@@ -138,7 +138,7 @@ function computeAssets(holdings, totalEval, defaultAssets) {
 }
 
 function parseMonthly(vr) {
-  const rows = (vr?.values ?? []).slice(1); // skip header row at B42
+  const rows = vr?.values ?? [];
   let lastYear = '';
   const result = [];
   rows.forEach(r => {
