@@ -6,7 +6,7 @@ import {
 
 // ── 구글 시트 설정 ─ 아래 두 값을 실제 값으로 교체하세요 ───────────────────────
 const GOOGLE_CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
-const SHEET_ID = '1yT5N6miUoYOBZeCZt6G9stVaSHog_PX5';
+const SHEET_ID = '1hWLSCd9n1zk4eM7Wf1O2a3VH_pwcDV9Qn_AixzDgUgE';
 // ─────────────────────────────────────────────────────────────────────────────
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 const CONFIGURED = !GOOGLE_CLIENT_ID.startsWith('YOUR_') && !SHEET_ID.startsWith('YOUR_');
