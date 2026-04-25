@@ -154,7 +154,7 @@ function parseMonthly(vr) {
 
     if (!total || !month || !lastYear) return;
     const yearShort = String(lastYear).slice(-2);
-    result.push({ label: `${yearShort}.${String(month).padStart(2, '0')}`, value: total });
+    result.push({ label: `${yearShort}.${String(month).padStart(2, '0')}`, value: total, year: lastYear });
   });
   return result;
 }
@@ -512,6 +512,7 @@ export default function App() {
   const [showDeleteMode, setShowDeleteMode] = useState(false);
   const [selectedToDelete, setSelectedToDelete] = useState(new Set());
   const [divYear, setDivYear] = useState('전체');
+  const [monthYear, setMonthYear] = useState('전체');
   const isMobile = useIsMobile();
 
   const onData = useCallback(({ accounts: a, monthly: m, dividends: d }) => {
@@ -525,7 +526,7 @@ export default function App() {
   const handleDeleteSelected = async () => {
     const ranges = [...selectedToDelete].map(idx => {
       const sheetRow = START_ROWS[acctKey] + acct.holdings[idx].rowOffset;
-      return `Banana!K${sheetRow}:S${sheetRow}`;
+      return `Banana!L${sheetRow}:S${sheetRow}`;
     });
     await sheets.clearRows(ranges);
     setShowDeleteMode(false);
@@ -726,27 +727,40 @@ export default function App() {
 
             {/* 전체 평가금 추이 바차트 */}
             <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 16 }}>
-                전체 평가금 추이
-              </div>
-              {monthlyData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={monthlyData} barSize={isMobile ? 8 : 14}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#2A2F3E" />
-                    <XAxis dataKey="label" tick={{ fill: "#5A6478", fontSize: 9 }} />
-                    <YAxis tickFormatter={v => `${(v / 10000).toFixed(0)}만`} tick={{ fill: "#5A6478", fontSize: 9 }} width={45} />
-                    <Tooltip
-                      formatter={v => [`₩${v.toLocaleString()}`, '평가금']}
-                      contentStyle={{ background: "#1E2233", border: "1px solid #2A2F3E", borderRadius: 8, fontSize: 11 }}
-                    />
-                    <Bar dataKey="value" fill="#3B82F6" radius={[3, 3, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5A6478', fontSize: 12 }}>
-                  데이터가 없습니다. Google Sheets에서 불러와 주세요.
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478" }}>전체 평가금 추이</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {['전체', '2025', '2026'].map(y => (
+                    <button key={y} onClick={() => setMonthYear(y)} style={{
+                      padding: '3px 10px', borderRadius: 4,
+                      border: `1px solid ${monthYear === y ? '#3B82F6' : '#2A2F3E'}`,
+                      background: monthYear === y ? '#1E3A5F' : 'transparent',
+                      color: monthYear === y ? '#60A5FA' : '#6B7280',
+                      cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
+                    }}>{y}</button>
+                  ))}
                 </div>
-              )}
+              </div>
+              {(() => {
+                const data = monthYear === '전체' ? monthlyData : monthlyData.filter(d => String(d.year) === monthYear);
+                return data.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={data} barSize={isMobile ? 8 : 14}>
+                      <XAxis dataKey="label" tick={{ fill: "#5A6478", fontSize: 9 }} axisLine={false} tickLine={false} />
+                      <YAxis tickFormatter={v => `${(v / 100000000).toFixed(1)}억`} tick={{ fill: "#5A6478", fontSize: 9 }} width={40} axisLine={false} tickLine={false} />
+                      <Tooltip
+                        formatter={v => [`₩${v.toLocaleString()}`, '평가금']}
+                        contentStyle={{ background: "#1E2233", border: "1px solid #2A2F3E", borderRadius: 8, fontSize: 11 }}
+                      />
+                      <Bar dataKey="value" fill="#3B82F6" radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5A6478', fontSize: 12 }}>
+                    데이터가 없습니다
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -855,8 +869,10 @@ export default function App() {
                     background: highlight ? '#1A2035' : 'transparent',
                     borderLeft: highlight ? `3px solid ${amt > 0 ? PROFIT_POS : PROFIT_NEG}` : '3px solid transparent',
                   }}>
-                    <div style={{ width: 8, height: 8, borderRadius: 2, background: COLORS[a.name] || '#aaa', marginRight: 10, flexShrink: 0 }} />
-                    <div style={{ flex: 1, fontSize: 12 }}>{a.name}</div>
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: 2, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
+                      <span style={{ fontSize: 12 }}>{a.name}</span>
+                    </div>
                     <div style={{ fontSize: 12, fontWeight: 700, color: amt > 0 ? PROFIT_POS : amt < 0 ? PROFIT_NEG : '#9CA3AF' }}>
                       ₩{fmt(amt)}
                     </div>
