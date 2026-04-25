@@ -11,16 +11,30 @@ const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 const CONFIGURED = !GOOGLE_CLIENT_ID.startsWith('YOUR_') && !SHEET_ID.startsWith('YOUR_');
 
 const SHEET_RANGES = {
-  ISA:          'Banana!K6:S12',
-  위탁:         'Banana!K14:S41',
-  연금저축:     'Banana!K43:S66',
-  IRP:          'Banana!K68:S80',
-  위탁목표:     'Banana!C11:C17',
-  연금저축목표: 'Banana!C23:C29',
-  월별잔고:     'Banana!B43:I89',
-  배당2025:     'Banana!U5:W78',
-  배당2026:     'Banana!Y5:AA78',
+  ISA:           'Banana!K6:S12',    // 0
+  위탁:          'Banana!K14:S41',   // 1
+  연금저축:      'Banana!K43:S66',   // 2
+  IRP:           'Banana!K68:S80',   // 3
+  위탁목표:      'Banana!C11:C17',   // 4
+  위탁현재:      'Banana!F11:F17',   // 5
+  위탁리밸:      'Banana!G11:G17',   // 6
+  연금저축목표:  'Banana!C23:C29',   // 7
+  연금저축현재:  'Banana!F23:F29',   // 8
+  연금저축리밸:  'Banana!G23:G29',   // 9
+  ISA목표:       'Banana!C6:C6',     // 10
+  ISA현재:       'Banana!F6:F6',     // 11
+  ISA리밸:       'Banana!G6:G6',     // 12
+  IRP목표:       'Banana!C35:C35',   // 13
+  IRP현재:       'Banana!F35:F35',   // 14
+  IRP리밸:       'Banana!G35:G35',   // 15
+  월별잔고:      'Banana!B42:I89',   // 16 (B42 포함 - 헤더행)
+  배당2025:      'Banana!U5:W78',    // 17
+  배당2026:      'Banana!Y5:AA78',   // 18
 };
+
+// 한국 주식 색상 체계: 이익=빨강, 손실=파랑
+const PROFIT_POS = '#EF4444';
+const PROFIT_NEG = '#60A5FA';
 
 // ── 색상 팔레트 ───────────────────────────────────────────────────────────────
 const COLORS = {
@@ -89,9 +103,6 @@ const fmt = (n) => {
   return Math.round(Math.abs(n)).toLocaleString('ko-KR');
 };
 
-const rebalData = (assets) =>
-  assets.map((a) => ({ name: a.name, 현재: a.ratio, 목표: a.target, gap: a.ratio - a.target }));
-
 // ── 구글 스크립트 동적 로더 ───────────────────────────────────────────────────
 function loadScript(src) {
   return new Promise((res, rej) => {
@@ -105,15 +116,6 @@ function loadScript(src) {
 // ── 파싱 함수들 ───────────────────────────────────────────────────────────────
 function parseNum(v) {
   return parseFloat(String(v ?? 0).replace(/,/g, '')) || 0;
-}
-
-const TARGET_ASSET_ORDER = ['채권', '금', '달러', '배당주', '리츠', '국내주식', '해외주식'];
-
-function parseTargets(valueRange) {
-  return (valueRange?.values ?? []).map((r, i) => ({
-    name: TARGET_ASSET_ORDER[i],
-    target: parseNum(r[0]),
-  }));
 }
 
 function computeAssets(holdings, totalEval, defaultAssets) {
@@ -136,7 +138,7 @@ function computeAssets(holdings, totalEval, defaultAssets) {
 }
 
 function parseMonthly(vr) {
-  const rows = vr?.values ?? [];
+  const rows = (vr?.values ?? []).slice(1); // skip header row at B42
   let lastYear = '';
   const result = [];
   rows.forEach(r => {
@@ -180,7 +182,12 @@ function parseDividends(vr2025, vr2026) {
 }
 
 function parseSheetData(valueRanges) {
-  // valueRanges order: [ISA, 위탁, 연금저축, IRP, 위탁목표, 연금저축목표, 월별잔고, 배당2025, 배당2026]
+  // indices: ISA(0) 위탁(1) 연금저축(2) IRP(3)
+  //          위탁목표(4) 위탁현재(5) 위탁리밸(6)
+  //          연금목표(7) 연금현재(8) 연금리밸(9)
+  //          ISA목표(10) ISA현재(11) ISA리밸(12)
+  //          IRP목표(13) IRP현재(14) IRP리밸(15)
+  //          월별잔고(16) 배당2025(17) 배당2026(18)
   const accountKeys = ['ISA', '위탁', '연금저축', 'IRP'];
   const result = {};
   let anyData = false;
@@ -218,25 +225,58 @@ function parseSheetData(valueRanges) {
     };
   });
 
-  // Apply target overrides
-  const 위탁타겟 = parseTargets(valueRanges[4]);
-  const 연금타겟 = parseTargets(valueRanges[5]);
+  const parseCol = (vr) => (vr?.values ?? []).map(r => parseNum(r[0]));
 
   if (result['위탁']) {
-    위탁타겟.forEach(({ name, target }) => {
-      const a = result['위탁'].assets.find(x => x.name === name);
-      if (a) a.target = target;
-    });
-  }
-  if (result['연금저축']) {
-    연금타겟.forEach(({ name, target }) => {
-      const a = result['연금저축'].assets.find(x => x.name === name);
-      if (a) a.target = target;
-    });
+    const targets = parseCol(valueRanges[4]);
+    const currents = parseCol(valueRanges[5]);
+    const rebals = parseCol(valueRanges[6]);
+    result['위탁'].assets = result['위탁'].assets.map((a, i) => ({
+      ...a,
+      target: targets[i] ?? a.target,
+      sheetCurrent: currents[i] ?? 0,
+      rebalAmt: rebals[i] ?? 0,
+    }));
   }
 
-  const monthly = parseMonthly(valueRanges[6]);
-  const dividends = parseDividends(valueRanges[7], valueRanges[8]);
+  if (result['연금저축']) {
+    const targets = parseCol(valueRanges[7]);
+    const currents = parseCol(valueRanges[8]);
+    const rebals = parseCol(valueRanges[9]);
+    result['연금저축'].assets = result['연금저축'].assets.map((a, i) => ({
+      ...a,
+      target: targets[i] ?? a.target,
+      sheetCurrent: currents[i] ?? 0,
+      rebalAmt: rebals[i] ?? 0,
+    }));
+  }
+
+  if (result['ISA']) {
+    const target = parseCol(valueRanges[10])[0] ?? 0;
+    const current = parseCol(valueRanges[11])[0] ?? 0;
+    const rebal = parseCol(valueRanges[12])[0] ?? 0;
+    result['ISA'].assets = result['ISA'].assets.map((a, i) => ({
+      ...a,
+      target: i === 0 ? target : a.target,
+      sheetCurrent: i === 0 ? current : 0,
+      rebalAmt: i === 0 ? rebal : 0,
+    }));
+  }
+
+  if (result['IRP']) {
+    const target = parseCol(valueRanges[13])[0] ?? 0;
+    const current = parseCol(valueRanges[14])[0] ?? 0;
+    const rebal = parseCol(valueRanges[15])[0] ?? 0;
+    result['IRP'].assets = result['IRP'].assets.map((a, i) => ({
+      ...a,
+      target: i === 0 ? target : a.target,
+      sheetCurrent: i === 0 ? current : 0,
+      rebalAmt: i === 0 ? rebal : 0,
+    }));
+  }
+
+  const monthly = parseMonthly(valueRanges[16]);
+  const dividends = parseDividends(valueRanges[17], valueRanges[18]);
 
   return anyData ? { accounts: result, monthly, dividends } : null;
 }
@@ -329,7 +369,15 @@ function useGoogleSheets(onData) {
     await doFetch();
   }, [doFetch]);
 
-  return { auth, sync, lastSync, signIn, signOut, fetch: doFetch, appendRow };
+  const clearRows = useCallback(async (ranges) => {
+    await window.gapi.client.sheets.spreadsheets.values.batchClear({
+      spreadsheetId: SHEET_ID,
+      resource: { ranges },
+    });
+    await doFetch();
+  }, [doFetch]);
+
+  return { auth, sync, lastSync, signIn, signOut, fetch: doFetch, appendRow, clearRows };
 }
 
 // ── 종목추가 폼 컴포넌트 ──────────────────────────────────────────────────────
@@ -366,9 +414,14 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel }) {
       else if (티커유형 === '네이버') 현재가formula = `=IMPORTXML("https://finance.naver.com/item/main.naver?code=${티커}","//p[@class='no_today']/em/span[1]")`;
 
       const 투자금 = parseFloat(매수단가) * parseFloat(수량);
-      const newRow = [자산군, 종목명, parseFloat(매수단가), parseFloat(수량), 투자금, 현재가formula, '', '', ''];
-
       const nextRow = START_ROWS[acctKey] + accounts[acctKey].holdings.length;
+      const newRow = [
+        자산군, 종목명, parseFloat(매수단가), parseFloat(수량), 투자금,
+        현재가formula,
+        `=R${nextRow}-O${nextRow}`,
+        `=N${nextRow}*P${nextRow}`,
+        `=(R${nextRow}-O${nextRow})/O${nextRow}*100`,
+      ];
       const writeRange = `Banana!K${nextRow}:S${nextRow}`;
 
       await onSave(writeRange, newRow);
@@ -453,9 +506,9 @@ export default function App() {
   const [accounts, setAccounts] = useState(DEFAULT_ACCOUNTS);
   const [monthlyData, setMonthlyData] = useState([]);
   const [dividendData, setDividendData] = useState([]);
-  const [showTarget, setShowTarget] = useState(true);
-  const [showCurrent, setShowCurrent] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showDeleteMode, setShowDeleteMode] = useState(false);
+  const [selectedToDelete, setSelectedToDelete] = useState(new Set());
   const [divYear, setDivYear] = useState('전체');
   const isMobile = useIsMobile();
 
@@ -466,6 +519,15 @@ export default function App() {
   }, []);
 
   const sheets = useGoogleSheets(onData);
+
+  const handleDeleteSelected = async () => {
+    const ranges = [...selectedToDelete].map(idx =>
+      `Banana!K${START_ROWS[acctKey] + idx}:S${START_ROWS[acctKey] + idx}`
+    );
+    await sheets.clearRows(ranges);
+    setShowDeleteMode(false);
+    setSelectedToDelete(new Set());
+  };
 
   const acct = accounts[acctKey];
   const totalEval = Object.values(accounts).reduce((s, a) => s + a.total_eval, 0);
@@ -519,10 +581,10 @@ export default function App() {
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>
             <div style={{ fontSize: 9, color: "#5A6478", letterSpacing: 2 }}>총 수익</div>
-            <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: totalProfit >= 0 ? "#4ADE80" : "#F87171" }}>
-              {totalProfit >= 0 ? '+' : '-'}₩{fmt(totalProfit)}
+            <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+              ₩{fmt(totalProfit)}
             </div>
-            <div style={{ fontSize: 10, color: totalProfit >= 0 ? "#4ADE80" : "#F87171" }}>
+            <div style={{ fontSize: 10, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
               {totalProfit >= 0 ? '+' : ''}{profitRate}%
             </div>
           </div>
@@ -597,7 +659,7 @@ export default function App() {
               {[
                 { label: "총 투자금", value: `₩${fmt(totalInvest)}`, color: "#9CA3AF" },
                 { label: "총 평가금", value: `₩${fmt(totalEval)}`, color: "#F5F7FF" },
-                { label: "수익률", value: `${totalProfit >= 0 ? '+' : ''}${profitRate}%`, color: totalProfit >= 0 ? "#4ADE80" : "#F87171" },
+                { label: "수익률", value: `${totalProfit >= 0 ? '+' : ''}${profitRate}%`, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG },
               ].map((s) => (
                 <div key={s.label} style={{
                   background: "#1A1D26", borderRadius: 10, padding: "12px 10px", textAlign: "center",
@@ -646,10 +708,10 @@ export default function App() {
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <div style={{ fontSize: 9, color: "#5A6478", marginBottom: 2 }}>수익</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: isPos ? "#4ADE80" : "#F87171" }}>
-                          {isPos ? '+' : '-'}₩{fmt(v.profit)}
+                        <div style={{ fontSize: 13, fontWeight: 700, color: isPos ? PROFIT_POS : PROFIT_NEG }}>
+                          ₩{fmt(v.profit)}
                         </div>
-                        <div style={{ fontSize: 11, color: isPos ? "#4ADE80" : "#F87171" }}>
+                        <div style={{ fontSize: 11, color: isPos ? PROFIT_POS : PROFIT_NEG }}>
                           {isPos ? '+' : ''}{pRate}%
                         </div>
                       </div>
@@ -689,9 +751,9 @@ export default function App() {
         {/* ── 리밸런싱 탭 ── */}
         {tab === "rebalance" && (
           <div>
-            {/* 계좌 선택 (위탁, 연금저축만) */}
+            {/* 계좌 선택 (4개) */}
             <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-              {['위탁', '연금저축'].map((k) => (
+              {Object.keys(accounts).map((k) => (
                 <button key={k} onClick={() => setAcctKey(k)} style={{
                   padding: isMobile ? "8px 14px" : "6px 14px",
                   minHeight: isMobile ? 40 : undefined,
@@ -706,110 +768,16 @@ export default function App() {
               ))}
             </div>
 
-            {/* 현재 vs 목표 비중 */}
-            <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478" }}>현재 vs 목표 비중</div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button onClick={() => setShowTarget(p => !p)} style={{
-                    padding: '3px 10px', borderRadius: 4, border: `1px solid ${showTarget ? '#2A3A5A' : '#2A2F3E'}`,
-                    background: showTarget ? '#2A3A5A' : 'transparent',
-                    color: showTarget ? '#60A5FA' : '#6B7280', cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
-                  }}>목표</button>
-                  <button onClick={() => setShowCurrent(p => !p)} style={{
-                    padding: '3px 10px', borderRadius: 4, border: `1px solid ${showCurrent ? '#1A3A2A' : '#2A2F3E'}`,
-                    background: showCurrent ? '#1A3A2A' : 'transparent',
-                    color: showCurrent ? '#4ADE80' : '#6B7280', cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
-                  }}>현재</button>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={rebalData(acct.assets)} layout="vertical" barSize={10}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#2A2F3E" />
-                      <XAxis type="number" tick={{ fill: "#5A6478", fontSize: 9 }} />
-                      <YAxis type="category" dataKey="name" tick={{ fill: "#9CA3AF", fontSize: 10 }} width={55} />
-                      <Tooltip
-                        contentStyle={{ background: "#1E2233", border: "1px solid #2A2F3E", borderRadius: 8, fontSize: 11 }}
-                        formatter={(v, n) => [`${v}%`, n === "목표" ? "목표비중" : "현재비중"]}
-                      />
-                      {showTarget && <Bar dataKey="목표" fill="#2A3A5A" radius={[0, 4, 4, 0]} />}
-                      {showCurrent && (
-                        <Bar dataKey="현재" radius={[0, 4, 4, 0]}>
-                          {rebalData(acct.assets).map((entry, i) => (
-                            <Cell key={i} fill={entry.gap > 3 ? "#52C8D4" : entry.gap < -3 ? "#F87171" : "#4ADE80"} />
-                          ))}
-                        </Bar>
-                      )}
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-                {/* 우측 레이블 패널 */}
-                <div style={{ width: 130, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', fontSize: 11 }}>
-                  {acct.assets.map(a => (
-                    <div key={a.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1px 0' }}>
-                      <span style={{ color: COLORS[a.name] || '#aaa', fontWeight: 600, fontSize: 10, minWidth: 40 }}>{a.name}</span>
-                      <span style={{ color: '#4ADE80', fontSize: 10 }}>{a.ratio}%</span>
-                      <span style={{ color: '#60A5FA', fontSize: 10 }}>{a.target}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* 리밸런싱 필요 테이블 */}
-            <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>
-                리밸런싱 필요
-              </div>
-              {acct.assets.map((a) => {
-                const gap = a.ratio - a.target;
-                const needAmt = (a.target / 100 * acct.total_eval) - a.eval;
-                const highlight = Math.abs(gap) >= 5;
-                return (
-                  <div key={a.name} style={{
-                    display: "flex", alignItems: "center",
-                    padding: "10px 12px",
-                    marginBottom: 4,
-                    borderRadius: 6,
-                    background: highlight ? "#1A2035" : "transparent",
-                    borderLeft: highlight ? `3px solid ${gap > 0 ? "#52C8D4" : "#F87171"}` : "3px solid transparent",
-                  }}>
-                    <div style={{ width: 8, height: 8, borderRadius: 2, background: COLORS[a.name] || "#aaa", marginRight: 10, flexShrink: 0 }} />
-                    <div style={{ flex: 1, fontSize: 12 }}>{a.name}</div>
-                    <div style={{ fontSize: 11, color: "#9CA3AF", marginRight: 10, flexShrink: 0 }}>
-                      {a.ratio}% → {a.target}%
-                    </div>
-                    <div style={{
-                      fontSize: 11, fontWeight: 700,
-                      color: Math.abs(gap) >= 5 ? (gap > 0 ? "#52C8D4" : "#F87171") : "#4ADE80",
-                      minWidth: 40, textAlign: "right", marginRight: 10, flexShrink: 0,
-                    }}>
-                      {gap > 0 ? "+" : ""}{gap}%p
-                    </div>
-                    <div style={{
-                      fontSize: 10,
-                      color: needAmt > 0 ? "#52C8D4" : "#F87171",
-                      minWidth: 90, textAlign: "right", flexShrink: 0,
-                    }}>
-                      {needAmt > 0 ? `+₩${fmt(Math.round(needAmt))}` : `-₩${fmt(Math.round(Math.abs(needAmt)))}`}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* 자산군 구성 파이 */}
-            {acct.assets.length > 1 && (
-              <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px" }}>
+            {/* 자산군 구성 파이 (최상단) */}
+            {acct.assets.some(a => a.eval > 0) && (
+              <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
                 <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>자산군 구성</div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <ResponsiveContainer width="100%" height={160}>
                       <PieChart>
                         <Pie
-                          data={acct.assets.filter(a => a.eval > 0).map(a => ({ name: a.name, value: a.eval, color: COLORS[a.name] || "#aaa" }))}
+                          data={acct.assets.filter(a => a.eval > 0).map(a => ({ name: a.name, value: a.eval }))}
                           cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" paddingAngle={3}>
                           {acct.assets.filter(a => a.eval > 0).map((a, i) => (
                             <Cell key={i} fill={COLORS[a.name] || "#aaa"} stroke="#0D0F14" strokeWidth={2} />
@@ -834,6 +802,63 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* 현재 vs 목표 비중 테이블 */}
+            <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
+              <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>현재 vs 목표 비중</div>
+              <div style={{ display: 'flex', alignItems: 'center', padding: '4px 8px', marginBottom: 4 }}>
+                <div style={{ flex: 1, fontSize: 10, color: '#5A6478' }}>자산군</div>
+                <div style={{ width: 50, textAlign: 'right', fontSize: 10, color: '#5A6478' }}>목표%</div>
+                <div style={{ width: 50, textAlign: 'right', fontSize: 10, color: '#5A6478' }}>현재%</div>
+                <div style={{ width: 60, textAlign: 'right', fontSize: 10, color: '#5A6478' }}>차이</div>
+              </div>
+              {acct.assets.map((a) => {
+                const curr = a.sheetCurrent ?? a.ratio;
+                const diff = curr - a.target;
+                const highlight = Math.abs(diff) >= 5;
+                return (
+                  <div key={a.name} style={{
+                    display: 'flex', alignItems: 'center', padding: '7px 8px',
+                    borderRadius: 6, marginBottom: 2,
+                    background: highlight ? '#1A2035' : 'transparent',
+                    borderLeft: highlight ? `3px solid ${diff > 0 ? PROFIT_POS : PROFIT_NEG}` : '3px solid transparent',
+                  }}>
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: 2, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
+                      <span style={{ fontSize: 12 }}>{a.name}</span>
+                    </div>
+                    <div style={{ width: 50, textAlign: 'right', fontSize: 12, color: '#9CA3AF' }}>{a.target}%</div>
+                    <div style={{ width: 50, textAlign: 'right', fontSize: 12, color: '#E8EAF0' }}>{curr}%</div>
+                    <div style={{ width: 60, textAlign: 'right', fontSize: 12, fontWeight: 700,
+                      color: diff > 0 ? PROFIT_POS : diff < 0 ? PROFIT_NEG : '#9CA3AF' }}>
+                      {diff > 0 ? '+' : ''}{diff}%p
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 리밸런싱 필요 */}
+            <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px" }}>
+              <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>리밸런싱 필요</div>
+              {acct.assets.map((a) => {
+                const amt = a.rebalAmt ?? 0;
+                return (
+                  <div key={a.name} style={{
+                    display: 'flex', alignItems: 'center', padding: '10px 12px',
+                    borderRadius: 6, marginBottom: 4,
+                    background: amt !== 0 ? '#1A2035' : 'transparent',
+                    borderLeft: amt !== 0 ? `3px solid ${amt > 0 ? PROFIT_POS : PROFIT_NEG}` : '3px solid transparent',
+                  }}>
+                    <div style={{ width: 8, height: 8, borderRadius: 2, background: COLORS[a.name] || '#aaa', marginRight: 10, flexShrink: 0 }} />
+                    <div style={{ flex: 1, fontSize: 12 }}>{a.name}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: amt > 0 ? PROFIT_POS : amt < 0 ? PROFIT_NEG : '#9CA3AF' }}>
+                      ₩{fmt(amt)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -878,11 +903,11 @@ export default function App() {
                 <div style={{ textAlign: "right" }}>
                   <div style={{
                     fontSize: isMobile ? 13 : 16, fontWeight: 700,
-                    color: acct.profit >= 0 ? "#4ADE80" : "#F87171",
+                    color: acct.profit >= 0 ? PROFIT_POS : PROFIT_NEG,
                   }}>
-                    {acct.profit >= 0 ? '+' : '-'}₩{fmt(acct.profit)}
+                    ₩{fmt(acct.profit)}
                   </div>
-                  <div style={{ fontSize: 11, color: acct.profit >= 0 ? "#4ADE80" : "#F87171" }}>
+                  <div style={{ fontSize: 11, color: acct.profit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
                     {acct.profit >= 0 ? '+' : ''}
                     {acct.total_invest > 0 ? ((acct.profit / acct.total_invest) * 100).toFixed(1) : '0.0'}%
                   </div>
@@ -890,11 +915,20 @@ export default function App() {
               </div>
             </div>
 
-            {/* 종목추가 버튼 + 폼 */}
+            {/* 종목추가/삭제 버튼 + 폼 */}
             {sheets.auth === 'signed-in' && (
               <div style={{ marginBottom: 12 }}>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-                  <button onClick={() => setShowAddForm(p => !p)} style={{
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
+                  <button onClick={() => { setShowDeleteMode(p => !p); setSelectedToDelete(new Set()); setShowAddForm(false); }} style={{
+                    padding: '6px 14px', borderRadius: 6,
+                    border: `1px solid ${showDeleteMode ? PROFIT_POS : '#2A2F3E'}`,
+                    background: showDeleteMode ? '#2A1A1A' : 'transparent',
+                    color: showDeleteMode ? PROFIT_POS : '#6B7280',
+                    cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
+                  }}>
+                    {showDeleteMode ? '✕ 취소' : '− 종목삭제'}
+                  </button>
+                  <button onClick={() => { setShowAddForm(p => !p); setShowDeleteMode(false); }} style={{
                     padding: '6px 14px', borderRadius: 6,
                     border: '1px solid #3B82F6', background: showAddForm ? '#1E3A5F' : 'transparent',
                     color: '#60A5FA', cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
@@ -916,41 +950,6 @@ export default function App() {
               </div>
             )}
 
-            {/* 자산군 파이 */}
-            {acct.assets.length > 1 && (
-              <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>자산군 구성</div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <ResponsiveContainer width="100%" height={160}>
-                      <PieChart>
-                        <Pie
-                          data={acct.assets.filter(a => a.eval > 0).map(a => ({ name: a.name, value: a.eval }))}
-                          cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" paddingAngle={3}>
-                          {acct.assets.filter(a => a.eval > 0).map((a, i) => (
-                            <Cell key={i} fill={COLORS[a.name] || "#aaa"} stroke="#0D0F14" strokeWidth={2} />
-                          ))}
-                        </Pie>
-                        <Tooltip formatter={(v) => `₩${v.toLocaleString()}`}
-                          contentStyle={{ background: "#1E2233", border: "1px solid #2A2F3E", borderRadius: 8, fontSize: 11 }} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div style={{ width: 120, flexShrink: 0 }}>
-                    {acct.assets.filter(a => a.eval > 0).map(a => (
-                      <div key={a.name} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
-                        <span style={{ fontSize: 11, color: '#9CA3AF', flex: 1 }}>{a.name}</span>
-                        <span style={{ fontSize: 11, color: '#E8EAF0' }}>
-                          {acct.total_eval > 0 ? (a.eval / acct.total_eval * 100).toFixed(1) : '0.0'}%
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
             {/* 보유 종목 목록 */}
             <div style={{ background: "#1A1D26", borderRadius: 12, overflow: "hidden" }}>
               <div style={{ padding: "12px 16px", borderBottom: "1px solid #2A2F3E", fontSize: 10, letterSpacing: 3, color: "#5A6478" }}>
@@ -962,16 +961,25 @@ export default function App() {
                 </div>
               )}
               {acct.holdings.map((h, i) => {
-                const sign = h.profit >= 0 ? '+' : '';
-                const color = h.profit >= 0 ? '#4ADE80' : '#F87171';
+                const color = h.profit >= 0 ? PROFIT_POS : PROFIT_NEG;
                 const typeName = h.type || '';
                 return (
                   <div key={i} style={{
                     padding: isMobile ? "10px 16px" : "12px 16px",
                     borderBottom: i < acct.holdings.length - 1 ? "1px solid #1E2233" : "none",
                     display: "flex", alignItems: "center", gap: 10,
+                    background: selectedToDelete.has(i) ? '#1A1520' : 'transparent',
                   }}>
-                    {/* 자산군 배지 */}
+                    {showDeleteMode && (
+                      <input type="checkbox" checked={selectedToDelete.has(i)}
+                        onChange={() => setSelectedToDelete(prev => {
+                          const next = new Set(prev);
+                          if (next.has(i)) next.delete(i); else next.add(i);
+                          return next;
+                        })}
+                        style={{ marginRight: 2, accentColor: PROFIT_POS, flexShrink: 0 }}
+                      />
+                    )}
                     {typeName && (
                       <div style={{
                         fontSize: 10,
@@ -993,7 +1001,7 @@ export default function App() {
                     <div style={{ textAlign: "right", flexShrink: 0 }}>
                       <div style={{ fontSize: isMobile ? 11 : 12, color: "#E8EAF0" }}>₩{fmt(h.eval)}</div>
                       <div style={{ fontSize: isMobile ? 10 : 11, fontWeight: 700, color }}>
-                        {sign}₩{fmt(Math.abs(h.profit))}
+                        ₩{fmt(Math.abs(h.profit))}
                       </div>
                       <div style={{ fontSize: 10, color }}>
                         {h.rate >= 0 ? '+' : ''}{h.rate.toFixed(1)}%
@@ -1002,6 +1010,17 @@ export default function App() {
                   </div>
                 );
               })}
+              {showDeleteMode && selectedToDelete.size > 0 && (
+                <div style={{ padding: '12px 16px', borderTop: '1px solid #2A2F3E' }}>
+                  <button onClick={handleDeleteSelected} style={{
+                    width: '100%', padding: 10, borderRadius: 6, border: 'none',
+                    background: PROFIT_POS, color: '#fff', cursor: 'pointer',
+                    fontSize: 12, fontFamily: baseFont,
+                  }}>
+                    선택 삭제 ({selectedToDelete.size}개)
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1044,6 +1063,8 @@ export default function App() {
                     <Tooltip
                       formatter={v => [`₩${v.toLocaleString()}`, '배당금']}
                       contentStyle={{ background: "#1E2233", border: "1px solid #2A2F3E", borderRadius: 8, fontSize: 11 }}
+                      labelStyle={{ color: '#E8EAF0' }}
+                      itemStyle={{ color: '#E8EAF0' }}
                     />
                     <Bar dataKey="amount" radius={[3, 3, 0, 0]}>
                       {filteredDividends.map((d, i) => (
