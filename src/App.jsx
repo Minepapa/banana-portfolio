@@ -13,11 +13,12 @@ const CONFIGURED = !GOOGLE_CLIENT_ID.startsWith('YOUR_') && !SHEET_ID.startsWith
 
 // 시트 탭명 및 데이터 범위 설정 (실제 시트 구조에 맞게 조정)
 // 컬럼 순서: A=종목명, B=수량, C=투자금, D=평가금, E=수익금, F=수익률(%), G=자산유형
+// K=자산군, L=종목명, M=매수단가, N=수량, O=투자금, P=현재가, Q=수익금, R=평가금, S=수익률
 const SHEET_RANGES = {
-  ISA:      'ISA!A2:G30',
-  위탁:     '위탁!A2:G30',
-  연금저축: '연금저축!A2:G30',
-  IRP:      'IRP!A2:G10',
+  ISA:      '13기_포포트!K6:S12',
+  위탁:     '13기_포포트!K14:S41',
+  연금저축: '13기_포포트!K43:S66',
+  IRP:      '13기_포포트!K68:S80',
 };
 
 // ── 색상 팔레트 ───────────────────────────────────────────────────────────────
@@ -134,19 +135,24 @@ function parseSheetData(valueRanges) {
   let anyData = false;
 
   keys.forEach((key, i) => {
-    const rows = (valueRanges[i]?.values ?? []).filter(r => r[0]);
+    const rows = (valueRanges[i]?.values ?? []).filter(r => r[1]); // 종목명(L열) 기준 필터
     if (!rows.length) return;
     anyData = true;
 
-    const holdings = rows.map(r => ({
-      name: String(r[0] ?? ''),
-      qty: parseNum(r[1]),
-      invest: parseNum(r[2]),
-      eval: parseNum(r[3]),
-      profit: parseNum(r[4]),
-      rate: parseNum(r[5]),
-      type: String(r[6] ?? ''),
-    }));
+    let lastType = '';
+    const holdings = rows.map(r => {
+      const type = String(r[0] ?? '').trim();
+      if (type) lastType = type; // 자산군은 첫 행에만 있으므로 fill-down
+      return {
+        name: String(r[1] ?? ''),  // L: 종목명
+        qty: parseNum(r[3]),       // N: 수량
+        invest: parseNum(r[4]),    // O: 투자금
+        eval: parseNum(r[7]),      // R: 평가금
+        profit: parseNum(r[6]),    // Q: 수익금
+        rate: parseNum(r[8]),      // S: 수익률
+        type: lastType,            // K: 자산군 (fill-down)
+      };
+    });
 
     const total_invest = holdings.reduce((s, h) => s + h.invest, 0);
     const total_eval = holdings.reduce((s, h) => s + h.eval, 0);
@@ -169,7 +175,15 @@ function serializeForSheet(accountsData) {
   return Object.entries(SHEET_RANGES).map(([key, range]) => ({
     range,
     values: (accountsData[key]?.holdings ?? []).map(h => [
-      h.name, h.qty, h.invest, h.eval, h.profit, h.rate, h.type ?? '',
+      h.type ?? '', // K: 자산군
+      h.name,       // L: 종목명
+      '',           // M: 매수단가 (앱에서 미관리)
+      h.qty,        // N: 수량
+      h.invest,     // O: 투자금
+      '',           // P: 현재가 (앱에서 미관리)
+      h.profit,     // Q: 수익금
+      h.eval,       // R: 평가금
+      h.rate,       // S: 수익률
     ]),
   }));
 }
