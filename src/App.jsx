@@ -27,7 +27,7 @@ const SHEET_RANGES = {
   IRP목표:       'Banana!C35:C35',   // 13
   IRP현재:       'Banana!F35:F35',   // 14
   IRP리밸:       'Banana!G35:G35',   // 15
-  월별잔고:      'Banana!B42:I89',   // 16 (B42 포함 - 헤더행)
+  월별잔고:      'Banana!B43:I89',   // 16
   배당2025:      'Banana!U5:W78',    // 17
   배당2026:      'Banana!Y5:AA78',   // 18
 };
@@ -139,20 +139,20 @@ function computeAssets(holdings, totalEval, defaultAssets) {
 
 function parseMonthly(vr) {
   const rows = vr?.values ?? [];
-  let lastYear = '';
+  let lastYear = 0;
   const result = [];
   rows.forEach(r => {
-    const yr = String(r[0] ?? '').trim();
-    if (yr) lastYear = yr;
-    const monthRaw = String(r[1] ?? '').trim();
-    const totalRaw = r[7];
-    if (!totalRaw || String(totalRaw).trim() === '') return;
-    const total = parseNum(totalRaw);
-    if (!total) return;
-    let month = 0;
-    if (/^\d+$/.test(monthRaw)) month = parseInt(monthRaw);
-    else if (monthRaw.includes('-')) month = parseInt(monthRaw.split('-')[1]);
-    if (!month || !lastYear) return;
+    // B열(index 0): 연도 — 숫자만 추출하므로 "2024", "2024년", "2,024" 모두 처리
+    const bNum = parseInt(String(r[0] ?? '').replace(/[^0-9]/g, ''));
+    if (bNum >= 2000) lastYear = bNum;
+
+    // C열(index 1): 월 — 숫자만 추출하므로 "1", "1월", "01" 모두 처리
+    const month = parseInt(String(r[1] ?? '').replace(/[^0-9]/g, ''));
+
+    // I열(index 7 in B:I 범위): 총잔고
+    const total = parseNum(r[7]);
+
+    if (!total || !month || !lastYear) return;
     const yearShort = String(lastYear).slice(-2);
     result.push({ label: `${yearShort}.${String(month).padStart(2, '0')}`, value: total });
   });
