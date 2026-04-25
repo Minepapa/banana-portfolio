@@ -55,12 +55,12 @@ const DEFAULT_ACCOUNTS = {
     total_invest: 0, total_eval: 0, profit: 0, color: "#52C8D4",
     assets: [
       { name: "채권",    ratio: 0, invest: 0, eval: 0, target: 0 },
-      { name: "해외주식", ratio: 0, invest: 0, eval: 0, target: 0 },
-      { name: "국내주식", ratio: 0, invest: 0, eval: 0, target: 0 },
-      { name: "배당주",  ratio: 0, invest: 0, eval: 0, target: 0 },
-      { name: "리츠",    ratio: 0, invest: 0, eval: 0, target: 0 },
       { name: "금",      ratio: 0, invest: 0, eval: 0, target: 0 },
       { name: "달러",    ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "배당주",  ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "리츠",    ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "국내주식", ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "해외주식", ratio: 0, invest: 0, eval: 0, target: 0 },
     ],
     holdings: [],
   },
@@ -193,15 +193,14 @@ function parseSheetData(valueRanges) {
   let anyData = false;
 
   accountKeys.forEach((key, i) => {
-    const rows = (valueRanges[i]?.values ?? []).filter(r => r[1]);
-    if (!rows.length) return;
-    anyData = true;
-
+    const allRows = valueRanges[i]?.values ?? [];
     let lastType = '';
-    const holdings = rows.map(r => {
+    const holdings = [];
+    allRows.forEach((r, rowOffset) => {
+      if (!r[1]) return;
       const type = String(r[0] ?? '').trim();
       if (type) lastType = type;
-      return {
+      holdings.push({
         name: String(r[1] ?? ''),
         qty: parseNum(r[3]),
         invest: parseNum(r[4]),
@@ -209,8 +208,11 @@ function parseSheetData(valueRanges) {
         profit: parseNum(r[6]),
         rate: parseNum(r[8]),
         type: lastType,
-      };
+        rowOffset,
+      });
     });
+    if (!holdings.length) return;
+    anyData = true;
 
     const total_invest = holdings.reduce((s, h) => s + h.invest, 0);
     const total_eval = holdings.reduce((s, h) => s + h.eval, 0);
@@ -420,7 +422,7 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel }) {
         현재가formula,
         `=R${nextRow}-O${nextRow}`,
         `=N${nextRow}*P${nextRow}`,
-        `=(R${nextRow}-O${nextRow})/O${nextRow}*100`,
+        `=R${nextRow}/O${nextRow}-1`,
       ];
       const writeRange = `Banana!K${nextRow}:S${nextRow}`;
 
@@ -521,9 +523,10 @@ export default function App() {
   const sheets = useGoogleSheets(onData);
 
   const handleDeleteSelected = async () => {
-    const ranges = [...selectedToDelete].map(idx =>
-      `Banana!K${START_ROWS[acctKey] + idx}:S${START_ROWS[acctKey] + idx}`
-    );
+    const ranges = [...selectedToDelete].map(idx => {
+      const sheetRow = START_ROWS[acctKey] + acct.holdings[idx].rowOffset;
+      return `Banana!K${sheetRow}:S${sheetRow}`;
+    });
     await sheets.clearRows(ranges);
     setShowDeleteMode(false);
     setSelectedToDelete(new Set());
@@ -805,7 +808,7 @@ export default function App() {
 
             {/* 현재 vs 목표 비중 테이블 */}
             <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>현재 vs 목표 비중</div>
+              <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>목표 vs 현재 비중</div>
               <div style={{ display: 'flex', alignItems: 'center', padding: '4px 8px', marginBottom: 4 }}>
                 <div style={{ flex: 1, fontSize: 10, color: '#5A6478' }}>자산군</div>
                 <div style={{ width: 50, textAlign: 'right', fontSize: 10, color: '#5A6478' }}>목표%</div>
@@ -843,12 +846,14 @@ export default function App() {
               <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>리밸런싱 필요</div>
               {acct.assets.map((a) => {
                 const amt = a.rebalAmt ?? 0;
+                const diff = (a.sheetCurrent ?? a.ratio) - a.target;
+                const highlight = Math.abs(diff) >= 5;
                 return (
                   <div key={a.name} style={{
                     display: 'flex', alignItems: 'center', padding: '10px 12px',
                     borderRadius: 6, marginBottom: 4,
-                    background: amt !== 0 ? '#1A2035' : 'transparent',
-                    borderLeft: amt !== 0 ? `3px solid ${amt > 0 ? PROFIT_POS : PROFIT_NEG}` : '3px solid transparent',
+                    background: highlight ? '#1A2035' : 'transparent',
+                    borderLeft: highlight ? `3px solid ${amt > 0 ? PROFIT_POS : PROFIT_NEG}` : '3px solid transparent',
                   }}>
                     <div style={{ width: 8, height: 8, borderRadius: 2, background: COLORS[a.name] || '#aaa', marginRight: 10, flexShrink: 0 }} />
                     <div style={{ flex: 1, fontSize: 12 }}>{a.name}</div>
@@ -952,29 +957,34 @@ export default function App() {
 
             {/* 보유 종목 목록 */}
             <div style={{ background: "#1A1D26", borderRadius: 12, overflow: "hidden" }}>
-              <div style={{ padding: "12px 16px", borderBottom: "1px solid #2A2F3E", fontSize: 10, letterSpacing: 3, color: "#5A6478" }}>
-                보유 종목 ({acct.holdings.length})
-              </div>
-              {acct.holdings.length === 0 && (
-                <div style={{ padding: 24, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
-                  종목이 없습니다
-                </div>
-              )}
-              {acct.holdings.map((h, i) => {
-                const color = h.profit >= 0 ? PROFIT_POS : PROFIT_NEG;
-                const typeName = h.type || '';
-                return (
-                  <div key={i} style={{
-                    padding: isMobile ? "10px 16px" : "12px 16px",
-                    borderBottom: i < acct.holdings.length - 1 ? "1px solid #1E2233" : "none",
-                    display: "flex", alignItems: "center", gap: 10,
-                    background: selectedToDelete.has(i) ? '#1A1520' : 'transparent',
-                  }}>
+              {(() => {
+                const vis = acct.holdings
+                  .map((h, origIdx) => ({ h, origIdx }))
+                  .filter(({ h }) => h.invest > 0 && h.eval > 0);
+                return (<>
+                  <div style={{ padding: "12px 16px", borderBottom: "1px solid #2A2F3E", fontSize: 10, letterSpacing: 3, color: "#5A6478" }}>
+                    보유 종목 ({vis.length})
+                  </div>
+                  {vis.length === 0 && (
+                    <div style={{ padding: 24, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
+                      종목이 없습니다
+                    </div>
+                  )}
+                  {vis.map(({ h, origIdx }, vi) => {
+                    const color = h.profit >= 0 ? PROFIT_POS : PROFIT_NEG;
+                    const typeName = h.type || '';
+                    return (
+                    <div key={origIdx} style={{
+                      padding: isMobile ? "10px 16px" : "12px 16px",
+                      borderBottom: vi < vis.length - 1 ? "1px solid #1E2233" : "none",
+                      display: "flex", alignItems: "center", gap: 10,
+                      background: selectedToDelete.has(origIdx) ? '#1A1520' : 'transparent',
+                    }}>
                     {showDeleteMode && (
-                      <input type="checkbox" checked={selectedToDelete.has(i)}
+                      <input type="checkbox" checked={selectedToDelete.has(origIdx)}
                         onChange={() => setSelectedToDelete(prev => {
                           const next = new Set(prev);
-                          if (next.has(i)) next.delete(i); else next.add(i);
+                          if (next.has(origIdx)) next.delete(origIdx); else next.add(origIdx);
                           return next;
                         })}
                         style={{ marginRight: 2, accentColor: PROFIT_POS, flexShrink: 0 }}
@@ -1021,6 +1031,8 @@ export default function App() {
                   </button>
                 </div>
               )}
+                </>);
+              })()}
             </div>
           </div>
         )}
