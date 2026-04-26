@@ -11,10 +11,10 @@ const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 const CONFIGURED = !GOOGLE_CLIENT_ID.startsWith('YOUR_') && !SHEET_ID.startsWith('YOUR_');
 
 const SHEET_RANGES = {
-  ISA:           'Banana!K6:S12',    // 0
-  위탁:          'Banana!K14:S41',   // 1
-  연금저축:      'Banana!K43:S66',   // 2
-  IRP:           'Banana!K68:S80',   // 3
+  ISA:           'Banana!K6:S10',    // 0
+  위탁:          'Banana!K14:S39',   // 1
+  연금저축:      'Banana!K43:S64',   // 2
+  IRP:           'Banana!K68:S69',   // 3
   위탁목표:      'Banana!C11:C17',   // 4
   위탁현재:      'Banana!F11:F17',   // 5
   위탁리밸:      'Banana!G11:G17',   // 6
@@ -379,15 +379,42 @@ function useGoogleSheets(onData) {
     await doFetch();
   }, [doFetch]);
 
-  return { auth, sync, lastSync, signIn, signOut, fetch: doFetch, appendRow, clearRows };
+  const readRange = useCallback(async (range) => {
+    const resp = await window.gapi.client.sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range,
+    });
+    return resp.result.values ?? [];
+  }, []);
+
+  return { auth, sync, lastSync, signIn, signOut, fetch: doFetch, appendRow, clearRows, readRange };
 }
 
 // ── 종목추가 폼 컴포넌트 ──────────────────────────────────────────────────────
 const START_ROWS = { ISA: 6, 위탁: 14, 연금저축: 43, IRP: 68 };
 
-function AddHoldingForm({ acctKey, accounts, onSave, onCancel }) {
-  const acct = accounts[acctKey];
-  const assetNames = acct.assets.map(a => a.name);
+// 계좌별 K:L 읽기 범위 (K=자산군, L=종목명 여부 확인용)
+const KL_CFG = {
+  ISA:  { range: 'Banana!K6:L10',  start: 6,  end: 10 },
+  위탁: { range: 'Banana!K14:L39', start: 14, end: 39 },
+  연금저축: { range: 'Banana!K43:L64', start: 43, end: 64 },
+  IRP:  { range: 'Banana!K68:L69', start: 68, end: 69 },
+};
+
+function buildRowMap(rows, start, end) {
+  let lastType = '';
+  const result = [];
+  for (let i = 0; i < end - start + 1; i++) {
+    const r = rows[i] ?? [];
+    const k = String(r[0] ?? '').trim();
+    if (k) lastType = k;
+    result.push({ row: start + i, type: lastType, empty: !String(r[1] ?? '').trim() });
+  }
+  return result;
+}
+
+function AddHoldingForm({ acctKey, accounts, onSave, onCancel, readRange }) {
+  const assetNames = accounts[acctKey].assets.map(a => a.name);
 
   const [자산군, set자산군] = useState(assetNames[0] || '');
   const [종목명, set종목명] = useState('');
@@ -397,6 +424,21 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel }) {
   const [수량, set수량] = useState('');
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [rowMap, setRowMap] = useState(null); // null=로딩중
+
+  const loadRowMap = useCallback(() => {
+    const cfg = KL_CFG[acctKey];
+    if (!cfg) return;
+    readRange(cfg.range)
+      .then(rows => setRowMap(buildRowMap(rows, cfg.start, cfg.end)))
+      .catch(() => setRowMap([]));
+  }, [acctKey, readRange]);
+
+  useEffect(() => { setRowMap(null); loadRowMap(); }, [loadRowMap]);
+
+  const freeCount = rowMap ? rowMap.filter(r => r.type === 자산군 && r.empty).length : null;
+  const isFull = freeCount === 0;
+  const notReady = rowMap === null || saving;
 
   const inputStyle = {
     background: '#0D1520', border: '1px solid #2A2F3E', borderRadius: 6,
@@ -407,29 +449,26 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel }) {
   const labelStyle = { fontSize: 10, color: '#5A6478', marginBottom: 4, display: 'block' };
 
   const handleSubmit = async () => {
-    if (!종목명.trim() || !매수단가 || !수량) return;
+    if (!종목명.trim() || !매수단가 || !수량 || !rowMap) return;
+    const target = rowMap.find(r => r.type === 자산군 && r.empty);
+    if (!target) return;
     setSaving(true);
     try {
       let 현재가formula = '';
       if (티커유형 === '국내(GOOGLEFINANCE)') 현재가formula = `=GOOGLEFINANCE("${티커}")`;
       else if (티커유형 === '해외(GOOGLEFINANCE)') 현재가formula = `=GOOGLEFINANCE("${티커}")*I37`;
       else if (티커유형 === '네이버') 현재가formula = `=IMPORTXML("https://finance.naver.com/item/main.naver?code=${티커}","//p[@class='no_today']/em/span[1]")`;
-
+      const n = target.row;
       const 투자금 = parseFloat(매수단가) * parseFloat(수량);
-      const nextRow = START_ROWS[acctKey] + accounts[acctKey].holdings.length;
-      const newRow = [
-        자산군, 종목명, parseFloat(매수단가), parseFloat(수량), 투자금,
+      await onSave(`Banana!L${n}:S${n}`, [
+        종목명, parseFloat(매수단가), parseFloat(수량), 투자금,
         현재가formula,
-        `=R${nextRow}-O${nextRow}`,
-        `=N${nextRow}*P${nextRow}`,
-        `=R${nextRow}/O${nextRow}-1`,
-      ];
-      const writeRange = `Banana!K${nextRow}:S${nextRow}`;
-
-      await onSave(writeRange, newRow);
+        `=R${n}-O${n}`, `=N${n}*P${n}`, `=R${n}/O${n}-1`,
+      ]);
       setSuccess(true);
-      setTimeout(() => { setSuccess(false); }, 2000);
+      setTimeout(() => setSuccess(false), 2000);
       set종목명(''); set티커(''); set매수단가(''); set수량('');
+      loadRowMap();
     } catch (e) {
       console.error('종목추가 오류:', e);
     } finally {
@@ -442,12 +481,23 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel }) {
       background: '#1A1D26', border: '1px solid #2A2F3E', borderRadius: 12,
       padding: 16, marginBottom: 16,
     }}>
-      <div style={{ fontSize: 11, letterSpacing: 2, color: '#5A6478', marginBottom: 12 }}>
-        종목 추가
-      </div>
+      <div style={{ fontSize: 11, letterSpacing: 2, color: '#5A6478', marginBottom: 12 }}>종목 추가</div>
+      {isFull && (
+        <div style={{
+          background: '#2A1A1A', border: '1px solid #EF4444', borderRadius: 6,
+          padding: '8px 12px', marginBottom: 12, fontSize: 11, color: '#EF4444',
+        }}>
+          {자산군} 항목에 더 이상 추가할 공간이 없습니다
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
         <div>
-          <label style={labelStyle}>자산군</label>
+          <label style={labelStyle}>
+            자산군&nbsp;
+            {freeCount !== null && (
+              <span style={{ color: isFull ? '#EF4444' : '#4ADE80' }}>({freeCount}자리 남음)</span>
+            )}
+          </label>
           <select value={자산군} onChange={e => set자산군(e.target.value)} style={inputStyle}>
             {assetNames.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
@@ -489,12 +539,13 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel }) {
           background: 'transparent', color: '#6B7280', cursor: 'pointer', fontSize: 11,
           fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
         }}>취소</button>
-        <button onClick={handleSubmit} disabled={saving} style={{
+        <button onClick={handleSubmit} disabled={notReady || isFull} style={{
           padding: '6px 14px', borderRadius: 6, border: 'none',
-          background: saving ? '#2A2F3E' : '#3B82F6', color: '#fff', cursor: saving ? 'not-allowed' : 'pointer',
+          background: (notReady || isFull) ? '#2A2F3E' : '#3B82F6',
+          color: '#fff', cursor: (notReady || isFull) ? 'not-allowed' : 'pointer',
           fontSize: 11, fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
         }}>
-          {saving ? '저장 중...' : success ? '저장됨 ✓' : '저장'}
+          {saving ? '저장 중...' : success ? '저장됨 ✓' : rowMap === null ? '로딩...' : '저장'}
         </button>
       </div>
     </div>
@@ -961,6 +1012,7 @@ export default function App() {
                   <AddHoldingForm
                     acctKey={acctKey}
                     accounts={accounts}
+                    readRange={sheets.readRange}
                     onSave={async (range, row) => {
                       await sheets.appendRow(range, row);
                       setShowAddForm(false);
