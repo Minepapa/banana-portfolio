@@ -877,6 +877,7 @@ export default function App() {
     setTradeSyncMsg('동기화 중...');
     try {
       const tradeValues = await sheets.readRange('체결내역!A2:M');
+      const tradeJFormulas = await sheets.readRange('체결내역!J2:J', 'FORMULA');
       const flags = await sheets.readTradeProcessedFlags();
 
       const rowsWithStatus = tradeValues.map((row, i) => ({ row, processed: flags[i] ?? false }));
@@ -908,7 +909,8 @@ export default function App() {
           const stockName = String(row[5] ?? '').trim(); // F
           const price     = parseNum(row[6]);             // G
           const qty       = parseNum(row[7]);             // H
-          const currentPrice = parseNum(row[9]);          // J
+          const jFormula  = String(tradeJFormulas[i]?.[0] ?? '').trim();
+          const currentPrice = jFormula.startsWith('=') ? jFormula : parseNum(row[9]); // J (formula or number)
 
           if (!account || !stockName) continue;
 
@@ -1142,17 +1144,17 @@ export default function App() {
         )}
 
         {/* 탭 */}
-        <div style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {[
             { key: "dashboard", label: "대시보드" },
             { key: "rebalance", label: "자산분배" },
             { key: "holdings", label: "종목" },
             { key: "dividend", label: "배당금" },
-            { key: "체결내역", label: "체결내역" },
+            { key: "체결내역", label: "체결" },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)} style={{
-              padding: isMobile ? "8px 14px" : "6px 14px",
-              minHeight: isMobile ? 40 : undefined,
+              padding: "6px 10px",
+              flexShrink: 0,
               borderRadius: 6, border: "none", cursor: "pointer",
               fontSize: 11, letterSpacing: 1, fontFamily: baseFont,
               background: tab === key ? "#3B82F6" : "#1E2233",
@@ -1867,7 +1869,7 @@ export default function App() {
                   cursor: (tradeSyncing || sheets.auth !== 'signed-in') ? 'not-allowed' : 'pointer',
                   fontSize: 10, fontFamily: baseFont,
                 }}>
-                  {tradeSyncing ? '동기화 중...' : '↻ 새로고침'}
+                  ↻
                 </button>
               </div>
             </div>
@@ -1909,7 +1911,7 @@ export default function App() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                           <span style={{
                             fontSize: 10, padding: '1px 5px', borderRadius: 3,
-                            background: isBuy ? '#1E3A5F' : '#2A1A1A',
+                            background: isBuy ? '#1E3A5F' : '#4A1E1E',
                             color: isBuy ? '#60A5FA' : '#F87171',
                           }}>{buySell || '—'}</span>
                           <span style={{ fontSize: 10, color: '#5A6478' }}>{account}</span>
