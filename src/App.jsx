@@ -826,6 +826,30 @@ export default function App() {
     setEditIncludeSavings(false);
   };
 
+  const repairFormulas = useCallback(async () => {
+    setTradeSyncMsg('수식 복구 중...');
+    try {
+      for (const key of ['ISA', '위탁', '연금저축', 'IRP']) {
+        const rows = await sheets.readRange(`${key}!B2:B60`);
+        for (let r = 0; r < rows.length; r++) {
+          if (!String(rows[r]?.[0] ?? '').trim()) continue;
+          const n = 2 + r;
+          await sheets.writeRange(`${key}!E${n}:E${n}`, [`=C${n}*D${n}`]);
+          await sheets.writeRange(`${key}!G${n}:G${n}`, [`=H${n}-E${n}`]);
+          await sheets.writeRange(`${key}!H${n}:H${n}`, [`=D${n}*F${n}`]);
+          await sheets.writeRange(`${key}!I${n}:I${n}`, [`=H${n}/E${n}-1`]);
+        }
+      }
+      setTradeSyncMsg('수식 복구 완료');
+      setTimeout(() => setTradeSyncMsg(''), 3000);
+      await sheets.fetch();
+    } catch (e) {
+      console.error('수식 복구 오류:', e);
+      setTradeSyncMsg('수식 복구 오류');
+      setTimeout(() => setTradeSyncMsg(''), 4000);
+    }
+  }, [sheets]);
+
   const addHoldingFromTrade = useCallback(async (acctKey, assetType, stockName, price, qty, currentPrice) => {
     const cfg = KL_CFG[acctKey];
     if (!cfg) throw new Error(`알 수 없는 계좌: ${acctKey}`);
@@ -1829,6 +1853,14 @@ export default function App() {
                     {tradeSyncMsg}
                   </span>
                 )}
+                <button onClick={repairFormulas} disabled={tradeSyncing || sheets.auth !== 'signed-in'} style={{
+                  padding: '5px 12px', borderRadius: 6, border: '1px solid #2A2F3E',
+                  background: 'transparent', color: '#F5A623',
+                  cursor: (tradeSyncing || sheets.auth !== 'signed-in') ? 'not-allowed' : 'pointer',
+                  fontSize: 10, fontFamily: baseFont,
+                }}>
+                  수식 복구
+                </button>
                 <button onClick={syncTradeExecutions} disabled={tradeSyncing || sheets.auth !== 'signed-in'} style={{
                   padding: '5px 12px', borderRadius: 6, border: '1px solid #2A2F3E',
                   background: 'transparent', color: '#9CA3AF',
