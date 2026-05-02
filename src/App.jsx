@@ -1233,7 +1233,7 @@ export default function App() {
                 <div style={{ width: 60, textAlign: 'right', fontSize: 10, color: '#5A6478' }}>차이</div>
               </div>
               {acct.assets.map((a) => {
-                const curr = acct.total_eval > 0 ? parseFloat((a.eval / acct.total_eval * 100).toFixed(1)) : 0;
+                const curr = a.sheetCurrent ?? a.ratio;
                 const diff = parseFloat((curr - a.target).toFixed(1));
                 const highlight = Math.abs(diff) >= 5;
                 return (
@@ -1265,7 +1265,7 @@ export default function App() {
               <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>리밸런싱 필요</div>
               {acct.assets.map((a) => {
                 const amt = a.rebalAmt ?? 0;
-                const curr = acct.total_eval > 0 ? parseFloat((a.eval / acct.total_eval * 100).toFixed(1)) : 0;
+                const curr = a.sheetCurrent ?? a.ratio;
                 const diff = parseFloat((curr - a.target).toFixed(1));
                 const highlight = Math.abs(diff) >= 5;
                 return (
