@@ -1,0 +1,19 @@
+{
+  "name": "바나나 포트폴리오",
+  "short_name": "포트폴리오",
+  "description": "개인 투자 포트폴리오 관리",
+  "start_url": "/banana-portfolio/",
+  "scope": "/banana-portfolio/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1a1a1a",
+  "theme_color": "#f5a623",
+  "icons": [
+    {
+      "src": "/banana-portfolio/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
