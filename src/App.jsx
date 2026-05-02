@@ -838,7 +838,7 @@ export default function App() {
   const acct = accounts[acctKey];
   const totalInvest = Object.values(accounts).reduce((s, a) => s + a.total_invest, 0);
   const totalProfit = totalEval - totalInvest;
-  const dailyDelta = prevDayEval != null ? totalEval - prevDayEval : null;
+  const dailyDelta = sheets.auth === 'signed-in' && prevDayEval != null ? totalEval - prevDayEval : null;
 
   const syncLabel =
     sheets.sync === 'syncing' ? '동기화 중...' :
