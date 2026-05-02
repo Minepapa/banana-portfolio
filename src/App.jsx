@@ -436,7 +436,53 @@ function useGoogleSheets(onData) {
     });
   }, []);
 
-  return { auth, sync, lastSync, lastSyncRef, signIn, signOut, fetch: doFetch, appendRow, clearRows, readRange, writeRange, writeRangeMulti, insertRowAfter };
+  const clearRowsRaw = useCallback(async (ranges) => {
+    await window.gapi.client.sheets.spreadsheets.values.batchClear({
+      spreadsheetId: SHEET_ID,
+      resource: { ranges },
+    });
+  }, []);
+
+  const getSheetId = useCallback(async (sheetName) => {
+    const meta = await window.gapi.client.sheets.spreadsheets.get({
+      spreadsheetId: SHEET_ID,
+      fields: 'sheets.properties',
+    });
+    const sheet = meta.result.sheets.find(s => s.properties.title === sheetName);
+    return sheet?.properties?.sheetId ?? null;
+  }, []);
+
+  const readTradeProcessedFlags = useCallback(async () => {
+    const resp = await window.gapi.client.sheets.spreadsheets.get({
+      spreadsheetId: SHEET_ID,
+      ranges: ['체결내역!A2:A200'],
+      includeGridData: true,
+      fields: 'sheets.data.rowData.values.userEnteredFormat.backgroundColor',
+    });
+    const rows = resp.result.sheets?.[0]?.data?.[0]?.rowData ?? [];
+    return rows.map(r => {
+      const bg = r?.values?.[0]?.userEnteredFormat?.backgroundColor;
+      if (!bg) return false;
+      return (bg.green ?? 0) > 0.5 && (bg.red ?? 1) < 0.5;
+    });
+  }, []);
+
+  const markTradeProcessed = useCallback(async (sheetId, rowIndex) => {
+    await window.gapi.client.sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SHEET_ID,
+      resource: {
+        requests: [{
+          repeatCell: {
+            range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: 0, endColumnIndex: 1 },
+            cell: { userEnteredFormat: { backgroundColor: { red: 0.204, green: 0.659, blue: 0.325 } } },
+            fields: 'userEnteredFormat.backgroundColor',
+          },
+        }],
+      },
+    });
+  }, []);
+
+  return { auth, sync, lastSync, lastSyncRef, signIn, signOut, fetch: doFetch, appendRow, clearRows, clearRowsRaw, readRange, writeRange, writeRangeMulti, insertRowAfter, getSheetId, readTradeProcessedFlags, markTradeProcessed };
 }
 
 // ── 종목추가 폼 컴포넌트 ──────────────────────────────────────────────────────
@@ -652,6 +698,9 @@ export default function App() {
   const savingsLpFiredRef = useRef(false);
   const [divYear, setDivYear] = useState('전체');
   const [monthYear, setMonthYear] = useState('전체');
+  const [tradeRows, setTradeRows] = useState([]);
+  const [tradeSyncing, setTradeSyncing] = useState(false);
+  const [tradeSyncMsg, setTradeSyncMsg] = useState('');
   const isMobile = useIsMobile();
 
   const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr }) => {
@@ -777,6 +826,134 @@ export default function App() {
     setEditIncludeSavings(false);
   };
 
+  const addHoldingFromTrade = useCallback(async (acctKey, assetType, stockName, price, qty, currentPrice) => {
+    const cfg = KL_CFG[acctKey];
+    if (!cfg) throw new Error(`알 수 없는 계좌: ${acctKey}`);
+    const rows = await sheets.readRange(cfg.range);
+    const rowMap = buildRowMap(rows, cfg.start, cfg.end);
+    let targetRow = null;
+    for (const r of rowMap) {
+      if (r.type === assetType && r.empty) { targetRow = r.row; break; }
+    }
+    if (targetRow === null) throw new Error(`${acctKey} > ${assetType}: 빈 행 없음`);
+    const n = targetRow;
+    await sheets.writeRange(`${acctKey}!B${n}:I${n}`, [
+      stockName, price, qty,
+      `=C${n}*D${n}`,
+      currentPrice,
+      `=H${n}-E${n}`,
+      `=D${n}*F${n}`,
+      `=H${n}/E${n}-1`,
+    ]);
+  }, [sheets]);
+
+  const syncTradeExecutions = useCallback(async () => {
+    if (tradeSyncing) return;
+    setTradeSyncing(true);
+    setTradeSyncMsg('동기화 중...');
+    try {
+      const tradeValues = await sheets.readRange('체결내역!A2:M');
+      const flags = await sheets.readTradeProcessedFlags();
+
+      const rowsWithStatus = tradeValues.map((row, i) => ({ row, processed: flags[i] ?? false }));
+      setTradeRows(rowsWithStatus);
+
+      const toProcess = rowsWithStatus
+        .map(({ row, processed }, i) => ({ row, i, processed }))
+        .filter(({ row, processed }) => {
+          if (processed) return false;
+          if (row.length < 13) return false;
+          return row.slice(0, 13).every(cell => String(cell ?? '').trim() !== '');
+        });
+
+      if (toProcess.length === 0) {
+        setTradeSyncMsg(tradeValues.length > 0 ? '처리할 신규 내역 없음' : '체결내역 없음');
+        setTimeout(() => setTradeSyncMsg(''), 3000);
+        return;
+      }
+
+      const cheolSheetId = await sheets.getSheetId('체결내역');
+      let processed = 0;
+      const errors = [];
+
+      for (const { row, i } of toProcess) {
+        try {
+          const buySell   = String(row[1] ?? '').trim(); // B
+          const account   = String(row[2] ?? '').trim(); // C
+          const assetType = String(row[4] ?? '').trim(); // E
+          const stockName = String(row[5] ?? '').trim(); // F
+          const price     = parseNum(row[6]);             // G
+          const qty       = parseNum(row[7]);             // H
+          const currentPrice = parseNum(row[9]);          // J
+
+          if (!account || !stockName) continue;
+
+          const acctKey = ['ISA', '위탁', '연금저축', 'IRP'].find(k => account.includes(k));
+          if (!acctKey) continue;
+
+          const holdingRows = await sheets.readRange(`${acctKey}!A2:D60`);
+          let matchRow = null;
+          let lastType = '';
+          for (let r = 0; r < holdingRows.length; r++) {
+            const hr = holdingRows[r];
+            const typeVal = String(hr[0] ?? '').trim();
+            if (typeVal) lastType = typeVal;
+            if (String(hr[1] ?? '').trim() === stockName) {
+              matchRow = { row: 2 + r, type: lastType, price: parseNum(hr[2]), qty: parseNum(hr[3]) };
+              break;
+            }
+          }
+
+          const isBuy  = buySell.includes('매수');
+          const isSell = buySell.includes('매도');
+
+          if (isBuy) {
+            if (matchRow) {
+              const newQty = matchRow.qty + qty;
+              const newAvgPrice = newQty > 0
+                ? Math.round((matchRow.price * matchRow.qty + price * qty) / newQty)
+                : price;
+              await sheets.writeRange(`${acctKey}!C${matchRow.row}:D${matchRow.row}`, [newAvgPrice, newQty]);
+            } else {
+              await addHoldingFromTrade(acctKey, assetType, stockName, price, qty, currentPrice);
+            }
+          } else if (isSell && matchRow) {
+            const newQty = matchRow.qty - qty;
+            if (newQty <= 0) {
+              await sheets.clearRowsRaw([`${acctKey}!B${matchRow.row}:I${matchRow.row}`]);
+            } else {
+              await sheets.writeRange(`${acctKey}!D${matchRow.row}`, [newQty]);
+            }
+          }
+
+          if (cheolSheetId !== null) {
+            await sheets.markTradeProcessed(cheolSheetId, i + 1); // row2 → 0-based index 1
+          }
+          processed++;
+        } catch (e) {
+          errors.push(String(e?.message ?? e));
+        }
+      }
+
+      await sheets.fetch();
+
+      const newValues = await sheets.readRange('체결내역!A2:M');
+      const newFlags  = await sheets.readTradeProcessedFlags();
+      setTradeRows(newValues.map((row, i) => ({ row, processed: newFlags[i] ?? false })));
+
+      setTradeSyncMsg(errors.length > 0
+        ? `${processed}건 완료 · ${errors.length}건 오류`
+        : `${processed}건 동기화 완료`);
+      setTimeout(() => setTradeSyncMsg(''), 5000);
+    } catch (e) {
+      console.error('체결내역 동기화 오류:', e);
+      setTradeSyncMsg('동기화 오류');
+      setTimeout(() => setTradeSyncMsg(''), 4000);
+    } finally {
+      setTradeSyncing(false);
+    }
+  }, [sheets, tradeSyncing, addHoldingFromTrade]);
+
   const saveAllTargets = async () => {
     const sum = allTargetInputs.reduce((s, v) => s + (parseFloat(v) || 0), 0);
     if (Math.abs(sum - 100) > 0.1) {
@@ -834,6 +1011,12 @@ export default function App() {
     }
     setShowSavingsEdit(false);
   };
+
+  useEffect(() => {
+    if (tab === '체결내역' && sheets.auth === 'signed-in') {
+      syncTradeExecutions();
+    }
+  }, [tab, sheets.auth]); // eslint-disable-line
 
   const acct = accounts[acctKey];
   const totalInvest = Object.values(accounts).reduce((s, a) => s + a.total_invest, 0);
@@ -941,6 +1124,7 @@ export default function App() {
             { key: "rebalance", label: "자산분배" },
             { key: "holdings", label: "종목" },
             { key: "dividend", label: "배당금" },
+            { key: "체결내역", label: "체결내역" },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)} style={{
               padding: isMobile ? "8px 14px" : "6px 14px",
@@ -1634,6 +1818,96 @@ export default function App() {
             </div>
           </div>
         )}
+        {/* ── 체결내역 탭 ── */}
+        {tab === "체결내역" && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478' }}>체결내역 자동 동기화</div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {tradeSyncMsg && (
+                  <span style={{ fontSize: 10, color: tradeSyncMsg.includes('오류') ? '#F87171' : '#4ADE80' }}>
+                    {tradeSyncMsg}
+                  </span>
+                )}
+                <button onClick={syncTradeExecutions} disabled={tradeSyncing || sheets.auth !== 'signed-in'} style={{
+                  padding: '5px 12px', borderRadius: 6, border: '1px solid #2A2F3E',
+                  background: 'transparent', color: '#9CA3AF',
+                  cursor: (tradeSyncing || sheets.auth !== 'signed-in') ? 'not-allowed' : 'pointer',
+                  fontSize: 10, fontFamily: baseFont,
+                }}>
+                  {tradeSyncing ? '동기화 중...' : '↻ 새로고침'}
+                </button>
+              </div>
+            </div>
+
+            {sheets.auth !== 'signed-in' ? (
+              <div style={{ padding: 32, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
+                로그인 후 이용할 수 있습니다
+              </div>
+            ) : tradeRows.length === 0 ? (
+              <div style={{ padding: 32, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
+                {tradeSyncing ? '불러오는 중...' : '체결내역이 없습니다'}
+              </div>
+            ) : (
+              <div style={{ background: '#1A1D26', borderRadius: 12, overflow: 'hidden' }}>
+                <div style={{ padding: '10px 16px', borderBottom: '1px solid #2A2F3E', fontSize: 10, letterSpacing: 3, color: '#5A6478' }}>
+                  전체 {tradeRows.length}건 · 처리완료 {tradeRows.filter(r => r.processed).length}건
+                </div>
+                {tradeRows.map(({ row, processed }, idx) => {
+                  const date     = String(row[0] ?? '').trim();
+                  const buySell  = String(row[1] ?? '').trim();
+                  const account  = String(row[2] ?? '').trim();
+                  const stockName = String(row[5] ?? '').trim();
+                  const price    = parseNum(row[6]);
+                  const qty      = parseNum(row[7]);
+                  const isComplete = row.length >= 13 && row.slice(0, 13).every(cell => String(cell ?? '').trim() !== '');
+                  const isBuy = buySell.includes('매수');
+                  return (
+                    <div key={idx} style={{
+                      padding: '12px 16px',
+                      borderBottom: idx < tradeRows.length - 1 ? '1px solid #1E2233' : 'none',
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      opacity: processed ? 0.55 : 1,
+                    }}>
+                      <div style={{
+                        width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                        background: processed ? '#34A853' : isComplete ? '#F5A623' : '#3B4152',
+                      }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                          <span style={{
+                            fontSize: 10, padding: '1px 5px', borderRadius: 3,
+                            background: isBuy ? '#1E3A5F' : '#2A1A1A',
+                            color: isBuy ? '#60A5FA' : '#F87171',
+                          }}>{buySell || '—'}</span>
+                          <span style={{ fontSize: 10, color: '#5A6478' }}>{account}</span>
+                          <span style={{ fontSize: 10, color: '#3A3F4E' }}>·</span>
+                          <span style={{ fontSize: 10, color: '#5A6478' }}>{date}</span>
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: '#E8EAF0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {stockName || '—'}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#5A6478', marginTop: 2 }}>
+                          {qty > 0 ? `${qty}주` : ''}{qty > 0 && price > 0 ? ' · ' : ''}{price > 0 ? `₩${price.toLocaleString()}` : ''}
+                          {!isComplete && <span style={{ marginLeft: 6, color: '#F59E0B' }}>셀 미완성</span>}
+                        </div>
+                      </div>
+                      {processed && (
+                        <span style={{ fontSize: 10, color: '#34A853', flexShrink: 0 }}>완료</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={{ marginTop: 12, fontSize: 10, color: '#3A3F4E', lineHeight: 1.6 }}>
+              · A~M열 모두 입력된 행만 자동 처리됩니다<br />
+              · 처리 완료 시 시트 A열이 초록색으로 표시됩니다
+            </div>
+          </div>
+        )}
+
       </div>
 
       <div style={{ padding: "12px 16px 32px", textAlign: "center", fontSize: 9, color: "#2A2F3E", letterSpacing: 2 }}>
