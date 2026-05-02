@@ -1153,7 +1153,7 @@ export default function App() {
             { key: "체결내역", label: "체결" },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)} style={{
-              padding: "6px 10px",
+              padding: "10px 10px",
               flexShrink: 0,
               borderRadius: 6, border: "none", cursor: "pointer",
               fontSize: 11, letterSpacing: 1, fontFamily: baseFont,
@@ -1935,10 +1935,6 @@ export default function App() {
               </div>
             )}
 
-            <div style={{ marginTop: 12, fontSize: 10, color: '#3A3F4E', lineHeight: 1.6 }}>
-              · A~M열 모두 입력된 행만 자동 처리됩니다<br />
-              · 처리 완료 시 시트 A열이 초록색으로 표시됩니다
-            </div>
           </div>
         )}
 
