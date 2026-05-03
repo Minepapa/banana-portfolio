@@ -174,14 +174,10 @@ function parseDividends(vrAll) {
   const result = {};
   (vrAll?.values ?? []).forEach(r => {
     const dateStr = String(r[0] ?? '').trim();
-    let name = '';
-    let amt;
-    if (r.length >= 3) {
-      name = String(r[1] ?? '').trim();
-      amt = parseNum(r[2]);
-    } else {
-      amt = parseNum(r[1]);
-    }
+    const cNum = parseNum(r[2] ?? 0);
+    // C열에 숫자가 있으면 B=종목명, C=금액; 없으면 B=금액 (기존 2열 구조 호환)
+    const name = cNum ? String(r[1] ?? '').trim() : '';
+    const amt  = cNum || parseNum(r[1] ?? 0);
     if (!dateStr || !amt) return;
     const parts = dateStr.split('-');
     if (parts.length < 2) return;
@@ -1437,12 +1433,12 @@ export default function App() {
 
             {/* 현재 vs 목표 비중 테이블 */}
             <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: 12 }}>
                 <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478" }}>목표 vs 현재 비중</div>
                 {sheets.auth === 'signed-in' && (
                   <button
                     onClick={() => { setAllTargetInputs(acct.assets.map(a => String(a.target))); setEditingAllTargets(true); }}
-                    style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #2A2F3E', background: 'transparent', color: '#5A6478', cursor: 'pointer', fontSize: 13, fontFamily: baseFont, lineHeight: 1 }}
+                    style={{ position: 'absolute', right: 0, padding: '4px 8px', borderRadius: 4, border: '1px solid #2A2F3E', background: 'transparent', color: '#5A6478', cursor: 'pointer', fontSize: 13, fontFamily: baseFont, lineHeight: 1 }}
                   >⋯</button>
                 )}
               </div>
