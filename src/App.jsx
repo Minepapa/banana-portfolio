@@ -75,7 +75,7 @@ const DEFAULT_ACCOUNTS = {
   IRP: {
     label: "IRP", sub: "한투 · TDF",
     total_invest: 0, total_eval: 0, profit: 0, color: "#A8D672",
-    assets: [{ name: "TDF", ratio: 0, invest: 0, eval: 0, target: 100 }],
+    assets: [{ name: "TDF", ratio: 0, invest: 0, eval: 0, target: 0 }],
     holdings: [],
   },
 };
@@ -1172,7 +1172,7 @@ export default function App() {
         {/* 탭 */}
         <div style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {[
-            { key: "dashboard", label: "대시보드" },
+            { key: "dashboard", label: "홈" },
             { key: "rebalance", label: "자산분배" },
             { key: "holdings", label: "종목" },
             { key: "dividend", label: "배당금" },
@@ -1435,7 +1435,7 @@ export default function App() {
                   <button
                     onClick={() => { setAllTargetInputs(acct.assets.map(a => String(a.target))); setEditingAllTargets(true); }}
                     style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #2A2F3E', background: 'transparent', color: '#5A6478', cursor: 'pointer', fontSize: 13, fontFamily: baseFont, lineHeight: 1 }}
-                  >✎</button>
+                  >⋯</button>
                 )}
               </div>
               {editingAllTargets && (
@@ -1464,10 +1464,10 @@ export default function App() {
                 </div>
               )}
               <div style={{ display: 'flex', alignItems: 'center', padding: '4px 8px', marginBottom: 4 }}>
-                <div style={{ flex: 1, fontSize: 10, color: '#5A6478' }}>자산군</div>
+                <div style={{ flex: 1, fontSize: 10, color: '#5A6478', textAlign: 'center' }}>자산군</div>
                 <div style={{ width: 60, textAlign: 'center', fontSize: 10, color: '#5A6478' }}>목표%</div>
                 <div style={{ width: 50, textAlign: 'center', fontSize: 10, color: '#5A6478' }}>현재%</div>
-                <div style={{ width: 60, textAlign: 'right', fontSize: 10, color: '#5A6478' }}>차이</div>
+                <div style={{ width: 60, textAlign: 'center', fontSize: 10, color: '#5A6478' }}>차이</div>
               </div>
               {acct.assets.map((a) => {
                 const curr = a.sheetCurrent ?? a.ratio;
