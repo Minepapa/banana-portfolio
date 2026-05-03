@@ -175,8 +175,8 @@ function parseDividends(vrAll) {
   const result = {};
   (vrAll?.values ?? []).forEach(r => {
     const dateStr = String(r[0] ?? '').trim();
-    const name = String(r[1] ?? '').trim(); // B열: 종목명
-    const amt  = parseNum(r[2] ?? 0);  // C열: 금액
+    const amt  = parseNum(r[1] ?? 0);  // B열: 금액
+    const name = String(r[2] ?? '').trim(); // C열: 종목명
     if (!dateStr || !amt) return;
     const parts = dateStr.split('-');
     if (parts.length < 2) return;
