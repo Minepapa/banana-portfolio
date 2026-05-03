@@ -21,6 +21,7 @@ const SHEET_RANGES = {
   IRP리밸:      '자산분배!B24:D24',    // 7
   월별잔고:     '월별잔고!A2:H',       // 8
   배당금:       '배당금!A2:B',         // 9
+  수익금:       '수익금!A2:F',         // 10
 };
 
 const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
@@ -187,6 +188,26 @@ function parseDividends(vrAll) {
   return Object.values(result).sort((a, b) => a.year - b.year || a.month - b.month);
 }
 
+function parseProfits(vr) {
+  const result = {};
+  (vr?.values ?? []).forEach(r => {
+    const dateStr = String(r[0] ?? '').trim();
+    const name    = String(r[1] ?? '').trim();
+    const profit  = parseNum(r[5]); // F열: 수익금
+    if (!dateStr) return;
+    const parts = dateStr.split('-');
+    if (parts.length < 2) return;
+    const year  = parseInt(parts[0]);
+    const month = parseInt(parts[1]);
+    if (!year || !month) return;
+    const key = `${year}-${month}`;
+    if (!result[key]) result[key] = { year, month, total: 0, items: [] };
+    result[key].total += profit;
+    if (name) result[key].items.push({ date: dateStr, name, profit });
+  });
+  return Object.values(result).sort((a, b) => a.year - b.year || a.month - b.month);
+}
+
 function parseSheetData(valueRanges) {
   // indices: ISA(0) 위탁(1) 연금저축(2) IRP(3)
   //          위탁리밸(4) 연금저축리밸(5) ISA리밸(6) IRP리밸(7)
@@ -285,8 +306,9 @@ function parseSheetData(valueRanges) {
   const monthly = parseMonthly(valueRanges[8]);
   const monthlyRow = findMonthlyRow(valueRanges[8]);
   const dividends = parseDividends(valueRanges[9]);
+  const profits = parseProfits(valueRanges[10]);
 
-  return anyData ? { accounts: result, monthly, monthlyRow, dividends } : null;
+  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits } : null;
 }
 
 // ── useGoogleSheets 훅 ────────────────────────────────────────────────────────
@@ -701,12 +723,16 @@ export default function App() {
   const [tradeRows, setTradeRows] = useState([]);
   const [tradeSyncing, setTradeSyncing] = useState(false);
   const [tradeSyncMsg, setTradeSyncMsg] = useState('');
+  const [profitData, setProfitData] = useState([]);
+  const [profitYear, setProfitYear] = useState('전체');
+  const [selectedProfitKey, setSelectedProfitKey] = useState(null);
   const isMobile = useIsMobile();
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr }) => {
+  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
     setDividendData(d || []);
+    setProfitData(p || []);
     monthlyRowRef.current = mr ?? null;
     setMonthlyRow(mr ?? null);
   }, []);
@@ -1150,6 +1176,7 @@ export default function App() {
             { key: "rebalance", label: "자산분배" },
             { key: "holdings", label: "종목" },
             { key: "dividend", label: "배당금" },
+            { key: "profit", label: "수익금" },
             { key: "체결내역", label: "체결" },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)} style={{
@@ -1848,6 +1875,102 @@ export default function App() {
             </div>
           </div>
         )}
+        {/* ── 수익금 탭 ── */}
+        {tab === "profit" && (() => {
+          const profitYears = ['전체', ...[...new Set(profitData.map(d => String(d.year)))].sort()];
+          const filtered = profitYear === '전체' ? profitData : profitData.filter(d => String(d.year) === profitYear);
+          const selectedItem = selectedProfitKey ? profitData.find(d => `${d.year}-${d.month}` === selectedProfitKey) : null;
+          const yearTotals = profitYears.filter(y => y !== '전체').map(y => ({
+            year: y,
+            total: profitData.filter(d => String(d.year) === y).reduce((s, d) => s + d.total, 0),
+          }));
+          return (
+            <div>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
+                {profitYears.map(y => (
+                  <button key={y} onClick={() => { setProfitYear(y); setSelectedProfitKey(null); }} style={{
+                    padding: isMobile ? "8px 14px" : "6px 14px",
+                    borderRadius: 20,
+                    border: `1px solid ${profitYear === y ? '#3B82F6' : '#2A2F3E'}`,
+                    background: profitYear === y ? '#1E3A5F' : 'transparent',
+                    color: profitYear === y ? '#60A5FA' : '#6B7280',
+                    cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
+                  }}>{y}</button>
+                ))}
+              </div>
+
+              <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 16 }}>월별 수익금</div>
+                {filtered.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart
+                      data={filtered.map(d => ({ ...d, label: `${String(d.year).slice(-2)}.${String(d.month).padStart(2, '0')}` }))}
+                      barSize={isMobile ? 10 : 16}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#2A2F3E" />
+                      <XAxis dataKey="label" tick={{ fill: "#5A6478", fontSize: 9 }} />
+                      <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: "#5A6478", fontSize: 9 }} width={55} />
+                      <Tooltip
+                        formatter={v => [`₩${v.toLocaleString()}`, '수익금']}
+                        contentStyle={{ background: "#1E2233", border: "1px solid #2A2F3E", borderRadius: 8, fontSize: 11 }}
+                        labelStyle={{ color: '#E8EAF0' }}
+                        itemStyle={{ color: '#E8EAF0' }}
+                      />
+                      <Bar dataKey="total" radius={[3, 3, 0, 0]} cursor="pointer"
+                        onClick={(data) => {
+                          const key = `${data.year}-${data.month}`;
+                          setSelectedProfitKey(prev => prev === key ? null : key);
+                        }}>
+                        {filtered.map((d, i) => (
+                          <Cell key={i} fill={`${d.year}-${d.month}` === selectedProfitKey ? '#F5A623' : (d.total >= 0 ? '#3B82F6' : '#EF4444')} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5A6478', fontSize: 12 }}>
+                    수익금 데이터가 없습니다
+                  </div>
+                )}
+
+                {selectedItem && (
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #2A2F3E' }}>
+                    <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 8, letterSpacing: 1 }}>
+                      {selectedItem.year}년 {selectedItem.month}월 상세
+                    </div>
+                    {selectedItem.items.map((item, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #1E2233' }}>
+                        <span style={{ fontSize: 12, color: '#E8EAF0' }}>{item.name}</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: item.profit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                          {item.profit >= 0 ? '+' : '-'}₩{fmt(Math.abs(item.profit))}
+                        </span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8 }}>
+                      <span style={{ fontSize: 11, color: '#9CA3AF' }}>합계</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: selectedItem.total >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                        {selectedItem.total >= 0 ? '+' : '-'}₩{fmt(Math.abs(selectedItem.total))}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px" }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>연도별 합계</div>
+                {yearTotals.map(row => (
+                  <div key={row.year} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #1E2233' }}>
+                    <span style={{ fontSize: 12, color: '#9CA3AF' }}>{row.year}년 합계</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: row.total >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                      {row.total >= 0 ? '+' : '-'}₩{fmt(Math.abs(row.total))}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── 체결내역 탭 ── */}
         {tab === "체결내역" && (
           <div>
