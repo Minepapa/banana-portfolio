@@ -20,7 +20,7 @@ const SHEET_RANGES = {
   ISA리밸:      '자산분배!B21:D21',    // 6
   IRP리밸:      '자산분배!B24:D24',    // 7
   월별잔고:     '월별잔고!A2:H',       // 8
-  배당금:       '배당금!A2:B',         // 9
+  배당금:       '배당금!A2:C',         // 9
   수익금:       '수익금!A2:F',         // 10
 };
 
@@ -174,7 +174,14 @@ function parseDividends(vrAll) {
   const result = {};
   (vrAll?.values ?? []).forEach(r => {
     const dateStr = String(r[0] ?? '').trim();
-    const amt = parseNum(r[1]);  // B열: 배당금
+    let name = '';
+    let amt;
+    if (r.length >= 3) {
+      name = String(r[1] ?? '').trim();
+      amt = parseNum(r[2]);
+    } else {
+      amt = parseNum(r[1]);
+    }
     if (!dateStr || !amt) return;
     const parts = dateStr.split('-');
     if (parts.length < 2) return;
@@ -182,8 +189,9 @@ function parseDividends(vrAll) {
     const month = parseInt(parts[1]);
     if (!year || !month) return;
     const key = `${year}-${month}`;
-    if (!result[key]) result[key] = { year, month, amount: 0 };
+    if (!result[key]) result[key] = { year, month, amount: 0, items: [] };
     result[key].amount += amt;
+    result[key].items.push({ date: dateStr, name, amount: amt });
   });
   return Object.values(result).sort((a, b) => a.year - b.year || a.month - b.month);
 }
@@ -720,6 +728,7 @@ export default function App() {
   const savingsLpRef = useRef(null);
   const savingsLpFiredRef = useRef(false);
   const [divYear, setDivYear] = useState('전체');
+  const [selectedDivKey, setSelectedDivKey] = useState(null);
   const [monthYear, setMonthYear] = useState('전체');
   const [tradeRows, setTradeRows] = useState([]);
   const [tradeSyncing, setTradeSyncing] = useState(false);
@@ -1092,12 +1101,10 @@ export default function App() {
   const baseFont = "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif";
 
   // 배당금 탭 필터링
+  const divYears = ['전체', ...[...new Set(dividendData.map(d => String(d.year)))].sort()];
   const filteredDividends = divYear === '전체'
     ? dividendData
     : dividendData.filter(d => String(d.year) === divYear);
-
-  const div2025Total = dividendData.filter(d => d.year === 2025).reduce((s, d) => s + d.amount, 0);
-  const div2026Total = dividendData.filter(d => d.year === 2026).reduce((s, d) => s + d.amount, 0);
 
   return (
     <div style={{
@@ -1123,11 +1130,11 @@ export default function App() {
           <div style={{ textAlign: "right", flexShrink: 0 }}>
             <div style={{ fontSize: 9, color: "#5A6478", letterSpacing: 2 }}>총 수익</div>
             <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
-              {totalProfit >= 0 ? '+' : '-'}₩{fmt(Math.abs(totalProfit))}
+              ₩{fmt(Math.abs(totalProfit))}
             </div>
             {dailyDelta != null && (
               <div style={{ fontSize: 10, color: dailyDelta >= 0 ? PROFIT_POS : PROFIT_NEG }}>
-                {dailyDelta >= 0 ? '+' : '-'}₩{fmt(Math.abs(dailyDelta))}
+                ₩{fmt(Math.abs(dailyDelta))}
               </div>
             )}
           </div>
@@ -1804,78 +1811,96 @@ export default function App() {
         )}
 
         {/* ── 배당금 탭 ── */}
-        {tab === "dividend" && (
-          <div>
-            {/* 연도 선택 */}
-            <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
-              {['전체', '2025', '2026'].map(y => (
-                <button key={y} onClick={() => setDivYear(y)} style={{
-                  padding: isMobile ? "8px 14px" : "6px 14px",
-                  minHeight: isMobile ? 40 : undefined,
-                  borderRadius: 20,
-                  border: `1px solid ${divYear === y ? '#3B82F6' : '#2A2F3E'}`,
-                  background: divYear === y ? '#1E3A5F' : 'transparent',
-                  color: divYear === y ? '#60A5FA' : '#6B7280',
-                  cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
-                }}>{y}</button>
-              ))}
-            </div>
-
-            {/* 배당금 바차트 */}
-            <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 16 }}>
-                월별 배당금
+        {tab === "dividend" && (() => {
+          const divYearTotals = divYears.filter(y => y !== '전체').map(y => ({
+            year: y,
+            total: dividendData.filter(d => String(d.year) === y).reduce((s, d) => s + d.amount, 0),
+          }));
+          const selectedDivItem = selectedDivKey ? dividendData.find(d => `${d.year}-${d.month}` === selectedDivKey) : null;
+          return (
+            <div>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
+                {divYears.map(y => (
+                  <button key={y} onClick={() => { setDivYear(y); setSelectedDivKey(null); }} style={{
+                    padding: isMobile ? "8px 14px" : "6px 14px",
+                    borderRadius: 20,
+                    border: `1px solid ${divYear === y ? '#3B82F6' : '#2A2F3E'}`,
+                    background: divYear === y ? '#1E3A5F' : 'transparent',
+                    color: divYear === y ? '#60A5FA' : '#6B7280',
+                    cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
+                  }}>{y}</button>
+                ))}
               </div>
-              {filteredDividends.length > 0 ? (
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart
-                    data={filteredDividends.map(d => ({
-                      ...d,
-                      label: `${String(d.year).slice(-2)}.${String(d.month).padStart(2, '0')}`,
-                    }))}
-                    barSize={isMobile ? 10 : 16}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#2A2F3E" />
-                    <XAxis dataKey="label" tick={{ fill: "#5A6478", fontSize: 9 }} />
-                    <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: "#5A6478", fontSize: 9 }} width={55} />
-                    <Tooltip
-                      formatter={v => [`₩${v.toLocaleString()}`, '배당금']}
-                      contentStyle={{ background: "#1E2233", border: "1px solid #2A2F3E", borderRadius: 8, fontSize: 11 }}
-                      labelStyle={{ color: '#E8EAF0' }}
-                      itemStyle={{ color: '#E8EAF0' }}
-                    />
-                    <Bar dataKey="amount" radius={[3, 3, 0, 0]}>
-                      {filteredDividends.map((d, i) => (
-                        <Cell key={i} fill={d.year === 2025 ? "#3B82F6" : "#10B981"} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5A6478', fontSize: 12 }}>
-                  배당 데이터가 없습니다
-                </div>
-              )}
-            </div>
 
-            {/* 연도별 합계 */}
-            <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px" }}>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>연도별 합계</div>
-              {[
-                { label: '2025년 합계', value: div2025Total, color: '#3B82F6' },
-                { label: '2026년 합계', value: div2026Total, color: '#10B981' },
-              ].map(row => (
-                <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #1E2233' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: row.color }} />
-                    <span style={{ fontSize: 12, color: '#9CA3AF' }}>{row.label}</span>
+              <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 16 }}>월별 배당금</div>
+                {filteredDividends.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart
+                      data={filteredDividends.map(d => ({ ...d, label: `${String(d.year).slice(-2)}.${String(d.month).padStart(2, '0')}` }))}
+                      barSize={isMobile ? 10 : 16}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#2A2F3E" />
+                      <XAxis dataKey="label" tick={{ fill: "#5A6478", fontSize: 9 }} />
+                      <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: "#5A6478", fontSize: 9 }} width={55} />
+                      <Tooltip
+                        formatter={v => [`₩${v.toLocaleString()}`, '배당금']}
+                        contentStyle={{ background: "#1E2233", border: "1px solid #2A2F3E", borderRadius: 8, fontSize: 11 }}
+                        labelStyle={{ color: '#E8EAF0' }}
+                        itemStyle={{ color: '#E8EAF0' }}
+                      />
+                      <Bar dataKey="amount" radius={[3, 3, 0, 0]} cursor="pointer"
+                        onClick={(data) => {
+                          const key = `${data.year}-${data.month}`;
+                          setSelectedDivKey(prev => prev === key ? null : key);
+                        }}>
+                        {filteredDividends.map((d, i) => (
+                          <Cell key={i} fill={`${d.year}-${d.month}` === selectedDivKey ? '#F5A623' : PROFIT_POS} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5A6478', fontSize: 12 }}>
+                    배당 데이터가 없습니다
                   </div>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: '#E8EAF0' }}>₩{row.value.toLocaleString()}</span>
-                </div>
-              ))}
+                )}
+
+                {selectedDivItem && (
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #2A2F3E' }}>
+                    <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 8, letterSpacing: 1 }}>
+                      {selectedDivItem.year}년 {selectedDivItem.month}월 상세
+                    </div>
+                    {selectedDivItem.items.map((item, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #1E2233' }}>
+                        <span style={{ fontSize: 12, color: '#E8EAF0' }}>{item.name || item.date}</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS }}>
+                          ₩{fmt(item.amount)}
+                        </span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8 }}>
+                      <span style={{ fontSize: 11, color: '#9CA3AF' }}>합계</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: PROFIT_POS }}>
+                        ₩{fmt(selectedDivItem.amount)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px" }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>연도별 합계</div>
+                {divYearTotals.map(row => (
+                  <div key={row.year} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #1E2233' }}>
+                    <span style={{ fontSize: 12, color: '#9CA3AF' }}>{row.year}년 합계</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: PROFIT_POS }}>₩{fmt(row.total)}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
         {/* ── 수익금 탭 ── */}
         {tab === "profit" && (() => {
           const profitYears = ['전체', ...[...new Set(profitData.map(d => String(d.year)))].sort()];
@@ -1943,14 +1968,14 @@ export default function App() {
                       <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #1E2233' }}>
                         <span style={{ fontSize: 12, color: '#E8EAF0' }}>{item.name}</span>
                         <span style={{ fontSize: 12, fontWeight: 700, color: item.profit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
-                          {item.profit >= 0 ? '+' : '-'}₩{fmt(Math.abs(item.profit))}
+                          ₩{fmt(Math.abs(item.profit))}
                         </span>
                       </div>
                     ))}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8 }}>
                       <span style={{ fontSize: 11, color: '#9CA3AF' }}>합계</span>
                       <span style={{ fontSize: 13, fontWeight: 700, color: selectedItem.total >= 0 ? PROFIT_POS : PROFIT_NEG }}>
-                        {selectedItem.total >= 0 ? '+' : '-'}₩{fmt(Math.abs(selectedItem.total))}
+                        ₩{fmt(Math.abs(selectedItem.total))}
                       </span>
                     </div>
                   </div>
@@ -1963,7 +1988,7 @@ export default function App() {
                   <div key={row.year} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #1E2233' }}>
                     <span style={{ fontSize: 12, color: '#9CA3AF' }}>{row.year}년 합계</span>
                     <span style={{ fontSize: 13, fontWeight: 700, color: row.total >= 0 ? PROFIT_POS : PROFIT_NEG }}>
-                      {row.total >= 0 ? '+' : '-'}₩{fmt(Math.abs(row.total))}
+                      ₩{fmt(Math.abs(row.total))}
                     </span>
                   </div>
                 ))}
