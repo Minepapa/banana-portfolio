@@ -335,6 +335,7 @@ function useGoogleSheets(onData) {
           monthly: parsed.monthly,
           monthlyRow: parsed.monthlyRow,
           dividends: parsed.dividends,
+          profits: parsed.profits,
         });
       }
       const now = new Date();
