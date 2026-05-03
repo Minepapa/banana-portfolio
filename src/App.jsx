@@ -1557,20 +1557,24 @@ export default function App() {
               <div style={{ marginBottom: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
                   <button onClick={() => { setShowDeleteMode(p => !p); setSelectedToDelete(new Set()); setShowAddForm(false); }} style={{
-                    padding: '6px 14px', borderRadius: 6,
-                    border: `1px solid ${showDeleteMode ? PROFIT_POS : '#2A2F3E'}`,
+                    width: 36, height: 36, padding: 0, borderRadius: 6, flexShrink: 0,
+                    border: showDeleteMode ? `1px solid ${PROFIT_POS}` : 'none',
                     background: showDeleteMode ? '#2A1A1A' : 'transparent',
                     color: showDeleteMode ? PROFIT_POS : '#6B7280',
-                    cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
+                    cursor: 'pointer', fontSize: 16, fontFamily: baseFont,
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   }}>
-                    {showDeleteMode ? '✕ 취소' : '− 종목삭제'}
+                    {showDeleteMode ? '✕' : '−'}
                   </button>
                   <button onClick={() => { setShowAddForm(p => !p); setShowDeleteMode(false); }} style={{
-                    padding: '6px 14px', borderRadius: 6,
-                    border: '1px solid #3B82F6', background: showAddForm ? '#1E3A5F' : 'transparent',
-                    color: '#60A5FA', cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
+                    width: 36, height: 36, padding: 0, borderRadius: 6, flexShrink: 0,
+                    border: showAddForm ? `1px solid ${PROFIT_POS}` : 'none',
+                    background: showAddForm ? '#2A1A1A' : 'transparent',
+                    color: showAddForm ? PROFIT_POS : '#60A5FA',
+                    cursor: 'pointer', fontSize: 16, fontFamily: baseFont,
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   }}>
-                    {showAddForm ? '✕ 닫기' : '+ 종목추가'}
+                    {showAddForm ? '✕' : '+'}
                   </button>
                 </div>
                 {showAddForm && (
