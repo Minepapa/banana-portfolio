@@ -1349,11 +1349,11 @@ export default function App() {
         {tab === "rebalance" && (
           <div>
             {/* 계좌 선택 (4개) */}
-            <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
               {Object.keys(accounts).map((k) => (
                 <button key={k} onClick={() => setAcctKey(k)} style={{
-                  padding: isMobile ? "8px 14px" : "6px 14px",
-                  minHeight: isMobile ? 40 : undefined,
+                  flex: 1, padding: isMobile ? "8px 4px" : "6px 4px",
+                  textAlign: 'center',
                   borderRadius: 20,
                   border: `1px solid ${acctKey === k ? accounts[k].color : "#2A2F3E"}`,
                   background: acctKey === k ? `${accounts[k].color}22` : "transparent",
@@ -1503,11 +1503,11 @@ export default function App() {
         {tab === "holdings" && (
           <div>
             {/* 계좌 선택 (4개 모두) */}
-            <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
               {Object.keys(accounts).map((k) => (
                 <button key={k} onClick={() => { setAcctKey(k); setShowAddForm(false); setEditingHolding(null); }} style={{
-                  padding: isMobile ? "8px 12px" : "6px 12px",
-                  minHeight: isMobile ? 40 : undefined,
+                  flex: 1, padding: isMobile ? "8px 4px" : "6px 4px",
+                  textAlign: 'center',
                   borderRadius: 20,
                   border: `1px solid ${acctKey === k ? accounts[k].color : "#2A2F3E"}`,
                   background: acctKey === k ? `${accounts[k].color}22` : "transparent",
