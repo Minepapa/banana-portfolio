@@ -555,7 +555,7 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel, readRange }) {
   useEffect(() => { setRowMap(null); loadRowMap(); }, [loadRowMap]);
 
   const hasAInSheet = rowMap ? rowMap.some(r => r.hasA && r.type === 자산군) : null;
-  const emptySlots = rowMap ? rowMap.filter(r => r.type === 자산군 && r.empty).length : null;
+  const emptySlots = rowMap ? rowMap.filter(r => r.type === 자산군 && r.empty && r.hasA).length : null;
   const sheetWarning = rowMap !== null && (!hasAInSheet || emptySlots === 0);
   const notReady = rowMap === null || saving || sheetWarning;
 
@@ -572,7 +572,7 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel, readRange }) {
     // 자산군의 첫 번째 빈 행 찾기
     let targetRow = null;
     for (const r of rowMap) {
-      if (r.type === 자산군 && r.empty) { targetRow = r.row; break; }
+      if (r.type === 자산군 && r.empty && r.hasA) { targetRow = r.row; break; }
     }
     if (targetRow === null) return;
     setSaving(true);
@@ -883,7 +883,7 @@ export default function App() {
     const rowMap = buildRowMap(rows, cfg.start, cfg.end);
     let targetRow = null;
     for (const r of rowMap) {
-      if (r.type === assetType && r.empty) { targetRow = r.row; break; }
+      if (r.type === assetType && r.empty && r.hasA) { targetRow = r.row; break; }
     }
     if (targetRow === null) throw new Error(`${acctKey} > ${assetType}: 빈 행 없음`);
     const n = targetRow;
