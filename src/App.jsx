@@ -175,10 +175,8 @@ function parseDividends(vrAll) {
   const result = {};
   (vrAll?.values ?? []).forEach(r => {
     const dateStr = String(r[0] ?? '').trim();
-    const cNum = parseNum(r[2] ?? 0);
-    // C열에 숫자가 있으면 B=종목명, C=금액; 없으면 B=금액 (기존 2열 구조 호환)
-    const name = cNum ? String(r[1] ?? '').trim() : '';
-    const amt  = cNum || parseNum(r[1] ?? 0);
+    const amt  = parseNum(r[1] ?? 0);  // B열: 금액
+    const name = String(r[2] ?? '').trim(); // C열: 종목명
     if (!dateStr || !amt) return;
     const parts = dateStr.split('-');
     if (parts.length < 2) return;
