@@ -29,6 +29,7 @@ const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
 // 한국 주식 색상 체계: 이익=빨강, 손실=파랑
 const PROFIT_POS = '#EF4444';
 const PROFIT_NEG = '#60A5FA';
+const CHART_BAR_COLOR = '#3B82F6';
 
 // ── 색상 팔레트 ───────────────────────────────────────────────────────────────
 const COLORS = {
@@ -1332,11 +1333,11 @@ export default function App() {
                       />
                       {showSavings ? (
                         <>
-                          <Bar dataKey="base" stackId="a" fill="#3B82F6" />
-                          <Bar dataKey="savingsAmt" stackId="a" fill="#10B981" radius={[3, 3, 0, 0]} />
+                          <Bar dataKey="base" stackId="a" fill={CHART_BAR_COLOR} />
+                          <Bar dataKey="savingsAmt" stackId="a" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} />
                         </>
                       ) : (
-                        <Bar dataKey="value" fill="#3B82F6" radius={[3, 3, 0, 0]} />
+                        <Bar dataKey="value" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} />
                       )}
                     </BarChart>
                   </ResponsiveContainer>
@@ -1845,15 +1846,11 @@ export default function App() {
                         labelStyle={{ color: '#E8EAF0' }}
                         itemStyle={{ color: '#E8EAF0' }}
                       />
-                      <Bar dataKey="amount" radius={[3, 3, 0, 0]} cursor="pointer"
+                      <Bar dataKey="amount" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} cursor="pointer"
                         onClick={(data) => {
                           const key = `${data.year}-${data.month}`;
                           setSelectedDivKey(prev => prev === key ? null : key);
-                        }}>
-                        {filteredDividends.map((d, i) => (
-                          <Cell key={i} fill={`${d.year}-${d.month}` === selectedDivKey ? '#F5A623' : PROFIT_POS} />
-                        ))}
-                      </Bar>
+                        }} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
@@ -1869,7 +1866,7 @@ export default function App() {
                     </div>
                     {selectedDivItem.items.map((item, i) => (
                       <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #1E2233' }}>
-                        <span style={{ fontSize: 12, color: '#E8EAF0' }}>{item.name || item.date}</span>
+                        <span style={{ fontSize: 12, color: '#E8EAF0' }}>{item.name}</span>
                         <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS }}>
                           ₩{fmt(item.amount)}
                         </span>
@@ -1938,15 +1935,11 @@ export default function App() {
                         labelStyle={{ color: '#E8EAF0' }}
                         itemStyle={{ color: '#E8EAF0' }}
                       />
-                      <Bar dataKey="total" radius={[3, 3, 0, 0]} cursor="pointer"
+                      <Bar dataKey="total" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} cursor="pointer"
                         onClick={(data) => {
                           const key = `${data.year}-${data.month}`;
                           setSelectedProfitKey(prev => prev === key ? null : key);
-                        }}>
-                        {filtered.map((d, i) => (
-                          <Cell key={i} fill={`${d.year}-${d.month}` === selectedProfitKey ? '#F5A623' : (d.total >= 0 ? '#3B82F6' : '#EF4444')} />
-                        ))}
-                      </Bar>
+                        }} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
