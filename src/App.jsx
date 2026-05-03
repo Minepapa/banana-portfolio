@@ -1557,8 +1557,8 @@ export default function App() {
               <div style={{ marginBottom: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
                   <button onClick={() => { setShowDeleteMode(p => !p); setSelectedToDelete(new Set()); setShowAddForm(false); }} style={{
-                    width: 36, height: 36, padding: 0, borderRadius: 6, flexShrink: 0,
-                    border: showDeleteMode ? `1px solid ${PROFIT_POS}` : 'none',
+                    width: 30, height: 30, padding: 0, borderRadius: 6, flexShrink: 0,
+                    border: showDeleteMode ? `1px solid ${PROFIT_POS}` : '1px solid #2A2F3E',
                     background: showDeleteMode ? '#2A1A1A' : 'transparent',
                     color: showDeleteMode ? PROFIT_POS : '#6B7280',
                     cursor: 'pointer', fontSize: 16, fontFamily: baseFont,
@@ -1567,10 +1567,10 @@ export default function App() {
                     {showDeleteMode ? '✕' : '−'}
                   </button>
                   <button onClick={() => { setShowAddForm(p => !p); setShowDeleteMode(false); }} style={{
-                    width: 36, height: 36, padding: 0, borderRadius: 6, flexShrink: 0,
-                    border: showAddForm ? `1px solid ${PROFIT_POS}` : 'none',
+                    width: 30, height: 30, padding: 0, borderRadius: 6, flexShrink: 0,
+                    border: showAddForm ? `1px solid ${PROFIT_POS}` : '1px solid #2A2F3E',
                     background: showAddForm ? '#2A1A1A' : 'transparent',
-                    color: showAddForm ? PROFIT_POS : '#60A5FA',
+                    color: showAddForm ? PROFIT_POS : '#6B7280',
                     cursor: 'pointer', fontSize: 16, fontFamily: baseFont,
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   }}>
