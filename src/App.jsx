@@ -975,12 +975,21 @@ export default function App() {
               await addHoldingFromTrade(acctKey, assetType, stockName, price, qty, currentPrice);
             }
           } else if (isSell && matchRow) {
+            const avgBuyPrice = matchRow.price; // 매도 전 평균매수단가 보존
             const newQty = matchRow.qty - qty;
             if (newQty <= 0) {
               await sheets.clearRowsRaw([`${acctKey}!B${matchRow.row}:I${matchRow.row}`]);
             } else {
               await sheets.writeRange(`${acctKey}!D${matchRow.row}`, [newQty]);
             }
+            // 수익금 시트에 매도 내역 기록
+            const profitRows = await sheets.readRange('수익금!A2:A');
+            const nextRow = (profitRows?.length ?? 0) + 2;
+            const dateStr = String(row[0] ?? '').trim();
+            await sheets.writeRange(`수익금!A${nextRow}:F${nextRow}`, [
+              dateStr, stockName, qty, avgBuyPrice, price,
+              `=(E${nextRow}-D${nextRow})*C${nextRow}`,
+            ]);
           }
 
           if (cheolSheetId !== null) {
