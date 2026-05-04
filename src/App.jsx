@@ -990,6 +990,9 @@ export default function App() {
               dateStr, stockName, qty, avgBuyPrice, price,
               `=(E${nextRow}-D${nextRow})*C${nextRow}`,
             ]);
+          } else if (isSell && !matchRow) {
+            errors.push(`${stockName}: 계좌(${acctKey})에서 종목을 찾을 수 없음 — 처리 건너뜀`);
+            continue; // 완료 마킹 스킵
           }
 
           if (cheolSheetId !== null) {
@@ -1132,7 +1135,7 @@ export default function App() {
             </div>
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>
-            <div style={{ fontSize: 9, color: "#5A6478", letterSpacing: 2 }}>총 수익</div>
+            <div style={{ fontSize: 9, color: "#5A6478", letterSpacing: 2 }}>평가손익</div>
             <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
               ₩{fmt(Math.abs(totalProfit))}
             </div>
@@ -1141,6 +1144,28 @@ export default function App() {
                 ₩{fmt(Math.abs(dailyDelta))}
               </div>
             )}
+            {(() => {
+              const realizedTotal = profitData.reduce((s, d) => s + d.total, 0);
+              const now = new Date();
+              const thisMonthDiv = dividendData.find(d => d.year === now.getFullYear() && d.month === now.getMonth() + 1)?.amount ?? 0;
+              return (
+                <>
+                  {realizedTotal !== 0 && (
+                    <div style={{ fontSize: 9, color: "#5A6478", letterSpacing: 1, marginTop: 4 }}>실현손익</div>
+                  )}
+                  {realizedTotal !== 0 && (
+                    <div style={{ fontSize: 11, fontWeight: 600, color: realizedTotal >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                      ₩{fmt(Math.abs(realizedTotal))}
+                    </div>
+                  )}
+                  {thisMonthDiv > 0 && (
+                    <div style={{ fontSize: 9, color: PROFIT_POS, marginTop: 2 }}>
+                      이번달 배당 ₩{fmt(thisMonthDiv)}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
 
@@ -1897,6 +1922,12 @@ export default function App() {
                     <span style={{ fontSize: 13, fontWeight: 700, color: PROFIT_POS }}>₩{fmt(row.total)}</span>
                   </div>
                 ))}
+                {(() => { const gt = dividendData.reduce((s, d) => s + d.amount, 0); return (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10 }}>
+                    <span style={{ fontSize: 12, color: '#E8EAF0', fontWeight: 600 }}>전체 합계</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: PROFIT_POS }}>₩{fmt(gt)}</span>
+                  </div>
+                ); })()}
               </div>
             </div>
           );
@@ -1942,11 +1973,15 @@ export default function App() {
                         labelStyle={{ color: '#E8EAF0' }}
                         itemStyle={{ color: '#E8EAF0' }}
                       />
-                      <Bar dataKey="total" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} cursor="pointer"
+                      <Bar dataKey="total" radius={[3, 3, 0, 0]} cursor="pointer"
                         onClick={(data) => {
                           const key = `${data.year}-${data.month}`;
                           setSelectedProfitKey(prev => prev === key ? null : key);
-                        }} />
+                        }}>
+                        {filtered.map((d, i) => (
+                          <Cell key={i} fill={d.total >= 0 ? PROFIT_POS : PROFIT_NEG} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
@@ -1988,6 +2023,14 @@ export default function App() {
                     </span>
                   </div>
                 ))}
+                {(() => { const gt = profitData.reduce((s, d) => s + d.total, 0); return (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10 }}>
+                    <span style={{ fontSize: 12, color: '#E8EAF0', fontWeight: 600 }}>전체 합계</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: gt >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                      ₩{fmt(Math.abs(gt))}
+                    </span>
+                  </div>
+                ); })()}
               </div>
             </div>
           );
