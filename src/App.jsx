@@ -1144,28 +1144,6 @@ export default function App() {
                 ₩{fmt(Math.abs(dailyDelta))}
               </div>
             )}
-            {(() => {
-              const realizedTotal = profitData.reduce((s, d) => s + d.total, 0);
-              const now = new Date();
-              const thisMonthDiv = dividendData.find(d => d.year === now.getFullYear() && d.month === now.getMonth() + 1)?.amount ?? 0;
-              return (
-                <>
-                  {realizedTotal !== 0 && (
-                    <div style={{ fontSize: 9, color: "#5A6478", letterSpacing: 1, marginTop: 4 }}>실현손익</div>
-                  )}
-                  {realizedTotal !== 0 && (
-                    <div style={{ fontSize: 11, fontWeight: 600, color: realizedTotal >= 0 ? PROFIT_POS : PROFIT_NEG }}>
-                      ₩{fmt(Math.abs(realizedTotal))}
-                    </div>
-                  )}
-                  {thisMonthDiv > 0 && (
-                    <div style={{ fontSize: 9, color: PROFIT_POS, marginTop: 2 }}>
-                      이번달 배당 ₩{fmt(thisMonthDiv)}
-                    </div>
-                  )}
-                </>
-              );
-            })()}
           </div>
         </div>
 
