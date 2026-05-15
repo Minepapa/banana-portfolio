@@ -728,6 +728,7 @@ export default function App() {
   const [tradeRows, setTradeRows] = useState([]);
   const [tradeSyncing, setTradeSyncing] = useState(false);
   const [tradeSyncMsg, setTradeSyncMsg] = useState('');
+  const [savingsAppliedRows, setSavingsAppliedRows] = useState(new Set());
   const [profitData, setProfitData] = useState([]);
   const [profitYear, setProfitYear] = useState('전체');
   const [selectedProfitKey, setSelectedProfitKey] = useState(null);
@@ -1022,6 +1023,40 @@ export default function App() {
       setTradeSyncing(false);
     }
   }, [sheets, tradeSyncing, addHoldingFromTrade]);
+
+  const applySavingsFromTrade = useCallback(async (tradeDate, amount, isBuy, rowIdx) => {
+    setTradeSyncMsg('저축금 반영 중...');
+    try {
+      const parts = tradeDate.split('-');
+      if (parts.length < 2) throw new Error('날짜 형식 오류');
+      const year = parseInt(parts[0]);
+      const month = parseInt(parts[1]);
+
+      const values = await sheets.readRange('월별잔고!A2:H');
+      let lastYear = 0;
+      let targetRow = null;
+      for (let i = 0; i < values.length; i++) {
+        const r = values[i];
+        const bNum = parseInt(String(r[0] ?? '').replace(/[^0-9]/g, ''));
+        if (bNum >= 2000) lastYear = bNum;
+        const mNum = parseInt(String(r[1] ?? '').replace(/[^0-9]/g, ''));
+        if (lastYear === year && mNum === month) { targetRow = 2 + i; break; }
+      }
+      if (!targetRow) throw new Error(`${year}년 ${month}월 행 없음`);
+
+      const rows = await sheets.readRange(`월별잔고!C${targetRow}:C${targetRow}`);
+      const current = parseNum(rows[0]?.[0]);
+      const delta = isBuy ? amount : -amount;
+      await sheets.writeRange(`월별잔고!C${targetRow}:C${targetRow}`, [current + delta]);
+
+      setSavingsAppliedRows(prev => new Set([...prev, rowIdx]));
+      setTradeSyncMsg(`${year}.${String(month).padStart(2,'0')} 저축금 ${isBuy ? '+' : '−'}₩${amount.toLocaleString()} 반영됨`);
+      setTimeout(() => setTradeSyncMsg(''), 4000);
+    } catch (e) {
+      setTradeSyncMsg(`저축금 반영 실패: ${e.message}`);
+      setTimeout(() => setTradeSyncMsg(''), 4000);
+    }
+  }, [sheets]);
 
   const saveAllTargets = async () => {
     const sum = allTargetInputs.reduce((s, v) => s + (parseFloat(v) || 0), 0);
@@ -1712,7 +1747,7 @@ export default function App() {
                           {h.name}
                         </div>
                         <div style={{ fontSize: 10, color: "#5A6478", marginTop: 2 }}>
-                          {h.qty}주 · ₩{fmt(h.invest)}
+                          {h.qty}주 · ₩{fmt(h.price)}/주
                         </div>
                       </div>
                       <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -2064,8 +2099,11 @@ export default function App() {
                   const stockName = String(row[5] ?? '').trim();
                   const price    = parseNum(row[6]);
                   const qty      = parseNum(row[7]);
+                  const amount   = Math.round(price * qty);
                   const isComplete = row.length >= 13 && row.slice(0, 13).every(cell => String(cell ?? '').trim() !== '');
                   const isBuy = buySell.includes('매수');
+                  const savingsApplied = savingsAppliedRows.has(idx);
+                  const canApplySavings = isComplete && amount > 0 && date && !savingsApplied;
                   return (
                     <div key={idx} style={{
                       padding: '12px 16px',
@@ -2096,9 +2134,29 @@ export default function App() {
                           {!isComplete && <span style={{ marginLeft: 6, color: '#F59E0B' }}>셀 미완성</span>}
                         </div>
                       </div>
-                      {processed && (
-                        <span style={{ fontSize: 10, color: '#34A853', flexShrink: 0 }}>완료</span>
-                      )}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                        {processed && (
+                          <span style={{ fontSize: 10, color: '#34A853' }}>완료</span>
+                        )}
+                        {savingsApplied ? (
+                          <span style={{ fontSize: 10, color: '#4ADE80' }}>저축금 ✓</span>
+                        ) : (
+                          <button
+                            onClick={() => canApplySavings && applySavingsFromTrade(date, amount, isBuy, idx)}
+                            disabled={!canApplySavings}
+                            style={{
+                              padding: '3px 8px', borderRadius: 4, border: '1px solid',
+                              borderColor: canApplySavings ? (isBuy ? '#3B82F6' : '#EF4444') : '#2A2F3E',
+                              background: 'transparent',
+                              color: canApplySavings ? (isBuy ? '#60A5FA' : '#F87171') : '#3A3F4E',
+                              cursor: canApplySavings ? 'pointer' : 'not-allowed',
+                              fontSize: 10, fontFamily: baseFont,
+                            }}
+                          >
+                            {isBuy ? '+저축' : '−저축'}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
