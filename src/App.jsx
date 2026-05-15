@@ -729,6 +729,7 @@ export default function App() {
   const [tradeSyncing, setTradeSyncing] = useState(false);
   const [tradeSyncMsg, setTradeSyncMsg] = useState('');
   const [savingsAppliedRows, setSavingsAppliedRows] = useState(new Set());
+  const [savingsMode, setSavingsMode] = useState(false);
   const [profitData, setProfitData] = useState([]);
   const [profitYear, setProfitYear] = useState('전체');
   const [selectedProfitKey, setSelectedProfitKey] = useState(null);
@@ -1747,7 +1748,7 @@ export default function App() {
                           {h.name}
                         </div>
                         <div style={{ fontSize: 10, color: "#5A6478", marginTop: 2 }}>
-                          {h.qty}주 · ₩{fmt(h.price)}/주
+                          {h.qty}주 · ₩{fmt(h.price)}
                         </div>
                       </div>
                       <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -2060,13 +2061,15 @@ export default function App() {
                     {tradeSyncMsg}
                   </span>
                 )}
-                <button onClick={repairFormulas} disabled={tradeSyncing || sheets.auth !== 'signed-in'} style={{
-                  padding: '5px 12px', borderRadius: 6, border: '1px solid #2A2F3E',
-                  background: 'transparent', color: '#F5A623',
-                  cursor: (tradeSyncing || sheets.auth !== 'signed-in') ? 'not-allowed' : 'pointer',
+                <button onClick={() => setSavingsMode(p => !p)} disabled={sheets.auth !== 'signed-in'} style={{
+                  padding: '5px 12px', borderRadius: 6,
+                  border: `1px solid ${savingsMode ? '#3B82F6' : '#2A2F3E'}`,
+                  background: savingsMode ? '#1E3A5F' : 'transparent',
+                  color: savingsMode ? '#60A5FA' : '#9CA3AF',
+                  cursor: sheets.auth !== 'signed-in' ? 'not-allowed' : 'pointer',
                   fontSize: 10, fontFamily: baseFont,
                 }}>
-                  수식 복구
+                  저축금
                 </button>
                 <button onClick={syncTradeExecutions} disabled={tradeSyncing || sheets.auth !== 'signed-in'} style={{
                   padding: '5px 12px', borderRadius: 6, border: '1px solid #2A2F3E',
@@ -2140,7 +2143,7 @@ export default function App() {
                         )}
                         {savingsApplied ? (
                           <span style={{ fontSize: 10, color: '#4ADE80' }}>저축금 ✓</span>
-                        ) : (
+                        ) : savingsMode && (
                           <button
                             onClick={() => canApplySavings && applySavingsFromTrade(date, amount, isBuy, idx)}
                             disabled={!canApplySavings}
