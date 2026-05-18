@@ -22,6 +22,7 @@ const SHEET_RANGES = {
   월별잔고:     '월별잔고!A2:H',       // 8
   배당금:       '배당금!A2:C',         // 9
   수익금:       '수익금!A2:F',         // 10
+  평가노트:     '종목투자노트!A2:T',   // 11  (없거나 비어있어도 안전)
 };
 
 const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
@@ -36,6 +37,133 @@ const COLORS = {
   채권: "#4A90D9", 금: "#F5C842", 달러: "#7EC8A4", 배당주: "#F4845F",
   리츠: "#B07FE8", 국내주식: "#E85F7A", 해외주식: "#52C8D4", TDF: "#A8D672",
 };
+
+// ── 학습 모듈 + AI 능동 평가 (Trading Agent/learning/ 참조) ─────────────────
+const LEARNING_MODULES = {
+  // 수익성
+  revenue_growth:   { title: '매출성장률 YoY', summary: '작년 같은 분기 대비 매출이 몇 % 늘었나. 회사의 외형 성장 속도. 마진과 함께 봐야 의미 있음.', threshold: 'Frank 확정: 10%+ 3년 유지면 성장주로 분류. 마진 동시 상승이면 강력. (2026-05 인터뷰)' },
+  operating_margin: { title: '영업이익률', summary: '본업으로 매출 100원에 영업단계 얼마 남는지. 동종 평균 1.5배 이상이면 가격결정력 강함.', threshold: 'Frank: 동종 대비 1.5배 + 3년 추세 평탄/상승이면 매수 근거' },
+  roic:             { title: 'ROIC (투하자본수익률)', summary: '빚+자기자본을 굴려 얼마 남기는지. 15% 이상 5년 유지면 해자(moat) 강력. ROE보다 정직.', threshold: 'Frank: 15% 이상 5년 평균 → 매수 후보, 10% 미만 → 신중' },
+
+  // 재무 안정성
+  net_debt_ebitda:  { title: '순부채/EBITDA', summary: '회사가 번 돈(EBITDA)으로 빚을 갚는 데 몇 년 걸리는지. 1배 이하면 빚 부담 없음, 3배 이상이면 위험.', threshold: 'Frank: < 1배 양호, 1~3배 보통, > 3배 신중. 사이클 산업은 더 보수적으로' },
+  interest_coverage:{ title: '이자보상배율 (EBIT/이자비용)', summary: '영업이익으로 이자를 몇 번 갚을 수 있는지. 5배 이상이 안전선, 2배 이하면 위험.', threshold: 'Frank: > 5배 안전, 3~5 보통, < 3 신중. 금리 상승기엔 5배 이상 권장' },
+  current_ratio:    { title: '유동비율', summary: '1년 안에 갚을 빚(유동부채) 대비 1년 안에 현금화 가능한 자산(유동자산). 150%+ 양호.', threshold: 'Frank: > 150% 양호, 100~150% 보통, < 100% 단기 유동성 리스크' },
+
+  // 밸류에이션
+  fwd_per:          { title: 'Forward PER 5년 밴드', summary: '예상 EPS 기준 PER이 지난 5년 밴드 어디인지. 자기 자신과의 비교라 업종 차이 흡수.', threshold: 'Frank: 밴드 P25 이하 + 펀더멘털 OK → 적극 매수, P75 이상 → 보류' },
+  ev_ebitda:        { title: 'EV/EBITDA', summary: '회사 전체 가격(EV) ÷ 본업 현금이익(EBITDA). PER보다 부채·세금·감가상각 영향 제거해 더 정직.', threshold: 'Frank: < 8배 저평가, 8~12 보통, > 15 고평가. 동종/5년 밴드와 같이' },
+  pbr:              { title: 'PBR (주가순자산비율)', summary: '주가 ÷ 주당순자산. 회사를 청산해서 받는 돈 대비 시장가. 1배 이하 = 청산가치 미달.', threshold: 'Frank: 자산형 회사(은행·금융지주) 0.5~1배, 성장주는 PBR로 판단하지 말 것' },
+
+  // 현금흐름
+  fcf_yield:        { title: 'FCF yield', summary: 'FCF/시가총액. 시가총액 대비 매년 회수되는 현금. 회계이익은 거짓말 가능, 현금은 사실.', threshold: 'Frank: 매수 시 영업이익만 보지 말 것. 배당주는 FCF 커버리지 80% 마지노선' },
+  payout_ratio:     { title: '배당성향', summary: '순이익 중 배당으로 나가는 비율. 70% 넘으면 성장 재투자 여력 적음, 100% 넘으면 배당컷 임박.', threshold: 'Frank 확정: 40~60% 이상적 (메리츠금융지주형 균형). 80%+면 FCF 커버리지 같이 확인. (2026-05 인터뷰)' },
+  dividend_sustainability:{ title: '배당지속가능성 (FCF 커버리지)', summary: '배당총액/FCF. 회사가 버는 현금으로 배당을 얼마나 여유롭게 지급하나. 80% 넘으면 배당컷 리스크.', threshold: 'Frank: < 80% 안전, 80~100% 경계, > 100% 배당컷 경보' },
+
+  // 모멘텀
+  rsi:              { title: 'RSI (상대강도지수)', summary: '14거래일 상승/하락 비율. 30 이하 = 일방적 매도세(반등 확률↑), 70 이상 = 과열.', threshold: 'CLAUDE.md §4: RSI 30 이하 → 적극 매수 / 70 이상 → 일부 차익실현' },
+  pos_52w:          { title: '52주 위치', summary: '현재가가 52주 최저~최고 어디인지. 하단 20% = 저점 매수, 상단 80% = 차익실현 검토.', threshold: 'CLAUDE.md §4: 52주 고점 +20% 초과 → 일부 매도 / ≤20% + 펀더멘털 OK → 적극 매수' },
+  foreign_flow:     { title: '외국인·기관 수급', summary: '한국 시장에서 외국인은 시총 ~35% 보유, 시장 방향 결정. 4거래일 흐름 + 환율 같이.', threshold: 'Frank: 외국인 4일 연속 순매도 → 추가 매수 보류 / 동반 순매수 4일 → 적립식 가속' },
+  sector_rs:        { title: '섹터 상대강도', summary: '해당 섹터 ETF 수익률 − 시장 지수 수익률. 양수면 섹터가 시장을 이기는 중, 강세 모멘텀 시그널.', threshold: 'Frank: 보유 섹터의 RS가 4주 연속 양수면 비중 유지/확대, 음수 전환 시 점검' },
+
+  // KPI (운용)
+  twr:              { title: 'TWR (시간가중수익률)', summary: '입출금 효과 제거한 순수 운용 수익률. 단순 수익률과의 차이가 곧 타이밍 효과.', threshold: 'Frank 확정: 연 TWR 시장 혼합(KOSPI:S&P500=50:50) 대비 +3~5%p (균형형 알파 목표). (2026-05 인터뷰)' },
+  sharpe:           { title: '샤프 비율', summary: '(수익률 − 무위험) / 변동성. 위험 1단위당 초과 수익. 1.0~1.5가 개인 포트폴리오 목표.', threshold: 'Frank 확정: 1년 샤프 0.8~1.2 (개인 적극 운용 합리적 목표). (2026-05 인터뷰)' },
+  mdd:              { title: '최대낙폭 (MDD)', summary: '최고점 대비 최저점 하락폭. 평균은 행복해도 거기서 못 견디면 의미 없다.', threshold: 'Frank 확정: 1년 MDD −25% 이내 (성장형) / 3년 −35% 이내 / 회복 12개월 이내. (2026-05 인터뷰)' },
+};
+
+const SAMPLE_EVALUATION = {
+  stock: { name: 'SK하이닉스', ticker: '000660', market: 'KR' },
+  date: '2026-05-17',
+  axes: [
+    { label: '수익성', grade: '🟢', items: [
+      { label: '매출성장률 YoY', value: '+47%',   source: 'OpenDart Q1',   metric: 'revenue_growth' },
+      { label: '영업이익률',    value: '32.1%',  source: 'HBM 마진 견인', metric: 'operating_margin' },
+      { label: 'ROIC',          value: '21.4%',  source: 'vs 동종 12%',   metric: 'roic' },
+    ]},
+    { label: '재무 안정성', grade: '🟢', items: [
+      { label: '순부채/EBITDA', value: '0.8',   source: '양호', metric: 'net_debt_ebitda' },
+      { label: '이자보상배율',  value: '11x',   source: '양호', metric: 'interest_coverage' },
+      { label: '유동비율',      value: '185%',                  metric: 'current_ratio' },
+    ]},
+    { label: '밸류에이션', grade: '🟢', items: [
+      { label: 'Forward PER',  value: '6.8x',  source: '5년 밴드 하단, 평균 12x', metric: 'fwd_per' },
+      { label: 'EV/EBITDA',    value: '4.2x',                                      metric: 'ev_ebitda' },
+      { label: 'PBR',          value: '1.8x',                                      metric: 'pbr' },
+    ]},
+    { label: '현금흐름', grade: '🟢', items: [
+      { label: 'FCF yield',         value: '8.2%', source: '시장금리 4.6% 대비 우수', metric: 'fcf_yield' },
+      { label: '배당성향',          value: '12%',                                       metric: 'payout_ratio' },
+      { label: '배당지속가능성',    value: '✅',  source: 'FCF 8% > 배당 1%',           metric: 'dividend_sustainability' },
+    ]},
+    { label: '모멘텀', grade: '🟡', items: [
+      { label: 'RSI(14)',        value: '58',         source: '중립',                  metric: 'rsi' },
+      { label: '52주 위치',      value: '78%',        source: '상단 영역',             metric: 'pos_52w' },
+      { label: '외국인 4일',     value: '−2,300억',   source: '순매도',                metric: 'foreign_flow' },
+      { label: '섹터 상대강도',  value: '+4.2%',      source: '반도체 vs 코스피',      metric: 'sector_rs' },
+    ]},
+  ],
+  conclusion: { grade: '🟢', label: '매수 적합 O' },
+  reasons: [
+    'HBM 사이클 구조적 수혜로 영업이익률 30%대 정착, 동종 평균 12% 대비 2.6배.',
+    'Fwd PER 6.8x는 5년 밴드 하단 + FCF yield 8.2%로 채권(4.6%) 대비 매력.',
+    'ROIC 21.4% 5년 추세 유효 — 자본 효율 강력.',
+  ],
+  risks: [
+    '외국인 4거래일 순매도 −2,300억 — 단기 환율/지정학 영향 가능.',
+    '미·중 반도체 규제 강화 시 중국향 매출(전체 22%) 노출.',
+  ],
+  actions: [
+    '1회 300만원 미만 분할 매수 가능 (CLAUDE.md §3).',
+    '외국인 4일 흐름이 순매수 전환 후 1차 진입 권장.',
+    '52주 위치 60% 이하로 눌림 발생 시 추가 매수 트리거.',
+  ],
+  sources: [
+    'OpenDart Q1 2026 (조회일 2026-05-17)',
+    'NaverFinance 종목페이지 (조회일 2026-05-17)',
+    '5/17 weekly_report 외부 변수',
+  ],
+};
+
+const EVAL_PROMPT_TEMPLATE = `[종목 능동 평가 요청]
+종목: <여기에 종목명 또는 티커 입력>
+
+다음 플레이북에 따라 5축 평가 카드를 생성해줘:
+- 단일 출처: Trading Agent/playbooks/active-evaluation.md
+- 출력 양식: §5의 표준 카드 (5축 + 결론 🟢/🟡/🔴 + 근거 3줄 + 리스크 2줄 + Frank 액션)
+- 데이터: KR=OpenDart MCP, US=UsStockInfo MCP
+- 모든 수치 출처/기준일 표기, 누락 항목은 '데이터 부족'으로 명시
+- 학습 모듈 옆 📘 표시 유지
+
+마지막에 반드시 아래 JSON 블록을 \`\`\`json ... \`\`\` 펜스로 출력해줘
+(banana-portfolio 평가 탭에 1-클릭 적재용):
+
+\`\`\`json
+{
+  "date": "YYYY-MM-DD",
+  "name": "종목명",
+  "ticker": "티커 또는 종목코드",
+  "market": "KR | US",
+  "conclusion": "🟢 O | 🟡 △ | 🔴 X",
+  "grades": {
+    "수익성": "🟢|🟡|🔴",
+    "안정성": "🟢|🟡|🔴",
+    "밸류에이션": "🟢|🟡|🔴",
+    "현금흐름": "🟢|🟡|🔴",
+    "모멘텀": "🟢|🟡|🔴"
+  },
+  "reasons": ["근거1", "근거2", "근거3"],
+  "risks": ["리스크1", "리스크2"],
+  "actions": ["액션1", "액션2", "액션3"],
+  "frankMemo": "",
+  "status": "보류 | 매수 | 매도",
+  "buyDate": "",
+  "buyPrice": "",
+  "targetTerm": "장기 | 1Y | 3Y",
+  "targetRet": "30%",
+  "aiNote": "한 줄 요약"
+}
+\`\`\``;
 
 // ── 기본 데이터 ───────────────────────────────────────────────────────────────
 const DEFAULT_ACCOUNTS = {
@@ -211,6 +339,55 @@ function parseProfits(vr) {
   return Object.values(result).sort((a, b) => a.year - b.year || a.month - b.month);
 }
 
+// 종목투자노트 탭 (playbook §6 컬럼 A~T) → 평가 카드 객체 배열
+function parseEvaluations(vr) {
+  const rows = vr?.values ?? [];
+  const splitNumbered = (s) => {
+    const t = String(s ?? '').trim();
+    if (!t) return [];
+    // "1) ... 2) ..." or "1. ... 2. ..." or 줄바꿈 분리
+    if (/\d[).]\s/.test(t)) {
+      return t.split(/(?=\d[).]\s)/).map(x => x.replace(/^\d[).]\s*/, '').trim()).filter(Boolean);
+    }
+    return t.split(/[\n;]+/).map(x => x.trim()).filter(Boolean);
+  };
+  const splitBullets = (s) => splitNumbered(s).length
+    ? splitNumbered(s)
+    : String(s ?? '').split(/\.\s+(?=[A-Z가-힣])/).map(x => x.trim()).filter(Boolean);
+
+  return rows.map(r => {
+    const date = String(r[0] ?? '').trim();
+    const name = String(r[1] ?? '').trim();
+    if (!date || !name) return null;
+    return {
+      stock: {
+        name,
+        ticker: String(r[2] ?? '').trim(),
+        market: String(r[3] ?? '').trim(),
+      },
+      date,
+      conclusion: { raw: String(r[4] ?? '').trim() },
+      axisGrades: {
+        수익성:     String(r[5] ?? '').trim(),
+        안정성:     String(r[6] ?? '').trim(),
+        밸류에이션: String(r[7] ?? '').trim(),
+        현금흐름:   String(r[8] ?? '').trim(),
+        모멘텀:     String(r[9] ?? '').trim(),
+      },
+      reasons:   splitNumbered(r[10]),
+      risks:     splitNumbered(r[11]),
+      actions:   splitBullets(r[12]),
+      frankMemo: String(r[13] ?? '').trim(),
+      status:    String(r[14] ?? '').trim(),  // 매수 / 보류 / 매도
+      buyDate:   String(r[15] ?? '').trim(),
+      buyPrice:  String(r[16] ?? '').trim(),
+      targetTerm:String(r[17] ?? '').trim(),
+      targetRet: String(r[18] ?? '').trim(),
+      aiNote:    String(r[19] ?? '').trim(),
+    };
+  }).filter(Boolean).reverse();  // 최신순
+}
+
 function parseSheetData(valueRanges) {
   // indices: ISA(0) 위탁(1) 연금저축(2) IRP(3)
   //          위탁리밸(4) 연금저축리밸(5) ISA리밸(6) IRP리밸(7)
@@ -310,8 +487,9 @@ function parseSheetData(valueRanges) {
   const monthlyRow = findMonthlyRow(valueRanges[8]);
   const dividends = parseDividends(valueRanges[9]);
   const profits = parseProfits(valueRanges[10]);
+  const evaluations = parseEvaluations(valueRanges[11]);
 
-  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits } : null;
+  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations } : null;
 }
 
 // ── useGoogleSheets 훅 ────────────────────────────────────────────────────────
@@ -339,6 +517,7 @@ function useGoogleSheets(onData) {
           monthlyRow: parsed.monthlyRow,
           dividends: parsed.dividends,
           profits: parsed.profits,
+          evaluations: parsed.evaluations,
         });
       }
       const now = new Date();
@@ -442,6 +621,18 @@ function useGoogleSheets(onData) {
     });
   }, []);
 
+  // 진짜 append (시트 끝에 새 행 추가) — values.append API
+  const appendValues = useCallback(async (range, rows) => {
+    await window.gapi.client.sheets.spreadsheets.values.append({
+      spreadsheetId: SHEET_ID,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      resource: { values: rows },
+    });
+    await doFetch();
+  }, [doFetch]);
+
   const insertRowAfter = useCallback(async (sheetName, startIndex) => {
     const meta = await window.gapi.client.sheets.spreadsheets.get({
       spreadsheetId: SHEET_ID,
@@ -508,7 +699,7 @@ function useGoogleSheets(onData) {
     });
   }, []);
 
-  return { auth, sync, lastSync, lastSyncRef, signIn, signOut, fetch: doFetch, appendRow, clearRows, clearRowsRaw, readRange, writeRange, writeRangeMulti, insertRowAfter, getSheetId, readTradeProcessedFlags, markTradeProcessed };
+  return { auth, sync, lastSync, lastSyncRef, signIn, signOut, fetch: doFetch, appendRow, appendValues, clearRows, clearRowsRaw, readRange, writeRange, writeRangeMulti, insertRowAfter, getSheetId, readTradeProcessedFlags, markTradeProcessed };
 }
 
 // ── 종목추가 폼 컴포넌트 ──────────────────────────────────────────────────────
@@ -734,17 +925,170 @@ export default function App() {
   const [profitYear, setProfitYear] = useState('전체');
   const [selectedProfitKey, setSelectedProfitKey] = useState(null);
   const isMobile = useIsMobile();
+  const [evalSelectedMetric, setEvalSelectedMetric] = useState(null);
+  const [evalPromptCopied, setEvalPromptCopied] = useState(false);
+  const [evaluations, setEvaluations] = useState([]);
+  const [evalSelectedIdx, setEvalSelectedIdx] = useState(0);
+  const [evalIngestOpen, setEvalIngestOpen] = useState(false);
+  const [evalIngestRaw, setEvalIngestRaw] = useState('');
+  const [evalIngestParsed, setEvalIngestParsed] = useState(null);
+  const [evalIngestMsg, setEvalIngestMsg] = useState('');
+  const [evalIngestBusy, setEvalIngestBusy] = useState(false);
+  const [noteSelectedStock, setNoteSelectedStock] = useState(null);
+  const [noteSellCopied, setNoteSellCopied] = useState(false);
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p }) => {
+  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
     setDividendData(d || []);
     setProfitData(p || []);
     monthlyRowRef.current = mr ?? null;
     setMonthlyRow(mr ?? null);
+    setEvaluations(ev || []);
+    setEvalSelectedIdx(0);
   }, []);
 
   const sheets = useGoogleSheets(onData);
+
+  // ── 평가 카드 JSON 파싱·적재 ────────────────────────────────────────────
+  const tryParseEvalJson = useCallback((raw) => {
+    if (!raw || !raw.trim()) return { ok: false, error: '입력이 비어있습니다.' };
+    // ```json ... ``` 펜스 우선 추출
+    const fence = raw.match(/```json\s*([\s\S]*?)\s*```/i) || raw.match(/```\s*([\s\S]*?)\s*```/);
+    let candidate = fence ? fence[1] : raw;
+    // 가장 바깥 { ... } 추출
+    const first = candidate.indexOf('{');
+    const last = candidate.lastIndexOf('}');
+    if (first < 0 || last < 0 || last < first) return { ok: false, error: 'JSON 블록을 찾지 못했습니다.' };
+    candidate = candidate.slice(first, last + 1);
+    try {
+      const obj = JSON.parse(candidate);
+      const required = ['date', 'name', 'conclusion'];
+      const missing = required.filter(k => !obj[k]);
+      if (missing.length) return { ok: false, error: `필수 필드 누락: ${missing.join(', ')}` };
+      const grades = obj.grades || {};
+      return { ok: true, data: {
+        date:       String(obj.date ?? ''),
+        name:       String(obj.name ?? ''),
+        ticker:     String(obj.ticker ?? ''),
+        market:     String(obj.market ?? ''),
+        conclusion: String(obj.conclusion ?? ''),
+        grades: {
+          수익성:     String(grades.수익성 ?? ''),
+          안정성:     String(grades.안정성 ?? ''),
+          밸류에이션: String(grades.밸류에이션 ?? ''),
+          현금흐름:   String(grades.현금흐름 ?? ''),
+          모멘텀:     String(grades.모멘텀 ?? ''),
+        },
+        reasons:    Array.isArray(obj.reasons) ? obj.reasons.map(String) : [],
+        risks:      Array.isArray(obj.risks)   ? obj.risks.map(String)   : [],
+        actions:    Array.isArray(obj.actions) ? obj.actions.map(String) : [],
+        frankMemo:  String(obj.frankMemo ?? ''),
+        status:     String(obj.status ?? '보류'),
+        buyDate:    String(obj.buyDate ?? ''),
+        buyPrice:   String(obj.buyPrice ?? ''),
+        targetTerm: String(obj.targetTerm ?? ''),
+        targetRet:  String(obj.targetRet ?? ''),
+        aiNote:     String(obj.aiNote ?? ''),
+      }};
+    } catch (e) {
+      return { ok: false, error: `JSON 파싱 실패: ${e.message}` };
+    }
+  }, []);
+
+  const buildEvalRow = useCallback((d) => {
+    const joinNumbered = (arr) => (arr || []).map((s, i) => `${i + 1}) ${s}`).join(' ');
+    return [
+      d.date, d.name, d.ticker, d.market,
+      d.conclusion,
+      d.grades.수익성, d.grades.안정성, d.grades.밸류에이션, d.grades.현금흐름, d.grades.모멘텀,
+      joinNumbered(d.reasons),
+      joinNumbered(d.risks),
+      joinNumbered(d.actions),
+      d.frankMemo,
+      d.status,
+      d.buyDate, d.buyPrice,
+      d.targetTerm, d.targetRet,
+      d.aiNote,
+    ];
+  }, []);
+
+  // 매도 평가 프롬프트 빌더 — 종목 정보 + 최초 매수 카드를 채워 sell-evaluation.md §2 입력 컨트랙트로 변환
+  const buildSellEvalPrompt = useCallback((stock, earliestEval, position) => {
+    const e = earliestEval;
+    const reasonLines = (e?.reasons || []).slice(0, 3).map((r, i) => `근거 ${i + 1}: ${r}`).join('\n');
+    const riskLines   = (e?.risks   || []).slice(0, 2).map((r, i) => `리스크 ${i + 1}: ${r}`).join('\n');
+    return `[매도 평가 요청]
+종목: ${stock.name}${stock.ticker ? ` (${stock.ticker})` : ''}
+시장: ${stock.market || (/^[0-9]{6}$/.test(stock.ticker || '') ? 'KR' : 'US')}
+트리거: 수동 요청 (banana-portfolio 노트 탭)
+
+[최초 매수 카드]
+${e ? `일자: ${e.date}
+결론: ${e.conclusion?.raw || '—'}
+${reasonLines || '(근거 미기록)'}
+${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노트에 평가 기록부터 필요)'}
+
+[현재 보유]
+보유수량: ${position.qty}주
+평균단가: ₩${Math.round(position.avgPrice).toLocaleString('ko-KR')}
+평가금: ₩${Math.round(position.evalSum).toLocaleString('ko-KR')}
+수익률: ${position.rate >= 0 ? '+' : ''}${position.rate.toFixed(1)}%
+계좌: ${position.accounts.map(a => a.acct).join(' / ')}
+
+다음 플레이북에 따라 매도 평가 카드를 생성해줘:
+- 단일 출처: Trading Agent/playbooks/sell-evaluation.md
+- 출력 양식: §5 표준 카드 (최초 ↔ 현재 ↔ 근거 점검 ↔ 리스크 점검 ↔ 판정 ↔ 권고 4안)
+- 4단계 판정: 🟢 유효 / 🟡 약화 / 🔴 훼손 / ⚪ 판단보류
+- 데이터 재산출: KR=OpenDart MCP, US=UsStockInfo MCP (active-evaluation.md §3 동일 5축)
+- 모든 수치 출처/기준일 표기, 누락 항목은 '데이터 부족'으로 명시
+- 분할 매도 시나리오 최소 3안 (CLAUDE.md §3 분할 매도 원칙)
+- 다음 재평가 시점 명시
+
+마지막에 반드시 \`\`\`json ... \`\`\` 펜스로 20필드 JSON 출력 (적재용):
+
+\`\`\`json
+{
+  "date": "YYYY-MM-DD",
+  "name": "${stock.name}",
+  "ticker": "${stock.ticker || ''}",
+  "market": "${stock.market || ''}",
+  "conclusion": "🟢 유효 | 🟡 약화 | 🔴 훼손 | ⚪ 판단보류",
+  "grades": { "수익성":"", "안정성":"", "밸류에이션":"", "현금흐름":"", "모멘텀":"" },
+  "reasons": ["현 시점 유지 정당화 또는 유지 어려움 근거"],
+  "risks": ["현 시점 추가/해소된 리스크"],
+  "actions": ["권고 시나리오 4안 요약"],
+  "frankMemo": "",
+  "status": "매도 | 보류",
+  "buyDate": "${e?.buyDate || ''}",
+  "buyPrice": "${e?.buyPrice || ''}",
+  "targetTerm": "${e?.targetTerm || ''}",
+  "targetRet": "${e?.targetRet || ''}",
+  "aiNote": "한 줄 요약 (예: 'PER 회복으로 매력 일부 소진, 펀더멘털은 강화')"
+}
+\`\`\``;
+  }, []);
+
+  const ingestEvaluation = useCallback(async () => {
+    if (!evalIngestParsed) return;
+    setEvalIngestBusy(true);
+    setEvalIngestMsg('적재 중...');
+    try {
+      const row = buildEvalRow(evalIngestParsed);
+      await sheets.appendValues('종목투자노트!A2:T', [row]);
+      setEvalIngestMsg('✓ 적재 완료 — 카드 갱신됨');
+      setTimeout(() => {
+        setEvalIngestOpen(false);
+        setEvalIngestRaw('');
+        setEvalIngestParsed(null);
+        setEvalIngestMsg('');
+      }, 1200);
+    } catch (e) {
+      setEvalIngestMsg(`적재 실패: ${e.message || e}`);
+    } finally {
+      setEvalIngestBusy(false);
+    }
+  }, [evalIngestParsed, buildEvalRow, sheets]);
 
   const totalEval = Object.values(accounts).reduce((s, a) => s + a.total_eval, 0);
 
@@ -1229,6 +1573,8 @@ export default function App() {
             { key: "dividend", label: "배당금" },
             { key: "profit", label: "수익금" },
             { key: "체결내역", label: "체결" },
+            { key: "평가", label: "평가" },
+            { key: "노트", label: "노트" },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)} style={{
               padding: "10px 10px",
@@ -2166,6 +2512,625 @@ export default function App() {
               </div>
             )}
 
+          </div>
+        )}
+
+        {/* ── 평가 탭 ── */}
+        {tab === "평가" && (() => {
+          const fromSheet = evaluations.length > 0;
+          const current = fromSheet ? evaluations[evalSelectedIdx] : null;
+          // 시트 카드를 SAMPLE 카드와 같은 모양으로 정규화 (axes는 grade만, items 없음)
+          const card = current ? {
+            stock: current.stock,
+            date: current.date,
+            axes: [
+              { label: '수익성',     grade: current.axisGrades.수익성,     items: [] },
+              { label: '재무 안정성', grade: current.axisGrades.안정성,     items: [] },
+              { label: '밸류에이션',  grade: current.axisGrades.밸류에이션, items: [] },
+              { label: '현금흐름',    grade: current.axisGrades.현금흐름,   items: [] },
+              { label: '모멘텀',      grade: current.axisGrades.모멘텀,     items: [] },
+            ],
+            conclusion: { raw: current.conclusion.raw, label: current.conclusion.raw },
+            reasons: current.reasons,
+            risks: current.risks,
+            actions: current.actions,
+            sources: [],
+            statusBar: { status: current.status, buyDate: current.buyDate, buyPrice: current.buyPrice, targetTerm: current.targetTerm, targetRet: current.targetRet, aiNote: current.aiNote, frankMemo: current.frankMemo },
+          } : SAMPLE_EVALUATION;
+
+          return (
+          <div>
+            {/* 헤더 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478' }}>🤖 AI 능동 종목 평가</div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={() => {
+                  navigator.clipboard.writeText(EVAL_PROMPT_TEMPLATE);
+                  setEvalPromptCopied(true);
+                  setTimeout(() => setEvalPromptCopied(false), 2000);
+                }} style={{
+                  padding: '5px 12px', borderRadius: 6, border: '1px solid #2A2F3E',
+                  background: 'transparent', color: evalPromptCopied ? '#4ADE80' : '#9CA3AF',
+                  cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
+                }}>
+                  {evalPromptCopied ? '✓ 복사됨' : '프롬프트 복사'}
+                </button>
+                <button onClick={() => setEvalIngestOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
+                  padding: '5px 12px', borderRadius: 6, border: '1px solid #3B82F6',
+                  background: '#1E3A5F', color: '#60A5FA',
+                  cursor: sheets.auth !== 'signed-in' ? 'not-allowed' : 'pointer',
+                  opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
+                  fontSize: 10, fontFamily: baseFont,
+                }}>
+                  + 적재
+                </button>
+              </div>
+            </div>
+
+            {/* 안내 */}
+            <div style={{ background: '#1A1D26', borderRadius: 10, padding: '12px 14px', marginBottom: 16, fontSize: 11, color: '#9CA3AF', lineHeight: 1.6 }}>
+              {fromSheet ? (
+                <>시트 <span style={{ color: '#60A5FA' }}>종목투자노트</span>의 평가 {evaluations.length}건 중 최신순.<br/>새 평가는 위 버튼으로 프롬프트 복사 → Claude Code 실행 → 시트 적재.</>
+              ) : (
+                <>아직 적재된 평가가 없습니다. 시트 <span style={{ color: '#60A5FA' }}>종목투자노트</span> 탭이 비어있으면 샘플을 표시합니다.<br/>위 버튼으로 프롬프트 복사 → Claude Code 실행 → 시트 적재.</>
+              )}
+            </div>
+
+            {/* 종목 선택 드롭다운 (시트 데이터 있을 때만) */}
+            {fromSheet && evaluations.length > 1 && (
+              <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+                {evaluations.slice(0, 12).map((ev, i) => (
+                  <button key={i} onClick={() => setEvalSelectedIdx(i)} style={{
+                    padding: '4px 10px', borderRadius: 6,
+                    border: `1px solid ${i === evalSelectedIdx ? '#3B82F6' : '#2A2F3E'}`,
+                    background: i === evalSelectedIdx ? '#1E3A5F' : 'transparent',
+                    color: i === evalSelectedIdx ? '#60A5FA' : '#9CA3AF',
+                    cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
+                  }}>{ev.stock.name}</button>
+                ))}
+              </div>
+            )}
+
+            <div style={{ fontSize: 9, letterSpacing: 2, color: '#5A6478', marginBottom: 8 }}>
+              {fromSheet ? `시트 데이터 (${card.stock.name} · ${card.date} 기준)` : `샘플 (${card.stock.name} · ${card.date} 기준)`}
+            </div>
+
+            {/* 평가 카드 */}
+            <div style={{ background: '#1A1D26', borderRadius: 12, padding: '16px 16px 12px', marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: '#E8EAF0' }}>
+                    {card.stock.name}{card.stock.ticker ? ` (${card.stock.ticker})` : ''}
+                  </div>
+                  <div style={{ fontSize: 9, color: '#5A6478', marginTop: 2, letterSpacing: 1 }}>
+                    {card.stock.market || '—'} · {card.date}
+                  </div>
+                </div>
+                {fromSheet && card.statusBar?.status && (
+                  <div style={{
+                    padding: '3px 10px', borderRadius: 4, fontSize: 10,
+                    background: card.statusBar.status === '매수' ? '#1E3A5F'
+                              : card.statusBar.status === '매도' ? '#4A1E1E' : '#2A2F3E',
+                    color:      card.statusBar.status === '매수' ? '#60A5FA'
+                              : card.statusBar.status === '매도' ? '#F87171' : '#9CA3AF',
+                  }}>{card.statusBar.status}</div>
+                )}
+              </div>
+
+              {/* 5축 */}
+              {card.axes.map((axis, ai) => (
+                <div key={ai} style={{ borderTop: '1px solid #1E2233', padding: '10px 0' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#E8EAF0', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>{axis.grade || '⚪'}</span>
+                    <span>{ai + 1}. {axis.label}</span>
+                  </div>
+                  {axis.items.map((item, ii) => (
+                    <div key={ii} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: 11 }}>
+                      <div style={{ color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>{item.label}</span>
+                        {item.metric && (
+                          <button onClick={() => setEvalSelectedMetric(item.metric)} style={{
+                            background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, fontSize: 10, lineHeight: 1,
+                          }} title={LEARNING_MODULES[item.metric]?.title}>📘</button>
+                        )}
+                      </div>
+                      <div style={{ color: '#E8EAF0', display: 'flex', alignItems: 'baseline', gap: 6, textAlign: 'right' }}>
+                        <span style={{ fontWeight: 600 }}>{item.value}</span>
+                        {item.source && <span style={{ fontSize: 9, color: '#5A6478' }}>{item.source}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+
+              {/* 결론·근거·리스크·액션·출처 */}
+              <div style={{ borderTop: '1px solid #2A2F3E', marginTop: 10, paddingTop: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#4ADE80', marginBottom: 12 }}>
+                  결론: {fromSheet ? card.conclusion.raw : `${card.conclusion.grade} ${card.conclusion.label}`}
+                </div>
+
+                {card.reasons.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>근거</div>
+                    {card.reasons.map((r, i) => (
+                      <div key={i} style={{ fontSize: 11, color: '#9CA3AF', paddingLeft: 8, lineHeight: 1.5, marginBottom: 3 }}>
+                        {i + 1}. {r}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {card.risks.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>리스크</div>
+                    {card.risks.map((r, i) => (
+                      <div key={i} style={{ fontSize: 11, color: '#F87171', paddingLeft: 8, lineHeight: 1.5, marginBottom: 3 }}>
+                        {i + 1}. {r}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {card.actions.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>Frank 액션 권고</div>
+                    {card.actions.map((a, i) => (
+                      <div key={i} style={{ fontSize: 11, color: '#60A5FA', paddingLeft: 8, lineHeight: 1.5, marginBottom: 3 }}>
+                        • {a}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 시트 메타 (매수일·목표 등) */}
+                {fromSheet && (card.statusBar?.buyDate || card.statusBar?.targetTerm || card.statusBar?.aiNote || card.statusBar?.frankMemo) && (
+                  <div style={{ background: '#0F1218', borderRadius: 6, padding: '8px 12px', marginTop: 8, fontSize: 10, color: '#9CA3AF', lineHeight: 1.6 }}>
+                    {card.statusBar.buyDate  && <div>매수일: <span style={{ color: '#E8EAF0' }}>{card.statusBar.buyDate}</span>{card.statusBar.buyPrice ? ` · ${card.statusBar.buyPrice}` : ''}</div>}
+                    {card.statusBar.targetTerm && <div>목표: <span style={{ color: '#E8EAF0' }}>{card.statusBar.targetTerm}{card.statusBar.targetRet ? ` · ${card.statusBar.targetRet}` : ''}</span></div>}
+                    {card.statusBar.aiNote   && <div>AI: <span style={{ color: '#E8EAF0' }}>{card.statusBar.aiNote}</span></div>}
+                    {card.statusBar.frankMemo && <div>Frank: <span style={{ color: '#E8EAF0' }}>{card.statusBar.frankMemo}</span></div>}
+                  </div>
+                )}
+
+                {card.sources?.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>출처</div>
+                    {card.sources.map((s, i) => (
+                      <div key={i} style={{ fontSize: 9, color: '#5A6478', paddingLeft: 8, lineHeight: 1.4 }}>· {s}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ fontSize: 9, color: '#3A3F4E', textAlign: 'center', lineHeight: 1.6 }}>
+              📘 아이콘은 샘플 카드에서만 표시됩니다 (시트 데이터는 5축 grade만).<br/>
+              평가 적재 후 ↻로 새로고침하면 최신 카드가 반영됩니다.
+            </div>
+          </div>
+          );
+        })()}
+
+        {/* ── 노트 탭 ── */}
+        {tab === "노트" && (() => {
+          // 4계좌 holdings 합산 — 종목명 key로 unique
+          const stockMap = {};
+          Object.entries(accounts).forEach(([acctKey, acct]) => {
+            (acct.holdings || []).forEach(h => {
+              const name = String(h.name ?? '').trim();
+              if (!name) return;
+              if (!stockMap[name]) {
+                stockMap[name] = { name, type: h.type, qty: 0, investSum: 0, evalSum: 0, profitSum: 0, accounts: [] };
+              }
+              const s = stockMap[name];
+              s.qty += h.qty || 0;
+              s.investSum += h.invest || 0;
+              s.evalSum   += h.eval   || 0;
+              s.profitSum += h.profit || 0;
+              s.accounts.push({ acct: acctKey, qty: h.qty, price: h.price, currentPrice: h.currentPrice });
+            });
+          });
+          const stocks = Object.values(stockMap)
+            .filter(s => s.qty > 0)
+            .map(s => ({
+              ...s,
+              avgPrice: s.investSum > 0 && s.qty > 0 ? s.investSum / s.qty : 0,
+              rate: s.investSum > 0 ? (s.profitSum / s.investSum) * 100 : 0,
+            }))
+            .sort((a, b) => b.evalSum - a.evalSum);
+
+          const currentName = noteSelectedStock || stocks[0]?.name || null;
+          const stock = stocks.find(s => s.name === currentName);
+          const stockEvals = evaluations.filter(e => e.stock?.name === currentName);
+
+          if (sheets.auth !== 'signed-in') {
+            return (
+              <div style={{ padding: 32, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
+                로그인 후 이용할 수 있습니다
+              </div>
+            );
+          }
+          if (stocks.length === 0) {
+            return (
+              <div style={{ padding: 32, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
+                보유 종목이 없습니다
+              </div>
+            );
+          }
+
+          return (
+            <div>
+              {/* 헤더 */}
+              <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>
+                📒 종목 노트 — 보유 {stocks.length}종목
+              </div>
+
+              {/* 종목 선택 칩 */}
+              <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+                {stocks.map(s => {
+                  const evCount = evaluations.filter(e => e.stock?.name === s.name).length;
+                  const isSelected = s.name === currentName;
+                  const profitColor = s.profitSum >= 0 ? PROFIT_POS : PROFIT_NEG;
+                  return (
+                    <button key={s.name} onClick={() => setNoteSelectedStock(s.name)} style={{
+                      padding: '6px 10px', borderRadius: 6,
+                      border: `1px solid ${isSelected ? '#3B82F6' : '#2A2F3E'}`,
+                      background: isSelected ? '#1E3A5F' : '#1A1D26',
+                      color: isSelected ? '#60A5FA' : '#9CA3AF',
+                      cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
+                      display: 'flex', alignItems: 'center', gap: 6,
+                    }}>
+                      <span>{s.name}</span>
+                      <span style={{ fontSize: 9, color: profitColor }}>
+                        {s.profitSum >= 0 ? '+' : ''}{s.rate.toFixed(1)}%
+                      </span>
+                      {evCount > 0 && (
+                        <span style={{
+                          fontSize: 8, padding: '0 4px', borderRadius: 8,
+                          background: '#2A2F3E', color: '#9CA3AF',
+                        }}>📘{evCount}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {stock && (() => {
+                const earliestEval = stockEvals[stockEvals.length - 1] || null;
+                const canSellEval = !!earliestEval && earliestEval.reasons.length > 0;
+                const onSellEvalClick = async () => {
+                  const prompt = buildSellEvalPrompt(
+                    { name: stock.name, ticker: earliestEval?.stock?.ticker || '', market: earliestEval?.stock?.market || '' },
+                    earliestEval,
+                    { qty: stock.qty, avgPrice: stock.avgPrice, evalSum: stock.evalSum, rate: stock.rate, accounts: stock.accounts }
+                  );
+                  await navigator.clipboard.writeText(prompt);
+                  setNoteSellCopied(true);
+                  setTimeout(() => setNoteSellCopied(false), 2000);
+                };
+                return (
+                <>
+                  {/* 보유 정보 카드 */}
+                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: '16px 16px 14px', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                      <div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: '#E8EAF0' }}>{stock.name}</div>
+                        <div style={{ fontSize: 9, color: '#5A6478', marginTop: 2, letterSpacing: 1 }}>
+                          {stock.type || '—'} · {stock.accounts.map(a => a.acct).join(' / ')}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: stock.profitSum >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                          {stock.profitSum >= 0 ? '+' : ''}{stock.rate.toFixed(1)}%
+                        </div>
+                        <div style={{ fontSize: 9, color: '#5A6478', marginTop: 2 }}>
+                          {stock.profitSum >= 0 ? '+' : ''}₩{fmt(stock.profitSum)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 매도 평가 트리거 */}
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                      <button onClick={onSellEvalClick} disabled={!canSellEval} title={canSellEval ? '매도 평가 프롬프트 복사' : '최초 매수 이유가 없어 매도 평가 불가'} style={{
+                        flex: 1, padding: '6px 10px', borderRadius: 6,
+                        border: `1px solid ${canSellEval ? '#F87171' : '#2A2F3E'}`,
+                        background: canSellEval ? (noteSellCopied ? '#4ADE8033' : '#4A1E1E33') : 'transparent',
+                        color: canSellEval ? (noteSellCopied ? '#4ADE80' : '#F87171') : '#3A3F4E',
+                        cursor: canSellEval ? 'pointer' : 'not-allowed',
+                        fontSize: 10, fontFamily: baseFont, fontWeight: 600,
+                      }}>
+                        {noteSellCopied ? '✓ 프롬프트 복사됨 — Claude Code 실행 후 적재' : '🔍 매도 평가 (펀더멘털 vs 매수이유)'}
+                      </button>
+                      <button onClick={() => setEvalIngestOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
+                        padding: '6px 10px', borderRadius: 6, border: '1px solid #3B82F6',
+                        background: '#1E3A5F', color: '#60A5FA',
+                        cursor: sheets.auth !== 'signed-in' ? 'not-allowed' : 'pointer',
+                        opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
+                        fontSize: 10, fontFamily: baseFont,
+                      }}>+ 적재</button>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, fontSize: 10 }}>
+                      <div>
+                        <div style={{ color: '#5A6478', letterSpacing: 1, marginBottom: 2 }}>보유</div>
+                        <div style={{ color: '#E8EAF0', fontWeight: 600 }}>{fmt(stock.qty)}주</div>
+                      </div>
+                      <div>
+                        <div style={{ color: '#5A6478', letterSpacing: 1, marginBottom: 2 }}>평균단가</div>
+                        <div style={{ color: '#E8EAF0', fontWeight: 600 }}>₩{fmt(stock.avgPrice)}</div>
+                      </div>
+                      <div>
+                        <div style={{ color: '#5A6478', letterSpacing: 1, marginBottom: 2 }}>평가금</div>
+                        <div style={{ color: '#E8EAF0', fontWeight: 600 }}>₩{fmt(stock.evalSum)}</div>
+                      </div>
+                    </div>
+
+                    {stock.accounts.length > 1 && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1E2233' }}>
+                        <div style={{ fontSize: 9, letterSpacing: 1, color: '#5A6478', marginBottom: 4 }}>계좌별 보유</div>
+                        {stock.accounts.map((a, i) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, padding: '2px 0' }}>
+                            <span style={{ color: '#9CA3AF' }}>{a.acct}</span>
+                            <span style={{ color: '#E8EAF0' }}>
+                              {fmt(a.qty)}주 · 매수가 ₩{fmt(a.price)}{a.currentPrice ? ` · 현재가 ₩${fmt(a.currentPrice)}` : ''}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 매수 이유 — 첫 평가의 reasons 또는 최신 평가의 reasons */}
+                  {stockEvals.length > 0 && (() => {
+                    const earliest = stockEvals[stockEvals.length - 1]; // evaluations는 최신순이므로 last가 가장 오래된 = 최초
+                    const latest = stockEvals[0];
+                    return (
+                      <div style={{ background: '#1A1D26', borderRadius: 12, padding: '14px 16px', marginBottom: 12 }}>
+                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 8 }}>
+                          📝 최초 매수 이유 ({earliest.date})
+                        </div>
+                        {earliest.reasons.length === 0 ? (
+                          <div style={{ fontSize: 11, color: '#5A6478' }}>(근거 미기록)</div>
+                        ) : earliest.reasons.map((r, i) => (
+                          <div key={i} style={{ fontSize: 11, color: '#9CA3AF', paddingLeft: 4, lineHeight: 1.6, marginBottom: 3 }}>
+                            {i + 1}. {r}
+                          </div>
+                        ))}
+
+                        {latest.aiNote && (
+                          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1E2233' }}>
+                            <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 4 }}>AI 한 줄 (최신 평가)</div>
+                            <div style={{ fontSize: 11, color: '#E8EAF0', lineHeight: 1.5 }}>{latest.aiNote}</div>
+                          </div>
+                        )}
+
+                        {latest.frankMemo && (
+                          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1E2233' }}>
+                            <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 4 }}>Frank 메모</div>
+                            <div style={{ fontSize: 11, color: '#E8EAF0', lineHeight: 1.5 }}>{latest.frankMemo}</div>
+                          </div>
+                        )}
+
+                        {(latest.targetTerm || latest.targetRet || latest.status) && (
+                          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1E2233', display: 'flex', gap: 12, fontSize: 10, color: '#5A6478' }}>
+                            {latest.status && <span>상태: <span style={{ color: '#E8EAF0' }}>{latest.status}</span></span>}
+                            {latest.targetTerm && <span>목표기간: <span style={{ color: '#E8EAF0' }}>{latest.targetTerm}</span></span>}
+                            {latest.targetRet && <span>목표수익률: <span style={{ color: '#E8EAF0' }}>{latest.targetRet}</span></span>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* 평가 히스토리 시계열 */}
+                  {stockEvals.length > 0 ? (
+                    <div style={{ background: '#1A1D26', borderRadius: 12, padding: '14px 16px', marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 10 }}>
+                        📊 평가 히스토리 ({stockEvals.length}건, 최신순)
+                      </div>
+                      {stockEvals.map((ev, i) => (
+                        <div key={i} style={{
+                          padding: '8px 0',
+                          borderTop: i === 0 ? 'none' : '1px solid #1E2233',
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                            <div style={{ fontSize: 11, color: '#E8EAF0', fontWeight: 600 }}>
+                              {ev.date} · {ev.conclusion.raw || '—'}
+                            </div>
+                            <div style={{ fontSize: 9, color: '#5A6478' }}>
+                              {[ev.axisGrades.수익성, ev.axisGrades.안정성, ev.axisGrades.밸류에이션, ev.axisGrades.현금흐름, ev.axisGrades.모멘텀].join(' ')}
+                            </div>
+                          </div>
+                          {ev.aiNote && (
+                            <div style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.5, paddingLeft: 4 }}>
+                              {ev.aiNote}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ background: '#1A1D26', borderRadius: 12, padding: '20px 16px', marginBottom: 12, textAlign: 'center' }}>
+                      <div style={{ fontSize: 11, color: '#5A6478', marginBottom: 8 }}>
+                        아직 평가 기록이 없습니다
+                      </div>
+                      <button onClick={() => setTab('평가')} style={{
+                        padding: '6px 12px', borderRadius: 6, border: '1px solid #3B82F6',
+                        background: '#1E3A5F', color: '#60A5FA',
+                        cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
+                      }}>
+                        평가 탭에서 추가 →
+                      </button>
+                    </div>
+                  )}
+
+                  <div style={{ fontSize: 9, color: '#3A3F4E', textAlign: 'center', lineHeight: 1.6 }}>
+                    매수이유는 시트 [종목투자노트] 가장 오래된 평가 기준.<br/>
+                    Frank 메모·AI 의견·상태는 최신 평가에서 가져옵니다.
+                  </div>
+                </>
+                );
+              })()}
+            </div>
+          );
+        })()}
+
+        {/* ── 평가 카드 적재 모달 ── */}
+        {evalIngestOpen && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16, zIndex: 200,
+          }} onClick={(e) => { if (e.target === e.currentTarget) setEvalIngestOpen(false); }}>
+            <div style={{
+              background: '#1A1D26', borderRadius: 12, width: '100%', maxWidth: 560,
+              maxHeight: '90vh', overflowY: 'auto', padding: '20px 18px',
+              border: '1px solid #2A2F3E',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#60A5FA' }}>평가 카드 시트 적재</div>
+                <button onClick={() => setEvalIngestOpen(false)} style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: '#5A6478', fontSize: 18, padding: 0, lineHeight: 1,
+                }}>✕</button>
+              </div>
+
+              <div style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.6, marginBottom: 10 }}>
+                Claude Code 응답의 JSON 블록(```json ... ```)을 통째로 붙여넣으면 자동 파싱됩니다.<br/>
+                JSON만 따로 잘라 붙여도 됩니다.
+              </div>
+
+              <textarea
+                value={evalIngestRaw}
+                onChange={(e) => { setEvalIngestRaw(e.target.value); setEvalIngestParsed(null); setEvalIngestMsg(''); }}
+                placeholder='```json\n{ "date": "2026-05-18", "name": "...", ... }\n```'
+                style={{
+                  width: '100%', minHeight: 140, boxSizing: 'border-box',
+                  background: '#0F1218', color: '#E8EAF0', border: '1px solid #2A2F3E',
+                  borderRadius: 8, padding: 10, fontSize: 11, fontFamily: 'ui-monospace, Menlo, monospace',
+                  lineHeight: 1.5, resize: 'vertical', outline: 'none',
+                }}
+              />
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button onClick={() => {
+                  const r = tryParseEvalJson(evalIngestRaw);
+                  if (r.ok) { setEvalIngestParsed(r.data); setEvalIngestMsg('✓ 파싱 완료. 검토 후 적재하세요.'); }
+                  else { setEvalIngestParsed(null); setEvalIngestMsg(`⚠️ ${r.error}`); }
+                }} style={{
+                  flex: 1, padding: '8px 12px', borderRadius: 6, border: '1px solid #2A2F3E',
+                  background: 'transparent', color: '#9CA3AF', cursor: 'pointer',
+                  fontSize: 11, fontFamily: baseFont,
+                }}>파싱</button>
+                <button onClick={ingestEvaluation} disabled={!evalIngestParsed || evalIngestBusy} style={{
+                  flex: 1, padding: '8px 12px', borderRadius: 6, border: 'none',
+                  background: evalIngestParsed && !evalIngestBusy ? '#3B82F6' : '#2A2F3E',
+                  color: evalIngestParsed && !evalIngestBusy ? '#fff' : '#5A6478',
+                  cursor: evalIngestParsed && !evalIngestBusy ? 'pointer' : 'not-allowed',
+                  fontSize: 11, fontWeight: 600, fontFamily: baseFont,
+                }}>{evalIngestBusy ? '적재 중...' : '시트에 적재'}</button>
+              </div>
+
+              {evalIngestMsg && (
+                <div style={{
+                  marginTop: 10, padding: '8px 12px', borderRadius: 6,
+                  background: '#0F1218', fontSize: 11,
+                  color: evalIngestMsg.startsWith('✓') ? '#4ADE80'
+                       : evalIngestMsg.startsWith('⚠️') ? '#F59E0B'
+                       : evalIngestMsg.includes('실패') ? '#F87171' : '#9CA3AF',
+                  lineHeight: 1.5,
+                }}>{evalIngestMsg}</div>
+              )}
+
+              {/* 파싱 결과 미리보기 + 편집 */}
+              {evalIngestParsed && (
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #2A2F3E' }}>
+                  <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 8 }}>미리보기 (편집 가능)</div>
+                  {[
+                    { k: 'date', label: '평가일' },
+                    { k: 'name', label: '종목명' },
+                    { k: 'ticker', label: '종목코드' },
+                    { k: 'market', label: '시장' },
+                    { k: 'conclusion', label: '결론' },
+                    { k: 'status', label: '매수여부' },
+                    { k: 'buyDate', label: '매수일' },
+                    { k: 'buyPrice', label: '매수가' },
+                    { k: 'targetTerm', label: '목표기간' },
+                    { k: 'targetRet', label: '목표수익률' },
+                    { k: 'aiNote', label: 'AI 의견' },
+                    { k: 'frankMemo', label: 'Frank 메모' },
+                  ].map(({ k, label }) => (
+                    <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <div style={{ width: 80, fontSize: 10, color: '#5A6478', textAlign: 'right', flexShrink: 0 }}>{label}</div>
+                      <input
+                        value={evalIngestParsed[k] || ''}
+                        onChange={(e) => setEvalIngestParsed({ ...evalIngestParsed, [k]: e.target.value })}
+                        style={{
+                          flex: 1, background: '#0F1218', border: '1px solid #2A2F3E',
+                          borderRadius: 4, padding: '4px 8px', color: '#E8EAF0', fontSize: 11,
+                          fontFamily: baseFont, outline: 'none',
+                        }}
+                      />
+                    </div>
+                  ))}
+
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>5축 등급</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {Object.entries(evalIngestParsed.grades).map(([axis, val]) => (
+                        <div key={axis} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ fontSize: 10, color: '#9CA3AF' }}>{axis}</span>
+                          <input
+                            value={val}
+                            onChange={(e) => setEvalIngestParsed({
+                              ...evalIngestParsed,
+                              grades: { ...evalIngestParsed.grades, [axis]: e.target.value },
+                            })}
+                            style={{
+                              width: 44, background: '#0F1218', border: '1px solid #2A2F3E',
+                              borderRadius: 4, padding: '3px 6px', color: '#E8EAF0', fontSize: 11,
+                              textAlign: 'center', fontFamily: baseFont, outline: 'none',
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 10, fontSize: 10, color: '#5A6478', lineHeight: 1.6 }}>
+                    근거 {evalIngestParsed.reasons.length}건 · 리스크 {evalIngestParsed.risks.length}건 · 액션 {evalIngestParsed.actions.length}건<br/>
+                    <span style={{ color: '#3A3F4E' }}>(긴 텍스트는 적재 후 시트에서 직접 수정)</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── 학습 모듈 슬라이드 패널 ── */}
+        {evalSelectedMetric && LEARNING_MODULES[evalSelectedMetric] && (
+          <div style={{
+            position: 'fixed', bottom: 0, left: 0, right: 0,
+            background: '#1A1D26', borderTop: '2px solid #3B82F6',
+            padding: '16px 20px 24px', maxHeight: '60vh', overflowY: 'auto',
+            boxShadow: '0 -8px 30px rgba(0,0,0,0.6)', zIndex: 100,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#60A5FA', display: 'flex', alignItems: 'center', gap: 6 }}>
+                📘 {LEARNING_MODULES[evalSelectedMetric].title}
+              </div>
+              <button onClick={() => setEvalSelectedMetric(null)} style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                color: '#5A6478', fontSize: 18, padding: 0, lineHeight: 1,
+              }}>✕</button>
+            </div>
+            <div style={{ fontSize: 12, color: '#E8EAF0', lineHeight: 1.6, marginBottom: 10 }}>
+              {LEARNING_MODULES[evalSelectedMetric].summary}
+            </div>
+            <div style={{ background: '#0F1218', borderRadius: 6, padding: '8px 12px', fontSize: 11, color: '#9CA3AF', lineHeight: 1.5 }}>
+              <span style={{ color: '#F5A623', marginRight: 6 }}>임계값</span>
+              {LEARNING_MODULES[evalSelectedMetric].threshold}
+            </div>
           </div>
         )}
 
