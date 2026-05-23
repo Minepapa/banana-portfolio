@@ -23,6 +23,7 @@ const SHEET_RANGES = {
   배당금:       '배당금!A2:C',         // 9
   수익금:       '수익금!A2:F',         // 10
   평가노트:     '종목투자노트!A2:T',   // 11  (없거나 비어있어도 안전)
+  평가요청:     '평가요청!A2:F',       // 12  비동기 평가 의뢰 큐 (모바일에서 추가 → Claude Pro가 처리)
 };
 
 const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
@@ -70,6 +71,16 @@ const LEARNING_MODULES = {
   twr:              { title: 'TWR (시간가중수익률)', summary: '입출금 효과 제거한 순수 운용 수익률. 단순 수익률과의 차이가 곧 타이밍 효과.', threshold: 'Frank 확정: 연 TWR 시장 혼합(KOSPI:S&P500=50:50) 대비 +3~5%p (균형형 알파 목표). (2026-05 인터뷰)' },
   sharpe:           { title: '샤프 비율', summary: '(수익률 − 무위험) / 변동성. 위험 1단위당 초과 수익. 1.0~1.5가 개인 포트폴리오 목표.', threshold: 'Frank 확정: 1년 샤프 0.8~1.2 (개인 적극 운용 합리적 목표). (2026-05 인터뷰)' },
   mdd:              { title: '최대낙폭 (MDD)', summary: '최고점 대비 최저점 하락폭. 평균은 행복해도 거기서 못 견디면 의미 없다.', threshold: 'Frank 확정: 1년 MDD −25% 이내 (성장형) / 3년 −35% 이내 / 회복 12개월 이내. (2026-05 인터뷰)' },
+};
+
+// 5축 → 학습 모듈 metric key. 시트 적재 카드는 axis grade만 있어 지표별 📘가 안 보이므로
+// axis 단위로 학습 모듈 진입 칩을 묶어 보여준다.
+const AXIS_METRICS = {
+  '수익성':     ['revenue_growth', 'operating_margin', 'roic'],
+  '재무 안정성': ['net_debt_ebitda', 'interest_coverage', 'current_ratio'],
+  '밸류에이션':  ['fwd_per', 'ev_ebitda', 'pbr'],
+  '현금흐름':    ['fcf_yield', 'payout_ratio', 'dividend_sustainability'],
+  '모멘텀':      ['rsi', 'pos_52w', 'foreign_flow', 'sector_rs'],
 };
 
 const SAMPLE_EVALUATION = {
@@ -388,6 +399,37 @@ function parseEvaluations(vr) {
   }).filter(Boolean).reverse();  // 최신순
 }
 
+// 평가요청 큐 (컬럼 A~F) → { entries, counts }
+function parseEvalQueue(vr) {
+  const rows = vr?.values ?? [];
+  const entries = rows.map((r, idx) => {
+    const requestedAt = String(r[0] ?? '').trim();
+    const name = String(r[1] ?? '').trim();
+    if (!requestedAt || !name) return null;
+    return {
+      rowIndex: idx,
+      requestedAt,
+      name,
+      market: String(r[2] ?? '').trim(),
+      status: String(r[3] ?? '').trim() || '대기',
+      processedAt: String(r[4] ?? '').trim(),
+      memo: String(r[5] ?? '').trim(),
+    };
+  }).filter(Boolean);
+
+  const counts = entries.reduce((acc, e) => {
+    const k = e.status === '완료' ? 'done'
+            : e.status === '처리중' ? 'processing'
+            : e.status === '오류' ? 'error'
+            : 'pending';
+    acc[k] = (acc[k] || 0) + 1;
+    return acc;
+  }, { pending: 0, processing: 0, done: 0, error: 0 });
+
+  // 최신 요청 순으로 정렬해서 반환
+  return { entries: entries.slice().reverse(), counts };
+}
+
 function parseSheetData(valueRanges) {
   // indices: ISA(0) 위탁(1) 연금저축(2) IRP(3)
   //          위탁리밸(4) 연금저축리밸(5) ISA리밸(6) IRP리밸(7)
@@ -488,8 +530,9 @@ function parseSheetData(valueRanges) {
   const dividends = parseDividends(valueRanges[9]);
   const profits = parseProfits(valueRanges[10]);
   const evaluations = parseEvaluations(valueRanges[11]);
+  const evalQueue = parseEvalQueue(valueRanges[12]);
 
-  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations } : null;
+  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue } : null;
 }
 
 // ── useGoogleSheets 훅 ────────────────────────────────────────────────────────
@@ -936,8 +979,15 @@ export default function App() {
   const [evalIngestBusy, setEvalIngestBusy] = useState(false);
   const [noteSelectedStock, setNoteSelectedStock] = useState(null);
   const [noteSellCopied, setNoteSellCopied] = useState(false);
+  const [evalQueue, setEvalQueue] = useState({ entries: [], counts: { pending: 0, processing: 0, done: 0, error: 0 } });
+  const [evalQueueOpen, setEvalQueueOpen] = useState(false);
+  const [evalQueueName, setEvalQueueName] = useState('');
+  const [evalQueueMarket, setEvalQueueMarket] = useState('KR');
+  const [evalQueueMemo, setEvalQueueMemo] = useState('');
+  const [evalQueueBusy, setEvalQueueBusy] = useState(false);
+  const [evalQueueMsg, setEvalQueueMsg] = useState('');
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev }) => {
+  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
     setDividendData(d || []);
@@ -946,6 +996,7 @@ export default function App() {
     setMonthlyRow(mr ?? null);
     setEvaluations(ev || []);
     setEvalSelectedIdx(0);
+    if (q) setEvalQueue(q);
   }, []);
 
   const sheets = useGoogleSheets(onData);
@@ -1068,6 +1119,29 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 }
 \`\`\``;
   }, []);
+
+  const submitEvalQueue = useCallback(async () => {
+    const name = evalQueueName.trim();
+    if (!name) { setEvalQueueMsg('⚠️ 종목명을 입력해주세요.'); return; }
+    setEvalQueueBusy(true);
+    setEvalQueueMsg('큐에 추가 중...');
+    try {
+      const requestedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
+      const row = [requestedAt, name, evalQueueMarket, '대기', '', evalQueueMemo.trim()];
+      await sheets.appendValues('평가요청!A2:F', [row]);
+      setEvalQueueMsg('✓ 큐에 추가됨 — Claude Pro에서 처리 요청해주세요');
+      setTimeout(() => {
+        setEvalQueueOpen(false);
+        setEvalQueueName('');
+        setEvalQueueMemo('');
+        setEvalQueueMsg('');
+      }, 1500);
+    } catch (e) {
+      setEvalQueueMsg(`큐 추가 실패: ${e.message || e}`);
+    } finally {
+      setEvalQueueBusy(false);
+    }
+  }, [evalQueueName, evalQueueMarket, evalQueueMemo, sheets]);
 
   const ingestEvaluation = useCallback(async () => {
     if (!evalIngestParsed) return;
@@ -2541,19 +2615,17 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
           return (
           <div>
             {/* 헤더 */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
               <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478' }}>🤖 AI 능동 종목 평가</div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button onClick={() => {
-                  navigator.clipboard.writeText(EVAL_PROMPT_TEMPLATE);
-                  setEvalPromptCopied(true);
-                  setTimeout(() => setEvalPromptCopied(false), 2000);
-                }} style={{
-                  padding: '5px 12px', borderRadius: 6, border: '1px solid #2A2F3E',
-                  background: 'transparent', color: evalPromptCopied ? '#4ADE80' : '#9CA3AF',
-                  cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button onClick={() => setEvalQueueOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
+                  padding: '5px 12px', borderRadius: 6, border: '1px solid #F5A623',
+                  background: '#3D2E14', color: '#F5A623',
+                  cursor: sheets.auth !== 'signed-in' ? 'not-allowed' : 'pointer',
+                  opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
+                  fontSize: 10, fontFamily: baseFont, fontWeight: 600,
                 }}>
-                  {evalPromptCopied ? '✓ 복사됨' : '프롬프트 복사'}
+                  + 평가 의뢰
                 </button>
                 <button onClick={() => setEvalIngestOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
                   padding: '5px 12px', borderRadius: 6, border: '1px solid #3B82F6',
@@ -2562,10 +2634,39 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
                   fontSize: 10, fontFamily: baseFont,
                 }}>
-                  + 적재
+                  + 결과 적재
+                </button>
+                <button onClick={() => {
+                  navigator.clipboard.writeText(EVAL_PROMPT_TEMPLATE);
+                  setEvalPromptCopied(true);
+                  setTimeout(() => setEvalPromptCopied(false), 2000);
+                }} style={{
+                  padding: '5px 10px', borderRadius: 6, border: '1px solid #2A2F3E',
+                  background: 'transparent', color: evalPromptCopied ? '#4ADE80' : '#5A6478',
+                  cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
+                }} title="데스크탑용 — 프롬프트 클립보드 복사">
+                  {evalPromptCopied ? '✓' : '📋'}
                 </button>
               </div>
             </div>
+
+            {/* 평가 의뢰 큐 상태 */}
+            {(evalQueue.counts.pending + evalQueue.counts.processing + evalQueue.counts.error) > 0 && (
+              <div style={{
+                background: '#0F1218', borderRadius: 8, padding: '8px 12px', marginBottom: 12,
+                fontSize: 10, color: '#9CA3AF', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center',
+              }}>
+                <span style={{ color: '#5A6478', letterSpacing: 1 }}>📥 의뢰 큐</span>
+                {evalQueue.counts.pending > 0 && <span>대기 <span style={{ color: '#F5A623', fontWeight: 600 }}>{evalQueue.counts.pending}</span></span>}
+                {evalQueue.counts.processing > 0 && <span>처리중 <span style={{ color: '#60A5FA', fontWeight: 600 }}>{evalQueue.counts.processing}</span></span>}
+                {evalQueue.counts.error > 0 && <span>오류 <span style={{ color: '#F87171', fontWeight: 600 }}>{evalQueue.counts.error}</span></span>}
+                {evalQueue.counts.pending > 0 && (
+                  <span style={{ marginLeft: 'auto', fontSize: 9, color: '#5A6478' }}>
+                    Claude Pro에 &quot;평가요청 처리해줘&quot; →
+                  </span>
+                )}
+              </div>
+            )}
 
             {/* 안내 */}
             <div style={{ background: '#1A1D26', borderRadius: 10, padding: '12px 14px', marginBottom: 16, fontSize: 11, color: '#9CA3AF', lineHeight: 1.6 }}>
@@ -2624,6 +2725,22 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     <span>{axis.grade || '⚪'}</span>
                     <span>{ai + 1}. {axis.label}</span>
                   </div>
+                  {/* 시트 카드(items 없음)는 axis 단위 학습 모듈 칩으로 📘 진입 보장 */}
+                  {axis.items.length === 0 && AXIS_METRICS[axis.label] && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 4 }}>
+                      {AXIS_METRICS[axis.label].map(metric => (
+                        <button key={metric} onClick={() => setEvalSelectedMetric(metric)} style={{
+                          padding: '3px 8px', borderRadius: 4, border: '1px solid #2A2F3E',
+                          background: 'transparent', color: '#9CA3AF',
+                          cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                        }} title={LEARNING_MODULES[metric]?.title}>
+                          <span>📘</span>
+                          <span>{LEARNING_MODULES[metric]?.title}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {axis.items.map((item, ii) => (
                     <div key={ii} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: 11 }}>
                       <div style={{ color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -2704,7 +2821,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             </div>
 
             <div style={{ fontSize: 9, color: '#3A3F4E', textAlign: 'center', lineHeight: 1.6 }}>
-              📘 아이콘은 샘플 카드에서만 표시됩니다 (시트 데이터는 5축 grade만).<br/>
+              📘 칩은 해당 축의 학습 모듈로 진입 (시트·샘플 카드 공통).<br/>
               평가 적재 후 ↻로 새로고침하면 최신 카드가 반영됩니다.
             </div>
           </div>
@@ -2886,8 +3003,15 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     const latest = stockEvals[0];
                     return (
                       <div style={{ background: '#1A1D26', borderRadius: 12, padding: '14px 16px', marginBottom: 12 }}>
-                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 8 }}>
-                          📝 최초 매수 이유 ({earliest.date})
+                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'baseline' }}>
+                          <span>📝 최초 매수 근거</span>
+                          <span style={{ color: '#9CA3AF' }}>
+                            매수일 <span style={{ color: earliest.buyDate ? '#E8EAF0' : '#5A6478' }}>{earliest.buyDate || '미입력'}</span>
+                          </span>
+                          <span style={{ color: '#3A3F4E' }}>·</span>
+                          <span style={{ color: '#9CA3AF' }}>
+                            평가일 <span style={{ color: '#E8EAF0' }}>{earliest.date}</span>
+                          </span>
                         </div>
                         {earliest.reasons.length === 0 ? (
                           <div style={{ fontSize: 11, color: '#5A6478' }}>(근거 미기록)</div>
@@ -2965,7 +3089,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   )}
 
                   <div style={{ fontSize: 9, color: '#3A3F4E', textAlign: 'center', lineHeight: 1.6 }}>
-                    매수이유는 시트 [종목투자노트] 가장 오래된 평가 기준.<br/>
+                    매수 근거는 가장 오래된 평가의 근거 (매수일은 별도 컬럼).<br/>
                     Frank 메모·AI 의견·상태는 최신 평가에서 가져옵니다.
                   </div>
                 </>
@@ -3101,6 +3225,141 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     근거 {evalIngestParsed.reasons.length}건 · 리스크 {evalIngestParsed.risks.length}건 · 액션 {evalIngestParsed.actions.length}건<br/>
                     <span style={{ color: '#3A3F4E' }}>(긴 텍스트는 적재 후 시트에서 직접 수정)</span>
                   </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── 평가 의뢰 모달 ── */}
+        {evalQueueOpen && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16, zIndex: 200,
+          }} onClick={(e) => { if (e.target === e.currentTarget) setEvalQueueOpen(false); }}>
+            <div style={{
+              background: '#1A1D26', borderRadius: 12, width: '100%', maxWidth: 420,
+              maxHeight: '90vh', overflowY: 'auto', padding: '20px 18px',
+              border: '1px solid #2A2F3E',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#F5A623' }}>+ 평가 의뢰</div>
+                <button onClick={() => setEvalQueueOpen(false)} style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: '#5A6478', fontSize: 18, padding: 0, lineHeight: 1,
+                }}>✕</button>
+              </div>
+
+              <div style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.6, marginBottom: 14 }}>
+                종목을 평가요청 큐에 추가합니다.<br/>
+                <span style={{ color: '#5A6478', fontSize: 10 }}>
+                  Claude Pro에 &quot;평가요청 시트 처리해줘&quot;라고 한 줄 명령하면<br/>
+                  큐가 비워지면서 결과가 종목투자노트에 적재됩니다.
+                </span>
+              </div>
+
+              {/* 종목명 */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>종목명</div>
+                <input
+                  value={evalQueueName}
+                  onChange={(e) => { setEvalQueueName(e.target.value); setEvalQueueMsg(''); }}
+                  placeholder="예: 삼성전자 또는 NVDA"
+                  autoFocus
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    background: '#0F1218', border: '1px solid #2A2F3E',
+                    borderRadius: 6, padding: '8px 10px', color: '#E8EAF0', fontSize: 13,
+                    fontFamily: baseFont, outline: 'none',
+                  }}
+                />
+              </div>
+
+              {/* 시장 */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>시장</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {['KR', 'US'].map(m => (
+                    <button key={m} onClick={() => setEvalQueueMarket(m)} style={{
+                      flex: 1, padding: '8px 12px', borderRadius: 6,
+                      border: `1px solid ${evalQueueMarket === m ? '#3B82F6' : '#2A2F3E'}`,
+                      background: evalQueueMarket === m ? '#1E3A5F' : 'transparent',
+                      color: evalQueueMarket === m ? '#60A5FA' : '#9CA3AF',
+                      cursor: 'pointer', fontSize: 11, fontFamily: baseFont, fontWeight: 600,
+                    }}>{m}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 메모 */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>메모 (선택)</div>
+                <input
+                  value={evalQueueMemo}
+                  onChange={(e) => setEvalQueueMemo(e.target.value)}
+                  placeholder="평가 시 참고할 맥락 (예: 1분기 어닝 후 재평가)"
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    background: '#0F1218', border: '1px solid #2A2F3E',
+                    borderRadius: 6, padding: '8px 10px', color: '#E8EAF0', fontSize: 12,
+                    fontFamily: baseFont, outline: 'none',
+                  }}
+                />
+              </div>
+
+              <button onClick={submitEvalQueue} disabled={!evalQueueName.trim() || evalQueueBusy} style={{
+                width: '100%', padding: '10px 12px', borderRadius: 6, border: 'none',
+                background: (evalQueueName.trim() && !evalQueueBusy) ? '#F5A623' : '#2A2F3E',
+                color: (evalQueueName.trim() && !evalQueueBusy) ? '#1A1D26' : '#5A6478',
+                cursor: (evalQueueName.trim() && !evalQueueBusy) ? 'pointer' : 'not-allowed',
+                fontSize: 12, fontWeight: 700, fontFamily: baseFont,
+              }}>
+                {evalQueueBusy ? '추가 중...' : '큐에 추가'}
+              </button>
+
+              {evalQueueMsg && (
+                <div style={{
+                  marginTop: 10, padding: '8px 12px', borderRadius: 6,
+                  background: '#0F1218', fontSize: 11,
+                  color: evalQueueMsg.startsWith('✓') ? '#4ADE80'
+                       : evalQueueMsg.startsWith('⚠️') ? '#F59E0B'
+                       : evalQueueMsg.includes('실패') ? '#F87171' : '#9CA3AF',
+                  lineHeight: 1.5,
+                }}>{evalQueueMsg}</div>
+              )}
+
+              {/* 큐 미리보기 */}
+              {evalQueue.entries.length > 0 && (
+                <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #2A2F3E' }}>
+                  <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 8 }}>
+                    최근 의뢰 ({evalQueue.entries.length}건)
+                  </div>
+                  {evalQueue.entries.slice(0, 5).map((e, i) => (
+                    <div key={i} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '6px 0', fontSize: 10, borderBottom: i < 4 ? '1px solid #1E2233' : 'none',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                        <span style={{
+                          fontSize: 9, padding: '1px 6px', borderRadius: 3,
+                          background: e.status === '완료' ? '#1E3D2A'
+                                    : e.status === '처리중' ? '#1E3A5F'
+                                    : e.status === '오류' ? '#4A1E1E' : '#3D2E14',
+                          color: e.status === '완료' ? '#4ADE80'
+                               : e.status === '처리중' ? '#60A5FA'
+                               : e.status === '오류' ? '#F87171' : '#F5A623',
+                        }}>{e.status}</span>
+                        <span style={{ color: '#E8EAF0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {e.name}
+                        </span>
+                        {e.market && <span style={{ color: '#5A6478', fontSize: 9 }}>{e.market}</span>}
+                      </div>
+                      <span style={{ color: '#5A6478', fontSize: 9, flexShrink: 0, marginLeft: 8 }}>
+                        {e.requestedAt.slice(5)}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
