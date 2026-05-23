@@ -2628,7 +2628,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
                   fontSize: 10, fontFamily: baseFont, fontWeight: 600,
                 }}>
-                  + 평가 의뢰
+                  평가 의뢰
                 </button>
                 <button onClick={() => setEvalIngestOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
                   padding: '5px 12px', borderRadius: 6, border: '1px solid #3B82F6',
@@ -2941,7 +2941,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         cursor: canSellEval ? 'pointer' : 'not-allowed',
                         fontSize: 10, fontFamily: baseFont, fontWeight: 600,
                       }}>
-                        {noteSellCopied ? '✓ 복사됨' : '🔍 매도 평가'}
+                        {noteSellCopied ? '✓ 복사됨' : '매도 평가'}
                       </button>
                       <button onClick={() => setEvalIngestOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
                         padding: '6px 10px', borderRadius: 6, border: '1px solid #3B82F6',
@@ -3219,7 +3219,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               border: '1px solid #2A2F3E',
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#F5A623' }}>+ 평가 의뢰</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#F5A623' }}>평가 의뢰</div>
                 <button onClick={() => setEvalQueueOpen(false)} style={{
                   background: 'transparent', border: 'none', cursor: 'pointer',
                   color: '#5A6478', fontSize: 18, padding: 0, lineHeight: 1,
