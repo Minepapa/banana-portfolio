@@ -288,6 +288,46 @@ function computeAssets(holdings, totalEval, defaultAssets) {
   });
 }
 
+// ── KPI 계산 (TWR·Sharpe·MDD) ──────────────────────────────────────────────
+function computeKPI(data) {
+  // data: [{ label, value (총잔고), savings (저축금), year }]  시간순
+  if (!data || data.length < 2) return null;
+
+  // 월별 수정 수익률 (TWR 방식: 입출금 제거)
+  const returns = [];
+  for (let i = 1; i < data.length; i++) {
+    const prev = data[i - 1].value;
+    const curr = data[i].value;
+    const cf   = data[i].savings || 0; // 당월 순유입
+    if (prev <= 0) continue;
+    returns.push((curr - cf) / prev - 1);
+  }
+  if (returns.length === 0) return null;
+
+  // TWR 누적 → 연환산
+  const twrCum = returns.reduce((acc, r) => acc * (1 + r), 1) - 1;
+  const twrAnn = Math.pow(1 + twrCum, 12 / returns.length) - 1;
+
+  // MDD (전체 기간 총잔고 기준)
+  let peak = data[0].value;
+  let mdd  = 0;
+  for (const d of data) {
+    if (d.value > peak) peak = d.value;
+    const dd = peak > 0 ? (d.value - peak) / peak : 0;
+    if (dd < mdd) mdd = dd;
+  }
+
+  // Sharpe (최근 12개월, 무위험 3.5% 연)
+  const recent = returns.slice(-12);
+  const mean   = recent.reduce((s, r) => s + r, 0) / recent.length;
+  const variance = recent.reduce((s, r) => s + (r - mean) ** 2, 0) / recent.length;
+  const std    = Math.sqrt(variance);
+  const rfM    = 0.035 / 12;
+  const sharpe = std > 0 ? ((mean - rfM) / std) * Math.sqrt(12) : null;
+
+  return { twr: twrAnn, sharpe, mdd, months: returns.length };
+}
+
 function parseMonthly(vr) {
   const rows = vr?.values ?? [];
   let lastYear = 0;
@@ -1886,6 +1926,75 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 </div>
               )}
             </div>
+
+            {/* ── KPI 카드 (TWR · Sharpe · MDD) ── */}
+            {(() => {
+              const kpi = computeKPI(monthlyData);
+              if (!kpi) return null;
+
+              const twrPct  = (kpi.twr  * 100).toFixed(1);
+              const mddPct  = (kpi.mdd  * 100).toFixed(1);
+              const sharpeV = kpi.sharpe !== null ? kpi.sharpe.toFixed(2) : '–';
+
+              // 상태 판정
+              const twrStatus  = kpi.twr >= 0
+                ? { icon: '✅', color: '#10B981', label: '양호' }
+                : { icon: '🔴', color: '#EF4444', label: '손실' };
+              const sharpeStatus = kpi.sharpe === null ? { icon: '–', color: '#6B7280', label: '데이터 부족' }
+                : kpi.sharpe >= 0.8 ? { icon: '✅', color: '#10B981', label: '양호' }
+                : kpi.sharpe >= 0.5 ? { icon: '⚠️', color: '#F59E0B', label: '주의' }
+                : { icon: '🔴', color: '#EF4444', label: '미달' };
+              const mddStatus  = kpi.mdd >= -0.25
+                ? { icon: '✅', color: '#10B981', label: '이내' }
+                : kpi.mdd >= -0.35
+                ? { icon: '⚠️', color: '#F59E0B', label: '주의' }
+                : { icon: '🔴', color: '#EF4444', label: '초과' };
+
+              const cards = [
+                {
+                  label: 'TWR (연환산)',
+                  value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`,
+                  sub: `목표 시장+3~5%p · ${kpi.months}개월`,
+                  status: twrStatus,
+                },
+                {
+                  label: 'Sharpe',
+                  value: sharpeV,
+                  sub: '목표 0.8~1.2 · 최근 12M',
+                  status: sharpeStatus,
+                },
+                {
+                  label: 'MDD',
+                  value: `${mddPct}%`,
+                  sub: '목표 −25% 이내',
+                  status: mddStatus,
+                },
+              ];
+
+              return (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 8 }}>운용 KPI</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                    {cards.map(c => (
+                      <div key={c.label} style={{
+                        background: '#1A1D26', borderRadius: 10,
+                        padding: '12px 8px', textAlign: 'center',
+                        border: `1px solid ${c.status.color}22`,
+                      }}>
+                        <div style={{ fontSize: 8, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>{c.label}</div>
+                        <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: c.status.color, marginBottom: 2 }}>
+                          {c.value}
+                        </div>
+                        <div style={{ fontSize: 9, color: c.status.color, marginBottom: 4 }}>
+                          {c.status.icon} {c.status.label}
+                        </div>
+                        <div style={{ fontSize: 8, color: '#3A4050', lineHeight: 1.3 }}>{c.sub}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
