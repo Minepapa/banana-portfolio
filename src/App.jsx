@@ -28,6 +28,23 @@ const SHEET_RANGES = {
 
 const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
 
+// 체결내역 A~M 컬럼 레이블
+const CHEOL_COLS = [
+  { key: 'A', label: '날짜',     placeholder: 'YYYY-MM-DD' },
+  { key: 'B', label: '매수/매도', placeholder: '매수 or 매도' },
+  { key: 'C', label: '계좌',     placeholder: 'ISA / 위탁 / 연금저축 / IRP' },
+  { key: 'D', label: '주문유형', placeholder: '' },
+  { key: 'E', label: '자산유형', placeholder: '채권 / 국내주식 / 해외주식 ...' },
+  { key: 'F', label: '종목명',   placeholder: '삼성전자' },
+  { key: 'G', label: '체결가',   placeholder: '0' },
+  { key: 'H', label: '수량',     placeholder: '0' },
+  { key: 'I', label: '체결금액', placeholder: '0' },
+  { key: 'J', label: '현재가',   placeholder: '0' },
+  { key: 'K', label: '수수료',   placeholder: '0' },
+  { key: 'L', label: '세금',     placeholder: '0' },
+  { key: 'M', label: '정산금액', placeholder: '0' },
+];
+
 // 한국 주식 색상 체계: 이익=빨강, 손실=파랑
 const PROFIT_POS = '#EF4444';
 const PROFIT_NEG = '#60A5FA';
@@ -965,6 +982,11 @@ export default function App() {
   const [tradeSyncMsg, setTradeSyncMsg] = useState('');
   const [savingsAppliedRows, setSavingsAppliedRows] = useState(new Set());
   const [savingsMode, setSavingsMode] = useState(false);
+  const [tradeEditOpen, setTradeEditOpen] = useState(false);
+  const [tradeEditRowIdx, setTradeEditRowIdx] = useState(null);
+  const [tradeEditValues, setTradeEditValues] = useState(Array(13).fill(''));
+  const [tradeEditBusy, setTradeEditBusy] = useState(false);
+  const tradeLpRef = useRef(null);
   const [profitData, setProfitData] = useState([]);
   const [profitYear, setProfitYear] = useState('전체');
   const [selectedProfitKey, setSelectedProfitKey] = useState(null);
@@ -1445,6 +1467,27 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
       setTradeSyncing(false);
     }
   }, [sheets, tradeSyncing, addHoldingFromTrade]);
+
+  const saveTradeEdit = useCallback(async () => {
+    if (tradeEditRowIdx === null) return;
+    setTradeEditBusy(true);
+    try {
+      const n = tradeEditRowIdx + 2; // 시트 행 번호 (A2 기준)
+      await sheets.writeRange(`체결내역!A${n}:M${n}`, tradeEditValues);
+      const newValues = await sheets.readRange('체결내역!A2:M');
+      const newFlags  = await sheets.readTradeProcessedFlags();
+      setTradeRows(newValues.map((row, i) => ({ row, processed: newFlags[i] ?? false })));
+      setTradeEditOpen(false);
+      setTradeEditRowIdx(null);
+      setTradeSyncMsg('셀 업데이트 완료');
+      setTimeout(() => setTradeSyncMsg(''), 3000);
+    } catch (e) {
+      setTradeSyncMsg(`저장 실패: ${e.message}`);
+      setTimeout(() => setTradeSyncMsg(''), 4000);
+    } finally {
+      setTradeEditBusy(false);
+    }
+  }, [sheets, tradeEditRowIdx, tradeEditValues]);
 
   const applySavingsFromTrade = useCallback(async (tradeDate, amount, isBuy, rowIdx) => {
     setTradeSyncMsg('저축금 반영 중...');
@@ -2530,13 +2573,26 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   const isBuy = buySell.includes('매수');
                   const savingsApplied = savingsAppliedRows.has(idx);
                   const canApplySavings = isComplete && amount > 0 && date && !savingsApplied;
+                  const openTradeEdit = () => {
+                    if (isComplete) return;
+                    const vals = Array(13).fill('').map((_, ci) => String(row[ci] ?? ''));
+                    setTradeEditValues(vals);
+                    setTradeEditRowIdx(idx);
+                    setTradeEditOpen(true);
+                  };
                   return (
-                    <div key={idx} style={{
-                      padding: '12px 16px',
-                      borderBottom: idx < tradeRows.length - 1 ? '1px solid #1E2233' : 'none',
-                      display: 'flex', alignItems: 'center', gap: 12,
-                      opacity: processed ? 0.55 : 1,
-                    }}>
+                    <div key={idx}
+                      onTouchStart={() => { tradeLpRef.current = setTimeout(openTradeEdit, 500); }}
+                      onTouchEnd={() => clearTimeout(tradeLpRef.current)}
+                      onTouchMove={() => clearTimeout(tradeLpRef.current)}
+                      onContextMenu={(e) => { e.preventDefault(); openTradeEdit(); }}
+                      style={{
+                        padding: '12px 16px',
+                        borderBottom: idx < tradeRows.length - 1 ? '1px solid #1E2233' : 'none',
+                        display: 'flex', alignItems: 'center', gap: 12,
+                        opacity: processed ? 0.55 : 1,
+                        cursor: !isComplete ? 'pointer' : 'default',
+                      }}>
                       <div style={{
                         width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
                         background: processed ? '#34A853' : isComplete ? '#F5A623' : '#3B4152',
@@ -3079,6 +3135,66 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             </div>
           );
         })()}
+
+        {/* ── 체결내역 셀 편집 모달 ── */}
+        {tradeEditOpen && tradeEditRowIdx !== null && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16, zIndex: 200,
+          }} onClick={(e) => { if (e.target === e.currentTarget) setTradeEditOpen(false); }}>
+            <div style={{
+              background: '#1A1D26', borderRadius: 12, width: '100%', maxWidth: 440,
+              maxHeight: '90vh', overflowY: 'auto', padding: '20px 18px',
+              border: '1px solid #2A2F3E',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#F5A623' }}>셀 값 입력</div>
+                <button onClick={() => setTradeEditOpen(false)} style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: '#5A6478', fontSize: 18, padding: 0, lineHeight: 1,
+                }}>✕</button>
+              </div>
+
+              {CHEOL_COLS.map((col, ci) => {
+                const isEmpty = !tradeEditValues[ci];
+                return (
+                  <div key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <div style={{
+                      width: 64, fontSize: 10, color: isEmpty ? '#F59E0B' : '#5A6478',
+                      textAlign: 'right', flexShrink: 0,
+                    }}>
+                      {col.key} · {col.label}
+                    </div>
+                    <input
+                      value={tradeEditValues[ci]}
+                      onChange={(e) => {
+                        const next = [...tradeEditValues];
+                        next[ci] = e.target.value;
+                        setTradeEditValues(next);
+                      }}
+                      placeholder={col.placeholder}
+                      style={{
+                        flex: 1, background: isEmpty ? '#1E1A0F' : '#0F1218',
+                        border: `1px solid ${isEmpty ? '#F59E0B' : '#2A2F3E'}`,
+                        borderRadius: 4, padding: '6px 8px', color: '#E8EAF0',
+                        fontSize: 12, fontFamily: baseFont, outline: 'none',
+                      }}
+                    />
+                  </div>
+                );
+              })}
+
+              <button onClick={saveTradeEdit} disabled={tradeEditBusy} style={{
+                width: '100%', marginTop: 12, padding: '10px 12px', borderRadius: 6, border: 'none',
+                background: tradeEditBusy ? '#2A2F3E' : '#F5A623',
+                color: tradeEditBusy ? '#5A6478' : '#1A1D26',
+                cursor: tradeEditBusy ? 'not-allowed' : 'pointer',
+                fontSize: 12, fontWeight: 700, fontFamily: baseFont,
+              }}>{tradeEditBusy ? '저장 중...' : '시트에 저장'}</button>
+            </div>
+          </div>
+        )}
 
         {/* ── 평가 카드 적재 모달 ── */}
         {evalIngestOpen && (
