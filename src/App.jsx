@@ -1132,7 +1132,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
       const requestedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
       const row = [requestedAt, name, evalQueueMarket, '대기', '', evalQueueMemo.trim()];
       await sheets.appendValues('평가요청!A2:F', [row]);
-      setEvalQueueMsg('✓ 큐에 추가됨 — Claude Pro에서 처리 요청해주세요');
+      setEvalQueueMsg('✓ 큐에 추가됨');
       setTimeout(() => {
         setEvalQueueOpen(false);
         setEvalQueueName('');
@@ -2663,27 +2663,13 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 {evalQueue.counts.pending > 0 && <span>대기 <span style={{ color: '#F5A623', fontWeight: 600 }}>{evalQueue.counts.pending}</span></span>}
                 {evalQueue.counts.processing > 0 && <span>처리중 <span style={{ color: '#60A5FA', fontWeight: 600 }}>{evalQueue.counts.processing}</span></span>}
                 {evalQueue.counts.error > 0 && <span>오류 <span style={{ color: '#F87171', fontWeight: 600 }}>{evalQueue.counts.error}</span></span>}
-                {evalQueue.counts.pending > 0 && (
-                  <span style={{ marginLeft: 'auto', fontSize: 9, color: '#5A6478' }}>
-                    Claude Pro에 &quot;평가요청 처리해줘&quot; →
-                  </span>
-                )}
               </div>
             )}
-
-            {/* 안내 */}
-            <div style={{ background: '#1A1D26', borderRadius: 10, padding: '12px 14px', marginBottom: 16, fontSize: 11, color: '#9CA3AF', lineHeight: 1.6 }}>
-              {fromSheet ? (
-                <>시트 <span style={{ color: '#60A5FA' }}>종목투자노트</span>의 평가 {evaluations.length}건 중 최신순.<br/>새 평가는 위 버튼으로 프롬프트 복사 → Claude Code 실행 → 시트 적재.</>
-              ) : (
-                <>아직 적재된 평가가 없습니다. 시트 <span style={{ color: '#60A5FA' }}>종목투자노트</span> 탭이 비어있으면 샘플을 표시합니다.<br/>위 버튼으로 프롬프트 복사 → Claude Code 실행 → 시트 적재.</>
-              )}
-            </div>
 
             {/* 종목 선택 드롭다운 (시트 데이터 있을 때만) */}
             {fromSheet && evaluations.length > 1 && (
               <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
-                {evaluations.slice(0, 12).map((ev, i) => (
+                {evaluations.map((ev, i) => (
                   <button key={i} onClick={() => setEvalSelectedIdx(i)} style={{
                     padding: '4px 10px', borderRadius: 6,
                     border: `1px solid ${i === evalSelectedIdx ? '#3B82F6' : '#2A2F3E'}`,
@@ -2823,10 +2809,6 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               </div>
             </div>
 
-            <div style={{ fontSize: 9, color: '#3A3F4E', textAlign: 'center', lineHeight: 1.6 }}>
-              📘 칩은 해당 축의 학습 모듈로 진입 (시트·샘플 카드 공통).<br/>
-              평가 적재 후 ↻로 새로고침하면 최신 카드가 반영됩니다.
-            </div>
           </div>
           );
         })()}
@@ -2959,7 +2941,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         cursor: canSellEval ? 'pointer' : 'not-allowed',
                         fontSize: 10, fontFamily: baseFont, fontWeight: 600,
                       }}>
-                        {noteSellCopied ? '✓ 프롬프트 복사됨 — Claude Code 실행 후 적재' : '🔍 매도 평가 (펀더멘털 vs 매수이유)'}
+                        {noteSellCopied ? '✓ 복사됨' : '🔍 매도 평가'}
                       </button>
                       <button onClick={() => setEvalIngestOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
                         padding: '6px 10px', borderRadius: 6, border: '1px solid #3B82F6',
@@ -3091,10 +3073,6 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     </div>
                   )}
 
-                  <div style={{ fontSize: 9, color: '#3A3F4E', textAlign: 'center', lineHeight: 1.6 }}>
-                    매수 근거는 가장 오래된 평가의 근거 (매수일은 별도 컬럼).<br/>
-                    Frank 메모·AI 의견·상태는 최신 평가에서 가져옵니다.
-                  </div>
                 </>
                 );
               })()}
@@ -3122,15 +3100,10 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 }}>✕</button>
               </div>
 
-              <div style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.6, marginBottom: 10 }}>
-                Claude Code 응답의 JSON 블록(```json ... ```)을 통째로 붙여넣으면 자동 파싱됩니다.<br/>
-                JSON만 따로 잘라 붙여도 됩니다.
-              </div>
-
               <textarea
                 value={evalIngestRaw}
                 onChange={(e) => { setEvalIngestRaw(e.target.value); setEvalIngestParsed(null); setEvalIngestMsg(''); }}
-                placeholder='```json\n{ "date": "2026-05-18", "name": "...", ... }\n```'
+                placeholder="JSON 블록 붙여넣기"
                 style={{
                   width: '100%', minHeight: 140, boxSizing: 'border-box',
                   background: '#0F1218', color: '#E8EAF0', border: '1px solid #2A2F3E',
@@ -3224,9 +3197,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     </div>
                   </div>
 
-                  <div style={{ marginTop: 10, fontSize: 10, color: '#5A6478', lineHeight: 1.6 }}>
-                    근거 {evalIngestParsed.reasons.length}건 · 리스크 {evalIngestParsed.risks.length}건 · 액션 {evalIngestParsed.actions.length}건<br/>
-                    <span style={{ color: '#3A3F4E' }}>(긴 텍스트는 적재 후 시트에서 직접 수정)</span>
+                  <div style={{ marginTop: 10, fontSize: 10, color: '#5A6478' }}>
+                    근거 {evalIngestParsed.reasons.length}건 · 리스크 {evalIngestParsed.risks.length}건 · 액션 {evalIngestParsed.actions.length}건
                   </div>
                 </div>
               )}
@@ -3252,14 +3224,6 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   background: 'transparent', border: 'none', cursor: 'pointer',
                   color: '#5A6478', fontSize: 18, padding: 0, lineHeight: 1,
                 }}>✕</button>
-              </div>
-
-              <div style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.6, marginBottom: 14 }}>
-                종목을 평가요청 큐에 추가합니다.<br/>
-                <span style={{ color: '#5A6478', fontSize: 10 }}>
-                  Claude Pro에 &quot;평가요청 시트 처리해줘&quot;라고 한 줄 명령하면<br/>
-                  큐가 비워지면서 결과가 종목투자노트에 적재됩니다.
-                </span>
               </div>
 
               {/* 종목명 */}
