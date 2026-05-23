@@ -2637,7 +2637,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
                   fontSize: 10, fontFamily: baseFont,
                 }}>
-                  + 결과 적재
+                  평가 결과 저장
                 </button>
                 <button onClick={() => {
                   navigator.clipboard.writeText(EVAL_PROMPT_TEMPLATE);
@@ -2949,7 +2949,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         cursor: sheets.auth !== 'signed-in' ? 'not-allowed' : 'pointer',
                         opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
                         fontSize: 10, fontFamily: baseFont,
-                      }}>+ 적재</button>
+                      }}>평가 결과 저장</button>
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, fontSize: 10 }}>
@@ -3093,7 +3093,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               border: '1px solid #2A2F3E',
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#60A5FA' }}>평가 카드 시트 적재</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#60A5FA' }}>평가 결과 저장</div>
                 <button onClick={() => setEvalIngestOpen(false)} style={{
                   background: 'transparent', border: 'none', cursor: 'pointer',
                   color: '#5A6478', fontSize: 18, padding: 0, lineHeight: 1,
