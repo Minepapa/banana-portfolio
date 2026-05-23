@@ -22,7 +22,7 @@ const SHEET_RANGES = {
   월별잔고:     '월별잔고!A2:H',       // 8
   배당금:       '배당금!A2:C',         // 9
   수익금:       '수익금!A2:F',         // 10
-  평가노트:     '종목투자노트!A2:T',   // 11  (없거나 비어있어도 안전)
+  평가노트:     '종목투자노트!A2:U',   // 11  (없거나 비어있어도 안전)
   평가요청:     '평가요청!A2:F',       // 12  비동기 평가 의뢰 큐 (모바일에서 추가 → Claude Pro가 처리)
 };
 
@@ -395,6 +395,7 @@ function parseEvaluations(vr) {
       targetTerm:String(r[17] ?? '').trim(),
       targetRet: String(r[18] ?? '').trim(),
       aiNote:    String(r[19] ?? '').trim(),
+      axisItems: (() => { try { const v = String(r[20] ?? '').trim(); return v ? JSON.parse(v) : null; } catch { return null; } })(),
     };
   }).filter(Boolean).reverse();  // 최신순
 }
@@ -1041,6 +1042,7 @@ export default function App() {
         targetTerm: String(obj.targetTerm ?? ''),
         targetRet:  String(obj.targetRet ?? ''),
         aiNote:     String(obj.aiNote ?? ''),
+        axisItems:  obj.axisItems && typeof obj.axisItems === 'object' ? obj.axisItems : null,
       }};
     } catch (e) {
       return { ok: false, error: `JSON 파싱 실패: ${e.message}` };
@@ -1061,6 +1063,7 @@ export default function App() {
       d.buyDate, d.buyPrice,
       d.targetTerm, d.targetRet,
       d.aiNote,
+      d.axisItems ? JSON.stringify(d.axisItems) : '',
     ];
   }, []);
 
@@ -1149,7 +1152,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
     setEvalIngestMsg('적재 중...');
     try {
       const row = buildEvalRow(evalIngestParsed);
-      await sheets.appendValues('종목투자노트!A2:T', [row]);
+      await sheets.appendValues('종목투자노트!A2:U', [row]);
       setEvalIngestMsg('✓ 적재 완료 — 카드 갱신됨');
       setTimeout(() => {
         setEvalIngestOpen(false);
@@ -2598,11 +2601,11 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             stock: current.stock,
             date: current.date,
             axes: [
-              { label: '수익성',     grade: current.axisGrades.수익성,     items: [] },
-              { label: '재무 안정성', grade: current.axisGrades.안정성,     items: [] },
-              { label: '밸류에이션',  grade: current.axisGrades.밸류에이션, items: [] },
-              { label: '현금흐름',    grade: current.axisGrades.현금흐름,   items: [] },
-              { label: '모멘텀',      grade: current.axisGrades.모멘텀,     items: [] },
+              { label: '수익성',     grade: current.axisGrades.수익성,     items: current.axisItems?.['수익성'] || [] },
+              { label: '재무 안정성', grade: current.axisGrades.안정성,     items: current.axisItems?.['안정성'] || [] },
+              { label: '밸류에이션',  grade: current.axisGrades.밸류에이션, items: current.axisItems?.['밸류에이션'] || [] },
+              { label: '현금흐름',    grade: current.axisGrades.현금흐름,   items: current.axisItems?.['현금흐름'] || [] },
+              { label: '모멘텀',      grade: current.axisGrades.모멘텀,     items: current.axisItems?.['모멘텀'] || [] },
             ],
             conclusion: { raw: current.conclusion.raw, label: current.conclusion.raw },
             reasons: current.reasons,
