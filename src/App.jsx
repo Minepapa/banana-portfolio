@@ -69,7 +69,8 @@ const LEARNING_MODULES = {
   current_ratio:    { title: '유동비율', summary: '1년 안에 갚을 빚(유동부채) 대비 1년 안에 현금화 가능한 자산(유동자산). 150%+ 양호.', threshold: 'Frank: > 150% 양호, 100~150% 보통, < 100% 단기 유동성 리스크' },
 
   // 밸류에이션
-  fwd_per:          { title: 'Forward PER 5년 밴드', summary: '예상 EPS 기준 PER이 지난 5년 밴드 어디인지. 자기 자신과의 비교라 업종 차이 흡수.', threshold: 'Frank: 밴드 P25 이하 + 펀더멘털 OK → 적극 매수, P75 이상 → 보류' },
+  fwd_per:          { title: 'Forward PER 5년 밴드', summary: '애널리스트 컨센서스 예상 EPS 기준 PER이 지난 5년 밴드 어디인지. 자기 자신과의 비교라 업종 차이를 흡수. 미래 이익에 대한 기대를 반영해 Trailing PER보다 낮게 나오는 경우가 많음.', threshold: 'Frank: 밴드 P25 이하 + 펀더멘털 OK → 적극 매수, P75 이상 → 보류' },
+  trailing_per:     { title: 'Trailing PER (실적 PER)', summary: '지난 12개월(LTM/TTM) 실제 EPS 기준 PER. 이미 확인된 이익을 기반으로 현재 주가 수준을 평가. 추정 오차 없이 사실 기반.\n\nForward PER과 비교:\n· Trailing > Forward → 시장이 이익 증가를 기대\n· Trailing < Forward → 이익 감소 우려', threshold: '동종 업종 평균 대비 낮으면 저평가 신호. 단, 일시적 이익 급증으로 낮아 보일 수 있으니 Forward PER, EV/EBITDA와 함께 비교할 것.' },
   ev_ebitda:        { title: 'EV/EBITDA', summary: '회사 전체 가격(EV) ÷ 본업 현금이익(EBITDA). PER보다 부채·세금·감가상각 영향 제거해 더 정직.', threshold: 'Frank: < 8배 저평가, 8~12 보통, > 15 고평가. 동종/5년 밴드와 같이' },
   pbr:              { title: 'PBR (주가순자산비율)', summary: '주가 ÷ 주당순자산. 회사를 청산해서 받는 돈 대비 시장가. 1배 이하 = 청산가치 미달.', threshold: 'Frank: 자산형 회사(은행·금융지주) 0.5~1배, 성장주는 PBR로 판단하지 말 것' },
 
@@ -115,6 +116,7 @@ const LABEL_TO_METRIC = {
   '이자보상배율': 'interest_coverage', '이자보상배율 (ebit/이자비용)': 'interest_coverage',
   '유동비율': 'current_ratio',
   'forward per': 'fwd_per', 'forward per 5년 밴드': 'fwd_per', 'fwd per': 'fwd_per',
+  'trailing per': 'trailing_per', 'trailing per (ttm)': 'trailing_per', 'per (ttm)': 'trailing_per', 'trailing p/e': 'trailing_per',
   'ev/ebitda': 'ev_ebitda',
   'pbr': 'pbr', 'pbr (주가순자산비율)': 'pbr',
   'fcf yield': 'fcf_yield',
@@ -2021,6 +2023,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 
           return (
             <div>
+              <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 16 }}>운용 KPI</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 16 }}>
                 {cards.map(c => (
                   <button key={c.label}
@@ -3294,7 +3297,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             });
           });
           const stocks = Object.values(stockMap)
-            .filter(s => s.qty > 0)
+            .filter(s => s.qty > 0 && evaluations.some(e => e.stock?.name === s.name))
             .map(s => ({
               ...s,
               avgPrice: s.investSum > 0 && s.qty > 0 ? s.investSum / s.qty : 0,
@@ -3316,7 +3319,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
           if (stocks.length === 0) {
             return (
               <div style={{ padding: 32, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
-                보유 종목이 없습니다
+                평가가 완료된 보유 종목이 없습니다.<br/>
+                <span style={{ fontSize: 11, color: '#3A4050' }}>평가 탭에서 종목 평가 후 노트를 작성할 수 있습니다.</span>
               </div>
             );
           }
@@ -3325,7 +3329,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             <div>
               {/* 헤더 */}
               <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>
-                📒 종목 노트 — 보유 {stocks.length}종목
+                📒 종목 노트 — 평가 완료 {stocks.length}종목
               </div>
 
               {/* 종목 선택 칩 */}
