@@ -1095,6 +1095,7 @@ export default function App() {
   const [evalIngestBusy, setEvalIngestBusy] = useState(false);
   const [noteSelectedStock, setNoteSelectedStock] = useState(null);
   const [noteSellCopied, setNoteSellCopied] = useState(false);
+  const [noteSellBusy, setNoteSellBusy] = useState(false);
   const [evalQueue, setEvalQueue] = useState({ entries: [], counts: { pending: 0, processing: 0, done: 0, error: 0 } });
   const [evalQueueOpen, setEvalQueueOpen] = useState(false);
   const [evalQueueName, setEvalQueueName] = useState('');
@@ -3092,13 +3093,13 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   평가 의뢰
                 </button>
                 <button onClick={() => setEvalIngestOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
-                  padding: '5px 12px', borderRadius: 6, border: '1px solid #3B82F6',
-                  background: '#1E3A5F', color: '#60A5FA',
+                  padding: '5px 10px', borderRadius: 6, border: '1px solid #2A2F3E',
+                  background: 'transparent', color: '#5A6478',
                   cursor: sheets.auth !== 'signed-in' ? 'not-allowed' : 'pointer',
                   opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
                   fontSize: 10, fontFamily: baseFont,
-                }}>
-                  평가 결과 저장
+                }} title="수동 평가 JSON 적재">
+                  💾
                 </button>
                 <button onClick={() => {
                   navigator.clipboard.writeText(EVAL_PROMPT_TEMPLATE);
@@ -3364,16 +3365,22 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 
               {stock && (() => {
                 const earliestEval = stockEvals[stockEvals.length - 1] || null;
-                const canSellEval = !!earliestEval && earliestEval.reasons.length > 0;
+                const canSellEval = !!earliestEval && earliestEval.reasons.length > 0 && sheets.auth === 'signed-in' && !noteSellBusy;
                 const onSellEvalClick = async () => {
-                  const prompt = buildSellEvalPrompt(
-                    { name: stock.name, ticker: earliestEval?.stock?.ticker || '', market: earliestEval?.stock?.market || '' },
-                    earliestEval,
-                    { qty: stock.qty, avgPrice: stock.avgPrice, evalSum: stock.evalSum, rate: stock.rate, accounts: stock.accounts }
-                  );
-                  await navigator.clipboard.writeText(prompt);
-                  setNoteSellCopied(true);
-                  setTimeout(() => setNoteSellCopied(false), 2000);
+                  if (!canSellEval) return;
+                  setNoteSellBusy(true);
+                  try {
+                    const market = earliestEval?.stock?.market || (/^[0-9]{6}$/.test(earliestEval?.stock?.ticker || '') ? 'KR' : 'US');
+                    const requestedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
+                    const row = [requestedAt, stock.name, market, '대기', '', '매도 평가'];
+                    await sheets.appendValues('평가요청!A2:F', [row]);
+                    setNoteSellCopied(true);
+                    setTimeout(() => setNoteSellCopied(false), 2000);
+                  } catch (e) {
+                    console.error('매도 평가 큐 추가 실패:', e);
+                  } finally {
+                    setNoteSellBusy(false);
+                  }
                 };
                 return (
                 <>
@@ -3396,9 +3403,9 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                       </div>
                     </div>
 
-                    {/* 매도 평가 트리거 */}
+                    {/* 매도 평가 의뢰 */}
                     <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                      <button onClick={onSellEvalClick} disabled={!canSellEval} title={canSellEval ? '매도 평가 프롬프트 복사' : '최초 매수 이유가 없어 매도 평가 불가'} style={{
+                      <button onClick={onSellEvalClick} disabled={!canSellEval} title={canSellEval ? '매도 평가를 큐에 추가' : '최초 매수 이유가 없어 매도 평가 불가'} style={{
                         flex: 1, padding: '6px 10px', borderRadius: 6,
                         border: `1px solid ${canSellEval ? '#F87171' : '#2A2F3E'}`,
                         background: canSellEval ? (noteSellCopied ? '#4ADE8033' : '#4A1E1E33') : 'transparent',
@@ -3406,15 +3413,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         cursor: canSellEval ? 'pointer' : 'not-allowed',
                         fontSize: 10, fontFamily: baseFont, fontWeight: 600,
                       }}>
-                        {noteSellCopied ? '✓ 복사됨' : '매도 평가'}
+                        {noteSellBusy ? '요청 중...' : noteSellCopied ? '✓ 큐에 추가됨' : '매도 평가 의뢰'}
                       </button>
-                      <button onClick={() => setEvalIngestOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
-                        padding: '6px 10px', borderRadius: 6, border: '1px solid #3B82F6',
-                        background: '#1E3A5F', color: '#60A5FA',
-                        cursor: sheets.auth !== 'signed-in' ? 'not-allowed' : 'pointer',
-                        opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
-                        fontSize: 10, fontFamily: baseFont,
-                      }}>평가 결과 저장</button>
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, fontSize: 10 }}>

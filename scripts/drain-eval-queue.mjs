@@ -210,7 +210,13 @@ function buildBuyPrompt(entry) {
 2. 마지막에 \`\`\`json 펜스로 JSON 블록 출력 (queue-evaluation.md §2.4 양식)
 3. JSON에 반드시 "axisItems" 필드 포함 — 각 축별 세부 지표({label, value, source, metric})
 4. status는 항상 "보류"
-5. 데이터 부족 항목은 추정 금지, "(데이터 부족: 소스)" 표기`;
+5. 데이터 부족 항목은 추정 금지, "(데이터 부족: 소스)" 표기
+
+⚠️ 데이터 최신성 필수:
+- 현재 날짜 기준으로 가장 최신 재무 데이터를 사용할 것 (OpenDart reprt_code: 최신 사업보고서 또는 분기보고서)
+- 2026년에 분석 시 반드시 2025 사업보고서 + 2026 분기보고서 사용. 2024년 이전 데이터를 최신으로 사용하면 안 됨
+- KR: OpenDart (get_financial_index, get_full_financial_statement) + 네이버 뉴스
+- US: get_stock_info, get_financial_statement + 뉴스`;
 }
 
 // ── 매도 평가 프롬프트 ────────────────────────────────────────────────────────
