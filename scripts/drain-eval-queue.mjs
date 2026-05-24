@@ -25,6 +25,7 @@ const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
+const DRY_RUN = args.includes('--dry-run'); // 시트 쓰기 없이 프롬프트만 출력
 
 // ── OAuth ───────────────────────────────────────────────────────────────────
 function getTokenViaBrowser() {
@@ -190,8 +191,13 @@ function nowKST() {
   return new Date(Date.now() + 9 * 3600_000).toISOString().replace('T', ' ').slice(0, 16);
 }
 
-// ── 프롬프트 빌더 ───────────────────────────────────────────────────────────
-function buildPrompt(entry) {
+// ── 매도 평가 여부 판단 ──────────────────────────────────────────────────────
+function isSellEval(entry) {
+  return /매도\s*평가/i.test(entry.memo || '');
+}
+
+// ── 매수 평가 프롬프트 ────────────────────────────────────────────────────────
+function buildBuyPrompt(entry) {
   const market = entry.market || '(자동감지)';
   const memo = entry.memo ? `\n메모: "${entry.memo}"` : '';
   return `다음 종목을 5축 평가해줘 (Trading Agent/playbooks/active-evaluation.md 따라):
@@ -207,8 +213,65 @@ function buildPrompt(entry) {
 5. 데이터 부족 항목은 추정 금지, "(데이터 부족: 소스)" 표기`;
 }
 
+// ── 매도 평가 프롬프트 ────────────────────────────────────────────────────────
+function buildSellPrompt(entry, buyCard) {
+  const market = entry.market || '(자동감지)';
+  const reasonLines = (buyCard?.reasons || []).map((r, i) => `근거 ${i+1}: ${r}`).join('\n');
+  const riskLines   = (buyCard?.risks   || []).map((r, i) => `리스크 ${i+1}: ${r}`).join('\n');
+  const cardSection = buyCard
+    ? `[최초 매수 카드]
+평가일: ${buyCard.date}
+결론: ${buyCard.conclusion}
+${reasonLines || '(근거 미기록)'}
+${riskLines || ''}
+AI 한줄: ${buyCard.aiNote || '—'}`
+    : `[최초 매수 카드]
+(종목투자노트에 매수 평가 없음 — 노트 탭에서 먼저 매수 평가를 기록해주세요)`;
+
+  return `[매도 평가 요청] sell-evaluation.md 따라 매도 평가 카드 생성해줘.
+
+종목: ${entry.name}
+시장: ${market}
+트리거: 수동 요청 (drain-eval-queue)
+
+${cardSection}
+
+출력 조건:
+1. sell-evaluation.md §5 표준 카드 양식 (최초 ↔ 현재 ↔ 근거 점검 ↔ 리스크 점검 ↔ 판정 ↔ 권고 4안)
+2. 판정 4단계: 🟢 유효 / 🟡 약화 / 🔴 훼손 / ⚪ 판단보류
+3. 현재 펀더멘털 재산출: active-evaluation.md §3 동일 5축·동일 MCP
+4. 분할 매도 시나리오 최소 3안 (CLAUDE.md §3)
+5. 다음 재평가 시점 명시
+6. 마지막에 \`\`\`json 펜스로 20필드 JSON (적재용, status는 "매도" 또는 "보류")
+7. 데이터 부족 항목 추정 금지`;
+}
+
+// ── 종목투자노트에서 최초 매수 카드 조회 ────────────────────────────────────
+function findEarliestBuyCard(noteRows, stockName) {
+  const matches = [];
+  (noteRows || []).forEach((r, idx) => {
+    const name = String(r[1] ?? '').trim();
+    if (name !== stockName) return;
+    const status = String(r[14] ?? '').trim(); // O열: 매수여부
+    if (status === '매도') return; // 매도 완료된 행은 제외
+    matches.push({
+      rowNum: idx + 2,
+      date:       String(r[0]  ?? '').trim(),
+      conclusion: String(r[4]  ?? '').trim(),
+      reasons:    String(r[10] ?? '').split(/\d+\)\s*/).filter(Boolean),
+      risks:      String(r[11] ?? '').split(/\d+\)\s*/).filter(Boolean),
+      aiNote:     String(r[19] ?? '').trim(),
+    });
+  });
+  // 날짜 오름차순 → 가장 오래된 = 최초 매수
+  matches.sort((a, b) => a.date.localeCompare(b.date));
+  return matches[0] || null;
+}
+
 // ── 메인 ────────────────────────────────────────────────────────────────────
 async function main() {
+  if (DRY_RUN) console.log('🔍 DRY-RUN 모드: 시트 쓰기 없이 프롬프트만 출력합니다.\n');
+
   let token = explicitToken?.trim();
   if (token) {
     console.log('✓ 토큰 인수 사용\n');
@@ -218,10 +281,14 @@ async function main() {
     console.log('✓ 토큰 취득\n');
   }
 
-  // 1. 큐 읽기
+  // 1. 큐 + 종목투자노트 병렬 읽기
   console.log('━━━ 평가요청 큐 읽기 ━━━');
-  const queueData = await getRange(token, '평가요청!A2:F');
+  const [queueData, noteData] = await Promise.all([
+    getRange(token, '평가요청!A2:F'),
+    getRange(token, '종목투자노트!A2:U'),
+  ]);
   const rows = queueData.values || [];
+  const noteRows = noteData.values || [];
 
   const pending = [];
   rows.forEach((r, idx) => {
@@ -242,9 +309,13 @@ async function main() {
     process.exit(0);
   }
 
-  console.log(`  대기 ${pending.length}건 발견:`);
+  // 요약 출력
+  const buyCount  = pending.filter(e => !isSellEval(e)).length;
+  const sellCount = pending.filter(e =>  isSellEval(e)).length;
+  console.log(`  대기 ${pending.length}건 (매수평가 ${buyCount}건 / 매도평가 ${sellCount}건):`);
   pending.forEach((e, i) => {
-    console.log(`    ${i + 1}. ${e.name} (${e.market || '?'}) — ${e.memo || '메모 없음'}`);
+    const tag = isSellEval(e) ? '🔴매도' : '🟢매수';
+    console.log(`    ${i + 1}. [${tag}] ${e.name} (${e.market || '?'}) — ${e.memo || '메모 없음'}`);
   });
   console.log('');
 
@@ -253,17 +324,37 @@ async function main() {
   let errors = 0;
 
   for (const entry of pending) {
-    console.log(`\n━━━ [${entry.name}] 처리 ━━━`);
+    const sellMode = isSellEval(entry);
+    const typeLabel = sellMode ? '🔴 매도 평가' : '🟢 매수 평가';
+    console.log(`\n━━━ [${entry.name}] ${typeLabel} ━━━`);
 
-    // 상태를 '처리중'으로
-    await updateCell(token, `평가요청!D${entry.rowNum}`, '처리중');
-    console.log(`  ✓ 큐 상태 → 처리중`);
+    // 매도 평가 시 최초 매수 카드 조회
+    let buyCard = null;
+    if (sellMode) {
+      buyCard = findEarliestBuyCard(noteRows, entry.name);
+      if (buyCard) {
+        console.log(`  ✓ 최초 매수 카드 발견 (${buyCard.date}, ${buyCard.conclusion})`);
+      } else {
+        console.log(`  ⚠️ 종목투자노트에 [${entry.name}] 매수 카드 없음 — 프롬프트에 경고 포함`);
+      }
+    }
+
+    // dry-run은 시트 상태 변경 없이 프롬프트만 출력
+    if (!DRY_RUN) {
+      await updateCell(token, `평가요청!D${entry.rowNum}`, '처리중');
+      console.log(`  ✓ 큐 상태 → 처리중`);
+    }
 
     // 프롬프트 출력
-    const prompt = buildPrompt(entry);
+    const prompt = sellMode ? buildSellPrompt(entry, buyCard) : buildBuyPrompt(entry);
     console.log('\n┌─── Claude Pro에 붙여넣을 프롬프트 ───┐');
     console.log(prompt);
     console.log('└──────────────────────────────────────┘\n');
+
+    if (DRY_RUN) {
+      console.log('  [DRY-RUN] 시트 변경 건너뜀\n');
+      continue;
+    }
 
     const action = await ask(rl, '  Claude Pro 응답 JSON을 붙여넣으시겠습니까? (y/skip) ');
 
@@ -282,7 +373,7 @@ async function main() {
 
       // 종목투자노트에 적재
       await appendValues(token, '종목투자노트!A2:U', [row]);
-      console.log(`  ✓ 종목투자노트에 적재 완료`);
+      console.log(`  ✓ 종목투자노트에 적재 완료 (${sellMode ? '매도 평가' : '매수 평가'})`);
 
       // 큐 상태 업데이트
       await updateCell(token, `평가요청!D${entry.rowNum}`, '완료');
@@ -291,20 +382,26 @@ async function main() {
       completed++;
     } catch (e) {
       console.error(`  ⚠️ 처리 실패: ${e.message}`);
-      await updateCell(token, `평가요청!D${entry.rowNum}`, '오류');
-      const existingMemo = entry.memo ? `${entry.memo} / ` : '';
-      await updateCell(token, `평가요청!F${entry.rowNum}`, `${existingMemo}오류: ${e.message.slice(0, 80)}`);
+      if (!DRY_RUN) {
+        await updateCell(token, `평가요청!D${entry.rowNum}`, '오류');
+        const existingMemo = entry.memo ? `${entry.memo} / ` : '';
+        await updateCell(token, `평가요청!F${entry.rowNum}`, `${existingMemo}오류: ${e.message.slice(0, 80)}`);
+      }
       errors++;
     }
   }
 
-  rl.close();
+  if (!DRY_RUN) rl.close();
 
   console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log(`✅ 평가요청 처리 완료`);
-  console.log(`  · 완료 ${completed}건`);
-  if (errors > 0) console.log(`  · 오류 ${errors}건`);
-  console.log(`  모바일 banana-portfolio 평가 탭에서 ↻ 새로고침하면 카드가 표시됩니다.`);
+  if (DRY_RUN) {
+    console.log(`🔍 DRY-RUN 완료 — 시트 변경 없음`);
+  } else {
+    console.log(`✅ 평가요청 처리 완료`);
+    console.log(`  · 완료 ${completed}건`);
+    if (errors > 0) console.log(`  · 오류 ${errors}건`);
+    console.log(`  모바일 banana-portfolio 평가/노트 탭에서 ↻ 새로고침하면 카드가 표시됩니다.`);
+  }
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 }
 
