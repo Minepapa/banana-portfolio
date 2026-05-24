@@ -1756,8 +1756,6 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
         <div className="tab-bar" style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {[
             { key: "dashboard", label: "홈" },
-            { key: "kpi",       label: "KPI" },
-            { key: "report",    label: "리포트" },
             { key: "rebalance", label: "자산분배" },
             { key: "holdings",  label: "종목" },
             { key: "dividend",  label: "배당금" },
@@ -1765,6 +1763,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             { key: "체결내역",  label: "체결" },
             { key: "평가",      label: "평가" },
             { key: "노트",      label: "노트" },
+            { key: "kpi",       label: "KPI" },
+            { key: "report",    label: "리포트" },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)} style={{
               padding: "10px 10px",
@@ -1957,44 +1957,6 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               )}
             </div>
 
-            {/* KPI 요약 스트립 */}
-            {(() => {
-              const kpi = computeKPI(monthlyData);
-              if (!kpi) return null;
-              const twrAnnPct = (kpi.twr * 100).toFixed(1);
-              const twrCumPct = (kpi.twrCum * 100).toFixed(1);
-              const alphaPct  = kpi.benchmarkTWR !== null ? ((kpi.twr - kpi.benchmarkTWR) * 100).toFixed(1) : null;
-              const mddPct    = (kpi.mdd * 100).toFixed(1);
-              const sharpeV   = kpi.sharpe !== null ? kpi.sharpe.toFixed(2) : '–';
-              const twrColor  = kpi.twr >= 0 ? '#10B981' : '#EF4444';
-              const sharpeColor = kpi.sharpe === null ? '#6B7280' : kpi.sharpe >= 0.8 ? '#10B981' : kpi.sharpe >= 0.5 ? '#F59E0B' : '#EF4444';
-              const mddColor  = kpi.mdd >= -0.25 ? '#10B981' : kpi.mdd >= -0.35 ? '#F59E0B' : '#EF4444';
-              return (
-                <div
-                  onClick={() => setTab('kpi')}
-                  style={{ background: '#1A1D26', borderRadius: 12, padding: '12px 16px', marginBottom: 16, cursor: 'pointer' }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <div style={{ fontSize: 9, letterSpacing: 3, color: '#5A6478' }}>운용 KPI · {kpi.months}M</div>
-                    <div style={{ fontSize: 9, color: '#3B82F6' }}>상세 →</div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 0 }}>
-                    {[
-                      { label: 'TWR 연환산', value: `${kpi.twr >= 0 ? '+' : ''}${twrAnnPct}%`, sub: alphaPct !== null ? `알파 ${parseFloat(alphaPct) >= 0 ? '+' : ''}${alphaPct}%p` : null, color: twrColor },
-                      { label: 'TWR 누적',   value: `${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}%`, sub: null, color: kpi.twrCum >= 0 ? '#10B981' : '#EF4444' },
-                      { label: 'Sharpe',    value: sharpeV,   sub: null, color: sharpeColor },
-                      { label: 'MDD',       value: `${mddPct}%`, sub: null, color: mddColor },
-                    ].map((item, i, arr) => (
-                      <div key={i} style={{ textAlign: 'center', borderRight: i < arr.length - 1 ? '1px solid #2A2F3E' : 'none', padding: '0 6px' }}>
-                        <div style={{ fontSize: 9, color: '#5A6478', marginBottom: 3 }}>{item.label}</div>
-                        <div style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700, color: item.color }}>{item.value}</div>
-                        {item.sub && <div style={{ fontSize: 8, color: item.color, marginTop: 2 }}>{item.sub}</div>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
           </div>
         )}
 
@@ -2030,7 +1992,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 
           const cards = [
             { label: 'TWR (연환산)', value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`, sub: bmPct !== null ? `시장 ${parseFloat(bmPct) >= 0 ? '+' : ''}${bmPct}% · ${kpi.months}M` : `누적 ${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}% · ${kpi.months}M`, status: twrStatus, metric: 'twr' },
-            { label: 'Sharpe',       value: sharpeV,                                  sub: '목표 0.8~1.2 · 최근 12M',   status: sharpeStatus, metric: 'sharpe' },
+            { label: 'Sharpe',       value: sharpeV,                                  sub: '목표 0.8~1.2',              status: sharpeStatus, metric: 'sharpe' },
             { label: 'MDD',          value: `${mddPct}%`,                             sub: '목표 −25% 이내',             status: mddStatus,    metric: 'mdd' },
           ];
 
