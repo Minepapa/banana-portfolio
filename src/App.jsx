@@ -106,6 +106,29 @@ const AXIS_METRICS = {
   '모멘텀':      ['rsi', 'pos_52w', 'foreign_flow', 'sector_rs'],
 };
 
+// 항목 label → metric key (item.metric 없을 때 자동 추론용)
+const LABEL_TO_METRIC = {
+  '매출성장률 yoy': 'revenue_growth', '매출성장률': 'revenue_growth',
+  '영업이익률': 'operating_margin',
+  'roic': 'roic', 'roic (투하자본수익률)': 'roic',
+  '순부채/ebitda': 'net_debt_ebitda',
+  '이자보상배율': 'interest_coverage', '이자보상배율 (ebit/이자비용)': 'interest_coverage',
+  '유동비율': 'current_ratio',
+  'forward per': 'fwd_per', 'forward per 5년 밴드': 'fwd_per', 'fwd per': 'fwd_per',
+  'ev/ebitda': 'ev_ebitda',
+  'pbr': 'pbr', 'pbr (주가순자산비율)': 'pbr',
+  'fcf yield': 'fcf_yield',
+  '배당성향': 'payout_ratio',
+  '배당지속가능성': 'dividend_sustainability', '배당지속가능성 (fcf 커버리지)': 'dividend_sustainability',
+  'rsi': 'rsi', 'rsi(14)': 'rsi', 'rsi (상대강도지수)': 'rsi',
+  '52주 위치': 'pos_52w',
+  '외국인·기관 수급': 'foreign_flow', '외국인 4일': 'foreign_flow', '외국인·기관': 'foreign_flow',
+  '섹터 상대강도': 'sector_rs',
+  'twr': 'twr', 'twr (시간가중수익률)': 'twr',
+  '샤프 비율': 'sharpe', 'sharpe': 'sharpe',
+  '최대낙폭': 'mdd', 'mdd': 'mdd', '최대낙폭 (mdd)': 'mdd',
+};
+
 const SAMPLE_EVALUATION = {
   stock: { name: 'SK하이닉스', ticker: '000660', market: 'KR' },
   date: '2026-05-17',
@@ -1757,7 +1780,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
           {[
             { key: "dashboard", label: "홈" },
             { key: "rebalance", label: "자산분배" },
-            { key: "holdings",  label: "종목" },
+            { key: "holdings",  label: "보유종목" },
             { key: "dividend",  label: "배당금" },
             { key: "profit",    label: "수익금" },
             { key: "체결내역",  label: "체결" },
@@ -1998,7 +2021,6 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 
           return (
             <div>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 16 }}>운용 KPI · {kpi.months}개월</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 16 }}>
                 {cards.map(c => (
                   <button key={c.label}
@@ -3170,11 +3192,14 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     <div key={ii} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: 11 }}>
                       <div style={{ color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span>{item.label}</span>
-                        {item.metric && (
-                          <button onClick={() => setEvalSelectedMetric(item.metric)} style={{
-                            background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, fontSize: 10, lineHeight: 1,
-                          }} title={LEARNING_MODULES[item.metric]?.title}>📘</button>
-                        )}
+                        {(() => {
+                          const m = item.metric || LABEL_TO_METRIC[item.label?.toLowerCase()];
+                          return m ? (
+                            <button onClick={() => setEvalSelectedMetric(m)} style={{
+                              background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, fontSize: 10, lineHeight: 1,
+                            }} title={LEARNING_MODULES[m]?.title}>📘</button>
+                          ) : null;
+                        })()}
                       </div>
                       <div style={{ color: '#E8EAF0', display: 'flex', alignItems: 'baseline', gap: 6, textAlign: 'right' }}>
                         <span style={{ fontWeight: 600 }}>{item.value}</span>
