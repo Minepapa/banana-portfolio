@@ -37,6 +37,10 @@ function fillBenchmarkForLastMonth() {
 //     예) fillAllSince(2025, 4)  → 2025-04 ~ 전월 전체
 // ═══════════════════════════════════════════════════════════════════
 function fillAllSince(startYear, startMonth) {
+  // ▶ 실행 버튼으로 인자 없이 실행할 경우 기본값 사용
+  if (!startYear)  startYear  = 2025;
+  if (!startMonth) startMonth = 4;
+
   var today    = new Date();
   var endYear  = today.getMonth() === 0 ? today.getFullYear() - 1 : today.getFullYear();
   var endMonth = today.getMonth() === 0 ? 12 : today.getMonth();
