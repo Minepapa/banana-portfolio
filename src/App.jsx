@@ -19,7 +19,7 @@ const SHEET_RANGES = {
   연금저축리밸: '자산분배!B12:D18',    // 5
   ISA리밸:      '자산분배!B21:D21',    // 6
   IRP리밸:      '자산분배!B24:D24',    // 7
-  월별잔고:     '월별잔고!A2:H',       // 8
+  월별잔고:     '월별잔고!A2:J',       // 8  (I=KOSPI지수, J=S&P500지수)
   배당금:       '배당금!A2:C',         // 9
   수익금:       '수익금!A2:F',         // 10
   평가노트:     '종목투자노트!A2:U',   // 11  (없거나 비어있어도 안전)
@@ -314,6 +314,21 @@ function computeKPI(data) {
   const twrCum = returns.reduce((acc, r) => acc * (1 + r), 1) - 1;
   const twrAnn = Math.pow(1 + twrCum, 12 / returns.length) - 1;
 
+  // 벤치마크 TWR: KOSPI 50% + S&P500 50% (지수값이 있는 월만)
+  const bmReturns = [];
+  for (let i = 1; i < data.length; i++) {
+    const pk = data[i - 1].kospi;  const ck = data[i].kospi;
+    const ps = data[i - 1].sp500; const cs = data[i].sp500;
+    if (pk > 0 && ck > 0 && ps > 0 && cs > 0) {
+      bmReturns.push(0.5 * (ck / pk - 1) + 0.5 * (cs / ps - 1));
+    }
+  }
+  let benchmarkTWR = null;
+  if (bmReturns.length >= 2) {
+    const bmCum = bmReturns.reduce((acc, r) => acc * (1 + r), 1) - 1;
+    benchmarkTWR = Math.pow(1 + bmCum, 12 / bmReturns.length) - 1;
+  }
+
   // MDD (전체 기간 총잔고 기준)
   let peak = data[0].value;
   let mdd  = 0;
@@ -333,7 +348,7 @@ function computeKPI(data) {
   const sharpeRaw = std >= 0.001 ? ((mean - rfM) / std) * Math.sqrt(12) : null;
   const sharpe = sharpeRaw !== null ? Math.max(-10, Math.min(10, sharpeRaw)) : null;
 
-  return { twr: twrAnn, sharpe, mdd, months: returns.length };
+  return { twr: twrAnn, benchmarkTWR, sharpe, mdd, months: returns.length };
 }
 
 function parseMonthly(vr) {
@@ -354,7 +369,9 @@ function parseMonthly(vr) {
     if (!total || !month || !lastYear) return;
     const yearShort = String(lastYear).slice(-2);
     const savings = parseNum(r[2]);
-    result.push({ label: `${yearShort}.${String(month).padStart(2, '0')}`, value: total, savings, year: lastYear });
+    const kospi  = parseNum(r[8]);   // I열: KOSPI 월말 지수 (0이면 미입력)
+    const sp500  = parseNum(r[9]);   // J열: S&P500 월말 지수 (0이면 미입력)
+    result.push({ label: `${yearShort}.${String(month).padStart(2, '0')}`, value: total, savings, year: lastYear, kospi, sp500 });
   });
   return result;
 }
@@ -1943,9 +1960,15 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               const twrPct  = (kpi.twr  * 100).toFixed(1);
               const mddPct  = (kpi.mdd  * 100).toFixed(1);
               const sharpeV = kpi.sharpe !== null ? kpi.sharpe.toFixed(2) : '–';
+              const bmPct   = kpi.benchmarkTWR !== null ? (kpi.benchmarkTWR * 100).toFixed(1) : null;
+              const alphaPct = bmPct !== null ? ((kpi.twr - kpi.benchmarkTWR) * 100).toFixed(1) : null;
 
               // 상태 판정
-              const twrStatus  = kpi.twr >= 0
+              const twrStatus  = alphaPct !== null
+                ? (parseFloat(alphaPct) >= 3  ? { icon: '✅', color: '#10B981', label: `알파 +${alphaPct}%p` }
+                 : parseFloat(alphaPct) >= 0  ? { icon: '⚠️', color: '#F59E0B', label: `알파 +${alphaPct}%p` }
+                 :                              { icon: '🔴', color: '#EF4444', label: `알파 ${alphaPct}%p` })
+                : kpi.twr >= 0
                 ? { icon: '✅', color: '#10B981', label: '양호' }
                 : { icon: '🔴', color: '#EF4444', label: '손실' };
               const sharpeStatus = kpi.sharpe === null ? { icon: '–', color: '#6B7280', label: '데이터 부족' }
@@ -1962,9 +1985,14 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 {
                   label: 'TWR (연환산)',
                   value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`,
-                  sub: `목표 시장+3~5%p · ${kpi.months}개월`,
+                  sub: bmPct !== null
+                    ? `시장 ${parseFloat(bmPct) >= 0 ? '+' : ''}${bmPct}% · ${kpi.months}M`
+                    : `목표 시장+3~5%p · ${kpi.months}개월`,
                   status: twrStatus,
                   metric: 'twr',
+                  extra: alphaPct !== null
+                    ? { label: '알파', value: `${parseFloat(alphaPct) >= 0 ? '+' : ''}${alphaPct}%p` }
+                    : null,
                 },
                 {
                   label: 'Sharpe',
@@ -2006,10 +2034,15 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: c.status.color, marginBottom: 2 }}>
                           {c.value}
                         </div>
+                        {c.extra && (
+                          <div style={{ fontSize: 9, fontWeight: 600, color: parseFloat(c.extra.value) >= 3 ? '#10B981' : parseFloat(c.extra.value) >= 0 ? '#F59E0B' : '#EF4444', marginBottom: 2 }}>
+                            {c.extra.label} {c.extra.value}
+                          </div>
+                        )}
                         <div style={{ fontSize: 9, color: c.status.color, marginBottom: 4 }}>
-                          {c.status.icon} {c.status.label}
+                          {c.status.icon} {c.extra ? c.sub : c.status.label}
                         </div>
-                        <div style={{ fontSize: 8, color: '#3A4050', lineHeight: 1.3 }}>{c.sub}</div>
+                        <div style={{ fontSize: 8, color: '#3A4050', lineHeight: 1.3 }}>{c.extra ? c.status.label : c.sub}</div>
                       </button>
                     ))}
                   </div>
