@@ -324,9 +324,11 @@ function computeKPI(data) {
     }
   }
   let benchmarkTWR = null;
+  let benchmarkTWRCum = null;
   if (bmReturns.length >= 2) {
     const bmCum = bmReturns.reduce((acc, r) => acc * (1 + r), 1) - 1;
     benchmarkTWR = Math.pow(1 + bmCum, 12 / bmReturns.length) - 1;
+    benchmarkTWRCum = bmCum;
   }
 
   // MDD (전체 기간 총잔고 기준)
@@ -348,7 +350,7 @@ function computeKPI(data) {
   const sharpeRaw = std >= 0.001 ? ((mean - rfM) / std) * Math.sqrt(12) : null;
   const sharpe = sharpeRaw !== null ? Math.max(-10, Math.min(10, sharpeRaw)) : null;
 
-  return { twr: twrAnn, benchmarkTWR, sharpe, mdd, months: returns.length };
+  return { twr: twrAnn, twrCum, benchmarkTWR, benchmarkTWRCum, sharpe, mdd, months: returns.length };
 }
 
 function parseMonthly(vr) {
@@ -1009,6 +1011,7 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel, readRange }) {
 export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [acctKey, setAcctKey] = useState("위탁");
+  const [holdSort, setHoldSort] = useState('rate_desc'); // rate_desc | rate_asc | eval_desc | profit_desc
   const [accounts, setAccounts] = useState(DEFAULT_ACCOUNTS);
   const [monthlyData, setMonthlyData] = useState([]);
   const [dividendData, setDividendData] = useState([]);
@@ -1753,13 +1756,14 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
         <div style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {[
             { key: "dashboard", label: "홈" },
+            { key: "report",    label: "리포트" },
             { key: "rebalance", label: "자산분배" },
-            { key: "holdings", label: "종목" },
-            { key: "dividend", label: "배당금" },
-            { key: "profit", label: "수익금" },
-            { key: "체결내역", label: "체결" },
-            { key: "평가", label: "평가" },
-            { key: "노트", label: "노트" },
+            { key: "holdings",  label: "종목" },
+            { key: "dividend",  label: "배당금" },
+            { key: "profit",    label: "수익금" },
+            { key: "체결내역",  label: "체결" },
+            { key: "평가",      label: "평가" },
+            { key: "노트",      label: "노트" },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)} style={{
               padding: "10px 10px",
@@ -1957,11 +1961,13 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               const kpi = computeKPI(monthlyData);
               if (!kpi) return null;
 
-              const twrPct  = (kpi.twr  * 100).toFixed(1);
-              const mddPct  = (kpi.mdd  * 100).toFixed(1);
-              const sharpeV = kpi.sharpe !== null ? kpi.sharpe.toFixed(2) : '–';
-              const bmPct   = kpi.benchmarkTWR !== null ? (kpi.benchmarkTWR * 100).toFixed(1) : null;
-              const alphaPct = bmPct !== null ? ((kpi.twr - kpi.benchmarkTWR) * 100).toFixed(1) : null;
+              const twrPct    = (kpi.twr  * 100).toFixed(1);
+              const twrCumPct = (kpi.twrCum * 100).toFixed(1);
+              const mddPct    = (kpi.mdd  * 100).toFixed(1);
+              const sharpeV   = kpi.sharpe !== null ? kpi.sharpe.toFixed(2) : '–';
+              const bmPct     = kpi.benchmarkTWR !== null ? (kpi.benchmarkTWR * 100).toFixed(1) : null;
+              const bmCumPct  = kpi.benchmarkTWRCum !== null ? (kpi.benchmarkTWRCum * 100).toFixed(1) : null;
+              const alphaPct  = bmPct !== null ? ((kpi.twr - kpi.benchmarkTWR) * 100).toFixed(1) : null;
 
               // 상태 판정
               const twrStatus  = alphaPct !== null
@@ -1985,14 +1991,14 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 {
                   label: 'TWR (연환산)',
                   value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`,
-                  sub: bmPct !== null
-                    ? `시장 ${parseFloat(bmPct) >= 0 ? '+' : ''}${bmPct}% · ${kpi.months}M`
-                    : `목표 시장+3~5%p · ${kpi.months}개월`,
+                  sub: bmCumPct !== null
+                    ? `시장누적 ${parseFloat(bmCumPct) >= 0 ? '+' : ''}${bmCumPct}% · ${kpi.months}M`
+                    : `누적 ${parseFloat(twrCumPct) >= 0 ? '+' : ''}${twrCumPct}% · ${kpi.months}M`,
                   status: twrStatus,
                   metric: 'twr',
                   extra: alphaPct !== null
                     ? { label: '알파', value: `${parseFloat(alphaPct) >= 0 ? '+' : ''}${alphaPct}%p` }
-                    : null,
+                    : { label: '누적', value: `${parseFloat(twrCumPct) >= 0 ? '+' : ''}${twrCumPct}%` },
                 },
                 {
                   label: 'Sharpe',
@@ -2051,6 +2057,178 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             })()}
           </div>
         )}
+
+        {/* ── 리포트 탭 ── */}
+        {tab === "report" && (() => {
+          const kpi = computeKPI(monthlyData);
+          const totalEval   = Object.values(accounts).reduce((s, a) => s + (a.total_eval   || 0), 0);
+          const totalInvest = Object.values(accounts).reduce((s, a) => s + (a.total_invest || 0), 0);
+          const totalProfit = totalEval - totalInvest;
+          const totalRate   = totalInvest > 0 ? (totalProfit / totalInvest * 100) : 0;
+
+          // 전체 종목 수익률 TOP3 / BOTTOM3
+          const allH = Object.entries(accounts).flatMap(([k, a]) =>
+            (a.holdings || []).filter(h => h.invest > 0 && h.eval > 0).map(h => ({ ...h, _acct: a.label, _color: a.color }))
+          );
+          const byRate    = [...allH].sort((a, b) => b.rate - a.rate);
+          const top3      = byRate.slice(0, 3);
+          const bottom3   = byRate.slice(-3).reverse();
+
+          // 리밸런싱 경보 (±5%p 초과)
+          const rebalAlerts = Object.entries(accounts).flatMap(([k, a]) =>
+            (a.assets || []).map(asset => {
+              const curr = asset.sheetCurrent ?? asset.ratio;
+              const diff = parseFloat((curr - asset.target).toFixed(1));
+              return { acct: a.label, name: asset.name, diff, color: a.color };
+            }).filter(x => Math.abs(x.diff) >= 5)
+          );
+
+          // KPI 상태 헬퍼
+          const kpiStatus = kpi ? {
+            twr:    kpi.twr >= 0       ? { icon: '✅', color: '#10B981' } : { icon: '🔴', color: '#EF4444' },
+            sharpe: kpi.sharpe === null ? { icon: '–',  color: '#6B7280' }
+                  : kpi.sharpe >= 0.8  ? { icon: '✅', color: '#10B981' }
+                  : kpi.sharpe >= 0.5  ? { icon: '⚠️', color: '#F59E0B' }
+                  :                      { icon: '🔴', color: '#EF4444' },
+            mdd:    kpi.mdd >= -0.25   ? { icon: '✅', color: '#10B981' }
+                  : kpi.mdd >= -0.35   ? { icon: '⚠️', color: '#F59E0B' }
+                  :                      { icon: '🔴', color: '#EF4444' },
+          } : null;
+
+          const today = new Date();
+          const dateStr = `${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
+
+          return (
+            <div>
+              {/* 헤더 */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>포트폴리오 리포트</div>
+                <div style={{ fontSize: 10, color: '#5A6478' }}>{dateStr} 기준</div>
+              </div>
+
+              {/* 섹션 1: 포트폴리오 총괄 */}
+              <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>포트폴리오 총괄</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: isMobile ? 20 : 24, fontWeight: 700, color: '#F5F7FF' }}>₩{fmt(totalEval)}</div>
+                    <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>투자원금 ₩{fmt(totalInvest)}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                      {totalProfit >= 0 ? '+' : ''}₩{fmt(totalProfit)}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                      {totalRate >= 0 ? '+' : ''}{totalRate.toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
+                {/* 계좌별 바 */}
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {Object.entries(accounts).filter(([, a]) => a.total_eval > 0).map(([k, a]) => {
+                    const w = totalEval > 0 ? (a.total_eval / totalEval * 100) : 0;
+                    return (
+                      <div key={k} style={{ flex: w, minWidth: 0, textAlign: 'center' }}>
+                        <div style={{ height: 6, background: a.color, borderRadius: 3, marginBottom: 4 }} />
+                        <div style={{ fontSize: 9, color: a.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.label}</div>
+                        <div style={{ fontSize: 9, color: '#5A6478' }}>{w.toFixed(0)}%</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 섹션 2: KPI 스냅샷 */}
+              {kpi && kpiStatus && (
+                <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>운용 KPI 스냅샷</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                    {[
+                      { label: 'TWR (연환산)', val: `${kpi.twr >= 0 ? '+' : ''}${(kpi.twr*100).toFixed(1)}%`, sub: `누적 ${kpi.twrCum >= 0 ? '+' : ''}${(kpi.twrCum*100).toFixed(1)}%`, st: kpiStatus.twr },
+                      { label: 'Sharpe',       val: kpi.sharpe !== null ? kpi.sharpe.toFixed(2) : '–',       sub: '목표 0.8~1.2',  st: kpiStatus.sharpe },
+                      { label: 'MDD',          val: `${(kpi.mdd*100).toFixed(1)}%`,                          sub: '목표 −25% 이내', st: kpiStatus.mdd },
+                    ].map(c => (
+                      <div key={c.label} style={{ background: '#141927', borderRadius: 8, padding: '10px 8px', textAlign: 'center', border: `1px solid ${c.st.color}22` }}>
+                        <div style={{ fontSize: 8, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>{c.label}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: c.st.color }}>{c.val}</div>
+                        <div style={{ fontSize: 8, color: '#3A4050', marginTop: 3, lineHeight: 1.3 }}>{c.sub}</div>
+                        <div style={{ fontSize: 9, color: c.st.color, marginTop: 3 }}>{c.st.icon}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {kpi.benchmarkTWR !== null && (
+                    <div style={{ marginTop: 10, padding: '8px 10px', background: '#141927', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 11, color: '#9CA3AF' }}>시장 대비 알파</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: (kpi.twr - kpi.benchmarkTWR) >= 0.03 ? '#10B981' : (kpi.twr - kpi.benchmarkTWR) >= 0 ? '#F59E0B' : '#EF4444' }}>
+                        {((kpi.twr - kpi.benchmarkTWR)*100) >= 0 ? '+' : ''}{((kpi.twr - kpi.benchmarkTWR)*100).toFixed(1)}%p
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 섹션 3: 수익률 TOP3 / BOTTOM3 */}
+              {allH.length > 0 && (
+                <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>종목 수익률 순위</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    {/* TOP3 */}
+                    <div>
+                      <div style={{ fontSize: 10, color: PROFIT_POS, marginBottom: 8, fontWeight: 600 }}>▲ 상위</div>
+                      {top3.map((h, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: i < top3.length-1 ? '1px solid #1E2233' : 'none' }}>
+                          <div>
+                            <div style={{ fontSize: 11, color: '#E8EAF0', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 90 }}>{h.name}</div>
+                            <div style={{ fontSize: 9, color: h._color }}>{h._acct}</div>
+                          </div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS }}>+{h.rate.toFixed(1)}%</div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* BOTTOM3 */}
+                    <div>
+                      <div style={{ fontSize: 10, color: PROFIT_NEG, marginBottom: 8, fontWeight: 600 }}>▼ 하위</div>
+                      {bottom3.map((h, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: i < bottom3.length-1 ? '1px solid #1E2233' : 'none' }}>
+                          <div>
+                            <div style={{ fontSize: 11, color: '#E8EAF0', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 90 }}>{h.name}</div>
+                            <div style={{ fontSize: 9, color: h._color }}>{h._acct}</div>
+                          </div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: h.rate >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                            {h.rate >= 0 ? '+' : ''}{h.rate.toFixed(1)}%
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 섹션 4: 리밸런싱 신호 */}
+              <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16 }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>리밸런싱 신호 (±5%p 초과)</div>
+                {rebalAlerts.length === 0 ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 16 }}>✅</span>
+                    <span style={{ fontSize: 12, color: '#10B981' }}>모든 자산군 목표 비중 이내</span>
+                  </div>
+                ) : (
+                  rebalAlerts.map((a, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: 6, marginBottom: 4, background: '#1A2035', borderLeft: `3px solid ${a.diff > 0 ? PROFIT_POS : PROFIT_NEG}` }}>
+                      <div>
+                        <span style={{ fontSize: 11, color: '#E8EAF0' }}>{a.name}</span>
+                        <span style={{ fontSize: 10, color: a.color, marginLeft: 6 }}>{a.acct}</span>
+                      </div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: a.diff > 0 ? PROFIT_POS : PROFIT_NEG }}>
+                        {a.diff > 0 ? '+' : ''}{a.diff}%p
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── 리밸런싱 탭 ── */}
         {tab === "rebalance" && (
@@ -2207,60 +2385,131 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
         )}
 
         {/* ── 종목 탭 ── */}
-        {tab === "holdings" && (
+        {tab === "holdings" && (() => {
+          // ── 전체 계좌 합산 ─────────────────────────────────────────
+          const totalPortEval   = Object.values(accounts).reduce((s, a) => s + (a.total_eval   || 0), 0);
+          const totalPortInvest = Object.values(accounts).reduce((s, a) => s + (a.total_invest || 0), 0);
+          const totalPortProfit = totalPortEval - totalPortInvest;
+
+          // 전체 계좌 종목 합산 (acctKey === '전체' 시 사용)
+          const allHoldingsFlat = Object.entries(accounts).flatMap(([k, a]) =>
+            (a.holdings || [])
+              .filter(h => h.invest > 0 && h.eval > 0)
+              .map(h => ({ ...h, _acct: a.label, _acctKey: k }))
+          );
+
+          // 현재 표시할 종목 목록 (단일 계좌 or 전체)
+          const isTotalView = acctKey === '전체';
+          const rawHoldings = isTotalView
+            ? allHoldingsFlat
+            : (acct.holdings || []).filter(h => h.invest > 0 && h.eval > 0).map((h, origIdx) => ({ ...h, origIdx }));
+
+          // 정렬
+          const SORT_FN = {
+            rate_desc:   (a, b) => b.rate   - a.rate,
+            rate_asc:    (a, b) => a.rate   - b.rate,
+            eval_desc:   (a, b) => b.eval   - a.eval,
+            profit_desc: (a, b) => b.profit - a.profit,
+          };
+          const sortedHoldings = [...rawHoldings].sort(SORT_FN[holdSort] || SORT_FN.rate_desc);
+
+          // 비중 계산 기준 (전체뷰: 총포트, 단일계좌: 해당계좌)
+          const weightBase = isTotalView ? totalPortEval : (acct.total_eval || 1);
+
+          return (
           <div>
-            {/* 계좌 선택 (4개 모두) */}
-            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-              {Object.keys(accounts).map((k) => (
+            {/* 계좌 선택 (전체 + 4개) */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: 'auto' }}>
+              {[{ k: '전체', label: '전체', color: '#8B5CF6' }, ...Object.entries(accounts).map(([k, a]) => ({ k, label: a.label, color: a.color }))].map(({ k, label, color }) => (
                 <button key={k} onClick={() => { setAcctKey(k); setShowAddForm(false); setEditingHolding(null); }} style={{
-                  flex: 1, padding: isMobile ? "8px 4px" : "6px 4px",
-                  textAlign: 'center',
+                  flex: k === '전체' ? 'none' : 1,
+                  padding: isMobile ? "8px 10px" : "6px 10px",
+                  textAlign: 'center', flexShrink: 0,
                   borderRadius: 20,
-                  border: `1px solid ${acctKey === k ? accounts[k].color : "#2A2F3E"}`,
-                  background: acctKey === k ? `${accounts[k].color}22` : "transparent",
-                  color: acctKey === k ? accounts[k].color : "#6B7280",
+                  border: `1px solid ${acctKey === k ? color : "#2A2F3E"}`,
+                  background: acctKey === k ? `${color}22` : "transparent",
+                  color: acctKey === k ? color : "#6B7280",
                   cursor: "pointer", fontSize: 11, fontFamily: baseFont,
                 }}>
-                  {accounts[k].label}
+                  {label}
                 </button>
               ))}
             </div>
 
             {/* 계좌 요약 카드 */}
-            <div style={{
-              background: `linear-gradient(135deg, ${acct.color}22, #1A1D26)`,
-              border: `1px solid ${acct.color}44`,
-              borderRadius: 12, padding: "16px", marginBottom: 16,
-            }}>
-              <div style={{ fontSize: 10, letterSpacing: 2, color: acct.color, marginBottom: 4 }}>
-                {acct.sub.toUpperCase()}
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-                <div>
-                  <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#F5F7FF" }}>
-                    ₩{fmt(acct.total_eval)}
+            {isTotalView ? (
+              <div style={{ background: 'linear-gradient(135deg, #8B5CF622, #1A1D26)', border: '1px solid #8B5CF644', borderRadius: 12, padding: "16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 10, letterSpacing: 2, color: '#8B5CF6', marginBottom: 4 }}>전체 포트폴리오</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+                  <div>
+                    <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#F5F7FF" }}>₩{fmt(totalPortEval)}</div>
+                    <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>투자금 ₩{fmt(totalPortInvest)}</div>
                   </div>
-                  <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>
-                    투자금 ₩{fmt(acct.total_invest)}
-                  </div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{
-                    fontSize: isMobile ? 13 : 16, fontWeight: 700,
-                    color: acct.profit >= 0 ? PROFIT_POS : PROFIT_NEG,
-                  }}>
-                    ₩{fmt(acct.profit)}
-                  </div>
-                  <div style={{ fontSize: 11, color: acct.profit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
-                    {acct.profit >= 0 ? '+' : ''}
-                    {acct.total_invest > 0 ? ((acct.profit / acct.total_invest) * 100).toFixed(1) : '0.0'}%
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, color: totalPortProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                      ₩{fmt(totalPortProfit)}
+                    </div>
+                    <div style={{ fontSize: 11, color: totalPortProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                      {totalPortProfit >= 0 ? '+' : ''}{totalPortInvest > 0 ? ((totalPortProfit / totalPortInvest) * 100).toFixed(1) : '0.0'}%
+                    </div>
                   </div>
                 </div>
               </div>
+            ) : (
+              <div style={{
+                background: `linear-gradient(135deg, ${acct.color}22, #1A1D26)`,
+                border: `1px solid ${acct.color}44`,
+                borderRadius: 12, padding: "16px", marginBottom: 16,
+              }}>
+                <div style={{ fontSize: 10, letterSpacing: 2, color: acct.color, marginBottom: 4 }}>
+                  {acct.sub.toUpperCase()}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+                  <div>
+                    <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#F5F7FF" }}>
+                      ₩{fmt(acct.total_eval)}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>
+                      투자금 ₩{fmt(acct.total_invest)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{
+                      fontSize: isMobile ? 13 : 16, fontWeight: 700,
+                      color: acct.profit >= 0 ? PROFIT_POS : PROFIT_NEG,
+                    }}>
+                      ₩{fmt(acct.profit)}
+                    </div>
+                    <div style={{ fontSize: 11, color: acct.profit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                      {acct.profit >= 0 ? '+' : ''}
+                      {acct.total_invest > 0 ? ((acct.profit / acct.total_invest) * 100).toFixed(1) : '0.0'}%
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 정렬 버튼 */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 12, alignItems: 'center' }}>
+              <span style={{ fontSize: 10, color: '#5A6478', flexShrink: 0 }}>정렬</span>
+              {[
+                { key: 'rate_desc',   label: '수익률↓' },
+                { key: 'rate_asc',    label: '수익률↑' },
+                { key: 'eval_desc',   label: '평가금↓' },
+                { key: 'profit_desc', label: '수익금↓' },
+              ].map(s => (
+                <button key={s.key} onClick={() => setHoldSort(s.key)} style={{
+                  padding: '4px 8px', borderRadius: 12, fontSize: 10,
+                  border: `1px solid ${holdSort === s.key ? '#3B82F6' : '#2A2F3E'}`,
+                  background: holdSort === s.key ? '#1E3A5F' : 'transparent',
+                  color: holdSort === s.key ? '#60A5FA' : '#6B7280',
+                  cursor: 'pointer', fontFamily: baseFont,
+                }}>{s.label}</button>
+              ))}
             </div>
 
             {/* 종목추가/삭제 버튼 + 폼 */}
-            {sheets.auth === 'signed-in' && (
+            {sheets.auth === 'signed-in' && !isTotalView && (
               <div style={{ marginBottom: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
                   <button onClick={() => { setShowDeleteMode(p => !p); setSelectedToDelete(new Set()); setShowAddForm(false); }} style={{
@@ -2318,60 +2567,51 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 
             {/* 보유 종목 목록 */}
             <div style={{ background: "#1A1D26", borderRadius: 12, overflow: "hidden" }}>
-              {(() => {
-                const vis = acct.holdings
-                  .map((h, origIdx) => ({ h, origIdx }))
-                  .filter(({ h }) => h.invest > 0 && h.eval > 0);
-                return (<>
-                  <div style={{ padding: "12px 16px", borderBottom: "1px solid #2A2F3E", fontSize: 10, letterSpacing: 3, color: "#5A6478" }}>
-                    보유 종목 ({vis.length})
-                  </div>
-                  {vis.length === 0 && (
-                    <div style={{ padding: 24, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
-                      종목이 없습니다
-                    </div>
-                  )}
-                  {vis.map(({ h, origIdx }, vi) => {
-                    const color = h.rate >= 0 ? PROFIT_POS : PROFIT_NEG;
-                    const typeName = h.type || '';
-                    const isEditing = editingHolding?.origIdx === origIdx;
-                    const lpHandlers = sheets.auth === 'signed-in' && !showDeleteMode ? {
-                      onMouseDown: () => startLP(origIdx, h),
-                      onMouseUp: endLP,
-                      onMouseLeave: endLP,
-                      onTouchStart: (e) => { e.preventDefault(); startLP(origIdx, h); },
-                      onTouchEnd: endLP,
-                      onTouchCancel: endLP,
-                      onContextMenu: (e) => e.preventDefault(),
-                    } : {};
-                    return (
-                    <div key={origIdx} style={{ borderBottom: vi < vis.length - 1 ? "1px solid #1E2233" : "none" }}>
-                      <div style={{
-                        padding: isMobile ? "10px 16px" : "12px 16px",
-                        display: "flex", alignItems: "center", gap: 10,
-                        background: isEditing ? '#1A2035' : selectedToDelete.has(origIdx) ? '#1A1520' : 'transparent',
-                        userSelect: 'none', WebkitUserSelect: 'none',
-                      }} {...lpHandlers}>
-                      {showDeleteMode && (
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid #2A2F3E", fontSize: 10, letterSpacing: 3, color: "#5A6478" }}>
+                보유 종목 ({sortedHoldings.length})
+              </div>
+              {sortedHoldings.length === 0 && (
+                <div style={{ padding: 24, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>종목이 없습니다</div>
+              )}
+              {sortedHoldings.map((h, vi) => {
+                const origIdx = h.origIdx ?? vi;
+                const color = h.rate >= 0 ? PROFIT_POS : PROFIT_NEG;
+                const typeName = h.type || '';
+                const isEditing = !isTotalView && editingHolding?.origIdx === origIdx;
+                const weightPct = weightBase > 0 ? (h.eval / weightBase * 100).toFixed(1) : '0.0';
+                const lpHandlers = !isTotalView && sheets.auth === 'signed-in' && !showDeleteMode ? {
+                  onMouseDown: () => startLP(origIdx, h),
+                  onMouseUp: endLP,
+                  onMouseLeave: endLP,
+                  onTouchStart: (e) => { e.preventDefault(); startLP(origIdx, h); },
+                  onTouchEnd: endLP,
+                  onTouchCancel: endLP,
+                  onContextMenu: (e) => e.preventDefault(),
+                } : {};
+                return (
+                  <div key={`${h._acctKey ?? acctKey}-${origIdx}`} style={{ borderBottom: vi < sortedHoldings.length - 1 ? "1px solid #1E2233" : "none" }}>
+                    <div style={{
+                      padding: isMobile ? "10px 16px" : "12px 16px",
+                      display: "flex", alignItems: "center", gap: 8,
+                      background: isEditing ? '#1A2035' : selectedToDelete.has(origIdx) ? '#1A1520' : 'transparent',
+                      userSelect: 'none', WebkitUserSelect: 'none',
+                    }} {...lpHandlers}>
+                      {!isTotalView && showDeleteMode && (
                         <input type="checkbox" checked={selectedToDelete.has(origIdx)}
-                          onChange={() => setSelectedToDelete(prev => {
-                            const next = new Set(prev);
-                            if (next.has(origIdx)) next.delete(origIdx); else next.add(origIdx);
-                            return next;
-                          })}
+                          onChange={() => setSelectedToDelete(prev => { const next = new Set(prev); if (next.has(origIdx)) next.delete(origIdx); else next.add(origIdx); return next; })}
                           style={{ marginRight: 2, accentColor: PROFIT_POS, flexShrink: 0 }}
                         />
                       )}
-                      {typeName && (
-                        <div style={{
-                          fontSize: 10,
-                          background: (COLORS[typeName] || '#aaa') + '33',
-                          color: COLORS[typeName] || '#aaa',
-                          padding: '2px 6px', borderRadius: 4, flexShrink: 0, whiteSpace: 'nowrap',
-                        }}>
+                      {/* 자산군 태그 or 계좌 태그(전체뷰) */}
+                      {isTotalView ? (
+                        <div style={{ fontSize: 9, background: (accounts[h._acctKey]?.color || '#aaa') + '33', color: accounts[h._acctKey]?.color || '#aaa', padding: '2px 5px', borderRadius: 4, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                          {h._acct}
+                        </div>
+                      ) : typeName ? (
+                        <div style={{ fontSize: 10, background: (COLORS[typeName] || '#aaa') + '33', color: COLORS[typeName] || '#aaa', padding: '2px 6px', borderRadius: 4, flexShrink: 0, whiteSpace: 'nowrap' }}>
                           {typeName}
                         </div>
-                      )}
+                      ) : null}
                       <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#E8EAF0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {h.name}
@@ -2380,107 +2620,67 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                           {h.qty}주 · ₩{fmt(h.price)}
                         </div>
                       </div>
+                      {/* 비중% */}
+                      <div style={{ textAlign: 'center', flexShrink: 0, minWidth: 32 }}>
+                        <div style={{ fontSize: 9, color: '#5A6478' }}>비중</div>
+                        <div style={{ fontSize: 10, color: '#9CA3AF', fontWeight: 600 }}>{weightPct}%</div>
+                      </div>
                       <div style={{ textAlign: "right", flexShrink: 0 }}>
                         <div style={{ fontSize: isMobile ? 11 : 12, color: "#E8EAF0" }}>₩{fmt(h.eval)}</div>
                         <div style={{ fontSize: isMobile ? 10 : 11, fontWeight: 700, color }}>
-                          ₩{fmt(Math.abs(h.profit))}
+                          {h.rate >= 0 ? '+' : ''}{h.rate.toFixed(1)}%
                         </div>
                         <div style={{ fontSize: 10, color }}>
-                          {h.rate >= 0 ? '+' : ''}{h.rate.toFixed(1)}%
+                          ₩{fmt(Math.abs(h.profit))}
                         </div>
                       </div>
                     </div>
                     {isEditing && (
-                      <div style={{
-                        padding: '12px 16px', background: '#141927',
-                        borderTop: '1px solid #2A2F3E',
-                      }}>
+                      <div style={{ padding: '12px 16px', background: '#141927', borderTop: '1px solid #2A2F3E' }}>
                         <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 10 }}>종목 수정</div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
                           <div>
                             <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>매수단가</div>
-                            <input
-                              type="number"
-                              value={editPrice}
-                              onChange={e => setEditPrice(e.target.value)}
-                              style={{
-                                background: '#0D1520', border: '1px solid #2A2F3E', borderRadius: 6,
-                                color: '#E8EAF0', padding: '6px 10px', fontSize: 12,
-                                fontFamily: baseFont, width: '100%', boxSizing: 'border-box',
-                              }}
-                            />
+                            <input type="number" value={editPrice} onChange={e => setEditPrice(e.target.value)}
+                              style={{ background: '#0D1520', border: '1px solid #2A2F3E', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
                           </div>
                           <div>
                             <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>수량</div>
-                            <input
-                              type="number"
-                              value={editQty}
-                              onChange={e => setEditQty(e.target.value)}
-                              style={{
-                                background: '#0D1520', border: '1px solid #2A2F3E', borderRadius: 6,
-                                color: '#E8EAF0', padding: '6px 10px', fontSize: 12,
-                                fontFamily: baseFont, width: '100%', boxSizing: 'border-box',
-                              }}
-                            />
+                            <input type="number" value={editQty} onChange={e => setEditQty(e.target.value)}
+                              style={{ background: '#0D1520', border: '1px solid #2A2F3E', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
                           </div>
                         </div>
                         {editingHolding?.isManual && (
                           <div style={{ marginBottom: 10 }}>
                             <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>현재가 (수기)</div>
-                            <input
-                              type="number"
-                              value={editCurrentPrice}
-                              onChange={e => setEditCurrentPrice(e.target.value)}
-                              style={{
-                                background: '#0D1520', border: '1px solid #3B82F6', borderRadius: 6,
-                                color: '#E8EAF0', padding: '6px 10px', fontSize: 12,
-                                fontFamily: baseFont, width: '100%', boxSizing: 'border-box',
-                              }}
-                            />
+                            <input type="number" value={editCurrentPrice} onChange={e => setEditCurrentPrice(e.target.value)}
+                              style={{ background: '#0D1520', border: '1px solid #3B82F6', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
                           </div>
                         )}
                         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#9CA3AF', marginBottom: 10, cursor: 'pointer', userSelect: 'none' }}>
-                          <input
-                            type="checkbox"
-                            checked={editIncludeSavings}
-                            onChange={e => setEditIncludeSavings(e.target.checked)}
-                            style={{ accentColor: '#3B82F6' }}
-                          />
+                          <input type="checkbox" checked={editIncludeSavings} onChange={e => setEditIncludeSavings(e.target.checked)} style={{ accentColor: '#3B82F6' }} />
                           신규 매수 반영 (저축금 업데이트)
                         </label>
                         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                          <button onClick={() => { setEditingHolding(null); setEditIncludeSavings(false); }} style={{
-                            padding: '6px 14px', borderRadius: 6, border: '1px solid #2A2F3E',
-                            background: 'transparent', color: '#6B7280', cursor: 'pointer',
-                            fontSize: 11, fontFamily: baseFont,
-                          }}>취소</button>
-                          <button onClick={saveEdit} style={{
-                            padding: '6px 14px', borderRadius: 6, border: 'none',
-                            background: '#3B82F6', color: '#fff', cursor: 'pointer',
-                            fontSize: 11, fontFamily: baseFont,
-                          }}>저장</button>
+                          <button onClick={() => { setEditingHolding(null); setEditIncludeSavings(false); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #2A2F3E', background: 'transparent', color: '#6B7280', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>취소</button>
+                          <button onClick={saveEdit} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#3B82F6', color: '#fff', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>저장</button>
                         </div>
                       </div>
                     )}
-                    </div>
+                  </div>
                 );
               })}
-              {showDeleteMode && selectedToDelete.size > 0 && (
+              {!isTotalView && showDeleteMode && selectedToDelete.size > 0 && (
                 <div style={{ padding: '12px 16px', borderTop: '1px solid #2A2F3E' }}>
-                  <button onClick={handleDeleteSelected} style={{
-                    width: '100%', padding: 10, borderRadius: 6, border: 'none',
-                    background: PROFIT_POS, color: '#fff', cursor: 'pointer',
-                    fontSize: 12, fontFamily: baseFont,
-                  }}>
+                  <button onClick={handleDeleteSelected} style={{ width: '100%', padding: 10, borderRadius: 6, border: 'none', background: PROFIT_POS, color: '#fff', cursor: 'pointer', fontSize: 12, fontFamily: baseFont }}>
                     선택 삭제 ({selectedToDelete.size}개)
                   </button>
                 </div>
               )}
-                </>);
-              })()}
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* ── 배당금 탭 ── */}
         {tab === "dividend" && (() => {
