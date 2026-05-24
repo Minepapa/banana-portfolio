@@ -1974,20 +1974,27 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
           const twrCumPct = (kpi.twrCum * 100).toFixed(1);
           const mddPct    = (kpi.mdd    * 100).toFixed(1);
           const sharpeV   = kpi.sharpe !== null ? kpi.sharpe.toFixed(2) : '–';
+          const bmPct     = kpi.benchmarkTWR !== null ? (kpi.benchmarkTWR * 100).toFixed(1) : null;
+          const alphaPct  = bmPct !== null ? ((kpi.twr - kpi.benchmarkTWR) * 100).toFixed(1) : null;
 
-          const twrStatus    = kpi.twr >= 0    ? { icon: '✅', color: '#10B981', label: '양호' } : { icon: '🔴', color: '#EF4444', label: '손실' };
+          const twrStatus = alphaPct !== null
+            ? (parseFloat(alphaPct) >= 3  ? { icon: '✅', color: '#10B981', label: `알파 +${alphaPct}%p` }
+             : parseFloat(alphaPct) >= 0  ? { icon: '⚠️', color: '#F59E0B', label: `알파 +${alphaPct}%p` }
+             :                              { icon: '🔴', color: '#EF4444', label: `알파 ${alphaPct}%p` })
+            : kpi.twr >= 0 ? { icon: '✅', color: '#10B981', label: '양호' }
+            :                { icon: '🔴', color: '#EF4444', label: '손실' };
           const sharpeStatus = kpi.sharpe === null ? { icon: '–', color: '#6B7280', label: '데이터 부족' }
             : kpi.sharpe >= 0.8 ? { icon: '✅', color: '#10B981', label: '양호' }
             : kpi.sharpe >= 0.5 ? { icon: '⚠️', color: '#F59E0B', label: '주의' }
             : { icon: '🔴', color: '#EF4444', label: '미달' };
-          const mddStatus    = kpi.mdd >= -0.25 ? { icon: '✅', color: '#10B981', label: '이내' }
+          const mddStatus = kpi.mdd >= -0.25 ? { icon: '✅', color: '#10B981', label: '이내' }
             : kpi.mdd >= -0.35 ? { icon: '⚠️', color: '#F59E0B', label: '주의' }
             : { icon: '🔴', color: '#EF4444', label: '초과' };
 
           const cards = [
-            { label: 'TWR (연환산)', value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`, sub: `누적 ${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}% · ${kpi.months}M`, status: twrStatus, metric: 'twr' },
-            { label: 'Sharpe',       value: sharpeV,                                  sub: '목표 0.8~1.2 · 최근 12M',                                                    status: sharpeStatus, metric: 'sharpe' },
-            { label: 'MDD',          value: `${mddPct}%`,                             sub: '목표 −25% 이내',                                                              status: mddStatus,    metric: 'mdd' },
+            { label: 'TWR (연환산)', value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`, sub: bmPct !== null ? `시장 ${parseFloat(bmPct) >= 0 ? '+' : ''}${bmPct}% · ${kpi.months}M` : `누적 ${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}% · ${kpi.months}M`, status: twrStatus, metric: 'twr' },
+            { label: 'Sharpe',       value: sharpeV,                                  sub: '목표 0.8~1.2 · 최근 12M',   status: sharpeStatus, metric: 'sharpe' },
+            { label: 'MDD',          value: `${mddPct}%`,                             sub: '목표 −25% 이내',             status: mddStatus,    metric: 'mdd' },
           ];
 
           return (
@@ -2023,11 +2030,12 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 {[
                   { label: 'TWR 연환산', value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`, color: twrStatus.color },
                   { label: 'TWR 누적',   value: `${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}%`, color: kpi.twrCum >= 0 ? '#10B981' : '#EF4444' },
+                  ...(alphaPct !== null ? [{ label: '시장 대비 알파', value: `${parseFloat(alphaPct) >= 0 ? '+' : ''}${alphaPct}%p`, color: twrStatus.color }] : []),
                   { label: 'Sharpe',     value: sharpeV,             color: sharpeStatus.color },
                   { label: 'MDD',        value: `${mddPct}%`,        color: mddStatus.color },
                   { label: '산출 기간',  value: `${kpi.months}개월`, color: '#9CA3AF' },
-                ].map((row, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < 4 ? '1px solid #1E2233' : 'none' }}>
+                ].map((row, i, arr) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none' }}>
                     <span style={{ fontSize: 12, color: '#9CA3AF' }}>{row.label}</span>
                     <span style={{ fontSize: 13, fontWeight: 700, color: row.color }}>{row.value}</span>
                   </div>
