@@ -126,27 +126,86 @@ function _fmt(d) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 테스트용: 수동으로 특정 연·월 채우기
-// 예: fillMonth(2026, 4)  → 2026년 4월 말일 종가 입력
+// 일괄 채우기: startYear-startMonth 부터 전월까지 한 번에 입력
+// 예: fillAllSince(2025, 4)  → 2025-04 ~ 전월 전체 채우기
 // ─────────────────────────────────────────────────────────────────────────────
-function fillMonth(year, month) {
-  const lastDay = new Date(year, month, 0);
-  const kospi = fetchLastClose('^KS11', lastDay);
-  const sp500 = fetchLastClose('^GSPC', lastDay);
-  if (kospi === null || sp500 === null) { console.log('수집 실패'); return; }
+function fillAllSince(startYear, startMonth) {
+  const today     = new Date();
+  const endYear   = today.getMonth() === 0 ? today.getFullYear() - 1 : today.getFullYear();
+  const endMonth  = today.getMonth() === 0 ? 12 : today.getMonth(); // 전월 (0-based getMonth → 1-based 전월)
 
   const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = ss.getSheetByName(SHEET_NAME);
-  const data  = sheet.getDataRange().getValues();
-  let lastYear = 0, targetRow = -1;
+  if (!sheet) { console.log(`❌ 시트 "${SHEET_NAME}" 없음`); return; }
+
+  let y = startYear, m = startMonth;
+  let ok = 0, skip = 0, fail = 0;
+
+  while (y < endYear || (y === endYear && m <= endMonth)) {
+    const lastDay = new Date(y, m, 0); // 해당 월 말일
+
+    const kospi = fetchLastClose('^KS11', lastDay);
+    const sp500 = fetchLastClose('^GSPC', lastDay);
+
+    if (kospi === null || sp500 === null) {
+      console.log(`  ⚠️  ${y}-${String(m).padStart(2,'0')} 수집 실패 — 스킵`);
+      fail++;
+    } else {
+      const row = _findRow(sheet, y, m);
+      if (row < 0) {
+        console.log(`  ⚠️  ${y}-${String(m).padStart(2,'0')} 시트 행 없음 — 스킵`);
+        skip++;
+      } else {
+        sheet.getRange(row, 9).setValue(Math.round(kospi));
+        sheet.getRange(row, 10).setValue(Math.round(sp500));
+        console.log(`  ✅ ${y}-${String(m).padStart(2,'0')} row${row}: KOSPI ${Math.round(kospi)}, S&P ${Math.round(sp500)}`);
+        ok++;
+      }
+    }
+
+    // 다음 달로 이동
+    m++;
+    if (m > 12) { m = 1; y++; }
+
+    // Yahoo Finance 과부하 방지 — 200ms 대기
+    Utilities.sleep(200);
+  }
+
+  console.log(`\n완료: ✅ ${ok}건 성공 / ⚠️ ${skip}건 행없음 / ❌ ${fail}건 수집실패`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 단일 월 수동 채우기: fillMonth(2026, 4)
+// ─────────────────────────────────────────────────────────────────────────────
+function fillMonth(year, month) {
+  const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_NAME);
+  if (!sheet) { console.log(`❌ 시트 없음`); return; }
+
+  const lastDay = new Date(year, month, 0);
+  const kospi = fetchLastClose('^KS11', lastDay);
+  const sp500 = fetchLastClose('^GSPC', lastDay);
+  if (kospi === null || sp500 === null) { console.log('❌ 수집 실패'); return; }
+
+  const row = _findRow(sheet, year, month);
+  if (row < 0) { console.log(`❌ ${year}-${month} 행 없음`); return; }
+
+  sheet.getRange(row, 9).setValue(Math.round(kospi));
+  sheet.getRange(row, 10).setValue(Math.round(sp500));
+  console.log(`✅ ${year}-${month} row${row}: KOSPI ${Math.round(kospi)}, S&P ${Math.round(sp500)}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 내부: 시트에서 특정 연·월의 행 번호(1-based) 반환, 없으면 -1
+// ─────────────────────────────────────────────────────────────────────────────
+function _findRow(sheet, year, month) {
+  const data = sheet.getDataRange().getValues();
+  let lastYear = 0;
   for (let i = 0; i < data.length; i++) {
     const y = parseInt(String(data[i][0]??'').replace(/[^0-9]/g,''));
     if (y >= 2000) lastYear = y;
     const m = parseInt(String(data[i][1]??'').replace(/[^0-9]/g,''));
-    if (lastYear === year && m === month) { targetRow = i + 1; break; }
+    if (lastYear === year && m === month) return i + 1;
   }
-  if (targetRow < 0) { console.log(`${year}-${month} 행 없음`); return; }
-  sheet.getRange(targetRow, 9).setValue(Math.round(kospi));
-  sheet.getRange(targetRow, 10).setValue(Math.round(sp500));
-  console.log(`✅ ${year}-${month} row${targetRow}: KOSPI ${Math.round(kospi)}, S&P ${Math.round(sp500)}`);
+  return -1;
 }
