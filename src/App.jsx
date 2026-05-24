@@ -59,7 +59,7 @@ const COLORS = {
 // ── 학습 모듈 + AI 능동 평가 (Trading Agent/learning/ 참조) ─────────────────
 const LEARNING_MODULES = {
   // 수익성
-  revenue_growth:   { title: '매출성장률 YoY', summary: '작년 같은 분기 대비 매출이 몇 % 늘었나. 회사의 외형 성장 속도. 마진과 함께 봐야 의미 있음.', threshold: 'Frank 확정: 10%+ 3년 유지면 성장주로 분류. 마진 동시 상승이면 강력. (2026-05 인터뷰)' },
+  revenue_growth:   { title: '매출성장률 YoY', summary: '작년 같은 분기 대비 매출이 몇 % 늘었나. 회사의 외형 성장 속도. 마진과 함께 봐야 의미 있음.', threshold: 'Frank 확정: 10%+ 3년 유지면 성장주로 분류. 마진 동시 상승이면 강력.' },
   operating_margin: { title: '영업이익률', summary: '본업으로 매출 100원에 영업단계 얼마 남는지. 동종 평균 1.5배 이상이면 가격결정력 강함.', threshold: 'Frank: 동종 대비 1.5배 + 3년 추세 평탄/상승이면 매수 근거' },
   roic:             { title: 'ROIC (투하자본수익률)', summary: '빚+자기자본을 굴려 얼마 남기는지. 15% 이상 5년 유지면 해자(moat) 강력. ROE보다 정직.', threshold: 'Frank: 15% 이상 5년 평균 → 매수 후보, 10% 미만 → 신중' },
 
@@ -75,25 +75,25 @@ const LEARNING_MODULES = {
 
   // 현금흐름
   fcf_yield:        { title: 'FCF yield', summary: 'FCF/시가총액. 시가총액 대비 매년 회수되는 현금. 회계이익은 거짓말 가능, 현금은 사실.', threshold: 'Frank: 매수 시 영업이익만 보지 말 것. 배당주는 FCF 커버리지 80% 마지노선' },
-  payout_ratio:     { title: '배당성향', summary: '순이익 중 배당으로 나가는 비율. 70% 넘으면 성장 재투자 여력 적음, 100% 넘으면 배당컷 임박.', threshold: 'Frank 확정: 40~60% 이상적 (메리츠금융지주형 균형). 80%+면 FCF 커버리지 같이 확인. (2026-05 인터뷰)' },
+  payout_ratio:     { title: '배당성향', summary: '순이익 중 배당으로 나가는 비율. 70% 넘으면 성장 재투자 여력 적음, 100% 넘으면 배당컷 임박.', threshold: 'Frank 확정: 40~60% 이상적 (메리츠금융지주형 균형). 80%+면 FCF 커버리지 같이 확인.' },
   dividend_sustainability:{ title: '배당지속가능성 (FCF 커버리지)', summary: '배당총액/FCF. 회사가 버는 현금으로 배당을 얼마나 여유롭게 지급하나. 80% 넘으면 배당컷 리스크.', threshold: 'Frank: < 80% 안전, 80~100% 경계, > 100% 배당컷 경보' },
 
   // 모멘텀
-  rsi:              { title: 'RSI (상대강도지수)', summary: '14거래일 상승/하락 비율. 30 이하 = 일방적 매도세(반등 확률↑), 70 이상 = 과열.', threshold: 'CLAUDE.md §4: RSI 30 이하 → 적극 매수 / 70 이상 → 일부 차익실현' },
-  pos_52w:          { title: '52주 위치', summary: '현재가가 52주 최저~최고 어디인지. 하단 20% = 저점 매수, 상단 80% = 차익실현 검토.', threshold: 'CLAUDE.md §4: 52주 고점 +20% 초과 → 일부 매도 / ≤20% + 펀더멘털 OK → 적극 매수' },
+  rsi:              { title: 'RSI (상대강도지수)', summary: '14거래일 상승/하락 비율. 30 이하 = 일방적 매도세(반등 확률↑), 70 이상 = 과열.', threshold: 'RSI 30 이하 → 적극 매수 / 70 이상 → 일부 차익실현' },
+  pos_52w:          { title: '52주 위치', summary: '현재가가 52주 최저~최고 어디인지. 하단 20% = 저점 매수, 상단 80% = 차익실현 검토.', threshold: '52주 고점 +20% 초과 → 일부 매도 / ≤20% + 펀더멘털 OK → 적극 매수' },
   foreign_flow:     { title: '외국인·기관 수급', summary: '한국 시장에서 외국인은 시총 ~35% 보유, 시장 방향 결정. 4거래일 흐름 + 환율 같이.', threshold: 'Frank: 외국인 4일 연속 순매도 → 추가 매수 보류 / 동반 순매수 4일 → 적립식 가속' },
   sector_rs:        { title: '섹터 상대강도', summary: '해당 섹터 ETF 수익률 − 시장 지수 수익률. 양수면 섹터가 시장을 이기는 중, 강세 모멘텀 시그널.', threshold: 'Frank: 보유 섹터의 RS가 4주 연속 양수면 비중 유지/확대, 음수 전환 시 점검' },
 
   // KPI (운용)
   twr:    { title: 'TWR (시간가중수익률)',
     summary: '저축·입금 효과를 제거하고 순수 운용 실력만 측정하는 지표.\n\n"단순 수익률은 얼마 벌었나, TWR은 운용을 잘했나."\n\n고점에 많이 입금하고 저점에 적게 입금하면 운용이 좋아도 단순 수익률은 낮게 나온다. TWR은 그 왜곡을 제거한다. 단순 수익률 vs TWR의 차이가 곧 타이밍 효과 — 실력은 TWR만 본다. 펀드·ETF·기관 모두 표준.',
-    threshold: 'Frank 확정: 연 TWR 시장 혼합(KOSPI:S&P500=50:50) 대비 +3~5%p 목표.\n· +3%p 미만 → 인덱스 ETF 위주 운용이 더 효율적일 수 있다는 신호\n· +5%p 초과 → 매우 우수, 종목 선별 운 가능성 점검\n매월 1일 weekly_report에 1줄 기록 (CLAUDE.md §7)' },
+    threshold: 'Frank 확정: 연 TWR 시장 혼합(KOSPI:S&P500=50:50) 대비 +3~5%p 목표.\n· +3%p 미만 → 인덱스 ETF 위주 운용이 더 효율적일 수 있다는 신호\n· +5%p 초과 → 매우 우수, 종목 선별 운 가능성 점검' },
   sharpe: { title: '샤프 비율 (위험 효율)',
     summary: '(수익률 − 무위험수익률) ÷ 표준편차. "위험 1단위당 초과 수익."\n\n같은 +30% 수익이라도:\n· 변동성 10% → 샤프 ~3.0 (매우 우수)\n· 변동성 50% → 샤프 ~0.6 (평범)\n\n수익률만 보면 무모한 운용이 이긴다. 샤프는 "별점과 표준편차를 같이 본다."',
-    threshold: '샤프 해석:\n· < 0.5: 비효율\n· 0.5~1.0: 평범\n· 1.0~2.0: 좋음\n· 2.0+: 매우 우수(장기 유지 어려움)\n\nFrank 확정: 1년 샤프 0.8~1.2 목표. 0.8 미만 → 위험 대비 효율이 시장 평균과 큰 차이 없음 → 자산배분 점검. 분기마다 자산군별 샤프 점검 (CLAUDE.md §7)' },
+    threshold: '샤프 해석:\n· < 0.5: 비효율\n· 0.5~1.0: 평범\n· 1.0~2.0: 좋음\n· 2.0+: 매우 우수(장기 유지 어려움)\n\nFrank 확정: 1년 샤프 0.8~1.2 목표. 0.8 미만 → 위험 대비 효율이 시장 평균과 큰 차이 없음 → 자산배분 점검.' },
   mdd:    { title: '최대낙폭 (MDD)',
     summary: '일정 기간 최고점 대비 최저점까지의 하락폭(%). "운용의 가장 어두운 골짜기."\n\n같은 연 +10%여도:\n· MDD −10% 운용 vs MDD −50% 운용\n→ 완전히 다른 경험. 후자는 중간에 패닉 매도할 확률이 훨씬 높다.\n\n평균은 행복해 보여도 거기서 못 견디고 던지면 평균은 의미 없다. 회복 시간(months to recovery)도 함께 봐야 한다.',
-    threshold: 'Frank 확정 (2026-05 인터뷰, 성장형):\n· 1년 MDD −25% 이내 (약 −5,440만원 수준)\n· 3년 MDD −35% 이내\n· 회복 12개월 이내\n이 한계 넘으면 패닉 매도 위험↑ → 자산배분 보수화 검토. 분기마다 자산군별 MDD 점검 (CLAUDE.md §7)' },
+    threshold: 'Frank 확정:\n· 1년 MDD −25% 이내\n· 3년 MDD −35% 이내\n· 회복 12개월 이내\n이 한계 넘으면 패닉 매도 위험↑ → 자산배분 보수화 검토.' },
 };
 
 // 5축 → 학습 모듈 metric key. 시트 적재 카드는 axis grade만 있어 지표별 📘가 안 보이므로
@@ -148,7 +148,7 @@ const SAMPLE_EVALUATION = {
     '미·중 반도체 규제 강화 시 중국향 매출(전체 22%) 노출.',
   ],
   actions: [
-    '1회 300만원 미만 분할 매수 가능 (CLAUDE.md §3).',
+    '1회 300만원 미만 분할 매수 가능.',
     '외국인 4일 흐름이 순매수 전환 후 1차 진입 권장.',
     '52주 위치 60% 이하로 눌림 발생 시 추가 매수 트리거.',
   ],
@@ -2038,6 +2038,40 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none' }}>
                     <span style={{ fontSize: 12, color: '#9CA3AF' }}>{row.label}</span>
                     <span style={{ fontSize: 13, fontWeight: 700, color: row.color }}>{row.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* 내 투자 기준 */}
+              <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginTop: 12 }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 14 }}>내 투자 기준</div>
+                {[
+                  { cat: '포트폴리오 성과', items: [
+                    { label: 'TWR 목표',    value: '시장 대비 +3~5%p' },
+                    { label: 'Sharpe 목표', value: '0.8~1.2 (1년)' },
+                    { label: 'MDD 한도',    value: '1년 −25% · 3년 −35%' },
+                    { label: 'MDD 회복',    value: '12개월 이내' },
+                  ]},
+                  { cat: '종목 매수 기준', items: [
+                    { label: '매출성장률',  value: '10%+ 3년 유지' },
+                    { label: 'ROIC',        value: '15%+ 5년 평균' },
+                    { label: 'RSI',         value: '30↓ 매수 · 70↑ 차익실현' },
+                    { label: '52주 위치',   value: '하단 20% 적극매수' },
+                    { label: '외국인수급',  value: '4일 연속 순매도 → 보류' },
+                  ]},
+                  { cat: '배당 기준', items: [
+                    { label: '배당성향',     value: '40~60%' },
+                    { label: 'FCF 커버리지', value: '80% 미만' },
+                  ]},
+                ].map((section, si, all) => (
+                  <div key={si} style={{ marginBottom: si < all.length - 1 ? 16 : 0 }}>
+                    <div style={{ fontSize: 9, color: '#3B82F6', letterSpacing: 1, marginBottom: 6 }}>{section.cat}</div>
+                    {section.items.map((item, ii, arr) => (
+                      <div key={ii} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: ii < arr.length - 1 ? '1px solid #1E2233' : 'none' }}>
+                        <span style={{ fontSize: 12, color: '#9CA3AF' }}>{item.label}</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#E8EAF0' }}>{item.value}</span>
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>
