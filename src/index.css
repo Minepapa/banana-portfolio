@@ -54,6 +54,15 @@ body {
   margin: 0;
 }
 
+/* 탭바 스크롤바 숨김 */
+.tab-bar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.tab-bar::-webkit-scrollbar {
+  display: none;
+}
+
 #root {
   width: 1126px;
   max-width: 100%;

@@ -1011,7 +1011,7 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel, readRange }) {
 export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [acctKey, setAcctKey] = useState("위탁");
-  const [holdSort, setHoldSort] = useState('rate_desc'); // rate_desc | rate_asc | eval_desc | profit_desc
+  const [holdSort, setHoldSort] = useState('sheet'); // sheet | rate_desc | rate_asc | eval_desc | profit_desc
   const [accounts, setAccounts] = useState(DEFAULT_ACCOUNTS);
   const [monthlyData, setMonthlyData] = useState([]);
   const [dividendData, setDividendData] = useState([]);
@@ -1753,9 +1753,10 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
         )}
 
         {/* 탭 */}
-        <div style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div className="tab-bar" style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {[
             { key: "dashboard", label: "홈" },
+            { key: "kpi",       label: "KPI" },
             { key: "report",    label: "리포트" },
             { key: "rebalance", label: "자산분배" },
             { key: "holdings",  label: "종목" },
@@ -1956,107 +1957,85 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               )}
             </div>
 
-            {/* ── KPI 카드 (TWR · Sharpe · MDD) ── */}
-            {(() => {
-              const kpi = computeKPI(monthlyData);
-              if (!kpi) return null;
-
-              const twrPct    = (kpi.twr  * 100).toFixed(1);
-              const twrCumPct = (kpi.twrCum * 100).toFixed(1);
-              const mddPct    = (kpi.mdd  * 100).toFixed(1);
-              const sharpeV   = kpi.sharpe !== null ? kpi.sharpe.toFixed(2) : '–';
-              const bmPct     = kpi.benchmarkTWR !== null ? (kpi.benchmarkTWR * 100).toFixed(1) : null;
-              const bmCumPct  = kpi.benchmarkTWRCum !== null ? (kpi.benchmarkTWRCum * 100).toFixed(1) : null;
-              const alphaPct  = bmPct !== null ? ((kpi.twr - kpi.benchmarkTWR) * 100).toFixed(1) : null;
-
-              // 상태 판정
-              const twrStatus  = alphaPct !== null
-                ? (parseFloat(alphaPct) >= 3  ? { icon: '✅', color: '#10B981', label: `알파 +${alphaPct}%p` }
-                 : parseFloat(alphaPct) >= 0  ? { icon: '⚠️', color: '#F59E0B', label: `알파 +${alphaPct}%p` }
-                 :                              { icon: '🔴', color: '#EF4444', label: `알파 ${alphaPct}%p` })
-                : kpi.twr >= 0
-                ? { icon: '✅', color: '#10B981', label: '양호' }
-                : { icon: '🔴', color: '#EF4444', label: '손실' };
-              const sharpeStatus = kpi.sharpe === null ? { icon: '–', color: '#6B7280', label: '데이터 부족' }
-                : kpi.sharpe >= 0.8 ? { icon: '✅', color: '#10B981', label: '양호' }
-                : kpi.sharpe >= 0.5 ? { icon: '⚠️', color: '#F59E0B', label: '주의' }
-                : { icon: '🔴', color: '#EF4444', label: '미달' };
-              const mddStatus  = kpi.mdd >= -0.25
-                ? { icon: '✅', color: '#10B981', label: '이내' }
-                : kpi.mdd >= -0.35
-                ? { icon: '⚠️', color: '#F59E0B', label: '주의' }
-                : { icon: '🔴', color: '#EF4444', label: '초과' };
-
-              const cards = [
-                {
-                  label: 'TWR (연환산)',
-                  value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`,
-                  sub: bmCumPct !== null
-                    ? `시장누적 ${parseFloat(bmCumPct) >= 0 ? '+' : ''}${bmCumPct}% · ${kpi.months}M`
-                    : `누적 ${parseFloat(twrCumPct) >= 0 ? '+' : ''}${twrCumPct}% · ${kpi.months}M`,
-                  status: twrStatus,
-                  metric: 'twr',
-                  extra: alphaPct !== null
-                    ? { label: '알파', value: `${parseFloat(alphaPct) >= 0 ? '+' : ''}${alphaPct}%p` }
-                    : { label: '누적', value: `${parseFloat(twrCumPct) >= 0 ? '+' : ''}${twrCumPct}%` },
-                },
-                {
-                  label: 'Sharpe',
-                  value: sharpeV,
-                  sub: '목표 0.8~1.2 · 최근 12M',
-                  status: sharpeStatus,
-                  metric: 'sharpe',
-                },
-                {
-                  label: 'MDD',
-                  value: `${mddPct}%`,
-                  sub: '목표 −25% 이내',
-                  status: mddStatus,
-                  metric: 'mdd',
-                },
-              ];
-
-              return (
-                <div style={{ marginTop: 16 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                    <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478' }}>운용 KPI</div>
-                    <span style={{ fontSize: 9, color: '#3B82F6' }}>📘 탭하면 용어 설명</span>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                    {cards.map(c => (
-                      <button key={c.label}
-                        onClick={() => setEvalSelectedMetric(prev => prev === c.metric ? null : c.metric)}
-                        style={{
-                          background: evalSelectedMetric === c.metric ? '#1E3A5F' : '#1A1D26',
-                          borderRadius: 10,
-                          padding: '12px 8px', textAlign: 'center',
-                          border: `1px solid ${evalSelectedMetric === c.metric ? '#3B82F6' : c.status.color + '22'}`,
-                          cursor: 'pointer', fontFamily: 'inherit',
-                          width: '100%', display: 'block',
-                        }}>
-                        <div style={{ fontSize: 8, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>
-                          {c.label} <span style={{ color: '#3B82F6' }}>📘</span>
-                        </div>
-                        <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: c.status.color, marginBottom: 2 }}>
-                          {c.value}
-                        </div>
-                        {c.extra && (
-                          <div style={{ fontSize: 9, fontWeight: 600, color: parseFloat(c.extra.value) >= 3 ? '#10B981' : parseFloat(c.extra.value) >= 0 ? '#F59E0B' : '#EF4444', marginBottom: 2 }}>
-                            {c.extra.label} {c.extra.value}
-                          </div>
-                        )}
-                        <div style={{ fontSize: 9, color: c.status.color, marginBottom: 4 }}>
-                          {c.status.icon} {c.extra ? c.sub : c.status.label}
-                        </div>
-                        <div style={{ fontSize: 8, color: '#3A4050', lineHeight: 1.3 }}>{c.extra ? c.status.label : c.sub}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
+            {/* KPI는 별도 KPI 탭으로 이동 */}
           </div>
         )}
+
+        {/* ── KPI 탭 ── */}
+        {tab === "kpi" && (() => {
+          const kpi = computeKPI(monthlyData);
+          if (!kpi) return (
+            <div style={{ padding: 40, textAlign: 'center', color: '#5A6478', fontSize: 13 }}>
+              월별잔고 데이터가 2개월 이상 있어야 KPI를 계산할 수 있습니다.
+            </div>
+          );
+
+          const twrPct    = (kpi.twr    * 100).toFixed(1);
+          const twrCumPct = (kpi.twrCum * 100).toFixed(1);
+          const mddPct    = (kpi.mdd    * 100).toFixed(1);
+          const sharpeV   = kpi.sharpe !== null ? kpi.sharpe.toFixed(2) : '–';
+
+          const twrStatus    = kpi.twr >= 0    ? { icon: '✅', color: '#10B981', label: '양호' } : { icon: '🔴', color: '#EF4444', label: '손실' };
+          const sharpeStatus = kpi.sharpe === null ? { icon: '–', color: '#6B7280', label: '데이터 부족' }
+            : kpi.sharpe >= 0.8 ? { icon: '✅', color: '#10B981', label: '양호' }
+            : kpi.sharpe >= 0.5 ? { icon: '⚠️', color: '#F59E0B', label: '주의' }
+            : { icon: '🔴', color: '#EF4444', label: '미달' };
+          const mddStatus    = kpi.mdd >= -0.25 ? { icon: '✅', color: '#10B981', label: '이내' }
+            : kpi.mdd >= -0.35 ? { icon: '⚠️', color: '#F59E0B', label: '주의' }
+            : { icon: '🔴', color: '#EF4444', label: '초과' };
+
+          const cards = [
+            { label: 'TWR (연환산)', value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`, sub: `누적 ${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}% · ${kpi.months}M`, status: twrStatus, metric: 'twr' },
+            { label: 'Sharpe',       value: sharpeV,                                  sub: '목표 0.8~1.2 · 최근 12M',                                                    status: sharpeStatus, metric: 'sharpe' },
+            { label: 'MDD',          value: `${mddPct}%`,                             sub: '목표 −25% 이내',                                                              status: mddStatus,    metric: 'mdd' },
+          ];
+
+          return (
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 16 }}>운용 KPI · {kpi.months}개월</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 16 }}>
+                {cards.map(c => (
+                  <button key={c.label}
+                    onClick={() => setEvalSelectedMetric(prev => prev === c.metric ? null : c.metric)}
+                    style={{
+                      background: evalSelectedMetric === c.metric ? '#1E3A5F' : '#1A1D26',
+                      borderRadius: 10, padding: '14px 8px', textAlign: 'center',
+                      border: `1px solid ${evalSelectedMetric === c.metric ? '#3B82F6' : c.status.color + '33'}`,
+                      cursor: 'pointer', fontFamily: 'inherit', width: '100%', display: 'block',
+                    }}>
+                    <div style={{ fontSize: 8, color: '#5A6478', marginBottom: 6, letterSpacing: 1 }}>
+                      {c.label} <span style={{ color: '#3B82F6' }}>📘</span>
+                    </div>
+                    <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 700, color: c.status.color, marginBottom: 4 }}>
+                      {c.value}
+                    </div>
+                    <div style={{ fontSize: 9, color: c.status.color, marginBottom: 4 }}>
+                      {c.status.icon} {c.status.label}
+                    </div>
+                    <div style={{ fontSize: 8, color: '#3A4050', lineHeight: 1.3 }}>{c.sub}</div>
+                  </button>
+                ))}
+              </div>
+
+              {/* 상세 지표 */}
+              <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16 }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>지표 상세</div>
+                {[
+                  { label: 'TWR 연환산', value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`, color: twrStatus.color },
+                  { label: 'TWR 누적',   value: `${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}%`, color: kpi.twrCum >= 0 ? '#10B981' : '#EF4444' },
+                  { label: 'Sharpe',     value: sharpeV,             color: sharpeStatus.color },
+                  { label: 'MDD',        value: `${mddPct}%`,        color: mddStatus.color },
+                  { label: '산출 기간',  value: `${kpi.months}개월`, color: '#9CA3AF' },
+                ].map((row, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < 4 ? '1px solid #1E2233' : 'none' }}>
+                    <span style={{ fontSize: 12, color: '#9CA3AF' }}>{row.label}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: row.color }}>{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── 리포트 탭 ── */}
         {tab === "report" && (() => {
@@ -2116,7 +2095,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: 16, fontWeight: 700, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
-                      {totalProfit >= 0 ? '+' : ''}₩{fmt(totalProfit)}
+                      ₩{fmt(totalProfit)}
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
                       {totalRate >= 0 ? '+' : ''}{totalRate.toFixed(1)}%
@@ -2171,17 +2150,14 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               {allH.length > 0 && (
                 <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
                   <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>종목 수익률 순위</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                     {/* TOP3 */}
                     <div>
                       <div style={{ fontSize: 10, color: PROFIT_POS, marginBottom: 8, fontWeight: 600 }}>▲ 상위</div>
                       {top3.map((h, i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: i < top3.length-1 ? '1px solid #1E2233' : 'none' }}>
-                          <div>
-                            <div style={{ fontSize: 11, color: '#E8EAF0', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 90 }}>{h.name}</div>
-                            <div style={{ fontSize: 9, color: h._color }}>{h._acct}</div>
-                          </div>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS }}>+{h.rate.toFixed(1)}%</div>
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: i < top3.length-1 ? '1px solid #1E2233' : 'none' }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: h._color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 80 }}>{h.name}</span>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS, flexShrink: 0 }}>+{h.rate.toFixed(1)}%</span>
                         </div>
                       ))}
                     </div>
@@ -2189,14 +2165,11 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     <div>
                       <div style={{ fontSize: 10, color: PROFIT_NEG, marginBottom: 8, fontWeight: 600 }}>▼ 하위</div>
                       {bottom3.map((h, i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: i < bottom3.length-1 ? '1px solid #1E2233' : 'none' }}>
-                          <div>
-                            <div style={{ fontSize: 11, color: '#E8EAF0', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 90 }}>{h.name}</div>
-                            <div style={{ fontSize: 9, color: h._color }}>{h._acct}</div>
-                          </div>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: h.rate >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: i < bottom3.length-1 ? '1px solid #1E2233' : 'none' }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: h._color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 80 }}>{h.name}</span>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: h.rate >= 0 ? PROFIT_POS : PROFIT_NEG, flexShrink: 0 }}>
                             {h.rate >= 0 ? '+' : ''}{h.rate.toFixed(1)}%
-                          </div>
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -2398,40 +2371,41 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               .map(h => ({ ...h, _acct: a.label, _acctKey: k }))
           );
 
-          // 현재 표시할 종목 목록 (단일 계좌 or 전체)
-          const isTotalView = acctKey === '전체';
-          const rawHoldings = isTotalView
-            ? allHoldingsFlat
-            : (acct.holdings || []).filter(h => h.invest > 0 && h.eval > 0).map((h, origIdx) => ({ ...h, origIdx }));
+          // 현재 표시할 종목 목록 (단일 계좌)
+          const isTotalView = false;
+          const rawHoldings = (acct.holdings || [])
+            .map((h, origIdx) => ({ ...h, origIdx }))
+            .filter(h => h.invest > 0 && h.eval > 0);
 
-          // 정렬
+          // 정렬 (sheet = 시트 원래 순서 유지)
           const SORT_FN = {
             rate_desc:   (a, b) => b.rate   - a.rate,
             rate_asc:    (a, b) => a.rate   - b.rate,
             eval_desc:   (a, b) => b.eval   - a.eval,
             profit_desc: (a, b) => b.profit - a.profit,
           };
-          const sortedHoldings = [...rawHoldings].sort(SORT_FN[holdSort] || SORT_FN.rate_desc);
+          const sortedHoldings = holdSort === 'sheet'
+            ? rawHoldings
+            : [...rawHoldings].sort(SORT_FN[holdSort] || SORT_FN.rate_desc);
 
-          // 비중 계산 기준 (전체뷰: 총포트, 단일계좌: 해당계좌)
-          const weightBase = isTotalView ? totalPortEval : (acct.total_eval || 1);
+          // 비중 계산 기준 (해당 계좌)
+          const weightBase = acct.total_eval || 1;
 
           return (
           <div>
-            {/* 계좌 선택 (전체 + 4개) */}
-            <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: 'auto' }}>
-              {[{ k: '전체', label: '전체', color: '#8B5CF6' }, ...Object.entries(accounts).map(([k, a]) => ({ k, label: a.label, color: a.color }))].map(({ k, label, color }) => (
+            {/* 계좌 선택 (4개) */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+              {Object.entries(accounts).map(([k, a]) => (
                 <button key={k} onClick={() => { setAcctKey(k); setShowAddForm(false); setEditingHolding(null); }} style={{
-                  flex: k === '전체' ? 'none' : 1,
-                  padding: isMobile ? "8px 10px" : "6px 10px",
-                  textAlign: 'center', flexShrink: 0,
+                  flex: 1, padding: isMobile ? "8px 4px" : "6px 4px",
+                  textAlign: 'center',
                   borderRadius: 20,
-                  border: `1px solid ${acctKey === k ? color : "#2A2F3E"}`,
-                  background: acctKey === k ? `${color}22` : "transparent",
-                  color: acctKey === k ? color : "#6B7280",
+                  border: `1px solid ${acctKey === k ? a.color : "#2A2F3E"}`,
+                  background: acctKey === k ? `${a.color}22` : "transparent",
+                  color: acctKey === k ? a.color : "#6B7280",
                   cursor: "pointer", fontSize: 11, fontFamily: baseFont,
                 }}>
-                  {label}
+                  {a.label}
                 </button>
               ))}
             </div>
@@ -2493,10 +2467,10 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             <div style={{ display: 'flex', gap: 6, marginBottom: 12, alignItems: 'center' }}>
               <span style={{ fontSize: 10, color: '#5A6478', flexShrink: 0 }}>정렬</span>
               {[
+                { key: 'sheet',       label: '자산군순' },
                 { key: 'rate_desc',   label: '수익률↓' },
                 { key: 'rate_asc',    label: '수익률↑' },
                 { key: 'eval_desc',   label: '평가금↓' },
-                { key: 'profit_desc', label: '수익금↓' },
               ].map(s => (
                 <button key={s.key} onClick={() => setHoldSort(s.key)} style={{
                   padding: '4px 8px', borderRadius: 12, fontSize: 10,
