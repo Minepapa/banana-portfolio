@@ -2451,61 +2451,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
           }));
           const selectedDivItem = selectedDivKey ? dividendData.find(d => `${d.year}-${d.month}` === selectedDivKey) : null;
 
-          // 종목별 배당 합산 (전체 기간)
-          const divByStock = {};
-          dividendData.forEach(d => d.items.forEach(it => {
-            if (!it.name) return;
-            divByStock[it.name] = (divByStock[it.name] || 0) + it.amount;
-          }));
-          const divStockRank = Object.entries(divByStock)
-            .sort((a, b) => b[1] - a[1]).slice(0, 5);
-
-          // 배당수익률: 현재연도 배당금 / 총투자금
-          const thisYear = String(new Date().getFullYear());
-          const thisYearDiv = dividendData.filter(d => String(d.year) === thisYear).reduce((s, d) => s + d.amount, 0);
-          const divYield = totalInvest > 0 ? (thisYearDiv / totalInvest * 100).toFixed(2) : '–';
-          const allTimeDiv = dividendData.reduce((s, d) => s + d.amount, 0);
-
           return (
             <div>
-              {/* 요약 카드 2개 */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
-                {[
-                  { label: `${thisYear}년 배당수익률`, value: divYield === '–' ? '–' : `${divYield}%`, sub: `${thisYear}년 배당 ₩${fmt(thisYearDiv)}`, color: '#10B981' },
-                  { label: '전체 누적 배당', value: `₩${fmt(allTimeDiv)}`, sub: `${dividendData.length}개월 수령`, color: PROFIT_POS },
-                ].map(s => (
-                  <div key={s.label} style={{ background: '#1A1D26', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
-                    <div style={{ fontSize: 9, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>{s.label}</div>
-                    <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 700, color: s.color }}>{s.value}</div>
-                    <div style={{ fontSize: 9, color: '#5A6478', marginTop: 3 }}>{s.sub}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* 종목별 배당 랭킹 */}
-              {divStockRank.length > 0 && (
-                <div style={{ background: '#1A1D26', borderRadius: 12, padding: '14px 16px', marginBottom: 16 }}>
-                  <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>종목별 누적 배당 TOP 5</div>
-                  {divStockRank.map(([name, amt], i) => {
-                    const ratio = allTimeDiv > 0 ? amt / allTimeDiv : 0;
-                    return (
-                      <div key={name} style={{ marginBottom: 10 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <span style={{ fontSize: 12, color: '#E8EAF0' }}>
-                            <span style={{ color: '#5A6478', marginRight: 6, fontSize: 10 }}>{i + 1}</span>{name}
-                          </span>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS }}>₩{fmt(amt)}</span>
-                        </div>
-                        <div style={{ background: '#0D1520', borderRadius: 3, height: 4 }}>
-                          <div style={{ width: `${(ratio * 100).toFixed(1)}%`, height: '100%', background: PROFIT_POS, borderRadius: 3, transition: 'width 0.4s' }} />
-                        </div>
-                        <div style={{ fontSize: 9, color: '#5A6478', marginTop: 2, textAlign: 'right' }}>{(ratio * 100).toFixed(1)}%</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
               <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
                 {divYears.map(y => (
                   <button key={y} onClick={() => { setDivYear(y); setSelectedDivKey(null); }} style={{
@@ -2600,73 +2547,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             total: profitData.filter(d => String(d.year) === y).reduce((s, d) => s + d.total, 0),
           }));
 
-          // 종목별 수익 합산 (전체 기간)
-          const profitByStock = {};
-          profitData.forEach(d => d.items.forEach(it => {
-            if (!it.name) return;
-            profitByStock[it.name] = (profitByStock[it.name] || 0) + it.profit;
-          }));
-          const profitStockRank = Object.entries(profitByStock)
-            .sort((a, b) => b[1] - a[1]).slice(0, 5);
-
-          const allTimeProfit = profitData.reduce((s, d) => s + d.total, 0);
-          const realizedRate = totalInvest > 0 ? (allTimeProfit / totalInvest * 100).toFixed(1) : '–';
-          const winMonths = profitData.filter(d => d.total > 0).length;
-          const totalMonths = profitData.length;
-
           return (
             <div>
-              {/* 요약 카드 2개 */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
-                {[
-                  {
-                    label: '누적 실현수익',
-                    value: `₩${fmt(Math.abs(allTimeProfit))}`,
-                    sub: `투자금 대비 ${realizedRate === '–' ? '–' : (allTimeProfit >= 0 ? '+' : '') + realizedRate + '%'}`,
-                    color: allTimeProfit >= 0 ? PROFIT_POS : PROFIT_NEG,
-                  },
-                  {
-                    label: '승률 (월 기준)',
-                    value: totalMonths > 0 ? `${Math.round(winMonths / totalMonths * 100)}%` : '–',
-                    sub: `${winMonths}승 ${totalMonths - winMonths}패 · ${totalMonths}개월`,
-                    color: winMonths / totalMonths >= 0.5 ? '#10B981' : '#F59E0B',
-                  },
-                ].map(s => (
-                  <div key={s.label} style={{ background: '#1A1D26', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
-                    <div style={{ fontSize: 9, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>{s.label}</div>
-                    <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 700, color: s.color }}>{s.value}</div>
-                    <div style={{ fontSize: 9, color: '#5A6478', marginTop: 3 }}>{s.sub}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* 종목별 수익 랭킹 */}
-              {profitStockRank.length > 0 && (
-                <div style={{ background: '#1A1D26', borderRadius: 12, padding: '14px 16px', marginBottom: 16 }}>
-                  <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>종목별 실현수익 TOP 5</div>
-                  {profitStockRank.map(([name, profit], i) => {
-                    const isPos = profit >= 0;
-                    const maxAbs = Math.abs(profitStockRank[0][1]);
-                    const barW = maxAbs > 0 ? Math.abs(profit) / maxAbs * 100 : 0;
-                    return (
-                      <div key={name} style={{ marginBottom: 10 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <span style={{ fontSize: 12, color: '#E8EAF0' }}>
-                            <span style={{ color: '#5A6478', marginRight: 6, fontSize: 10 }}>{i + 1}</span>{name}
-                          </span>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: isPos ? PROFIT_POS : PROFIT_NEG }}>
-                            {isPos ? '+' : '−'}₩{fmt(Math.abs(profit))}
-                          </span>
-                        </div>
-                        <div style={{ background: '#0D1520', borderRadius: 3, height: 4 }}>
-                          <div style={{ width: `${barW.toFixed(1)}%`, height: '100%', background: isPos ? PROFIT_POS : PROFIT_NEG, borderRadius: 3, transition: 'width 0.4s' }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
               <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
                 {profitYears.map(y => (
                   <button key={y} onClick={() => { setProfitYear(y); setSelectedProfitKey(null); }} style={{
