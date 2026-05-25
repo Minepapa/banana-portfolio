@@ -61,9 +61,15 @@ const LEARNING_MODULES = {
   // 수익성
   revenue_growth:   { title: '매출성장률 YoY', summary: '작년 같은 분기 대비 매출이 몇 % 늘었나. 회사의 외형 성장 속도. 마진과 함께 봐야 의미 있음.', threshold: 'Frank 확정: 10%+ 3년 유지면 성장주로 분류. 마진 동시 상승이면 강력.' },
   operating_margin: { title: '영업이익률', summary: '본업으로 매출 100원에 영업단계 얼마 남는지. 동종 평균 1.5배 이상이면 가격결정력 강함.', threshold: 'Frank: 동종 대비 1.5배 + 3년 추세 평탄/상승이면 매수 근거' },
+  gross_margin:     { title: '매출총이익률 (Gross Margin)', summary: '매출에서 원가를 빼고 남는 비율. 회사의 원가 경쟁력과 가격결정력의 1차 지표. 영업이익률의 상한선.', threshold: 'Frank: 50%+ 소프트웨어/플랫폼급, 30~50% 제조업 우수, 20% 미만 → 가격 경쟁 치열' },
+  roe:              { title: 'ROE (자기자본이익률)', summary: '주주 자본 대비 순이익. 자기 돈을 굴려 얼마 벌었는지. 부채 레버리지 포함이라 ROIC와 함께 봐야 정확.', threshold: 'Frank: 15%+ 3년 유지면 우수. 단 부채비율 100% 이상이면 레버리지 효과 감안 필요' },
   roic:             { title: 'ROIC (투하자본수익률)', summary: '빚+자기자본을 굴려 얼마 남기는지. 15% 이상 5년 유지면 해자(moat) 강력. ROE보다 정직.', threshold: 'Frank: 15% 이상 5년 평균 → 매수 후보, 10% 미만 → 신중' },
 
   // 재무 안정성
+  debt_ratio:       { title: '부채비율', summary: '부채총계 ÷ 자기자본. 100%면 빚과 자본이 같다는 뜻. 업종마다 정상 범위 다름.', threshold: 'Frank: 제조업 < 100% 양호, 금융업은 별도 기준. 200% 초과 → 재무 리스크 점검' },
+  equity_ratio:     { title: '자기자본비율', summary: '자기자본 ÷ 총자산. 높을수록 재무 안전. 부채비율의 역수 관계.', threshold: 'Frank: 50%+ 양호, 30~50% 보통, 30% 미만 → 차입 의존도 높음' },
+  debt_to_equity:   { title: 'D/E (부채자본비율)', summary: '총부채 ÷ 자기자본. 부채비율과 동일 개념이나 US 기업 분석에서 주로 사용. 낮을수록 안전.', threshold: 'Frank: 테크 < 50% 양호, 유틸리티/리츠는 100%+ 정상. 업종 맥락 필수' },
+  net_cash:         { title: '순현금', summary: '보유 현금 − 총차입금. 양수면 빚보다 현금이 많아 재무 안전. 음수(순부채)면 차입 의존.', threshold: 'Frank: 순현금 양수 → 재무 리스크 낮음. 순부채 전환 추세면 경계' },
   net_debt_ebitda:  { title: '순부채/EBITDA', summary: '회사가 번 돈(EBITDA)으로 빚을 갚는 데 몇 년 걸리는지. 1배 이하면 빚 부담 없음, 3배 이상이면 위험.', threshold: 'Frank: < 1배 양호, 1~3배 보통, > 3배 신중. 사이클 산업은 더 보수적으로' },
   interest_coverage:{ title: '이자보상배율 (EBIT/이자비용)', summary: '영업이익으로 이자를 몇 번 갚을 수 있는지. 5배 이상이 안전선, 2배 이하면 위험.', threshold: 'Frank: > 5배 안전, 3~5 보통, < 3 신중. 금리 상승기엔 5배 이상 권장' },
   current_ratio:    { title: '유동비율', summary: '1년 안에 갚을 빚(유동부채) 대비 1년 안에 현금화 가능한 자산(유동자산). 150%+ 양호.', threshold: 'Frank: > 150% 양호, 100~150% 보통, < 100% 단기 유동성 리스크' },
@@ -73,6 +79,8 @@ const LEARNING_MODULES = {
   trailing_per:     { title: 'Trailing PER (실적 PER)', summary: '지난 12개월(LTM/TTM) 실제 EPS 기준 PER. 이미 확인된 이익을 기반으로 현재 주가 수준을 평가. 추정 오차 없이 사실 기반.\n\nForward PER과 비교:\n· Trailing > Forward → 시장이 이익 증가를 기대\n· Trailing < Forward → 이익 감소 우려', threshold: '동종 업종 평균 대비 낮으면 저평가 신호. 단, 일시적 이익 급증으로 낮아 보일 수 있으니 Forward PER, EV/EBITDA와 함께 비교할 것.' },
   ev_ebitda:        { title: 'EV/EBITDA', summary: '회사 전체 가격(EV) ÷ 본업 현금이익(EBITDA). PER보다 부채·세금·감가상각 영향 제거해 더 정직.', threshold: 'Frank: < 8배 저평가, 8~12 보통, > 15 고평가. 동종/5년 밴드와 같이' },
   pbr:              { title: 'PBR (주가순자산비율)', summary: '주가 ÷ 주당순자산. 회사를 청산해서 받는 돈 대비 시장가. 1배 이하 = 청산가치 미달.', threshold: 'Frank: 자산형 회사(은행·금융지주) 0.5~1배, 성장주는 PBR로 판단하지 말 것' },
+  peg:              { title: 'PEG (PER ÷ 성장률)', summary: 'PER을 이익성장률로 나눈 값. 성장 속도 대비 주가가 비싼지 판단. 1 미만이면 성장 대비 저평가, 2 이상이면 성장을 이미 다 반영.', threshold: 'Frank: < 0.8 적극 매수, 0.8~1.2 합리적, 1.5+ 성장 프리미엄 과다. 단 적자 전환 시 무의미' },
+  ps_ratio:         { title: 'P/S (주가매출비율)', summary: '시가총액 ÷ 매출. 적자 기업이나 고성장 기업에서 PER 대신 사용. 매출 1원에 시장이 얼마를 지불하는지.', threshold: 'Frank: SaaS/플랫폼 10~20x 정상, 제조업 1~3x. 같은 업종 내 비교 필수' },
 
   // 현금흐름
   fcf_yield:        { title: 'FCF yield', summary: 'FCF/시가총액. 시가총액 대비 매년 회수되는 현금. 회계이익은 거짓말 가능, 현금은 사실.', threshold: 'Frank: 매수 시 영업이익만 보지 말 것. 배당주는 FCF 커버리지 80% 마지노선' },
@@ -100,9 +108,9 @@ const LEARNING_MODULES = {
 // 5축 → 학습 모듈 metric key. 시트 적재 카드는 axis grade만 있어 지표별 📘가 안 보이므로
 // axis 단위로 학습 모듈 진입 칩을 묶어 보여준다.
 const AXIS_METRICS = {
-  '수익성':     ['revenue_growth', 'operating_margin', 'roic'],
-  '재무 안정성': ['net_debt_ebitda', 'interest_coverage', 'current_ratio'],
-  '밸류에이션':  ['fwd_per', 'ev_ebitda', 'pbr'],
+  '수익성':     ['revenue_growth', 'operating_margin', 'gross_margin', 'roe', 'roic'],
+  '재무 안정성': ['debt_ratio', 'equity_ratio', 'debt_to_equity', 'net_cash', 'net_debt_ebitda', 'interest_coverage', 'current_ratio'],
+  '밸류에이션':  ['fwd_per', 'trailing_per', 'ev_ebitda', 'pbr', 'peg', 'ps_ratio'],
   '현금흐름':    ['fcf_yield', 'payout_ratio', 'dividend_sustainability'],
   '모멘텀':      ['rsi', 'pos_52w', 'foreign_flow', 'sector_rs'],
 };
@@ -111,7 +119,13 @@ const AXIS_METRICS = {
 const LABEL_TO_METRIC = {
   '매출성장률 yoy': 'revenue_growth', '매출성장률': 'revenue_growth',
   '영업이익률': 'operating_margin',
+  '매출총이익률': 'gross_margin', 'gross margin': 'gross_margin', '매출총이익률 (gross margin)': 'gross_margin',
+  'roe': 'roe', 'roe (자기자본이익률)': 'roe', '자기자본이익률': 'roe',
   'roic': 'roic', 'roic (투하자본수익률)': 'roic',
+  '부채비율': 'debt_ratio',
+  '자기자본비율': 'equity_ratio',
+  'd/e': 'debt_to_equity', 'd/e (부채자본비율)': 'debt_to_equity', '부채자본비율': 'debt_to_equity',
+  '순현금': 'net_cash',
   '순부채/ebitda': 'net_debt_ebitda',
   '이자보상배율': 'interest_coverage', '이자보상배율 (ebit/이자비용)': 'interest_coverage',
   '유동비율': 'current_ratio',
@@ -119,9 +133,11 @@ const LABEL_TO_METRIC = {
   'trailing per': 'trailing_per', 'trailing per (ttm)': 'trailing_per', 'per (ttm)': 'trailing_per', 'trailing p/e': 'trailing_per',
   'ev/ebitda': 'ev_ebitda',
   'pbr': 'pbr', 'pbr (주가순자산비율)': 'pbr',
+  'peg': 'peg', 'peg (per ÷ 성장률)': 'peg',
+  'p/s': 'ps_ratio', 'p/s (주가매출비율)': 'ps_ratio', '주가매출비율': 'ps_ratio',
   'fcf yield': 'fcf_yield',
   '배당성향': 'payout_ratio',
-  '배당지속가능성': 'dividend_sustainability', '배당지속가능성 (fcf 커버리지)': 'dividend_sustainability',
+  '배당지속가능성': 'dividend_sustainability', '배당지속가능성 (fcf 커버리지)': 'dividend_sustainability', '배당커버': 'dividend_sustainability',
   'rsi': 'rsi', 'rsi(14)': 'rsi', 'rsi (상대강도지수)': 'rsi',
   '52주 위치': 'pos_52w',
   '외국인·기관 수급': 'foreign_flow', '외국인 4일': 'foreign_flow', '외국인·기관': 'foreign_flow',
