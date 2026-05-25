@@ -3057,7 +3057,24 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
         {/* ── 평가 탭 ── */}
         {tab === "평가" && (() => {
           const fromSheet = evaluations.length > 0;
-          const current = fromSheet ? evaluations[evalSelectedIdx] : null;
+          // 종목별 최신 평가만 추출 + 노트 탭과 동일하게 evalSum 내림차순 정렬
+          const uniqueEvals = (() => {
+            const seen = new Map();
+            evaluations.forEach((ev) => {
+              const name = ev.stock?.name;
+              if (name && !seen.has(name)) seen.set(name, ev);
+            });
+            const evalSumMap = {};
+            Object.values(accounts).forEach(acct => {
+              (acct.holdings || []).forEach(h => {
+                const n = String(h.name ?? '').trim();
+                if (!n) return;
+                evalSumMap[n] = (evalSumMap[n] || 0) + (h.eval || 0);
+              });
+            });
+            return [...seen.values()].sort((a, b) => (evalSumMap[b.stock?.name] || 0) - (evalSumMap[a.stock?.name] || 0));
+          })();
+          const current = fromSheet ? (uniqueEvals[evalSelectedIdx] || uniqueEvals[0]) : null;
           // 시트 카드를 SAMPLE 카드와 같은 모양으로 정규화 (axes는 grade만, items 없음)
           const card = current ? {
             stock: current.stock,
@@ -3128,10 +3145,10 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               </div>
             )}
 
-            {/* 종목 선택 드롭다운 (시트 데이터 있을 때만) */}
-            {fromSheet && evaluations.length > 1 && (
+            {/* 종목 선택 칩 (시트 데이터 있을 때만) — 노트 탭과 동일 순서 */}
+            {fromSheet && uniqueEvals.length > 1 && (
               <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
-                {evaluations.map((ev, i) => (
+                {uniqueEvals.map((ev, i) => (
                   <button key={i} onClick={() => setEvalSelectedIdx(i)} style={{
                     padding: '4px 10px', borderRadius: 6,
                     border: `1px solid ${i === evalSelectedIdx ? '#3B82F6' : '#2A2F3E'}`,

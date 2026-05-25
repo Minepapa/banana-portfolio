@@ -216,6 +216,8 @@ function buildBuyPrompt(entry) {
 - 현재 날짜 기준으로 가장 최신 재무 데이터를 사용할 것 (OpenDart reprt_code: 최신 사업보고서 또는 분기보고서)
 - 2026년에 분석 시 반드시 2025 사업보고서 + 2026 분기보고서 사용. 2024년 이전 데이터를 최신으로 사용하면 안 됨
 - KR: OpenDart (get_financial_index, get_full_financial_statement) + 네이버 뉴스
+- KR 모멘텀(RSI/52주): api.finance.naver.com/siseJson.naver?symbol={종목코드}&requestType=1&startTime={1년전}&endTime={오늘}&timeframe=day
+  → 종가 배열로 RSI(14) 직접 계산, 52주 고저·위치(%) 산출
 - US: get_stock_info, get_financial_statement + 뉴스`;
 }
 
