@@ -24,6 +24,7 @@ const SHEET_RANGES = {
   수익금:       '수익금!A2:F',         // 10
   평가노트:     '종목투자노트!A2:U',   // 11  (없거나 비어있어도 안전)
   평가요청:     '평가요청!A2:F',       // 12  비동기 평가 의뢰 큐 (모바일에서 추가 → Claude Pro가 처리)
+  주간리포트:   '주간리포트!A2:C',     // 13  주간 AI 리포트 (날짜, 요약, 본문)
 };
 
 const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
@@ -556,6 +557,16 @@ function parseEvalQueue(vr) {
   return { entries: entries.slice().reverse(), counts };
 }
 
+// 주간리포트 파서 (날짜, 요약, 본문) → 최신순 배열
+function parseWeeklyReports(vr) {
+  const rows = vr?.values ?? [];
+  return rows.map(r => {
+    const date = String(r[0] ?? '').trim();
+    if (!date) return null;
+    return { date, summary: String(r[1] ?? '').trim(), body: String(r[2] ?? '').trim() };
+  }).filter(Boolean).reverse();
+}
+
 function parseSheetData(valueRanges) {
   // indices: ISA(0) 위탁(1) 연금저축(2) IRP(3)
   //          위탁리밸(4) 연금저축리밸(5) ISA리밸(6) IRP리밸(7)
@@ -657,8 +668,9 @@ function parseSheetData(valueRanges) {
   const profits = parseProfits(valueRanges[10]);
   const evaluations = parseEvaluations(valueRanges[11]);
   const evalQueue = parseEvalQueue(valueRanges[12]);
+  const weeklyReports = parseWeeklyReports(valueRanges[13]);
 
-  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue } : null;
+  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports } : null;
 }
 
 // ── useGoogleSheets 훅 ────────────────────────────────────────────────────────
@@ -687,6 +699,7 @@ function useGoogleSheets(onData) {
           dividends: parsed.dividends,
           profits: parsed.profits,
           evaluations: parsed.evaluations,
+          weeklyReports: parsed.weeklyReports,
         });
       }
       const now = new Date();
@@ -1120,7 +1133,10 @@ export default function App() {
   const [evalQueueBusy, setEvalQueueBusy] = useState(false);
   const [evalQueueMsg, setEvalQueueMsg] = useState('');
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q }) => {
+  const [weeklyReports, setWeeklyReports] = useState([]);
+  const [weeklyExpanded, setWeeklyExpanded] = useState(false);
+
+  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
     setDividendData(d || []);
@@ -1130,6 +1146,7 @@ export default function App() {
     setEvaluations(ev || []);
     setEvalSelectedIdx(0);
     if (q) setEvalQueue(q);
+    if (wr) setWeeklyReports(wr);
   }, []);
 
   const sheets = useGoogleSheets(onData);
@@ -2260,7 +2277,67 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 </div>
               )}
 
-              {/* 섹션 4: 리밸런싱 신호 */}
+              {/* 섹션 4: 주간 AI 리포트 */}
+              {weeklyReports.length > 0 && (() => {
+                const latest = weeklyReports[0];
+                const sections = latest.body.split(/^## /m).filter(Boolean).map(s => {
+                  const lines = s.split('\n');
+                  const title = lines[0].trim();
+                  const content = lines.slice(1).join('\n').trim();
+                  return { title, content };
+                });
+                const visibleSections = weeklyExpanded ? sections : sections.slice(0, 3);
+                return (
+                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478' }}>📋 주간 AI 리포트</div>
+                      <div style={{ fontSize: 10, color: '#3A4050' }}>{latest.date}</div>
+                    </div>
+                    {visibleSections.map((sec, i) => (
+                      <div key={i} style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: '#60A5FA', marginBottom: 6 }}>{sec.title}</div>
+                        <div style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {sec.content.split('\n').map((line, j) => {
+                            if (line.startsWith('|') && line.includes('|')) {
+                              const cells = line.split('|').filter(Boolean).map(c => c.trim());
+                              if (cells.every(c => /^[-:]+$/.test(c))) return null;
+                              return (
+                                <div key={j} style={{ display: 'flex', gap: 8, padding: '2px 0', fontSize: 9, borderBottom: '1px solid #1E2233' }}>
+                                  {cells.map((c, k) => <span key={k} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.replace(/\*\*/g, '')}</span>)}
+                                </div>
+                              );
+                            }
+                            const cleaned = line.replace(/\*\*/g, '').replace(/^>\s*/, '');
+                            if (!cleaned) return <br key={j} />;
+                            if (line.startsWith('###')) return <div key={j} style={{ fontSize: 10, fontWeight: 600, color: '#E8EAF0', marginTop: 8, marginBottom: 4 }}>{cleaned.replace(/^#+\s*/, '')}</div>;
+                            return <div key={j}>{cleaned}</div>;
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                    {sections.length > 3 && (
+                      <button onClick={() => setWeeklyExpanded(!weeklyExpanded)} style={{
+                        width: '100%', padding: '8px', borderRadius: 6, border: '1px solid #2A2F3E',
+                        background: 'transparent', color: '#5A6478', cursor: 'pointer', fontSize: 10,
+                      }}>
+                        {weeklyExpanded ? '접기 ▲' : `전체 보기 (${sections.length}섹션) ▼`}
+                      </button>
+                    )}
+                    {weeklyReports.length > 1 && (
+                      <div style={{ display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap' }}>
+                        {weeklyReports.map((r, i) => (
+                          <button key={i} onClick={() => { setWeeklyReports(prev => { const copy = [...prev]; const item = copy.splice(i, 1)[0]; copy.unshift(item); return copy; }); setWeeklyExpanded(false); }}
+                            style={{ padding: '3px 8px', borderRadius: 4, border: `1px solid ${i === 0 ? '#3B82F6' : '#2A2F3E'}`, background: i === 0 ? '#1E3A5F' : 'transparent', color: i === 0 ? '#60A5FA' : '#5A6478', cursor: 'pointer', fontSize: 9 }}>
+                            {r.date}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* 섹션 5: 리밸런싱 신호 */}
               <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16 }}>
                 <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>리밸런싱 신호 (±5%p 초과)</div>
                 {rebalAlerts.length === 0 ? (
