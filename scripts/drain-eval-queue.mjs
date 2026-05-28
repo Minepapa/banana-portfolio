@@ -223,19 +223,34 @@ function findSameQuarterEval(noteRows, stockName, todayStr) {
 // 숫자 문자열 파싱 (쉼표·% 제거)
 function pn(v) { return parseFloat(String(v ?? '').replace(/[,%]/g, '')) || 0; }
 
-// 4계좌 보유현황에서 종목 포지션 조회. 반환: [{ acct, avgPrice, qty, invest, profit, rate }]
+// 4계좌 보유현황에서 종목 포지션 조회. 반환: [{ acct, type, avgPrice, qty, invest, profit, rate }]
 function findHolding(holdingsByAcct, stockName) {
   const results = [];
   for (const [acct, rows] of Object.entries(holdingsByAcct)) {
+    let lastType = '';
     for (const r of (rows || [])) {
+      const t = String(r[0] ?? '').trim();
+      if (t) lastType = t;
       if (String(r[1] ?? '').trim() !== stockName) continue;
       const qty = pn(r[3]);
       const invest = pn(r[4]);
       if (qty <= 0 && invest <= 0) continue;
-      results.push({ acct, avgPrice: pn(r[2]), qty, invest, profit: pn(r[6]), rate: pn(r[8]) });
+      results.push({ acct, type: lastType, avgPrice: pn(r[2]), qty, invest, profit: pn(r[6]), rate: pn(r[8]) });
     }
   }
   return results;
+}
+
+// 자산배분 현황 구성 (위탁·연금저축 자산분배 시트 → {위탁:[{name,target,current,rebalAmt}...], 연금저축:[...]})
+const REBAL_ASSETS = ['채권', '금', '달러', '배당주', '리츠', '국내주식', '해외주식'];
+function buildAllocationData(위탁Rebal, 연금저축Rebal) {
+  const parse = (vr) => (vr?.values ?? []).map(r => ({ target: pn(r[0]), current: pn(r[1]), rebalAmt: pn(r[2]) }));
+  const w = parse(위탁Rebal);
+  const y = parse(연금저축Rebal);
+  return {
+    위탁:     REBAL_ASSETS.map((name, i) => ({ name, ...(w[i] || {target:0, current:0, rebalAmt:0}) })),
+    연금저축: REBAL_ASSETS.map((name, i) => ({ name, ...(y[i] || {target:0, current:0, rebalAmt:0}) })),
+  };
 }
 
 // ── 매도 평가 여부 판단 ──────────────────────────────────────────────────────
@@ -244,19 +259,39 @@ function isSellEval(entry) {
 }
 
 // ── 매수 평가 프롬프트 ────────────────────────────────────────────────────────
-function buildBuyPrompt(entry, cachedEval, holdings) {
+function buildBuyPrompt(entry, cachedEval, holdings, allocationData) {
   const market = entry.market || '(자동감지)';
   const memo = entry.memo ? `\n메모: "${entry.memo}"` : '';
 
   const fmt = n => Math.round(n).toLocaleString('ko-KR');
+
+  // ① 현재 포지션
   let posSection;
   if (holdings && holdings.length > 0) {
     const lines = holdings.map(h =>
-      `  [${h.acct}] 평균단가 ${fmt(h.avgPrice)}원 × ${h.qty}주 = 투자금 ${fmt(h.invest)}원 (수익률 ${h.rate}%)`
+      `  [${h.acct}${h.type ? ` · ${h.type}` : ''}] 평균단가 ${fmt(h.avgPrice)}원 × ${h.qty}주 = 투자금 ${fmt(h.invest)}원 (수익률 ${h.rate}%)`
     ).join('\n');
     posSection = `[Frank 현재 포지션]\n${lines}`;
   } else {
     posSection = `[Frank 현재 포지션] 미보유`;
+  }
+
+  // ② 자산배분 현황 — 이 종목의 해당 자산군
+  const assetType = holdings?.[0]?.type
+    || ((entry.market || '').toUpperCase() === 'KR' ? '국내주식'
+      : (entry.market || '').toUpperCase() === 'US' ? '해외주식' : null);
+
+  let allocationSection = '';
+  if (allocationData && assetType) {
+    const rows = [];
+    for (const [acct, assets] of Object.entries(allocationData)) {
+      const a = assets.find(x => x.name === assetType);
+      if (!a || (a.target === 0 && a.current === 0)) continue;
+      const gap = (a.target - a.current).toFixed(1);
+      const dir = a.rebalAmt > 0 ? `매수 여력 ${fmt(a.rebalAmt)}원` : a.rebalAmt < 0 ? `초과 ${fmt(-a.rebalAmt)}원` : '균형';
+      rows.push(`  ${acct} ${assetType}: 현재 ${a.current}% vs 목표 ${a.target}% (갭 ${gap > 0 ? '+' : ''}${gap}%p, ${dir})`);
+    }
+    if (rows.length) allocationSection = `\n[포트폴리오 배분 현황 — ${assetType}]\n${rows.join('\n')}\n`;
   }
 
   let cacheSection = '';
@@ -288,7 +323,7 @@ ${fin.현금흐름 || '  (데이터 없음)'}
 시장: ${market}${memo}
 
 ${posSection}
-${cacheSection}
+${allocationSection}${cacheSection}
 출력 조건:
 1. active-evaluation.md §5 표준 카드 양식으로 먼저 보여줘
 2. 마지막에 \`\`\`json 펜스로 JSON 블록 출력 (queue-evaluation.md §2.4 양식)
@@ -383,13 +418,15 @@ async function main() {
 
   // 1. 큐 + 종목투자노트 + 4계좌 보유현황 병렬 읽기
   console.log('━━━ 평가요청 큐 읽기 ━━━');
-  const [queueData, noteData, 위탁Data, 연금저축Data, ISAData, IRPData] = await Promise.all([
+  const [queueData, noteData, 위탁Data, 연금저축Data, ISAData, IRPData, 위탁Rebal, 연금저축Rebal] = await Promise.all([
     getRange(token, '평가요청!A2:F'),
     getRange(token, '종목투자노트!A2:U'),
     getRange(token, '위탁!A2:I'),
     getRange(token, '연금저축!A2:I'),
     getRange(token, 'ISA!A2:I'),
     getRange(token, 'IRP!A2:I'),
+    getRange(token, '자산분배!B3:D9'),
+    getRange(token, '자산분배!B12:D18'),
   ]);
   const rows = queueData.values || [];
   const noteRows = noteData.values || [];
@@ -399,6 +436,7 @@ async function main() {
     ISA:      ISAData.values     || [],
     IRP:      IRPData.values     || [],
   };
+  const allocationData = buildAllocationData(위탁Rebal, 연금저축Rebal);
 
   const pending = [];
   rows.forEach((r, idx) => {
@@ -474,7 +512,7 @@ async function main() {
     }
 
     // 프롬프트 출력
-    const prompt = sellMode ? buildSellPrompt(entry, buyCard) : buildBuyPrompt(entry, cachedEval, holdings);
+    const prompt = sellMode ? buildSellPrompt(entry, buyCard) : buildBuyPrompt(entry, cachedEval, holdings, allocationData);
     console.log('\n┌─── Claude Pro에 붙여넣을 프롬프트 ───┐');
     console.log(prompt);
     console.log('└──────────────────────────────────────┘\n');
