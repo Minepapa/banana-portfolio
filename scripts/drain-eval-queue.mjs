@@ -191,26 +191,118 @@ function nowKST() {
   return new Date(Date.now() + 9 * 3600_000).toISOString().replace('T', ' ').slice(0, 16);
 }
 
+function todayKST() {
+  return nowKST().slice(0, 10);
+}
+
+// 날짜 → 분기 키 ("2026-Q1" 등). 4~5월=Q1, 6~8월=Q2, 9~11월=Q3, 1~3월=Q4prev
+function getQuarterKey(dateStr) {
+  const [y, m] = (dateStr || '').split('-').map(Number);
+  if (!y || !m) return null;
+  const q = m <= 3 ? 'Q4prev' : m <= 5 ? 'Q1' : m <= 8 ? 'Q2' : m <= 11 ? 'Q3' : 'Q4';
+  return `${y}-${q}`;
+}
+
+// 같은 분기 내 같은 종목 기존 평가 조회 → axisItems 반환 (없으면 null)
+function findSameQuarterEval(noteRows, stockName, todayStr) {
+  const todayQK = getQuarterKey(todayStr);
+  if (!todayQK) return null;
+  for (const r of (noteRows || [])) {
+    if (String(r[1] ?? '').trim() !== stockName) continue;
+    const rowQK = getQuarterKey(String(r[0] ?? '').trim());
+    if (rowQK !== todayQK) continue;
+    const axisJson = String(r[20] ?? '').trim();
+    if (!axisJson) continue;
+    try {
+      return { date: String(r[0]).trim(), axisItems: JSON.parse(axisJson) };
+    } catch { continue; }
+  }
+  return null;
+}
+
+// 숫자 문자열 파싱 (쉼표·% 제거)
+function pn(v) { return parseFloat(String(v ?? '').replace(/[,%]/g, '')) || 0; }
+
+// 4계좌 보유현황에서 종목 포지션 조회. 반환: [{ acct, avgPrice, qty, invest, profit, rate }]
+function findHolding(holdingsByAcct, stockName) {
+  const results = [];
+  for (const [acct, rows] of Object.entries(holdingsByAcct)) {
+    for (const r of (rows || [])) {
+      if (String(r[1] ?? '').trim() !== stockName) continue;
+      const qty = pn(r[3]);
+      const invest = pn(r[4]);
+      if (qty <= 0 && invest <= 0) continue;
+      results.push({ acct, avgPrice: pn(r[2]), qty, invest, profit: pn(r[6]), rate: pn(r[8]) });
+    }
+  }
+  return results;
+}
+
 // ── 매도 평가 여부 판단 ──────────────────────────────────────────────────────
 function isSellEval(entry) {
   return /매도\s*평가/i.test(entry.memo || '');
 }
 
 // ── 매수 평가 프롬프트 ────────────────────────────────────────────────────────
-function buildBuyPrompt(entry) {
+function buildBuyPrompt(entry, cachedEval, holdings) {
   const market = entry.market || '(자동감지)';
   const memo = entry.memo ? `\n메모: "${entry.memo}"` : '';
+
+  const fmt = n => Math.round(n).toLocaleString('ko-KR');
+  let posSection;
+  if (holdings && holdings.length > 0) {
+    const lines = holdings.map(h =>
+      `  [${h.acct}] 평균단가 ${fmt(h.avgPrice)}원 × ${h.qty}주 = 투자금 ${fmt(h.invest)}원 (수익률 ${h.rate}%)`
+    ).join('\n');
+    posSection = `[Frank 현재 포지션]\n${lines}`;
+  } else {
+    posSection = `[Frank 현재 포지션] 미보유`;
+  }
+
+  let cacheSection = '';
+  if (cachedEval) {
+    const fin = {
+      수익성:   (cachedEval.axisItems['수익성']   || []).map(i => `  {label:"${i.label}", value:"${i.value}", source:"${i.source}"${i.metric ? `, metric:"${i.metric}"` : ''}}`).join('\n'),
+      안정성:   (cachedEval.axisItems['안정성']   || []).map(i => `  {label:"${i.label}", value:"${i.value}", source:"${i.source}"${i.metric ? `, metric:"${i.metric}"` : ''}}`).join('\n'),
+      현금흐름: (cachedEval.axisItems['현금흐름'] || []).map(i => `  {label:"${i.label}", value:"${i.value}", source:"${i.source}"${i.metric ? `, metric:"${i.metric}"` : ''}}`).join('\n'),
+    };
+    cacheSection = `
+⚡ 동일 분기 재평가 — 재무제표 캐시 활용 (이전 평가일: ${cachedEval.date})
+수익성/안정성/현금흐름 항목은 OpenDart 재호출 없이 아래 데이터를 axisItems에 그대로 복사하세요.
+밸류에이션(현재 주가 기반 PER/PBR)과 모멘텀(RSI/52주/수급)만 새로 fetch하면 됩니다.
+
+[캐시 재무제표 — 수익성]
+${fin.수익성 || '  (데이터 없음)'}
+
+[캐시 재무제표 — 안정성]
+${fin.안정성 || '  (데이터 없음)'}
+
+[캐시 재무제표 — 현금흐름]
+${fin.현금흐름 || '  (데이터 없음)'}
+`;
+  }
+
   return `다음 종목을 5축 평가해줘 (Trading Agent/playbooks/active-evaluation.md 따라):
 
 종목: ${entry.name}
 시장: ${market}${memo}
 
+${posSection}
+${cacheSection}
 출력 조건:
 1. active-evaluation.md §5 표준 카드 양식으로 먼저 보여줘
 2. 마지막에 \`\`\`json 펜스로 JSON 블록 출력 (queue-evaluation.md §2.4 양식)
 3. JSON에 반드시 "axisItems" 필드 포함 — 각 축별 세부 지표({label, value, source, metric})
 4. status는 항상 "보류"
 5. 데이터 부족 항목은 추정 금지, "(데이터 부족: 소스)" 표기
+
+⚠️ Frank 액션 권고 필수 포함 항목 (위 포지션 기반으로 구체화):
+- 현재 포지션 상태: 보유/미보유, 보유 시 평균단가 대비 현재가 갭
+- 매수/추가 진입 조건: RSI + 구체적 가격대 명시 (예: "RSI 45 이하 + 270,000원 이하 시 1차 진입")
+- 1회 진입 금액: 300만원 이하 원칙 준수
+- 차익실현/손절 조건: 52주 위치 또는 RSI 기반 구체적 레벨
+- 보유 중이라면: 추가매수 여부 또는 홀딩 의견
+- 미보유라면: 진입 우선순위 (지금 바로 / 조정 후 / 보류)
 
 ⚠️ 데이터 최신성 필수:
 - 현재 날짜 기준으로 가장 최신 재무 데이터를 사용할 것 (OpenDart reprt_code: 최신 사업보고서 또는 분기보고서)
@@ -289,14 +381,24 @@ async function main() {
     console.log('✓ 토큰 취득\n');
   }
 
-  // 1. 큐 + 종목투자노트 병렬 읽기
+  // 1. 큐 + 종목투자노트 + 4계좌 보유현황 병렬 읽기
   console.log('━━━ 평가요청 큐 읽기 ━━━');
-  const [queueData, noteData] = await Promise.all([
+  const [queueData, noteData, 위탁Data, 연금저축Data, ISAData, IRPData] = await Promise.all([
     getRange(token, '평가요청!A2:F'),
     getRange(token, '종목투자노트!A2:U'),
+    getRange(token, '위탁!A2:I'),
+    getRange(token, '연금저축!A2:I'),
+    getRange(token, 'ISA!A2:I'),
+    getRange(token, 'IRP!A2:I'),
   ]);
   const rows = queueData.values || [];
   const noteRows = noteData.values || [];
+  const holdingsByAcct = {
+    위탁:     위탁Data.values    || [],
+    연금저축: 연금저축Data.values || [],
+    ISA:      ISAData.values     || [],
+    IRP:      IRPData.values     || [],
+  };
 
   const pending = [];
   rows.forEach((r, idx) => {
@@ -347,6 +449,24 @@ async function main() {
       }
     }
 
+    // 매수 평가 시 동일 분기 기존 평가 캐시 확인
+    let cachedEval = null;
+    if (!sellMode) {
+      cachedEval = findSameQuarterEval(noteRows, entry.name, todayKST());
+      if (cachedEval) {
+        console.log(`  ⚡ 분기 내 재평가 캐시 발견 (${cachedEval.date}) — 재무제표 재사용, 밸류에이션·모멘텀만 새로 fetch`);
+      }
+    }
+
+    // 현재 보유현황 조회
+    const holdings = findHolding(holdingsByAcct, entry.name);
+    if (holdings.length > 0) {
+      const summary = holdings.map(h => `${h.acct} ${h.qty}주 @${Math.round(h.avgPrice).toLocaleString('ko-KR')}원`).join(', ');
+      console.log(`  📊 보유 현황: ${summary}`);
+    } else {
+      console.log(`  📊 보유 현황: 미보유`);
+    }
+
     // dry-run은 시트 상태 변경 없이 프롬프트만 출력
     if (!DRY_RUN) {
       await updateCell(token, `평가요청!D${entry.rowNum}`, '처리중');
@@ -354,7 +474,7 @@ async function main() {
     }
 
     // 프롬프트 출력
-    const prompt = sellMode ? buildSellPrompt(entry, buyCard) : buildBuyPrompt(entry);
+    const prompt = sellMode ? buildSellPrompt(entry, buyCard) : buildBuyPrompt(entry, cachedEval, holdings);
     console.log('\n┌─── Claude Pro에 붙여넣을 프롬프트 ───┐');
     console.log(prompt);
     console.log('└──────────────────────────────────────┘\n');

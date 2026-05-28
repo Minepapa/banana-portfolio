@@ -3475,7 +3475,22 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 
               {stock && (() => {
                 const earliestEval = stockEvals[stockEvals.length - 1] || null;
+                const latestEval = stockEvals[0] || null;
                 const canSellEval = !!earliestEval && earliestEval.reasons.length > 0 && sheets.auth === 'signed-in' && !noteSellBusy;
+
+                // ── 상태 모니터 파생값 ──
+                const daysSinceEval = latestEval?.date
+                  ? Math.floor((Date.now() - new Date(latestEval.date).getTime()) / 86400000)
+                  : null;
+                const _momentum = latestEval?.axisItems?.모멘텀 || [];
+                const rsiItem = _momentum.find(i => i.metric === 'rsi' || String(i.label||'').toUpperCase().includes('RSI'));
+                const pos52Item = _momentum.find(i => i.metric === 'pos_52w' || String(i.label||'').includes('52주'));
+                const rsiVal = rsiItem ? (parseFloat(String(rsiItem.value||'').replace(/[^0-9.]/g, '')) || null) : null;
+                const pos52Val = pos52Item ? (parseFloat(String(pos52Item.value||'').replace(/[^0-9.]/g, '')) || null) : null;
+                const rsiOver = rsiVal !== null && rsiVal > 70;
+                const rsiUnder = rsiVal !== null && rsiVal < 30;
+                const pos52Over = pos52Val !== null && pos52Val > 80;
+                const hasAlerts = rsiOver || rsiUnder || pos52Over;
                 const onSellEvalClick = async () => {
                   if (!canSellEval) return;
                   setNoteSellBusy(true);
@@ -3496,6 +3511,16 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 <>
                   {/* 보유 정보 카드 */}
                   <div style={{ background: '#1A1D26', borderRadius: 12, padding: '16px 16px 14px', marginBottom: 12 }}>
+                    {/* 경고 배너 */}
+                    {hasAlerts && (
+                      <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 8, background: '#4A1E1E44', border: '1px solid #F8717144', fontSize: 10, color: '#F87171' }}>
+                        ⚠️ {[
+                          rsiOver ? `RSI ${Math.round(rsiVal)} 과열 — 차익실현 검토` : null,
+                          rsiUnder ? `RSI ${Math.round(rsiVal)} 급락 — 매수 기회 점검` : null,
+                          pos52Over ? `52주 ${Math.round(pos52Val)}% 고점 근접` : null,
+                        ].filter(Boolean).join(' · ')}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
                       <div>
                         <div style={{ fontSize: 16, fontWeight: 700, color: '#E8EAF0' }}>{stock.name}</div>
@@ -3523,7 +3548,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         cursor: canSellEval ? 'pointer' : 'not-allowed',
                         fontSize: 10, fontFamily: baseFont, fontWeight: 600,
                       }}>
-                        {noteSellBusy ? '요청 중...' : noteSellCopied ? '✓ 큐에 추가됨' : '매도 평가 의뢰'}
+                        {noteSellBusy ? '요청 중...' : noteSellCopied ? '✓ 큐에 추가됨' : `근거 점검${daysSinceEval !== null ? ` · ${daysSinceEval}일 전 평가` : ''}`}
                       </button>
                     </div>
 
@@ -3541,6 +3566,27 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         <div style={{ color: '#E8EAF0', fontWeight: 600 }}>₩{fmt(stock.evalSum)}</div>
                       </div>
                     </div>
+
+                    {/* 상태 배지 — 마지막 평가 기준 */}
+                    {(rsiVal !== null || pos52Val !== null || daysSinceEval !== null) && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1E2233', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                        {rsiVal !== null && (
+                          <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 9, fontWeight: 600, background: rsiOver ? '#4A1E1E33' : rsiUnder ? '#1A3A2633' : '#1E2233', color: rsiOver ? '#F87171' : rsiUnder ? '#4ADE80' : '#9CA3AF', border: `1px solid ${rsiOver ? '#F8717144' : rsiUnder ? '#4ADE8044' : '#2A2F3E'}` }}>
+                            RSI {Math.round(rsiVal)}
+                          </span>
+                        )}
+                        {pos52Val !== null && (
+                          <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 9, fontWeight: 600, background: pos52Over ? '#4A3A1E33' : '#1E2233', color: pos52Over ? '#FBBF24' : '#9CA3AF', border: `1px solid ${pos52Over ? '#FBBF2444' : '#2A2F3E'}` }}>
+                            52주 {Math.round(pos52Val)}%
+                          </span>
+                        )}
+                        {daysSinceEval !== null && (
+                          <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 9, background: daysSinceEval > 90 ? '#4A1E1E33' : daysSinceEval > 30 ? '#3A2A1E33' : '#1E2233', color: daysSinceEval > 90 ? '#F87171' : daysSinceEval > 30 ? '#FBBF24' : '#5A6478', border: `1px solid ${daysSinceEval > 90 ? '#F8717144' : daysSinceEval > 30 ? '#FBBF2444' : '#2A2F3E'}` }}>
+                            평가 {daysSinceEval}일 전
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     {stock.accounts.length > 1 && (
                       <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1E2233' }}>
