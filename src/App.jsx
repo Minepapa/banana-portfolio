@@ -3303,21 +3303,21 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     </div>
                   )}
                   {axis.items.map((item, ii) => (
-                    <div key={ii} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: 11 }}>
-                      <div style={{ color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div key={ii} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '4px 0', fontSize: 11, gap: 6 }}>
+                      <div style={{ color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 4, flex: '0 0 auto', maxWidth: '42%', wordBreak: 'keep-all' }}>
                         <span>{item.label}</span>
                         {(() => {
                           const m = item.metric || LABEL_TO_METRIC[item.label?.toLowerCase()];
                           return m ? (
                             <button onClick={() => setEvalSelectedMetric(m)} style={{
-                              background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, fontSize: 10, lineHeight: 1,
+                              background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, fontSize: 10, lineHeight: 1, flexShrink: 0,
                             }} title={LEARNING_MODULES[m]?.title}>📘</button>
                           ) : null;
                         })()}
                       </div>
-                      <div style={{ color: '#E8EAF0', display: 'flex', alignItems: 'baseline', gap: 6, textAlign: 'right' }}>
-                        <span style={{ fontWeight: 600 }}>{item.value}</span>
-                        {item.source && <span style={{ fontSize: 9, color: '#5A6478' }}>{item.source}</span>}
+                      <div style={{ color: '#E8EAF0', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, textAlign: 'right', minWidth: 0 }}>
+                        <span style={{ fontWeight: 600, wordBreak: 'break-word' }}>{item.value}</span>
+                        {item.source && <span style={{ fontSize: 9, color: '#5A6478', wordBreak: 'break-word' }}>{item.source}</span>}
                       </div>
                     </div>
                   ))}
