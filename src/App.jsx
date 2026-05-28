@@ -2245,22 +2245,13 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 
         {/* ── 리포트 탭 ── */}
         {tab === "report" && (() => {
-          const kpi = computeKPI(monthlyData);
           const totalEval   = Object.values(accounts).reduce((s, a) => s + (a.total_eval   || 0), 0);
           const totalInvest = Object.values(accounts).reduce((s, a) => s + (a.total_invest || 0), 0);
           const totalProfit = totalEval - totalInvest;
           const totalRate   = totalInvest > 0 ? (totalProfit / totalInvest * 100) : 0;
 
-          // 전체 종목 수익률 TOP3 / BOTTOM3
-          const allH = Object.entries(accounts).flatMap(([k, a]) =>
-            (a.holdings || []).filter(h => h.invest > 0 && h.eval > 0).map(h => ({ ...h, _acct: a.label, _color: a.color }))
-          );
-          const byRate    = [...allH].sort((a, b) => b.rate - a.rate);
-          const top3      = byRate.slice(0, 3);
-          const bottom3   = byRate.slice(-3).reverse();
-
           // 리밸런싱 경보 (±5%p 초과)
-          const rebalAlerts = Object.entries(accounts).flatMap(([k, a]) =>
+          const rebalAlerts = Object.entries(accounts).flatMap(([, a]) =>
             (a.assets || []).map(asset => {
               const curr = asset.sheetCurrent ?? asset.ratio;
               const diff = parseFloat((curr - asset.target).toFixed(1));
@@ -2268,28 +2259,26 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             }).filter(x => Math.abs(x.diff) >= 5)
           );
 
-          // KPI 상태 헬퍼
-          const kpiStatus = kpi ? {
-            twr:    kpi.twr >= 0       ? { icon: '✅', color: '#10B981' } : { icon: '🔴', color: '#EF4444' },
-            sharpe: kpi.sharpe === null ? { icon: '–',  color: '#6B7280' }
-                  : kpi.sharpe >= 0.8  ? { icon: '✅', color: '#10B981' }
-                  : kpi.sharpe >= 0.5  ? { icon: '⚠️', color: '#F59E0B' }
-                  :                      { icon: '🔴', color: '#EF4444' },
-            mdd:    kpi.mdd >= -0.25   ? { icon: '✅', color: '#10B981' }
-                  : kpi.mdd >= -0.35   ? { icon: '⚠️', color: '#F59E0B' }
-                  :                      { icon: '🔴', color: '#EF4444' },
-          } : null;
-
           const today = new Date();
           const dateStr = `${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
 
           return (
             <div>
-              {/* 헤더 */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              {/* 헤더 + 리포트 날짜 선택 */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: weeklyReports.length > 1 ? 8 : 20 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>포트폴리오 리포트</div>
                 <div style={{ fontSize: 10, color: '#5A6478' }}>{dateStr} 기준</div>
               </div>
+              {weeklyReports.length > 1 && (
+                <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap' }}>
+                  {weeklyReports.map((r, i) => (
+                    <button key={i} onClick={() => { setWeeklyReports(prev => { const copy = [...prev]; const item = copy.splice(i, 1)[0]; copy.unshift(item); return copy; }); setWeeklyExpanded(false); }}
+                      style={{ padding: '4px 10px', borderRadius: 4, border: `1px solid ${i === 0 ? '#3B82F6' : '#2A2F3E'}`, background: i === 0 ? '#1E3A5F' : 'transparent', color: i === 0 ? '#60A5FA' : '#5A6478', cursor: 'pointer', fontSize: 9 }}>
+                      {r.date}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* 섹션 1: 포트폴리오 총괄 */}
               <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
@@ -2308,80 +2297,54 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     </div>
                   </div>
                 </div>
-                {/* 계좌별 바 */}
-                <div style={{ display: 'flex', gap: 4 }}>
-                  {Object.entries(accounts).filter(([, a]) => a.total_eval > 0).map(([k, a]) => {
-                    const w = totalEval > 0 ? (a.total_eval / totalEval * 100) : 0;
-                    return (
-                      <div key={k} style={{ flex: w, minWidth: 0, textAlign: 'center' }}>
-                        <div style={{ height: 6, background: a.color, borderRadius: 3, marginBottom: 4 }} />
-                        <div style={{ fontSize: 9, color: a.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.label}</div>
-                        <div style={{ fontSize: 9, color: '#5A6478' }}>{w.toFixed(0)}%</div>
+                {/* 계좌별 도넛 차트 */}
+                {(() => {
+                  const donutData = Object.entries(accounts)
+                    .filter(([, a]) => a.total_eval > 0)
+                    .map(([, a]) => ({ label: a.label, value: a.total_eval, color: a.color }));
+                  if (!donutData.length) return null;
+                  const r = 38, circ = 2 * Math.PI * r;
+                  let cumDash = 0;
+                  const slices = donutData.map(d => {
+                    const pct = totalEval > 0 ? d.value / totalEval : 0;
+                    const dash = pct * circ;
+                    const offset = circ / 4 - cumDash;
+                    cumDash += dash;
+                    return { ...d, dash, offset, pctStr: (pct * 100).toFixed(0) };
+                  });
+                  const evalAmt = totalEval >= 100000000
+                    ? `${(totalEval/100000000).toFixed(1)}억`
+                    : `${(totalEval/10000).toFixed(0)}만`;
+                  return (
+                    <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <svg viewBox="0 0 100 100" width="110" height="110" style={{ flexShrink: 0 }}>
+                        {slices.map((s, i) => (
+                          <circle key={i} cx="50" cy="50" r={r}
+                            fill="none" stroke={s.color} strokeWidth="20"
+                            strokeDasharray={`${s.dash} ${circ - s.dash}`}
+                            strokeDashoffset={s.offset}
+                          />
+                        ))}
+                        <text x="50" y="47" textAnchor="middle" fill="#E8EAF0" fontSize="9" fontWeight="700">{evalAmt}</text>
+                        <text x="50" y="58" textAnchor="middle" fill="#9CA3AF" fontSize="7">총자산</text>
+                      </svg>
+                      <div style={{ flex: 1, minWidth: 80 }}>
+                        {slices.map((s, i) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: i < slices.length - 1 ? '1px solid #1E2233' : 'none' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <div style={{ width: 7, height: 7, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+                              <span style={{ fontSize: 10, color: '#9CA3AF' }}>{s.label}</span>
+                            </div>
+                            <span style={{ fontSize: 10, fontWeight: 600, color: '#E8EAF0' }}>{s.pctStr}%</span>
+                          </div>
+                        ))}
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  );
+                })()}
               </div>
 
-              {/* 섹션 2: KPI 스냅샷 */}
-              {kpi && kpiStatus && (
-                <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
-                  <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>운용 KPI 스냅샷</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                    {[
-                      { label: 'TWR (연환산)', val: `${kpi.twr >= 0 ? '+' : ''}${(kpi.twr*100).toFixed(1)}%`, sub: `누적 ${kpi.twrCum >= 0 ? '+' : ''}${(kpi.twrCum*100).toFixed(1)}%`, st: kpiStatus.twr },
-                      { label: 'Sharpe',       val: kpi.sharpe !== null ? kpi.sharpe.toFixed(2) : '–',       sub: '목표 0.8~1.2',  st: kpiStatus.sharpe },
-                      { label: 'MDD',          val: `${(kpi.mdd*100).toFixed(1)}%`,                          sub: '목표 −25% 이내', st: kpiStatus.mdd },
-                    ].map(c => (
-                      <div key={c.label} style={{ background: '#141927', borderRadius: 8, padding: '10px 8px', textAlign: 'center', border: `1px solid ${c.st.color}22` }}>
-                        <div style={{ fontSize: 8, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>{c.label}</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: c.st.color }}>{c.val}</div>
-                        <div style={{ fontSize: 8, color: '#3A4050', marginTop: 3, lineHeight: 1.3 }}>{c.sub}</div>
-                        <div style={{ fontSize: 9, color: c.st.color, marginTop: 3 }}>{c.st.icon}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {kpi.benchmarkTWR !== null && (
-                    <div style={{ marginTop: 10, padding: '8px 10px', background: '#141927', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 11, color: '#9CA3AF' }}>시장 대비 알파</span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: (kpi.twr - kpi.benchmarkTWR) >= 0.03 ? '#10B981' : (kpi.twr - kpi.benchmarkTWR) >= 0 ? '#F59E0B' : '#EF4444' }}>
-                        {((kpi.twr - kpi.benchmarkTWR)*100) >= 0 ? '+' : ''}{((kpi.twr - kpi.benchmarkTWR)*100).toFixed(1)}%p
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
 
-              {/* 섹션 3: 수익률 TOP3 / BOTTOM3 */}
-              {allH.length > 0 && (
-                <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
-                  <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>종목 수익률 순위</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    {/* TOP3 */}
-                    <div>
-                      <div style={{ fontSize: 10, color: PROFIT_POS, marginBottom: 8, fontWeight: 600 }}>▲ 상위</div>
-                      {top3.map((h, i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: i < top3.length-1 ? '1px solid #1E2233' : 'none' }}>
-                          <span style={{ fontSize: 11, fontWeight: 600, color: h._color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 80 }}>{h.name}</span>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS, flexShrink: 0 }}>+{h.rate.toFixed(1)}%</span>
-                        </div>
-                      ))}
-                    </div>
-                    {/* BOTTOM3 */}
-                    <div>
-                      <div style={{ fontSize: 10, color: PROFIT_NEG, marginBottom: 8, fontWeight: 600 }}>▼ 하위</div>
-                      {bottom3.map((h, i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: i < bottom3.length-1 ? '1px solid #1E2233' : 'none' }}>
-                          <span style={{ fontSize: 11, fontWeight: 600, color: h._color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 80 }}>{h.name}</span>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: h.rate >= 0 ? PROFIT_POS : PROFIT_NEG, flexShrink: 0 }}>
-                            {h.rate >= 0 ? '+' : ''}{h.rate.toFixed(1)}%
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* 섹션 4: 주간 AI 리포트 */}
               {weeklyReports.length > 0 && (() => {
@@ -2428,16 +2391,6 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                       }}>
                         {weeklyExpanded ? '접기 ▲' : `전체 보기 (${sections.length}섹션) ▼`}
                       </button>
-                    )}
-                    {weeklyReports.length > 1 && (
-                      <div style={{ display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap' }}>
-                        {weeklyReports.map((r, i) => (
-                          <button key={i} onClick={() => { setWeeklyReports(prev => { const copy = [...prev]; const item = copy.splice(i, 1)[0]; copy.unshift(item); return copy; }); setWeeklyExpanded(false); }}
-                            style={{ padding: '3px 8px', borderRadius: 4, border: `1px solid ${i === 0 ? '#3B82F6' : '#2A2F3E'}`, background: i === 0 ? '#1E3A5F' : 'transparent', color: i === 0 ? '#60A5FA' : '#5A6478', cursor: 'pointer', fontSize: 9 }}>
-                            {r.date}
-                          </button>
-                        ))}
-                      </div>
                     )}
                   </div>
                 );
