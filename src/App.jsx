@@ -2162,28 +2162,31 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   </div>
                 );
               })()}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 16 }}>
-                {cards.map(c => (
-                  <button key={c.label}
-                    onClick={() => setEvalSelectedMetric(prev => prev === c.metric ? null : c.metric)}
-                    style={{
-                      background: evalSelectedMetric === c.metric ? '#1E3A5F' : '#1A1D26',
-                      borderRadius: 10, padding: '14px 8px', textAlign: 'center',
-                      border: `1px solid ${evalSelectedMetric === c.metric ? '#3B82F6' : c.status.color + '33'}`,
-                      cursor: 'pointer', fontFamily: 'inherit', width: '100%', display: 'block',
-                    }}>
-                    <div style={{ fontSize: 8, color: '#5A6478', marginBottom: 6, letterSpacing: 1 }}>
-                      {c.label} <span style={{ color: '#3B82F6' }}>📘</span>
-                    </div>
-                    <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 700, color: c.status.color, marginBottom: 4 }}>
-                      {c.value}
-                    </div>
-                    <div style={{ fontSize: 9, color: c.status.color, marginBottom: 4 }}>
-                      {c.status.icon} {c.status.label}
-                    </div>
-                    <div style={{ fontSize: 8, color: '#3A4050', lineHeight: 1.3 }}>{c.sub}</div>
-                  </button>
-                ))}
+              <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>운용 성과</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                  {cards.map(c => (
+                    <button key={c.label}
+                      onClick={() => setEvalSelectedMetric(prev => prev === c.metric ? null : c.metric)}
+                      style={{
+                        background: evalSelectedMetric === c.metric ? '#1E3A5F' : '#0F1117',
+                        borderRadius: 10, padding: '14px 8px', textAlign: 'center',
+                        border: `1px solid ${evalSelectedMetric === c.metric ? '#3B82F6' : c.status.color + '33'}`,
+                        cursor: 'pointer', fontFamily: 'inherit', width: '100%', display: 'block',
+                      }}>
+                      <div style={{ fontSize: 8, color: '#5A6478', marginBottom: 6, letterSpacing: 1 }}>
+                        {c.label} <span style={{ color: '#3B82F6' }}>📘</span>
+                      </div>
+                      <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 700, color: c.status.color, marginBottom: 4 }}>
+                        {c.value}
+                      </div>
+                      <div style={{ fontSize: 9, color: c.status.color, marginBottom: 4 }}>
+                        {c.status.icon} {c.status.label}
+                      </div>
+                      <div style={{ fontSize: 8, color: '#3A4050', lineHeight: 1.3 }}>{c.sub}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* 상세 지표 */}
