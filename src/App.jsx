@@ -2117,7 +2117,51 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 
           return (
             <div>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 16 }}>운용 KPI</div>
+              {/* 행동 추적 — 최상단 */}
+              {(() => {
+                const bm = computeBehaviorMetrics(kpiTrades, evaluations);
+                if (kpiTrades === null) return (
+                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16, textAlign: 'center', color: '#5A6478', fontSize: 11 }}>행동 추적 데이터 불러오는 중...</div>
+                );
+                if (!bm) return (
+                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16, textAlign: 'center', color: '#5A6478', fontSize: 11 }}>체결 내역 없음 — 체결 탭에서 먼저 동기화하세요</div>
+                );
+                const r300Color = bm.rule300Rate === null ? '#5A6478' : bm.rule300Rate >= 80 ? '#10B981' : bm.rule300Rate >= 60 ? '#F59E0B' : '#EF4444';
+                const emColor   = bm.evalMatchRate === null ? '#5A6478' : bm.evalMatchRate >= 60 ? '#10B981' : bm.evalMatchRate >= 30 ? '#F59E0B' : '#EF4444';
+                return (
+                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                    <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 14 }}>행동 추적</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
+                      {[
+                        { label: '300만 원칙', value: bm.rule300Rate !== null ? `${bm.rule300Rate}%` : '–', sub: `${bm.rule300OK}/${bm.rule300Total}건`, color: r300Color },
+                        { label: '평가→매수', value: bm.evalMatchRate !== null ? `${bm.evalMatchRate}%` : '–', sub: `${bm.evalMatchCount}/${bm.greenEvalTotal}건`, color: emColor },
+                        { label: '최근 30일', value: `${bm.recent30Count}건`, sub: `매수 ${bm.recent30Buys}건`, color: '#E8EAF0' },
+                      ].map((card, i) => (
+                        <div key={i} style={{ background: '#0F1117', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
+                          <div style={{ fontSize: 9, color: '#5A6478', marginBottom: 4 }}>{card.label}</div>
+                          <div style={{ fontSize: 18, fontWeight: 700, color: card.color }}>{card.value}</div>
+                          <div style={{ fontSize: 9, color: '#5A6478', marginTop: 2 }}>{card.sub}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {bm.unmatchedEvals.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 9, color: '#F59E0B', letterSpacing: 1, marginBottom: 8 }}>🟢 평가 후 미매수 {bm.unmatchedEvals.length}건 — 검토 필요</div>
+                        {bm.unmatchedEvals.slice(0, 5).map((ev, i, arr) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none', fontSize: 11 }}>
+                            <span style={{ color: '#E8EAF0' }}>{ev.stock?.name}</span>
+                            <span style={{ color: '#5A6478' }}>{ev.date}</span>
+                          </div>
+                        ))}
+                        {bm.unmatchedEvals.length > 5 && <div style={{ fontSize: 10, color: '#5A6478', textAlign: 'center', paddingTop: 6 }}>+{bm.unmatchedEvals.length - 5}건 더</div>}
+                      </div>
+                    )}
+                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1E2233', fontSize: 9, color: '#5A6478', textAlign: 'center' }}>
+                      전체 매수 {bm.totalBuys}건 · 매도 {bm.totalSells}건
+                    </div>
+                  </div>
+                );
+              })()}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 16 }}>
                 {cards.map(c => (
                   <button key={c.label}
@@ -2194,51 +2238,6 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 ))}
               </div>
 
-              {/* 행동 추적 */}
-              {(() => {
-                const bm = computeBehaviorMetrics(kpiTrades, evaluations);
-                if (kpiTrades === null) return (
-                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginTop: 12, textAlign: 'center', color: '#5A6478', fontSize: 11 }}>행동 추적 데이터 불러오는 중...</div>
-                );
-                if (!bm) return (
-                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginTop: 12, textAlign: 'center', color: '#5A6478', fontSize: 11 }}>체결 내역 없음 — 체결 탭에서 먼저 동기화하세요</div>
-                );
-                const r300Color = bm.rule300Rate === null ? '#5A6478' : bm.rule300Rate >= 80 ? '#10B981' : bm.rule300Rate >= 60 ? '#F59E0B' : '#EF4444';
-                const emColor   = bm.evalMatchRate === null ? '#5A6478' : bm.evalMatchRate >= 60 ? '#10B981' : bm.evalMatchRate >= 30 ? '#F59E0B' : '#EF4444';
-                return (
-                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginTop: 12 }}>
-                    <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 14 }}>행동 추적</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
-                      {[
-                        { label: '300만 원칙', value: bm.rule300Rate !== null ? `${bm.rule300Rate}%` : '–', sub: `${bm.rule300OK}/${bm.rule300Total}건`, color: r300Color },
-                        { label: '평가→매수', value: bm.evalMatchRate !== null ? `${bm.evalMatchRate}%` : '–', sub: `${bm.evalMatchCount}/${bm.greenEvalTotal}건`, color: emColor },
-                        { label: '최근 30일', value: `${bm.recent30Count}건`, sub: `매수 ${bm.recent30Buys}건`, color: '#E8EAF0' },
-                      ].map((card, i) => (
-                        <div key={i} style={{ background: '#0F1117', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
-                          <div style={{ fontSize: 9, color: '#5A6478', marginBottom: 4 }}>{card.label}</div>
-                          <div style={{ fontSize: 18, fontWeight: 700, color: card.color }}>{card.value}</div>
-                          <div style={{ fontSize: 9, color: '#5A6478', marginTop: 2 }}>{card.sub}</div>
-                        </div>
-                      ))}
-                    </div>
-                    {bm.unmatchedEvals.length > 0 && (
-                      <div>
-                        <div style={{ fontSize: 9, color: '#F59E0B', letterSpacing: 1, marginBottom: 8 }}>🟢 평가 후 미매수 {bm.unmatchedEvals.length}건 — 검토 필요</div>
-                        {bm.unmatchedEvals.slice(0, 5).map((ev, i, arr) => (
-                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none', fontSize: 11 }}>
-                            <span style={{ color: '#E8EAF0' }}>{ev.stock?.name}</span>
-                            <span style={{ color: '#5A6478' }}>{ev.date}</span>
-                          </div>
-                        ))}
-                        {bm.unmatchedEvals.length > 5 && <div style={{ fontSize: 10, color: '#5A6478', textAlign: 'center', paddingTop: 6 }}>+{bm.unmatchedEvals.length - 5}건 더</div>}
-                      </div>
-                    )}
-                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1E2233', fontSize: 9, color: '#5A6478', textAlign: 'center' }}>
-                      전체 매수 {bm.totalBuys}건 · 매도 {bm.totalSells}건
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
           );
         })()}
@@ -2264,21 +2263,11 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 
           return (
             <div>
-              {/* 헤더 + 리포트 날짜 선택 */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: weeklyReports.length > 1 ? 8 : 20 }}>
+              {/* 헤더 */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>포트폴리오 리포트</div>
                 <div style={{ fontSize: 10, color: '#5A6478' }}>{dateStr} 기준</div>
               </div>
-              {weeklyReports.length > 1 && (
-                <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap' }}>
-                  {weeklyReports.map((r, i) => (
-                    <button key={i} onClick={() => { setWeeklyReports(prev => { const copy = [...prev]; const item = copy.splice(i, 1)[0]; copy.unshift(item); return copy; }); setWeeklyExpanded(false); }}
-                      style={{ padding: '4px 10px', borderRadius: 4, border: `1px solid ${i === 0 ? '#3B82F6' : '#2A2F3E'}`, background: i === 0 ? '#1E3A5F' : 'transparent', color: i === 0 ? '#60A5FA' : '#5A6478', cursor: 'pointer', fontSize: 9 }}>
-                      {r.date}
-                    </button>
-                  ))}
-                </div>
-              )}
 
               {/* 섹션 1: 포트폴리오 총괄 */}
               <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
@@ -2344,7 +2333,17 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 })()}
               </div>
 
-
+              {/* 리포트 날짜 선택 */}
+              {weeklyReports.length > 1 && (
+                <div style={{ display: 'flex', gap: 4, marginBottom: 12, marginTop: 4, flexWrap: 'wrap' }}>
+                  {weeklyReports.map((r, i) => (
+                    <button key={i} onClick={() => { setWeeklyReports(prev => { const copy = [...prev]; const item = copy.splice(i, 1)[0]; copy.unshift(item); return copy; }); setWeeklyExpanded(false); }}
+                      style={{ padding: '4px 10px', borderRadius: 4, border: `1px solid ${i === 0 ? '#3B82F6' : '#2A2F3E'}`, background: i === 0 ? '#1E3A5F' : 'transparent', color: i === 0 ? '#60A5FA' : '#5A6478', cursor: 'pointer', fontSize: 9 }}>
+                      {r.date}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* 섹션 4: 주간 AI 리포트 */}
               {weeklyReports.length > 0 && (() => {
