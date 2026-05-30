@@ -1330,7 +1330,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
     setEvalQueueBusy(true);
     setEvalQueueMsg('큐에 추가 중...');
     try {
-      const requestedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
+      const _now = new Date();
+      const requestedAt = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')} ${String(_now.getHours()).padStart(2,'0')}:${String(_now.getMinutes()).padStart(2,'0')}`;
       const row = [requestedAt, name, evalQueueMarket, '대기', '', evalQueueMemo.trim()];
       await sheets.appendValues('평가요청!A2:F', [row]);
       setEvalQueueMsg('✓ 큐에 추가됨');
@@ -3557,7 +3558,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   setNoteSellBusy(true);
                   try {
                     const market = earliestEval?.stock?.market || (/^[0-9]{6}$/.test(earliestEval?.stock?.ticker || '') ? 'KR' : 'US');
-                    const requestedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
+                    const _now2 = new Date();
+                    const requestedAt = `${_now2.getFullYear()}-${String(_now2.getMonth()+1).padStart(2,'0')}-${String(_now2.getDate()).padStart(2,'0')} ${String(_now2.getHours()).padStart(2,'0')}:${String(_now2.getMinutes()).padStart(2,'0')}`;
                     const row = [requestedAt, stock.name, market, '대기', '', '매도 평가'];
                     await sheets.appendValues('평가요청!A2:F', [row]);
                     setNoteSellCopied(true);
