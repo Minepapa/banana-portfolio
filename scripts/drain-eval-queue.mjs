@@ -1,20 +1,25 @@
 /**
- * 평가요청 큐 드레인 (반자동)
+ * 평가요청 큐 드레인 (반자동 + --auto 헤드리스 자동)
  *
  * 흐름:
  *   1. OAuth → 시트 평가요청 탭에서 대기 행 읽기
- *   2. 각 대기 건마다 Claude Pro용 프롬프트 출력 → Frank가 복사해서 붙여넣기
- *   3. Claude Pro 응답 JSON을 이 스크립트에 붙여넣기
- *   4. 종목투자노트!A2:U에 append + 평가요청 상태 '완료'로 업데이트
+ *   2. 각 대기 건마다 Claude용 프롬프트 생성
+ *      - 반자동: 프롬프트 출력 → Frank가 Claude Pro에 붙여넣고 응답 JSON 회신
+ *      - --auto: 헤드리스 claude -p 가 직접 평가 (Bash 데이터 소스)
+ *   3. 응답 JSON 파싱 → 종목투자노트!A2:U append + 평가요청 상태 '완료' 업데이트
  *
  * 사용법:
- *   node scripts/drain-eval-queue.mjs              # 자동 OAuth
- *   node scripts/drain-eval-queue.mjs <TOKEN>      # 토큰 직접
+ *   node scripts/drain-eval-queue.mjs              # 반자동 (프롬프트 출력 → 응답 붙여넣기)
+ *   node scripts/drain-eval-queue.mjs --auto       # 완전자동 (헤드리스 claude -p 평가)
+ *   node scripts/drain-eval-queue.mjs --dry-run    # 시트 변경 없이 프롬프트만 출력
+ *   node scripts/drain-eval-queue.mjs --model=opus # 헤드리스 모델 지정 (기본 sonnet)
+ *   node scripts/drain-eval-queue.mjs <TOKEN>      # OAuth 대신 토큰 직접 전달
  */
 
 import { createServer } from 'http';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { createInterface } from 'readline';
+import { readFileSync } from 'fs';
 
 const CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
 const SHEET_ID  = '1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg';
@@ -26,6 +31,21 @@ const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
 const DRY_RUN = args.includes('--dry-run'); // 시트 쓰기 없이 프롬프트만 출력
+const AUTO = args.includes('--auto');       // 헤드리스 claude -p 로 자동 평가
+const modelArg = args.find(a => a.startsWith('--model='));
+const MODEL = modelArg ? modelArg.split('=')[1] : 'sonnet';
+
+// .env 로드 (DART_API_KEY 등) — 헤드리스 자식 프로세스로 전달
+function loadEnv() {
+  try {
+    const txt = readFileSync(new URL('../.env', import.meta.url), 'utf8');
+    for (const line of txt.split('\n')) {
+      const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
+    }
+  } catch { /* .env 없으면 무시 */ }
+}
+loadEnv();
 
 // ── OAuth ───────────────────────────────────────────────────────────────────
 function getTokenViaBrowser() {
@@ -403,9 +423,47 @@ function findEarliestBuyCard(noteRows, stockName) {
   return matches[0] || null;
 }
 
+// ── 헤드리스 Claude 실행 (--auto) ────────────────────────────────────────────
+const HEADLESS_NOTE = `
+
+[⚙️ 실행환경: 헤드리스 자동화 — MCP 도구 사용 불가. 모든 데이터는 Bash로 직접 조회할 것]
+- HTTPS 호출은 python urllib 말고 반드시 curl 사용 (이 환경 python은 SSL 인증서 검증 실패함)
+- KR 재무지표: OpenDart REST를 curl로 호출 (API 키는 환경변수 $DART_API_KEY 사용)
+  · 재무비율: curl "https://opendart.fss.or.kr/api/fnlttSinglIndx.json?crtfc_key=$DART_API_KEY&corp_code={고유번호8자리}&bsns_year={연도}&reprt_code={사업11011·1Q11013·반기11012·3Q11014}&idx_cl_code={수익성M210000·안정성M220000·성장성M230000·활동성M240000}"
+  · 단일회사 전체재무제표: .../fnlttSinglAcntAll.json (동일 파라미터 + fs_div=CFS)
+  · 고유번호(corp_code) 모르면 종목코드로 매핑 (pykrx 또는 알려진 값 사용; 삼성전자=00126380)
+- KR 시세/RSI(14)/52주 위치: python3 pykrx 또는 curl Naver JSON (api.finance.naver.com/siseJson.naver?symbol={코드}&requestType=1&timeframe=day)
+- US: python3 yfinance (예: yf.Ticker("AAPL").info / .quarterly_financials)
+- 데이터를 못 구하면 추정 금지, 해당 항목에 "(데이터 부족: 소스)" 표기`;
+
+function runHeadlessClaude(prompt, model) {
+  return new Promise((resolve, reject) => {
+    const cp = spawn('claude', [
+      '-p', prompt,
+      '--permission-mode', 'bypassPermissions',
+      '--allowedTools', 'Bash,Read,Glob,Grep,WebFetch',
+      '--model', model,
+      '--output-format', 'text',
+    ], { env: { ...process.env } });
+
+    let out = '', err = '';
+    const timer = setTimeout(() => { cp.kill('SIGKILL'); reject(new Error('헤드리스 타임아웃 (12분 초과)')); }, 12 * 60 * 1000);
+    cp.stdout.on('data', d => { out += d; });
+    cp.stderr.on('data', d => { err += d; });
+    cp.on('error', e => { clearTimeout(timer); reject(e); });
+    cp.on('close', code => {
+      clearTimeout(timer);
+      if (code !== 0) return reject(new Error(`claude 종료코드 ${code}: ${err.slice(0, 200)}`));
+      if (!out.trim()) return reject(new Error('claude 빈 출력'));
+      resolve(out);
+    });
+  });
+}
+
 // ── 메인 ────────────────────────────────────────────────────────────────────
 async function main() {
   if (DRY_RUN) console.log('🔍 DRY-RUN 모드: 시트 쓰기 없이 프롬프트만 출력합니다.\n');
+  if (AUTO) console.log(`🤖 AUTO 모드: 헤드리스 claude -p(${MODEL})로 평가를 자동 생성합니다.\n`);
 
   let token = explicitToken?.trim();
   if (token) {
@@ -467,7 +525,7 @@ async function main() {
   });
   console.log('');
 
-  const rl = createRL();
+  const rl = AUTO ? null : createRL();
   let completed = 0;
   let errors = 0;
 
@@ -511,27 +569,47 @@ async function main() {
       console.log(`  ✓ 큐 상태 → 처리중`);
     }
 
-    // 프롬프트 출력
-    const prompt = sellMode ? buildSellPrompt(entry, buyCard) : buildBuyPrompt(entry, cachedEval, holdings, allocationData);
-    console.log('\n┌─── Claude Pro에 붙여넣을 프롬프트 ───┐');
-    console.log(prompt);
-    console.log('└──────────────────────────────────────┘\n');
+    // 프롬프트 구성 (AUTO 모드는 헤드리스 환경 안내 추가)
+    const basePrompt = sellMode ? buildSellPrompt(entry, buyCard) : buildBuyPrompt(entry, cachedEval, holdings, allocationData);
+    const prompt = AUTO ? basePrompt + HEADLESS_NOTE : basePrompt;
 
     if (DRY_RUN) {
+      console.log('\n┌─── 생성된 프롬프트 (DRY-RUN) ───┐');
+      console.log(prompt);
+      console.log('└──────────────────────────────────────┘');
       console.log('  [DRY-RUN] 시트 변경 건너뜀\n');
       continue;
     }
 
-    const action = await ask(rl, '  Claude Pro 응답 JSON을 붙여넣으시겠습니까? (y/skip) ');
+    let rawJson;
+    if (AUTO) {
+      console.log(`  🤖 헤드리스 Claude(${MODEL}) 실행 중... (수 분 소요)`);
+      const t0 = Date.now();
+      try {
+        rawJson = await runHeadlessClaude(prompt, MODEL);
+        console.log(`  ✓ 헤드리스 평가 완료 (${Math.round((Date.now() - t0) / 1000)}초)`);
+      } catch (e) {
+        console.error(`  ⚠️ 헤드리스 실행 실패: ${e.message}`);
+        await updateCell(token, `평가요청!D${entry.rowNum}`, '오류');
+        const existingMemo = entry.memo ? `${entry.memo} / ` : '';
+        await updateCell(token, `평가요청!F${entry.rowNum}`, `${existingMemo}헤드리스 오류: ${e.message.slice(0, 80)}`);
+        errors++;
+        continue;
+      }
+    } else {
+      console.log('\n┌─── Claude Pro에 붙여넣을 프롬프트 ───┐');
+      console.log(prompt);
+      console.log('└──────────────────────────────────────┘\n');
 
-    if (action.trim().toLowerCase() === 'skip') {
-      await updateCell(token, `평가요청!D${entry.rowNum}`, '대기');
-      console.log(`  ↩ ${entry.name} 건너뜀, 상태 복원 → 대기`);
-      continue;
+      const action = await ask(rl, '  Claude Pro 응답 JSON을 붙여넣으시겠습니까? (y/skip) ');
+      if (action.trim().toLowerCase() === 'skip') {
+        await updateCell(token, `평가요청!D${entry.rowNum}`, '대기');
+        console.log(`  ↩ ${entry.name} 건너뜀, 상태 복원 → 대기`);
+        continue;
+      }
+      console.log(`\n  Claude Pro 응답 JSON을 붙여넣으세요:`);
+      rawJson = await readMultiline(rl);
     }
-
-    console.log(`\n  Claude Pro 응답 JSON을 붙여넣으세요:`);
-    const rawJson = await readMultiline(rl);
 
     try {
       const obj = parseEvalJson(rawJson);
@@ -557,7 +635,7 @@ async function main() {
     }
   }
 
-  if (!DRY_RUN) rl.close();
+  if (rl) rl.close();
 
   console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   if (DRY_RUN) {

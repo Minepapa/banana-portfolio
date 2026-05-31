@@ -25,6 +25,8 @@ const SHEET_RANGES = {
   평가노트:     '종목투자노트!A2:U',   // 11  (없거나 비어있어도 안전)
   평가요청:     '평가요청!A2:F',       // 12  비동기 평가 의뢰 큐 (모바일에서 추가 → Claude Pro가 처리)
   주간리포트:   '주간리포트!A2:C',     // 13  주간 AI 리포트 (날짜, 요약, 본문)
+  리스크모니터: '리스크모니터!A2:H',   // 14  AI 리스크 신호 (날짜,유형,대상,신호,요약,상세,근거,기준선참조)
+  리스크기준선: '리스크기준선!A2:J',   // 15  펀더멘털 기준선 (종목,티커,시장,기준일,매총이,영익,ROE,부채,EPS,비고)
 };
 
 const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
@@ -618,6 +620,46 @@ function parseWeeklyReports(vr) {
   }).filter(Boolean).reverse();
 }
 
+// 리스크모니터 파서 (날짜,유형,대상,신호,요약,상세,근거,기준선참조) → 최신순
+function parseRiskMonitor(vr) {
+  const rows = vr?.values ?? [];
+  return rows.map(r => {
+    const date = String(r[0] ?? '').trim();
+    if (!date) return null;
+    return {
+      date,
+      type: String(r[1] ?? '').trim(),       // B(논리) | D(거시)
+      target: String(r[2] ?? '').trim(),
+      signal: String(r[3] ?? '').trim(),     // 🟢 | 🟡 | 🔴
+      summary: String(r[4] ?? '').trim(),
+      detail: String(r[5] ?? '').trim(),
+      evidence: String(r[6] ?? '').trim(),   // JSON 문자열
+      baselineRef: String(r[7] ?? '').trim(),
+    };
+  }).filter(Boolean).reverse();
+}
+
+// 리스크기준선 파서 (종목,티커,시장,기준일,매총이,영익,ROE,부채,EPS,비고)
+function parseBaselines(vr) {
+  const rows = vr?.values ?? [];
+  return rows.map(r => {
+    const name = String(r[0] ?? '').trim();
+    if (!name) return null;
+    return {
+      name,
+      ticker: String(r[1] ?? '').trim(),
+      market: String(r[2] ?? '').trim(),
+      date: String(r[3] ?? '').trim(),
+      grossMargin: String(r[4] ?? '').trim(),
+      operatingMargin: String(r[5] ?? '').trim(),
+      roe: String(r[6] ?? '').trim(),
+      debtRatio: String(r[7] ?? '').trim(),
+      eps: String(r[8] ?? '').trim(),
+      note: String(r[9] ?? '').trim(),
+    };
+  }).filter(Boolean);
+}
+
 function parseSheetData(valueRanges) {
   // indices: ISA(0) 위탁(1) 연금저축(2) IRP(3)
   //          위탁리밸(4) 연금저축리밸(5) ISA리밸(6) IRP리밸(7)
@@ -720,8 +762,10 @@ function parseSheetData(valueRanges) {
   const evaluations = parseEvaluations(valueRanges[11]);
   const evalQueue = parseEvalQueue(valueRanges[12]);
   const weeklyReports = parseWeeklyReports(valueRanges[13]);
+  const riskMonitor = parseRiskMonitor(valueRanges[14]);
+  const baselines = parseBaselines(valueRanges[15]);
 
-  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports } : null;
+  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines } : null;
 }
 
 // ── useGoogleSheets 훅 ────────────────────────────────────────────────────────
@@ -751,6 +795,8 @@ function useGoogleSheets(onData) {
           profits: parsed.profits,
           evaluations: parsed.evaluations,
           weeklyReports: parsed.weeklyReports,
+          riskMonitor: parsed.riskMonitor,
+          baselines: parsed.baselines,
         });
       }
       const now = new Date();
@@ -1187,8 +1233,11 @@ export default function App() {
 
   const [weeklyReports, setWeeklyReports] = useState([]);
   const [weeklyExpanded, setWeeklyExpanded] = useState(false);
+  const [riskMonitor, setRiskMonitor] = useState([]);
+  const [baselines, setBaselines] = useState([]);
+  const [riskOpen, setRiskOpen] = useState(new Set());
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr }) => {
+  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
     setDividendData(d || []);
@@ -1199,6 +1248,8 @@ export default function App() {
     setEvalSelectedIdx(0);
     if (q) setEvalQueue(q);
     if (wr) setWeeklyReports(wr);
+    if (rm) setRiskMonitor(rm);
+    if (bl) setBaselines(bl);
   }, []);
 
   const sheets = useGoogleSheets(onData);
@@ -1885,6 +1936,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             { key: "노트",      label: "노트" },
             { key: "kpi",       label: "KPI" },
             { key: "report",    label: "리포트" },
+            { key: "리스크",    label: "리스크" },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)} style={{
               padding: "10px 10px",
@@ -2420,6 +2472,142 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     </div>
                   ))
                 )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── 리스크 탭 ── */}
+        {tab === "리스크" && (() => {
+          const today = new Date();
+          const dateStr = `${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
+          const sigLevel = (s) => s.includes('🔴') ? 3 : s.includes('🟡') ? 2 : 1;
+          const sigColor = (s) => s.includes('🔴') ? '#EF4444' : s.includes('🟡') ? '#F5C842' : '#10B981';
+          const typeLabel = (t) => t === 'B' ? '논리 훼손' : t === 'D' ? '거시 충격' : t;
+
+          // 동일 (유형+대상)은 최신 1건만 — riskMonitor는 최신순
+          const seen = new Set();
+          const latest = [];
+          for (const r of riskMonitor) {
+            const k = `${r.type}|${r.target}`;
+            if (seen.has(k)) continue;
+            seen.add(k); latest.push(r);
+          }
+          latest.sort((a, b) => sigLevel(b.signal) - sigLevel(a.signal));
+          const counts = { red: 0, amber: 0, green: 0 };
+          latest.forEach(r => { const l = sigLevel(r.signal); if (l === 3) counts.red++; else if (l === 2) counts.amber++; else counts.green++; });
+          const lastUpdated = riskMonitor[0]?.date || '—';
+
+          const renderEvidence = (ev) => {
+            if (!ev) return null;
+            let obj;
+            try { obj = JSON.parse(ev); } catch { return null; }
+            if (!obj || typeof obj !== 'object') return null;
+            const entries = Object.entries(obj).filter(([, v]) => v != null && typeof v !== 'object');
+            if (!entries.length) return null;
+            return (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {entries.map(([k, v], i) => (
+                  <div key={i} style={{ fontSize: 9, color: '#9CA3AF', background: '#12141C', borderRadius: 4, padding: '3px 7px' }}>
+                    <span style={{ color: '#5A6478' }}>{k}</span> {String(v)}
+                  </div>
+                ))}
+              </div>
+            );
+          };
+
+          return (
+            <div>
+              {/* 헤더 */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>리스크 모니터</div>
+                <div style={{ fontSize: 10, color: '#5A6478' }}>최근 점검 {lastUpdated}</div>
+              </div>
+
+              {riskMonitor.length === 0 ? (
+                <div style={{ background: '#1A1D26', borderRadius: 12, padding: 24, textAlign: 'center' }}>
+                  <div style={{ fontSize: 28, marginBottom: 8 }}>🛡️</div>
+                  <div style={{ fontSize: 12, color: '#9CA3AF', lineHeight: 1.6 }}>
+                    아직 리스크 신호가 없습니다.<br />
+                    <span style={{ fontSize: 10, color: '#5A6478' }}>risk-monitor 실행 후 B(논리 훼손)·D(거시 충격) 신호가 표시됩니다.</span>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* 신호 요약 */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+                    {[
+                      { label: '경보', n: counts.red, c: '#EF4444', e: '🔴' },
+                      { label: '주의', n: counts.amber, c: '#F5C842', e: '🟡' },
+                      { label: '정상', n: counts.green, c: '#10B981', e: '🟢' },
+                    ].map((x, i) => (
+                      <div key={i} style={{ background: '#1A1D26', borderRadius: 10, padding: '12px 8px', textAlign: 'center', borderTop: `2px solid ${x.c}` }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: x.c }}>{x.n}</div>
+                        <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 2 }}>{x.e} {x.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* 신호 카드 목록 */}
+                  {latest.map((r, i) => {
+                    const color = sigColor(r.signal);
+                    const isOpen = riskOpen.has(i);
+                    return (
+                      <div key={i} style={{ background: '#1A1D26', borderRadius: 10, padding: 14, marginBottom: 8, borderLeft: `3px solid ${color}` }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 13 }}>{r.signal.match(/[🔴🟡🟢]/)?.[0] || '•'}</span>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: '#E8EAF0' }}>{r.target}</span>
+                              <span style={{ fontSize: 8, color: color, border: `1px solid ${color}`, borderRadius: 3, padding: '1px 5px' }}>{typeLabel(r.type)}</span>
+                            </div>
+                            <div style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.5 }}>{r.summary}</div>
+                          </div>
+                          <span style={{ fontSize: 9, color: '#3A4050', flexShrink: 0 }}>{r.date}</span>
+                        </div>
+                        {(r.detail || r.evidence) && (
+                          <button onClick={() => setRiskOpen(prev => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; })}
+                            style={{ marginTop: 8, padding: '4px 0', background: 'transparent', border: 'none', color: '#5A6478', cursor: 'pointer', fontSize: 9 }}>
+                            {isOpen ? '접기 ▲' : '자세히 ▼'}
+                          </button>
+                        )}
+                        {isOpen && (
+                          <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #1E2233' }}>
+                            {r.detail && <div style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{r.detail}</div>}
+                            {renderEvidence(r.evidence)}
+                            {r.baselineRef && <div style={{ fontSize: 9, color: '#5A6478', marginTop: 8 }}>기준선: {r.baselineRef}</div>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
+              {/* 펀더멘털 기준선 */}
+              {baselines.length > 0 && (
+                <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginTop: 12 }}>
+                  <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>📊 펀더멘털 기준선 (논리 훼손 비교 기준)</div>
+                  <div style={{ display: 'flex', fontSize: 9, color: '#5A6478', padding: '0 0 6px', borderBottom: '1px solid #1E2233' }}>
+                    <span style={{ flex: 2, minWidth: 0 }}>종목</span>
+                    <span style={{ flex: 1, textAlign: 'right' }}>영익률</span>
+                    <span style={{ flex: 1, textAlign: 'right' }}>ROE</span>
+                    <span style={{ flex: 1, textAlign: 'right' }}>부채</span>
+                  </div>
+                  {baselines.map((b, i) => (
+                    <div key={i} style={{ display: 'flex', fontSize: 10, color: '#E8EAF0', padding: '7px 0', borderBottom: i < baselines.length - 1 ? '1px solid #15171F' : 'none' }}>
+                      <span style={{ flex: 2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
+                      <span style={{ flex: 1, textAlign: 'right', color: '#9CA3AF' }}>{b.operatingMargin || '—'}</span>
+                      <span style={{ flex: 1, textAlign: 'right', color: '#9CA3AF' }}>{b.roe || '—'}</span>
+                      <span style={{ flex: 1, textAlign: 'right', color: '#9CA3AF' }}>{b.debtRatio || '—'}</span>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 9, color: '#3A4050', marginTop: 8 }}>기준일 {baselines[0]?.date || '—'} · 가격 등락이 아닌 실적 훼손만 리스크로 평가</div>
+                </div>
+              )}
+
+              <div style={{ fontSize: 9, color: '#3A4050', textAlign: 'center', marginTop: 16 }}>
+                {dateStr} 조회 · 펀더멘털·거시 기반 (가격 과열 단독은 신호 아님)
               </div>
             </div>
           );
