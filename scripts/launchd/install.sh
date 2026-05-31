@@ -2,7 +2,7 @@
 # launchd 작업 설치 — plist 를 ~/Library/LaunchAgents 에 심볼릭 링크하고 로드.
 #
 # 사용: bash scripts/launchd/install.sh [drain|risk-d|risk-b ...]
-#   인자 없으면 risk-d · risk-b 만 설치(drain 은 서비스 계정 키 준비 후 권장).
+#   인자 없으면 risk-d · risk-b · drain 셋 다 설치(모두 서비스 계정 키로 무인 동작).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -11,7 +11,7 @@ LOG_DIR="$HOME/Library/Logs/banana-portfolio"
 mkdir -p "$AGENTS" "$LOG_DIR"
 
 JOBS=("$@")
-if [ ${#JOBS[@]} -eq 0 ]; then JOBS=(risk-d risk-b); fi
+if [ ${#JOBS[@]} -eq 0 ]; then JOBS=(risk-d risk-b drain); fi
 
 for job in "${JOBS[@]}"; do
   src="$HERE/com.banana.$job.plist"
