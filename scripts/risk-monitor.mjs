@@ -25,7 +25,7 @@
  */
 
 import {
-  loadEnv, getTokenViaBrowser, getRange, appendValues, ensureSheet,
+  loadEnv, getToken, hasServiceAccount, getRange, appendValues, ensureSheet,
   readHoldings, runHeadlessClaude, parseJsonBlock, todayKST, HEADLESS_NOTE,
   sendTelegram,
 } from './lib/sheets-common.mjs';
@@ -215,10 +215,12 @@ async function main() {
   console.log(`🛡️  리스크 모니터 — 모드 ${MODE} (${MODE === 'D' ? '거시/일간' : '논리훼손/주간'})`);
   if (DRY_RUN) console.log('   (--dry-run: 프롬프트만 출력)');
 
-  let token = explicitToken?.trim();
+  let token = explicitToken?.trim() || null;
   if (!DRY_RUN) {
-    if (!token) { console.log('\n🔑 Google 인증 중...'); token = await getTokenViaBrowser(); console.log('✅ 토큰 획득'); }
-    else console.log('✓ 토큰 인수 사용');
+    if (token) console.log('✓ 토큰 인수 사용');
+    else console.log(hasServiceAccount() ? '\n🤖 서비스 계정 인증(무인)...' : '\n🔑 Google 인증 중...');
+    token = await getToken(token);
+    console.log('✅ 토큰 준비');
     await ensureSheet(token, RISK_SHEET, RISK_HEADER);
   }
 

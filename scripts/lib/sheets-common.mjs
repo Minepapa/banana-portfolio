@@ -9,6 +9,7 @@
 import { createServer } from 'http';
 import { exec, spawn } from 'child_process';
 import { readFileSync } from 'fs';
+import { createSign } from 'crypto';
 
 export const SHEET_ID = '1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg';
 export const CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
@@ -87,6 +88,56 @@ export function getTokenViaBrowser() {
       else reject(e);
     });
   });
+}
+
+// ── 서비스 계정 인증 (완전 무인, launchd 용) ──────────────
+// SA 키 JSON 으로 JWT 서명 → access token 교환. 대화형 로그인 0회.
+// 키 파일 경로: 환경변수 SA_KEY_FILE 또는 기본값(아래).
+export const SA_KEY_FILE = process.env.SA_KEY_FILE
+  || `${process.env.HOME}/.config/banana-portfolio/sa-key.json`;
+
+export function hasServiceAccount() {
+  try { readFileSync(SA_KEY_FILE); return true; } catch { return false; }
+}
+
+function b64url(buf) {
+  return Buffer.from(buf).toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export async function getServiceAccountToken(keyFile = SA_KEY_FILE) {
+  const key = JSON.parse(readFileSync(keyFile, 'utf8'));
+  if (!key.client_email || !key.private_key) {
+    throw new Error('SA 키에 client_email/private_key 없음');
+  }
+  const aud = key.token_uri || 'https://oauth2.googleapis.com/token';
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const claim = b64url(JSON.stringify({
+    iss: key.client_email, scope: SCOPE, aud, iat: now, exp: now + 3600,
+  }));
+  const signer = createSign('RSA-SHA256');
+  signer.update(`${header}.${claim}`);
+  const jwt = `${header}.${claim}.${b64url(signer.sign(key.private_key))}`;
+  const res = await fetch(aud, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }),
+  });
+  if (!res.ok) throw new Error(`SA 토큰 교환 실패: ${await res.text()}`);
+  return (await res.json()).access_token;
+}
+
+// 통합 토큰 획득: 명시 토큰 > 서비스 계정(무인) > 브라우저(대화형).
+// allowBrowser=false 면 무인 전용(SA 없으면 즉시 실패 — launchd 안전장치).
+export async function getToken(explicit, { allowBrowser = true } = {}) {
+  if (explicit) return explicit;
+  if (hasServiceAccount()) return getServiceAccountToken();
+  if (allowBrowser) return getTokenViaBrowser();
+  throw new Error(`무인 토큰 없음: 서비스 계정 키(${SA_KEY_FILE}) 필요`);
 }
 
 // ── Sheets REST ────────────────────────────────────────

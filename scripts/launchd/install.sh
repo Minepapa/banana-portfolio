@@ -2,7 +2,7 @@
 # launchd 작업 설치 — plist 를 ~/Library/LaunchAgents 에 심볼릭 링크하고 로드.
 #
 # 사용: bash scripts/launchd/install.sh [drain|risk-d|risk-b ...]
-#   인자 없으면 risk-d · risk-b 만 설치(drain 은 토큰 캐시 준비 후 권장).
+#   인자 없으면 risk-d · risk-b 만 설치(drain 은 서비스 계정 키 준비 후 권장).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -27,4 +27,5 @@ done
 echo
 echo "확인: launchctl list | grep com.banana"
 echo "수동 1회 실행: launchctl kickstart -k gui/$(id -u)/com.banana.risk-d"
-echo "⚠️ 무인 실행은 토큰 캐시(\$HOME/.config/banana-portfolio/token.txt) 필요 — Phase 7 인증 결정 후 채울 것."
+echo "⚠️ 무인 실행은 서비스 계정 키(\$HOME/.config/banana-portfolio/sa-key.json) 필요."
+echo "   설정: GCP 서비스 계정 생성 → JSON 키 저장 → 시트를 SA client_email 에 편집자 공유 (docs/plans/ai-risk-engine.md Phase 7)."
