@@ -203,46 +203,6 @@ const SAMPLE_EVALUATION = {
   ],
 };
 
-const EVAL_PROMPT_TEMPLATE = `[종목 능동 평가 요청]
-종목: <여기에 종목명 또는 티커 입력>
-
-다음 플레이북에 따라 5축 평가 카드를 생성해줘:
-- 단일 출처: Trading Agent/playbooks/active-evaluation.md
-- 출력 양식: §5의 표준 카드 (5축 + 결론 🟢/🟡/🔴 + 근거 3줄 + 리스크 2줄 + Frank 액션)
-- 데이터: KR=OpenDart MCP, US=UsStockInfo MCP
-- 모든 수치 출처/기준일 표기, 누락 항목은 '데이터 부족'으로 명시
-- 학습 모듈 옆 📘 표시 유지
-
-마지막에 반드시 아래 JSON 블록을 \`\`\`json ... \`\`\` 펜스로 출력해줘
-(banana-portfolio 평가 탭에 1-클릭 적재용):
-
-\`\`\`json
-{
-  "date": "YYYY-MM-DD",
-  "name": "종목명",
-  "ticker": "티커 또는 종목코드",
-  "market": "KR | US",
-  "conclusion": "🟢 O | 🟡 △ | 🔴 X",
-  "grades": {
-    "수익성": "🟢|🟡|🔴",
-    "안정성": "🟢|🟡|🔴",
-    "밸류에이션": "🟢|🟡|🔴",
-    "현금흐름": "🟢|🟡|🔴",
-    "모멘텀": "🟢|🟡|🔴"
-  },
-  "reasons": ["근거1", "근거2", "근거3"],
-  "risks": ["리스크1", "리스크2"],
-  "actions": ["액션1", "액션2", "액션3"],
-  "frankMemo": "",
-  "status": "보류 | 매수 | 매도",
-  "buyDate": "",
-  "buyPrice": "",
-  "targetTerm": "장기 | 1Y | 3Y",
-  "targetRet": "30%",
-  "aiNote": "한 줄 요약"
-}
-\`\`\``;
-
 // ── 기본 데이터 ───────────────────────────────────────────────────────────────
 const DEFAULT_ACCOUNTS = {
   ISA: {
@@ -1212,7 +1172,6 @@ export default function App() {
   const [selectedProfitKey, setSelectedProfitKey] = useState(null);
   const isMobile = useIsMobile();
   const [evalSelectedMetric, setEvalSelectedMetric] = useState(null);
-  const [evalPromptCopied, setEvalPromptCopied] = useState(false);
   const [evaluations, setEvaluations] = useState([]);
   const [evalSelectedIdx, setEvalSelectedIdx] = useState(0);
   const [evalIngestOpen, setEvalIngestOpen] = useState(false);
@@ -3460,17 +3419,6 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   fontSize: 10, fontFamily: baseFont,
                 }} title="수동 평가 JSON 적재">
                   💾
-                </button>
-                <button onClick={() => {
-                  navigator.clipboard.writeText(EVAL_PROMPT_TEMPLATE);
-                  setEvalPromptCopied(true);
-                  setTimeout(() => setEvalPromptCopied(false), 2000);
-                }} style={{
-                  padding: '5px 10px', borderRadius: 6, border: '1px solid #2A2F3E',
-                  background: 'transparent', color: evalPromptCopied ? '#4ADE80' : '#5A6478',
-                  cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
-                }} title="데스크탑용 — 프롬프트 클립보드 복사">
-                  {evalPromptCopied ? '✓' : '📋'}
                 </button>
               </div>
             </div>
