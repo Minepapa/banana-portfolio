@@ -146,34 +146,49 @@ AI는 **로컬 PC의 예약 스크립트(`launchd` + 헤드리스 `claude -p`)�
 
 ---
 
-### Phase 6: 🔴 텔레그램 즉시 푸시
+### Phase 6: 🔴 텔레그램 즉시 푸시 — ✅ 완료 (커밋 1fa7145)
 **Goal:** 새 🔴 신호 발생 시에만 텔레그램 알림.
 
-**Tasks:**
-1. `risk-monitor.mjs` 적재 후 신규 🔴 신호 판별(이전 실행 대비 새로 생긴 것만 — 상태 파일 또는 시트
-   이전행 비교로 중복 푸시 방지).
-2. 텔레그램 발송: 헤드리스 Claude가 telegram MCP `reply`로 보내거나, 스크립트에서 봇 API 직접 호출.
-   (chat_id 확보 방법 확인 필요.)
-3. 메시지 포맷: 종목/유형 + "무엇이 바뀌었나" + 앱 리스크 탭 링크.
+**구현:**
+1. `risk-monitor.mjs` 가 적재 전 `리스크모니터` 기존 행에서 직전 🔴 `유형|대상` 키를 모아
+   신규 🔴 만 푸시(같은 실행 내 중복도 차단). `--no-push` 로 끔.
+2. 봇 API 직접 호출(`sendTelegram` in `scripts/lib/sheets-common.mjs`). 봇 토큰·chat_id 는
+   telegram 채널 설정 재사용 — 토큰 `~/.claude/channels/telegram/.env`,
+   chat_id `~/.claude/channels/telegram/access.json` 의 `allowFrom[0]`.
+3. 메시지 포맷: 유형(거시/논리) + 대상 + 요약 + 상세(300자) + 날짜. (앱 탭 링크는 추후.)
 
 **Success criteria:**
-- [ ] 신규 🔴만 1회 푸시(같은 신호 반복 푸시 없음)
-- [ ] 🟡🟢는 푸시 안 함(앱에서만 확인)
+- [x] 신규 🔴만 1회 푸시(같은 신호 반복 푸시 없음)
+- [x] 🟡🟢는 푸시 안 함(앱에서만 확인)
+- [ ] 라이브 검증(실제 🔴 발생 시 수신) — OAuth 라이브 세션에서 확인
 
 ---
 
 ### Phase 7: launchd 예약
 **Goal:** 전체 파이프라인 무인 예약 실행.
 
-**Tasks:**
-1. `~/Library/LaunchAgents/`에 plist 작성(또는 `scripts/`에 설치 스크립트):
-   - 큐 자동 드레인: 주기적(예: 수 시간 간격) 또는 평가요청 대기 시.
-   - risk-monitor B: 주1회(예: 월 08:00). D: 매일(예: 평일 08:00).
-2. 로그 경로 지정(`stdout`/`stderr` → 파일). 실패 알림(선택).
-3. PC 꺼짐 대비: `launchd`의 누락 작업 캐치업 동작 확인/문서화.
+**스캐폴딩 — ✅ 완료 (`scripts/launchd/`):**
+- `run.sh <drain|risk-d|risk-b>` — cwd 고정 · 토큰 캐시 주입 · 로그 리다이렉트 래퍼.
+- `com.banana.risk-d.plist` — 평일 08:00 (거시/일간)
+- `com.banana.risk-b.plist` — 월요일 08:10 (논리/주간)
+- `com.banana.drain.plist` — 3시간 간격 (평가 큐 자동 드레인)
+- `install.sh` / `uninstall.sh` — `launchctl bootstrap/bootout` 기반 idempotent 설치·제거.
+- 로그: `~/Library/Logs/banana-portfolio/{risk-d,risk-b,drain}.log`
+
+**남은 결정사항 — 무인 토큰 캐싱 (Frank 선택 필요):**
+
+| 방식 | 동작 | 장점 | 단점/필요작업 |
+|------|------|------|---------------|
+| **서비스 계정 (권장)** | GCP SA JWT → access token, 시트를 SA 이메일에 공유 | 완전 무인, 대화형 로그인 0회 | GCP 콘솔에서 SA·키 생성 + 시트 공유 1회 |
+| **Refresh token** | 1회 대화형 동의(offline access) → refresh token 저장, 갱신 | 기존 OAuth 클라이언트 재사용 | implicit→auth-code 흐름 전환 필요, client_secret 보관 |
+
+- 결정 후: 토큰 헬퍼가 `~/.config/banana-portfolio/token.txt`(또는 SA 키) 를 채우도록 구현 →
+  `run.sh` 가 이미 그 파일을 읽어 주입함.
+- PC 꺼짐 대비: `launchd` 는 놓친 `StartCalendarInterval` 을 깨어날 때 1회 캐치업 실행(문서화).
 
 **Success criteria:**
-- [ ] `launchctl load` 후 예약대로 실행되어 시트가 갱신됨
+- [x] plist · 설치/제거 스크립트 작성, `plutil -lint` · `bash -n` 통과
+- [ ] (인증 결정 후) 토큰 캐시 구현 → `launchctl kickstart` 무인 1회 실행으로 시트 갱신
 - [ ] 로그에서 각 작업 성공/실패 추적 가능
 
 ---
