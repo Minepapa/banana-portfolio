@@ -168,27 +168,29 @@ AI는 **로컬 PC의 예약 스크립트(`launchd` + 헤드리스 `claude -p`)�
 **Goal:** 전체 파이프라인 무인 예약 실행.
 
 **스캐폴딩 — ✅ 완료 (`scripts/launchd/`):**
-- `run.sh <drain|risk-d|risk-b>` — cwd 고정 · 토큰 캐시 주입 · 로그 리다이렉트 래퍼.
+- `run.sh <drain|risk-d|risk-b>` — cwd 고정 · 서비스 계정 토큰 발급·주입 · 로그 리다이렉트 래퍼.
 - `com.banana.risk-d.plist` — 평일 08:00 (거시/일간)
 - `com.banana.risk-b.plist` — 월요일 08:10 (논리/주간)
 - `com.banana.drain.plist` — 3시간 간격 (평가 큐 자동 드레인)
 - `install.sh` / `uninstall.sh` — `launchctl bootstrap/bootout` 기반 idempotent 설치·제거.
 - 로그: `~/Library/Logs/banana-portfolio/{risk-d,risk-b,drain}.log`
 
-**남은 결정사항 — 무인 토큰 캐싱 (Frank 선택 필요):**
+**무인 인증 — ✅ 서비스 계정 채택·구현 (커밋 dfdb74a):**
 
-| 방식 | 동작 | 장점 | 단점/필요작업 |
-|------|------|------|---------------|
-| **서비스 계정 (권장)** | GCP SA JWT → access token, 시트를 SA 이메일에 공유 | 완전 무인, 대화형 로그인 0회 | GCP 콘솔에서 SA·키 생성 + 시트 공유 1회 |
-| **Refresh token** | 1회 대화형 동의(offline access) → refresh token 저장, 갱신 | 기존 OAuth 클라이언트 재사용 | implicit→auth-code 흐름 전환 필요, client_secret 보관 |
-
-- 결정 후: 토큰 헬퍼가 `~/.config/banana-portfolio/token.txt`(또는 SA 키) 를 채우도록 구현 →
-  `run.sh` 가 이미 그 파일을 읽어 주입함.
+- 방식: GCP 서비스 계정 키(`sa-key.json`)로 RS256 JWT 서명 → `oauth2.googleapis.com/token` 에서
+  access token 교환(`getServiceAccountToken` in `scripts/lib/sheets-common.mjs`, 외부 의존성 없음).
+  `getToken()` 이 SA 키 있으면 무인, 없으면 대화형 OAuth 폴백.
+- `run.sh` 가 SA 키로 토큰 1회 발급 후 모든 잡에 positional 인자로 주입 → drain·risk-monitor 둘 다
+  코드 변경 없이 무인 동작. risk-monitor 는 자체적으로도 `getToken` 사용(이중 안전).
+- **1회 설정(Frank)**: ① GCP 콘솔에서 서비스 계정 생성 + Google Sheets API 활성화, ② JSON 키 발급해
+  `~/.config/banana-portfolio/sa-key.json` 에 저장, ③ 키의 `client_email` 을 복사해 스프레드시트
+  (ID `1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg`)를 그 이메일에 **편집자**로 공유. 이후 `install.sh` 실행.
 - PC 꺼짐 대비: `launchd` 는 놓친 `StartCalendarInterval` 을 깨어날 때 1회 캐치업 실행(문서화).
 
 **Success criteria:**
 - [x] plist · 설치/제거 스크립트 작성, `plutil -lint` · `bash -n` 통과
-- [ ] (인증 결정 후) 토큰 캐시 구현 → `launchctl kickstart` 무인 1회 실행으로 시트 갱신
+- [x] 무인 인증 구현(서비스 계정) — SA 키 배치 시 대화형 로그인 0회
+- [ ] (SA 키 배치 후) `launchctl kickstart` 무인 1회 실행으로 시트 갱신 검증
 - [ ] 로그에서 각 작업 성공/실패 추적 가능
 
 ---
