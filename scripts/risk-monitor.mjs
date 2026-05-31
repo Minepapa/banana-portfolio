@@ -18,11 +18,16 @@
  *   node scripts/risk-monitor.mjs --mode=D --dry-run  # 프롬프트만 출력
  *   node scripts/risk-monitor.mjs --mode=B --model=opus
  *   node scripts/risk-monitor.mjs --mode=D <TOKEN>    # OAuth 대신 토큰 직접 전달
+ *   node scripts/risk-monitor.mjs --mode=B --no-push  # 🔴 텔레그램 푸시 끔
+ *
+ * 🔴 신호는 텔레그램으로 즉시 푸시(신규만 — 같은 유형·대상의 직전 🔴 는 중복 발송 안 함).
+ * 🟡🟢 는 푸시하지 않음(시트 기록만).
  */
 
 import {
   loadEnv, getTokenViaBrowser, getRange, appendValues, ensureSheet,
   readHoldings, runHeadlessClaude, parseJsonBlock, todayKST, HEADLESS_NOTE,
+  sendTelegram,
 } from './lib/sheets-common.mjs';
 
 const RISK_SHEET = '리스크모니터';
@@ -33,6 +38,7 @@ const HUB_CLAUDE = '/Users/huinique/Claude/Agent/Trading Agent/CLAUDE.md';
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
 const DRY_RUN = args.includes('--dry-run');
+const NO_PUSH = args.includes('--no-push');
 const modeArg = args.find(a => a.startsWith('--mode='));
 const MODE = modeArg ? modeArg.split('=')[1].toUpperCase() : '';
 const modelArg = args.find(a => a.startsWith('--model='));
@@ -172,6 +178,39 @@ function baselineMap(rows) {
   return m;
 }
 
+// 기존 리스크모니터 행에서 직전 🔴 (유형|대상) 키 수집 → 신규 🔴 만 푸시
+function redKeysFromRows(rows) {
+  const s = new Set();
+  for (const r of (rows || [])) {
+    if (String(r[3] ?? '').includes('🔴')) s.add(`${r[1]}|${r[2]}`);
+  }
+  return s;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// 신규 🔴 행만 텔레그램 푸시. priorRedKeys 를 변형해 같은 실행 내 중복도 차단.
+async function pushNewReds(rows, priorRedKeys) {
+  if (NO_PUSH) return;
+  for (const row of rows) {
+    const [date, type, target, signal, summary, detail] = row;
+    if (!String(signal).includes('🔴')) continue;
+    const key = `${type}|${target}`;
+    if (priorRedKeys.has(key)) continue;
+    priorRedKeys.add(key);
+    const typeLabel = type === 'D' ? '거시 충격' : '논리 훼손';
+    const text = `🔴 <b>리스크 경보</b> · ${typeLabel}\n`
+      + `<b>${escapeHtml(target)}</b>\n`
+      + `${escapeHtml(summary || '')}\n`
+      + (detail ? `\n${escapeHtml(String(detail).slice(0, 300))}\n` : '')
+      + `\n<i>${date}</i>`;
+    try { await sendTelegram(text); console.log(`      📲 텔레그램 푸시: ${target}`); }
+    catch (e) { console.error(`      ⚠️ 텔레그램 실패: ${e.message}`); }
+  }
+}
+
 async function main() {
   console.log(`🛡️  리스크 모니터 — 모드 ${MODE} (${MODE === 'D' ? '거시/일간' : '논리훼손/주간'})`);
   if (DRY_RUN) console.log('   (--dry-run: 프롬프트만 출력)');
@@ -185,6 +224,11 @@ async function main() {
 
   // dry-run 이면서 토큰 없으면 보유종목을 읽을 수 없음 → 빈 목록으로 프롬프트 형태만 확인
   const holdings = (token) ? await readHoldings(token) : [];
+
+  // 신규 🔴 판별용: 기존 리스크모니터의 직전 🔴 (유형|대상) 키
+  const priorRedKeys = (token && !NO_PUSH)
+    ? redKeysFromRows(await getRange(token, `${RISK_SHEET}!A2:H`))
+    : new Set();
 
   if (MODE === 'D') {
     const prompt = buildMacroPrompt(holdings);
@@ -208,6 +252,7 @@ async function main() {
         await appendValues(token, `${RISK_SHEET}!A2`, rows);
         console.log(`   ✅ 거시 신호 ${rows.length}건 적재`);
         sigs.forEach(s => console.log(`      ${s.signal} ${s.target}: ${s.summary}`));
+        await pushNewReds(rows, priorRedKeys);
       }
     } catch (e) {
       console.error(`   ❌ 실패: ${e.message}`);
@@ -233,12 +278,14 @@ async function main() {
     console.log(`\n⏳ ${h.name} 논리 점검 중... (수 분)`);
     try {
       const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL));
-      await appendValues(token, `${RISK_SHEET}!A2`, [[
+      const row = [
         r.date || todayKST(), 'B', h.name, r.signal || '🟢',
         r.summary || '', r.detail || '', JSON.stringify(r.evidence || {}),
         r.baseline_ref || (baseline ? baseline.date : '없음'),
-      ]]);
+      ];
+      await appendValues(token, `${RISK_SHEET}!A2`, [row]);
       console.log(`   ${r.signal || '🟢'} ${h.name}: ${r.summary || ''}`);
+      await pushNewReds([row], priorRedKeys);
       if (r.signal && r.signal !== '🟢') alerts++;
       ok++;
     } catch (e) {
