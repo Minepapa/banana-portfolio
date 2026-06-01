@@ -371,22 +371,29 @@ function computeBehaviorMetrics(kpiTrades, evaluations) {
     return amt > 0 && amt <= 3000000;
   }).length;
 
-  // 🟢 평가 후 60일 내 매수 여부
+  // 🟢 평가 → 매수 매칭 (매칭 기간 내 동일 종목 매수 여부)
+  // 3분류: 실행(matched) / 미실행-기간경과(missed, 진짜 누락) / 유예(pending, 기간 미경과)
+  // 일치율 분모는 "실행 기회가 있었던 평가"(matched+missed)만 — 유예는 제외해야 의미 있음.
+  const MATCH_WINDOW_DAYS = 30;
+  const windowMs = MATCH_WINDOW_DAYS * 86400000;
+  const nowTs = Date.now();
   const greenEvals = (evaluations || []).filter(e => {
     const raw = String(e.conclusion?.raw || '');
     return raw.includes('🟢') || (raw.includes('O') && !raw.includes('X'));
   });
-  const matchedEvals = [], unmatchedEvals = [];
+  const matchedEvals = [], missedEvals = [], pendingEvals = [];
   greenEvals.forEach(ev => {
     const evalTs = new Date(ev.date).getTime();
-    if (isNaN(evalTs)) return unmatchedEvals.push(ev);
-    const bought = buys.some(r => {
+    const bought = !isNaN(evalTs) && buys.some(r => {
       const ts = new Date(String(r.row?.[0]||'')).getTime();
-      return String(r.row?.[5]||'').trim() === ev.stock?.name
-        && !isNaN(ts) && ts >= evalTs && ts <= evalTs + 60 * 86400000;
+      return String(r.row?.[5]||'').trim() === String(ev.stock?.name||'').trim()
+        && !isNaN(ts) && ts >= evalTs && ts <= evalTs + windowMs;
     });
-    (bought ? matchedEvals : unmatchedEvals).push(ev);
+    if (bought) matchedEvals.push(ev);
+    else if (isNaN(evalTs) || nowTs >= evalTs + windowMs) missedEvals.push(ev);  // 기간 경과 미실행
+    else pendingEvals.push(ev);                                                   // 기간 미경과 = 유예
   });
+  const evalEligible = matchedEvals.length + missedEvals.length;
 
   // 최근 30일 거래
   const now = Date.now();
@@ -401,8 +408,11 @@ function computeBehaviorMetrics(kpiTrades, evaluations) {
     rule300Rate: buys.length > 0 ? Math.round(rule300OK / buys.length * 100) : null,
     greenEvalTotal: greenEvals.length,
     evalMatchCount: matchedEvals.length,
-    evalMatchRate: greenEvals.length > 0 ? Math.round(matchedEvals.length / greenEvals.length * 100) : null,
-    unmatchedEvals,
+    evalEligible,
+    evalMatchRate: evalEligible > 0 ? Math.round(matchedEvals.length / evalEligible * 100) : null,
+    missedEvals,
+    pendingCount: pendingEvals.length,
+    matchWindowDays: MATCH_WINDOW_DAYS,
     recent30Count: recent30.length,
     recent30Buys: recent30.filter(r => String(r.row?.[1]||'').trim() === '매수').length,
   };
@@ -2146,7 +2156,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
                       {[
                         { label: '300만 원칙', value: bm.rule300Rate !== null ? `${bm.rule300Rate}%` : '–', sub: `${bm.rule300OK}/${bm.rule300Total}건`, color: r300Color },
-                        { label: '평가→매수', value: bm.evalMatchRate !== null ? `${bm.evalMatchRate}%` : '–', sub: `${bm.evalMatchCount}/${bm.greenEvalTotal}건`, color: emColor },
+                        { label: '평가→매수', value: bm.evalMatchRate !== null ? `${bm.evalMatchRate}%` : '–', sub: `${bm.evalMatchCount}/${bm.evalEligible}건`, color: emColor },
                         { label: '최근 30일', value: `${bm.recent30Count}건`, sub: `매수 ${bm.recent30Buys}건`, color: '#E8EAF0' },
                       ].map((card, i) => (
                         <div key={i} style={{ background: '#0F1117', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
@@ -2156,20 +2166,29 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         </div>
                       ))}
                     </div>
-                    {bm.unmatchedEvals.length > 0 && (
+                    {(bm.missedEvals.length > 0 || bm.pendingCount > 0) && (
                       <div>
-                        <div style={{ fontSize: 9, color: '#F59E0B', letterSpacing: 1, marginBottom: 8 }}>🟢 평가 후 미매수 {bm.unmatchedEvals.length}건 — 검토 필요</div>
-                        {bm.unmatchedEvals.slice(0, 5).map((ev, i, arr) => (
-                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none', fontSize: 11 }}>
-                            <span style={{ color: '#E8EAF0' }}>{ev.stock?.name}</span>
-                            <span style={{ color: '#5A6478' }}>{ev.date}</span>
+                        {bm.missedEvals.length > 0 && (
+                          <>
+                            <div style={{ fontSize: 9, color: '#F59E0B', letterSpacing: 1, marginBottom: 8 }}>🟢 평가 후 {bm.matchWindowDays}일 내 미매수 {bm.missedEvals.length}건 — 검토 필요</div>
+                            {bm.missedEvals.slice(0, 5).map((ev, i, arr) => (
+                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none', fontSize: 11 }}>
+                                <span style={{ color: '#E8EAF0' }}>{ev.stock?.name}</span>
+                                <span style={{ color: '#5A6478' }}>{ev.date}</span>
+                              </div>
+                            ))}
+                            {bm.missedEvals.length > 5 && <div style={{ fontSize: 10, color: '#5A6478', textAlign: 'center', paddingTop: 6 }}>+{bm.missedEvals.length - 5}건 더</div>}
+                          </>
+                        )}
+                        {bm.pendingCount > 0 && (
+                          <div style={{ fontSize: 9, color: '#5A6478', marginTop: bm.missedEvals.length > 0 ? 10 : 0 }}>
+                            ⏳ 유예 {bm.pendingCount}건 — 평가 후 {bm.matchWindowDays}일 미경과, 일치율 집계 제외
                           </div>
-                        ))}
-                        {bm.unmatchedEvals.length > 5 && <div style={{ fontSize: 10, color: '#5A6478', textAlign: 'center', paddingTop: 6 }}>+{bm.unmatchedEvals.length - 5}건 더</div>}
+                        )}
                       </div>
                     )}
                     <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1E2233', fontSize: 9, color: '#5A6478', textAlign: 'center' }}>
-                      전체 매수 {bm.totalBuys}건 · 매도 {bm.totalSells}건
+                      전체 매수 {bm.totalBuys}건 · 매도 {bm.totalSells}건 · 평가→매수 {bm.matchWindowDays}일 기준
                     </div>
                   </div>
                 );
