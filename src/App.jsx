@@ -2444,10 +2444,14 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
           const sigColor = (s) => s.includes('🔴') ? '#EF4444' : s.includes('🟡') ? '#F5C842' : '#10B981';
           const typeLabel = (t) => t === 'B' ? '논리 훼손' : t === 'D' ? '거시 충격' : t;
 
-          // 동일 (유형+대상)은 최신 1건만 — riskMonitor는 최신순
+          // 동일 (유형+대상)은 최신 1건만 — riskMonitor는 최신순.
+          // 거시(D)는 대상 텍스트가 실행마다 달라져 (유형+대상) 디듀프가 안 먹으므로,
+          // 가장 최근 날짜의 D 신호만 노출(과거 날짜 누적분 자동 제거).
+          const latestDDate = riskMonitor.reduce((mx, r) => (r.type === 'D' && r.date > mx ? r.date : mx), '');
           const seen = new Set();
           const latest = [];
           for (const r of riskMonitor) {
+            if (r.type === 'D' && r.date !== latestDDate) continue;
             const k = `${r.type}|${r.target}`;
             if (seen.has(k)) continue;
             seen.add(k); latest.push(r);
