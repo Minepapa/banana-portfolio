@@ -2284,6 +2284,32 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 <div style={{ fontSize: 10, color: '#5A6478' }}>{dateStr} 기준</div>
               </div>
 
+              {/* 이번 주 행동 처방 — 최신 리포트의 "🎯 …처방" 섹션을 최상단에 고정 노출 */}
+              {(() => {
+                const rpt = weeklyReports[0];
+                if (!rpt) return null;
+                const pSec = rpt.body.split(/^## /m).filter(Boolean).find(s => /처방/.test(s.split('\n')[0]));
+                if (!pSec) return null;
+                const rest = pSec.split('\n').slice(1).join('\n').trim();
+                const quote = rest.match(/^>\s*(.+)$/m);
+                const action = quote ? quote[1].replace(/\*\*/g, '').replace(/^["“]\s*|\s*["”]$/g, '').trim() : '';
+                if (!action) return null;
+                let reason = rest.replace(/^>.*$/m, '').trim();
+                const sep = reason.indexOf('\n---');
+                if (sep >= 0) reason = reason.slice(0, sep).trim();
+                reason = reason.replace(/^근거\s*[:：]\s*/, '').replace(/\*\*/g, '').trim();
+                return (
+                  <div style={{ background: 'linear-gradient(135deg,#2A2410,#1A1D26)', border: '1px solid #F5C842', borderRadius: 12, padding: 16, marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#F5C842', letterSpacing: 1 }}>🎯 이번 주 행동 처방</div>
+                      <div style={{ fontSize: 9, color: '#5A6478' }}>{rpt.date}</div>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#F5F7FF', lineHeight: 1.5, marginBottom: reason ? 8 : 0 }}>{action}</div>
+                    {reason && <div style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{reason}</div>}
+                  </div>
+                );
+              })()}
+
               {/* 섹션 1: 포트폴리오 총괄 */}
               <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
                 <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>포트폴리오 총괄</div>
