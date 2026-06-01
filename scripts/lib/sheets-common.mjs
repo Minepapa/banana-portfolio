@@ -174,6 +174,27 @@ export async function updateCell(token, range, value) {
   if (!res.ok) throw new Error(`셀 업데이트 실패 (${range}): ${await res.text()}`);
 }
 
+// 범위에 2차원 배열을 덮어쓴다(PUT). appendValues 와 달리 기존 셀을 갱신.
+export async function setValues(token, range, values) {
+  const res = await fetch(
+    `${API}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+    {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values }),
+    }
+  );
+  if (!res.ok) throw new Error(`범위 쓰기 실패 (${range}): ${await res.text()}`);
+}
+
+// 범위의 값을 비운다(서식은 유지).
+export async function clearValues(token, range) {
+  const res = await fetch(`${API}/values/${encodeURIComponent(range)}:clear`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`범위 비우기 실패 (${range}): ${await res.text()}`);
+}
+
 async function listSheetTitles(token) {
   const res = await fetch(`${API}?fields=sheets.properties.title`, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`시트 목록 조회 실패: ${await res.text()}`);

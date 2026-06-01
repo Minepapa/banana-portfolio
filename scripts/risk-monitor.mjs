@@ -27,7 +27,7 @@
 import {
   loadEnv, getToken, hasServiceAccount, getRange, appendValues, ensureSheet,
   readHoldings, runHeadlessClaude, parseJsonBlock, todayKST, HEADLESS_NOTE,
-  sendTelegram,
+  sendTelegram, setValues, clearValues,
 } from './lib/sheets-common.mjs';
 
 const RISK_SHEET = '리스크모니터';
@@ -211,6 +211,35 @@ async function pushNewReds(rows, priorRedKeys) {
   }
 }
 
+// 시트는 append-only 라 매 실행 누적된다. 리스크 탭 표시 기준과 동일하게 정리:
+// 가장 최근 날짜의 거시(D) + 위탁 개별주식 B 최신 1건만 남기고 오래된 D·중복 행 제거.
+// (D·B 어느 모드가 돌든 양쪽 유효분을 보존하므로 멱등.)
+async function pruneRiskSheet(token, monitoredNames) {
+  const rows = await getRange(token, `${RISK_SHEET}!A2:H`);
+  if (rows.length === 0) return;
+  const maxDDate = rows.reduce(
+    (mx, r) => (String(r[1] ?? '').trim() === 'D' && String(r[0] ?? '') > mx ? String(r[0] ?? '') : mx), '');
+  const keepIdx = new Set();
+  const seen = new Set();
+  for (let i = rows.length - 1; i >= 0; i--) {   // 최신(아래)부터
+    const date = String(rows[i][0] ?? '').trim();
+    const type = String(rows[i][1] ?? '').trim();
+    const target = String(rows[i][2] ?? '').trim();
+    if (type === 'D') { if (date !== maxDDate) continue; }
+    else if (type === 'B') { if (!monitoredNames.has(target)) continue; }
+    else continue;
+    const k = `${type}|${target}`;
+    if (seen.has(k)) continue;
+    seen.add(k); keepIdx.add(i);
+  }
+  if (keepIdx.size === rows.length) return;   // 정리할 것 없음
+  const kept = rows.filter((_, i) => keepIdx.has(i))
+    .map(r => { const x = r.slice(0, 8); while (x.length < 8) x.push(''); return x; });
+  await clearValues(token, `${RISK_SHEET}!A2:H`);
+  if (kept.length) await setValues(token, `${RISK_SHEET}!A2`, kept);
+  console.log(`🧹 시트 정리: ${rows.length} → ${kept.length}행`);
+}
+
 async function main() {
   console.log(`🛡️  리스크 모니터 — 모드 ${MODE} (${MODE === 'D' ? '거시/일간' : '논리훼손/주간'})`);
   if (DRY_RUN) console.log('   (--dry-run: 프롬프트만 출력)');
@@ -226,6 +255,12 @@ async function main() {
 
   // dry-run 이면서 토큰 없으면 보유종목을 읽을 수 없음 → 빈 목록으로 프롬프트 형태만 확인
   const holdings = (token) ? await readHoldings(token) : [];
+
+  // 논리훼손(B) 점검·시트 정리 대상 = 위탁계좌 개별주식(국내/해외).
+  const STOCK_TYPES = new Set(['국내주식', '해외주식']);
+  const monitoredNames = new Set(
+    holdings.filter(h => h.accounts.some(a => a.acct === '위탁' && STOCK_TYPES.has(a.type))).map(h => h.name),
+  );
 
   // 신규 🔴 판별용: 기존 리스크모니터의 직전 🔴 (유형|대상) 키
   const priorRedKeys = (token && !NO_PUSH)
@@ -260,6 +295,7 @@ async function main() {
       console.error(`   ❌ 실패: ${e.message}`);
       process.exit(1);
     }
+    await pruneRiskSheet(token, monitoredNames);
     return;
   }
 
@@ -274,10 +310,7 @@ async function main() {
   // ETF·펀드·현금성(MMF·RP·CD금리·TDF·금현물 등, 연금/ISA/IRP 포함)은 펀더멘털 가드레일
   // 판단 대상이 아니고 매번 trivial 통과하면서 무거운 claude 호출로 사용량 한도만 소진 →
   // 점검에서 제외하고 필요 시 수동 평가 요청으로 처리. (사용량 한도 회피)
-  const STOCK_TYPES = new Set(['국내주식', '해외주식']);
-  const targets = holdings.filter(h =>
-    h.accounts.some(a => a.acct === '위탁' && STOCK_TYPES.has(a.type)),
-  );
+  const targets = holdings.filter(h => monitoredNames.has(h.name));
   const skipped = holdings.length - targets.length;
 
   console.log(`\n📊 위탁 개별주식 ${targets.length}개 논리 점검 시작 (전체 ${holdings.length}개 중 ETF·펀드·현금성 ${skipped}개 제외)`);
@@ -305,7 +338,10 @@ async function main() {
       fail++;
     }
   }
-  if (!DRY_RUN) console.log(`\n🏁 완료 — 점검 ${ok} · 경보(🟡🔴) ${alerts} · 실패 ${fail}`);
+  if (!DRY_RUN) {
+    await pruneRiskSheet(token, monitoredNames);
+    console.log(`\n🏁 완료 — 점검 ${ok} · 경보(🟡🔴) ${alerts} · 실패 ${fail}`);
+  }
 }
 
 main().catch(e => { console.error('\n❌ 오류:', e.message); process.exit(1); });
