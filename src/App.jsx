@@ -499,6 +499,24 @@ function parseProfits(vr) {
   return Object.values(result).sort((a, b) => a.year - b.year || a.month - b.month);
 }
 
+// 결론(E) 표준 어휘 — 단일 통합 4단계 (매수·매도 공통). 이모지가 표준 단어를 결정.
+const CONCLUSION_STD = { '🟢': '🟢 유효', '🟡': '🟡 관망', '🔴': '🔴 부적합', '⚪': '⚪ 판단보류' };
+function normalizeConclusion(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  // 이모지 우선 (includes — 정규식 charclass의 surrogate 깨짐 회피)
+  if (s.includes('🟢')) return CONCLUSION_STD['🟢'];
+  if (s.includes('🟡')) return CONCLUSION_STD['🟡'];
+  if (s.includes('🔴')) return CONCLUSION_STD['🔴'];
+  if (s.includes('⚪')) return CONCLUSION_STD['⚪'];
+  // 이모지 없으면 단어로 추정 (구체→일반 순서)
+  if (/판단\s*보류/.test(s)) return CONCLUSION_STD['⚪'];
+  if (/부적합|훼손|불가|매도|\bX\b/i.test(s)) return CONCLUSION_STD['🔴'];
+  if (/관망|약화|보류|축소|△/.test(s)) return CONCLUSION_STD['🟡'];
+  if (/유효|적합|매수|\bO\b/i.test(s)) return CONCLUSION_STD['🟢'];
+  return s;
+}
+
 // 종목투자노트 탭 (playbook §6 컬럼 A~T) → 평가 카드 객체 배열
 function parseEvaluations(vr) {
   const rows = vr?.values ?? [];
@@ -526,7 +544,7 @@ function parseEvaluations(vr) {
         market: String(r[3] ?? '').trim(),
       },
       date,
-      conclusion: { raw: String(r[4] ?? '').trim() },
+      conclusion: { raw: normalizeConclusion(r[4]) },
       axisGrades: {
         수익성:     String(r[5] ?? '').trim(),
         안정성:     String(r[6] ?? '').trim(),
@@ -1328,7 +1346,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
   "name": "${stock.name}",
   "ticker": "${stock.ticker || ''}",
   "market": "${stock.market || ''}",
-  "conclusion": "🟢 유효 | 🟡 약화 | 🔴 훼손 | ⚪ 판단보류",
+  "conclusion": "🟢 유효 | 🟡 관망 | 🔴 부적합 | ⚪ 판단보류",
   "grades": { "수익성":"", "안정성":"", "밸류에이션":"", "현금흐름":"", "모멘텀":"" },
   "reasons": ["현 시점 유지 정당화 또는 유지 어려움 근거"],
   "risks": ["현 시점 추가/해소된 리스크"],
