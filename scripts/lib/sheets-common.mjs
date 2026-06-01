@@ -244,7 +244,8 @@ export function runHeadlessClaude(prompt, model = 'sonnet') {
       '--allowedTools', 'Bash,Read,Glob,Grep,WebFetch',
       '--model', model,
       '--output-format', 'text',
-    ], { env: { ...process.env } });
+      // stdin 은 /dev/null(ignore)로 둬 즉시 EOF → "no stdin data received in 3s" 경고·3초 대기 제거.
+    ], { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     const timer = setTimeout(() => { cp.kill('SIGKILL'); reject(new Error('헤드리스 타임아웃 (12분 초과)')); }, 12 * 60 * 1000);
     cp.stdout.on('data', d => { out += d; });
@@ -252,7 +253,12 @@ export function runHeadlessClaude(prompt, model = 'sonnet') {
     cp.on('error', e => { clearTimeout(timer); reject(e); });
     cp.on('close', code => {
       clearTimeout(timer);
-      if (code !== 0) return reject(new Error(`claude 종료코드 ${code}: ${err.slice(0, 200)}`));
+      if (code !== 0) {
+        // stdin 경고 같은 노이즈를 걸러내고, 실제 에러는 끝부분에 오므로 꼬리 300자를 노출.
+        const clean = err.split('\n').filter(l => !/no stdin data received/i.test(l)).join('\n').trim();
+        const detail = ((clean || out).trim().slice(-300)) || '(stderr/stdout 비어있음)';
+        return reject(new Error(`claude 종료코드 ${code}: ${detail}`));
+      }
       if (!out.trim()) return reject(new Error('claude 빈 출력'));
       resolve(out);
     });

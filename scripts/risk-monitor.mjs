@@ -270,9 +270,19 @@ async function main() {
   ]);
   const bMap = baselineMap(baseRows);
 
-  console.log(`\n📊 보유종목 ${holdings.length}개 논리 점검 시작`);
+  // 위탁계좌의 개별주식(국내주식·해외주식)만 논리훼손 점검 대상.
+  // ETF·펀드·현금성(MMF·RP·CD금리·TDF·금현물 등, 연금/ISA/IRP 포함)은 펀더멘털 가드레일
+  // 판단 대상이 아니고 매번 trivial 통과하면서 무거운 claude 호출로 사용량 한도만 소진 →
+  // 점검에서 제외하고 필요 시 수동 평가 요청으로 처리. (사용량 한도 회피)
+  const STOCK_TYPES = new Set(['국내주식', '해외주식']);
+  const targets = holdings.filter(h =>
+    h.accounts.some(a => a.acct === '위탁' && STOCK_TYPES.has(a.type)),
+  );
+  const skipped = holdings.length - targets.length;
+
+  console.log(`\n📊 위탁 개별주식 ${targets.length}개 논리 점검 시작 (전체 ${holdings.length}개 중 ETF·펀드·현금성 ${skipped}개 제외)`);
   let ok = 0, fail = 0, alerts = 0;
-  for (const h of holdings) {
+  for (const h of targets) {
     const baseline = bMap.get(h.name) || null;
     const buyCard = findBuyCard(noteRows, h.name);
     const prompt = buildLogicPrompt(h, baseline, buyCard);
