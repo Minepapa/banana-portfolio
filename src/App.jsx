@@ -2487,7 +2487,19 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
           const dateStr = `${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
           const sigLevel = (s) => s.includes('🔴') ? 3 : s.includes('🟡') ? 2 : 1;
           const sigColor = (s) => s.includes('🔴') ? '#EF4444' : s.includes('🟡') ? '#F5C842' : '#10B981';
-          const typeLabel = (t) => t === 'B' ? '논리 훼손' : t === 'D' ? '거시 충격' : t;
+          // 검증 "항목"(무엇을 점검했나) — 중립 표기. 결과/상태와 분리.
+          const typeLabel = (t) => t === 'B' ? '논리 점검' : t === 'D' ? '거시 점검' : t;
+          // 점검 "결과"(상황) — 색상과 함께 표시.
+          const statusLabel = (s) => s.includes('🔴') ? '경보' : s.includes('🟡') ? '주의' : '정상';
+          // 기준선 수치 단위 통일(%): 숫자면 % 부착, 데이터 없으면 '데이터 부족'.
+          const fmtPct = (v) => {
+            const s = String(v ?? '').trim();
+            if (!s || s === '—') return '—';
+            if (/데이터\s*부족|N\/?A|없음|None|미분류/i.test(s)) return '데이터 부족';
+            const n = parseFloat(s.replace(/[,%\s]/g, ''));
+            if (isNaN(n)) return '데이터 부족';
+            return `${Number.isInteger(n) ? n : parseFloat(n.toFixed(2))}%`;
+          };
 
           // 동일 (유형+대상)은 최신 1건만 — riskMonitor는 최신순.
           // 거시(D)는 대상 텍스트가 실행마다 달라져 (유형+대상) 디듀프가 안 먹으므로,
@@ -2565,9 +2577,13 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 13 }}>{r.signal.match(/[🔴🟡🟢]/)?.[0] || '•'}</span>
+                              {/* 상태 점(이모지 대신 CSS 원 — 폰트 의존 없이 항상 정상 표시) */}
+                              <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
                               <span style={{ fontSize: 12, fontWeight: 700, color: '#E8EAF0' }}>{r.target}</span>
-                              <span style={{ fontSize: 8, color: color, border: `1px solid ${color}`, borderRadius: 3, padding: '1px 5px' }}>{typeLabel(r.type)}</span>
+                              {/* 검증 항목(중립 회색) */}
+                              <span style={{ fontSize: 8, color: '#8A93A6', border: '1px solid #2E3442', borderRadius: 3, padding: '1px 5px' }}>{typeLabel(r.type)}</span>
+                              {/* 결과 상태(색상) */}
+                              <span style={{ fontSize: 8, color, background: `${color}22`, borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>{statusLabel(r.signal)}</span>
                             </div>
                             <div style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.5 }}>{r.summary}</div>
                           </div>
@@ -2605,9 +2621,10 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   {baselines.map((b, i) => (
                     <div key={i} style={{ display: 'flex', fontSize: 10, color: '#E8EAF0', padding: '7px 0', borderBottom: i < baselines.length - 1 ? '1px solid #15171F' : 'none' }}>
                       <span style={{ flex: 2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
-                      <span style={{ flex: 1, textAlign: 'right', color: '#9CA3AF' }}>{b.operatingMargin || '—'}</span>
-                      <span style={{ flex: 1, textAlign: 'right', color: '#9CA3AF' }}>{b.roe || '—'}</span>
-                      <span style={{ flex: 1, textAlign: 'right', color: '#9CA3AF' }}>{b.debtRatio || '—'}</span>
+                      {[b.operatingMargin, b.roe, b.debtRatio].map((v, k) => {
+                        const f = fmtPct(v);
+                        return <span key={k} style={{ flex: 1, textAlign: 'right', color: f === '데이터 부족' ? '#5A6478' : '#9CA3AF', fontSize: f === '데이터 부족' ? 9 : 10 }}>{f}</span>;
+                      })}
                     </div>
                   ))}
                   <div style={{ fontSize: 9, color: '#3A4050', marginTop: 8 }}>기준일 {baselines[0]?.date || '—'} · 가격 등락이 아닌 실적 훼손만 리스크로 평가</div>
