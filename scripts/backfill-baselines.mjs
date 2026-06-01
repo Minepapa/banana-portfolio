@@ -79,14 +79,20 @@ async function main() {
 
   const holdings = await readHoldings(token);
 
+  // 기준선은 risk-monitor mode B(위탁 개별주식 국내/해외)의 논리훼손 비교 기준점.
+  // B 점검 대상이 아닌 ETF·펀드·현금성에는 기준선이 쓰이지 않고 헤드리스 호출(사용량 한도)만
+  // 낭비하므로 동일하게 위탁 개별주식만 대상으로 한정. (risk-monitor.mjs mode B 필터와 일치)
+  const STOCK_TYPES = new Set(['국내주식', '해외주식']);
+  const stocks = holdings.filter(h => h.accounts.some(a => a.acct === '위탁' && STOCK_TYPES.has(a.type)));
+
   const existing = new Set();
   if (!FORCE) {
     const base = await getRange(token, `${BASELINE_SHEET}!A2:B`);
     for (const r of base) { const k = String(r[0] ?? '').trim(); if (k) existing.add(k); }
   }
 
-  const targets = holdings.filter(h => FORCE || !existing.has(h.name));
-  console.log(`\n📊 보유종목 ${holdings.length}개 · 백필 대상 ${targets.length}개` + (existing.size ? ` (기존 ${existing.size}개 건너뜀)` : ''));
+  const targets = stocks.filter(h => FORCE || !existing.has(h.name));
+  console.log(`\n📊 위탁 개별주식 ${stocks.length}개 (전체 ${holdings.length}개 중 ETF·펀드·현금성 ${holdings.length - stocks.length}개 제외) · 백필 대상 ${targets.length}개` + (existing.size ? ` (기존 ${existing.size}개 건너뜀)` : ''));
   for (const h of targets) console.log(`   - ${h.name} (${h.market}, ${h.accounts.map(a => a.acct).join('/')})`);
 
   if (DRY_RUN || targets.length === 0) { console.log('\n완료(적재 없음).'); return; }
