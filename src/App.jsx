@@ -2590,6 +2590,13 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   {latest.map((r, i) => {
                     const color = sigColor(r.signal);
                     const isOpen = riskOpen.has(i);
+                    // 거시(D) 머리글은 자산군 단위로 통합 — 구성종목 나열은 '자세히'로 내림
+                    let headTitle = r.target, headRest = '';
+                    if (r.type === 'D') {
+                      const parts = r.target.split(/\s+[—–-]\s+/);
+                      if (parts.length > 1) { headTitle = parts[0].trim(); headRest = parts.slice(1).join(' — ').trim(); }
+                      else if (r.target.length > 40) { headTitle = r.target.slice(0, 40).trim() + '…'; headRest = r.target; }
+                    }
                     return (
                       <div key={i} style={{ background: '#1A1D26', borderRadius: 10, padding: 14, marginBottom: 8, borderLeft: `3px solid ${color}` }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
@@ -2597,7 +2604,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
                               {/* 상태 점(이모지 대신 CSS 원 — 폰트 의존 없이 항상 정상 표시) */}
                               <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
-                              <span style={{ fontSize: 12, fontWeight: 700, color: '#E8EAF0' }}>{r.target}</span>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: '#E8EAF0' }}>{headTitle}</span>
                               {/* 검증 항목(중립 회색) */}
                               <span style={{ fontSize: 8, color: '#8A93A6', border: '1px solid #2E3442', borderRadius: 3, padding: '1px 5px' }}>{typeLabel(r.type)}</span>
                               {/* 결과 상태(색상) */}
@@ -2615,6 +2622,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         )}
                         {isOpen && (
                           <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #1E2233' }}>
+                            {headRest && <div style={{ fontSize: 9, color: '#5A6478', lineHeight: 1.5, marginBottom: 6, wordBreak: 'break-word' }}>구성: {headRest}</div>}
                             {r.detail && <div style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{r.detail}</div>}
                             {renderEvidence(r.evidence)}
                             {r.baselineRef && <div style={{ fontSize: 9, color: '#5A6478', marginTop: 8 }}>기준선: {r.baselineRef}</div>}
