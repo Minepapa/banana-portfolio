@@ -31,9 +31,10 @@ if [ -z "$TOKEN" ]; then
 fi
 
 case "${1:-}" in
-  drain)       exec "$NODE" scripts/drain-eval-queue.mjs --auto ${TOKEN:+"$TOKEN"} ;;
-  risk-d)      exec "$NODE" scripts/risk-monitor.mjs --mode=D ${TOKEN:+"$TOKEN"} ;;
-  risk-b)      exec "$NODE" scripts/risk-monitor.mjs --mode=B ${TOKEN:+"$TOKEN"} ;;
-  report-sync) exec "$NODE" scripts/sync-reports.mjs ${TOKEN:+"$TOKEN"} ;;
-  *) echo "usage: run.sh {drain|risk-d|risk-b|report-sync}" >&2; exit 2 ;;
+  drain)               exec "$NODE" scripts/drain-eval-queue.mjs --auto ${TOKEN:+"$TOKEN"} ;;
+  risk-d)              exec "$NODE" scripts/risk-monitor.mjs --mode=D ${TOKEN:+"$TOKEN"} ;;
+  risk-b)              exec "$NODE" scripts/risk-monitor.mjs --mode=B ${TOKEN:+"$TOKEN"} ;;
+  report-sync)         exec "$NODE" scripts/sync-reports.mjs ${TOKEN:+"$TOKEN"} ;;
+  parse-notifications) exec "$NODE" scripts/parse-notifications.mjs ${TOKEN:+"$TOKEN"} ;;
+  *) echo "usage: run.sh {drain|risk-d|risk-b|report-sync|parse-notifications}" >&2; exit 2 ;;
 esac
