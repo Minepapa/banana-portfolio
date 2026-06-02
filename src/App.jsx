@@ -192,7 +192,7 @@ const SAMPLE_EVALUATION = {
     '미·중 반도체 규제 강화 시 중국향 매출(전체 22%) 노출.',
   ],
   actions: [
-    '1회 300만원 미만 분할 매수 가능.',
+    '1회 500만원 미만 분할 매수 가능.',
     '외국인 4일 흐름이 순매수 전환 후 1차 진입 권장.',
     '52주 위치 60% 이하로 눌림 발생 시 추가 매수 트리거.',
   ],
@@ -365,10 +365,10 @@ function computeBehaviorMetrics(kpiTrades, evaluations) {
   const buys  = kpiTrades.filter(r => String(r.row?.[1]||'').trim() === '매수');
   const sells = kpiTrades.filter(r => String(r.row?.[1]||'').trim() === '매도');
 
-  // 300만 원칙 (1회 매수 체결금액 ≤ 3,000,000)
-  const rule300OK = buys.filter(r => {
+  // 500만 원칙 (1회 매수 체결금액 ≤ 5,000,000)
+  const rule500OK = buys.filter(r => {
     const amt = Math.round(parseNum(r.row?.[6]) * parseNum(r.row?.[7]));
-    return amt > 0 && amt <= 3000000;
+    return amt > 0 && amt <= 5000000;
   }).length;
 
   // 🟢 평가 → 매수 매칭 (매칭 기간 내 동일 종목 매수 여부)
@@ -404,8 +404,8 @@ function computeBehaviorMetrics(kpiTrades, evaluations) {
 
   return {
     totalBuys: buys.length, totalSells: sells.length,
-    rule300OK, rule300Total: buys.length,
-    rule300Rate: buys.length > 0 ? Math.round(rule300OK / buys.length * 100) : null,
+    rule500OK, rule500Total: buys.length,
+    rule500Rate: buys.length > 0 ? Math.round(rule500OK / buys.length * 100) : null,
     greenEvalTotal: greenEvals.length,
     evalMatchCount: matchedEvals.length,
     evalEligible,
@@ -2166,14 +2166,14 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 if (!bm) return (
                   <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16, textAlign: 'center', color: '#5A6478', fontSize: 11 }}>체결 내역 없음 — 체결 탭에서 먼저 동기화하세요</div>
                 );
-                const r300Color = bm.rule300Rate === null ? '#5A6478' : bm.rule300Rate >= 80 ? '#10B981' : bm.rule300Rate >= 60 ? '#F59E0B' : '#EF4444';
+                const r500Color = bm.rule500Rate === null ? '#5A6478' : bm.rule500Rate >= 80 ? '#10B981' : bm.rule500Rate >= 60 ? '#F59E0B' : '#EF4444';
                 const emColor   = bm.evalMatchRate === null ? '#5A6478' : bm.evalMatchRate >= 60 ? '#10B981' : bm.evalMatchRate >= 30 ? '#F59E0B' : '#EF4444';
                 return (
                   <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16 }}>
                     <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 14 }}>행동 추적</div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
                       {[
-                        { label: '300만 원칙', value: bm.rule300Rate !== null ? `${bm.rule300Rate}%` : '–', sub: `${bm.rule300OK}/${bm.rule300Total}건`, color: r300Color },
+                        { label: '500만 원칙', value: bm.rule500Rate !== null ? `${bm.rule500Rate}%` : '–', sub: `${bm.rule500OK}/${bm.rule500Total}건`, color: r500Color },
                         { label: '평가→매수', value: bm.evalMatchRate !== null ? `${bm.evalMatchRate}%` : '–', sub: `${bm.evalMatchCount}/${bm.evalEligible}건`, color: emColor },
                         { label: '최근 30일', value: `${bm.recent30Count}건`, sub: `매수 ${bm.recent30Buys}건`, color: '#E8EAF0' },
                       ].map((card, i) => (
