@@ -461,7 +461,7 @@ function findMonthlyRow(vr) {
 
 function parseDividends(vrAll) {
   const result = {};
-  (vrAll?.values ?? []).forEach(r => {
+  (vrAll?.values ?? []).forEach((r, i) => {
     const dateStr = String(r[0] ?? '').trim();
     const amt  = parseNum(r[1] ?? 0);  // B열: 금액
     const name = String(r[2] ?? '').trim(); // C열: 종목명
@@ -474,7 +474,8 @@ function parseDividends(vrAll) {
     const key = `${year}-${month}`;
     if (!result[key]) result[key] = { year, month, amount: 0, items: [] };
     result[key].amount += amt;
-    result[key].items.push({ date: dateStr, name, amount: amt });
+    // row: 배당금!A2:C 기준 시트 행번호 (종목명 편집 시 C열 타겟)
+    result[key].items.push({ date: dateStr, name, amount: amt, row: i + 2 });
   });
   return Object.values(result).sort((a, b) => a.year - b.year || a.month - b.month);
 }
@@ -1182,6 +1183,9 @@ export default function App() {
   const savingsLpRef = useRef(null);
   const savingsLpFiredRef = useRef(false);
   const [divYear, setDivYear] = useState('전체');
+  const [editingDivRow, setEditingDivRow] = useState(null); // 배당 종목명 편집 중인 시트 행
+  const [editDivName, setEditDivName] = useState('');
+  const [divSaving, setDivSaving] = useState(false);
   const [selectedDivKey, setSelectedDivKey] = useState(null);
   const [monthYear, setMonthYear] = useState('전체');
   const [tradeRows, setTradeRows] = useState([]);
@@ -3176,11 +3180,28 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                       {selectedDivItem.year}년 {selectedDivItem.month}월 상세
                     </div>
                     {selectedDivItem.items.map((item, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #1E2233' }}>
-                        <span style={{ fontSize: 12, color: '#E8EAF0' }}>{item.name}</span>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS }}>
-                          ₩{fmt(item.amount)}
-                        </span>
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid #1E2233' }}>
+                        {editingDivRow === item.row ? (
+                          <>
+                            <input value={editDivName} onChange={e => setEditDivName(e.target.value)} autoFocus
+                              style={{ flex: 1, minWidth: 0, fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #3B82F6', background: '#0F1117', color: '#E8EAF0', fontFamily: baseFont }} />
+                            <button disabled={divSaving} onClick={async () => {
+                              const v = editDivName.trim(); if (!v) return;
+                              setDivSaving(true);
+                              try { await sheets.writeRange(`배당금!C${item.row}`, [v]); await sheets.fetch(); setEditingDivRow(null); }
+                              finally { setDivSaving(false); }
+                            }} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 4, border: 'none', background: '#10B981', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>{divSaving ? '…' : '저장'}</button>
+                            <button onClick={() => setEditingDivRow(null)} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 4, border: '1px solid #2A2F3E', background: 'transparent', color: '#9CA3AF', cursor: 'pointer', flexShrink: 0 }}>취소</button>
+                          </>
+                        ) : (
+                          <>
+                            <span onClick={() => { setEditingDivRow(item.row); setEditDivName(item.name); }}
+                              style={{ fontSize: 12, color: '#E8EAF0', cursor: 'pointer', flex: 1, minWidth: 0 }}>
+                              {item.name || '(이름 없음)'} <span style={{ fontSize: 9, color: '#5A6478' }}>✎</span>
+                            </span>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS, flexShrink: 0 }}>₩{fmt(item.amount)}</span>
+                          </>
+                        )}
                       </div>
                     ))}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8 }}>
