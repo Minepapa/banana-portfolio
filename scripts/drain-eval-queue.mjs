@@ -503,15 +503,19 @@ async function main() {
   const allocationData = buildAllocationData(위탁Rebal, 연금저축Rebal);
 
   const pending = [];
+  // 사용량 한도로 보류된 '오류'는 일시적 → 자동 재시도 대상. 그 외 '오류'(데이터·파싱 등)는 수동 검토.
+  const LIMIT_RE = /hit your (limit|session limit)|usage limit|사용량 한도/i;
   rows.forEach((r, idx) => {
     const status = String(r[3] ?? '').trim();
-    if (status === '대기') {
+    const memo = String(r[5] ?? '').trim();
+    if (status === '대기' || (status === '오류' && LIMIT_RE.test(memo))) {
       pending.push({
         rowNum: idx + 2,
         requestedAt: String(r[0] ?? '').trim(),
         name: String(r[1] ?? '').trim(),
         market: String(r[2] ?? '').trim(),
-        memo: String(r[5] ?? '').trim(),
+        memo,
+        retry: status === '오류',
       });
     }
   });
@@ -597,6 +601,15 @@ async function main() {
       } catch (e) {
         console.error(`  ⚠️ 헤드리스 실행 실패: ${e.message}`);
         await updateCell(token, `평가요청!D${entry.rowNum}`, '오류');
+        const isLimit = /hit your (limit|session limit)|usage limit/i.test(e.message);
+        if (isLimit) {
+          // 한도는 일시적 → 다음 자동 drain 타임에 재시도(상태 '오류' + 한도 마커로 재시도 대상 유지).
+          // 이후 항목도 같은 한도로 실패하므로 남은 큐는 중단(불필요한 호출 방지).
+          await updateCell(token, `평가요청!F${entry.rowNum}`, `사용량 한도로 보류 — 다음 자동 타임 재시도 (${nowKST()})`);
+          console.error(`  ⏳ ${entry.name} 사용량 한도 → 다음 drain 재시도. 남은 큐 중단.`);
+          errors++;
+          break;
+        }
         const existingMemo = entry.memo ? `${entry.memo} / ` : '';
         await updateCell(token, `평가요청!F${entry.rowNum}`, `${existingMemo}헤드리스 오류: ${e.message.slice(0, 80)}`);
         errors++;
