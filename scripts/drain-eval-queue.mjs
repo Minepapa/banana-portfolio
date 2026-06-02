@@ -17,7 +17,8 @@
  */
 
 import { createServer } from 'http';
-import { exec, spawn } from 'child_process';
+import { exec } from 'child_process';
+import { runHeadlessClaude } from './lib/sheets-common.mjs';
 import { createInterface } from 'readline';
 import { readFileSync } from 'fs';
 
@@ -436,35 +437,7 @@ const HEADLESS_NOTE = `
 - US: python3 yfinance (예: yf.Ticker("AAPL").info / .quarterly_financials)
 - 데이터를 못 구하면 추정 금지, 해당 항목에 "(데이터 부족: 소스)" 표기`;
 
-function runHeadlessClaude(prompt, model) {
-  return new Promise((resolve, reject) => {
-    const cp = spawn('claude', [
-      '-p', prompt,
-      '--permission-mode', 'bypassPermissions',
-      '--allowedTools', 'Bash,Read,Glob,Grep,WebFetch',
-      '--model', model,
-      '--output-format', 'text',
-      // stdin 은 /dev/null(ignore)로 둬 즉시 EOF → "no stdin data received in 3s" 경고·3초 대기 제거.
-    ], { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
-
-    let out = '', err = '';
-    const timer = setTimeout(() => { cp.kill('SIGKILL'); reject(new Error('헤드리스 타임아웃 (12분 초과)')); }, 12 * 60 * 1000);
-    cp.stdout.on('data', d => { out += d; });
-    cp.stderr.on('data', d => { err += d; });
-    cp.on('error', e => { clearTimeout(timer); reject(e); });
-    cp.on('close', code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        // stdin 경고 같은 노이즈를 걸러내고, 실제 에러는 끝부분에 오므로 꼬리 300자를 노출.
-        const clean = err.split('\n').filter(l => !/no stdin data received/i.test(l)).join('\n').trim();
-        const detail = ((clean || out).trim().slice(-300)) || '(stderr/stdout 비어있음)';
-        return reject(new Error(`claude 종료코드 ${code}: ${detail}`));
-      }
-      if (!out.trim()) return reject(new Error('claude 빈 출력'));
-      resolve(out);
-    });
-  });
-}
+// runHeadlessClaude 는 scripts/lib/sheets-common.mjs 로 통합 (중복 제거 — 위에서 import).
 
 // ── 메인 ────────────────────────────────────────────────────────────────────
 async function main() {
