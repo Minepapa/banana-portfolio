@@ -1918,16 +1918,16 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
         <div className="tab-bar" style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {[
             { key: "dashboard", label: "홈" },
-            { key: "rebalance", label: "자산분배" },
+            { key: "리스크",    label: "리스크" },
+            { key: "평가",      label: "매수평가" },
+            { key: "노트",      label: "매도검토" },
             { key: "holdings",  label: "보유종목" },
+            { key: "rebalance", label: "자산분배" },
+            { key: "report",    label: "리포트" },
+            { key: "kpi",       label: "KPI" },
+            { key: "체결내역",  label: "체결" },
             { key: "dividend",  label: "배당금" },
             { key: "profit",    label: "수익금" },
-            { key: "체결내역",  label: "체결" },
-            { key: "평가",      label: "평가" },
-            { key: "노트",      label: "노트" },
-            { key: "kpi",       label: "KPI" },
-            { key: "report",    label: "리포트" },
-            { key: "리스크",    label: "리스크" },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)} style={{
               padding: "10px 10px",
@@ -3742,7 +3742,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
             return (
               <div style={{ padding: 32, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
                 평가가 완료된 보유 종목이 없습니다.<br/>
-                <span style={{ fontSize: 11, color: '#3A4050' }}>평가 탭에서 종목 평가 후 노트를 작성할 수 있습니다.</span>
+                <span style={{ fontSize: 11, color: '#3A4050' }}>매수평가 탭에서 평가 후 보유 중이면 여기에 표시됩니다.</span>
               </div>
             );
           }
@@ -4001,7 +4001,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         background: '#1E3A5F', color: '#60A5FA',
                         cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
                       }}>
-                        평가 탭에서 추가 →
+                        매수평가 탭에서 추가 →
                       </button>
                     </div>
                   )}
