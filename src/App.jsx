@@ -146,9 +146,16 @@ function breakUnits(text) {
     .replace(/([.。!?…])\s+/g, '$1\n')      // 문장 종결 뒤 → 줄바꿈
     .split('\n').map(s => s.trim()).filter(Boolean);
 }
-// 문장 단위로 각 줄을 렌더(공통 스타일 적용)
-function Sentences({ text, style }) {
-  return breakUnits(text).map((l, i) => <div key={i} style={style}>{l}</div>);
+// 문장 종결(. 。 ! ? …) 뒤에서만 줄바꿈 — — · → 는 끊지 않음(카드 끝까지 채움).
+function breakSentences(text) {
+  return String(text ?? '')
+    .replace(/([.。!?…])\s+/g, '$1\n')
+    .split('\n').map(s => s.trim()).filter(Boolean);
+}
+// 문장 단위로 각 줄을 렌더(공통 스타일 적용). sentenceOnly=true면 문장 종결에서만 줄바꿈.
+function Sentences({ text, style, sentenceOnly }) {
+  const lines = sentenceOnly ? breakSentences(text) : breakUnits(text);
+  return lines.map((l, i) => <div key={i} style={style}>{l}</div>);
 }
 // 소제목 캡션: 색 점 + 라벨(좌측, 리스트 머리)
 function SubLabel({ children, color = '#5A6478' }) {
@@ -2392,30 +2399,18 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         </div>
                       ))}
                     </div>
-                    {(bm.missedEvals.length > 0 || bm.pendingCount > 0) && (
+                    {bm.missedEvals.length > 0 && (
                       <div>
-                        {bm.missedEvals.length > 0 && (
-                          <>
-                            <div style={{ fontSize: 9, color: '#F59E0B', letterSpacing: 1, marginBottom: 8 }}>🟢 평가 후 {bm.matchWindowDays}일 내 미매수 {bm.missedEvals.length}건 — 검토 필요</div>
-                            {bm.missedEvals.slice(0, 5).map((ev, i, arr) => (
-                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none', fontSize: 11 }}>
-                                <span style={{ color: '#E8EAF0' }}>{ev.stock?.name}</span>
-                                <span style={{ color: '#5A6478' }}>{ev.date}</span>
-                              </div>
-                            ))}
-                            {bm.missedEvals.length > 5 && <div style={{ fontSize: 10, color: '#5A6478', textAlign: 'center', paddingTop: 6 }}>+{bm.missedEvals.length - 5}건 더</div>}
-                          </>
-                        )}
-                        {bm.pendingCount > 0 && (
-                          <div style={{ fontSize: 9, color: '#5A6478', marginTop: bm.missedEvals.length > 0 ? 10 : 0 }}>
-                            ⏳ 유예 {bm.pendingCount}건 — 평가 후 {bm.matchWindowDays}일 미경과, 일치율 집계 제외
+                        <div style={{ fontSize: 9, color: '#F59E0B', letterSpacing: 1, marginBottom: 8 }}>🟢 평가 후 {bm.matchWindowDays}일 내 미매수 {bm.missedEvals.length}건 — 검토 필요</div>
+                        {bm.missedEvals.slice(0, 5).map((ev, i, arr) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none', fontSize: 11 }}>
+                            <span style={{ color: '#E8EAF0' }}>{ev.stock?.name}</span>
+                            <span style={{ color: '#5A6478' }}>{ev.date}</span>
                           </div>
-                        )}
+                        ))}
+                        {bm.missedEvals.length > 5 && <div style={{ fontSize: 10, color: '#5A6478', textAlign: 'center', paddingTop: 6 }}>+{bm.missedEvals.length - 5}건 더</div>}
                       </div>
                     )}
-                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #1E2233', fontSize: 9, color: '#5A6478', textAlign: 'center' }}>
-                      전체 매수 {bm.totalBuys}건 · 매도 {bm.totalSells}건 · 평가→매수 {bm.matchWindowDays}일 기준
-                    </div>
                   </div>
                 );
               })()}
@@ -2817,7 +2812,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                               {/* 결과 상태(색상) */}
                               <span style={{ fontSize: 8, color, background: `${color}22`, borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>{statusLabel(r.signal)}</span>
                             </div>
-                            <Sentences text={r.summary} style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.55 }} />
+                            <Sentences text={r.summary} sentenceOnly style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.55 }} />
                           </div>
                           <span style={{ fontSize: 9, color: '#3A4050', flexShrink: 0 }}>{r.date}</span>
                         </div>
@@ -2830,7 +2825,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         {isOpen && (
                           <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #1E2233' }}>
                             {headRest && <div style={{ fontSize: 9, color: '#5A6478', lineHeight: 1.5, marginBottom: 6, wordBreak: 'break-word' }}>구성: {headRest}</div>}
-                            {r.detail && <Sentences text={r.detail} style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, wordBreak: 'break-word', marginBottom: 2 }} />}
+                            {r.detail && <Sentences text={r.detail} sentenceOnly style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, wordBreak: 'break-word', marginBottom: 2 }} />}
                             {renderEvidence(r.evidence)}
                             {r.baselineRef && <div style={{ fontSize: 9, color: '#5A6478', marginTop: 8 }}>기준선: {r.baselineRef}</div>}
                           </div>
