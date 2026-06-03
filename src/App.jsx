@@ -128,6 +128,15 @@ function GradeDot({ grade, size = 9 }) {
 function stripGrade(s) {
   return String(s ?? '').replace(/[🟢🟡🔴⚪]/g, '').trim();
 }
+// 항목명에서 연도·분기 표기(중복) 제거 — 출처는 숫자 아래에 따로 표기됨.
+// "RSI(14)" 같은 파라미터 괄호는 보존(연도/분기 토큰이 있을 때만 제거).
+function stripPeriod(label) {
+  const PERIOD = /\d{4}|분기|반기|연간|[1-4]\s*분기|[1-4]\s*Q|Q[1-4]|FY\d|TTM/i;
+  return String(label ?? '')
+    .replace(/\s*[([][^)\]]*[)\]]\s*$/g, (m) => (PERIOD.test(m) ? '' : m))
+    .replace(/\s*[,·]\s*(?:[^,·()]*(?:\d{4}|분기|반기|연간|TTM|Q[1-4])[^,·()]*)\s*$/i, '')
+    .trim();
+}
 
 // ── 마침표·의미(— · 등) 단위로 줄바꿈 ───────────────────────────────────────────
 function breakUnits(text) {
@@ -3776,7 +3785,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   {axis.items.map((item, ii) => (
                     <div key={ii} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '4px 0', fontSize: 11, gap: 6 }}>
                       <div style={{ color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 4, flex: '0 0 auto', maxWidth: '42%', wordBreak: 'keep-all' }}>
-                        <span>{item.label}</span>
+                        <span>{stripPeriod(item.label)}</span>
                         {(() => {
                           const m = item.metric || LABEL_TO_METRIC[item.label?.toLowerCase()];
                           return m ? (
