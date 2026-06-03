@@ -4,6 +4,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts";
 import guideRaw from "../docs/USER-GUIDE.md?raw";
+// 도움말 탭: 상단 H1·인트로(첫 --- 이전)는 앱에서 SectionTitle로 대체 → 본문만 렌더
+const guideBody = String(guideRaw).replace(/\r\n/g, '\n').replace(/^[\s\S]*?\n---\n/, '');
 
 // ── 도움말: USER-GUIDE.md 경량 마크다운 렌더러 ───────────────────────────────────
 // 가이드에서 실제 쓰는 문법만 처리(헤더·표·리스트·인용·hr·볼드/이탤릭/코드/링크).
@@ -68,7 +70,7 @@ function renderMarkdown(md) {
         <div key={key++} style={{ overflowX: 'auto', margin: '12px 0' }}>
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 11 }}>
             <thead><tr>{header.map((c, ci) => <th key={ci} style={{ textAlign: 'left', padding: '7px 9px', background: '#1E2233', color: '#9CA3AF', borderBottom: '1px solid #2A2F3E', fontWeight: 700, whiteSpace: 'nowrap' }}>{mdInline(c)}</th>)}</tr></thead>
-            <tbody>{rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci} style={{ padding: '7px 9px', color: '#C2C8D4', borderBottom: '1px solid #20242F', verticalAlign: 'top', lineHeight: 1.5 }}>{mdInline(c)}</td>)}</tr>)}</tbody>
+            <tbody>{rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci} style={{ padding: '7px 9px', color: '#C2C8D4', borderBottom: '1px solid #20242F', verticalAlign: 'top', lineHeight: 1.5 }}>{breakUnits(c).map((ln, li) => <div key={li}>{mdInline(ln)}</div>)}</td>)}</tr>)}</tbody>
           </table>
         </div>
       );
@@ -131,6 +133,7 @@ function stripGrade(s) {
 function breakUnits(text) {
   return String(text ?? '')
     .replace(/\s*[—–]\s*/g, '\n')          // 줄표 → 의미 끊김
+    .replace(/\s+→\s+/g, '\n')             // 흐름 화살표(공백 양옆) → 단계 줄바꿈
     .replace(/([.。!?…])\s+/g, '$1\n')      // 문장 종결 뒤 → 줄바꿈
     .split('\n').map(s => s.trim()).filter(Boolean);
 }
@@ -4219,7 +4222,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
         {/* ── 도움말 탭 ── */}
         {tab === "help" && (
           <div style={{ maxWidth: 760, margin: '0 auto', fontFamily: baseFont, textAlign: 'left' }}>
-            {renderMarkdown(guideRaw)}
+            <SectionTitle color="#3B82F6" size={15} sub="각 탭을 언제·어떻게 쓰나">실전 사용 가이드</SectionTitle>
+            {renderMarkdown(guideBody)}
           </div>
         )}
 
