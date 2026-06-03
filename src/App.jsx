@@ -504,12 +504,15 @@ function computeKPI(data) {
     benchmarkTWRCum = bmCum;
   }
 
-  // MDD (전체 기간 총잔고 기준)
-  let peak = data[0].value;
-  let mdd  = 0;
-  for (const d of data) {
-    if (d.value > peak) peak = d.value;
-    const dd = peak > 0 ? (d.value - peak) / peak : 0;
+  // MDD: TWR 누적 지수(입출금 제거) 기준.
+  // 총잔고를 그대로 쓰면 매월 저축 유입으로 고점이 계속 갱신돼, 보유 손실 중에도
+  // 낙폭이 0으로 가려진다. returns(현금흐름 제거된 월수익률)로 운용 곡선을 만들어 낙폭 측정.
+  let mdd = 0;
+  let eq = 1, eqPeak = 1;
+  for (const r of returns) {
+    eq *= (1 + r);
+    if (eq > eqPeak) eqPeak = eq;
+    const dd = (eq - eqPeak) / eqPeak;
     if (dd < mdd) mdd = dd;
   }
 
