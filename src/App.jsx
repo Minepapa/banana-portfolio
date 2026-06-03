@@ -7,7 +7,16 @@ import guideRaw from "../docs/USER-GUIDE.md?raw";
 
 // ── 도움말: USER-GUIDE.md 경량 마크다운 렌더러 ───────────────────────────────────
 // 가이드에서 실제 쓰는 문법만 처리(헤더·표·리스트·인용·hr·볼드/이탤릭/코드/링크).
+// 이모지·픽토그램·별표 제거 후 중복 공백 정리 (도움말은 텍스트만 표시)
+function stripEmoji(text) {
+  return String(text)
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{FE0F}\u{200D}\u{20E3}]/gu, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
 function mdInline(text) {
+  text = stripEmoji(text);
   const out = [];
   const re = /\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g;
   let last = 0, m, k = 0;
@@ -88,7 +97,7 @@ function renderMarkdown(md) {
     while (i < lines.length && lines[i].trim() !== '' && !/^(#{1,3}\s|>\s?|---+\s*$|\s*[-*]\s+|\s*\d+\.\s+)/.test(lines[i]) && !lines[i].trim().startsWith('|')) {
       para.push(lines[i]); i++;
     }
-    blocks.push(<p key={key++} style={{ margin: '8px 0', color: '#C2C8D4', fontSize: 12, lineHeight: 1.7 }}>{mdInline(para.join(' '))}</p>);
+    blocks.push(<p key={key++} style={{ margin: '8px 0', color: '#C2C8D4', fontSize: 12, lineHeight: 1.7 }}>{para.map((pl, pi) => <span key={pi}>{pi > 0 && <br />}{mdInline(pl)}</span>)}</p>);
   }
   return blocks;
 }
@@ -4165,7 +4174,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 
         {/* ── 도움말 탭 ── */}
         {tab === "help" && (
-          <div style={{ maxWidth: 760, margin: '0 auto', fontFamily: baseFont }}>
+          <div style={{ maxWidth: 760, margin: '0 auto', fontFamily: baseFont, textAlign: 'left' }}>
             {renderMarkdown(guideRaw)}
           </div>
         )}
