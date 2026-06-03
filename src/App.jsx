@@ -102,6 +102,33 @@ function renderMarkdown(md) {
   return blocks;
 }
 
+// ── 섹션 헤더: 이모지 대신 색 강조바 + 라벨(스캔 가독성) ──────────────────────────
+function SectionLabel({ children, color = '#3B82F6', right, style }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12, ...style }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <span style={{ width: 3, height: 13, borderRadius: 2, background: color, flexShrink: 0, display: 'inline-block' }} />
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.3, color: '#C2C8D4' }}>{children}</span>
+      </div>
+      {right || null}
+    </div>
+  );
+}
+
+// ── 등급 표시: 🟢🟡🔴⚪ → 폰트 비의존 CSS 원 ───────────────────────────────────
+const GRADE_COLORS = { '🟢': '#10B981', '🟡': '#F5C842', '🔴': '#EF4444', '⚪': '#6B7280' };
+function gradeColor(s) {
+  const str = String(s ?? '');
+  for (const k of Object.keys(GRADE_COLORS)) if (str.includes(k)) return GRADE_COLORS[k];
+  return '#6B7280';
+}
+function GradeDot({ grade, size = 9 }) {
+  return <span style={{ width: size, height: size, borderRadius: '50%', background: gradeColor(grade), flexShrink: 0, display: 'inline-block' }} />;
+}
+function stripGrade(s) {
+  return String(s ?? '').replace(/[🟢🟡🔴⚪]/g, '').trim();
+}
+
 // ── 구글 시트 설정 ─────────────────────────────────────────────────────────────
 const GOOGLE_CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
 const SHEET_ID = '1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg';
@@ -2658,10 +2685,13 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
           };
 
           return (
-            <div>
+            <div style={{ textAlign: 'left' }}>
               {/* 헤더 */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>리스크 모니터</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <span style={{ width: 3, height: 15, borderRadius: 2, background: '#EF4444', flexShrink: 0 }} />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>리스크 모니터</span>
+                </div>
                 <div style={{ fontSize: 10, color: '#5A6478' }}>최근 점검 {lastUpdated}</div>
               </div>
 
@@ -2740,7 +2770,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               {/* 펀더멘털 기준선 */}
               {baselines.length > 0 && (
                 <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginTop: 12 }}>
-                  <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>📊 펀더멘털 기준선 (논리 훼손 비교 기준)</div>
+                  <SectionLabel color="#F5C842" style={{ marginBottom: 12 }}>펀더멘털 기준선 <span style={{ fontWeight: 400, color: '#5A6478', fontSize: 10 }}>· 논리 훼손 비교 기준</span></SectionLabel>
                   <div style={{ display: 'flex', fontSize: 9, color: '#5A6478', padding: '0 0 6px', borderBottom: '1px solid #1E2233' }}>
                     <span style={{ flex: 2, minWidth: 0 }}>종목</span>
                     <span style={{ flex: 1, textAlign: 'right' }}>영익률</span>
@@ -3609,10 +3639,13 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
           } : SAMPLE_EVALUATION;
 
           return (
-          <div>
+          <div style={{ textAlign: 'left' }}>
             {/* 헤더 */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478' }}>🤖 AI 능동 종목 평가</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span style={{ width: 3, height: 13, borderRadius: 2, background: '#F5A623', flexShrink: 0 }} />
+                <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.3, color: '#E8EAF0' }}>AI 능동 종목 평가</span>
+              </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button onClick={() => setEvalQueueOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
                   padding: '5px 12px', borderRadius: 6, border: '1px solid #F5A623',
@@ -3641,7 +3674,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 background: '#0F1218', borderRadius: 8, padding: '8px 12px', marginBottom: 12,
                 fontSize: 10, color: '#9CA3AF', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center',
               }}>
-                <span style={{ color: '#5A6478', letterSpacing: 1 }}>📥 의뢰 큐</span>
+                <span style={{ color: '#5A6478', letterSpacing: 1 }}>의뢰 큐</span>
                 {evalQueue.counts.pending > 0 && <span>대기 <span style={{ color: '#F5A623', fontWeight: 600 }}>{evalQueue.counts.pending}</span></span>}
                 {evalQueue.counts.processing > 0 && <span>처리중 <span style={{ color: '#60A5FA', fontWeight: 600 }}>{evalQueue.counts.processing}</span></span>}
                 {evalQueue.counts.error > 0 && <span>오류 <span style={{ color: '#F87171', fontWeight: 600 }}>{evalQueue.counts.error}</span></span>}
@@ -3692,8 +3725,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
               {/* 5축 */}
               {card.axes.map((axis, ai) => (
                 <div key={ai} style={{ borderTop: '1px solid #1E2233', padding: '10px 0' }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: '#E8EAF0', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span>{axis.grade || '⚪'}</span>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#E8EAF0', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <GradeDot grade={axis.grade} size={9} />
                     <span>{ai + 1}. {axis.label}</span>
                   </div>
                   {/* 시트 카드(items 없음)는 axis 단위 학습 모듈 칩으로 📘 진입 보장 */}
@@ -3736,9 +3769,17 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
 
               {/* 결론·근거·리스크·액션·출처 */}
               <div style={{ borderTop: '1px solid #2A2F3E', marginTop: 10, paddingTop: 12 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#4ADE80', marginBottom: 12 }}>
-                  결론: {fromSheet ? card.conclusion.raw : `${card.conclusion.grade} ${card.conclusion.label}`}
-                </div>
+                {(() => {
+                  const concRaw = fromSheet ? card.conclusion.raw : `${card.conclusion.grade} ${card.conclusion.label}`;
+                  const cc = gradeColor(concRaw);
+                  return (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, marginBottom: 12, padding: '5px 12px', borderRadius: 8, background: `${cc}1A`, border: `1px solid ${cc}55` }}>
+                      <span style={{ fontSize: 10, color: '#5A6478', fontWeight: 600, letterSpacing: 0.5 }}>결론</span>
+                      <GradeDot grade={concRaw} size={9} />
+                      <span style={{ fontSize: 13, fontWeight: 700, color: cc }}>{stripGrade(concRaw) || '—'}</span>
+                    </div>
+                  );
+                })()}
 
                 {card.reasons.length > 0 && (
                   <div style={{ marginBottom: 10 }}>
@@ -3847,11 +3888,11 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
           }
 
           return (
-            <div>
+            <div style={{ textAlign: 'left' }}>
               {/* 헤더 */}
-              <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>
-                📒 종목 노트 — 평가 완료 {stocks.length}종목
-              </div>
+              <SectionLabel color="#F87171" style={{ marginBottom: 14 }}>
+                매도검토 · 평가 완료 {stocks.length}종목
+              </SectionLabel>
 
               {/* 종목 선택 칩 */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -3924,8 +3965,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   <div style={{ background: '#1A1D26', borderRadius: 12, padding: '16px 16px 14px', marginBottom: 12 }}>
                     {/* 경고 배너 */}
                     {hasAlerts && (
-                      <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 8, background: '#4A1E1E44', border: '1px solid #F8717144', fontSize: 10, color: '#F87171' }}>
-                        ⚠️ {[
+                      <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 8, background: '#4A1E1E44', border: '1px solid #F8717144', fontSize: 10, color: '#F87171', fontWeight: 600 }}>
+                        {[
                           rsiOver ? `RSI ${Math.round(rsiVal)} 과열 — 차익실현 검토` : null,
                           rsiUnder ? `RSI ${Math.round(rsiVal)} 급락 — 매수 기회 점검` : null,
                           pos52Over ? `52주 ${Math.round(pos52Val)}% 고점 근접` : null,
@@ -4020,8 +4061,11 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                     const latest = stockEvals[0];
                     return (
                       <div style={{ background: '#1A1D26', borderRadius: 12, padding: '14px 16px', marginBottom: 12 }}>
-                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'baseline' }}>
-                          <span>📝 최초 매수 근거</span>
+                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                            <span style={{ width: 3, height: 12, borderRadius: 2, background: '#60A5FA', flexShrink: 0 }} />
+                            <span style={{ fontSize: 11, fontWeight: 700, color: '#C2C8D4', letterSpacing: 0.3 }}>최초 매수 근거</span>
+                          </span>
                           <span style={{ color: '#9CA3AF' }}>
                             매수일 <span style={{ color: earliest.buyDate ? '#E8EAF0' : '#5A6478' }}>{earliest.buyDate || '미입력'}</span>
                           </span>
@@ -4066,20 +4110,22 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                   {/* 평가 히스토리 시계열 */}
                   {stockEvals.length > 0 ? (
                     <div style={{ background: '#1A1D26', borderRadius: 12, padding: '14px 16px', marginBottom: 12 }}>
-                      <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 10 }}>
-                        📊 평가 히스토리 ({stockEvals.length}건, 최신순)
-                      </div>
+                      <SectionLabel color="#3B82F6" style={{ marginBottom: 12 }}>
+                        평가 히스토리 ({stockEvals.length}건 · 최신순)
+                      </SectionLabel>
                       {stockEvals.map((ev, i) => (
                         <div key={i} style={{
                           padding: '8px 0',
                           borderTop: i === 0 ? 'none' : '1px solid #1E2233',
                         }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-                            <div style={{ fontSize: 11, color: '#E8EAF0', fontWeight: 600 }}>
-                              {ev.date} · {ev.conclusion.raw || '—'}
+                            <div style={{ fontSize: 11, color: '#E8EAF0', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span>{ev.date}</span>
+                              <GradeDot grade={ev.conclusion.raw} size={8} />
+                              <span>{stripGrade(ev.conclusion.raw) || '—'}</span>
                             </div>
-                            <div style={{ fontSize: 9, color: '#5A6478' }}>
-                              {[ev.axisGrades.수익성, ev.axisGrades.안정성, ev.axisGrades.밸류에이션, ev.axisGrades.현금흐름, ev.axisGrades.모멘텀].join(' ')}
+                            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                              {[ev.axisGrades.수익성, ev.axisGrades.안정성, ev.axisGrades.밸류에이션, ev.axisGrades.현금흐름, ev.axisGrades.모멘텀].map((g, gi) => <GradeDot key={gi} grade={g} size={7} />)}
                             </div>
                           </div>
                           {ev.aiNote && (
