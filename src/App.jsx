@@ -1355,6 +1355,7 @@ export default function App() {
   const [editingDivRow, setEditingDivRow] = useState(null); // 배당 종목명 편집 중인 시트 행
   const [editDivName, setEditDivName] = useState('');
   const [divSaving, setDivSaving] = useState(false);
+  const divLongPress = useRef(null); // 종목명 롱프레스 타이머
   const [selectedDivKey, setSelectedDivKey] = useState(null);
   const [monthYear, setMonthYear] = useState('전체');
   const [tradeRows, setTradeRows] = useState([]);
@@ -3364,10 +3365,24 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                           </>
                         ) : (
                           <>
-                            <span onClick={() => { setEditingDivRow(item.row); setEditDivName(item.name); }}
-                              style={{ fontSize: 12, color: '#E8EAF0', cursor: 'pointer', flex: 1, minWidth: 0 }}>
-                              {item.name || '(이름 없음)'} <span style={{ fontSize: 9, color: '#5A6478' }}>✎</span>
-                            </span>
+                            {(() => {
+                              const startPress = () => {
+                                clearTimeout(divLongPress.current);
+                                divLongPress.current = setTimeout(() => { setEditingDivRow(item.row); setEditDivName(item.name); }, 500);
+                              };
+                              const cancelPress = () => clearTimeout(divLongPress.current);
+                              return (
+                                <span
+                                  onPointerDown={startPress}
+                                  onPointerUp={cancelPress}
+                                  onPointerLeave={cancelPress}
+                                  onContextMenu={e => e.preventDefault()}
+                                  title="길게 눌러 이름 수정"
+                                  style={{ fontSize: 12, color: '#E8EAF0', cursor: 'pointer', flex: 1, minWidth: 0, textAlign: 'left', userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'manipulation' }}>
+                                  {item.name || '(이름 없음)'}
+                                </span>
+                              );
+                            })()}
                             <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS, flexShrink: 0 }}>₩{fmt(item.amount)}</span>
                           </>
                         )}
