@@ -574,8 +574,34 @@ function computeBehaviorMetrics(kpiTrades, evaluations) {
     return !isNaN(ts) && now - ts <= 30 * 86400000;
   });
 
+  // 매도 규율: 매도 전 N일 내 해당 종목 평가(근거 점검)가 있었는지 — 충동 매도 방지 추적
+  const sellDisciplineOK = sells.filter(s => {
+    const sellTs = new Date(String(s.row?.[0]||'')).getTime();
+    const nm = String(s.row?.[5]||'').trim();
+    if (isNaN(sellTs) || !nm) return false;
+    return (evaluations || []).some(ev => {
+      const evTs = new Date(ev.date).getTime();
+      return String(ev.stock?.name||'').trim() === nm && !isNaN(evTs) && evTs <= sellTs && evTs >= sellTs - windowMs;
+    });
+  }).length;
+
+  // 거래 빈도: 최근 30일 건수 vs 전체 기간 30일당 평균 (자기 기준선 대비 과열 감지)
+  // 분할매수 전략은 절대 건수가 높을 수 있어 고정 임계 대신 본인 평소 빈도와 비교한다.
+  const tradeTs = kpiTrades.map(r => new Date(String(r.row?.[0]||'')).getTime()).filter(t => !isNaN(t));
+  let freqAvg30 = null, freqRatio = null;
+  if (tradeTs.length >= 2) {
+    const spanDays = (Math.max(...tradeTs) - Math.min(...tradeTs)) / 86400000;
+    if (spanDays >= 45) {                       // 기준선 신뢰 위해 최소 45일 이력 필요
+      freqAvg30 = kpiTrades.length / spanDays * 30;
+      freqRatio = freqAvg30 > 0 ? recent30.length / freqAvg30 : null;
+    }
+  }
+
   return {
     totalBuys: buys.length, totalSells: sells.length,
+    sellDisciplineOK, sellDisciplineTotal: sells.length,
+    sellDisciplineRate: sells.length > 0 ? Math.round(sellDisciplineOK / sells.length * 100) : null,
+    freqAvg30, freqRatio,
     rule500OK, rule500Total: buys.length,
     rule500Rate: buys.length > 0 ? Math.round(rule500OK / buys.length * 100) : null,
     greenEvalTotal: greenEvals.length,
@@ -2346,6 +2372,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                 );
                 const r500Color = bm.rule500Rate === null ? '#5A6478' : bm.rule500Rate >= 80 ? '#10B981' : bm.rule500Rate >= 60 ? '#F59E0B' : '#EF4444';
                 const emColor   = bm.evalMatchRate === null ? '#5A6478' : bm.evalMatchRate >= 60 ? '#10B981' : bm.evalMatchRate >= 30 ? '#F59E0B' : '#EF4444';
+                const sdColor   = bm.sellDisciplineRate === null ? '#5A6478' : bm.sellDisciplineRate >= 60 ? '#10B981' : bm.sellDisciplineRate >= 30 ? '#F59E0B' : '#EF4444';
+                const freqColor = bm.freqRatio === null ? '#5A6478' : bm.freqRatio <= 1.0 ? '#10B981' : bm.freqRatio <= 1.5 ? '#F59E0B' : '#EF4444';
                 return (
                   <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16 }}>
                     <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 14 }}>행동 추적</div>
@@ -2353,6 +2381,8 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                       {[
                         { label: '500만 원칙', value: bm.rule500Rate !== null ? `${bm.rule500Rate}%` : '–', sub: `${bm.rule500OK}/${bm.rule500Total}건`, color: r500Color },
                         { label: '평가→매수', value: bm.evalMatchRate !== null ? `${bm.evalMatchRate}%` : '–', sub: `${bm.evalMatchCount}/${bm.evalEligible}건`, color: emColor },
+                        { label: '매도 규율', value: bm.sellDisciplineRate !== null ? `${bm.sellDisciplineRate}%` : '–', sub: `점검 ${bm.sellDisciplineOK}/${bm.sellDisciplineTotal}건`, color: sdColor },
+                        { label: '거래빈도', value: bm.freqRatio !== null ? `${bm.freqRatio.toFixed(1)}×` : '–', sub: bm.freqAvg30 !== null ? `평소 ${Math.round(bm.freqAvg30)}건/월` : '기간 부족', color: freqColor },
                         { label: '최근 30일', value: `${bm.recent30Count}건`, sub: `매수 ${bm.recent30Buys}건`, color: '#E8EAF0' },
                       ].map((card, i) => (
                         <div key={i} style={{ background: '#0F1117', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
