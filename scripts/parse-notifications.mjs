@@ -46,12 +46,6 @@ const CASH_BASE_SEED = [
   ['연금저축', '', '', '수동', ''], ['IRP', '', '', '수동', ''],
 ];
 
-// ── 금현물 기준선 설정 ────────────────────────────────
-// 금 파서가 알람합으로 행을 덮어쓰면 사전 보유분(알람 없는 과거 매수)이 사라진다.
-// 예수금과 동형: 기준수량·기준투자금·기준일을 기준으로, 기준일 이후 매수 알림만 가산.
-const GOLD_BASE_SHEET = '금기준';
-const GOLD_BASE_HEADER = ['종목', '기준수량', '기준투자금', '기준일', '갱신시각'];
-
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
 const DRY_RUN = args.includes('--dry-run');
@@ -160,7 +154,9 @@ const GOLD_PRICE = /체결단가\s*:\s*([\d,]+)\s*원/;
 const GOLD_ORDER = /주문번호\s*:\s*(\d+)/;
 
 function parseGoldBuy(body, tsRaw) {
-  if (!(body.includes('체결') && body.includes('매수') && GOLD_QTY.test(body))) return null;
+  // 금 매도 알림은 아직 샘플 없으나, 동일 포맷에서 매수→매도만 바뀐다고 가정해 양쪽 지원.
+  const isSell = body.includes('매도');
+  if (!(body.includes('체결') && (body.includes('매수') || isSell) && GOLD_QTY.test(body))) return null;
   const nm = body.match(GOLD_NAME);
   const qm = body.match(GOLD_QTY);
   const pm = body.match(GOLD_PRICE);
@@ -170,7 +166,7 @@ function parseGoldBuy(body, tsRaw) {
   const price = parseFloat(cleanNum(pm[1], true));
   if (!stockName || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(price) || price <= 0) return null;
   const om = body.match(GOLD_ORDER);
-  return { stockName, qty, price, orderNo: om ? om[1] : '', date: normalizeDateTime(tsRaw).slice(0, 10) };
+  return { stockName, qty, price, tradeType: isSell ? '매도' : '매수', orderNo: om ? om[1] : '', date: normalizeDateTime(tsRaw).slice(0, 10) };
 }
 
 // ── 예수금 앵커 파서 (NH투자증권 "입금안내/출금안내", 잔고줄 보유) ─
@@ -387,54 +383,35 @@ async function main() {
   console.log(`  펀드적립: 갱신 대상 ${fundWrites.length}개`);
   fundWrites.forEach(w => console.log(`    ↻ ${w.tab} ${w.name}: ${w.detail}`));
 
-  // ── 금현물 (기준선 앵커 + 매수 델타 → 보유행 D:E) ──────────
-  // 예수금과 동형: 금기준 표의 기준수량·기준투자금 + (기준일 이후 매수 알림 합). 기준 빈칸이면 skip(클로버 방지).
-  // D(수량)·E(투자금) 리터럴만. C(단가)·F(현재가 GAS)·H(평가 수식)·I(수익률)는 절대 안 건드림.
+  // ── 금현물 → 체결내역 통합 (일반 주식과 동일 파이프라인) ──────
+  // 금 매수/매도 알림을 체결내역에 적재 → 앱 체결 동기화가 보유행 수량을 매수누적·매도차감.
+  // 별도 보유행 계산 없음(클로버 원인 제거). 예수금 현금흐름은 아래 flows에서 부호로 가감.
   const goldDedup = new Map();
-  for (const g of golds) goldDedup.set(g.orderNo || `${g.date}|${g.qty}|${g.price}`, g);
+  for (const g of golds) goldDedup.set(g.orderNo || `${g.date}|${g.tradeType}|${g.qty}|${g.price}`, g);
 
-  if (!DRY_RUN) await ensureSheet(token, GOLD_BASE_SHEET, GOLD_BASE_HEADER);
-  // 보유 금 종목(유형=금) 열거
   const goldHoldings = [];
   for (const [name, p] of portfolioMap) if (p[1] === '금') goldHoldings.push({ name, tab: p[0] });
-  // 금기준 표 로드 → 종목별 {기준수량, 기준투자금, 기준일, rowNum}
-  const goldBaseRows = await getRange(token, `${GOLD_BASE_SHEET}!A2:E`).catch(() => []);
-  const goldBaseByName = new Map();
-  goldBaseRows.forEach((r, i) => { const n = String(r[0] ?? '').trim(); if (n) goldBaseByName.set(n, { qty: r[1], invest: r[2], date: String(r[3] ?? '').trim(), rowNum: i + 2 }); });
-  // 보유 금 종목 중 기준 표에 없는 건 빈 기준값으로 시드
-  if (!DRY_RUN) {
-    const seeds = goldHoldings.filter(h => !goldBaseByName.has(h.name)).map(h => [h.name, '', '', '', '']);
-    if (seeds.length) { await appendValues(token, `${GOLD_BASE_SHEET}!A2`, seeds); seeds.forEach((s, k) => goldBaseByName.set(s[0], { qty: '', invest: '', date: '', rowNum: goldBaseRows.length + 2 + k })); }
-  }
-  // 금 매수 알림을 보유 금 종목으로 귀속 (종목명 부분일치)
-  const goldByHolding = new Map();
+  const goldExecRows = [];
   for (const g of goldDedup.values()) {
+    // 금 알림 종목명 → 보유 금 종목 귀속(부분일치). 단가·수량 단위는 원/g·g.
     const h = goldHoldings.find(h => norm(g.stockName).includes(norm(h.name)) || norm(h.name).includes(norm(g.stockName)));
-    if (!h) continue;
-    if (!goldByHolding.has(h.name)) goldByHolding.set(h.name, []);
-    goldByHolding.get(h.name).push(g);
+    if (!h) { console.log(`  ⚠ 금 보유종목 매칭 실패: ${g.stockName} — skip`); continue; }
+    const key = `${g.date}|${g.tradeType}|${h.name}|${String(g.qty).replace(/\.0*$/, '')}`;
+    if (existingKeys.has(key)) continue;        // 체결내역 멱등 dedup
+    existingKeys.add(key);
+    goldExecRows.push([
+      g.date, g.tradeType, h.tab, '금', '금', h.name,
+      String(g.price), String(g.qty),
+      '=INDIRECT("G"&ROW())*INDIRECT("H"&ROW())',
+      String(g.price),                          // 현재가(J): 금은 시세 티커 없어 체결가로 기록(로그용)
+      '=INDIRECT("L"&ROW())-INDIRECT("I"&ROW())',
+      '=INDIRECT("H"&ROW())*INDIRECT("J"&ROW())',
+      '=INDIRECT("L"&ROW())/INDIRECT("I"&ROW())-1',
+    ]);
   }
-  const goldWrites = [];
-  for (const { name } of goldHoldings) {
-    const cfg = goldBaseByName.get(name);
-    if (!cfg || String(cfg.qty ?? '').trim() === '') { console.log(`  ⚠ 금 기준 미입력: ${name} — 금기준 표에 기준수량·기준투자금·기준일 입력 필요(앱에서 금 행 길게 눌러 입력), skip`); continue; }
-    const baseQty = parseFloat(cleanNum(cfg.qty, true));
-    const baseInvest = parseInt(cleanNum(cfg.invest), 10);
-    if (!Number.isFinite(baseQty) || !Number.isFinite(baseInvest)) { console.log(`  ⚠ 금 기준값 비정상: ${name} (수량=${cfg.qty}, 투자금=${cfg.invest}) — skip`); continue; }
-    const baseDate = cfg.date;
-    const recs = (goldByHolding.get(name) || []).filter(r => r.date > baseDate);
-    const 수량 = baseQty + recs.reduce((s, r) => s + r.qty, 0);
-    const 투자금 = baseInvest + recs.reduce((s, r) => s + Math.round(r.qty * r.price), 0);
-    const hit = await findHoldingRow(name);
-    if (!hit) { console.log(`  ⚠ 금 보유행 못 찾음: ${name} — skip`); continue; }
-    goldWrites.push({
-      range: `${hit.tab}!D${hit.row}:E${hit.row}`, tab: hit.tab, name: hit.name,
-      values: [[수량, 투자금]],
-      detail: `기준 ${baseQty}g/${baseInvest.toLocaleString()}(${baseDate || '?'}) + 매수 ${recs.length}건 → ${수량}g · 투자금 ${투자금.toLocaleString()}원`,
-    });
-  }
-  console.log(`  금현물: 갱신 대상 ${goldWrites.length}개`);
-  goldWrites.forEach(w => console.log(`    ↻ ${w.tab} ${w.name}: ${w.detail}`));
+  execRowsToWrite.push(...goldExecRows);
+  console.log(`  금현물: 체결내역 신규 ${goldExecRows.length}건`);
+  goldExecRows.forEach(r => console.log(`    + ${r[0]} ${r[1]} ${r[5]} ${r[7]}g @${r[6]}`));
 
   // ── 예수금 (앵커 + 거래 델타 → 표시행 E·H) ─────────────
   // NH(ISA·위탁): 입금/출금 알림 출금가능금액으로 기준 자동 갱신. 연금저축·IRP: 예수금기준 표 수동값.
@@ -459,7 +436,7 @@ async function main() {
     flows.push({ tab: p[0], date: e.tradeDate.slice(0, 10), amount: (e.tradeType === '매수' ? -1 : 1) * e.quantity * e.price });
   }
   for (const d of divs) { const p = portfolioMap.get(d.stockName); if (p) flows.push({ tab: p[0], date: d.date, amount: d.afterTaxAmount }); }
-  for (const g of goldDedup.values()) { const tab = await tabOfHolding(g.stockName); if (tab) flows.push({ tab, date: g.date, amount: -Math.round(g.qty * g.price) }); }
+  for (const g of goldDedup.values()) { const tab = await tabOfHolding(g.stockName); if (tab) flows.push({ tab, date: g.date, amount: (g.tradeType === '매도' ? 1 : -1) * Math.round(g.qty * g.price) }); }
   for (const f of fundDedup.values()) { const tab = await tabOfHolding(f.fundName); if (tab) flows.push({ tab, date: f.date, amount: -f.amount }); }
 
   // 표시행 찾기: 연금저축=MMF 행, 그 외=종목명 '예수금' 행
@@ -508,11 +485,10 @@ async function main() {
   }
   if (divAppends.length) await appendValues(token, `${DIV_SHEET}!A2`, divAppends);
   for (const w of fundWrites) await setValues(token, w.range, w.values);
-  for (const w of goldWrites) await setValues(token, w.range, w.values);
   for (const u of baseUpdates) await setValues(token, u.range, u.values);
   // 현금은 투자금(E)=평가금액(H), 손익 0. F(현재가)·G(손익) 칸은 보존 위해 E·H만 개별 갱신.
   for (const w of cashWrites) { await updateCell(token, `${w.tab}!E${w.row}`, w.cash); await updateCell(token, `${w.tab}!H${w.row}`, w.cash); }
-  console.log(`\n✅ 완료 — 체결 +${execRowsToWrite.length} · 배당 신규 +${divAppends.length}/갱신 ${divUpdates.length} · 펀드 ↻${fundWrites.length} · 금 ↻${goldWrites.length} · 예수금 ↻${cashWrites.length}`);
+  console.log(`\n✅ 완료 — 체결 +${execRowsToWrite.length}(금 ${goldExecRows.length}) · 배당 신규 +${divAppends.length}/갱신 ${divUpdates.length} · 펀드 ↻${fundWrites.length} · 예수금 ↻${cashWrites.length}`);
 }
 
 main().catch(e => { console.error('\n❌ 오류:', e.message); process.exit(1); });
