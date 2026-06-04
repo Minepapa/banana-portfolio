@@ -24,7 +24,7 @@
  *   node scripts/parse-notifications.mjs <TOKEN>    # 토큰 직접 전달(launchd run.sh)
  */
 
-import { SHEET_ID, getToken, getRange, appendValues, updateCell } from './lib/sheets-common.mjs';
+import { SHEET_ID, getToken, getRange, appendValues, updateCell, setValues } from './lib/sheets-common.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 const ALARM_SHEET = '알람';
@@ -108,6 +108,29 @@ function parseDividend(body, tsRaw) {
   return null;
 }
 
+// ── 펀드 적립 매수 파서 (삼성증권 "펀드 매수 완료 안내") ─
+// 매수금액·매수기준가로 좌수를 역산: 좌수 = 매수금액 ÷ 기준가 × 1000 (기준가는 1,000좌당 표기 관행)
+const FUND_FUNDNAME = /펀드명\s*:\s*([^\n\r]+)/;
+const FUND_AMOUNT = /매수금액\s*:\s*([\d,]+)\s*원/;
+const FUND_NAV = /매수기준가\s*:\s*([\d,]+(?:\.\d+)?)/;
+const FUND_DATE = /매수신청일\s*:\s*(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/;
+
+function parseFundBuy(body, tsRaw) {
+  if (!(body.includes('펀드') && body.includes('매수기준가'))) return null;
+  const fm = body.match(FUND_FUNDNAME);
+  const am = body.match(FUND_AMOUNT);
+  const nm = body.match(FUND_NAV);
+  if (!fm || !am || !nm) return null;
+  const fundName = fm[1].trim();
+  const amount = parseInt(cleanNum(am[1]), 10);
+  const nav = parseFloat(cleanNum(nm[1], true));
+  if (!fundName || !Number.isFinite(amount) || amount <= 0 || !Number.isFinite(nav) || nav <= 0) return null;
+  const dm = body.match(FUND_DATE);
+  const p = (n) => String(n).padStart(2, '0');
+  const date = dm ? `${dm[1]}-${p(dm[2])}-${p(dm[3])}` : normalizeDateTime(tsRaw).slice(0, 10);
+  return { fundName, amount, nav, date, units: (amount / nav) * 1000 };
+}
+
 // ── 종목코드 해석 (포트폴리오 수식 → 네이버 자동완성) ──
 function extractStockCode(formula) {
   let m = String(formula).match(/["']([A-Za-z0-9]{6})["']/); if (m) return m[1];
@@ -146,15 +169,16 @@ async function main() {
   console.log(`📨 알람 ${alarmRows.length}행 스캔`);
 
   // 본문(D열) 파싱
-  const execs = [], divs = [];
+  const execs = [], divs = [], funds = [];
   for (const r of alarmRows) {
     const body = String(r[3] ?? '');   // D: 내용
     const ts = String(r[0] ?? '');     // A: 시간
     if (!body) continue;
     const e = parseExecution(body, ts); if (e) { execs.push(e); continue; }
-    const d = parseDividend(body, ts); if (d) divs.push(d);
+    const d = parseDividend(body, ts); if (d) { divs.push(d); continue; }
+    const f = parseFundBuy(body, ts); if (f) funds.push(f);
   }
-  console.log(`  파싱: 체결 ${execs.length}건 · 배당 ${divs.length}건`);
+  console.log(`  파싱: 체결 ${execs.length}건 · 배당 ${divs.length}건 · 펀드적립 ${funds.length}건`);
 
   // ── 체결내역 적재 ──────────────────────────────────
   const execExisting = await getRange(token, `${EXEC_SHEET}!A:H`);
@@ -256,6 +280,55 @@ async function main() {
   divAppends.forEach(r => console.log(`    + ${r[0]} ${r[2]} ${r[1]}원`));
   divUpdates.forEach(u => console.log(`    ~ ${u.date} ${u.name} → ${u.amount}원`));
 
+  // ── 펀드 적립 (알림 전량 재계산 후 보유행 덮어쓰기, 멱등) ──
+  // 알림 자체 중복 흡수: 키 = 펀드명|날짜|금액|기준가
+  const fundDedup = new Map();
+  for (const f of funds) fundDedup.set(`${f.fundName}|${f.date}|${f.amount}|${f.nav}`, f);
+  const fundGroups = new Map();
+  for (const f of fundDedup.values()) {
+    if (!fundGroups.has(f.fundName)) fundGroups.set(f.fundName, []);
+    fundGroups.get(f.fundName).push(f);
+  }
+
+  // 보유행 찾기: 전 계좌 탭 A:B 에서 B(종목명)가 알림 펀드명에 포함되는 첫 행
+  const norm = (s) => String(s ?? '').replace(/\s/g, '');
+  async function findHoldingRow(fundName) {
+    const target = norm(fundName);
+    for (const tab of ACCOUNT_TABS) {
+      const rows = await getRange(token, `${tab}!A:B`).catch(() => []);
+      for (let i = 0; i < rows.length; i++) {
+        const name = String(rows[i]?.[1] ?? '').trim();
+        if (name && target.includes(norm(name))) return { tab, row: i + 1, name };
+      }
+    }
+    return null;
+  }
+
+  const round = (x, n) => Number(x.toFixed(n));
+  const fundWrites = [];
+  for (const [fundName, recs] of fundGroups) {
+    recs.sort((a, b) => a.date.localeCompare(b.date));
+    const 누적투자금 = recs.reduce((s, r) => s + r.amount, 0);
+    const 누적좌수 = recs.reduce((s, r) => s + r.units, 0);
+    if (누적좌수 <= 0) continue;
+    const 평균기준가 = (누적투자금 / 누적좌수) * 1000;
+    const 최신기준가 = recs[recs.length - 1].nav;
+    const D천좌 = 누적좌수 / 1000;
+    const 평가금액 = Math.round(D천좌 * 최신기준가);
+    const 손익 = 평가금액 - 누적투자금;
+    const 수익률 = 누적투자금 ? 평가금액 / 누적투자금 - 1 : 0;
+    const hit = await findHoldingRow(fundName);
+    if (!hit) { console.log(`  ⚠ 펀드 보유행 못 찾음: ${fundName} (적립 ${recs.length}건, ${누적투자금}원) — skip`); continue; }
+    // C:I = 단가 수량 투자금 현재가 손익 평가금액 수익률 (C×D=투자금, H=D×F 정의상 일치)
+    fundWrites.push({
+      range: `${hit.tab}!C${hit.row}:I${hit.row}`, tab: hit.tab, name: hit.name,
+      values: [[round(평균기준가, 2), round(D천좌, 6), 누적투자금, 최신기준가, 손익, 평가금액, round(수익률, 4)]],
+      detail: `${recs.length}건 적립 ${누적투자금.toLocaleString()}원 · 좌수 ${Math.round(누적좌수).toLocaleString()} · 기준가 ${최신기준가} → 평가 ${평가금액.toLocaleString()}원 (${(수익률 * 100).toFixed(1)}%)`,
+    });
+  }
+  console.log(`  펀드적립: 갱신 대상 ${fundWrites.length}개`);
+  fundWrites.forEach(w => console.log(`    ↻ ${w.tab} ${w.name}: ${w.detail}`));
+
   if (DRY_RUN) { console.log('\n(드라이런 — 쓰기 없음)'); return; }
 
   // 쓰기
@@ -265,7 +338,8 @@ async function main() {
     await updateCell(token, `${DIV_SHEET}!D${u.rowNum}`, u.keys);
   }
   if (divAppends.length) await appendValues(token, `${DIV_SHEET}!A2`, divAppends);
-  console.log(`\n✅ 완료 — 체결 +${execRowsToWrite.length} · 배당 신규 +${divAppends.length}/갱신 ${divUpdates.length}`);
+  for (const w of fundWrites) await setValues(token, w.range, w.values);
+  console.log(`\n✅ 완료 — 체결 +${execRowsToWrite.length} · 배당 신규 +${divAppends.length}/갱신 ${divUpdates.length} · 펀드 ↻${fundWrites.length}`);
 }
 
 main().catch(e => { console.error('\n❌ 오류:', e.message); process.exit(1); });
