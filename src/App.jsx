@@ -4,6 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts";
 import guideRaw from "../docs/USER-GUIDE.md?raw";
+import { parseJobStatus, computeJobHealth } from './lib/jobHealth.js';
 // 도움말 탭: 상단 H1·인트로(첫 --- 이전)는 앱에서 SectionTitle로 대체 → 본문만 렌더
 const guideBody = String(guideRaw).replace(/\r\n/g, '\n').replace(/^[\s\S]*?\n---\n/, '');
 
@@ -206,6 +207,8 @@ const SHEET_RANGES = {
 };
 
 const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
+// 잡 헬스 배너용 — 잡별 최대 허용 무갱신 시간(시간). 주말 갭 고려해 risk 류는 넉넉히.
+const JOB_CADENCE = { 'parse-notifications': 1, drain: 6, 'risk-d': 80, 'risk-b': 200 };
 
 // 체결내역 A~M 컬럼 레이블
 const CHEOL_COLS = [
@@ -1397,6 +1400,7 @@ export default function App() {
   const [tradeRows, setTradeRows] = useState([]);
   const [tradeSyncing, setTradeSyncing] = useState(false);
   const [kpiTrades, setKpiTrades] = useState(null); // null=미로딩, []이상=로딩완료
+  const [jobStatus, setJobStatus] = useState(null); // null=미로딩
   const [tradeSyncMsg, setTradeSyncMsg] = useState('');
   const [savingsAppliedRows, setSavingsAppliedRows] = useState(new Set());
   const [savingsMode, setSavingsMode] = useState(false);
@@ -2023,6 +2027,14 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
     }
   }, [tab, sheets.auth]); // eslint-disable-line
 
+  useEffect(() => {
+    if (sheets.auth === 'signed-in' && jobStatus === null) {
+      sheets.readRange('잡상태!A2:E')
+        .then(rows => setJobStatus(parseJobStatus(rows)))
+        .catch(() => setJobStatus([]));   // 시트 없거나 실패 → 배너 숨김
+    }
+  }, [sheets.auth, jobStatus]); // eslint-disable-line
+
   const acct = accounts[acctKey];
   const totalInvest = Object.values(accounts).reduce((s, a) => s + a.total_invest, 0);
   const totalProfit = totalEval - totalInvest;
@@ -2152,6 +2164,29 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
       </div>
 
       <div style={{ padding: "20px 16px" }}>
+
+        {jobStatus && (() => {
+          const problems = computeJobHealth(jobStatus, JOB_CADENCE);
+          if (problems.length === 0) return null;
+          const anyFail = problems.some(p => p.problem === 'fail');
+          return (
+            <div style={{
+              margin: '8px 12px', padding: '8px 12px', borderRadius: 8,
+              background: anyFail ? '#2A1416' : '#241F12',
+              border: `1px solid ${anyFail ? '#7F1D1D' : '#78510F'}`,
+              fontSize: 11, color: anyFail ? '#FCA5A5' : '#FCD34D', textAlign: 'left',
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 2 }}>
+                ⚠️ 무인 잡 점검 필요 {problems.length}건
+              </div>
+              {problems.map((p, i) => (
+                <div key={i} style={{ fontSize: 10, opacity: 0.9 }}>
+                  {p.job} — {p.problem === 'fail' ? '실패' : '갱신 정체'}{p.detail ? ` (${p.detail.slice(0, 60)})` : ''}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* ── 대시보드 탭 ── */}
         {tab === "dashboard" && (
