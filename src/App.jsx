@@ -1443,6 +1443,7 @@ export default function App() {
   const [evalQueueMemo, setEvalQueueMemo] = useState('');
   const [evalQueueBusy, setEvalQueueBusy] = useState(false);
   const [evalQueueMsg, setEvalQueueMsg] = useState('');
+  const [requeueBusyIdx, setRequeueBusyIdx] = useState(null); // 재시도 진행 중인 큐 행 rowIndex
 
   const [weeklyReports, setWeeklyReports] = useState([]);
   const [weeklyExpanded, setWeeklyExpanded] = useState(false);
@@ -1554,6 +1555,23 @@ export default function App() {
       setEvalQueueBusy(false);
     }
   }, [evalQueueName, evalQueueMarket, evalQueueMemo, sheets]);
+
+  // 오류 난 평가요청을 다시 '대기'로 돌려 다음 drain 때 재처리.
+  // F열(메모)은 보존 — '매도 평가' 같은 의미 트리거가 들어 있을 수 있어 지우면 안 됨.
+  const requeueEval = async (entry) => {
+    setRequeueBusyIdx(entry.rowIndex);
+    setEvalQueueMsg('');
+    try {
+      const sheetRow = entry.rowIndex + 2; // A2:F → rowIndex 0 = 시트 2행
+      await sheets.writeRange(`평가요청!D${sheetRow}:E${sheetRow}`, ['대기', '']);
+      await sheets.fetch();
+    } catch {
+      setEvalQueueMsg('재시도 등록 실패 — 잠시 후 다시 시도해주세요');
+      setTimeout(() => setEvalQueueMsg(''), 4000);
+    } finally {
+      setRequeueBusyIdx(null);
+    }
+  };
 
   const ingestEvaluation = useCallback(async () => {
     if (!evalIngestParsed) return;
@@ -3750,6 +3768,39 @@ export default function App() {
                 {evalQueue.counts.pending > 0 && <span>대기 <span style={{ color: '#F5A623', fontWeight: 600 }}>{evalQueue.counts.pending}</span></span>}
                 {evalQueue.counts.processing > 0 && <span>처리중 <span style={{ color: '#60A5FA', fontWeight: 600 }}>{evalQueue.counts.processing}</span></span>}
                 {evalQueue.counts.error > 0 && <span>오류 <span style={{ color: '#F87171', fontWeight: 600 }}>{evalQueue.counts.error}</span></span>}
+              </div>
+            )}
+
+            {/* 평가 오류 상세 — 사유 표시 + 재시도 (시트 진입 없이 앱에서 확인·재처리) */}
+            {evalQueue.counts.error > 0 && (
+              <div style={{ background: '#1A1012', border: '1px solid #4A1E1E', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
+                <div style={{ fontSize: 10, letterSpacing: 1, color: '#F87171', marginBottom: 8, fontWeight: 600 }}>
+                  ⚠ 평가 오류 {evalQueue.counts.error}건 — 사유 확인 후 재시도
+                </div>
+                {evalQueue.entries.filter(e => e.status === '오류').map((e, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0', borderTop: i > 0 ? '1px solid #2A1518' : 'none' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#E8EAF0' }}>
+                        {e.name}{e.market && <span style={{ color: '#5A6478', fontSize: 9, marginLeft: 4 }}>{e.market}</span>}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#C98A8A', marginTop: 2, lineHeight: 1.4, wordBreak: 'break-word' }}>
+                        {e.memo || '사유 미기록'}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => requeueEval(e)}
+                      disabled={requeueBusyIdx === e.rowIndex || sheets.auth !== 'signed-in'}
+                      style={{
+                        flexShrink: 0, padding: '4px 10px', borderRadius: 5, border: '1px solid #3B82F6',
+                        background: 'transparent', color: '#60A5FA',
+                        cursor: (requeueBusyIdx === e.rowIndex || sheets.auth !== 'signed-in') ? 'not-allowed' : 'pointer',
+                        opacity: (requeueBusyIdx === e.rowIndex || sheets.auth !== 'signed-in') ? 0.5 : 1,
+                        fontSize: 10, fontFamily: baseFont, whiteSpace: 'nowrap',
+                      }}>
+                      {requeueBusyIdx === e.rowIndex ? '등록 중...' : '다시 시도'}
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
