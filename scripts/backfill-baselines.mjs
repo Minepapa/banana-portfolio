@@ -19,7 +19,7 @@
  */
 
 import {
-  loadEnv, getTokenViaBrowser, getRange, appendValues, ensureSheet,
+  loadEnv, getToken, hasServiceAccount, getRange, appendValues, ensureSheet,
   readHoldings, runHeadlessClaude, parseJsonBlock, todayKST, HEADLESS_NOTE,
 } from './lib/sheets-common.mjs';
 
@@ -71,9 +71,12 @@ async function main() {
   if (DRY_RUN) console.log('   (--dry-run)');
   if (FORCE) console.log('   (--force: 기존 적재 종목도 재조회)');
 
-  let token = explicitToken?.trim();
-  if (!token) { console.log('\n🔑 Google 인증 중...'); token = await getTokenViaBrowser(); console.log('✅ 토큰 획득'); }
-  else console.log('✓ 토큰 인수 사용');
+  let token = explicitToken?.trim() || null;
+  if (!token) {
+    console.log(hasServiceAccount() ? '\n🤖 서비스 계정 인증(무인)...' : '\n🔑 Google 인증 중...');
+    token = await getToken(token);
+    console.log('✅ 토큰 획득');
+  } else console.log('✓ 토큰 인수 사용');
 
   await ensureSheet(token, BASELINE_SHEET, BASELINE_HEADER);
 
