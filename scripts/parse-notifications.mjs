@@ -17,6 +17,9 @@
  * 알람 탭 컬럼: A=시간(yyyy-MM-dd HH:mm:ss) · B=발신인 · C=키워드 · D=내용(본문)
  * 체결내역 컬럼: A체결일 B구분 C계좌 D종목코드 E자산군 F종목명 G매수단가 H수량 I매수금액 J현재가 K손익 L평가금액 M수익률
  * 배당금 컬럼:   A일자 B배당금(누적) C종목명 D처리키(uniqueKey 콤마)
+ * 추가 적재: 펀드 적립(연금저축 펀드 행 D:E)·금현물(위탁 금 행 D:E)·예수금(계좌별 예수금 행 E·H).
+ *   예수금 = 기준액 + Σ(거래 델타). NH(ISA·위탁)는 입금/출금 알림 출금가능금액으로 기준 자동,
+ *   연금저축·IRP는 '예수금기준' 표 수동 기준값. 설계: docs/superpowers/specs/2026-06-04-예수금-자동관리-design.md
  *
  * 사용법:
  *   node scripts/parse-notifications.mjs            # OAuth(대화형) 또는 SA(무인)
@@ -24,13 +27,24 @@
  *   node scripts/parse-notifications.mjs <TOKEN>    # 토큰 직접 전달(launchd run.sh)
  */
 
-import { SHEET_ID, getToken, getRange, appendValues, updateCell, setValues } from './lib/sheets-common.mjs';
+import { SHEET_ID, getToken, getRange, appendValues, updateCell, setValues, ensureSheet } from './lib/sheets-common.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 const ALARM_SHEET = '알람';
 const EXEC_SHEET = '체결내역';
 const DIV_SHEET = '배당금';
 const ACCOUNT_TABS = ['ISA', '위탁', '연금저축', 'IRP'];
+
+// ── 예수금 자동관리 설정 ──────────────────────────────
+const CASH_BASE_SHEET = '예수금기준';
+const CASH_BASE_HEADER = ['계좌', '기준액', '기준일', '소스', '갱신시각'];
+const CASH_ROW_NAME = '예수금';                 // ISA·위탁·IRP 표시 행 종목명(사용자가 1회 생성)
+const AUTO_CASH_TABS = new Set(['ISA', '위탁']);  // NH: 입금/출금 알림 잔고로 자동 앵커
+const NH_ACCT_PREFIX = { '209-02': 'ISA', '205-01': '위탁' };  // 계좌번호 앞6자 → 탭
+const CASH_BASE_SEED = [
+  ['ISA', '', '', '자동', ''], ['위탁', '', '', '자동', ''],
+  ['연금저축', '', '', '수동', ''], ['IRP', '', '', '수동', ''],
+];
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
@@ -153,6 +167,26 @@ function parseGoldBuy(body, tsRaw) {
   return { stockName, qty, price, orderNo: om ? om[1] : '', date: normalizeDateTime(tsRaw).slice(0, 10) };
 }
 
+// ── 예수금 앵커 파서 (NH투자증권 "입금안내/출금안내", 잔고줄 보유) ─
+// 입금·출금 알림 양쪽에 '출금가능금액'(그 시점 정답 현금잔고)이 있어 앵커로 쓴다.
+// ISA·위탁 둘 다 NH라 포맷 동일 → 계좌번호 앞6자로 구분 (209-02=ISA, 205-01=위탁).
+const CASH_ACCTNO = /계좌번호\s*([\d]{3}-[\d]{2}-[\d*]+)/;
+const CASH_BALANCE = /출금가능금액\s*:\s*([\d,]+)\s*원/;
+
+function parseCashAlarm(body, tsRaw) {
+  if (!body.includes('NH투자증권')) return null;
+  if (!(body.includes('입금안내') || body.includes('출금안내'))) return null;
+  const am = body.match(CASH_ACCTNO);
+  const bm = body.match(CASH_BALANCE);
+  if (!am || !bm) return null;
+  const acctNo = am[1].trim();
+  const tab = NH_ACCT_PREFIX[acctNo.slice(0, 6)];
+  if (!tab) return null;                          // 매핑 안 된 NH 계좌 → skip
+  const balance = parseInt(cleanNum(bm[1]), 10);
+  if (!Number.isFinite(balance) || balance < 0) return null;
+  return { tab, acctNo, balance, ts: normalizeDateTime(tsRaw) };
+}
+
 // ── 종목코드 해석 (포트폴리오 수식 → 네이버 자동완성) ──
 function extractStockCode(formula) {
   let m = String(formula).match(/["']([A-Za-z0-9]{6})["']/); if (m) return m[1];
@@ -191,7 +225,7 @@ async function main() {
   console.log(`📨 알람 ${alarmRows.length}행 스캔`);
 
   // 본문(D열) 파싱
-  const execs = [], divs = [], funds = [], golds = [];
+  const execs = [], divs = [], funds = [], golds = [], cashes = [];
   for (const r of alarmRows) {
     const body = String(r[3] ?? '');   // D: 내용
     const ts = String(r[0] ?? '');     // A: 시간
@@ -199,9 +233,10 @@ async function main() {
     const e = parseExecution(body, ts); if (e) { execs.push(e); continue; }
     const d = parseDividend(body, ts); if (d) { divs.push(d); continue; }
     const f = parseFundBuy(body, ts); if (f) { funds.push(f); continue; }
-    const g = parseGoldBuy(body, ts); if (g) golds.push(g);
+    const g = parseGoldBuy(body, ts); if (g) { golds.push(g); continue; }
+    const c = parseCashAlarm(body, ts); if (c) cashes.push(c);
   }
-  console.log(`  파싱: 체결 ${execs.length}건 · 배당 ${divs.length}건 · 펀드적립 ${funds.length}건 · 금현물 ${golds.length}건`);
+  console.log(`  파싱: 체결 ${execs.length}건 · 배당 ${divs.length}건 · 펀드적립 ${funds.length}건 · 금현물 ${golds.length}건 · 예수금알림 ${cashes.length}건`);
 
   // ── 체결내역 적재 ──────────────────────────────────
   const execExisting = await getRange(token, `${EXEC_SHEET}!A:H`);
@@ -371,6 +406,68 @@ async function main() {
   console.log(`  금현물: 갱신 대상 ${goldWrites.length}개`);
   goldWrites.forEach(w => console.log(`    ↻ ${w.tab} ${w.name}: ${w.detail}`));
 
+  // ── 예수금 (앵커 + 거래 델타 → 표시행 E·H) ─────────────
+  // NH(ISA·위탁): 입금/출금 알림 출금가능금액으로 기준 자동 갱신. 연금저축·IRP: 예수금기준 표 수동값.
+  // 예수금 = 기준액 + Σ(그 계좌 거래, 날짜 > 기준일). 매도·배당 +, 매수·금·펀드 −. 원화만(USD 제외).
+  if (!DRY_RUN) await ensureSheet(token, CASH_BASE_SHEET, CASH_BASE_HEADER);
+  let baseRows = await getRange(token, `${CASH_BASE_SHEET}!A2:E`).catch(() => []);
+  if (!baseRows.length && !DRY_RUN) { await appendValues(token, `${CASH_BASE_SHEET}!A2`, CASH_BASE_SEED); baseRows = CASH_BASE_SEED.map(r => [...r]); }
+  const baseByAcct = new Map();
+  baseRows.forEach((r, i) => { const a = String(r[0] ?? '').trim(); if (a) baseByAcct.set(a, { base: r[1], date: String(r[2] ?? '').trim(), rowNum: i + 2 }); });
+
+  // 계좌별 최신 NH 앵커
+  const nhLatest = new Map();
+  for (const c of cashes) { const prev = nhLatest.get(c.tab); if (!prev || c.ts > prev.ts) nhLatest.set(c.tab, c); }
+
+  // 거래 → 계좌별 부호화 현금흐름 (date 비교용 yyyy-MM-dd)
+  const tabCache = new Map();
+  const tabOfHolding = async (name) => { if (!tabCache.has(name)) { const h = await findHoldingRow(name); tabCache.set(name, h ? h.tab : null); } return tabCache.get(name); };
+  const flows = [];
+  for (const e of execs) {
+    if (e.currency !== 'KRW') continue;                          // USD 체결 → 외화RP(수동) 소관
+    const p = portfolioMap.get(e.stockName); if (!p) continue;   // 계좌 미상(중복명 등) skip
+    flows.push({ tab: p[0], date: e.tradeDate.slice(0, 10), amount: (e.tradeType === '매수' ? -1 : 1) * e.quantity * e.price });
+  }
+  for (const d of divs) { const p = portfolioMap.get(d.stockName); if (p) flows.push({ tab: p[0], date: d.date, amount: d.afterTaxAmount }); }
+  for (const g of goldDedup.values()) { const tab = await tabOfHolding(g.stockName); if (tab) flows.push({ tab, date: g.date, amount: -Math.round(g.qty * g.price) }); }
+  for (const f of fundDedup.values()) { const tab = await tabOfHolding(f.fundName); if (tab) flows.push({ tab, date: f.date, amount: -f.amount }); }
+
+  // 표시행 찾기: 연금저축=MMF 행, 그 외=종목명 '예수금' 행
+  const cashRowCache = new Map();
+  async function findCashRow(tab) {
+    if (cashRowCache.has(tab)) return cashRowCache.get(tab);
+    const rows = await getRange(token, `${tab}!A:B`).catch(() => []);
+    let hit = null;
+    for (let i = 0; i < rows.length; i++) {
+      const nm = String(rows[i]?.[1] ?? '').trim(); if (!nm) continue;
+      if (tab === '연금저축' ? nm.includes('MMF') : nm === CASH_ROW_NAME) { hit = { row: i + 1, name: nm }; break; }
+    }
+    cashRowCache.set(tab, hit); return hit;
+  }
+
+  const nowStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
+  const cashWrites = [], baseUpdates = [];
+  for (const tab of ACCOUNT_TABS) {
+    const cfg = baseByAcct.get(tab);
+    let base = null, baseDate = '';
+    if (AUTO_CASH_TABS.has(tab)) {
+      const anchor = nhLatest.get(tab);
+      if (anchor) {
+        base = anchor.balance; baseDate = anchor.ts.slice(0, 10);
+        if (cfg) baseUpdates.push({ range: `${CASH_BASE_SHEET}!B${cfg.rowNum}:E${cfg.rowNum}`, values: [[base, baseDate, '자동', nowStr]] });
+      } else if (cfg && String(cfg.base).trim() !== '') { base = parseInt(cleanNum(cfg.base), 10); baseDate = cfg.date; }  // 이번 회차 알림 없음 → 기존 기준 유지
+    } else if (cfg && String(cfg.base).trim() !== '') { base = parseInt(cleanNum(cfg.base), 10); baseDate = cfg.date; }
+    if (!Number.isFinite(base)) { if (!AUTO_CASH_TABS.has(tab)) console.log(`  ⚠ 예수금 기준 미입력: ${tab} — 예수금기준 표에 기준액·기준일 입력 필요, skip`); continue; }
+
+    const delta = flows.filter(fl => fl.tab === tab && fl.date > baseDate).reduce((s, fl) => s + fl.amount, 0);
+    const cash = base + delta;
+    const disp = await findCashRow(tab);
+    if (!disp) { console.log(`  ⚠ 예수금 표시행 못 찾음: ${tab} (${tab === '연금저축' ? 'MMF' : CASH_ROW_NAME}) — skip`); continue; }
+    cashWrites.push({ tab, row: disp.row, name: disp.name, cash, detail: `기준 ${Number(base).toLocaleString()}(${baseDate || '?'}) ${delta >= 0 ? '+' : '−'}${Math.abs(delta).toLocaleString()} = ${cash.toLocaleString()}원` });
+  }
+  console.log(`  예수금: 갱신 대상 ${cashWrites.length}개` + (baseUpdates.length ? ` (NH 기준 자동갱신 ${baseUpdates.length})` : ''));
+  cashWrites.forEach(w => console.log(`    ↻ ${w.tab} ${w.name}: ${w.detail}`));
+
   if (DRY_RUN) { console.log('\n(드라이런 — 쓰기 없음)'); return; }
 
   // 쓰기
@@ -382,7 +479,10 @@ async function main() {
   if (divAppends.length) await appendValues(token, `${DIV_SHEET}!A2`, divAppends);
   for (const w of fundWrites) await setValues(token, w.range, w.values);
   for (const w of goldWrites) await setValues(token, w.range, w.values);
-  console.log(`\n✅ 완료 — 체결 +${execRowsToWrite.length} · 배당 신규 +${divAppends.length}/갱신 ${divUpdates.length} · 펀드 ↻${fundWrites.length} · 금 ↻${goldWrites.length}`);
+  for (const u of baseUpdates) await setValues(token, u.range, u.values);
+  // 현금은 투자금(E)=평가금액(H), 손익 0. F(현재가)·G(손익) 칸은 보존 위해 E·H만 개별 갱신.
+  for (const w of cashWrites) { await updateCell(token, `${w.tab}!E${w.row}`, w.cash); await updateCell(token, `${w.tab}!H${w.row}`, w.cash); }
+  console.log(`\n✅ 완료 — 체결 +${execRowsToWrite.length} · 배당 신규 +${divAppends.length}/갱신 ${divUpdates.length} · 펀드 ↻${fundWrites.length} · 금 ↻${goldWrites.length} · 예수금 ↻${cashWrites.length}`);
 }
 
 main().catch(e => { console.error('\n❌ 오류:', e.message); process.exit(1); });

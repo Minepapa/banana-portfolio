@@ -25,7 +25,8 @@
      → 알람 원문 파싱 → ├─ 체결(매수/매도) → "체결내역" 탭
                         ├─ 배당/분배금     → "배당금" 탭
                         ├─ 펀드 적립 매수   → 좌수 역산·누적 재계산 → 연금저축 펀드 행 덮어쓰기
-                        └─ 금현물 매수(g)   → 수량·투자금 누적 재계산 → 위탁 금 행 덮어쓰기
+                        ├─ 금현물 매수(g)   → 수량·투자금 누적 재계산 → 위탁 금 행 덮어쓰기
+                        └─ 예수금          → NH 입금/출금 잔고 앵커 + 거래 델타 → 계좌별 예수금 행
 
 스프레드시트 ─ banana 앱(11탭)이 읽어 표시
             ├ 평가요청(큐) ─ drain(3h) → 헤드리스 claude 평가 → 종목투자노트
@@ -59,7 +60,7 @@ Trading Agent ─ portfolio-rebalancing-monitor 스킬(수동) → weekly_report
 ### launchd (무인, macOS) — `scripts/launchd/`
 | 잡 | 주기 | 하는 일 |
 |----|------|---------|
-| `com.banana.parse-notifications` | 매시간 | 알람 원문 → 체결내역/배당금/펀드적립/금현물 멱등 파싱 (claude 미사용) |
+| `com.banana.parse-notifications` | 매시간 | 알람 원문 → 체결내역/배당금/펀드적립/금현물/예수금 멱등 파싱 (claude 미사용) |
 | `com.banana.drain` | 3시간 | 평가요청 큐 → 헤드리스 claude 평가 → 종목투자노트 |
 | `com.banana.risk-d` | 평일 08:00 | 거시 충격 신호 → 리스크모니터 |
 | `com.banana.risk-b` | 월 08:10 | 위탁 개별주식 9종목 논리훼손 점검 → 리스크모니터 |
