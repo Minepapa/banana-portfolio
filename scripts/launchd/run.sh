@@ -30,11 +30,27 @@ if [ -z "$TOKEN" ]; then
   echo "[run.sh] 경고: 서비스 계정 키($SA_KEY_FILE) 없음 → 무인 실행 실패 가능(대화형 OAuth)" >&2
 fi
 
-case "${1:-}" in
-  drain)               exec "$NODE" scripts/drain-eval-queue.mjs --auto ${TOKEN:+"$TOKEN"} ;;
-  risk-d)              exec "$NODE" scripts/risk-monitor.mjs --mode=D ${TOKEN:+"$TOKEN"} ;;
-  risk-b)              exec "$NODE" scripts/risk-monitor.mjs --mode=B ${TOKEN:+"$TOKEN"} ;;
-  report-sync)         exec "$NODE" scripts/sync-reports.mjs ${TOKEN:+"$TOKEN"} ;;
-  parse-notifications) exec "$NODE" scripts/parse-notifications.mjs ${TOKEN:+"$TOKEN"} ;;
+JOB="${1:-}"
+case "$JOB" in
+  drain)               CMD=(scripts/drain-eval-queue.mjs --auto) ;;
+  risk-d)              CMD=(scripts/risk-monitor.mjs --mode=D) ;;
+  risk-b)              CMD=(scripts/risk-monitor.mjs --mode=B) ;;
+  report-sync)         CMD=(scripts/sync-reports.mjs) ;;
+  parse-notifications) CMD=(scripts/parse-notifications.mjs) ;;
   *) echo "usage: run.sh {drain|risk-d|risk-b|report-sync|parse-notifications}" >&2; exit 2 ;;
 esac
+
+# 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)
+START=$(date +%s)
+set +e
+"$NODE" "${CMD[@]}" ${TOKEN:+"$TOKEN"}
+CODE=$?
+set -e
+DUR=$(( $(date +%s) - START ))
+STATUS=OK; [ "$CODE" -ne 0 ] && STATUS=FAIL
+
+# 하트비트 기록 (잡 실패해도 기록은 시도; 기록 실패는 잡 종료코드를 가리지 않음)
+HB_DETAIL="$(tail -n 3 "$LOG_DIR/$JOB.log" 2>/dev/null | tr '\n' ' ' | cut -c1-200)" \
+  "$NODE" scripts/record-heartbeat.mjs "$JOB" "$STATUS" "$DUR" ${TOKEN:+"$TOKEN"} || true
+
+exit "$CODE"
