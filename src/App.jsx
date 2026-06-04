@@ -237,6 +237,7 @@ const CHART_BAR_COLOR = '#3B82F6';
 const COLORS = {
   채권: "#4A90D9", 금: "#F5C842", 달러: "#7EC8A4", 배당주: "#F4845F",
   리츠: "#B07FE8", 국내주식: "#E85F7A", 해외주식: "#52C8D4", TDF: "#A8D672",
+  현금성: "#8A93A6",
 };
 
 // ── 학습 모듈 + AI 능동 평가 (Trading Agent/learning/ 참조) ─────────────────
@@ -1380,6 +1381,8 @@ export default function App() {
   const [editQty, setEditQty] = useState('');
   const [editCurrentPrice, setEditCurrentPrice] = useState('');
   const [editIncludeSavings, setEditIncludeSavings] = useState(false);
+  const [editingCash, setEditingCash] = useState(null); // 예수금(현금성) 수동 편집 중인 행
+  const [editCashValue, setEditCashValue] = useState('');
   const [editingAllTargets, setEditingAllTargets] = useState(false);
   const [allTargetInputs, setAllTargetInputs] = useState([]);
   const lpRef = useRef(null);
@@ -1658,9 +1661,23 @@ export default function App() {
     setSelectedToDelete(new Set());
   };
 
+  // 파서 findCashRow 로직과 동일하게 현금(예수금) 행을 판별
+  const isCashRow = (h) => h.name === '예수금' || (acctKey === '연금저축' && String(h.name).includes('MMF'));
+
   const startLP = (origIdx, h) => {
     lpRef.current = setTimeout(async () => {
       const sheetRow = START_ROWS[acctKey] + h.rowOffset;
+      if (isCashRow(h)) {
+        // NH(ISA·위탁)는 입금/출금 알림으로 자동 갱신 — 수동 편집 막고 안내만
+        if (acctKey !== '연금저축' && acctKey !== 'IRP') {
+          setBalanceSyncMsg('NH 입금/출금 알림으로 자동 갱신됩니다');
+          setTimeout(() => setBalanceSyncMsg(''), 3500);
+          return;
+        }
+        setEditingCash({ origIdx, sheetRow });
+        setEditCashValue(String(Math.round(h.eval) || ''));
+        return;
+      }
       let isManual = false;
       try {
         const vals = await sheets.readRange(`${acctKey}!F${sheetRow}`, 'FORMULA');
@@ -1721,6 +1738,41 @@ export default function App() {
     }
     setEditingHolding(null);
     setEditIncludeSavings(false);
+  };
+
+  // 예수금(연금저축·IRP) 수동 편집 저장: 표시 행이 아닌 예수금기준 표를 리셋해 파서 클로버 회피.
+  const saveCash = async () => {
+    if (!editingCash) return;
+    const { sheetRow } = editingCash;
+    const amt = parseFloat(editCashValue);
+    if (!Number.isFinite(amt) || amt < 0) {
+      setBalanceSyncMsg('예수금 금액을 올바르게 입력해주세요');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+      return;
+    }
+    // 파서 todayKST와 맞춰 KST 기준일로 리셋(UTC 자정 근처 하루 오차 방지)
+    const todayKST = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    try {
+      const baseA = await sheets.readRange('예수금기준!A2:A5');
+      const idx = baseA.findIndex(r => String(r?.[0] ?? '').trim() === acctKey);
+      if (idx < 0) {
+        setBalanceSyncMsg('예수금기준 표에 계좌 행이 없습니다');
+        setTimeout(() => setBalanceSyncMsg(''), 4000);
+        return;
+      }
+      const baseRow = 2 + idx;
+      await sheets.writeRange(`예수금기준!B${baseRow}:C${baseRow}`, [amt, todayKST]);
+      await sheets.writeRange(`${acctKey}!E${sheetRow}`, [amt]);
+      await sheets.writeRange(`${acctKey}!H${sheetRow}`, [amt]);
+      await sheets.fetch();
+      setBalanceSyncMsg('예수금 갱신됨');
+      setTimeout(() => setBalanceSyncMsg(''), 3000);
+    } catch {
+      setBalanceSyncMsg('예수금 저장 실패 — 다시 시도해주세요');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+      return;
+    }
+    setEditingCash(null);
   };
 
   const addHoldingFromTrade = useCallback(async (acctKey, assetType, stockName, price, qty, currentPrice) => {
@@ -3067,7 +3119,7 @@ export default function App() {
             {/* 계좌 선택 (4개) */}
             <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
               {Object.entries(accounts).map(([k, a]) => (
-                <button key={k} onClick={() => { setAcctKey(k); setShowAddForm(false); setEditingHolding(null); }} style={{
+                <button key={k} onClick={() => { setAcctKey(k); setShowAddForm(false); setEditingHolding(null); setEditingCash(null); }} style={{
                   flex: 1, padding: isMobile ? "8px 4px" : "6px 4px",
                   textAlign: 'center',
                   borderRadius: 20,
@@ -3223,6 +3275,7 @@ export default function App() {
                 const color = h.rate >= 0 ? PROFIT_POS : PROFIT_NEG;
                 const typeName = h.type || '';
                 const isEditing = !isTotalView && editingHolding?.origIdx === origIdx;
+                const isEditingCash = !isTotalView && editingCash?.origIdx === origIdx;
                 const weightPct = weightBase > 0 ? (h.eval / weightBase * 100).toFixed(1) : '0.0';
                 const lpHandlers = !isTotalView && sheets.auth === 'signed-in' && !showDeleteMode ? {
                   onMouseDown: () => startLP(origIdx, h),
@@ -3238,7 +3291,7 @@ export default function App() {
                     <div style={{
                       padding: isMobile ? "10px 16px" : "12px 16px",
                       display: "flex", alignItems: "center", gap: 8,
-                      background: isEditing ? '#1A2035' : selectedToDelete.has(origIdx) ? '#1A1520' : 'transparent',
+                      background: isEditing || isEditingCash ? '#1A2035' : selectedToDelete.has(origIdx) ? '#1A1520' : 'transparent',
                       userSelect: 'none', WebkitUserSelect: 'none',
                     }} {...lpHandlers}>
                       {!isTotalView && showDeleteMode && (
@@ -3309,6 +3362,23 @@ export default function App() {
                         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                           <button onClick={() => { setEditingHolding(null); setEditIncludeSavings(false); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #2A2F3E', background: 'transparent', color: '#6B7280', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>취소</button>
                           <button onClick={saveEdit} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#3B82F6', color: '#fff', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>저장</button>
+                        </div>
+                      </div>
+                    )}
+                    {isEditingCash && (
+                      <div style={{ padding: '12px 16px', background: '#141927', borderTop: '1px solid #2A2F3E' }}>
+                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 10 }}>예수금 수정</div>
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>예수금 잔액 (₩)</div>
+                          <input type="number" inputMode="numeric" value={editCashValue} onChange={e => setEditCashValue(e.target.value)}
+                            style={{ background: '#0D1520', border: '1px solid #3B82F6', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
+                        </div>
+                        <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 10, lineHeight: 1.5 }}>
+                          입력값을 오늘 기준으로 리셋합니다. 이후 매수·매도·배당이 자동 가감됩니다.
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                          <button onClick={() => setEditingCash(null)} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #2A2F3E', background: 'transparent', color: '#6B7280', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>취소</button>
+                          <button onClick={saveCash} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#3B82F6', color: '#fff', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>저장</button>
                         </div>
                       </div>
                     )}
