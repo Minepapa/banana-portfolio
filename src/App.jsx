@@ -1625,7 +1625,13 @@ export default function App() {
       const sheetRow = START_ROWS[acctKey] + acct.holdings[idx].rowOffset;
       return `${acctKey}!B${sheetRow}:I${sheetRow}`;
     });
-    await sheets.clearRows(ranges);
+    try {
+      await sheets.clearRows(ranges);
+    } catch {
+      setBalanceSyncMsg('삭제 실패 — 다시 시도해주세요');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+      return;
+    }
     setShowDeleteMode(false);
     setSelectedToDelete(new Set());
   };
@@ -1656,9 +1662,19 @@ export default function App() {
     const { sheetRow, oldPrice, oldQty, isManual } = editingHolding;
     const p = parseFloat(editPrice) || 0;
     const q = parseFloat(editQty) || 0;
-    await sheets.appendRow(`${acctKey}!C${sheetRow}:D${sheetRow}`, [p, q]);
-    if (isManual && editCurrentPrice !== '') {
-      await sheets.writeRange(`${acctKey}!F${sheetRow}`, [parseFloat(editCurrentPrice) || 0]);
+    try {
+      await sheets.appendRow(`${acctKey}!C${sheetRow}:D${sheetRow}`, [p, q]);
+      if (isManual && editCurrentPrice !== '') {
+        const cp = parseFloat(editCurrentPrice);
+        // 잘못된 입력으로 현재가를 0으로 덮어써 평가금이 0이 되는 사고 방지
+        if (Number.isFinite(cp) && cp > 0) {
+          await sheets.writeRange(`${acctKey}!F${sheetRow}`, [cp]);
+        }
+      }
+    } catch {
+      setBalanceSyncMsg('수정 저장 실패 — 다시 시도해주세요');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+      return;
     }
     if (editIncludeSavings) {
       const mr = monthlyRowRef.current;
@@ -1890,11 +1906,16 @@ export default function App() {
     }
     setEditingAllTargets(false);
     const startRow = REBAL_TARGET_START[acctKey];
-    await sheets.writeRangeMulti(
-      `자산분배!B${startRow}:B${startRow + allTargetInputs.length - 1}`,
-      allTargetInputs.map(v => [(parseFloat(v) || 0) / 100])
-    );
-    await sheets.fetch();
+    try {
+      await sheets.writeRangeMulti(
+        `자산분배!B${startRow}:B${startRow + allTargetInputs.length - 1}`,
+        allTargetInputs.map(v => [(parseFloat(v) || 0) / 100])
+      );
+      await sheets.fetch();
+    } catch {
+      setBalanceSyncMsg('목표비중 저장 실패 — 다시 시도해주세요');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+    }
   };
 
   const startSavingsLP = () => {
@@ -2549,9 +2570,11 @@ export default function App() {
                     cumDash += dash;
                     return { ...d, dash, offset, pctStr: (pct * 100).toFixed(0) };
                   });
-                  const evalAmt = totalEval >= 100000000
-                    ? `${(totalEval/100000000).toFixed(1)}억`
-                    : `${(totalEval/10000).toFixed(0)}만`;
+                  const evalAmt = totalEval <= 0
+                    ? '—'
+                    : totalEval >= 100000000
+                      ? `${(totalEval/100000000).toFixed(1)}억`
+                      : `${(totalEval/10000).toFixed(0)}만`;
                   return (
                     <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
                       <svg viewBox="0 0 100 100" width="110" height="110" style={{ flexShrink: 0 }}>
@@ -3957,9 +3980,10 @@ export default function App() {
                 const canSellEval = !!earliestEval && earliestEval.reasons.length > 0 && sheets.auth === 'signed-in' && !noteSellBusy;
 
                 // ── 상태 모니터 파생값 ──
-                const daysSinceEval = latestEval?.date
-                  ? Math.floor((Date.now() - new Date(latestEval.date).getTime()) / 86400000)
-                  : null;
+                const _evalTs = latestEval?.date ? Date.parse(latestEval.date) : NaN;
+                const daysSinceEval = Number.isNaN(_evalTs)
+                  ? null
+                  : Math.floor((Date.now() - _evalTs) / 86400000);
                 const _momentum = latestEval?.axisItems?.모멘텀 || [];
                 const rsiItem = _momentum.find(i => i.metric === 'rsi' || String(i.label||'').toUpperCase().includes('RSI'));
                 const pos52Item = _momentum.find(i => i.metric === 'pos_52w' || String(i.label||'').includes('52주'));
