@@ -24,16 +24,17 @@ async function main() {
   const token = await getToken(tokenArg?.trim() || null, { allowBrowser: false });
   await ensureSheet(token, STATUS_SHEET, HEADER);
 
+  const ts = nowKST();
   const rows = await getRange(token, `${STATUS_SHEET}!A2:E`);
   const rowNum = findStatusRow(rows, job);
-  const values = [[job, nowKST(), status, detail, String(durationSec)]];
+  const values = [[job, ts, status, detail, String(durationSec)]];
   if (rowNum) await setValues(token, `${STATUS_SHEET}!A${rowNum}:E${rowNum}`, values);
   else        await appendValues(token, `${STATUS_SHEET}!A2`, values);
   console.log(`🫀 ${job} ${status} ${durationSec}s (행 ${rowNum ?? 'append'})`);
 
   if (status !== 'OK') {
     try {
-      await sendTelegram(`⚠️ <b>banana 잡 실패</b>\njob: <code>${job}</code>\n시각: ${nowKST()}\n${detail || '(detail 없음)'}`);
+      await sendTelegram(`⚠️ <b>banana 잡 실패</b>\njob: <code>${job}</code>\n시각: ${ts}\n${detail || '(detail 없음)'}`);
     } catch (e) { console.error('Telegram 알림 실패(무시):', e.message); }
   }
 }
