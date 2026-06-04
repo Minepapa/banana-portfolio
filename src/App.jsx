@@ -1383,6 +1383,9 @@ export default function App() {
   const [editIncludeSavings, setEditIncludeSavings] = useState(false);
   const [editingCash, setEditingCash] = useState(null); // 예수금(현금성) 수동 편집 중인 행
   const [editCashValue, setEditCashValue] = useState('');
+  const [editingGold, setEditingGold] = useState(null); // 금현물 수동 편집 중인 행
+  const [editGoldQty, setEditGoldQty] = useState('');
+  const [editGoldInvest, setEditGoldInvest] = useState('');
   const [editingAllTargets, setEditingAllTargets] = useState(false);
   const [allTargetInputs, setAllTargetInputs] = useState([]);
   const lpRef = useRef(null);
@@ -1678,6 +1681,13 @@ export default function App() {
         setEditCashValue(String(Math.round(h.eval) || ''));
         return;
       }
+      if (h.type === '금') {
+        // 금현물: 기준 표(금기준) 리셋 방식 — 표시 행이 아닌 기준을 갱신해 파서 클로버 회피.
+        setEditingGold({ origIdx, sheetRow, name: h.name });
+        setEditGoldQty(String(h.qty || ''));
+        setEditGoldInvest(String(Math.round(h.invest) || ''));
+        return;
+      }
       let isManual = false;
       try {
         const vals = await sheets.readRange(`${acctKey}!F${sheetRow}`, 'FORMULA');
@@ -1773,6 +1783,40 @@ export default function App() {
       return;
     }
     setEditingCash(null);
+  };
+
+  // 금현물 수동 편집 저장: 표시 행이 아닌 금기준 표를 리셋해 파서 클로버 회피(예수금과 동형).
+  const saveGold = async () => {
+    if (!editingGold) return;
+    const { sheetRow, name } = editingGold;
+    const qty = parseFloat(editGoldQty);
+    const invest = parseFloat(editGoldInvest);
+    if (!Number.isFinite(qty) || qty < 0 || !Number.isFinite(invest) || invest < 0) {
+      setBalanceSyncMsg('수량·투자금을 올바르게 입력해주세요');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+      return;
+    }
+    const todayKST = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    const nowKST = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    try {
+      const baseA = await sheets.readRange('금기준!A:A').catch(() => []);
+      let baseRow = baseA.findIndex(r => String(r?.[0] ?? '').trim() === name);
+      if (baseRow < 0) {
+        // 금기준 표에 종목 행이 없으면 추가(파서가 아직 시드 전일 수 있음)
+        await sheets.appendValues('금기준!A:E', [[name, qty, invest, todayKST, nowKST]]);
+      } else {
+        await sheets.writeRange(`금기준!B${baseRow + 1}:E${baseRow + 1}`, [qty, invest, todayKST, nowKST]);
+      }
+      await sheets.writeRange(`${acctKey}!D${sheetRow}:E${sheetRow}`, [qty, invest]);
+      await sheets.fetch();
+      setBalanceSyncMsg('금 보유 갱신됨');
+      setTimeout(() => setBalanceSyncMsg(''), 3000);
+    } catch {
+      setBalanceSyncMsg('금 저장 실패 — 다시 시도해주세요');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+      return;
+    }
+    setEditingGold(null);
   };
 
   const addHoldingFromTrade = useCallback(async (acctKey, assetType, stockName, price, qty, currentPrice) => {
@@ -3119,7 +3163,7 @@ export default function App() {
             {/* 계좌 선택 (4개) */}
             <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
               {Object.entries(accounts).map(([k, a]) => (
-                <button key={k} onClick={() => { setAcctKey(k); setShowAddForm(false); setEditingHolding(null); setEditingCash(null); }} style={{
+                <button key={k} onClick={() => { setAcctKey(k); setShowAddForm(false); setEditingHolding(null); setEditingCash(null); setEditingGold(null); }} style={{
                   flex: 1, padding: isMobile ? "8px 4px" : "6px 4px",
                   textAlign: 'center',
                   borderRadius: 20,
@@ -3276,6 +3320,7 @@ export default function App() {
                 const typeName = h.type || '';
                 const isEditing = !isTotalView && editingHolding?.origIdx === origIdx;
                 const isEditingCash = !isTotalView && editingCash?.origIdx === origIdx;
+                const isEditingGold = !isTotalView && editingGold?.origIdx === origIdx;
                 const weightPct = weightBase > 0 ? (h.eval / weightBase * 100).toFixed(1) : '0.0';
                 const lpHandlers = !isTotalView && sheets.auth === 'signed-in' && !showDeleteMode ? {
                   onMouseDown: () => startLP(origIdx, h),
@@ -3291,7 +3336,7 @@ export default function App() {
                     <div style={{
                       padding: isMobile ? "10px 16px" : "12px 16px",
                       display: "flex", alignItems: "center", gap: 8,
-                      background: isEditing || isEditingCash ? '#1A2035' : selectedToDelete.has(origIdx) ? '#1A1520' : 'transparent',
+                      background: isEditing || isEditingCash || isEditingGold ? '#1A2035' : selectedToDelete.has(origIdx) ? '#1A1520' : 'transparent',
                       userSelect: 'none', WebkitUserSelect: 'none',
                     }} {...lpHandlers}>
                       {!isTotalView && showDeleteMode && (
@@ -3379,6 +3424,30 @@ export default function App() {
                         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                           <button onClick={() => setEditingCash(null)} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #2A2F3E', background: 'transparent', color: '#6B7280', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>취소</button>
                           <button onClick={saveCash} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#3B82F6', color: '#fff', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>저장</button>
+                        </div>
+                      </div>
+                    )}
+                    {isEditingGold && (
+                      <div style={{ padding: '12px 16px', background: '#141927', borderTop: '1px solid #2A2F3E' }}>
+                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 10 }}>금 보유 수정</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                          <div>
+                            <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>수량 (g)</div>
+                            <input type="number" inputMode="decimal" value={editGoldQty} onChange={e => setEditGoldQty(e.target.value)}
+                              style={{ background: '#0D1520', border: '1px solid #3B82F6', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>투자금 (₩)</div>
+                            <input type="number" inputMode="numeric" value={editGoldInvest} onChange={e => setEditGoldInvest(e.target.value)}
+                              style={{ background: '#0D1520', border: '1px solid #3B82F6', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 10, lineHeight: 1.5 }}>
+                          입력값을 오늘 기준으로 리셋합니다. 이후 금 매수 알림이 자동 가산됩니다.
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                          <button onClick={() => setEditingGold(null)} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #2A2F3E', background: 'transparent', color: '#6B7280', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>취소</button>
+                          <button onClick={saveGold} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#3B82F6', color: '#fff', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>저장</button>
                         </div>
                       </div>
                     )}
