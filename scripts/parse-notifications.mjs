@@ -131,6 +131,28 @@ function parseFundBuy(body, tsRaw) {
   return { fundName, amount, nav, date, units: (amount / nav) * 1000 };
 }
 
+// ── 금현물 매수 파서 (NH투자증권 "매수 주문체결", 단위 g) ─
+// 주식 체결은 "주" 단위라 parseExecution(NH)에 먼저 잡히고, 금은 "g" 단위라 거기서 미스 →
+// 여기로 떨어진다. 가드를 g 단위로 둬 일반 체결과 충돌하지 않음.
+const GOLD_NAME = /종\s*목\s*명\s*:\s*([^\n\r]+)/;
+const GOLD_QTY = /체결수량\s*:\s*([\d,.]+)\s*g/;
+const GOLD_PRICE = /체결단가\s*:\s*([\d,]+)\s*원/;
+const GOLD_ORDER = /주문번호\s*:\s*(\d+)/;
+
+function parseGoldBuy(body, tsRaw) {
+  if (!(body.includes('체결') && body.includes('매수') && GOLD_QTY.test(body))) return null;
+  const nm = body.match(GOLD_NAME);
+  const qm = body.match(GOLD_QTY);
+  const pm = body.match(GOLD_PRICE);
+  if (!nm || !qm || !pm) return null;
+  const stockName = nm[1].trim();
+  const qty = parseFloat(cleanNum(qm[1], true));
+  const price = parseFloat(cleanNum(pm[1], true));
+  if (!stockName || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(price) || price <= 0) return null;
+  const om = body.match(GOLD_ORDER);
+  return { stockName, qty, price, orderNo: om ? om[1] : '', date: normalizeDateTime(tsRaw).slice(0, 10) };
+}
+
 // ── 종목코드 해석 (포트폴리오 수식 → 네이버 자동완성) ──
 function extractStockCode(formula) {
   let m = String(formula).match(/["']([A-Za-z0-9]{6})["']/); if (m) return m[1];
@@ -169,16 +191,17 @@ async function main() {
   console.log(`📨 알람 ${alarmRows.length}행 스캔`);
 
   // 본문(D열) 파싱
-  const execs = [], divs = [], funds = [];
+  const execs = [], divs = [], funds = [], golds = [];
   for (const r of alarmRows) {
     const body = String(r[3] ?? '');   // D: 내용
     const ts = String(r[0] ?? '');     // A: 시간
     if (!body) continue;
     const e = parseExecution(body, ts); if (e) { execs.push(e); continue; }
     const d = parseDividend(body, ts); if (d) { divs.push(d); continue; }
-    const f = parseFundBuy(body, ts); if (f) funds.push(f);
+    const f = parseFundBuy(body, ts); if (f) { funds.push(f); continue; }
+    const g = parseGoldBuy(body, ts); if (g) golds.push(g);
   }
-  console.log(`  파싱: 체결 ${execs.length}건 · 배당 ${divs.length}건 · 펀드적립 ${funds.length}건`);
+  console.log(`  파싱: 체결 ${execs.length}건 · 배당 ${divs.length}건 · 펀드적립 ${funds.length}건 · 금현물 ${golds.length}건`);
 
   // ── 체결내역 적재 ──────────────────────────────────
   const execExisting = await getRange(token, `${EXEC_SHEET}!A:H`);
@@ -323,6 +346,31 @@ async function main() {
   console.log(`  펀드적립: 갱신 대상 ${fundWrites.length}개`);
   fundWrites.forEach(w => console.log(`    ↻ ${w.tab} ${w.name}: ${w.detail}`));
 
+  // ── 금현물 적립 (주문번호 dedup, 수량g·투자금 누적 → 보유행 D:E) ──
+  // 펀드와 동일: 평균단가(C)·평가(H)·수익률(I)은 시트 수식, 현재가(F)는 GAS 라이브 → D:E만 갱신.
+  const goldDedup = new Map();
+  for (const g of golds) goldDedup.set(g.orderNo || `${g.date}|${g.qty}|${g.price}`, g);
+  const goldByName = new Map();
+  for (const g of goldDedup.values()) {
+    if (!goldByName.has(g.stockName)) goldByName.set(g.stockName, []);
+    goldByName.get(g.stockName).push(g);
+  }
+  const goldWrites = [];
+  for (const [name, recs] of goldByName) {
+    const 총수량 = recs.reduce((s, r) => s + r.qty, 0);
+    const 총투자금 = recs.reduce((s, r) => s + Math.round(r.qty * r.price), 0);
+    if (총수량 <= 0) continue;
+    const hit = await findHoldingRow(name);
+    if (!hit) { console.log(`  ⚠ 금 보유행 못 찾음: ${name} (${recs.length}건, ${총투자금}원) — skip`); continue; }
+    goldWrites.push({
+      range: `${hit.tab}!D${hit.row}:E${hit.row}`, tab: hit.tab, name: hit.name,
+      values: [[총수량, 총투자금]],
+      detail: `${recs.length}건 매수 → ${총수량}g · 투자금 ${총투자금.toLocaleString()}원`,
+    });
+  }
+  console.log(`  금현물: 갱신 대상 ${goldWrites.length}개`);
+  goldWrites.forEach(w => console.log(`    ↻ ${w.tab} ${w.name}: ${w.detail}`));
+
   if (DRY_RUN) { console.log('\n(드라이런 — 쓰기 없음)'); return; }
 
   // 쓰기
@@ -333,7 +381,8 @@ async function main() {
   }
   if (divAppends.length) await appendValues(token, `${DIV_SHEET}!A2`, divAppends);
   for (const w of fundWrites) await setValues(token, w.range, w.values);
-  console.log(`\n✅ 완료 — 체결 +${execRowsToWrite.length} · 배당 신규 +${divAppends.length}/갱신 ${divUpdates.length} · 펀드 ↻${fundWrites.length}`);
+  for (const w of goldWrites) await setValues(token, w.range, w.values);
+  console.log(`\n✅ 완료 — 체결 +${execRowsToWrite.length} · 배당 신규 +${divAppends.length}/갱신 ${divUpdates.length} · 펀드 ↻${fundWrites.length} · 금 ↻${goldWrites.length}`);
 }
 
 main().catch(e => { console.error('\n❌ 오류:', e.message); process.exit(1); });
