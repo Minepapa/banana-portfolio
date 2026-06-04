@@ -1410,7 +1410,11 @@ export default function App() {
   const [kpiTrades, setKpiTrades] = useState(null); // null=미로딩, []이상=로딩완료
   const [jobStatus, setJobStatus] = useState(null); // null=미로딩
   const [tradeSyncMsg, setTradeSyncMsg] = useState('');
-  const [savingsAppliedRows, setSavingsAppliedRows] = useState(new Set());
+  // 저축금 반영 완료 거래 — 새로고침 후 이중 반영 방지 위해 거래 내용 키로 localStorage 영속화
+  const [savingsAppliedRows, setSavingsAppliedRows] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('banana_savings_applied') || '[]')); }
+    catch { return new Set(); }
+  });
   const [savingsMode, setSavingsMode] = useState(false);
   const [tradeEditOpen, setTradeEditOpen] = useState(false);
   const [tradeEditRowIdx, setTradeEditRowIdx] = useState(null);
@@ -1864,7 +1868,7 @@ export default function App() {
     }
   }, [sheets, tradeEditRowIdx, tradeEditValues]);
 
-  const applySavingsFromTrade = useCallback(async (tradeDate, amount, isBuy, rowIdx) => {
+  const applySavingsFromTrade = useCallback(async (tradeDate, amount, isBuy, tradeKey) => {
     setTradeSyncMsg('저축금 반영 중...');
     try {
       const parts = tradeDate.split('-');
@@ -1889,7 +1893,11 @@ export default function App() {
       const delta = isBuy ? amount : -amount;
       await sheets.writeRange(`월별잔고!C${targetRow}:C${targetRow}`, [current + delta]);
 
-      setSavingsAppliedRows(prev => new Set([...prev, rowIdx]));
+      setSavingsAppliedRows(prev => {
+        const next = new Set([...prev, tradeKey]);
+        try { localStorage.setItem('banana_savings_applied', JSON.stringify([...next])); } catch { /* 저장소 불가 시 메모리만 유지 */ }
+        return next;
+      });
       setTradeSyncMsg(`${year}.${String(month).padStart(2,'0')} 저축금 ${isBuy ? '+' : '−'}₩${amount.toLocaleString()} 반영됨`);
       setTimeout(() => setTradeSyncMsg(''), 4000);
     } catch (e) {
@@ -3586,7 +3594,9 @@ export default function App() {
                   const amount   = Math.round(price * qty);
                   const isComplete = row.length >= 13 && row.slice(0, 13).every(cell => String(cell ?? '').trim() !== '');
                   const isBuy = buySell.includes('매수');
-                  const savingsApplied = savingsAppliedRows.has(idx);
+                  // 위치 인덱스가 아닌 거래 내용으로 식별 — 새로고침/행 이동에도 이중 반영 방지
+                  const tradeKey = `${date}|${buySell}|${account}|${stockName}|${amount}`;
+                  const savingsApplied = savingsAppliedRows.has(tradeKey);
                   const canApplySavings = isComplete && amount > 0 && date && !savingsApplied;
                   const openTradeEdit = () => {
                     if (isComplete) return;
@@ -3639,7 +3649,7 @@ export default function App() {
                           <span style={{ fontSize: 10, color: '#4ADE80' }}>저축금 ✓</span>
                         ) : savingsMode && (
                           <button
-                            onClick={() => canApplySavings && applySavingsFromTrade(date, amount, isBuy, idx)}
+                            onClick={() => canApplySavings && applySavingsFromTrade(date, amount, isBuy, tradeKey)}
                             disabled={!canApplySavings}
                             style={{
                               padding: '3px 8px', borderRadius: 4, border: '1px solid',
