@@ -304,26 +304,20 @@ async function main() {
     return null;
   }
 
-  const round = (x, n) => Number(x.toFixed(n));
   const fundWrites = [];
   for (const [fundName, recs] of fundGroups) {
     recs.sort((a, b) => a.date.localeCompare(b.date));
     const 누적투자금 = recs.reduce((s, r) => s + r.amount, 0);
-    const 누적좌수 = recs.reduce((s, r) => s + r.units, 0);
+    const 누적좌수 = Math.round(recs.reduce((s, r) => s + r.units, 0));
     if (누적좌수 <= 0) continue;
-    const 평균기준가 = (누적투자금 / 누적좌수) * 1000;
-    const 최신기준가 = recs[recs.length - 1].nav;
-    const D천좌 = 누적좌수 / 1000;
-    const 평가금액 = Math.round(D천좌 * 최신기준가);
-    const 손익 = 평가금액 - 누적투자금;
-    const 수익률 = 누적투자금 ? 평가금액 / 누적투자금 - 1 : 0;
     const hit = await findHoldingRow(fundName);
     if (!hit) { console.log(`  ⚠ 펀드 보유행 못 찾음: ${fundName} (적립 ${recs.length}건, ${누적투자금}원) — skip`); continue; }
-    // C:I = 단가 수량 투자금 현재가 손익 평가금액 수익률 (C×D=투자금, H=D×F 정의상 일치)
+    // 좌수(D)·투자금(E) 리터럴만 갱신. 평균기준가(C)·평가금액(H)·수익률(I)은 시트 수식이
+    // 자동 계산하고, 현재가(F=기준가)는 gold-price.gs(GAS)가 라이브 갱신하므로 절대 덮어쓰지 않음.
     fundWrites.push({
-      range: `${hit.tab}!C${hit.row}:I${hit.row}`, tab: hit.tab, name: hit.name,
-      values: [[round(평균기준가, 2), round(D천좌, 6), 누적투자금, 최신기준가, 손익, 평가금액, round(수익률, 4)]],
-      detail: `${recs.length}건 적립 ${누적투자금.toLocaleString()}원 · 좌수 ${Math.round(누적좌수).toLocaleString()} · 기준가 ${최신기준가} → 평가 ${평가금액.toLocaleString()}원 (${(수익률 * 100).toFixed(1)}%)`,
+      range: `${hit.tab}!D${hit.row}:E${hit.row}`, tab: hit.tab, name: hit.name,
+      values: [[누적좌수, 누적투자금]],
+      detail: `${recs.length}건 적립 → 좌수 ${누적좌수.toLocaleString()} · 투자금 ${누적투자금.toLocaleString()}원`,
     });
   }
   console.log(`  펀드적립: 갱신 대상 ${fundWrites.length}개`);
