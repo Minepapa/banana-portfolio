@@ -609,6 +609,12 @@ function computeBehaviorMetrics(kpiTrades, evaluations) {
     }
   }
 
+  // 미연결 매수: 어떤 평가와도 (코드/이름) 매칭 안 되는 매수 — 이름 오타·평가 누락 신호
+  const unlinkedBuys = buys.filter(r => {
+    return !(evaluations || []).some(ev =>
+      sameStock(r.row?.[3], r.row?.[5], ev.stock?.ticker, ev.stock?.name));
+  }).length;
+
   return {
     totalBuys: buys.length, totalSells: sells.length,
     sellDisciplineOK, sellDisciplineTotal: sells.length,
@@ -625,6 +631,7 @@ function computeBehaviorMetrics(kpiTrades, evaluations) {
     matchWindowDays: MATCH_WINDOW_DAYS,
     recent30Count: recent30.length,
     recent30Buys: recent30.filter(r => String(r.row?.[1]||'').trim() === '매수').length,
+    unlinkedBuys,
   };
 }
 
@@ -2436,6 +2443,11 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
                         </div>
                       ))}
                     </div>
+                    {bm.unlinkedBuys > 0 && (
+                      <div style={{ fontSize: 9, color: '#5A6478', marginTop: 6 }}>
+                        평가에 연결 안 된 매수 {bm.unlinkedBuys}건 — 종목명 표기 차이 또는 평가 누락 점검
+                      </div>
+                    )}
                     {bm.missedEvals.length > 0 && (
                       <div>
                         <div style={{ fontSize: 9, color: '#F59E0B', letterSpacing: 1, marginBottom: 8 }}>🟢 평가 후 {bm.matchWindowDays}일 내 미매수 {bm.missedEvals.length}건 — 검토 필요</div>
