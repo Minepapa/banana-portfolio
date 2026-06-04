@@ -1527,62 +1527,6 @@ export default function App() {
     ];
   }, []);
 
-  // 매도 평가 프롬프트 빌더 — 종목 정보 + 최초 매수 카드를 채워 sell-evaluation.md §2 입력 컨트랙트로 변환
-  const buildSellEvalPrompt = useCallback((stock, earliestEval, position) => {
-    const e = earliestEval;
-    const reasonLines = (e?.reasons || []).slice(0, 3).map((r, i) => `근거 ${i + 1}: ${r}`).join('\n');
-    const riskLines   = (e?.risks   || []).slice(0, 2).map((r, i) => `리스크 ${i + 1}: ${r}`).join('\n');
-    return `[매도 평가 요청]
-종목: ${stock.name}${stock.ticker ? ` (${stock.ticker})` : ''}
-시장: ${stock.market || (/^[0-9]{6}$/.test(stock.ticker || '') ? 'KR' : 'US')}
-트리거: 수동 요청 (banana-portfolio 노트 탭)
-
-[최초 매수 카드]
-${e ? `일자: ${e.date}
-결론: ${e.conclusion?.raw || '—'}
-${reasonLines || '(근거 미기록)'}
-${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노트에 평가 기록부터 필요)'}
-
-[현재 보유]
-보유수량: ${position.qty}주
-평균단가: ₩${Math.round(position.avgPrice).toLocaleString('ko-KR')}
-평가금: ₩${Math.round(position.evalSum).toLocaleString('ko-KR')}
-수익률: ${position.rate >= 0 ? '+' : ''}${position.rate.toFixed(1)}%
-계좌: ${position.accounts.map(a => a.acct).join(' / ')}
-
-다음 플레이북에 따라 매도 평가 카드를 생성해줘:
-- 단일 출처: Trading Agent/playbooks/sell-evaluation.md
-- 출력 양식: §5 표준 카드 (최초 ↔ 현재 ↔ 근거 점검 ↔ 리스크 점검 ↔ 판정 ↔ 권고 4안)
-- 4단계 판정: 🟢 유효 / 🟡 약화 / 🔴 훼손 / ⚪ 판단보류
-- 데이터 재산출: KR=OpenDart MCP, US=UsStockInfo MCP (active-evaluation.md §3 동일 5축)
-- 모든 수치 출처/기준일 표기, 누락 항목은 '데이터 부족'으로 명시
-- 분할 매도 시나리오 최소 3안 (CLAUDE.md §3 분할 매도 원칙)
-- 다음 재평가 시점 명시
-
-마지막에 반드시 \`\`\`json ... \`\`\` 펜스로 20필드 JSON 출력 (적재용):
-
-\`\`\`json
-{
-  "date": "YYYY-MM-DD",
-  "name": "${stock.name}",
-  "ticker": "${stock.ticker || ''}",
-  "market": "${stock.market || ''}",
-  "conclusion": "🟢 유효 | 🟡 관망 | 🔴 부적합 | ⚪ 판단보류",
-  "grades": { "수익성":"", "안정성":"", "밸류에이션":"", "현금흐름":"", "모멘텀":"" },
-  "reasons": ["현 시점 유지 정당화 또는 유지 어려움 근거"],
-  "risks": ["현 시점 추가/해소된 리스크"],
-  "actions": ["권고 시나리오 4안 요약"],
-  "frankMemo": "",
-  "status": "매도 | 보류",
-  "buyDate": "${e?.buyDate || ''}",
-  "buyPrice": "${e?.buyPrice || ''}",
-  "targetTerm": "${e?.targetTerm || ''}",
-  "targetRet": "${e?.targetRet || ''}",
-  "aiNote": "한 줄 요약 (예: 'PER 회복으로 매력 일부 소진, 펀더멘털은 강화')"
-}
-\`\`\``;
-  }, []);
-
   const submitEvalQueue = useCallback(async () => {
     const name = evalQueueName.trim();
     if (!name) { setEvalQueueMsg('⚠️ 종목명을 입력해주세요.'); return; }
@@ -1740,30 +1684,6 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
     setEditingHolding(null);
     setEditIncludeSavings(false);
   };
-
-  const repairFormulas = useCallback(async () => {
-    setTradeSyncMsg('수식 복구 중...');
-    try {
-      for (const key of ['ISA', '위탁', '연금저축', 'IRP']) {
-        const rows = await sheets.readRange(`${key}!B2:B60`);
-        for (let r = 0; r < rows.length; r++) {
-          if (!String(rows[r]?.[0] ?? '').trim()) continue;
-          const n = 2 + r;
-          await sheets.writeRange(`${key}!E${n}:E${n}`, [`=C${n}*D${n}`]);
-          await sheets.writeRange(`${key}!G${n}:G${n}`, [`=H${n}-E${n}`]);
-          await sheets.writeRange(`${key}!H${n}:H${n}`, [`=D${n}*F${n}`]);
-          await sheets.writeRange(`${key}!I${n}:I${n}`, [`=H${n}/E${n}-1`]);
-        }
-      }
-      setTradeSyncMsg('수식 복구 완료');
-      setTimeout(() => setTradeSyncMsg(''), 3000);
-      await sheets.fetch();
-    } catch (e) {
-      console.error('수식 복구 오류:', e);
-      setTradeSyncMsg('수식 복구 오류');
-      setTimeout(() => setTradeSyncMsg(''), 4000);
-    }
-  }, [sheets]);
 
   const addHoldingFromTrade = useCallback(async (acctKey, assetType, stockName, price, qty, currentPrice) => {
     const cfg = KL_CFG[acctKey];
