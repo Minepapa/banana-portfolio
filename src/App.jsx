@@ -14,7 +14,7 @@ const guideBody = String(guideRaw).replace(/\r\n/g, '\n').replace(/^[\s\S]*?\n--
 // 이모지·픽토그램·별표 제거 후 중복 공백 정리 (도움말은 텍스트만 표시)
 function stripEmoji(text) {
   return String(text)
-    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{FE0F}\u{200D}\u{20E3}]/gu, '')
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}]|\u{FE0F}|\u{200D}|\u{20E3}/gu, '')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 }
@@ -128,7 +128,7 @@ function GradeDot({ grade, size = 9 }) {
   return <span style={{ width: size, height: size, borderRadius: '50%', background: gradeColor(grade), flexShrink: 0, display: 'inline-block' }} />;
 }
 function stripGrade(s) {
-  return String(s ?? '').replace(/[🟢🟡🔴⚪]/g, '').trim();
+  return String(s ?? '').replace(/[🟢🟡🔴⚪]/gu, '').trim();
 }
 // 항목명에서 연도·분기 표기(중복) 제거 — 출처는 숫자 아래에 따로 표기됨.
 // "RSI(14)" 같은 파라미터 괄호는 보존(연도/분기 토큰이 있을 때만 제거).
@@ -1383,7 +1383,6 @@ export default function App() {
   const [editingAllTargets, setEditingAllTargets] = useState(false);
   const [allTargetInputs, setAllTargetInputs] = useState([]);
   const lpRef = useRef(null);
-  const [monthlyRow, setMonthlyRow] = useState(null);
   const monthlyRowRef = useRef(null);
   const lastBalanceSyncRef = useRef(null);
   const isBalanceWritingRef = useRef(false);
@@ -1453,7 +1452,6 @@ export default function App() {
     setDividendData(d || []);
     setProfitData(p || []);
     monthlyRowRef.current = mr ?? null;
-    setMonthlyRow(mr ?? null);
     setEvaluations(ev || []);
     setEvalSelectedIdx(0);
     if (q) setEvalQueue(q);
@@ -1643,7 +1641,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
     const dates = Object.keys(history).sort();
     while (dates.length > 7) delete history[dates.shift()];
     localStorage.setItem('banana_eval_history', JSON.stringify(history));
-  }, [sheets.sync, totalEval]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sheets.sync, totalEval]);
 
   // 잔고 자동 동기화 — write 후 re-fetch 하여 월별 그래프도 즉시 갱신
   useEffect(() => {
@@ -1696,7 +1694,7 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
         const vals = await sheets.readRange(`${acctKey}!F${sheetRow}`, 'FORMULA');
         const cell = String(vals[0]?.[0] ?? '');
         isManual = cell !== '' && !cell.startsWith('=');
-      } catch {}
+      } catch { /* 수식 조회 실패 시 수동 여부 미상으로 진행 */ }
       setEditingHolding({ origIdx, sheetRow, oldPrice: h.price, oldQty: h.qty, isManual });
       setEditPrice(String(h.price || ''));
       setEditQty(String(h.qty || ''));
@@ -3074,13 +3072,6 @@ ${riskLines || ''}` : '(최초 매수 카드 없음 — 시트 종목투자노�
           const totalPortEval   = Object.values(accounts).reduce((s, a) => s + (a.total_eval   || 0), 0);
           const totalPortInvest = Object.values(accounts).reduce((s, a) => s + (a.total_invest || 0), 0);
           const totalPortProfit = totalPortEval - totalPortInvest;
-
-          // 전체 계좌 종목 합산 (acctKey === '전체' 시 사용)
-          const allHoldingsFlat = Object.entries(accounts).flatMap(([k, a]) =>
-            (a.holdings || [])
-              .filter(h => h.invest > 0 && h.eval > 0)
-              .map(h => ({ ...h, _acct: a.label, _acctKey: k }))
-          );
 
           // 현재 표시할 종목 목록 (단일 계좌)
           const isTotalView = false;
