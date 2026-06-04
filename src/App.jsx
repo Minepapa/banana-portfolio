@@ -5,6 +5,7 @@ import {
 } from "recharts";
 import guideRaw from "../docs/USER-GUIDE.md?raw";
 import { parseJobStatus, computeJobHealth } from './lib/jobHealth.js';
+import { sameStock } from './lib/stockIdentity.js';
 // 도움말 탭: 상단 H1·인트로(첫 --- 이전)는 앱에서 SectionTitle로 대체 → 본문만 렌더
 const guideBody = String(guideRaw).replace(/\r\n/g, '\n').replace(/^[\s\S]*?\n---\n/, '');
 
@@ -568,7 +569,7 @@ function computeBehaviorMetrics(kpiTrades, evaluations) {
     const evalTs = new Date(ev.date).getTime();
     const bought = !isNaN(evalTs) && buys.some(r => {
       const ts = new Date(String(r.row?.[0]||'')).getTime();
-      return String(r.row?.[5]||'').trim() === String(ev.stock?.name||'').trim()
+      return sameStock(r.row?.[3], r.row?.[5], ev.stock?.ticker, ev.stock?.name)
         && !isNaN(ts) && ts >= evalTs && ts <= evalTs + windowMs;
     });
     if (bought) matchedEvals.push(ev);
@@ -591,7 +592,8 @@ function computeBehaviorMetrics(kpiTrades, evaluations) {
     if (isNaN(sellTs) || !nm) return false;
     return (evaluations || []).some(ev => {
       const evTs = new Date(ev.date).getTime();
-      return String(ev.stock?.name||'').trim() === nm && !isNaN(evTs) && evTs <= sellTs && evTs >= sellTs - windowMs;
+      return sameStock(s.row?.[3], nm, ev.stock?.ticker, ev.stock?.name)
+        && !isNaN(evTs) && evTs <= sellTs && evTs >= sellTs - windowMs;
     });
   }).length;
 
