@@ -27,7 +27,7 @@
  *   node scripts/parse-notifications.mjs <TOKEN>    # 토큰 직접 전달(launchd run.sh)
  */
 
-import { SHEET_ID, getToken, getRange, appendValues, updateCell, setValues, ensureSheet } from './lib/sheets-common.mjs';
+import { SHEET_ID, getToken, getRange, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from './lib/sheets-common.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 const ALARM_SHEET = '알람';
@@ -242,14 +242,17 @@ async function main() {
 
   // ── 체결내역 적재 ──────────────────────────────────
   const execExisting = await getRange(token, `${EXEC_SHEET}!A:H`);
+  // dedup 키: 날짜는 'yyyy-MM-dd'로만 비교한다. 셀 표시형식이 날짜전용이면 read-back 시
+  // 시각이 잘려(예: '2026-06-05 09:51:59'→'2026-06-05') 풀-날짜시각 키와 어긋나 매시간 중복 적재됐다.
+  const execKey = (date, type, name, qty) =>
+    `${String(date).slice(0, 10)}|${String(type).trim()}|${String(name).trim()}|${String(qty).trim().replace(/\.0*$/, '')}`;
   const existingKeys = new Set(
     execExisting.map(row => {
-      const date = normalizeDateTime(row[0]); const type = String(row[1] ?? '').trim();
-      const name = String(row[5] ?? '').trim(); const qty = String(row[7] ?? '').trim().replace(/\.0*$/, '');
-      return (!date || !name) ? null : `${date}|${type}|${name}|${qty}`;
+      const date = normalizeDateTime(row[0]).slice(0, 10); const name = String(row[5] ?? '').trim();
+      return (!date || !name) ? null : execKey(date, row[1], name, row[7]);
     }).filter(Boolean),
   );
-  const newExecs = execs.filter(e => !existingKeys.has(`${e.tradeDate}|${e.tradeType}|${e.stockName}|${e.quantity}`));
+  const newExecs = execs.filter(e => !existingKeys.has(execKey(e.tradeDate, e.tradeType, e.stockName, e.quantity)));
 
   // 포트폴리오 맵 (종목명 → [계좌, 자산군]); 중복 종목명 제외
   const portfolioMap = new Map(); const dupNames = new Set();
@@ -396,7 +399,7 @@ async function main() {
     // 금 알림 종목명 → 보유 금 종목 귀속(부분일치). 단가·수량 단위는 원/g·g.
     const h = goldHoldings.find(h => norm(g.stockName).includes(norm(h.name)) || norm(h.name).includes(norm(g.stockName)));
     if (!h) { console.log(`  ⚠ 금 보유종목 매칭 실패: ${g.stockName} — skip`); continue; }
-    const key = `${g.date}|${g.tradeType}|${h.name}|${String(g.qty).replace(/\.0*$/, '')}`;
+    const key = execKey(g.date, g.tradeType, h.name, g.qty);
     if (existingKeys.has(key)) continue;        // 체결내역 멱등 dedup
     existingKeys.add(key);
     goldExecRows.push([
@@ -478,7 +481,13 @@ async function main() {
   if (DRY_RUN) { console.log('\n(드라이런 — 쓰기 없음)'); return; }
 
   // 쓰기
-  if (execRowsToWrite.length) await appendValues(token, `${EXEC_SHEET}!A2`, execRowsToWrite);
+  if (execRowsToWrite.length) {
+    const resp = await appendValues(token, `${EXEC_SHEET}!A2`, execRowsToWrite);
+    // 새 체결행의 A열 배경을 흰색으로 리셋 — 위 '처리완료(초록)' 행 서식 상속으로
+    // 앱이 미처리 신규 체결을 처리완료로 오인·스킵하는 것을 방지.
+    const m = String(resp?.updates?.updatedRange ?? '').match(/!\D+(\d+):\D+(\d+)$/);
+    if (m) await clearColumnABackground(token, EXEC_SHEET, parseInt(m[1], 10), parseInt(m[2], 10));
+  }
   for (const u of divUpdates) {
     await updateCell(token, `${DIV_SHEET}!B${u.rowNum}`, u.amount);
     await updateCell(token, `${DIV_SHEET}!D${u.rowNum}`, u.keys);

@@ -201,6 +201,34 @@ async function listSheetTitles(token) {
   return ((await res.json()).sheets || []).map(s => s.properties.title);
 }
 
+// 시트 제목 → 숫자 sheetId (batchUpdate 서식 요청에 필요)
+export async function getSheetIdByTitle(token, title) {
+  const res = await fetch(`${API}?fields=sheets.properties(sheetId,title)`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`시트 ID 조회 실패: ${await res.text()}`);
+  const s = ((await res.json()).sheets || []).find(x => x.properties.title === title);
+  return s ? s.properties.sheetId : null;
+}
+
+// 지정 행 범위(1-based, 양끝 포함)의 A열 배경을 흰색으로 리셋.
+// append(INSERT_ROWS)는 위 행 서식을 상속한다 → 위가 '처리완료(초록)'면 새 체결행이
+// 초록으로 태어나 앱이 '처리완료'로 오인·스킵한다. 이를 방지해 항상 미처리(흰색)로 둔다.
+export async function clearColumnABackground(token, title, startRow1, endRow1) {
+  const sheetId = await getSheetIdByTitle(token, title);
+  if (sheetId == null) throw new Error(`시트 없음: ${title}`);
+  const res = await fetch(`${API}:batchUpdate`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requests: [{
+      repeatCell: {
+        range: { sheetId, startRowIndex: startRow1 - 1, endRowIndex: endRow1, startColumnIndex: 0, endColumnIndex: 1 },
+        cell: { userEnteredFormat: { backgroundColor: { red: 1, green: 1, blue: 1 } } },
+        fields: 'userEnteredFormat.backgroundColor',
+      },
+    }] }),
+  });
+  if (!res.ok) throw new Error(`배경 리셋 실패 (${title} A${startRow1}:A${endRow1}): ${await res.text()}`);
+}
+
 // 탭이 없으면 생성하고 헤더 적재. 반환: 새로 만들었으면 true
 export async function ensureSheet(token, title, header) {
   const titles = await listSheetTitles(token);
