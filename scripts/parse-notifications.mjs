@@ -46,6 +46,13 @@ const CASH_BASE_SEED = [
   ['연금저축', '', '', '수동', ''], ['IRP', '', '', '수동', ''],
 ];
 
+// ── 달러RP 자동관리 설정 (모델 X: USD 앵커+델타, 원화는 표시수식) ─
+// 설계: docs/superpowers/specs/2026-06-05-달러RP-앵커델타-design.md
+const DOLLAR_BASE_SHEET = '달러기준';
+const DOLLAR_BASE_HEADER = ['계좌', '기준USD', '기준일', '갱신시각'];
+const DOLLAR_TAB = '위탁';
+const DOLLAR_ROW_NAME = '외화 RP';   // 표시행: 파서가 D열(USD 잔액)만 씀, C·E·F·H는 수식
+
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
 const DRY_RUN = args.includes('--dry-run');
@@ -199,6 +206,30 @@ function parseCashAlarm(body, tsRaw) {
   return { tab, acctNo, balance, ts: normalizeDateTime(tsRaw) };
 }
 
+// ── 환전 파서 (NH투자증권 "환전내역 안내") ────────────
+// 외화매수 → 달러RP +USD(외화금액), 외화매도 → −USD. USD만 처리.
+// 환전일자엔 연도가 없어 알람 ts 연도를 차용(NH_BOND와 동형).
+const EXCH_DATE = /환전일자\s*:\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/;
+const EXCH_KIND = /환전구분\s*:\s*(외화매수|외화매도)/;
+const EXCH_CCY = /통화명\s*:\s*([A-Za-z]+)/;
+const EXCH_USD = /외화금액\s*:\s*USD\s*([\d,]+(?:\.\d+)?)/;
+
+function parseExchange(body, tsRaw) {
+  if (!(body.includes('환전내역') && body.includes('환전구분'))) return null;
+  const km = body.match(EXCH_KIND);
+  const um = body.match(EXCH_USD);
+  if (!km || !um) return null;
+  const cm = body.match(EXCH_CCY);
+  if (cm && cm[1].toUpperCase() !== 'USD') return null;   // USD 외 통화 skip
+  const usd = parseFloat(cleanNum(um[1], true));
+  if (!Number.isFinite(usd) || usd <= 0) return null;
+  const ts = normalizeDateTime(tsRaw);
+  const dm = body.match(EXCH_DATE);
+  const p = (n) => String(n).padStart(2, '0');
+  const date = dm ? `${ts.slice(0, 4)}-${p(dm[1])}-${p(dm[2])}` : ts.slice(0, 10);
+  return { kind: km[1], usd, date };
+}
+
 // ── 종목코드 해석 (포트폴리오 수식 → 네이버 자동완성) ──
 function extractStockCode(formula) {
   let m = String(formula).match(/["']([A-Za-z0-9]{6})["']/); if (m) return m[1];
@@ -237,7 +268,7 @@ async function main() {
   console.log(`📨 알람 ${alarmRows.length}행 스캔`);
 
   // 본문(D열) 파싱
-  const execs = [], divs = [], funds = [], golds = [], cashes = [];
+  const execs = [], divs = [], funds = [], golds = [], cashes = [], exchanges = [];
   for (const r of alarmRows) {
     const body = String(r[3] ?? '');   // D: 내용
     const ts = String(r[0] ?? '');     // A: 시간
@@ -246,9 +277,10 @@ async function main() {
     const d = parseDividend(body, ts); if (d) { divs.push(d); continue; }
     const f = parseFundBuy(body, ts); if (f) { funds.push(f); continue; }
     const g = parseGoldBuy(body, ts); if (g) { golds.push(g); continue; }
+    const x = parseExchange(body, ts); if (x) { exchanges.push(x); continue; }
     const c = parseCashAlarm(body, ts); if (c) cashes.push(c);
   }
-  console.log(`  파싱: 체결 ${execs.length}건 · 배당 ${divs.length}건 · 펀드적립 ${funds.length}건 · 금현물 ${golds.length}건 · 예수금알림 ${cashes.length}건`);
+  console.log(`  파싱: 체결 ${execs.length}건 · 배당 ${divs.length}건 · 펀드적립 ${funds.length}건 · 금현물 ${golds.length}건 · 환전 ${exchanges.length}건 · 예수금알림 ${cashes.length}건`);
 
   // ── 체결내역 적재 ──────────────────────────────────
   // 원본값(UNFORMATTED)으로 읽는다: 날짜=직렬수라 표시형식이 날짜전용이어도 시각이 보존된다.
@@ -493,6 +525,31 @@ async function main() {
   console.log(`  예수금: 갱신 대상 ${cashWrites.length}개` + (baseUpdates.length ? ` (NH 기준 자동갱신 ${baseUpdates.length})` : ''));
   cashWrites.forEach(w => console.log(`    ↻ ${w.tab} ${w.name}: ${w.detail}`));
 
+  // ── 달러RP (USD 앵커 + USD 델타 → 위탁!D{row}) ──────
+  // 환전(외화매수 +/외화매도 −) + 해외 체결(매수 −/매도 +). 기준 이후 strict 가산.
+  // 저장은 USD(불변), 원화 표시는 D×설정!B2 수식 → 환율 변동에 출렁이지 않음(멱등).
+  if (!DRY_RUN) await ensureSheet(token, DOLLAR_BASE_SHEET, DOLLAR_BASE_HEADER);
+  const dollarBaseRows = await getRange(token, `${DOLLAR_BASE_SHEET}!A2:D`).catch(() => []);
+  const dollarBase = dollarBaseRows.find(r => String(r[0] ?? '').trim() === DOLLAR_TAB);
+  let dollarWrite = null;
+  if (!dollarBase || String(dollarBase[1] ?? '').trim() === '') {
+    console.log(`  ⚠ 달러RP 기준 미입력: ${DOLLAR_TAB} — 달러기준 표에 기준USD·기준일 입력 필요, skip`);
+  } else {
+    const baseUSD = parseFloat(cleanNum(dollarBase[1], true));
+    const baseDate = String(dollarBase[2] ?? '').trim();
+    const usdFlows = [];
+    for (const x of exchanges) usdFlows.push({ date: x.date, amount: (x.kind === '외화매수' ? 1 : -1) * x.usd });
+    for (const e of execs) { if (e.currency !== 'USD') continue; usdFlows.push({ date: e.tradeDate.slice(0, 10), amount: (e.tradeType === '매수' ? -1 : 1) * e.quantity * e.price }); }
+    const usdDelta = usdFlows.filter(fl => fl.date > baseDate).reduce((s, fl) => s + fl.amount, 0);
+    const usdBal = Math.round((baseUSD + usdDelta) * 100) / 100;
+    const witRows = await getRange(token, `${DOLLAR_TAB}!A:B`).catch(() => []);
+    let dRow = null;
+    for (let i = 0; i < witRows.length; i++) { if (String(witRows[i]?.[1] ?? '').trim() === DOLLAR_ROW_NAME) { dRow = i + 1; break; } }
+    if (!dRow) console.log(`  ⚠ 달러RP 표시행 못 찾음: ${DOLLAR_TAB} (${DOLLAR_ROW_NAME}) — skip`);
+    else dollarWrite = { row: dRow, usd: usdBal, detail: `기준 ${baseUSD}(${baseDate || '?'}) ${usdDelta >= 0 ? '+' : '−'}${Math.abs(usdDelta).toFixed(2)} = ${usdBal} USD` };
+  }
+  if (dollarWrite) console.log(`  달러RP: ↻ ${DOLLAR_TAB} ${dollarWrite.detail}`);
+
   if (DRY_RUN) { console.log('\n(드라이런 — 쓰기 없음)'); return; }
 
   // 쓰기
@@ -520,6 +577,8 @@ async function main() {
   for (const u of baseUpdates) await setValues(token, u.range, u.values);
   // 현금은 투자금(E)=평가금액(H), 손익 0. F(현재가)·G(손익) 칸은 보존 위해 E·H만 개별 갱신.
   for (const w of cashWrites) { await updateCell(token, `${w.tab}!E${w.row}`, w.cash); await updateCell(token, `${w.tab}!H${w.row}`, w.cash); }
+  // 달러RP: D열(USD 잔액)만 씀. C·E·F·H 수식(원화 표시) 보존.
+  if (dollarWrite) await updateCell(token, `${DOLLAR_TAB}!D${dollarWrite.row}`, dollarWrite.usd);
   console.log(`\n✅ 완료 — 체결 +${execRowsToWrite.length}(금 ${goldExecRows.length}) · 배당 신규 +${divAppends.length}/갱신 ${divUpdates.length} · 펀드 ↻${fundWrites.length} · 예수금 ↻${cashWrites.length}`);
 }
 

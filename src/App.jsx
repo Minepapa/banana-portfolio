@@ -1383,6 +1383,8 @@ export default function App() {
   const [editIncludeSavings, setEditIncludeSavings] = useState(false);
   const [editingCash, setEditingCash] = useState(null); // 예수금(현금성) 수동 편집 중인 행
   const [editCashValue, setEditCashValue] = useState('');
+  const [editingDollar, setEditingDollar] = useState(null); // 달러RP(외화 RP) 수동 편집 중인 행
+  const [editDollarValue, setEditDollarValue] = useState(''); // USD 잔액
   const [editingAllTargets, setEditingAllTargets] = useState(false);
   const [allTargetInputs, setAllTargetInputs] = useState([]);
   const lpRef = useRef(null);
@@ -1663,6 +1665,7 @@ export default function App() {
 
   // 파서 findCashRow 로직과 동일하게 현금(예수금) 행을 판별
   const isCashRow = (h) => h.name === '예수금' || (acctKey === '연금저축' && String(h.name).includes('MMF'));
+  const isDollarRow = (h) => acctKey === '위탁' && h.name === '외화 RP';
 
   const startLP = (origIdx, h) => {
     lpRef.current = setTimeout(async () => {
@@ -1676,6 +1679,12 @@ export default function App() {
         }
         setEditingCash({ origIdx, sheetRow });
         setEditCashValue(String(Math.round(h.eval) || ''));
+        return;
+      }
+      if (isDollarRow(h)) {
+        // 달러RP: USD 잔액을 기준으로 리셋(달러기준 표). 표시행 D열만 갱신, 원화는 수식.
+        setEditingDollar({ origIdx, sheetRow });
+        setEditDollarValue(String(h.qty || ''));
         return;
       }
       let isManual = false;
@@ -1773,6 +1782,38 @@ export default function App() {
       return;
     }
     setEditingCash(null);
+  };
+
+  // 달러RP(외화 RP) 수동 편집 저장: 달러기준 표(USD)를 리셋해 파서 클로버 회피.
+  // 표시행은 D열(USD 잔액)만 갱신 — C·E·F·H 수식(원화 표시)은 보존.
+  const saveDollar = async () => {
+    if (!editingDollar) return;
+    const { sheetRow } = editingDollar;
+    const usd = parseFloat(editDollarValue);
+    if (!Number.isFinite(usd) || usd < 0) {
+      setBalanceSyncMsg('USD 잔액을 올바르게 입력해주세요');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+      return;
+    }
+    const todayKST = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    try {
+      const baseA = await sheets.readRange('달러기준!A2:A10');
+      const idx = baseA.findIndex(r => String(r?.[0] ?? '').trim() === '위탁');
+      if (idx < 0) {
+        await sheets.appendValues('달러기준!A2', [['위탁', usd, todayKST, todayKST]]);
+      } else {
+        await sheets.writeRange(`달러기준!B${2 + idx}:C${2 + idx}`, [usd, todayKST]);
+      }
+      await sheets.writeRange(`위탁!D${sheetRow}`, [usd]);
+      await sheets.fetch();
+      setBalanceSyncMsg('달러RP 갱신됨');
+      setTimeout(() => setBalanceSyncMsg(''), 3000);
+    } catch {
+      setBalanceSyncMsg('달러RP 저장 실패 — 다시 시도해주세요');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+      return;
+    }
+    setEditingDollar(null);
   };
 
   const addHoldingFromTrade = useCallback(async (acctKey, assetType, stockName, price, qty, currentPrice) => {
@@ -3276,6 +3317,7 @@ export default function App() {
                 const typeName = h.type || '';
                 const isEditing = !isTotalView && editingHolding?.origIdx === origIdx;
                 const isEditingCash = !isTotalView && editingCash?.origIdx === origIdx;
+                const isEditingDollar = !isTotalView && editingDollar?.origIdx === origIdx;
                 const weightPct = weightBase > 0 ? (h.eval / weightBase * 100).toFixed(1) : '0.0';
                 const lpHandlers = !isTotalView && sheets.auth === 'signed-in' && !showDeleteMode ? {
                   onMouseDown: () => startLP(origIdx, h),
@@ -3291,7 +3333,7 @@ export default function App() {
                     <div style={{
                       padding: isMobile ? "10px 16px" : "12px 16px",
                       display: "flex", alignItems: "center", gap: 8,
-                      background: isEditing || isEditingCash ? '#1A2035' : selectedToDelete.has(origIdx) ? '#1A1520' : 'transparent',
+                      background: isEditing || isEditingCash || isEditingDollar ? '#1A2035' : selectedToDelete.has(origIdx) ? '#1A1520' : 'transparent',
                       userSelect: 'none', WebkitUserSelect: 'none',
                     }} {...lpHandlers}>
                       {!isTotalView && showDeleteMode && (
@@ -3379,6 +3421,23 @@ export default function App() {
                         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                           <button onClick={() => setEditingCash(null)} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #2A2F3E', background: 'transparent', color: '#6B7280', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>취소</button>
                           <button onClick={saveCash} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#3B82F6', color: '#fff', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>저장</button>
+                        </div>
+                      </div>
+                    )}
+                    {isEditingDollar && (
+                      <div style={{ padding: '12px 16px', background: '#141927', borderTop: '1px solid #2A2F3E' }}>
+                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 10 }}>달러RP 수정</div>
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>달러RP 잔액 (USD)</div>
+                          <input type="number" inputMode="decimal" step="0.01" value={editDollarValue} onChange={e => setEditDollarValue(e.target.value)}
+                            style={{ background: '#0D1520', border: '1px solid #3B82F6', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
+                        </div>
+                        <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 10, lineHeight: 1.5 }}>
+                          USD 잔액을 오늘 기준으로 리셋합니다. 이후 환전·해외 매수·매도가 자동 가감됩니다. 원화 표시는 환율 수식으로 자동 환산됩니다.
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                          <button onClick={() => setEditingDollar(null)} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #2A2F3E', background: 'transparent', color: '#6B7280', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>취소</button>
+                          <button onClick={saveDollar} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#3B82F6', color: '#fff', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>저장</button>
                         </div>
                       </div>
                     )}
