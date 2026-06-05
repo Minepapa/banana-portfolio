@@ -27,7 +27,7 @@
  *   node scripts/parse-notifications.mjs <TOKEN>    # 토큰 직접 전달(launchd run.sh)
  */
 
-import { SHEET_ID, getToken, getRange, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from './lib/sheets-common.mjs';
+import { SHEET_ID, getToken, getRange, getRangeRaw, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from './lib/sheets-common.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 const ALARM_SHEET = '알람';
@@ -58,6 +58,16 @@ function normalizeDateTime(raw) {
   if (!m) return String(raw ?? '').trim();
   const p = (n) => String(n).padStart(2, '0');
   return `${m[1]}-${p(m[2])}-${p(m[3])} ${p(m[4])}:${p(m[5])}:${p(m[6])}`;
+}
+
+// Sheets 직렬수(1899-12-30 기준, 분수=하루 비율) → 'yyyy-MM-dd HH:mm:ss' 벽시계 문자열.
+// 날짜셀 표시형식이 '날짜전용'이어도 직렬값엔 체결 시각이 남아있어 이를 복원한다.
+// 이 시각이 dedup 키에 들어가야 같은 날·같은 종목·같은 수량의 서로 다른 두 체결을 구분한다.
+function serialToDateTime(serial) {
+  const ms = Math.round(serial * 86400) * 1000;        // 초 단위 반올림(부동소수 오차 흡수)
+  const d = new Date(Date.UTC(1899, 11, 30) + ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
 async function getFormulas(token, range) {
@@ -241,15 +251,20 @@ async function main() {
   console.log(`  파싱: 체결 ${execs.length}건 · 배당 ${divs.length}건 · 펀드적립 ${funds.length}건 · 금현물 ${golds.length}건 · 예수금알림 ${cashes.length}건`);
 
   // ── 체결내역 적재 ──────────────────────────────────
-  const execExisting = await getRange(token, `${EXEC_SHEET}!A:H`);
-  // dedup 키: 날짜는 'yyyy-MM-dd'로만 비교한다. 셀 표시형식이 날짜전용이면 read-back 시
-  // 시각이 잘려(예: '2026-06-05 09:51:59'→'2026-06-05') 풀-날짜시각 키와 어긋나 매시간 중복 적재됐다.
-  const execKey = (date, type, name, qty) =>
-    `${String(date).slice(0, 10)}|${String(type).trim()}|${String(name).trim()}|${String(qty).trim().replace(/\.0*$/, '')}`;
+  // 원본값(UNFORMATTED)으로 읽는다: 날짜=직렬수라 표시형식이 날짜전용이어도 시각이 보존된다.
+  // (과거: FORMATTED로 읽어 시각이 잘려 풀-날짜시각 키와 어긋나 매시간 중복 적재되던 버그)
+  const execExisting = await getRangeRaw(token, `${EXEC_SHEET}!A:H`);
+  // dedup 키 = 체결일시(시각 포함) | 구분 | 종목 | 수량.
+  // 시각까지 비교하므로 같은 날·같은 종목·같은 수량이라도 체결 시각이 다르면 별개 거래로 본다.
+  // 자정(00:00:00)은 시각정보 없는 날짜전용 기록(금현물 등)이므로 날짜로만 비교.
+  const canonDT = (s) => { const t = String(s ?? '').trim(); return t.endsWith(' 00:00:00') ? t.slice(0, 10) : t; };
+  const cellDT = (v) => (typeof v === 'number' ? serialToDateTime(v) : normalizeDateTime(v));
+  const execKey = (dt, type, name, qty) =>
+    `${canonDT(dt)}|${String(type ?? '').trim()}|${String(name ?? '').trim()}|${String(qty ?? '').trim().replace(/\.0*$/, '')}`;
   const existingKeys = new Set(
     execExisting.map(row => {
-      const date = normalizeDateTime(row[0]).slice(0, 10); const name = String(row[5] ?? '').trim();
-      return (!date || !name) ? null : execKey(date, row[1], name, row[7]);
+      const dt = cellDT(row[0]); const name = String(row[5] ?? '').trim();
+      return (!dt || !name) ? null : execKey(dt, row[1], name, row[7]);
     }).filter(Boolean),
   );
   const newExecs = execs.filter(e => !existingKeys.has(execKey(e.tradeDate, e.tradeType, e.stockName, e.quantity)));

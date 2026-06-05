@@ -149,6 +149,16 @@ export async function getRange(token, range) {
   return (await res.json()).values || [];
 }
 
+// 표시형식과 무관하게 원본값을 읽는다(UNFORMATTED_VALUE). 날짜=직렬수, 숫자=수.
+// 날짜 셀이 '날짜전용' 서식이어도 직렬값엔 시각이 남아있어 시각 복원에 쓴다.
+export async function getRangeRaw(token, range) {
+  const res = await fetch(`${API}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`원본 범위 조회 실패 (${range}): ${await res.text()}`);
+  return (await res.json()).values || [];
+}
+
 export async function appendValues(token, range, values) {
   const res = await fetch(
     `${API}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
