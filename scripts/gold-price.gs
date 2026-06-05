@@ -5,7 +5,7 @@
  *   함수: updateAllPrices | 시간 기반 | 1시간마다
  *
  * [갱신 항목]
- *   위탁!F6      ← 국내 금 시세 (네이버 finance)
+ *   위탁!F7      ← 국내 금 시세 (네이버 finance)
  *   연금저축!F15 ← VIP한국형가치투자 기준가 (vipasset.co.kr)
  */
 
@@ -118,8 +118,8 @@ function writeCell(sheetName, cell, value) {
 // ── 개별 업데이트 ─────────────────────────────────────────────────────────────
 function updateGoldPrice() {
   const price = fetchGoldPrice();
-  writeCell('위탁', 'F6', price);
-  Logger.log('✅ 금 ' + price.toLocaleString() + '원/g → 위탁!F6');
+  writeCell('위탁', 'F7', price);
+  Logger.log('✅ 금 ' + price.toLocaleString() + '원/g → 위탁!F7');
 }
 
 function updateVipFundPrice() {
