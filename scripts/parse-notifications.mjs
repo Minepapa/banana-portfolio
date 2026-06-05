@@ -500,8 +500,16 @@ async function main() {
     const resp = await appendValues(token, `${EXEC_SHEET}!A2`, execRowsToWrite);
     // 새 체결행의 A열 배경을 흰색으로 리셋 — 위 '처리완료(초록)' 행 서식 상속으로
     // 앱이 미처리 신규 체결을 처리완료로 오인·스킵하는 것을 방지.
-    const m = String(resp?.updates?.updatedRange ?? '').match(/!\D+(\d+):\D+(\d+)$/);
-    if (m) await clearColumnABackground(token, EXEC_SHEET, parseInt(m[1], 10), parseInt(m[2], 10));
+    // 범위는 append 응답 updatedRange에서 행번호 추출(권위 소스). 파싱 실패 시 기존행수로 역산(폴백)
+    // — 조용히 스킵하면 배경상속 버그가 재발하므로 반드시 어떤 범위로든 리셋한다.
+    const cells = String(resp?.updates?.updatedRange ?? '').split('!').pop() || '';
+    const rowNums = (cells.match(/\d+/g) || []).map(Number);
+    let startRow = rowNums[0], endRow = rowNums[rowNums.length - 1] ?? rowNums[0];
+    if (!startRow) {
+      startRow = execExisting.length + 1; endRow = startRow + execRowsToWrite.length - 1;
+      console.log(`  ⚠ updatedRange 파싱 실패('${cells}') — 기존행수 기준 폴백 A${startRow}:A${endRow}`);
+    }
+    await clearColumnABackground(token, EXEC_SHEET, startRow, endRow);
   }
   for (const u of divUpdates) {
     await updateCell(token, `${DIV_SHEET}!B${u.rowNum}`, u.amount);
