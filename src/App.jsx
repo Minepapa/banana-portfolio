@@ -3738,6 +3738,13 @@ export default function App() {
           const logicReds = (riskMonitor || []).filter(s => s.type === 'B' && /🔴|🟡/.test(s.signal)).slice(0, 6);
           const alerts = findThesisAlerts(positionJournal, riskMonitor); // 팔 것 후보
           const lessons = (positionJournal || []).filter(p => p.status === '청산' && p.lesson).slice(0, 6);
+          const rebalAlerts = Object.entries(accounts).flatMap(([, a]) =>
+            (a.assets || []).map(asset => {
+              const curr = asset.ratio > 0 ? asset.ratio : (asset.sheetCurrent ?? 0);
+              const diff = parseFloat((curr - asset.target).toFixed(1));
+              return { acct: a.label, name: asset.name, diff, color: a.color };
+            }).filter(x => Math.abs(x.diff) >= 5)
+          );
 
           // 옮길 곳: 최신 리포트 처방 재사용
           let action = '', reason = '', rptDate = '';
@@ -3818,6 +3825,22 @@ export default function App() {
                     {rptDate && <div style={{ fontSize: 9, color: '#8A9AB5', marginTop: 6 }}>{rptDate} 리포트</div>}
                   </div>
                 ) : <div style={{ fontSize: 11, color: '#8A9AB5' }}>최근 리포트 처방 없음 — 리포트 탭에서 주간 리포트를 생성하세요</div>}
+                {rebalAlerts.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 9, letterSpacing: 1, color: '#8A9AB5', marginBottom: 6 }}>리밸런싱 갭 (±5%p 초과)</div>
+                    {rebalAlerts.map((a, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', borderRadius: 5, marginBottom: 3, background: '#12141C', borderLeft: `3px solid ${a.diff > 0 ? PROFIT_POS : PROFIT_NEG}` }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <div style={{ width: 6, height: 6, borderRadius: '50%', background: a.color, flexShrink: 0 }} />
+                          <span style={{ fontSize: 11, color: '#E8EAF0' }}>{a.name}</span>
+                          <span style={{ fontSize: 9, color: a.color }}>{a.acct}</span>
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: a.diff > 0 ? PROFIT_POS : PROFIT_NEG }}>{a.diff > 0 ? '+' : ''}{a.diff}%p</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {rebalAlerts.length === 0 && <div style={{ fontSize: 10, color: '#4ADE80', marginTop: 8 }}>✅ 모든 자산군 목표 비중 이내</div>}
                 <button onClick={() => setTab('rebalance')} style={{ marginTop: 8, padding: '6px 12px', minHeight: 32, borderRadius: 6, border: '1px solid #2E3344', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: 10, fontFamily: baseFont }}>자산분배 갭 보기 ›</button>
               </div>
 
