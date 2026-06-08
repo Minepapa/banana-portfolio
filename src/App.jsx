@@ -1072,6 +1072,7 @@ function useGoogleSheets(onData) {
           riskMonitor: parsed.riskMonitor,
           baselines: parsed.baselines,
           positionJournal: parsed.positionJournal,
+          usdRate: parsed.usdRate,
         });
       }
       const now = new Date();
@@ -2286,14 +2287,14 @@ export default function App() {
         <div className="tab-bar" role="tablist" aria-label="화면 전환" style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {[
             { key: "dashboard", label: "홈" },
+            { key: "report",    label: "리포트" },
             { key: "리스크",    label: "리스크" },
             { key: "평가",      label: "매수평가" },
             { key: "노트",      label: "매도검토" },
             { key: "거래",      label: "거래결정" },
-            { key: "저널",      label: "포지션저널" },
+            { key: "저널",      label: "포지션" },
             { key: "holdings",  label: "보유종목" },
             { key: "rebalance", label: "자산분배" },
-            { key: "report",    label: "리포트" },
             { key: "체결내역",  label: "체결" },
             { key: "dividend",  label: "배당금" },
             { key: "profit",    label: "수익금" },
@@ -3490,7 +3491,7 @@ export default function App() {
                           {h.name}
                         </div>
                         <div style={{ fontSize: 10, color: "#8A9AB5", marginTop: 2 }}>
-                          {h.qty}주 · {h.type === '해외주식' && usdRate > 0 ? `$${(h.price / usdRate).toFixed(2)}` : `₩${fmt(h.price)}`}
+                          {h.qty}주 · {String(h.type ?? '').includes('해외') && usdRate > 0 ? `$${(h.price / usdRate).toFixed(2)}` : `₩${fmt(h.price)}`}
                         </div>
                       </div>
                       {/* 비중% */}
