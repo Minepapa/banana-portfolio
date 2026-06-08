@@ -3211,7 +3211,7 @@ export default function App() {
                 <div style={{ width: 60, textAlign: 'center', fontSize: 10, color: '#8A9AB5' }}>차이</div>
               </div>
               {acct.assets.map((a) => {
-                const curr = a.sheetCurrent ?? a.ratio;
+                const curr = a.ratio > 0 ? a.ratio : (a.sheetCurrent ?? 0);
                 const diff = parseFloat((curr - a.target).toFixed(1));
                 const highlight = Math.abs(diff) >= 5;
                 return (
@@ -3243,7 +3243,7 @@ export default function App() {
               <div style={{ fontSize: 10, letterSpacing: 3, color: "#8A9AB5", marginBottom: 12 }}>리밸런싱 필요</div>
               {acct.assets.map((a) => {
                 const amt = a.rebalAmt ?? 0;
-                const curr = a.sheetCurrent ?? a.ratio;
+                const curr = a.ratio > 0 ? a.ratio : (a.sheetCurrent ?? 0);
                 const diff = parseFloat((curr - a.target).toFixed(1));
                 const highlight = Math.abs(diff) >= 5;
                 return (
