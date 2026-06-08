@@ -965,7 +965,8 @@ function parseSheetData(valueRanges) {
     const total_invest = holdings.reduce((s, h) => s + h.invest, 0);
     const total_eval = holdings.reduce((s, h) => s + h.eval, 0);
     const isCash = (h) => h.name === '예수금' || (key === '연금저축' && String(h.name).includes('MMF'));
-    const asset_eval = holdings.filter(h => !isCash(h)).reduce((s, h) => s + h.eval, 0);
+    const nonCashHoldings = holdings.filter(h => !isCash(h));
+    const asset_eval = nonCashHoldings.reduce((s, h) => s + h.eval, 0);
 
     result[key] = {
       ...DEFAULT_ACCOUNTS[key],
@@ -973,7 +974,7 @@ function parseSheetData(valueRanges) {
       total_eval,
       profit: total_eval - total_invest,
       holdings,
-      assets: computeAssets(holdings, asset_eval || total_eval, DEFAULT_ACCOUNTS[key].assets),
+      assets: computeAssets(nonCashHoldings, asset_eval || total_eval, DEFAULT_ACCOUNTS[key].assets),
     };
   });
 

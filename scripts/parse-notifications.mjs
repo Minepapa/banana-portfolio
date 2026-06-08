@@ -509,10 +509,12 @@ async function main() {
     let base = null, baseDate = '';
     if (AUTO_CASH_TABS.has(tab)) {
       const anchor = nhLatest.get(tab);
-      if (anchor) {
+      const cfgDate = cfg ? String(cfg.date ?? '').trim() : '';
+      if (anchor && anchor.ts.slice(0, 10) >= cfgDate) {
+        // 앵커가 기존 기준일 이상일 때만 자동 갱신 (수기 입력이 더 최신이면 존중)
         base = anchor.balance; baseDate = anchor.ts.slice(0, 10);
         if (cfg) baseUpdates.push({ range: `${CASH_BASE_SHEET}!B${cfg.rowNum}:E${cfg.rowNum}`, values: [[base, baseDate, '자동', nowStr]] });
-      } else if (cfg && String(cfg.base).trim() !== '') { base = parseInt(cleanNum(cfg.base), 10); baseDate = cfg.date; }  // 이번 회차 알림 없음 → 기존 기준 유지
+      } else if (cfg && String(cfg.base).trim() !== '') { base = parseInt(cleanNum(cfg.base), 10); baseDate = cfgDate; }  // 이번 회차 알림 없음 또는 수기 최신 → 기존 기준 유지
     } else if (cfg && String(cfg.base).trim() !== '') { base = parseInt(cleanNum(cfg.base), 10); baseDate = cfg.date; }
     if (!Number.isFinite(base)) { if (!AUTO_CASH_TABS.has(tab)) console.log(`  ⚠ 예수금 기준 미입력: ${tab} — 예수금기준 표에 기준액·기준일 입력 필요, skip`); continue; }
 
