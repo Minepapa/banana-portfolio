@@ -2002,6 +2002,18 @@ export default function App() {
             continue; // 완료 마킹 스킵
           }
 
+          // 예수금 반영 — ISA·위탁 국내주식만 (해외주식은 외화RP 별도 처리)
+          if ((isBuy || isSell) && !assetType.includes('해외') && (acctKey === 'ISA' || acctKey === '위탁')) {
+            const cashRowIdx = holdingRows.findIndex(hr => String(hr[1] ?? '').trim() === '예수금');
+            if (cashRowIdx >= 0) {
+              const cashRowNum = 2 + cashRowIdx;
+              const currentCash = parseNum(holdingRows[cashRowIdx][2]);
+              const tradeAmt = Math.round(price * qty);
+              const newCash = isBuy ? Math.max(0, currentCash - tradeAmt) : currentCash + tradeAmt;
+              await sheets.writeRange(`${acctKey}!C${cashRowNum}`, [newCash]);
+            }
+          }
+
           if (cheolSheetId !== null) {
             await sheets.markTradeProcessed(cheolSheetId, i + 1); // row2 → 0-based index 1
           }
