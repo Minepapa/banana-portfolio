@@ -1979,9 +1979,13 @@ export default function App() {
           if (isBuy) {
             if (matchRow) {
               const newQty = matchRow.qty + qty;
-              const newAvgPrice = newQty > 0
-                ? Math.round((matchRow.price * matchRow.qty + price * qty) / newQty)
+              const isOverseas = assetType.includes('해외');
+              const rawAvg = newQty > 0
+                ? (matchRow.price * matchRow.qty + price * qty) / newQty
                 : price;
+              const newAvgPrice = isOverseas
+                ? Math.round(rawAvg * 100) / 100   // USD: 소수점 2자리
+                : Math.round(rawAvg);               // KRW: 정수
               await sheets.writeRange(`${acctKey}!C${matchRow.row}:D${matchRow.row}`, [newAvgPrice, newQty]);
             } else {
               await addHoldingFromTrade(acctKey, assetType, stockName, price, qty, currentPrice);
