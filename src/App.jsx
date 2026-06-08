@@ -206,6 +206,7 @@ const SHEET_RANGES = {
   리스크모니터: '리스크모니터!A2:H',   // 14  AI 리스크 신호 (날짜,유형,대상,신호,요약,상세,근거,기준선참조)
   리스크기준선: '리스크기준선!A2:J',   // 15  펀더멘털 기준선 (종목,티커,시장,기준일,매총이,영익,ROE,부채,EPS,비고)
   포지션저널:   '포지션저널!A2:P',     // 16  거래 생애주기 전제 (종목,티커,시장,계좌,유형,전제,목표,이탈조건,예상보유,진입일,상태,청산일,청산결과,교훈,확인여부,갱신시각)
+  환율:         '설정!B2',             // 17  USD/KRW 환율 (GOOGLEFINANCE 수식)
 };
 
 const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
@@ -1036,8 +1037,9 @@ function parseSheetData(valueRanges) {
   const riskMonitor = parseRiskMonitor(valueRanges[14]);
   const baselines = parseBaselines(valueRanges[15]);
   const positionJournal = parsePositionJournal(valueRanges[16]);
+  const usdRate = parseNum(valueRanges[17]?.values?.[0]?.[0]);
 
-  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines, positionJournal } : null;
+  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines, positionJournal, usdRate } : null;
 }
 
 // ── useGoogleSheets 훅 ────────────────────────────────────────────────────────
@@ -1526,8 +1528,9 @@ export default function App() {
   const [lessonDraft, setLessonDraft] = useState({}); // rowIndex → 교훈 입력값 (반성 카드)
   const [exitDraft, setExitDraft] = useState({}); // rowIndex → 이탈조건 편집값
   const [exitEditing, setExitEditing] = useState(new Set()); // 이탈조건 편집 중인 rowIndex
+  const [usdRate, setUsdRate] = useState(0); // USD/KRW 환율
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj }) => {
+  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj, usdRate: ur }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
     setDividendData(d || []);
@@ -1540,6 +1543,7 @@ export default function App() {
     if (rm) setRiskMonitor(rm);
     if (bl) setBaselines(bl);
     if (pj) setPositionJournal(pj);
+    if (ur > 0) setUsdRate(ur);
   }, []);
 
   const sheets = useGoogleSheets(onData);
@@ -2577,7 +2581,6 @@ export default function App() {
 
           return (
             <div>
-              <div style={{ textAlign: 'right', marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
               {/* 행동 추적 — 최상단 */}
               {(() => {
                 const bm = computeBehaviorMetrics(kpiTrades, evaluations);
@@ -2736,10 +2739,7 @@ export default function App() {
               {/* 헤더 */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>포트폴리오 리포트</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button>
-                  <div style={{ fontSize: 10, color: '#8A9AB5' }}>{dateStr} 기준</div>
-                </div>
+                <div style={{ fontSize: 10, color: '#8A9AB5' }}>{dateStr} 기준</div>
               </div>
 
               {/* 전제 점검 경보 — 보유 포지션의 이탈조건이 risk 신호와 충돌하면 최상단에 노출 */}
@@ -3002,7 +3002,6 @@ export default function App() {
             <div style={{ textAlign: 'left' }}>
               {/* 헤더 */}
               <SectionTitle color="#EF4444" size={15} sub={`최근 점검 ${lastUpdated}`}>리스크 모니터</SectionTitle>
-              <div style={{ textAlign: 'right', marginTop: -8, marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
 
               {riskMonitor.length === 0 ? (
                 <div style={{ background: '#1A1D26', borderRadius: 12, padding: 24, textAlign: 'center' }}>
@@ -3127,7 +3126,6 @@ export default function App() {
               ))}
             </div>
 
-            <div style={{ textAlign: 'right', marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
 
             {/* 자산군 구성 파이 (최상단) */}
             {acct.assets.some(a => a.eval > 0) && (
@@ -3292,7 +3290,6 @@ export default function App() {
 
           return (
           <div>
-            <div style={{ textAlign: 'right', marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
             {/* 계좌 선택 (4개) */}
             <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
               {Object.entries(accounts).map(([k, a]) => (
@@ -3493,7 +3490,7 @@ export default function App() {
                           {h.name}
                         </div>
                         <div style={{ fontSize: 10, color: "#8A9AB5", marginTop: 2 }}>
-                          {h.qty}주 · ₩{fmt(h.price)}
+                          {h.qty}주 · {h.type === '해외주식' && usdRate > 0 ? `$${(h.price / usdRate).toFixed(2)}` : `₩${fmt(h.price)}`}
                         </div>
                       </div>
                       {/* 비중% */}
@@ -3602,7 +3599,6 @@ export default function App() {
 
           return (
             <div>
-              <div style={{ textAlign: 'right', marginBottom: 4 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
               <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
                 {divYears.map(y => (
                   <button key={y} onClick={() => { setDivYear(y); setSelectedDivKey(null); }} style={{
@@ -3730,7 +3726,6 @@ export default function App() {
 
           return (
             <div>
-              <div style={{ textAlign: 'right', marginBottom: 4 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
               <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
                 {profitYears.map(y => (
                   <button key={y} onClick={() => { setProfitYear(y); setSelectedProfitKey(null); }} style={{
@@ -3860,10 +3855,7 @@ export default function App() {
 
           return (
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5' }}>거래결정 — 팔기 전에 4단계</div>
-                <button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button>
-              </div>
+              <SectionTitle color="#F4845F" mb={14} sub="팔기 전에 4단계 점검">거래결정</SectionTitle>
 
               {/* 1. 지금 시장 */}
               <div style={cardStyle}>
@@ -4110,10 +4102,7 @@ export default function App() {
 
           return (
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5' }}>포지션저널 — 거래 생애주기 전제</div>
-                <button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button>
-              </div>
+              <SectionTitle color="#52C8D4" mb={14} sub="거래 생애주기 전제 관리">포지션저널</SectionTitle>
               {positionJournal.length === 0 ? (
                 <div style={{ textAlign: 'center', color: '#8A9AB5', fontSize: 12, padding: '40px 0' }}>
                   {sheets.auth === 'signed-in' ? '포지션저널이 비어있습니다' : '로그인하면 전제가 표시됩니다'}
@@ -4152,7 +4141,6 @@ export default function App() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5' }}>체결내역 자동 동기화</div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button>
                 {tradeSyncMsg && (
                   <span style={{ fontSize: 10, color: tradeSyncMsg.includes('오류') ? '#F87171' : '#4ADE80' }}>
                     {tradeSyncMsg}
@@ -4324,28 +4312,26 @@ export default function App() {
           return (
           <div style={{ textAlign: 'left' }}>
             {/* 헤더 */}
-            <SectionTitle color="#F5A623" mb={12}>AI 능동 종목 평가</SectionTitle>
-            <div style={{ textAlign: 'right', marginTop: -8, marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#E8EAF0' }}>AI 능동 종목 평가</div>
+                <div style={{ width: 26, height: 3, borderRadius: 2, background: '#F5A623', marginTop: 6 }} />
+              </div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <button onClick={() => setEvalQueueOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
                   padding: '5px 12px', borderRadius: 6, border: '1px solid #F5A623',
                   background: '#3D2E14', color: '#F5A623',
                   cursor: sheets.auth !== 'signed-in' ? 'not-allowed' : 'pointer',
                   opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
                   fontSize: 10, fontFamily: baseFont, fontWeight: 600,
-                }}>
-                  평가 의뢰
-                </button>
+                }}>평가 의뢰</button>
                 <button onClick={() => setEvalIngestOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
                   padding: '5px 10px', borderRadius: 6, border: '1px solid #2A2F3E',
                   background: 'transparent', color: '#8A9AB5',
                   cursor: sheets.auth !== 'signed-in' ? 'not-allowed' : 'pointer',
                   opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
                   fontSize: 10, fontFamily: baseFont,
-                }} title="수동 평가 JSON 적재">
-                  💾
-                </button>
+                }} title="수동 평가 JSON 적재">💾</button>
               </div>
             </div>
 
@@ -4595,7 +4581,6 @@ export default function App() {
             <div style={{ textAlign: 'left' }}>
               {/* 헤더 */}
               <SectionTitle color="#F87171" sub={`평가 완료 ${stocks.length}종목 · 보유 중`}>매도검토</SectionTitle>
-              <div style={{ textAlign: 'right', marginTop: -8, marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
 
               {/* 종목 선택 칩 */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
