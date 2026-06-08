@@ -2758,13 +2758,13 @@ export default function App() {
                   <button onClick={() => setTab('저널')} style={{ width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: baseFont,
                     background: `linear-gradient(135deg,${c}1A,#1A1D26)`, border: `1px solid ${c}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: c, letterSpacing: 1 }}>⚠ 전제 점검 {thesisAlerts.length}건</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: c, letterSpacing: 1 }}>⚠ 투자논리 훼손 {thesisAlerts.length}건</div>
                       <div style={{ fontSize: 9, color: '#8A9AB5' }}>포지션저널 ›</div>
                     </div>
                     <div style={{ fontSize: 12, color: '#F5F7FF', lineHeight: 1.5 }}>
                       {thesisAlerts.slice(0, 4).map(a => a.position.name).join(' · ')}{thesisAlerts.length > 4 ? ` 외 ${thesisAlerts.length - 4}` : ''}
                     </div>
-                    <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 4 }}>보유 전제가 흔들리는 신호 — 이탈조건과 대조해 매도 검토하세요</div>
+                    <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 4 }}>보유 투자논리가 흔들리는 신호 — 이탈조건과 대조해 매도 검토하세요</div>
                   </button>
                 );
               })()}
@@ -4000,7 +4000,7 @@ export default function App() {
                     <span style={{ fontSize: 13, fontWeight: 700, color: '#F5F7FF' }}>{p.name}</span>
                     {kindBadge(p.kind)}
                     {confirmBadge(p.confirm)}
-                    {sig && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: '#EF444422', color: '#EF4444' }}>⚠ 전제 점검</span>}
+                    {sig && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: '#EF444422', color: '#EF4444' }}>⚠ 투자논리 훼손</span>}
                     <span style={{ marginLeft: 'auto', fontSize: 10, color: '#8A9AB5' }}>{p.account}</span>
                   </div>
                   {!open && sig && (
@@ -4014,12 +4014,12 @@ export default function App() {
                   <div style={{ padding: '0 14px 14px' }}>
                     {sig && (
                       <div style={{ background: sigColor + '14', border: `1px solid ${sigColor}44`, borderRadius: 8, padding: 10, marginBottom: 10 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: sigColor, marginBottom: 3 }}>⚠ 전제 점검 — 이탈조건 대조 필요 · {sig.type}신호 {sig.date}</div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: sigColor, marginBottom: 3 }}>⚠ 투자논리 훼손 — 이탈조건 대조 필요 · {sig.type}신호 {sig.date}</div>
                         <div style={{ fontSize: 12, color: '#F5F7FF', lineHeight: 1.5 }}>{sig.signal} {sig.summary}</div>
                         {sig.detail && <div style={{ fontSize: 11, color: '#C9D1E5', lineHeight: 1.5, marginTop: 4 }}>{sig.detail}</div>}
                       </div>
                     )}
-                    {p.thesis && (<><div style={{ fontSize: 9, letterSpacing: 1, color: '#60A5FA', marginBottom: 3 }}>전제</div>
+                    {p.thesis && (<><div style={{ fontSize: 9, letterSpacing: 1, color: '#60A5FA', marginBottom: 3 }}>투자논리</div>
                       <div style={{ fontSize: 12, color: '#E5E9F5', lineHeight: 1.5, marginBottom: 10 }}>{p.thesis}</div></>)}
                     <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 10 }}>
                       {p.target && <div><div style={{ fontSize: 9, color: '#8A9AB5' }}>목표</div><div style={{ fontSize: 11, color: '#F5F7FF' }}>{p.target}</div></div>}
@@ -4068,7 +4068,7 @@ export default function App() {
                     {p.status === '청산' && (
                       <div style={{ background: '#12141C', borderRadius: 8, padding: 12, marginBottom: 10 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                          <span style={{ fontSize: 9, letterSpacing: 1, color: '#A8D672', fontWeight: 700 }}>반성 — 전제는 맞았나?</span>
+                          <span style={{ fontSize: 9, letterSpacing: 1, color: '#A8D672', fontWeight: 700 }}>반성 — 투자논리는 맞았나?</span>
                           {p.exitDate && <span style={{ fontSize: 9, color: '#8A9AB5' }}>청산 {p.exitDate}</span>}
                           {!p.lesson && <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: '#F5C84222', color: '#F5C842' }}>반성 필요</span>}
                         </div>
@@ -4097,7 +4097,7 @@ export default function App() {
                     )}
                     {p.confirm !== '확인' && p.thesis && p.status !== '청산' && (
                       <button onClick={() => confirmThesis(p)} style={{ padding: '8px 14px', minHeight: 36, borderRadius: 6, border: '1px solid #4ADE8055', background: '#13301F', color: '#4ADE80', cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
-                        이 전제 확인 (동의)
+                        투자논리 확인 (동의)
                       </button>
                     )}
                   </div>
@@ -4108,10 +4108,10 @@ export default function App() {
 
           return (
             <div>
-              <SectionTitle color="#52C8D4" mb={14} sub="거래 생애주기 전제 관리">포지션저널</SectionTitle>
+              <SectionTitle color="#52C8D4" mb={14} sub="거래 생애주기 투자논리 관리">포지션저널</SectionTitle>
               {positionJournal.length === 0 ? (
                 <div style={{ textAlign: 'center', color: '#8A9AB5', fontSize: 12, padding: '40px 0' }}>
-                  {sheets.auth === 'signed-in' ? '포지션저널이 비어있습니다' : '로그인하면 전제가 표시됩니다'}
+                  {sheets.auth === 'signed-in' ? '포지션저널이 비어있습니다' : '로그인하면 투자논리가 표시됩니다'}
                 </div>
               ) : (
                 <>
@@ -4120,7 +4120,7 @@ export default function App() {
                     <span style={{ color: '#F4845F' }}>확신 {conviction.length}</span>
                     <span style={{ color: '#52C8D4' }}>배분 {alloc.length}</span>
                     {pending > 0 && <span style={{ color: '#F5C842' }}>확인대기 {pending}</span>}
-                    {alertByRow.size > 0 && <span style={{ color: '#EF4444', fontWeight: 700 }}>⚠ 전제 점검 {alertByRow.size}</span>}
+                    {alertByRow.size > 0 && <span style={{ color: '#EF4444', fontWeight: 700 }}>⚠ 투자논리 훼손 {alertByRow.size}</span>}
                     {closed.filter(p => !p.lesson).length > 0 && <span style={{ color: '#F5C842', fontWeight: 700 }}>반성 필요 {closed.filter(p => !p.lesson).length}</span>}
                   </div>
                   {conviction.length > 0 && (<>
