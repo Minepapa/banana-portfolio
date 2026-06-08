@@ -2446,6 +2446,61 @@ export default function App() {
               })}
             </div>
 
+            {/* 포트폴리오 총괄 도넛 */}
+            {(() => {
+              const _te = Object.values(accounts).reduce((s, a) => s + (a.total_eval || 0), 0);
+              const _ti = Object.values(accounts).reduce((s, a) => s + (a.total_invest || 0), 0);
+              const _tp = _te - _ti;
+              const _tr = _ti > 0 ? (_tp / _ti * 100) : 0;
+              const donutData = Object.entries(accounts).filter(([, a]) => a.total_eval > 0).map(([, a]) => ({ label: a.label, value: a.total_eval, color: a.color }));
+              if (!donutData.length) return null;
+              const r = 38, circ = 2 * Math.PI * r;
+              let cum = 0;
+              const slices = donutData.map(d => {
+                const pct = _te > 0 ? d.value / _te : 0;
+                const dash = pct * circ;
+                const offset = circ / 4 - cum;
+                cum += dash;
+                return { ...d, dash, offset, pctStr: (pct * 100).toFixed(0) };
+              });
+              const evalAmt = _te <= 0 ? '—' : _te >= 100000000 ? `${(_te/100000000).toFixed(1)}억` : `${(_te/10000).toFixed(0)}만`;
+              return (
+                <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontSize: isMobile ? 20 : 24, fontWeight: 700, color: '#F5F7FF' }}>₩{fmt(_te)}</div>
+                      <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>투자원금 ₩{fmt(_ti)}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: _tp >= 0 ? PROFIT_POS : PROFIT_NEG }}>₩{fmt(_tp)}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: _tp >= 0 ? PROFIT_POS : PROFIT_NEG }}>{_tr >= 0 ? '+' : ''}{_tr.toFixed(1)}%</div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <svg viewBox="0 0 100 100" width="110" height="110" style={{ flexShrink: 0 }}>
+                      {slices.map((s, i) => (
+                        <circle key={i} cx="50" cy="50" r={r} fill="none" stroke={s.color} strokeWidth="20"
+                          strokeDasharray={`${s.dash} ${circ - s.dash}`} strokeDashoffset={s.offset} />
+                      ))}
+                      <text x="50" y="47" textAnchor="middle" fill="#E8EAF0" fontSize="9" fontWeight="700">{evalAmt}</text>
+                      <text x="50" y="58" textAnchor="middle" fill="#9CA3AF" fontSize="7">총자산</text>
+                    </svg>
+                    <div style={{ flex: 1, minWidth: 80 }}>
+                      {slices.map((s, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: i < slices.length - 1 ? '1px solid #1E2233' : 'none' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+                            <span style={{ fontSize: 10, color: '#9CA3AF' }}>{s.label}</span>
+                          </div>
+                          <span style={{ fontSize: 10, fontWeight: 600, color: '#E8EAF0' }}>{s.pctStr}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* 전체 평가금 추이 바차트 */}
             <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
