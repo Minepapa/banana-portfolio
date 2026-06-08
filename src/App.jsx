@@ -3836,9 +3836,9 @@ export default function App() {
 
           return (
             <div>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 6 }}>거래결정 — 팔기 전에 4단계</div>
-              <div style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.5, marginBottom: 14 }}>
-                <b style={{ color: '#E5E9F5' }}>지금 시장 → 팔 것 → 옮길 곳 → 지난 교훈</b> 순으로 점검합니다. 데이터는 리스크모니터·포지션저널·리포트에서 가져옵니다.
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5' }}>거래결정 — 팔기 전에 4단계</div>
+                <button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button>
               </div>
 
               {/* 1. 지금 시장 */}
@@ -3965,7 +3965,7 @@ export default function App() {
                     <span style={{ fontSize: 13, fontWeight: 700, color: '#F5F7FF' }}>{p.name}</span>
                     {kindBadge(p.kind)}
                     {confirmBadge(p.confirm)}
-                    {sig && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: sigColor + '22', color: sigColor }}>⚠ 전제 점검</span>}
+                    {sig && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: '#EF444422', color: '#EF4444' }}>⚠ 전제 점검</span>}
                     <span style={{ marginLeft: 'auto', fontSize: 10, color: '#8A9AB5' }}>{p.account}</span>
                   </div>
                   {!open && sig && (
@@ -4036,9 +4036,9 @@ export default function App() {
 
           return (
             <div>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 6 }}>포지션저널 — 거래 생애주기 전제</div>
-              <div style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.5, marginBottom: 14 }}>
-                각 보유의 <b style={{ color: '#E5E9F5' }}>왜 샀는지(전제)</b>와 <b style={{ color: '#F4845F' }}>언제 팔지(이탈조건)</b>를 기록합니다. 이게 깨지면 매도 검토 신호가 됩니다. 전제는 AI 초안이며, 확인을 눌러 동의하거나 시트에서 직접 고칠 수 있습니다.
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5' }}>포지션저널 — 거래 생애주기 전제</div>
+                <button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button>
               </div>
               {positionJournal.length === 0 ? (
                 <div style={{ textAlign: 'center', color: '#8A9AB5', fontSize: 12, padding: '40px 0' }}>
