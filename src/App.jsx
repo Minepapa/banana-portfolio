@@ -2778,20 +2778,6 @@ export default function App() {
 
         {/* ── 리포트 탭 ── */}
         {tab === "report" && (() => {
-          const totalEval   = Object.values(accounts).reduce((s, a) => s + (a.total_eval   || 0), 0);
-          const totalInvest = Object.values(accounts).reduce((s, a) => s + (a.total_invest || 0), 0);
-          const totalProfit = totalEval - totalInvest;
-          const totalRate   = totalInvest > 0 ? (totalProfit / totalInvest * 100) : 0;
-
-          // 리밸런싱 경보 (±5%p 초과)
-          const rebalAlerts = Object.entries(accounts).flatMap(([, a]) =>
-            (a.assets || []).map(asset => {
-              const curr = asset.sheetCurrent ?? asset.ratio;
-              const diff = parseFloat((curr - asset.target).toFixed(1));
-              return { acct: a.label, name: asset.name, diff, color: a.color };
-            }).filter(x => Math.abs(x.diff) >= 5)
-          );
-
           const today = new Date();
           const dateStr = `${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
 
@@ -2799,121 +2785,8 @@ export default function App() {
             <div>
               {/* 헤더 */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>포트폴리오 리포트</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>주간 리포트</div>
                 <div style={{ fontSize: 10, color: '#8A9AB5' }}>{dateStr} 기준</div>
-              </div>
-
-              {/* 전제 점검 경보 — 보유 포지션의 이탈조건이 risk 신호와 충돌하면 최상단에 노출 */}
-              {(() => {
-                const thesisAlerts = findThesisAlerts(positionJournal, riskMonitor);
-                if (thesisAlerts.length === 0) return null;
-                const hasRed = thesisAlerts.some(a => /🔴/.test(a.signal.signal));
-                const c = hasRed ? '#EF4444' : '#F5C842';
-                return (
-                  <button onClick={() => setTab('저널')} style={{ width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: baseFont,
-                    background: `linear-gradient(135deg,${c}1A,#1A1D26)`, border: `1px solid ${c}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: c, letterSpacing: 1 }}>⚠ 투자논리 훼손 {thesisAlerts.length}건</div>
-                      <div style={{ fontSize: 9, color: '#8A9AB5' }}>포지션저널 ›</div>
-                    </div>
-                    <div style={{ fontSize: 12, color: '#F5F7FF', lineHeight: 1.5 }}>
-                      {thesisAlerts.slice(0, 4).map(a => a.position.name).join(' · ')}{thesisAlerts.length > 4 ? ` 외 ${thesisAlerts.length - 4}` : ''}
-                    </div>
-                    <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 4 }}>보유 투자논리가 흔들리는 신호 — 이탈조건과 대조해 매도 검토하세요</div>
-                  </button>
-                );
-              })()}
-
-              {/* 이번 주 행동 처방 — 최신 리포트의 "🎯 …처방" 섹션을 최상단에 고정 노출 */}
-              {(() => {
-                const rpt = weeklyReports[0];
-                if (!rpt) return null;
-                const pSec = rpt.body.split(/^## /m).filter(Boolean).find(s => /처방/.test(s.split('\n')[0]));
-                if (!pSec) return null;
-                const rest = pSec.split('\n').slice(1).join('\n').trim();
-                const quote = rest.match(/^>\s*(.+)$/m);
-                const action = quote ? quote[1].replace(/\*\*/g, '').replace(/^["“]\s*|\s*["”]$/g, '').trim() : '';
-                if (!action) return null;
-                let reason = rest.replace(/^>.*$/m, '').trim();
-                const sep = reason.indexOf('\n---');
-                if (sep >= 0) reason = reason.slice(0, sep).trim();
-                reason = reason.replace(/^근거\s*[:：]\s*/, '').replace(/\*\*/g, '').trim();
-                return (
-                  <div style={{ background: 'linear-gradient(135deg,#2A2410,#1A1D26)', border: '1px solid #F5C842', borderRadius: 12, padding: 16, marginBottom: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#F5C842', letterSpacing: 1 }}>🎯 이번 주 행동 처방</div>
-                      <div style={{ fontSize: 9, color: '#8A9AB5' }}>{rpt.date}</div>
-                    </div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#F5F7FF', lineHeight: 1.5, marginBottom: reason ? 8 : 0 }}>{action}</div>
-                    {reason && <div style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{reason}</div>}
-                  </div>
-                );
-              })()}
-
-              {/* 섹션 1: 포트폴리오 총괄 */}
-              <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 12 }}>포트폴리오 총괄</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
-                  <div>
-                    <div style={{ fontSize: isMobile ? 20 : 24, fontWeight: 700, color: '#F5F7FF' }}>₩{fmt(totalEval)}</div>
-                    <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>투자원금 ₩{fmt(totalInvest)}</div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
-                      ₩{fmt(totalProfit)}
-                    </div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
-                      {totalRate >= 0 ? '+' : ''}{totalRate.toFixed(1)}%
-                    </div>
-                  </div>
-                </div>
-                {/* 계좌별 도넛 차트 */}
-                {(() => {
-                  const donutData = Object.entries(accounts)
-                    .filter(([, a]) => a.total_eval > 0)
-                    .map(([, a]) => ({ label: a.label, value: a.total_eval, color: a.color }));
-                  if (!donutData.length) return null;
-                  const r = 38, circ = 2 * Math.PI * r;
-                  let cumDash = 0;
-                  const slices = donutData.map(d => {
-                    const pct = totalEval > 0 ? d.value / totalEval : 0;
-                    const dash = pct * circ;
-                    const offset = circ / 4 - cumDash;
-                    cumDash += dash;
-                    return { ...d, dash, offset, pctStr: (pct * 100).toFixed(0) };
-                  });
-                  const evalAmt = totalEval <= 0
-                    ? '—'
-                    : totalEval >= 100000000
-                      ? `${(totalEval/100000000).toFixed(1)}억`
-                      : `${(totalEval/10000).toFixed(0)}만`;
-                  return (
-                    <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <svg viewBox="0 0 100 100" width="110" height="110" style={{ flexShrink: 0 }}>
-                        {slices.map((s, i) => (
-                          <circle key={i} cx="50" cy="50" r={r}
-                            fill="none" stroke={s.color} strokeWidth="20"
-                            strokeDasharray={`${s.dash} ${circ - s.dash}`}
-                            strokeDashoffset={s.offset}
-                          />
-                        ))}
-                        <text x="50" y="47" textAnchor="middle" fill="#E8EAF0" fontSize="9" fontWeight="700">{evalAmt}</text>
-                        <text x="50" y="58" textAnchor="middle" fill="#9CA3AF" fontSize="7">총자산</text>
-                      </svg>
-                      <div style={{ flex: 1, minWidth: 80 }}>
-                        {slices.map((s, i) => (
-                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: i < slices.length - 1 ? '1px solid #1E2233' : 'none' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <div style={{ width: 7, height: 7, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
-                              <span style={{ fontSize: 10, color: '#9CA3AF' }}>{s.label}</span>
-                            </div>
-                            <span style={{ fontSize: 10, fontWeight: 600, color: '#E8EAF0' }}>{s.pctStr}%</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })()}
               </div>
 
               {/* 리포트 날짜 선택 */}
@@ -2978,28 +2851,6 @@ export default function App() {
                 );
               })()}
 
-              {/* 섹션 5: 리밸런싱 신호 */}
-              <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 12 }}>리밸런싱 신호 (±5%p 초과)</div>
-                {rebalAlerts.length === 0 ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 16 }}>✅</span>
-                    <span style={{ fontSize: 12, color: '#10B981' }}>모든 자산군 목표 비중 이내</span>
-                  </div>
-                ) : (
-                  rebalAlerts.map((a, i) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: 6, marginBottom: 4, background: '#1A2035', borderLeft: `3px solid ${a.diff > 0 ? PROFIT_POS : PROFIT_NEG}` }}>
-                      <div>
-                        <span style={{ fontSize: 11, color: '#E8EAF0' }}>{a.name}</span>
-                        <span style={{ fontSize: 10, color: a.color, marginLeft: 6 }}>{a.acct}</span>
-                      </div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: a.diff > 0 ? PROFIT_POS : PROFIT_NEG }}>
-                        {a.diff > 0 ? '+' : ''}{a.diff}%p
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
             </div>
           );
         })()}
