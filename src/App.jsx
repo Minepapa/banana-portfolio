@@ -793,8 +793,8 @@ function parseEvaluations(vr) {
       status:    String(r[14] ?? '').trim(),  // 매수 / 보류 / 매도
       buyDate:   String(r[15] ?? '').trim(),
       buyPrice:  String(r[16] ?? '').trim(),
-      targetTerm:String(r[17] ?? '').trim(),
-      targetRet: String(r[18] ?? '').trim(),
+      targetTerm:(() => { const v = String(r[17] ?? '').trim(); return v.startsWith('#') ? '' : v; })(),
+      targetRet: (() => { const v = String(r[18] ?? '').trim(); return v.startsWith('#') ? '' : v; })(),
       aiNote:    String(r[19] ?? '').trim(),
       axisItems: (() => { try { const v = String(r[20] ?? '').trim(); return v ? JSON.parse(v) : null; } catch { return null; } })(),
     };
@@ -1524,6 +1524,8 @@ export default function App() {
   const [positionJournal, setPositionJournal] = useState([]);
   const [journalOpen, setJournalOpen] = useState(new Set());
   const [lessonDraft, setLessonDraft] = useState({}); // rowIndex → 교훈 입력값 (반성 카드)
+  const [exitDraft, setExitDraft] = useState({}); // rowIndex → 이탈조건 편집값
+  const [exitEditing, setExitEditing] = useState(new Set()); // 이탈조건 편집 중인 rowIndex
 
   const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj }) => {
     setAccounts(prev => ({ ...prev, ...a }));
@@ -2276,10 +2278,10 @@ export default function App() {
             { key: "holdings",  label: "보유종목" },
             { key: "rebalance", label: "자산분배" },
             { key: "report",    label: "리포트" },
-            { key: "kpi",       label: "KPI" },
             { key: "체결내역",  label: "체결" },
             { key: "dividend",  label: "배당금" },
             { key: "profit",    label: "수익금" },
+            { key: "kpi",       label: "KPI" },
             { key: "help",      label: "도움말" },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)}
@@ -2563,6 +2565,7 @@ export default function App() {
 
           return (
             <div>
+              <div style={{ textAlign: 'right', marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
               {/* 행동 추적 — 최상단 */}
               {(() => {
                 const bm = computeBehaviorMetrics(kpiTrades, evaluations);
@@ -2721,7 +2724,10 @@ export default function App() {
               {/* 헤더 */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>포트폴리오 리포트</div>
-                <div style={{ fontSize: 10, color: '#8A9AB5' }}>{dateStr} 기준</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button>
+                  <div style={{ fontSize: 10, color: '#8A9AB5' }}>{dateStr} 기준</div>
+                </div>
               </div>
 
               {/* 전제 점검 경보 — 보유 포지션의 이탈조건이 risk 신호와 충돌하면 최상단에 노출 */}
@@ -2984,6 +2990,7 @@ export default function App() {
             <div style={{ textAlign: 'left' }}>
               {/* 헤더 */}
               <SectionTitle color="#EF4444" size={15} sub={`최근 점검 ${lastUpdated}`}>리스크 모니터</SectionTitle>
+              <div style={{ textAlign: 'right', marginTop: -8, marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
 
               {riskMonitor.length === 0 ? (
                 <div style={{ background: '#1A1D26', borderRadius: 12, padding: 24, textAlign: 'center' }}>
@@ -3107,6 +3114,8 @@ export default function App() {
                 </button>
               ))}
             </div>
+
+            <div style={{ textAlign: 'right', marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
 
             {/* 자산군 구성 파이 (최상단) */}
             {acct.assets.some(a => a.eval > 0) && (
@@ -3271,6 +3280,7 @@ export default function App() {
 
           return (
           <div>
+            <div style={{ textAlign: 'right', marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
             {/* 계좌 선택 (4개) */}
             <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
               {Object.entries(accounts).map(([k, a]) => (
@@ -3580,6 +3590,7 @@ export default function App() {
 
           return (
             <div>
+              <div style={{ textAlign: 'right', marginBottom: 4 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
               <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
                 {divYears.map(y => (
                   <button key={y} onClick={() => { setDivYear(y); setSelectedDivKey(null); }} style={{
@@ -3707,6 +3718,7 @@ export default function App() {
 
           return (
             <div>
+              <div style={{ textAlign: 'right', marginBottom: 4 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
               <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
                 {profitYears.map(y => (
                   <button key={y} onClick={() => { setProfitYear(y); setSelectedProfitKey(null); }} style={{
@@ -3939,6 +3951,19 @@ export default function App() {
             } catch (e) { console.error('전제 확인 오류:', e); }
           };
 
+          // 이탈조건 저장 → H열(이탈조건) + P열(갱신시각)
+          const saveExit = async (p) => {
+            const text = (exitDraft[p.rowIndex] ?? '').trim();
+            const nowStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 16);
+            try {
+              await sheets.writeRange(`포지션저널!H${p.rowIndex + 2}`, [text]);
+              await sheets.writeRange(`포지션저널!P${p.rowIndex + 2}`, [nowStr]);
+              setExitEditing(prev => { const n = new Set(prev); n.delete(p.rowIndex); return n; });
+              setExitDraft(prev => { const n = { ...prev }; delete n[p.rowIndex]; return n; });
+              await sheets.fetch();
+            } catch (e) { console.error('이탈조건 저장 오류:', e); }
+          };
+
           // 청산 포지션의 교훈 저장 → N(교훈) + P(갱신시각). 다음 매수 때 ①에서 경고로 재노출
           const saveLesson = async (p) => {
             const text = (lessonDraft[p.rowIndex] ?? '').trim();
@@ -3991,8 +4016,45 @@ export default function App() {
                       {p.hold && <div><div style={{ fontSize: 9, color: '#8A9AB5' }}>예상보유</div><div style={{ fontSize: 11, color: '#F5F7FF' }}>{p.hold}</div></div>}
                       {p.entry && <div><div style={{ fontSize: 9, color: '#8A9AB5' }}>진입일</div><div style={{ fontSize: 11, color: '#F5F7FF' }}>{p.entry}</div></div>}
                     </div>
-                    {p.exit && (<><div style={{ fontSize: 9, letterSpacing: 1, color: '#F4845F', marginBottom: 3 }}>이탈조건 (이게 깨지면 매도 검토)</div>
-                      <div style={{ fontSize: 12, color: '#F5C9B8', lineHeight: 1.5, marginBottom: 10 }}>{p.exit}</div></>)}
+                    {p.status !== '청산' ? (
+                      exitEditing.has(p.rowIndex) ? (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 9, letterSpacing: 1, color: '#F4845F', marginBottom: 4 }}>이탈조건 편집</div>
+                          <textarea
+                            value={exitDraft[p.rowIndex] ?? p.exit ?? ''}
+                            onChange={e => setExitDraft(prev => ({ ...prev, [p.rowIndex]: e.target.value }))}
+                            rows={2}
+                            style={{ width: '100%', boxSizing: 'border-box', background: '#1A1D26', border: '1px solid #F4845F55', borderRadius: 6, color: '#F5C9B8', fontSize: 11, fontFamily: baseFont, padding: 8, resize: 'vertical' }}
+                          />
+                          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                            <button onClick={() => saveExit(p)}
+                              style={{ padding: '6px 12px', minHeight: 32, borderRadius: 6, border: '1px solid #F4845F55', background: '#2A1A12', color: '#F4845F', cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
+                              저장
+                            </button>
+                            <button onClick={() => setExitEditing(prev => { const n = new Set(prev); n.delete(p.rowIndex); return n; })}
+                              style={{ padding: '6px 12px', minHeight: 32, borderRadius: 6, border: '1px solid #2E3344', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>
+                              취소
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                            <div style={{ fontSize: 9, letterSpacing: 1, color: '#F4845F' }}>이탈조건 (이게 깨지면 매도 검토)</div>
+                            <button onClick={() => { setExitEditing(prev => new Set([...prev, p.rowIndex])); setExitDraft(prev => ({ ...prev, [p.rowIndex]: p.exit ?? '' })); }}
+                              style={{ fontSize: 9, color: '#8A9AB5', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>수정</button>
+                          </div>
+                          {p.exit ? (
+                            <div style={{ fontSize: 12, color: '#F5C9B8', lineHeight: 1.5 }}>{p.exit}</div>
+                          ) : (
+                            <div style={{ fontSize: 11, color: '#3A4050' }}>이탈조건 없음 — 수정 버튼으로 추가</div>
+                          )}
+                        </div>
+                      )
+                    ) : (
+                      p.exit && (<><div style={{ fontSize: 9, letterSpacing: 1, color: '#F4845F', marginBottom: 3 }}>이탈조건</div>
+                        <div style={{ fontSize: 12, color: '#F5C9B8', lineHeight: 1.5, marginBottom: 10 }}>{p.exit}</div></>)
+                    )}
                     {p.status === '청산' && (
                       <div style={{ background: '#12141C', borderRadius: 8, padding: 12, marginBottom: 10 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
@@ -4078,6 +4140,7 @@ export default function App() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5' }}>체결내역 자동 동기화</div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button>
                 {tradeSyncMsg && (
                   <span style={{ fontSize: 10, color: tradeSyncMsg.includes('오류') ? '#F87171' : '#4ADE80' }}>
                     {tradeSyncMsg}
@@ -4250,6 +4313,7 @@ export default function App() {
           <div style={{ textAlign: 'left' }}>
             {/* 헤더 */}
             <SectionTitle color="#F5A623" mb={12}>AI 능동 종목 평가</SectionTitle>
+            <div style={{ textAlign: 'right', marginTop: -8, marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
             <div style={{ display: 'flex', justifyContent: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button onClick={() => setEvalQueueOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
@@ -4519,6 +4583,7 @@ export default function App() {
             <div style={{ textAlign: 'left' }}>
               {/* 헤더 */}
               <SectionTitle color="#F87171" sub={`평가 완료 ${stocks.length}종목 · 보유 중`}>매도검토</SectionTitle>
+              <div style={{ textAlign: 'right', marginTop: -8, marginBottom: 8 }}><button onClick={() => setTab('help')} style={{ fontSize: 10, color: '#60A5FA', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>도움말 ›</button></div>
 
               {/* 종목 선택 칩 */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
