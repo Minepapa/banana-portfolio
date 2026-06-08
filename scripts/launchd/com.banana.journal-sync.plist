@@ -10,11 +10,11 @@
     <string>/Users/huinique/Stockproject/banana-portfolio/scripts/launchd/run.sh</string>
     <string>journal-sync</string>
   </array>
-  <!-- 신규 보유 종목에 포지션저널 스텁 자동 append: 매일 09:30 (멱등 — 기존 종목 skip). 전제는 빈칸(미작성)이나 즉시 risk-b 감시 대상이 됨 -->
+  <!-- 신규 보유 스텁 append + 청산 감지: 매일 16:00 KST (KRX 마감 15:30+정산 후 → 당일 국내거래 + 야간 정산된 미국거래를 한 패스로 포착). 멱등 — 기존 종목 skip -->
   <key>StartCalendarInterval</key>
   <dict>
-    <key>Hour</key><integer>9</integer>
-    <key>Minute</key><integer>30</integer>
+    <key>Hour</key><integer>16</integer>
+    <key>Minute</key><integer>0</integer>
   </dict>
   <key>RunAtLoad</key>
   <false/>
