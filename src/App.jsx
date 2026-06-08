@@ -111,7 +111,7 @@ function SectionTitle({ children, color = '#3B82F6', sub, size = 13, mb = 16 }) 
   return (
     <div style={{ textAlign: 'center', marginBottom: mb }}>
       <div style={{ fontSize: size, fontWeight: 700, letterSpacing: 0.5, color: '#E8EAF0' }}>{children}</div>
-      {sub != null && sub !== '' && <div style={{ fontSize: 10, color: '#5A6478', marginTop: 4, lineHeight: 1.5 }}>{sub}</div>}
+      {sub != null && sub !== '' && <div style={{ fontSize: 10, color: '#8A9AB5', marginTop: 4, lineHeight: 1.5 }}>{sub}</div>}
       <div style={{ width: 26, height: 3, borderRadius: 2, background: color, margin: '8px auto 0' }} />
     </div>
   );
@@ -160,7 +160,7 @@ function Sentences({ text, style, sentenceOnly }) {
   return lines.map((l, i) => <div key={i} style={style}>{l}</div>);
 }
 // 소제목 캡션: 색 점 + 라벨(좌측, 리스트 머리)
-function SubLabel({ children, color = '#5A6478' }) {
+function SubLabel({ children, color = '#8A9AB5' }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
       <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
@@ -169,7 +169,7 @@ function SubLabel({ children, color = '#5A6478' }) {
   );
 }
 // 번호 매김 리스트: 번호 열 + 문장 단위 줄바꿈
-function NumberedItem({ n, text, color = '#9CA3AF', numColor = '#5A6478' }) {
+function NumberedItem({ n, text, color = '#9CA3AF', numColor = '#8A9AB5' }) {
   return (
     <div style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
       <span style={{ fontSize: 11, fontWeight: 700, color: numColor, flexShrink: 0, lineHeight: 1.6 }}>{n}</span>
@@ -228,10 +228,24 @@ const CHEOL_COLS = [
   { key: 'M', label: '정산금액', placeholder: '0' },
 ];
 
-// 한국 주식 색상 체계: 이익=빨강, 손실=파랑
+// 한국 주식 색상 체계: 이익=빨강, 손실=파랑, 변동없음=중립회색
 const PROFIT_POS = '#EF4444';
 const PROFIT_NEG = '#60A5FA';
+const PROFIT_FLAT = '#8A93A6';
 const CHART_BAR_COLOR = '#3B82F6';
+
+// 손익 색상: 0은 중립색 (색맹·변동없음 혼란 방지)
+const profitColor = (n) => n > 0 ? PROFIT_POS : n < 0 ? PROFIT_NEG : PROFIT_FLAT;
+
+// 상대 시각 ("3분 전" · "2시간 전") — 마지막 갱신 표시용
+const relTime = (date) => {
+  if (!date) return '';
+  const sec = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (sec < 60) return '방금 전';
+  if (sec < 3600) return `${Math.floor(sec / 60)}분 전`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}시간 전`;
+  return `${Math.floor(sec / 86400)}일 전`;
+};
 
 // ── 색상 팔레트 ───────────────────────────────────────────────────────────────
 const COLORS = {
@@ -901,6 +915,8 @@ function parseSheetData(valueRanges) {
 
     const total_invest = holdings.reduce((s, h) => s + h.invest, 0);
     const total_eval = holdings.reduce((s, h) => s + h.eval, 0);
+    const isCash = (h) => h.name === '예수금' || (key === '연금저축' && String(h.name).includes('MMF'));
+    const asset_eval = holdings.filter(h => !isCash(h)).reduce((s, h) => s + h.eval, 0);
 
     result[key] = {
       ...DEFAULT_ACCOUNTS[key],
@@ -908,7 +924,7 @@ function parseSheetData(valueRanges) {
       total_eval,
       profit: total_eval - total_invest,
       holdings,
-      assets: computeAssets(holdings, total_eval, DEFAULT_ACCOUNTS[key].assets),
+      assets: computeAssets(holdings, asset_eval || total_eval, DEFAULT_ACCOUNTS[key].assets),
     };
   });
 
@@ -1246,7 +1262,7 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel, readRange }) {
     fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
     width: '100%', boxSizing: 'border-box',
   };
-  const labelStyle = { fontSize: 10, color: '#5A6478', marginBottom: 4, display: 'block' };
+  const labelStyle = { fontSize: 10, color: '#8A9AB5', marginBottom: 4, display: 'block' };
 
   const handleSubmit = async () => {
     if (!종목명.trim() || !매수단가 || !수량 || !rowMap || sheetWarning) return;
@@ -1287,7 +1303,7 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel, readRange }) {
       background: '#1A1D26', border: '1px solid #2A2F3E', borderRadius: 12,
       padding: 16, marginBottom: 16,
     }}>
-      <div style={{ fontSize: 11, letterSpacing: 2, color: '#5A6478', marginBottom: 12 }}>종목 추가</div>
+      <div style={{ fontSize: 11, letterSpacing: 2, color: '#8A9AB5', marginBottom: 12 }}>종목 추가</div>
       {rowMap !== null && sheetWarning && (
         <div style={{
           background: '#2D1A1A', border: '1px solid #7F1D1D', borderRadius: 6,
@@ -2110,14 +2126,14 @@ export default function App() {
   const syncLabel =
     sheets.sync === 'syncing' ? '동기화 중...' :
     sheets.sync === 'error'   ? '동기화 실패' :
-    sheets.lastSync           ? `↑ ${sheets.lastSync.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}` :
+    sheets.lastSync           ? `${relTime(sheets.lastSync)} 갱신` :
     '';
 
   const sheetBtnStyle = {
-    padding: "3px 8px", borderRadius: 4,
+    padding: "8px 12px", minHeight: 36, borderRadius: 4,
     border: "1px solid #2A2F3E", background: "transparent",
     color: "#9CA3AF", cursor: "pointer",
-    fontSize: 10, fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
+    fontSize: 11, fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
   };
 
   const baseFont = "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif";
@@ -2142,7 +2158,7 @@ export default function App() {
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
-            <div style={{ fontSize: 9, letterSpacing: 3, color: "#5A6478", marginBottom: 4 }}>
+            <div style={{ fontSize: 9, letterSpacing: 3, color: "#8A9AB5", marginBottom: 4 }}>
               BANANA · 은퇴 준비 포트폴리오
             </div>
             <div style={{ fontSize: isMobile ? 20 : 24, fontWeight: 700, letterSpacing: -1, color: "#F5F7FF" }}>
@@ -2150,12 +2166,12 @@ export default function App() {
             </div>
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>
-            <div style={{ fontSize: 9, color: "#5A6478", letterSpacing: 2 }}>평가손익</div>
-            <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+            <div style={{ fontSize: 9, color: "#8A9AB5", letterSpacing: 2 }}>평가손익</div>
+            <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: profitColor(totalProfit) }}>
               ₩{fmt(Math.abs(totalProfit))}
             </div>
             {dailyDelta != null && (
-              <div style={{ fontSize: 10, color: dailyDelta >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+              <div style={{ fontSize: 10, color: profitColor(dailyDelta) }}>
                 ₩{fmt(Math.abs(dailyDelta))}
               </div>
             )}
@@ -2166,29 +2182,24 @@ export default function App() {
         {CONFIGURED && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
             {sheets.auth === 'loading' && (
-              <span style={{ fontSize: 10, color: "#5A6478" }}>Google 초기화 중...</span>
+              <span style={{ fontSize: 10, color: "#8A9AB5" }}>Google 초기화 중...</span>
             )}
             {sheets.auth === 'signed-out' && (
-              <button onClick={sheets.signIn}
+              <button onClick={sheets.signIn} aria-label="Google 계정으로 로그인"
                 style={{ ...sheetBtnStyle, background: "#1E3A5F", color: "#60A5FA", borderColor: "#3B82F6" }}>
                 로그인
               </button>
             )}
             {sheets.auth === 'signed-in' && (
               <>
-                <span style={{ fontSize: 10, color: sheets.sync === 'error' ? "#F87171" : "#5A6478" }}>
+                <span style={{ fontSize: 10, color: sheets.sync === 'error' ? "#F87171" : "#8A9AB5" }}>
                   {syncLabel}
                 </span>
-                {balanceSyncMsg && (
-                  <span style={{ fontSize: 10, color: balanceSyncMsg.includes('실패') || balanceSyncMsg.includes('없음') ? '#F87171' : '#4ADE80' }}>
-                    · {balanceSyncMsg}
-                  </span>
-                )}
                 <button onClick={sheets.fetch} disabled={sheets.sync === 'syncing'}
-                  style={sheetBtnStyle} title="시트에서 최신 데이터 가져오기">
+                  style={sheetBtnStyle} aria-label="시트에서 최신 데이터 새로고침" title="시트에서 최신 데이터 가져오기">
                   ↻ 새로고침
                 </button>
-                <button onClick={sheets.signOut} style={{ ...sheetBtnStyle, color: "#F87171" }}>
+                <button onClick={sheets.signOut} aria-label="로그아웃" style={{ ...sheetBtnStyle, color: "#F87171" }}>
                   로그아웃
                 </button>
               </>
@@ -2200,7 +2211,7 @@ export default function App() {
         )}
 
         {/* 탭 */}
-        <div className="tab-bar" style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div className="tab-bar" role="tablist" aria-label="화면 전환" style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {[
             { key: "dashboard", label: "홈" },
             { key: "리스크",    label: "리스크" },
@@ -2215,13 +2226,15 @@ export default function App() {
             { key: "profit",    label: "수익금" },
             { key: "help",      label: "도움말" },
           ].map(({ key, label }) => (
-            <button key={key} onClick={() => setTab(key)} style={{
-              padding: "10px 10px",
+            <button key={key} onClick={() => setTab(key)}
+              role="tab" aria-selected={tab === key} aria-label={label} style={{
+              padding: "10px 12px",
+              minHeight: 44,
               flexShrink: 0,
               borderRadius: 6, border: "none", cursor: "pointer",
-              fontSize: 11, letterSpacing: 1, fontFamily: baseFont,
+              fontSize: 12, letterSpacing: 1, fontFamily: baseFont,
               background: tab === key ? "#3B82F6" : "#1E2233",
-              color: tab === key ? "#fff" : "#6B7280",
+              color: tab === key ? "#fff" : "#9CA3AF",
               transition: "all 0.2s",
             }}>
               {label}
@@ -2231,6 +2244,30 @@ export default function App() {
       </div>
 
       <div style={{ padding: "20px 16px" }}>
+
+        {CONFIGURED && (sheets.auth === 'signed-out' || sheets.auth === 'error') && (
+          <div style={{
+            background: "linear-gradient(135deg, #1E3A5F33, #1A1D26)",
+            border: "1px solid #3B82F655", borderRadius: 12,
+            padding: "20px 16px", marginBottom: 16, textAlign: "center",
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#F5F7FF", marginBottom: 6 }}>
+              {sheets.auth === 'error' ? 'Google 연결 오류' : '로그인이 필요합니다'}
+            </div>
+            <div style={{ fontSize: 11, color: "#9CA3AF", lineHeight: 1.5, marginBottom: 14 }}>
+              {sheets.auth === 'error'
+                ? '시트 연결에 문제가 있어 데이터를 불러오지 못했습니다. 아래 0원 표시는 실제 잔액이 아닙니다.'
+                : '로그인하면 실제 포트폴리오가 표시됩니다. 아래 0원은 로그인 전 빈 화면입니다.'}
+            </div>
+            <button onClick={sheets.signIn} style={{
+              padding: "10px 24px", borderRadius: 8, border: "1px solid #3B82F6",
+              background: "#1E3A5F", color: "#60A5FA", cursor: "pointer",
+              fontSize: 13, fontWeight: 600, fontFamily: baseFont, minHeight: 44,
+            }}>
+              {sheets.auth === 'error' ? '다시 로그인' : 'Google 로그인'}
+            </button>
+          </div>
+        )}
 
         {jobStatus && (() => {
           const problems = computeJobHealth(jobStatus, JOB_CADENCE);
@@ -2267,12 +2304,12 @@ export default function App() {
               {[
                 { label: "총 투자금", value: `₩${fmt(totalInvest)}`, color: "#9CA3AF" },
                 { label: "총 평가금", value: `₩${fmt(totalEval)}`, color: "#F5F7FF" },
-                { label: "수익률", value: `${totalProfit >= 0 ? '+' : ''}${totalInvest > 0 ? ((totalProfit / totalInvest) * 100).toFixed(1) : '0.0'}%`, color: totalProfit >= 0 ? PROFIT_POS : PROFIT_NEG },
+                { label: "수익률", value: `${totalProfit > 0 ? '+' : ''}${totalInvest > 0 ? ((totalProfit / totalInvest) * 100).toFixed(1) : '0.0'}%`, color: profitColor(totalProfit) },
               ].map((s) => (
                 <div key={s.label} style={{
                   background: "#1A1D26", borderRadius: 10, padding: "12px 10px", textAlign: "center",
                 }}>
-                  <div style={{ fontSize: 9, color: "#5A6478", marginBottom: 4, letterSpacing: 1 }}>{s.label}</div>
+                  <div style={{ fontSize: 9, color: "#8A9AB5", marginBottom: 4, letterSpacing: 1 }}>{s.label}</div>
                   <div style={{
                     fontSize: isMobile ? 10 : 13, fontWeight: 700, color: s.color,
                     wordBreak: "break-all",
@@ -2290,7 +2327,7 @@ export default function App() {
               gap: 10, marginBottom: 20,
             }}>
               {Object.entries(accounts).map(([k, v]) => {
-                const isPos = v.profit >= 0;
+                const pColor = profitColor(v.profit);
                 const pRate = v.total_invest > 0
                   ? ((v.profit / v.total_invest) * 100).toFixed(1)
                   : '0.0';
@@ -2315,12 +2352,12 @@ export default function App() {
                         </div>
                       </div>
                       <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 9, color: "#5A6478", marginBottom: 2 }}>수익</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: isPos ? PROFIT_POS : PROFIT_NEG }}>
+                        <div style={{ fontSize: 9, color: "#8A9AB5", marginBottom: 2 }}>수익</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: pColor }}>
                           ₩{fmt(v.profit)}
                         </div>
-                        <div style={{ fontSize: 11, color: isPos ? PROFIT_POS : PROFIT_NEG }}>
-                          {isPos ? '+' : ''}{pRate}%
+                        <div style={{ fontSize: 11, color: pColor }}>
+                          {v.profit > 0 ? '+' : ''}{pRate}%
                         </div>
                       </div>
                     </div>
@@ -2333,7 +2370,7 @@ export default function App() {
             <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478" }}>전체 평가금 추이</div>
+                  <div style={{ fontSize: 10, letterSpacing: 3, color: "#8A9AB5" }}>전체 평가금 추이</div>
                   <button
                     onClick={() => { if (!savingsLpFiredRef.current) setShowSavings(p => !p); }}
                     onMouseDown={startSavingsLP}
@@ -2373,8 +2410,8 @@ export default function App() {
                 return data.length > 0 ? (
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={chartData} barSize={isMobile ? 8 : 14}>
-                      <XAxis dataKey="label" tick={{ fill: "#5A6478", fontSize: 9 }} axisLine={false} tickLine={false} />
-                      <YAxis tickFormatter={v => `${(v / 100000000).toFixed(1)}억`} tick={{ fill: "#5A6478", fontSize: 9 }} width={40} axisLine={false} tickLine={false} />
+                      <XAxis dataKey="label" tick={{ fill: "#8A9AB5", fontSize: 9 }} axisLine={false} tickLine={false} />
+                      <YAxis tickFormatter={v => `${(v / 100000000).toFixed(1)}억`} tick={{ fill: "#8A9AB5", fontSize: 9 }} width={40} axisLine={false} tickLine={false} />
                       <Tooltip
                         formatter={(v, name) => {
                           if (name === 'base') return [`₩${v.toLocaleString()}`, '잔고'];
@@ -2396,14 +2433,14 @@ export default function App() {
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5A6478', fontSize: 12 }}>
+                  <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8A9AB5', fontSize: 12 }}>
                     데이터가 없습니다
                   </div>
                 );
               })()}
               {showSavingsEdit && (
                 <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #2A2F3E' }}>
-                  <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 8 }}>이번 달 저축금 수정</div>
+                  <div style={{ fontSize: 10, letterSpacing: 2, color: '#8A9AB5', marginBottom: 8 }}>이번 달 저축금 수정</div>
                   <input
                     type="number"
                     value={savingsEditValue}
@@ -2436,7 +2473,7 @@ export default function App() {
         {tab === "kpi" && (() => {
           const kpi = computeKPI(monthlyData);
           if (!kpi) return (
-            <div style={{ padding: 40, textAlign: 'center', color: '#5A6478', fontSize: 13 }}>
+            <div style={{ padding: 40, textAlign: 'center', color: '#8A9AB5', fontSize: 13 }}>
               월별잔고 데이터가 2개월 이상 있어야 KPI를 계산할 수 있습니다.
             </div>
           );
@@ -2474,18 +2511,18 @@ export default function App() {
               {(() => {
                 const bm = computeBehaviorMetrics(kpiTrades, evaluations);
                 if (kpiTrades === null) return (
-                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16, textAlign: 'center', color: '#5A6478', fontSize: 11 }}>행동 추적 데이터 불러오는 중...</div>
+                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16, textAlign: 'center', color: '#8A9AB5', fontSize: 11 }}>행동 추적 데이터 불러오는 중...</div>
                 );
                 if (!bm) return (
-                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16, textAlign: 'center', color: '#5A6478', fontSize: 11 }}>체결 내역 없음 — 체결 탭에서 먼저 동기화하세요</div>
+                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16, textAlign: 'center', color: '#8A9AB5', fontSize: 11 }}>체결 내역 없음 — 체결 탭에서 먼저 동기화하세요</div>
                 );
-                const r500Color = bm.rule500Rate === null ? '#5A6478' : bm.rule500Rate >= 80 ? '#10B981' : bm.rule500Rate >= 60 ? '#F59E0B' : '#EF4444';
-                const emColor   = bm.evalMatchRate === null ? '#5A6478' : bm.evalMatchRate >= 60 ? '#10B981' : bm.evalMatchRate >= 30 ? '#F59E0B' : '#EF4444';
-                const sdColor   = bm.sellDisciplineRate === null ? '#5A6478' : bm.sellDisciplineRate >= 60 ? '#10B981' : bm.sellDisciplineRate >= 30 ? '#F59E0B' : '#EF4444';
-                const freqColor = bm.freqRatio === null ? '#5A6478' : bm.freqRatio <= 1.0 ? '#10B981' : bm.freqRatio <= 1.5 ? '#F59E0B' : '#EF4444';
+                const r500Color = bm.rule500Rate === null ? '#8A9AB5' : bm.rule500Rate >= 80 ? '#10B981' : bm.rule500Rate >= 60 ? '#F59E0B' : '#EF4444';
+                const emColor   = bm.evalMatchRate === null ? '#8A9AB5' : bm.evalMatchRate >= 60 ? '#10B981' : bm.evalMatchRate >= 30 ? '#F59E0B' : '#EF4444';
+                const sdColor   = bm.sellDisciplineRate === null ? '#8A9AB5' : bm.sellDisciplineRate >= 60 ? '#10B981' : bm.sellDisciplineRate >= 30 ? '#F59E0B' : '#EF4444';
+                const freqColor = bm.freqRatio === null ? '#8A9AB5' : bm.freqRatio <= 1.0 ? '#10B981' : bm.freqRatio <= 1.5 ? '#F59E0B' : '#EF4444';
                 return (
                   <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16 }}>
-                    <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 14 }}>행동 추적</div>
+                    <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 14 }}>행동 추적</div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
                       {[
                         { label: '500만 원칙', value: bm.rule500Rate !== null ? `${bm.rule500Rate}%` : '–', sub: `${bm.rule500OK}/${bm.rule500Total}건`, color: r500Color },
@@ -2495,14 +2532,14 @@ export default function App() {
                         { label: '최근 30일', value: `${bm.recent30Count}건`, sub: `매수 ${bm.recent30Buys}건`, color: '#E8EAF0' },
                       ].map((card, i) => (
                         <div key={i} style={{ background: '#0F1117', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
-                          <div style={{ fontSize: 9, color: '#5A6478', marginBottom: 4 }}>{card.label}</div>
+                          <div style={{ fontSize: 9, color: '#8A9AB5', marginBottom: 4 }}>{card.label}</div>
                           <div style={{ fontSize: 18, fontWeight: 700, color: card.color }}>{card.value}</div>
-                          <div style={{ fontSize: 9, color: '#5A6478', marginTop: 2 }}>{card.sub}</div>
+                          <div style={{ fontSize: 9, color: '#8A9AB5', marginTop: 2 }}>{card.sub}</div>
                         </div>
                       ))}
                     </div>
                     {bm.unlinkedBuys > 0 && (
-                      <div style={{ fontSize: 9, color: '#5A6478', marginTop: 6 }}>
+                      <div style={{ fontSize: 9, color: '#8A9AB5', marginTop: 6 }}>
                         평가에 연결 안 된 매수 {bm.unlinkedBuys}건 — 종목명 표기 차이 또는 평가 누락 점검
                       </div>
                     )}
@@ -2512,17 +2549,17 @@ export default function App() {
                         {bm.missedEvals.slice(0, 5).map((ev, i, arr) => (
                           <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none', fontSize: 11 }}>
                             <span style={{ color: '#E8EAF0' }}>{ev.stock?.name}</span>
-                            <span style={{ color: '#5A6478' }}>{ev.date}</span>
+                            <span style={{ color: '#8A9AB5' }}>{ev.date}</span>
                           </div>
                         ))}
-                        {bm.missedEvals.length > 5 && <div style={{ fontSize: 10, color: '#5A6478', textAlign: 'center', paddingTop: 6 }}>+{bm.missedEvals.length - 5}건 더</div>}
+                        {bm.missedEvals.length > 5 && <div style={{ fontSize: 10, color: '#8A9AB5', textAlign: 'center', paddingTop: 6 }}>+{bm.missedEvals.length - 5}건 더</div>}
                       </div>
                     )}
                   </div>
                 );
               })()}
               <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>운용 성과</div>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 12 }}>운용 성과</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                   {cards.map(c => (
                     <button key={c.label}
@@ -2533,7 +2570,7 @@ export default function App() {
                         border: `1px solid ${evalSelectedMetric === c.metric ? '#3B82F6' : c.status.color + '33'}`,
                         cursor: 'pointer', fontFamily: 'inherit', width: '100%', display: 'block',
                       }}>
-                      <div style={{ fontSize: 8, color: '#5A6478', marginBottom: 6, letterSpacing: 1 }}>
+                      <div style={{ fontSize: 8, color: '#8A9AB5', marginBottom: 6, letterSpacing: 1 }}>
                         {c.label} <span style={{ color: '#3B82F6' }}>📘</span>
                       </div>
                       <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 700, color: c.status.color, marginBottom: 4 }}>
@@ -2550,7 +2587,7 @@ export default function App() {
 
               {/* 상세 지표 */}
               <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>지표 상세</div>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 12 }}>지표 상세</div>
                 {[
                   { label: 'TWR 연환산', value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`, color: twrStatus.color },
                   { label: 'TWR 누적',   value: `${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}%`, color: kpi.twrCum >= 0 ? '#10B981' : '#EF4444' },
@@ -2568,7 +2605,7 @@ export default function App() {
 
               {/* 내 투자 기준 */}
               <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginTop: 12 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 14 }}>내 투자 기준</div>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 14 }}>내 투자 기준</div>
                 {[
                   { cat: '포트폴리오 성과', items: [
                     { label: 'TWR 목표',    value: '시장 대비 +3~5%p' },
@@ -2628,7 +2665,7 @@ export default function App() {
               {/* 헤더 */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>포트폴리오 리포트</div>
-                <div style={{ fontSize: 10, color: '#5A6478' }}>{dateStr} 기준</div>
+                <div style={{ fontSize: 10, color: '#8A9AB5' }}>{dateStr} 기준</div>
               </div>
 
               {/* 이번 주 행동 처방 — 최신 리포트의 "🎯 …처방" 섹션을 최상단에 고정 노출 */}
@@ -2649,7 +2686,7 @@ export default function App() {
                   <div style={{ background: 'linear-gradient(135deg,#2A2410,#1A1D26)', border: '1px solid #F5C842', borderRadius: 12, padding: 16, marginBottom: 12 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: '#F5C842', letterSpacing: 1 }}>🎯 이번 주 행동 처방</div>
-                      <div style={{ fontSize: 9, color: '#5A6478' }}>{rpt.date}</div>
+                      <div style={{ fontSize: 9, color: '#8A9AB5' }}>{rpt.date}</div>
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#F5F7FF', lineHeight: 1.5, marginBottom: reason ? 8 : 0 }}>{action}</div>
                     {reason && <div style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{reason}</div>}
@@ -2659,7 +2696,7 @@ export default function App() {
 
               {/* 섹션 1: 포트폴리오 총괄 */}
               <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>포트폴리오 총괄</div>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 12 }}>포트폴리오 총괄</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
                   <div>
                     <div style={{ fontSize: isMobile ? 20 : 24, fontWeight: 700, color: '#F5F7FF' }}>₩{fmt(totalEval)}</div>
@@ -2728,7 +2765,7 @@ export default function App() {
                 <div style={{ display: 'flex', gap: 4, marginBottom: 12, marginTop: 4, flexWrap: 'wrap' }}>
                   {weeklyReports.map((r, i) => (
                     <button key={i} onClick={() => { setWeeklyReports(prev => { const copy = [...prev]; const item = copy.splice(i, 1)[0]; copy.unshift(item); return copy; }); setWeeklyExpanded(false); }}
-                      style={{ padding: '4px 10px', borderRadius: 4, border: `1px solid ${i === 0 ? '#3B82F6' : '#2A2F3E'}`, background: i === 0 ? '#1E3A5F' : 'transparent', color: i === 0 ? '#60A5FA' : '#5A6478', cursor: 'pointer', fontSize: 9 }}>
+                      style={{ padding: '4px 10px', borderRadius: 4, border: `1px solid ${i === 0 ? '#3B82F6' : '#2A2F3E'}`, background: i === 0 ? '#1E3A5F' : 'transparent', color: i === 0 ? '#60A5FA' : '#8A9AB5', cursor: 'pointer', fontSize: 9 }}>
                       {r.date}
                     </button>
                   ))}
@@ -2748,7 +2785,7 @@ export default function App() {
                 return (
                   <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                      <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478' }}>📋 주간 AI 리포트</div>
+                      <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5' }}>📋 주간 AI 리포트</div>
                       <div style={{ fontSize: 10, color: '#3A4050' }}>{latest.date}</div>
                     </div>
                     {visibleSections.map((sec, i) => (
@@ -2776,7 +2813,7 @@ export default function App() {
                     {sections.length > 3 && (
                       <button onClick={() => setWeeklyExpanded(!weeklyExpanded)} style={{
                         width: '100%', padding: '8px', borderRadius: 6, border: '1px solid #2A2F3E',
-                        background: 'transparent', color: '#5A6478', cursor: 'pointer', fontSize: 10,
+                        background: 'transparent', color: '#8A9AB5', cursor: 'pointer', fontSize: 10,
                       }}>
                         {weeklyExpanded ? '접기 ▲' : `전체 보기 (${sections.length}섹션) ▼`}
                       </button>
@@ -2787,7 +2824,7 @@ export default function App() {
 
               {/* 섹션 5: 리밸런싱 신호 */}
               <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478', marginBottom: 12 }}>리밸런싱 신호 (±5%p 초과)</div>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 12 }}>리밸런싱 신호 (±5%p 초과)</div>
                 {rebalAlerts.length === 0 ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 16 }}>✅</span>
@@ -2859,7 +2896,7 @@ export default function App() {
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                 {entries.map(([k, v], i) => (
                   <div key={i} style={{ fontSize: 9, color: '#9CA3AF', background: '#12141C', borderRadius: 4, padding: '3px 7px' }}>
-                    <span style={{ color: '#5A6478' }}>{k}</span> {String(v)}
+                    <span style={{ color: '#8A9AB5' }}>{k}</span> {String(v)}
                   </div>
                 ))}
               </div>
@@ -2876,7 +2913,7 @@ export default function App() {
                   <div style={{ fontSize: 28, marginBottom: 8 }}>🛡️</div>
                   <div style={{ fontSize: 12, color: '#9CA3AF', lineHeight: 1.6 }}>
                     아직 리스크 신호가 없습니다.<br />
-                    <span style={{ fontSize: 10, color: '#5A6478' }}>risk-monitor 실행 후 B(논리 훼손)·D(거시 충격) 신호가 표시됩니다.</span>
+                    <span style={{ fontSize: 10, color: '#8A9AB5' }}>risk-monitor 실행 후 B(논리 훼손)·D(거시 충격) 신호가 표시됩니다.</span>
                   </div>
                 </div>
               ) : (
@@ -2926,16 +2963,16 @@ export default function App() {
                         <Sentences text={r.summary} sentenceOnly style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.55, marginTop: 4 }} />
                         {(r.detail || r.evidence) && (
                           <button onClick={() => setRiskOpen(prev => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; })}
-                            style={{ marginTop: 8, padding: '4px 0', background: 'transparent', border: 'none', color: '#5A6478', cursor: 'pointer', fontSize: 9 }}>
+                            style={{ marginTop: 8, padding: '4px 0', background: 'transparent', border: 'none', color: '#8A9AB5', cursor: 'pointer', fontSize: 9 }}>
                             {isOpen ? '접기 ▲' : '자세히 ▼'}
                           </button>
                         )}
                         {isOpen && (
                           <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #1E2233' }}>
-                            {headRest && <div style={{ fontSize: 9, color: '#5A6478', lineHeight: 1.5, marginBottom: 6, wordBreak: 'break-word' }}>구성: {headRest}</div>}
+                            {headRest && <div style={{ fontSize: 9, color: '#8A9AB5', lineHeight: 1.5, marginBottom: 6, wordBreak: 'break-word' }}>구성: {headRest}</div>}
                             {r.detail && <Sentences text={r.detail} sentenceOnly style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, wordBreak: 'break-word', marginBottom: 2 }} />}
                             {renderEvidence(r.evidence)}
-                            {r.baselineRef && <div style={{ fontSize: 9, color: '#5A6478', marginTop: 8 }}>기준선: {r.baselineRef}</div>}
+                            {r.baselineRef && <div style={{ fontSize: 9, color: '#8A9AB5', marginTop: 8 }}>기준선: {r.baselineRef}</div>}
                           </div>
                         )}
                       </div>
@@ -2948,7 +2985,7 @@ export default function App() {
               {baselines.length > 0 && (
                 <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginTop: 12 }}>
                   <SectionTitle color="#F5C842" size={12} mb={14} sub="논리 훼손 비교 기준">펀더멘털 기준선</SectionTitle>
-                  <div style={{ display: 'flex', fontSize: 9, color: '#5A6478', padding: '0 0 6px', borderBottom: '1px solid #1E2233' }}>
+                  <div style={{ display: 'flex', fontSize: 9, color: '#8A9AB5', padding: '0 0 6px', borderBottom: '1px solid #1E2233' }}>
                     <span style={{ flex: 2, minWidth: 0 }}>종목</span>
                     <span style={{ flex: 1, textAlign: 'right' }}>영익률</span>
                     <span style={{ flex: 1, textAlign: 'right' }}>ROE</span>
@@ -2959,7 +2996,7 @@ export default function App() {
                       <span style={{ flex: 2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
                       {[b.operatingMargin, b.roe, b.debtRatio].map((v, k) => {
                         const f = fmtPct(v);
-                        return <span key={k} style={{ flex: 1, textAlign: 'right', color: f === '데이터 부족' ? '#5A6478' : '#9CA3AF', fontSize: f === '데이터 부족' ? 9 : 10 }}>{f}</span>;
+                        return <span key={k} style={{ flex: 1, textAlign: 'right', color: f === '데이터 부족' ? '#8A9AB5' : '#9CA3AF', fontSize: f === '데이터 부족' ? 9 : 10 }}>{f}</span>;
                       })}
                     </div>
                   ))}
@@ -2997,7 +3034,7 @@ export default function App() {
             {/* 자산군 구성 파이 (최상단) */}
             {acct.assets.some(a => a.eval > 0) && (
               <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>자산군 구성</div>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: "#8A9AB5", marginBottom: 12 }}>자산군 구성</div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <ResponsiveContainer width="100%" height={160}>
@@ -3020,7 +3057,7 @@ export default function App() {
                         <div style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
                         <span style={{ fontSize: 11, color: '#9CA3AF', flex: 1 }}>{a.name}</span>
                         <span style={{ fontSize: 11, color: '#E8EAF0' }}>
-                          {acct.total_eval > 0 ? (a.eval / acct.total_eval * 100).toFixed(1) : '0.0'}%
+                          {a.ratio.toFixed ? a.ratio.toFixed(1) : a.ratio}%
                         </span>
                       </div>
                     ))}
@@ -3032,17 +3069,17 @@ export default function App() {
             {/* 현재 vs 목표 비중 테이블 */}
             <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
               <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: 12 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478" }}>목표 vs 현재 비중</div>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: "#8A9AB5" }}>목표 vs 현재 비중</div>
                 {sheets.auth === 'signed-in' && (
                   <button
                     onClick={() => { setAllTargetInputs(acct.assets.map(a => String(a.target))); setEditingAllTargets(true); }}
-                    style={{ position: 'absolute', right: 0, padding: '4px 8px', borderRadius: 4, border: '1px solid #2A2F3E', background: 'transparent', color: '#5A6478', cursor: 'pointer', fontSize: 13, fontFamily: baseFont, lineHeight: 1 }}
+                    style={{ position: 'absolute', right: 0, padding: '4px 8px', borderRadius: 4, border: '1px solid #2A2F3E', background: 'transparent', color: '#8A9AB5', cursor: 'pointer', fontSize: 13, fontFamily: baseFont, lineHeight: 1 }}
                   >⋯</button>
                 )}
               </div>
               {editingAllTargets && (
                 <div style={{ marginBottom: 12, background: '#141927', borderRadius: 8, padding: 12 }}>
-                  <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 8 }}>목표 비중 수정 — 합계 100%</div>
+                  <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 8 }}>목표 비중 수정 — 합계 100%</div>
                   {acct.assets.map((a, i) => (
                     <div key={a.name} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                       <div style={{ width: 8, height: 8, borderRadius: 2, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
@@ -3053,7 +3090,7 @@ export default function App() {
                         onChange={e => setAllTargetInputs(prev => { const n = [...prev]; n[i] = e.target.value; return n; })}
                         style={{ width: 60, padding: '3px 6px', borderRadius: 4, border: '1px solid #3B82F6', background: '#0D1520', color: '#E8EAF0', fontSize: 12, textAlign: 'right', fontFamily: baseFont, outline: 'none' }}
                       />
-                      <span style={{ fontSize: 11, color: '#5A6478' }}>%</span>
+                      <span style={{ fontSize: 11, color: '#8A9AB5' }}>%</span>
                     </div>
                   ))}
                   <div style={{ fontSize: 11, marginBottom: 8, color: (() => { const s = allTargetInputs.reduce((acc, v) => acc + (parseFloat(v)||0), 0); return Math.abs(s-100) < 0.1 ? '#4ADE80' : '#F87171'; })() }}>
@@ -3066,10 +3103,10 @@ export default function App() {
                 </div>
               )}
               <div style={{ display: 'flex', alignItems: 'center', padding: '4px 8px', marginBottom: 4 }}>
-                <div style={{ flex: 1, fontSize: 10, color: '#5A6478', textAlign: 'center' }}>자산군</div>
-                <div style={{ width: 60, textAlign: 'center', fontSize: 10, color: '#5A6478' }}>목표%</div>
-                <div style={{ width: 50, textAlign: 'center', fontSize: 10, color: '#5A6478' }}>현재%</div>
-                <div style={{ width: 60, textAlign: 'center', fontSize: 10, color: '#5A6478' }}>차이</div>
+                <div style={{ flex: 1, fontSize: 10, color: '#8A9AB5', textAlign: 'center' }}>자산군</div>
+                <div style={{ width: 60, textAlign: 'center', fontSize: 10, color: '#8A9AB5' }}>목표%</div>
+                <div style={{ width: 50, textAlign: 'center', fontSize: 10, color: '#8A9AB5' }}>현재%</div>
+                <div style={{ width: 60, textAlign: 'center', fontSize: 10, color: '#8A9AB5' }}>차이</div>
               </div>
               {acct.assets.map((a) => {
                 const curr = a.sheetCurrent ?? a.ratio;
@@ -3101,7 +3138,7 @@ export default function App() {
 
             {/* 리밸런싱 필요 */}
             <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px" }}>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>리밸런싱 필요</div>
+              <div style={{ fontSize: 10, letterSpacing: 3, color: "#8A9AB5", marginBottom: 12 }}>리밸런싱 필요</div>
               {acct.assets.map((a) => {
                 const amt = a.rebalAmt ?? 0;
                 const curr = a.sheetCurrent ?? a.ratio;
@@ -3229,7 +3266,7 @@ export default function App() {
 
             {/* 정렬 버튼 */}
             <div style={{ display: 'flex', gap: 6, marginBottom: 12, alignItems: 'center' }}>
-              <span style={{ fontSize: 10, color: '#5A6478', flexShrink: 0 }}>정렬</span>
+              <span style={{ fontSize: 10, color: '#8A9AB5', flexShrink: 0 }}>정렬</span>
               {[
                 { key: 'sheet',       label: '자산군순' },
                 { key: 'rate_desc',   label: '수익률↓' },
@@ -3305,11 +3342,11 @@ export default function App() {
 
             {/* 보유 종목 목록 */}
             <div style={{ background: "#1A1D26", borderRadius: 12, overflow: "hidden" }}>
-              <div style={{ padding: "12px 16px", borderBottom: "1px solid #2A2F3E", fontSize: 10, letterSpacing: 3, color: "#5A6478" }}>
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid #2A2F3E", fontSize: 10, letterSpacing: 3, color: "#8A9AB5" }}>
                 보유 종목 ({sortedHoldings.length})
               </div>
               {sortedHoldings.length === 0 && (
-                <div style={{ padding: 24, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>종목이 없습니다</div>
+                <div style={{ padding: 24, textAlign: 'center', color: '#8A9AB5', fontSize: 12 }}>종목이 없습니다</div>
               )}
               {sortedHoldings.map((h, vi) => {
                 const origIdx = h.origIdx ?? vi;
@@ -3356,13 +3393,13 @@ export default function App() {
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#E8EAF0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {h.name}
                         </div>
-                        <div style={{ fontSize: 10, color: "#5A6478", marginTop: 2 }}>
+                        <div style={{ fontSize: 10, color: "#8A9AB5", marginTop: 2 }}>
                           {h.qty}주 · ₩{fmt(h.price)}
                         </div>
                       </div>
                       {/* 비중% */}
                       <div style={{ textAlign: 'center', flexShrink: 0, minWidth: 32 }}>
-                        <div style={{ fontSize: 9, color: '#5A6478' }}>비중</div>
+                        <div style={{ fontSize: 9, color: '#8A9AB5' }}>비중</div>
                         <div style={{ fontSize: 10, color: '#9CA3AF', fontWeight: 600 }}>{weightPct}%</div>
                       </div>
                       <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -3377,22 +3414,22 @@ export default function App() {
                     </div>
                     {isEditing && (
                       <div style={{ padding: '12px 16px', background: '#141927', borderTop: '1px solid #2A2F3E' }}>
-                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 10 }}>종목 수정</div>
+                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#8A9AB5', marginBottom: 10 }}>종목 수정</div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
                           <div>
-                            <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>매수단가</div>
+                            <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 4 }}>매수단가</div>
                             <input type="number" value={editPrice} onChange={e => setEditPrice(e.target.value)}
                               style={{ background: '#0D1520', border: '1px solid #2A2F3E', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
                           </div>
                           <div>
-                            <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>수량</div>
+                            <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 4 }}>수량</div>
                             <input type="number" value={editQty} onChange={e => setEditQty(e.target.value)}
                               style={{ background: '#0D1520', border: '1px solid #2A2F3E', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
                           </div>
                         </div>
                         {editingHolding?.isManual && (
                           <div style={{ marginBottom: 10 }}>
-                            <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>현재가 (수기)</div>
+                            <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 4 }}>현재가 (수기)</div>
                             <input type="number" value={editCurrentPrice} onChange={e => setEditCurrentPrice(e.target.value)}
                               style={{ background: '#0D1520', border: '1px solid #3B82F6', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
                           </div>
@@ -3409,13 +3446,13 @@ export default function App() {
                     )}
                     {isEditingCash && (
                       <div style={{ padding: '12px 16px', background: '#141927', borderTop: '1px solid #2A2F3E' }}>
-                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 10 }}>예수금 수정</div>
+                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#8A9AB5', marginBottom: 10 }}>예수금 수정</div>
                         <div style={{ marginBottom: 10 }}>
-                          <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>예수금 잔액 (₩)</div>
+                          <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 4 }}>예수금 잔액 (₩)</div>
                           <input type="number" inputMode="numeric" value={editCashValue} onChange={e => setEditCashValue(e.target.value)}
                             style={{ background: '#0D1520', border: '1px solid #3B82F6', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
                         </div>
-                        <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 10, lineHeight: 1.5 }}>
+                        <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 10, lineHeight: 1.5 }}>
                           입력값을 오늘 기준으로 리셋합니다. 이후 매수·매도·배당이 자동 가감됩니다.
                         </div>
                         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -3426,13 +3463,13 @@ export default function App() {
                     )}
                     {isEditingDollar && (
                       <div style={{ padding: '12px 16px', background: '#141927', borderTop: '1px solid #2A2F3E' }}>
-                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 10 }}>달러RP 수정</div>
+                        <div style={{ fontSize: 10, letterSpacing: 2, color: '#8A9AB5', marginBottom: 10 }}>달러RP 수정</div>
                         <div style={{ marginBottom: 10 }}>
-                          <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>달러RP 잔액 (USD)</div>
+                          <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 4 }}>달러RP 잔액 (USD)</div>
                           <input type="number" inputMode="decimal" step="0.01" value={editDollarValue} onChange={e => setEditDollarValue(e.target.value)}
                             style={{ background: '#0D1520', border: '1px solid #3B82F6', borderRadius: 6, color: '#E8EAF0', padding: '6px 10px', fontSize: 12, fontFamily: baseFont, width: '100%', boxSizing: 'border-box' }} />
                         </div>
-                        <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 10, lineHeight: 1.5 }}>
+                        <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 10, lineHeight: 1.5 }}>
                           USD 잔액을 오늘 기준으로 리셋합니다. 이후 환전·해외 매수·매도가 자동 가감됩니다. 원화 표시는 환율 수식으로 자동 환산됩니다.
                         </div>
                         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -3480,7 +3517,7 @@ export default function App() {
               </div>
 
               <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 16 }}>월별 배당금</div>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: "#8A9AB5", marginBottom: 16 }}>월별 배당금</div>
                 {filteredDividends.length > 0 ? (
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart
@@ -3488,8 +3525,8 @@ export default function App() {
                       barSize={isMobile ? 10 : 16}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#2A2F3E" />
-                      <XAxis dataKey="label" tick={{ fill: "#5A6478", fontSize: 9 }} />
-                      <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: "#5A6478", fontSize: 9 }} width={55} />
+                      <XAxis dataKey="label" tick={{ fill: "#8A9AB5", fontSize: 9 }} />
+                      <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: "#8A9AB5", fontSize: 9 }} width={55} />
                       <Tooltip
                         formatter={v => [`₩${v.toLocaleString()}`, '배당금']}
                         contentStyle={{ background: "#1E2233", border: "1px solid #2A2F3E", borderRadius: 8, fontSize: 11 }}
@@ -3504,14 +3541,14 @@ export default function App() {
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5A6478', fontSize: 12 }}>
+                  <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8A9AB5', fontSize: 12 }}>
                     배당 데이터가 없습니다
                   </div>
                 )}
 
                 {selectedDivItem && (
                   <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #2A2F3E' }}>
-                    <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 8, letterSpacing: 1 }}>
+                    <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 8, letterSpacing: 1 }}>
                       {selectedDivItem.year}년 {selectedDivItem.month}월 상세
                     </div>
                     {selectedDivItem.items.map((item, i) => (
@@ -3564,7 +3601,7 @@ export default function App() {
               </div>
 
               <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px" }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>연도별 합계</div>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: "#8A9AB5", marginBottom: 12 }}>연도별 합계</div>
                 {divYearTotals.map(row => (
                   <div key={row.year} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #1E2233' }}>
                     <span style={{ fontSize: 12, color: '#9CA3AF' }}>{row.year}년 합계</span>
@@ -3607,7 +3644,7 @@ export default function App() {
               </div>
 
               <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px", marginBottom: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 16 }}>월별 수익금</div>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: "#8A9AB5", marginBottom: 16 }}>월별 수익금</div>
                 {filtered.length > 0 ? (
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart
@@ -3615,8 +3652,8 @@ export default function App() {
                       barSize={isMobile ? 10 : 16}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#2A2F3E" />
-                      <XAxis dataKey="label" tick={{ fill: "#5A6478", fontSize: 9 }} />
-                      <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: "#5A6478", fontSize: 9 }} width={55} />
+                      <XAxis dataKey="label" tick={{ fill: "#8A9AB5", fontSize: 9 }} />
+                      <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: "#8A9AB5", fontSize: 9 }} width={55} />
                       <Tooltip
                         formatter={v => [`₩${v.toLocaleString()}`, '수익금']}
                         contentStyle={{ background: "#1E2233", border: "1px solid #2A2F3E", borderRadius: 8, fontSize: 11 }}
@@ -3635,14 +3672,14 @@ export default function App() {
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5A6478', fontSize: 12 }}>
+                  <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8A9AB5', fontSize: 12 }}>
                     수익금 데이터가 없습니다
                   </div>
                 )}
 
                 {selectedItem && (
                   <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #2A2F3E' }}>
-                    <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 8, letterSpacing: 1 }}>
+                    <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 8, letterSpacing: 1 }}>
                       {selectedItem.year}년 {selectedItem.month}월 상세
                     </div>
                     {selectedItem.items.map((item, i) => (
@@ -3664,7 +3701,7 @@ export default function App() {
               </div>
 
               <div style={{ background: "#1A1D26", borderRadius: 12, padding: "16px" }}>
-                <div style={{ fontSize: 10, letterSpacing: 3, color: "#5A6478", marginBottom: 12 }}>연도별 합계</div>
+                <div style={{ fontSize: 10, letterSpacing: 3, color: "#8A9AB5", marginBottom: 12 }}>연도별 합계</div>
                 {yearTotals.map(row => (
                   <div key={row.year} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #1E2233' }}>
                     <span style={{ fontSize: 12, color: '#9CA3AF' }}>{row.year}년 합계</span>
@@ -3690,7 +3727,7 @@ export default function App() {
         {tab === "체결내역" && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: '#5A6478' }}>체결내역 자동 동기화</div>
+              <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5' }}>체결내역 자동 동기화</div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 {tradeSyncMsg && (
                   <span style={{ fontSize: 10, color: tradeSyncMsg.includes('오류') ? '#F87171' : '#4ADE80' }}>
@@ -3719,16 +3756,16 @@ export default function App() {
             </div>
 
             {sheets.auth !== 'signed-in' ? (
-              <div style={{ padding: 32, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
+              <div style={{ padding: 32, textAlign: 'center', color: '#8A9AB5', fontSize: 12 }}>
                 로그인 후 이용할 수 있습니다
               </div>
             ) : tradeRows.length === 0 ? (
-              <div style={{ padding: 32, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
+              <div style={{ padding: 32, textAlign: 'center', color: '#8A9AB5', fontSize: 12 }}>
                 {tradeSyncing ? '불러오는 중...' : '체결내역이 없습니다'}
               </div>
             ) : (
               <div style={{ background: '#1A1D26', borderRadius: 12, overflow: 'hidden' }}>
-                <div style={{ padding: '10px 16px', borderBottom: '1px solid #2A2F3E', fontSize: 10, letterSpacing: 3, color: '#5A6478' }}>
+                <div style={{ padding: '10px 16px', borderBottom: '1px solid #2A2F3E', fontSize: 10, letterSpacing: 3, color: '#8A9AB5' }}>
                   전체 {tradeRows.length}건 · 처리완료 {tradeRows.filter(r => r.processed).length}건
                 </div>
                 {tradeRows.map(({ row, processed }, idx) => {
@@ -3776,14 +3813,14 @@ export default function App() {
                             background: isBuy ? '#1E3A5F' : '#4A1E1E',
                             color: isBuy ? '#60A5FA' : '#F87171',
                           }}>{buySell || '—'}</span>
-                          <span style={{ fontSize: 10, color: '#5A6478' }}>{account}</span>
+                          <span style={{ fontSize: 10, color: '#8A9AB5' }}>{account}</span>
                           <span style={{ fontSize: 10, color: '#3A3F4E' }}>·</span>
-                          <span style={{ fontSize: 10, color: '#5A6478' }}>{date}</span>
+                          <span style={{ fontSize: 10, color: '#8A9AB5' }}>{date}</span>
                         </div>
                         <div style={{ fontSize: 13, fontWeight: 700, color: '#E8EAF0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {stockName || '—'}
                         </div>
-                        <div style={{ fontSize: 10, color: '#5A6478', marginTop: 2 }}>
+                        <div style={{ fontSize: 10, color: '#8A9AB5', marginTop: 2 }}>
                           {qty > 0 ? `${qty}주` : ''}{qty > 0 && price > 0 ? ' · ' : ''}{price > 0 ? `₩${price.toLocaleString()}` : ''}
                           {!isComplete && <span style={{ marginLeft: 6, color: '#F59E0B' }}>셀 미완성</span>}
                         </div>
@@ -3877,7 +3914,7 @@ export default function App() {
                 </button>
                 <button onClick={() => setEvalIngestOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
                   padding: '5px 10px', borderRadius: 6, border: '1px solid #2A2F3E',
-                  background: 'transparent', color: '#5A6478',
+                  background: 'transparent', color: '#8A9AB5',
                   cursor: sheets.auth !== 'signed-in' ? 'not-allowed' : 'pointer',
                   opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
                   fontSize: 10, fontFamily: baseFont,
@@ -3893,7 +3930,7 @@ export default function App() {
                 background: '#0F1218', borderRadius: 8, padding: '8px 12px', marginBottom: 12,
                 fontSize: 10, color: '#9CA3AF', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center',
               }}>
-                <span style={{ color: '#5A6478', letterSpacing: 1 }}>의뢰 큐</span>
+                <span style={{ color: '#8A9AB5', letterSpacing: 1 }}>의뢰 큐</span>
                 {evalQueue.counts.pending > 0 && <span>대기 <span style={{ color: '#F5A623', fontWeight: 600 }}>{evalQueue.counts.pending}</span></span>}
                 {evalQueue.counts.processing > 0 && <span>처리중 <span style={{ color: '#60A5FA', fontWeight: 600 }}>{evalQueue.counts.processing}</span></span>}
                 {evalQueue.counts.error > 0 && <span>오류 <span style={{ color: '#F87171', fontWeight: 600 }}>{evalQueue.counts.error}</span></span>}
@@ -3910,7 +3947,7 @@ export default function App() {
                   <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0', borderTop: i > 0 ? '1px solid #2A1518' : 'none' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: '#E8EAF0' }}>
-                        {e.name}{e.market && <span style={{ color: '#5A6478', fontSize: 9, marginLeft: 4 }}>{e.market}</span>}
+                        {e.name}{e.market && <span style={{ color: '#8A9AB5', fontSize: 9, marginLeft: 4 }}>{e.market}</span>}
                       </div>
                       <div style={{ fontSize: 10, color: '#C98A8A', marginTop: 2, lineHeight: 1.4, wordBreak: 'break-word' }}>
                         {e.memo || '사유 미기록'}
@@ -3948,7 +3985,7 @@ export default function App() {
               </div>
             )}
 
-            <div style={{ fontSize: 9, letterSpacing: 2, color: '#5A6478', marginBottom: 8 }}>
+            <div style={{ fontSize: 9, letterSpacing: 2, color: '#8A9AB5', marginBottom: 8 }}>
               {fromSheet ? `시트 데이터 (${card.stock.name} · ${card.date} 기준)` : `샘플 (${card.stock.name} · ${card.date} 기준)`}
             </div>
 
@@ -3959,7 +3996,7 @@ export default function App() {
                 <div style={{ fontSize: 19, fontWeight: 800, color: '#F5F7FF', letterSpacing: -0.3 }}>
                   {card.stock.name}{card.stock.ticker ? ` (${card.stock.ticker})` : ''}
                 </div>
-                <div style={{ fontSize: 10, color: '#5A6478', marginTop: 4, letterSpacing: 1 }}>
+                <div style={{ fontSize: 10, color: '#8A9AB5', marginTop: 4, letterSpacing: 1 }}>
                   {card.stock.market || '—'} · {card.date}
                 </div>
                 {fromSheet && card.statusBar?.status && (
@@ -4012,7 +4049,7 @@ export default function App() {
                       </div>
                       <div style={{ color: '#E8EAF0', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, textAlign: 'right', minWidth: 0 }}>
                         <span style={{ fontWeight: 600, wordBreak: 'break-word' }}>{item.value}</span>
-                        {item.source && <span style={{ fontSize: 9, color: '#5A6478', wordBreak: 'break-word' }}>{item.source}</span>}
+                        {item.source && <span style={{ fontSize: 9, color: '#8A9AB5', wordBreak: 'break-word' }}>{item.source}</span>}
                       </div>
                     </div>
                   ))}
@@ -4027,7 +4064,7 @@ export default function App() {
                   return (
                     <div style={{ textAlign: 'center', marginBottom: 14 }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '8px 18px', borderRadius: 22, background: `${cc}1A`, border: `1px solid ${cc}66` }}>
-                        <span style={{ fontSize: 10, color: '#5A6478', fontWeight: 600, letterSpacing: 1 }}>결론</span>
+                        <span style={{ fontSize: 10, color: '#8A9AB5', fontWeight: 600, letterSpacing: 1 }}>결론</span>
                         <GradeDot grade={concRaw} size={11} />
                         <span style={{ fontSize: 15, fontWeight: 800, color: cc, letterSpacing: 0.3 }}>{stripGrade(concRaw) || '—'}</span>
                       </div>
@@ -4068,9 +4105,9 @@ export default function App() {
 
                 {card.sources?.length > 0 && (
                   <div style={{ marginTop: 8 }}>
-                    <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>출처</div>
+                    <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 4, letterSpacing: 1 }}>출처</div>
                     {card.sources.map((s, i) => (
-                      <div key={i} style={{ fontSize: 9, color: '#5A6478', paddingLeft: 8, lineHeight: 1.4 }}>· {s}</div>
+                      <div key={i} style={{ fontSize: 9, color: '#8A9AB5', paddingLeft: 8, lineHeight: 1.4 }}>· {s}</div>
                     ))}
                   </div>
                 )}
@@ -4115,14 +4152,14 @@ export default function App() {
 
           if (sheets.auth !== 'signed-in') {
             return (
-              <div style={{ padding: 32, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
+              <div style={{ padding: 32, textAlign: 'center', color: '#8A9AB5', fontSize: 12 }}>
                 로그인 후 이용할 수 있습니다
               </div>
             );
           }
           if (stocks.length === 0) {
             return (
-              <div style={{ padding: 32, textAlign: 'center', color: '#5A6478', fontSize: 12 }}>
+              <div style={{ padding: 32, textAlign: 'center', color: '#8A9AB5', fontSize: 12 }}>
                 평가가 완료된 보유 종목이 없습니다.<br/>
                 <span style={{ fontSize: 11, color: '#3A4050' }}>매수평가 탭에서 평가 후 보유 중이면 여기에 표시됩니다.</span>
               </div>
@@ -4216,14 +4253,14 @@ export default function App() {
                     )}
                     <div style={{ textAlign: 'center', marginBottom: 12 }}>
                       <div style={{ fontSize: 18, fontWeight: 800, color: '#E8EAF0', letterSpacing: 0.3 }}>{stock.name}</div>
-                      <div style={{ fontSize: 9, color: '#5A6478', marginTop: 3, letterSpacing: 1 }}>
+                      <div style={{ fontSize: 9, color: '#8A9AB5', marginTop: 3, letterSpacing: 1 }}>
                         {stock.type || '—'} · {stock.accounts.map(a => a.acct).join(' / ')}
                       </div>
                       <div style={{ marginTop: 8, display: 'flex', justifyContent: 'center', alignItems: 'baseline', gap: 8 }}>
                         <span style={{ fontSize: 20, fontWeight: 800, color: stock.profitSum >= 0 ? PROFIT_POS : PROFIT_NEG }}>
                           {stock.profitSum >= 0 ? '+' : ''}{stock.rate.toFixed(1)}%
                         </span>
-                        <span style={{ fontSize: 11, color: '#5A6478' }}>
+                        <span style={{ fontSize: 11, color: '#8A9AB5' }}>
                           {stock.profitSum >= 0 ? '+' : ''}₩{fmt(stock.profitSum)}
                         </span>
                       </div>
@@ -4245,15 +4282,15 @@ export default function App() {
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, fontSize: 10 }}>
                       <div>
-                        <div style={{ color: '#5A6478', letterSpacing: 1, marginBottom: 2 }}>보유</div>
+                        <div style={{ color: '#8A9AB5', letterSpacing: 1, marginBottom: 2 }}>보유</div>
                         <div style={{ color: '#E8EAF0', fontWeight: 600 }}>{fmt(stock.qty)}주</div>
                       </div>
                       <div>
-                        <div style={{ color: '#5A6478', letterSpacing: 1, marginBottom: 2 }}>평균단가</div>
+                        <div style={{ color: '#8A9AB5', letterSpacing: 1, marginBottom: 2 }}>평균단가</div>
                         <div style={{ color: '#E8EAF0', fontWeight: 600 }}>₩{fmt(stock.avgPrice)}</div>
                       </div>
                       <div>
-                        <div style={{ color: '#5A6478', letterSpacing: 1, marginBottom: 2 }}>평가금</div>
+                        <div style={{ color: '#8A9AB5', letterSpacing: 1, marginBottom: 2 }}>평가금</div>
                         <div style={{ color: '#E8EAF0', fontWeight: 600 }}>₩{fmt(stock.evalSum)}</div>
                       </div>
                     </div>
@@ -4272,7 +4309,7 @@ export default function App() {
                           </span>
                         )}
                         {daysSinceEval !== null && (
-                          <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 9, background: daysSinceEval > 90 ? '#4A1E1E33' : daysSinceEval > 30 ? '#3A2A1E33' : '#1E2233', color: daysSinceEval > 90 ? '#F87171' : daysSinceEval > 30 ? '#FBBF24' : '#5A6478', border: `1px solid ${daysSinceEval > 90 ? '#F8717144' : daysSinceEval > 30 ? '#FBBF2444' : '#2A2F3E'}` }}>
+                          <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 9, background: daysSinceEval > 90 ? '#4A1E1E33' : daysSinceEval > 30 ? '#3A2A1E33' : '#1E2233', color: daysSinceEval > 90 ? '#F87171' : daysSinceEval > 30 ? '#FBBF24' : '#8A9AB5', border: `1px solid ${daysSinceEval > 90 ? '#F8717144' : daysSinceEval > 30 ? '#FBBF2444' : '#2A2F3E'}` }}>
                             평가 {daysSinceEval}일 전
                           </span>
                         )}
@@ -4281,7 +4318,7 @@ export default function App() {
 
                     {stock.accounts.length > 1 && (
                       <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1E2233' }}>
-                        <div style={{ fontSize: 9, letterSpacing: 1, color: '#5A6478', marginBottom: 4 }}>계좌별 보유</div>
+                        <div style={{ fontSize: 9, letterSpacing: 1, color: '#8A9AB5', marginBottom: 4 }}>계좌별 보유</div>
                         {stock.accounts.map((a, i) => (
                           <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, padding: '2px 0' }}>
                             <span style={{ color: '#9CA3AF' }}>{a.acct}</span>
@@ -4305,7 +4342,7 @@ export default function App() {
                           최초 매수 근거
                         </SectionTitle>
                         {earliest.reasons.length === 0 ? (
-                          <div style={{ fontSize: 11, color: '#5A6478' }}>(근거 미기록)</div>
+                          <div style={{ fontSize: 11, color: '#8A9AB5' }}>(근거 미기록)</div>
                         ) : earliest.reasons.map((r, i) => (
                           <NumberedItem key={i} n={i + 1} text={r} color="#9CA3AF" numColor="#60A5FA" />
                         ))}
@@ -4325,7 +4362,7 @@ export default function App() {
                         )}
 
                         {(latest.targetTerm || latest.targetRet || latest.status) && (
-                          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1E2233', display: 'flex', gap: 12, fontSize: 10, color: '#5A6478' }}>
+                          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1E2233', display: 'flex', gap: 12, fontSize: 10, color: '#8A9AB5' }}>
                             {latest.status && <span>상태: <span style={{ color: '#E8EAF0' }}>{latest.status}</span></span>}
                             {latest.targetTerm && <span>목표기간: <span style={{ color: '#E8EAF0' }}>{latest.targetTerm}</span></span>}
                             {latest.targetRet && <span>목표수익률: <span style={{ color: '#E8EAF0' }}>{latest.targetRet}</span></span>}
@@ -4364,7 +4401,7 @@ export default function App() {
                     </div>
                   ) : (
                     <div style={{ background: '#1A1D26', borderRadius: 12, padding: '20px 16px', marginBottom: 12, textAlign: 'center' }}>
-                      <div style={{ fontSize: 11, color: '#5A6478', marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, color: '#8A9AB5', marginBottom: 8 }}>
                         아직 평가 기록이 없습니다
                       </div>
                       <button onClick={() => setTab('평가')} style={{
@@ -4400,7 +4437,7 @@ export default function App() {
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#F5A623' }}>셀 값 입력</div>
                 <button onClick={() => setTradeEditOpen(false)} style={{
                   background: 'transparent', border: 'none', cursor: 'pointer',
-                  color: '#5A6478', fontSize: 18, padding: 0, lineHeight: 1,
+                  color: '#8A9AB5', fontSize: 18, padding: 0, lineHeight: 1,
                 }}>✕</button>
               </div>
 
@@ -4409,7 +4446,7 @@ export default function App() {
                 return (
                   <div key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <div style={{
-                      width: 64, fontSize: 10, color: isEmpty ? '#F59E0B' : '#5A6478',
+                      width: 64, fontSize: 10, color: isEmpty ? '#F59E0B' : '#8A9AB5',
                       textAlign: 'right', flexShrink: 0,
                     }}>
                       {col.key} · {col.label}
@@ -4436,7 +4473,7 @@ export default function App() {
               <button onClick={saveTradeEdit} disabled={tradeEditBusy} style={{
                 width: '100%', marginTop: 12, padding: '10px 12px', borderRadius: 6, border: 'none',
                 background: tradeEditBusy ? '#2A2F3E' : '#F5A623',
-                color: tradeEditBusy ? '#5A6478' : '#1A1D26',
+                color: tradeEditBusy ? '#8A9AB5' : '#1A1D26',
                 cursor: tradeEditBusy ? 'not-allowed' : 'pointer',
                 fontSize: 12, fontWeight: 700, fontFamily: baseFont,
               }}>{tradeEditBusy ? '저장 중...' : '시트에 저장'}</button>
@@ -4468,7 +4505,7 @@ export default function App() {
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#60A5FA' }}>평가 결과 저장</div>
                 <button onClick={() => setEvalIngestOpen(false)} style={{
                   background: 'transparent', border: 'none', cursor: 'pointer',
-                  color: '#5A6478', fontSize: 18, padding: 0, lineHeight: 1,
+                  color: '#8A9AB5', fontSize: 18, padding: 0, lineHeight: 1,
                 }}>✕</button>
               </div>
 
@@ -4497,7 +4534,7 @@ export default function App() {
                 <button onClick={ingestEvaluation} disabled={!evalIngestParsed || evalIngestBusy} style={{
                   flex: 1, padding: '8px 12px', borderRadius: 6, border: 'none',
                   background: evalIngestParsed && !evalIngestBusy ? '#3B82F6' : '#2A2F3E',
-                  color: evalIngestParsed && !evalIngestBusy ? '#fff' : '#5A6478',
+                  color: evalIngestParsed && !evalIngestBusy ? '#fff' : '#8A9AB5',
                   cursor: evalIngestParsed && !evalIngestBusy ? 'pointer' : 'not-allowed',
                   fontSize: 11, fontWeight: 600, fontFamily: baseFont,
                 }}>{evalIngestBusy ? '적재 중...' : '시트에 적재'}</button>
@@ -4517,7 +4554,7 @@ export default function App() {
               {/* 파싱 결과 미리보기 + 편집 */}
               {evalIngestParsed && (
                 <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #2A2F3E' }}>
-                  <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 8 }}>미리보기 (편집 가능)</div>
+                  <div style={{ fontSize: 10, letterSpacing: 2, color: '#8A9AB5', marginBottom: 8 }}>미리보기 (편집 가능)</div>
                   {[
                     { k: 'date', label: '평가일' },
                     { k: 'name', label: '종목명' },
@@ -4533,7 +4570,7 @@ export default function App() {
                     { k: 'frankMemo', label: 'Frank 메모' },
                   ].map(({ k, label }) => (
                     <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <div style={{ width: 80, fontSize: 10, color: '#5A6478', textAlign: 'right', flexShrink: 0 }}>{label}</div>
+                      <div style={{ width: 80, fontSize: 10, color: '#8A9AB5', textAlign: 'right', flexShrink: 0 }}>{label}</div>
                       <input
                         value={evalIngestParsed[k] || ''}
                         onChange={(e) => setEvalIngestParsed({ ...evalIngestParsed, [k]: e.target.value })}
@@ -4547,7 +4584,7 @@ export default function App() {
                   ))}
 
                   <div style={{ marginTop: 10 }}>
-                    <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4 }}>5축 등급</div>
+                    <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 4 }}>5축 등급</div>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       {Object.entries(evalIngestParsed.grades).map(([axis, val]) => (
                         <div key={axis} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -4569,7 +4606,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div style={{ marginTop: 10, fontSize: 10, color: '#5A6478' }}>
+                  <div style={{ marginTop: 10, fontSize: 10, color: '#8A9AB5' }}>
                     근거 {evalIngestParsed.reasons.length}건 · 리스크 {evalIngestParsed.risks.length}건 · 액션 {evalIngestParsed.actions.length}건
                   </div>
                 </div>
@@ -4594,13 +4631,13 @@ export default function App() {
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#F5A623' }}>평가 의뢰</div>
                 <button onClick={() => setEvalQueueOpen(false)} style={{
                   background: 'transparent', border: 'none', cursor: 'pointer',
-                  color: '#5A6478', fontSize: 18, padding: 0, lineHeight: 1,
+                  color: '#8A9AB5', fontSize: 18, padding: 0, lineHeight: 1,
                 }}>✕</button>
               </div>
 
               {/* 종목명 */}
               <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>종목명</div>
+                <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 4, letterSpacing: 1 }}>종목명</div>
                 <input
                   value={evalQueueName}
                   onChange={(e) => { setEvalQueueName(e.target.value); setEvalQueueMsg(''); }}
@@ -4617,7 +4654,7 @@ export default function App() {
 
               {/* 시장 */}
               <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>시장</div>
+                <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 4, letterSpacing: 1 }}>시장</div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   {['KR', 'US'].map(m => (
                     <button key={m} onClick={() => setEvalQueueMarket(m)} style={{
@@ -4633,7 +4670,7 @@ export default function App() {
 
               {/* 메모 */}
               <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 4, letterSpacing: 1 }}>메모 (선택)</div>
+                <div style={{ fontSize: 10, color: '#8A9AB5', marginBottom: 4, letterSpacing: 1 }}>메모 (선택)</div>
                 <input
                   value={evalQueueMemo}
                   onChange={(e) => setEvalQueueMemo(e.target.value)}
@@ -4650,7 +4687,7 @@ export default function App() {
               <button onClick={submitEvalQueue} disabled={!evalQueueName.trim() || evalQueueBusy} style={{
                 width: '100%', padding: '10px 12px', borderRadius: 6, border: 'none',
                 background: (evalQueueName.trim() && !evalQueueBusy) ? '#F5A623' : '#2A2F3E',
-                color: (evalQueueName.trim() && !evalQueueBusy) ? '#1A1D26' : '#5A6478',
+                color: (evalQueueName.trim() && !evalQueueBusy) ? '#1A1D26' : '#8A9AB5',
                 cursor: (evalQueueName.trim() && !evalQueueBusy) ? 'pointer' : 'not-allowed',
                 fontSize: 12, fontWeight: 700, fontFamily: baseFont,
               }}>
@@ -4671,7 +4708,7 @@ export default function App() {
               {/* 큐 미리보기 */}
               {evalQueue.entries.length > 0 && (
                 <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #2A2F3E' }}>
-                  <div style={{ fontSize: 10, letterSpacing: 2, color: '#5A6478', marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, letterSpacing: 2, color: '#8A9AB5', marginBottom: 8 }}>
                     최근 의뢰 ({evalQueue.entries.length}건)
                   </div>
                   {evalQueue.entries.slice(0, 5).map((e, i) => (
@@ -4692,9 +4729,9 @@ export default function App() {
                         <span style={{ color: '#E8EAF0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {e.name}
                         </span>
-                        {e.market && <span style={{ color: '#5A6478', fontSize: 9 }}>{e.market}</span>}
+                        {e.market && <span style={{ color: '#8A9AB5', fontSize: 9 }}>{e.market}</span>}
                       </div>
-                      <span style={{ color: '#5A6478', fontSize: 9, flexShrink: 0, marginLeft: 8 }}>
+                      <span style={{ color: '#8A9AB5', fontSize: 9, flexShrink: 0, marginLeft: 8 }}>
                         {e.requestedAt.slice(5)}
                       </span>
                     </div>
@@ -4719,7 +4756,7 @@ export default function App() {
               </div>
               <button onClick={() => setEvalSelectedMetric(null)} style={{
                 background: 'transparent', border: 'none', cursor: 'pointer',
-                color: '#5A6478', fontSize: 18, padding: 0, lineHeight: 1,
+                color: '#8A9AB5', fontSize: 18, padding: 0, lineHeight: 1,
               }}>✕</button>
             </div>
             <div style={{ fontSize: 12, color: '#E8EAF0', lineHeight: 1.6, marginBottom: 10 }}>
@@ -4735,8 +4772,29 @@ export default function App() {
       </div>
 
       <div style={{ padding: "12px 16px 32px", textAlign: "center", fontSize: 9, color: "#2A2F3E", letterSpacing: 2 }}>
-        2026-04-25 · 바나나 은퇴 준비 포트폴리오
+        {(sheets.lastSync || new Date()).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })} · 바나나 은퇴 준비 포트폴리오
       </div>
+
+      {/* 동기화/저장 피드백 토스트 (하단 고정) */}
+      {balanceSyncMsg && (() => {
+        const isErr = balanceSyncMsg.includes('실패') || balanceSyncMsg.includes('없음') || balanceSyncMsg.includes('올바르게');
+        return (
+          <div style={{
+            position: "fixed", left: "50%", bottom: 24, transform: "translateX(-50%)",
+            zIndex: 2000, maxWidth: "90%",
+            padding: "12px 20px", borderRadius: 10,
+            background: isErr ? "#3A1518" : "#143526",
+            border: `1px solid ${isErr ? "#7F1D1D" : "#15803D"}`,
+            color: isErr ? "#FCA5A5" : "#86EFAC",
+            fontSize: 13, fontWeight: 600, fontFamily: baseFont,
+            boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", gap: 8,
+          }}>
+            <span>{isErr ? "⚠️" : "✓"}</span>
+            <span>{balanceSyncMsg}</span>
+          </div>
+        );
+      })()}
     </div>
   );
 }
