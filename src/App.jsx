@@ -205,6 +205,7 @@ const SHEET_RANGES = {
   주간리포트:   '주간리포트!A2:C',     // 13  주간 AI 리포트 (날짜, 요약, 본문)
   리스크모니터: '리스크모니터!A2:H',   // 14  AI 리스크 신호 (날짜,유형,대상,신호,요약,상세,근거,기준선참조)
   리스크기준선: '리스크기준선!A2:J',   // 15  펀더멘털 기준선 (종목,티커,시장,기준일,매총이,영익,ROE,부채,EPS,비고)
+  포지션저널:   '포지션저널!A2:P',     // 16  거래 생애주기 전제 (종목,티커,시장,계좌,유형,전제,목표,이탈조건,예상보유,진입일,상태,청산일,청산결과,교훈,확인여부,갱신시각)
 };
 
 const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
@@ -841,6 +842,53 @@ function parseWeeklyReports(vr) {
   }).filter(Boolean).reverse();
 }
 
+// 포지션저널 파서 (A~P) → 거래 생애주기 전제 배열. 보유 우선, 그 안에서 시트 순서 유지
+function parsePositionJournal(vr) {
+  const rows = vr?.values ?? [];
+  const list = rows.map((r, idx) => {
+    const name = String(r[0] ?? '').trim();
+    if (!name) return null;
+    return {
+      rowIndex: idx,            // 시트 행 = idx + 2 (A2 기준)
+      name,
+      ticker:  String(r[1] ?? '').trim(),
+      market:  String(r[2] ?? '').trim(),
+      account: String(r[3] ?? '').trim(),
+      kind:    String(r[4] ?? '').trim(),   // 배분 / 확신
+      thesis:  String(r[5] ?? '').trim(),
+      target:  String(r[6] ?? '').trim(),
+      exit:    String(r[7] ?? '').trim(),
+      hold:    String(r[8] ?? '').trim(),
+      entry:   String(r[9] ?? '').trim(),
+      status:  String(r[10] ?? '').trim() || '보유',  // 보유 / 청산
+      exitDate:String(r[11] ?? '').trim(),
+      result:  String(r[12] ?? '').trim(),
+      lesson:  String(r[13] ?? '').trim(),
+      confirm: String(r[14] ?? '').trim() || '미작성',  // 대기 / 확인 / 미작성
+      updated: String(r[15] ?? '').trim(),
+    };
+  }).filter(Boolean);
+  // 보유 먼저, 청산 뒤로
+  return list.sort((a, b) => (a.status === '청산' ? 1 : 0) - (b.status === '청산' ? 1 : 0));
+}
+
+// 보유 포지션 × 리스크 신호(🟡/🔴) 조인 → 전제 점검 대상 [{ position, signal }]
+// riskMonitor 는 최신순 → find 가 최신 신호를 반환. target 은 종목명 또는 코드.
+function findThesisAlerts(positionJournal, riskMonitor) {
+  const held = (positionJournal || []).filter(p => p.status !== '청산');
+  const alerts = [];
+  for (const p of held) {
+    const signal = (riskMonitor || []).find(s =>
+      /🔴|🟡/.test(s.signal) && s.target && (
+        (p.ticker && p.ticker.toUpperCase() === s.target.toUpperCase()) ||
+        sameStock('', p.name, '', s.target)
+      )
+    );
+    if (signal) alerts.push({ position: p, signal });
+  }
+  return alerts;
+}
+
 // 리스크모니터 파서 (날짜,유형,대상,신호,요약,상세,근거,기준선참조) → 최신순
 function parseRiskMonitor(vr) {
   const rows = vr?.values ?? [];
@@ -987,8 +1035,9 @@ function parseSheetData(valueRanges) {
   const weeklyReports = parseWeeklyReports(valueRanges[13]);
   const riskMonitor = parseRiskMonitor(valueRanges[14]);
   const baselines = parseBaselines(valueRanges[15]);
+  const positionJournal = parsePositionJournal(valueRanges[16]);
 
-  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines } : null;
+  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines, positionJournal } : null;
 }
 
 // ── useGoogleSheets 훅 ────────────────────────────────────────────────────────
@@ -1020,6 +1069,7 @@ function useGoogleSheets(onData) {
           weeklyReports: parsed.weeklyReports,
           riskMonitor: parsed.riskMonitor,
           baselines: parsed.baselines,
+          positionJournal: parsed.positionJournal,
         });
       }
       const now = new Date();
@@ -1471,8 +1521,11 @@ export default function App() {
   const [riskMonitor, setRiskMonitor] = useState([]);
   const [baselines, setBaselines] = useState([]);
   const [riskOpen, setRiskOpen] = useState(new Set());
+  const [positionJournal, setPositionJournal] = useState([]);
+  const [journalOpen, setJournalOpen] = useState(new Set());
+  const [lessonDraft, setLessonDraft] = useState({}); // rowIndex → 교훈 입력값 (반성 카드)
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl }) => {
+  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
     setDividendData(d || []);
@@ -1484,6 +1537,7 @@ export default function App() {
     if (wr) setWeeklyReports(wr);
     if (rm) setRiskMonitor(rm);
     if (bl) setBaselines(bl);
+    if (pj) setPositionJournal(pj);
   }, []);
 
   const sheets = useGoogleSheets(onData);
@@ -2217,6 +2271,8 @@ export default function App() {
             { key: "리스크",    label: "리스크" },
             { key: "평가",      label: "매수평가" },
             { key: "노트",      label: "매도검토" },
+            { key: "거래",      label: "거래결정" },
+            { key: "저널",      label: "포지션저널" },
             { key: "holdings",  label: "보유종목" },
             { key: "rebalance", label: "자산분배" },
             { key: "report",    label: "리포트" },
@@ -2667,6 +2723,27 @@ export default function App() {
                 <div style={{ fontSize: 14, fontWeight: 700, color: '#E8EAF0' }}>포트폴리오 리포트</div>
                 <div style={{ fontSize: 10, color: '#8A9AB5' }}>{dateStr} 기준</div>
               </div>
+
+              {/* 전제 점검 경보 — 보유 포지션의 이탈조건이 risk 신호와 충돌하면 최상단에 노출 */}
+              {(() => {
+                const thesisAlerts = findThesisAlerts(positionJournal, riskMonitor);
+                if (thesisAlerts.length === 0) return null;
+                const hasRed = thesisAlerts.some(a => /🔴/.test(a.signal.signal));
+                const c = hasRed ? '#EF4444' : '#F5C842';
+                return (
+                  <button onClick={() => setTab('저널')} style={{ width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: baseFont,
+                    background: `linear-gradient(135deg,${c}1A,#1A1D26)`, border: `1px solid ${c}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: c, letterSpacing: 1 }}>⚠ 전제 점검 {thesisAlerts.length}건</div>
+                      <div style={{ fontSize: 9, color: '#8A9AB5' }}>포지션저널 ›</div>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#F5F7FF', lineHeight: 1.5 }}>
+                      {thesisAlerts.slice(0, 4).map(a => a.position.name).join(' · ')}{thesisAlerts.length > 4 ? ` 외 ${thesisAlerts.length - 4}` : ''}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 4 }}>보유 전제가 흔들리는 신호 — 이탈조건과 대조해 매도 검토하세요</div>
+                  </button>
+                );
+              })()}
 
               {/* 이번 주 행동 처방 — 최신 리포트의 "🎯 …처방" 섹션을 최상단에 고정 노출 */}
               {(() => {
@@ -3719,6 +3796,278 @@ export default function App() {
                   </div>
                 ); })()}
               </div>
+            </div>
+          );
+        })()}
+
+        {/* ── 거래결정 탭 (① 거래직전 워크플로우: 시장→팔것→옮길곳→교훈) ── */}
+        {tab === "거래" && (() => {
+          // riskMonitor 는 최신순. 최신 거시(D)·논리(B) 신호 추출
+          const macro = (riskMonitor || []).find(s => s.type === 'D');
+          const logicReds = (riskMonitor || []).filter(s => s.type === 'B' && /🔴|🟡/.test(s.signal)).slice(0, 6);
+          const alerts = findThesisAlerts(positionJournal, riskMonitor); // 팔 것 후보
+          const lessons = (positionJournal || []).filter(p => p.status === '청산' && p.lesson).slice(0, 6);
+
+          // 옮길 곳: 최신 리포트 처방 재사용
+          let action = '', reason = '', rptDate = '';
+          const rpt = weeklyReports[0];
+          if (rpt) {
+            const pSec = rpt.body.split(/^## /m).filter(Boolean).find(s => /처방/.test(s.split('\n')[0]));
+            if (pSec) {
+              const rest = pSec.split('\n').slice(1).join('\n').trim();
+              const quote = rest.match(/^>\s*(.+)$/m);
+              action = quote ? quote[1].replace(/\*\*/g, '').replace(/^["“]\s*|\s*["”]$/g, '').trim() : '';
+              let r2 = rest.replace(/^>.*$/m, '').trim();
+              const sep = r2.indexOf('\n---'); if (sep >= 0) r2 = r2.slice(0, sep).trim();
+              reason = r2.replace(/^근거\s*[:：]\s*/, '').replace(/\*\*/g, '').trim();
+              rptDate = rpt.date;
+            }
+          }
+
+          const sigColor = (s) => /🔴/.test(s) ? '#EF4444' : /🟡/.test(s) ? '#F5C842' : '#4ADE80';
+          const StepHead = (n, title, sub) => (
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: '#F5C842' }}>{n}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#F5F7FF' }}>{title}</span>
+              {sub && <span style={{ fontSize: 10, color: '#8A9AB5' }}>{sub}</span>}
+            </div>
+          );
+          const cardStyle = { background: '#1A1D26', border: '1px solid #262A3A', borderRadius: 12, padding: 16, marginBottom: 12 };
+
+          return (
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 6 }}>거래결정 — 팔기 전에 4단계</div>
+              <div style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.5, marginBottom: 14 }}>
+                <b style={{ color: '#E5E9F5' }}>지금 시장 → 팔 것 → 옮길 곳 → 지난 교훈</b> 순으로 점검합니다. 데이터는 리스크모니터·포지션저널·리포트에서 가져옵니다.
+              </div>
+
+              {/* 1. 지금 시장 */}
+              <div style={cardStyle}>
+                {StepHead('1', '지금 시장', '거시·논리 신호')}
+                {macro ? (
+                  <div style={{ background: sigColor(macro.signal) + '14', border: `1px solid ${sigColor(macro.signal)}44`, borderRadius: 8, padding: 10, marginBottom: logicReds.length ? 10 : 0 }}>
+                    <div style={{ fontSize: 12, color: '#F5F7FF', fontWeight: 600 }}>{macro.signal} 거시 — {macro.summary}</div>
+                    {macro.detail && <div style={{ fontSize: 11, color: '#C9D1E5', lineHeight: 1.5, marginTop: 4 }}>{macro.detail}</div>}
+                    <div style={{ fontSize: 9, color: '#8A9AB5', marginTop: 4 }}>{macro.date}</div>
+                  </div>
+                ) : <div style={{ fontSize: 11, color: '#8A9AB5' }}>최근 거시 신호 없음</div>}
+                {logicReds.length > 0 && (
+                  <div style={{ marginTop: 4 }}>
+                    {logicReds.map((s, i) => (
+                      <div key={i} style={{ fontSize: 11, color: '#C9D1E5', lineHeight: 1.5, padding: '3px 0' }}>
+                        <span style={{ color: sigColor(s.signal) }}>{s.signal}</span> <b style={{ color: '#E5E9F5' }}>{s.target}</b> — {s.summary}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 2. 팔 것 */}
+              <div style={cardStyle}>
+                {StepHead('2', '팔 것', '이탈조건이 흔들리는 보유')}
+                {alerts.length === 0 ? (
+                  <div style={{ fontSize: 11, color: '#4ADE80' }}>지금 이탈조건이 깨진 보유는 없습니다 — 매도 서두를 필요 없음</div>
+                ) : alerts.map((a, i) => (
+                  <div key={i} style={{ background: '#12141C', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#F5F7FF' }}>{a.position.name}</span>
+                      <span style={{ fontSize: 10, color: sigColor(a.signal.signal) }}>{a.signal.signal} {a.signal.type}신호</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#C9D1E5', lineHeight: 1.5 }}>{a.signal.summary}</div>
+                    {a.position.exit && <div style={{ fontSize: 10, color: '#F5C9B8', lineHeight: 1.5, marginTop: 4 }}>이탈조건: {a.position.exit}</div>}
+                  </div>
+                ))}
+                <button onClick={() => setTab('저널')} style={{ marginTop: 6, padding: '6px 12px', minHeight: 32, borderRadius: 6, border: '1px solid #2E3344', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: 10, fontFamily: baseFont }}>포지션저널에서 전체 보기 ›</button>
+              </div>
+
+              {/* 3. 옮길 곳 */}
+              <div style={cardStyle}>
+                {StepHead('3', '옮길 곳', '이번 주 처방 · 배분 갭')}
+                {action ? (
+                  <div style={{ background: 'linear-gradient(135deg,#2A2410,#12141C)', border: '1px solid #F5C84244', borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#F5F7FF', lineHeight: 1.5, marginBottom: reason ? 8 : 0 }}>{action}</div>
+                    {reason && <div style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{reason}</div>}
+                    {rptDate && <div style={{ fontSize: 9, color: '#8A9AB5', marginTop: 6 }}>{rptDate} 리포트</div>}
+                  </div>
+                ) : <div style={{ fontSize: 11, color: '#8A9AB5' }}>최근 리포트 처방 없음 — 리포트 탭에서 주간 리포트를 생성하세요</div>}
+                <button onClick={() => setTab('rebalance')} style={{ marginTop: 8, padding: '6px 12px', minHeight: 32, borderRadius: 6, border: '1px solid #2E3344', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: 10, fontFamily: baseFont }}>자산분배 갭 보기 ›</button>
+              </div>
+
+              {/* 4. 지난 교훈 */}
+              <div style={cardStyle}>
+                {StepHead('4', '지난 교훈', '같은 실수 반복 금지')}
+                {lessons.length === 0 ? (
+                  <div style={{ fontSize: 11, color: '#8A9AB5' }}>아직 기록된 교훈이 없습니다 — 청산 종목을 반성하면 여기 쌓입니다</div>
+                ) : lessons.map((p, i) => (
+                  <div key={i} style={{ fontSize: 11, color: '#A8D672', lineHeight: 1.5, padding: '4px 0', borderBottom: i < lessons.length - 1 ? '1px solid #1F2330' : 'none' }}>
+                    <b style={{ color: '#C9D1E5' }}>{p.name}</b>: {p.lesson}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── 포지션저널 탭 (거래 생애주기 전제) ── */}
+        {tab === "저널" && (() => {
+          const held = positionJournal.filter(p => p.status !== '청산');
+          const closed = positionJournal.filter(p => p.status === '청산');
+          const alertByRow = new Map(findThesisAlerts(positionJournal, riskMonitor).map(a => [a.position.rowIndex, a.signal]));
+          const byAlert = (a, b) => (alertByRow.has(b.rowIndex) ? 1 : 0) - (alertByRow.has(a.rowIndex) ? 1 : 0);
+          const conviction = held.filter(p => p.kind === '확신').sort(byAlert);
+          const alloc = held.filter(p => p.kind !== '확신').sort(byAlert);
+          const pending = held.filter(p => p.confirm !== '확인').length;
+
+          const kindBadge = (kind) => (
+            <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+              background: kind === '확신' ? '#F4845F22' : '#52C8D422',
+              color: kind === '확신' ? '#F4845F' : '#52C8D4' }}>
+              {kind === '확신' ? '확신' : '배분'}
+            </span>
+          );
+          const confirmBadge = (c) => {
+            const map = { '확인': ['#4ADE8022', '#4ADE80', '✓ 확인'], '대기': ['#F5C84222', '#F5C842', '확인 대기'], '미작성': ['#8A9AB522', '#8A9AB5', '미작성'] };
+            const [bg, fg, label] = map[c] || map['미작성'];
+            return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: bg, color: fg }}>{label}</span>;
+          };
+
+          const confirmThesis = async (p) => {
+            const nowStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 16);
+            try {
+              await sheets.writeRange(`포지션저널!O${p.rowIndex + 2}:P${p.rowIndex + 2}`, ['확인', nowStr]);
+              await sheets.fetch();
+            } catch (e) { console.error('전제 확인 오류:', e); }
+          };
+
+          // 청산 포지션의 교훈 저장 → N(교훈) + P(갱신시각). 다음 매수 때 ①에서 경고로 재노출
+          const saveLesson = async (p) => {
+            const text = (lessonDraft[p.rowIndex] ?? '').trim();
+            if (!text) return;
+            const nowStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 16);
+            try {
+              await sheets.writeRange(`포지션저널!N${p.rowIndex + 2}`, [text]);
+              await sheets.writeRange(`포지션저널!P${p.rowIndex + 2}`, [nowStr]);
+              setLessonDraft(prev => { const n = { ...prev }; delete n[p.rowIndex]; return n; });
+              await sheets.fetch();
+            } catch (e) { console.error('교훈 저장 오류:', e); }
+          };
+
+          const Card = (p) => {
+            const needReflect = p.status === '청산' && !p.lesson;
+            const open = journalOpen.has(p.rowIndex) || needReflect; // 반성 필요 카드는 기본 펼침
+            const sig = alertByRow.get(p.rowIndex);
+            const sigColor = sig && /🔴/.test(sig.signal) ? '#EF4444' : '#F5C842';
+            return (
+              <div key={p.rowIndex} style={{ background: '#1A1D26', border: `1px solid ${sig ? sigColor + '66' : '#262A3A'}`, borderRadius: 10, marginBottom: 8, overflow: 'hidden' }}>
+                <button onClick={() => setJournalOpen(prev => { const n = new Set(prev); n.has(p.rowIndex) ? n.delete(p.rowIndex) : n.add(p.rowIndex); return n; })}
+                  style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 14px', fontFamily: baseFont }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#F5F7FF' }}>{p.name}</span>
+                    {kindBadge(p.kind)}
+                    {confirmBadge(p.confirm)}
+                    {sig && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: sigColor + '22', color: sigColor }}>⚠ 전제 점검</span>}
+                    <span style={{ marginLeft: 'auto', fontSize: 10, color: '#8A9AB5' }}>{p.account}</span>
+                  </div>
+                  {!open && sig && (
+                    <div style={{ fontSize: 11, color: sigColor, marginTop: 6, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sig.signal} {sig.summary}</div>
+                  )}
+                  {!open && !sig && p.thesis && (
+                    <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 6, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.thesis}</div>
+                  )}
+                </button>
+                {open && (
+                  <div style={{ padding: '0 14px 14px' }}>
+                    {sig && (
+                      <div style={{ background: sigColor + '14', border: `1px solid ${sigColor}44`, borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: sigColor, marginBottom: 3 }}>⚠ 전제 점검 — 이탈조건 대조 필요 · {sig.type}신호 {sig.date}</div>
+                        <div style={{ fontSize: 12, color: '#F5F7FF', lineHeight: 1.5 }}>{sig.signal} {sig.summary}</div>
+                        {sig.detail && <div style={{ fontSize: 11, color: '#C9D1E5', lineHeight: 1.5, marginTop: 4 }}>{sig.detail}</div>}
+                      </div>
+                    )}
+                    {p.thesis && (<><div style={{ fontSize: 9, letterSpacing: 1, color: '#60A5FA', marginBottom: 3 }}>전제</div>
+                      <div style={{ fontSize: 12, color: '#E5E9F5', lineHeight: 1.5, marginBottom: 10 }}>{p.thesis}</div></>)}
+                    <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 10 }}>
+                      {p.target && <div><div style={{ fontSize: 9, color: '#8A9AB5' }}>목표</div><div style={{ fontSize: 11, color: '#F5F7FF' }}>{p.target}</div></div>}
+                      {p.hold && <div><div style={{ fontSize: 9, color: '#8A9AB5' }}>예상보유</div><div style={{ fontSize: 11, color: '#F5F7FF' }}>{p.hold}</div></div>}
+                      {p.entry && <div><div style={{ fontSize: 9, color: '#8A9AB5' }}>진입일</div><div style={{ fontSize: 11, color: '#F5F7FF' }}>{p.entry}</div></div>}
+                    </div>
+                    {p.exit && (<><div style={{ fontSize: 9, letterSpacing: 1, color: '#F4845F', marginBottom: 3 }}>이탈조건 (이게 깨지면 매도 검토)</div>
+                      <div style={{ fontSize: 12, color: '#F5C9B8', lineHeight: 1.5, marginBottom: 10 }}>{p.exit}</div></>)}
+                    {p.status === '청산' && (
+                      <div style={{ background: '#12141C', borderRadius: 8, padding: 12, marginBottom: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                          <span style={{ fontSize: 9, letterSpacing: 1, color: '#A8D672', fontWeight: 700 }}>반성 — 전제는 맞았나?</span>
+                          {p.exitDate && <span style={{ fontSize: 9, color: '#8A9AB5' }}>청산 {p.exitDate}</span>}
+                          {!p.lesson && <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: '#F5C84222', color: '#F5C842' }}>반성 필요</span>}
+                        </div>
+                        {p.result && <div style={{ fontSize: 11, color: '#E5E9F5', marginBottom: 6 }}>청산결과: {p.result}</div>}
+                        {p.lesson ? (
+                          <div style={{ fontSize: 11, color: '#A8D672', lineHeight: 1.5 }}>교훈: {p.lesson}</div>
+                        ) : (
+                          <div>
+                            <div style={{ fontSize: 10, color: '#8A9AB5', lineHeight: 1.5, marginBottom: 6 }}>
+                              이 매도에서 배운 한 가지를 남기세요. {p.exit ? '이탈조건대로 팔았는지, 너무 일찍/늦게 팔았는지.' : '왜 팔았고, 다음엔 무엇을 다르게 할지.'}
+                            </div>
+                            <textarea
+                              value={lessonDraft[p.rowIndex] ?? ''}
+                              onChange={e => setLessonDraft(prev => ({ ...prev, [p.rowIndex]: e.target.value }))}
+                              placeholder="예: 이탈조건 신호 후에도 미루다 -8%. 다음엔 신호 즉시 절반 정리."
+                              rows={2}
+                              style={{ width: '100%', boxSizing: 'border-box', background: '#1A1D26', border: '1px solid #2E3344', borderRadius: 6, color: '#E5E9F5', fontSize: 11, fontFamily: baseFont, padding: 8, resize: 'vertical' }}
+                            />
+                            <button onClick={() => saveLesson(p)} disabled={!(lessonDraft[p.rowIndex] ?? '').trim()}
+                              style={{ marginTop: 6, padding: '6px 12px', minHeight: 32, borderRadius: 6, border: '1px solid #A8D67255', background: '#1B2913', color: '#A8D672', cursor: (lessonDraft[p.rowIndex] ?? '').trim() ? 'pointer' : 'not-allowed', opacity: (lessonDraft[p.rowIndex] ?? '').trim() ? 1 : 0.5, fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
+                              교훈 저장
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {p.confirm !== '확인' && p.thesis && p.status !== '청산' && (
+                      <button onClick={() => confirmThesis(p)} style={{ padding: '8px 14px', minHeight: 36, borderRadius: 6, border: '1px solid #4ADE8055', background: '#13301F', color: '#4ADE80', cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
+                        이 전제 확인 (동의)
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          };
+
+          return (
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 6 }}>포지션저널 — 거래 생애주기 전제</div>
+              <div style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.5, marginBottom: 14 }}>
+                각 보유의 <b style={{ color: '#E5E9F5' }}>왜 샀는지(전제)</b>와 <b style={{ color: '#F4845F' }}>언제 팔지(이탈조건)</b>를 기록합니다. 이게 깨지면 매도 검토 신호가 됩니다. 전제는 AI 초안이며, 확인을 눌러 동의하거나 시트에서 직접 고칠 수 있습니다.
+              </div>
+              {positionJournal.length === 0 ? (
+                <div style={{ textAlign: 'center', color: '#8A9AB5', fontSize: 12, padding: '40px 0' }}>
+                  {sheets.auth === 'signed-in' ? '포지션저널이 비어있습니다' : '로그인하면 전제가 표시됩니다'}
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16, fontSize: 11 }}>
+                    <span style={{ color: '#8A9AB5' }}>보유 <b style={{ color: '#F5F7FF' }}>{held.length}</b></span>
+                    <span style={{ color: '#F4845F' }}>확신 {conviction.length}</span>
+                    <span style={{ color: '#52C8D4' }}>배분 {alloc.length}</span>
+                    {pending > 0 && <span style={{ color: '#F5C842' }}>확인대기 {pending}</span>}
+                    {alertByRow.size > 0 && <span style={{ color: '#EF4444', fontWeight: 700 }}>⚠ 전제 점검 {alertByRow.size}</span>}
+                    {closed.filter(p => !p.lesson).length > 0 && <span style={{ color: '#F5C842', fontWeight: 700 }}>반성 필요 {closed.filter(p => !p.lesson).length}</span>}
+                  </div>
+                  {conviction.length > 0 && (<>
+                    <div style={{ fontSize: 10, letterSpacing: 2, color: '#F4845F', marginBottom: 8 }}>확신형 (논리 훼손을 감시)</div>
+                    {conviction.map(Card)}
+                  </>)}
+                  {alloc.length > 0 && (<>
+                    <div style={{ fontSize: 10, letterSpacing: 2, color: '#52C8D4', margin: '16px 0 8px' }}>배분형 (비중 드리프트를 감시)</div>
+                    {alloc.map(Card)}
+                  </>)}
+                  {closed.length > 0 && (<>
+                    <div style={{ fontSize: 10, letterSpacing: 2, color: '#8A9AB5', margin: '16px 0 8px' }}>청산 ({closed.length}) · 반성</div>
+                    {closed.map(Card)}
+                  </>)}
+                </>
+              )}
             </div>
           );
         })()}
