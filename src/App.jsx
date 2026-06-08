@@ -3491,7 +3491,7 @@ export default function App() {
                           {h.name}
                         </div>
                         <div style={{ fontSize: 10, color: "#8A9AB5", marginTop: 2 }}>
-                          {h.qty}주 · {String(h.type ?? '').includes('해외') && usdRate > 0 ? `$${(h.price / usdRate).toFixed(2)}` : `₩${fmt(h.price)}`}
+                          {h.qty}주 · {String(h.type ?? '').includes('해외') ? `$${Number(h.price).toFixed(2)}` : `₩${fmt(h.price)}`}
                         </div>
                       </div>
                       {/* 비중% */}
