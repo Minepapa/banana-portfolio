@@ -1127,12 +1127,7 @@ export default function App() {
     lpRef.current = setTimeout(async () => {
       const sheetRow = START_ROWS[acctKey] + h.rowOffset;
       if (isCashRow(h)) {
-        // NH(ISA·위탁)는 입금/출금 알림으로 자동 갱신 — 수동 편집 막고 안내만
-        if (acctKey !== '연금저축' && acctKey !== 'IRP') {
-          setBalanceSyncMsg('NH 입금/출금 알림으로 자동 갱신됩니다');
-          setTimeout(() => setBalanceSyncMsg(''), 3500);
-          return;
-        }
+        // 모든 계좌 수동 편집 허용 — 입력값이 예수금기준(수동)으로 저장돼 이후 거래 델타의 기준이 됨
         setEditingCash({ origIdx, sheetRow });
         setEditCashValue(String(Math.round(h.eval) || ''));
         return;
@@ -1205,7 +1200,8 @@ export default function App() {
     setEditIncludeSavings(false);
   };
 
-  // 예수금(연금저축·IRP) 수동 편집 저장: 표시 행이 아닌 예수금기준 표를 리셋해 파서 클로버 회피.
+  // 예수금 수동 편집 저장: 예수금기준 표에 소스='수동'으로 기록 → 스크립트가 NH 자동앵커보다 우선해
+  // 이 값을 기준으로 삼고 이후 거래 델타만 가산(자동 회귀 방지). 표시행 E·H도 즉시 갱신.
   const saveCash = async () => {
     if (!editingCash) return;
     const { sheetRow } = editingCash;
@@ -1217,6 +1213,7 @@ export default function App() {
     }
     // 파서 todayKST와 맞춰 KST 기준일로 리셋(UTC 자정 근처 하루 오차 방지)
     const todayKST = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    const nowKST = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
     try {
       const baseA = await sheets.readRange('예수금기준!A2:A5');
       const idx = baseA.findIndex(r => String(r?.[0] ?? '').trim() === acctKey);
@@ -1226,7 +1223,7 @@ export default function App() {
         return;
       }
       const baseRow = 2 + idx;
-      await sheets.writeRange(`예수금기준!B${baseRow}:C${baseRow}`, [amt, todayKST]);
+      await sheets.writeRange(`예수금기준!B${baseRow}:E${baseRow}`, [amt, todayKST, '수동', nowKST]);
       await sheets.writeRange(`${acctKey}!E${sheetRow}`, [amt]);
       await sheets.writeRange(`${acctKey}!H${sheetRow}`, [amt]);
       await sheets.fetch();
@@ -1428,14 +1425,17 @@ export default function App() {
           }
 
           // 예수금 반영 — ISA·위탁 국내주식만 (해외주식은 외화RP 별도 처리)
+          // 표시값은 E·H열(투자금=평가금). 즉시 피드백용이며 헤드리스 스크립트가 기준+델타로 최종 정합.
           if ((isBuy || isSell) && !assetType.includes('해외') && (acctKey === 'ISA' || acctKey === '위탁')) {
             const cashRowIdx = holdingRows.findIndex(hr => String(hr[1] ?? '').trim() === '예수금');
             if (cashRowIdx >= 0) {
               const cashRowNum = 2 + cashRowIdx;
-              const currentCash = parseNum(holdingRows[cashRowIdx][2]);
+              const cashCell = await sheets.readRange(`${acctKey}!H${cashRowNum}`);
+              const currentCash = parseNum(cashCell?.[0]?.[0]);
               const tradeAmt = Math.round(price * qty);
               const newCash = isBuy ? Math.max(0, currentCash - tradeAmt) : currentCash + tradeAmt;
-              await sheets.writeRange(`${acctKey}!C${cashRowNum}`, [newCash]);
+              await sheets.writeRange(`${acctKey}!E${cashRowNum}`, [newCash]);
+              await sheets.writeRange(`${acctKey}!H${cashRowNum}`, [newCash]);
             }
           }
 

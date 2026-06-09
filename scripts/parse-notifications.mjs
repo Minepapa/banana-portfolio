@@ -42,8 +42,8 @@ const CASH_ROW_NAME = '예수금';                 // ISA·위탁·IRP 표시 �
 const AUTO_CASH_TABS = new Set(['ISA', '위탁']);  // NH: 입금/출금 알림 잔고로 자동 앵커
 const NH_ACCT_PREFIX = { '209-02': 'ISA', '205-01': '위탁' };  // 계좌번호 앞6자 → 탭
 const CASH_BASE_SEED = [
-  ['ISA', '', '', '자동', ''], ['위탁', '', '', '자동', ''],
-  ['연금저축', '', '', '수동', ''], ['IRP', '', '', '수동', ''],
+  ['ISA', 0, '', '자동', ''], ['위탁', 0, '', '자동', ''],
+  ['연금저축', 0, '', '수동', ''], ['IRP', 0, '', '수동', ''],
 ];
 
 // ── 달러RP 자동관리 설정 (모델 X: USD 앵커+델타, 원화는 표시수식) ─
@@ -473,7 +473,7 @@ async function main() {
   let baseRows = await getRange(token, `${CASH_BASE_SHEET}!A2:E`).catch(() => []);
   if (!baseRows.length && !DRY_RUN) { await appendValues(token, `${CASH_BASE_SHEET}!A2`, CASH_BASE_SEED); baseRows = CASH_BASE_SEED.map(r => [...r]); }
   const baseByAcct = new Map();
-  baseRows.forEach((r, i) => { const a = String(r[0] ?? '').trim(); if (a) baseByAcct.set(a, { base: r[1], date: String(r[2] ?? '').trim(), rowNum: i + 2 }); });
+  baseRows.forEach((r, i) => { const a = String(r[0] ?? '').trim(); if (a) baseByAcct.set(a, { base: r[1], date: String(r[2] ?? '').trim(), source: String(r[3] ?? '').trim(), rowNum: i + 2 }); });
 
   // 계좌별 최신 NH 앵커
   const nhLatest = new Map();
@@ -510,7 +510,9 @@ async function main() {
   for (const tab of ACCOUNT_TABS) {
     const cfg = baseByAcct.get(tab);
     let base = null, baseDate = '';
-    if (AUTO_CASH_TABS.has(tab)) {
+    const isManual = cfg && cfg.source === '수동' && String(cfg.base).trim() !== '';
+    if (AUTO_CASH_TABS.has(tab) && !isManual) {
+      // NH 자동앵커: 사용자가 앱에서 수동 입력(소스='수동')하지 않은 경우에만 알림 잔고로 자동 갱신
       const anchor = nhLatest.get(tab);
       const cfgDate = cfg ? String(cfg.date ?? '').trim() : '';
       if (anchor && anchor.ts.slice(0, 10) >= cfgDate) {
@@ -518,7 +520,7 @@ async function main() {
         base = anchor.balance; baseDate = anchor.ts.slice(0, 10);
         if (cfg) baseUpdates.push({ range: `${CASH_BASE_SHEET}!B${cfg.rowNum}:E${cfg.rowNum}`, values: [[base, baseDate, '자동', nowStr]] });
       } else if (cfg && String(cfg.base).trim() !== '') { base = parseInt(cleanNum(cfg.base), 10); baseDate = cfgDate; }  // 이번 회차 알림 없음 또는 수기 최신 → 기존 기준 유지
-    } else if (cfg && String(cfg.base).trim() !== '') { base = parseInt(cleanNum(cfg.base), 10); baseDate = cfg.date; }
+    } else if (cfg && String(cfg.base).trim() !== '') { base = parseInt(cleanNum(cfg.base), 10); baseDate = cfg.date; }  // 수동 기준 또는 비자동 계좌 → 입력값 우선
     if (!Number.isFinite(base)) { if (!AUTO_CASH_TABS.has(tab)) console.log(`  ⚠ 예수금 기준 미입력: ${tab} — 예수금기준 표에 기준액·기준일 입력 필요, skip`); continue; }
 
     const delta = flows.filter(fl => fl.tab === tab && fl.date > baseDate).reduce((s, fl) => s + fl.amount, 0);
