@@ -20,7 +20,7 @@ import { createServer } from 'http';
 import { exec } from 'child_process';
 import { runHeadlessClaude } from './lib/sheets-common.mjs';
 import { createInterface } from 'readline';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 
 const CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
 const SHEET_ID  = '1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg';
@@ -178,6 +178,41 @@ function readMultiline(rl) {
 }
 
 // ── JSON 파싱 ───────────────────────────────────────────────────────────────
+// 한글 키 → 영문 키 별칭. 헤드리스 모델이 카드 라벨(한글)을 키로 쓰는 경우 흡수한다.
+const KEY_ALIAS = {
+  평가일: 'date', 종목명: 'name', 종목코드: 'ticker', 시장: 'market', 결론: 'conclusion',
+  근거: 'reasons', 리스크: 'risks', frank_액션: 'actions', 액션: 'actions',
+  frank_메모: 'frankMemo', 매수일: 'buyDate', 매수가: 'buyPrice',
+  목표기간: 'targetTerm', 목표수익률: 'targetRet', ai_의견: 'aiNote', 세부지표: 'axisItems',
+};
+const AXIS_KEYS = ['수익성', '안정성', '밸류에이션', '현금흐름', '모멘텀'];
+
+// "1) a 2) b" 또는 배열을 배열로 정규화
+function toList(v) {
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'string' && v.trim()) {
+    return v.split(/\s*\d+\)\s*/).map(s => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+// 한글 키 스키마 → 영문 키 스키마로 변환 (영문 키면 그대로 통과)
+function normalizeEvalObj(obj) {
+  if (obj.date && obj.name && obj.conclusion) return obj; // 이미 영문 스키마
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) out[KEY_ALIAS[k] ?? k] = v;
+  // 평면 축 등급(top-level 수익성/안정성…) → grades 객체로 수집
+  if (!out.grades) {
+    const g = {};
+    for (const ax of AXIS_KEYS) if (typeof obj[ax] === 'string') g[ax] = obj[ax];
+    if (Object.keys(g).length) out.grades = g;
+  }
+  out.reasons = toList(out.reasons);
+  out.risks = toList(out.risks);
+  out.actions = toList(out.actions);
+  return out;
+}
+
 function parseEvalJson(raw) {
   const fence = raw.match(/```json\s*([\s\S]*?)\s*```/i) || raw.match(/```\s*([\s\S]*?)\s*```/);
   let candidate = fence ? fence[1] : raw;
@@ -185,7 +220,7 @@ function parseEvalJson(raw) {
   const last = candidate.lastIndexOf('}');
   if (first < 0 || last < 0) throw new Error('JSON 블록을 찾지 못했습니다.');
   candidate = candidate.slice(first, last + 1);
-  const obj = JSON.parse(candidate);
+  const obj = normalizeEvalObj(JSON.parse(candidate));
   if (!obj.date || !obj.name || !obj.conclusion) {
     throw new Error(`필수 필드 누락: ${['date','name','conclusion'].filter(k => !obj[k]).join(', ')}`);
   }
@@ -410,7 +445,28 @@ ${cardSection}
 3. 현재 펀더멘털 재산출: active-evaluation.md §3 동일 5축·동일 MCP
 4. 분할 매도 시나리오 최소 3안 (CLAUDE.md §3)
 5. 다음 재평가 시점 명시
-6. 마지막에 \`\`\`json 펜스로 20필드 JSON (적재용, status는 "매도" 또는 "보류")
+6. 마지막에 \`\`\`json 펜스로 아래 영문 키 스키마 그대로 출력 (적재용 — 한글 키 금지):
+\`\`\`json
+{
+  "date": "YYYY-MM-DD",
+  "name": "${sanitizeField(entry.name, 60)}",
+  "ticker": "종목코드",
+  "market": "KR | US",
+  "conclusion": "🟢 유효 | 🟡 관망 | 🔴 부적합 | ⚪ 판단보류",
+  "grades": { "수익성":"🟢", "안정성":"🟢", "밸류에이션":"🟡", "현금흐름":"🟢", "모멘텀":"🟡" },
+  "axisItems": {
+    "수익성": [{ "label":"...", "value":"...", "source":"...", "metric":"..." }],
+    "안정성": [], "밸류에이션": [], "현금흐름": [], "모멘텀": []
+  },
+  "reasons": ["근거 점검 결과..."],
+  "risks": ["리스크 점검 결과..."],
+  "actions": ["Frank 권고 4안..."],
+  "frankMemo": "",
+  "status": "매도 | 보류",
+  "buyDate": "", "buyPrice": "", "targetTerm": "", "targetRet": "",
+  "aiNote": "한 줄 요약"
+}
+\`\`\`
 7. 데이터 부족 항목 추정 금지`;
 }
 
@@ -630,10 +686,25 @@ async function main() {
       completed++;
     } catch (e) {
       console.error(`  ⚠️ 처리 실패: ${e.message}`);
+      // 파싱 실패 시 헤드리스 출력(수 분짜리)을 버리지 않고 파일로 보존 — 수동 적재·디버깅용.
+      let savedPath = '';
+      if (rawJson) {
+        try {
+          const dir = `${process.env.HOME}/Library/Logs/banana-portfolio/failed-evals`;
+          mkdirSync(dir, { recursive: true });
+          const safeName = sanitizeField(entry.name, 40).replace(/[^\w가-힣]/g, '_') || 'unknown';
+          savedPath = `${dir}/${todayKST()}_${safeName}_row${entry.rowNum}.txt`;
+          writeFileSync(savedPath, rawJson, 'utf-8');
+          console.error(`  💾 헤드리스 출력 보존: ${savedPath}`);
+        } catch (saveErr) {
+          console.error(`  ⚠️ 출력 보존 실패: ${saveErr.message}`);
+        }
+      }
       if (!DRY_RUN) {
         await updateCell(token, `평가요청!D${entry.rowNum}`, '오류');
         const existingMemo = entry.memo ? `${entry.memo} / ` : '';
-        await updateCell(token, `평가요청!F${entry.rowNum}`, `${existingMemo}오류: ${e.message.slice(0, 80)}`);
+        const savedNote = savedPath ? ` (출력 보존: ${savedPath.split('/').pop()})` : '';
+        await updateCell(token, `평가요청!F${entry.rowNum}`, `${existingMemo}오류: ${e.message.slice(0, 60)}${savedNote}`);
       }
       errors++;
     }
