@@ -59,6 +59,9 @@ const DRY_RUN = args.includes('--dry-run');
 
 // ── 공통 ──────────────────────────────────────────────
 const cleanNum = (s, allowDot = false) => String(s ?? '').replace(allowDot ? /[^0-9.]/g : /[^0-9]/g, '');
+// 수식 인젝션 방어: USER_ENTERED 쓰기 시 =,+,-,@로 시작하면 Sheets가 수식으로 해석.
+// 알림 텍스트에서 온 데이터 필드(종목명 등)는 선행 작은따옴표로 텍스트 강제.
+const deformula = (s) => { const t = String(s ?? ''); return /^[=+\-@\t\r]/.test(t) ? `'${t}` : t; };
 // "2026-05-04 9:20:42" → "2026-05-04 09:20:42" (Sheets가 leading-zero 생략 가능)
 function normalizeDateTime(raw) {
   const m = String(raw ?? '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2}):(\d{1,2})$/);
@@ -335,7 +338,7 @@ async function main() {
     let stockCode = e.stockCode;
     if (!stockCode) { if (!codeCache.has(e.stockName)) codeCache.set(e.stockName, await resolveStockCode(e.stockName)); stockCode = codeCache.get(e.stockName); }
     execRowsToWrite.push([
-      e.tradeDate, e.tradeType, portfolio?.[0] || '', stockCode, portfolio?.[1] || '', e.stockName,
+      e.tradeDate, e.tradeType, portfolio?.[0] || '', stockCode, portfolio?.[1] || '', deformula(e.stockName),
       isOverseas ? `=${e.price}*'설정'!$B$2` : String(e.price),
       String(e.quantity),
       '=INDIRECT("G"&ROW())*INDIRECT("H"&ROW())',
@@ -381,7 +384,7 @@ async function main() {
     } else {
       const seen = new Set(); const distinct = novel.filter(r => !seen.has(r.uniqueKey) && seen.add(r.uniqueKey));
       const total = distinct.reduce((s, r) => s + r.afterTaxAmount, 0);
-      divAppends.push([date, String(total), name, distinct.map(r => r.uniqueKey).join(',')]);
+      divAppends.push([date, String(total), deformula(name), distinct.map(r => r.uniqueKey).join(',')]);
     }
     novel.forEach(r => dateKeys.add(r.uniqueKey));
     keysByDate.set(date, dateKeys);
