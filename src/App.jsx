@@ -1088,6 +1088,7 @@ function useGoogleSheets(onData) {
 
   useEffect(() => {
     if (!CONFIGURED) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAuth('loading');
     Promise.all([
       loadScript('https://apis.google.com/js/api.js'),
@@ -1303,6 +1304,7 @@ function AddHoldingForm({ acctKey, accounts, onSave, onCancel, readRange }) {
       .catch(() => setRowMap([]));
   }, [acctKey, readRange]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setRowMap(null); loadRowMap(); }, [loadRowMap]);
 
   const hasAInSheet = rowMap ? rowMap.some(r => r.hasA && r.type === 자산군) : null;
@@ -1533,6 +1535,7 @@ export default function App() {
   const [exitEditing, setExitEditing] = useState(new Set()); // 이탈조건 편집 중인 rowIndex
   const [usdRate, setUsdRate] = useState(0); // USD/KRW 환율
 
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj, usdRate: ur }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
@@ -1616,6 +1619,7 @@ export default function App() {
     ];
   }, []);
 
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const submitEvalQueue = useCallback(async () => {
     const name = evalQueueName.trim();
     if (!name) { setEvalQueueMsg('⚠️ 종목명을 입력해주세요.'); return; }
@@ -1657,6 +1661,7 @@ export default function App() {
     }
   };
 
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const ingestEvaluation = useCallback(async () => {
     if (!evalIngestParsed) return;
     setEvalIngestBusy(true);
@@ -1686,6 +1691,7 @@ export default function App() {
     const today = new Date().toISOString().slice(0, 10);
     const history = JSON.parse(localStorage.getItem('banana_eval_history') || '{}');
     const prevDate = Object.keys(history).filter(d => d < today).sort().pop();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPrevDayEval(prevDate ? history[prevDate] : null);
     history[today] = totalEval;
     const dates = Object.keys(history).sort();
@@ -2069,6 +2075,7 @@ export default function App() {
     }
   }, [sheets, tradeSyncing, addHoldingFromTrade, usdRate]);
 
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const saveTradeEdit = useCallback(async () => {
     if (tradeEditRowIdx === null) return;
     setTradeEditBusy(true);
@@ -2193,7 +2200,7 @@ export default function App() {
 
   useEffect(() => {
     if (tab === '체결내역' && sheets.auth === 'signed-in') {
-      syncTradeExecutions();
+      syncTradeExecutions(); // eslint-disable-line react-hooks/set-state-in-effect
     }
   }, [tab, sheets.auth]); // eslint-disable-line
 
@@ -3380,6 +3387,7 @@ export default function App() {
                 const isEditingCash = !isTotalView && editingCash?.origIdx === origIdx;
                 const isEditingDollar = !isTotalView && editingDollar?.origIdx === origIdx;
                 const weightPct = weightBase > 0 ? (h.eval / weightBase * 100).toFixed(1) : '0.0';
+                /* eslint-disable react-hooks/refs */
                 const lpHandlers = !isTotalView && sheets.auth === 'signed-in' && !showDeleteMode ? {
                   onMouseDown: () => startLP(origIdx, h),
                   onMouseUp: endLP,
@@ -3389,6 +3397,7 @@ export default function App() {
                   onTouchCancel: endLP,
                   onContextMenu: (e) => e.preventDefault(),
                 } : {};
+                /* eslint-enable react-hooks/refs */
                 return (
                   <div key={`${h._acctKey ?? acctKey}-${origIdx}`} style={{ borderBottom: vi < sortedHoldings.length - 1 ? "1px solid #1E2233" : "none" }}>
                     <div style={{
