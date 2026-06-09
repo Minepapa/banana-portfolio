@@ -6,6 +6,7 @@ import {
 } from './lib/constants.js';
 import { parseNum } from './lib/textFormat.js';
 import { computeAssets } from './lib/metrics.js';
+import { START_ROWS, KL_CFG, buildRowMap } from './lib/sheetRows.js';
 import HelpTab from './tabs/HelpTab.jsx';
 import DividendTab from './tabs/DividendTab.jsx';
 import ProfitTab from './tabs/ProfitTab.jsx';
@@ -652,28 +653,6 @@ function useGoogleSheets(onData) {
 }
 
 // ── 종목추가 폼 컴포넌트 ──────────────────────────────────────────────────────
-const START_ROWS = { ISA: 2, 위탁: 2, 연금저축: 2, IRP: 2 };
-
-// 계좌별 A:B 읽기 범위 (A=자산군, B=종목명 여부 확인용)
-const KL_CFG = {
-  ISA:      { range: 'ISA!A2:B60',      start: 2, end: 60 },
-  위탁:     { range: '위탁!A2:B60',     start: 2, end: 60 },
-  연금저축: { range: '연금저축!A2:B60', start: 2, end: 60 },
-  IRP:      { range: 'IRP!A2:B30',      start: 2, end: 30 },
-};
-
-function buildRowMap(rows, start, end) {
-  let lastType = '';
-  const result = [];
-  for (let i = 0; i < end - start + 1; i++) {
-    const r = rows[i] ?? [];
-    const k = String(r[0] ?? '').trim();
-    if (k) lastType = k;
-    result.push({ row: start + i, type: lastType, empty: !String(r[1] ?? '').trim(), hasA: !!k });
-  }
-  return result;
-}
-
 function AddHoldingForm({ acctKey, accounts, onSave, onCancel, readRange }) {
   const assetNames = accounts[acctKey].assets.map(a => a.name);
 
