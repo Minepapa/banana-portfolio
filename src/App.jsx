@@ -12,54 +12,13 @@ import {
   COLORS, LEARNING_MODULES, AXIS_METRICS, LABEL_TO_METRIC,
   SAMPLE_EVALUATION, DEFAULT_ACCOUNTS,
 } from './lib/constants.js';
-import {
-  gradeColor, stripGrade, stripPeriod, breakUnits, breakSentences,
-} from './lib/textFormat.js';
+import { gradeColor, stripGrade, stripPeriod } from './lib/textFormat.js';
 import { renderMarkdown } from './lib/markdown.jsx';
+import {
+  SectionTitle, GradeDot, Sentences, SubLabel, NumberedItem,
+} from './lib/primitives.jsx';
 // 도움말 탭: 상단 H1·인트로(첫 --- 이전)는 앱에서 SectionTitle로 대체 → 본문만 렌더
 const guideBody = String(guideRaw).replace(/\r\n/g, '\n').replace(/^[\s\S]*?\n---\n/, '');
-
-// ── 섹션/카드 제목: 중앙 정렬 + 색 밑줄 강조 ─────────────────────────────────────
-function SectionTitle({ children, color = '#3B82F6', sub, size = 13, mb = 16 }) {
-  return (
-    <div style={{ textAlign: 'center', marginBottom: mb }}>
-      <div style={{ fontSize: size, fontWeight: 700, letterSpacing: 0.5, color: '#E8EAF0' }}>{children}</div>
-      {sub != null && sub !== '' && <div style={{ fontSize: 10, color: '#8A9AB5', marginTop: 4, lineHeight: 1.5 }}>{sub}</div>}
-      <div style={{ width: 26, height: 3, borderRadius: 2, background: color, margin: '8px auto 0' }} />
-    </div>
-  );
-}
-
-function GradeDot({ grade, size = 9 }) {
-  return <span style={{ width: size, height: size, borderRadius: '50%', background: gradeColor(grade), flexShrink: 0, display: 'inline-block' }} />;
-}
-// 문장 단위로 각 줄을 렌더(공통 스타일 적용). sentenceOnly=true면 문장 종결에서만 줄바꿈.
-function Sentences({ text, style, sentenceOnly }) {
-  const lines = sentenceOnly ? breakSentences(text) : breakUnits(text);
-  return lines.map((l, i) => <div key={i} style={style}>{l}</div>);
-}
-// 소제목 캡션: 색 점 + 라벨(좌측, 리스트 머리)
-function SubLabel({ children, color = '#8A9AB5' }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
-      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: '#7A8499' }}>{children}</span>
-    </div>
-  );
-}
-// 번호 매김 리스트: 번호 열 + 문장 단위 줄바꿈
-function NumberedItem({ n, text, color = '#9CA3AF', numColor = '#8A9AB5' }) {
-  return (
-    <div style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
-      <span style={{ fontSize: 11, fontWeight: 700, color: numColor, flexShrink: 0, lineHeight: 1.6 }}>{n}</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {breakUnits(text).map((l, i) => (
-          <div key={i} style={{ fontSize: 11, color, lineHeight: 1.6 }}>{l}</div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // ── 구글 시트 설정 ─────────────────────────────────────────────────────────────
 const GOOGLE_CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
