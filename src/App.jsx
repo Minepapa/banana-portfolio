@@ -1981,7 +1981,12 @@ export default function App() {
           const isOverseas = assetType.includes('해외');
           // 해외주식: G열 체결가는 parse-notifications이 ={usd}*설정!B2 수식으로 기록 → evaluated 값은 KRW
           // holdings C열은 USD 저장이므로 KRW→USD 변환 후 연산
-          const priceForCalc = isOverseas && usdRate > 0 ? price / usdRate : price;
+          // 환율 미로드(usdRate=0) 시 변환 불가 → KRW를 USD로 잘못 저장하는 사고 방지 위해 스킵
+          if (isOverseas && !(usdRate > 0)) {
+            errors.push(`${stockName}: 환율 미로드 — 해외주식 처리 보류 (다음 동기화 재시도)`);
+            continue;
+          }
+          const priceForCalc = isOverseas ? price / usdRate : price;
 
           if (isBuy) {
             if (matchRow) {
@@ -4537,7 +4542,7 @@ export default function App() {
             return (
               <div style={{ padding: 32, textAlign: 'center', color: '#8A9AB5', fontSize: 12 }}>
                 평가가 완료된 보유 종목이 없습니다.<br/>
-                <span style={{ fontSize: 11, color: '#3A4050' }}>매수평가 탭에서 평가 후 보유 중이면 여기에 표시됩니다.</span>
+                <span style={{ fontSize: 11, color: '#3A4050' }}>[매수] 모드에서 평가 후 보유 중이면 여기에 표시됩니다.</span>
               </div>
             );
           }
