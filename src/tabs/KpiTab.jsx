@@ -1,11 +1,62 @@
-// KPI 탭: 행동 추적 + 운용 성과(TWR/Sharpe/MDD) + 투자 기준. App.jsx에서 추출 (동작 불변).
+// KPI 탭: 무인 잡 상태 + 행동 추적 + 운용 성과(TWR/Sharpe/MDD) + 투자 기준. App.jsx에서 추출.
 import { computeKPI, computeBehaviorMetrics } from '../lib/metrics.js';
+import { relTime, JOB_CADENCE } from '../lib/constants.js';
+import { computeJobHealth } from '../lib/jobHealth.js';
 
-export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, evalSelectedMetric, setEvalSelectedMetric }) {
+// 잡상태 시트(heartbeat) 표시용 — 잡 키 → 한글 라벨, 표시 순서 고정
+const JOB_LABELS = {
+  'parse-notifications': '체결 알림 파싱',
+  'drain': '평가 큐 처리',
+  'risk-d': '리스크 D (거시)',
+  'risk-b': '리스크 B (논리)',
+  'report-sync': '주간 리포트',
+  'journal-sync': '포지션 저널',
+};
+const JOB_ORDER = ['parse-notifications', 'drain', 'journal-sync', 'risk-d', 'risk-b', 'report-sync'];
+
+function JobStatusPanel({ jobStatus }) {
+  if (!jobStatus) return null;
+  const byJob = new Map(jobStatus.map(j => [j.job, j]));
+  const ordered = [
+    ...JOB_ORDER.filter(k => byJob.has(k)),
+    ...jobStatus.map(j => j.job).filter(k => !JOB_ORDER.includes(k)),
+  ];
+  if (ordered.length === 0) return null;
+  // 시간 의존 판정(fail/stale)은 순수 lib 함수에 위임 — render 내 Date.now() 직접 호출 회피(React Compiler purity)
+  const problemByJob = new Map(computeJobHealth(jobStatus, JOB_CADENCE).map(p => [p.job, p.problem]));
+  return (
+    <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 12 }}>무인 잡 상태</div>
+      {ordered.map((key, i, arr) => {
+        const j = byJob.get(key);
+        const problem = problemByJob.get(j.job);
+        const color = problem === 'fail' ? '#EF4444' : problem === 'stale' ? '#F59E0B' : '#10B981';
+        const icon = problem === 'fail' ? '🔴' : problem === 'stale' ? '⚠️' : '✅';
+        const tsMs = Date.parse(j.lastRun);
+        const when = isFinite(tsMs) ? relTime(new Date(tsMs)) : (j.lastRun || '–');
+        return (
+          <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none' }}>
+            <span style={{ fontSize: 12, color: '#9CA3AF' }}>{JOB_LABELS[j.job] || j.job}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {j.durationSec && <span style={{ fontSize: 9, color: '#3A4050' }}>{j.durationSec}s</span>}
+              <span style={{ fontSize: 12, color: '#8A9AB5' }}>{when}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color }}>{icon}</span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, evalSelectedMetric, setEvalSelectedMetric, jobStatus }) {
   const kpi = computeKPI(monthlyData);
   if (!kpi) return (
-    <div style={{ padding: 40, textAlign: 'center', color: '#8A9AB5', fontSize: 13 }}>
-      월별잔고 데이터가 2개월 이상 있어야 KPI를 계산할 수 있습니다.
+    <div>
+      <JobStatusPanel jobStatus={jobStatus} />
+      <div style={{ padding: 40, textAlign: 'center', color: '#8A9AB5', fontSize: 13 }}>
+        월별잔고 데이터가 2개월 이상 있어야 KPI를 계산할 수 있습니다.
+      </div>
     </div>
   );
 
@@ -38,7 +89,8 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
 
   return (
     <div>
-      {/* 행동 추적 — 최상단 */}
+      <JobStatusPanel jobStatus={jobStatus} />
+      {/* 행동 추적 */}
       {(() => {
         const bm = computeBehaviorMetrics(kpiTrades, evaluations);
         if (kpiTrades === null) return (

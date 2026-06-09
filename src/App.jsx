@@ -414,7 +414,7 @@ export default function App() {
 
         {/* ── KPI 탭 ── */}
         {tab === "kpi" && (
-          <KpiTab monthlyData={monthlyData} kpiTrades={kpiTrades} evaluations={evaluations} isMobile={isMobile} evalSelectedMetric={evalSelectedMetric} setEvalSelectedMetric={setEvalSelectedMetric} />
+          <KpiTab monthlyData={monthlyData} kpiTrades={kpiTrades} evaluations={evaluations} isMobile={isMobile} evalSelectedMetric={evalSelectedMetric} setEvalSelectedMetric={setEvalSelectedMetric} jobStatus={jobStatus} />
         )}
 
         {/* ── 리포트 탭 ── */}
