@@ -3,7 +3,6 @@ import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts";
-import guideRaw from "../docs/USER-GUIDE.md?raw";
 import { parseJobStatus, computeJobHealth } from './lib/jobHealth.js';
 import { sameStock } from './lib/stockIdentity.js';
 import {
@@ -13,13 +12,11 @@ import {
   SAMPLE_EVALUATION, DEFAULT_ACCOUNTS,
 } from './lib/constants.js';
 import { parseNum, gradeColor, stripGrade, stripPeriod } from './lib/textFormat.js';
-import { renderMarkdown } from './lib/markdown.jsx';
 import {
   SectionTitle, GradeDot, Sentences, SubLabel, NumberedItem,
 } from './lib/primitives.jsx';
 import { computeAssets, computeKPI, computeBehaviorMetrics } from './lib/metrics.js';
-// 도움말 탭: 상단 H1·인트로(첫 --- 이전)는 앱에서 SectionTitle로 대체 → 본문만 렌더
-const guideBody = String(guideRaw).replace(/\r\n/g, '\n').replace(/^[\s\S]*?\n---\n/, '');
+import HelpTab from './tabs/HelpTab.jsx';
 
 // ── 구글 시트 설정 ─────────────────────────────────────────────────────────────
 const GOOGLE_CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
@@ -4300,12 +4297,7 @@ export default function App() {
         )}
 
         {/* ── 도움말 탭 ── */}
-        {tab === "help" && (
-          <div style={{ maxWidth: 760, margin: '0 auto', fontFamily: baseFont, textAlign: 'left' }}>
-            <SectionTitle color="#3B82F6" size={15} sub="각 탭을 언제·어떻게 쓰나">실전 사용 가이드</SectionTitle>
-            {renderMarkdown(guideBody)}
-          </div>
-        )}
+        {tab === "help" && <HelpTab baseFont={baseFont} />}
 
         {/* ── 평가 카드 적재 모달 ── */}
         {evalIngestOpen && (
