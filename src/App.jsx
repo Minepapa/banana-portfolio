@@ -1978,34 +1978,41 @@ export default function App() {
           const isBuy  = buySell.includes('매수');
           const isSell = buySell.includes('매도');
 
+          const isOverseas = assetType.includes('해외');
+          // 해외주식: G열 체결가는 parse-notifications이 ={usd}*설정!B2 수식으로 기록 → evaluated 값은 KRW
+          // holdings C열은 USD 저장이므로 KRW→USD 변환 후 연산
+          const priceForCalc = isOverseas && usdRate > 0 ? price / usdRate : price;
+
           if (isBuy) {
             if (matchRow) {
               const newQty = matchRow.qty + qty;
-              const isOverseas = assetType.includes('해외');
               const rawAvg = newQty > 0
-                ? (matchRow.price * matchRow.qty + price * qty) / newQty
-                : price;
+                ? (matchRow.price * matchRow.qty + priceForCalc * qty) / newQty
+                : priceForCalc;
               const newAvgPrice = isOverseas
                 ? Math.round(rawAvg * 100) / 100   // USD: 소수점 2자리
                 : Math.round(rawAvg);               // KRW: 정수
               await sheets.writeRange(`${acctKey}!C${matchRow.row}:D${matchRow.row}`, [newAvgPrice, newQty]);
             } else {
-              await addHoldingFromTrade(acctKey, assetType, stockName, price, qty, currentPrice);
+              await addHoldingFromTrade(acctKey, assetType, stockName, priceForCalc, qty, currentPrice);
             }
           } else if (isSell && matchRow) {
-            const avgBuyPrice = matchRow.price; // 매도 전 평균매수단가 보존
+            const avgBuyPrice = matchRow.price; // 매도 전 평균매수단가 보존 (USD for 해외주식)
             const newQty = matchRow.qty - qty;
             if (newQty <= 0) {
               await sheets.clearRowsRaw([`${acctKey}!B${matchRow.row}:I${matchRow.row}`]);
             } else {
               await sheets.writeRange(`${acctKey}!D${matchRow.row}`, [newQty]);
             }
-            // 수익금 시트에 매도 내역 기록
+            // 수익금 시트에 매도 내역 기록 — 해외주식은 USD 기준으로 통일
             const profitRows = await sheets.readRange('수익금!A2:A');
             const nextRow = (profitRows?.length ?? 0) + 2;
             const dateStr = String(row[0] ?? '').trim();
+            const sellPriceForProfit = isOverseas
+              ? Math.round(priceForCalc * 100) / 100  // USD 소수점 2자리
+              : price;
             await sheets.writeRange(`수익금!A${nextRow}:F${nextRow}`, [
-              dateStr, stockName, qty, avgBuyPrice, price,
+              dateStr, stockName, qty, avgBuyPrice, sellPriceForProfit,
               `=(E${nextRow}-D${nextRow})*C${nextRow}`,
             ]);
           } else if (isSell && !matchRow) {
