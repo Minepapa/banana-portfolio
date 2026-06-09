@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { parseJobStatus, computeJobHealth } from './lib/jobHealth.js';
 import {
-  SHEET_RANGES, REBAL_TARGET_START, JOB_CADENCE, CHEOL_COLS,
+  SHEET_RANGES, REBAL_TARGET_START, JOB_CADENCE,
   profitColor, relTime, DEFAULT_ACCOUNTS,
 } from './lib/constants.js';
 import { parseNum } from './lib/textFormat.js';
@@ -21,6 +21,7 @@ import PositionJournalTab from './tabs/PositionJournalTab.jsx';
 import BuyEvaluationTab from './tabs/BuyEvaluationTab.jsx';
 import SellEvaluationTab from './tabs/SellEvaluationTab.jsx';
 import LearningModuleModal from './tabs/LearningModuleModal.jsx';
+import TradeEditModal from './tabs/TradeEditModal.jsx';
 
 // ── 구글 시트 설정 ─────────────────────────────────────────────────────────────
 const GOOGLE_CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
@@ -1897,64 +1898,11 @@ export default function App() {
         )}
 
         {/* ── 체결내역 셀 편집 모달 ── */}
-        {tradeEditOpen && tradeEditRowIdx !== null && (
-          <div style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: 16, zIndex: 200,
-          }} onClick={(e) => { if (e.target === e.currentTarget) setTradeEditOpen(false); }}>
-            <div style={{
-              background: '#1A1D26', borderRadius: 12, width: '100%', maxWidth: 440,
-              maxHeight: '90vh', overflowY: 'auto', padding: '20px 18px',
-              border: '1px solid #2A2F3E',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#F5A623' }}>셀 값 입력</div>
-                <button onClick={() => setTradeEditOpen(false)} style={{
-                  background: 'transparent', border: 'none', cursor: 'pointer',
-                  color: '#8A9AB5', fontSize: 18, padding: 0, lineHeight: 1,
-                }}>✕</button>
-              </div>
-
-              {CHEOL_COLS.map((col, ci) => {
-                const isEmpty = !tradeEditValues[ci];
-                return (
-                  <div key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <div style={{
-                      width: 64, fontSize: 10, color: isEmpty ? '#F59E0B' : '#8A9AB5',
-                      textAlign: 'right', flexShrink: 0,
-                    }}>
-                      {col.key} · {col.label}
-                    </div>
-                    <input
-                      value={tradeEditValues[ci]}
-                      onChange={(e) => {
-                        const next = [...tradeEditValues];
-                        next[ci] = e.target.value;
-                        setTradeEditValues(next);
-                      }}
-                      placeholder={col.placeholder}
-                      style={{
-                        flex: 1, background: isEmpty ? '#1E1A0F' : '#0F1218',
-                        border: `1px solid ${isEmpty ? '#F59E0B' : '#2A2F3E'}`,
-                        borderRadius: 4, padding: '6px 8px', color: '#E8EAF0',
-                        fontSize: 12, fontFamily: baseFont, outline: 'none',
-                      }}
-                    />
-                  </div>
-                );
-              })}
-
-              <button onClick={saveTradeEdit} disabled={tradeEditBusy} style={{
-                width: '100%', marginTop: 12, padding: '10px 12px', borderRadius: 6, border: 'none',
-                background: tradeEditBusy ? '#2A2F3E' : '#F5A623',
-                color: tradeEditBusy ? '#8A9AB5' : '#1A1D26',
-                cursor: tradeEditBusy ? 'not-allowed' : 'pointer',
-                fontSize: 12, fontWeight: 700, fontFamily: baseFont,
-              }}>{tradeEditBusy ? '저장 중...' : '시트에 저장'}</button>
-            </div>
-          </div>
-        )}
+        <TradeEditModal
+          tradeEditOpen={tradeEditOpen} tradeEditRowIdx={tradeEditRowIdx} setTradeEditOpen={setTradeEditOpen}
+          tradeEditValues={tradeEditValues} setTradeEditValues={setTradeEditValues}
+          saveTradeEdit={saveTradeEdit} tradeEditBusy={tradeEditBusy} baseFont={baseFont}
+        />
 
         {/* ── 도움말 탭 ── */}
         {tab === "help" && <HelpTab baseFont={baseFont} />}
