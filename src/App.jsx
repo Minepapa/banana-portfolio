@@ -4119,10 +4119,13 @@ export default function App() {
                   const date     = String(row[0] ?? '').trim();
                   const buySell  = String(row[1] ?? '').trim();
                   const account  = String(row[2] ?? '').trim();
+                  const assetType = String(row[4] ?? '').trim();
                   const stockName = String(row[5] ?? '').trim();
                   const price    = parseNum(row[6]);
                   const qty      = parseNum(row[7]);
                   const amount   = Math.round(price * qty);
+                  const isOverseas = assetType === '해외주식';
+                  const currencySymbol = isOverseas ? '$' : '₩';
                   const isComplete = row.length >= 13 && row.slice(0, 13).every(cell => String(cell ?? '').trim() !== '');
                   const isBuy = buySell.includes('매수');
                   // 위치 인덱스가 아닌 거래 내용으로 식별 — 새로고침/행 이동에도 이중 반영 방지
@@ -4168,7 +4171,7 @@ export default function App() {
                           {stockName || '—'}
                         </div>
                         <div style={{ fontSize: 10, color: '#8A9AB5', marginTop: 2 }}>
-                          {qty > 0 ? `${qty}주` : ''}{qty > 0 && price > 0 ? ' · ' : ''}{price > 0 ? `₩${price.toLocaleString()}` : ''}
+                          {qty > 0 ? `${qty}주` : ''}{qty > 0 && price > 0 ? ' · ' : ''}{price > 0 ? `${currencySymbol}${price.toLocaleString()}` : ''}
                           {!isComplete && <span style={{ marginLeft: 6, color: '#F59E0B' }}>셀 미완성</span>}
                         </div>
                       </div>
