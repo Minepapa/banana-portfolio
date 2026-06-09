@@ -2011,9 +2011,13 @@ export default function App() {
             const sellPriceForProfit = isOverseas
               ? Math.round(priceForCalc * 100) / 100  // USD 소수점 2자리
               : price;
+            // 해외주식: D·E는 USD, F는 KRW (×환율). 국내주식: D·E·F 모두 KRW
+            const profitFormula = isOverseas
+              ? `=(E${nextRow}-D${nextRow})*C${nextRow}*설정!$B$2`
+              : `=(E${nextRow}-D${nextRow})*C${nextRow}`;
             await sheets.writeRange(`수익금!A${nextRow}:F${nextRow}`, [
               dateStr, stockName, qty, avgBuyPrice, sellPriceForProfit,
-              `=(E${nextRow}-D${nextRow})*C${nextRow}`,
+              profitFormula,
             ]);
           } else if (isSell && !matchRow) {
             errors.push(`${stockName}: 계좌(${acctKey})에서 종목을 찾을 수 없음 — 처리 건너뜀`);
