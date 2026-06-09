@@ -3812,7 +3812,7 @@ export default function App() {
                     {a.position.exit && <div style={{ fontSize: 10, color: '#F5C9B8', lineHeight: 1.5, marginTop: 4 }}>이탈조건: {a.position.exit}</div>}
                   </div>
                 ))}
-                <button onClick={() => setTab('저널')} style={{ marginTop: 6, padding: '6px 12px', minHeight: 32, borderRadius: 6, border: '1px solid #2E3344', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: 10, fontFamily: baseFont }}>포지션저널에서 전체 보기 ›</button>
+                <button onClick={() => setTab('저널')} style={{ marginTop: 6, padding: '6px 12px', minHeight: 32, borderRadius: 6, border: '1px solid #2E3344', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: 10, fontFamily: baseFont }}>포지션에서 전체 보기 ›</button>
               </div>
 
               {/* 3. 옮길 곳 */}
@@ -4037,10 +4037,10 @@ export default function App() {
 
           return (
             <div>
-              <SectionTitle color="#52C8D4" mb={14} sub="거래 생애주기 투자논리 관리">포지션저널</SectionTitle>
+              <SectionTitle color="#52C8D4" mb={14} sub="거래 생애주기 투자논리 관리">포지션</SectionTitle>
               {positionJournal.length === 0 ? (
                 <div style={{ textAlign: 'center', color: '#8A9AB5', fontSize: 12, padding: '40px 0' }}>
-                  {sheets.auth === 'signed-in' ? '포지션저널이 비어있습니다' : '로그인하면 투자논리가 표시됩니다'}
+                  {sheets.auth === 'signed-in' ? '포지션이 비어있습니다' : '로그인하면 투자논리가 표시됩니다'}
                 </div>
               ) : (
                 <>
@@ -4528,10 +4528,23 @@ export default function App() {
             );
           }
 
+          const thesisAlertMap = (() => {
+            const alerts = findThesisAlerts(positionJournal, riskMonitor);
+            const m = new Map();
+            alerts.forEach(a => m.set(a.position.name, a));
+            return m;
+          })();
+
           return (
             <div style={{ textAlign: 'left' }}>
               {/* 헤더 */}
-              <SectionTitle color="#F87171" sub={`평가 완료 ${stocks.length}종목 · 보유 중`}>매도검토</SectionTitle>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#E8EAF0' }}>매도 검토</div>
+                  <div style={{ width: 26, height: 3, borderRadius: 2, background: '#F87171', marginTop: 6 }} />
+                </div>
+                <div style={{ fontSize: 10, color: '#8A9AB5' }}>평가 완료 {stocks.length}종목 · 보유 중</div>
+              </div>
 
               {/* 종목 선택 칩 */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -4539,12 +4552,13 @@ export default function App() {
                   const evCount = evaluations.filter(e => e.stock?.name === s.name).length;
                   const isSelected = s.name === currentName;
                   const profitColor = s.profitSum >= 0 ? PROFIT_POS : PROFIT_NEG;
+                  const hasThesisAlert = thesisAlertMap.has(s.name);
                   return (
                     <button key={s.name} onClick={() => setNoteSelectedStock(s.name)} style={{
-                      padding: '6px 10px', borderRadius: 6,
-                      border: `1px solid ${isSelected ? '#3B82F6' : '#2A2F3E'}`,
-                      background: isSelected ? '#1E3A5F' : '#1A1D26',
-                      color: isSelected ? '#60A5FA' : '#9CA3AF',
+                      padding: '5px 10px', borderRadius: 6,
+                      border: `1px solid ${isSelected ? '#F87171' : hasThesisAlert ? '#EF444466' : '#2A2F3E'}`,
+                      background: isSelected ? '#4A1E1E' : '#1A1D26',
+                      color: isSelected ? '#F87171' : '#9CA3AF',
                       cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
                       display: 'flex', alignItems: 'center', gap: 6,
                     }}>
@@ -4552,6 +4566,7 @@ export default function App() {
                       <span style={{ fontSize: 9, color: profitColor }}>
                         {s.profitSum >= 0 ? '+' : ''}{s.rate.toFixed(1)}%
                       </span>
+                      {hasThesisAlert && <span style={{ fontSize: 8, color: '#EF4444' }}>🔴</span>}
                       {evCount > 0 && (
                         <span style={{
                           fontSize: 8, padding: '0 4px', borderRadius: 8,
@@ -4602,13 +4617,23 @@ export default function App() {
                 return (
                 <>
                   {/* 보유 정보 카드 */}
-                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: '16px 16px 14px', marginBottom: 12 }}>
-                    {/* 경고 배너 */}
+                  <div style={{ background: '#1A1D26', borderRadius: 12, padding: '16px 16px 14px', marginBottom: 12, border: thesisAlertMap.has(stock.name) ? '1px solid #EF444455' : '1px solid transparent' }}>
+                    {/* 투자논리 훼손 경보 — findThesisAlerts 기준 (포지션·거래결정 탭과 동일 소스) */}
+                    {thesisAlertMap.has(stock.name) && (() => {
+                      const ta = thesisAlertMap.get(stock.name);
+                      return (
+                        <div style={{ marginBottom: 10, padding: '7px 10px', borderRadius: 8, background: '#4A1E1E55', border: '1px solid #EF444455', fontSize: 10, color: '#F87171', fontWeight: 600, lineHeight: 1.5 }}>
+                          {ta.signal.signal} 논거 훼손 경보
+                          {ta.signal.summary && <div style={{ fontWeight: 400, color: '#F5C9B8', marginTop: 3 }}>{ta.signal.summary}</div>}
+                        </div>
+                      );
+                    })()}
+                    {/* 기술적 신호 (RSI / 52주) */}
                     {hasAlerts && (
-                      <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 8, background: '#4A1E1E44', border: '1px solid #F8717144', fontSize: 10, color: '#F87171', fontWeight: 600 }}>
-                        {[
-                          rsiOver ? `RSI ${Math.round(rsiVal)} 과열 — 차익실현 검토` : null,
-                          rsiUnder ? `RSI ${Math.round(rsiVal)} 급락 — 매수 기회 점검` : null,
+                      <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 8, background: '#3A2A1E44', border: '1px solid #FBBF2444', fontSize: 10, color: '#FBBF24', fontWeight: 600 }}>
+                        기술적 신호 · {[
+                          rsiOver ? `RSI ${Math.round(rsiVal)} 과열` : null,
+                          rsiUnder ? `RSI ${Math.round(rsiVal)} 급락` : null,
                           pos52Over ? `52주 ${Math.round(pos52Val)}% 고점 근접` : null,
                         ].filter(Boolean).join(' · ')}
                       </div>
@@ -4766,12 +4791,12 @@ export default function App() {
                       <div style={{ fontSize: 11, color: '#8A9AB5', marginBottom: 8 }}>
                         아직 평가 기록이 없습니다
                       </div>
-                      <button onClick={() => setTab('평가')} style={{
-                        padding: '6px 12px', borderRadius: 6, border: '1px solid #3B82F6',
-                        background: '#1E3A5F', color: '#60A5FA',
+                      <button onClick={() => setEvalMode('매수')} style={{
+                        padding: '6px 12px', borderRadius: 6, border: '1px solid #F5A623',
+                        background: '#3D2E14', color: '#F5A623',
                         cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
                       }}>
-                        매수평가 탭에서 추가 →
+                        매수 평가 추가 →
                       </button>
                     </div>
                   )}
