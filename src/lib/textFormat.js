@@ -1,5 +1,10 @@
 // 순수 문자열 포맷·파싱 헬퍼. App.jsx에서 추출 (동작 불변, JSX 없음).
 
+// 콤마·공백 섞인 문자열 → 숫자 (실패 시 0)
+export function parseNum(v) {
+  return parseFloat(String(v ?? 0).replace(/,/g, '')) || 0;
+}
+
 // 이모지·픽토그램·별표 제거 후 중복 공백 정리 (도움말은 텍스트만 표시)
 export function stripEmoji(text) {
   return String(text)
