@@ -2067,7 +2067,7 @@ export default function App() {
     } finally {
       setTradeSyncing(false);
     }
-  }, [sheets, tradeSyncing, addHoldingFromTrade]);
+  }, [sheets, tradeSyncing, addHoldingFromTrade, usdRate]);
 
   const saveTradeEdit = useCallback(async () => {
     if (tradeEditRowIdx === null) return;
@@ -4499,7 +4499,7 @@ export default function App() {
           );
         })()}
 
-        {/* ── 노트 탭 (매도검토) ── */}
+        {/* ── 매도 모드 (evalMode === '매도') ── */}
         {tab === "평가" && evalMode === '매도' && (() => {
           // 4계좌 holdings 합산 — 종목명 key로 unique
           const stockMap = {};
