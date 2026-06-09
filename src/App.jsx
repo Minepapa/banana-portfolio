@@ -1457,6 +1457,7 @@ export default function App() {
   const [editDollarValue, setEditDollarValue] = useState(''); // USD 잔액
   const [editingAllTargets, setEditingAllTargets] = useState(false);
   const [allTargetInputs, setAllTargetInputs] = useState([]);
+  const [evalMode, setEvalMode] = useState('매수'); // 평가 탭 토글: '매수' | '매도'
   const lpRef = useRef(null);
   const monthlyRowRef = useRef(null);
   const lastBalanceSyncRef = useRef(null);
@@ -2294,8 +2295,7 @@ export default function App() {
             { key: "dashboard", label: "홈" },
             { key: "report",    label: "리포트" },
             { key: "리스크",    label: "리스크" },
-            { key: "평가",      label: "매수평가" },
-            { key: "노트",      label: "매도검토" },
+            { key: "평가",      label: "평가" },
             { key: "거래",      label: "거래결정" },
             { key: "저널",      label: "포지션" },
             { key: "holdings",  label: "보유종목" },
@@ -4246,6 +4246,20 @@ export default function App() {
 
           return (
           <div style={{ textAlign: 'left' }}>
+            {/* 매수/매도 토글 */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+              {['매수', '매도'].map(mode => (
+                <button key={mode} onClick={() => setEvalMode(mode)} style={{
+                  padding: '5px 16px', borderRadius: 6, fontSize: 11, fontWeight: 600, fontFamily: baseFont,
+                  border: evalMode === mode ? '1px solid #F5A623' : '1px solid #2A2F3E',
+                  background: evalMode === mode ? '#3D2E14' : 'transparent',
+                  color: evalMode === mode ? '#F5A623' : '#6B7280',
+                  cursor: 'pointer',
+                }}>{mode}</button>
+              ))}
+            </div>
+
+            {evalMode === '매수' && <>
             {/* 헤더 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <div>
@@ -4460,12 +4474,14 @@ export default function App() {
               </div>
             </div>
 
+            </>}
+
           </div>
           );
         })()}
 
-        {/* ── 노트 탭 ── */}
-        {tab === "노트" && (() => {
+        {/* ── 노트 탭 (매도검토) ── */}
+        {tab === "평가" && evalMode === '매도' && (() => {
           // 4계좌 holdings 합산 — 종목명 key로 unique
           const stockMap = {};
           Object.entries(accounts).forEach(([acctKey, acct]) => {
