@@ -8,6 +8,8 @@ import { useGoogleSheets, CONFIGURED } from './hooks/useGoogleSheets.js';
 import { useTradeSync } from './hooks/useTradeSync.js';
 import { useEvalCard } from './hooks/useEvalCard.js';
 import { usePortfolioEdits } from './hooks/usePortfolioEdits.js';
+import { useSavingsEdit } from './hooks/useSavingsEdit.js';
+import { useRebalanceTargets } from './hooks/useRebalanceTargets.js';
 import HelpTab from './tabs/HelpTab.jsx';
 import DividendTab from './tabs/DividendTab.jsx';
 import ProfitTab from './tabs/ProfitTab.jsx';
@@ -146,18 +148,24 @@ export default function App() {
     editCashValue, setEditCashValue,
     editingDollar, setEditingDollar,
     editDollarValue, setEditDollarValue,
-    editingAllTargets, setEditingAllTargets,
-    allTargetInputs, setAllTargetInputs,
-    showSavingsEdit, setShowSavingsEdit,
-    savingsEditValue, setSavingsEditValue,
-    savingsLpFiredRef,
     handleDeleteSelected,
     startLP, endLP,
     saveEdit, saveCash, saveDollar,
     handleAddHoldingSave,
-    saveAllTargets,
-    startSavingsLP, endSavingsLP, saveSavingsEdit,
   } = usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, setBalanceSyncMsg });
+
+  const {
+    showSavingsEdit, setShowSavingsEdit,
+    savingsEditValue, setSavingsEditValue,
+    savingsLpFiredRef,
+    startSavingsLP, endSavingsLP, saveSavingsEdit,
+  } = useSavingsEdit({ sheets, monthlyRowRef, setBalanceSyncMsg });
+
+  const {
+    editingAllTargets, setEditingAllTargets,
+    allTargetInputs, setAllTargetInputs,
+    saveAllTargets,
+  } = useRebalanceTargets({ sheets, acctKey, setBalanceSyncMsg });
 
   const totalEval = Object.values(accounts).reduce((s, a) => s + a.total_eval, 0);
 

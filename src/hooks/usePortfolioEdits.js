@@ -1,10 +1,10 @@
-// 보유종목/예수금/달러RP/목표비중/저축금 편집 워크플로 훅. App.jsx에서 추출 (동작 불변).
-// 롱프레스(lpRef) 진입 → 편집 상태 → sheets write 후 re-fetch. monthlyRowRef·setBalanceSyncMsg는
-// onData·잔고동기화 effect와 공유되므로 App이 소유하고 파라미터로 주입받는다.
+// 보유종목/예수금/달러RP 행 편집·삭제 워크플로 훅. App.jsx에서 추출 (동작 불변).
+// 롱프레스(lpRef) 진입 → 행 종류(현금·달러·일반)별 편집 상태 → sheets write 후 re-fetch.
+// monthlyRowRef·setBalanceSyncMsg는 onData·잔고동기화 effect와 공유되므로 App이 소유·주입한다.
+// 저축금 직접편집은 useSavingsEdit, 목표비중은 useRebalanceTargets로 분리됨.
 import { useState, useRef } from "react";
 import { parseNum } from '../lib/textFormat.js';
 import { START_ROWS } from '../lib/sheetRows.js';
-import { REBAL_TARGET_START } from '../lib/constants.js';
 
 export function usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, setBalanceSyncMsg }) {
   const acct = accounts[acctKey];
@@ -21,13 +21,22 @@ export function usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, se
   const [editCashValue, setEditCashValue] = useState('');
   const [editingDollar, setEditingDollar] = useState(null); // 달러RP(외화 RP) 수동 편집 중인 행
   const [editDollarValue, setEditDollarValue] = useState(''); // USD 잔액
-  const [editingAllTargets, setEditingAllTargets] = useState(false);
-  const [allTargetInputs, setAllTargetInputs] = useState([]);
   const lpRef = useRef(null);
-  const [showSavingsEdit, setShowSavingsEdit] = useState(false);
-  const [savingsEditValue, setSavingsEditValue] = useState('');
-  const savingsLpRef = useRef(null);
-  const savingsLpFiredRef = useRef(false);
+
+  // 저축금(월별잔고!C) 델타 가산 공통부 — saveEdit·handleAddHoldingSave 공유.
+  // 호출부가 mr 존재·delta 적용 여부를 판단하고, 이 함수는 실제 I/O와 메시지만 담당.
+  const applySavingsDelta = async (mr, delta) => {
+    try {
+      const rows = await sheets.readRange(`월별잔고!C${mr}:C${mr}`);
+      const current = parseNum(rows[0]?.[0]);
+      await sheets.writeRange(`월별잔고!C${mr}:C${mr}`, [current + delta]);
+      setBalanceSyncMsg('저축금 반영됨');
+      setTimeout(() => setBalanceSyncMsg(''), 3000);
+    } catch {
+      setBalanceSyncMsg('저축금 업데이트 실패');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+    }
+  };
 
   const handleDeleteSelected = async () => {
     const ranges = [...selectedToDelete].map(idx => {
@@ -107,19 +116,8 @@ export function usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, se
         setBalanceSyncMsg('이번 달 행 없음 — 저축금 미반영');
         setTimeout(() => setBalanceSyncMsg(''), 4000);
       } else {
-        try {
-          const delta = (p * q) - ((oldPrice || 0) * (oldQty || 0));
-          if (delta !== 0) {
-            const rows = await sheets.readRange(`월별잔고!C${mr}:C${mr}`);
-            const current = parseNum(rows[0]?.[0]);
-            await sheets.writeRange(`월별잔고!C${mr}:C${mr}`, [current + delta]);
-            setBalanceSyncMsg('저축금 반영됨');
-            setTimeout(() => setBalanceSyncMsg(''), 3000);
-          }
-        } catch {
-          setBalanceSyncMsg('저축금 업데이트 실패');
-          setTimeout(() => setBalanceSyncMsg(''), 4000);
-        }
+        const delta = (p * q) - ((oldPrice || 0) * (oldQty || 0));
+        if (delta !== 0) await applySavingsDelta(mr, delta);
       }
     }
     setEditingHolding(null);
@@ -202,81 +200,9 @@ export function usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, se
       setBalanceSyncMsg('이번 달 행 없음 — 저축금 미반영');
       setTimeout(() => setBalanceSyncMsg(''), 4000);
     } else {
-      try {
-        const rows = await sheets.readRange(`월별잔고!C${mr}:C${mr}`);
-        const current = parseNum(rows[0]?.[0]);
-        await sheets.writeRange(`월별잔고!C${mr}:C${mr}`, [current + investAmount]);
-        setBalanceSyncMsg('저축금 반영됨');
-        setTimeout(() => setBalanceSyncMsg(''), 3000);
-      } catch {
-        setBalanceSyncMsg('저축금 업데이트 실패');
-        setTimeout(() => setBalanceSyncMsg(''), 4000);
-      }
+      await applySavingsDelta(mr, investAmount);
     }
     setShowAddForm(false);
-  };
-
-  const saveAllTargets = async () => {
-    const sum = allTargetInputs.reduce((s, v) => s + (parseFloat(v) || 0), 0);
-    if (Math.abs(sum - 100) > 0.1) {
-      alert(`합계가 ${sum.toFixed(1)}%입니다. 100%가 되어야 합니다.`);
-      return;
-    }
-    setEditingAllTargets(false);
-    const startRow = REBAL_TARGET_START[acctKey];
-    try {
-      await sheets.writeRangeMulti(
-        `자산분배!B${startRow}:B${startRow + allTargetInputs.length - 1}`,
-        allTargetInputs.map(v => [(parseFloat(v) || 0) / 100])
-      );
-      await sheets.fetch();
-    } catch {
-      setBalanceSyncMsg('목표비중 저장 실패 — 다시 시도해주세요');
-      setTimeout(() => setBalanceSyncMsg(''), 4000);
-    }
-  };
-
-  const startSavingsLP = () => {
-    savingsLpFiredRef.current = false;
-    savingsLpRef.current = setTimeout(async () => {
-      savingsLpFiredRef.current = true;
-      const mr = monthlyRowRef.current;
-      if (!mr) {
-        setBalanceSyncMsg('이번 달 행 없음');
-        setTimeout(() => setBalanceSyncMsg(''), 3000);
-        return;
-      }
-      try {
-        const rows = await sheets.readRange(`월별잔고!C${mr}:C${mr}`);
-        setSavingsEditValue(String(parseNum(rows[0]?.[0]) || ''));
-      } catch {
-        setSavingsEditValue('');
-      }
-      setShowSavingsEdit(true);
-    }, 1000);
-  };
-
-  const endSavingsLP = () => {
-    if (savingsLpRef.current) { clearTimeout(savingsLpRef.current); savingsLpRef.current = null; }
-  };
-
-  const saveSavingsEdit = async () => {
-    const mr = monthlyRowRef.current;
-    if (!mr) {
-      setBalanceSyncMsg('이번 달 행 없음');
-      setTimeout(() => setBalanceSyncMsg(''), 4000);
-      setShowSavingsEdit(false);
-      return;
-    }
-    try {
-      await sheets.writeRange(`월별잔고!C${mr}:C${mr}`, [parseFloat(savingsEditValue) || 0]);
-      setBalanceSyncMsg('저축금 저장됨');
-      setTimeout(() => setBalanceSyncMsg(''), 3000);
-    } catch {
-      setBalanceSyncMsg('저축금 저장 실패');
-      setTimeout(() => setBalanceSyncMsg(''), 4000);
-    }
-    setShowSavingsEdit(false);
   };
 
   return {
@@ -292,16 +218,9 @@ export function usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, se
     editCashValue, setEditCashValue,
     editingDollar, setEditingDollar,
     editDollarValue, setEditDollarValue,
-    editingAllTargets, setEditingAllTargets,
-    allTargetInputs, setAllTargetInputs,
-    showSavingsEdit, setShowSavingsEdit,
-    savingsEditValue, setSavingsEditValue,
-    savingsLpFiredRef,
     handleDeleteSelected,
     startLP, endLP,
     saveEdit, saveCash, saveDollar,
     handleAddHoldingSave,
-    saveAllTargets,
-    startSavingsLP, endSavingsLP, saveSavingsEdit,
   };
 }
