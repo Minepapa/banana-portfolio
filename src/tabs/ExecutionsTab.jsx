@@ -1,13 +1,15 @@
 // 체결내역 탭: 체결 자동 동기화 목록 + 저축금 반영 토글. App.jsx에서 추출 (동작 불변).
 // 동기화·저축금 반영·거래편집 상태는 App에 남기고 prop으로 받는다 — 시트 I/O는 App 책임.
 import { parseNum } from '../lib/textFormat.js';
+import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function ExecutionsTab({
   tradeRows, tradeSyncMsg, tradeSyncing, syncTradeExecutions,
   savingsMode, setSavingsMode, savingsAppliedRows, applySavingsFromTrade,
-  setTradeEditValues, setTradeEditRowIdx, setTradeEditOpen, tradeLpRef,
+  setTradeEditValues, setTradeEditRowIdx, setTradeEditOpen,
   sheets, baseFont,
 }) {
+  const lp = useLongPress();
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -78,17 +80,18 @@ export default function ExecutionsTab({
             };
             return (
               <div key={idx}
-                onTouchStart={() => { tradeLpRef.current = setTimeout(openTradeEdit, 500); }}
-                onTouchEnd={() => clearTimeout(tradeLpRef.current)}
-                onTouchMove={() => clearTimeout(tradeLpRef.current)}
-                onContextMenu={(e) => { e.preventDefault(); openTradeEdit(); }}
+                {...(!isComplete ? lp.bind(idx, openTradeEdit) : {})}
+                onContextMenu={!isComplete ? (e) => { e.preventDefault(); openTradeEdit(); } : undefined}
                 style={{
+                  position: 'relative',
                   padding: '12px 16px',
                   borderBottom: idx < tradeRows.length - 1 ? '1px solid #1E2233' : 'none',
                   display: 'flex', alignItems: 'center', gap: 12,
+                  background: lp.activeId === idx ? '#1E2A45' : 'transparent',
                   opacity: processed ? 0.55 : 1,
                   cursor: !isComplete ? 'pointer' : 'default',
                 }}>
+                {lp.activeId === idx && <div className="lp-progress" />}
                 <div style={{
                   width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
                   background: processed ? '#34A853' : isComplete ? '#F5A623' : '#3B4152',

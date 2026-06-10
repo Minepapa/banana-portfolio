@@ -1,6 +1,6 @@
 // 체결내역 동기화 훅: 체결 탭의 보유 반영·매도 수익금 기록·예수금 증감·셀 편집·저축금 반영을 묶음. App.jsx에서 추출 (동작 불변).
 // 입력: { sheets, usdRate }. 반환: 트레이드 상태·setter·동기화 함수들.
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import { parseNum } from '../lib/textFormat.js';
 import { KL_CFG, buildRowMap } from '../lib/sheetRows.js';
 
@@ -17,7 +17,6 @@ export function useTradeSync({ sheets, usdRate }) {
   const [tradeEditRowIdx, setTradeEditRowIdx] = useState(null);
   const [tradeEditValues, setTradeEditValues] = useState(Array(13).fill(''));
   const [tradeEditBusy, setTradeEditBusy] = useState(false);
-  const tradeLpRef = useRef(null);
 
   const addHoldingFromTrade = useCallback(async (acctKey, assetType, stockName, price, qty, currentPrice) => {
     const cfg = KL_CFG[acctKey];
@@ -273,7 +272,6 @@ export function useTradeSync({ sheets, usdRate }) {
     tradeEditRowIdx, setTradeEditRowIdx,
     tradeEditValues, setTradeEditValues,
     tradeEditBusy,
-    tradeLpRef,
     syncTradeExecutions,
     saveTradeEdit,
     applySavingsFromTrade,

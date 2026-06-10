@@ -5,14 +5,16 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
 } from "recharts";
 import { PROFIT_POS, PROFIT_NEG, CHART_BAR_COLOR, profitColor } from '../lib/constants.js';
+import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function DashboardTab({
   totalInvest, totalEval, totalProfit, accounts, monthlyData,
   fmt, isMobile, baseFont, setAcctKey, setTab,
   showSavings, setShowSavings, showSavingsEdit, savingsEditValue, setSavingsEditValue,
-  savingsLpFiredRef, startSavingsLP, endSavingsLP, saveSavingsEdit, setShowSavingsEdit,
+  beginSavingsEdit, saveSavingsEdit, setShowSavingsEdit,
 }) {
   const [monthYear, setMonthYear] = useState('전체');
+  const lp = useLongPress();
 
   return (
     <div>
@@ -148,23 +150,18 @@ export default function DashboardTab({
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <div style={{ fontSize: 10, letterSpacing: 3, color: "#8A9AB5" }}>전체 평가금 추이</div>
             <button
-              onClick={() => { if (!savingsLpFiredRef.current) setShowSavings(p => !p); }}
-              onMouseDown={startSavingsLP}
-              onMouseUp={endSavingsLP}
-              onMouseLeave={endSavingsLP}
-              onTouchStart={e => { e.preventDefault(); startSavingsLP(); }}
-              onTouchEnd={endSavingsLP}
-              onTouchCancel={endSavingsLP}
-              onContextMenu={e => e.preventDefault()}
+              onClick={() => { if (!lp.firedRef.current) setShowSavings(p => !p); }}
+              {...lp.bind('savings', beginSavingsEdit)}
               style={{
+                position: 'relative', overflow: 'hidden',
                 padding: '3px 10px', borderRadius: 4,
-                border: `1px solid ${showSavings ? '#10B981' : '#2A2F3E'}`,
+                border: `1px solid ${lp.activeId === 'savings' ? '#3B82F6' : showSavings ? '#10B981' : '#2A2F3E'}`,
                 background: showSavings ? '#0D2B1A' : 'transparent',
                 color: showSavings ? '#10B981' : '#6B7280',
                 cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
                 userSelect: 'none', WebkitUserSelect: 'none',
               }}
-            >저축금</button>
+            >저축금{lp.activeId === 'savings' && <div className="lp-progress" />}</button>
           </div>
           <div style={{ display: 'flex', gap: 4 }}>
             {['전체', '2025', '2026'].map(y => (

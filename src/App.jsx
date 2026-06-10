@@ -111,7 +111,6 @@ export default function App() {
     tradeEditRowIdx, setTradeEditRowIdx,
     tradeEditValues, setTradeEditValues,
     tradeEditBusy,
-    tradeLpRef,
     syncTradeExecutions,
     saveTradeEdit,
     applySavingsFromTrade,
@@ -150,7 +149,7 @@ export default function App() {
     editingDollar, setEditingDollar,
     editDollarValue, setEditDollarValue,
     handleDeleteSelected,
-    startLP, endLP,
+    beginEdit,
     saveEdit, saveCash, saveDollar,
     handleAddHoldingSave,
   } = usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, setBalanceSyncMsg });
@@ -158,8 +157,7 @@ export default function App() {
   const {
     showSavingsEdit, setShowSavingsEdit,
     savingsEditValue, setSavingsEditValue,
-    savingsLpFiredRef,
-    startSavingsLP, endSavingsLP, saveSavingsEdit,
+    beginSavingsEdit, saveSavingsEdit,
   } = useSavingsEdit({ sheets, monthlyRowRef, setBalanceSyncMsg });
 
   const {
@@ -431,7 +429,7 @@ export default function App() {
             setAcctKey={setAcctKey} setTab={setTab}
             showSavings={showSavings} setShowSavings={setShowSavings} showSavingsEdit={showSavingsEdit}
             savingsEditValue={savingsEditValue} setSavingsEditValue={setSavingsEditValue}
-            savingsLpFiredRef={savingsLpFiredRef} startSavingsLP={startSavingsLP} endSavingsLP={endSavingsLP}
+            beginSavingsEdit={beginSavingsEdit}
             saveSavingsEdit={saveSavingsEdit} setShowSavingsEdit={setShowSavingsEdit}
           />
         )}
@@ -480,7 +478,7 @@ export default function App() {
             editIncludeSavings={editIncludeSavings} setEditIncludeSavings={setEditIncludeSavings}
             editCashValue={editCashValue} setEditCashValue={setEditCashValue}
             editDollarValue={editDollarValue} setEditDollarValue={setEditDollarValue}
-            startLP={startLP} endLP={endLP} saveEdit={saveEdit} saveCash={saveCash}
+            beginEdit={beginEdit} saveEdit={saveEdit} saveCash={saveCash}
             saveDollar={saveDollar} handleDeleteSelected={handleDeleteSelected}
             AddHoldingForm={AddHoldingForm} onAddHoldingSave={handleAddHoldingSave}
           />
@@ -519,7 +517,7 @@ export default function App() {
             savingsMode={savingsMode} setSavingsMode={setSavingsMode}
             savingsAppliedRows={savingsAppliedRows} applySavingsFromTrade={applySavingsFromTrade}
             setTradeEditValues={setTradeEditValues} setTradeEditRowIdx={setTradeEditRowIdx}
-            setTradeEditOpen={setTradeEditOpen} tradeLpRef={tradeLpRef}
+            setTradeEditOpen={setTradeEditOpen}
             sheets={sheets} baseFont={baseFont}
           />
         )}

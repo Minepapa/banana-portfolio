@@ -2,7 +2,7 @@
 // 롱프레스(lpRef) 진입 → 행 종류(현금·달러·일반)별 편집 상태 → sheets write 후 re-fetch.
 // monthlyRowRef·setBalanceSyncMsg는 onData·잔고동기화 effect와 공유되므로 App이 소유·주입한다.
 // 저축금 직접편집은 useSavingsEdit, 목표비중은 useRebalanceTargets로 분리됨.
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { parseNum } from '../lib/textFormat.js';
 import { START_ROWS } from '../lib/sheetRows.js';
 
@@ -21,7 +21,6 @@ export function usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, se
   const [editCashValue, setEditCashValue] = useState('');
   const [editingDollar, setEditingDollar] = useState(null); // 달러RP(외화 RP) 수동 편집 중인 행
   const [editDollarValue, setEditDollarValue] = useState(''); // USD 잔액
-  const lpRef = useRef(null);
 
   // 저축금(월별잔고!C) 델타 가산 공통부 — saveEdit·handleAddHoldingSave 공유.
   // 호출부가 mr 존재·delta 적용 여부를 판단하고, 이 함수는 실제 I/O와 메시지만 담당.
@@ -77,37 +76,32 @@ export function usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, se
   const isCashRow = (h) => h.name === '예수금' || (acctKey === '연금저축' && String(h.name).includes('MMF'));
   const isDollarRow = (h) => acctKey === '위탁' && h.name === '외화 RP';
 
-  const startLP = (origIdx, h) => {
-    lpRef.current = setTimeout(async () => {
-      const sheetRow = START_ROWS[acctKey] + h.rowOffset;
-      if (isCashRow(h)) {
-        // 모든 계좌 수동 편집 허용 — 입력값이 예수금기준(수동)으로 저장돼 이후 거래 델타의 기준이 됨
-        setEditingCash({ origIdx, sheetRow });
-        setEditCashValue(String(Math.round(h.eval) || ''));
-        return;
-      }
-      if (isDollarRow(h)) {
-        // 달러RP: USD 잔액을 기준으로 리셋(달러기준 표). 표시행 D열만 갱신, 원화는 수식.
-        setEditingDollar({ origIdx, sheetRow });
-        setEditDollarValue(String(h.qty || ''));
-        return;
-      }
-      let isManual = false;
-      try {
-        const vals = await sheets.readRange(`${acctKey}!F${sheetRow}`, 'FORMULA');
-        const cell = String(vals[0]?.[0] ?? '');
-        isManual = cell !== '' && !cell.startsWith('=');
-      } catch { /* 수식 조회 실패 시 수동 여부 미상으로 진행 */ }
-      setEditingHolding({ origIdx, sheetRow, oldPrice: h.price, oldQty: h.qty, isManual });
-      setEditPrice(String(h.price || ''));
-      setEditQty(String(h.qty || ''));
-      setEditCurrentPrice(String(isManual ? (h.currentPrice || '') : ''));
-      setEditIncludeSavings(false);
-    }, 1000);
-  };
-
-  const endLP = () => {
-    if (lpRef.current) { clearTimeout(lpRef.current); lpRef.current = null; }
+  // 롱프레스 발화 시 호출되는 편집 진입 본문(타이밍·제스처는 useLongPress가 소유).
+  const beginEdit = async (origIdx, h) => {
+    const sheetRow = START_ROWS[acctKey] + h.rowOffset;
+    if (isCashRow(h)) {
+      // 모든 계좌 수동 편집 허용 — 입력값이 예수금기준(수동)으로 저장돼 이후 거래 델타의 기준이 됨
+      setEditingCash({ origIdx, sheetRow });
+      setEditCashValue(String(Math.round(h.eval) || ''));
+      return;
+    }
+    if (isDollarRow(h)) {
+      // 달러RP: USD 잔액을 기준으로 리셋(달러기준 표). 표시행 D열만 갱신, 원화는 수식.
+      setEditingDollar({ origIdx, sheetRow });
+      setEditDollarValue(String(h.qty || ''));
+      return;
+    }
+    let isManual = false;
+    try {
+      const vals = await sheets.readRange(`${acctKey}!F${sheetRow}`, 'FORMULA');
+      const cell = String(vals[0]?.[0] ?? '');
+      isManual = cell !== '' && !cell.startsWith('=');
+    } catch { /* 수식 조회 실패 시 수동 여부 미상으로 진행 */ }
+    setEditingHolding({ origIdx, sheetRow, oldPrice: h.price, oldQty: h.qty, isManual });
+    setEditPrice(String(h.price || ''));
+    setEditQty(String(h.qty || ''));
+    setEditCurrentPrice(String(isManual ? (h.currentPrice || '') : ''));
+    setEditIncludeSavings(false);
   };
 
   const saveEdit = async () => {
@@ -238,7 +232,7 @@ export function usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, se
     editingDollar, setEditingDollar,
     editDollarValue, setEditDollarValue,
     handleDeleteSelected,
-    startLP, endLP,
+    beginEdit,
     saveEdit, saveCash, saveDollar,
     handleAddHoldingSave,
   };

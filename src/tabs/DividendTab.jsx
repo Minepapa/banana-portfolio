@@ -1,16 +1,17 @@
 // 배당 탭: 월별 배당 차트 + 종목명 인라인 편집 + 연도별 합계. App.jsx에서 추출 (동작 불변).
-import { useState, useRef } from "react";
+import { useState } from "react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
 import { CHART_BAR_COLOR, PROFIT_POS } from '../lib/constants.js';
+import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function DividendTab({ dividendData, isMobile, baseFont, fmt, sheets }) {
   const [divYear, setDivYear] = useState('전체');
   const [editingDivRow, setEditingDivRow] = useState(null); // 배당 종목명 편집 중인 시트 행
   const [editDivName, setEditDivName] = useState('');
   const [divSaving, setDivSaving] = useState(false);
-  const divLongPress = useRef(null); // 종목명 롱프레스 타이머
+  const lp = useLongPress();
   const [selectedDivKey, setSelectedDivKey] = useState(null);
 
   const divYears = ['전체', ...[...new Set(dividendData.map(d => String(d.year)))].sort()];
@@ -90,24 +91,13 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
                   </>
                 ) : (
                   <>
-                    {(() => {
-                      const startPress = () => {
-                        clearTimeout(divLongPress.current);
-                        divLongPress.current = setTimeout(() => { setEditingDivRow(item.row); setEditDivName(item.name); }, 500);
-                      };
-                      const cancelPress = () => clearTimeout(divLongPress.current);
-                      return (
-                        <span
-                          onPointerDown={startPress}
-                          onPointerUp={cancelPress}
-                          onPointerLeave={cancelPress}
-                          onContextMenu={e => e.preventDefault()}
-                          title="길게 눌러 이름 수정"
-                          style={{ fontSize: 12, color: '#E8EAF0', cursor: 'pointer', flex: 1, minWidth: 0, textAlign: 'left', userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'manipulation' }}>
-                          {item.name || '(이름 없음)'}
-                        </span>
-                      );
-                    })()}
+                    <span
+                      {...lp.bind(item.row, () => { setEditingDivRow(item.row); setEditDivName(item.name); })}
+                      title="길게 눌러 이름 수정"
+                      style={{ position: 'relative', fontSize: 12, color: lp.activeId === item.row ? '#60A5FA' : '#E8EAF0', cursor: 'pointer', flex: 1, minWidth: 0, textAlign: 'left', userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'manipulation' }}>
+                      {item.name || '(이름 없음)'}
+                      {lp.activeId === item.row && <div className="lp-progress" />}
+                    </span>
                     <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS, flexShrink: 0 }}>₩{fmt(item.amount)}</span>
                   </>
                 )}

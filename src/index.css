@@ -54,6 +54,23 @@ body {
   margin: 0;
 }
 
+/* 롱프레스 진행 표시 — 1초 동안 좌→우로 채워지는 하단 바 */
+@keyframes lpFill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.lp-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  transform-origin: left;
+  background: #3B82F6;
+  animation: lpFill 1s linear forwards;
+  pointer-events: none;
+}
+
 /* 탭바 스크롤바 숨김 */
 .tab-bar {
   scrollbar-width: none;

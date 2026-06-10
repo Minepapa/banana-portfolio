@@ -1,6 +1,7 @@
 // 종목 탭: 계좌별 보유종목 목록 + 추가/삭제/인라인 편집(매수단가·예수금·달러RP). App.jsx에서 추출 (동작 불변).
 // 모든 편집 상태·핸들러(시트 쓰기)와 AddHoldingForm은 App에 남기고 prop으로 받는다 — 시트 I/O는 App 책임.
 import { PROFIT_POS, PROFIT_NEG, COLORS } from '../lib/constants.js';
+import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function HoldingsTab({
   accounts, acct, acctKey, setAcctKey, isMobile, baseFont, fmt, sheets,
@@ -11,9 +12,10 @@ export default function HoldingsTab({
   editPrice, setEditPrice, editQty, setEditQty, editCurrentPrice, setEditCurrentPrice,
   editIncludeSavings, setEditIncludeSavings,
   editCashValue, setEditCashValue, editDollarValue, setEditDollarValue,
-  startLP, endLP, saveEdit, saveCash, saveDollar, handleDeleteSelected,
+  beginEdit, saveEdit, saveCash, saveDollar, handleDeleteSelected,
   AddHoldingForm, onAddHoldingSave,
 }) {
+  const lp = useLongPress();
   // ── 전체 계좌 합산 ─────────────────────────────────────────
   const totalPortEval   = Object.values(accounts).reduce((s, a) => s + (a.total_eval   || 0), 0);
   const totalPortInvest = Object.values(accounts).reduce((s, a) => s + (a.total_invest || 0), 0);
@@ -184,23 +186,20 @@ export default function HoldingsTab({
           const isEditingCash = !isTotalView && editingCash?.origIdx === origIdx;
           const isEditingDollar = !isTotalView && editingDollar?.origIdx === origIdx;
           const weightPct = weightBase > 0 ? (h.eval / weightBase * 100).toFixed(1) : '0.0';
-          const lpHandlers = !isTotalView && sheets.auth === 'signed-in' && !showDeleteMode ? {
-            onMouseDown: () => startLP(origIdx, h),
-            onMouseUp: endLP,
-            onMouseLeave: endLP,
-            onTouchStart: (e) => { e.preventDefault(); startLP(origIdx, h); },
-            onTouchEnd: endLP,
-            onTouchCancel: endLP,
-            onContextMenu: (e) => e.preventDefault(),
-          } : {};
+          const canLP = !isTotalView && sheets.auth === 'signed-in' && !showDeleteMode;
+          const lpActive = canLP && lp.activeId === origIdx;
+          const lpHandlers = canLP ? lp.bind(origIdx, () => beginEdit(origIdx, h)) : {};
           return (
             <div key={`${h._acctKey ?? acctKey}-${origIdx}`} style={{ borderBottom: vi < sortedHoldings.length - 1 ? "1px solid #1E2233" : "none" }}>
               <div style={{
+                position: 'relative',
                 padding: isMobile ? "10px 16px" : "12px 16px",
                 display: "flex", alignItems: "center", gap: 8,
-                background: isEditing || isEditingCash || isEditingDollar ? '#1A2035' : selectedToDelete.has(origIdx) ? '#1A1520' : 'transparent',
+                background: lpActive ? '#1E2A45' : isEditing || isEditingCash || isEditingDollar ? '#1A2035' : selectedToDelete.has(origIdx) ? '#1A1520' : 'transparent',
+                transition: 'background 0.1s',
                 userSelect: 'none', WebkitUserSelect: 'none',
               }} {...lpHandlers}>
+                {lpActive && <div className="lp-progress" />}
                 {!isTotalView && showDeleteMode && (
                   <input type="checkbox" checked={selectedToDelete.has(origIdx)}
                     onChange={() => setSelectedToDelete(prev => { const next = new Set(prev); if (next.has(origIdx)) next.delete(origIdx); else next.add(origIdx); return next; })}
