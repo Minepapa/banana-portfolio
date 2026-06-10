@@ -38,7 +38,8 @@ case "$JOB" in
   report-sync)         CMD=(scripts/sync-reports.mjs) ;;
   parse-notifications) CMD=(scripts/parse-notifications.mjs) ;;
   journal-sync)        CMD=(scripts/setup/setup-position-journal.mjs) ;;
-  *) echo "usage: run.sh {drain|risk-d|risk-b|report-sync|parse-notifications|journal-sync}" >&2; exit 2 ;;
+  backup)              CMD=(scripts/backup-sheet.mjs) ;;
+  *) echo "usage: run.sh {drain|risk-d|risk-b|report-sync|parse-notifications|journal-sync|backup}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)

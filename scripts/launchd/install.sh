@@ -11,7 +11,7 @@ LOG_DIR="$HOME/Library/Logs/banana-portfolio"
 mkdir -p "$AGENTS" "$LOG_DIR"
 
 JOBS=("$@")
-if [ ${#JOBS[@]} -eq 0 ]; then JOBS=(risk-d risk-b drain report-sync parse-notifications); fi
+if [ ${#JOBS[@]} -eq 0 ]; then JOBS=(risk-d risk-b drain report-sync parse-notifications backup); fi
 
 for job in "${JOBS[@]}"; do
   src="$HERE/com.banana.$job.plist"

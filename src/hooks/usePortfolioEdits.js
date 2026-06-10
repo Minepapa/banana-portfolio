@@ -39,10 +39,29 @@ export function usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, se
   };
 
   const handleDeleteSelected = async () => {
-    const ranges = [...selectedToDelete].map(idx => {
-      const sheetRow = START_ROWS[acctKey] + acct.holdings[idx].rowOffset;
-      return `${acctKey}!B${sheetRow}:I${sheetRow}`;
+    const targets = [...selectedToDelete].map(idx => {
+      const h = acct.holdings[idx];
+      return { sheetRow: START_ROWS[acctKey] + h.rowOffset, name: String(h.name ?? '').trim() };
     });
+    // 행 앵커 가드: idx→rowOffset 매핑은 마지막 fetch 시점 기준이라, 그 사이 시트가 바뀌면
+    // (자동화·타 세션) 엉뚱한 행을 지울 수 있다. 삭제 직전 각 행 B열(종목명)이 기대값과
+    // 일치하는지 확인하고, 하나라도 어긋나면 전체 중단 — 자산 데이터 오삭제 방지.
+    const rowNums = targets.map(t => t.sheetRow);
+    const min = Math.min(...rowNums), max = Math.max(...rowNums);
+    try {
+      const colB = await sheets.readRange(`${acctKey}!B${min}:B${max}`);
+      const mismatch = targets.some(t => String(colB[t.sheetRow - min]?.[0] ?? '').trim() !== t.name);
+      if (mismatch) {
+        setBalanceSyncMsg('시트가 변경됐어요 — 새로고침 후 다시 시도해주세요');
+        setTimeout(() => setBalanceSyncMsg(''), 5000);
+        return;
+      }
+    } catch {
+      setBalanceSyncMsg('삭제 전 확인 실패 — 다시 시도해주세요');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+      return;
+    }
+    const ranges = targets.map(t => `${acctKey}!B${t.sheetRow}:I${t.sheetRow}`);
     try {
       await sheets.clearRows(ranges);
     } catch {

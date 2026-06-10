@@ -112,6 +112,9 @@ export function useTradeSync({ sheets, usdRate }) {
           }
           const priceForCalc = isOverseas ? price / usdRate : price;
 
+          // ── 1) 보유종목 반영 (유일한 재실행-위험 작업) ──────────────
+          // 매도 전 평균매수단가 보존 (USD for 해외주식) — 행이 청산돼도 in-memory 값은 남음
+          const avgBuyPrice = matchRow ? matchRow.price : 0;
           if (isBuy) {
             if (matchRow) {
               const newQty = matchRow.qty + qty;
@@ -126,14 +129,28 @@ export function useTradeSync({ sheets, usdRate }) {
               await addHoldingFromTrade(acctKey, assetType, stockName, priceForCalc, qty, currentPrice);
             }
           } else if (isSell && matchRow) {
-            const avgBuyPrice = matchRow.price; // 매도 전 평균매수단가 보존 (USD for 해외주식)
             const newQty = matchRow.qty - qty;
             if (newQty <= 0) {
               await sheets.clearRowsRaw([`${acctKey}!B${matchRow.row}:I${matchRow.row}`]);
             } else {
               await sheets.writeRange(`${acctKey}!D${matchRow.row}`, [newQty]);
             }
-            // 수익금 시트에 매도 내역 기록 — 해외주식은 USD 기준으로 통일
+          } else if (isSell && !matchRow) {
+            errors.push(`${stockName}: 계좌(${acctKey})에서 종목을 찾을 수 없음 — 처리 건너뜀`);
+            continue; // 완료 마킹 스킵
+          }
+
+          // ── 2) 보유 반영 직후 즉시 완료 마킹 ─────────────────────────
+          // 보유종목 쓰기만이 재실행 시 위험(수량·평단 이중반영). 그 직후 마킹해 부분실패가
+          // 같은 체결을 재처리하지 못하게 막는다. 이후 수익금·예수금은 best-effort —
+          // 실패해도 이미 마킹돼 보유 이중반영은 없고, 오류만 표면화돼 수동 보정 가능.
+          if (cheolSheetId !== null) {
+            await sheets.markTradeProcessed(cheolSheetId, i + 1); // row2 → 0-based index 1
+          }
+          processed++;
+
+          // ── 3) 수익금 기록 (매도) — best-effort ─────────────────────
+          if (isSell && matchRow) {
             const profitRows = await sheets.readRange('수익금!A2:A');
             const nextRow = (profitRows?.length ?? 0) + 2;
             const dateStr = String(row[0] ?? '').trim();
@@ -148,12 +165,9 @@ export function useTradeSync({ sheets, usdRate }) {
               dateStr, stockName, qty, avgBuyPrice, sellPriceForProfit,
               profitFormula,
             ]);
-          } else if (isSell && !matchRow) {
-            errors.push(`${stockName}: 계좌(${acctKey})에서 종목을 찾을 수 없음 — 처리 건너뜀`);
-            continue; // 완료 마킹 스킵
           }
 
-          // 예수금 반영 — ISA·위탁 국내주식만 (해외주식은 외화RP 별도 처리)
+          // ── 4) 예수금 반영 — ISA·위탁 국내주식만 (해외주식은 외화RP 별도) · best-effort ──
           // 표시값은 E·H열(투자금=평가금). 즉시 피드백용이며 헤드리스 스크립트가 기준+델타로 최종 정합.
           if ((isBuy || isSell) && !assetType.includes('해외') && (acctKey === 'ISA' || acctKey === '위탁')) {
             const cashRowIdx = holdingRows.findIndex(hr => String(hr[1] ?? '').trim() === '예수금');
@@ -167,11 +181,6 @@ export function useTradeSync({ sheets, usdRate }) {
               await sheets.writeRange(`${acctKey}!H${cashRowNum}`, [newCash]);
             }
           }
-
-          if (cheolSheetId !== null) {
-            await sheets.markTradeProcessed(cheolSheetId, i + 1); // row2 → 0-based index 1
-          }
-          processed++;
         } catch (e) {
           errors.push(String(e?.message ?? e));
         }

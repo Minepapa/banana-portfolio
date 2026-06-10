@@ -11,8 +11,9 @@ const JOB_LABELS = {
   'risk-b': '리스크 B (논리)',
   'report-sync': '주간 리포트',
   'journal-sync': '포지션 저널',
+  'backup': '시트 백업',
 };
-const JOB_ORDER = ['parse-notifications', 'drain', 'journal-sync', 'risk-d', 'risk-b', 'report-sync'];
+const JOB_ORDER = ['parse-notifications', 'drain', 'journal-sync', 'risk-d', 'risk-b', 'report-sync', 'backup'];
 
 function JobStatusPanel({ jobStatus }) {
   if (!jobStatus) return null;
