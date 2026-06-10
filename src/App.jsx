@@ -296,11 +296,12 @@ export default function App() {
           <div style={{ textAlign: "right", flexShrink: 0 }}>
             <div style={{ fontSize: 9, color: "#8A9AB5", letterSpacing: 2 }}>평가손익</div>
             <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: profitColor(totalProfit) }}>
-              ₩{fmt(Math.abs(totalProfit))}
+              {totalProfit > 0 ? '▲ ' : totalProfit < 0 ? '▼ ' : ''}₩{fmt(Math.abs(totalProfit))}
             </div>
             {dailyDelta != null && (
               <div style={{ fontSize: 10, color: profitColor(dailyDelta) }}>
-                ₩{fmt(Math.abs(dailyDelta))}
+                {dailyDelta > 0 ? '▲ ' : dailyDelta < 0 ? '▼ ' : ''}₩{fmt(Math.abs(dailyDelta))}
+                {prevDayEval > 0 ? ` (${dailyDelta >= 0 ? '+' : '−'}${Math.abs(dailyDelta / prevDayEval * 100).toFixed(2)}%)` : ''}
               </div>
             )}
           </div>
