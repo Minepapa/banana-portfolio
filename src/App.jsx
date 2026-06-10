@@ -20,7 +20,7 @@ import DashboardTab from './tabs/DashboardTab.jsx';
 import RebalanceTab from './tabs/RebalanceTab.jsx';
 import HoldingsTab from './tabs/HoldingsTab.jsx';
 import ExecutionsTab from './tabs/ExecutionsTab.jsx';
-import TradeDecisionTab from './tabs/TradeDecisionTab.jsx';
+import TodayTab from './tabs/TodayTab.jsx';
 import PositionJournalTab from './tabs/PositionJournalTab.jsx';
 import BuyEvaluationTab from './tabs/BuyEvaluationTab.jsx';
 import SellEvaluationTab from './tabs/SellEvaluationTab.jsx';
@@ -69,6 +69,7 @@ export default function App() {
   const [showSavings, setShowSavings] = useState(false);
   const [kpiTrades, setKpiTrades] = useState(null); // null=미로딩, []이상=로딩완료
   const [jobStatus, setJobStatus] = useState(null); // null=미로딩
+  const [execPending, setExecPending] = useState(null); // 오늘 탭: 미처리 체결 수(읽기전용). null=미로딩
   const [savingsMode, setSavingsMode] = useState(false);
   const [profitData, setProfitData] = useState([]);
   const isMobile = useIsMobile();
@@ -238,6 +239,21 @@ export default function App() {
     }
   }, [sheets.auth, jobStatus]); // eslint-disable-line
 
+  // 오늘 탭: 미처리 체결 수를 읽기전용으로 집계(동기화는 쓰기라 탭 진입만으로 호출 금지).
+  // 탭 진입·전역 새로고침(lastSync) 때마다 재조회 — 종목명 있고 미처리(초록 아님)인 행만 카운트.
+  useEffect(() => {
+    if (tab !== '오늘' || sheets.auth !== 'signed-in') return;
+    let cancelled = false;
+    Promise.all([sheets.readRange('체결내역!A2:M'), sheets.readTradeProcessedFlags()])
+      .then(([vals, flags]) => {
+        if (cancelled) return;
+        const n = (vals || []).filter((row, i) => String(row[5] ?? '').trim() !== '' && !(flags[i] ?? false)).length;
+        setExecPending(n);
+      })
+      .catch(() => { if (!cancelled) setExecPending(0); });
+    return () => { cancelled = true; };
+  }, [tab, sheets.auth, sheets.lastSync]); // eslint-disable-line
+
   const acct = accounts[acctKey];
   const totalInvest = Object.values(accounts).reduce((s, a) => s + a.total_invest, 0);
   const totalProfit = totalEval - totalInvest;
@@ -328,10 +344,10 @@ export default function App() {
         <div className="tab-bar" role="tablist" aria-label="화면 전환" style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {[
             { key: "dashboard", label: "홈" },
+            { key: "오늘",      label: "오늘" },
             { key: "report",    label: "리포트" },
             { key: "리스크",    label: "리스크" },
             { key: "평가",      label: "평가" },
-            { key: "거래",      label: "거래결정" },
             { key: "저널",      label: "포지션" },
             { key: "holdings",  label: "보유종목" },
             { key: "rebalance", label: "자산분배" },
@@ -479,11 +495,12 @@ export default function App() {
           <ProfitTab profitData={profitData} isMobile={isMobile} baseFont={baseFont} fmt={fmt} />
         )}
 
-        {/* ── 거래결정 탭 (① 거래직전 워크플로우: 시장→팔것→옮길곳→교훈) ── */}
-        {tab === "거래" && (
-          <TradeDecisionTab
+        {/* ── 오늘 탭 (매일 처리할 행동 체크리스트 — 거래결정 탭 대체) ── */}
+        {tab === "오늘" && (
+          <TodayTab
             riskMonitor={riskMonitor} positionJournal={positionJournal} accounts={accounts}
-            weeklyReports={weeklyReports} setTab={setTab} baseFont={baseFont}
+            weeklyReports={weeklyReports} execPending={execPending} jobStatus={jobStatus}
+            setTab={setTab} baseFont={baseFont}
           />
         )}
 
