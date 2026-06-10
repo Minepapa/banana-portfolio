@@ -18,29 +18,30 @@ const JOB_ORDER = ['parse-notifications', 'drain', 'journal-sync', 'risk-d', 'ri
 function JobStatusPanel({ jobStatus }) {
   if (!jobStatus) return null;
   const byJob = new Map(jobStatus.map(j => [j.job, j]));
+  // 시간 의존 판정(fail/stale/missing)은 순수 lib 함수에 위임 — render 내 Date.now() 직접 호출 회피(React Compiler purity)
+  const problemByJob = new Map(computeJobHealth(jobStatus, JOB_CADENCE).map(p => [p.job, p.problem]));
+  // missing(heartbeat 행 자체가 없는 필수 잡)도 행으로 노출 — byJob엔 없지만 problemByJob엔 있다
   const ordered = [
-    ...JOB_ORDER.filter(k => byJob.has(k)),
+    ...JOB_ORDER.filter(k => byJob.has(k) || problemByJob.has(k)),
     ...jobStatus.map(j => j.job).filter(k => !JOB_ORDER.includes(k)),
   ];
   if (ordered.length === 0) return null;
-  // 시간 의존 판정(fail/stale)은 순수 lib 함수에 위임 — render 내 Date.now() 직접 호출 회피(React Compiler purity)
-  const problemByJob = new Map(computeJobHealth(jobStatus, JOB_CADENCE).map(p => [p.job, p.problem]));
   return (
     <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16 }}>
       <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 4 }}>무인 잡 상태</div>
       <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 12 }}>최근 실행 시각 (잡이 마지막으로 점검·실행된 때 · 실제 발행/적재 시각 아님)</div>
       {ordered.map((key, i, arr) => {
         const j = byJob.get(key);
-        const problem = problemByJob.get(j.job);
-        const color = problem === 'fail' ? '#EF4444' : problem === 'stale' ? '#F59E0B' : '#10B981';
-        const icon = problem === 'fail' ? '🔴' : problem === 'stale' ? '⚠️' : '✅';
-        const tsMs = Date.parse(j.lastRun);
-        const when = isFinite(tsMs) ? relTime(new Date(tsMs)) : (j.lastRun || '–');
+        const problem = problemByJob.get(key);
+        const color = (problem === 'fail' || problem === 'missing') ? '#EF4444' : problem === 'stale' ? '#F59E0B' : '#10B981';
+        const icon = (problem === 'fail' || problem === 'missing') ? '🔴' : problem === 'stale' ? '⚠️' : '✅';
+        const tsMs = j ? Date.parse(j.lastRun) : NaN;
+        const when = problem === 'missing' ? '기록 없음' : isFinite(tsMs) ? relTime(new Date(tsMs)) : (j?.lastRun || '–');
         return (
           <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none' }}>
-            <span style={{ fontSize: 12, color: '#9CA3AF' }}>{JOB_LABELS[j.job] || j.job}</span>
+            <span style={{ fontSize: 12, color: '#9CA3AF' }}>{JOB_LABELS[key] || key}</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {j.durationSec && <span style={{ fontSize: 9, color: '#3A4050' }}>{j.durationSec}s</span>}
+              {j?.durationSec && <span style={{ fontSize: 9, color: '#3A4050' }}>{j.durationSec}s</span>}
               <span style={{ fontSize: 12, color: '#8A9AB5' }}>{when}</span>
               <span style={{ fontSize: 11, fontWeight: 700, color }}>{icon}</span>
             </span>

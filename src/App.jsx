@@ -401,7 +401,7 @@ export default function App() {
         {jobStatus && (() => {
           const problems = computeJobHealth(jobStatus, JOB_CADENCE);
           if (problems.length === 0) return null;
-          const anyFail = problems.some(p => p.problem === 'fail');
+          const anyFail = problems.some(p => p.problem === 'fail' || p.problem === 'missing');
           return (
             <div style={{
               margin: '8px 12px', padding: '8px 12px', borderRadius: 8,
@@ -414,7 +414,7 @@ export default function App() {
               </div>
               {problems.map((p, i) => (
                 <div key={i} style={{ fontSize: 10, opacity: 0.9 }}>
-                  {p.job} — {p.problem === 'fail' ? '실패' : '갱신 정체'}{p.detail ? ` (${p.detail.slice(0, 60)})` : ''}
+                  {p.job} — {p.problem === 'fail' ? '실패' : p.problem === 'missing' ? '미실행(기록 없음)' : '갱신 정체'}{p.detail ? ` (${p.detail.slice(0, 60)})` : ''}
                 </div>
               ))}
             </div>
