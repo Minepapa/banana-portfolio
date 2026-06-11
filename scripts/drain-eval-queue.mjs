@@ -21,6 +21,9 @@ import { exec } from 'child_process';
 import { runHeadlessClaude } from './lib/sheets-common.mjs';
 import { createInterface } from 'readline';
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { fetchKrFundamentals, fetchUsFundamentals, fetchKrMarketData, fetchMarketData } from './lib/fundamentals.mjs';
+import { krCorpCode, krStockCode, usTicker } from './lib/instruments.mjs';
+import { buildEvalFacts } from './lib/eval-facts.mjs';
 
 const CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
 const SHEET_ID  = '1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg';
@@ -227,7 +230,7 @@ function parseEvalJson(raw) {
   return obj;
 }
 
-function buildRow(obj) {
+function buildRow(obj, nodeAxis) {
   const grades = obj.grades || {};
   const joinNum = (arr) => (arr || []).map((s, i) => `${i + 1}) ${s}`).join(' ');
   return [
@@ -239,7 +242,7 @@ function buildRow(obj) {
     obj.buyDate || '', obj.buyPrice || '',
     obj.targetTerm || '', obj.targetRet || '',
     obj.aiNote || '',
-    obj.axisItems ? JSON.stringify(obj.axisItems) : '',
+    nodeAxis ? JSON.stringify(nodeAxis) : (obj.axisItems ? JSON.stringify(obj.axisItems) : ''),
   ];
 }
 
@@ -327,7 +330,7 @@ const buildMemoBlock = (memo) => {
 };
 
 // ── 매수 평가 프롬프트 ────────────────────────────────────────────────────────
-function buildBuyPrompt(entry, cachedEval, holdings, allocationData) {
+function buildBuyPrompt(entry, cachedEval, holdings, allocationData, facts) {
   const market = entry.market || '(자동감지)';
   const memo = buildMemoBlock(entry.memo);
 
@@ -385,39 +388,41 @@ ${fin.현금흐름 || '  (데이터 없음)'}
 `;
   }
 
+  const factsSection = facts ? `
+✅ 검증된 펀더멘털 (Node가 OpenDart·yfinance로 결정론 산출 — 절대 재조회·수정 금지)
+${facts.factsText}
+
+⚠️ 위 숫자만 사용하세요. PER·ROE·RSI·52주 등 어떤 수치도 직접 fetch하거나 추정하지 마세요.
+당신의 역할은 이 검증된 숫자로 5축 등급(🟢🟡🔴)과 근거·리스크·액션을 판단하는 것뿐입니다.
+axisItems는 위 값을 그대로 옮기고, 데이터 부족 항목만 "(데이터 부족)"으로 두세요.`
+    : `
+⚠️ 검증된 펀더멘털을 산출하지 못했습니다. 모든 수치 항목을 "(데이터 부족)"으로 표기하고
+정성적 판단만 하세요. 숫자를 추정하지 마세요.`;
+
   return `다음 종목을 5축 평가해줘 (Trading Agent/playbooks/active-evaluation.md 따라):
 
 종목: ${sanitizeField(entry.name, 60)}
 시장: ${market}${memo}
 
 ${posSection}
-${allocationSection}${cacheSection}
+${allocationSection}${cacheSection}${factsSection}
 출력 조건:
 1. active-evaluation.md §5 표준 카드 양식으로 먼저 보여줘
 2. 마지막에 \`\`\`json 펜스로 JSON 블록 출력 (queue-evaluation.md §2.4 양식)
-3. JSON에 반드시 "axisItems" 필드 포함 — 각 축별 세부 지표({label, value, source, metric})
+3. JSON에 "axisItems" 포함 — 위 검증된 펀더멘털 값을 그대로 옮길 것
 4. status는 항상 "보류"
-5. 데이터 부족 항목은 추정 금지, "(데이터 부족: 소스)" 표기
+5. 데이터 부족 항목은 추정 금지, "(데이터 부족)" 표기
 
-⚠️ Frank 액션 권고 필수 포함 항목 (위 포지션 기반으로 구체화):
-- 현재 포지션 상태: 보유/미보유, 보유 시 평균단가 대비 현재가 갭
-- 매수/추가 진입 조건: RSI + 구체적 가격대 명시 (예: "RSI 45 이하 + 270,000원 이하 시 1차 진입")
-- 1회 진입 금액: 500만원 이하 원칙 준수
-- 차익실현/손절 조건: 52주 위치 또는 RSI 기반 구체적 레벨
-- 보유 중이라면: 추가매수 여부 또는 홀딩 의견
-- 미보유라면: 진입 우선순위 (지금 바로 / 조정 후 / 보류)
-
-⚠️ 데이터 최신성 필수:
-- 현재 날짜 기준으로 가장 최신 재무 데이터를 사용할 것 (OpenDart reprt_code: 최신 사업보고서 또는 분기보고서)
-- 2026년에 분석 시 반드시 2025 사업보고서 + 2026 분기보고서 사용. 2024년 이전 데이터를 최신으로 사용하면 안 됨
-- KR: OpenDart (get_financial_index, get_full_financial_statement) + 네이버 뉴스
-- KR 모멘텀(RSI/52주): api.finance.naver.com/siseJson.naver?symbol={종목코드}&requestType=1&startTime={1년전}&endTime={오늘}&timeframe=day
-  → 종가 배열로 RSI(14) 직접 계산, 52주 고저·위치(%) 산출
-- US: get_stock_info, get_financial_statement + 뉴스`;
+⚠️ Frank 액션 권고 필수 (위 포지션·검증된 RSI/52주 기반으로 구체화):
+- 현재 포지션 상태: 보유/미보유, 보유 시 평균단가 대비 갭
+- 매수/추가 진입 조건: RSI + 구체적 가격대
+- 1회 진입 금액: 500만원 이하 원칙
+- 차익실현/손절 조건: 52주 위치 또는 RSI 기반 레벨
+- 보유 중: 추가매수/홀딩 의견 / 미보유: 진입 우선순위`;
 }
 
 // ── 매도 평가 프롬프트 ────────────────────────────────────────────────────────
-function buildSellPrompt(entry, buyCard) {
+function buildSellPrompt(entry, buyCard, facts) {
   const market = entry.market || '(자동감지)';
   const reasonLines = (buyCard?.reasons || []).map((r, i) => `근거 ${i+1}: ${r}`).join('\n');
   const riskLines   = (buyCard?.risks   || []).map((r, i) => `리스크 ${i+1}: ${r}`).join('\n');
@@ -431,6 +436,13 @@ AI 한줄: ${buyCard.aiNote || '—'}`
     : `[최초 매수 카드]
 (종목투자노트에 매수 평가 없음 — 노트 탭에서 먼저 매수 평가를 기록해주세요)`;
 
+  const factsSection = facts ? `
+✅ 검증된 펀더멘털 (Node가 결정론 산출 — 재조회·수정 금지)
+${facts.factsText}
+
+⚠️ 위 숫자만 사용. axisItems는 위 값을 그대로 옮기세요.` : `
+⚠️ 검증된 펀더멘털 없음 — 수치 항목은 "(데이터 부족)" 표기, 추정 금지.`;
+
   return `[매도 평가 요청] sell-evaluation.md 따라 매도 평가 카드 생성해줘.
 
 종목: ${sanitizeField(entry.name, 60)}
@@ -438,11 +450,12 @@ AI 한줄: ${buyCard.aiNote || '—'}`
 트리거: 수동 요청 (drain-eval-queue)
 
 ${cardSection}
+${factsSection}
 
 출력 조건:
 1. sell-evaluation.md §5 표준 카드 양식 (최초 ↔ 현재 ↔ 근거 점검 ↔ 리스크 점검 ↔ 판정 ↔ 권고 4안)
 2. 판정 4단계: 🟢 유효 / 🟡 관망 / 🔴 부적합 / ⚪ 판단보류
-3. 현재 펀더멘털 재산출: active-evaluation.md §3 동일 5축·동일 MCP
+3. 현재 펀더멘털: 위 검증된 facts 사용 (재산출 금지)
 4. 분할 매도 시나리오 최소 3안 (CLAUDE.md §3)
 5. 다음 재평가 시점 명시
 6. 마지막에 \`\`\`json 펜스로 아래 영문 키 스키마 그대로 출력 (적재용 — 한글 키 금지):
@@ -492,20 +505,24 @@ function findEarliestBuyCard(noteRows, stockName) {
   return matches[0] || null;
 }
 
-// ── 헤드리스 Claude 실행 (--auto) ────────────────────────────────────────────
-const HEADLESS_NOTE = `
-
-[⚙️ 실행환경: 헤드리스 자동화 — MCP 도구 사용 불가. 모든 데이터는 Bash로 직접 조회할 것]
-- HTTPS 호출은 python urllib 말고 반드시 curl 사용 (이 환경 python은 SSL 인증서 검증 실패함)
-- KR 재무지표: OpenDart REST를 curl로 호출 (API 키는 환경변수 $DART_API_KEY 사용)
-  · 재무비율: curl "https://opendart.fss.or.kr/api/fnlttSinglIndx.json?crtfc_key=$DART_API_KEY&corp_code={고유번호8자리}&bsns_year={연도}&reprt_code={사업11011·1Q11013·반기11012·3Q11014}&idx_cl_code={수익성M210000·안정성M220000·성장성M230000·활동성M240000}"
-  · 단일회사 전체재무제표: .../fnlttSinglAcntAll.json (동일 파라미터 + fs_div=CFS)
-  · 고유번호(corp_code) 모르면 종목코드로 매핑 (pykrx 또는 알려진 값 사용; 삼성전자=00126380)
-- KR 시세/RSI(14)/52주 위치: python3 pykrx 또는 curl Naver JSON (api.finance.naver.com/siseJson.naver?symbol={코드}&requestType=1&timeframe=day)
-- US: python3 yfinance (예: yf.Ticker("AAPL").info / .quarterly_financials)
-- 데이터를 못 구하면 추정 금지, 해당 항목에 "(데이터 부족: 소스)" 표기`;
-
 // runHeadlessClaude 는 scripts/lib/sheets-common.mjs 로 통합 (중복 제거 — 위에서 import).
+
+// --auto 전용: Node가 결정론 facts를 만든다. 실패해도 throw하지 않고 null facts로
+// 폴백(프롬프트는 '데이터 부족'으로 진행) — 환각보다 공백이 낫다.
+function buildAutoFacts(entry) {
+  try {
+    const ids = { corpCode: krCorpCode(entry.name), stockCode: krStockCode(entry.name), ticker: usTicker(entry.name) };
+    return buildEvalFacts(entry, ids, {
+      krFund: (c) => fetchKrFundamentals(c),
+      usFund: (t) => fetchUsFundamentals(t),
+      krMkt: (s) => fetchKrMarketData(s),
+      usMkt: (t) => fetchMarketData(t),
+    });
+  } catch (e) {
+    console.error(`  ⚠️ facts 조립 실패(${entry.name}): ${e.message} — 데이터 부족으로 진행`);
+    return null;
+  }
+}
 
 // ── 메인 ────────────────────────────────────────────────────────────────────
 async function main() {
@@ -620,9 +637,11 @@ async function main() {
       console.log(`  ✓ 큐 상태 → 처리중`);
     }
 
-    // 프롬프트 구성 (AUTO 모드는 헤드리스 환경 안내 추가)
-    const basePrompt = sellMode ? buildSellPrompt(entry, buyCard) : buildBuyPrompt(entry, cachedEval, holdings, allocationData);
-    const prompt = AUTO ? basePrompt + HEADLESS_NOTE : basePrompt;
+    // --auto: Node가 결정론 facts를 산출해 프롬프트에 주입. 반자동은 facts 없이 종전대로.
+    const facts = AUTO ? buildAutoFacts(entry) : null;
+    const prompt = sellMode
+      ? buildSellPrompt(entry, buyCard, facts)
+      : buildBuyPrompt(entry, cachedEval, holdings, allocationData, facts);
 
     if (DRY_RUN) {
       console.log('\n┌─── 생성된 프롬프트 (DRY-RUN) ───┐');
@@ -637,7 +656,7 @@ async function main() {
       console.log(`  🤖 헤드리스 Claude(${MODEL}) 실행 중... (수 분 소요)`);
       const t0 = Date.now();
       try {
-        rawJson = await runHeadlessClaude(prompt, MODEL);
+        rawJson = await runHeadlessClaude(prompt, MODEL, 'Read');
         console.log(`  ✓ 헤드리스 평가 완료 (${Math.round((Date.now() - t0) / 1000)}초)`);
       } catch (e) {
         console.error(`  ⚠️ 헤드리스 실행 실패: ${e.message}`);
@@ -673,7 +692,7 @@ async function main() {
 
     try {
       const obj = parseEvalJson(rawJson);
-      const row = buildRow(obj);
+      const row = buildRow(obj, facts?.axisItems || null);
 
       // 종목투자노트에 적재
       await appendValues(token, '종목투자노트!A2:U', [row]);
