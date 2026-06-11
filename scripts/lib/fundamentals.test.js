@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   reprtCodeForDate, prevPeriod, computeYoY, parseKrAmounts, parseKrRatios, checkGuardrails,
+  computeMacroChange,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -65,6 +66,17 @@ test('parseKrRatios: 정확 매칭 — 유사명(총자산영업이익률·유�
   assert.equal(r.roe, 6.104);
   assert.equal(r.debtRatio, 51.398);
   assert.deepEqual(parseKrRatios([]), { grossMargin: null, opMargin: null, roe: null, debtRatio: null });
+});
+
+test('computeMacroChange: 현재값=마지막 종가, 변화율=5거래일 전 대비', () => {
+  // 10개 종가, 5거래일 전(인덱스 -6)=100 → 현재 105 = +5%
+  assert.deepEqual(computeMacroChange([90, 95, 98, 99, 100, 101, 102, 103, 104, 105]),
+    { value: 105, change5d: 5 });
+  // NaN/공백 섞여도 유한값만; 6개 미만이면 변화율 null
+  assert.deepEqual(computeMacroChange([100, 110]), { value: 110, change5d: null });
+  assert.deepEqual(computeMacroChange([]), { value: null, change5d: null });
+  // 소수 둘째자리 반올림
+  assert.equal(computeMacroChange([1500, 1, 1, 1, 1, 1521.7]).change5d, 1.45);
 });
 
 test('checkGuardrails: 영업이익 2분기 연속 감소 / 부채비율 +20%p', () => {

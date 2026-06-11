@@ -133,3 +133,26 @@ export function fetchUsFundamentals(ticker) {
   if (r.status !== 0) throw new Error(`yfinance 실패: ${(r.stderr || '').slice(-200)}`);
   return { market: 'US', revenue: null, opIncome: null, netIncomeYoY: null, ...JSON.parse(r.stdout) };
 }
+
+// ── 거시지표 (risk-monitor mode D) ──────────────────────────────
+// 종가 배열(과거→현재)에서 현재값·5거래일 변화율을 계산. 데이터는 yfinance가 주고
+// 숫자는 Node가 산출한다 — LLM이 환율·VIX·지수를 지어내던 환각을 차단(mode B와 동일 원칙).
+export function computeMacroChange(closes) {
+  const a = (closes || []).filter(x => Number.isFinite(x));
+  if (!a.length) return { value: null, change5d: null };
+  const value = a[a.length - 1];
+  const prev = a.length >= 6 ? a[a.length - 6] : null;  // 5거래일 전
+  const change5d = (prev != null && prev !== 0)
+    ? Math.round((value - prev) / Math.abs(prev) * 10000) / 100 : null;
+  return { value, change5d };
+}
+
+export const MACRO_TICKERS = { USDKRW: 'KRW=X', TNX: '^TNX', VIX: '^VIX', KOSPI: '^KS11', SP500: '^GSPC' };
+
+export function fetchMacroIndicators() {
+  const py = new URL('./yf-macro.py', import.meta.url).pathname;
+  const r = spawnSync('python3', [py, ...Object.values(MACRO_TICKERS)], { encoding: 'utf8', timeout: 120000 });
+  if (r.status !== 0) throw new Error(`yfinance 거시 조회 실패: ${(r.stderr || '').slice(-200)}`);
+  const raw = JSON.parse(r.stdout);
+  return Object.fromEntries(Object.entries(MACRO_TICKERS).map(([key, tk]) => [key, computeMacroChange(raw[tk])]));
+}

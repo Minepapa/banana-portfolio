@@ -26,10 +26,10 @@
 
 import {
   loadEnv, getToken, hasServiceAccount, getRange, appendValues, ensureSheet,
-  readHoldings, runHeadlessClaude, parseJsonBlock, todayKST, HEADLESS_NOTE,
+  readHoldings, runHeadlessClaude, parseJsonBlock, todayKST,
   sendTelegram, setValues, clearValues,
 } from './lib/sheets-common.mjs';
-import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails } from './lib/fundamentals.mjs';
+import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators } from './lib/fundamentals.mjs';
 import { krCorpCode, usTicker } from './lib/instruments.mjs';
 
 const RISK_SHEET = '리스크모니터';
@@ -74,35 +74,46 @@ function holdingsSummary(holdings) {
 }
 
 // ── D 모드: 거시 리스크 프롬프트 ────────────────────────
-function buildMacroPrompt(holdings) {
-  return `[거시 리스크 점검 — 매일] Frank 포트폴리오에 대한 거시 충격(D 유형) 리스크를 평가해줘.
+// 거시지표 숫자는 Node(fetchMacroIndicators)가 yfinance에서 직접 조회·계산해 주입한다.
+// LLM은 재조회 금지 — 주입된 수치를 Hub 트리거 기준과 비교해 "판단만". (mode B와 동일 원칙)
+function buildMacroPrompt(holdings, indicators) {
+  return `[거시 리스크 점검 — 매일] Frank 포트폴리오에 대한 거시 충격(D 유형) 리스크를 "판단만" 해줘.
 
 먼저 \`${HUB_CLAUDE}\` 파일을 Read 로 읽고 거시 트리거 기준(환율/금리/VIX 임계값 등)을 확인해.
-그 다음 아래 거시지표를 실제로 조회(yfinance)하고, Frank 보유 포지션에 "연결되는 영향만" 판단해.
+
+[검증된 거시지표 — 시스템이 yfinance에서 직접 조회·계산한 값. 이 수치만 사용할 것.
+ 절대 재조회·재계산·추정하지 말 것. null 은 "데이터 없음"이며 불리하게 해석하지 말 것]
+${JSON.stringify(indicators, null, 1)}
 
 [Frank 포트폴리오]
 ${holdingsSummary(holdings)}
 
-조회 거시지표(yfinance): USDKRW("KRW=X") · 미10년물("^TNX") · VIX("^VIX") · KOSPI("^KS11") · S&P500("^GSPC")
-- 각 지표의 현재값 + 최근 5거래일 변화율도 함께.
-
 판단 규칙:
-- Hub CLAUDE.md 거시 트리거에 해당하면 그 자산군/종목을 대상으로 신호 생성.
+- 위 검증된 수치를 Hub CLAUDE.md 거시 트리거 기준과 비교해, 해당하면 그 자산군/종목 대상으로 신호 생성.
 - 일반적 지표 나열 금지 — 반드시 "Frank의 어느 자산군/포지션에 어떻게" 영향인지 매핑.
 - 신호 없으면(트리거 미발동) signals 빈 배열로.
 - 가격 과열 단독은 리스크로 쓰지 않음(펀더멘털 우선 철학).
+- summary·detail에 쓰는 모든 숫자는 위 JSON 값 그대로 인용(단위·부호 변형 금지).
 
-출력: 설명 없이 \`\`\`json 블록 하나만.
+출력: 설명 없이 \`\`\`json 블록 하나만. (지표 숫자는 시스템이 이미 기록하므로 다시 적지 말 것)
 \`\`\`json
 {
   "date": "${todayKST()}",
-  "indicators": {"USDKRW":"","TNX":"","VIX":"","KOSPI":"","SP500":""},
   "signals": [
-    {"target":"해외주식(US 익스포저)","signal":"🟡","summary":"한줄 요약","detail":"무엇이 어떻게 바뀌어 어느 포지션에 영향","evidence":{"VIX":"","변화":""}}
+    {"target":"해외주식(US 익스포저)","signal":"🟡","summary":"한줄 요약","detail":"무엇이 어떻게 바뀌어 어느 포지션에 영향"}
   ]
 }
-\`\`\`
-${HEADLESS_NOTE}`;
+\`\`\``;
+}
+
+// 거시지표 {value, change5d} → 표시 문자열. 금리(TNX)는 %, 나머지는 콤마+소수 2자리.
+function fmtMacro(key, o) {
+  if (!o || o.value == null) return '데이터 없음';
+  const v = key === 'TNX'
+    ? `${o.value.toFixed(3)}%`
+    : o.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const c = o.change5d == null ? '' : ` (5d ${o.change5d >= 0 ? '+' : ''}${o.change5d}%)`;
+  return v + c;
 }
 
 // ── B 모드: 논리 훼손 프롬프트 (종목별) — 판단 전용 ─────────────────
@@ -268,13 +279,19 @@ async function main() {
     : new Set();
 
   if (MODE === 'D') {
-    const prompt = buildMacroPrompt(holdings);
+    // ① Node가 거시지표를 yfinance에서 직접 조회·계산(결정론). LLM은 이 숫자만 보고 판단.
+    console.log(`\n⏳ 거시지표 조회 중 (yfinance — 결정론)...`);
+    const macro = fetchMacroIndicators();
+    const indicators = Object.fromEntries(Object.entries(macro).map(([k, o]) => [k, fmtMacro(k, o)]));
+    Object.entries(indicators).forEach(([k, v]) => console.log(`   · ${k}: ${v}`));
+    const evidenceBase = JSON.stringify(indicators);  // 근거데이터 = Node 숫자(LLM 아님)
+
+    const prompt = buildMacroPrompt(holdings, indicators);
     if (DRY_RUN) { console.log('\n┌─── D 프롬프트 ───┐\n' + prompt + '\n└──────────────────┘'); return; }
-    console.log(`\n⏳ 거시 리스크 분석 중... (수 분)`);
+    console.log(`\n⏳ 거시 리스크 판단 중... (LLM은 Read 전용)`);
     try {
-      const res = parseJsonBlock(await runHeadlessClaude(prompt, MODEL));
+      const res = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read'));
       const sigs = res.signals || [];
-      const evidenceBase = JSON.stringify(res.indicators || {});
       if (!sigs.length) {
         console.log('   ✅ 거시 트리거 미발동 — 신호 없음. (기록은 남김: 🟢 정상)');
         await appendValues(token, `${RISK_SHEET}!A2`, [[
@@ -284,7 +301,7 @@ async function main() {
       } else {
         const rows = sigs.map(s => [
           res.date || todayKST(), 'D', s.target || '포트폴리오', s.signal || '🟡',
-          s.summary || '', s.detail || '', JSON.stringify({ ...res.indicators, ...(s.evidence || {}) }), '',
+          s.summary || '', s.detail || '', evidenceBase, '',
         ]);
         await appendValues(token, `${RISK_SHEET}!A2`, rows);
         console.log(`   ✅ 거시 신호 ${rows.length}건 적재`);
