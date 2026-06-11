@@ -2,17 +2,17 @@
 /**
  * 보유종목 펀더멘털 기준선(baseline) 백필 — AI 리스크 엔진 Phase 3
  *
- * 4개 계좌 보유종목을 읽어, 종목별 펀더멘털 기준선을 헤드리스 claude -p 로 조회해
- * `리스크기준선` 탭에 적재한다. 이 기준선은 Phase 4 B 유형(논리 훼손) 판단의 비교 기준점.
+ * 4개 계좌 보유종목을 읽어, 종목별 펀더멘털 기준선을 OpenDart/yfinance에서 직접
+ * 조회(결정론)해 `리스크기준선` 탭에 적재한다. Phase 4 B 유형(논리 훼손) 판단의 비교 기준점.
+ * (LLM 미사용 — 숫자는 Node가 fundamentals.mjs 페처로만 산출해 환각 차단)
  *
  * `리스크기준선` 스키마(10열):
  *   종목 | 티커 | 시장 | 기준일 | 매출총이익률 | 영업이익률 | ROE | 부채비율 | EPS | 비고(소스)
  *
  * 사용법:
- *   node scripts/backfill-baselines.mjs            # 헤드리스로 기준선 백필
+ *   node scripts/backfill-baselines.mjs            # 기준선 백필(직접 조회)
  *   node scripts/backfill-baselines.mjs --dry-run  # 보유종목/대상만 확인
  *   node scripts/backfill-baselines.mjs --force     # 이미 적재된 종목도 재조회
- *   node scripts/backfill-baselines.mjs --model=opus
  *   node scripts/backfill-baselines.mjs <TOKEN>     # OAuth 대신 토큰 직접 전달
  *
  * 멱등성: 기본은 이미 `리스크기준선`에 있는 종목은 건너뜀(--force 로 무시).
@@ -20,8 +20,10 @@
 
 import {
   loadEnv, getToken, hasServiceAccount, getRange, appendValues, ensureSheet,
-  readHoldings, runHeadlessClaude, parseJsonBlock, todayKST, HEADLESS_NOTE,
+  readHoldings, todayKST,
 } from './lib/sheets-common.mjs';
+import { fetchKrFundamentals, fetchUsFundamentals } from './lib/fundamentals.mjs';
+import { krCorpCode, usTicker } from './lib/instruments.mjs';
 
 const BASELINE_SHEET = '리스크기준선';
 const BASELINE_HEADER = ['종목', '티커', '시장', '기준일', '매출총이익률', '영업이익률', 'ROE', '부채비율', 'EPS', '비고'];
@@ -30,44 +32,11 @@ const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
 const DRY_RUN = args.includes('--dry-run');
 const FORCE = args.includes('--force');
-const modelArg = args.find(a => a.startsWith('--model='));
-const MODEL = modelArg ? modelArg.split('=')[1] : 'sonnet';
 
 loadEnv();
 
-function buildBaselinePrompt(h) {
-  const dataRule = h.market === 'KR'
-    ? '- KR: OpenDart REST(curl, $DART_API_KEY). 오늘 기준 직전 분기 우선(4~5월=1분기 11013, 없으면 직전 사업보고서 11011). 수익성 M210000(매출총이익률·영업이익률·ROE), 안정성 M220000(부채비율)'
-    : '- US: python3 yfinance. info(grossMargins·operatingMargins·returnOnEquity·debtToEquity·trailingEps) 또는 financials/balance_sheet 계산. quarterly/TTM 우선';
-  return `다음 보유종목의 펀더멘털 "기준선"을 조회해줘. 향후 실적 훼손(논리 붕괴) 감지의 비교 기준점이야.
-
-종목: ${h.name}
-시장: ${h.market}
-
-조회 항목(현재 시점 최신 분기 기준): 매출총이익률(%) · 영업이익률(%) · ROE(%) · 부채비율(%) · EPS(주당순이익)
-
-데이터 규칙:
-${dataRule}
-- 데이터 못 구하면 추정 금지, 해당 값은 정확히 "데이터 부족" 으로만 표기(부연 설명·사유 금지)
-- 실제 조회한 수치만 사용. 소스(예: "OpenDart 2026 1분기보고서", "yfinance TTM")를 note에 명시
-
-출력: 설명 없이 아래 형식의 \`\`\`json 블록 하나만.
-\`\`\`json
-{"name":"${h.name}","ticker":"","market":"${h.market}","date":"${todayKST()}","gross_margin":"","operating_margin":"","roe":"","debt_ratio":"","eps":"","note":""}
-\`\`\`
-${HEADLESS_NOTE}`;
-}
-
-function buildRow(b) {
-  return [
-    b.name || '', b.ticker || '', b.market || '', b.date || '',
-    b.gross_margin || '', b.operating_margin || '', b.roe || '',
-    b.debt_ratio || '', b.eps || '', b.note || '',
-  ];
-}
-
 async function main() {
-  console.log('🧭 보유종목 기준선 백필 (헤드리스)');
+  console.log('🧭 보유종목 기준선 백필 (OpenDart/yfinance 직접 조회 — 결정론)');
   if (DRY_RUN) console.log('   (--dry-run)');
   if (FORCE) console.log('   (--force: 기존 적재 종목도 재조회)');
 
@@ -100,13 +69,27 @@ async function main() {
 
   if (DRY_RUN || targets.length === 0) { console.log('\n완료(적재 없음).'); return; }
 
+  const pct = (v) => v == null ? '데이터 부족' : `${v}%`;
   let ok = 0, fail = 0;
   for (const h of targets) {
-    console.log(`\n⏳ ${h.name} 기준선 조회 중... (수 분)`);
+    console.log(`\n⏳ ${h.name} 기준선 조회 중...`);
     try {
-      const b = parseJsonBlock(await runHeadlessClaude(buildBaselinePrompt(h), MODEL));
-      await appendValues(token, `${BASELINE_SHEET}!A2`, [buildRow(b)]);
-      console.log(`   ✅ 적재: 매총이 ${b.gross_margin} · 영익률 ${b.operating_margin} · ROE ${b.roe} · 부채 ${b.debt_ratio}`);
+      let f, ticker = '';
+      if (h.market === 'KR') {
+        const code = krCorpCode(h.name);
+        if (!code) throw new Error(`corp_code 미해결: ${h.name}`);
+        f = await fetchKrFundamentals(code); ticker = code;
+      } else {
+        const tk = usTicker(h.name);
+        if (!tk) throw new Error(`US 티커 미등록: ${h.name}`);
+        f = fetchUsFundamentals(tk); ticker = tk;
+      }
+      await appendValues(token, `${BASELINE_SHEET}!A2`, [[
+        h.name, ticker, h.market, todayKST(),
+        pct(f.grossMargin), pct(f.opMargin), pct(f.roe), pct(f.debtRatio),
+        f.eps ?? '데이터 부족', f.source,
+      ]]);
+      console.log(`   ✅ 적재: 매총이 ${pct(f.grossMargin)} · 영익률 ${pct(f.opMargin)} · ROE ${pct(f.roe)} · 부채 ${pct(f.debtRatio)}`);
       ok++;
     } catch (e) {
       console.error(`   ❌ 실패: ${e.message}`);
