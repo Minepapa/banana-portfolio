@@ -187,8 +187,23 @@ const KEY_ALIAS = {
   근거: 'reasons', 리스크: 'risks', frank_액션: 'actions', 액션: 'actions',
   frank_메모: 'frankMemo', 매수일: 'buyDate', 매수가: 'buyPrice',
   목표기간: 'targetTerm', 목표수익률: 'targetRet', ai_의견: 'aiNote', 세부지표: 'axisItems',
+  // playbook(active/queue-evaluation.md) 영문 스키마 → 내부 키. LLM이 이 키로 출력하므로
+  // 매핑 누락 시 reasons/risks/actions/grades가 비어 행이 망가지거나 joinNum이 터진다.
+  axes: 'grades', rationale: 'reasons', frankAction: 'actions', aiOneliner: 'aiNote',
 };
 const AXIS_KEYS = ['수익성', '안정성', '밸류에이션', '현금흐름', '모멘텀'];
+// 등급 축키 정규화: playbook은 "재무 안정성"으로 내지만 buildRow는 grades.안정성을 읽는다.
+const GRADE_KEY_ALIAS = { '재무 안정성': '안정성', '재무안정성': '안정성', '안정성': '안정성',
+  '수익성': '수익성', '밸류에이션': '밸류에이션', '현금흐름': '현금흐름', '모멘텀': '모멘텀' };
+function normalizeGrades(axes) {
+  if (!axes || typeof axes !== 'object') return undefined;
+  const g = {};
+  for (const [k, v] of Object.entries(axes)) {
+    const nk = GRADE_KEY_ALIAS[String(k).trim()] ?? String(k).trim();
+    if (AXIS_KEYS.includes(nk) && typeof v === 'string') g[nk] = v;
+  }
+  return Object.keys(g).length ? g : undefined;
+}
 
 // "1) a 2) b" 또는 배열을 배열로 정규화
 function toList(v) {
@@ -199,17 +214,22 @@ function toList(v) {
   return [];
 }
 
-// 한글 키 스키마 → 영문 키 스키마로 변환 (영문 키면 그대로 통과)
+// 한/영 혼재 LLM 출력 스키마 → 내부 스키마로 정규화.
+// 조기 반환 금지: 영문 키(date/name/conclusion)가 있어도 reasons/risks/actions는
+// 문자열로 올 수 있으므로(playbook 스키마) 반드시 toList를 거쳐야 joinNum이 터지지 않는다.
 function normalizeEvalObj(obj) {
-  if (obj.date && obj.name && obj.conclusion) return obj; // 이미 영문 스키마
   const out = {};
-  for (const [k, v] of Object.entries(obj)) out[KEY_ALIAS[k] ?? k] = v;
-  // 평면 축 등급(top-level 수익성/안정성…) → grades 객체로 수집
-  if (!out.grades) {
-    const g = {};
-    for (const ax of AXIS_KEYS) if (typeof obj[ax] === 'string') g[ax] = obj[ax];
-    if (Object.keys(g).length) out.grades = g;
+  for (const [k, v] of Object.entries(obj)) {
+    const mapped = KEY_ALIAS[k] ?? k;
+    if (!(mapped in out)) out[mapped] = v; // 먼저 들어온 명시 키 우선(한/영 충돌 방지)
   }
+  // 등급: axes/grades 객체 우선, 없으면 top-level 축 문자열 수집
+  let rawGrades = out.grades;
+  if (!rawGrades || typeof rawGrades !== 'object') {
+    rawGrades = {};
+    for (const ax of AXIS_KEYS) if (typeof obj[ax] === 'string') rawGrades[ax] = obj[ax];
+  }
+  out.grades = normalizeGrades(rawGrades);
   out.reasons = toList(out.reasons);
   out.risks = toList(out.risks);
   out.actions = toList(out.actions);
@@ -745,7 +765,12 @@ async function main() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 }
 
-main().catch(e => {
-  console.error('\n❌ 오류:', e.message);
-  process.exit(1);
-});
+export { normalizeEvalObj, parseEvalJson, buildRow, toList, normalizeGrades };
+
+// 직접 실행 시에만 main() 구동 (테스트가 import할 때 부작용 방지)
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(e => {
+    console.error('\n❌ 오류:', e.message);
+    process.exit(1);
+  });
+}
