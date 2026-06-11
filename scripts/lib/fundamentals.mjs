@@ -134,6 +134,42 @@ export function fetchUsFundamentals(ticker) {
   return { market: 'US', revenue: null, opIncome: null, netIncomeYoY: null, ...JSON.parse(r.stdout) };
 }
 
+// ── 평가 카드용 순수 지표 (drain --auto) ────────────────────────────
+// 시세 raw에서 결정론적으로 산출 — LLM이 RSI·52주·FCF를 지어내던 환각을 차단.
+
+// RSI(14) — Wilder 평활. closes: 과거→현재 종가배열. 15개 미만이면 null.
+export function computeRsi14(closes, period = 14) {
+  const a = (closes || []).filter(x => Number.isFinite(x));
+  if (a.length < period + 1) return null;
+  let gain = 0, loss = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = a[i] - a[i - 1];
+    if (d >= 0) gain += d; else loss -= d;
+  }
+  let avgGain = gain / period, avgLoss = loss / period;
+  for (let i = period + 1; i < a.length; i++) {
+    const d = a[i] - a[i - 1];
+    avgGain = (avgGain * (period - 1) + (d > 0 ? d : 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + (d < 0 ? -d : 0)) / period;
+  }
+  if (avgLoss === 0) return avgGain === 0 ? 50 : 100;
+  const rsi = 100 - 100 / (1 + avgGain / avgLoss);
+  return Math.round(rsi * 100) / 100;
+}
+
+// 52주 위치(%) = (현재-저)/(고-저)*100. 분모 0·결측 → null.
+export function compute52wPosition(current, high, low) {
+  if (![current, high, low].every(Number.isFinite)) return null;
+  if (high === low) return null;
+  return Math.round((current - low) / (high - low) * 1000) / 10;
+}
+
+// FCF yield(%) = 잉여현금흐름/시가총액*100. 결측·0분모 → null.
+export function computeFcfYield(fcf, marketCap) {
+  if (!Number.isFinite(fcf) || !Number.isFinite(marketCap) || marketCap === 0) return null;
+  return Math.round(fcf / marketCap * 1000) / 10;
+}
+
 // ── 거시지표 (risk-monitor mode D) ──────────────────────────────
 // 종가 배열(과거→현재)에서 현재값·5거래일 변화율을 계산. 데이터는 yfinance가 주고
 // 숫자는 Node가 산출한다 — LLM이 환율·VIX·지수를 지어내던 환각을 차단(mode B와 동일 원칙).

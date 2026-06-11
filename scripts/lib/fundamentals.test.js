@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   reprtCodeForDate, prevPeriod, computeYoY, parseKrAmounts, parseKrRatios, checkGuardrails,
-  computeMacroChange,
+  computeMacroChange, computeRsi14, compute52wPosition, computeFcfYield,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -85,4 +85,34 @@ test('checkGuardrails: 영업이익 2분기 연속 감소 / 부채비율 +20%p',
   assert.deepEqual(checkGuardrails({ opYoYCurr: 10, opYoYPrev: -3, debtRatio: 75, baselineDebtRatio: 50 }),
     ['부채비율 급증(기준선 대비 +20%p 이상)']);
   assert.deepEqual(checkGuardrails({ opYoYCurr: 10, opYoYPrev: null, debtRatio: null, baselineDebtRatio: 50 }), []);
+});
+
+test('computeRsi14: Wilder 평활 RSI — 표준 14기간', () => {
+  // 첫 상승만 있는 단조 증가 → RSI 100 수렴
+  const up = Array.from({ length: 20 }, (_, i) => 100 + i);
+  assert.equal(computeRsi14(up), 100);
+  // 단조 하락 → RSI 0 수렴
+  const down = Array.from({ length: 20 }, (_, i) => 100 - i);
+  assert.equal(computeRsi14(down), 0);
+  // 15개 미만(계산 불가) → null
+  assert.equal(computeRsi14([1, 2, 3]), null);
+  const sample = [44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08,
+                  45.89, 46.03, 45.61, 46.28, 46.28, 46.00, 46.03, 46.41, 46.22, 45.64];
+  // Wilder 평활 RSI(14)를 최신 종가 기준으로 산출 — 이 20개 종가열의 마지막 시점 값 = 57.92
+  assert.equal(computeRsi14(sample), 57.92);
+});
+
+test('compute52wPosition: (현재-저)/(고-저)*100, 경계·결측 방어', () => {
+  assert.equal(compute52wPosition(150, 200, 100), 50);   // 중앙
+  assert.equal(compute52wPosition(200, 200, 100), 100);  // 고점
+  assert.equal(compute52wPosition(100, 200, 100), 0);    // 저점
+  assert.equal(compute52wPosition(150, 100, 100), null); // 고=저(0 분모)
+  assert.equal(compute52wPosition(null, 200, 100), null);
+});
+
+test('computeFcfYield: FCF/시총*100, 결측·0분모 → null', () => {
+  assert.equal(computeFcfYield(5e9, 1e11), 5);
+  assert.equal(computeFcfYield(-1e9, 1e11), -1);
+  assert.equal(computeFcfYield(5e9, 0), null);
+  assert.equal(computeFcfYield(null, 1e11), null);
 });
