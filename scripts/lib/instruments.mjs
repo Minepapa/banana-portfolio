@@ -44,6 +44,25 @@ export function parseCorpCodeXml(xml) {
   return map;
 }
 
+// 캐시에서 name과 정규화 일치하는 항목의 field(corp|stock)를 찾되, 절대 추정하지 않는다.
+// - 항목이 null(파싱 단계 모호) → null
+// - 항목이 객체가 아님(구형 문자열 캐시 등 잘못된 shape) → null (undefined 누출 차단)
+// - 정규화 후 서로 다른 값으로 충돌 → null
+// 일치 항목이 없으면 found(null) 그대로 반환.
+export function lookupField(cache, name, field) {
+  const target = norm(name);
+  let found = null;
+  for (const [corpName, entry] of Object.entries(cache)) {
+    if (norm(corpName) !== target) continue;
+    if (typeof entry !== 'object' || entry === null) return null; // 모호/구형/잘못된 shape
+    const value = entry[field];
+    if (typeof value !== 'string') return null;  // 필드 누락 등 → null
+    if (found && found !== value) return null;    // 정규화 후 충돌 → 환각 차단
+    found = value;
+  }
+  return found;
+}
+
 // corpCode.xml(zip) 다운로드 → 상장사만 {corp_name: corp_code} 캐시. 30일 지나면 갱신.
 export function krCorpCode(name, apiKey = process.env.DART_API_KEY) {
   let cache = null;
@@ -62,15 +81,7 @@ export function krCorpCode(name, apiKey = process.env.DART_API_KEY) {
     cache = parseCorpCodeXml(xml);
     writeFileSync(CACHE_FILE, JSON.stringify({ fetchedAt: Date.now(), map: cache }));
   }
-  const target = norm(name);
-  let found = null;
-  for (const [corpName, entry] of Object.entries(cache)) {
-    if (norm(corpName) !== target) continue;
-    if (entry === null) return null;             // 파싱 단계에서 모호로 판정된 동명사
-    if (found && found !== entry.corp) return null; // 정규화 후 충돌(다른 코드) → 환각 차단
-    found = entry.corp;
-  }
-  return found;
+  return lookupField(cache, name, 'corp');
 }
 
 // KR 6자리 종목코드 (yfinance .KS/.KQ 라우팅용). 미상장·모호·미발견 → null.
@@ -80,12 +91,5 @@ export function krStockCode(name, apiKey = process.env.DART_API_KEY) {
     try { return JSON.parse(readFileSync(CACHE_FILE, 'utf8')).map; } catch { return null; }
   })();
   if (!cache) return null;
-  const target = norm(name);
-  let found = null;
-  for (const [corpName, entry] of Object.entries(cache)) {
-    if (norm(corpName) !== target || !entry) continue;
-    if (found && found !== entry.stock) return null;
-    found = entry.stock;
-  }
-  return found;
+  return lookupField(cache, name, 'stock');
 }

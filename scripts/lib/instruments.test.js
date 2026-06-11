@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { usTicker, parseCorpCodeXml } from './instruments.mjs';
+import { usTicker, parseCorpCodeXml, lookupField } from './instruments.mjs';
 
 test('usTicker: 한글명→티커, 공백·대소문자 정규화', () => {
   assert.equal(usTicker('애플'), 'AAPL');
@@ -40,4 +40,26 @@ test('parseCorpCodeXml: 동명 다른 corp_code → null(모호 표시로 환각
   const xml = `<list><corp_code>00311030</corp_code><corp_name>미래에셋증권</corp_name><stock_code>006800</stock_code></list>
 <list><corp_code>00111722</corp_code><corp_name>미래에셋증권</corp_name><stock_code>037620</stock_code></list>`;
   assert.equal(parseCorpCodeXml(xml)['미래에셋증권'], null);
+});
+
+test('lookupField: 정상 객체 항목 → 해당 필드 반환', () => {
+  const cache = { '삼성전자': { corp: '00126380', stock: '005930' } };
+  assert.equal(lookupField(cache, '삼성전자', 'corp'), '00126380');
+  assert.equal(lookupField(cache, '삼성전자', 'stock'), '005930');
+});
+
+test('lookupField: 미발견 → null', () => {
+  assert.equal(lookupField({ '삼성전자': { corp: '00126380', stock: '005930' } }, '없는회사', 'corp'), null);
+});
+
+test('lookupField: 구형 문자열 캐시(잘못된 shape) → null (undefined 누출 차단)', () => {
+  // 30일 TTL 내 구형 캐시: map 값이 객체가 아닌 bare corp_code 문자열.
+  // entry.corp/entry.stock는 undefined이지만 절대 undefined를 반환하면 안 됨.
+  const oldCache = { '테스트사': '00999999' };
+  assert.equal(lookupField(oldCache, '테스트사', 'corp'), null);
+  assert.equal(lookupField(oldCache, '테스트사', 'stock'), null);
+});
+
+test('lookupField: null 항목(파싱 모호) → null', () => {
+  assert.equal(lookupField({ '미래에셋증권': null }, '미래에셋증권', 'corp'), null);
 });
