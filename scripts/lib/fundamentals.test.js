@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  reprtCodeForDate, prevPeriod, computeYoY, parseKrAmounts, checkGuardrails,
+  reprtCodeForDate, prevPeriod, computeYoY, parseKrAmounts, parseKrRatios, checkGuardrails,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -47,6 +47,24 @@ test('parseKrAmounts: CFS 우선, thstrm_add_amount 우선, 콤마 제거', () =
 test('parseKrAmounts: CFS 없으면 OFS 폴백', () => {
   const list = [{ fs_div: 'OFS', sj_div: 'IS', account_nm: '매출액', thstrm_amount: '100', frmtrm_amount: '50' }];
   assert.equal(parseKrAmounts(list).revenue.curr, 100);
+});
+
+test('parseKrRatios: 정확 매칭 — 유사명(총자산영업이익률·유동부채비율)에 오염 안 됨', () => {
+  // 삼바 1Q 실측 응답 구조: 순수 '영업이익률'은 없고 유사명만 존재
+  const list = [
+    { idx_nm: '매출총이익률', idx_val: '54.085' },
+    { idx_nm: '총자산영업이익률', idx_val: '5.038' },   // opMargin으로 잡히면 안 됨(과거 버그)
+    { idx_nm: '자기자본영업이익률', idx_val: '7.555' },
+    { idx_nm: 'ROE', idx_val: '6.104' },
+    { idx_nm: '부채비율', idx_val: '51.398' },
+    { idx_nm: '유동부채비율', idx_val: '34.584' },     // debtRatio로 잡히면 안 됨
+  ];
+  const r = parseKrRatios(list);
+  assert.equal(r.grossMargin, 54.085);
+  assert.equal(r.opMargin, null);       // 순수 영업이익률 부재 → null(페처가 금액으로 계산)
+  assert.equal(r.roe, 6.104);
+  assert.equal(r.debtRatio, 51.398);
+  assert.deepEqual(parseKrRatios([]), { grossMargin: null, opMargin: null, roe: null, debtRatio: null });
 });
 
 test('checkGuardrails: 영업이익 2분기 연속 감소 / 부채비율 +20%p', () => {
