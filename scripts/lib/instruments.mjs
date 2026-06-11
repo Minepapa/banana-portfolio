@@ -31,9 +31,15 @@ export function parseCorpCodeXml(xml) {
   while ((m = re.exec(xml))) {
     if (!m[3].trim()) continue;
     const nm = m[2].trim();
+    const stock = m[3].trim();
     // 실데이터엔 동일 corp_name이 서로 다른 corp_code를 갖는 상장사가 34건 존재
     // (미래에셋증권·우리금융지주 등). 어느 쪽이 맞는지 추정 불가 → null로 모호 표시.
-    map[nm] = (nm in map && map[nm] !== m[1]) ? null : m[1];
+    // 한 번 null이면 끝까지 고착(리셋 금지 — 환각 차단).
+    if (nm in map) {
+      if (map[nm] === null || map[nm].corp !== m[1]) map[nm] = null;
+    } else {
+      map[nm] = { corp: m[1], stock };
+    }
   }
   return map;
 }
@@ -58,11 +64,28 @@ export function krCorpCode(name, apiKey = process.env.DART_API_KEY) {
   }
   const target = norm(name);
   let found = null;
-  for (const [corpName, code] of Object.entries(cache)) {
+  for (const [corpName, entry] of Object.entries(cache)) {
     if (norm(corpName) !== target) continue;
-    if (code === null) return null;            // 파싱 단계에서 모호로 판정된 동명사
-    if (found && found !== code) return null;   // 정규화 후 충돌(다른 코드) → 환각 차단
-    found = code;
+    if (entry === null) return null;             // 파싱 단계에서 모호로 판정된 동명사
+    if (found && found !== entry.corp) return null; // 정규화 후 충돌(다른 코드) → 환각 차단
+    found = entry.corp;
+  }
+  return found;
+}
+
+// KR 6자리 종목코드 (yfinance .KS/.KQ 라우팅용). 미상장·모호·미발견 → null.
+export function krStockCode(name, apiKey = process.env.DART_API_KEY) {
+  krCorpCode(name, apiKey); // 캐시 보장(부수효과)
+  const cache = (() => {
+    try { return JSON.parse(readFileSync(CACHE_FILE, 'utf8')).map; } catch { return null; }
+  })();
+  if (!cache) return null;
+  const target = norm(name);
+  let found = null;
+  for (const [corpName, entry] of Object.entries(cache)) {
+    if (norm(corpName) !== target || !entry) continue;
+    if (found && found !== entry.stock) return null;
+    found = entry.stock;
   }
   return found;
 }
