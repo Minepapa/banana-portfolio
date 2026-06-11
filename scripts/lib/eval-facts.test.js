@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildEvalFacts } from './eval-facts.mjs';
+import { LEARNING_MODULES } from '../../src/lib/constants.js';
 
 const krFundStub = () => ({ market: 'KR', source: 'OpenDart 2026 1Q(연결)',
   revenueYoY: 12.3, opMargin: 18.5, roe: 9.2, debtRatio: 51.4, opYoYCurr: 5, opYoYPrev: 3 });
@@ -15,6 +16,18 @@ test('buildEvalFacts: KR 정상 — 5축 axisItems 채움, 숫자는 Node값', (
   assert.equal(f.axisItems.밸류에이션.find(i => i.label.includes('PER')).value, '14.2');
   assert.equal(f.axisItems.모멘텀.find(i => i.metric === 'rsi').value, '47.5');
   assert.ok(f.axisItems.수익성[0].source.includes('OpenDart'));
+});
+
+test('buildEvalFacts: 모든 metric 키는 LEARNING_MODULES에 실재 (CLAUDE.md 규칙5)', () => {
+  // metric이 LEARNING_MODULES 키와 어긋나면 앱 학습모듈 연결이 깨진다 — 환각 방지와 별개로 계약 위반.
+  const f = buildEvalFacts({ name: '삼성전자', market: 'KR' },
+    { corpCode: '00126380', stockCode: '005930' },
+    { krFund: krFundStub, usFund: null, krMkt: mktStub, usMkt: null });
+  for (const items of Object.values(f.axisItems)) {
+    for (const it of items) {
+      if (it.metric) assert.ok(it.metric in LEARNING_MODULES, `미존재 metric 키: ${it.metric}`);
+    }
+  }
 });
 
 test('buildEvalFacts: 매핑 실패 — 추정 없이 데이터부족 표기', () => {

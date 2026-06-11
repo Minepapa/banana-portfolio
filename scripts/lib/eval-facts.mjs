@@ -35,7 +35,7 @@ export function buildEvalFacts(entry, ids, fetchers) {
       item('부채비율', fmtPct(fund?.debtRatio), fs),
     ]),
     밸류에이션: compact([
-      item('Forward PER', fmtNum(mkt?.forwardPE), ms, 'fwd_per_band'),
+      item('Forward PER', fmtNum(mkt?.forwardPE), ms, 'fwd_per'),
       item('PBR', fmtNum(mkt?.pbr), ms),
     ]),
     현금흐름: compact([
@@ -44,7 +44,7 @@ export function buildEvalFacts(entry, ids, fetchers) {
     ]),
     모멘텀: compact([
       item('RSI(14)', fmtNum(mkt?.rsi14), ms, 'rsi'),
-      item('52주 위치', fmtPct(mkt?.pos52w), ms, '52w_position'),
+      item('52주 위치', fmtPct(mkt?.pos52w), ms, 'pos_52w'),
     ]),
   };
 
