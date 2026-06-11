@@ -295,12 +295,12 @@ export const HEADLESS_NOTE = `
 - 거시지표: USDKRW=yf "KRW=X", 미10년물=yf "^TNX", VIX=yf "^VIX", KOSPI=yf "^KS11", S&P500=yf "^GSPC"
 - 데이터를 못 구하면 추정 금지, 해당 항목에 "(데이터 부족: 소스)" 표기`;
 
-export function runHeadlessClaude(prompt, model = 'sonnet') {
+export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools = 'Bash,Read,Glob,Grep,WebFetch') {
   return new Promise((resolve, reject) => {
     const cp = spawn('claude', [
       '-p', prompt,
       '--permission-mode', 'bypassPermissions',
-      '--allowedTools', 'Bash,Read,Glob,Grep,WebFetch',
+      '--allowedTools', allowedTools,
       '--model', model,
       '--output-format', 'text',
       // stdin 은 /dev/null(ignore)로 둬 즉시 EOF → "no stdin data received in 3s" 경고·3초 대기 제거.

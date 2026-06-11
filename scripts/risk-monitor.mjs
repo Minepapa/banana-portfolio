@@ -29,6 +29,8 @@ import {
   readHoldings, runHeadlessClaude, parseJsonBlock, todayKST, HEADLESS_NOTE,
   sendTelegram, setValues, clearValues,
 } from './lib/sheets-common.mjs';
+import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails } from './lib/fundamentals.mjs';
+import { krCorpCode, usTicker } from './lib/instruments.mjs';
 
 const RISK_SHEET = '리스크모니터';
 const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세', '근거데이터', '기준선참조'];
@@ -103,48 +105,46 @@ ${holdingsSummary(holdings)}
 ${HEADLESS_NOTE}`;
 }
 
-// ── B 모드: 논리 훼손 프롬프트 (종목별) ─────────────────
-function buildLogicPrompt(h, baseline, buyCard) {
+// ── B 모드: 논리 훼손 프롬프트 (종목별) — 판단 전용 ─────────────────
+// 숫자는 Node가 OpenDart/yfinance에서 조회·계산해 주입한다. LLM은 재조회·재계산 금지,
+// 주입된 수치로 "전제가 깨졌는가"만 판단. (환각 차단의 핵심: raw 숫자는 LLM이 만들지 않음)
+function buildLogicPrompt(h, facts, guardrails, baseline, buyCard) {
   const baseLine = baseline
     ? `[저장된 기준선 (${baseline.date})]
 매출총이익률 ${baseline.gross_margin} · 영업이익률 ${baseline.operating_margin} · ROE ${baseline.roe} · 부채비율 ${baseline.debt_ratio} · EPS ${baseline.eps}
 (${baseline.note || ''})`
-    : '[저장된 기준선] 없음 — 현재 펀더멘털만으로 절대 평가';
+    : '[저장된 기준선] 없음 — 주입된 펀더멘털만으로 절대 평가';
   const cardLine = buyCard
     ? `[매수 논리 (${buyCard.date})]
 결론: ${buyCard.conclusion}
 근거: ${(buyCard.reasons || []).join(' / ') || '(미기록)'}
 리스크: ${(buyCard.risks || []).join(' / ') || '(미기록)'}`
     : '[매수 논리] 종목투자노트에 없음 — 기준선 대비 변화만 판단';
-  const dataRule = h.market === 'KR'
-    ? '- KR: OpenDart REST(curl). 오늘 기준 직전 분기(4~5월=1분기 11013) 매출총이익률·영업이익률·ROE·부채비율 + 최근 2분기 영업이익 YoY 추세'
-    : '- US: yfinance quarterly_financials/info. 매출총이익률·영업이익률·ROE·부채비율 + 최근 2분기 영업이익 YoY 추세';
 
-  return `[논리 훼손 점검 — 주간] 보유종목의 매수 논리가 펀더멘털상 훼손됐는지 판단해줘.
+  return `[논리 훼손 점검 — 주간] 보유종목의 매수 논리가 펀더멘털상 훼손됐는지 "판단만" 해줘.
 
 종목: ${h.name} (${h.market})
+
+[검증된 펀더멘털 — 시스템이 ${facts.source}에서 직접 조회·계산한 값. 이 수치만 사용할 것.
+ 절대 재조회·재계산·추정하지 말 것. null 은 "데이터 없음"이며 불리하게 해석하지 말 것]
+${JSON.stringify(facts, null, 1)}
+
+[가드레일 사전판정(시스템 계산)] ${guardrails.length ? guardrails.join(' · ') + ' → 신호는 최소 🟡' : '트리거 없음'}
 
 ${baseLine}
 
 ${cardLine}
 
-현재 펀더멘털을 재조회해서 기준선/매수논리와 비교:
-${dataRule}
-
-판단 규칙(가드레일 — 해당 시 강제 🟡 이상):
-- 영업이익 YoY 2분기 연속 감소
-- 가이던스/컨센서스 명백한 하향
-- FCF 적자 전환
-- 부채비율 급증(기준선 대비 +20%p 이상)
-- 매수 근거의 핵심 전제가 깨짐(예: "마진 개선" 논리인데 마진 급락)
-신호: 🟢 논리 유효 / 🟡 약화·주의 / 🔴 훼손(매도 평가 필요)
-※ 단순 주가 하락·52주/RSI 과열은 단독으로 신호 삼지 않음(펀더멘털 우선).
+판단 규칙:
+- 위 검증된 수치와 기준선/매수논리를 비교해 "매수 근거의 핵심 전제가 깨졌는가"만 판단.
+- 신호: 🟢 논리 유효 / 🟡 약화·주의 / 🔴 훼손(매도 평가 필요)
+- 단순 주가 하락·52주/RSI 과열은 단독 신호 금지(펀더멘털 우선).
+- summary·detail에 쓰는 모든 숫자는 위 JSON 값 그대로 인용(단위·부호 변형 금지).
 
 출력: 설명 없이 \`\`\`json 블록 하나만.
 \`\`\`json
-{"date":"${todayKST()}","name":"${h.name}","signal":"🟢","summary":"한줄","detail":"무엇이 어떻게 바뀌었나(기준선 대비)","evidence":{"매출총이익률":"","영업이익률":"","영업이익YoY":""},"baseline_ref":"${baseline ? baseline.date : '없음'}"}
-\`\`\`
-${HEADLESS_NOTE}`;
+{"signal":"🟢","summary":"한줄","detail":"무엇이 어떻게 바뀌었나(기준선 대비)"}
+\`\`\``;
 }
 
 // 종목투자노트에서 최신 매수 카드 조회 (status 매도 제외)
@@ -318,20 +318,56 @@ async function main() {
   for (const h of targets) {
     const baseline = bMap.get(h.name) || null;
     const buyCard = findBuyCard(noteRows, h.name);
-    const prompt = buildLogicPrompt(h, baseline, buyCard);
-    if (DRY_RUN) { console.log(`\n┌─── B 프롬프트 [${h.name}] ───┐\n` + prompt + '\n└──────────────────┘'); continue; }
-    console.log(`\n⏳ ${h.name} 논리 점검 중... (수 분)`);
+
+    // ① 결정론 데이터 조회 — 실패 시 LLM 호출 없이 '데이터 부족' 행(침묵 실패 방지)
+    let facts = null, fetchErr = null;
     try {
-      const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL));
-      const row = [
-        r.date || todayKST(), 'B', h.name, r.signal || '🟢',
-        r.summary || '', r.detail || '', JSON.stringify(r.evidence || {}),
-        r.baseline_ref || (baseline ? baseline.date : '없음'),
-      ];
+      if (h.market === 'KR') {
+        const code = krCorpCode(h.name);
+        if (!code) throw new Error(`corp_code 미해결: ${h.name}`);
+        facts = await fetchKrFundamentals(code);
+      } else {
+        const tk = usTicker(h.name);
+        if (!tk) throw new Error(`US 티커 미등록: ${h.name} — instruments.mjs US_MAP에 추가 필요`);
+        facts = fetchUsFundamentals(tk);
+      }
+    } catch (e) { fetchErr = e; }
+
+    if (fetchErr) {
+      const row = [todayKST(), 'B', h.name, '🟡', '데이터 조회 실패 — 수동 확인 필요',
+        fetchErr.message, '{}', baseline ? baseline.date : '없음'];
+      if (DRY_RUN) { console.log(`   🟡 ${h.name} 데이터 부족(dry-run): ${fetchErr.message}`); continue; }
       await appendValues(token, `${RISK_SHEET}!A2`, [row]);
-      console.log(`   ${r.signal || '🟢'} ${h.name}: ${r.summary || ''}`);
+      console.error(`   🟡 ${h.name} 데이터 부족: ${fetchErr.message}`);
+      fail++;
+      continue;
+    }
+
+    // ② 가드레일 사전판정(결정론)
+    const guardrails = checkGuardrails({
+      opYoYCurr: facts.opYoYCurr, opYoYPrev: facts.opYoYPrev,
+      debtRatio: facts.debtRatio,
+      baselineDebtRatio: baseline ? parseFloat(String(baseline.debt_ratio).replace(/[%,]/g, '')) || null : null,
+    });
+
+    const prompt = buildLogicPrompt(h, facts, guardrails, baseline, buyCard);
+    if (DRY_RUN) { console.log(`\n┌─── B 프롬프트 [${h.name}] ───┐\n` + prompt + '\n└──────────────────┘'); continue; }
+    console.log(`\n⏳ ${h.name} 논리 판단 중... (수 분)`);
+    try {
+      const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read'));
+      // ③ 하네스: 가드레일 발동인데 🟢이면 🟡로 강제. 근거데이터는 LLM 아닌 Node 계산값.
+      let signal = r.signal || '🟢';
+      let summary = r.summary || '';
+      if (guardrails.length && signal === '🟢') {
+        signal = '🟡';
+        summary = `[가드레일 강제🟡: ${guardrails.join('·')}] ${summary}`;
+      }
+      const row = [todayKST(), 'B', h.name, signal, summary, r.detail || '',
+        JSON.stringify(facts), r.baseline_ref || (baseline ? baseline.date : '없음')];
+      await appendValues(token, `${RISK_SHEET}!A2`, [row]);
+      console.log(`   ${signal} ${h.name}: ${summary}`);
       await pushNewReds([row], priorRedKeys);
-      if (r.signal && r.signal !== '🟢') alerts++;
+      if (signal !== '🟢') alerts++;
       ok++;
     } catch (e) {
       console.error(`   ❌ ${h.name} 실패: ${e.message}`);
