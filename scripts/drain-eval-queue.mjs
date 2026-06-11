@@ -365,8 +365,10 @@ function buildBuyPrompt(entry, cachedEval, holdings, allocationData, facts) {
     if (rows.length) allocationSection = `\n[포트폴리오 배분 현황 — ${assetType}]\n${rows.join('\n')}\n`;
   }
 
+  // facts(--auto)가 있으면 Node 검증 숫자가 우선 — 캐시 재무 안내(밸류·모멘텀 재fetch 지시)는
+  // factsSection의 '재조회 금지'와 모순되므로 생략한다. 반자동(facts 없음)에서만 캐시 안내 노출.
   let cacheSection = '';
-  if (cachedEval) {
+  if (cachedEval && !facts) {
     const fin = {
       수익성:   (cachedEval.axisItems['수익성']   || []).map(i => `  {label:"${i.label}", value:"${i.value}", source:"${i.source}"${i.metric ? `, metric:"${i.metric}"` : ''}}`).join('\n'),
       안정성:   (cachedEval.axisItems['안정성']   || []).map(i => `  {label:"${i.label}", value:"${i.value}", source:"${i.source}"${i.metric ? `, metric:"${i.metric}"` : ''}}`).join('\n'),
