@@ -23,6 +23,5 @@ print(json.dumps({
     'marketCap': num(info.get('marketCap')),
     'freeCashflow': num(info.get('freeCashflow')),
     'payoutRatio': num(info.get('payoutRatio')),
-    'dividendYield': num(info.get('dividendYield')),
     'closes': closes,
 }, ensure_ascii=False))

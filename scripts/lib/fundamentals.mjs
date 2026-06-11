@@ -148,7 +148,6 @@ export function fetchMarketData(yahooTicker) {
     pos52w: compute52wPosition(d.currentPrice, d.fiftyTwoWeekHigh, d.fiftyTwoWeekLow),
     fcfYield: computeFcfYield(d.freeCashflow, d.marketCap),
     payoutRatio: d.payoutRatio != null ? Math.round(d.payoutRatio * 1000) / 10 : null,
-    dividendYield: d.dividendYield != null ? Math.round(d.dividendYield * 1000) / 10 : null,
     source: `yfinance ${yahooTicker}`,
   };
 }
