@@ -8,8 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test 'src/**/*.test.js'",
-    "test:watch": "node --test --watch 'src/**/*.test.js'"
+    "test": "node --test 'src/**/*.test.js' 'scripts/**/*.test.js'",
+    "test:watch": "node --test --watch 'src/**/*.test.js' 'scripts/**/*.test.js'"
   },
   "dependencies": {
     "react": "^19.2.5",
