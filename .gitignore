@@ -32,3 +32,5 @@ dist-ssr
 CLAUDE.md
 
 .env
+
+scripts/.cache/
