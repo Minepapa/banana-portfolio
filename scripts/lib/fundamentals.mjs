@@ -134,6 +134,36 @@ export function fetchUsFundamentals(ticker) {
   return { market: 'US', revenue: null, opIncome: null, netIncomeYoY: null, ...JSON.parse(r.stdout) };
 }
 
+// 시세·밸류에이션 (KR/US 공통, yfinance). yahooTicker: US='AAPL', KR='005930.KS'.
+// RSI·52주위치·FCF yield는 Node 순수함수로 계산 — raw만 python에서 받는다.
+export function fetchMarketData(yahooTicker) {
+  const py = new URL('./yf-marketdata.py', import.meta.url).pathname;
+  const r = spawnSync('python3', [py, yahooTicker], { encoding: 'utf8', timeout: 120000 });
+  if (r.status !== 0) throw new Error(`yfinance 시세 조회 실패(${yahooTicker}): ${(r.stderr || '').slice(-200)}`);
+  const d = JSON.parse(r.stdout);
+  return {
+    forwardPE: d.forwardPE ?? d.trailingPE ?? null,
+    pbr: d.priceToBook ?? null,
+    rsi14: computeRsi14(d.closes),
+    pos52w: compute52wPosition(d.currentPrice, d.fiftyTwoWeekHigh, d.fiftyTwoWeekLow),
+    fcfYield: computeFcfYield(d.freeCashflow, d.marketCap),
+    payoutRatio: d.payoutRatio != null ? Math.round(d.payoutRatio * 1000) / 10 : null,
+    dividendYield: d.dividendYield != null ? Math.round(d.dividendYield * 1000) / 10 : null,
+    source: `yfinance ${yahooTicker}`,
+  };
+}
+
+// KR 6자리 → yahoo 티커. KOSPI .KS 우선, 빈 응답이면 .KQ 재시도(코스닥).
+export function fetchKrMarketData(stockCode) {
+  for (const sfx of ['.KS', '.KQ']) {
+    try {
+      const d = fetchMarketData(`${stockCode}${sfx}`);
+      if (d.rsi14 != null || d.pos52w != null || d.forwardPE != null) return d;
+    } catch { /* 다음 접미사 시도 */ }
+  }
+  return null;
+}
+
 // ── 평가 카드용 순수 지표 (drain --auto) ────────────────────────────
 // 시세 raw에서 결정론적으로 산출 — LLM이 RSI·52주·FCF를 지어내던 환각을 차단.
 
