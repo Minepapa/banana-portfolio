@@ -511,10 +511,10 @@ function findEarliestBuyCard(noteRows, stockName) {
 
 // --auto 전용: Node가 결정론 facts를 만든다. 실패해도 throw하지 않고 null facts로
 // 폴백(프롬프트는 '데이터 부족'으로 진행) — 환각보다 공백이 낫다.
-function buildAutoFacts(entry) {
+async function buildAutoFacts(entry) {
   try {
     const ids = { corpCode: krCorpCode(entry.name), stockCode: krStockCode(entry.name), ticker: usTicker(entry.name) };
-    return buildEvalFacts(entry, ids, {
+    return await buildEvalFacts(entry, ids, {
       krFund: (c) => fetchKrFundamentals(c),
       usFund: (t) => fetchUsFundamentals(t),
       krMkt: (s) => fetchKrMarketData(s),
@@ -640,7 +640,7 @@ async function main() {
     }
 
     // --auto: Node가 결정론 facts를 산출해 프롬프트에 주입. 반자동은 facts 없이 종전대로.
-    const facts = AUTO ? buildAutoFacts(entry) : null;
+    const facts = AUTO ? await buildAutoFacts(entry) : null;
     const prompt = sellMode
       ? buildSellPrompt(entry, buyCard, facts)
       : buildBuyPrompt(entry, cachedEval, holdings, allocationData, facts);

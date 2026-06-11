@@ -141,9 +141,10 @@ export function fetchMarketData(yahooTicker) {
   const r = spawnSync('python3', [py, yahooTicker], { encoding: 'utf8', timeout: 120000 });
   if (r.status !== 0) throw new Error(`yfinance 시세 조회 실패(${yahooTicker}): ${(r.stderr || '').slice(-200)}`);
   const d = JSON.parse(r.stdout);
+  const round2 = (v) => Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
   return {
-    forwardPE: d.forwardPE ?? d.trailingPE ?? null,
-    pbr: d.priceToBook ?? null,
+    forwardPE: round2(d.forwardPE ?? d.trailingPE),
+    pbr: round2(d.priceToBook),
     rsi14: computeRsi14(d.closes),
     pos52w: compute52wPosition(d.currentPrice, d.fiftyTwoWeekHigh, d.fiftyTwoWeekLow),
     fcfYield: computeFcfYield(d.freeCashflow, d.marketCap),

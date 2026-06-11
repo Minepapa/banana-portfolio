@@ -7,19 +7,21 @@ const item = (label, value, source, metric) =>
   value == null ? null : { label, value, source, ...(metric ? { metric } : {}) };
 const compact = (arr) => arr.filter(Boolean);
 
-export function buildEvalFacts(entry, ids, fetchers) {
+// async: fetchKrFundamentals가 Promise를 반환하므로 반드시 await해야 한다(동기 호출 시 fund가
+// 미해소 Promise가 되어 모든 재무 축이 조용히 '데이터 부족'으로 빠지는 버그를 방지).
+export async function buildEvalFacts(entry, ids, fetchers) {
   const isKr = (entry.market || '').toUpperCase() === 'KR'
     || (!entry.market && ids.corpCode != null);
   const missing = [];
 
   let fund = null;
-  if (isKr && ids.corpCode && fetchers.krFund) fund = fetchers.krFund(ids.corpCode);
-  else if (!isKr && ids.ticker && fetchers.usFund) fund = fetchers.usFund(ids.ticker);
+  if (isKr && ids.corpCode && fetchers.krFund) fund = await fetchers.krFund(ids.corpCode);
+  else if (!isKr && ids.ticker && fetchers.usFund) fund = await fetchers.usFund(ids.ticker);
   else missing.push(isKr ? 'corp_code 매핑 실패(재무)' : 'US 티커 매핑 실패(재무)');
 
   let mkt = null;
-  if (isKr && ids.stockCode && fetchers.krMkt) mkt = fetchers.krMkt(ids.stockCode);
-  else if (!isKr && ids.ticker && fetchers.usMkt) mkt = fetchers.usMkt(ids.ticker);
+  if (isKr && ids.stockCode && fetchers.krMkt) mkt = await fetchers.krMkt(ids.stockCode);
+  else if (!isKr && ids.ticker && fetchers.usMkt) mkt = await fetchers.usMkt(ids.ticker);
   if (!mkt) missing.push(isKr ? '종목코드 매핑 실패(시세)' : 'US 티커 매핑 실패(시세)');
 
   const fs = fund?.source || '데이터 부족';
