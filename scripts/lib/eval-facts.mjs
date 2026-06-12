@@ -1,6 +1,6 @@
 // 평가 카드 facts 조립기 — Node 결정론 숫자를 5축 axisItems + 프롬프트 텍스트로 만든다.
 // 페처는 인자 주입(테스트용 스텁 가능). 매핑·페처 실패는 추정 없이 '데이터 부족' 표기(환각 차단).
-import { computePbr } from './fundamentals.mjs';
+import { computePbr, computeFcfYield } from './fundamentals.mjs';
 
 const fmtPct = (v) => v == null ? null : `${v}%`;
 const fmtNum = (v) => v == null ? null : String(v);
@@ -32,6 +32,14 @@ export async function buildEvalFacts(entry, ids, fetchers) {
   const pbr = mkt?.pbr ?? computePbr(mkt?.marketCap, fund?.equity);
   const pbrSrc = mkt?.pbr != null ? ms : `${ms} ÷ ${fs}`;
 
+  // FCF yield: yfinance 우선, null이면 OpenDart 영업활동현금흐름/시총으로 산출(KR .KS freeCashflow 미제공 보강).
+  const fcfYield = mkt?.fcfYield ?? computeFcfYield(fund?.operCf, mkt?.marketCap);
+  const fcfSrc = mkt?.fcfYield != null ? ms : `${fs} ÷ ${ms}`;
+
+  // 배당성향: yfinance 우선, null이면 OpenDart M310000 현금배당성향 폴백.
+  const payoutRatio = mkt?.payoutRatio ?? fund?.payoutRatio;
+  const payoutSrc = mkt?.payoutRatio != null ? ms : fs;
+
   const axisItems = {
     수익성: compact([
       item('영업이익률', fmtPct(fund?.opMargin), fs, 'operating_margin'),
@@ -46,8 +54,8 @@ export async function buildEvalFacts(entry, ids, fetchers) {
       item('PBR', fmtNum(pbr), pbrSrc),
     ]),
     현금흐름: compact([
-      item('FCF yield', fmtPct(mkt?.fcfYield), ms, 'fcf_yield'),
-      item('배당성향', fmtPct(mkt?.payoutRatio), ms),
+      item('FCF yield', fmtPct(fcfYield), fcfSrc, 'fcf_yield'),
+      item('배당성향', fmtPct(payoutRatio), payoutSrc),
     ]),
     모멘텀: compact([
       item('RSI(14)', fmtNum(mkt?.rsi14), ms, 'rsi'),

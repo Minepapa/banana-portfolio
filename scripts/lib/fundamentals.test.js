@@ -67,7 +67,26 @@ test('parseKrRatios: 정확 매칭 — 유사명(총자산영업이익률·유�
   assert.equal(r.opMargin, null);       // 순수 영업이익률 부재 → null(페처가 금액으로 계산)
   assert.equal(r.roe, 6.104);
   assert.equal(r.debtRatio, 51.398);
-  assert.deepEqual(parseKrRatios([]), { grossMargin: null, opMargin: null, roe: null, debtRatio: null });
+  assert.deepEqual(parseKrRatios([]), { grossMargin: null, opMargin: null, roe: null, debtRatio: null, payoutRatio: null });
+});
+
+test('parseKrRatios: 현금배당성향 정확 매칭 (M310000 — KR 배당성향 폴백)', () => {
+  const list = [
+    { idx_nm: '현금배당성향', idx_val: '28.5' },
+    { idx_nm: '배당성향', idx_val: '99.9' },  // 유사명 — 잡히면 안 됨
+  ];
+  assert.equal(parseKrRatios(list).payoutRatio, 28.5);
+});
+
+test('parseKrAmounts: 영업활동현금흐름 CF 항목 파싱', () => {
+  const list = [
+    { fs_div: 'CFS', sj_div: 'CF', account_nm: '영업활동현금흐름', thstrm_add_amount: '12,345,678', frmtrm_add_amount: '9,000,000' },
+    { fs_div: 'CFS', sj_div: 'IS', account_nm: '매출액', thstrm_add_amount: '100', frmtrm_add_amount: '90' },
+  ];
+  const a = parseKrAmounts(list);
+  assert.equal(a.operCf.curr, 12345678);
+  assert.equal(a.operCf.prev, 9000000);
+  assert.equal(a.revenue.curr, 100);  // IS 항목도 정상
 });
 
 test('computeTtmNetIncome: 직전연간 − 직전동기누적 + 당기누적 (누적값 기반 일반화)', () => {

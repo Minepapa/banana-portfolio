@@ -53,6 +53,8 @@ export function parseKrAmounts(list) {
     opIncome: get('영업이익', '영업이익(손실)'),
     netIncome: get('당기순이익(손실)', '당기순이익', '분기순이익', '반기순이익'),
     assets: get('자산총계'), liabilities: get('부채총계'), equity: get('자본총계'),
+    // 주요계정엔 CF 3항목이 포함됨 — yfinance .KS freeCashflow 미제공 시 영업CF/시총으로 폴백.
+    operCf: get('영업활동현금흐름', '영업활동으로 인한 현금흐름', '영업활동으로인한현금흐름'),
   };
 }
 
@@ -67,6 +69,7 @@ export function parseKrRatios(list) {
     opMargin: find(/^영업이익률$/),
     roe: find(/^ROE$/),
     debtRatio: find(/^부채비율$/),
+    payoutRatio: find(/^현금배당성향$/),  // M310000(주당·배당지표) — yfinance .KS payoutRatio 미제공 시 폴백
   };
 }
 
@@ -120,7 +123,7 @@ export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = p
   const pa = prevList ? parseKrAmounts(prevList) : null;
 
   let ratios = { grossMargin: null, opMargin: null, roe: null, debtRatio: null };
-  for (const idx of ['M210000', 'M220000']) {
+  for (const idx of ['M210000', 'M220000', 'M310000']) {  // M310000: 주당·배당지표(현금배당성향 포함)
     const list = await dartJson('fnlttSinglIndx.json', {
       corp_code: corpCode, bsns_year: cur.period.bsnsYear, reprt_code: cur.period.reprtCode, idx_cl_code: idx,
     }, apiKey).catch(() => null);
@@ -152,6 +155,7 @@ export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = p
     opYoYPrev: pa ? computeYoY(pa.opIncome.curr, pa.opIncome.prev) : null,
     netIncomeYoY: computeYoY(a.netIncome.curr, a.netIncome.prev),
     equity: a.equity.curr,   // 자본총계(당기말) — eval-facts에서 PBR(=시총/자기자본) 계산용
+    operCf: a.operCf?.curr,  // 영업활동현금흐름 — eval-facts KR FCF yield 폴백(yfinance .KS freeCashflow 미제공 보강)
     ...ratios, eps: null,
   };
 }
