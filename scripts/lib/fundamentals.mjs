@@ -266,6 +266,17 @@ export function computeDrawdownFromPeak(closes, window = 5) {
   return Math.round((a[a.length - 1] - peak) / peak * 10000) / 100;
 }
 
+// 최근 window거래일 저점 대비 현재 종가의 상승폭(%). computeDrawdownFromPeak의 반대 방향.
+// USDKRW 급등(KRW 약세 충격) 탐지용 — 끝점비교가 놓치는 진행 중 급등 포착. 결측·저점0 → null.
+export function computeRallyFromTrough(closes, window = 5) {
+  const a = (closes || []).filter(x => Number.isFinite(x));
+  if (a.length < 2) return null;
+  const recent = a.slice(-(window + 1));
+  const trough = Math.min(...recent);
+  if (!(trough > 0)) return null;
+  return Math.round((a[a.length - 1] - trough) / trough * 10000) / 100;
+}
+
 // 네이버 siseJson 응답(JS 배열: 홑따옴표·trailing comma 포함) → 종가 시계열(과거→현재).
 // 헤더행('종가' 문자열)·결측은 Number→NaN 으로 자동 제외. 파싱 불가 시 빈 배열(폴백 유도).
 export function parseNaverSise(text) {
@@ -302,9 +313,19 @@ export function fetchMacroIndicators() {
   const kospiCloses = naverKospi.length ? naverKospi : (raw['^KS11'] || []);
   const out = Object.fromEntries(Object.entries(MACRO_TICKERS).map(
     ([key, tk]) => [key, computeMacroChange(key === 'KOSPI' ? kospiCloses : raw[tk])]));
-  // KOSPI 진행 중 급락(5일 고점 대비 낙폭) + 출처 — 모드 D 결정론 🔴 가드레일·로깅에서 사용.
-  // 폴백(yfinance)은 일봉 확정 지연이 있어 급락 경보가 늦을 수 있으므로 출처를 드러내 진단 가능케 함.
+  // KOSPI: 네이버 비지연·5일 고점낙폭·출처 — 가드레일·폴백 가시화.
   out.KOSPI.drawdown5d = computeDrawdownFromPeak(kospiCloses);
   out.KOSPI.source = naverKospi.length ? '네이버(비지연)' : (kospiCloses.length ? 'yfinance(폴백·지연주의)' : '데이터없음');
+  // USDKRW: 5일 저점 대비 상승폭(KRW 약세 충격) — 끝점비교 누락 보강. FX는 연속거래라 yfinance 지연 ~10h(허용).
+  const usdkrwCloses = raw['KRW=X'] || [];
+  out.USDKRW.rally5d = computeRallyFromTrough(usdkrwCloses);
+  out.USDKRW.source = usdkrwCloses.length ? 'yfinance(FX,~10h지연)' : '데이터없음';
+  // SP500: 5일 고점 대비 낙폭 — 미증시 진행 중 급락 포착. yfinance 지연 무시 가능(US 이전 세션 종가).
+  const sp500Closes = raw['^GSPC'] || [];
+  out.SP500.drawdown5d = computeDrawdownFromPeak(sp500Closes);
+  out.SP500.source = sp500Closes.length ? 'yfinance' : '데이터없음';
+  // TNX·VIX: 출처 표기(임계 설정 어려워 LLM 판단 위임, 가시화만).
+  out.TNX.source = (raw['^TNX'] || []).length ? 'yfinance' : '데이터없음';
+  out.VIX.source = (raw['^VIX'] || []).length ? 'yfinance' : '데이터없음';
   return out;
 }

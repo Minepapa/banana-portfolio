@@ -37,6 +37,8 @@ const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세',
 const BASELINE_SHEET = '리스크기준선';
 const HUB_CLAUDE = '/Users/huinique/Claude/Agent/Trading Agent/CLAUDE.md';
 const KOSPI_CRASH_PCT = -10;  // KOSPI 5일 고점 대비 낙폭 임계 — 이하면 LLM 판단 무관 🔴 강제 푸시
+const USDKRW_SURGE_PCT = 3;   // USDKRW 5일 저점 대비 상승 임계 — KRW 급약세 결정론 경보
+const SP500_CRASH_PCT = -7;   // SP500 5일 고점 대비 낙폭 임계 — 미증시 급락 결정론 경보
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
@@ -114,9 +116,11 @@ function fmtMacro(key, o) {
     ? `${o.value.toFixed(3)}%`
     : o.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const c = o.change5d == null ? '' : ` (5d ${o.change5d >= 0 ? '+' : ''}${o.change5d}%)`;
-  // KOSPI는 5일 고점 대비 낙폭도 표기 — 결정론 가드레일과 LLM이 같은 낙폭 수치를 보게 함.
+  // 인트라-윈도우 낙폭/급등도 표기 — 가드레일과 LLM이 같은 수치를 보게 함.
   const dd = key === 'KOSPI' && o.drawdown5d != null ? ` [고점대비 ${o.drawdown5d}%]` : '';
-  return v + c + dd;
+  const sp = key === 'SP500' && o.drawdown5d != null ? ` [고점대비 ${o.drawdown5d}%]` : '';
+  const fx = key === 'USDKRW' && o.rally5d != null ? ` [저점대비 +${o.rally5d}%]` : '';
+  return v + c + dd + sp + fx;
 }
 
 // ── B 모드: 논리 훼손 프롬프트 (종목별) — 판단 전용 ─────────────────
@@ -302,6 +306,32 @@ async function main() {
       console.log(`   ⚑ KOSPI 급락 가드레일 발동: ${dd}% → 🔴 강제`);
       await appendValues(token, `${RISK_SHEET}!A2`, [crashRow]);
       await pushNewReds([crashRow], priorRedKeys);
+    }
+
+    const fx5d = macro.USDKRW?.rally5d;
+    if (!DRY_RUN && fx5d != null && fx5d >= USDKRW_SURGE_PCT) {
+      const fxRow = [
+        todayKST(), 'D', '환율(USDKRW)', '🔴',
+        `USDKRW 5일 저점 대비 +${fx5d}% 급등 — KRW 급약세 (현재 ${macro.USDKRW.value?.toFixed(2) ?? macro.USDKRW.value})`,
+        `결정론 가드레일: 최근 5거래일 저점 대비 상승폭 ${fx5d}% ≥ ${USDKRW_SURGE_PCT}% — KRW 약세 급등 경보. 환노출 포지션 점검 필요.`,
+        evidenceBase, '',
+      ];
+      console.log(`   ⚑ USDKRW 급등 가드레일 발동: +${fx5d}% → 🔴 강제`);
+      await appendValues(token, `${RISK_SHEET}!A2`, [fxRow]);
+      await pushNewReds([fxRow], priorRedKeys);
+    }
+
+    const sp5d = macro.SP500?.drawdown5d;
+    if (!DRY_RUN && sp5d != null && sp5d <= SP500_CRASH_PCT) {
+      const spRow = [
+        todayKST(), 'D', '미증시(SP500)', '🔴',
+        `SP500 5일 고점 대비 ${sp5d}% 급락 (현재 ${macro.SP500.value?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) ?? macro.SP500.value})`,
+        `결정론 가드레일: 최근 5거래일 고점 대비 낙폭 ${sp5d}% ≤ ${SP500_CRASH_PCT}% — LLM 판단 무관 강제 경보. 미증시 급락 포지션 점검 필요.`,
+        evidenceBase, '',
+      ];
+      console.log(`   ⚑ SP500 급락 가드레일 발동: ${sp5d}% → 🔴 강제`);
+      await appendValues(token, `${RISK_SHEET}!A2`, [spRow]);
+      await pushNewReds([spRow], priorRedKeys);
     }
 
     const prompt = buildMacroPrompt(holdings, indicators);

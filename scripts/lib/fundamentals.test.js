@@ -4,7 +4,7 @@ import {
   reprtCodeForDate, prevPeriod, computeYoY, parseKrAmounts, parseKrRatios, checkGuardrails,
   computeMacroChange, computeRsi14, compute52wPosition, computeFcfYield,
   computeTtmNetIncome, computeRoe, computePbr,
-  computeDrawdownFromPeak, parseNaverSise,
+  computeDrawdownFromPeak, computeRallyFromTrough, parseNaverSise,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -113,6 +113,18 @@ test('computePbr: 시가총액/자기자본 — yfinance .KS priceToBook null �
   assert.equal(computePbr(1e15, -5e13), null);      // 음수 자본
   assert.equal(computePbr(null, 4e14), null);
   assert.equal(computePbr(1e15, null), null);
+});
+
+test('computeRallyFromTrough: 오늘 종가 vs 최근 N일 저점 상승폭 — USDKRW 급약세 포착', () => {
+  // 저점 90 → 현재 110: (110-90)/90 = 22.22%
+  assert.equal(computeRallyFromTrough([100, 90, 95, 99, 105, 110]), 22.22);
+  // 단조 하락 → 현재가 곧 저점 → 상승폭 0
+  assert.equal(computeRallyFromTrough([110, 105, 100]), 0);
+  // window=2면 마지막 3개[100,105,110] 저점100 → +10
+  assert.equal(computeRallyFromTrough([50, 100, 105, 110], 2), 10);
+  // 데이터 부족 → null
+  assert.equal(computeRallyFromTrough([100]), null);
+  assert.equal(computeRallyFromTrough([]), null);
 });
 
 test('computeDrawdownFromPeak: 오늘 종가 vs 최근 N일 고점 낙폭 — 진행 중 급락 포착', () => {
