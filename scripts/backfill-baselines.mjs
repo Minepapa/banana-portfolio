@@ -57,14 +57,14 @@ async function main() {
   const STOCK_TYPES = new Set(['국내주식', '해외주식']);
   const stocks = holdings.filter(h => h.accounts.some(a => a.acct === '위탁' && STOCK_TYPES.has(a.type)));
 
-  const existing = new Set();
-  if (!FORCE) {
-    const base = await getRange(token, `${BASELINE_SHEET}!A2:B`);
-    for (const r of base) { const k = String(r[0] ?? '').trim(); if (k) existing.add(k); }
-  }
+  // 기존 행 rowNum 맵 구성 (--force 시에도 제자리 업데이트하려면 위치가 필요)
+  const existingRowMap = new Map(); // name → 1-indexed 시트 행 번호
+  const baseRows = await getRange(token, `${BASELINE_SHEET}!A2:A`).catch(() => []);
+  baseRows.forEach((r, i) => { const k = String(r[0] ?? '').trim(); if (k) existingRowMap.set(k, i + 2); });
 
-  const targets = stocks.filter(h => FORCE || !existing.has(h.name));
-  console.log(`\n📊 위탁 개별주식 ${stocks.length}개 (전체 ${holdings.length}개 중 ETF·펀드·현금성 ${holdings.length - stocks.length}개 제외) · 백필 대상 ${targets.length}개` + (existing.size ? ` (기존 ${existing.size}개 건너뜀)` : ''));
+  const targets = stocks.filter(h => FORCE || !existingRowMap.has(h.name));
+  const skippedCount = stocks.length - targets.length;
+  console.log(`\n📊 위탁 개별주식 ${stocks.length}개 (전체 ${holdings.length}개 중 ETF·펀드·현금성 ${holdings.length - stocks.length}개 제외) · 백필 대상 ${targets.length}개` + (skippedCount ? ` (기존 ${skippedCount}개 건너뜀)` : ''));
   for (const h of targets) console.log(`   - ${h.name} (${h.market}, ${h.accounts.map(a => a.acct).join('/')})`);
 
   if (DRY_RUN || targets.length === 0) { console.log('\n완료(적재 없음).'); return; }
@@ -84,12 +84,19 @@ async function main() {
         if (!tk) throw new Error(`US 티커 미등록: ${h.name}`);
         f = fetchUsFundamentals(tk); ticker = tk;
       }
-      await appendValues(token, `${BASELINE_SHEET}!A2`, [[
+      const row = [
         h.name, ticker, h.market, todayKST(),
         pct(f.grossMargin), pct(f.opMargin), pct(f.roe), pct(f.debtRatio),
         f.eps ?? '데이터 부족', f.source,
-      ]]);
-      console.log(`   ✅ 적재: 매총이 ${pct(f.grossMargin)} · 영익률 ${pct(f.opMargin)} · ROE ${pct(f.roe)} · 부채 ${pct(f.debtRatio)}`);
+      ];
+      const existingRow = existingRowMap.get(h.name);
+      if (existingRow) {
+        // 기존 행 제자리 업데이트 (중복 방지)
+        await setValues(token, `${BASELINE_SHEET}!A${existingRow}:J${existingRow}`, [row]);
+      } else {
+        await appendValues(token, `${BASELINE_SHEET}!A2`, [row]);
+      }
+      console.log(`   ✅ ${existingRow ? '갱신' : '신규'}: 매총이 ${pct(f.grossMargin)} · 영익률 ${pct(f.opMargin)} · ROE ${pct(f.roe)} · 부채 ${pct(f.debtRatio)}`);
       ok++;
     } catch (e) {
       console.error(`   ❌ 실패: ${e.message}`);
