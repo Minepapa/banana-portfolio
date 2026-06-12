@@ -35,11 +35,12 @@ case "$JOB" in
   drain)               CMD=(scripts/drain-eval-queue.mjs --auto) ;;
   risk-d)              CMD=(scripts/risk-monitor.mjs --mode=D) ;;
   risk-b)              CMD=(scripts/risk-monitor.mjs --mode=B) ;;
+  baseline)            CMD=(scripts/backfill-baselines.mjs --force) ;;
   report-sync)         CMD=(scripts/sync-reports.mjs) ;;
   parse-notifications) CMD=(scripts/parse-notifications.mjs) ;;
   journal-sync)        CMD=(scripts/setup/setup-position-journal.mjs) ;;
   backup)              CMD=(scripts/backup-sheet.mjs) ;;
-  *) echo "usage: run.sh {drain|risk-d|risk-b|report-sync|parse-notifications|journal-sync|backup}" >&2; exit 2 ;;
+  *) echo "usage: run.sh {drain|risk-d|risk-b|baseline|report-sync|parse-notifications|journal-sync|backup}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)

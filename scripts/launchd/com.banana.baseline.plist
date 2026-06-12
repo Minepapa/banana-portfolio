@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana.baseline</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio/scripts/launchd/run.sh</string>
+    <string>baseline</string>
+  </array>
+  <!-- 펀더멘털 기준선 분기 갱신: 각 정기보고서 발행 마감 직후 08:00 (TTM ROE 등 정확값 재적재).
+       4/5=전년 사업보고서(3/31마감), 5/20=1Q(5/15마감), 8/20=반기(8/14마감), 11/20=3Q(11/14마감) -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Month</key><integer>4</integer><key>Day</key><integer>5</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Month</key><integer>5</integer><key>Day</key><integer>20</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Month</key><integer>8</integer><key>Day</key><integer>20</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Month</key><integer>11</integer><key>Day</key><integer>20</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio/baseline.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio/baseline.log</string>
+</dict>
+</plist>

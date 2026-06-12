@@ -19,7 +19,7 @@
  */
 
 import {
-  loadEnv, getToken, hasServiceAccount, getRange, appendValues, ensureSheet,
+  loadEnv, getToken, hasServiceAccount, getRange, appendValues, setValues, ensureSheet,
   readHoldings, todayKST,
 } from './lib/sheets-common.mjs';
 import { fetchKrFundamentals, fetchUsFundamentals } from './lib/fundamentals.mjs';
