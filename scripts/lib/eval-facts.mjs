@@ -1,5 +1,6 @@
 // 평가 카드 facts 조립기 — Node 결정론 숫자를 5축 axisItems + 프롬프트 텍스트로 만든다.
 // 페처는 인자 주입(테스트용 스텁 가능). 매핑·페처 실패는 추정 없이 '데이터 부족' 표기(환각 차단).
+import { computePbr } from './fundamentals.mjs';
 
 const fmtPct = (v) => v == null ? null : `${v}%`;
 const fmtNum = (v) => v == null ? null : String(v);
@@ -27,6 +28,10 @@ export async function buildEvalFacts(entry, ids, fetchers) {
   const fs = fund?.source || '데이터 부족';
   const ms = mkt?.source || '데이터 부족';
 
+  // PBR: yfinance 우선, null이면 시총(yfinance)/자기자본(OpenDart)으로 직접 산출(KR .KS 보강).
+  const pbr = mkt?.pbr ?? computePbr(mkt?.marketCap, fund?.equity);
+  const pbrSrc = mkt?.pbr != null ? ms : `${ms} ÷ ${fs}`;
+
   const axisItems = {
     수익성: compact([
       item('영업이익률', fmtPct(fund?.opMargin), fs, 'operating_margin'),
@@ -38,7 +43,7 @@ export async function buildEvalFacts(entry, ids, fetchers) {
     ]),
     밸류에이션: compact([
       item('Forward PER', fmtNum(mkt?.forwardPE), ms, 'fwd_per'),
-      item('PBR', fmtNum(mkt?.pbr), ms),
+      item('PBR', fmtNum(pbr), pbrSrc),
     ]),
     현금흐름: compact([
       item('FCF yield', fmtPct(mkt?.fcfYield), ms, 'fcf_yield'),

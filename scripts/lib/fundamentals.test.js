@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   reprtCodeForDate, prevPeriod, computeYoY, parseKrAmounts, parseKrRatios, checkGuardrails,
   computeMacroChange, computeRsi14, compute52wPosition, computeFcfYield,
-  computeTtmNetIncome, computeRoe,
+  computeTtmNetIncome, computeRoe, computePbr,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -84,6 +84,15 @@ test('computeRoe: TTM순이익/기초자본 — 기초자본(직전사업연도�
   assert.equal(computeRoe(null, 12067), null);
   assert.equal(computeRoe(7519, 0), null);    // 0 분모 방어
   assert.equal(computeRoe(7519, null), null);
+});
+
+test('computePbr: 시가총액/자기자본 — yfinance .KS priceToBook null 보강, 0·결측 방어', () => {
+  assert.equal(computePbr(1.2e15, 4e14), 3);       // 1,200조 / 400조 = 3.00
+  assert.equal(computePbr(2199.8e12, 400e12), 5.5);// 소수 둘째자리 반올림
+  assert.equal(computePbr(1e15, 0), null);          // 0 분모(자본잠식 등)
+  assert.equal(computePbr(1e15, -5e13), null);      // 음수 자본
+  assert.equal(computePbr(null, 4e14), null);
+  assert.equal(computePbr(1e15, null), null);
 });
 
 test('computeMacroChange: 현재값=마지막 종가, 변화율=5거래일 전 대비', () => {

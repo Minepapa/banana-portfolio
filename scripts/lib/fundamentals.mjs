@@ -151,6 +151,7 @@ export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = p
     opYoYCurr: computeYoY(a.opIncome.curr, a.opIncome.prev),
     opYoYPrev: pa ? computeYoY(pa.opIncome.curr, pa.opIncome.prev) : null,
     netIncomeYoY: computeYoY(a.netIncome.curr, a.netIncome.prev),
+    equity: a.equity.curr,   // 자본총계(당기말) — eval-facts에서 PBR(=시총/자기자본) 계산용
     ...ratios, eps: null,
   };
 }
@@ -177,6 +178,7 @@ export function fetchMarketData(yahooTicker) {
     pos52w: compute52wPosition(d.currentPrice, d.fiftyTwoWeekHigh, d.fiftyTwoWeekLow),
     fcfYield: computeFcfYield(d.freeCashflow, d.marketCap),
     payoutRatio: d.payoutRatio != null ? Math.round(d.payoutRatio * 1000) / 10 : null,
+    marketCap: Number.isFinite(d.marketCap) ? d.marketCap : null,  // PBR 폴백 계산용(시총/자기자본)
     source: `yfinance ${yahooTicker}`,
   };
 }
@@ -226,6 +228,14 @@ export function compute52wPosition(current, high, low) {
 export function computeFcfYield(fcf, marketCap) {
   if (!Number.isFinite(fcf) || !Number.isFinite(marketCap) || marketCap === 0) return null;
   return Math.round(fcf / marketCap * 1000) / 10;
+}
+
+// PBR = 시가총액 / 자기자본. yfinance가 KR(.KS) priceToBook을 안 주는 종목(삼성전자 등)에서
+// marketCap(yfinance)·자본총계(OpenDart)로 직접 산출 — pykrx는 KRX 로그인 요구로 헤드리스 불가.
+// 자본총계는 비지배지분 포함이라 지배주주 BPS 기준 PBR 대비 소폭 과소(수 % 오차). 결측·0분모 → null.
+export function computePbr(marketCap, equity) {
+  if (!Number.isFinite(marketCap) || !Number.isFinite(equity) || equity <= 0) return null;
+  return Math.round(marketCap / equity * 100) / 100;
 }
 
 // ── 거시지표 (risk-monitor mode D) ──────────────────────────────
