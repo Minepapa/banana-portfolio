@@ -8,9 +8,10 @@
 //  - firedRef: 롱프레스가 발화한 직후 따라오는 click을 호출부가 무시하도록 노출.
 import { useState, useRef, useCallback } from "react";
 
-export function useLongPress({ duration = 1000, moveThreshold = 10 } = {}) {
+export function useLongPress({ duration = 1000, showDelay = 500, moveThreshold = 10 } = {}) {
   const [activeId, setActiveId] = useState(null);
   const timerRef = useRef(null);
+  const showTimerRef = useRef(null);
   const startRef = useRef(null);
   const firedRef = useRef(false);
 
@@ -21,6 +22,7 @@ export function useLongPress({ duration = 1000, moveThreshold = 10 } = {}) {
 
   const clear = useCallback(() => {
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    if (showTimerRef.current) { clearTimeout(showTimerRef.current); showTimerRef.current = null; }
     startRef.current = null;
     setActiveId(null);
   }, []);
@@ -28,14 +30,15 @@ export function useLongPress({ duration = 1000, moveThreshold = 10 } = {}) {
   const begin = useCallback((id, onFire) => (e) => {
     firedRef.current = false;
     startRef.current = point(e);
-    setActiveId(id);
+    // 500ms 미만 탭은 파란 바 미표시 — 스크롤 시 깜빡임 방지
+    showTimerRef.current = setTimeout(() => setActiveId(id), showDelay);
     timerRef.current = setTimeout(() => {
       firedRef.current = true;
       timerRef.current = null;
       setActiveId(null);
       onFire();
     }, duration);
-  }, [duration]);
+  }, [duration, showDelay]);
 
   const onMove = useCallback((e) => {
     if (!startRef.current || !timerRef.current) return;

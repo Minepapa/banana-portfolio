@@ -67,7 +67,7 @@ body {
   width: 100%;
   transform-origin: left;
   background: #3B82F6;
-  animation: lpFill 1s linear forwards;
+  animation: lpFill 0.5s linear forwards;
   pointer-events: none;
 }
 

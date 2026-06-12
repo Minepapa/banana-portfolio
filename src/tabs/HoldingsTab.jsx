@@ -222,12 +222,15 @@ export default function HoldingsTab({
                   </div>
                   <div style={{ fontSize: 10, color: "#8A9AB5", marginTop: 2 }}>
                     {h.qty}주 · 매수 {String(h.type ?? '').includes('해외') ? `$${Number(h.price).toFixed(2)}` : `₩${fmt(h.price)}`}
-                    {h.currentPrice > 0 && <> · 현재 {String(h.type ?? '').includes('해외') ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`}</>}
                   </div>
+                  {h.currentPrice > 0 && (
+                    <div style={{ fontSize: 10, color: "#8A9AB5" }}>
+                      현재 {String(h.type ?? '').includes('해외') ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`}
+                    </div>
+                  )}
                 </div>
                 {/* 비중% */}
                 <div style={{ textAlign: 'center', flexShrink: 0, minWidth: 32 }}>
-                  <div style={{ fontSize: 9, color: '#8A9AB5' }}>비중</div>
                   <div style={{ fontSize: 10, color: '#9CA3AF', fontWeight: 600 }}>{weightPct}%</div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
