@@ -251,6 +251,41 @@ export function computeMacroChange(closes) {
   return { value, change5d };
 }
 
+// 최근 window거래일 고점 대비 현재 종가의 낙폭(%). 끝점만 보는 change5d와 달리 창 안 고점을
+// 기준 삼아 며칠에 걸친 누적 급락(예: 5일 -10%)도 포착 — 진행 중 급락 경보용. 결측·고점0 → null.
+export function computeDrawdownFromPeak(closes, window = 5) {
+  const a = (closes || []).filter(x => Number.isFinite(x));
+  if (a.length < 2) return null;
+  const recent = a.slice(-(window + 1));   // 오늘 + 직전 window거래일
+  const peak = Math.max(...recent);
+  if (!(peak > 0)) return null;
+  return Math.round((a[a.length - 1] - peak) / peak * 10000) / 100;
+}
+
+// 네이버 siseJson 응답(JS 배열: 홑따옴표·trailing comma 포함) → 종가 시계열(과거→현재).
+// 헤더행('종가' 문자열)·결측은 Number→NaN 으로 자동 제외. 파싱 불가 시 빈 배열(폴백 유도).
+export function parseNaverSise(text) {
+  try {
+    const json = String(text || '').replace(/'/g, '"').replace(/,(\s*[\]}])/g, '$1');
+    const rows = JSON.parse(json);
+    if (!Array.isArray(rows)) return [];
+    return rows.map(r => Number(r?.[4])).filter(Number.isFinite);
+  } catch { return []; }
+}
+
+// 네이버 금융 지수 종가(무인증, 당일 마감 즉시 반영 — yfinance ^KS11 일봉 확정 지연 회피).
+// curl 사용(Python urllib SSL 깨짐·WebFetch 차단). 실패·빈 응답 → [] → 호출부가 yfinance 폴백.
+export function fetchNaverIndexCloses(symbol = 'KOSPI', startYmd, endYmd) {
+  const ymd = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  const now = new Date();
+  const start = startYmd || ymd(new Date(now.getTime() - 40 * 86400000));
+  const end = endYmd || ymd(now);
+  const url = `https://api.finance.naver.com/siseJson.naver?symbol=${symbol}&requestType=1&startTime=${start}&endTime=${end}&timeframe=day`;
+  const r = spawnSync('curl', ['-sL', '--max-time', '15', url], { encoding: 'utf8', timeout: 20000 });
+  if (r.status !== 0) return [];
+  return parseNaverSise(r.stdout);
+}
+
 export const MACRO_TICKERS = { USDKRW: 'KRW=X', TNX: '^TNX', VIX: '^VIX', KOSPI: '^KS11', SP500: '^GSPC' };
 
 export function fetchMacroIndicators() {
@@ -258,5 +293,14 @@ export function fetchMacroIndicators() {
   const r = spawnSync('python3', [py, ...Object.values(MACRO_TICKERS)], { encoding: 'utf8', timeout: 120000 });
   if (r.status !== 0) throw new Error(`yfinance 거시 조회 실패: ${(r.stderr || '').slice(-200)}`);
   const raw = JSON.parse(r.stdout);
-  return Object.fromEntries(Object.entries(MACRO_TICKERS).map(([key, tk]) => [key, computeMacroChange(raw[tk])]));
+  // KOSPI는 네이버(비지연) 우선, 실패 시 yfinance ^KS11 폴백. 나머지(환율·금리·VIX·S&P)는 yfinance.
+  const naverKospi = fetchNaverIndexCloses('KOSPI');
+  const kospiCloses = naverKospi.length ? naverKospi : (raw['^KS11'] || []);
+  const out = Object.fromEntries(Object.entries(MACRO_TICKERS).map(
+    ([key, tk]) => [key, computeMacroChange(key === 'KOSPI' ? kospiCloses : raw[tk])]));
+  // KOSPI 진행 중 급락(5일 고점 대비 낙폭) + 출처 — 모드 D 결정론 🔴 가드레일·로깅에서 사용.
+  // 폴백(yfinance)은 일봉 확정 지연이 있어 급락 경보가 늦을 수 있으므로 출처를 드러내 진단 가능케 함.
+  out.KOSPI.drawdown5d = computeDrawdownFromPeak(kospiCloses);
+  out.KOSPI.source = naverKospi.length ? '네이버(비지연)' : (kospiCloses.length ? 'yfinance(폴백·지연주의)' : '데이터없음');
+  return out;
 }

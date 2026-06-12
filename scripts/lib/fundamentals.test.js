@@ -4,6 +4,7 @@ import {
   reprtCodeForDate, prevPeriod, computeYoY, parseKrAmounts, parseKrRatios, checkGuardrails,
   computeMacroChange, computeRsi14, compute52wPosition, computeFcfYield,
   computeTtmNetIncome, computeRoe, computePbr,
+  computeDrawdownFromPeak, parseNaverSise,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -93,6 +94,29 @@ test('computePbr: 시가총액/자기자본 — yfinance .KS priceToBook null �
   assert.equal(computePbr(1e15, -5e13), null);      // 음수 자본
   assert.equal(computePbr(null, 4e14), null);
   assert.equal(computePbr(1e15, null), null);
+});
+
+test('computeDrawdownFromPeak: 오늘 종가 vs 최근 N일 고점 낙폭 — 진행 중 급락 포착', () => {
+  // 고점 110 → 현재 90: (90-110)/110 = -18.18%
+  assert.equal(computeDrawdownFromPeak([100, 110, 105, 99, 95, 90]), -18.18);
+  // 단조 상승 → 현재가 곧 고점 → 낙폭 0
+  assert.equal(computeDrawdownFromPeak([90, 95, 100]), 0);
+  // 이틀 누적 슬라이드(단일일 -5%씩, 끝점비교론 못 잡지만 고점 대비론 -10.5%)
+  assert.equal(computeDrawdownFromPeak([100, 95, 89.5]), -10.5);
+  // window 밖 더 높은 값은 무시: window=2면 마지막 3개[100,95,90] 고점100 → -10
+  assert.equal(computeDrawdownFromPeak([200, 100, 95, 90], 2), -10);
+  // 데이터 부족 → null
+  assert.equal(computeDrawdownFromPeak([100]), null);
+  assert.equal(computeDrawdownFromPeak([]), null);
+});
+
+test('parseNaverSise: 네이버 siseJson JS배열 → 종가 시계열(과거→현재), 헤더·결측 방어', () => {
+  const raw = "[['날짜', '시가', '고가', '저가', '종가', '거래량', '외국인소진율'],\n"
+    + '["20240102", 2645.47, 2675.8, 2641.88, 2669.81, 409872, 0.0],\n'
+    + '["20240103", 2643.54, 2643.72, 2607.31, 2607.31, 463132, 0.0],]';
+  assert.deepEqual(parseNaverSise(raw), [2669.81, 2607.31]);
+  assert.deepEqual(parseNaverSise(''), []);
+  assert.deepEqual(parseNaverSise('garbage'), []);
 });
 
 test('computeMacroChange: 현재값=마지막 종가, 변화율=5거래일 전 대비', () => {

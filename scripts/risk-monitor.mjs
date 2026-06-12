@@ -36,6 +36,7 @@ const RISK_SHEET = '리스크모니터';
 const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세', '근거데이터', '기준선참조'];
 const BASELINE_SHEET = '리스크기준선';
 const HUB_CLAUDE = '/Users/huinique/Claude/Agent/Trading Agent/CLAUDE.md';
+const KOSPI_CRASH_PCT = -10;  // KOSPI 5일 고점 대비 낙폭 임계 — 이하면 LLM 판단 무관 🔴 강제 푸시
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
@@ -113,7 +114,9 @@ function fmtMacro(key, o) {
     ? `${o.value.toFixed(3)}%`
     : o.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const c = o.change5d == null ? '' : ` (5d ${o.change5d >= 0 ? '+' : ''}${o.change5d}%)`;
-  return v + c;
+  // KOSPI는 5일 고점 대비 낙폭도 표기 — 결정론 가드레일과 LLM이 같은 낙폭 수치를 보게 함.
+  const dd = key === 'KOSPI' && o.drawdown5d != null ? ` [고점대비 ${o.drawdown5d}%]` : '';
+  return v + c + dd;
 }
 
 // ── B 모드: 논리 훼손 프롬프트 (종목별) — 판단 전용 ─────────────────
@@ -285,6 +288,21 @@ async function main() {
     const indicators = Object.fromEntries(Object.entries(macro).map(([k, o]) => [k, fmtMacro(k, o)]));
     Object.entries(indicators).forEach(([k, v]) => console.log(`   · ${k}: ${v}`));
     const evidenceBase = JSON.stringify(indicators);  // 근거데이터 = Node 숫자(LLM 아님)
+
+    // 결정론 가드레일: KOSPI 5일 고점 대비 낙폭이 임계 이하면 LLM 판단을 거치지 않고 🔴 강제.
+    // LLM 호출 실패·완화 판정에 무관하게 급락 경보가 반드시 나가도록 보장(끝점비교 누락도 방지).
+    const dd = macro.KOSPI?.drawdown5d;
+    if (!DRY_RUN && dd != null && dd <= KOSPI_CRASH_PCT) {
+      const crashRow = [
+        todayKST(), 'D', '국내주식(KOSPI)', '🔴',
+        `KOSPI 5일 고점 대비 ${dd}% 급락 (현재 ${macro.KOSPI.value?.toLocaleString('en-US') ?? macro.KOSPI.value})`,
+        `결정론 가드레일: 최근 5거래일 고점 대비 낙폭 ${dd}% ≤ ${KOSPI_CRASH_PCT}% — LLM 판단 무관 강제 경보. 급락 매수 기회 점검 필요.`,
+        evidenceBase, '',
+      ];
+      console.log(`   ⚑ KOSPI 급락 가드레일 발동: ${dd}% → 🔴 강제`);
+      await appendValues(token, `${RISK_SHEET}!A2`, [crashRow]);
+      await pushNewReds([crashRow], priorRedKeys);
+    }
 
     const prompt = buildMacroPrompt(holdings, indicators);
     if (DRY_RUN) { console.log('\n┌─── D 프롬프트 ───┐\n' + prompt + '\n└──────────────────┘'); return; }
