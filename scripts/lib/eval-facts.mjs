@@ -31,7 +31,7 @@ export async function buildEvalFacts(entry, ids, fetchers) {
     수익성: compact([
       item('영업이익률', fmtPct(fund?.opMargin), fs, 'operating_margin'),
       item('매출성장률 YoY', fmtPct(fund?.revenueYoY), fs),
-      item('ROE', fmtPct(fund?.roe), fs),
+      item('ROE(TTM)', fmtPct(fund?.roe), fs),
     ]),
     안정성: compact([
       item('부채비율', fmtPct(fund?.debtRatio), fs),

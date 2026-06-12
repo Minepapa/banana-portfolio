@@ -26,6 +26,21 @@ export function computeYoY(curr, prev) {
   return Math.round((curr - prev) / Math.abs(prev) * 1000) / 10;
 }
 
+// TTM(4분기 누적) 순이익 = 직전 사업연도 연간 − 직전연도 동기간 누적 + 당기 누적.
+// 손익은 add_amount(누적)이라 1Q=Q1·반기=상반기·3Q=9개월 — 어느 분기든 일반화된다.
+// 분기보고서의 순이익(누적)으로 단순 ROE를 내면 과소평가되므로 TTM으로 환산한다.
+export function computeTtmNetIncome(curCum, prevCum, annualPrev) {
+  if (curCum == null || prevCum == null || annualPrev == null) return null;
+  return annualPrev - prevCum + curCum;
+}
+
+// ROE(TTM, %) = TTM순이익 / 기초자기자본(직전 사업연도말) × 100. 분모 결측·0 → null.
+// 기초자본 기준(네이버 정합) — 평균자본이 아닌 직전 사업연도말 자본을 분모로 둔다.
+export function computeRoe(ttmNet, eqBegin) {
+  if (ttmNet == null || !eqBegin) return null;
+  return Math.round(ttmNet / eqBegin * 1000) / 10;
+}
+
 // fnlttSinglAcnt(주요계정) 응답 파싱. CFS 우선, 손익은 누적(add_amount) 우선.
 export function parseKrAmounts(list) {
   const cfs = (list || []).filter(r => r.fs_div === 'CFS');
@@ -114,6 +129,19 @@ export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = p
   // 비율 API 미제공 시 금액으로 직접 계산(영업이익률·부채비율)
   if (ratios.opMargin == null && a.opIncome.curr != null && a.revenue.curr) ratios.opMargin = Math.round(a.opIncome.curr / a.revenue.curr * 1000) / 10;
   if (ratios.debtRatio == null && a.liabilities.curr != null && a.equity.curr) ratios.debtRatio = Math.round(a.liabilities.curr / a.equity.curr * 1000) / 10;
+
+  // ROE를 OpenDart 분기값(누적순이익 기반·과소) 대신 TTM·기초자본 기준으로 재계산.
+  // 사업보고서(11011)는 당기순이익이 곧 연간이라 추가 조회 불필요. 분기면 직전 사업연도 연간을 조회.
+  let ttmNet = a.netIncome.curr;
+  if (cur.period.reprtCode !== '11011') {
+    const annualPrevList = await dartJson('fnlttSinglAcnt.json', {
+      corp_code: corpCode, bsns_year: String(Number(cur.period.bsnsYear) - 1), reprt_code: '11011',
+    }, apiKey).catch(() => null);
+    const annualPrevNet = annualPrevList ? parseKrAmounts(annualPrevList).netIncome.curr : null;
+    ttmNet = computeTtmNetIncome(a.netIncome.curr, a.netIncome.prev, annualPrevNet);
+  }
+  const ttmRoe = computeRoe(ttmNet, a.equity.prev); // 기초자본 = BS frmtrm(직전 사업연도말)
+  if (ttmRoe != null) ratios.roe = ttmRoe;          // TTM 불가 시 OpenDart 분기 ROE 유지(폴백)
 
   return {
     market: 'KR',

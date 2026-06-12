@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   reprtCodeForDate, prevPeriod, computeYoY, parseKrAmounts, parseKrRatios, checkGuardrails,
   computeMacroChange, computeRsi14, compute52wPosition, computeFcfYield,
+  computeTtmNetIncome, computeRoe,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -66,6 +67,23 @@ test('parseKrRatios: 정확 매칭 — 유사명(총자산영업이익률·유�
   assert.equal(r.roe, 6.104);
   assert.equal(r.debtRatio, 51.398);
   assert.deepEqual(parseKrRatios([]), { grossMargin: null, opMargin: null, roe: null, debtRatio: null });
+});
+
+test('computeTtmNetIncome: 직전연간 − 직전동기누적 + 당기누적 (누적값 기반 일반화)', () => {
+  // SK하이닉스 26-1Q류: 직전연간 + 당기누적 급증 − 직전연도 동기누적 = TTM 75조대
+  assert.equal(computeTtmNetIncome(40, 2, 37), 75);   // 37 − 2 + 40
+  assert.equal(computeTtmNetIncome(null, 2, 37), null);
+  assert.equal(computeTtmNetIncome(40, null, 37), null);
+  assert.equal(computeTtmNetIncome(40, 2, null), null);
+});
+
+test('computeRoe: TTM순이익/기초자본 — 기초자본(직전사업연도말) 기준, 네이버 정합', () => {
+  // SK하이닉스: TTM 75.19조 / 기초자본 120.67조 = 62.3% (네이버 61.6% 근사)
+  assert.equal(computeRoe(7519, 12067), 62.3);
+  assert.equal(computeRoe(469, 7922), 5.9);  // 일반 케이스
+  assert.equal(computeRoe(null, 12067), null);
+  assert.equal(computeRoe(7519, 0), null);    // 0 분모 방어
+  assert.equal(computeRoe(7519, null), null);
 });
 
 test('computeMacroChange: 현재값=마지막 종가, 변화율=5거래일 전 대비', () => {
