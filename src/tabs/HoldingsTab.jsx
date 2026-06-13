@@ -229,10 +229,6 @@ export default function HoldingsTab({
                     </div>
                   )}
                 </div>
-                {/* 비중% */}
-                <div style={{ textAlign: 'center', flexShrink: 0, minWidth: 32 }}>
-                  <div style={{ fontSize: 10, color: '#9CA3AF', fontWeight: 600 }}>{weightPct}%</div>
-                </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
                   <div style={{ fontSize: isMobile ? 11 : 12, color: "#E8EAF0" }}>₩{fmt(h.eval)}</div>
                   <div style={{ fontSize: isMobile ? 10 : 11, fontWeight: 700, color }}>

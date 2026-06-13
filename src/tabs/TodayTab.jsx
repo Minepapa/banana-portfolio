@@ -77,7 +77,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   // ── 항목 조립 ── kind:'read'=당일 확인으로 닫힘, 'auto'=처리하면 자동 소멸 ──
   const items = [];
 
-  if (riskActionable > 0 && !acked.has(`risk:${lastRiskDate}`)) {
+  if (riskActionable > 0) {
     items.push({
       key: `risk:${lastRiskDate}`, kind: 'read', accent: riskRed > 0 ? '#EF4444' : '#F5C842',
       icon: riskRed > 0 ? '🔴' : '🟡',
@@ -134,7 +134,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
       ),
     });
   }
-  if (rxAction && !acked.has(`rx:${rxDate}`)) {
+  if (rxAction) {
     items.push({
       key: `rx:${rxDate}`, kind: 'read', accent: '#F5C842', icon: '💊',
       title: '이번 주 처방', sub: `${rxDate} 리포트`, goLabel: '리포트 보기', go: () => setTab('report'),
@@ -155,9 +155,19 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
     });
   }
 
+  const allDone = items.length > 0 && items.every(it => acked.has(it.key));
+
   return (
     <div>
       <SectionTitle color="#F4845F" mb={14} sub={`${day} · 오늘 처리할 것만 모음`}>오늘 할 일</SectionTitle>
+
+      {allDone && (
+        <div style={{ background: 'linear-gradient(135deg,#0D2010,#12141C)', border: '1px solid #4ADE8055', borderRadius: 12, padding: '16px 20px', marginBottom: 14, textAlign: 'center' }}>
+          <div style={{ fontSize: 24, marginBottom: 6 }}>✅</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#4ADE80' }}>오늘 할 일 모두 완료!</div>
+          <div style={{ fontSize: 10, color: '#6B7280', marginTop: 4 }}>수고하셨습니다. 내일 다시 확인해주세요.</div>
+        </div>
+      )}
 
       {items.length === 0 ? (
         <div style={{ background: '#1A1D26', borderRadius: 12, padding: 32, textAlign: 'center', border: '1px solid #232838' }}>
@@ -166,32 +176,36 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
           <div style={{ fontSize: 11, color: '#8A9AB5', lineHeight: 1.6 }}>리스크·포지션·체결·리밸런싱 모두 정상.<br />홈에서 숫자만 확인하면 됩니다.</div>
         </div>
       ) : (
-        items.map((it) => (
-          <div key={it.key} style={{ background: '#1A1D26', border: '1px solid #262A3A', borderLeft: `4px solid ${it.accent}`, borderRadius: 12, padding: 14, marginBottom: 10 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-              <span style={{ fontSize: 16, lineHeight: 1.3, flexShrink: 0 }}>{it.icon}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#F5F7FF' }}>{it.title}</div>
-                {it.sub && <div style={{ fontSize: 10, color: '#8A9AB5', marginTop: 2, lineHeight: 1.5, wordBreak: 'break-word' }}>{it.sub}</div>}
+        items.map((it) => {
+          const done = acked.has(it.key);
+          return (
+            <div key={it.key} style={{ background: '#1A1D26', border: `1px solid ${done ? '#2E3A2E' : '#262A3A'}`, borderLeft: `4px solid ${done ? '#4ADE8066' : it.accent}`, borderRadius: 12, padding: 14, marginBottom: 10, opacity: done ? 0.6 : 1, transition: 'opacity 0.2s' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <span style={{ fontSize: 16, lineHeight: 1.3, flexShrink: 0 }}>{done ? '✅' : it.icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: done ? '#6B7280' : '#F5F7FF', textDecoration: done ? 'line-through' : 'none' }}>{it.title}</div>
+                  {it.sub && <div style={{ fontSize: 10, color: '#8A9AB5', marginTop: 2, lineHeight: 1.5, wordBreak: 'break-word' }}>{it.sub}</div>}
+                </div>
+                {done && <span style={{ fontSize: 10, color: '#4ADE80', flexShrink: 0, fontWeight: 700 }}>완료</span>}
+              </div>
+              {!done && it.body}
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                {!done && (
+                  <button onClick={it.go} style={{ padding: '6px 12px', minHeight: 32, borderRadius: 6, border: `1px solid ${it.accent}55`, background: 'transparent', color: it.accent, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
+                    {it.goLabel} ›
+                  </button>
+                )}
+                <button onClick={() => done ? null : ack(it.key)} style={{ padding: '6px 12px', minHeight: 32, borderRadius: 6, border: `1px solid ${done ? '#2E3A2E' : '#2E3344'}`, background: done ? '#1A2A1A' : 'none', color: done ? '#4ADE80' : '#9CA3AF', cursor: done ? 'default' : 'pointer', fontSize: 11, fontFamily: baseFont }}>
+                  {done ? '✓ 확인됨' : '확인 ✓'}
+                </button>
               </div>
             </div>
-            {it.body}
-            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-              <button onClick={it.go} style={{ padding: '6px 12px', minHeight: 32, borderRadius: 6, border: `1px solid ${it.accent}55`, background: 'transparent', color: it.accent, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
-                {it.goLabel} ›
-              </button>
-              {it.kind === 'read' && (
-                <button onClick={() => ack(it.key)} style={{ padding: '6px 12px', minHeight: 32, borderRadius: 6, border: '1px solid #2E3344', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>
-                  오늘 확인 ✓
-                </button>
-              )}
-            </div>
-          </div>
-        ))
+          );
+        })
       )}
 
       <div style={{ fontSize: 9, color: '#3A4050', textAlign: 'center', marginTop: 16, lineHeight: 1.6 }}>
-        처리하면 자동으로 사라집니다 · 리스크·처방은 "오늘 확인"으로 닫으면 내일 다시 표시
+        처리하면 자동으로 사라집니다 · 확인 표시는 오늘 하루만 유지됩니다
       </div>
     </div>
   );

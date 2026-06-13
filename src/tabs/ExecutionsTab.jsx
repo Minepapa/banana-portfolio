@@ -54,7 +54,7 @@ export default function ExecutionsTab({
           <div style={{ padding: '10px 16px', borderBottom: '1px solid #2A2F3E', fontSize: 10, letterSpacing: 3, color: '#8A9AB5' }}>
             전체 {tradeRows.length}건 · 처리완료 {tradeRows.filter(r => r.processed).length}건
           </div>
-          {tradeRows.map(({ row, processed }, idx) => {
+          {[...tradeRows].sort((a, b) => String(b.row[0] ?? '').localeCompare(String(a.row[0] ?? ''))).map(({ row, processed }, idx) => {
             const date     = String(row[0] ?? '').trim();
             const buySell  = String(row[1] ?? '').trim();
             const account  = String(row[2] ?? '').trim();
