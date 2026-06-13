@@ -5,6 +5,18 @@ import { SAMPLE_EVALUATION, AXIS_METRICS, LEARNING_MODULES, LABEL_TO_METRIC } fr
 import { GradeDot, SubLabel, NumberedItem } from '../lib/primitives.jsx';
 import { gradeColor, stripGrade, stripPeriod } from '../lib/textFormat.js';
 
+// "OpenDart 2025 반기보고서(연결)" → "2025 H1", "quarterly+info(TTM)" → "TTM", 순수 yfinance → null
+function parsePeriodBadge(source) {
+  if (!source) return null;
+  const od = source.match(/OpenDart (\d{4}) (사업보고서|1분기보고서|반기보고서|3분기보고서)/);
+  if (od) {
+    const label = { '사업보고서': '연간', '1분기보고서': 'Q1', '반기보고서': 'H1', '3분기보고서': 'Q3' }[od[2]];
+    return `${od[1]} ${label}`;
+  }
+  if (source.includes('TTM') || source.includes('quarterly+info')) return 'TTM';
+  return null;
+}
+
 export default function BuyEvaluationTab({
   evaluations, accounts, evalMode, setEvalMode, setEvalSelectedMetric,
   setEvalQueueOpen, setEvalIngestOpen, evalQueue, requeueEval, requeueBusyIdx,
@@ -213,7 +225,12 @@ export default function BuyEvaluationTab({
                 </div>
                 <div style={{ color: '#E8EAF0', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, textAlign: 'right', minWidth: 0 }}>
                   <span style={{ fontWeight: 600, wordBreak: 'break-word' }}>{item.value}</span>
-                  {item.source && <span style={{ fontSize: 9, color: '#8A9AB5', wordBreak: 'break-word' }}>{item.source}</span>}
+                  {(() => {
+                    const badge = parsePeriodBadge(item.source);
+                    return badge ? (
+                      <span style={{ fontSize: 8, color: '#6B7A9A', background: '#1A2030', border: '1px solid #2A3348', borderRadius: 3, padding: '1px 4px', letterSpacing: 0.3 }}>{badge}</span>
+                    ) : null;
+                  })()}
                 </div>
               </div>
             ))}
