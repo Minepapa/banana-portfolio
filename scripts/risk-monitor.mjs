@@ -26,7 +26,7 @@
 
 import {
   loadEnv, getToken, hasServiceAccount, getRange, appendValues, ensureSheet,
-  readHoldings, runHeadlessClaude, parseJsonBlock, todayKST,
+  readHoldings, runHeadlessClaude, parseJsonBlock, nowKST,
   sendTelegram, setValues, clearValues,
 } from './lib/sheets-common.mjs';
 import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators } from './lib/fundamentals.mjs';
@@ -101,7 +101,7 @@ ${holdingsSummary(holdings)}
 출력: 설명 없이 \`\`\`json 블록 하나만. (지표 숫자는 시스템이 이미 기록하므로 다시 적지 말 것)
 \`\`\`json
 {
-  "date": "${todayKST()}",
+  "date": "${nowKST()}",
   "signals": [
     {"target":"해외주식(US 익스포저)","signal":"🟡","summary":"한줄 요약","detail":"무엇이 어떻게 바뀌어 어느 포지션에 영향"}
   ]
@@ -298,7 +298,7 @@ async function main() {
     const dd = macro.KOSPI?.drawdown5d;
     if (!DRY_RUN && dd != null && dd <= KOSPI_CRASH_PCT) {
       const crashRow = [
-        todayKST(), 'D', '국내주식(KOSPI)', '🔴',
+        nowKST(), 'D', '국내주식(KOSPI)', '🔴',
         `KOSPI 5일 고점 대비 ${dd}% 급락 (현재 ${macro.KOSPI.value?.toLocaleString('en-US') ?? macro.KOSPI.value})`,
         `결정론 가드레일: 최근 5거래일 고점 대비 낙폭 ${dd}% ≤ ${KOSPI_CRASH_PCT}% — LLM 판단 무관 강제 경보. 급락 매수 기회 점검 필요.`,
         evidenceBase, '',
@@ -311,7 +311,7 @@ async function main() {
     const fx5d = macro.USDKRW?.rally5d;
     if (!DRY_RUN && fx5d != null && fx5d >= USDKRW_SURGE_PCT) {
       const fxRow = [
-        todayKST(), 'D', '환율(USDKRW)', '🔴',
+        nowKST(), 'D', '환율(USDKRW)', '🔴',
         `USDKRW 5일 저점 대비 +${fx5d}% 급등 — KRW 급약세 (현재 ${macro.USDKRW.value?.toFixed(2) ?? macro.USDKRW.value})`,
         `결정론 가드레일: 최근 5거래일 저점 대비 상승폭 ${fx5d}% ≥ ${USDKRW_SURGE_PCT}% — KRW 약세 급등 경보. 환노출 포지션 점검 필요.`,
         evidenceBase, '',
@@ -324,7 +324,7 @@ async function main() {
     const sp5d = macro.SP500?.drawdown5d;
     if (!DRY_RUN && sp5d != null && sp5d <= SP500_CRASH_PCT) {
       const spRow = [
-        todayKST(), 'D', '미증시(SP500)', '🔴',
+        nowKST(), 'D', '미증시(SP500)', '🔴',
         `SP500 5일 고점 대비 ${sp5d}% 급락 (현재 ${macro.SP500.value?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) ?? macro.SP500.value})`,
         `결정론 가드레일: 최근 5거래일 고점 대비 낙폭 ${sp5d}% ≤ ${SP500_CRASH_PCT}% — LLM 판단 무관 강제 경보. 미증시 급락 포지션 점검 필요.`,
         evidenceBase, '',
@@ -343,12 +343,12 @@ async function main() {
       if (!sigs.length) {
         console.log('   ✅ 거시 트리거 미발동 — 신호 없음. (기록은 남김: 🟢 정상)');
         await appendValues(token, `${RISK_SHEET}!A2`, [[
-          res.date || todayKST(), 'D', '포트폴리오 전체', '🟢',
+          res.date || nowKST(), 'D', '포트폴리오 전체', '🟢',
           '거시 트리거 미발동', '환율·금리·VIX·지수 정상 범위', evidenceBase, '',
         ]]);
       } else {
         const rows = sigs.map(s => [
-          res.date || todayKST(), 'D', s.target || '포트폴리오', s.signal || '🟡',
+          res.date || nowKST(), 'D', s.target || '포트폴리오', s.signal || '🟡',
           s.summary || '', s.detail || '', evidenceBase, '',
         ]);
         await appendValues(token, `${RISK_SHEET}!A2`, rows);
@@ -399,7 +399,7 @@ async function main() {
     } catch (e) { fetchErr = e; }
 
     if (fetchErr) {
-      const row = [todayKST(), 'B', h.name, '🟡', '데이터 조회 실패 — 수동 확인 필요',
+      const row = [nowKST(), 'B', h.name, '🟡', '데이터 조회 실패 — 수동 확인 필요',
         fetchErr.message, '{}', baseline ? baseline.date : '없음'];
       if (DRY_RUN) { console.log(`   🟡 ${h.name} 데이터 부족(dry-run): ${fetchErr.message}`); continue; }
       await appendValues(token, `${RISK_SHEET}!A2`, [row]);
@@ -427,7 +427,7 @@ async function main() {
         signal = '🟡';
         summary = `[가드레일 강제🟡: ${guardrails.join('·')}] ${summary}`;
       }
-      const row = [todayKST(), 'B', h.name, signal, summary, r.detail || '',
+      const row = [nowKST(), 'B', h.name, signal, summary, r.detail || '',
         JSON.stringify(facts), r.baseline_ref || (baseline ? baseline.date : '없음')];
       await appendValues(token, `${RISK_SHEET}!A2`, [row]);
       console.log(`   ${signal} ${h.name}: ${summary}`);
