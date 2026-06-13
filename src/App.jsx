@@ -387,7 +387,7 @@ export default function App() {
             <div style={{ fontSize: 11, color: "#9CA3AF", lineHeight: 1.5, marginBottom: 14 }}>
               {sheets.auth === 'error'
                 ? '시트 연결에 문제가 있어 데이터를 불러오지 못했습니다. 아래 0원 표시는 실제 잔액이 아닙니다.'
-                : '로그인하면 실제 포트폴리오가 표시됩니다. 아래 0원은 로그인 전 빈 화면입니다.'}
+                : '로그인하면 실제 포트폴리오가 표시됩니다.'}
             </div>
             <button onClick={sheets.signIn} style={{
               padding: "10px 24px", borderRadius: 8, border: "1px solid #3B82F6",

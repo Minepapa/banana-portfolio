@@ -41,7 +41,7 @@ function JobStatusPanel({ jobStatus }) {
   return (
     <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16 }}>
       <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 4 }}>무인 잡 상태</div>
-      <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 12 }}>최근 실행 시각 (잡이 마지막으로 점검·실행된 때 · 실제 발행/적재 시각 아님)</div>
+      <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 12 }}>최근 실행 시간(마지막 점검/실행 시간, 실제 발행/적재 시간 아님)</div>
       {ordered.map((key, i, arr) => {
         const j = byJob.get(key);
         const problem = problemByJob.get(key);
