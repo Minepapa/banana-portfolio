@@ -18,6 +18,8 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
   const conviction = held.filter(p => p.kind === '확신').sort(byAlert);
   const alloc = held.filter(p => p.kind !== '확신').sort(byAlert);
   const pending = held.filter(p => p.confirm !== '확인').length;
+  // 논리 점검(risk-b)은 보유종목을 한 배치로 점검하므로, B신호 최신 날짜 = 일괄 점검일.
+  const lastChecked = (riskMonitor || []).filter(r => r.type === 'B').reduce((mx, r) => (r.date > mx ? r.date : mx), '');
 
   const kindBadge = (kind) => (
     <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
@@ -187,7 +189,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
 
   return (
     <div>
-      <SectionTitle color="#52C8D4" mb={14} sub="거래 생애주기 투자논리 관리">포지션</SectionTitle>
+      <SectionTitle color="#52C8D4" mb={14} sub={`거래 생애주기 투자논리 관리${lastChecked ? ` · 최근 논리 점검 ${lastChecked}` : ''}`}>포지션</SectionTitle>
       {positionJournal.length === 0 ? (
         <div style={{ textAlign: 'center', color: '#8A9AB5', fontSize: 12, padding: '40px 0' }}>
           {sheets.auth === 'signed-in' ? '포지션이 비어있습니다' : '로그인하면 투자논리가 표시됩니다'}

@@ -12,8 +12,20 @@ const JOB_LABELS = {
   'report-sync': '주간 리포트',
   'journal-sync': '포지션 저널',
   'backup': '시트 백업',
+  'baseline': '펀더멘털 기준선',
 };
-const JOB_ORDER = ['parse-notifications', 'drain', 'journal-sync', 'risk-d', 'risk-b', 'report-sync', 'backup'];
+// 각 잡의 무인 실행 주기(launchd plist 기준) — 표에 배지로 노출
+const JOB_INTERVALS = {
+  'parse-notifications': '15분',
+  'drain': '3시간',
+  'journal-sync': '매일 16:00',
+  'risk-d': '평일 16:30',
+  'risk-b': '주간 월 07:10',
+  'report-sync': '매일 09:00',
+  'backup': '매일 03:00',
+  'baseline': '분기 4회',
+};
+const JOB_ORDER = ['parse-notifications', 'drain', 'journal-sync', 'risk-d', 'risk-b', 'report-sync', 'backup', 'baseline'];
 
 function JobStatusPanel({ jobStatus }) {
   if (!jobStatus) return null;
@@ -39,7 +51,10 @@ function JobStatusPanel({ jobStatus }) {
         const when = problem === 'missing' ? '기록 없음' : isFinite(tsMs) ? relTime(new Date(tsMs)) : (j?.lastRun || '–');
         return (
           <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none' }}>
-            <span style={{ fontSize: 12, color: '#9CA3AF' }}>{JOB_LABELS[key] || key}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+              <span style={{ fontSize: 12, color: '#9CA3AF' }}>{JOB_LABELS[key] || key}</span>
+              {JOB_INTERVALS[key] && <span style={{ fontSize: 9, color: '#5A6478', border: '1px solid #2A2F3E', borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap' }}>{JOB_INTERVALS[key]}</span>}
+            </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {j?.durationSec && <span style={{ fontSize: 9, color: '#3A4050' }}>{j.durationSec}s</span>}
               <span style={{ fontSize: 12, color: '#8A9AB5' }}>{when}</span>

@@ -38,7 +38,8 @@ export default function RiskTab({ riskMonitor, baselines }) {
   latest.sort((a, b) => sigLevel(b.signal) - sigLevel(a.signal));
   const counts = { red: 0, amber: 0, green: 0 };
   latest.forEach(r => { const l = sigLevel(r.signal); if (l === 3) counts.red++; else if (l === 2) counts.amber++; else counts.green++; });
-  const lastUpdated = riskMonitor[0]?.date || '—';
+  // 최신 점검일 — 행 순서에 의존하지 않게 실제 최대 날짜로 계산.
+  const lastUpdated = riskMonitor.reduce((mx, r) => (r.date > mx ? r.date : mx), '') || '—';
 
   const renderEvidence = (ev) => {
     if (!ev) return null;
