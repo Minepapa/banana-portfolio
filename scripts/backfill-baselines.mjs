@@ -23,10 +23,10 @@ import {
   readHoldings, todayKST,
 } from './lib/sheets-common.mjs';
 import { fetchKrFundamentals, fetchUsFundamentals } from './lib/fundamentals.mjs';
-import { krCorpCode, usTicker } from './lib/instruments.mjs';
+import { krCorpCode, usTicker, krStockCode } from './lib/instruments.mjs';
 
 const BASELINE_SHEET = '리스크기준선';
-const BASELINE_HEADER = ['종목', '티커', '시장', '기준일', '매출총이익률', '영업이익률', 'ROE', '부채비율', 'EPS', '비고'];
+const BASELINE_HEADER = ['종목', '티커', '시장', '기준일', '매출총이익률', '영업이익률', 'ROE', '부채비율', 'EPS', 'PBR', '비고'];
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
@@ -48,6 +48,8 @@ async function main() {
   } else console.log('✓ 토큰 인수 사용');
 
   await ensureSheet(token, BASELINE_SHEET, BASELINE_HEADER);
+  // ensureSheet는 신규 탭만 헤더를 씀 — 기존 탭도 스키마 변경 시 갱신.
+  await setValues(token, `${BASELINE_SHEET}!A1`, [BASELINE_HEADER]);
 
   const holdings = await readHoldings(token);
 
@@ -78,7 +80,8 @@ async function main() {
       if (h.market === 'KR') {
         const code = krCorpCode(h.name);
         if (!code) throw new Error(`corp_code 미해결: ${h.name}`);
-        f = await fetchKrFundamentals(code); ticker = code;
+        const sc = krStockCode(h.name);
+        f = await fetchKrFundamentals(code, undefined, undefined, sc); ticker = code;
       } else {
         const tk = usTicker(h.name);
         if (!tk) throw new Error(`US 티커 미등록: ${h.name}`);
@@ -87,16 +90,18 @@ async function main() {
       const row = [
         h.name, ticker, h.market, todayKST(),
         pct(f.grossMargin), pct(f.opMargin), pct(f.roe), pct(f.debtRatio),
-        f.eps ?? '데이터 부족', f.source,
+        f.eps ?? '데이터 부족',
+        f.pbr != null ? String(f.pbr) : '데이터 부족',
+        f.source,
       ];
       const existingRow = existingRowMap.get(h.name);
       if (existingRow) {
         // 기존 행 제자리 업데이트 (중복 방지)
-        await setValues(token, `${BASELINE_SHEET}!A${existingRow}:J${existingRow}`, [row]);
+        await setValues(token, `${BASELINE_SHEET}!A${existingRow}:K${existingRow}`, [row]);
       } else {
         await appendValues(token, `${BASELINE_SHEET}!A2`, [row]);
       }
-      console.log(`   ✅ ${existingRow ? '갱신' : '신규'}: 매총이 ${pct(f.grossMargin)} · 영익률 ${pct(f.opMargin)} · ROE ${pct(f.roe)} · 부채 ${pct(f.debtRatio)}`);
+      console.log(`   ✅ ${existingRow ? '갱신' : '신규'}: 매총이 ${pct(f.grossMargin)} · 영익률 ${pct(f.opMargin)} · ROE ${pct(f.roe)} · 부채 ${pct(f.debtRatio)} · PBR ${f.pbr ?? '데이터 부족'}`);
       ok++;
     } catch (e) {
       console.error(`   ❌ 실패: ${e.message}`);

@@ -109,7 +109,7 @@ async function dartWithFallback(path, corpCode, period, extra, apiKey) {
 
 const REPRT_LABEL = { 11011: '사업보고서', 11013: '1분기보고서', 11012: '반기보고서', 11014: '3분기보고서' };
 
-export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = process.env.DART_API_KEY) {
+export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = process.env.DART_API_KEY, stockCode = null) {
   if (!apiKey) throw new Error('DART_API_KEY 미설정');
   const period = reprtCodeForDate(now);
   const cur = await dartWithFallback('fnlttSinglAcnt.json', corpCode, period, {}, apiKey);
@@ -146,6 +146,15 @@ export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = p
   const ttmRoe = computeRoe(ttmNet, a.equity.prev); // 기초자본 = BS frmtrm(직전 사업연도말)
   if (ttmRoe != null) ratios.roe = ttmRoe;          // TTM 불가 시 OpenDart 분기 ROE 유지(폴백)
 
+  // PBR: yfinance marketCap(.KS/.KQ) ÷ OpenDart equity. pykrx는 KRX 로그인 요구로 헤드리스 불가.
+  let pbr = null;
+  if (stockCode) {
+    try {
+      const mkt = fetchKrMarketData(stockCode);
+      pbr = mkt?.pbr ?? computePbr(mkt?.marketCap, a.equity.curr);
+    } catch { /* PBR 조회 실패 시 null 유지 */ }
+  }
+
   return {
     market: 'KR',
     source: `OpenDart ${cur.period.bsnsYear} ${REPRT_LABEL[cur.period.reprtCode]}(연결)${cur.fellBack ? ' (분기 미공시 폴백)' : ''}`,
@@ -154,9 +163,9 @@ export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = p
     opYoYCurr: computeYoY(a.opIncome.curr, a.opIncome.prev),
     opYoYPrev: pa ? computeYoY(pa.opIncome.curr, pa.opIncome.prev) : null,
     netIncomeYoY: computeYoY(a.netIncome.curr, a.netIncome.prev),
-    equity: a.equity.curr,   // 자본총계(당기말) — eval-facts에서 PBR(=시총/자기자본) 계산용
-    operCf: a.operCf?.curr,  // 영업활동현금흐름 — eval-facts KR FCF yield 폴백(yfinance .KS freeCashflow 미제공 보강)
-    ...ratios, eps: null,
+    equity: a.equity.curr,
+    operCf: a.operCf?.curr,
+    ...ratios, eps: null, pbr,
   };
 }
 

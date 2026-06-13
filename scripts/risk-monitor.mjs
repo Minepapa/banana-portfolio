@@ -30,7 +30,7 @@ import {
   sendTelegram, setValues, clearValues,
 } from './lib/sheets-common.mjs';
 import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators } from './lib/fundamentals.mjs';
-import { krCorpCode, usTicker } from './lib/instruments.mjs';
+import { krCorpCode, usTicker, krStockCode } from './lib/instruments.mjs';
 
 const RISK_SHEET = '리스크모니터';
 const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세', '근거데이터', '기준선참조'];
@@ -129,7 +129,7 @@ function fmtMacro(key, o) {
 function buildLogicPrompt(h, facts, guardrails, baseline, buyCard) {
   const baseLine = baseline
     ? `[저장된 기준선 (${baseline.date})]
-매출총이익률 ${baseline.gross_margin} · 영업이익률 ${baseline.operating_margin} · ROE ${baseline.roe} · 부채비율 ${baseline.debt_ratio} · EPS ${baseline.eps}
+매출총이익률 ${baseline.gross_margin} · 영업이익률 ${baseline.operating_margin} · ROE ${baseline.roe} · 부채비율 ${baseline.debt_ratio} · EPS ${baseline.eps} · PBR ${baseline.pbr || '데이터 부족'}
 (${baseline.note || ''})`
     : '[저장된 기준선] 없음 — 주입된 펀더멘털만으로 절대 평가';
   const cardLine = buyCard
@@ -190,7 +190,7 @@ function baselineMap(rows) {
     m.set(name, {
       name, ticker: r[1], market: r[2], date: r[3],
       gross_margin: r[4], operating_margin: r[5], roe: r[6],
-      debt_ratio: r[7], eps: r[8], note: r[9],
+      debt_ratio: r[7], eps: r[8], pbr: r[9], note: r[10],
     });
   }
   return m;
@@ -390,7 +390,8 @@ async function main() {
       if (h.market === 'KR') {
         const code = krCorpCode(h.name);
         if (!code) throw new Error(`corp_code 미해결: ${h.name}`);
-        facts = await fetchKrFundamentals(code);
+        const sc = krStockCode(h.name);
+        facts = await fetchKrFundamentals(code, undefined, undefined, sc);
       } else {
         const tk = usTicker(h.name);
         if (!tk) throw new Error(`US 티커 미등록: ${h.name} — instruments.mjs US_MAP에 추가 필요`);
