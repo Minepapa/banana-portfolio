@@ -173,7 +173,8 @@ export function fetchUsFundamentals(ticker) {
   const py = new URL('./yf-fundamentals.py', import.meta.url).pathname;
   const r = spawnSync('python3', [py, ticker], { encoding: 'utf8', timeout: 120000 });
   if (r.status !== 0) throw new Error(`yfinance 실패: ${(r.stderr || '').slice(-200)}`);
-  return { market: 'US', revenue: null, opIncome: null, netIncomeYoY: null, ...JSON.parse(r.stdout) };
+  const d = JSON.parse(r.stdout);
+  return { market: 'US', revenue: null, opIncome: null, netIncomeYoY: null, ...d, pbr: d.pbr ?? null };
 }
 
 // 시세·밸류에이션 (KR/US 공통, yfinance). yahooTicker: US='AAPL', KR='005930.KS'.
