@@ -18,18 +18,20 @@
 
 import {
   loadEnv, getToken, hasServiceAccount, getRange, appendValues, ensureSheet,
-  readHoldings, runHeadlessClaude, nowKST, todayKST, sendTelegram, setValues,
+  readHoldings, runHeadlessClaude, nowKST, todayKST, sendTelegram, setValues, parseJsonBlock,
 } from './lib/sheets-common.mjs';
 import {
   fetchKrFundamentals, fetchUsFundamentals, fetchKrMarketData, fetchMarketData, fetchMacroIndicators,
 } from './lib/fundamentals.mjs';
 import { krCorpCode, usTicker, krStockCode } from './lib/instruments.mjs';
 import { buildReportFacts } from './lib/report-facts.mjs';
+import { buildBehaviorSignals } from './lib/behavior-signals.mjs';
 import { extractSummary } from './sync-reports.mjs';
 import { writeFileSync, readdirSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const PROFILE = new URL('../profile/investor-profile.md', import.meta.url).pathname;
+const OBSERVED = new URL('../profile/observed-behavior.md', import.meta.url).pathname;
 const REPORTS_DIR = new URL('../reports/', import.meta.url).pathname;
 const REPORT_SHEET = '주간리포트';
 const REPORT_HEADER = ['날짜', '요약', '본문'];
@@ -93,7 +95,9 @@ async function sheetValueMap(token) {
 function buildReportPrompt(factsText, asof) {
   return `[주간 자산 리포트 작성 — ${asof}] Frank를 위한 **맞춤형** 주간 자산 분석 리포트를 작성해줘.
 
-먼저 \`${PROFILE}\` 파일을 Read 로 읽어. 이 리포트는 그냥 시장 요약이 아니라 **Frank의 성향·계좌 구조를 아는 분석가가 쓰는 1:1 코칭 리포트**다.
+먼저 \`${PROFILE}\` 파일(명시 성향)과 \`${OBSERVED}\` 파일(실제 행동에서 학습된 성향)을 Read 로 읽어.
+이 리포트는 그냥 시장 요약이 아니라 **Frank의 성향·계좌 구조를 아는 분석가가 쓰는 1:1 코칭 리포트**다.
+명시 성향과 학습된 관찰(특히 '확정'·'§3 승격 후보')이 다르면 **드러난 행동(학습 관찰)을 우선**해 분석하라.
 
 [검증된 facts — 시스템이 yfinance·OpenDart·시트에서 직접 조회·계산한 값. 이 수치만 사용.
  재조회·재계산·추정 금지. "데이터 부족"은 그대로 두고 지어내지 말 것.]
@@ -162,6 +166,52 @@ ${factsText}
 설명·머리말 없이 위 마크다운 리포트 본문만 출력. 첫 줄은 반드시 \`# 주간 자산 종합 점검\`.`;
 }
 
+// 성향 관찰 추출 프롬프트 — 결정론 행동 신호를 §3·직전 로그와 대조해 관찰(JSON)만 뽑는다.
+function buildObservationPrompt(signalsText) {
+  return `[성향 관찰 추출] Frank의 이번 주 실제 행동 신호를 보고, 명시 성향과 비교해 "드러난 성향 관찰"을 뽑아줘.
+
+먼저 \`${PROFILE}\` (§3 명시 성향)와 \`${OBSERVED}\` (직전 관찰 로그)를 Read.
+
+[결정론 행동 신호 — 시스템이 체결·평가·저널에서 산출. 이 사실만 근거로 쓸 것. 추정·날조 금지.]
+${signalsText}
+
+규칙:
+- **증거가 있는 관찰만**. 신호에 없는 내용은 만들지 말 것. 뚜렷한 게 없으면 빈 배열.
+- 각 관찰은 명시 성향(§3)과 대조: "일치(보강)" / "신규" / "상충".
+- 직전 로그에 같은 관찰이 이미 여러 번 있으면 promote=true(§3 승격 후보).
+- 최대 3개. 사소한 건 버리고 의미 있는 것만.
+
+출력: 설명 없이 \`\`\`json 배열 하나만.
+\`\`\`json
+[
+  {"type":"매도 타이밍","observation":"과열 구간 부분 익절 실행","evidence":"체결 2026-06-12 SK하이닉스 5주 @2,280,000 +14%","vsProfile":"일치(보강)","confidence":"높음","promote":false}
+]
+\`\`\``;
+}
+
+// 관찰 JSON → 로그 마크다운 블록. observed-behavior.md "## 관찰 기록" 아래에 최신이 위로 삽입.
+function appendObservations(asof, observations) {
+  if (!observations?.length) return 0;
+  const block = [`## ${asof}`];
+  for (const o of observations) {
+    const promote = o.promote || /상충/.test(o.vsProfile || '');
+    block.push(`- 신호유형: ${o.type || '기타'}`);
+    block.push(`- 관찰: ${o.observation || ''}`);
+    block.push(`- 증거: ${o.evidence || ''}`);
+    block.push(`- §3 대비: ${o.vsProfile || '신규'}${/상충/.test(o.vsProfile || '') ? ' ⚑' : ''}`);
+    block.push(`- 신뢰도: ${o.confidence || '보통'}`);
+    block.push(`- 상태: ${promote ? '§3 승격 후보 ⚑' : '관찰'}`);
+    block.push('');
+  }
+  const md = readFileSync(OBSERVED, 'utf8');
+  const marker = '## 관찰 기록';
+  const idx = md.indexOf(marker);
+  const insertAt = idx >= 0 ? md.indexOf('\n', md.indexOf('-->', idx)) + 1 : md.length;
+  const next = md.slice(0, insertAt) + '\n' + block.join('\n') + md.slice(insertAt);
+  writeFileSync(OBSERVED, next, 'utf8');
+  return observations.length;
+}
+
 async function main() {
   console.log('📰 주간 리포트 발행 (결정론 facts → claude -p 서술)');
   if (DRY_RUN) console.log('   (--dry-run: facts·프롬프트만 출력)');
@@ -215,25 +265,28 @@ async function main() {
     }
   }
 
-  // ④ 시트 데이터 (리스크·기준선·노트·체결·배당)
-  const [riskRows, baselineRows, noteRows, tradeRows, dividendRows] = await Promise.all([
+  // ④ 시트 데이터 (리스크·기준선·노트·체결·배당·포지션저널)
+  const [riskRows, baselineRows, noteRows, tradeRows, dividendRows, journalRows] = await Promise.all([
     getRange(token, '리스크모니터!A2:H').catch(() => []),
     getRange(token, '리스크기준선!A2:J').catch(() => []),
     getRange(token, '종목투자노트!A2:U').catch(() => []),
     getRange(token, '체결내역!A2:M').catch(() => []),
     getRange(token, '배당금!A2:C').catch(() => []),
+    getRange(token, '포지션저널!A2:P').catch(() => []),
   ]);
   const prevReport = loadPrevReport(asof);
 
-  // ⑤ facts 조립
+  // ⑤ facts 조립 + 행동 신호(성향 학습용) 산출
   const { facts, factsText } = buildReportFacts({
     asof, weekStart, holdings, macro, sheetByName, marketByName, fundByName,
     riskRows, baselineRows, noteRows, tradeRows, dividendRows, prevReport,
   });
+  const { signalsText } = buildBehaviorSignals({ asof, weekStart, tradeRows, noteRows, journalRows, riskRows });
 
   const prompt = buildReportPrompt(factsText, asof);
   if (DRY_RUN) {
     console.log('\n┌─── FACTS ───┐\n' + factsText + '\n└─────────────┘');
+    console.log('\n┌─── 행동 신호(성향 학습) ───┐\n' + signalsText + '\n└─────────────┘');
     console.log('\n┌─── PROMPT ───┐\n' + prompt + '\n└──────────────┘');
     console.log(`\n총 평가액: ${facts.totalEval != null ? Math.round(facts.totalEval).toLocaleString('en-US') + '원' : '데이터 부족'}`);
     return;
@@ -275,6 +328,15 @@ async function main() {
       console.log('   📲 텔레그램 요약 푸시');
     } catch (e) { console.error(`   ⚠️ 텔레그램 실패: ${e.message}`); }
   }
+
+  // ⑩ 성향 학습 — 행동 신호를 §3·직전 로그와 대조해 관찰 추출(sonnet) → observed-behavior.md append.
+  //    리포트 본문(opus)과 분리. 실패해도 리포트 발행은 성공 처리.
+  try {
+    console.log('\n⏳ 성향 관찰 추출 중 (claude -p sonnet)...');
+    const obs = parseJsonBlock(await runHeadlessClaude(buildObservationPrompt(signalsText), 'sonnet', 'Read'));
+    const n = appendObservations(asof, Array.isArray(obs) ? obs : []);
+    console.log(n ? `   🧠 성향 관찰 ${n}건 기록 (observed-behavior.md)` : '   🧠 이번 주 뚜렷한 성향 관찰 없음');
+  } catch (e) { console.error(`   ⚠️ 성향 관찰 단계 실패(리포트는 정상): ${e.message}`); }
 
   console.log('\n🏁 주간 리포트 발행 완료');
 }
