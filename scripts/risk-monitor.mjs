@@ -6,7 +6,7 @@
  *   --mode=B (주1회): 보유종목별 펀더멘털을 재조회해 저장된 기준선/매수논리 대비 "논리 훼손" 판단.
  *                     가드레일: 영업이익 YoY 2분기 연속 감소·가이던스 하향·FCF 적자전환·부채 급증은
  *                     강제 🟡 이상. 단순 가격 과열(52주/RSI)은 단독 신호로 쓰지 않음(Frank 철학).
- *   --mode=D (매일): USDKRW·미10년물·VIX·KOSPI·S&P 조회 → Trading Agent CLAUDE.md 거시 트리거 대조
+ *   --mode=D (매일): USDKRW·미10년물·VIX·KOSPI·S&P 조회 → profile/investor-profile.md §4 거시 트리거 대조
  *                    → Frank 보유 포지션/자산군에 연결된 영향만 산출.
  *
  * `리스크모니터` 스키마(8열):

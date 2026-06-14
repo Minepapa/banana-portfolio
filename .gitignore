@@ -38,6 +38,7 @@ scripts/.cache/
 # 발행된 주간 리포트(실제 잔고 포함)·투자 성향 프로필(재무 정보) — 비공개
 reports/
 profile/
-# 평가 playbook·학습 모듈(개인 투자 전략·KPI 실적 포함) — Trading Agent에서 이전, 로컬 전용
+# 평가 playbook·학습 모듈·에이전트 스킬(개인 투자 전략·KPI·자기개선 루프) — Trading Agent에서 이전, 로컬 전용
 playbooks/
 learning/
+skills/
