@@ -10,7 +10,7 @@
  *   node scripts/kpi-calc.mjs                  # 자동 OAuth + 콘솔 출력
  *   node scripts/kpi-calc.mjs <TOKEN>
  *
- * 출력: 마크다운 표 (Trading Agent/kpi_baseline.md §2-§4의 TODO 영역에 복사)
+ * 출력: 마크다운 표 (profile/kpi_baseline.md (banana) §2-§4의 TODO 영역에 복사)
  */
 
 import { createServer } from 'http';
@@ -300,7 +300,7 @@ async function main() {
   });
 
   console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('✅ 완료. Trading Agent/kpi_baseline.md §2~§4 TODO 영역에 위 표를 복사하세요.');
+  console.log('✅ 완료. profile/kpi_baseline.md (banana) §2~§4 TODO 영역에 위 표를 복사하세요.');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 }
 

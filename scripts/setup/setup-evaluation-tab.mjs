@@ -1,7 +1,7 @@
 /**
  * 종목투자노트 탭 셋업 — AI 능동 평가 카드 적재용 스키마
  *
- * 단일 출처: Trading Agent/playbooks/active-evaluation.md §6 (컬럼 A~T)
+ * 단일 출처: playbooks/active-evaluation.md (banana) §6 (컬럼 A~T)
  *
  * 사용법:
  *   node scripts/setup-evaluation-tab.mjs                  # 자동 OAuth + 안전 모드

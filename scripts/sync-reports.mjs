@@ -23,7 +23,9 @@ import { getToken, getRange, appendValues, ensureSheet } from './lib/sheets-comm
 
 const REPORT_SHEET = '주간리포트';
 const REPORT_HEADER = ['날짜', '요약', '본문'];
-const REPORT_DIR = process.env.TRADING_AGENT_DIR || '/Users/huinique/Claude/Agent/Trading Agent';
+// 리포트 발행처를 banana로 이전(2026-06-14) → 기본 스캔 위치도 banana reports/.
+// 과거 Trading Agent 리포트는 이미 시트에 적재됨. 필요 시 REPORT_DIR 환경변수로 재지정.
+const REPORT_DIR = process.env.REPORT_DIR || new URL('../reports/', import.meta.url).pathname;
 const FILE_RE = /^weekly_report_(\d{4})(\d{2})(\d{2})\.md$/;
 
 const args = process.argv.slice(2);
@@ -33,7 +35,7 @@ const DRY_RUN = args.includes('--dry-run');
 // 리포트 본문에서 요약 200자 추출.
 // 1) 명시적 "> 요약: ..." / "**요약**: ..." 라인 우선
 // 2) 없으면 제목·인용·구분선·헤더·표를 제거한 첫 의미 문단 200자
-function extractSummary(md) {
+export function extractSummary(md) {
   const explicit = md.match(/^[>\s]*\*{0,2}\s*요약\s*[:：]\s*(.+)$/m);
   if (explicit) return explicit[1].trim().slice(0, 200);
   const body = md.split('\n')
@@ -71,4 +73,8 @@ async function main() {
   console.log(DRY_RUN ? '\n(드라이런 — 실제 적재 안 함)' : `\n✅ ${missing.length}건 적재 완료`);
 }
 
-main().catch(e => { console.error('\n❌ 오류:', e.message); process.exit(1); });
+// 직접 실행 시에만 main() 구동 — 다른 스크립트가 extractSummary를 import할 때 부작용 방지.
+import { fileURLToPath } from 'node:url';
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch(e => { console.error('\n❌ 오류:', e.message); process.exit(1); });
+}

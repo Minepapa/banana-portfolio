@@ -35,7 +35,8 @@ import { krCorpCode, usTicker, krStockCode } from './lib/instruments.mjs';
 const RISK_SHEET = '리스크모니터';
 const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세', '근거데이터', '기준선참조'];
 const BASELINE_SHEET = '리스크기준선';
-const HUB_CLAUDE = '/Users/huinique/Claude/Agent/Trading Agent/CLAUDE.md';
+// 투자 성향 정본 — Trading Agent Hub에서 이전(2026-06-14). 거시 트리거(§4)·계좌배분(§2)이 여기 있음.
+const HUB_CLAUDE = new URL('../profile/investor-profile.md', import.meta.url).pathname;
 const KOSPI_CRASH_PCT = -10;  // KOSPI 5일 고점 대비 낙폭 임계 — 이하면 LLM 판단 무관 🔴 강제 푸시
 const USDKRW_SURGE_PCT = 3;   // USDKRW 5일 저점 대비 상승 임계 — KRW 급약세 결정론 경보
 const SP500_CRASH_PCT = -7;   // SP500 5일 고점 대비 낙폭 임계 — 미증시 급락 결정론 경보

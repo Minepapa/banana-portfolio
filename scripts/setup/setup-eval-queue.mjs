@@ -4,7 +4,7 @@
  * 흐름:
  *   1. 모바일 banana-portfolio "평가 의뢰" → 이 탭에 한 줄 append
  *   2. Frank가 Claude Pro에 "평가요청 처리해줘" 한 줄 명령
- *      → Trading Agent/playbooks/queue-evaluation.md 따라 처리
+ *      → playbooks/queue-evaluation.md (banana) 따라 처리
  *   3. 결과는 종목투자노트 탭에 적재 + 본 탭 상태=완료
  *
  * 사용법:
@@ -241,7 +241,7 @@ async function main() {
   console.log('다음 단계:');
   console.log('  1. banana-portfolio 평가 탭에서 "+ 평가 의뢰" → 큐에 던지기');
   console.log('  2. Claude Pro에 "평가요청 시트 처리해줘" 한 줄 명령');
-  console.log('     → Trading Agent/playbooks/queue-evaluation.md 따라 처리');
+  console.log('     → playbooks/queue-evaluation.md (banana) 따라 처리');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 }
 

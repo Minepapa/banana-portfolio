@@ -27,6 +27,8 @@ import { buildEvalFacts } from './lib/eval-facts.mjs';
 
 const CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
 const SHEET_ID  = '1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg';
+// 평가 playbook 정본 — Trading Agent에서 이전(2026-06-14). banana 내 로컬 디렉토리.
+const PLAYBOOKS = new URL('../playbooks/', import.meta.url).pathname;
 const SCOPE     = 'https://www.googleapis.com/auth/spreadsheets';
 const REDIRECT  = 'http://localhost:8085/callback';
 const AUTH_TIMEOUT_MS = 120_000;
@@ -421,7 +423,7 @@ axisItems는 위 값을 그대로 옮기고, 데이터 부족 항목만 "(데이
 ⚠️ 검증된 펀더멘털을 산출하지 못했습니다. 모든 수치 항목을 "(데이터 부족)"으로 표기하고
 정성적 판단만 하세요. 숫자를 추정하지 마세요.`;
 
-  return `다음 종목을 5축 평가해줘 (Trading Agent/playbooks/active-evaluation.md 따라):
+  return `다음 종목을 5축 평가해줘 (${PLAYBOOKS}active-evaluation.md 따라):
 
 종목: ${sanitizeField(entry.name, 60)}
 시장: ${market}${memo}

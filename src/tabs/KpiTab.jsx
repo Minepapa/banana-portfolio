@@ -9,7 +9,8 @@ const JOB_LABELS = {
   'drain': '평가 큐 처리',
   'risk-d': '리스크 D (거시)',
   'risk-b': '리스크 B (논리)',
-  'report-sync': '주간 리포트',
+  'weekly-report': '주간 리포트 발행',
+  'report-sync': '리포트 적재(보충)',
   'journal-sync': '포지션 저널',
   'backup': '시트 백업',
   'baseline': '펀더멘털 기준선',
@@ -21,11 +22,12 @@ const JOB_INTERVALS = {
   'journal-sync': '매일 16:00',
   'risk-d': '평일 16:30',
   'risk-b': '주간 월 07:00',
+  'weekly-report': '일요일 08:00',
   'report-sync': '매일 09:00',
   'backup': '매일 05:00',
   'baseline': '분기 4회',
 };
-const JOB_ORDER = ['parse-notifications', 'drain', 'journal-sync', 'risk-d', 'risk-b', 'report-sync', 'backup', 'baseline'];
+const JOB_ORDER = ['parse-notifications', 'drain', 'journal-sync', 'risk-d', 'risk-b', 'weekly-report', 'report-sync', 'backup', 'baseline'];
 
 function JobStatusPanel({ jobStatus }) {
   if (!jobStatus) return null;

@@ -193,6 +193,10 @@ export function fetchMarketData(yahooTicker) {
     fcfYield: computeFcfYield(d.freeCashflow, d.marketCap),
     payoutRatio: d.payoutRatio != null ? Math.round(d.payoutRatio * 1000) / 10 : null,
     marketCap: Number.isFinite(d.marketCap) ? d.marketCap : null,  // PBR 폴백 계산용(시총/자기자본)
+    currentPrice: Number.isFinite(d.currentPrice) ? d.currentPrice : null,  // 주간리포트 평가액·주간수익률 산출용
+    weekChange: computeMacroChange(d.closes)?.change5d ?? null,             // 5거래일(주간) 가격 등락률 %
+    high52w: Number.isFinite(d.fiftyTwoWeekHigh) ? d.fiftyTwoWeekHigh : null,
+    low52w: Number.isFinite(d.fiftyTwoWeekLow) ? d.fiftyTwoWeekLow : null,
     source: `yfinance ${yahooTicker}`,
   };
 }
@@ -311,7 +315,10 @@ export function fetchNaverIndexCloses(symbol = 'KOSPI', startYmd, endYmd) {
   return parseNaverSise(r.stdout);
 }
 
-export const MACRO_TICKERS = { USDKRW: 'KRW=X', TNX: '^TNX', VIX: '^VIX', KOSPI: '^KS11', SP500: '^GSPC' };
+export const MACRO_TICKERS = {
+  USDKRW: 'KRW=X', TNX: '^TNX', VIX: '^VIX', KOSPI: '^KS11', SP500: '^GSPC',
+  KOSDAQ: '^KQ11', NASDAQ: '^IXIC', GOLD: 'GC=F', WTI: 'CL=F',  // 주간리포트 §1 외부변수 결정론화
+};
 
 export function fetchMacroIndicators() {
   const py = new URL('./yf-macro.py', import.meta.url).pathname;
@@ -337,5 +344,9 @@ export function fetchMacroIndicators() {
   // TNX·VIX: 출처 표기(임계 설정 어려워 LLM 판단 위임, 가시화만).
   out.TNX.source = (raw['^TNX'] || []).length ? 'yfinance' : '데이터없음';
   out.VIX.source = (raw['^VIX'] || []).length ? 'yfinance' : '데이터없음';
+  // 주간리포트 §1 외부변수(가시화·판단 위임). KOSDAQ·나스닥·금·WTI 모두 yfinance.
+  for (const [key, tk] of [['KOSDAQ', '^KQ11'], ['NASDAQ', '^IXIC'], ['GOLD', 'GC=F'], ['WTI', 'CL=F']]) {
+    if (out[key]) out[key].source = (raw[tk] || []).length ? 'yfinance' : '데이터없음';
+  }
   return out;
 }

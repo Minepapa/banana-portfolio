@@ -23,7 +23,7 @@ export const SHEET_RANGES = {
 
 export const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
 // 잡 헬스 배너용 — 잡별 최대 허용 무갱신 시간(시간). 주말 갭 고려해 risk 류는 넉넉히.
-export const JOB_CADENCE = { 'parse-notifications': 1, drain: 6, 'risk-d': 80, 'risk-b': 200 };
+export const JOB_CADENCE = { 'parse-notifications': 1, drain: 6, 'risk-d': 80, 'risk-b': 200, 'weekly-report': 200 };
 
 // 체결내역 A~M 컬럼 레이블
 export const CHEOL_COLS = [
@@ -68,7 +68,7 @@ export const COLORS = {
   현금성: "#8A93A6",
 };
 
-// ── 학습 모듈 + AI 능동 평가 (Trading Agent/learning/ 참조) ─────────────────
+// ── 학습 모듈 + AI 능동 평가 (banana learning/ 참조 — 2026-06-14 이전) ─────────────────
 export const LEARNING_MODULES = {
   // 수익성
   revenue_growth:   { title: '매출성장률 YoY', summary: '작년 같은 분기 대비 매출이 몇 % 늘었나. 회사의 외형 성장 속도. 마진과 함께 봐야 의미 있음.', threshold: 'Frank 확정: 10%+ 3년 유지면 성장주로 분류. 마진 동시 상승이면 강력.' },
