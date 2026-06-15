@@ -45,11 +45,13 @@ export function useGoogleSheets(onData) {
           dividends: parsed.dividends,
           profits: parsed.profits,
           evaluations: parsed.evaluations,
+          evalQueue: parsed.evalQueue,
           weeklyReports: parsed.weeklyReports,
           riskMonitor: parsed.riskMonitor,
           baselines: parsed.baselines,
           positionJournal: parsed.positionJournal,
           usdRate: parsed.usdRate,
+          preferences: parsed.preferences,
         });
       }
       const now = new Date();
