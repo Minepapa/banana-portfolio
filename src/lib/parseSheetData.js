@@ -225,6 +225,27 @@ function parsePositionJournal(vr) {
   return list.sort((a, b) => (a.status === '청산' ? 1 : 0) - (b.status === '청산' ? 1 : 0));
 }
 
+// 성향관찰 파서 (날짜,신호유형,관찰,증거,§3대비,신뢰도,상태,갱신시각) → 최신순.
+// 행동 학습 로그 — 앱 성향확인 탭이 표시·확정/기각. rowIndex로 G(상태)·H(갱신) writeback.
+function parsePreferences(vr) {
+  const rows = vr?.values ?? [];
+  return rows.map((r, idx) => {
+    const observation = String(r[2] ?? '').trim();
+    if (!observation) return null;
+    return {
+      rowIndex: idx,                                  // 시트 행 = idx + 2 (A2 기준)
+      date:       String(r[0] ?? '').trim(),
+      type:       String(r[1] ?? '').trim(),          // 신호유형
+      observation,
+      evidence:   String(r[3] ?? '').trim(),          // 근거(체결·평가·저널·발화)
+      vsProfile:  String(r[4] ?? '').trim(),          // 일치(보강) | 신규 | 상충
+      confidence: String(r[5] ?? '').trim(),          // 높음 | 보통 | 낮음
+      status:     String(r[6] ?? '').trim() || '관찰', // 관찰 | 승격후보 | 확정 | 기각
+      updated:    String(r[7] ?? '').trim(),
+    };
+  }).filter(Boolean).reverse();                       // 최신이 위로
+}
+
 // 보유 포지션 × 리스크 신호(🟡/🔴) 조인 → 전제 점검 대상 [{ position, signal }]
 // riskMonitor 는 최신순 → find 가 최신 신호를 반환. target 은 종목명 또는 코드.
 // 리스크모니터 파서 (날짜,유형,대상,신호,요약,상세,근거,기준선참조) → 최신순
@@ -376,6 +397,7 @@ export function parseSheetData(valueRanges) {
   const baselines = parseBaselines(valueRanges[15]);
   const positionJournal = parsePositionJournal(valueRanges[16]);
   const usdRate = parseNum(valueRanges[17]?.values?.[0]?.[0]);
+  const preferences = parsePreferences(valueRanges[18]);
 
-  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines, positionJournal, usdRate } : null;
+  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines, positionJournal, usdRate, preferences } : null;
 }

@@ -22,6 +22,7 @@ import HoldingsTab from './tabs/HoldingsTab.jsx';
 import ExecutionsTab from './tabs/ExecutionsTab.jsx';
 import TodayTab from './tabs/TodayTab.jsx';
 import PositionJournalTab from './tabs/PositionJournalTab.jsx';
+import PreferenceTab from './tabs/PreferenceTab.jsx';
 import BuyEvaluationTab from './tabs/BuyEvaluationTab.jsx';
 import SellEvaluationTab from './tabs/SellEvaluationTab.jsx';
 import LearningModuleModal from './tabs/LearningModuleModal.jsx';
@@ -82,9 +83,10 @@ export default function App() {
   const [riskMonitor, setRiskMonitor] = useState([]);
   const [baselines, setBaselines] = useState([]);
   const [positionJournal, setPositionJournal] = useState([]);
+  const [preferences, setPreferences] = useState([]); // 성향 학습 관찰
   const [usdRate, setUsdRate] = useState(0); // USD/KRW 환율
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj, usdRate: ur }) => {
+  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj, usdRate: ur, preferences: pref }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
     setDividendData(d || []);
@@ -97,6 +99,7 @@ export default function App() {
     if (rm) setRiskMonitor(rm);
     if (bl) setBaselines(bl);
     if (pj) setPositionJournal(pj);
+    if (pref) setPreferences(pref);
     if (ur > 0) setUsdRate(ur);
   }, []);
 
@@ -348,6 +351,7 @@ export default function App() {
             { key: "리스크",    label: "리스크" },
             { key: "저널",      label: "포지션" },
             { key: "평가",      label: "평가" },
+            { key: "성향",      label: "성향" },
             { key: "holdings",  label: "보유종목" },
             { key: "rebalance", label: "자산분배" },
             { key: "체결내역",  label: "체결" },
@@ -508,6 +512,11 @@ export default function App() {
           <PositionJournalTab
             positionJournal={positionJournal} riskMonitor={riskMonitor} sheets={sheets} baseFont={baseFont}
           />
+        )}
+
+        {/* ── 성향확인 탭 (행동 학습 관찰 확인) ── */}
+        {tab === "성향" && (
+          <PreferenceTab preferences={preferences} sheets={sheets} baseFont={baseFont} />
         )}
 
         {/* ── 체결내역 탭 ── */}
