@@ -351,12 +351,12 @@ export default function App() {
             { key: "리스크",    label: "리스크" },
             { key: "저널",      label: "포지션" },
             { key: "평가",      label: "평가" },
-            { key: "성향",      label: "성향" },
             { key: "holdings",  label: "보유종목" },
             { key: "rebalance", label: "자산분배" },
             { key: "체결내역",  label: "체결" },
             { key: "dividend",  label: "배당금" },
             { key: "profit",    label: "수익금" },
+            { key: "성향",      label: "성향" },
             { key: "kpi",       label: "KPI" },
             { key: "help",      label: "도움말" },
           ].map(({ key, label }) => (
