@@ -8,7 +8,7 @@
 
 import { createServer } from 'http';
 import { exec, spawn } from 'child_process';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { createSign } from 'crypto';
 
 export const SHEET_ID = '1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg';
@@ -98,6 +98,62 @@ export const SA_KEY_FILE = process.env.SA_KEY_FILE
 
 export function hasServiceAccount() {
   try { readFileSync(SA_KEY_FILE); return true; } catch { return false; }
+}
+
+// ── 사용량 한도 전역 쿨다운 ──────────────────────────────────────────────────
+// claude -p 헤드리스 잡들과 대화형 Claude Code 가 단일 구독 quota 를 공유한다.
+// 한 잡이 한도("You've hit your limit · resets …")를 만나면 reset 시각을 공유
+// 파일에 기록하고, 모든 claude 호출 잡이 시작 시 확인해 쿨다운 중이면 조용히 skip
+// → 불필요한 호출·로그 노이즈 제거.
+export const COOLDOWN_FILE = process.env.COOLDOWN_FILE
+  || `${process.env.HOME}/.config/banana-portfolio/quota-cooldown.json`;
+export const LIMIT_RE = /hit your (limit|session limit)|usage limit|사용량 한도/i;
+
+// 한도 메시지의 "resets 10:50am (Asia/Seoul)" → KST 기준 다음 도래 시각(ms).
+// 분 생략("8pm")·이미 지난 시각(다음날 롤오버) 처리. 파싱 실패 시 null.
+export function parseResetTime(message, now = Date.now()) {
+  const m = String(message ?? '').match(/resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+  if (!m) return null;
+  let hour = parseInt(m[1], 10);
+  const min = m[2] ? parseInt(m[2], 10) : 0;
+  const ap = m[3].toLowerCase();
+  if (hour === 12) hour = 0;            // 12am→0, 12pm→12(아래서 +12)
+  if (ap === 'pm') hour += 12;
+  if (hour > 23 || min > 59) return null;
+  // KST(UTC+9) 기준으로 오늘의 해당 시각을 UTC ms 로 환산.
+  const KST = 9 * 3600_000;
+  const kstNow = new Date(now + KST);
+  const y = kstNow.getUTCFullYear(), mo = kstNow.getUTCMonth(), d = kstNow.getUTCDate();
+  let resetUtc = Date.UTC(y, mo, d, hour, min) - KST;
+  if (resetUtc <= now) resetUtc += 24 * 3600_000;   // 이미 지났으면 다음날
+  return resetUtc;
+}
+
+export function setCooldown(resetAt, reason = '') {
+  try {
+    writeFileSync(COOLDOWN_FILE, JSON.stringify({ resetAt, reason, setAt: Date.now() }));
+  } catch { /* 파일 못 쓰면 무시(쿨다운 미적용) */ }
+}
+
+// 활성 쿨다운이면 { resetAt, reason }, 아니면(없거나 만료) null. 만료 시 파일 삭제.
+export function getCooldown(now = Date.now()) {
+  let data;
+  try { data = JSON.parse(readFileSync(COOLDOWN_FILE, 'utf8')); }
+  catch { return null; }
+  if (!data || typeof data.resetAt !== 'number' || now >= data.resetAt) {
+    try { unlinkSync(COOLDOWN_FILE); } catch { /* noop */ }
+    return null;
+  }
+  return { resetAt: data.resetAt, reason: data.reason || '' };
+}
+
+// 쿨다운 가드 — claude 호출 잡 시작 시 호출. 쿨다운 중이면 로그 후 true 반환(잡은 exit(0)).
+export function cooldownActive() {
+  const cd = getCooldown();
+  if (!cd) return false;
+  const when = new Date(cd.resetAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+  console.log(`⏳ 사용량 한도 쿨다운 중 (reset ${when}) — claude 호출 skip`);
+  return true;
 }
 
 function b64url(buf) {
@@ -316,7 +372,13 @@ export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools = 'Bash
         // stdin 경고 같은 노이즈를 걸러내고, 실제 에러는 끝부분에 오므로 꼬리 300자를 노출.
         const clean = err.split('\n').filter(l => !/no stdin data received/i.test(l)).join('\n').trim();
         const detail = ((clean || out).trim().slice(-300)) || '(stderr/stdout 비어있음)';
-        return reject(new Error(`claude 종료코드 ${code}: ${detail}`));
+        const e = new Error(`claude 종료코드 ${code}: ${detail}`);
+        // 사용량 한도 → 전역 쿨다운 설정 + isLimit 태그(호출 잡이 남은 작업 중단).
+        if (LIMIT_RE.test(detail)) {
+          e.isLimit = true;
+          setCooldown(parseResetTime(detail) ?? Date.now() + 3600_000, detail);
+        }
+        return reject(e);
       }
       if (!out.trim()) return reject(new Error('claude 빈 출력'));
       resolve(out);

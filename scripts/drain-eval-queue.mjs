@@ -18,7 +18,7 @@
 
 import { createServer } from 'http';
 import { exec } from 'child_process';
-import { runHeadlessClaude } from './lib/sheets-common.mjs';
+import { runHeadlessClaude, cooldownActive, LIMIT_RE } from './lib/sheets-common.mjs';
 import { createInterface } from 'readline';
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { fetchKrFundamentals, fetchUsFundamentals, fetchKrMarketData, fetchMarketData } from './lib/fundamentals.mjs';
@@ -586,11 +586,18 @@ async function main() {
 
   const pending = [];
   // 사용량 한도로 보류된 '오류'는 일시적 → 자동 재시도 대상. 그 외 '오류'(데이터·파싱 등)는 수동 검토.
-  const LIMIT_RE = /hit your (limit|session limit)|usage limit|사용량 한도/i;
+  // 재시도 횟수가 상한(MAX_RETRY) 초과한 한도-보류 건은 자동 재시도 제외(전역 쿨다운의 2차 안전장치).
+  const MAX_RETRY = 8;
+  const overLimitRows = [];   // [{rowNum, name}] — 자동 재시도 한도 초과로 강등할 행
   rows.forEach((r, idx) => {
     const status = String(r[3] ?? '').trim();
     const memo = String(r[5] ?? '').trim();
     if (status === '대기' || (status === '오류' && LIMIT_RE.test(memo))) {
+      const tries = parseInt((memo.match(/재시도\s*(\d+)\s*회/) || [])[1] || '0', 10);
+      if (status === '오류' && tries >= MAX_RETRY) {
+        overLimitRows.push({ rowNum: idx + 2, name: String(r[1] ?? '').trim() });
+        return;
+      }
       pending.push({
         rowNum: idx + 2,
         requestedAt: String(r[0] ?? '').trim(),
@@ -598,9 +605,16 @@ async function main() {
         market: String(r[2] ?? '').trim(),
         memo,
         retry: status === '오류',
+        tries,
       });
     }
   });
+
+  // 재시도 한도 초과 건 강등 — 더 이상 자동 재시도하지 않고 수동 검토로.
+  for (const o of overLimitRows) {
+    if (!DRY_RUN) await updateCell(token, `평가요청!F${o.rowNum}`, `자동 재시도 한도(${MAX_RETRY}회) 초과 — 수동 검토 (${nowKST()})`);
+    console.log(`  ⚠ ${o.name} 자동 재시도 ${MAX_RETRY}회 초과 → 수동 검토로 강등`);
+  }
 
   if (pending.length === 0) {
     console.log('  처리할 의뢰가 없습니다 (대기 0건).\n');
@@ -616,6 +630,9 @@ async function main() {
     console.log(`    ${i + 1}. [${tag}] ${e.name} (${e.market || '?'}) — ${e.memo || '메모 없음'}`);
   });
   console.log('');
+
+  // AUTO(헤드리스) 모드는 사용량 한도 쿨다운 중이면 호출하지 않고 종료(다음 타임 재시도).
+  if (AUTO && !DRY_RUN && cooldownActive()) process.exit(0);
 
   const rl = AUTO ? null : createRL();
   let completed = 0;
@@ -685,12 +702,13 @@ async function main() {
       } catch (e) {
         console.error(`  ⚠️ 헤드리스 실행 실패: ${e.message}`);
         await updateCell(token, `평가요청!D${entry.rowNum}`, '오류');
-        const isLimit = /hit your (limit|session limit)|usage limit/i.test(e.message);
-        if (isLimit) {
-          // 한도는 일시적 → 다음 자동 drain 타임에 재시도(상태 '오류' + 한도 마커로 재시도 대상 유지).
-          // 이후 항목도 같은 한도로 실패하므로 남은 큐는 중단(불필요한 호출 방지).
-          await updateCell(token, `평가요청!F${entry.rowNum}`, `사용량 한도로 보류 — 다음 자동 타임 재시도 (${nowKST()})`);
-          console.error(`  ⏳ ${entry.name} 사용량 한도 → 다음 drain 재시도. 남은 큐 중단.`);
+        if (e.isLimit ?? LIMIT_RE.test(e.message)) {
+          // 한도는 일시적 → 다음 자동 drain 타임에 재시도(상태 '오류' + 재시도 횟수 마커로 재시도 대상 유지).
+          // 재시도 횟수를 누적해 백오프 상한(MAX_RETRY)에서 수동 검토로 강등(다음 실행 pending 필터).
+          // 쿨다운은 runHeadlessClaude 가 이미 설정 → 이후 항목도 막히므로 남은 큐 중단.
+          const next = (entry.tries ?? 0) + 1;
+          await updateCell(token, `평가요청!F${entry.rowNum}`, `사용량 한도로 보류 (재시도 ${next}회) — 다음 자동 타임 재시도 (${nowKST()})`);
+          console.error(`  ⏳ ${entry.name} 사용량 한도(재시도 ${next}회) → 다음 drain 재시도. 남은 큐 중단.`);
           errors++;
           break;
         }

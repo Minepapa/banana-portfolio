@@ -10,9 +10,18 @@
     <string>/Users/huinique/Stockproject/banana-portfolio/scripts/launchd/run.sh</string>
     <string>drain</string>
   </array>
-  <!-- 평가 큐 자동 드레인: 3시간 간격 -->
-  <key>StartInterval</key>
-  <integer>10800</integer>
+  <!-- 평가 큐 자동 드레인: ~3시간 간격 고정 시각. risk-b(월 07:00)·risk-d(평일 16:30)
+       충돌 시간대(06~07, 15~16)를 피해 quota 경쟁 완화. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>1</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
   <key>RunAtLoad</key>
   <false/>
   <key>ProcessType</key>

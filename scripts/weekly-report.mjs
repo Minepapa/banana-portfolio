@@ -310,8 +310,16 @@ async function main() {
   }
 
   // ⑥ claude -p 서술 생성 (Read=프로필/직전리포트, WebSearch=정성 뉴스. Bash 제외 — 수치 재조회 차단)
+  // 주1회 최고가치 산출물이라 쿨다운 사전 skip은 하지 않음(빈번한 저우선 잡이 막지 않도록).
+  // 단 자신이 한도를 만나면 쿨다운은 설정되고, 이번 발행만 보류(정상 종료 — 한도 해제 후 수동/다음 재실행).
   console.log(`\n⏳ 리포트 작성 중 (claude -p ${MODEL}, 수 분)...`);
-  let md = (await runHeadlessClaude(prompt, MODEL, 'Read,WebSearch')).trim();
+  let md;
+  try {
+    md = (await runHeadlessClaude(prompt, MODEL, 'Read,WebSearch')).trim();
+  } catch (e) {
+    if (e.isLimit) { console.log(`   ⏳ 사용량 한도 → 이번 리포트 발행 보류(쿨다운 설정). 한도 해제 후 재실행하세요.`); process.exit(0); }
+    throw e;
+  }
   // LLM이 "이제 작성하겠습니다" 같은 머리말을 붙이는 경우 첫 H1(# ) 앞을 제거.
   const h1 = md.search(/^# /m);
   if (h1 > 0) { md = md.slice(h1); console.log('   ✂️ 머리말 제거(첫 # 제목 앞 잘라냄)'); }

@@ -27,7 +27,7 @@
 import {
   loadEnv, getToken, hasServiceAccount, getRange, appendValues, ensureSheet,
   readHoldings, runHeadlessClaude, parseJsonBlock, nowKST,
-  sendTelegram, setValues, clearValues,
+  sendTelegram, setValues, clearValues, cooldownActive,
 } from './lib/sheets-common.mjs';
 import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators } from './lib/fundamentals.mjs';
 import { krCorpCode, usTicker, krStockCode } from './lib/instruments.mjs';
@@ -337,6 +337,8 @@ async function main() {
 
     const prompt = buildMacroPrompt(holdings, indicators);
     if (DRY_RUN) { console.log('\n┌─── D 프롬프트 ───┐\n' + prompt + '\n└──────────────────┘'); return; }
+    // 결정론 가드레일(급락 경보)은 위에서 이미 실행됨. LLM 판단만 쿨다운 시 skip.
+    if (cooldownActive()) { console.log('   거시 LLM 판단 skip — 가드레일 경보는 위에서 적재됨.'); return; }
     console.log(`\n⏳ 거시 리스크 판단 중... (LLM은 Read 전용)`);
     try {
       const res = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read'));
@@ -358,6 +360,8 @@ async function main() {
         await pushNewReds(rows, priorRedKeys);
       }
     } catch (e) {
+      // 한도면 쿨다운은 runHeadlessClaude 가 이미 설정 → 정상 종료(FAIL 알림 노이즈 방지).
+      if (e.isLimit) { console.log(`   ⏳ 사용량 한도 → 거시 판단 보류(쿨다운 설정).`); return; }
       console.error(`   ❌ 실패: ${e.message}`);
       process.exit(1);
     }
@@ -380,6 +384,8 @@ async function main() {
   const skipped = holdings.length - targets.length;
 
   console.log(`\n📊 위탁 개별주식 ${targets.length}개 논리 점검 시작 (전체 ${holdings.length}개 중 ETF·펀드·현금성 ${skipped}개 제외)`);
+  // 종목당 claude 1회 — 가장 무거운 배치. 쿨다운 중이면 호출 안 함(시트 정리만 하고 종료).
+  if (!DRY_RUN && cooldownActive()) { await pruneRiskSheet(token, monitoredNames); return; }
   let ok = 0, fail = 0, alerts = 0;
   for (const h of targets) {
     const baseline = bMap.get(h.name) || null;
@@ -437,6 +443,8 @@ async function main() {
       if (signal !== '🟢') alerts++;
       ok++;
     } catch (e) {
+      // 한도면 남은 종목도 모두 막히므로 루프 중단(쿨다운은 이미 설정됨). 불필요한 호출·노이즈 방지.
+      if (e.isLimit) { console.error(`   ⏳ ${h.name} 사용량 한도 → 남은 종목 점검 중단.`); break; }
       console.error(`   ❌ ${h.name} 실패: ${e.message}`);
       fail++;
     }

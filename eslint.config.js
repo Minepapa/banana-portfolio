@@ -18,4 +18,9 @@ export default defineConfig([
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
+  {
+    // 테스트는 node 런타임에서 실행 — node 전역(process 등) 허용.
+    files: ['**/*.test.js'],
+    languageOptions: { globals: globals.node },
+  },
 ])
