@@ -30,7 +30,7 @@ import {
   sendTelegram, setValues, clearValues, cooldownActive,
 } from './lib/sheets-common.mjs';
 import { renderPrefRows, prefBlock, PREF_SHEET } from './lib/preferences.mjs';
-import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators } from './lib/fundamentals.mjs';
+import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators, fetchMarketData, fetchKrMarketData } from './lib/fundamentals.mjs';
 import { krCorpCode, usTicker, krStockCode } from './lib/instruments.mjs';
 
 const RISK_SHEET = '리스크모니터';
@@ -41,6 +41,13 @@ const HUB_CLAUDE = new URL('../profile/investor-profile.md', import.meta.url).pa
 const KOSPI_CRASH_PCT = -10;  // KOSPI 5일 고점 대비 낙폭 임계 — 이하면 LLM 판단 무관 🔴 강제 푸시
 const USDKRW_SURGE_PCT = 3;   // USDKRW 5일 저점 대비 상승 임계 — KRW 급약세 결정론 경보
 const SP500_CRASH_PCT = -7;   // SP500 5일 고점 대비 낙폭 임계 — 미증시 급락 결정론 경보
+
+// §4 개별 종목 가격 트리거 임계 (결정론). 급락 매수 기회는 성향(급락매수 선호)과 부합 → 🔴 강하게.
+// 급등 차익실현은 성향상 가격만으로 익절하지 않음 → 🟡 검토만(펀더멘털 확인 유도).
+const OPP_BUY_DROP_PCT = -10; // 단기(5거래일) 등락 ≤ -10% → 급락 매수 기회
+const OPP_RSI_LOW = 30;       // RSI ≤ 30 → 과매도(급락 매수 기회)
+const OPP_RSI_HIGH = 70;      // RSI ≥ 70 → 과열(차익실현 검토)
+const OPP_POS52_HIGH = 80;    // 52주 위치 ≥ 80% → 고점 근접(차익실현 검토)
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
@@ -81,6 +88,32 @@ function holdingsSummary(holdings) {
 // ── D 모드: 거시 리스크 프롬프트 ────────────────────────
 // 거시지표 숫자는 Node(fetchMacroIndicators)가 yfinance에서 직접 조회·계산해 주입한다.
 // LLM은 재조회 금지 — 주입된 수치를 Hub 트리거 기준과 비교해 "판단만". (mode B와 동일 원칙)
+// 개별 종목 시세(md) → §4 가격 트리거 판정. 결정론(LLM 무관). 트리거 없으면 🟢(자가 치유용).
+function scanOpportunity(md) {
+  if (!md) return null;
+  const { rsi14, pos52w, weekChange, currentPrice } = md;
+  const ev = JSON.stringify({ rsi14, pos52w, weekChange, currentPrice });
+  // ① 급락 매수 기회 — 성향(급락매수 선호) 부합 → 🔴
+  const dropHit = weekChange != null && weekChange <= OPP_BUY_DROP_PCT;
+  const rsiLow = rsi14 != null && rsi14 <= OPP_RSI_LOW;
+  if (dropHit || rsiLow) {
+    const why = [dropHit ? `5일 ${weekChange}%` : null, rsiLow ? `RSI ${rsi14}` : null].filter(Boolean).join(' · ');
+    return { signal: '🔴', summary: `급락 매수 기회 — ${why}`,
+      detail: '§4 급락 매수 기회 트리거(단기 -10% 또는 RSI 30↓). Frank 급락매수 선호와 부합 — 펀더멘털 유효 시 적극 매수 검토(1회 500만원 이하).', ev };
+  }
+  // ② 급등 차익실현 — 성향상 가격만으로 익절 안 함 → 🟡 검토만
+  const rsiHigh = rsi14 != null && rsi14 >= OPP_RSI_HIGH;
+  const pos52High = pos52w != null && pos52w >= OPP_POS52_HIGH;
+  if (rsiHigh || pos52High) {
+    const why = [rsiHigh ? `RSI ${rsi14}` : null, pos52High ? `52주 ${pos52w}%` : null].filter(Boolean).join(' · ');
+    return { signal: '🟡', summary: `차익실현 검토 — ${why}`,
+      detail: '§4 급등 차익실현 트리거(RSI 70↑ 또는 52주 고점 근접). 단, 가격만으로 익절하지 않는 성향 — 펀더멘털·논리 유효성 먼저 확인 후 일부 차익실현만 검토.', ev };
+  }
+  // ③ 트리거 없음 — 🟢(이전 기회 신호 자가 해소용). 앱은 🟢 기회는 숨김.
+  return { signal: '🟢', summary: '가격 트리거 없음',
+    detail: '', ev: JSON.stringify({ rsi14, pos52w, weekChange }) };
+}
+
 function buildMacroPrompt(holdings, indicators, confirmedPrefsText) {
   return `[거시 리스크 점검 — 매일] Frank 포트폴리오에 대한 거시 충격(D 유형) 리스크를 "판단만" 해줘.
 
@@ -251,6 +284,7 @@ async function pruneRiskSheet(token, monitoredNames) {
     const target = String(rows[i][2] ?? '').trim();
     if (type === 'D') { if (date !== maxDDate) continue; }
     else if (type === 'B') { if (!monitoredNames.has(target)) continue; }
+    else if (type === 'O') { /* 종목당 최신 O 1개 유지(아래 seen 디듀프). 🟢 포함 — 자가 치유 */ }
     else continue;
     const k = `${type}|${target}`;
     if (seen.has(k)) continue;
@@ -343,6 +377,32 @@ async function main() {
       console.log(`   ⚑ SP500 급락 가드레일 발동: ${sp5d}% → 🔴 강제`);
       await appendValues(token, `${RISK_SHEET}!A2`, [spRow]);
       await pushNewReds([spRow], priorRedKeys);
+    }
+
+    // ② 개별 종목 가격 기회 트리거 (§4) — 결정론·LLM 무관(쿨다운·dry-run 무관하게 실행).
+    //    위탁·ISA의 주식·ETF만. 종목당 O행 1개(🔴 급락매수 / 🟡 차익검토 / 🟢 해당없음 — 자가 치유).
+    const OPP_ACCTS = new Set(['위탁', 'ISA']);
+    const OPP_TYPES = new Set(['국내주식', '해외주식']);
+    const oppTargets = holdings.filter(h => h.accounts.some(a => OPP_ACCTS.has(a.acct) && OPP_TYPES.has(a.type)));
+    console.log(`\n💡 가격 기회 트리거 스캔 — 위탁·ISA 주식·ETF ${oppTargets.length}개`);
+    const oppRows = [];
+    for (const h of oppTargets) {
+      let md = null;
+      try {
+        if (h.market === 'KR') { const c = krStockCode(h.name); if (c) md = fetchKrMarketData(c); }
+        else { const t = usTicker(h.name); if (t) md = fetchMarketData(t); }
+      } catch { md = null; }
+      if (!md) { console.log(`   · ${h.name}: 시세 미해결 — skip`); continue; }
+      const opp = scanOpportunity(md);
+      const row = [nowKST(), 'O', h.name, opp.signal, opp.summary, opp.detail, opp.ev, ''];
+      oppRows.push(row);
+      if (opp.signal !== '🟢') console.log(`   ${opp.signal} ${h.name}: ${opp.summary}`);
+    }
+    const oppHits = oppRows.filter(r => r[3] !== '🟢').length;
+    console.log(`   기회 신호 ${oppHits}건 (스캔 ${oppRows.length}개)`);
+    if (!DRY_RUN && oppRows.length) {
+      await appendValues(token, `${RISK_SHEET}!A2`, oppRows);
+      await pushNewReds(oppRows, priorRedKeys);   // 🔴 급락 매수 기회만 신규 푸시
     }
 
     const prompt = buildMacroPrompt(holdings, indicators, confirmedPrefsText);

@@ -31,7 +31,16 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   const latestDDate = (riskMonitor || []).reduce((mx, r) => (r.type === 'D' && r.date > mx ? r.date : mx), '');
   const seen = new Set();
   let riskRed = 0, riskAmber = 0;
+  // 기회(O) 트리거 — 리스크와 분리 집계. 종목당 최신 1건, 🟢(해소)는 제외.
+  const oppSeen = new Set();
+  let oppBuy = 0, oppTrim = 0;  // 🔴 급락 매수 / 🟡 차익 검토
   for (const r of (riskMonitor || [])) {
+    if (r.type === 'O') {
+      if (oppSeen.has(r.target)) continue;
+      oppSeen.add(r.target);
+      if (/🔴/.test(r.signal)) oppBuy++; else if (/🟡/.test(r.signal)) oppTrim++;
+      continue;
+    }
     if (r.type === 'D' && r.date !== latestDDate) continue;
     const k = `${r.type}|${r.target}`;
     if (seen.has(k)) continue;
@@ -39,6 +48,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
     if (/🔴/.test(r.signal)) riskRed++; else if (/🟡/.test(r.signal)) riskAmber++;
   }
   const riskActionable = riskRed + riskAmber;
+  const oppActionable = oppBuy + oppTrim;
   const lastRiskDate = (riskMonitor || [])[0]?.date || '';
 
   // ── 2) 투자논리 훼손 / 3) 전제 확인 대기 / 4) 반성 필요 ──
@@ -83,6 +93,14 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
       icon: riskRed > 0 ? '🔴' : '🟡',
       title: `리스크 ${riskRed > 0 ? `경보 ${riskRed}건` : ''}${riskRed > 0 && riskAmber > 0 ? ' · ' : ''}${riskAmber > 0 ? `주의 ${riskAmber}건` : ''}`,
       sub: '펀더멘털·거시 신호 점검', goLabel: '리스크 보기', go: () => setTab('리스크'),
+    });
+  }
+  if (oppActionable > 0) {
+    items.push({
+      key: `opp:${lastRiskDate}`, kind: 'read', accent: oppBuy > 0 ? '#52C8D4' : '#F5C842',
+      icon: '💡',
+      title: `리밸런싱 기회 ${oppBuy > 0 ? `급락매수 ${oppBuy}건` : ''}${oppBuy > 0 && oppTrim > 0 ? ' · ' : ''}${oppTrim > 0 ? `차익검토 ${oppTrim}건` : ''}`,
+      sub: '§4 가격 트리거 — 펀더멘털 확인 후 판단', goLabel: '리스크 보기', go: () => setTab('리스크'),
     });
   }
   if (thesisAlerts > 0) {
