@@ -10,6 +10,30 @@ const SHEET_ID = '1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg';
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 export const CONFIGURED = !GOOGLE_CLIENT_ID.startsWith('YOUR_') && !SHEET_ID.startsWith('YOUR_');
 
+// ── 토큰 영속화 (PWA 로그인 유지) ──────────────────────────────────────────────
+// GSI implicit flow 는 access token(만료 ~1h)만 주고 refresh token 을 안 준다.
+// 토큰을 메모리에만 두면 앱 최소화·뒤로가기로 페이지가 리로드될 때 휘발 → "로그아웃"처럼 보임.
+// access token + 만료시각을 localStorage 에 저장해 리로드·복귀 시 복원하고,
+// 만료 임박/만료 시 무팝업(prompt:'') 재발급으로 사실상 로그인 유지.
+const TOKEN_KEY = 'banana_gtoken';
+const REFRESH_MARGIN_MS = 5 * 60 * 1000;   // 만료 5분 전이면 갱신 대상
+
+function saveToken(resp) {
+  try {
+    const expiry = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
+    localStorage.setItem(TOKEN_KEY, JSON.stringify({ access_token: resp.access_token, expiry }));
+  } catch { /* localStorage 불가(프라이빗 모드 등) — 메모리만 사용 */ }
+}
+function loadToken() {
+  try {
+    const t = JSON.parse(localStorage.getItem(TOKEN_KEY) || 'null');
+    return t && t.access_token && t.expiry ? t : null;
+  } catch { return null; }
+}
+function clearToken() {
+  try { localStorage.removeItem(TOKEN_KEY); } catch { /* noop */ }
+}
+
 // ── 구글 스크립트 동적 로더 ───────────────────────────────────────────────────
 function loadScript(src) {
   return new Promise((res, rej) => {
@@ -26,6 +50,7 @@ export function useGoogleSheets(onData) {
   const [lastSync, setLastSync] = useState(null);
   const lastSyncRef = useRef(null);
   const [tc, setTc] = useState(null);
+  const tcRef = useRef(null);              // 콜백 의존 없는 토큰 클라이언트 참조(401 갱신용)
   const onDataRef = useRef(onData);
   useEffect(() => { onDataRef.current = onData; });
 
@@ -59,6 +84,12 @@ export function useGoogleSheets(onData) {
       setLastSync(now);
       setSync('synced');
     } catch (e) {
+      // 토큰 만료(401) → 무팝업 갱신 시도. 성공 시 콜백이 doFetch 를 다시 부른다.
+      const code = e?.status ?? e?.result?.error?.code;
+      if (code === 401 && tcRef.current) {
+        tcRef.current.requestAccessToken({ prompt: '' });
+        return;
+      }
       console.error('Sheets fetch error:', e);
       setSync('error');
     }
@@ -81,13 +112,32 @@ export function useGoogleSheets(onData) {
             client_id: GOOGLE_CLIENT_ID,
             scope: SCOPES,
             callback: async (resp) => {
-              if (resp.error) { setAuth('error'); return; }
+              if (resp.error) {
+                // 무팝업 갱신(prompt:'') 실패 시 토큰이 이미 있으면 유지, 없으면 로그인 필요 상태로.
+                if (!window.gapi.client.getToken()) setAuth('signed-out');
+                return;
+              }
+              saveToken(resp);
               setAuth('signed-in');
               await doFetch();
             },
           });
           setTc(tokenClient);
-          setAuth('signed-out');
+          tcRef.current = tokenClient;
+
+          // 저장된 토큰 복원 — 리로드·PWA 복귀 시 재로그인 없이 이어가기.
+          const saved = loadToken();
+          if (saved && saved.expiry - Date.now() > REFRESH_MARGIN_MS) {
+            window.gapi.client.setToken({ access_token: saved.access_token });
+            setAuth('signed-in');
+            await doFetch();
+          } else if (saved) {
+            // 토큰이 있었으나 만료/임박 → 무팝업 재발급 시도(기존 구글 세션 이용).
+            setAuth('signed-in');               // 깜빡임 방지: 일단 유지, 실패 시 콜백이 내림
+            tokenClient.requestAccessToken({ prompt: '' });
+          } else {
+            setAuth('signed-out');
+          }
         } catch (e) {
           console.error('Google init error:', e);
           setAuth('error');
@@ -106,10 +156,29 @@ export function useGoogleSheets(onData) {
       window.google.accounts.oauth2.revoke(token.access_token);
       window.gapi.client.setToken(null);
     }
+    clearToken();                 // 명시적 로그아웃에서만 저장 토큰 제거
     setAuth('signed-out');
     setSync('idle');
     setLastSync(null);
   }, []);
+
+  // PWA 포그라운드 복귀 시 토큰 만료 임박이면 무팝업 갱신 — "최소화 후 복귀 = 로그아웃" 방지.
+  useEffect(() => {
+    if (!tc) return;
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      const saved = loadToken();
+      if (!saved) return;                                    // 로그인한 적 없음
+      if (saved.expiry - Date.now() <= REFRESH_MARGIN_MS) {  // 만료 임박/만료 → 조용히 갱신
+        tc.requestAccessToken({ prompt: '' });
+      } else if (!window.gapi?.client?.getToken()) {         // 토큰은 유효한데 메모리만 비었으면 복원
+        window.gapi.client.setToken({ access_token: saved.access_token });
+        setAuth('signed-in');
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [tc]);
 
   const appendRow = useCallback(async (range, rowData) => {
     await window.gapi.client.sheets.spreadsheets.values.update({
