@@ -63,8 +63,9 @@ export default function ExecutionsTab({
             const price    = parseNum(row[6]);
             const qty      = parseNum(row[7]);
             const amount   = Math.round(price * qty);
-            const isOverseas = assetType === '해외주식';
-            const currencySymbol = isOverseas ? '$' : '₩';
+            // 위탁 계좌의 해외주식 개별종목만 달러. 연금저축·ISA·IRP의 해외ETF(Tiger·Kodex 등)는 원화.
+            const isUsDollar = assetType === '해외주식' && account === '위탁';
+            const currencySymbol = isUsDollar ? '$' : '₩';
             const isComplete = row.length >= 13 && row.slice(0, 13).every(cell => String(cell ?? '').trim() !== '');
             const isBuy = buySell.includes('매수');
             // 위치 인덱스가 아닌 거래 내용으로 식별 — 새로고침/행 이동에도 이중 반영 방지

@@ -38,9 +38,6 @@ export default function HoldingsTab({
     ? rawHoldings
     : [...rawHoldings].sort(SORT_FN[holdSort] || SORT_FN.rate_desc);
 
-  // 비중 계산 기준 (해당 계좌)
-  const weightBase = acct.total_eval || 1;
-
   return (
     <div>
       {/* 계좌 선택 (4개) */}
@@ -182,12 +179,12 @@ export default function HoldingsTab({
           const origIdx = h.origIdx ?? vi;
           const color = h.rate >= 0 ? PROFIT_POS : PROFIT_NEG;
           const typeName = h.type || '';
-          // 위탁 계좌의 해외주식 개별종목만 달러 표시. 연금저축·ISA·IRP의 해외ETF는 원화.
-          const isUsDollar = String(typeName).includes('해외') && (h._acctKey ?? acctKey) === '위탁';
+          // 위탁 계좌의 해외주식 개별종목만 달러 표시. 같은 '해외주식' 자산군이라도
+          // 연금저축·ISA·IRP에 있으면 국내 상장 해외ETF(Tiger·Kodex 등)이므로 원화.
+          const isUsDollar = String(typeName).includes('해외') && acctKey === '위탁';
           const isEditing = !isTotalView && editingHolding?.origIdx === origIdx;
           const isEditingCash = !isTotalView && editingCash?.origIdx === origIdx;
           const isEditingDollar = !isTotalView && editingDollar?.origIdx === origIdx;
-          const weightPct = weightBase > 0 ? (h.eval / weightBase * 100).toFixed(1) : '0.0';
           const canLP = !isTotalView && sheets.auth === 'signed-in' && !showDeleteMode;
           const lpActive = canLP && lp.activeId === origIdx;
           const lpHandlers = canLP ? lp.bind(origIdx, () => beginEdit(origIdx, h)) : {};

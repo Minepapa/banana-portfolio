@@ -5,6 +5,24 @@ export function parseNum(v) {
   return parseFloat(String(v ?? 0).replace(/,/g, '')) || 0;
 }
 
+// 시트 날짜 셀 → "YYYY-MM-DD" 문자열.
+// 셀 포맷이 '일반'이면 날짜가 구글 시트 시리얼 넘버(예: 46189.25)로 들어온다.
+// 이미 "2026-06-15" 같은 텍스트면 앞 10자만 잘라 그대로 반환. 순수 숫자형만 변환.
+// 시리얼 기준일 1899-12-30(구글 시트), 1일 = 86400000ms.
+export function toDateStr(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  if (/^\d+(\.\d+)?$/.test(s)) {                 // 순수 숫자 = 시리얼로 간주
+    const serial = parseFloat(s);
+    if (serial > 1) {                            // 1900년 이후만 (0·1은 무효 방지)
+      const ms = Math.round((serial - 25569) * 86400000); // 25569 = 1970-01-01의 시리얼
+      const d = new Date(ms);
+      if (!isNaN(d)) return d.toISOString().slice(0, 10);
+    }
+  }
+  return s.slice(0, 10);                          // "2026-06-15 06:11" → "2026-06-15"
+}
+
 // 이모지·픽토그램·별표 제거 후 중복 공백 정리 (도움말은 텍스트만 표시)
 export function stripEmoji(text) {
   return String(text)

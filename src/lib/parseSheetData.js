@@ -1,6 +1,6 @@
 // 구글 시트 valueRanges → 앱 상태 객체 파싱 함수 모음. App.jsx에서 추출 (동작 불변).
 // parseSheetData가 진입점 — 나머지는 내부 헬퍼. parseNum/DEFAULT_ACCOUNTS/computeAssets에 의존.
-import { parseNum } from './textFormat.js';
+import { parseNum, toDateStr } from './textFormat.js';
 import { DEFAULT_ACCOUNTS } from './constants.js';
 import { computeAssets } from './metrics.js';
 
@@ -48,7 +48,7 @@ function findMonthlyRow(vr) {
 function parseDividends(vrAll) {
   const result = {};
   (vrAll?.values ?? []).forEach((r, i) => {
-    const dateStr = String(r[0] ?? '').trim();
+    const dateStr = toDateStr(r[0]);   // 시리얼/타임스탬프 → YYYY-MM-DD
     const amt  = parseNum(r[1] ?? 0);  // B열: 금액
     const name = String(r[2] ?? '').trim(); // C열: 종목명
     if (!dateStr || !amt) return;
@@ -69,7 +69,7 @@ function parseDividends(vrAll) {
 function parseProfits(vr) {
   const result = {};
   (vr?.values ?? []).forEach(r => {
-    const dateStr = String(r[0] ?? '').trim();
+    const dateStr = toDateStr(r[0]);   // 시리얼/타임스탬프 → YYYY-MM-DD
     const name    = String(r[1] ?? '').trim();
     const profit  = parseNum(r[5]); // F열: 수익금
     if (!dateStr) return;
@@ -121,7 +121,7 @@ function parseEvaluations(vr) {
     : String(s ?? '').split(/\.\s+(?=[A-Z가-힣])/).map(x => x.trim()).filter(Boolean);
 
   return rows.map(r => {
-    const date = String(r[0] ?? '').trim();
+    const date = toDateStr(r[0]);      // 시리얼/타임스탬프 → YYYY-MM-DD
     const name = String(r[1] ?? '').trim();
     if (!date || !name) return null;
     return {
@@ -158,7 +158,7 @@ function parseEvaluations(vr) {
 function parseEvalQueue(vr) {
   const rows = vr?.values ?? [];
   const entries = rows.map((r, idx) => {
-    const requestedAt = String(r[0] ?? '').trim();
+    const requestedAt = toDateStr(r[0]);   // 시리얼/타임스탬프 → YYYY-MM-DD
     const name = String(r[1] ?? '').trim();
     if (!requestedAt || !name) return null;
     return {
@@ -189,7 +189,7 @@ function parseEvalQueue(vr) {
 function parseWeeklyReports(vr) {
   const rows = vr?.values ?? [];
   return rows.map(r => {
-    const date = String(r[0] ?? '').trim();
+    const date = toDateStr(r[0]);      // 시리얼/타임스탬프 → YYYY-MM-DD
     if (!date) return null;
     return { date, summary: String(r[1] ?? '').trim(), body: String(r[2] ?? '').trim() };
   }).filter(Boolean).reverse();
@@ -212,9 +212,9 @@ function parsePositionJournal(vr) {
       target:  String(r[6] ?? '').trim(),
       exit:    String(r[7] ?? '').trim(),
       hold:    String(r[8] ?? '').trim(),
-      entry:   String(r[9] ?? '').trim(),
+      entry:   toDateStr(r[9]),                        // 진입일 — 시리얼 방어
       status:  String(r[10] ?? '').trim() || '보유',  // 보유 / 청산
-      exitDate:String(r[11] ?? '').trim(),
+      exitDate:toDateStr(r[11]),                       // 청산일 — 시리얼 방어
       result:  String(r[12] ?? '').trim(),
       lesson:  String(r[13] ?? '').trim(),
       confirm: String(r[14] ?? '').trim() || '미작성',  // 대기 / 확인 / 미작성
@@ -234,7 +234,7 @@ function parsePreferences(vr) {
     if (!observation) return null;
     return {
       rowIndex: idx,                                  // 시트 행 = idx + 2 (A2 기준)
-      date:       String(r[0] ?? '').trim(),
+      date:       toDateStr(r[0]),                    // 시리얼/타임스탬프 → YYYY-MM-DD
       type:       String(r[1] ?? '').trim(),          // 신호유형
       observation,
       evidence:   String(r[3] ?? '').trim(),          // 근거(체결·평가·저널·발화)
@@ -252,7 +252,7 @@ function parsePreferences(vr) {
 function parseRiskMonitor(vr) {
   const rows = vr?.values ?? [];
   return rows.map(r => {
-    const date = String(r[0] ?? '').trim();
+    const date = toDateStr(r[0]);      // 시리얼/타임스탬프 → YYYY-MM-DD
     if (!date) return null;
     return {
       date,
