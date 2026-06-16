@@ -26,12 +26,12 @@ import {
 import { krCorpCode, usTicker, krStockCode } from './lib/instruments.mjs';
 import { buildReportFacts } from './lib/report-facts.mjs';
 import { buildBehaviorSignals } from './lib/behavior-signals.mjs';
+import { renderPrefRows, PREF_SHEET } from './lib/preferences.mjs';
 import { extractSummary } from './sync-reports.mjs';
 import { writeFileSync, readdirSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const PROFILE = new URL('../profile/investor-profile.md', import.meta.url).pathname;
-const PREF_SHEET = '성향관찰';
 const PREF_HEADER = ['날짜', '신호유형', '관찰', '증거', '§3대비', '신뢰도', '상태', '갱신시각'];
 const REPORTS_DIR = new URL('../reports/', import.meta.url).pathname;
 const REPORT_SHEET = '주간리포트';
@@ -196,18 +196,6 @@ ${signalsText}
 \`\`\``;
 }
 
-// 성향관찰 시트의 행들 → 프롬프트용 압축 텍스트. status 컬럼(G)·관찰(C)·§3대비(E)만.
-function renderPrefRows(rows, { confirmedOnly = false } = {}) {
-  const lines = [];
-  for (const r of rows) {
-    const obs = String(r[2] ?? '').trim();
-    const status = String(r[6] ?? '').trim() || '관찰';
-    if (!obs || status === '기각') continue;
-    if (confirmedOnly && status !== '확정') continue;
-    lines.push(`- [${status}] ${String(r[1] ?? '').trim()}: ${obs}${r[4] ? ` (§3 대비 ${String(r[4]).trim()})` : ''}`);
-  }
-  return lines.join('\n');
-}
 
 // 관찰 JSON → 성향관찰 시트 행으로 append. 상충/promote면 상태=승격후보, 아니면 관찰.
 async function appendObservations(token, asof, observations) {

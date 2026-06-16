@@ -19,6 +19,7 @@
 import { createServer } from 'http';
 import { exec } from 'child_process';
 import { runHeadlessClaude, cooldownActive, LIMIT_RE } from './lib/sheets-common.mjs';
+import { renderPrefRows, prefBlock, PREF_SHEET } from './lib/preferences.mjs';
 import { createInterface } from 'readline';
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { fetchKrFundamentals, fetchUsFundamentals, fetchKrMarketData, fetchMarketData } from './lib/fundamentals.mjs';
@@ -352,7 +353,7 @@ const buildMemoBlock = (memo) => {
 };
 
 // ── 매수 평가 프롬프트 ────────────────────────────────────────────────────────
-function buildBuyPrompt(entry, cachedEval, holdings, allocationData, facts) {
+function buildBuyPrompt(entry, cachedEval, holdings, allocationData, facts, confirmedPrefsText) {
   const market = entry.market || '(자동감지)';
   const memo = buildMemoBlock(entry.memo);
 
@@ -430,6 +431,9 @@ axisItems는 위 값을 그대로 옮기고, 데이터 부족 항목만 "(데이
 
 ${posSection}
 ${allocationSection}${cacheSection}${factsSection}
+
+${prefBlock(confirmedPrefsText)}
+
 출력 조건:
 1. active-evaluation.md §5 표준 카드 양식으로 먼저 보여줘
 2. 마지막에 \`\`\`json 펜스로 JSON 블록 출력 (queue-evaluation.md §2.4 양식)
@@ -437,16 +441,16 @@ ${allocationSection}${cacheSection}${factsSection}
 4. status는 항상 "보류"
 5. 데이터 부족 항목은 추정 금지, "(데이터 부족)" 표기
 
-⚠️ Frank 액션 권고 필수 (위 포지션·검증된 RSI/52주 기반으로 구체화):
+⚠️ Frank 액션 권고 필수 (위 포지션·검증된 RSI/52주 + 위 확정 학습 성향 기반으로 구체화):
 - 현재 포지션 상태: 보유/미보유, 보유 시 평균단가 대비 갭
-- 매수/추가 진입 조건: RSI + 구체적 가격대
+- 매수/추가 진입 조건: RSI + 구체적 가격대 (Frank의 급락매수 선호·추격매수 비선호 반영)
 - 1회 진입 금액: 500만원 이하 원칙
-- 차익실현/손절 조건: 52주 위치 또는 RSI 기반 레벨
+- 차익실현/손절 조건: 52주 위치 또는 RSI 기반 레벨 (확정 성향과 상충하면 명시)
 - 보유 중: 추가매수/홀딩 의견 / 미보유: 진입 우선순위`;
 }
 
 // ── 매도 평가 프롬프트 ────────────────────────────────────────────────────────
-function buildSellPrompt(entry, buyCard, facts) {
+function buildSellPrompt(entry, buyCard, facts, confirmedPrefsText) {
   const market = entry.market || '(자동감지)';
   const reasonLines = (buyCard?.reasons || []).map((r, i) => `근거 ${i+1}: ${r}`).join('\n');
   const riskLines   = (buyCard?.risks   || []).map((r, i) => `리스크 ${i+1}: ${r}`).join('\n');
@@ -475,6 +479,8 @@ ${facts.factsText}
 
 ${cardSection}
 ${factsSection}
+
+${prefBlock(confirmedPrefsText)}
 
 출력 조건:
 1. sell-evaluation.md §5 표준 카드 양식 (최초 ↔ 현재 ↔ 근거 점검 ↔ 리스크 점검 ↔ 판정 ↔ 권고 4안)
@@ -564,7 +570,7 @@ async function main() {
 
   // 1. 큐 + 종목투자노트 + 4계좌 보유현황 병렬 읽기
   console.log('━━━ 평가요청 큐 읽기 ━━━');
-  const [queueData, noteData, 위탁Data, 연금저축Data, ISAData, IRPData, 위탁Rebal, 연금저축Rebal] = await Promise.all([
+  const [queueData, noteData, 위탁Data, 연금저축Data, ISAData, IRPData, 위탁Rebal, 연금저축Rebal, prefData] = await Promise.all([
     getRange(token, '평가요청!A2:F'),
     getRange(token, '종목투자노트!A2:U'),
     getRange(token, '위탁!A2:I'),
@@ -573,7 +579,10 @@ async function main() {
     getRange(token, 'IRP!A2:I'),
     getRange(token, '자산분배!B3:D9'),
     getRange(token, '자산분배!B12:D18'),
+    getRange(token, `${PREF_SHEET}!A2:H`).catch(() => ({ values: [] })),  // 성향관찰(없어도 안전)
   ]);
+  // 확정 성향만 평가 프롬프트에 주입 — "Frank 맞춤 판단"(명시 §3 + 학습 성향).
+  const confirmedPrefsText = renderPrefRows(prefData.values || [], { confirmedOnly: true });
   const rows = queueData.values || [];
   const noteRows = noteData.values || [];
   const holdingsByAcct = {
@@ -681,8 +690,8 @@ async function main() {
     // --auto: Node가 결정론 facts를 산출해 프롬프트에 주입. 반자동은 facts 없이 종전대로.
     const facts = AUTO ? await buildAutoFacts(entry) : null;
     const prompt = sellMode
-      ? buildSellPrompt(entry, buyCard, facts)
-      : buildBuyPrompt(entry, cachedEval, holdings, allocationData, facts);
+      ? buildSellPrompt(entry, buyCard, facts, confirmedPrefsText)
+      : buildBuyPrompt(entry, cachedEval, holdings, allocationData, facts, confirmedPrefsText);
 
     if (DRY_RUN) {
       console.log('\n┌─── 생성된 프롬프트 (DRY-RUN) ───┐');

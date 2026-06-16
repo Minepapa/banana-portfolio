@@ -29,6 +29,7 @@ import {
   readHoldings, runHeadlessClaude, parseJsonBlock, nowKST,
   sendTelegram, setValues, clearValues, cooldownActive,
 } from './lib/sheets-common.mjs';
+import { renderPrefRows, prefBlock, PREF_SHEET } from './lib/preferences.mjs';
 import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators } from './lib/fundamentals.mjs';
 import { krCorpCode, usTicker, krStockCode } from './lib/instruments.mjs';
 
@@ -80,7 +81,7 @@ function holdingsSummary(holdings) {
 // ── D 모드: 거시 리스크 프롬프트 ────────────────────────
 // 거시지표 숫자는 Node(fetchMacroIndicators)가 yfinance에서 직접 조회·계산해 주입한다.
 // LLM은 재조회 금지 — 주입된 수치를 Hub 트리거 기준과 비교해 "판단만". (mode B와 동일 원칙)
-function buildMacroPrompt(holdings, indicators) {
+function buildMacroPrompt(holdings, indicators, confirmedPrefsText) {
   return `[거시 리스크 점검 — 매일] Frank 포트폴리오에 대한 거시 충격(D 유형) 리스크를 "판단만" 해줘.
 
 먼저 \`${HUB_CLAUDE}\` 파일을 Read 로 읽고 거시 트리거 기준(환율/금리/VIX 임계값 등)을 확인해.
@@ -91,6 +92,8 @@ ${JSON.stringify(indicators, null, 1)}
 
 [Frank 포트폴리오]
 ${holdingsSummary(holdings)}
+
+${prefBlock(confirmedPrefsText)}
 
 판단 규칙:
 - 위 검증된 수치를 Hub CLAUDE.md 거시 트리거 기준과 비교해, 해당하면 그 자산군/종목 대상으로 신호 생성.
@@ -127,7 +130,7 @@ function fmtMacro(key, o) {
 // ── B 모드: 논리 훼손 프롬프트 (종목별) — 판단 전용 ─────────────────
 // 숫자는 Node가 OpenDart/yfinance에서 조회·계산해 주입한다. LLM은 재조회·재계산 금지,
 // 주입된 수치로 "전제가 깨졌는가"만 판단. (환각 차단의 핵심: raw 숫자는 LLM이 만들지 않음)
-function buildLogicPrompt(h, facts, guardrails, baseline, buyCard) {
+function buildLogicPrompt(h, facts, guardrails, baseline, buyCard, confirmedPrefsText) {
   const baseLine = baseline
     ? `[저장된 기준선 (${baseline.date})]
 매출총이익률 ${baseline.gross_margin} · 영업이익률 ${baseline.operating_margin} · ROE ${baseline.roe} · 부채비율 ${baseline.debt_ratio} · EPS ${baseline.eps} · PBR ${baseline.pbr || '데이터 부족'}
@@ -153,6 +156,8 @@ ${JSON.stringify(facts, null, 1)}
 ${baseLine}
 
 ${cardLine}
+
+${prefBlock(confirmedPrefsText)}
 
 판단 규칙:
 - 위 검증된 수치와 기준선/매수논리를 비교해 "매수 근거의 핵심 전제가 깨졌는가"만 판단.
@@ -275,6 +280,11 @@ async function main() {
   // dry-run 이면서 토큰 없으면 보유종목을 읽을 수 없음 → 빈 목록으로 프롬프트 형태만 확인
   const holdings = (token) ? await readHoldings(token) : [];
 
+  // 확정 성향 — 거시(D)·논리(B) 판단 모두에 주입("Frank 맞춤 판단"). 명시 성향과 함께 기준.
+  // sheets-common getRange 는 배열을 직접 반환(drain 의 {values} 와 다름).
+  const prefRows = token ? await getRange(token, `${PREF_SHEET}!A2:H`).catch(() => []) : [];
+  const confirmedPrefsText = renderPrefRows(prefRows, { confirmedOnly: true });
+
   // 논리훼손(B) 점검·시트 정리 대상 = 위탁계좌 개별주식(국내/해외).
   const STOCK_TYPES = new Set(['국내주식', '해외주식']);
   const monitoredNames = new Set(
@@ -335,7 +345,7 @@ async function main() {
       await pushNewReds([spRow], priorRedKeys);
     }
 
-    const prompt = buildMacroPrompt(holdings, indicators);
+    const prompt = buildMacroPrompt(holdings, indicators, confirmedPrefsText);
     if (DRY_RUN) { console.log('\n┌─── D 프롬프트 ───┐\n' + prompt + '\n└──────────────────┘'); return; }
     // 결정론 가드레일(급락 경보)은 위에서 이미 실행됨. LLM 판단만 쿨다운 시 skip.
     if (cooldownActive()) { console.log('   거시 LLM 판단 skip — 가드레일 경보는 위에서 적재됨.'); return; }
@@ -423,7 +433,7 @@ async function main() {
       baselineDebtRatio: baseline ? parseFloat(String(baseline.debt_ratio).replace(/[%,]/g, '')) || null : null,
     });
 
-    const prompt = buildLogicPrompt(h, facts, guardrails, baseline, buyCard);
+    const prompt = buildLogicPrompt(h, facts, guardrails, baseline, buyCard, confirmedPrefsText);
     if (DRY_RUN) { console.log(`\n┌─── B 프롬프트 [${h.name}] ───┐\n` + prompt + '\n└──────────────────┘'); continue; }
     console.log(`\n⏳ ${h.name} 논리 판단 중... (수 분)`);
     try {
