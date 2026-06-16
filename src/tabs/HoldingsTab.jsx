@@ -182,6 +182,8 @@ export default function HoldingsTab({
           const origIdx = h.origIdx ?? vi;
           const color = h.rate >= 0 ? PROFIT_POS : PROFIT_NEG;
           const typeName = h.type || '';
+          // 위탁 계좌의 해외주식 개별종목만 달러 표시. 연금저축·ISA·IRP의 해외ETF는 원화.
+          const isUsDollar = String(typeName).includes('해외') && (h._acctKey ?? acctKey) === '위탁';
           const isEditing = !isTotalView && editingHolding?.origIdx === origIdx;
           const isEditingCash = !isTotalView && editingCash?.origIdx === origIdx;
           const isEditingDollar = !isTotalView && editingDollar?.origIdx === origIdx;
@@ -221,11 +223,11 @@ export default function HoldingsTab({
                     {h.name}
                   </div>
                   <div style={{ fontSize: 10, color: "#8A9AB5", marginTop: 2 }}>
-                    {h.qty}주 · 매수 {String(h.type ?? '').includes('해외') ? `$${Number(h.price).toFixed(2)}` : `₩${fmt(h.price)}`}
+                    {h.qty}주 · 매수 {isUsDollar ? `$${Number(h.price).toFixed(2)}` : `₩${fmt(h.price)}`}
                   </div>
                   {h.currentPrice > 0 && (
                     <div style={{ fontSize: 10, color: "#8A9AB5" }}>
-                      현재 {String(h.type ?? '').includes('해외') ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`}
+                      현재 {isUsDollar ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`}
                     </div>
                   )}
                 </div>
