@@ -10,11 +10,11 @@
     <string>/Users/huinique/Stockproject/banana-portfolio/scripts/launchd/run.sh</string>
     <string>weekly-report</string>
   </array>
-  <!-- 주간 리포트 발행: 주1회 일요일 08:00 (결정론 facts → claude -p opus 서술) -->
+  <!-- 주간 리포트 발행: 주1회 일요일 03:00 (사용자 수면 시간대 — 대화형 quota 경쟁 회피) -->
   <key>StartCalendarInterval</key>
   <dict>
     <key>Weekday</key><integer>0</integer>
-    <key>Hour</key><integer>8</integer>
+    <key>Hour</key><integer>3</integer>
     <key>Minute</key><integer>0</integer>
   </dict>
   <key>RunAtLoad</key>

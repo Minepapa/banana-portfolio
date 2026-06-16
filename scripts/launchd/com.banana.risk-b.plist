@@ -10,11 +10,11 @@
     <string>/Users/huinique/Stockproject/banana-portfolio/scripts/launchd/run.sh</string>
     <string>risk-b</string>
   </array>
-  <!-- 논리 훼손: 주1회 월요일 07:00 -->
+  <!-- 논리 훼손: 주1회 월요일 03:00 (사용자 수면 시간대 — 대화형 quota 경쟁 회피) -->
   <key>StartCalendarInterval</key>
   <dict>
     <key>Weekday</key><integer>1</integer>
-    <key>Hour</key><integer>7</integer>
+    <key>Hour</key><integer>3</integer>
     <key>Minute</key><integer>0</integer>
   </dict>
   <key>RunAtLoad</key>
