@@ -128,7 +128,7 @@ function monthlyReturns(series) {
     if (prev.total <= 0) { rs.push(null); continue; }
     const inflow = Math.max(0, cur.savings);  // 안전 가드: 음수면 0
     const r = (cur.total - prev.total - inflow) / prev.total;
-    rs.push({ ...cur, r, inflow, prevTotal: prev.total });
+    rs.push({ ...cur, r, inflow, prevTotal: prev.total, prevLabel: prev.label });
   }
   return rs.filter(x => x && Number.isFinite(x.r));
 }
@@ -154,33 +154,38 @@ function sharpe(returns) {
   return ((mean - RISK_FREE_MONTHLY) / std) * Math.sqrt(12);
 }
 
-function mdd(series) {
-  // 시계열의 누적 peak 대비 최저 낙폭. 회복 개월수도 같이.
-  if (series.length < 2) return { mdd: null, peakIdx: -1, troughIdx: -1, recoveryMonths: null };
-  let peak = series[0].total;
-  let peakIdx = 0;
-  let worst = 0;
-  let worstPeakIdx = 0, worstTroughIdx = 0;
-  series.forEach((p, i) => {
-    if (p.total > peak) { peak = p.total; peakIdx = i; }
-    const dd = (p.total - peak) / peak;
+function mdd(returns) {
+  // 잔고가 아닌 누적 TWR(수익) 곡선 기준 최대낙폭. 매달 신규 입금으로 잔고가 계속
+  // 오르면 잔고 MDD는 항상 ~0%가 되므로, 입금 효과를 제거한 투자성과 낙폭을 측정한다.
+  if (!returns || returns.length < 1) {
+    return { mdd: null, peakLabel: null, troughLabel: null, recoveryMonths: null, recoveryLabel: null };
+  }
+  // equity curve: 첫 수익률 직전을 1.0 으로 두고 월수익률을 누적 곱.
+  const curve = [{ value: 1, label: returns[0].prevLabel ?? returns[0].label }];
+  let equity = 1;
+  for (const x of returns) { equity *= (1 + x.r); curve.push({ value: equity, label: x.label }); }
+
+  let peak = curve[0].value, peakIdx = 0;
+  let worst = 0, worstPeakIdx = 0, worstTroughIdx = 0;
+  curve.forEach((p, i) => {
+    if (p.value > peak) { peak = p.value; peakIdx = i; }
+    const dd = (p.value - peak) / peak;
     if (dd < worst) { worst = dd; worstPeakIdx = peakIdx; worstTroughIdx = i; }
   });
-  // 회복: trough 이후 peak 재돌파 시점
-  const recoveryTarget = series[worstPeakIdx].total;
+  if (worst === 0) return { mdd: 0, peakLabel: null, troughLabel: null, recoveryMonths: null, recoveryLabel: null };
+
+  // 회복: trough 이후 직전 peak 재도달(회복) 시점
+  const recoveryTarget = curve[worstPeakIdx].value;
   let recoveryIdx = -1;
-  for (let i = worstTroughIdx + 1; i < series.length; i++) {
-    if (series[i].total >= recoveryTarget) { recoveryIdx = i; break; }
+  for (let i = worstTroughIdx + 1; i < curve.length; i++) {
+    if (curve[i].value >= recoveryTarget) { recoveryIdx = i; break; }
   }
-  const recoveryMonths = recoveryIdx >= 0 ? (recoveryIdx - worstTroughIdx) : null;
   return {
     mdd: worst,
-    peakIdx: worstPeakIdx,
-    troughIdx: worstTroughIdx,
-    peakLabel: series[worstPeakIdx]?.label,
-    troughLabel: series[worstTroughIdx]?.label,
-    recoveryMonths,
-    recoveryLabel: recoveryIdx >= 0 ? series[recoveryIdx].label : null,
+    peakLabel: curve[worstPeakIdx]?.label,
+    troughLabel: curve[worstTroughIdx]?.label,
+    recoveryMonths: recoveryIdx >= 0 ? (recoveryIdx - worstTroughIdx) : null,
+    recoveryLabel: recoveryIdx >= 0 ? curve[recoveryIdx].label : null,
   };
 }
 
@@ -210,7 +215,7 @@ function reportWindow(label, series) {
   const months = returns.length;
   const cagrV = cagr(twrV, months);
   const sharpeV = sharpe(returns);
-  const m = mdd(series);
+  const m = mdd(returns);
   return { label, months, twr: twrV, cagr: cagrV, sharpe: sharpeV, mdd: m, series };
 }
 
