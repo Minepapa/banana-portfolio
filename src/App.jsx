@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { parseJobStatus, computeJobHealth } from './lib/jobHealth.js';
+import { parseJobStatus } from './lib/jobHealth.js';
 import {
-  JOB_CADENCE,
   profitColor, relTime, DEFAULT_ACCOUNTS,
 } from './lib/constants.js';
 import { useGoogleSheets, CONFIGURED } from './hooks/useGoogleSheets.js';
@@ -30,6 +29,8 @@ import TradeEditModal from './tabs/TradeEditModal.jsx';
 import EvalIngestModal from './tabs/EvalIngestModal.jsx';
 import EvalQueueModal from './tabs/EvalQueueModal.jsx';
 import AddHoldingForm from './tabs/AddHoldingForm.jsx';
+import JobHealthBanner from './tabs/JobHealthBanner.jsx';
+import SyncBanner from './tabs/SyncBanner.jsx';
 
 // ── 반응형 훅 ─────────────────────────────────────────────────────────────────
 function useIsMobile(bp = 640) {
@@ -403,28 +404,7 @@ export default function App() {
           </div>
         )}
 
-        {jobStatus && (() => {
-          const problems = computeJobHealth(jobStatus, JOB_CADENCE);
-          if (problems.length === 0) return null;
-          const anyFail = problems.some(p => p.problem === 'fail' || p.problem === 'missing');
-          return (
-            <div style={{
-              margin: '8px 12px', padding: '8px 12px', borderRadius: 8,
-              background: anyFail ? '#2A1416' : '#241F12',
-              border: `1px solid ${anyFail ? '#7F1D1D' : '#78510F'}`,
-              fontSize: 11, color: anyFail ? '#FCA5A5' : '#FCD34D', textAlign: 'left',
-            }}>
-              <div style={{ fontWeight: 700, marginBottom: 2 }}>
-                ⚠️ 무인 잡 점검 필요 {problems.length}건
-              </div>
-              {problems.map((p, i) => (
-                <div key={i} style={{ fontSize: 10, opacity: 0.9 }}>
-                  {p.job} — {p.problem === 'fail' ? '실패' : p.problem === 'missing' ? '미실행(기록 없음)' : '갱신 정체'}{p.detail ? ` (${p.detail.slice(0, 60)})` : ''}
-                </div>
-              ))}
-            </div>
-          );
-        })()}
+        <JobHealthBanner jobStatus={jobStatus} />
 
         {/* ── 대시보드 탭 ── */}
         {tab === "dashboard" && (
@@ -592,25 +572,7 @@ export default function App() {
       </div>
 
       {/* 동기화/저장 피드백 토스트 (하단 고정) */}
-      {balanceSyncMsg && (() => {
-        const isErr = balanceSyncMsg.includes('실패') || balanceSyncMsg.includes('없음') || balanceSyncMsg.includes('올바르게');
-        return (
-          <div style={{
-            position: "fixed", left: "50%", bottom: 24, transform: "translateX(-50%)",
-            zIndex: 2000, maxWidth: "90%",
-            padding: "12px 20px", borderRadius: 10,
-            background: isErr ? "#3A1518" : "#143526",
-            border: `1px solid ${isErr ? "#7F1D1D" : "#15803D"}`,
-            color: isErr ? "#FCA5A5" : "#86EFAC",
-            fontSize: 13, fontWeight: 600, fontFamily: baseFont,
-            boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
-            display: "flex", alignItems: "center", gap: 8,
-          }}>
-            <span>{isErr ? "⚠️" : "✓"}</span>
-            <span>{balanceSyncMsg}</span>
-          </div>
-        );
-      })()}
+      <SyncBanner message={balanceSyncMsg} baseFont={baseFont} />
     </div>
   );
 }
