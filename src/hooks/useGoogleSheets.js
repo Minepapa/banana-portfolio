@@ -118,6 +118,9 @@ export function useGoogleSheets(onData) {
                 return;
               }
               saveToken(resp);
+              // 토큰을 gapi 에 즉시 적용 — 안 하면 setAuth 직후 실행되는 읽기 effect(잡상태 등)가
+              // 토큰 적용 전에 호출돼 401 실패. 복원 경로와 동일하게 맞춤.
+              window.gapi.client.setToken({ access_token: resp.access_token });
               setAuth('signed-in');
               await doFetch();
             },

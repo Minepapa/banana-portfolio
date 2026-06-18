@@ -237,7 +237,9 @@ export default function App() {
     if (sheets.auth === 'signed-in' && jobStatus === null) {
       sheets.readRange('잡상태!A2:E')
         .then(rows => setJobStatus(parseJobStatus(rows)))
-        .catch(() => setJobStatus([]));   // 시트 없거나 실패 → 배너 숨김
+        // 실패 시 jobStatus는 null 유지 → 배너 숨김([]는 "전부 미실행"으로 오표시되므로 금지).
+        // 401(토큰 미적용)은 정상 레이스라 조용히, 그 외 실제 오류는 흔적 남김.
+        .catch(e => { if (e?.status !== 401) console.error('잡상태 read failed:', e); });
     }
   }, [sheets.auth, jobStatus]); // eslint-disable-line
 
