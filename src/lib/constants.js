@@ -24,7 +24,9 @@ export const SHEET_RANGES = {
 
 export const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
 // 잡 헬스 배너용 — 잡별 최대 허용 무갱신 시간(시간). 주말 갭 고려해 risk 류는 넉넉히.
-export const JOB_CADENCE = { 'parse-notifications': 1, drain: 6, 'risk-d': 80, 'risk-b': 200 };
+// parse-notifications 는 평일 장중(08:00–16:30)만 도므로 staleness 판정 제외(야간·주말 갭 오탐 방지).
+// 실패 감지는 연속 2회 실패 시 텔레그램 알림(record-heartbeat)으로 대체.
+export const JOB_CADENCE = { drain: 6, 'risk-d': 80, 'risk-b': 200 };
 
 // 체결내역 A~M 컬럼 레이블
 export const CHEOL_COLS = [

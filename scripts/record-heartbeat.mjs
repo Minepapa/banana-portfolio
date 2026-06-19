@@ -11,7 +11,7 @@ import {
 import { findStatusRow } from './lib/job-status.mjs';
 
 const STATUS_SHEET = '잡상태';
-const HEADER = ['job', 'lastRun', 'status', 'detail', 'durationSec'];
+const HEADER = ['job', 'lastRun', 'status', 'detail', 'durationSec', 'failStreak'];
 
 const job = process.argv[2];
 const status = process.argv[3] || 'OK';
@@ -25,16 +25,21 @@ async function main() {
   await ensureSheet(token, STATUS_SHEET, HEADER);
 
   const ts = nowKST();
-  const rows = await getRange(token, `${STATUS_SHEET}!A2:E`);
+  const rows = await getRange(token, `${STATUS_SHEET}!A2:F`);
   const rowNum = findStatusRow(rows, job);
-  const values = [[job, ts, status, detail, String(durationSec)]];
-  if (rowNum) await setValues(token, `${STATUS_SHEET}!A${rowNum}:E${rowNum}`, values);
+  // 연속 실패 횟수(F열) 추적 — OK면 0으로 리셋, 실패면 직전값 +1.
+  // 기존 5열 행은 F 없음 → priorStreak 0 (배포 직후 1회 카운터 리셋, 무해).
+  const priorStreak = rowNum ? (parseInt(rows[rowNum - 2]?.[5] ?? '0', 10) || 0) : 0;
+  const streak = status === 'OK' ? 0 : priorStreak + 1;
+  const values = [[job, ts, status, detail, String(durationSec), String(streak)]];
+  if (rowNum) await setValues(token, `${STATUS_SHEET}!A${rowNum}:F${rowNum}`, values);
   else        await appendValues(token, `${STATUS_SHEET}!A2`, values);
-  console.log(`🫀 ${job} ${status} ${durationSec}s (행 ${rowNum ?? 'append'})`);
+  console.log(`🫀 ${job} ${status} ${durationSec}s (행 ${rowNum ?? 'append'}${status !== 'OK' ? `, 연속실패 ${streak}회` : ''})`);
 
-  if (status !== 'OK') {
+  // 1회 실패는 무시(일시 오류는 다음 주기에 자가복구) — 연속 2회 이상일 때만 텔레그램 알림.
+  if (status !== 'OK' && streak >= 2) {
     try {
-      await sendTelegram(`⚠️ <b>banana 잡 실패</b>\njob: <code>${job}</code>\n시각: ${ts}\n${detail || '(detail 없음)'}`);
+      await sendTelegram(`⚠️ <b>banana 잡 실패</b> (연속 ${streak}회)\njob: <code>${job}</code>\n시각: ${ts}\n${detail || '(detail 없음)'}`);
     } catch (e) { console.error('Telegram 알림 실패(무시):', e.message); }
   }
 }

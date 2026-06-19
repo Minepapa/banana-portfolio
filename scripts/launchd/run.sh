@@ -20,6 +20,18 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 NODE="$(command -v node || true)"
 if [ -z "$NODE" ]; then echo "[run.sh] node 를 PATH 에서 찾지 못했습니다" >&2; exit 127; fi
 
+JOB="${1:-}"
+# parse-notifications 는 평일(월~금) 08:00–16:30 KST(장중~마감 1h)만 실행.
+# 그 외 시간/주말엔 구글 접근(토큰·시트) 없이 즉시 skip — 24시간 폴링 제거.
+# (미국장 체결도 카카오 알람이 다음 한국장 중에 도착하므로 한국장 윈도우로 충분.)
+if [ "$JOB" = "parse-notifications" ]; then
+  DOW=$(TZ=Asia/Seoul date +%u)              # 1=월 … 7=일
+  HHMM=$((10#$(TZ=Asia/Seoul date +%H%M)))   # 10# : 0800 8진수 파싱 오류 방지
+  if [ "$DOW" -gt 5 ] || [ "$HHMM" -lt 800 ] || [ "$HHMM" -gt 1630 ]; then
+    echo "[run.sh] parse-notifications: 장외(평일 08:00–16:30 KST 외) — skip"; exit 0
+  fi
+fi
+
 # 서비스 계정 키로 무인 토큰 발급 (sheets-common 의 getServiceAccountToken 재사용)
 TOKEN=""
 if [ -f "$SA_KEY_FILE" ]; then
@@ -30,7 +42,6 @@ if [ -z "$TOKEN" ]; then
   echo "[run.sh] 경고: 서비스 계정 키($SA_KEY_FILE) 없음 → 무인 실행 실패 가능(대화형 OAuth)" >&2
 fi
 
-JOB="${1:-}"
 case "$JOB" in
   drain)               CMD=(scripts/drain-eval-queue.mjs --auto) ;;
   risk-d)              CMD=(scripts/risk-monitor.mjs --mode=D) ;;

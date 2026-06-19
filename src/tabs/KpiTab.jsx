@@ -17,7 +17,7 @@ const JOB_LABELS = {
 };
 // 각 잡의 무인 실행 주기(launchd plist 기준) — 표에 배지로 노출
 const JOB_INTERVALS = {
-  'parse-notifications': '15분',
+  'parse-notifications': '평일 08–16:30 · 15분',
   'drain': '1·4·9·12·14·19·22시',
   'journal-sync': '매일 16:00',
   'risk-d': '평일 16:30',
