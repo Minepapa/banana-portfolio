@@ -147,13 +147,12 @@ export default function RiskTab({ riskMonitor, baselines }) {
         </>
       )}
 
-      {/* 리밸런싱 기회 (§4 가격 트리거 — O 신호) */}
+      {/* 급락 매수 기회 (§4 급락 트리거 — O 신호. 가격 상승은 매도 신호 아님) */}
       {oppLatest.length > 0 && (
         <div style={{ marginTop: 12 }}>
-          <SectionTitle color="#52C8D4" size={12} mb={10} sub="§4 가격 트리거 — 펀더멘털 확인 후 판단">💡 리밸런싱 기회</SectionTitle>
+          <SectionTitle color="#52C8D4" size={12} mb={10} sub="§4 급락 트리거 — 펀더멘털 확인 후 매수 검토">💡 급락 매수 기회</SectionTitle>
           {oppLatest.map((r, i) => {
-            const color = sigColor(r.signal);
-            const isBuy = sigLevel(r.signal) === 3;          // 🔴 = 급락 매수 기회
+            const color = sigColor(r.signal);          // O 신호는 급락 매수(🔴)만 생성됨
             const key = `opp-${i}`;
             const isOpen = riskOpen.has(key);
             return (
@@ -162,7 +161,7 @@ export default function RiskTab({ riskMonitor, baselines }) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
                     <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
                     <span style={{ fontSize: 12, fontWeight: 700, color: '#E8EAF0' }}>{r.target}</span>
-                    <span style={{ fontSize: 8, color, background: `${color}22`, borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>{isBuy ? '급락 매수' : '차익 검토'}</span>
+                    <span style={{ fontSize: 8, color, background: `${color}22`, borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>급락 매수</span>
                   </div>
                   <span style={{ fontSize: 9, color: '#3A4050', flexShrink: 0 }}>{r.date}</span>
                 </div>

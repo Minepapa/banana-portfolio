@@ -42,12 +42,11 @@ const KOSPI_CRASH_PCT = -10;  // KOSPI 5일 고점 대비 낙폭 임계 — 이�
 const USDKRW_SURGE_PCT = 3;   // USDKRW 5일 저점 대비 상승 임계 — KRW 급약세 결정론 경보
 const SP500_CRASH_PCT = -7;   // SP500 5일 고점 대비 낙폭 임계 — 미증시 급락 결정론 경보
 
-// §4 개별 종목 가격 트리거 임계 (결정론). 급락 매수 기회는 성향(급락매수 선호)과 부합 → 🔴 강하게.
-// 급등 차익실현은 성향상 가격만으로 익절하지 않음 → 🟡 검토만(펀더멘털 확인 유도).
+// §4 개별 종목 가격 트리거 임계 (결정론) — 급락 매수 기회만.
+// ⚠️ 급등 차익실현(52주/RSI 고점) 트리거는 제거됨: Frank 철학상 가격 상승은 매도 신호가 아니다
+//    (과열 익절은 본인 재량). 매도 검토는 펀더멘털 훼손(B 모드)에서만 나온다.
 const OPP_BUY_DROP_PCT = -10; // 단기(5거래일) 등락 ≤ -10% → 급락 매수 기회
 const OPP_RSI_LOW = 30;       // RSI ≤ 30 → 과매도(급락 매수 기회)
-const OPP_RSI_HIGH = 70;      // RSI ≥ 70 → 과열(차익실현 검토)
-const OPP_POS52_HIGH = 80;    // 52주 위치 ≥ 80% → 고점 근접(차익실현 검토)
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
@@ -88,12 +87,13 @@ function holdingsSummary(holdings) {
 // ── D 모드: 거시 리스크 프롬프트 ────────────────────────
 // 거시지표 숫자는 Node(fetchMacroIndicators)가 yfinance에서 직접 조회·계산해 주입한다.
 // LLM은 재조회 금지 — 주입된 수치를 Hub 트리거 기준과 비교해 "판단만". (mode B와 동일 원칙)
-// 개별 종목 시세(md) → §4 가격 트리거 판정. 결정론(LLM 무관). 트리거 없으면 🟢(자가 치유용).
+// 개별 종목 시세(md) → §4 급락 매수 기회만 판정. 결정론(LLM 무관). 트리거 없으면 🟢(자가 치유용).
+// 가격 상승(52주/RSI 고점)은 매도/차익 신호로 쓰지 않는다(Frank 철학 — 펀더멘털 우선).
 function scanOpportunity(md) {
   if (!md) return null;
   const { rsi14, pos52w, weekChange, currentPrice } = md;
   const ev = JSON.stringify({ rsi14, pos52w, weekChange, currentPrice });
-  // ① 급락 매수 기회 — 성향(급락매수 선호) 부합 → 🔴
+  // 급락 매수 기회 — 성향(급락매수 선호) 부합 → 🔴
   const dropHit = weekChange != null && weekChange <= OPP_BUY_DROP_PCT;
   const rsiLow = rsi14 != null && rsi14 <= OPP_RSI_LOW;
   if (dropHit || rsiLow) {
@@ -101,15 +101,7 @@ function scanOpportunity(md) {
     return { signal: '🔴', summary: `급락 매수 기회 — ${why}`,
       detail: '§4 급락 매수 기회 트리거(단기 -10% 또는 RSI 30↓). Frank 급락매수 선호와 부합 — 펀더멘털 유효 시 적극 매수 검토(1회 500만원 이하).', ev };
   }
-  // ② 급등 차익실현 — 성향상 가격만으로 익절 안 함 → 🟡 검토만
-  const rsiHigh = rsi14 != null && rsi14 >= OPP_RSI_HIGH;
-  const pos52High = pos52w != null && pos52w >= OPP_POS52_HIGH;
-  if (rsiHigh || pos52High) {
-    const why = [rsiHigh ? `RSI ${rsi14}` : null, pos52High ? `52주 ${pos52w}%` : null].filter(Boolean).join(' · ');
-    return { signal: '🟡', summary: `차익실현 검토 — ${why}`,
-      detail: '§4 급등 차익실현 트리거(RSI 70↑ 또는 52주 고점 근접). 단, 가격만으로 익절하지 않는 성향 — 펀더멘털·논리 유효성 먼저 확인 후 일부 차익실현만 검토.', ev };
-  }
-  // ③ 트리거 없음 — 🟢(이전 기회 신호 자가 해소용). 앱은 🟢 기회는 숨김.
+  // 트리거 없음 — 🟢(이전 기회 신호 자가 해소용). 앱은 🟢 기회는 숨김.
   return { signal: '🟢', summary: '가격 트리거 없음',
     detail: '', ev: JSON.stringify({ rsi14, pos52w, weekChange }) };
 }

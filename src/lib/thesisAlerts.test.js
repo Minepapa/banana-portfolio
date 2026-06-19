@@ -23,24 +23,30 @@ test('최신 신호가 🔴면 경보', () => {
   assert.equal(alerts[0].signal.signal, '🔴');
 });
 
-test('유형별로 최신 판정 — B는 🟢여도 D 최신이 🔴면 경보', () => {
+test('거시(D) 신호는 투자논리 훼손이 아님 — B만 본다', () => {
+  const journal = [pos('삼성전자')];
+  const risk = [{ date: '2026-06-11', type: 'D', target: '삼성전자', signal: '🔴', summary: '거시 충격' }];
+  assert.equal(findThesisAlerts(journal, risk).length, 0);
+});
+
+test('가격(O) 신호는 투자논리 훼손이 아님 — 차익실현🟡·급락매수🔴 모두 무시', () => {
+  const journal = [pos('삼성전자')];
+  const riskTrim = [{ date: '2026-06-12', type: 'O', target: '삼성전자', signal: '🟡', summary: '차익실현 검토 — 52주 92%' }];
+  const riskBuy  = [{ date: '2026-06-12', type: 'O', target: '삼성전자', signal: '🔴', summary: '급락 매수 기회 — RSI 28' }];
+  assert.equal(findThesisAlerts(journal, riskTrim).length, 0);
+  assert.equal(findThesisAlerts(journal, riskBuy).length, 0);
+});
+
+test('B 🟡(논리 약화)는 경보, 같은 종목 O🔴가 있어도 B만 반영', () => {
   const journal = [pos('삼성전자')];
   const risk = [
-    { date: '2026-06-12', type: 'B', target: '삼성전자', signal: '🟢', summary: '논리 정상' },
-    { date: '2026-06-11', type: 'D', target: '삼성전자', signal: '🔴', summary: '거시 충격' },
+    { date: '2026-06-12', type: 'O', target: '삼성전자', signal: '🔴', summary: '급락 매수' },
+    { date: '2026-06-12', type: 'B', target: '삼성전자', signal: '🟡', summary: '영익률 약화' },
   ];
   const alerts = findThesisAlerts(journal, risk);
   assert.equal(alerts.length, 1);
-  assert.equal(alerts[0].signal.type, 'D');
-});
-
-test('여러 활성 신호 중 🔴를 🟡보다 우선 노출', () => {
-  const journal = [pos('삼성전자')];
-  const risk = [
-    { date: '2026-06-12', type: 'B', target: '삼성전자', signal: '🟡', summary: '주의' },
-    { date: '2026-06-12', type: 'D', target: '삼성전자', signal: '🔴', summary: '경보' },
-  ];
-  assert.equal(findThesisAlerts(journal, risk)[0].signal.signal, '🔴');
+  assert.equal(alerts[0].signal.type, 'B');
+  assert.equal(alerts[0].signal.signal, '🟡');
 });
 
 test('청산 포지션은 제외', () => {

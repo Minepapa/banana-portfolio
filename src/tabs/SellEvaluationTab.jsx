@@ -162,14 +162,14 @@ export default function SellEvaluationTab({
                 </div>
               );
             })()}
-            {/* 기술적 신호 (RSI / 52주) */}
+            {/* 기술 지표 (참고) — 가격(RSI·52주)은 매도 신호가 아니다(펀더멘털 우선). 맥락 정보로만 중립 표시. */}
             {hasAlerts && (
-              <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 8, background: '#3A2A1E44', border: '1px solid #FBBF2444', fontSize: 10, color: '#FBBF24', fontWeight: 600 }}>
-                기술적 신호 · {[
-                  rsiOver ? `RSI ${Math.round(rsiVal)} 과열` : null,
-                  rsiUnder ? `RSI ${Math.round(rsiVal)} 급락` : null,
-                  pos52Over ? `52주 ${Math.round(pos52Val)}% 고점 근접` : null,
+              <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 8, background: '#1B1F2A', border: '1px solid #2A2F3E', fontSize: 10, color: '#8A9AB5', fontWeight: 500 }}>
+                기술 지표(참고) · {[
+                  rsiVal !== null ? `RSI ${Math.round(rsiVal)}` : null,
+                  pos52Val !== null ? `52주 ${Math.round(pos52Val)}%` : null,
                 ].filter(Boolean).join(' · ')}
+                <span style={{ color: '#6B7A9A' }}> · 가격은 매도 신호 아님</span>
               </div>
             )}
             <div style={{ textAlign: 'center', marginBottom: 12 }}>
@@ -219,13 +219,15 @@ export default function SellEvaluationTab({
             {/* 상태 배지 — 마지막 평가 기준 */}
             {(rsiVal !== null || pos52Val !== null || daysSinceEval !== null) && (
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1E2233', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                {/* RSI: 과매도(급락=매수기회)만 초록. 과열(>70)은 매도 신호가 아니므로 중립 회색. */}
                 {rsiVal !== null && (
-                  <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 9, fontWeight: 600, background: rsiOver ? '#4A1E1E33' : rsiUnder ? '#1A3A2633' : '#1E2233', color: rsiOver ? '#F87171' : rsiUnder ? '#4ADE80' : '#9CA3AF', border: `1px solid ${rsiOver ? '#F8717144' : rsiUnder ? '#4ADE8044' : '#2A2F3E'}` }}>
+                  <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 9, fontWeight: 600, background: rsiUnder ? '#1A3A2633' : '#1E2233', color: rsiUnder ? '#4ADE80' : '#9CA3AF', border: `1px solid ${rsiUnder ? '#4ADE8044' : '#2A2F3E'}` }}>
                     RSI {Math.round(rsiVal)}
                   </span>
                 )}
+                {/* 52주 위치: 가격이므로 항상 중립 — 고점 근접은 매도 신호가 아님. */}
                 {pos52Val !== null && (
-                  <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 9, fontWeight: 600, background: pos52Over ? '#4A3A1E33' : '#1E2233', color: pos52Over ? '#FBBF24' : '#9CA3AF', border: `1px solid ${pos52Over ? '#FBBF2444' : '#2A2F3E'}` }}>
+                  <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 9, fontWeight: 600, background: '#1E2233', color: '#9CA3AF', border: '1px solid #2A2F3E' }}>
                     52주 {Math.round(pos52Val)}%
                   </span>
                 )}
