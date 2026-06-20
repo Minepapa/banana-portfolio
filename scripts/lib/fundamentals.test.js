@@ -5,6 +5,7 @@ import {
   computeMacroChange, computeRsi14, compute52wPosition, computeFcfYield,
   computeTtmNetIncome, computeRoe, computePbr,
   computeDrawdownFromPeak, computeRallyFromTrough, parseNaverSise,
+  computeBollingerBands,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -197,4 +198,37 @@ test('computeFcfYield: FCF/시총*100, 결측·0분모 → null', () => {
   assert.equal(computeFcfYield(-1e9, 1e11), -1);
   assert.equal(computeFcfYield(5e9, 0), null);
   assert.equal(computeFcfYield(null, 1e11), null);
+});
+
+test('computeBollingerBands: 정상 계산 (MA, sigma, upper, lower, zscore)', () => {
+  // 250개 종가: 1300~1500 범위, 평균 1400
+  const closes = Array.from({ length: 250 }, (_, i) => 1300 + (i % 5) * 50);
+  const b = computeBollingerBands(closes);
+  assert.notEqual(b, null);
+  assert.equal(b.window, 250);
+  assert.equal(typeof b.ma, 'number');
+  assert.equal(typeof b.sigma, 'number');
+  assert.ok(b.upper > b.ma);
+  assert.ok(b.lower < b.ma);
+  assert.ok(b.upper === b.ma + 2 * b.sigma || Math.abs(b.upper - (b.ma + 2 * b.sigma)) < 0.02);
+});
+
+test('computeBollingerBands: 데이터 부족 시 null (window 절반 미만)', () => {
+  assert.equal(computeBollingerBands(Array(124).fill(1400)), null);
+  assert.equal(computeBollingerBands([]), null);
+  assert.equal(computeBollingerBands(null), null);
+});
+
+test('computeBollingerBands: zscore 방향 — 현재가 MA 위면 양수', () => {
+  // 200개 1400 + 마지막 50개 1500 → 평균 ~1425, 현재 1500 → z > 0
+  const closes = [...Array(200).fill(1400), ...Array(50).fill(1500)];
+  const b = computeBollingerBands(closes);
+  assert.ok(b.zscore > 0);
+});
+
+test('computeBollingerBands: 커스텀 window', () => {
+  const closes = Array.from({ length: 60 }, (_, i) => 1380 + i);
+  const b = computeBollingerBands(closes, 60);
+  assert.notEqual(b, null);
+  assert.equal(b.window, 60);
 });

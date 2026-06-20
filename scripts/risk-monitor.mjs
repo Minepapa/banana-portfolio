@@ -149,7 +149,8 @@ function fmtMacro(key, o) {
   const dd = key === 'KOSPI' && o.drawdown5d != null ? ` [고점대비 ${o.drawdown5d}%]` : '';
   const sp = key === 'SP500' && o.drawdown5d != null ? ` [고점대비 ${o.drawdown5d}%]` : '';
   const fx = key === 'USDKRW' && o.rally5d != null ? ` [저점대비 +${o.rally5d}%]` : '';
-  return v + c + dd + sp + fx;
+  const band = key === 'USDKRW' && o.bands ? ` [밴드 ${o.bands.lower}~${o.bands.upper}, z=${o.bands.zscore}]` : '';
+  return v + c + dd + sp + fx + band;
 }
 
 // ── B 모드: 논리 훼손 프롬프트 (종목별) — 판단 전용 ─────────────────
@@ -317,10 +318,10 @@ async function main() {
     holdings.filter(h => h.accounts.some(a => a.acct === '위탁' && STOCK_TYPES.has(a.type))).map(h => h.name),
   );
 
-  // 신규 🔴 판별용: 기존 리스크모니터의 직전 🔴 (유형|대상) 키
-  const priorRedKeys = (token && !NO_PUSH)
-    ? redKeysFromRows(await getRange(token, `${RISK_SHEET}!A2:H`))
-    : new Set();
+  // 기존 리스크모니터의 직전 행 + 🔴 키
+  const priorRows = (token && !NO_PUSH)
+    ? await getRange(token, `${RISK_SHEET}!A2:H`) : [];
+  const priorRedKeys = redKeysFromRows(priorRows);
 
   if (MODE === 'D') {
     // ① Node가 거시지표를 yfinance에서 직접 조회·계산(결정론). LLM은 이 숫자만 보고 판단.
@@ -356,6 +357,34 @@ async function main() {
       console.log(`   ⚑ USDKRW 급등 가드레일 발동: +${fx5d}% → 🔴 강제`);
       await appendValues(token, `${RISK_SHEET}!A2`, [fxRow]);
       await pushNewReds([fxRow], priorRedKeys);
+    }
+
+    // 볼린저 밴드 가드레일: 12개월 MA ± 2σ 돌파 시 결정론 경보 (고정 임계값 대체)
+    const fxBands = macro.USDKRW?.bands;
+    const todayDate = nowKST().slice(0, 10);
+    const hasBandRowToday = priorRows.some(r => String(r[0] ?? '').startsWith(todayDate) && String(r[1]) === 'D' && String(r[2]).includes('USDKRW') && String(r[4]).includes('밴드'));
+    if (!DRY_RUN && fxBands && fxBands.sigma > 0 && !hasBandRowToday) {
+      const fxVal = macro.USDKRW.value;
+      if (fxVal > fxBands.upper) {
+        const bandRow = [
+          nowKST(), 'D', '환율(USDKRW)', '🔴',
+          `USDKRW ${fxVal?.toFixed(0)} — 12개월 상단밴드(${fxBands.upper}) 돌파 (z=${fxBands.zscore})`,
+          `결정론 가드레일: 12개월 MA ${fxBands.ma} + 2σ(${fxBands.sigma}) = ${fxBands.upper} 상회. 달러 자산 축소 검토.`,
+          evidenceBase, '',
+        ];
+        console.log(`   ⚑ USDKRW 볼린저 상단 돌파: ${fxVal?.toFixed(0)} > ${fxBands.upper} (z=${fxBands.zscore}) → 🔴`);
+        await appendValues(token, `${RISK_SHEET}!A2`, [bandRow]);
+        await pushNewReds([bandRow], priorRedKeys);
+      } else if (fxVal < fxBands.lower) {
+        const bandRow = [
+          nowKST(), 'D', '환율(USDKRW)', '🟡',
+          `USDKRW ${fxVal?.toFixed(0)} — 12개월 하단밴드(${fxBands.lower}) 하회 (z=${fxBands.zscore})`,
+          `결정론 가드레일: 12개월 MA ${fxBands.ma} - 2σ(${fxBands.sigma}) = ${fxBands.lower} 하회. 달러 자산 확대 기회.`,
+          evidenceBase, '',
+        ];
+        console.log(`   ⚑ USDKRW 볼린저 하단 이탈: ${fxVal?.toFixed(0)} < ${fxBands.lower} (z=${fxBands.zscore}) → 🟡`);
+        await appendValues(token, `${RISK_SHEET}!A2`, [bandRow]);
+      }
     }
 
     const sp5d = macro.SP500?.drawdown5d;

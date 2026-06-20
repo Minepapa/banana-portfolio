@@ -291,6 +291,26 @@ export function computeRallyFromTrough(closes, window = 5) {
   return Math.round((a[a.length - 1] - trough) / trough * 10000) / 100;
 }
 
+// 볼린저 밴드 (MA ± 2σ). 고정 임계값 대신 최근 N거래일 분포로 동적 극단값 판별.
+// window=250 ≈ 12개월. 데이터가 window의 절반 미만이면 null(신뢰 부족).
+export function computeBollingerBands(closes, window = 250) {
+  const a = (closes || []).filter(x => Number.isFinite(x));
+  if (a.length < Math.floor(window * 0.5)) return null;
+  const slice = a.slice(-window);
+  const n = slice.length;
+  const ma = slice.reduce((s, x) => s + x, 0) / n;
+  const variance = slice.reduce((s, x) => s + (x - ma) ** 2, 0) / n;
+  const sigma = Math.sqrt(variance);
+  const current = a[a.length - 1];
+  const zscore = sigma > 0 ? (current - ma) / sigma : 0;
+  const round2 = v => Math.round(v * 100) / 100;
+  return {
+    ma: round2(ma), sigma: round2(sigma),
+    upper: round2(ma + 2 * sigma), lower: round2(ma - 2 * sigma),
+    zscore: round2(zscore), window: n,
+  };
+}
+
 // 네이버 siseJson 응답(JS 배열: 홑따옴표·trailing comma 포함) → 종가 시계열(과거→현재).
 // 헤더행('종가' 문자열)·결측은 Number→NaN 으로 자동 제외. 파싱 불가 시 빈 배열(폴백 유도).
 export function parseNaverSise(text) {
@@ -336,6 +356,7 @@ export function fetchMacroIndicators() {
   // USDKRW: 5일 저점 대비 상승폭(KRW 약세 충격) — 끝점비교 누락 보강. FX는 연속거래라 yfinance 지연 ~10h(허용).
   const usdkrwCloses = raw['KRW=X'] || [];
   out.USDKRW.rally5d = computeRallyFromTrough(usdkrwCloses);
+  out.USDKRW.bands = computeBollingerBands(usdkrwCloses);
   out.USDKRW.source = usdkrwCloses.length ? 'yfinance(FX,~10h지연)' : '데이터없음';
   // SP500: 5일 고점 대비 낙폭 — 미증시 진행 중 급락 포착. yfinance 지연 무시 가능(US 이전 세션 종가).
   const sp500Closes = raw['^GSPC'] || [];
