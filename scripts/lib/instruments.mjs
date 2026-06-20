@@ -14,7 +14,7 @@ const norm = (s) => String(s ?? '').normalize('NFC').replace(/\s+/g, ' ').trim()
 // US 보유종목 한글명 → 티커. 신규 매수 시 여기 한 줄 추가(누락 시 잡이 '데이터 부족'으로 알려줌).
 const US_MAP = {
   '애플': 'AAPL', '테슬라': 'TSLA', '엔비디아': 'NVDA',
-  '알파벳 class a': 'GOOGL', '마이크로소프트': 'MSFT',
+  '알파벳 class a': 'GOOGL', '마이크로소프트': 'MSFT', '아마존': 'AMZN',
 };
 
 export function usTicker(name) {
