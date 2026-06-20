@@ -132,8 +132,6 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
                 <div style={{ marginBottom: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
                     <div style={{ fontSize: 9, letterSpacing: 1, color: '#F4845F' }}>이탈조건 (이게 깨지면 매도 검토)</div>
-                    <button onClick={() => { setExitEditing(prev => new Set([...prev, p.rowIndex])); setExitDraft(prev => ({ ...prev, [p.rowIndex]: p.exit ?? '' })); }}
-                      style={{ fontSize: 9, color: '#8A9AB5', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>수정</button>
                   </div>
                   {p.exit ? (
                     <div style={{ fontSize: 12, color: '#F5C9B8', lineHeight: 1.5 }}>{p.exit}</div>

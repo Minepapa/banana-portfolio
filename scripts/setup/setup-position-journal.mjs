@@ -133,6 +133,25 @@ async function main() {
   for (const r of rows) console.log(`  + ${r[0]} [${r[4]}] ${r[5] ? '전제O' : '전제미작성'}`);
   if (rows.length && !DRY_RUN) await appendValues(token, `${SHEET}!A2`, rows);
 
+  // ── 기존 행 빈 목표(G)·이탈조건(H) 보충: THESES에 정의됐으나 시트가 비어있는 셀 채움 ──
+  const fills = [];
+  for (let idx = 0; idx < existingRows.length; idx++) {
+    const name = String(existingRows[idx][0] ?? '').trim();
+    if (!name) continue;
+    const t = lookupThesis(name);
+    if (!t.target && !t.exit) continue;
+    const curTarget = String(existingRows[idx][6] ?? '').trim();
+    const curExit   = String(existingRows[idx][7] ?? '').trim();
+    if (curTarget && curExit) continue;
+    const row = idx + 2;
+    if (!curTarget && t.target) { fills.push({ row, col: 'G', name, field: '목표', val: t.target }); }
+    if (!curExit   && t.exit)   { fills.push({ row, col: 'H', name, field: '이탈조건', val: t.exit }); }
+  }
+  for (const f of fills) {
+    console.log(`  ✏ ${f.name} ${f.field} 보충: ${f.val.slice(0, 60)}`);
+    if (!DRY_RUN) await setValues(token, `${SHEET}!${f.col}${f.row}`, [[f.val]]);
+  }
+
   // ── 청산 감지: 저널엔 '보유'인데 현재 보유종목에 없는 종목 → 매도된 것 → 상태=청산, 청산일 기록 ──
   // (③ 반성 단계의 트리거. 청산결과·교훈은 빈칸 → 앱 반성 카드에서 채움)
   const norm = (s) => String(s ?? '').normalize('NFC').replace(/\s*\([^)]*\)\s*$/, '').replace(/\s+/g, '').toLowerCase();
