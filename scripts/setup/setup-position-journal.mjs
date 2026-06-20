@@ -38,15 +38,15 @@ const SKIP = new Set(['예수금']);
 // 에이전트(나)가 보유종목·종목노트(2026-06)·배분맥락을 보고 작성. 사용자 확인 대기 상태로 적재.
 const THESES = {
   // ── 확신형(개별주) ──
-  '삼성전자': { type:'확신', thesis:'HBM4 공급 정상화로 DS 마진 회복(Q1 영익률 42.7%), 순현금 119조·Fwd PER 6.8x로 하방 제한된 반도체 코어', target:'+30% (장기)', exit:'HBM4 경쟁 열위 고착 / DS 마진 재악화 / 파운드리 구조조정 장기화', hold:'장기(2년+)' },
-  '삼성바이오로직스': { type:'확신', thesis:'글로벌 1위 CDMO, 5공장 풀가동+미국공장으로 이익 레버리지. 영익률 46%, 매출 +26% YoY 고성장·고마진 동시', target:'+25% (장기)', exit:'노사갈등 장기화로 가동 차질 / 성장 둔화에 PER 53x 멀티플 축소', hold:'장기', entry:'2026-05-12' },
-  'SK하이닉스': { type:'확신', thesis:'HBM 시장 리더, AI 메모리 수요 최대 수혜. 메모리 업사이클 핵심 보유', target:'+30% (장기)', exit:'HBM 공급과잉 전환 / 메모리 다운사이클 진입 / 후발 추격 점유율 잠식', hold:'장기' },
-  '메리츠금융지주': { type:'확신', thesis:'ROE 21%(동종 1.76배), PER 5.6x·PBR 1.17x 역사적 하단. 자사주 소각 중심 주주환원', target:'+30% (장기)', exit:'배당·소각 정책 후퇴 / 영업이익 추가 하락 추세 / IFRS17·금리 운용수익 압박', hold:'장기' },
-  '애플': { type:'확신', thesis:'서비스 고마진 믹스 확대+생태계 락인. 안정적 현금창출·자사주 매입 지속', target:'+25% (장기)', exit:'아이폰 수요 구조적 둔화 / AI 전략 지연으로 교체수요 약화', hold:'장기' },
-  '테슬라': { type:'확신', thesis:'순현금 $28.9B·유동비율 2.04 견고. Fwd PER 168x는 로보택시/AI 기대 선반영 — 실현 시 재평가', target:'+30% (장기)', exit:'FSD·로보택시 상용화 지연으로 기대 미실현 → 밸류 하방 / 해외주식 33% 비중 추가 확대', hold:'장기' },
-  '엔비디아': { type:'확신', thesis:'AI 인프라 폭발 성장(매출 +85% YoY, 영익률 65.6%). Fwd PER 17x·PEG 0.66 성장 대비 합리적, 순현금 $40B', target:'+40% (장기)', exit:'미중 AI칩 수출규제로 중국향(~20%) 직격 / AI capex 사이클 둔화', hold:'장기' },
-  '알파벳 Class A': { type:'확신', thesis:'검색 현금창출+클라우드 성장+Gemini로 AI 경쟁 복귀. 빅테크 중 상대적 밸류 매력', target:'+25% (장기)', exit:'검색 점유율 AI 챗봇에 구조적 잠식 / 반독점 분할 리스크 현실화', hold:'장기' },
-  '마이크로소프트': { type:'확신', thesis:'Azure+Copilot AI 수익화 선두, 구독 기반 현금흐름. 엔터프라이즈 AI 1순위 수혜', target:'+25% (장기)', exit:'Azure 성장 둔화 / AI capex 회수 지연으로 마진 압박', hold:'장기' },
+  '삼성전자': { type:'확신', thesis:'HBM4 공급 정상화로 DS 마진 회복(Q1 영익률 42.7%), 순현금 119조·Fwd PER 6.8x로 하방 제한된 반도체 코어', target:'30% (장기)', exit:'HBM4 경쟁 열위 고착 / DS 마진 재악화 / 파운드리 구조조정 장기화', hold:'장기(2년+)' },
+  '삼성바이오로직스': { type:'확신', thesis:'글로벌 1위 CDMO, 5공장 풀가동+미국공장으로 이익 레버리지. 영익률 46%, 매출 +26% YoY 고성장·고마진 동시', target:'25% (장기)', exit:'노사갈등 장기화로 가동 차질 / 성장 둔화에 PER 53x 멀티플 축소', hold:'장기', entry:'2026-05-12' },
+  'SK하이닉스': { type:'확신', thesis:'HBM 시장 리더, AI 메모리 수요 최대 수혜. 메모리 업사이클 핵심 보유', target:'30% (장기)', exit:'HBM 공급과잉 전환 / 메모리 다운사이클 진입 / 후발 추격 점유율 잠식', hold:'장기' },
+  '메리츠금융지주': { type:'확신', thesis:'ROE 21%(동종 1.76배), PER 5.6x·PBR 1.17x 역사적 하단. 자사주 소각 중심 주주환원', target:'30% (장기)', exit:'배당·소각 정책 후퇴 / 영업이익 추가 하락 추세 / IFRS17·금리 운용수익 압박', hold:'장기' },
+  '애플': { type:'확신', thesis:'서비스 고마진 믹스 확대+생태계 락인. 안정적 현금창출·자사주 매입 지속', target:'25% (장기)', exit:'아이폰 수요 구조적 둔화 / AI 전략 지연으로 교체수요 약화', hold:'장기' },
+  '테슬라': { type:'확신', thesis:'순현금 $28.9B·유동비율 2.04 견고. Fwd PER 168x는 로보택시/AI 기대 선반영 — 실현 시 재평가', target:'30% (장기)', exit:'FSD·로보택시 상용화 지연으로 기대 미실현 → 밸류 하방 / 해외주식 33% 비중 추가 확대', hold:'장기' },
+  '엔비디아': { type:'확신', thesis:'AI 인프라 폭발 성장(매출 +85% YoY, 영익률 65.6%). Fwd PER 17x·PEG 0.66 성장 대비 합리적, 순현금 $40B', target:'40% (장기)', exit:'미중 AI칩 수출규제로 중국향(~20%) 직격 / AI capex 사이클 둔화', hold:'장기' },
+  '알파벳 Class A': { type:'확신', thesis:'검색 현금창출+클라우드 성장+Gemini로 AI 경쟁 복귀. 빅테크 중 상대적 밸류 매력', target:'25% (장기)', exit:'검색 점유율 AI 챗봇에 구조적 잠식 / 반독점 분할 리스크 현실화', hold:'장기' },
+  '마이크로소프트': { type:'확신', thesis:'Azure+Copilot AI 수익화 선두, 구독 기반 현금흐름. 엔터프라이즈 AI 1순위 수혜', target:'25% (장기)', exit:'Azure 성장 둔화 / AI capex 회수 지연으로 마진 압박', hold:'장기' },
   'VIP한국형가치투자증권자투자신탁(주식)-C-Pe': { type:'확신', thesis:'국내 가치투자 위탁운용(액티브 펀드) — 저평가 장기 복리. 직접 종목선정 대체', target:'시장 초과수익(장기)', exit:'운용성과 시장 대비 부진 누적(2년+) / 가치투자 철학 이탈', hold:'장기' },
   '삼척블루파워12': { type:'확신', thesis:'개별 회사채 — 만기보유로 표면이자 수취(인컴). 5.32% 쿠폰', target:'만기까지 이자 수취', exit:'발행사 신용등급 강등 / 디폴트·차환 위험 징후', hold:'만기보유' },
 
@@ -140,12 +140,13 @@ async function main() {
     if (!name) continue;
     const t = lookupThesis(name);
     if (!t.target && !t.exit) continue;
+    const isEmpty = (v) => { const s = String(v ?? '').trim(); return !s || s.startsWith('#'); };
     const curTarget = String(existingRows[idx][6] ?? '').trim();
     const curExit   = String(existingRows[idx][7] ?? '').trim();
-    if (curTarget && curExit) continue;
+    if (!isEmpty(curTarget) && !isEmpty(curExit)) continue;
     const row = idx + 2;
-    if (!curTarget && t.target) { fills.push({ row, col: 'G', name, field: '목표', val: t.target }); }
-    if (!curExit   && t.exit)   { fills.push({ row, col: 'H', name, field: '이탈조건', val: t.exit }); }
+    if (isEmpty(curTarget) && t.target) { fills.push({ row, col: 'G', name, field: '목표', val: t.target }); }
+    if (isEmpty(curExit)   && t.exit)   { fills.push({ row, col: 'H', name, field: '이탈조건', val: t.exit }); }
   }
   for (const f of fills) {
     console.log(`  ✏ ${f.name} ${f.field} 보충: ${f.val.slice(0, 60)}`);
