@@ -186,7 +186,7 @@ function readMultiline(rl) {
 // ── JSON 파싱 ───────────────────────────────────────────────────────────────
 // 한글 키 → 영문 키 별칭. 헤드리스 모델이 카드 라벨(한글)을 키로 쓰는 경우 흡수한다.
 const KEY_ALIAS = {
-  평가일: 'date', 종목명: 'name', 종목코드: 'ticker', 시장: 'market', 결론: 'conclusion',
+  평가일: 'date', evaluatedAt: 'date', 종목명: 'name', 종목코드: 'ticker', 시장: 'market', 결론: 'conclusion',
   근거: 'reasons', 리스크: 'risks', frank_액션: 'actions', 액션: 'actions',
   frank_메모: 'frankMemo', 매수일: 'buyDate', 매수가: 'buyPrice',
   목표기간: 'targetTerm', 목표수익률: 'targetRet', ai_의견: 'aiNote', 세부지표: 'axisItems',
