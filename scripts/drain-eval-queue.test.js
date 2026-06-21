@@ -57,6 +57,32 @@ test('parseEvalJson: ```json 펜스 안의 playbook JSON 파싱 + 정규화', ()
   assert.equal(obj.grades.안정성, '🟢');
 });
 
+test('parseEvalJson: trailing comma 허용', () => {
+  const json = '{ "date":"2026-06-20", "name":"테슬라", "conclusion":"🟡 관망", "reasons":["a",], "risks":["b",], }';
+  const raw = '분석:\n```json\n' + json + '\n```';
+  const obj = parseEvalJson(raw);
+  assert.equal(obj.name, '테슬라');
+  assert.deepEqual(obj.reasons, ['a']);
+});
+
+test('parseEvalJson: 복수 ```json 펜스 시 마지막 블록 사용', () => {
+  const schema = '```json\n{"date":"YYYY-MM-DD","name":"예시"}\n```';
+  const real = '```json\n{"date":"2026-06-20","name":"삼성전자","conclusion":"🟢 매수적극","reasons":["a"],"risks":["b"]}\n```';
+  const raw = '스키마 예시:\n' + schema + '\n\n실제 출력:\n' + real;
+  const obj = parseEvalJson(raw);
+  assert.equal(obj.name, '삼성전자');
+  assert.equal(obj.date, '2026-06-20');
+});
+
+test('normalizeEvalObj: evaluatedAt/stockName 별칭 → date/name', () => {
+  const obj = normalizeEvalObj({
+    evaluatedAt: '2026-06-20', stockName: '아마존', conclusion: '🟢 유효',
+    reasons: ['a'], risks: ['b'],
+  });
+  assert.equal(obj.date, '2026-06-20');
+  assert.equal(obj.name, '아마존');
+});
+
 test('normalizeEvalObj: 한글 스키마(근거/리스크/frank_액션)도 그대로 동작', () => {
   const obj = normalizeEvalObj({
     평가일: '2026-06-12', 종목명: '삼성전자', 결론: '🟢 유효',

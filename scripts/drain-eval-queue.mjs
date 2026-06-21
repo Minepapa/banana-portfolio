@@ -240,12 +240,21 @@ function normalizeEvalObj(obj) {
 }
 
 function parseEvalJson(raw) {
-  const fence = raw.match(/```json\s*([\s\S]*?)\s*```/i) || raw.match(/```\s*([\s\S]*?)\s*```/);
-  let candidate = fence ? fence[1] : raw;
+  // 마지막 ```json 펜스 우선(프롬프트에 스키마 예시가 먼저 오므로 LLM 응답은 뒤에 온다)
+  const fences = [...raw.matchAll(/```json\s*([\s\S]*?)\s*```/gi)];
+  let candidate;
+  if (fences.length > 0) {
+    candidate = fences[fences.length - 1][1];
+  } else {
+    const plain = raw.match(/```\s*([\s\S]*?)\s*```/);
+    candidate = plain ? plain[1] : raw;
+  }
   const first = candidate.indexOf('{');
   const last = candidate.lastIndexOf('}');
   if (first < 0 || last < 0) throw new Error('JSON 블록을 찾지 못했습니다.');
   candidate = candidate.slice(first, last + 1);
+  // trailing comma 제거 (LLM이 자주 넣는 패턴: ",}" / ",]")
+  candidate = candidate.replace(/,(\s*[}\]])/g, '$1');
   const obj = normalizeEvalObj(JSON.parse(candidate));
   if (!obj.date || !obj.name || !obj.conclusion) {
     throw new Error(`필수 필드 누락: ${['date','name','conclusion'].filter(k => !obj[k]).join(', ')}`);
@@ -436,7 +445,28 @@ ${prefBlock(confirmedPrefsText)}
 
 출력 조건:
 1. active-evaluation.md §5 표준 카드 양식으로 먼저 보여줘
-2. 마지막에 \`\`\`json 펜스로 JSON 블록 출력 (queue-evaluation.md §2.4 양식)
+2. 마지막에 \`\`\`json 펜스로 아래 영문 키 스키마 그대로 출력 (한글 키 금지):
+\`\`\`json
+{
+  "date": "YYYY-MM-DD",
+  "name": "${sanitizeField(entry.name, 60)}",
+  "ticker": "종목코드",
+  "market": "KR | US",
+  "conclusion": "🟢 매수적극 | 🟡 매수관망 | 🔴 매수부적합 | ⚪ 판단보류",
+  "grades": { "수익성":"🟢", "안정성":"🟢", "밸류에이션":"🟡", "현금흐름":"🟢", "모멘텀":"🟡" },
+  "axisItems": {
+    "수익성": [{ "label":"...", "value":"...", "source":"...", "metric":"..." }],
+    "안정성": [], "밸류에이션": [], "현금흐름": [], "모멘텀": []
+  },
+  "reasons": ["근거1", "근거2", "근거3"],
+  "risks": ["리스크1", "리스크2"],
+  "actions": ["Frank 액션 권고1", "액션2"],
+  "frankMemo": "",
+  "status": "보류",
+  "buyDate": "", "buyPrice": "", "targetTerm": "", "targetRet": "",
+  "aiNote": "한 줄 요약"
+}
+\`\`\`
 3. JSON에 "axisItems" 포함 — 위 검증된 펀더멘털 값을 그대로 옮길 것
 4. status는 항상 "보류"
 5. 데이터 부족 항목은 추정 금지, "(데이터 부족)" 표기

@@ -5,7 +5,8 @@ import { SAMPLE_EVALUATION, AXIS_METRICS, LEARNING_MODULES, LABEL_TO_METRIC } fr
 import { GradeDot, SubLabel, NumberedItem } from '../lib/primitives.jsx';
 import { gradeColor, stripGrade, stripPeriod } from '../lib/textFormat.js';
 
-// "OpenDart 2025 반기보고서(연결)" → "2025 H1", "quarterly+info(TTM)" → "TTM", 순수 yfinance → null
+// "OpenDart 2025 반기보고서(연결)" → "2025 H1", "quarterly+info(TTM)" → "TTM"
+// 매칭 안 되면 source 텍스트를 축약해서라도 표시 (일관된 출처 표기)
 function parsePeriodBadge(source) {
   if (!source) return null;
   const od = source.match(/OpenDart (\d{4}) (사업보고서|1분기보고서|반기보고서|3분기보고서)/);
@@ -14,7 +15,10 @@ function parsePeriodBadge(source) {
     return `${od[1]} ${label}`;
   }
   if (source.includes('TTM') || source.includes('quarterly+info')) return 'TTM';
-  return null;
+  if (source.includes('yfinance')) return 'yfinance';
+  if (source.includes('pykrx')) return 'pykrx';
+  if (source.includes('네이버')) return '네이버';
+  return source.length <= 20 ? source : source.slice(0, 18) + '…';
 }
 
 export default function BuyEvaluationTab({
@@ -223,12 +227,12 @@ export default function BuyEvaluationTab({
                     ) : null;
                   })()}
                 </div>
-                <div style={{ color: '#E8EAF0', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, textAlign: 'right', minWidth: 0 }}>
+                <div style={{ color: '#E8EAF0', display: 'flex', alignItems: 'baseline', gap: 5, justifyContent: 'flex-end', minWidth: 0 }}>
                   <span style={{ fontWeight: 600, wordBreak: 'break-word' }}>{item.value}</span>
                   {(() => {
                     const badge = parsePeriodBadge(item.source);
                     return badge ? (
-                      <span style={{ fontSize: 8, color: '#6B7A9A', background: '#1A2030', border: '1px solid #2A3348', borderRadius: 3, padding: '1px 4px', letterSpacing: 0.3 }}>{badge}</span>
+                      <span style={{ fontSize: 7, color: '#6B7A9A', background: '#1A2030', border: '1px solid #2A3348', borderRadius: 3, padding: '1px 4px', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>{badge}</span>
                     ) : null;
                   })()}
                 </div>
