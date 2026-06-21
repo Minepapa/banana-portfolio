@@ -179,15 +179,17 @@ export default function BuyEvaluationTab({
           <div style={{ fontSize: 10, color: '#8A9AB5', marginTop: 4, letterSpacing: 1 }}>
             {card.stock.market || '—'} · {card.date}
           </div>
-          {fromSheet && card.statusBar?.status && (
-            <div style={{
-              display: 'inline-block', marginTop: 8,
-              padding: '3px 12px', borderRadius: 20, fontSize: 10, fontWeight: 600,
-              background: card.statusBar.status === '매수' ? '#1E3A5F'
-                        : card.statusBar.status === '매도' ? '#4A1E1E' : '#2A2F3E',
-              color:      card.statusBar.status === '매수' ? '#60A5FA'
-                        : card.statusBar.status === '매도' ? '#F87171' : '#9CA3AF',
-            }}>{card.statusBar.status}</div>
+          {card.axes.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: 10 }}>
+              {card.axes.map((axis, i) => (
+                <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                  <GradeDot grade={axis.grade} size={10} />
+                  <span style={{ fontSize: 7, color: '#6B7A9A', letterSpacing: -0.3 }}>
+                    {axis.label.replace('재무 ', '')}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
@@ -278,9 +280,10 @@ export default function BuyEvaluationTab({
             </div>
           )}
 
-          {/* 시트 메타 (매수일·목표 등) */}
-          {fromSheet && (card.statusBar?.buyDate || card.statusBar?.targetTerm || card.statusBar?.aiNote || card.statusBar?.frankMemo) && (
+          {/* 시트 메타 (상태·매수일·목표 등) */}
+          {fromSheet && (card.statusBar?.status || card.statusBar?.buyDate || card.statusBar?.targetTerm || card.statusBar?.aiNote || card.statusBar?.frankMemo) && (
             <div style={{ background: '#0F1218', borderRadius: 6, padding: '8px 12px', marginTop: 8, fontSize: 10, color: '#9CA3AF', lineHeight: 1.6 }}>
+              {card.statusBar.status && <div>상태: <span style={{ color: card.statusBar.status === '매수' ? '#60A5FA' : card.statusBar.status === '매도' ? '#F87171' : '#E8EAF0', fontWeight: 600 }}>{card.statusBar.status}</span></div>}
               {card.statusBar.buyDate  && <div>매수일: <span style={{ color: '#E8EAF0' }}>{card.statusBar.buyDate}</span>{card.statusBar.buyPrice ? ` · ${card.statusBar.buyPrice}` : ''}</div>}
               {card.statusBar.targetTerm && <div>목표: <span style={{ color: '#E8EAF0' }}>{card.statusBar.targetTerm}{card.statusBar.targetRet ? ` · ${card.statusBar.targetRet}` : ''}</span></div>}
               {card.statusBar.aiNote   && <div>AI: <span style={{ color: '#E8EAF0' }}>{card.statusBar.aiNote}</span></div>}
