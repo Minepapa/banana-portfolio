@@ -3,6 +3,7 @@
  *
  * 데이터: 시트 [월별잔고]
  *   A: 연도  B: 월  C: 그 달 신규 입금(저축금, 최소 0)  D: ISA  E: 위탁  F: 연금저축  G: IRP  H: 총잔고
+ *   I: KOSPI 월말 지수  J: S&P500 월말 지수 (벤치마크 TWR/알파 산출용)
  *
  * 월간 입금 = C[i]  (C열은 누적이 아니라 "그 달에 새로 들어간 투자금")
  *
@@ -92,7 +93,7 @@ const parseNum = (v) => parseFloat(String(v ?? 0).replace(/,/g, '')) || 0;
 const parseInt2 = (v) => parseInt(String(v ?? '').replace(/[^0-9]/g, ''), 10);
 
 function parseMonthlyBalance(values) {
-  // values: 월별잔고!A2:H 의 원시 row 배열
+  // values: 월별잔고!A2:J 의 원시 row 배열
   let lastYear = 0;
   const out = [];
   (values || []).forEach(r => {
@@ -105,11 +106,13 @@ function parseMonthlyBalance(values) {
     const pen  = parseNum(r[5]);
     const irp  = parseNum(r[6]);
     const total = parseNum(r[7]);
+    const kospi = parseNum(r[8]);
+    const sp500 = parseNum(r[9]);
     if (!m || !lastYear || !total) return;
     out.push({
       year: lastYear, month: m,
       ym: lastYear * 100 + m,
-      savings, isa, wita, pen, irp, total,
+      savings, isa, wita, pen, irp, total, kospi, sp500,
       label: `${String(lastYear).slice(-2)}.${String(m).padStart(2, '0')}`,
     });
   });
@@ -209,6 +212,21 @@ const pct = (v) => v == null ? '—' : `${(v * 100).toFixed(2)}%`;
 const ratio = (v) => v == null ? '—' : v.toFixed(2);
 const krw = (v) => v == null ? '—' : `₩${Math.round(v).toLocaleString('ko-KR')}`;
 
+// 벤치마크 TWR: KOSPI 50% + S&P500 50% 블렌드 (metrics.js와 동일 로직)
+function benchmarkTWR(series) {
+  const bmReturns = [];
+  for (let i = 1; i < series.length; i++) {
+    const pk = series[i - 1].kospi, ck = series[i].kospi;
+    const ps = series[i - 1].sp500, cs = series[i].sp500;
+    if (pk > 0 && ck > 0 && ps > 0 && cs > 0) {
+      bmReturns.push(0.5 * (ck / pk - 1) + 0.5 * (cs / ps - 1));
+    }
+  }
+  if (bmReturns.length < 2) return null;
+  const bmCum = bmReturns.reduce((acc, r) => acc * (1 + r), 1) - 1;
+  return { cum: bmCum, ann: Math.pow(1 + bmCum, 12 / bmReturns.length) - 1, months: bmReturns.length };
+}
+
 function reportWindow(label, series) {
   const returns = monthlyReturns(series);
   const twrV = twr(returns);
@@ -216,7 +234,8 @@ function reportWindow(label, series) {
   const cagrV = cagr(twrV, months);
   const sharpeV = sharpe(returns);
   const m = mdd(returns);
-  return { label, months, twr: twrV, cagr: cagrV, sharpe: sharpeV, mdd: m, series };
+  const bm = benchmarkTWR(series);
+  return { label, months, twr: twrV, cagr: cagrV, sharpe: sharpeV, mdd: m, benchmark: bm, series };
 }
 
 function printSection(title, win) {
@@ -224,6 +243,13 @@ function printSection(title, win) {
   console.log(`구간: ${win.series[0]?.label} → ${win.series[win.series.length - 1]?.label} (${win.months}개월 수익률 산정)`);
   console.log(`- TWR (누적):   ${pct(win.twr)}`);
   console.log(`- CAGR (연환산): ${pct(win.cagr)}`);
+  if (win.benchmark) {
+    console.log(`- 벤치마크 TWR: ${pct(win.benchmark.cum)}  (KOSPI50+SP50, ${win.benchmark.months}M)`);
+    const alpha = win.cagr != null ? win.cagr - win.benchmark.ann : null;
+    console.log(`- 알파:         ${alpha != null ? (alpha >= 0 ? '+' : '') + (alpha * 100).toFixed(2) + '%p' : '—'}`);
+  } else {
+    console.log(`- 벤치마크:     — (I/J열 데이터 부족)`);
+  }
   console.log(`- 샤프:         ${ratio(win.sharpe)}`);
   console.log(`- MDD:          ${pct(win.mdd.mdd)}` + (win.mdd.peakLabel ? `  (${win.mdd.peakLabel} → ${win.mdd.troughLabel})` : ''));
   if (win.mdd.recoveryMonths != null) console.log(`  회복: ${win.mdd.recoveryMonths}개월 (→ ${win.mdd.recoveryLabel})`);
@@ -231,19 +257,22 @@ function printSection(title, win) {
 }
 
 function markdownTable(rows) {
-  const hdr = '| 시간대 | 기간 | TWR (누적) | CAGR | 샤프 | MDD | 회복 |';
-  const sep = '|--------|------|-----------|------|------|-----|------|';
+  const hdr = '| 시간대 | 기간 | TWR (누적) | CAGR | 벤치마크 | 알파 | 샤프 | MDD | 회복 |';
+  const sep = '|--------|------|-----------|------|---------|------|------|-----|------|';
   const body = rows.map(w => {
     const periodLabel = w.series.length > 0
       ? `${w.series[0].label} → ${w.series[w.series.length - 1].label}`
       : '—';
+    const bmCell = w.benchmark ? pct(w.benchmark.cum) : '—';
+    const alphaVal = w.benchmark && w.cagr != null ? w.cagr - w.benchmark.ann : null;
+    const alphaCell = alphaVal != null ? `${alphaVal >= 0 ? '+' : ''}${(alphaVal * 100).toFixed(1)}%p` : '—';
     const mddCell = w.mdd.mdd == null
       ? '—'
       : `${pct(w.mdd.mdd)}` + (w.mdd.peakLabel ? ` (${w.mdd.peakLabel}→${w.mdd.troughLabel})` : '');
     const recCell = w.mdd.recoveryMonths != null
       ? `${w.mdd.recoveryMonths}개월`
       : w.mdd.troughLabel ? '미회복' : '—';
-    return `| ${w.label} | ${periodLabel} | ${pct(w.twr)} | ${pct(w.cagr)} | ${ratio(w.sharpe)} | ${mddCell} | ${recCell} |`;
+    return `| ${w.label} | ${periodLabel} | ${pct(w.twr)} | ${pct(w.cagr)} | ${bmCell} | ${alphaCell} | ${ratio(w.sharpe)} | ${mddCell} | ${recCell} |`;
   });
   return [hdr, sep, ...body].join('\n');
 }
@@ -261,7 +290,7 @@ async function main() {
   }
 
   console.log('1. 월별잔고 데이터 조회...');
-  const resp = await getRange(token, '월별잔고!A2:H');
+  const resp = await getRange(token, '월별잔고!A2:J');
   const values = resp.values ?? [];
   const series = parseMonthlyBalance(values);
 

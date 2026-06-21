@@ -1,11 +1,15 @@
 // 리포트 탭: 주간 AI 리포트 표시 + 날짜 선택. App.jsx에서 추출 (동작 불변).
 import { useState } from "react";
 
-export default function ReportTab({ weeklyReports, setWeeklyReports }) {
+export default function ReportTab({ weeklyReports }) {
   const [weeklyExpanded, setWeeklyExpanded] = useState(false);
+  const [selectedIdx, setSelectedIdx] = useState(0);
 
   const today = new Date();
   const dateStr = `${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
+
+  const sorted = weeklyReports;
+  const safeIdx = selectedIdx < sorted.length ? selectedIdx : 0;
 
   return (
     <div>
@@ -16,11 +20,11 @@ export default function ReportTab({ weeklyReports, setWeeklyReports }) {
       </div>
 
       {/* 리포트 날짜 선택 */}
-      {weeklyReports.length > 1 && (
+      {sorted.length > 1 && (
         <div style={{ display: 'flex', gap: 4, marginBottom: 12, marginTop: 4, flexWrap: 'wrap' }}>
-          {weeklyReports.map((r, i) => (
-            <button key={i} onClick={() => { setWeeklyReports(prev => { const copy = [...prev]; const item = copy.splice(i, 1)[0]; copy.unshift(item); return copy; }); setWeeklyExpanded(false); }}
-              style={{ padding: '4px 10px', borderRadius: 4, border: `1px solid ${i === 0 ? '#3B82F6' : '#2A2F3E'}`, background: i === 0 ? '#1E3A5F' : 'transparent', color: i === 0 ? '#60A5FA' : '#8A9AB5', cursor: 'pointer', fontSize: 9 }}>
+          {sorted.map((r, i) => (
+            <button key={r.date} onClick={() => { setSelectedIdx(i); setWeeklyExpanded(false); }}
+              style={{ padding: '4px 10px', borderRadius: 4, border: `1px solid ${i === safeIdx ? '#3B82F6' : '#2A2F3E'}`, background: i === safeIdx ? '#1E3A5F' : 'transparent', color: i === safeIdx ? '#60A5FA' : '#8A9AB5', cursor: 'pointer', fontSize: 9 }}>
               {r.date}
             </button>
           ))}
@@ -28,8 +32,8 @@ export default function ReportTab({ weeklyReports, setWeeklyReports }) {
       )}
 
       {/* 섹션 4: 주간 AI 리포트 */}
-      {weeklyReports.length > 0 && (() => {
-        const latest = weeklyReports[0];
+      {sorted.length > 0 && (() => {
+        const latest = sorted[safeIdx];
         const sections = latest.body.split(/^## /m).filter(Boolean).map(s => {
           const lines = s.split('\n');
           const title = lines[0].trim();

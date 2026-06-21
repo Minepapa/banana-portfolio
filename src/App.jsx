@@ -406,8 +406,6 @@ export default function App() {
           </div>
         )}
 
-        <JobHealthBanner jobStatus={jobStatus} />
-
         {/* ── 대시보드 탭 ── */}
         {tab === "dashboard" && (
           <DashboardTab
@@ -422,13 +420,14 @@ export default function App() {
         )}
 
         {/* ── KPI 탭 ── */}
-        {tab === "kpi" && (
+        {tab === "kpi" && (<>
+          <JobHealthBanner jobStatus={jobStatus} />
           <KpiTab monthlyData={monthlyData} kpiTrades={kpiTrades} evaluations={evaluations} isMobile={isMobile} evalSelectedMetric={evalSelectedMetric} setEvalSelectedMetric={setEvalSelectedMetric} jobStatus={jobStatus} />
-        )}
+        </>)}
 
         {/* ── 리포트 탭 ── */}
         {tab === "report" && (
-          <ReportTab weeklyReports={weeklyReports} setWeeklyReports={setWeeklyReports} />
+          <ReportTab weeklyReports={weeklyReports} />
         )}
 
         {/* ── 리스크 탭 ── */}
