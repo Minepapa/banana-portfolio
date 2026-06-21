@@ -186,18 +186,21 @@ function readMultiline(rl) {
 // ── JSON 파싱 ───────────────────────────────────────────────────────────────
 // 한글 키 → 영문 키 별칭. 헤드리스 모델이 카드 라벨(한글)을 키로 쓰는 경우 흡수한다.
 const KEY_ALIAS = {
-  평가일: 'date', evaluatedAt: 'date', 종목명: 'name', stockName: 'name', 종목코드: 'ticker', 시장: 'market', 결론: 'conclusion',
+  평가일: 'date', evaluatedAt: 'date', evaluationDate: 'date', evalDate: 'date',
+  종목명: 'name', stockName: 'name', 종목코드: 'ticker', 시장: 'market', 결론: 'conclusion',
   근거: 'reasons', 리스크: 'risks', frank_액션: 'actions', 액션: 'actions',
   frank_메모: 'frankMemo', 매수일: 'buyDate', 매수가: 'buyPrice',
   목표기간: 'targetTerm', 목표수익률: 'targetRet', ai_의견: 'aiNote', 세부지표: 'axisItems',
   // playbook(active/queue-evaluation.md) 영문 스키마 → 내부 키. LLM이 이 키로 출력하므로
   // 매핑 누락 시 reasons/risks/actions/grades가 비어 행이 망가지거나 joinNum이 터진다.
-  axes: 'grades', rationale: 'reasons', frankAction: 'actions', aiOneliner: 'aiNote',
+  axes: 'grades', rationale: 'reasons', frankAction: 'actions', aiOneliner: 'aiNote', aiComment: 'aiNote',
 };
 const AXIS_KEYS = ['수익성', '안정성', '밸류에이션', '현금흐름', '모멘텀'];
 // 등급 축키 정규화: playbook은 "재무 안정성"으로 내지만 buildRow는 grades.안정성을 읽는다.
 const GRADE_KEY_ALIAS = { '재무 안정성': '안정성', '재무안정성': '안정성', '안정성': '안정성',
-  '수익성': '수익성', '밸류에이션': '밸류에이션', '현금흐름': '현금흐름', '모멘텀': '모멘텀' };
+  '수익성': '수익성', '밸류에이션': '밸류에이션', '현금흐름': '현금흐름', '모멘텀': '모멘텀',
+  profitability: '수익성', stability: '안정성', valuation: '밸류에이션',
+  cashflow: '현금흐름', cash_flow: '현금흐름', momentum: '모멘텀' };
 function normalizeGrades(axes) {
   if (!axes || typeof axes !== 'object') return undefined;
   const g = {};

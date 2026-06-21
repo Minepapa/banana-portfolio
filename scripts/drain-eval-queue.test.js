@@ -83,6 +83,22 @@ test('normalizeEvalObj: evaluatedAt/stockName 별칭 → date/name', () => {
   assert.equal(obj.name, '아마존');
 });
 
+test('normalizeEvalObj: evaluationDate/aiComment/영문 axes 별칭', () => {
+  const obj = normalizeEvalObj({
+    evaluationDate: '2026-06-20', name: '삼성바이오로직스', conclusion: '🟡 관망',
+    axes: { profitability: '🟢', stability: '🟡', valuation: '🔴', cashflow: '🟡', momentum: '🟢' },
+    rationale: '1) a 2) b', risks: '1) c', frankAction: '홀딩',
+    aiComment: 'CDMO 최상위',
+  });
+  assert.equal(obj.date, '2026-06-20');
+  assert.equal(obj.grades.수익성, '🟢');
+  assert.equal(obj.grades.안정성, '🟡');
+  assert.equal(obj.grades.밸류에이션, '🔴');
+  assert.equal(obj.grades.현금흐름, '🟡');
+  assert.equal(obj.grades.모멘텀, '🟢');
+  assert.equal(obj.aiNote, 'CDMO 최상위');
+});
+
 test('normalizeEvalObj: 한글 스키마(근거/리스크/frank_액션)도 그대로 동작', () => {
   const obj = normalizeEvalObj({
     평가일: '2026-06-12', 종목명: '삼성전자', 결론: '🟢 유효',
