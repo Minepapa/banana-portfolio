@@ -15,6 +15,7 @@ function todayStr() {
 
 export default function TodayTab({ riskMonitor, positionJournal, accounts, weeklyReports, execPending, jobStatus, setTab, baseFont }) {
   const [day] = useState(todayStr);
+  const isWeekend = (() => { const d = new Date(Date.now() + 9 * 3600000).getUTCDay(); return d === 0 || d === 6; })();
   const [acked, setAcked] = useState(() => {
     try {
       const raw = JSON.parse(localStorage.getItem('banana_today_ack') || '{}');
@@ -87,7 +88,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   // ── 항목 조립 ── kind:'read'=당일 확인으로 닫힘, 'auto'=처리하면 자동 소멸 ──
   const items = [];
 
-  if (riskActionable > 0) {
+  if (!isWeekend && riskActionable > 0) {
     items.push({
       key: `risk:${lastRiskDate}`, kind: 'read', accent: riskRed > 0 ? '#EF4444' : '#F5C842',
       icon: riskRed > 0 ? '🔴' : '🟡',
@@ -95,7 +96,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
       sub: '펀더멘털·거시 신호 점검', goLabel: '리스크 보기', go: () => setTab('리스크'),
     });
   }
-  if (oppActionable > 0) {
+  if (!isWeekend && oppActionable > 0) {
     items.push({
       key: `opp:${lastRiskDate}`, kind: 'read', accent: '#52C8D4',
       icon: '💡',

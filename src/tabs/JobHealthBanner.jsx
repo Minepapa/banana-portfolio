@@ -4,6 +4,11 @@ import { computeJobHealth } from '../lib/jobHealth.js';
 import { JOB_CADENCE } from '../lib/constants.js';
 
 export default function JobHealthBanner({ jobStatus }) {
+  if (jobStatus === null) return (
+    <div style={{ margin: '8px 12px', padding: '6px 12px', borderRadius: 8, background: '#1A1D26', border: '1px solid #262A3A', fontSize: 10, color: '#6B7280', textAlign: 'left' }}>
+      ⏳ 무인 잡 상태 로딩 중…
+    </div>
+  );
   if (!jobStatus) return null;
   const problems = computeJobHealth(jobStatus, JOB_CADENCE);
   if (problems.length === 0) return null;
