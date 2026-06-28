@@ -196,9 +196,55 @@ export async function getToken(explicit, { allowBrowser = true } = {}) {
   throw new Error(`무인 토큰 없음: 서비스 계정 키(${SA_KEY_FILE}) 필요`);
 }
 
+// ── HTTP 재시도 (일시적 5xx/429·네트워크 오류) ──────────────────
+// Google Sheets/네트워크 일시 오류(503 UNAVAILABLE 등)로 시트 쓰기가 throw 되면
+// 비싼 평가 결과가 통째로 유실된다(실제: claude 5분 평가 후 appendValues 503 → 카드 소실).
+// 시트 REST 호출을 짧은 지수 백오프로 재시도해 유실을 막는다.
+// (Google 공식 권장: 5xx/429 는 exponential backoff 재시도.)
+//
+// 멱등성 주의: getRange/updateCell/setValues 등은 멱등이라 재시도가 안전하다. 단 appendValues
+// 는 비멱등 POST 다. 503(UNAVAILABLE)은 '요청 미처리'라 재시도해도 중복이 없지만(우리 사고도
+// 미적재 503 이었다), 504(DEADLINE)·네트워크 단절은 서버가 이미 행을 커밋한 뒤 응답만 유실됐을
+// 수 있어 append 재시도가 at-least-once 가 된다(드물게 중복 행). 평가 카드는 '유실=비싼 재평가
+// (claude 수 분)' vs '중복=앱이 최신 카드만 표시·정리 쉬움' 이라, 중복을 감수하고 유실을 막는
+// 쪽이 명백히 이득 → append 도 동일 재시도 대상으로 둔다. (recover-evals 는 name+date 로 dedupe.)
+export const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
+function defaultOnRetry(n, delayMs, err) {
+  console.warn(`   ⏳ 시트 호출 일시오류(${err?.message || '?'}) — ${(delayMs / 1000).toFixed(1)}s 후 재시도 (${n})`);
+}
+
+// fetch 래퍼: 재시도성 상태/네트워크 오류면 지수 백오프 후 재시도.
+// 성공·비재시도성(4xx 등)·재시도 소진 시엔 Response 를 그대로 반환 → 호출부의
+// `if (!res.ok) throw` 가 기존과 동일하게 동작(에러 메시지 보존). 네트워크 오류가
+// 끝까지 지속되면 마지막 예외를 throw. fetchImpl/sleep/onRetry 는 테스트 주입용(DI).
+// retries=4 → 최초 1회 + 재시도 4회 = 최대 5회 시도(누적 백오프 최악 ~8.5s, 헤드리스 12분 내 무해).
+export async function fetchRetry(url, opts = {}, {
+  retries = 4,
+  baseDelayMs = 500,
+  fetchImpl = fetch,
+  sleep = (ms) => new Promise(r => setTimeout(r, ms)),
+  onRetry = defaultOnRetry,
+} = {}) {
+  let lastErr;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetchImpl(url, opts);
+      if (res.ok || !RETRYABLE_STATUS.has(res.status) || attempt >= retries) return res;
+      lastErr = new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      if (attempt >= retries) throw e;   // 네트워크 오류 — 재시도 소진
+      lastErr = e;
+    }
+    const delay = baseDelayMs * 2 ** attempt + Math.floor(Math.random() * 250);
+    onRetry?.(attempt + 1, delay, lastErr);
+    await sleep(delay);
+  }
+}
+
 // ── Sheets REST ────────────────────────────────────────
 export async function getRange(token, range) {
-  const res = await fetch(`${API}/values/${encodeURIComponent(range)}`, {
+  const res = await fetchRetry(`${API}/values/${encodeURIComponent(range)}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`범위 조회 실패 (${range}): ${await res.text()}`);
@@ -208,7 +254,7 @@ export async function getRange(token, range) {
 // 표시형식과 무관하게 원본값을 읽는다(UNFORMATTED_VALUE). 날짜=직렬수, 숫자=수.
 // 날짜 셀이 '날짜전용' 서식이어도 직렬값엔 시각이 남아있어 시각 복원에 쓴다.
 export async function getRangeRaw(token, range) {
-  const res = await fetch(`${API}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`, {
+  const res = await fetchRetry(`${API}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`원본 범위 조회 실패 (${range}): ${await res.text()}`);
@@ -216,7 +262,7 @@ export async function getRangeRaw(token, range) {
 }
 
 export async function appendValues(token, range, values) {
-  const res = await fetch(
+  const res = await fetchRetry(
     `${API}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
     {
       method: 'POST',
@@ -229,7 +275,7 @@ export async function appendValues(token, range, values) {
 }
 
 export async function updateCell(token, range, value) {
-  const res = await fetch(
+  const res = await fetchRetry(
     `${API}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
     {
       method: 'PUT',
@@ -242,7 +288,7 @@ export async function updateCell(token, range, value) {
 
 // 범위에 2차원 배열을 덮어쓴다(PUT). appendValues 와 달리 기존 셀을 갱신.
 export async function setValues(token, range, values) {
-  const res = await fetch(
+  const res = await fetchRetry(
     `${API}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
     {
       method: 'PUT',
@@ -255,21 +301,21 @@ export async function setValues(token, range, values) {
 
 // 범위의 값을 비운다(서식은 유지).
 export async function clearValues(token, range) {
-  const res = await fetch(`${API}/values/${encodeURIComponent(range)}:clear`, {
+  const res = await fetchRetry(`${API}/values/${encodeURIComponent(range)}:clear`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`범위 비우기 실패 (${range}): ${await res.text()}`);
 }
 
 async function listSheetTitles(token) {
-  const res = await fetch(`${API}?fields=sheets.properties.title`, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await fetchRetry(`${API}?fields=sheets.properties.title`, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`시트 목록 조회 실패: ${await res.text()}`);
   return ((await res.json()).sheets || []).map(s => s.properties.title);
 }
 
 // 시트 제목 → 숫자 sheetId (batchUpdate 서식 요청에 필요)
 export async function getSheetIdByTitle(token, title) {
-  const res = await fetch(`${API}?fields=sheets.properties(sheetId,title)`, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await fetchRetry(`${API}?fields=sheets.properties(sheetId,title)`, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`시트 ID 조회 실패: ${await res.text()}`);
   const s = ((await res.json()).sheets || []).find(x => x.properties.title === title);
   return s ? s.properties.sheetId : null;
@@ -281,7 +327,7 @@ export async function getSheetIdByTitle(token, title) {
 export async function clearColumnABackground(token, title, startRow1, endRow1) {
   const sheetId = await getSheetIdByTitle(token, title);
   if (sheetId == null) throw new Error(`시트 없음: ${title}`);
-  const res = await fetch(`${API}:batchUpdate`, {
+  const res = await fetchRetry(`${API}:batchUpdate`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests: [{
@@ -299,7 +345,7 @@ export async function clearColumnABackground(token, title, startRow1, endRow1) {
 export async function ensureSheet(token, title, header) {
   const titles = await listSheetTitles(token);
   if (titles.includes(title)) return false;
-  const res = await fetch(`${API}:batchUpdate`, {
+  const res = await fetchRetry(`${API}:batchUpdate`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests: [{ addSheet: { properties: { title } } }] }),

@@ -15,7 +15,8 @@ function todayStr() {
 
 export default function TodayTab({ riskMonitor, positionJournal, accounts, weeklyReports, execPending, jobStatus, setTab, baseFont }) {
   const [day] = useState(todayStr);
-  const isWeekend = (() => { const d = new Date(Date.now() + 9 * 3600000).getUTCDay(); return d === 0 || d === 6; })();
+  // 주말 여부는 마운트 시 고정된 day(KST 날짜)에서 파생 — 렌더 순수성 유지(Date.now 미사용).
+  const isWeekend = (() => { const d = new Date(day).getUTCDay(); return d === 0 || d === 6; })();
   const [acked, setAcked] = useState(() => {
     try {
       const raw = JSON.parse(localStorage.getItem('banana_today_ack') || '{}');
