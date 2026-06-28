@@ -82,7 +82,6 @@ export default function ExecutionsTab({
             return (
               <div key={idx}
                 {...(!isComplete ? lp.bind(idx, openTradeEdit) : {})}
-                onContextMenu={!isComplete ? (e) => { e.preventDefault(); openTradeEdit(); } : undefined}
                 style={{
                   position: 'relative',
                   padding: '12px 16px',
