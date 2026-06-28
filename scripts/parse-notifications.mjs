@@ -28,6 +28,7 @@
  */
 
 import { SHEET_ID, getToken, getRange, getRangeRaw, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from './lib/sheets-common.mjs';
+import { resolveCashBase } from './lib/cash-base.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 const ALARM_SHEET = '알람';
@@ -509,19 +510,12 @@ async function main() {
   const cashWrites = [], baseUpdates = [];
   for (const tab of ACCOUNT_TABS) {
     const cfg = baseByAcct.get(tab);
-    let base = null, baseDate = '';
-    const isManual = cfg && cfg.source === '수동' && String(cfg.base).trim() !== '';
-    if (AUTO_CASH_TABS.has(tab) && !isManual) {
-      // NH 자동앵커: 사용자가 앱에서 수동 입력(소스='수동')하지 않은 경우에만 알림 잔고로 자동 갱신
-      const anchor = nhLatest.get(tab);
-      const cfgDate = cfg ? String(cfg.date ?? '').trim() : '';
-      if (anchor && anchor.ts.slice(0, 10) >= cfgDate) {
-        // 앵커가 기존 기준일 이상일 때만 자동 갱신 (수기 입력이 더 최신이면 존중)
-        base = anchor.balance; baseDate = anchor.ts.slice(0, 10);
-        if (cfg) baseUpdates.push({ range: `${CASH_BASE_SHEET}!B${cfg.rowNum}:E${cfg.rowNum}`, values: [[base, baseDate, '자동', nowStr]] });
-      } else if (cfg && String(cfg.base).trim() !== '') { base = parseInt(cleanNum(cfg.base), 10); baseDate = cfgDate; }  // 이번 회차 알림 없음 또는 수기 최신 → 기존 기준 유지
-    } else if (cfg && String(cfg.base).trim() !== '') { base = parseInt(cleanNum(cfg.base), 10); baseDate = cfg.date; }  // 수동 기준 또는 비자동 계좌 → 입력값 우선
-    if (!Number.isFinite(base)) { if (!AUTO_CASH_TABS.has(tab)) console.log(`  ⚠ 예수금 기준 미입력: ${tab} — 예수금기준 표에 기준액·기준일 입력 필요, skip`); continue; }
+    const isAutoTab = AUTO_CASH_TABS.has(tab);
+    // NH(ISA·위탁)는 입금/출금 알림이 그 시점 실제 잔고 = 앵커. 알림이 수동 기준일보다 최신이면
+    // 알림 우선(입금 자동 반영), 같은 날은 수동 존중. 비-NH는 수동 기준만. (로직: cash-base.mjs)
+    const { base, baseDate, autoUpdated } = resolveCashBase({ cfg, anchor: isAutoTab ? nhLatest.get(tab) : null, isAutoTab });
+    if (autoUpdated && cfg) baseUpdates.push({ range: `${CASH_BASE_SHEET}!B${cfg.rowNum}:E${cfg.rowNum}`, values: [[base, baseDate, '자동', nowStr]] });
+    if (!Number.isFinite(base)) { if (!isAutoTab) console.log(`  ⚠ 예수금 기준 미입력: ${tab} — 예수금기준 표에 기준액·기준일 입력 필요, skip`); continue; }
 
     const delta = flows.filter(fl => fl.tab === tab && fl.date > baseDate).reduce((s, fl) => s + fl.amount, 0);
     const cash = base + delta;
