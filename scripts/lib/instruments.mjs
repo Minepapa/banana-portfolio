@@ -17,6 +17,11 @@ const US_MAP = {
   '알파벳 class a': 'GOOGL', '마이크로소프트': 'MSFT', '아마존': 'AMZN',
 };
 
+// KR 단축명 → DART 공식 법인명 별칭. 보유종목 시트의 한글 단축명과 DART 등재명이 다른 경우.
+const KR_ALIAS = {
+  '현대차': '현대자동차',
+};
+
 export function usTicker(name) {
   return US_MAP[norm(name)] ?? null;
 }
@@ -65,6 +70,7 @@ export function lookupField(cache, name, field) {
 
 // corpCode.xml(zip) 다운로드 → 상장사만 {corp_name: corp_code} 캐시. 30일 지나면 갱신.
 export function krCorpCode(name, apiKey = process.env.DART_API_KEY) {
+  const dartName = KR_ALIAS[norm(name)] ?? name;
   let cache = null;
   if (existsSync(CACHE_FILE)) {
     try {  // 중단된 쓰기로 캐시가 깨졌으면 throw 대신 재다운로드로 폴백
@@ -81,15 +87,16 @@ export function krCorpCode(name, apiKey = process.env.DART_API_KEY) {
     cache = parseCorpCodeXml(xml);
     writeFileSync(CACHE_FILE, JSON.stringify({ fetchedAt: Date.now(), map: cache }));
   }
-  return lookupField(cache, name, 'corp');
+  return lookupField(cache, dartName, 'corp');
 }
 
 // KR 6자리 종목코드 (yfinance .KS/.KQ 라우팅용). 미상장·모호·미발견 → null.
 export function krStockCode(name, apiKey = process.env.DART_API_KEY) {
+  const dartName = KR_ALIAS[norm(name)] ?? name;
   krCorpCode(name, apiKey); // 캐시 보장(부수효과)
   const cache = (() => {
     try { return JSON.parse(readFileSync(CACHE_FILE, 'utf8')).map; } catch { return null; }
   })();
   if (!cache) return null;
-  return lookupField(cache, name, 'stock');
+  return lookupField(cache, dartName, 'stock');
 }

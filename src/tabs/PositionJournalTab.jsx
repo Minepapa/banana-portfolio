@@ -137,7 +137,6 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
                   {lp.activeId === p.rowIndex && <div className="lp-progress" />}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                     <div style={{ fontSize: 9, letterSpacing: 1, color: '#F4845F' }}>이탈조건 (이게 깨지면 매도 검토)</div>
-                    <span style={{ fontSize: 8, color: '#4B5563', background: '#1A1D26', borderRadius: 3, padding: '1px 4px' }}>길게 눌러 수정</span>
                   </div>
                   {p.exit ? (
                     <div style={{ fontSize: 12, color: '#F5C9B8', lineHeight: 1.5 }}>{p.exit}</div>
