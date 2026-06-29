@@ -4,8 +4,10 @@
 import { useState } from 'react';
 import { SectionTitle } from '../lib/primitives.jsx';
 import { findThesisAlerts } from '../lib/thesisAlerts.js';
+import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function PositionJournalTab({ positionJournal, riskMonitor, sheets, baseFont }) {
+  const lp = useLongPress();
   const [journalOpen, setJournalOpen] = useState(new Set());
   const [lessonDraft, setLessonDraft] = useState({}); // rowIndex → 교훈 입력값 (반성 카드)
   const [exitDraft, setExitDraft] = useState({}); // rowIndex → 이탈조건 편집값
@@ -129,14 +131,18 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
                   </div>
                 </div>
               ) : (
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                <div
+                  {...lp.bind(p.rowIndex, () => setExitEditing(prev => { const n = new Set(prev); n.add(p.rowIndex); return n; }))}
+                  style={{ position: 'relative', cursor: 'pointer', borderRadius: 6, padding: '6px 8px', margin: '0 -8px 10px', userSelect: 'none', background: lp.activeId === p.rowIndex ? '#F4845F14' : 'transparent' }}>
+                  {lp.activeId === p.rowIndex && <div className="lp-progress" />}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                     <div style={{ fontSize: 9, letterSpacing: 1, color: '#F4845F' }}>이탈조건 (이게 깨지면 매도 검토)</div>
+                    <span style={{ fontSize: 8, color: '#4B5563', background: '#1A1D26', borderRadius: 3, padding: '1px 4px' }}>길게 눌러 수정</span>
                   </div>
                   {p.exit ? (
                     <div style={{ fontSize: 12, color: '#F5C9B8', lineHeight: 1.5 }}>{p.exit}</div>
                   ) : (
-                    <div style={{ fontSize: 11, color: '#3A4050' }}>이탈조건 없음 — 수정 버튼으로 추가</div>
+                    <div style={{ fontSize: 11, color: '#3A4050' }}>이탈조건 없음 — 길게 눌러 추가</div>
                   )}
                 </div>
               )
@@ -186,7 +192,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
   };
 
   return (
-    <div>
+    <div style={{ textAlign: 'left' }}>
       <SectionTitle color="#52C8D4" mb={14} sub={`거래 생애주기 투자논리 관리${lastChecked ? ` · 최근 논리 점검 ${lastChecked}` : ''}`}>포지션</SectionTitle>
       {positionJournal.length === 0 ? (
         <div style={{ textAlign: 'center', color: '#8A9AB5', fontSize: 12, padding: '40px 0' }}>
