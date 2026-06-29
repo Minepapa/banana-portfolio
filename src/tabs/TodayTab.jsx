@@ -13,7 +13,7 @@ function todayStr() {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
 }
 
-export default function TodayTab({ riskMonitor, positionJournal, accounts, weeklyReports, execPending, jobStatus, setTab, baseFont }) {
+export default function TodayTab({ riskMonitor, positionJournal, accounts, weeklyReports, execPending, jobStatus, preferences, setTab, baseFont }) {
   const [day] = useState(todayStr);
   // 주말 여부는 마운트 시 고정된 day(KST 날짜)에서 파생 — 렌더 순수성 유지(Date.now 미사용).
   const isWeekend = (() => { const d = new Date(day).getUTCDay(); return d === 0 || d === 6; })();
@@ -57,6 +57,8 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   const thesisAlerts = findThesisAlerts(positionJournal, riskMonitor).length;
   const pendingConfirm = (positionJournal || []).filter(p => p.status !== '청산' && p.thesis && p.confirm !== '확인').length;
   const reflectNeeded = (positionJournal || []).filter(p => p.status === '청산' && !p.lesson).length;
+  // ── 5) 성향 확인 대기 ──
+  const prefPending = (preferences || []).filter(p => p.status === '관찰' || p.status === '승격후보').length;
 
   // ── 6) 리밸런싱 갭 ±5%p (거래결정 탭에서 이전) ──
   const rebalAlerts = Object.entries(accounts || {}).flatMap(([, a]) =>
@@ -99,15 +101,15 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   }
   if (!isWeekend && oppActionable > 0) {
     items.push({
-      key: `opp:${lastRiskDate}`, kind: 'read', accent: '#52C8D4',
-      icon: '💡',
-      title: `급락 매수 기회 ${oppBuy}건`,
-      sub: '§4 급락 트리거 — 펀더멘털 확인 후 매수 검토', goLabel: '리스크 보기', go: () => setTab('리스크'),
+      key: `opp:${lastRiskDate}`, kind: 'read', accent: '#F5A623',
+      icon: '⚠️',
+      title: `급락 알림 ${oppBuy}건`,
+      sub: '§4 급락 트리거 발동 — 펀더멘털 확인 후 매수 검토', goLabel: '리스크 보기', go: () => setTab('리스크'),
     });
   }
   if (thesisAlerts > 0) {
     items.push({
-      key: 'thesis', kind: 'auto', accent: '#EF4444', icon: '⚠',
+      key: 'thesis', kind: 'auto', accent: '#EF4444', icon: '⚠️',
       title: `투자논리 훼손 ${thesisAlerts}종목`, sub: '이탈조건 대조 후 매도 검토',
       goLabel: '포지션 보기', go: () => setTab('저널'),
     });
@@ -174,6 +176,14 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
       goLabel: '잡 상태 보기', go: () => setTab('kpi'),
     });
   }
+  if (prefPending > 0) {
+    items.push({
+      key: 'pref', kind: 'read', accent: '#F5C842', icon: '💬',
+      title: `성향 확인 필요 ${prefPending}건`,
+      sub: '행동에서 관찰된 내 투자 성향 — 확정 또는 기각',
+      goLabel: '성향 보기', go: () => setTab('성향'),
+    });
+  }
 
   const allDone = items.length > 0 && items.every(it => acked.has(it.key));
 
@@ -199,7 +209,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
         items.map((it) => {
           const done = acked.has(it.key);
           return (
-            <div key={it.key} style={{ background: '#1A1D26', border: `1px solid ${done ? '#2E3A2E' : '#262A3A'}`, borderLeft: `4px solid ${done ? '#4ADE8066' : it.accent}`, borderRadius: 12, padding: 14, marginBottom: 10, opacity: done ? 0.6 : 1, transition: 'opacity 0.2s' }}>
+            <div key={it.key} style={{ background: done ? '#1A1D26' : `${it.accent}10`, border: `1px solid ${done ? '#2E3A2E' : it.accent + '38'}`, borderLeft: `4px solid ${done ? '#4ADE8066' : it.accent}`, borderRadius: 12, padding: 14, marginBottom: 10, opacity: done ? 0.55 : 1, transition: 'opacity 0.2s' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                 <span style={{ fontSize: 16, lineHeight: 1.3, flexShrink: 0 }}>{done ? '✅' : it.icon}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>

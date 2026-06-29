@@ -10,7 +10,7 @@ export default function RiskTab({ riskMonitor, baselines }) {
   const sigLevel = (s) => s.includes('🔴') ? 3 : s.includes('🟡') ? 2 : 1;
   const sigColor = (s) => s.includes('🔴') ? '#EF4444' : s.includes('🟡') ? '#F5C842' : '#10B981';
   // 검증 "항목"(무엇을 점검했나) — 중립 표기. 결과/상태와 분리.
-  const typeLabel = (t) => t === 'B' ? '논리 점검' : t === 'D' ? '거시 점검' : t;
+  const typeLabel = (t) => t === 'B' ? '논리 점검' : t === 'D' ? '거시 점검' : t === 'O' ? '급락매수' : t;
   // 점검 "결과"(상황) — 색상과 함께 표시.
   const statusLabel = (s) => s.includes('🔴') ? '경보' : s.includes('🟡') ? '주의' : '정상';
   // 기준선 수치 단위 통일(%): 숫자면 % 부착, 데이터 없으면 '데이터 부족'.
@@ -29,14 +29,13 @@ export default function RiskTab({ riskMonitor, baselines }) {
   const latestDDate = riskMonitor.reduce((mx, r) => (r.type === 'D' && r.date > mx ? r.date : mx), '');
   const seen = new Set();
   const latest = [];
-  const oppSeen = new Set();   // 기회(O) 신호 — 종목당 최신 1건, 리스크와 분리
-  const oppLatest = [];
+  const oppSeen = new Set();   // 기회(O) 신호 — 종목당 최신 1건
   for (const r of riskMonitor) {                       // riskMonitor 최신순
-    if (r.type === 'O') {                              // 가격 기회 트리거(§4) — 리스크 카운트에서 제외
+    if (r.type === 'O') {
       if (oppSeen.has(r.target)) continue;
       oppSeen.add(r.target);
       if (sigLevel(r.signal) === 1) continue;          // 🟢(해소된 기회)는 숨김
-      oppLatest.push(r);
+      latest.push(r);                                  // 대시보드 카운트에 포함
       continue;
     }
     if (r.type === 'D' && r.date !== latestDDate) continue;
@@ -45,7 +44,6 @@ export default function RiskTab({ riskMonitor, baselines }) {
     seen.add(k); latest.push(r);
   }
   latest.sort((a, b) => sigLevel(b.signal) - sigLevel(a.signal));
-  oppLatest.sort((a, b) => sigLevel(b.signal) - sigLevel(a.signal));  // 급락매수(🔴) 먼저
   const counts = { red: 0, amber: 0, green: 0 };
   latest.forEach(r => { const l = sigLevel(r.signal); if (l === 3) counts.red++; else if (l === 2) counts.amber++; else counts.green++; });
   // 최신 점검일 — 행 순서에 의존하지 않게 실제 최대 날짜로 계산.
@@ -147,42 +145,6 @@ export default function RiskTab({ riskMonitor, baselines }) {
         </>
       )}
 
-      {/* 급락 매수 기회 (§4 급락 트리거 — O 신호. 가격 상승은 매도 신호 아님) */}
-      {oppLatest.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <SectionTitle color="#52C8D4" size={12} mb={10} sub="§4 급락 트리거 — 펀더멘털 확인 후 매수 검토">💡 급락 매수 기회</SectionTitle>
-          {oppLatest.map((r, i) => {
-            const color = sigColor(r.signal);          // O 신호는 급락 매수(🔴)만 생성됨
-            const key = `opp-${i}`;
-            const isOpen = riskOpen.has(key);
-            return (
-              <div key={key} style={{ background: '#1A1D26', borderRadius: 12, padding: 14, marginBottom: 8, border: '1px solid #232838', borderLeft: `4px solid ${color}` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
-                    <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
-                    <span style={{ fontSize: 12, fontWeight: 700, color: '#E8EAF0' }}>{r.target}</span>
-                    <span style={{ fontSize: 8, color, background: `${color}22`, borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>급락 매수</span>
-                  </div>
-                  <span style={{ fontSize: 9, color: '#3A4050', flexShrink: 0 }}>{r.date}</span>
-                </div>
-                <Sentences text={r.summary} sentenceOnly style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.55, marginTop: 4 }} />
-                {(r.detail || r.evidence) && (
-                  <button onClick={() => setRiskOpen(prev => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; })}
-                    style={{ marginTop: 8, padding: '4px 0', background: 'transparent', border: 'none', color: '#8A9AB5', cursor: 'pointer', fontSize: 9 }}>
-                    {isOpen ? '접기 ▲' : '자세히 ▼'}
-                  </button>
-                )}
-                {isOpen && (
-                  <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #1E2233' }}>
-                    {r.detail && <Sentences text={r.detail} sentenceOnly style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, wordBreak: 'break-word', marginBottom: 2 }} />}
-                    {renderEvidence(r.evidence)}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {/* 펀더멘털 기준선 */}
       {baselines.length > 0 && (

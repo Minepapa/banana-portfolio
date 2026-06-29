@@ -488,6 +488,7 @@ export default function App() {
           <TodayTab
             riskMonitor={riskMonitor} positionJournal={positionJournal} accounts={accounts}
             weeklyReports={weeklyReports} execPending={execPending} jobStatus={jobStatus}
+            preferences={preferences}
             setTab={setTab} baseFont={baseFont}
           />
         )}
