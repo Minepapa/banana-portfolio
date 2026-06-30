@@ -5,16 +5,18 @@ import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function HoldingsTab({
   accounts, acct, acctKey, setAcctKey, isMobile, baseFont, fmt, sheets,
-  holdSort, setHoldSort,
-  showAddForm, setShowAddForm, showDeleteMode, setShowDeleteMode,
-  selectedToDelete, setSelectedToDelete,
-  editingHolding, setEditingHolding, editingCash, setEditingCash, editingDollar, setEditingDollar,
-  editPrice, setEditPrice, editQty, setEditQty, editCurrentPrice, setEditCurrentPrice,
-  editIncludeSavings, setEditIncludeSavings,
-  editCashValue, setEditCashValue, editDollarValue, setEditDollarValue,
-  beginEdit, saveEdit, saveCash, saveDollar, handleDeleteSelected,
-  AddHoldingForm, onAddHoldingSave,
+  holdSort, setHoldSort, edits,
 }) {
+  const {
+    showAddForm, setShowAddForm, showDeleteMode, setShowDeleteMode,
+    selectedToDelete, setSelectedToDelete,
+    editingHolding, setEditingHolding, editingCash, setEditingCash, editingDollar, setEditingDollar,
+    editPrice, setEditPrice, editQty, setEditQty, editCurrentPrice, setEditCurrentPrice,
+    editIncludeSavings, setEditIncludeSavings,
+    editCashValue, setEditCashValue, editDollarValue, setEditDollarValue,
+    beginEdit, saveEdit, saveCash, saveDollar, handleDeleteSelected,
+    AddHoldingForm, onAddHoldingSave,
+  } = edits;
   const lp = useLongPress();
   // ── 전체 계좌 합산 ─────────────────────────────────────────
   const totalPortEval   = Object.values(accounts).reduce((s, a) => s + (a.total_eval   || 0), 0);

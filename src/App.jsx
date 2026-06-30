@@ -396,21 +396,18 @@ export default function App() {
             accounts={accounts} acct={acct} acctKey={acctKey} setAcctKey={setAcctKey}
             isMobile={isMobile} baseFont={baseFont} fmt={fmt} sheets={sheets}
             holdSort={holdSort} setHoldSort={setHoldSort}
-            showAddForm={showAddForm} setShowAddForm={setShowAddForm}
-            showDeleteMode={showDeleteMode} setShowDeleteMode={setShowDeleteMode}
-            selectedToDelete={selectedToDelete} setSelectedToDelete={setSelectedToDelete}
-            editingHolding={editingHolding} setEditingHolding={setEditingHolding}
-            editingCash={editingCash} setEditingCash={setEditingCash}
-            editingDollar={editingDollar} setEditingDollar={setEditingDollar}
-            editPrice={editPrice} setEditPrice={setEditPrice}
-            editQty={editQty} setEditQty={setEditQty}
-            editCurrentPrice={editCurrentPrice} setEditCurrentPrice={setEditCurrentPrice}
-            editIncludeSavings={editIncludeSavings} setEditIncludeSavings={setEditIncludeSavings}
-            editCashValue={editCashValue} setEditCashValue={setEditCashValue}
-            editDollarValue={editDollarValue} setEditDollarValue={setEditDollarValue}
-            beginEdit={beginEdit} saveEdit={saveEdit} saveCash={saveCash}
-            saveDollar={saveDollar} handleDeleteSelected={handleDeleteSelected}
-            AddHoldingForm={AddHoldingForm} onAddHoldingSave={handleAddHoldingSave}
+            edits={{
+              showAddForm, setShowAddForm, showDeleteMode, setShowDeleteMode,
+              selectedToDelete, setSelectedToDelete,
+              editingHolding, setEditingHolding, editingCash, setEditingCash,
+              editingDollar, setEditingDollar,
+              editPrice, setEditPrice, editQty, setEditQty,
+              editCurrentPrice, setEditCurrentPrice,
+              editIncludeSavings, setEditIncludeSavings,
+              editCashValue, setEditCashValue, editDollarValue, setEditDollarValue,
+              beginEdit, saveEdit, saveCash, saveDollar, handleDeleteSelected,
+              AddHoldingForm, onAddHoldingSave: handleAddHoldingSave,
+            }}
           />
         )}
 
