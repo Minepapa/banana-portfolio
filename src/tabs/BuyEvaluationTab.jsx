@@ -157,9 +157,9 @@ export default function BuyEvaluationTab({
           {uniqueEvals.map((ev, i) => (
             <button key={i} onClick={() => setEvalSelectedIdx(i)} style={{
               padding: '4px 10px', borderRadius: 0,
-              border: `1px solid ${i === evalSelectedIdx ? '#141414' : '#141414'}`,
-              background: i === evalSelectedIdx ? '#EAE6DA' : 'transparent',
-              color: i === evalSelectedIdx ? '#141414' : '#6B675C',
+              border: '1px solid #141414',
+              background: i === evalSelectedIdx ? '#C9F23E' : 'transparent',
+              color: '#141414', fontWeight: i === evalSelectedIdx ? 800 : 600,
               cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
             }}>{ev.stock.name}</button>
           ))}

@@ -237,7 +237,7 @@ export default function App() {
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
-            <div style={{ display: "inline-block", fontSize: 9, fontWeight: 800, letterSpacing: 3, color: INK, background: ACCENT, padding: "2px 6px", marginBottom: 6 }}>
+            <div style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: isMobile ? 1 : 2, color: INK, background: ACCENT, padding: "2px 6px", marginBottom: 6 }}>
               BANANA · 은퇴 준비 포트폴리오
             </div>
             <div style={{ fontSize: isMobile ? 22 : 27, fontWeight: 800, letterSpacing: -0.5, color: INK, fontFamily: MONO }}>
@@ -315,9 +315,9 @@ export default function App() {
               flexShrink: 0,
               borderRadius: 0, border: BORDER, cursor: "pointer",
               fontSize: 12, fontWeight: tab === key ? 800 : 600, letterSpacing: 0.5, fontFamily: baseFont,
-              background: tab === key ? ACCENT : CARD_BG,
+              background: tab === key ? "#DCEF8F" : CARD_BG,
               color: INK,
-              boxShadow: tab === key ? SHADOW_SM : "none",
+              boxShadow: "none",
               transition: "none",
             }}>
               {label}

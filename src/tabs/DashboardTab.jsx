@@ -5,6 +5,7 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
 } from "recharts";
 import { PROFIT_POS, PROFIT_NEG, CHART_BAR_COLOR, profitColor } from '../lib/colors.js';
+import { MONO } from '../lib/theme.js';
 import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function DashboardTab({
@@ -34,8 +35,8 @@ export default function DashboardTab({
           }}>
             <div style={{ fontSize: 9, color: "#6B675C", marginBottom: 4, letterSpacing: 1 }}>{s.label}</div>
             <div style={{
-              fontSize: isMobile ? 10 : 13, fontWeight: 700, color: s.color,
-              wordBreak: "break-all",
+              fontSize: isMobile ? 12 : 15, fontWeight: 800, color: s.color, fontFamily: MONO,
+              wordBreak: "break-all", letterSpacing: -0.3,
             }}>
               {s.value}
             </div>
@@ -70,7 +71,7 @@ export default function DashboardTab({
                   <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: "#141414" }}>
                     {v.label}
                   </div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: "#141414", marginBottom: 2 }}>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: "#141414", marginBottom: 2, fontFamily: MONO, letterSpacing: -0.3 }}>
                     ₩{fmt(v.total_eval)}
                   </div>
                 </div>
@@ -111,7 +112,7 @@ export default function DashboardTab({
           <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
               <div>
-                <div style={{ fontSize: isMobile ? 20 : 24, fontWeight: 700, color: '#141414' }}>₩{fmt(_te)}</div>
+                <div style={{ fontSize: isMobile ? 21 : 25, fontWeight: 800, color: '#141414', fontFamily: MONO, letterSpacing: -0.5 }}>₩{fmt(_te)}</div>
                 <div style={{ fontSize: 11, color: '#6B675C', marginTop: 2 }}>투자원금 ₩{fmt(_ti)}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
@@ -167,9 +168,9 @@ export default function DashboardTab({
             {['전체', '2025', '2026'].map(y => (
               <button key={y} onClick={() => setMonthYear(y)} style={{
                 padding: '3px 10px', borderRadius: 0,
-                border: `1px solid ${monthYear === y ? '#141414' : '#141414'}`,
-                background: monthYear === y ? '#EAE6DA' : 'transparent',
-                color: monthYear === y ? '#141414' : '#6B675C',
+                border: '1px solid #141414',
+                background: monthYear === y ? '#C9F23E' : 'transparent',
+                color: '#141414', fontWeight: monthYear === y ? 800 : 600,
                 cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
               }}>{y}</button>
             ))}

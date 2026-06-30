@@ -24,7 +24,7 @@ export default function ReportTab({ weeklyReports }) {
         <div style={{ display: 'flex', gap: 4, marginBottom: 12, marginTop: 4, flexWrap: 'wrap' }}>
           {sorted.map((r, i) => (
             <button key={r.date} onClick={() => { setSelectedIdx(i); setWeeklyExpanded(false); }}
-              style={{ padding: '4px 10px', borderRadius: 0, border: `1px solid ${i === safeIdx ? '#141414' : '#141414'}`, background: i === safeIdx ? '#EAE6DA' : 'transparent', color: i === safeIdx ? '#141414' : '#6B675C', cursor: 'pointer', fontSize: 9 }}>
+              style={{ padding: '4px 10px', borderRadius: 0, border: '1px solid #141414', background: i === safeIdx ? '#C9F23E' : 'transparent', color: '#141414', fontWeight: i === safeIdx ? 800 : 600, cursor: 'pointer', fontSize: 9 }}>
               {r.date}
             </button>
           ))}

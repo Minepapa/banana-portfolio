@@ -123,9 +123,9 @@ export default function HoldingsTab({
         ].map(s => (
           <button key={s.key} onClick={() => setHoldSort(s.key)} style={{
             padding: '4px 8px', borderRadius: 0, fontSize: 10,
-            border: `1px solid ${holdSort === s.key ? '#141414' : '#141414'}`,
-            background: holdSort === s.key ? '#EAE6DA' : 'transparent',
-            color: holdSort === s.key ? '#141414' : '#6B675C',
+            border: '1px solid #141414',
+            background: holdSort === s.key ? '#C9F23E' : 'transparent',
+            color: '#141414', fontWeight: holdSort === s.key ? 800 : 600,
             cursor: 'pointer', fontFamily: baseFont,
           }}>{s.label}</button>
         ))}
