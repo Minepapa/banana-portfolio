@@ -72,8 +72,7 @@ export default function SellEvaluationTab({
       {/* 헤더 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#141414' }}>매도 검토</div>
-          <div style={{ width: 26, height: 3, borderRadius: 0, background: '#E5484D', marginTop: 6 }} />
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#141414' }}>매도 검토</div>
         </div>
         <div style={{ fontSize: 10, color: '#6B675C' }}>평가 완료 {stocks.length}종목 · 보유 중</div>
       </div>
@@ -260,7 +259,7 @@ export default function SellEvaluationTab({
             const latest = stockEvals[0];
             return (
               <div style={{ background: '#FFFFFF', borderRadius: 0, padding: '14px 16px', marginBottom: 12 }}>
-                <SectionTitle color="#C9F23E" size={12} mb={10}
+                <SectionTitle size={12} mb={10}
                   sub={`매수일 ${earliest.buyDate || '미입력'} · 평가일 ${earliest.date}`}>
                   최초 매수 근거
                 </SectionTitle>
@@ -298,7 +297,7 @@ export default function SellEvaluationTab({
           {/* 평가 히스토리 시계열 */}
           {stockEvals.length > 0 ? (
             <div style={{ background: '#FFFFFF', borderRadius: 0, padding: '14px 16px', marginBottom: 12 }}>
-              <SectionTitle color="#C9F23E" size={12} mb={12} sub="최신순">평가 히스토리 {stockEvals.length}건</SectionTitle>
+              <SectionTitle size={12} mb={12} sub="최신순">평가 히스토리 {stockEvals.length}건</SectionTitle>
               {stockEvals.map((ev, i) => (
                 <div key={i} style={{
                   padding: '8px 0',

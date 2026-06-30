@@ -4,7 +4,7 @@
 export const PROFIT_POS = '#E5484D';
 export const PROFIT_NEG = '#2F62E8';
 export const PROFIT_FLAT = '#6B675C';
-export const CHART_BAR_COLOR = '#141414';
+export const CHART_BAR_COLOR = '#C9F23E';
 
 // 손익 색상: 0은 중립색 (색맹·변동없음 혼란 방지)
 export const profitColor = (n) => n > 0 ? PROFIT_POS : n < 0 ? PROFIT_NEG : PROFIT_FLAT;

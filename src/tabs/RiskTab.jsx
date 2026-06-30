@@ -70,7 +70,7 @@ export default function RiskTab({ riskMonitor, baselines }) {
   return (
     <div style={{ textAlign: 'left' }}>
       {/* 헤더 */}
-      <SectionTitle color="#E5484D" size={15} sub={`최근 점검 ${lastUpdated}`}>리스크 모니터</SectionTitle>
+      <SectionTitle sub={`최근 점검 ${lastUpdated}`}>리스크 모니터</SectionTitle>
 
       {riskMonitor.length === 0 ? (
         <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 24, textAlign: 'center' }}>
@@ -149,7 +149,7 @@ export default function RiskTab({ riskMonitor, baselines }) {
       {/* 펀더멘털 기준선 */}
       {baselines.length > 0 && (
         <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginTop: 12 }}>
-          <SectionTitle color="#E0A000" size={12} mb={14} sub="논리 훼손 비교 기준">펀더멘털 기준선</SectionTitle>
+          <SectionTitle size={12} mb={14} sub="논리 훼손 비교 기준">펀더멘털 기준선</SectionTitle>
           <div style={{ display: 'flex', fontSize: 9, color: '#6B675C', padding: '0 0 6px', borderBottom: '1px solid #EAE6DA' }}>
             <span style={{ flex: 2, minWidth: 0 }}>종목</span>
             <span style={{ flex: 1, textAlign: 'right' }}>영익률</span>

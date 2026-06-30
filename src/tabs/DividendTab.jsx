@@ -3,7 +3,7 @@ import { useState } from "react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
-import { CHART_BAR_COLOR, PROFIT_POS } from '../lib/colors.js';
+import { PROFIT_POS } from '../lib/colors.js';
 import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function DividendTab({ dividendData, isMobile, baseFont, fmt, sheets }) {
@@ -57,7 +57,7 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
                 labelStyle={{ color: '#141414' }}
                 itemStyle={{ color: '#141414' }}
               />
-              <Bar dataKey="amount" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} cursor="pointer"
+              <Bar dataKey="amount" fill={PROFIT_POS} radius={[3, 3, 0, 0]} cursor="pointer"
                 onClick={(data) => {
                   const key = `${data.year}-${data.month}`;
                   setSelectedDivKey(prev => prev === key ? null : key);

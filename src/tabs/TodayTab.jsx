@@ -190,7 +190,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
 
   return (
     <div>
-      <SectionTitle color="#F4845F" mb={14} sub={`${day} · 오늘 처리할 것만 모음`}>오늘 할 일</SectionTitle>
+      <SectionTitle mb={14} sub={`${day} · 오늘 처리할 것만 모음`}>오늘 할 일</SectionTitle>
 
       {allDone && (
         <div style={{ background: '#C9F23E', border: '2px solid #141414', boxShadow: '4px 4px 0 #141414', borderRadius: 0, padding: '16px 20px', marginBottom: 14, textAlign: 'center' }}>

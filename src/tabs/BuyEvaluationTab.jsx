@@ -84,8 +84,7 @@ export default function BuyEvaluationTab({
       {/* 헤더 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#141414' }}>AI 능동 종목 평가</div>
-          <div style={{ width: 26, height: 3, borderRadius: 0, background: '#F5A623', marginTop: 6 }} />
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#141414' }}>AI 능동 종목 평가</div>
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <button onClick={() => setEvalQueueOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{

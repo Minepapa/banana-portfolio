@@ -77,10 +77,10 @@ export default function DashboardTab({
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 9, color: "#6B675C", marginBottom: 2 }}>수익</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: pColor }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: pColor }}>
                     ₩{fmt(v.profit)}
                   </div>
-                  <div style={{ fontSize: 11, color: pColor }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: pColor }}>
                     {v.profit > 0 ? '+' : ''}{pRate}%
                   </div>
                 </div>
@@ -116,8 +116,8 @@ export default function DashboardTab({
                 <div style={{ fontSize: 11, color: '#6B675C', marginTop: 2 }}>투자원금 ₩{fmt(_ti)}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 16, fontWeight: 700, color: _tp >= 0 ? PROFIT_POS : PROFIT_NEG }}>₩{fmt(_tp)}</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: _tp >= 0 ? PROFIT_POS : PROFIT_NEG }}>{_tr >= 0 ? '+' : ''}{_tr.toFixed(1)}%</div>
+                <div style={{ fontSize: 17, fontWeight: 800, color: _tp >= 0 ? PROFIT_POS : PROFIT_NEG, fontFamily: MONO, letterSpacing: -0.3 }}>₩{fmt(_tp)}</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: _tp >= 0 ? PROFIT_POS : PROFIT_NEG }}>{_tr >= 0 ? '+' : ''}{_tr.toFixed(1)}%</div>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -136,7 +136,7 @@ export default function DashboardTab({
                       <div style={{ width: 7, height: 7, borderRadius: 0, background: s.color, flexShrink: 0 }} />
                       <span style={{ fontSize: 10, color: '#6B675C' }}>{s.label}</span>
                     </div>
-                    <span style={{ fontSize: 10, fontWeight: 600, color: '#141414' }}>{s.pctStr}%</span>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: '#141414' }}>{s.pctStr}%</span>
                   </div>
                 ))}
               </div>

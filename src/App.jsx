@@ -310,12 +310,12 @@ export default function App() {
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)}
               role="tab" aria-selected={tab === key} aria-label={label} style={{
-              padding: "9px 12px",
-              minHeight: 44,
+              padding: "5px 12px",
+              minHeight: 32,
               flexShrink: 0,
               borderRadius: 0, border: BORDER, cursor: "pointer",
               fontSize: 12, fontWeight: tab === key ? 800 : 600, letterSpacing: 0.5, fontFamily: baseFont,
-              background: tab === key ? "#DCEF8F" : CARD_BG,
+              background: tab === key ? ACCENT : CARD_BG,
               color: INK,
               boxShadow: "none",
               transition: "none",

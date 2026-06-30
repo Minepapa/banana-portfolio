@@ -1,5 +1,6 @@
 // 리포트 탭: 주간 AI 리포트 표시 + 날짜 선택. App.jsx에서 추출 (동작 불변).
 import { useState } from "react";
+import { SectionTitle } from '../lib/primitives.jsx';
 
 export default function ReportTab({ weeklyReports }) {
   const [weeklyExpanded, setWeeklyExpanded] = useState(false);
@@ -14,10 +15,7 @@ export default function ReportTab({ weeklyReports }) {
   return (
     <div>
       {/* 헤더 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: '#141414' }}>주간 리포트</div>
-        <div style={{ fontSize: 10, color: '#6B675C' }}>{dateStr} 기준</div>
-      </div>
+      <SectionTitle sub={`${dateStr} 기준`}>주간 리포트</SectionTitle>
 
       {/* 리포트 날짜 선택 */}
       {sorted.length > 1 && (

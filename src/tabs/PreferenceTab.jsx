@@ -66,7 +66,7 @@ export default function PreferenceTab({ preferences, sheets, baseFont }) {
 
   return (
     <div>
-      <SectionTitle color="#52C8D4" mb={14} sub="실제 행동에서 학습한 내 투자 성향 — 맞으면 확정, 아니면 기각">성향</SectionTitle>
+      <SectionTitle mb={14} sub="실제 행동에서 학습한 내 투자 성향 — 맞으면 확정, 아니면 기각">성향</SectionTitle>
       {list.length === 0 ? (
         <div style={{ textAlign: 'center', color: '#6B675C', fontSize: 12, padding: '40px 0' }}>
           {sheets.auth === 'signed-in' ? '아직 학습된 성향이 없습니다 — 주간 리포트가 관찰을 쌓습니다' : '로그인하면 학습된 성향이 표시됩니다'}

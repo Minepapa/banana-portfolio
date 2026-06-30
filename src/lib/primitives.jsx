@@ -1,13 +1,13 @@
 // 공통 프레젠테이션 프리미티브. App.jsx에서 추출 (동작 불변).
 import { gradeColor, breakUnits, breakSentences } from './textFormat.js';
 
-// ── 섹션/카드 제목: 좌측 정렬 + 라임 하이라이트 블록 (네오 브루탈리즘) ──────────────
-// color는 하이라이트 블록 색(기본 라임). 제목 텍스트는 항상 ink.
-export function SectionTitle({ children, color = '#C9F23E', sub, size = 13, mb = 16 }) {
+// ── 섹션/탭 제목: 모든 탭 진입 제목의 통일 포맷 (주간 리포트 헤더 기준) ─────────────
+// 제목 14px·weight 700·ink 좌측 정렬 + sub는 그 아래 10px 뮤트. (color prop은 하위호환용, 미사용)
+export function SectionTitle({ children, sub, size = 14, mb = 16 }) {
   return (
     <div style={{ textAlign: 'left', marginBottom: mb }}>
-      <span style={{ display: 'inline-block', fontSize: size, fontWeight: 800, letterSpacing: 0.5, color: '#141414', background: color, padding: '2px 8px', border: '2px solid #141414' }}>{children}</span>
-      {sub != null && sub !== '' && <div style={{ fontSize: 10, color: '#6B675C', marginTop: 6, lineHeight: 1.5 }}>{sub}</div>}
+      <div style={{ fontSize: size, fontWeight: 700, color: '#141414', letterSpacing: -0.2 }}>{children}</div>
+      {sub != null && sub !== '' && <div style={{ fontSize: 10, color: '#6B675C', marginTop: 4, lineHeight: 1.5 }}>{sub}</div>}
     </div>
   );
 }

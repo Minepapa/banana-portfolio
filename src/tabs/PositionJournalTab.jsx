@@ -192,7 +192,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
 
   return (
     <div style={{ textAlign: 'left' }}>
-      <SectionTitle color="#52C8D4" mb={14} sub={`거래 생애주기 투자논리 관리${lastChecked ? ` · 최근 논리 점검 ${lastChecked}` : ''}`}>포지션</SectionTitle>
+      <SectionTitle mb={14} sub={`거래 생애주기 투자논리 관리${lastChecked ? ` · 최근 논리 점검 ${lastChecked}` : ''}`}>포지션</SectionTitle>
       {positionJournal.length === 0 ? (
         <div style={{ textAlign: 'center', color: '#6B675C', fontSize: 12, padding: '40px 0' }}>
           {sheets.auth === 'signed-in' ? '포지션이 비어있습니다' : '로그인하면 투자논리가 표시됩니다'}
