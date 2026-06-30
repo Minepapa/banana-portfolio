@@ -2,7 +2,7 @@
 // 실제 네트워크/대기 없이: fetchImpl·sleep 을 주입(DI)해 결정론적으로 검증.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchRetry, RETRYABLE_STATUS } from './sheets-common.mjs';
+import { fetchRetry, RETRYABLE_STATUS } from './fetch-retry.mjs';
 
 // 호출 순서대로 응답/예외를 돌려주는 가짜 fetch.
 function mockFetch(sequence) {

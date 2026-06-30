@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 
 process.env.COOLDOWN_FILE = join(tmpdir(), `banana-cooldown-test-${process.pid}.json`);
-const { parseResetTime, setCooldown, getCooldown, LIMIT_RE } = await import('./sheets-common.mjs');
+const { parseResetTime, setCooldown, getCooldown, LIMIT_RE } = await import('./quota-cooldown.mjs');
 
 function cleanup() { try { rmSync(process.env.COOLDOWN_FILE); } catch { /* noop */ } }
 
