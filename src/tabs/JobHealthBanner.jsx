@@ -5,7 +5,7 @@ import { JOB_CADENCE } from '../lib/constants.js';
 
 export default function JobHealthBanner({ jobStatus }) {
   if (jobStatus === null) return (
-    <div style={{ margin: '8px 12px', padding: '6px 12px', borderRadius: 8, background: '#1A1D26', border: '1px solid #262A3A', fontSize: 10, color: '#6B7280', textAlign: 'left' }}>
+    <div style={{ margin: '8px 12px', padding: '6px 12px', borderRadius: 0, background: '#FFFFFF', border: '1px solid #141414', fontSize: 10, color: '#6B675C', textAlign: 'left' }}>
       ⏳ 무인 잡 상태 로딩 중…
     </div>
   );
@@ -15,10 +15,10 @@ export default function JobHealthBanner({ jobStatus }) {
   const anyFail = problems.some(p => p.problem === 'fail' || p.problem === 'missing');
   return (
     <div style={{
-      margin: '8px 12px', padding: '8px 12px', borderRadius: 8,
-      background: anyFail ? '#2A1416' : '#241F12',
-      border: `1px solid ${anyFail ? '#7F1D1D' : '#78510F'}`,
-      fontSize: 11, color: anyFail ? '#FCA5A5' : '#FCD34D', textAlign: 'left',
+      margin: '8px 12px', padding: '8px 12px', borderRadius: 0,
+      background: anyFail ? '#FBE3E4' : '#FBF1D0',
+      border: `1px solid ${anyFail ? '#141414' : '#78510F'}`,
+      fontSize: 11, color: anyFail ? '#E5484D' : '#FCD34D', textAlign: 'left',
     }}>
       <div style={{ fontWeight: 700, marginBottom: 2 }}>
         ⚠️ 무인 잡 점검 필요 {problems.length}건

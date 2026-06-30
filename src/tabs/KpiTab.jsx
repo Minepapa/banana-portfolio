@@ -42,8 +42,8 @@ function JobStatusPanel({ jobStatus }) {
   ];
   if (ordered.length === 0) return null;
   return (
-    <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 4 }}>무인 잡 상태</div>
+    <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C', marginBottom: 4 }}>무인 잡 상태</div>
       <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 12 }}>최근 실행 시간(마지막 점검/실행 시간, 실제 발행/적재 시간 아님)</div>
       {ordered.map((key, i, arr) => {
         const j = byJob.get(key);
@@ -53,14 +53,14 @@ function JobStatusPanel({ jobStatus }) {
         const tsMs = j ? Date.parse(j.lastRun) : NaN;
         const when = problem === 'missing' ? '기록 없음' : isFinite(tsMs) ? relTime(new Date(tsMs)) : (j?.lastRun || '–');
         return (
-          <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none' }}>
+          <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #EAE6DA' : 'none' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-              <span style={{ fontSize: 12, color: '#9CA3AF' }}>{JOB_LABELS[key] || key}</span>
-              {JOB_INTERVALS[key] && <span style={{ fontSize: 9, color: '#5A6478', border: '1px solid #2A2F3E', borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap' }}>{JOB_INTERVALS[key]}</span>}
+              <span style={{ fontSize: 12, color: '#6B675C' }}>{JOB_LABELS[key] || key}</span>
+              {JOB_INTERVALS[key] && <span style={{ fontSize: 9, color: '#5A6478', border: '1px solid #141414', borderRadius: 0, padding: '1px 5px', whiteSpace: 'nowrap' }}>{JOB_INTERVALS[key]}</span>}
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {j?.durationSec && <span style={{ fontSize: 9, color: '#3A4050' }}>{j.durationSec}s</span>}
-              <span style={{ fontSize: 12, color: '#8A9AB5' }}>{when}</span>
+              <span style={{ fontSize: 12, color: '#6B675C' }}>{when}</span>
               <span style={{ fontSize: 11, fontWeight: 700, color }}>{icon}</span>
             </span>
           </div>
@@ -75,7 +75,7 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
   if (!kpi) return (
     <div>
       <JobStatusPanel jobStatus={jobStatus} />
-      <div style={{ padding: 40, textAlign: 'center', color: '#8A9AB5', fontSize: 13 }}>
+      <div style={{ padding: 40, textAlign: 'center', color: '#6B675C', fontSize: 13 }}>
         월별잔고 데이터가 2개월 이상 있어야 KPI를 계산할 수 있습니다.
       </div>
     </div>
@@ -94,7 +94,7 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
      :                              { icon: '🔴', color: '#EF4444', label: `알파 ${alphaPct}%p` })
     : kpi.twr >= 0 ? { icon: '✅', color: '#10B981', label: '양호' }
     :                { icon: '🔴', color: '#EF4444', label: '손실' };
-  const sharpeStatus = kpi.sharpe === null ? { icon: '–', color: '#6B7280', label: '데이터 부족' }
+  const sharpeStatus = kpi.sharpe === null ? { icon: '–', color: '#6B675C', label: '데이터 부족' }
     : kpi.sharpe >= 0.8 ? { icon: '✅', color: '#10B981', label: '양호' }
     : kpi.sharpe >= 0.5 ? { icon: '⚠️', color: '#F59E0B', label: '주의' }
     : { icon: '🔴', color: '#EF4444', label: '미달' };
@@ -115,35 +115,35 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
       {(() => {
         const bm = computeBehaviorMetrics(kpiTrades, evaluations);
         if (kpiTrades === null) return (
-          <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16, textAlign: 'center', color: '#8A9AB5', fontSize: 11 }}>행동 추적 데이터 불러오는 중...</div>
+          <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 16, textAlign: 'center', color: '#6B675C', fontSize: 11 }}>행동 추적 데이터 불러오는 중...</div>
         );
         if (!bm) return (
-          <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16, textAlign: 'center', color: '#8A9AB5', fontSize: 11 }}>체결 내역 없음 — 체결 탭에서 먼저 동기화하세요</div>
+          <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 16, textAlign: 'center', color: '#6B675C', fontSize: 11 }}>체결 내역 없음 — 체결 탭에서 먼저 동기화하세요</div>
         );
-        const r500Color = bm.rule500Rate === null ? '#8A9AB5' : bm.rule500Rate >= 80 ? '#10B981' : bm.rule500Rate >= 60 ? '#F59E0B' : '#EF4444';
-        const emColor   = bm.evalMatchRate === null ? '#8A9AB5' : bm.evalMatchRate >= 60 ? '#10B981' : bm.evalMatchRate >= 30 ? '#F59E0B' : '#EF4444';
-        const sdColor   = bm.sellDisciplineRate === null ? '#8A9AB5' : bm.sellDisciplineRate >= 60 ? '#10B981' : bm.sellDisciplineRate >= 30 ? '#F59E0B' : '#EF4444';
-        const freqColor = bm.freqRatio === null ? '#8A9AB5' : bm.freqRatio <= 1.0 ? '#10B981' : bm.freqRatio <= 1.5 ? '#F59E0B' : '#EF4444';
+        const r500Color = bm.rule500Rate === null ? '#6B675C' : bm.rule500Rate >= 80 ? '#10B981' : bm.rule500Rate >= 60 ? '#F59E0B' : '#EF4444';
+        const emColor   = bm.evalMatchRate === null ? '#6B675C' : bm.evalMatchRate >= 60 ? '#10B981' : bm.evalMatchRate >= 30 ? '#F59E0B' : '#EF4444';
+        const sdColor   = bm.sellDisciplineRate === null ? '#6B675C' : bm.sellDisciplineRate >= 60 ? '#10B981' : bm.sellDisciplineRate >= 30 ? '#F59E0B' : '#EF4444';
+        const freqColor = bm.freqRatio === null ? '#6B675C' : bm.freqRatio <= 1.0 ? '#10B981' : bm.freqRatio <= 1.5 ? '#F59E0B' : '#EF4444';
         return (
-          <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 14 }}>행동 추적</div>
+          <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C', marginBottom: 14 }}>행동 추적</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
               {[
                 { label: '500만 원칙', value: bm.rule500Rate !== null ? `${bm.rule500Rate}%` : '–', sub: `${bm.rule500OK}/${bm.rule500Total}건`, color: r500Color },
                 { label: '평가→매수', value: bm.evalMatchRate !== null ? `${bm.evalMatchRate}%` : '–', sub: `${bm.evalMatchCount}/${bm.evalEligible}건`, color: emColor },
                 { label: '매도 규율', value: bm.sellDisciplineRate !== null ? `${bm.sellDisciplineRate}%` : '–', sub: `점검 ${bm.sellDisciplineOK}/${bm.sellDisciplineTotal}건`, color: sdColor },
                 { label: '거래빈도', value: bm.freqRatio !== null ? `${bm.freqRatio.toFixed(1)}×` : '–', sub: bm.freqAvg30 !== null ? `평소 ${Math.round(bm.freqAvg30)}건/월` : '기간 부족', color: freqColor },
-                { label: '최근 30일', value: `${bm.recent30Count}건`, sub: `매수 ${bm.recent30Buys}건`, color: '#E8EAF0' },
+                { label: '최근 30일', value: `${bm.recent30Count}건`, sub: `매수 ${bm.recent30Buys}건`, color: '#141414' },
               ].map((card, i) => (
-                <div key={i} style={{ background: '#0F1117', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 9, color: '#8A9AB5', marginBottom: 4 }}>{card.label}</div>
+                <div key={i} style={{ background: '#FFFFFF', borderRadius: 0, padding: '12px 10px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 9, color: '#6B675C', marginBottom: 4 }}>{card.label}</div>
                   <div style={{ fontSize: 18, fontWeight: 700, color: card.color }}>{card.value}</div>
-                  <div style={{ fontSize: 9, color: '#8A9AB5', marginTop: 2 }}>{card.sub}</div>
+                  <div style={{ fontSize: 9, color: '#6B675C', marginTop: 2 }}>{card.sub}</div>
                 </div>
               ))}
             </div>
             {bm.unlinkedBuys > 0 && (
-              <div style={{ fontSize: 9, color: '#8A9AB5', marginTop: 6 }}>
+              <div style={{ fontSize: 9, color: '#6B675C', marginTop: 6 }}>
                 평가에 연결 안 된 매수 {bm.unlinkedBuys}건 — 종목명 표기 차이 또는 평가 누락 점검
               </div>
             )}
@@ -151,31 +151,31 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
               <div>
                 <div style={{ fontSize: 9, color: '#F59E0B', letterSpacing: 1, marginBottom: 8 }}>🟢 평가 후 {bm.matchWindowDays}일 내 미매수 {bm.missedEvals.length}건 — 검토 필요</div>
                 {bm.missedEvals.slice(0, 5).map((ev, i, arr) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none', fontSize: 11 }}>
-                    <span style={{ color: '#E8EAF0' }}>{ev.stock?.name}</span>
-                    <span style={{ color: '#8A9AB5' }}>{ev.date}</span>
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: i < arr.length - 1 ? '1px solid #EAE6DA' : 'none', fontSize: 11 }}>
+                    <span style={{ color: '#141414' }}>{ev.stock?.name}</span>
+                    <span style={{ color: '#6B675C' }}>{ev.date}</span>
                   </div>
                 ))}
-                {bm.missedEvals.length > 5 && <div style={{ fontSize: 10, color: '#8A9AB5', textAlign: 'center', paddingTop: 6 }}>+{bm.missedEvals.length - 5}건 더</div>}
+                {bm.missedEvals.length > 5 && <div style={{ fontSize: 10, color: '#6B675C', textAlign: 'center', paddingTop: 6 }}>+{bm.missedEvals.length - 5}건 더</div>}
               </div>
             )}
           </div>
         );
       })()}
-      <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginBottom: 12 }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 12 }}>운용 성과</div>
+      <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 12 }}>
+        <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C', marginBottom: 12 }}>운용 성과</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
           {cards.map(c => (
             <button key={c.label}
               onClick={() => setEvalSelectedMetric(prev => prev === c.metric ? null : c.metric)}
               style={{
-                background: evalSelectedMetric === c.metric ? '#1E3A5F' : '#0F1117',
-                borderRadius: 10, padding: '14px 8px', textAlign: 'center',
-                border: `1px solid ${evalSelectedMetric === c.metric ? '#3B82F6' : c.status.color + '33'}`,
+                background: evalSelectedMetric === c.metric ? '#EAE6DA' : '#FFFFFF',
+                borderRadius: 0, padding: '14px 8px', textAlign: 'center',
+                border: `1px solid ${evalSelectedMetric === c.metric ? '#141414' : c.status.color + '33'}`,
                 cursor: 'pointer', fontFamily: 'inherit', width: '100%', display: 'block',
               }}>
-              <div style={{ fontSize: 8, color: '#8A9AB5', marginBottom: 6, letterSpacing: 1 }}>
-                {c.label} <span style={{ color: '#3B82F6' }}>📘</span>
+              <div style={{ fontSize: 8, color: '#6B675C', marginBottom: 6, letterSpacing: 1 }}>
+                {c.label} <span style={{ color: '#141414' }}>📘</span>
               </div>
               <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 700, color: c.status.color, marginBottom: 4 }}>
                 {c.value}
@@ -190,26 +190,26 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
       </div>
 
       {/* 상세 지표 */}
-      <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16 }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 12 }}>지표 상세</div>
+      <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16 }}>
+        <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C', marginBottom: 12 }}>지표 상세</div>
         {[
           { label: 'TWR 연환산', value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`, color: twrStatus.color },
           { label: 'TWR 누적',   value: `${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}%`, color: kpi.twrCum >= 0 ? '#10B981' : '#EF4444' },
           ...(alphaPct !== null ? [{ label: '시장 대비 알파', value: `${parseFloat(alphaPct) >= 0 ? '+' : ''}${alphaPct}%p`, color: twrStatus.color }] : []),
           { label: 'Sharpe',     value: sharpeV,             color: sharpeStatus.color },
           { label: 'MDD',        value: `${mddPct}%`,        color: mddStatus.color },
-          { label: '산출 기간',  value: `${kpi.months}개월`, color: '#9CA3AF' },
+          { label: '산출 기간',  value: `${kpi.months}개월`, color: '#6B675C' },
         ].map((row, i, arr) => (
-          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #1E2233' : 'none' }}>
-            <span style={{ fontSize: 12, color: '#9CA3AF' }}>{row.label}</span>
+          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #EAE6DA' : 'none' }}>
+            <span style={{ fontSize: 12, color: '#6B675C' }}>{row.label}</span>
             <span style={{ fontSize: 13, fontWeight: 700, color: row.color }}>{row.value}</span>
           </div>
         ))}
       </div>
 
       {/* 내 투자 기준 */}
-      <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginTop: 12 }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: '#8A9AB5', marginBottom: 14 }}>내 투자 기준</div>
+      <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginTop: 12 }}>
+        <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C', marginBottom: 14 }}>내 투자 기준</div>
         {[
           { cat: '포트폴리오 성과', items: [
             { label: 'TWR 목표',    value: '시장 대비 +3~5%p' },
@@ -230,11 +230,11 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
           ]},
         ].map((section, si, all) => (
           <div key={si} style={{ marginBottom: si < all.length - 1 ? 16 : 0 }}>
-            <div style={{ fontSize: 9, color: '#3B82F6', letterSpacing: 1, marginBottom: 6 }}>{section.cat}</div>
+            <div style={{ fontSize: 9, color: '#141414', letterSpacing: 1, marginBottom: 6 }}>{section.cat}</div>
             {section.items.map((item, ii, arr) => (
-              <div key={ii} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: ii < arr.length - 1 ? '1px solid #1E2233' : 'none' }}>
-                <span style={{ fontSize: 12, color: '#9CA3AF' }}>{item.label}</span>
-                <span style={{ fontSize: 12, fontWeight: 600, color: '#E8EAF0' }}>{item.value}</span>
+              <div key={ii} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: ii < arr.length - 1 ? '1px solid #EAE6DA' : 'none' }}>
+                <span style={{ fontSize: 12, color: '#6B675C' }}>{item.label}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#141414' }}>{item.value}</span>
               </div>
             ))}
           </div>

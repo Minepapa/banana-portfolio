@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { DEFAULT_ACCOUNTS } from './lib/constants.js';
 import { profitColor } from './lib/colors.js';
+import { PAPER, INK, INK_2, ACCENT, CARD_BG, MONO, BORDER, BORDER_HEAVY, SHADOW_SM } from './lib/theme.js';
 import { relTime, fmt } from './lib/textFormat.js';
 import { useIsMobile } from './hooks/useIsMobile.js';
 import { useGoogleSheets, CONFIGURED } from './hooks/useGoogleSheets.js';
@@ -214,9 +215,9 @@ export default function App() {
     '';
 
   const sheetBtnStyle = {
-    padding: "8px 12px", minHeight: 36, borderRadius: 4,
-    border: "1px solid #2A2F3E", background: "transparent",
-    color: "#9CA3AF", cursor: "pointer",
+    padding: "8px 12px", minHeight: 36, borderRadius: 0,
+    border: BORDER, background: CARD_BG, boxShadow: SHADOW_SM,
+    color: INK, cursor: "pointer", fontWeight: 700,
     fontSize: 11, fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
   };
 
@@ -224,32 +225,32 @@ export default function App() {
 
   return (
     <div style={{
-      minHeight: "100vh", background: "#0D0F14", color: "#E8EAF0",
+      minHeight: "100vh", background: PAPER, color: INK,
       fontFamily: baseFont, padding: 0,
     }}>
       {/* ── 헤더 ── */}
       <div style={{
-        background: "linear-gradient(135deg, #1A1D26 0%, #0D1520 100%)",
-        borderBottom: "1px solid #2A2F3E",
+        background: PAPER,
+        borderBottom: BORDER_HEAVY,
         padding: isMobile ? "14px 16px 12px" : "20px 24px 16px",
         position: "sticky", top: 0, zIndex: 100,
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
-            <div style={{ fontSize: 9, letterSpacing: 3, color: "#8A9AB5", marginBottom: 4 }}>
+            <div style={{ display: "inline-block", fontSize: 9, fontWeight: 800, letterSpacing: 3, color: INK, background: ACCENT, padding: "2px 6px", marginBottom: 6 }}>
               BANANA · 은퇴 준비 포트폴리오
             </div>
-            <div style={{ fontSize: isMobile ? 20 : 24, fontWeight: 700, letterSpacing: -1, color: "#F5F7FF" }}>
+            <div style={{ fontSize: isMobile ? 22 : 27, fontWeight: 800, letterSpacing: -0.5, color: INK, fontFamily: MONO }}>
               ₩{totalEval.toLocaleString()}
             </div>
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>
-            <div style={{ fontSize: 9, color: "#8A9AB5", letterSpacing: 2 }}>평가손익</div>
-            <div style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: profitColor(totalProfit) }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: INK_2, letterSpacing: 2 }}>평가손익</div>
+            <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: profitColor(totalProfit), fontFamily: MONO }}>
               {totalProfit > 0 ? '▲ ' : totalProfit < 0 ? '▼ ' : ''}₩{fmt(Math.abs(totalProfit))}
             </div>
             {dailyDelta != null && (
-              <div style={{ fontSize: 10, color: profitColor(dailyDelta) }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: profitColor(dailyDelta), fontFamily: MONO }}>
                 {dailyDelta > 0 ? '▲ ' : dailyDelta < 0 ? '▼ ' : ''}₩{fmt(Math.abs(dailyDelta))}
                 {prevDayEval > 0 ? ` (${dailyDelta >= 0 ? '+' : '−'}${Math.abs(dailyDelta / prevDayEval * 100).toFixed(2)}%)` : ''}
               </div>
@@ -261,30 +262,30 @@ export default function App() {
         {CONFIGURED && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
             {sheets.auth === 'loading' && (
-              <span style={{ fontSize: 10, color: "#8A9AB5" }}>Google 초기화 중...</span>
+              <span style={{ fontSize: 10, color: INK_2 }}>Google 초기화 중...</span>
             )}
             {sheets.auth === 'signed-out' && (
               <button onClick={sheets.signIn} aria-label="Google 계정으로 로그인"
-                style={{ ...sheetBtnStyle, background: "#1E3A5F", color: "#60A5FA", borderColor: "#3B82F6" }}>
+                style={{ ...sheetBtnStyle, background: ACCENT, color: INK }}>
                 로그인
               </button>
             )}
             {sheets.auth === 'signed-in' && (
               <>
-                <span style={{ fontSize: 10, color: sheets.sync === 'error' ? "#F87171" : "#8A9AB5" }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: sheets.sync === 'error' ? "#E5484D" : INK_2 }}>
                   {syncLabel}
                 </span>
                 <button onClick={sheets.fetch} disabled={sheets.sync === 'syncing'}
                   style={sheetBtnStyle} aria-label="시트에서 최신 데이터 새로고침" title="시트에서 최신 데이터 가져오기">
                   ↻ 새로고침
                 </button>
-                <button onClick={sheets.signOut} aria-label="로그아웃" style={{ ...sheetBtnStyle, color: "#F87171" }}>
+                <button onClick={sheets.signOut} aria-label="로그아웃" style={{ ...sheetBtnStyle, color: "#E5484D" }}>
                   로그아웃
                 </button>
               </>
             )}
             {sheets.auth === 'error' && (
-              <span style={{ fontSize: 10, color: "#F87171" }}>Google 연결 오류</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#E5484D" }}>Google 연결 오류</span>
             )}
           </div>
         )}
@@ -309,14 +310,15 @@ export default function App() {
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)}
               role="tab" aria-selected={tab === key} aria-label={label} style={{
-              padding: "10px 12px",
+              padding: "9px 12px",
               minHeight: 44,
               flexShrink: 0,
-              borderRadius: 6, border: "none", cursor: "pointer",
-              fontSize: 12, letterSpacing: 1, fontFamily: baseFont,
-              background: tab === key ? "#3B82F6" : "#1E2233",
-              color: tab === key ? "#fff" : "#9CA3AF",
-              transition: "all 0.2s",
+              borderRadius: 0, border: BORDER, cursor: "pointer",
+              fontSize: 12, fontWeight: tab === key ? 800 : 600, letterSpacing: 0.5, fontFamily: baseFont,
+              background: tab === key ? ACCENT : CARD_BG,
+              color: INK,
+              boxShadow: tab === key ? SHADOW_SM : "none",
+              transition: "none",
             }}>
               {label}
             </button>
@@ -328,22 +330,22 @@ export default function App() {
 
         {CONFIGURED && (sheets.auth === 'signed-out' || sheets.auth === 'error') && (
           <div style={{
-            background: "linear-gradient(135deg, #1E3A5F33, #1A1D26)",
-            border: "1px solid #3B82F655", borderRadius: 12,
+            background: CARD_BG,
+            border: BORDER, borderRadius: 0, boxShadow: SHADOW_SM,
             padding: "20px 16px", marginBottom: 16, textAlign: "center",
           }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#F5F7FF", marginBottom: 6 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: INK, marginBottom: 6 }}>
               {sheets.auth === 'error' ? 'Google 연결 오류' : '로그인이 필요합니다'}
             </div>
-            <div style={{ fontSize: 11, color: "#9CA3AF", lineHeight: 1.5, marginBottom: 14 }}>
+            <div style={{ fontSize: 11, color: INK_2, lineHeight: 1.5, marginBottom: 14 }}>
               {sheets.auth === 'error'
                 ? '시트 연결에 문제가 있어 데이터를 불러오지 못했습니다. 아래 0원 표시는 실제 잔액이 아닙니다.'
                 : '로그인하면 실제 포트폴리오가 표시됩니다.'}
             </div>
             <button onClick={sheets.signIn} style={{
-              padding: "10px 24px", borderRadius: 8, border: "1px solid #3B82F6",
-              background: "#1E3A5F", color: "#60A5FA", cursor: "pointer",
-              fontSize: 13, fontWeight: 600, fontFamily: baseFont, minHeight: 44,
+              padding: "10px 24px", borderRadius: 0, border: BORDER, boxShadow: SHADOW_SM,
+              background: ACCENT, color: INK, cursor: "pointer",
+              fontSize: 13, fontWeight: 800, fontFamily: baseFont, minHeight: 44,
             }}>
               {sheets.auth === 'error' ? '다시 로그인' : 'Google 로그인'}
             </button>
@@ -510,7 +512,7 @@ export default function App() {
 
       </div>
 
-      <div style={{ padding: "12px 16px 32px", textAlign: "center", fontSize: 9, color: "#2A2F3E", letterSpacing: 2 }}>
+      <div style={{ padding: "12px 16px 32px", textAlign: "center", fontSize: 9, color: "#141414", letterSpacing: 2 }}>
         {(sheets.lastSync || new Date()).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })} · 바나나 은퇴 준비 포트폴리오
       </div>
 

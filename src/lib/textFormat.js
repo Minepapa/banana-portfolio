@@ -42,7 +42,7 @@ export function stripEmoji(text) {
 }
 
 // ── 등급 표시: 🟢🟡🔴⚪ → 폰트 비의존 CSS 원 ───────────────────────────────────
-export const GRADE_COLORS = { '🟢': '#10B981', '🟡': '#F5C842', '🔴': '#EF4444', '⚪': '#6B7280' };
+export const GRADE_COLORS = { '🟢': '#159E52', '🟡': '#E0A000', '🔴': '#E5484D', '⚪': '#8A8578' };
 export function gradeColor(s) {
   const str = String(s ?? '');
   for (const k of Object.keys(GRADE_COLORS)) if (str.includes(k)) return GRADE_COLORS[k];

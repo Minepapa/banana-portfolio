@@ -14,15 +14,15 @@ export default function TradeEditModal({
       padding: 16, zIndex: 200,
     }} onClick={(e) => { if (e.target === e.currentTarget) setTradeEditOpen(false); }}>
       <div style={{
-        background: '#1A1D26', borderRadius: 12, width: '100%', maxWidth: 440,
+        background: '#FFFFFF', borderRadius: 0, width: '100%', maxWidth: 440,
         maxHeight: '90vh', overflowY: 'auto', padding: '20px 18px',
-        border: '1px solid #2A2F3E',
+        border: '1px solid #141414',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#F5A623' }}>셀 값 입력</div>
           <button onClick={() => setTradeEditOpen(false)} style={{
             background: 'transparent', border: 'none', cursor: 'pointer',
-            color: '#8A9AB5', fontSize: 18, padding: 0, lineHeight: 1,
+            color: '#6B675C', fontSize: 18, padding: 0, lineHeight: 1,
           }}>✕</button>
         </div>
 
@@ -31,7 +31,7 @@ export default function TradeEditModal({
           return (
             <div key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <div style={{
-                width: 64, fontSize: 10, color: isEmpty ? '#F59E0B' : '#8A9AB5',
+                width: 64, fontSize: 10, color: isEmpty ? '#F59E0B' : '#6B675C',
                 textAlign: 'right', flexShrink: 0,
               }}>
                 {col.key} · {col.label}
@@ -45,9 +45,9 @@ export default function TradeEditModal({
                 }}
                 placeholder={col.placeholder}
                 style={{
-                  flex: 1, background: isEmpty ? '#1E1A0F' : '#0F1218',
-                  border: `1px solid ${isEmpty ? '#F59E0B' : '#2A2F3E'}`,
-                  borderRadius: 4, padding: '6px 8px', color: '#E8EAF0',
+                  flex: 1, background: isEmpty ? '#FBF1D0' : '#FFFFFF',
+                  border: `1px solid ${isEmpty ? '#F59E0B' : '#141414'}`,
+                  borderRadius: 0, padding: '6px 8px', color: '#141414',
                   fontSize: 12, fontFamily: baseFont, outline: 'none',
                 }}
               />
@@ -56,9 +56,9 @@ export default function TradeEditModal({
         })}
 
         <button onClick={saveTradeEdit} disabled={tradeEditBusy} style={{
-          width: '100%', marginTop: 12, padding: '10px 12px', borderRadius: 6, border: 'none',
-          background: tradeEditBusy ? '#2A2F3E' : '#F5A623',
-          color: tradeEditBusy ? '#8A9AB5' : '#1A1D26',
+          width: '100%', marginTop: 12, padding: '10px 12px', borderRadius: 0, border: 'none',
+          background: tradeEditBusy ? '#141414' : '#F5A623',
+          color: tradeEditBusy ? '#6B675C' : '#FFFFFF',
           cursor: tradeEditBusy ? 'not-allowed' : 'pointer',
           fontSize: 12, fontWeight: 700, fontFamily: baseFont,
         }}>{tradeEditBusy ? '저장 중...' : '시트에 저장'}</button>

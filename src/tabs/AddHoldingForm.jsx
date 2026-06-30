@@ -34,12 +34,12 @@ export default function AddHoldingForm({ acctKey, accounts, onSave, onCancel, re
   const notReady = rowMap === null || saving || sheetWarning;
 
   const inputStyle = {
-    background: '#0D1520', border: '1px solid #2A2F3E', borderRadius: 6,
-    color: '#E8EAF0', padding: '6px 10px', fontSize: 12,
+    background: '#FFFFFF', border: '1px solid #141414', borderRadius: 0,
+    color: '#141414', padding: '6px 10px', fontSize: 12,
     fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
     width: '100%', boxSizing: 'border-box',
   };
-  const labelStyle = { fontSize: 10, color: '#8A9AB5', marginBottom: 4, display: 'block' };
+  const labelStyle = { fontSize: 10, color: '#6B675C', marginBottom: 4, display: 'block' };
 
   const handleSubmit = async () => {
     if (!종목명.trim() || !매수단가 || !수량 || !rowMap || sheetWarning) return;
@@ -77,14 +77,14 @@ export default function AddHoldingForm({ acctKey, accounts, onSave, onCancel, re
 
   return (
     <div style={{
-      background: '#1A1D26', border: '1px solid #2A2F3E', borderRadius: 12,
+      background: '#FFFFFF', border: '1px solid #141414', borderRadius: 0,
       padding: 16, marginBottom: 16,
     }}>
-      <div style={{ fontSize: 11, letterSpacing: 2, color: '#8A9AB5', marginBottom: 12 }}>종목 추가</div>
+      <div style={{ fontSize: 11, letterSpacing: 2, color: '#6B675C', marginBottom: 12 }}>종목 추가</div>
       {rowMap !== null && sheetWarning && (
         <div style={{
-          background: '#2D1A1A', border: '1px solid #7F1D1D', borderRadius: 6,
-          padding: '7px 11px', marginBottom: 10, fontSize: 11, color: '#FCA5A5',
+          background: '#FBE3E4', border: '1px solid #141414', borderRadius: 0,
+          padding: '7px 11px', marginBottom: 10, fontSize: 11, color: '#E5484D',
         }}>
           ⚠ {!hasAInSheet ? `시트 A열에 '${자산군}' 자산군 없음` : '빈 행 없음 — 시트에 공백 행 추가 필요'}
         </div>
@@ -93,7 +93,7 @@ export default function AddHoldingForm({ acctKey, accounts, onSave, onCancel, re
         <div>
           <label style={labelStyle}>
             자산군{rowMap !== null && hasAInSheet && (
-              <span style={{ marginLeft: 5, color: emptySlots > 0 ? '#6EE7B7' : '#FCA5A5' }}>
+              <span style={{ marginLeft: 5, color: emptySlots > 0 ? '#6EE7B7' : '#E5484D' }}>
                 ({emptySlots}개 가능)
               </span>
             )}
@@ -141,13 +141,13 @@ export default function AddHoldingForm({ acctKey, accounts, onSave, onCancel, re
       </div>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button onClick={onCancel} style={{
-          padding: '6px 14px', borderRadius: 6, border: '1px solid #2A2F3E',
-          background: 'transparent', color: '#6B7280', cursor: 'pointer', fontSize: 11,
+          padding: '6px 14px', borderRadius: 0, border: '1px solid #141414',
+          background: 'transparent', color: '#6B675C', cursor: 'pointer', fontSize: 11,
           fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
         }}>취소</button>
         <button onClick={handleSubmit} disabled={notReady} style={{
-          padding: '6px 14px', borderRadius: 6, border: 'none',
-          background: notReady ? '#2A2F3E' : '#3B82F6',
+          padding: '6px 14px', borderRadius: 0, border: 'none',
+          background: notReady ? '#141414' : '#141414',
           color: '#fff', cursor: notReady ? 'not-allowed' : 'pointer',
           fontSize: 11, fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
         }}>

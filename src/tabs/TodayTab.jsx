@@ -124,7 +124,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   }
   if (pendingConfirm > 0) {
     items.push({
-      key: 'confirm', kind: 'auto', accent: '#4ADE80', icon: '⏳',
+      key: 'confirm', kind: 'auto', accent: '#159E52', icon: '⏳',
       title: `투자논리 확인 대기 ${pendingConfirm}건`, sub: '매수 전제에 동의 표시',
       goLabel: '포지션 보기', go: () => setTab('저널'),
     });
@@ -138,16 +138,16 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   }
   if (rebalAlerts.length > 0) {
     items.push({
-      key: 'rebal', kind: 'auto', accent: '#60A5FA', icon: '⚖️',
+      key: 'rebal', kind: 'auto', accent: '#141414', icon: '⚖️',
       title: `리밸런싱 갭 ${rebalAlerts.length}건`, sub: '목표 비중 ±5%p 초과',
       goLabel: '자산분배 보기', go: () => setTab('rebalance'),
       body: (
         <div style={{ marginTop: 8 }}>
           {rebalAlerts.map((a, i) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 8px', borderRadius: 5, marginBottom: 3, background: '#12141C', borderLeft: `3px solid ${a.diff > 0 ? PROFIT_POS : PROFIT_NEG}` }}>
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 8px', borderRadius: 0, marginBottom: 3, background: '#FFFFFF', borderLeft: `3px solid ${a.diff > 0 ? PROFIT_POS : PROFIT_NEG}` }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ width: 6, height: 6, borderRadius: '50%', background: a.color, flexShrink: 0 }} />
-                <span style={{ fontSize: 11, color: '#E8EAF0' }}>{a.name}</span>
+                <div style={{ width: 6, height: 6, borderRadius: 0, background: a.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 11, color: '#141414' }}>{a.name}</span>
                 <span style={{ fontSize: 9, color: a.color }}>{a.acct}</span>
               </div>
               <span style={{ fontSize: 11, fontWeight: 700, color: a.diff > 0 ? PROFIT_POS : PROFIT_NEG }}>{a.diff > 0 ? '+' : ''}{a.diff}%p</span>
@@ -162,9 +162,9 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
       key: `rx:${rxDate}`, kind: 'read', accent: '#F5C842', icon: '💊',
       title: '이번 주 처방', sub: `${rxDate} 리포트`, goLabel: '리포트 보기', go: () => setTab('report'),
       body: (
-        <div style={{ marginTop: 8, background: 'linear-gradient(135deg,#2A2410,#12141C)', border: '1px solid #F5C84244', borderRadius: 8, padding: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#F5F7FF', lineHeight: 1.5, marginBottom: rxReason ? 8 : 0 }}>{rxAction}</div>
-          {rxReason && <div style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{rxReason}</div>}
+        <div style={{ marginTop: 8, background: '#FFFFFF', border: '2px solid #141414', borderLeft: '5px solid #E0A000', borderRadius: 0, padding: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#141414', lineHeight: 1.5, marginBottom: rxReason ? 8 : 0 }}>{rxAction}</div>
+          {rxReason && <div style={{ fontSize: 10, color: '#6B675C', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{rxReason}</div>}
         </div>
       ),
     });
@@ -193,40 +193,40 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
       <SectionTitle color="#F4845F" mb={14} sub={`${day} · 오늘 처리할 것만 모음`}>오늘 할 일</SectionTitle>
 
       {allDone && (
-        <div style={{ background: 'linear-gradient(135deg,#0D2010,#12141C)', border: '1px solid #4ADE8055', borderRadius: 12, padding: '16px 20px', marginBottom: 14, textAlign: 'center' }}>
+        <div style={{ background: '#C9F23E', border: '2px solid #141414', boxShadow: '4px 4px 0 #141414', borderRadius: 0, padding: '16px 20px', marginBottom: 14, textAlign: 'center' }}>
           <div style={{ fontSize: 24, marginBottom: 6 }}>✅</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#4ADE80' }}>오늘 할 일 모두 완료!</div>
-          <div style={{ fontSize: 10, color: '#6B7280', marginTop: 4 }}>수고하셨습니다. 내일 다시 확인해주세요.</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#141414' }}>오늘 할 일 모두 완료!</div>
+          <div style={{ fontSize: 10, color: '#141414', marginTop: 4 }}>수고하셨습니다. 내일 다시 확인해주세요.</div>
         </div>
       )}
 
       {items.length === 0 ? (
-        <div style={{ background: '#1A1D26', borderRadius: 12, padding: 32, textAlign: 'center', border: '1px solid #232838' }}>
+        <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 32, textAlign: 'center', border: '1px solid #141414' }}>
           <div style={{ fontSize: 32, marginBottom: 10 }}>✅</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#E8EAF0', marginBottom: 4 }}>오늘 할 일 없음</div>
-          <div style={{ fontSize: 11, color: '#8A9AB5', lineHeight: 1.6 }}>리스크·포지션·체결·리밸런싱 모두 정상.<br />홈에서 숫자만 확인하면 됩니다.</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#141414', marginBottom: 4 }}>오늘 할 일 없음</div>
+          <div style={{ fontSize: 11, color: '#6B675C', lineHeight: 1.6 }}>리스크·포지션·체결·리밸런싱 모두 정상.<br />홈에서 숫자만 확인하면 됩니다.</div>
         </div>
       ) : (
         items.map((it) => {
           const done = acked.has(it.key);
           return (
-            <div key={it.key} style={{ background: done ? '#1A1D26' : `${it.accent}10`, border: `1px solid ${done ? '#2E3A2E' : it.accent + '38'}`, borderLeft: `4px solid ${done ? '#4ADE8066' : it.accent}`, borderRadius: 12, padding: 14, marginBottom: 10, opacity: done ? 0.55 : 1, transition: 'opacity 0.2s' }}>
+            <div key={it.key} style={{ background: done ? '#FFFFFF' : `${it.accent}10`, border: `1px solid ${done ? '#141414' : it.accent + '38'}`, borderLeft: `4px solid ${done ? '#4ADE8066' : it.accent}`, borderRadius: 0, padding: 14, marginBottom: 10, opacity: done ? 0.55 : 1, transition: 'opacity 0.2s' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                 <span style={{ fontSize: 16, lineHeight: 1.3, flexShrink: 0 }}>{done ? '✅' : it.icon}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: done ? '#6B7280' : '#F5F7FF', textDecoration: done ? 'line-through' : 'none' }}>{it.title}</div>
-                  {it.sub && <div style={{ fontSize: 10, color: '#8A9AB5', marginTop: 2, lineHeight: 1.5, wordBreak: 'break-word' }}>{it.sub}</div>}
+                  <div style={{ fontSize: 13, fontWeight: 700, color: done ? '#6B675C' : '#141414', textDecoration: done ? 'line-through' : 'none' }}>{it.title}</div>
+                  {it.sub && <div style={{ fontSize: 10, color: '#6B675C', marginTop: 2, lineHeight: 1.5, wordBreak: 'break-word' }}>{it.sub}</div>}
                 </div>
-                {done && <span style={{ fontSize: 10, color: '#4ADE80', flexShrink: 0, fontWeight: 700 }}>완료</span>}
+                {done && <span style={{ fontSize: 10, color: '#159E52', flexShrink: 0, fontWeight: 700 }}>완료</span>}
               </div>
               {!done && it.body}
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                 {!done && (
-                  <button onClick={it.go} style={{ padding: '6px 12px', minHeight: 32, borderRadius: 6, border: `1px solid ${it.accent}55`, background: 'transparent', color: it.accent, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
+                  <button onClick={it.go} style={{ padding: '6px 12px', minHeight: 32, borderRadius: 0, border: `1px solid ${it.accent}55`, background: 'transparent', color: it.accent, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
                     {it.goLabel} ›
                   </button>
                 )}
-                <button onClick={() => done ? null : ack(it.key)} style={{ padding: '6px 12px', minHeight: 32, borderRadius: 6, border: `1px solid ${done ? '#2E3A2E' : '#2E3344'}`, background: done ? '#1A2A1A' : 'none', color: done ? '#4ADE80' : '#9CA3AF', cursor: done ? 'default' : 'pointer', fontSize: 11, fontFamily: baseFont }}>
+                <button onClick={() => done ? null : ack(it.key)} style={{ padding: '6px 12px', minHeight: 32, borderRadius: 0, border: `1px solid ${done ? '#141414' : '#141414'}`, background: done ? '#DDF3E4' : 'none', color: done ? '#159E52' : '#6B675C', cursor: done ? 'default' : 'pointer', fontSize: 11, fontFamily: baseFont }}>
                   {done ? '✓ 확인됨' : '확인 ✓'}
                 </button>
               </div>

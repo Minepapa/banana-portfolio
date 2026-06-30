@@ -59,8 +59,8 @@ export default function RiskTab({ riskMonitor, baselines }) {
     return (
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
         {entries.map(([k, v], i) => (
-          <div key={i} style={{ fontSize: 9, color: '#9CA3AF', background: '#12141C', borderRadius: 4, padding: '3px 7px' }}>
-            <span style={{ color: '#8A9AB5' }}>{k}</span> {String(v)}
+          <div key={i} style={{ fontSize: 9, color: '#6B675C', background: '#FFFFFF', borderRadius: 0, padding: '3px 7px' }}>
+            <span style={{ color: '#6B675C' }}>{k}</span> {String(v)}
           </div>
         ))}
       </div>
@@ -70,14 +70,14 @@ export default function RiskTab({ riskMonitor, baselines }) {
   return (
     <div style={{ textAlign: 'left' }}>
       {/* 헤더 */}
-      <SectionTitle color="#EF4444" size={15} sub={`최근 점검 ${lastUpdated}`}>리스크 모니터</SectionTitle>
+      <SectionTitle color="#E5484D" size={15} sub={`최근 점검 ${lastUpdated}`}>리스크 모니터</SectionTitle>
 
       {riskMonitor.length === 0 ? (
-        <div style={{ background: '#1A1D26', borderRadius: 12, padding: 24, textAlign: 'center' }}>
+        <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 24, textAlign: 'center' }}>
           <div style={{ fontSize: 28, marginBottom: 8 }}>🛡️</div>
-          <div style={{ fontSize: 12, color: '#9CA3AF', lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12, color: '#6B675C', lineHeight: 1.6 }}>
             아직 리스크 신호가 없습니다.<br />
-            <span style={{ fontSize: 10, color: '#8A9AB5' }}>risk-monitor 실행 후 B(논리 훼손)·D(거시 충격) 신호가 표시됩니다.</span>
+            <span style={{ fontSize: 10, color: '#6B675C' }}>risk-monitor 실행 후 B(논리 훼손)·D(거시 충격) 신호가 표시됩니다.</span>
           </div>
         </div>
       ) : (
@@ -89,10 +89,10 @@ export default function RiskTab({ riskMonitor, baselines }) {
               { label: '주의', n: counts.amber, c: '#F5C842' },
               { label: '정상', n: counts.green, c: '#10B981' },
             ].map((x, i) => (
-              <div key={i} style={{ background: x.n > 0 ? `${x.c}14` : '#1A1D26', borderRadius: 12, padding: '14px 8px', textAlign: 'center', border: `1px solid ${x.n > 0 ? `${x.c}44` : '#232838'}` }}>
+              <div key={i} style={{ background: x.n > 0 ? `${x.c}14` : '#FFFFFF', borderRadius: 0, padding: '14px 8px', textAlign: 'center', border: `1px solid ${x.n > 0 ? `${x.c}44` : '#141414'}` }}>
                 <div style={{ fontSize: 24, fontWeight: 800, color: x.n > 0 ? x.c : '#3A4050', lineHeight: 1 }}>{x.n}</div>
-                <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: x.c, display: 'inline-block' }} />{x.label}
+                <div style={{ fontSize: 10, color: '#6B675C', marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 0, background: x.c, display: 'inline-block' }} />{x.label}
                 </div>
               </div>
             ))}
@@ -110,33 +110,33 @@ export default function RiskTab({ riskMonitor, baselines }) {
               else if (r.target.length > 40) { headTitle = r.target.slice(0, 40).trim() + '…'; headRest = r.target; }
             }
             return (
-              <div key={i} style={{ background: '#1A1D26', borderRadius: 12, padding: 14, marginBottom: 8, border: '1px solid #232838', borderLeft: `4px solid ${color}` }}>
+              <div key={i} style={{ background: '#FFFFFF', borderRadius: 0, padding: 14, marginBottom: 8, border: '1px solid #141414', borderLeft: `4px solid ${color}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
                     {/* 상태 점(이모지 대신 CSS 원 — 폰트 의존 없이 항상 정상 표시) */}
-                    <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
-                    <span style={{ fontSize: 12, fontWeight: 700, color: '#E8EAF0' }}>{headTitle}</span>
+                    <span style={{ width: 9, height: 9, borderRadius: 0, background: color, flexShrink: 0, display: 'inline-block' }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#141414' }}>{headTitle}</span>
                     {/* 검증 항목(중립 회색) */}
-                    <span style={{ fontSize: 8, color: '#8A93A6', border: '1px solid #2E3442', borderRadius: 3, padding: '1px 5px' }}>{typeLabel(r.type)}</span>
+                    <span style={{ fontSize: 8, color: '#6B675C', border: '1px solid #141414', borderRadius: 0, padding: '1px 5px' }}>{typeLabel(r.type)}</span>
                     {/* 결과 상태(색상) */}
-                    <span style={{ fontSize: 8, color, background: `${color}22`, borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>{statusLabel(r.signal)}</span>
+                    <span style={{ fontSize: 8, color, background: `${color}22`, borderRadius: 0, padding: '1px 6px', fontWeight: 700 }}>{statusLabel(r.signal)}</span>
                   </div>
                   <span style={{ fontSize: 9, color: '#3A4050', flexShrink: 0 }}>{r.date}</span>
                 </div>
                 {/* 본문은 카드 전체 폭으로 — 날짜 아래까지 채워 자연스럽게 줄바꿈 */}
-                <Sentences text={r.summary} sentenceOnly style={{ fontSize: 11, color: '#9CA3AF', lineHeight: 1.55, marginTop: 4 }} />
+                <Sentences text={r.summary} sentenceOnly style={{ fontSize: 11, color: '#6B675C', lineHeight: 1.55, marginTop: 4 }} />
                 {(r.detail || r.evidence) && (
                   <button onClick={() => setRiskOpen(prev => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; })}
-                    style={{ marginTop: 8, padding: '4px 0', background: 'transparent', border: 'none', color: '#8A9AB5', cursor: 'pointer', fontSize: 9 }}>
+                    style={{ marginTop: 8, padding: '4px 0', background: 'transparent', border: 'none', color: '#6B675C', cursor: 'pointer', fontSize: 9 }}>
                     {isOpen ? '접기 ▲' : '자세히 ▼'}
                   </button>
                 )}
                 {isOpen && (
-                  <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #1E2233' }}>
-                    {headRest && <div style={{ fontSize: 9, color: '#8A9AB5', lineHeight: 1.5, marginBottom: 6, wordBreak: 'break-word' }}>구성: {headRest}</div>}
-                    {r.detail && <Sentences text={r.detail} sentenceOnly style={{ fontSize: 10, color: '#9CA3AF', lineHeight: 1.6, wordBreak: 'break-word', marginBottom: 2 }} />}
+                  <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #EAE6DA' }}>
+                    {headRest && <div style={{ fontSize: 9, color: '#6B675C', lineHeight: 1.5, marginBottom: 6, wordBreak: 'break-word' }}>구성: {headRest}</div>}
+                    {r.detail && <Sentences text={r.detail} sentenceOnly style={{ fontSize: 10, color: '#6B675C', lineHeight: 1.6, wordBreak: 'break-word', marginBottom: 2 }} />}
                     {renderEvidence(r.evidence)}
-                    {r.baselineRef && <div style={{ fontSize: 9, color: '#8A9AB5', marginTop: 8 }}>기준선: {r.baselineRef}</div>}
+                    {r.baselineRef && <div style={{ fontSize: 9, color: '#6B675C', marginTop: 8 }}>기준선: {r.baselineRef}</div>}
                   </div>
                 )}
               </div>
@@ -148,20 +148,20 @@ export default function RiskTab({ riskMonitor, baselines }) {
 
       {/* 펀더멘털 기준선 */}
       {baselines.length > 0 && (
-        <div style={{ background: '#1A1D26', borderRadius: 12, padding: 16, marginTop: 12 }}>
-          <SectionTitle color="#F5C842" size={12} mb={14} sub="논리 훼손 비교 기준">펀더멘털 기준선</SectionTitle>
-          <div style={{ display: 'flex', fontSize: 9, color: '#8A9AB5', padding: '0 0 6px', borderBottom: '1px solid #1E2233' }}>
+        <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginTop: 12 }}>
+          <SectionTitle color="#E0A000" size={12} mb={14} sub="논리 훼손 비교 기준">펀더멘털 기준선</SectionTitle>
+          <div style={{ display: 'flex', fontSize: 9, color: '#6B675C', padding: '0 0 6px', borderBottom: '1px solid #EAE6DA' }}>
             <span style={{ flex: 2, minWidth: 0 }}>종목</span>
             <span style={{ flex: 1, textAlign: 'right' }}>영익률</span>
             <span style={{ flex: 1, textAlign: 'right' }}>ROE</span>
             <span style={{ flex: 1, textAlign: 'right' }}>부채</span>
           </div>
           {baselines.map((b, i) => (
-            <div key={i} style={{ display: 'flex', fontSize: 10, color: '#E8EAF0', padding: '7px 0', borderBottom: i < baselines.length - 1 ? '1px solid #15171F' : 'none' }}>
+            <div key={i} style={{ display: 'flex', fontSize: 10, color: '#141414', padding: '7px 0', borderBottom: i < baselines.length - 1 ? '1px solid #141414' : 'none' }}>
               <span style={{ flex: 2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
               {[b.operatingMargin, b.roe, b.debtRatio].map((v, k) => {
                 const f = fmtPct(v);
-                return <span key={k} style={{ flex: 1, textAlign: 'right', color: f === '데이터 부족' ? '#8A9AB5' : '#9CA3AF', fontSize: f === '데이터 부족' ? 9 : 10 }}>{f}</span>;
+                return <span key={k} style={{ flex: 1, textAlign: 'right', color: f === '데이터 부족' ? '#6B675C' : '#6B675C', fontSize: f === '데이터 부족' ? 9 : 10 }}>{f}</span>;
               })}
             </div>
           ))}
