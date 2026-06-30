@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { parseJobStatus } from './lib/jobHealth.js';
 import { DEFAULT_ACCOUNTS } from './lib/constants.js';
 import { profitColor } from './lib/colors.js';
 import { relTime, fmt } from './lib/textFormat.js';
@@ -10,6 +9,7 @@ import { useEvalCard } from './hooks/useEvalCard.js';
 import { usePortfolioEdits } from './hooks/usePortfolioEdits.js';
 import { useSavingsEdit } from './hooks/useSavingsEdit.js';
 import { useRebalanceTargets } from './hooks/useRebalanceTargets.js';
+import { useTabData } from './hooks/useTabData.js';
 import HelpTab from './tabs/HelpTab.jsx';
 import DividendTab from './tabs/DividendTab.jsx';
 import ProfitTab from './tabs/ProfitTab.jsx';
@@ -53,9 +53,6 @@ export default function App() {
     return prevDate ? history[prevDate] : null;
   });
   const [showSavings, setShowSavings] = useState(false);
-  const [kpiTrades, setKpiTrades] = useState(null); // null=미로딩, []이상=로딩완료
-  const [jobStatus, setJobStatus] = useState(null); // null=미로딩
-  const [execPending, setExecPending] = useState(null); // 오늘 탭: 미처리 체결 수(읽기전용). null=미로딩
   const [savingsMode, setSavingsMode] = useState(false);
   const [profitData, setProfitData] = useState([]);
   const isMobile = useIsMobile();
@@ -154,6 +151,8 @@ export default function App() {
     saveAllTargets,
   } = useRebalanceTargets({ sheets, acctKey, setBalanceSyncMsg });
 
+  const { kpiTrades, jobStatus, execPending } = useTabData({ sheets, tab, syncTradeExecutions });
+
   const totalEval = Object.values(accounts).reduce((s, a) => s + a.total_eval, 0);
 
   // 어제 대비 평가금 추적
@@ -202,49 +201,6 @@ export default function App() {
       isBalanceWritingRef.current = false;
     });
   }, [sheets.sync, sheets.lastSync, accounts]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (tab === '체결내역' && sheets.auth === 'signed-in') {
-      syncTradeExecutions();
-    }
-  }, [tab, sheets.auth]); // eslint-disable-line
-
-  useEffect(() => {
-    if (tab === 'kpi' && sheets.auth === 'signed-in' && kpiTrades === null) {
-      sheets.readRange('체결내역!A2:M')
-        .then(vals => setKpiTrades((vals || []).map(row => ({ row }))))
-        .catch(() => setKpiTrades([]));
-    }
-  }, [tab, sheets.auth]); // eslint-disable-line
-
-  // 잡 상태는 별도 '잡상태' 시트라 메인 batchGet(doFetch)에 안 실린다 → 따로 읽는다.
-  // 복원-만료 토큰 경로(useGoogleSheets)는 토큰 적용 전 잠깐 signed-in 이 되므로 첫 시도가
-  // 401 로 죽을 수 있다. 그땐 jobStatus 가 null 로 남는데, 토큰 갱신→doFetch 성공으로
-  // lastSync 가 바뀌면(=토큰 준비됨 신호) 이 effect 가 재발화해 채운다. 한 번 채워지면 즉시 스킵.
-  useEffect(() => {
-    if (sheets.auth === 'signed-in' && jobStatus === null) {
-      sheets.readRange('잡상태!A2:E')
-        .then(rows => setJobStatus(parseJobStatus(rows)))
-        // 실패 시 jobStatus는 null 유지 → 배너 숨김([]는 "전부 미실행"으로 오표시되므로 금지).
-        // 401(토큰 미적용 레이스)은 조용히 — lastSync 갱신 때 재시도한다. 그 외만 흔적 남김.
-        .catch(e => { if (e?.status !== 401) console.error('잡상태 read failed:', e); });
-    }
-  }, [sheets.auth, jobStatus, sheets.lastSync]); // eslint-disable-line
-
-  // 오늘 탭: 미처리 체결 수를 읽기전용으로 집계(동기화는 쓰기라 탭 진입만으로 호출 금지).
-  // 탭 진입·전역 새로고침(lastSync) 때마다 재조회 — 종목명 있고 미처리(초록 아님)인 행만 카운트.
-  useEffect(() => {
-    if (tab !== '오늘' || sheets.auth !== 'signed-in') return;
-    let cancelled = false;
-    Promise.all([sheets.readRange('체결내역!A2:M'), sheets.readTradeProcessedFlags()])
-      .then(([vals, flags]) => {
-        if (cancelled) return;
-        const n = (vals || []).filter((row, i) => String(row[5] ?? '').trim() !== '' && !(flags[i] ?? false)).length;
-        setExecPending(n);
-      })
-      .catch(() => { if (!cancelled) setExecPending(0); });
-    return () => { cancelled = true; };
-  }, [tab, sheets.auth, sheets.lastSync]); // eslint-disable-line
 
   const acct = accounts[acctKey];
   const totalInvest = Object.values(accounts).reduce((s, a) => s + a.total_invest, 0);
