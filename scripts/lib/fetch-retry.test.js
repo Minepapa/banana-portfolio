@@ -80,7 +80,7 @@ test('백오프 지연은 지수적으로 증가하고 jitter 범위 내(base*2^
     const lo = 100 * 2 ** n;                       // 100, 200, 400
     assert.ok(delays[n] >= lo && delays[n] < lo + 250, `delay[${n}]=${delays[n]} ∈ [${lo}, ${lo + 250})`);
   }
-  assert.ok(delays[0] < delays[1] && delays[1] < delays[2], '단조 증가');
+  // 단조증가 어서션 제거: jitter[0,249]로 인해 delay[0]>delay[1]이 ~18% 확률 발생(플레이크). lo 범위 검증이 지수 성장을 충분히 보장함.
 });
 
 test('RETRYABLE_STATUS는 429·500·502·503·504 포함, 404·403 미포함', () => {
