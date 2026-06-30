@@ -261,18 +261,30 @@ async function pushNewReds(rows, priorRedKeys) {
   }
 }
 
+// Sheets 날짜 시리얼(USER_ENTERED로 저장된 숫자) 또는 날짜 문자열 → YYYY-MM-DD.
+// 문자열 비교에서 시리얼 "4xxxx" > "2026-..." 오판을 방지.
+function normDate(v) {
+  const s = String(v ?? '').trim();
+  if (/^\d{5}(\.\d+)?$/.test(s)) {
+    return new Date((parseFloat(s) - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+  }
+  return s.slice(0, 10);
+}
+
 // 시트는 append-only 라 매 실행 누적된다. 리스크 탭 표시 기준과 동일하게 정리:
 // 가장 최근 날짜의 거시(D) + 위탁 개별주식 B 최신 1건만 남기고 오래된 D·중복 행 제거.
 // (D·B 어느 모드가 돌든 양쪽 유효분을 보존하므로 멱등.)
 async function pruneRiskSheet(token, monitoredNames) {
   const rows = await getRange(token, `${RISK_SHEET}!A2:H`);
   if (rows.length === 0) return;
-  const maxDDate = rows.reduce(
-    (mx, r) => (String(r[1] ?? '').trim() === 'D' && String(r[0] ?? '') > mx ? String(r[0] ?? '') : mx), '');
+  const maxDDate = rows.reduce((mx, r) => {
+    if (String(r[1] ?? '').trim() !== 'D') return mx;
+    const d = normDate(r[0]); return d > mx ? d : mx;
+  }, '');
   const keepIdx = new Set();
   const seen = new Set();
   for (let i = rows.length - 1; i >= 0; i--) {   // 최신(아래)부터
-    const date = String(rows[i][0] ?? '').trim();
+    const date = normDate(rows[i][0]);
     const type = String(rows[i][1] ?? '').trim();
     const target = String(rows[i][2] ?? '').trim();
     if (type === 'D') { if (date !== maxDDate) continue; }
@@ -362,7 +374,7 @@ async function main() {
     // 볼린저 밴드 가드레일: 12개월 MA ± 2σ 돌파 시 결정론 경보 (고정 임계값 대체)
     const fxBands = macro.USDKRW?.bands;
     const todayDate = nowKST().slice(0, 10);
-    const hasBandRowToday = priorRows.some(r => String(r[0] ?? '').startsWith(todayDate) && String(r[1]) === 'D' && String(r[2]).includes('USDKRW') && String(r[4]).includes('밴드'));
+    const hasBandRowToday = priorRows.some(r => normDate(r[0]) === todayDate && String(r[1]) === 'D' && String(r[2]).includes('USDKRW') && String(r[4]).includes('밴드'));
     if (!DRY_RUN && fxBands && fxBands.sigma > 0 && !hasBandRowToday) {
       const fxVal = macro.USDKRW.value;
       if (fxVal > fxBands.upper) {
