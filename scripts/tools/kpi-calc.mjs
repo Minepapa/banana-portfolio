@@ -8,8 +8,8 @@
  * 월간 입금 = C[i]  (C열은 누적이 아니라 "그 달에 새로 들어간 투자금")
  *
  * 사용법:
- *   node scripts/kpi-calc.mjs                  # 자동 OAuth + 콘솔 출력
- *   node scripts/kpi-calc.mjs <TOKEN>
+ *   node scripts/tools/kpi-calc.mjs                  # 자동 OAuth + 콘솔 출력
+ *   node scripts/tools/kpi-calc.mjs <TOKEN>
  *
  * 출력: 마크다운 표 (profile/kpi_baseline.md (banana) §2-§4의 TODO 영역에 복사)
  */
@@ -75,7 +75,7 @@ function getTokenViaBrowser() {
 
     server.on('error', e => {
       clearTimeout(timer);
-      if (e.code === 'EADDRINUSE') reject(new Error('포트 8085 사용 중. 토큰 직접 전달: node scripts/kpi-calc.mjs <TOKEN>'));
+      if (e.code === 'EADDRINUSE') reject(new Error('포트 8085 사용 중. 토큰 직접 전달: node scripts/tools/kpi-calc.mjs <TOKEN>'));
       else reject(e);
     });
   });

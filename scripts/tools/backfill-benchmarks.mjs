@@ -6,13 +6,13 @@
  * 누락·불일치 발견 시 시트에 기록.
  *
  * 사용법:
- *   node scripts/backfill-benchmarks.mjs            # 점검 + 수정
- *   node scripts/backfill-benchmarks.mjs --dry-run  # 점검만 (시트 쓰기 안 함)
- *   node scripts/backfill-benchmarks.mjs <TOKEN>     # OAuth 대신 토큰 직접 전달
+ *   node scripts/tools/backfill-benchmarks.mjs            # 점검 + 수정
+ *   node scripts/tools/backfill-benchmarks.mjs --dry-run  # 점검만 (시트 쓰기 안 함)
+ *   node scripts/tools/backfill-benchmarks.mjs <TOKEN>     # OAuth 대신 토큰 직접 전달
  */
 
 import { spawnSync } from 'child_process';
-import { loadEnv, getToken, getRange, setValues } from './lib/sheets-common.mjs';
+import { loadEnv, getToken, getRange, setValues } from '../lib/sheets-common.mjs';
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
@@ -42,7 +42,7 @@ function parseRows(values) {
 }
 
 function fetchMonthlyCloses(startYm, endYm) {
-  const py = new URL('./lib/yf-monthly-close.py', import.meta.url).pathname;
+  const py = new URL('../lib/yf-monthly-close.py', import.meta.url).pathname;
   const r = spawnSync('python3', [py, String(startYm), String(endYm), '^KS11', '^GSPC'], {
     encoding: 'utf8', timeout: 120000,
   });

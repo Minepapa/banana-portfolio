@@ -2,13 +2,13 @@
 /**
  * 잡 하트비트 기록 — launchd run.sh 가 각 잡 종료 후 호출.
  * 잡상태 시트(1잡=1행)를 upsert 하고, FAIL 이면 Telegram 으로 알린다.
- * 사용: node scripts/record-heartbeat.mjs <job> <status> <durationSec> [token]
+ * 사용: node scripts/jobs/record-heartbeat.mjs <job> <status> <durationSec> [token]
  *       HB_DETAIL=<로그꼬리> 환경변수로 detail 전달(선택).
  */
 import {
   getToken, getRange, appendValues, setValues, ensureSheet, sendTelegram, nowKST,
-} from './lib/sheets-common.mjs';
-import { findStatusRow } from './lib/job-status.mjs';
+} from '../lib/sheets-common.mjs';
+import { findStatusRow } from '../lib/job-status.mjs';
 
 const STATUS_SHEET = '잡상태';
 const HEADER = ['job', 'lastRun', 'status', 'detail', 'durationSec', 'failStreak'];

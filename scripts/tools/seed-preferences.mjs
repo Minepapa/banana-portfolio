@@ -12,11 +12,11 @@
  * 멱등: 시트에 이미 데이터 행이 있으면 시드를 건너뛴다(중복 방지).
  *
  * 사용법:
- *   node scripts/seed-preferences.mjs            # OAuth(대화형) 또는 SA(무인)
- *   node scripts/seed-preferences.mjs <TOKEN>    # 토큰 직접 전달
+ *   node scripts/tools/seed-preferences.mjs            # OAuth(대화형) 또는 SA(무인)
+ *   node scripts/tools/seed-preferences.mjs <TOKEN>    # 토큰 직접 전달
  */
 
-import { loadEnv, getToken, hasServiceAccount, ensureSheet, getRange, appendValues, nowKST } from './lib/sheets-common.mjs';
+import { loadEnv, getToken, hasServiceAccount, ensureSheet, getRange, appendValues, nowKST } from '../lib/sheets-common.mjs';
 
 const SHEET = '성향관찰';
 const HEADER = ['날짜', '신호유형', '관찰', '증거', '§3대비', '신뢰도', '상태', '갱신시각'];

@@ -13,12 +13,12 @@
  *   날짜 | 유형(B/D) | 대상 | 신호(🟢🟡🔴) | 요약 | 상세 | 근거데이터(JSON) | 기준선참조
  *
  * 사용법:
- *   node scripts/risk-monitor.mjs --mode=D            # 거시 리스크 (매일)
- *   node scripts/risk-monitor.mjs --mode=B            # 논리 훼손 (주1회)
- *   node scripts/risk-monitor.mjs --mode=D --dry-run  # 프롬프트만 출력
- *   node scripts/risk-monitor.mjs --mode=B --model=opus
- *   node scripts/risk-monitor.mjs --mode=D <TOKEN>    # OAuth 대신 토큰 직접 전달
- *   node scripts/risk-monitor.mjs --mode=B --no-push  # 🔴 텔레그램 푸시 끔
+ *   node scripts/jobs/risk-monitor.mjs --mode=D            # 거시 리스크 (매일)
+ *   node scripts/jobs/risk-monitor.mjs --mode=B            # 논리 훼손 (주1회)
+ *   node scripts/jobs/risk-monitor.mjs --mode=D --dry-run  # 프롬프트만 출력
+ *   node scripts/jobs/risk-monitor.mjs --mode=B --model=opus
+ *   node scripts/jobs/risk-monitor.mjs --mode=D <TOKEN>    # OAuth 대신 토큰 직접 전달
+ *   node scripts/jobs/risk-monitor.mjs --mode=B --no-push  # 🔴 텔레그램 푸시 끔
  *
  * 🔴 신호는 텔레그램으로 즉시 푸시(신규만 — 같은 유형·대상의 직전 🔴 는 중복 발송 안 함).
  * 🟡🟢 는 푸시하지 않음(시트 기록만).
@@ -28,16 +28,16 @@ import {
   loadEnv, getToken, hasServiceAccount, getRange, appendValues, ensureSheet,
   readHoldings, runHeadlessClaude, parseJsonBlock, nowKST,
   sendTelegram, setValues, clearValues, cooldownActive,
-} from './lib/sheets-common.mjs';
-import { renderPrefRows, prefBlock, PREF_SHEET } from './lib/preferences.mjs';
-import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators, fetchMarketData, fetchKrMarketData } from './lib/fundamentals.mjs';
-import { krCorpCode, usTicker, krStockCode } from './lib/instruments.mjs';
+} from '../lib/sheets-common.mjs';
+import { renderPrefRows, prefBlock, PREF_SHEET } from '../lib/preferences.mjs';
+import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators, fetchMarketData, fetchKrMarketData } from '../lib/fundamentals.mjs';
+import { krCorpCode, usTicker, krStockCode } from '../lib/instruments.mjs';
 
 const RISK_SHEET = '리스크모니터';
 const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세', '근거데이터', '기준선참조'];
 const BASELINE_SHEET = '리스크기준선';
 // 투자 성향 정본 — Trading Agent Hub에서 이전(2026-06-14). 거시 트리거(§4)·계좌배분(§2)이 여기 있음.
-const HUB_CLAUDE = new URL('../profile/investor-profile.md', import.meta.url).pathname;
+const HUB_CLAUDE = new URL('../../profile/investor-profile.md', import.meta.url).pathname;
 const KOSPI_CRASH_PCT = -10;  // KOSPI 5일 고점 대비 낙폭 임계 — 이하면 LLM 판단 무관 🔴 강제 푸시
 const USDKRW_SURGE_PCT = 3;   // USDKRW 5일 저점 대비 상승 임계 — KRW 급약세 결정론 경보
 const SP500_CRASH_PCT = -7;   // SP500 5일 고점 대비 낙폭 임계 — 미증시 급락 결정론 경보

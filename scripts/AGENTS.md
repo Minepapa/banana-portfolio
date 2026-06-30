@@ -2,6 +2,14 @@
 
 launchd로 도는 Node 자동화. plist는 `scripts/launchd/`(설치본 `~/Library/LaunchAgents/`는 심링크 → 저장소 사본 수정이 곧 반영, `launchctl unload/load`로 적용).
 
+## 폴더 구조 (역할·실행환경별)
+- `jobs/` — **launchd 무인 잡 진입점**. `launchd/run.sh`의 case 문이 호출(예: `scripts/jobs/risk-monitor.mjs`). 진입점을 추가·이동하면 **run.sh 경로를 반드시 같이 수정**.
+- `tools/` — 수동 실행 도구(launchd 미등록). 백필·시드·자가검증 등. `recover-evals`는 `../jobs/drain-eval-queue.mjs`의 파서를 재사용.
+- `setup/` — **일회성 마이그레이션**(시트 생성·스키마 변경, 실행 완료분). 운영 경로 아님 — 참조·복구용 보존.
+- `lib/` — 공유 순수 모듈 + `*.test.js` + python 페처(`yf-*.py`). **이동 금지**(`instruments.mjs`의 `.cache` 상대경로·다수 진입점이 `../lib/`로 의존).
+- `apps-script/` — Google Apps Script(`.gs`) 런타임. Node 아님 — 시트에 붙여 실행. `legacy/`는 구버전.
+- 진입점이 `jobs/`·`tools/` 하위에 있으므로 lib import는 `../lib/...`, 같은 폴더 진입점 간은 `./...`.
+
 ## 결정론 원칙 (환각 차단 — 최우선)
 - **Node가 모든 수치를 계산, claude(`claude -p`)는 판단·서술만.** RSI·52주·재무비율·KPI·거시지표는 `lib/fundamentals.mjs`·`kpi-calc.mjs` 등 순수 함수가 산출하고, 프롬프트에 주입한다. LLM에 수치 재조회·추정을 시키지 말 것.
 - 데이터 없으면 "(데이터 부족)" 표기 강제, 추정 금지.

@@ -12,9 +12,9 @@
  *   O 확인여부(대기/확인) · P 갱신시각
  *
  * 사용법:
- *   node scripts/setup/setup-position-journal.mjs --dump     # 보유종목+종목노트 덤프(초안 작성용)
- *   node scripts/setup/setup-position-journal.mjs --dry-run  # 적재 대상만 출력
- *   node scripts/setup/setup-position-journal.mjs            # 시트 생성 + 누락분 백필
+ *   node scripts/jobs/sync-position-journal.mjs --dump     # 보유종목+종목노트 덤프(초안 작성용)
+ *   node scripts/jobs/sync-position-journal.mjs --dry-run  # 적재 대상만 출력
+ *   node scripts/jobs/sync-position-journal.mjs            # 시트 생성 + 누락분 백필
  */
 
 import { getToken, getRange, appendValues, setValues, ensureSheet, readHoldings, nowKST, todayKST } from '../lib/sheets-common.mjs';

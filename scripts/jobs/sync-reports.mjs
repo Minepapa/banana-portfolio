@@ -12,20 +12,20 @@
  * 시트 컬럼: A=발행일(YYYY-MM-DD) · B=요약(200자) · C=전체 본문(마크다운)
  *
  * 사용법:
- *   node scripts/sync-reports.mjs            # OAuth(대화형) 또는 SA(무인) 토큰
- *   node scripts/sync-reports.mjs --dry-run  # 적재 대상만 출력
- *   node scripts/sync-reports.mjs <TOKEN>    # 토큰 직접 전달(launchd run.sh)
+ *   node scripts/jobs/sync-reports.mjs            # OAuth(대화형) 또는 SA(무인) 토큰
+ *   node scripts/jobs/sync-reports.mjs --dry-run  # 적재 대상만 출력
+ *   node scripts/jobs/sync-reports.mjs <TOKEN>    # 토큰 직접 전달(launchd run.sh)
  */
 
 import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { getToken, getRange, appendValues, ensureSheet } from './lib/sheets-common.mjs';
+import { getToken, getRange, appendValues, ensureSheet } from '../lib/sheets-common.mjs';
 
 const REPORT_SHEET = '주간리포트';
 const REPORT_HEADER = ['날짜', '요약', '본문'];
 // 리포트 발행처를 banana로 이전(2026-06-14) → 기본 스캔 위치도 banana reports/.
 // 과거 Trading Agent 리포트는 이미 시트에 적재됨. 필요 시 REPORT_DIR 환경변수로 재지정.
-const REPORT_DIR = process.env.REPORT_DIR || new URL('../reports/', import.meta.url).pathname;
+const REPORT_DIR = process.env.REPORT_DIR || new URL('../../reports/', import.meta.url).pathname;
 const FILE_RE = /^weekly_report_(\d{4})(\d{2})(\d{2})\.md$/;
 
 const args = process.argv.slice(2);

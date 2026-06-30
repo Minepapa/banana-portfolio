@@ -9,27 +9,27 @@
  *   3. 응답 JSON 파싱 → 종목투자노트!A2:U append + 평가요청 상태 '완료' 업데이트
  *
  * 사용법:
- *   node scripts/drain-eval-queue.mjs              # 반자동 (프롬프트 출력 → 응답 붙여넣기)
- *   node scripts/drain-eval-queue.mjs --auto       # 완전자동 (헤드리스 claude -p 평가)
- *   node scripts/drain-eval-queue.mjs --dry-run    # 시트 변경 없이 프롬프트만 출력
- *   node scripts/drain-eval-queue.mjs --model=opus # 헤드리스 모델 지정 (기본 sonnet)
- *   node scripts/drain-eval-queue.mjs <TOKEN>      # OAuth 대신 토큰 직접 전달
+ *   node scripts/jobs/drain-eval-queue.mjs              # 반자동 (프롬프트 출력 → 응답 붙여넣기)
+ *   node scripts/jobs/drain-eval-queue.mjs --auto       # 완전자동 (헤드리스 claude -p 평가)
+ *   node scripts/jobs/drain-eval-queue.mjs --dry-run    # 시트 변경 없이 프롬프트만 출력
+ *   node scripts/jobs/drain-eval-queue.mjs --model=opus # 헤드리스 모델 지정 (기본 sonnet)
+ *   node scripts/jobs/drain-eval-queue.mjs <TOKEN>      # OAuth 대신 토큰 직접 전달
  */
 
 import { createServer } from 'http';
 import { exec } from 'child_process';
-import { runHeadlessClaude, cooldownActive, LIMIT_RE } from './lib/sheets-common.mjs';
-import { renderPrefRows, prefBlock, PREF_SHEET } from './lib/preferences.mjs';
+import { runHeadlessClaude, cooldownActive, LIMIT_RE } from '../lib/sheets-common.mjs';
+import { renderPrefRows, prefBlock, PREF_SHEET } from '../lib/preferences.mjs';
 import { createInterface } from 'readline';
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { fetchKrFundamentals, fetchUsFundamentals, fetchKrMarketData, fetchMarketData } from './lib/fundamentals.mjs';
-import { krCorpCode, krStockCode, usTicker } from './lib/instruments.mjs';
-import { buildEvalFacts } from './lib/eval-facts.mjs';
+import { fetchKrFundamentals, fetchUsFundamentals, fetchKrMarketData, fetchMarketData } from '../lib/fundamentals.mjs';
+import { krCorpCode, krStockCode, usTicker } from '../lib/instruments.mjs';
+import { buildEvalFacts } from '../lib/eval-facts.mjs';
 
 const CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
 const SHEET_ID  = '1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg';
 // 평가 playbook 정본 — Trading Agent에서 이전(2026-06-14). banana 내 로컬 디렉토리.
-const PLAYBOOKS = new URL('../playbooks/', import.meta.url).pathname;
+const PLAYBOOKS = new URL('../../playbooks/', import.meta.url).pathname;
 const SCOPE     = 'https://www.googleapis.com/auth/spreadsheets';
 const REDIRECT  = 'http://localhost:8085/callback';
 const AUTH_TIMEOUT_MS = 120_000;
@@ -45,7 +45,7 @@ const MODEL = modelArg ? modelArg.split('=')[1] : 'sonnet';
 // .env 로드 (DART_API_KEY 등) — 헤드리스 자식 프로세스로 전달
 function loadEnv() {
   try {
-    const txt = readFileSync(new URL('../.env', import.meta.url), 'utf8');
+    const txt = readFileSync(new URL('../../.env', import.meta.url), 'utf8');
     for (const line of txt.split('\n')) {
       const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
       if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
@@ -112,7 +112,7 @@ function getTokenViaBrowser() {
     server.on('error', e => {
       clearTimeout(timer);
       if (e.code === 'EADDRINUSE') {
-        reject(new Error('포트 8085 사용 중. 토큰 직접 전달: node scripts/drain-eval-queue.mjs <TOKEN>'));
+        reject(new Error('포트 8085 사용 중. 토큰 직접 전달: node scripts/jobs/drain-eval-queue.mjs <TOKEN>'));
       } else { reject(e); }
     });
   });

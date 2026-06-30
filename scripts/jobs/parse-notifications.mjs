@@ -22,13 +22,13 @@
  *   연금저축·IRP는 '예수금기준' 표 수동 기준값. 설계: docs/superpowers/specs/2026-06-04-예수금-자동관리-design.md
  *
  * 사용법:
- *   node scripts/parse-notifications.mjs            # OAuth(대화형) 또는 SA(무인)
- *   node scripts/parse-notifications.mjs --dry-run  # 적재 대상만 출력(쓰기 없음)
- *   node scripts/parse-notifications.mjs <TOKEN>    # 토큰 직접 전달(launchd run.sh)
+ *   node scripts/jobs/parse-notifications.mjs            # OAuth(대화형) 또는 SA(무인)
+ *   node scripts/jobs/parse-notifications.mjs --dry-run  # 적재 대상만 출력(쓰기 없음)
+ *   node scripts/jobs/parse-notifications.mjs <TOKEN>    # 토큰 직접 전달(launchd run.sh)
  */
 
-import { SHEET_ID, getToken, getRange, getRangeRaw, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from './lib/sheets-common.mjs';
-import { resolveCashBase } from './lib/cash-base.mjs';
+import { SHEET_ID, getToken, getRange, getRangeRaw, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from '../lib/sheets-common.mjs';
+import { resolveCashBase } from '../lib/cash-base.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 const ALARM_SHEET = '알람';

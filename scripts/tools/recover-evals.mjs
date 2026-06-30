@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // 실패한 평가를 복구하고 source 없는 카드를 재큐잉하는 일회성 스크립트.
-// 사용: node scripts/recover-evals.mjs [TOKEN]
+// 사용: node scripts/tools/recover-evals.mjs [TOKEN]
 import { readFileSync, readdirSync } from 'fs';
-import { getToken, getRange, appendValues, updateCell } from './lib/sheets-common.mjs';
-import { parseEvalJson, buildRow } from './drain-eval-queue.mjs';
+import { getToken, getRange, appendValues, updateCell } from '../lib/sheets-common.mjs';
+import { parseEvalJson, buildRow } from '../jobs/drain-eval-queue.mjs';
 
 const SID = '1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg';
 const FAILED_DIR = `${process.env.HOME}/Library/Logs/banana-portfolio/failed-evals`;

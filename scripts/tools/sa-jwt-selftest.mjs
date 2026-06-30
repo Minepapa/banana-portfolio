@@ -8,12 +8,12 @@
 //
 // 통과 = b64url 인코딩·클레임 조립·RS256 서명이 모두 정확 → 키만 놓으면 실제로 동작한다는 확신.
 //
-// 사용: node scripts/sa-jwt-selftest.mjs   (종료코드 0=통과, 1=실패)
+// 사용: node scripts/tools/sa-jwt-selftest.mjs   (종료코드 0=통과, 1=실패)
 import { generateKeyPairSync, createVerify } from 'crypto';
 import { writeFileSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { getServiceAccountToken } from './lib/sheets-common.mjs';
+import { getServiceAccountToken } from '../lib/sheets-common.mjs';
 
 const EXPECTED_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const TOKEN_URI = 'https://oauth2.googleapis.com/token';

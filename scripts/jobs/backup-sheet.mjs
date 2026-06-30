@@ -4,11 +4,11 @@
  * 모든 탭의 값을 타임스탬프 JSON 으로 덤프해 리포 밖(~/banana-portfolio-backups)에 보관.
  * 자산 데이터(보유종목·예수금·월별잔고 등)가 단일 시트에 모여 있어, 동기화/편집 사고 시
  * 되돌릴 수 있는 스냅샷이 필요하다. 90일 초과분은 자동 정리(디스크 무한 증가 방지).
- * 사용: node scripts/backup-sheet.mjs [token]
+ * 사용: node scripts/jobs/backup-sheet.mjs [token]
  */
 import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { getToken, SHEET_ID, nowKST, todayKST } from './lib/sheets-common.mjs';
+import { getToken, SHEET_ID, nowKST, todayKST } from '../lib/sheets-common.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 const BACKUP_DIR = `${process.env.HOME}/banana-portfolio-backups`;

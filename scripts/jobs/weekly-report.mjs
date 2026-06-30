@@ -9,31 +9,31 @@
  *   ③ reports/weekly_report_YYYYMMDD.md 저장 + 주간리포트 시트 append + (선택)텔레그램 푸시
  *
  * 사용법:
- *   node scripts/weekly-report.mjs                 # 발행(OAuth/SA)
- *   node scripts/weekly-report.mjs --dry-run       # facts·프롬프트만 출력(시트/파일 미기록)
- *   node scripts/weekly-report.mjs --model=opus    # 서술 품질용(기본 opus)
- *   node scripts/weekly-report.mjs --no-push       # 텔레그램 요약 푸시 끔
- *   node scripts/weekly-report.mjs <TOKEN>         # launchd run.sh 무인 토큰 주입
+ *   node scripts/jobs/weekly-report.mjs                 # 발행(OAuth/SA)
+ *   node scripts/jobs/weekly-report.mjs --dry-run       # facts·프롬프트만 출력(시트/파일 미기록)
+ *   node scripts/jobs/weekly-report.mjs --model=opus    # 서술 품질용(기본 opus)
+ *   node scripts/jobs/weekly-report.mjs --no-push       # 텔레그램 요약 푸시 끔
+ *   node scripts/jobs/weekly-report.mjs <TOKEN>         # launchd run.sh 무인 토큰 주입
  */
 
 import {
   loadEnv, getToken, hasServiceAccount, getRange, appendValues, ensureSheet,
   readHoldings, runHeadlessClaude, nowKST, todayKST, sendTelegram, setValues, parseJsonBlock,
-} from './lib/sheets-common.mjs';
+} from '../lib/sheets-common.mjs';
 import {
   fetchKrFundamentals, fetchUsFundamentals, fetchKrMarketData, fetchMarketData, fetchMacroIndicators,
-} from './lib/fundamentals.mjs';
-import { krCorpCode, usTicker, krStockCode } from './lib/instruments.mjs';
-import { buildReportFacts } from './lib/report-facts.mjs';
-import { buildBehaviorSignals } from './lib/behavior-signals.mjs';
-import { renderPrefRows, PREF_SHEET } from './lib/preferences.mjs';
+} from '../lib/fundamentals.mjs';
+import { krCorpCode, usTicker, krStockCode } from '../lib/instruments.mjs';
+import { buildReportFacts } from '../lib/report-facts.mjs';
+import { buildBehaviorSignals } from '../lib/behavior-signals.mjs';
+import { renderPrefRows, PREF_SHEET } from '../lib/preferences.mjs';
 import { extractSummary } from './sync-reports.mjs';
 import { writeFileSync, readdirSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-const PROFILE = new URL('../profile/investor-profile.md', import.meta.url).pathname;
+const PROFILE = new URL('../../profile/investor-profile.md', import.meta.url).pathname;
 const PREF_HEADER = ['날짜', '신호유형', '관찰', '증거', '§3대비', '신뢰도', '상태', '갱신시각'];
-const REPORTS_DIR = new URL('../reports/', import.meta.url).pathname;
+const REPORTS_DIR = new URL('../../reports/', import.meta.url).pathname;
 const REPORT_SHEET = '주간리포트';
 const REPORT_HEADER = ['날짜', '요약', '본문'];
 const STOCK_TYPES = new Set(['국내주식', '해외주식']);  // 라이브 펀더멘털 조회 대상(나머진 시트 현재가)

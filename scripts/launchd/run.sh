@@ -43,15 +43,15 @@ if [ -z "$TOKEN" ]; then
 fi
 
 case "$JOB" in
-  drain)               CMD=(scripts/drain-eval-queue.mjs --auto) ;;
-  risk-d)              CMD=(scripts/risk-monitor.mjs --mode=D) ;;
-  risk-b)              CMD=(scripts/risk-monitor.mjs --mode=B) ;;
-  baseline)            CMD=(scripts/backfill-baselines.mjs --force) ;;
-  report-sync)         CMD=(scripts/sync-reports.mjs) ;;
-  weekly-report)       CMD=(scripts/weekly-report.mjs --model=opus) ;;
-  parse-notifications) CMD=(scripts/parse-notifications.mjs) ;;
-  journal-sync)        CMD=(scripts/setup/setup-position-journal.mjs) ;;
-  backup)              CMD=(scripts/backup-sheet.mjs) ;;
+  drain)               CMD=(scripts/jobs/drain-eval-queue.mjs --auto) ;;
+  risk-d)              CMD=(scripts/jobs/risk-monitor.mjs --mode=D) ;;
+  risk-b)              CMD=(scripts/jobs/risk-monitor.mjs --mode=B) ;;
+  baseline)            CMD=(scripts/jobs/backfill-baselines.mjs --force) ;;
+  report-sync)         CMD=(scripts/jobs/sync-reports.mjs) ;;
+  weekly-report)       CMD=(scripts/jobs/weekly-report.mjs --model=opus) ;;
+  parse-notifications) CMD=(scripts/jobs/parse-notifications.mjs) ;;
+  journal-sync)        CMD=(scripts/jobs/sync-position-journal.mjs) ;;
+  backup)              CMD=(scripts/jobs/backup-sheet.mjs) ;;
   *) echo "usage: run.sh {drain|risk-d|risk-b|baseline|report-sync|weekly-report|parse-notifications|journal-sync|backup}" >&2; exit 2 ;;
 esac
 
@@ -66,6 +66,6 @@ STATUS=OK; [ "$CODE" -ne 0 ] && STATUS=FAIL
 
 # 하트비트 기록 (잡 실패해도 기록은 시도; 기록 실패는 잡 종료코드를 가리지 않음)
 HB_DETAIL="$(tail -n 3 "$LOG_DIR/$JOB.log" 2>/dev/null | tr '\n' ' ' | cut -c1-200)" \
-  "$NODE" scripts/record-heartbeat.mjs "$JOB" "$STATUS" "$DUR" ${TOKEN:+"$TOKEN"} || true
+  "$NODE" scripts/jobs/record-heartbeat.mjs "$JOB" "$STATUS" "$DUR" ${TOKEN:+"$TOKEN"} || true
 
 exit "$CODE"

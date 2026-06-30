@@ -10,10 +10,10 @@
  *   종목 | 티커 | 시장 | 기준일 | 매출총이익률 | 영업이익률 | ROE | 부채비율 | EPS | 비고(소스)
  *
  * 사용법:
- *   node scripts/backfill-baselines.mjs            # 기준선 백필(직접 조회)
- *   node scripts/backfill-baselines.mjs --dry-run  # 보유종목/대상만 확인
- *   node scripts/backfill-baselines.mjs --force     # 이미 적재된 종목도 재조회
- *   node scripts/backfill-baselines.mjs <TOKEN>     # OAuth 대신 토큰 직접 전달
+ *   node scripts/jobs/backfill-baselines.mjs            # 기준선 백필(직접 조회)
+ *   node scripts/jobs/backfill-baselines.mjs --dry-run  # 보유종목/대상만 확인
+ *   node scripts/jobs/backfill-baselines.mjs --force     # 이미 적재된 종목도 재조회
+ *   node scripts/jobs/backfill-baselines.mjs <TOKEN>     # OAuth 대신 토큰 직접 전달
  *
  * 멱등성: 기본은 이미 `리스크기준선`에 있는 종목은 건너뜀(--force 로 무시).
  */
@@ -21,9 +21,9 @@
 import {
   loadEnv, getToken, hasServiceAccount, getRange, appendValues, setValues, ensureSheet,
   readHoldings, todayKST,
-} from './lib/sheets-common.mjs';
-import { fetchKrFundamentals, fetchUsFundamentals } from './lib/fundamentals.mjs';
-import { krCorpCode, usTicker, krStockCode } from './lib/instruments.mjs';
+} from '../lib/sheets-common.mjs';
+import { fetchKrFundamentals, fetchUsFundamentals } from '../lib/fundamentals.mjs';
+import { krCorpCode, usTicker, krStockCode } from '../lib/instruments.mjs';
 
 const BASELINE_SHEET = '리스크기준선';
 const BASELINE_HEADER = ['종목', '티커', '시장', '기준일', '매출총이익률', '영업이익률', 'ROE', '부채비율', 'EPS', 'PBR', '비고'];

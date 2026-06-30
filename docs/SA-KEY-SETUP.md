@@ -11,7 +11,7 @@
 | 대화형 OAuth | `getInteractiveToken` | 브라우저 팝업 1회 | 손으로 스크립트 돌릴 때 |
 | 서비스 계정 | `getServiceAccountToken` | **0회 (무인)** | launchd 무인 잡 |
 
-서비스 계정 경로는 SA 키 JSON으로 JWT를 만들어 RS256 서명 → Google 토큰 엔드포인트와 교환한다. 이 서명 로직은 이미 오프라인 셀프테스트로 검증됨(`node scripts/sa-jwt-selftest.mjs` → 14/14 통과). **남은 건 실제 키 파일을 놓고 시트를 공유하는 것뿐.**
+서비스 계정 경로는 SA 키 JSON으로 JWT를 만들어 RS256 서명 → Google 토큰 엔드포인트와 교환한다. 이 서명 로직은 이미 오프라인 셀프테스트로 검증됨(`node scripts/tools/sa-jwt-selftest.mjs` → 14/14 통과). **남은 건 실제 키 파일을 놓고 시트를 공유하는 것뿐.**
 
 ## 사전 정보 (코드에서 확정된 값)
 
@@ -62,7 +62,7 @@ chmod 600 ~/.config/banana-portfolio/sa-key.json   # 본인만 읽기
 
 ### 가. 오프라인 서명 검증 (로그인 불필요, 항상 가능)
 ```bash
-node scripts/sa-jwt-selftest.mjs   # 종료코드 0 = 서명/클레임 정상
+node scripts/tools/sa-jwt-selftest.mjs   # 종료코드 0 = 서명/클레임 정상
 ```
 
 ### 나. 실제 토큰 발급 검증 (키 배치 + 시트 공유 후)
@@ -75,13 +75,13 @@ node -e "import('./scripts/lib/sheets-common.mjs').then(m=>m.getServiceAccountTo
 ### 다. 잡 1건 무인 실행 (dry-run 우선 권장)
 ```bash
 # 기준선 백필 (먼저 dry-run으로 안전 확인)
-node scripts/backfill-baselines.mjs --dry-run
+node scripts/jobs/backfill-baselines.mjs --dry-run
 # 실제 적재
-node scripts/backfill-baselines.mjs
+node scripts/jobs/backfill-baselines.mjs
 
 # 리스크 모니터
-node scripts/risk-monitor.mjs --mode=D
-node scripts/risk-monitor.mjs --mode=B
+node scripts/jobs/risk-monitor.mjs --mode=D
+node scripts/jobs/risk-monitor.mjs --mode=B
 ```
 적재되면 앱 **리스크 탭**(App.jsx:2754)에서 `리스크모니터`·`리스크기준선` 데이터가 렌더되는지 확인.
 
