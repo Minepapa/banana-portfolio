@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { parseJobStatus } from './lib/jobHealth.js';
 import { DEFAULT_ACCOUNTS } from './lib/constants.js';
 import { profitColor } from './lib/colors.js';
-import { relTime } from './lib/textFormat.js';
+import { relTime, fmt } from './lib/textFormat.js';
+import { useIsMobile } from './hooks/useIsMobile.js';
 import { useGoogleSheets, CONFIGURED } from './hooks/useGoogleSheets.js';
 import { useTradeSync } from './hooks/useTradeSync.js';
 import { useEvalCard } from './hooks/useEvalCard.js';
@@ -31,23 +32,6 @@ import EvalQueueModal from './tabs/EvalQueueModal.jsx';
 import AddHoldingForm from './tabs/AddHoldingForm.jsx';
 import JobHealthBanner from './tabs/JobHealthBanner.jsx';
 import SyncBanner from './tabs/SyncBanner.jsx';
-
-// ── 반응형 훅 ─────────────────────────────────────────────────────────────────
-function useIsMobile(bp = 640) {
-  const [m, setM] = useState(() => window.innerWidth < bp);
-  useEffect(() => {
-    const h = () => setM(window.innerWidth < bp);
-    window.addEventListener('resize', h);
-    return () => window.removeEventListener('resize', h);
-  }, [bp]);
-  return m;
-}
-
-// ── 유틸 함수 ─────────────────────────────────────────────────────────────────
-const fmt = (n) => {
-  if (n == null) return '-';
-  return Math.round(Math.abs(n)).toLocaleString('ko-KR');
-};
 
 // ── 앱 ────────────────────────────────────────────────────────────────────────
 export default function App() {

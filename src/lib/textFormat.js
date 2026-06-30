@@ -61,6 +61,12 @@ export function stripPeriod(label) {
     .trim();
 }
 
+// 절대값을 정수 원화 포맷으로 표시. null·undefined → '-'
+export function fmt(n) {
+  if (n == null) return '-';
+  return Math.round(Math.abs(n)).toLocaleString('ko-KR');
+}
+
 // ── 마침표·의미(— · 등) 단위로 줄바꿈 ───────────────────────────────────────────
 export function breakUnits(text) {
   return String(text ?? '')
