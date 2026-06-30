@@ -3,7 +3,7 @@ import { useState } from "react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
-import { CHART_BAR_COLOR, PROFIT_POS } from '../lib/constants.js';
+import { CHART_BAR_COLOR, PROFIT_POS } from '../lib/colors.js';
 import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function DividendTab({ dividendData, isMobile, baseFont, fmt, sheets }) {

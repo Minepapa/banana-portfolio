@@ -23,6 +23,16 @@ export function toDateStr(v) {
   return s.slice(0, 10);                          // "2026-06-15 06:11" → "2026-06-15"
 }
 
+// 상대 시각 ("3분 전" · "2시간 전") — 마지막 갱신 표시용
+export const relTime = (date) => {
+  if (!date) return '';
+  const sec = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (sec < 60) return '방금 전';
+  if (sec < 3600) return `${Math.floor(sec / 60)}분 전`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}시간 전`;
+  return `${Math.floor(sec / 86400)}일 전`;
+};
+
 // 이모지·픽토그램·별표 제거 후 중복 공백 정리 (도움말은 텍스트만 표시)
 export function stripEmoji(text) {
   return String(text)

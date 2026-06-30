@@ -3,7 +3,7 @@ import { useState } from "react";
 import {
   ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
-import { PROFIT_POS, PROFIT_NEG } from '../lib/constants.js';
+import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 
 export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
   const [profitYear, setProfitYear] = useState('전체');

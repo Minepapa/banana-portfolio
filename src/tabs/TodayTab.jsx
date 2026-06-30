@@ -6,7 +6,8 @@ import { useState } from 'react';
 import { SectionTitle } from '../lib/primitives.jsx';
 import { findThesisAlerts } from '../lib/thesisAlerts.js';
 import { computeJobHealth } from '../lib/jobHealth.js';
-import { JOB_CADENCE, PROFIT_POS, PROFIT_NEG } from '../lib/constants.js';
+import { JOB_CADENCE } from '../lib/constants.js';
+import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 
 // KST 기준 오늘 날짜(YYYY-MM-DD). 마운트 시 1회만 평가해 렌더 순수성 유지.
 function todayStr() {

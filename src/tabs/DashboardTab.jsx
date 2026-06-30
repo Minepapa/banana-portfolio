@@ -4,7 +4,7 @@ import { useState } from "react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
 } from "recharts";
-import { PROFIT_POS, PROFIT_NEG, CHART_BAR_COLOR, profitColor } from '../lib/constants.js';
+import { PROFIT_POS, PROFIT_NEG, CHART_BAR_COLOR, profitColor } from '../lib/colors.js';
 import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function DashboardTab({

@@ -3,7 +3,7 @@
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { COLORS, PROFIT_POS, PROFIT_NEG } from '../lib/constants.js';
+import { COLORS, PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 
 export default function RebalanceTab({
   accounts, acctKey, acct, setAcctKey, isMobile, baseFont, fmt, sheets,

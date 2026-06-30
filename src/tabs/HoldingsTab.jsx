@@ -1,6 +1,6 @@
 // 종목 탭: 계좌별 보유종목 목록 + 추가/삭제/인라인 편집(매수단가·예수금·달러RP). App.jsx에서 추출 (동작 불변).
 // 모든 편집 상태·핸들러(시트 쓰기)와 AddHoldingForm은 App에 남기고 prop으로 받는다 — 시트 I/O는 App 책임.
-import { PROFIT_POS, PROFIT_NEG, COLORS } from '../lib/constants.js';
+import { PROFIT_POS, PROFIT_NEG, COLORS } from '../lib/colors.js';
 import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function HoldingsTab({

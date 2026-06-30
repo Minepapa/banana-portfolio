@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { parseJobStatus } from './lib/jobHealth.js';
-import {
-  profitColor, relTime, DEFAULT_ACCOUNTS,
-} from './lib/constants.js';
+import { DEFAULT_ACCOUNTS } from './lib/constants.js';
+import { profitColor } from './lib/colors.js';
+import { relTime } from './lib/textFormat.js';
 import { useGoogleSheets, CONFIGURED } from './hooks/useGoogleSheets.js';
 import { useTradeSync } from './hooks/useTradeSync.js';
 import { useEvalCard } from './hooks/useEvalCard.js';

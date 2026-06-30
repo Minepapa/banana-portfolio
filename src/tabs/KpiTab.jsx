@@ -1,6 +1,7 @@
 // KPI 탭: 무인 잡 상태 + 행동 추적 + 운용 성과(TWR/Sharpe/MDD) + 투자 기준. App.jsx에서 추출.
 import { computeKPI, computeBehaviorMetrics } from '../lib/metrics.js';
-import { relTime, JOB_CADENCE } from '../lib/constants.js';
+import { JOB_CADENCE } from '../lib/constants.js';
+import { relTime } from '../lib/textFormat.js';
 import { computeJobHealth } from '../lib/jobHealth.js';
 
 // 잡상태 시트(heartbeat) 표시용 — 잡 키 → 한글 라벨, 표시 순서 고정

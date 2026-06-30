@@ -2,7 +2,7 @@
 // 선택·요청 상태(noteSelectedStock/noteSellBusy/noteSellCopied)는 매도 전용이라 함께 내려옴.
 // 매도 평가 큐 추가(sheets.appendValues)는 탭 로컬 핸들러 — sheets prop만 사용.
 import { useState } from 'react';
-import { PROFIT_POS, PROFIT_NEG } from '../lib/constants.js';
+import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 import { SectionTitle, GradeDot, SubLabel, NumberedItem, Sentences } from '../lib/primitives.jsx';
 import { stripGrade } from '../lib/textFormat.js';
 import { findThesisAlerts } from '../lib/thesisAlerts.js';
