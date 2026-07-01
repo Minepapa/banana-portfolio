@@ -169,7 +169,7 @@ export default function DashboardTab({
               <button key={y} onClick={() => setMonthYear(y)} style={{
                 padding: '3px 10px', borderRadius: 0,
                 border: '1px solid #141414',
-                background: monthYear === y ? '#C9F23E' : 'transparent',
+                background: monthYear === y ? '#E4F5A0' : 'transparent',
                 color: '#141414', fontWeight: monthYear === y ? 800 : 600,
                 cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
               }}>{y}</button>
@@ -198,11 +198,11 @@ export default function DashboardTab({
                 />
                 {showSavings ? (
                   <>
-                    <Bar dataKey="base" stackId="a" fill={CHART_BAR_COLOR} />
-                    <Bar dataKey="savingsAmt" stackId="a" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="base" stackId="a" fill={CHART_BAR_COLOR} activeBar={false} />
+                    <Bar dataKey="savingsAmt" stackId="a" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} activeBar={false} />
                   </>
                 ) : (
-                  <Bar dataKey="value" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="value" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} activeBar={false} />
                 )}
               </BarChart>
             </ResponsiveContainer>

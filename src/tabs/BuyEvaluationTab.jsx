@@ -72,9 +72,9 @@ export default function BuyEvaluationTab({
           <button key={mode} onClick={() => setEvalMode(mode)} style={{
             padding: '5px 16px', borderRadius: 0, fontSize: 11, fontWeight: evalMode === mode ? 800 : 600, fontFamily: baseFont,
             border: '1px solid #141414',
-            background: evalMode === mode ? '#F5A623' : 'transparent',
-            boxShadow: evalMode === mode ? '2px 2px 0 #141414' : 'none',
-            color: evalMode === mode ? '#141414' : '#6B675C',
+            background: evalMode === mode ? '#E4F5A0' : 'transparent',
+            boxShadow: 'none',
+            color: '#141414',
             cursor: 'pointer',
           }}>{mode}</button>
         ))}
@@ -89,7 +89,7 @@ export default function BuyEvaluationTab({
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <button onClick={() => setEvalQueueOpen(true)} disabled={sheets.auth !== 'signed-in'} style={{
             padding: '5px 12px', borderRadius: 0, border: '1px solid #141414',
-            background: '#F5A623', color: '#141414',
+            background: 'transparent', color: '#141414',
             cursor: sheets.auth !== 'signed-in' ? 'not-allowed' : 'pointer',
             opacity: sheets.auth !== 'signed-in' ? 0.4 : 1,
             fontSize: 10, fontFamily: baseFont, fontWeight: 600,
@@ -157,7 +157,7 @@ export default function BuyEvaluationTab({
             <button key={i} onClick={() => setEvalSelectedIdx(i)} style={{
               padding: '4px 10px', borderRadius: 0,
               border: '1px solid #141414',
-              background: i === evalSelectedIdx ? '#C9F23E' : 'transparent',
+              background: i === evalSelectedIdx ? '#E4F5A0' : 'transparent',
               color: '#141414', fontWeight: i === evalSelectedIdx ? 800 : 600,
               cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
             }}>{ev.stock.name}</button>

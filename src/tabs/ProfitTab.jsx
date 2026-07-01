@@ -25,7 +25,7 @@ export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
             padding: isMobile ? "8px 14px" : "6px 14px",
             borderRadius: 0,
             border: `1px solid ${profitYear === y ? '#141414' : '#141414'}`,
-            background: profitYear === y ? '#EAE6DA' : 'transparent',
+            background: profitYear === y ? '#E4F5A0' : 'transparent',
             color: profitYear === y ? '#141414' : '#6B675C',
             cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
           }}>{y}</button>
@@ -49,14 +49,15 @@ export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
                 labelStyle={{ color: '#141414' }}
                 itemStyle={{ color: '#141414' }}
               />
-              <Bar dataKey="total" radius={[3, 3, 0, 0]} cursor="pointer"
+              <Bar dataKey="total" radius={[3, 3, 0, 0]} cursor="pointer" activeBar={false}
                 onClick={(data) => {
                   const key = `${data.year}-${data.month}`;
                   setSelectedProfitKey(prev => prev === key ? null : key);
                 }}>
-                {filtered.map((d, i) => (
-                  <Cell key={i} fill={d.total >= 0 ? PROFIT_POS : PROFIT_NEG} />
-                ))}
+                {filtered.map((d, i) => {
+                  const dim = selectedProfitKey && `${d.year}-${d.month}` !== selectedProfitKey;
+                  return <Cell key={i} fill={d.total >= 0 ? PROFIT_POS : PROFIT_NEG} fillOpacity={dim ? 0.3 : 1} />;
+                })}
               </Bar>
             </BarChart>
           </ResponsiveContainer>

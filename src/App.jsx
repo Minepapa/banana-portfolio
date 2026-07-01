@@ -215,8 +215,8 @@ export default function App() {
     '';
 
   const sheetBtnStyle = {
-    padding: "8px 12px", minHeight: 36, borderRadius: 0,
-    border: BORDER, background: CARD_BG, boxShadow: SHADOW_SM,
+    padding: "5px 10px", minHeight: 32, borderRadius: 0,
+    border: "1px solid #141414", background: CARD_BG, boxShadow: "none",
     color: INK, cursor: "pointer", fontWeight: 700,
     fontSize: 11, fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
   };
@@ -260,7 +260,7 @@ export default function App() {
 
         {/* 구글 시트 동기화 UI */}
         {CONFIGURED && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
             {sheets.auth === 'loading' && (
               <span style={{ fontSize: 10, color: INK_2 }}>Google 초기화 중...</span>
             )}
@@ -277,7 +277,7 @@ export default function App() {
                 </span>
                 <button onClick={sheets.fetch} disabled={sheets.sync === 'syncing'}
                   style={sheetBtnStyle} aria-label="시트에서 최신 데이터 새로고침" title="시트에서 최신 데이터 가져오기">
-                  ↻ 새로고침
+                  ↻
                 </button>
                 <button onClick={sheets.signOut} aria-label="로그아웃" style={{ ...sheetBtnStyle, color: "#E5484D" }}>
                   로그아웃
@@ -313,9 +313,9 @@ export default function App() {
               padding: "5px 12px",
               minHeight: 32,
               flexShrink: 0,
-              borderRadius: 0, border: BORDER, cursor: "pointer",
+              borderRadius: 0, border: "1px solid #141414", cursor: "pointer",
               fontSize: 12, fontWeight: tab === key ? 800 : 600, letterSpacing: 0.5, fontFamily: baseFont,
-              background: tab === key ? ACCENT : CARD_BG,
+              background: tab === key ? "#E4F5A0" : CARD_BG,
               color: INK,
               boxShadow: "none",
               transition: "none",

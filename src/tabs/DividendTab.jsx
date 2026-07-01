@@ -1,7 +1,7 @@
 // 배당 탭: 월별 배당 차트 + 종목명 인라인 편집 + 연도별 합계. App.jsx에서 추출 (동작 불변).
 import { useState } from "react";
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
 import { PROFIT_POS } from '../lib/colors.js';
 import { useLongPress } from '../hooks/useLongPress.js';
@@ -57,11 +57,16 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
                 labelStyle={{ color: '#141414' }}
                 itemStyle={{ color: '#141414' }}
               />
-              <Bar dataKey="amount" fill={PROFIT_POS} radius={[3, 3, 0, 0]} cursor="pointer"
+              <Bar dataKey="amount" fill={PROFIT_POS} radius={[3, 3, 0, 0]} cursor="pointer" activeBar={false}
                 onClick={(data) => {
                   const key = `${data.year}-${data.month}`;
                   setSelectedDivKey(prev => prev === key ? null : key);
-                }} />
+                }}>
+                {filteredDividends.map((d, i) => {
+                  const dim = selectedDivKey && `${d.year}-${d.month}` !== selectedDivKey;
+                  return <Cell key={i} fill={PROFIT_POS} fillOpacity={dim ? 0.3 : 1} />;
+                })}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         ) : (

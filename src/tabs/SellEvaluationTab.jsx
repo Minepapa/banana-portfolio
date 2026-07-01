@@ -328,7 +328,7 @@ export default function SellEvaluationTab({
               </div>
               <button onClick={() => setEvalMode('매수')} style={{
                 padding: '6px 12px', borderRadius: 0, border: '1px solid #141414',
-                background: '#F5A623', color: '#141414', fontWeight: 700,
+                background: 'transparent', color: '#141414', fontWeight: 700,
                 cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
               }}>
                 매수 평가 추가 →
