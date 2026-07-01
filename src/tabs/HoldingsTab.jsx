@@ -1,6 +1,7 @@
 // 종목 탭: 계좌별 보유종목 목록 + 추가/삭제/인라인 편집(매수단가·예수금·달러RP). App.jsx에서 추출 (동작 불변).
 // 모든 편집 상태·핸들러(시트 쓰기)와 AddHoldingForm은 App에 남기고 prop으로 받는다 — 시트 I/O는 App 책임.
 import { PROFIT_POS, PROFIT_NEG, COLORS } from '../lib/colors.js';
+import { MONO } from '../lib/theme.js';
 import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function HoldingsTab({
@@ -65,11 +66,11 @@ export default function HoldingsTab({
           <div style={{ display: 'inline-block', fontSize: 10, letterSpacing: 2, fontWeight: 800, color: '#141414', background: '#C9F23E', padding: '2px 6px', marginBottom: 6 }}>전체 포트폴리오</div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
             <div>
-              <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#141414" }}>₩{fmt(totalPortEval)}</div>
+              <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#141414", fontFamily: MONO }}>₩{fmt(totalPortEval)}</div>
               <div style={{ fontSize: 11, color: "#6B675C", marginTop: 2 }}>투자금 ₩{fmt(totalPortInvest)}</div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, color: totalPortProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+              <div style={{ fontSize: isMobile ? 13 : 16, fontWeight: 700, color: totalPortProfit >= 0 ? PROFIT_POS : PROFIT_NEG , fontFamily: MONO}}>
                 ₩{fmt(totalPortProfit)}
               </div>
               <div style={{ fontSize: 11, color: totalPortProfit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
@@ -89,7 +90,7 @@ export default function HoldingsTab({
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
             <div>
-              <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#141414" }}>
+              <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#141414" , fontFamily: MONO}}>
                 ₩{fmt(acct.total_eval)}
               </div>
               <div style={{ fontSize: 11, color: "#6B675C", marginTop: 2 }}>
@@ -100,7 +101,7 @@ export default function HoldingsTab({
               <div style={{
                 fontSize: isMobile ? 13 : 16, fontWeight: 700,
                 color: acct.profit >= 0 ? PROFIT_POS : PROFIT_NEG,
-              }}>
+              fontFamily: MONO}}>
                 ₩{fmt(acct.profit)}
               </div>
               <div style={{ fontSize: 11, color: acct.profit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
@@ -231,11 +232,11 @@ export default function HoldingsTab({
                   )}
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontSize: isMobile ? 11 : 12, color: "#141414" }}>₩{fmt(h.eval)}</div>
+                  <div style={{ fontSize: isMobile ? 11 : 12, color: "#141414", fontFamily: MONO }}>₩{fmt(h.eval)}</div>
                   <div style={{ fontSize: isMobile ? 10 : 11, fontWeight: 700, color }}>
                     {h.rate >= 0 ? '+' : ''}{h.rate.toFixed(1)}%
                   </div>
-                  <div style={{ fontSize: 10, color }}>
+                  <div style={{ fontSize: 10, color , fontFamily: MONO}}>
                     ₩{fmt(Math.abs(h.profit))}
                   </div>
                 </div>

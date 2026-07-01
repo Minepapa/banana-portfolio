@@ -4,6 +4,7 @@ import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { COLORS, PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
+import { MONO } from '../lib/theme.js';
 
 export default function RebalanceTab({
   accounts, acctKey, acct, setAcctKey, isMobile, baseFont, fmt, sheets,
@@ -36,7 +37,7 @@ export default function RebalanceTab({
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <ResponsiveContainer width="100%" height={160}>
-                <PieChart>
+                <PieChart accessibilityLayer={false}>
                   <Pie
                     data={acct.assets.filter(a => a.eval > 0).map(a => ({ name: a.name, value: a.eval }))}
                     cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" paddingAngle={3}>
@@ -54,7 +55,7 @@ export default function RebalanceTab({
                 <div key={a.name} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                   <div style={{ width: 8, height: 8, borderRadius: 0, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
                   <span style={{ fontSize: 11, color: '#6B675C', flex: 1 }}>{a.name}</span>
-                  <span style={{ fontSize: 11, color: '#141414' }}>
+                  <span style={{ fontSize: 11, color: '#141414' , fontFamily: MONO}}>
                     {a.ratio.toFixed ? a.ratio.toFixed(1) : a.ratio}%
                   </span>
                 </div>
@@ -121,10 +122,10 @@ export default function RebalanceTab({
                 <div style={{ width: 8, height: 8, borderRadius: 0, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
                 <span style={{ fontSize: 12 }}>{a.name}</span>
               </div>
-              <div style={{ width: 60, textAlign: 'center', fontSize: 12, color: '#6B675C' }}>
+              <div style={{ width: 60, textAlign: 'center', fontSize: 12, color: '#6B675C' , fontFamily: MONO}}>
                 {a.target}%
               </div>
-              <div style={{ width: 50, textAlign: 'center', fontSize: 12, color: '#141414' }}>{curr}%</div>
+              <div style={{ width: 50, textAlign: 'center', fontSize: 12, color: '#141414' , fontFamily: MONO}}>{curr}%</div>
               <div style={{ width: 60, textAlign: 'right', fontSize: 12, fontWeight: 700,
                 color: diff > 0 ? PROFIT_POS : diff < 0 ? PROFIT_NEG : '#6B675C' }}>
                 {diff > 0 ? '+' : ''}{diff}%p
@@ -153,7 +154,7 @@ export default function RebalanceTab({
                 <div style={{ width: 8, height: 8, borderRadius: 0, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
                 <span style={{ fontSize: 12 }}>{a.name}</span>
               </div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: amt > 0 ? PROFIT_POS : amt < 0 ? PROFIT_NEG : '#6B675C' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: amt > 0 ? PROFIT_POS : amt < 0 ? PROFIT_NEG : '#6B675C' , fontFamily: MONO}}>
                 ₩{fmt(amt)}
               </div>
             </div>

@@ -1,5 +1,6 @@
 // KPI 탭: 무인 잡 상태 + 행동 추적 + 운용 성과(TWR/Sharpe/MDD) + 투자 기준. App.jsx에서 추출.
 import { computeKPI, computeBehaviorMetrics } from '../lib/metrics.js';
+import { MONO } from '../lib/theme.js';
 import { JOB_CADENCE } from '../lib/constants.js';
 import { relTime } from '../lib/textFormat.js';
 import { computeJobHealth } from '../lib/jobHealth.js';
@@ -137,7 +138,7 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
               ].map((card, i) => (
                 <div key={i} style={{ background: '#FFFFFF', borderRadius: 0, padding: '12px 10px', textAlign: 'center' }}>
                   <div style={{ fontSize: 9, color: '#6B675C', marginBottom: 4 }}>{card.label}</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: card.color }}>{card.value}</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: card.color, fontFamily: MONO, letterSpacing: -0.3 }}>{card.value}</div>
                   <div style={{ fontSize: 9, color: '#6B675C', marginTop: 2 }}>{card.sub}</div>
                 </div>
               ))}
@@ -177,7 +178,7 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
               <div style={{ fontSize: 8, color: '#6B675C', marginBottom: 6, letterSpacing: 1 }}>
                 {c.label} <span style={{ color: '#141414' }}>📘</span>
               </div>
-              <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 700, color: c.status.color, marginBottom: 4 }}>
+              <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 700, color: c.status.color, marginBottom: 4, fontFamily: MONO, letterSpacing: -0.3 }}>
                 {c.value}
               </div>
               <div style={{ fontSize: 9, color: c.status.color, marginBottom: 4 }}>

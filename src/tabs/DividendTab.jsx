@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
 import { PROFIT_POS } from '../lib/colors.js';
+import { MONO } from '../lib/theme.js';
 import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function DividendTab({ dividendData, isMobile, baseFont, fmt, sheets }) {
@@ -47,6 +48,7 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
             <BarChart
               data={filteredDividends.map(d => ({ ...d, label: `${String(d.year).slice(-2)}.${String(d.month).padStart(2, '0')}` }))}
               barSize={isMobile ? 10 : 16}
+              accessibilityLayer={false}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#141414" />
               <XAxis dataKey="label" tick={{ fill: "#6B675C", fontSize: 9 }} />
@@ -103,14 +105,14 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
                       {item.name || '(이름 없음)'}
                       {lp.activeId === item.row && <div className="lp-progress" />}
                     </span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS, flexShrink: 0 }}>₩{fmt(item.amount)}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS, flexShrink: 0, fontFamily: MONO }}>₩{fmt(item.amount)}</span>
                   </>
                 )}
               </div>
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8 }}>
               <span style={{ fontSize: 11, color: '#6B675C' }}>합계</span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: PROFIT_POS }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: PROFIT_POS , fontFamily: MONO}}>
                 ₩{fmt(selectedDivItem.amount)}
               </span>
             </div>
@@ -123,13 +125,13 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
         {divYearTotals.map(row => (
           <div key={row.year} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #EAE6DA' }}>
             <span style={{ fontSize: 12, color: '#6B675C' }}>{row.year}년 합계</span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: PROFIT_POS }}>₩{fmt(row.total)}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: PROFIT_POS, fontFamily: MONO }}>₩{fmt(row.total)}</span>
           </div>
         ))}
         {(() => { const gt = dividendData.reduce((s, d) => s + d.amount, 0); return (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10 }}>
             <span style={{ fontSize: 12, color: '#141414', fontWeight: 700 }}>전체 합계</span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: PROFIT_POS }}>₩{fmt(gt)}</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: PROFIT_POS, fontFamily: MONO }}>₩{fmt(gt)}</span>
           </div>
         ); })()}
       </div>

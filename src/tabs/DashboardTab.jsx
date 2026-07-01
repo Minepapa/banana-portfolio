@@ -77,7 +77,7 @@ export default function DashboardTab({
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 9, color: "#6B675C", marginBottom: 2 }}>수익</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: pColor }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: pColor , fontFamily: MONO}}>
                     ₩{fmt(v.profit)}
                   </div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: pColor }}>
@@ -136,7 +136,7 @@ export default function DashboardTab({
                       <div style={{ width: 7, height: 7, borderRadius: 0, background: s.color, flexShrink: 0 }} />
                       <span style={{ fontSize: 10, color: '#6B675C' }}>{s.label}</span>
                     </div>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: '#141414' }}>{s.pctStr}%</span>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: '#141414' , fontFamily: MONO}}>{s.pctStr}%</span>
                   </div>
                 ))}
               </div>
@@ -183,7 +183,7 @@ export default function DashboardTab({
             : data;
           return data.length > 0 ? (
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={chartData} barSize={isMobile ? 8 : 14}>
+              <BarChart data={chartData} barSize={isMobile ? 8 : 14} accessibilityLayer={false}>
                 <XAxis dataKey="label" tick={{ fill: "#6B675C", fontSize: 9 }} axisLine={false} tickLine={false} />
                 <YAxis tickFormatter={v => `${(v / 100000000).toFixed(1)}억`} tick={{ fill: "#6B675C", fontSize: 9 }} width={40} axisLine={false} tickLine={false} />
                 <Tooltip

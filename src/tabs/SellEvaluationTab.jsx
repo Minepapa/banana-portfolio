@@ -3,6 +3,7 @@
 // 매도 평가 큐 추가(sheets.appendValues)는 탭 로컬 핸들러 — sheets prop만 사용.
 import { useState } from 'react';
 import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
+import { MONO } from '../lib/theme.js';
 import { SectionTitle, GradeDot, SubLabel, NumberedItem, Sentences } from '../lib/primitives.jsx';
 import { stripGrade } from '../lib/textFormat.js';
 import { findThesisAlerts } from '../lib/thesisAlerts.js';
@@ -207,11 +208,11 @@ export default function SellEvaluationTab({
               </div>
               <div>
                 <div style={{ color: '#6B675C', letterSpacing: 1, marginBottom: 2 }}>평균단가</div>
-                <div style={{ color: '#141414', fontWeight: 700 }}>₩{fmt(stock.avgPrice)}</div>
+                <div style={{ color: '#141414', fontWeight: 700, fontFamily: MONO }}>₩{fmt(stock.avgPrice)}</div>
               </div>
               <div>
                 <div style={{ color: '#6B675C', letterSpacing: 1, marginBottom: 2 }}>평가금</div>
-                <div style={{ color: '#141414', fontWeight: 700 }}>₩{fmt(stock.evalSum)}</div>
+                <div style={{ color: '#141414', fontWeight: 700, fontFamily: MONO }}>₩{fmt(stock.evalSum)}</div>
               </div>
             </div>
 
@@ -226,7 +227,7 @@ export default function SellEvaluationTab({
                 )}
                 {/* 52주 위치: 가격이므로 항상 중립 — 고점 근접은 매도 신호가 아님. */}
                 {pos52Val !== null && (
-                  <span style={{ padding: '2px 8px', borderRadius: 0, fontSize: 9, fontWeight: 600, background: '#EAE6DA', color: '#6B675C', border: '1px solid #141414' }}>
+                  <span style={{ padding: '2px 8px', borderRadius: 0, fontSize: 9, fontWeight: 600, background: '#EAE6DA', color: '#6B675C', border: '1px solid #141414' , fontFamily: MONO}}>
                     52주 {Math.round(pos52Val)}%
                   </span>
                 )}
