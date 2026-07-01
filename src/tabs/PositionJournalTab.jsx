@@ -31,7 +31,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
     </span>
   );
   const confirmBadge = (c) => {
-    const map = { '확인': ['#4ADE8022', '#159E52', '✓ 확인'], '대기': ['#F5C84222', '#E0A000', '확인 대기'], '미작성': ['#6B675C22', '#6B675C', '미작성'] };
+    const map = { '확인': ['#159E5222', '#159E52', '✓ 확인'], '대기': ['#E0A00022', '#E0A000', '확인 대기'], '미작성': ['#6B675C22', '#6B675C', '미작성'] };
     const [bg, fg, label] = map[c] || map['미작성'];
     return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 0, background: bg, color: fg }}>{label}</span>;
   };
@@ -74,7 +74,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
     const needReflect = p.status === '청산' && !p.lesson;
     const open = journalOpen.has(p.rowIndex) || needReflect; // 반성 필요 카드는 기본 펼침
     const sig = alertByRow.get(p.rowIndex);
-    const sigColor = sig && /🔴/.test(sig.signal) ? '#EF4444' : '#E0A000';
+    const sigColor = sig && /🔴/.test(sig.signal) ? '#E5484D' : '#E0A000';
     return (
       <div key={p.rowIndex} style={{ background: '#FFFFFF', border: `1px solid ${sig ? sigColor + '66' : '#141414'}`, borderRadius: 0, marginBottom: 8, overflow: 'hidden' }}>
         <button onClick={() => setJournalOpen(prev => { const n = new Set(prev); n.has(p.rowIndex) ? n.delete(p.rowIndex) : n.add(p.rowIndex); return n; })}
@@ -83,7 +83,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
             <span style={{ fontSize: 13, fontWeight: 700, color: '#141414' }}>{p.name}</span>
             {kindBadge(p.kind)}
             {confirmBadge(p.confirm)}
-            {sig && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 0, background: '#EF444422', color: '#EF4444' }}>⚠ 투자논리 훼손</span>}
+            {sig && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 0, background: '#E5484D22', color: '#E5484D' }}>⚠ 투자논리 훼손</span>}
             <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6B675C' }}>{p.account}</span>
           </div>
           {!open && sig && (
@@ -141,7 +141,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
                   {p.exit ? (
                     <div style={{ fontSize: 12, color: '#6B675C', lineHeight: 1.5 }}>{p.exit}</div>
                   ) : (
-                    <div style={{ fontSize: 11, color: '#3A4050' }}>이탈조건 없음 — 길게 눌러 추가</div>
+                    <div style={{ fontSize: 11, color: '#6B675C' }}>이탈조건 없음 — 길게 눌러 추가</div>
                   )}
                 </div>
               )
@@ -180,7 +180,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
               </div>
             )}
             {p.confirm !== '확인' && p.thesis && p.status !== '청산' && (
-              <button onClick={() => confirmThesis(p)} style={{ padding: '8px 14px', minHeight: 36, borderRadius: 0, border: '1px solid #4ADE8055', background: '#DDF3E4', color: '#159E52', cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
+              <button onClick={() => confirmThesis(p)} style={{ padding: '8px 14px', minHeight: 36, borderRadius: 0, border: '1px solid #159E5255', background: '#DDF3E4', color: '#159E52', cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
                 투자논리 확인 (동의)
               </button>
             )}
@@ -204,7 +204,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
             <span style={{ color: '#F4845F' }}>확신 {conviction.length}</span>
             <span style={{ color: '#52C8D4' }}>배분 {alloc.length}</span>
             {pending > 0 && <span style={{ color: '#E0A000' }}>확인대기 {pending}</span>}
-            {alertByRow.size > 0 && <span style={{ color: '#EF4444', fontWeight: 700 }}>⚠ 투자논리 훼손 {alertByRow.size}</span>}
+            {alertByRow.size > 0 && <span style={{ color: '#E5484D', fontWeight: 700 }}>⚠ 투자논리 훼손 {alertByRow.size}</span>}
             {closed.filter(p => !p.lesson).length > 0 && <span style={{ color: '#E0A000', fontWeight: 700 }}>반성 필요 {closed.filter(p => !p.lesson).length}</span>}
           </div>
           {conviction.length > 0 && (<>

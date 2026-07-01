@@ -55,7 +55,7 @@ export default function SellEvaluationTab({
     return (
       <div style={{ padding: 32, textAlign: 'center', color: '#6B675C', fontSize: 12 }}>
         평가가 완료된 보유 종목이 없습니다.<br/>
-        <span style={{ fontSize: 11, color: '#3A4050' }}>[매수] 모드에서 평가 후 보유 중이면 여기에 표시됩니다.</span>
+        <span style={{ fontSize: 11, color: '#6B675C' }}>[매수] 모드에서 평가 후 보유 중이면 여기에 표시됩니다.</span>
       </div>
     );
   }
@@ -87,7 +87,7 @@ export default function SellEvaluationTab({
           return (
             <button key={s.name} onClick={() => setNoteSelectedStock(s.name)} style={{
               padding: '5px 10px', borderRadius: 0,
-              border: `1px solid ${isSelected ? '#E5484D' : hasThesisAlert ? '#EF444466' : '#141414'}`,
+              border: `1px solid ${isSelected ? '#E5484D' : hasThesisAlert ? '#E5484D66' : '#141414'}`,
               background: isSelected ? '#FBE3E4' : '#FFFFFF',
               color: isSelected ? '#E5484D' : '#6B675C',
               cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
@@ -97,7 +97,7 @@ export default function SellEvaluationTab({
               <span style={{ fontSize: 9, color: profitColor }}>
                 {s.profitSum >= 0 ? '+' : ''}{s.rate.toFixed(1)}%
               </span>
-              {hasThesisAlert && <span style={{ fontSize: 8, color: '#EF4444' }}>🔴</span>}
+              {hasThesisAlert && <span style={{ fontSize: 8, color: '#E5484D' }}>🔴</span>}
               {evCount > 0 && (
                 <span style={{
                   fontSize: 8, padding: '0 4px', borderRadius: 0,
@@ -150,12 +150,12 @@ export default function SellEvaluationTab({
         return (
         <>
           {/* 보유 정보 카드 */}
-          <div style={{ background: '#FFFFFF', borderRadius: 0, padding: '16px 16px 14px', marginBottom: 12, border: thesisAlertMap.has(stock.name) ? '1px solid #EF444455' : '1px solid transparent' }}>
+          <div style={{ background: '#FFFFFF', borderRadius: 0, padding: '16px 16px 14px', marginBottom: 12, border: thesisAlertMap.has(stock.name) ? '1px solid #E5484D55' : '1px solid transparent' }}>
             {/* 투자논리 훼손 경보 — findThesisAlerts 기준 (포지션·거래결정 탭과 동일 소스) */}
             {thesisAlertMap.has(stock.name) && (() => {
               const ta = thesisAlertMap.get(stock.name);
               return (
-                <div style={{ marginBottom: 10, padding: '7px 10px', borderRadius: 0, background: '#FBE3E455', border: '1px solid #EF444455', fontSize: 10, color: '#E5484D', fontWeight: 600, lineHeight: 1.5 }}>
+                <div style={{ marginBottom: 10, padding: '7px 10px', borderRadius: 0, background: '#FBE3E455', border: '1px solid #E5484D55', fontSize: 10, color: '#E5484D', fontWeight: 600, lineHeight: 1.5 }}>
                   {ta.signal.signal} 논거 훼손 경보
                   {ta.signal.summary && <div style={{ fontWeight: 400, color: '#6B675C', marginTop: 3 }}>{ta.signal.summary}</div>}
                 </div>
@@ -191,8 +191,8 @@ export default function SellEvaluationTab({
               <button onClick={onSellEvalClick} disabled={!canSellEval} title={canSellEval ? '매도 평가를 큐에 추가' : '최초 매수 이유가 없어 매도 평가 불가'} style={{
                 flex: 1, padding: '6px 10px', borderRadius: 0,
                 border: `1px solid ${canSellEval ? '#E5484D' : '#141414'}`,
-                background: canSellEval ? (noteSellCopied ? '#4ADE8033' : '#FBE3E433') : 'transparent',
-                color: canSellEval ? (noteSellCopied ? '#159E52' : '#E5484D') : '#3A3F4E',
+                background: canSellEval ? (noteSellCopied ? '#159E5233' : '#FBE3E433') : 'transparent',
+                color: canSellEval ? (noteSellCopied ? '#159E52' : '#E5484D') : '#6B675C',
                 cursor: canSellEval ? 'pointer' : 'not-allowed',
                 fontSize: 10, fontFamily: baseFont, fontWeight: 600,
               }}>
@@ -207,11 +207,11 @@ export default function SellEvaluationTab({
               </div>
               <div>
                 <div style={{ color: '#6B675C', letterSpacing: 1, marginBottom: 2 }}>평균단가</div>
-                <div style={{ color: '#141414', fontWeight: 600 }}>₩{fmt(stock.avgPrice)}</div>
+                <div style={{ color: '#141414', fontWeight: 700 }}>₩{fmt(stock.avgPrice)}</div>
               </div>
               <div>
                 <div style={{ color: '#6B675C', letterSpacing: 1, marginBottom: 2 }}>평가금</div>
-                <div style={{ color: '#141414', fontWeight: 600 }}>₩{fmt(stock.evalSum)}</div>
+                <div style={{ color: '#141414', fontWeight: 700 }}>₩{fmt(stock.evalSum)}</div>
               </div>
             </div>
 
@@ -220,7 +220,7 @@ export default function SellEvaluationTab({
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #EAE6DA', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                 {/* RSI: 과매도(급락=매수기회)만 초록. 과열(>70)은 매도 신호가 아니므로 중립 회색. */}
                 {rsiVal !== null && (
-                  <span style={{ padding: '2px 8px', borderRadius: 0, fontSize: 9, fontWeight: 600, background: rsiUnder ? '#DDF3E433' : '#EAE6DA', color: rsiUnder ? '#159E52' : '#6B675C', border: `1px solid ${rsiUnder ? '#4ADE8044' : '#141414'}` }}>
+                  <span style={{ padding: '2px 8px', borderRadius: 0, fontSize: 9, fontWeight: 600, background: rsiUnder ? '#DDF3E433' : '#EAE6DA', color: rsiUnder ? '#159E52' : '#6B675C', border: `1px solid ${rsiUnder ? '#159E5244' : '#141414'}` }}>
                     RSI {Math.round(rsiVal)}
                   </span>
                 )}
@@ -231,7 +231,7 @@ export default function SellEvaluationTab({
                   </span>
                 )}
                 {daysSinceEval !== null && (
-                  <span style={{ padding: '2px 8px', borderRadius: 0, fontSize: 9, background: daysSinceEval > 90 ? '#FBE3E433' : daysSinceEval > 30 ? '#FBF1D033' : '#EAE6DA', color: daysSinceEval > 90 ? '#E5484D' : daysSinceEval > 30 ? '#FBBF24' : '#6B675C', border: `1px solid ${daysSinceEval > 90 ? '#E5484D44' : daysSinceEval > 30 ? '#FBBF2444' : '#141414'}` }}>
+                  <span style={{ padding: '2px 8px', borderRadius: 0, fontSize: 9, background: daysSinceEval > 90 ? '#FBE3E433' : daysSinceEval > 30 ? '#FBF1D033' : '#EAE6DA', color: daysSinceEval > 90 ? '#E5484D' : daysSinceEval > 30 ? '#E0A000' : '#6B675C', border: `1px solid ${daysSinceEval > 90 ? '#E5484D44' : daysSinceEval > 30 ? '#E0A00044' : '#141414'}` }}>
                     평가 {daysSinceEval}일 전
                   </span>
                 )}

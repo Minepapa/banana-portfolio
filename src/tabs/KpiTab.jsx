@@ -43,12 +43,12 @@ function JobStatusPanel({ jobStatus }) {
   if (ordered.length === 0) return null;
   return (
     <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C', marginBottom: 4 }}>무인 잡 상태</div>
-      <div style={{ fontSize: 10, color: '#5A6478', marginBottom: 12 }}>최근 실행 시간(마지막 점검/실행 시간, 실제 발행/적재 시간 아님)</div>
+      <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C', marginBottom: 4 }}>무인 잡 상태</div>
+      <div style={{ fontSize: 10, color: '#6B675C', marginBottom: 12 }}>최근 실행 시간(마지막 점검/실행 시간, 실제 발행/적재 시간 아님)</div>
       {ordered.map((key, i, arr) => {
         const j = byJob.get(key);
         const problem = problemByJob.get(key);
-        const color = (problem === 'fail' || problem === 'missing') ? '#EF4444' : problem === 'stale' ? '#F59E0B' : '#10B981';
+        const color = (problem === 'fail' || problem === 'missing') ? '#E5484D' : problem === 'stale' ? '#E0A000' : '#159E52';
         const icon = (problem === 'fail' || problem === 'missing') ? '🔴' : problem === 'stale' ? '⚠️' : '✅';
         const tsMs = j ? Date.parse(j.lastRun) : NaN;
         const when = problem === 'missing' ? '기록 없음' : isFinite(tsMs) ? relTime(new Date(tsMs)) : (j?.lastRun || '–');
@@ -56,10 +56,10 @@ function JobStatusPanel({ jobStatus }) {
           <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #EAE6DA' : 'none' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
               <span style={{ fontSize: 12, color: '#6B675C' }}>{JOB_LABELS[key] || key}</span>
-              {JOB_INTERVALS[key] && <span style={{ fontSize: 9, color: '#5A6478', border: '1px solid #141414', borderRadius: 0, padding: '1px 5px', whiteSpace: 'nowrap' }}>{JOB_INTERVALS[key]}</span>}
+              {JOB_INTERVALS[key] && <span style={{ fontSize: 9, color: '#6B675C', border: '1px solid #141414', borderRadius: 0, padding: '1px 5px', whiteSpace: 'nowrap' }}>{JOB_INTERVALS[key]}</span>}
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {j?.durationSec && <span style={{ fontSize: 9, color: '#3A4050' }}>{j.durationSec}s</span>}
+              {j?.durationSec && <span style={{ fontSize: 9, color: '#6B675C' }}>{j.durationSec}s</span>}
               <span style={{ fontSize: 12, color: '#6B675C' }}>{when}</span>
               <span style={{ fontSize: 11, fontWeight: 700, color }}>{icon}</span>
             </span>
@@ -89,18 +89,18 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
   const alphaPct  = bmPct !== null ? ((kpi.twr - kpi.benchmarkTWR) * 100).toFixed(1) : null;
 
   const twrStatus = alphaPct !== null
-    ? (parseFloat(alphaPct) >= 3  ? { icon: '✅', color: '#10B981', label: `알파 +${alphaPct}%p` }
-     : parseFloat(alphaPct) >= 0  ? { icon: '⚠️', color: '#F59E0B', label: `알파 +${alphaPct}%p` }
-     :                              { icon: '🔴', color: '#EF4444', label: `알파 ${alphaPct}%p` })
-    : kpi.twr >= 0 ? { icon: '✅', color: '#10B981', label: '양호' }
-    :                { icon: '🔴', color: '#EF4444', label: '손실' };
+    ? (parseFloat(alphaPct) >= 3  ? { icon: '✅', color: '#159E52', label: `알파 +${alphaPct}%p` }
+     : parseFloat(alphaPct) >= 0  ? { icon: '⚠️', color: '#E0A000', label: `알파 +${alphaPct}%p` }
+     :                              { icon: '🔴', color: '#E5484D', label: `알파 ${alphaPct}%p` })
+    : kpi.twr >= 0 ? { icon: '✅', color: '#159E52', label: '양호' }
+    :                { icon: '🔴', color: '#E5484D', label: '손실' };
   const sharpeStatus = kpi.sharpe === null ? { icon: '–', color: '#6B675C', label: '데이터 부족' }
-    : kpi.sharpe >= 0.8 ? { icon: '✅', color: '#10B981', label: '양호' }
-    : kpi.sharpe >= 0.5 ? { icon: '⚠️', color: '#F59E0B', label: '주의' }
-    : { icon: '🔴', color: '#EF4444', label: '미달' };
-  const mddStatus = kpi.mdd >= -0.25 ? { icon: '✅', color: '#10B981', label: '이내' }
-    : kpi.mdd >= -0.35 ? { icon: '⚠️', color: '#F59E0B', label: '주의' }
-    : { icon: '🔴', color: '#EF4444', label: '초과' };
+    : kpi.sharpe >= 0.8 ? { icon: '✅', color: '#159E52', label: '양호' }
+    : kpi.sharpe >= 0.5 ? { icon: '⚠️', color: '#E0A000', label: '주의' }
+    : { icon: '🔴', color: '#E5484D', label: '미달' };
+  const mddStatus = kpi.mdd >= -0.25 ? { icon: '✅', color: '#159E52', label: '이내' }
+    : kpi.mdd >= -0.35 ? { icon: '⚠️', color: '#E0A000', label: '주의' }
+    : { icon: '🔴', color: '#E5484D', label: '초과' };
 
   const cards = [
     { label: 'TWR (연환산)', value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`, sub: bmPct !== null ? `시장 ${parseFloat(bmPct) >= 0 ? '+' : ''}${bmPct}% · ${kpi.months}M` : `누적 ${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}% · ${kpi.months}M`, status: twrStatus, metric: 'twr' },
@@ -120,13 +120,13 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
         if (!bm) return (
           <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 16, textAlign: 'center', color: '#6B675C', fontSize: 11 }}>체결 내역 없음 — 체결 탭에서 먼저 동기화하세요</div>
         );
-        const r500Color = bm.rule500Rate === null ? '#6B675C' : bm.rule500Rate >= 80 ? '#10B981' : bm.rule500Rate >= 60 ? '#F59E0B' : '#EF4444';
-        const emColor   = bm.evalMatchRate === null ? '#6B675C' : bm.evalMatchRate >= 60 ? '#10B981' : bm.evalMatchRate >= 30 ? '#F59E0B' : '#EF4444';
-        const sdColor   = bm.sellDisciplineRate === null ? '#6B675C' : bm.sellDisciplineRate >= 60 ? '#10B981' : bm.sellDisciplineRate >= 30 ? '#F59E0B' : '#EF4444';
-        const freqColor = bm.freqRatio === null ? '#6B675C' : bm.freqRatio <= 1.0 ? '#10B981' : bm.freqRatio <= 1.5 ? '#F59E0B' : '#EF4444';
+        const r500Color = bm.rule500Rate === null ? '#6B675C' : bm.rule500Rate >= 80 ? '#159E52' : bm.rule500Rate >= 60 ? '#E0A000' : '#E5484D';
+        const emColor   = bm.evalMatchRate === null ? '#6B675C' : bm.evalMatchRate >= 60 ? '#159E52' : bm.evalMatchRate >= 30 ? '#E0A000' : '#E5484D';
+        const sdColor   = bm.sellDisciplineRate === null ? '#6B675C' : bm.sellDisciplineRate >= 60 ? '#159E52' : bm.sellDisciplineRate >= 30 ? '#E0A000' : '#E5484D';
+        const freqColor = bm.freqRatio === null ? '#6B675C' : bm.freqRatio <= 1.0 ? '#159E52' : bm.freqRatio <= 1.5 ? '#E0A000' : '#E5484D';
         return (
           <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C', marginBottom: 14 }}>행동 추적</div>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C', marginBottom: 14 }}>행동 추적</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
               {[
                 { label: '500만 원칙', value: bm.rule500Rate !== null ? `${bm.rule500Rate}%` : '–', sub: `${bm.rule500OK}/${bm.rule500Total}건`, color: r500Color },
@@ -149,7 +149,7 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
             )}
             {bm.missedEvals.length > 0 && (
               <div>
-                <div style={{ fontSize: 9, color: '#F59E0B', letterSpacing: 1, marginBottom: 8 }}>🟢 평가 후 {bm.matchWindowDays}일 내 미매수 {bm.missedEvals.length}건 — 검토 필요</div>
+                <div style={{ fontSize: 9, color: '#E0A000', letterSpacing: 1, marginBottom: 8 }}>🟢 평가 후 {bm.matchWindowDays}일 내 미매수 {bm.missedEvals.length}건 — 검토 필요</div>
                 {bm.missedEvals.slice(0, 5).map((ev, i, arr) => (
                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: i < arr.length - 1 ? '1px solid #EAE6DA' : 'none', fontSize: 11 }}>
                     <span style={{ color: '#141414' }}>{ev.stock?.name}</span>
@@ -163,7 +163,7 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
         );
       })()}
       <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 12 }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C', marginBottom: 12 }}>운용 성과</div>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C', marginBottom: 12 }}>운용 성과</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
           {cards.map(c => (
             <button key={c.label}
@@ -183,7 +183,7 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
               <div style={{ fontSize: 9, color: c.status.color, marginBottom: 4 }}>
                 {c.status.icon} {c.status.label}
               </div>
-              <div style={{ fontSize: 8, color: '#3A4050', lineHeight: 1.3 }}>{c.sub}</div>
+              <div style={{ fontSize: 8, color: '#6B675C', lineHeight: 1.3 }}>{c.sub}</div>
             </button>
           ))}
         </div>
@@ -191,10 +191,10 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
 
       {/* 상세 지표 */}
       <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16 }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C', marginBottom: 12 }}>지표 상세</div>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C', marginBottom: 12 }}>지표 상세</div>
         {[
           { label: 'TWR 연환산', value: `${kpi.twr >= 0 ? '+' : ''}${twrPct}%`, color: twrStatus.color },
-          { label: 'TWR 누적',   value: `${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}%`, color: kpi.twrCum >= 0 ? '#10B981' : '#EF4444' },
+          { label: 'TWR 누적',   value: `${kpi.twrCum >= 0 ? '+' : ''}${twrCumPct}%`, color: kpi.twrCum >= 0 ? '#159E52' : '#E5484D' },
           ...(alphaPct !== null ? [{ label: '시장 대비 알파', value: `${parseFloat(alphaPct) >= 0 ? '+' : ''}${alphaPct}%p`, color: twrStatus.color }] : []),
           { label: 'Sharpe',     value: sharpeV,             color: sharpeStatus.color },
           { label: 'MDD',        value: `${mddPct}%`,        color: mddStatus.color },
@@ -209,7 +209,7 @@ export default function KpiTab({ monthlyData, kpiTrades, evaluations, isMobile, 
 
       {/* 내 투자 기준 */}
       <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginTop: 12 }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C', marginBottom: 14 }}>내 투자 기준</div>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C', marginBottom: 14 }}>내 투자 기준</div>
         {[
           { cat: '포트폴리오 성과', items: [
             { label: 'TWR 목표',    value: '시장 대비 +3~5%p' },

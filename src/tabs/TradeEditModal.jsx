@@ -19,7 +19,7 @@ export default function TradeEditModal({
         border: '1px solid #141414',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#F5A623' }}>셀 값 입력</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#E0A000' }}>셀 값 입력</div>
           <button onClick={() => setTradeEditOpen(false)} style={{
             background: 'transparent', border: 'none', cursor: 'pointer',
             color: '#6B675C', fontSize: 18, padding: 0, lineHeight: 1,
@@ -31,7 +31,7 @@ export default function TradeEditModal({
           return (
             <div key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <div style={{
-                width: 64, fontSize: 10, color: isEmpty ? '#F59E0B' : '#6B675C',
+                width: 64, fontSize: 10, color: isEmpty ? '#E0A000' : '#6B675C',
                 textAlign: 'right', flexShrink: 0,
               }}>
                 {col.key} · {col.label}
@@ -46,7 +46,7 @@ export default function TradeEditModal({
                 placeholder={col.placeholder}
                 style={{
                   flex: 1, background: isEmpty ? '#FBF1D0' : '#FFFFFF',
-                  border: `1px solid ${isEmpty ? '#F59E0B' : '#141414'}`,
+                  border: `1px solid ${isEmpty ? '#E0A000' : '#141414'}`,
                   borderRadius: 0, padding: '6px 8px', color: '#141414',
                   fontSize: 12, fontFamily: baseFont, outline: 'none',
                 }}
@@ -57,7 +57,7 @@ export default function TradeEditModal({
 
         <button onClick={saveTradeEdit} disabled={tradeEditBusy} style={{
           width: '100%', marginTop: 12, padding: '10px 12px', borderRadius: 0, border: 'none',
-          background: tradeEditBusy ? '#141414' : '#F5A623',
+          background: tradeEditBusy ? '#141414' : '#E0A000',
           color: tradeEditBusy ? '#6B675C' : '#FFFFFF',
           cursor: tradeEditBusy ? 'not-allowed' : 'pointer',
           fontSize: 12, fontWeight: 700, fontFamily: baseFont,

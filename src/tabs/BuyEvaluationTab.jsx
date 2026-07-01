@@ -111,7 +111,7 @@ export default function BuyEvaluationTab({
           fontSize: 10, color: '#6B675C', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center',
         }}>
           <span style={{ color: '#6B675C', letterSpacing: 1 }}>의뢰 큐</span>
-          {evalQueue.counts.pending > 0 && <span>대기 <span style={{ color: '#F5A623', fontWeight: 600 }}>{evalQueue.counts.pending}</span></span>}
+          {evalQueue.counts.pending > 0 && <span>대기 <span style={{ color: '#E0A000', fontWeight: 600 }}>{evalQueue.counts.pending}</span></span>}
           {evalQueue.counts.processing > 0 && <span>처리중 <span style={{ color: '#141414', fontWeight: 600 }}>{evalQueue.counts.processing}</span></span>}
           {evalQueue.counts.error > 0 && <span>오류 <span style={{ color: '#E5484D', fontWeight: 600 }}>{evalQueue.counts.error}</span></span>}
         </div>
@@ -119,7 +119,7 @@ export default function BuyEvaluationTab({
 
       {/* 평가 오류 상세 — 사유 표시 + 재시도 (시트 진입 없이 앱에서 확인·재처리) */}
       {evalQueue.counts.error > 0 && (
-        <div style={{ background: '#FBE3E4', border: '1px solid #FBE3E4', borderRadius: 0, padding: '10px 12px', marginBottom: 12 }}>
+        <div style={{ background: '#FBE3E4', border: '1px solid #E5484D', borderRadius: 0, padding: '10px 12px', marginBottom: 12 }}>
           <div style={{ fontSize: 10, letterSpacing: 1, color: '#E5484D', marginBottom: 8, fontWeight: 600 }}>
             ⚠ 평가 오류 {evalQueue.counts.error}건 — 사유 확인 후 재시도
           </div>
@@ -261,22 +261,22 @@ export default function BuyEvaluationTab({
 
           {card.reasons.length > 0 && (
             <div style={{ marginBottom: 12 }}>
-              <SubLabel color="#10B981">근거</SubLabel>
-              {card.reasons.map((r, i) => <NumberedItem key={i} n={i + 1} text={r} color="#C2C8D4" numColor="#10B981" />)}
+              <SubLabel color="#159E52">근거</SubLabel>
+              {card.reasons.map((r, i) => <NumberedItem key={i} n={i + 1} text={r} color="#6B675C" numColor="#159E52" />)}
             </div>
           )}
 
           {card.risks.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <SubLabel color="#E5484D">리스크</SubLabel>
-              {card.risks.map((r, i) => <NumberedItem key={i} n={i + 1} text={r} color="#F8A4A4" numColor="#E5484D" />)}
+              {card.risks.map((r, i) => <NumberedItem key={i} n={i + 1} text={r} color="#E5484D" numColor="#E5484D" />)}
             </div>
           )}
 
           {card.actions.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <SubLabel color="#141414">Frank 액션 권고</SubLabel>
-              {card.actions.map((a, i) => <NumberedItem key={i} n={'•'} text={a} color="#A9C7F5" numColor="#141414" />)}
+              {card.actions.map((a, i) => <NumberedItem key={i} n={'•'} text={a} color="#6B675C" numColor="#141414" />)}
             </div>
           )}
 

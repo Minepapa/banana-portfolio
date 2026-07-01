@@ -13,7 +13,7 @@ export default function ExecutionsTab({
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C' }}>체결내역 자동 동기화</div>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C' }}>체결내역 자동 동기화</div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           {tradeSyncMsg && (
             <span style={{ fontSize: 10, color: tradeSyncMsg.includes('오류') ? '#E5484D' : '#159E52' }}>
@@ -51,7 +51,7 @@ export default function ExecutionsTab({
         </div>
       ) : (
         <div style={{ background: '#FFFFFF', borderRadius: 0, overflow: 'hidden' }}>
-          <div style={{ padding: '10px 16px', borderBottom: '1px solid #141414', fontSize: 10, letterSpacing: 3, color: '#6B675C' }}>
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid #141414', fontSize: 10, letterSpacing: 2, color: '#6B675C' }}>
             전체 {tradeRows.length}건 · 처리완료 {tradeRows.filter(r => r.processed).length}건
           </div>
           {[...tradeRows].sort((a, b) => String(b.row[0] ?? '').localeCompare(String(a.row[0] ?? ''))).map(({ row, processed }, idx) => {
@@ -94,7 +94,7 @@ export default function ExecutionsTab({
                 {lp.activeId === idx && <div className="lp-progress" />}
                 <div style={{
                   width: 8, height: 8, borderRadius: 0, flexShrink: 0,
-                  background: processed ? '#34A853' : isComplete ? '#F5A623' : '#EAE6DA',
+                  background: processed ? '#159E52' : isComplete ? '#E0A000' : '#EAE6DA',
                 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
@@ -104,7 +104,7 @@ export default function ExecutionsTab({
                       color: isBuy ? '#141414' : '#E5484D',
                     }}>{buySell || '—'}</span>
                     <span style={{ fontSize: 10, color: '#6B675C' }}>{account}</span>
-                    <span style={{ fontSize: 10, color: '#3A3F4E' }}>·</span>
+                    <span style={{ fontSize: 10, color: '#6B675C' }}>·</span>
                     <span style={{ fontSize: 10, color: '#6B675C' }}>{date}</span>
                   </div>
                   <div style={{ fontSize: 13, fontWeight: 700, color: '#141414', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -112,12 +112,12 @@ export default function ExecutionsTab({
                   </div>
                   <div style={{ fontSize: 10, color: '#6B675C', marginTop: 2 }}>
                     {qty > 0 ? `${qty}주` : ''}{qty > 0 && price > 0 ? ' · ' : ''}{price > 0 ? `${currencySymbol}${price.toLocaleString()}` : ''}
-                    {!isComplete && <span style={{ marginLeft: 6, color: '#F59E0B' }}>셀 미완성</span>}
+                    {!isComplete && <span style={{ marginLeft: 6, color: '#E0A000' }}>셀 미완성</span>}
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
                   {processed && (
-                    <span style={{ fontSize: 10, color: '#34A853' }}>완료</span>
+                    <span style={{ fontSize: 10, color: '#159E52' }}>완료</span>
                   )}
                   {savingsApplied ? (
                     <span style={{ fontSize: 10, color: '#159E52' }}>저축금 ✓</span>
@@ -127,9 +127,9 @@ export default function ExecutionsTab({
                       disabled={!canApplySavings}
                       style={{
                         padding: '3px 8px', borderRadius: 0, border: '1px solid',
-                        borderColor: canApplySavings ? (isBuy ? '#141414' : '#EF4444') : '#141414',
+                        borderColor: canApplySavings ? (isBuy ? '#141414' : '#E5484D') : '#141414',
                         background: 'transparent',
-                        color: canApplySavings ? (isBuy ? '#141414' : '#E5484D') : '#3A3F4E',
+                        color: canApplySavings ? (isBuy ? '#141414' : '#E5484D') : '#6B675C',
                         cursor: canApplySavings ? 'pointer' : 'not-allowed',
                         fontSize: 10, fontFamily: baseFont,
                       }}

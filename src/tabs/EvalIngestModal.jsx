@@ -63,7 +63,7 @@ export default function EvalIngestModal({
             marginTop: 10, padding: '8px 12px', borderRadius: 0,
             background: '#FFFFFF', fontSize: 11,
             color: evalIngestMsg.startsWith('✓') ? '#159E52'
-                 : evalIngestMsg.startsWith('⚠️') ? '#F59E0B'
+                 : evalIngestMsg.startsWith('⚠️') ? '#E0A000'
                  : evalIngestMsg.includes('실패') ? '#E5484D' : '#6B675C',
             lineHeight: 1.5,
           }}>{evalIngestMsg}</div>

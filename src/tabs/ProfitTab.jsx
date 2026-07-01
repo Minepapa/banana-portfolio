@@ -33,7 +33,7 @@ export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
       </div>
 
       <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px", marginBottom: 16 }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: "#6B675C", marginBottom: 16 }}>월별 수익금</div>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 16 }}>월별 수익금</div>
         {filtered.length > 0 ? (
           <ResponsiveContainer width="100%" height={220}>
             <BarChart
@@ -91,7 +91,7 @@ export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
       </div>
 
       <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px" }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: "#6B675C", marginBottom: 12 }}>연도별 합계</div>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 12 }}>연도별 합계</div>
         {yearTotals.map(row => (
           <div key={row.year} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #EAE6DA' }}>
             <span style={{ fontSize: 12, color: '#6B675C' }}>{row.year}년 합계</span>
@@ -102,7 +102,7 @@ export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
         ))}
         {(() => { const gt = profitData.reduce((s, d) => s + d.total, 0); return (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10 }}>
-            <span style={{ fontSize: 12, color: '#141414', fontWeight: 600 }}>전체 합계</span>
+            <span style={{ fontSize: 12, color: '#141414', fontWeight: 700 }}>전체 합계</span>
             <span style={{ fontSize: 14, fontWeight: 700, color: gt >= 0 ? PROFIT_POS : PROFIT_NEG }}>
               ₩{fmt(Math.abs(gt))}
             </span>

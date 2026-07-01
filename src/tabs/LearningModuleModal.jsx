@@ -25,7 +25,7 @@ export default function LearningModuleModal({ evalSelectedMetric, setEvalSelecte
         {mod.summary}
       </div>
       <div style={{ background: '#FFFFFF', borderRadius: 0, padding: '8px 12px', fontSize: 11, color: '#6B675C', lineHeight: 1.5 }}>
-        <span style={{ color: '#F5A623', marginRight: 6 }}>임계값</span>
+        <span style={{ color: '#E0A000', marginRight: 6 }}>임계값</span>
         {mod.threshold}
       </div>
     </div>

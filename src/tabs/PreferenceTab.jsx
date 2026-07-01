@@ -22,11 +22,11 @@ export default function PreferenceTab({ preferences, sheets, baseFont }) {
   const vsBadge = (v) => {
     const conflict = /상충/.test(v || '');
     const match = /일치|보강/.test(v || '');
-    const [bg, fg] = conflict ? ['#F59E0B22', '#F59E0B'] : match ? ['#4ADE8022', '#159E52'] : ['#14141422', '#141414'];
+    const [bg, fg] = conflict ? ['#E0A00022', '#E0A000'] : match ? ['#159E5222', '#159E52'] : ['#14141422', '#141414'];
     return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 0, background: bg, color: fg }}>{v || '신규'}{conflict ? ' ⚑' : ''}</span>;
   };
   const confBadge = (c) => {
-    const map = { '높음': ['#4ADE8022', '#159E52'], '보통': ['#F5C84222', '#F5C842'], '낮음': ['#6B675C22', '#6B675C'] };
+    const map = { '높음': ['#159E5222', '#159E52'], '보통': ['#E0A00022', '#E0A000'], '낮음': ['#6B675C22', '#6B675C'] };
     const [bg, fg] = map[c] || map['보통'];
     return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 0, background: bg, color: fg }}>신뢰도 {c || '보통'}</span>;
   };
@@ -48,7 +48,7 @@ export default function PreferenceTab({ preferences, sheets, baseFont }) {
       {opts.actions && (
         <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
           <button onClick={() => setStatus(p, '확정')}
-            style={{ padding: '6px 14px', minHeight: 34, borderRadius: 0, border: '1px solid #4ADE8055', background: '#DDF3E4', color: '#159E52', cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
+            style={{ padding: '6px 14px', minHeight: 34, borderRadius: 0, border: '1px solid #159E5255', background: '#DDF3E4', color: '#159E52', cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
             ✓ 확정 (내 성향 맞음)
           </button>
           <button onClick={() => setStatus(p, '기각')}
@@ -75,18 +75,18 @@ export default function PreferenceTab({ preferences, sheets, baseFont }) {
         <>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16, fontSize: 11 }}>
             <span style={{ color: '#159E52' }}>확정 <b>{confirmed.length}</b></span>
-            {pending.length > 0 && <span style={{ color: '#F5C842', fontWeight: 700 }}>확인 필요 {pending.length}</span>}
+            {pending.length > 0 && <span style={{ color: '#E0A000', fontWeight: 700 }}>확인 필요 {pending.length}</span>}
             {rejected.length > 0 && <span style={{ color: '#6B675C' }}>기각 {rejected.length}</span>}
           </div>
 
           {pending.length > 0 && (<>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: '#F5C842', marginBottom: 8 }}>확인 필요 — 이게 내 성향이 맞나요?</div>
-            {pending.map(p => Card(p, { actions: true, border: '#F5C84244' }))}
+            <div style={{ fontSize: 10, letterSpacing: 2, color: '#E0A000', marginBottom: 8 }}>확인 필요 — 이게 내 성향이 맞나요?</div>
+            {pending.map(p => Card(p, { actions: true, border: '#E0A00044' }))}
           </>)}
 
           {confirmed.length > 0 && (<>
             <div style={{ fontSize: 10, letterSpacing: 2, color: '#159E52', margin: '16px 0 8px' }}>확정된 내 성향 (분석의 기준)</div>
-            {confirmed.map(p => Card(p, { border: '#4ADE8033' }))}
+            {confirmed.map(p => Card(p, { border: '#159E5233' }))}
           </>)}
 
           {rejected.length > 0 && (<>

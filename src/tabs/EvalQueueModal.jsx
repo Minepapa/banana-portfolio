@@ -21,7 +21,7 @@ export default function EvalQueueModal({
         border: '1px solid #141414',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#F5A623' }}>평가 의뢰</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#E0A000' }}>평가 의뢰</div>
           <button onClick={() => setEvalQueueOpen(false)} style={{
             background: 'transparent', border: 'none', cursor: 'pointer',
             color: '#6B675C', fontSize: 18, padding: 0, lineHeight: 1,
@@ -79,7 +79,7 @@ export default function EvalQueueModal({
 
         <button onClick={submitEvalQueue} disabled={!evalQueueName.trim() || evalQueueBusy} style={{
           width: '100%', padding: '10px 12px', borderRadius: 0, border: 'none',
-          background: (evalQueueName.trim() && !evalQueueBusy) ? '#F5A623' : '#141414',
+          background: (evalQueueName.trim() && !evalQueueBusy) ? '#E0A000' : '#141414',
           color: (evalQueueName.trim() && !evalQueueBusy) ? '#FFFFFF' : '#6B675C',
           cursor: (evalQueueName.trim() && !evalQueueBusy) ? 'pointer' : 'not-allowed',
           fontSize: 12, fontWeight: 700, fontFamily: baseFont,
@@ -92,7 +92,7 @@ export default function EvalQueueModal({
             marginTop: 10, padding: '8px 12px', borderRadius: 0,
             background: '#FFFFFF', fontSize: 11,
             color: evalQueueMsg.startsWith('✓') ? '#159E52'
-                 : evalQueueMsg.startsWith('⚠️') ? '#F59E0B'
+                 : evalQueueMsg.startsWith('⚠️') ? '#E0A000'
                  : evalQueueMsg.includes('실패') ? '#E5484D' : '#6B675C',
             lineHeight: 1.5,
           }}>{evalQueueMsg}</div>
@@ -117,7 +117,7 @@ export default function EvalQueueModal({
                               : e.status === '오류' ? '#FBE3E4' : '#FBF1D0',
                     color: e.status === '완료' ? '#159E52'
                          : e.status === '처리중' ? '#141414'
-                         : e.status === '오류' ? '#E5484D' : '#F5A623',
+                         : e.status === '오류' ? '#E5484D' : '#E0A000',
                   }}>{e.status}</span>
                   <span style={{ color: '#141414', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {e.name}

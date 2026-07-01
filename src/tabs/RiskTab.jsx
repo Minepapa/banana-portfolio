@@ -8,7 +8,7 @@ export default function RiskTab({ riskMonitor, baselines }) {
   const today = new Date();
   const dateStr = `${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
   const sigLevel = (s) => s.includes('🔴') ? 3 : s.includes('🟡') ? 2 : 1;
-  const sigColor = (s) => s.includes('🔴') ? '#EF4444' : s.includes('🟡') ? '#F5C842' : '#10B981';
+  const sigColor = (s) => s.includes('🔴') ? '#E5484D' : s.includes('🟡') ? '#E0A000' : '#159E52';
   // 검증 "항목"(무엇을 점검했나) — 중립 표기. 결과/상태와 분리.
   const typeLabel = (t) => t === 'B' ? '논리 점검' : t === 'D' ? '거시 점검' : t === 'O' ? '급락매수' : t;
   // 점검 "결과"(상황) — 색상과 함께 표시.
@@ -85,12 +85,12 @@ export default function RiskTab({ riskMonitor, baselines }) {
           {/* 신호 요약 */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
             {[
-              { label: '경보', n: counts.red, c: '#EF4444' },
-              { label: '주의', n: counts.amber, c: '#F5C842' },
-              { label: '정상', n: counts.green, c: '#10B981' },
+              { label: '경보', n: counts.red, c: '#E5484D' },
+              { label: '주의', n: counts.amber, c: '#E0A000' },
+              { label: '정상', n: counts.green, c: '#159E52' },
             ].map((x, i) => (
               <div key={i} style={{ background: x.n > 0 ? `${x.c}14` : '#FFFFFF', borderRadius: 0, padding: '14px 8px', textAlign: 'center', border: `1px solid ${x.n > 0 ? `${x.c}44` : '#141414'}` }}>
-                <div style={{ fontSize: 24, fontWeight: 800, color: x.n > 0 ? x.c : '#3A4050', lineHeight: 1 }}>{x.n}</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: x.n > 0 ? x.c : '#6B675C', lineHeight: 1 }}>{x.n}</div>
                 <div style={{ fontSize: 10, color: '#6B675C', marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
                   <span style={{ width: 6, height: 6, borderRadius: 0, background: x.c, display: 'inline-block' }} />{x.label}
                 </div>
@@ -121,7 +121,7 @@ export default function RiskTab({ riskMonitor, baselines }) {
                     {/* 결과 상태(색상) */}
                     <span style={{ fontSize: 8, color, background: `${color}22`, borderRadius: 0, padding: '1px 6px', fontWeight: 700 }}>{statusLabel(r.signal)}</span>
                   </div>
-                  <span style={{ fontSize: 9, color: '#3A4050', flexShrink: 0 }}>{r.date}</span>
+                  <span style={{ fontSize: 9, color: '#6B675C', flexShrink: 0 }}>{r.date}</span>
                 </div>
                 {/* 본문은 카드 전체 폭으로 — 날짜 아래까지 채워 자연스럽게 줄바꿈 */}
                 <Sentences text={r.summary} sentenceOnly style={{ fontSize: 11, color: '#6B675C', lineHeight: 1.55, marginTop: 4 }} />
@@ -165,11 +165,11 @@ export default function RiskTab({ riskMonitor, baselines }) {
               })}
             </div>
           ))}
-          <div style={{ fontSize: 9, color: '#3A4050', marginTop: 8 }}>기준일 {baselines[0]?.date || '—'} · 가격 등락이 아닌 실적 훼손만 리스크로 평가</div>
+          <div style={{ fontSize: 9, color: '#6B675C', marginTop: 8 }}>기준일 {baselines[0]?.date || '—'} · 가격 등락이 아닌 실적 훼손만 리스크로 평가</div>
         </div>
       )}
 
-      <div style={{ fontSize: 9, color: '#3A4050', textAlign: 'center', marginTop: 16 }}>
+      <div style={{ fontSize: 9, color: '#6B675C', textAlign: 'center', marginTop: 16 }}>
         {dateStr} 조회 · 펀더멘털·거시 기반 (가격 과열 단독은 신호 아님)
       </div>
     </div>

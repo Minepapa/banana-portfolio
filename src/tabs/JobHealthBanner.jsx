@@ -17,8 +17,8 @@ export default function JobHealthBanner({ jobStatus }) {
     <div style={{
       margin: '8px 12px', padding: '8px 12px', borderRadius: 0,
       background: anyFail ? '#FBE3E4' : '#FBF1D0',
-      border: `1px solid ${anyFail ? '#141414' : '#78510F'}`,
-      fontSize: 11, color: anyFail ? '#E5484D' : '#FCD34D', textAlign: 'left',
+      border: `1px solid ${anyFail ? '#141414' : '#E0A000'}`,
+      fontSize: 11, color: anyFail ? '#E5484D' : '#E0A000', textAlign: 'left',
     }}>
       <div style={{ fontWeight: 700, marginBottom: 2 }}>
         ⚠️ 무인 잡 점검 필요 {problems.length}건

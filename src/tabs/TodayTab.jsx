@@ -94,7 +94,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
 
   if (!isWeekend && riskActionable > 0) {
     items.push({
-      key: `risk:${lastRiskDate}`, kind: 'read', accent: riskRed > 0 ? '#EF4444' : '#F5C842',
+      key: `risk:${lastRiskDate}`, kind: 'read', accent: riskRed > 0 ? '#E5484D' : '#E0A000',
       icon: riskRed > 0 ? '🔴' : '🟡',
       title: `리스크 ${riskRed > 0 ? `경보 ${riskRed}건` : ''}${riskRed > 0 && riskAmber > 0 ? ' · ' : ''}${riskAmber > 0 ? `주의 ${riskAmber}건` : ''}`,
       sub: '펀더멘털·거시 신호 점검', goLabel: '리스크 보기', go: () => setTab('리스크'),
@@ -102,7 +102,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   }
   if (!isWeekend && oppActionable > 0) {
     items.push({
-      key: `opp:${lastRiskDate}`, kind: 'read', accent: '#F5A623',
+      key: `opp:${lastRiskDate}`, kind: 'read', accent: '#E0A000',
       icon: '⚠️',
       title: `급락 알림 ${oppBuy}건`,
       sub: '§4 급락 트리거 발동 — 펀더멘털 확인 후 매수 검토', goLabel: '리스크 보기', go: () => setTab('리스크'),
@@ -110,14 +110,14 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   }
   if (thesisAlerts > 0) {
     items.push({
-      key: 'thesis', kind: 'auto', accent: '#EF4444', icon: '⚠️',
+      key: 'thesis', kind: 'auto', accent: '#E5484D', icon: '⚠️',
       title: `투자논리 훼손 ${thesisAlerts}종목`, sub: '이탈조건 대조 후 매도 검토',
       goLabel: '포지션 보기', go: () => setTab('저널'),
     });
   }
   if (execPending > 0) {
     items.push({
-      key: 'exec', kind: 'auto', accent: '#F59E0B', icon: '📥',
+      key: 'exec', kind: 'auto', accent: '#E0A000', icon: '📥',
       title: `미처리 체결 ${execPending}건`, sub: '동기화하면 보유종목에 반영',
       goLabel: '체결 동기화', go: () => setTab('체결내역'),
     });
@@ -159,7 +159,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   }
   if (rxAction) {
     items.push({
-      key: `rx:${rxDate}`, kind: 'read', accent: '#F5C842', icon: '💊',
+      key: `rx:${rxDate}`, kind: 'read', accent: '#E0A000', icon: '💊',
       title: '이번 주 처방', sub: `${rxDate} 리포트`, goLabel: '리포트 보기', go: () => setTab('report'),
       body: (
         <div style={{ marginTop: 8, background: '#FFFFFF', border: '2px solid #141414', borderLeft: '5px solid #E0A000', borderRadius: 0, padding: 12 }}>
@@ -172,14 +172,14 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   if (jobProblems.length > 0) {
     const anyFail = jobProblems.some(p => p.problem === 'fail' || p.problem === 'missing');
     items.push({
-      key: 'jobs', kind: 'auto', accent: anyFail ? '#EF4444' : '#F5C842', icon: '🔧',
+      key: 'jobs', kind: 'auto', accent: anyFail ? '#E5484D' : '#E0A000', icon: '🔧',
       title: `무인 잡 점검 ${jobProblems.length}건`, sub: jobProblems.map(p => `${p.job}(${p.problem === 'fail' ? '실패' : p.problem === 'missing' ? '미실행' : '정체'})`).join(' · '),
       goLabel: '잡 상태 보기', go: () => setTab('kpi'),
     });
   }
   if (prefPending > 0) {
     items.push({
-      key: 'pref', kind: 'read', accent: '#F5C842', icon: '💬',
+      key: 'pref', kind: 'read', accent: '#E0A000', icon: '💬',
       title: `성향 확인 필요 ${prefPending}건`,
       sub: '행동에서 관찰된 내 투자 성향 — 확정 또는 기각',
       goLabel: '성향 보기', go: () => setTab('성향'),
@@ -210,7 +210,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
         items.map((it) => {
           const done = acked.has(it.key);
           return (
-            <div key={it.key} style={{ background: done ? '#FFFFFF' : `${it.accent}10`, border: `1px solid ${done ? '#141414' : it.accent + '38'}`, borderLeft: `4px solid ${done ? '#4ADE8066' : it.accent}`, borderRadius: 0, padding: 14, marginBottom: 10, opacity: done ? 0.55 : 1, transition: 'opacity 0.2s' }}>
+            <div key={it.key} style={{ background: done ? '#FFFFFF' : `${it.accent}10`, border: `1px solid ${done ? '#141414' : it.accent + '38'}`, borderLeft: `4px solid ${done ? '#159E5266' : it.accent}`, borderRadius: 0, padding: 14, marginBottom: 10, opacity: done ? 0.55 : 1, transition: 'opacity 0.2s' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                 <span style={{ fontSize: 16, lineHeight: 1.3, flexShrink: 0 }}>{done ? '✅' : it.icon}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -235,7 +235,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
         })
       )}
 
-      <div style={{ fontSize: 9, color: '#3A4050', textAlign: 'center', marginTop: 16, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 9, color: '#6B675C', textAlign: 'center', marginTop: 16, lineHeight: 1.6 }}>
         처리하면 자동으로 사라집니다 · 확인 표시는 오늘 하루만 유지됩니다
       </div>
     </div>

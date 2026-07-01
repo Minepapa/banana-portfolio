@@ -171,7 +171,7 @@ export default function HoldingsTab({
 
       {/* 보유 종목 목록 */}
       <div style={{ background: "#FFFFFF", borderRadius: 0, overflow: "hidden" }}>
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid #141414", fontSize: 10, letterSpacing: 3, color: "#6B675C" }}>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid #141414", fontSize: 10, letterSpacing: 2, color: "#6B675C" }}>
           보유 종목 ({sortedHoldings.length})
         </div>
         {sortedHoldings.length === 0 && (

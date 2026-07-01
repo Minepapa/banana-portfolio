@@ -33,7 +33,7 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
             padding: isMobile ? "8px 14px" : "6px 14px",
             borderRadius: 0,
             border: `1px solid ${divYear === y ? '#141414' : '#141414'}`,
-            background: divYear === y ? '#EAE6DA' : 'transparent',
+            background: divYear === y ? '#E4F5A0' : 'transparent',
             color: divYear === y ? '#141414' : '#6B675C',
             cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
           }}>{y}</button>
@@ -41,7 +41,7 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
       </div>
 
       <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px", marginBottom: 16 }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: "#6B675C", marginBottom: 16 }}>월별 배당금</div>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 16 }}>월별 배당금</div>
         {filteredDividends.length > 0 ? (
           <ResponsiveContainer width="100%" height={220}>
             <BarChart
@@ -91,7 +91,7 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
                       setDivSaving(true);
                       try { await sheets.writeRange(`배당금!C${item.row}`, [v]); await sheets.fetch(); setEditingDivRow(null); }
                       finally { setDivSaving(false); }
-                    }} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 0, border: 'none', background: '#10B981', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>{divSaving ? '…' : '저장'}</button>
+                    }} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 0, border: 'none', background: '#159E52', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>{divSaving ? '…' : '저장'}</button>
                     <button onClick={() => setEditingDivRow(null)} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 0, border: '1px solid #141414', background: 'transparent', color: '#6B675C', cursor: 'pointer', flexShrink: 0 }}>취소</button>
                   </>
                 ) : (
@@ -119,7 +119,7 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
       </div>
 
       <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px" }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: "#6B675C", marginBottom: 12 }}>연도별 합계</div>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 12 }}>연도별 합계</div>
         {divYearTotals.map(row => (
           <div key={row.year} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #EAE6DA' }}>
             <span style={{ fontSize: 12, color: '#6B675C' }}>{row.year}년 합계</span>
@@ -128,7 +128,7 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
         ))}
         {(() => { const gt = dividendData.reduce((s, d) => s + d.amount, 0); return (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10 }}>
-            <span style={{ fontSize: 12, color: '#141414', fontWeight: 600 }}>전체 합계</span>
+            <span style={{ fontSize: 12, color: '#141414', fontWeight: 700 }}>전체 합계</span>
             <span style={{ fontSize: 14, fontWeight: 700, color: PROFIT_POS }}>₩{fmt(gt)}</span>
           </div>
         ); })()}

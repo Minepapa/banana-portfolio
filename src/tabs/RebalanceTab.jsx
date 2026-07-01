@@ -32,7 +32,7 @@ export default function RebalanceTab({
       {/* 자산군 구성 파이 (최상단) */}
       {acct.assets.some(a => a.eval > 0) && (
         <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px", marginBottom: 16 }}>
-          <div style={{ fontSize: 10, letterSpacing: 3, color: "#6B675C", marginBottom: 12 }}>자산군 구성</div>
+          <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 12 }}>자산군 구성</div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <ResponsiveContainer width="100%" height={160}>
@@ -67,7 +67,7 @@ export default function RebalanceTab({
       {/* 현재 vs 목표 비중 테이블 */}
       <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px", marginBottom: 16 }}>
         <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontSize: 10, letterSpacing: 3, color: "#6B675C" }}>목표 vs 현재 비중</div>
+          <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C" }}>목표 vs 현재 비중</div>
           {sheets.auth === 'signed-in' && (
             <button
               onClick={() => { setAllTargetInputs(acct.assets.map(a => String(a.target))); setEditingAllTargets(true); }}
@@ -136,7 +136,7 @@ export default function RebalanceTab({
 
       {/* 리밸런싱 필요 */}
       <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px" }}>
-        <div style={{ fontSize: 10, letterSpacing: 3, color: "#6B675C", marginBottom: 12 }}>리밸런싱 필요</div>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 12 }}>리밸런싱 필요</div>
         {acct.assets.map((a) => {
           const amt = a.rebalAmt ?? 0;
           const curr = a.ratio > 0 ? a.ratio : (a.sheetCurrent ?? 0);

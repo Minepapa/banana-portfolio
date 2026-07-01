@@ -93,7 +93,7 @@ export default function AddHoldingForm({ acctKey, accounts, onSave, onCancel, re
         <div>
           <label style={labelStyle}>
             자산군{rowMap !== null && hasAInSheet && (
-              <span style={{ marginLeft: 5, color: emptySlots > 0 ? '#6EE7B7' : '#E5484D' }}>
+              <span style={{ marginLeft: 5, color: emptySlots > 0 ? '#159E52' : '#E5484D' }}>
                 ({emptySlots}개 가능)
               </span>
             )}

@@ -42,8 +42,8 @@ export default function ReportTab({ weeklyReports }) {
         return (
           <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <div style={{ fontSize: 10, letterSpacing: 3, color: '#6B675C' }}>📋 주간 AI 리포트</div>
-              <div style={{ fontSize: 10, color: '#3A4050' }}>{latest.date}</div>
+              <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C' }}>📋 주간 AI 리포트</div>
+              <div style={{ fontSize: 10, color: '#6B675C' }}>{latest.date}</div>
             </div>
             {visibleSections.map((sec, i) => (
               <div key={i} style={{ marginBottom: 10 }}>

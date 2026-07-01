@@ -149,16 +149,16 @@ export default function DashboardTab({
       <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px", marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ fontSize: 10, letterSpacing: 3, color: "#6B675C" }}>전체 평가금 추이</div>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C" }}>전체 평가금 추이</div>
             <button
               onClick={() => { if (!lp.firedRef.current) setShowSavings(p => !p); }}
               {...lp.bind('savings', beginSavingsEdit)}
               style={{
                 position: 'relative', overflow: 'hidden',
                 padding: '3px 10px', borderRadius: 0,
-                border: `1px solid ${lp.activeId === 'savings' ? '#141414' : showSavings ? '#10B981' : '#141414'}`,
+                border: `1px solid ${lp.activeId === 'savings' ? '#141414' : showSavings ? '#159E52' : '#141414'}`,
                 background: showSavings ? '#DDF3E4' : 'transparent',
-                color: showSavings ? '#10B981' : '#6B675C',
+                color: showSavings ? '#159E52' : '#6B675C',
                 cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
                 userSelect: 'none', WebkitUserSelect: 'none',
               }}
@@ -233,7 +233,7 @@ export default function DashboardTab({
               }}>취소</button>
               <button onClick={saveSavingsEdit} style={{
                 padding: '6px 12px', borderRadius: 0, border: 'none',
-                background: '#10B981', color: '#fff', cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
+                background: '#159E52', color: '#fff', cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
               }}>저장</button>
             </div>
           </div>
