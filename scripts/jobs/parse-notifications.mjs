@@ -42,6 +42,18 @@ const CASH_BASE_HEADER = ['계좌', '기준액', '기준일', '소스', '갱신�
 const CASH_ROW_NAME = '예수금';                 // ISA·위탁·IRP 표시 행 종목명(사용자가 1회 생성)
 const AUTO_CASH_TABS = new Set(['ISA', '위탁']);  // NH: 입금/출금 알림 잔고로 자동 앵커
 const NH_ACCT_PREFIX = { '209-02': 'ISA', '205-01': '위탁' };  // 계좌번호 앞6자 → 탭
+// 배당/분배금 알림의 계좌번호 → 예수금 귀속 후보 계좌. NH는 유일, 삼성(71612)은
+// 연금저축·IRP 공용이라 종목 보유 계좌로 최종 판별(아래 resolveDivTab). null=미상.
+function dividendAcctCandidates(d) {
+  const s = String(d?.acctRaw ?? '').replace(/[^0-9]/g, '');
+  if (s.startsWith('20902')) return ['ISA'];
+  if (s.startsWith('20501')) return ['위탁'];
+  if (s.startsWith('71612')) return ['연금저축', 'IRP'];   // 삼성 공용 → 보유로 구분
+  const b = String(d?.broker ?? '');                       // 계좌번호 없으면 증권사로 후보 축소
+  if (/NH투자증권/.test(b)) return ['ISA', '위탁'];
+  if (/삼성증권/.test(b)) return ['연금저축', 'IRP'];
+  return null;
+}
 const CASH_BASE_SEED = [
   ['ISA', 0, '', '자동', ''], ['위탁', 0, '', '자동', ''],
   ['연금저축', 0, '', '수동', ''], ['IRP', 0, '', '수동', ''],
@@ -144,7 +156,9 @@ function parseDividend(body, tsRaw) {
   const ts = normalizeDateTime(tsRaw);
   const datePart = ts.slice(0, 10);            // yyyy-MM-dd
   const timePart = ts.slice(11, 19) || '00:00:00'; // HH:mm:ss
-  const mk = (date, amount, stockName) => ({ date, afterTaxAmount: amount, stockName: stockName.trim(), receivedTime: timePart, uniqueKey: `${timePart}_${amount}` });
+  const acctRaw = (body.match(/계좌번호\s*:\s*([0-9*\-]+)/)?.[1] ?? '').trim(); // 예수금 귀속용(있으면)
+  const broker = (body.match(/\[(NH투자증권|삼성증권|한국투자증권)[^\]]*\]/)?.[1] ?? '').trim(); // NH엔 계좌번호 없음 → 증권사로 후보 축소
+  const mk = (date, amount, stockName) => ({ date, afterTaxAmount: amount, stockName: stockName.trim(), acctRaw, broker, receivedTime: timePart, uniqueKey: `${timePart}_${amount}` });
 
   let m = body.match(NH_DIV);
   if (m) { const a = parseInt(cleanNum(m.groups.amount), 10); if (Number.isFinite(a)) return mk(m.groups.date.replace(/\./g, '-'), a, m.groups.stockName); }
@@ -536,7 +550,55 @@ async function main() {
     const p = portfolioMap.get(e.stockName); if (!p) continue;   // 계좌 미상(중복명 등) skip
     flows.push({ tab: p[0], date: e.tradeDate.slice(0, 10), amount: (e.tradeType === '매수' ? -1 : 1) * e.quantity * e.price });
   }
-  for (const d of divs) { const p = portfolioMap.get(d.stockName); if (p) flows.push({ tab: p[0], date: d.date, amount: d.afterTaxAmount }); }
+  // 배당/분배금 → 예수금(+). 계좌 귀속은 portfolioMap(중복명 삭제됨)이 아니라 "보유 계좌 + 알림 계좌번호"로
+  // 판별한다: 여러 계좌 보유 ETF(중복명)도 알림의 계좌번호로 정확히 귀속(예: 삼성 71612 → 연금저축).
+  // 보유 종목 목록(계좌·이름). 알림명은 정식 장명(미래에셋 TIGER…증권상장지수투자신탁), 보유명은
+  // 축약(TIGER 미국배당다우존스)이라 정확일치가 안 됨 → 공백제거 후 "알림명 ⊃ 보유명" 부분일치로,
+  // 여러 개 걸리면 가장 긴(구체적) 보유명 우선(커버드콜 등 유사명 오귀속 방지). 'SK'↔'에스케이' 보정.
+  const dnorm = (s) => String(s ?? '').replace(/\s/g, '').replace(/에스케이/g, 'SK').replace(/케이티/g, 'KT');
+  const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const holdingList = [];
+  for (const tab of ACCOUNT_TABS) {
+    const rows = await getRange(token, `${tab}!A:B`).catch(() => []);
+    for (const row of rows) {
+      const name = String(row[1] ?? '').trim(); if (!name) continue;
+      const full = dnorm(name);
+      holdingList.push({ tab, nname: full, isCore: false });
+      // 보유명 후행 (…)/[…] 접미(예: '(H)'·'(합성)'·'[채권-재간접]')는 알림 장명에 없을 수 있어 코어도 등록
+      const core = full.replace(/[([].*$/, '');
+      if (core.length >= 6 && core !== full) holdingList.push({ tab, nname: core, isCore: true });
+    }
+  }
+  // 매칭: full은 순수 부분일치. core(접미 제거)는 프리픽스 오매칭(KODEX200 vs KODEX200TR) 방지를 위해
+  // 코어 뒤에 ETF 법정접미(증권/상장지수/투자신탁)나 문자열 끝이 와야 인정.
+  const matchesHolding = (dn, h) => {
+    if (!h.nname || !dn.includes(h.nname)) return false;
+    if (!h.isCore) return true;
+    return new RegExp(reEsc(h.nname) + '(증권|상장지수|투자신탁|$)').test(dn);
+  };
+  const resolveDivTab = (d) => {
+    const dn = dnorm(d.stockName);
+    const matches = holdingList.filter(h => matchesHolding(dn, h)).sort((a, b) => b.nname.length - a.nname.length);
+    if (matches.length === 0) { const c = dividendAcctCandidates(d); return (c && c.length === 1) ? c[0] : null; }
+    const best = matches[0];
+    const bestTabs = [...new Set(matches.filter(m => m.nname === best.nname).map(m => m.tab))]; // 최장 일치명의 계좌들
+    const cands = dividendAcctCandidates(d);
+    // full 이름이 유일 계좌 → 확정. core 매칭이거나 다계좌면 계좌 후보와 교집합이 '유일'할 때만 확정
+    // (실물 계좌 금액이라 애매하면 추측하지 않고 미상 처리 → 아래 경고, 수동 확인).
+    if (bestTabs.length === 1 && !best.isCore) return bestTabs[0];
+    if (!cands) return null;
+    const inter = bestTabs.filter(t => cands.includes(t));
+    return inter.length === 1 ? inter[0] : null;
+  };
+  const divSeen = new Set(); const divUnresolved = [];
+  for (const d of divs) {
+    const tab = resolveDivTab(d);
+    if (!tab) { divUnresolved.push(d.stockName); continue; }
+    const dk = `${d.date}|${tab}|${d.stockName}|${d.uniqueKey}`; // 귀속 후 dedup(계좌 포함) → 같은 금액 타계좌 배당 보존
+    if (divSeen.has(dk)) continue; divSeen.add(dk);
+    flows.push({ tab, date: d.date, amount: d.afterTaxAmount });
+  }
+  if (divUnresolved.length) console.log(`  ⚠ 배당 예수금 귀속 실패(계좌 판별 불가·수동 확인): ${[...new Set(divUnresolved)].join(', ')}`);
   for (const g of goldDedup.values()) { const tab = await tabOfHolding(g.stockName); if (tab) flows.push({ tab, date: g.date, amount: (g.tradeType === '매도' ? 1 : -1) * Math.round(g.qty * g.price) }); }
   for (const f of fundDedup.values()) { const tab = await tabOfHolding(f.fundName); if (tab) flows.push({ tab, date: f.date, amount: -f.amount }); }
 
