@@ -47,6 +47,18 @@ const CASH_BASE_SEED = [
   ['연금저축', 0, '', '수동', ''], ['IRP', 0, '', '수동', ''],
 ];
 
+// ── 펀드 적립 영구 원장 ────────────────────────────────
+// 알람은 외부 Kakao 앱이 관리해 과거 알림이 사라진다 → "알람 전량 재계산 후 덮어쓰기"는
+// 알림이 1건만 남으면 누적 포지션을 그 1건으로 축소 파괴한다(2026-07 사고: 8,004,640좌→90,511좌).
+// 대신 매수를 이 영구 원장에 dedup append 하고, 보유행 좌수(D)·투자금(E) = Σ(원장)으로 계산한다
+// (체결내역과 동일한 append+dedup 내구성). BASE 행 = 자동화 이전 누적분(앵커).
+const FUND_LEDGER_SHEET = '펀드적립이력';
+const FUND_LEDGER_HEADER = ['날짜', '펀드명', '금액', '기준가', '좌수', '키'];
+const FUND_LEDGER_SEED = [
+  // 2026-07 복구: 삼성증권 기준 자동화 이전 누적(최초 2025-06-04~) = 8,004,640좌 / 12,400,000원
+  ['2026-06-30', 'VIP한국형가치투자증권자투자신탁(주식)-C-Pe', 12400000, '', 8004640, 'BASE|VIP|2026-06-30'],
+];
+
 // ── 달러RP 자동관리 설정 (모델 X: USD 앵커+델타, 원화는 표시수식) ─
 // 설계: docs/superpowers/specs/2026-06-05-달러RP-앵커델타-design.md
 const DOLLAR_BASE_SHEET = '달러기준';
@@ -394,17 +406,16 @@ async function main() {
   divAppends.forEach(r => console.log(`    + ${r[0]} ${r[2]} ${r[1]}원`));
   divUpdates.forEach(u => console.log(`    ~ ${u.date} ${u.name} → ${u.amount}원`));
 
-  // ── 펀드 적립 (알림 전량 재계산 후 보유행 덮어쓰기, 멱등) ──
-  // 알림 자체 중복 흡수: 키 = 펀드명|날짜|금액|기준가
+  // ── 펀드 적립 (영구 원장 append+dedup → 보유행 D:E = Σ원장) ──
+  // 왜 '전량 재계산 덮어쓰기'를 안 쓰나: 알람은 외부 Kakao 앱 관리라 과거 알림이 사라진다.
+  // 알림이 1건만 남은 순간 재계산하면 누적 포지션을 1건으로 축소 덮어쓴다(2026-07 사고).
+  // → 매수를 영구 원장(FUND_LEDGER_SHEET)에 키로 dedup append 하고, 좌수/투자금은 Σ원장.
+  // 알림 자체 중복 흡수: 키 = 펀드명|날짜|금액|기준가.
   const fundDedup = new Map();
   for (const f of funds) fundDedup.set(`${f.fundName}|${f.date}|${f.amount}|${f.nav}`, f);
-  const fundGroups = new Map();
-  for (const f of fundDedup.values()) {
-    if (!fundGroups.has(f.fundName)) fundGroups.set(f.fundName, []);
-    fundGroups.get(f.fundName).push(f);
-  }
 
-  // 보유행 찾기: 전 계좌 탭 A:B 에서 B(종목명)가 알림 펀드명에 포함되는 첫 행
+  // 보유행 찾기: 전 계좌 탭 A:B 에서 B(종목명)가 원장 펀드명의 접두인 첫 행.
+  // startsWith(=접두 일치): 이름이 문자열 중간에 우연히 겹쳐 오귀속되는 것을 막는다(금융 안전).
   const norm = (s) => String(s ?? '').replace(/\s/g, '');
   async function findHoldingRow(fundName) {
     const target = norm(fundName);
@@ -412,29 +423,65 @@ async function main() {
       const rows = await getRange(token, `${tab}!A:B`).catch(() => []);
       for (let i = 0; i < rows.length; i++) {
         const name = String(rows[i]?.[1] ?? '').trim();
-        if (name && target.includes(norm(name))) return { tab, row: i + 1, name };
+        if (name && target.startsWith(norm(name))) return { tab, row: i + 1, name };
       }
     }
     return null;
   }
 
+  // 영구 원장 로드 + 최초 시드(자동화 이전 누적 앵커)
+  if (!DRY_RUN) await ensureSheet(token, FUND_LEDGER_SHEET, FUND_LEDGER_HEADER);
+  let ledgerRows = await getRange(token, `${FUND_LEDGER_SHEET}!A2:F`).catch(() => []);
+  if (!ledgerRows.length) {
+    if (!DRY_RUN) await appendValues(token, `${FUND_LEDGER_SHEET}!A2`, FUND_LEDGER_SEED);
+    ledgerRows = FUND_LEDGER_SEED.map(r => [...r]);   // dry-run/최초에도 계산에 반영
+  }
+  const ledgerKeys = new Set(ledgerRows.map(r => String(r[5] ?? '').trim()).filter(Boolean));
+
+  // 새 매수 알림 → 원장 append (멱등: 키 미존재만). 여기서 ledgerRows에도 즉시 반영.
+  const fundLedgerAppends = [];
+  for (const f of fundDedup.values()) {
+    const key = `${f.fundName}|${f.date}|${f.amount}|${f.nav}`;
+    if (ledgerKeys.has(key)) continue;
+    ledgerKeys.add(key);
+    const row = [f.date, f.fundName, f.amount, f.nav, Math.round(f.units), key];
+    fundLedgerAppends.push(row); ledgerRows.push(row);
+  }
+
+  // 원장 전체를 보유행별로 집계 → 평균기준가(C)·좌수(D)·투자금(E). C=Σ투자금/Σ좌수×1000(평균
+  // 매수기준가, 리터럴 기록 — 시트 C가 수식이 아니라 리터럴이라 스스로 갱신 안 돼 파서가 채운다).
+  // 평가금액(H)·수익률(I)은 시트 수식이, 현재가(F=기준가)는 GAS가 라이브 갱신 → 절대 건드리지 않음.
+  const fundAgg = new Map();          // `${tab}!${row}` → 누적
+  const holdCache = new Map();
+  const unmatched = new Map();        // 보유행 못 찾은 펀드명 → 원장 건수(경고용)
+  const rowFunds = new Map();         // `${tab}!${row}` → Set(펀드명) — 오귀속 충돌 탐지
+  for (const r of ledgerRows) {
+    const fname = String(r[1] ?? '').trim(); if (!fname) continue;
+    const amount = parseInt(cleanNum(String(r[2] ?? '')), 10) || 0;
+    const units = parseInt(cleanNum(String(r[4] ?? '')), 10) || 0;
+    if (!holdCache.has(fname)) holdCache.set(fname, await findHoldingRow(fname));
+    const hit = holdCache.get(fname);
+    if (!hit) { unmatched.set(fname, (unmatched.get(fname) || 0) + 1); continue; }
+    const k = `${hit.tab}!${hit.row}`;
+    if (!rowFunds.has(k)) rowFunds.set(k, new Set());
+    rowFunds.get(k).add(fname);
+    if (!fundAgg.has(k)) fundAgg.set(k, { tab: hit.tab, row: hit.row, name: hit.name, units: 0, invest: 0, n: 0 });
+    const a = fundAgg.get(k); a.units += units; a.invest += amount; a.n += 1;
+  }
+  // 안전 경고: 보유행 미매칭(오타·행 삭제·일시적 read 실패로 원장 유실) / 한 행에 2+ 펀드 오귀속
+  for (const [name, n] of unmatched) console.log(`  ⚠ 펀드 원장 보유행 못 찾음: ${name} (${n}건) — 집계 제외(보유종목 B열 이름 접두 확인)`);
+  for (const [k, names] of rowFunds) if (names.size > 1) console.log(`  ⚠ 펀드 오귀속 의심: 보유행 ${k}에 서로 다른 펀드명 ${names.size}개 합산됨 — ${[...names].join(' / ')}`);
   const fundWrites = [];
-  for (const [fundName, recs] of fundGroups) {
-    recs.sort((a, b) => a.date.localeCompare(b.date));
-    const 누적투자금 = recs.reduce((s, r) => s + r.amount, 0);
-    const 누적좌수 = Math.round(recs.reduce((s, r) => s + r.units, 0));
-    if (누적좌수 <= 0) continue;
-    const hit = await findHoldingRow(fundName);
-    if (!hit) { console.log(`  ⚠ 펀드 보유행 못 찾음: ${fundName} (적립 ${recs.length}건, ${누적투자금}원) — skip`); continue; }
-    // 좌수(D)·투자금(E) 리터럴만 갱신. 평균기준가(C)·평가금액(H)·수익률(I)은 시트 수식이
-    // 자동 계산하고, 현재가(F=기준가)는 gold-price.gs(GAS)가 라이브 갱신하므로 절대 덮어쓰지 않음.
+  for (const a of fundAgg.values()) {
+    if (a.units <= 0) continue;
+    const 평균단가 = Math.round(a.invest / a.units * 1000 * 100) / 100;   // 평균 매수기준가(1,000좌당)
     fundWrites.push({
-      range: `${hit.tab}!D${hit.row}:E${hit.row}`, tab: hit.tab, name: hit.name,
-      values: [[누적좌수, 누적투자금]],
-      detail: `${recs.length}건 적립 → 좌수 ${누적좌수.toLocaleString()} · 투자금 ${누적투자금.toLocaleString()}원`,
+      range: `${a.tab}!C${a.row}:E${a.row}`, tab: a.tab, name: a.name,
+      values: [[평균단가, a.units, a.invest]],
+      detail: `원장 ${a.n}건 Σ → 단가 ${평균단가.toLocaleString()} · 좌수 ${a.units.toLocaleString()} · 투자금 ${a.invest.toLocaleString()}원`,
     });
   }
-  console.log(`  펀드적립: 갱신 대상 ${fundWrites.length}개`);
+  console.log(`  펀드적립: 원장 신규 +${fundLedgerAppends.length} · 보유행 갱신 ${fundWrites.length}개`);
   fundWrites.forEach(w => console.log(`    ↻ ${w.tab} ${w.name}: ${w.detail}`));
 
   // ── 금현물 → 체결내역 통합 (일반 주식과 동일 파이프라인) ──────
@@ -574,6 +621,7 @@ async function main() {
     await updateCell(token, `${DIV_SHEET}!D${u.rowNum}`, u.keys);
   }
   if (divAppends.length) await appendValues(token, `${DIV_SHEET}!A2`, divAppends);
+  if (fundLedgerAppends.length) await appendValues(token, `${FUND_LEDGER_SHEET}!A2`, fundLedgerAppends);
   for (const w of fundWrites) await setValues(token, w.range, w.values);
   for (const u of baseUpdates) await setValues(token, u.range, u.values);
   // 현금은 투자금(E)=평가금액(H), 손익 0. F(현재가)·G(손익) 칸은 보존 위해 E·H만 개별 갱신.
