@@ -54,7 +54,10 @@ export default function ExecutionsTab({
           <div style={{ padding: '10px 16px', borderBottom: '1px solid #141414', fontSize: 10, letterSpacing: 2, color: '#6B675C' }}>
             전체 {tradeRows.length}건 · 처리완료 {tradeRows.filter(r => r.processed).length}건
           </div>
-          {[...tradeRows].sort((a, b) => String(b.row[0] ?? '').localeCompare(String(a.row[0] ?? ''))).map(({ row, processed }, idx) => {
+          {[...tradeRows]
+            .map((it, origIdx) => ({ ...it, origIdx }))   // 원래(시트순) 인덱스 보존 — 편집 저장 대상 행
+            .sort((a, b) => String(b.row[0] ?? '').localeCompare(String(a.row[0] ?? '')))
+            .map(({ row, processed, origIdx }, sortPos, arr) => {
             const date     = String(row[0] ?? '').trim();
             const buySell  = String(row[1] ?? '').trim();
             const account  = String(row[2] ?? '').trim();
@@ -76,22 +79,22 @@ export default function ExecutionsTab({
               if (isComplete) return;
               const vals = Array(13).fill('').map((_, ci) => String(row[ci] ?? ''));
               setTradeEditValues(vals);
-              setTradeEditRowIdx(idx);
+              setTradeEditRowIdx(origIdx);   // 시트순 인덱스 — 정렬 위치가 아니라 실제 행에 저장
               setTradeEditOpen(true);
             };
             return (
-              <div key={idx}
-                {...(!isComplete ? lp.bind(idx, openTradeEdit) : {})}
+              <div key={origIdx}
+                {...(!isComplete ? lp.bind(origIdx, openTradeEdit) : {})}
                 style={{
                   position: 'relative',
                   padding: '12px 16px',
-                  borderBottom: idx < tradeRows.length - 1 ? '1px solid #EAE6DA' : 'none',
+                  borderBottom: sortPos < arr.length - 1 ? '1px solid #EAE6DA' : 'none',
                   display: 'flex', alignItems: 'center', gap: 12,
-                  background: lp.activeId === idx ? '#EAE6DA' : 'transparent',
+                  background: lp.activeId === origIdx ? '#EAE6DA' : 'transparent',
                   opacity: processed ? 0.55 : 1,
                   cursor: !isComplete ? 'pointer' : 'default',
                 }}>
-                {lp.activeId === idx && <div className="lp-progress" />}
+                {lp.activeId === origIdx && <div className="lp-progress" />}
                 <div style={{
                   width: 8, height: 8, borderRadius: 0, flexShrink: 0,
                   background: processed ? '#159E52' : isComplete ? '#E0A000' : '#EAE6DA',

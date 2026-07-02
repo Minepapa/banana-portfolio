@@ -15,8 +15,8 @@ export default function TradeEditModal({
     }} onClick={(e) => { if (e.target === e.currentTarget) setTradeEditOpen(false); }}>
       <div style={{
         background: '#FFFFFF', borderRadius: 0, width: '100%', maxWidth: 440,
-        maxHeight: '90vh', overflowY: 'auto', padding: '20px 18px',
-        border: '1px solid #141414',
+        maxHeight: '90vh', overflowY: 'auto', overflowX: 'hidden', padding: '20px 18px',
+        border: '1px solid #141414', boxSizing: 'border-box',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#E0A000' }}>셀 값 입력</div>
@@ -45,7 +45,8 @@ export default function TradeEditModal({
                 }}
                 placeholder={col.placeholder}
                 style={{
-                  flex: 1, background: isEmpty ? '#FBF1D0' : '#FFFFFF',
+                  flex: 1, minWidth: 0, boxSizing: 'border-box',
+                  background: isEmpty ? '#FBF1D0' : '#FFFFFF',
                   border: `1px solid ${isEmpty ? '#E0A000' : '#141414'}`,
                   borderRadius: 0, padding: '6px 8px', color: '#141414',
                   fontSize: 12, fontFamily: baseFont, outline: 'none',
