@@ -6,7 +6,7 @@ import { useLongPress } from '../hooks/useLongPress.js';
 export default function ExecutionsTab({
   tradeRows, tradeSyncMsg, tradeSyncing, syncTradeExecutions,
   savingsMode, setSavingsMode, savingsAppliedRows, applySavingsFromTrade,
-  setTradeEditValues, setTradeEditRowIdx, setTradeEditOpen,
+  setTradeEditValues, setTradeEditRowIdx, setTradeEditOpen, setTradeEditOriginal,
   sheets, baseFont,
 }) {
   const lp = useLongPress();
@@ -79,6 +79,7 @@ export default function ExecutionsTab({
               if (isComplete) return;
               const vals = Array(13).fill('').map((_, ci) => String(row[ci] ?? ''));
               setTradeEditValues(vals);
+              setTradeEditOriginal(vals);    // 저장 시 diff 기준 — 안 건드린 셀(특히 날짜)은 원본 보존
               setTradeEditRowIdx(origIdx);   // 시트순 인덱스 — 정렬 위치가 아니라 실제 행에 저장
               setTradeEditOpen(true);
             };

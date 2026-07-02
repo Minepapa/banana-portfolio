@@ -96,6 +96,7 @@ export default function App() {
     tradeEditOpen, setTradeEditOpen,
     tradeEditRowIdx, setTradeEditRowIdx,
     tradeEditValues, setTradeEditValues,
+    setTradeEditOriginal,
     tradeEditBusy,
     syncTradeExecutions,
     saveTradeEdit,
@@ -452,7 +453,7 @@ export default function App() {
             savingsMode={savingsMode} setSavingsMode={setSavingsMode}
             savingsAppliedRows={savingsAppliedRows} applySavingsFromTrade={applySavingsFromTrade}
             setTradeEditValues={setTradeEditValues} setTradeEditRowIdx={setTradeEditRowIdx}
-            setTradeEditOpen={setTradeEditOpen}
+            setTradeEditOpen={setTradeEditOpen} setTradeEditOriginal={setTradeEditOriginal}
             sheets={sheets} baseFont={baseFont}
           />
         )}

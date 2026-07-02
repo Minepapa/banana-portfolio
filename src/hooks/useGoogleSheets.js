@@ -219,6 +219,17 @@ export function useGoogleSheets(onData) {
     });
   }, []);
 
+  // 서로 떨어진 여러 셀을 한 번의 API 요청으로 씀(원자적 — 요청 전체가 실패하면 아무 것도 안 바뀜).
+  // N번 개별 writeRange로 쪼개면 중간 실패 시 일부 셀만 반영되는 부분쓰기 위험이 있어,
+  // 여러 셀을 동시에 갱신해야 하는 편집(체결 셀 편집 등)에 사용.
+  const writeCellsBatch = useCallback(async (data) => { // data: [{ range, values: [rowData] }, ...]
+    if (!data.length) return;
+    await window.gapi.client.sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: SHEET_ID,
+      resource: { valueInputOption: 'USER_ENTERED', data },
+    });
+  }, []);
+
   const writeRangeMulti = useCallback(async (range, rows) => {
     await window.gapi.client.sheets.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
@@ -306,5 +317,5 @@ export function useGoogleSheets(onData) {
     });
   }, []);
 
-  return { auth, sync, lastSync, lastSyncRef, signIn, signOut, fetch: doFetch, appendRow, appendValues, clearRows, clearRowsRaw, readRange, writeRange, writeRangeMulti, insertRowAfter, getSheetId, readTradeProcessedFlags, markTradeProcessed };
+  return { auth, sync, lastSync, lastSyncRef, signIn, signOut, fetch: doFetch, appendRow, appendValues, clearRows, clearRowsRaw, readRange, writeRange, writeRangeMulti, writeCellsBatch, insertRowAfter, getSheetId, readTradeProcessedFlags, markTradeProcessed };
 }

@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { parseNum } from '../lib/textFormat.js';
 import { KL_CFG, buildRowMap } from '../lib/sheetRows.js';
+import { CHEOL_COLS } from '../lib/constants.js';
 
 export function useTradeSync({ sheets, usdRate }) {
   const [tradeRows, setTradeRows] = useState([]);
@@ -16,6 +17,9 @@ export function useTradeSync({ sheets, usdRate }) {
   const [tradeEditOpen, setTradeEditOpen] = useState(false);
   const [tradeEditRowIdx, setTradeEditRowIdx] = useState(null);
   const [tradeEditValues, setTradeEditValues] = useState(Array(13).fill(''));
+  // 편집 시작 시점 원본 스냅샷 — 저장 시 이것과 다른 셀만 개별 갱신(날짜 등 안 건드린 셀은 원본
+  // 그대로 보존). 과거 버그: 항상 A:M 전체를 재저장해 FORMATTED로 읽은 날짜의 시각이 유실됨.
+  const [tradeEditOriginal, setTradeEditOriginal] = useState(Array(13).fill(''));
   const [tradeEditBusy, setTradeEditBusy] = useState(false);
 
   const addHoldingFromTrade = useCallback(async (acctKey, assetType, stockName, price, qty, currentPrice) => {
@@ -209,7 +213,22 @@ export function useTradeSync({ sheets, usdRate }) {
     setTradeEditBusy(true);
     try {
       const n = tradeEditRowIdx + 2; // 시트 행 번호 (A2 기준)
-      await sheets.writeRange(`체결내역!A${n}:M${n}`, tradeEditValues);
+      // 원본과 달라진 셀만 갱신 — 안 건드린 날짜(A) 등은 그대로 둬 원본 직렬값(시각 포함)을 보존한다.
+      // 항상 A:M 전체를 재저장하면 화면표시(FORMATTED)로 읽은 날짜의 시각이 유실되고, 이후 알람
+      // 재파싱 dedup이 어긋나 매시간 중복 적재되는 사고로 이어진다(2026-06-23 현대차, 파서 dedup
+      // 완화는 별도 커밋). 변경분은 batchUpdate 한 번으로 원자적 기록(N번 개별 호출 시 중간 실패하면
+      // 일부 셀만 반영되는 부분쓰기 위험 방지).
+      const changedIdx = CHEOL_COLS.map((_, ci) => ci).filter(ci => tradeEditValues[ci] !== tradeEditOriginal[ci]);
+      if (!changedIdx.length) {
+        setTradeEditOpen(false);
+        setTradeEditRowIdx(null);
+        setTradeSyncMsg('변경 사항 없음');
+        setTimeout(() => setTradeSyncMsg(''), 3000);
+        return;
+      }
+      await sheets.writeCellsBatch(changedIdx.map(ci => ({
+        range: `체결내역!${CHEOL_COLS[ci].key}${n}`, values: [[tradeEditValues[ci]]],
+      })));
       const newValues = await sheets.readRange('체결내역!A2:M');
       const newFlags  = await sheets.readTradeProcessedFlags();
       setTradeRows(newValues.map((row, i) => ({ row, processed: newFlags[i] ?? false })));
@@ -223,7 +242,7 @@ export function useTradeSync({ sheets, usdRate }) {
     } finally {
       setTradeEditBusy(false);
     }
-  }, [sheets, tradeEditRowIdx, tradeEditValues]);
+  }, [sheets, tradeEditRowIdx, tradeEditValues, tradeEditOriginal]);
 
   const applySavingsFromTrade = useCallback(async (tradeDate, amount, isBuy, tradeKey) => {
     setTradeSyncMsg('저축금 반영 중...');
@@ -271,6 +290,7 @@ export function useTradeSync({ sheets, usdRate }) {
     tradeEditOpen, setTradeEditOpen,
     tradeEditRowIdx, setTradeEditRowIdx,
     tradeEditValues, setTradeEditValues,
+    tradeEditOriginal, setTradeEditOriginal,
     tradeEditBusy,
     syncTradeExecutions,
     saveTradeEdit,
