@@ -323,13 +323,32 @@ async function main() {
   const cellDT = (v) => (typeof v === 'number' ? serialToDateTime(v) : normalizeDateTime(v));
   const execKey = (dt, type, name, qty) =>
     `${canonDT(dt)}|${String(type ?? '').trim()}|${String(name ?? '').trim()}|${String(qty ?? '').trim().replace(/\.0*$/, '')}`;
-  const existingKeys = new Set(
-    execExisting.map(row => {
-      const dt = cellDT(row[0]); const name = String(row[5] ?? '').trim();
-      return (!dt || !name) ? null : execKey(dt, row[1], name, row[7]);
-    }).filter(Boolean),
-  );
-  const newExecs = execs.filter(e => !existingKeys.has(execKey(e.tradeDate, e.tradeType, e.stockName, e.quantity)));
+  const existingKeys = new Set();
+  // 시각정보 없는(날짜만) 기존 행의 키 — 앱 셀편집(TradeEditModal)이 FORMATTED 날짜를 그대로
+  // 재저장해 시각이 유실된 행 포함. 이런 행은 알람 재파싱 시 항상 실제 시각을 갖게 되어 execKey가
+  // 절대 일치할 수 없다 → 매시간 중복 적재된 사고(2026-06-23 현대차, 8주→16주로 배증).
+  // 날짜만으로도 매칭되게 완화하되, 레거시 행 1개당 딱 1건만 흡수(Map 카운트)해 같은 날 진짜
+  // 분할매수(동일 종목·수량)가 두 번째부터 죄다 스킵되는 걸 막는다. 시각 있는 정상 행은 엄격 유지.
+  const existingDateOnlyKeys = new Map();   // key → 남은 흡수 가능 건수
+  const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  for (const row of execExisting) {
+    const dt = cellDT(row[0]); const name = String(row[5] ?? '').trim();
+    if (!dt || !name) continue;
+    const k = execKey(dt, row[1], name, row[7]);   // execKey 내부가 canonDT 적용(자정→날짜만 축약)
+    existingKeys.add(k);
+    if (DATE_ONLY_RE.test(k.split('|')[0])) existingDateOnlyKeys.set(k, (existingDateOnlyKeys.get(k) ?? 0) + 1);
+  }
+  const newExecs = execs.filter(e => {
+    if (existingKeys.has(execKey(e.tradeDate, e.tradeType, e.stockName, e.quantity))) return false;
+    const dk = execKey(e.tradeDate.slice(0, 10), e.tradeType, e.stockName, e.quantity);
+    const left = existingDateOnlyKeys.get(dk);
+    if (left > 0) {
+      existingDateOnlyKeys.set(dk, left - 1);
+      console.log(`  ⚠ 날짜전용 레거시행 매칭으로 중복 스킵(감사용): ${e.tradeDate} ${e.tradeType} ${e.stockName} ${e.quantity}주 — 실제 신규 거래라면 해당 레거시 체결행 시각 확인 필요`);
+      return false;
+    }
+    return true;
+  });
 
   // 포트폴리오 맵 (종목명 → [계좌, 자산군]); 중복 종목명 제외
   const portfolioMap = new Map(); const dupNames = new Set();
