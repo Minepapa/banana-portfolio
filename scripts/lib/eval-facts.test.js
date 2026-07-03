@@ -48,3 +48,29 @@ test('buildEvalFacts: 매핑 실패 — 추정 없이 데이터부족 표기', a
   assert.ok(f.factsText.includes('데이터 부족'));
   assert.deepEqual(f.axisItems.수익성, []);
 });
+
+// drain-eval-queue의 "완전 매핑실패 → 헤드리스 호출 생략" 게이트는 missing 배열 형태에
+// 의존한다(길이 2 · 전부 "매핑 실패" 포함). 문구가 바뀌면 게이트가 조용히 안 걸리는 회귀가
+// 재발하므로(2026-07 알파벳·마이크론 사고) 이 계약을 여기서 고정한다.
+test('buildEvalFacts: 완전 매핑실패(KR) — missing 2건·전부 "매핑 실패" 포함(게이트 계약)', async () => {
+  const f = await buildEvalFacts({ name: '미지의종목', market: 'KR' },
+    { corpCode: null, stockCode: null },
+    { krFund: krFundStub, usFund: null, krMkt: mktStub, usMkt: null });
+  assert.equal(f.missing.length, 2);
+  assert.ok(f.missing.every(m => m.includes('매핑 실패')));
+});
+
+test('buildEvalFacts: 완전 매핑실패(US) — missing 2건·전부 "매핑 실패" 포함(게이트 계약)', async () => {
+  const f = await buildEvalFacts({ name: '미지의종목', market: 'US' },
+    { corpCode: null, stockCode: null, ticker: null },
+    { krFund: null, usFund: krFundStub, krMkt: null, usMkt: mktStub });
+  assert.equal(f.missing.length, 2);
+  assert.ok(f.missing.every(m => m.includes('매핑 실패')));
+});
+
+test('buildEvalFacts: 부분 매핑실패(재무만) — missing 1건뿐(게이트 미발동 조건)', async () => {
+  const f = await buildEvalFacts({ name: '미지의종목', market: 'KR' },
+    { corpCode: null, stockCode: '005930' },
+    { krFund: krFundStub, usFund: null, krMkt: mktStub, usMkt: null });
+  assert.equal(f.missing.length, 1);
+});

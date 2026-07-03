@@ -70,5 +70,5 @@ export async function buildEvalFacts(entry, ids, fetchers) {
   }
   if (missing.length) lines.push(`- ⚠️ 데이터 부족: ${missing.join('; ')} → 해당 축은 "(데이터 부족)" 표기, 추정 금지`);
 
-  return { axisItems, factsText: lines.join('\n'), market: isKr ? 'KR' : 'US' };
+  return { axisItems, factsText: lines.join('\n'), market: isKr ? 'KR' : 'US', missing };
 }

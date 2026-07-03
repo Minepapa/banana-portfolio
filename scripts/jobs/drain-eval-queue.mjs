@@ -722,6 +722,22 @@ async function main() {
 
     // --auto: Node가 결정론 facts를 산출해 프롬프트에 주입. 반자동은 facts 없이 종전대로.
     const facts = AUTO ? await buildAutoFacts(entry) : null;
+
+    // 완전 매핑 실패(재무·시세 둘 다 corp_code/티커 없음) — 헤드리스 호출해봐야 5축 전부
+    // "데이터 부족"인 빈 판단보류 카드만 나온다(2026-07 알파벳·마이크론 사고: 완료로 표시돼
+    // 실패가 안 보임). 호출 자체를 생략하고 즉시 오류로 표면화해 무엇을 등록해야 하는지 알려준다.
+    if (facts?.missing?.length === 2 && facts.missing.every(m => m.includes('매핑 실패'))) {
+      const isKrEntry = (entry.market || '').toUpperCase() === 'KR';
+      const memo = `${isKrEntry ? 'KR corp_code' : 'US 티커'} 매핑 없음 — instruments.mjs에 '${entry.name}' 등록 후 재시도 필요 (${nowKST()})`;
+      console.error(`  ⚠️ ${entry.name}: ${isKrEntry ? 'corp_code' : '티커'} 매핑 없음 — 헤드리스 호출 생략, 수동 등록 필요`);
+      if (!DRY_RUN) {
+        await updateCell(token, `평가요청!D${entry.rowNum}`, '오류');
+        await updateCell(token, `평가요청!F${entry.rowNum}`, memo);
+      }
+      errors++;
+      continue;
+    }
+
     const prompt = sellMode
       ? buildSellPrompt(entry, buyCard, facts, confirmedPrefsText)
       : buildBuyPrompt(entry, cachedEval, holdings, allocationData, facts, confirmedPrefsText);
