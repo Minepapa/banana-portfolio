@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { SectionTitle, Sentences } from '../lib/primitives.jsx';
 
-export default function RiskTab({ riskMonitor, baselines }) {
+export default function RiskTab({ riskMonitor, baselines, setTab }) {
   const [riskOpen, setRiskOpen] = useState(new Set());
 
   const today = new Date();
@@ -125,6 +125,27 @@ export default function RiskTab({ riskMonitor, baselines }) {
                 </div>
                 {/* 본문은 카드 전체 폭으로 — 날짜 아래까지 채워 자연스럽게 줄바꿈 */}
                 <Sentences text={r.summary} sentenceOnly style={{ fontSize: 11, color: '#6B675C', lineHeight: 1.55, marginTop: 4 }} />
+                {/* 신호→행동 원탭: B(논리)=포지션·매도검토, O(급락)=평가. D(거시)는 읽기형 — 링크 없음.
+                    🟢(정상)은 조치 불필요라 버튼 생략. (스타일: TodayTab go 버튼과 동일) */}
+                {setTab && sigLevel(r.signal) >= 2 && (r.type === 'B' || r.type === 'O') && (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                    {r.type === 'B' && (
+                      <>
+                        <button onClick={() => setTab('저널')} style={{ padding: '5px 12px', minHeight: 30, borderRadius: 0, border: `1px solid ${color}55`, background: 'transparent', color, cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>
+                          포지션 보기 ›
+                        </button>
+                        <button onClick={() => setTab('평가')} style={{ padding: '5px 12px', minHeight: 30, borderRadius: 0, border: '1px solid #141414', background: 'transparent', color: '#141414', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>
+                          매도 검토 ›
+                        </button>
+                      </>
+                    )}
+                    {r.type === 'O' && (
+                      <button onClick={() => setTab('평가')} style={{ padding: '5px 12px', minHeight: 30, borderRadius: 0, border: `1px solid ${color}55`, background: 'transparent', color, cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>
+                        평가 보기 ›
+                      </button>
+                    )}
+                  </div>
+                )}
                 {(r.detail || r.evidence) && (
                   <button onClick={() => setRiskOpen(prev => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; })}
                     style={{ marginTop: 8, padding: '4px 0', background: 'transparent', border: 'none', color: '#6B675C', cursor: 'pointer', fontSize: 9 }}>

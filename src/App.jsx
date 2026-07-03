@@ -397,7 +397,7 @@ export default function App() {
 
         {/* ── 리스크 탭 ── */}
         {tab === "리스크" && (
-          <RiskTab riskMonitor={riskMonitor} baselines={baselines} />
+          <RiskTab riskMonitor={riskMonitor} baselines={baselines} setTab={setTab} />
         )}
 
         {/* ── 리밸런싱 탭 ── */}
