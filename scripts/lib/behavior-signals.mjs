@@ -4,19 +4,14 @@
 //
 // 임계값은 src/lib/metrics.js computeBehaviorMetrics와 일치(500만 원칙·30일 매칭창).
 
+// 컬럼 레이아웃은 sheet-contracts.mjs 단일 정본에서 import — 로컬 중복 하드코딩 금지
+// (writer HEADER와의 정합은 sheet-contracts.test.js가 고정).
+import { EXEC_COL as T, NOTE_COL as N, JOURNAL_COL as J, RISK_COL as R } from './sheet-contracts.mjs';
+
 const RULE500_WON = 5_000_000;        // 1회 매수 체결금액 상한(성향: 적립식)
 const MATCH_WINDOW_DAYS = 30;         // 🟢 평가 → 매수 매칭창
 const LESSON_LOOKBACK_DAYS = 60;      // 청산 교훈 수집 범위
 const RULE_LOOKBACK_DAYS = 90;        // 500만 원칙 집계 범위(주간은 표본이 작아 최근 누적으로 본다)
-
-// 체결내역: A날짜0 B구분1 C계좌2 D코드3 E자산군4 F종목명5 G체결가6 H수량7 I금액8 J현재가9 K손익10 L평가11 M수익률12
-const T = { DATE: 0, SIDE: 1, ACCT: 2, CODE: 3, ASSET: 4, NAME: 5, PRICE: 6, QTY: 7, AMOUNT: 8, PNL: 10, RETPCT: 12 };
-// 종목투자노트: A날짜0 B종목1 C티커2 D시장3 E결론4 … O상태14
-const N = { DATE: 0, NAME: 1, CONCL: 4, STATUS: 14 };
-// 포지션저널: A종목0 … K상태10 L청산일11 M청산결과12 N교훈13
-const J = { NAME: 0, STATUS: 10, EXITDATE: 11, RESULT: 12, LESSON: 13 };
-// 리스크모니터: 날짜0 유형1 대상2 신호3 …
-const R = { DATE: 0, TYPE: 1, TARGET: 2, SIGNAL: 3 };
 
 const num = (v) => { const n = parseFloat(String(v ?? '').replace(/[,%+\s]/g, '')); return Number.isFinite(n) ? n : null; };
 const s = (v) => String(v ?? '').trim();

@@ -18,6 +18,7 @@
  */
 
 import { getToken, getRange, appendValues, setValues, ensureSheet, readHoldings, nowKST, todayKST } from '../lib/sheets-common.mjs';
+import { JOURNAL_HEADER, JOURNAL_COL, JOURNAL_STATUS, CONFIRM_STATUS } from '../lib/sheet-contracts.mjs';
 
 const args = process.argv.slice(2);
 const DUMP = args.includes('--dump');
@@ -25,7 +26,9 @@ const DRY_RUN = args.includes('--dry-run');
 const explicitToken = args.find(a => !a.startsWith('--')); // launchd run.sh 가 SA 토큰을 positional 로 전달
 
 const SHEET = '포지션저널';
-const HEADER = ['종목명', '티커', '시장', '계좌', '유형', '전제', '목표', '이탈조건', '예상보유', '진입일', '상태', '청산일', '청산결과', '교훈', '확인여부', '갱신시각'];
+// 컬럼 레이아웃은 sheet-contracts.mjs 단일 정본 — reader(behavior-signals·parseSheetData)와의
+// 정합을 sheet-contracts.test.js가 고정한다.
+const HEADER = JOURNAL_HEADER;
 
 // 배분형(자산군 대표 ETF/펀드) 분류용 키워드
 const ALLOC_KW = /ETF|펀드|액티브|플러스|TIGER|KODEX|ACE|RISE|SOL|KBSTAR|ARIRANG|HANARO|TDF|채권|국고|리츠|REIT|배당|커버드콜|단기|MMF|머니마켓|금현물|S&P|나스닥|지수/i;
@@ -122,11 +125,11 @@ async function main() {
       t.exit || '',                 // H 이탈조건
       t.hold || '',                 // I 예상보유
       t.entry || '',                // J 진입일
-      '보유',                       // K 상태
+      JOURNAL_STATUS.HELD,          // K 상태
       '',                           // L 청산일
       '',                           // M 청산결과
       '',                           // N 교훈
-      (t.thesis ? '대기' : '미작성'), // O 확인여부
+      (t.thesis ? CONFIRM_STATUS.PENDING : CONFIRM_STATUS.UNWRITTEN), // O 확인여부
       nowKST(),                     // P 갱신시각
     ]);
   }
@@ -164,8 +167,8 @@ async function main() {
   existingRows.forEach((r, idx) => {
     const name = String(r[0] ?? '').trim();
     if (!name || SKIP.has(name)) return;
-    const status = String(r[10] ?? '').trim() || '보유';
-    if (status === '청산') return;
+    const status = String(r[JOURNAL_COL.STATUS] ?? '').trim() || JOURNAL_STATUS.HELD;
+    if (status === JOURNAL_STATUS.CLOSED) return;
     const ticker = String(r[1] ?? '').trim().toUpperCase();
     const stillHeld = heldKeys.has(norm(name)) || (ticker && heldKeys.has(ticker));
     if (!stillHeld) closures.push({ row: idx + 2, name });
@@ -175,14 +178,14 @@ async function main() {
   // 이상이 한 번에 "청산"되는 재앙적 규모(mass-flip, 부분 read 의심)만 차단한다.
   // 고정 카운트(>3)로 막으면 정당한 리밸런싱 대량 매도가 영구 스킵됨(리뷰 지적).
   const heldJournalCount = existingRows.filter(r =>
-    String(r[0] ?? '').trim() && (String(r[10] ?? '').trim() || '보유') !== '청산').length;
+    String(r[0] ?? '').trim() && (String(r[JOURNAL_COL.STATUS] ?? '').trim() || JOURNAL_STATUS.HELD) !== JOURNAL_STATUS.CLOSED).length;
   if (closures.length > 3 && closures.length >= heldJournalCount / 2) {
     console.log(`  ⚠ 청산 감지 ${closures.length}건(저널 보유 ${heldJournalCount}개의 절반 이상) — mass-flip 의심, 마킹 전체 스킵`);
     closures.length = 0;
   }
   for (const c of closures) {
     console.log(`  ⚑ 청산 감지: ${c.name} (행 ${c.row}) → 상태=청산 · 청산일=${todayKST()}`);
-    if (!DRY_RUN) await setValues(token, `${SHEET}!K${c.row}:L${c.row}`, [['청산', todayKST()]]);
+    if (!DRY_RUN) await setValues(token, `${SHEET}!K${c.row}:L${c.row}`, [[JOURNAL_STATUS.CLOSED, todayKST()]]);
   }
 
   const summary = [];

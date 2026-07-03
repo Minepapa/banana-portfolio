@@ -200,6 +200,30 @@ test('parsePositionJournal: 보유 먼저, 청산 뒤로', () => {
   assert.ok(journal.slice(1).every(j => j.status === '청산'));
 });
 
+test('parsePositionJournal: 컬럼 인덱스 계약 고정 (A~P, scripts/lib/sheet-contracts.mjs와 정합)', () => {
+  // writer(sync-position-journal HEADER)·다른 reader(behavior-signals JOURNAL_COL)와 같은
+  // 레이아웃을 이 파서가 유지하는지 위치별 고유값으로 고정 — 열이 한 칸이라도 밀리면 실패.
+  // (src는 scripts를 import할 수 없어 여기서 동일 계약을 독립적으로 핀 — 2026-07 침묵 어긋남 방지)
+  const vrs = makeVR();
+  vrs[1] = { values: [CASH_ROW] };
+  vrs[16] = { values: [[
+    '이름0', '티커1', '시장2', '계좌3', '유형4', '전제5', '목표6', '이탈7',
+    '보유기간8', '2026-01-09', '청산', '2026-06-11', '결과12', '교훈13', '확인', '갱신15',
+  ]] };
+  const [p] = parseSheetData(vrs).positionJournal;
+  assert.equal(p.name, '이름0');
+  assert.equal(p.kind, '유형4');
+  assert.equal(p.thesis, '전제5');
+  assert.equal(p.exit, '이탈7');
+  assert.equal(p.entry, '2026-01-09');    // J열(9)
+  assert.equal(p.status, '청산');          // K열(10) — 여기 밀리면 상태를 청산일로 읽는 사고
+  assert.equal(p.exitDate, '2026-06-11'); // L열(11)
+  assert.equal(p.result, '결과12');        // M열(12)
+  assert.equal(p.lesson, '교훈13');        // N열(13)
+  assert.equal(p.confirm, '확인');         // O열(14)
+  assert.equal(p.updated, '갱신15');       // P열(15)
+});
+
 // ── parseDividends ────────────────────────────────────────
 
 test('parseDividends: 같은 월 집계', () => {
