@@ -1,4 +1,4 @@
-// 잡상태 시트(A2:E) → 헬스 판정 순수 로직. App.jsx 배너와 테스트가 공유.
+// 잡상태 시트(A2:F) → 헬스 판정 순수 로직. App.jsx 배너와 테스트가 공유.
 export function parseJobStatus(rows) {
   return (rows || [])
     .filter(r => String(r?.[0] ?? '').trim())
@@ -8,6 +8,7 @@ export function parseJobStatus(rows) {
       status: String(r[2] ?? '').trim(),
       detail: String(r[3] ?? '').trim(),
       durationSec: String(r[4] ?? '').trim(),
+      failStreak: parseInt(String(r[5] ?? '0'), 10) || 0,  // F열 연속실패 — 심각도 판단용
     }));
 }
 
@@ -17,7 +18,7 @@ export function computeJobHealth(statusRows, cadence, now = Date.now()) {
   const seen = new Set();
   for (const s of statusRows || []) {
     seen.add(s.job);
-    if (s.status && s.status !== 'OK') { out.push({ job: s.job, problem: 'fail', detail: s.detail || '' }); continue; }
+    if (s.status && s.status !== 'OK') { out.push({ job: s.job, problem: 'fail', detail: s.detail || '', failStreak: s.failStreak || 0 }); continue; }
     const maxH = cadence[s.job];
     if (maxH == null) continue;
     const ts = Date.parse(s.lastRun);

@@ -29,6 +29,7 @@
 
 import { SHEET_ID, getToken, getRange, getRangeRaw, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from '../lib/sheets-common.mjs';
 import { resolveCashBase } from '../lib/cash-base.mjs';
+import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 const ALARM_SHEET = '알람';
@@ -502,8 +503,14 @@ async function main() {
     const a = fundAgg.get(k); a.units += units; a.invest += amount; a.n += 1;
   }
   // 안전 경고: 보유행 미매칭(오타·행 삭제·일시적 read 실패로 원장 유실) / 한 행에 2+ 펀드 오귀속
-  for (const [name, n] of unmatched) console.log(`  ⚠ 펀드 원장 보유행 못 찾음: ${name} (${n}건) — 집계 제외(보유종목 B열 이름 접두 확인)`);
-  for (const [k, names] of rowFunds) if (names.size > 1) console.log(`  ⚠ 펀드 오귀속 의심: 보유행 ${k}에 서로 다른 펀드명 ${names.size}개 합산됨 — ${[...names].join(' / ')}`);
+  for (const [name, n] of unmatched) {
+    console.log(`  ⚠ 펀드 원장 보유행 못 찾음: ${name} (${n}건) — 집계 제외(보유종목 B열 이름 접두 확인)`);
+    collectWarning(`펀드 보유행 못찾음: ${name}`);
+  }
+  for (const [k, names] of rowFunds) if (names.size > 1) {
+    console.log(`  ⚠ 펀드 오귀속 의심: 보유행 ${k}에 서로 다른 펀드명 ${names.size}개 합산됨 — ${[...names].join(' / ')}`);
+    collectWarning(`펀드 오귀속 의심: ${k}`);
+  }
   const fundWrites = [];
   for (const a of fundAgg.values()) {
     if (a.units <= 0) continue;
@@ -529,7 +536,7 @@ async function main() {
   for (const g of goldDedup.values()) {
     // 금 알림 종목명 → 보유 금 종목 귀속(부분일치). 단가·수량 단위는 원/g·g.
     const h = goldHoldings.find(h => norm(g.stockName).includes(norm(h.name)) || norm(h.name).includes(norm(g.stockName)));
-    if (!h) { console.log(`  ⚠ 금 보유종목 매칭 실패: ${g.stockName} — skip`); continue; }
+    if (!h) { console.log(`  ⚠ 금 보유종목 매칭 실패: ${g.stockName} — skip`); collectWarning(`금 매칭실패: ${g.stockName}`); continue; }
     const key = execKey(g.date, g.tradeType, h.name, g.qty);
     if (existingKeys.has(key)) continue;        // 체결내역 멱등 dedup
     existingKeys.add(key);
@@ -617,7 +624,11 @@ async function main() {
     if (divSeen.has(dk)) continue; divSeen.add(dk);
     flows.push({ tab, date: d.date, amount: d.afterTaxAmount });
   }
-  if (divUnresolved.length) console.log(`  ⚠ 배당 예수금 귀속 실패(계좌 판별 불가·수동 확인): ${[...new Set(divUnresolved)].join(', ')}`);
+  if (divUnresolved.length) {
+    const names = [...new Set(divUnresolved)];
+    console.log(`  ⚠ 배당 예수금 귀속 실패(계좌 판별 불가·수동 확인): ${names.join(', ')}`);
+    collectWarning(`배당 귀속실패 ${names.length}종목: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ' 외' : ''}`);
+  }
   for (const g of goldDedup.values()) { const tab = await tabOfHolding(g.stockName); if (tab) flows.push({ tab, date: g.date, amount: (g.tradeType === '매도' ? 1 : -1) * Math.round(g.qty * g.price) }); }
   for (const f of fundDedup.values()) { const tab = await tabOfHolding(f.fundName); if (tab) flows.push({ tab, date: f.date, amount: -f.amount }); }
 
@@ -679,7 +690,7 @@ async function main() {
   }
   if (dollarWrite) console.log(`  달러RP: ↻ ${DOLLAR_TAB} ${dollarWrite.detail}`);
 
-  if (DRY_RUN) { console.log('\n(드라이런 — 쓰기 없음)'); return; }
+  if (DRY_RUN) { console.log('\n(드라이런 — 쓰기 없음)'); await flushWarnings('parse-notifications', { dryRun: true }); return; }
 
   // 쓰기
   if (execRowsToWrite.length) {
@@ -710,6 +721,8 @@ async function main() {
   // 달러RP: D열(USD 잔액)만 씀. C·E·F·H 수식(원화 표시) 보존.
   if (dollarWrite) await updateCell(token, `${DOLLAR_TAB}!D${dollarWrite.row}`, dollarWrite.usd);
   console.log(`\n✅ 완료 — 체결 +${execRowsToWrite.length}(금 ${goldExecRows.length}) · 배당 신규 +${divAppends.length}/갱신 ${divUpdates.length} · 펀드 ↻${fundWrites.length} · 예수금 ↻${cashWrites.length}`);
+  // 경고 요약은 마지막 줄에 — run.sh가 로그 꼬리(tail -3)를 잡상태 detail로 넣어 앱에 노출 + 텔레그램(24h 억제)
+  await flushWarnings('parse-notifications');
 }
 
 main().catch(e => { console.error('\n❌ 오류:', e.message); process.exit(1); });

@@ -4,16 +4,21 @@ import { parseJobStatus, computeJobHealth } from './jobHealth.js';
 
 const T0 = Date.parse('2026-06-04 12:00');
 
-test('parseJobStatus: A2:E 행을 객체로', () => {
-  const rows = [['drain', '2026-06-04 06:00', 'OK', '', '5']];
+test('parseJobStatus: A2:F 행을 객체로 (failStreak 포함)', () => {
+  const rows = [['drain', '2026-06-04 06:00', 'OK', '', '5', '0']];
   assert.deepEqual(parseJobStatus(rows), [
-    { job: 'drain', lastRun: '2026-06-04 06:00', status: 'OK', detail: '', durationSec: '5' },
+    { job: 'drain', lastRun: '2026-06-04 06:00', status: 'OK', detail: '', durationSec: '5', failStreak: 0 },
   ]);
 });
 
-test('computeJobHealth: status FAIL 은 fail 문제', () => {
-  const rows = [{ job: 'risk-d', lastRun: '2026-06-04 07:00', status: 'FAIL', detail: 'limit' }];
-  assert.deepEqual(computeJobHealth(rows, { 'risk-d': 80 }, T0), [{ job: 'risk-d', problem: 'fail', detail: 'limit' }]);
+test('parseJobStatus: 구형 5열 행은 failStreak 0으로 안전 파싱', () => {
+  const rows = [['drain', '2026-06-04 06:00', 'FAIL', 'err', '5']];
+  assert.equal(parseJobStatus(rows)[0].failStreak, 0);
+});
+
+test('computeJobHealth: status FAIL 은 fail 문제 (failStreak 전달)', () => {
+  const rows = [{ job: 'risk-d', lastRun: '2026-06-04 07:00', status: 'FAIL', detail: 'limit', failStreak: 3 }];
+  assert.deepEqual(computeJobHealth(rows, { 'risk-d': 80 }, T0), [{ job: 'risk-d', problem: 'fail', detail: 'limit', failStreak: 3 }]);
 });
 
 test('computeJobHealth: 최근 OK 는 문제 없음', () => {

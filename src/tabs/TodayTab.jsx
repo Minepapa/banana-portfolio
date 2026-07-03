@@ -173,7 +173,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
     const anyFail = jobProblems.some(p => p.problem === 'fail' || p.problem === 'missing');
     items.push({
       key: 'jobs', kind: 'auto', accent: anyFail ? '#E5484D' : '#E0A000', icon: '🔧',
-      title: `무인 잡 점검 ${jobProblems.length}건`, sub: jobProblems.map(p => `${p.job}(${p.problem === 'fail' ? '실패' : p.problem === 'missing' ? '미실행' : '정체'})`).join(' · '),
+      title: `무인 잡 점검 ${jobProblems.length}건`, sub: jobProblems.map(p => `${p.job}(${p.problem === 'fail' ? (p.failStreak >= 2 ? `연속 ${p.failStreak}회 실패` : '실패') : p.problem === 'missing' ? '미실행' : '정체'})`).join(' · '),
       goLabel: '잡 상태 보기', go: () => setTab('kpi'),
     });
   }

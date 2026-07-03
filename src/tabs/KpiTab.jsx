@@ -53,17 +53,27 @@ function JobStatusPanel({ jobStatus }) {
         const icon = (problem === 'fail' || problem === 'missing') ? '🔴' : problem === 'stale' ? '⚠️' : '✅';
         const tsMs = j ? Date.parse(j.lastRun) : NaN;
         const when = problem === 'missing' ? '기록 없음' : isFinite(tsMs) ? relTime(new Date(tsMs)) : (j?.lastRun || '–');
+        const streak = j?.failStreak || 0;                          // 연속실패 — ≥2면 심각(텔레그램 발송선과 동일)
+        const warnDetail = /⚠/.test(j?.detail || '') ? j.detail : ''; // 잡이 남긴 경고 요약(job-alerts flush)
         return (
-          <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #EAE6DA' : 'none' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-              <span style={{ fontSize: 12, color: '#6B675C' }}>{JOB_LABELS[key] || key}</span>
-              {JOB_INTERVALS[key] && <span style={{ fontSize: 9, color: '#6B675C', border: '1px solid #141414', borderRadius: 0, padding: '1px 5px', whiteSpace: 'nowrap' }}>{JOB_INTERVALS[key]}</span>}
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {j?.durationSec && <span style={{ fontSize: 9, color: '#6B675C' }}>{j.durationSec}s</span>}
-              <span style={{ fontSize: 12, color: '#6B675C' }}>{when}</span>
-              <span style={{ fontSize: 11, fontWeight: 700, color }}>{icon}</span>
-            </span>
+          <div key={key} style={{ padding: '8px 0', borderBottom: i < arr.length - 1 ? '1px solid #EAE6DA' : 'none' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                <span style={{ fontSize: 12, color: '#6B675C' }}>{JOB_LABELS[key] || key}</span>
+                {JOB_INTERVALS[key] && <span style={{ fontSize: 9, color: '#6B675C', border: '1px solid #141414', borderRadius: 0, padding: '1px 5px', whiteSpace: 'nowrap' }}>{JOB_INTERVALS[key]}</span>}
+                {streak >= 2 && <span style={{ fontSize: 9, fontWeight: 800, color: '#FFFFFF', background: '#E5484D', borderRadius: 0, padding: '1px 5px', whiteSpace: 'nowrap' }}>연속 {streak}회 실패</span>}
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {j?.durationSec && <span style={{ fontSize: 9, color: '#6B675C' }}>{j.durationSec}s</span>}
+                <span style={{ fontSize: 12, color: '#6B675C' }}>{when}</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color }}>{icon}</span>
+              </span>
+            </div>
+            {((problem === 'fail' || problem === 'missing') || warnDetail) && (j?.detail || '') && (
+              <div style={{ fontSize: 9, color: problem ? '#E5484D' : '#E0A000', marginTop: 3, lineHeight: 1.4, wordBreak: 'break-word' }}>
+                {j.detail}
+              </div>
+            )}
           </div>
         );
       })}

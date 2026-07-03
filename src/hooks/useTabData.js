@@ -27,7 +27,7 @@ export function useTabData({ sheets, tab, syncTradeExecutions }) {
   // 잡 상태: signed-in 후 1회 로드. 토큰 갱신(lastSync 변경) 시 재시도.
   useEffect(() => {
     if (sheets.auth === 'signed-in' && jobStatus === null) {
-      sheets.readRange('잡상태!A2:E')
+      sheets.readRange('잡상태!A2:F')
         .then(rows => setJobStatus(parseJobStatus(rows)))
         .catch(e => { if (e?.status !== 401) console.error('잡상태 read failed:', e); });
     }

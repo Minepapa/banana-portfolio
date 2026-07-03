@@ -329,6 +329,24 @@ export default function App() {
 
       <div style={{ padding: "20px 16px" }}>
 
+        {/* 동기화 실패 배너 — 실패한 옛 데이터를 최신처럼 보는 것 방지 (전 탭 공통) */}
+        {sheets.auth === 'signed-in' && sheets.sync === 'error' && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+            background: '#FBE3E4', border: '1px solid #E5484D', borderRadius: 0,
+            padding: '8px 12px', marginBottom: 12,
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#E5484D', textAlign: 'left' }}>
+              동기화 실패 — 표시 중인 데이터는 {sheets.lastSync ? `${relTime(sheets.lastSync)} 기준` : '이전 세션 기준'}입니다
+            </span>
+            <button onClick={sheets.fetch} style={{
+              flexShrink: 0, padding: '4px 10px', borderRadius: 0, border: '1px solid #E5484D',
+              background: 'transparent', color: '#E5484D', cursor: 'pointer',
+              fontSize: 10, fontWeight: 700, fontFamily: baseFont,
+            }}>재시도</button>
+          </div>
+        )}
+
         {CONFIGURED && (sheets.auth === 'signed-out' || sheets.auth === 'error') && (
           <div style={{
             background: CARD_BG,

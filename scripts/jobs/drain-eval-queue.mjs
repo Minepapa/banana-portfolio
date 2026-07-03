@@ -19,6 +19,7 @@
 import { createServer } from 'http';
 import { exec } from 'child_process';
 import { runHeadlessClaude, cooldownActive, LIMIT_RE } from '../lib/sheets-common.mjs';
+import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { renderPrefRows, prefBlock, PREF_SHEET } from '../lib/preferences.mjs';
 import { createInterface } from 'readline';
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
@@ -730,6 +731,7 @@ async function main() {
       const isKrEntry = (entry.market || '').toUpperCase() === 'KR';
       const memo = `${isKrEntry ? 'KR corp_code' : 'US 티커'} 매핑 없음 — instruments.mjs에 '${entry.name}' 등록 후 재시도 필요 (${nowKST()})`;
       console.error(`  ⚠️ ${entry.name}: ${isKrEntry ? 'corp_code' : '티커'} 매핑 없음 — 헤드리스 호출 생략, 수동 등록 필요`);
+      collectWarning(`평가 매핑없음: ${entry.name} — instruments.mjs 등록 필요`);
       if (!DRY_RUN) {
         await updateCell(token, `평가요청!D${entry.rowNum}`, '오류');
         await updateCell(token, `평가요청!F${entry.rowNum}`, memo);
@@ -772,6 +774,7 @@ async function main() {
         }
         const existingMemo = entry.memo ? `${entry.memo} / ` : '';
         await updateCell(token, `평가요청!F${entry.rowNum}`, `${existingMemo}헤드리스 오류: ${e.message.slice(0, 80)}`);
+        collectWarning(`평가 헤드리스 오류: ${entry.name}`);   // e.message는 가변(스택 꼬리)이라 시그니처 불안정 → 시트 메모에만 상세
         errors++;
         continue;
       }
@@ -805,6 +808,7 @@ async function main() {
       completed++;
     } catch (e) {
       console.error(`  ⚠️ 처리 실패: ${e.message}`);
+      collectWarning(`평가 처리실패: ${entry.name}`);        // 동일 — 상세는 시트 메모·보존 파일에
       // 파싱 실패 시 헤드리스 출력(수 분짜리)을 버리지 않고 파일로 보존 — 수동 적재·디버깅용.
       let savedPath = '';
       if (rawJson) {
@@ -841,6 +845,8 @@ async function main() {
     console.log(`  모바일 banana-portfolio 평가/노트 탭에서 ↻ 새로고침하면 카드가 표시됩니다.`);
   }
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+  // 경고 요약은 마지막 줄 — run.sh 로그 꼬리(tail -3)가 잡상태 detail로 앱 노출 + 텔레그램(24h 억제)
+  await flushWarnings('drain', { dryRun: DRY_RUN });
 }
 
 export { normalizeEvalObj, parseEvalJson, buildRow, toList, normalizeGrades };
