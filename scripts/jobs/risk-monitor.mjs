@@ -277,6 +277,12 @@ function normDate(v) {
 async function pruneRiskSheet(token, monitoredNames) {
   const rows = await getRange(token, `${RISK_SHEET}!A2:H`);
   if (rows.length === 0) return;
+  // 가드: 보유목록이 비어 읽혔으면(일시적 under-read) B행 전량이 "미보유"로 보여 몽땅
+  // 프루닝된다 — 펀드 축소 사고(2026-07)와 동일 패턴. 이번 실행은 정리 스킵.
+  if (!monitoredNames || monitoredNames.size === 0) {
+    console.log('  ⚠ 보유종목 0건으로 읽힘 — under-read 의심, 시트 정리 스킵');
+    return;
+  }
   const maxDDate = rows.reduce((mx, r) => {
     if (String(r[1] ?? '').trim() !== 'D') return mx;
     const d = normDate(r[0]); return d > mx ? d : mx;
@@ -296,11 +302,22 @@ async function pruneRiskSheet(token, monitoredNames) {
     seen.add(k); keepIdx.add(i);
   }
   if (keepIdx.size === rows.length) return;   // 정리할 것 없음
+  // 서킷브레이커(재앙 규모만): monitoredNames가 검증된 비어있지 않은 보유(readHoldings가
+  // 0건이면 throw)에서 왔으므로 정상 대량 프루닝은 정당하다 — 고정 카운트로 막으면 대량
+  // 매도 후 프루닝이 영구 스킵됨(리뷰 지적). 최신 D행은 항상 유지되므로 kept=0으로 채워진
+  // 시트를 비우는 경우만 이상 신호로 본다.
+  const removed = rows.length - keepIdx.size;
+  if (keepIdx.size === 0 && rows.length > 5) {
+    console.log(`  ⚠ 정리 결과 0행(기존 ${rows.length}행 전체 제거) — 이상 신호, 정리 스킵`);
+    return;
+  }
   const kept = rows.filter((_, i) => keepIdx.has(i))
     .map(r => { const x = r.slice(0, 8); while (x.length < 8) x.push(''); return x; });
-  await clearValues(token, `${RISK_SHEET}!A2:H`);
+  // kept를 먼저 쓰고 남는 꼬리만 clear — clear→set 순서였을 때 set 실패 시 시트가 통째로
+  // 비어버리는 파괴적 실패 제거(완전 원자성은 아니나 잔여 실패는 다음 실행이 자가 치유).
   if (kept.length) await setValues(token, `${RISK_SHEET}!A2`, kept);
-  console.log(`🧹 시트 정리: ${rows.length} → ${kept.length}행`);
+  await clearValues(token, `${RISK_SHEET}!A${2 + kept.length}:H`);
+  console.log(`🧹 시트 정리: ${rows.length} → ${kept.length}행 (-${removed})`);
 }
 
 async function main() {

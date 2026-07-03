@@ -97,8 +97,10 @@ async function main() {
   const created = await ensureSheet(token, SHEET, HEADER);
   if (created) console.log(`🆕 ${SHEET} 생성`);
 
-  // 기존 저널 전체 행(멱등 + 청산 감지)
-  const existingRows = await getRange(token, `${SHEET}!A2:P`).catch(() => []);
+  // 기존 저널 전체 행(멱등 + 청산 감지). read 실패를 빈 배열로 위장하면 전 보유가
+  // "신규"로 보여 중복 적재된다 — 실패는 throw로 표면화(run.sh 하트비트가 FAIL 기록).
+  // 시트가 방금 생성됐거나 비어있으면 getRange가 정상적으로 []를 반환하므로 안전.
+  const existingRows = await getRange(token, `${SHEET}!A2:P`);
   const existing = new Set(existingRows.map(r => String(r[0] ?? '').trim()).filter(Boolean));
 
   // 종목명 끝의 "(5.32%)" 같은 가변 접미사를 떼고도 전제를 찾도록
@@ -168,6 +170,16 @@ async function main() {
     const stillHeld = heldKeys.has(norm(name)) || (ticker && heldKeys.has(ticker));
     if (!stillHeld) closures.push({ row: idx + 2, name });
   });
+  // 서킷브레이커(비율 기반): readHoldings가 0건이면 이미 throw하므로(sheets-api 가드) 여기
+  // 도달한 holdings는 신뢰 가능 — 정당한 다종목 매도(4~6건)는 통과시키고, 보유 저널의 절반
+  // 이상이 한 번에 "청산"되는 재앙적 규모(mass-flip, 부분 read 의심)만 차단한다.
+  // 고정 카운트(>3)로 막으면 정당한 리밸런싱 대량 매도가 영구 스킵됨(리뷰 지적).
+  const heldJournalCount = existingRows.filter(r =>
+    String(r[0] ?? '').trim() && (String(r[10] ?? '').trim() || '보유') !== '청산').length;
+  if (closures.length > 3 && closures.length >= heldJournalCount / 2) {
+    console.log(`  ⚠ 청산 감지 ${closures.length}건(저널 보유 ${heldJournalCount}개의 절반 이상) — mass-flip 의심, 마킹 전체 스킵`);
+    closures.length = 0;
+  }
   for (const c of closures) {
     console.log(`  ⚑ 청산 감지: ${c.name} (행 ${c.row}) → 상태=청산 · 청산일=${todayKST()}`);
     if (!DRY_RUN) await setValues(token, `${SHEET}!K${c.row}:L${c.row}`, [['청산', todayKST()]]);

@@ -17,10 +17,14 @@ export function useSavingsEdit({ sheets, monthlyRowRef, setBalanceSyncMsg }) {
       return;
     }
     try {
-      const rows = await sheets.readRange(`월별잔고!C${mr}:C${mr}`);
+      // UNFORMATTED: 표시형식(콤마 등)과 무관하게 원본 숫자를 읽는다.
+      const rows = await sheets.readRange(`월별잔고!C${mr}:C${mr}`, 'UNFORMATTED_VALUE');
       setSavingsEditValue(String(parseNum(rows[0]?.[0]) || ''));
     } catch {
-      setSavingsEditValue('');
+      // 읽기 실패 시 편집창을 빈값으로 열면 저장 시 실값을 0으로 덮어쓸 수 있다 — 진입 차단.
+      setBalanceSyncMsg('저축금 조회 실패 — 다시 시도해주세요');
+      setTimeout(() => setBalanceSyncMsg(''), 4000);
+      return;
     }
     setShowSavingsEdit(true);
   };
@@ -34,7 +38,8 @@ export function useSavingsEdit({ sheets, monthlyRowRef, setBalanceSyncMsg }) {
       return;
     }
     try {
-      await sheets.writeRange(`월별잔고!C${mr}:C${mr}`, [parseFloat(savingsEditValue) || 0]);
+      // parseNum: "1,234,000" 같은 콤마 입력도 안전(parseFloat는 콤마에서 끊겨 1이 됨).
+      await sheets.writeRange(`월별잔고!C${mr}:C${mr}`, [parseNum(savingsEditValue)]);
       setBalanceSyncMsg('저축금 저장됨');
       setTimeout(() => setBalanceSyncMsg(''), 3000);
     } catch {

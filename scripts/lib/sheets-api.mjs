@@ -133,6 +133,10 @@ export async function readHoldings(token) {
       map.get(key).accounts.push({ acct, type: lastType, qty, invest });
     }
   }
+  // 가드: 실계좌엔 보유 종목이 항상 존재하므로 4계좌 합산 0건 = 시트 읽기 이상(부분/빈 응답).
+  // 조용한 빈 배열은 하류(risk-monitor 프루닝·journal-sync 청산 마킹·weekly-report)를
+  // "전량 매도"로 오판시킨다 — throw로 잡 실패를 표면화(하트비트 FAIL → 기존 알림 경로).
+  if (map.size === 0) throw new Error('보유종목 0건 — 전 계좌 빈 응답(읽기 이상 의심), 안전을 위해 중단');
   return [...map.values()];
 }
 
