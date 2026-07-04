@@ -43,16 +43,21 @@ const CASH_BASE_HEADER = ['계좌', '기준액', '기준일', '소스', '갱신�
 const CASH_ROW_NAME = '예수금';                 // ISA·위탁·IRP 표시 행 종목명(사용자가 1회 생성)
 const AUTO_CASH_TABS = new Set(['ISA', '위탁']);  // NH: 입금/출금 알림 잔고로 자동 앵커
 const NH_ACCT_PREFIX = { '209-02': 'ISA', '205-01': '위탁' };  // 계좌번호 앞6자 → 탭
-// 배당/분배금 알림의 계좌번호 → 예수금 귀속 후보 계좌. NH는 유일, 삼성(71612)은
-// 연금저축·IRP 공용이라 종목 보유 계좌로 최종 판별(아래 resolveDivTab). null=미상.
+// 배당/분배금 알림의 계좌번호 → 예수금 귀속 후보 계좌. 4계좌가 서로 다른 증권사라
+// (ISA·위탁=NH, 연금저축=삼성, IRP=한국투자) 계좌번호 앞자리로 유일하게 정해진다 —
+// 후보가 2개 이상 남는 경우는 없다(정정 전엔 삼성(71612)을 연금저축·IRP 공용으로
+// 잘못 취급해 실제로는 유일하게 정해지는 배당까지 모호 처리했었음). null=미상.
 function dividendAcctCandidates(d) {
   const s = String(d?.acctRaw ?? '').replace(/[^0-9]/g, '');
   if (s.startsWith('20902')) return ['ISA'];
   if (s.startsWith('20501')) return ['위탁'];
-  if (s.startsWith('71612')) return ['연금저축', 'IRP'];   // 삼성 공용 → 보유로 구분
-  const b = String(d?.broker ?? '');                       // 계좌번호 없으면 증권사로 후보 축소
-  if (/NH투자증권/.test(b)) return ['ISA', '위탁'];
-  if (/삼성증권/.test(b)) return ['연금저축', 'IRP'];
+  if (s.startsWith('71612')) return ['연금저축'];   // 삼성증권 = 연금저축 전용
+  if (s.startsWith('43')) return ['IRP'];           // 한국투자증권 = IRP 전용(2자리라 광범위 —
+                                                     // 반드시 위 5자리 prefix 검사들 뒤에 와야 안전)
+  const b = String(d?.broker ?? '');                // 계좌번호 없으면 증권사로 판별
+  if (/NH투자증권/.test(b)) return ['ISA', '위탁']; // NH는 ISA·위탁 공용 → 보유로 추가 판별 필요
+  if (/삼성증권/.test(b)) return ['연금저축'];
+  if (/한국투자증권/.test(b)) return ['IRP'];
   return null;
 }
 const CASH_BASE_SEED = [
