@@ -1,6 +1,6 @@
 // 도움말(USER-GUIDE.md)용 경량 마크다운 렌더러. App.jsx에서 추출 (동작 불변).
 // 가이드에서 실제 쓰는 문법만 처리(헤더·표·리스트·인용·hr·볼드/이탤릭/코드/링크).
-import { stripEmoji, breakUnits } from './textFormat.js';
+import { stripEmoji } from './textFormat.js';
 
 function mdInline(text) {
   text = stripEmoji(text);
@@ -55,7 +55,7 @@ export function renderMarkdown(md) {
         <div key={key++} style={{ overflowX: 'auto', margin: '12px 0' }}>
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 11 }}>
             <thead><tr>{header.map((c, ci) => <th key={ci} style={{ textAlign: 'left', padding: '7px 9px', background: '#EAE6DA', color: '#6B675C', borderBottom: '1px solid #141414', fontWeight: 700, whiteSpace: 'nowrap' }}>{mdInline(c)}</th>)}</tr></thead>
-            <tbody>{rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci} style={{ padding: '7px 9px', color: '#141414', borderBottom: '1px solid #141414', verticalAlign: 'top', lineHeight: 1.5 }}>{breakUnits(c).map((ln, li) => <div key={li}>{mdInline(ln)}</div>)}</td>)}</tr>)}</tbody>
+            <tbody>{rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci} style={{ padding: '7px 9px', color: '#141414', borderBottom: '1px solid #141414', verticalAlign: 'top', lineHeight: 1.5 }}>{mdInline(c)}</td>)}</tr>)}</tbody>
           </table>
         </div>
       );
