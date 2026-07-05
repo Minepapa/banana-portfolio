@@ -30,6 +30,18 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
     return n;
   });
 
+  // 주말/월초 루틴 리마인더 — 당일 리셋(banana_today_ack)이 아니라 "그 주말·그 달 1회"만
+  // 뜨도록 별도 저장(키가 바뀌면 자동 재등장, 지난 키는 안 지워도 무해).
+  const [routineAcked, setRoutineAcked] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('banana_routine_ack') || '[]')); }
+    catch { return new Set(); }
+  });
+  const ackRoutine = (key) => setRoutineAcked(prev => {
+    const n = new Set(prev); n.add(key);
+    localStorage.setItem('banana_routine_ack', JSON.stringify([...n]));
+    return n;
+  });
+
   // ── 1) 리스크 경보·주의 (RiskTab과 동일 dedup: 동일 유형+대상 최신 1건, 거시는 최신 날짜만) ──
   const latestDDate = (riskMonitor || []).reduce((mx, r) => (r.type === 'D' && r.date > mx ? r.date : mx), '');
   const seen = new Set();
@@ -186,7 +198,28 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
     });
   }
 
-  const allDone = items.length > 0 && items.every(it => acked.has(it.key));
+  // ── 9) 주말 정리(15분) / 월초 회고(10분) — profile/app-usage-playbook.md §2-4 루틴 ──
+  if (isWeekend) {
+    const d = new Date(day);
+    const satOffset = d.getUTCDay() === 0 ? 1 : 0;   // 일요일이면 하루 빼 토요일 날짜로 맞춤
+    const weekendKey = new Date(d.getTime() - satOffset * 86400000).toISOString().slice(0, 10);
+    items.push({
+      key: `weekly:${weekendKey}`, kind: 'routine', accent: '#52C8D4', icon: '🗓️',
+      title: '주간 정리 15분', sub: '리포트 처방 → 자산분배 갭 → 포지션 전제·교훈 소진',
+      goLabel: '리포트 보기', go: () => setTab('report'),
+    });
+  }
+  const domNum = parseInt(day.slice(8, 10), 10);
+  if (domNum >= 1 && domNum <= 5) {
+    items.push({
+      key: `monthly:${day.slice(0, 7)}`, kind: 'routine', accent: '#8B5CF6', icon: '📊',
+      title: '월간 회고 10분', sub: 'KPI 행동추적(500만 원칙·평가→매수 일치율) 먼저, 성과는 다음',
+      goLabel: 'KPI 보기', go: () => setTab('kpi'),
+    });
+  }
+
+  const doneOf = (it) => (it.kind === 'routine' ? routineAcked : acked).has(it.key);
+  const allDone = items.length > 0 && items.every(doneOf);
 
   return (
     <div>
@@ -208,7 +241,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
         </div>
       ) : (
         items.map((it) => {
-          const done = acked.has(it.key);
+          const done = doneOf(it);
           return (
             <div key={it.key} style={{ background: done ? '#FFFFFF' : `${it.accent}10`, border: `1px solid ${done ? '#141414' : it.accent + '38'}`, borderLeft: `4px solid ${done ? '#159E5266' : it.accent}`, borderRadius: 0, padding: 14, marginBottom: 10, opacity: done ? 0.55 : 1, transition: 'opacity 0.2s' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
@@ -226,7 +259,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
                     {it.goLabel} ›
                   </button>
                 )}
-                <button onClick={() => done ? null : ack(it.key)} style={{ padding: '6px 12px', minHeight: 32, borderRadius: 0, border: `1px solid ${done ? '#141414' : '#141414'}`, background: done ? '#DDF3E4' : 'none', color: done ? '#159E52' : '#6B675C', cursor: done ? 'default' : 'pointer', fontSize: 11, fontFamily: baseFont }}>
+                <button onClick={() => done ? null : (it.kind === 'routine' ? ackRoutine(it.key) : ack(it.key))} style={{ padding: '6px 12px', minHeight: 32, borderRadius: 0, border: `1px solid ${done ? '#141414' : '#141414'}`, background: done ? '#DDF3E4' : 'none', color: done ? '#159E52' : '#6B675C', cursor: done ? 'default' : 'pointer', fontSize: 11, fontFamily: baseFont }}>
                   {done ? '✓ 확인됨' : '확인 ✓'}
                 </button>
               </div>
