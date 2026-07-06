@@ -89,6 +89,9 @@ for (const f of failedFiles) {
 console.log();
 
 // 3. 복구 가능한 카드 삽입
+// drain-eval-queue.mjs의 실시간 루프와 달리 obj.name을 그대로 신뢰한다 — 복구 시점엔
+// 평가요청 큐 원본 행이 이미 완료·삭제됐을 수 있어 대조할 entry.name이 없다(파일명에
+// 원래 종목명이 남아있긴 하나, 이 일회성 도구는 사람이 출력을 보며 실행하므로 우선순위 낮음).
 let inserted = 0;
 for (const { file, obj } of recoverable) {
   const row = buildRow(obj, obj.axisItems || null);

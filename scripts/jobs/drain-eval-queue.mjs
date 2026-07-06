@@ -686,6 +686,16 @@ async function main() {
     const typeLabel = sellMode ? '🔴 매도 평가' : '🟢 매수 평가';
     console.log(`\n━━━ [${entry.name}] ${typeLabel} ━━━`);
 
+    // 종목명 없는 요청은 진행 안 함 — buildRow가 obj.name 대신 entry.name을 강제로 쓰므로
+    // 빈 이름이 그대로 종목투자노트에 적재되면 매도평가 탭 종목 매칭이 조용히 깨진다.
+    if (!entry.name) {
+      if (!DRY_RUN) await updateCell(token, `평가요청!D${entry.rowNum}`, '오류');
+      console.error(`  ⚠️ 종목명 없음(행 ${entry.rowNum}) — 건너뜀`);
+      collectWarning(`평가요청 종목명 없음: 행 ${entry.rowNum}`);
+      errors++;
+      continue;
+    }
+
     // 매도 평가 시 최초 매수 카드 조회
     let buyCard = null;
     if (sellMode) {
@@ -795,7 +805,10 @@ async function main() {
 
     try {
       const obj = parseEvalJson(rawJson);
-      const row = buildRow(obj, facts?.axisItems || null);
+      // 종목명은 LLM이 되짚어 쓴 obj.name이 아니라 항상 큐 요청 원본(entry.name)을 그대로 쓴다.
+      // LLM이 회사 공식명(예: "현대자동차")으로 바꿔 쓰면 보유종목 시트 이름("현대차")과 어긋나
+      // 매도평가 탭 종목 선택지 매칭이 조용히 깨진다(정확일치 필요 — SellEvaluationTab.jsx).
+      const row = buildRow({ ...obj, name: entry.name }, facts?.axisItems || null);
 
       // 종목투자노트에 적재
       await appendValues(token, '종목투자노트!A2:U', [row]);

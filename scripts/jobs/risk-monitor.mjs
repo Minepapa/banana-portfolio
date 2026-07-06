@@ -56,6 +56,10 @@ const modeArg = args.find(a => a.startsWith('--mode='));
 const MODE = modeArg ? modeArg.split('=')[1].toUpperCase() : '';
 const modelArg = args.find(a => a.startsWith('--model='));
 const MODEL = modelArg ? modelArg.split('=')[1] : 'sonnet';
+// 특정 종목만 재점검(예: 계산 로직 수정 후 해당 종목만 재계산) — 전체 배치 재실행으로 인한
+// 불필요한 LLM 호출 낭비를 피한다. mode=B 전용.
+const onlyArg = args.find(a => a.startsWith('--only='));
+const ONLY = onlyArg ? onlyArg.split('=')[1] : null;
 
 loadEnv();
 
@@ -500,10 +504,15 @@ async function main() {
   // ETF·펀드·현금성(MMF·RP·CD금리·TDF·금현물 등, 연금/ISA/IRP 포함)은 펀더멘털 가드레일
   // 판단 대상이 아니고 매번 trivial 통과하면서 무거운 claude 호출로 사용량 한도만 소진 →
   // 점검에서 제외하고 필요 시 수동 평가 요청으로 처리. (사용량 한도 회피)
-  const targets = holdings.filter(h => monitoredNames.has(h.name));
+  const targets = holdings.filter(h => monitoredNames.has(h.name) && (!ONLY || h.name === ONLY));
   const skipped = holdings.length - targets.length;
 
-  console.log(`\n📊 위탁 개별주식 ${targets.length}개 논리 점검 시작 (전체 ${holdings.length}개 중 ETF·펀드·현금성 ${skipped}개 제외)`);
+  if (ONLY && !targets.length) {
+    console.error(`❌ --only=${ONLY} — 위탁 개별주식 보유종목 중 일치하는 이름 없음`);
+    process.exit(1);
+  }
+  const skipLabel = ONLY ? `--only=${ONLY} 외 ${skipped}개 제외` : `ETF·펀드·현금성 ${skipped}개 제외`;
+  console.log(`\n📊 위탁 개별주식 ${targets.length}개 논리 점검 시작 (전체 ${holdings.length}개 중 ${skipLabel})`);
   // 종목당 claude 1회 — 가장 무거운 배치. 쿨다운 중이면 호출 안 함(시트 정리만 하고 종료).
   if (!DRY_RUN && cooldownActive()) { await pruneRiskSheet(token, monitoredNames); return; }
   let ok = 0, fail = 0, alerts = 0;
