@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  reprtCodeForDate, prevPeriod, computeYoY, parseKrAmounts, parseKrRatios, checkGuardrails,
+  reprtCodeForDate, prevPeriod, standaloneAmounts, quarterStandalone, computeYoY, parseKrAmounts, parseKrRatios, checkGuardrails,
   computeMacroChange, computeRsi14, compute52wPosition, computeFcfYield,
   computeTtmNetIncome, computeRoe, computePbr,
   computeDrawdownFromPeak, computeRallyFromTrough, parseNaverSise,
@@ -22,6 +22,39 @@ test('prevPeriod: 미공시 폴백 체인 (반기→1Q→전년 사업→전년 
   assert.deepEqual(prevPeriod({ bsnsYear: '2026', reprtCode: '11013' }), { bsnsYear: '2025', reprtCode: '11011' });
   assert.deepEqual(prevPeriod({ bsnsYear: '2025', reprtCode: '11011' }), { bsnsYear: '2025', reprtCode: '11014' });
   assert.deepEqual(prevPeriod({ bsnsYear: '2026', reprtCode: '11014' }), { bsnsYear: '2026', reprtCode: '11012' });
+});
+
+test('standaloneAmounts: 누적치 − 같은 해 직전 리포트 누적치 = 단일분기 (현대차 4Q 2025 실측)', () => {
+  // 사업보고서(FY2025 누적) − 3분기보고서(9개월 누적) = 4분기 단독. 실측: 16,954억(4Q25) / 28,222억(4Q24) ≈ YoY -39.9%
+  const annual = { curr: 11467851000000, prev: 14239592000000 };   // FY2025, FY2024
+  const nineMo = { curr: 9772472000000, prev: 11417398000000 };    // 2025 9개월 누적, 2024 9개월 누적
+  const q4 = standaloneAmounts(annual, nineMo);
+  assert.equal(q4.curr, 1695379000000);
+  assert.equal(q4.prev, 2822194000000);
+  assert.equal(computeYoY(q4.curr, q4.prev), -39.9);
+});
+
+test('standaloneAmounts: priorCum 결측(조회 실패 포함)이면 null — cum을 그대로 반환하지 않음', () => {
+  assert.equal(standaloneAmounts({ curr: 100, prev: 90 }, null), null);
+  assert.equal(standaloneAmounts({ curr: null, prev: 90 }, { curr: 10, prev: 5 }), null);
+  assert.equal(standaloneAmounts({ curr: 100, prev: 90 }, { curr: null, prev: 5 }), null);
+});
+
+test('quarterStandalone: 1분기는 SAME_YEAR_PRIOR_REPORT에 없어 조회 없이 누적치 그대로(이미 단일분기)', () => {
+  const q1 = { curr: 100, prev: 90 };
+  assert.deepEqual(quarterStandalone({ bsnsYear: '2026', reprtCode: '11013' }, q1, null), q1);
+});
+
+test('quarterStandalone: 1분기 외 리포트인데 priorOp 조회 실패(null) → null (옛 버그처럼 누적치를 단일분기인 척 쓰지 않음)', () => {
+  const fy = { curr: 11467851000000, prev: 14239592000000 };
+  assert.equal(quarterStandalone({ bsnsYear: '2025', reprtCode: '11011' }, fy, null), null);
+});
+
+test('quarterStandalone: 사업보고서 − 3분기 누적 = 4분기 단독 (현대차 실측)', () => {
+  const annual = { curr: 11467851000000, prev: 14239592000000 };
+  const nineMo = { curr: 9772472000000, prev: 11417398000000 };
+  const q4 = quarterStandalone({ bsnsYear: '2025', reprtCode: '11011' }, annual, nineMo);
+  assert.equal(computeYoY(q4.curr, q4.prev), -39.9);
 });
 
 test('computeYoY: 정상/0분모/결측', () => {

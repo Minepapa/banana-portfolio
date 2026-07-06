@@ -19,6 +19,27 @@ export function prevPeriod({ bsnsYear, reprtCode }) {
   return { bsnsYear, reprtCode: ORDER[i - 1] };
 }
 
+// 분기보고서 add_amount는 연초 누적치(반기=1~2분기 합, 3분기=1~3분기 합, 사업=1~4분기 합).
+// 같은 해 "직전" 리포트 코드 — 이 리포트의 누적치를 빼면 해당 분기 하나만 남는다.
+// 1분기(11013)는 이미 단일분기라 뺄 대상 없음(맵에 없음 → quarterStandalone이 그대로 반환).
+export const SAME_YEAR_PRIOR_REPORT = { 11012: '11013', 11014: '11012', 11011: '11014' };
+
+// 누적치(cum)에서 같은 해 직전 리포트 누적치(priorCum)를 빼 단일분기 수치로 환산.
+// priorCum 결측(조회 실패 등)은 "1분기라 뺄 게 없음"과 다른 상태라 여기선 구분하지 않고 null —
+// 1분기 예외 판단은 quarterStandalone이 SAME_YEAR_PRIOR_REPORT 유무로 미리 내린다.
+export function standaloneAmounts(cum, priorCum) {
+  if (cum?.curr == null || cum?.prev == null || priorCum?.curr == null || priorCum?.prev == null) return null;
+  return { curr: cum.curr - priorCum.curr, prev: cum.prev - priorCum.prev };
+}
+
+// period 리포트를 단일분기로 환산. 1분기는 이미 단일분기라 그대로 반환(조회 자체가 없음).
+// 그 외 분기인데 priorOp 조회가 실패했으면(네트워크 오류 등) — cum을 그대로 쓰면 옛 버그
+// (다분기 누적을 단일분기인 척 계산)가 조용히 재발하므로 null로 명확히 실패시킨다.
+export function quarterStandalone(period, cum, priorOp) {
+  if (!SAME_YEAR_PRIOR_REPORT[period.reprtCode]) return cum;
+  return standaloneAmounts(cum, priorOp);
+}
+
 const num = (s) => { const n = parseFloat(String(s ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
 
 export function computeYoY(curr, prev) {
@@ -96,6 +117,17 @@ async function dartJson(path, params, apiKey) {
   return j.list;
 }
 
+// period 리포트를 단일분기로 환산하기 위한 "같은 해 직전 리포트"의 영업이익 누적치.
+// 1분기 리포트는 SAME_YEAR_PRIOR_REPORT에 없어 호출 없이 null 반환(이미 단일분기).
+async function fetchSameYearPriorOp(period, corpCode, apiKey) {
+  const priorCode = SAME_YEAR_PRIOR_REPORT[period.reprtCode];
+  if (!priorCode) return null;
+  const list = await dartJson('fnlttSinglAcnt.json', {
+    corp_code: corpCode, bsns_year: period.bsnsYear, reprt_code: priorCode,
+  }, apiKey).catch(() => null);
+  return list ? parseKrAmounts(list).opIncome : null;
+}
+
 // 미공시면 prevPeriod로 한 번 폴백. 그래도 없으면 null.
 async function dartWithFallback(path, corpCode, period, extra, apiKey) {
   for (const p of [period, prevPeriod(period)]) {
@@ -121,6 +153,14 @@ export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = p
 
   const a = parseKrAmounts(cur.list);
   const pa = prevList ? parseKrAmounts(prevList) : null;
+
+  // 영업이익 YoY는 "그 분기 하나만"의 단일분기 기준이어야 한다(가드레일 "2분기 연속 감소"의 전제).
+  // 반기·3분기·사업보고서의 add_amount는 연초 누적치라 그대로 쓰면 다분기 실적이 섞인다 —
+  // 같은 해 직전 리포트 누적치를 빼 단일분기로 환산(1분기는 이미 단일분기라 조회 없이 그대로 사용).
+  const curPriorOp = await fetchSameYearPriorOp(cur.period, corpCode, apiKey);
+  const curOpStandalone = quarterStandalone(cur.period, a.opIncome, curPriorOp);
+  const prevPriorOp = pa ? await fetchSameYearPriorOp(prevP, corpCode, apiKey) : null;
+  const prevOpStandalone = pa ? quarterStandalone(prevP, pa.opIncome, prevPriorOp) : null;
 
   let ratios = { grossMargin: null, opMargin: null, roe: null, debtRatio: null };
   for (const idx of ['M210000', 'M220000', 'M310000']) {  // M310000: 주당·배당지표(현금배당성향 포함)
@@ -158,10 +198,12 @@ export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = p
   return {
     market: 'KR',
     source: `OpenDart ${cur.period.bsnsYear} ${REPRT_LABEL[cur.period.reprtCode]}(연결)${cur.fellBack ? ' (분기 미공시 폴백)' : ''}`,
+    // revenueYoY·netIncomeYoY는 (의도적으로) 단일분기 환산 없이 누적 YoY 그대로 — 가드레일이
+    // opYoY*만 보므로 지금은 범위 밖. 반기·3분기 리포트에서는 다분기 누적 YoY라는 점 주의(후속 과제).
     revenue: a.revenue.curr, revenueYoY: computeYoY(a.revenue.curr, a.revenue.prev),
     opIncome: a.opIncome.curr,
-    opYoYCurr: computeYoY(a.opIncome.curr, a.opIncome.prev),
-    opYoYPrev: pa ? computeYoY(pa.opIncome.curr, pa.opIncome.prev) : null,
+    opYoYCurr: curOpStandalone ? computeYoY(curOpStandalone.curr, curOpStandalone.prev) : null,
+    opYoYPrev: prevOpStandalone ? computeYoY(prevOpStandalone.curr, prevOpStandalone.prev) : null,
     netIncomeYoY: computeYoY(a.netIncome.curr, a.netIncome.prev),
     equity: a.equity.curr,
     operCf: a.operCf?.curr,
