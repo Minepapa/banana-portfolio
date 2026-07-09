@@ -288,6 +288,30 @@ function parseBaselines(vr) {
   }).filter(Boolean);
 }
 
+// 일별스냅샷 파서 — 최신 1행(max 날짜)만 "오늘 기준선"으로 반환. 빈 시트/미존재 → null.
+// A날짜 B스냅시각 C총평가 D계좌별JSON E종목별JSON. JSON 파싱 실패 시 해당 필드 빈 객체.
+function parseDailySnapshot(vr) {
+  const rows = vr?.values ?? [];
+  let latest = null;
+  for (const r of rows) {
+    const date = toDateStr(r[0]);
+    if (!date) continue;
+    if (!latest || date > latest._date) latest = { _date: date, row: r };
+  }
+  if (!latest) return null;
+  const r = latest.row;
+  const safeJson = (s) => { try { return JSON.parse(String(s ?? '') || '{}'); } catch { return {}; } };
+  const totalEval = parseNum(r[2]);
+  if (!(totalEval > 0)) return null;               // 총평가 0 = 오염된 기준선 → 무시(폴백 유도)
+  return {
+    date: latest._date,
+    ts: String(r[1] ?? '').trim() || latest._date,
+    totalEval,
+    byAccount: safeJson(r[3]),
+    byHolding: safeJson(r[4]),
+  };
+}
+
 export function parseSheetData(valueRanges) {
   // indices: ISA(0) 위탁(1) 연금저축(2) IRP(3)
   //          위탁리밸(4) 연금저축리밸(5) ISA리밸(6) IRP리밸(7)
@@ -398,6 +422,7 @@ export function parseSheetData(valueRanges) {
   const positionJournal = parsePositionJournal(valueRanges[16]);
   const usdRate = parseNum(valueRanges[17]?.values?.[0]?.[0]);
   const preferences = parsePreferences(valueRanges[18]);
+  const dailySnapshot = parseDailySnapshot(valueRanges[19]);
 
-  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines, positionJournal, usdRate, preferences } : null;
+  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines, positionJournal, usdRate, preferences, dailySnapshot } : null;
 }

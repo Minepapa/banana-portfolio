@@ -52,7 +52,8 @@ case "$JOB" in
   parse-notifications) CMD=(scripts/jobs/parse-notifications.mjs) ;;
   journal-sync)        CMD=(scripts/jobs/sync-position-journal.mjs) ;;
   backup)              CMD=(scripts/jobs/backup-sheet.mjs) ;;
-  *) echo "usage: run.sh {drain|risk-d|risk-b|baseline|report-sync|weekly-report|parse-notifications|journal-sync|backup}" >&2; exit 2 ;;
+  daily-snapshot)      CMD=(scripts/jobs/daily-snapshot.mjs) ;;
+  *) echo "usage: run.sh {drain|risk-d|risk-b|baseline|report-sync|weekly-report|parse-notifications|journal-sync|backup|daily-snapshot}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)

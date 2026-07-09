@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { DEFAULT_ACCOUNTS } from './lib/constants.js';
 import { profitColor } from './lib/colors.js';
+import { computeDailyChange } from './lib/movers.js';
 import { PAPER, INK, INK_2, ACCENT, CARD_BG, MONO, BORDER, BORDER_HEAVY, SHADOW_SM } from './lib/theme.js';
 import { relTime, fmt } from './lib/textFormat.js';
 import { useIsMobile } from './hooks/useIsMobile.js';
@@ -68,8 +69,9 @@ export default function App() {
   const [positionJournal, setPositionJournal] = useState([]);
   const [preferences, setPreferences] = useState([]); // 성향 학습 관찰
   const [usdRate, setUsdRate] = useState(0); // USD/KRW 환율
+  const [dailySnapshot, setDailySnapshot] = useState(null); // 일별스냅샷 최신행(어제대비·무버 기준선)
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj, usdRate: ur, preferences: pref }) => {
+  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj, usdRate: ur, preferences: pref, dailySnapshot: ds }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
     setDividendData(d || []);
@@ -84,6 +86,7 @@ export default function App() {
     if (pj) setPositionJournal(pj);
     if (pref) setPreferences(pref);
     if (ur > 0) setUsdRate(ur);
+    setDailySnapshot(ds ?? null);
   }, []);
 
   const sheets = useGoogleSheets(onData);
@@ -207,7 +210,14 @@ export default function App() {
   const acct = accounts[acctKey];
   const totalInvest = Object.values(accounts).reduce((s, a) => s + a.total_invest, 0);
   const totalProfit = totalEval - totalInvest;
-  const dailyDelta = sheets.auth === 'signed-in' && prevDayEval != null ? totalEval - prevDayEval : null;
+  // 어제 대비: 시트 일별스냅샷(08:00 기준선·정확) 우선, 없으면 기존 localStorage 폴백(무중단).
+  const daily = sheets.auth === 'signed-in' ? computeDailyChange(accounts, dailySnapshot) : null;
+  const dailyDelta = daily ? daily.totalDelta
+    : (sheets.auth === 'signed-in' && prevDayEval != null ? totalEval - prevDayEval : null);
+  const dailyPct = daily ? daily.totalPct * 100
+    : (prevDayEval > 0 && dailyDelta != null ? dailyDelta / prevDayEval * 100 : null);
+  const dailyBaseLabel = daily?.baselineTs ? daily.baselineTs.slice(5, 16) : null; // "MM-DD HH:mm" 기준시각
+  const movers = daily?.movers ?? [];
 
   const syncLabel =
     sheets.sync === 'syncing' ? '동기화 중...' :
@@ -253,7 +263,10 @@ export default function App() {
             {dailyDelta != null && (
               <div style={{ fontSize: 10, fontWeight: 700, color: profitColor(dailyDelta), fontFamily: MONO }}>
                 {dailyDelta > 0 ? '▲ ' : dailyDelta < 0 ? '▼ ' : ''}₩{fmt(Math.abs(dailyDelta))}
-                {prevDayEval > 0 ? ` (${dailyDelta >= 0 ? '+' : '−'}${Math.abs(dailyDelta / prevDayEval * 100).toFixed(2)}%)` : ''}
+                {dailyPct != null ? ` (${dailyDelta >= 0 ? '+' : '−'}${Math.abs(dailyPct).toFixed(2)}%)` : ''}
+                {dailyBaseLabel && (
+                  <span style={{ fontWeight: 400, color: INK_2, fontFamily: 'inherit' }}> · {dailyBaseLabel} 기준</span>
+                )}
               </div>
             )}
           </div>
@@ -376,6 +389,7 @@ export default function App() {
           <DashboardTab
             totalInvest={totalInvest} totalEval={totalEval} totalProfit={totalProfit}
             accounts={accounts} monthlyData={monthlyData} fmt={fmt} isMobile={isMobile} baseFont={baseFont}
+            movers={movers} dailyBaseLabel={dailyBaseLabel}
             setAcctKey={setAcctKey} setTab={setTab}
             showSavings={showSavings} setShowSavings={setShowSavings} showSavingsEdit={showSavingsEdit}
             savingsEditValue={savingsEditValue} setSavingsEditValue={setSavingsEditValue}
