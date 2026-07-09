@@ -10,7 +10,7 @@ import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function DashboardTab({
   totalInvest, totalEval, totalProfit, accounts, monthlyData,
-  fmt, isMobile, baseFont, setAcctKey, setTab, movers = [], dailyBaseLabel,
+  fmt, isMobile, baseFont, setAcctKey, setTab,
   showSavings, setShowSavings, showSavingsEdit, savingsEditValue, setSavingsEditValue,
   beginSavingsEdit, saveSavingsEdit, setShowSavingsEdit,
 }) {
@@ -43,43 +43,6 @@ export default function DashboardTab({
           </div>
         ))}
       </div>
-
-      {/* 오늘의 변동 종목 (일별스냅샷 08:00 기준선 대비 단가 변동 상위) */}
-      {movers.length > 0 && (
-        <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "14px 16px", marginBottom: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C" }}>오늘의 변동 종목</div>
-            {dailyBaseLabel && <div style={{ fontSize: 9, color: "#6B675C" }}>{dailyBaseLabel} 기준</div>}
-          </div>
-          {movers.map((m, i) => {
-            const color = profitColor(m.wonDelta);
-            const acctColor = accounts[m.account]?.color || '#aaa';
-            const acctLabel = accounts[m.account]?.label || m.account;
-            return (
-              <div key={`${m.account}-${m.name}-${i}`} style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '8px 0', borderBottom: i < movers.length - 1 ? '1px solid #EAE6DA' : 'none',
-              }}>
-                <div style={{ fontSize: 9, background: acctColor + '33', color: acctColor, padding: '2px 5px', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                  {acctLabel}
-                </div>
-                <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: '#141414', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {m.name}
-                  {m.traded && <span style={{ fontSize: 9, fontWeight: 400, color: '#6B675C', marginLeft: 4 }}>거래</span>}
-                </div>
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color, fontFamily: MONO }}>
-                    {m.wonDelta > 0 ? '▲ ' : m.wonDelta < 0 ? '▼ ' : ''}₩{fmt(Math.abs(m.wonDelta))}
-                  </div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color }}>
-                    {m.pct >= 0 ? '+' : ''}{(m.pct * 100).toFixed(2)}%
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {/* 계좌 카드 그리드 (2열) */}
       <div style={{

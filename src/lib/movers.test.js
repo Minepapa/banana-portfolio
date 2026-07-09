@@ -21,7 +21,7 @@ test('computeDailyChange: 계좌 전체 델타는 총평가 기준(거래 포함
   assert.equal(r.baselineTs, '2026-07-10 08:00');
 });
 
-test('computeDailyChange: 종목 무버는 단가 변동만(수량 무관), abs 내림차순', () => {
+test('computeDailyChange: 종목 무버는 단가 변동만(수량 무관), 등락률(%) abs 내림차순', () => {
   const accounts = {
     ISA: acct(0, []),
     위탁: acct(0, [
@@ -44,6 +44,29 @@ test('computeDailyChange: 종목 무버는 단가 변동만(수량 무관), abs 
   assert.equal(r.movers[0].account, '위탁');
   assert.equal(r.movers[1].name, 'SK하이닉스');
   assert.equal(r.movers[1].wonDelta, 100);
+});
+
+test('computeDailyChange: 정렬 기준은 원화금액이 아니라 등락률 — 금액 작아도 %가 크면 상위', () => {
+  const accounts = {
+    ISA: acct(0, []),
+    위탁: acct(0, [
+      { name: '고액저변동', eval: 1010000, qty: 10000, type: '국내주식' },   // 단가 101 vs 100 = +1%, 원화 +10,000
+      { name: '소액고변동', eval: 200, qty: 10, type: '국내주식' },          // 단가 20 vs 10 = +100%, 원화 +100
+    ]),
+    연금저축: acct(0, []), IRP: acct(0, []),
+  };
+  const snap = {
+    date: '2026-07-10', ts: '2026-07-10 08:00', totalEval: 999999,
+    byHolding: {
+      '위탁|고액저변동': { e: 1000000, q: 10000 },
+      '위탁|소액고변동': { e: 100, q: 10 },
+    },
+  };
+  const r = computeDailyChange(accounts, snap);
+  // 원화 기준이면 고액저변동(10,000)이 1등이지만, %기준이므로 소액고변동(100%)이 1등이어야 함.
+  assert.equal(r.movers[0].name, '소액고변동');
+  assert.equal(Math.round(r.movers[0].pct * 100) / 100, 1);
+  assert.equal(r.movers[1].name, '고액저변동');
 });
 
 test('computeDailyChange: 거래로 수량 바뀌어도 단가델타는 순수가격, traded 표기', () => {
@@ -105,7 +128,7 @@ test('computeDailyChange: 현금성(예수금·외화 RP·MMF)·기준없는 종
   assert.equal(r.movers.length, 0);
 });
 
-test('computeDailyChange: 변동 0원 종목은 무버에서 제외(기준선 직후 all-zero 방지)', () => {
+test('computeDailyChange: 변동 0%(단가 무변동) 종목은 무버에서 제외(기준선 직후 all-zero 방지)', () => {
   const accounts = {
     ISA: acct(0, []),
     위탁: acct(0, [

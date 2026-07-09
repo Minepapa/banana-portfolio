@@ -7,14 +7,15 @@ import { SectionTitle } from '../lib/primitives.jsx';
 import { findThesisAlerts } from '../lib/thesisAlerts.js';
 import { computeJobHealth } from '../lib/jobHealth.js';
 import { JOB_CADENCE } from '../lib/constants.js';
-import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
+import { PROFIT_POS, PROFIT_NEG, profitColor } from '../lib/colors.js';
+import { MONO } from '../lib/theme.js';
 
 // KST 기준 오늘 날짜(YYYY-MM-DD). 마운트 시 1회만 평가해 렌더 순수성 유지.
 function todayStr() {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
 }
 
-export default function TodayTab({ riskMonitor, positionJournal, accounts, weeklyReports, execPending, jobStatus, preferences, setTab, baseFont }) {
+export default function TodayTab({ riskMonitor, positionJournal, accounts, weeklyReports, execPending, jobStatus, preferences, movers = [], dailyBaseLabel, fmt, setTab, baseFont }) {
   const [day] = useState(todayStr);
   // 주말 여부는 마운트 시 고정된 day(KST 날짜)에서 파생 — 렌더 순수성 유지(Date.now 미사용).
   const isWeekend = (() => { const d = new Date(day).getUTCDay(); return d === 0 || d === 6; })();
@@ -271,6 +272,44 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
       <div style={{ fontSize: 9, color: '#6B675C', textAlign: 'center', marginTop: 16, lineHeight: 1.6 }}>
         처리하면 자동으로 사라집니다 · 확인 표시는 오늘 하루만 유지됩니다
       </div>
+
+      {/* 오늘의 변동 종목 — 일별스냅샷(매일 08:00 KST) 기준 등락률(%) 상위. 금액이 아니라
+          변동성(가격이 얼마나 흔들렸나)을 보기 위한 목록이라 원화가 아닌 %로 정렬한다. */}
+      {movers.length > 0 && (
+        <div style={{ background: '#FFFFFF', border: '1px solid #141414', borderRadius: 0, padding: '14px 16px', marginTop: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C' }}>오늘의 변동 종목 (등락률순)</div>
+            {dailyBaseLabel && <div style={{ fontSize: 9, color: '#6B675C' }}>{dailyBaseLabel} 기준</div>}
+          </div>
+          {movers.map((m, i) => {
+            const color = profitColor(m.pct);
+            const acctColor = accounts?.[m.account]?.color || '#aaa';
+            const acctLabel = accounts?.[m.account]?.label || m.account;
+            return (
+              <div key={`${m.account}-${m.name}-${i}`} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 0', borderBottom: i < movers.length - 1 ? '1px solid #EAE6DA' : 'none',
+              }}>
+                <div style={{ fontSize: 9, background: acctColor + '33', color: acctColor, padding: '2px 5px', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                  {acctLabel}
+                </div>
+                <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: '#141414', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {m.name}
+                  {m.traded && <span style={{ fontSize: 9, fontWeight: 400, color: '#6B675C', marginLeft: 4 }}>거래</span>}
+                </div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color }}>
+                    {m.pct >= 0 ? '+' : ''}{(m.pct * 100).toFixed(2)}%
+                  </div>
+                  <div style={{ fontSize: 10, color, fontFamily: MONO }}>
+                    {m.wonDelta > 0 ? '▲ ' : m.wonDelta < 0 ? '▼ ' : ''}₩{fmt(Math.abs(m.wonDelta))}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

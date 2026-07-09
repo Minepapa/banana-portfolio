@@ -264,9 +264,6 @@ export default function App() {
               <div style={{ fontSize: 10, fontWeight: 700, color: profitColor(dailyDelta), fontFamily: MONO }}>
                 {dailyDelta > 0 ? '▲ ' : dailyDelta < 0 ? '▼ ' : ''}₩{fmt(Math.abs(dailyDelta))}
                 {dailyPct != null ? ` (${dailyDelta >= 0 ? '+' : '−'}${Math.abs(dailyPct).toFixed(2)}%)` : ''}
-                {dailyBaseLabel && (
-                  <span style={{ fontWeight: 400, color: INK_2, fontFamily: 'inherit' }}> · {dailyBaseLabel} 기준</span>
-                )}
               </div>
             )}
           </div>
@@ -389,7 +386,6 @@ export default function App() {
           <DashboardTab
             totalInvest={totalInvest} totalEval={totalEval} totalProfit={totalProfit}
             accounts={accounts} monthlyData={monthlyData} fmt={fmt} isMobile={isMobile} baseFont={baseFont}
-            movers={movers} dailyBaseLabel={dailyBaseLabel}
             setAcctKey={setAcctKey} setTab={setTab}
             showSavings={showSavings} setShowSavings={setShowSavings} showSavingsEdit={showSavingsEdit}
             savingsEditValue={savingsEditValue} setSavingsEditValue={setSavingsEditValue}
@@ -460,7 +456,7 @@ export default function App() {
           <TodayTab
             riskMonitor={riskMonitor} positionJournal={positionJournal} accounts={accounts}
             weeklyReports={weeklyReports} execPending={execPending} jobStatus={jobStatus}
-            preferences={preferences}
+            preferences={preferences} movers={movers} dailyBaseLabel={dailyBaseLabel} fmt={fmt}
             setTab={setTab} baseFont={baseFont}
           />
         )}
