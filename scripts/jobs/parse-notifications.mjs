@@ -712,6 +712,28 @@ async function main() {
       console.log(`  ⚠ updatedRange 파싱 실패('${cells}') — 기존행수 기준 폴백 A${startRow}:A${endRow}`);
     }
     await clearColumnABackground(token, EXEC_SHEET, startRow, endRow);
+
+    // ── 주문제안 자동 매칭 — 승인된 주문서가 실제 체결되면 실행완료로 (주문함 루프 클로즈) ──
+    // 매칭키 = 계좌|종목명|방향 (order-candidates makeMatchKey와 동일 계약). 승인 1건당 체결
+    // 1건만 소비. 매칭 실패는 그대로 둠(수동 처리 가능 — 파괴적 쓰기 없음, 시트 미존재도 무해).
+    try {
+      const propRows = await getRange(token, '주문제안!A2:N').catch(() => []);
+      const approved = new Map();   // matchKey → rowNum (최초 1건)
+      propRows.forEach((r, i) => {
+        if (String(r[10] ?? '').trim() !== '승인') return;
+        const k = String(r[13] ?? '').trim();
+        if (k && !approved.has(k)) approved.set(k, i + 2);
+      });
+      for (const er of execRowsToWrite) {
+        const k = `${String(er[2] ?? '').trim()}|${String(er[5] ?? '').trim()}|${String(er[1] ?? '').trim()}`;
+        const rowNum = approved.get(k);
+        if (!rowNum) continue;
+        approved.delete(k);
+        await updateCell(token, `주문제안!K${rowNum}`, '실행완료');
+        await updateCell(token, `주문제안!L${rowNum}`, normalizeDateTime(String(er[0] ?? '')));
+        console.log(`  ✅ 주문서 실행완료 매칭: ${k} (행 ${rowNum})`);
+      }
+    } catch (e) { console.log(`  ⚠ 주문제안 매칭 skip: ${e.message}`); }
   }
   for (const u of divUpdates) {
     await updateCell(token, `${DIV_SHEET}!B${u.rowNum}`, u.amount);

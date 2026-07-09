@@ -15,7 +15,7 @@ function todayStr() {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
 }
 
-export default function TodayTab({ riskMonitor, positionJournal, accounts, weeklyReports, execPending, jobStatus, preferences, movers = [], dailyBaseLabel, fmt, setTab, baseFont }) {
+export default function TodayTab({ riskMonitor, positionJournal, accounts, weeklyReports, execPending, jobStatus, preferences, movers = [], dailyBaseLabel, fmt, proposals = [], setTab, baseFont }) {
   const [day] = useState(todayStr);
   // 주말 여부는 마운트 시 고정된 day(KST 날짜)에서 파생 — 렌더 순수성 유지(Date.now 미사용).
   const isWeekend = (() => { const d = new Date(day).getUTCDay(); return d === 0 || d === 6; })();
@@ -102,9 +102,21 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   // ── 8) 무인 잡 문제 ──
   const jobProblems = jobStatus ? computeJobHealth(jobStatus, JOB_CADENCE) : [];
 
+  // ── 0) 대기 주문서 (주문함 파이프라인 — 승인/기각하면 자동 소멸) ──
+  const pendingOrders = (proposals || []).filter(p => p.status === '제안').length;
+  const approvedOrders = (proposals || []).filter(p => p.status === '승인').length;
+
   // ── 항목 조립 ── kind:'read'=당일 확인으로 닫힘, 'auto'=처리하면 자동 소멸 ──
   const items = [];
 
+  if (pendingOrders > 0 || approvedOrders > 0) {
+    items.push({
+      key: 'orders', kind: 'auto', accent: '#141414', icon: '📋',
+      title: [pendingOrders > 0 ? `대기 주문서 ${pendingOrders}건` : '', approvedOrders > 0 ? `실행 대기 ${approvedOrders}건` : ''].filter(Boolean).join(' · '),
+      sub: pendingOrders > 0 ? '완성된 주문서 — 승인 또는 기각' : '증권사 앱에서 입력하면 자동 완료',
+      goLabel: '주문함 보기', go: () => setTab('주문'),
+    });
+  }
   if (!isWeekend && riskActionable > 0) {
     items.push({
       key: `risk:${lastRiskDate}`, kind: 'read', accent: riskRed > 0 ? '#E5484D' : '#E0A000',

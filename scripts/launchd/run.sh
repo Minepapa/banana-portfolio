@@ -53,7 +53,9 @@ case "$JOB" in
   journal-sync)        CMD=(scripts/jobs/sync-position-journal.mjs) ;;
   backup)              CMD=(scripts/jobs/backup-sheet.mjs) ;;
   daily-snapshot)      CMD=(scripts/jobs/daily-snapshot.mjs) ;;
-  *) echo "usage: run.sh {drain|risk-d|risk-b|baseline|report-sync|weekly-report|parse-notifications|journal-sync|backup|daily-snapshot}" >&2; exit 2 ;;
+  order-weekly)        CMD=(scripts/jobs/order-proposals.mjs --mode=weekly) ;;
+  order-crash)         CMD=(scripts/jobs/order-proposals.mjs --mode=crash) ;;
+  *) echo "usage: run.sh {drain|risk-d|risk-b|baseline|report-sync|weekly-report|parse-notifications|journal-sync|backup|daily-snapshot|order-weekly|order-crash}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)

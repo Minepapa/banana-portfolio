@@ -288,6 +288,35 @@ function parseBaselines(vr) {
   }).filter(Boolean);
 }
 
+// 주문제안 파서 (A~N) — 컬럼 레이아웃은 scripts/lib/sheet-contracts.mjs PROPOSAL_COL 계약과
+// 동일(브라우저라 import 불가 → parseSheetData.test.js 핀 테스트가 정합 고정).
+// rowNum(1-base 시트 행번호)은 승인/기각 writeRange에 필요.
+function parseProposals(vr) {
+  const rows = vr?.values ?? [];
+  const safeJson = (str, fb) => { try { return JSON.parse(String(str ?? '') || 'null') ?? fb; } catch { return fb; } };
+  return rows.map((r, i) => {
+    const name = String(r[4] ?? '').trim();
+    if (!name) return null;
+    return {
+      rowNum: i + 2,
+      date: toDateStr(r[0]),                    // 시리얼 방어 (표시·정렬 일관성)
+      source: String(r[1] ?? '').trim(),
+      acct: String(r[2] ?? '').trim(),
+      side: String(r[3] ?? '').trim(),          // 매수/매도
+      name,
+      qty: parseNum(r[5]),
+      price: parseNum(r[6]),
+      amount: parseNum(r[7]),
+      rationale: safeJson(r[8], { text: '', facts: {} }),
+      checks: safeJson(r[9], []),
+      status: String(r[10] ?? '').trim() || '제안',
+      responded: String(r[11] ?? '').trim(),
+      rejectReason: String(r[12] ?? '').trim(),
+      matchKey: String(r[13] ?? '').trim(),
+    };
+  }).filter(Boolean).reverse();                  // 최신 먼저
+}
+
 // 일별스냅샷 파서 — 최신 1행(max 날짜)만 "오늘 기준선"으로 반환. 빈 시트/미존재 → null.
 // A날짜 B스냅시각 C총평가 D계좌별JSON E종목별JSON. JSON 파싱 실패 시 해당 필드 빈 객체.
 function parseDailySnapshot(vr) {
@@ -423,6 +452,7 @@ export function parseSheetData(valueRanges) {
   const usdRate = parseNum(valueRanges[17]?.values?.[0]?.[0]);
   const preferences = parsePreferences(valueRanges[18]);
   const dailySnapshot = parseDailySnapshot(valueRanges[19]);
+  const proposals = parseProposals(valueRanges[20]);
 
-  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines, positionJournal, usdRate, preferences, dailySnapshot } : null;
+  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines, positionJournal, usdRate, preferences, dailySnapshot, proposals } : null;
 }

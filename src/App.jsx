@@ -23,6 +23,7 @@ import RebalanceTab from './tabs/RebalanceTab.jsx';
 import HoldingsTab from './tabs/HoldingsTab.jsx';
 import ExecutionsTab from './tabs/ExecutionsTab.jsx';
 import TodayTab from './tabs/TodayTab.jsx';
+import OrderInboxTab from './tabs/OrderInboxTab.jsx';
 import PositionJournalTab from './tabs/PositionJournalTab.jsx';
 import PreferenceTab from './tabs/PreferenceTab.jsx';
 import BuyEvaluationTab from './tabs/BuyEvaluationTab.jsx';
@@ -70,8 +71,9 @@ export default function App() {
   const [preferences, setPreferences] = useState([]); // 성향 학습 관찰
   const [usdRate, setUsdRate] = useState(0); // USD/KRW 환율
   const [dailySnapshot, setDailySnapshot] = useState(null); // 일별스냅샷 최신행(어제대비·무버 기준선)
+  const [proposals, setProposals] = useState([]); // 주문제안 (주문함)
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj, usdRate: ur, preferences: pref, dailySnapshot: ds }) => {
+  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj, usdRate: ur, preferences: pref, dailySnapshot: ds, proposals: pr }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
     setDividendData(d || []);
@@ -87,6 +89,7 @@ export default function App() {
     if (pref) setPreferences(pref);
     if (ur > 0) setUsdRate(ur);
     setDailySnapshot(ds ?? null);
+    setProposals(pr || []);
   }, []);
 
   const sheets = useGoogleSheets(onData);
@@ -306,6 +309,7 @@ export default function App() {
           {[
             { key: "dashboard", label: "홈" },
             { key: "오늘",      label: "오늘" },
+            { key: "주문",      label: "주문" },
             { key: "report",    label: "리포트" },
             { key: "리스크",    label: "리스크" },
             { key: "평가",      label: "평가" },
@@ -457,8 +461,14 @@ export default function App() {
             riskMonitor={riskMonitor} positionJournal={positionJournal} accounts={accounts}
             weeklyReports={weeklyReports} execPending={execPending} jobStatus={jobStatus}
             preferences={preferences} movers={movers} dailyBaseLabel={dailyBaseLabel} fmt={fmt}
+            proposals={proposals}
             setTab={setTab} baseFont={baseFont}
           />
+        )}
+
+        {/* ── 주문 탭 (주문함 — 신호를 실행 가능한 주문서로) ── */}
+        {tab === "주문" && (
+          <OrderInboxTab proposals={proposals} accounts={accounts} sheets={sheets} fmt={fmt} baseFont={baseFont} />
         )}
 
         {/* ── 포지션저널 탭 (거래 생애주기 전제) ── */}

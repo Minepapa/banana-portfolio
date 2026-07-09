@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   JOURNAL_HEADER, JOURNAL_COL, EXEC_COL, NOTE_COL, RISK_COL,
+  PROPOSAL_HEADER, PROPOSAL_COL, PROPOSAL_STATUS, PROPOSAL_SOURCE,
   EVAL_STATUS, JOURNAL_STATUS, CONFIRM_STATUS, CASH_SOURCE, colLetter,
 } from './sheet-contracts.mjs';
 import { CHEOL_COLS } from '../../src/lib/constants.js';
@@ -49,6 +50,31 @@ test('NOTE_COL·RISK_COL 핵심 인덱스 고정', () => {
   assert.equal(NOTE_COL.STATUS, 14); // O열 매수여부
   assert.equal(RISK_COL.TYPE, 1);    // 리스크모니터 B열 유형(B/D/O)
   assert.equal(RISK_COL.SIGNAL, 3);  // D열 신호(🟢🟡🔴)
+});
+
+test('주문제안: HEADER 길이·컬럼 라벨이 컬럼맵 인덱스와 정합 (A~N)', () => {
+  assert.equal(PROPOSAL_HEADER.length, 14);                        // A~N
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.DATE], '생성일시');
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.SOURCE], '출처');
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.ACCT], '계좌');
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.SIDE], '방향');
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.NAME], '종목명');
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.QTY], '수량');
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.AMOUNT], '예상금액');
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.RATIONALE], '근거체인');
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.CONSTRAINTS], '제약체크');
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.STATUS], '상태');      // K열 — 앱 승인/기각·매칭이 갱신
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.REJECT_REASON], '기각사유');
+  assert.equal(PROPOSAL_HEADER[PROPOSAL_COL.MATCH_KEY], '매칭키');
+  assert.equal(colLetter(PROPOSAL_COL.STATUS), 'K');
+  assert.equal(colLetter(PROPOSAL_COL.MATCH_KEY), 'N');
+});
+
+test('주문제안 상태·출처 계약값 고정 (잡이 쓰고 앱·매칭이 읽음)', () => {
+  assert.deepEqual(Object.values(PROPOSAL_STATUS).sort(),
+    ['기각', '만료', '승인', '실행완료', '제안'].sort());
+  assert.deepEqual(Object.values(PROPOSAL_SOURCE).sort(),
+    ['급락O', '논리훼손B', '리밸런싱', '평가🟢'].sort());
 });
 
 test('colLetter: 인덱스 → 시트 열 문자', () => {

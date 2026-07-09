@@ -330,3 +330,43 @@ test('parseRiskMonitor: 날짜 없는 행 필터', () => {
   assert.equal(riskMonitor.length, 1);
   assert.equal(riskMonitor[0].date, '2026-06-01');
 });
+
+// ── parseProposals (주문제안 A~N — sheet-contracts.mjs PROPOSAL_COL 계약 핀) ──
+
+test('parseProposals: 컬럼 계약 정합 + JSON 필드 파싱 + 최신순', () => {
+  const vrs = makeVR(21);
+  vrs[1] = { values: [CASH_ROW] };
+  vrs[20] = { values: [
+    // A생성일시 B출처 C계좌 D방향 E종목명 F수량 G단가 H금액 I근거 J제약 K상태 L응답 M사유 N매칭키
+    ['2026-07-06 08:30', '리밸런싱', '위탁', '매도', '현대차', '3', '482000', '1446000',
+      '{"text":"근거","facts":{"갭":"+7%p"}}', '[{"k":"확신보호","ok":true,"d":"배분형"}]',
+      '제안', '', '', '위탁|현대차|매도'],
+    ['2026-07-10 16:50', '급락O', '위탁', '매수', '삼성전자', '3', '278000', '834000',
+      '{"text":"","facts":{}}', '[]', '승인', '2026-07-10 17:00', '', '위탁|삼성전자|매수'],
+  ] };
+  const { proposals } = parseSheetData(vrs);
+  assert.equal(proposals.length, 2);
+  assert.equal(proposals[0].name, '삼성전자');          // 최신(뒤 행)이 앞
+  assert.equal(proposals[0].status, '승인');
+  assert.equal(proposals[0].rowNum, 3);                 // 시트 행번호(승인/기각 쓰기용)
+  assert.equal(proposals[1].side, '매도');
+  assert.equal(proposals[1].qty, 3);
+  assert.equal(proposals[1].amount, 1446000);
+  assert.equal(proposals[1].rationale.facts['갭'], '+7%p');
+  assert.equal(proposals[1].checks[0].k, '확신보호');
+  assert.equal(proposals[1].matchKey, '위탁|현대차|매도');
+});
+
+test('parseProposals: 깨진 JSON·종목명 없는 행 방어', () => {
+  const vrs = makeVR(21);
+  vrs[1] = { values: [CASH_ROW] };
+  vrs[20] = { values: [
+    ['2026-07-06', '리밸런싱', '위탁', '매도', '', '3', '', '', '', '', '제안', '', '', ''],   // 이름 없음 → 제외
+    ['2026-07-06', '리밸런싱', '위탁', '매도', '현대차', '3', '482000', '1446000',
+      '{broken json', 'also broken', '제안', '', '', 'k'],
+  ] };
+  const { proposals } = parseSheetData(vrs);
+  assert.equal(proposals.length, 1);
+  assert.deepEqual(proposals[0].rationale, { text: '', facts: {} });   // 폴백
+  assert.deepEqual(proposals[0].checks, []);
+});

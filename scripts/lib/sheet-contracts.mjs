@@ -29,6 +29,24 @@ export const NOTE_COL = { DATE: 0, NAME: 1, TICKER: 2, MARKET: 3, CONCL: 4, STAT
 // ── 리스크모니터 (A~H, 사용 필드만) ──────────────────────────────────────────
 export const RISK_COL = { DATE: 0, TYPE: 1, TARGET: 2, SIGNAL: 3 };
 
+// ── 주문제안 (A~N) — order-proposals 잡이 쓰고 앱 주문 탭·parse-notifications 매칭이 읽음 ──
+export const PROPOSAL_HEADER = [
+  '생성일시', '출처', '계좌', '방향', '종목명', '수량', '예상단가', '예상금액',
+  '근거체인', '제약체크', '상태', '응답일시', '기각사유', '매칭키',
+];
+export const PROPOSAL_COL = {
+  DATE: 0, SOURCE: 1, ACCT: 2, SIDE: 3, NAME: 4, QTY: 5, PRICE: 6, AMOUNT: 7,
+  RATIONALE: 8, CONSTRAINTS: 9, STATUS: 10, RESPONDED: 11, REJECT_REASON: 12, MATCH_KEY: 13,
+};
+// 상태 전이: 제안 → (승인 → 실행완료) | 기각 | 만료. 승인만 체결 매칭 대상.
+export const PROPOSAL_STATUS = {
+  PROPOSED: '제안', APPROVED: '승인', REJECTED: '기각', EXECUTED: '실행완료', EXPIRED: '만료',
+};
+// 출처 신호 종류 — B열 계약값(앱 배지·dedup 키에 사용)
+export const PROPOSAL_SOURCE = {
+  REBALANCE: '리밸런싱', CRASH: '급락O', THESIS: '논리훼손B', EVAL: '평가🟢',
+};
+
 // ── 상태 문자열 (writer가 쓰고 앱·잡이 읽는 계약값) ───────────────────────────
 export const EVAL_STATUS = { PENDING: '대기', PROCESSING: '처리중', DONE: '완료', ERROR: '오류' };
 export const JOURNAL_STATUS = { HELD: '보유', CLOSED: '청산' };
