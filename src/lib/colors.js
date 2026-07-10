@@ -9,6 +9,18 @@ export const CHART_BAR_COLOR = '#C9F23E';
 // 손익 색상: 0은 중립색 (색맹·변동없음 혼란 방지)
 export const profitColor = (n) => n > 0 ? PROFIT_POS : n < 0 ? PROFIT_NEG : PROFIT_FLAT;
 
+// ── 리스크 신호 심각도 색상 ──────────────────────────────────────────────────
+// 오늘·리스크·포지션 탭이 공유하는 단일 정본(🔴/🟡/🟢). "기회"(O) 같은 의미
+// 구분은 색이 아니라 아이콘·라벨이 담당 — 심각도색은 항상 신호 이모지에서만 파생한다.
+// (2026-07 사고: 탭마다 색을 따로 정의해 같은 급락 신호가 주황/파랑/빨강으로 제각각 보였음)
+export const SIGNAL_RED = '#E5484D';
+export const SIGNAL_AMBER = '#E0A000';
+export const SIGNAL_GREEN = '#159E52';
+export const signalColor = (signal) => {
+  const s = String(signal ?? '');
+  return s.includes('🔴') ? SIGNAL_RED : s.includes('🟡') ? SIGNAL_AMBER : SIGNAL_GREEN;
+};
+
 // ── 자산군 색상 팔레트 ─────────────────────────────────────────────────────────
 export const COLORS = {
   채권: "#4A90D9", 금: "#F5C842", 달러: "#7EC8A4", 배당주: "#F4845F",

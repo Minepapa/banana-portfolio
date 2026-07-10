@@ -1,6 +1,7 @@
 // 리스크 탭: B(논리)·D(거시) 신호 모니터 + 펀더멘털 기준선. App.jsx에서 추출 (동작 불변).
 import { useState } from "react";
 import { SectionTitle, Sentences } from '../lib/primitives.jsx';
+import { SIGNAL_RED, SIGNAL_AMBER, SIGNAL_GREEN, signalColor } from '../lib/colors.js';
 
 export default function RiskTab({ riskMonitor, baselines, setTab }) {
   const [riskOpen, setRiskOpen] = useState(new Set());
@@ -8,7 +9,6 @@ export default function RiskTab({ riskMonitor, baselines, setTab }) {
   const today = new Date();
   const dateStr = `${today.getFullYear()}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getDate()).padStart(2,'0')}`;
   const sigLevel = (s) => s.includes('🔴') ? 3 : s.includes('🟡') ? 2 : 1;
-  const sigColor = (s) => s.includes('🔴') ? '#E5484D' : s.includes('🟡') ? '#E0A000' : '#159E52';
   // 검증 "항목"(무엇을 점검했나) — 중립 표기. 결과/상태와 분리.
   const typeLabel = (t) => t === 'B' ? '논리 점검' : t === 'D' ? '거시 점검' : t === 'O' ? '급락매수' : t;
   // 점검 "결과"(상황) — 색상과 함께 표시.
@@ -49,10 +49,12 @@ export default function RiskTab({ riskMonitor, baselines, setTab }) {
   // 참고: 여기 '기회'는 활성 O 전부(비🟢), 오늘 탭 '급락 알림'은 🔴만 — 현재 파이프라인은
   // O를 🔴/🟢만 발행하므로 동일. O🟡을 발행하게 되면 두 기준을 함께 맞출 것.
   const counts = { red: 0, amber: 0, green: 0, opp: 0 };
+  let oppMaxLevel = 0;   // 기회 칩 색 = 집계된 O신호 중 최고 심각도(색은 항상 이모지 기반 — 통일 원칙)
   latest.forEach(r => {
-    if (r.type === 'O') { counts.opp++; return; }
+    if (r.type === 'O') { counts.opp++; oppMaxLevel = Math.max(oppMaxLevel, sigLevel(r.signal)); return; }
     const l = sigLevel(r.signal); if (l === 3) counts.red++; else if (l === 2) counts.amber++; else counts.green++;
   });
+  const oppColor = oppMaxLevel === 3 ? SIGNAL_RED : oppMaxLevel === 2 ? SIGNAL_AMBER : SIGNAL_GREEN;
   // 최신 점검일 — 행 순서에 의존하지 않게 실제 최대 날짜로 계산.
   const lastUpdated = riskMonitor.reduce((mx, r) => (r.date > mx ? r.date : mx), '') || '—';
 
@@ -92,10 +94,10 @@ export default function RiskTab({ riskMonitor, baselines, setTab }) {
           {/* 신호 요약 — 기회(O)는 리스크(경보/주의)와 분리된 칩 */}
           <div style={{ display: 'grid', gridTemplateColumns: counts.opp > 0 ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
             {[
-              { label: '경보', n: counts.red, c: '#E5484D' },
-              { label: '주의', n: counts.amber, c: '#E0A000' },
-              ...(counts.opp > 0 ? [{ label: '기회', n: counts.opp, c: '#2F62E8' }] : []),
-              { label: '정상', n: counts.green, c: '#159E52' },
+              { label: '경보', n: counts.red, c: SIGNAL_RED },
+              { label: '주의', n: counts.amber, c: SIGNAL_AMBER },
+              ...(counts.opp > 0 ? [{ label: '기회', n: counts.opp, c: oppColor }] : []),
+              { label: '정상', n: counts.green, c: SIGNAL_GREEN },
             ].map((x, i) => (
               <div key={i} style={{ background: x.n > 0 ? `${x.c}14` : '#FFFFFF', borderRadius: 0, padding: '14px 8px', textAlign: 'center', border: `1px solid ${x.n > 0 ? `${x.c}44` : '#141414'}` }}>
                 <div style={{ fontSize: 24, fontWeight: 800, color: x.n > 0 ? x.c : '#6B675C', lineHeight: 1 }}>{x.n}</div>
@@ -108,7 +110,7 @@ export default function RiskTab({ riskMonitor, baselines, setTab }) {
 
           {/* 신호 카드 목록 */}
           {latest.map((r, i) => {
-            const color = sigColor(r.signal);
+            const color = signalColor(r.signal);
             const isOpen = riskOpen.has(i);
             // 거시(D) 머리글은 자산군 단위로 통합 — 구성종목 나열은 '자세히'로 내림
             let headTitle = r.target, headRest = '';

@@ -7,7 +7,7 @@ import { SectionTitle } from '../lib/primitives.jsx';
 import { findThesisAlerts } from '../lib/thesisAlerts.js';
 import { computeJobHealth } from '../lib/jobHealth.js';
 import { JOB_CADENCE } from '../lib/constants.js';
-import { PROFIT_POS, PROFIT_NEG, profitColor } from '../lib/colors.js';
+import { PROFIT_POS, PROFIT_NEG, profitColor, SIGNAL_RED, SIGNAL_AMBER } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
 
 // KST 기준 오늘 날짜(YYYY-MM-DD). 마운트 시 1회만 평가해 렌더 순수성 유지.
@@ -119,7 +119,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   }
   if (!isWeekend && riskActionable > 0) {
     items.push({
-      key: `risk:${lastRiskDate}`, kind: 'read', accent: riskRed > 0 ? '#E5484D' : '#E0A000',
+      key: `risk:${lastRiskDate}`, kind: 'read', accent: riskRed > 0 ? SIGNAL_RED : SIGNAL_AMBER,
       icon: riskRed > 0 ? '🔴' : '🟡',
       title: `리스크 ${riskRed > 0 ? `경보 ${riskRed}건` : ''}${riskRed > 0 && riskAmber > 0 ? ' · ' : ''}${riskAmber > 0 ? `주의 ${riskAmber}건` : ''}`,
       sub: '펀더멘털·거시 신호 점검', goLabel: '리스크 보기', go: () => setTab('리스크'),
@@ -127,7 +127,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   }
   if (!isWeekend && oppActionable > 0) {
     items.push({
-      key: `opp:${lastRiskDate}`, kind: 'read', accent: '#E0A000',
+      key: `opp:${lastRiskDate}`, kind: 'read', accent: SIGNAL_RED,   // oppBuy는 🔴만 집계 — 실제 심각도와 일치
       icon: '⚠️',
       title: `급락 알림 ${oppBuy}건`,
       sub: '§4 급락 트리거 발동 — 펀더멘털 확인 후 매수 검토', goLabel: '리스크 보기', go: () => setTab('리스크'),

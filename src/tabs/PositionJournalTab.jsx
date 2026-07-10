@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { SectionTitle } from '../lib/primitives.jsx';
 import { findThesisAlerts } from '../lib/thesisAlerts.js';
 import { useLongPress } from '../hooks/useLongPress.js';
+import { signalColor } from '../lib/colors.js';
 
 export default function PositionJournalTab({ positionJournal, riskMonitor, sheets, baseFont }) {
   const lp = useLongPress();
@@ -74,7 +75,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
     const needReflect = p.status === '청산' && !p.lesson;
     const open = journalOpen.has(p.rowIndex) || needReflect; // 반성 필요 카드는 기본 펼침
     const sig = alertByRow.get(p.rowIndex);
-    const sigColor = sig && /🔴/.test(sig.signal) ? '#E5484D' : '#E0A000';
+    const sigColor = sig ? signalColor(sig.signal) : '#141414';
     return (
       <div key={p.rowIndex} style={{ background: '#FFFFFF', border: `1px solid ${sig ? sigColor + '66' : '#141414'}`, borderRadius: 0, marginBottom: 8, overflow: 'hidden' }}>
         <button onClick={() => setJournalOpen(prev => { const n = new Set(prev); n.has(p.rowIndex) ? n.delete(p.rowIndex) : n.add(p.rowIndex); return n; })}
