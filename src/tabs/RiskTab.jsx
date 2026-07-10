@@ -1,7 +1,7 @@
 // 리스크 탭: B(논리)·D(거시) 신호 모니터 + 펀더멘털 기준선. App.jsx에서 추출 (동작 불변).
 import { useState } from "react";
 import { SectionTitle, Sentences } from '../lib/primitives.jsx';
-import { SIGNAL_RED, SIGNAL_AMBER, SIGNAL_GREEN, signalColor } from '../lib/colors.js';
+import { SIGNAL_RED, SIGNAL_AMBER, SIGNAL_GREEN, SIGNAL_OPPORTUNITY, signalColor } from '../lib/colors.js';
 
 export default function RiskTab({ riskMonitor, baselines, setTab }) {
   const [riskOpen, setRiskOpen] = useState(new Set());
@@ -46,15 +46,11 @@ export default function RiskTab({ riskMonitor, baselines, setTab }) {
   latest.sort((a, b) => sigLevel(b.signal) - sigLevel(a.signal));
   // 기회(O)는 리스크가 아니므로 경보/주의에 안 섞고 별도 집계 — 오늘 탭(급락 알림 분리)과 동일 의미.
   // (섞으면 급락 "매수 기회"가 경보 수를 부풀려 두 탭 숫자가 어긋난다 — 2026-07-10 실측)
-  // 참고: 여기 '기회'는 활성 O 전부(비🟢), 오늘 탭 '급락 알림'은 🔴만 — 현재 파이프라인은
-  // O를 🔴/🟢만 발행하므로 동일. O🟡을 발행하게 되면 두 기준을 함께 맞출 것.
   const counts = { red: 0, amber: 0, green: 0, opp: 0 };
-  let oppMaxLevel = 0;   // 기회 칩 색 = 집계된 O신호 중 최고 심각도(색은 항상 이모지 기반 — 통일 원칙)
   latest.forEach(r => {
-    if (r.type === 'O') { counts.opp++; oppMaxLevel = Math.max(oppMaxLevel, sigLevel(r.signal)); return; }
+    if (r.type === 'O') { counts.opp++; return; }
     const l = sigLevel(r.signal); if (l === 3) counts.red++; else if (l === 2) counts.amber++; else counts.green++;
   });
-  const oppColor = oppMaxLevel === 3 ? SIGNAL_RED : oppMaxLevel === 2 ? SIGNAL_AMBER : SIGNAL_GREEN;
   // 최신 점검일 — 행 순서에 의존하지 않게 실제 최대 날짜로 계산.
   const lastUpdated = riskMonitor.reduce((mx, r) => (r.date > mx ? r.date : mx), '') || '—';
 
@@ -96,7 +92,7 @@ export default function RiskTab({ riskMonitor, baselines, setTab }) {
             {[
               { label: '경보', n: counts.red, c: SIGNAL_RED },
               { label: '주의', n: counts.amber, c: SIGNAL_AMBER },
-              ...(counts.opp > 0 ? [{ label: '기회', n: counts.opp, c: oppColor }] : []),
+              ...(counts.opp > 0 ? [{ label: '기회', n: counts.opp, c: SIGNAL_OPPORTUNITY }] : []),
               { label: '정상', n: counts.green, c: SIGNAL_GREEN },
             ].map((x, i) => (
               <div key={i} style={{ background: x.n > 0 ? `${x.c}14` : '#FFFFFF', borderRadius: 0, padding: '14px 8px', textAlign: 'center', border: `1px solid ${x.n > 0 ? `${x.c}44` : '#141414'}` }}>

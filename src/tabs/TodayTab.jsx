@@ -7,7 +7,7 @@ import { SectionTitle } from '../lib/primitives.jsx';
 import { findThesisAlerts } from '../lib/thesisAlerts.js';
 import { computeJobHealth } from '../lib/jobHealth.js';
 import { JOB_CADENCE } from '../lib/constants.js';
-import { PROFIT_POS, PROFIT_NEG, profitColor, SIGNAL_RED, SIGNAL_AMBER } from '../lib/colors.js';
+import { PROFIT_POS, PROFIT_NEG, profitColor, SIGNAL_RED, SIGNAL_AMBER, SIGNAL_OPPORTUNITY } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
 
 // KST 기준 오늘 날짜(YYYY-MM-DD). 마운트 시 1회만 평가해 렌더 순수성 유지.
@@ -127,7 +127,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   }
   if (!isWeekend && oppActionable > 0) {
     items.push({
-      key: `opp:${lastRiskDate}`, kind: 'read', accent: SIGNAL_RED,   // oppBuy는 🔴만 집계 — 실제 심각도와 일치
+      key: `opp:${lastRiskDate}`, kind: 'read', accent: SIGNAL_OPPORTUNITY,   // 리스크 탭 "기회" 칩과 동일한 카테고리색(경보와 구분)
       icon: '⚠️',
       title: `급락 알림 ${oppBuy}건`,
       sub: '§4 급락 트리거 발동 — 펀더멘털 확인 후 매수 검토', goLabel: '리스크 보기', go: () => setTab('리스크'),
