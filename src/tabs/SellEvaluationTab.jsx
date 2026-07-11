@@ -19,7 +19,10 @@ export default function SellEvaluationTab({
   // targetName이 바뀌면(리스크 탭에서 종목 지정) 해당 종목 선택 — effect 대신 렌더 중
   // 조건부 setState(React 공식 "prop 변화에 맞춰 state 조정" 패턴, 무한루프 없이 1회만 발화).
   // nonce로 비교(이름만 비교하면 같은 종목 재클릭 시 "안 바뀜"으로 오판해 재이동 안 됨).
-  const [prevTargetNonce, setPrevTargetNonce] = useState(targetNonce);
+  // 초기값을 null로(=targetNonce로 하면 안 됨): 이 탭은 tab==="평가"&&evalMode==="매도"일 때만
+  // 마운트되는 조건부 렌더라 리스크탭→평가탭 이동 시 항상 새로 마운트되는데, useState(targetNonce)
+  // 로 초기화하면 마운트 첫 렌더에서 이미 "같음"으로 판정돼 동기화가 발동하지 않는 버그가 있었음.
+  const [prevTargetNonce, setPrevTargetNonce] = useState(null);
   if (targetNonce !== prevTargetNonce) {
     setPrevTargetNonce(targetNonce);
     if (targetName) setNoteSelectedStock(targetName);
