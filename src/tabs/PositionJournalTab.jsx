@@ -200,14 +200,23 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
         </div>
       ) : (
         <>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16, fontSize: 11 }}>
-            <span style={{ color: '#6B675C' }}>보유 <b style={{ color: '#141414' }}>{held.length}</b></span>
+          {/* 1행: 보유 구성(전량 분할) — 보유 = 확신 + 배분. 2행: 처리 필요(교차 플래그) —
+              같은 포지션이 확신/배분 어느 쪽이든 동시에 여러 개 걸릴 수 있어 1행 합계에 안 더해짐. */}
+          <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', marginBottom: 8, fontSize: 11 }}>
+            <span style={{ color: '#6B675C' }}>보유 <b style={{ color: '#141414', fontSize: 14 }}>{held.length}</b></span>
+            <span style={{ color: '#6B675C' }}>=</span>
             <span style={{ color: '#F4845F' }}>확신 {conviction.length}</span>
+            <span style={{ color: '#6B675C' }}>+</span>
             <span style={{ color: '#52C8D4' }}>배분 {alloc.length}</span>
-            {pending > 0 && <span style={{ color: '#E0A000' }}>확인대기 {pending}</span>}
-            {alertByRow.size > 0 && <span style={{ color: '#E5484D', fontWeight: 700 }}>⚠ 투자논리 훼손 {alertByRow.size}</span>}
-            {closed.filter(p => !p.lesson).length > 0 && <span style={{ color: '#E0A000', fontWeight: 700 }}>반성 필요 {closed.filter(p => !p.lesson).length}</span>}
           </div>
+          {(pending > 0 || alertByRow.size > 0 || closed.filter(p => !p.lesson).length > 0) && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16, fontSize: 10 }}>
+              <span style={{ color: '#6B675C', letterSpacing: 1 }}>처리 필요</span>
+              {pending > 0 && <span style={{ color: '#E0A000', background: '#E0A00022', padding: '2px 6px' }}>확인대기 {pending}</span>}
+              {alertByRow.size > 0 && <span style={{ color: '#E5484D', background: '#E5484D22', padding: '2px 6px', fontWeight: 700 }}>⚠ 투자논리 훼손 {alertByRow.size}</span>}
+              {closed.filter(p => !p.lesson).length > 0 && <span style={{ color: '#E0A000', background: '#E0A00022', padding: '2px 6px', fontWeight: 700 }}>반성 필요 {closed.filter(p => !p.lesson).length}</span>}
+            </div>
+          )}
           {conviction.length > 0 && (<>
             <div style={{ fontSize: 10, letterSpacing: 2, color: '#F4845F', marginBottom: 8 }}>확신형 (논리 훼손을 감시)</div>
             {conviction.map(Card)}

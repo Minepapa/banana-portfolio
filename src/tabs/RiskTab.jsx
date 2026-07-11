@@ -11,8 +11,11 @@ export default function RiskTab({ riskMonitor, baselines, setTab }) {
   const sigLevel = (s) => s.includes('🔴') ? 3 : s.includes('🟡') ? 2 : 1;
   // 검증 "항목"(무엇을 점검했나) — 중립 표기. 결과/상태와 분리.
   const typeLabel = (t) => t === 'B' ? '논리 점검' : t === 'D' ? '거시 점검' : t === 'O' ? '급락매수' : t;
-  // 점검 "결과"(상황) — 색상과 함께 표시.
-  const statusLabel = (s) => s.includes('🔴') ? '경보' : s.includes('🟡') ? '주의' : '정상';
+  // 점검 "결과"(상황) — 색상과 함께 표시. O(급락매수)는 리스크가 아니라 기회라 이모지와
+  // 무관하게 항상 "기회"(상단 칩과 동일 라벨·색) — 🔴라고 "경보"로 잘못 읽히지 않게.
+  const statusLabel = (type, s) => type === 'O' ? '기회' : s.includes('🔴') ? '경보' : s.includes('🟡') ? '주의' : '정상';
+  // 카드 색도 같은 원칙: O는 심각도(signalColor)가 아니라 상단 "기회" 칩과 같은 고정색.
+  const cardColor = (r) => r.type === 'O' ? SIGNAL_OPPORTUNITY : signalColor(r.signal);
   // 기준선 수치 단위 통일(%): 숫자면 % 부착, 데이터 없으면 '데이터 부족'.
   const fmtPct = (v) => {
     const s = String(v ?? '').trim();
@@ -94,19 +97,23 @@ export default function RiskTab({ riskMonitor, baselines, setTab }) {
               { label: '주의', n: counts.amber, c: SIGNAL_AMBER },
               ...(counts.opp > 0 ? [{ label: '기회', n: counts.opp, c: SIGNAL_OPPORTUNITY }] : []),
               { label: '정상', n: counts.green, c: SIGNAL_GREEN },
-            ].map((x, i) => (
-              <div key={i} style={{ background: x.n > 0 ? `${x.c}14` : '#FFFFFF', borderRadius: 0, padding: '14px 8px', textAlign: 'center', border: `1px solid ${x.n > 0 ? `${x.c}44` : '#141414'}` }}>
-                <div style={{ fontSize: 24, fontWeight: 800, color: x.n > 0 ? x.c : '#6B675C', lineHeight: 1 }}>{x.n}</div>
-                <div style={{ fontSize: 10, color: '#6B675C', marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: 0, background: x.c, display: 'inline-block' }} />{x.label}
+            ].map((x, i) => {
+              // 0건이면 숫자·점 둘 다 회색으로 죽인다(숫자만 죽고 점은 원색이면 서로 안 맞아 보임).
+              const shown = x.n > 0 ? x.c : '#6B675C';
+              return (
+                <div key={i} style={{ background: x.n > 0 ? `${x.c}14` : '#FFFFFF', borderRadius: 0, padding: '14px 8px', textAlign: 'center', border: `1px solid ${x.n > 0 ? `${x.c}44` : '#141414'}` }}>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: shown, lineHeight: 1 }}>{x.n}</div>
+                  <div style={{ fontSize: 10, color: '#6B675C', marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: 0, background: shown, display: 'inline-block' }} />{x.label}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* 신호 카드 목록 */}
           {latest.map((r, i) => {
-            const color = signalColor(r.signal);
+            const color = cardColor(r);
             const isOpen = riskOpen.has(i);
             // 거시(D) 머리글은 자산군 단위로 통합 — 구성종목 나열은 '자세히'로 내림
             let headTitle = r.target, headRest = '';
@@ -125,7 +132,7 @@ export default function RiskTab({ riskMonitor, baselines, setTab }) {
                     {/* 검증 항목(중립 회색) */}
                     <span style={{ fontSize: 8, color: '#6B675C', border: '1px solid #141414', borderRadius: 0, padding: '1px 5px' }}>{typeLabel(r.type)}</span>
                     {/* 결과 상태(색상) */}
-                    <span style={{ fontSize: 8, color, background: `${color}22`, borderRadius: 0, padding: '1px 6px', fontWeight: 700 }}>{statusLabel(r.signal)}</span>
+                    <span style={{ fontSize: 8, color, background: `${color}22`, borderRadius: 0, padding: '1px 6px', fontWeight: 700 }}>{statusLabel(r.type, r.signal)}</span>
                   </div>
                   <span style={{ fontSize: 9, color: '#6B675C', flexShrink: 0 }}>{r.date}</span>
                 </div>
