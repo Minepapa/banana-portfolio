@@ -1,18 +1,35 @@
 // 포지션 탭: 거래 생애주기(거래직전→감시→반성) 투자논리 관리. App.jsx에서 추출 (동작 불변).
-// 편집 상태(journalOpen/lessonDraft/exitDraft/exitEditing)는 이 탭 전용이라 함께 내려옴.
-// 시트 쓰기 핸들러(confirmThesis/saveExit/saveLesson)는 sheets prop만 사용 — 탭 로컬.
+// 편집 상태(journalOpen/lessonDraft/exitDraft/exitEditing/thesisDraft/thesisEditing)는
+// 이 탭 전용이라 함께 내려옴. 시트 쓰기 핸들러는 sheets prop만 사용 — 탭 로컬.
 import { useState } from 'react';
 import { SectionTitle } from '../lib/primitives.jsx';
 import { findThesisAlerts } from '../lib/thesisAlerts.js';
 import { useLongPress } from '../hooks/useLongPress.js';
 import { signalColor } from '../lib/colors.js';
+import { stripGrade } from '../lib/textFormat.js';
 
-export default function PositionJournalTab({ positionJournal, riskMonitor, sheets, baseFont }) {
+// 매수평가 카드(결론+근거)에서 전제 초안을 구성 — 새로 지어내지 않고 이미 기록된 내용만
+// 재사용(환각 차단 원칙). 종목당 최신 매수(비매도) 카드 사용, evaluations는 이미 최신순.
+// 매칭 카드가 없으면 빈 문자열 반환(그럴 땐 직접 작성).
+function draftThesisFrom(evaluations, name) {
+  const card = (evaluations || []).find(e => e.stock?.name === name && e.status !== '매도');
+  if (!card) return '';
+  const concl = stripGrade(card.conclusion?.raw);
+  const reasons = (card.reasons || []).join(' · ');
+  // 평가 시점을 명시(CLAUDE.md 기간 표기 규칙) — "매수관망" 같은 과거 결론이 최신 판단인
+  // 것처럼 읽히지 않도록. 날짜가 오래됐으면 검토 시 사용자가 그대로 감안할 수 있음.
+  const body = [concl, reasons].filter(Boolean).join(' — ');
+  return body ? `(${card.date} 평가카드 기준) ${body}` : '';
+}
+
+export default function PositionJournalTab({ positionJournal, riskMonitor, evaluations, sheets, baseFont }) {
   const lp = useLongPress();
   const [journalOpen, setJournalOpen] = useState(new Set());
   const [lessonDraft, setLessonDraft] = useState({}); // rowIndex → 교훈 입력값 (반성 카드)
   const [exitDraft, setExitDraft] = useState({}); // rowIndex → 이탈조건 편집값
   const [exitEditing, setExitEditing] = useState(new Set()); // 이탈조건 편집 중인 rowIndex
+  const [thesisDraft, setThesisDraft] = useState({}); // rowIndex → 전제 편집값(초안 프리필)
+  const [thesisEditing, setThesisEditing] = useState(new Set()); // 전제 편집 중인 rowIndex
 
   const held = positionJournal.filter(p => p.status !== '청산');
   const closed = positionJournal.filter(p => p.status === '청산');
@@ -61,6 +78,25 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
     } catch (e) { console.error('이탈조건 저장 오류:', e); }
   };
 
+  // 전제 저장 → F열(전제) + P열(갱신시각). 처음 쓰는 경우(미작성→)만 O열을 '대기'로 전환해
+  // 기존 확인여부 표시와 맞춘다 — 이미 확인된 전제를 고쳤을 땐 확인 상태를 건드리지 않는다.
+  const saveThesis = async (p) => {
+    const text = (thesisDraft[p.rowIndex] ?? '').trim();
+    if (!text) return;
+    const nowStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 16);
+    try {
+      await sheets.writeRange(`포지션저널!F${p.rowIndex + 2}`, [text]);
+      if (p.confirm === '미작성') {
+        await sheets.writeRange(`포지션저널!O${p.rowIndex + 2}:P${p.rowIndex + 2}`, ['대기', nowStr]);
+      } else {
+        await sheets.writeRange(`포지션저널!P${p.rowIndex + 2}`, [nowStr]);
+      }
+      setThesisEditing(prev => { const n = new Set(prev); n.delete(p.rowIndex); return n; });
+      setThesisDraft(prev => { const n = { ...prev }; delete n[p.rowIndex]; return n; });
+      await sheets.fetch();
+    } catch (e) { console.error('전제 저장 오류:', e); }
+  };
+
   // 청산 포지션의 교훈 저장 → N(교훈) + P(갱신시각). 다음 매수 때 ①에서 경고로 재노출
   const saveLesson = async (p) => {
     const text = (lessonDraft[p.rowIndex] ?? '').trim();
@@ -106,8 +142,56 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
                 {sig.detail && <div style={{ fontSize: 11, color: '#6B675C', lineHeight: 1.5, marginTop: 4 }}>{sig.detail}</div>}
               </div>
             )}
-            {p.thesis && (<><div style={{ fontSize: 9, letterSpacing: 1, color: '#141414', marginBottom: 3 }}>투자논리</div>
-              <div style={{ fontSize: 12, color: '#141414', lineHeight: 1.5, marginBottom: 10 }}>{p.thesis}</div></>)}
+            {p.status !== '청산' ? (
+              thesisEditing.has(p.rowIndex) ? (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, letterSpacing: 1, color: '#141414', marginBottom: 4 }}>투자논리 편집</div>
+                  <textarea
+                    value={thesisDraft[p.rowIndex] ?? p.thesis ?? ''}
+                    onChange={e => setThesisDraft(prev => ({ ...prev, [p.rowIndex]: e.target.value }))}
+                    rows={3}
+                    style={{ width: '100%', boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #14141455', borderRadius: 0, color: '#141414', fontSize: 12, fontFamily: baseFont, padding: 8, resize: 'vertical' }}
+                  />
+                  {!p.thesis && (
+                    <div style={{ fontSize: 9, color: '#6B675C', marginTop: 4, lineHeight: 1.5 }}>
+                      {draftThesisFrom(evaluations, p.name)
+                        ? '매수평가 카드의 결론·근거로 초안을 채워뒀습니다 — 검토 후 필요하면 고쳐서 저장하세요.'
+                        : '매칭되는 매수평가 카드가 없어 초안을 못 채웠습니다 — 직접 작성해 주세요.'}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                    <button onClick={() => saveThesis(p)} disabled={!(thesisDraft[p.rowIndex] ?? p.thesis ?? '').trim()}
+                      style={{ padding: '6px 12px', minHeight: 32, borderRadius: 0, border: '1px solid #141414', background: '#DDF3E4', color: '#159E52', cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
+                      저장
+                    </button>
+                    <button onClick={() => { setThesisEditing(prev => { const n = new Set(prev); n.delete(p.rowIndex); return n; }); setThesisDraft(prev => { const n = { ...prev }; delete n[p.rowIndex]; return n; }); }}
+                      style={{ padding: '6px 12px', minHeight: 32, borderRadius: 0, border: '1px solid #141414', background: 'none', color: '#6B675C', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>
+                      취소
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  {...lp.bind(`${p.rowIndex}-thesis`, () => {
+                    setThesisDraft(prev => ({ ...prev, [p.rowIndex]: p.thesis || draftThesisFrom(evaluations, p.name) }));
+                    setThesisEditing(prev => { const n = new Set(prev); n.add(p.rowIndex); return n; });
+                  })}
+                  style={{ position: 'relative', cursor: 'pointer', borderRadius: 0, padding: '6px 8px', margin: '0 -8px 10px', userSelect: 'none', background: lp.activeId === `${p.rowIndex}-thesis` ? '#14141408' : 'transparent' }}>
+                  {lp.activeId === `${p.rowIndex}-thesis` && <div className="lp-progress" />}
+                  <div style={{ fontSize: 9, letterSpacing: 1, color: '#141414', marginBottom: 3 }}>투자논리</div>
+                  {p.thesis ? (
+                    <div style={{ fontSize: 12, color: '#141414', lineHeight: 1.5 }}>{p.thesis}</div>
+                  ) : (
+                    <div style={{ fontSize: 11, color: '#6B675C' }}>
+                      투자논리 없음 — 길게 눌러 작성{draftThesisFrom(evaluations, p.name) ? ' (초안 준비됨)' : ''}
+                    </div>
+                  )}
+                </div>
+              )
+            ) : (
+              p.thesis && (<><div style={{ fontSize: 9, letterSpacing: 1, color: '#141414', marginBottom: 3 }}>투자논리</div>
+                <div style={{ fontSize: 12, color: '#141414', lineHeight: 1.5, marginBottom: 10 }}>{p.thesis}</div></>)
+            )}
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 10 }}>
               {p.target && <div><div style={{ fontSize: 9, color: '#6B675C' }}>목표</div><div style={{ fontSize: 11, color: '#141414' }}>{p.target}</div></div>}
               {p.hold && <div><div style={{ fontSize: 9, color: '#6B675C' }}>예상보유</div><div style={{ fontSize: 11, color: '#141414' }}>{p.hold}</div></div>}
@@ -223,8 +307,8 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
               </div>
               <div style={{ fontSize: 9, color: '#6B675C', lineHeight: 1.5, marginTop: 4, marginBottom: 16 }}>
                 확인대기=AI 초안 매수전제에 동의 표시만 하면 됨 · 전제 미작성=매수전제 자체가
-                비어있어 직접 작성 필요(구글시트) · 훼손=리스크 신호가 매수 이유와 충돌해 이탈조건
-                대조 필요
+                비어있어 직접 작성 필요(카드의 "투자논리"를 길게 눌러 작성) · 훼손=리스크 신호가
+                매수 이유와 충돌해 이탈조건 대조 필요
               </div>
             </>
           )}

@@ -484,7 +484,8 @@ export default function App() {
         {/* ── 포지션저널 탭 (거래 생애주기 전제) ── */}
         {tab === "저널" && (
           <PositionJournalTab
-            positionJournal={positionJournal} riskMonitor={riskMonitor} sheets={sheets} baseFont={baseFont}
+            positionJournal={positionJournal} riskMonitor={riskMonitor} evaluations={evaluations}
+            sheets={sheets} baseFont={baseFont}
           />
         )}
 
