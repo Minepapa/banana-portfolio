@@ -46,9 +46,9 @@ export default function RiskTab({ riskMonitor, baselines, setTab, onGoToEval }) 
     if (seen.has(k)) continue;
     seen.add(k); latest.push(r);
   }
-  // 카드 정렬 = 상단 칩과 같은 순서(경보→주의→기회→정상). 심각도만으로 정렬하면 O(항상 🔴)가
-  // 경보와 같은 순위라 기회 카드가 주의보다 앞서버림 — 카테고리 우선, 그다음 심각도.
-  const categoryRank = (r) => r.type === 'O' ? 3 : (sigLevel(r.signal) === 3 ? 1 : sigLevel(r.signal) === 2 ? 2 : 4);
+  // 카드 정렬 = 상단 칩과 같은 순서(경보→기회→주의→정상, 2026-07 사용자 지정). 심각도만으로
+  // 정렬하면 O(항상 🔴)가 경보와 같은 순위가 돼버려 카테고리 우선, 그다음 심각도로 정렬.
+  const categoryRank = (r) => r.type === 'O' ? 2 : (sigLevel(r.signal) === 3 ? 1 : sigLevel(r.signal) === 2 ? 3 : 4);
   latest.sort((a, b) => categoryRank(a) - categoryRank(b) || sigLevel(b.signal) - sigLevel(a.signal));
   // 기회(O)는 리스크가 아니므로 경보/주의에 안 섞고 별도 집계 — 오늘 탭(급락 알림 분리)과 동일 의미.
   // (섞으면 급락 "매수 기회"가 경보 수를 부풀려 두 탭 숫자가 어긋난다 — 2026-07-10 실측)
@@ -97,8 +97,8 @@ export default function RiskTab({ riskMonitor, baselines, setTab, onGoToEval }) 
           <div style={{ display: 'grid', gridTemplateColumns: counts.opp > 0 ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
             {[
               { label: '경보', n: counts.red, c: SIGNAL_RED },
-              { label: '주의', n: counts.amber, c: SIGNAL_AMBER },
               ...(counts.opp > 0 ? [{ label: '기회', n: counts.opp, c: SIGNAL_OPPORTUNITY }] : []),
+              { label: '주의', n: counts.amber, c: SIGNAL_AMBER },
               { label: '정상', n: counts.green, c: SIGNAL_GREEN },
             ].map((x, i) => {
               // 0건이면 숫자·점 둘 다 회색으로 죽인다(숫자만 죽고 점은 원색이면 서로 안 맞아 보임).

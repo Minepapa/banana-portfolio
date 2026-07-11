@@ -192,7 +192,9 @@ export default function SellEvaluationTab({
                   {stock.profitSum >= 0 ? '+' : ''}{stock.rate.toFixed(1)}%
                 </span>
                 <span style={{ fontSize: 11, color: '#6B675C' }}>
-                  {stock.profitSum >= 0 ? '+' : ''}₩{fmt(stock.profitSum)}
+                  {/* fmt()는 절대값만 반환(Math.abs) — 부호는 여기서 직접 붙여야 함.
+                      '+'만 있고 손실엔 부호가 없어 색으로만 구분되던 문제(2026-07 지적). */}
+                  {stock.profitSum >= 0 ? '+' : '-'}₩{fmt(stock.profitSum)}
                 </span>
               </div>
             </div>
