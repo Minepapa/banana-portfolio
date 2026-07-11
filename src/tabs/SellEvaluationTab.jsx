@@ -1,6 +1,7 @@
 // 평가 탭(매도 모드): 보유 + 평가완료 종목의 매도 검토. App.jsx에서 추출 (동작 불변).
 // 선택·요청 상태(noteSelectedStock/noteSellBusy/noteSellCopied)는 매도 전용이라 함께 내려옴.
 // 매도 평가 큐 추가(sheets.appendValues)는 탭 로컬 핸들러 — sheets prop만 사용.
+// targetName: 리스크 탭 "매도 검토"처럼 특정 종목을 지정해 들어왔을 때 그 종목을 자동 선택.
 import { useState } from 'react';
 import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
@@ -9,11 +10,20 @@ import { stripGrade } from '../lib/textFormat.js';
 import { findThesisAlerts } from '../lib/thesisAlerts.js';
 
 export default function SellEvaluationTab({
-  accounts, evaluations, positionJournal, riskMonitor, setEvalMode, sheets, baseFont, fmt,
+  accounts, evaluations, positionJournal, riskMonitor, setEvalMode, sheets, baseFont, fmt, targetName, targetNonce,
 }) {
   const [noteSelectedStock, setNoteSelectedStock] = useState(null);
   const [noteSellCopied, setNoteSellCopied] = useState(false);
   const [noteSellBusy, setNoteSellBusy] = useState(false);
+
+  // targetName이 바뀌면(리스크 탭에서 종목 지정) 해당 종목 선택 — effect 대신 렌더 중
+  // 조건부 setState(React 공식 "prop 변화에 맞춰 state 조정" 패턴, 무한루프 없이 1회만 발화).
+  // nonce로 비교(이름만 비교하면 같은 종목 재클릭 시 "안 바뀜"으로 오판해 재이동 안 됨).
+  const [prevTargetNonce, setPrevTargetNonce] = useState(targetNonce);
+  if (targetNonce !== prevTargetNonce) {
+    setPrevTargetNonce(targetNonce);
+    if (targetName) setNoteSelectedStock(targetName);
+  }
 
   // 4계좌 holdings 합산 — 종목명 key로 unique
   const stockMap = {};

@@ -20,7 +20,10 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
   const byAlert = (a, b) => (alertByRow.has(b.rowIndex) ? 1 : 0) - (alertByRow.has(a.rowIndex) ? 1 : 0);
   const conviction = held.filter(p => p.kind === '확신').sort(byAlert);
   const alloc = held.filter(p => p.kind !== '확신').sort(byAlert);
-  const pending = held.filter(p => p.confirm !== '확인').length;
+  // "확인대기"(전제는 있고 동의만 하면 됨)와 "전제 미작성"(전제 자체가 없어 확인할 게 없음)은
+  // 필요한 행동이 다르다 — 하나로 묶으면 "확인대기 1"인데 눌러도 확인 버튼이 없어 헷갈린다.
+  const pendingConfirm = held.filter(p => p.confirm === '대기').length;
+  const unwritten = held.filter(p => p.confirm === '미작성').length;
   // 논리 점검(risk-b)은 보유종목을 한 배치로 점검하므로, B신호 최신 날짜 = 일괄 점검일.
   const lastChecked = (riskMonitor || []).filter(r => r.type === 'B').reduce((mx, r) => (r.date > mx ? r.date : mx), '');
 
@@ -32,7 +35,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
     </span>
   );
   const confirmBadge = (c) => {
-    const map = { '확인': ['#159E5222', '#159E52', '✓ 확인'], '대기': ['#E0A00022', '#E0A000', '확인 대기'], '미작성': ['#6B675C22', '#6B675C', '미작성'] };
+    const map = { '확인': ['#159E5222', '#159E52', '✓ 확인'], '대기': ['#E0A00022', '#E0A000', '확인 대기'], '미작성': ['#6B675C22', '#6B675C', '전제 미작성'] };
     const [bg, fg, label] = map[c] || map['미작성'];
     return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 0, background: bg, color: fg }}>{label}</span>;
   };
@@ -209,13 +212,21 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, sheet
             <span style={{ color: '#6B675C' }}>+</span>
             <span style={{ color: '#52C8D4' }}>배분 {alloc.length}</span>
           </div>
-          {(pending > 0 || alertByRow.size > 0 || closed.filter(p => !p.lesson).length > 0) && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16, fontSize: 10 }}>
-              <span style={{ color: '#6B675C', letterSpacing: 1 }}>처리 필요</span>
-              {pending > 0 && <span style={{ color: '#E0A000', background: '#E0A00022', padding: '2px 6px' }}>확인대기 {pending}</span>}
-              {alertByRow.size > 0 && <span style={{ color: '#E5484D', background: '#E5484D22', padding: '2px 6px', fontWeight: 700 }}>⚠ 투자논리 훼손 {alertByRow.size}</span>}
-              {closed.filter(p => !p.lesson).length > 0 && <span style={{ color: '#E0A000', background: '#E0A00022', padding: '2px 6px', fontWeight: 700 }}>반성 필요 {closed.filter(p => !p.lesson).length}</span>}
-            </div>
+          {(pendingConfirm > 0 || unwritten > 0 || alertByRow.size > 0 || closed.filter(p => !p.lesson).length > 0) && (
+            <>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 10 }}>
+                <span style={{ color: '#6B675C', letterSpacing: 1 }}>처리 필요</span>
+                {pendingConfirm > 0 && <span style={{ color: '#E0A000', background: '#E0A00022', padding: '2px 6px' }}>확인대기 {pendingConfirm}</span>}
+                {unwritten > 0 && <span style={{ color: '#6B675C', background: '#6B675C22', padding: '2px 6px' }}>전제 미작성 {unwritten}</span>}
+                {alertByRow.size > 0 && <span style={{ color: '#E5484D', background: '#E5484D22', padding: '2px 6px', fontWeight: 700 }}>⚠ 투자논리 훼손 {alertByRow.size}</span>}
+                {closed.filter(p => !p.lesson).length > 0 && <span style={{ color: '#E0A000', background: '#E0A00022', padding: '2px 6px', fontWeight: 700 }}>반성 필요 {closed.filter(p => !p.lesson).length}</span>}
+              </div>
+              <div style={{ fontSize: 9, color: '#6B675C', lineHeight: 1.5, marginTop: 4, marginBottom: 16 }}>
+                확인대기=AI 초안 매수전제에 동의 표시만 하면 됨 · 전제 미작성=매수전제 자체가
+                비어있어 직접 작성 필요(구글시트) · 훼손=리스크 신호가 매수 이유와 충돌해 이탈조건
+                대조 필요
+              </div>
+            </>
           )}
           {conviction.length > 0 && (<>
             <div style={{ fontSize: 10, letterSpacing: 2, color: '#F4845F', marginBottom: 8 }}>확신형 (논리 훼손을 감시)</div>

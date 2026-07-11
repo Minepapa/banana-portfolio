@@ -1,6 +1,8 @@
 // 평가 탭(매수 모드): AI 능동 종목 평가 카드 + 매수/매도 토글. App.jsx에서 추출 (동작 불변).
 // 매수/매도 토글은 tab==="평가"일 때 항상 렌더 — 이 컴포넌트가 토글의 소유자.
 // evalSelectedIdx는 매수 전용이라 내려옴. 의뢰/적재 모달·재시도는 App 책임이라 prop.
+// targetName: 리스크 탭 "평가 보기"처럼 특정 종목을 지정해 들어왔을 때 그 종목 카드를 자동 선택.
+import { useState } from 'react';
 import { SAMPLE_EVALUATION, AXIS_METRICS, LEARNING_MODULES, LABEL_TO_METRIC } from '../lib/constants.js';
 import { GradeDot, SubLabel, NumberedItem } from '../lib/primitives.jsx';
 import { gradeColor, stripGrade, stripPeriod } from '../lib/textFormat.js';
@@ -24,7 +26,7 @@ function parsePeriodBadge(source) {
 export default function BuyEvaluationTab({
   evaluations, accounts, evalMode, setEvalMode, setEvalSelectedMetric,
   setEvalQueueOpen, setEvalIngestOpen, evalQueue, requeueEval, requeueBusyIdx,
-  evalSelectedIdx, setEvalSelectedIdx, sheets, baseFont,
+  evalSelectedIdx, setEvalSelectedIdx, sheets, baseFont, targetName, targetNonce,
 }) {
   const fromSheet = evaluations.length > 0;
   // 종목별 최신 평가만 추출 + 노트 탭과 동일하게 evalSum 내림차순 정렬
@@ -44,6 +46,17 @@ export default function BuyEvaluationTab({
     });
     return [...seen.values()].sort((a, b) => (evalSumMap[b.stock?.name] || 0) - (evalSumMap[a.stock?.name] || 0));
   })();
+  // targetName이 바뀌면(리스크 탭에서 종목 지정) 해당 인덱스로 전환. effect 대신 렌더 중
+  // 조건부 setState — React 공식 "prop 변화에 맞춰 state 조정" 패턴(무한루프 없이 1회만 발화).
+  // nonce로 비교(이름만 비교하면 같은 종목 재클릭 시 "안 바뀜"으로 오판해 재이동 안 됨).
+  const [prevTargetNonce, setPrevTargetNonce] = useState(targetNonce);
+  if (targetNonce !== prevTargetNonce) {
+    setPrevTargetNonce(targetNonce);
+    if (targetName) {
+      const idx = uniqueEvals.findIndex(ev => ev.stock?.name === targetName);
+      if (idx >= 0) setEvalSelectedIdx(idx);
+    }
+  }
   const current = fromSheet ? (uniqueEvals[evalSelectedIdx] || uniqueEvals[0]) : null;
   // 시트 카드를 SAMPLE 카드와 같은 모양으로 정규화 (axes는 grade만, items 없음)
   const card = current ? {

@@ -45,6 +45,8 @@ export default function App() {
   const [monthlyData, setMonthlyData] = useState([]);
   const [dividendData, setDividendData] = useState([]);
   const [evalMode, setEvalMode] = useState('매수'); // 평가 탭 토글: '매수' | '매도'
+  const [evalTargetName, setEvalTargetName] = useState(null); // 리스크탭→평가 탭 이동 시 자동 선택할 종목
+  const [evalTargetNonce, setEvalTargetNonce] = useState(0);  // 같은 종목 재클릭에도 재이동되도록(이름만 비교하면 무시됨)
   const monthlyRowRef = useRef(null);
   const lastBalanceSyncRef = useRef(null);
   const isBalanceWritingRef = useRef(false);
@@ -222,6 +224,14 @@ export default function App() {
   const dailyBaseLabel = daily?.baselineTs ? daily.baselineTs.slice(5, 16) : null; // "MM-DD HH:mm" 기준시각
   const movers = daily?.movers ?? [];
 
+  // 리스크 탭 "평가 보기"/"매도 검토" → 평가 탭의 해당 종목 카드로 바로 이동.
+  const goToEval = (stockName, mode) => {
+    setEvalMode(mode);
+    setEvalTargetName(stockName);
+    setEvalTargetNonce(n => n + 1);
+    setTab('평가');
+  };
+
   const syncLabel =
     sheets.sync === 'syncing' ? '동기화 중...' :
     sheets.sync === 'error'   ? '동기화 실패' :
@@ -310,9 +320,9 @@ export default function App() {
             { key: "dashboard", label: "홈" },
             { key: "오늘",      label: "오늘" },
             { key: "주문",      label: "주문" },
-            { key: "report",    label: "리포트" },
             { key: "리스크",    label: "리스크" },
             { key: "평가",      label: "평가" },
+            { key: "report",    label: "리포트" },
             { key: "holdings",  label: "보유종목" },
             { key: "rebalance", label: "자산분배" },
             { key: "체결내역",  label: "체결" },
@@ -411,7 +421,7 @@ export default function App() {
 
         {/* ── 리스크 탭 ── */}
         {tab === "리스크" && (
-          <RiskTab riskMonitor={riskMonitor} baselines={baselines} setTab={setTab} />
+          <RiskTab riskMonitor={riskMonitor} baselines={baselines} setTab={setTab} onGoToEval={goToEval} />
         )}
 
         {/* ── 리밸런싱 탭 ── */}
@@ -503,7 +513,7 @@ export default function App() {
             setEvalSelectedMetric={setEvalSelectedMetric} setEvalQueueOpen={setEvalQueueOpen}
             setEvalIngestOpen={setEvalIngestOpen} evalQueue={evalQueue} requeueEval={requeueEval}
             requeueBusyIdx={requeueBusyIdx} evalSelectedIdx={evalSelectedIdx} setEvalSelectedIdx={setEvalSelectedIdx}
-            sheets={sheets} baseFont={baseFont}
+            sheets={sheets} baseFont={baseFont} targetName={evalTargetName} targetNonce={evalTargetNonce}
           />
         )}
 
@@ -512,6 +522,7 @@ export default function App() {
           <SellEvaluationTab
             accounts={accounts} evaluations={evaluations} positionJournal={positionJournal}
             riskMonitor={riskMonitor} setEvalMode={setEvalMode} sheets={sheets} baseFont={baseFont} fmt={fmt}
+            targetName={evalTargetName} targetNonce={evalTargetNonce}
           />
         )}
 

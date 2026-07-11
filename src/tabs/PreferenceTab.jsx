@@ -1,9 +1,14 @@
 // 성향확인 탭: 행동 학습 관찰을 표시·확정/기각. App.jsx에서 분리.
 // 앱은 시트만 읽으므로 학습 데이터는 '성향관찰' 시트(parsePreferences)에서 온다.
 // 확정/기각은 PositionJournalTab.confirmThesis 패턴 — sheets.writeRange(G·H열) → fetch.
+// 확정된 성향을 되돌리는 건 자주 안 쓰는 동작이라 버튼 대신 롱프레스(HoldingsTab과 동일 패턴).
+import { useState } from 'react';
 import { SectionTitle } from '../lib/primitives.jsx';
+import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function PreferenceTab({ preferences, sheets, baseFont }) {
+  const lp = useLongPress();
+  const [rejectConfirm, setRejectConfirm] = useState(null); // 롱프레스로 기각 확인 중인 rowIndex
   const list = preferences || [];
   const confirmed = list.filter(p => p.status === '확정');
   const pending = list.filter(p => p.status === '관찰' || p.status === '승격후보');
@@ -31,38 +36,63 @@ export default function PreferenceTab({ preferences, sheets, baseFont }) {
     return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 0, background: bg, color: fg }}>신뢰도 {c || '보통'}</span>;
   };
 
-  const Card = (p, opts = {}) => (
-    <div key={p.rowIndex} style={{ background: '#FFFFFF', border: `1px solid ${opts.border || '#141414'}`, borderRadius: 0, marginBottom: 8, padding: '12px 14px', opacity: opts.dim ? 0.55 : 1 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
-        {p.type && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 0, background: '#52C8D422', color: '#52C8D4' }}>{p.type}</span>}
-        {vsBadge(p.vsProfile)}
-        {confBadge(p.confidence)}
-        {p.date && <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6B675C' }}>{p.date}</span>}
+  const Card = (p, opts = {}) => {
+    const canLP = opts.longPressReject && sheets.auth === 'signed-in';
+    const lpActive = canLP && lp.activeId === p.rowIndex;
+    const lpHandlers = canLP ? lp.bind(p.rowIndex, () => setRejectConfirm(p.rowIndex)) : {};
+    const confirming = rejectConfirm === p.rowIndex;
+    return (
+      <div key={p.rowIndex} style={{
+        position: 'relative', background: lpActive ? '#EAE6DA' : '#FFFFFF',
+        border: `1px solid ${opts.border || '#141414'}`, borderRadius: 0, marginBottom: 8, padding: '12px 14px',
+        opacity: opts.dim ? 0.55 : 1, transition: 'background 0.1s',
+        userSelect: canLP ? 'none' : undefined, WebkitUserSelect: canLP ? 'none' : undefined,
+      }} {...lpHandlers}>
+        {lpActive && <div className="lp-progress" />}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+          {p.type && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 0, background: '#52C8D422', color: '#52C8D4' }}>{p.type}</span>}
+          {vsBadge(p.vsProfile)}
+          {confBadge(p.confidence)}
+          {p.date && <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6B675C' }}>{p.date}</span>}
+        </div>
+        <div style={{ fontSize: 13, color: '#141414', lineHeight: 1.5, marginBottom: p.evidence ? 6 : 0 }}>{p.observation}</div>
+        {p.evidence && (
+          <div style={{ fontSize: 11, color: '#6B675C', lineHeight: 1.5, background: '#FFFFFF', borderRadius: 0, padding: '6px 8px' }}>
+            <span style={{ color: '#6B675C' }}>근거 </span>{p.evidence}
+          </div>
+        )}
+        {opts.actions && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            <button onClick={() => setStatus(p, '확정')}
+              style={{ padding: '6px 14px', minHeight: 34, borderRadius: 0, border: '1px solid #159E5255', background: '#DDF3E4', color: '#159E52', cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
+              ✓ 확정 (내 성향 맞음)
+            </button>
+            <button onClick={() => setStatus(p, '기각')}
+              style={{ padding: '6px 14px', minHeight: 34, borderRadius: 0, border: '1px solid #141414', background: 'none', color: '#6B675C', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>
+              기각
+            </button>
+          </div>
+        )}
+        {opts.restore && (
+          <button onClick={() => setStatus(p, '관찰')}
+            style={{ marginTop: 8, fontSize: 9, color: '#6B675C', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>되돌리기</button>
+        )}
+        {canLP && confirming && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, paddingTop: 10, borderTop: '1px solid #14141422' }}>
+            <span style={{ fontSize: 10, color: '#6B675C' }}>이 성향을 기각할까요? (잘못 확정했을 때)</span>
+            <button onClick={() => { setStatus(p, '기각'); setRejectConfirm(null); }}
+              style={{ padding: '5px 12px', minHeight: 30, borderRadius: 0, border: '1px solid #E5484D55', background: '#FBE3E4', color: '#E5484D', cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
+              기각 확정
+            </button>
+            <button onClick={() => setRejectConfirm(null)}
+              style={{ padding: '5px 12px', minHeight: 30, borderRadius: 0, border: '1px solid #141414', background: 'none', color: '#6B675C', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>
+              취소
+            </button>
+          </div>
+        )}
       </div>
-      <div style={{ fontSize: 13, color: '#141414', lineHeight: 1.5, marginBottom: p.evidence ? 6 : 0 }}>{p.observation}</div>
-      {p.evidence && (
-        <div style={{ fontSize: 11, color: '#6B675C', lineHeight: 1.5, background: '#FFFFFF', borderRadius: 0, padding: '6px 8px' }}>
-          <span style={{ color: '#6B675C' }}>근거 </span>{p.evidence}
-        </div>
-      )}
-      {opts.actions && (
-        <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-          <button onClick={() => setStatus(p, '확정')}
-            style={{ padding: '6px 14px', minHeight: 34, borderRadius: 0, border: '1px solid #159E5255', background: '#DDF3E4', color: '#159E52', cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: baseFont }}>
-            ✓ 확정 (내 성향 맞음)
-          </button>
-          <button onClick={() => setStatus(p, '기각')}
-            style={{ padding: '6px 14px', minHeight: 34, borderRadius: 0, border: '1px solid #141414', background: 'none', color: '#6B675C', cursor: 'pointer', fontSize: 11, fontFamily: baseFont }}>
-            기각
-          </button>
-        </div>
-      )}
-      {opts.restore && (
-        <button onClick={() => setStatus(p, '관찰')}
-          style={{ marginTop: 8, fontSize: 9, color: '#6B675C', background: 'none', border: 'none', cursor: 'pointer', fontFamily: baseFont, padding: 0 }}>되돌리기</button>
-      )}
-    </div>
-  );
+    );
+  };
 
   return (
     <div>
@@ -85,8 +115,10 @@ export default function PreferenceTab({ preferences, sheets, baseFont }) {
           </>)}
 
           {confirmed.length > 0 && (<>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: '#159E52', margin: '16px 0 8px' }}>확정된 내 성향 (분석의 기준)</div>
-            {confirmed.map(p => Card(p, { border: '#159E5233' }))}
+            <div style={{ fontSize: 10, letterSpacing: 2, color: '#159E52', margin: '16px 0 8px' }}>
+              확정된 내 성향 (분석의 기준) — 잘못 확정했으면 길게 눌러 기각
+            </div>
+            {confirmed.map(p => Card(p, { border: '#159E5233', longPressReject: true }))}
           </>)}
 
           {rejected.length > 0 && (<>

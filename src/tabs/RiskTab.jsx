@@ -3,7 +3,7 @@ import { useState } from "react";
 import { SectionTitle, Sentences } from '../lib/primitives.jsx';
 import { SIGNAL_RED, SIGNAL_AMBER, SIGNAL_GREEN, SIGNAL_OPPORTUNITY, signalColor } from '../lib/colors.js';
 
-export default function RiskTab({ riskMonitor, baselines, setTab }) {
+export default function RiskTab({ riskMonitor, baselines, setTab, onGoToEval }) {
   const [riskOpen, setRiskOpen] = useState(new Set());
 
   const today = new Date();
@@ -46,7 +46,10 @@ export default function RiskTab({ riskMonitor, baselines, setTab }) {
     if (seen.has(k)) continue;
     seen.add(k); latest.push(r);
   }
-  latest.sort((a, b) => sigLevel(b.signal) - sigLevel(a.signal));
+  // 카드 정렬 = 상단 칩과 같은 순서(경보→주의→기회→정상). 심각도만으로 정렬하면 O(항상 🔴)가
+  // 경보와 같은 순위라 기회 카드가 주의보다 앞서버림 — 카테고리 우선, 그다음 심각도.
+  const categoryRank = (r) => r.type === 'O' ? 3 : (sigLevel(r.signal) === 3 ? 1 : sigLevel(r.signal) === 2 ? 2 : 4);
+  latest.sort((a, b) => categoryRank(a) - categoryRank(b) || sigLevel(b.signal) - sigLevel(a.signal));
   // 기회(O)는 리스크가 아니므로 경보/주의에 안 섞고 별도 집계 — 오늘 탭(급락 알림 분리)과 동일 의미.
   // (섞으면 급락 "매수 기회"가 경보 수를 부풀려 두 탭 숫자가 어긋난다 — 2026-07-10 실측)
   const counts = { red: 0, amber: 0, green: 0, opp: 0 };
@@ -147,13 +150,13 @@ export default function RiskTab({ riskMonitor, baselines, setTab }) {
                         <button onClick={() => setTab('저널')} style={{ padding: '5px 12px', minHeight: 30, borderRadius: 0, border: `1px solid ${color}55`, background: 'transparent', color, cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>
                           포지션 보기 ›
                         </button>
-                        <button onClick={() => setTab('평가')} style={{ padding: '5px 12px', minHeight: 30, borderRadius: 0, border: '1px solid #141414', background: 'transparent', color: '#141414', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>
+                        <button onClick={() => (onGoToEval ? onGoToEval(r.target, '매도') : setTab('평가'))} style={{ padding: '5px 12px', minHeight: 30, borderRadius: 0, border: '1px solid #141414', background: 'transparent', color: '#141414', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>
                           매도 검토 ›
                         </button>
                       </>
                     )}
                     {r.type === 'O' && (
-                      <button onClick={() => setTab('평가')} style={{ padding: '5px 12px', minHeight: 30, borderRadius: 0, border: `1px solid ${color}55`, background: 'transparent', color, cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>
+                      <button onClick={() => (onGoToEval ? onGoToEval(r.target, '매수') : setTab('평가'))} style={{ padding: '5px 12px', minHeight: 30, borderRadius: 0, border: `1px solid ${color}55`, background: 'transparent', color, cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>
                         평가 보기 ›
                       </button>
                     )}
