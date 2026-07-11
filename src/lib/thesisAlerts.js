@@ -4,6 +4,12 @@
 // 거래결정·포지션·평가 탭이 공유하는 단일 소스. App.jsx에서 추출.
 import { sameStock } from './stockIdentity.js';
 
+// B신호 심각도별 라벨 — 🔴=훼손(확정), 🟡=주의(약화·"훼손 확정 아님"). Frank 결정 2026-07:
+// 포지션 탭이 🟡까지 "훼손"으로 뭉뚱그리던 것을 주문 가드(applyThesisGuard)와 동일 어휘로 세분화.
+// (🔴만 매수 제외·훼손, 🟡은 매수 경고·주의) — 세 탭이 같은 신호를 같은 말로 부르게 한다.
+export const isThesisBreach = (signal) => String(signal ?? '').includes('🔴');
+export const thesisAlertLabel = (signal) => isThesisBreach(signal) ? '투자논리 훼손' : '논리 주의';
+
 export function findThesisAlerts(positionJournal, riskMonitor) {
   const held = (positionJournal || []).filter(p => p.status !== '청산');
   const matches = (p, s) => s.target && (

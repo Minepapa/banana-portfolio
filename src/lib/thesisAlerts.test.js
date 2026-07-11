@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findThesisAlerts } from './thesisAlerts.js';
+import { findThesisAlerts, isThesisBreach, thesisAlertLabel } from './thesisAlerts.js';
 
 // riskMonitor는 최신순(index 0 = 최신). findThesisAlerts는 리스크 탭과 동일하게
 // 대상의 유형별 최신 신호를 보고, 그게 🔴🟡일 때만 경보한다.
@@ -59,4 +59,13 @@ test('매칭 신호 없으면 경보 없음', () => {
   const journal = [pos('카카오')];
   const risk = [{ date: '2026-06-12', type: 'B', target: '삼성전자', signal: '🔴', summary: 'x' }];
   assert.equal(findThesisAlerts(journal, risk).length, 0);
+});
+
+test('isThesisBreach·thesisAlertLabel: 🔴=훼손, 🟡=주의 (주문 가드와 동일 어휘)', () => {
+  assert.equal(isThesisBreach('🔴 영익률 훼손'), true);
+  assert.equal(isThesisBreach('🟡 영익 약화'), false);
+  assert.equal(isThesisBreach(''), false);
+  assert.equal(isThesisBreach(null), false);
+  assert.equal(thesisAlertLabel('🔴 x'), '투자논리 훼손');
+  assert.equal(thesisAlertLabel('🟡 x'), '논리 주의');
 });

@@ -7,7 +7,7 @@ import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
 import { SectionTitle, GradeDot, SubLabel, NumberedItem, Sentences } from '../lib/primitives.jsx';
 import { stripGrade } from '../lib/textFormat.js';
-import { findThesisAlerts } from '../lib/thesisAlerts.js';
+import { findThesisAlerts, isThesisBreach } from '../lib/thesisAlerts.js';
 
 export default function SellEvaluationTab({
   accounts, evaluations, positionJournal, riskMonitor, setEvalMode, sheets, baseFont, fmt, targetName, targetNonce,
@@ -98,10 +98,13 @@ export default function SellEvaluationTab({
           const isSelected = s.name === currentName;
           const profitColor = s.profitSum >= 0 ? PROFIT_POS : PROFIT_NEG;
           const hasThesisAlert = thesisAlertMap.has(s.name);
+          // 🔴=훼손(빨강)·🟡=주의(주황) — 아래 상세 카드와 같은 어휘로 셀렉터 칩도 세분화.
+          const chipBreach = hasThesisAlert && isThesisBreach(thesisAlertMap.get(s.name).signal.signal);
+          const alertColor = chipBreach ? '#E5484D' : '#E0A000';
           return (
             <button key={s.name} onClick={() => setNoteSelectedStock(s.name)} style={{
               padding: '5px 10px', borderRadius: 0,
-              border: `1px solid ${isSelected ? '#E5484D' : hasThesisAlert ? '#E5484D66' : '#141414'}`,
+              border: `1px solid ${isSelected ? '#E5484D' : hasThesisAlert ? alertColor + '66' : '#141414'}`,
               background: isSelected ? '#FBE3E4' : '#FFFFFF',
               color: isSelected ? '#E5484D' : '#6B675C',
               cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
@@ -111,7 +114,7 @@ export default function SellEvaluationTab({
               <span style={{ fontSize: 9, color: profitColor }}>
                 {s.profitSum >= 0 ? '+' : ''}{s.rate.toFixed(1)}%
               </span>
-              {hasThesisAlert && <span style={{ fontSize: 8, color: '#E5484D' }}>🔴</span>}
+              {hasThesisAlert && <span style={{ fontSize: 8 }}>{chipBreach ? '🔴' : '🟡'}</span>}
               {evCount > 0 && (
                 <span style={{
                   fontSize: 8, padding: '0 4px', borderRadius: 0,
@@ -164,13 +167,15 @@ export default function SellEvaluationTab({
         return (
         <>
           {/* 보유 정보 카드 */}
-          <div style={{ background: '#FFFFFF', borderRadius: 0, padding: '16px 16px 14px', marginBottom: 12, border: thesisAlertMap.has(stock.name) ? '1px solid #E5484D55' : '1px solid transparent' }}>
-            {/* 투자논리 훼손 경보 — findThesisAlerts 기준 (포지션·거래결정 탭과 동일 소스) */}
+          <div style={{ background: '#FFFFFF', borderRadius: 0, padding: '16px 16px 14px', marginBottom: 12, border: thesisAlertMap.has(stock.name) ? `1px solid ${isThesisBreach(thesisAlertMap.get(stock.name).signal.signal) ? '#E5484D' : '#E0A000'}55` : '1px solid transparent' }}>
+            {/* 논거 훼손(🔴)·주의(🟡) 경보 — findThesisAlerts 기준 (포지션·거래결정 탭과 동일 어휘) */}
             {thesisAlertMap.has(stock.name) && (() => {
               const ta = thesisAlertMap.get(stock.name);
+              const breach = isThesisBreach(ta.signal.signal);
+              const c = breach ? '#E5484D' : '#E0A000';
               return (
-                <div style={{ marginBottom: 10, padding: '7px 10px', borderRadius: 0, background: '#FBE3E455', border: '1px solid #E5484D55', fontSize: 10, color: '#E5484D', fontWeight: 600, lineHeight: 1.5 }}>
-                  {ta.signal.signal} 논거 훼손 경보
+                <div style={{ marginBottom: 10, padding: '7px 10px', borderRadius: 0, background: c + '18', border: `1px solid ${c}55`, fontSize: 10, color: c, fontWeight: 600, lineHeight: 1.5 }}>
+                  {ta.signal.signal} {breach ? '논거 훼손 경보' : '논거 주의 (약화)'}
                   {ta.signal.summary && <div style={{ fontWeight: 400, color: '#6B675C', marginTop: 3 }}>{ta.signal.summary}</div>}
                 </div>
               );

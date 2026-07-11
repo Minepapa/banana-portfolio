@@ -201,6 +201,32 @@ export function buildBuyFromEval({ conclusions, execRows, holdings, cash, defaul
   return out;
 }
 
+// ── 논리훼손 가드 ────────────────────────────────────────────────────────────
+
+// 매수 후보를 B(논리) 신호와 대조. playbook §4.1(급락매수 전제=펀더멘털 훼손 없음) +
+// 리스크 우선순위 B(논리)>가격을 코드로 강제한다(Frank 결정 2026-07: 🔴제외·🟡경고유지).
+//   B🔴(훼손)  → 매수 부적합 → dropped 로 분리(주문에서 제외).
+//   B🟡(약화)  → 급락 저점매수 선호 존중 → 유지하되 why.논리충돌 스탬프(주문 탭에 ✗ 노출).
+//   B🟢/무신호 → 통과. 매도 후보는 대상 아님(B🔴 매도는 buildSellFromThesis가 정본 처리).
+// bSignals: latestRiskByType(riskRows, 'B') 결과(Map name→{signal, summary, date}).
+export function applyThesisGuard(candidates, bSignals) {
+  const kept = [], dropped = [];
+  for (const c of candidates || []) {
+    if (c.side !== '매수') { kept.push(c); continue; }
+    const b = (bSignals || new Map()).get(c.name);
+    const sig = b?.signal ?? '';
+    if (sig.includes('🔴')) {
+      dropped.push({ ...c, reason: `논리훼손B🔴 (${b.date}) — 매수 부적합, 주문 제외` });
+      continue;
+    }
+    if (sig.includes('🟡')) {
+      c.why = { ...c.why, 논리충돌: `B🟡 논리약화 (${b.date}) — ${b.summary}`.slice(0, 120) };
+    }
+    kept.push(c);
+  }
+  return { kept, dropped };
+}
+
 // ── 제약 검증 (J열 JSON) ─────────────────────────────────────────────────────
 
 // 후보별 체크리스트. ok=false 가 있어도 후보는 유지(카드에 ✗로 표시 — 최종 판단은 Frank).
@@ -216,6 +242,8 @@ export function checkConstraints(c, { cash, conviction }) {
       checks.push({ k: '500만원칙', ok: within || conv,
         d: within ? `${Math.round(c.amount).toLocaleString()}원 ≤ 500만` : (conv ? '초과하나 확신 종목 예외(확정 성향)' : '500만 초과') });
     }
+    // 논리훼손 가드가 스탬프한 충돌(B🟡) — 급락매수여도 펀더멘털 약화를 명시(최종 판단은 Frank).
+    if (c.why?.논리충돌) checks.push({ k: '논리상태', ok: false, d: c.why.논리충돌 });
   } else {
     checks.push({ k: '확신보호', ok: conviction.get(c.name) !== '확신',
       d: conviction.get(c.name) === '확신' ? '확신 종목 매도 — 재확인 필요' : '배분형 — 매도 가능' });

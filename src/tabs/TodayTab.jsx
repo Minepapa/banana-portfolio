@@ -4,7 +4,7 @@
 // 당일 한정 수동 확인(localStorage banana_today_ack)으로 닫는다. 거래결정 탭을 대체.
 import { useState } from 'react';
 import { SectionTitle } from '../lib/primitives.jsx';
-import { findThesisAlerts } from '../lib/thesisAlerts.js';
+import { findThesisAlerts, isThesisBreach } from '../lib/thesisAlerts.js';
 import { computeJobHealth } from '../lib/jobHealth.js';
 import { JOB_CADENCE } from '../lib/constants.js';
 import { PROFIT_POS, PROFIT_NEG, profitColor, SIGNAL_RED, SIGNAL_AMBER, SIGNAL_OPPORTUNITY } from '../lib/colors.js';
@@ -67,8 +67,10 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   const oppActionable = oppBuy;
   const lastRiskDate = (riskMonitor || [])[0]?.date || '';
 
-  // ── 2) 투자논리 훼손 / 3) 전제 확인 대기 / 4) 반성 필요 ──
-  const thesisAlerts = findThesisAlerts(positionJournal, riskMonitor).length;
+  // ── 2) 투자논리 훼손(🔴)·논리 주의(🟡) / 3) 전제 확인 대기 / 4) 반성 필요 ──
+  const thesisAlertList = findThesisAlerts(positionJournal, riskMonitor);
+  const thesisBreach = thesisAlertList.filter(a => isThesisBreach(a.signal.signal)).length;
+  const thesisCaution = thesisAlertList.length - thesisBreach;
   const pendingConfirm = (positionJournal || []).filter(p => p.status !== '청산' && p.thesis && p.confirm !== '확인').length;
   const reflectNeeded = (positionJournal || []).filter(p => p.status === '청산' && !p.lesson).length;
   // ── 5) 성향 확인 대기 ──
@@ -133,10 +135,17 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
       sub: '§4 급락 트리거 발동 — 펀더멘털 확인 후 매수 검토', goLabel: '리스크 보기', go: () => setTab('리스크'),
     });
   }
-  if (thesisAlerts > 0) {
+  if (thesisBreach > 0) {
     items.push({
       key: 'thesis', kind: 'auto', accent: '#E5484D', icon: '⚠️',
-      title: `투자논리 훼손 ${thesisAlerts}종목`, sub: '이탈조건 대조 후 매도 검토',
+      title: `투자논리 훼손 ${thesisBreach}종목`, sub: '이탈조건 대조 후 매도 검토',
+      goLabel: '포지션 보기', go: () => setTab('저널'),
+    });
+  }
+  if (thesisCaution > 0) {
+    items.push({
+      key: 'thesis-caution', kind: 'auto', accent: '#E0A000', icon: '⚠️',
+      title: `논리 주의 ${thesisCaution}종목`, sub: '논리 약화 주시 — 훼손 확정 아님(매도 아님)',
       goLabel: '포지션 보기', go: () => setTab('저널'),
     });
   }

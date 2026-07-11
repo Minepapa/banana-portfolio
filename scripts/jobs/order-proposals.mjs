@@ -34,7 +34,7 @@ import {
 import {
   parseHoldingRows, latestConclusions, convictionMap, latestRiskByType,
   buildRebalanceCandidates, buildCrashBuyCandidates, buildSellFromThesis, buildBuyFromEval,
-  checkConstraints, makeMatchKey, toDateStr, RULE500_WON,
+  applyThesisGuard, checkConstraints, makeMatchKey, toDateStr, RULE500_WON,
 } from '../lib/order-candidates.mjs';
 
 const PROPOSAL_SHEET = '주문제안';
@@ -153,6 +153,9 @@ async function main() {
   let candidates = [];
   const evalRequests = [];
 
+  // 논리(B) 신호는 모드 무관 공용 — crash 모드도 급락매수 가드에 필요, weekly 는 매도 후보에 사용.
+  const bSignals = latestRiskByType(riskRows, 'B');
+
   if (MODE === 'crash') {
     const oSignals = latestRiskByType(riskRows, 'O');
     // 오늘 신호만 — 어제 급락 제안은 weekly가 이미 다뤘거나 만료됨
@@ -170,7 +173,6 @@ async function main() {
     }
     candidates.push(...buildRebalanceCandidates({ gaps, holdings, conviction, conclusions }));
 
-    const bSignals = latestRiskByType(riskRows, 'B');
     const thesis = buildSellFromThesis({ bSignals, holdings, conviction, conclusions });
     candidates.push(...thesis.candidates);
     evalRequests.push(...thesis.evalRequests);
@@ -201,6 +203,15 @@ async function main() {
     if (!(c.qty >= 1)) collectWarning(`주문제안 제외: ${c.name} — 단가 미해결/예산 부족`);
   }
   candidates = candidates.filter(c => c.qty >= 1 && c.price != null);
+
+  // 논리훼손 가드 — B🔴 매수 후보 제외, B🟡 매수 후보엔 충돌 플래그(리스크 우선순위 B>가격 강제).
+  // 매도평가 라우팅은 weekly buildSellFromThesis + risk-monitor 🔴 텔레그램이 담당(중복 방지).
+  const guard = applyThesisGuard(candidates, bSignals);
+  candidates = guard.kept;
+  guard.dropped.forEach(d => {
+    console.log(`  ⛔ 매수 제외 [${d.source}] ${d.acct} ${d.name} — ${d.reason}`);
+    collectWarning(`주문제안 제외: ${d.name} — ${d.reason}`);
+  });
 
   // 제약 체크 부착
   for (const c of candidates) c.checks = checkConstraints(c, { cash, conviction });

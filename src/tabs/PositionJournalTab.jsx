@@ -3,7 +3,7 @@
 // 이 탭 전용이라 함께 내려옴. 시트 쓰기 핸들러는 sheets prop만 사용 — 탭 로컬.
 import { useState } from 'react';
 import { SectionTitle } from '../lib/primitives.jsx';
-import { findThesisAlerts } from '../lib/thesisAlerts.js';
+import { findThesisAlerts, thesisAlertLabel, isThesisBreach } from '../lib/thesisAlerts.js';
 import { useLongPress } from '../hooks/useLongPress.js';
 import { signalColor } from '../lib/colors.js';
 import { stripGrade } from '../lib/textFormat.js';
@@ -34,6 +34,9 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, evalu
   const held = positionJournal.filter(p => p.status !== '청산');
   const closed = positionJournal.filter(p => p.status === '청산');
   const alertByRow = new Map(findThesisAlerts(positionJournal, riskMonitor).map(a => [a.position.rowIndex, a.signal]));
+  // 🔴=훼손(확정)·🟡=주의(약화)로 분리 집계 — 요약 칩에서 두 상태를 다른 말로(주문 가드와 동일 어휘).
+  const breachCount = [...alertByRow.values()].filter(s => isThesisBreach(s.signal)).length;
+  const cautionCount = alertByRow.size - breachCount;
   const byAlert = (a, b) => (alertByRow.has(b.rowIndex) ? 1 : 0) - (alertByRow.has(a.rowIndex) ? 1 : 0);
   const conviction = held.filter(p => p.kind === '확신').sort(byAlert);
   const alloc = held.filter(p => p.kind !== '확신').sort(byAlert);
@@ -123,7 +126,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, evalu
             <span style={{ fontSize: 13, fontWeight: 700, color: '#141414' }}>{p.name}</span>
             {kindBadge(p.kind)}
             {confirmBadge(p.confirm)}
-            {sig && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 0, background: '#E5484D22', color: '#E5484D' }}>⚠ 투자논리 훼손</span>}
+            {sig && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 0, background: sigColor + '22', color: sigColor }}>⚠ {thesisAlertLabel(sig.signal)}</span>}
             <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6B675C' }}>{p.account}</span>
           </div>
           {!open && sig && (
@@ -137,7 +140,7 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, evalu
           <div style={{ padding: '0 14px 14px' }}>
             {sig && (
               <div style={{ background: sigColor + '14', border: `1px solid ${sigColor}44`, borderRadius: 0, padding: 10, marginBottom: 10 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: sigColor, marginBottom: 3 }}>⚠ 투자논리 훼손 — 이탈조건 대조 필요 · {sig.type}신호 {sig.date}</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: sigColor, marginBottom: 3 }}>⚠ {thesisAlertLabel(sig.signal)} — 이탈조건 대조 필요 · {sig.type}신호 {sig.date}</div>
                 <div style={{ fontSize: 12, color: '#141414', lineHeight: 1.5 }}>{sig.signal} {sig.summary}</div>
                 {sig.detail && <div style={{ fontSize: 11, color: '#6B675C', lineHeight: 1.5, marginTop: 4 }}>{sig.detail}</div>}
               </div>
@@ -302,18 +305,19 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, evalu
                 <span style={{ color: '#6B675C', letterSpacing: 1 }}>처리 필요</span>
                 {pendingConfirm > 0 && <span style={{ color: '#E0A000', background: '#E0A00022', padding: '2px 6px' }}>확인대기 {pendingConfirm}</span>}
                 {unwritten > 0 && <span style={{ color: '#6B675C', background: '#6B675C22', padding: '2px 6px' }}>전제 미작성 {unwritten}</span>}
-                {alertByRow.size > 0 && <span style={{ color: '#E5484D', background: '#E5484D22', padding: '2px 6px', fontWeight: 700 }}>⚠ 투자논리 훼손 {alertByRow.size}</span>}
+                {breachCount > 0 && <span style={{ color: '#E5484D', background: '#E5484D22', padding: '2px 6px', fontWeight: 700 }}>⚠ 투자논리 훼손 {breachCount}</span>}
+                {cautionCount > 0 && <span style={{ color: '#E0A000', background: '#E0A00022', padding: '2px 6px', fontWeight: 700 }}>⚠ 논리 주의 {cautionCount}</span>}
                 {closed.filter(p => !p.lesson).length > 0 && <span style={{ color: '#E0A000', background: '#E0A00022', padding: '2px 6px', fontWeight: 700 }}>반성 필요 {closed.filter(p => !p.lesson).length}</span>}
               </div>
               <div style={{ fontSize: 9, color: '#6B675C', lineHeight: 1.5, marginTop: 4, marginBottom: 16 }}>
                 확인대기=AI 초안 매수전제에 동의 표시만 하면 됨 · 전제 미작성=매수전제 자체가
-                비어있어 직접 작성 필요(카드의 "투자논리"를 길게 눌러 작성) · 훼손=리스크 신호가
-                매수 이유와 충돌해 이탈조건 대조 필요
+                비어있어 직접 작성 필요(카드의 "투자논리"를 길게 눌러 작성) · 훼손(🔴)=매수 논리가
+                펀더멘털상 깨짐, 이탈조건 대조 필요 · 주의(🟡)=논리 약화 진행(훼손 확정 아님)
               </div>
             </>
           )}
           {conviction.length > 0 && (<>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: '#F4845F', marginBottom: 8 }}>확신형 (논리 훼손을 감시)</div>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: '#F4845F', marginBottom: 8 }}>확신형 (논리 주의·훼손을 감시)</div>
             {conviction.map(Card)}
           </>)}
           {alloc.length > 0 && (<>

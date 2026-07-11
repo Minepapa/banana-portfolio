@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseHoldingRows, latestConclusions, convictionMap, latestRiskByType,
   buildRebalanceCandidates, buildCrashBuyCandidates, buildSellFromThesis, buildBuyFromEval,
-  checkConstraints, makeMatchKey, RULE500_WON,
+  applyThesisGuard, checkConstraints, makeMatchKey, RULE500_WON,
 } from './order-candidates.mjs';
 
 // ── 픽스처 헬퍼 ──────────────────────────────────────────────────────────────
@@ -169,6 +169,40 @@ test('날짜 시리얼 방어: 평가일이 시리얼이어도 이후 매수를 
   const execRows = [trow('2026-07-03 10:00', '매수', '삼성전자')];
   const out = buildBuyFromEval({ conclusions, execRows, holdings: [], cash: { 위탁: 3000000 } });
   assert.equal(out.length, 0);   // 평가 후 매수했으므로 제안 없음
+});
+
+test('applyThesisGuard: B🔴 매수 제외·B🟡 매수 유지+충돌플래그·매도는 무관', () => {
+  const bSignals = latestRiskByType([
+    rrow('2026-07-06', 'B', '테슬라', '🔴', '전제 붕괴'),
+    rrow('2026-07-06', 'B', '현대차', '🟡', '영업이익 2분기 연속 감소'),
+    rrow('2026-07-06', 'B', 'SK하이닉스', '🟢', '훼손 없음'),
+  ], 'B');
+  const cands = [
+    { source: '급락O', side: '매수', name: '테슬라', why: {} },       // B🔴 → 제외
+    { source: '급락O', side: '매수', name: '현대차', why: {} },       // B🟡 → 유지+플래그
+    { source: '급락O', side: '매수', name: 'SK하이닉스', why: {} },   // B🟢 → clean
+    { source: '급락O', side: '매수', name: '가온전선', why: {} },     // 무신호 → clean
+    { source: '논리훼손B', side: '매도', name: '테슬라', why: {} },   // 매도는 가드 무관
+  ];
+  const { kept, dropped } = applyThesisGuard(cands, bSignals);
+  assert.deepEqual(kept.map(c => c.name), ['현대차', 'SK하이닉스', '가온전선', '테슬라']);
+  assert.equal(dropped.length, 1);
+  assert.equal(dropped[0].name, '테슬라');
+  assert.equal(dropped[0].source, '급락O');       // 매도 테슬라는 kept, 매수 테슬라만 dropped
+  assert.match(dropped[0].reason, /B🔴/);
+  // 현대차만 충돌 플래그, 나머지 매수는 clean
+  assert.match(kept.find(c => c.name === '현대차').why.논리충돌, /B🟡 논리약화/);
+  assert.equal(kept.find(c => c.name === 'SK하이닉스').why.논리충돌, undefined);
+  assert.equal(kept.find(c => c.name === '가온전선').why.논리충돌, undefined);
+});
+
+test('checkConstraints: why.논리충돌 있으면 논리상태 ✗ 체크 산출(매수)', () => {
+  const checks = checkConstraints(
+    { side: '매수', acct: '위탁', name: '현대차', amount: 964000, why: { 논리충돌: 'B🟡 논리약화 (2026-07-06) — 수익성 압박' } },
+    { cash: { 위탁: 1200000 }, conviction: new Map() });
+  const logic = checks.find(x => x.k === '논리상태');
+  assert.equal(logic.ok, false);
+  assert.match(logic.d, /B🟡/);
 });
 
 test('makeMatchKey + RULE500 상수', () => {
