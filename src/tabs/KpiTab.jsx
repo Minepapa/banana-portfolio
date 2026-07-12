@@ -9,11 +9,14 @@ import { computeJobHealth } from '../lib/jobHealth.js';
 const JOB_LABELS = {
   'parse-notifications': '체결 알림 파싱',
   'drain': '평가 큐 처리',
+  'journal-sync': '포지션 저널',
+  'daily-snapshot': '일별 잔고 스냅샷',
   'risk-d': '리스크 D (거시)',
+  'order-crash': '급락 대응 주문서',
   'risk-b': '리스크 B (논리)',
   'weekly-report': '주간 리포트 발행',
+  'order-weekly': '주간 주문서 생성',
   'report-sync': '리포트 적재(보충)',
-  'journal-sync': '포지션 저널',
   'backup': '시트 백업',
   'baseline': '펀더멘털 기준선',
 };
@@ -22,14 +25,21 @@ const JOB_INTERVALS = {
   'parse-notifications': '평일 08–16:30 · 15분',
   'drain': '1·4·9·12·14·19·22시',
   'journal-sync': '매일 16:00',
+  'daily-snapshot': '매일 08:00',
   'risk-d': '평일 16:30',
+  'order-crash': '평일 16:50',
   'risk-b': '주간 월 03:00',
   'weekly-report': '일요일 03:00',
+  'order-weekly': '일요일 08:30',
   'report-sync': '매일 09:00',
   'backup': '매일 05:00',
   'baseline': '분기 4회',
 };
-const JOB_ORDER = ['parse-notifications', 'drain', 'journal-sync', 'risk-d', 'risk-b', 'weekly-report', 'report-sync', 'backup', 'baseline'];
+const JOB_ORDER = [
+  'parse-notifications', 'drain', 'journal-sync', 'daily-snapshot',
+  'risk-d', 'order-crash', 'risk-b', 'weekly-report', 'order-weekly',
+  'report-sync', 'backup', 'baseline',
+];
 
 function JobStatusPanel({ jobStatus }) {
   if (!jobStatus) return null;
