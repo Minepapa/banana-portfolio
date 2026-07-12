@@ -110,3 +110,38 @@ test('normalizeEvalObj: 한글 스키마(근거/리스크/frank_액션)도 그�
   assert.equal(obj.grades.수익성, '🟢');
   assert.equal(obj.grades.안정성, '🟡');
 });
+
+// ── LLM 출력 하네스 (2026-07 성향관찰 사고 대응) ────────────────────────────
+
+test('parseEvalJson: 결론에 이모지 없으면 카드 전체 폐기(throw)', () => {
+  const raw = '```json\n{"date":"2026-06-20","name":"테슬라","conclusion":"매수적극","reasons":["a"],"risks":["b"]}\n```';
+  assert.throws(() => parseEvalJson(raw), /결론 이모지 불명/);
+});
+
+test('parseEvalJson: 결론이 이모지로 시작하면 정상 통과', () => {
+  const raw = '```json\n{"date":"2026-06-20","name":"테슬라","conclusion":"🟢 매수적극","reasons":["a"],"risks":["b"]}\n```';
+  const obj = parseEvalJson(raw);
+  assert.equal(obj.conclusion, '🟢 매수적극');
+});
+
+test('normalizeGrades: 등급값에 신호 이모지 없으면 그 축은 드롭("좋음" 같은 자유텍스트 차단)', () => {
+  const obj = normalizeEvalObj({
+    date: '2026-06-20', name: '삼성전자', conclusion: '🟢 유효',
+    axes: { 수익성: '좋음', 안정성: '🟢', 밸류에이션: '🟡' },
+    reasons: ['a'], risks: ['b'],
+  });
+  assert.equal(obj.grades.수익성, undefined);   // 이모지 없어 드롭
+  assert.equal(obj.grades.안정성, '🟢');         // 이모지 있어 유지
+  assert.equal(obj.grades.밸류에이션, '🟡');
+});
+
+test('buildRow: 드롭된 축은 빈 문자열로(정직한 미평가, 크래시 없음)', () => {
+  const obj = normalizeEvalObj({
+    date: '2026-06-20', name: '삼성전자', conclusion: '🟢 유효',
+    axes: { 수익성: '좋음', 안정성: '🟢' },
+    reasons: ['a'], risks: ['b'],
+  });
+  const row = buildRow(obj, null);
+  assert.equal(row[5], '');       // 수익성 드롭 → 빈칸
+  assert.equal(row[6], '🟢');     // 안정성 유지
+});

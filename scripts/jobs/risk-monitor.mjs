@@ -32,6 +32,7 @@ import {
 import { renderPrefRows, prefBlock, PREF_SHEET } from '../lib/preferences.mjs';
 import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators, fetchMarketData, fetchKrMarketData } from '../lib/fundamentals.mjs';
 import { krCorpCode, usTicker, krStockCode } from '../lib/instruments.mjs';
+import { extractSignal, clampLen } from '../lib/llm-guard.mjs';
 
 const RISK_SHEET = '리스크모니터';
 const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세', '근거데이터', '기준선참조'];
@@ -130,6 +131,8 @@ ${prefBlock(confirmedPrefsText)}
 - 신호 없으면(트리거 미발동) signals 빈 배열로.
 - 가격 과열 단독은 리스크로 쓰지 않음(펀더멘털 우선 철학).
 - summary·detail에 쓰는 모든 숫자는 위 JSON 값 그대로 인용(단위·부호 변형 금지).
+- signal 값은 🟢|🟡|🔴 셋 중 하나만(그 외 값은 시스템이 🟡로 강등). target은 위 [Frank 포트폴리오]에
+  실존하는 자산군/종목명만 — 새 이름 금지.
 
 출력: 설명 없이 \`\`\`json 블록 하나만. (지표 숫자는 시스템이 이미 기록하므로 다시 적지 말 것)
 \`\`\`json
@@ -194,6 +197,7 @@ ${prefBlock(confirmedPrefsText)}
 - 신호: 🟢 논리 유효 / 🟡 약화·주의 / 🔴 훼손(매도 평가 필요)
 - 단순 주가 하락·52주/RSI 과열은 단독 신호 금지(펀더멘털 우선).
 - summary·detail에 쓰는 모든 숫자는 위 JSON 값 그대로 인용(단위·부호 변형 금지).
+- signal 값은 🟢|🟡|🔴 셋 중 하나만 출력(그 외 값은 시스템이 🟡로 강등).
 
 출력: 설명 없이 \`\`\`json 블록 하나만.
 \`\`\`json
@@ -474,10 +478,15 @@ async function main() {
           '거시 트리거 미발동', '환율·금리·VIX·지수 정상 범위', evidenceBase, '',
         ]]);
       } else {
-        const rows = sigs.map(s => [
-          res.date || nowKST(), 'D', s.target || '포트폴리오', s.signal || '🟡',
-          s.summary || '', s.detail || '', evidenceBase, '',
-        ]);
+        // LLM 출력 하네스(2026-07): signal enum 강제 — 목록 밖 값이면 🟡로 강등하고 이유를 남긴다.
+        const rows = sigs.map(s => {
+          const sig = extractSignal(s.signal);
+          const summary = sig ? (s.summary || '') : `[자동보정: 신호값 불명] ${s.summary || ''}`;
+          return [
+            res.date || nowKST(), 'D', clampLen(s.target || '포트폴리오', 40), sig || '🟡',
+            clampLen(summary, 200), clampLen(s.detail || '', 400), evidenceBase, '',
+          ];
+        });
         await appendValues(token, `${RISK_SHEET}!A2`, rows);
         console.log(`   ✅ 거시 신호 ${rows.length}건 적재`);
         sigs.forEach(s => console.log(`      ${s.signal} ${s.target}: ${s.summary}`));
@@ -557,14 +566,16 @@ async function main() {
     console.log(`\n⏳ ${h.name} 논리 판단 중... (수 분)`);
     try {
       const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read'));
-      // ③ 하네스: 가드레일 발동인데 🟢이면 🟡로 강제. 근거데이터는 LLM 아닌 Node 계산값.
-      let signal = r.signal || '🟢';
-      let summary = r.summary || '';
+      // ② LLM 출력 하네스(2026-07): signal enum 강제 — 목록 밖 값이면 🟡로 강등.
+      // ③ 가드레일 발동인데 🟢이면 🟡로 강제. 근거데이터는 LLM 아닌 Node 계산값.
+      const extracted = extractSignal(r.signal);
+      let signal = extracted || '🟡';
+      let summary = extracted ? (r.summary || '') : `[자동보정: 신호값 불명] ${r.summary || ''}`;
       if (guardrails.length && signal === '🟢') {
         signal = '🟡';
         summary = `[가드레일 강제🟡: ${guardrails.join('·')}] ${summary}`;
       }
-      const row = [nowKST(), 'B', h.name, signal, summary, r.detail || '',
+      const row = [nowKST(), 'B', h.name, signal, clampLen(summary, 200), clampLen(r.detail || '', 400),
         JSON.stringify(facts), r.baseline_ref || (baseline ? baseline.date : '없음')];
       await appendValues(token, `${RISK_SHEET}!A2`, [row]);
       console.log(`   ${signal} ${h.name}: ${summary}`);

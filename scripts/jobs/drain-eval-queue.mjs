@@ -26,6 +26,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { fetchKrFundamentals, fetchUsFundamentals, fetchKrMarketData, fetchMarketData } from '../lib/fundamentals.mjs';
 import { krCorpCode, krStockCode, usTicker } from '../lib/instruments.mjs';
 import { buildEvalFacts } from '../lib/eval-facts.mjs';
+import { CONCLUSION_EMOJI, SIGNAL_EMOJI } from '../lib/llm-guard.mjs';
 
 const CLIENT_ID = '107361333660-guipca83j7hqhuf0tc7l1cdilk7jgte3.apps.googleusercontent.com';
 const SHEET_ID  = '1ANhZyJUm51T8HfvQ56sK-Xrli9IViKmKG462l9rLKeg';
@@ -207,7 +208,9 @@ function normalizeGrades(axes) {
   const g = {};
   for (const [k, v] of Object.entries(axes)) {
     const nk = GRADE_KEY_ALIAS[String(k).trim()] ?? String(k).trim();
-    if (AXIS_KEYS.includes(nk) && typeof v === 'string') g[nk] = v;
+    // LLM 출력 하네스(2026-07): 등급값에 신호 이모지(🟢🟡🔴)가 없으면 그 축은 드롭한다
+    // (빈칸=정직한 미평가. buildRow가 어차피 ''로 기본 처리하므로 안전).
+    if (AXIS_KEYS.includes(nk) && typeof v === 'string' && SIGNAL_EMOJI.some(e => v.includes(e))) g[nk] = v;
   }
   return Object.keys(g).length ? g : undefined;
 }
@@ -262,6 +265,12 @@ function parseEvalJson(raw) {
   const obj = normalizeEvalObj(JSON.parse(candidate));
   if (!obj.date || !obj.name || !obj.conclusion) {
     throw new Error(`필수 필드 누락: ${['date','name','conclusion'].filter(k => !obj[k]).join(', ')}`);
+  }
+  // LLM 출력 하네스(2026-07): 결론이 이모지로 시작 안 하면 카드 전체를 폐기(THROW) — 이 카드는
+  // 이후 latestConclusions()·draftThesisFrom() 등 여러 파이프라인의 "정본"이 되므로 여기서
+  // 막지 않으면 오염이 전파된다. 기존 오류 처리 경로(오류 상태·원문 보존)를 그대로 탄다.
+  if (!CONCLUSION_EMOJI.some(e => obj.conclusion.startsWith(e))) {
+    throw new Error(`결론 이모지 불명(🟢🟡🔴⚪로 시작해야 함): "${String(obj.conclusion).slice(0, 30)}"`);
   }
   return obj;
 }
@@ -474,6 +483,8 @@ ${prefBlock(confirmedPrefsText)}
 3. JSON에 "axisItems" 포함 — 위 검증된 펀더멘털 값을 그대로 옮길 것
 4. status는 항상 "보류"
 5. 데이터 부족 항목은 추정 금지, "(데이터 부족)" 표기
+6. conclusion은 반드시 🟢/🟡/🔴/⚪로 시작(아니면 카드 전체가 폐기됨). grades 값은 🟢|🟡|🔴 만.
+   name은 요청 종목명 그대로("${sanitizeField(entry.name, 60)}") — 공식명으로 바꾸지 말 것.
 
 ⚠️ Frank 액션 권고 필수 (위 포지션·검증된 RSI/52주 + 위 확정 학습 성향 기반으로 구체화):
 - 현재 포지션 상태: 보유/미보유, 보유 시 평균단가 대비 갭
@@ -544,7 +555,9 @@ ${prefBlock(confirmedPrefsText)}
   "aiNote": "한 줄 요약"
 }
 \`\`\`
-7. 데이터 부족 항목 추정 금지`;
+7. 데이터 부족 항목 추정 금지
+8. conclusion은 반드시 🟢/🟡/🔴/⚪로 시작(아니면 카드 전체가 폐기됨). grades 값은 🟢|🟡|🔴 만.
+   name은 요청 종목명 그대로("${sanitizeField(entry.name, 60)}") — 공식명으로 바꾸지 말 것.`;
 }
 
 // ── 종목투자노트에서 최초 매수 카드 조회 ────────────────────────────────────
@@ -808,6 +821,9 @@ async function main() {
       // 종목명은 LLM이 되짚어 쓴 obj.name이 아니라 항상 큐 요청 원본(entry.name)을 그대로 쓴다.
       // LLM이 회사 공식명(예: "현대자동차")으로 바꿔 쓰면 보유종목 시트 이름("현대차")과 어긋나
       // 매도평가 탭 종목 선택지 매칭이 조용히 깨진다(정확일치 필요 — SellEvaluationTab.jsx).
+      if (obj.name && obj.name !== entry.name) {
+        collectWarning(`평가 종목명 불일치 보정: LLM "${obj.name}" → 요청원본 "${entry.name}" 사용`);
+      }
       const row = buildRow({ ...obj, name: entry.name }, facts?.axisItems || null);
 
       // 종목투자노트에 적재

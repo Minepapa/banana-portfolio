@@ -27,6 +27,9 @@ import { krCorpCode, usTicker, krStockCode } from '../lib/instruments.mjs';
 import { buildReportFacts } from '../lib/report-facts.mjs';
 import { buildBehaviorSignals } from '../lib/behavior-signals.mjs';
 import { renderPrefRows, PREF_SHEET } from '../lib/preferences.mjs';
+import { RISK_COL as R } from '../lib/sheet-contracts.mjs';
+import { filterObservations, claimViolations } from '../lib/llm-guard.mjs';
+import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { extractSummary } from './sync-reports.mjs';
 import { writeFileSync, readdirSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -118,6 +121,8 @@ ${factsText}
 - 모든 수치는 facts 값 그대로(가격·평가액·비중·등락·재무). 단위·부호 변형 금지.
 - 그러나 **데이터 나열로 끝내지 말 것.** 각 섹션에 분석가로서의 \`내 판단:\` 또는 \`내 시선:\`을 명시적으로 넣어 — "이 수치가 Frank에게 뜻하는 바"와 분명한 입장(좋다/주의/행동)을 밝혀라. 애매한 양비론 금지.
 - 리스크/포지션/평가 탭의 단순 재요약이 아니라, 그것들을 **종합·해석**해 한 주를 읽어내는 글.
+- 리스크 신호 인용 시 facts의 유형 표기를 그대로: 논리(B)=매수논리 훼손, 거시(D)=거시 충격.
+  facts에 없는 신호·종목 상태(예: "논리훼손", "미매도 지속")를 만들어 붙이지 말 것.
 
 【3. Frank 성향·계좌 맞춤 (profile 적용)】
 - 매수: 단기 급락 시 저점매수 선호 · 1회 500만원 미만 적립식 · 추격매수 비선호.
@@ -187,6 +192,13 @@ ${signalsText}
 - 각 관찰은 명시 성향(§3)과 대조: "일치(보강)" / "신규" / "상충".
 - 직전 관찰에 같은 내용이 이미 있으면 promote=true(§3 승격 후보).
 - 최대 3개. 사소한 건 버리고 의미 있는 것만.
+
+금지(위반한 관찰은 시스템이 자동 폐기함):
+- 신호유형 혼동 금지: B(논리)=매수 논리 훼손, O(가격)=급락 "매수 기회"(리스크 아님), D(거시)=거시 충격.
+  O🔴을 리스크·미련·미매도로 해석하지 말 것.
+- evidence에는 위 [결정론 행동 신호] 텍스트에 그대로 있는 문장·수치만 인용. 서로 다른 신호 줄을
+  합쳐 새로운 인과(예: "원칙 위반 + 🔴 → 논리훼손 후 미매도")를 만들지 말 것.
+- confidence는 높음|보통|낮음, vsProfile은 일치(보강)|신규|상충 만 사용.
 
 출력: 설명 없이 \`\`\`json 배열 하나만.
 \`\`\`json
@@ -287,6 +299,21 @@ async function main() {
   const confirmedPrefsText = renderPrefRows(prefRows, { confirmedOnly: true });  // 리포트에 주입(확정만)
   const priorPrefsText = renderPrefRows(prefRows);                               // 관찰 추출에 주입(기각 제외 전체)
 
+  // ⑤-b LLM 환각 하네스용 결정론 집합(2026-07 성향관찰 사고 대응) — "이 텍스트에 없는 걸
+  // 지어내지 말 것"을 코드로 검증하기 위한 실존 종목 화이트리스트 + B🔴(진짜 논리훼손) 목록.
+  const universe = [...new Set([
+    ...holdings.map(h => h.name),
+    ...noteRows.map(r => String(r[1] ?? '').trim()),
+    ...riskRows.map(r => String(r[R.TARGET] ?? '').trim()),
+  ])].filter(Boolean);
+  const bBreachNames = [...new Set(riskRows
+    .filter(r => String(r[R.TYPE] ?? '').trim() === 'B' && String(r[R.SIGNAL] ?? '').includes('🔴'))
+    .map(r => String(r[R.TARGET] ?? '').trim()))].filter(Boolean);
+  const priorObsTexts = prefRows
+    .filter(r => String(r[6] ?? '').trim() !== '기각')
+    .map(r => String(r[2] ?? '').trim())
+    .filter(Boolean);
+
   const prompt = buildReportPrompt(factsText, asof, confirmedPrefsText);
   if (DRY_RUN) {
     console.log('\n┌─── FACTS ───┐\n' + factsText + '\n└─────────────┘');
@@ -312,6 +339,12 @@ async function main() {
   const h1 = md.search(/^# /m);
   if (h1 > 0) { md = md.slice(h1); console.log('   ✂️ 머리말 제거(첫 # 제목 앞 잘라냄)'); }
   else if (h1 < 0) console.warn('   ⚠️ 마크다운 H1(#)을 찾지 못함 — 그대로 저장');
+
+  // ⑥-b 경고성 사후검증(2026-07 사고 대응) — 리포트가 "논리훼손"을 언급한 종목이 실제
+  // B🔴 목록에 없으면 텔레그램 경고만(리포트 차단·수정은 안 함 — 산문 자체를 고치는 건
+  // 과도하고, facts는 이미 결정론 주입이라 이 검증은 최후의 안전망일 뿐).
+  const reportClaims = claimViolations(md, /논리\s*훼손/, universe, bBreachNames);
+  if (reportClaims.length) collectWarning(`주간리포트 자동검증: "논리훼손" 언급이 B🔴 신호와 불일치 — ${reportClaims.join(', ')}`);
 
   // ⑦ 파일 저장
   if (!existsSync(REPORTS_DIR)) mkdirSync(REPORTS_DIR, { recursive: true });
@@ -344,15 +377,27 @@ async function main() {
 
   // ⑩ 성향 학습 — 행동 신호를 §3·직전 관찰과 대조해 관찰 추출(sonnet) → 성향관찰 시트 append.
   //    리포트 본문(opus)과 분리. 실패해도 리포트 발행은 성공 처리. 앱 성향 탭이 확정/기각.
+  //    2026-07 사고(O🔴를 논리훼손으로 날조) 대응: LLM 응답을 그대로 안 쓰고 filterObservations로
+  //    검증 — 사실 텍스트에 없는 종목 인용·논리훼손 오주장·중복은 시트에 절대 안 쓰고 DROP+경고.
   try {
     console.log('\n⏳ 성향 관찰 추출 중 (claude -p sonnet)...');
     await ensureSheet(token, PREF_SHEET, PREF_HEADER);  // 시트 없으면 생성(seed 미실행 대비)
-    const obs = parseJsonBlock(await runHeadlessClaude(buildObservationPrompt(signalsText, priorPrefsText), 'sonnet', 'Read'));
-    const n = await appendObservations(token, asof, Array.isArray(obs) ? obs : []);
+    const obsRaw = parseJsonBlock(await runHeadlessClaude(buildObservationPrompt(signalsText, priorPrefsText), 'sonnet', 'Read'));
+    const { kept, dropped } = filterObservations(Array.isArray(obsRaw) ? obsRaw : [], {
+      universe, factsText: signalsText, claimAllowed: bBreachNames, priorTexts: priorObsTexts, maxRows: 3,
+    });
+    dropped.forEach(d => collectWarning(`성향관찰 자동폐기: "${String(d.obs?.observation ?? '').slice(0, 60)}" — ${d.reason}`));
+    const n = await appendObservations(token, asof, kept);
     console.log(n ? `   🧠 성향 관찰 ${n}건 기록 (성향관찰 시트 → 앱 성향 탭에서 확인)` : '   🧠 이번 주 뚜렷한 성향 관찰 없음');
+    if (dropped.length) console.log(`   🛡 자동 검증 실패로 폐기 ${dropped.length}건(텔레그램 경고)`);
   } catch (e) { console.error(`   ⚠️ 성향 관찰 단계 실패(리포트는 정상): ${e.message}`); }
 
+  await flushWarnings('weekly-report');
   console.log('\n🏁 주간 리포트 발행 완료');
 }
 
-main().catch(e => { console.error('\n❌ 오류:', e.message); process.exit(1); });
+main().catch(async (e) => {
+  console.error('\n❌ 오류:', e.message);
+  await flushWarnings('weekly-report').catch(() => {});
+  process.exit(1);
+});

@@ -30,6 +30,9 @@ const baseInput = () => ({
   ],
   riskRows: [
     ['2026-06-13 16:30', 'B', '마이크로소프트', '🔴', '논리 훼손 우려', '...', '{}', ''],
+    // O🔴(급락 매수 기회)는 B가 아니라 가격 신호 — unsoldRed(논리훼손 미매도)에 절대 섞이면
+    // 안 됨(2026-07 사고: SK하이닉스가 B🔴 없이 O🔴만 있었는데 잘못 집계돼 LLM이 날조).
+    ['2026-06-13 16:30', 'O', 'SK하이닉스', '🔴', '급락 매수 기회 — 5일 -10.1%', '...', '{}', ''],
   ],
 });
 
@@ -75,6 +78,22 @@ test('buildBehaviorSignals: 🔴 리스크 보유 지속(미련) 감지', () => 
   assert.ok(signals.unsoldRed.some(u => u.name === '마이크로소프트'));
 });
 
+test('buildBehaviorSignals: 사고 회귀 — O🔴(급락매수기회)는 unsoldRed에 절대 안 섞임', () => {
+  const { signals, signalsText } = buildBehaviorSignals(baseInput());
+  // SK하이닉스는 B🔴 이력이 없고 O🔴만 있음 — unsoldRed(B-only)에 나오면 안 됨
+  assert.ok(!signals.unsoldRed.some(u => u.name === 'SK하이닉스'));
+  assert.ok(signals.unsoldRed.some(u => u.name === '마이크로소프트'));   // B🔴는 정상 포함
+  assert.ok(!signalsText.includes('SK하이닉스 (B🔴'));
+});
+
+test('buildBehaviorSignals: signalsText에 신호유형 범례와 B🔴 라벨이 있다', () => {
+  const { signalsText } = buildBehaviorSignals(baseInput());
+  assert.ok(signalsText.includes('신호유형 범례'));
+  assert.ok(signalsText.includes('O(가격) = 가격 트리거'));
+  assert.ok(signalsText.includes('논리훼손(B) 보유 지속'));
+  assert.ok(signalsText.includes('마이크로소프트 (B🔴'));
+});
+
 test('buildBehaviorSignals: 청산 교훈 수집', () => {
   const { signals } = buildBehaviorSignals(baseInput());
   assert.equal(signals.lessons.length, 1);   // 엔비디아만 청산+교훈
@@ -87,6 +106,23 @@ test('buildBehaviorSignals: signalsText에 증거가 포함되고 추정 표현�
   assert.ok(signalsText.includes('SK하이닉스'));
   assert.ok(signalsText.includes('엔비디아'));
   assert.ok(!/추정/.test(signalsText));
+});
+
+test('buildBehaviorSignals: 평가일이 구글 시리얼이어도 ISO로 표시되고 30일 매칭이 정확', () => {
+  // 46184 = 2026-06-11. 시리얼 그대로면 "2026-06-15" >= "46184" 같은 사전순 비교가 깨진다.
+  const input = {
+    asof: '2026-06-20', weekStart: '2026-06-08',
+    tradeRows: [
+      ['2026-06-15', '매수', '위탁', '005930', '국내주식', '삼성전자', '70000', '10', '700000', '', '', '', ''],
+    ],
+    noteRows: [
+      ['46184', '삼성전자', '005930', 'KR', '🟢 유효', '', '', '', '', '', '1) 실적', '', '', '', '보류'],
+    ],
+    journalRows: [], riskRows: [],
+  };
+  const { signals } = buildBehaviorSignals(input);
+  // 평가(6/11) 후 4일 내(6/15) 매수했으므로 missedGreen에 안 잡혀야 함(시리얼이면 사전순 비교로 오판)
+  assert.ok(!signals.missedGreen.some(m => m.name === '삼성전자'));
 });
 
 test('buildBehaviorSignals: 빈 입력도 안전', () => {

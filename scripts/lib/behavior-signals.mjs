@@ -7,6 +7,8 @@
 // 컬럼 레이아웃은 sheet-contracts.mjs 단일 정본에서 import — 로컬 중복 하드코딩 금지
 // (writer HEADER와의 정합은 sheet-contracts.test.js가 고정).
 import { EXEC_COL as T, NOTE_COL as N, JOURNAL_COL as J, RISK_COL as R } from './sheet-contracts.mjs';
+// 구글 시리얼 날짜 → ISO. 순수 함수라 순환 없음(order-candidates도 sheet-contracts만 import).
+import { toDateStr } from './order-candidates.mjs';
 
 const RULE500_WON = 5_000_000;        // 1회 매수 체결금액 상한(성향: 적립식)
 const MATCH_WINDOW_DAYS = 30;         // 🟢 평가 → 매수 매칭창
@@ -75,17 +77,20 @@ export function buildBehaviorSignals(input) {
     return s(r[N.NAME]) && isGreen && status !== '매수';
   });
   const missedGreen = greenNotes.filter(r => {
-    const name = s(r[N.NAME]); const evDate = s(r[N.DATE]);
+    const name = s(r[N.NAME]); const evDate = toDateStr(r[N.DATE]);   // 시리얼 방어(사전순 비교 버그)
     const boughtAfter = buysAll.some(b => b.name === name && b.date >= evDate
       && daysBetween(evDate, b.date) <= MATCH_WINDOW_DAYS);
     return !boughtAfter;
-  }).map(r => ({ name: s(r[N.NAME]), date: s(r[N.DATE]) }));
+  }).map(r => ({ name: s(r[N.NAME]), date: toDateStr(r[N.DATE]) }));
 
-  // 🔴 리스크인데 미매도(미련·손실회피) — 최신 🔴 대상이 이번 주 매도되지 않음.
+  // 🔴 논리훼손(B)인데 미매도(미련·손실회피) — B 유형만. O🔴은 "급락 매수 기회"(매수 신호)라
+  // 미매도 신호로 쓰면 의미가 정반대로 뒤집힌다(2026-07 성향관찰 환각 사고의 근원 — SK하이닉스가
+  // B🔴 이력 없이 O🔴만 있었는데 "논리훼손 미매도"로 잘못 집계돼 LLM이 날조 관찰을 만들어냄).
   const redTargets = new Map();
   for (const r of riskRows) {
+    if (s(r[R.TYPE]) !== 'B') continue;
     if (!s(r[R.SIGNAL]).includes('🔴')) continue;
-    const t = s(r[R.TARGET]); const d = s(r[R.DATE]);
+    const t = s(r[R.TARGET]); const d = toDateStr(r[R.DATE]) || s(r[R.DATE]);
     if (!redTargets.has(t) || d > redTargets.get(t)) redTargets.set(t, d);
   }
   const unsoldRed = [...redTargets.keys()]
@@ -106,7 +111,13 @@ export function buildBehaviorSignals(input) {
 // LLM 관찰 추출 프롬프트 주입용 — 결정론 신호를 사실 텍스트로(여기 값만 인용하도록).
 function renderSignalsText(g) {
   const L = [];
-  L.push(`■ 기간 ${g.weekStart}~${g.asof}`);
+  // 신호유형 범례 — LLM이 O(가격)를 B(논리)로 착각해 날조하는 것을 원천 차단(2026-07 사고).
+  L.push('■ 신호유형 범례 — 아래 텍스트의 유일한 해석 기준');
+  L.push('  - B(논리) = 매수 논리 훼손 신호. B🔴 = 훼손(매도 평가 필요)');
+  L.push('  - O(가격) = 가격 트리거. O🔴 = 급락 "매수 기회" — 리스크가 아니라 매수 신호');
+  L.push('  - D(거시) = 거시 충격 신호');
+  L.push('  ※ 이 텍스트에 없는 신호유형·종목명·수치·인과관계를 만들지 말 것');
+  L.push(`\n■ 기간 ${g.weekStart}~${g.asof}`);
 
   L.push('\n■ 이번 주 매수');
   if (g.week.buys.length) for (const b of g.week.buys)
@@ -128,8 +139,8 @@ function renderSignalsText(g) {
   if (g.missedGreen.length) for (const m of g.missedGreen) L.push(`  - ${m.name} (평가 ${m.date}, 30일 내 미매수)`);
   else L.push('  - (없음)');
 
-  L.push('\n■ 🔴 리스크 보유 지속(미련 신호)');
-  if (g.unsoldRed.length) for (const u of g.unsoldRed) L.push(`  - ${u.name} (🔴 ${u.since} 이후 미매도)`);
+  L.push('\n■ 🔴 논리훼손(B) 보유 지속(미련 신호)');
+  if (g.unsoldRed.length) for (const u of g.unsoldRed) L.push(`  - ${u.name} (B🔴 ${u.since} 이후 미매도)`);
   else L.push('  - (없음)');
 
   L.push('\n■ 최근 청산 교훈');

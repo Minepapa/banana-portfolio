@@ -36,6 +36,7 @@ import {
   buildRebalanceCandidates, buildCrashBuyCandidates, buildSellFromThesis, buildBuyFromEval,
   applyThesisGuard, checkConstraints, makeMatchKey, toDateStr, RULE500_WON,
 } from '../lib/order-candidates.mjs';
+import { unknownMentions, clampLen } from '../lib/llm-guard.mjs';
 
 const PROPOSAL_SHEET = '주문제안';
 const ACCOUNT_TABS = ['ISA', '위탁', '연금저축', 'IRP'];
@@ -81,6 +82,8 @@ ${prefBlock(confirmedPrefsText)}
 - 서로 모순되는 후보(같은 종목 매수+매도)는 더 근거 강한 쪽만.
 - 성향과 충돌하는 후보는 제외하고 reason에 명시.
 - rationale: 각 채택 후보의 why 사실들을 1~2문장 산문으로(수치 그대로 인용, 단위 변형 금지).
+- rationale에는 위 후보 JSON에 실존하는 종목명·수치만 사용 — 목록 밖 종목명을 언급하면
+  그 rationale은 폐기되고 결정론 근거만 남는다. idx는 후보 배열의 정수 인덱스 그대로.
 
 출력: 설명 없이 \`\`\`json 블록 하나만.
 \`\`\`json
@@ -231,8 +234,22 @@ async function main() {
         if (!Array.isArray(res.selected)) throw new Error('AI 응답에 selected 배열 없음');
         // 파싱에 성공했으면 빈 selected 도 "전부 제외" 의도로 존중한다 — 실패 폴백(전체 적재)과
         // 구분하지 않으면 AI가 성향 충돌로 걸러낸 후보가 그대로 올라가는 역전이 생긴다.
-        selected = res.selected.filter(x => candidates[x.idx])
-          .map(x => ({ c: candidates[x.idx], rationale: s(x.rationale) }));
+        // LLM 출력 하네스(2026-07): idx는 정수만, rationale은 후보 목록 밖 종목명을 언급하면
+        // 폐기(빈 문자열)하고 경고 — 수치는 어차피 candidates[idx]가 정본이라 rationale만 리스크.
+        const candidateNames = candidates.map(c => c.name);
+        const nameUniverse = [...new Set([...holdings.map(h => h.name), ...candidateNames])];
+        selected = res.selected
+          .filter(x => Number.isInteger(x.idx) && candidates[x.idx])
+          .map(x => {
+            const c = candidates[x.idx];
+            let rationale = s(x.rationale);
+            const unknown = unknownMentions(rationale, nameUniverse, candidateNames);
+            if (unknown.length) {
+              collectWarning(`주문제안 rationale 폐기: ${c.name} — 후보 밖 종목 언급(${unknown.join(', ')})`);
+              rationale = '';
+            }
+            return { c, rationale: clampLen(rationale, 300) };
+          });
         (res.dropped || []).forEach(d => candidates[d.idx] &&
           console.log(`    ✂ AI 제외: ${candidates[d.idx].name} — ${s(d.reason)}`));
       } catch (e) {
