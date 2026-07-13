@@ -3,7 +3,7 @@
 // 예수금에 반영되지 않던 버그. 알림이 수동 기준일보다 '엄격히 최신'이면 알림을 우선한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveCashBase, parseAmount } from './cash-base.mjs';
+import { resolveCashBase, parseAmount, settleCash } from './cash-base.mjs';
 
 const cfg = (base, date, source) => ({ base, date, source, rowNum: 2 });
 const anchor = (balance, ts) => ({ balance, ts });
@@ -105,4 +105,13 @@ test('수동 base 는 있으나 기준일이 빈 문자열이면 날짜 있는 �
   assert.equal(r.base, 984832);
   assert.equal(r.baseDate, '2026-06-24');
   assert.equal(r.autoUpdated, true);
+});
+
+test('settleCash: 양수·0은 그대로, 음수는 0 클램프+negative 플래그', () => {
+  assert.deepEqual(settleCash(1000000, -300000), { cash: 700000, raw: 700000, negative: false });
+  assert.deepEqual(settleCash(500000, -500000), { cash: 0, raw: 0, negative: false });
+  // 입금 누락으로 매수 델타만 빠진 상황 — 음수는 0으로 막고 raw는 보존(경고 진단용)
+  assert.deepEqual(settleCash(100000, -390600), { cash: 0, raw: -290600, negative: true });
+  // null 방어
+  assert.deepEqual(settleCash(null, null), { cash: 0, raw: 0, negative: false });
 });

@@ -28,7 +28,9 @@ export default function HoldingsTab({
   const isTotalView = false;
   const rawHoldings = (acct.holdings || [])
     .map((h, origIdx) => ({ ...h, origIdx }))
-    .filter(h => h.invest > 0 && h.eval > 0);
+    // 현금성 행(예수금·외화RP·MMF)은 잔액이 0이어도 유지 — 음수→행 소멸 버그 방지.
+    // (데이터층 parse-notifications가 음수를 0으로 클램프하므로 정상 흐름에선 항상 ≥0)
+    .filter(h => h.isCashLike || (h.invest > 0 && h.eval > 0));
 
   // 정렬 (sheet = 시트 원래 순서 유지)
   const SORT_FN = {

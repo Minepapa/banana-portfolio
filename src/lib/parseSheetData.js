@@ -357,8 +357,10 @@ export function parseSheetData(valueRanges) {
       if (!r[1]) return;
       const type = String(r[0] ?? '').trim();
       if (type) lastType = type;
+      const nm = String(r[1] ?? '');
+      const nmTrim = nm.trim();
       holdings.push({
-        name: String(r[1] ?? ''),
+        name: nm,
         price: parseNum(r[2]),
         qty: parseNum(r[3]),
         invest: parseNum(r[4]),
@@ -368,6 +370,10 @@ export function parseSheetData(valueRanges) {
         rate: parseNum(r[8]),
         type: lastType,
         rowOffset,
+        // 현금성 행 판별(예수금·외화RP·MMF) — 잔액이 0이어도 목록에서 사라지면 안 되므로
+        // HoldingsTab 필터가 이 태그로 예외처리(movers.js·order-candidates isCashLike와 동일 집합).
+        // trim() 후 비교 — movers.js·order-candidates.mjs 정규 predicate와 일치.
+        isCashLike: nmTrim === '예수금' || nmTrim === '외화 RP' || nmTrim.includes('MMF'),
       });
     });
     if (!holdings.length) return;

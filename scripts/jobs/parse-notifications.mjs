@@ -28,7 +28,7 @@
  */
 
 import { SHEET_ID, getToken, getRange, getRangeRaw, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from '../lib/sheets-common.mjs';
-import { resolveCashBase } from '../lib/cash-base.mjs';
+import { resolveCashBase, settleCash } from '../lib/cash-base.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
@@ -662,10 +662,18 @@ async function main() {
     if (!Number.isFinite(base)) { if (!isAutoTab) console.log(`  ⚠ 예수금 기준 미입력: ${tab} — 예수금기준 표에 기준액·기준일 입력 필요, skip`); continue; }
 
     const delta = flows.filter(fl => fl.tab === tab && fl.date > baseDate).reduce((s, fl) => s + fl.amount, 0);
-    const cash = base + delta;
+    // 예수금은 음수가 될 수 없다 → 0 클램프. raw 가 음수면 입금 누락(카카오 알림 삭제·비-NH 수동
+    // 미갱신·타이밍) 또는 거래 오귀속의 징후 → 계좌유형별 조치 안내 경고(사용자가 검증하도록).
+    const { cash, raw, negative } = settleCash(base, delta);
     const disp = await findCashRow(tab);
     if (!disp) { console.log(`  ⚠ 예수금 표시행 못 찾음: ${tab} (${tab === '연금저축' ? 'MMF' : CASH_ROW_NAME}) — skip`); continue; }
-    cashWrites.push({ tab, row: disp.row, name: disp.name, cash, detail: `기준 ${Number(base).toLocaleString()}(${baseDate || '?'}) ${delta >= 0 ? '+' : '−'}${Math.abs(delta).toLocaleString()} = ${cash.toLocaleString()}원` });
+    if (negative) {
+      const advice = isAutoTab
+        ? 'NH 입금알림 누락/삭제 또는 타이밍 의심 — 카카오 알림 확인 또는 예수금기준 표 갱신 필요'
+        : '입금 자동반영 대상 아님(수동 계좌) — 예수금기준 표 기준액 갱신 필요';
+      collectWarning(`예수금 음수: ${tab} 기준 ${Number(base).toLocaleString()}(${baseDate || '?'}) ${delta >= 0 ? '+' : '−'}${Math.abs(delta).toLocaleString()} = ${raw.toLocaleString()}원 → 0 클램프. ${advice}`);
+    }
+    cashWrites.push({ tab, row: disp.row, name: disp.name, cash, detail: `기준 ${Number(base).toLocaleString()}(${baseDate || '?'}) ${delta >= 0 ? '+' : '−'}${Math.abs(delta).toLocaleString()} = ${raw.toLocaleString()}원${negative ? ' → 0 클램프' : ''}` });
   }
   console.log(`  예수금: 갱신 대상 ${cashWrites.length}개` + (baseUpdates.length ? ` (NH 기준 자동갱신 ${baseUpdates.length})` : ''));
   cashWrites.forEach(w => console.log(`    ↻ ${w.tab} ${w.name}: ${w.detail}`));

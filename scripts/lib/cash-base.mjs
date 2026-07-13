@@ -17,6 +17,14 @@ export function parseAmount(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+// 예수금 정산 — base + delta. 예수금은 음수가 될 수 없다(미수·마진 미지원)이므로 0으로 클램프하고
+// 음수였다는 사실을 negative 로 표시한다. 음수는 입금/이체 알림 누락(카카오 앱이 과거 알림 삭제·
+// 비-NH 수동기준 미갱신 등) 또는 거래 오귀속의 징후 — 호출부가 경고를 띄워 계좌·금액 검증을 유도한다.
+export function settleCash(base, delta) {
+  const raw = (base ?? 0) + (delta ?? 0);
+  return { cash: Math.max(0, raw), raw, negative: raw < 0 };
+}
+
 // cfg: { base, date, source } | null  (예수금기준 표의 해당 계좌 행)
 // anchor: { balance, ts } | null      (그 계좌 최신 NH 입금/출금 알림; balance≥0)
 // isAutoTab: boolean                  (ISA·위탁=true, 연금저축·IRP=false)

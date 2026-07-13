@@ -53,6 +53,22 @@ test('복수 계좌 데이터 → accounts에 각 키가 생성됨', () => {
   assert.equal(result.accounts['IRP'], undefined);  // 데이터 없으면 키 없음
 });
 
+test('현금성 행 태깅: 예수금·MMF는 isCashLike, 일반 종목은 아님', () => {
+  const vrs = makeVR();
+  vrs[1] = { values: [
+    CASH_ROW,   // 예수금
+    ['국내주식', '삼성전자', '70000', '10', '700000', '75000', '50000', '750000', '7.14'],
+  ] };
+  vrs[2] = { values: [
+    ['현금성', '삼성신종종류형 MMF 제4호', '0', '1', '127000', '127000', '0', '127000', '0'],
+  ] };
+  const result = parseSheetData(vrs);
+  const 위탁 = result.accounts['위탁'];
+  assert.equal(위탁.holdings.find(h => h.name === '예수금').isCashLike, true);
+  assert.equal(위탁.holdings.find(h => h.name === '삼성전자').isCashLike, false);
+  assert.equal(result.accounts['연금저축'].holdings[0].isCashLike, true);   // MMF
+});
+
 // ── 날짜 시리얼 방어 ─────────────────────────────────────
 // 구글 시트 USER_ENTERED 쓰기 후 셀이 시리얼로 저장되는 케이스.
 // 이 클래스 버그가 실제로 risk-monitor 6/17 카드 소실 원인(pruneRiskSheet 오비교).
