@@ -25,6 +25,40 @@ export function settleCash(base, delta) {
   return { cash: Math.max(0, raw), raw, negative: raw < 0 };
 }
 
+// 계좌 귀속 폴백 — 전량매도로 보유행이 지워진 종목(useTradeSync.js clearRowsRaw 가 매도 후
+// 잔여수량<=0 이면 B:I를 비움)은 그 시점 이후 "현재 보유" 스캔(portfolioMap)에서 사라진다.
+// 실제 사고(2026-07-13): 삼성바이오로직스 전량매도 후 보유행 소멸 → 매도대금(+5,620,000)이
+// 예수금 델타 계산에서 조용히 누락되어 위탁 예수금이 0으로 클램프됨.
+// 체결내역 시트는 그 거래가 원래 기록될 때(보유행이 아직 살아있던 시점)의 계좌를 C열에 영구
+// 보존한다 — 이를 폴백 소스로 삼아 "현재 보유 스캔 실패 → 조용히 버림"을 막는다.
+// rows: 체결내역 원본 행. tabCol/nameCol: 0-based 컬럼 인덱스. validTabs: 허용 계좌 목록.
+export function buildHistoricalAcctMap(rows, { tabCol, nameCol, validTabs }) {
+  const map = new Map(); const ambiguous = new Set();
+  for (const row of rows ?? []) {
+    const tab = String(row[tabCol] ?? '').trim();
+    const name = String(row[nameCol] ?? '').trim();
+    if (!tab || !name || !validTabs.includes(tab)) continue;
+    const prev = map.get(name);
+    if (prev && prev !== tab) { ambiguous.add(name); continue; }
+    map.set(name, tab);
+  }
+  return { map, ambiguous };
+}
+
+// 계좌 결정 — 현재 보유 스캔(liveTab)이 있으면 그것을 신뢰(가장 최신 실측). 없으면(전량매도로
+// 소멸) 체결내역 폴백을 쓰되, 같은 종목명이 서로 다른 계좌에 기록된 적 있으면(모호) 오귀속
+// 위험이 있어 포기(null)한다 — 틀린 계좌에 붙이는 것보다 누락 경고가 안전하다.
+// dupNames: 현재 2개 이상 계좌에 동시 보유 중인 종목명 집합(portfolioMap 구성 시 이미 계산됨).
+// KRW 체결 알림엔 계좌번호가 없어 이런 종목은 portfolioMap 이 의도적으로 제외한다(liveTab=null
+// 로 여기 들어옴) — 체결내역 이력에 계좌가 하나만 남아있어도(예: 한쪽 계좌 이력 부재) 폴백이
+// 되살려버리면 그 배제가 무력화된다. 그래서 dupNames 는 이력 유무와 무관하게 항상 거부한다.
+export function resolveTradeTab(name, liveTab, hist, dupNames) {
+  if (liveTab) return liveTab;
+  if (dupNames?.has(name)) return null;
+  if (hist.ambiguous.has(name)) return null;
+  return hist.map.get(name) ?? null;
+}
+
 // cfg: { base, date, source } | null  (예수금기준 표의 해당 계좌 행)
 // anchor: { balance, ts } | null      (그 계좌 최신 NH 입금/출금 알림; balance≥0)
 // isAutoTab: boolean                  (ISA·위탁=true, 연금저축·IRP=false)

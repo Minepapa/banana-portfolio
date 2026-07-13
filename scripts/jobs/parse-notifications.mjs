@@ -28,7 +28,7 @@
  */
 
 import { SHEET_ID, getToken, getRange, getRangeRaw, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from '../lib/sheets-common.mjs';
-import { resolveCashBase, settleCash } from '../lib/cash-base.mjs';
+import { resolveCashBase, settleCash, buildHistoricalAcctMap, resolveTradeTab } from '../lib/cash-base.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
@@ -573,13 +573,24 @@ async function main() {
   for (const c of cashes) { const prev = nhLatest.get(c.tab); if (!prev || c.ts > prev.ts) nhLatest.set(c.tab, c); }
 
   // 거래 → 계좌별 부호화 현금흐름 (date 비교용 yyyy-MM-dd)
+  // 전량매도로 보유행이 지워진 종목(useTradeSync.js clearRowsRaw)은 portfolioMap(현재 보유 스캔)에
+  // 없다 → 체결내역(이미 기록된 계좌, C열)을 폴백으로 써서 매도대금이 조용히 누락되지 않게 한다
+  // (2026-07-13 삼성바이오로직스 전량매도 사고: 위탁 예수금 음수→0 클램프로 이어짐).
+  const histAcct = buildHistoricalAcctMap(execExisting, { tabCol: 2, nameCol: 5, validTabs: ACCOUNT_TABS });
   const tabCache = new Map();
-  const tabOfHolding = async (name) => { if (!tabCache.has(name)) { const h = await findHoldingRow(name); tabCache.set(name, h ? h.tab : null); } return tabCache.get(name); };
+  const tabOfHolding = async (name) => {
+    if (!tabCache.has(name)) {
+      const h = await findHoldingRow(name);
+      tabCache.set(name, resolveTradeTab(name, h ? h.tab : null, histAcct, dupNames));
+    }
+    return tabCache.get(name);
+  };
   const flows = [];
   for (const e of execs) {
     if (e.currency !== 'KRW') continue;                          // USD 체결 → 외화RP(수동) 소관
-    const p = portfolioMap.get(e.stockName); if (!p) continue;   // 계좌 미상(중복명 등) skip
-    flows.push({ tab: p[0], date: e.tradeDate.slice(0, 10), amount: (e.tradeType === '매수' ? -1 : 1) * e.quantity * e.price });
+    const tab = resolveTradeTab(e.stockName, portfolioMap.get(e.stockName)?.[0], histAcct, dupNames);
+    if (!tab) continue;                                          // 계좌 미상(중복명·이력 없음 등) skip
+    flows.push({ tab, date: e.tradeDate.slice(0, 10), amount: (e.tradeType === '매수' ? -1 : 1) * e.quantity * e.price });
   }
   // 배당/분배금 → 예수금(+). 계좌 귀속은 portfolioMap(중복명 삭제됨)이 아니라 "보유 계좌 + 알림 계좌번호"로
   // 판별한다: 여러 계좌 보유 ETF(중복명)도 알림의 계좌번호로 정확히 귀속(예: 삼성 71612 → 연금저축).

@@ -3,7 +3,7 @@
 // 예수금에 반영되지 않던 버그. 알림이 수동 기준일보다 '엄격히 최신'이면 알림을 우선한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveCashBase, parseAmount, settleCash } from './cash-base.mjs';
+import { resolveCashBase, parseAmount, settleCash, buildHistoricalAcctMap, resolveTradeTab } from './cash-base.mjs';
 
 const cfg = (base, date, source) => ({ base, date, source, rowNum: 2 });
 const anchor = (balance, ts) => ({ balance, ts });
@@ -114,4 +114,52 @@ test('settleCash: 양수·0은 그대로, 음수는 0 클램프+negative 플래�
   assert.deepEqual(settleCash(100000, -390600), { cash: 0, raw: -290600, negative: true });
   // null 방어
   assert.deepEqual(settleCash(null, null), { cash: 0, raw: 0, negative: false });
+});
+
+const VALID_TABS = ['ISA', '위탁', '연금저축', 'IRP'];
+const execRow = (tab, name) => ['2026-07-01', '매수', tab, '', '국내주식', name];
+
+test('[버그수정] 전량매도로 보유행이 지워진 종목 — 체결내역 폴백으로 계좌 복원', () => {
+  // 2026-07-13 사고: 삼성바이오로직스 전량매도 후 보유행 소멸(clearRowsRaw) →
+  // 현재 보유 스캔(portfolioMap)엔 없지만, 체결내역엔 계좌가 이미 기록돼 있다.
+  const hist = buildHistoricalAcctMap(
+    [execRow('위탁', '삼성바이오로직스'), execRow('위탁', 'SK하이닉스')],
+    { tabCol: 2, nameCol: 5, validTabs: VALID_TABS },
+  );
+  assert.equal(resolveTradeTab('삼성바이오로직스', null, hist), '위탁');
+});
+
+test('현재 보유 스캔에 있으면 그것을 우선(체결내역 폴백보다 최신 실측 신뢰)', () => {
+  const hist = buildHistoricalAcctMap([execRow('IRP', '삼성전자')], { tabCol: 2, nameCol: 5, validTabs: VALID_TABS });
+  assert.equal(resolveTradeTab('삼성전자', 'ISA', hist), 'ISA');
+});
+
+test('같은 종목명이 서로 다른 계좌에 기록된 적 있으면(모호) 폴백 포기 — 오귀속보다 누락 경고가 안전', () => {
+  const hist = buildHistoricalAcctMap(
+    [execRow('ISA', 'TIGER 미국배당다우존스'), execRow('연금저축', 'TIGER 미국배당다우존스')],
+    { tabCol: 2, nameCol: 5, validTabs: VALID_TABS },
+  );
+  assert.equal(resolveTradeTab('TIGER 미국배당다우존스', null, hist), null);
+});
+
+test('체결내역에도 없는 종목은 null(누락 경고 대상)', () => {
+  const hist = buildHistoricalAcctMap([execRow('위탁', 'SK하이닉스')], { tabCol: 2, nameCol: 5, validTabs: VALID_TABS });
+  assert.equal(resolveTradeTab('없는종목', null, hist), null);
+});
+
+test('[버그수정] 현재 2개 계좌에 동시보유 중인 종목명은 이력이 하나뿐이어도 폴백 거부', () => {
+  // KRW 체결 알림엔 계좌번호가 없어 portfolioMap 이 dupNames 를 의도적으로 제외(liveTab=null).
+  // 한쪽 계좌엔 체결내역이 없어 hist.map 에 계좌가 하나만 남는 비대칭 상황이어도, dupNames 는
+  // 이력과 무관하게 항상 거부해야 한다 — 안 그러면 portfolioMap 의 배제가 폴백에서 무력화된다.
+  const hist = buildHistoricalAcctMap([execRow('ISA', 'TIGER 리츠부동산인프라')], { tabCol: 2, nameCol: 5, validTabs: VALID_TABS });
+  const dupNames = new Set(['TIGER 리츠부동산인프라']);   // 현재 ISA·위탁 동시 보유
+  assert.equal(resolveTradeTab('TIGER 리츠부동산인프라', null, hist, dupNames), null);
+});
+
+test('buildHistoricalAcctMap: 계좌·종목명 빈값이나 허용 계좌 외는 무시', () => {
+  const hist = buildHistoricalAcctMap(
+    [execRow('', '이름있음'), execRow('위탁', ''), execRow('알수없는계좌', '아무개')],
+    { tabCol: 2, nameCol: 5, validTabs: VALID_TABS },
+  );
+  assert.equal(hist.map.size, 0);
 });
