@@ -209,3 +209,34 @@ test('makeMatchKey + RULE500 상수', () => {
   assert.equal(makeMatchKey({ acct: '위탁', name: '삼성전자', side: '매수' }), '위탁|삼성전자|매수');
   assert.equal(RULE500_WON, 5000000);
 });
+
+// ── isCashLike 정합 테스트 ────────────────────────────────────────────────────
+// parseSheetData.isCashLike · movers.isCashLike · order-candidates.isCashLike 는
+// "동일 집합(예수금·외화 RP·MMF 포함, 공백 trim)"을 공유해야 한다.
+// 세 구현이 모두 trim() 후 비교하므로 픽스처에서 공백 변형도 포함해 검증한다.
+// order-candidates.isCashLike 는 export 없으므로 parseHoldingRows 경유로 간접 검증.
+test('isCashLike 정합: 공유 픽스처 — 예수금·외화 RP·MMF 변형 모두 현금성 제외', () => {
+  // { name, expectCashLike } 픽스처
+  // parseHoldingRows 는 isCashLike=true 인 행을 결과에서 제외한다(필터).
+  const cashNames   = ['예수금', '예수금 ', ' 예수금', '외화 RP', '외화 RP ', ' 외화 RP', '삼성신종종류형 MMF 제4호'];
+  const normalNames = ['삼성전자', '', '예수금X', '예수금포함'];  // MMF·외화RP·예수금 정확 일치 아닌 경우
+
+  // qty(idx3)=1, evalWon(idx7)=1000000 — parseHoldingRows qty>0·evalWon>0 필터 통과용
+  const makeRows = (names) =>
+    names.map((name) => ['국내주식', name, '', '1', '', '', '', '1000000']);
+
+  const cashRows   = makeRows(cashNames);
+  const normalRows = makeRows(normalNames).filter(r => r[1] !== '');  // 빈 name 은 파서가 skip
+
+  // 현금성 픽스처 → parseHoldingRows 결과에서 모두 제외돼야 함
+  const cashHoldings = parseHoldingRows('위탁', cashRows);
+  assert.equal(cashHoldings.length, 0, `현금성 행이 주문 후보에 포함됨: ${JSON.stringify(cashHoldings.map(h => h.name))}`);
+
+  // 일반 픽스처 → parseHoldingRows 결과에 포함돼야 함 (qty=1 이므로 필터 통과)
+  // '예수금X', 'MMF예수금' 은 isCashLike=false 이므로 포함
+  const normalHoldings = parseHoldingRows('위탁', normalRows);
+  const normalParsedNames = normalHoldings.map(h => h.name);
+  for (const name of ['삼성전자', '예수금X', '예수금포함']) {
+    assert.ok(normalParsedNames.includes(name), `'${name}'이 일반 종목으로 포함돼야 함`);
+  }
+});

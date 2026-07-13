@@ -373,6 +373,25 @@ test('parseProposals: 컬럼 계약 정합 + JSON 필드 파싱 + 최신순', ()
   assert.equal(proposals[1].matchKey, '위탁|현대차|매도');
 });
 
+// ── isCashLike trim 회귀 ──────────────────────────────────────────────────────
+// '예수금 '(뒤 공백) 처럼 시트에서 공백이 붙은 종목명도 현금성으로 태깅돼야 한다.
+// movers.js·order-candidates.mjs 정규 predicate 는 trim() 후 비교하므로 parseSheetData 도 일치해야 함.
+test('isCashLike trim 회귀: 뒤 공백 붙은 예수금·외화 RP 행도 isCashLike=true', () => {
+  const vrs = makeVR();
+  vrs[1] = { values: [
+    ['현금성', '예수금 ', '0', '1', '500000', '500000', '0', '500000', '0'],   // 뒤 공백
+    ['현금성', ' 외화 RP', '0', '1', '200000', '200000', '0', '200000', '0'],  // 앞 공백
+    ['현금성', '예수금', '0', '1', '100000', '100000', '0', '100000', '0'],    // 정상
+    ['국내주식', '삼성전자', '70000', '10', '700000', '75000', '50000', '750000', '7.14'],
+  ] };
+  const result = parseSheetData(vrs);
+  const h = result.accounts['위탁'].holdings;
+  assert.equal(h.find(x => x.name === '예수금 ').isCashLike, true,  '뒤 공백 예수금');
+  assert.equal(h.find(x => x.name === ' 외화 RP').isCashLike, true, '앞 공백 외화 RP');
+  assert.equal(h.find(x => x.name === '예수금').isCashLike, true,   '정상 예수금');
+  assert.equal(h.find(x => x.name === '삼성전자').isCashLike, false, '일반 종목은 false');
+});
+
 test('parseProposals: 깨진 JSON·종목명 없는 행 방어', () => {
   const vrs = makeVR(21);
   vrs[1] = { values: [CASH_ROW] };
