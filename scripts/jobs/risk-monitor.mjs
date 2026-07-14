@@ -33,6 +33,7 @@ import { renderPrefRows, prefBlock, PREF_SHEET } from '../lib/preferences.mjs';
 import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators, fetchMarketData, fetchKrMarketData } from '../lib/fundamentals.mjs';
 import { krCorpCode, usTicker, krStockCode } from '../lib/instruments.mjs';
 import { extractSignal, clampLen } from '../lib/llm-guard.mjs';
+import { loadAgent } from '../lib/agent-loader.mjs';
 
 const RISK_SHEET = '리스크모니터';
 const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세', '근거데이터', '기준선참조'];
@@ -55,8 +56,13 @@ const DRY_RUN = args.includes('--dry-run');
 const NO_PUSH = args.includes('--no-push');
 const modeArg = args.find(a => a.startsWith('--mode='));
 const MODE = modeArg ? modeArg.split('=')[1].toUpperCase() : '';
+// 리스크 감시(거시 D·논리훼손 B 모두)는 리스크관리실(Themis) 소관 — 에이전트 정의가 모델·
+// 판단원칙의 단일 진실 소스. 우선순위: CLI --model= > frontmatter > 폴백. 손상 시 경고는
+// 로그로 표면화(run.sh가 로그 꼬리를 잡상태 detail에 넣음 — 이 잡은 job-alerts 미사용).
+const AGENT = loadAgent('themis', { fallbackModel: 'sonnet' });
+if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
 const modelArg = args.find(a => a.startsWith('--model='));
-const MODEL = modelArg ? modelArg.split('=')[1] : 'sonnet';
+const MODEL = modelArg ? modelArg.split('=')[1] : AGENT.model;
 // 특정 종목만 재점검(예: 계산 로직 수정 후 해당 종목만 재계산) — 전체 배치 재실행으로 인한
 // 불필요한 LLM 호출 낭비를 피한다. mode=B 전용.
 const onlyArg = args.find(a => a.startsWith('--only='));
@@ -469,7 +475,7 @@ async function main() {
     if (cooldownActive()) { console.log('   거시 LLM 판단 skip — 가드레일 경보는 위에서 적재됨.'); return; }
     console.log(`\n⏳ 거시 리스크 판단 중... (LLM은 Read 전용)`);
     try {
-      const res = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read'));
+      const res = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt }));
       const sigs = res.signals || [];
       if (!sigs.length) {
         console.log('   ✅ 거시 트리거 미발동 — 신호 없음. (기록은 남김: 🟢 정상)');
@@ -565,7 +571,7 @@ async function main() {
     if (DRY_RUN) { console.log(`\n┌─── B 프롬프트 [${h.name}] ───┐\n` + prompt + '\n└──────────────────┘'); continue; }
     console.log(`\n⏳ ${h.name} 논리 판단 중... (수 분)`);
     try {
-      const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read'));
+      const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt }));
       // ② LLM 출력 하네스(2026-07): signal enum 강제 — 목록 밖 값이면 🟡로 강등.
       // ③ 가드레일 발동인데 🟢이면 🟡로 강제. 근거데이터는 LLM 아닌 Node 계산값.
       const extracted = extractSignal(r.signal);

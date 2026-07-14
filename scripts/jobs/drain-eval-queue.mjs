@@ -20,6 +20,7 @@ import { createServer } from 'http';
 import { exec } from 'child_process';
 import { runHeadlessClaude, cooldownActive, LIMIT_RE } from '../lib/sheets-common.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
+import { loadAgent } from '../lib/agent-loader.mjs';
 import { renderPrefRows, prefBlock, PREF_SHEET } from '../lib/preferences.mjs';
 import { createInterface } from 'readline';
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
@@ -41,8 +42,12 @@ const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
 const DRY_RUN = args.includes('--dry-run'); // 시트 쓰기 없이 프롬프트만 출력
 const AUTO = args.includes('--auto');       // 헤드리스 claude -p 로 자동 평가
+// 평가는 투자전략실(Athena) 소관 — 에이전트 정의가 모델·판단원칙의 단일 진실 소스.
+// 우선순위: CLI --model= (쿼터 크런치 시 임시 다운그레이드) > 에이전트 frontmatter > 폴백.
+const AGENT = loadAgent('athena', { fallbackModel: 'sonnet' });
+if (AGENT.warning) collectWarning(AGENT.warning);
 const modelArg = args.find(a => a.startsWith('--model='));
-const MODEL = modelArg ? modelArg.split('=')[1] : 'sonnet';
+const MODEL = modelArg ? modelArg.split('=')[1] : AGENT.model;
 
 // .env 로드 (DART_API_KEY 등) — 헤드리스 자식 프로세스로 전달
 function loadEnv() {
@@ -780,7 +785,7 @@ async function main() {
       console.log(`  🤖 헤드리스 Claude(${MODEL}) 실행 중... (수 분 소요)`);
       const t0 = Date.now();
       try {
-        rawJson = await runHeadlessClaude(prompt, MODEL, 'Read');
+        rawJson = await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt });
         console.log(`  ✓ 헤드리스 평가 완료 (${Math.round((Date.now() - t0) / 1000)}초)`);
       } catch (e) {
         console.error(`  ⚠️ 헤드리스 실행 실패: ${e.message}`);

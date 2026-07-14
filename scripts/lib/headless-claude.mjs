@@ -14,15 +14,26 @@ export const HEADLESS_NOTE = `
 - 거시지표: USDKRW=yf "KRW=X", 미10년물=yf "^TNX", VIX=yf "^VIX", KOSPI=yf "^KS11", S&P500=yf "^GSPC"
 - 데이터를 못 구하면 추정 금지, 해당 항목에 "(데이터 부족: 소스)" 표기`;
 
-export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools = 'Bash,Read,Glob,Grep,WebFetch') {
+// argv 조립 — 순수함수(spawn 없이 단위 테스트 가능). appendSystemPrompt 는 에이전트 정의
+// (agent-loader.mjs)의 본문을 시스템 프롬프트에 '추가'한다 — --system-prompt(전체 교체)가
+// 아니라 --append-system-prompt 를 쓰는 이유: 기본 시스템 프롬프트의 동작을 보존하고
+// 도메인 페르소나만 보태기 위함. 잡의 -p 태스크 프롬프트(결정론 사실·출력 계약)는 불변.
+export function buildArgs(prompt, model, allowedTools, { appendSystemPrompt } = {}) {
+  const args = [
+    '-p', prompt,
+    '--permission-mode', 'bypassPermissions',
+    '--allowedTools', allowedTools,
+    '--model', model,
+    '--output-format', 'text',
+  ];
+  if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt);
+  return args;
+}
+
+export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools = 'Bash,Read,Glob,Grep,WebFetch', opts = {}) {
   return new Promise((resolve, reject) => {
-    const cp = spawn('claude', [
-      '-p', prompt,
-      '--permission-mode', 'bypassPermissions',
-      '--allowedTools', allowedTools,
-      '--model', model,
-      '--output-format', 'text',
-    ], { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const cp = spawn('claude', buildArgs(prompt, model, allowedTools, opts),
+      { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     const timer = setTimeout(() => { cp.kill('SIGKILL'); reject(new Error('헤드리스 타임아웃 (12분 초과)')); }, 12 * 60 * 1000);
     cp.stdout.on('data', d => { out += d; });

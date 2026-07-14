@@ -30,6 +30,7 @@ import { renderPrefRows, PREF_SHEET } from '../lib/preferences.mjs';
 import { RISK_COL as R } from '../lib/sheet-contracts.mjs';
 import { filterObservations, claimViolations } from '../lib/llm-guard.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
+import { loadAgent } from '../lib/agent-loader.mjs';
 import { extractSummary } from './sync-reports.mjs';
 import { writeFileSync, readdirSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -48,8 +49,14 @@ const explicitToken = args.find(a => !a.startsWith('--'));
 const DRY_RUN = args.includes('--dry-run');
 const NO_PUSH = args.includes('--no-push');
 const FORCE = args.includes('--force');  // 같은 날짜 시트 행이 있으면 덮어씀(재발행)
+// 리포트 서사·성향 추출 모두 비서실(Apollo) 소관 — 에이전트 정의가 모델·원칙의 단일 진실 소스.
+// 폴백은 호출부별 현행값 보존(본문 opus·성향 sonnet — 파일 손상 시 기존 동작 그대로).
+// 우선순위: CLI --model= (리포트 본문에만 적용, 종전과 동일) > frontmatter > 폴백.
+const APOLLO_REPORT = loadAgent('apollo', { fallbackModel: 'opus' });
+const APOLLO_PREFS = loadAgent('apollo', { fallbackModel: 'sonnet' });
+if (APOLLO_REPORT.warning) collectWarning(APOLLO_REPORT.warning);
 const modelArg = args.find(a => a.startsWith('--model='));
-const MODEL = modelArg ? modelArg.split('=')[1] : 'opus';
+const MODEL = modelArg ? modelArg.split('=')[1] : APOLLO_REPORT.model;
 
 loadEnv();
 
@@ -330,7 +337,7 @@ async function main() {
   console.log(`\n⏳ 리포트 작성 중 (claude -p ${MODEL}, 수 분)...`);
   let md;
   try {
-    md = (await runHeadlessClaude(prompt, MODEL, 'Read,WebSearch')).trim();
+    md = (await runHeadlessClaude(prompt, MODEL, 'Read,WebSearch', { appendSystemPrompt: APOLLO_REPORT.systemPrompt })).trim();
   } catch (e) {
     if (e.isLimit) { console.log(`   ⏳ 사용량 한도 → 이번 리포트 발행 보류(쿨다운 설정). 한도 해제 후 재실행하세요.`); process.exit(0); }
     throw e;
@@ -376,13 +383,13 @@ async function main() {
   }
 
   // ⑩ 성향 학습 — 행동 신호를 §3·직전 관찰과 대조해 관찰 추출(sonnet) → 성향관찰 시트 append.
-  //    리포트 본문(opus)과 분리. 실패해도 리포트 발행은 성공 처리. 앱 성향 탭이 확정/기각.
+  //    리포트 본문과 분리. 실패해도 리포트 발행은 성공 처리. 앱 성향 탭이 확정/기각.
   //    2026-07 사고(O🔴를 논리훼손으로 날조) 대응: LLM 응답을 그대로 안 쓰고 filterObservations로
   //    검증 — 사실 텍스트에 없는 종목 인용·논리훼손 오주장·중복은 시트에 절대 안 쓰고 DROP+경고.
   try {
-    console.log('\n⏳ 성향 관찰 추출 중 (claude -p sonnet)...');
+    console.log(`\n⏳ 성향 관찰 추출 중 (claude -p ${APOLLO_PREFS.model})...`);
     await ensureSheet(token, PREF_SHEET, PREF_HEADER);  // 시트 없으면 생성(seed 미실행 대비)
-    const obsRaw = parseJsonBlock(await runHeadlessClaude(buildObservationPrompt(signalsText, priorPrefsText), 'sonnet', 'Read'));
+    const obsRaw = parseJsonBlock(await runHeadlessClaude(buildObservationPrompt(signalsText, priorPrefsText), APOLLO_PREFS.model, 'Read', { appendSystemPrompt: APOLLO_PREFS.systemPrompt }));
     const { kept, dropped } = filterObservations(Array.isArray(obsRaw) ? obsRaw : [], {
       universe, factsText: signalsText, claimAllowed: bBreachNames, priorTexts: priorObsTexts, maxRows: 3,
     });

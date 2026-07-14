@@ -27,7 +27,10 @@ dist-ssr
 .netlify
 
 # Claude Code / OMC session metadata
-.claude/
+# .claude/* 로 직계 자식만 무시 — agents/(부서 에이전트 정의, 경로 참조만 포함·전략 내용 없음)는
+# 코드(agent-loader)가 의존하므로 네거티브 패턴으로 버전관리에 포함한다.
+.claude/*
+!.claude/agents/
 .omc/
 CLAUDE.md
 

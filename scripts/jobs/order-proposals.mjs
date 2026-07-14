@@ -37,6 +37,7 @@ import {
   applyThesisGuard, checkConstraints, makeMatchKey, toDateStr, RULE500_WON,
 } from '../lib/order-candidates.mjs';
 import { unknownMentions, clampLen } from '../lib/llm-guard.mjs';
+import { loadAgent } from '../lib/agent-loader.mjs';
 
 const PROPOSAL_SHEET = '주문제안';
 const ACCOUNT_TABS = ['ISA', '위탁', '연금저축', 'IRP'];
@@ -48,7 +49,11 @@ const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
 const DRY_RUN = args.includes('--dry-run');
 const MODE = (args.find(a => a.startsWith('--mode='))?.split('=')[1] || '').toLowerCase();
-const MODEL = args.find(a => a.startsWith('--model='))?.split('=')[1] || 'sonnet';
+// 주문서 초안(후보 선별+근거)은 투자전략실(Athena) 소관 — 에이전트 정의가 모델·판단원칙의
+// 단일 진실 소스. 우선순위: CLI --model= > frontmatter > 폴백.
+const AGENT = loadAgent('athena', { fallbackModel: 'sonnet' });
+if (AGENT.warning) collectWarning(AGENT.warning);
+const MODEL = args.find(a => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
 
 if (!['weekly', 'crash'].includes(MODE)) {
   console.error('❌ --mode=weekly 또는 --mode=crash 를 지정하세요.');
@@ -230,7 +235,8 @@ async function main() {
       try {
         const confirmedPrefsText = renderPrefRows(prefRows, { confirmedOnly: true });
         const res = parseJsonBlock(await runHeadlessClaude(buildSelectionPrompt(
-          candidates.map(({ checks: _checks, ...rest }) => rest), confirmedPrefsText), MODEL, 'Read'));
+          candidates.map(({ checks: _checks, ...rest }) => rest), confirmedPrefsText), MODEL, 'Read',
+          { appendSystemPrompt: AGENT.systemPrompt }));
         if (!Array.isArray(res.selected)) throw new Error('AI 응답에 selected 배열 없음');
         // 파싱에 성공했으면 빈 selected 도 "전부 제외" 의도로 존중한다 — 실패 폴백(전체 적재)과
         // 구분하지 않으면 AI가 성향 충돌로 걸러낸 후보가 그대로 올라가는 역전이 생긴다.
