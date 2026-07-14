@@ -28,7 +28,7 @@
  */
 
 import { SHEET_ID, getToken, getRange, getRangeRaw, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from '../lib/sheets-common.mjs';
-import { resolveCashBase, settleCash, buildHistoricalAcctMap, resolveTradeTab, resolveBrokerTab } from '../lib/cash-base.mjs';
+import { resolveCashBase, settleCash, buildHistoricalAcctMap, resolveTradeTab, resolveBrokerTab, resolveDepositAnchorBalance } from '../lib/cash-base.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
@@ -226,19 +226,35 @@ function parseGoldBuy(body, tsRaw) {
 // ── 예수금 앵커 파서 (NH투자증권 "입금안내/출금안내", 잔고줄 보유) ─
 // 입금·출금 알림 양쪽에 '출금가능금액'(그 시점 정답 현금잔고)이 있어 앵커로 쓴다.
 // ISA·위탁 둘 다 NH라 포맷 동일 → 계좌번호 앞6자로 구분 (209-02=ISA, 205-01=위탁).
+// 예외: ISA는 계좌 특성상 출금을 하지 않아 NH가 출금가능금액을 정확히 갱신하지 않는다(매도 후
+// 아직 결제(입금)가 안 된 예수금이 있을 때도 낮게 보일 수 있음) — 실증(2026-07-14 ISA):
+// 입금 300,000원인데 출금가능금액 183,079원(입금액보다 작음). 입금안내는 '금액'(이번 입금액)도
+// 같이 오므로, 둘 다 확인해 더 큰 쪽을 신뢰한다(resolveDepositAnchorBalance, cash-base.mjs).
 const CASH_ACCTNO = /계좌번호\s*([\d]{3}-[\d]{2}-[\d*]+)/;
 const CASH_BALANCE = /출금가능금액\s*:\s*([\d,]+)\s*원/;
+const CASH_DEPOSIT_AMOUNT = /(?<!출금가능)금액\s+([\d,]+)\s*원/;
 
 function parseCashAlarm(body, tsRaw) {
   if (!body.includes('NH투자증권')) return null;
-  if (!(body.includes('입금안내') || body.includes('출금안내'))) return null;
+  const isDeposit = body.includes('입금안내');
+  if (!(isDeposit || body.includes('출금안내'))) return null;
   const am = body.match(CASH_ACCTNO);
   const bm = body.match(CASH_BALANCE);
   if (!am || !bm) return null;
   const acctNo = am[1].trim();
   const tab = NH_ACCT_PREFIX[acctNo.slice(0, 6)];
   if (!tab) return null;                          // 매핑 안 된 NH 계좌 → skip
-  const balance = parseInt(cleanNum(bm[1]), 10);
+  const withdrawable = parseInt(cleanNum(bm[1]), 10);
+  if (!Number.isFinite(withdrawable) || withdrawable < 0) return null;
+  let balance = withdrawable;
+  // ISA 한정 — 위탁은 출금가능금액이 이미 입금을 정확히 반영함이 실증됨(06-18: 224,098+1,000,000
+  // =7,224,098 정확 일치). ISA만 이 뒤처짐 증상이 있으므로, 다른 NH 계좌까지 무조건 입금액과
+  // max 를 취하면 위탁처럼 이미 정확한 값을 근거 없이 덮어씌울 위험이 생긴다.
+  if (isDeposit && tab === 'ISA') {
+    const dm = body.match(CASH_DEPOSIT_AMOUNT);
+    const deposit = dm ? parseInt(cleanNum(dm[1]), 10) : NaN;
+    balance = resolveDepositAnchorBalance(withdrawable, deposit);
+  }
   if (!Number.isFinite(balance) || balance < 0) return null;
   return { tab, acctNo, balance, ts: normalizeDateTime(tsRaw) };
 }

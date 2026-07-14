@@ -3,7 +3,10 @@
 // 예수금에 반영되지 않던 버그. 알림이 수동 기준일보다 '엄격히 최신'이면 알림을 우선한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveCashBase, parseAmount, settleCash, buildHistoricalAcctMap, resolveTradeTab, resolveBrokerTab } from './cash-base.mjs';
+import {
+  resolveCashBase, parseAmount, settleCash, buildHistoricalAcctMap, resolveTradeTab,
+  resolveBrokerTab, resolveDepositAnchorBalance,
+} from './cash-base.mjs';
 
 const cfg = (base, date, source) => ({ base, date, source, rowNum: 2 });
 const anchor = (balance, ts) => ({ balance, ts });
@@ -114,6 +117,21 @@ test('settleCash: 양수·0은 그대로, 음수는 0 클램프+negative 플래�
   assert.deepEqual(settleCash(100000, -390600), { cash: 0, raw: -290600, negative: true });
   // null 방어
   assert.deepEqual(settleCash(null, null), { cash: 0, raw: 0, negative: false });
+});
+
+test('[버그수정] ISA: 출금가능금액이 방금 입금액보다 작으면(뒤처짐) 입금액을 앵커로', () => {
+  // 2026-07-14 실증: 입금 300,000원인데 출금가능금액 183,079원 — 출금가능금액이 이 입금을
+  // 반영 못 한 상태(ISA는 출금 안 하는 계좌라 NH가 정확히 안 갱신). 입금액을 우선.
+  assert.equal(resolveDepositAnchorBalance(183079, 300000), 300000);
+});
+
+test('출금가능금액이 입금액을 포함해 이미 더 크면(정상 케이스, 위탁 등) 그대로 사용', () => {
+  // 2026-06-18 위탁 실증: 224,098 + 1,000,000 입금 = 7,224,098(정확히 반영됨) — no-op 확인.
+  assert.equal(resolveDepositAnchorBalance(7224098, 7000000), 7224098);
+});
+
+test('입금액을 못 읽었으면(파싱 실패) 출금가능금액 그대로', () => {
+  assert.equal(resolveDepositAnchorBalance(183079, NaN), 183079);
 });
 
 const VALID_TABS = ['ISA', '위탁', '연금저축', 'IRP'];

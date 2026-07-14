@@ -64,6 +64,19 @@ export function resolveBrokerTab(broker) {
   return tabs?.length === 1 ? tabs[0] : null;
 }
 
+// NH 입금안내 앵커 값 결정 — '출금가능금액'만 보면 위험한 경우가 있다. ISA는 계좌 특성상
+// 출금을 하지 않아 NH가 출금가능금액을 정확히 갱신하지 않고, 매도 후 아직 결제(입금)가 안 된
+// 예수금이 있을 때도 출금가능금액이 낮게 보일 수 있다. 실증(2026-07-14 ISA): 입금 300,000원인데
+// 출금가능금액 183,079원(입금액보다 작음) — 출금가능금액이 이 입금을 반영 못 한 상태.
+// 입금액이 출금가능금액보다 크면(=출금가능금액이 뒤처짐) 입금액을 앵커로 우선한다. 정상 케이스
+// (위탁처럼 출금가능금액이 이미 입금을 포함해 더 큰 경우)는 그대로 출금가능금액을 쓴다 — 이 함수는
+// 그 경우 항상 no-op. 호출부(parse-notifications.mjs)는 ISA에만 이 함수를 쓴다 — 위탁은 출금가능
+// 금액이 이미 정확함이 실증돼(06-18: 224,098+1,000,000=7,224,098) 근거 없이 덮어쓸 위험을 피한다.
+export function resolveDepositAnchorBalance(withdrawable, deposit) {
+  if (!Number.isFinite(deposit)) return withdrawable;
+  return Math.max(withdrawable, deposit);
+}
+
 // 계좌 결정 — 현재 보유 스캔(liveTab)이 있으면 그것을 신뢰(가장 최신 실측). 없으면(전량매도로
 // 소멸) 체결내역 폴백을 쓰되, 같은 종목명이 서로 다른 계좌에 기록된 적 있으면(모호) 오귀속
 // 위험이 있어 포기(null)한다 — 틀린 계좌에 붙이는 것보다 누락 경고가 안전하다.
