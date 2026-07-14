@@ -3,7 +3,7 @@
 // 예수금에 반영되지 않던 버그. 알림이 수동 기준일보다 '엄격히 최신'이면 알림을 우선한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveCashBase, parseAmount, settleCash, buildHistoricalAcctMap, resolveTradeTab } from './cash-base.mjs';
+import { resolveCashBase, parseAmount, settleCash, buildHistoricalAcctMap, resolveTradeTab, resolveBrokerTab } from './cash-base.mjs';
 
 const cfg = (base, date, source) => ({ base, date, source, rowNum: 2 });
 const anchor = (balance, ts) => ({ balance, ts });
@@ -154,6 +154,21 @@ test('[버그수정] 현재 2개 계좌에 동시보유 중인 종목명은 이�
   const hist = buildHistoricalAcctMap([execRow('ISA', 'TIGER 리츠부동산인프라')], { tabCol: 2, nameCol: 5, validTabs: VALID_TABS });
   const dupNames = new Set(['TIGER 리츠부동산인프라']);   // 현재 ISA·위탁 동시 보유
   assert.equal(resolveTradeTab('TIGER 리츠부동산인프라', null, hist, dupNames), null);
+});
+
+test('[버그수정] 증권사만으로 계좌가 유일하게 정해지면(연금저축·IRP) 종목명 중복과 무관하게 확정', () => {
+  // 2026-07-14 사고: 위탁(NH)·연금저축(삼성증권)이 "TIGER 미국배당다우존스"를 동시보유 →
+  // 종목명 매칭은 둘 다 배제하지만, 삼성증권 알림이면 연금저축으로 확정할 수 있다.
+  assert.equal(resolveBrokerTab('삼성증권'), '연금저축');
+  assert.equal(resolveBrokerTab('한국투자증권'), 'IRP');
+});
+
+test('NH투자증권은 ISA·위탁 둘 다 걸쳐있어 증권사만으로 유일 확정 불가 — null(이름 매칭 폴백 필요)', () => {
+  assert.equal(resolveBrokerTab('NH투자증권'), null);
+});
+
+test('알 수 없는 증권사는 null', () => {
+  assert.equal(resolveBrokerTab('미상증권'), null);
 });
 
 test('buildHistoricalAcctMap: 계좌·종목명 빈값이나 허용 계좌 외는 무시', () => {

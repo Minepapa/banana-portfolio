@@ -45,6 +45,25 @@ export function buildHistoricalAcctMap(rows, { tabCol, nameCol, validTabs }) {
   return { map, ambiguous };
 }
 
+// 증권사(broker) → 그 증권사를 쓰는 계좌 목록. NH투자증권은 ISA·위탁 둘 다 걸쳐있어 유일
+// 확정이 안 되지만, 삼성증권(연금저축 전용)·한국투자증권(IRP 전용)은 증권사만으로 계좌가
+// 100% 확정된다 — 종목명 중복(portfolioMap dupNames)과 무관한, 가장 신뢰도 높은 신호다.
+// (dividendAcctCandidates 와 동일한 매핑, 체결 흐름 계산에도 재사용)
+export const BROKER_TABS = {
+  'NH투자증권': ['ISA', '위탁'],
+  '삼성증권': ['연금저축'],
+  '한국투자증권': ['IRP'],
+};
+
+// 실제 사고(2026-07-14): 위탁(NH)·연금저축(삼성증권)이 똑같은 이름("TIGER 미국배당다우존스")을
+// 동시보유 → 종목명 매칭(portfolioMap/체결내역 폴백)은 둘 다 배제해 연금저축 매도대금
+// (+307,300원)이 누락됐다. 그 알림이 어느 증권사(broker)에서 왔는지는 이미 알고 있으므로,
+// 증권사가 계좌를 유일하게 정하면(연금저축·IRP) 종목명 매칭보다 먼저 이걸로 확정한다.
+export function resolveBrokerTab(broker) {
+  const tabs = BROKER_TABS[broker];
+  return tabs?.length === 1 ? tabs[0] : null;
+}
+
 // 계좌 결정 — 현재 보유 스캔(liveTab)이 있으면 그것을 신뢰(가장 최신 실측). 없으면(전량매도로
 // 소멸) 체결내역 폴백을 쓰되, 같은 종목명이 서로 다른 계좌에 기록된 적 있으면(모호) 오귀속
 // 위험이 있어 포기(null)한다 — 틀린 계좌에 붙이는 것보다 누락 경고가 안전하다.

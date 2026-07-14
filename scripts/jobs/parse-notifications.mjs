@@ -28,7 +28,7 @@
  */
 
 import { SHEET_ID, getToken, getRange, getRangeRaw, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from '../lib/sheets-common.mjs';
-import { resolveCashBase, settleCash, buildHistoricalAcctMap, resolveTradeTab } from '../lib/cash-base.mjs';
+import { resolveCashBase, settleCash, buildHistoricalAcctMap, resolveTradeTab, resolveBrokerTab } from '../lib/cash-base.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
@@ -147,6 +147,7 @@ function parseExecution(body, tsRaw) {
       stockCode: g.stockCode?.trim() || '',
       stockName, quantity, price,
       currency: p.overseas ? 'USD' : 'KRW',
+      broker: p.broker,
     };
   }
   return null;
@@ -588,7 +589,9 @@ async function main() {
   const flows = [];
   for (const e of execs) {
     if (e.currency !== 'KRW') continue;                          // USD 체결 → 외화RP(수동) 소관
-    const tab = resolveTradeTab(e.stockName, portfolioMap.get(e.stockName)?.[0], histAcct, dupNames);
+    // 증권사가 계좌를 유일하게 정하면(연금저축·IRP) 종목명 중복과 무관하게 최우선 신뢰.
+    // NH(ISA·위탁 공용)만 기존 방식(현재 보유 스캔 → 체결내역 폴백)으로 판별.
+    const tab = resolveBrokerTab(e.broker) ?? resolveTradeTab(e.stockName, portfolioMap.get(e.stockName)?.[0], histAcct, dupNames);
     if (!tab) continue;                                          // 계좌 미상(중복명·이력 없음 등) skip
     flows.push({ tab, date: e.tradeDate.slice(0, 10), amount: (e.tradeType === '매수' ? -1 : 1) * e.quantity * e.price });
   }
