@@ -29,8 +29,10 @@ dist-ssr
 # Claude Code / OMC session metadata
 # .claude/* 로 직계 자식만 무시 — agents/(부서 에이전트 정의, 경로 참조만 포함·전략 내용 없음)는
 # 코드(agent-loader)가 의존하므로 네거티브 패턴으로 버전관리에 포함한다.
+# 단 agents/memory/(부서 메모리·업무기록)는 실제 투자 활동 내용이라 로컬 전용(profile/ 정책과 일치).
 .claude/*
 !.claude/agents/
+.claude/agents/memory/
 .omc/
 CLAUDE.md
 
