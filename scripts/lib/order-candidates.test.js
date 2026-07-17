@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseHoldingRows, latestConclusions, convictionMap, latestRiskByType,
   buildRebalanceCandidates, buildCrashBuyCandidates, buildSellFromThesis, buildBuyFromEval,
-  applyThesisGuard, checkConstraints, makeMatchKey, RULE500_WON,
+  applyThesisGuard, detectThesisReleases, checkConstraints, makeMatchKey, RULE500_WON,
 } from './order-candidates.mjs';
 
 // ── 픽스처 헬퍼 ──────────────────────────────────────────────────────────────
@@ -17,6 +17,8 @@ const jrow = (name, kind, status = '보유') => {
 };
 // 리스크모니터 행: idx0=날짜, idx1=유형, idx2=대상, idx3=신호, idx4=요약
 const rrow = (date, type, target, signal, summary = '') => [date, type, target, signal, summary];
+// 차단해제이력 행(risk-monitor.mjs가 전환 감지 시 기록): idx0=감지일시, idx1=종목명, idx2=이전신호일, idx3=신규신호일, idx4=신규신호
+const relrow = (detectedAt, name, from, to, newSignal) => [detectedAt, name, from, to, newSignal];
 // 체결내역 행: idx0=날짜, idx1=구분, idx5=종목명
 const trow = (date, side, name) => { const r = []; r[0] = date; r[1] = side; r[5] = name; return r; };
 
@@ -194,6 +196,62 @@ test('applyThesisGuard: B🔴 매수 제외·B🟡 매수 유지+충돌플래그
   assert.match(kept.find(c => c.name === '현대차').why.논리충돌, /B🟡 논리약화/);
   assert.equal(kept.find(c => c.name === 'SK하이닉스').why.논리충돌, undefined);
   assert.equal(kept.find(c => c.name === '가온전선').why.논리충돌, undefined);
+});
+
+// 구조조정 안건7(2026-07-17) — 차단해제(B🔴→비🔴 전환)가 코드상 아무 감지 없이 자동·조용히
+// 통과되던 것을 리허설로 발견해 게이트화. 최초 설계는 detectThesisReleases가 리스크모니터
+// 시트 이력에서 직접 전환을 재구성했으나, pruneRiskSheet가 종목당 최신 B행 1개만 남겨(이력
+// 소멸) 절대 발동 안 하는 죽은 게이트였음(code-reviewer 지적) — risk-monitor.mjs가 전환 시점에
+// 별도 영구 로그(차단해제이력)에 남기고, detectThesisReleases는 그 로그를 파싱만 한다.
+test('detectThesisReleases: 차단해제이력 로그 파싱 — 14일 이내만, 종목당 최신 감지만', () => {
+  const releases = detectThesisReleases([
+    relrow('2026-07-06 09:00:00', '테슬라', '2026-06-01', '2026-07-06', '🟢'),   // 최근 → 대상
+    relrow('2026-06-01 09:00:00', '현대차', '2026-05-01', '2026-06-01', '🟡'),   // 14일 초과 → 창밖(제외)
+    relrow('2026-06-25 09:00:00', 'SK하이닉스', '2026-06-01', '2026-06-25', '🟢'),
+    relrow('2026-07-02 09:00:00', 'SK하이닉스', '2026-06-25', '2026-07-02', '🟢'), // 같은 종목 재감지 → 최신만
+  ], '2026-07-14');
+  assert.deepEqual([...releases.keys()].sort(), ['SK하이닉스', '테슬라']);
+  const tesla = releases.get('테슬라');
+  assert.equal(tesla.from, '2026-06-01'); assert.equal(tesla.to, '2026-07-06'); assert.equal(tesla.newSignal, '🟢');
+  assert.equal(releases.get('SK하이닉스').detectedAt, '2026-07-02 09:00:00');   // 06-25건 아니라 최신(07-02)
+});
+
+test('detectThesisReleases: 경계값 — 정확히 14일 전 감지는 포함(그날까지는 Zeus 검토 창)', () => {
+  const releases = detectThesisReleases(
+    [relrow('2026-06-30 09:00:00', '카카오', '2026-06-01', '2026-06-30', '🟢')], '2026-07-14');
+  assert.equal(releases.size, 1);   // 2026-07-14 - 14일 = 2026-06-30, 경계 포함
+});
+
+test('detectThesisReleases: todayStr 미전달 시 창 제한 없이 전부 반환(하위호환)', () => {
+  const releases = detectThesisReleases([relrow('2020-01-01 00:00:00', '오래된종목', '2019-01-01', '2020-01-01', '🟢')]);
+  assert.equal(releases.size, 1);
+});
+
+test('applyThesisGuard: 막 회복(releases) 매수 후보는 통과하되 차단해제대기 플래그 부착', () => {
+  const bSignals = latestRiskByType([rrow('2026-07-06', 'B', '테슬라', '🟢', '펀더멘털 회복 확인')], 'B');
+  const releases = detectThesisReleases(
+    [relrow('2026-07-06 09:00:00', '테슬라', '2026-06-01', '2026-07-06', '🟢')], '2026-07-14');
+  const cands = [{ source: '급락O', side: '매수', name: '테슬라', why: {} }];
+  const { kept, dropped } = applyThesisGuard(cands, bSignals, releases);
+  assert.equal(dropped.length, 0);            // 자동 차단 아님 — 통과
+  assert.equal(kept.length, 1);
+  assert.match(kept[0].why.차단해제대기, /B🔴\(2026-06-01\)→🟢\(2026-07-06\)/);
+  assert.match(kept[0].why.차단해제대기, /Zeus 반대검증/);
+});
+
+test('applyThesisGuard: releases 미전달(기존 호출부 하위호환) 시 차단해제대기 없음', () => {
+  const bSignals = latestRiskByType([rrow('2026-07-06', 'B', 'SK하이닉스', '🟢', '훼손 없음')], 'B');
+  const { kept } = applyThesisGuard([{ source: '급락O', side: '매수', name: 'SK하이닉스', why: {} }], bSignals);
+  assert.equal(kept[0].why.차단해제대기, undefined);
+});
+
+test('checkConstraints: why.차단해제대기 있으면 차단해제확인 ✗ 체크 산출(매수)', () => {
+  const checks = checkConstraints(
+    { side: '매수', acct: '위탁', name: '테슬라', amount: 964000, why: { 차단해제대기: 'B🔴(2026-06-01)→🟢(2026-07-06) 최근 회복 — Zeus 반대검증 확인 필요' } },
+    { cash: { 위탁: 1200000 }, conviction: new Map() });
+  const check = checks.find(x => x.k === '차단해제확인');
+  assert.equal(check.ok, false);
+  assert.match(check.d, /반대검증/);
 });
 
 test('checkConstraints: why.논리충돌 있으면 논리상태 ✗ 체크 산출(매수)', () => {

@@ -32,7 +32,7 @@ import {
   PROPOSAL_HEADER, PROPOSAL_COL as P, PROPOSAL_STATUS, EVAL_STATUS, colLetter,
 } from '../lib/sheet-contracts.mjs';
 import {
-  parseHoldingRows, latestConclusions, convictionMap, latestRiskByType,
+  parseHoldingRows, latestConclusions, convictionMap, latestRiskByType, detectThesisReleases,
   buildRebalanceCandidates, buildCrashBuyCandidates, buildSellFromThesis, buildBuyFromEval,
   applyThesisGuard, checkConstraints, makeMatchKey, toDateStr, RULE500_WON,
 } from '../lib/order-candidates.mjs';
@@ -128,13 +128,14 @@ async function main() {
   }
   if (!holdings.length) throw new Error('보유종목 0건 — 읽기 이상 의심, 안전을 위해 중단');
 
-  const [riskRows, noteRows, journalRows, execRows, prefRows, existingRows] = await Promise.all([
+  const [riskRows, noteRows, journalRows, execRows, prefRows, existingRows, releaseRows] = await Promise.all([
     getRange(token, '리스크모니터!A2:H'),
     getRange(token, '종목투자노트!A2:U'),
     getRange(token, '포지션저널!A2:P'),
     getRange(token, '체결내역!A2:M'),
     getRange(token, `${PREF_SHEET}!A2:H`).catch(() => []),
     getRange(token, `${PROPOSAL_SHEET}!A2:N`).catch(() => []),
+    getRange(token, '차단해제이력!A2:E').catch(() => []),   // 시트 미존재(최초 실행 전)면 빈 배열
   ]);
   const conclusions = latestConclusions(noteRows);
   const conviction = convictionMap(journalRows);
@@ -163,6 +164,10 @@ async function main() {
 
   // 논리(B) 신호는 모드 무관 공용 — crash 모드도 급락매수 가드에 필요, weekly 는 매도 후보에 사용.
   const bSignals = latestRiskByType(riskRows, 'B');
+  // 차단해제 감지(구조조정 안건7) — B🔴에서 막 회복한 종목을 자동·조용히 통과시키지 않고 플래그.
+  // risk-monitor.mjs가 전환 시점에 남긴 영구 로그(차단해제이력)를 읽는다 — 리스크모니터 시트
+  // 자체는 pruneRiskSheet가 종목당 최신 1행만 남겨 이력 재구성이 불가하다(code-reviewer 지적).
+  const bReleases = detectThesisReleases(releaseRows, today);
 
   if (MODE === 'crash') {
     const oSignals = latestRiskByType(riskRows, 'O');
@@ -214,7 +219,7 @@ async function main() {
 
   // 논리훼손 가드 — B🔴 매수 후보 제외, B🟡 매수 후보엔 충돌 플래그(리스크 우선순위 B>가격 강제).
   // 매도평가 라우팅은 weekly buildSellFromThesis + risk-monitor 🔴 텔레그램이 담당(중복 방지).
-  const guard = applyThesisGuard(candidates, bSignals);
+  const guard = applyThesisGuard(candidates, bSignals, bReleases);
   candidates = guard.kept;
   guard.dropped.forEach(d => {
     console.log(`  ⛔ 매수 제외 [${d.source}] ${d.acct} ${d.name} — ${d.reason}`);

@@ -38,6 +38,15 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 const RISK_SHEET = '리스크모니터';
 const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세', '근거데이터', '기준선참조'];
 const BASELINE_SHEET = '리스크기준선';
+// 차단해제(B🔴→비🔴 전환) 감지 로그 — pruneRiskSheet가 매 실행 끝에 종목당 최신 B행 1개만
+// 남기므로(리스크모니터 시트 자체에는 "직전 신호가 뭐였는지"가 안 남는다), order-proposals가
+// 사후에 이력으로 재구성할 방법이 없다(구조조정 안건7, code-reviewer 지적으로 발견 — 최초
+// 설계는 리스크모니터 시트에서 재구성하려다 프루닝에 막혀 절대 발동 안 하는 죽은 게이트였음).
+// 그래서 전환이 실제로 일어나는 이 순간(이번 판정 직전, priorRows가 아직 지난 실행의 신호를
+// 들고 있을 때) 여기서 직접 감지해 별도 영구 로그에 남긴다 — FUND_LEDGER_SHEET(펀드 영구 원장)
+// 와 동일한 이유(외부/자체 정리로 사라지는 이력을 append-only 로그로 보존).
+const THESIS_RELEASE_SHEET = '차단해제이력';
+const THESIS_RELEASE_HEADER = ['감지일시', '종목명', '이전신호일', '신규신호일', '신규신호'];
 // 투자 성향 정본 — Trading Agent Hub에서 이전(2026-06-14). 거시 트리거(§4)·계좌배분(§2)이 여기 있음.
 const HUB_CLAUDE = new URL('../../profile/investor-profile.md', import.meta.url).pathname;
 const KOSPI_CRASH_PCT = -10;  // KOSPI 5일 고점 대비 낙폭 임계 — 이하면 LLM 판단 무관 🔴 강제 푸시
@@ -251,6 +260,19 @@ function redKeysFromRows(rows) {
   return s;
 }
 
+// priorRows(이번 실행 전, 지난 실행이 남긴 시트 상태)에서 특정 종목의 직전 B신호를 찾는다 —
+// pruneRiskSheet가 종목당 최신 1행만 남기므로 이 시점(다음 판정을 쓰기 전)이 "직전 신호"를
+// 볼 수 있는 유일한 창구다. 동일 종목 중복 행이 남아있는 예외 상황을 대비해 날짜 최신 것을 취함.
+function findPriorBSignal(priorRows, name) {
+  let best = null;
+  for (const r of priorRows || []) {
+    if (String(r[1] ?? '').trim() !== 'B' || String(r[2] ?? '').trim() !== name) continue;
+    const date = String(r[0] ?? '').trim();
+    if (!best || date > best.date) best = { date, signal: String(r[3] ?? '').trim() };
+  }
+  return best;
+}
+
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -361,9 +383,11 @@ async function main() {
     holdings.filter(h => h.accounts.some(a => a.acct === '위탁' && STOCK_TYPES.has(a.type))).map(h => h.name),
   );
 
-  // 기존 리스크모니터의 직전 행 + 🔴 키
-  const priorRows = (token && !NO_PUSH)
-    ? await getRange(token, `${RISK_SHEET}!A2:H`) : [];
+  // 기존 리스크모니터의 직전 행 + 🔴 키 — 텔레그램 푸시(NO_PUSH) 여부와 무관하게 항상 조회한다.
+  // 차단해제 감지(findPriorBSignal, 안건7)도 이 값을 쓰므로 --no-push 로 조회를 건너뛰면 그
+  // 실행에서 일어난 회복 전환을 영영 놓친다(code-reviewer 지적 — 거버넌스 게이트가 무관한
+  // 플래그에 결합되는 결함).
+  const priorRows = token ? await getRange(token, `${RISK_SHEET}!A2:H`) : [];
   const priorRedKeys = redKeysFromRows(priorRows);
 
   if (MODE === 'D') {
@@ -530,6 +554,7 @@ async function main() {
   console.log(`\n📊 위탁 개별주식 ${targets.length}개 논리 점검 시작 (전체 ${holdings.length}개 중 ${skipLabel})`);
   // 종목당 claude 1회 — 가장 무거운 배치. 쿨다운 중이면 호출 안 함(시트 정리만 하고 종료).
   if (!DRY_RUN && cooldownActive()) { await pruneRiskSheet(token, monitoredNames); return; }
+  if (!DRY_RUN) await ensureSheet(token, THESIS_RELEASE_SHEET, THESIS_RELEASE_HEADER);
   let ok = 0, fail = 0, alerts = 0;
   for (const h of targets) {
     const baseline = bMap.get(h.name) || null;
@@ -583,6 +608,15 @@ async function main() {
       }
       const row = [nowKST(), 'B', h.name, signal, clampLen(summary, 200), clampLen(r.detail || '', 400),
         JSON.stringify(facts), r.baseline_ref || (baseline ? baseline.date : '없음')];
+      // 차단해제 감지 — 직전 신호가 🔴였는데 이번엔 아니면(회복) 시트 프루닝으로 사라지기 전에
+      // 별도 영구 로그에 남긴다(order-proposals의 차단해제 게이트가 이 로그를 읽음, 안건7).
+      // (이 지점은 위 DRY_RUN continue 를 이미 통과했으므로 항상 실기록 — dry-run 분기 불필요.
+      // ensureSheet는 루프 진입 전 1회만 호출 — 여러 종목이 같은 실행에서 회복해도 재호출 없음.)
+      const prior = findPriorBSignal(priorRows, h.name);
+      if (prior?.signal.includes('🔴') && !signal.includes('🔴')) {
+        await appendValues(token, `${THESIS_RELEASE_SHEET}!A2`, [[nowKST(), h.name, prior.date.slice(0, 10), row[0].slice(0, 10), signal]]);
+        console.log(`   🔓 차단해제 감지·기록: ${h.name} B🔴(${prior.date})→${signal}(${row[0]})`);
+      }
       await appendValues(token, `${RISK_SHEET}!A2`, [row]);
       console.log(`   ${signal} ${h.name}: ${summary}`);
       await pushNewReds([row], priorRedKeys);

@@ -203,13 +203,50 @@ export function buildBuyFromEval({ conclusions, execRows, holdings, cash, defaul
 
 // ── 논리훼손 가드 ────────────────────────────────────────────────────────────
 
+// 최근 논리훼손(B🔴)에서 막 회복한 종목 감지 — "차단해제"는 Zeus 결정 게이트(헌장 §2,
+// 리스크실 의무 반대검증 선행)다. 애초엔 이 함수가 리스크모니터 시트의 B이력에서 직전↔최신
+// 전환을 직접 재구성하려 했으나, risk-monitor.mjs의 pruneRiskSheet가 매 실행 끝에 종목당
+// 최신 B행 1개만 남겨(시트 자체엔 "직전 신호가 뭐였는지"가 안 남음) 이 시점엔 이미 이력이
+// 사라진 뒤라 절대 발동하지 않는 죽은 게이트였다(구조조정 안건7, code-reviewer 지적으로
+// 발견). 그래서 감지는 risk-monitor.mjs가 전환이 실제로 일어나는 순간(프루닝 전) 별도
+// 영구 로그(차단해제이력 시트)에 남기고, 이 함수는 그 로그를 읽어 "아직 Zeus 미확인"인
+// 항목만 반환한다. 14일 이내로 창을 두는 이유: 무기한 누적 방지(다른 경고 플래그와 동일한
+// 자연 소멸 방식) — 그 안에 Zeus가 검토하지 않으면 조용히 사라지되, 리스크실 상시감시(B)가
+// 계속 지켜보므로 재훼손 시엔 새 로그 행으로 다시 걸린다.
+// releaseRows: 차단해제이력 시트 원본 행(감지일시|종목명|이전신호일|신규신호일|신규신호).
+// todayStr: 'YYYY-MM-DD' 기준일(순수함수 유지 — 내부에서 현재시각을 직접 조회하지 않음).
+const RELEASE_WINDOW_DAYS = 14;
+
+function daysBeforeStr(dateStr, days) {
+  const d = new Date(`${dateStr.slice(0, 10)}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+export function detectThesisReleases(releaseRows, todayStr) {
+  const cutoff = todayStr ? daysBeforeStr(todayStr, RELEASE_WINDOW_DAYS) : null;
+  const releases = new Map();
+  for (const r of releaseRows || []) {
+    const name = s(r[1]); if (!name) continue;
+    const detectedAt = s(r[0]);
+    if (cutoff && detectedAt.slice(0, 10) < cutoff) continue;
+    const prevBest = releases.get(name);
+    if (prevBest && prevBest.detectedAt >= detectedAt) continue;   // 같은 종목은 최신 감지만
+    releases.set(name, { detectedAt, from: s(r[2]), to: s(r[3]), newSignal: s(r[4]) });
+  }
+  return releases;
+}
+
 // 매수 후보를 B(논리) 신호와 대조. playbook §4.1(급락매수 전제=펀더멘털 훼손 없음) +
 // 리스크 우선순위 B(논리)>가격을 코드로 강제한다(Frank 결정 2026-07: 🔴제외·🟡경고유지).
 //   B🔴(훼손)  → 매수 부적합 → dropped 로 분리(주문에서 제외).
 //   B🟡(약화)  → 급락 저점매수 선호 존중 → 유지하되 why.논리충돌 스탬프(주문 탭에 ✗ 노출).
 //   B🟢/무신호 → 통과. 매도 후보는 대상 아님(B🔴 매도는 buildSellFromThesis가 정본 처리).
+//   막 회복(releases)  → 통과하되 why.차단해제대기 스탬프 — Zeus 반대검증 확인 전엔 다른
+//   후보와 섞여 보이지 않도록 표시만 한다(자동 차단은 아님 — 최종 판단은 Zeus/Frank).
 // bSignals: latestRiskByType(riskRows, 'B') 결과(Map name→{signal, summary, date}).
-export function applyThesisGuard(candidates, bSignals) {
+// releases: detectThesisReleases(releaseRows, todayStr) 결과(Map name→{detectedAt, from, to, newSignal}).
+export function applyThesisGuard(candidates, bSignals, releases) {
   const kept = [], dropped = [];
   for (const c of candidates || []) {
     if (c.side !== '매수') { kept.push(c); continue; }
@@ -221,6 +258,10 @@ export function applyThesisGuard(candidates, bSignals) {
     }
     if (sig.includes('🟡')) {
       c.why = { ...c.why, 논리충돌: `B🟡 논리약화 (${b.date}) — ${b.summary}`.slice(0, 120) };
+    }
+    const rel = (releases || new Map()).get(c.name);
+    if (rel) {
+      c.why = { ...c.why, 차단해제대기: `B🔴(${rel.from})→${rel.newSignal}(${rel.to}) 최근 회복 — Zeus 반대검증 확인 필요(헌장 §2)`.slice(0, 120) };
     }
     kept.push(c);
   }
@@ -244,6 +285,9 @@ export function checkConstraints(c, { cash, conviction }) {
     }
     // 논리훼손 가드가 스탬프한 충돌(B🟡) — 급락매수여도 펀더멘털 약화를 명시(최종 판단은 Frank).
     if (c.why?.논리충돌) checks.push({ k: '논리상태', ok: false, d: c.why.논리충돌 });
+    // 차단해제 대기(구조조정 안건7) — B🔴에서 막 회복한 종목은 Zeus 반대검증 확인 전엔
+    // 다른 후보와 섞여 조용히 통과하지 않도록 체크리스트에 별도로 노출한다.
+    if (c.why?.차단해제대기) checks.push({ k: '차단해제확인', ok: false, d: c.why.차단해제대기 });
   } else {
     checks.push({ k: '확신보호', ok: conviction.get(c.name) !== '확신',
       d: conviction.get(c.name) === '확신' ? '확신 종목 매도 — 재확인 필요' : '배분형 — 매도 가능' });
