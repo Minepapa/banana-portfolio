@@ -598,6 +598,11 @@ async function main() {
   if (!DRY_RUN) {
     await pruneRiskSheet(token, monitoredNames);
     console.log(`\n🏁 완료 — 점검 ${ok} · 경보(🟡🔴) ${alerts} · 실패 ${fail}`);
+    // 종목별 실패(fail++)는 지금까지 개별 행에만 남고 잡 종료코드는 항상 0이었다 — run.sh가
+    // 종료코드만으로 OK/FAIL을 판정하므로(record-heartbeat) 401 등 티커 단위 실패가 잡상태
+    // OK·failStreak=0으로 은폐됨(2026-07-17 Themis 자체평가 적발). Mode D는 이미 실패 시
+    // exit(1)하므로 정상 반영됐던 것과 대칭 맞춤 — 종목 1개라도 실패하면 잡 자체를 FAIL로.
+    if (fail > 0) process.exitCode = 1;
   }
 }
 
