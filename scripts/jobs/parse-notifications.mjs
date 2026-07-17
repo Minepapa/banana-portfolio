@@ -346,6 +346,32 @@ async function main() {
   const cellDT = (v) => (typeof v === 'number' ? serialToDateTime(v) : normalizeDateTime(v));
   const execKey = (dt, type, name, qty) =>
     `${canonDT(dt)}|${String(type ?? '').trim()}|${String(name ?? '').trim()}|${String(qty ?? '').trim().replace(/\.0*$/, '')}`;
+
+  // 알람 원문 자체 중복 방어 — 카카오 알림 앱이 같은 알림을 통째로 두 번 적재하는 사고가 있다
+  // (실측 2026-07-16 TIME Korea플러스배당액티브: 알람 시트에 동일 시각·동일 본문 행이 2개,
+  // 배당·펀드·금현물·예수금 파서는 각자 uniqueKey/Map 키로 우연히 방어됐으나 체결 파서만
+  // 무방비 — 체결내역에 2행 적재된 것은 물론, 아래 예수금 delta 계산(flows)도 이 execs
+  // 배열을 그대로 재사용해 매 실행마다 영구적으로 이중 차감됨). execKey가 시각까지 포함하므로
+  // 완전 동일 키는 같은 알림의 재전송으로 간주해 소스에서 한 번만 남긴다 — 이후 모든 소비처
+  // (체결내역 적재·예수금 계산)가 자동으로 보호받는다.
+  {
+    const seen = new Set();
+    const deduped = [];
+    for (const e of execs) {
+      // 가격도 키에 포함(execKey 자체엔 없음 — 시트 dedup은 계약상 그대로 둠) — 같은 초에 수량까지
+      // 같은 두 개의 '진짜' 분할체결(가격만 다름)이 우연히 겹쳐 삭제되는 것을 막기 위함.
+      const key = `${execKey(e.tradeDate, e.tradeType, e.stockName, e.quantity)}|${e.price}`;
+      if (seen.has(key)) {
+        console.log(`  ⚠ 알람 원문 중복 적재 스킵(감사용): ${e.tradeDate} ${e.tradeType} ${e.stockName} ${e.quantity}주 @${e.price} — 동일 알림 재전송 의심(카카오 앱)`);
+        continue;
+      }
+      seen.add(key);
+      deduped.push(e);
+    }
+    execs.length = 0;
+    execs.push(...deduped);
+  }
+
   const existingKeys = new Set();
   // 시각정보 없는(날짜만) 기존 행의 키 — 앱 셀편집(TradeEditModal)이 FORMATTED 날짜를 그대로
   // 재저장해 시각이 유실된 행 포함. 이런 행은 알람 재파싱 시 항상 실제 시각을 갖게 되어 execKey가
