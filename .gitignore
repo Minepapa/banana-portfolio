@@ -33,6 +33,7 @@ dist-ssr
 .claude/*
 !.claude/agents/
 !.claude/commands/
+!.claude/settings.json
 .claude/agents/memory/
 .omc/
 CLAUDE.md
