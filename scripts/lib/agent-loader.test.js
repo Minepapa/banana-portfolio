@@ -92,8 +92,8 @@ test('[핵심 계약] loadAgent: frontmatter 손상 → throw 없이 폴백+warn
 });
 
 test('실제 리포지토리 판테온 5개 파일이 모두 파싱되고 모델이 설계와 일치', () => {
-  // 설계 정본: 계획 v2 — zeus=opus, athena/themis/apollo=sonnet, hermes=haiku.
-  const expected = { zeus: 'opus', athena: 'sonnet', themis: 'sonnet', hermes: 'haiku', apollo: 'sonnet' };
+  // 설계 정본: zeus=opus, athena/themis/apollo=sonnet, hermes=sonnet(2026-07-18 haiku→sonnet 승격, 서술 품질).
+  const expected = { zeus: 'opus', athena: 'sonnet', themis: 'sonnet', hermes: 'sonnet', apollo: 'sonnet' };
   for (const [name, model] of Object.entries(expected)) {
     const r = loadAgent(name, { fallbackModel: 'FALLBACK-SHOULD-NOT-BE-USED' });
     assert.equal(r.warning, null, `${name}: ${r.warning}`);
