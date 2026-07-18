@@ -26,8 +26,17 @@ export const EXEC_COL = {
 // ── 종목투자노트 (A~U, 사용 필드만) ──────────────────────────────────────────
 export const NOTE_COL = { DATE: 0, NAME: 1, TICKER: 2, MARKET: 3, CONCL: 4, STATUS: 14 };
 
-// ── 리스크모니터 (A~H, 사용 필드만) ──────────────────────────────────────────
-export const RISK_COL = { DATE: 0, TYPE: 1, TARGET: 2, SIGNAL: 3 };
+// ── 리스크모니터 (A~H) — risk-monitor.mjs RISK_HEADER와 동일 레이아웃 ──────────
+export const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세', '근거데이터', '기준선참조'];
+export const RISK_COL = {
+  DATE: 0, TYPE: 1, TARGET: 2, SIGNAL: 3, SUMMARY: 4, DETAIL: 5, EVIDENCE: 6, BASELINE_REF: 7,
+};
+
+// ── 리스크기준선 (A~K) — backfill-baselines가 쓰고 report-facts·risk-facts가 읽음 ─────
+export const BASELINE_HEADER = ['종목', '티커', '시장', '기준일', '매출총이익률', '영업이익률', 'ROE', '부채비율', 'EPS', 'PBR', '비고'];
+export const BASELINE_COL = {
+  NAME: 0, TICKER: 1, MARKET: 2, DATE: 3, GROSS_MARGIN: 4, OP_MARGIN: 5, ROE: 6, DEBT_RATIO: 7, EPS: 8, PBR: 9, NOTE: 10,
+};
 
 // ── 주문제안 (A~N) — order-proposals 잡이 쓰고 앱 주문 탭·parse-notifications 매칭이 읽음 ──
 export const PROPOSAL_HEADER = [

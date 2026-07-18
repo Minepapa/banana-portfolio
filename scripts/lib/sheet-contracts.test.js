@@ -4,7 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  JOURNAL_HEADER, JOURNAL_COL, EXEC_COL, NOTE_COL, RISK_COL,
+  JOURNAL_HEADER, JOURNAL_COL, EXEC_COL, NOTE_COL, RISK_HEADER, RISK_COL,
+  BASELINE_HEADER, BASELINE_COL,
   PROPOSAL_HEADER, PROPOSAL_COL, PROPOSAL_STATUS, PROPOSAL_SOURCE,
   EVAL_STATUS, JOURNAL_STATUS, CONFIRM_STATUS, CASH_SOURCE, colLetter,
 } from './sheet-contracts.mjs';
@@ -50,6 +51,25 @@ test('NOTE_COL·RISK_COL 핵심 인덱스 고정', () => {
   assert.equal(NOTE_COL.STATUS, 14); // O열 매수여부
   assert.equal(RISK_COL.TYPE, 1);    // 리스크모니터 B열 유형(B/D/O)
   assert.equal(RISK_COL.SIGNAL, 3);  // D열 신호(🟢🟡🔴)
+});
+
+test('리스크기준선: HEADER 길이·라벨이 컬럼맵과 정합 (A~K), report-facts.mjs 인덱스와 일치', () => {
+  assert.equal(BASELINE_HEADER.length, 11);
+  assert.equal(BASELINE_HEADER[BASELINE_COL.NAME], '종목');
+  assert.equal(BASELINE_COL.DATE, 3);        // report-facts.mjs baselines.date = r[3]
+  assert.equal(BASELINE_COL.OP_MARGIN, 5);   // report-facts.mjs opMargin = r[5]
+  assert.equal(BASELINE_COL.ROE, 6);
+  assert.equal(BASELINE_COL.PBR, 9);
+});
+
+test('리스크모니터: HEADER 길이·라벨이 컬럼맵과 정합 (A~H)', () => {
+  assert.equal(RISK_HEADER.length, 8);
+  assert.equal(RISK_HEADER[RISK_COL.DATE], '날짜');
+  assert.equal(RISK_HEADER[RISK_COL.TARGET], '대상');
+  assert.equal(RISK_HEADER[RISK_COL.SUMMARY], '요약');
+  assert.equal(RISK_HEADER[RISK_COL.DETAIL], '상세');
+  assert.equal(RISK_HEADER[RISK_COL.EVIDENCE], '근거데이터');
+  assert.equal(RISK_HEADER[RISK_COL.BASELINE_REF], '기준선참조');
 });
 
 test('주문제안: HEADER 길이·컬럼 라벨이 컬럼맵 인덱스와 정합 (A~N)', () => {

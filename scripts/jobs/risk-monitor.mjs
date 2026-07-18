@@ -34,9 +34,9 @@ import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIn
 import { krCorpCode, usTicker, krStockCode } from '../lib/instruments.mjs';
 import { extractSignal, clampLen } from '../lib/llm-guard.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
+import { RISK_HEADER } from '../lib/sheet-contracts.mjs';
 
 const RISK_SHEET = '리스크모니터';
-const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세', '근거데이터', '기준선참조'];
 const BASELINE_SHEET = '리스크기준선';
 // 차단해제(B🔴→비🔴 전환) 감지 로그 — pruneRiskSheet가 매 실행 끝에 종목당 최신 B행 1개만
 // 남기므로(리스크모니터 시트 자체에는 "직전 신호가 뭐였는지"가 안 남는다), order-proposals가
