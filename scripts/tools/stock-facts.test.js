@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseArgs, renderFacts, assembleFacts } from './stock-facts.mjs';
+import { parseArgs, renderFacts, assembleFacts, findHolding, formatHoldings, holdingsFromRows } from './stock-facts.mjs';
 
 // stock-facts.mjs — 대화형 부서에 주입할 "Node 결정론 숫자"를 조립·출력하는 CLI.
 // 목적: 대화형 Athena가 숫자를 직접 fetch하지 못하게 하고(하드 보장), 모든 수치를 이 CLI가
@@ -76,4 +76,70 @@ test('assembleFacts — 매핑 실패 종목은 데이터 부족(추정 금지)'
   });
   assert.ok(facts.missing.length > 0);
   assert.match(facts.factsText, /데이터 부족/);
+});
+
+// 보유 파싱: 시트 탭 행 A2:I — A=구분0 B=종목1 C=평단2 D=수량3 E=투자금4 G=손익6 I=수익률8
+// 시트 실제 이름은 "알파벳 Class A"인데 Frank는 "알파벳"으로 부른다 → 선행 단어 매칭 필요.
+const holdingsFixture = () => ({
+  위탁: [
+    ['해외주식', '알파벳 Class A', '311500', '14', '6488790', '', '734006', '', '11.3'],
+    ['', '엔비디아', '100', '10', '1000', '', '50', '', '5'],
+  ],
+  ISA: [['배당주', '알파벳 Class C', '340000', '2', '680000', '', '13000', '', '1.9']],
+  연금저축: [], IRP: [],
+});
+
+test('findHolding — 계좌별 포지션 집계(평단·수익률 포함) + 선행단어 매칭("알파벳"→"알파벳 Class A")', () => {
+  const rows = findHolding(holdingsFixture(), '알파벳');
+  assert.equal(rows.length, 2);              // 위탁 Class A + ISA Class C
+  assert.equal(rows[0].acct, '위탁');
+  assert.equal(rows[0].qty, 14);
+  assert.equal(rows[0].avgPrice, 311500);
+  assert.equal(rows[0].rate, 11.3);
+});
+
+test('findHolding — 정확일치도 매칭', () => {
+  const rows = findHolding({ 위탁: [['국내주식', '삼성전자', '60000', '100', '6000000', '', '0', '', '0']] }, '삼성전자');
+  assert.equal(rows.length, 1);
+});
+
+test('findHolding — 과매칭 방지: "삼성"은 "삼성전자"를 매칭하지 않는다(공백 경계)', () => {
+  const rows = findHolding({ 위탁: [['국내주식', '삼성전자', '60000', '100', '6000000', '', '0', '', '0']] }, '삼성');
+  assert.deepEqual(rows, []);
+});
+
+test('findHolding — 미보유는 빈 배열, 수량·투자금 0은 제외', () => {
+  assert.deepEqual(findHolding(holdingsFixture(), '테슬라'), []);
+  const zero = { 위탁: [['국내주식', '유령', '0', '0', '0', '', '', '', '']] };
+  assert.deepEqual(findHolding(zero, '유령'), []);
+});
+
+test('formatHoldings — 미보유는 "미보유" 명시', () => {
+  assert.match(formatHoldings([]), /미보유/);
+});
+
+test('formatHoldings — 보유는 수치·계좌를 서술', () => {
+  const out = formatHoldings(findHolding(holdingsFixture(), '알파벳'));
+  assert.match(out, /위탁/);
+  assert.match(out, /14/);
+  assert.match(out, /311[,.]?500/);
+});
+
+test('holdingsFromRows — 전 계좌 빈 응답은 "미보유"가 아니라 데이터 부족(읽기 이상)', () => {
+  // 리뷰 지적(readHoldings 가드 미러): 실계좌엔 항상 보유가 있으므로 전부 빈 응답 = 읽기 이상.
+  const r = holdingsFromRows({ 위탁: [], 연금저축: [], ISA: [], IRP: [] }, '알파벳');
+  assert.equal(r.holdings, null);
+  assert.match(r.holdingsText, /데이터 부족|읽기 이상/);
+});
+
+test('holdingsFromRows — 데이터는 있는데 그 종목만 없으면 정직한 "미보유"', () => {
+  const r = holdingsFromRows(holdingsFixture(), '테슬라');
+  assert.deepEqual(r.holdings, []);
+  assert.match(r.holdingsText, /미보유/);
+});
+
+test('holdingsFromRows — 보유 종목은 리스트+서술', () => {
+  const r = holdingsFromRows(holdingsFixture(), '알파벳');
+  assert.equal(r.holdings.length, 2);
+  assert.match(r.holdingsText, /위탁/);
 });
