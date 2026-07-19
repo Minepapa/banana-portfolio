@@ -101,7 +101,7 @@ Zeus는 부서 산출물을 그대로 이어붙이는 중계자가 아니라 **�
 
 ### 구조조정 등록 안건 (창립 워크샵 2026-07-15 접수, 차기 워크샵 처리)
 1. ~~`profile/observed-behavior.md` 은퇴 잔재 정리~~ — **완료(2026-07-19)**: 성향관찰 시트에 데이터 이미 이관 확인(16건, seed-preferences.mjs 시드 포함). 파일 삭제(로컬·gitignore라 git 흔적 없음), seed-preferences.mjs 주석의 파일명 참조 제거. CLAUDE.md의 "observed-behavior.md는 은퇴(시트로 대체)" 서술은 삭제 후에도 참이라 유지.
-2. 평가 사후검증 루프 신설 검토 — 전략실 (과거 평가 결론 vs 실제 수익 적중률 대조 — memory 축적의 선행 조건)
+2. 평가 사후검증 루프 — 전략실. **입력 정비 완료(2026-07-19)**: 실데이터 조사 결과 targetTerm(목표기간)="장기", targetRet(목표수익률)="0.3" 같은 계산 불가능한 값이 관찰됨(원인: playbook §6 시트 스키마가 "1Y/3Y/장기"를 정식 허용값으로 문서화해뒀던 것 — LLM 실수 아님). Node 정규화 게이트(`normalizeTargetTerm`·`normalizeTargetRet`, drain-eval-queue.mjs) 신설 — 정수 일수·명확한 퍼센트만 통과, 애매값은 지어맞추지 않고 빈칸 드롭. playbook §6 표·매수 프롬프트 스키마 동시 개정. code-reviewer 승인(TDD 23케이스). **미완**: 적중률 계산 엔진 자체(과거 평가 vs 실제 가격변동 대조)는 착수 안 함 — 데이터가 4건 이하로 아직 부족해 축적 후 별도 세션에서 설계.
 3. §4 거시 트리거 임계 "근접 🟡" 사전 경보 검토 — 리스크실 (이탈 후 사후 대응만 있는 현 체계 보완)
 4. `sync-reports.mjs` 보충 발생 빈도 측정 후 격주/폐지 검토 + `skills/reporting/*`(SUPERSEDED) 제거 — 운영실
 5. 성향관찰 '승격후보' TTL(N주 무응답 시 자동 보류) 검토 — 비서실

@@ -220,6 +220,32 @@ function normalizeGrades(axes) {
   return Object.keys(g).length ? g : undefined;
 }
 
+// 구조조정 안건2(평가 사후검증 루프) 입력 정비 — 실사례(2026-07)에서 targetTerm="장기",
+// targetRet="0.3" 같은 계산 불가능한 값이 관찰됐다. 향후 "평가 결론 vs 실제 수익 적중률" 대조
+// 엔진이 쓸 수 있으려면 targetTerm은 정수 일수, targetRet은 명확한 퍼센트 숫자여야 한다.
+// Node가 계산 가능한 형식만 통과시키고, 그렇지 않으면 지어맞추지 않고 빈칸으로 드롭한다
+// (환각보다 공백 — 이 세션의 숫자 무결성 원칙과 동일선상).
+function normalizeTargetTerm(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  const m = s.match(/^(\d+)/); // "90", "90일", "90d" 모두 선행 숫자만 취함
+  if (!m) return '';
+  const n = parseInt(m[1], 10);
+  return n > 0 ? String(n) : '';
+}
+
+function normalizeTargetRet(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  const m = s.match(/^([+-]?\d+(?:\.\d+)?)(%?)$/);
+  if (!m) return '';
+  const n = parseFloat(m[1]);
+  // |n| < 1 은 "0.3"처럼 30%인지 0.3%인지 판별 불가한 단위 혼동이지만, "0.3%"처럼 %가 명시돼
+  // 있으면 그 자체로 단위가 확정되므로 드롭 사유("판별 불가")가 성립하지 않는다(리뷰 지적).
+  if (!m[2] && Math.abs(n) < 1) return '';
+  return String(n);
+}
+
 // "1) a 2) b" 또는 배열을 배열로 정규화
 function toList(v) {
   if (Array.isArray(v)) return v;
@@ -248,6 +274,8 @@ function normalizeEvalObj(obj) {
   out.reasons = toList(out.reasons);
   out.risks = toList(out.risks);
   out.actions = toList(out.actions);
+  out.targetTerm = normalizeTargetTerm(out.targetTerm);
+  out.targetRet = normalizeTargetRet(out.targetRet);
   return out;
 }
 
@@ -481,7 +509,7 @@ ${prefBlock(confirmedPrefsText)}
   "actions": ["Frank 액션 권고1", "액션2"],
   "frankMemo": "",
   "status": "보류",
-  "buyDate": "", "buyPrice": "", "targetTerm": "", "targetRet": "",
+  "buyDate": "", "buyPrice": "", "targetTerm": "정수 일수(예: 90)", "targetRet": "퍼센트 숫자(예: 15 또는 -8)",
   "aiNote": "한 줄 요약"
 }
 \`\`\`
@@ -490,6 +518,10 @@ ${prefBlock(confirmedPrefsText)}
 5. 데이터 부족 항목은 추정 금지, "(데이터 부족)" 표기
 6. conclusion은 반드시 🟢/🟡/🔴/⚪로 시작(아니면 카드 전체가 폐기됨). grades 값은 🟢|🟡|🔴 만.
    name은 요청 종목명 그대로("${sanitizeField(entry.name, 60)}") — 공식명으로 바꾸지 말 것.
+7. targetTerm은 반드시 **정수 일수**(예: "30"·"90"·"180") — "장기"·"단기" 같은 정성적 표현 금지
+   (계산 불가한 값은 Node가 자동으로 빈칸 처리해 사후검증에서 누락됨).
+   targetRet은 반드시 **명확한 퍼센트 숫자**(예: "15"=+15%, "-8"=-8%) — "0.3" 같은 단위 불명 값
+   (0.3%인지 30%인지 판별 불가) 금지. 예상 근거가 약하면 값을 비워도 되지만("" ), 채울 거면 이 형식대로.
 
 ⚠️ Frank 액션 권고 필수 (위 포지션·검증된 RSI/52주 + 위 확정 학습 성향 기반으로 구체화):
 - 현재 포지션 상태: 보유/미보유, 보유 시 평균단가 대비 갭
@@ -883,7 +915,7 @@ async function main() {
   await flushWarnings('drain', { dryRun: DRY_RUN });
 }
 
-export { normalizeEvalObj, parseEvalJson, buildRow, toList, normalizeGrades };
+export { normalizeEvalObj, parseEvalJson, buildRow, toList, normalizeGrades, normalizeTargetTerm, normalizeTargetRet };
 
 // 직접 실행 시에만 main() 구동 (테스트가 import할 때 부작용 방지)
 if (import.meta.url === `file://${process.argv[1]}`) {

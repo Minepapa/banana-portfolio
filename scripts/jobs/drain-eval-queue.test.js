@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeEvalObj, parseEvalJson, buildRow } from './drain-eval-queue.mjs';
+import { normalizeEvalObj, parseEvalJson, buildRow, normalizeTargetTerm, normalizeTargetRet } from './drain-eval-queue.mjs';
 
 // 라이브 --auto 실행에서 헤드리스 Claude가 실제로 낸 playbook 스키마 출력.
 // risks가 "1)…2)…" 문자열, axes 키가 "재무 안정성", reasons 대신 rationale 등 —
@@ -144,4 +144,74 @@ test('buildRow: 드롭된 축은 빈 문자열로(정직한 미평가, 크래시
   const row = buildRow(obj, null);
   assert.equal(row[5], '');       // 수익성 드롭 → 빈칸
   assert.equal(row[6], '🟢');     // 안정성 유지
+});
+
+// 구조조정 안건2(평가 사후검증 루프) 입력 정비 — 실사례(2026-07 종목투자노트)에서 "장기"·"0.3" 같은
+// 애매값이 관찰돼 사후 적중률 계산이 불가능했다. Node가 계산 가능한 형식만 통과시키고, 애매한 값은
+// 지어맞추지 않고 빈칸으로 드롭한다(환각보다 공백 — 이 세션 전체를 관통한 원칙과 동일).
+test('normalizeTargetTerm: 순수 숫자(일수)는 그대로, "일"/"d" 단위 접미사는 벗겨냄', () => {
+  assert.equal(normalizeTargetTerm('90'), '90');
+  assert.equal(normalizeTargetTerm('90일'), '90');
+  assert.equal(normalizeTargetTerm('90d'), '90');
+  assert.equal(normalizeTargetTerm(' 30 '), '30');
+});
+
+test('normalizeTargetTerm: "장기"·"단기" 같은 정성적 값은 계산 불가라 드롭(빈 문자열)', () => {
+  assert.equal(normalizeTargetTerm('장기'), '');
+  assert.equal(normalizeTargetTerm('단기'), '');
+  assert.equal(normalizeTargetTerm(''), '');
+  assert.equal(normalizeTargetTerm(undefined), '');
+});
+
+test('normalizeTargetTerm: 0 이하·비정상 값은 드롭', () => {
+  assert.equal(normalizeTargetTerm('0'), '');
+  assert.equal(normalizeTargetTerm('-10'), '');
+});
+
+test('normalizeTargetRet: 부호·소수·% 기호를 허용된 형식으로 정규화', () => {
+  assert.equal(normalizeTargetRet('15'), '15');
+  assert.equal(normalizeTargetRet('+15'), '15');
+  assert.equal(normalizeTargetRet('15%'), '15');
+  assert.equal(normalizeTargetRet('-8.5'), '-8.5');
+  assert.equal(normalizeTargetRet('+15.5%'), '15.5');
+});
+
+test('normalizeTargetRet: 실사례 "0.3"(부호 없음) 같은 단위 불명값은 30%인지 0.3%인지 판별 불가라 드롭', () => {
+  // 리뷰 근거: 이 값은 과거 실데이터에서 관찰됐으나 단위(비율 vs 퍼센트)가 프롬프트에 명시된 적이
+  // 없어 어느 쪽으로도 확신할 수 없다 — Node가 임의로 ×100 하지 않고 빈칸으로 정직하게 남긴다.
+  assert.equal(normalizeTargetRet('0.3'), '');
+  assert.equal(normalizeTargetRet('0.05'), '');
+});
+
+test('normalizeTargetRet: "%" 기호가 명시되면 1 미만이어도 단위가 명확하므로 드롭하지 않는다(리뷰 지적 반영)', () => {
+  // "0.3"은 단위 불명이라 드롭하지만 "0.3%"는 스스로 %를 명시했으니 판별 불가가 아니다 —
+  // 앞의 드롭 사유("판별 불가")가 여기선 성립하지 않으므로 통과시켜야 한다.
+  assert.equal(normalizeTargetRet('0.5%'), '0.5');
+  assert.equal(normalizeTargetRet('0.3%'), '0.3');
+  assert.equal(normalizeTargetRet('-0.5%'), '-0.5');
+});
+
+test('normalizeTargetRet: 숫자로 파싱 불가한 값은 드롭', () => {
+  assert.equal(normalizeTargetRet('많이'), '');
+  assert.equal(normalizeTargetRet(''), '');
+  assert.equal(normalizeTargetRet(undefined), '');
+});
+
+test('normalizeEvalObj: targetTerm/targetRet이 정규화를 거쳐 채워짐', () => {
+  const obj = normalizeEvalObj({
+    date: '2026-07-19', name: '테스트종목', conclusion: '🟢 매수적극',
+    reasons: ['a'], risks: ['b'], targetTerm: '90일', targetRet: '+15%',
+  });
+  assert.equal(obj.targetTerm, '90');
+  assert.equal(obj.targetRet, '15');
+});
+
+test('normalizeEvalObj: 애매한 targetTerm/targetRet은 빈칸으로(카드 자체는 폐기 안 됨)', () => {
+  const obj = normalizeEvalObj({
+    date: '2026-07-19', name: '테스트종목', conclusion: '🟢 매수적극',
+    reasons: ['a'], risks: ['b'], targetTerm: '장기', targetRet: '0.3',
+  });
+  assert.equal(obj.targetTerm, '');
+  assert.equal(obj.targetRet, '');
+  assert.equal(obj.conclusion, '🟢 매수적극');   // 나머지 카드는 정상 유지
 });
