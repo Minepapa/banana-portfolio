@@ -2,7 +2,7 @@
 // 편집 상태(journalOpen/lessonDraft/exitDraft/exitEditing/thesisDraft/thesisEditing)는
 // 이 탭 전용이라 함께 내려옴. 시트 쓰기 핸들러는 sheets prop만 사용 — 탭 로컬.
 import { useState } from 'react';
-import { SectionTitle } from '../lib/primitives.jsx';
+import { SectionTitle, DeptBadge } from '../lib/primitives.jsx';
 import { findThesisAlerts, thesisAlertLabel, isThesisBreach } from '../lib/thesisAlerts.js';
 import { useLongPress } from '../hooks/useLongPress.js';
 import { signalColor } from '../lib/colors.js';
@@ -283,7 +283,10 @@ export default function PositionJournalTab({ positionJournal, riskMonitor, evalu
 
   return (
     <div style={{ textAlign: 'left' }}>
-      <SectionTitle mb={14} sub={`거래 생애주기 투자논리 관리${lastChecked ? ` · 최근 논리 점검 ${lastChecked}` : ''}`}>포지션</SectionTitle>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <SectionTitle mb={14} sub={`거래 생애주기 투자논리 관리${lastChecked ? ` · 최근 논리 점검 ${lastChecked}` : ''}`}>포지션</SectionTitle>
+        <DeptBadge dept="themis" />
+      </div>
       {positionJournal.length === 0 ? (
         <div style={{ textAlign: 'center', color: '#6B675C', fontSize: 12, padding: '40px 0' }}>
           {sheets.auth === 'signed-in' ? '포지션이 비어있습니다' : '로그인하면 투자논리가 표시됩니다'}

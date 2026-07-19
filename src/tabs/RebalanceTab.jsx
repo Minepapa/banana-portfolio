@@ -5,6 +5,7 @@ import {
 } from "recharts";
 import { COLORS, PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
+import { DeptBadge } from '../lib/primitives.jsx';
 
 export default function RebalanceTab({
   accounts, acctKey, acct, setAcctKey, isMobile, baseFont, fmt, sheets,
@@ -12,6 +13,9 @@ export default function RebalanceTab({
 }) {
   return (
     <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <DeptBadge dept="athena" />
+      </div>
       {/* 계좌 선택 (4개) */}
       <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
         {Object.keys(accounts).map((k) => (

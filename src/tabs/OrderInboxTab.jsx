@@ -3,7 +3,7 @@
 // 상태 문자열·컬럼(K상태 L응답 M기각사유)은 scripts/lib/sheet-contracts.mjs PROPOSAL_* 계약.
 // 승인/기각은 PreferenceTab 패턴(writeRange → fetch) — K:M 한 번에 써서 부분쓰기 방지.
 import { useState } from 'react';
-import { SectionTitle } from '../lib/primitives.jsx';
+import { SectionTitle, DeptBadge } from '../lib/primitives.jsx';
 import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
 
@@ -80,7 +80,10 @@ export default function OrderInboxTab({ proposals, accounts, sheets, fmt, baseFo
 
   return (
     <div>
-      <SectionTitle mb={14} sub="신호를 실행 가능한 주문서로 — 승인하면 증권사 앱에 그대로 입력만">주문함</SectionTitle>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <SectionTitle mb={14} sub="신호를 실행 가능한 주문서로 — 승인하면 증권사 앱에 그대로 입력만">주문함</SectionTitle>
+        <DeptBadge dept="athena" />
+      </div>
 
       {/* ① 대기 주문서 */}
       <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C', marginBottom: 8 }}>대기 주문서 ({pending.length})</div>
