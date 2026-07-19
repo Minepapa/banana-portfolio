@@ -4,6 +4,7 @@ import { MONO } from '../lib/theme.js';
 import { JOB_CADENCE } from '../lib/constants.js';
 import { relTime } from '../lib/textFormat.js';
 import { computeJobHealth } from '../lib/jobHealth.js';
+import { DeptBadge } from '../lib/primitives.jsx';
 
 // 잡상태 시트(heartbeat) 표시용 — 잡 키 → 한글 라벨, 표시 순서 고정
 const JOB_LABELS = {
@@ -54,7 +55,10 @@ function JobStatusPanel({ jobStatus }) {
   if (ordered.length === 0) return null;
   return (
     <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C', marginBottom: 4 }}>무인 잡 상태</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C' }}>무인 잡 상태</div>
+        <DeptBadge dept="hermes" />
+      </div>
       <div style={{ fontSize: 10, color: '#6B675C', marginBottom: 12 }}>최근 실행 시간(마지막 점검/실행 시간, 실제 발행/적재 시간 아님)</div>
       {ordered.map((key, i, arr) => {
         const j = byJob.get(key);

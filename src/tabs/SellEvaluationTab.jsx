@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
-import { SectionTitle, GradeDot, SubLabel, NumberedItem, Sentences } from '../lib/primitives.jsx';
+import { SectionTitle, GradeDot, SubLabel, NumberedItem, Sentences, DeptBadge } from '../lib/primitives.jsx';
 import { stripGrade } from '../lib/textFormat.js';
 import { findThesisAlerts, isThesisBreach } from '../lib/thesisAlerts.js';
 
@@ -280,10 +280,13 @@ export default function SellEvaluationTab({
             const latest = stockEvals[0];
             return (
               <div style={{ background: '#FFFFFF', borderRadius: 0, padding: '14px 16px', marginBottom: 12 }}>
-                <SectionTitle size={12} mb={10}
-                  sub={`매수일 ${earliest.buyDate || '미입력'} · 평가일 ${earliest.date}`}>
-                  최초 매수 근거
-                </SectionTitle>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                  <SectionTitle size={12} mb={10}
+                    sub={`매수일 ${earliest.buyDate || '미입력'} · 평가일 ${earliest.date}`}>
+                    최초 매수 근거
+                  </SectionTitle>
+                  <DeptBadge dept="athena" />
+                </div>
                 {earliest.reasons.length === 0 ? (
                   <div style={{ fontSize: 11, color: '#6B675C' }}>(근거 미기록)</div>
                 ) : earliest.reasons.map((r, i) => (

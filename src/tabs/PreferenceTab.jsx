@@ -3,7 +3,7 @@
 // 확정/기각은 PositionJournalTab.confirmThesis 패턴 — sheets.writeRange(G·H열) → fetch.
 // 확정된 성향을 되돌리는 건 자주 안 쓰는 동작이라 버튼 대신 롱프레스(HoldingsTab과 동일 패턴).
 import { useState } from 'react';
-import { SectionTitle } from '../lib/primitives.jsx';
+import { SectionTitle, DeptBadge } from '../lib/primitives.jsx';
 import { useLongPress } from '../hooks/useLongPress.js';
 import { pendingPreferences } from '../lib/preferencesPending.js';
 
@@ -97,7 +97,10 @@ export default function PreferenceTab({ preferences, sheets, baseFont }) {
 
   return (
     <div>
-      <SectionTitle mb={14} sub="실제 행동에서 학습한 내 투자 성향 — 맞으면 확정, 아니면 기각">성향</SectionTitle>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <SectionTitle mb={14} sub="실제 행동에서 학습한 내 투자 성향 — 맞으면 확정, 아니면 기각">성향</SectionTitle>
+        <DeptBadge dept="apollo" />
+      </div>
       {list.length === 0 ? (
         <div style={{ textAlign: 'center', color: '#6B675C', fontSize: 12, padding: '40px 0' }}>
           {sheets.auth === 'signed-in' ? '아직 학습된 성향이 없습니다 — 주간 리포트가 관찰을 쌓습니다' : '로그인하면 학습된 성향이 표시됩니다'}

@@ -4,7 +4,7 @@
 // targetName: 리스크 탭 "평가 보기"처럼 특정 종목을 지정해 들어왔을 때 그 종목 카드를 자동 선택.
 import { useState } from 'react';
 import { SAMPLE_EVALUATION, AXIS_METRICS, LEARNING_MODULES, LABEL_TO_METRIC } from '../lib/constants.js';
-import { GradeDot, SubLabel, NumberedItem } from '../lib/primitives.jsx';
+import { GradeDot, SubLabel, NumberedItem, DeptBadge } from '../lib/primitives.jsx';
 import { gradeColor, stripGrade, stripPeriod } from '../lib/textFormat.js';
 
 // "OpenDart 2025 반기보고서(연결)" → "2025 H1", "quarterly+info(TTM)" → "TTM"
@@ -182,8 +182,11 @@ export default function BuyEvaluationTab({
         </div>
       )}
 
-      <div style={{ fontSize: 9, letterSpacing: 2, color: '#6B675C', marginBottom: 8 }}>
-        {fromSheet ? `시트 데이터 (${card.stock.name} · ${card.date} 기준)` : `샘플 (${card.stock.name} · ${card.date} 기준)`}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+        <div style={{ fontSize: 9, letterSpacing: 2, color: '#6B675C' }}>
+          {fromSheet ? `시트 데이터 (${card.stock.name} · ${card.date} 기준)` : `샘플 (${card.stock.name} · ${card.date} 기준)`}
+        </div>
+        <DeptBadge dept="athena" />
       </div>
 
       {/* 평가 카드 */}

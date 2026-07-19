@@ -1,6 +1,6 @@
 // 리스크 탭: B(논리)·D(거시) 신호 모니터 + 펀더멘털 기준선. App.jsx에서 추출 (동작 불변).
 import { useState } from "react";
-import { SectionTitle, Sentences } from '../lib/primitives.jsx';
+import { SectionTitle, Sentences, DeptBadge } from '../lib/primitives.jsx';
 import { SIGNAL_RED, SIGNAL_AMBER, SIGNAL_GREEN, SIGNAL_OPPORTUNITY, signalColor } from '../lib/colors.js';
 import { computeRiskCounts } from '../lib/riskCounts.js';
 
@@ -51,7 +51,10 @@ export default function RiskTab({ riskMonitor, baselines, setTab, onGoToEval }) 
   return (
     <div style={{ textAlign: 'left' }}>
       {/* 헤더 */}
-      <SectionTitle sub={`최근 점검 ${lastUpdated}`}>리스크 모니터</SectionTitle>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <SectionTitle sub={`최근 점검 ${lastUpdated}`}>리스크 모니터</SectionTitle>
+        <DeptBadge dept="themis" />
+      </div>
 
       {riskMonitor.length === 0 ? (
         <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 24, textAlign: 'center' }}>
