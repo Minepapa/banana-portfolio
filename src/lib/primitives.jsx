@@ -48,7 +48,9 @@ export function NumberedItem({ n, text, color = '#141414', numColor = '#6B675C' 
 // 판테온 부서 배지 — 아이콘+라벨, 부서색 22% 배경. 기존 인라인 배지들(RiskTab typeLabel/
 // statusLabel, PreferenceTab vsBadge/confBadge)과 동일 규격(fontSize/padding/직각)으로
 // 시각 일관성 유지. "이건 어느 부서 소관인가"를 알려주는 축 — 기존 배지들과 병렬 배치.
-export function DeptBadge({ dept, size = 'sm' }) {
+// invert: 밝은 부서색(Zeus 등)이 옅은 배경 카드 위에서 22% 틴트로는 거의 안 보일 때
+// solid 배경+잉크 텍스트로 반전(예: Zeus 카드는 배지와 카드가 같은 틴트라 배지가 묻힘).
+export function DeptBadge({ dept, size = 'sm', invert = false }) {
   const d = DEPARTMENTS[dept];
   if (!d) return null;
   return (
@@ -56,7 +58,9 @@ export function DeptBadge({ dept, size = 'sm' }) {
       display: 'inline-flex', alignItems: 'center', gap: 3,
       fontSize: size === 'sm' ? 9 : 10, fontWeight: 700,
       padding: '2px 6px', borderRadius: 0,
-      background: `${d.color}22`, color: d.color, whiteSpace: 'nowrap',
+      background: invert ? d.color : `${d.color}22`,
+      color: invert ? '#141414' : d.color,
+      whiteSpace: 'nowrap',
     }}>
       <span>{d.icon}</span><span>{d.label}</span>
     </span>

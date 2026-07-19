@@ -49,7 +49,7 @@ export const COLORS = {
 // 계열(#D9A441)은 금(#F5C842)·SIGNAL_AMBER(#E0A000)와 계열이 가까워 육안 재확인 대상.
 export const DEPARTMENTS = {
   zeus:   { name: 'Zeus',   label: '대표',         color: ACCENT,    icon: '⚡' },
-  athena: { name: 'Athena', label: '투자전략실',   color: '#5B7B4F', icon: '🦉' },
+  athena: { name: 'Athena', label: '투자전략실',   color: '#5B7B4F', icon: '🛡️' },
   themis: { name: 'Themis', label: '리스크관리실', color: '#3D4A7A', icon: '⚖️' },
   hermes: { name: 'Hermes', label: '운영실',       color: '#B5722E', icon: '🪽' },
   apollo: { name: 'Apollo', label: '비서실',       color: '#B8862F', icon: '☀️' }, // 육안 확인 후 짙게 조정(대비 확보)

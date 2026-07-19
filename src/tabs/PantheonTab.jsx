@@ -11,11 +11,12 @@ import { computeJobHealth } from '../lib/jobHealth.js';
 import { JOB_CADENCE } from '../lib/constants.js';
 
 const cardStyle = {
-  background: '#FFFFFF', border: '2px solid #141414', boxShadow: '4px 4px 0 #141414',
-  borderRadius: 0, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8,
+  background: '#FFFFFF', border: '2px solid #141414',
+  borderRadius: 0, padding: '14px 16px', display: 'flex', flexDirection: 'column',
+  alignItems: 'center', textAlign: 'center', gap: 8,
 };
 const goBtnStyle = {
-  alignSelf: 'flex-start', marginTop: 4, padding: '4px 10px', fontSize: 10, fontWeight: 700,
+  alignSelf: 'center', marginTop: 'auto', padding: '4px 10px', fontSize: 10, fontWeight: 700,
   border: '1px solid #141414', borderRadius: 0, background: '#F4F1E9', color: '#141414', cursor: 'pointer',
 };
 
@@ -56,7 +57,7 @@ export default function PantheonTab({ evalQueue, riskMonitor, jobStatus, prefere
       <SectionTitle sub="대표 Zeus + 4개 부서가 지금 무엇을 하고 있는지">판테온</SectionTitle>
 
       <div style={{ ...cardStyle, background: `${DEPARTMENTS.zeus.color}22`, marginBottom: 16 }}>
-        <DeptBadge dept="zeus" size="md" />
+        <DeptBadge dept="zeus" size="md" invert />
         <div style={{ fontSize: 13, fontWeight: 700, color: '#141414' }}>{zeusVerdict}</div>
       </div>
 
