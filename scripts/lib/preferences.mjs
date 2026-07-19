@@ -24,3 +24,24 @@ export function prefBlock(confirmedText) {
   return `[확정 학습 성향 — Frank의 실제 행동에서 학습돼 본인이 확인한 성향. 명시 성향(§3 또는 Hub 프로필)과 함께 판단 기준으로 쓸 것. 둘이 다르면 드러난 행동(학습 성향)을 우선.]
 ${confirmedText || '(아직 확정된 학습 성향 없음 — 명시 성향만 사용)'}`;
 }
+
+// 구조조정 안건5 — 승격후보 TTL(4주 무응답 시 자동 관찰 보류). 순수 판정만 하는 함수 —
+// 실제 시트 되돌리기(G·H열 업데이트)는 호출부(weekly-report.mjs)가 이 결과로 수행한다.
+// rows: 성향관찰!A2:H 원본. 상태(G열=idx6)가 '승격후보'이고 갱신시각(H열=idx7, 없으면
+// 날짜 A열=idx0으로 폴백)이 ttlWeeks 이상 지난 행을 찾는다. 날짜 파싱 불가 시 판정을
+// 보류한다(추정 금지 — 이 세션의 숫자 무결성 원칙과 동일선상).
+const WEEK_MS = 7 * 24 * 3600_000;
+
+export function findExpiredPromotions(rows, { now = new Date(), ttlWeeks = 4 } = {}) {
+  const nowMs = (now instanceof Date ? now : new Date(now)).getTime();
+  const out = [];
+  (rows || []).forEach((r, idx) => {
+    if (String(r?.[6] ?? '').trim() !== '승격후보') return;
+    const tsStr = String(r?.[7] ?? '').trim() || String(r?.[0] ?? '').trim();
+    const ts = Date.parse(tsStr);
+    if (!Number.isFinite(ts)) return;
+    const ageWeeks = (nowMs - ts) / WEEK_MS;
+    if (ageWeeks >= ttlWeeks) out.push({ rowNum: idx + 2, obs: String(r?.[2] ?? '').trim(), ageWeeks: Math.floor(ageWeeks) });
+  });
+  return out;
+}

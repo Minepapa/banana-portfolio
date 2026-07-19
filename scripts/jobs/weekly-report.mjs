@@ -26,7 +26,7 @@ import {
 import { krCorpCode, usTicker, krStockCode } from '../lib/instruments.mjs';
 import { buildReportFacts } from '../lib/report-facts.mjs';
 import { buildBehaviorSignals } from '../lib/behavior-signals.mjs';
-import { renderPrefRows, PREF_SHEET } from '../lib/preferences.mjs';
+import { renderPrefRows, PREF_SHEET, findExpiredPromotions } from '../lib/preferences.mjs';
 import { RISK_COL as R } from '../lib/sheet-contracts.mjs';
 import { filterObservations, claimViolations } from '../lib/llm-guard.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
@@ -398,6 +398,27 @@ async function main() {
     console.log(n ? `   🧠 성향 관찰 ${n}건 기록 (성향관찰 시트 → 앱 성향 탭에서 확인)` : '   🧠 이번 주 뚜렷한 성향 관찰 없음');
     if (dropped.length) console.log(`   🛡 자동 검증 실패로 폐기 ${dropped.length}건(텔레그램 경고)`);
   } catch (e) { console.error(`   ⚠️ 성향 관찰 단계 실패(리포트는 정상): ${e.message}`); }
+
+  // ⑩-b 승격후보 TTL(구조조정 안건5, 2026-07-19) — 4주 무응답이면 자동으로 관찰 보류.
+  //     Zeus/Frank 확인 없이 무한정 대기 상태로 쌓이는 걸 방지. ⑩과 분리된 독립 단계 —
+  //     관찰 추출이 실패해도 이 정리는 별개로 시도한다.
+  //     경합 방지(code-reviewer 지적): prefRows는 main() 상단 스냅샷이라 ⑩(LLM 호출, 수 분 소요)
+  //     사이 Frank가 앱에서 막 확정/기각했을 수 있다. 그 사이 변경을 놓치지 않도록 이 시점에
+  //     시트를 다시 읽어 만료 판정한다 — 방금 확정된 행을 되돌려버리는 TOCTOU 방지.
+  try {
+    const freshPrefRows = await getRange(token, `${PREF_SHEET}!A2:H`).catch(() => prefRows);
+    const expired = findExpiredPromotions(freshPrefRows, { now: new Date() });
+    if (expired.length) {
+      const results = await Promise.allSettled(
+        expired.map(e => setValues(token, `${PREF_SHEET}!G${e.rowNum}:H${e.rowNum}`, [['관찰', nowKST()]])),
+      );
+      const ok = expired.filter((_, i) => results[i].status === 'fulfilled');
+      const failed = expired.filter((_, i) => results[i].status === 'rejected');
+      if (ok.length) console.log(`   ⏳ 승격후보 TTL 만료 ${ok.length}건 → 관찰로 자동 보류: ${ok.map(e => `"${e.obs.slice(0, 20)}"(${e.ageWeeks}주)`).join(', ')}`);
+      if (failed.length) console.error(`   ⚠️ TTL 되돌리기 실패 ${failed.length}건(행: ${failed.map(e => e.rowNum).join(',')}) — 다음 주 재시도`);
+      collectWarning(`성향관찰 승격후보 TTL 만료 ${ok.length}건 → 관찰 보류(4주 무응답)${failed.length ? `, 되돌리기 실패 ${failed.length}건` : ''}`);
+    }
+  } catch (e) { console.error(`   ⚠️ 승격후보 TTL 정리 실패(리포트는 정상): ${e.message}`); }
 
   await flushWarnings('weekly-report');
   console.log('\n🏁 주간 리포트 발행 완료');
