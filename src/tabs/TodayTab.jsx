@@ -7,6 +7,7 @@ import { SectionTitle } from '../lib/primitives.jsx';
 import { findThesisAlerts, isThesisBreach } from '../lib/thesisAlerts.js';
 import { computeJobHealth } from '../lib/jobHealth.js';
 import { JOB_CADENCE } from '../lib/constants.js';
+import { pendingPreferences } from '../lib/preferencesPending.js';
 import { PROFIT_POS, PROFIT_NEG, profitColor, SIGNAL_RED, SIGNAL_AMBER, SIGNAL_OPPORTUNITY } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
 
@@ -74,7 +75,7 @@ export default function TodayTab({ riskMonitor, positionJournal, accounts, weekl
   const pendingConfirm = (positionJournal || []).filter(p => p.status !== '청산' && p.thesis && p.confirm !== '확인').length;
   const reflectNeeded = (positionJournal || []).filter(p => p.status === '청산' && !p.lesson).length;
   // ── 5) 성향 확인 대기 ──
-  const prefPending = (preferences || []).filter(p => p.status === '관찰' || p.status === '승격후보').length;
+  const prefPending = pendingPreferences(preferences).length;
 
   // ── 6) 리밸런싱 갭 ±5%p (거래결정 탭에서 이전) ──
   const rebalAlerts = Object.entries(accounts || {}).flatMap(([, a]) =>

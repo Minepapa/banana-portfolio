@@ -1,4 +1,5 @@
 // 앱 색상 시스템 — 손익 색상·차트·자산군 팔레트. constants.js에서 분리 (동작 불변).
+import { ACCENT } from './theme.js';
 
 // 한국 주식 색상 체계: 이익=빨강, 손실=파랑, 변동없음=중립회색 (브루탈 톤: 볼드·고대비)
 export const PROFIT_POS = '#E5484D';
@@ -40,4 +41,16 @@ export const COLORS = {
   채권: "#4A90D9", 금: "#F5C842", 달러: "#7EC8A4", 배당주: "#F4845F",
   리츠: "#B07FE8", 국내주식: "#E85F7A", 해외주식: "#52C8D4", TDF: "#A8D672",
   현금성: "#8A93A6",
+};
+
+// ── 판테온 부서 색상·아이콘 — 앱 UX에 조직 정체성을 입히는 배지(DeptBadge)가 소비 ──────
+// Zeus는 신규 hex 대신 기존 ACCENT 재사용(CHART_BAR_COLOR도 이미 이렇게 씀 — 기존 관례).
+// 나머지 4색은 위 COLORS·SIGNAL_*·PROFIT_*와 전수 대조해 구별되게 골랐음. 단 Apollo 골드
+// 계열(#D9A441)은 금(#F5C842)·SIGNAL_AMBER(#E0A000)와 계열이 가까워 육안 재확인 대상.
+export const DEPARTMENTS = {
+  zeus:   { name: 'Zeus',   label: '대표',         color: ACCENT,    icon: '⚡' },
+  athena: { name: 'Athena', label: '투자전략실',   color: '#5B7B4F', icon: '🦉' },
+  themis: { name: 'Themis', label: '리스크관리실', color: '#3D4A7A', icon: '⚖️' },
+  hermes: { name: 'Hermes', label: '운영실',       color: '#B5722E', icon: '🪽' },
+  apollo: { name: 'Apollo', label: '비서실',       color: '#D9A441', icon: '☀️' },
 };

@@ -5,13 +5,14 @@
 import { useState } from 'react';
 import { SectionTitle } from '../lib/primitives.jsx';
 import { useLongPress } from '../hooks/useLongPress.js';
+import { pendingPreferences } from '../lib/preferencesPending.js';
 
 export default function PreferenceTab({ preferences, sheets, baseFont }) {
   const lp = useLongPress();
   const [rejectConfirm, setRejectConfirm] = useState(null); // 롱프레스로 기각 확인 중인 rowIndex
   const list = preferences || [];
   const confirmed = list.filter(p => p.status === '확정');
-  const pending = list.filter(p => p.status === '관찰' || p.status === '승격후보');
+  const pending = pendingPreferences(list);
   const rejected = list.filter(p => p.status === '기각');
 
   // 상태 쓰기 → G열(상태) + H열(갱신시각). rowIndex 기준(시트 행 = rowIndex + 2).
