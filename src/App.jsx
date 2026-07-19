@@ -23,6 +23,7 @@ import RebalanceTab from './tabs/RebalanceTab.jsx';
 import HoldingsTab from './tabs/HoldingsTab.jsx';
 import ExecutionsTab from './tabs/ExecutionsTab.jsx';
 import TodayTab from './tabs/TodayTab.jsx';
+import PantheonTab from './tabs/PantheonTab.jsx';
 import OrderInboxTab from './tabs/OrderInboxTab.jsx';
 import PositionJournalTab from './tabs/PositionJournalTab.jsx';
 import PreferenceTab from './tabs/PreferenceTab.jsx';
@@ -318,6 +319,7 @@ export default function App() {
         <div className="tab-bar" role="tablist" aria-label="화면 전환" style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {[
             { key: "dashboard", label: "홈" },
+            { key: "판테온",    label: "판테온" },
             { key: "오늘",      label: "오늘" },
             { key: "주문",      label: "주문" },
             { key: "리스크",    label: "리스크" },
@@ -463,6 +465,14 @@ export default function App() {
         {/* ── 수익금 탭 ── */}
         {tab === "profit" && (
           <ProfitTab profitData={profitData} isMobile={isMobile} baseFont={baseFont} fmt={fmt} />
+        )}
+
+        {/* ── 판테온 현황판 (대표 Zeus + 4부서 요약 — 새 fetch 없음, 기존 state 재사용) ── */}
+        {tab === "판테온" && (
+          <PantheonTab
+            evalQueue={evalQueue} riskMonitor={riskMonitor} jobStatus={jobStatus}
+            preferences={preferences} weeklyReports={weeklyReports} setTab={setTab}
+          />
         )}
 
         {/* ── 오늘 탭 (매일 처리할 행동 체크리스트 — 거래결정 탭 대체) ── */}
