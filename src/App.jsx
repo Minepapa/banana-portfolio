@@ -40,6 +40,14 @@ import SyncBanner from './tabs/SyncBanner.jsx';
 // ── 앱 ────────────────────────────────────────────────────────────────────────
 export default function App() {
   const [tab, setTab] = useState("dashboard");
+  const [hideAmounts, setHideAmounts] = useState(() => {
+    try { return localStorage.getItem('banana_hide_amounts') === '1'; } catch { return false; }
+  });
+  const toggleHideAmounts = () => setHideAmounts(prev => {
+    const next = !prev;
+    try { localStorage.setItem('banana_hide_amounts', next ? '1' : '0'); } catch { /* 프라이빗 모드 등 — 세션 내에서만 유지 */ }
+    return next;
+  });
   const [acctKey, setAcctKey] = useState("위탁");
   const [holdSort, setHoldSort] = useState('sheet'); // sheet | rate_desc | rate_asc | eval_desc | profit_desc
   const [accounts, setAccounts] = useState(DEFAULT_ACCOUNTS);
@@ -262,19 +270,25 @@ export default function App() {
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
-            <div style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: isMobile ? 1 : 2, color: INK, background: ACCENT, padding: "2px 6px", marginBottom: 6 }}>
-              BANANA · 은퇴 준비 포트폴리오
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <div style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: isMobile ? 1 : 2, color: INK, background: ACCENT, padding: "2px 6px" }}>
+                BANANA · 은퇴 준비 포트폴리오
+              </div>
+              <button onClick={toggleHideAmounts} aria-label={hideAmounts ? "금액 표시" : "금액 숨기기"} title={hideAmounts ? "금액 표시" : "금액 숨기기"}
+                style={{ flexShrink: 0, border: "1px solid #141414", borderRadius: 0, background: hideAmounts ? ACCENT : PAPER, color: INK, cursor: "pointer", fontSize: 11, lineHeight: 1, padding: "3px 6px" }}>
+                {hideAmounts ? "🙈" : "👁"}
+              </button>
             </div>
             <div style={{ fontSize: isMobile ? 22 : 27, fontWeight: 800, letterSpacing: -0.5, color: INK, fontFamily: MONO }}>
-              ₩{totalEval.toLocaleString()}
+              {hideAmounts ? "₩••••••" : `₩${totalEval.toLocaleString()}`}
             </div>
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: INK_2, letterSpacing: 2 }}>평가손익</div>
-            <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: profitColor(totalProfit), fontFamily: MONO }}>
-              {totalProfit > 0 ? '▲ ' : totalProfit < 0 ? '▼ ' : ''}₩{fmt(Math.abs(totalProfit))}
+            <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: hideAmounts ? INK_2 : profitColor(totalProfit), fontFamily: MONO }}>
+              {hideAmounts ? "••••••" : <>{totalProfit > 0 ? '▲ ' : totalProfit < 0 ? '▼ ' : ''}₩{fmt(Math.abs(totalProfit))}</>}
             </div>
-            {dailyDelta != null && (
+            {dailyDelta != null && !hideAmounts && (
               <div style={{ fontSize: 10, fontWeight: 700, color: profitColor(dailyDelta), fontFamily: MONO }}>
                 {dailyDelta > 0 ? '▲ ' : dailyDelta < 0 ? '▼ ' : ''}₩{fmt(Math.abs(dailyDelta))}
                 {dailyPct != null ? ` (${dailyDelta >= 0 ? '+' : '−'}${Math.abs(dailyPct).toFixed(2)}%)` : ''}
