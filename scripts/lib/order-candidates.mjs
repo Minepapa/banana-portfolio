@@ -63,8 +63,9 @@ export function latestConclusions(noteRows) {
     const emoji = concl.includes('🟢') ? '🟢' : concl.includes('🟡') ? '🟡'
       : concl.includes('🔴') ? '🔴' : concl.includes('⚪') ? '⚪' : null;
     const isSell = s(r[N.STATUS]) === '매도';
+    const targetRet = s(r[N.TARGET_RET]);
     const prev = map.get(name);
-    if (!prev || date > prev.date) map.set(name, { date, emoji, isSell, concl });
+    if (!prev || date > prev.date) map.set(name, { date, emoji, isSell, concl, targetRet });
   }
   return map;
 }
@@ -201,6 +202,36 @@ export function buildBuyFromEval({ conclusions, execRows, holdings, cash, defaul
   return out;
 }
 
+// 보유 종목별 회전(로테이션) 판단 재료 — 이미 읽고 있는 raw rows에서 조립하는 순수함수
+// (신규 네트워크 호출 없음). AI가 "이 급락 후보로 교체할 만큼 상승여력이 낮은 기존 보유"를
+// 판단할 때 근거로 쓴다. conviction(확신/배분)은 그대로 노출만 하고, 확신 종목을 매도 후보에서
+// 제외하는 건 소비자(order-proposals.mjs 프롬프트·검증)가 conviction!=='확신' 필터로 한다 —
+// buildRebalanceCandidates가 이미 쓰는 것과 동일 원칙, 이 함수는 판단 재료 조립만 담당.
+export function buildHoldingsFacts({ holdings, conclusions, conviction, journalRows }) {
+  const targets = new Map();
+  for (const r of journalRows || []) {
+    if (s(r[J.STATUS]) === JOURNAL_STATUS.CLOSED) continue;
+    const name = s(r[J.NAME]); if (!name) continue;
+    const target = s(r[J.TARGET]);
+    if (target) targets.set(name, target);
+  }
+  return (holdings || []).map(h => {
+    const card = (conclusions || new Map()).get(h.name);
+    return {
+      name: h.name,
+      acct: h.acct,
+      evalWon: h.evalWon,
+      qty: h.qty,
+      conviction: (conviction || new Map()).get(h.name) ?? '배분',
+      grade: card?.emoji ?? null,
+      gradeDate: card?.date ?? null,
+      gradeText: card?.concl ? s(card.concl).slice(0, 200) : '',
+      target: targets.get(h.name) ?? '',
+      targetRet: card?.targetRet ?? '',
+    };
+  });
+}
+
 // ── 논리훼손 가드 ────────────────────────────────────────────────────────────
 
 // 최근 논리훼손(B🔴)에서 막 회복한 종목 감지 — "차단해제"는 Zeus 결정 게이트(헌장 §2,
@@ -297,7 +328,32 @@ export function checkConstraints(c, { cash, conviction }) {
 
 export const makeMatchKey = (c) => `${c.acct}|${c.name}|${c.side}`;
 
-function mk(source, acct, side, name, qty, unitKrw, why) {
+// AI가 회전(로테이션) 매도로 지목한 종목명을 보유 데이터와 대조해 결정론으로 후보 조립.
+// 순수함수 — 시트 I/O·activeKeys 원본 없이 호출부가 넘긴 값만으로 판단(테스트 가능).
+// 반환: 유효하면 {candidate, reason:null}, 무효면 {candidate:null, reason:'왜 거절했는지'}.
+//   sellName/buyName: AI가 지목한 매도 종목명 / 이 회전과 짝지어질 매수 후보 종목명(자기참조 방지).
+//   holdings: parseHoldingRows 결과(수량·단가 소스).
+//   rotatable: 확신 종목이 이미 빠진 holdingsFacts 부분집합(호출부가 conviction!=='확신'으로 필터).
+//   isDuplicateKey(matchKey): 이미 대기/승인 중이거나 이번 실행에서 이미 나온 매도인지 판단하는 호출부 콜백.
+export function resolveRotationSell({ sellName, buyName, holdings, rotatable, isDuplicateKey }) {
+  const name = s(sellName);
+  if (!name) return { candidate: null, reason: '이름 없음' };
+  if (name === buyName) return { candidate: null, reason: '자기참조(매수 후보와 동일 종목)' };
+  const h = (holdings || []).find(x => x.name === name);
+  const fact = (rotatable || []).find(f => f.name === name);
+  if (!h || !fact) return { candidate: null, reason: '보유 미확인 또는 확신 종목' };
+  const candidate = mk(PROPOSAL_SOURCE.ROTATION, h.acct, '매도', h.name, h.qty, h.unitKrw, {
+    회전: `${buyName} 매수와 연동된 회전 매도`,
+  });
+  if (isDuplicateKey && isDuplicateKey(makeMatchKey(candidate))) {
+    return { candidate: null, reason: '이미 대기/승인 중이거나 이번 실행에서 이미 제안된 매도' };
+  }
+  return { candidate, reason: null };
+}
+
+// AI가 회전(로테이션) 매도측을 새로 지목했을 때 order-proposals.mjs가 동일 후보 형태로
+// 결정론 조립하기 위해 export(그 외 내부 빌더들과 동일 계약).
+export function mk(source, acct, side, name, qty, unitKrw, why) {
   const price = unitKrw != null ? Math.round(unitKrw) : null;
   return {
     source, acct, side, name, qty,

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
   parseHoldingRows, latestConclusions, convictionMap, latestRiskByType,
   buildRebalanceCandidates, buildCrashBuyCandidates, buildSellFromThesis, buildBuyFromEval,
-  applyThesisGuard, detectThesisReleases, checkConstraints, makeMatchKey, RULE500_WON,
+  buildHoldingsFacts, resolveRotationSell, applyThesisGuard, detectThesisReleases, checkConstraints,
+  makeMatchKey, RULE500_WON, mk,
 } from './order-candidates.mjs';
 
 // ── 픽스처 헬퍼 ──────────────────────────────────────────────────────────────
@@ -171,6 +172,92 @@ test('날짜 시리얼 방어: 평가일이 시리얼이어도 이후 매수를 
   const execRows = [trow('2026-07-03 10:00', '매수', '삼성전자')];
   const out = buildBuyFromEval({ conclusions, execRows, holdings: [], cash: { 위탁: 3000000 } });
   assert.equal(out.length, 0);   // 평가 후 매수했으므로 제안 없음
+});
+
+test('buildHoldingsFacts: 등급·확신여부·목표·목표수익률을 보유 종목별로 조립', () => {
+  const holdings = [
+    { acct: '위탁', name: '삼성전자', assetType: '국내주식', qty: 40, evalWon: 11020000, unitKrw: 275500 },
+    { acct: '위탁', name: 'SK하이닉스', assetType: '국내주식', qty: 5, evalWon: 10770000, unitKrw: 2154000 },
+  ];
+  const conclusions = new Map([
+    ['삼성전자', { date: '2026-07-01', emoji: '🟢', isSell: false, concl: '🟢 유효 — 실적 개선', targetRet: '15' }],
+  ]);
+  const conviction = new Map([['SK하이닉스', '확신']]);
+  // 포지션저널: idx0=이름, idx4=유형, idx6=목표, idx10=상태
+  const journalRows = [
+    ['삼성전자', '', '', '', '배분', '', '3개월 내 +15%', '', '', '', '보유'],
+    ['SK하이닉스', '', '', '', '확신', '', '장기 보유', '', '', '', '보유'],
+  ];
+  const facts = buildHoldingsFacts({ holdings, conclusions, conviction, journalRows });
+  assert.equal(facts.length, 2);
+  const samsung = facts.find(f => f.name === '삼성전자');
+  assert.equal(samsung.conviction, '배분');
+  assert.equal(samsung.grade, '🟢');
+  assert.equal(samsung.target, '3개월 내 +15%');
+  assert.equal(samsung.targetRet, '15');
+  const skhynix = facts.find(f => f.name === 'SK하이닉스');
+  assert.equal(skhynix.conviction, '확신');   // 매도 후보 배제는 소비자가 이 필드로 판단
+  assert.equal(skhynix.grade, null);          // 무평가
+  assert.equal(skhynix.target, '장기 보유');
+});
+
+test('buildHoldingsFacts: 청산된 포지션의 목표는 제외(현재 보유만)', () => {
+  const holdings = [{ acct: '위탁', name: '현대차', assetType: '국내주식', qty: 8, evalWon: 3856000, unitKrw: 482000 }];
+  const journalRows = [
+    ['현대차', '', '', '', '배분', '', '목표 A', '', '', '', '보유'],
+    ['옛종목', '', '', '', '배분', '', '목표 B(청산됨·무시돼야 함)', '', '', '', '청산'],
+  ];
+  const facts = buildHoldingsFacts({ holdings, conclusions: new Map(), conviction: new Map(), journalRows });
+  assert.equal(facts[0].target, '목표 A');
+});
+
+test('mk: export되어 order-proposals.mjs가 회전 매도 후보를 동일 계약으로 조립 가능', () => {
+  const c = mk('회전', '위탁', '매도', '현대차', 8, 482000, { 회전: '연동 매도' });
+  assert.equal(c.source, '회전');
+  assert.equal(c.amount, 8 * 482000);
+});
+
+test('resolveRotationSell: 정상 케이스 — 보유·배분형 종목을 결정론 매도 후보로 조립', () => {
+  const holdings = [{ acct: '위탁', name: '현대차', assetType: '국내주식', qty: 8, evalWon: 3856000, unitKrw: 482000 }];
+  const rotatable = [{ name: '현대차', conviction: '배분' }];
+  const { candidate, reason } = resolveRotationSell({
+    sellName: '현대차', buyName: 'SK하이닉스', holdings, rotatable, isDuplicateKey: () => false,
+  });
+  assert.equal(reason, null);
+  assert.equal(candidate.source, '회전');
+  assert.equal(candidate.side, '매도');
+  assert.equal(candidate.qty, 8);
+  assert.equal(candidate.amount, 8 * 482000);
+});
+
+test('resolveRotationSell: 자기참조·미보유·확신종목·중복은 전부 candidate:null', () => {
+  const holdings = [
+    { acct: '위탁', name: '현대차', assetType: '국내주식', qty: 8, evalWon: 3856000, unitKrw: 482000 },
+    { acct: '위탁', name: 'SK하이닉스', assetType: '국내주식', qty: 5, evalWon: 10770000, unitKrw: 2154000 },
+  ];
+  const rotatable = [{ name: '현대차', conviction: '배분' }];   // SK하이닉스는 확신이라 목록에 없음
+
+  // 자기참조(매도 대상이 매수 후보 자신)
+  assert.equal(resolveRotationSell({
+    sellName: '현대차', buyName: '현대차', holdings, rotatable, isDuplicateKey: () => false,
+  }).candidate, null);
+
+  // 확신 종목(rotatable에 없음)
+  assert.equal(resolveRotationSell({
+    sellName: 'SK하이닉스', buyName: '가온전선', holdings, rotatable, isDuplicateKey: () => false,
+  }).candidate, null);
+
+  // 미보유(holdings에 없음)
+  assert.equal(resolveRotationSell({
+    sellName: '삼성전자', buyName: '가온전선', holdings, rotatable, isDuplicateKey: () => false,
+  }).candidate, null);
+
+  // 이미 대기/승인 중이거나 이번 실행에서 이미 나온 매도(중복)
+  const dup = resolveRotationSell({
+    sellName: '현대차', buyName: 'SK하이닉스', holdings, rotatable, isDuplicateKey: () => true,
+  });
+  assert.equal(dup.candidate, null);
+  assert.match(dup.reason, /이미/);
 });
 
 test('applyThesisGuard: B🔴 매수 제외·B🟡 매수 유지+충돌플래그·매도는 무관', () => {

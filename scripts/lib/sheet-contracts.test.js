@@ -94,7 +94,7 @@ test('주문제안 상태·출처 계약값 고정 (잡이 쓰고 앱·매칭이
   assert.deepEqual(Object.values(PROPOSAL_STATUS).sort(),
     ['기각', '만료', '승인', '실행완료', '제안'].sort());
   assert.deepEqual(Object.values(PROPOSAL_SOURCE).sort(),
-    ['급락O', '논리훼손B', '리밸런싱', '평가🟢'].sort());
+    ['급락O', '논리훼손B', '리밸런싱', '평가🟢', '회전'].sort());
 });
 
 test('colLetter: 인덱스 → 시트 열 문자', () => {

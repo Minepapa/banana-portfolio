@@ -7,13 +7,19 @@
  * 제약 체크(예수금·500만·확신보호) + 근거 체인을 만들어 앱 "주문" 탭에서 승인/기각만 남긴다.
  *
  * 아키텍처(기존 원칙 동일): Node가 후보·수량·제약을 결정론 계산(order-candidates.mjs 순수부),
- * AI(weekly만)는 후보 중 최종 선택·근거 산문만. AI 실패/쿨다운 시 Node 후보 그대로 적재
- * (결정론 데이터라 환각 위험 없음 — 파이프라인이 AI 가용성에 죽지 않게).
+ * AI(weekly·crash 공용)는 후보 중 최종 선택·근거 산문 + 회전(로테이션) 판단만. AI 실패/쿨다운
+ * 시 Node 후보 그대로 적재(결정론 데이터라 환각 위험 없음 — 파이프라인이 AI 가용성에 죽지 않게).
+ * 2026-07-22: crash도 AI 판단을 받도록 확장 — "AI 생략"은 비용 절감이 아니라 실행 흐름 단순화
+ * 목적이었을 뿐이라(커밋 이력 확인), 매일 같은 하드코딩 사유가 반복되는 문제의 근본 원인이었다.
+ * 회전(회전=매도+매수 짝) 판단 재료는 buildHoldingsFacts()(보유종목별 등급·확신여부·목표) —
+ * "상승여력 제한" 근거는 반드시 펀더멘털/평가등급/목표달성이어야 하고 가격·RSI 단독 근거는
+ * 프롬프트에서 명시적으로 금지한다(risk-monitor.mjs의 "가격 상승은 매도 신호 아님" 철학과 동일).
  *
  * 모드:
  *   --mode=weekly (일 08:30): 리밸런싱+논리훼손B+평가🟢 전체 스캔. B🔴인데 매도평가 카드
  *                             없으면 평가요청에 매도평가 자동 의뢰(주문은 평가 후 다음 주기에).
- *   --mode=crash  (평일 16:50, risk-d 16:30 이후): 오늘 O🔴 급락 매수만 신속 생성(AI 생략).
+ *   --mode=crash  (평일 16:50, risk-d 16:30 이후): 오늘 O🔴 급락 매수만 생성, AI가 단순매수/
+ *                             회전(기존 배분형 보유 매도 후 교체)/스킵을 판단.
  *
  * 가드: 매칭키 동일한 제안/승인 건 존재 시 skip(dedup) · 7일 경과 제안 → 만료 ·
  *       보유 0건/예수금 전무 읽기 시 throw(오염 방지) · dry-run.
@@ -29,12 +35,13 @@ import { renderPrefRows, prefBlock, PREF_SHEET } from '../lib/preferences.mjs';
 import { krStockCode, usTicker } from '../lib/instruments.mjs';
 import { fetchKrMarketData, fetchMarketData } from '../lib/fundamentals.mjs';
 import {
-  PROPOSAL_HEADER, PROPOSAL_COL as P, PROPOSAL_STATUS, EVAL_STATUS, colLetter,
+  PROPOSAL_HEADER, PROPOSAL_COL as P, PROPOSAL_STATUS, PROPOSAL_SOURCE, EVAL_STATUS, colLetter,
 } from '../lib/sheet-contracts.mjs';
 import {
   parseHoldingRows, latestConclusions, convictionMap, latestRiskByType, detectThesisReleases,
   buildRebalanceCandidates, buildCrashBuyCandidates, buildSellFromThesis, buildBuyFromEval,
-  applyThesisGuard, checkConstraints, makeMatchKey, toDateStr, RULE500_WON,
+  buildHoldingsFacts, resolveRotationSell, applyThesisGuard, checkConstraints, makeMatchKey,
+  toDateStr, RULE500_WON,
 } from '../lib/order-candidates.mjs';
 import { unknownMentions, clampLen } from '../lib/llm-guard.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
@@ -73,12 +80,33 @@ function parseCashRow(acct, rows) {
 }
 
 // AI 프롬프트 — Node 후보(검증된 수치)를 주고 선택·근거 산문만 시킨다. 재조회·재계산 금지.
-function buildSelectionPrompt(candidates, confirmedPrefsText) {
-  return `[주문서 최종 선별 — 주간] Node가 결정론으로 계산한 주문 후보 중 이번 주 실제 제안할 것을 골라줘.
+// holdingsFacts(회전판단 재료)가 있으면 "단순 추가매수"뿐 아니라 "기존 배분형 보유를 매도하고
+// 이 후보로 교체"(회전)도 판단할 수 있게 한다 — 매도측 수량/단가는 Node가 후처리로 결정론
+// 계산하므로 AI는 종목명·근거만 고른다(기존 "숫자는 Node" 원칙 그대로 확장).
+function buildSelectionPrompt(candidates, confirmedPrefsText, holdingsFacts, label = '') {
+  const rotationBlock = holdingsFacts?.length ? `
+
+[보유 종목 현황 — 회전(매도 후 매수) 판단 재료. conviction:"확신"인 종목은 매도 대상에서
+ 반드시 제외. grade는 최근 매수/매도평가 결론(🟢🟡🔴⚪), target/targetRet은 그 종목을 평가할
+ 때 이미 적어둔 목표(자유서술/퍼센트) — 참고만, 반드시 다 채워져 있진 않음.]
+${JSON.stringify(holdingsFacts, null, 1)}
+
+회전 판단 규칙(중요):
+- 위 매수 후보 중 하나가 "이미 보유 중인 배분형(conviction:"배분") 종목보다 뚜렷이 매력적"이라
+  판단되면, 그 후보의 선택 항목에 rotateSell을 추가해 매도할 기존 종목을 지목해도 된다.
+- rotateSell.name은 반드시 위 "보유 종목 현황" 목록에 실존하는 이름이어야 하고, 확신 종목이거나
+  이 후보 자신과 같은 종목이면 안 된다.
+- **회전(매도) 근거는 반드시 펀더멘털·평가등급 하락·목표 이미 달성·투자논리 훼손 중 하나여야
+  한다. 가격·RSI·52주 고점/저점만으로 매도를 정당화하는 것은 금지**(가격 상승은 매도 신호가
+  아니라는 것이 이 투자자의 확정 원칙 — 프로필 §3과 동일).
+- 회전이 아니라 단순 추가매수가 낫다고 판단되면 rotateSell 없이 채택해도 된다(기본값).` : '';
+
+  return `[주문서 최종 선별${label ? ` — ${label}` : ''}] Node가 결정론으로 계산한 주문 후보 중 실제 제안할 것을 골라줘.
 
 [후보 목록 — 시스템이 시트·신호에서 직접 계산한 값. 이 수치만 사용, 재조회·재계산·추정 금지.
  qty/price/amount 는 절대 바꾸지 말 것(수량 조정이 필요하면 그 후보를 제외하고 이유를 남겨).]
 ${JSON.stringify(candidates, null, 1)}
+${rotationBlock}
 
 ${prefBlock(confirmedPrefsText)}
 
@@ -87,13 +115,14 @@ ${prefBlock(confirmedPrefsText)}
 - 서로 모순되는 후보(같은 종목 매수+매도)는 더 근거 강한 쪽만.
 - 성향과 충돌하는 후보는 제외하고 reason에 명시.
 - rationale: 각 채택 후보의 why 사실들을 1~2문장 산문으로(수치 그대로 인용, 단위 변형 금지).
-- rationale에는 위 후보 JSON에 실존하는 종목명·수치만 사용 — 목록 밖 종목명을 언급하면
-  그 rationale은 폐기되고 결정론 근거만 남는다. idx는 후보 배열의 정수 인덱스 그대로.
+- rationale에는 위 후보 JSON·보유종목 현황에 실존하는 종목명·수치만 사용 — 그 밖 종목명을
+  언급하면 그 rationale은 폐기되고 결정론 근거만 남는다. idx는 후보 배열의 정수 인덱스 그대로.
 
 출력: 설명 없이 \`\`\`json 블록 하나만.
 \`\`\`json
-{"selected":[{"idx":0,"rationale":"한줄"}],"dropped":[{"idx":1,"reason":"한줄"}]}
-\`\`\``;
+{"selected":[{"idx":0,"rationale":"한줄","rotateSell":{"name":"기존보유종목명","reason":"매도 근거 한줄"}}],"dropped":[{"idx":1,"reason":"한줄"}]}
+\`\`\`
+(rotateSell은 회전을 제안할 때만 포함 — 단순 매수면 생략)`;
 }
 
 function toRow(c, rationaleText) {
@@ -139,6 +168,8 @@ async function main() {
   ]);
   const conclusions = latestConclusions(noteRows);
   const conviction = convictionMap(journalRows);
+  // 회전(로테이션) 판단 재료 — weekly/crash 공용, 신규 fetch 없음(이미 읽은 rows에서 조립).
+  const holdingsFacts = buildHoldingsFacts({ holdings, conclusions, conviction, journalRows });
 
   // ── 만료 처리: 7일 경과한 "제안" → 만료 (응답 없는 제안이 무한히 쌓이는 것 방지) ──
   const today = todayKST();
@@ -232,34 +263,79 @@ async function main() {
   console.log(`  후보 ${candidates.length}건 · 매도평가 의뢰 ${evalRequests.length}건 (dedup 후)`);
   candidates.forEach(c => console.log(`    · [${c.source}] ${c.acct} ${c.side} ${c.name} ${c.qty}주 @${c.price?.toLocaleString()} ≈ ${c.amount?.toLocaleString()}원`));
 
-  // ── AI 최종 선별 (weekly 전용·후보 있을 때만·쿨다운 존중) ──
+  // ── AI 최종 선별 (weekly·crash 공용·후보 있을 때만·쿨다운 존중) ──
+  // crash도 weekly와 동일하게 AI 판단을 받는다 — "AI 생략"은 원래 비용 절감이 아니라 실행
+  // 흐름 단순화 목적이었고(커밋 이력 확인), AI 실패 시 아래처럼 Node 결정론 후보로 안전
+  // 폴백하므로 크래시 경로의 신속성·신뢰성은 그대로 유지된다.
   let finalRows = [];
   if (candidates.length) {
     let selected = candidates.map((c, i) => ({ c, rationale: '' , idx: i }));
-    if (MODE === 'weekly' && !DRY_RUN && !cooldownActive()) {
+    if (!DRY_RUN && !cooldownActive()) {
       try {
         const confirmedPrefsText = renderPrefRows(prefRows, { confirmedOnly: true });
+        // 확신 종목은 회전 매도 후보에서 원천 배제 — AI에게 애초에 보여주지 않는다.
+        const rotatable = holdingsFacts.filter(f => f.conviction !== '확신');
         const res = parseJsonBlock(await runHeadlessClaude(buildSelectionPrompt(
-          candidates.map(({ checks: _checks, ...rest }) => rest), confirmedPrefsText), MODEL, 'Read',
+          candidates.map(({ checks: _checks, ...rest }) => rest), confirmedPrefsText, rotatable,
+          MODE === 'crash' ? '급락 대응' : '주간'), MODEL, 'Read',
           { appendSystemPrompt: AGENT.systemPrompt }));
         if (!Array.isArray(res.selected)) throw new Error('AI 응답에 selected 배열 없음');
         // 파싱에 성공했으면 빈 selected 도 "전부 제외" 의도로 존중한다 — 실패 폴백(전체 적재)과
         // 구분하지 않으면 AI가 성향 충돌로 걸러낸 후보가 그대로 올라가는 역전이 생긴다.
         // LLM 출력 하네스(2026-07): idx는 정수만, rationale은 후보 목록 밖 종목명을 언급하면
         // 폐기(빈 문자열)하고 경고 — 수치는 어차피 candidates[idx]가 정본이라 rationale만 리스크.
+        // allowedNames는 후보별로 좁게 스코프한다 — 후보명 전체를 항상 허용하되, 회전을 지목한
+        // 항목만 그 매도 대상 이름 하나를 추가로 허용(전체 보유종목으로 다 열면 실존 종목을 아무
+        // 데나 끌어다 쓰는 걸 가드가 못 잡게 된다 — 2026-07 성향관찰 환각 사고의 재발 방지 지점).
         const candidateNames = candidates.map(c => c.name);
         const nameUniverse = [...new Set([...holdings.map(h => h.name), ...candidateNames])];
+        // 같은 idx 중복 선택 방지 + 회전 매도 중복 방지(직전 사고 지점: activeKeys는 이번 실행
+        // 이전의 시트 상태만 반영해 같은 실행 안에서 나온 매도끼리는 서로 못 잡는다) — 이번
+        // 실행에서 확정될 매도(결정론 후보 중 selected에 포함될 것 + 회전으로 새로 만든 것)를
+        // 전부 한 Set에 누적해 대조한다.
+        const seenIdx = new Set();
+        const selectedIdxSet = new Set(res.selected.map(x => x.idx));
+        const runSellKeys = new Set(
+          candidates
+            .filter((c, i) => c.side === '매도' && selectedIdxSet.has(i))
+            .map(makeMatchKey)
+        );
         selected = res.selected
           .filter(x => Number.isInteger(x.idx) && candidates[x.idx])
-          .map(x => {
+          .filter(x => { if (seenIdx.has(x.idx)) return false; seenIdx.add(x.idx); return true; })
+          .flatMap(x => {
             const c = candidates[x.idx];
+            const sellName = s(x.rotateSell?.name);
+            const itemAllowed = sellName ? [...candidateNames, sellName] : candidateNames;
+
             let rationale = s(x.rationale);
-            const unknown = unknownMentions(rationale, nameUniverse, candidateNames);
+            const unknown = unknownMentions(rationale, nameUniverse, itemAllowed);
             if (unknown.length) {
               collectWarning(`주문제안 rationale 폐기: ${c.name} — 후보 밖 종목 언급(${unknown.join(', ')})`);
               rationale = '';
             }
-            return { c, rationale: clampLen(rationale, 300) };
+            const picked = { c, rationale: clampLen(rationale, 300) };
+            if (!sellName) return [picked];
+
+            // 회전(로테이션): AI가 매도할 기존 보유종목을 지목 — Node가 수량/단가를 보유
+            // 데이터에서 결정론 계산해 짝 후보로 조립한다(AI는 종목명·근거만, 수치는 안 만듦).
+            const { candidate: sellCandidate, reason: rejectReason } = resolveRotationSell({
+              sellName, buyName: c.name, holdings, rotatable,
+              isDuplicateKey: (k) => activeKeys.has(k) || runSellKeys.has(k),
+            });
+            if (!sellCandidate) {
+              collectWarning(`회전 매도 제외: ${sellName} — ${rejectReason}`);
+              return [picked];
+            }
+            runSellKeys.add(makeMatchKey(sellCandidate));
+            sellCandidate.checks = checkConstraints(sellCandidate, { cash, conviction });
+            let sellReason = s(x.rotateSell.reason);
+            const sellUnknown = unknownMentions(sellReason, nameUniverse, itemAllowed);
+            if (sellUnknown.length) sellReason = '';
+            c.source = PROPOSAL_SOURCE.ROTATION;
+            c.why = { ...c.why, 회전상대: `${sellName} 매도와 연동(회전)` };
+            console.log(`    🔁 회전 제안: ${sellName} 매도 → ${c.name} 매수`);
+            return [picked, { c: sellCandidate, rationale: clampLen(sellReason, 300) }];
           });
         (res.dropped || []).forEach(d => candidates[d.idx] &&
           console.log(`    ✂ AI 제외: ${candidates[d.idx].name} — ${s(d.reason)}`));

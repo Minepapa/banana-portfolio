@@ -24,7 +24,10 @@ export const EXEC_COL = {
 };
 
 // ── 종목투자노트 (A~U, 사용 필드만) ──────────────────────────────────────────
-export const NOTE_COL = { DATE: 0, NAME: 1, TICKER: 2, MARKET: 3, CONCL: 4, STATUS: 14 };
+// TARGET_TERM(목표기간·일수)·TARGET_RET(목표수익률·%)은 drain-eval-queue.mjs buildRow()가
+// 매수평가 시점에 LLM 판단으로 적어두는 값 — 회전(로테이션) 판단 재료로 order-candidates.mjs
+// buildHoldingsFacts가 읽는다(src/lib/parseSheetData.js r[17]/r[18]과 동일 위치).
+export const NOTE_COL = { DATE: 0, NAME: 1, TICKER: 2, MARKET: 3, CONCL: 4, TARGET_TERM: 17, TARGET_RET: 18, STATUS: 14 };
 
 // ── 리스크모니터 (A~H) — risk-monitor.mjs RISK_HEADER와 동일 레이아웃 ──────────
 export const RISK_HEADER = ['날짜', '유형', '대상', '신호', '요약', '상세', '근거데이터', '기준선참조'];
@@ -52,8 +55,10 @@ export const PROPOSAL_STATUS = {
   PROPOSED: '제안', APPROVED: '승인', REJECTED: '기각', EXECUTED: '실행완료', EXPIRED: '만료',
 };
 // 출처 신호 종류 — B열 계약값(앱 배지·dedup 키에 사용)
+// ROTATION(회전): AI가 크래시·주간 판단 중 "기존 배분형 보유를 매도하고 이 후보로 교체"를
+// 제안했을 때 Node가 결정론으로 만드는 매도측 짝 후보(및 그 매수측)의 출처 표기.
 export const PROPOSAL_SOURCE = {
-  REBALANCE: '리밸런싱', CRASH: '급락O', THESIS: '논리훼손B', EVAL: '평가🟢',
+  REBALANCE: '리밸런싱', CRASH: '급락O', THESIS: '논리훼손B', EVAL: '평가🟢', ROTATION: '회전',
 };
 
 // ── 상태 문자열 (writer가 쓰고 앱·잡이 읽는 계약값) ───────────────────────────

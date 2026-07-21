@@ -7,7 +7,7 @@ import { SectionTitle, DeptBadge } from '../lib/primitives.jsx';
 import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
 
-const SRC_COLOR = { '리밸런싱': '#141414', '급락O': '#E5484D', '논리훼손B': '#E0A000', '평가🟢': '#159E52' };
+const SRC_COLOR = { '리밸런싱': '#141414', '급락O': '#E5484D', '논리훼손B': '#E0A000', '평가🟢': '#159E52', '회전': '#7C5CBF' };
 
 export default function OrderInboxTab({ proposals, accounts, sheets, fmt, baseFont }) {
   const [busy, setBusy] = useState(null);          // rowNum 처리 중
