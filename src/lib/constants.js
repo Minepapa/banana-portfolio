@@ -22,11 +22,13 @@ export const SHEET_RANGES = {
   성향관찰:     '성향관찰!A2:H',       // 18  행동 학습 관찰 (날짜,신호유형,관찰,증거,§3대비,신뢰도,상태,갱신시각)
   일별스냅샷:   '일별스냅샷!A2:E',     // 19  매일 08:00 잔고 스냅샷 (날짜,스냅시각,총평가,계좌별JSON,종목별JSON) — 어제대비·무버 기준선
   주문제안:     '주문제안!A2:N',       // 20  주문서 (생성일시,출처,계좌,방향,종목명,수량,단가,금액,근거,제약,상태,응답,기각사유,매칭키)
+  실시간시세:   '실시간시세!A2:F',     // 21  한투(KIS) 실시간 시세 — 보유 국내종목만 (종목명,시장,티커,실시간가,등락률,갱신시각)
 };
 
 export const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 24 };
 // 잡 헬스 배너용 — 잡별 최대 허용 무갱신 시간(시간). 주말 갭 고려해 risk 류는 넉넉히.
-// parse-notifications 는 평일 장중(08:00–16:30)만 도므로 staleness 판정 제외(야간·주말 갭 오탐 방지).
+// parse-notifications·realtime-quotes 는 평일 장중(각각 08:00–16:30·09:00–15:30)만 도므로
+// staleness 판정 제외(야간·주말 갭 오탐 방지) — 실패 감지는 아래 설명대로 heartbeat 연속실패로.
 // 실패 감지는 연속 2회 실패 시 텔레그램 알림(record-heartbeat)으로 대체.
 export const JOB_CADENCE = { drain: 6, 'risk-d': 80, 'risk-b': 200 };
 
@@ -46,6 +48,7 @@ export const JOB_DEPARTMENT = {
   'report-sync': 'hermes',
   'backup': 'hermes',
   'baseline': 'themis',
+  'realtime-quotes': 'hermes',
 };
 
 // 체결내역 A~M 컬럼 레이블

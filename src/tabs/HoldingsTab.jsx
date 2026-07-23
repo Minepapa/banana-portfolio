@@ -3,10 +3,11 @@
 import { PROFIT_POS, PROFIT_NEG, COLORS } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
 import { useLongPress } from '../hooks/useLongPress.js';
+import { relTime } from '../lib/textFormat.js';
 
 export default function HoldingsTab({
   accounts, acct, acctKey, setAcctKey, isMobile, baseFont, fmt, sheets,
-  holdSort, setHoldSort, edits,
+  holdSort, setHoldSort, edits, realtimeQuotes,
 }) {
   const {
     showAddForm, setShowAddForm, showDeleteMode, setShowDeleteMode,
@@ -230,6 +231,11 @@ export default function HoldingsTab({
                   {h.currentPrice > 0 && (
                     <div style={{ fontSize: 10, color: "#6B675C" }}>
                       현재 {isUsDollar ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`}
+                    </div>
+                  )}
+                  {realtimeQuotes?.[h.name] && (
+                    <div style={{ fontSize: 10, color: "#159E52" }}>
+                      실시간 ₩{fmt(realtimeQuotes[h.name].price)} ({relTime(realtimeQuotes[h.name].ts)})
                     </div>
                   )}
                 </div>

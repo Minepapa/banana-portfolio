@@ -373,6 +373,27 @@ test('parseProposals: 컬럼 계약 정합 + JSON 필드 파싱 + 최신순', ()
   assert.equal(proposals[1].matchKey, '위탁|현대차|매도');
 });
 
+test('parseRealtimeQuotes: 종목명 키 lookup, 등락률 없으면 null, 갱신시각은 Date로 파싱', () => {
+  const vrs = makeVR(22);
+  vrs[1] = { values: [CASH_ROW] };
+  vrs[21] = { values: [
+    // A종목명 B시장 C티커 D실시간가 E등락률 F갱신시각
+    ['삼성전자', 'KR', '005930', '75000', '1.35', '2026-07-23 09:31'],
+    ['현대차', 'KR', '005380', '250000', '', '2026-07-23 09:29'],
+  ] };
+  const { realtimeQuotes } = parseSheetData(vrs);
+  assert.equal(realtimeQuotes['삼성전자'].price, 75000);
+  assert.equal(realtimeQuotes['삼성전자'].changePct, 1.35);
+  assert.equal(realtimeQuotes['현대차'].changePct, null);
+  assert.equal(realtimeQuotes['삼성전자'].ts.toISOString(), '2026-07-23T00:31:00.000Z'); // KST→UTC
+  assert.equal(realtimeQuotes['미보유종목'], undefined);
+});
+
+test('parseRealtimeQuotes: 시트 미존재/빈 값이면 빈 객체(에러 아님)', () => {
+  const { realtimeQuotes } = parseSheetData(makeVR(22).map((v, i) => i === 1 ? { values: [CASH_ROW] } : v));
+  assert.deepEqual(realtimeQuotes, {});
+});
+
 // ── isCashLike trim 회귀 ──────────────────────────────────────────────────────
 // '예수금 '(뒤 공백) 처럼 시트에서 공백이 붙은 종목명도 현금성으로 태깅돼야 한다.
 // movers.js·order-candidates.mjs 정규 predicate 는 trim() 후 비교하므로 parseSheetData 도 일치해야 함.

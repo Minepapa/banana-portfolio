@@ -317,6 +317,26 @@ function parseProposals(vr) {
   }).filter(Boolean).reverse();                  // 최신 먼저
 }
 
+// 실시간시세 파서(한투 KIS, 보유 국내종목만) — 종목명 키 lookup. A종목명 B시장 C티커
+// D실시간가 E등락률 F갱신시각. 시트 미존재/빈 값이어도 안전(빈 객체) — 프론트는 매칭 없으면
+// 보조표시를 그냥 생략한다(에러 UI 없음).
+function parseRealtimeQuotes(vr) {
+  const rows = vr?.values ?? [];
+  const out = {};
+  for (const r of rows) {
+    const name = String(r[0] ?? '').trim();
+    if (!name) continue;
+    const price = parseNum(r[3]);
+    if (!(price > 0)) continue;
+    const changePctRaw = r[4];
+    const changePct = changePctRaw !== undefined && changePctRaw !== '' ? parseNum(changePctRaw) : null;
+    const tsStr = String(r[5] ?? '').trim();
+    const ts = tsStr ? new Date(`${tsStr.replace(' ', 'T')}+09:00`) : null;   // "YYYY-MM-DD HH:MM"(KST) → Date
+    out[name] = { price, changePct, ts: ts && !isNaN(ts) ? ts : null };
+  }
+  return out;
+}
+
 // 일별스냅샷 파서 — 최신 1행(max 날짜)만 "오늘 기준선"으로 반환. 빈 시트/미존재 → null.
 // A날짜 B스냅시각 C총평가 D계좌별JSON E종목별JSON. JSON 파싱 실패 시 해당 필드 빈 객체.
 function parseDailySnapshot(vr) {
@@ -459,6 +479,7 @@ export function parseSheetData(valueRanges) {
   const preferences = parsePreferences(valueRanges[18]);
   const dailySnapshot = parseDailySnapshot(valueRanges[19]);
   const proposals = parseProposals(valueRanges[20]);
+  const realtimeQuotes = parseRealtimeQuotes(valueRanges[21]);
 
-  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines, positionJournal, usdRate, preferences, dailySnapshot, proposals } : null;
+  return anyData ? { accounts: result, monthly, monthlyRow, dividends, profits, evaluations, evalQueue, weeklyReports, riskMonitor, baselines, positionJournal, usdRate, preferences, dailySnapshot, proposals, realtimeQuotes } : null;
 }

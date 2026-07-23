@@ -32,6 +32,15 @@ if [ "$JOB" = "parse-notifications" ]; then
   fi
 fi
 
+# realtime-quotes(한투 KIS 보유종목 시세)는 국내 정규장(평일 09:00–15:30 KST)만 실행.
+if [ "$JOB" = "realtime-quotes" ]; then
+  DOW=$(TZ=Asia/Seoul date +%u)
+  HHMM=$((10#$(TZ=Asia/Seoul date +%H%M)))
+  if [ "$DOW" -gt 5 ] || [ "$HHMM" -lt 900 ] || [ "$HHMM" -gt 1530 ]; then
+    echo "[run.sh] realtime-quotes: 장외(평일 09:00–15:30 KST 외) — skip"; exit 0
+  fi
+fi
+
 # 서비스 계정 키로 무인 토큰 발급 (sheets-common 의 getServiceAccountToken 재사용)
 TOKEN=""
 if [ -f "$SA_KEY_FILE" ]; then
@@ -55,7 +64,8 @@ case "$JOB" in
   daily-snapshot)      CMD=(scripts/jobs/daily-snapshot.mjs) ;;
   order-weekly)        CMD=(scripts/jobs/order-proposals.mjs --mode=weekly) ;;
   order-crash)         CMD=(scripts/jobs/order-proposals.mjs --mode=crash) ;;
-  *) echo "usage: run.sh {drain|risk-d|risk-b|baseline|report-sync|weekly-report|parse-notifications|journal-sync|backup|daily-snapshot|order-weekly|order-crash}" >&2; exit 2 ;;
+  realtime-quotes)     CMD=(scripts/jobs/realtime-quotes.mjs) ;;
+  *) echo "usage: run.sh {drain|risk-d|risk-b|baseline|report-sync|weekly-report|parse-notifications|journal-sync|backup|daily-snapshot|order-weekly|order-crash|realtime-quotes}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)

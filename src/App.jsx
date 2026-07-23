@@ -83,8 +83,9 @@ export default function App() {
   const [usdRate, setUsdRate] = useState(0); // USD/KRW 환율
   const [dailySnapshot, setDailySnapshot] = useState(null); // 일별스냅샷 최신행(어제대비·무버 기준선)
   const [proposals, setProposals] = useState([]); // 주문제안 (주문함)
+  const [realtimeQuotes, setRealtimeQuotes] = useState({}); // 한투(KIS) 실시간 시세 — 보유 국내종목만
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj, usdRate: ur, preferences: pref, dailySnapshot: ds, proposals: pr }) => {
+  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj, usdRate: ur, preferences: pref, dailySnapshot: ds, proposals: pr, realtimeQuotes: rq }) => {
     setAccounts(prev => ({ ...prev, ...a }));
     setMonthlyData(m || []);
     setDividendData(d || []);
@@ -101,6 +102,7 @@ export default function App() {
     if (ur > 0) setUsdRate(ur);
     setDailySnapshot(ds ?? null);
     setProposals(pr || []);
+    setRealtimeQuotes(rq || {});
   }, []);
 
   const sheets = useGoogleSheets(onData);
@@ -456,7 +458,7 @@ export default function App() {
           <HoldingsTab
             accounts={accounts} acct={acct} acctKey={acctKey} setAcctKey={setAcctKey}
             isMobile={isMobile} baseFont={baseFont} fmt={fmt} sheets={sheets}
-            holdSort={holdSort} setHoldSort={setHoldSort}
+            holdSort={holdSort} setHoldSort={setHoldSort} realtimeQuotes={realtimeQuotes}
             edits={{
               showAddForm, setShowAddForm, showDeleteMode, setShowDeleteMode,
               selectedToDelete, setSelectedToDelete,

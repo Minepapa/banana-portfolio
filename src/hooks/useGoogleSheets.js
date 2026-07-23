@@ -79,6 +79,7 @@ export function useGoogleSheets(onData) {
           preferences: parsed.preferences,
           dailySnapshot: parsed.dailySnapshot,
           proposals: parsed.proposals,
+          realtimeQuotes: parsed.realtimeQuotes,
         });
       }
       const now = new Date();
