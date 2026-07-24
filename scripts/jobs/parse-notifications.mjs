@@ -260,12 +260,16 @@ function parseCashAlarm(body, tsRaw) {
 }
 
 // ── 환전 파서 (NH투자증권 "환전내역 안내") ────────────
-// 외화매수 → 달러RP +USD(외화금액), 외화매도 → −USD. USD만 처리.
+// 외화매수 → 달러RP +USD(외화금액) · 위탁 KRW 예수금 −원화금액.
+// 외화매도 → 달러RP −USD · 위탁 KRW 예수금 +원화금액. USD만 처리.
 // 환전일자엔 연도가 없어 알람 ts 연도를 차용(NH_BOND와 동형).
+// 원화금액을 못 읽으면(패턴 변경 등) won=null — 호출부가 KRW 쪽 반영을 skip(USD 쪽은 그대로 진행,
+// 추정치로 예수금을 어긋나게 하느니 그 계좌 예수금을 못 맞추는 게 안전).
 const EXCH_DATE = /환전일자\s*:\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/;
 const EXCH_KIND = /환전구분\s*:\s*(외화매수|외화매도)/;
 const EXCH_CCY = /통화명\s*:\s*([A-Za-z]+)/;
 const EXCH_USD = /외화금액\s*:\s*USD\s*([\d,]+(?:\.\d+)?)/;
+const EXCH_WON = /원화금액\s*:\s*([\d,]+)/;
 
 function parseExchange(body, tsRaw) {
   if (!(body.includes('환전내역') && body.includes('환전구분'))) return null;
@@ -276,11 +280,13 @@ function parseExchange(body, tsRaw) {
   if (cm && cm[1].toUpperCase() !== 'USD') return null;   // USD 외 통화 skip
   const usd = parseFloat(cleanNum(um[1], true));
   if (!Number.isFinite(usd) || usd <= 0) return null;
+  const wm = body.match(EXCH_WON);
+  const won = wm ? parseInt(cleanNum(wm[1]), 10) : null;
   const ts = normalizeDateTime(tsRaw);
   const dm = body.match(EXCH_DATE);
   const p = (n) => String(n).padStart(2, '0');
   const date = dm ? `${ts.slice(0, 4)}-${p(dm[1])}-${p(dm[2])}` : ts.slice(0, 10);
-  return { kind: km[1], usd, date };
+  return { kind: km[1], usd, won: Number.isFinite(won) && won > 0 ? won : null, date };
 }
 
 // ── 종목코드 해석 (포트폴리오 수식 → 네이버 자동완성) ──
@@ -692,6 +698,15 @@ async function main() {
   }
   for (const g of goldDedup.values()) { const tab = await tabOfHolding(g.stockName); if (tab) flows.push({ tab, date: g.date, amount: (g.tradeType === '매도' ? 1 : -1) * Math.round(g.qty * g.price) }); }
   for (const f of fundDedup.values()) { const tab = await tabOfHolding(f.fundName); if (tab) flows.push({ tab, date: f.date, amount: -f.amount }); }
+  // 환전 KRW 측 — 외화매수(원화→달러)는 위탁 예수금 차감, 외화매도(달러→원화)는 증가.
+  // 달러RP(USD) 쪽 반영은 아래 "달러RP" 섹션에서 별도 처리(exchanges 재사용) — 여기는 KRW만.
+  // won이 null(원화금액 파싱 실패)이면 KRW 쪽만 조용히 skip되고 USD 쪽(아래)은 그대로 적용돼
+  // 예수금이 다시 과대계상되는 재발이 소리 없이 일어날 수 있다 — 반드시 경고로 표면화.
+  for (const x of exchanges) {
+    if (x.won != null) { flows.push({ tab: DOLLAR_TAB, date: x.date, amount: (x.kind === '외화매수' ? -1 : 1) * x.won }); continue; }
+    console.log(`  ⚠ 환전 원화금액 파싱 실패(KRW 예수금 미반영, USD만 적용됨): ${x.date} ${x.kind} USD ${x.usd}`);
+    collectWarning(`환전 원화금액 파싱 실패: ${x.date} ${x.kind} USD ${x.usd} — 예수금 과대계상 가능`);
+  }
 
   // 표시행 찾기: 연금저축=MMF 행, 그 외=종목명 '예수금' 행
   const cashRowCache = new Map();
