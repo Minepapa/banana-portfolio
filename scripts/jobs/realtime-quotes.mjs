@@ -8,7 +8,15 @@
  * usePortfolioEdits.js의 "수식 아니면 수동편집" 판정도 오작동한다. 그래서 KIS 시세는 별도
  * 시트에 "참고용" 보조값으로만 쌓는다. 보유종목·수량·계좌 구조는 그대로 Google Sheets 정본.
  *
- * 스코프: v1은 국내(KR) 보유종목만(해외는 세션시간·환율·레이트리밋 이슈로 후속 과제).
+ * 스코프: v1은 KIS 국내 시세 API로 조회 가능한 종목만 — readHoldings()의 market 필드(자산군
+ * 텍스트에 "해외"/"미국" 포함 여부로 추정)를 제외 게이트로는 안 쓴다. "TIGER 미국S&P500"처럼
+ * 실제로는 KRX 상장인데 자산군이 "해외"로 분류된 ETF가 있어(2026-07 발견), 그 필드로 거르면
+ * 국내 조회 가능한 종목까지 잘못 걸러진다 — 대신 krStockCode() 해석 성공 여부 자체를 게이트로
+ * 쓴다(DART·KIS 종목마스터 둘 다 KRX 상장분만 들고 있어 해외 개별주는 애초에 안 걸림).
+ * market 필드는 "매핑 실패 시 경고를 낼지" 판단에만 참조(아래 참고) — 진짜 해외거래소 상장
+ * 종목(테슬라·엔비디아 등)은 매핑 실패가 당연하므로 조용히 skip, 국내인데 매핑 실패한 경우만
+ * 경고(이게 진짜 놓친 매핑이라 알아야 함). 진짜 해외 종목 자체는 이 방식으로도 여전히 시세
+ * 조회 범위 밖(세션시간·환율·레이트리밋 이슈로 후속 과제).
  * 평일 09:00–15:30 KST만 실행되게 설계됨(시간 게이트는 scripts/launchd/run.sh — 이 스크립트
  * 자체엔 시간 체크 없음, 수동 실행 시 언제든 동작).
  *
@@ -56,13 +64,20 @@ async function main() {
   const holdingsRaw = await readHoldings(token);
   const holdings = [];
   for (const h of holdingsRaw) {
-    if (h.market !== 'KR' || isCashLike(h.name)) continue;
+    if (isCashLike(h.name)) continue;
     const code = krStockCode(h.name);
-    if (!code) { collectWarning(`실시간시세 제외: ${h.name} — 종목코드 매핑 없음`); continue; }
+    if (!code) {
+      // market:'US'(진짜 해외거래소 상장으로 추정되는 종목)는 매핑 실패가 당연해 조용히 skip —
+      // 안 그러면 30초 폴링마다 "테슬라 매핑 없음" 같은 뻔한 경고가 영구 반복된다(예수금과
+      // 동일한 "경고할 대상 아님" 원칙, isCashLike 주석 참고). market:'KR'인데 매핑 실패한
+      // 경우만 경고 — 이건 실제로 놓친 매핑이라 사람이 알아야 한다.
+      if (h.market !== 'US') collectWarning(`실시간시세 제외: ${h.name} — 종목코드 매핑 없음`);
+      continue;
+    }
     holdings.push({ name: h.name, code });
   }
   if (!holdings.length) {
-    console.log('국내 보유종목 매핑 0건 — 종료');
+    console.log('KRX 상장 보유종목 매핑 0건 — 종료');
     await flushWarnings('realtime-quotes');
     return;
   }
