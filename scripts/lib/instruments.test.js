@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { usTicker, parseCorpCodeXml, lookupField, parseKisMasterText, mergeMstEntry } from './instruments.mjs';
+import { usTicker, usExchange, parseCorpCodeXml, lookupField, parseKisMasterText, mergeMstEntry } from './instruments.mjs';
 
 // KIS 종목마스터 행 조립 헬퍼(테스트용) — 실 레이아웃: 0:9=단축코드, 9:21=표준코드,
 // 21:=한글명(그룹코드 앵커 전까지). groupCode는 실측대로 이름에 공백 없이 바로 붙는 경우
@@ -13,6 +13,12 @@ test('usTicker: 한글명→티커, 공백·대소문자 정규화', () => {
   assert.equal(usTicker('알파벳 Class A'), 'GOOGL');
   assert.equal(usTicker('알파벳  class a'), 'GOOGL');
   assert.equal(usTicker('없는종목'), null);
+});
+
+test('usExchange: 등록된 티커는 거래소코드 반환, 미등록은 null(추정 금지)', () => {
+  assert.equal(usExchange('TSLA'), 'NAS');
+  assert.equal(usExchange('AAPL'), 'NAS');
+  assert.equal(usExchange('없는티커'), null);
 });
 
 test('parseCorpCodeXml: 상장사만 corp_code 매핑', () => {

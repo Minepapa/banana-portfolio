@@ -235,7 +235,9 @@ export default function HoldingsTab({
                   )}
                   {realtimeQuotes?.[h.name] && (
                     <div style={{ fontSize: 10, color: "#159E52" }}>
-                      실시간 ₩{fmt(realtimeQuotes[h.name].price)} ({relTime(realtimeQuotes[h.name].ts)})
+                      실시간 {realtimeQuotes[h.name].market === 'US'
+                        ? `$${Number(realtimeQuotes[h.name].price).toFixed(2)}`
+                        : `₩${fmt(realtimeQuotes[h.name].price)}`} ({relTime(realtimeQuotes[h.name].ts)})
                     </div>
                   )}
                 </div>

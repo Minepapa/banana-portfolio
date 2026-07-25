@@ -389,6 +389,18 @@ test('parseRealtimeQuotes: 종목명 키 lookup, 등락률 없으면 null, 갱�
   assert.equal(realtimeQuotes['미보유종목'], undefined);
 });
 
+test('parseRealtimeQuotes: market 필드 보존(프론트 ₩/$ 표시 분기용)', () => {
+  const vrs = makeVR(22);
+  vrs[1] = { values: [CASH_ROW] };
+  vrs[21] = { values: [
+    ['삼성전자', 'KR', '005930', '75000', '1.35', '2026-07-23 09:31'],
+    ['테슬라', 'US', 'TSLA', '250.5', '-0.8', '2026-07-23 09:31'],
+  ] };
+  const { realtimeQuotes } = parseSheetData(vrs);
+  assert.equal(realtimeQuotes['삼성전자'].market, 'KR');
+  assert.equal(realtimeQuotes['테슬라'].market, 'US');
+});
+
 test('parseRealtimeQuotes: 시트 미존재/빈 값이면 빈 객체(에러 아님)', () => {
   const { realtimeQuotes } = parseSheetData(makeVR(22).map((v, i) => i === 1 ? { values: [CASH_ROW] } : v));
   assert.deepEqual(realtimeQuotes, {});

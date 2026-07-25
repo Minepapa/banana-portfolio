@@ -33,6 +33,20 @@ export function usTicker(name) {
   return US_MAP[norm(name)] ?? null;
 }
 
+// 티커 → KIS 해외주식 거래소코드(EXCD: NAS/NYS/AMS 등). US_MAP과 동일한 원칙으로 명시
+// 등록만 신뢰한다(파일 상단 주석의 "매핑 실패는 절대 추정하지 않는다" 원칙 — 기본값을
+// 'NAS'로 추정하면, 미래에 NYSE 종목을 US_MAP에 등록하고 여기 등록을 깜빡했을 때 조용히
+// 틀린 거래소로 조회돼(같은 티커가 여러 거래소에 동시 상장된 경우 엉뚱한 종목의 가격이
+// 조용히 나올 수 있음) 환각 차단 원칙이 깨진다. 신규 티커 등록 시 US_MAP과 함께 여기도
+// 등록할 것 — 누락하면 실시간시세 잡이 조용히 스킵하는 대신 collectWarning으로 드러난다.
+const US_EXCD_MAP = {
+  AAPL: 'NAS', TSLA: 'NAS', NVDA: 'NAS', GOOGL: 'NAS', MU: 'NAS', MSFT: 'NAS', AMZN: 'NAS',
+};
+
+export function usExchange(ticker) {
+  return US_EXCD_MAP[ticker] ?? null;
+}
+
 export function parseCorpCodeXml(xml) {
   const map = {};
   // 공백·개행에 관대한 선형 정규식을 원본(29MB)에 직접 적용. 전체 .replace()는

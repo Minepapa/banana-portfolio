@@ -332,7 +332,8 @@ function parseRealtimeQuotes(vr) {
     const changePct = changePctRaw !== undefined && changePctRaw !== '' ? parseNum(changePctRaw) : null;
     const tsStr = String(r[5] ?? '').trim();
     const ts = tsStr ? new Date(`${tsStr.replace(' ', 'T')}+09:00`) : null;   // "YYYY-MM-DD HH:MM"(KST) → Date
-    out[name] = { price, changePct, ts: ts && !isNaN(ts) ? ts : null };
+    const market = String(r[1] ?? '').trim();
+    out[name] = { price, changePct, ts: ts && !isNaN(ts) ? ts : null, market };
   }
   return out;
 }

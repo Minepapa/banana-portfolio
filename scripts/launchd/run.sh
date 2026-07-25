@@ -32,12 +32,21 @@ if [ "$JOB" = "parse-notifications" ]; then
   fi
 fi
 
-# realtime-quotes(한투 KIS 보유종목 시세)는 국내 정규장(평일 09:00–15:30 KST)만 실행.
+# realtime-quotes(한투 KIS 보유종목 시세, 국내+해외)는 국내 정규장(평일 09:00–15:30 KST)
+# 또는 미국 정규장(평일 09:30–16:00 America/New_York — tzdata가 서머타임을 자동 반영하므로
+# KST 환산 없이 그 지역 로컬 시각을 직접 물어봄)일 때만 실행. 둘 다 닫혀있으면 서비스계정
+# OAuth 호출조차 하지 않고 즉시 skip(24시간 폴링 방지, parse-notifications 게이트와 동일 취지).
+# 이건 대략적인 사전 필터일 뿐 — 정밀한 시장별(국내/해외 각각) 판단은 잡 자체(kis.mjs
+# isKrMarketOpen/isUsMarketOpen)가 다시 독립적으로 한다.
 if [ "$JOB" = "realtime-quotes" ]; then
-  DOW=$(TZ=Asia/Seoul date +%u)
-  HHMM=$((10#$(TZ=Asia/Seoul date +%H%M)))
-  if [ "$DOW" -gt 5 ] || [ "$HHMM" -lt 900 ] || [ "$HHMM" -gt 1530 ]; then
-    echo "[run.sh] realtime-quotes: 장외(평일 09:00–15:30 KST 외) — skip"; exit 0
+  KR_DOW=$(TZ=Asia/Seoul date +%u)
+  KR_HHMM=$((10#$(TZ=Asia/Seoul date +%H%M)))
+  US_DOW=$(TZ=America/New_York date +%u)
+  US_HHMM=$((10#$(TZ=America/New_York date +%H%M)))
+  KR_OPEN=0; { [ "$KR_DOW" -le 5 ] && [ "$KR_HHMM" -ge 900 ] && [ "$KR_HHMM" -le 1530 ]; } && KR_OPEN=1
+  US_OPEN=0; { [ "$US_DOW" -le 5 ] && [ "$US_HHMM" -ge 930 ] && [ "$US_HHMM" -le 1600 ]; } && US_OPEN=1
+  if [ "$KR_OPEN" -eq 0 ] && [ "$US_OPEN" -eq 0 ]; then
+    echo "[run.sh] realtime-quotes: 국내·해외 모두 장외 — skip"; exit 0
   fi
 fi
 
