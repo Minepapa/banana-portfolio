@@ -29,7 +29,10 @@ import {
 
 const SHEET = '실시간시세';
 const HEADER = ['종목명', '시장', '티커', '실시간가', '등락률', '갱신시각'];
-const STAGGER_MS = 200; // 국내 레이트리밋 미확인 — 방어적으로 종목 호출 사이 간격
+// 국내 레이트리밋 정확한 수치 미확인(공식문서 "초당 거래건수 초과 EGW00201"만 언급) —
+// 실측(2026-07): 200ms 간격도 종목 14개 순차호출 중 무작위로 레이트리밋에 걸림.
+// 400ms로 늘리고, getKrQuote 자체에도 EGW00201 재시도를 넣어 이중 방어.
+const STAGGER_MS = 400;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 

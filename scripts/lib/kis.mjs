@@ -72,23 +72,36 @@ export function parseQuoteResponse(json) {
   return { price, changePct: Number.isFinite(changePct) ? changePct : null };
 }
 
+// KIS는 레이트리밋을 HTTP 200 + 바디 안 msg_cd로 알린다(HTTP status로는 못 잡음).
+// 실측(2026-07): 종목 14개를 200ms 간격으로 순차 호출해도 무작위로 걸림 — 공식 문서에
+// 정확한 초당 한도가 안 나와 있어("초당 거래건수 초과 EGW00201"만 언급) 재시도로 흡수한다.
+const KIS_RATE_LIMIT_CODE = 'EGW00201';
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 // 국내주식 현재가 조회. code: 6자리 종목코드(scripts/lib/instruments.mjs krStockCode 결과).
 // tr_id FHKST01010100 확인: github.com/koreainvestment/open-trading-api
 // examples_user/domestic_stock/domestic_stock_functions.py inquire_price().
-export async function getKrQuote({ token, appkey, appsecret, code, fetchImpl = fetch }) {
+export async function getKrQuote({ token, appkey, appsecret, code, fetchImpl = fetch, retries = 2, retryDelayMs = 700 }) {
   const url = `${BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price`
     + `?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=${encodeURIComponent(code)}`;
-  const res = await fetchImpl(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      authorization: `Bearer ${token}`,
-      appkey, appsecret,
-      tr_id: 'FHKST01010100',
-      custtype: 'P',
-    },
-  });
-  if (!res.ok) throw new Error(`KIS 시세 조회 실패(${code}): ${await res.text()}`);
-  return parseQuoteResponse(await res.json());
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetchImpl(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        authorization: `Bearer ${token}`,
+        appkey, appsecret,
+        tr_id: 'FHKST01010100',
+        custtype: 'P',
+      },
+    });
+    if (!res.ok) throw new Error(`KIS 시세 조회 실패(${code}): ${await res.text()}`);
+    const json = await res.json();
+    if (json?.msg_cd === KIS_RATE_LIMIT_CODE && attempt < retries) {
+      await sleep(retryDelayMs * (attempt + 1));
+      continue;
+    }
+    return parseQuoteResponse(json);
+  }
 }
 
 // 보유종목 + 이번 폴링 시세결과 + 직전 실시간시세 행 → 시트에 쓸 행 배열.

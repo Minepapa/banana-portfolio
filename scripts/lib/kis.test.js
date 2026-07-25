@@ -1,6 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseKisExpiry, parseQuoteResponse, buildRealtimeRows } from './kis.mjs';
+import { parseKisExpiry, parseQuoteResponse, buildRealtimeRows, getKrQuote } from './kis.mjs';
+
+// fetch 모킹 헬퍼 — 호출마다 큐에서 다음 응답을 꺼내 반환.
+const mockFetch = (responses) => {
+  let i = 0;
+  return async () => {
+    const r = responses[Math.min(i++, responses.length - 1)];
+    return { ok: r.ok !== false, status: r.status ?? 200, json: async () => r.body, text: async () => JSON.stringify(r.body) };
+  };
+};
 
 test('parseKisExpiry: KIS 만료 형식(YYYY-MM-DD HH:MM:SS, KST) → UTC epoch', () => {
   // 2026-07-23 15:00:00 KST = 2026-07-23 06:00:00 UTC
@@ -65,6 +74,31 @@ test('buildRealtimeRows: 등락률 없으면 빈 문자열(0과 구분)', () => 
   const quotes = new Map([['삼성전자', { price: 75000, changePct: null }]]);
   const rows = buildRealtimeRows(holdings, quotes, [], '2026-07-23 09:31');
   assert.equal(rows[0][4], '');
+});
+
+test('getKrQuote: 레이트리밋(EGW00201) 응답이면 재시도 후 성공', async () => {
+  const fetchImpl = mockFetch([
+    { body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } },
+    { body: { rt_cd: '0', output: { stck_prpr: '75000', prdy_ctrt: '1.2' } } },
+  ]);
+  const q = await getKrQuote({ token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl, retryDelayMs: 1 });
+  assert.equal(q.price, 75000);
+});
+
+test('getKrQuote: 재시도 소진 후에도 레이트리밋이면 결국 throw', async () => {
+  const fetchImpl = mockFetch([{ body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } }]);
+  await assert.rejects(
+    () => getKrQuote({ token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl, retries: 1, retryDelayMs: 1 }),
+    /초당 거래건수/
+  );
+});
+
+test('getKrQuote: 레이트리밋 아닌 다른 오류(rt_cd 실패)는 즉시 throw(재시도 안 함)', async () => {
+  const fetchImpl = mockFetch([{ body: { rt_cd: '1', msg_cd: 'OTHER', msg1: '모의투자 미지원 종목' } }]);
+  await assert.rejects(
+    () => getKrQuote({ token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl, retryDelayMs: 1 }),
+    /모의투자 미지원 종목/
+  );
 });
 
 test('buildRealtimeRows: 보유종목이 매도돼 사라지면(더 이상 holdings에 없음) 그 행도 자연히 빠짐', () => {

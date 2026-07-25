@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = join(HERE, '..', '.cache');
 const CACHE_FILE = join(CACHE_DIR, 'corpcodes.json');
+const KIS_MST_CACHE_FILE = join(CACHE_DIR, 'kis-mst.json');
 
 const norm = (s) => String(s ?? '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -96,13 +97,110 @@ export function krCorpCode(name, apiKey = process.env.DART_API_KEY) {
   return lookupField(cache, dartName, 'corp');
 }
 
+// ── KIS 종목마스터(KOSPI·KOSDAQ, ETF 포함) — DART 폴백용 ──────────────────────
+// DART corpCode.xml은 "상장기업"만 등록돼 있어 ETF(TIGER·KODEX·PLUS 등)가 원천적으로
+// 안 잡힌다(2026-07 실사고: 보유종목 18개 중 15개가 ETF라 krStockCode 전멸). 한국투자증권이
+// 인증 없이 공개하는 종목마스터 파일(KOSPI/KOSDAQ 전종목, ETF 포함)을 DART 실패 시 폴백으로
+// 쓴다. 출처: github.com/koreainvestment/open-trading-api stocks_info/kis_ko{spi,sdaq}_code_mst.py
+//
+// 공식 샘플은 "종목명 필드가 row 끝에서 정확히 228(KOSPI)·222(KOSDAQ)자 앞까지"라는 고정
+// 오프셋을 가정하는데, 실측 결과 틀렸다 — 종목유형(주식/ETF/ETN 등)마다 뒤따르는 필드 개수가
+// 달라 전체 행 길이가 271~290자 사이에서 들쭉날쭉하다(예: "TIGER 미국배당다우존스타겟데일리
+// 커버드콜EF..."를 228 오프셋으로 자르면 이름이 통째로 날아감 — 2026-07 발견). 대신 "그룹코드
+// (대문자 2자, ST/EF/EN 등) + 공백 0~3칸 + 숫자 9자리 이상"이라는 part2 시작부의 안정적
+// 패턴을 앵커로 이름의 끝을 찾는다 — 그룹코드 전체 목록을 몰라도 동작하고, 실측 KOSPI
+// 2567/2567·KOSDAQ 1822/1822 전건 성공(실패 0건) 확인됨.
+const KIS_MST_URLS = [
+  { url: 'https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip', file: 'kospi_code.mst' },
+  { url: 'https://new.real.download.dws.co.kr/common/master/kosdaq_code.mst.zip', file: 'kosdaq_code.mst' },
+];
+const KIS_MST_NAME_END_RE = /[A-Z]{2}\s{0,3}\d{9,}/;
+
+// name→code 한 건을 map에 병합 — 이미 다른 코드로 존재하면(모호) null로 고착.
+// parseKisMasterText 내부(파일 내 중복)와 downloadKisMasterCodes(파일 간 중복, 예:
+// KOSPI·KOSDAQ에 같은 짧은 이름이 동시 존재) 양쪽에서 공유 — 병합 순서와 무관하게 항상
+// "다른 코드 두 번 = null"이 성립해야 한다(code-reviewer 지적: Object.assign으로 그냥
+// 덮어쓰면 나중 소스가 조용히 이기는데, 그건 틀린 코드를 조용히 확정하는 것이라 DART
+// parseCorpCodeXml의 "모호하면 추정 안 함" 원칙보다 더 나쁘다).
+export function mergeMstEntry(map, name, code) {
+  if (name in map) { if (map[name] !== null && map[name] !== code) map[name] = null; }
+  else map[name] = code;
+}
+
+// 마스터 파일 원문(UTF-8 변환 후) → {한글명: 단축코드}. 순수함수 — 테스트 가능.
+export function parseKisMasterText(text) {
+  const map = {};
+  for (const rawRow of String(text ?? '').split('\n')) {
+    const row = rawRow.replace(/\r$/, '');
+    if (row.length < 25) continue;   // 코드(9)+표준코드(12)+이름 최소 여유
+    const code = row.slice(0, 9).trim();
+    const nameSeg = row.slice(21);
+    const m = nameSeg.match(KIS_MST_NAME_END_RE);
+    if (!code || !m) continue;
+    const name = nameSeg.slice(0, m.index).trimEnd();
+    // 이름이 1자 이하면 앵커 정규식이 이름 자체를 먹어버린 오탐 가능성 — 신뢰 안 함.
+    if (name.length < 2) continue;
+    mergeMstEntry(map, name, code);
+  }
+  return map;
+}
+
+// KOSPI+KOSDAQ 마스터 다운로드·병합. curl/unzip/iconv 셸아웃 — 이 환경에서 Python urllib가
+// SSL 문제로 깨지는 전례가 있어(project-headless-automation 메모리) curl로 통일.
+// 파일 간 병합도 mergeMstEntry로 — 두 시장에 동일 이름이 다른 코드로 존재하면(드묾) null.
+function downloadKisMasterCodes() {
+  mkdirSync(CACHE_DIR, { recursive: true });
+  const map = {};
+  for (const m of KIS_MST_URLS) {
+    const zip = join(CACHE_DIR, `${m.file}.zip`);
+    execSync(`curl -sfL "${m.url}" -o "${zip}"`);
+    execSync(`unzip -o -q "${zip}" -d "${CACHE_DIR}"`);
+    const mstPath = join(CACHE_DIR, m.file);
+    const utf8 = execSync(`iconv -f cp949 -t utf-8//IGNORE "${mstPath}"`, { maxBuffer: 32 * 1024 * 1024 }).toString('utf8');
+    for (const [name, code] of Object.entries(parseKisMasterText(utf8))) mergeMstEntry(map, name, code);
+  }
+  return map;
+}
+
+// 캐시(30일) 보장 후 이름 조회. lookupField와 달리 값이 평문 문자열(코드)이라 field 없이 직접 대조.
+function kisMasterStockCode(name) {
+  let cache = null;
+  if (existsSync(KIS_MST_CACHE_FILE)) {
+    try {
+      const c = JSON.parse(readFileSync(KIS_MST_CACHE_FILE, 'utf8'));
+      if (Date.now() - c.fetchedAt < 30 * 86400e3) cache = c.map;
+    } catch { cache = null; }
+  }
+  if (!cache) {
+    try {
+      const fresh = downloadKisMasterCodes();
+      // 파싱 결과가 비면(레이아웃 변경 등) 30일간 재시도 없이 null 고착되는 걸 막기 위해
+      // 캐시하지 않는다 — 다음 실행이 다시 다운로드를 시도하게 둔다.
+      if (!Object.keys(fresh).length) return null;
+      cache = fresh;
+      writeFileSync(KIS_MST_CACHE_FILE, JSON.stringify({ fetchedAt: Date.now(), map: cache }));
+    } catch { return null; }   // 다운로드 실패(네트워크 등) — 추정 없이 null
+  }
+  const target = norm(name);
+  let found = null;
+  for (const [mstName, code] of Object.entries(cache)) {
+    if (norm(mstName) !== target) continue;
+    if (code === null) return null;               // 원본에서 이미 모호 처리됨
+    if (found && found !== code) return null;      // 정규화 후 충돌
+    found = code;
+  }
+  return found;
+}
+
 // KR 6자리 종목코드 (yfinance .KS/.KQ 라우팅용). 미상장·모호·미발견 → null.
+// DART 우선(기존 KR_ALIAS 튜닝 보존) → 실패 시 KIS 종목마스터 폴백(ETF 등 DART 미등재분 커버).
 export function krStockCode(name, apiKey = process.env.DART_API_KEY) {
   const dartName = KR_ALIAS[norm(name)] ?? name;
   krCorpCode(name, apiKey); // 캐시 보장(부수효과)
   const cache = (() => {
     try { return JSON.parse(readFileSync(CACHE_FILE, 'utf8')).map; } catch { return null; }
   })();
-  if (!cache) return null;
-  return lookupField(cache, dartName, 'stock');
+  const dartResult = cache ? lookupField(cache, dartName, 'stock') : null;
+  if (dartResult) return dartResult;
+  return kisMasterStockCode(name);
 }
