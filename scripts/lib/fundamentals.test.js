@@ -7,6 +7,7 @@ import {
   computeDrawdownFromPeak, computeRallyFromTrough, parseNaverSise,
   computeBollingerBands,
   computeMacd, computeMaAlignment, computeAtr, computeStochastic, computeVolumeSurge,
+  dropSignal,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -196,6 +197,46 @@ test('computeMacroChange: 현재값=마지막 종가, 변화율=5거래일 전 �
   assert.equal(computeMacroChange([1500, 1, 1, 1, 1, 1521.7]).change5d, 1.45);
 });
 
+test('dropSignal: ATR 있고 임계배수(2배) 이상이면 hit(5일 낙폭%·기대변동폭·배수를 why에 인용)', () => {
+  const r = dropSignal(-50, 10);
+  assert.equal(r.hit, true);
+  assert.equal(r.multiple, 2.2);
+  assert.equal(r.expectedRange, 22.4);
+  assert.equal(r.why, '5일 -50%(5일 기대변동폭 22.4% 대비 2.2배)');
+});
+
+test('dropSignal: ATR 있고 임계배수 미달이면 miss', () => {
+  const r = dropSignal(-40, 10);
+  assert.equal(r.hit, false);
+  assert.equal(r.why, null);
+});
+
+test('dropSignal: 반올림 경계 회귀(표시용 반올림이 1.96배를 2.0배로 보이게 해도 실제 비교는 원값 기준 — hit 안 함)', () => {
+  // atrPct=10 → 기대변동폭≈22.36, weekChange=-43.83 → 원배수≈1.96(<2, miss여야 함).
+  // 반올림 후 비교하는 버그였다면 표시값 2.0으로 올림돼 잘못 hit=true가 됐을 케이스(테스트
+  // 작성 중 실제로 발견해 수정 — dropSignal 구현부 주석 참고).
+  const r = dropSignal(-43.83, 10);
+  assert.equal(r.hit, false);
+  assert.equal(r.multiple, 2); // 표시상으로는 2.0으로 반올림되지만
+  assert.equal(r.why, null);  // hit 판정 자체는 원값 기준이라 미발동
+});
+
+test('dropSignal: ATR 없으면(null/0) 고정 임계값(-10%) 폴백 — 그 이하만 hit, why에 폴백 명시', () => {
+  assert.deepEqual(dropSignal(-15, null), {
+    hit: true, why: '5일 -15%(ATR 데이터 없어 고정 임계값 폴백)', multiple: null, expectedRange: null, fallback: true,
+  });
+  const r0 = dropSignal(-15, 0);
+  assert.equal(r0.hit, true); // atrPct=0도 "없음" 취급(0 초과만 유효 ATR)
+  assert.equal(dropSignal(-9, null).hit, false); // 폴백 임계값(-10%) 미달
+});
+
+test('dropSignal: weekChange가 0 이상(상승)이거나 null이면 ATR 유무와 무관하게 항상 miss', () => {
+  assert.equal(dropSignal(5, 10).hit, false);
+  assert.equal(dropSignal(0, 10).hit, false);
+  assert.equal(dropSignal(null, 10).hit, false);
+  assert.equal(dropSignal(5, null).hit, false);
+});
+
 test('checkGuardrails: 영업이익 2분기 연속 감소 / 부채비율 +20%p', () => {
   assert.deepEqual(checkGuardrails({ opYoYCurr: -5, opYoYPrev: -3, debtRatio: 51, baselineDebtRatio: 50 }),
     ['영업이익 YoY 2분기 연속 감소']);
@@ -218,14 +259,32 @@ test('checkGuardrails: 투자의견 하향 2건 이상이면 발동(1건은 노�
   assert.deepEqual(checkGuardrails({ opinionDowngrades: null }), []);
 });
 
-test('checkGuardrails: 4개 조건이 동시에 걸리면 4건 모두 반환(순서 고정)', () => {
+test('checkGuardrails: 부채비율 절대수준(200% 초과)은 기준선 없이도 단독 발동', () => {
+  assert.deepEqual(checkGuardrails({ debtRatio: 250 }), [
+    '부채비율 고위험 절대수준(250%, 200% 초과 — 신용평가 실무 기준)',
+  ]);
+  assert.deepEqual(checkGuardrails({ debtRatio: 200 }), []); // 정확히 200%는 "초과" 아님
+  assert.deepEqual(checkGuardrails({ debtRatio: 150 }), []);
+  assert.deepEqual(checkGuardrails({ debtRatio: null }), []);
+});
+
+test('checkGuardrails: 변화량(+20%p)과 절대수준(200%) 가드레일은 서로 독립 — 둘 다 걸리면 둘 다 반환', () => {
+  // 기준선 180%→현재 210%: 변화량 +30%p(≥20 발동) AND 절대수준 210%(>200 발동) 동시 충족
+  assert.deepEqual(checkGuardrails({ debtRatio: 210, baselineDebtRatio: 180 }), [
+    '부채비율 급증(기준선 대비 +20%p 이상)',
+    '부채비율 고위험 절대수준(210%, 200% 초과 — 신용평가 실무 기준)',
+  ]);
+});
+
+test('checkGuardrails: 5개 조건이 동시에 걸리면 5건 모두 반환(순서 고정)', () => {
   const g = {
-    opYoYCurr: -5, opYoYPrev: -3, debtRatio: 75, baselineDebtRatio: 50,
+    opYoYCurr: -5, opYoYPrev: -3, debtRatio: 250, baselineDebtRatio: 50,
     cfCurr: -100, cfPrev: 50, opinionDowngrades: 3,
   };
   assert.deepEqual(checkGuardrails(g), [
     '영업이익 YoY 2분기 연속 감소',
     '부채비율 급증(기준선 대비 +20%p 이상)',
+    '부채비율 고위험 절대수준(250%, 200% 초과 — 신용평가 실무 기준)',
     '현금흐름 적자전환(직전 대비)',
     '증권사 투자의견 하향 3건(직전 대비, 최근 90일)',
   ]);

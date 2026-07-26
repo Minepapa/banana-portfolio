@@ -94,10 +94,49 @@ export function parseKrRatios(list) {
   };
 }
 
+// 5일 낙폭 트리거 배수 — 통계적으로 "유의미한 이탈"의 일반 관행(대략 1.5~2σ 상당 — ATR은
+// 표준편차가 아니라 true-range 평균이라 정규분포 σ로 정확히 환산되진 않음, 근사로 ATR≈0.8σ면
+// 2×ATR≈1.6σ) — 이 지표(가격 급락 트리거) 전용 문헌 근거는 없음(2026-07 Frank 지적으로 실증
+// 재검증, 정직히 명시).
+export const OPP_DROP_ATR_MULT = 2;
+// ATR 데이터 부족(상장 이력 짧은 종목 등)일 때만 쓰는 폴백 — 이 -10%도 임의값이라는 동일
+// 비판에서 자유롭지 않다(ATR 확보 전 임시 커버리지 목적일 뿐, "전문가 숫자"로 내세우지 않음).
+export const OPP_BUY_DROP_FALLBACK_PCT = -10;
+
+// 5일 낙폭 트리거 판정 — ATR 있으면 변동성 상대화, 없으면 고정값 폴백. √5는 일간수익률이
+// iid(랜덤워크)라는 가정 하의 근사(n일 누적 변동폭 ∝ √n) — 실제 주가는 자기상관·변동성
+// 군집이 있어 이 근사가 기대변동폭을 과소평가할 수 있다(추세장에서 특히). 순수함수 — 테스트
+// 가능. risk-monitor.mjs scanOpportunity의 §4 핵심 트리거라 인라인 대신 여기 분리해 경계값을
+// 단위테스트로 고정한다(코드리뷰 지적 — 원래 인라인이라 라이브 실행으로만 검증되던 갭).
+export function dropSignal(weekChange, atrPct, mult = OPP_DROP_ATR_MULT, fallbackPct = OPP_BUY_DROP_FALLBACK_PCT) {
+  if (weekChange == null || weekChange >= 0) return { hit: false, why: null, multiple: null, expectedRange: null };
+  if (atrPct > 0) {
+    // 비교는 반올림 전 원값으로 — 표시용 반올림(소수 1자리) 뒤에 비교하면 1.95~1.99배 같은
+    // 값이 2.0으로 반올림돼 실제론 미달인데 발동하는 경계 버그가 생긴다(테스트 작성 중 발견).
+    const expectedRangeRaw = atrPct * Math.sqrt(5);
+    const multipleRaw = Math.abs(weekChange) / expectedRangeRaw;
+    const hit = multipleRaw >= mult;
+    const expectedRange = Math.round(expectedRangeRaw * 10) / 10;
+    const multiple = Math.round(multipleRaw * 10) / 10;
+    const why = hit ? `5일 ${weekChange}%(5일 기대변동폭 ${expectedRange}% 대비 ${multiple}배)` : null;
+    return { hit, why, multiple, expectedRange };
+  }
+  if (weekChange <= fallbackPct) {
+    return { hit: true, why: `5일 ${weekChange}%(ATR 데이터 없어 고정 임계값 폴백)`, multiple: null, expectedRange: null, fallback: true };
+  }
+  return { hit: false, why: null, multiple: null, expectedRange: null };
+}
+
 // 투자의견 하향(브로커 자기자신의 직전 리포트 대비) 몇 건 이상이면 가드레일 발동할지 —
 // 1건은 개별 애널리스트 소음일 수 있어 노이즈 방지 목적으로 2건부터(risk-monitor.mjs
 // 논리훼손 프롬프트 §참고, kis.mjs summarizeInvestOpinion이 계산).
 export const OPINION_DOWNGRADE_MIN = 2;
+
+// 부채비율(=D/E×100, 한국식 "부채비율" 정의가 곧 D/E 백분율) 절대수준 가드레일 — 신용평가
+// 실무는 변화폭이 아니라 절대수준을 본다(2026-07 웹리서치: D/E>2.0(200%)이면 비자본집약
+// 업종 기준 신용검토 대상, D/E>2.5면 고위험). 200%를 그대로 채택 — 기준선(baselineDebtRatio)
+// 없이도(신규 종목 등) 독립적으로 발동 가능.
+export const DEBT_RATIO_HIGH_PCT = 200;
 
 // 가드레일(결정론) — 해당 시 Node가 신호 하한을 🟡로 강제한다. risk-monitor.mjs 헤더 주석엔
 // 원래 4개(영업이익 YoY 연속감소·가이던스 하향·FCF 적자전환·부채 급증)가 설계돼 있었으나
@@ -110,6 +149,8 @@ export function checkGuardrails(g) {
     t.push('영업이익 YoY 2분기 연속 감소');
   if (g.debtRatio != null && g.baselineDebtRatio != null && g.debtRatio - g.baselineDebtRatio >= 20)
     t.push('부채비율 급증(기준선 대비 +20%p 이상)');
+  if (g.debtRatio != null && g.debtRatio > DEBT_RATIO_HIGH_PCT)
+    t.push(`부채비율 고위험 절대수준(${g.debtRatio}%, ${DEBT_RATIO_HIGH_PCT}% 초과 — 신용평가 실무 기준)`);
   // 현금흐름 적자전환 — KR은 영업활동현금흐름 누적치(OpenDart, CAPEX 데이터 미보유라 순수
   // FCF 대신 이 프록시 사용, 직전 "보고서" 시점까지의 누적 대비 — 단일분기 환산 아님),
   // US는 yfinance quarterly_cashflow의 실제 단일분기 Free Cash Flow. 두 시장이 "직전" 단위가

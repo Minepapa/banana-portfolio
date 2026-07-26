@@ -30,7 +30,7 @@ import {
   sendTelegram, setValues, clearValues, cooldownActive,
 } from '../lib/sheets-common.mjs';
 import { renderPrefRows, prefBlock, PREF_SHEET } from '../lib/preferences.mjs';
-import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators, fetchMarketData, fetchKrMarketData } from '../lib/fundamentals.mjs';
+import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators, fetchMarketData, fetchKrMarketData, dropSignal } from '../lib/fundamentals.mjs';
 import { krCorpCode, usTicker, krStockCode } from '../lib/instruments.mjs';
 import { hasKisCredentials, loadKisCredentials, getKisToken, getKrInvestorFlow, getKrInvestOpinion, summarizeInvestOpinion } from '../lib/kis.mjs';
 import { extractSignal, clampLen } from '../lib/llm-guard.mjs';
@@ -57,11 +57,18 @@ const SP500_CRASH_PCT = -7;   // SP500 5일 고점 대비 낙폭 임계 — 미�
 // §4 개별 종목 가격 트리거 임계 (결정론) — 급락 매수 기회만.
 // ⚠️ 급등 차익실현(52주/RSI 고점) 트리거는 제거됨: Frank 철학상 가격 상승은 매도 신호가 아니다
 //    (과열 익절은 본인 재량). 매도 검토는 펀더멘털 훼손(B 모드)에서만 나온다.
-const OPP_BUY_DROP_PCT = -10; // 단기(5거래일) 등락 ≤ -10% → 급락 매수 기회
-const OPP_RSI_LOW = 30;       // RSI ≤ 30 → 과매도(급락 매수 기회)
-const OPP_VOL_SURGE_X = 2;    // 거래대금이 직전 20일 평균의 2배 이상 → 컨빅션 보강 문구(단독 트리거 아님)
+const OPP_RSI_LOW = 30;       // RSI ≤ 30 → 과매도(급락 매수 기회). Wilder(1978) 원저 표준값 — 실증 검증(2026-07,
+                               // 보유 7종목 3년치)으로도 발생빈도 0.27~5.82%(대체로 희귀 이벤트)라 유지.
+// 5일 낙폭 트리거 — 원래 고정 -10%였으나 2026-07 실증 검증(보유 7종목 3년치 일봉)에서 심각한
+// 결함 발견: 마이크로소프트는 -10%가 연 1회뿐인 진짜 이례적 사건(5일 기대변동폭 4.52%)인데,
+// 테슬라는 연 15회(3주에 한 번꼴)로 뜨는 일상적 변동(5일 기대변동폭 10.47% — -10%가 정상
+// 범위 안!). 같은 숫자가 종목마다 다른 의미라는 게 데이터로 확인돼 ATR 기반으로 교체(Frank
+// 결정, 2026-07) — 실제 판정 로직(dropSignal, OPP_DROP_ATR_MULT·OPP_BUY_DROP_FALLBACK_PCT
+// 정의 포함)은 fundamentals.mjs로 분리해 단위테스트로 경계값을 고정했다(코드리뷰 지적).
+// 거래대금 급증/저조 — 2026-07 웹리서치(전문 트레이딩 플랫폼 관행): 2배는 "노이즈 多"로
+// 분류되고(하루 수십 건 알림, 대부분 무의미) 3배부터 실제 액션 기준. 2→3 상향.
+const OPP_VOL_SURGE_X = 3;
 const OPP_VOL_QUIET_X = 0.7;  // 거래대금이 직전 20일 평균의 0.7배 미만 → "조용한 하락"(투매 아님) 주의 문구
-const OPP_ATR_SEVERE_X = 2;   // 5일 누적 낙폭이 "5일 기대 변동폭"의 2배 이상 → 이례적 급락(계산은 scanOpportunity 참고)
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
@@ -121,11 +128,13 @@ function scanOpportunity(md, flow) {
   const { rsi14, pos52w, weekChange, currentPrice, tech } = md;
   const flowEv = flow ? { flowDate: flow.date, frgnNetQty: flow.frgnNetQty, orgnNetQty: flow.orgnNetQty } : null;
   const ev = JSON.stringify({ rsi14, pos52w, weekChange, currentPrice, flow: flowEv, tech: tech ?? null });
-  // 급락 매수 기회 — 성향(급락매수 선호) 부합 → 🔴
-  const dropHit = weekChange != null && weekChange <= OPP_BUY_DROP_PCT;
+  // 급락 매수 기회 — 성향(급락매수 선호) 부합 → 🔴. dropSignal(fundamentals.mjs)이 ATR
+  // 있으면 변동성 상대화, 없으면(상장 이력 짧은 종목 등) 고정값 폴백으로 판정 — 커버리지가
+  // 조용히 빠지지 않도록.
   const rsiLow = rsi14 != null && rsi14 <= OPP_RSI_LOW;
+  const { hit: dropHit, why: dropWhy } = dropSignal(weekChange, tech?.atr?.pct);
   if (dropHit || rsiLow) {
-    const why = [dropHit ? `5일 ${weekChange}%` : null, rsiLow ? `RSI ${rsi14}` : null].filter(Boolean).join(' · ');
+    const why = [dropWhy, rsiLow ? `RSI ${rsi14}` : null].filter(Boolean).join(' · ');
     // 쌍끌이 매수(외국인·기관 동시 순매수)면 수급이 가격 반등을 뒷받침 — 컨빅션 보강 문구만 추가.
     // frgnNetQty/orgnNetQty가 null(파싱 실패·데이터 없음)이면 "순매도 우위"로 오표기하지 않도록
     // flowKnown으로 구분(코드리뷰 지적 — null>0===false라 순매도와 데이터없음이 뒤섞이던 결함).
@@ -147,25 +156,15 @@ function scanOpportunity(md, flow) {
     if (tech?.maAlignment?.alignment === '정배열') techFlags.push('이평 정배열');
     if (tech?.stochastic?.oversold) techFlags.push(`스토캐스틱 과매도(%K ${tech.stochastic.k})`);
     // 거래대금: 급증(투매/전환 가능성)과 저조(조용한 하락 — 투매 신호 약함)를 양방향으로 구분.
-    // 고정 -10%는 종목별 평소 변동성을 무시한다는 지적(Frank, 2026-07) — ATR 대비 배수로
-    // 상대화해 "이례적 급락"만 별도 표기(dropHit 트리거 조건 자체는 안 바꿈).
+    // ATR 대비 배수는 이제 dropWhy에 이미 포함(위 dropHit 계산 참고) — 여기서 중복 표기 안 함.
     if (tech?.volumeSurge?.ratio >= OPP_VOL_SURGE_X) techFlags.push(`거래대금 급증(${tech.volumeSurge.ratio}배, 투매/전환 가능성)`);
     else if (tech?.volumeSurge && tech.volumeSurge.ratio < OPP_VOL_QUIET_X) techFlags.push(`거래량 저조(${tech.volumeSurge.ratio}배, 조용한 하락 — 투매 신호 약함)`);
-    if (dropHit && tech?.atr?.pct > 0) {
-      // weekChange는 5거래일 누적 등락률인데 tech.atr.pct는 일간 변동폭이라 그대로 나누면
-      // 랜덤워크 기준 정상적인 5일 변동(일간의 √5≈2.24배)도 "이례적"으로 잘못 표기된다
-      // (코드리뷰 지적 — 예: 일간ATR 5% 종목의 정확히 -10% 하락이 2.0배로 잡혀 실제론 1시그마
-      // 이내인데 이례적으로 보임). ATR을 √5로 스케일한 "5일 기대 변동폭"과 비교해야 정확하다.
-      const expected5dRange = tech.atr.pct * Math.sqrt(5);
-      const atrMultiple = Math.abs(weekChange) / expected5dRange;
-      if (atrMultiple >= OPP_ATR_SEVERE_X) techFlags.push(`평소 변동성(일간ATR ${tech.atr.pct}%→5일 기대변동폭 ${Math.round(expected5dRange * 10) / 10}%) 대비 ${Math.round(atrMultiple * 10) / 10}배 이례적 급락`);
-    }
     const techNote = techFlags.length ? ` · ${techFlags.join(' · ')}` : '';
     const techDetail = tech
       ? ` 기술지표(참고): MACD히스토그램 ${tech.macd?.histogram ?? '데이터없음'} · 이평 ${tech.maAlignment?.alignment ?? '데이터없음'} · ATR ${tech.atr?.pct ?? '데이터없음'}% · 스토캐스틱%K ${tech.stochastic?.k ?? '데이터없음'} · 거래대금배수 ${tech.volumeSurge?.ratio ?? '데이터없음'}.`
       : '';
     return { signal: '🔴', summary: `급락 매수 기회 — ${why}${flowNote}${techNote}`,
-      detail: '§4 급락 매수 기회 트리거(단기 -10% 또는 RSI 30↓). Frank 급락매수 선호와 부합 — 펀더멘털 유효 시 적극 매수 검토(1회 500만원 이하).' + flowDetail + techDetail, ev };
+      detail: '§4 급락 매수 기회 트리거(5일 낙폭이 ATR 기반 기대변동폭의 2배 이상 — ATR 데이터 없으면 고정 -10% 폴백 — 또는 RSI 30↓). Frank 급락매수 선호와 부합 — 펀더멘털 유효 시 적극 매수 검토(1회 500만원 이하).' + flowDetail + techDetail, ev };
   }
   // 트리거 없음 — 🟢(이전 기회 신호 자가 해소용). 앱은 🟢 기회는 숨김.
   return { signal: '🟢', summary: '가격 트리거 없음',
