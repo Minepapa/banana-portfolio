@@ -204,6 +204,33 @@ test('checkGuardrails: 영업이익 2분기 연속 감소 / 부채비율 +20%p',
   assert.deepEqual(checkGuardrails({ opYoYCurr: 10, opYoYPrev: null, debtRatio: null, baselineDebtRatio: 50 }), []);
 });
 
+test('checkGuardrails: 현금흐름 적자전환(직전 흑자→이번 적자만 발동, 이미 적자 지속은 미발동)', () => {
+  assert.deepEqual(checkGuardrails({ cfCurr: -100, cfPrev: 50 }), ['현금흐름 적자전환(직전 대비)']);
+  assert.deepEqual(checkGuardrails({ cfCurr: -100, cfPrev: -50 }), []); // 이미 적자 지속 — "전환" 아님
+  assert.deepEqual(checkGuardrails({ cfCurr: 100, cfPrev: 50 }), []); // 계속 흑자
+  assert.deepEqual(checkGuardrails({ cfCurr: null, cfPrev: 50 }), []); // 결측 방어
+});
+
+test('checkGuardrails: 투자의견 하향 2건 이상이면 발동(1건은 노이즈 취급 미발동)', () => {
+  assert.deepEqual(checkGuardrails({ opinionDowngrades: 2 }), ['증권사 투자의견 하향 2건(직전 대비, 최근 90일)']);
+  assert.deepEqual(checkGuardrails({ opinionDowngrades: 1 }), []);
+  assert.deepEqual(checkGuardrails({ opinionDowngrades: 0 }), []);
+  assert.deepEqual(checkGuardrails({ opinionDowngrades: null }), []);
+});
+
+test('checkGuardrails: 4개 조건이 동시에 걸리면 4건 모두 반환(순서 고정)', () => {
+  const g = {
+    opYoYCurr: -5, opYoYPrev: -3, debtRatio: 75, baselineDebtRatio: 50,
+    cfCurr: -100, cfPrev: 50, opinionDowngrades: 3,
+  };
+  assert.deepEqual(checkGuardrails(g), [
+    '영업이익 YoY 2분기 연속 감소',
+    '부채비율 급증(기준선 대비 +20%p 이상)',
+    '현금흐름 적자전환(직전 대비)',
+    '증권사 투자의견 하향 3건(직전 대비, 최근 90일)',
+  ]);
+});
+
 test('computeRsi14: Wilder 평활 RSI — 표준 14기간', () => {
   // 첫 상승만 있는 단조 증가 → RSI 100 수렴
   const up = Array.from({ length: 20 }, (_, i) => 100 + i);

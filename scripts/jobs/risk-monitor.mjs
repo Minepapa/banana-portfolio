@@ -60,6 +60,8 @@ const SP500_CRASH_PCT = -7;   // SP500 5일 고점 대비 낙폭 임계 — 미�
 const OPP_BUY_DROP_PCT = -10; // 단기(5거래일) 등락 ≤ -10% → 급락 매수 기회
 const OPP_RSI_LOW = 30;       // RSI ≤ 30 → 과매도(급락 매수 기회)
 const OPP_VOL_SURGE_X = 2;    // 거래대금이 직전 20일 평균의 2배 이상 → 컨빅션 보강 문구(단독 트리거 아님)
+const OPP_VOL_QUIET_X = 0.7;  // 거래대금이 직전 20일 평균의 0.7배 미만 → "조용한 하락"(투매 아님) 주의 문구
+const OPP_ATR_SEVERE_X = 2;   // 5일 누적 낙폭이 "5일 기대 변동폭"의 2배 이상 → 이례적 급락(계산은 scanOpportunity 참고)
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
@@ -137,13 +139,27 @@ function scanOpportunity(md, flow) {
       ? ` 수급(최근 거래일 ${flow.date}): 외국인 순매수 ${flow.frgnNetQty?.toLocaleString('en-US') ?? '데이터없음'}주 · 기관 순매수 ${flow.orgnNetQty?.toLocaleString('en-US') ?? '데이터없음'}주.`
       : '';
     // 기술지표 플래그 — 값이 실제로 신호를 확인/약화하는 경우만 노출(항상 다 나열하지 않음).
+    // §4 트리거(dropHit||rsiLow) 자체는 그대로 — 여기선 이미 뜬 🔴의 컨빅션(severity)만 상대화한다.
     const techFlags = [];
     if (tech?.macd?.crossDown) techFlags.push('MACD 데드크로스');
     if (tech?.macd?.crossUp) techFlags.push('MACD 골든크로스');
     if (tech?.maAlignment?.alignment === '역배열') techFlags.push('이평 역배열');
     if (tech?.maAlignment?.alignment === '정배열') techFlags.push('이평 정배열');
     if (tech?.stochastic?.oversold) techFlags.push(`스토캐스틱 과매도(%K ${tech.stochastic.k})`);
-    if (tech?.volumeSurge?.ratio >= OPP_VOL_SURGE_X) techFlags.push(`거래대금 급증(${tech.volumeSurge.ratio}배)`);
+    // 거래대금: 급증(투매/전환 가능성)과 저조(조용한 하락 — 투매 신호 약함)를 양방향으로 구분.
+    // 고정 -10%는 종목별 평소 변동성을 무시한다는 지적(Frank, 2026-07) — ATR 대비 배수로
+    // 상대화해 "이례적 급락"만 별도 표기(dropHit 트리거 조건 자체는 안 바꿈).
+    if (tech?.volumeSurge?.ratio >= OPP_VOL_SURGE_X) techFlags.push(`거래대금 급증(${tech.volumeSurge.ratio}배, 투매/전환 가능성)`);
+    else if (tech?.volumeSurge && tech.volumeSurge.ratio < OPP_VOL_QUIET_X) techFlags.push(`거래량 저조(${tech.volumeSurge.ratio}배, 조용한 하락 — 투매 신호 약함)`);
+    if (dropHit && tech?.atr?.pct > 0) {
+      // weekChange는 5거래일 누적 등락률인데 tech.atr.pct는 일간 변동폭이라 그대로 나누면
+      // 랜덤워크 기준 정상적인 5일 변동(일간의 √5≈2.24배)도 "이례적"으로 잘못 표기된다
+      // (코드리뷰 지적 — 예: 일간ATR 5% 종목의 정확히 -10% 하락이 2.0배로 잡혀 실제론 1시그마
+      // 이내인데 이례적으로 보임). ATR을 √5로 스케일한 "5일 기대 변동폭"과 비교해야 정확하다.
+      const expected5dRange = tech.atr.pct * Math.sqrt(5);
+      const atrMultiple = Math.abs(weekChange) / expected5dRange;
+      if (atrMultiple >= OPP_ATR_SEVERE_X) techFlags.push(`평소 변동성(일간ATR ${tech.atr.pct}%→5일 기대변동폭 ${Math.round(expected5dRange * 10) / 10}%) 대비 ${Math.round(atrMultiple * 10) / 10}배 이례적 급락`);
+    }
     const techNote = techFlags.length ? ` · ${techFlags.join(' · ')}` : '';
     const techDetail = tech
       ? ` 기술지표(참고): MACD히스토그램 ${tech.macd?.histogram ?? '데이터없음'} · 이평 ${tech.maAlignment?.alignment ?? '데이터없음'} · ATR ${tech.atr?.pct ?? '데이터없음'}% · 스토캐스틱%K ${tech.stochastic?.k ?? '데이터없음'} · 거래대금배수 ${tech.volumeSurge?.ratio ?? '데이터없음'}.`
@@ -647,14 +663,9 @@ async function main() {
       continue;
     }
 
-    // ② 가드레일 사전판정(결정론)
-    const guardrails = checkGuardrails({
-      opYoYCurr: facts.opYoYCurr, opYoYPrev: facts.opYoYPrev,
-      debtRatio: facts.debtRatio,
-      baselineDebtRatio: baseline ? parseFloat(String(baseline.debt_ratio).replace(/[%,]/g, '')) || null : null,
-    });
-
-    // ③ 증권사 투자의견 컨센서스(KR만·참고정보) — 실패해도 펀더멘털 판정 자체는 막지 않는다.
+    // ② 증권사 투자의견 컨센서스(KR만) — 가드레일(투자의견 하향 대리신호)이 이 결과를 쓰므로
+    // checkGuardrails보다 먼저 조회한다. 실패해도 펀더멘털 판정 자체는 막지 않는다(opinion=null
+    // 이면 아래 opinionDowngrades가 null이 되어 그 가드레일 분기만 자연히 skip).
     let opinion = null;
     if (h.market === 'KR' && kisAuth && stockCode) {
       try {
@@ -663,6 +674,20 @@ async function main() {
         opinion = summarizeInvestOpinion(rows, mkt?.currentPrice);
       } catch (e) { console.log(`   · ${h.name}: 투자의견 조회 실패(펀더멘털 판정만 사용) — ${e.message}`); }
     }
+
+    // ③ 가드레일 사전판정(결정론). 현금흐름 필드명이 시장별로 다르다 — KR은 fetchKrFundamentals의
+    // operCf/operCfPrev(영업활동현금흐름 누적, CAPEX 미보유라 FCF 프록시), US는 fetchUsFundamentals의
+    // fcfCurr/fcfPrev(yfinance 실제 단일분기 Free Cash Flow) — 필드명을 억지로 통일하지 않고
+    // 호출부에서 명시적으로 매핑한다(fundamentals.mjs checkGuardrails 주석 참고).
+    const cfCurr = h.market === 'KR' ? facts.operCf : facts.fcfCurr;
+    const cfPrev = h.market === 'KR' ? facts.operCfPrev : facts.fcfPrev;
+    const guardrails = checkGuardrails({
+      opYoYCurr: facts.opYoYCurr, opYoYPrev: facts.opYoYPrev,
+      debtRatio: facts.debtRatio,
+      baselineDebtRatio: baseline ? parseFloat(String(baseline.debt_ratio).replace(/[%,]/g, '')) || null : null,
+      cfCurr, cfPrev,
+      opinionDowngrades: opinion?.downgrades ?? null,
+    });
 
     const prompt = buildLogicPrompt(h, facts, guardrails, baseline, buyCard, confirmedPrefsText, opinion);
     if (DRY_RUN) { console.log(`\n┌─── B 프롬프트 [${h.name}] ───┐\n` + prompt + '\n└──────────────────┘'); continue; }

@@ -94,13 +94,33 @@ export function parseKrRatios(list) {
   };
 }
 
-// 가드레일(결정론) — 해당 시 Node가 신호 하한을 🟡로 강제한다.
+// 투자의견 하향(브로커 자기자신의 직전 리포트 대비) 몇 건 이상이면 가드레일 발동할지 —
+// 1건은 개별 애널리스트 소음일 수 있어 노이즈 방지 목적으로 2건부터(risk-monitor.mjs
+// 논리훼손 프롬프트 §참고, kis.mjs summarizeInvestOpinion이 계산).
+export const OPINION_DOWNGRADE_MIN = 2;
+
+// 가드레일(결정론) — 해당 시 Node가 신호 하한을 🟡로 강제한다. risk-monitor.mjs 헤더 주석엔
+// 원래 4개(영업이익 YoY 연속감소·가이던스 하향·FCF 적자전환·부채 급증)가 설계돼 있었으나
+// 2026-06-11 최초 구현 시 2개만 코드화된 채 방치돼 있었다(2026-07 Frank 지적으로 발견) —
+// 이번에 나머지 2개를 채운다: 가이던스 하향은 공시 기반 원안 대신 증권사 투자의견 하향을
+// 대리 신호로 쓴다(원안 데이터소스 미보유, 목표주가 컨센서스는 이미 수집 중이라 재사용).
 export function checkGuardrails(g) {
   const t = [];
   if (g.opYoYCurr != null && g.opYoYPrev != null && g.opYoYCurr < 0 && g.opYoYPrev < 0)
     t.push('영업이익 YoY 2분기 연속 감소');
   if (g.debtRatio != null && g.baselineDebtRatio != null && g.debtRatio - g.baselineDebtRatio >= 20)
     t.push('부채비율 급증(기준선 대비 +20%p 이상)');
+  // 현금흐름 적자전환 — KR은 영업활동현금흐름 누적치(OpenDart, CAPEX 데이터 미보유라 순수
+  // FCF 대신 이 프록시 사용, 직전 "보고서" 시점까지의 누적 대비 — 단일분기 환산 아님),
+  // US는 yfinance quarterly_cashflow의 실제 단일분기 Free Cash Flow. 두 시장이 "직전" 단위가
+  // 달라(KR=누적, US=단일분기) 메시지는 "분기"를 명시하지 않고 "직전 대비"로만 표기한다.
+  // 직전엔 흑자(≥0)였다가 이번엔 적자(<0)로 전환된 경우만 — 이미 적자 지속 중이면 "전환" 아님.
+  if (g.cfCurr != null && g.cfPrev != null && g.cfCurr < 0 && g.cfPrev >= 0)
+    t.push('현금흐름 적자전환(직전 대비)');
+  // 투자의견 하향(가이던스 하향 대리 신호) — KR 전용(KIS 국내주식 API). US는 opinionDowngrades
+  // 미주입이라 이 분기는 자연히 skip.
+  if (g.opinionDowngrades != null && g.opinionDowngrades >= OPINION_DOWNGRADE_MIN)
+    t.push(`증권사 투자의견 하향 ${g.opinionDowngrades}건(직전 대비, 최근 90일)`);
   return t;
 }
 
@@ -207,6 +227,10 @@ export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = p
     netIncomeYoY: computeYoY(a.netIncome.curr, a.netIncome.prev),
     equity: a.equity.curr,
     operCf: a.operCf?.curr,
+    // 직전 보고서(prevPeriod) 시점까지의 누적 영업활동현금흐름 — 단일분기 환산(quarterStandalone)
+    // 없이 누적치 그대로 비교(가드레일 "적자전환" 판정용, opYoY*처럼 단일분기 환산은 범위 밖 —
+    // revenueYoY·netIncomeYoY와 동일한 의도적 단순화, 위 주석 참고).
+    operCfPrev: pa?.operCf?.curr ?? null,
     ...ratios, eps: null, pbr,
   };
 }

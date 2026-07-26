@@ -258,8 +258,12 @@ export async function getKrInvestOpinion({ token, appkey, appsecret, code, dayWi
   return parseInvestOpinionResponse(json);
 }
 
-// KIS 종목투자의견 원본 응답 → [{date, firm, opinion, targetPrice}, ...](발행일 역순 원본 그대로).
-// 순수함수 — 테스트 가능. date·firm 중 하나라도 없는 행은 집계에 쓸 수 없어 스킵(전체 throw 안 함).
+// KIS 종목투자의견 원본 응답 → [{date, firm, opinion, prevOpinion, targetPrice}, ...](발행일
+// 역순 원본 그대로). prevOpinion(직전투자의견, rgbf_invt_opnn)은 그 브로커의 "이 리포트 직전"
+// 자기 의견 — KIS가 리포트마다 동봉해줘서 별도 조회 없이 하향/상향 판정이 가능하다(실측
+// 확인: 2026-07 라이브 호출, 공식 예제 chk_invest_opinion.py의 COLUMN_MAPPING엔 명시 안 됐지만
+// 실제 응답에 존재 — mbcr_name과 동일하게 문서보다 실측 신뢰). 순수함수 — 테스트 가능.
+// date·firm 중 하나라도 없는 행은 집계에 쓸 수 없어 스킵(전체 throw 안 함).
 export function parseInvestOpinionResponse(json) {
   if (json?.rt_cd !== '0') throw new Error(`KIS 투자의견 오류: ${json?.msg1 || json?.rt_cd || '알 수 없음'}`);
   const rows = Array.isArray(json?.output) ? json.output : [];
@@ -269,6 +273,7 @@ export function parseInvestOpinionResponse(json) {
       date: String(r?.stck_bsop_date ?? '').trim(),
       firm: String(r?.mbcr_name ?? '').trim(),
       opinion: String(r?.invt_opnn ?? '').trim(),
+      prevOpinion: String(r?.rgbf_invt_opnn ?? '').trim(),
       targetPrice: num(r?.hts_goal_prc),
     }))
     .filter(r => r.date && r.firm);
@@ -284,10 +289,19 @@ function classifyOpinion(text) {
   return 'other';
 }
 
+// buy>hold>sell 서열 — 하향/상향 판정용. classifyOpinion이 'other'로 분류한 표현(리포트
+// 특유 문구 등)은 서열을 매길 수 없어 null(그 리포트는 하향/상향 집계에서 제외 — 억지로
+// 끼워맞추지 않음).
+const OPINION_RANK = { buy: 2, hold: 1, sell: 0 };
+function opinionRank(text) { return OPINION_RANK[classifyOpinion(text)] ?? null; }
+
 // 브로커별 투자의견 리스트 → 컨센서스 요약(브로커당 최신 1건으로 중복제거). currentPrice는 KIS
 // 자체 괴리율 필드(dprt/nday_dprt — 산출 기준이 공식 문서에 없어 신뢰 불가) 대신 이미 검증된
 // 자체 시세(fundamentals.mjs fetchMarketData currentPrice)로 직접 계산 — 가격의 단일 진실
 // 소스를 유지(리포트마다 발행일의 전일종가가 달라 시점이 제각각인 stck_prdy_clpr도 배제).
+// downgrades/upgrades: 브로커별 최신 리포트의 opinion vs 그 리포트 자체의 prevOpinion(그
+// 브로커 직전 의견) 비교 — "여러 브로커의 최신 성향"이 아니라 "그 브로커가 스스로 의견을
+// 낮췄는가"라 노이즈가 적다(risk-monitor.mjs checkGuardrails 가이던스 하향 대리신호로 소비).
 // 순수함수 — 테스트 가능. 리포트 0건이면 null(데이터 없음, 0으로 추정 안 함).
 export function summarizeInvestOpinion(rows, currentPrice) {
   const latestByFirm = new Map();
@@ -299,17 +313,24 @@ export function summarizeInvestOpinion(rows, currentPrice) {
   if (!uniq.length) return null;
   const counts = { buy: 0, hold: 0, sell: 0, other: 0 };
   const targets = [];
-  let latestDate = '';
+  let latestDate = '', downgrades = 0, upgrades = 0;
   for (const r of uniq) {
     counts[classifyOpinion(r.opinion)]++;
     if (r.targetPrice != null && r.targetPrice > 0) targets.push(r.targetPrice);
     if (r.date > latestDate) latestDate = r.date;
+    if (r.prevOpinion) {
+      const cur = opinionRank(r.opinion), prev = opinionRank(r.prevOpinion);
+      if (cur != null && prev != null) {
+        if (cur < prev) downgrades++;
+        else if (cur > prev) upgrades++;
+      }
+    }
   }
   const avgTargetPrice = targets.length ? Math.round(targets.reduce((s, v) => s + v, 0) / targets.length) : null;
   const targetGapPct = (avgTargetPrice != null && Number.isFinite(currentPrice) && currentPrice > 0)
     ? Math.round((avgTargetPrice - currentPrice) / currentPrice * 1000) / 10
     : null;
-  return { reportCount: uniq.length, opinionCounts: counts, avgTargetPrice, targetGapPct, latestDate };
+  return { reportCount: uniq.length, opinionCounts: counts, avgTargetPrice, targetGapPct, latestDate, downgrades, upgrades };
 }
 
 // 국내 계좌 잔고조회(퇴직연금/IRP 포함 — KIS는 계좌상품코드(ACNT_PRDT_CD)로 계좌 종류를

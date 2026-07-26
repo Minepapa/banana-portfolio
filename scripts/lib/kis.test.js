@@ -353,18 +353,26 @@ test('getKrInvestorFlow: 레이트리밋(EGW00201)이면 재시도 후 성공', 
   assert.deepEqual(flow, { date: '20260724', frgnNetQty: 100, orgnNetQty: -50 });
 });
 
-test('parseInvestOpinionResponse: 정상 응답에서 브로커별 리포트 추출(발행일·회사명·의견·목표가)', () => {
+test('parseInvestOpinionResponse: 정상 응답에서 브로커별 리포트 추출(발행일·회사명·의견·직전의견·목표가)', () => {
   const rows = parseInvestOpinionResponse({
     rt_cd: '0',
     output: [
-      { stck_bsop_date: '20260708', mbcr_name: 'IBK투자', invt_opnn: '매수', hts_goal_prc: '460000' },
-      { stck_bsop_date: '20260708', mbcr_name: '키움', invt_opnn: 'BUY', hts_goal_prc: '390000' },
+      { stck_bsop_date: '20260708', mbcr_name: 'IBK투자', invt_opnn: '매수', rgbf_invt_opnn: '매수', hts_goal_prc: '460000' },
+      { stck_bsop_date: '20260708', mbcr_name: '키움', invt_opnn: 'BUY', rgbf_invt_opnn: 'BUY', hts_goal_prc: '390000' },
     ],
   });
   assert.deepEqual(rows, [
-    { date: '20260708', firm: 'IBK투자', opinion: '매수', targetPrice: 460000 },
-    { date: '20260708', firm: '키움', opinion: 'BUY', targetPrice: 390000 },
+    { date: '20260708', firm: 'IBK투자', opinion: '매수', prevOpinion: '매수', targetPrice: 460000 },
+    { date: '20260708', firm: '키움', opinion: 'BUY', prevOpinion: 'BUY', targetPrice: 390000 },
   ]);
+});
+
+test('parseInvestOpinionResponse: rgbf_invt_opnn 필드가 없으면 prevOpinion 빈 문자열(throw 안 함)', () => {
+  const rows = parseInvestOpinionResponse({
+    rt_cd: '0',
+    output: [{ stck_bsop_date: '20260708', mbcr_name: 'KB', invt_opnn: 'BUY', hts_goal_prc: '600000' }],
+  });
+  assert.equal(rows[0].prevOpinion, '');
 });
 
 test('parseInvestOpinionResponse: 발행일·회사명 누락 행은 스킵(전체 throw 안 함)', () => {
@@ -450,6 +458,38 @@ test('summarizeInvestOpinion: targetPrice가 0 이하인 리포트는 평균 계
   const s = summarizeInvestOpinion(rows, 300000);
   assert.equal(s.reportCount, 3);
   assert.equal(s.avgTargetPrice, 500000); // 0·음수 제외, 유효값 1개만 평균
+});
+
+test('summarizeInvestOpinion: 브로커 자신의 직전의견 대비 하향/상향 카운트(가이던스 하향 대리신호)', () => {
+  const rows = [
+    { date: '20260708', firm: 'A', opinion: '중립', prevOpinion: '매수', targetPrice: 100 }, // 하향
+    { date: '20260708', firm: 'B', opinion: '매도', prevOpinion: '매수', targetPrice: 100 }, // 하향
+    { date: '20260708', firm: 'C', opinion: '매수', prevOpinion: '중립', targetPrice: 100 }, // 상향
+    { date: '20260708', firm: 'D', opinion: '매수', prevOpinion: '매수', targetPrice: 100 }, // 유지
+  ];
+  const s = summarizeInvestOpinion(rows, 90);
+  assert.equal(s.downgrades, 2);
+  assert.equal(s.upgrades, 1);
+});
+
+test('summarizeInvestOpinion: prevOpinion 없거나(신규 커버리지) 서열 불가(other)면 하향/상향 집계에서 제외', () => {
+  const rows = [
+    { date: '20260708', firm: 'A', opinion: 'BUY', prevOpinion: '', targetPrice: 100 }, // 신규 커버리지
+    { date: '20260708', firm: 'B', opinion: '알수없음', prevOpinion: '매수', targetPrice: 100 }, // 현재의견 서열불가
+    { date: '20260708', firm: 'C', opinion: '매수', prevOpinion: '알수없음', targetPrice: 100 }, // 직전의견 서열불가
+  ];
+  const s = summarizeInvestOpinion(rows, 90);
+  assert.equal(s.downgrades, 0);
+  assert.equal(s.upgrades, 0);
+});
+
+test('summarizeInvestOpinion: 재수정 리포트는 브로커당 최신 1건 기준으로만 하향/상향 판정(중복집계 안 함)', () => {
+  const rows = [
+    { date: '20260601', firm: 'KB', opinion: '매도', prevOpinion: '매수', targetPrice: 100 }, // 옛 리포트 — 무시돼야 함
+    { date: '20260708', firm: 'KB', opinion: '매수', prevOpinion: '매수', targetPrice: 100 }, // 최신 — 하향 아님
+  ];
+  const s = summarizeInvestOpinion(rows, 90);
+  assert.equal(s.downgrades, 0);
 });
 
 test('classifyOpinion(비export, summarizeInvestOpinion 경유 검증): 비중확대/축소류 국내 관행 표현도 buy/sell로 분류', () => {
