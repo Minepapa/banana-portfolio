@@ -226,7 +226,7 @@ test('isUsMarketOpen: 장외 시각이면 false', () => {
 });
 
 test('parseBalanceResponse: output1에서 보유종목 추출, 수량 0은 제외', () => {
-  const holdings = parseBalanceResponse({
+  const { holdings } = parseBalanceResponse({
     rt_cd: '0',
     output1: [
       { pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격', hldg_qty: '120' },
@@ -237,7 +237,7 @@ test('parseBalanceResponse: output1에서 보유종목 추출, 수량 0은 제�
 });
 
 test('parseBalanceResponse: output1 비어있으면 빈 배열', () => {
-  assert.deepEqual(parseBalanceResponse({ rt_cd: '0', output1: [] }), []);
+  assert.deepEqual(parseBalanceResponse({ rt_cd: '0', output1: [] }).holdings, []);
 });
 
 test('parseBalanceResponse: rt_cd 실패 코드면 throw(msg1 인용)', () => {
@@ -247,15 +247,34 @@ test('parseBalanceResponse: rt_cd 실패 코드면 throw(msg1 인용)', () => {
   );
 });
 
+test('parseBalanceResponse: output2.dnca_tot_amt에서 예수금 추출(콤마 포함 문자열도 처리)', () => {
+  const { cash } = parseBalanceResponse({ rt_cd: '0', output1: [], output2: [{ dnca_tot_amt: '335,446' }] });
+  assert.equal(cash, 335446);
+});
+
+test('parseBalanceResponse: output2 없거나 dnca_tot_amt 파싱 불가면 cash=null(0으로 추정 안 함)', () => {
+  assert.equal(parseBalanceResponse({ rt_cd: '0', output1: [] }).cash, null);
+  assert.equal(parseBalanceResponse({ rt_cd: '0', output1: [], output2: [] }).cash, null);
+  assert.equal(parseBalanceResponse({ rt_cd: '0', output1: [], output2: [{}] }).cash, null);
+  // 필드는 있지만 숫자로 해석 불가한 값(공백 아닌 쓰레기 문자열)도 null — Number('N/A')는
+  // NaN이라 별도 분기 없이도 이미 걸러지지만, 코드리뷰 지적으로 명시적으로 고정해둔다.
+  assert.equal(parseBalanceResponse({ rt_cd: '0', output1: [], output2: [{ dnca_tot_amt: 'N/A' }] }).cash, null);
+});
+
+test('parseBalanceResponse: dnca_tot_amt가 "0"이면 진짜 0원(null 아님)', () => {
+  assert.equal(parseBalanceResponse({ rt_cd: '0', output1: [], output2: [{ dnca_tot_amt: '0' }] }).cash, 0);
+});
+
 test('getAccountBalance: 레이트리밋이면 재시도 후 성공', async () => {
   const fetchImpl = mockFetch([
     { body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } },
-    { body: { rt_cd: '0', output1: [{ pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격', hldg_qty: '120' }] } },
+    { body: { rt_cd: '0', output1: [{ pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격', hldg_qty: '120' }], output2: [{ dnca_tot_amt: '0' }] } },
   ]);
-  const holdings = await getAccountBalance({
+  const { holdings, cash } = await getAccountBalance({
     token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '29', fetchImpl, retryDelayMs: 1,
   });
   assert.equal(holdings[0].name, 'TIGER TDF2045 적격');
+  assert.equal(cash, 0);
 });
 
 test('loadIrpAccount: cano·acntPrdtCd·appkey·appsecret 넷 다 있으면 반환(cano/acntPrdtCd는 문자열 강제 변환)', () => {

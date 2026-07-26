@@ -221,19 +221,29 @@ export async function getAccountBalance({ token, appkey, appsecret, cano, acntPr
   return parseBalanceResponse(json);
 }
 
-// KIS 잔고조회 원본 응답(output1: 종목별 보유내역) → [{code, name, qty}, ...]. 순수함수 —
-// 테스트 가능. 수량 0(매도돼 사라진 종목이 output1에 잔존 행으로 남는 경우가 있음)은 제외 —
-// "보유 중"만 대사 대상.
+// KIS 잔고조회 원본 응답 → {holdings: [{code, name, qty}, ...], cash}. 순수함수 — 테스트
+// 가능. holdings: output1(종목별 보유내역)에서 수량 0(매도돼 사라진 종목이 잔존 행으로
+// 남는 경우가 있음)은 제외 — "보유 중"만 대사 대상. cash: output2(계좌 요약)의
+// dnca_tot_amt(예수금총금액) — output2 자체가 없거나 파싱 불가면 null(0으로 추정하지
+// 않음 — 호출측이 "데이터 없음"과 "진짜 0원"을 구분해야 오탐 없이 대사 가능).
 export function parseBalanceResponse(json) {
   if (json?.rt_cd !== '0') throw new Error(`KIS 잔고조회 오류: ${json?.msg1 || json?.rt_cd || '알 수 없음'}`);
   const output1 = Array.isArray(json?.output1) ? json.output1 : [];
-  return output1
+  const holdings = output1
     .map(o => ({
       code: String(o?.pdno ?? '').trim(),
       name: String(o?.prdt_name ?? '').trim(),
       qty: Number(o?.hldg_qty) || 0,
     }))
     .filter(h => h.qty > 0);
+  // Number('')===0이라 "필드 자체가 없음"과 "빈 문자열"을 구분 못 하는 함정이 있다(이 파일의
+  // parseQuoteResponse changePct와 동일 문제) — undefined/빈문자열이면 애초에 Number()를
+  // 안 부르고 바로 null 처리한다.
+  const cashRaw = Array.isArray(json?.output2) ? json.output2[0]?.dnca_tot_amt : undefined;
+  const cash = cashRaw !== undefined && String(cashRaw).trim() !== ''
+    ? Number(String(cashRaw).replace(/,/g, ''))
+    : NaN;
+  return { holdings, cash: Number.isFinite(cash) ? cash : null };
 }
 
 // 보유종목 + 이번 폴링 시세결과 + 직전 실시간시세 행 → 시트에 쓸 행 배열.
