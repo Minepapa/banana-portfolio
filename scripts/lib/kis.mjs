@@ -1,6 +1,13 @@
-// 한국투자증권(KIS) Open API 클라이언트 — 보유종목 실시간 시세 조회 전용(주문 API 미사용).
-// 크리덴셜은 sa-key.json과 동일 컨벤션(scripts/lib/auth.mjs SA_KEY_FILE 미러링):
-// ~/.config/banana-portfolio/kis-key.json, {appkey, appsecret}.
+// 한국투자증권(KIS) Open API 클라이언트 — 시세 조회·계좌 잔고조회 전용(주문 API 미사용,
+// 자동매매는 이 모듈의 범위 밖). 크리덴셜은 sa-key.json과 동일 컨벤션(scripts/lib/auth.mjs
+// SA_KEY_FILE 미러링): ~/.config/banana-portfolio/kis-key.json, {appkey, appsecret,
+// irpAccount?: {cano, acntPrdtCd, appkey, appsecret}}.
+//
+// irpAccount에 appkey/appsecret이 별도로 있는 이유: KIS 개발자센터가 앱키를 계좌 단위로
+// 등록시킨다(2026-07 실측 — 최상위 appkey로 IRP 잔고조회를 했더니 INVALID_CHECK_ACNO로
+// 거부됐고, IRP 계좌를 별도로 신청해 발급받은 앱키로 바꾸니 그제서야 계좌 검증을 통과함).
+// 즉 최상위 appkey(시세 조회용, 모든 종목 공용)와 irpAccount.appkey(그 IRP 계좌 전용)는
+// 서로 다른 KIS 앱이다 — 토큰도 앱키별로 별도 발급·캐시해야 한다(아래 getKisToken 참고).
 //
 // 토큰(POST /oauth2/tokenP) 유효기간 1일, 공식 예제(kis_auth.py) 주석: "6시간 이내 발급시
 // 기존 token값 유지" — 그래도 30초 주기 폴링마다 재발급하면 낭비이므로 파일 캐시로 만료
@@ -27,6 +34,22 @@ export function loadKisCredentials(keyFile = KIS_KEY_FILE) {
   return { appkey, appsecret };
 }
 
+// IRP 계좌번호+전용 앱키 — kis-key.json에 {..., irpAccount: {cano, acntPrdtCd, appkey, appsecret}}
+// 로 로컬 등록(직접 편집, 채팅에 붙여넣지 않음 — 최상위 appkey/appsecret과 동일 취급).
+// appkey/appsecret이 최상위와 별도로 필요한 이유는 파일 상단 주석 참고(계좌별 앱키 등록).
+// 넷 중 하나라도 없으면 null(hasKisCredentials 없을 때와 동일하게 "아직 설정 안 함"을
+// 오류로 취급하지 않기 위함 — 호출측이 이 값으로 IRP 대사 기능 자체를 조용히 skip).
+export function loadIrpAccount(keyFile = KIS_KEY_FILE) {
+  try {
+    const { irpAccount } = JSON.parse(readFileSync(keyFile, 'utf8'));
+    if (!irpAccount?.cano || !irpAccount?.acntPrdtCd || !irpAccount?.appkey || !irpAccount?.appsecret) return null;
+    return {
+      cano: String(irpAccount.cano), acntPrdtCd: String(irpAccount.acntPrdtCd),
+      appkey: String(irpAccount.appkey), appsecret: String(irpAccount.appsecret),
+    };
+  } catch { return null; }
+}
+
 // KIS access_token_token_expired 형식("YYYY-MM-DD HH:MM:SS", KST 벽시계) → epoch ms.
 // 순수함수 — 테스트 가능. 형식이 안 맞으면 0(즉시 만료 취급 — 안전한 쪽으로 폴백).
 export function parseKisExpiry(expiredStr) {
@@ -36,16 +59,21 @@ export function parseKisExpiry(expiredStr) {
   return Date.UTC(y, mo - 1, d, h - 9, mi, s); // KST(UTC+9) 벽시계 → UTC epoch
 }
 
+// 캐시는 appkey별로 분리 보관한다(맵: {[appkey]: {token, expiresAt}}) — 이제 KIS 앱이
+// 최상위(시세용)·irpAccount(계좌 전용) 최소 2개라, 단일 슬롯 캐시였다면 한쪽 앱의 토큰을
+// 다른 앱의 appkey/appsecret 헤더와 섞어 보내는 사고가 난다(앱키 등록 단위와 불일치 → 인증
+// 실패, 심하면 계좌A 자격증명으로 계좌B를 조회하려는 요청처럼 보일 위험).
 function readTokenCache() {
-  try { return JSON.parse(readFileSync(TOKEN_CACHE_FILE, 'utf8')); } catch { return null; }
+  try { return JSON.parse(readFileSync(TOKEN_CACHE_FILE, 'utf8')); } catch { return {}; }
 }
-function writeTokenCache(data) {
+function writeTokenCache(map) {
   mkdirSync(dirname(TOKEN_CACHE_FILE), { recursive: true });
-  writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(data));
+  writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(map));
 }
 
 export async function getKisToken({ appkey, appsecret, fetchImpl = fetch }) {
-  const cached = readTokenCache();
+  const cache = readTokenCache();
+  const cached = cache[appkey];
   if (cached && cached.expiresAt - Date.now() > TOKEN_MARGIN_MS) return cached.token;
 
   const res = await fetchImpl(`${BASE_URL}/oauth2/tokenP`, {
@@ -57,7 +85,8 @@ export async function getKisToken({ appkey, appsecret, fetchImpl = fetch }) {
   const body = await res.json();
   if (!body.access_token) throw new Error('KIS 토큰 응답에 access_token 없음');
   const expiresAt = parseKisExpiry(body.access_token_token_expired);
-  writeTokenCache({ token: body.access_token, expiresAt });
+  cache[appkey] = { token: body.access_token, expiresAt };
+  writeTokenCache(cache);
   return body.access_token;
 }
 
@@ -114,15 +143,15 @@ export function isUsMarketOpen(date = new Date()) {
 const KIS_RATE_LIMIT_CODE = 'EGW00201';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// GET + 레이트리밋 재시도 공통 로직(국내·해외 시세 조회가 공유). URL·tr_id·헤더만 다르므로
-// 재시도 루프 자체를 두 번 따로 유지하면 한쪽만 고치는 회귀 위험이 있어 여기로 뽑아둔다.
-// label: 에러 메시지에 넣을 종목 식별자(코드/티커) — 호출측(realtime-quotes.mjs)이 이미
-// h.name으로 감싸긴 하지만, 라이브러리 함수 자체의 에러도 어떤 조회였는지 알 수 있어야
-// 다른 호출측이 붙어도(예: 향후 order-proposals.mjs 등) 맥락이 안 사라진다.
-async function fetchKisQuote(url, headers, label, { fetchImpl = fetch, retries = 2, retryDelayMs = 700 } = {}) {
+// GET + 레이트리밋 재시도 공통 로직(시세·잔고조회 등 인증된 KIS GET 호출이 전부 공유).
+// URL·tr_id·헤더만 다르므로 재시도 루프 자체를 여러 번 따로 유지하면 한쪽만 고치는 회귀
+// 위험이 있어 여기로 뽑아둔다. label: 에러 메시지에 넣을 식별자(종목코드/티커/계좌번호 등) —
+// 호출측이 이미 자기 맥락으로 감싸는 경우도 있지만, 라이브러리 함수 자체의 에러도 어떤
+// 조회였는지 알 수 있어야 다른 호출측이 붙어도 맥락이 안 사라진다.
+async function fetchKis(url, headers, label, { fetchImpl = fetch, retries = 2, retryDelayMs = 700 } = {}) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetchImpl(url, { headers });
-    if (!res.ok) throw new Error(`KIS 시세 조회 실패(${label}): ${await res.text()}`);
+    if (!res.ok) throw new Error(`KIS 조회 실패(${label}): ${await res.text()}`);
     const json = await res.json();
     if (json?.msg_cd === KIS_RATE_LIMIT_CODE && attempt < retries) {
       await sleep(retryDelayMs * (attempt + 1));
@@ -145,7 +174,7 @@ export async function getKrQuote({ token, appkey, appsecret, code, fetchImpl, re
     tr_id: 'FHKST01010100',
     custtype: 'P',
   };
-  const json = await fetchKisQuote(url, headers, code, { fetchImpl, retries, retryDelayMs });
+  const json = await fetchKis(url, headers, code, { fetchImpl, retries, retryDelayMs });
   return parseQuoteResponse(json);
 }
 
@@ -162,8 +191,49 @@ export async function getUsQuote({ token, appkey, appsecret, excd, symb, fetchIm
     tr_id: 'HHDFS00000300',
     custtype: 'P',
   };
-  const json = await fetchKisQuote(url, headers, `${excd}:${symb}`, { fetchImpl, retries, retryDelayMs });
+  const json = await fetchKis(url, headers, `${excd}:${symb}`, { fetchImpl, retries, retryDelayMs });
   return parseUsQuoteResponse(json);
+}
+
+// 국내 계좌 잔고조회(퇴직연금/IRP 포함 — KIS는 계좌상품코드(ACNT_PRDT_CD)로 계좌 종류를
+// 구분할 뿐 연금 전용 별도 API가 없다, 확인: github.com/koreainvestment/open-trading-api
+// examples_llm/domestic_stock/inquire_balance). tr_id TTTC8434R. cano/acntPrdtCd는
+// loadIrpAccount() 결과.
+export async function getAccountBalance({ token, appkey, appsecret, cano, acntPrdtCd, fetchImpl, retries, retryDelayMs }) {
+  const params = new URLSearchParams({
+    CANO: cano, ACNT_PRDT_CD: acntPrdtCd,
+    AFHR_FLPR_YN: 'N', OFL_YN: '', INQR_DVSN: '01', UNPR_DVSN: '01',
+    FUND_STTL_ICLD_YN: 'N', FNCG_AMT_AUTO_RDPT_YN: 'N', PRCS_DVSN: '00',
+    CTX_AREA_FK100: '', CTX_AREA_NK100: '',
+  });
+  const url = `${BASE_URL}/uapi/domestic-stock/v1/trading/inquire-balance?${params}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    authorization: `Bearer ${token}`,
+    appkey, appsecret,
+    tr_id: 'TTTC8434R',
+    custtype: 'P',
+  };
+  // label엔 계좌번호(cano/acntPrdtCd)를 넣지 않는다 — fetchKis가 실패 시 이 label을 그대로
+  // Error 메시지에 박아 넣고, 그 메시지가 reconcile-irp.mjs의 console.error를 거쳐 로그
+  // 파일에 남는다. 계좌번호는 appkey/appsecret과 동일하게 민감정보로 취급(코드리뷰 지적).
+  const json = await fetchKis(url, headers, 'IRP잔고', { fetchImpl, retries, retryDelayMs });
+  return parseBalanceResponse(json);
+}
+
+// KIS 잔고조회 원본 응답(output1: 종목별 보유내역) → [{code, name, qty}, ...]. 순수함수 —
+// 테스트 가능. 수량 0(매도돼 사라진 종목이 output1에 잔존 행으로 남는 경우가 있음)은 제외 —
+// "보유 중"만 대사 대상.
+export function parseBalanceResponse(json) {
+  if (json?.rt_cd !== '0') throw new Error(`KIS 잔고조회 오류: ${json?.msg1 || json?.rt_cd || '알 수 없음'}`);
+  const output1 = Array.isArray(json?.output1) ? json.output1 : [];
+  return output1
+    .map(o => ({
+      code: String(o?.pdno ?? '').trim(),
+      name: String(o?.prdt_name ?? '').trim(),
+      qty: Number(o?.hldg_qty) || 0,
+    }))
+    .filter(h => h.qty > 0);
 }
 
 // 보유종목 + 이번 폴링 시세결과 + 직전 실시간시세 행 → 시트에 쓸 행 배열.

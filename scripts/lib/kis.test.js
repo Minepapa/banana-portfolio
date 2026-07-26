@@ -1,8 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   parseKisExpiry, parseQuoteResponse, parseUsQuoteResponse, buildRealtimeRows, getKrQuote,
-  getUsQuote, isKrMarketOpen, isUsMarketOpen,
+  getUsQuote, isKrMarketOpen, isUsMarketOpen, parseBalanceResponse, getAccountBalance,
+  loadIrpAccount,
 } from './kis.mjs';
 
 // fetch 모킹 헬퍼 — 호출마다 큐에서 다음 응답을 꺼내 반환.
@@ -219,4 +223,75 @@ test('isUsMarketOpen: 미국장이 KST 기준 다음날 새벽까지 이어지�
 test('isUsMarketOpen: 장외 시각이면 false', () => {
   // 2026-07-15(수) 20:00 EDT
   assert.equal(isUsMarketOpen(new Date('2026-07-16T00:00:00Z')), false);
+});
+
+test('parseBalanceResponse: output1에서 보유종목 추출, 수량 0은 제외', () => {
+  const holdings = parseBalanceResponse({
+    rt_cd: '0',
+    output1: [
+      { pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격', hldg_qty: '120' },
+      { pdno: '005930', prdt_name: '삼성전자', hldg_qty: '0' }, // 전량 매도된 잔존 행 — 제외돼야 함
+    ],
+  });
+  assert.deepEqual(holdings, [{ code: '0025N0', name: 'TIGER TDF2045 적격', qty: 120 }]);
+});
+
+test('parseBalanceResponse: output1 비어있으면 빈 배열', () => {
+  assert.deepEqual(parseBalanceResponse({ rt_cd: '0', output1: [] }), []);
+});
+
+test('parseBalanceResponse: rt_cd 실패 코드면 throw(msg1 인용)', () => {
+  assert.throws(
+    () => parseBalanceResponse({ rt_cd: '1', msg1: '계좌번호 오류' }),
+    /계좌번호 오류/
+  );
+});
+
+test('getAccountBalance: 레이트리밋이면 재시도 후 성공', async () => {
+  const fetchImpl = mockFetch([
+    { body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } },
+    { body: { rt_cd: '0', output1: [{ pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격', hldg_qty: '120' }] } },
+  ]);
+  const holdings = await getAccountBalance({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '29', fetchImpl, retryDelayMs: 1,
+  });
+  assert.equal(holdings[0].name, 'TIGER TDF2045 적격');
+});
+
+test('loadIrpAccount: cano·acntPrdtCd·appkey·appsecret 넷 다 있으면 반환(cano/acntPrdtCd는 문자열 강제 변환)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kis-test-'));
+  const file = join(dir, 'kis-key.json');
+  writeFileSync(file, JSON.stringify({
+    appkey: 'k', appsecret: 's',
+    irpAccount: { cano: 12345678, acntPrdtCd: 29, appkey: 'irp-k', appsecret: 'irp-s' },
+  }));
+  assert.deepEqual(loadIrpAccount(file), { cano: '12345678', acntPrdtCd: '29', appkey: 'irp-k', appsecret: 'irp-s' });
+});
+
+test('loadIrpAccount: irpAccount 필드 자체가 없으면 null(미설정 — 오류 아님)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kis-test-'));
+  const file = join(dir, 'kis-key.json');
+  writeFileSync(file, JSON.stringify({ appkey: 'k', appsecret: 's' }));
+  assert.equal(loadIrpAccount(file), null);
+});
+
+test('loadIrpAccount: cano만 있고 acntPrdtCd 누락이면 null', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kis-test-'));
+  const file = join(dir, 'kis-key.json');
+  writeFileSync(file, JSON.stringify({ appkey: 'k', appsecret: 's', irpAccount: { cano: '12345678' } }));
+  assert.equal(loadIrpAccount(file), null);
+});
+
+test('loadIrpAccount: cano·acntPrdtCd는 있는데 IRP 전용 appkey/appsecret이 없으면 null(최상위 크리덴셜로 대체 안 함)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kis-test-'));
+  const file = join(dir, 'kis-key.json');
+  // KIS는 앱키를 계좌 단위로 등록시켜(2026-07 실측) 최상위 appkey로는 IRP 계좌 조회가
+  // INVALID_CHECK_ACNO로 거부된다 — irpAccount 자체에 전용 appkey/appsecret이 없으면
+  // 최상위 값으로 조용히 대체하지 말고 null(미설정 취급)이어야 한다.
+  writeFileSync(file, JSON.stringify({ appkey: 'k', appsecret: 's', irpAccount: { cano: '12345678', acntPrdtCd: '29' } }));
+  assert.equal(loadIrpAccount(file), null);
+});
+
+test('loadIrpAccount: 파일 자체가 없으면 null(throw 안 함)', () => {
+  assert.equal(loadIrpAccount('/nonexistent/path/kis-key.json'), null);
 });

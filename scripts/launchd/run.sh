@@ -74,7 +74,8 @@ case "$JOB" in
   order-weekly)        CMD=(scripts/jobs/order-proposals.mjs --mode=weekly) ;;
   order-crash)         CMD=(scripts/jobs/order-proposals.mjs --mode=crash) ;;
   realtime-quotes)     CMD=(scripts/jobs/realtime-quotes.mjs) ;;
-  *) echo "usage: run.sh {drain|risk-d|risk-b|baseline|report-sync|weekly-report|parse-notifications|journal-sync|backup|daily-snapshot|order-weekly|order-crash|realtime-quotes}" >&2; exit 2 ;;
+  reconcile-irp)       CMD=(scripts/jobs/reconcile-irp.mjs) ;;
+  *) echo "usage: run.sh {drain|risk-d|risk-b|baseline|report-sync|weekly-report|parse-notifications|journal-sync|backup|daily-snapshot|order-weekly|order-crash|realtime-quotes|reconcile-irp}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)
