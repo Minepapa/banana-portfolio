@@ -32,6 +32,7 @@ import {
 import { renderPrefRows, prefBlock, PREF_SHEET } from '../lib/preferences.mjs';
 import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators, fetchMarketData, fetchKrMarketData } from '../lib/fundamentals.mjs';
 import { krCorpCode, usTicker, krStockCode } from '../lib/instruments.mjs';
+import { hasKisCredentials, loadKisCredentials, getKisToken, getKrInvestorFlow } from '../lib/kis.mjs';
 import { extractSignal, clampLen } from '../lib/llm-guard.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { RISK_HEADER } from '../lib/sheet-contracts.mjs';
@@ -107,23 +108,38 @@ function holdingsSummary(holdings) {
 // ── D 모드: 거시 리스크 프롬프트 ────────────────────────
 // 거시지표 숫자는 Node(fetchMacroIndicators)가 yfinance에서 직접 조회·계산해 주입한다.
 // LLM은 재조회 금지 — 주입된 수치를 Hub 트리거 기준과 비교해 "판단만". (mode B와 동일 원칙)
-// 개별 종목 시세(md) → §4 급락 매수 기회만 판정. 결정론(LLM 무관). 트리거 없으면 🟢(자가 치유용).
-// 가격 상승(52주/RSI 고점)은 매도/차익 신호로 쓰지 않는다(Frank 철학 — 펀더멘털 우선).
-function scanOpportunity(md) {
+// 개별 종목 시세(md) + 수급(flow, KR만·선택) → §4 급락 매수 기회만 판정. 결정론(LLM 무관).
+// 트리거 없으면 🟢(자가 치유용). 가격 상승(52주/RSI 고점)은 매도/차익 신호로 쓰지 않는다
+// (Frank 철학 — 펀더멘털 우선). flow(외국인·기관 순매수)는 가격 트리거의 보조 확인 신호일
+// 뿐 단독 트리거로 쓰지 않는다 — 컨빅션 텍스트만 보강(신호 색상·enum은 불변).
+function scanOpportunity(md, flow) {
   if (!md) return null;
   const { rsi14, pos52w, weekChange, currentPrice } = md;
-  const ev = JSON.stringify({ rsi14, pos52w, weekChange, currentPrice });
+  const flowEv = flow ? { flowDate: flow.date, frgnNetQty: flow.frgnNetQty, orgnNetQty: flow.orgnNetQty } : null;
+  const ev = JSON.stringify({ rsi14, pos52w, weekChange, currentPrice, flow: flowEv });
   // 급락 매수 기회 — 성향(급락매수 선호) 부합 → 🔴
   const dropHit = weekChange != null && weekChange <= OPP_BUY_DROP_PCT;
   const rsiLow = rsi14 != null && rsi14 <= OPP_RSI_LOW;
   if (dropHit || rsiLow) {
     const why = [dropHit ? `5일 ${weekChange}%` : null, rsiLow ? `RSI ${rsi14}` : null].filter(Boolean).join(' · ');
-    return { signal: '🔴', summary: `급락 매수 기회 — ${why}`,
-      detail: '§4 급락 매수 기회 트리거(단기 -10% 또는 RSI 30↓). Frank 급락매수 선호와 부합 — 펀더멘털 유효 시 적극 매수 검토(1회 500만원 이하).', ev };
+    // 쌍끌이 매수(외국인·기관 동시 순매수)면 수급이 가격 반등을 뒷받침 — 컨빅션 보강 문구만 추가.
+    // frgnNetQty/orgnNetQty가 null(파싱 실패·데이터 없음)이면 "순매도 우위"로 오표기하지 않도록
+    // flowKnown으로 구분(코드리뷰 지적 — null>0===false라 순매도와 데이터없음이 뒤섞이던 결함).
+    const flowKnown = flow && flow.frgnNetQty != null && flow.orgnNetQty != null;
+    const flowSupportive = flowKnown && flow.frgnNetQty > 0 && flow.orgnNetQty > 0;
+    const flowNote = !flow ? ''
+      : flowSupportive ? ` · 외국인·기관 쌍끌이 매수(${flow.date})`
+      : flowKnown ? ' · 수급은 아직 순매도 우위'
+      : ' · 수급 데이터 미제공';
+    const flowDetail = flow
+      ? ` 수급(최근 거래일 ${flow.date}): 외국인 순매수 ${flow.frgnNetQty?.toLocaleString('en-US') ?? '데이터없음'}주 · 기관 순매수 ${flow.orgnNetQty?.toLocaleString('en-US') ?? '데이터없음'}주.`
+      : '';
+    return { signal: '🔴', summary: `급락 매수 기회 — ${why}${flowNote}`,
+      detail: '§4 급락 매수 기회 트리거(단기 -10% 또는 RSI 30↓). Frank 급락매수 선호와 부합 — 펀더멘털 유효 시 적극 매수 검토(1회 500만원 이하).' + flowDetail, ev };
   }
   // 트리거 없음 — 🟢(이전 기회 신호 자가 해소용). 앱은 🟢 기회는 숨김.
   return { signal: '🟢', summary: '가격 트리거 없음',
-    detail: '', ev: JSON.stringify({ rsi14, pos52w, weekChange }) };
+    detail: '', ev };
 }
 
 function buildMacroPrompt(holdings, indicators, confirmedPrefsText) {
@@ -473,6 +489,15 @@ async function main() {
     const OPP_TYPES = new Set(['국내주식', '해외주식']);
     const oppTargets = holdings.filter(h => h.accounts.some(a => OPP_ACCTS.has(a.acct) && OPP_TYPES.has(a.type)));
     console.log(`\n💡 가격 기회 트리거 스캔 — 위탁·ISA 주식·ETF ${oppTargets.length}개`);
+    // KR 종목 수급(외국인/기관 순매수) 보조 신호 — KIS 크리덴셜 없으면 조용히 skip(가격 트리거는
+    // 그대로 동작, 컨빅션 보강 문구만 빠짐). 최상위 appkey(시세용) 재사용 — IRP 전용 키 아님.
+    let kisAuth = null;
+    if (hasKisCredentials()) {
+      try {
+        const { appkey, appsecret } = loadKisCredentials();
+        kisAuth = { appkey, appsecret, token: await getKisToken({ appkey, appsecret }) };
+      } catch (e) { console.log(`   ⚠ KIS 인증 실패 — 수급 신호 skip: ${e.message}`); }
+    }
     const oppRows = [];
     for (const h of oppTargets) {
       let md = null;
@@ -481,7 +506,12 @@ async function main() {
         else { const t = usTicker(h.name); if (t) md = fetchMarketData(t); }
       } catch { md = null; }
       if (!md) { console.log(`   · ${h.name}: 시세 미해결 — skip`); continue; }
-      const opp = scanOpportunity(md);
+      let flow = null;
+      if (h.market === 'KR' && kisAuth) {
+        try { const c = krStockCode(h.name); if (c) flow = await getKrInvestorFlow({ ...kisAuth, code: c }); }
+        catch (e) { console.log(`   · ${h.name}: 수급 조회 실패(가격 트리거만 사용) — ${e.message}`); }
+      }
+      const opp = scanOpportunity(md, flow);
       const row = [nowKST(), 'O', h.name, opp.signal, opp.summary, opp.detail, opp.ev, ''];
       oppRows.push(row);
       if (opp.signal !== '🟢') console.log(`   ${opp.signal} ${h.name}: ${opp.summary}`);

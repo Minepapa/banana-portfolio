@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import {
   parseKisExpiry, parseQuoteResponse, parseUsQuoteResponse, buildRealtimeRows, getKrQuote,
   getUsQuote, isKrMarketOpen, isUsMarketOpen, parseBalanceResponse, getAccountBalance,
-  loadIrpAccount,
+  loadIrpAccount, parseInvestorFlowResponse, getKrInvestorFlow,
 } from './kis.mjs';
 
 // fetch 모킹 헬퍼 — 호출마다 큐에서 다음 응답을 꺼내 반환.
@@ -313,4 +313,41 @@ test('loadIrpAccount: cano·acntPrdtCd는 있는데 IRP 전용 appkey/appsecret�
 
 test('loadIrpAccount: 파일 자체가 없으면 null(throw 안 함)', () => {
   assert.equal(loadIrpAccount('/nonexistent/path/kis-key.json'), null);
+});
+
+test('parseInvestorFlowResponse: output[0](최근 거래일)에서 외국인·기관 순매수 수량 추출', () => {
+  const flow = parseInvestorFlowResponse({
+    rt_cd: '0',
+    output: [
+      { stck_bsop_date: '20260724', frgn_ntby_qty: '-3428259', orgn_ntby_qty: '-3378638' },
+      { stck_bsop_date: '20260723', frgn_ntby_qty: '1299490', orgn_ntby_qty: '-120579' },
+    ],
+  });
+  assert.deepEqual(flow, { date: '20260724', frgnNetQty: -3428259, orgnNetQty: -3378638 });
+});
+
+test('parseInvestorFlowResponse: 순매수 수량 필드 누락이면 frgnNetQty/orgnNetQty는 null(0으로 추정 안 함)', () => {
+  const flow = parseInvestorFlowResponse({ rt_cd: '0', output: [{ stck_bsop_date: '20260724' }] });
+  assert.deepEqual(flow, { date: '20260724', frgnNetQty: null, orgnNetQty: null });
+});
+
+test('parseInvestorFlowResponse: output 비어있으면 null', () => {
+  assert.equal(parseInvestorFlowResponse({ rt_cd: '0', output: [] }), null);
+  assert.equal(parseInvestorFlowResponse({ rt_cd: '0' }), null);
+});
+
+test('parseInvestorFlowResponse: rt_cd 실패 코드면 throw(msg1 인용)', () => {
+  assert.throws(
+    () => parseInvestorFlowResponse({ rt_cd: '1', msg1: '조회할 자료가 없습니다' }),
+    /조회할 자료가 없습니다/
+  );
+});
+
+test('getKrInvestorFlow: 레이트리밋(EGW00201)이면 재시도 후 성공', async () => {
+  const fetchImpl = mockFetch([
+    { body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } },
+    { body: { rt_cd: '0', output: [{ stck_bsop_date: '20260724', frgn_ntby_qty: '100', orgn_ntby_qty: '-50' }] } },
+  ]);
+  const flow = await getKrInvestorFlow({ token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl, retryDelayMs: 1 });
+  assert.deepEqual(flow, { date: '20260724', frgnNetQty: 100, orgnNetQty: -50 });
 });

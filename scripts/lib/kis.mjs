@@ -195,6 +195,39 @@ export async function getUsQuote({ token, appkey, appsecret, excd, symb, fetchIm
   return parseUsQuoteResponse(json);
 }
 
+// 국내주식 투자자별 매매동향(외국인/기관 순매수) 조회. tr_id FHKST01010900. output은 최근 30
+// 영업일이 최신순으로 정렬돼 온다(실측 2026-07-26 확인: output[0].stck_bsop_date=20260724,
+// 조회 시점 기준 가장 최근 거래일) — output[0]만 사용. 확인:
+// github.com/koreainvestment/open-trading-api examples_llm/domestic_stock/inquire_investor.
+// code: 6자리 종목코드(scripts/lib/instruments.mjs krStockCode 결과).
+export async function getKrInvestorFlow({ token, appkey, appsecret, code, fetchImpl, retries, retryDelayMs }) {
+  const url = `${BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-investor`
+    + `?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=${encodeURIComponent(code)}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    authorization: `Bearer ${token}`,
+    appkey, appsecret,
+    tr_id: 'FHKST01010900',
+    custtype: 'P',
+  };
+  const json = await fetchKis(url, headers, code, { fetchImpl, retries, retryDelayMs });
+  return parseInvestorFlowResponse(json);
+}
+
+// KIS 투자자별 매매동향 원본 응답 → {date, frgnNetQty, orgnNetQty}(가장 최근 거래일만). 순수함수
+// — 테스트 가능. output이 비어있으면 null(당일 데이터는 장 종료 후 제공 — 유의사항 참고).
+export function parseInvestorFlowResponse(json) {
+  if (json?.rt_cd !== '0') throw new Error(`KIS 투자자매매동향 오류: ${json?.msg1 || json?.rt_cd || '알 수 없음'}`);
+  const latest = Array.isArray(json?.output) ? json.output[0] : null;
+  if (!latest) return null;
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+  return {
+    date: String(latest.stck_bsop_date ?? '').trim(),
+    frgnNetQty: num(latest.frgn_ntby_qty),
+    orgnNetQty: num(latest.orgn_ntby_qty),
+  };
+}
+
 // 국내 계좌 잔고조회(퇴직연금/IRP 포함 — KIS는 계좌상품코드(ACNT_PRDT_CD)로 계좌 종류를
 // 구분할 뿐 연금 전용 별도 API가 없다, 확인: github.com/koreainvestment/open-trading-api
 // examples_llm/domestic_stock/inquire_balance). tr_id TTTC8434R. cano/acntPrdtCd는
