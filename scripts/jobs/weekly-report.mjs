@@ -28,7 +28,7 @@ import { buildReportFacts } from '../lib/report-facts.mjs';
 import { buildBehaviorSignals } from '../lib/behavior-signals.mjs';
 import { renderPrefRows, PREF_SHEET, findExpiredPromotions } from '../lib/preferences.mjs';
 import { RISK_COL as R } from '../lib/sheet-contracts.mjs';
-import { filterObservations, claimViolations } from '../lib/llm-guard.mjs';
+import { filterObservations, claimViolationsInDoc } from '../lib/llm-guard.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { extractSummary } from './sync-reports.mjs';
@@ -353,7 +353,10 @@ async function main() {
   // ⑥-b 경고성 사후검증(2026-07 사고 대응) — 리포트가 "논리훼손"을 언급한 종목이 실제
   // B🔴 목록에 없으면 텔레그램 경고만(리포트 차단·수정은 안 함 — 산문 자체를 고치는 건
   // 과도하고, facts는 이미 결정론 주입이라 이 검증은 최후의 안전망일 뿐).
-  const reportClaims = claimViolations(md, /논리\s*훼손/, universe, bBreachNames);
+  // claimViolations(문서 전체)가 아니라 claimViolationsInDoc(줄 단위 + 부정문 제외)를 쓴다 —
+  // claimViolations를 리포트 전문에 그대로 쓰면 "논리 훼손 없음"(안전 신호) 한 줄 때문에
+  // 무관한 다른 섹션 종목명까지 전부 위반으로 오탐된다(2026-07-26 실사고: 15종목 오탐).
+  const reportClaims = claimViolationsInDoc(md, /논리\s*훼손/, universe, bBreachNames);
   if (reportClaims.length) collectWarning(`주간리포트 자동검증: "논리훼손" 언급이 B🔴 신호와 불일치 — ${reportClaims.join(', ')}`);
 
   // ⑦ 파일 저장

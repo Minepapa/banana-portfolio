@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   coerceEnum, extractSignal, mentionedNames, unknownMentions, claimViolations,
-  clampLen, filterObservations, SIGNAL_EMOJI, CONFIDENCE,
+  claimViolationsInDoc, clampLen, filterObservations, SIGNAL_EMOJI, CONFIDENCE,
 } from './llm-guard.mjs';
 
 test('coerceEnum: 정확값 통과·변형 흡수·목록밖은 fallback+coerced', () => {
@@ -46,6 +46,67 @@ test('claimViolations: 사고 회귀 — "논리훼손(B) 종목(SK하이닉스)
   assert.deepEqual(claimViolations(text, claimRe, universe, ['SK하이닉스']), []);
   // 주장 자체가 없으면(claimRe 미매치) 검사 안 함
   assert.deepEqual(claimViolations('SK하이닉스 급락 매수', claimRe, universe, []), []);
+});
+
+test('claimViolationsInDoc: 사고 회귀 — "논리 훼손 없음"(부정문)은 문서 전체를 오염시키지 않음', () => {
+  // 2026-07-26 실사고 재현: claimViolations(문서 전체)를 그대로 쓰면 이 한 줄 때문에
+  // 무관한 다른 줄의 종목명(테슬라 등)까지 전부 위반으로 잡혔다.
+  const universe = ['SK하이닉스', '삼성전자', '테슬라'];
+  const doc = [
+    '## 국내주식',
+    '삼성전자·SK하이닉스 논리 훼손 없음 — 저비중 구간',
+    '## 해외주식',
+    '테슬라 급락 매수 창구 열림, 논리(B) 🟢 유지',
+  ].join('\n');
+  assert.deepEqual(claimViolationsInDoc(doc, /논리\s*훼손/, universe, []), []);
+});
+
+test('claimViolationsInDoc: 실제 위반(부정문 아님)은 여전히 잡힘, 같은 줄 종목만', () => {
+  const universe = ['SK하이닉스', '삼성전자', '테슬라'];
+  const doc = [
+    '삼성전자는 정상.',
+    '🔴 논리훼손(B) 종목(SK하이닉스)에 대규모 매수 후 미매도 지속',
+    '테슬라는 급락매수 트리거 발동',
+  ].join('\n');
+  // SK하이닉스가 실제 B🔴 목록에 없으면 위반, 다른 줄의 삼성전자·테슬라는 안 섞임
+  assert.deepEqual(claimViolationsInDoc(doc, /논리\s*훼손/, universe, []), ['SK하이닉스']);
+  assert.deepEqual(claimViolationsInDoc(doc, /논리\s*훼손/, universe, ['SK하이닉스']), []);
+});
+
+test('claimViolationsInDoc: "~이 아니다" 부정형도 제외', () => {
+  const universe = ['현대차'];
+  const doc = '하락의 주범은 국내주식이며 이는 시장 리스크지 현대차 개별 논리 훼손이 아니다.';
+  assert.deepEqual(claimViolationsInDoc(doc, /논리\s*훼손/, universe, []), []);
+});
+
+test('claimViolationsInDoc: claimRe 매치 없으면 빈 배열', () => {
+  assert.deepEqual(claimViolationsInDoc('SK하이닉스 급락 매수', /논리\s*훼손/, ['SK하이닉스'], []), []);
+});
+
+test('claimViolationsInDoc: 한 줄에 부정+긍정 섞이면 진짜 주장(SK하이닉스)을 놓치지 않음(코드리뷰 지적 회귀) — 같은 줄의 부정 대상(삼성전자)까지 함께 잡히는 건 과잉 경보 쪽으로 허용된 트레이드오프', () => {
+  const universe = ['삼성전자', 'SK하이닉스'];
+  const doc = '삼성전자 논리 훼손 없음, 그리고 SK하이닉스 논리 훼손 발생';
+  const result = claimViolationsInDoc(doc, /논리\s*훼손/, universe, []);
+  // 핵심 회귀 대상: 뒤쪽 진짜 주장(SK하이닉스)을 절대 놓치면 안 됨(줄 단위 첫 매치만 보던
+  // 이전 버전은 이걸 놓쳤다 — false negative, 안전망 무력화).
+  assert.ok(result.includes('SK하이닉스'));
+});
+
+test('claimViolationsInDoc: "없으며"·"없었다"·"없고"·"없는" 등 부정 활용형도 제외(코드리뷰 지적 회귀)', () => {
+  const universe = ['삼성전자'];
+  for (const suffix of ['없으며', '없었다', '없고', '없는 상태']) {
+    const doc = `삼성전자 논리 훼손 ${suffix}`;
+    assert.deepEqual(claimViolationsInDoc(doc, /논리\s*훼손/, universe, []), [], `실패: ${suffix}`);
+  }
+});
+
+test('claimViolationsInDoc: claimRe에 g 플래그가 있어도 안전(lastIndex 공유 버그 방지)', () => {
+  const universe = ['SK하이닉스'];
+  const globalRe = /논리\s*훼손/g;
+  const doc = '🔴 논리훼손(B) 종목(SK하이닉스)에 대규모 매수 후 미매도 지속';
+  // 같은 g 정규식으로 두 번 호출해도 결과가 매번 동일해야 함(lastIndex가 안 남아야 함)
+  assert.deepEqual(claimViolationsInDoc(doc, globalRe, universe, []), ['SK하이닉스']);
+  assert.deepEqual(claimViolationsInDoc(doc, globalRe, universe, []), ['SK하이닉스']);
 });
 
 test('clampLen: 길이 제한 + 말줄임', () => {
