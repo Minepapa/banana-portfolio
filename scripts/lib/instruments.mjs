@@ -29,22 +29,22 @@ const KR_ALIAS = {
   '현대차': '현대자동차',
 };
 
+// US_MAP(수동 등록) 우선 → 실패 시 해외종목마스터(아래) 폴백. "아마존"처럼 시트/평가의뢰의
+// 관용 단축명이 마스터파일의 정식 한글명("아마존닷컴")과 다른 경우가 있어 US_MAP을 여전히
+// 1순위로 둔다(2026-07 실측 발견).
 export function usTicker(name) {
-  return US_MAP[norm(name)] ?? null;
+  return US_MAP[norm(name)] ?? usMasterTicker(name);
 }
 
-// 티커 → KIS 해외주식 거래소코드(EXCD: NAS/NYS/AMS 등). US_MAP과 동일한 원칙으로 명시
-// 등록만 신뢰한다(파일 상단 주석의 "매핑 실패는 절대 추정하지 않는다" 원칙 — 기본값을
-// 'NAS'로 추정하면, 미래에 NYSE 종목을 US_MAP에 등록하고 여기 등록을 깜빡했을 때 조용히
-// 틀린 거래소로 조회돼(같은 티커가 여러 거래소에 동시 상장된 경우 엉뚱한 종목의 가격이
-// 조용히 나올 수 있음) 환각 차단 원칙이 깨진다. 신규 티커 등록 시 US_MAP과 함께 여기도
-// 등록할 것 — 누락하면 실시간시세 잡이 조용히 스킵하는 대신 collectWarning으로 드러난다.
+// 티커 → KIS 해외주식 거래소코드(EXCD: NAS/NYS/AMS 등). US_EXCD_MAP(수동) 우선 → 실패 시
+// 마스터파일 폴백(마스터파일 자체에 거래소코드 컬럼이 있어 티커와 함께 확보됨). 명시 등록이든
+// 마스터파일이든 "추정 안 함" 원칙은 동일 — 둘 다 실패하면 null.
 const US_EXCD_MAP = {
   AAPL: 'NAS', TSLA: 'NAS', NVDA: 'NAS', GOOGL: 'NAS', MU: 'NAS', MSFT: 'NAS', AMZN: 'NAS',
 };
 
 export function usExchange(ticker) {
-  return US_EXCD_MAP[ticker] ?? null;
+  return US_EXCD_MAP[ticker] ?? usMasterExcd(ticker);
 }
 
 export function parseCorpCodeXml(xml) {
@@ -167,7 +167,7 @@ function downloadKisMasterCodes() {
   const map = {};
   for (const m of KIS_MST_URLS) {
     const zip = join(CACHE_DIR, `${m.file}.zip`);
-    execSync(`curl -sfL "${m.url}" -o "${zip}"`);
+    execSync(`curl -sfL --connect-timeout 10 --max-time 30 "${m.url}" -o "${zip}"`);
     execSync(`unzip -o -q "${zip}" -d "${CACHE_DIR}"`);
     const mstPath = join(CACHE_DIR, m.file);
     const utf8 = execSync(`iconv -f cp949 -t utf-8//IGNORE "${mstPath}"`, { maxBuffer: 32 * 1024 * 1024 }).toString('utf8');
@@ -217,4 +217,101 @@ export function krStockCode(name, apiKey = process.env.DART_API_KEY) {
   const dartResult = cache ? lookupField(cache, dartName, 'stock') : null;
   if (dartResult) return dartResult;
   return kisMasterStockCode(name);
+}
+
+// ── 해외종목마스터(나스닥·뉴욕·아멕스) — US_MAP/US_EXCD_MAP 폴백용 ─────────────
+// US_MAP은 수동 등록 목록이라 신규 관심종목마다 코드에 한 줄 추가해야 했다. 한국투자증권이
+// 인증 없이 공개하는 해외종목마스터 파일(나스닥/뉴욕/아멕스, 한글명 컬럼 포함)이 KOSPI/KOSDAQ
+// 마스터와 같은 서버에 있어 동일 패턴으로 폴백 가능하다(2026-07 발견 — Frank가 "API로
+// 해외종목도 검색되지 않냐"고 지적해 재조사, 처음엔 시세·거래 API 폴더만 봐서 "불가능"으로
+// 잘못 결론 냈었음 — 리포지토리 최상위 stocks_info 폴더에 마스터파일 다운로더가 따로 있었음).
+// 출처: github.com/koreainvestment/open-trading-api stocks_info/overseas_stock_code.py
+//
+// 국내 마스터와 달리 탭 구분(24컬럼) 고정 레이아웃이라 앵커 정규식이 필요 없다 — 실측
+// 확인(2026-07): 5번째 컬럼(0-idx 4)=Symbol, 3번째(0-idx 2)=Exchange code(NAS/NYS/AMS),
+// 7번째(0-idx 6)=Korea name. "애플→AAPL/NAS", "테슬라→TSLA/NAS", "비자→V/NYS" 등 확인.
+// 아멕스(ETF 위주) 종목은 Korea name 컬럼에 실제로는 영문 설명이 들어있는 행이 많음(한국어
+// 트래킹이 없는 소형 ETF) — 문제없음, 어차피 문자열 키로만 쓰여 언어 무관하게 동작.
+const US_MST_URLS = [
+  { url: 'https://new.real.download.dws.co.kr/common/master/nasmst.cod.zip', file: 'nasmst.cod' },
+  { url: 'https://new.real.download.dws.co.kr/common/master/nysmst.cod.zip', file: 'nysmst.cod' },
+  { url: 'https://new.real.download.dws.co.kr/common/master/amsmst.cod.zip', file: 'amsmst.cod' },
+];
+const US_MST_CACHE_FILE = join(CACHE_DIR, 'us-mst.json');
+
+// 마스터 파일 원문(탭 구분, UTF-8 변환 후) → {nameToTicker: {한글명: 티커}, tickerToExcd:
+// {티커: 거래소코드}}. 순수함수 — 테스트 가능. 충돌(동일 이름이 다른 티커, 동일 티커가
+// 다른 거래소)은 mergeMstEntry로 null 고착 — 국내 마스터와 동일 원칙.
+export function parseUsMasterText(text) {
+  const nameToTicker = {};
+  const tickerToExcd = {};
+  for (const rawRow of String(text ?? '').split('\n')) {
+    const row = rawRow.replace(/\r$/, '');
+    if (!row.trim()) continue;
+    const cols = row.split('\t');
+    if (cols.length < 8) continue;
+    const excd = cols[2].trim();
+    const ticker = cols[4].trim();
+    const name = cols[6].trim();
+    if (!ticker || !excd) continue;
+    mergeMstEntry(tickerToExcd, ticker, excd);
+    if (name.length >= 2) mergeMstEntry(nameToTicker, name, ticker);
+  }
+  return { nameToTicker, tickerToExcd };
+}
+
+// 나스닥+뉴욕+아멕스 마스터 다운로드·병합. curl/unzip/iconv 셸아웃(국내 마스터와 동일 이유
+// — python urllib SSL 문제 전례). 파일 간 병합도 mergeMstEntry로 두 지도 모두 처리.
+function downloadUsMasterCodes() {
+  mkdirSync(CACHE_DIR, { recursive: true });
+  const nameToTicker = {};
+  const tickerToExcd = {};
+  for (const m of US_MST_URLS) {
+    const zip = join(CACHE_DIR, `${m.file}.zip`);
+    execSync(`curl -sfL --connect-timeout 10 --max-time 30 "${m.url}" -o "${zip}"`);
+    execSync(`unzip -o -q "${zip}" -d "${CACHE_DIR}"`);
+    const mstPath = join(CACHE_DIR, m.file);
+    const utf8 = execSync(`iconv -f cp949 -t utf-8//IGNORE "${mstPath}"`, { maxBuffer: 32 * 1024 * 1024 }).toString('utf8');
+    const parsed = parseUsMasterText(utf8);
+    for (const [name, ticker] of Object.entries(parsed.nameToTicker)) mergeMstEntry(nameToTicker, name, ticker);
+    for (const [ticker, excd] of Object.entries(parsed.tickerToExcd)) mergeMstEntry(tickerToExcd, ticker, excd);
+  }
+  return { nameToTicker, tickerToExcd };
+}
+
+// 캐시(30일) 보장 후 두 지도 반환. 실패/빈 결과는 캐시 안 함(국내 마스터와 동일 원칙 —
+// 레이아웃 변경 등으로 파싱이 비면 30일간 재시도 없이 고착되는 걸 막음).
+function usMasterMaps() {
+  if (existsSync(US_MST_CACHE_FILE)) {
+    try {
+      const c = JSON.parse(readFileSync(US_MST_CACHE_FILE, 'utf8'));
+      if (Date.now() - c.fetchedAt < 30 * 86400e3) return c;
+    } catch { /* 캐시 손상 — 재다운로드로 폴백 */ }
+  }
+  try {
+    const fresh = downloadUsMasterCodes();
+    if (!Object.keys(fresh.nameToTicker).length) return null;
+    const record = { fetchedAt: Date.now(), ...fresh };
+    writeFileSync(US_MST_CACHE_FILE, JSON.stringify(record));
+    return record;
+  } catch { return null; }   // 다운로드 실패(네트워크 등) — 추정 없이 null
+}
+
+function usMasterTicker(name) {
+  const maps = usMasterMaps();
+  if (!maps) return null;
+  const target = norm(name);
+  let found = null;
+  for (const [mstName, ticker] of Object.entries(maps.nameToTicker)) {
+    if (norm(mstName) !== target) continue;
+    if (ticker === null) return null;
+    if (found && found !== ticker) return null;
+    found = ticker;
+  }
+  return found;
+}
+
+function usMasterExcd(ticker) {
+  const maps = usMasterMaps();
+  return maps ? (maps.tickerToExcd[ticker] ?? null) : null;
 }

@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { usTicker, usExchange, parseCorpCodeXml, lookupField, parseKisMasterText, mergeMstEntry } from './instruments.mjs';
+import {
+  usTicker, usExchange, parseCorpCodeXml, lookupField, parseKisMasterText, mergeMstEntry,
+  parseUsMasterText,
+} from './instruments.mjs';
 
 // KIS 종목마스터 행 조립 헬퍼(테스트용) — 실 레이아웃: 0:9=단축코드, 9:21=표준코드,
 // 21:=한글명(그룹코드 앵커 전까지). groupCode는 실측대로 이름에 공백 없이 바로 붙는 경우
@@ -8,17 +11,54 @@ import { usTicker, usExchange, parseCorpCodeXml, lookupField, parseKisMasterText
 const kisRow = (code, name, { std = 'KR7000000000', groupCode = 'EF', pad = 0 } = {}) =>
   code.padEnd(9) + std.padEnd(12) + name + ' '.repeat(pad) + groupCode + '000000000000';
 
-test('usTicker: 한글명→티커, 공백·대소문자 정규화', () => {
+// 해외종목마스터 행 조립 헬퍼(테스트용) — 실측 탭 구분 24컬럼 레이아웃 재현(0-idx):
+// 2=Exchange code, 4=Symbol, 6=Korea name. 나머지 컬럼은 최소한만 채움(파서가 안 씀).
+const usRow = (ticker, name, excd = 'NAS') =>
+  ['US', '22', excd, '거래소명', ticker, `${excd}${ticker}`, name, 'ENGLISH NAME', '2', 'USD']
+    .concat(Array(14).fill('')).join('\t');
+
+// usTicker/usExchange는 US_MAP(수동 맵)에 없으면 해외종목마스터 다운로드로 폴백하는데,
+// 이건 네트워크 I/O라 유닛테스트에서 직접 호출하면 안 된다(krStockCode의 KIS 마스터
+// 폴백과 동일 원칙 — 이 파일이 impure I/O 경로를 직접 테스트하지 않는 이유). US_MAP에
+// 등록된 값(폴백까지 안 감, 순수 dict lookup)만 테스트하고, 폴백 로직 자체는
+// parseUsMasterText(순수 파서)로 따로 검증한다.
+test('usTicker: US_MAP 등록값은 한글명→티커, 공백·대소문자 정규화(네트워크 폴백 안 탐)', () => {
   assert.equal(usTicker('애플'), 'AAPL');
   assert.equal(usTicker('알파벳 Class A'), 'GOOGL');
   assert.equal(usTicker('알파벳  class a'), 'GOOGL');
-  assert.equal(usTicker('없는종목'), null);
 });
 
-test('usExchange: 등록된 티커는 거래소코드 반환, 미등록은 null(추정 금지)', () => {
+test('usExchange: US_EXCD_MAP 등록된 티커는 거래소코드 반환(네트워크 폴백 안 탐)', () => {
   assert.equal(usExchange('TSLA'), 'NAS');
   assert.equal(usExchange('AAPL'), 'NAS');
-  assert.equal(usExchange('없는티커'), null);
+});
+
+test('parseUsMasterText: 실측 레이아웃(탭 구분 24컬럼)에서 티커·거래소코드 추출', () => {
+  const text = [usRow('AAPL', '애플'), usRow('V', '비자', 'NYS')].join('\n');
+  const { nameToTicker, tickerToExcd } = parseUsMasterText(text);
+  assert.equal(nameToTicker['애플'], 'AAPL');
+  assert.equal(nameToTicker['비자'], 'V');
+  assert.equal(tickerToExcd['AAPL'], 'NAS');
+  assert.equal(tickerToExcd['V'], 'NYS');
+});
+
+test('parseUsMasterText: 동일 한글명이 다른 티커로 나오면 null 고착(DART·KIS 마스터와 동일 원칙)', () => {
+  const text = [usRow('DUPE1', '중복종목'), usRow('DUPE2', '중복종목')].join('\n');
+  assert.equal(parseUsMasterText(text).nameToTicker['중복종목'], null);
+});
+
+test('parseUsMasterText: 컬럼 부족(깨진 행)·빈 줄은 조용히 skip', () => {
+  const text = ['짧은행', '', usRow('AAPL', '애플')].join('\n');
+  const { nameToTicker } = parseUsMasterText(text);
+  assert.equal(Object.keys(nameToTicker).length, 1);
+  assert.equal(nameToTicker['애플'], 'AAPL');
+});
+
+test('parseUsMasterText: 한글명이 1자면 신뢰 안 함(오탐 방어, 국내 마스터와 동일 원칙)', () => {
+  const text = usRow('X', 'A');
+  assert.equal(Object.keys(parseUsMasterText(text).nameToTicker).length, 0);
+  // 다만 tickerToExcd는 이름 길이와 무관하게(티커 자체는 항상 신뢰 가능) 채워짐
+  assert.equal(parseUsMasterText(text).tickerToExcd['X'], 'NAS');
 });
 
 test('parseCorpCodeXml: 상장사만 corp_code 매핑', () => {
