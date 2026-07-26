@@ -228,6 +228,90 @@ export function parseInvestorFlowResponse(json) {
   };
 }
 
+// 국내주식 종목투자의견(증권사별 투자의견+목표주가) 조회. tr_id FHKST663300C0. 날짜범위 필수
+// (KIS 스펙) — 기본 최근 90일. output은 발행일 역순(최신 먼저)이며 같은 브로커가 재수정
+// 리포트를 여러 건 낼 수 있어 원본 그대로 반환(중복제거는 summarizeInvestOpinion 담당).
+// mbcr_name(회원사명) 필드는 공식 예제 chk_invest_opinion.py의 COLUMN_MAPPING엔 없지만 실제
+// 응답엔 존재(2026-07 라이브 확인) — 문서보다 실측을 신뢰. 확인:
+// github.com/koreainvestment/open-trading-api examples_llm/domestic_stock/invest_opinion.
+// code: 6자리 종목코드. 페이지네이션(tr_cont='M') 미구현 — dayWindow 기본값(90일)에서는
+// 관측된 데이터량(삼성전자 53건)이 KIS 1페이지 한도 내라 지금은 불필요(다른 KIS 래퍼도 동일 한계).
+export async function getKrInvestOpinion({ token, appkey, appsecret, code, dayWindow = 90, fetchImpl, retries, retryDelayMs, now = new Date() }) {
+  const ymd = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  const from = new Date(now.getTime() - dayWindow * 86400000);
+  const params = new URLSearchParams({
+    FID_COND_MRKT_DIV_CODE: 'J',
+    FID_COND_SCR_DIV_CODE: '16633',
+    FID_INPUT_ISCD: code,
+    FID_INPUT_DATE_1: ymd(from),
+    FID_INPUT_DATE_2: ymd(now),
+  });
+  const url = `${BASE_URL}/uapi/domestic-stock/v1/quotations/invest-opinion?${params}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    authorization: `Bearer ${token}`,
+    appkey, appsecret,
+    tr_id: 'FHKST663300C0',
+    custtype: 'P',
+  };
+  const json = await fetchKis(url, headers, code, { fetchImpl, retries, retryDelayMs });
+  return parseInvestOpinionResponse(json);
+}
+
+// KIS 종목투자의견 원본 응답 → [{date, firm, opinion, targetPrice}, ...](발행일 역순 원본 그대로).
+// 순수함수 — 테스트 가능. date·firm 중 하나라도 없는 행은 집계에 쓸 수 없어 스킵(전체 throw 안 함).
+export function parseInvestOpinionResponse(json) {
+  if (json?.rt_cd !== '0') throw new Error(`KIS 투자의견 오류: ${json?.msg1 || json?.rt_cd || '알 수 없음'}`);
+  const rows = Array.isArray(json?.output) ? json.output : [];
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+  return rows
+    .map(r => ({
+      date: String(r?.stck_bsop_date ?? '').trim(),
+      firm: String(r?.mbcr_name ?? '').trim(),
+      opinion: String(r?.invt_opnn ?? '').trim(),
+      targetPrice: num(r?.hts_goal_prc),
+    }))
+    .filter(r => r.date && r.firm);
+}
+
+// 투자의견 텍스트(한글/영문 혼용 — 실측: "매수"/"BUY"/"중립"/"HOLD" 등, 비중확대·Overweight류
+// 국내 증권사 관행 표현도 포함) → buy|hold|sell|other. KIS가 invt_opnn_cls_code 코드값 의미를
+// 공식 문서에 안 밝혀 텍스트 매칭으로 분류한다.
+function classifyOpinion(text) {
+  if (/매수|BUY|비중\s*확대|OVERWEIGHT|OUTPERFORM/i.test(text)) return 'buy';
+  if (/매도|SELL|비중\s*축소|UNDERWEIGHT|UNDERPERFORM/i.test(text)) return 'sell';
+  if (/중립|보유|HOLD|NEUTRAL/i.test(text)) return 'hold';
+  return 'other';
+}
+
+// 브로커별 투자의견 리스트 → 컨센서스 요약(브로커당 최신 1건으로 중복제거). currentPrice는 KIS
+// 자체 괴리율 필드(dprt/nday_dprt — 산출 기준이 공식 문서에 없어 신뢰 불가) 대신 이미 검증된
+// 자체 시세(fundamentals.mjs fetchMarketData currentPrice)로 직접 계산 — 가격의 단일 진실
+// 소스를 유지(리포트마다 발행일의 전일종가가 달라 시점이 제각각인 stck_prdy_clpr도 배제).
+// 순수함수 — 테스트 가능. 리포트 0건이면 null(데이터 없음, 0으로 추정 안 함).
+export function summarizeInvestOpinion(rows, currentPrice) {
+  const latestByFirm = new Map();
+  for (const r of (rows || [])) {
+    const prev = latestByFirm.get(r.firm);
+    if (!prev || r.date > prev.date) latestByFirm.set(r.firm, r);
+  }
+  const uniq = [...latestByFirm.values()];
+  if (!uniq.length) return null;
+  const counts = { buy: 0, hold: 0, sell: 0, other: 0 };
+  const targets = [];
+  let latestDate = '';
+  for (const r of uniq) {
+    counts[classifyOpinion(r.opinion)]++;
+    if (r.targetPrice != null && r.targetPrice > 0) targets.push(r.targetPrice);
+    if (r.date > latestDate) latestDate = r.date;
+  }
+  const avgTargetPrice = targets.length ? Math.round(targets.reduce((s, v) => s + v, 0) / targets.length) : null;
+  const targetGapPct = (avgTargetPrice != null && Number.isFinite(currentPrice) && currentPrice > 0)
+    ? Math.round((avgTargetPrice - currentPrice) / currentPrice * 1000) / 10
+    : null;
+  return { reportCount: uniq.length, opinionCounts: counts, avgTargetPrice, targetGapPct, latestDate };
+}
+
 // 국내 계좌 잔고조회(퇴직연금/IRP 포함 — KIS는 계좌상품코드(ACNT_PRDT_CD)로 계좌 종류를
 // 구분할 뿐 연금 전용 별도 API가 없다, 확인: github.com/koreainvestment/open-trading-api
 // examples_llm/domestic_stock/inquire_balance). tr_id TTTC8434R. cano/acntPrdtCd는

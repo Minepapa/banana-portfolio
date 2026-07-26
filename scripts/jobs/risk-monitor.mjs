@@ -32,7 +32,7 @@ import {
 import { renderPrefRows, prefBlock, PREF_SHEET } from '../lib/preferences.mjs';
 import { fetchKrFundamentals, fetchUsFundamentals, checkGuardrails, fetchMacroIndicators, fetchMarketData, fetchKrMarketData } from '../lib/fundamentals.mjs';
 import { krCorpCode, usTicker, krStockCode } from '../lib/instruments.mjs';
-import { hasKisCredentials, loadKisCredentials, getKisToken, getKrInvestorFlow } from '../lib/kis.mjs';
+import { hasKisCredentials, loadKisCredentials, getKisToken, getKrInvestorFlow, getKrInvestOpinion, summarizeInvestOpinion } from '../lib/kis.mjs';
 import { extractSignal, clampLen } from '../lib/llm-guard.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { RISK_HEADER } from '../lib/sheet-contracts.mjs';
@@ -194,7 +194,7 @@ function fmtMacro(key, o) {
 // ── B 모드: 논리 훼손 프롬프트 (종목별) — 판단 전용 ─────────────────
 // 숫자는 Node가 OpenDart/yfinance에서 조회·계산해 주입한다. LLM은 재조회·재계산 금지,
 // 주입된 수치로 "전제가 깨졌는가"만 판단. (환각 차단의 핵심: raw 숫자는 LLM이 만들지 않음)
-function buildLogicPrompt(h, facts, guardrails, baseline, buyCard, confirmedPrefsText) {
+function buildLogicPrompt(h, facts, guardrails, baseline, buyCard, confirmedPrefsText, opinion) {
   const baseLine = baseline
     ? `[저장된 기준선 (${baseline.date})]
 매출총이익률 ${baseline.gross_margin} · 영업이익률 ${baseline.operating_margin} · ROE ${baseline.roe} · 부채비율 ${baseline.debt_ratio} · EPS ${baseline.eps} · PBR ${baseline.pbr || '데이터 부족'}
@@ -206,6 +206,13 @@ function buildLogicPrompt(h, facts, guardrails, baseline, buyCard, confirmedPref
 근거: ${(buyCard.reasons || []).join(' / ') || '(미기록)'}
 리스크: ${(buyCard.risks || []).join(' / ') || '(미기록)'}`
     : '[매수 논리] 종목투자노트에 없음 — 기준선 대비 변화만 판단';
+  // KR만(KIS 국내주식 전용 API). 목표주가 컨센서스는 밸류에이션 참고정보일 뿐 단독 신호
+  // 금지 원칙(펀더멘털 우선)을 지키기 위해 판단 규칙에서도 명시적으로 "참고만" 못박는다.
+  const opinionLine = opinion
+    ? `[증권사 투자의견 컨센서스 (${opinion.latestDate}, 최근 90일·브로커 ${opinion.reportCount}곳 — 참고정보, 단독 신호 아님)]
+매수 ${opinion.opinionCounts.buy} · 중립 ${opinion.opinionCounts.hold} · 매도 ${opinion.opinionCounts.sell}${opinion.opinionCounts.other ? ` · 기타 ${opinion.opinionCounts.other}` : ''}
+평균 목표주가 ${opinion.avgTargetPrice ?? '데이터 부족'}${opinion.targetGapPct != null ? ` (현재가 대비 ${opinion.targetGapPct >= 0 ? '+' : ''}${opinion.targetGapPct}%)` : ''}`
+    : '';
 
   return `[논리 훼손 점검 — 주간] 보유종목의 매수 논리가 펀더멘털상 훼손됐는지 "판단만" 해줘.
 
@@ -221,12 +228,15 @@ ${baseLine}
 
 ${cardLine}
 
+${opinionLine}
+
 ${prefBlock(confirmedPrefsText)}
 
 판단 규칙:
 - 위 검증된 수치와 기준선/매수논리를 비교해 "매수 근거의 핵심 전제가 깨졌는가"만 판단.
 - 신호: 🟢 논리 유효 / 🟡 약화·주의 / 🔴 훼손(매도 평가 필요)
-- 단순 주가 하락·52주/RSI 과열은 단독 신호 금지(펀더멘털 우선).
+- 단순 주가 하락·52주/RSI 과열은 단독 신호 금지(펀더멘털 우선). 증권사 투자의견 컨센서스도
+  동일 원칙 — 목표가 괴리·의견 분포만으로 신호를 올리지 말 것(펀더멘털 판단의 참고자료일 뿐).
 - summary·detail에 쓰는 모든 숫자는 위 JSON 값 그대로 인용(단위·부호 변형 금지).
 - signal 값은 🟢|🟡|🔴 셋 중 하나만 출력(그 외 값은 시스템이 🟡로 강등).
 
@@ -372,6 +382,20 @@ async function pruneRiskSheet(token, monitoredNames) {
   console.log(`🧹 시트 정리: ${rows.length} → ${kept.length}행 (-${removed})`);
 }
 
+// KIS 인증(최상위 appkey — 시세·수급·투자의견 공용, IRP 전용 키 아님) — D모드 O신호(수급)와
+// B모드(투자의견 팩트)가 공유. 크리덴셜 없거나 인증 실패면 null(호출측이 조용히 KIS 보조
+// 신호를 skip — 가격/펀더멘털 판정 자체는 KIS 없이도 동작해야 하므로 throw하지 않는다).
+async function loadKisAuth() {
+  if (!hasKisCredentials()) return null;
+  try {
+    const { appkey, appsecret } = loadKisCredentials();
+    return { appkey, appsecret, token: await getKisToken({ appkey, appsecret }) };
+  } catch (e) {
+    console.log(`   ⚠ KIS 인증 실패 — KIS 보조 신호 skip: ${e.message}`);
+    return null;
+  }
+}
+
 async function main() {
   console.log(`🛡️  리스크 모니터 — 모드 ${MODE} (${MODE === 'D' ? '거시/일간' : '논리훼손/주간'})`);
   if (DRY_RUN) console.log('   (--dry-run: 프롬프트만 출력)');
@@ -489,15 +513,7 @@ async function main() {
     const OPP_TYPES = new Set(['국내주식', '해외주식']);
     const oppTargets = holdings.filter(h => h.accounts.some(a => OPP_ACCTS.has(a.acct) && OPP_TYPES.has(a.type)));
     console.log(`\n💡 가격 기회 트리거 스캔 — 위탁·ISA 주식·ETF ${oppTargets.length}개`);
-    // KR 종목 수급(외국인/기관 순매수) 보조 신호 — KIS 크리덴셜 없으면 조용히 skip(가격 트리거는
-    // 그대로 동작, 컨빅션 보강 문구만 빠짐). 최상위 appkey(시세용) 재사용 — IRP 전용 키 아님.
-    let kisAuth = null;
-    if (hasKisCredentials()) {
-      try {
-        const { appkey, appsecret } = loadKisCredentials();
-        kisAuth = { appkey, appsecret, token: await getKisToken({ appkey, appsecret }) };
-      } catch (e) { console.log(`   ⚠ KIS 인증 실패 — 수급 신호 skip: ${e.message}`); }
-    }
+    const kisAuth = await loadKisAuth();
     const oppRows = [];
     for (const h of oppTargets) {
       let md = null;
@@ -585,19 +601,21 @@ async function main() {
   // 종목당 claude 1회 — 가장 무거운 배치. 쿨다운 중이면 호출 안 함(시트 정리만 하고 종료).
   if (!DRY_RUN && cooldownActive()) { await pruneRiskSheet(token, monitoredNames); return; }
   if (!DRY_RUN) await ensureSheet(token, THESIS_RELEASE_SHEET, THESIS_RELEASE_HEADER);
+  // KR 종목 증권사 투자의견 컨센서스(참고정보) — D모드 수급 신호와 동일 인증 재사용.
+  const kisAuth = await loadKisAuth();
   let ok = 0, fail = 0, alerts = 0;
   for (const h of targets) {
     const baseline = bMap.get(h.name) || null;
     const buyCard = findBuyCard(noteRows, h.name);
 
     // ① 결정론 데이터 조회 — 실패 시 LLM 호출 없이 '데이터 부족' 행(침묵 실패 방지)
-    let facts = null, fetchErr = null;
+    let facts = null, fetchErr = null, stockCode = null;
     try {
       if (h.market === 'KR') {
         const code = krCorpCode(h.name);
         if (!code) throw new Error(`corp_code 미해결: ${h.name}`);
-        const sc = krStockCode(h.name);
-        facts = await fetchKrFundamentals(code, undefined, undefined, sc);
+        stockCode = krStockCode(h.name);
+        facts = await fetchKrFundamentals(code, undefined, undefined, stockCode);
       } else {
         const tk = usTicker(h.name);
         if (!tk) throw new Error(`US 티커 미등록: ${h.name} — instruments.mjs US_MAP에 추가 필요`);
@@ -622,7 +640,17 @@ async function main() {
       baselineDebtRatio: baseline ? parseFloat(String(baseline.debt_ratio).replace(/[%,]/g, '')) || null : null,
     });
 
-    const prompt = buildLogicPrompt(h, facts, guardrails, baseline, buyCard, confirmedPrefsText);
+    // ③ 증권사 투자의견 컨센서스(KR만·참고정보) — 실패해도 펀더멘털 판정 자체는 막지 않는다.
+    let opinion = null;
+    if (h.market === 'KR' && kisAuth && stockCode) {
+      try {
+        const mkt = fetchKrMarketData(stockCode);
+        const rows = await getKrInvestOpinion({ ...kisAuth, code: stockCode });
+        opinion = summarizeInvestOpinion(rows, mkt?.currentPrice);
+      } catch (e) { console.log(`   · ${h.name}: 투자의견 조회 실패(펀더멘털 판정만 사용) — ${e.message}`); }
+    }
+
+    const prompt = buildLogicPrompt(h, facts, guardrails, baseline, buyCard, confirmedPrefsText, opinion);
     if (DRY_RUN) { console.log(`\n┌─── B 프롬프트 [${h.name}] ───┐\n` + prompt + '\n└──────────────────┘'); continue; }
     console.log(`\n⏳ ${h.name} 논리 판단 중... (수 분)`);
     try {

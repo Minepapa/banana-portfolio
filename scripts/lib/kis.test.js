@@ -7,6 +7,7 @@ import {
   parseKisExpiry, parseQuoteResponse, parseUsQuoteResponse, buildRealtimeRows, getKrQuote,
   getUsQuote, isKrMarketOpen, isUsMarketOpen, parseBalanceResponse, getAccountBalance,
   loadIrpAccount, parseInvestorFlowResponse, getKrInvestorFlow,
+  parseInvestOpinionResponse, summarizeInvestOpinion, getKrInvestOpinion,
 } from './kis.mjs';
 
 // fetch 모킹 헬퍼 — 호출마다 큐에서 다음 응답을 꺼내 반환.
@@ -350,4 +351,140 @@ test('getKrInvestorFlow: 레이트리밋(EGW00201)이면 재시도 후 성공', 
   ]);
   const flow = await getKrInvestorFlow({ token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl, retryDelayMs: 1 });
   assert.deepEqual(flow, { date: '20260724', frgnNetQty: 100, orgnNetQty: -50 });
+});
+
+test('parseInvestOpinionResponse: 정상 응답에서 브로커별 리포트 추출(발행일·회사명·의견·목표가)', () => {
+  const rows = parseInvestOpinionResponse({
+    rt_cd: '0',
+    output: [
+      { stck_bsop_date: '20260708', mbcr_name: 'IBK투자', invt_opnn: '매수', hts_goal_prc: '460000' },
+      { stck_bsop_date: '20260708', mbcr_name: '키움', invt_opnn: 'BUY', hts_goal_prc: '390000' },
+    ],
+  });
+  assert.deepEqual(rows, [
+    { date: '20260708', firm: 'IBK투자', opinion: '매수', targetPrice: 460000 },
+    { date: '20260708', firm: '키움', opinion: 'BUY', targetPrice: 390000 },
+  ]);
+});
+
+test('parseInvestOpinionResponse: 발행일·회사명 누락 행은 스킵(전체 throw 안 함)', () => {
+  const rows = parseInvestOpinionResponse({
+    rt_cd: '0',
+    output: [
+      { stck_bsop_date: '', mbcr_name: '키움', invt_opnn: 'BUY', hts_goal_prc: '390000' },
+      { stck_bsop_date: '20260708', mbcr_name: '', invt_opnn: 'BUY', hts_goal_prc: '390000' },
+      { stck_bsop_date: '20260708', mbcr_name: 'KB', invt_opnn: 'BUY', hts_goal_prc: '600000' },
+    ],
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].firm, 'KB');
+});
+
+test('parseInvestOpinionResponse: output 없으면 빈 배열, rt_cd 실패면 throw', () => {
+  assert.deepEqual(parseInvestOpinionResponse({ rt_cd: '0' }), []);
+  assert.throws(
+    () => parseInvestOpinionResponse({ rt_cd: '1', msg1: '조회할 자료가 없습니다' }),
+    /조회할 자료가 없습니다/
+  );
+});
+
+test('summarizeInvestOpinion: 브로커당 최신 1건만 반영(재수정 리포트 중복제거)', () => {
+  const rows = [
+    { date: '20260601', firm: 'KB', opinion: 'BUY', targetPrice: 500000 },
+    { date: '20260708', firm: 'KB', opinion: 'BUY', targetPrice: 600000 }, // KB 재수정 — 이게 최신
+  ];
+  const s = summarizeInvestOpinion(rows, 300000);
+  assert.equal(s.reportCount, 1);
+  assert.equal(s.avgTargetPrice, 600000);
+  assert.equal(s.latestDate, '20260708');
+});
+
+test('summarizeInvestOpinion: 의견 분류(매수/BUY→buy, 중립/HOLD→hold, 매도/SELL→sell, 그 외→other) 집계', () => {
+  const rows = [
+    { date: '20260708', firm: 'A', opinion: '매수', targetPrice: 100 },
+    { date: '20260708', firm: 'B', opinion: 'BUY', targetPrice: 100 },
+    { date: '20260708', firm: 'C', opinion: '중립', targetPrice: 100 },
+    { date: '20260708', firm: 'D', opinion: 'SELL', targetPrice: 100 },
+    { date: '20260708', firm: 'E', opinion: '알수없음', targetPrice: 100 },
+  ];
+  const s = summarizeInvestOpinion(rows, 90);
+  assert.deepEqual(s.opinionCounts, { buy: 2, hold: 1, sell: 1, other: 1 });
+});
+
+test('summarizeInvestOpinion: 목표가 평균·현재가 대비 괴리율(%) 계산', () => {
+  const rows = [
+    { date: '20260708', firm: 'A', opinion: 'BUY', targetPrice: 400000 },
+    { date: '20260708', firm: 'B', opinion: 'BUY', targetPrice: 500000 },
+  ];
+  // 평균 목표가 450000, 현재가 300000 → (450000-300000)/300000*100 = 50%
+  const s = summarizeInvestOpinion(rows, 300000);
+  assert.equal(s.avgTargetPrice, 450000);
+  assert.equal(s.targetGapPct, 50);
+});
+
+test('summarizeInvestOpinion: 목표가 결측 리포트만 있으면 avgTargetPrice·targetGapPct null(0 아님)', () => {
+  const rows = [{ date: '20260708', firm: 'A', opinion: 'BUY', targetPrice: null }];
+  const s = summarizeInvestOpinion(rows, 300000);
+  assert.equal(s.reportCount, 1);
+  assert.equal(s.avgTargetPrice, null);
+  assert.equal(s.targetGapPct, null);
+});
+
+test('summarizeInvestOpinion: 리포트 0건이면 null', () => {
+  assert.equal(summarizeInvestOpinion([], 300000), null);
+});
+
+test('summarizeInvestOpinion: currentPrice가 없으면(undefined/null) targetGapPct는 null(평균목표가는 여전히 계산)', () => {
+  const rows = [{ date: '20260708', firm: 'A', opinion: 'BUY', targetPrice: 400000 }];
+  assert.equal(summarizeInvestOpinion(rows, undefined).targetGapPct, null);
+  assert.equal(summarizeInvestOpinion(rows, undefined).avgTargetPrice, 400000);
+  assert.equal(summarizeInvestOpinion(rows, null).targetGapPct, null);
+});
+
+test('summarizeInvestOpinion: targetPrice가 0 이하인 리포트는 평균 계산에서 제외', () => {
+  const rows = [
+    { date: '20260708', firm: 'A', opinion: 'BUY', targetPrice: 0 },
+    { date: '20260708', firm: 'B', opinion: 'BUY', targetPrice: -100 },
+    { date: '20260708', firm: 'C', opinion: 'BUY', targetPrice: 500000 },
+  ];
+  const s = summarizeInvestOpinion(rows, 300000);
+  assert.equal(s.reportCount, 3);
+  assert.equal(s.avgTargetPrice, 500000); // 0·음수 제외, 유효값 1개만 평균
+});
+
+test('classifyOpinion(비export, summarizeInvestOpinion 경유 검증): 비중확대/축소류 국내 관행 표현도 buy/sell로 분류', () => {
+  const rows = [
+    { date: '20260708', firm: 'A', opinion: '비중확대', targetPrice: 100 },
+    { date: '20260708', firm: 'B', opinion: 'Overweight', targetPrice: 100 },
+    { date: '20260708', firm: 'C', opinion: '비중축소', targetPrice: 100 },
+  ];
+  const s = summarizeInvestOpinion(rows, 90);
+  assert.deepEqual(s.opinionCounts, { buy: 2, hold: 0, sell: 1, other: 0 });
+});
+
+test('getKrInvestOpinion: 레이트리밋(EGW00201)이면 재시도 후 성공', async () => {
+  const fetchImpl = mockFetch([
+    { body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } },
+    { body: { rt_cd: '0', output: [{ stck_bsop_date: '20260708', mbcr_name: 'KB', invt_opnn: 'BUY', hts_goal_prc: '500000' }] } },
+  ]);
+  const rows = await getKrInvestOpinion({ token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl, retryDelayMs: 1 });
+  assert.equal(rows[0].firm, 'KB');
+});
+
+test('getKrInvestOpinion: 종목코드·날짜범위(dayWindow 기준)를 요청 파라미터에 포함', async () => {
+  let capturedUrl = null;
+  const fetchImpl = async (url) => {
+    capturedUrl = url;
+    return { ok: true, status: 200, json: async () => ({ rt_cd: '0', output: [] }), text: async () => '' };
+  };
+  // new Date(y, m, d) — 로컬 캘린더 생성자. 프로덕션 ymd()도 getFullYear/getMonth/getDate로
+  // 같은 로컬 캘린더를 읽으므로, ISO UTC 문자열(예: '2026-07-26T00:00:00Z')로 넘기면 호스트
+  // 타임존에 따라 로컬 날짜가 하루 밀릴 수 있어 CI에서 취약(코드리뷰 지적) — 로컬 생성자로 고정.
+  await getKrInvestOpinion({
+    token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl,
+    now: new Date(2026, 6, 26),
+  });
+  assert.match(capturedUrl, /FID_INPUT_ISCD=005930/);
+  assert.match(capturedUrl, /FID_INPUT_DATE_2=20260726/);
+  assert.match(capturedUrl, /FID_INPUT_DATE_1=20260427/); // 90일 전
 });
