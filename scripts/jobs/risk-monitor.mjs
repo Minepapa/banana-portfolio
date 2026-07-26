@@ -59,6 +59,7 @@ const SP500_CRASH_PCT = -7;   // SP500 5일 고점 대비 낙폭 임계 — 미�
 //    (과열 익절은 본인 재량). 매도 검토는 펀더멘털 훼손(B 모드)에서만 나온다.
 const OPP_BUY_DROP_PCT = -10; // 단기(5거래일) 등락 ≤ -10% → 급락 매수 기회
 const OPP_RSI_LOW = 30;       // RSI ≤ 30 → 과매도(급락 매수 기회)
+const OPP_VOL_SURGE_X = 2;    // 거래대금이 직전 20일 평균의 2배 이상 → 컨빅션 보강 문구(단독 트리거 아님)
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
@@ -108,15 +109,16 @@ function holdingsSummary(holdings) {
 // ── D 모드: 거시 리스크 프롬프트 ────────────────────────
 // 거시지표 숫자는 Node(fetchMacroIndicators)가 yfinance에서 직접 조회·계산해 주입한다.
 // LLM은 재조회 금지 — 주입된 수치를 Hub 트리거 기준과 비교해 "판단만". (mode B와 동일 원칙)
-// 개별 종목 시세(md) + 수급(flow, KR만·선택) → §4 급락 매수 기회만 판정. 결정론(LLM 무관).
-// 트리거 없으면 🟢(자가 치유용). 가격 상승(52주/RSI 고점)은 매도/차익 신호로 쓰지 않는다
-// (Frank 철학 — 펀더멘털 우선). flow(외국인·기관 순매수)는 가격 트리거의 보조 확인 신호일
-// 뿐 단독 트리거로 쓰지 않는다 — 컨빅션 텍스트만 보강(신호 색상·enum은 불변).
+// 개별 종목 시세(md) + 수급(flow, KR만·선택) + 기술지표(md.tech, KIS strategy_builder/
+// backtester 계산 로직 이식 — 2026-07 Frank 결정) → §4 급락 매수 기회만 판정. 결정론(LLM
+// 무관). 트리거 없으면 🟢(자가 치유용). 가격 상승(52주/RSI 고점)은 매도/차익 신호로 쓰지
+// 않는다(Frank 철학 — 펀더멘털 우선). flow·tech 둘 다 가격 트리거의 보조 확인 신호일 뿐
+// 단독 트리거로 쓰지 않는다 — 컨빅션 텍스트만 보강(신호 색상·enum·§4 임계값은 불변).
 function scanOpportunity(md, flow) {
   if (!md) return null;
-  const { rsi14, pos52w, weekChange, currentPrice } = md;
+  const { rsi14, pos52w, weekChange, currentPrice, tech } = md;
   const flowEv = flow ? { flowDate: flow.date, frgnNetQty: flow.frgnNetQty, orgnNetQty: flow.orgnNetQty } : null;
-  const ev = JSON.stringify({ rsi14, pos52w, weekChange, currentPrice, flow: flowEv });
+  const ev = JSON.stringify({ rsi14, pos52w, weekChange, currentPrice, flow: flowEv, tech: tech ?? null });
   // 급락 매수 기회 — 성향(급락매수 선호) 부합 → 🔴
   const dropHit = weekChange != null && weekChange <= OPP_BUY_DROP_PCT;
   const rsiLow = rsi14 != null && rsi14 <= OPP_RSI_LOW;
@@ -134,8 +136,20 @@ function scanOpportunity(md, flow) {
     const flowDetail = flow
       ? ` 수급(최근 거래일 ${flow.date}): 외국인 순매수 ${flow.frgnNetQty?.toLocaleString('en-US') ?? '데이터없음'}주 · 기관 순매수 ${flow.orgnNetQty?.toLocaleString('en-US') ?? '데이터없음'}주.`
       : '';
-    return { signal: '🔴', summary: `급락 매수 기회 — ${why}${flowNote}`,
-      detail: '§4 급락 매수 기회 트리거(단기 -10% 또는 RSI 30↓). Frank 급락매수 선호와 부합 — 펀더멘털 유효 시 적극 매수 검토(1회 500만원 이하).' + flowDetail, ev };
+    // 기술지표 플래그 — 값이 실제로 신호를 확인/약화하는 경우만 노출(항상 다 나열하지 않음).
+    const techFlags = [];
+    if (tech?.macd?.crossDown) techFlags.push('MACD 데드크로스');
+    if (tech?.macd?.crossUp) techFlags.push('MACD 골든크로스');
+    if (tech?.maAlignment?.alignment === '역배열') techFlags.push('이평 역배열');
+    if (tech?.maAlignment?.alignment === '정배열') techFlags.push('이평 정배열');
+    if (tech?.stochastic?.oversold) techFlags.push(`스토캐스틱 과매도(%K ${tech.stochastic.k})`);
+    if (tech?.volumeSurge?.ratio >= OPP_VOL_SURGE_X) techFlags.push(`거래대금 급증(${tech.volumeSurge.ratio}배)`);
+    const techNote = techFlags.length ? ` · ${techFlags.join(' · ')}` : '';
+    const techDetail = tech
+      ? ` 기술지표(참고): MACD히스토그램 ${tech.macd?.histogram ?? '데이터없음'} · 이평 ${tech.maAlignment?.alignment ?? '데이터없음'} · ATR ${tech.atr?.pct ?? '데이터없음'}% · 스토캐스틱%K ${tech.stochastic?.k ?? '데이터없음'} · 거래대금배수 ${tech.volumeSurge?.ratio ?? '데이터없음'}.`
+      : '';
+    return { signal: '🔴', summary: `급락 매수 기회 — ${why}${flowNote}${techNote}`,
+      detail: '§4 급락 매수 기회 트리거(단기 -10% 또는 RSI 30↓). Frank 급락매수 선호와 부합 — 펀더멘털 유효 시 적극 매수 검토(1회 500만원 이하).' + flowDetail + techDetail, ev };
   }
   // 트리거 없음 — 🟢(이전 기회 신호 자가 해소용). 앱은 🟢 기회는 숨김.
   return { signal: '🟢', summary: '가격 트리거 없음',

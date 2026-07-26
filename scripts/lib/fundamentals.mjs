@@ -230,7 +230,13 @@ export function fetchMarketData(yahooTicker) {
   return {
     forwardPE: round2(d.forwardPE ?? d.trailingPE),
     pbr: round2(d.priceToBook),
-    rsi14: computeRsi14(d.closes),
+    // closes는 MA60·MACD 워밍업 때문에 90개로 확대됐지만(2026-07), RSI14는 Wilder 평활이
+    // 경로 의존적이라 윈도우가 넓어지면 시드값 잔존 가중치가 줄어 출력 자체가 달라진다
+    // (코드리뷰 실측: 30개 윈도우 대비 90개 윈도우에서 동일 종목 RSI14가 수 포인트 이동).
+    // 이 rsi14는 risk-monitor §4의 rsiLow(≤30) 결정론 트리거 입력이라, 이미 살아있는 트리거의
+    // 경계값(RSI≈30 근처) 판정이 이 리팩터 하나로 조용히 뒤바뀌면 안 된다 — 기존 트리거가
+    // 써오던 30개 윈도우 그대로 고정한다(다른 지표들만 90개 활용).
+    rsi14: computeRsi14(d.closes.slice(-30)),
     pos52w: compute52wPosition(d.currentPrice, d.fiftyTwoWeekHigh, d.fiftyTwoWeekLow),
     fcfYield: computeFcfYield(d.freeCashflow, d.marketCap),
     payoutRatio: d.payoutRatio != null ? Math.round(d.payoutRatio * 1000) / 10 : null,
@@ -239,6 +245,14 @@ export function fetchMarketData(yahooTicker) {
     weekChange: computeMacroChange(d.closes)?.change5d ?? null,             // 5거래일(주간) 가격 등락률 %
     high52w: Number.isFinite(d.fiftyTwoWeekHigh) ? d.fiftyTwoWeekHigh : null,
     low52w: Number.isFinite(d.fiftyTwoWeekLow) ? d.fiftyTwoWeekLow : null,
+    // 기술지표(보조 참고정보 전용 — §4 결정론 임계값은 안 바꿈, risk-monitor scanOpportunity 참고).
+    tech: {
+      macd: computeMacd(d.closes),
+      maAlignment: computeMaAlignment(d.closes),
+      atr: computeAtr(d.highs, d.lows, d.closes),
+      stochastic: computeStochastic(d.highs, d.lows, d.closes),
+      volumeSurge: computeVolumeSurge(d.volumes, d.closes),
+    },
     source: `yfinance ${yahooTicker}`,
   };
 }
@@ -296,6 +310,114 @@ export function computeFcfYield(fcf, marketCap) {
 export function computePbr(marketCap, equity) {
   if (!Number.isFinite(marketCap) || !Number.isFinite(equity) || equity <= 0) return null;
   return Math.round(marketCap / equity * 100) / 100;
+}
+
+// ── 기술지표 (KIS strategy_builder/backtester 참고 — 2026-07 Frank 결정: 별도 앱/Docker 없이
+// 계산 로직만 흡수, 기존 O/B 신호의 "보조 참고정보"로만 사용. §4 결정론 임계값(가격 -10%/
+// RSI30)은 그대로 유지 — 이 지표들이 신호 색상을 직접 바꾸지 않는다, 컨빅션 텍스트만 보강) ──
+
+// EMA(지수이동평균) 시계열. 내부 헬퍼 — 첫 값은 그대로, 이후 표준 스무딩 공식.
+function emaSeries(values, period) {
+  const k = 2 / (period + 1);
+  const out = [];
+  let prev;
+  values.forEach((v, i) => { prev = i === 0 ? v : v * k + prev * (1 - k); out.push(prev); });
+  return out;
+}
+
+function sma(values, period) {
+  if (values.length < period) return null;
+  const slice = values.slice(-period);
+  return slice.reduce((s, x) => s + x, 0) / period;
+}
+
+// MACD(12,26,9). closes: 과거→현재 종가배열. slow+signal 최소 길이 미만이면 null(워밍업 부족
+// — EMA 초반값은 부정확해 신뢰 불가). crossUp/crossDown은 "어제→오늘" MACD선-시그널선 대소
+// 역전(골든/데드크로스). 순수함수 — 테스트 가능.
+export function computeMacd(closes, fast = 12, slow = 26, signalPeriod = 9) {
+  const a = (closes || []).filter(Number.isFinite);
+  if (a.length < slow + signalPeriod) return null;
+  const emaFast = emaSeries(a, fast);
+  const emaSlow = emaSeries(a, slow);
+  const macdLine = a.map((_, i) => emaFast[i] - emaSlow[i]);
+  const signalLine = emaSeries(macdLine, signalPeriod);
+  const round2 = (v) => Math.round(v * 100) / 100;
+  const macd = macdLine[macdLine.length - 1];
+  const signal = signalLine[signalLine.length - 1];
+  const prevMacd = macdLine[macdLine.length - 2];
+  const prevSignal = signalLine[signalLine.length - 2];
+  const crossUp = prevMacd != null && prevSignal != null && prevMacd <= prevSignal && macd > signal;
+  const crossDown = prevMacd != null && prevSignal != null && prevMacd >= prevSignal && macd < signal;
+  return { macd: round2(macd), signal: round2(signal), histogram: round2(macd - signal), crossUp, crossDown };
+}
+
+// 이동평균 정배열/역배열 + 단기·중기 골든/데드크로스. periods는 반드시 오름차순
+// [단기,중기,장기](기본 5/20/60일). 정배열=단기>중기>장기(상승추세), 역배열=그 반대. 데이터
+// 부족(가장 긴 기간 미만)이면 null. 순수함수 — 테스트 가능.
+export function computeMaAlignment(closes, periods = [5, 20, 60]) {
+  const a = (closes || []).filter(Number.isFinite);
+  const [short, mid, long] = periods;
+  const smas = { [short]: sma(a, short), [mid]: sma(a, mid), [long]: sma(a, long) };
+  if (Object.values(smas).some(v => v == null)) return null;
+  const bullish = smas[short] > smas[mid] && smas[mid] > smas[long];
+  const bearish = smas[short] < smas[mid] && smas[mid] < smas[long];
+  const prev = a.slice(0, -1);
+  const prevShort = sma(prev, short), prevMid = sma(prev, mid);
+  const goldenCross = prevShort != null && prevMid != null && prevShort <= prevMid && smas[short] > smas[mid];
+  const deadCross = prevShort != null && prevMid != null && prevShort >= prevMid && smas[short] < smas[mid];
+  return { sma: smas, alignment: bullish ? '정배열' : bearish ? '역배열' : '혼조', goldenCross, deadCross };
+}
+
+// ATR(Average True Range, Wilder 평활) — 절대값과 현재가 대비 비율(%) 둘 다 반환. 고정
+// -10% 낙폭 임계값이 종목별 평소 변동성 대비 어느 정도인지 참고할 때 쓴다(임계값 자체는
+// 안 바꿈). highs/lows/closes는 반드시 같은 날짜 정렬(yf-marketdata.py가 같은 슬라이스로
+// 보장). 데이터 부족 시 null. 순수함수 — 테스트 가능.
+export function computeAtr(highs, lows, closes, period = 14) {
+  const n = Math.min(highs?.length ?? 0, lows?.length ?? 0, closes?.length ?? 0);
+  if (n < period + 1) return null;
+  const trs = [];
+  for (let i = 1; i < n; i++) {
+    const h = highs[i], l = lows[i], pc = closes[i - 1];
+    trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+  }
+  let atr = trs.slice(0, period).reduce((s, x) => s + x, 0) / period;
+  for (let i = period; i < trs.length; i++) atr = (atr * (period - 1) + trs[i]) / period;
+  const currentPrice = closes[n - 1];
+  const pct = currentPrice > 0 ? Math.round(atr / currentPrice * 1000) / 10 : null;
+  return { atr: Math.round(atr * 100) / 100, pct };
+}
+
+// 스토캐스틱(%K/%D, 14/3) — RSI와 다른 계산식(최근 N일 고저 대비 종가 위치)으로 과매도/과열
+// 이중 확인. highs/lows/closes 동일 정렬 필수. 데이터 부족 시 null. 순수함수 — 테스트 가능.
+export function computeStochastic(highs, lows, closes, kPeriod = 14, dPeriod = 3) {
+  const n = Math.min(highs?.length ?? 0, lows?.length ?? 0, closes?.length ?? 0);
+  if (n < kPeriod + dPeriod) return null;
+  const kValues = [];
+  for (let i = kPeriod - 1; i < n; i++) {
+    const hh = Math.max(...highs.slice(i - kPeriod + 1, i + 1));
+    const ll = Math.min(...lows.slice(i - kPeriod + 1, i + 1));
+    kValues.push(hh === ll ? 50 : (closes[i] - ll) / (hh - ll) * 100);
+  }
+  if (kValues.length < dPeriod) return null;
+  const d = kValues.slice(-dPeriod).reduce((s, x) => s + x, 0) / dPeriod;
+  const k = kValues[kValues.length - 1];
+  const round2 = (v) => Math.round(v * 100) / 100;
+  return { k: round2(k), d: round2(d), oversold: k <= 20, overbought: k >= 80 };
+}
+
+// 거래대금(거래량×종가) 급증 — 오늘 거래대금이 직전 window일 평균 대비 몇 배인지. Frank가
+// "거래량은 신뢰도 높은 정보"로 강조 — 가격 급락이 대량 거래(투매/전환)를 동반했는지 참고용
+// 확인 지표. volumes/closes 동일 정렬 필수. avgPrior 0/결측 시 null(0으로 나누기 방지).
+// 순수함수 — 테스트 가능.
+export function computeVolumeSurge(volumes, closes, window = 20) {
+  const n = Math.min(volumes?.length ?? 0, closes?.length ?? 0);
+  if (n < window + 1) return null;
+  const value = [];
+  for (let i = 0; i < n; i++) value.push(volumes[i] * closes[i]);
+  const latest = value[n - 1];
+  const avgPrior = value.slice(n - 1 - window, n - 1).reduce((s, x) => s + x, 0) / window;
+  if (!(avgPrior > 0)) return null;
+  return { ratio: Math.round(latest / avgPrior * 100) / 100, latest: Math.round(latest), avgPrior: Math.round(avgPrior) };
 }
 
 // ── 거시지표 (risk-monitor mode D) ──────────────────────────────

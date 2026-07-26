@@ -6,6 +6,7 @@ import {
   computeTtmNetIncome, computeRoe, computePbr,
   computeDrawdownFromPeak, computeRallyFromTrough, parseNaverSise,
   computeBollingerBands,
+  computeMacd, computeMaAlignment, computeAtr, computeStochastic, computeVolumeSurge,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -264,4 +265,106 @@ test('computeBollingerBands: 커스텀 window', () => {
   const b = computeBollingerBands(closes, 60);
   assert.notEqual(b, null);
   assert.equal(b.window, 60);
+});
+
+// ── 기술지표(strategy_builder/backtester 참고 이식, 2026-07) ──────────────────
+
+test('computeMacd: 데이터 부족(slow+signal 미만)이면 null', () => {
+  assert.equal(computeMacd(Array(20).fill(100)), null);
+});
+
+test('computeMacd: null/빈 배열 입력이면 데이터부족과 동일하게 null(throw 안 함)', () => {
+  assert.equal(computeMacd(null), null);
+  assert.equal(computeMacd([]), null);
+});
+
+test('computeMacd: 급등 후 되돌림 국면에서 데드크로스(macd가 signal 아래로) 감지', () => {
+  // 50일 평평(100) → 15일 200 유지. 초반 급등 직후엔 macd>signal이나, 가격이 새 레벨에서
+  // 안정되며 signal(지연)이 macd를 따라잡아 뒤늦게 역전 — MACD의 전형적인 추세감속 신호.
+  const closes = [...Array(50).fill(100), ...Array(15).fill(200)];
+  const r = computeMacd(closes);
+  assert.notEqual(r, null);
+  assert.equal(r.crossDown, true);
+  assert.equal(r.crossUp, false);
+  assert.ok(r.macd < r.signal);
+});
+
+test('computeMacd: 급락 후 되돌림 국면에서 골든크로스(macd가 signal 위로) 감지(대칭)', () => {
+  const closes = [...Array(50).fill(100), ...Array(15).fill(50)];
+  const r = computeMacd(closes);
+  assert.equal(r.crossUp, true);
+  assert.equal(r.crossDown, false);
+});
+
+test('computeMaAlignment: 데이터 부족(가장 긴 period 미만)이면 null', () => {
+  assert.equal(computeMaAlignment(Array(50).fill(100)), null);
+});
+
+test('computeMaAlignment: 지속 상승(오름차순) 시퀀스는 정배열(단기>중기>장기)', () => {
+  const closes = Array.from({ length: 90 }, (_, i) => 100 + i);
+  const r = computeMaAlignment(closes);
+  assert.equal(r.alignment, '정배열');
+  assert.ok(r.sma[5] > r.sma[20] && r.sma[20] > r.sma[60]);
+});
+
+test('computeMaAlignment: 지속 하락(내림차순) 시퀀스는 역배열(단기<중기<장기)', () => {
+  const closes = Array.from({ length: 90 }, (_, i) => 200 - i);
+  assert.equal(computeMaAlignment(closes).alignment, '역배열');
+});
+
+test('computeMaAlignment: 평평하다가 마지막날 급등하면 단기선이 중기선을 상향돌파(골든크로스)', () => {
+  const closes = [...Array(59).fill(100), 300];
+  const r = computeMaAlignment(closes);
+  assert.equal(r.goldenCross, true);
+  assert.equal(r.deadCross, false);
+});
+
+test('computeMaAlignment: 평평하다가 마지막날 급락하면 단기선이 중기선을 하향돌파(데드크로스, 대칭)', () => {
+  const closes = [...Array(59).fill(100), 10];
+  const r = computeMaAlignment(closes);
+  assert.equal(r.deadCross, true);
+  assert.equal(r.goldenCross, false);
+});
+
+test('computeAtr: 데이터 부족(period+1 미만)이면 null', () => {
+  assert.equal(computeAtr(Array(10).fill(105), Array(10).fill(95), Array(10).fill(100)), null);
+});
+
+test('computeAtr: 매 봉 True Range가 일정(H=105,L=95,C=100)하면 ATR도 그 값(10)으로 수렴, pct=현재가 대비 10%', () => {
+  const n = 30;
+  const r = computeAtr(Array(n).fill(105), Array(n).fill(95), Array(n).fill(100));
+  assert.equal(r.atr, 10);
+  assert.equal(r.pct, 10);
+});
+
+test('computeStochastic: 데이터 부족(kPeriod+dPeriod 미만)이면 null', () => {
+  assert.equal(computeStochastic(Array(10).fill(110), Array(10).fill(90), Array(10).fill(100)), null);
+});
+
+test('computeStochastic: 마지막 종가가 최근 14일 최고가와 같으면 %K=100(과열)', () => {
+  const n = 20;
+  const closes = Array(n).fill(100); closes[n - 1] = 110;
+  const r = computeStochastic(Array(n).fill(110), Array(n).fill(90), closes);
+  assert.equal(r.k, 100);
+  assert.equal(r.overbought, true);
+  assert.equal(r.oversold, false);
+});
+
+test('computeVolumeSurge: 데이터 부족(window+1 미만)이면 null', () => {
+  assert.equal(computeVolumeSurge(Array(10).fill(1000), Array(10).fill(100)), null);
+});
+
+test('computeVolumeSurge: 오늘 거래대금이 직전 20일 평균의 정확히 2배면 ratio=2', () => {
+  const n = 25;
+  const vols = Array(n).fill(1000); vols[n - 1] = 2000;
+  const r = computeVolumeSurge(vols, Array(n).fill(100));
+  assert.equal(r.ratio, 2);
+  assert.equal(r.latest, 200000);
+  assert.equal(r.avgPrior, 100000);
+});
+
+test('computeVolumeSurge: 직전 평균 거래대금이 0이면 null(0으로 나누기 방지)', () => {
+  const n = 25;
+  const vols = Array(n).fill(0); vols[n - 1] = 1000;
+  assert.equal(computeVolumeSurge(vols, Array(n).fill(100)), null);
 });
