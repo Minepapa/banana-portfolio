@@ -110,6 +110,52 @@ test('buildReportFacts: 이번 주 체결만 필터(weekStart 이상)', () => {
   assert.equal(wider.facts.weekTrades[0].name, 'SK하이닉스');
 });
 
+test('buildReportFacts: 매도 실현손익은 체결이력 매입평균 대비로 계산(체결행 라이브 컬럼 무시) — 2026-07 현대차 회귀 재현', () => {
+  // 실제 사고 재현: 현대차 6/23 8주 @524,000 매수 → 7/24 8주 @396,000 매도(-24.4% 손절).
+  // 체결내역엔 손익/수익률 컬럼(J~M)이 없다(스키마상 I금액까지만 파싱 대상) — 이 테스트는
+  // parseTrade가 그 컬럼을 아예 보지 않고 매입평균 기반으로 재계산함을 검증한다.
+  const input = {
+    ...baseInput(),
+    weekStart: '2026-07-24',
+    asof: '2026-07-26',
+    tradeRows: [
+      ['2026-06-23', '매수', '위탁', '005380', '국내주식', '현대차', '524000', '8', '4192000'],
+      ['2026-07-24', '매도', '위탁', '005380', '국내주식', '현대차', '396000', '8', '3168000'],
+    ],
+  };
+  const { facts, factsText } = buildReportFacts(input);
+  const sell = facts.weekTrades.find(t => t.name === '현대차' && t.side === '매도');
+  assert.equal(sell.realizedPct, -24.4);
+  assert.equal(sell.partialHistory, false); // 매수 8주 = 매도 8주, 완전 추적
+  assert.match(factsText, /현대차.*실현 -24\.4%/);
+});
+
+test('buildReportFacts: 매도 수량보다 추적된 매수 수량이 적으면 partialHistory=true — 2026-07 삼성바이오로직스 회귀 재현', () => {
+  // 실제 사고 재현: 삼성바이오로직스 매도 4주 중 체결내역에 추적된 매수는 2주뿐(체결내역
+  // 시스템 도입 이전부터 보유하던 물량 포함 추정) — avgBuy가 2주치 평균이라 확정치가 아니다.
+  const input = {
+    ...baseInput(),
+    weekStart: '2026-07-13',
+    asof: '2026-07-19',
+    tradeRows: [
+      ['2026-05-12', '매수', '위탁', '207940', '국내주식', '삼성바이오로직스', '1439000', '1', '1439000'],
+      ['2026-05-27', '매수', '위탁', '207940', '국내주식', '삼성바이오로직스', '1376000', '1', '1376000'],
+      ['2026-07-13', '매도', '위탁', '207940', '국내주식', '삼성바이오로직스', '1405000', '4', '5620000'],
+    ],
+  };
+  const { facts, factsText } = buildReportFacts(input);
+  const sell = facts.weekTrades.find(t => t.name === '삼성바이오로직스' && t.side === '매도');
+  assert.equal(sell.partialHistory, true);
+  assert.equal(sell.realizedPct, -0.2); // (1405000-1407500)/1407500*100, round1
+  assert.match(factsText, /매입이력 일부만 추적됨/);
+});
+
+test('buildReportFacts: 매수 행은 realizedPct null(익절/손절 개념 없음)', () => {
+  const { facts } = buildReportFacts({ ...baseInput(), weekStart: '2026-06-01' });
+  const buy = facts.weekTrades.find(t => t.side === '매수');
+  assert.equal(buy.realizedPct, null);
+});
+
 test('buildReportFacts: 이번 주 배당만 필터', () => {
   const { facts } = buildReportFacts(baseInput());
   // 6/02 배당은 weekStart(6/08) 이전 → 제외

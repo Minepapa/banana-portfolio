@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildBehaviorSignals } from './behavior-signals.mjs';
+import { buildBehaviorSignals, parseSell, collectBuys } from './behavior-signals.mjs';
 
 // 체결내역: A날짜0 B구분1 C계좌2 D코드3 E자산군4 F종목명5 G체결가6 H수량7 I금액8 J현재가9 K손익10 L평가11 M수익률12
 const baseInput = () => ({
@@ -54,6 +54,49 @@ test('buildBehaviorSignals: 익절/손절 분류 (실현수익률 부호)', () =
   assert.equal(signals.takeProfit.count, 1);   // 하이닉스 +14%
   assert.equal(signals.stopLoss.count, 1);     // 애플 -4.9%
   assert.equal(signals.takeProfit.avgPct, 14);
+});
+
+test('parseSell: 매도수량 = 추적된 매수수량 → partialHistory=false(완전 추적)', () => {
+  const buysAll = collectBuys([
+    ['2026-04-10', '매수', '위탁', '000660', '국내주식', 'SK하이닉스', '2000000', '5', '10000000'],
+  ]);
+  const sell = parseSell(['2026-06-12', '매도', '위탁', '000660', '국내주식', 'SK하이닉스', '2280000', '5', '11400000'], buysAll);
+  assert.equal(sell.partialHistory, false);
+  assert.equal(sell.realizedPct, 14);
+});
+
+test('parseSell: 매도수량 > 추적된 매수수량 → partialHistory=true — 2026-07 삼성바이오로직스 사고 재현', () => {
+  // 매도 4주 중 체결내역에 추적된 매수는 2주뿐(체결내역 시스템 도입 이전부터 보유하던 물량 포함 추정).
+  const buysAll = collectBuys([
+    ['2026-05-12', '매수', '위탁', '207940', '국내주식', '삼성바이오로직스', '1439000', '1', '1439000'],
+    ['2026-05-27', '매수', '위탁', '207940', '국내주식', '삼성바이오로직스', '1376000', '1', '1376000'],
+  ]);
+  const sell = parseSell(['2026-07-13', '매도', '위탁', '207940', '국내주식', '삼성바이오로직스', '1405000', '4', '5620000'], buysAll);
+  assert.equal(sell.partialHistory, true);
+  assert.equal(sell.realizedPct, -0.2);
+});
+
+test('parseSell: qty 결측이면 완전 추적을 검증할 수 없으므로 partialHistory=true(안전한 쪽)', () => {
+  const buysAll = collectBuys([
+    ['2026-04-10', '매수', '위탁', '000660', '국내주식', 'SK하이닉스', '2000000', '5', '10000000'],
+  ]);
+  const sell = parseSell(['2026-06-12', '매도', '위탁', '000660', '국내주식', 'SK하이닉스', '2280000', '', ''], buysAll);
+  assert.equal(sell.partialHistory, true);
+});
+
+test('buildBehaviorSignals: partialHistory 매도가 섞이면 익절/손절 집계에 hasPartial 플래그 + signalsText에 단서 표시', () => {
+  const input = {
+    ...baseInput(),
+    weekStart: '2026-07-13', asof: '2026-07-19',
+    tradeRows: [
+      ['2026-05-12', '매수', '위탁', '207940', '국내주식', '삼성바이오로직스', '1439000', '1', '1439000'],
+      ['2026-05-27', '매수', '위탁', '207940', '국내주식', '삼성바이오로직스', '1376000', '1', '1376000'],
+      ['2026-07-13', '매도', '위탁', '207940', '국내주식', '삼성바이오로직스', '1405000', '4', '5620000'],
+    ],
+  };
+  const { signals, signalsText } = buildBehaviorSignals(input);
+  assert.equal(signals.stopLoss.hasPartial, true);
+  assert.match(signalsText, /일부 매입이력 미확정 포함/);
 });
 
 test('buildBehaviorSignals: 500만 원칙 — 초과 매수 감지(최근 90일)', () => {

@@ -1,18 +1,30 @@
 // 주간 리포트 facts 조립기 — 순수 함수(네트워크 없음). weekly-report.mjs가 페치한 결정론
 // 데이터를 받아 리포트 프롬프트에 주입할 facts 객체 + factsText로 조립한다.
 // 원칙(risk-monitor·eval-facts와 동일): raw 숫자는 LLM이 만들지 않는다. 여기서 계산한 값만 쓴다.
+import { EXEC_COL as T } from './sheet-contracts.mjs';
+import { parseSell, collectBuys } from './behavior-signals.mjs';
 
 const round1 = (v) => Number.isFinite(v) ? Math.round(v * 10) / 10 : null;
 const won = (v) => Number.isFinite(v) ? Math.round(v).toLocaleString('en-US') : '데이터 부족';
 const pct = (v) => v == null ? '데이터 부족' : `${v}%`;
 
 // 체결내역 스키마: A날짜0 B구분1 C계좌2 D코드3 E자산군4 F종목명5 G체결가6 H수량7 I금액8
-function parseTrade(r) {
-  return {
-    date: String(r[0] ?? '').trim(), side: String(r[1] ?? '').trim(),
-    account: String(r[2] ?? '').trim(), name: String(r[5] ?? '').trim(),
-    price: String(r[6] ?? '').trim(), qty: String(r[7] ?? '').trim(), amount: String(r[8] ?? '').trim(),
+// buysAll: 전체 매수 이력(behavior-signals.mjs parseBuy 결과) — 매도 행의 실현손익 계산용.
+// 매도의 익절/손절은 반드시 여기서 계산한 realizedPct로만 판단한다 — 체결행 자체의
+// 손익/수익률 컬럼(K/L/M)은 매도 후에도 현재가로 계속 재계산되는 라이브 스냅샷이라 실제
+// 매도손익이 아니다(2026-07 삼성바이오로직스·현대차 리포트가 이 컬럼을 그대로 서술에 써서
+// 손절을 익절로 잘못 보고한 사고 — LLM에게 근거 숫자를 안 주고 "성향 부합 코멘트"만
+// 시켰더니 스스로 방향을 추측/날조했던 것도 같은 사고의 원인이었다).
+function parseTrade(r, buysAll) {
+  const side = String(r[T.SIDE] ?? '').trim();
+  const base = {
+    date: String(r[T.DATE] ?? '').trim(), side,
+    account: String(r[T.ACCT] ?? '').trim(), name: String(r[T.NAME] ?? '').trim(),
+    price: String(r[T.PRICE] ?? '').trim(), qty: String(r[T.QTY] ?? '').trim(), amount: String(r[T.AMOUNT] ?? '').trim(),
   };
+  if (side !== '매도') return { ...base, realizedPct: null, partialHistory: false };
+  const { realizedPct, partialHistory } = parseSell(r, buysAll);
+  return { ...base, realizedPct, partialHistory };
 }
 // 배당금 스키마: A날짜0 B금액1 C종목명2
 function parseDividend(r) {
@@ -136,7 +148,9 @@ export function buildReportFacts(input) {
 
   // ── 이번 주 체결·배당 (weekStart 이상) ────────────────
   const inWeek = (d) => weekStart ? (d && d >= weekStart) : true;
-  const weekTrades = tradeRows.map(parseTrade).filter(t => t.name && inWeek(t.date));
+  // buysAll은 전체 이력(주간 필터 전) — 이번 주 매도가 그 이전 매수와 매칭돼야 하므로.
+  const buysAll = collectBuys(tradeRows);
+  const weekTrades = tradeRows.map(r => parseTrade(r, buysAll)).filter(t => t.name && inWeek(t.date));
   const weekDividends = dividendRows.map(parseDividend).filter(d => d.name && inWeek(d.date));
 
   const facts = {
@@ -190,7 +204,12 @@ function renderFactsText(f) {
   }
 
   L.push('\n■ 이번 주 체결');
-  if (f.weekTrades.length) for (const t of f.weekTrades) L.push(`  - ${t.date} ${t.side} ${t.name} ${t.qty}주 @${t.price} (${t.account})`);
+  if (f.weekTrades.length) for (const t of f.weekTrades)
+    L.push(`  - ${t.date} ${t.side} ${t.name} ${t.qty}주 @${t.price} (${t.account})`
+      + (t.side === '매도'
+        ? ` · 실현 ${t.realizedPct != null ? (t.realizedPct >= 0 ? '+' : '') + t.realizedPct + '%' : '매입평균 불명'}`
+          + (t.partialHistory ? ' (매입이력 일부만 추적됨)' : '')
+        : ''));
   else L.push('  - (이번 주 체결 없음)');
 
   L.push('\n■ 이번 주 배당');

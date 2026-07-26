@@ -20,22 +20,39 @@ const s = (v) => String(v ?? '').trim();
 const round1 = (v) => Number.isFinite(v) ? Math.round(v * 10) / 10 : null;
 const daysBetween = (a, b) => (new Date(b).getTime() - new Date(a).getTime()) / 86400000;
 
-function parseBuy(r) {
+export function parseBuy(r) {
   const amount = num(r[T.AMOUNT]) ?? (num(r[T.PRICE]) != null && num(r[T.QTY]) != null ? num(r[T.PRICE]) * num(r[T.QTY]) : null);
   return { date: s(r[T.DATE]), name: s(r[T.NAME]), account: s(r[T.ACCT]), assetType: s(r[T.ASSET]),
     price: num(r[T.PRICE]), qty: num(r[T.QTY]), amount };
 }
-// 매도 실현수익률은 체결행 M열(수익률=포지션 현재 스냅샷, 미실현)이 아니라
+
+// 체결내역 전체 rows → 매수 행만 파싱(매도 매칭용 buysAll). report-facts.mjs도 매도 실현손익
+// 계산에 동일한 매수 이력이 필요해 여기서 공유 — 필터 조건을 두 곳에 복붙하면 한쪽만 고쳐
+// 갈라지는 회귀 위험이 있다(이번 세션 kis.mjs fetchKis 추출과 동일한 이유).
+export function collectBuys(tradeRows) {
+  return tradeRows.filter(r => s(r[T.SIDE]) === '매수' && s(r[T.NAME])).map(parseBuy);
+}
+// 매도 실현수익률은 체결행 M열(수익률=포지션 현재 스냅샷, 미실현 — 매도 후에도 현재가 기준
+// 으로 계속 재계산되는 라이브 수식이라 실제 매도손익이 아님. 2026-07 삼성바이오로직스·
+// 현대차 리포트가 이 컬럼을 그대로 서술에 써서 손절을 익절로 잘못 보고한 사고 원인)가 아니라
 // "체결 이력의 매입평균(Σ매수금액/Σ매수수량, 매도일 이전)" 대비로 산출한다(결정론·정확).
-function parseSell(r, buysAll) {
+export function parseSell(r, buysAll) {
   const date = s(r[T.DATE]); const name = s(r[T.NAME]);
-  const price = num(r[T.PRICE]);
+  const price = num(r[T.PRICE]); const qty = num(r[T.QTY]);
   const priorBuys = buysAll.filter(b => b.name === name && b.date && b.date < date && b.amount != null && b.qty);
   const boughtQty = priorBuys.reduce((s_, b) => s_ + b.qty, 0);
   const boughtAmt = priorBuys.reduce((s_, b) => s_ + b.amount, 0);
   const avgBuy = boughtQty > 0 ? boughtAmt / boughtQty : null;
   const realizedPct = (avgBuy && price != null) ? round1((price - avgBuy) / avgBuy * 100) : null;
-  return { date, name, account: s(r[T.ACCT]), price, qty: num(r[T.QTY]), avgBuy, realizedPct };
+  // 추적된 매입수량이 매도수량보다 적으면(체결내역 시스템 도입 이전부터 보유하던 물량이
+  // 섞여있는 등) avgBuy가 일부 로트만 반영한 값이라 realizedPct를 확정치처럼 서술하면 안
+  // 된다 — 호출측이 이 플래그로 "매입평균 불명확(일부만 추적)" 같은 단서를 달게 한다.
+  // qty 자체가 없으면 "매도수량 대비 완전히 추적됐는지"를 검증할 수 없으므로 — realizedPct는
+  // 계산되더라도(avgBuy만 있으면 계산됨) 안전한 쪽으로 partialHistory=true 취급한다(코드
+  // 리뷰 지적 — qty 결측 시 partialHistory=false로 빠지면 정작 이런 행이 가장 위험한데
+  // 힌트 없이 확정치처럼 노출된다).
+  const partialHistory = boughtQty > 0 && (qty == null || boughtQty < qty);
+  return { date, name, account: s(r[T.ACCT]), price, qty, avgBuy, realizedPct, partialHistory };
 }
 
 /**
@@ -50,7 +67,7 @@ export function buildBehaviorSignals(input) {
   const { asof, weekStart, tradeRows = [], noteRows = [], journalRows = [], riskRows = [] } = input;
   const inWeek = (d) => weekStart ? (d && d >= weekStart) : true;
 
-  const buysAll = tradeRows.filter(r => s(r[T.SIDE]) === '매수' && s(r[T.NAME])).map(parseBuy);
+  const buysAll = collectBuys(tradeRows);
   const sellsAll = tradeRows.filter(r => s(r[T.SIDE]) === '매도' && s(r[T.NAME])).map(r => parseSell(r, buysAll));
 
   const week = {
@@ -59,11 +76,13 @@ export function buildBehaviorSignals(input) {
   };
 
   // 익절/손절 — 이번 주 매도의 실현수익률(체결이력 매입평균 대비) 부호. 매입평균 불명이면 분류 제외.
+  // partialHistory(매입이력 일부만 추적됨) 건이 섞여 있으면 평균·건수 자체가 확정치가 아니므로
+  // hasPartial 플래그로 표시 — renderSignalsText가 "일부 매입이력 미확정 포함"을 덧붙인다.
   const tp = week.sells.filter(x => x.realizedPct != null && x.realizedPct > 0);
   const sl = week.sells.filter(x => x.realizedPct != null && x.realizedPct < 0);
   const avg = (arr) => arr.length ? round1(arr.reduce((s_, x) => s_ + x.realizedPct, 0) / arr.length) : null;
-  const takeProfit = { count: tp.length, avgPct: avg(tp), items: tp };
-  const stopLoss = { count: sl.length, avgPct: avg(sl), items: sl };
+  const takeProfit = { count: tp.length, avgPct: avg(tp), items: tp, hasPartial: tp.some(x => x.partialHistory) };
+  const stopLoss = { count: sl.length, avgPct: avg(sl), items: sl, hasPartial: sl.some(x => x.partialHistory) };
 
   // 500만 원칙 — 최근 RULE_LOOKBACK_DAYS 매수 누적 기준(주간 표본이 작아 최근 흐름으로 본다). 위반 목록.
   const ruleBuys = buysAll.filter(b => !asof || !b.date || daysBetween(b.date, asof) <= RULE_LOOKBACK_DAYS);
@@ -128,10 +147,12 @@ function renderSignalsText(g) {
   if (g.week.sells.length) for (const x of g.week.sells)
     L.push(`  - ${x.date} ${x.name} ${x.qty ?? '?'}주 @${x.price ?? '?'}`
       + ` · 실현 ${x.realizedPct != null ? (x.realizedPct >= 0 ? '+' : '') + x.realizedPct + '%' : '매입평균 불명'}`
+      + (x.partialHistory ? ' (매입이력 일부만 추적됨 — 확정치 아님)' : '')
       + ` (${x.account})`);
   else L.push('  - (없음)');
 
-  L.push(`\n■ 익절/손절: 익절 ${g.takeProfit.count}건(평균 ${g.takeProfit.avgPct ?? '–'}%) · 손절 ${g.stopLoss.count}건(평균 ${g.stopLoss.avgPct ?? '–'}%)`);
+  L.push(`\n■ 익절/손절: 익절 ${g.takeProfit.count}건(평균 ${g.takeProfit.avgPct ?? '–'}%${g.takeProfit.hasPartial ? ', 일부 매입이력 미확정 포함' : ''})`
+    + ` · 손절 ${g.stopLoss.count}건(평균 ${g.stopLoss.avgPct ?? '–'}%${g.stopLoss.hasPartial ? ', 일부 매입이력 미확정 포함' : ''})`);
   L.push(`■ 1회 500만 원칙: 매수 ${g.rule500.total}건 중 위반 ${g.rule500.violations.length}건`
     + (g.rule500.violations.length ? ` (${g.rule500.violations.map(v => `${v.name} ${v.amount.toLocaleString('en-US')}원`).join(', ')})` : ''));
 
