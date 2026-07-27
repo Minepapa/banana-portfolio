@@ -39,7 +39,7 @@ import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { krStockCode, usTicker, usExchange } from '../lib/instruments.mjs';
 import {
   hasKisCredentials, loadKisCredentials, getKisToken, getKrQuote, getUsQuote,
-  buildRealtimeRows, isKrMarketOpen, isUsMarketOpen,
+  buildRealtimeRows, isKrMarketOpen, isUsMarketOpen, KIS_RATE_LIMIT_CODE,
 } from '../lib/kis.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -68,6 +68,27 @@ function loadUnmappedCache() {
 function saveUnmappedCache(map) {
   mkdirSync(dirname(UNMAPPED_CACHE_FILE), { recursive: true });
   writeFileSync(UNMAPPED_CACHE_FILE, JSON.stringify(map));
+}
+
+// 레이트리밋(EGW00201)은 "항상 같은 종목"이 아니라 매 폴링마다 무작위로 다른 종목이 걸린다
+// (2026-07 재조사: 최근 로그에서 12개 서로 다른 종목이 1~12회씩 무작위 분산 — Frank가 "특정
+// 4종목만 실패"로 오인한 원인이 이것. 실제론 고정된 문제 종목이 없다). 종목명이 매번 달라지면
+// job-alerts.mjs의 24h 억제(경고 세트 전체 해시 기준)가 매번 새 세트로 인식돼 무력화된다
+// (이전 수정에서 "매핑없음" 3건은 이 방식으로 고쳤지만 EGW00201은 그때 그대로 뒀었음 — 잔여
+// 스팸의 원인). 레이트리밋은 종목이 아니라 "시스템 전역의 일시적 상태"(다음 폴링에서 자동
+// 회복, carry-forward로 화면엔 영향 없음)라 종목명과 무관하게 이 주기 안엔 딱 한 번만 알린다.
+// 판별은 err.message 정규식이 아니라 kis.mjs가 err.code(KIS msg_cd 원본값)로 붙여주는 값과
+// 비교한다 — msg1(사람이 읽는 문구)로 판별하면 KIS가 문구를 바꿀 때 조용히 깨진다(코드리뷰
+// 지적, kis.test.js 레이트리밋 픽스처가 msg1엔 코드 문자열을 안 넣는다는 점에서도 확인됨).
+const RATE_LIMIT_CACHE_FILE = join(HERE, '..', '.cache', 'realtime-quotes-ratelimit.json');
+const RATE_LIMIT_ALERT_COOLDOWN_MS = 6 * 3600 * 1000; // 6시간 — 정규장 세션당 대략 1회 수준(경험적 선택)
+
+function loadRateLimitCache() {
+  try { return JSON.parse(readFileSync(RATE_LIMIT_CACHE_FILE, 'utf8')); } catch { return {}; }
+}
+function saveRateLimitCache(obj) {
+  mkdirSync(dirname(RATE_LIMIT_CACHE_FILE), { recursive: true });
+  writeFileSync(RATE_LIMIT_CACHE_FILE, JSON.stringify(obj));
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -141,6 +162,11 @@ async function main() {
   const { appkey, appsecret } = loadKisCredentials();
   const kisToken = await getKisToken({ appkey, appsecret });
 
+  const rateLimitCache = loadRateLimitCache();
+  let rateLimitCacheDirty = false;
+  let rateLimitAlertedThisRun = false; // 이번 실행 안에서는 최대 1건만 collectWarning
+  let rateLimitFailCount = 0;
+
   const quotes = new Map();
   for (const h of targets) {
     if (!h.fetch) continue; // 그 시장이 지금 장외 — 조회 안 함(carry-forward로 직전 값 유지)
@@ -150,10 +176,24 @@ async function main() {
         : await getKrQuote({ token: kisToken, appkey, appsecret, code: h.code, retries: QUOTE_RETRIES, retryDelayMs: QUOTE_RETRY_DELAY_MS });
       quotes.set(h.name, quote);
     } catch (e) {
-      collectWarning(`실시간시세 조회 실패: ${h.name} — ${e.message.slice(0, 80)}`);
+      if (e.code === KIS_RATE_LIMIT_CODE) {
+        rateLimitFailCount++;
+        console.log(`   ⏳ ${h.name}: 레이트리밋(EGW00201) — carry-forward, 다음 폴링 자동 재시도`);
+        const last = rateLimitCache.lastAlert;
+        if (!rateLimitAlertedThisRun && (!last || Date.now() - last >= RATE_LIMIT_ALERT_COOLDOWN_MS)) {
+          collectWarning(`실시간시세 레이트리밋(EGW00201) 발생 중 — 예: ${h.name} 등. 자동 재시도되는 일시적 현상(조치 불필요, 종목은 폴링마다 무작위) — 지속 시에만 ${Math.round(RATE_LIMIT_ALERT_COOLDOWN_MS / 3600000)}시간마다 재알림.`);
+          rateLimitCache.lastAlert = Date.now();
+          rateLimitCacheDirty = true;
+          rateLimitAlertedThisRun = true;
+        }
+      } else {
+        collectWarning(`실시간시세 조회 실패: ${h.name} — ${e.message.slice(0, 80)}`);
+      }
     }
     await sleep(STAGGER_MS);
   }
+  if (rateLimitCacheDirty) saveRateLimitCache(rateLimitCache);
+  if (rateLimitFailCount) console.log(`   ⏳ 레이트리밋 총 ${rateLimitFailCount}건(carry-forward로 흡수됨)`);
 
   const created = await ensureSheet(token, SHEET, HEADER);
   const prevRows = created ? [] : await getRange(token, `${SHEET}!A2:F`);

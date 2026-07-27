@@ -139,6 +139,54 @@ test('getKrQuote: 레이트리밋 아닌 다른 오류(rt_cd 실패)는 즉시 t
   );
 });
 
+test('getKrQuote: 레이트리밋이 HTTP 500(!res.ok)으로 와도 몸통의 msg_cd로 재시도 후 성공(2026-07 실측 — "항상 HTTP 200" 가정이 틀렸던 버그 수정)', async () => {
+  const fetchImpl = mockFetch([
+    { ok: false, status: 500, body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } },
+    { body: { rt_cd: '0', output: { stck_prpr: '75000', prdy_ctrt: '1.2' } } },
+  ]);
+  const q = await getKrQuote({ token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl, retryDelayMs: 1 });
+  assert.equal(q.price, 75000);
+});
+
+test('getKrQuote: HTTP 500 레이트리밋이 재시도 소진 후에도 지속되면 throw(code=EGW00201)', async () => {
+  const fetchImpl = mockFetch([{ ok: false, status: 500, body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } }]);
+  try {
+    await getKrQuote({ token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl, retries: 1, retryDelayMs: 1 });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.code, 'EGW00201');
+    assert.match(e.message, /초당 거래건수/);
+  }
+});
+
+test('getKrQuote: 몸통이 JSON도 아닌 진짜 알 수 없는 HTTP 실패는 즉시 throw(원문 그대로 인용)', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 502, json: async () => { throw new Error('not json'); }, text: async () => 'Bad Gateway' });
+  await assert.rejects(
+    () => getKrQuote({ token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl, retryDelayMs: 1 }),
+    /Bad Gateway/
+  );
+});
+
+test('getKrQuote: 재시도 소진 후 throw된 에러의 code가 msg_cd(EGW00201) — msg1 문구가 아니라 이 값으로 호출측이 레이트리밋을 판별한다(realtime-quotes.mjs가 소비)', async () => {
+  const fetchImpl = mockFetch([{ body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } }]);
+  try {
+    await getKrQuote({ token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl, retries: 1, retryDelayMs: 1 });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.code, 'EGW00201');
+  }
+});
+
+test('getKrQuote: 레이트리밋 아닌 오류는 code가 그 msg_cd 그대로(EGW00201 아님)', async () => {
+  const fetchImpl = mockFetch([{ body: { rt_cd: '1', msg_cd: 'OTHER', msg1: '모의투자 미지원 종목' } }]);
+  try {
+    await getKrQuote({ token: 't', appkey: 'k', appsecret: 's', code: '005930', fetchImpl, retryDelayMs: 1 });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.code, 'OTHER');
+  }
+});
+
 test('buildRealtimeRows: 보유종목이 매도돼 사라지면(더 이상 holdings에 없음) 그 행도 자연히 빠짐', () => {
   const holdings = [{ name: '삼성전자', code: '005930', market: 'KR' }]; // 현대차는 이제 holdings에 없음
   const quotes = new Map([['삼성전자', { price: 75000, changePct: 1.2 }]]);
@@ -188,6 +236,16 @@ test('getUsQuote: 레이트리밋 아닌 다른 오류는 즉시 throw', async (
     () => getUsQuote({ token: 't', appkey: 'k', appsecret: 's', excd: 'NAS', symb: 'TSLA', fetchImpl, retryDelayMs: 1 }),
     /존재하지 않는 종목/
   );
+});
+
+test('getUsQuote: 재시도 소진 후 throw된 에러의 code가 msg_cd(EGW00201)', async () => {
+  const fetchImpl = mockFetch([{ body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } }]);
+  try {
+    await getUsQuote({ token: 't', appkey: 'k', appsecret: 's', excd: 'NAS', symb: 'TSLA', fetchImpl, retries: 1, retryDelayMs: 1 });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.code, 'EGW00201');
+  }
 });
 
 test('isKrMarketOpen: 평일 정규장 시각이면 true', () => {
@@ -515,7 +573,8 @@ test('getKrInvestOpinion: 종목코드·날짜범위(dayWindow 기준)를 요청
   let capturedUrl = null;
   const fetchImpl = async (url) => {
     capturedUrl = url;
-    return { ok: true, status: 200, json: async () => ({ rt_cd: '0', output: [] }), text: async () => '' };
+    const body = { rt_cd: '0', output: [] };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
   };
   // new Date(y, m, d) — 로컬 캘린더 생성자. 프로덕션 ymd()도 getFullYear/getMonth/getDate로
   // 같은 로컬 캘린더를 읽으므로, ISO UTC 문자열(예: '2026-07-26T00:00:00Z')로 넘기면 호스트

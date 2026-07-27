@@ -90,10 +90,20 @@ export async function getKisToken({ appkey, appsecret, fetchImpl = fetch }) {
   return body.access_token;
 }
 
+// rt_cd!=='0'(KIS 실패) 응답 → Error, msg_cd(안정적 코드값, 예: "EGW00201" 레이트리밋)를
+// err.code에 붙여준다. msg1(사람이 읽는 문구)로 에러 종류를 판별하면 KIS가 문구를 바꿀 때
+// 조용히 깨진다(코드리뷰 지적 — realtime-quotes.mjs가 레이트리밋 여부를 err.message 정규식
+// 매칭으로 판별하다 kis.test.js 픽스처와도 안 맞았던 문제). 호출측은 이제 err.code로 판별.
+function kisRtError(prefix, json) {
+  const err = new Error(`${prefix}: ${json?.msg1 || json?.rt_cd || '알 수 없음'}`);
+  err.code = json?.msg_cd;
+  return err;
+}
+
 // KIS 국내주식 현재가(inquire-price) 원본 응답 → {price, changePct}. 네트워크와 분리된
 // 순수함수 — 테스트 가능. rt_cd!=='0'(KIS 성공 코드) 또는 현재가 파싱 실패면 throw.
 export function parseQuoteResponse(json) {
-  if (json?.rt_cd !== '0') throw new Error(`KIS 시세 오류: ${json?.msg1 || json?.rt_cd || '알 수 없음'}`);
+  if (json?.rt_cd !== '0') throw kisRtError('KIS 시세 오류', json);
   const price = Number(json?.output?.stck_prpr);
   if (!(price > 0)) throw new Error('KIS 응답에 유효한 현재가 없음');
   const changePctRaw = json?.output?.prdy_ctrt;
@@ -105,7 +115,7 @@ export function parseQuoteResponse(json) {
 // 응답 envelope(rt_cd/msg_cd/msg1)은 국내와 동일, output 필드명만 다름(last/rate — 확인:
 // examples_llm/overseas_stock/price/chk_price.py COLUMN_MAPPING). 순수함수 — 테스트 가능.
 export function parseUsQuoteResponse(json) {
-  if (json?.rt_cd !== '0') throw new Error(`KIS 해외 시세 오류: ${json?.msg1 || json?.rt_cd || '알 수 없음'}`);
+  if (json?.rt_cd !== '0') throw kisRtError('KIS 해외 시세 오류', json);
   const price = Number(json?.output?.last);
   if (!(price > 0)) throw new Error('KIS 해외 응답에 유효한 현재가 없음');
   const changePctRaw = json?.output?.rate;
@@ -137,10 +147,16 @@ export function isUsMarketOpen(date = new Date()) {
   return dow <= 5 && hhmm >= 930 && hhmm <= 1600;
 }
 
-// KIS는 레이트리밋을 HTTP 200 + 바디 안 msg_cd로 알린다(HTTP status로는 못 잡음).
-// 실측(2026-07): 종목 14개를 200ms 간격으로 순차 호출해도 무작위로 걸림 — 공식 문서에
-// 정확한 초당 한도가 안 나와 있어("초당 거래건수 초과 EGW00201"만 언급) 재시도로 흡수한다.
-const KIS_RATE_LIMIT_CODE = 'EGW00201';
+// KIS 레이트리밋(msg_cd=EGW00201)의 HTTP status는 일정하지 않다 — 기존엔 "HTTP 200 + 바디
+// 안 msg_cd로만 온다"고 가정했으나 2026-07 재조사(Frank의 텔레그램 스팸 신고로 raw 응답을
+// 직접 떠서 확인)에서 **HTTP 500 + 같은 msg_cd 바디**로도 옴을 실측 확인했다(res.ok===false인데
+// 몸통은 정상적인 KIS JSON envelope). 그동안 `!res.ok`면 몸통을 아예 안 보고 즉시 throw했기
+// 때문에, 실제로 발생하는 레이트리밋의 상당수가 재시도 기회 자체를 못 받고 바로 실패 처리되고
+// 있었다(realtime-quotes.mjs의 잔여 텔레그램 스팸 원인 — 스태거·재시도 횟수를 올려도 이 경로엔
+// 적용이 안 됐던 것). 그래서 res.ok 여부와 무관하게 항상 몸통을 먼저 파싱해 msg_cd로 재시도
+// 여부를 판단한다. 공식 문서엔 정확한 초당 한도가 안 나와 있어("초당 거래건수 초과 EGW00201"
+// 문구만 언급) 재시도로 흡수하는 전략 자체는 유지.
+export const KIS_RATE_LIMIT_CODE = 'EGW00201';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // GET + 레이트리밋 재시도 공통 로직(시세·잔고조회 등 인증된 KIS GET 호출이 전부 공유).
@@ -151,11 +167,18 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function fetchKis(url, headers, label, { fetchImpl = fetch, retries = 2, retryDelayMs = 700 } = {}) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetchImpl(url, { headers });
-    if (!res.ok) throw new Error(`KIS 조회 실패(${label}): ${await res.text()}`);
-    const json = await res.json();
+    const text = await res.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch { /* 아래에서 처리 — 몸통이 JSON이 아닌 진짜 알 수 없는 실패 */ }
     if (json?.msg_cd === KIS_RATE_LIMIT_CODE && attempt < retries) {
       await sleep(retryDelayMs * (attempt + 1));
       continue;
+    }
+    if (!json) throw new Error(`KIS 조회 실패(${label}): ${text}`);
+    if (!res.ok) {
+      const err = new Error(`KIS 조회 실패(${label}): ${json?.msg1 || text}`);
+      err.code = json?.msg_cd;
+      throw err;
     }
     return json;
   }
@@ -217,7 +240,7 @@ export async function getKrInvestorFlow({ token, appkey, appsecret, code, fetchI
 // KIS 투자자별 매매동향 원본 응답 → {date, frgnNetQty, orgnNetQty}(가장 최근 거래일만). 순수함수
 // — 테스트 가능. output이 비어있으면 null(당일 데이터는 장 종료 후 제공 — 유의사항 참고).
 export function parseInvestorFlowResponse(json) {
-  if (json?.rt_cd !== '0') throw new Error(`KIS 투자자매매동향 오류: ${json?.msg1 || json?.rt_cd || '알 수 없음'}`);
+  if (json?.rt_cd !== '0') throw kisRtError('KIS 투자자매매동향 오류', json);
   const latest = Array.isArray(json?.output) ? json.output[0] : null;
   if (!latest) return null;
   const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -265,7 +288,7 @@ export async function getKrInvestOpinion({ token, appkey, appsecret, code, dayWi
 // 실제 응답에 존재 — mbcr_name과 동일하게 문서보다 실측 신뢰). 순수함수 — 테스트 가능.
 // date·firm 중 하나라도 없는 행은 집계에 쓸 수 없어 스킵(전체 throw 안 함).
 export function parseInvestOpinionResponse(json) {
-  if (json?.rt_cd !== '0') throw new Error(`KIS 투자의견 오류: ${json?.msg1 || json?.rt_cd || '알 수 없음'}`);
+  if (json?.rt_cd !== '0') throw kisRtError('KIS 투자의견 오류', json);
   const rows = Array.isArray(json?.output) ? json.output : [];
   const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
   return rows
@@ -365,7 +388,7 @@ export async function getAccountBalance({ token, appkey, appsecret, cano, acntPr
 // dnca_tot_amt(예수금총금액) — output2 자체가 없거나 파싱 불가면 null(0으로 추정하지
 // 않음 — 호출측이 "데이터 없음"과 "진짜 0원"을 구분해야 오탐 없이 대사 가능).
 export function parseBalanceResponse(json) {
-  if (json?.rt_cd !== '0') throw new Error(`KIS 잔고조회 오류: ${json?.msg1 || json?.rt_cd || '알 수 없음'}`);
+  if (json?.rt_cd !== '0') throw kisRtError('KIS 잔고조회 오류', json);
   const output1 = Array.isArray(json?.output1) ? json.output1 : [];
   const holdings = output1
     .map(o => ({
