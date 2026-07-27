@@ -141,8 +141,11 @@ function holdingsSummary(holdings) {
 // 개별 종목 시세(md) + 수급(flow, KR만·선택) + 기술지표(md.tech, KIS strategy_builder/
 // backtester 계산 로직 이식 — 2026-07 Frank 결정) → §4 급락 매수 기회만 판정. 결정론(LLM
 // 무관). 트리거 없으면 🟢(자가 치유용). 가격 상승(52주/RSI 고점)은 매도/차익 신호로 쓰지
-// 않는다(Frank 철학 — 펀더멘털 우선). flow·tech 둘 다 가격 트리거의 보조 확인 신호일 뿐
-// 단독 트리거로 쓰지 않는다 — 컨빅션 텍스트만 보강(신호 색상·enum·§4 임계값은 불변).
+// 않는다(Frank 철학 — 펀더멘털 우선).
+// ⚠️ tech 안에서도 역할이 갈린다: tech.atr는 §4 임계값 "자체"다(dropSignal이 5일 낙폭을
+// ATR 기대변동폭 대비로 판정 — 2026-07 실증검증으로 고정 -10%를 대체, 코드리뷰 지적으로
+// 이 주석을 최신화함). MACD·이동평균·Stochastic·거래량·flow(수급)는 여전히 그 판정이
+// 끝난 뒤의 컨빅션 텍스트 보강일 뿐 — 신호 색상·enum엔 개입하지 않는다.
 function scanOpportunity(md, flow) {
   if (!md) return null;
   const { rsi14, pos52w, weekChange, currentPrice, tech } = md;
