@@ -9,9 +9,11 @@ import { DeptBadge } from '../lib/primitives.jsx';
 // 잡상태 시트(heartbeat) 표시용 — 잡 키 → 한글 라벨, 표시 순서 고정
 const JOB_LABELS = {
   'parse-notifications': '체결 알림 파싱',
+  'realtime-quotes': '실시간 시세',
   'drain': '평가 큐 처리',
   'journal-sync': '포지션 저널',
   'daily-snapshot': '일별 잔고 스냅샷',
+  'reconcile-irp': 'IRP 잔고 대사',
   'risk-d': '리스크 D (거시)',
   'order-crash': '급락 대응 주문서',
   'risk-b': '리스크 B (논리)',
@@ -24,9 +26,11 @@ const JOB_LABELS = {
 // 각 잡의 무인 실행 주기(launchd plist 기준) — 표에 배지로 노출
 const JOB_INTERVALS = {
   'parse-notifications': '평일 08–16:30 · 15분',
+  'realtime-quotes': '평일 09–15:30·미국장 · 30초',
   'drain': '1·4·9·12·14·19·22시',
   'journal-sync': '매일 16:00',
   'daily-snapshot': '매일 08:00',
+  'reconcile-irp': '매일 08:15',
   'risk-d': '평일 16:30',
   'order-crash': '평일 16:50',
   'risk-b': '주간 월 03:00',
@@ -37,7 +41,7 @@ const JOB_INTERVALS = {
   'baseline': '분기 4회',
 };
 const JOB_ORDER = [
-  'parse-notifications', 'drain', 'journal-sync', 'daily-snapshot',
+  'parse-notifications', 'realtime-quotes', 'drain', 'journal-sync', 'daily-snapshot', 'reconcile-irp',
   'risk-d', 'order-crash', 'risk-b', 'weekly-report', 'order-weekly',
   'report-sync', 'backup', 'baseline',
 ];

@@ -356,7 +356,16 @@ async function main() {
   // claimViolations(문서 전체)가 아니라 claimViolationsInDoc(줄 단위 + 부정문 제외)를 쓴다 —
   // claimViolations를 리포트 전문에 그대로 쓰면 "논리 훼손 없음"(안전 신호) 한 줄 때문에
   // 무관한 다른 섹션 종목명까지 전부 위반으로 오탐된다(2026-07-26 실사고: 15종목 오탐).
-  const reportClaims = claimViolationsInDoc(md, /논리\s*훼손/, universe, bBreachNames);
+  // "논리훼손" 검증은 B신호가 애초에 날 수 없는 자산(ETF·채권·현금성 등)까지 universe에
+  // 섞이면 오탐 표면이 불필요하게 넓어진다 — risk-monitor.mjs의 B모드 대상 정의(위탁계좌
+  // 개별주식만)와 동일하게 좁힌 전용 universe를 쓴다(2026-07, 코드리뷰 후속 보강 —
+  // 실제 과거 사고는 부정문 미탐지가 원인이었고(ed26ce3로 수정 완료) 이건 잔여 이론적
+  // 오탐 표면을 줄이는 방어적 강화일 뿐).
+  // STOCK_TYPES는 파일 상단(라이브 펀더멘털 조회 대상 정의)에 이미 있는 동일 집합 재사용.
+  const bModeUniverse = holdings
+    .filter(h => h.accounts.some(a => a.acct === '위탁' && STOCK_TYPES.has(a.type)))
+    .map(h => h.name);
+  const reportClaims = claimViolationsInDoc(md, /논리\s*훼손/, bModeUniverse, bBreachNames);
   if (reportClaims.length) collectWarning(`주간리포트 자동검증: "논리훼손" 언급이 B🔴 신호와 불일치 — ${reportClaims.join(', ')}`);
 
   // ⑦ 파일 저장

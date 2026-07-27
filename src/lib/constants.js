@@ -49,6 +49,7 @@ export const JOB_DEPARTMENT = {
   'backup': 'hermes',
   'baseline': 'themis',
   'realtime-quotes': 'hermes',
+  'reconcile-irp': 'hermes',
 };
 
 // 체결내역 A~M 컬럼 레이블
