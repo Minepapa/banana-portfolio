@@ -50,8 +50,27 @@ const THESIS_RELEASE_SHEET = '차단해제이력';
 const THESIS_RELEASE_HEADER = ['감지일시', '종목명', '이전신호일', '신규신호일', '신규신호'];
 // 투자 성향 정본 — Trading Agent Hub에서 이전(2026-06-14). 거시 트리거(§4)·계좌배분(§2)이 여기 있음.
 const HUB_CLAUDE = new URL('../../profile/investor-profile.md', import.meta.url).pathname;
+// D그룹(거시) 임계값 3개 — 2026-07 실증+문헌 재검증 완료(Frank 지시, 개별종목 O신호와 동일
+// 방법론: 10년치 일봉 + 확립된 금융 컨벤션 대조). 셋 다 "5일 윈도우" 측정방식 자체는 이
+// 시스템의 설계(빠른 위기 포착용)이지 아래 외부 컨벤션의 정의(무제한 lookback 또는 단일일)와
+// 정확히 같지는 않다는 점은 정직히 남긴다 — 다만 크기(숫자) 자체와 실제 발생빈도는 검증됨.
+//
+// KOSPI -10%: "시장 조정(market correction)"의 표준 정의가 정확히 "최근 고점 대비 -10%"
+// (Wall Street 관행, 20% 이상은 bear market). 실증(2016~2026 KOSPI 10년): 5일 고점대비
+// -10% 이하는 전체 거래일의 0.90%(연 약 2.2회)만 발생 — 1퍼센타일(-9.68%)과 거의 일치하는
+// 자연스러운 희귀사건 경계. 최근 발생일이 2026-03~07에 몰려있어 최근 변동성 국면과 부합.
 const KOSPI_CRASH_PCT = -10;  // KOSPI 5일 고점 대비 낙폭 임계 — 이하면 LLM 판단 무관 🔴 강제 푸시
+// USDKRW +3%: 한국 외환당국의 공식 개입 발동 %는 공개된 바 없음(리서치로 못 찾음 — 당국이
+// 의도적으로 비공개하는 것으로 보임). 대신 실증(10년)으로 보정: 5일 저점대비 +3% 이상은
+// 전체의 0.96%(연 약 2.5회)만 발생, 99퍼센타일(+2.97%)과 거의 정확히 일치 — "상위 1% 극단
+// 이상치"라는 정의로는 잘 보정된 임계값(외부 공식 인용은 없음, 자체 통계 보정으로 대체).
 const USDKRW_SURGE_PCT = 3;   // USDKRW 5일 저점 대비 상승 임계 — KRW 급약세 결정론 경보
+// SP500 -7%: NYSE 시장전체 서킷브레이커 Level 1 임계값과 정확히 일치(전일종가 대비 당일
+// -7% → 15분 거래정지, 공식 규정). 다만 서킷브레이커 원정의는 "단일일" 하락인데 이 코드는
+// "5일 고점대비" — 방법론이 달라 완전히 동일하진 않음(실증 참고: 같은 10년 데이터에서 단일일
+// -7%는 3회뿐인데 5일 윈도우 버전은 29회 — 이쪽이 더 빨리 반응하는 조기경보 성격). 그래도
+// 숫자(7%) 자체는 규정에서 직접 따온 것이라 임의값은 아님. 실증 발생비율 1.15%(연 2.9회),
+// 실제 발생일도 2020 코로나·2022 금리인상·2025년4월 등 알려진 위기 구간과 정확히 일치.
 const SP500_CRASH_PCT = -7;   // SP500 5일 고점 대비 낙폭 임계 — 미증시 급락 결정론 경보
 
 // §4 개별 종목 가격 트리거 임계 (결정론) — 급락 매수 기회만.
@@ -63,12 +82,13 @@ const OPP_RSI_LOW = 30;       // RSI ≤ 30 → 과매도(급락 매수 기회).
 // 결함 발견: 마이크로소프트는 -10%가 연 1회뿐인 진짜 이례적 사건(5일 기대변동폭 4.52%)인데,
 // 테슬라는 연 15회(3주에 한 번꼴)로 뜨는 일상적 변동(5일 기대변동폭 10.47% — -10%가 정상
 // 범위 안!). 같은 숫자가 종목마다 다른 의미라는 게 데이터로 확인돼 ATR 기반으로 교체(Frank
-// 결정, 2026-07) — 실제 판정 로직(dropSignal, OPP_DROP_ATR_MULT·OPP_BUY_DROP_FALLBACK_PCT
-// 정의 포함)은 fundamentals.mjs로 분리해 단위테스트로 경계값을 고정했다(코드리뷰 지적).
-// 거래대금 급증/저조 — 2026-07 웹리서치(전문 트레이딩 플랫폼 관행): 2배는 "노이즈 多"로
-// 분류되고(하루 수십 건 알림, 대부분 무의미) 3배부터 실제 액션 기준. 2→3 상향.
+// 결정, 2026-07) — 실제 판정 로직(dropSignal, OPP_DROP_ATR_MULT 정의 포함)은 fundamentals.mjs로
+// 분리해 단위테스트로 경계값을 고정했다(코드리뷰 지적). 고정 -10% 폴백(ATR 데이터 없을 때)도
+// 근거없는 임의값이라는 동일 비판을 받아 폐기 — ATR 없으면 이 트리거는 그냥 skip(RSI가 커버).
+// 거래대금 급증 — 2026-07 웹리서치(전문 트레이딩 플랫폼 관행): 2배는 "노이즈 多"로 분류되고
+// (하루 수십 건 알림, 대부분 무의미) 3배부터 실제 액션 기준. 2→3 상향. "거래량 저조"(0.7배)
+// 반대쪽 플래그는 근거를 못 찾아 삭제(2026-07).
 const OPP_VOL_SURGE_X = 3;
-const OPP_VOL_QUIET_X = 0.7;  // 거래대금이 직전 20일 평균의 0.7배 미만 → "조용한 하락"(투매 아님) 주의 문구
 
 const args = process.argv.slice(2);
 const explicitToken = args.find(a => !a.startsWith('--'));
@@ -129,8 +149,8 @@ function scanOpportunity(md, flow) {
   const flowEv = flow ? { flowDate: flow.date, frgnNetQty: flow.frgnNetQty, orgnNetQty: flow.orgnNetQty } : null;
   const ev = JSON.stringify({ rsi14, pos52w, weekChange, currentPrice, flow: flowEv, tech: tech ?? null });
   // 급락 매수 기회 — 성향(급락매수 선호) 부합 → 🔴. dropSignal(fundamentals.mjs)이 ATR
-  // 있으면 변동성 상대화, 없으면(상장 이력 짧은 종목 등) 고정값 폴백으로 판정 — 커버리지가
-  // 조용히 빠지지 않도록.
+  // 있으면 변동성 상대화로 판정, 없으면(상장 이력 짧은 종목 등) 이 조건은 skip — RSI 트리거가
+  // 그 상황을 별도로 커버한다(예전 고정 -10% 폴백은 근거없는 임의값이라 2026-07 삭제됨).
   const rsiLow = rsi14 != null && rsi14 <= OPP_RSI_LOW;
   const { hit: dropHit, why: dropWhy } = dropSignal(weekChange, tech?.atr?.pct);
   if (dropHit || rsiLow) {
@@ -155,16 +175,14 @@ function scanOpportunity(md, flow) {
     if (tech?.maAlignment?.alignment === '역배열') techFlags.push('이평 역배열');
     if (tech?.maAlignment?.alignment === '정배열') techFlags.push('이평 정배열');
     if (tech?.stochastic?.oversold) techFlags.push(`스토캐스틱 과매도(%K ${tech.stochastic.k})`);
-    // 거래대금: 급증(투매/전환 가능성)과 저조(조용한 하락 — 투매 신호 약함)를 양방향으로 구분.
     // ATR 대비 배수는 이제 dropWhy에 이미 포함(위 dropHit 계산 참고) — 여기서 중복 표기 안 함.
     if (tech?.volumeSurge?.ratio >= OPP_VOL_SURGE_X) techFlags.push(`거래대금 급증(${tech.volumeSurge.ratio}배, 투매/전환 가능성)`);
-    else if (tech?.volumeSurge && tech.volumeSurge.ratio < OPP_VOL_QUIET_X) techFlags.push(`거래량 저조(${tech.volumeSurge.ratio}배, 조용한 하락 — 투매 신호 약함)`);
     const techNote = techFlags.length ? ` · ${techFlags.join(' · ')}` : '';
     const techDetail = tech
       ? ` 기술지표(참고): MACD히스토그램 ${tech.macd?.histogram ?? '데이터없음'} · 이평 ${tech.maAlignment?.alignment ?? '데이터없음'} · ATR ${tech.atr?.pct ?? '데이터없음'}% · 스토캐스틱%K ${tech.stochastic?.k ?? '데이터없음'} · 거래대금배수 ${tech.volumeSurge?.ratio ?? '데이터없음'}.`
       : '';
     return { signal: '🔴', summary: `급락 매수 기회 — ${why}${flowNote}${techNote}`,
-      detail: '§4 급락 매수 기회 트리거(5일 낙폭이 ATR 기반 기대변동폭의 2배 이상 — ATR 데이터 없으면 고정 -10% 폴백 — 또는 RSI 30↓). Frank 급락매수 선호와 부합 — 펀더멘털 유효 시 적극 매수 검토(1회 500만원 이하).' + flowDetail + techDetail, ev };
+      detail: '§4 급락 매수 기회 트리거(5일 낙폭이 ATR 기반 기대변동폭의 2배 이상 — ATR 데이터 없으면 이 조건은 skip — 또는 RSI 30↓). Frank 급락매수 선호와 부합 — 펀더멘털 유효 시 적극 매수 검토(1회 500만원 이하).' + flowDetail + techDetail, ev };
   }
   // 트리거 없음 — 🟢(이전 기회 신호 자가 해소용). 앱은 🟢 기회는 숨김.
   return { signal: '🟢', summary: '가격 트리거 없음',
@@ -237,10 +255,13 @@ function buildLogicPrompt(h, facts, guardrails, baseline, buyCard, confirmedPref
     : '[매수 논리] 종목투자노트에 없음 — 기준선 대비 변화만 판단';
   // KR만(KIS 국내주식 전용 API). 목표주가 컨센서스는 밸류에이션 참고정보일 뿐 단독 신호
   // 금지 원칙(펀더멘털 우선)을 지키기 위해 판단 규칙에서도 명시적으로 "참고만" 못박는다.
+  // downgrades/upgrades(브로커 자기 직전 리포트 대비)는 정보 표기만 — "몇 건부터 유의미"의
+  // 업계 표준을 못 찾아 가드레일 임계값(예전 2건)은 삭제(2026-07). 숫자 자체는 계속 보여준다.
   const opinionLine = opinion
     ? `[증권사 투자의견 컨센서스 (${opinion.latestDate}, 최근 90일·브로커 ${opinion.reportCount}곳 — 참고정보, 단독 신호 아님)]
 매수 ${opinion.opinionCounts.buy} · 중립 ${opinion.opinionCounts.hold} · 매도 ${opinion.opinionCounts.sell}${opinion.opinionCounts.other ? ` · 기타 ${opinion.opinionCounts.other}` : ''}
-평균 목표주가 ${opinion.avgTargetPrice ?? '데이터 부족'}${opinion.targetGapPct != null ? ` (현재가 대비 ${opinion.targetGapPct >= 0 ? '+' : ''}${opinion.targetGapPct}%)` : ''}`
+평균 목표주가 ${opinion.avgTargetPrice ?? '데이터 부족'}${opinion.targetGapPct != null ? ` (현재가 대비 ${opinion.targetGapPct >= 0 ? '+' : ''}${opinion.targetGapPct}%)` : ''}
+직전 대비 하향 ${opinion.downgrades}건 · 상향 ${opinion.upgrades}건(브로커 자기 직전 리포트 기준, 임계값 없음)`
     : '';
 
   return `[논리 훼손 점검 — 주간] 보유종목의 매수 논리가 펀더멘털상 훼손됐는지 "판단만" 해줘.
@@ -662,9 +683,8 @@ async function main() {
       continue;
     }
 
-    // ② 증권사 투자의견 컨센서스(KR만) — 가드레일(투자의견 하향 대리신호)이 이 결과를 쓰므로
-    // checkGuardrails보다 먼저 조회한다. 실패해도 펀더멘털 판정 자체는 막지 않는다(opinion=null
-    // 이면 아래 opinionDowngrades가 null이 되어 그 가드레일 분기만 자연히 skip).
+    // ② 증권사 투자의견 컨센서스(KR만, 참고정보 — 가드레일 아님, 2026-07 투자의견하향
+    // 가드레일은 근거없어 삭제됨). 실패해도 펀더멘털 판정 자체는 막지 않는다.
     let opinion = null;
     if (h.market === 'KR' && kisAuth && stockCode) {
       try {
@@ -683,9 +703,7 @@ async function main() {
     const guardrails = checkGuardrails({
       opYoYCurr: facts.opYoYCurr, opYoYPrev: facts.opYoYPrev,
       debtRatio: facts.debtRatio,
-      baselineDebtRatio: baseline ? parseFloat(String(baseline.debt_ratio).replace(/[%,]/g, '')) || null : null,
       cfCurr, cfPrev,
-      opinionDowngrades: opinion?.downgrades ?? null,
     });
 
     const prompt = buildLogicPrompt(h, facts, guardrails, baseline, buyCard, confirmedPrefsText, opinion);

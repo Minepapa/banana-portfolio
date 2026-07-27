@@ -221,13 +221,10 @@ test('dropSignal: 반올림 경계 회귀(표시용 반올림이 1.96배를 2.0�
   assert.equal(r.why, null);  // hit 판정 자체는 원값 기준이라 미발동
 });
 
-test('dropSignal: ATR 없으면(null/0) 고정 임계값(-10%) 폴백 — 그 이하만 hit, why에 폴백 명시', () => {
-  assert.deepEqual(dropSignal(-15, null), {
-    hit: true, why: '5일 -15%(ATR 데이터 없어 고정 임계값 폴백)', multiple: null, expectedRange: null, fallback: true,
-  });
-  const r0 = dropSignal(-15, 0);
-  assert.equal(r0.hit, true); // atrPct=0도 "없음" 취급(0 초과만 유효 ATR)
-  assert.equal(dropSignal(-9, null).hit, false); // 폴백 임계값(-10%) 미달
+test('dropSignal: ATR 없으면(null/0) 판정 자체를 skip(miss) — 예전 고정 -10% 폴백은 근거없는 임의값이라 폐기(2026-07)', () => {
+  assert.equal(dropSignal(-15, null).hit, false);
+  assert.equal(dropSignal(-50, 0).hit, false); // atrPct=0도 "없음" 취급
+  assert.equal(dropSignal(-15, undefined).hit, false);
 });
 
 test('dropSignal: weekChange가 0 이상(상승)이거나 null이면 ATR 유무와 무관하게 항상 miss', () => {
@@ -237,12 +234,10 @@ test('dropSignal: weekChange가 0 이상(상승)이거나 null이면 ATR 유무�
   assert.equal(dropSignal(5, null).hit, false);
 });
 
-test('checkGuardrails: 영업이익 2분기 연속 감소 / 부채비율 +20%p', () => {
-  assert.deepEqual(checkGuardrails({ opYoYCurr: -5, opYoYPrev: -3, debtRatio: 51, baselineDebtRatio: 50 }),
-    ['영업이익 YoY 2분기 연속 감소']);
-  assert.deepEqual(checkGuardrails({ opYoYCurr: 10, opYoYPrev: -3, debtRatio: 75, baselineDebtRatio: 50 }),
-    ['부채비율 급증(기준선 대비 +20%p 이상)']);
-  assert.deepEqual(checkGuardrails({ opYoYCurr: 10, opYoYPrev: null, debtRatio: null, baselineDebtRatio: 50 }), []);
+test('checkGuardrails: 영업이익 2분기 연속 감소', () => {
+  assert.deepEqual(checkGuardrails({ opYoYCurr: -5, opYoYPrev: -3 }), ['영업이익 YoY 2분기 연속 감소']);
+  assert.deepEqual(checkGuardrails({ opYoYCurr: 10, opYoYPrev: -3 }), []);
+  assert.deepEqual(checkGuardrails({ opYoYCurr: 10, opYoYPrev: null }), []);
 });
 
 test('checkGuardrails: 현금흐름 적자전환(직전 흑자→이번 적자만 발동, 이미 적자 지속은 미발동)', () => {
@@ -252,42 +247,30 @@ test('checkGuardrails: 현금흐름 적자전환(직전 흑자→이번 적자�
   assert.deepEqual(checkGuardrails({ cfCurr: null, cfPrev: 50 }), []); // 결측 방어
 });
 
-test('checkGuardrails: 투자의견 하향 2건 이상이면 발동(1건은 노이즈 취급 미발동)', () => {
-  assert.deepEqual(checkGuardrails({ opinionDowngrades: 2 }), ['증권사 투자의견 하향 2건(직전 대비, 최근 90일)']);
-  assert.deepEqual(checkGuardrails({ opinionDowngrades: 1 }), []);
-  assert.deepEqual(checkGuardrails({ opinionDowngrades: 0 }), []);
-  assert.deepEqual(checkGuardrails({ opinionDowngrades: null }), []);
-});
-
-test('checkGuardrails: 부채비율 절대수준(200% 초과)은 기준선 없이도 단독 발동', () => {
+test('checkGuardrails: 부채비율 절대수준(200% 초과)만 남음(변화량 +20%p 가드레일은 2026-07 근거없어 삭제)', () => {
   assert.deepEqual(checkGuardrails({ debtRatio: 250 }), [
     '부채비율 고위험 절대수준(250%, 200% 초과 — 신용평가 실무 기준)',
   ]);
   assert.deepEqual(checkGuardrails({ debtRatio: 200 }), []); // 정확히 200%는 "초과" 아님
   assert.deepEqual(checkGuardrails({ debtRatio: 150 }), []);
   assert.deepEqual(checkGuardrails({ debtRatio: null }), []);
-});
-
-test('checkGuardrails: 변화량(+20%p)과 절대수준(200%) 가드레일은 서로 독립 — 둘 다 걸리면 둘 다 반환', () => {
-  // 기준선 180%→현재 210%: 변화량 +30%p(≥20 발동) AND 절대수준 210%(>200 발동) 동시 충족
+  // baselineDebtRatio를 넘겨도(호출부 하위호환) 더 이상 아무 영향 없음 — 변화량 가드레일 삭제됨
   assert.deepEqual(checkGuardrails({ debtRatio: 210, baselineDebtRatio: 180 }), [
-    '부채비율 급증(기준선 대비 +20%p 이상)',
     '부채비율 고위험 절대수준(210%, 200% 초과 — 신용평가 실무 기준)',
   ]);
 });
 
-test('checkGuardrails: 5개 조건이 동시에 걸리면 5건 모두 반환(순서 고정)', () => {
-  const g = {
-    opYoYCurr: -5, opYoYPrev: -3, debtRatio: 250, baselineDebtRatio: 50,
-    cfCurr: -100, cfPrev: 50, opinionDowngrades: 3,
-  };
+test('checkGuardrails: 3개 조건이 동시에 걸리면 3건 모두 반환(순서 고정)', () => {
+  const g = { opYoYCurr: -5, opYoYPrev: -3, debtRatio: 250, cfCurr: -100, cfPrev: 50 };
   assert.deepEqual(checkGuardrails(g), [
     '영업이익 YoY 2분기 연속 감소',
-    '부채비율 급증(기준선 대비 +20%p 이상)',
     '부채비율 고위험 절대수준(250%, 200% 초과 — 신용평가 실무 기준)',
     '현금흐름 적자전환(직전 대비)',
-    '증권사 투자의견 하향 3건(직전 대비, 최근 90일)',
   ]);
+});
+
+test('checkGuardrails: opinionDowngrades를 넘겨도(호출부 하위호환) 더 이상 아무 가드레일도 발동 안 함(2026-07 근거없어 삭제)', () => {
+  assert.deepEqual(checkGuardrails({ opinionDowngrades: 5 }), []);
 });
 
 test('computeRsi14: Wilder 평활 RSI — 표준 14기간', () => {

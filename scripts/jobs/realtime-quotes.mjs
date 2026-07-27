@@ -29,6 +29,9 @@
  *
  * 사용: node scripts/jobs/realtime-quotes.mjs [token]
  */
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import {
   getToken, getRange, ensureSheet, clearValues, setValues, nowKST, readHoldings,
 } from '../lib/sheets-common.mjs';
@@ -39,13 +42,33 @@ import {
   buildRealtimeRows, isKrMarketOpen, isUsMarketOpen,
 } from '../lib/kis.mjs';
 
+const HERE = dirname(fileURLToPath(import.meta.url));
 const SHEET = '실시간시세';
 const HEADER = ['종목명', '시장', '티커', '실시간가', '등락률', '갱신시각'];
 // 국내 레이트리밋 정확한 수치 미확인(공식문서 "초당 거래건수 초과 EGW00201"만 언급) —
-// 실측(2026-07): 200ms 간격도 종목 14개 순차호출 중 무작위로 레이트리밋에 걸림.
-// 400ms로 늘리고, get{Kr,Us}Quote 자체에도 EGW00201 재시도를 넣어 이중 방어. 해외 API도
-// 같은 KIS 앱키 아래 호출이라 보수적으로 동일 간격 적용.
-const STAGGER_MS = 400;
+// 실측(2026-07): 200ms→400ms로 늘려도 여전히 부족(같은 달 재실측: 17건 중 4건(24%)이 재시도
+// 2회(700ms·1400ms 백오프) 다 써도 실패 — 텔레그램에 EGW00201 경고가 거의 매 폴링(30초)마다
+// 발생하는 근본 원인이었음, Frank 신고로 발견). 800ms로 재상향 + 재시도 예산도 늘림(2→3회).
+const STAGGER_MS = 800;
+const QUOTE_RETRIES = 3;
+const QUOTE_RETRY_DELAY_MS = 700;
+
+// "매핑 없음"(종목코드/티커 자체가 없는 채권·실물자산·OTC펀드 등)은 구조적으로 영구히 안
+// 풀리는 상태라 매 폴링(30초)마다 경고를 반복하면 텔레그램 스팸이 된다(job-alerts.mjs의 24h
+// 억제는 "경고 세트 전체의 해시"가 같아야 걸리는데, 같은 배치 안에 무작위로 달라지는
+// EGW00201 실패 종목이 섞이면 세트 해시가 매번 달라져 억제가 무력화됨 — 이게 실제 스팸의
+// 핵심 원인, Frank 신고로 발견). 이름별로 마지막 경고 시각을 캐시해 재확인 주기(7일, 마스터
+// 파일이 나중에 갱신돼 매핑될 가능성 고려)마다만 1회 경고한다.
+const UNMAPPED_CACHE_FILE = join(HERE, '..', '.cache', 'realtime-quotes-unmapped.json');
+const UNMAPPED_RECHECK_MS = 7 * 24 * 3600 * 1000;
+
+function loadUnmappedCache() {
+  try { return JSON.parse(readFileSync(UNMAPPED_CACHE_FILE, 'utf8')); } catch { return {}; }
+}
+function saveUnmappedCache(map) {
+  mkdirSync(dirname(UNMAPPED_CACHE_FILE), { recursive: true });
+  writeFileSync(UNMAPPED_CACHE_FILE, JSON.stringify(map));
+}
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -78,6 +101,19 @@ async function main() {
   // 있어야 한다. 여기서 열려있지 않은 시장 종목을 아예 빼버리면 그 시장이 닫힐 때마다
   // clearValues+setValues 과정에서 직전 시세 행이 통째로 사라진다(carry-forward 무력화) —
   // 그래서 "이번에 실제로 조회할지"는 fetch 플래그로만 분리하고 목록 자체엔 항상 포함시킨다.
+  const unmappedCache = loadUnmappedCache();
+  let unmappedCacheDirty = false;
+  // 영구 미매핑(채권 직접보유·실물자산·OTC펀드 등 KRX/미국거래소 코드 자체가 없는 상품)은
+  // 이름별로 UNMAPPED_RECHECK_MS(7일)에 한 번만 경고 — 매 폴링(30초)마다 반복 경고하는 걸
+  // 막는다(Frank 신고 — 3개 고정 항목이 매번 텔레그램에 뜨던 스팸의 원인).
+  const warnUnmapped = (name, reason) => {
+    const last = unmappedCache[name];
+    if (last && Date.now() - last < UNMAPPED_RECHECK_MS) return;
+    collectWarning(`실시간시세 제외: ${name} — ${reason}`);
+    unmappedCache[name] = Date.now();
+    unmappedCacheDirty = true;
+  };
+
   const holdingsRaw = await readHoldings(token);
   const targets = [];
   for (const h of holdingsRaw) {
@@ -89,12 +125,13 @@ async function main() {
       const excd = usExchange(ticker);
       // usExchange도 usTicker처럼 미등록이면 null(추정 금지) — instruments.mjs 참고.
       // 신규 US 종목을 US_MAP에만 등록하고 US_EXCD_MAP 등록을 깜빡한 경우 여기서 드러난다.
-      if (!excd) { collectWarning(`실시간시세 제외: ${h.name} — 거래소코드(EXCD) 미등록(usExchange 등록 필요)`); continue; }
+      if (!excd) { warnUnmapped(h.name, '거래소코드(EXCD) 미등록(usExchange 등록 필요)'); continue; }
       targets.push({ name: h.name, code: ticker, market: 'US', excd, fetch: usOpen });
       continue;
     }
-    collectWarning(`실시간시세 제외: ${h.name} — 종목코드/티커 매핑 없음`);
+    warnUnmapped(h.name, '종목코드/티커 매핑 없음');
   }
+  if (unmappedCacheDirty) saveUnmappedCache(unmappedCache);
   if (!targets.length) {
     console.log('매핑된 보유종목 0건 — 종료');
     await flushWarnings('realtime-quotes');
@@ -109,8 +146,8 @@ async function main() {
     if (!h.fetch) continue; // 그 시장이 지금 장외 — 조회 안 함(carry-forward로 직전 값 유지)
     try {
       const quote = h.market === 'US'
-        ? await getUsQuote({ token: kisToken, appkey, appsecret, excd: h.excd, symb: h.code })
-        : await getKrQuote({ token: kisToken, appkey, appsecret, code: h.code });
+        ? await getUsQuote({ token: kisToken, appkey, appsecret, excd: h.excd, symb: h.code, retries: QUOTE_RETRIES, retryDelayMs: QUOTE_RETRY_DELAY_MS })
+        : await getKrQuote({ token: kisToken, appkey, appsecret, code: h.code, retries: QUOTE_RETRIES, retryDelayMs: QUOTE_RETRY_DELAY_MS });
       quotes.set(h.name, quote);
     } catch (e) {
       collectWarning(`실시간시세 조회 실패: ${h.name} — ${e.message.slice(0, 80)}`);
