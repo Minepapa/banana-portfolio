@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildExecutionRecord, buildDividendRecord } from './ledger-vault-writer.mjs';
+import { VAULT_PATHS } from './vault-paths.mjs';
 
 const exec = (overrides = {}) => ({
   tradeDate: '2026-08-04 09:12:33',
@@ -16,9 +17,14 @@ const exec = (overrides = {}) => ({
   ...overrides,
 });
 
-test('buildExecutionRecord: 파일명에 날짜·시각·구분·종목명이 들어간다', () => {
+test('buildExecutionRecord: 파일명에 날짜·시각·구분·종목명이 들어간다(종류 접두사 없음 — 폴더가 이미 말해줌)', () => {
   const { filename } = buildExecutionRecord(exec());
-  assert.equal(filename, 'execution-2026-08-04-091233-매수-삼성전자.md');
+  assert.equal(filename, '2026-08-04-091233-매수-삼성전자.md');
+});
+
+test('buildExecutionRecord: Executions 하위폴더를 가리킨다', () => {
+  const { dir } = buildExecutionRecord(exec());
+  assert.equal(dir, VAULT_PATHS.facts.ledger.executions);
 });
 
 test('buildExecutionRecord: 같은 이벤트는 항상 같은 파일명(멱등키 역할)', () => {
@@ -68,11 +74,18 @@ const div = (overrides = {}) => ({
   ...overrides,
 });
 
-test('buildDividendRecord: 파일명·dedupKey가 결정론적', () => {
+test('buildDividendRecord: 파일명·dedupKey가 결정론적(파일명도 종류 접두사 없음)', () => {
   const a = buildDividendRecord(div());
   const b = buildDividendRecord(div());
   assert.equal(a.filename, b.filename);
+  assert.equal(a.filename, '2026-08-04-090000-TIGER-리츠부동산인프라.md');
   assert.equal(a.dedupKey, '2026-08-04|TIGER 리츠부동산인프라|09:00:00_15000');
+});
+
+test('buildDividendRecord: Dividends 하위폴더를 가리킨다(Executions와 다른 폴더)', () => {
+  const { dir } = buildDividendRecord(div());
+  assert.equal(dir, VAULT_PATHS.facts.ledger.dividends);
+  assert.notEqual(dir, VAULT_PATHS.facts.ledger.executions);
 });
 
 test('buildDividendRecord: 금액이 다르면(같은 시각) uniqueKey가 달라 dedupKey도 달라짐', () => {

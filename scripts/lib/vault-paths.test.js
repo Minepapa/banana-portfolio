@@ -14,15 +14,32 @@ test('기본값: VAULT_PATH 미설정 시 홈 디렉토리 아래 banana-vault',
   assert.match(VAULT_ROOT, /banana-vault$/);
 });
 
+// facts.ledger는 이벤트 종류별 하위폴더가 있는 중첩 객체라(2026-08-04 확정) 재귀로 편다.
+function flattenPaths(obj) {
+  const out = [];
+  for (const v of Object.values(obj)) {
+    if (typeof v === 'string') out.push(v);
+    else out.push(...flattenPaths(v));
+  }
+  return out;
+}
+
 test('4대분류 하위경로가 전부 VAULT_ROOT 밑에 걸린다', () => {
   const flat = [
-    ...Object.values(VAULT_PATHS.facts),
-    ...Object.values(VAULT_PATHS.state),
-    ...Object.values(VAULT_PATHS.decisions),
-    ...Object.values(VAULT_PATHS.knowledge),
+    ...flattenPaths(VAULT_PATHS.facts),
+    ...flattenPaths(VAULT_PATHS.state),
+    ...flattenPaths(VAULT_PATHS.decisions),
+    ...flattenPaths(VAULT_PATHS.knowledge),
   ];
-  assert.equal(flat.length, 11);
+  // facts: ledgerRoot(1) + ledger 하위 5종 + marketPolls(1) = 7, state 3, decisions 3, knowledge 3
+  assert.equal(flat.length, 16);
   for (const p of flat) assert.ok(p.startsWith(VAULT_ROOT), `${p} should start with ${VAULT_ROOT}`);
+});
+
+test('Ledger 이벤트 종류별 하위폴더 5종이 전부 Facts/Ledger 밑에 걸린다', () => {
+  const subfolders = Object.values(VAULT_PATHS.facts.ledger);
+  assert.equal(subfolders.length, 5);
+  for (const p of subfolders) assert.ok(p.startsWith(VAULT_PATHS.facts.ledgerRoot));
 });
 
 test('VAULT_PATH 환경변수로 루트를 오버라이드할 수 있다(Drive 이전 시 코드 변경 없이 전환)', () => {

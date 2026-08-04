@@ -10,7 +10,13 @@
 // 계좌 귀속(account)은 이 시점에 비워둔다 — 어느 계좌 보유종목인지 판별하려면
 // State/Holdings(구현계획서 Phase 8·9)가 있어야 하는데, Phase 2는 파싱→Ledger 기록까지만
 // 범위로 정했다(2026-08-04 오너 확정). accountNote로 이유를 명시해 "누락"이 아니라
-// "의도적으로 다음 단계로 미룸"임을 남긴다.
+// "의도적으로 다음 단계로 미룸"임을 남긴다. **폴더가 아니라 필드**로 비워두는 이유도
+// 같다 — 이벤트 로그는 한번 쓰면 옮기지 않는 게 원칙이라, 나중에 확정되는 값(계좌)을
+// 기준으로 폴더를 나누면 그 값이 확정될 때 파일을 옮겨야 해서 원칙과 어긋난다.
+//
+// 어느 Ledger 하위폴더에 쓸지는 이 모듈이 결정해 `dir`로 반환한다(2026-08-04 확정,
+// 오너 요청 — 이벤트 종류별 하위폴더 분리) — 호출부가 매핑을 따로 알 필요가 없다.
+import { VAULT_PATHS } from './vault-paths.mjs';
 
 function sanitizeSegment(s) {
   return String(s ?? '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '-');
@@ -33,11 +39,15 @@ function buildFrontmatter(fields) {
 const ACCOUNT_NOTE = 'Phase 8·9(State/Holdings) 이후 별도 배치로 채워짐 — Phase 2 범위 밖(2026-08-04 확정)';
 
 // e: parseExecution()의 반환값 { tradeDate, tradeType, stockCode, stockName, quantity, price, currency, broker }
+// 금현물도 이 함수를 그대로 쓴다(별도 함수 없음) — v1이 "금현물을 별도 원장으로 뒀다가
+// 버그나서 체결내역에 통합"한 전례를 반영(폴더 하나로 합침, 위 import 주석 참고).
 export function buildExecutionRecord(e) {
   const dedupKey = `${e.tradeDate}|${e.tradeType}|${e.stockName}|${e.quantity}`;
   const datePart = e.tradeDate.slice(0, 10);
   const timePart = e.tradeDate.slice(11).replace(/:/g, '') || '000000';
-  const filename = `execution-${datePart}-${timePart}-${sanitizeSegment(e.tradeType)}-${sanitizeSegment(e.stockName)}.md`;
+  // 폴더가 이미 "체결"임을 말해주므로 파일명엔 종류 접두사를 안 붙인다 — 날짜부터
+  // 시작해 옵시디언 파일목록에서 자동으로 시간순 정렬되게 한다.
+  const filename = `${datePart}-${timePart}-${sanitizeSegment(e.tradeType)}-${sanitizeSegment(e.stockName)}.md`;
   const content = buildFrontmatter({
     type: 'execution',
     tradeDate: e.tradeDate,
@@ -53,14 +63,14 @@ export function buildExecutionRecord(e) {
     dedupKey,
     recordedAt: new Date().toISOString(),
   });
-  return { dedupKey, filename, content };
+  return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.executions };
 }
 
 // d: parseDividend()의 반환값 { date, afterTaxAmount, stockName, acctRaw, broker, receivedTime, uniqueKey }
 export function buildDividendRecord(d) {
   const dedupKey = `${d.date}|${d.stockName}|${d.uniqueKey}`;
   const timePart = String(d.receivedTime ?? '').replace(/:/g, '') || '000000';
-  const filename = `dividend-${d.date}-${timePart}-${sanitizeSegment(d.stockName)}.md`;
+  const filename = `${d.date}-${timePart}-${sanitizeSegment(d.stockName)}.md`;
   const content = buildFrontmatter({
     type: 'dividend',
     date: d.date,
@@ -75,5 +85,5 @@ export function buildDividendRecord(d) {
     dedupKey,
     recordedAt: new Date().toISOString(),
   });
-  return { dedupKey, filename, content };
+  return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.dividends };
 }

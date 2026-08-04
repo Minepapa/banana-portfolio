@@ -16,7 +16,22 @@ export const VAULT_ROOT = process.env.VAULT_PATH || join(homedir(), 'banana-vaul
 export const VAULT_PATHS = {
   root: VAULT_ROOT,
   facts: {
-    ledger: join(VAULT_ROOT, 'Facts', 'Ledger'),
+    // Ledger는 이벤트 종류별로 하위폴더를 나눈다(2026-08-04 확정, 오너 요청) — 카카오
+    // 알림이 파싱하는 6종(체결·배당·펀드매수·예수금앵커·환전 + 금현물)이 전부 같은
+    // 평평한 폴더에 뒤섞이면 옵시디언에서 원본을 훑어보기 어렵다. 금현물은 v1에서
+    // "별도 원장으로 뒀다가 버그(클로버 원인)가 나서 체결내역에 통합"한 전례가 있어
+    // 여기서도 Executions에 합친다(별도 폴더 만들지 않음) — 같은 실수 반복 방지.
+    // 계좌(위탁·ISA 등) 기준 폴더는 만들지 않는다 — 계좌 귀속은 State/Holdings 설계
+    // (Phase 8·9) 전까지 확정 안 되는 값이라, 폴더가 아니라 frontmatter의 account
+    // 필드로 나중에 채우고 Dataview로 재조회한다(이벤트 로그는 쓴 뒤 옮기지 않는다).
+    ledgerRoot: join(VAULT_ROOT, 'Facts', 'Ledger'),
+    ledger: {
+      executions: join(VAULT_ROOT, 'Facts', 'Ledger', 'Executions'), // 체결(주식+금현물)
+      dividends: join(VAULT_ROOT, 'Facts', 'Ledger', 'Dividends'),
+      fundPurchases: join(VAULT_ROOT, 'Facts', 'Ledger', 'FundPurchases'), // 아직 미배선(파서만 존재)
+      cashEvents: join(VAULT_ROOT, 'Facts', 'Ledger', 'CashEvents'), // NH 입금·출금 원문(잔고 재계산은 State 몫)
+      exchanges: join(VAULT_ROOT, 'Facts', 'Ledger', 'Exchanges'), // 아직 미배선(파서만 존재)
+    },
     marketPolls: join(VAULT_ROOT, 'Facts', 'MarketPolls'),
   },
   state: {

@@ -114,10 +114,19 @@ Vault frontmatter 고유키 필드로 그대로 이식(새로 설계하지 않�
 >   `scripts/jobs/parse-notifications-to-vault.mjs` — 파일명 자체가 dedup 키, 계좌
 >   귀속은 `account: null` + 사유 명시(임의로 안 채움)
 > - **뒤로 미룬 것**: 보유종목 갱신·다계좌 회계(→ Phase 8·9, State/Holdings 설계 후),
->   주문제안 자동매칭(→ Phase 5, 검문소·승인흐름), 펀드적립·금현물·예수금앵커·환전의
+>   주문제안 자동매칭(→ Phase 5, 검문소·승인흐름), 펀드적립·예수금앵커·환전의
 >   Vault 기록(파서는 이미 준비됨, 연결만 안 함)
 > - "알람" 시트 처리행 정리는 안 함(dedup으로 정합성엔 문제없음, 비효율만 남음 — 설계
 >   문서 자체가 "구현 시 결정"으로 열어둔 항목)
+>
+> **후속 — Ledger 구조 세분화(2026-08-04, 오너 요청)**: 완료 직후 오너가 "체결·배당이
+> 한 폴더에 뒤섞이면 안 된다"고 지적, `Facts/Ledger/`를 `Executions/`(체결+**금현물
+> 통합**, v1이 금현물 별도취급하다 버그난 전례 반영)·`Dividends/`·`FundPurchases/`·
+> `CashEvents/`·`Exchanges/` 5개 하위폴더로 재설계. 계좌별 폴더는 만들지 않음(계좌
+> 귀속은 폴더가 아니라 frontmatter 필드로, 나중에 확정돼도 파일을 안 옮기게). 이
+> 원칙(폴더=쓰는시점 확정값 기준, 관계=frontmatter 위키링크)을 `ARCHITECTURE-V2.md`
+> "폴더·연결 설계 원칙" 절로 일반화해 State/Decisions/Knowledge에도 앞으로 적용.
+> `vault-paths.mjs`·`ledger-vault-writer.mjs`·잡 전부 반영, 테스트 560개로 증가.
 
 **추천 스킬**: **`tdd`** — 브로커별 정규식 파서는 이미 v1에 테스트가 있을 가능성이
 높으므로, 먼저 기존 테스트를 이식하고 출력 대상 변경분만 새 테스트로 보강.
