@@ -58,6 +58,13 @@ test('buildExecutionRecord: 종목명에 슬래시·콜론 등이 있어도 안�
   assert.doesNotMatch(filename, /[:/]/);
 });
 
+test('[보안리뷰 반영] buildExecutionRecord: tradeDate 자체가 비정상 형식(경로 구분자 포함)이어도 파일명에 슬래시가 안 남는다', () => {
+  // normalizeDateTime은 형식이 안 맞는 입력을 무가공으로 돌려줄 수 있음 — datePart·
+  // timePart도 sanitizeSegment를 거쳐야 한다(2026-08-05, security-review 스킬 지적).
+  const { filename } = buildExecutionRecord(exec({ tradeDate: '2026/08/04 09:12:33' }));
+  assert.doesNotMatch(filename, /\//);
+});
+
 test('buildExecutionRecord: 문자열 값의 큰따옴표는 이스케이프된다', () => {
   const { content } = buildExecutionRecord(exec({ stockName: '종목"이상한"이름' }));
   assert.match(content, /stockName: "종목\\"이상한\\"이름"/);

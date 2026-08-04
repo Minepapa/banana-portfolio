@@ -35,7 +35,12 @@ export function buildExecutionRecord(e) {
   const timePart = e.tradeDate.slice(11).replace(/:/g, '') || '000000';
   // 폴더가 이미 "체결"임을 말해주므로 파일명엔 종류 접두사를 안 붙인다 — 날짜부터
   // 시작해 옵시디언 파일목록에서 자동으로 시간순 정렬되게 한다.
-  const filename = `${datePart}-${timePart}-${sanitizeSegment(e.tradeType)}-${sanitizeSegment(e.stockName)}.md`;
+  // datePart·timePart도 sanitizeSegment를 거친다(보안리뷰 지적, 2026-08-05) —
+  // normalizeDateTime이 예상 형식과 안 맞는 입력을 무가공으로 돌려줄 수 있어, 나머지
+  // 필드(tradeType·stockName)와 일관되게 방어한다. 지금은 알람 시트 "시간" 열(기기가
+  // 생성)이 소스라 공격 경로는 없지만, 파일명 조립 규칙 전체를 균일하게 유지하는 게
+  // 나중에 다른 소스가 추가돼도 안전하다.
+  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.tradeType)}-${sanitizeSegment(e.stockName)}.md`;
   const content = buildFrontmatter({
     type: 'execution',
     tradeDate: e.tradeDate,
@@ -58,7 +63,7 @@ export function buildExecutionRecord(e) {
 export function buildDividendRecord(d) {
   const dedupKey = `${d.date}|${d.stockName}|${d.uniqueKey}`;
   const timePart = String(d.receivedTime ?? '').replace(/:/g, '') || '000000';
-  const filename = `${d.date}-${timePart}-${sanitizeSegment(d.stockName)}.md`;
+  const filename = `${sanitizeSegment(d.date)}-${sanitizeSegment(timePart)}-${sanitizeSegment(d.stockName)}.md`;
   const content = buildFrontmatter({
     type: 'dividend',
     date: d.date,
