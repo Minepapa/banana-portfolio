@@ -6,39 +6,12 @@
 // "실패"를 보고할 때만 경보한다 — 잡이 아예 조용해지면(launchd 잡 삭제·스크립트가
 // record-heartbeat 호출 전에 죽음·Mac 절전 등) 못 잡는다. v2는 독립 워처가 "이 잡이
 // 기대 주기의 2배 이상 조용하다"를 별도로 감시해 그 사각을 메운다(isStale).
+//
+// frontmatter 빌드/파싱은 vault-frontmatter.mjs 공용 모듈 사용(2026-08-05 리팩터 —
+// ledger-vault-writer.mjs와 중복이던 걸 정리해 한 곳으로 모음).
+import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 
-function yamlValue(v) {
-  if (v === null || v === undefined) return 'null';
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  const s = String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  return `"${s}"`;
-}
-
-function buildFrontmatter(fields) {
-  const lines = ['---'];
-  for (const [k, v] of Object.entries(fields)) lines.push(`${k}: ${yamlValue(v)}`);
-  lines.push('---', '');
-  return lines.join('\n');
-}
-
-// 아주 단순한 "key: value" frontmatter 파서 — job-health 파일은 이 모듈이 직접 쓰므로
-// 형태가 고정돼 있다(중첩 없음, buildFrontmatter의 역함수). 범용 YAML 파서가 필요하면
-// 그때 라이브러리를 도입한다(지금은 과설계 방지).
-export function parseFrontmatter(content) {
-  const m = String(content ?? '').match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return {};
-  const out = {};
-  for (const line of m[1].split('\n')) {
-    const mm = line.match(/^([A-Za-z0-9_]+):\s*(.*)$/);
-    if (!mm) continue;
-    const [, key, raw] = mm;
-    if (raw === 'null') out[key] = null;
-    else if (/^-?\d+(\.\d+)?$/.test(raw)) out[key] = Number(raw);
-    else if (raw === 'true' || raw === 'false') out[key] = raw === 'true';
-    else out[key] = raw.replace(/^"|"$/g, '').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-  }
-  return out;
-}
+export { parseFrontmatter };
 
 // prior: 이전 State/JobHealth/<job>.md를 parseFrontmatter로 읽은 결과(없으면 null).
 // v1과 동일한 규칙: OK면 연속실패 0으로 리셋, 아니면 이전값+1. 1회 실패는 조용히

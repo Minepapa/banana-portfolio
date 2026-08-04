@@ -17,23 +17,11 @@
 // 어느 Ledger 하위폴더에 쓸지는 이 모듈이 결정해 `dir`로 반환한다(2026-08-04 확정,
 // 오너 요청 — 이벤트 종류별 하위폴더 분리) — 호출부가 매핑을 따로 알 필요가 없다.
 import { VAULT_PATHS } from './vault-paths.mjs';
+// frontmatter 빌드는 vault-frontmatter.mjs 공용 모듈 사용(2026-08-05 리팩터).
+import { buildFrontmatter } from './vault-frontmatter.mjs';
 
 function sanitizeSegment(s) {
   return String(s ?? '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '-');
-}
-
-function yamlValue(v) {
-  if (v === null || v === undefined) return 'null';
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  const s = String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  return `"${s}"`;
-}
-
-function buildFrontmatter(fields) {
-  const lines = ['---'];
-  for (const [k, v] of Object.entries(fields)) lines.push(`${k}: ${yamlValue(v)}`);
-  lines.push('---', '');
-  return lines.join('\n');
 }
 
 const ACCOUNT_NOTE = 'Phase 8·9(State/Holdings) 이후 별도 배치로 채워짐 — Phase 2 범위 밖(2026-08-04 확정)';
