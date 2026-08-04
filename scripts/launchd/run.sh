@@ -1,87 +1,36 @@
 #!/usr/bin/env bash
-# launchd 래퍼 — 리포지토리 cwd 고정 · 서비스 계정 토큰 주입 · 로그 리다이렉트.
+# launchd 래퍼 (v2) — 리포지토리 cwd 고정·로그 리다이렉트·잡 종료 후 하트비트 기록.
 #
-# launchd plist 들이 이 스크립트를 호출한다(예: run.sh risk-d).
-# 토큰은 서비스 계정 키(sa-key.json)로 무인 발급해 각 스크립트의 positional <TOKEN> 인자로 넘긴다.
-# 모든 대상 스크립트(drain·risk-monitor)가 positional 토큰을 받으므로 추가 코드 변경 없이 무인 동작.
-# 서비스 계정 키가 없으면 토큰 없이 실행 → 대화형 OAuth 가 떠 무인 실행은 실패한다.
-# (서비스 계정 설정 = docs/plans/ai-risk-engine.md Phase 7 참고.)
+# v1(banana-portfolio)의 scripts/launchd/run.sh와 같은 패턴이지만 완전히 별개 파일이다
+# — v2 잡은 대부분 Vault(로컬 파일) + git + 텔레그램만 쓰고 구글 시트 서비스계정 토큰이
+# 필요 없어서(카카오 파싱류 제외) 그 부분은 뺐다. 시트가 필요한 v2 잡(예:
+# parse-notifications-to-vault)이 늘어나면 그때 v1 run.sh의 토큰 발급 블록을 가져온다.
+#
+# launchd plist들이 이 스크립트를 호출한다(예: run.sh backup-vault).
 set -euo pipefail
 
-REPO="/Users/huinique/Stockproject/banana-portfolio"
-LOG_DIR="$HOME/Library/Logs/banana-portfolio"
-SA_KEY_FILE="${SA_KEY_FILE:-$HOME/.config/banana-portfolio/sa-key.json}"
+REPO="/Users/huinique/Stockproject/banana-portfolio-v2"
+LOG_DIR="$HOME/Library/Logs/banana-portfolio-v2"
 
 mkdir -p "$LOG_DIR"
 cd "$REPO"
 
-# launchd 는 최소 PATH 로 실행되므로 node 를 찾도록 보강
+# launchd는 최소 PATH로 실행되므로 node를 찾도록 보강
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 NODE="$(command -v node || true)"
-if [ -z "$NODE" ]; then echo "[run.sh] node 를 PATH 에서 찾지 못했습니다" >&2; exit 127; fi
+if [ -z "$NODE" ]; then echo "[run.sh] node를 PATH에서 찾지 못했습니다" >&2; exit 127; fi
 
 JOB="${1:-}"
-# parse-notifications 는 평일(월~금) 08:00–16:30 KST(장중~마감 1h)만 실행.
-# 그 외 시간/주말엔 구글 접근(토큰·시트) 없이 즉시 skip — 24시간 폴링 제거.
-# (미국장 체결도 카카오 알람이 다음 한국장 중에 도착하므로 한국장 윈도우로 충분.)
-if [ "$JOB" = "parse-notifications" ]; then
-  DOW=$(TZ=Asia/Seoul date +%u)              # 1=월 … 7=일
-  HHMM=$((10#$(TZ=Asia/Seoul date +%H%M)))   # 10# : 0800 8진수 파싱 오류 방지
-  if [ "$DOW" -gt 5 ] || [ "$HHMM" -lt 800 ] || [ "$HHMM" -gt 1630 ]; then
-    echo "[run.sh] parse-notifications: 장외(평일 08:00–16:30 KST 외) — skip"; exit 0
-  fi
-fi
-
-# realtime-quotes(한투 KIS 보유종목 시세, 국내+해외)는 국내 정규장(평일 09:00–15:30 KST)
-# 또는 미국 정규장(평일 09:30–16:00 America/New_York — tzdata가 서머타임을 자동 반영하므로
-# KST 환산 없이 그 지역 로컬 시각을 직접 물어봄)일 때만 실행. 둘 다 닫혀있으면 서비스계정
-# OAuth 호출조차 하지 않고 즉시 skip(24시간 폴링 방지, parse-notifications 게이트와 동일 취지).
-# 이건 대략적인 사전 필터일 뿐 — 정밀한 시장별(국내/해외 각각) 판단은 잡 자체(kis.mjs
-# isKrMarketOpen/isUsMarketOpen)가 다시 독립적으로 한다.
-if [ "$JOB" = "realtime-quotes" ]; then
-  KR_DOW=$(TZ=Asia/Seoul date +%u)
-  KR_HHMM=$((10#$(TZ=Asia/Seoul date +%H%M)))
-  US_DOW=$(TZ=America/New_York date +%u)
-  US_HHMM=$((10#$(TZ=America/New_York date +%H%M)))
-  KR_OPEN=0; { [ "$KR_DOW" -le 5 ] && [ "$KR_HHMM" -ge 900 ] && [ "$KR_HHMM" -le 1530 ]; } && KR_OPEN=1
-  US_OPEN=0; { [ "$US_DOW" -le 5 ] && [ "$US_HHMM" -ge 930 ] && [ "$US_HHMM" -le 1600 ]; } && US_OPEN=1
-  if [ "$KR_OPEN" -eq 0 ] && [ "$US_OPEN" -eq 0 ]; then
-    echo "[run.sh] realtime-quotes: 국내·해외 모두 장외 — skip"; exit 0
-  fi
-fi
-
-# 서비스 계정 키로 무인 토큰 발급 (sheets-common 의 getServiceAccountToken 재사용)
-TOKEN=""
-if [ -f "$SA_KEY_FILE" ]; then
-  TOKEN="$("$NODE" -e 'import("./scripts/lib/sheets-common.mjs").then(m=>m.getServiceAccountToken()).then(t=>process.stdout.write(t)).catch(e=>{console.error(e.message);process.exit(1)})')" \
-    || { echo "[run.sh] 서비스 계정 토큰 발급 실패 (키: $SA_KEY_FILE)" >&2; exit 1; }
-fi
-if [ -z "$TOKEN" ]; then
-  echo "[run.sh] 경고: 서비스 계정 키($SA_KEY_FILE) 없음 → 무인 실행 실패 가능(대화형 OAuth)" >&2
-fi
-
 case "$JOB" in
-  drain)               CMD=(scripts/jobs/drain-eval-queue.mjs --auto) ;;
-  risk-d)              CMD=(scripts/jobs/risk-monitor.mjs --mode=D) ;;
-  risk-b)              CMD=(scripts/jobs/risk-monitor.mjs --mode=B) ;;
-  baseline)            CMD=(scripts/jobs/backfill-baselines.mjs --force) ;;
-  report-sync)         CMD=(scripts/jobs/sync-reports.mjs) ;;
-  weekly-report)       CMD=(scripts/jobs/weekly-report.mjs --model=opus) ;;
-  parse-notifications) CMD=(scripts/jobs/parse-notifications.mjs) ;;
-  journal-sync)        CMD=(scripts/jobs/sync-position-journal.mjs) ;;
-  backup)              CMD=(scripts/jobs/backup-sheet.mjs) ;;
-  daily-snapshot)      CMD=(scripts/jobs/daily-snapshot.mjs) ;;
-  order-weekly)        CMD=(scripts/jobs/order-proposals.mjs --mode=weekly) ;;
-  order-crash)         CMD=(scripts/jobs/order-proposals.mjs --mode=crash) ;;
-  realtime-quotes)     CMD=(scripts/jobs/realtime-quotes.mjs) ;;
-  reconcile-irp)       CMD=(scripts/jobs/reconcile-irp.mjs) ;;
-  *) echo "usage: run.sh {drain|risk-d|risk-b|baseline|report-sync|weekly-report|parse-notifications|journal-sync|backup|daily-snapshot|order-weekly|order-crash|realtime-quotes|reconcile-irp}" >&2; exit 2 ;;
+  backup-vault)   CMD=(scripts/jobs/backup-vault-snapshot.mjs) ;;
+  health-watcher) CMD=(scripts/jobs/health-watcher.mjs) ;;
+  *) echo "usage: run.sh {backup-vault|health-watcher}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)
 START=$(date +%s)
 set +e
-"$NODE" "${CMD[@]}" ${TOKEN:+"$TOKEN"}
+"$NODE" "${CMD[@]}"
 CODE=$?
 set -e
 DUR=$(( $(date +%s) - START ))
@@ -89,6 +38,6 @@ STATUS=OK; [ "$CODE" -ne 0 ] && STATUS=FAIL
 
 # 하트비트 기록 (잡 실패해도 기록은 시도; 기록 실패는 잡 종료코드를 가리지 않음)
 HB_DETAIL="$(tail -n 3 "$LOG_DIR/$JOB.log" 2>/dev/null | tr '\n' ' ' | cut -c1-200)" \
-  "$NODE" scripts/jobs/record-heartbeat.mjs "$JOB" "$STATUS" "$DUR" ${TOKEN:+"$TOKEN"} || true
+  "$NODE" scripts/jobs/record-heartbeat-vault.mjs "$JOB" "$STATUS" "$DUR" || true
 
 exit "$CODE"

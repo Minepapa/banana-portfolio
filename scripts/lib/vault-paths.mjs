@@ -38,6 +38,10 @@ export const VAULT_PATHS = {
     holdings: join(VAULT_ROOT, 'State', 'Holdings'),
     allocation: join(VAULT_ROOT, 'State', 'Allocation'),
     baselines: join(VAULT_ROOT, 'State', 'Baselines'),
+    // 잡 하트비트(1잡=1파일, 매번 덮어쓰기) — 구현계획서 Phase 3, v1 record-heartbeat.mjs의
+    // Vault판. 폴더가 아니라 이 State 카테고리에 두는 이유: "지금 상태"이지 이벤트 로그가
+    // 아니다(잡이 실행될 때마다 파일이 늘지 않고 같은 파일이 갱신됨).
+    jobHealth: join(VAULT_ROOT, 'State', 'JobHealth'),
   },
   decisions: {
     evaluations: join(VAULT_ROOT, 'Decisions', 'Evaluations'),

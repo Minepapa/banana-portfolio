@@ -148,6 +148,24 @@ Vault frontmatter 고유키 필드로 그대로 이식(새로 설계하지 않�
 **추천 스킬**: 별도 스킬 불필요 — v1 launchd 패턴 그대로 포팅하는 작업. `tdd`는
 하트비트 임계치 판정 로직 정도에만 적용.
 
+> ✅ **완료(2026-08-05)**:
+> - `job-health.mjs`(순수함수, 12 테스트) + `record-heartbeat-vault.mjs` — v1의
+>   구글시트 "잡상태" 탭을 `State/JobHealth/<job>.md`(1잡=1파일)로 대체, 연속 2회
+>   실패부터 텔레그램 알림(v1과 동일 임계치)
+> - `health-watcher.mjs`(6 테스트) — 독립 워처. **하트비트 정체 감지는 실제로 3시간
+>   조용한 잡을 인위적으로 만들어 리허설 완료**(정상 탐지 확인). **텔레그램 상시세션
+>   프로세스 감시는 그 세션 자체가 Phase 5 산출물이라 아직 실제 리허설 불가** —
+>   `WATCH_TELEGRAM_SESSION=1`으로 켜는 코드는 준비해뒀고, Phase 5 완료 후 다시
+>   리허설 필요(완료 기준 중 "상시 세션을 죽여봤을 때" 부분은 지금 검증 불가능한
+>   전제라 미룸)
+> - `backup-vault-snapshot.mjs` — `~/banana-vault`를 로컬 전용 git 리포로 초기화(코드
+>   리포와 무관, 원격 push 없음), **실제로 스냅샷→삭제→`git checkout`으로 복구까지
+>   리허설 완료**(완료 기준 충족)
+> - `run.sh`(v2 전용, v1과 별개 파일)·`com.banana2.*.plist` 2개 작성 — **`launchctl
+>   load`로 활성화는 안 함**(Vault가 아직 로컬 임시 경로라 실사용 전, `com.banana.*`
+>   와 라벨·로그 디렉토리 분리해 v1 운영과 충돌 없음). 활성화는 오너가 준비되면
+>   수동으로.
+
 **병렬화**: Phase 0·1과 독립이므로 Phase 1 완료 즉시 병렬 착수 가능
 (**`superpowers:dispatching-parallel-agents`** 활용 여지).
 
