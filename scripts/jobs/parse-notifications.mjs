@@ -28,8 +28,15 @@
  */
 
 import { SHEET_ID, getToken, getRange, getRangeRaw, appendValues, updateCell, setValues, ensureSheet, clearColumnABackground } from '../lib/sheets-common.mjs';
-import { resolveCashBase, settleCash, buildHistoricalAcctMap, resolveTradeTab, resolveBrokerTab, resolveDepositAnchorBalance } from '../lib/cash-base.mjs';
+import { resolveCashBase, settleCash, buildHistoricalAcctMap, resolveTradeTab, resolveBrokerTab } from '../lib/cash-base.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
+// 파싱 함수(순수)는 scripts/lib/notification-parsers.mjs로 이관됐다(구현계획서 Phase 2,
+// 2026-08-04) — v2의 Vault 기록 잡(parse-notifications-to-vault.mjs)과 이 잡이 같은
+// 정규식을 공유해 갈라지지 않게 하기 위함. 이 잡의 동작은 바뀌지 않는다(순수 리팩터).
+import {
+  cleanNum, normalizeDateTime,
+  parseExecution, parseDividend, parseFundBuy, parseGoldBuy, parseCashAlarm, parseExchange,
+} from '../lib/notification-parsers.mjs';
 
 const API = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 const ALARM_SHEET = '알람';
@@ -42,7 +49,7 @@ const CASH_BASE_SHEET = '예수금기준';
 const CASH_BASE_HEADER = ['계좌', '기준액', '기준일', '소스', '갱신시각'];
 const CASH_ROW_NAME = '예수금';                 // ISA·위탁·IRP 표시 행 종목명(사용자가 1회 생성)
 const AUTO_CASH_TABS = new Set(['ISA', '위탁']);  // NH: 입금/출금 알림 잔고로 자동 앵커
-const NH_ACCT_PREFIX = { '209-02': 'ISA', '205-01': '위탁' };  // 계좌번호 앞6자 → 탭
+// NH_ACCT_PREFIX는 notification-parsers.mjs의 parseCashAlarm 내부로 이관됨(그쪽에서만 쓰임).
 // 배당/분배금 알림의 계좌번호 → 예수금 귀속 후보 계좌. 4계좌가 서로 다른 증권사라
 // (ISA·위탁=NH, 연금저축=삼성, IRP=한국투자) 계좌번호 앞자리로 유일하게 정해진다 —
 // 후보가 2개 이상 남는 경우는 없다(정정 전엔 삼성(71612)을 연금저축·IRP 공용으로
@@ -89,17 +96,10 @@ const explicitToken = args.find(a => !a.startsWith('--'));
 const DRY_RUN = args.includes('--dry-run');
 
 // ── 공통 ──────────────────────────────────────────────
-const cleanNum = (s, allowDot = false) => String(s ?? '').replace(allowDot ? /[^0-9.]/g : /[^0-9]/g, '');
+// cleanNum·normalizeDateTime은 notification-parsers.mjs에서 import(위) — 정의 이관됨.
 // 수식 인젝션 방어: USER_ENTERED 쓰기 시 =,+,-,@로 시작하면 Sheets가 수식으로 해석.
 // 알림 텍스트에서 온 데이터 필드(종목명 등)는 선행 작은따옴표로 텍스트 강제.
 const deformula = (s) => { const t = String(s ?? ''); return /^[=+\-@\t\r]/.test(t) ? `'${t}` : t; };
-// "2026-05-04 9:20:42" → "2026-05-04 09:20:42" (Sheets가 leading-zero 생략 가능)
-function normalizeDateTime(raw) {
-  const m = String(raw ?? '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2}):(\d{1,2})$/);
-  if (!m) return String(raw ?? '').trim();
-  const p = (n) => String(n).padStart(2, '0');
-  return `${m[1]}-${p(m[2])}-${p(m[3])} ${p(m[4])}:${p(m[5])}:${p(m[6])}`;
-}
 
 // Sheets 직렬수(1899-12-30 기준, 분수=하루 비율) → 'yyyy-MM-dd HH:mm:ss' 벽시계 문자열.
 // 날짜셀 표시형식이 '날짜전용'이어도 직렬값엔 체결 시각이 남아있어 이를 복원한다.
@@ -117,176 +117,6 @@ async function getFormulas(token, range) {
   });
   if (!res.ok) return [];
   return (await res.json()).values || [];
-}
-
-// ── 체결 파서 (증권사별 정규식) ───────────────────────
-const TRADE_PATTERNS = [
-  { broker: 'NH투자증권', overseas: false,
-    re: /\[NH투자증권\][\s\S]*?종\s*목\s*명\s*:\s*(?<stockName>[^\n\r]+)[\s\S]*?종목코드\s*:\s*(?<stockCode>[A-Za-z0-9]{6})[\s\S]*?체결수량\s*:\s*(?<quantity>[\d,]+)\s*주[\s\S]*?체결단가\s*:\s*(?<price>[\d,]+)\s*원/ },
-  { broker: 'NH투자증권 해외', overseas: true,
-    re: /\[NH투자증권\]\s*해외주식[\s\S]*?종목명\s*:\s*\((?<stockCode>[A-Z0-9]+)\s+[A-Z]+\)(?<stockName>[^\n\r]+)[\s\S]*?체결수량\s*:\s*(?<quantity>[\d,]+)\s*주[\s\S]*?체결가격\s*:\s*(?<price>[\d.]+)/ },
-  { broker: '삼성증권', overseas: false,
-    re: /\[삼성증권\]<주식체결안내>[\n\r]+[^\n\r]+[\n\r]+(?<stockName>[^\n\r]+)[\n\r]+(?:매수|매도)(?<quantity>[\d,]+)주\s+(?<price>[\d,]+)원/ },
-  { broker: '한국투자증권', overseas: false,
-    re: /\[한국투자증권 체결안내\][\s\S]*?종목명\s*:\s*(?<stockName>[^(\n\r]+?)\s*\((?<stockCode>[A-Za-z0-9]{6})\)[\s\S]*?체결수량\s*:\s*(?<quantity>[\d,]+)\s*주[\s\S]*?체결단가\s*:\s*(?<price>[\d,]+)\s*원/ },
-];
-
-function parseExecution(body, tsRaw) {
-  if (!(body.includes('체결') && (body.includes('매수') || body.includes('매도')))) return null;
-  for (const p of TRADE_PATTERNS) {
-    const m = body.match(p.re);
-    if (!m) continue;
-    const g = m.groups || {};
-    const stockName = g.stockName?.trim();
-    const quantity = parseInt(cleanNum(g.quantity), 10);
-    const price = parseFloat(cleanNum(g.price, true));
-    if (!stockName || !Number.isFinite(quantity) || !Number.isFinite(price)) return null;
-    return {
-      tradeDate: normalizeDateTime(tsRaw),
-      tradeType: body.includes('매수') ? '매수' : '매도',
-      stockCode: g.stockCode?.trim() || '',
-      stockName, quantity, price,
-      currency: p.overseas ? 'USD' : 'KRW',
-      broker: p.broker,
-    };
-  }
-  return null;
-}
-
-// ── 배당 파서 (증권사별 정규식) ───────────────────────
-const NH_DIV = /\[NH투자증권\]\s*(?:분배금|배당금)\s*입금\s*안내[\s\S]*?종목명\s*:\s*(?<stockName>[^\n\r]+)[\s\S]*?세후금액\s*:\s*(?<amount>[\d,]+)\s*원[\s\S]*?입금일\s*:\s*(?<date>\d{4}\.\d{2}\.\d{2})/;
-const NH_BOND = /\[NH투자증권\]\s*채권원리금\s*입금\s*안내[\n\r]+[^\n\r]*입금\s+(?<month>\d{2})\/(?<day>\d{2})\s+\d{2}:\d{2}\s+(?<amount>[\d,]+)\s+(?<stockName>[^\n\r]+)/;
-const SAMSUNG_DIV = /\[삼성증권\]\s*<(?:분배금|배당금)[^>]*>[\s\S]*?종목명\s*:\s*(?<stockName>[^\n\r\-]+)[\s\S]*?세후\s*(?:분배금액|배당금액)\s*:\s*(?<amount>[\d,]+)\s*원/;
-
-function parseDividend(body, tsRaw) {
-  if (!(body.includes('배당금') || body.includes('분배금') || body.includes('채권원리금'))) return null;
-  const ts = normalizeDateTime(tsRaw);
-  const datePart = ts.slice(0, 10);            // yyyy-MM-dd
-  const timePart = ts.slice(11, 19) || '00:00:00'; // HH:mm:ss
-  const acctRaw = (body.match(/계좌번호\s*:\s*([0-9*\-]+)/)?.[1] ?? '').trim(); // 예수금 귀속용(있으면)
-  const broker = (body.match(/\[(NH투자증권|삼성증권|한국투자증권)[^\]]*\]/)?.[1] ?? '').trim(); // NH엔 계좌번호 없음 → 증권사로 후보 축소
-  const mk = (date, amount, stockName) => ({ date, afterTaxAmount: amount, stockName: stockName.trim(), acctRaw, broker, receivedTime: timePart, uniqueKey: `${timePart}_${amount}` });
-
-  let m = body.match(NH_DIV);
-  if (m) { const a = parseInt(cleanNum(m.groups.amount), 10); if (Number.isFinite(a)) return mk(m.groups.date.replace(/\./g, '-'), a, m.groups.stockName); }
-  m = body.match(NH_BOND);
-  if (m) { const a = parseInt(cleanNum(m.groups.amount), 10); if (Number.isFinite(a)) return mk(`${ts.slice(0,4)}-${m.groups.month}-${m.groups.day}`, a, m.groups.stockName); }
-  m = body.match(SAMSUNG_DIV);
-  if (m) { const a = parseInt(cleanNum(m.groups.amount), 10); if (Number.isFinite(a)) return mk(datePart, a, m.groups.stockName); }
-  return null;
-}
-
-// ── 펀드 적립 매수 파서 (삼성증권 "펀드 매수 완료 안내") ─
-// 매수금액·매수기준가로 좌수를 역산: 좌수 = 매수금액 ÷ 기준가 × 1000 (기준가는 1,000좌당 표기 관행)
-const FUND_FUNDNAME = /펀드명\s*:\s*([^\n\r]+)/;
-const FUND_AMOUNT = /매수금액\s*:\s*([\d,]+)\s*원/;
-const FUND_NAV = /매수기준가\s*:\s*([\d,]+(?:\.\d+)?)/;
-const FUND_DATE = /매수신청일\s*:\s*(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/;
-
-function parseFundBuy(body, tsRaw) {
-  if (!(body.includes('펀드') && body.includes('매수기준가'))) return null;
-  const fm = body.match(FUND_FUNDNAME);
-  const am = body.match(FUND_AMOUNT);
-  const nm = body.match(FUND_NAV);
-  if (!fm || !am || !nm) return null;
-  const fundName = fm[1].trim();
-  const amount = parseInt(cleanNum(am[1]), 10);
-  const nav = parseFloat(cleanNum(nm[1], true));
-  if (!fundName || !Number.isFinite(amount) || amount <= 0 || !Number.isFinite(nav) || nav <= 0) return null;
-  const dm = body.match(FUND_DATE);
-  const p = (n) => String(n).padStart(2, '0');
-  const date = dm ? `${dm[1]}-${p(dm[2])}-${p(dm[3])}` : normalizeDateTime(tsRaw).slice(0, 10);
-  return { fundName, amount, nav, date, units: (amount / nav) * 1000 };
-}
-
-// ── 금현물 매수 파서 (NH투자증권 "매수 주문체결", 단위 g) ─
-// 주식 체결은 "주" 단위라 parseExecution(NH)에 먼저 잡히고, 금은 "g" 단위라 거기서 미스 →
-// 여기로 떨어진다. 가드를 g 단위로 둬 일반 체결과 충돌하지 않음.
-const GOLD_NAME = /종\s*목\s*명\s*:\s*([^\n\r]+)/;
-const GOLD_QTY = /체결수량\s*:\s*([\d,.]+)\s*g/;
-const GOLD_PRICE = /체결단가\s*:\s*([\d,]+)\s*원/;
-const GOLD_ORDER = /주문번호\s*:\s*(\d+)/;
-
-function parseGoldBuy(body, tsRaw) {
-  // 금 매도 알림은 아직 샘플 없으나, 동일 포맷에서 매수→매도만 바뀐다고 가정해 양쪽 지원.
-  const isSell = body.includes('매도');
-  if (!(body.includes('체결') && (body.includes('매수') || isSell) && GOLD_QTY.test(body))) return null;
-  const nm = body.match(GOLD_NAME);
-  const qm = body.match(GOLD_QTY);
-  const pm = body.match(GOLD_PRICE);
-  if (!nm || !qm || !pm) return null;
-  const stockName = nm[1].trim();
-  const qty = parseFloat(cleanNum(qm[1], true));
-  const price = parseFloat(cleanNum(pm[1], true));
-  if (!stockName || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(price) || price <= 0) return null;
-  const om = body.match(GOLD_ORDER);
-  return { stockName, qty, price, tradeType: isSell ? '매도' : '매수', orderNo: om ? om[1] : '', date: normalizeDateTime(tsRaw).slice(0, 10) };
-}
-
-// ── 예수금 앵커 파서 (NH투자증권 "입금안내/출금안내", 잔고줄 보유) ─
-// 입금·출금 알림 양쪽에 '출금가능금액'(그 시점 정답 현금잔고)이 있어 앵커로 쓴다.
-// ISA·위탁 둘 다 NH라 포맷 동일 → 계좌번호 앞6자로 구분 (209-02=ISA, 205-01=위탁).
-// 예외: ISA는 계좌 특성상 출금을 하지 않아 NH가 출금가능금액을 정확히 갱신하지 않는다(매도 후
-// 아직 결제(입금)가 안 된 예수금이 있을 때도 낮게 보일 수 있음) — 실증(2026-07-14 ISA):
-// 입금 300,000원인데 출금가능금액 183,079원(입금액보다 작음). 입금안내는 '금액'(이번 입금액)도
-// 같이 오므로, 둘 다 확인해 더 큰 쪽을 신뢰한다(resolveDepositAnchorBalance, cash-base.mjs).
-const CASH_ACCTNO = /계좌번호\s*([\d]{3}-[\d]{2}-[\d*]+)/;
-const CASH_BALANCE = /출금가능금액\s*:\s*([\d,]+)\s*원/;
-const CASH_DEPOSIT_AMOUNT = /(?<!출금가능)금액\s+([\d,]+)\s*원/;
-
-function parseCashAlarm(body, tsRaw) {
-  if (!body.includes('NH투자증권')) return null;
-  const isDeposit = body.includes('입금안내');
-  if (!(isDeposit || body.includes('출금안내'))) return null;
-  const am = body.match(CASH_ACCTNO);
-  const bm = body.match(CASH_BALANCE);
-  if (!am || !bm) return null;
-  const acctNo = am[1].trim();
-  const tab = NH_ACCT_PREFIX[acctNo.slice(0, 6)];
-  if (!tab) return null;                          // 매핑 안 된 NH 계좌 → skip
-  const withdrawable = parseInt(cleanNum(bm[1]), 10);
-  if (!Number.isFinite(withdrawable) || withdrawable < 0) return null;
-  let balance = withdrawable;
-  // ISA 한정 — 위탁은 출금가능금액이 이미 입금을 정확히 반영함이 실증됨(06-18: 224,098+1,000,000
-  // =7,224,098 정확 일치). ISA만 이 뒤처짐 증상이 있으므로, 다른 NH 계좌까지 무조건 입금액과
-  // max 를 취하면 위탁처럼 이미 정확한 값을 근거 없이 덮어씌울 위험이 생긴다.
-  if (isDeposit && tab === 'ISA') {
-    const dm = body.match(CASH_DEPOSIT_AMOUNT);
-    const deposit = dm ? parseInt(cleanNum(dm[1]), 10) : NaN;
-    balance = resolveDepositAnchorBalance(withdrawable, deposit);
-  }
-  if (!Number.isFinite(balance) || balance < 0) return null;
-  return { tab, acctNo, balance, ts: normalizeDateTime(tsRaw) };
-}
-
-// ── 환전 파서 (NH투자증권 "환전내역 안내") ────────────
-// 외화매수 → 달러RP +USD(외화금액) · 위탁 KRW 예수금 −원화금액.
-// 외화매도 → 달러RP −USD · 위탁 KRW 예수금 +원화금액. USD만 처리.
-// 환전일자엔 연도가 없어 알람 ts 연도를 차용(NH_BOND와 동형).
-// 원화금액을 못 읽으면(패턴 변경 등) won=null — 호출부가 KRW 쪽 반영을 skip(USD 쪽은 그대로 진행,
-// 추정치로 예수금을 어긋나게 하느니 그 계좌 예수금을 못 맞추는 게 안전).
-const EXCH_DATE = /환전일자\s*:\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/;
-const EXCH_KIND = /환전구분\s*:\s*(외화매수|외화매도)/;
-const EXCH_CCY = /통화명\s*:\s*([A-Za-z]+)/;
-const EXCH_USD = /외화금액\s*:\s*USD\s*([\d,]+(?:\.\d+)?)/;
-const EXCH_WON = /원화금액\s*:\s*([\d,]+)/;
-
-function parseExchange(body, tsRaw) {
-  if (!(body.includes('환전내역') && body.includes('환전구분'))) return null;
-  const km = body.match(EXCH_KIND);
-  const um = body.match(EXCH_USD);
-  if (!km || !um) return null;
-  const cm = body.match(EXCH_CCY);
-  if (cm && cm[1].toUpperCase() !== 'USD') return null;   // USD 외 통화 skip
-  const usd = parseFloat(cleanNum(um[1], true));
-  if (!Number.isFinite(usd) || usd <= 0) return null;
-  const wm = body.match(EXCH_WON);
-  const won = wm ? parseInt(cleanNum(wm[1]), 10) : null;
-  const ts = normalizeDateTime(tsRaw);
-  const dm = body.match(EXCH_DATE);
-  const p = (n) => String(n).padStart(2, '0');
-  const date = dm ? `${ts.slice(0, 4)}-${p(dm[1])}-${p(dm[2])}` : ts.slice(0, 10);
-  return { kind: km[1], usd, won: Number.isFinite(won) && won > 0 ? won : null, date };
 }
 
 // ── 종목코드 해석 (포트폴리오 수식 → 네이버 자동완성) ──
