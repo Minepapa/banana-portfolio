@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildFrontmatter, parseFrontmatter, yamlValue } from './vault-frontmatter.mjs';
+import { buildFrontmatter, parseFrontmatter, updateFrontmatter, yamlValue } from './vault-frontmatter.mjs';
 
 test('yamlValue: null/undefined → "null"', () => {
   assert.equal(yamlValue(null), 'null');
@@ -27,4 +27,13 @@ test('buildFrontmatter → parseFrontmatter 왕복 보장', () => {
 
 test('parseFrontmatter: frontmatter 없으면 빈 객체', () => {
   assert.deepEqual(parseFrontmatter('그냥 본문'), {});
+});
+
+test('updateFrontmatter: 기존 필드에 새 필드 병합', () => {
+  const original = buildFrontmatter({ status: '대기', qty: 10 });
+  const updated = updateFrontmatter(original, { status: '완료', holdingsApplied: true });
+  const parsed = parseFrontmatter(updated);
+  assert.equal(parsed.status, '완료');
+  assert.equal(parsed.qty, 10);
+  assert.equal(parsed.holdingsApplied, true);
 });

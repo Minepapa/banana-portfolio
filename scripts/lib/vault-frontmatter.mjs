@@ -17,6 +17,14 @@ export function buildFrontmatter(fields) {
   return lines.join('\n');
 }
 
+// 기존 frontmatter 필드에 updates를 병합해 새 content를 만든다(파일 자체를 새로 쓰는 게
+// 아니라 같은 파일을 갱신) — proposal-vault.mjs의 updateProposalRecord와 같은 패턴이라
+// Phase 8(holdings-updater가 체결에 holdingsApplied 마킹)에서 재사용하려고 공용화했다.
+export function updateFrontmatter(currentContent, updates) {
+  const merged = { ...parseFrontmatter(currentContent), ...updates };
+  return buildFrontmatter(merged);
+}
+
 // 아주 단순한 "key: value" frontmatter 파서 — buildFrontmatter의 역함수(왕복 보장).
 export function parseFrontmatter(content) {
   const m = String(content ?? '').match(/^---\n([\s\S]*?)\n---/);

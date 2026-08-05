@@ -2,7 +2,7 @@
 // YAML 형태인지 확인.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildExecutionRecord, buildDividendRecord } from './ledger-vault-writer.mjs';
+import { buildExecutionRecord, buildDividendRecord, buildProfitRecord } from './ledger-vault-writer.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
 
 const exec = (overrides = {}) => ({
@@ -107,4 +107,35 @@ test('buildDividendRecord: frontmatter에 배당 필드 포함', () => {
   assert.match(content, /afterTaxAmount: 15000/);
   assert.match(content, /uniqueKey: "09:00:00_15000"/);
   assert.match(content, /account: null/);
+});
+
+const sellExec = (overrides = {}) => ({
+  tradeDate: '2026-08-05 10:00:00', stockName: '삼성전자', quantity: 4, price: 70000, account: '위탁', ...overrides,
+});
+
+test('buildProfitRecord: account가 null이 아니다(매도 시점엔 이미 계좌 귀속 해결됨)', () => {
+  const { content } = buildProfitRecord(sellExec(), 50000, (70000 - 50000) * 4);
+  assert.match(content, /account: "위탁"/);
+  assert.match(content, /type: "realized-profit"/);
+  assert.match(content, /profit: 80000/);
+  assert.match(content, /buyPrice: 50000/);
+  assert.match(content, /sellPrice: 70000/);
+});
+
+test('buildProfitRecord: Profits 하위폴더를 가리킨다', () => {
+  const { dir } = buildProfitRecord(sellExec(), 50000, 80000);
+  assert.equal(dir, VAULT_PATHS.facts.ledger.profits);
+});
+
+test('buildProfitRecord: 파일명이 결정론적(날짜·시각·종목명·계좌)', () => {
+  const a = buildProfitRecord(sellExec(), 50000, 80000);
+  const b = buildProfitRecord(sellExec(), 50000, 80000);
+  assert.equal(a.filename, b.filename);
+  assert.equal(a.filename, '2026-08-05-100000-삼성전자-위탁-4.md');
+});
+
+test('buildProfitRecord: 같은 종목·계좌·같은 초라도 수량이 다르면(분할체결) 다른 파일명', () => {
+  const a = buildProfitRecord(sellExec({ quantity: 4 }), 50000, 80000);
+  const b = buildProfitRecord(sellExec({ quantity: 6 }), 50000, 80000);
+  assert.notEqual(a.filename, b.filename);
 });

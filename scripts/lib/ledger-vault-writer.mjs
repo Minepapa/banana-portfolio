@@ -80,3 +80,30 @@ export function buildDividendRecord(d) {
   });
   return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.dividends };
 }
+
+// 매도 체결로 발생한 실현손익 — holdings-updater.mjs(구현계획서 Phase 8)가 매도 적용
+// 직후 호출한다. account는 여기선 null로 안 비워둔다 — 매도 자체가 계좌 귀속이 이미
+// 해결된 뒤에만(account-resolver.mjs) 처리되는 단계라, 실현손익 시점엔 계좌를 이미 안다.
+// e: { tradeDate, stockName, quantity, price, account }, avgPrice: 매도 직전 평단가,
+// realizedProfit: holdings-updater.mjs applySell()의 계산 결과.
+export function buildProfitRecord(e, avgPrice, realizedProfit) {
+  const dedupKey = `${e.tradeDate}|매도|${e.stockName}|${e.quantity}|profit`;
+  const datePart = e.tradeDate.slice(0, 10);
+  const timePart = e.tradeDate.slice(11).replace(/:/g, '') || '000000';
+  // 수량을 파일명에 포함(코드리뷰 지적, 2026-08-05) — 같은 종목·계좌를 같은 초에 분할
+  // 매도(분할체결)하면 수량 없이는 파일명이 겹쳐 뒤 기록이 앞 기록을 조용히 덮어쓴다.
+  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.stockName)}-${sanitizeSegment(e.account)}-${sanitizeSegment(e.quantity)}.md`;
+  const content = buildFrontmatter({
+    type: 'realized-profit',
+    date: e.tradeDate,
+    stockName: e.stockName,
+    quantity: e.quantity,
+    buyPrice: avgPrice,
+    sellPrice: e.price,
+    profit: realizedProfit,
+    account: e.account,
+    dedupKey,
+    recordedAt: new Date().toISOString(),
+  });
+  return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.profits };
+}
