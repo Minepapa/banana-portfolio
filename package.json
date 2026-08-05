@@ -12,6 +12,8 @@
     "test:watch": "node --test --watch 'src/**/*.test.js' 'scripts/**/*.test.js'"
   },
   "dependencies": {
+    "firebase": "^12.17.1",
+    "firebase-admin": "^14.2.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "recharts": "^3.8.1"

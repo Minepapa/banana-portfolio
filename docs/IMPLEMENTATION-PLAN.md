@@ -87,6 +87,15 @@ Phase 0~3은 서로 독립적이라 병렬 진행 가능. Phase 8·9는 서로 �
 - [ ] 상시세션 활성화 후 **실제 텔레그램으로 최소 1회 왕복 리허설**(제안 발송→승인
   답장→상태전이) — 지금은 합성 데이터로만 검증됨, 진짜 텔레그램 메시지로는 아직 미확인.
 
+**Phase 6 — Firestore 미러 + 대시보드 앱**
+- [x] ~~Firestore 미러 작업을 지금 어떻게 진행할지~~ → **해소(2026-08-05)**: Firebase
+  콘솔 설정을 오너와 함께 라이브로 진행(claude-in-chrome), 기존 GCP 프로젝트 재사용.
+- [ ] **App.jsx 탭 정리(11→7)·`useFirestoreMirror` 배선 시점** — 2026-08-05 오너 확정:
+  지금 배선하면 State/Holdings·Allocation이 비어있어(Phase 8·9 전) 매일 쓰는 대시보드가
+  먹통이 되므로, Phase 8·9로 Vault에 실제 자산분배·퀀트 데이터가 쌓인 뒤 다시 이 Phase로
+  돌아와 마무리(백엔드 인프라는 이미 완료 — `firebase.js`·`firestore-mirror.mjs`·
+  `sync-firestore-mirror.mjs`·`useFirestoreMirror.js`·`mirrorFreshness.js`).
+
 **아직 안 왔지만 미리 적어두는 것(뒷 Phase에서 다시 상기)**
 - [ ] Phase 2에서 미배선한 펀드적립·예수금앵커·환전의 Vault 기록은 Phase 8·9(계좌
   귀속)에서 다시 다뤄야 함.
@@ -339,6 +348,30 @@ Claude Code의 텔레그램 채널 플러그인(`claude --channels plugin:telegr
 - **`run`** — 실제 앱을 띄워서 눈으로 확인(이 프로젝트 CLAUDE.md의 "UI 변경은 브라우저
   테스트 필수" 원칙과 정확히 일치)
 - **`tdd`** — 이미 `src/lib/*.test.js` 컨벤션이 있으므로 그대로 계승
+
+> ✅ **부분 완료(2026-08-05)** — Firebase/Firestore 인프라 + 백엔드 미러 파이프라인은
+> 실제로 구축·검증됨. **App.jsx 탭 정리·배선은 의도적으로 미룸**(아래 사유).
+> - Firebase 콘솔 라이브 설정(claude-in-chrome으로 함께 진행): 기존 GCP 프로젝트
+>   재사용, Firestore(`asia-northeast3`, 프로덕션모드 보안규칙 — `mirror/**` 읽기는
+>   `vermouth1894@gmail.com`만), Google Authentication 활성화, 웹앱 등록, Admin SDK
+>   서비스계정 키 발급(`~/.config/banana-portfolio-v2/firebase-adminsdk-key.json`, 600권한)
+> - `src/lib/firebase.js`: 클라이언트 SDK 초기화(설정값은 시크릿 아님 — `useGoogleSheets.js`와
+>   동일하게 소스에 직접 기재)
+> - `firestore-mirror.mjs`(12 테스트): Vault 데이터 → `mirror/*` 7종 문서 빌더(순수함수).
+>   State/Holdings·Allocation이 Phase 8·9 전이라 비어있어 holdings·allocation·home은
+>   지금 정직하게 0·빈배열로 나감(가짜 숫자 없음) — trades·dividends는 Facts/Ledger에
+>   실제 기록된 데이터를 그대로 반영
+> - `sync-firestore-mirror.mjs`(2 테스트) + Admin SDK로 **실제 Firestore에 7개 문서
+>   쓰기 → 별도 읽기로 왕복 검증 완료**(합성 데이터 아님, 진짜 클라우드 쓰기/읽기)
+> - `useFirestoreMirror.js`(구글 로그인 + `onSnapshot` 실시간 구독) + `mirrorFreshness.js`
+>   (5 테스트, 신선도 배너용 `isMirrorStale`) — 인프라만 준비, **App.jsx에 아직 미배선**
+> - **App.jsx 탭 정리(11→7)·대기중 제안 배지·신선도 배너 UI 배선은 Phase 8·9 이후로
+>   연기**(2026-08-05 오너 확정) — 지금 배선하면 State/Holdings·Allocation이 비어있어
+>   보유종목·자산분배·손익이 전부 0으로 나오는데, `src/`가 지금 그대로 매일 쓰는 v1
+>   시트 기반 대시보드라 실사용이 먹통이 됨. Phase 8·9로 Vault에 진짜 데이터가 쌓인 뒤
+>   다시 이 Phase로 돌아와 탭 정리·배선·`npm run dev` 브라우저 확인까지 마무리한다.
+>
+> 테스트 677개 통과, lint 클린.
 
 ---
 
