@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.telegram-session</string>
+  <!-- 상시 텔레그램 채널 세션(docs/ARCHITECTURE-V2.md "구현 메모" 절) — Zeus가 Frank의
+       승인/거부 답장·부서 직접호출("카이로스, ~")·킬스위치 명령을 실시간으로 받는다.
+       ⚠️ 봇 토큰은 getUpdates 소비자를 1개만 허용한다 — 이 launchd 잡이 떠 있는 동안
+       터미널에서 수동으로 같은 명령을 또 실행하면 409 Conflict가 난다(구현 메모 참고).
+       KeepAlive로 죽으면 자동 재시작하되, 그 자체가 "이미 떠 있는데 또 뜨는" 중복
+       실행을 만들지는 않는다(launchd가 Label당 1개만 관리). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>claude --channels plugin:telegram@claude-plugins-official</string>
+  </array>
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-session.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-session.log</string>
+</dict>
+</plist>

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildProposalRecord, updateProposalRecord, parseProposal, proposalMatchKey,
-  findActiveProposal, findRecentRejection,
+  findActiveProposal, findRecentRejection, findProposalByTelegramMessageId,
 } from './proposal-vault.mjs';
 
 const now = new Date('2026-08-05T09:00:00.000Z');
@@ -73,6 +73,24 @@ test('findRecentRejection: withinMs 밖(오래된 거부)은 안 걸린다', () 
   };
   const found = findRecentRejection([rejected], { track: '자산분배', assetKey: 'Y', side: '매도', withinMs: 24 * 60 * 60 * 1000, now: new Date('2026-08-05T09:00:00.000Z') });
   assert.equal(found, null);
+});
+
+test('findProposalByTelegramMessageId: 정확히 일치하는 1건을 찾는다', () => {
+  const p = { ...parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'X', side: '매수', quantity: 1, proposedPrice: 100, now }).content), telegramMessageId: 555 };
+  const found = findProposalByTelegramMessageId([p], 555);
+  assert.equal(found.id, p.id);
+});
+
+test('[막아야 함] findProposalByTelegramMessageId: 못 찾으면 추정하지 않고 null', () => {
+  const p = { ...parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'X', side: '매수', quantity: 1, proposedPrice: 100, now }).content), telegramMessageId: 555 };
+  assert.equal(findProposalByTelegramMessageId([p], 999), null);
+  assert.equal(findProposalByTelegramMessageId([p], null), null);
+});
+
+test('[막아야 함] findProposalByTelegramMessageId: 같은 메시지ID가 둘 이상이면(모호) null — 아무거나 안 고름', () => {
+  const p1 = { ...parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'X', side: '매수', quantity: 1, proposedPrice: 100, now }).content), telegramMessageId: 555 };
+  const p2 = { ...parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'Y', side: '매수', quantity: 1, proposedPrice: 100, now }).content), telegramMessageId: 555 };
+  assert.equal(findProposalByTelegramMessageId([p1, p2], 555), null);
 });
 
 test('findRecentRejection: 승인/체결된 건은 거부 이력으로 안 잡힘', () => {

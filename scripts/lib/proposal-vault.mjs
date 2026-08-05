@@ -28,6 +28,9 @@ export function buildProposalRecord({ track, account = null, assetKey, side, qua
     executedAt: null,
     rejectReason: null,
     supersededBy: null,
+    // 텔레그램 발송 후 채워짐(구현계획서 Phase 5) — 이 메시지ID가 Frank의 reply_to와
+    // 정확히 일치할 때만 승인/거부로 인정한다(order-gate.checkApprovalMatch).
+    telegramMessageId: null,
   });
   return { id, filename, content };
 }
@@ -72,4 +75,15 @@ export function findRecentRejection(proposals, { track, assetKey, side, withinMs
   );
   if (!candidates.length) return null;
   return candidates.reduce((latest, p) => (!latest || p.decidedAt > latest.decidedAt ? p : latest), null);
+}
+
+// Frank의 텔레그램 답장이 가리키는(reply_to) 메시지ID로 원본 제안을 찾는다 — 이게
+// "추정하지 않고 정확히 매칭"의 실제 조회 지점이다(order-gate.checkApprovalMatch는
+// 이 함수가 찾아준 제안의 id를 expectedProposalId로 받아 최종 확인만 한다).
+// telegramMessageId가 같은 제안이 둘 이상이면(발생하면 안 되는 상황) null — 추정 금지
+// 원칙상 모호하면 자동으로 아무거나 고르지 않는다.
+export function findProposalByTelegramMessageId(proposals, telegramMessageId) {
+  if (!telegramMessageId) return null;
+  const matches = proposals.filter((p) => p.telegramMessageId === telegramMessageId);
+  return matches.length === 1 ? matches[0] : null;
 }

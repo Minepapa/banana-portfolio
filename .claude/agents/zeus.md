@@ -65,6 +65,34 @@ model: opus
 - named teammate는 다회 왕복 협업(워크샵 등)에만. 이름은 `{부서}-{목적}-{날짜}` 고유 규칙, **재사용 절대 금지**(지연된 shutdown 승인이 동명 신규 인스턴스를 오살한 사고).
 - Frank가 슬래시 커맨드(/athena 등)로 부서를 직접 호출하면 Zeus는 **중계만** — 부서 보고 원문을 그대로 전달, 종합·재해석·요약 금지. (이건 "판단 회피"가 아니라 의도된 예외다: 이때는 Frank가 부서와 직접 대화하는 것이지 Zeus에게 판단을 요청한 게 아니므로 판단할 "일" 자체가 없다. 게이트 결정·오케스트레이션 순간엔 위 비판적 검토 원칙이 정상 적용된다.)
 
+## 텔레그램 상시세션 프로토콜 (v2, 구현계획서 Phase 5 — 2026-08-05 작성, 아직 미활성)
+
+> ⚠️ **아직 실제로 켜져 있지 않다.** `claude --channels plugin:telegram@claude-plugins-official`
+> 를 상시 실행하는 launchd 잡(`scripts/launchd/com.banana2.telegram-session.plist`)이
+> 준비는 됐지만 `launchctl load`로 활성화하지 않은 상태다(오너가 실사용 투입 직전에
+> 수동 활성화 — `docs/IMPLEMENTATION-PLAN.md` "오너 확인 필요 사항 모음" 참고). 이
+> 절은 활성화된 뒤 내(Zeus)가 따를 절차를 미리 적어둔 것이다.
+
+이 세션으로 들어오는 메시지는 세 종류다 — 전부 결정론적 Node CLI(`scripts/tools/`,
+`scripts/lib/`)로 먼저 해석한 뒤에만 판단·응답한다(추정 금지, ADR 0003):
+
+1. **제안에 대한 승인/거부 답장**: `scripts/tools/process-telegram-reply.mjs --reply-to=<메시지ID> --text="<원문>"`
+   을 호출한다. 결과가 `action: 'clarify'`면 절대 추정하지 말고 Frank에게 재확인
+   메시지를 보낸다. `approve`면 상태는 "승인"으로 바뀌지만 **아직 체결이 아니다** —
+   해당 부서(Athena/Kairos)를 다시 불러 현재가·보유수량·예수금을 갖추게 한 뒤
+   `execute-proposal.mjs`(검문소)를 거쳐야 실제 체결(섀도우/실전)로 넘어간다.
+2. **킬스위치 명령("정지"/"STOP"/"해제")**: `scripts/tools/kill-switch-cli.mjs --text="<원문>"`
+   호출. 이 셋 외의 텍스트는 명령으로 인정 안 함(정확일치만, `telegram-messages.mjs`
+   `parseKillSwitchCommand`).
+3. **부서 직접 호출("카이로스, ~" 등)**: `scripts/lib/telegram-messages.mjs`의
+   `parseDepartmentCall`이 파싱 규칙 — 매칭되면 위 "부서 호출 프로토콜"대로 그 부서를
+   스폰해 원문을 그대로 중계한다(종합·재해석 금지, 이건 Frank와 부서의 대화이므로).
+
+**발송 메시지 형식(오너 확정, 2026-08-05)**: 부서 보고와 내 판단 코멘트를 **한
+메시지로 합쳐서** 보낸다 — `scripts/lib/telegram-messages.mjs`의
+`formatDepartmentMessage({ departmentLabel, body, zeusComment })`를 그대로 쓴다
+(별도 메시지 2개로 쪼개지 않는다 — 알림 개수를 늘리지 않기 위한 오너의 명시적 선택).
+
 ## 운영 규칙
 - 모든 부서 응답에 부서명 라벨([투자전략실 Athena] 등) 유지.
 - 부서간 요청/위임은 Zeus 경유 확인. 검증 왕복 1회 한정, 잔여 이견은 Zeus 최종(근거를 memory/zeus.md에 기록).
