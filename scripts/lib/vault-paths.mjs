@@ -31,6 +31,13 @@ export const VAULT_PATHS = {
       fundPurchases: join(VAULT_ROOT, 'Facts', 'Ledger', 'FundPurchases'), // 아직 미배선(파서만 존재)
       cashEvents: join(VAULT_ROOT, 'Facts', 'Ledger', 'CashEvents'), // NH 입금·출금 원문(잔고 재계산은 State 몫)
       exchanges: join(VAULT_ROOT, 'Facts', 'Ledger', 'Exchanges'), // 아직 미배선(파서만 존재)
+      // 2026-08-05 Phase 7(v1→Vault 마이그레이션) 추가 — v1 시트에 있었지만 지금까지
+      // Ledger 하위폴더가 없던 2종. 실현손익은 체결(매수·매도) 두 이벤트의 파생값이라
+      // 다시 계산할 수도 있지만, v1이 이미 계산해둔 값을 그대로 옮기는 쪽이 손실 없음
+      // (재계산 로직은 Phase 8·9 몫). 일별스냅샷은 TWR·Sharpe·MDD 등 과거 성과 재계산에
+      // 필요한 시계열이라 State(현재값만)가 아니라 Facts/Ledger(이력)에 둔다.
+      profits: join(VAULT_ROOT, 'Facts', 'Ledger', 'Profits'),
+      dailySnapshots: join(VAULT_ROOT, 'Facts', 'Ledger', 'DailySnapshots'),
     },
     marketPolls: join(VAULT_ROOT, 'Facts', 'MarketPolls'),
   },
@@ -47,6 +54,9 @@ export const VAULT_PATHS = {
     evaluations: join(VAULT_ROOT, 'Decisions', 'Evaluations'),
     positionJournal: join(VAULT_ROOT, 'Decisions', 'PositionJournal'),
     proposals: join(VAULT_ROOT, 'Decisions', 'Proposals'),
+    // 2026-08-05 Phase 7 추가 — v1 "리스크모니터" 탭(과거 리스크 판정 이력) 이관 대상.
+    // Themis의 판정 결과이지 아직 미확정 안건이 아니므로 Decisions 대분류가 맞다.
+    riskMonitor: join(VAULT_ROOT, 'Decisions', 'RiskMonitor'),
   },
   knowledge: {
     profile: join(VAULT_ROOT, 'Knowledge', 'Profile'),
