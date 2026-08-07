@@ -739,9 +739,37 @@ pykrx/OpenDart 데이터로 동작. 350종목 유니버스 조회부터 순위 �
 > 통과, lint 클린. **아직 실계좌 검증 불가**(`quantAccount` 크리덴셜 미등록 — 오너가 로컬
 > `kis-key.json`에 `{cano, acntPrdtCd, appkey, appsecret}` 등록 시 활성화, IRP와 동일 관례).
 >
-> **남은 작업**: 섀도우모드 제안 흐름 연결(Phase 4·5 인프라 재사용) → 퀀트 계좌 KIS
-> 크리덴셜 등록 후 실계좌 검증 → Phase 9 완료기준(섀도우모드 월말 재계산→리컨스티튜션
-> 제안→텔레그램 승인 흐름 실데이터 동작) 충족 확인.
+> ✅ **4/N 완료 — 제안 생성→텔레그램 발송→승인후 체결 배선**: Phase 4·5는 검문소·킬스위치·
+> 섀도우모드·텔레그램 승인 상태전이까지 순수 판정 로직만 만들어뒀을 뿐, **제안을 실제로
+> 쓰고 보내는 코드도, 승인 후 실제 체결을 호출하는 코드도, 킬스위치/체결모드 State 파일
+> 경로 자체도 없었다**(Athena·Kairos 둘 다 마찬가지 — 이번에 만든 건 트랙 무관 공용
+> 인프라). `vault-paths.mjs`에 `state.killSwitch`·`state.executionMode` 단일파일 경로 추가.
+> `scripts/lib/proposal-flow.mjs`(`createAndSendProposal`, I/O 전부 주입식이라 트랙무관
+> 재사용 가능 — Athena도 나중에 그대로 씀) + `scripts/tools/create-quant-proposal.mjs`
+> (Zeus가 투자실행협의체 결론 이후 호출하는 CLI — 검문소 단일활성제안/거부쿨다운 통과 →
+> Vault 기록 → 텔레그램 발송 → message_id 회수). `scripts/tools/execute-quant-proposal.mjs`
+> (승인된 제안을 현재가·퀀트계좌 실잔고·킬스위치·체결모드로 검문소 통과시켜 체결 —
+> 섀도우면 로그, 실전이면 Phase 11 미구현이라 명시적 throw).
+>
+> **독립 코드리뷰에서 CRITICAL 1건 발견 후 수정**: `killSwitchContent`를 State 파일에서
+> 읽어놓고 검문소 gateInput에 담는 걸 빠뜨려, Frank의 "정지" 명령이 체결 시점엔 무력화
+> 되는 상태였음(오류도 안 남기고 조용히 통과) — 이 프로젝트 안전장치 중 가장 중요한
+> 킬스위치가 실전 전환 시점까지 아무도 못 알아챌 수 있었던 결함. `scripts/lib/
+> proposal-execution-input.mjs`(`buildGateInput`, 순수함수)로 gateInput 조립 자체를
+> 오케스트레이션 밖으로 뽑아 테스트 가능하게 만들고, "킬스위치 활성→체결 차단" 회귀
+> 테스트를 실제로 `executeProposal`과 엮어 통합 검증(대조군 테스트로 "킬스위치 비활성이면
+> 정상 체결"도 같이 확인). MEDIUM 1건(이 실행 경로 자체가 테스트 0개였음 — 위 리팩터로
+> 해소) 함께 수정. 테스트 820개 통과, lint 클린.
+>
+> **실계좌/실텔레그램 미검증**: 퀀트 계좌 KIS 크리덴셜 미등록이라 `execute-quant-proposal.mjs`
+> 는 skip 경로까지만 실행 확인. `create-quant-proposal.mjs`의 실제 텔레그램 발송 경로는
+> 오너 승인 없이 실제 메시지를 보낼 수 없어 의도적으로 `--dry-run`까지만 실행(내부
+> `createAndSendProposal` 로직 자체는 mocked I/O 단위테스트 6개로 커버).
+>
+> **남은 작업**: 퀀트 계좌 KIS 크리덴셜 등록(오너) → 실계좌·실텔레그램으로 엔드투엔드
+> 1회 검증 → Phase 9 완료기준(섀도우모드 월말 재계산→리컨스티튜션 제안→텔레그램 승인
+> 흐름 실데이터 동작) 충족 확인. 참고: 영속 idempotency 저장소(체결↔재시도 중복 방지)는
+> 섀도우모드에서는 무해해 지금은 보류 — Phase 11(실주문 API)+실전전환 전 반드시 추가.
 
 ---
 

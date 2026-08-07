@@ -53,6 +53,13 @@ export const VAULT_PATHS = {
     // 크로스(상태변화) 판정에 필요(macro-overlay.mjs detectFaberCrossover). 이벤트로그가
     // 아니라 "지금 상태"라 jobHealth와 같은 원칙(1파일=덮어쓰기).
     macroOverlay: join(VAULT_ROOT, 'State', 'MacroOverlay'),
+    // 킬스위치·체결모드(섀도우|실전) — 시스템 전체에 하나뿐인 상태라 폴더가 아니라 단일
+    // 파일(구현계획서 Phase 9, 제안 흐름 연결 — kill-switch.mjs·shadow-mode.mjs는
+    // Phase 4에서 순수 판정 로직만 만들어졌고 실제 파일 경로는 없었다). 파일이 아직
+    // 없으면 두 모듈 다 안전한 기본값(킬스위치 꺼짐·섀도우모드)으로 떨어지므로 최초
+    // 배포 시 이 파일들을 미리 만들 필요는 없다.
+    killSwitch: join(VAULT_ROOT, 'State', 'KillSwitch.md'),
+    executionMode: join(VAULT_ROOT, 'State', 'ExecutionMode.md'),
   },
   decisions: {
     evaluations: join(VAULT_ROOT, 'Decisions', 'Evaluations'),
