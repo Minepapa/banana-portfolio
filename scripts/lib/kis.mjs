@@ -34,20 +34,36 @@ export function loadKisCredentials(keyFile = KIS_KEY_FILE) {
   return { appkey, appsecret };
 }
 
+// 계좌번호+전용 앱키를 kis-key.json의 지정 필드에서 읽는 공용 헬퍼 — loadIrpAccount·
+// loadQuantAccount가 필드명만 다르고 동일 로직(계좌 단위 앱키 등록, 넷 중 하나라도
+// 없으면 null)을 쓰므로 하나로 합침(2026-08-07, 퀀트 계좌 추가 시 중복 방지).
+function loadNamedAccount(keyFile, fieldName) {
+  try {
+    const acc = JSON.parse(readFileSync(keyFile, 'utf8'))[fieldName];
+    if (!acc?.cano || !acc?.acntPrdtCd || !acc?.appkey || !acc?.appsecret) return null;
+    return {
+      cano: String(acc.cano), acntPrdtCd: String(acc.acntPrdtCd),
+      appkey: String(acc.appkey), appsecret: String(acc.appsecret),
+    };
+  } catch { return null; }
+}
+
 // IRP 계좌번호+전용 앱키 — kis-key.json에 {..., irpAccount: {cano, acntPrdtCd, appkey, appsecret}}
 // 로 로컬 등록(직접 편집, 채팅에 붙여넣지 않음 — 최상위 appkey/appsecret과 동일 취급).
 // appkey/appsecret이 최상위와 별도로 필요한 이유는 파일 상단 주석 참고(계좌별 앱키 등록).
 // 넷 중 하나라도 없으면 null(hasKisCredentials 없을 때와 동일하게 "아직 설정 안 함"을
 // 오류로 취급하지 않기 위함 — 호출측이 이 값으로 IRP 대사 기능 자체를 조용히 skip).
 export function loadIrpAccount(keyFile = KIS_KEY_FILE) {
-  try {
-    const { irpAccount } = JSON.parse(readFileSync(keyFile, 'utf8'));
-    if (!irpAccount?.cano || !irpAccount?.acntPrdtCd || !irpAccount?.appkey || !irpAccount?.appsecret) return null;
-    return {
-      cano: String(irpAccount.cano), acntPrdtCd: String(irpAccount.acntPrdtCd),
-      appkey: String(irpAccount.appkey), appsecret: String(irpAccount.appsecret),
-    };
-  } catch { return null; }
+  return loadNamedAccount(keyFile, 'irpAccount');
+}
+
+// 퀀트 트랙(Kairos) 전용 KIS 계좌 — 자산분배 트랙과 완전히 분리된 별도 계좌(2트랙 구조
+// 확정 원칙). IRP와 동일 관례로 kis-key.json에 quantAccount: {cano, acntPrdtCd, appkey,
+// appsecret} 추가 시 활성화, 미설정이면 null(리컨스티튜션 잡이 조용히 skip — Phase 9
+// "현재 보유종목 추적" 오너 확정: State/Holdings가 아니라 리컨스티튜션 시점마다 KIS
+// 잔고조회 API 직접 호출, 2026-08-07).
+export function loadQuantAccount(keyFile = KIS_KEY_FILE) {
+  return loadNamedAccount(keyFile, 'quantAccount');
 }
 
 // KIS access_token_token_expired 형식("YYYY-MM-DD HH:MM:SS", KST 벽시계) → epoch ms.

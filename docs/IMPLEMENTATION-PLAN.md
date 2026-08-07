@@ -698,6 +698,50 @@ pykrx/OpenDart 데이터로 동작. 350종목 유니버스 조회부터 순위 �
 > 구현 시 `krCorpCode` 캐시 구조 재사용해 역인덱스만 새로 만들 것).
 >
 > 테스트 775개 통과, lint 클린.
+>
+> ✅ **2/N 완료 — OCF/P 팩터 순위 산출**: `scripts/lib/quant-factor.mjs`(`computeOcfToPrice`·
+> `rankByOcfToPrice`, 순수함수) + `scripts/tools/quant-factor-facts.mjs`(유니버스→유동성→
+> corpCode 매칭→`fetchOcfPointInTime`→순위 오케스트레이션). 350종목 실측: 유동성통과 315 →
+> 순위산출 310건(법인코드매칭실패 4·공시미확인 1), 상위권이 금융·에너지·유틸리티(현금흐름
+> 수익률 팩터의 전형적 성향)로 나와 계산 자체의 타당성 뒷받침. 독립 코드리뷰에서 HIGH
+> 1건(quant-universe.mjs의 MIN_FILL_RATIO 가드와 달리 여기는 DART_API_KEY 만료·전역
+> 레이트리밋 같은 전역 장애가 "조회실패 많은 달"로 조용히 지나가 신뢰 못 할 순위를 exit 0으로
+> 낼 수 있었음 — 실패율 50% 초과 시 던지도록 수정, 잘못된 키로 재현검증 완료) + MEDIUM 1건
+> (`--limit` 미검증 시 0·음수·비숫자 입력이 전체 350종목 조회로 조용히 이스케이프 — 양의
+> 정수 아니면 즉시 거부로 수정) 발견해 전부 수정. 테스트 795개 통과, lint 클린. 커밋 `c09613a`.
+>
+> **오너 확정(2026-08-07)**: Kairos의 "현재 보유종목" 추적 방식 — Vault State/Holdings
+> 재사용이 아니라 **리컨스티튜션 시점마다 KIS 잔고조회 API를 직접 호출**(실시간 진실,
+> Vault 미러 지연·불일치 리스크 없음). IRP 대사(`reconcile-irp.mjs`)가 이미 같은 API를
+> 쓰고 있어 재사용 가능 확인: `scripts/lib/kis.mjs`의 `getAccountBalance`/
+> `parseBalanceResponse`(tr_id TTTC8434R)가 `{cano, acntPrdtCd}`만 받는 범용 함수라 IRP
+> 전용이 아니다. 퀀트 계좌도 `loadIrpAccount()`와 동일 패턴으로 `kis-key.json`에
+> `quantAccount: {cano, acntPrdtCd, appkey, appsecret}` 필드를 추가하면 됨(오너가 로컬
+> 파일에 직접 등록 — 채팅에 붙여넣지 않음, IRP와 동일 관례). **아직 미등록** — 등록 전까지
+> 리컨스티튜션 잡은 `hasKisCredentials()`/`loadIrpAccount()`와 동일하게 "설정 안 됨"으로
+> 조용히 skip(오류 아님).
+>
+> ✅ **3/N 완료 — 버퍼존 리컨스티튜션 판정**: `scripts/lib/quant-reconstitution.mjs`
+> (`computeReconstitution`·`positionBand`, 순수함수, 12 테스트) + `scripts/tools/
+> quant-reconstitution-facts.mjs`(순위 산출 + KIS 실계좌 잔고조회 → 매수/매도/유지/확인필요
+> 분류 + 포지션사이징 밴드 보고). 매수=상위10위 이내+미보유, 매도=보유중+20위 밖 확정,
+> 유지=보유중+20위 이내(버퍼존, 신규진입 조건 재충족 불필요), **확인필요**=보유중인데
+> 이번 랭킹 결과 자체에 없는 경우(유니버스이탈·유동성미달·법인코드매칭실패·공시미확인 중
+> 원인 미확정) — 곧장 매도로 추정하지 않고 Kairos 검토로 넘김(ADR 0003 폴백 금지 원칙).
+> 계좌 미설정(`quantAccount` 필드 없음)이면 `reconcile-irp.mjs`와 동일 관례로 조용히
+> skip(오류 아님). 리팩터: `enrichWithOcf`/`computeMonthlyRanking`을 `quant-factor-facts.mjs`
+> 에서 `scripts/lib/quant-ranking.mjs`로 뽑아 두 CLI(랭킹 보고·리컨스티튜션 판정)가 전역장애
+> 가드(MAX_OCF_FAIL_RATIO)를 공유 — 리팩터 전후 `--limit 10` 실계 데이터로 출력 동일함
+> 확인. `kis.mjs`에 `loadQuantAccount`(`loadIrpAccount`와 동일 패턴, `loadNamedAccount`
+> 공용 헬퍼로 중복 제거) 추가. 독립 코드리뷰 APPROVE — MEDIUM 1건(리컨스티튜션 CLI에서
+> `--limit`이 유니버스를 잘라 매수/매도/유지/확인필요 분류 자체가 부정확해질 수 있는데
+> 경고가 없었음 — `--limit` 사용 시 눈에 띄는 경고 추가로 수정) 발견해 수정. 테스트 807개
+> 통과, lint 클린. **아직 실계좌 검증 불가**(`quantAccount` 크리덴셜 미등록 — 오너가 로컬
+> `kis-key.json`에 `{cano, acntPrdtCd, appkey, appsecret}` 등록 시 활성화, IRP와 동일 관례).
+>
+> **남은 작업**: 섀도우모드 제안 흐름 연결(Phase 4·5 인프라 재사용) → 퀀트 계좌 KIS
+> 크리덴셜 등록 후 실계좌 검증 → Phase 9 완료기준(섀도우모드 월말 재계산→리컨스티튜션
+> 제안→텔레그램 승인 흐름 실데이터 동작) 충족 확인.
 
 ---
 
