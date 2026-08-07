@@ -7,7 +7,7 @@ import {
   computeDrawdownFromPeak, computeRallyFromTrough, parseNaverSise,
   computeBollingerBands,
   computeMacd, computeMaAlignment, computeAtr, computeStochastic, computeVolumeSurge,
-  dropSignal,
+  dropSignal, disclosureDateFromRceptNo, extractOcf,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -17,6 +17,64 @@ test('reprtCodeForDate: 월→보고서 매핑', () => {
   assert.deepEqual(reprtCodeForDate(new Date('2026-06-11')), { bsnsYear: '2026', reprtCode: '11012' });
   assert.deepEqual(reprtCodeForDate(new Date('2026-10-01')), { bsnsYear: '2026', reprtCode: '11014' });
   assert.deepEqual(reprtCodeForDate(new Date('2026-12-20')), { bsnsYear: '2026', reprtCode: '11014' });
+});
+
+// disclosureDateFromRceptNo — 구현계획서 Phase 9(퀀트 OCF/P 룩어헤드 방지)에서 추가.
+// OpenDart rcept_no 앞 8자리 = 접수일자(YYYYMMDD), 실측 확인(2026-08-07, 삼성전자
+// 2026 1분기보고서 rcept_no="20260515002181" → 공시일 2026-05-15).
+test('disclosureDateFromRceptNo: 앞 8자리를 YYYY-MM-DD로 변환(실측 삼성전자 1분기 사례)', () => {
+  assert.equal(disclosureDateFromRceptNo('20260515002181'), '2026-05-15');
+});
+
+test('disclosureDateFromRceptNo: 형식이 안 맞으면(8자리 숫자로 시작 안 함) null', () => {
+  assert.equal(disclosureDateFromRceptNo('abc'), null);
+  assert.equal(disclosureDateFromRceptNo(''), null);
+  assert.equal(disclosureDateFromRceptNo(null), null);
+  assert.equal(disclosureDateFromRceptNo(undefined), null);
+});
+
+// extractOcf — fnlttSinglAcnt.json(주요계정)은 현금흐름표를 아예 안 줘서(2026-08-07
+// 실측 확인) fnlttSinglAcntAll.json(전체 재무제표)의 CF 섹션에서 뽑아야 한다.
+test('extractOcf: CF 섹션의 영업활동현금흐름 항목에서 금액 추출(실측 삼성전자 사례, 콤마 포함 문자열)', () => {
+  const list = [
+    { sj_div: 'BS', account_nm: '유동자산', thstrm_amount: '1000' },
+    { sj_div: 'CF', account_nm: '영업활동현금흐름', thstrm_amount: '85,315,148,000,000' },
+  ];
+  assert.equal(extractOcf(list), 85315148000000);
+});
+
+test('extractOcf: 표기가 소폭 달라도("영업활동으로 인한 현금흐름") 부분일치로 찾음', () => {
+  const list = [{ sj_div: 'CF', account_nm: '영업활동으로 인한 현금흐름', thstrm_amount: '1,000' }];
+  assert.equal(extractOcf(list), 1000);
+});
+
+// 코드리뷰 지적 회귀방지(2026-08-07): "영업활동으로 인한 자산·부채의 변동"(하위 항목,
+// 이름에 "영업활동"이 포함됨) 같은 항목이 실제 합계보다 먼저 나와도, IFRS 표준계정코드가
+// 있으면 그걸 최우선으로 써서 하위 항목에 안 낚인다.
+test('extractOcf: 하위 항목("...변동")이 합계보다 먼저 나와도 IFRS 표준코드로 정확히 합계를 찾음', () => {
+  const list = [
+    { sj_div: 'CF', account_id: 'dart_IncreaseDecreaseInOperatingAssetsAndLiabilities', account_nm: '영업활동으로 인한 자산·부채의 변동', thstrm_amount: '999' },
+    { sj_div: 'CF', account_id: 'ifrs-full_CashFlowsFromUsedInOperatingActivities', account_nm: '영업활동현금흐름', thstrm_amount: '85,315,148,000,000' },
+  ];
+  assert.equal(extractOcf(list), 85315148000000);
+});
+
+test('extractOcf: 표준코드가 없는 경우에도 "변동" 하위 항목은 이름 매칭에서 제외', () => {
+  const list = [
+    { sj_div: 'CF', account_nm: '영업활동으로 인한 자산·부채의 변동', thstrm_amount: '999' },
+    { sj_div: 'CF', account_nm: '영업활동현금흐름', thstrm_amount: '1,000' },
+  ];
+  assert.equal(extractOcf(list), 1000);
+});
+
+test('extractOcf: CF 섹션이 아예 없으면(주요계정 API 등) null', () => {
+  const list = [{ sj_div: 'BS', account_nm: '유동자산', thstrm_amount: '1000' }];
+  assert.equal(extractOcf(list), null);
+});
+
+test('extractOcf: 빈 배열·undefined는 null(크래시 없음)', () => {
+  assert.equal(extractOcf([]), null);
+  assert.equal(extractOcf(undefined), null);
 });
 
 test('prevPeriod: 미공시 폴백 체인 (반기→1Q→전년 사업→전년 3Q)', () => {

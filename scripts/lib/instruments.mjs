@@ -89,9 +89,26 @@ export function lookupField(cache, name, field) {
   return found;
 }
 
-// corpCode.xml(zip) 다운로드 → 상장사만 {corp_name: corp_code} 캐시. 30일 지나면 갱신.
-export function krCorpCode(name, apiKey = process.env.DART_API_KEY) {
-  const dartName = KR_ALIAS[norm(name)] ?? name;
+// 캐시에서 stockCode(종목코드, 6자리)와 정확히 일치하는 항목의 corp_code를 찾는다.
+// lookupField(이름 매칭)와 자매 함수 — 종목코드는 거래소가 부여하는 고유값이라 이름과
+// 달리 "동명이인 회사" 모호성이 구조적으로 없지만, 캐시 데이터 자체가 이상해서 같은
+// 종목코드가 두 번 나오는 경우까지 방어한다(추정하지 않고 null).
+export function lookupByStock(cache, stockCode) {
+  const target = String(stockCode ?? '').trim();
+  let found = null;
+  for (const entry of Object.values(cache)) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    if (entry.stock !== target) continue;
+    if (found && found !== entry.corp) return null; // 종목코드 중복(이상 데이터) — 모호 처리
+    found = entry.corp;
+  }
+  return found;
+}
+
+// corpCode.xml(zip) 다운로드·캐시 로드 공용 — krCorpCode(이름 매칭)·krCorpCodeByStock
+// (종목코드 매칭, 구현계획서 Phase 9 퀀트 OCF/P 팩터 계산에서 추가) 둘 다 재사용한다
+// (2026-08-07 리팩터 — 두 번째 소비자가 생기기 전에 정리, 동작 불변).
+function loadCorpCodeCache(apiKey) {
   let cache = null;
   if (existsSync(CACHE_FILE)) {
     try {  // 중단된 쓰기로 캐시가 깨졌으면 throw 대신 재다운로드로 폴백
@@ -108,7 +125,26 @@ export function krCorpCode(name, apiKey = process.env.DART_API_KEY) {
     cache = parseCorpCodeXml(xml);
     writeFileSync(CACHE_FILE, JSON.stringify({ fetchedAt: Date.now(), map: cache }));
   }
+  return cache;
+}
+
+// corpCode.xml(zip) 다운로드 → 상장사만 {corp_name: corp_code} 캐시. 30일 지나면 갱신.
+export function krCorpCode(name, apiKey = process.env.DART_API_KEY) {
+  const dartName = KR_ALIAS[norm(name)] ?? name;
+  const cache = loadCorpCodeCache(apiKey);
+  if (!cache) return null;
   return lookupField(cache, dartName, 'corp');
+}
+
+// 종목코드(6자리, 예: "005930") → corp_code. 이름 매칭(krCorpCode)과 달리 동명이인 회사
+// 모호성이 구조적으로 없다(종목코드는 거래소가 부여하는 고유값) — 퀀트 유니버스처럼
+// 종목코드를 이미 확실히 아는 대량 조회에는 이쪽이 더 안전하다. 그래도 캐시에 같은
+// 종목코드가 서로 다른 회사명 아래 두 번 이상 나오면(구조적으로는 없어야 하지만 데이터
+// 이상 방어) 추정하지 않고 null.
+export function krCorpCodeByStock(stockCode, apiKey = process.env.DART_API_KEY) {
+  const cache = loadCorpCodeCache(apiKey);
+  if (!cache) return null;
+  return lookupByStock(cache, stockCode);
 }
 
 // ── KIS 종목마스터(KOSPI·KOSDAQ, ETF 포함) — DART 폴백용 ──────────────────────

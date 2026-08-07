@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  usTicker, usExchange, parseCorpCodeXml, lookupField, parseKisMasterText, mergeMstEntry,
+  usTicker, usExchange, parseCorpCodeXml, lookupField, lookupByStock, parseKisMasterText, mergeMstEntry,
   parseUsMasterText,
 } from './instruments.mjs';
 
@@ -114,6 +114,36 @@ test('lookupField: 구형 문자열 캐시(잘못된 shape) → null (undefined 
 
 test('lookupField: null 항목(파싱 모호) → null', () => {
   assert.equal(lookupField({ '미래에셋증권': null }, '미래에셋증권', 'corp'), null);
+});
+
+// lookupByStock — 구현계획서 Phase 9(퀀트 OCF/P 팩터 계산)에서 추가. 종목코드는 거래소
+// 고유값이라 이름과 달리 동명이인 모호성이 구조적으로 없다.
+test('lookupByStock: 정상 매칭 → corp_code 반환', () => {
+  const cache = { '삼성전자': { corp: '00126380', stock: '005930' } };
+  assert.equal(lookupByStock(cache, '005930'), '00126380');
+});
+
+test('lookupByStock: 미발견 → null', () => {
+  const cache = { '삼성전자': { corp: '00126380', stock: '005930' } };
+  assert.equal(lookupByStock(cache, '999999'), null);
+});
+
+test('lookupByStock: 잘못된 shape(구형 문자열 캐시) 항목은 건너뜀', () => {
+  const cache = { '테스트사': '00999999', '삼성전자': { corp: '00126380', stock: '005930' } };
+  assert.equal(lookupByStock(cache, '005930'), '00126380');
+});
+
+test('lookupByStock: null 항목은 건너뜀', () => {
+  const cache = { '미래에셋증권': null, '삼성전자': { corp: '00126380', stock: '005930' } };
+  assert.equal(lookupByStock(cache, '005930'), '00126380');
+});
+
+test('lookupByStock: 같은 종목코드가 서로 다른 corp에 중복되면(데이터 이상) 추정하지 않고 null', () => {
+  const cache = {
+    'A사': { corp: '00000001', stock: '005930' },
+    'B사': { corp: '00000002', stock: '005930' },
+  };
+  assert.equal(lookupByStock(cache, '005930'), null);
 });
 
 test('parseKisMasterText: ETF명이 그룹코드와 공백 없이 바로 붙어도(실측 패턴) 정상 추출', () => {

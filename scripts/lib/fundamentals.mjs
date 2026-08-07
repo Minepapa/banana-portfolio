@@ -192,6 +192,86 @@ async function dartWithFallback(path, corpCode, period, extra, apiKey) {
 
 const REPRT_LABEL = { 11011: '사업보고서', 11013: '1분기보고서', 11012: '반기보고서', 11014: '3분기보고서' };
 
+// OpenDart 접수번호(rcept_no)의 앞 8자리는 항상 접수일자(YYYYMMDD) — OpenDart 공식
+// 관례(문서화된 필드는 없지만 API 응답 실측으로 확인, 2026-08-07). "YYYY-MM-DD" 형태로
+// 반환, 형식이 안 맞으면(방어적으로) null.
+export function disclosureDateFromRceptNo(rceptNo) {
+  const s = String(rceptNo ?? '');
+  if (!/^\d{8}/.test(s)) return null;
+  return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+}
+
+const y_m_d = (d) => d.toISOString().slice(0, 10);
+
+// list(fnlttSinglAcntAll.json 응답)에서 현금흐름표의 "영업활동현금흐름" 합계만 뽑는다.
+// 1순위: IFRS 표준계정코드(ifrs-full_CashFlowsFromUsedInOperatingActivities)로 정확히
+// 매칭 — 회사별 계정명 표기 차이나 "영업활동으로 인한 자산·부채의 변동"(하위 항목,
+// 이름에 "영업활동"이 포함돼 부분일치로 찾으면 합계 대신 이 하위 항목이 잘못 걸릴 수
+// 있음 — 코드리뷰 지적, 2026-08-07) 걱정이 아예 없다. 2순위(표준코드 없는 드문 경우):
+// 이름에 "영업활동"은 있지만 "변동"은 없는 항목만(하위 항목 배제).
+export function extractOcf(list) {
+  const items = (list ?? []).filter((x) => x.sj_div === 'CF');
+  const parseAmount = (v) => { const n = Number(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
+  const byId = items.find((x) => x.account_id === 'ifrs-full_CashFlowsFromUsedInOperatingActivities');
+  if (byId) return parseAmount(byId.thstrm_amount);
+  const byName = items.find((x) => String(x.account_nm ?? '').includes('영업활동') && !String(x.account_nm ?? '').includes('변동'));
+  return byName ? parseAmount(byName.thstrm_amount) : null;
+}
+
+// ⚠️ fnlttSinglAcnt.json(주요계정)은 재무상태표·손익계산서만 주고 **현금흐름표를 아예
+// 안 준다**(2026-08-07 실측 확인 — 연간·반기·3분기 전부 CF 항목 0건, fetchKrFundamentals
+// 의 operCf 필드가 실제로는 항상 null이었을 가능성이 있다는 뜻이지만 그건 이미 배포된
+// Athena 개별종목 평가 코드 몫이라 여기서 고치지 않는다, 별도 확인 필요 사항으로만 기록).
+// OCF는 반드시 fnlttSinglAcntAll.json(전체 재무제표)에서 fs_div=CFS(연결)로 조회하고,
+// 자회사가 없어 연결재무제표가 없는 회사는 OFS(별도)로 폴백한다. **CFS 응답이 비어있지
+// 않아도 실제로 OCF를 뽑아낼 수 있는지까지 확인한 뒤에만 그 fsDiv를 채택**한다(코드리뷰
+// 지적, 2026-08-07) — 응답에 항목은 있는데 CF 섹션만 빠진 극단적인 경우, 단순히
+// "비어있지 않음"만 보면 실제로 OCF가 있는 OFS 폴백을 시도조차 안 하게 됨.
+async function fetchCfList(corpCode, period, apiKey) {
+  for (const fsDiv of ['CFS', 'OFS']) {
+    const list = await dartJson('fnlttSinglAcntAll.json', {
+      corp_code: corpCode, bsns_year: period.bsnsYear, reprt_code: period.reprtCode, fs_div: fsDiv,
+    }, apiKey).catch(() => null);
+    if (list && list.length && extractOcf(list) != null) return list;
+  }
+  return null;
+}
+
+// 특정 시점(asOfDate) 기준 "그때 실제로 이미 공시돼 있던" 가장 최근 영업활동현금흐름
+// (OCF)을 찾는다 — 구현계획서 Phase 9 "룩어헤드 바이어스 방지" 절 그대로: 재무제표는
+// 분기 마감일이 아니라 **실제 공시일** 기준으로 반영해야 한다(예: 2분기 실적은 6/30
+// 마감이지만 통상 8월 중순 공시 — 7월 말일 재계산 시점엔 아직 못 씀).
+//
+// reprtCodeForDate의 달력 추정에서 시작하되, 추정이 틀렸을 수 있으므로(달력 추정은
+// "보통 이맘때면 이 분기가 나왔겠지"일 뿐 이 회사가 실제로 공시했는지는 확인 안 함)
+// rcept_no로 실제 공시일을 확인해 asOfDate보다 늦으면 prevPeriod로 물러나 재확인한다.
+// 최대 4단계(사업·1Q·반기·3Q 한 바퀴)까지 시도 — 그래도 못 찾으면 **추정하지 않고 null**.
+// fetchCfList가 이미 "실제로 OCF를 뽑아낼 수 있는" 응답만 반환하므로, 여기서 반환하는
+// operCf는 null일 수 없다(코드리뷰 지적으로 이중 null 가능성 제거, 2026-08-07) — 호출부는
+// 반환값이 null이 아니면 operCf도 항상 유효한 숫자라고 믿어도 된다.
+//
+// ⚠️ asOfDate는 UTC 캘린더 날짜로 비교된다(disclosureDateFromRceptNo는 KST 공시일을
+// 그대로 반환) — 자정 근처 몇 시간의 오차가 있을 수 있으나 어긋나는 방향이 항상 "당일
+// 한국 공시를 아직 안 반영"쪽이라(더 보수적) 룩어헤드 방지 목적엔 안전하다. 과거 특정
+// 날짜로 호출할 땐(백테스트 등) new Date('YYYY-MM-DD')로 넘기면 UTC 자정 기준이라
+// disclosureDate와 자연히 맞아떨어진다.
+export async function fetchOcfPointInTime(corpCode, asOfDate = new Date(), apiKey = process.env.DART_API_KEY) {
+  if (!apiKey) throw new Error('DART_API_KEY 미설정');
+  const asOfStr = y_m_d(asOfDate);
+  let period = reprtCodeForDate(asOfDate);
+  for (let i = 0; i < 4; i++) {
+    const list = await fetchCfList(corpCode, period, apiKey);
+    if (list) {
+      const disclosureDate = disclosureDateFromRceptNo(list[0].rcept_no);
+      if (disclosureDate && disclosureDate <= asOfStr) {
+        return { operCf: extractOcf(list), period, disclosureDate, source: `OpenDart ${period.bsnsYear} ${REPRT_LABEL[period.reprtCode]}(공시 ${disclosureDate})` };
+      }
+    }
+    period = prevPeriod(period);
+  }
+  return null; // 4단계 다 시도해도 asOfDate 이전 실제 공시분을 못 찾음 — 이번 달은 후보에서 빠짐
+}
+
 export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = process.env.DART_API_KEY, stockCode = null) {
   if (!apiKey) throw new Error('DART_API_KEY 미설정');
   const period = reprtCodeForDate(now);

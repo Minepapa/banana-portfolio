@@ -122,6 +122,17 @@ Phase 0~3은 서로 독립적이라 병렬 진행 가능. Phase 8·9는 서로 �
   반환하는지 확인되면 근사 대신 공식 지수로 교체 가능(유동성·업종배분 등 KRX
   추가 선정기준까지 정확히 반영됨). `KRX_ID`·`KRX_PW` 환경변수 설정만으로 해결되는지,
   아니면 회원가입·별도 승인 절차가 더 필요한지부터 확인 필요.
+- [ ] **⚠️ Athena `fetchKrFundamentals`(개별종목 평가, 이미 배포됨)의 operCf 필드가
+  항상 null이었을 가능성 발견(2026-08-07)** — Phase 9 OCF/P 팩터 계산 작업 중 실측으로
+  확인: OpenDart `fnlttSinglAcnt.json`(주요계정) 엔드포인트는 재무상태표·손익계산서만
+  주고 **현금흐름표를 아예 안 준다**(연간·반기·3분기 전부 CF 항목 0건, 삼성전자로 직접
+  검증). `fetchKrFundamentals`의 operCf·operCfPrev는 이 엔드포인트에서 뽑으므로 실제
+  값을 받은 적이 없었을 가능성 — 이게 사실이면 `checkGuardrails`의 "현금흐름 적자전환"
+  가드레일이 한 번도 발동할 수 없었다는 뜻(cfCurr·cfPrev 둘 다 non-null이어야 판정
+  가능한데 둘 다 항상 null). **Phase 9 자체 OCF 조회는 올바른 엔드포인트
+  (`fnlttSinglAcntAll.json`, fs_div=CFS→OFS 폴백)로 새로 구현해 문제 없음** — 이건
+  기존 Athena 코드(다른 컴포넌트, 이미 검토 완료됨)의 잠재 버그를 발견한 것뿐이라 지금
+  고치지 않음. 확인·수정 여부는 오너 판단 필요.
 
 **아직 안 왔지만 미리 적어두는 것(뒷 Phase에서 다시 상기)**
 - [ ] Phase 2에서 미배선한 펀드적립·예수금앵커·환전의 Vault 기록은 Phase 8·9(계좌
