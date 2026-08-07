@@ -49,6 +49,10 @@ export const VAULT_PATHS = {
     // Vault판. 폴더가 아니라 이 State 카테고리에 두는 이유: "지금 상태"이지 이벤트 로그가
     // 아니다(잡이 실행될 때마다 파일이 늘지 않고 같은 파일이 갱신됨).
     jobHealth: join(VAULT_ROOT, 'State', 'JobHealth'),
+    // Faber 10개월 이평 "지난 확인 시점 상태"(위/아래) 저장 — 구현계획서 Phase 8.
+    // 크로스(상태변화) 판정에 필요(macro-overlay.mjs detectFaberCrossover). 이벤트로그가
+    // 아니라 "지금 상태"라 jobHealth와 같은 원칙(1파일=덮어쓰기).
+    macroOverlay: join(VAULT_ROOT, 'State', 'MacroOverlay'),
   },
   decisions: {
     evaluations: join(VAULT_ROOT, 'Decisions', 'Evaluations'),

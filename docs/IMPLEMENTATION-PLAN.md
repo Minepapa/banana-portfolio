@@ -552,6 +552,35 @@ Claude Code의 텔레그램 채널 플러그인(`claude --channels plugin:telegr
 >
 > 테스트 745개 통과, lint 클린.
 
+> ✅ **3/4 완료(2026-08-07) — 거시 전술 오버레이 신호 계산**: docs/ARCHITECTURE-V2.md
+> "거시 전술 오버레이 — Node/LLM 분리" 절 구현. 확정 5개 신호 중 ECOS(한국 국고채
+> 스프레드)는 API 키 미신청이라 제외(오너 확정, "나머지 4개부터") — Faber·미국금리차·
+> DXY·VIX·유가만. **여기까지만 Node** — 신호가 "진짜 국면전환인지 노이즈인지" 판단은
+> Athena 몫이라 이 컴포넌트는 만들지 않는다.
+> - `macro-overlay.mjs`(18 테스트): 기존 `fundamentals.mjs`의 `computeBollingerBands`
+>   (이미 검증된 ±2σ 볼린저)를 그대로 재사용. Faber는 "지금 위/아래"가 아니라 "지난
+>   확인 이후 크로스됐는가"가 신호라는 설계서 문구를 정확히 구현(`detectFaberCrossover`)
+>   — 매일 계산 가능한 것 자체를 "변화"로 오인하는 버그를 직접 짜다가 스스로 발견해
+>   즉시 수정(회귀 테스트로 고정)
+> - `macro-overlay-facts.mjs`(scripts/tools/) — `ledger-facts.mjs`·`rebalance-facts.mjs`
+>   와 같은 패턴이되 **유일한 예외**: Faber 크로스 판정에 "직전 확인 상태" 저장이
+>   필수라 State/MacroOverlay/faber-state.md를 이 CLI만 쓴다(다른 `*-facts.mjs`는
+>   순수 읽기전용). 실제 yfinance로 실행 확인: KOSPI·S&P500 둘 다 10개월선 위,
+>   미국금리차 +0.94%p(정상), DXY·VIX·유가 전부 밴드 안 — 크로스 재현 테스트(직전
+>   상태를 수동으로 반대로 바꿔서 실행)까지 실제로 성공 확인
+> - `vault-paths.mjs`에 `state.macroOverlay` 경로 추가(21개 경로로 갱신)
+> - 독립 코드리뷰 통과(CRITICAL/HIGH 0건) — MEDIUM 2건 + LOW 1건 발견, 전부 수정:
+>   (1) `--json` 조회 모드가 크로스 상태를 "소비"해버려 다음 진짜 보고가 크로스를
+>   놓치는 문제 → 사람이 읽는 보고에서만 상태 갱신하도록 수정, 실제 재현 테스트로
+>   확인(`--json` 실행 전후 `checkedAt` 불변 확인); (2) 데이터 일시 결손 시 직전
+>   상태를 null로 덮어써 그 사이의 진짜 크로스가 영구히 사라지는 문제 → 계산 실패 시
+>   직전 값을 그대로 유지하도록 수정; (3) TNX·IRX를 각자 독립적으로 결측 제거하면
+>   우연히 길이만 같아져 실제로는 다른 날짜끼리 짝지어질 위험 → 원본 인덱스 기준
+>   쌍으로 먼저 짝지은 뒤 걸러내도록 수정, 146 vs 148(수정 전 버그값)을 구분하는
+>   테스트로 고정
+>
+> 테스트 763개 통과, lint 클린.
+
 ---
 
 ## Phase 9 — 퀀트 트랙 로직 (Kairos)
