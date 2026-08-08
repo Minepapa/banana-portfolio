@@ -227,7 +227,10 @@ export function extractOcf(list) {
 // 않아도 실제로 OCF를 뽑아낼 수 있는지까지 확인한 뒤에만 그 fsDiv를 채택**한다(코드리뷰
 // 지적, 2026-08-07) — 응답에 항목은 있는데 CF 섹션만 빠진 극단적인 경우, 단순히
 // "비어있지 않음"만 보면 실제로 OCF가 있는 OFS 폴백을 시도조차 안 하게 됨.
-async function fetchCfList(corpCode, period, apiKey) {
+// export하는 이유: Phase 10 ocf-history-cache.mjs가 같은 CFS→OFS 폴백 로직을 재사용
+// (한 시점만 보는 fetchOcfPointInTime과 달리, 여러 분기를 한 번에 훑어 로컬 캐시로
+// 쌓는 대량 수집용 — 로직 중복 없이 이 함수만 여러 period에 대해 반복 호출).
+export async function fetchCfList(corpCode, period, apiKey) {
   for (const fsDiv of ['CFS', 'OFS']) {
     const list = await dartJson('fnlttSinglAcntAll.json', {
       corp_code: corpCode, bsns_year: period.bsnsYear, reprt_code: period.reprtCode, fs_div: fsDiv,

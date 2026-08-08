@@ -906,10 +906,37 @@ pykrx/OpenDart 데이터로 동작. 350종목 유니버스 조회부터 순위 �
 > 216~311종목(시대별 시장 유동성 성장 반영, 타당) → 삼성전자 항상 1위로 정상 확인.
 > 테스트 869개 통과, lint 클린.
 >
-> **남은 작업**: 역사적 OCF 대규모 수집(OpenDart, 실제 백테스트 가능 구간 2014~2026
-> 기준) → 워크포워드 엔진 결합(universeAtBatch+attachLiquidity+filterByLiquidity+OCF/P
-> 랭킹을 매달 재계산 시점마다 순회) → N(시도횟수) 정직 집계 방법론 확정 → 실제 백테스트
-> 1회 완주 → DSR 판정.
+> ✅ **4/N 완료 — 역사적 OCF 대량 수집 인프라**: `scripts/lib/ocf-history-cache.mjs` 신설
+> — historical-universe.py의 시세 캐싱과 같은 이유·같은 패턴("한 시점만 보는" Phase 9
+> `fetchOcfPointInTime`을 워크포워드 백테스트의 수십~백여 재계산 시점마다 반복 호출하면
+> 낭비이므로, 종목당 전체 분기 보고서 이력을 한 번만 수집해 로컬 캐싱 후 여러 시점에서
+> 재사용). `fetchOcfHistory`(회사 1곳의 [fromYear,toYear] 전체 분기를 OpenDart에서
+> 수집, 이미 export된 `fetchCfList`/`extractOcf`/`disclosureDateFromRceptNo` 재사용) +
+> `cacheOcfHistory`(다회사 배치, resumable) + `findOcfAtOrBefore`(순수함수, 룩어헤드
+> 방지 — 공시일 기준 point-in-time 조회) + `ocfAtOrBefore`/`ocfAt`(로드-후-질의).
+>
+> 독립 코드리뷰 HIGH 1건 발견해 수정: 실패율 가드(`MAX_ZERO_HISTORY_RATIO`)가 트립되기
+> **전에** 개별 결과를 이미 디스크에 써버려서, DART_API_KEY 만료 같은 사고로 절반이
+> 빈 이력([])이 되면 (1) 이번 실행은 가드가 예외를 던지지만 (2) **재개 실행은 그
+> 회사들이 "이미 캐시됨"으로 보여 재시도조차 안 하고 영구히 빈 이력으로 고정** —
+> 가드가 막으려던 바로 그 실패모드를 재개 시점에 그대로 통과시키는 심각한 결함이었음.
+> 전부 메모리에 모아 가드를 통과한 경우에만 디스크에 쓰도록 수정, 회귀테스트로 "실패율
+> 과다 시 파일 0개 남김" 직접 검증. MEDIUM 3건도 수정: ①`writeFileSync` 비원자적 쓰기라
+> 크래시 시 손상된 캐시가 영구 고정될 수 있었음 — `state-writer.mjs`와 동일한 임시파일+
+> rename 원자적 쓰기로 교체 ②재개 배치가 작을 때(예: 1곳 남았는데 마침 신규상장이라
+> 이력 0건) 실패율 가드가 정상 케이스를 오탐할 수 있었음 — `MIN_BATCH_FOR_RATIO_GUARD`
+> (10) 미만이면 비율 자체를 안 봄 ③가드 로직이 네트워크 없인 테스트 불가능했음 —
+> `fetchOne` 주입 가능하게 리팩터해 가드 트립/오탐방지/resumable 케이스 전부 테스트로
+> 고정. LOW 1건(반환값 문서의 `period` 필드 불일치)도 수정.
+>
+> 실데이터 검증(삼성전자 2020~2022): 12/12분기 정확히 수집, 룩어헤드 방지 확인(반기
+> 보고서 공시 전날(8/1) 조회 시 1분기 값, 공시 후(8/20) 조회 시 반기 값 — 정확히 구분).
+> 테스트 879개 통과, lint 클린.
+>
+> **남은 작업**: 실제 백테스트 가능 구간(2014~2026) 전체 유니버스에 대한 대량 OCF
+> 수집 실행(수천~수만 회 OpenDart 호출 예상, 오너 확인 후 진행) → 워크포워드 엔진 결합
+> (universeAtBatch+attachLiquidity+filterByLiquidity+OCF/P 랭킹을 매달 재계산 시점마다
+> 순회) → N(시도횟수) 정직 집계 방법론 확정 → 실제 백테스트 1회 완주 → DSR 판정.
 
 ---
 
