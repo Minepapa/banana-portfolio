@@ -41,6 +41,8 @@ CLAUDE.md
 .env
 
 scripts/.cache/
+__pycache__/
+*.pyc
 
 # 발행된 주간 리포트(실제 잔고 포함)·투자 성향 프로필(재무 정보) — 비공개
 reports/
