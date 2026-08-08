@@ -102,3 +102,36 @@ test('ocfAtOrBefore·ocfAt: targetDate가 "YYYY-MM-DD" 형식이 아니면 즉�
   assert.throws(() => ocfAtOrBefore('ANY', '2020/01/01'));
   assert.throws(() => ocfAt(['ANY'], ['2020-1-1']));
 });
+
+// 회귀테스트 — 장시간 대량 수집에서 배치 단위로 검증·기록해야, 도중에 실패해도 이미
+// 성공한 앞쪽 배치는 안전하게 남는다(2026-08-08, 전체 백테스트 구간 대량 수집을 앞두고
+// 추가 — "끝까지 다 모았다가 한 번에 쓰기"였다면 이 시나리오에서 배치1도 같이 날아감).
+test('cacheOcfHistory: batchSize로 나누면 앞선 배치는 뒤 배치가 실패해도 디스크에 남는다', async () => {
+  const okCodes = Array.from({ length: MIN_BATCH_FOR_RATIO_GUARD }, (_, i) => `TEST-BATCH-OK-${i}`);
+  const failCodes = Array.from({ length: MIN_BATCH_FOR_RATIO_GUARD }, (_, i) => `TEST-BATCH-FAIL-${i}`);
+  cleanup([...okCodes, ...failCodes]);
+  const entries = [...okCodes, ...failCodes].map((corpCode) => ({ stockCode: corpCode, corpCode }));
+  const history = [{ bsnsYear: '2020', reprtCode: '11013', disclosureDate: '2020-05-15', operCf: 1 }];
+  const fetchOne = async (corpCode) => (corpCode.startsWith('TEST-BATCH-FAIL') ? [] : history);
+
+  await assert.rejects(
+    () => cacheOcfHistory(entries, { fromYear: 2020, toYear: 2020, apiKey: 'x', fetchOne, batchSize: MIN_BATCH_FOR_RATIO_GUARD }),
+    /비율 과다/,
+  );
+  for (const c of okCodes) assert.equal(existsSync(join(CACHE_DIR, `${c}.json`)), true, `${c}(첫 배치)는 남아있어야 함`);
+  for (const c of failCodes) assert.equal(existsSync(join(CACHE_DIR, `${c}.json`)), false, `${c}(실패 배치)는 안 남아야 함`);
+  cleanup([...okCodes, ...failCodes]);
+});
+
+test('cacheOcfHistory: entries 항목별 fromYear/toYear가 전역값보다 우선한다', async () => {
+  const codes = ['TEST-PERYEAR-A'];
+  cleanup(codes);
+  const seenRanges = [];
+  const fetchOne = async (corpCode, range) => { seenRanges.push(range); return []; };
+  await cacheOcfHistory(
+    [{ stockCode: 'A', corpCode: 'TEST-PERYEAR-A', fromYear: 2018, toYear: 2019 }],
+    { fromYear: 2010, toYear: 2026, apiKey: 'x', fetchOne },
+  );
+  assert.deepEqual(seenRanges[0], { fromYear: 2018, toYear: 2019 });
+  cleanup(codes);
+});

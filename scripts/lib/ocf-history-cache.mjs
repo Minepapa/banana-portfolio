@@ -69,46 +69,60 @@ export async function fetchOcfHistory(corpCode, { fromYear, toYear }, apiKey, { 
   return out;
 }
 
-// entries: [{ stockCode, corpCode }, ...] — 이미 캐시된 corpCode는 스킵(재실행 안전,
-// 중단 후 재개 가능). fetchOne 주입 가능(기본 fetchOcfHistory) — 테스트에서 네트워크
-// 없이 가짜 결과를 넣어 가드 로직만 검증할 수 있게(코드리뷰 지적, 2026-08-08).
+// entries: [{ stockCode, corpCode, fromYear?, toYear? }, ...] — 이미 캐시된 corpCode는
+// 스킵(재실행 안전, 중단 후 재개 가능). 항목별 fromYear/toYear가 있으면 그걸 쓰고,
+// 없으면 옵션의 전역 fromYear/toYear를 쓴다(회사마다 실제 유니버스 편입 구간이 달라
+// 전체기간을 일괄 조회하면 낭비가 크다 — 대량 수집 시 항목별 범위 지정을 권장).
+// fetchOne 주입 가능(기본 fetchOcfHistory) — 테스트에서 네트워크 없이 가짜 결과를
+// 넣어 가드 로직만 검증할 수 있게(코드리뷰 지적, 2026-08-08).
 //
-// ⚠️ 전부 메모리에 모은 뒤 실패율을 먼저 판정하고, 통과한 경우에만 디스크에 쓴다 —
-// 원래는 회사마다 즉시 파일을 썼는데(수집 실패든 성공이든), 그러면 DART_API_KEY가
-// 도중에 만료돼 절반이 빈 이력([])으로 끝나도 그 빈 파일들이 이미 디스크에 남아있어서
-// (1) 이번 실행은 실패율 가드로 예외를 던지지만 (2) **다음 재개 실행은 그 회사들이
-// "이미 캐시됨"으로 보여 재시도조차 안 하고 영구히 빈 이력으로 고정**되는 심각한
-// 버그가 있었다(코드리뷰 CRITICAL급 지적, 2026-08-08 — 가드가 정확히 막으려던 실패
-// 모드를 재개 시점에 그대로 통과시켜버림). 지금은 실패율이 정상 범위일 때만 씀 —
-// 비정상이면 아무것도 디스크에 안 남아 다음 실행이 전부 다시 시도한다.
-export async function cacheOcfHistory(entries, { fromYear, toYear, apiKey, maxZeroHistoryRatio = MAX_ZERO_HISTORY_RATIO, minBatchForRatioGuard = MIN_BATCH_FOR_RATIO_GUARD, fetchOne = fetchOcfHistory, onProgress } = {}) {
+// ⚠️ batchSize 단위로 모아 그 배치의 실패율을 판정하고, 통과한 배치만 디스크에 쓴다
+// (기본 무한대=한 배치 — 소규모 호출에서는 이전과 동일 동작). 원래는 회사마다 즉시
+// 파일을 썼는데, 그러면 DART_API_KEY가 도중에 만료돼 절반이 빈 이력([])으로 끝나도
+// 그 빈 파일들이 이미 디스크에 남아있어서 (1) 이번 실행은 실패율 가드로 예외를 던지지만
+// (2) **다음 재개 실행은 그 회사들이 "이미 캐시됨"으로 보여 재시도조차 안 하고 영구히
+// 빈 이력으로 고정**되는 심각한 버그가 있었다(코드리뷰 CRITICAL급 지적, 2026-08-08 —
+// 가드가 정확히 막으려던 실패 모드를 재개 시점에 그대로 통과시켜버림). 배치 단위로
+// 나눈 이유: 수백~수천 개짜리 장시간 실행에서 "끝까지 다 모았다가 한 번에 검증"이면
+// 중간에 크래시할 때 이미 성공한 수백 건까지 통째로 날아간다 — 배치별로 검증·기록해
+// 장시간 작업에서도 진행 상황이 안전하게 누적되게 한다(오너 승인, 2026-08-08).
+export async function cacheOcfHistory(entries, { fromYear, toYear, apiKey, maxZeroHistoryRatio = MAX_ZERO_HISTORY_RATIO, minBatchForRatioGuard = MIN_BATCH_FOR_RATIO_GUARD, batchSize = Infinity, fetchOne = fetchOcfHistory, onProgress } = {}) {
   mkdirSync(CACHE_DIR, { recursive: true });
   const toFetch = entries.filter((e) => !existsSync(cachePath(e.corpCode)));
-  const results = [];
-  let zeroHistory = 0;
-  for (const [i, { corpCode }] of toFetch.entries()) {
-    const history = await fetchOne(corpCode, { fromYear, toYear }, apiKey);
-    results.push({ corpCode, history });
-    if (history.length === 0) zeroHistory++;
-    onProgress?.(i + 1, toFetch.length);
-  }
+  let fetched = 0, zeroHistory = 0, done = 0;
 
-  if (toFetch.length >= minBatchForRatioGuard) {
-    const zeroRatio = zeroHistory / toFetch.length;
-    if (zeroRatio > maxZeroHistoryRatio) {
-      throw new Error(
-        `OCF 이력 수집 결과 유효이력 0건 비율 과다: ${zeroHistory}/${toFetch.length}건(${(zeroRatio * 100).toFixed(0)}%) — `
-        + `DART_API_KEY 만료·전역 레이트리밋 의심(개별 회사의 짧은 상장이력만으론 이 정도 비율이 안 나옴). `
-        + `아무것도 캐시에 쓰지 않았으니 다음 실행이 전부 재시도한다.`,
-      );
+  for (let start = 0; start < toFetch.length; start += batchSize) {
+    const chunk = toFetch.slice(start, start + batchSize);
+    const results = [];
+    let chunkZero = 0;
+    for (const entry of chunk) {
+      const history = await fetchOne(entry.corpCode, { fromYear: entry.fromYear ?? fromYear, toYear: entry.toYear ?? toYear }, apiKey);
+      results.push({ corpCode: entry.corpCode, history });
+      if (history.length === 0) chunkZero++;
+      done++;
+      onProgress?.(done, toFetch.length);
     }
+
+    if (chunk.length >= minBatchForRatioGuard) {
+      const zeroRatio = chunkZero / chunk.length;
+      if (zeroRatio > maxZeroHistoryRatio) {
+        throw new Error(
+          `OCF 이력 수집 결과 유효이력 0건 비율 과다(배치 ${start}~${start + chunk.length - 1}): `
+          + `${chunkZero}/${chunk.length}건(${(zeroRatio * 100).toFixed(0)}%) — `
+          + `DART_API_KEY 만료·전역 레이트리밋 의심(개별 회사의 짧은 상장이력만으론 이 정도 비율이 안 나옴). `
+          + `이 배치는 디스크에 안 썼으니(이전 배치들은 이미 안전하게 기록됨) 다음 실행이 이 지점부터 재시도한다.`,
+        );
+      }
+    }
+
+    for (const { corpCode, history } of results) {
+      writeAtomic(cachePath(corpCode), JSON.stringify(history));
+    }
+    fetched += results.length;
+    zeroHistory += chunkZero;
   }
 
-  for (const { corpCode, history } of results) {
-    writeAtomic(cachePath(corpCode), JSON.stringify(history));
-  }
-
-  return { fetched: results.length, cached: entries.length - toFetch.length, zeroHistory, total: entries.length };
+  return { fetched, cached: entries.length - toFetch.length, zeroHistory, total: entries.length };
 }
 
 function loadHistory(corpCode) {
