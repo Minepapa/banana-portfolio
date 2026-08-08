@@ -69,10 +69,40 @@ export async function fetchOcfHistory(corpCode, { fromYear, toYear }, apiKey, { 
   return out;
 }
 
-// entries: [{ stockCode, corpCode, fromYear?, toYear? }, ...] — 이미 캐시된 corpCode는
-// 스킵(재실행 안전, 중단 후 재개 가능). 항목별 fromYear/toYear가 있으면 그걸 쓰고,
-// 없으면 옵션의 전역 fromYear/toYear를 쓴다(회사마다 실제 유니버스 편입 구간이 달라
-// 전체기간을 일괄 조회하면 낭비가 크다 — 대량 수집 시 항목별 범위 지정을 권장).
+// 캐시 파일에 실제 이력 배열뿐 아니라 "어느 [fromYear,toYear] 범위로 조회해서 만들어진
+// 캐시인지"도 같이 저장한다 — 그냥 배열만 저장하면, 좁은 범위(예: 파일럿 검증용
+// 2023~2025)로 먼저 캐싱된 회사가 나중에 더 넓은 범위(예: 전체 백테스트 구간
+// 2014~2026)로 다시 요청될 때 "파일이 이미 있으니 스킵"으로 오판해 **좁은 범위의
+// 캐시가 넓은 범위 요청을 영구히 가로막는** 사고가 난다(2026-08-08 직접 겪음 —
+// 삼성전자를 파일럿에서 2023~2025로 먼저 캐싱해뒀더니, 전체 구간 수집이 "이미
+// 캐시됨"으로 보고 2014~2022 데이터를 영영 못 채움 — 2014~2022 재계산 시점에서
+// 삼성전자가 통째로 랭킹에서 빠지는 결과로 이어짐). 이제 캐시가 실제로 요청 범위를
+// 덮는지 검사하고, 못 덮으면(좁은 캐시든 아예 없든) 그 회사를 다시 수집 대상에 넣는다.
+function readCacheFile(corpCode) {
+  const path = cachePath(corpCode);
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
+    // 구버전 캐시(배열만 저장) 호환 — range 정보가 없으면 "범위를 모른다"로 취급해
+    // 항상 재수집 대상이 되게 한다(추정하지 않음).
+    if (Array.isArray(parsed)) return { fromYear: null, toYear: null, history: parsed };
+    return parsed;
+  } catch { return null; }
+}
+
+function coversRange(cached, fromYear, toYear) {
+  if (!cached || cached.fromYear == null || cached.toYear == null) return false;
+  return cached.fromYear <= fromYear && cached.toYear >= toYear;
+}
+
+// entries: [{ stockCode, corpCode, fromYear?, toYear? }, ...] — 캐시가 없거나 요청
+// 범위를 덮지 못하는 corpCode만 (재)수집 대상(재실행 안전, 중단 후 재개 가능 — 단
+// "범위가 넓어짐"도 재수집 트리거가 됨, 위 주석 참고). 항목별 fromYear/toYear가 있으면
+// 그걸 쓰고, 없으면 옵션의 전역 fromYear/toYear를 쓴다(회사마다 실제 유니버스 편입
+// 구간이 달라 전체기간을 일괄 조회하면 낭비가 크다). 기존 캐시 범위가 새 요청 범위와
+// 겹치되 완전히 못 덮으면(예: 기존 2023~2025, 요청 2014~2026) 두 범위의 합집합을
+// 다시 처음부터 전부 수집한다(부분 병합은 안 함 — 단순하고 안전한 쪽 선택, 약간의
+// 중복 조회는 감수).
 // fetchOne 주입 가능(기본 fetchOcfHistory) — 테스트에서 네트워크 없이 가짜 결과를
 // 넣어 가드 로직만 검증할 수 있게(코드리뷰 지적, 2026-08-08).
 //
@@ -88,7 +118,8 @@ export async function fetchOcfHistory(corpCode, { fromYear, toYear }, apiKey, { 
 // 장시간 작업에서도 진행 상황이 안전하게 누적되게 한다(오너 승인, 2026-08-08).
 export async function cacheOcfHistory(entries, { fromYear, toYear, apiKey, maxZeroHistoryRatio = MAX_ZERO_HISTORY_RATIO, minBatchForRatioGuard = MIN_BATCH_FOR_RATIO_GUARD, batchSize = Infinity, fetchOne = fetchOcfHistory, onProgress } = {}) {
   mkdirSync(CACHE_DIR, { recursive: true });
-  const toFetch = entries.filter((e) => !existsSync(cachePath(e.corpCode)));
+  const withRange = entries.map((e) => ({ ...e, fromYear: e.fromYear ?? fromYear, toYear: e.toYear ?? toYear }));
+  const toFetch = withRange.filter((e) => !coversRange(readCacheFile(e.corpCode), e.fromYear, e.toYear));
   let fetched = 0, zeroHistory = 0, done = 0;
 
   for (let start = 0; start < toFetch.length; start += batchSize) {
@@ -96,8 +127,12 @@ export async function cacheOcfHistory(entries, { fromYear, toYear, apiKey, maxZe
     const results = [];
     let chunkZero = 0;
     for (const entry of chunk) {
-      const history = await fetchOne(entry.corpCode, { fromYear: entry.fromYear ?? fromYear, toYear: entry.toYear ?? toYear }, apiKey);
-      results.push({ corpCode: entry.corpCode, history });
+      // 기존 캐시가 있지만 범위를 못 덮으면 합집합 범위로 다시 전부 수집(부분 병합 안 함).
+      const existing = readCacheFile(entry.corpCode);
+      const effFromYear = existing?.fromYear != null ? Math.min(existing.fromYear, entry.fromYear) : entry.fromYear;
+      const effToYear = existing?.toYear != null ? Math.max(existing.toYear, entry.toYear) : entry.toYear;
+      const history = await fetchOne(entry.corpCode, { fromYear: effFromYear, toYear: effToYear }, apiKey);
+      results.push({ corpCode: entry.corpCode, fromYear: effFromYear, toYear: effToYear, history });
       if (history.length === 0) chunkZero++;
       done++;
       onProgress?.(done, toFetch.length);
@@ -115,8 +150,8 @@ export async function cacheOcfHistory(entries, { fromYear, toYear, apiKey, maxZe
       }
     }
 
-    for (const { corpCode, history } of results) {
-      writeAtomic(cachePath(corpCode), JSON.stringify(history));
+    for (const { corpCode, fromYear: f, toYear: t, history } of results) {
+      writeAtomic(cachePath(corpCode), JSON.stringify({ fromYear: f, toYear: t, history }));
     }
     fetched += results.length;
     zeroHistory += chunkZero;
@@ -126,9 +161,7 @@ export async function cacheOcfHistory(entries, { fromYear, toYear, apiKey, maxZe
 }
 
 function loadHistory(corpCode) {
-  const path = cachePath(corpCode);
-  if (!existsSync(path)) return null;
-  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
+  return readCacheFile(corpCode)?.history ?? null;
 }
 
 function assertDateString(d) {

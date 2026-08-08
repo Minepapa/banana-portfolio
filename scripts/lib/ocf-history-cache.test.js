@@ -86,7 +86,10 @@ test('cacheOcfHistory: 정상 수집 후 파일에 정확히 기록되고, 재�
 
   const result1 = await cacheOcfHistory(entries, { fromYear: 2020, toYear: 2020, apiKey: 'x', fetchOne });
   assert.deepEqual(result1, { fetched: 2, cached: 0, zeroHistory: 0, total: 2 });
-  assert.deepEqual(JSON.parse(readFileSync(join(CACHE_DIR, 'TEST-OK-A.json'), 'utf8')), history);
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(CACHE_DIR, 'TEST-OK-A.json'), 'utf8')),
+    { fromYear: 2020, toYear: 2020, history },
+  );
 
   const fetchOneShouldNotBeCalled = async () => { throw new Error('재실행에서 이미 캐시된 항목을 다시 조회함 — resumable 아님'); };
   const result2 = await cacheOcfHistory(entries, { fromYear: 2020, toYear: 2020, apiKey: 'x', fetchOne: fetchOneShouldNotBeCalled });
@@ -133,5 +136,56 @@ test('cacheOcfHistory: entries 항목별 fromYear/toYear가 전역값보다 우�
     { fromYear: 2010, toYear: 2026, apiKey: 'x', fetchOne },
   );
   assert.deepEqual(seenRanges[0], { fromYear: 2018, toYear: 2019 });
+  cleanup(codes);
+});
+
+// 회귀테스트 — 2026-08-08 실전 발견 버그: 좁은 범위(예: 파일럿 검증용 2023~2025)로
+// 먼저 캐싱된 회사가 나중에 더 넓은 범위(예: 전체 백테스트 구간 2014~2026)로 다시
+// 요청될 때, 파일 존재 여부만 보면 "이미 캐시됨"으로 오판해 좁은 범위 캐시가 넓은
+// 범위 요청을 영구히 가로막는다. 삼성전자가 파일럿(2023~2025)에서 먼저 캐싱된 뒤
+// 전체 구간(2014~2026) 수집에서 스킵돼, 2014~2022 재계산 시점에 통째로 랭킹에서
+// 빠지는 실제 사고로 발견됨. 이제는 캐시 범위가 요청 범위를 못 덮으면 재수집한다.
+test('cacheOcfHistory: 기존 캐시가 좁은 범위면 더 넓은 범위 요청 시 재수집한다(좁은 캐시가 넓은 요청을 막지 않음)', async () => {
+  const codes = ['TEST-WIDEN-A'];
+  cleanup(codes);
+  const narrowHistory = [{ bsnsYear: '2023', reprtCode: '11013', disclosureDate: '2023-05-15', operCf: 1 }];
+  const wideHistory = [
+    { bsnsYear: '2014', reprtCode: '11013', disclosureDate: '2014-05-15', operCf: 2 },
+    ...narrowHistory,
+  ];
+  let calls = 0;
+  const fetchOneNarrow = async () => narrowHistory;
+  await cacheOcfHistory(
+    [{ stockCode: 'A', corpCode: 'TEST-WIDEN-A', fromYear: 2023, toYear: 2025 }],
+    { apiKey: 'x', fetchOne: fetchOneNarrow },
+  );
+  assert.equal(ocfAtOrBefore('TEST-WIDEN-A', '2020-01-01'), null); // 좁은 캐시엔 2020년 데이터가 없음
+
+  const fetchOneWide = async (corpCode, range) => { calls++; assert.deepEqual(range, { fromYear: 2014, toYear: 2026 }); return wideHistory; };
+  const result = await cacheOcfHistory(
+    [{ stockCode: 'A', corpCode: 'TEST-WIDEN-A', fromYear: 2014, toYear: 2026 }],
+    { apiKey: 'x', fetchOne: fetchOneWide },
+  );
+  assert.equal(calls, 1, '좁은 캐시가 있어도 재수집이 실제로 일어나야 함');
+  assert.equal(result.fetched, 1);
+  assert.equal(ocfAtOrBefore('TEST-WIDEN-A', '2020-01-01').operCf, 2); // 이제 2014년 데이터로 커버됨
+  cleanup(codes);
+});
+
+test('cacheOcfHistory: 기존 캐시가 요청 범위를 이미 덮으면 재수집 없이 스킵한다', async () => {
+  const codes = ['TEST-COVERED-A'];
+  cleanup(codes);
+  const history = [{ bsnsYear: '2020', reprtCode: '11013', disclosureDate: '2020-05-15', operCf: 1 }];
+  await cacheOcfHistory(
+    [{ stockCode: 'A', corpCode: 'TEST-COVERED-A', fromYear: 2014, toYear: 2026 }],
+    { apiKey: 'x', fetchOne: async () => history },
+  );
+  const shouldNotBeCalled = async () => { throw new Error('이미 넓은 범위로 캐시돼 있는데 재수집함'); };
+  const result = await cacheOcfHistory(
+    [{ stockCode: 'A', corpCode: 'TEST-COVERED-A', fromYear: 2018, toYear: 2020 }], // 기존 범위(2014-2026) 안에 완전히 포함
+    { apiKey: 'x', fetchOne: shouldNotBeCalled },
+  );
+  assert.equal(result.fetched, 0);
+  assert.equal(result.cached, 1);
   cleanup(codes);
 });
