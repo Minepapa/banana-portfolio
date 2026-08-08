@@ -19,8 +19,9 @@
 
 사용법:
   python3 historical-universe.py build-pool                    # 후보풀 JSON 출력
-  python3 historical-universe.py cache-prices <시작일> [<종목코드,...>]  # 시세 캐시 채우기
-  python3 historical-universe.py universe-at <기준일> [상위N_코스피] [상위N_코스닥]
+  python3 historical-universe.py cache-prices <시작일> [<종목코드,...>]  # 시세+거래량 캐시 채우기
+  python3 historical-universe.py prices-at <날짜배열JSON> [<종목코드,...>]
+  python3 historical-universe.py liquidity-at <날짜배열JSON> [<종목코드,...>]
 """
 import json
 import os
@@ -112,8 +113,11 @@ def cache_path(code):
 
 
 def cache_prices(codes, start_date, end_date=None, delay=0.05, max_fail_ratio=MAX_CACHE_FAIL_RATIO):
-    """codes 각각의 일별 종가 시계열을 로컬 CSV로 캐싱(이미 있으면 스킵 — 재실행해도
-    안전, 중단 후 재개 가능). 반환: {code: 'cached'|'fetched'|'empty'|'error:...'} 요약.
+    """codes 각각의 일별 종가+거래량 시계열을 로컬 CSV로 캐싱(이미 있으면 스킵 —
+    재실행해도 안전, 중단 후 재개 가능). Volume도 같이 저장하는 이유: 유동성 필터
+    (avg_trading_value_at, 30억원 기준)가 종가×거래량을 요구하는데 처음엔 Close만
+    캐싱해뒀다가 뒤늦게 빠진 걸 발견함(2026-08-08 — 백테스트가 실전 전략의 유동성
+    필터를 재현 못 하고 있었음). 반환: {code: 'cached'|'fetched'|'empty'|'error:...'} 요약.
 
     빈 결과(진짜 데이터 없음)는 이번 실행 전체가 "건강"할 때만 캐시에 확정한다 —
     전역장애(SSL 깨짐·레이트리밋 등)가 개별 종목 결측인 척 위장하면서 "빈 결과"를
@@ -135,7 +139,8 @@ def cache_prices(codes, start_date, end_date=None, delay=0.05, max_fail_ratio=MA
                 result[code] = 'empty'
                 pending_empty.append(code)
             else:
-                df[['Close']].to_csv(cache_path(code))
+                cols = [c for c in ('Close', 'Volume') if c in df.columns]
+                df[cols].to_csv(cache_path(code))
                 result[code] = 'fetched'
         except Exception as e:
             result[code] = f'error:{e}'
@@ -157,7 +162,7 @@ def cache_prices(codes, start_date, end_date=None, delay=0.05, max_fail_ratio=MA
     # 여기 도달했다는 건 실패율이 정상 범위 — 빈 결과를 이제 캐시에 확정한다(헤더만
     # 있는 빈 CSV로 "조회했지만 없음"을 기록, 다음 실행부터 재조회 스킵).
     for code in pending_empty:
-        pd.DataFrame(columns=['Close']).to_csv(cache_path(code))
+        pd.DataFrame(columns=['Close', 'Volume']).to_csv(cache_path(code))
 
     for code in codes:
         if code not in result:
@@ -190,6 +195,35 @@ def price_at_or_before(code, target_date):
     if eligible.empty:
         return None
     return float(eligible['Close'].iloc[-1])
+
+
+def avg_trading_value_at(code, target_date, days=20, min_window_ratio=0.9):
+    """target_date 이하 최근 days거래일의 평균 거래대금(종가×거래량 근사) — fdr-universe.py
+    avg_trading_value()의 "과거 특정 시점" 버전(그쪽은 항상 "오늘" 기준). 짧은 창(신규상장
+    직후 등)은 min_window_ratio 미만이면 null(추정 안 함, fdr-universe.py와 동일 원칙).
+    이 함수는 유니버스 순위(computePointInTimeUniverse)로 이미 상위 350위 안에 든 종목만
+    호출측이 골라서 넘기는 걸 전제한다(전체 4천여 종목이 아니라 시장당 상위 200+150만) —
+    유니버스 랭킹 자체는 시가총액만 필요하고 유동성은 그 다음 단계 필터라, ARCHITECTURE-V2.md
+    "유니버스 → 유동성 필터" 순서와 정합."""
+    df = load_price_series(code)
+    if df is None or 'Volume' not in df.columns:
+        return None
+    eligible = df[df.index <= pd.Timestamp(target_date)].tail(days)
+    if len(eligible) < days * min_window_ratio:
+        return None
+    amounts = (eligible['Close'] * eligible['Volume']).dropna()
+    if amounts.empty:
+        return None
+    return float(amounts.mean())
+
+
+def liquidity_at(codes, target_dates, days=20):
+    """codes × target_dates 조합별 avg_trading_value_at — prices_at과 같은 로드-후-질의
+    패턴(종목당 CSV 1회 로드). 반환: {code: {date: avgTradingValue_or_null}}."""
+    out = {}
+    for code in codes:
+        out[code] = {d: avg_trading_value_at(code, d, days) for d in target_dates}
+    return out
 
 
 def prices_at(codes, target_dates):
@@ -230,6 +264,10 @@ def main():
         target_dates = json.loads(sys.argv[2])
         codes = sys.argv[3].split(',') if len(sys.argv) > 3 else [c['code'] for c in build_candidate_pool()]
         print(json.dumps(prices_at(codes, target_dates), ensure_ascii=False))
+    elif cmd == 'liquidity-at':
+        target_dates = json.loads(sys.argv[2])
+        codes = sys.argv[3].split(',') if len(sys.argv) > 3 else [c['code'] for c in build_candidate_pool()]
+        print(json.dumps(liquidity_at(codes, target_dates), ensure_ascii=False))
     else:
         print(__doc__, file=sys.stderr)
         sys.exit(2)

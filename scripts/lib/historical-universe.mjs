@@ -53,10 +53,12 @@ export function buildCandidatePool() {
   return runPy(['build-pool']);
 }
 
-// codes의 일별 종가를 로컬 캐시(scripts/.cache/historical-prices/)에 채운다 — 이미
-// 캐시된 종목은 스킵(재실행 안전, 중단 후 재개 가능). 수천 종목이면 실제로 수십 분
-// 걸릴 수 있어(종목당 실제 네트워크 호출 1회 + 예의상 지연) 기본 timeout을 30분으로
-// 넉넉히 잡는다.
+// codes의 일별 종가+거래량을 로컬 캐시(scripts/.cache/historical-prices/)에 채운다 —
+// 이미 캐시된 종목은 스킵(재실행 안전, 중단 후 재개 가능). 거래량도 같이 캐싱하는
+// 이유: fetchLiquidityAt(유동성 필터, 30억원 기준)이 종가×거래량을 요구(2026-08-08 —
+// 처음엔 종가만 캐싱했다가 유동성 필터를 재현할 수 없다는 걸 뒤늦게 발견). 수천 종목이면
+// 실제로 수십 분 걸릴 수 있어(종목당 실제 네트워크 호출 1회 + 예의상 지연) 기본
+// timeout을 30분으로 넉넉히 잡는다.
 export function cachePrices(codes, startDate, { timeout = 30 * 60 * 1000 } = {}) {
   return runPy(['cache-prices', startDate, codes.join(',')], { timeout });
 }
@@ -67,6 +69,17 @@ export function cachePrices(codes, startDate, { timeout = 30 * 60 * 1000 } = {})
 export function fetchPricesAt(codes, targetDates, opts = {}) {
   assertDateStrings(targetDates);
   return runPy(['prices-at', JSON.stringify(targetDates), codes.join(',')], opts);
+}
+
+// codes × targetDates 조합의 "그 날짜 이하 최근 20거래일 평균 거래대금"(종가×거래량
+// 근사)을 캐시에서 조회 — ARCHITECTURE-V2.md "유니버스 → 유동성 필터" 순서대로, 유니버스
+// 순위(computePointInTimeUniverse)로 이미 걸러진 상위 350위 안쪽 후보만 넘기는 게
+// 정상 사용법(전체 4천여 종목이 아니라). 신규상장 직후처럼 거래일 창이 짧으면(90%
+// 미만) null(추정 안 함, fdr-universe.py avg_trading_value와 동일 원칙). 반환:
+// { [code]: { [date]: avgTradingValue|null } }.
+export function fetchLiquidityAt(codes, targetDates, opts = {}) {
+  assertDateStrings(targetDates);
+  return runPy(['liquidity-at', JSON.stringify(targetDates), codes.join(',')], opts);
 }
 
 // pool: buildCandidatePool() 결과. pricesByCode: fetchPricesAt() 결과의 code 하나
@@ -95,6 +108,16 @@ export function computePointInTimeUniverse(pool, pricesByCode, targetDate, { nKo
     out.push(...ranked);
   }
   return out;
+}
+
+// candidates: computePointInTimeUniverse 결과(순위까지만, 유동성 미반영). liquidityByCode:
+// fetchLiquidityAt() 결과. 순수함수 — 테스트 가능. 각 후보에 avgTradingValue만 붙인다
+// (필터링은 안 함 — quant-universe.mjs의 filterByLiquidity를 그대로 이어 쓰는 게 의도,
+// 현재 유니버스와 동일한 필터 로직을 재사용해 두 곳에서 임계치 30억원이 따로 관리되며
+// 갈라지는 걸 방지). 사용 예: filterByLiquidity(attachLiquidity(candidates, liq, date)).
+export function attachLiquidity(candidates, liquidityByCode, targetDate) {
+  assertDateStrings([targetDate]);
+  return candidates.map((c) => ({ ...c, avgTradingValue: liquidityByCode[c.code]?.[targetDate] ?? null }));
 }
 
 // 여러 targetDates를 한 번의 pool 조회 + 한 번의 가격조회 배치로 재구성 — 워크포워드

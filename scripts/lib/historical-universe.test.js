@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computePointInTimeUniverse } from './historical-universe.mjs';
+import { computePointInTimeUniverse, attachLiquidity } from './historical-universe.mjs';
+import { filterByLiquidity, LIQUIDITY_MIN_KRW } from './quant-universe.mjs';
 
 const candidate = (overrides) => ({
   code: 'X', name: '테스트', market: 'KOSPI', sharesOutstanding: 100,
@@ -69,6 +70,37 @@ test('computePointInTimeUniverse: 시가총액 내림차순 정렬 + 시장별 �
   const prices = { A: { '2020-01-01': 10 }, B: { '2020-01-01': 30 }, C: { '2020-01-01': 20 } };
   const out = computePointInTimeUniverse(pool, prices, '2020-01-01', { nKospi: 2, nKosdaq: 0 });
   assert.deepEqual(out.map((c) => c.code), ['B', 'C']); // 30 > 20 > 10, 상위 2개만
+});
+
+test('attachLiquidity: 후보에 avgTradingValue만 붙인다(필터링은 안 함)', () => {
+  const candidates = [candidate({ code: 'A' }), candidate({ code: 'B' })];
+  const liq = { A: { '2020-01-01': 5_000_000_000 }, B: { '2020-01-01': null } };
+  const out = attachLiquidity(candidates, liq, '2020-01-01');
+  assert.equal(out.length, 2); // 필터링 안 됨 — 둘 다 그대로
+  assert.equal(out[0].avgTradingValue, 5_000_000_000);
+  assert.equal(out[1].avgTradingValue, null);
+});
+
+test('attachLiquidity: liquidityByCode에 그 코드/날짜가 없으면 null(추정 안 함)', () => {
+  const out = attachLiquidity([candidate({ code: 'A' })], {}, '2020-01-01');
+  assert.equal(out[0].avgTradingValue, null);
+});
+
+// 핵심 통합 성질 — attachLiquidity + quant-universe.mjs의 filterByLiquidity(이미 검증된
+// 현재 유니버스용 필터)를 그대로 이어붙이면 30억원 기준 필터가 정확히 재현돼야 한다.
+// 임계치를 여기서 새로 만들지 않고 재사용하는 게 이 설계의 핵심(2026-08-08 결정).
+test('attachLiquidity + filterByLiquidity: 30억원 기준 유동성 필터가 그대로 재현된다', () => {
+  const candidates = [
+    candidate({ code: 'A' }), candidate({ code: 'B' }), candidate({ code: 'C' }),
+  ];
+  const liq = {
+    A: { '2020-01-01': 5_000_000_000 },
+    B: { '2020-01-01': 2_000_000_000 }, // 기준 미달
+    C: { '2020-01-01': LIQUIDITY_MIN_KRW }, // 경계값(포함)
+  };
+  const withLiquidity = attachLiquidity(candidates, liq, '2020-01-01');
+  const passed = filterByLiquidity(withLiquidity);
+  assert.deepEqual(passed.map((c) => c.code).sort(), ['A', 'C']);
 });
 
 test('computePointInTimeUniverse: 시장별로 독립적으로 순위·상한 적용(코스피·코스닥 안 섞임)', () => {
