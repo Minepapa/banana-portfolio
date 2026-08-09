@@ -203,6 +203,97 @@ export function disclosureDateFromRceptNo(rceptNo) {
 
 const y_m_d = (d) => d.toISOString().slice(0, 10);
 
+// ── 정정공시(기재정정)로 공시일이 밀리는 문제 대응 ──────────────────────────
+// fnlttSinglAcntAll.json은 (corp_code,bsns_year,reprt_code,fs_div)로 조회하면 그 회사가
+// "가장 최근에" 낸 버전(정정공시가 있었으면 정정본)을 돌려주고, rcept_no도 정정본의
+// 접수번호다. disclosureDateFromRceptNo를 그대로 믿으면 원래 몇 년 전에 이미 공시됐던
+// 재무데이터가 "정정일에야 공시됨"으로 잘못 표시돼, 룩어헤드 방지 로직이 그 몇 년치를
+// 통째로 "미공시"로 오판하고 훨씬 더 오래된 값을 계속 재사용하는 부작용이 생긴다(2026-08-09
+// 실측 발견 — LS 006260이 2017~2020년 4개년치가 전부 2021-08-31 하루로 밀려 4년간 2016년
+// OCF를 재사용, ocf-history-cache.mjs 캐시 1,004사 중 106사(10.6%)가 같은 패턴).
+//
+// 완전한 해결(원본 시점 그대로의 정확한 숫자 복원)은 원본 공시서류(XBRL) 다운로드·파싱이
+// 필요해 별도 파이프라인 급의 작업이라 여기서 하지 않는다(오너 결정, 2026-08-09). 대신
+// **원본 공시일**만 list.json(공시서류검색)으로 별도 확인해 룩어헤드 커트라인으로 쓴다 —
+// 숫자는 여전히 fnlttSinglAcntAll.json이 주는 최신(정정)값이지만, "그 시점에 시장이 이
+// 회사 실적을 처음 알게 된 날짜"는 정확해진다(정정 전 숫자와 정정 후 숫자는 통상 소폭
+// 차이라 이 근사가 4년치 데이터 동결보다 훨씬 작은 편향 — §8 관점에서 "완벽하진 않지만
+// 방향이 명확히 개선되는" 근사로 채택).
+//
+// 매 조회마다 list.json을 추가로 부르면(정정 없는 정상 케이스가 대다수, ~90%) API 호출이
+// 불필요하게 배로 늘어난다 — 그래서 rcept_no로 뽑은 공시일이 그 분기 마감일 대비
+// "비정상적으로 늦다"고 판단될 때만(정기공시 법정기한: 분기·반기 45일, 사업보고서 90일 —
+// 넉넉히 150일을 이상치 기준으로 삼음) list.json 조회를 추가로 한다.
+const REPRT_PERIOD_END = { 11013: '03-31', 11012: '06-30', 11014: '09-30', 11011: '12-31' };
+const SUSPICIOUS_DISCLOSURE_DELAY_DAYS = 150;
+
+// period(bsnsYear+reprtCode)의 분기 마감일(UTC Date) — "정상적인 공시라면 이 날짜로부터
+// 몇 달 안에 나와야 한다"는 기준점. 순수함수 — 테스트 가능.
+export function periodEndDate(period) {
+  return new Date(`${period.bsnsYear}-${REPRT_PERIOD_END[period.reprtCode]}T00:00:00.000Z`);
+}
+
+// disclosureDate가 그 분기 마감일로부터 thresholdDays를 넘겨 나왔으면 "정정공시로 밀렸을
+// 가능성"으로 의심한다. 순수함수 — 테스트 가능.
+export function isSuspiciouslyLateDisclosure(disclosureDate, period, thresholdDays = SUSPICIOUS_DISCLOSURE_DELAY_DAYS) {
+  if (!disclosureDate) return false;
+  const end = periodEndDate(period);
+  const disclosed = new Date(`${disclosureDate}T00:00:00.000Z`);
+  const days = (disclosed.getTime() - end.getTime()) / 86400000;
+  return days > thresholdDays;
+}
+
+const REPRT_TYPE_LABEL = { 11013: '분기보고서', 11012: '반기보고서', 11014: '분기보고서', 11011: '사업보고서' };
+
+// list.json(공시서류검색) 응답 목록에서 이 period의 "정정 아닌 원본" 항목을 찾는다 —
+// report_nm이 "분기보고서 (2017.03)"로 시작하고 그 뒤 어딘가에 기간 태그를 포함하는 것만
+// (정정본은 "[기재정정]분기보고서 (2017.03)"처럼 앞에 대괄호 접두사가 붙어 startsWith에서
+// 자동 배제됨, 실측 확인). 완전일치 대신 시작·포함 매칭을 쓰는 이유(코드리뷰 지적,
+// 2026-08-09): "분기보고서 (2017.03) (신규상장법인)"처럼 뒤에 추가 태그가 붙는 변형이
+// 있으면 완전일치는 그 회사만 조용히 원본을 못 찾고 옛 버그(정정일 재사용)로 되돌아간다
+// — 이 매칭이 이 수정 전체의 효과 범위를 좌우하는 지점이라 방어적으로 짠다. 여러 건이면
+// (이례적) 가장 이른 접수번호(정정본이 섞여 들어와도 가장 이른 것이 원본일 수밖에 없어
+// 이중 안전장치). 순수함수 — 테스트 가능.
+export function matchOriginalDisclosure(list, period) {
+  const mm = REPRT_PERIOD_END[period.reprtCode]?.slice(0, 2);
+  if (!mm) return null;
+  const typeLabel = REPRT_TYPE_LABEL[period.reprtCode];
+  const periodTag = `(${period.bsnsYear}.${mm})`;
+  const candidates = (list ?? []).filter((x) => {
+    const nm = String(x.report_nm ?? '').trim();
+    return nm.startsWith(typeLabel) && nm.includes(periodTag);
+  });
+  if (!candidates.length) return null;
+  return candidates.reduce((a, b) => (a.rcept_no <= b.rcept_no ? a : b));
+}
+
+// list.json으로 이 period의 원본 공시일을 조회 — 실패·미발견 시 null(추정 안 함, 호출측이
+// rcept_no 기반 날짜로 폴백). 마감일부터 +180일 창(법정기한 45~90일에 넉넉한 여유).
+export async function findOriginalDisclosureDate(corpCode, period, apiKey) {
+  const end = periodEndDate(period);
+  const bgn = y_m_d(end).replace(/-/g, '');
+  const stop = y_m_d(new Date(end.getTime() + 180 * 86400000)).replace(/-/g, '');
+  const list = await dartJson('list.json', { corp_code: corpCode, bgn_de: bgn, end_de: stop, page_count: '100' }, apiKey).catch(() => null);
+  const original = matchOriginalDisclosure(list, period);
+  return original ? disclosureDateFromRceptNo(original.rcept_no) : null;
+}
+
+// fetchCfList 그대로 두고, 공시일만 위 이상치 탐지+list.json 보정을 거쳐 반환하는 래퍼 —
+// ocf-history-cache.mjs·pead.mjs 둘 다 여기를 통해 disclosureDate를 얻어야 정정공시 문제에
+// 안전하다. list가 없으면(fetchCfList 실패) null. 정상 케이스(비정상 지연 아님)는 list.json
+// 추가호출 없이 그대로 통과 — API 부담 최소화. fetchList·fetchOriginal 주입 가능(기본
+// fetchCfList·findOriginalDisclosureDate) — 이 함수 자체가 "이상치 감지→보정→폴백" 배선의
+// 정답이라, 테스트에서 네트워크 없이 세 분기(정상/보정성공/보정실패폴백)를 직접 검증하기
+// 위함(코드리뷰 지적, 2026-08-09 — 하위 순수함수들은 테스트됐지만 이 배선 자체는 무방비였음).
+export async function fetchCfListWithDisclosureDate(corpCode, period, apiKey, { fetchList = fetchCfList, fetchOriginal = findOriginalDisclosureDate } = {}) {
+  const list = await fetchList(corpCode, period, apiKey);
+  if (!list) return null;
+  const rawDate = disclosureDateFromRceptNo(list[0].rcept_no);
+  if (!isSuspiciouslyLateDisclosure(rawDate, period)) return { list, disclosureDate: rawDate, correctedFromLateDisclosure: false };
+  const original = await fetchOriginal(corpCode, period, apiKey);
+  return { list, disclosureDate: original ?? rawDate, correctedFromLateDisclosure: original != null };
+}
+
 // list(fnlttSinglAcntAll.json 응답)에서 현금흐름표의 "영업활동현금흐름" 합계만 뽑는다.
 // 1순위: IFRS 표준계정코드(ifrs-full_CashFlowsFromUsedInOperatingActivities)로 정확히
 // 매칭 — 회사별 계정명 표기 차이나 "영업활동으로 인한 자산·부채의 변동"(하위 항목,
@@ -230,6 +321,23 @@ export function extractOcf(list) {
 // export하는 이유: Phase 10 ocf-history-cache.mjs가 같은 CFS→OFS 폴백 로직을 재사용
 // (한 시점만 보는 fetchOcfPointInTime과 달리, 여러 분기를 한 번에 훑어 로컬 캐시로
 // 쌓는 대량 수집용 — 로직 중복 없이 이 함수만 여러 period에 대해 반복 호출).
+// list(fnlttSinglAcntAll.json 응답)에서 손익계산서의 "당기순이익"(지배+비지배 합계, 총액)만
+// 뽑는다 — extractOcf와 동일 관례(표준계정코드 우선, 이름매칭 폴백). IS/CIS 두 섹션에 같은
+// account_id가 중복 등장하는 경우가 실측 확인됨(값은 동일 — 어느 쪽이든 상관없이 첫 매치를
+// 쓰면 됨). 표준코드 접두사가 "ifrs_"/"ifrs-full_" 두 가지로 갈리는 것도 실측 확인(2026-08-09,
+// LS·CJ·한국전력은 ifrs_, SK텔레콤은 ifrs-full_) — 둘 다 매칭. 이름매칭 폴백은 "지배기업의
+// 소유주에게 귀속되는 당기순이익(손실)"·"비지배지분에 귀속되는 당기순이익(손실)"처럼 총액이
+// 아닌 항목에 낚이지 않도록 정확히 "(당기|분기|반기)순이익(손실)?" 전체일치만 허용
+// (parseKrAmounts의 netIncome 이름 후보와 동일 어휘, 여기선 정규식 전체일치로 부분항목 배제).
+export function extractNetIncome(list) {
+  const items = (list ?? []).filter((x) => x.sj_div === 'CIS' || x.sj_div === 'IS');
+  const parseAmount = (v) => { const n = Number(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
+  const byId = items.find((x) => x.account_id === 'ifrs-full_ProfitLoss' || x.account_id === 'ifrs_ProfitLoss');
+  if (byId) return parseAmount(byId.thstrm_amount);
+  const byName = items.find((x) => /^(당기|분기|반기)순이익(\(손실\))?$/.test(String(x.account_nm ?? '').trim()));
+  return byName ? parseAmount(byName.thstrm_amount) : null;
+}
+
 export async function fetchCfList(corpCode, period, apiKey) {
   for (const fsDiv of ['CFS', 'OFS']) {
     const list = await dartJson('fnlttSinglAcntAll.json', {
@@ -258,6 +366,13 @@ export async function fetchCfList(corpCode, period, apiKey) {
 // 한국 공시를 아직 안 반영"쪽이라(더 보수적) 룩어헤드 방지 목적엔 안전하다. 과거 특정
 // 날짜로 호출할 땐(백테스트 등) new Date('YYYY-MM-DD')로 넘기면 UTC 자정 기준이라
 // disclosureDate와 자연히 맞아떨어진다.
+//
+// ⚠️ 정정공시 보정 미적용(코드리뷰 지적, 2026-08-09): 여기는 fetchCfListWithDisclosureDate가
+// 아니라 fetchCfList+disclosureDateFromRceptNo를 그대로 쓴다 — asOfDate가 "지금"에 가까운
+// 라이브 월간 리컨스티튜션 용도라 문제되지 않는다(정정일은 항상 과거이므로 오늘 시점
+// 룩어헤드 판정에 영향 없음). 하지만 이 함수를 과거 특정 asOfDate로 호출하면(주석상
+// "백테스트 등") LS 006260과 같은 공시일 밀림 버그가 그대로 재현된다 — 실제 백테스트는
+// ocf-history-cache.mjs(fetchCfListWithDisclosureDate 사용)를 거치므로 지금은 영향 없음.
 export async function fetchOcfPointInTime(corpCode, asOfDate = new Date(), apiKey = process.env.DART_API_KEY) {
   if (!apiKey) throw new Error('DART_API_KEY 미설정');
   const asOfStr = y_m_d(asOfDate);

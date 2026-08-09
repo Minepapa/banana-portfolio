@@ -7,7 +7,7 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fetchCfList, extractOcf, disclosureDateFromRceptNo } from './fundamentals.mjs';
+import { extractOcf, fetchCfListWithDisclosureDate } from './fundamentals.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = join(HERE, '..', '.cache', 'ocf-history');
@@ -47,6 +47,9 @@ function writeAtomic(path, content) {
 // 조회) — 배열([{bsnsYear, reprtCode, disclosureDate, operCf}, ...], 공시일 오름차순).
 // 데이터 없는 분기는 조용히 스킵(fetchCfList가 이미 "실제로 OCF를 뽑아낼 수 있는" 응답만
 // 반환 — extractOcf가 null이면 애초에 이 항목이 안 생김, fetchOcfPointInTime과 동일 보장).
+// disclosureDate는 fetchCfListWithDisclosureDate가 정정공시 이상치를 감지해 원본
+// 공시일로 보정한 값(fundamentals.mjs 헤더 주석 참고, 2026-08-09 — 정정공시로 공시일이
+// 몇 년씩 밀려 룩어헤드 로직이 옛 값을 계속 재사용하던 버그 수정).
 export async function fetchOcfHistory(corpCode, { fromYear, toYear }, apiKey, { onProgress } = {}) {
   const out = [];
   let attempted = 0;
@@ -55,9 +58,9 @@ export async function fetchOcfHistory(corpCode, { fromYear, toYear }, apiKey, { 
     for (const reprtCode of QUARTERLY_ORDER) {
       attempted++;
       const period = { bsnsYear: String(year), reprtCode };
-      const list = await fetchCfList(corpCode, period, apiKey).catch(() => null);
-      if (list) {
-        const disclosureDate = disclosureDateFromRceptNo(list[0].rcept_no);
+      const result = await fetchCfListWithDisclosureDate(corpCode, period, apiKey).catch(() => null);
+      if (result) {
+        const { list, disclosureDate } = result;
         const operCf = extractOcf(list);
         if (disclosureDate && operCf != null) out.push({ bsnsYear: period.bsnsYear, reprtCode, disclosureDate, operCf });
       }

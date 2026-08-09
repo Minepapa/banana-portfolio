@@ -2,15 +2,15 @@
   "diagnosis1_equalWeightVsFactor": {
     "description": "같은 유니버스·같은 버퍼존·같은 동일가중, 순위기준만 다름(OCF/P vs 시가총액상위)",
     "ocfFactor": {
-      "cumulativeReturn": 0.5668509932364176,
-      "annualizedReturn": 0.04554225628600217,
-      "maxDrawdown": 0.4669957676090692,
+      "cumulativeReturn": 0.8394545483689417,
+      "annualizedReturn": 0.06230727294835603,
+      "maxDrawdown": 0.440244307551783,
       "vsKospi": {
         "periodCount": 121,
-        "cumulativeExcessReturn": -0.8285250469369979,
-        "meanExcessReturn": -0.0068473144374958505,
-        "informationRatio": -0.3842206270634549,
-        "strategySharpe": 0.30901816509472685,
+        "cumulativeExcessReturn": -0.6548388977448866,
+        "meanExcessReturn": -0.005411891716899889,
+        "informationRatio": -0.30516279872413665,
+        "strategySharpe": 0.376777047886731,
         "benchmarkSharpe": 0.5878278452691725
       }
     },
@@ -31,40 +31,40 @@
   "diagnosis2_drawdownAttribution": {
     "description": "OCF/P 전략의 최대낙폭 구간(고점→저점) 동안 각 종목의 그 구간 내 누적수익률",
     "window": {
-      "peakDate": "2017-08-01",
+      "peakDate": "2018-02-01",
       "troughDate": "2020-04-01",
-      "drawdown": 0.4669957676090692
+      "drawdown": 0.440244307551783
     },
     "worstContributors": [
       {
-        "code": "006260",
-        "monthsHeld": 31,
-        "cumulativeReturn": -0.6226822223860292
-      },
-      {
         "code": "001040",
-        "monthsHeld": 17,
-        "cumulativeReturn": -0.6195021280516919
+        "monthsHeld": 19,
+        "cumulativeReturn": -0.6462987534127611
       },
       {
         "code": "000880",
-        "monthsHeld": 18,
-        "cumulativeReturn": -0.5794509236274024
-      },
-      {
-        "code": "015760",
-        "monthsHeld": 32,
-        "cumulativeReturn": -0.576837416481069
+        "monthsHeld": 13,
+        "cumulativeReturn": -0.63175640864642
       },
       {
         "code": "036460",
-        "monthsHeld": 30,
-        "cumulativeReturn": -0.5313474529164037
+        "monthsHeld": 24,
+        "cumulativeReturn": -0.518225181598063
+      },
+      {
+        "code": "023530",
+        "monthsHeld": 8,
+        "cumulativeReturn": -0.47259259259259256
+      },
+      {
+        "code": "015760",
+        "monthsHeld": 26,
+        "cumulativeReturn": -0.4722222222222223
       },
       {
         "code": "034220",
-        "monthsHeld": 19,
-        "cumulativeReturn": -0.5211245251031612
+        "monthsHeld": 15,
+        "cumulativeReturn": -0.44955435574823643
       },
       {
         "code": "047050",
@@ -72,14 +72,14 @@
         "cumulativeReturn": -0.4089644174203687
       },
       {
-        "code": "030200",
-        "monthsHeld": 31,
-        "cumulativeReturn": -0.3788121990369181
+        "code": "042670",
+        "monthsHeld": 13,
+        "cumulativeReturn": -0.37288055825774835
       },
       {
-        "code": "017670",
+        "code": "030200",
         "monthsHeld": 26,
-        "cumulativeReturn": -0.3578388374021152
+        "cumulativeReturn": -0.3451776649746192
       },
       {
         "code": "038540",
@@ -87,29 +87,29 @@
         "cumulativeReturn": -0.33760683760683763
       },
       {
+        "code": "017670",
+        "monthsHeld": 26,
+        "cumulativeReturn": -0.3307770734518376
+      },
+      {
+        "code": "011210",
+        "monthsHeld": 10,
+        "cumulativeReturn": -0.3303571428571429
+      },
+      {
         "code": "078930",
-        "monthsHeld": 9,
-        "cumulativeReturn": -0.3099415204678363
-      },
-      {
-        "code": "047040",
-        "monthsHeld": 5,
-        "cumulativeReturn": -0.2727272727272727
-      },
-      {
-        "code": "006650",
-        "monthsHeld": 8,
-        "cumulativeReturn": -0.25690607734806625
+        "monthsHeld": 10,
+        "cumulativeReturn": -0.2934131736526946
       },
       {
         "code": "003490",
-        "monthsHeld": 23,
-        "cumulativeReturn": -0.2507218566363222
+        "monthsHeld": 18,
+        "cumulativeReturn": -0.2682463131787468
       },
       {
-        "code": "032640",
+        "code": "010060",
         "monthsHeld": 15,
-        "cumulativeReturn": -0.2202512934220252
+        "cumulativeReturn": -0.2661493394948171
       }
     ]
   }

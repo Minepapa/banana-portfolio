@@ -7,7 +7,8 @@ import {
   computeDrawdownFromPeak, computeRallyFromTrough, parseNaverSise,
   computeBollingerBands,
   computeMacd, computeMaAlignment, computeAtr, computeStochastic, computeVolumeSurge,
-  dropSignal, disclosureDateFromRceptNo, extractOcf,
+  dropSignal, disclosureDateFromRceptNo, extractOcf, extractNetIncome,
+  periodEndDate, isSuspiciouslyLateDisclosure, matchOriginalDisclosure, fetchCfListWithDisclosureDate,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -75,6 +76,132 @@ test('extractOcf: CF 섹션이 아예 없으면(주요계정 API 등) null', () 
 test('extractOcf: 빈 배열·undefined는 null(크래시 없음)', () => {
   assert.equal(extractOcf([]), null);
   assert.equal(extractOcf(undefined), null);
+});
+
+// extractNetIncome — PEAD(실적서프라이즈) 진단(2026-08-09)용. 실측 검증(LS·CJ·한국전력·
+// SK텔레콤, fnlttSinglAcntAll.json IS/CIS 섹션): 표준코드 접두사가 ifrs_/ifrs-full_ 두 가지로
+// 갈리고, IS·CIS 두 섹션에 같은 항목이 값 동일하게 중복 등장하며, "지배기업 소유주 귀속"·
+// "비지배지분 귀속" 항목은 총액이 아니라 배제해야 한다.
+test('extractNetIncome: 표준코드(ifrs_ProfitLoss)로 총 당기순이익 추출(실측 LS 2018 사업보고서 사례)', () => {
+  const list = [
+    { sj_div: 'CIS', account_id: 'ifrs_ProfitLossBeforeTax', account_nm: '법인세비용차감전순이익', thstrm_amount: '275,082,000,000' },
+    { sj_div: 'CIS', account_id: 'ifrs_ProfitLoss', account_nm: '당기순이익', thstrm_amount: '487,659,000,000' },
+    { sj_div: 'CIS', account_id: 'ifrs_ProfitLossAttributableToOwnersOfParent', account_nm: '지배기업의 소유주에게 귀속되는 당기순이익(손실)', thstrm_amount: '404,149,000,000' },
+    { sj_div: 'CIS', account_id: 'ifrs_ProfitLossAttributableToNoncontrollingInterests', account_nm: '비지배지분에 귀속되는 당기순이익(손실)', thstrm_amount: '83,510,000,000' },
+  ];
+  assert.equal(extractNetIncome(list), 487659000000);
+});
+
+test('extractNetIncome: 표준코드 접두사가 ifrs-full_인 경우도 매칭(실측 SK텔레콤 2019Q3 사례, "분기순이익" 표기)', () => {
+  const list = [{ sj_div: 'CIS', account_id: 'ifrs-full_ProfitLoss', account_nm: '분기순이익', thstrm_amount: '274,425,000,000' }];
+  assert.equal(extractNetIncome(list), 274425000000);
+});
+
+test('extractNetIncome: 표준코드 없으면 이름 전체일치("당기순이익(손실)")로 폴백, 부분항목엔 안 낚임', () => {
+  const list = [
+    { sj_div: 'IS', account_nm: '지배기업의 소유주에게 귀속되는 당기순이익(손실)', thstrm_amount: '999' },
+    { sj_div: 'IS', account_nm: '당기순이익(손실)', thstrm_amount: '216,000,333,000' },
+  ];
+  assert.equal(extractNetIncome(list), 216000333000);
+});
+
+test('extractNetIncome: IS·CIS 섹션 외(BS 등)는 무시, 매치 없으면 null', () => {
+  const list = [{ sj_div: 'BS', account_nm: '당기순이익(손실)', thstrm_amount: '999' }];
+  assert.equal(extractNetIncome(list), null);
+});
+
+test('extractNetIncome: 빈 배열·undefined는 null(크래시 없음)', () => {
+  assert.equal(extractNetIncome([]), null);
+  assert.equal(extractNetIncome(undefined), null);
+});
+
+// 정정공시로 공시일이 밀리는 문제 대응(2026-08-09, LS 006260 실측 발견 — 2017~2020년
+// 4개년치가 전부 2021-08-31 하루로 밀려 4년간 2016년 OCF를 재사용한 버그).
+test('periodEndDate: 분기 마감일(1Q=3/31, 반기=6/30, 3Q=9/30, 사업=12/31)', () => {
+  assert.equal(periodEndDate({ bsnsYear: '2017', reprtCode: '11013' }).toISOString().slice(0, 10), '2017-03-31');
+  assert.equal(periodEndDate({ bsnsYear: '2017', reprtCode: '11012' }).toISOString().slice(0, 10), '2017-06-30');
+  assert.equal(periodEndDate({ bsnsYear: '2017', reprtCode: '11014' }).toISOString().slice(0, 10), '2017-09-30');
+  assert.equal(periodEndDate({ bsnsYear: '2017', reprtCode: '11011' }).toISOString().slice(0, 10), '2017-12-31');
+});
+
+test('isSuspiciouslyLateDisclosure: 법정기한 근처(45~90일)의 정상 공시는 의심 안 함', () => {
+  // 1분기(3/31 마감) 45일 후 공시 — 정상
+  assert.equal(isSuspiciouslyLateDisclosure('2017-05-15', { bsnsYear: '2017', reprtCode: '11013' }), false);
+});
+
+test('isSuspiciouslyLateDisclosure: 마감일로부터 150일 넘게 지나면 의심(실측 LS 사례 — 2017 1분기가 2021-08-31에 "공시"됨)', () => {
+  assert.equal(isSuspiciouslyLateDisclosure('2021-08-31', { bsnsYear: '2017', reprtCode: '11013' }), true);
+});
+
+test('isSuspiciouslyLateDisclosure: 공시일 결측이면 판단 자체를 skip(false)', () => {
+  assert.equal(isSuspiciouslyLateDisclosure(null, { bsnsYear: '2017', reprtCode: '11013' }), false);
+});
+
+test('matchOriginalDisclosure: report_nm 정확 일치로 원본만 찾고 "[기재정정]" 접두사 붙은 정정본은 배제(실측 LS list.json 응답 형태)', () => {
+  const list = [
+    { rcept_no: '20210831001729', rcept_dt: '20210831', report_nm: '[기재정정]분기보고서 (2017.03)' },
+    { rcept_no: '20170515003882', rcept_dt: '20170515', report_nm: '분기보고서 (2017.03)' },
+  ];
+  const found = matchOriginalDisclosure(list, { bsnsYear: '2017', reprtCode: '11013' });
+  assert.equal(found.rcept_no, '20170515003882');
+});
+
+test('matchOriginalDisclosure: 다른 분기·연도의 보고서명은 매칭 안 됨(부분일치 방지)', () => {
+  const list = [{ rcept_no: '1', report_nm: '반기보고서 (2017.06)' }, { rcept_no: '2', report_nm: '사업보고서 (2016.12)' }];
+  assert.equal(matchOriginalDisclosure(list, { bsnsYear: '2017', reprtCode: '11013' }), null);
+});
+
+test('matchOriginalDisclosure: 매칭 없으면(원본 자체가 목록 창 밖) null(추정 안 함)', () => {
+  assert.equal(matchOriginalDisclosure([], { bsnsYear: '2017', reprtCode: '11013' }), null);
+});
+
+// 완전일치 대신 시작·포함 매칭으로 바꾼 회귀 방지(코드리뷰 지적, 2026-08-09) — 뒤에 추가
+// 태그가 붙는 변형이 있어도 원본을 놓치지 않아야 이 수정 전체의 효과가 유지된다.
+test('matchOriginalDisclosure: report_nm 뒤에 추가 태그가 붙어도(예: "(신규상장법인)") 원본으로 인식', () => {
+  const list = [{ rcept_no: '20170515003882', report_nm: '분기보고서 (2017.03) (신규상장법인)' }];
+  const found = matchOriginalDisclosure(list, { bsnsYear: '2017', reprtCode: '11013' });
+  assert.equal(found.rcept_no, '20170515003882');
+});
+
+test('matchOriginalDisclosure: "[기재정정]" 외 다른 대괄호 접두사(예: "[첨부정정]")도 startsWith에서 자동 배제', () => {
+  const list = [
+    { rcept_no: '20210831999999', report_nm: '[첨부정정]분기보고서 (2017.03)' },
+    { rcept_no: '20170515003882', report_nm: '분기보고서 (2017.03)' },
+  ];
+  const found = matchOriginalDisclosure(list, { bsnsYear: '2017', reprtCode: '11013' });
+  assert.equal(found.rcept_no, '20170515003882');
+});
+
+// fetchCfListWithDisclosureDate — 이상치 감지→list.json 보정→폴백 배선 자체의 회귀방지
+// (코드리뷰 지적, 2026-08-09 — 하위 순수함수는 다 테스트됐지만 이 배선은 무방비였음).
+// fetchList·fetchOriginal 주입으로 네트워크 없이 LS 006260 시나리오를 직접 재현한다.
+test('fetchCfListWithDisclosureDate: 정상 공시일이면 list.json 보정 없이 그대로 통과(추가 호출 없음)', async () => {
+  const fetchList = async () => [{ rcept_no: '20170515003882' }];
+  const fetchOriginal = async () => { throw new Error('호출되면 안 됨 — 정상 케이스는 보정 스킵'); };
+  const result = await fetchCfListWithDisclosureDate('corp', { bsnsYear: '2017', reprtCode: '11013' }, 'key', { fetchList, fetchOriginal });
+  assert.equal(result.disclosureDate, '2017-05-15');
+  assert.equal(result.correctedFromLateDisclosure, false);
+});
+
+test('fetchCfListWithDisclosureDate: 정정공시로 밀린 날짜는 원본으로 보정(LS 006260 재현)', async () => {
+  const fetchList = async () => [{ rcept_no: '20210831001729' }]; // 2017 1분기가 2021-08-31로 밀린 실측 사례
+  const fetchOriginal = async () => '2017-05-15';
+  const result = await fetchCfListWithDisclosureDate('corp', { bsnsYear: '2017', reprtCode: '11013' }, 'key', { fetchList, fetchOriginal });
+  assert.equal(result.disclosureDate, '2017-05-15');
+  assert.equal(result.correctedFromLateDisclosure, true);
+});
+
+test('fetchCfListWithDisclosureDate: 의심되는데 list.json도 원본을 못 찾으면(null) rcept_no 기반 날짜로 폴백(크래시 없음)', async () => {
+  const fetchList = async () => [{ rcept_no: '20210831001729' }];
+  const fetchOriginal = async () => null;
+  const result = await fetchCfListWithDisclosureDate('corp', { bsnsYear: '2017', reprtCode: '11013' }, 'key', { fetchList, fetchOriginal });
+  assert.equal(result.disclosureDate, '2021-08-31');
+  assert.equal(result.correctedFromLateDisclosure, false);
+});
+
+test('fetchCfListWithDisclosureDate: fetchList가 null이면(미공시) 그대로 null', async () => {
+  const result = await fetchCfListWithDisclosureDate('corp', { bsnsYear: '2017', reprtCode: '11013' }, 'key', { fetchList: async () => null });
+  assert.equal(result, null);
 });
 
 test('prevPeriod: 미공시 폴백 체인 (반기→1Q→전년 사업→전년 3Q)', () => {

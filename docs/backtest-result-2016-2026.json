@@ -11,7 +11,7 @@
     "sellRank": 20
   },
   "dataQuality": {
-    "minRankedPerMonth": 175,
+    "minRankedPerMonth": 176,
     "medianRankedPerMonth": 273,
     "maxRankedPerMonth": 342,
     "monthsBelow30Ranked": 0,
@@ -20,67 +20,67 @@
         "date": "2016-07-01",
         "universeSize": 350,
         "liquidityPassed": 254,
-        "ranked": 223
+        "ranked": 224
       },
       {
         "date": "2016-08-01",
         "universeSize": 350,
         "liquidityPassed": 261,
-        "ranked": 231
+        "ranked": 232
       },
       {
         "date": "2016-09-01",
         "universeSize": 350,
         "liquidityPassed": 252,
-        "ranked": 226
+        "ranked": 227
       },
       {
         "date": "2016-10-01",
         "universeSize": 350,
         "liquidityPassed": 245,
-        "ranked": 218
+        "ranked": 219
       },
       {
         "date": "2016-11-01",
         "universeSize": 350,
         "liquidityPassed": 213,
-        "ranked": 185
+        "ranked": 186
       },
       {
         "date": "2016-12-01",
         "universeSize": 350,
         "liquidityPassed": 208,
-        "ranked": 180
+        "ranked": 181
       },
       {
         "date": "2017-01-01",
         "universeSize": 350,
         "liquidityPassed": 208,
-        "ranked": 178
+        "ranked": 179
       },
       {
         "date": "2017-02-01",
         "universeSize": 350,
         "liquidityPassed": 205,
-        "ranked": 175
+        "ranked": 176
       },
       {
         "date": "2017-03-01",
         "universeSize": 350,
         "liquidityPassed": 220,
-        "ranked": 190
+        "ranked": 191
       },
       {
         "date": "2017-04-01",
         "universeSize": 350,
         "liquidityPassed": 219,
-        "ranked": 191
+        "ranked": 192
       },
       {
         "date": "2017-05-01",
         "universeSize": 350,
         "liquidityPassed": 220,
-        "ranked": 192
+        "ranked": 193
       },
       {
         "date": "2017-06-01",
@@ -104,43 +104,43 @@
         "date": "2017-09-01",
         "universeSize": 350,
         "liquidityPassed": 230,
-        "ranked": 201
+        "ranked": 202
       },
       {
         "date": "2017-10-01",
         "universeSize": 350,
         "liquidityPassed": 230,
-        "ranked": 203
+        "ranked": 204
       },
       {
         "date": "2017-11-01",
         "universeSize": 350,
         "liquidityPassed": 247,
-        "ranked": 218
+        "ranked": 219
       },
       {
         "date": "2017-12-01",
         "universeSize": 350,
         "liquidityPassed": 281,
-        "ranked": 250
+        "ranked": 251
       },
       {
         "date": "2018-01-01",
         "universeSize": 350,
         "liquidityPassed": 272,
-        "ranked": 243
+        "ranked": 244
       },
       {
         "date": "2018-02-01",
         "universeSize": 350,
         "liquidityPassed": 290,
-        "ranked": 257
+        "ranked": 258
       },
       {
         "date": "2018-03-01",
         "universeSize": 350,
         "liquidityPassed": 295,
-        "ranked": 262
+        "ranked": 263
       },
       {
         "date": "2018-04-01",
@@ -152,133 +152,133 @@
         "date": "2018-05-01",
         "universeSize": 350,
         "liquidityPassed": 286,
-        "ranked": 259
+        "ranked": 261
       },
       {
         "date": "2018-06-01",
         "universeSize": 350,
         "liquidityPassed": 285,
-        "ranked": 257
+        "ranked": 258
       },
       {
         "date": "2018-07-01",
         "universeSize": 350,
         "liquidityPassed": 280,
-        "ranked": 254
+        "ranked": 255
       },
       {
         "date": "2018-08-01",
         "universeSize": 350,
         "liquidityPassed": 252,
-        "ranked": 229
+        "ranked": 230
       },
       {
         "date": "2018-09-01",
         "universeSize": 350,
         "liquidityPassed": 262,
-        "ranked": 237
+        "ranked": 238
       },
       {
         "date": "2018-10-01",
         "universeSize": 350,
         "liquidityPassed": 264,
-        "ranked": 239
+        "ranked": 240
       },
       {
         "date": "2018-11-01",
         "universeSize": 350,
         "liquidityPassed": 254,
-        "ranked": 228
+        "ranked": 229
       },
       {
         "date": "2018-12-01",
         "universeSize": 350,
         "liquidityPassed": 244,
-        "ranked": 219
+        "ranked": 220
       },
       {
         "date": "2019-01-01",
         "universeSize": 350,
         "liquidityPassed": 246,
-        "ranked": 218
+        "ranked": 219
       },
       {
         "date": "2019-02-01",
         "universeSize": 350,
         "liquidityPassed": 252,
-        "ranked": 224
+        "ranked": 225
       },
       {
         "date": "2019-03-01",
         "universeSize": 350,
         "liquidityPassed": 259,
-        "ranked": 233
+        "ranked": 234
       },
       {
         "date": "2019-04-01",
         "universeSize": 350,
         "liquidityPassed": 263,
-        "ranked": 236
+        "ranked": 237
       },
       {
         "date": "2019-05-01",
         "universeSize": 350,
         "liquidityPassed": 257,
-        "ranked": 230
+        "ranked": 232
       },
       {
         "date": "2019-06-01",
         "universeSize": 350,
         "liquidityPassed": 253,
-        "ranked": 228
+        "ranked": 230
       },
       {
         "date": "2019-07-01",
         "universeSize": 350,
         "liquidityPassed": 242,
-        "ranked": 216
+        "ranked": 218
       },
       {
         "date": "2019-08-01",
         "universeSize": 350,
         "liquidityPassed": 223,
-        "ranked": 200
+        "ranked": 201
       },
       {
         "date": "2019-09-01",
         "universeSize": 350,
         "liquidityPassed": 230,
-        "ranked": 205
+        "ranked": 207
       },
       {
         "date": "2019-10-01",
         "universeSize": 350,
         "liquidityPassed": 217,
-        "ranked": 193
+        "ranked": 195
       },
       {
         "date": "2019-11-01",
         "universeSize": 350,
         "liquidityPassed": 233,
-        "ranked": 208
+        "ranked": 210
       },
       {
         "date": "2019-12-01",
         "universeSize": 350,
         "liquidityPassed": 247,
-        "ranked": 221
+        "ranked": 223
       },
       {
         "date": "2020-01-01",
         "universeSize": 350,
         "liquidityPassed": 234,
-        "ranked": 204
+        "ranked": 205
       },
       {
         "date": "2020-02-01",
         "universeSize": 350,
         "liquidityPassed": 260,
-        "ranked": 228
+        "ranked": 230
       },
       {
         "date": "2020-03-01",
@@ -290,91 +290,91 @@
         "date": "2020-04-01",
         "universeSize": 350,
         "liquidityPassed": 276,
-        "ranked": 248
+        "ranked": 250
       },
       {
         "date": "2020-05-01",
         "universeSize": 350,
         "liquidityPassed": 286,
-        "ranked": 261
+        "ranked": 262
       },
       {
         "date": "2020-06-01",
         "universeSize": 350,
         "liquidityPassed": 294,
-        "ranked": 271
+        "ranked": 272
       },
       {
         "date": "2020-07-01",
         "universeSize": 350,
         "liquidityPassed": 301,
-        "ranked": 276
+        "ranked": 277
       },
       {
         "date": "2020-08-01",
         "universeSize": 350,
         "liquidityPassed": 300,
-        "ranked": 274
+        "ranked": 275
       },
       {
         "date": "2020-09-01",
         "universeSize": 350,
         "liquidityPassed": 312,
-        "ranked": 283
+        "ranked": 285
       },
       {
         "date": "2020-10-01",
         "universeSize": 350,
         "liquidityPassed": 309,
-        "ranked": 281
+        "ranked": 283
       },
       {
         "date": "2020-11-01",
         "universeSize": 350,
         "liquidityPassed": 297,
-        "ranked": 268
+        "ranked": 269
       },
       {
         "date": "2020-12-01",
         "universeSize": 350,
         "liquidityPassed": 315,
-        "ranked": 286
+        "ranked": 288
       },
       {
         "date": "2021-01-01",
         "universeSize": 350,
         "liquidityPassed": 327,
-        "ranked": 295
+        "ranked": 297
       },
       {
         "date": "2021-02-01",
         "universeSize": 350,
         "liquidityPassed": 331,
-        "ranked": 302
+        "ranked": 304
       },
       {
         "date": "2021-03-01",
         "universeSize": 350,
         "liquidityPassed": 320,
-        "ranked": 288
+        "ranked": 290
       },
       {
         "date": "2021-04-01",
         "universeSize": 350,
         "liquidityPassed": 309,
-        "ranked": 277
+        "ranked": 278
       },
       {
         "date": "2021-05-01",
         "universeSize": 350,
         "liquidityPassed": 316,
-        "ranked": 284
+        "ranked": 287
       },
       {
         "date": "2021-06-01",
         "universeSize": 350,
         "liquidityPassed": 318,
-        "ranked": 289
+        "ranked": 290
       },
       {
         "date": "2021-07-01",
@@ -554,25 +554,25 @@
         "date": "2023-12-01",
         "universeSize": 350,
         "liquidityPassed": 306,
-        "ranked": 290
+        "ranked": 291
       },
       {
         "date": "2024-01-01",
         "universeSize": 350,
         "liquidityPassed": 311,
-        "ranked": 298
+        "ranked": 299
       },
       {
         "date": "2024-02-01",
         "universeSize": 350,
         "liquidityPassed": 305,
-        "ranked": 294
+        "ranked": 295
       },
       {
         "date": "2024-03-01",
         "universeSize": 350,
         "liquidityPassed": 322,
-        "ranked": 311
+        "ranked": 312
       },
       {
         "date": "2024-04-01",
@@ -752,16 +752,16 @@
   },
   "comparison": {
     "periodCount": 121,
-    "cumulativeExcessReturn": -0.8285250469369979,
-    "meanExcessReturn": -0.0068473144374958505,
-    "informationRatio": -0.3842206270634549,
-    "strategySharpe": 0.30901816509472685,
+    "cumulativeExcessReturn": -0.6548388977448866,
+    "meanExcessReturn": -0.005411891716899889,
+    "informationRatio": -0.30516279872413665,
+    "strategySharpe": 0.376777047886731,
     "benchmarkSharpe": 0.5878278452691725
   },
   "strategy": {
-    "cumulativeReturn": 0.5668509932364176,
-    "annualizedReturn": 0.04554225628600217,
-    "maxDrawdown": 0.4669957676090692
+    "cumulativeReturn": 0.8394545483689417,
+    "annualizedReturn": 0.06230727294835603,
+    "maxDrawdown": 0.440244307551783
   },
   "benchmark": {
     "cumulativeReturn": 2.318765976289674,
