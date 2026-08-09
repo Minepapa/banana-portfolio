@@ -1,0 +1,771 @@
+{
+  "period": {
+    "from": "2016-07-01",
+    "to": "2026-08-09",
+    "months": 122,
+    "dataGaps": 0,
+    "pairedPeriods": 121
+  },
+  "params": {
+    "buyRank": 10,
+    "sellRank": 20
+  },
+  "dataQuality": {
+    "minRankedPerMonth": 175,
+    "medianRankedPerMonth": 273,
+    "maxRankedPerMonth": 342,
+    "monthsBelow30Ranked": 0,
+    "monthlyStats": [
+      {
+        "date": "2016-07-01",
+        "universeSize": 350,
+        "liquidityPassed": 254,
+        "ranked": 223
+      },
+      {
+        "date": "2016-08-01",
+        "universeSize": 350,
+        "liquidityPassed": 261,
+        "ranked": 231
+      },
+      {
+        "date": "2016-09-01",
+        "universeSize": 350,
+        "liquidityPassed": 252,
+        "ranked": 226
+      },
+      {
+        "date": "2016-10-01",
+        "universeSize": 350,
+        "liquidityPassed": 245,
+        "ranked": 218
+      },
+      {
+        "date": "2016-11-01",
+        "universeSize": 350,
+        "liquidityPassed": 213,
+        "ranked": 185
+      },
+      {
+        "date": "2016-12-01",
+        "universeSize": 350,
+        "liquidityPassed": 208,
+        "ranked": 180
+      },
+      {
+        "date": "2017-01-01",
+        "universeSize": 350,
+        "liquidityPassed": 208,
+        "ranked": 178
+      },
+      {
+        "date": "2017-02-01",
+        "universeSize": 350,
+        "liquidityPassed": 205,
+        "ranked": 175
+      },
+      {
+        "date": "2017-03-01",
+        "universeSize": 350,
+        "liquidityPassed": 220,
+        "ranked": 190
+      },
+      {
+        "date": "2017-04-01",
+        "universeSize": 350,
+        "liquidityPassed": 219,
+        "ranked": 191
+      },
+      {
+        "date": "2017-05-01",
+        "universeSize": 350,
+        "liquidityPassed": 220,
+        "ranked": 192
+      },
+      {
+        "date": "2017-06-01",
+        "universeSize": 350,
+        "liquidityPassed": 243,
+        "ranked": 217
+      },
+      {
+        "date": "2017-07-01",
+        "universeSize": 350,
+        "liquidityPassed": 255,
+        "ranked": 224
+      },
+      {
+        "date": "2017-08-01",
+        "universeSize": 350,
+        "liquidityPassed": 233,
+        "ranked": 200
+      },
+      {
+        "date": "2017-09-01",
+        "universeSize": 350,
+        "liquidityPassed": 230,
+        "ranked": 201
+      },
+      {
+        "date": "2017-10-01",
+        "universeSize": 350,
+        "liquidityPassed": 230,
+        "ranked": 203
+      },
+      {
+        "date": "2017-11-01",
+        "universeSize": 350,
+        "liquidityPassed": 247,
+        "ranked": 218
+      },
+      {
+        "date": "2017-12-01",
+        "universeSize": 350,
+        "liquidityPassed": 281,
+        "ranked": 250
+      },
+      {
+        "date": "2018-01-01",
+        "universeSize": 350,
+        "liquidityPassed": 272,
+        "ranked": 243
+      },
+      {
+        "date": "2018-02-01",
+        "universeSize": 350,
+        "liquidityPassed": 290,
+        "ranked": 257
+      },
+      {
+        "date": "2018-03-01",
+        "universeSize": 350,
+        "liquidityPassed": 295,
+        "ranked": 262
+      },
+      {
+        "date": "2018-04-01",
+        "universeSize": 350,
+        "liquidityPassed": 278,
+        "ranked": 247
+      },
+      {
+        "date": "2018-05-01",
+        "universeSize": 350,
+        "liquidityPassed": 286,
+        "ranked": 259
+      },
+      {
+        "date": "2018-06-01",
+        "universeSize": 350,
+        "liquidityPassed": 285,
+        "ranked": 257
+      },
+      {
+        "date": "2018-07-01",
+        "universeSize": 350,
+        "liquidityPassed": 280,
+        "ranked": 254
+      },
+      {
+        "date": "2018-08-01",
+        "universeSize": 350,
+        "liquidityPassed": 252,
+        "ranked": 229
+      },
+      {
+        "date": "2018-09-01",
+        "universeSize": 350,
+        "liquidityPassed": 262,
+        "ranked": 237
+      },
+      {
+        "date": "2018-10-01",
+        "universeSize": 350,
+        "liquidityPassed": 264,
+        "ranked": 239
+      },
+      {
+        "date": "2018-11-01",
+        "universeSize": 350,
+        "liquidityPassed": 254,
+        "ranked": 228
+      },
+      {
+        "date": "2018-12-01",
+        "universeSize": 350,
+        "liquidityPassed": 244,
+        "ranked": 219
+      },
+      {
+        "date": "2019-01-01",
+        "universeSize": 350,
+        "liquidityPassed": 246,
+        "ranked": 218
+      },
+      {
+        "date": "2019-02-01",
+        "universeSize": 350,
+        "liquidityPassed": 252,
+        "ranked": 224
+      },
+      {
+        "date": "2019-03-01",
+        "universeSize": 350,
+        "liquidityPassed": 259,
+        "ranked": 233
+      },
+      {
+        "date": "2019-04-01",
+        "universeSize": 350,
+        "liquidityPassed": 263,
+        "ranked": 236
+      },
+      {
+        "date": "2019-05-01",
+        "universeSize": 350,
+        "liquidityPassed": 257,
+        "ranked": 230
+      },
+      {
+        "date": "2019-06-01",
+        "universeSize": 350,
+        "liquidityPassed": 253,
+        "ranked": 228
+      },
+      {
+        "date": "2019-07-01",
+        "universeSize": 350,
+        "liquidityPassed": 242,
+        "ranked": 216
+      },
+      {
+        "date": "2019-08-01",
+        "universeSize": 350,
+        "liquidityPassed": 223,
+        "ranked": 200
+      },
+      {
+        "date": "2019-09-01",
+        "universeSize": 350,
+        "liquidityPassed": 230,
+        "ranked": 205
+      },
+      {
+        "date": "2019-10-01",
+        "universeSize": 350,
+        "liquidityPassed": 217,
+        "ranked": 193
+      },
+      {
+        "date": "2019-11-01",
+        "universeSize": 350,
+        "liquidityPassed": 233,
+        "ranked": 208
+      },
+      {
+        "date": "2019-12-01",
+        "universeSize": 350,
+        "liquidityPassed": 247,
+        "ranked": 221
+      },
+      {
+        "date": "2020-01-01",
+        "universeSize": 350,
+        "liquidityPassed": 234,
+        "ranked": 204
+      },
+      {
+        "date": "2020-02-01",
+        "universeSize": 350,
+        "liquidityPassed": 260,
+        "ranked": 228
+      },
+      {
+        "date": "2020-03-01",
+        "universeSize": 350,
+        "liquidityPassed": 249,
+        "ranked": 220
+      },
+      {
+        "date": "2020-04-01",
+        "universeSize": 350,
+        "liquidityPassed": 276,
+        "ranked": 248
+      },
+      {
+        "date": "2020-05-01",
+        "universeSize": 350,
+        "liquidityPassed": 286,
+        "ranked": 261
+      },
+      {
+        "date": "2020-06-01",
+        "universeSize": 350,
+        "liquidityPassed": 294,
+        "ranked": 271
+      },
+      {
+        "date": "2020-07-01",
+        "universeSize": 350,
+        "liquidityPassed": 301,
+        "ranked": 276
+      },
+      {
+        "date": "2020-08-01",
+        "universeSize": 350,
+        "liquidityPassed": 300,
+        "ranked": 274
+      },
+      {
+        "date": "2020-09-01",
+        "universeSize": 350,
+        "liquidityPassed": 312,
+        "ranked": 283
+      },
+      {
+        "date": "2020-10-01",
+        "universeSize": 350,
+        "liquidityPassed": 309,
+        "ranked": 281
+      },
+      {
+        "date": "2020-11-01",
+        "universeSize": 350,
+        "liquidityPassed": 297,
+        "ranked": 268
+      },
+      {
+        "date": "2020-12-01",
+        "universeSize": 350,
+        "liquidityPassed": 315,
+        "ranked": 286
+      },
+      {
+        "date": "2021-01-01",
+        "universeSize": 350,
+        "liquidityPassed": 327,
+        "ranked": 295
+      },
+      {
+        "date": "2021-02-01",
+        "universeSize": 350,
+        "liquidityPassed": 331,
+        "ranked": 302
+      },
+      {
+        "date": "2021-03-01",
+        "universeSize": 350,
+        "liquidityPassed": 320,
+        "ranked": 288
+      },
+      {
+        "date": "2021-04-01",
+        "universeSize": 350,
+        "liquidityPassed": 309,
+        "ranked": 277
+      },
+      {
+        "date": "2021-05-01",
+        "universeSize": 350,
+        "liquidityPassed": 316,
+        "ranked": 284
+      },
+      {
+        "date": "2021-06-01",
+        "universeSize": 350,
+        "liquidityPassed": 318,
+        "ranked": 289
+      },
+      {
+        "date": "2021-07-01",
+        "universeSize": 350,
+        "liquidityPassed": 321,
+        "ranked": 290
+      },
+      {
+        "date": "2021-08-01",
+        "universeSize": 350,
+        "liquidityPassed": 321,
+        "ranked": 290
+      },
+      {
+        "date": "2021-09-01",
+        "universeSize": 350,
+        "liquidityPassed": 320,
+        "ranked": 291
+      },
+      {
+        "date": "2021-10-01",
+        "universeSize": 350,
+        "liquidityPassed": 311,
+        "ranked": 279
+      },
+      {
+        "date": "2021-11-01",
+        "universeSize": 350,
+        "liquidityPassed": 310,
+        "ranked": 277
+      },
+      {
+        "date": "2021-12-01",
+        "universeSize": 350,
+        "liquidityPassed": 317,
+        "ranked": 286
+      },
+      {
+        "date": "2022-01-01",
+        "universeSize": 350,
+        "liquidityPassed": 311,
+        "ranked": 277
+      },
+      {
+        "date": "2022-02-01",
+        "universeSize": 350,
+        "liquidityPassed": 306,
+        "ranked": 273
+      },
+      {
+        "date": "2022-03-01",
+        "universeSize": 350,
+        "liquidityPassed": 296,
+        "ranked": 264
+      },
+      {
+        "date": "2022-04-01",
+        "universeSize": 350,
+        "liquidityPassed": 306,
+        "ranked": 279
+      },
+      {
+        "date": "2022-05-01",
+        "universeSize": 350,
+        "liquidityPassed": 300,
+        "ranked": 273
+      },
+      {
+        "date": "2022-06-01",
+        "universeSize": 350,
+        "liquidityPassed": 297,
+        "ranked": 270
+      },
+      {
+        "date": "2022-07-01",
+        "universeSize": 350,
+        "liquidityPassed": 289,
+        "ranked": 262
+      },
+      {
+        "date": "2022-08-01",
+        "universeSize": 350,
+        "liquidityPassed": 272,
+        "ranked": 246
+      },
+      {
+        "date": "2022-09-01",
+        "universeSize": 350,
+        "liquidityPassed": 289,
+        "ranked": 262
+      },
+      {
+        "date": "2022-10-01",
+        "universeSize": 350,
+        "liquidityPassed": 279,
+        "ranked": 251
+      },
+      {
+        "date": "2022-11-01",
+        "universeSize": 350,
+        "liquidityPassed": 271,
+        "ranked": 242
+      },
+      {
+        "date": "2022-12-01",
+        "universeSize": 350,
+        "liquidityPassed": 288,
+        "ranked": 263
+      },
+      {
+        "date": "2023-01-01",
+        "universeSize": 350,
+        "liquidityPassed": 290,
+        "ranked": 263
+      },
+      {
+        "date": "2023-02-01",
+        "universeSize": 350,
+        "liquidityPassed": 281,
+        "ranked": 255
+      },
+      {
+        "date": "2023-03-01",
+        "universeSize": 350,
+        "liquidityPassed": 300,
+        "ranked": 274
+      },
+      {
+        "date": "2023-04-01",
+        "universeSize": 350,
+        "liquidityPassed": 313,
+        "ranked": 285
+      },
+      {
+        "date": "2023-05-01",
+        "universeSize": 350,
+        "liquidityPassed": 314,
+        "ranked": 287
+      },
+      {
+        "date": "2023-06-01",
+        "universeSize": 350,
+        "liquidityPassed": 303,
+        "ranked": 279
+      },
+      {
+        "date": "2023-07-01",
+        "universeSize": 350,
+        "liquidityPassed": 310,
+        "ranked": 284
+      },
+      {
+        "date": "2023-08-01",
+        "universeSize": 350,
+        "liquidityPassed": 320,
+        "ranked": 290
+      },
+      {
+        "date": "2023-09-01",
+        "universeSize": 350,
+        "liquidityPassed": 314,
+        "ranked": 288
+      },
+      {
+        "date": "2023-10-01",
+        "universeSize": 350,
+        "liquidityPassed": 316,
+        "ranked": 289
+      },
+      {
+        "date": "2023-11-01",
+        "universeSize": 350,
+        "liquidityPassed": 300,
+        "ranked": 273
+      },
+      {
+        "date": "2023-12-01",
+        "universeSize": 350,
+        "liquidityPassed": 306,
+        "ranked": 290
+      },
+      {
+        "date": "2024-01-01",
+        "universeSize": 350,
+        "liquidityPassed": 311,
+        "ranked": 298
+      },
+      {
+        "date": "2024-02-01",
+        "universeSize": 350,
+        "liquidityPassed": 305,
+        "ranked": 294
+      },
+      {
+        "date": "2024-03-01",
+        "universeSize": 350,
+        "liquidityPassed": 322,
+        "ranked": 311
+      },
+      {
+        "date": "2024-04-01",
+        "universeSize": 350,
+        "liquidityPassed": 321,
+        "ranked": 314
+      },
+      {
+        "date": "2024-05-01",
+        "universeSize": 350,
+        "liquidityPassed": 305,
+        "ranked": 299
+      },
+      {
+        "date": "2024-06-01",
+        "universeSize": 350,
+        "liquidityPassed": 310,
+        "ranked": 304
+      },
+      {
+        "date": "2024-07-01",
+        "universeSize": 350,
+        "liquidityPassed": 314,
+        "ranked": 307
+      },
+      {
+        "date": "2024-08-01",
+        "universeSize": 350,
+        "liquidityPassed": 302,
+        "ranked": 295
+      },
+      {
+        "date": "2024-09-01",
+        "universeSize": 350,
+        "liquidityPassed": 293,
+        "ranked": 285
+      },
+      {
+        "date": "2024-10-01",
+        "universeSize": 350,
+        "liquidityPassed": 285,
+        "ranked": 277
+      },
+      {
+        "date": "2024-11-01",
+        "universeSize": 350,
+        "liquidityPassed": 284,
+        "ranked": 275
+      },
+      {
+        "date": "2024-12-01",
+        "universeSize": 350,
+        "liquidityPassed": 287,
+        "ranked": 282
+      },
+      {
+        "date": "2025-01-01",
+        "universeSize": 350,
+        "liquidityPassed": 286,
+        "ranked": 281
+      },
+      {
+        "date": "2025-02-01",
+        "universeSize": 350,
+        "liquidityPassed": 288,
+        "ranked": 282
+      },
+      {
+        "date": "2025-03-01",
+        "universeSize": 350,
+        "liquidityPassed": 303,
+        "ranked": 297
+      },
+      {
+        "date": "2025-04-01",
+        "universeSize": 350,
+        "liquidityPassed": 288,
+        "ranked": 280
+      },
+      {
+        "date": "2025-05-01",
+        "universeSize": 350,
+        "liquidityPassed": 265,
+        "ranked": 258
+      },
+      {
+        "date": "2025-06-01",
+        "universeSize": 350,
+        "liquidityPassed": 287,
+        "ranked": 280
+      },
+      {
+        "date": "2025-07-01",
+        "universeSize": 350,
+        "liquidityPassed": 329,
+        "ranked": 323
+      },
+      {
+        "date": "2025-08-01",
+        "universeSize": 350,
+        "liquidityPassed": 316,
+        "ranked": 310
+      },
+      {
+        "date": "2025-09-01",
+        "universeSize": 350,
+        "liquidityPassed": 299,
+        "ranked": 293
+      },
+      {
+        "date": "2025-10-01",
+        "universeSize": 350,
+        "liquidityPassed": 313,
+        "ranked": 306
+      },
+      {
+        "date": "2025-11-01",
+        "universeSize": 350,
+        "liquidityPassed": 322,
+        "ranked": 316
+      },
+      {
+        "date": "2025-12-01",
+        "universeSize": 350,
+        "liquidityPassed": 325,
+        "ranked": 319
+      },
+      {
+        "date": "2026-01-01",
+        "universeSize": 350,
+        "liquidityPassed": 329,
+        "ranked": 322
+      },
+      {
+        "date": "2026-02-01",
+        "universeSize": 350,
+        "liquidityPassed": 340,
+        "ranked": 330
+      },
+      {
+        "date": "2026-03-01",
+        "universeSize": 350,
+        "liquidityPassed": 348,
+        "ranked": 340
+      },
+      {
+        "date": "2026-04-01",
+        "universeSize": 350,
+        "liquidityPassed": 341,
+        "ranked": 335
+      },
+      {
+        "date": "2026-05-01",
+        "universeSize": 350,
+        "liquidityPassed": 336,
+        "ranked": 330
+      },
+      {
+        "date": "2026-06-01",
+        "universeSize": 350,
+        "liquidityPassed": 347,
+        "ranked": 342
+      },
+      {
+        "date": "2026-07-01",
+        "universeSize": 350,
+        "liquidityPassed": 335,
+        "ranked": 329
+      },
+      {
+        "date": "2026-08-01",
+        "universeSize": 350,
+        "liquidityPassed": 316,
+        "ranked": 311
+      }
+    ]
+  },
+  "comparison": {
+    "periodCount": 121,
+    "cumulativeExcessReturn": -0.8285250469369979,
+    "meanExcessReturn": -0.0068473144374958505,
+    "informationRatio": -0.3842206270634549,
+    "strategySharpe": 0.30901816509472685,
+    "benchmarkSharpe": 0.5878278452691725
+  },
+  "strategy": {
+    "cumulativeReturn": 0.5668509932364176,
+    "annualizedReturn": 0.04554225628600217,
+    "maxDrawdown": 0.4669957676090692
+  },
+  "benchmark": {
+    "cumulativeReturn": 2.318765976289674,
+    "annualizedReturn": 0.1263337655529806,
+    "maxDrawdown": 0.3438062089747483
+  }
+}
