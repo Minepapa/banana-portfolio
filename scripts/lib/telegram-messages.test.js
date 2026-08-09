@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   formatDepartmentMessage, parseReplyDecision, parseKillSwitchCommand, parseDepartmentCall,
+  parseExecutionModeCommand,
 } from './telegram-messages.mjs';
 
 test('formatDepartmentMessage: 부서보고+Zeus코멘트를 한 메시지로 합침(오너 확정 형식)', () => {
@@ -46,6 +47,20 @@ test('parseKillSwitchCommand: "해제" → deactivate', () => {
 test('[막아야 함] parseKillSwitchCommand: 캐주얼한 문장 속 단어는 명령으로 인정 안 함(정확일치만)', () => {
   assert.equal(parseKillSwitchCommand('오늘 장 정지될까?'), null);
   assert.equal(parseKillSwitchCommand('그만 stop 하자'), null);
+});
+
+test('parseExecutionModeCommand: "실전전환" → live', () => {
+  assert.equal(parseExecutionModeCommand('실전전환'), 'live');
+});
+
+test('parseExecutionModeCommand: "섀도우전환" → shadow', () => {
+  assert.equal(parseExecutionModeCommand('섀도우전환'), 'shadow');
+});
+
+test('[막아야 함] parseExecutionModeCommand: 캐주얼한 문장 속 언급은 명령으로 인정 안 함(정확일치만)', () => {
+  assert.equal(parseExecutionModeCommand('이제 실전전환 해도 될까?'), null);
+  assert.equal(parseExecutionModeCommand('아직 섀도우전환은 이르지'), null);
+  assert.equal(parseExecutionModeCommand('실전'), null);
 });
 
 test('parseDepartmentCall: "카이로스, ~" 형식 파싱', () => {

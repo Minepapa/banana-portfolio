@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildExecutionModeState, getExecutionMode, isShadowMode, settleExecution, MODE_SHADOW, MODE_LIVE,
 } from './shadow-mode.mjs';
+import { parseFrontmatter } from './vault-frontmatter.mjs';
 
 test('[핵심 안전장치] content가 없으면(State 파일 미존재) 무조건 섀도우', () => {
   assert.equal(getExecutionMode(null), MODE_SHADOW);
@@ -29,6 +30,18 @@ test('buildExecutionModeState → getExecutionMode 왕복(실전) — 명시적 
 
 test('buildExecutionModeState: 허용 안 된 모드 값은 즉시 에러(오타 방지)', () => {
   assert.throws(() => buildExecutionModeState({ mode: 'shadow' }), /알 수 없는 모드/);
+});
+
+// reason(감사기록) — 코드리뷰 지적(2026-08-09, Phase 12): 실제 자금 발주를 켜는 스위치라
+// "언제·무슨 명령으로 전환됐는지" 킬스위치(buildKillSwitchState)와 동일하게 남겨야 한다.
+test('buildExecutionModeState: reason이 프론트매터에 그대로 남는다(감사기록)', () => {
+  const content = buildExecutionModeState({ mode: MODE_LIVE, reason: 'Frank 명령: "실전전환"', now: new Date() });
+  assert.equal(parseFrontmatter(content).reason, 'Frank 명령: "실전전환"');
+});
+
+test('buildExecutionModeState: reason 생략하면 빈 문자열(하위호환)', () => {
+  const content = buildExecutionModeState({ mode: MODE_SHADOW, now: new Date() });
+  assert.equal(parseFrontmatter(content).reason, '');
 });
 
 test('settleExecution: 섀도우 모드는 브로커를 안 부르고 로그만 만든다', async () => {

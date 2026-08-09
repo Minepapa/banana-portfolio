@@ -8,11 +8,14 @@ import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 export const MODE_SHADOW = '섀도우';
 export const MODE_LIVE = '실전';
 
-export function buildExecutionModeState({ mode, now = new Date() }) {
+// reason: 누가·무슨 명령으로 전환했는지(킬스위치 buildKillSwitchState와 동일 관례) —
+// 실제 자금 발주를 켜는 스위치라 킬스위치보다도 감사기록이 중요하다는 코드리뷰 지적
+// (2026-08-09) 반영. 기본값 ''은 하위호환(reason 없이 부르던 기존 테스트·호출부)용.
+export function buildExecutionModeState({ mode, reason = '', now = new Date() }) {
   if (mode !== MODE_SHADOW && mode !== MODE_LIVE) {
     throw new Error(`알 수 없는 모드: ${mode} (허용: ${MODE_SHADOW}|${MODE_LIVE})`);
   }
-  return buildFrontmatter({ mode, changedAt: now.toISOString() });
+  return buildFrontmatter({ mode, reason, changedAt: now.toISOString() });
 }
 
 // content가 없거나(파일 미존재) 파싱 결과가 기대 밖이면 무조건 섀도우로 떨어진다 — 이

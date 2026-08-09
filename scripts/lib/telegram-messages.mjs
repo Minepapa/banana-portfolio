@@ -40,6 +40,21 @@ export function parseKillSwitchCommand(text) {
   return null;
 }
 
+// 체결모드(섀도우|실전) 전환 명령 — Phase 12. "실전전환"/"섀도우전환"은 구현계획서
+// Phase 12 작업 설명에 이미 그대로 지정된 명령어라 그대로 채택(킬스위치의 "정지"/"해제"
+// 처럼 일상 대화에 흔한 단일 단어가 아니라 이 목적 전용 복합어라 오작동 위험이 낮음 —
+// 킬스위치 쪽 오너 지적과 동일한 우려가 여기선 상대적으로 적음). 정확일치만 인정
+// (킬스위치와 동일 원칙 — "전환해볼까 실전전환처럼?" 같은 캐주얼한 언급과 구분).
+const LIVE_WORDS = new Set(['실전전환']);
+const SHADOW_WORDS = new Set(['섀도우전환']);
+
+export function parseExecutionModeCommand(text) {
+  const t = String(text ?? '').trim();
+  if (LIVE_WORDS.has(t)) return 'live';
+  if (SHADOW_WORDS.has(t)) return 'shadow';
+  return null;
+}
+
 // "카이로스, ~" 같은 부서 직접호출 — 메시지 시작 부분의 부서명 키워드만 본다(구현
 // 메모: "메시지 시작 부분의 부서명 키워드 매칭으로 우선 단순 구현 가능"). 구분자는
 // 쉼표·공백 어느 쪽이든 허용.
