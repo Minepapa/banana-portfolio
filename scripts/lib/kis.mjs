@@ -175,14 +175,18 @@ export function isUsMarketOpen(date = new Date()) {
 export const KIS_RATE_LIMIT_CODE = 'EGW00201';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// GET + 레이트리밋 재시도 공통 로직(시세·잔고조회 등 인증된 KIS GET 호출이 전부 공유).
-// URL·tr_id·헤더만 다르므로 재시도 루프 자체를 여러 번 따로 유지하면 한쪽만 고치는 회귀
-// 위험이 있어 여기로 뽑아둔다. label: 에러 메시지에 넣을 식별자(종목코드/티커/계좌번호 등) —
-// 호출측이 이미 자기 맥락으로 감싸는 경우도 있지만, 라이브러리 함수 자체의 에러도 어떤
-// 조회였는지 알 수 있어야 다른 호출측이 붙어도 맥락이 안 사라진다.
-async function fetchKis(url, headers, label, { fetchImpl = fetch, retries = 2, retryDelayMs = 700 } = {}) {
+// GET/POST + 레이트리밋 재시도 공통 로직(시세·잔고조회·주문 등 인증된 KIS 호출이 전부
+// 공유). URL·tr_id·헤더만 다르므로 재시도 루프 자체를 여러 번 따로 유지하면 한쪽만 고치는
+// 회귀 위험이 있어 여기로 뽑아둔다. label: 에러 메시지에 넣을 식별자(종목코드/티커/계좌번호
+// 등) — 호출측이 이미 자기 맥락으로 감싸는 경우도 있지만, 라이브러리 함수 자체의 에러도
+// 어떤 조회였는지 알 수 있어야 다른 호출측이 붙어도 맥락이 안 사라진다. method/body는
+// 주문 API(POST) 추가 시 확장(Phase 11, 2026-08-09) — 기존 GET 호출측은 인자를 안 바꿔도
+// method 기본값(GET)·body 미설정으로 그대로 동작한다.
+async function fetchKis(url, headers, label, { fetchImpl = fetch, retries = 2, retryDelayMs = 700, method = 'GET', body } = {}) {
   for (let attempt = 0; ; attempt++) {
-    const res = await fetchImpl(url, { headers });
+    const init = { method, headers };
+    if (body !== undefined) init.body = JSON.stringify(body);
+    const res = await fetchImpl(url, init);
     const text = await res.text();
     let json = null;
     try { json = JSON.parse(text); } catch { /* 아래에서 처리 — 몸통이 JSON이 아닌 진짜 알 수 없는 실패 */ }
@@ -421,6 +425,81 @@ export function parseBalanceResponse(json) {
     ? Number(String(cashRaw).replace(/,/g, ''))
     : NaN;
   return { holdings, cash: Number.isFinite(cash) ? cash : null };
+}
+
+// ── 국내주식 현금 매수/매도 주문 — Phase 11(2026-08-09) ────────────────────
+// tr_id 확인: github.com/koreainvestment/open-trading-api
+// examples_llm/domestic_stock/order_cash/order_cash.py — env_dv/ord_dv 분기 로직 원문에서
+// 실전 매수=TTTC0012U, 실전 매도=TTTC0011U 확인(document-specialist 조사, 2026-08-09).
+// ⚠️ 이 프로젝트는 실계좌만 다룬다(모의투자 계좌 자체가 없음) — 모의투자용 V-접두
+// tr_id(VTTC0012U/VTTC0011U)는 의도적으로 미구현. 매수/매도가 뒤바뀌면 실제 금전 사고라
+// kis.test.js에 이 매핑 자체를 하드코딩 값으로 직접 대조하는 테스트를 둔다(연구 권고사항).
+export const ORDER_TR_ID = { 매수: 'TTTC0012U', 매도: 'TTTC0011U' };
+
+// 지정가만 지원(ORD_DVSN='00') — 구현계획서 Phase 11 "지정가 우선 원칙" 그대로. 시장가('01')는
+// 지금 쓰임이 없어 미구현(필요해지면 그때 추가 — 과설계 방지). SLL_TYPE은 매도일 때만 필요
+// (01=일반매도 — 이 프로젝트는 신용·대차 계좌를 안 쓰므로 이 값 고정, order_cash.py 확인).
+// ⚠️ 던지는 에러의 confirmedNotSent 플래그(코드리뷰 지적, 2026-08-09 — "롤백이 애매한 실패
+// 에도 무조건 실행돼 이중주문 위험을 되살림"): 호출측(execute-quant-proposal.mjs)이 주문
+// 실패 시 idempotency 선점을 롤백해도 되는지 판단하려면 "확실히 미체결"과 "체결 여부
+// 불명(응답을 못 받았을 뿐 KIS엔 이미 접수됐을 수 있음)"을 구분해야 한다 — 후자를 안전 삼아
+// 롤백하면 재시도가 실제로는 이중 실주문이 될 수 있다. true인 경우만 안전하게 롤백 가능:
+// ①네트워크·body 파싱 단계까지 가지도 못한 사전검증 실패, ②KIS가 명시적으로 rt_cd!='0'
+// 업무거부를 응답(레이트리밋 재시도 소진 포함 — 그 경우도 KIS가 msg_cd로 명시 응답한 것).
+// false/미설정(기본값)이면 네트워크 예외·응답파싱 실패·"성공인데 주문번호 없음"처럼 실제로
+// 접수됐을 가능성을 배제할 수 없는 경우 — 호출측은 절대 롤백하면 안 되고 수동확인으로 넘겨야 한다.
+export async function placeKrOrder({ token, appkey, appsecret, cano, acntPrdtCd, code, side, quantity, price, fetchImpl, retries, retryDelayMs }) {
+  const trId = ORDER_TR_ID[side];
+  if (!trId) { const e = new Error(`알 수 없는 side: ${side} (허용: 매수|매도)`); e.confirmedNotSent = true; throw e; }
+  if (!(Number.isInteger(quantity) && quantity > 0)) {
+    const e = new Error(`주문수량은 양의 정수여야 함: ${quantity}`); e.confirmedNotSent = true; throw e;
+  }
+  if (!(price > 0)) { const e = new Error(`주문단가는 양수여야 함: ${price}`); e.confirmedNotSent = true; throw e; }
+
+  const body = {
+    CANO: cano, ACNT_PRDT_CD: acntPrdtCd, PDNO: code,
+    ORD_DVSN: '00', ORD_QTY: String(quantity), ORD_UNPR: String(price),
+    EXCG_ID_DVSN_CD: 'KRX',
+  };
+  if (side === '매도') body.SLL_TYPE = '01';
+
+  const headers = {
+    'Content-Type': 'application/json',
+    authorization: `Bearer ${token}`,
+    appkey, appsecret,
+    tr_id: trId,
+    custtype: 'P',
+  };
+  const url = `${BASE_URL}/uapi/domestic-stock/v1/trading/order-cash`;
+  let json;
+  try {
+    json = await fetchKis(url, headers, `${side} ${code}`, { fetchImpl, retries, retryDelayMs, method: 'POST', body });
+  } catch (e) {
+    // fetchKis가 던진 에러에 code(msg_cd)가 있으면 KIS가 실제로 파싱 가능한 응답을 줬다는
+    // 뜻(레이트리밋 재시도 소진 포함) — 명시적 업무거부로 확정 미체결. code가 없으면(JSON
+    // 파싱 자체가 안 됐거나 fetchImpl 자체가 네트워크 예외를 던짐) 응답을 못 받은 것뿐이라
+    // 실제로는 KIS에 주문이 이미 접수됐을 가능성을 배제할 수 없다 — 플래그 안 붙임(불명).
+    if (e.code) e.confirmedNotSent = true;
+    throw e;
+  }
+  return parseOrderResponse(json);
+}
+
+// KIS 주문 응답 → {orderNo, orderTime, orgNo}(주문번호·주문시각·거래소전송조직번호 —
+// order_cash.py COLUMN_MAPPING 확인: output.ODNO/ORD_TMD/KRX_FWDG_ORD_ORGNO). 순수함수 —
+// 테스트 가능. rt_cd 실패 또는 주문번호 없음(응답 이상)이면 throw — "주문 냈는데 번호를
+// 모른다"는 상태를 조용히 성공으로 취급하면 안 됨(체결 확인·정정취소가 불가능해짐).
+// rt_cd!='0'(명시적 거부)만 confirmedNotSent=true — ODNO 누락은 rt_cd='0'(KIS가 "성공"이라고
+// 답했는데 확인 번호만 없는 상태)이라 오히려 가장 위험한 "불명" 케이스, 절대 확정 취급 안 함.
+export function parseOrderResponse(json) {
+  if (json?.rt_cd !== '0') { const e = kisRtError('KIS 주문 오류', json); e.confirmedNotSent = true; throw e; }
+  const orderNo = String(json?.output?.ODNO ?? '').trim();
+  if (!orderNo) throw new Error('KIS 주문 응답에 주문번호(ODNO) 없음 — 실제 체결 여부 불확실, 즉시 확인 필요');
+  return {
+    orderNo,
+    orderTime: String(json?.output?.ORD_TMD ?? '').trim(),
+    orgNo: String(json?.output?.KRX_FWDG_ORD_ORGNO ?? '').trim(),
+  };
 }
 
 // 보유종목 + 이번 폴링 시세결과 + 직전 실시간시세 행 → 시트에 쓸 행 배열.

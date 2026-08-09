@@ -15,7 +15,7 @@ import { updateProposalRecord } from './proposal-vault.mjs';
 // reply_to·킬스위치 content 등 — 전부 호출부가 이미 조회해서 넘긴다, 이 모듈은
 // 조회하지 않는다).
 // mode: shadow-mode.getExecutionMode()의 반환값('섀도우'|'실전').
-export function executeProposal({ proposal, proposalContent, gateInput, mode, liveExecutor }) {
+export async function executeProposal({ proposal, proposalContent, gateInput, mode, liveExecutor }) {
   const gate = runExecutionGateChecks({
     proposalId: proposal.id,
     proposedPrice: proposal.proposedPrice,
@@ -36,7 +36,7 @@ export function executeProposal({ proposal, proposalContent, gateInput, mode, li
     };
   }
 
-  const settlement = settleExecution({ mode, proposal, liveExecutor });
+  const settlement = await settleExecution({ mode, proposal, liveExecutor });
   const updatedContent = updateProposalRecord(proposalContent, {
     status: settlement.status,
     executedAt: new Date().toISOString(),

@@ -1146,6 +1146,16 @@ pykrx/OpenDart 데이터로 동작. 350종목 유니버스 조회부터 순위 �
 > 사용)은 이 보정 미적용 — 지금은 asOfDate가 항상 "현재"라 영향 없지만 과거 시점 호출로
 > 오용되면 같은 버그 재현 가능(주석으로 경고만 남김, 코드 변경 안 함). 나머지 1건
 > 잔존 클러스터(00356839)는 원인 미조사.
+>
+> **⚠️ 보류 결정(오너, 2026-08-09)**: 정정공시 버그 수정 후에도 OCF/P 단일팩터는
+> 벤치마크 대비 열위(-65.5%p)이고 PEAD 검증도 애매한 결론(카이로스 판정 (c) — 05
+> 단계 조건부 재검증 가치는 있으나 지금 채택 근거는 아님)으로 남아있다. 이 퀀트
+> 로직(팩터 선택·PEAD·품질필터 재검토 등)은 **추후 세션에서 더 가다듬기로 하고**,
+> 지금은 이 상태 그대로 Phase 11로 진행한다 — Phase 11 완료기준의 "Phase 10 백테스트
+> 게이트 통과"는 자동 임계값이 아니라 원래부터 Zeus+오너 종합판단 대상(벤치마크
+> 상대비교 게이트 설계 원칙, 위 참고)이었고, 이번이 그 판단이다. 재개 시 카이로스가
+> 제시한 05 단계 조건(리컨스티튜션 편입시점 기준 SUE 재현, 한화·KT 반례 메커니즘
+> 규명)부터 시작.
 
 ---
 
@@ -1172,6 +1182,56 @@ pykrx/OpenDart 데이터로 동작. 350종목 유니버스 조회부터 순위 �
 - **`git-guardrails-claude-code`** — 실거래 코드가 들어간 시점부터 위험한 git 조작을
   훅으로 막아두는 것을 권장
 - **`tdd`** + **`/code-review`**(엄격 적용)
+
+> **✅ 코드 완료(2026-08-09)** — 오너 결정: 카이로스 퀀트 로직(팩터·PEAD)은 추후 세션에서
+> 더 가다듬기로 하고, 현재 백테스트 상태 그대로 Phase 11 착수(위 완료기준의 "백테스트
+> 게이트 통과"는 원래부터 자동임계값이 아니라 Zeus+오너 종합판단 대상이었고, 이번이 그
+> 판단 — Phase 10 tail 참고).
+>
+> **구현 내용**:
+> - `scripts/lib/kis.mjs`: `placeKrOrder`(국내주식 현금 매수/매도, POST
+>   /uapi/domestic-stock/v1/trading/order-cash) 신규. tr_id는 공식 GitHub 예제
+>   (koreainvestment/open-trading-api examples_llm/domestic_stock/order_cash/order_cash.py)
+>   원문으로 사전 검증(document-specialist 조사) — 실전 매수=TTTC0012U, 매도=TTTC0011U.
+>   지정가만 지원(ORD_DVSN='00', 구현계획서 원칙 그대로). 매수/매도 tr_id 뒤바뀜(=금전
+>   사고)을 막기 위해 하드코딩 값 직접대조 테스트를 둠.
+> - Phase 4 검문소의 `settleExecution`(shadow-mode.mjs)·`executeProposal`
+>   (execute-proposal.mjs)를 동기→비동기로 전환해 `liveExecutor` 주입점에 실제 KIS
+>   호출을 연결(`execute-quant-proposal.mjs`).
+> - `scripts/lib/executed-orders.mjs`(신규): 체결 제안 ID 영속 목록(State/
+>   ExecutedOrders.md) — 예전엔 idempotency 체크가 매 실행마다 빈 배열로 시작해 크래시
+>   후 재실행 시 중복체결 위험이 있던 갭(execute-quant-proposal.mjs 옛 주석에 이미
+>   명시돼 있던 미해결 항목)을 해소.
+>
+> **보안리뷰(security-review 스킬) + 코드리뷰 2라운드로 발견·수정한 실제 결함**(전부
+> attacker-exploitable은 아니고 폐쇄형 1인 시스템의 운영 안전성 이슈 — 그래도 실금전
+> 이중주문으로 이어질 수 있어 전부 수정):
+> 1. **TOCTOU 레이스**: 이 스크립트가 겹쳐 실행되면 두 프로세스가 같은 멱등성 스냅샷을
+>    보고 둘 다 실주문을 낼 수 있었음 → `liveExecutor` 안에서 "선점(recordExecutedOrder,
+>    락 기반 compare-and-set) → 성공해야만 실제 주문" 순서로 수정.
+> 2. **킬스위치·멱등목록 스냅샷 staleness**: 배치 시작 시 1회만 읽어 처리 도중 킬스위치를
+>    눌러도 그 배치 나머지엔 반영 안 됐음 → 제안마다 루프 안에서 재조회로 수정.
+> 3. **[가장 중요] 애매한 실패의 무조건 롤백**: 처음엔 주문 실패 시 무조건 선점을
+>    롤백했는데, 네트워크 예외·"성공인데 주문번호(ODNO) 누락" 같은 **불명 케이스**(KIS에
+>    실제로는 이미 접수됐을 수 있음)까지 롤백하면 재시도가 진짜 이중 실주문이 될 위험이
+>    있었음 → `kis.mjs`가 던지는 에러에 `confirmedNotSent` 플래그를 붙여(사전검증
+>    실패·KIS 명시적 업무거부만 true) 확실한 경우만 롤백, 불명이면 선점 유지+수동확인
+>    으로 분리.
+> 4. 롤백 자체가 실패하면 원본 KIS 에러가 소실되던 문제(이중실패) → 롤백을 별도
+>    try/catch로 감싸 원본 에러 항상 전파.
+> 5. `ExecutedOrders.md`가 손상/권한오류로 못 읽히면 조용히 빈 목록(멱등체크 무음 비활성화)
+>    으로 폴백하던 문제 → ENOENT(파일 없음, 정상)만 빈 목록 허용, 그 외는 throw.
+>
+> 테스트 980개 통과, lint 클린.
+>
+> **남은 작업(실전전환 Phase 12 전 확인)**:
+> - KIS 토큰 캐시 파일 권한이 기본값(world-readable) — 다중 사용자 머신이면 낮은 위험
+>   (이번 diff 밖 기존 코드, 저비용이라 다음에 `{ mode: 0o600 }`만 추가하면 됨).
+> - 주문 성공+선점 기록 직후 Proposal 파일 쓰기 전 크래시하면(좁은 창) 자금은 안전하지만
+>   Proposal 상태가 "승인"으로 영구 오표기될 수 있음 — 발생 시 KIS 체결내역과
+>   `State/ExecutedOrders.md` 수동 대조 필요(execute-quant-proposal.mjs 헤더 주석 참고).
+> - 소액 실거래 3~6개월 병행 검증은 오너가 KIS 계좌 크리덴셜(`quantAccount`)을
+>   `kis-key.json`에 등록해야 실제로 시작 가능(오너 작업, 아직 미등록).
 
 ---
 

@@ -25,20 +25,20 @@ test('[핵심] 구조 검증: execute-proposal.mjs는 ledger-vault-writer.mjs를
   assert.doesNotMatch(src, /ledger-vault-writer/);
 });
 
-test('섀도우 모드: 검문소 통과 시 상태가 "섀도우체결"로 바뀐다', () => {
+test('섀도우 모드: 검문소 통과 시 상태가 "섀도우체결"로 바뀐다', async () => {
   const { proposal, content } = makeProposal();
   const gateInput = { ...PASS_GATE_INPUT, replyTo: proposal.id, expectedProposalId: proposal.id };
-  const r = executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_SHADOW });
+  const r = await executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_SHADOW });
   assert.equal(r.executed, true);
   const updated = parseProposal(r.updatedContent);
   assert.equal(updated.status, '섀도우체결');
   assert.match(updated.executionLog, /SHADOW/);
 });
 
-test('[막아야 함] 검문소 실패(가격이탈) 시 체결되지 않고 "대기" 상태를 유지(거부 아님 — 원인 해소 후 재시도 가능)', () => {
+test('[막아야 함] 검문소 실패(가격이탈) 시 체결되지 않고 "대기" 상태를 유지(거부 아님 — 원인 해소 후 재시도 가능)', async () => {
   const { proposal, content } = makeProposal();
   const gateInput = { ...PASS_GATE_INPUT, currentPrice: 80000, replyTo: proposal.id, expectedProposalId: proposal.id }; // 큰 가격이탈
-  const r = executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_SHADOW });
+  const r = await executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_SHADOW });
   assert.equal(r.executed, false);
   assert.equal(r.gate.pass, false);
   const updated = parseProposal(r.updatedContent);
@@ -46,24 +46,37 @@ test('[막아야 함] 검문소 실패(가격이탈) 시 체결되지 않고 "�
   assert.match(updated.gateBlockedReason, /priceDeviation/);
 });
 
-test('[막아야 함] reply_to 불일치면 섀도우 모드여도 체결되지 않는다(승인 위조 방어는 모드와 무관)', () => {
+test('[막아야 함] reply_to 불일치면 섀도우 모드여도 체결되지 않는다(승인 위조 방어는 모드와 무관)', async () => {
   const { proposal, content } = makeProposal();
   const gateInput = { ...PASS_GATE_INPUT, replyTo: '다른제안ID', expectedProposalId: proposal.id };
-  const r = executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_SHADOW });
+  const r = await executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_SHADOW });
   assert.equal(r.executed, false);
 });
 
-test('실전 모드 + liveExecutor 없이 검문소를 통과하면(가정) 명시적으로 에러(조용히 안 넘어감)', () => {
+test('실전 모드 + liveExecutor 없이 검문소를 통과하면(가정) 명시적으로 에러(조용히 안 넘어감)', async () => {
   const { proposal, content } = makeProposal();
   const gateInput = { ...PASS_GATE_INPUT, replyTo: proposal.id, expectedProposalId: proposal.id };
-  assert.throws(() => executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_LIVE }));
+  await assert.rejects(() => executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_LIVE }));
 });
 
-test('실전 모드 + liveExecutor 주입 시 상태가 "체결"로 바뀐다', () => {
+test('실전 모드 + liveExecutor 주입 시 상태가 "체결"로 바뀐다', async () => {
   const { proposal, content } = makeProposal();
   const gateInput = { ...PASS_GATE_INPUT, replyTo: proposal.id, expectedProposalId: proposal.id };
-  const liveExecutor = () => ({ brokerOrderId: 'KIS-1' });
-  const r = executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_LIVE, liveExecutor });
+  const liveExecutor = async () => ({ brokerOrderId: 'KIS-1' });
+  const r = await executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_LIVE, liveExecutor });
   assert.equal(r.executed, true);
   assert.equal(parseProposal(r.updatedContent).status, '체결');
+});
+
+// 실주문이 검문소를 통과했지만 KIS 자체가 거부(예: 주문가능금액 초과)하면 체결로 기록되면
+// 안 된다 — updatedContent도 안 만들어져야(호출부가 이 에러를 잡아 상태를 그대로 "승인"에
+// 두고 재시도할 수 있게, Phase 11 회귀방지).
+test('[막아야 함] 실전 모드에서 liveExecutor가 실패하면 executeProposal 자체가 throw(체결로 위장 안 함)', async () => {
+  const { proposal, content } = makeProposal();
+  const gateInput = { ...PASS_GATE_INPUT, replyTo: proposal.id, expectedProposalId: proposal.id };
+  const liveExecutor = async () => { throw new Error('KIS 주문 오류: 주문가능금액을 초과하였습니다.'); };
+  await assert.rejects(
+    () => executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_LIVE, liveExecutor }),
+    /주문가능금액을 초과하였습니다/,
+  );
 });

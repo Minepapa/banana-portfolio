@@ -44,7 +44,7 @@ test('buildGateInput: replyTo·expectedProposalId는 proposal.telegramMessageId 
 // execute-quant-proposal.mjs가 킬스위치를 읽고도 검문소에 전달하지 않던 버그. buildGateInput
 // + executeProposal을 실제로 엮어서 "킬스위치 활성 → 체결 차단"을 증명한다(단위테스트
 // 하나로는 못 잡는 배선 버그라 통합 형태로 남김).
-test('킬스위치 활성 상태면 나머지 조건이 전부 통과여도 체결이 차단된다(회귀 — 2026-08-07)', () => {
+test('킬스위치 활성 상태면 나머지 조건이 전부 통과여도 체결이 차단된다(회귀 — 2026-08-07)', async () => {
   const now = new Date('2026-08-10T05:00:00.000Z'); // 평일 KST 14:00, 장중
   const { id, content } = buildProposalRecord({
     track: '퀀트', assetKey: '005930', side: '매수', quantity: 10, proposedPrice: 70000, reason: 'test', now,
@@ -58,13 +58,13 @@ test('킬스위치 활성 상태면 나머지 조건이 전부 통과여도 체�
   // 명시로 덮어씀).
   const gateInput = { ...buildGateInput({ proposal, currentPrice: 70000, holdings: [], cash: 10_000_000, killSwitchContent }), now };
 
-  const result = executeProposal({ proposal, proposalContent: withApproval, gateInput, mode: '섀도우' });
+  const result = await executeProposal({ proposal, proposalContent: withApproval, gateInput, mode: '섀도우' });
 
   assert.equal(result.executed, false);
   assert.ok(result.gate.failures.some((f) => f.check === 'killSwitch'));
 });
 
-test('킬스위치 비활성(null, 파일 미존재)이면 나머지 조건 통과 시 체결된다(대조군)', () => {
+test('킬스위치 비활성(null, 파일 미존재)이면 나머지 조건 통과 시 체결된다(대조군)', async () => {
   const now = new Date('2026-08-10T05:00:00.000Z');
   const { id, content } = buildProposalRecord({
     track: '퀀트', assetKey: '005930', side: '매수', quantity: 10, proposedPrice: 70000, reason: 'test', now,
@@ -73,7 +73,7 @@ test('킬스위치 비활성(null, 파일 미존재)이면 나머지 조건 통�
   const proposal = { id, telegramMessageId: 999, ...parseProposal(withApproval) };
 
   const gateInput = { ...buildGateInput({ proposal, currentPrice: 70000, holdings: [], cash: 10_000_000, killSwitchContent: null }), now };
-  const result = executeProposal({ proposal, proposalContent: withApproval, gateInput, mode: '섀도우' });
+  const result = await executeProposal({ proposal, proposalContent: withApproval, gateInput, mode: '섀도우' });
 
   assert.equal(result.executed, true);
   assert.equal(result.settlement.status, '섀도우체결');

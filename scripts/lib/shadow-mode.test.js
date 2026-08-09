@@ -31,24 +31,32 @@ test('buildExecutionModeState: 허용 안 된 모드 값은 즉시 에러(오타
   assert.throws(() => buildExecutionModeState({ mode: 'shadow' }), /알 수 없는 모드/);
 });
 
-test('settleExecution: 섀도우 모드는 브로커를 안 부르고 로그만 만든다', () => {
+test('settleExecution: 섀도우 모드는 브로커를 안 부르고 로그만 만든다', async () => {
   const proposal = { assetKey: '삼성전자', quantity: 10, side: '매수' };
-  const r = settleExecution({ mode: MODE_SHADOW, proposal });
+  const r = await settleExecution({ mode: MODE_SHADOW, proposal });
   assert.equal(r.status, '섀도우체결');
   assert.equal(r.writesToLedger, false);
   assert.match(r.log, /SHADOW.*삼성전자.*10매수/);
 });
 
-test('settleExecution: 실전 모드인데 liveExecutor 없으면 조용히 넘어가지 않고 에러', () => {
+test('settleExecution: 실전 모드인데 liveExecutor 없으면 조용히 넘어가지 않고 에러', async () => {
   const proposal = { assetKey: '삼성전자', quantity: 10, side: '매수' };
-  assert.throws(() => settleExecution({ mode: MODE_LIVE, proposal }), /liveExecutor가 주입되지 않았습니다/);
+  await assert.rejects(() => settleExecution({ mode: MODE_LIVE, proposal }), /liveExecutor가 주입되지 않았습니다/);
 });
 
-test('settleExecution: 실전 모드 + liveExecutor 주입 시 그 결과를 그대로 반영', () => {
+test('settleExecution: 실전 모드 + liveExecutor 주입 시 그 결과를 그대로 반영(liveExecutor가 비동기여도 await됨)', async () => {
   const proposal = { assetKey: '삼성전자', quantity: 10, side: '매수' };
-  const liveExecutor = (p) => ({ brokerOrderId: 'KIS-123', filledQty: p.quantity });
-  const r = settleExecution({ mode: MODE_LIVE, proposal, liveExecutor });
+  const liveExecutor = async (p) => ({ brokerOrderId: 'KIS-123', filledQty: p.quantity });
+  const r = await settleExecution({ mode: MODE_LIVE, proposal, liveExecutor });
   assert.equal(r.status, '체결');
   assert.equal(r.writesToLedger, true);
   assert.equal(r.brokerOrderId, 'KIS-123');
+});
+
+// liveExecutor가 실패(거부)하면 settlement 자체가 throw돼야 한다 — "실주문이 실패했는데
+// 조용히 체결로 처리"되는 게 이 프로젝트에서 가장 위험한 실패모드(Phase 11 회귀방지).
+test('settleExecution: liveExecutor가 실패(reject)하면 그대로 전파(체결로 위장 안 함)', async () => {
+  const proposal = { assetKey: '삼성전자', quantity: 10, side: '매수' };
+  const liveExecutor = async () => { throw new Error('KIS 주문 오류: 주문가능금액 초과'); };
+  await assert.rejects(() => settleExecution({ mode: MODE_LIVE, proposal, liveExecutor }), /주문가능금액 초과/);
 });

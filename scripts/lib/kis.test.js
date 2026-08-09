@@ -8,6 +8,7 @@ import {
   getUsQuote, isKrMarketOpen, isUsMarketOpen, parseBalanceResponse, getAccountBalance,
   loadIrpAccount, parseInvestorFlowResponse, getKrInvestorFlow,
   parseInvestOpinionResponse, summarizeInvestOpinion, getKrInvestOpinion,
+  ORDER_TR_ID, parseOrderResponse, placeKrOrder,
 } from './kis.mjs';
 
 // fetch 모킹 헬퍼 — 호출마다 큐에서 다음 응답을 꺼내 반환.
@@ -586,4 +587,171 @@ test('getKrInvestOpinion: 종목코드·날짜범위(dayWindow 기준)를 요청
   assert.match(capturedUrl, /FID_INPUT_ISCD=005930/);
   assert.match(capturedUrl, /FID_INPUT_DATE_2=20260726/);
   assert.match(capturedUrl, /FID_INPUT_DATE_1=20260427/); // 90일 전
+});
+
+// ── 국내주식 현금 매수/매도 주문 — Phase 11(2026-08-09) ────────────────────
+// 매수/매도 tr_id가 뒤바뀌면 실제 금전 사고이므로 하드코딩 값을 직접 대조한다
+// (연구 조사 권고사항 — document-specialist가 github.com/koreainvestment/open-trading-api
+// order_cash.py 원문에서 확인한 값과 정확히 일치해야 함).
+test('[핵심 안전장치] ORDER_TR_ID: 매수/매도 tr_id가 정확히 실측값과 일치(뒤바뀌면 금전 사고)', () => {
+  assert.equal(ORDER_TR_ID['매수'], 'TTTC0012U');
+  assert.equal(ORDER_TR_ID['매도'], 'TTTC0011U');
+});
+
+test('parseOrderResponse: 정상 응답에서 주문번호·주문시각·거래소전송조직번호 추출', () => {
+  const r = parseOrderResponse({ rt_cd: '0', output: { ODNO: '0000012345', ORD_TMD: '090501', KRX_FWDG_ORD_ORGNO: '06010' } });
+  assert.equal(r.orderNo, '0000012345');
+  assert.equal(r.orderTime, '090501');
+  assert.equal(r.orgNo, '06010');
+});
+
+test('parseOrderResponse: rt_cd 실패면 throw(msg1 인용) + confirmedNotSent=true(명시적 거부, 롤백 안전)', () => {
+  try {
+    parseOrderResponse({ rt_cd: '1', msg1: '주문가능금액을 초과하였습니다.' });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /주문가능금액을 초과하였습니다/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+// [핵심 안전장치] ODNO 누락은 rt_cd='0'(KIS가 "성공"이라고 답함)인데 확인 번호만 없는
+// 상태라, 가장 위험한 "불명" 케이스다 — confirmedNotSent를 절대 true로 붙이면 안 된다
+// (코드리뷰 HIGH 지적, 2026-08-09 — 여기 붙이면 호출측이 안전하다고 믿고 롤백+재시도해서
+// 이중 실주문이 날 수 있음).
+test('[핵심 안전장치] parseOrderResponse: rt_cd는 성공인데 주문번호(ODNO)가 없으면 throw하되 confirmedNotSent는 안 붙음(불명 — 롤백 금지)', () => {
+  try {
+    parseOrderResponse({ rt_cd: '0', output: {} });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /주문번호.*없음/);
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
+test('[핵심] placeKrOrder: 매수는 TTTC0012U tr_id + ORD_DVSN=00(지정가)로 요청', async () => {
+  let capturedHeaders = null, capturedBody = null;
+  const fetchImpl = async (url, init) => {
+    capturedHeaders = init.headers; capturedBody = JSON.parse(init.body);
+    const body = { rt_cd: '0', output: { ODNO: '1', ORD_TMD: '1', KRX_FWDG_ORD_ORGNO: '1' } };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await placeKrOrder({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    code: '005930', side: '매수', quantity: 10, price: 71000, fetchImpl,
+  });
+  assert.equal(capturedHeaders.tr_id, 'TTTC0012U');
+  assert.equal(capturedBody.ORD_DVSN, '00');
+  assert.equal(capturedBody.ORD_QTY, '10');
+  assert.equal(capturedBody.ORD_UNPR, '71000');
+  assert.equal(capturedBody.PDNO, '005930');
+  assert.equal(capturedBody.SLL_TYPE, undefined); // 매수엔 SLL_TYPE 없음
+});
+
+test('[핵심] placeKrOrder: 매도는 TTTC0011U tr_id + SLL_TYPE=01(일반매도)로 요청', async () => {
+  let capturedHeaders = null, capturedBody = null;
+  const fetchImpl = async (url, init) => {
+    capturedHeaders = init.headers; capturedBody = JSON.parse(init.body);
+    const body = { rt_cd: '0', output: { ODNO: '1', ORD_TMD: '1', KRX_FWDG_ORD_ORGNO: '1' } };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await placeKrOrder({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    code: '005930', side: '매도', quantity: 5, price: 72000, fetchImpl,
+  });
+  assert.equal(capturedHeaders.tr_id, 'TTTC0011U');
+  assert.equal(capturedBody.SLL_TYPE, '01');
+});
+
+test('placeKrOrder: 알 수 없는 side는 네트워크 호출 전에 즉시 throw + confirmedNotSent=true(네트워크 자체를 안 탐 — 롤백 안전)', async () => {
+  try {
+    await placeKrOrder({ token: 't', appkey: 'k', appsecret: 's', cano: 'c', acntPrdtCd: 'p', code: '005930', side: '보유', quantity: 1, price: 1000 });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /알 수 없는 side/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+test('placeKrOrder: 수량 0 이하·소수는 즉시 throw(네트워크 호출 안 함) + confirmedNotSent=true', async () => {
+  try {
+    await placeKrOrder({ token: 't', appkey: 'k', appsecret: 's', cano: 'c', acntPrdtCd: 'p', code: '005930', side: '매수', quantity: 0, price: 1000 });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /주문수량/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+  await assert.rejects(
+    () => placeKrOrder({ token: 't', appkey: 'k', appsecret: 's', cano: 'c', acntPrdtCd: 'p', code: '005930', side: '매수', quantity: 1.5, price: 1000 }),
+    /주문수량/,
+  );
+});
+
+test('placeKrOrder: 가격 0 이하는 즉시 throw(네트워크 호출 안 함) + confirmedNotSent=true', async () => {
+  try {
+    await placeKrOrder({ token: 't', appkey: 'k', appsecret: 's', cano: 'c', acntPrdtCd: 'p', code: '005930', side: '매수', quantity: 1, price: 0 });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /주문단가/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+// [핵심 안전장치] KIS가 명시적으로 업무거부(rt_cd!='0')하면 확정 미체결 — 롤백 안전.
+test('placeKrOrder: KIS 업무거부(rt_cd!=0)면 throw + confirmedNotSent=true', async () => {
+  const fetchImpl = mockFetch([{ body: { rt_cd: '1', msg_cd: 'APBK0919', msg1: '주문가능금액을 초과하였습니다.' } }]);
+  try {
+    await placeKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+      code: '005930', side: '매수', quantity: 1, price: 71000, fetchImpl,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /주문가능금액을 초과하였습니다/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+// [핵심 안전장치] 네트워크 예외(fetchImpl 자체가 throw)는 KIS 응답을 아예 못 받은 것 —
+// 주문이 실제로는 이미 접수됐을 수 있어 confirmedNotSent를 절대 붙이면 안 된다(코드리뷰
+// HIGH 지적, 2026-08-09 — 이게 무조건 롤백되면 재시도가 진짜 이중 실주문이 될 위험).
+test('[핵심 안전장치] placeKrOrder: 네트워크 예외(fetchImpl throw)는 confirmedNotSent 안 붙음(불명 — 롤백 금지)', async () => {
+  const fetchImpl = async () => { throw new Error('ECONNRESET'); };
+  try {
+    await placeKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+      code: '005930', side: '매수', quantity: 1, price: 71000, fetchImpl,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /ECONNRESET/);
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
+// [핵심 안전장치] 몸통이 JSON도 아닌 응답(진짜 알 수 없는 실패)도 KIS의 명시적 답을 못 받은
+// 것과 같다 — confirmedNotSent 안 붙음.
+test('[핵심 안전장치] placeKrOrder: JSON 아닌 응답(진짜 알 수 없는 실패)도 confirmedNotSent 안 붙음(불명 — 롤백 금지)', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 502, json: async () => { throw new Error('not json'); }, text: async () => 'Bad Gateway' });
+  try {
+    await placeKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+      code: '005930', side: '매수', quantity: 1, price: 71000, fetchImpl,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
+test('placeKrOrder: 레이트리밋(EGW00201)이면 재시도 후 성공(GET 조회와 동일한 재시도 로직 공유)', async () => {
+  const fetchImpl = mockFetch([
+    { body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } },
+    { body: { rt_cd: '0', output: { ODNO: '999', ORD_TMD: '1', KRX_FWDG_ORD_ORGNO: '1' } } },
+  ]);
+  const r = await placeKrOrder({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    code: '005930', side: '매수', quantity: 1, price: 71000, fetchImpl, retryDelayMs: 1,
+  });
+  assert.equal(r.orderNo, '999');
 });
