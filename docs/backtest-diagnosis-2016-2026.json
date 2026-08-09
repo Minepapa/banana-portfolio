@@ -1,0 +1,116 @@
+{
+  "diagnosis1_equalWeightVsFactor": {
+    "description": "같은 유니버스·같은 버퍼존·같은 동일가중, 순위기준만 다름(OCF/P vs 시가총액상위)",
+    "ocfFactor": {
+      "cumulativeReturn": 0.5668509932364176,
+      "annualizedReturn": 0.04554225628600217,
+      "maxDrawdown": 0.4669957676090692,
+      "vsKospi": {
+        "periodCount": 121,
+        "cumulativeExcessReturn": -0.8285250469369979,
+        "meanExcessReturn": -0.0068473144374958505,
+        "informationRatio": -0.3842206270634549,
+        "strategySharpe": 0.30901816509472685,
+        "benchmarkSharpe": 0.5878278452691725
+      }
+    },
+    "marketCapControl": {
+      "cumulativeReturn": 1.3121071646987867,
+      "annualizedReturn": 0.08667571839539678,
+      "maxDrawdown": 0.4227149941117935,
+      "vsKospi": {
+        "periodCount": 121,
+        "cumulativeExcessReturn": -0.3410304151766185,
+        "meanExcessReturn": -0.0028184331832778386,
+        "informationRatio": -0.3629412994688171,
+        "strategySharpe": 0.4440160103281595,
+        "benchmarkSharpe": 0.5878278452691725
+      }
+    }
+  },
+  "diagnosis2_drawdownAttribution": {
+    "description": "OCF/P 전략의 최대낙폭 구간(고점→저점) 동안 각 종목의 그 구간 내 누적수익률",
+    "window": {
+      "peakDate": "2017-08-01",
+      "troughDate": "2020-04-01",
+      "drawdown": 0.4669957676090692
+    },
+    "worstContributors": [
+      {
+        "code": "006260",
+        "monthsHeld": 31,
+        "cumulativeReturn": -0.6226822223860292
+      },
+      {
+        "code": "001040",
+        "monthsHeld": 17,
+        "cumulativeReturn": -0.6195021280516919
+      },
+      {
+        "code": "000880",
+        "monthsHeld": 18,
+        "cumulativeReturn": -0.5794509236274024
+      },
+      {
+        "code": "015760",
+        "monthsHeld": 32,
+        "cumulativeReturn": -0.576837416481069
+      },
+      {
+        "code": "036460",
+        "monthsHeld": 30,
+        "cumulativeReturn": -0.5313474529164037
+      },
+      {
+        "code": "034220",
+        "monthsHeld": 19,
+        "cumulativeReturn": -0.5211245251031612
+      },
+      {
+        "code": "047050",
+        "monthsHeld": 8,
+        "cumulativeReturn": -0.4089644174203687
+      },
+      {
+        "code": "030200",
+        "monthsHeld": 31,
+        "cumulativeReturn": -0.3788121990369181
+      },
+      {
+        "code": "017670",
+        "monthsHeld": 26,
+        "cumulativeReturn": -0.3578388374021152
+      },
+      {
+        "code": "038540",
+        "monthsHeld": 6,
+        "cumulativeReturn": -0.33760683760683763
+      },
+      {
+        "code": "078930",
+        "monthsHeld": 9,
+        "cumulativeReturn": -0.3099415204678363
+      },
+      {
+        "code": "047040",
+        "monthsHeld": 5,
+        "cumulativeReturn": -0.2727272727272727
+      },
+      {
+        "code": "006650",
+        "monthsHeld": 8,
+        "cumulativeReturn": -0.25690607734806625
+      },
+      {
+        "code": "003490",
+        "monthsHeld": 23,
+        "cumulativeReturn": -0.2507218566363222
+      },
+      {
+        "code": "032640",
+        "monthsHeld": 15,
+        "cumulativeReturn": -0.2202512934220252
+      }
+    ]
+  }
+}
