@@ -16,7 +16,25 @@
        a prompt argument when using --print"). /usr/bin/script로 가짜 TTY를 붙여야
        --channels가 의도한 대화형 상시세션으로 뜬다(claude --help엔 --channels 자체가
        안 나오지만 telegram 플러그인 공식 문서에 정확히 이 커맨드로 명시돼 있음 —
-       claude --help 목록에 없다고 존재하지 않는 플래그로 오판하지 말 것). -->
+       claude --help 목록에 없다고 존재하지 않는 플래그로 오판하지 말 것).
+       ⚠️ --allowedTools 필수(2026-08-11 실측 발견) — 위 pty 수정 후에도 텔레그램 명령이
+       계속 무반응이었던 진짜 원인: 세션이 메시지를 정상 수신하고 "실전전환"→
+       execution-mode-cli.mjs 호출까지 정확히 판단했지만, Claude Code 기본 권한 확인
+       프롬프트("이 명령 실행해도 될까요?")에서 멈춰 있었다 — 백그라운드 세션이라 그
+       프롬프트에 답할 사람이 없어 영원히 대기. scripts/tools/*(운영 CLI 전용 — execution-
+       mode-cli·process-telegram-reply·execute-quant-proposal·kill-switch-cli·
+       create-quant-proposal)만 자동승인하도록 범위를 좁혔다(오너 확정, 2026-08-11) —
+       실제 안전장치(검문소 6종·킬스위치·멱등성)는 이미 이 스크립트들 내부에 있어 이
+       단계의 프롬프트는 금융안전과 무관했다. scripts/tools/* 밖의 임의 Bash 명령은
+       여전히 확인이 필요(전체 --dangerously-skip-permissions는 쓰지 않음).
+       ⚠️ PATH에 ~/.bun/bin 명시 필요(2026-08-11 실측 발견) — 위 두 수정 후에도 텔레그램
+       메시지가 세션엔 도달했는데 실제 응답(봇 서버, bun run server.ts)이 안 뜨는 문제가
+       남아있었다. bun의 PATH 등록이 ~/.zshrc에만 있는데, launchd가 만드는 프로세스는
+       bash/zsh 어느 쪽 로그인쉘로 띄워도(env -i로 재현 확인) .zshrc를 안 읽어(비대화형
+       모드라 인터랙티브 전용 파일이 로드 안 됨) bun을 못 찾아 MCP 서버 기동 자체가
+       조용히 실패했다(에러 로그도 없음 — claude 자체는 PATH 문제 없이 떠서 겉으로는
+       "잘 도는 것처럼" 보였음). PATH를 셸 프로파일에 의존하지 않고 커맨드 안에서 직접
+       명시. -->
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/script</string>
@@ -24,7 +42,7 @@
     <string>/dev/null</string>
     <string>/bin/bash</string>
     <string>-lc</string>
-    <string>claude --channels plugin:telegram@claude-plugins-official</string>
+    <string>export PATH="$HOME/.bun/bin:$PATH"; claude --channels plugin:telegram@claude-plugins-official --allowedTools "Bash(node scripts/tools/*)"</string>
   </array>
   <key>KeepAlive</key>
   <true/>
