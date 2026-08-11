@@ -9,9 +9,19 @@
        ⚠️ 봇 토큰은 getUpdates 소비자를 1개만 허용한다 — 이 launchd 잡이 떠 있는 동안
        터미널에서 수동으로 같은 명령을 또 실행하면 409 Conflict가 난다(구현 메모 참고).
        KeepAlive로 죽으면 자동 재시작하되, 그 자체가 "이미 떠 있는데 또 뜨는" 중복
-       실행을 만들지는 않는다(launchd가 Label당 1개만 관리). -->
+       실행을 만들지는 않는다(launchd가 Label당 1개만 관리).
+       ⚠️ script(pty 할당) 필수(2026-08-11 실측 발견) — launchd가 만드는 프로세스에는
+       터미널(TTY)이 없어서, claude가 "--print 모드인데 프롬프트 없음"으로 오판해
+       즉시 종료하는 버그가 있었다("Input must be provided either through stdin or as
+       a prompt argument when using --print"). /usr/bin/script로 가짜 TTY를 붙여야
+       --channels가 의도한 대화형 상시세션으로 뜬다(claude --help엔 --channels 자체가
+       안 나오지만 telegram 플러그인 공식 문서에 정확히 이 커맨드로 명시돼 있음 —
+       claude --help 목록에 없다고 존재하지 않는 플래그로 오판하지 말 것). -->
   <key>ProgramArguments</key>
   <array>
+    <string>/usr/bin/script</string>
+    <string>-q</string>
+    <string>/dev/null</string>
     <string>/bin/bash</string>
     <string>-lc</string>
     <string>claude --channels plugin:telegram@claude-plugins-official</string>
