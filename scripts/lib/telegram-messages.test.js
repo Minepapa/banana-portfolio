@@ -34,19 +34,24 @@ test('[막아야 함] parseReplyDecision: 승인/거부가 둘 다 있으면(모
   assert.equal(parseReplyDecision('승인 아니 거부할래'), null);
 });
 
-test('parseKillSwitchCommand: "정지"/"STOP" → activate', () => {
-  assert.equal(parseKillSwitchCommand('정지'), 'activate');
+// 최종 확정(오너, 2026-08-12) — "정지"/"해제"는 일상 대화에 흔한 단어라 오작동 위험이
+// 있어 "실전전환"/"섀도우전환"과 같은 원칙(목적 전용 복합어)으로 "긴급정지"/"정지해제"로
+// 교체. STOP/stop은 영문 명령으로 유지.
+test('parseKillSwitchCommand: "긴급정지"/"STOP" → activate', () => {
+  assert.equal(parseKillSwitchCommand('긴급정지'), 'activate');
   assert.equal(parseKillSwitchCommand('STOP'), 'activate');
   assert.equal(parseKillSwitchCommand('stop'), 'activate');
 });
 
-test('parseKillSwitchCommand: "해제" → deactivate', () => {
-  assert.equal(parseKillSwitchCommand('해제'), 'deactivate');
+test('parseKillSwitchCommand: "정지해제" → deactivate', () => {
+  assert.equal(parseKillSwitchCommand('정지해제'), 'deactivate');
 });
 
-test('[막아야 함] parseKillSwitchCommand: 캐주얼한 문장 속 단어는 명령으로 인정 안 함(정확일치만)', () => {
-  assert.equal(parseKillSwitchCommand('오늘 장 정지될까?'), null);
+test('[막아야 함] parseKillSwitchCommand: 캐주얼한 문장 속 단어·옛 단일단어("정지"/"해제")는 더 이상 명령으로 인정 안 함(정확일치만)', () => {
+  assert.equal(parseKillSwitchCommand('오늘 장 긴급정지될까?'), null);
   assert.equal(parseKillSwitchCommand('그만 stop 하자'), null);
+  assert.equal(parseKillSwitchCommand('정지'), null); // 옛 단일단어 — 더 이상 인정 안 함
+  assert.equal(parseKillSwitchCommand('해제'), null); // 옛 단일단어 — 더 이상 인정 안 함
 });
 
 test('parseExecutionModeCommand: "실전전환" → live', () => {

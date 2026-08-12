@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * 킬스위치 토글 — Zeus(상시 세션)가 Frank의 "정지"/"STOP"/"해제" 텍스트를 받으면
- * 이 CLI를 호출한다. State/KillSwitch.md를 갱신한다.
+ * 킬스위치 토글 — Zeus(상시 세션)가 Frank의 "긴급정지"/"STOP"/"정지해제" 텍스트를 받으면
+ * 이 CLI를 호출한다. State/KillSwitch.md를 갱신한다. ("정지"/"해제" 단일단어는 일상
+ * 대화에 흔해 오작동 위험 있다고 판단, 2026-08-12 오너 확정으로 복합어 교체.)
  *
- * 사용법: node scripts/tools/kill-switch-cli.mjs --text="정지"
+ * 사용법: node scripts/tools/kill-switch-cli.mjs --text="긴급정지"
  */
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -29,7 +30,7 @@ async function main() {
   const cmd = parseKillSwitchCommand(text);
 
   if (!cmd) {
-    console.log(`ℹ️ "${text}"는 킬스위치 명령이 아닙니다(정확히 "정지"/"STOP"/"해제"만 인정) — 무시`);
+    console.log(`ℹ️ "${text}"는 킬스위치 명령이 아닙니다(정확히 "긴급정지"/"STOP"/"정지해제"만 인정) — 무시`);
     return;
   }
 
@@ -41,7 +42,7 @@ async function main() {
     mkdirSync(VAULT_PATHS.root + '/State', { recursive: true });
     const content = buildKillSwitchState({ active: true, reason: `Frank 명령: "${text}"` });
     await writeStateFile(KILL_SWITCH_PATH, content);
-    console.log('🛑 킬스위치 활성화 — 모든 자동 체결이 중단됩니다(새 제안 생성은 계속됨). 해제는 "해제" 명령으로만.');
+    console.log('🛑 킬스위치 활성화 — 모든 자동 체결이 중단됩니다(새 제안 생성은 계속됨). 해제는 "정지해제" 명령으로만.');
     return;
   }
 
