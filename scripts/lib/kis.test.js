@@ -9,6 +9,7 @@ import {
   loadIrpAccount, parseInvestorFlowResponse, getKrInvestorFlow,
   parseInvestOpinionResponse, summarizeInvestOpinion, getKrInvestOpinion,
   ORDER_TR_ID, parseOrderResponse, placeKrOrder,
+  checkOrderFill, parseOrderFillResponse,
 } from './kis.mjs';
 
 // fetch 모킹 헬퍼 — 호출마다 큐에서 다음 응답을 꺼내 반환.
@@ -754,4 +755,81 @@ test('placeKrOrder: 레이트리밋(EGW00201)이면 재시도 후 성공(GET 조
     code: '005930', side: '매수', quantity: 1, price: 71000, fetchImpl, retryDelayMs: 1,
   });
   assert.equal(r.orderNo, '999');
+});
+
+// ── 주식일별주문체결조회 — 체결확인 갭 대응(2026-08-12) ────────────────────
+test('parseOrderFillResponse: 완전체결(주문수량=체결수량)이면 fullyFilled=true', () => {
+  const json = { rt_cd: '0', output1: [{ odno: '6693100', ord_qty: '1', tot_ccld_qty: '1', rmn_qty: '0', avg_prvs: '87500', cncl_yn: 'N' }] };
+  const r = parseOrderFillResponse(json, '6693100');
+  assert.equal(r.orderNo, '6693100');
+  assert.equal(r.orderQty, 1);
+  assert.equal(r.filledQty, 1);
+  assert.equal(r.remainingQty, 0);
+  assert.equal(r.avgFillPrice, 87500);
+  assert.equal(r.canceled, false);
+  assert.equal(r.fullyFilled, true);
+});
+
+test('parseOrderFillResponse: 부분체결(체결수량 < 주문수량)이면 fullyFilled=false', () => {
+  const json = { rt_cd: '0', output1: [{ odno: '1', ord_qty: '10', tot_ccld_qty: '3', rmn_qty: '7', avg_prvs: '87500', cncl_yn: 'N' }] };
+  const r = parseOrderFillResponse(json, '1');
+  assert.equal(r.filledQty, 3);
+  assert.equal(r.remainingQty, 7);
+  assert.equal(r.fullyFilled, false);
+});
+
+test('parseOrderFillResponse: 미체결(체결수량 0)이면 fullyFilled=false', () => {
+  const json = { rt_cd: '0', output1: [{ odno: '1', ord_qty: '10', tot_ccld_qty: '0', rmn_qty: '10', avg_prvs: '0', cncl_yn: 'N' }] };
+  const r = parseOrderFillResponse(json, '1');
+  assert.equal(r.filledQty, 0);
+  assert.equal(r.fullyFilled, false);
+});
+
+test('parseOrderFillResponse: 취소된 주문은 canceled=true', () => {
+  const json = { rt_cd: '0', output1: [{ odno: '1', ord_qty: '10', tot_ccld_qty: '0', rmn_qty: '0', avg_prvs: '0', cncl_yn: 'Y' }] };
+  const r = parseOrderFillResponse(json, '1');
+  assert.equal(r.canceled, true);
+});
+
+// [핵심 안전장치] 해당 주문번호가 응답에 아직 안 보이면(접수 직후 반영 지연 등) null —
+// "0건 체결"로 추정하지 않는다(호출측이 "아직 모름"과 "확인된 0건"을 구분해야 함).
+test('[핵심 안전장치] parseOrderFillResponse: 해당 odno가 output1에 없으면 null(추정 안 함)', () => {
+  const json = { rt_cd: '0', output1: [{ odno: '다른주문', ord_qty: '1', tot_ccld_qty: '1' }] };
+  assert.equal(parseOrderFillResponse(json, '6693100'), null);
+});
+
+// [핵심 안전장치] 실측 발견(2026-08-12, 실주문 6693100으로 라이브 검증 중 발견) — 이
+// API의 odno는 10자리 0패딩("0006693100")으로 오는데 주문 접수 응답은 패딩 없이 온다.
+// 문자열 그대로 비교했더니 실제로 체결된 주문도 계속 null로 나오는 진짜 버그였다.
+test('[핵심 안전장치] parseOrderFillResponse: odno가 0패딩("0006693100")으로 와도 패딩 없는 조회값과 매칭(실측 KIS 응답 형태)', () => {
+  const json = { rt_cd: '0', output1: [{ odno: '0006693100', ord_qty: '1', tot_ccld_qty: '1', rmn_qty: '0', avg_prvs: '87500', cncl_yn: '' }] };
+  const r = parseOrderFillResponse(json, '6693100');
+  assert.notEqual(r, null);
+  assert.equal(r.fullyFilled, true);
+});
+
+test('parseOrderFillResponse: output1이 비어있으면 null', () => {
+  assert.equal(parseOrderFillResponse({ rt_cd: '0', output1: [] }, '1'), null);
+});
+
+test('parseOrderFillResponse: rt_cd 실패면 throw', () => {
+  assert.throws(() => parseOrderFillResponse({ rt_cd: '1', msg1: '조회 실패' }, '1'), /조회 실패/);
+});
+
+test('[핵심] checkOrderFill: TTTC0081R tr_id + ODNO·당일 날짜로 요청', async () => {
+  let capturedUrl = null, capturedHeaders = null;
+  const fetchImpl = async (url, init) => {
+    capturedUrl = url; capturedHeaders = init.headers;
+    const body = { rt_cd: '0', output1: [{ odno: '6693100', ord_qty: '1', tot_ccld_qty: '1', rmn_qty: '0', avg_prvs: '87500', cncl_yn: 'N' }] };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  const r = await checkOrderFill({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    odno: '6693100', now: new Date(2026, 7, 12), fetchImpl,
+  });
+  assert.equal(capturedHeaders.tr_id, 'TTTC0081R');
+  assert.match(capturedUrl, /ODNO=6693100/);
+  assert.match(capturedUrl, /INQR_STRT_DT=20260812/);
+  assert.match(capturedUrl, /INQR_END_DT=20260812/);
+  assert.equal(r.fullyFilled, true);
 });

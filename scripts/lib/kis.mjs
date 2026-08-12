@@ -427,6 +427,63 @@ export function parseBalanceResponse(json) {
   return { holdings, cash: Number.isFinite(cash) ? cash : null };
 }
 
+// ── 주식일별주문체결조회 — Phase 11 후속(2026-08-12, 실주문 체결 확인 갭 발견) ──────
+// 확인: github.com/koreainvestment/open-trading-api
+// examples_llm/domestic_stock/inquire_daily_ccld/inquire_daily_ccld.py — 실전+3개월
+// 이내 조회 tr_id=TTTC0081R(document-specialist 조사, 2026-08-12). 3개월 이전 조회용
+// tr_id(CTSC9215R)는 이 프로젝트 쓰임(주문 직후 당일 체결 확인)과 무관해 미구현 — 필요
+// 해지면 그때 추가(과설계 방지). ODNO로 특정 주문 하나만 좁혀 조회 가능해 페이지네이션
+// (CTX_AREA_FK100/NK100)은 항상 빈 값으로 첫 페이지만 쓴다(응답이 1건뿐이라 불필요).
+export async function checkOrderFill({ token, appkey, appsecret, cano, acntPrdtCd, odno, now = new Date(), fetchImpl, retries, retryDelayMs }) {
+  const ymd = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  const today = ymd(now);
+  const params = new URLSearchParams({
+    CANO: cano, ACNT_PRDT_CD: acntPrdtCd,
+    INQR_STRT_DT: today, INQR_END_DT: today,
+    SLL_BUY_DVSN_CD: '00', CCLD_DVSN: '00', INQR_DVSN: '00', INQR_DVSN_1: '', INQR_DVSN_3: '00',
+    ODNO: odno, EXCG_ID_DVSN_CD: 'KRX',
+    CTX_AREA_FK100: '', CTX_AREA_NK100: '',
+  });
+  const url = `${BASE_URL}/uapi/domestic-stock/v1/trading/inquire-daily-ccld?${params}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    authorization: `Bearer ${token}`,
+    appkey, appsecret,
+    tr_id: 'TTTC0081R',
+    custtype: 'P',
+  };
+  const json = await fetchKis(url, headers, `체결조회 ${odno}`, { fetchImpl, retries, retryDelayMs });
+  return parseOrderFillResponse(json, odno);
+}
+
+// KIS 체결내역조회 원본 응답 → 주문번호별 체결 상태. 순수함수 — 테스트 가능. output1이
+// 비어있거나 해당 odno가 안 보이면 null(추정 안 함 — 접수 직후엔 아직 조회에 안 잡히는
+// 지연이 있을 수 있어, 호출측이 "아직 모름"과 "0건 체결"을 구분해야 함). fullyFilled는
+// 주문수량과 총체결수량이 둘 다 확보됐고 체결수량이 주문수량 이상일 때만 true.
+export function parseOrderFillResponse(json, odno) {
+  if (json?.rt_cd !== '0') throw kisRtError('KIS 체결내역조회 오류', json);
+  const rows = Array.isArray(json?.output1) ? json.output1 : [];
+  // ⚠️ 실측 발견(2026-08-12): 이 API의 odno는 10자리 0패딩("0006693100")으로 오는데,
+  // 주문 접수 응답(order_cash, ODNO)이나 텔레그램에 남는 값은 패딩 없는 "6693100" —
+  // 문자열 그대로 비교하면 항상 실패해 실제로 체결된 주문도 null로 나온다(진짜 겪은
+  // 버그). 숫자로 정규화해 비교해야 양쪽 표기가 달라도 안전하게 매칭된다.
+  const targetNum = Number(odno);
+  const row = rows.find((r) => Number(r?.odno) === targetNum);
+  if (!row) return null;
+  const num = (v) => { const n = Number(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
+  const orderQty = num(row.ord_qty);
+  const filledQty = num(row.tot_ccld_qty);
+  return {
+    orderNo: String(row.odno ?? '').trim(),
+    orderQty,
+    filledQty,
+    remainingQty: num(row.rmn_qty),
+    avgFillPrice: num(row.avg_prvs),
+    canceled: String(row.cncl_yn ?? '').trim() === 'Y',
+    fullyFilled: orderQty != null && filledQty != null && orderQty > 0 && filledQty >= orderQty,
+  };
+}
+
 // ── 국내주식 현금 매수/매도 주문 — Phase 11(2026-08-09) ────────────────────
 // tr_id 확인: github.com/koreainvestment/open-trading-api
 // examples_llm/domestic_stock/order_cash/order_cash.py — env_dv/ord_dv 분기 로직 원문에서

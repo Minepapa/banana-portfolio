@@ -40,7 +40,9 @@
 //   node scripts/tools/execute-quant-proposal.mjs                    # 승인 대기 중인 퀀트 제안 전부
 //   node scripts/tools/execute-quant-proposal.mjs --proposal-id=<id>  # 특정 제안 하나만
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { parseProposal } from '../lib/proposal-vault.mjs';
 import { executeProposal } from '../lib/execute-proposal.mjs';
 import { buildGateInput } from '../lib/proposal-execution-input.mjs';
@@ -201,6 +203,27 @@ async function main() {
       console.log(`  ⛔ ${proposal.id} — 검문소 차단: ${result.gate.failures.map((f) => `${f.check}(${f.reason})`).join('; ')}`);
     } else {
       console.log(`  ✅ ${proposal.id} — ${result.settlement.status} (${result.settlement.log})`);
+      // 실주문이 실제로 KIS에 접수되면(brokerOrderId 있음) 체결 여부를 아무도 확인 안 하는
+      // 갭이 있었다(2026-08-12 발견 — 카카오 알림 파싱이 v2/퀀트 트랙에 배선 안 돼 있어
+      // 체결을 시스템이 전혀 모름). watch-order-fill.mjs를 분리된 백그라운드 프로세스로
+      // 띄워 KIS 체결내역조회 API로 직접 확인 후 텔레그램으로 알린다 — detached+unref로
+      // 이 스크립트(execute-quant-proposal.mjs)가 끝나도 감시가 계속되게 한다.
+      if (result.settlement.brokerOrderId) {
+        const here = dirname(fileURLToPath(import.meta.url));
+        const child = spawn('node', [
+          join(here, 'watch-order-fill.mjs'),
+          `--order-no=${result.settlement.brokerOrderId}`,
+          `--code=${proposal.assetKey}`,
+        ], { detached: true, stdio: 'ignore' }); // name 생략 시 watch-order-fill.mjs가 code로 대체(proposal에 별도 종목명 필드 없음)
+        // spawn()은 실행 자체가 실패해도(예: node 못 찾음) 동기 throw가 아니라 비동기
+        // 'error' 이벤트로만 알려준다 — 리스너가 없으면 unhandled 'error'가 이 프로세스를
+        // 죽여 같은 배치의 나머지 제안 처리까지 중단시킨다(코드리뷰 지적, 2026-08-12).
+        // 이미 주문 자체는 writeStateFile로 기록 완료된 뒤라 감시 기동 실패는 로그만
+        // 남기고 배치는 계속 진행되게 한다.
+        child.on('error', (e) => console.error(`  ⚠️ 체결감시 기동 실패(주문 자체는 이미 기록됨): ${e.message}`));
+        child.unref();
+        console.log(`  👁️ 체결감시 시작(백그라운드) — 주문번호 ${result.settlement.brokerOrderId}`);
+      }
     }
   }
 }
