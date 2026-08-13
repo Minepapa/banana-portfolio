@@ -36,6 +36,7 @@ import { parseExecution, parseDividend, parseGoldBuy } from '../lib/notification
 import { buildExecutionRecord, buildDividendRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { QUANT_ACCOUNT_NO } from '../lib/account-resolver.mjs';
 
 const ALARM_SHEET = '알람';
 
@@ -79,7 +80,7 @@ async function main() {
   const alarmRows = await getRange(token, `${ALARM_SHEET}!A2:D`);
   console.log(`📨 알람 ${alarmRows.length}행 스캔`);
 
-  let execNew = 0, divNew = 0, skip = 0, unrecognized = 0;
+  let execNew = 0, divNew = 0, skip = 0, unrecognized = 0, quantExcluded = 0;
   for (const r of alarmRows) {
     const body = String(r[3] ?? ''); // D: 내용
     const ts = String(r[0] ?? '');   // A: 시간
@@ -87,6 +88,11 @@ async function main() {
 
     const e = parseExecution(body, ts);
     if (e) {
+      // 퀀트 전용 계좌 체결은 Facts/Ledger에 아예 안 쓴다(2026-08-13) — KIS API가
+      // 정본이고(watch-order-fill.mjs가 이미 직접 기록), 카카오로 잡힌 건 순수 중복
+      // 이라 계좌 오귀속 위험(account-resolver.mjs 참고)뿐 아니라 장부에 같은 거래가
+      // 두 번 남는 것 자체가 혼란이다 — 아예 원천에서 걸러낸다.
+      if (e.acctNo === QUANT_ACCOUNT_NO) { quantExcluded++; continue; }
       const { filename, content, dir } = buildExecutionRecord(e);
       const filepath = join(dir, filename);
       if (existsSync(filepath)) { skip++; continue; }
@@ -124,7 +130,8 @@ async function main() {
   }
 
   console.log(
-    `\n✅ 완료 — 체결 +${execNew}(금현물 포함) · 배당 +${divNew} · 중복스킵 ${skip} · 범위밖/미인식 ${unrecognized}` +
+    `\n✅ 완료 — 체결 +${execNew}(금현물 포함) · 배당 +${divNew} · 중복스킵 ${skip} · ` +
+    `퀀트계좌 제외 ${quantExcluded}(KIS API가 정본) · 범위밖/미인식 ${unrecognized}` +
     (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
 }

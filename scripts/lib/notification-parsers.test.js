@@ -32,6 +32,7 @@ test('parseExecution: NH투자증권 국내 체결', () => {
     price: 71000,
     currency: 'KRW',
     broker: 'NH투자증권',
+    acctNo: '',
   });
 });
 
@@ -53,12 +54,29 @@ test('parseExecution: 삼성증권 매도 체결', () => {
   assert.equal(r.price, 30500);
 });
 
-test('parseExecution: 한국투자증권 체결', () => {
+test('parseExecution: 한국투자증권 체결(계좌번호 없는 옛 형식도 여전히 파싱됨)', () => {
   const body = '[한국투자증권 체결안내]\n매수 체결되었습니다\n종목명 : TIGER 미국나스닥100(133690)\n체결수량 : 3주\n체결단가 : 105,000원';
   const r = parseExecution(body, '2026-08-04 11:00:00');
   assert.equal(r.stockCode, '133690');
   assert.equal(r.stockName, 'TIGER 미국나스닥100');
   assert.equal(r.quantity, 3);
+  assert.equal(r.acctNo, '');
+});
+
+// 2026-08-13 오너가 실제 알림 원문을 붙여 확인 — 한국투자증권 체결안내엔 계좌번호가
+// 있었다(IRP·퀀트 두 계좌를 구분해야 하는 실제 계기가 된 예시). 이 계좌번호로
+// account-resolver.mjs가 증권사명보다 우선해서 계좌를 확정한다.
+test('[막아야 함] parseExecution: 한국투자증권 체결 — 계좌번호를 캡처해 IRP/퀀트를 구분할 수 있다', () => {
+  const irpBody = '[한국투자증권 체결안내]11:04\n\n*계좌번호:43****82-29\n*계좌명:정영호\n*매매구분:현금매수체결\n*종목명:TIGER TDF2045 적격(0025N0)\n*체결수량:4주\n*체결단가:12,220원\n\n*주문수량:4주\n*총체결수량:4주\n*주문번호:3989900';
+  const quantBody = '[한국투자증권 체결안내]09:41\n\n*계좌번호:46****07-01\n*계좌명:정영호\n*매매구분:현금매수체결\n*종목명:SK텔레콤(017670)\n*체결수량:1주\n*체결단가:87,500원\n\n*주문수량:1주\n*총체결수량:1주\n*주문번호:6693100';
+
+  const irp = parseExecution(irpBody, '2026-08-12 11:04:00');
+  const quant = parseExecution(quantBody, '2026-08-12 09:41:00');
+  assert.equal(irp.acctNo, '43****82-29');
+  assert.equal(irp.stockName, 'TIGER TDF2045 적격');
+  assert.equal(quant.acctNo, '46****07-01');
+  assert.equal(quant.stockName, 'SK텔레콤');
+  assert.notEqual(irp.acctNo, quant.acctNo); // 같은 증권사, 다른 계좌 — 이게 이번 수정의 핵심
 });
 
 test('parseExecution: 체결·매수/매도 키워드 없으면 null', () => {

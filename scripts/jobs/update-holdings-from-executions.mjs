@@ -43,7 +43,7 @@ import { join } from 'node:path';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
-import { resolveExecutionAccount } from '../lib/account-resolver.mjs';
+import { resolveExecutionAccount, QUANT_TRACK_LABEL } from '../lib/account-resolver.mjs';
 import { applyBuy, applySell, consolidateLots } from '../lib/holdings-updater.mjs';
 import { buildLiveHoldingRecord, holdingFilename, parseAppliedDedupKeys } from '../lib/holdings-vault-writer.mjs';
 import { buildProfitRecord } from '../lib/ledger-vault-writer.mjs';
@@ -74,6 +74,16 @@ function writeHolding(holding) {
 // 계좌당 종목 하나 = 파일 하나로 수렴시킨다. 여러 로트가 있던 항목은 통합 결과를 쓰고
 // 남는 로트 파일을 지운다(전부 --dry-run이면 계산만, 쓰기 없음). 반환: account|name →
 // holding(+appliedDedupKeys 배열) Map.
+//
+// ⚠️ 버그 수정(2026-08-13, 실사고로 발견) — 예전엔 `group.length > 1`일 때만 정식
+// 파일명(holdingFilename)으로 다시 쓰고 나머지를 지웠다. 그런데 로트가 원래 1개뿐이던
+// 종목(Phase 7 마이그레이션이 남긴 `{계좌}-{종목}-r{행번호}.md` 파일)은 이 조건을 안 타
+// 옛 파일명 그대로 방치됐다 — 그 종목이 "처음 신규 체결"을 받는 순간, writeHolding이
+// 정식 파일명으로 새로 쓰지만 옛 파일은 안 지워져 같은 종목이 두 파일로 이중 집계되는
+// 사고가 실제로 났다(ISA TIGER 리츠부동산인프라, 1450주짜리 구파일이 1480주짜리 새
+// 파일과 나란히 남음). 이제 로트 개수와 무관하게 "이 파일 경로가 정식 파일명과 다르면"
+// 무조건 정리한다 — 다음 잡 실행 때 아직 안 건드려진 나머지 레거시 파일명도 전부
+// 자연히 정규화된다(에러 없이 조용히 발생하던 종류의 버그라 여기서 한 번에 청소).
 function loadConsolidatedHoldings() {
   const files = readVaultFiles(VAULT_PATHS.state.holdings);
   const groups = new Map();
@@ -85,11 +95,13 @@ function loadConsolidatedHoldings() {
   const holdingsMap = new Map();
   for (const [key, group] of groups) {
     const merged = consolidateLots(group.map((f) => f.parsed));
-    if (group.length > 1) {
-      console.log(`  🔀 로트 통합: ${key} (${group.length}개 파일 → 1개, 합산 ${merged.qty}주)`);
+    const survivingFilename = join(VAULT_PATHS.state.holdings, holdingFilename(merged.account, merged.name));
+    const needsRewrite = group.length > 1 || group[0].filepath !== survivingFilename;
+    if (needsRewrite) {
+      if (group.length > 1) console.log(`  🔀 로트 통합: ${key} (${group.length}개 파일 → 1개, 합산 ${merged.qty}주)`);
+      else console.log(`  📝 파일명 정규화(레거시 잔재 정리): ${key}`);
       writeHolding(merged);
       for (const f of group) {
-        const survivingFilename = join(VAULT_PATHS.state.holdings, holdingFilename(merged.account, merged.name));
         if (f.filepath !== survivingFilename && !DRY_RUN) rmSync(f.filepath, { force: true });
       }
     }
@@ -110,10 +122,23 @@ async function main() {
 
   for (const { filepath, content, parsed: exec } of targets) {
     const currentHoldings = [...holdingsMap.values()];
-    const account = exec.account || resolveExecutionAccount({ broker: exec.broker, stockName: exec.stockName, stockCode: exec.stockCode }, currentHoldings);
+    const account = exec.account || resolveExecutionAccount({ broker: exec.broker, stockName: exec.stockName, stockCode: exec.stockCode, acctNo: exec.acctNo }, currentHoldings);
     if (!account) {
       console.log(`  ⚠️  계좌 귀속 불가 — 건너뜀: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName} (${exec.broker})`);
       unresolvedAccount++;
+      continue;
+    }
+    // ⚠️ 버그 수정(2026-08-13, 독립 코드리뷰 HIGH 지적) — 퀀트 트랙 체결(exec.account가
+    // 이미 '퀀트'로 채워진 채 들어옴, watch-order-fill.mjs 참고)은 `exec.account ||
+    // resolveExecutionAccount(...)`에서 이미 참(truthy)이라 resolveExecutionAccount의
+    // "퀀트는 null" 가드를 그대로 건너뛰고 여기까지 도달해버렸다 — 고치기 전엔 이
+    // 잡이 State/Holdings에 퀀트 포지션을 실제로 써서(자산분배·퀀트 계좌 분리 원칙 위반)
+    // Firestore 미러·대시보드에도 퀀트 보유가 섞여 나갈 뻔했다. 퀀트는 KIS API가
+    // 정본이라(Phase 9 확정) 여기서 명시적으로 건너뛴다 — holdingsApplied만 찍어
+    // 재처리 대상에서 빠지게 한다(Holdings에는 안 씀).
+    if (account === QUANT_TRACK_LABEL) {
+      console.log(`  ↪️  퀀트 트랙 체결 — State/Holdings 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       continue;
     }
 

@@ -23,6 +23,13 @@ export function normalizeDateTime(raw) {
 }
 
 // ── 체결 파서 (증권사별 정규식) ───────────────────────
+// ⚠️ 계좌번호 캡처(2026-08-13) — account-resolver.mjs 기존 주석은 "체결 알림 원문
+// 자체에 계좌번호가 없다"고 명시했었는데(2026-08-05 확인 당시엔 한국투자증권 계좌가
+// IRP 하나뿐이라 아쉬울 이유가 없어서 안 찾아봤을 뿐), 오너가 실제 알림 원문을 다시
+// 붙여준 걸 보니 한국투자증권 체결안내엔 "*계좌번호:43****82-29" 형태로 계좌번호가
+// 그대로 있었다 — 그 가정이 틀렸다. 지금 한국투자증권이 IRP·퀀트 두 계좌를 다 호스팅
+// 하게 되면서 증권사명만으로는 더 이상 유일하게 안 풀리므로(NH의 ISA/위탁 문제와
+// 같은 클래스), 이 계좌번호를 뽑아 account-resolver.mjs가 우선 사용하게 한다.
 const TRADE_PATTERNS = [
   { broker: 'NH투자증권', overseas: false,
     re: /\[NH투자증권\][\s\S]*?종\s*목\s*명\s*:\s*(?<stockName>[^\n\r]+)[\s\S]*?종목코드\s*:\s*(?<stockCode>[A-Za-z0-9]{6})[\s\S]*?체결수량\s*:\s*(?<quantity>[\d,]+)\s*주[\s\S]*?체결단가\s*:\s*(?<price>[\d,]+)\s*원/ },
@@ -31,7 +38,10 @@ const TRADE_PATTERNS = [
   { broker: '삼성증권', overseas: false,
     re: /\[삼성증권\]<주식체결안내>[\n\r]+[^\n\r]+[\n\r]+(?<stockName>[^\n\r]+)[\n\r]+(?:매수|매도)(?<quantity>[\d,]+)주\s+(?<price>[\d,]+)원/ },
   { broker: '한국투자증권', overseas: false,
-    re: /\[한국투자증권 체결안내\][\s\S]*?종목명\s*:\s*(?<stockName>[^(\n\r]+?)\s*\((?<stockCode>[A-Za-z0-9]{6})\)[\s\S]*?체결수량\s*:\s*(?<quantity>[\d,]+)\s*주[\s\S]*?체결단가\s*:\s*(?<price>[\d,]+)\s*원/ },
+    // 계좌번호 캡처는 선택(?)로 둔다 — 실측으로는 항상 있지만, 혹시 형식이 다른
+    // 변종 알림에서 없다고 해서 체결 자체를 통째로 놓치면(파싱 실패) 계좌번호 하나 더
+    // 아는 것보다 훨씬 나쁘다(체결 자체가 기록에서 빠짐).
+    re: /\[한국투자증권 체결안내\][\s\S]*?(?:계좌번호\s*:\s*(?<acctNo>[0-9*\-]+)[\s\S]*?)?종목명\s*:\s*(?<stockName>[^(\n\r]+?)\s*\((?<stockCode>[A-Za-z0-9]{6})\)[\s\S]*?체결수량\s*:\s*(?<quantity>[\d,]+)\s*주[\s\S]*?체결단가\s*:\s*(?<price>[\d,]+)\s*원/ },
 ];
 
 export function parseExecution(body, tsRaw) {
@@ -51,6 +61,7 @@ export function parseExecution(body, tsRaw) {
       stockName, quantity, price,
       currency: p.overseas ? 'USD' : 'KRW',
       broker: p.broker,
+      acctNo: g.acctNo?.trim() || '', // 한국투자증권만 현재 캡처(다른 증권사는 빈 문자열)
     };
   }
   return null;

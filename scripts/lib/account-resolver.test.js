@@ -6,8 +6,23 @@ test('삼성증권은 항상 연금저축(1:1 확정)', () => {
   assert.equal(resolveExecutionAccount({ broker: '삼성증권', stockName: '아무거나' }, []), '연금저축');
 });
 
-test('한국투자증권은 항상 IRP(1:1 확정)', () => {
-  assert.equal(resolveExecutionAccount({ broker: '한국투자증권', stockName: '아무거나' }, []), 'IRP');
+// 2026-08-13 수정 — 한국투자증권이 이제 IRP·퀀트 두 계좌를 호스팅해 증권사명만으로는
+// 더 이상 유일하게 안 풀린다(NH의 ISA/위탁 문제와 같은 클래스). 계좌번호(acctNo)로
+// 구분한다 — 실제 알림 원문 예시(오너 제공)로 고정.
+test('[막아야 함] 한국투자증권 — 계좌번호로 IRP를 확정(증권사명만으론 더 이상 확정 못 함)', () => {
+  assert.equal(resolveExecutionAccount({ broker: '한국투자증권', stockName: '아무거나', acctNo: '43****82-29' }, []), 'IRP');
+});
+
+test('[막아야 함] 한국투자증권 — 계좌번호가 퀀트 계좌면 null(State/Holdings 반영 금지, KIS API가 정본)', () => {
+  assert.equal(resolveExecutionAccount({ broker: '한국투자증권', stockName: '아무거나', acctNo: '46****07-01' }, []), null);
+});
+
+test('[막아야 함] 한국투자증권 — 계좌번호를 못 뽑았으면(옛 형식 등) 더 이상 IRP로 추정하지 않고 null', () => {
+  assert.equal(resolveExecutionAccount({ broker: '한국투자증권', stockName: '아무거나' }, []), null);
+});
+
+test('한국투자증권 — 모르는 계좌번호(신규 계좌 등)면 추정하지 않고 null', () => {
+  assert.equal(resolveExecutionAccount({ broker: '한국투자증권', stockName: '아무거나', acctNo: '99****99-99' }, []), null);
 });
 
 test('NH — 종목이 ISA에만 있으면 ISA로 확정', () => {
