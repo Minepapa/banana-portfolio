@@ -12,7 +12,7 @@
 // 토큰(POST /oauth2/tokenP) 유효기간 1일, 공식 예제(kis_auth.py) 주석: "6시간 이내 발급시
 // 기존 token값 유지" — 그래도 30초 주기 폴링마다 재발급하면 낭비이므로 파일 캐시로 만료
 // 임박 전까지 재사용한다(job-alerts.mjs STATE_FILE과 동일 위치 관례: scripts/.cache/, gitignore됨).
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -82,9 +82,15 @@ export function parseKisExpiry(expiredStr) {
 function readTokenCache() {
   try { return JSON.parse(readFileSync(TOKEN_CACHE_FILE, 'utf8')); } catch { return {}; }
 }
+// mode: 0o600 — access_token이 그대로 든 파일이라 소유자 외 읽기를 막는다(Phase 11
+// "남은 작업" 항목, 2026-08-13 정리). writeFileSync의 mode는 파일을 새로 생성할 때만
+// 적용되고(Node 동작 — 기존 파일이면 무시) 기존에 world-readable로 이미 만들어진
+// 캐시파일까지는 안 고쳐주므로, 매번 명시적으로 chmodSync도 같이 호출해 이미 존재하는
+// 파일의 권한도 실제로 좁힌다.
 function writeTokenCache(map) {
   mkdirSync(dirname(TOKEN_CACHE_FILE), { recursive: true });
-  writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(map));
+  writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(map), { mode: 0o600 });
+  chmodSync(TOKEN_CACHE_FILE, 0o600);
 }
 
 export async function getKisToken({ appkey, appsecret, fetchImpl = fetch }) {
