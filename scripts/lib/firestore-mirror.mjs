@@ -40,6 +40,7 @@ export function buildHoldingsMirror({ holdings = [], now = new Date() }) {
   const totalEval = holdings.reduce((s, h) => s + (h.evalAmount || 0), 0);
   const items = holdings.map((h) => ({
     account: h.account ?? null, name: h.name, ticker: h.ticker ?? '', market: h.market ?? '',
+    assetClass: h.assetClass ?? '', isCashLike: h.isCashLike ?? false,
     qty: h.qty, avgPrice: h.avgPrice, curPrice: h.curPrice ?? null,
     evalAmount: h.evalAmount, profitAmount: h.profitAmount ?? null, profitPct: h.profitPct ?? null,
     weightPct: totalEval > 0 ? ((h.evalAmount || 0) / totalEval) * 100 : 0,

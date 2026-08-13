@@ -53,6 +53,18 @@ test('buildHoldingsMirror: weightPct는 evalAmount 비중으로 계산', () => {
   assert.equal(r.items[1].weightPct, 70);
 });
 
+test('buildHoldingsMirror: assetClass·isCashLike를 그대로 전달(App.jsx 7탭 재배선용, 2026-08-13)', () => {
+  const holdings = [
+    { name: '삼성전자', assetClass: '국내주식', evalAmount: 100 },
+    { name: '예수금', isCashLike: true, evalAmount: 0 },
+  ];
+  const r = buildHoldingsMirror({ holdings, now: NOW });
+  assert.equal(r.items[0].assetClass, '국내주식');
+  assert.equal(r.items[0].isCashLike, false);
+  assert.equal(r.items[1].assetClass, '');
+  assert.equal(r.items[1].isCashLike, true);
+});
+
 test('buildAllocationMirror: 빈 accounts 그대로 통과', () => {
   const r = buildAllocationMirror({ now: NOW });
   assert.deepEqual(r.accounts, []);
