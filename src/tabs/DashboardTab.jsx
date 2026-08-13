@@ -1,22 +1,13 @@
-// 대시보드 탭: 요약 카드 + 계좌 그리드 + 총괄 도넛 + 평가금 추이. App.jsx에서 추출 (동작 불변).
-// 저축금 편집(시트 쓰기)·롱프레스 핸들러는 App에 남기고 prop으로 받는다 — 시트 I/O는 App 책임.
-import { useState } from "react";
-import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
-} from "recharts";
-import { PROFIT_POS, PROFIT_NEG, CHART_BAR_COLOR, profitColor } from '../lib/colors.js';
+// 대시보드 탭 — 요약 카드 + 계좌 그리드 + 총괄 도넛. v2 재배선(2026-08-13): 읽기 전용
+// (Firestore mirror는 쓰기 API가 없음 — useFirestoreMirror.js 참고), 편집 기능 전부
+// 제거. 월별 잔고 추이 차트는 v1 "월별잔고" 시트 전용이라 미러 7종 문서에 대응 값이
+// 없어 제거(가짜 데이터로 대체하지 않는다).
+import { profitColor } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
-import { useLongPress } from '../hooks/useLongPress.js';
 
 export default function DashboardTab({
-  totalInvest, totalEval, totalProfit, accounts, monthlyData,
-  fmt, isMobile, baseFont, setAcctKey, setTab,
-  showSavings, setShowSavings, showSavingsEdit, savingsEditValue, setSavingsEditValue,
-  beginSavingsEdit, saveSavingsEdit, setShowSavingsEdit,
+  totalInvest, totalEval, totalProfit, accounts, fmt, isMobile, setAcctKey, setTab,
 }) {
-  const [monthYear, setMonthYear] = useState('전체');
-  const lp = useLongPress();
-
   return (
     <div>
       {/* 요약 카드 3개 */}
@@ -116,8 +107,8 @@ export default function DashboardTab({
                 <div style={{ fontSize: 11, color: '#6B675C', marginTop: 2 }}>투자원금 ₩{fmt(_ti)}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 17, fontWeight: 800, color: _tp >= 0 ? PROFIT_POS : PROFIT_NEG, fontFamily: MONO, letterSpacing: -0.3 }}>₩{fmt(_tp)}</div>
-                <div style={{ fontSize: 13, fontWeight: 800, color: _tp >= 0 ? PROFIT_POS : PROFIT_NEG }}>{_tr >= 0 ? '+' : ''}{_tr.toFixed(1)}%</div>
+                <div style={{ fontSize: 17, fontWeight: 800, color: _tp >= 0 ? '#159E52' : '#E5484D', fontFamily: MONO, letterSpacing: -0.3 }}>₩{fmt(_tp)}</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: _tp >= 0 ? '#159E52' : '#E5484D' }}>{_tr >= 0 ? '+' : ''}{_tr.toFixed(1)}%</div>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -144,102 +135,6 @@ export default function DashboardTab({
           </div>
         );
       })()}
-
-      {/* 전체 평가금 추이 바차트 */}
-      <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px", marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C" }}>전체 평가금 추이</div>
-            <button
-              onClick={() => { if (!lp.firedRef.current) setShowSavings(p => !p); }}
-              {...lp.bind('savings', beginSavingsEdit)}
-              style={{
-                position: 'relative', overflow: 'hidden',
-                padding: '3px 10px', borderRadius: 0,
-                border: `1px solid ${lp.activeId === 'savings' ? '#141414' : showSavings ? '#159E52' : '#141414'}`,
-                background: showSavings ? '#DDF3E4' : 'transparent',
-                color: showSavings ? '#159E52' : '#6B675C',
-                cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
-                userSelect: 'none', WebkitUserSelect: 'none',
-              }}
-            >저축금{lp.activeId === 'savings' && <div className="lp-progress" />}</button>
-          </div>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {['전체', '2025', '2026'].map(y => (
-              <button key={y} onClick={() => setMonthYear(y)} style={{
-                padding: '3px 10px', borderRadius: 0,
-                border: '1px solid #141414',
-                background: monthYear === y ? '#E4F5A0' : 'transparent',
-                color: '#141414', fontWeight: monthYear === y ? 800 : 600,
-                cursor: 'pointer', fontSize: 10, fontFamily: baseFont,
-              }}>{y}</button>
-            ))}
-          </div>
-        </div>
-        {(() => {
-          const data = monthYear === '전체' ? monthlyData : monthlyData.filter(d => String(d.year) === monthYear);
-          const chartData = showSavings
-            ? data.map(d => ({ ...d, base: Math.max(0, d.value - (d.savings || 0)), savingsAmt: d.savings || 0 }))
-            : data;
-          return data.length > 0 ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={chartData} barSize={isMobile ? 8 : 14} accessibilityLayer={false}>
-                <XAxis dataKey="label" tick={{ fill: "#6B675C", fontSize: 9 }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={v => `${(v / 100000000).toFixed(1)}억`} tick={{ fill: "#6B675C", fontSize: 9 }} width={40} axisLine={false} tickLine={false} />
-                <Tooltip
-                  formatter={(v, name) => {
-                    if (name === 'base') return [`₩${v.toLocaleString()}`, '잔고'];
-                    if (name === 'savingsAmt') return [`₩${v.toLocaleString()}`, '저축금'];
-                    return [`₩${v.toLocaleString()}`, '평가금'];
-                  }}
-                  contentStyle={{ background: "#EAE6DA", border: "1px solid #141414", borderRadius: 0, fontSize: 11 }}
-                  labelStyle={{ color: '#141414' }}
-                  itemStyle={{ color: '#141414' }}
-                />
-                {showSavings ? (
-                  <>
-                    <Bar dataKey="base" stackId="a" fill={CHART_BAR_COLOR} activeBar={false} />
-                    <Bar dataKey="savingsAmt" stackId="a" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} activeBar={false} />
-                  </>
-                ) : (
-                  <Bar dataKey="value" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} activeBar={false} />
-                )}
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6B675C', fontSize: 12 }}>
-              데이터가 없습니다
-            </div>
-          );
-        })()}
-        {showSavingsEdit && (
-          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #141414' }}>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C', marginBottom: 8 }}>이번 달 저축금 수정</div>
-            <input
-              type="number"
-              value={savingsEditValue}
-              onChange={e => setSavingsEditValue(e.target.value)}
-              style={{
-                width: '100%', boxSizing: 'border-box', marginBottom: 8,
-                background: '#FFFFFF', border: '1px solid #141414', borderRadius: 0,
-                color: '#141414', padding: '6px 10px', fontSize: 12, fontFamily: baseFont,
-              }}
-              placeholder="0"
-            />
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowSavingsEdit(false)} style={{
-                padding: '6px 12px', borderRadius: 0, border: '1px solid #141414',
-                background: 'transparent', color: '#6B675C', cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
-              }}>취소</button>
-              <button onClick={saveSavingsEdit} style={{
-                padding: '6px 12px', borderRadius: 0, border: 'none',
-                background: '#159E52', color: '#fff', cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
-              }}>저장</button>
-            </div>
-          </div>
-        )}
-      </div>
-
     </div>
   );
 }

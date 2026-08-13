@@ -1,18 +1,14 @@
-// 배당 탭: 월별 배당 차트 + 종목명 인라인 편집 + 연도별 합계. App.jsx에서 추출 (동작 불변).
+// 배당 탭 — 월별 배당 차트 + 연도별 합계. v2 재배선(2026-08-13): 읽기 전용(종목명
+// 인라인 편집은 시트 쓰기 기능이었음 — 제거).
 import { useState } from "react";
 import {
   ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
 import { PROFIT_POS } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
-import { useLongPress } from '../hooks/useLongPress.js';
 
-export default function DividendTab({ dividendData, isMobile, baseFont, fmt, sheets }) {
+export default function DividendTab({ dividendData, isMobile, baseFont, fmt }) {
   const [divYear, setDivYear] = useState('전체');
-  const [editingDivRow, setEditingDivRow] = useState(null); // 배당 종목명 편집 중인 시트 행
-  const [editDivName, setEditDivName] = useState('');
-  const [divSaving, setDivSaving] = useState(false);
-  const lp = useLongPress();
   const [selectedDivKey, setSelectedDivKey] = useState(null);
 
   const divYears = ['전체', ...[...new Set(dividendData.map(d => String(d.year)))].sort()];
@@ -33,7 +29,7 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
           <button key={y} onClick={() => { setDivYear(y); setSelectedDivKey(null); }} style={{
             padding: isMobile ? "8px 14px" : "6px 14px",
             borderRadius: 0,
-            border: `1px solid ${divYear === y ? '#141414' : '#141414'}`,
+            border: '1px solid #141414',
             background: divYear === y ? '#E4F5A0' : 'transparent',
             color: divYear === y ? '#141414' : '#6B675C',
             cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
@@ -84,30 +80,8 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, she
             </div>
             {selectedDivItem.items.map((item, i) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid #EAE6DA' }}>
-                {editingDivRow === item.row ? (
-                  <>
-                    <input value={editDivName} onChange={e => setEditDivName(e.target.value)} autoFocus
-                      style={{ flex: 1, minWidth: 0, fontSize: 12, padding: '4px 6px', borderRadius: 0, border: '1px solid #141414', background: '#FFFFFF', color: '#141414', fontFamily: baseFont }} />
-                    <button disabled={divSaving} onClick={async () => {
-                      const v = editDivName.trim(); if (!v) return;
-                      setDivSaving(true);
-                      try { await sheets.writeRange(`배당금!C${item.row}`, [v]); await sheets.fetch(); setEditingDivRow(null); }
-                      finally { setDivSaving(false); }
-                    }} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 0, border: 'none', background: '#159E52', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>{divSaving ? '…' : '저장'}</button>
-                    <button onClick={() => setEditingDivRow(null)} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 0, border: '1px solid #141414', background: 'transparent', color: '#6B675C', cursor: 'pointer', flexShrink: 0 }}>취소</button>
-                  </>
-                ) : (
-                  <>
-                    <span
-                      {...lp.bind(item.row, () => { setEditingDivRow(item.row); setEditDivName(item.name); })}
-                      title="길게 눌러 이름 수정"
-                      style={{ position: 'relative', fontSize: 12, color: lp.activeId === item.row ? '#141414' : '#141414', cursor: 'pointer', flex: 1, minWidth: 0, textAlign: 'left', userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'manipulation' }}>
-                      {item.name || '(이름 없음)'}
-                      {lp.activeId === item.row && <div className="lp-progress" />}
-                    </span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS, flexShrink: 0, fontFamily: MONO }}>₩{fmt(item.amount)}</span>
-                  </>
-                )}
+                <span style={{ fontSize: 12, color: '#141414', flex: 1, minWidth: 0, textAlign: 'left' }}>{item.name || '(이름 없음)'}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS, flexShrink: 0, fontFamily: MONO }}>₩{fmt(item.amount)}</span>
               </div>
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8 }}>

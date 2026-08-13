@@ -1,43 +1,26 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { DEFAULT_ACCOUNTS } from './lib/constants.js';
-import { profitColor } from './lib/colors.js';
-import { computeDailyChange } from './lib/movers.js';
-import { PAPER, INK, INK_2, ACCENT, CARD_BG, MONO, BORDER, BORDER_HEAVY, SHADOW_SM } from './lib/theme.js';
+import { useState, useMemo } from "react";
+import { PAPER, INK, INK_2, ACCENT, CARD_BG, MONO, BORDER_HEAVY } from './lib/theme.js';
 import { relTime, fmt } from './lib/textFormat.js';
+import { isMirrorStale } from './lib/mirrorFreshness.js';
+import {
+  accountsFromMirror, rebalanceAccountFromMirror, monthlyDividendsFromMirror,
+  monthlyProfitsFromMirror, sortedTradesFromMirror,
+} from './lib/mirrorAdapters.js';
 import { useIsMobile } from './hooks/useIsMobile.js';
-import { useGoogleSheets, CONFIGURED } from './hooks/useGoogleSheets.js';
-import { useTradeSync } from './hooks/useTradeSync.js';
-import { useEvalCard } from './hooks/useEvalCard.js';
-import { usePortfolioEdits } from './hooks/usePortfolioEdits.js';
-import { useSavingsEdit } from './hooks/useSavingsEdit.js';
-import { useRebalanceTargets } from './hooks/useRebalanceTargets.js';
-import { useTabData } from './hooks/useTabData.js';
-import HelpTab from './tabs/HelpTab.jsx';
-import DividendTab from './tabs/DividendTab.jsx';
-import ProfitTab from './tabs/ProfitTab.jsx';
-import ReportTab from './tabs/ReportTab.jsx';
-import KpiTab from './tabs/KpiTab.jsx';
-import RiskTab from './tabs/RiskTab.jsx';
+import { useFirestoreMirror } from './hooks/useFirestoreMirror.js';
 import DashboardTab from './tabs/DashboardTab.jsx';
+import ReportTab from './tabs/ReportTab.jsx';
 import RebalanceTab from './tabs/RebalanceTab.jsx';
 import HoldingsTab from './tabs/HoldingsTab.jsx';
 import ExecutionsTab from './tabs/ExecutionsTab.jsx';
-import TodayTab from './tabs/TodayTab.jsx';
-import PantheonTab from './tabs/PantheonTab.jsx';
-import OrderInboxTab from './tabs/OrderInboxTab.jsx';
-import PositionJournalTab from './tabs/PositionJournalTab.jsx';
-import PreferenceTab from './tabs/PreferenceTab.jsx';
-import BuyEvaluationTab from './tabs/BuyEvaluationTab.jsx';
-import SellEvaluationTab from './tabs/SellEvaluationTab.jsx';
-import LearningModuleModal from './tabs/LearningModuleModal.jsx';
-import TradeEditModal from './tabs/TradeEditModal.jsx';
-import EvalIngestModal from './tabs/EvalIngestModal.jsx';
-import EvalQueueModal from './tabs/EvalQueueModal.jsx';
-import AddHoldingForm from './tabs/AddHoldingForm.jsx';
-import JobHealthBanner from './tabs/JobHealthBanner.jsx';
-import SyncBanner from './tabs/SyncBanner.jsx';
+import DividendTab from './tabs/DividendTab.jsx';
+import ProfitTab from './tabs/ProfitTab.jsx';
 
-// ── 앱 ────────────────────────────────────────────────────────────────────────
+// ── 앱(v2 — Firestore mirror 읽기 전용, 2026-08-13 재배선) ──────────────────────
+// docs/IMPLEMENTATION-PLAN.md Phase 6 확정: 7개 탭(홈·보유종목·자산분배·배당금·수익금·
+// 체결내역·리포트)만 남긴다. 쓰기는 전부 텔레그램 승인 흐름을 거쳐 Vault에 반영되고
+// (useFirestoreMirror.js 원칙), 이 앱은 그 결과를 보여만 준다 — 수정하려면 판테온에게
+// 텔레그램으로 요청.
 export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [hideAmounts, setHideAmounts] = useState(() => {
@@ -49,204 +32,31 @@ export default function App() {
     return next;
   });
   const [acctKey, setAcctKey] = useState("위탁");
-  const [holdSort, setHoldSort] = useState('sheet'); // sheet | rate_desc | rate_asc | eval_desc | profit_desc
-  const [accounts, setAccounts] = useState(DEFAULT_ACCOUNTS);
-  const [monthlyData, setMonthlyData] = useState([]);
-  const [dividendData, setDividendData] = useState([]);
-  const [evalMode, setEvalMode] = useState('매수'); // 평가 탭 토글: '매수' | '매도'
-  const [evalTargetName, setEvalTargetName] = useState(null); // 리스크탭→평가 탭 이동 시 자동 선택할 종목
-  const [evalTargetNonce, setEvalTargetNonce] = useState(0);  // 같은 종목 재클릭에도 재이동되도록(이름만 비교하면 무시됨)
-  const monthlyRowRef = useRef(null);
-  const lastBalanceSyncRef = useRef(null);
-  const isBalanceWritingRef = useRef(false);
-  const [balanceSyncMsg, setBalanceSyncMsg] = useState('');
-  const [prevDayEval, setPrevDayEval] = useState(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    const history = JSON.parse(localStorage.getItem('banana_eval_history') || '{}');
-    const prevDate = Object.keys(history).filter(d => d < today).sort().pop();
-    return prevDate ? history[prevDate] : null;
-  });
-  const [showSavings, setShowSavings] = useState(false);
-  const [savingsMode, setSavingsMode] = useState(false);
-  const [profitData, setProfitData] = useState([]);
+  const [holdSort, setHoldSort] = useState('sheet');
   const isMobile = useIsMobile();
-  const [evalSelectedMetric, setEvalSelectedMetric] = useState(null);
-  const [evaluations, setEvaluations] = useState([]);
-  const [evalSelectedIdx, setEvalSelectedIdx] = useState(0);
-  const [evalQueue, setEvalQueue] = useState({ entries: [], counts: { pending: 0, processing: 0, done: 0, error: 0 } });
 
-  const [weeklyReports, setWeeklyReports] = useState([]);
-  const [riskMonitor, setRiskMonitor] = useState([]);
-  const [baselines, setBaselines] = useState([]);
-  const [positionJournal, setPositionJournal] = useState([]);
-  const [preferences, setPreferences] = useState([]); // 성향 학습 관찰
-  const [usdRate, setUsdRate] = useState(0); // USD/KRW 환율
-  const [dailySnapshot, setDailySnapshot] = useState(null); // 일별스냅샷 최신행(어제대비·무버 기준선)
-  const [proposals, setProposals] = useState([]); // 주문제안 (주문함)
-  const [realtimeQuotes, setRealtimeQuotes] = useState({}); // 한투(KIS) 실시간 시세 — 보유 국내종목만
+  const { auth, sync, mirrors, signIn, signOut } = useFirestoreMirror();
 
-  const onData = useCallback(({ accounts: a, monthly: m, dividends: d, monthlyRow: mr, profits: p, evaluations: ev, evalQueue: q, weeklyReports: wr, riskMonitor: rm, baselines: bl, positionJournal: pj, usdRate: ur, preferences: pref, dailySnapshot: ds, proposals: pr, realtimeQuotes: rq }) => {
-    setAccounts(prev => ({ ...prev, ...a }));
-    setMonthlyData(m || []);
-    setDividendData(d || []);
-    setProfitData(p || []);
-    monthlyRowRef.current = mr ?? null;
-    setEvaluations(ev || []);
-    setEvalSelectedIdx(0);
-    if (q) setEvalQueue(q);
-    if (wr) setWeeklyReports(wr);
-    if (rm) setRiskMonitor(rm);
-    if (bl) setBaselines(bl);
-    if (pj) setPositionJournal(pj);
-    if (pref) setPreferences(pref);
-    if (ur > 0) setUsdRate(ur);
-    setDailySnapshot(ds ?? null);
-    setProposals(pr || []);
-    setRealtimeQuotes(rq || {});
-  }, []);
+  const accounts = useMemo(() => accountsFromMirror(mirrors.holdings), [mirrors.holdings]);
+  const acct = accounts[acctKey] ?? Object.values(accounts)[0];
+  const rebalanceAcct = useMemo(
+    () => rebalanceAccountFromMirror({ allocationMirror: mirrors.allocation, holdingsMirror: mirrors.holdings, acctKey }),
+    [mirrors.allocation, mirrors.holdings, acctKey],
+  );
+  const dividendData = useMemo(() => monthlyDividendsFromMirror(mirrors.dividends), [mirrors.dividends]);
+  const profitData = useMemo(() => monthlyProfitsFromMirror(mirrors.profits), [mirrors.profits]);
+  const trades = useMemo(() => sortedTradesFromMirror(mirrors.trades), [mirrors.trades]);
 
-  const sheets = useGoogleSheets(onData);
-
-  const {
-    tradeRows,
-    tradeSyncing,
-    tradeSyncMsg,
-    savingsAppliedRows,
-    tradeEditOpen, setTradeEditOpen,
-    tradeEditRowIdx, setTradeEditRowIdx,
-    tradeEditValues, setTradeEditValues,
-    setTradeEditOriginal,
-    tradeEditBusy,
-    syncTradeExecutions,
-    saveTradeEdit,
-    applySavingsFromTrade,
-  } = useTradeSync({ sheets, usdRate });
-
-  const {
-    evalIngestOpen, setEvalIngestOpen,
-    evalIngestRaw, setEvalIngestRaw,
-    evalIngestParsed, setEvalIngestParsed,
-    evalIngestMsg, setEvalIngestMsg,
-    evalIngestBusy,
-    evalQueueOpen, setEvalQueueOpen,
-    evalQueueName, setEvalQueueName,
-    evalQueueMarket, setEvalQueueMarket,
-    evalQueueMemo, setEvalQueueMemo,
-    evalQueueMsg, setEvalQueueMsg,
-    evalQueueBusy,
-    requeueBusyIdx,
-    tryParseEvalJson,
-    ingestEvaluation,
-    submitEvalQueue,
-    requeueEval,
-  } = useEvalCard({ sheets });
-
-  const {
-    showAddForm, setShowAddForm,
-    showDeleteMode, setShowDeleteMode,
-    selectedToDelete, setSelectedToDelete,
-    editingHolding, setEditingHolding,
-    editPrice, setEditPrice,
-    editQty, setEditQty,
-    editCurrentPrice, setEditCurrentPrice,
-    editIncludeSavings, setEditIncludeSavings,
-    editingCash, setEditingCash,
-    editCashValue, setEditCashValue,
-    editingDollar, setEditingDollar,
-    editDollarValue, setEditDollarValue,
-    handleDeleteSelected,
-    beginEdit,
-    saveEdit, saveCash, saveDollar,
-    handleAddHoldingSave,
-  } = usePortfolioEdits({ sheets, accounts, acctKey, monthlyRowRef, setBalanceSyncMsg });
-
-  const {
-    showSavingsEdit, setShowSavingsEdit,
-    savingsEditValue, setSavingsEditValue,
-    beginSavingsEdit, saveSavingsEdit,
-  } = useSavingsEdit({ sheets, monthlyRowRef, setBalanceSyncMsg });
-
-  const {
-    editingAllTargets, setEditingAllTargets,
-    allTargetInputs, setAllTargetInputs,
-    saveAllTargets,
-  } = useRebalanceTargets({ sheets, acctKey, setBalanceSyncMsg });
-
-  const { kpiTrades, jobStatus, execPending } = useTabData({ sheets, tab, syncTradeExecutions });
-
-  const totalEval = Object.values(accounts).reduce((s, a) => s + a.total_eval, 0);
-
-  // 어제 대비 평가금 추적
-  useEffect(() => {
-    if (sheets.sync !== 'synced' || totalEval === 0) return;
-    const today = new Date().toISOString().slice(0, 10);
-    const history = JSON.parse(localStorage.getItem('banana_eval_history') || '{}');
-    const prevDate = Object.keys(history).filter(d => d < today).sort().pop();
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPrevDayEval(prevDate ? history[prevDate] : null);
-    history[today] = totalEval;
-    const dates = Object.keys(history).sort();
-    while (dates.length > 7) delete history[dates.shift()];
-    localStorage.setItem('banana_eval_history', JSON.stringify(history));
-  }, [sheets.sync, totalEval]);
-
-  // 잔고 자동 동기화 — write 후 re-fetch 하여 월별 그래프도 즉시 갱신
-  useEffect(() => {
-    if (isBalanceWritingRef.current) return;
-    if (sheets.sync !== 'synced' || !sheets.lastSync) return;
-    if (lastBalanceSyncRef.current === sheets.lastSync) return;
-    lastBalanceSyncRef.current = sheets.lastSync;
-    const mr = monthlyRowRef.current;
-    if (!mr) {
-      setBalanceSyncMsg('이번 달 행 없음');
-      setTimeout(() => setBalanceSyncMsg(''), 4000);
-      return;
-    }
-    isBalanceWritingRef.current = true;
-    const _isa = accounts['ISA']?.total_eval ?? 0;
-    const _위탁 = accounts['위탁']?.total_eval ?? 0;
-    const _연금 = accounts['연금저축']?.total_eval ?? 0;
-    const _irp = accounts['IRP']?.total_eval ?? 0;
-    sheets.writeRange(`월별잔고!D${mr}:H${mr}`, [
-      _isa, _위탁, _연금, _irp, _isa + _위탁 + _연금 + _irp,
-    ]).then(async () => {
-      await sheets.fetch();
-      // fetch 완료 후 lastSyncRef.current = t2 → 다음 effect 실행 시 중복 write 방지
-      lastBalanceSyncRef.current = sheets.lastSyncRef.current;
-      setBalanceSyncMsg('잔고 동기화됨');
-      setTimeout(() => setBalanceSyncMsg(''), 3000);
-    }).catch(() => {
-      setBalanceSyncMsg('잔고 동기화 실패');
-      setTimeout(() => setBalanceSyncMsg(''), 4000);
-    }).finally(() => {
-      isBalanceWritingRef.current = false;
-    });
-  }, [sheets.sync, sheets.lastSync, accounts]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const acct = accounts[acctKey];
-  const totalInvest = Object.values(accounts).reduce((s, a) => s + a.total_invest, 0);
-  const totalProfit = totalEval - totalInvest;
-  // 어제 대비: 시트 일별스냅샷(08:00 기준선·정확) 우선, 없으면 기존 localStorage 폴백(무중단).
-  const daily = sheets.auth === 'signed-in' ? computeDailyChange(accounts, dailySnapshot) : null;
-  const dailyDelta = daily ? daily.totalDelta
-    : (sheets.auth === 'signed-in' && prevDayEval != null ? totalEval - prevDayEval : null);
-  const dailyPct = daily ? daily.totalPct * 100
-    : (prevDayEval > 0 && dailyDelta != null ? dailyDelta / prevDayEval * 100 : null);
-  const dailyBaseLabel = daily?.baselineTs ? daily.baselineTs.slice(5, 16) : null; // "MM-DD HH:mm" 기준시각
-  const movers = daily?.movers ?? [];
-
-  // 리스크 탭 "평가 보기"/"매도 검토" → 평가 탭의 해당 종목 카드로 바로 이동.
-  const goToEval = (stockName, mode) => {
-    setEvalMode(mode);
-    setEvalTargetName(stockName);
-    setEvalTargetNonce(n => n + 1);
-    setTab('평가');
-  };
+  const totalEval = mirrors.home?.totalEval ?? 0;
+  const totalInvest = mirrors.home?.totalInvest ?? 0;
+  const totalProfit = mirrors.home?.totalProfit ?? 0;
+  const pendingProposalCount = mirrors.home?.pendingProposalCount ?? 0;
+  const stale = isMirrorStale(mirrors.home?.updatedAt);
 
   const syncLabel =
-    sheets.sync === 'syncing' ? '동기화 중...' :
-    sheets.sync === 'error'   ? '동기화 실패' :
-    sheets.lastSync           ? `${relTime(sheets.lastSync)} 갱신` :
+    sync === 'syncing' ? '동기화 중...' :
+    sync === 'error'   ? '동기화 실패' :
+    mirrors.home?.updatedAt ? `${relTime(mirrors.home.updatedAt)} 갱신` :
     '';
 
   const sheetBtnStyle = {
@@ -272,7 +82,7 @@ export default function App() {
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
               <div style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: isMobile ? 1 : 2, color: INK, background: ACCENT, padding: "2px 6px" }}>
                 BANANA · 은퇴 준비 포트폴리오
               </div>
@@ -280,6 +90,11 @@ export default function App() {
                 style={{ flexShrink: 0, border: "1px solid #141414", borderRadius: 0, background: hideAmounts ? ACCENT : PAPER, color: INK, cursor: "pointer", fontSize: 11, lineHeight: 1, padding: "3px 6px" }}>
                 {hideAmounts ? "🙈" : "👁"}
               </button>
+              {pendingProposalCount > 0 && (
+                <div title="텔레그램에서 승인/거부 대기 중인 제안" style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: 1, color: "#fff", background: "#E0A000", padding: "2px 6px" }}>
+                  제안 대기 {pendingProposalCount}건
+                </div>
+              )}
             </div>
             <div style={{ fontSize: isMobile ? 22 : 27, fontWeight: 800, letterSpacing: -0.5, color: INK, fontFamily: MONO }}>
               {hideAmounts ? "₩••••••" : `₩${totalEval.toLocaleString()}`}
@@ -287,69 +102,48 @@ export default function App() {
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: INK_2, letterSpacing: 2 }}>평가손익</div>
-            <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: hideAmounts ? INK_2 : profitColor(totalProfit), fontFamily: MONO }}>
+            <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: hideAmounts ? INK_2 : (totalProfit >= 0 ? '#159E52' : '#E5484D'), fontFamily: MONO }}>
               {hideAmounts ? "••••••" : <>{totalProfit > 0 ? '▲ ' : totalProfit < 0 ? '▼ ' : ''}₩{fmt(Math.abs(totalProfit))}</>}
             </div>
-            {dailyDelta != null && !hideAmounts && (
-              <div style={{ fontSize: 10, fontWeight: 700, color: profitColor(dailyDelta), fontFamily: MONO }}>
-                {dailyDelta > 0 ? '▲ ' : dailyDelta < 0 ? '▼ ' : ''}₩{fmt(Math.abs(dailyDelta))}
-                {dailyPct != null ? ` (${dailyDelta >= 0 ? '+' : '−'}${Math.abs(dailyPct).toFixed(2)}%)` : ''}
-              </div>
-            )}
           </div>
         </div>
 
-        {/* 구글 시트 동기화 UI */}
-        {CONFIGURED && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-            {sheets.auth === 'loading' && (
-              <span style={{ fontSize: 10, color: INK_2 }}>Google 초기화 중...</span>
-            )}
-            {sheets.auth === 'signed-out' && (
-              <button onClick={sheets.signIn} aria-label="Google 계정으로 로그인"
-                style={{ ...sheetBtnStyle, background: ACCENT, color: INK }}>
-                로그인
+        {/* 구글 로그인(Firestore mirror 구독용) */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+          {auth === 'loading' && (
+            <span style={{ fontSize: 10, color: INK_2 }}>Google 초기화 중...</span>
+          )}
+          {auth === 'signed-out' && (
+            <button onClick={signIn} aria-label="Google 계정으로 로그인"
+              style={{ ...sheetBtnStyle, background: ACCENT, color: INK }}>
+              로그인
+            </button>
+          )}
+          {auth === 'signed-in' && (
+            <>
+              <span style={{ fontSize: 10, fontWeight: 700, color: sync === 'error' ? "#E5484D" : INK_2 }}>
+                {syncLabel}
+              </span>
+              <button onClick={signOut} aria-label="로그아웃" style={{ ...sheetBtnStyle, color: "#E5484D" }}>
+                로그아웃
               </button>
-            )}
-            {sheets.auth === 'signed-in' && (
-              <>
-                <span style={{ fontSize: 10, fontWeight: 700, color: sheets.sync === 'error' ? "#E5484D" : INK_2 }}>
-                  {syncLabel}
-                </span>
-                <button onClick={sheets.fetch} disabled={sheets.sync === 'syncing'}
-                  style={sheetBtnStyle} aria-label="시트에서 최신 데이터 새로고침" title="시트에서 최신 데이터 가져오기">
-                  ↻
-                </button>
-                <button onClick={sheets.signOut} aria-label="로그아웃" style={{ ...sheetBtnStyle, color: "#E5484D" }}>
-                  로그아웃
-                </button>
-              </>
-            )}
-            {sheets.auth === 'error' && (
-              <span style={{ fontSize: 10, fontWeight: 700, color: "#E5484D" }}>Google 연결 오류</span>
-            )}
-          </div>
-        )}
+            </>
+          )}
+          {auth === 'error' && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#E5484D" }}>Google 연결 오류</span>
+          )}
+        </div>
 
         {/* 탭 */}
         <div className="tab-bar" role="tablist" aria-label="화면 전환" style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {[
             { key: "dashboard", label: "홈" },
-            { key: "판테온",    label: "판테온" },
-            { key: "오늘",      label: "오늘" },
-            { key: "주문",      label: "주문" },
-            { key: "리스크",    label: "리스크" },
-            { key: "평가",      label: "평가" },
-            { key: "report",    label: "리포트" },
             { key: "holdings",  label: "보유종목" },
             { key: "rebalance", label: "자산분배" },
             { key: "체결내역",  label: "체결" },
             { key: "dividend",  label: "배당금" },
             { key: "profit",    label: "수익금" },
-            { key: "저널",      label: "포지션" },
-            { key: "성향",      label: "성향" },
-            { key: "kpi",       label: "KPI" },
-            { key: "help",      label: "도움말" },
+            { key: "report",    label: "리포트" },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setTab(key)}
               role="tab" aria-selected={tab === key} aria-label={label} style={{
@@ -371,44 +165,51 @@ export default function App() {
 
       <div style={{ padding: "20px 16px" }}>
 
-        {/* 동기화 실패 배너 — 실패한 옛 데이터를 최신처럼 보는 것 방지 (전 탭 공통) */}
-        {sheets.auth === 'signed-in' && sheets.sync === 'error' && (
+        {/* 동기화 실패 배너 */}
+        {auth === 'signed-in' && sync === 'error' && (
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
             background: '#FBE3E4', border: '1px solid #E5484D', borderRadius: 0,
             padding: '8px 12px', marginBottom: 12,
           }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: '#E5484D', textAlign: 'left' }}>
-              동기화 실패 — 표시 중인 데이터는 {sheets.lastSync ? `${relTime(sheets.lastSync)} 기준` : '이전 세션 기준'}입니다
+              동기화 실패 — 표시 중인 데이터가 최신이 아닐 수 있습니다
             </span>
-            <button onClick={sheets.fetch} style={{
-              flexShrink: 0, padding: '4px 10px', borderRadius: 0, border: '1px solid #E5484D',
-              background: 'transparent', color: '#E5484D', cursor: 'pointer',
-              fontSize: 10, fontWeight: 700, fontFamily: baseFont,
-            }}>재시도</button>
           </div>
         )}
 
-        {CONFIGURED && (sheets.auth === 'signed-out' || sheets.auth === 'error') && (
+        {/* 데이터 신선도 배너 — updatedAt이 2시간 넘게 안 갱신되면 옛 데이터임을 명시 */}
+        {auth === 'signed-in' && sync === 'synced' && stale && (
+          <div style={{
+            background: '#FDF3D8', border: '1px solid #E0A000', borderRadius: 0,
+            padding: '8px 12px', marginBottom: 12,
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#8A6200' }}>
+              ⚠ 데이터가 오래됐습니다({syncLabel || '갱신 이력 없음'}) — 무인 잡이 멈췄을 수 있습니다
+            </span>
+          </div>
+        )}
+
+        {(auth === 'signed-out' || auth === 'error') && (
           <div style={{
             background: CARD_BG,
-            border: BORDER, borderRadius: 0, boxShadow: SHADOW_SM,
+            border: "1px solid #141414", borderRadius: 0, boxShadow: "3px 3px 0 #141414",
             padding: "20px 16px", marginBottom: 16, textAlign: "center",
           }}>
             <div style={{ fontSize: 13, fontWeight: 800, color: INK, marginBottom: 6 }}>
-              {sheets.auth === 'error' ? 'Google 연결 오류' : '로그인이 필요합니다'}
+              {auth === 'error' ? 'Google 연결 오류' : '로그인이 필요합니다'}
             </div>
             <div style={{ fontSize: 11, color: INK_2, lineHeight: 1.5, marginBottom: 14 }}>
-              {sheets.auth === 'error'
-                ? '시트 연결에 문제가 있어 데이터를 불러오지 못했습니다. 아래 0원 표시는 실제 잔액이 아닙니다.'
+              {auth === 'error'
+                ? 'Firestore 연결에 문제가 있어 데이터를 불러오지 못했습니다.'
                 : '로그인하면 실제 포트폴리오가 표시됩니다.'}
             </div>
-            <button onClick={sheets.signIn} style={{
-              padding: "10px 24px", borderRadius: 0, border: BORDER, boxShadow: SHADOW_SM,
+            <button onClick={signIn} style={{
+              padding: "10px 24px", borderRadius: 0, border: "1px solid #141414", boxShadow: "3px 3px 0 #141414",
               background: ACCENT, color: INK, cursor: "pointer",
               fontSize: 13, fontWeight: 800, fontFamily: baseFont, minHeight: 44,
             }}>
-              {sheets.auth === 'error' ? '다시 로그인' : 'Google 로그인'}
+              {auth === 'error' ? '다시 로그인' : 'Google 로그인'}
             </button>
           </div>
         )}
@@ -417,39 +218,21 @@ export default function App() {
         {tab === "dashboard" && (
           <DashboardTab
             totalInvest={totalInvest} totalEval={totalEval} totalProfit={totalProfit}
-            accounts={accounts} monthlyData={monthlyData} fmt={fmt} isMobile={isMobile} baseFont={baseFont}
+            accounts={accounts} fmt={fmt} isMobile={isMobile}
             setAcctKey={setAcctKey} setTab={setTab}
-            showSavings={showSavings} setShowSavings={setShowSavings} showSavingsEdit={showSavingsEdit}
-            savingsEditValue={savingsEditValue} setSavingsEditValue={setSavingsEditValue}
-            beginSavingsEdit={beginSavingsEdit}
-            saveSavingsEdit={saveSavingsEdit} setShowSavingsEdit={setShowSavingsEdit}
           />
         )}
 
-        {/* ── KPI 탭 ── */}
-        {tab === "kpi" && (<>
-          <JobHealthBanner jobStatus={jobStatus} />
-          <KpiTab monthlyData={monthlyData} kpiTrades={kpiTrades} evaluations={evaluations} isMobile={isMobile} evalSelectedMetric={evalSelectedMetric} setEvalSelectedMetric={setEvalSelectedMetric} jobStatus={jobStatus} />
-        </>)}
-
         {/* ── 리포트 탭 ── */}
         {tab === "report" && (
-          <ReportTab weeklyReports={weeklyReports} />
+          <ReportTab report={mirrors.latestReport} />
         )}
 
-        {/* ── 리스크 탭 ── */}
-        {tab === "리스크" && (
-          <RiskTab riskMonitor={riskMonitor} baselines={baselines} setTab={setTab} onGoToEval={goToEval} />
-        )}
-
-        {/* ── 리밸런싱 탭 ── */}
+        {/* ── 자산분배 탭 ── */}
         {tab === "rebalance" && (
           <RebalanceTab
-            accounts={accounts} acctKey={acctKey} acct={acct} setAcctKey={setAcctKey}
-            isMobile={isMobile} baseFont={baseFont} fmt={fmt} sheets={sheets}
-            editingAllTargets={editingAllTargets} setEditingAllTargets={setEditingAllTargets}
-            allTargetInputs={allTargetInputs} setAllTargetInputs={setAllTargetInputs}
-            saveAllTargets={saveAllTargets}
+            accounts={accounts} acctKey={acctKey} acct={rebalanceAcct} setAcctKey={setAcctKey}
+            isMobile={isMobile} baseFont={baseFont} fmt={fmt}
           />
         )}
 
@@ -457,144 +240,30 @@ export default function App() {
         {tab === "holdings" && (
           <HoldingsTab
             accounts={accounts} acct={acct} acctKey={acctKey} setAcctKey={setAcctKey}
-            isMobile={isMobile} baseFont={baseFont} fmt={fmt} sheets={sheets}
-            holdSort={holdSort} setHoldSort={setHoldSort} realtimeQuotes={realtimeQuotes}
-            edits={{
-              showAddForm, setShowAddForm, showDeleteMode, setShowDeleteMode,
-              selectedToDelete, setSelectedToDelete,
-              editingHolding, setEditingHolding, editingCash, setEditingCash,
-              editingDollar, setEditingDollar,
-              editPrice, setEditPrice, editQty, setEditQty,
-              editCurrentPrice, setEditCurrentPrice,
-              editIncludeSavings, setEditIncludeSavings,
-              editCashValue, setEditCashValue, editDollarValue, setEditDollarValue,
-              beginEdit, saveEdit, saveCash, saveDollar, handleDeleteSelected,
-              AddHoldingForm, onAddHoldingSave: handleAddHoldingSave,
-            }}
+            isMobile={isMobile} baseFont={baseFont} fmt={fmt}
+            holdSort={holdSort} setHoldSort={setHoldSort}
           />
         )}
 
         {/* ── 배당금 탭 ── */}
         {tab === "dividend" && (
-          <DividendTab dividendData={dividendData} isMobile={isMobile} baseFont={baseFont} fmt={fmt} sheets={sheets} />
+          <DividendTab dividendData={dividendData} isMobile={isMobile} baseFont={baseFont} fmt={fmt} />
         )}
         {/* ── 수익금 탭 ── */}
         {tab === "profit" && (
           <ProfitTab profitData={profitData} isMobile={isMobile} baseFont={baseFont} fmt={fmt} />
         )}
 
-        {/* ── 판테온 현황판 (대표 Zeus + 4부서 요약 — 새 fetch 없음, 기존 state 재사용) ── */}
-        {tab === "판테온" && (
-          <PantheonTab
-            evalQueue={evalQueue} riskMonitor={riskMonitor} jobStatus={jobStatus}
-            preferences={preferences} weeklyReports={weeklyReports} setTab={setTab}
-          />
-        )}
-
-        {/* ── 오늘 탭 (매일 처리할 행동 체크리스트 — 거래결정 탭 대체) ── */}
-        {tab === "오늘" && (
-          <TodayTab
-            riskMonitor={riskMonitor} positionJournal={positionJournal} accounts={accounts}
-            weeklyReports={weeklyReports} execPending={execPending} jobStatus={jobStatus}
-            preferences={preferences} movers={movers} dailyBaseLabel={dailyBaseLabel} fmt={fmt}
-            proposals={proposals}
-            setTab={setTab} baseFont={baseFont}
-          />
-        )}
-
-        {/* ── 주문 탭 (주문함 — 신호를 실행 가능한 주문서로) ── */}
-        {tab === "주문" && (
-          <OrderInboxTab proposals={proposals} accounts={accounts} sheets={sheets} fmt={fmt} baseFont={baseFont} />
-        )}
-
-        {/* ── 포지션저널 탭 (거래 생애주기 전제) ── */}
-        {tab === "저널" && (
-          <PositionJournalTab
-            positionJournal={positionJournal} riskMonitor={riskMonitor} evaluations={evaluations}
-            sheets={sheets} baseFont={baseFont}
-          />
-        )}
-
-        {/* ── 성향확인 탭 (행동 학습 관찰 확인) ── */}
-        {tab === "성향" && (
-          <PreferenceTab preferences={preferences} sheets={sheets} baseFont={baseFont} />
-        )}
-
         {/* ── 체결내역 탭 ── */}
         {tab === "체결내역" && (
-          <ExecutionsTab
-            tradeRows={tradeRows} tradeSyncMsg={tradeSyncMsg} tradeSyncing={tradeSyncing}
-            syncTradeExecutions={syncTradeExecutions}
-            savingsMode={savingsMode} setSavingsMode={setSavingsMode}
-            savingsAppliedRows={savingsAppliedRows} applySavingsFromTrade={applySavingsFromTrade}
-            setTradeEditValues={setTradeEditValues} setTradeEditRowIdx={setTradeEditRowIdx}
-            setTradeEditOpen={setTradeEditOpen} setTradeEditOriginal={setTradeEditOriginal}
-            sheets={sheets} baseFont={baseFont}
-          />
+          <ExecutionsTab trades={trades} isMobile={isMobile} baseFont={baseFont} fmt={fmt} />
         )}
-
-        {/* ── 평가 탭 ── */}
-        {tab === "평가" && (
-          <BuyEvaluationTab
-            evaluations={evaluations} accounts={accounts} evalMode={evalMode} setEvalMode={setEvalMode}
-            setEvalSelectedMetric={setEvalSelectedMetric} setEvalQueueOpen={setEvalQueueOpen}
-            setEvalIngestOpen={setEvalIngestOpen} evalQueue={evalQueue} requeueEval={requeueEval}
-            requeueBusyIdx={requeueBusyIdx} evalSelectedIdx={evalSelectedIdx} setEvalSelectedIdx={setEvalSelectedIdx}
-            sheets={sheets} baseFont={baseFont} targetName={evalTargetName} targetNonce={evalTargetNonce}
-          />
-        )}
-
-        {/* ── 매도 모드 (evalMode === '매도') ── */}
-        {tab === "평가" && evalMode === '매도' && (
-          <SellEvaluationTab
-            accounts={accounts} evaluations={evaluations} positionJournal={positionJournal}
-            riskMonitor={riskMonitor} setEvalMode={setEvalMode} sheets={sheets} baseFont={baseFont} fmt={fmt}
-            targetName={evalTargetName} targetNonce={evalTargetNonce}
-          />
-        )}
-
-        {/* ── 체결내역 셀 편집 모달 ── */}
-        <TradeEditModal
-          tradeEditOpen={tradeEditOpen} tradeEditRowIdx={tradeEditRowIdx} setTradeEditOpen={setTradeEditOpen}
-          tradeEditValues={tradeEditValues} setTradeEditValues={setTradeEditValues}
-          saveTradeEdit={saveTradeEdit} tradeEditBusy={tradeEditBusy} baseFont={baseFont}
-        />
-
-        {/* ── 도움말 탭 ── */}
-        {tab === "help" && <HelpTab baseFont={baseFont} />}
-
-        {/* ── 평가 카드 적재 모달 ── */}
-        <EvalIngestModal
-          evalIngestOpen={evalIngestOpen} setEvalIngestOpen={setEvalIngestOpen}
-          evalIngestRaw={evalIngestRaw} setEvalIngestRaw={setEvalIngestRaw}
-          evalIngestParsed={evalIngestParsed} setEvalIngestParsed={setEvalIngestParsed}
-          evalIngestMsg={evalIngestMsg} setEvalIngestMsg={setEvalIngestMsg}
-          evalIngestBusy={evalIngestBusy} tryParseEvalJson={tryParseEvalJson}
-          ingestEvaluation={ingestEvaluation} baseFont={baseFont}
-        />
-
-        {/* ── 평가 의뢰 모달 ── */}
-        <EvalQueueModal
-          evalQueueOpen={evalQueueOpen} setEvalQueueOpen={setEvalQueueOpen}
-          evalQueueName={evalQueueName} setEvalQueueName={setEvalQueueName}
-          evalQueueMarket={evalQueueMarket} setEvalQueueMarket={setEvalQueueMarket}
-          evalQueueMemo={evalQueueMemo} setEvalQueueMemo={setEvalQueueMemo}
-          evalQueueMsg={evalQueueMsg} setEvalQueueMsg={setEvalQueueMsg}
-          evalQueueBusy={evalQueueBusy} submitEvalQueue={submitEvalQueue}
-          evalQueue={evalQueue} baseFont={baseFont}
-        />
-
-        {/* ── 학습 모듈 슬라이드 패널 ── */}
-        <LearningModuleModal evalSelectedMetric={evalSelectedMetric} setEvalSelectedMetric={setEvalSelectedMetric} />
 
       </div>
 
       <div style={{ padding: "12px 16px 32px", textAlign: "center", fontSize: 9, color: "#141414", letterSpacing: 2 }}>
-        {(sheets.lastSync || new Date()).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })} · 바나나 은퇴 준비 포트폴리오
+        {(mirrors.home?.updatedAt ? new Date(mirrors.home.updatedAt) : new Date()).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })} · 바나나 은퇴 준비 포트폴리오
       </div>
-
-      {/* 동기화/저장 피드백 토스트 (하단 고정) */}
-      <SyncBanner message={balanceSyncMsg} baseFont={baseFont} />
     </div>
   );
 }
