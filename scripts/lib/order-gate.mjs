@@ -27,7 +27,7 @@ export function resolveProposalIntake({ track, assetKey, side, existingProposals
 
   const active = findActiveProposal(existingProposals, { track, assetKey, side });
   if (active) {
-    return { action: 'supersede', supersedeId: active.id, reason: '같은 안건의 대기 중 제안을 최신 정보로 교체' };
+    return { action: 'supersede', supersedeId: active.id, reason: '같은 안건의 활성(대기/승인) 제안을 최신 정보로 교체' };
   }
 
   return { action: 'create' };
@@ -100,6 +100,19 @@ export function checkMarketOpen({ now = new Date(), market = 'KR' }) {
   if (!isWeekday) return { pass: false, reason: `주말(${weekday}) — 장 마감. 다음 개장까지 보류` };
   if (!inSession) return { pass: false, reason: `장중 시간 아님(KST ${hour}:${String(minute).padStart(2, '0')}) — 다음 개장까지 보류` };
   return { pass: true, reason: '장중(공휴일 캘린더 미적용 — 알려진 한계)' };
+}
+
+// 승인의 당일 유효기간 — 오너 확정(2026-08-13): "승인"은 승인한 그날(KST 달력일)에만
+// 유효하다. 가격이탈 등으로 계속 막힌 채 날짜가 넘어가면, 승인 시점의 판단(그날 가격·
+// 상황 기준)이 이미 낡았을 수 있어 시스템이 다음날·다음주까지 조용히 재시도하지 않는다
+// — 지정가 "당일유효" 주문 관례와 동일 원칙. runExecutionGateChecks의 일부가 아니다
+// (그쪽은 "지금 이 시도가 통과하나"만 보고 상태를 안 바꾼다) — 이 함수는 "이 승인 자체가
+// 아직 유효한가"를 별도로 판정하고, 호출부(execute-quant-proposal.mjs)가 true면 상태를
+// "거부"로 전환해 재승인을 요구한다.
+export function isApprovalStale({ decidedAt, now = new Date() }) {
+  if (!decidedAt) return false;
+  const kstDate = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(d);
+  return kstDate(new Date(decidedAt)) !== kstDate(now);
 }
 
 export function checkKillSwitch({ killSwitchContent }) {

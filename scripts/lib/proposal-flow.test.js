@@ -94,6 +94,22 @@ test('createAndSendProposal: 같은 안건에 대기 중 제안이 있으면 대
   assert.match(oldWrite.content, new RegExp(`supersededBy: "${result.id}"`));
 });
 
+test('[막아야 함] createAndSendProposal: 같은 안건이 "승인"(검문소에 막혀 미체결) 상태여도 대체(supersede) — 승인 두 건 동시존재 방지', async () => {
+  const blockedApproved = fixture({ status: '승인', decidedAt: '2026-08-01T01:00:00.000Z' });
+  const writer = mockWriter();
+  const sender = mockSender({ message_id: 2 });
+  const result = await createAndSendProposal({
+    track: '퀀트', assetKey: '005930', side: '매수', quantity: 20, proposedPrice: 71000,
+    departmentLabel: '카이로스',
+    existingProposals: [blockedApproved], writeProposalFile: writer, sendMessage: sender,
+  });
+  assert.equal(result.action, 'created');
+  assert.equal(result.supersededId, blockedApproved.id);
+  const oldWrite = writer.writes.find((w) => w.filename === blockedApproved.filename);
+  assert.ok(oldWrite);
+  assert.match(oldWrite.content, /status: "대체됨"/);
+});
+
 test('createAndSendProposal: 발송 응답에 message_id가 없으면 telegramMessageId는 null, 두 번째 쓰기 없음', async () => {
   const writer = mockWriter();
   const sender = mockSender({}); // message_id 없음

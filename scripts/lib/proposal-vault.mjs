@@ -55,11 +55,19 @@ export function listProposalsFromContents(contents) {
   return contents.map((c) => parseProposal(c));
 }
 
-// 같은 안건(track+assetKey+side)의 "대기" 상태 제안 중 가장 최근 것 — 없으면 null.
-// 있으면 "단일 활성 제안 원칙"에 따라 새 제안이 이걸 대체(supersede)해야 한다.
+// "활성" = 아직 최종 결론(체결·섀도우체결·거부·대체됨)에 이르지 않은 상태. "승인"도
+// 활성이다 — 검문소에 막혀 체결까지 못 갔거나(gateBlockedReason) 아직 execute-quant-
+// proposal.mjs가 안 돌았을 뿐 Frank는 이미 "예"라고 답한 상태라, 여기서 빠지면 같은
+// 종목에 "승인" 두 건이 동시에 존재할 수 있다 — 무인 잡이 어느 쪽이 맞는지 추정 못 하고
+// 최악엔 둘 다 체결(중복 실거래)로 이어진다(오너 지적, 2026-08-12 — 검문소 테스트 중
+// 가격이탈로 막힌 제안이 "승인" 상태로 남았는데 재제안이 이를 대체하지 않던 실사례).
+const ACTIVE_PROPOSAL_STATUSES = new Set(['대기', '승인']);
+
+// 같은 안건(track+assetKey+side)의 활성(대기·승인) 상태 제안 중 가장 최근 것 — 없으면
+// null. 있으면 "단일 활성 제안 원칙"에 따라 새 제안이 이걸 대체(supersede)해야 한다.
 export function findActiveProposal(proposals, { track, assetKey, side }) {
   const key = proposalMatchKey({ track, assetKey, side });
-  const candidates = proposals.filter((p) => p.status === '대기' && proposalMatchKey(p) === key);
+  const candidates = proposals.filter((p) => ACTIVE_PROPOSAL_STATUSES.has(p.status) && proposalMatchKey(p) === key);
   if (!candidates.length) return null;
   return candidates.reduce((latest, p) => (!latest || p.createdAt > latest.createdAt ? p : latest), null);
 }

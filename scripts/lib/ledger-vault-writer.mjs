@@ -26,7 +26,12 @@ function sanitizeSegment(s) {
 
 const ACCOUNT_NOTE = 'Phase 8·9(State/Holdings) 이후 별도 배치로 채워짐 — Phase 2 범위 밖(2026-08-04 확정)';
 
-// e: parseExecution()의 반환값 { tradeDate, tradeType, stockCode, stockName, quantity, price, currency, broker }
+// e: parseExecution()의 반환값 { tradeDate, tradeType, stockCode, stockName, quantity, price,
+// currency, broker, account? }. account는 선택 필드 — 카카오 파싱 경로(자산분배 트랙)는
+// 파싱 시점에 어느 계좌인지 몰라 안 넘기고(기존 그대로 null+ACCOUNT_NOTE로 폴백), 퀀트
+// 트랙(watch-order-fill.mjs)처럼 호출부가 이미 계좌를 확실히 아는 경우에만 넘겨서 그
+// 자리에서 바로 채운다(2026-08-13 — "나중에 채움" 각주가 필요 없는 소스까지 똑같이
+// null로 남겨 혼동을 주지 않기 위함).
 // 금현물도 이 함수를 그대로 쓴다(별도 함수 없음) — v1이 "금현물을 별도 원장으로 뒀다가
 // 버그나서 체결내역에 통합"한 전례를 반영(폴더 하나로 합침, 위 import 주석 참고).
 export function buildExecutionRecord(e) {
@@ -51,8 +56,8 @@ export function buildExecutionRecord(e) {
     price: e.price,
     currency: e.currency,
     broker: e.broker,
-    account: null,
-    accountNote: ACCOUNT_NOTE,
+    account: e.account ?? null,
+    accountNote: e.account ? null : ACCOUNT_NOTE,
     dedupKey,
     recordedAt: new Date().toISOString(),
   });

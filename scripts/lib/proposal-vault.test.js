@@ -51,6 +51,19 @@ test('findActiveProposal: 상태가 "대기"가 아니면(이미 처리됨) 후�
   assert.equal(findActiveProposal([done], { track: '퀀트', assetKey: 'X', side: '매수' }), null);
 });
 
+test('[막아야 함] findActiveProposal: "승인" 상태도 활성으로 취급 — 같은 종목에 승인 두 건이 동시에 쌓이는 걸 막는다', () => {
+  const approved = { ...parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'X', side: '매수', quantity: 1, proposedPrice: 100, now }).content), status: '승인' };
+  const found = findActiveProposal([approved], { track: '퀀트', assetKey: 'X', side: '매수' });
+  assert.equal(found.id, approved.id);
+});
+
+test('findActiveProposal: "체결"·"섀도우체결"·"거부"·"대체됨"은 최종 상태라 활성 아님', () => {
+  for (const status of ['체결', '섀도우체결', '거부', '대체됨']) {
+    const done = { ...parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'X', side: '매수', quantity: 1, proposedPrice: 100, now }).content), status };
+    assert.equal(findActiveProposal([done], { track: '퀀트', assetKey: 'X', side: '매수' }), null, `status=${status}`);
+  }
+});
+
 test('findActiveProposal: 다른 종목/방향은 안 걸린다', () => {
   const p = parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'X', side: '매수', quantity: 1, proposedPrice: 100, now }).content);
   assert.equal(findActiveProposal([p], { track: '퀀트', assetKey: 'Y', side: '매수' }), null);
@@ -99,4 +112,16 @@ test('findRecentRejection: 승인/체결된 건은 거부 이력으로 안 잡�
     status: '승인', decidedAt: now.toISOString(),
   };
   assert.equal(findRecentRejection([approved], { track: '자산분배', assetKey: 'Y', side: '매도', withinMs: 999999999, now }), null);
+});
+
+// 독립 코드리뷰 지적(2026-08-13, MEDIUM) — 승인 당일유효 자동만료(execute-quant-proposal.mjs
+// isApprovalStale)가 한때 status를 "거부"로 재사용했는데, decidedAt(승인 시각)을 그대로 둔
+// 채라 findRecentRejection이 "정말로 오너가 거부했다"고 오인해 24시간 재상정 쿨다운을
+// 걸어버렸다(오너는 거부한 적이 없는데도) — "만료"라는 별개 상태로 분리해 고침.
+test('[막아야 함] findRecentRejection: "만료"(당일유효 자동만료) 상태는 거부 이력으로 안 잡힘', () => {
+  const expired = {
+    ...parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'Z', side: '매수', quantity: 1, proposedPrice: 100, now }).content),
+    status: '만료', decidedAt: now.toISOString(),
+  };
+  assert.equal(findRecentRejection([expired], { track: '퀀트', assetKey: 'Z', side: '매수', withinMs: 999999999, now }), null);
 });

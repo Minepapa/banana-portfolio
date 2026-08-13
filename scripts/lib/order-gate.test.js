@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resolveProposalIntake, checkPriceDeviation, checkHoldingsConsistency, checkIdempotency,
-  checkApprovalMatch, checkMarketOpen, checkKillSwitch, runExecutionGateChecks,
+  checkApprovalMatch, checkMarketOpen, checkKillSwitch, runExecutionGateChecks, isApprovalStale,
 } from './order-gate.mjs';
 import { buildProposalRecord, parseProposal } from './proposal-vault.mjs';
 import { buildKillSwitchState } from './kill-switch.mjs';
@@ -23,6 +23,13 @@ test('[막아야 함] resolveProposalIntake: 같은 안건이 이미 "대기" �
   assert.equal(r.supersedeId, active.id);
 });
 
+test('[막아야 함] resolveProposalIntake: 같은 안건이 이미 "승인"(검문소 차단 등으로 미체결) 상태여도 대체(supersede) — 승인 두 건 동시존재 방지', () => {
+  const blocked = { ...parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'X', side: '매도', quantity: 2, proposedPrice: 90000 }).content), status: '승인', gateBlockedReason: '가격이탈' };
+  const r = resolveProposalIntake({ track: '퀀트', assetKey: 'X', side: '매도', existingProposals: [blocked] });
+  assert.equal(r.action, 'supersede');
+  assert.equal(r.supersedeId, blocked.id);
+});
+
 test('[막아야 함] resolveProposalIntake: 24시간 이내 거부 이력이 있으면 조건변화 명시 없이는 차단', () => {
   const rejected = { ...parseProposal(buildProposalRecord({ track: '자산분배', assetKey: 'Y', side: '매도', quantity: 1, proposedPrice: 100, now: new Date('2026-08-05T08:00:00.000Z') }).content), status: '거부', decidedAt: '2026-08-05T08:05:00.000Z' };
   const r = resolveProposalIntake({ track: '자산분배', assetKey: 'Y', side: '매도', existingProposals: [rejected], now: new Date('2026-08-05T09:00:00.000Z') });
@@ -34,6 +41,21 @@ test('resolveProposalIntake: 거부 이력이 있어도 conditionsChanged=true�
   const rejected = { ...parseProposal(buildProposalRecord({ track: '자산분배', assetKey: 'Y', side: '매도', quantity: 1, proposedPrice: 100, now: new Date('2026-08-05T08:00:00.000Z') }).content), status: '거부', decidedAt: '2026-08-05T08:05:00.000Z' };
   const r = resolveProposalIntake({ track: '자산분배', assetKey: 'Y', side: '매도', existingProposals: [rejected], conditionsChanged: true, now: new Date('2026-08-05T09:00:00.000Z') });
   assert.equal(r.action, 'create');
+});
+
+// ── isApprovalStale (당일 유효기간) ──────────────────────────────
+test('isApprovalStale: 같은 KST 달력일이면 아직 유효', () => {
+  const r = isApprovalStale({ decidedAt: '2026-08-13T01:00:00.000Z', now: new Date('2026-08-13T08:00:00.000Z') }); // 둘 다 KST 8/13
+  assert.equal(r, false);
+});
+
+test('[막아야 함] isApprovalStale: 날짜가 넘어가면(KST 기준) 만료 — 가격이탈로 계속 막히다 다음날로 넘어간 경우', () => {
+  const r = isApprovalStale({ decidedAt: '2026-08-12T05:42:54.455Z', now: new Date('2026-08-13T01:00:00.000Z') }); // 승인 KST 8/12, 지금 KST 8/13
+  assert.equal(r, true);
+});
+
+test('isApprovalStale: decidedAt 없으면(아직 미승인 등 이상상태) 추정하지 않고 false', () => {
+  assert.equal(isApprovalStale({ decidedAt: null }), false);
 });
 
 // ── checkPriceDeviation ──────────────────────────────────────────

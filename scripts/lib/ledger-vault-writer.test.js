@@ -53,6 +53,12 @@ test('buildExecutionRecord: frontmatter에 필수 필드와 account=null(사유 
   assert.match(content, /dedupKey: "2026-08-04 09:12:33\|매수\|삼성전자\|10"/);
 });
 
+test('buildExecutionRecord: 호출부가 account를 이미 알면(퀀트 트랙 등) 그 자리에서 채우고 accountNote는 null(더 이상 미룰 이유 없음)', () => {
+  const { content } = buildExecutionRecord(exec({ account: '퀀트' }));
+  assert.match(content, /account: "퀀트"/);
+  assert.match(content, /accountNote: null/);
+});
+
 test('buildExecutionRecord: 종목명에 슬래시·콜론 등이 있어도 안전한 파일명', () => {
   const { filename } = buildExecutionRecord(exec({ stockName: 'TIGER 미국:나스닥/100' }));
   assert.doesNotMatch(filename, /[:/]/);

@@ -5,10 +5,27 @@
 // 발견해 대응). execute-quant-proposal.mjs가 주문 접수 성공 직후 이 스크립트를 백그라운드
 // 로 띄운다(오너가 직접 실행할 수도 있음).
 //
+// ⚠️ Facts/Ledger 기록(2026-08-13, 오너 확정) — 퀀트 트랙은 카카오 알림 파싱이 아니라
+// KIS API로 직접 체결을 확인하므로(자산분배 트랙과 달리 알림 스크레이핑이 필요 없음),
+// 전량체결 확인 시 이 스크립트가 ledger-vault-writer.mjs의 buildExecutionRecord()를 직접
+// 호출해 Facts/Ledger에 기록한다 — 자산분배 트랙의 parse-notifications-to-vault.mjs와
+// 같은 빌더·같은 dedup 방식(파일명 자체가 dedup 키)을 재사용, 계좌만 그 자리에서 바로
+// '퀀트'로 채운다(카카오 경로는 파싱 시점에 계좌를 몰라 null로 미루지만, 여기는 애초에
+// 퀀트 전용 계좌 하나뿐이라 미룰 이유가 없다).
+//
 // 사용법:
-//   node scripts/tools/watch-order-fill.mjs --order-no=6693100 --code=017670 --name=SK텔레콤
+//   node scripts/tools/watch-order-fill.mjs --order-no=6693100 --code=017670 --name=SK텔레콤 --side=매수
+import { existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { loadKisCredentials, loadQuantAccount, getKisToken, checkOrderFill } from '../lib/kis.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
+import { writeAtomic } from '../lib/state-writer.mjs';
+import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { QUANT_TRACK_LABEL } from '../lib/account-resolver.mjs';
+
+const BROKER = '한국투자증권';
+const ACCOUNT_LABEL = QUANT_TRACK_LABEL; // account-resolver.mjs·update-holdings-from-executions.mjs와 동일 라벨(단일 진실 소스)
 
 function parseArgs(argv) {
   const out = {};
@@ -35,12 +52,16 @@ async function main() {
   const orderNo = args['order-no'];
   const code = args.code || '';
   const name = args.name || code;
+  const side = args.side;
   // --timeout이 숫자가 아니면(오타 등) NaN이 아니라 기본값 30분으로 안전하게 폴백
   // (코드리뷰 지적, 2026-08-12 — NaN이면 deadline 비교가 항상 false가 돼 즉시 타임아웃).
   const timeoutArg = Number(args.timeout);
   const timeoutMin = Number.isFinite(timeoutArg) && timeoutArg > 0 ? timeoutArg : 30;
 
   if (!orderNo) { console.error('❌ --order-no 필요'); process.exit(2); }
+  if (!['매수', '매도'].includes(side)) { console.error('❌ --side 는 매수 또는 매도(Ledger 기록에 필요)'); process.exit(2); }
+
+  mkdirSync(VAULT_PATHS.facts.ledger.executions, { recursive: true });
 
   const quant = loadQuantAccount();
   if (!quant) { console.error('❌ 퀀트 계좌정보(quantAccount) 미설정'); process.exit(1); }
@@ -75,6 +96,31 @@ async function main() {
     if (result?.fullyFilled) {
       console.log(`[체결 확인] 전량 체결 — 평균단가 ${result.avgFillPrice}원`);
       await sendTelegram(buildFilledMessage({ name, code, orderNo, filledQty: result.filledQty, avgFillPrice: result.avgFillPrice }));
+      // avgFillPrice가 없으면(알려진 한계, 위 buildFilledMessage 주석 참고) Ledger에 가격
+      // 없는 체결을 기록하지 않는다 — 알림은 이미 나갔으니 "확인 필요" 상태가 조용히
+      // 묻히지 않고, 오너가 KIS와 대조해 수동 기록해야 함이 로그에 남는다.
+      if (result.avgFillPrice != null) {
+        const { filename, content, dir } = buildExecutionRecord({
+          tradeDate: new Date().toISOString(),
+          tradeType: side,
+          stockCode: code,
+          stockName: name,
+          quantity: result.filledQty,
+          price: result.avgFillPrice,
+          currency: 'KRW',
+          broker: BROKER,
+          account: ACCOUNT_LABEL,
+        });
+        const filepath = join(dir, filename);
+        if (existsSync(filepath)) {
+          console.log(`[Ledger] 이미 기록됨(중복 아님) — ${filepath}`);
+        } else {
+          writeAtomic(filepath, content);
+          console.log(`[Ledger] Facts/Ledger 기록 — ${filepath}`);
+        }
+      } else {
+        console.error('[Ledger] avgFillPrice 없음 — 자동 기록 스킵, 수동 확인 필요');
+      }
       return true;
     }
     if (result && result.filledQty > 0) {

@@ -43,13 +43,15 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { parseProposal } from '../lib/proposal-vault.mjs';
+import { parseProposal, proposalMatchKey, updateProposalRecord } from '../lib/proposal-vault.mjs';
 import { executeProposal } from '../lib/execute-proposal.mjs';
+import { isApprovalStale } from '../lib/order-gate.mjs';
 import { buildGateInput } from '../lib/proposal-execution-input.mjs';
 import { getExecutionMode, MODE_LIVE } from '../lib/shadow-mode.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { loadExecutedOrderIds, recordExecutedOrder, unrecordExecutedOrder } from '../lib/executed-orders.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { sendTelegram } from '../lib/telegram.mjs';
 import {
   hasKisCredentials, loadKisCredentials, loadQuantAccount,
   getKisToken, getKrQuote, getAccountBalance, placeKrOrder,
@@ -94,9 +96,62 @@ async function main() {
   const proposalsDir = VAULT_PATHS.decisions.proposals;
   const all = loadProposals(proposalsDir);
   let targets = all.filter((p) => p.track === '퀀트' && p.status === '승인');
+
+  // 당일 유효기간(오너 확정, 2026-08-13) — 승인한 그날(KST) 안에 체결되지 못한 건은
+  // 여기서 먼저 걸러 "만료"시킨다. --proposal-id로 특정 제안을 지목했어도 예외
+  // 없이 적용(수동 재시도라고 해서 당일유효 원칙을 비켜가면 정책이 두 갈래로 갈라진다).
+  // KIS 조회 전(네트워크 호출 0)에 걸러내 만료 건이 섞여 있어도 API 낭비가 없다.
+  //
+  // ⚠️ 버그 수정(2026-08-13, 독립 코드리뷰 MEDIUM 지적) — 처음엔 status를 "거부"로
+  // 썼는데, findRecentRejection(proposal-vault.mjs)이 "거부" 상태를 24시간 재상정
+  // 쿨다운 판정에 그대로 쓴다 — decidedAt(승인 시각)을 안 바꾸고 재사용했으므로, 자동
+  // 만료 직후 "다시 제안해 주세요" 안내를 그대로 따라 재제안해도 최대 24시간 동안
+  // "거부 재상정 쿨다운"에 걸려 차단됐다(오너가 실제 거부한 적이 없는데도). "만료"라는
+  // 별개 상태로 분리해 이 쿨다운 로직과 아예 안 엮이게 한다.
+  const stillFresh = [];
+  for (const p of targets) {
+    if (!isApprovalStale({ decidedAt: p.decidedAt })) { stillFresh.push(p); continue; }
+    const updated = updateProposalRecord(p.content, {
+      status: '만료',
+      rejectReason: `당일 미체결로 자동 만료 — 승인일(${p.decidedAt}) 안에 체결되지 않음. 여전히 필요하면 새로 제안·승인해 주세요.`,
+    });
+    await writeStateFile(join(proposalsDir, p.filename), updated);
+    console.log(`  ⏳ ${p.id} — 당일 미체결로 자동 만료 처리(재승인 필요)`);
+    try {
+      await sendTelegram(`⏳ <b>승인 만료</b>\n${p.side} ${p.assetKey} ${p.quantity}주 (제안 ${p.id})\n승인 당일 안에 체결되지 않아 자동 만료되었습니다. 계속 진행하려면 다시 제안해 주세요.`);
+    } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
+  }
+  targets = stillFresh;
+
   if (args['proposal-id']) {
     targets = targets.filter((p) => p.id === args['proposal-id']);
     if (!targets.length) { console.log(`ℹ️ 승인 상태의 퀀트 제안 중 id=${args['proposal-id']} 없음`); return; }
+  } else {
+    // 단일 활성 제안 원칙(2026-08-13) — findActiveProposal이 이제 '승인'도 활성으로 쳐서
+    // 새 제안이 자동으로 대체(supersede)하지만, 이 방어가 배포되기 전 데이터·수동 파일
+    // 편집 등으로 그 불변조건이 이미 깨져 같은 안건(track+assetKey+side)에 "승인"이
+    // 2건 이상 남아있을 수 있다. --proposal-id 없이 일괄 실행할 때 이런 상태를 만나면
+    // 어느 쪽이 맞는 제안인지 추정하지 않고 둘 다 건너뛴다 — 잘못 하나 골라 집행하면
+    // 중복 실거래가 되므로, 아무것도 안 하는 쪽이 훨씬 안전하다(ADR 0003 폴백 금지 원칙).
+    const byKey = new Map();
+    for (const p of targets) {
+      const key = proposalMatchKey(p);
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key).push(p);
+    }
+    const duplicates = [...byKey.entries()].filter(([, ps]) => ps.length > 1);
+    if (duplicates.length) {
+      const lines = duplicates.map(([key, ps]) => `· ${key}: ${ps.map((p) => p.id).join(', ')}`);
+      for (const line of lines) console.error(`  ⛔ 같은 안건에 "승인"이 2건 이상 — 추정하지 않고 전부 건너뜀: ${line}`);
+      try {
+        await sendTelegram(
+          `⚠️ <b>제안 정합성 이상</b>\n같은 안건에 "승인" 상태가 2건 이상 동시에 있어 자동체결을 보류했습니다 — ` +
+          `수동으로 확인 후 하나만 남기고 나머지는 거부/대체 처리해 주세요.\n${lines.join('\n')}`,
+        );
+      } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
+      const duplicateIds = new Set(duplicates.flatMap(([, ps]) => ps.map((p) => p.id)));
+      targets = targets.filter((p) => !duplicateIds.has(p.id));
+    }
   }
   if (!targets.length) { console.log('ℹ️ 체결 대기 중인 승인된 퀀트 제안 없음'); return; }
 
@@ -200,7 +255,23 @@ async function main() {
     await writeStateFile(join(proposalsDir, proposal.filename), result.updatedContent);
 
     if (!result.executed) {
-      console.log(`  ⛔ ${proposal.id} — 검문소 차단: ${result.gate.failures.map((f) => `${f.check}(${f.reason})`).join('; ')}`);
+      // ⚠️ 버그 수정(2026-08-13, 독립 코드리뷰 MEDIUM 지적) — 여기서 별도로 문자열을
+      // 다시 조립하면(`${f.check}(${f.reason})`) execute-proposal.mjs가 실제 파일에 쓰는
+      // 형식(`${f.check}: ${f.reason}`)과 어긋나 dedup 비교가 매번 "다름"으로 나와
+      // 5분마다 알림이 스팸으로 나갔다. 방금 write한 result.updatedContent를 그대로
+      // 파싱해 "실제 저장된 값"을 쓴다 — 형식이 두 곳에서 따로 관리되며 갈라지는 걸
+      // 원천 차단(단일 진실 소스).
+      const newReason = parseProposal(result.updatedContent).gateBlockedReason ?? '';
+      console.log(`  ⛔ ${proposal.id} — 검문소 차단: ${newReason}`);
+      // 5분마다 도는 무인 재시도(com.banana2.execute-quant, 2026-08-13)라 같은 사유로
+      // 계속 막히면 실행마다 알림을 보내면 스팸이 된다 — 차단 사유가 "바뀔 때만" 알린다
+      // (최초 차단 포함 — 이전 gateBlockedReason은 이 실행 전 파일 내용이라 바뀌지 않는
+      // 한 자연히 dedup됨). 장외시간→장중 전환처럼 사유가 바뀌면 다시 알림이 나간다.
+      if (newReason !== (proposal.gateBlockedReason || '')) {
+        try {
+          await sendTelegram(`⛔ <b>검문소 차단</b>\n${proposal.side} ${proposal.assetKey} ${proposal.quantity}주 (제안 ${proposal.id})\n${newReason}`);
+        } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
+      }
     } else {
       console.log(`  ✅ ${proposal.id} — ${result.settlement.status} (${result.settlement.log})`);
       // 실주문이 실제로 KIS에 접수되면(brokerOrderId 있음) 체결 여부를 아무도 확인 안 하는
@@ -214,6 +285,7 @@ async function main() {
           join(here, 'watch-order-fill.mjs'),
           `--order-no=${result.settlement.brokerOrderId}`,
           `--code=${proposal.assetKey}`,
+          `--side=${proposal.side}`,
         ], { detached: true, stdio: 'ignore' }); // name 생략 시 watch-order-fill.mjs가 code로 대체(proposal에 별도 종목명 필드 없음)
         // spawn()은 실행 자체가 실패해도(예: node 못 찾음) 동기 throw가 아니라 비동기
         // 'error' 이벤트로만 알려준다 — 리스너가 없으면 unhandled 'error'가 이 프로세스를
