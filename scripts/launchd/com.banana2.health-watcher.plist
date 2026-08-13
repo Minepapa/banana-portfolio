@@ -16,6 +16,19 @@
   <integer>1800</integer>
   <key>RunAtLoad</key>
   <false/>
+  <!-- WATCH_TELEGRAM_SESSION=1(2026-08-13, task #34 조사) — health-watcher.mjs 코드에
+       이미 텔레그램 상시세션 pgrep 생존체크가 있었는데, 오탐 방지 목적의 옵트인
+       환경변수가 이 plist에 한 번도 설정된 적이 없어 이 잡 자체도, 이 체크도 실제로는
+       한 번도 안 돌고 있었다(이 잡이 launchctl load조차 안 된 상태였음 — 코드는 완성,
+       배선만 안 됨). 지금 켜도 pgrep이 프로세스 존재만 보므로 "죽어서 재시작됨"은
+       잡지만, "프로세스는 살아있는데 getUpdates 폴링이 끊겨 응답만 멈춘" 좀비 상태는
+       여전히 못 잡는다 — 이건 세션 스스로 하트비트를 남기게 만드는 별도 설계가 필요
+       (아직 미해결, docs 참고). -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WATCH_TELEGRAM_SESSION</key>
+    <string>1</string>
+  </dict>
   <key>ProcessType</key>
   <string>Background</string>
   <key>WorkingDirectory</key>

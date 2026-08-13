@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildJobHealthRecord } from '../lib/job-health.mjs';
-import { findStaleJobs } from './health-watcher.mjs';
+import { findStaleJobs, isPollingStuck } from './health-watcher.mjs';
 
 function makeTmpDir() {
   return mkdtempSync(join(tmpdir(), 'health-watcher-test-'));
@@ -59,4 +59,19 @@ test('findStaleJobs: .md 아닌 파일(예: 락파일 잔재)은 무시', () => 
   writeFileSync(join(dir, 'something.lock'), 'x');
   assert.deepEqual(findStaleJobs(dir, { expectedIntervals: {} }), []);
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ── isPollingStuck (좀비 세션 감지, task #34) ─────────────────────
+test('[막아야 함] isPollingStuck: 미수신 업데이트가 큐에 남아있으면 좀비로 판정', () => {
+  assert.equal(isPollingStuck({ pendingUpdateCount: 3 }), true);
+});
+
+test('isPollingStuck: 큐가 비어있으면(정상 폴링 중) 좀비 아님', () => {
+  assert.equal(isPollingStuck({ pendingUpdateCount: 0 }), false);
+});
+
+test('isPollingStuck: 값이 없거나 숫자가 아니면(조회 자체가 이상) 추정하지 않고 false', () => {
+  assert.equal(isPollingStuck({ pendingUpdateCount: undefined }), false);
+  assert.equal(isPollingStuck({ pendingUpdateCount: null }), false);
+  assert.equal(isPollingStuck({ pendingUpdateCount: NaN }), false);
 });

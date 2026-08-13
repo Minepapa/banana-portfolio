@@ -17,7 +17,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { parseFrontmatter, isStale } from '../lib/job-health.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -59,6 +59,16 @@ function isProcessAlive(pattern) {
   }
 }
 
+// 좀비 감지(2026-08-13, task #34) — pgrep은 "프로세스가 존재하는가"만 보고 "실제로
+// 메시지를 소비하고 있는가"는 못 본다. pending_update_count가 0보다 크면 텔레그램이
+// 배달을 시도했는데 상시세션이 아직 안 가져간 업데이트가 큐에 남아있다는 뜻 —
+// getUpdates 롱폴링이 정상이면 보통 즉시 소비되므로, 이 시점 스냅샷에서 잡힌다는 것
+// 자체가 폴링이 멈췄다는 강한 신호다(오탐 여지: 체크 순간과 다음 폴링 사이의 아주 좁은
+// 타이밍 경합 — 실무적으로 무시 가능한 수준으로 판단, 순수함수라 임계값 조정은 쉬움).
+export function isPollingStuck({ pendingUpdateCount }) {
+  return Number.isFinite(pendingUpdateCount) && pendingUpdateCount > 0;
+}
+
 async function main() {
   const issues = [];
 
@@ -67,8 +77,25 @@ async function main() {
     issues.push(`⚠️ 잡 <code>${s.job}</code>이(가) 조용합니다 — ${lastRunDesc}(기대주기 ${Math.round(s.expectedIntervalMs / 60000)}분의 2배 초과)`);
   }
 
-  if (WATCH_TELEGRAM_SESSION && !isProcessAlive(TELEGRAM_SESSION_PATTERN)) {
-    issues.push('⚠️ 텔레그램 상시 세션이 응답하지 않습니다(프로세스 없음).');
+  if (WATCH_TELEGRAM_SESSION) {
+    if (!isProcessAlive(TELEGRAM_SESSION_PATTERN)) {
+      issues.push('⚠️ 텔레그램 상시 세션이 응답하지 않습니다(프로세스 없음).');
+    } else {
+      // 프로세스는 살아있어도 폴링이 멈췄을 수 있다(좀비 상태, 위 isPollingStuck 주석
+      // 참고) — 이 체크는 실패해도(네트워크 오류 등) 다른 잡의 stale 판정을 막지 않게
+      // 별도로 감싼다.
+      try {
+        const info = await getTelegramWebhookInfo();
+        if (isPollingStuck({ pendingUpdateCount: info.pending_update_count })) {
+          issues.push(
+            `⚠️ 텔레그램 상시 세션이 좀비 상태로 보입니다 — 프로세스는 살아있지만 ` +
+            `미수신 메시지 ${info.pending_update_count}건이 큐에 쌓여있습니다(폴링 중단 의심). 세션 재시작 필요.`,
+          );
+        }
+      } catch (e) {
+        issues.push(`⚠️ 텔레그램 폴링 상태 확인 실패(getWebhookInfo): ${e.message}`);
+      }
+    }
   }
 
   if (!issues.length) {
