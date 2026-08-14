@@ -42,6 +42,9 @@ const EXPECTED_INTERVALS_MS = {
   // 22시간 동안 30분마다 계속 알림이 나갔다 — 이 잡을 처음 활성화할 때(2026-08-13)
   // backup-vault의 실제(하루 1회) 주기를 안 넣은 설정 누락.
   'backup-vault': 24 * 60 * 60 * 1000,
+  // daily-asset-allocation-check도 backup-vault와 같은 이유로 하루 1회 잡 — 처음부터
+  // 여기 넣어 같은 오탐이 재발하지 않게 한다(2026-08-14).
+  'daily-asset-allocation-check': 24 * 60 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 

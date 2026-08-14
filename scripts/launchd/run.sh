@@ -25,7 +25,8 @@ case "$JOB" in
   backup-vault)   CMD=(scripts/jobs/backup-vault-snapshot.mjs) ;;
   health-watcher) CMD=(scripts/jobs/health-watcher.mjs) ;;
   execute-quant)  CMD=(scripts/tools/execute-quant-proposal.mjs) ;;
-  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant}" >&2; exit 2 ;;
+  daily-asset-allocation-check) CMD=(scripts/jobs/daily-asset-allocation-check.mjs) ;;
+  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)
