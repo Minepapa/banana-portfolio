@@ -18,15 +18,30 @@ import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { parseFrontmatter, isStale } from '../lib/job-health.mjs';
 import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
+import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
+
+// 이 잡(health-watcher) 자체가 보내는 텔레그램 알림의 부서 라벨 — 판테온 조직에서
+// "장부·데이터·인프라 배관"을 담당하는 운영실(Hermes) 소관(v1 JOB_DEPARTMENT 매핑의
+// 'backup'·'parse-notifications'·'realtime-quotes' 등이 전부 hermes였던 것과 동일 원칙).
+// 2026-08-14 오너 지적 — 알림에 어느 잡을 감시하는 건지·어느 부서 소관인지 표기 안 돼
+// 있어 헷갈렸음, formatDepartmentMessage(기존 부서 메시지 포맷)로 통일.
+const DEPARTMENT_LABEL = '운영실 Hermes';
 
 // 잡별 기대 실행 주기 — 새 v2 잡이 생길 때마다 여기 추가한다(구현계획서 Phase 5+).
 // 값이 없는 잡은 기본값(EXPECTED_INTERVAL_DEFAULT_MS)을 쓴다.
 const EXPECTED_INTERVALS_MS = {
   // "카카오 알림 → Vault" 절: Mac 로컬 자동화가 매시간 알람 시트를 폴링(기존 v1 주기 계승)
   'parse-notifications-to-vault': 60 * 60 * 1000,
+  // ⚠️ 버그 수정(2026-08-14, 오너 신고 — 30분마다 알람 반복) — backup-vault는 밤 23:50
+  // 하루 1회만 도는 잡인데(scripts/launchd/com.banana2.backup-vault.plist,
+  // StartCalendarInterval) 여기 항목이 없어 기본값(1시간)이 적용됐다. 그 결과 정상
+  // 실행 후 2시간(기대주기×2)만 지나면 매일 "조용하다"고 오판해 다음날 23:50까지
+  // 22시간 동안 30분마다 계속 알림이 나갔다 — 이 잡을 처음 활성화할 때(2026-08-13)
+  // backup-vault의 실제(하루 1회) 주기를 안 넣은 설정 누락.
+  'backup-vault': 24 * 60 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 
@@ -107,7 +122,10 @@ async function main() {
   issues.forEach((i) => console.log(`  ${i}`));
   if (!DRY_RUN) {
     try {
-      await sendTelegram(`🚨 <b>banana v2 장애감지</b>\n${issues.join('\n')}`);
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL,
+        body: `🚨 <b>banana v2 장애감지</b>\n${issues.join('\n')}`,
+      }));
     } catch (e) {
       console.error('텔레그램 알림 실패:', e.message);
     }
