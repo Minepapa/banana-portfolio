@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  formatDepartmentMessage, parseReplyDecision, parseKillSwitchCommand, parseDepartmentCall,
-  parseExecutionModeCommand,
+  formatDepartmentMessage, formatFactsMessage, parseReplyDecision, parseKillSwitchCommand,
+  parseDepartmentCall, parseExecutionModeCommand,
 } from './telegram-messages.mjs';
 
 test('formatDepartmentMessage: 부서보고+Zeus코멘트를 한 메시지로 합침(오너 확정 형식)', () => {
@@ -13,6 +13,35 @@ test('formatDepartmentMessage: 부서보고+Zeus코멘트를 한 메시지로 �
 test('formatDepartmentMessage: zeusComment 없으면 부서보고만', () => {
   const msg = formatDepartmentMessage({ departmentLabel: '운영실 Hermes', body: '예수금 확인 결과입니다.' });
   assert.equal(msg, '[운영실 Hermes]\n예수금 확인 결과입니다.');
+});
+
+test('formatFactsMessage: 사실은 개조식, 해석은 뒤에 서술형 문단으로(오너 확정 표준 구조, 2026-08-17)', () => {
+  const msg = formatFactsMessage({
+    departmentLabel: '투자전략실 Athena',
+    facts: ['리츠 갭 -1.98%p(밴드 이탈)', '연금저축 누적현금 962,000원'],
+    interpretation: '리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.',
+  });
+  assert.equal(
+    msg,
+    '[투자전략실 Athena]\n• 리츠 갭 -1.98%p(밴드 이탈)\n• 연금저축 누적현금 962,000원\n\n리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.',
+  );
+});
+
+test('formatFactsMessage: interpretation 없으면 사실만(LLM 없는 순수 운영 알림 변형)', () => {
+  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['잡 A가 조용함', '잡 B가 조용함'] });
+  assert.equal(msg, '[운영실 Hermes]\n• 잡 A가 조용함\n• 잡 B가 조용함');
+});
+
+test('formatFactsMessage: zeusComment까지 있으면 맨 뒤에 붙음', () => {
+  const msg = formatFactsMessage({
+    departmentLabel: '투자전략실 Athena', facts: ['사실1'], interpretation: '해석문단', zeusComment: '승인',
+  });
+  assert.equal(msg, '[투자전략실 Athena]\n• 사실1\n\n해석문단\n\n[Zeus] 승인');
+});
+
+test('formatFactsMessage: facts 없어도(빈 배열) 헤더+빈 줄만 남고 안 터짐', () => {
+  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: [] });
+  assert.equal(msg, '[운영실 Hermes]\n');
 });
 
 test('parseReplyDecision: "승인"이 포함되면 승인(부가 코멘트 있어도)', () => {

@@ -95,7 +95,7 @@ async function main() {
 
       const result = await createAndSendProposal({
         track: '퀀트', assetKey: code, name, side, quantity, proposedPrice: target, reason,
-        departmentLabel: '카이로스', existingProposals, writeProposalFile, sendMessage,
+        departmentLabel: '퀀트전략실 Kairos', existingProposals, writeProposalFile, sendMessage,
       });
 
       if (result.action === 'blocked') {

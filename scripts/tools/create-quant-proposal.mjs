@@ -75,7 +75,7 @@ async function main() {
 
   const result = await createAndSendProposal({
     track: '퀀트', assetKey, name, side, quantity, proposedPrice, reason,
-    departmentLabel: '카이로스', zeusComment, conditionsChanged,
+    departmentLabel: '퀀트전략실 Kairos', zeusComment, conditionsChanged,
     existingProposals, writeProposalFile, sendMessage,
   });
 

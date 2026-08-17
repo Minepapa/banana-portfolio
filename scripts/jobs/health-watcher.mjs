@@ -18,7 +18,8 @@ import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { parseFrontmatter, isStale } from '../lib/job-health.mjs';
 import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { formatFactsMessage } from '../lib/telegram-messages.mjs';
+import { describeJob } from '../lib/job-labels.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -111,7 +112,9 @@ async function main() {
 
   for (const s of findStaleJobs(VAULT_PATHS.state.jobHealth)) {
     const lastRunDesc = s.lastRun ? `마지막 실행 ${s.lastRun}` : '실행 기록 없음';
-    issues.push(`⚠️ 잡 <code>${s.job}</code>이(가) 조용합니다 — ${lastRunDesc}(기대주기 ${Math.round(s.expectedIntervalMs / 60000)}분의 2배 초과)`);
+    // 잡 이름만 영어로 나오면 오너가 어떤 잡인지 못 알아본다(2026-08-17 지적) —
+    // describeJob으로 한글 설명을 괄호로 덧붙인다.
+    issues.push(`⚠️ 잡 <code>${describeJob(s.job)}</code>이(가) 조용합니다 — ${lastRunDesc}(기대주기 ${Math.round(s.expectedIntervalMs / 60000)}분의 2배 초과)`);
   }
 
   if (WATCH_TELEGRAM_SESSION) {
@@ -144,9 +147,11 @@ async function main() {
   issues.forEach((i) => console.log(`  ${i}`));
   if (!DRY_RUN) {
     try {
-      await sendTelegram(formatDepartmentMessage({
+      // 이 잡은 LLM을 아예 안 부르는 순수 운영 감시라 해석 문단 없이 사실(불릿)만
+      // 나간다 — 오너 확정 표준 구조의 "변형" 허용 범위(2026-08-17).
+      await sendTelegram(formatFactsMessage({
         departmentLabel: DEPARTMENT_LABEL,
-        body: `🚨 <b>banana v2 장애감지</b>\n${issues.join('\n')}`,
+        facts: [`<b>banana v2 장애감지 ${issues.length}건</b>`, ...issues],
       }));
     } catch (e) {
       console.error('텔레그램 알림 실패:', e.message);

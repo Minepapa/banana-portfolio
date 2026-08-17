@@ -8,17 +8,31 @@
 // kis.mjs의 fetchImpl 주입과 같은 관례).
 import { resolveProposalIntake } from './order-gate.mjs';
 import { buildProposalRecord, updateProposalRecord } from './proposal-vault.mjs';
-import { formatDepartmentMessage } from './telegram-messages.mjs';
+import { formatFactsMessage } from './telegram-messages.mjs';
 
 const won = (n) => Math.round(n).toLocaleString('ko-KR');
 
-// 텔레그램 메시지 본문(주문 상세 + 사유) — 순수 함수, 테스트 가능.
+// 텔레그램 메시지 본문(주문 상세 + 사유, 한 줄 요약형) — DRY-RUN 미리보기 등 사람이
+// 짧게 훑어볼 용도로 계속 보존. 실제 발송 텔레그램 메시지는 아래 buildProposalFacts+
+// formatFactsMessage(사실 개조식+해석 서술형 표준 구조, 2026-08-17 오너 확정)를 쓴다.
 export function buildProposalMessageBody({ side, name, assetKey, quantity, proposedPrice, reason }) {
   const amount = proposedPrice != null ? quantity * proposedPrice : null;
   const priceLine = proposedPrice != null
     ? `${side} ${name}(${assetKey}) ${quantity}주 @${won(proposedPrice)}원 ≈ ${won(amount)}원`
     : `${side} ${name}(${assetKey}) ${quantity}주`;
   return reason ? `${priceLine}\n사유: ${reason}` : priceLine;
+}
+
+// 제안의 결정론적 사실(Node가 계산한 값) — 개조식 텔레그램 메시지의 facts 배열로
+// 쓰인다. reason(부서 LLM의 판단 서술)은 여기 안 넣는다 — 사실과 해석을 구조로
+// 분리하는 게 표준 구조의 핵심이라 섞으면 안 된다.
+export function buildProposalFacts({ side, name, assetKey, quantity, proposedPrice }) {
+  const amount = proposedPrice != null ? quantity * proposedPrice : null;
+  const facts = [`${side} ${name}(${assetKey})`];
+  if (quantity != null) facts.push(`수량 ${quantity}주`);
+  if (proposedPrice != null) facts.push(`제안가 ${won(proposedPrice)}원`);
+  if (amount != null) facts.push(`개산금액 ≈ ${won(amount)}원`);
+  return facts;
 }
 
 // existingProposals: [{filename, content, ...parseProposal() 결과}] — 호출부가 Decisions/
@@ -59,8 +73,11 @@ export async function createAndSendProposal({
 
   await writeProposalFile(filename, content);
 
-  const body = buildProposalMessageBody({ side, name: name ?? assetKey, assetKey, quantity, proposedPrice, reason });
-  const messageText = formatDepartmentMessage({ departmentLabel, body, zeusComment });
+  // 표준 구조(2026-08-17 오너 확정): 사실(Node 계산값)은 개조식, 부서 LLM의 판단
+  // 서술(reason)은 그 뒤에 문단으로 — buildProposalMessageBody(한 줄 요약형)는 이제
+  // DRY-RUN 미리보기 전용, 실제 발송은 여기서 조립한다.
+  const facts = buildProposalFacts({ side, name: name ?? assetKey, assetKey, quantity, proposedPrice });
+  const messageText = formatFactsMessage({ departmentLabel, facts, interpretation: reason || null, zeusComment });
   const sendResult = await sendMessage(messageText);
   const telegramMessageId = sendResult?.message_id ?? null;
 

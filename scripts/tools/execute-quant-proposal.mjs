@@ -52,10 +52,16 @@ import { writeStateFile } from '../lib/state-writer.mjs';
 import { loadExecutedOrderIds, recordExecutedOrder, unrecordExecutedOrder } from '../lib/executed-orders.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import {
   hasKisCredentials, loadKisCredentials, loadQuantAccount,
   getKisToken, getKrQuote, getAccountBalance, placeKrOrder,
 } from '../lib/kis.mjs';
+
+// 이 잡의 운영 알림(승인만료·검문소차단·정합성이상)은 부서 라벨 없이 나가고 있었다
+// (2026-08-17 지적 — 모든 텔레그램 알림은 [부서]로 시작해야 함). 퀀트 트랙 소관이라
+// Kairos로 통일.
+const DEPARTMENT_LABEL = '퀀트전략실 Kairos';
 
 function parseArgs(argv) {
   const out = {};
@@ -118,7 +124,10 @@ async function main() {
     await writeStateFile(join(proposalsDir, p.filename), updated);
     console.log(`  ⏳ ${p.id} — 당일 미체결로 자동 만료 처리(재승인 필요)`);
     try {
-      await sendTelegram(`⏳ <b>승인 만료</b>\n${p.side} ${p.assetKey} ${p.quantity}주 (제안 ${p.id})\n승인 당일 안에 체결되지 않아 자동 만료되었습니다. 계속 진행하려면 다시 제안해 주세요.`);
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL,
+        body: `⏳ <b>승인 만료</b>\n${p.side} ${p.assetKey} ${p.quantity}주 (제안 ${p.id})\n승인 당일 안에 체결되지 않아 자동 만료되었습니다. 계속 진행하려면 다시 제안해 주세요.`,
+      }));
     } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
   }
   targets = stillFresh;
@@ -144,10 +153,11 @@ async function main() {
       const lines = duplicates.map(([key, ps]) => `· ${key}: ${ps.map((p) => p.id).join(', ')}`);
       for (const line of lines) console.error(`  ⛔ 같은 안건에 "승인"이 2건 이상 — 추정하지 않고 전부 건너뜀: ${line}`);
       try {
-        await sendTelegram(
-          `⚠️ <b>제안 정합성 이상</b>\n같은 안건에 "승인" 상태가 2건 이상 동시에 있어 자동체결을 보류했습니다 — ` +
-          `수동으로 확인 후 하나만 남기고 나머지는 거부/대체 처리해 주세요.\n${lines.join('\n')}`,
-        );
+        await sendTelegram(formatDepartmentMessage({
+          departmentLabel: DEPARTMENT_LABEL,
+          body: `⚠️ <b>제안 정합성 이상</b>\n같은 안건에 "승인" 상태가 2건 이상 동시에 있어 자동체결을 보류했습니다 — ` +
+            `수동으로 확인 후 하나만 남기고 나머지는 거부/대체 처리해 주세요.\n${lines.join('\n')}`,
+        }));
       } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
       const duplicateIds = new Set(duplicates.flatMap(([, ps]) => ps.map((p) => p.id)));
       targets = targets.filter((p) => !duplicateIds.has(p.id));
@@ -269,7 +279,10 @@ async function main() {
       // 한 자연히 dedup됨). 장외시간→장중 전환처럼 사유가 바뀌면 다시 알림이 나간다.
       if (newReason !== (proposal.gateBlockedReason || '')) {
         try {
-          await sendTelegram(`⛔ <b>검문소 차단</b>\n${proposal.side} ${proposal.assetKey} ${proposal.quantity}주 (제안 ${proposal.id})\n${newReason}`);
+          await sendTelegram(formatDepartmentMessage({
+            departmentLabel: DEPARTMENT_LABEL,
+            body: `⛔ <b>검문소 차단</b>\n${proposal.side} ${proposal.assetKey} ${proposal.quantity}주 (제안 ${proposal.id})\n${newReason}`,
+          }));
         } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
       }
     } else {

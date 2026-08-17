@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createAndSendProposal, buildProposalMessageBody } from './proposal-flow.mjs';
+import { createAndSendProposal, buildProposalMessageBody, buildProposalFacts } from './proposal-flow.mjs';
 import { buildProposalRecord, parseProposal } from './proposal-vault.mjs';
 
 // existingProposals 로더 출력을 흉내(process-telegram-reply.mjs loadProposals와 동일 형태:
@@ -40,6 +40,16 @@ test('buildProposalMessageBody: 가격 있으면 수량·단가·개산금액 + 
 test('buildProposalMessageBody: 가격 없으면(정액 리밸런싱 등) 개산금액 생략, 사유 없으면 사유줄 생략', () => {
   const body = buildProposalMessageBody({ side: '매도', name: '채권ETF', assetKey: '채권', quantity: 5 });
   assert.equal(body, '매도 채권ETF(채권) 5주');
+});
+
+test('buildProposalFacts: 가격 있으면 사실 배열에 종목·수량·제안가·개산금액 순서로', () => {
+  const facts = buildProposalFacts({ side: '매수', name: '삼성전자', assetKey: '005930', quantity: 10, proposedPrice: 70000 });
+  assert.deepEqual(facts, ['매수 삼성전자(005930)', '수량 10주', '제안가 70,000원', '개산금액 ≈ 700,000원']);
+});
+
+test('buildProposalFacts: 가격 없으면(정액 리밸런싱 등) 제안가·개산금액 라인 생략', () => {
+  const facts = buildProposalFacts({ side: '매도', name: '채권ETF', assetKey: '채권', quantity: 5 });
+  assert.deepEqual(facts, ['매도 채권ETF(채권)', '수량 5주']);
 });
 
 test('createAndSendProposal: 신규 생성 — 파일 쓰고 텔레그램 발송 후 telegramMessageId까지 갱신', async () => {

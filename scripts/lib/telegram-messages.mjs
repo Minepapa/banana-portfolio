@@ -11,6 +11,21 @@ export function formatDepartmentMessage({ departmentLabel, body, zeusComment = n
   return `${header}\n${body}\n\n[Zeus] ${zeusComment}`;
 }
 
+// 텔레그램 알림 표준 구조(2026-08-17 오너 확정) — [부서]로 시작 → Node가 계산한
+// 사실을 개조식(불릿)으로 나열 → 그 뒤에 LLM이 그 사실을 보고 낸 해석을 서술형
+// 문단으로 붙인다. interpretation이 없으면(health-watcher처럼 애초에 LLM을 안 부르는
+// 순수 운영 알림) 사실만 나간다 — 오너가 명시한 "필요에 따라 이 구조에서 변형" 허용
+// 범위. formatDepartmentMessage와 달리 body를 자유 문자열로 안 받고 facts 배열을
+// 강제해, 호출부가 사실과 해석을 섞어서 쓰지 않도록 구조로 유도한다.
+export function formatFactsMessage({ departmentLabel, facts, interpretation = null, zeusComment = null }) {
+  const header = `[${departmentLabel}]`;
+  const factBlock = (facts ?? []).map((f) => `• ${f}`).join('\n');
+  let msg = `${header}\n${factBlock}`;
+  if (interpretation) msg += `\n\n${interpretation}`;
+  if (zeusComment) msg += `\n\n[Zeus] ${zeusComment}`;
+  return msg;
+}
+
 // Frank의 답장 텍스트에서 승인/거부 의사를 읽는다. "승인"·"거부"가 둘 다 있거나(모순)
 // 둘 다 없으면 null — 추정하지 않는다(ADR 0003 폴백 금지 원칙). reply_to 매칭 자체는
 // 이 함수의 책임이 아니다(order-gate.checkApprovalMatch + proposal-vault.

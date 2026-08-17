@@ -19,6 +19,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadKisCredentials, loadQuantAccount, getKisToken, checkOrderFill } from '../lib/kis.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
@@ -26,6 +27,9 @@ import { QUANT_TRACK_LABEL } from '../lib/account-resolver.mjs';
 
 const BROKER = '한국투자증권';
 const ACCOUNT_LABEL = QUANT_TRACK_LABEL; // account-resolver.mjs·update-holdings-from-executions.mjs와 동일 라벨(단일 진실 소스)
+// 이 잡의 체결확인 알림도 부서 라벨 없이 나가고 있었다(2026-08-17 지적) — 퀀트 트랙
+// 소관이라 execute-quant-proposal.mjs와 동일하게 Kairos로 통일.
+const DEPARTMENT_LABEL = '퀀트전략실 Kairos';
 
 function parseArgs(argv) {
   const out = {};
@@ -90,12 +94,18 @@ async function main() {
     }
     if (result?.canceled) {
       console.log('[취소 확인] 주문이 취소됨');
-      await sendTelegram(`❌ <b>주문 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — 취소되었습니다.`);
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL,
+        body: `❌ <b>주문 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — 취소되었습니다.`,
+      }));
       return true;
     }
     if (result?.fullyFilled) {
       console.log(`[체결 확인] 전량 체결 — 평균단가 ${result.avgFillPrice}원`);
-      await sendTelegram(buildFilledMessage({ name, code, orderNo, filledQty: result.filledQty, avgFillPrice: result.avgFillPrice }));
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL,
+        body: buildFilledMessage({ name, code, orderNo, filledQty: result.filledQty, avgFillPrice: result.avgFillPrice }),
+      }));
       // avgFillPrice가 없으면(알려진 한계, 위 buildFilledMessage 주석 참고) Ledger에 가격
       // 없는 체결을 기록하지 않는다 — 알림은 이미 나갔으니 "확인 필요" 상태가 조용히
       // 묻히지 않고, 오너가 KIS와 대조해 수동 기록해야 함이 로그에 남는다.
@@ -143,10 +153,11 @@ async function main() {
   if (await checkAndReportIfDone()) return;
 
   console.log('[타임아웃] 확인 시간 내 전량체결 미확인 — 알림 발송');
-  await sendTelegram(
-    `⚠️ <b>체결 확인 시간 초과</b>\n${name}(${code}) 주문번호 ${orderNo} — ${timeoutMin}분 동안 전량체결 확인 안 됨. ` +
-    `KIS 앱에서 직접 확인해 주세요(미체결로 남아있거나 부분체결됐을 수 있음).`,
-  );
+  await sendTelegram(formatDepartmentMessage({
+    departmentLabel: DEPARTMENT_LABEL,
+    body: `⚠️ <b>체결 확인 시간 초과</b>\n${name}(${code}) 주문번호 ${orderNo} — ${timeoutMin}분 동안 전량체결 확인 안 됨. ` +
+      `KIS 앱에서 직접 확인해 주세요(미체결로 남아있거나 부분체결됐을 수 있음).`,
+  }));
 }
 
 main().catch((e) => { console.error('\n❌ 오류:', e.message); process.exit(1); });
