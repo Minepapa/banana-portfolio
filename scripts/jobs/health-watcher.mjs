@@ -57,12 +57,6 @@ const EXPECTED_INTERVALS_MS = {
   // — 평일 16:10 KST 하루 1회(update-holdings-from-executions 16:05 직후, 그날
   // 매도체결이 Facts/Ledger/Profits에 반영된 뒤라야 이 잡이 정확한 금액을 읽는다).
   'new-cash-allocation': 24 * 60 * 60 * 1000,
-  // ⚠️ risk-b-monitor는 2026-08-14 당일에 신설·스케줄링했다가 같은 세션에서 바로
-  // 잠정 중단했다(오너 지적 — 위탁 개별종목은 ETF 전환 대상 레거시라 논리훼손 판정의
-  // 장기 가치가 낮음, 이 로직은 오히려 카이로스/퀀트 트랙 쪽 후보로 이관 검토 중,
-  // project-v2-redesign 메모 참고). launchd 잡 자체를 언로드했으므로 여기 등록하면
-  // 영원히 "조용하다"고 오판해 알림 스팸만 낸다 — 잡이 실제로 재활성화될 때 항목을
-  // 되살릴 것(스크립트·테스트 파일은 재사용 목적으로 삭제하지 않고 보존 중).
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 
