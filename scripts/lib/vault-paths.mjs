@@ -39,7 +39,10 @@ export const VAULT_PATHS = {
       profits: join(VAULT_ROOT, 'Facts', 'Ledger', 'Profits'),
       dailySnapshots: join(VAULT_ROOT, 'Facts', 'Ledger', 'DailySnapshots'),
     },
-    marketPolls: join(VAULT_ROOT, 'Facts', 'MarketPolls'),
+    // ⚠️ marketPolls(가격폴링·추세신호 원자료) 경로는 2026-08-17 삭제됨 — 전제였던
+    // 폴링 기반 추세추종이 ADR-0012 추신에서 이미 기각돼 코드로 한 번도 안 만들어졌음
+    // (ARCHITECTURE-V2.md "정리된 항목과 그 이유" 표 참고). 재사용 필요해지면 그때
+    // 새로 설계해 추가할 것 — 옛 값 그대로 복원하지 말 것(전제 자체가 무효).
   },
   state: {
     holdings: join(VAULT_ROOT, 'State', 'Holdings'),
