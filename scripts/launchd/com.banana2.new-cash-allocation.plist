@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.new-cash-allocation</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>new-cash-allocation</string>
+  </array>
+  <!-- 평일 16:10 KST(2026-08-16) — ARCHITECTURE-V2.md "신규 현금 배분 원칙" 절
+       구현(구현계획서 Phase 8이 열어둔 채 남겨뒀던 항목). update-holdings-from-executions
+       (16:05)가 그날 매도체결을 State/Holdings+Facts/Ledger/Profits에 반영한 직후 —
+       이 잡이 읽는 매도현금(quantity*sellPrice)은 Profits 레코드에서 나오므로 반드시
+       그 다음 순서여야 한다. daily-asset-allocation-check(16:30)보다는 먼저 끝나
+       그날 안에 배분 제안까지 발송될 여지를 남긴다. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/new-cash-allocation.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/new-cash-allocation.log</string>
+</dict>
+</plist>

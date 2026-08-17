@@ -33,8 +33,11 @@ const DEPARTMENT_LABEL = '운영실 Hermes';
 // 잡별 기대 실행 주기 — 새 v2 잡이 생길 때마다 여기 추가한다(구현계획서 Phase 5+).
 // 값이 없는 잡은 기본값(EXPECTED_INTERVAL_DEFAULT_MS)을 쓴다.
 const EXPECTED_INTERVALS_MS = {
-  // "카카오 알림 → Vault" 절: Mac 로컬 자동화가 매시간 알람 시트를 폴링(기존 v1 주기 계승)
-  'parse-notifications-to-vault': 60 * 60 * 1000,
+  // ⚠️ 빈도 수정(2026-08-14, 오너 확인) — 기존엔 v1 주기(매시간)를 그대로 계승했지만,
+  // 자산분배 트랙엔 이 기록을 당일 즉시 소비하는 자동화가 없어(퀀트 트랙과 달리 같은
+  // 날 바로 사고파는 파이프라인이 없음) 하루 1회(평일 16:00 KST)로 충분하다 —
+  // com.banana2.parse-notifications-to-vault.plist 참고.
+  'parse-notifications-to-vault': 24 * 60 * 60 * 1000,
   // ⚠️ 버그 수정(2026-08-14, 오너 신고 — 30분마다 알람 반복) — backup-vault는 밤 23:50
   // 하루 1회만 도는 잡인데(scripts/launchd/com.banana2.backup-vault.plist,
   // StartCalendarInterval) 여기 항목이 없어 기본값(1시간)이 적용됐다. 그 결과 정상
@@ -45,6 +48,21 @@ const EXPECTED_INTERVALS_MS = {
   // daily-asset-allocation-check도 backup-vault와 같은 이유로 하루 1회 잡 — 처음부터
   // 여기 넣어 같은 오탐이 재발하지 않게 한다(2026-08-14).
   'daily-asset-allocation-check': 24 * 60 * 60 * 1000,
+  // update-holdings-from-executions(2026-08-15 신설 스케줄) — 로직 자체는 이미 있었지만
+  // (퀀트 체결은 KIS API가 정본이라 skip, 그 외 자산분배 트랙 체결만 반영) 무인 스케줄이
+  // 없어 watch-order-fill.mjs의 퀀트 트리거에만 의존하던 잡. 평일 16:05 KST 하루 1회
+  // (parse-notifications-to-vault 16:00 직후).
+  'update-holdings-from-executions': 24 * 60 * 60 * 1000,
+  // new-cash-allocation(2026-08-16 신설, ARCHITECTURE-V2.md "신규 현금 배분 원칙")
+  // — 평일 16:10 KST 하루 1회(update-holdings-from-executions 16:05 직후, 그날
+  // 매도체결이 Facts/Ledger/Profits에 반영된 뒤라야 이 잡이 정확한 금액을 읽는다).
+  'new-cash-allocation': 24 * 60 * 60 * 1000,
+  // ⚠️ risk-b-monitor는 2026-08-14 당일에 신설·스케줄링했다가 같은 세션에서 바로
+  // 잠정 중단했다(오너 지적 — 위탁 개별종목은 ETF 전환 대상 레거시라 논리훼손 판정의
+  // 장기 가치가 낮음, 이 로직은 오히려 카이로스/퀀트 트랙 쪽 후보로 이관 검토 중,
+  // project-v2-redesign 메모 참고). launchd 잡 자체를 언로드했으므로 여기 등록하면
+  // 영원히 "조용하다"고 오판해 알림 스팸만 낸다 — 잡이 실제로 재활성화될 때 항목을
+  // 되살릴 것(스크립트·테스트 파일은 재사용 목적으로 삭제하지 않고 보존 중).
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 

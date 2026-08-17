@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.update-holdings-from-executions</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>update-holdings-from-executions</string>
+  </array>
+  <!-- 평일 16:05 KST(2026-08-15) — 이 잡의 로직(scripts/jobs/update-holdings-from-executions.mjs)
+       자체는 이미 완성돼 있었지만(퀀트 트랙 체결은 KIS API가 정본이라 명시적으로 skip,
+       그 외 자산분배 트랙 체결만 State/Holdings에 반영) 지금까지 watch-order-fill.mjs가
+       퀀트 체결 시에만 수동 트리거했을 뿐, 자산분배 트랙(위탁·연금저축·ISA·IRP) 체결을
+       처리할 무인 스케줄이 없었다 — parse-notifications-to-vault(16:00)가 그날의 카카오
+       알림을 Facts/Ledger/Executions로 옮긴 직후(5분 버퍼) 이 잡이 그 신규 체결을
+       State/Holdings에 반영하고, daily-asset-allocation-check(16:30)가 그 최신 잔고로
+       리밸런싱 갭을 확인하는 순서. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>5</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-holdings-from-executions.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-holdings-from-executions.log</string>
+</dict>
+</plist>

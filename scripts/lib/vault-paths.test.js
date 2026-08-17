@@ -32,9 +32,10 @@ test('4대분류 하위경로가 전부 VAULT_ROOT 밑에 걸린다', () => {
     ...flattenPaths(VAULT_PATHS.knowledge),
   ];
   // facts: ledgerRoot(1) + ledger 하위 7종(Phase 7에서 profits·dailySnapshots 추가) +
-  // marketPolls(1) = 9, state 8(+jobHealth, +Phase 8 macroOverlay, +Phase 9 killSwitch·
-  // executionMode, +Phase 11 executedOrders), decisions 4(+riskMonitor), knowledge 3
-  assert.equal(flat.length, 24);
+  // marketPolls(1) = 9, state 9(+jobHealth, +Phase 8 macroOverlay, +Phase 9 killSwitch·
+  // executionMode, +Phase 11 executedOrders, +2026-08-16 cashAccumulator), decisions
+  // 4(+riskMonitor), knowledge 3
+  assert.equal(flat.length, 25);
   for (const p of flat) assert.ok(p.startsWith(VAULT_ROOT), `${p} should start with ${VAULT_ROOT}`);
 });
 

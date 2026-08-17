@@ -48,14 +48,43 @@ Phase 0~3은 서로 독립적이라 병렬 진행 가능. Phase 8·9는 서로 �
 > 다시 결정할 수 있도록 이 절 하나로 모은다. 결정되면 취소선 처리하고 어디에 반영했는지
 > 남긴다.
 
+**v2 무인 잡(launchd) 현황 — 2026-08-16 재정리** (아래 항목들의 로드 여부를 실측
+`launchctl list`로 확인하고 한 번에 정리):
+- 현재 로드·활성 8개: `backup-vault`(23:50 1일1회)·`health-watcher`(30분 주기)·
+  `telegram-session`(상시)·`execute-quant`(5분 주기)·`daily-asset-allocation-check`
+  (평일 16:30)·`parse-notifications-to-vault`(평일 16:00)·
+  `update-holdings-from-executions`(평일 16:05, 2026-08-15 신설 — 로직은 이미 있었으나
+  자산분배 트랙 체결을 반영할 무인 스케줄이 없던 공백을 메움)·`new-cash-allocation`
+  (평일 16:10, 2026-08-16 신설, 아래 참고).
+- 잠정 중단: `risk-b-monitor`(개별종목 논리훼손, 2026-08-14 신설 당일 중단 — 위탁
+  개별주식이 ETF 전환 대상 레거시라 장기가치 낮다는 오너 판단, 카이로스 이관 후보로
+  소스만 보존).
+- [x] ~~신규 현금 배분(누적 50만원 트리거) 미구현~~ → **해소(2026-08-16)**:
+  `scripts/jobs/new-cash-allocation.mjs` 신설 — 배당(Facts/Ledger/Dividends)·매도체결
+  (Facts/Ledger/Profits, quantity×sellPrice 전액)을 계좌별(위탁·연금저축)로 누적
+  (`cash-accumulator.mjs`), 50만원 이상이면 `computeRebalanceGaps`(기존 재사용)로
+  갭을 계산하고 그 계좌가 세금상 담을 수 있는 자산군만 후보로 필터
+  (`cash-allocation-candidates.mjs`, ARCHITECTURE-V2.md "원칙 2" 표를 그대로 상수화) →
+  Athena 헤드리스 판단(갭·실존 후보만 주고 배분은 재량, 개별종목 배분은 프롬프트+
+  athena.md 시스템프롬프트 이중 금지) → `proposal-flow.mjs`(트랙 무관 공용) 재사용해
+  Decisions/Proposals+텔레그램 제안. 승인 이후 자동체결은 없음(자산분배 트랙엔
+  브로커 API 실행이 없어 오너가 직접 주문 → 카카오 알림으로 다시 Vault에 들어와 루프가
+  닫힘). `com.banana2.new-cash-allocation.plist`(평일 16:10 KST, update-holdings-
+  from-executions 16:05 직후) 설치·로드, health-watcher 등록. legacy(Phase 7 마이그레이션)
+  배당·매도 기록은 제외(과거 이벤트를 새 현금으로 재계산하면 안 됨). 테스트 27개
+  (`cash-accumulator`·`cash-allocation-candidates`·`new-cash-allocation` 각 모듈).
+- **남은 무인 잡 공백**: 퀀트 트랙 월간 리컨스티튜션 무인 트리거 없음 — 카이로스 전략
+  보류 지시 대상이라 오너가 먼저 요청하기 전까지 손 안 댐.
+
 **Phase 1 — Vault 인프라**
 - [ ] Google Drive for desktop 설치 + `~/banana-vault`를 그 안으로 이전(`VAULT_PATH`
   환경변수만 바꾸면 코드 변경 없이 전환 가능). 그 전까지 안드로이드에서 Vault 열람 불가.
 - [ ] 안드로이드 쪽 동기화 앱(FolderSync·Autosync 등) 선택·설정.
 
 **Phase 3 — 백업·장애감지**
-- [ ] `com.banana2.backup-vault.plist`·`com.banana2.health-watcher.plist` 실제
-  `launchctl load` 활성화 시점(지금은 코드만 있고 안 돌아가는 중).
+- [x] ~~`com.banana2.backup-vault.plist`·`com.banana2.health-watcher.plist` 실제
+  `launchctl load` 활성화 시점~~ → **해소**: 둘 다 로드·활성 중(`launchctl list`로
+  2026-08-15 재확인).
 - [ ] "알람" 시트 처리행 정리 방식 — 즉시삭제 vs "처리됨" 표시 후 별도 정리(원 설계
   문서도 "구현 시 결정"으로 열어둔 항목, 아직 미정 — dedup이 있어 안 정리해도 정합성엔
   문제없고 시트가 계속 자라는 비효율만 있음).
@@ -74,8 +103,8 @@ Phase 0~3은 서로 독립적이라 병렬 진행 가능. Phase 8·9는 서로 �
   `launchctl load`는 나중에(Phase 3 launchd 잡과 같은 패턴 — 아래 참고).
 - [x] ~~[Zeus] 코멘트를 부서 보고와 어떻게 묶을지~~ → **해소(2026-08-05)**: 한 메시지에
   합쳐서 발송.
-- [ ] `com.banana2.telegram-session.plist` 실제 `launchctl load` 활성화 시점(위 Phase 3
-  항목과 같은 성격 — 실사용 투입 직전 오너가 수동 활성화).
+- [x] ~~`com.banana2.telegram-session.plist` 실제 `launchctl load` 활성화 시점~~ →
+  **해소**: 로드·실행 중(`launchctl list`로 2026-08-15 재확인).
 - [ ] **킬스위치 On/Off 명령어 재정의** — 2026-08-05 오너 지적: "정지"/"해제"는 일상
   대화에서도 흔히 쓰는 일반 단어라, 킬스위치와 무관한 문맥에서 그 단어를 썼는데
   오작동할 위험이 있다(예: "정지"라는 한 단어만 답장하는 상황이 다른 이유로도 생길 수
@@ -90,11 +119,8 @@ Phase 0~3은 서로 독립적이라 병렬 진행 가능. Phase 8·9는 서로 �
 **Phase 6 — Firestore 미러 + 대시보드 앱**
 - [x] ~~Firestore 미러 작업을 지금 어떻게 진행할지~~ → **해소(2026-08-05)**: Firebase
   콘솔 설정을 오너와 함께 라이브로 진행(claude-in-chrome), 기존 GCP 프로젝트 재사용.
-- [ ] **App.jsx 탭 정리(11→7)·`useFirestoreMirror` 배선 시점** — 2026-08-05 오너 확정:
-  지금 배선하면 State/Holdings·Allocation이 비어있어(Phase 8·9 전) 매일 쓰는 대시보드가
-  먹통이 되므로, Phase 8·9로 Vault에 실제 자산분배·퀀트 데이터가 쌓인 뒤 다시 이 Phase로
-  돌아와 마무리(백엔드 인프라는 이미 완료 — `firebase.js`·`firestore-mirror.mjs`·
-  `sync-firestore-mirror.mjs`·`useFirestoreMirror.js`·`mirrorFreshness.js`).
+- [x] ~~**App.jsx 탭 정리(11→7)·`useFirestoreMirror` 배선 시점**~~ → **해소(2026-08-13)**:
+  배선 완료, 7탭(홈·보유종목·자산분배·배당금·수익금·체결내역·리포트) 읽기전용 대시보드.
 
 **Phase 7 — v1→Vault 마이그레이션**
 - [ ] **컷오버 전 잔여 투자금액 불일치 3건 — 오너가 Vault 파일 직접 열어 수동 대조 예정
@@ -119,9 +145,10 @@ Phase 0~3은 서로 독립적이라 병렬 진행 가능. Phase 8·9는 서로 �
     이중집계되는 사고 발생 가능성이 있었음(ISA TIGER 리츠부동산인프라에서 실제로 발생,
     수동 정리함). 로직을 "파일명이 정식 규칙과 다르면 항상 정리"로 수정하고 재실행해
     레거시 파일명 32건 전부 정규화 완료(값 변동 없음, 순수 파일명 정리).
-- [ ] **v1 launchd 무인 잡 중단 시점** — 원안 작업목록엔 있으나 이번엔 실행 안 함(운영
-  변경은 별도 확인 필요). 언제·어떤 잡부터 끌지 확인 필요(parse-notifications 등
-  v2 파이프라인이 완전히 대체하는 잡부터 우선순위).
+- [x] ~~**v1 launchd 무인 잡 중단 시점**~~ → **해소(2026-08-14)**: 오너 지시로 14개
+  전부 중단(심볼릭링크 정리, 소스 plist는 v1 리포에 보존해 재설치 가능). 중단 직후
+  발견한 자산분배 트랙 감시 공백은 같은 세션에 `daily-asset-allocation-check.mjs`로
+  메움 — 아래 "v2 무인 잡 현황" 참고.
 - [ ] **v1 UI 버그 2건 발견(수정 안 함, v1 은퇴 예정이라 참고용)**: (1) `src/lib/
   constants.js` CHEOL_COLS와 `scripts/lib/sheet-contracts.mjs` EXEC_COL이 체결내역
   K·L·M열 의미를 다르게 봄(죽은 코드라 실사용 영향 없음). (2) `src/lib/parseSheetData.js`
@@ -130,11 +157,11 @@ Phase 0~3은 서로 독립적이라 병렬 진행 가능. Phase 8·9는 서로 �
   란에 숫자가 보이면 이 버그일 수 있음 — 필요하면 확인.
 
 **Phase 8 — 자산분배 트랙 로직(Athena)**
-- [ ] **신규 현금 배분(카카오 이벤트 기반 누적 50만원 트리거) 미구현** — 오너 확정
-  (2026-08-07): 3계좌 합산 노출 보고만 오늘 완성, 신규 현금 배분은 범위 밖으로 명시
-  연기. 예수금앵커 Kakao 알림 → Vault CashEvents 배선(Phase 2가 파서만 만들고
-  미배선해둔 부분, 바로 아래 항목과 동일 작업)이 먼저 필요 — 그 위에 계좌별 미투자
-  현금 누적 추적 + 50만원 트리거 로직을 새로 얹어야 완성됨.
+- [x] ~~신규 현금 배분(카카오 이벤트 기반 누적 50만원 트리거) 미구현~~ → **해소
+  (2026-08-16)**: `scripts/jobs/new-cash-allocation.mjs` — 위 "오너 확인 필요 사항
+  모음"의 상세 기록 참고. 배당·매도체결(Facts/Ledger/Dividends·Profits, CashEvents
+  경유 아님 — 실제로는 배당·매도체결만으로 충분해 CashEvents 배선은 전제조건이
+  아니었음)을 소스로 사용.
 
 **Phase 9 — 퀀트 트랙 로직(Kairos)**
 - [ ] **pykrx 실제 KRX 계정 로그인 재시도** — 오너가 PC 앞에 있을 때 직접 시도해볼

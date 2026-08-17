@@ -26,7 +26,11 @@ case "$JOB" in
   health-watcher) CMD=(scripts/jobs/health-watcher.mjs) ;;
   execute-quant)  CMD=(scripts/tools/execute-quant-proposal.mjs) ;;
   daily-asset-allocation-check) CMD=(scripts/jobs/daily-asset-allocation-check.mjs) ;;
-  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check}" >&2; exit 2 ;;
+  risk-b-monitor) CMD=(scripts/jobs/risk-b-monitor.mjs) ;;
+  parse-notifications-to-vault) CMD=(scripts/jobs/parse-notifications-to-vault.mjs) ;;
+  update-holdings-from-executions) CMD=(scripts/jobs/update-holdings-from-executions.mjs) ;;
+  new-cash-allocation) CMD=(scripts/jobs/new-cash-allocation.mjs) ;;
+  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|risk-b-monitor|parse-notifications-to-vault|update-holdings-from-executions|new-cash-allocation}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)

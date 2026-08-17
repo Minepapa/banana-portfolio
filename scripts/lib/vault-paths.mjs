@@ -53,6 +53,10 @@ export const VAULT_PATHS = {
     // 크로스(상태변화) 판정에 필요(macro-overlay.mjs detectFaberCrossover). 이벤트로그가
     // 아니라 "지금 상태"라 jobHealth와 같은 원칙(1파일=덮어쓰기).
     macroOverlay: join(VAULT_ROOT, 'State', 'MacroOverlay'),
+    // 계좌별 "배당·매도체결로 생긴 미투자 현금" 누적치(ARCHITECTURE-V2.md "신규 현금
+    // 배분 원칙" 절, 2026-08-16 신설) — 1계좌=1파일, 트리거(50만원) 도달 시 제안 발송
+    // 후 0으로 리셋되는 "지금 상태"라 macroOverlay·jobHealth와 같은 원칙(덮어쓰기).
+    cashAccumulator: join(VAULT_ROOT, 'State', 'CashAccumulator'),
     // 킬스위치·체결모드(섀도우|실전) — 시스템 전체에 하나뿐인 상태라 폴더가 아니라 단일
     // 파일(구현계획서 Phase 9, 제안 흐름 연결 — kill-switch.mjs·shadow-mode.mjs는
     // Phase 4에서 순수 판정 로직만 만들어졌고 실제 파일 경로는 없었다). 파일이 아직

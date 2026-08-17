@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.parse-notifications-to-vault</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>parse-notifications-to-vault</string>
+  </array>
+  <!-- 평일 16:00 KST(2026-08-14) — v1은 장중 매시간 폴링했지만(카카오 알림 시트 경유
+       구조라 언제 거래가 찍힐지 몰라 폴링 자체는 불가피, ADR-0005), 자산분배 트랙엔
+       이 기록을 당일 즉시 소비하는 자동화가 없어(퀀트 트랙과 달리 같은 날 바로
+       사고파는 파이프라인이 없음) 최대 24시간 지연돼도 실질적 피해가 없다(오너 확인).
+       daily-asset-allocation-check(16:30)보다 30분 먼저 돌려 그날 체결이 반영된
+       상태에서 리밸런싱 갭을 확인하게 한다. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/parse-notifications-to-vault.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/parse-notifications-to-vault.log</string>
+</dict>
+</plist>
