@@ -13,6 +13,8 @@ export const JOB_LABELS = {
   'parse-notifications-to-vault': '카카오 체결·배당 알림 → Vault 기록',
   'update-holdings-from-executions': '체결 반영 → 보유종목 잔고 갱신',
   'new-cash-allocation': '신규 현금 배분 판단(2026-08-17 잠정중단 — 예수금 계산 정확도 문제)',
+  'reconcile-irp': 'IRP 계좌 KIS API 종목·예수금 대사(예수금은 CashEvent로도 기록)',
+  'update-cash-from-ledger': '계좌별(위탁·ISA·CMA·금현물·연금저축·IRP) 예수금 실잔고 계산',
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
 };
 

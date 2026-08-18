@@ -10,10 +10,11 @@ test('[막아야 함] describeJob: 등록 안 된 잡 이름도 조용히 사라
   assert.equal(describeJob('아직-등록-안-된-새-잡'), '아직-등록-안-된-새-잡');
 });
 
-test('JOB_LABELS: 현재 활성 launchd 잡 8개(telegram-session 포함) 전부 등록돼 있음', () => {
+test('JOB_LABELS: 현재 활성 launchd 잡 9개(telegram-session 포함) 전부 등록돼 있음', () => {
   const active = [
     'backup-vault', 'health-watcher', 'execute-quant', 'daily-asset-allocation-check',
     'parse-notifications-to-vault', 'update-holdings-from-executions', 'telegram-session',
+    'reconcile-irp', 'update-cash-from-ledger',
   ];
   for (const job of active) assert.ok(JOB_LABELS[job], `${job} 라벨 누락`);
 });

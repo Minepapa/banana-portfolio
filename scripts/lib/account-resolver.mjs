@@ -26,11 +26,16 @@ export const QUANT_ACCOUNT_NO = '46****07-01';
 // 쓴다(단일 진실 소스로 여기 하나만 정의 — 문자열 리터럴 중복 방지).
 export const QUANT_TRACK_LABEL = '퀀트';
 
+// IRP 계좌번호(마스킹) — reconcile-irp.mjs가 KIS API로 가져온 예수금을 CashEvent로
+// 기록할 때도 재사용한다(2026-08-18 — 문자열 리터럴 중복 방지, QUANT_ACCOUNT_NO와
+// 동일 원칙).
+export const IRP_ACCOUNT_NO = '43****82-29';
+
 // 계좌번호로 확정되는 경우 — 증권사명보다 우선. 퀀트 계좌는 의도적으로 null: KIS API가
 // 정본이라(Phase 9 확정) State/Holdings에 절대 반영하면 안 되고, 카카오로 잡힌 건
 // 순수 중복이므로 "귀속 불가"와 동일하게 취급해 호출부가 자동 적용을 건너뛰게 한다.
 const KNOWN_ACCOUNT_NUMBERS = {
-  '43****82-29': 'IRP',
+  [IRP_ACCOUNT_NO]: 'IRP',
   [QUANT_ACCOUNT_NO]: null, // 퀀트 트랙 전용 계좌 — State/Holdings 반영 대상 아님
 };
 

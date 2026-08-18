@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.update-cash-from-ledger</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>update-cash-from-ledger</string>
+  </array>
+  <!-- 평일 16:10 KST(2026-08-18 신설) — 예수금앵커 배선의 마지막 조립 단계
+       (update-cash-from-ledger.mjs)를 실제로 매일 돌게 스케줄링. parse-notifications-
+       to-vault(16:00, NH 4계좌 카카오 알림 파싱)·update-holdings-from-executions(16:05,
+       체결·배당 계좌귀속)·reconcile-irp(16:07, IRP KIS API 예수금) 세 잡이 그날의
+       CashEvents·Executions·Dividends를 다 채운 뒤에 돌아야 최신 값을 반영한다.
+       연금저축은 자동 CashEvent가 없어(알림 자체가 안 옴) 오너가 주기적으로 수동
+       스냅샷을 넣어줘야 최신 유지됨 — 이 잡은 그 값이 있으면 쓰고 없으면 마지막
+       저장값을 그대로 유지한다(추정 안 함, cash-ledger.mjs resolveCashAnchor). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-cash-from-ledger.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-cash-from-ledger.log</string>
+</dict>
+</plist>

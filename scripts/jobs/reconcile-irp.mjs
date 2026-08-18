@@ -41,9 +41,15 @@
  *
  * 사용: node scripts/jobs/reconcile-irp.mjs [token]
  */
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { getToken, readHoldings } from '../lib/sheets-common.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { hasKisCredentials, loadIrpAccount, getKisToken, getAccountBalance } from '../lib/kis.mjs';
+import { IRP_ACCOUNT_NO } from '../lib/account-resolver.mjs';
+import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { buildCashEventRecord } from '../lib/ledger-vault-writer.mjs';
+import { writeAtomic } from '../lib/state-writer.mjs';
 
 async function main() {
   if (!hasKisCredentials()) {
@@ -61,13 +67,37 @@ async function main() {
 
   const { appkey, appsecret, cano, acntPrdtCd } = irpAccount;
   const kisToken = await getKisToken({ appkey, appsecret });
-  // cash는 이 계좌 타입에서 신뢰 불가(파일 상단 주석) — holdings(종목 수량)만 대사에 쓴다.
-  const { holdings: kisHoldings } = await getAccountBalance({ token: kisToken, appkey, appsecret, cano, acntPrdtCd });
+  const { holdings: kisHoldings, cash } = await getAccountBalance({ token: kisToken, appkey, appsecret, cano, acntPrdtCd });
+
+  // 예수금앵커 자동화(2026-08-18) — cash가 이제 신뢰 가능함이 실측으로 확인됐다(파일
+  // 상단 정정 주석). NH 4계좌의 카카오 알림과 동일한 역할 — CashEvents에 기록만 해두면
+  // update-cash-from-ledger.mjs가 그걸 최신 기준점으로 읽어 IRP 실잔고를 계산한다.
+  // null(진짜 조회 실패)이면 기록하지 않는다 — 0으로 추정해 기존 앵커를 덮어쓰면 더 위험.
+  if (cash != null) {
+    // ⚠️ 버그 수정(2026-08-18, 배선 직후 발견) — toISOString()은 UTC라 KST보다 9시간
+    // 느리다. 이 Vault의 모든 타임스탬프(카카오 알림 파싱·오너 수동 앵커 등)는 KST
+    // 벽시계 기준이라, UTC로 쓰면 computeCashDelta의 사전식 비교가 실제보다 9시간
+    // 이른 시각으로 착각해 그 사이(진짜로는 앵커 이전인) 체결·배당이 델타에 잘못
+    // 포함될 위험이 있었다(order-gate.mjs checkMarketOpen과 동일 Asia/Seoul 관례로 통일).
+    const kstParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Seoul', hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).formatToParts(new Date());
+    const get = (type) => kstParts.find((p) => p.type === type).value;
+    const nowTs = `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+    const { filename, content, dir } = buildCashEventRecord({ account: 'IRP', acctNo: IRP_ACCOUNT_NO, balance: cash, ts: nowTs });
+    mkdirSync(dir, { recursive: true });
+    writeAtomic(join(dir, filename), content);
+    console.log(`  + [예수금앵커] IRP ${nowTs} 잔고 ${cash.toLocaleString()}원`);
+  } else {
+    console.log('  ⚠️ IRP 예수금 조회 실패(null) — CashEvent 기록 건너뜀(기존 기준점 유지)');
+  }
 
   // 예수금(현금성) 행은 수량 개념이 없어 종목 대사 대상이 아니다 — readHoldings()가 qty를
   // 빈칸→0으로 채워서, 종목 루프에 그대로 두면 0=0으로 조용히 "일치" 취급된다. 이름
-  // 포함매칭(includes)으로 걸러서 애초에 대사 대상에서 뺀다(예수금 자체의 금액 대사는
-  // 위 사유로 비활성화 상태 — 재활성화 시 이 자리에 다시 추가).
+  // 포함매칭(includes)으로 걸러서 애초에 대사 대상에서 뺀다. 예수금 자체는 이제 위에서
+  // CashEvent로 따로 기록되므로(2026-08-18), 여기 남은 건 "시트 vs KIS 종목 수량"만
+  // 비교하는 순수 대사 로직 — 예수금 값끼리의 대사(비교)는 여전히 이 잡 스코프 밖.
   const holdingsRaw = await readHoldings(token);
   const sheetIrp = new Map();
   for (const h of holdingsRaw) {
@@ -89,8 +119,8 @@ async function main() {
     }
   }
 
-  if (mismatches === 0) console.log(`✅ IRP 대사 일치 (종목 ${allNames.size}개, 예수금 대사는 비활성화 상태)`);
-  else console.log(`⚠️ IRP 대사 불일치 ${mismatches}건 (종목 ${allNames.size}개, 예수금 대사는 비활성화 상태)`);
+  if (mismatches === 0) console.log(`✅ IRP 종목 대사 일치 (종목 ${allNames.size}개, 예수금 자체는 위에서 별도로 CashEvent 기록됨)`);
+  else console.log(`⚠️ IRP 종목 대사 불일치 ${mismatches}건 (종목 ${allNames.size}개, 예수금 자체는 위에서 별도로 CashEvent 기록됨)`);
   await flushWarnings('reconcile-irp');
 }
 

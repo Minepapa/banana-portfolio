@@ -65,6 +65,11 @@ const EXPECTED_INTERVALS_MS = {
   // 자리잡으면(예수금앵커 배선 완료 후) 이 항목을 되살릴 것. 다른 4개 자산분배 잡
   // (parse-notifications-to-vault·update-holdings-from-executions·
   // daily-asset-allocation-check·backup-vault)은 이 문제와 무관해 그대로 둔다.
+  // reconcile-irp·update-cash-from-ledger(2026-08-18 신설 — 예수금앵커 배선 마지막
+  // 조립, IRP는 여기서 KIS API로 자동 CashEvent도 기록) 둘 다 평일 16:07·16:10 하루
+  // 1회.
+  'reconcile-irp': 24 * 60 * 60 * 1000,
+  'update-cash-from-ledger': 24 * 60 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 
