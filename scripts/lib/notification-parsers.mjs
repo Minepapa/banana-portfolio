@@ -133,7 +133,14 @@ export function parseGoldBuy(body, tsRaw) {
   const price = parseFloat(cleanNum(pm[1], true));
   if (!stockName || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(price) || price <= 0) return null;
   const om = body.match(GOLD_ORDER);
-  return { stockName, qty, price, tradeType: isSell ? '매도' : '매수', orderNo: om ? om[1] : '', date: normalizeDateTime(tsRaw).slice(0, 10) };
+  // ⚠️ 버그 수정(2026-08-18, 예수금앵커 설계 중 발견) — 원래 여기서 날짜만 남기고
+  // (slice(0,10)) 시각을 버렸었다. cash-ledger.mjs가 예수금 델타를 "기준점 이후"로
+  // 판정할 때 전체 타임스탬프 문자열 비교(computeCashDelta)를 쓰는데, 날짜만 있는
+  // 문자열은 같은 날 나중에 온 실제 시각 앵커보다 사전식으로 항상 "이전"으로 취급돼
+  // (짧은 문자열이 그 접두사를 공유하는 긴 문자열보다 먼저 정렬됨) 같은 날 오후에 산
+  // 금이 델타에서 빠지는, 이 세션 전체가 고치고 있는 바로 그 날짜절삭 버그가 여기
+  // 그대로 재발할 뻔했다. 다른 파서(체결·예수금앵커)처럼 전체 타임스탬프를 그대로 쓴다.
+  return { stockName, qty, price, tradeType: isSell ? '매도' : '매수', orderNo: om ? om[1] : '', date: normalizeDateTime(tsRaw) };
 }
 
 // ── 예수금 앵커 파서 (NH투자증권 "입금안내/출금안내", 잔고줄 보유) ─

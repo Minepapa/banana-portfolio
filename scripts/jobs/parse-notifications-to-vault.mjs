@@ -53,7 +53,9 @@ const ALARM_SHEET = '알람';
 // parseGoldBuy는 체결과 필드 모양이 달라(qty/date vs quantity/tradeDate) 여기서만 맞춰준다.
 function goldToExecutionEvent(g) {
   return {
-    tradeDate: g.date, // 시각 정보 없음(날짜만) — buildExecutionRecord가 자동으로 000000 처리
+    // g.date는 전체 타임스탬프(2026-08-18 notification-parsers.mjs 수정 — 예전엔
+    // 날짜만 남겨 cash-ledger.mjs의 델타 계산에서 날짜절삭 버그가 재발할 뻔했다).
+    tradeDate: g.date,
     tradeType: g.tradeType,
     stockCode: '',
     stockName: g.stockName,

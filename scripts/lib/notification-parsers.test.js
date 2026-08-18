@@ -151,6 +151,12 @@ test('parseGoldBuy: 주 단위(일반 주식)는 매칭 안 됨(g 가드)', () =
   assert.equal(parseGoldBuy(body, '2026-08-04 09:00:00'), null);
 });
 
+test('[막아야 함/날짜절삭 재발방지] parseGoldBuy: date가 날짜만이 아니라 전체 타임스탬프(시각 보존) — cash-ledger.mjs 델타 비교가 사전식으로 안전하려면 필수', () => {
+  const body = '체결통보\n종목명 : KRX금99.99K\n체결수량 : 10.5g\n체결단가 : 95,000원\n매수';
+  const r = parseGoldBuy(body, '2026-08-04 13:02:15');
+  assert.equal(r.date, '2026-08-04 13:02:15');
+});
+
 test('parseCashAlarm: NH 위탁 입금안내(정상 — 출금가능금액이 입금 반영)', () => {
   const body = '[NH투자증권] 입금안내\n계좌번호 205-01-59***9\n금액 1,000,000원\n출금가능금액 : 7,224,098원';
   const r = parseCashAlarm(body, '2026-08-04 09:00:00');
