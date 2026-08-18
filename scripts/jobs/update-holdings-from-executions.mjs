@@ -88,13 +88,25 @@ export function pickUnprocessedExecutions(executionFiles) {
 // (체결내역 기준 스냅샷)이 이미 반영한 체결을 카카오 파이프라인이 나중에 "새 체결"로
 // 다시 발견해 applyBuy/applySell로 재적용하는 사고가 실제로 났다(실측 52건, 보유종목
 // 12개·실현손익 6건 오염 — Aug-17 실행분 vault 백업 git 이력으로 대조·복구 완료).
-// 날짜(일단위)·구분·종목명·수량·단가가 legacy 레코드와 완전히 같으면 "이미 반영된
-// 사건"으로 보고 holdingsApplied만 찍고 실제 적용(applyBuy/applySell)은 건너뛴다.
+// 날짜(일단위)·구분·종목명·수량이 legacy 레코드와 같으면 "이미 반영된 사건"으로 보고
+// holdingsApplied만 찍고 실제 적용(applyBuy/applySell)은 건너뛴다.
+//
+// ⚠️ 버그 수정(2026-08-18, 재활성화 직후 오너가 보내준 실제 앱 스크린샷 대조로 발견) —
+// 처음엔 단가(price)까지 완전일치를 요구했는데, 해외주식은 legacy(마이그레이션, v1
+// "체결내역" 시트 — 원화환산가 저장)와 live(카카오 알림 재파싱 — 원문 USD 단가 그대로
+// 저장) 사이에 통화 자체가 달라(예: 마이크로소프트 2026-05-12 매수 2주가 legacy엔
+// price:585919(원), live엔 price:410.565(달러)) 숫자가 절대 같아질 수 없다 — 그래서
+// 이 조건 때문에 해외주식 중복 7건이 전부 탐지를 피해 그대로 재적용됐다(마이크로소프트
+// +2·알파벳 Class A +8·엔비디아 +5주, 실제 앱 잔고와 다름을 오너 스크린샷으로 확인).
+// 단가 비교를 뺀다 — 날짜(초단위 포함)·구분·종목명·수량이 같은 두 개의 서로 다른
+// 진짜 거래가 우연히 존재할 확률은 무시할 수준이고(이 프로젝트 자체의 dedupKey 관례
+// — ledger-vault-writer.mjs buildExecutionRecord — 도 애초에 단가 없이 이 넷만으로
+// 유일성을 정의한다, 여기서도 그 관례를 그대로 따르는 게 맞다).
 export function matchesLegacyExecution(exec, legacyExecutions) {
   return legacyExecutions.some((g) =>
     String(g.tradeDate).slice(0, 10) === String(exec.tradeDate).slice(0, 10) &&
     g.tradeType === exec.tradeType && g.stockName === exec.stockName &&
-    g.quantity === exec.quantity && g.price === exec.price,
+    g.quantity === exec.quantity,
   );
 }
 

@@ -61,9 +61,15 @@ test('pickAccountlessAppliedExecutions: legacy는 제외(account:null이 영구 
 
 const exec = (overrides = {}) => ({ tradeDate: '2026-06-19 10:15:04', tradeType: '매수', stockName: '금 99.99K', quantity: 2, price: 205350, ...overrides });
 
-test('[막아야 함/실사고] matchesLegacyExecution: 날짜(일단위)·구분·종목명·수량·단가 완전일치하면 중복(2026-08-18 발견 — 알람 시트 잔존 옛 행이 마이그레이션 스냅샷을 재적용해 12개 보유종목 오염시킨 실사고)', () => {
+test('[막아야 함/실사고] matchesLegacyExecution: 날짜(일단위)·구분·종목명·수량 일치하면 중복(2026-08-18 발견 — 알람 시트 잔존 옛 행이 마이그레이션 스냅샷을 재적용해 12개 보유종목 오염시킨 실사고)', () => {
   const legacy = [{ tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 2, price: 205350 }];
   assert.equal(matchesLegacyExecution(exec(), legacy), true);
+});
+
+test('[막아야 함/실사고2] matchesLegacyExecution: 단가가 달라도 중복(2026-08-18 재발견 — 해외주식은 legacy가 원화환산가·live가 USD원문가라 단가가 절대 같아질 수 없음, 이 조건 때문에 마이크로소프트·알파벳·엔비디아 중복 7건이 탐지를 피해 실제 앱 잔고와 다르게 재적용됐던 실사고)', () => {
+  const legacy = [{ tradeDate: '2026-05-12', tradeType: '매수', stockName: '마이크로소프트', quantity: 2, price: 585919 }];
+  const liveUsd = { tradeDate: '2026-05-12 13:20:58', tradeType: '매수', stockName: '마이크로소프트', quantity: 2, price: 410.565 };
+  assert.equal(matchesLegacyExecution(liveUsd, legacy), true);
 });
 
 test('matchesLegacyExecution: 시각까지 있는 legacy tradeDate라도 날짜(앞 10자)만 비교', () => {
@@ -71,7 +77,7 @@ test('matchesLegacyExecution: 시각까지 있는 legacy tradeDate라도 날짜(
   assert.equal(matchesLegacyExecution(exec(), legacy), true);
 });
 
-test('matchesLegacyExecution: 수량·단가 중 하나라도 다르면 중복 아님(진짜 다른 체결)', () => {
+test('matchesLegacyExecution: 수량이 다르면 중복 아님(진짜 다른 체결)', () => {
   const legacy = [{ tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 3, price: 205350 }];
   assert.equal(matchesLegacyExecution(exec(), legacy), false);
 });
