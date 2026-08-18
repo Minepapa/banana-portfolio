@@ -12,7 +12,7 @@ export const JOB_LABELS = {
   'daily-asset-allocation-check': '자산분배 트랙 일일 리밸런싱·거시오버레이 점검',
   'parse-notifications-to-vault': '카카오 체결·배당 알림 → Vault 기록',
   'update-holdings-from-executions': '체결 반영 → 보유종목 잔고 갱신',
-  'new-cash-allocation': '신규 현금 배분 판단(2026-08-18 실잔고 기반 재작성 완료 — launchd 재활성화는 별도 확인 대기중)',
+  'new-cash-allocation': '신규 현금 배분 판단(2026-08-18 실잔고 기반 재작성 후 재활성화)',
   'reconcile-irp': 'IRP 계좌 KIS API 종목·예수금 대사(예수금은 CashEvent로도 기록)',
   'update-cash-from-ledger': '계좌별(위탁·ISA·CMA·금현물·연금저축·IRP) 예수금 실잔고 계산',
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',

@@ -54,17 +54,11 @@ const EXPECTED_INTERVALS_MS = {
   // 없어 watch-order-fill.mjs의 퀀트 트리거에만 의존하던 잡. 평일 16:05 KST 하루 1회
   // (parse-notifications-to-vault 16:00 직후).
   'update-holdings-from-executions': 24 * 60 * 60 * 1000,
-  // ⚠️ new-cash-allocation은 2026-08-16 신설 다음날(08-17) 실제로 첫 자동 실행됐다가
-  // 즉시 잠정 중단됐다(오너 지적) — 누적 로직이 "배당·매도로 들어온 돈"만 더하고
-  // "그 돈으로 오너가 이미 직접 재투자한 것"은 빼지 않아, 실제 예수금(위탁 1,164,516원,
-  // State/Holdings/위탁-예수금.md)보다 약 10배 부풀려진 금액(11,598,305원)으로 실제
-  // 매수 제안이 나갔다. 근본 원인은 v2에 예수금앵커(카카오 입출금 알림) → Vault 배선이
-  // 아직 없어 진짜 현금 잔고를 실시간 추적할 방법 자체가 없다는 것(Facts/Ledger/
-  // CashEvents 계속 비어있음, 기존에 이미 알려진 공백). launchd 잡 자체를 언로드했으므로
-  // 여기 등록하면 영원히 "조용하다"고 오판해 알림 스팸만 낸다 — 예수금 추적이 제대로
-  // 자리잡으면(예수금앵커 배선 완료 후) 이 항목을 되살릴 것. 다른 4개 자산분배 잡
-  // (parse-notifications-to-vault·update-holdings-from-executions·
-  // daily-asset-allocation-check·backup-vault)은 이 문제와 무관해 그대로 둔다.
+  // new-cash-allocation은 2026-08-16 신설 다음날(08-17) 10배 부풀림 사고로 잠정
+  // 중단됐다가, 예수금앵커 배선 완료 후 실잔고 기반으로 전면 재작성돼 2026-08-18
+  // 재활성화됐다(오너 확인) — 상세 경위는 job-labels.mjs·new-cash-allocation.mjs
+  // 헤더 주석 참고. 평일 16:13 하루 1회(update-cash-from-ledger 16:10 직후).
+  'new-cash-allocation': 24 * 60 * 60 * 1000,
   // reconcile-irp·update-cash-from-ledger(2026-08-18 신설 — 예수금앵커 배선 마지막
   // 조립, IRP는 여기서 KIS API로 자동 CashEvent도 기록) 둘 다 평일 16:07·16:10 하루
   // 1회.

@@ -10,19 +10,23 @@
     <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>new-cash-allocation</string>
   </array>
-  <!-- 평일 16:10 KST(2026-08-16) — ARCHITECTURE-V2.md "신규 현금 배분 원칙" 절
-       구현(구현계획서 Phase 8이 열어둔 채 남겨뒀던 항목). update-holdings-from-executions
-       (16:05)가 그날 매도체결을 State/Holdings+Facts/Ledger/Profits에 반영한 직후 —
-       이 잡이 읽는 매도현금(quantity*sellPrice)은 Profits 레코드에서 나오므로 반드시
-       그 다음 순서여야 한다. daily-asset-allocation-check(16:30)보다는 먼저 끝나
-       그날 안에 배분 제안까지 발송될 여지를 남긴다. -->
+  <!-- 평일 16:13 KST(2026-08-16 신설, 2026-08-18 재활성화+시각 조정) — ARCHITECTURE-V2.md
+       "신규 현금 배분 원칙" 절 구현. 2026-08-17 10배 부풀림 사고로 잠정중단됐다가,
+       예수금앵커 배선 완료(update-cash-from-ledger.mjs) 후 실잔고 기반으로 전면
+       재작성돼 재활성화됨(오너 확인, 2026-08-18) — 이제 이 잡은 Profits 레코드를 직접
+       읽지 않고 State/Holdings/{계좌}-예수금.md(실잔고)만 읽는다. 그래서 순서가
+       parse-notifications-to-vault(16:00)→update-holdings-from-executions(16:05)→
+       reconcile-irp(16:07)→update-cash-from-ledger(16:10, 실잔고 계산)→이 잡(16:13)
+       →daily-asset-allocation-check(16:30) — update-cash-from-ledger가 그날의 최신
+       실잔고를 다 쓴 뒤에 돌아야 한다(예전엔 16:10으로 update-cash-from-ledger와
+       겹쳐있었음 — 재활성화 시점에 발견·수정). -->
   <key>StartCalendarInterval</key>
   <array>
-    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
-    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
-    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
-    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
-    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>13</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>13</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>13</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>13</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>13</integer></dict>
   </array>
   <key>RunAtLoad</key>
   <false/>
