@@ -7,15 +7,23 @@
  * parsers.mjs)로 해석하지만, 출력 대상이 시트 탭이 아니라 Vault Facts/Ledger다
  * (docs/ARCHITECTURE-V2.md "카카오 알림 → Vault 파싱 파이프라인" 절).
  *
- * ⚠️ 범위(2026-08-04, 구현계획서 Phase 2 — 오너 확정): 오늘은 **체결(금현물 포함)·
- * 배당만** Vault에 기록한다. 펀드적립·예수금앵커·환전은 파서는 이미 준비돼 있지만
+ * ⚠️ 범위(2026-08-04, 구현계획서 Phase 2 — 오너 확정): 처음엔 **체결(금현물 포함)·
+ * 배당만** Vault에 기록했다. 펀드적립·환전은 파서는 이미 준비돼 있지만
  * (notification-parsers.mjs), 계좌 귀속·다계좌 회계·보유종목 갱신은 State/Holdings
  * 설계가 끝나는 Phase 8·9에서 마저 연결한다 — 지금 억지로 끼워 넣지 않는다(설계 없이
  * 만들면 나중에 다시 뜯어고쳐야 함).
  *
+ * ⚠️ 예수금앵커(2026-08-18 추가, 오너 요청 — "예수금 관리가 정확한지 철저히 분석"):
+ * v1은 기준점·거래를 날짜만 비교해 같은 날 오후 거래를 델타에서 빠뜨리는 버그가 있었다
+ * (cash-ledger.mjs 헤더 주석 참고). v2는 parseCashAlarm(nh-accounts.mjs 기반 전체
+ * 계좌번호 매칭)로 원문만 Facts/Ledger/CashEvents에 그대로 적재하고, 실제 잔고 계산
+ * (기준점+델타)은 State 쓰기 잡(뒤 Phase)이 이 원문들을 읽어 수행한다 — 이 잡은 원문
+ * 저장까지만 책임진다(cash-ledger.mjs의 계산 함수는 여기서 호출하지 않음).
+ *
  * Ledger 하위폴더(2026-08-04, 오너 요청으로 세분화): Facts/Ledger/Executions(체결+
- * 금현물)·Dividends(배당) — 나머지 3개 폴더(FundPurchases·CashEvents·Exchanges)는
- * 그 파서가 배선되는 뒷 Phase에서 자연히 채워진다(vault-paths.mjs 참고).
+ * 금현물)·Dividends(배당)·CashEvents(예수금앵커, 2026-08-18 추가) — 나머지 2개 폴더
+ * (FundPurchases·Exchanges)는 그 파서가 배선되는 뒷 Phase에서 자연히 채워진다
+ * (vault-paths.mjs 참고).
  *
  * 멱등: 파일명 자체가 dedup 키(ledger-vault-writer.mjs) — 같은 이벤트를 다시 읽어도
  * 같은 파일명이 나와 existsSync만으로 중복을 걸러낸다. "알람" 시트 원문 행 정리(삭제·
@@ -32,8 +40,8 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getToken, getRange } from '../lib/sheets-common.mjs';
-import { parseExecution, parseDividend, parseGoldBuy } from '../lib/notification-parsers.mjs';
-import { buildExecutionRecord, buildDividendRecord } from '../lib/ledger-vault-writer.mjs';
+import { parseExecution, parseDividend, parseGoldBuy, parseCashAlarm } from '../lib/notification-parsers.mjs';
+import { buildExecutionRecord, buildDividendRecord, buildCashEventRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { QUANT_ACCOUNT_NO } from '../lib/account-resolver.mjs';
@@ -75,12 +83,13 @@ async function main() {
   if (!DRY_RUN) {
     mkdirSync(VAULT_PATHS.facts.ledger.executions, { recursive: true });
     mkdirSync(VAULT_PATHS.facts.ledger.dividends, { recursive: true });
+    mkdirSync(VAULT_PATHS.facts.ledger.cashEvents, { recursive: true });
   }
 
   const alarmRows = await getRange(token, `${ALARM_SHEET}!A2:D`);
   console.log(`📨 알람 ${alarmRows.length}행 스캔`);
 
-  let execNew = 0, divNew = 0, skip = 0, unrecognized = 0, quantExcluded = 0;
+  let execNew = 0, divNew = 0, cashNew = 0, skip = 0, unrecognized = 0, quantExcluded = 0;
   for (const r of alarmRows) {
     const body = String(r[3] ?? ''); // D: 내용
     const ts = String(r[0] ?? '');   // A: 시간
@@ -124,14 +133,25 @@ async function main() {
       continue;
     }
 
-    // 펀드적립·예수금앵커·환전일 수도, 파싱 대상이 아예 아닌 알림(광고 등)일 수도 있다
-    // — 이 3종은 아직 Phase 8·9(계좌 귀속·다계좌 회계) 전이라 범위 밖, 개수만 집계.
+    const c = parseCashAlarm(body, ts);
+    if (c) {
+      const { filename, content, dir } = buildCashEventRecord(c);
+      const filepath = join(dir, filename);
+      if (existsSync(filepath)) { skip++; continue; }
+      console.log(`  + [예수금] ${c.ts} ${c.account} 잔고 ${c.balance.toLocaleString()}원`);
+      if (!DRY_RUN) writeAtomic(filepath, content);
+      cashNew++;
+      continue;
+    }
+
+    // 펀드적립·환전일 수도, 파싱 대상이 아예 아닌 알림(광고 등)일 수도 있다 — 이 2종은
+    // 아직 Phase 8·9(계좌 귀속·다계좌 회계) 전이라 범위 밖, 개수만 집계.
     unrecognized++;
   }
 
   console.log(
-    `\n✅ 완료 — 체결 +${execNew}(금현물 포함) · 배당 +${divNew} · 중복스킵 ${skip} · ` +
-    `퀀트계좌 제외 ${quantExcluded}(KIS API가 정본) · 범위밖/미인식 ${unrecognized}` +
+    `\n✅ 완료 — 체결 +${execNew}(금현물 포함) · 배당 +${divNew} · 예수금앵커 +${cashNew} · ` +
+    `중복스킵 ${skip} · 퀀트계좌 제외 ${quantExcluded}(KIS API가 정본) · 범위밖/미인식 ${unrecognized}` +
     (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
 }

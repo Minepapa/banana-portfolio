@@ -86,6 +86,29 @@ export function buildDividendRecord(d) {
   return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.dividends };
 }
 
+// c: parseCashAlarm()의 반환값 { account, acctNo, balance, ts }. 체결·배당과 달리
+// account가 파싱 시점에 이미 확정돼 있다(nh-accounts.mjs가 계좌번호로 바로 판정) —
+// "나중에 채움" accountNote 패턴이 필요 없다(2026-08-18 신설, 예수금앵커 배선).
+export function buildCashEventRecord(c) {
+  const dedupKey = `${c.ts}|${c.account}|${c.balance}`;
+  const datePart = c.ts.slice(0, 10);
+  const timePart = c.ts.slice(11).replace(/:/g, '') || '000000';
+  // 잔고를 파일명에 포함(buildProfitRecord와 동일 원칙, 코드리뷰 관례 재사용) — 같은
+  // 계좌가 같은 초에 알림을 2건 받으면(연속 입출금 등) 잔고 없이는 파일명이 겹쳐
+  // 뒤 기록이 앞 기록을 조용히 덮어쓴다.
+  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(c.account)}-${sanitizeSegment(c.balance)}.md`;
+  const content = buildFrontmatter({
+    type: 'cash-event',
+    ts: c.ts,
+    account: c.account,
+    acctNo: c.acctNo || '',
+    balance: c.balance,
+    dedupKey,
+    recordedAt: new Date().toISOString(),
+  });
+  return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.cashEvents };
+}
+
 // 매도 체결로 발생한 실현손익 — holdings-updater.mjs(구현계획서 Phase 8)가 매도 적용
 // 직후 호출한다. account는 여기선 null로 안 비워둔다 — 매도 자체가 계좌 귀속이 이미
 // 해결된 뒤에만(account-resolver.mjs) 처리되는 단계라, 실현손익 시점엔 계좌를 이미 안다.

@@ -2,7 +2,7 @@
 // YAML 형태인지 확인.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildExecutionRecord, buildDividendRecord, buildProfitRecord } from './ledger-vault-writer.mjs';
+import { buildExecutionRecord, buildDividendRecord, buildProfitRecord, buildCashEventRecord } from './ledger-vault-writer.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
 
 const exec = (overrides = {}) => ({
@@ -144,4 +144,40 @@ test('buildProfitRecord: 같은 종목·계좌·같은 초라도 수량이 다�
   const a = buildProfitRecord(sellExec({ quantity: 4 }), 50000, 80000);
   const b = buildProfitRecord(sellExec({ quantity: 6 }), 50000, 80000);
   assert.notEqual(a.filename, b.filename);
+});
+
+const cashEvent = (overrides = {}) => ({
+  account: '위탁', acctNo: '205-01-59***9', balance: 1234567, ts: '2026-08-18 09:00:00',
+  ...overrides,
+});
+
+test('buildCashEventRecord: CashEvents 하위폴더를 가리킨다', () => {
+  const { dir } = buildCashEventRecord(cashEvent());
+  assert.equal(dir, VAULT_PATHS.facts.ledger.cashEvents);
+});
+
+test('buildCashEventRecord: 파일명·dedupKey가 결정론적(날짜-시각-계좌명-잔고)', () => {
+  const a = buildCashEventRecord(cashEvent());
+  const b = buildCashEventRecord(cashEvent());
+  assert.equal(a.filename, b.filename);
+  assert.equal(a.filename, '2026-08-18-090000-위탁-1234567.md');
+  assert.equal(a.dedupKey, '2026-08-18 09:00:00|위탁|1234567');
+});
+
+test('[막아야 함] buildCashEventRecord: 같은 계좌·같은 초에 잔고 다른 알림 2건이 와도 파일명이 안 겹침', () => {
+  const a = buildCashEventRecord(cashEvent({ balance: 100 }));
+  const b = buildCashEventRecord(cashEvent({ balance: 200 }));
+  assert.notEqual(a.filename, b.filename);
+});
+
+test('buildCashEventRecord: account는 파싱 시점에 이미 확정 — accountNote 지연패턴 없음', () => {
+  const { content } = buildCashEventRecord(cashEvent());
+  assert.match(content, /account: "위탁"/);
+  assert.doesNotMatch(content, /accountNote/);
+});
+
+test('buildCashEventRecord: 같은 계좌·같은 시각이라도 잔고가 다르면(같은 초 연속 알림) 다른 dedupKey', () => {
+  const a = buildCashEventRecord(cashEvent({ balance: 100 }));
+  const b = buildCashEventRecord(cashEvent({ balance: 200 }));
+  assert.notEqual(a.dedupKey, b.dedupKey);
 });

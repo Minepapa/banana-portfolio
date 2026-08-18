@@ -137,35 +137,35 @@ export function parseGoldBuy(body, tsRaw) {
 }
 
 // ── 예수금 앵커 파서 (NH투자증권 "입금안내/출금안내", 잔고줄 보유) ─
-const CASH_ACCTNO = /계좌번호\s*([\d]{3}-[\d]{2}-[\d*]+)/;
 const CASH_BALANCE = /출금가능금액\s*:\s*([\d,]+)\s*원/;
 const CASH_DEPOSIT_AMOUNT = /(?<!출금가능)금액\s+([\d,]+)\s*원/;
-const NH_ACCT_PREFIX = { '209-02': 'ISA', '205-01': '위탁' };
 
 // resolveDepositAnchorBalance: cash-base.mjs가 소유(계좌 회계 로직) — 여기서는 import해
 // 그대로 쓴다. 순환 의존 없음(cash-base.mjs는 이 모듈을 import하지 않음).
 import { resolveDepositAnchorBalance } from './cash-base.mjs';
+// resolveNhAccount/extractNhAccountNo: nh-accounts.mjs가 소유(계좌번호→계좌명 매핑,
+// 마스킹된 전체번호 기준) — 2026-08-18 접두사(6자리)만 보던 예전 방식을 교체.
+// ISA(209-02-89***2)와 금현물(209-02-92***6)이 접두사를 공유해 실데이터로 오귀속을
+// 확인, 전체번호 매칭으로 전환했다(nh-accounts.mjs 헤더 주석 참고).
+import { resolveNhAccount, extractNhAccountNo } from './nh-accounts.mjs';
 
 export function parseCashAlarm(body, tsRaw) {
   if (!body.includes('NH투자증권')) return null;
   const isDeposit = body.includes('입금안내');
   if (!(isDeposit || body.includes('출금안내'))) return null;
-  const am = body.match(CASH_ACCTNO);
+  const account = resolveNhAccount(body);
   const bm = body.match(CASH_BALANCE);
-  if (!am || !bm) return null;
-  const acctNo = am[1].trim();
-  const tab = NH_ACCT_PREFIX[acctNo.slice(0, 6)];
-  if (!tab) return null;
+  if (!account || !bm) return null;
   const withdrawable = parseInt(cleanNum(bm[1]), 10);
   if (!Number.isFinite(withdrawable) || withdrawable < 0) return null;
   let balance = withdrawable;
-  if (isDeposit && tab === 'ISA') {
+  if (isDeposit && account === 'ISA') {
     const dm = body.match(CASH_DEPOSIT_AMOUNT);
     const deposit = dm ? parseInt(cleanNum(dm[1]), 10) : NaN;
     balance = resolveDepositAnchorBalance(withdrawable, deposit);
   }
   if (!Number.isFinite(balance) || balance < 0) return null;
-  return { tab, acctNo, balance, ts: normalizeDateTime(tsRaw) };
+  return { account, acctNo: extractNhAccountNo(body), balance, ts: normalizeDateTime(tsRaw) };
 }
 
 // ── 환전 파서 (NH투자증권 "환전내역 안내") ────────────

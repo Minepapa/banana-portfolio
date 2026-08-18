@@ -152,20 +152,36 @@ test('parseGoldBuy: 주 단위(일반 주식)는 매칭 안 됨(g 가드)', () =
 });
 
 test('parseCashAlarm: NH 위탁 입금안내(정상 — 출금가능금액이 입금 반영)', () => {
-  const body = '[NH투자증권] 입금안내\n계좌번호 205-01-123456\n금액 1,000,000원\n출금가능금액 : 7,224,098원';
+  const body = '[NH투자증권] 입금안내\n계좌번호 205-01-59***9\n금액 1,000,000원\n출금가능금액 : 7,224,098원';
   const r = parseCashAlarm(body, '2026-08-04 09:00:00');
-  assert.equal(r.tab, '위탁');
+  assert.equal(r.account, '위탁');
+  assert.equal(r.acctNo, '205-01-59***9');
   assert.equal(r.balance, 7224098); // 위탁은 출금가능금액이 이미 정확 → 그대로
 });
 
 test('parseCashAlarm: NH ISA 입금안내(출금가능금액이 입금보다 작아 뒤처짐 — 입금액 우선)', () => {
-  const body = '[NH투자증권] 입금안내\n계좌번호 209-02-654321\n금액 300,000원\n출금가능금액 : 183,079원';
+  const body = '[NH투자증권] 입금안내\n계좌번호 209-02-89***2\n금액 300,000원\n출금가능금액 : 183,079원';
   const r = parseCashAlarm(body, '2026-08-04 09:00:00');
-  assert.equal(r.tab, 'ISA');
+  assert.equal(r.account, 'ISA');
   assert.equal(r.balance, 300000); // resolveDepositAnchorBalance가 더 큰 입금액 채택
 });
 
-test('parseCashAlarm: 매핑 안 된 NH 계좌는 null', () => {
+test('[막아야 함] parseCashAlarm: 접두사(209-02)가 같은 금현물 계좌는 ISA와 섞이지 않음', () => {
+  // 실제 사고 재현 방지 회귀 테스트(2026-08-18 실데이터로 발견) — ISA와 금현물이
+  // 209-02 접두사를 공유해, 접두사만 보던 예전 방식이면 금현물 알림이 ISA로 잘못 들어감.
+  const body = '[NH투자증권] 출금안내\n계좌번호 209-02-92***6\n금액 200,000원\n출금가능금액 : 50,000원';
+  const r = parseCashAlarm(body, '2026-08-04 09:00:00');
+  assert.equal(r.account, '금현물');
+});
+
+test('parseCashAlarm: NH CMA 입금안내(경유지 계좌도 계좌명으로 정확히 식별)', () => {
+  const body = '[NH투자증권] 입금안내\n계좌번호 209-01-92***6\n금액 2,000,000원\n출금가능금액 : 25,103,085원';
+  const r = parseCashAlarm(body, '2026-08-04 09:00:00');
+  assert.equal(r.account, 'CMA');
+  assert.equal(r.balance, 25103085);
+});
+
+test('parseCashAlarm: 매핑 안 된 NH 계좌는 null(추정 안 함)', () => {
   const body = '[NH투자증권] 입금안내\n계좌번호 999-99-000000\n금액 100,000원\n출금가능금액 : 100,000원';
   assert.equal(parseCashAlarm(body, '2026-08-04 09:00:00'), null);
 });
