@@ -20,6 +20,14 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 NODE="$(command -v node || true)"
 if [ -z "$NODE" ]; then echo "[run.sh] node를 PATH에서 찾지 못했습니다" >&2; exit 127; fi
 
+# ⚠️ 이 머신의 Node 20+ 기본 Happy Eyeballs(이중스택 동시접속, RFC 8305)가 IPv6가
+# 즉각 거부되고 IPv4는 느리게 응답하는 조건에서 오작동해 외부 API 호출이 fetch
+# failed(ETIMEDOUT)로 실패하는 걸 실측 확인(2026-08-18, task #34 — "텔레그램 상시세션
+# 재연결 불안정"으로 보고됐던 증상의 실제 원인. scripts/lib/telegram.mjs에도 같은
+# 수정을 넣었지만, 이 잡들이 앞으로 호출할 다른 외부 API(KIS·Google·DART·KRX)도 같은
+# 네트워크 조건에 노출돼 있어 여기서도 전역으로 끈다 — 방어적 이중화).
+export NODE_OPTIONS="${NODE_OPTIONS:-} --no-network-family-autoselection"
+
 JOB="${1:-}"
 case "$JOB" in
   backup-vault)   CMD=(scripts/jobs/backup-vault-snapshot.mjs) ;;

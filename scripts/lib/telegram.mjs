@@ -1,4 +1,18 @@
 import { readFileSync } from 'fs';
+import { setDefaultAutoSelectFamily } from 'node:net';
+
+// ⚠️ 실사고 근본원인(2026-08-18, task #34) — health-watcher·daily-asset-allocation-
+// check·new-cash-allocation 등에서 "텔레그램 알림 실패: fetch failed"가 반복되던
+// 진짜 원인을 찾았다. curl은 api.telegram.org에 즉시 연결되는데(IPv6는 "No route to
+// host"로 빠르게 실패 후 IPv4로 자연 전환) Node의 fetch()는 같은 IPv4 주소에서
+// ETIMEDOUT으로 멈췄다 — Node 20+ 기본 활성화된 Happy Eyeballs(RFC 8305, 이중스택
+// 동시접속 경쟁) 구현이 "IPv6가 즉각 거부되지만 IPv4는 느리게 응답하는" 이 머신의
+// 네트워크 조건에서 오작동하는 것으로 확인(재현: 이 옵션 없이 매번 실패, 있으면
+// 매번 즉시 성공). "상시세션 재연결 불안정"으로 보고됐던 문제의 실체는 상시세션
+// 자체(bun 기반 MCP 서버, 별도 런타임이라 이 버그와 무관해 보임)가 아니라, 알림을
+// 보내는 별개 launchd Node 잡들이 매번 이 타임아웃에 걸려 알림 발송에 실패하던
+// 것이었다 — "재연결이 불안정하다"는 증상 설명이 원인을 잘못 짚고 있었다.
+setDefaultAutoSelectFamily(false);
 
 const TG_ENV = `${process.env.HOME}/.claude/channels/telegram/.env`;
 const TG_ACCESS = `${process.env.HOME}/.claude/channels/telegram/access.json`;
