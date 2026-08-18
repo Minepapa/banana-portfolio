@@ -47,3 +47,30 @@ export function parseAppliedDedupKeys(holdingFrontmatter) {
     return [];
   }
 }
+
+// 계좌별 현금(예수금) 잔고 — State/Holdings에 종목 보유와 같은 방식(같은 디렉터리,
+// 같은 파일명 관례)으로 저장한다(2026-08-18, 예수금앵커 배선 — update-cash-from-ledger.mjs
+// 가 호출). name="예수금"·isCashLike=true는 v1부터 이어진 관례 그대로 따른다 — 기존
+// isCashLike 소비처(order-candidates.mjs·realtime-quotes.mjs·sync-position-journal.mjs
+// 등)가 전부 이 이름·플래그로 예수금 행을 걸러내므로, 새 스키마를 만들지 않고 그 관례에
+// 맞춘다(1주=1원 취급: avgPrice=1·curPrice=1, qty=invest=evalAmount=잔고).
+//
+// buildLiveHoldingRecord와 달리 appliedDedupKeys(증분 반영 방어)가 없다 — 종목 보유는
+// 체결을 하나씩 누적 반영하지만, 예수금은 매 실행마다 기준점+델타를 처음부터 다시
+// 계산해 전체를 덮어쓴다(cash-ledger.mjs). 같은 입력이면 항상 같은 출력이 나오는 순수
+// 재계산이라 "체결이 두 번 반영되는" 사고 클래스 자체가 성립하지 않는다.
+export function buildCashHoldingRecord(cash) {
+  const content = buildFrontmatter({
+    type: 'holding', account: cash.account, assetClass: '현금', name: '예수금',
+    ticker: '', market: '',
+    avgPrice: 1, qty: cash.balance, invest: cash.balance,
+    curPrice: 1, evalAmount: cash.balance, profitAmount: 0, profitPct: 0,
+    isCashLike: true,
+    // 예수금 전용 감사 필드 — 종목 보유엔 없는 정보(어떤 기준점+델타로 이 값이 나왔는지
+    // 보존, cash-ledger.mjs resolveNhCashAnchor/resolvePensionCashLedger 참고).
+    anchorBase: cash.anchorBase ?? null, anchorTs: cash.anchorTs ?? '', anchorSource: cash.anchorSource ?? '',
+    raw: cash.raw ?? cash.balance, negative: cash.negative ?? false,
+    updatedAt: new Date().toISOString(),
+  });
+  return { filename: holdingFilename(cash.account, '예수금'), content, dir: VAULT_PATHS.state.holdings };
+}

@@ -58,3 +58,14 @@ export function resolvePensionCashLedger({ flows }) {
   const delta = (flows ?? []).reduce((s, f) => s + (f?.amount ?? 0), 0);
   return settleCash(0, delta);
 }
+
+// 위탁이 신규현금배분(new-cash-allocation.mjs) 등에서 실제로 "쓸 수 있는" 현금 —
+// 위탁 자체 잔고 + 금현물 잔고를 합산한다(오너 확정, 2026-08-18: "금현물 계좌의
+// 현금(아직 금을 안 사고 대기 중인 돈)은 위탁과 합쳐서 같이 취급"). 각 계좌의 실제
+// 잔고(State/Holdings/{계좌}-예수금.md)는 그대로 따로 저장·감사되고, 이 함수는 그
+// 위에서 "합산해서 보는 관점"만 별도로 제공한다 — 물리적으로 두 계좌를 하나로
+// 합치는 게 아니라 정책적 관점 하나를 계산해줄 뿐이다(nh-accounts.mjs 헤더 주석의
+// "cash-ledger.mjs의 합산 로직"이 가리키는 지점).
+export function resolveDesignatedCashBalance({ wtCash, goldCash }) {
+  return (wtCash ?? 0) + (goldCash ?? 0);
+}

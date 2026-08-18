@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeCashDelta, settleCash, resolveNhCashAnchor, resolvePensionCashLedger } from './cash-ledger.mjs';
+import { computeCashDelta, settleCash, resolveNhCashAnchor, resolvePensionCashLedger, resolveDesignatedCashBalance } from './cash-ledger.mjs';
 
 test('[막아야 함/v1 버그 재현 방지] computeCashDelta: 기준점과 같은 날 오후에 생긴 거래도 정밀 타임스탬프로 정확히 포함', () => {
   // v1 버그 재현: 기준점(NH 알림)이 "2026-08-04 09:00:00"에 왔고, 같은 날 오후
@@ -84,4 +84,13 @@ test('resolvePensionCashLedger: 매수만 있고 그만큼 배당이 없으면(�
 
 test('resolvePensionCashLedger: flows 없으면 0', () => {
   assert.deepEqual(resolvePensionCashLedger({ flows: [] }), { cash: 0, raw: 0, negative: false });
+});
+
+test('resolveDesignatedCashBalance: 위탁+금현물 합산(오너 확정 — 금현물 대기현금은 위탁과 합쳐 취급)', () => {
+  assert.equal(resolveDesignatedCashBalance({ wtCash: 1164516, goldCash: 538637 }), 1703153);
+});
+
+test('resolveDesignatedCashBalance: null/undefined 안전(터지지 않음)', () => {
+  assert.equal(resolveDesignatedCashBalance({ wtCash: null, goldCash: undefined }), 0);
+  assert.equal(resolveDesignatedCashBalance({}), 0);
 });

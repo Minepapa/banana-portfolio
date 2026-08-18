@@ -93,6 +93,15 @@ export function pickUnprocessedDividends(dividendFiles) {
       || String(a.parsed.recordedAt).localeCompare(String(b.parsed.recordedAt)));
 }
 
+// 일회성 소급 백필 대상 — 2026-08-18 이전에(이 잡이 account를 원본에 영구기록하기
+// 시작하기 전) 이미 holdingsApplied:true로 처리된 체결은 pickUnprocessedExecutions의
+// !holdingsApplied 조건에 걸려 영원히 재방문되지 않는다(실측: 실계좌 84건 중 60건이
+// 이 상태). 보유수량엔 이미 정확히 반영돼 있으니 재적용은 불필요 — account 필드만
+// 뒤늦게 채워 넣는다(cash-ledger.mjs가 이 필드로 흐름을 계좌별로 가른다).
+export function pickAccountlessAppliedExecutions(executionFiles) {
+  return executionFiles.filter(({ parsed }) => !parsed.legacy && parsed.holdingsApplied && !parsed.account);
+}
+
 function writeHolding(holding) {
   const { filename, content, dir } = buildLiveHoldingRecord(holding);
   if (!DRY_RUN) { mkdirSync(dir, { recursive: true }); writeAtomic(join(dir, filename), content); }
@@ -230,6 +239,28 @@ async function main() {
     `\n📊 매수 ${buys}건 · 매도 ${sells}건(전량청산 ${closed}건, 실현손익 합계 ${Math.round(totalRealizedProfit).toLocaleString()}원) · ` +
     `계좌귀속불가 ${unresolvedAccount}건 · 경고스킵 ${warnings}건 · 재시도(이미반영) ${alreadyApplied}건` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
+
+  // 체결 계좌귀속 소급 백필 — 2026-08-18 이전에 이미 holdingsApplied:true로 처리된
+  // 체결(실측 84건 중 60건)은 위 메인 루프의 !holdingsApplied 조건에 걸려 다시 안
+  // 지나간다. 보유수량은 이미 정확하니 재적용 없이 account만 채운다.
+  const backfillTargets = pickAccountlessAppliedExecutions(executionFiles);
+  let backfillResolved = 0, backfillUnresolved = 0;
+  if (backfillTargets.length > 0) {
+    console.log(`\n🔎 체결 계좌귀속 소급백필 대상 ${backfillTargets.length}건`);
+    const currentHoldings = [...holdingsMap.values()];
+    for (const { filepath, content, parsed: exec } of backfillTargets) {
+      const account = resolveExecutionAccount({ broker: exec.broker, stockName: exec.stockName, stockCode: exec.stockCode, acctNo: exec.acctNo }, currentHoldings);
+      if (!account) {
+        console.log(`  ⚠️  소급백필 계좌귀속 불가 — 건너뜀: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName} (${exec.broker})`);
+        backfillUnresolved++;
+        continue;
+      }
+      console.log(`  + [소급백필] ${exec.tradeDate} ${exec.tradeType} ${exec.stockName} → ${account}`);
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account }));
+      backfillResolved++;
+    }
+    console.log(`📊 소급백필 완료 ${backfillResolved}건 · 계좌귀속불가 ${backfillUnresolved}건` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''));
+  }
 
   // 배당 계좌귀속 — 체결 처리로 최신화된 holdingsMap을 그대로 재사용(같은 실행 내
   // 새로 반영된 보유도 후보좁히기에 즉시 반영되게). 위 로직과 별개 루프인 이유:

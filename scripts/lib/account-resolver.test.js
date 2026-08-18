@@ -52,6 +52,16 @@ test('NH — 다른 계좌(연금저축)에만 같은 이름이 있어도 후보
   assert.equal(resolveExecutionAccount({ broker: 'NH투자증권', stockName: '겹치는이름' }, holdings), null);
 });
 
+test('[막아야 함] NH — 금현물(실물 금) 매수도 후보에 포함(2026-08-18 수정 — 예전엔 없어서 실제 금 매수가 생기면 영원히 계좌귀속불가였을 잠재 버그)', () => {
+  const holdings = [{ account: '금현물', name: 'KRX금99.99K' }];
+  assert.equal(resolveExecutionAccount({ broker: 'NH투자증권', stockName: 'KRX금99.99K' }, holdings), '금현물');
+});
+
+test('NH — CMA는 여전히 후보 밖(순수 현금 경유지라 증권 보유 불가, 오너 확정)', () => {
+  const holdings = [{ account: 'CMA', name: '어쩌다생긴이름' }];
+  assert.equal(resolveExecutionAccount({ broker: 'NH투자증권', stockName: '어쩌다생긴이름' }, holdings), null);
+});
+
 test('NH 해외(overseas) 브로커명도 동일 후보군으로 취급', () => {
   const holdings = [{ account: '위탁', name: 'VOO' }];
   assert.equal(resolveExecutionAccount({ broker: 'NH투자증권 해외', stockName: 'VOO' }, holdings), '위탁');
