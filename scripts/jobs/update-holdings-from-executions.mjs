@@ -83,6 +83,21 @@ export function pickUnprocessedExecutions(executionFiles) {
       || String(a.parsed.recordedAt).localeCompare(String(b.parsed.recordedAt)));
 }
 
+// ⚠️ 실사고 수정(2026-08-18) — "알람" 시트가 이미 "체결내역" 시트로 넘어간 옛 행을
+// 그대로 갖고 있어서(v1이 알람→체결내역 처리 후 알람 행을 안 지움), v1→v2 마이그레이션
+// (체결내역 기준 스냅샷)이 이미 반영한 체결을 카카오 파이프라인이 나중에 "새 체결"로
+// 다시 발견해 applyBuy/applySell로 재적용하는 사고가 실제로 났다(실측 52건, 보유종목
+// 12개·실현손익 6건 오염 — Aug-17 실행분 vault 백업 git 이력으로 대조·복구 완료).
+// 날짜(일단위)·구분·종목명·수량·단가가 legacy 레코드와 완전히 같으면 "이미 반영된
+// 사건"으로 보고 holdingsApplied만 찍고 실제 적용(applyBuy/applySell)은 건너뛴다.
+export function matchesLegacyExecution(exec, legacyExecutions) {
+  return legacyExecutions.some((g) =>
+    String(g.tradeDate).slice(0, 10) === String(exec.tradeDate).slice(0, 10) &&
+    g.tradeType === exec.tradeType && g.stockName === exec.stockName &&
+    g.quantity === exec.quantity && g.price === exec.price,
+  );
+}
+
 // 배당은 holdingsApplied 플래그가 없다(보유수량에 영향 없음) — account 필드 유무로
 // 멱등 판정. legacy(Phase 7 마이그레이션)는 account:null로 영구 고정된 스냅샷이라
 // 대상에서 제외(계좌귀속판정 대상이 아니라 이력 그대로 보존하는 레코드).
@@ -148,12 +163,13 @@ function loadConsolidatedHoldings() {
 
 async function main() {
   const executionFiles = readVaultFiles(VAULT_PATHS.facts.ledger.executions);
+  const legacyExecutions = executionFiles.filter(({ parsed }) => parsed.legacy).map(({ parsed }) => parsed);
   const targets = pickUnprocessedExecutions(executionFiles);
   console.log(`🔎 미처리 체결 ${targets.length}건 (전체 ${executionFiles.length}건 중)`);
 
   const holdingsMap = loadConsolidatedHoldings();
 
-  let buys = 0, sells = 0, closed = 0, unresolvedAccount = 0, warnings = 0, alreadyApplied = 0, totalRealizedProfit = 0;
+  let buys = 0, sells = 0, closed = 0, unresolvedAccount = 0, warnings = 0, alreadyApplied = 0, duplicateOfLegacy = 0, totalRealizedProfit = 0;
 
   // ⚠️ 버그 수정(2026-08-18, 독립 코드리뷰 HIGH 지적) — 예전엔 targets가 비면 여기서
   // 바로 return해 아래 배당 계좌귀속 패스까지 통째로 건너뛰었다. 이 잡은 launchd
@@ -168,6 +184,12 @@ async function main() {
     if (!account) {
       console.log(`  ⚠️  계좌 귀속 불가 — 건너뜀: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName} (${exec.broker})`);
       unresolvedAccount++;
+      continue;
+    }
+    if (matchesLegacyExecution(exec, legacyExecutions)) {
+      console.log(`  ↩️  마이그레이션 스냅샷과 중복(이미 반영됨) — 적용 없이 플래그만 기록: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName}`);
+      duplicateOfLegacy++;
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       continue;
     }
     // ⚠️ 버그 수정(2026-08-13, 독립 코드리뷰 HIGH 지적) — 퀀트 트랙 체결(exec.account가
@@ -237,7 +259,7 @@ async function main() {
 
   console.log(
     `\n📊 매수 ${buys}건 · 매도 ${sells}건(전량청산 ${closed}건, 실현손익 합계 ${Math.round(totalRealizedProfit).toLocaleString()}원) · ` +
-    `계좌귀속불가 ${unresolvedAccount}건 · 경고스킵 ${warnings}건 · 재시도(이미반영) ${alreadyApplied}건` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
+    `계좌귀속불가 ${unresolvedAccount}건 · 경고스킵 ${warnings}건 · 재시도(이미반영) ${alreadyApplied}건 · 마이그레이션중복(적용스킵) ${duplicateOfLegacy}건` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
 
   // 체결 계좌귀속 소급 백필 — 2026-08-18 이전에 이미 holdingsApplied:true로 처리된

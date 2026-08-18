@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickUnprocessedExecutions, pickUnprocessedDividends, pickAccountlessAppliedExecutions } from './update-holdings-from-executions.mjs';
+import { pickUnprocessedExecutions, pickUnprocessedDividends, pickAccountlessAppliedExecutions, matchesLegacyExecution } from './update-holdings-from-executions.mjs';
 
 const f = (parsed) => ({ filepath: '/x', content: '', parsed });
 
@@ -57,4 +57,25 @@ test('[막아야 함/실사고] pickAccountlessAppliedExecutions: holdingsApplie
 test('pickAccountlessAppliedExecutions: legacy는 제외(account:null이 영구 고정 스냅샷)', () => {
   const files = [f({ legacy: true, holdingsApplied: true, account: null })];
   assert.equal(pickAccountlessAppliedExecutions(files).length, 0);
+});
+
+const exec = (overrides = {}) => ({ tradeDate: '2026-06-19 10:15:04', tradeType: '매수', stockName: '금 99.99K', quantity: 2, price: 205350, ...overrides });
+
+test('[막아야 함/실사고] matchesLegacyExecution: 날짜(일단위)·구분·종목명·수량·단가 완전일치하면 중복(2026-08-18 발견 — 알람 시트 잔존 옛 행이 마이그레이션 스냅샷을 재적용해 12개 보유종목 오염시킨 실사고)', () => {
+  const legacy = [{ tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 2, price: 205350 }];
+  assert.equal(matchesLegacyExecution(exec(), legacy), true);
+});
+
+test('matchesLegacyExecution: 시각까지 있는 legacy tradeDate라도 날짜(앞 10자)만 비교', () => {
+  const legacy = [{ tradeDate: '2026-06-19 00:00:00', tradeType: '매수', stockName: '금 99.99K', quantity: 2, price: 205350 }];
+  assert.equal(matchesLegacyExecution(exec(), legacy), true);
+});
+
+test('matchesLegacyExecution: 수량·단가 중 하나라도 다르면 중복 아님(진짜 다른 체결)', () => {
+  const legacy = [{ tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 3, price: 205350 }];
+  assert.equal(matchesLegacyExecution(exec(), legacy), false);
+});
+
+test('matchesLegacyExecution: legacy 없으면 false', () => {
+  assert.equal(matchesLegacyExecution(exec(), []), false);
 });
