@@ -34,6 +34,23 @@
  * 선택되지만 보유 쪽 appliedDedupKeys가 이미 그 dedupKey를 갖고 있으면 재적용 없이
  * 플래그만 (재)기록한다 — 수량이 두 번 반영되는 사고를 막는다.
  *
+ * ⚠️ 범위 확장(2026-08-18, 예수금앵커 배선 — 오너 확정): 이 잡이 이미 체결마다 계좌를
+ * 풀고 있으면서도(resolveExecutionAccount) 그 결과를 체결 원본(Facts/Ledger/Executions)
+ * 프론트매터엔 기록하지 않았다 — holdingsApplied 플래그만 남기고 계좌는 매번 휘발됐다.
+ * cash-ledger.mjs(예수금 기준점+델타 계산)가 "이 흐름이 어느 계좌 것인지"를 알아야
+ * 하는데, 배당(Facts/Ledger/Dividends)은 지금까지 이걸 처리하는 잡 자체가 없었다(계좌
+ * null인 채 영구 방치). 새 잡을 또 만드는 대신(같은 계좌귀속 판정을 두 잡이 따로 하면
+ * 데이터가 갈릴 위험) 이 잡을 확장한다:
+ *   1) 체결 처리 시 이제 account를 체결 원본 프론트매터에도 영구 기록한다(더 이상 휘발
+ *      안 됨 — 계좌귀속불가로 건너뛴 체결은 그대로 account 없이 남아 다음 실행에 재시도).
+ *   2) 체결 처리가 끝난 뒤(최신 보유현황 확보 후) 배당도 마저 훑어 계좌를 확정한다.
+ *      배당 알림 실측 결과(2026-08-18) NH는 원문에 계좌번호가 아예 없어(acctRaw 항상
+ *      빈 문자열) 체결과 똑같이 "종목명+보유현황" 후보좁히기가 필요 — 그래서 새 함수를
+ *      만들지 않고 resolveExecutionAccount를 그대로 재사용한다(stockCode·acctNo 없이
+ *      호출하면 이름 기반 매칭으로 안전하게 폴백, 로직은 이미 동일 문제를 풀고 있음).
+ *      배당은 보유수량·평단가에 영향이 없으므로(현금만 늘림) holdingsApplied가 아니라
+ *      account 필드 자체의 유무로 멱등 판정한다(체결처럼 별도 플래그 불필요).
+ *
  * 사용법:
  *   node scripts/jobs/update-holdings-from-executions.mjs            # 실제로 반영
  *   node scripts/jobs/update-holdings-from-executions.mjs --dry-run  # 계산만, 쓰기 없음
@@ -63,6 +80,16 @@ export function pickUnprocessedExecutions(executionFiles) {
   return executionFiles
     .filter(({ parsed }) => !parsed.legacy && !parsed.holdingsApplied)
     .sort((a, b) => String(a.parsed.tradeDate).localeCompare(String(b.parsed.tradeDate))
+      || String(a.parsed.recordedAt).localeCompare(String(b.parsed.recordedAt)));
+}
+
+// 배당은 holdingsApplied 플래그가 없다(보유수량에 영향 없음) — account 필드 유무로
+// 멱등 판정. legacy(Phase 7 마이그레이션)는 account:null로 영구 고정된 스냅샷이라
+// 대상에서 제외(계좌귀속판정 대상이 아니라 이력 그대로 보존하는 레코드).
+export function pickUnprocessedDividends(dividendFiles) {
+  return dividendFiles
+    .filter(({ parsed }) => !parsed.legacy && !parsed.account)
+    .sort((a, b) => String(a.parsed.date).localeCompare(String(b.parsed.date))
       || String(a.parsed.recordedAt).localeCompare(String(b.parsed.recordedAt)));
 }
 
@@ -116,10 +143,16 @@ async function main() {
   console.log(`🔎 미처리 체결 ${targets.length}건 (전체 ${executionFiles.length}건 중)`);
 
   const holdingsMap = loadConsolidatedHoldings();
-  if (targets.length === 0) { console.log('처리할 게 없습니다.'); return; }
 
   let buys = 0, sells = 0, closed = 0, unresolvedAccount = 0, warnings = 0, alreadyApplied = 0, totalRealizedProfit = 0;
 
+  // ⚠️ 버그 수정(2026-08-18, 독립 코드리뷰 HIGH 지적) — 예전엔 targets가 비면 여기서
+  // 바로 return해 아래 배당 계좌귀속 패스까지 통째로 건너뛰었다. 이 잡은 launchd
+  // 고정시각 잡이라(체결 발생 시점이 아니라 매일 16:05) "처리할 체결 없음"이 오히려
+  // 평상시 기본 상태 — 그 상태에서 배당 패스가 매번 무력화되면 실사용에서 사실상 죽은
+  // 코드가 된다(드라이런 검증 때 마침 미처리 체결이 같이 있어서 못 잡을 뻔함). 체결
+  // 루프만 이 조건으로 감싸고, 배당 패스는 항상 이어서 실행되게 한다.
+  if (targets.length === 0) console.log('처리할 체결 없음 — 배당 계좌귀속으로 진행.');
   for (const { filepath, content, parsed: exec } of targets) {
     const currentHoldings = [...holdingsMap.values()];
     const account = exec.account || resolveExecutionAccount({ broker: exec.broker, stockName: exec.stockName, stockCode: exec.stockCode, acctNo: exec.acctNo }, currentHoldings);
@@ -138,7 +171,7 @@ async function main() {
     // 재처리 대상에서 빠지게 한다(Holdings에는 안 씀).
     if (account === QUANT_TRACK_LABEL) {
       console.log(`  ↪️  퀀트 트랙 체결 — State/Holdings 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
-      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       continue;
     }
 
@@ -151,7 +184,7 @@ async function main() {
     if (existing?.appliedDedupKeys?.includes(exec.dedupKey)) {
       console.log(`  ↩️  이미 반영된 체결(재시도) — 재적용 없이 플래그만 기록: ${exec.stockName}`);
       alreadyApplied++;
-      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       continue;
     }
 
@@ -190,13 +223,47 @@ async function main() {
       continue;
     }
 
-    if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+    if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
   }
 
   console.log(
     `\n📊 매수 ${buys}건 · 매도 ${sells}건(전량청산 ${closed}건, 실현손익 합계 ${Math.round(totalRealizedProfit).toLocaleString()}원) · ` +
     `계좌귀속불가 ${unresolvedAccount}건 · 경고스킵 ${warnings}건 · 재시도(이미반영) ${alreadyApplied}건` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
+
+  // 배당 계좌귀속 — 체결 처리로 최신화된 holdingsMap을 그대로 재사용(같은 실행 내
+  // 새로 반영된 보유도 후보좁히기에 즉시 반영되게). 위 로직과 별개 루프인 이유:
+  // 배당은 보유수량에 영향이 없어 매수/매도 분기(applyBuy/applySell)를 탈 필요가
+  // 없고, 계좌만 확정해 기록하면 끝이다(cash-ledger.mjs가 이후 소비).
+  //
+  // ⚠️ 코드리뷰 확인(2026-08-18) — resolveExecutionAccount의 NH 후보좁히기는 ISA·위탁
+  // 둘만 본다(금현물·CMA 제외). 이름만으로 판정하는 경로라 "같은 이름·다른 계좌"
+  // 오귀속 위험 클래스(ISA/금현물 마스킹계좌 접두사 충돌과 동일 계열)가 이론상 있는지
+  // 점검했다 — 구조적으로 불가능: 금현물은 금 실물만 보유(배당 없음), CMA는 순수
+  // 현금 경유지(증권 보유 자체가 없음, 2026-08-18 오너 확정). 둘 다 배당을 낼 종목을
+  // 보유할 수 없으니 후보에서 빠져도 안전. 이 불변식이 깨지면(예: 금현물 계좌로 실제
+  // 배당지급 증권을 사게 되면) 후보 목록도 같이 넓혀야 한다.
+  const dividendFiles = readVaultFiles(VAULT_PATHS.facts.ledger.dividends);
+  const divTargets = pickUnprocessedDividends(dividendFiles);
+  let divResolved = 0, divUnresolved = 0;
+  if (divTargets.length > 0) {
+    console.log(`\n🔎 배당 계좌귀속 미처리 ${divTargets.length}건 (전체 ${dividendFiles.length}건 중)`);
+    const currentHoldings = [...holdingsMap.values()];
+    for (const { filepath, content, parsed: div } of divTargets) {
+      // acctRaw는 실측상 NH 배당 알림엔 항상 비어있다(2026-08-18 확인) — 체결과 동일한
+      // "종목명+보유현황" 후보좁히기로 폴백(stockCode·acctNo 없이 호출).
+      const account = resolveExecutionAccount({ broker: div.broker, stockName: div.stockName }, currentHoldings);
+      if (!account) {
+        console.log(`  ⚠️  배당 계좌 귀속 불가 — 건너뜀: ${div.date} ${div.stockName} (${div.broker})`);
+        divUnresolved++;
+        continue;
+      }
+      console.log(`  + [배당] ${div.date} ${div.stockName} → ${account}`);
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account }));
+      divResolved++;
+    }
+    console.log(`📊 배당 계좌귀속 완료 ${divResolved}건 · 계좌귀속불가 ${divUnresolved}건` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''));
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
