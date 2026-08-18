@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeCashDelta, settleCash, resolveNhCashAnchor, resolvePensionCashLedger, resolveDesignatedCashBalance } from './cash-ledger.mjs';
+import { computeCashDelta, settleCash, resolveCashAnchor, resolveDesignatedCashBalance } from './cash-ledger.mjs';
 
 test('[막아야 함/v1 버그 재현 방지] computeCashDelta: 기준점과 같은 날 오후에 생긴 거래도 정밀 타임스탬프로 정확히 포함', () => {
   // v1 버그 재현: 기준점(NH 알림)이 "2026-08-04 09:00:00"에 왔고, 같은 날 오후
@@ -49,41 +49,34 @@ test('settleCash: 양수는 그대로, 음수는 0 클램프+negative 플래그(
   assert.deepEqual(settleCash(null, null), { cash: 0, raw: 0, negative: false });
 });
 
-test('resolveNhCashAnchor: 최신 알림이 있으면 항상 그걸 기준점으로(수동 폴백 불필요 — 4계좌 전부 실알림 있음)', () => {
-  const r = resolveNhCashAnchor({ stored: { base: 100, baseTs: '2026-08-01 00:00:00', source: '자동' }, latestAlarm: { balance: 999999, ts: '2026-08-10 09:00:00' } });
-  assert.deepEqual(r, { base: 999999, baseTs: '2026-08-10 09:00:00', source: '자동' });
-});
-
-test('resolveNhCashAnchor: 알림이 한 번도 없었으면 기존 저장값 유지(마이그레이션 스냅샷 등)', () => {
-  const r = resolveNhCashAnchor({ stored: { base: 1164516, baseTs: '2026-08-13', source: '이관' }, latestAlarm: null });
-  assert.deepEqual(r, { base: 1164516, baseTs: '2026-08-13', source: '이관' });
-});
-
-test('resolveNhCashAnchor: 저장값도 알림도 없으면(완전 최초) base null', () => {
-  const r = resolveNhCashAnchor({ stored: null, latestAlarm: null });
-  assert.equal(r.base, null);
-});
-
-test('resolvePensionCashLedger: 배당·매도(+)와 매수(-)를 합산해 잔고 계산 — 어제 사고의 정확한 수정', () => {
-  // 2026-08-16 실사고 재현: 배당 25건이 들어왔는데(합계 96만원) 그 돈으로 이미 직접
-  // 매수한 것(합계 80만원)은 안 빠져서 962,000원 전액이 "미투자 현금"으로 잘못 잡혔다.
-  // 이제는 매수도 델타에 포함(음수)돼 실제 남은 돈만 계산된다.
-  const r = resolvePensionCashLedger({
+test('[실사고 재현/2026-08-16] settleCash+computeCashDelta: 배당(+)만 세고 그 돈으로 재투자한 매수(-)를 안 빼면 잔고가 부풀려짐 — 반드시 양방향', () => {
+  // 배당 25건 합계 96만원이 들어왔는데 그 돈으로 이미 직접 매수한 것(80만원)을 안 빼서
+  // 962,000원 전액이 "미투자 현금"으로 잘못 잡혔던 사고. 매수도 델타에 포함(음수)해야
+  // 실제 남은 돈만 계산된다 — 연금저축·IRP처럼 앵커가 0원(마이그레이션 직후 등)인
+  // 계좌에서도 이 계산 방식은 동일하다(2026-08-18 설계통합 — 계좌별 특수 함수 없앰).
+  const delta = computeCashDelta({
+    anchorTs: '2026-08-01 00:00:00',
     flows: [
       { ts: '2026-08-04 10:00:00', amount: 962000 },   // 배당 누적
       { ts: '2026-08-04 15:00:00', amount: -800000 },  // 그 돈으로 직접 매수
     ],
   });
-  assert.equal(r.cash, 162000); // 이제 정확히 남은 돈만 미투자 현금으로 잡힘
+  assert.equal(settleCash(0, delta).cash, 162000); // 이제 정확히 남은 돈만 미투자 현금으로 잡힘
 });
 
-test('resolvePensionCashLedger: 매수만 있고 그만큼 배당이 없으면(과거 이월 자금 사용) 0 클램프+경고', () => {
-  const r = resolvePensionCashLedger({ flows: [{ ts: '2026-08-04', amount: -100000 }] });
-  assert.deepEqual(r, { cash: 0, raw: -100000, negative: true });
+test('resolveCashAnchor: 최신 CashEvent가 있으면 항상 그걸 기준점으로(자동 알림·수동 스냅샷 구분 없음, 2026-08-18 설계통합)', () => {
+  const r = resolveCashAnchor({ stored: { base: 100, baseTs: '2026-08-01 00:00:00', source: '자동' }, latestEvent: { balance: 999999, ts: '2026-08-10 09:00:00' } });
+  assert.deepEqual(r, { base: 999999, baseTs: '2026-08-10 09:00:00', source: '자동' });
 });
 
-test('resolvePensionCashLedger: flows 없으면 0', () => {
-  assert.deepEqual(resolvePensionCashLedger({ flows: [] }), { cash: 0, raw: 0, negative: false });
+test('resolveCashAnchor: CashEvent가 한 번도 없었으면 기존 저장값 유지(마이그레이션 스냅샷 등)', () => {
+  const r = resolveCashAnchor({ stored: { base: 1164516, baseTs: '2026-08-13', source: '이관' }, latestEvent: null });
+  assert.deepEqual(r, { base: 1164516, baseTs: '2026-08-13', source: '이관' });
+});
+
+test('resolveCashAnchor: 저장값도 CashEvent도 없으면(완전 최초) base null', () => {
+  const r = resolveCashAnchor({ stored: null, latestEvent: null });
+  assert.equal(r.base, null);
 });
 
 test('resolveDesignatedCashBalance: 위탁+금현물 합산(오너 확정 — 금현물 대기현금은 위탁과 합쳐 취급)', () => {

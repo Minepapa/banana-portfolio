@@ -4,30 +4,41 @@
  *
  * 지금까지 배선된 조각을 실제로 조립하는 마지막 단계 — Facts/Ledger의 세 원장을 읽어
  * 계좌별 실제 잔고를 계산한다:
- *   - CashEvents(예수금앵커): NH 4계좌(위탁·ISA·금현물·CMA)의 실제 입출금 알림 원문.
- *     계좌는 파싱 시점에 이미 확정돼 있다(nh-accounts.mjs 전체계좌번호매칭).
+ *   - CashEvents(예수금앵커): "이 시각에 이 계좌 잔고가 이 값이었다"는 사실 기록.
+ *     NH 4계좌(위탁·ISA·금현물·CMA)는 카카오 입출금 알림에서 자동 파싱(nh-accounts.mjs
+ *     전체계좌번호매칭), 연금저축·IRP는 알림이 없어(2026-08-18 오너 확인) 오너가 앱에서
+ *     직접 확인한 값을 수동으로 기록한다 — 자동/수동 구분 없이 그냥 "가장 최근 값"이
+ *     기준점이 된다(cash-ledger.mjs resolveCashAnchor).
  *   - Executions(체결): 계좌는 update-holdings-from-executions.mjs가 영구기록한다
  *     (2026-08-18 확장). 매수는 현금유출(-), 매도는 현금유입(+).
  *   - Dividends(배당): 계좌는 같은 잡이 영구기록한다. 항상 현금유입(+).
  *
- * NH 4계좌는 "가장 최근 앵커 알림 잔고 + 그 시각 이후 흐름 합산"(cash-ledger.mjs
- * resolveNhCashAnchor+computeCashDelta+settleCash) — v1의 날짜절삭 버그를 전체
- * 타임스탬프 비교로 구조적으로 막는다(cash-ledger.mjs 헤더 주석 참고).
+ * ⚠️ 설계 통합(2026-08-18) — 처음엔 "NH 4계좌(자동 알림)"과 "연금저축(알림 없음,
+ * 0원-이후-복식부기)"을 별도 로직으로 나눴었다. 그런데 오너가 IRP(한국투자증권,
+ * 알림 없음·매월 26일 고정 25만원 자동입금)까지 "모든 계좌 동일하게" 원했고, 연금저축도
+ * 실은 잔고 확인이 가능함이 드러났다(MMF 보유 평가금액이 곧 예수금 — 배당·수익금이
+ * 자동으로 MMF에 쌓이고 매수 시 MMF를 먼저 매도하는 구조). "자동 알림 유무"가 아니라
+ * "기준점을 어떻게 얻는가"만 다를 뿐 델타 계산은 6계좌 전부 동일해야 맞다 —
+ * 계좌별 특수 함수(resolvePensionCashLedger 등) 없이 전부 같은 루프를 돈다.
+ * 알림 없는 계좌(연금저축·IRP)는 오너가 확인한 값을 수동 CashEvent로 넣어두면
+ * (자동 알림과 완전히 같은 레코드 모양) 그게 그대로 기준점이 된다.
  *
- * 연금저축은 카카오 입출금 알림 자체가 없어(오너 확인, 2026-08-17) 앵커가 없다 —
- * 마이그레이션 시점(0원) 기준 복식부기로 배당·매도(+)·매수(−) 전액을 반영한다
- * (resolvePensionCashLedger, 2026-08-16 사고의 정확한 수정).
+ * 기준점+델타 계산은 전체 타임스탬프 비교라 v1의 날짜절삭 버그가 구조적으로 재발
+ * 불가능하다(cash-ledger.mjs 헤더 주석 참고).
  *
- * ⚠️ 범위: 이 잡은 위탁·ISA·금현물·CMA·연금저축 5계좌의 "각자 실제 잔고"만 계산해
- * 그대로 저장한다(감사 정확성 우선 — 계좌 하나엔 그 계좌의 진짜 숫자만 남긴다).
+ * ⚠️ 범위: 이 잡은 6계좌(위탁·ISA·금현물·CMA·연금저축·IRP)의 "각자 실제 잔고"만
+ * 계산해 그대로 저장한다(감사 정확성 우선 — 계좌 하나엔 그 계좌의 진짜 숫자만 남긴다).
  * "금현물 대기현금을 위탁과 합쳐서 본다"는 정책(오너 확정)은 여기서 물리적으로
  * 합치지 않는다 — cash-ledger.mjs의 resolveDesignatedCashBalance가 그 관점만 별도
  * 계산해주고, 실제 소비(신규현금배분 판단)는 new-cash-allocation.mjs 재작성 몫이다.
  *
- * ⚠️ 알려진 한계(2026-08-18): 펀드적립(연금저축 VIP 펀드)·환전은 아직 파싱은 되지만
- * (notification-parsers.mjs parseFundBuy/parseExchange) Facts/Ledger에 배선 안 됨
- * (parse-notifications-to-vault.mjs 범위 밖, 의도적 — 헤더 주석 참고) — 이 두 종류가
- * 실제로 발생한 계좌(연금저축 등)는 그만큼 잔고가 소폭 부정확할 수 있다.
+ * ⚠️ 알려진 한계(2026-08-18):
+ * - 펀드적립(연금저축 VIP 펀드)·환전은 아직 파싱은 되지만(notification-parsers.mjs
+ *   parseFundBuy/parseExchange) Facts/Ledger에 배선 안 됨(parse-notifications-to-vault.mjs
+ *   범위 밖, 의도적) — 이 두 종류가 실제로 발생한 계좌는 그만큼 잔고가 소폭 부정확할 수 있다.
+ * - 연금저축·IRP는 자동 CashEvent가 없어 오너가 수동으로 갱신해줘야 최신 상태 유지됨 —
+ *   특히 IRP는 매월 26일 고정 25만원 자동입금이 알림 없이 들어오므로, 그 입금이 실제로
+ *   반영됐는지는 다음 수동 스냅샷 전까지 알 수 없다(추정으로 자동 반영하지 않음).
  *
  * 매 실행마다 기준점+델타를 처음부터 다시 계산해 전체를 덮어쓴다("지금 상태" 원칙,
  * vault-paths.mjs state.* 관례와 동일) — 누적 증분이 아니라 순수 재계산이라 같은
@@ -44,13 +55,14 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { NH_ACCOUNT_MAP } from '../lib/nh-accounts.mjs';
-import { resolveNhCashAnchor, computeCashDelta, settleCash, resolvePensionCashLedger } from '../lib/cash-ledger.mjs';
+import { resolveCashAnchor, computeCashDelta, settleCash } from '../lib/cash-ledger.mjs';
 import { buildCashHoldingRecord, holdingFilename } from '../lib/holdings-vault-writer.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
-const NH_ACCOUNTS = [...new Set(Object.values(NH_ACCOUNT_MAP))]; // 위탁·ISA·금현물·CMA
-const PENSION_ACCOUNT = '연금저축';
+// 위탁·ISA·금현물·CMA(자동 알림) + 연금저축·IRP(수동 스냅샷, 2026-08-18 추가) — 6계좌
+// 전부 동일 로직(resolveCashAnchor+computeCashDelta+settleCash)을 탄다.
+const ALL_ACCOUNTS = [...new Set(Object.values(NH_ACCOUNT_MAP)), '연금저축', 'IRP'];
 
 function readVaultFiles(dir) {
   if (!existsSync(dir)) return [];
@@ -61,9 +73,8 @@ function readVaultFiles(dir) {
 }
 
 // 이전 실행에서 이미 써둔 예수금 파일이 있으면 그 앵커 정보를 "저장값" 폴백으로
-// 읽는다 — NH 4계좌는 실제로 항상 CashEvents가 있어(4계좌 전부 실알림 확인,
-// cash-ledger.mjs 헤더 주석) 정상 가동 중엔 거의 쓰일 일이 없지만, 최초 실행 등
-// CashEvents가 아직 하나도 없는 과도기를 안전하게 넘기기 위한 안전망이다.
+// 읽는다 — CashEvents가 아직 하나도 없는 과도기(최초 실행 등)를 안전하게 넘기기
+// 위한 안전망. 정상 가동 중엔 CashEvents가 항상 있어(자동이든 수동이든) 거의 안 쓰임.
 function loadStoredAnchor(account) {
   const filepath = join(VAULT_PATHS.state.holdings, holdingFilename(account, '예수금'));
   if (!existsSync(filepath)) return null;
@@ -107,16 +118,16 @@ async function main() {
 
   let written = 0, skippedNoAnchor = 0, negativeWarnings = 0;
 
-  for (const account of NH_ACCOUNTS) {
+  for (const account of ALL_ACCOUNTS) {
     const accountEvents = cashEvents
       .filter((c) => c.account === account)
       .sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-    const latestAlarm = accountEvents.length > 0
+    const latestEvent = accountEvents.length > 0
       ? accountEvents[accountEvents.length - 1]
       : null;
-    const anchor = resolveNhCashAnchor({
+    const anchor = resolveCashAnchor({
       stored: loadStoredAnchor(account),
-      latestAlarm: latestAlarm ? { balance: latestAlarm.balance, ts: latestAlarm.ts } : null,
+      latestEvent: latestEvent ? { balance: latestEvent.balance, ts: latestEvent.ts } : null,
     });
 
     if (anchor.base === null) {
@@ -138,18 +149,6 @@ async function main() {
     });
     written++;
   }
-
-  // 연금저축 — 알림 기반 앵커가 없어 항상 0원 기준 복식부기(cash-ledger.mjs 헤더 주석).
-  const pensionFlows = buildFlows(PENSION_ACCOUNT, executions, dividends);
-  const pension = resolvePensionCashLedger({ flows: pensionFlows });
-  const pensionFlag = pension.negative ? ' ⚠️ 마이너스(데이터 점검 필요)' : '';
-  console.log(`  ${PENSION_ACCOUNT}: 복식부기 델타합산 → ${pension.cash.toLocaleString()}원${pensionFlag}`);
-  if (pension.negative) negativeWarnings++;
-  writeCash({
-    account: PENSION_ACCOUNT, balance: pension.cash, raw: pension.raw, negative: pension.negative,
-    anchorBase: 0, anchorTs: '', anchorSource: '복식부기(알림없음)',
-  });
-  written++;
 
   console.log(
     `\n✅ 예수금 ${written}계좌 계산 완료 · 기준점없음 ${skippedNoAnchor}건 · 마이너스경고 ${negativeWarnings}건` +

@@ -67,7 +67,7 @@ export function buildCashHoldingRecord(cash) {
     curPrice: 1, evalAmount: cash.balance, profitAmount: 0, profitPct: 0,
     isCashLike: true,
     // 예수금 전용 감사 필드 — 종목 보유엔 없는 정보(어떤 기준점+델타로 이 값이 나왔는지
-    // 보존, cash-ledger.mjs resolveNhCashAnchor/resolvePensionCashLedger 참고).
+    // 보존, cash-ledger.mjs resolveCashAnchor 참고).
     anchorBase: cash.anchorBase ?? null, anchorTs: cash.anchorTs ?? '', anchorSource: cash.anchorSource ?? '',
     raw: cash.raw ?? cash.balance, negative: cash.negative ?? false,
     updatedAt: new Date().toISOString(),

@@ -11,11 +11,19 @@
 // 타임스탬프를 갖고 있어(normalizeDateTime 확인됨), 날짜 대신 **전체 타임스탬프**로
 // 비교하면 이 버그 자체가 구조적으로 생길 수 없다.
 //
-// 위탁·ISA·금현물·CMA는 전부 NH라 실제 입출금 알림(앵커)이 항상 존재 —
-// resolveNhCashAnchor를 쓴다. 연금저축은 카카오로 입출금 알림 자체가 안 온다(오너
-// 확인, 2026-08-17 — 연 1회 연봉 연동 고정액 자동납입뿐이라 이벤트 알림이 없음) —
-// 실제 잔고와 대조할 방법이 없으므로 resolvePensionCashLedger로 별도 처리한다
-// (마이그레이션 시점 0원 기준 + 그 이후 배당·매도(+)·매수(−) 전액 델타, 복식부기).
+// ⚠️ 설계 통합(2026-08-18) — 처음엔 NH 4계좌(위탁·ISA·금현물·CMA, 자동 입출금
+// 알림 있음)와 연금저축(알림 없음, 0원-이후-복식부기)을 별도 함수로 나눴었다.
+// 그런데 오너가 IRP(한국투자증권, 알림 없음·매월 26일 고정 25만원 자동입금)까지
+// "모든 계좌 동일하게" 관리하길 원했고, 연금저축도 실은 잔고 조회가 가능함이
+// 드러났다(MMF 보유 평가금액이 곧 예수금 — 배당·수익금이 자동으로 MMF에 쌓이고
+// 매수 시 MMF를 먼저 매도하는 구조). 즉 "자동 알림 유무"가 아니라 "기준점을 어떻게
+// 얻는가"만 다를 뿐, 델타 계산(체결·배당 흐름 합산)은 6계좌 전부 동일해야 맞다 —
+// resolvePensionCashLedger(0원 영구기준 복식부기)는 삭제했다. 알림이 없는 계좌는
+// 오너가 앱에서 직접 확인한 값을 수동 CashEvent로 기록해 기준점 삼는다(자동 알림과
+// 완전히 같은 레코드 모양 — Facts/Ledger/CashEvents는 이제 "자동 알림"과 "수동
+// 스냅샷"을 구분하지 않고 그냥 "이 시각에 이 계좌 잔고가 이 값이었다"는 사실만 담는
+// 폴더다). resolveCashAnchor는 그래서 더 이상 NH 전용이 아니다 — 모든 계좌에 그대로
+// 쓴다(이름에서 "Nh" 제거).
 
 // anchorTs 이후(엄격히 이후, 같은 시각은 이미 그 잔고에 반영된 것으로 간주)에 발생한
 // flow만 델타에 포함한다 — 위 v1 버그를 막는 핵심. flow: { ts: 'YYYY-MM-DD HH:mm:ss',
@@ -33,30 +41,20 @@ export function settleCash(base, delta) {
   return { cash: Math.max(0, raw), raw, negative: raw < 0 };
 }
 
-// NH 계좌(위탁·ISA·금현물·CMA) 기준점 결정 — 항상 "가장 최근 알림"을 신뢰한다(4계좌
-// 전부 실제 알림이 오므로 v1처럼 수동 기준으로 폴백할 필요가 원천적으로 없음). 알림이
-// 아직 한 번도 없었으면(이 기능 최초 실행 등) 기존 저장값(마이그레이션 스냅샷 등)을
-// 임시 기준으로 유지 — source:'이관'으로 표시해 첫 실제 알림이 오면 반드시 대체되게 한다.
-// latestAlarm: { balance, ts } | null. stored: { base, baseTs, source } | null.
-export function resolveNhCashAnchor({ stored, latestAlarm }) {
-  if (latestAlarm) {
-    return { base: latestAlarm.balance, baseTs: latestAlarm.ts, source: '자동' };
+// 계좌 기준점 결정 — 항상 "가장 최근 CashEvent"를 신뢰한다(자동 알림·수동 스냅샷
+// 구분 없이 시각 기준 최신 것이 이긴다 — 2026-08-18 설계통합, 위 헤더 주석 참고).
+// CashEvent가 아직 하나도 없으면(이 기능 최초 실행 등) 기존 저장값(마이그레이션
+// 스냅샷 등)을 임시 기준으로 유지 — source:'이관'으로 표시해 첫 실제 기록이 오면
+// 반드시 대체되게 한다. latestEvent: { balance, ts } | null. stored: { base, baseTs,
+// source } | null.
+export function resolveCashAnchor({ stored, latestEvent }) {
+  if (latestEvent) {
+    return { base: latestEvent.balance, baseTs: latestEvent.ts, source: '자동' };
   }
   if (stored && Number.isFinite(stored.base)) {
     return { base: stored.base, baseTs: stored.baseTs ?? '', source: stored.source || '이관' };
   }
   return { base: null, baseTs: '', source: null };
-}
-
-// 연금저축 원장 — 실제 잔고 대조 수단이 없어(알림 없음) 마이그레이션 시점(0원)을
-// 영구 기준점으로 삼고, 그 이후의 모든 배당·매도(+)·매수(−) 이벤트를 전액 반영한다
-// (복식부기 — 2026-08-16 사고는 입금만 세고 출금을 안 뺀 게 원인이었으므로 반드시
-// 양방향). flows: { ts, amount(+배당/매도 전액, -매수 전액) }[], legacy(마이그레이션
-// 스냅샷) 이벤트는 호출부가 미리 걸러서 넘긴다(update-holdings-from-executions.mjs의
-// pickUnprocessedExecutions와 동일 원칙).
-export function resolvePensionCashLedger({ flows }) {
-  const delta = (flows ?? []).reduce((s, f) => s + (f?.amount ?? 0), 0);
-  return settleCash(0, delta);
 }
 
 // 위탁이 신규현금배분(new-cash-allocation.mjs) 등에서 실제로 "쓸 수 있는" 현금 —
