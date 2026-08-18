@@ -2,12 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildCashAllocationPrompt, validateAllocations, resolveInstrumentPricing,
-  classifyCashEvents, allAllocationsSent,
+  findCashBalance, allAllocationsSent,
 } from './new-cash-allocation.mjs';
 
-test('buildCashAllocationPrompt: 계좌·누적금액·갭·후보가 프롬프트에 포함됨', () => {
+test('buildCashAllocationPrompt: 계좌·실잔고·갭·후보가 프롬프트에 포함됨', () => {
   const prompt = buildCashAllocationPrompt({
-    account: '위탁', accumulatedAmount: 550_000,
+    account: '위탁', availableCash: 550_000,
     rankedGaps: [{ assetClass: '국내주식', targetPct: 30, currentPct: 20, absDeltaPct: -10 }],
     candidatesByClass: { 국내주식: [{ name: 'TIGER 200', ticker: '102110', curPrice: 40000 }], 해외주식: [] },
   });
@@ -19,19 +19,19 @@ test('buildCashAllocationPrompt: 계좌·누적금액·갭·후보가 프롬프�
 });
 
 test('buildCashAllocationPrompt: 개별종목 배분 금지 규칙이 항상 포함됨', () => {
-  const prompt = buildCashAllocationPrompt({ account: '위탁', accumulatedAmount: 500_000, rankedGaps: [], candidatesByClass: {} });
+  const prompt = buildCashAllocationPrompt({ account: '위탁', availableCash: 500_000, rankedGaps: [], candidatesByClass: {} });
   assert.match(prompt, /개별 회사 주식.*절대 배분하지 말 것/);
 });
 
 test('buildCashAllocationPrompt: 언더웨이트 후보 없으면 안내 문구', () => {
-  const prompt = buildCashAllocationPrompt({ account: '연금저축', accumulatedAmount: 500_000, rankedGaps: [], candidatesByClass: {} });
+  const prompt = buildCashAllocationPrompt({ account: '연금저축', availableCash: 500_000, rankedGaps: [], candidatesByClass: {} });
   assert.match(prompt, /언더웨이트 없음/);
 });
 
 test('validateAllocations: 정상 라인은 유지', () => {
   const { kept, dropped } = validateAllocations(
     [{ assetClass: '국내주식', instrumentName: 'TIGER 200', amountWon: 300000, reasoning: '갭 큼' }],
-    { account: '위탁', accumulatedAmount: 500000, eligibleClasses: ['국내주식', '해외주식'] },
+    { account: '위탁', availableCash: 500000, eligibleClasses: ['국내주식', '해외주식'] },
   );
   assert.equal(kept.length, 1);
   assert.equal(dropped.length, 0);
@@ -41,20 +41,20 @@ test('validateAllocations: 정상 라인은 유지', () => {
 test('[막아야 함] validateAllocations: 그 계좌가 세금상 담을 수 없는 자산군은 드롭', () => {
   const { kept, dropped } = validateAllocations(
     [{ assetClass: '배당주', instrumentName: 'ACE 고배당', amountWon: 100000 }],
-    { account: '위탁', accumulatedAmount: 500000, eligibleClasses: ['국내주식', '해외주식'] },
+    { account: '위탁', availableCash: 500000, eligibleClasses: ['국내주식', '해외주식'] },
   );
   assert.equal(kept.length, 0);
   assert.equal(dropped.length, 1);
   assert.match(dropped[0].reason, /담을 수 없는 자산군/);
 });
 
-test('validateAllocations: 누적잔여 초과 요청은 뒤에서부터 드롭(먼저 온 라인 우선)', () => {
+test('validateAllocations: 잔여잔고 초과 요청은 뒤에서부터 드롭(먼저 온 라인 우선)', () => {
   const { kept, dropped } = validateAllocations(
     [
       { assetClass: '국내주식', instrumentName: 'A', amountWon: 400000 },
       { assetClass: '해외주식', instrumentName: 'B', amountWon: 300000 },
     ],
-    { account: '위탁', accumulatedAmount: 500000, eligibleClasses: ['국내주식', '해외주식'] },
+    { account: '위탁', availableCash: 500000, eligibleClasses: ['국내주식', '해외주식'] },
   );
   assert.equal(kept.length, 1);
   assert.equal(kept[0].instrumentName, 'A');
@@ -65,7 +65,7 @@ test('validateAllocations: 누적잔여 초과 요청은 뒤에서부터 드롭(
 test('validateAllocations: 금액이 0 이하·비숫자면 드롭', () => {
   const { kept, dropped } = validateAllocations(
     [{ assetClass: '국내주식', instrumentName: 'A', amountWon: 0 }, { assetClass: '국내주식', instrumentName: 'B', amountWon: 'abc' }],
-    { account: '위탁', accumulatedAmount: 500000, eligibleClasses: ['국내주식'] },
+    { account: '위탁', availableCash: 500000, eligibleClasses: ['국내주식'] },
   );
   assert.equal(kept.length, 0);
   assert.equal(dropped.length, 2);
@@ -74,7 +74,7 @@ test('validateAllocations: 금액이 0 이하·비숫자면 드롭', () => {
 test('validateAllocations: 종목명 없으면 드롭', () => {
   const { kept, dropped } = validateAllocations(
     [{ assetClass: '국내주식', instrumentName: '', amountWon: 100000 }],
-    { account: '위탁', accumulatedAmount: 500000, eligibleClasses: ['국내주식'] },
+    { account: '위탁', availableCash: 500000, eligibleClasses: ['국내주식'] },
   );
   assert.equal(kept.length, 0);
   assert.equal(dropped.length, 1);
@@ -107,55 +107,23 @@ test('resolveInstrumentPricing: ticker 없는 후보는 name을 assetKey로 사�
   assert.equal(r.assetKey, '위탁-금현물');
 });
 
-test('classifyCashEvents: 계좌 귀속 성공한 배당은 이벤트로 반영 + 처리됨 표시 대상', () => {
-  const dividendFiles = [{ filepath: '/d1.md', dedupKey: 'd1', afterTaxAmount: 10000, broker: 'NH투자증권', stockName: 'X', acctRaw: '' }];
-  const { eventsByAccount, processedFilepaths } = classifyCashEvents({
-    dividendFiles, profitFiles: [], holdings: [],
-    resolveAccount: () => '위탁',
-  });
-  assert.deepEqual(eventsByAccount.위탁, [{ dedupKey: 'd1', amount: 10000 }]);
-  assert.deepEqual(processedFilepaths, ['/d1.md']);
+test('[실사고 재현 방지/2026-08-17] findCashBalance: 예수금 보유(isCashLike)의 evalAmount를 그대로 실잔고로 사용 — 배당·매도 이벤트를 다시 더하지 않음', () => {
+  const holdings = [
+    { account: '위탁', name: '예수금', isCashLike: true, evalAmount: 1164516 },
+    { account: '위탁', name: '삼성전자', isCashLike: false, evalAmount: 5000000 },
+  ];
+  assert.equal(findCashBalance(holdings, '위탁'), 1164516);
 });
 
-test('[막아야 함] classifyCashEvents: 계좌 귀속 모호(null)한 배당은 처리됨 표시 안 함(다음 실행 재시도)', () => {
-  const dividendFiles = [{ filepath: '/d1.md', dedupKey: 'd1', afterTaxAmount: 10000, broker: 'NH투자증권', stockName: 'X', acctRaw: '' }];
-  const { eventsByAccount, processedFilepaths } = classifyCashEvents({
-    dividendFiles, profitFiles: [], holdings: [],
-    resolveAccount: () => null,
-  });
-  assert.deepEqual(eventsByAccount.위탁, []);
-  assert.deepEqual(eventsByAccount.연금저축, []);
-  assert.deepEqual(processedFilepaths, []); // 처리됨 표시 안 됨 — 다음 실행이 재확인
+test('findCashBalance: 그 계좌 예수금 보유가 없으면 null(0으로 추정 안 함)', () => {
+  assert.equal(findCashBalance([{ account: 'ISA', name: '예수금', isCashLike: true, evalAmount: 1000 }], '위탁'), null);
 });
 
-test('classifyCashEvents: 계좌가 확정됐지만 범위 밖(ISA·IRP)인 배당은 처리됨 표시는 하되 이벤트엔 안 넣음', () => {
-  const dividendFiles = [{ filepath: '/d1.md', dedupKey: 'd1', afterTaxAmount: 10000, broker: 'NH투자증권', stockName: 'X', acctRaw: '' }];
-  const { eventsByAccount, processedFilepaths } = classifyCashEvents({
-    dividendFiles, profitFiles: [], holdings: [],
-    resolveAccount: () => 'ISA',
-  });
-  assert.deepEqual(eventsByAccount.위탁, []);
-  assert.deepEqual(processedFilepaths, ['/d1.md']); // 확정 계좌라 재확인 불필요 — 처리됨 표시
-});
-
-test('classifyCashEvents: 매도실현 파일은 quantity*sellPrice 전액이 이벤트 금액(실현손익 아님)', () => {
-  const profitFiles = [{ filepath: '/p1.md', dedupKey: 'p1', account: '연금저축', quantity: 10, sellPrice: 50000, profit: 12000 }];
-  const { eventsByAccount, processedFilepaths } = classifyCashEvents({ dividendFiles: [], profitFiles, holdings: [] });
-  assert.deepEqual(eventsByAccount.연금저축, [{ dedupKey: 'p1', amount: 500000 }]);
-  assert.deepEqual(processedFilepaths, ['/p1.md']);
-});
-
-test('classifyCashEvents: 매도실현 파일은 항상 계좌가 확정돼 있어 범위 밖이어도 처리됨 표시', () => {
-  const profitFiles = [{ filepath: '/p1.md', dedupKey: 'p1', account: 'IRP', quantity: 10, sellPrice: 50000 }];
-  const { processedFilepaths } = classifyCashEvents({ dividendFiles: [], profitFiles, holdings: [] });
-  assert.deepEqual(processedFilepaths, ['/p1.md']);
-});
-
-test('allAllocationsSent: 전부 created면 true(리셋 대상)', () => {
+test('allAllocationsSent: 전부 created면 true(트리거 상태 갱신 대상)', () => {
   assert.equal(allAllocationsSent([{ action: 'created' }, { action: 'created' }]), true);
 });
 
-test('[막아야 함] allAllocationsSent: 하나라도 blocked면 false(리셋하면 안 됨 — 아직 안 보낸 현금)', () => {
+test('[막아야 함] allAllocationsSent: 하나라도 blocked면 false(상태 갱신하면 안 됨 — 다음 실행이 재시도해야 함)', () => {
   assert.equal(allAllocationsSent([{ action: 'created' }, { action: 'blocked' }]), false);
 });
 
@@ -163,6 +131,6 @@ test('allAllocationsSent: 하나라도 failed면 false', () => {
   assert.equal(allAllocationsSent([{ action: 'created' }, { action: 'failed' }]), false);
 });
 
-test('allAllocationsSent: 빈 배열이면 false(아무것도 안 보냈으니 리셋 대상 아님)', () => {
+test('allAllocationsSent: 빈 배열이면 false(아무것도 안 보냈으니 갱신 대상 아님)', () => {
   assert.equal(allAllocationsSent([]), false);
 });

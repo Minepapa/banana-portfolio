@@ -2,59 +2,65 @@
 /**
  * 신규 현금 배분 — ARCHITECTURE-V2.md "신규 현금 배분 원칙" 절(2026-08-04 확정)의
  * Vault-native 구현. 구현계획서 Phase 8이 "신규 현금 배분(누적 50만원 트리거) 미구현"
- * 으로 열어둔 채 남겨뒀던 부분(2026-08-16 신설).
+ * 으로 열어둔 채 남겨뒀던 부분(2026-08-16 신설, 2026-08-18 실잔고 기반으로 전면 재작성).
  *
- * ⚠️ 잠정 중단(2026-08-17, 신설 다음날) — launchd 스케줄 해제됨(health-watcher 등록도
- * 해제), 소스는 보존. 첫 자동 실행에서 실제 예수금(위탁 1,164,516원)보다 약 10배
- * 부풀려진 금액(11,598,305원)으로 실제 매수 제안이 나가는 사고 발생 — 아래 누적
- * 로직이 "배당·매도로 들어온 돈"만 더하고 "그 돈으로 오너가 이미 직접 재투자한 것"은
- * 빼지 않아서다. 근본 원인은 v2에 예수금앵커(카카오 입출금 알림) → Vault 배선이 아직
- * 없어(Facts/Ledger/CashEvents 계속 비어있음) 진짜 현금 잔고를 실시간 추적할 방법
- * 자체가 없다는 것 — 예수금앵커 배선이 끝나고 이 잡의 "미투자 현금" 계산이 실제
- * 예수금 잔고에 기반하도록 재설계된 뒤에 재활성화할 것. 그 전까지 재활성화 금지.
+ * ⚠️ 재설계 경위(2026-08-18) — 원래(2026-08-16)는 Facts/Ledger/Dividends·Profits의
+ * "돈이 들어온 이벤트"만 계좌별로 누적하는 방식이었다. 신설 다음날(08-17) 첫 자동
+ * 실행에서 실제 예수금(위탁 1,164,516원)보다 약 10배 부풀려진 금액(11,598,305원)으로
+ * 매수 제안이 나가는 사고가 났다 — "들어온 돈"만 더하고 "그 돈으로 오너가 이미 직접
+ * 재투자한 것"을 빼지 않는 구조적 결함(근본 원인은 v2에 예수금앵커 → Vault 배선이
+ * 아직 없어 진짜 현금 잔고를 실시간 추적할 방법 자체가 없었다는 것). 예수금앵커 배선
+ * 완료(State/Holdings/{계좌}-예수금.md, update-cash-from-ledger.mjs) 후 이 잡을
+ * 전면 재작성 — 이벤트를 추측으로 누적하는 대신, **매번 그 계좌의 실제 예수금 잔고를
+ * 그대로 읽는다.** "미투자 현금"이 곧 실잔고이므로 이중계상·누락 자체가 구조적으로
+ * 불가능하다(update-cash-from-ledger.mjs와 동일 철학 — 완전 재계산, 증분 누적 아님).
+ * cash-accumulator.mjs(이벤트 누적 모듈)는 이 재작성으로 완전히 폐기·삭제됐다.
  *
- * 흐름(설계서 그대로):
- *   1. Facts/Ledger/Dividends·Profits(배당·매도체결로 생긴 현금)를 계좌별로 누적
- *      (cash-accumulator.mjs) — 매도는 실현손익이 아니라 전액(quantity*sellPrice)이
- *      새 현금이 된다.
- *   2. 계좌당(위탁·연금저축) 누적 50만원 이상이면: computeRebalanceGaps(전체 보유)로
- *      갭을 계산(rebalance-gap.mjs 재사용, 새 로직 안 만듦) → 그 계좌가 세금상 담을 수
- *      있는 자산군만 후보로 필터(cash-allocation-candidates.mjs, ARCHITECTURE-V2.md
- *      "원칙 2" 표를 그대로 상수화) → Athena 헤드리스 판단(갭 크기·후보만 주고 "어디에
- *      얼마씩"은 재량 — 고정공식 금지, [[feedback-no-hardcoded-judgment]]) →
- *      Decisions/Proposals + 텔레그램 제안(proposal-flow.mjs 재사용, 트랙 무관 공용
- *      함수라 새로 안 만듦).
- *   3. 제안 발송 성공 시에만 그 계좌의 누적을 리셋한다 — 실패(LLM 한도 등)하면 누적을
- *      그대로 남겨 다음 실행이 자연히 재시도한다(엣지 트리거가 아니라 레벨 조건으로
- *      매 실행 재확인 — 크로싱 순간에만 트리거하면 그 순간 LLM 호출이 실패할 때 영구
- *      누락될 위험이 있어 피함).
+ * 흐름:
+ *   1. State/Holdings에서 각 계좌의 "예수금" 보유(isCashLike)를 읽어 실잔고를 얻는다.
+ *      위탁은 금현물 잔고까지 합산한 값을 쓴다(오너 확정, 2026-08-18 — "금현물의 대기
+ *      현금은 위탁과 합쳐서 같이 취급", cash-ledger.mjs resolveDesignatedCashBalance).
+ *      실제 매수는 위탁 계좌에서 나가므로, 합산액이 위탁 단독 잔고보다 크면 금현물→위탁
+ *      이체가 먼저 필요할 수 있다는 걸 오너가 알아서 판단한다(제안 문구에 명시).
+ *   2. 계좌당(위탁·연금저축) 실잔고가 50만원 이상이고, 직전에 이 잔고로 이미 판단을
+ *      트리거한 적이 없으면(State/CashAccumulator/{계좌}.md의 lastTriggeredBalance와
+ *      다르면): computeRebalanceGaps(전체 보유)로 갭을 계산(rebalance-gap.mjs 재사용) →
+ *      그 계좌가 세금상 담을 수 있는 자산군만 후보로 필터(cash-allocation-candidates.mjs)
+ *      → Athena 헤드리스 판단(갭 크기·후보만 주고 "어디에 얼마씩"은 재량 — 고정공식
+ *      금지, [[feedback-no-hardcoded-judgment]]) → Decisions/Proposals + 텔레그램 제안
+ *      (proposal-flow.mjs 재사용, 트랙 무관 공용 함수라 새로 안 만듦).
+ *   3. 배분 라인 전부 발송 성공 시에만 lastTriggeredBalance를 이번 잔고값으로 갱신한다
+ *      — 실패(LLM 한도·일부 차단 등)하면 그대로 둬 다음 실행이 자연히 재시도한다(잔고가
+ *      안 바뀌었으니 트리거 조건도 그대로 유지됨). 리셋할 "누적치" 자체가 이제 없다 —
+ *      다음 실행은 그때의 실잔고를 새로 읽을 뿐이다(매수가 실제 체결되면 잔고 자체가
+ *      자연히 줄어든다, parse-notifications-to-vault→update-holdings-from-executions→
+ *      update-cash-from-ledger 루프로).
  *
  * ⚠️ 개별종목 배분 금지 — 위탁 레거시 개별종목(삼성전자 등) 전환은 오너 직접 판단
- * 영역(ARCHITECTURE-V2.md "정리된 항목과 그 이유" 표, 2026-08-02 확정 — 이 표에서 이미
- * 제거 확정된 기능을 뒤늦게 만들었다가 폐기한 전례가 있어, 새 잡을 짤 때는 이 표부터
- * 확인해야 한다는 교훈이 남음). Athena 에이전트 정의(athena.md)에 이미 "자산분배
- * 트랙은 개별종목 신규 매수를 하지 않는다"가 있어 시스템프롬프트로 1차 방어, 이 잡의
- * 태스크 프롬프트에서도 명시적으로 재확인한다(방어 이중화).
+ * 영역(ARCHITECTURE-V2.md "정리된 항목과 그 이유" 표, 2026-08-02 확정). Athena 에이전트
+ * 정의(athena.md)에 이미 "자산분배 트랙은 개별종목 신규 매수를 하지 않는다"가 있어
+ * 시스템프롬프트로 1차 방어, 이 잡의 태스크 프롬프트에서도 명시적으로 재확인한다.
  *
  * 승인·체결: 이 잡은 제안 생성·발송까지만 한다. 자산분배 트랙엔 자동 브로커 실행이
- * 없다(퀀트 트랙만 KIS API로 자동체결, Phase 9 확정) — Frank가 텔레그램 승인 답장 후
- * 본인이 직접 브로커 앱에서 주문하고, 그 체결이 카카오 알림으로 다시 Vault에 들어오는
- * 루프(parse-notifications-to-vault→update-holdings-from-executions)로 닫힌다.
+ * 없다 — Frank가 텔레그램 승인 답장 후 본인이 직접 브로커 앱에서 주문하고, 그 체결이
+ * 카카오 알림으로 다시 Vault에 들어오는 루프로 닫힌다.
+ *
+ * ⚠️ launchd 재활성화는 이 재작성만으로 자동으로 하지 않는다 — 실데이터 dry-run
+ * 검증과 오너의 명시적 확인을 거친 뒤에 별도로 진행할 것(2026-08-17 사고 재발 방지 원칙).
  *
  * 사용법:
  *   node scripts/jobs/new-cash-allocation.mjs            # 실제 반영+제안 발송
- *   node scripts/jobs/new-cash-allocation.mjs --dry-run   # 누적 계산·프롬프트만, 쓰기 없음
+ *   node scripts/jobs/new-cash-allocation.mjs --dry-run   # 잔고·프롬프트만 확인, 쓰기 없음
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { parseFrontmatter, buildFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { writeStateFile, writeAtomic } from '../lib/state-writer.mjs';
-import { applyCashEvents, resetAccumulator, NEW_CASH_THRESHOLD_WON, CASH_ELIGIBLE_ACCOUNTS } from '../lib/cash-accumulator.mjs';
+import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { writeStateFile } from '../lib/state-writer.mjs';
+import { NEW_CASH_THRESHOLD_WON, CASH_ELIGIBLE_ACCOUNTS, resolveDesignatedCashBalance } from '../lib/cash-ledger.mjs';
 import { rankEligibleGaps, findExistingInstruments, ACCOUNT_ELIGIBLE_ASSET_CLASSES } from '../lib/cash-allocation-candidates.mjs';
 import { computeRebalanceGaps } from '../lib/rebalance-gap.mjs';
-import { resolveExecutionAccount } from '../lib/account-resolver.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
@@ -75,9 +81,17 @@ function readMdDir(dir) {
     .map((f) => ({ file: f, filepath: join(dir, f), ...parseFrontmatter(readFileSync(join(dir, f), 'utf8')) }));
 }
 
+// State/Holdings에서 그 계좌의 예수금 보유(isCashLike, name="예수금")를 찾는다 —
+// buildCashHoldingRecord가 쓰는 관례 그대로(holdings-vault-writer.mjs). 없으면(그
+// 계좌 예수금 계산이 아직 한 번도 안 됨 등) null — 0으로 추정하지 않는다.
+export function findCashBalance(holdings, account) {
+  const h = holdings.find((x) => x.account === account && x.name === '예수금' && x.isCashLike);
+  return h && Number.isFinite(h.evalAmount) ? h.evalAmount : null;
+}
+
 // Athena에게 줄 프롬프트 — 갭·후보(실존 보유)만 주고 "어디에 얼마씩"은 판단시킨다.
 // 순수 함수(테스트 가능) — candidatesByClass: { [assetClass]: [{name,ticker,curPrice}] }.
-export function buildCashAllocationPrompt({ account, accumulatedAmount, rankedGaps, candidatesByClass }) {
+export function buildCashAllocationPrompt({ account, availableCash, rankedGaps, candidatesByClass }) {
   const gapLines = rankedGaps.map((g) =>
     `  ${g.assetClass}: 목표 ${g.targetPct}% / 현재 ${g.currentPct.toFixed(2)}% (갭 ${g.absDeltaPct.toFixed(2)}%p, 부족)`,
   ).join('\n') || '  (이 계좌가 담을 수 있는 자산군 중 언더웨이트 없음)';
@@ -88,7 +102,7 @@ export function buildCashAllocationPrompt({ account, accumulatedAmount, rankedGa
     return `  [${cls}]\n${lines}`;
   }).join('\n');
 
-  return `[신규 현금 배분 판단] ${account} 계좌에 배당·매도체결로 생긴 미투자 현금이 누적 ${accumulatedAmount.toLocaleString('ko-KR')}원(문턱 ${NEW_CASH_THRESHOLD_WON.toLocaleString('ko-KR')}원) 쌓였다. 어디에 얼마씩 배분할지 "판단"해줘.
+  return `[신규 현금 배분 판단] ${account} 계좌의 현재 실제 예수금 잔고가 ${availableCash.toLocaleString('ko-KR')}원(문턱 ${NEW_CASH_THRESHOLD_WON.toLocaleString('ko-KR')}원 이상)이다. 어디에 얼마씩 배분할지 "판단"해줘.
 
 [검증된 갭 — 시스템이 위탁+연금저축 합산 5/25 밴드 기준으로 계산한 값. 이 계좌가 세금상
  담을 수 있는 자산군만 후보로 이미 걸러져 있다. 재계산·재조회 금지, 이 숫자만 사용할 것]
@@ -102,7 +116,7 @@ ${candLines}
 판단 규칙:
 - ⚠️ 개별 회사 주식(삼성전자·엔비디아 등 레거시 전환 대상)에는 절대 배분하지 말 것 — ETF만.
 - 갭이 가장 큰 자산군 하나에 몰아줘도 되고, 여러 자산군에 나눠도 된다(고정 비율 없음).
-- allocations의 amountWon 합계는 ${accumulatedAmount}원을 넘지 말 것.
+- allocations의 amountWon 합계는 ${availableCash}원을 넘지 말 것.
 - instrumentName은 위 후보 목록의 이름을 정확히 그대로 쓸 것(새로 짓지 말 것) — 신규
   제안일 때만 새 ETF명 사용 가능.
 
@@ -119,9 +133,9 @@ ${candLines}
 
 // LLM 응답 검증 — 후보에 없는 자산군·개별종목·합계초과는 여기서 드롭(THROW 아님, 나머지
 // 유효한 라인은 살린다 — 부분 오염이 전체 제안을 막지 않게). 순수 함수.
-export function validateAllocations(allocations, { account, accumulatedAmount, eligibleClasses }) {
+export function validateAllocations(allocations, { account, availableCash, eligibleClasses }) {
   const kept = [], dropped = [];
-  let remaining = accumulatedAmount;
+  let remaining = availableCash;
   for (const a of allocations ?? []) {
     const assetClass = String(a?.assetClass ?? '').trim();
     const amountWon = Number(a?.amountWon);
@@ -129,7 +143,7 @@ export function validateAllocations(allocations, { account, accumulatedAmount, e
     if (!eligibleClasses.includes(assetClass)) { dropped.push({ a, reason: `${account} 계좌가 담을 수 없는 자산군: ${assetClass}` }); continue; }
     if (!instrumentName) { dropped.push({ a, reason: '종목명 없음' }); continue; }
     if (!Number.isFinite(amountWon) || amountWon <= 0) { dropped.push({ a, reason: '금액 값 이상' }); continue; }
-    if (amountWon > remaining) { dropped.push({ a, reason: `누적잔여(${remaining}원) 초과 요청(${amountWon}원)` }); continue; }
+    if (amountWon > remaining) { dropped.push({ a, reason: `잔여잔고(${remaining}원) 초과 요청(${amountWon}원)` }); continue; }
     remaining -= amountWon;
     kept.push({ assetClass, instrumentName, amountWon, reasoning: String(a?.reasoning ?? '') });
   }
@@ -148,39 +162,8 @@ export function resolveInstrumentPricing(allocation, candidates) {
   return { assetKey: match.ticker || match.name, ticker: match.ticker || '', quantity: quantity > 0 ? quantity : null, proposedPrice: match.curPrice };
 }
 
-// 배당·매도체결 파일 → 계좌별 이벤트 분류 + "처리됨(cashAccumApplied)" 표시 대상 파일 결정.
-// 순수 함수(fs 없음, resolveAccount 주입 — 테스트 가능). 계좌 귀속이 **확정**된 파일만
-// processedFilepaths에 넣는다 — 확정이면 범위 밖(ISA·IRP)이어도 다시 안 볼 파일이라 표시,
-// 확정 자체가 안 된(resolveAccount가 null 반환 — 같은 이름 상품이 위탁·ISA 양쪽에 있어
-// 못 좁히는 등) 파일은 표시하지 않아 다음 실행이 자연히 재확인한다(2026-08-17 코드리뷰
-// MEDIUM 지적 — 예전엔 귀속 여부와 무관하게 전부 처리됨으로 찍어, 모호했던 배당의 현금이
-// 나중에 보유정보가 갱신돼 귀속이 풀려도 영원히 트래킹에서 빠져 있었다).
-export function classifyCashEvents({ dividendFiles, profitFiles, holdings, resolveAccount = resolveExecutionAccount }) {
-  const eventsByAccount = { 위탁: [], 연금저축: [] };
-  const processedFilepaths = [];
-
-  for (const d of dividendFiles) {
-    const account = resolveAccount({ broker: d.broker, stockName: d.stockName, stockCode: null, acctNo: d.acctRaw }, holdings);
-    if (account == null) continue; // 귀속 모호 — 처리됨 표시 안 함(다음 실행 재시도)
-    processedFilepaths.push(d.filepath);
-    if (!CASH_ELIGIBLE_ACCOUNTS.has(account)) continue; // ISA·IRP 등 — 확정 계좌이나 범위 밖
-    eventsByAccount[account].push({ dedupKey: d.dedupKey, amount: d.afterTaxAmount });
-  }
-  for (const p of profitFiles) {
-    // 실현손익 파일은 매도 시점에 계좌 귀속이 이미 끝난 뒤에만 생성된다(ledger-vault-writer.mjs
-    // buildProfitRecord 계약) — account가 null일 수 없어 배당과 달리 모호 케이스가 없다.
-    processedFilepaths.push(p.filepath);
-    if (!CASH_ELIGIBLE_ACCOUNTS.has(p.account)) continue;
-    const proceeds = (p.quantity ?? 0) * (p.sellPrice ?? 0);
-    eventsByAccount[p.account].push({ dedupKey: p.dedupKey, amount: proceeds });
-  }
-  return { eventsByAccount, processedFilepaths };
-}
-
-// 배분 라인 발송 결과가 전부 'created'(실제 발송 성공)여야 누적을 리셋한다 — 'blocked'
-// (거부 재상정 쿨다운 등, order-gate.resolveProposalIntake)도 미발송이므로 리셋 대상이
-// 아니다(2026-08-17 코드리뷰 MEDIUM 지적 — 예전엔 예외(throw)만 실패로 잡아, 전부
-// blocked인 배치도 "실패 없음"으로 오판해 아직 못 보낸 현금의 누적을 지워버렸다).
+// 배분 라인 발송 결과가 전부 'created'(실제 발송 성공)여야 트리거 상태를 갱신한다 —
+// 'blocked'(거부 재상정 쿨다운 등)도 미발송이므로 갱신 대상이 아니다.
 export function allAllocationsSent(sendResults) {
   return sendResults.length > 0 && sendResults.every((r) => r.action === 'created');
 }
@@ -193,17 +176,21 @@ function loadExistingProposals(dir) {
   });
 }
 
-function readAccumulator(account) {
+// State/CashAccumulator/{계좌}.md — "직전에 어느 실잔고 값으로 이미 배분판단을
+// 트리거했는가"만 기억한다(2026-08-18 재작성 — 예전엔 이벤트 dedupKey를 누적했지만
+// 이제 실잔고 자체를 매번 새로 읽으므로 그런 상태가 필요 없다). 잔고가 그대로면
+// (오너가 아직 제안에 응답 안 함, 새 배당·매도도 없음) 매일 같은 제안을 반복 발송하지
+// 않기 위한 최소한의 dedup — 잔고가 바뀌면(새 돈 유입 또는 매수 체결로 감소) 다시 트리거.
+function readTriggerState(account) {
   const p = join(VAULT_PATHS.state.cashAccumulator, `${account}.md`);
   if (!existsSync(p)) return null;
-  return parseFrontmatter(readFileSync(p, 'utf8'));
+  const parsed = parseFrontmatter(readFileSync(p, 'utf8'));
+  return Number.isFinite(parsed.lastTriggeredBalance) ? parsed.lastTriggeredBalance : null;
 }
 
-async function writeAccumulator(account, state) {
+async function writeTriggerState(account, lastTriggeredBalance) {
   const content = buildFrontmatter({
-    type: 'cash-accumulator', account,
-    accumulatedAmount: state.accumulatedAmount,
-    appliedDedupKeys: JSON.stringify(state.appliedDedupKeys),
+    type: 'cash-allocation-trigger', account, lastTriggeredBalance,
     updatedAt: new Date().toISOString(),
   });
   if (!DRY_RUN) {
@@ -212,57 +199,80 @@ async function writeAccumulator(account, state) {
   }
 }
 
-function parseAppliedDedupKeys(raw) {
-  try { const v = JSON.parse(raw?.appliedDedupKeys ?? '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+// 잔고가 문턱 아래로 내려갈 때 트리거 상태를 지운다(코드리뷰 지적, 2026-08-18) — 안
+// 지우면 나중에 잔고가 "정확히 그 트리거값"으로 우연히 재상승했을 때 === 비교가 이미
+// 처리한 걸로 착각해 영원히 재트리거를 못 하는 사각지대가 생긴다.
+function clearTriggerState(account) {
+  if (DRY_RUN) return;
+  const p = join(VAULT_PATHS.state.cashAccumulator, `${account}.md`);
+  if (existsSync(p)) rmSync(p, { force: true });
 }
 
 async function main() {
-  console.log('💰 new-cash-allocation — 신규 현금 배분 점검');
+  console.log('💰 new-cash-allocation — 신규 현금 배분 점검(실잔고 기반)');
   if (DRY_RUN) console.log('   (--dry-run: 쓰기·발송 없음)');
 
   const holdings = readMdDir(VAULT_PATHS.state.holdings);
-  // legacy(Phase 7 마이그레이션 스냅샷)는 제외 — update-holdings-from-executions.mjs의
-  // pickUnprocessedExecutions와 동일 원칙(그 시점 스냅샷이 이미 State로 반영됐으므로,
-  // 그 과거 이벤트를 지금 다시 "새 현금"으로 세면 안 됨). 대부분 account:null이라
-  // resolveExecutionAccount가 우연히 걸러주지만(broker 필드 자체가 없음), 우연에 기대지
-  // 않고 명시적으로 제외한다.
-  const dividendFiles = readMdDir(VAULT_PATHS.facts.ledger.dividends).filter((d) => !d.legacy && !d.cashAccumApplied);
-  const profitFiles = readMdDir(VAULT_PATHS.facts.ledger.profits).filter((p) => !p.legacy && !p.cashAccumApplied);
-  console.log(`🔎 미처리 배당 ${dividendFiles.length}건 · 매도실현 ${profitFiles.length}건`);
 
-  const { eventsByAccount, processedFilepaths: processedFiles } = classifyCashEvents({ dividendFiles, profitFiles, holdings });
+  const wtCash = findCashBalance(holdings, '위탁');
+  const goldCash = findCashBalance(holdings, '금현물');
+  const pensionCash = findCashBalance(holdings, '연금저축');
+
+  // ⚠️ goldCash만 예외적으로 0 폴백(코드리뷰 지적, 2026-08-18 — wtCash==null은 아래서
+  // 계좌 전체를 건너뛰는데 이건 왜 다른지 설명 필요). 금현물은 "위탁 잔고에 추가로 더
+  // 합산되는 보조 입력"이라, 아직 계산된 적 없어도(update-cash-from-ledger.mjs가 그
+  // 계좌를 아직 못 돌았을 때 등) 위탁 자체 잔고만으로 진행하는 쪽이 안전하다 — 잘못된
+  // 방향(실제보다 과소평가)이지 과대평가(원래 사고 클래스)가 아니다. wtCash==null은
+  // "이 계좌 자체를 아예 모른다"는 뜻이라 성격이 다르다(추정할 기준 자체가 없음).
+  const availableCashByAccount = {
+    위탁: wtCash != null ? resolveDesignatedCashBalance({ wtCash, goldCash: goldCash ?? 0 }) : null,
+    연금저축: pensionCash,
+  };
 
   let existingProposals = null;
   for (const account of CASH_ELIGIBLE_ACCOUNTS) {
-    const existing = readAccumulator(account);
-    const existingState = existing ? { accumulatedAmount: existing.accumulatedAmount ?? 0, appliedDedupKeys: parseAppliedDedupKeys(existing) } : null;
-    const updated = applyCashEvents(existingState, eventsByAccount[account]);
-    if (updated.addedCount > 0) console.log(`  ${account}: 신규 이벤트 ${updated.addedCount}건 반영 → 누적 ${updated.accumulatedAmount.toLocaleString('ko-KR')}원${updated.crossed ? ' 🔔 문턱 최초 돌파' : ''}`);
-    await writeAccumulator(account, updated);
+    const availableCash = availableCashByAccount[account];
+    if (availableCash == null) {
+      console.log(`  ⚠️  ${account}: 예수금 잔고 없음(update-cash-from-ledger.mjs 아직 안 돌았거나 실패) — 건너뜀(0으로 추정 안 함)`);
+      continue;
+    }
 
-    if (updated.accumulatedAmount < NEW_CASH_THRESHOLD_WON) continue;
-    console.log(`\n💡 ${account} 누적 ${updated.accumulatedAmount.toLocaleString('ko-KR')}원 — 배분 판단 시작`);
+    const lastTriggeredBalance = readTriggerState(account);
+    console.log(`  ${account}: 실잔고 ${availableCash.toLocaleString('ko-KR')}원${account === '위탁' ? `(금현물 ${(goldCash ?? 0).toLocaleString('ko-KR')}원 합산)` : ''} (직전 트리거 ${lastTriggeredBalance != null ? lastTriggeredBalance.toLocaleString('ko-KR') + '원' : '없음'})`);
+
+    if (availableCash < NEW_CASH_THRESHOLD_WON) {
+      // ⚠️ 코드리뷰 지적(2026-08-18) — 트리거 상태를 그대로 두면, 나중에 잔고가 다시
+      // "정확히 그 값"으로 돌아왔을 때(예: 문턱 밑으로 내려갔다가 우연히 같은 원 단위로
+      // 재상승) === 비교가 "이미 처리함"으로 착각해 영원히 재트리거를 못 하는 사각지대가
+      // 있었다. 문턱 아래로 내려가는 순간 상태를 지워서, 다음에 뭘로 다시 올라오든
+      // "처음 보는 값"으로 취급되게 한다.
+      if (lastTriggeredBalance != null) clearTriggerState(account);
+      continue;
+    }
+    if (availableCash === lastTriggeredBalance) { console.log(`    → 직전과 동일 잔고 — 재트리거 안 함(오너 응답 대기 또는 신규 유입 없음)`); continue; }
+
+    console.log(`\n💡 ${account} 실잔고 ${availableCash.toLocaleString('ko-KR')}원 — 배분 판단 시작`);
 
     const { gaps } = computeRebalanceGaps(holdings);
     const rankedGaps = rankEligibleGaps(gaps, account);
     const eligibleClasses = ACCOUNT_ELIGIBLE_ASSET_CLASSES[account];
     const candidatesByClass = Object.fromEntries(eligibleClasses.map((c) => [c, findExistingInstruments(holdings, account, c)]));
 
-    const prompt = buildCashAllocationPrompt({ account, accumulatedAmount: updated.accumulatedAmount, rankedGaps, candidatesByClass });
+    const prompt = buildCashAllocationPrompt({ account, availableCash, rankedGaps, candidatesByClass });
     if (DRY_RUN) { console.log(`\n┌─── 프롬프트 [${account}] ───┐\n${prompt}\n└──────────────────┘`); continue; }
 
     let allocations;
     try {
       const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt }));
-      const { kept, dropped } = validateAllocations(r.allocations, { account, accumulatedAmount: updated.accumulatedAmount, eligibleClasses });
+      const { kept, dropped } = validateAllocations(r.allocations, { account, availableCash, eligibleClasses });
       dropped.forEach((d) => console.log(`  ⚠️ 배분 라인 드롭: ${d.reason}`));
       allocations = kept;
     } catch (e) {
-      if (e.isLimit) { console.log(`  ⏳ 사용량 한도 → 배분 판단 보류(누적은 유지, 다음 실행 재시도).`); continue; }
-      console.error(`  ❌ ${account} 배분 판단 실패: ${e.message} — 누적 유지, 다음 실행 재시도`);
+      if (e.isLimit) { console.log(`  ⏳ 사용량 한도 → 배분 판단 보류(다음 실행 재시도).`); continue; }
+      console.error(`  ❌ ${account} 배분 판단 실패: ${e.message} — 다음 실행 재시도`);
       continue;
     }
-    if (!allocations.length) { console.log(`  ⚠️ 유효한 배분 라인 없음 — 누적 유지, 다음 실행 재시도`); continue; }
+    if (!allocations.length) { console.log(`  ⚠️ 유효한 배분 라인 없음 — 다음 실행 재시도`); continue; }
 
     existingProposals ??= loadExistingProposals(VAULT_PATHS.decisions.proposals);
     const sendResults = [];
@@ -292,19 +302,13 @@ async function main() {
       }
     }
     if (allAllocationsSent(sendResults)) {
-      await writeAccumulator(account, resetAccumulator());
-      console.log(`  🔄 ${account} 누적 리셋 완료`);
+      await writeTriggerState(account, availableCash);
+      console.log(`  🔄 ${account} 트리거 상태 갱신(잔고 ${availableCash.toLocaleString('ko-KR')}원) — 이 잔고로는 재트리거 안 함`);
     } else {
-      console.log(`  ⚠️ 일부 미발송(차단·실패) — 누적 유지(다음 실행 재시도, 이미 보낸 제안은 단일활성제안 원칙으로 중복 방지됨)`);
+      console.log(`  ⚠️ 일부 미발송(차단·실패) — 트리거 상태 유지(다음 실행 재시도, 이미 보낸 제안은 단일활성제안 원칙으로 중복 방지됨)`);
     }
   }
 
-  if (!DRY_RUN) {
-    for (const filepath of processedFiles) {
-      const content = readFileSync(filepath, 'utf8');
-      writeAtomic(filepath, updateFrontmatter(content, { cashAccumApplied: true, cashAccumAppliedAt: new Date().toISOString() }));
-    }
-  }
   console.log('\n🏁 완료');
 }
 

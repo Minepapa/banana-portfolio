@@ -57,6 +57,17 @@ export function resolveCashAnchor({ stored, latestEvent }) {
   return { base: null, baseTs: '', source: null };
 }
 
+// 신규현금배분(new-cash-allocation.mjs) 트리거 문턱값+적용범위 — 원래 cash-accumulator.mjs
+// 에 있었으나(2026-08-16 신설), 그 모듈 전체(이벤트 누적 방식)가 2026-08-18에 실잔고
+// 기반으로 교체되며 폐기됐다(2026-08-17 10배 부풀림 사고 — "들어온 돈"만 더하고 "이미
+// 재투자한 돈"을 안 빼는 구조적 결함, 예수금앵커가 없어 실잔고 대조가 불가능했던 게
+// 근본원인). 이제 실잔고(State/Holdings/{계좌}-예수금.md)가 있으므로 이 두 상수만
+// 여기로 옮기고 이벤트 누적 로직은 전부 제거했다.
+export const NEW_CASH_THRESHOLD_WON = 500_000;
+// 위탁·연금저축만(ARCHITECTURE-V2.md "신규 현금 배분 원칙" 절, rebalance-gap.mjs
+// TARGET_ALLOCATION과 동일 범위 — ISA·CMA·금현물·IRP·퀀트는 대상 밖).
+export const CASH_ELIGIBLE_ACCOUNTS = new Set(['위탁', '연금저축']);
+
 // 위탁이 신규현금배분(new-cash-allocation.mjs) 등에서 실제로 "쓸 수 있는" 현금 —
 // 위탁 자체 잔고 + 금현물 잔고를 합산한다(오너 확정, 2026-08-18: "금현물 계좌의
 // 현금(아직 금을 안 사고 대기 중인 돈)은 위탁과 합쳐서 같이 취급"). 각 계좌의 실제
