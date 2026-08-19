@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.update-holdings-prices</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>update-holdings-prices</string>
+  </array>
+  <!-- 30분 간격(2026-08-19, 오너 확정) — v1 com.banana.realtime-quotes(30초 간격, KIS
+       레이트리밋 회피 목적의 초단위 폴링)보다 훨씬 느슨하다. 이 잡의 목적은 Vault
+       (State/Holdings)를 "정본"으로 신뢰할 수 있게 주기적으로 신선하게 유지하는 것이지
+       실시간 대시보드 갱신이 아니라, 30초 단위 폴링이 굳이 필요 없다. 장중·장외 여부는
+       스케줄이 아니라 잡 자체(isKrMarketOpen/isUsMarketOpen)가 내부에서 판단 — 24시간
+       내내 이 간격으로 돌아도 장외엔 KR/US 조회를 스스로 스킵한다(금현물만 예외 —
+       KRX 일별배치라 애초에 장중·장외 구분이 의미 없음). -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-holdings-prices.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-holdings-prices.log</string>
+</dict>
+</plist>

@@ -36,10 +36,11 @@ case "$JOB" in
   daily-asset-allocation-check) CMD=(scripts/jobs/daily-asset-allocation-check.mjs) ;;
   parse-notifications-to-vault) CMD=(scripts/jobs/parse-notifications-to-vault.mjs) ;;
   update-holdings-from-executions) CMD=(scripts/jobs/update-holdings-from-executions.mjs) ;;
+  update-holdings-prices) CMD=(scripts/jobs/update-holdings-prices.mjs) ;;
   new-cash-allocation) CMD=(scripts/jobs/new-cash-allocation.mjs) ;;
   reconcile-irp) CMD=(scripts/jobs/reconcile-irp.mjs) ;;
   update-cash-from-ledger) CMD=(scripts/jobs/update-cash-from-ledger.mjs) ;;
-  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|new-cash-allocation|reconcile-irp|update-cash-from-ledger}" >&2; exit 2 ;;
+  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|update-holdings-prices|new-cash-allocation|reconcile-irp|update-cash-from-ledger}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)

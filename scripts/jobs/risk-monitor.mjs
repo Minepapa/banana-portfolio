@@ -485,8 +485,8 @@ async function main() {
 
   if (MODE === 'D') {
     // ① Node가 거시지표를 yfinance에서 직접 조회·계산(결정론). LLM은 이 숫자만 보고 판단.
-    console.log(`\n⏳ 거시지표 조회 중 (yfinance — 결정론)...`);
-    const macro = fetchMacroIndicators();
+    console.log(`\n⏳ 거시지표 조회 중 (KRX/yfinance — 결정론)...`);
+    const macro = await fetchMacroIndicators();
     const indicators = Object.fromEntries(Object.entries(macro).map(([k, o]) => [k, fmtMacro(k, o)]));
     Object.entries(indicators).forEach(([k, v]) => console.log(`   · ${k}: ${v}`));
     const evidenceBase = JSON.stringify(indicators);  // 근거데이터 = Node 숫자(LLM 아님)
@@ -571,9 +571,9 @@ async function main() {
     for (const h of oppTargets) {
       let md = null;
       try {
-        if (h.market === 'KR') { const c = krStockCode(h.name); if (c) md = fetchKrMarketData(c); }
+        if (h.market === 'KR') { const c = krStockCode(h.name); if (c) md = await fetchKrMarketData(c); }
         else { const t = usTicker(h.name); if (t) md = fetchMarketData(t); }
-      } catch { md = null; }
+      } catch (e) { md = null; console.log(`   · ${h.name}: 시세 조회 실패 — ${e.message}`); }
       if (!md) { console.log(`   · ${h.name}: 시세 미해결 — skip`); continue; }
       let flow = null;
       if (h.market === 'KR' && kisAuth) {
@@ -691,7 +691,7 @@ async function main() {
     let opinion = null;
     if (h.market === 'KR' && kisAuth && stockCode) {
       try {
-        const mkt = fetchKrMarketData(stockCode);
+        const mkt = await fetchKrMarketData(stockCode);
         const rows = await getKrInvestOpinion({ ...kisAuth, code: stockCode });
         opinion = summarizeInvestOpinion(rows, mkt?.currentPrice);
       } catch (e) { console.log(`   · ${h.name}: 투자의견 조회 실패(펀더멘털 판정만 사용) — ${e.message}`); }

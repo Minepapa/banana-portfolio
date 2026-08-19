@@ -4,11 +4,12 @@ import {
   reprtCodeForDate, prevPeriod, standaloneAmounts, quarterStandalone, computeYoY, parseKrAmounts, parseKrRatios, checkGuardrails,
   computeMacroChange, computeRsi14, compute52wPosition, computeFcfYield,
   computeTtmNetIncome, computeRoe, computePbr,
-  computeDrawdownFromPeak, computeRallyFromTrough, parseNaverSise,
+  computeDrawdownFromPeak, computeRallyFromTrough,
   computeBollingerBands,
   computeMacd, computeMaAlignment, computeAtr, computeStochastic, computeVolumeSurge,
   dropSignal, disclosureDateFromRceptNo, extractOcf, extractNetIncome,
   periodEndDate, isSuspiciouslyLateDisclosure, matchOriginalDisclosure, fetchCfListWithDisclosureDate,
+  overlayKrxPriceData,
 } from './fundamentals.mjs';
 
 // CLAUDE.md 데이터 기준 표: 1~3월=전년 사업, 4~5월=1Q, 6~8월=반기, 9~12월=3Q
@@ -362,15 +363,6 @@ test('computeDrawdownFromPeak: 오늘 종가 vs 최근 N일 고점 낙폭 — �
   assert.equal(computeDrawdownFromPeak([]), null);
 });
 
-test('parseNaverSise: 네이버 siseJson JS배열 → 종가 시계열(과거→현재), 헤더·결측 방어', () => {
-  const raw = "[['날짜', '시가', '고가', '저가', '종가', '거래량', '외국인소진율'],\n"
-    + '["20240102", 2645.47, 2675.8, 2641.88, 2669.81, 409872, 0.0],\n'
-    + '["20240103", 2643.54, 2643.72, 2607.31, 2607.31, 463132, 0.0],]';
-  assert.deepEqual(parseNaverSise(raw), [2669.81, 2607.31]);
-  assert.deepEqual(parseNaverSise(''), []);
-  assert.deepEqual(parseNaverSise('garbage'), []);
-});
-
 test('computeMacroChange: 현재값=마지막 종가, 변화율=5거래일 전 대비', () => {
   // 10개 종가, 5거래일 전(인덱스 -6)=100 → 현재 105 = +5%
   assert.deepEqual(computeMacroChange([90, 95, 98, 99, 100, 101, 102, 103, 104, 105]),
@@ -621,4 +613,87 @@ test('computeVolumeSurge: 직전 평균 거래대금이 0이면 null(0으로 나
   const n = 25;
   const vols = Array(n).fill(0); vols[n - 1] = 1000;
   assert.equal(computeVolumeSurge(vols, Array(n).fill(100)), null);
+});
+
+// ── overlayKrxPriceData: KRX 가격 시계열로 yfinance 가격 파생 지표 덮어쓰기(2026-08-19) ──
+import { rmSync } from 'node:fs';
+import { join, dirname as _dirname } from 'node:path';
+import { fileURLToPath as _fileURLToPath } from 'node:url';
+const _CACHE_DIR = join(_dirname(_fileURLToPath(import.meta.url)), '..', '.cache', 'krx-daily');
+const _cleanupDays = (basDds) => basDds.forEach((b) => rmSync(join(_CACHE_DIR, `${b}.json`), { force: true }));
+
+test('overlayKrxPriceData: yfData가 null이면 KRX 호출 없이 그대로 null', async () => {
+  const r = await overlayKrxPriceData('005930', null, {});
+  assert.equal(r, null);
+});
+
+test('overlayKrxPriceData: KRX 조회 실패 시 폴백하지 않고 throw(가용성보다 출처 추적성 우선, 오너 지시 2026-08-19)', async () => {
+  const yfData = { rsi14: 50, pos52w: 60, forwardPE: 10, pbr: 1.2, tech: { macd: null } };
+  const fetchImpl = async () => { throw new Error('network down'); };
+  await assert.rejects(
+    () => overlayKrxPriceData('005930', yfData, { fetchImpl, apiKey: 'K', delayMs: 0 }),
+    /network down/,
+  );
+});
+
+test('overlayKrxPriceData: 확보 일수가 15일 미만이면 폴백 없이 throw(RSI14도 못 낼 정도면 KRX 데이터 자체가 이상)', async () => {
+  const yfData = { rsi14: 50, pos52w: 60, tech: {} };
+  const startDate = new Date(1997, 0, 6); // 테스트 전용 과거 날짜대 — 실캐시와 무관
+  const fetchImpl = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ OutBlock_1: [{ ISU_CD: 'X', TDD_CLSPRC: '100' }] }) });
+  try {
+    await assert.rejects(
+      () => overlayKrxPriceData('X', yfData, { fetchImpl, apiKey: 'K', delayMs: 0, startDate, maxScanDays: 10 }),
+      /KRX 가격 시계열 부족/,
+    ); // maxScanDays=10 → 10일치만 확보(15 미만)
+  } finally {
+    const basDds = Array.from({ length: 15 }, (_, i) => {
+      const d = new Date(startDate.getTime() - i * 86400000);
+      return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    });
+    _cleanupDays(basDds);
+  }
+});
+
+test('overlayKrxPriceData: 데이터 충분하면 가격 파생 지표를 KRX로 덮어쓰고 재무추정치는 yfinance 유지', async () => {
+  const yfData = {
+    rsi14: 999, pos52w: 999, weekChange: 999, marketCap: 1, currentPrice: 1, high52w: 1, low52w: 1,
+    forwardPE: 12.3, pbr: 1.5, fcfYield: 4.2, payoutRatio: 30,
+    tech: { macd: 'stale', maAlignment: 'stale', atr: 'stale', stochastic: 'stale', volumeSurge: 'stale' },
+    source: 'yfinance 005930.KS',
+  };
+  const startDate = new Date(1996, 0, 8); // 또 다른 테스트 전용 과거 날짜대 — 격리
+  let day = 0;
+  const fetchImpl = async (url) => {
+    const isKospi = /stk_bydd_trd/.test(url);
+    if (!isKospi) return { ok: true, status: 200, text: async () => JSON.stringify({ OutBlock_1: [] }) };
+    day++;
+    // 워크백은 오늘→과거 순으로 호출되므로(day=1이 가장 최근일) 우상향 시계열(과거→현재
+    // 증가)을 만들려면 day가 클수록(더 과거) 종가가 낮아야 한다.
+    const close = 200 - day; // 과거→현재 오름차순(우상향) → RSI14가 50보다 커야 정상
+    const rows = [{ ISU_CD: 'X', TDD_CLSPRC: String(close), TDD_HGPRC: String(close + 5), TDD_LWPRC: String(close - 5), ACC_TRDVOL: '1000', ACC_TRDVAL: '100000', MKTCAP: String(close * 1_000_000) }];
+    return { ok: true, status: 200, text: async () => JSON.stringify({ OutBlock_1: rows }) };
+  };
+  const cleanupBasDds = [];
+  try {
+    const r = await overlayKrxPriceData('X', yfData, { fetchImpl, apiKey: 'K', delayMs: 0, startDate, maxScanDays: 20 });
+    // 가격 파생 지표는 KRX로 교체됨(더 이상 yfData의 더미값 999/1이 아님)
+    assert.notEqual(r.rsi14, 999);
+    assert.notEqual(r.marketCap, 1);
+    assert.notEqual(r.currentPrice, 1);
+    assert.notEqual(r.high52w, 1);
+    assert.notEqual(r.low52w, 1);
+    assert.ok(r.rsi14 > 50); // 우상향 시계열이므로 RSI14 > 50이 정상
+    // 재무추정치는 KRX에 없는 필드라 yfinance 값 그대로 유지
+    assert.equal(r.forwardPE, 12.3);
+    assert.equal(r.pbr, 1.5);
+    assert.equal(r.fcfYield, 4.2);
+    assert.equal(r.payoutRatio, 30);
+    assert.equal(r.source, 'yfinance 005930.KS + KRX(가격 실측)');
+  } finally {
+    for (let i = 0; i < 25; i++) {
+      const d = new Date(startDate.getTime() - i * 86400000);
+      cleanupBasDds.push(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`);
+    }
+    _cleanupDays(cleanupBasDds);
+  }
 });

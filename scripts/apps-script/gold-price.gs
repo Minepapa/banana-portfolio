@@ -5,7 +5,9 @@
  *   함수: updateAllPrices | 시간 기반 | 1시간마다
  *
  * [갱신 항목]
- *   위탁!F7      ← 국내 금 시세 (네이버 finance)
+ *   위탁!F7      ← 국내 금 시세 (KRX Data Marketplace 금시장 일별매매정보, 2026-08-19
+ *                  네이버 HTML 스크래핑에서 대체 — 사전에 스크립트 속성에 KRX_API_KEY
+ *                  등록 필요, fetchGoldPrice() 주석 참고)
  *   연금저축!F15 ← VIP한국형가치투자 기준가 (vipasset.co.kr)
  */
 
@@ -50,43 +52,51 @@ function debugFundHtml() {
   }
 }
 
-// ── 금 가격 추출 ──────────────────────────────────────────────────────────────
-// 네이버 안티스크래핑 구조:
-//   <span class="no2">2</span><span class="no1">1</span>...
-//   각 자릿수를 class="noX" (X=실제숫자)로 분리해서 렌더링
-function tryParsePrice(html) {
-  // <p class="no_today"> 안의 첫 번째 <em> 에서 정수 부분만 추출
-  const sectionStart = html.indexOf('class="no_today"');
-  if (sectionStart !== -1) {
-    const emStart = html.indexOf('<em', sectionStart);
-    const emEnd   = html.indexOf('</em>', emStart);
-    if (emStart !== -1 && emEnd !== -1) {
-      const emContent     = html.substring(emStart, emEnd);
-      const beforeDecimal = emContent.split('class="jum"')[0]; // 소수점 앞만
-      const digitMatches  = beforeDecimal.match(/class="no(\d)"/g) || [];
-      if (digitMatches.length >= 5) {
-        const priceStr = digitMatches.map(m => m.match(/no(\d)/)[1]).join('');
-        const price    = parseInt(priceStr, 10);
-        if (price >= 100000 && price <= 999999) {
-          Logger.log('[OK] no_today span 파싱: ' + price);
-          return price;
-        }
-      }
-    }
-  }
-  Logger.log('[MISS] no_today 패턴 미발견');
-  return null;
+// ── 금 시세 (KRX Data Marketplace, 2026-08-19 — 네이버 HTML 안티스크래핑 파싱 대체) ──
+// 기존엔 네이버 goldDetail 페이지의 <span class="noX">(자릿수별 CSS 클래스로 렌더링하는
+// 안티스크래핑 구조)를 역조립해서 가격을 뽑아냈다 — 부서지기 쉽고(마크업 바뀌면 즉시
+// 파싱 실패) 공식 출처도 아니었다. KRX Data Marketplace의 "금시장 일별매매정보"
+// (gen/gold_bydd_trd)가 정확히 같은 상품("금 99.99_1kg")을 공식 거래소 원천으로 제공함을
+// 실측 확인(2026-08-19, docs/DATA-SOURCES.md) — TDD_CLSPRC가 원/g 단가로 온다(실측:
+// 199,950 — 보유 평단가 208,473원/g와 같은 자릿수대, 단위 정합 확인됨).
+//
+// ⚠️ KRX는 일별 배치라 당일 데이터는 장마감 후에나 발행된다(장중에 오늘 날짜로 조회하면
+// 빈 배열) — 발행 전이거나 휴장일이면 하루씩 과거로 물러나며 최대 5거래일 전까지
+// 찾는다(이건 "다른 소스로 폴백"이 아니라 이 API 고유의 배치 발행 타이밍을 감안한
+// 정상 재시도 — banana-portfolio-v2의 feedback-no-silent-fallback 원칙과 무관: 실패하면
+// throw만 하고, 절대 네이버 등 다른 소스로 조용히 넘어가지 않는다).
+//
+// [사전 설정] KRX_API_KEY를 이 Apps Script 프로젝트의 스크립트 속성에 등록해야 한다:
+//   프로젝트 설정(⚙️) > 스크립트 속성 > 속성 추가 → 이름: KRX_API_KEY, 값: <발급받은 키>
+//   (banana-portfolio-v2 리포 .env의 KRX_API_KEY와 같은 값 — 코드에 직접 넣지 않는다)
+function ymd_(d) {
+  return Utilities.formatDate(d, 'Asia/Seoul', 'yyyyMMdd');
 }
 
-// ── 금 시세 (네이버 finance) ──────────────────────────────────────────────────
 function fetchGoldPrice() {
-  const res = UrlFetchApp.fetch('https://finance.naver.com/marketindex/goldDetail.naver', FETCH_OPTS);
-  if (res.getResponseCode() !== 200) throw new Error('네이버 응답 오류: HTTP ' + res.getResponseCode());
+  const apiKey = PropertiesService.getScriptProperties().getProperty('KRX_API_KEY');
+  if (!apiKey) throw new Error('KRX_API_KEY 스크립트 속성 미설정 — 프로젝트 설정 > 스크립트 속성에서 등록 필요');
 
-  const html  = res.getContentText('EUC-KR');
-  const price = tryParsePrice(html);
-  if (price) return price;
-  throw new Error('금 가격 파싱 실패 — tryParsePrice 확인 필요');
+  const opts = { muteHttpExceptions: true, headers: { AUTH_KEY: apiKey } };
+  let d = new Date();
+  for (let i = 0; i < 5; i++) {
+    const basDd = ymd_(d);
+    const url = 'https://data-dbg.krx.co.kr/svc/apis/gen/gold_bydd_trd?basDd=' + basDd;
+    const res = UrlFetchApp.fetch(url, opts);
+    if (res.getResponseCode() !== 200) {
+      throw new Error('KRX API 오류: HTTP ' + res.getResponseCode() + ' — ' + res.getContentText('UTF-8').substring(0, 200));
+    }
+    const json = JSON.parse(res.getContentText('UTF-8'));
+    const rows = json.OutBlock_1 || [];
+    const row  = rows.filter(function (r) { return r.ISU_NM === '금 99.99_1kg'; })[0];
+    if (row && row.TDD_CLSPRC) {
+      const price = parseInt(String(row.TDD_CLSPRC).replace(/,/g, ''), 10);
+      Logger.log('[OK] KRX 금 99.99_1kg 종가(' + basDd + '): ' + price + '원/g');
+      return price;
+    }
+    d.setDate(d.getDate() - 1); // 당일 미발행/휴장일 — 하루 전으로(다른 소스 폴백 아님)
+  }
+  throw new Error('KRX 금 시세 조회 실패 — 최근 5거래일 모두 데이터 없음(API 이상·장기 휴장 여부 확인 필요)');
 }
 
 // ── VIP 펀드 기준가 (vipasset.co.kr 내부 API) ────────────────────────────────

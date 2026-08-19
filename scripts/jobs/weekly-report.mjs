@@ -252,8 +252,8 @@ async function main() {
   const weekStart = weekStartOf(asof);
 
   // ① 거시지표 (결정론)
-  console.log('\n⏳ 거시지표 조회(yfinance/네이버)...');
-  const macro = fetchMacroIndicators();
+  console.log('\n⏳ 거시지표 조회(KRX/yfinance)...');
+  const macro = await fetchMacroIndicators();
 
   // ② 보유 종목 + 시트 자산 값(현재가·평가액·수량 정본)
   const holdings = await readHoldings(token);
@@ -270,7 +270,7 @@ async function main() {
     try {
       if (h.market === 'KR') {
         const sc = krStockCode(h.name);
-        const mkt = sc ? fetchKrMarketData(sc) : null;
+        const mkt = sc ? await fetchKrMarketData(sc) : null;
         if (mkt) marketByName.set(h.name, mkt);
         const cc = krCorpCode(h.name);
         if (cc) fundByName.set(h.name, await fetchKrFundamentals(cc, undefined, undefined, sc));

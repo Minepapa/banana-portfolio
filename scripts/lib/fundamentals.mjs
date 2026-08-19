@@ -1,6 +1,8 @@
 // 결정론적 펀더멘털 데이터 계층 — risk-monitor(B)·backfill-baselines가 사용.
 // 원칙: raw 숫자는 절대 LLM이 만들지 않는다. 여기서 조회·계산한 값만 시트와 프롬프트에 쓴다.
 import { spawnSync } from 'node:child_process';
+import { fetchKrxPriceSeries } from './krx-price-cache.mjs';
+import { fetchIndexCloses } from './krx.mjs';
 
 // CLAUDE.md 데이터 기준: 1~3월=전년 사업(11011), 4~5월=1Q(11013), 6~8월=반기(11012), 9~12월=3Q(11014)
 export function reprtCodeForDate(d = new Date()) {
@@ -435,13 +437,22 @@ export async function fetchKrFundamentals(corpCode, now = new Date(), apiKey = p
   const ttmRoe = computeRoe(ttmNet, a.equity.prev); // 기초자본 = BS frmtrm(직전 사업연도말)
   if (ttmRoe != null) ratios.roe = ttmRoe;          // TTM 불가 시 OpenDart 분기 ROE 유지(폴백)
 
-  // PBR: yfinance marketCap(.KS/.KQ) ÷ OpenDart equity. pykrx는 KRX 로그인 요구로 헤드리스 불가.
+  // PBR: KRX 실시가총액(fetchKrMarketData가 이제 KRX 우선으로 채움) ÷ OpenDart equity.
+  // yfinance 자체 priceToBook(mkt.pbr)이 있으면 그걸 우선(일부 종목은 yfinance가 이미
+  // 정확한 PBR을 줌), 없으면 marketCap÷equity로 직접 계산. pykrx는 KRX 로그인 요구로
+  // 헤드리스 불가라 여전히 못 씀(2026-08-19 KRX Open API 전환으로도 안 바뀜 — 별개 문제).
   let pbr = null;
   if (stockCode) {
     try {
-      const mkt = fetchKrMarketData(stockCode);
+      const mkt = await fetchKrMarketData(stockCode);
       pbr = mkt?.pbr ?? computePbr(mkt?.marketCap, a.equity.curr);
-    } catch { /* PBR 조회 실패 시 null 유지 */ }
+    } catch (e) {
+      // PBR은 null로 유지하되(추정 안 함) 실패 이유는 반드시 로그에 남긴다 — KRX 조회
+      // 실패를 조용히 삼키면 "PBR 없음"과 "KRX 장애"를 구분할 수 없어져 출처 추적성이
+      // 깨진다(2026-08-19 오너 지시, feedback-no-silent-fallback — 코드리뷰 지적으로 발견,
+      // 이 catch만 다른 호출부들과 달리 로그가 빠져 있었음).
+      console.error(`   ⚠️ ${stockCode} PBR용 시세 조회 실패 — ${e.message}`);
+    }
   }
 
   return {
@@ -510,8 +521,10 @@ export function fetchMarketData(yahooTicker) {
   };
 }
 
-// KR 6자리 → yahoo 티커. KOSPI .KS 우선, 빈 응답이면 .KQ 재시도(코스닥).
-export function fetchKrMarketData(stockCode) {
+// KR 6자리 → yahoo 티커. KOSPI .KS 우선, 빈 응답이면 .KQ 재시도(코스닥). forwardPE·PBR
+// (yfinance 자체값)·FCF수익률·배당성향은 KRX Data Marketplace에 없는 필드(가격이 아니라
+// 재무추정치 영역)라 이 경로는 그대로 유지 — overlayKrxPriceData가 가격 파생 지표만 덮어쓴다.
+function fetchYfKrMarketData(stockCode) {
   for (const sfx of ['.KS', '.KQ']) {
     try {
       const d = fetchMarketData(`${stockCode}${sfx}`);
@@ -519,6 +532,54 @@ export function fetchKrMarketData(stockCode) {
     } catch { /* 다음 접미사 시도 */ }
   }
   return null;
+}
+
+// yfinance 결과(가격 파생 지표 포함) 위에 KRX 실측 가격 시계열을 덮어쓴다 — rsi14·52주
+// 고저·거래대금기반 기술지표·시가총액·현재가는 KRX가 거래소 원천이라 더 정확하다(근사치가
+// 아니라 실제 값, 2026-08-19 docs/DATA-SOURCES.md 카탈로그 마이그레이션). forwardPE·pbr·
+// fcfYield·payoutRatio는 KRX 일별매매정보에 없는 필드라 yfinance 값을 그대로 둔다.
+//
+// ⚠️ KRX 조회가 실패하거나 데이터가 부족해도 yfinance/Naver로 조용히 폴백하지 않는다
+// (2026-08-19, 오너 지시 — "폴백하면 잘못된 부분을 못 고치고 데이터 출처를 못 추적한다").
+// 예전엔 실패 시 yfData를 그대로 반환하는 가용성우선 폴백이 있었으나, 그러면 호출부가
+// "이 값이 KRX산인지 yfinance산인지" 구분할 방법이 없어 정확도 개선의 취지 자체가
+// 무의미해진다 — throw해서 호출측이 실패를 명시적으로 인지·기록하게 한다(이 코드베이스의
+// "추정하지 않는다" 원칙과 동일선상).
+export async function overlayKrxPriceData(stockCode, yfData, { days = 252, ...krxOpts } = {}) {
+  if (!yfData) return yfData;
+  const series = await fetchKrxPriceSeries(stockCode, days, krxOpts);
+  const { closes, highs, lows, volumes } = series;
+  if (closes.length < 15) {
+    throw new Error(`KRX 가격 시계열 부족(${stockCode}): ${closes.length}일치만 확보(RSI14 산출에 최소 15일 필요) — 신규상장이거나 KRX 응답 이상`);
+  }
+  const currentPrice = closes[closes.length - 1];
+  const marketCap = series.marketCaps[series.marketCaps.length - 1];
+  const high52w = highs.length ? Math.max(...highs) : null;
+  const low52w = lows.length ? Math.min(...lows) : null;
+  return {
+    ...yfData,
+    rsi14: computeRsi14(closes.slice(-30)) ?? yfData.rsi14,
+    pos52w: compute52wPosition(currentPrice, high52w, low52w) ?? yfData.pos52w,
+    weekChange: computeMacroChange(closes)?.change5d ?? yfData.weekChange,
+    marketCap: marketCap ?? yfData.marketCap,
+    currentPrice: currentPrice ?? yfData.currentPrice,
+    high52w: high52w ?? yfData.high52w,
+    low52w: low52w ?? yfData.low52w,
+    tech: {
+      macd: computeMacd(closes) ?? yfData.tech?.macd ?? null,
+      maAlignment: computeMaAlignment(closes) ?? yfData.tech?.maAlignment ?? null,
+      atr: computeAtr(highs, lows, closes) ?? yfData.tech?.atr ?? null,
+      stochastic: computeStochastic(highs, lows, closes) ?? yfData.tech?.stochastic ?? null,
+      volumeSurge: computeVolumeSurge(volumes, closes) ?? yfData.tech?.volumeSurge ?? null,
+    },
+    source: `${yfData.source} + KRX(가격 실측)`,
+  };
+}
+
+export async function fetchKrMarketData(stockCode, opts = {}) {
+  const yfData = fetchYfKrMarketData(stockCode);
+  if (!yfData) return null;
+  return overlayKrxPriceData(stockCode, yfData, opts);
 }
 
 // ── 평가 카드용 순수 지표 (drain --auto) ────────────────────────────
@@ -728,48 +789,37 @@ export function computeBollingerBands(closes, window = 250) {
   };
 }
 
-// 네이버 siseJson 응답(JS 배열: 홑따옴표·trailing comma 포함) → 종가 시계열(과거→현재).
-// 헤더행('종가' 문자열)·결측은 Number→NaN 으로 자동 제외. 파싱 불가 시 빈 배열(폴백 유도).
-export function parseNaverSise(text) {
-  try {
-    const json = String(text || '').replace(/'/g, '"').replace(/,(\s*[\]}])/g, '$1');
-    const rows = JSON.parse(json);
-    if (!Array.isArray(rows)) return [];
-    return rows.map(r => Number(r?.[4])).filter(Number.isFinite);
-  } catch { return []; }
-}
-
-// 네이버 금융 지수 종가(무인증, 당일 마감 즉시 반영 — yfinance ^KS11 일봉 확정 지연 회피).
-// curl 사용(Python urllib SSL 깨짐·WebFetch 차단). 실패·빈 응답 → [] → 호출부가 yfinance 폴백.
-export function fetchNaverIndexCloses(symbol = 'KOSPI', startYmd, endYmd) {
-  const ymd = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-  const now = new Date();
-  const start = startYmd || ymd(new Date(now.getTime() - 40 * 86400000));
-  const end = endYmd || ymd(now);
-  const url = `https://api.finance.naver.com/siseJson.naver?symbol=${symbol}&requestType=1&startTime=${start}&endTime=${end}&timeframe=day`;
-  const r = spawnSync('curl', ['-sL', '--max-time', '15', url], { encoding: 'utf8', timeout: 20000 });
-  if (r.status !== 0) return [];
-  return parseNaverSise(r.stdout);
-}
-
 export const MACRO_TICKERS = {
   USDKRW: 'KRW=X', TNX: '^TNX', VIX: '^VIX', KOSPI: '^KS11', SP500: '^GSPC',
   KOSDAQ: '^KQ11', NASDAQ: '^IXIC', GOLD: 'GC=F', WTI: 'CL=F',  // 주간리포트 §1 외부변수 결정론화
 };
 
-export function fetchMacroIndicators() {
+export async function fetchMacroIndicators() {
   const py = new URL('./yf-macro.py', import.meta.url).pathname;
-  const r = spawnSync('python3', [py, ...Object.values(MACRO_TICKERS)], { encoding: 'utf8', timeout: 120000 });
+  // KOSPI·KOSDAQ은 이제 KRX로만 조회하므로(아래) yfinance엔 요청하지 않는다 — 안 쓸 데이터를
+  // 받아오는 낭비 방지(2026-08-19).
+  const yfTickers = Object.entries(MACRO_TICKERS).filter(([key]) => key !== 'KOSPI' && key !== 'KOSDAQ');
+  const r = spawnSync('python3', [py, ...yfTickers.map(([, tk]) => tk)], { encoding: 'utf8', timeout: 120000 });
   if (r.status !== 0) throw new Error(`yfinance 거시 조회 실패: ${(r.stderr || '').slice(-200)}`);
   const raw = JSON.parse(r.stdout);
-  // KOSPI는 네이버(비지연) 우선, 실패 시 yfinance ^KS11 폴백. 나머지(환율·금리·VIX·S&P)는 yfinance.
-  const naverKospi = fetchNaverIndexCloses('KOSPI');
-  const kospiCloses = naverKospi.length ? naverKospi : (raw['^KS11'] || []);
+
+  // KOSPI·KOSDAQ: KRX 원천만 쓴다(당일 마감 즉시 반영, 공식 거래소 데이터·yfinance
+  // ^KS11/^KQ11의 일봉 확정 지연이 없음, 2026-08-19 docs/DATA-SOURCES.md 카탈로그
+  // 마이그레이션). ⚠️ Naver·yfinance로의 조용한 폴백을 의도적으로 없앴다(오너 지시 —
+  // "폴백하면 잘못된 부분을 못 고치고 데이터 출처를 못 추적한다") — KRX 조회가 실패하면
+  // 이 함수 전체가 throw한다. 다른 지표(VIX·USDKRW 등)까지 같이 못 쓰게 되는 대가가
+  // 있지만, 실패를 감추고 낮은 정확도로 계속 도는 것보다 즉시 드러나는 쪽을 택한 것.
+  const krxKospi = await fetchIndexCloses('KOSPI', '코스피', 30);
+  if (!krxKospi.length) throw new Error('KRX KOSPI 지수 조회 실패: 응답에 유효한 종가 없음(휴장일 연속·API 이상 등 원인 확인 필요)');
+  const krxKosdaq = await fetchIndexCloses('KOSDAQ', '코스닥', 30);
+  if (!krxKosdaq.length) throw new Error('KRX KOSDAQ 지수 조회 실패: 응답에 유효한 종가 없음(휴장일 연속·API 이상 등 원인 확인 필요)');
+
+  const krxSeriesByKey = { KOSPI: krxKospi, KOSDAQ: krxKosdaq };
   const out = Object.fromEntries(Object.entries(MACRO_TICKERS).map(
-    ([key, tk]) => [key, computeMacroChange(key === 'KOSPI' ? kospiCloses : raw[tk])]));
-  // KOSPI: 네이버 비지연·5일 고점낙폭·출처 — 가드레일·폴백 가시화.
-  out.KOSPI.drawdown5d = computeDrawdownFromPeak(kospiCloses);
-  out.KOSPI.source = naverKospi.length ? '네이버(비지연)' : (kospiCloses.length ? 'yfinance(폴백·지연주의)' : '데이터없음');
+    ([key, tk]) => [key, computeMacroChange(krxSeriesByKey[key] ?? raw[tk])]));
+  out.KOSPI.drawdown5d = computeDrawdownFromPeak(krxKospi);
+  out.KOSPI.source = 'KRX(비지연)';
+  out.KOSDAQ.source = 'KRX(비지연)';
   // USDKRW: 5일 저점 대비 상승폭(KRW 약세 충격) — 끝점비교 누락 보강. FX는 연속거래라 yfinance 지연 ~10h(허용).
   const usdkrwCloses = raw['KRW=X'] || [];
   out.USDKRW.rally5d = computeRallyFromTrough(usdkrwCloses);
@@ -782,8 +832,9 @@ export function fetchMacroIndicators() {
   // TNX·VIX: 출처 표기(임계 설정 어려워 LLM 판단 위임, 가시화만).
   out.TNX.source = (raw['^TNX'] || []).length ? 'yfinance' : '데이터없음';
   out.VIX.source = (raw['^VIX'] || []).length ? 'yfinance' : '데이터없음';
-  // 주간리포트 §1 외부변수(가시화·판단 위임). KOSDAQ·나스닥·금·WTI 모두 yfinance.
-  for (const [key, tk] of [['KOSDAQ', '^KQ11'], ['NASDAQ', '^IXIC'], ['GOLD', 'GC=F'], ['WTI', 'CL=F']]) {
+  // 주간리포트 §1 외부변수(가시화·판단 위임). 나스닥·금·WTI는 KRX 카탈로그에 없어 yfinance
+  // 유지(금은 KRX 금시장 현물가와 다른 상품 — GC=F는 국제 선물가, 단순 대체 아님).
+  for (const [key, tk] of [['NASDAQ', '^IXIC'], ['GOLD', 'GC=F'], ['WTI', 'CL=F']]) {
     if (out[key]) out[key].source = (raw[tk] || []).length ? 'yfinance' : '데이터없음';
   }
   return out;

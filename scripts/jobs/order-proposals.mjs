@@ -234,7 +234,7 @@ async function main() {
       const market = s(noteRows.find(r => s(r[1]) === c.name)?.[3]).toUpperCase();
       const md = market === 'US'
         ? (usTicker(c.name) ? fetchMarketData(usTicker(c.name)) : null)
-        : (krStockCode(c.name) ? fetchKrMarketData(krStockCode(c.name)) : null);
+        : (krStockCode(c.name) ? await fetchKrMarketData(krStockCode(c.name)) : null);
       if (md?.currentPrice > 0) {
         // KR은 KRW 그대로, US는 환율 미적용 상태라 v1은 KR만 지원 — US 미보유는 제외
         if (market === 'US') { collectWarning(`주문제안 제외: ${c.name} — US 미보유 종목 단가 환산 미지원(v1)`); c.qty = null; continue; }
@@ -243,7 +243,7 @@ async function main() {
         c.qty = Math.floor(budget / c.price);
         c.amount = c.qty * c.price;
       }
-    } catch { /* 아래 공통 제외 처리 */ }
+    } catch (e) { console.error(`   ⚠️ ${c.name} 단가 조회 실패 — ${e.message}`); /* 아래 공통 제외 처리 */ }
     if (!(c.qty >= 1)) collectWarning(`주문제안 제외: ${c.name} — 단가 미해결/예산 부족`);
   }
   candidates = candidates.filter(c => c.qty >= 1 && c.price != null);

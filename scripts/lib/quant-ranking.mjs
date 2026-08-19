@@ -50,9 +50,9 @@ export async function enrichWithOcf(candidates, asOfDate, { apiKey = process.env
 // 비율 유지, 최소 1종목씩은 확보) — 안 그러면 350종목 전체 조회(약 1분) 뒤에야 몇 종목만
 // 잘라내는 낭비가 난다.
 export async function computeMonthlyRanking({ limit = null, asOfDate = new Date(), apiKey = process.env.DART_API_KEY, onProgress, onSampleError } = {}) {
-  const universe = limit
+  const universe = await (limit
     ? fetchQuantUniverse({ nKospi: Math.max(1, Math.ceil(limit * 200 / 350)), nKosdaq: Math.max(1, Math.ceil(limit * 150 / 350)) })
-    : fetchQuantUniverse();
+    : fetchQuantUniverse());
   const liquid = filterByLiquidity(universe);
   const targets = limit ? liquid.slice(0, limit) : liquid;
 
