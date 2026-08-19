@@ -21,13 +21,28 @@ export const NH_ACCOUNT_MAP = {
 // 않는다 — cash-ledger.mjs의 합산 로직에서 처리.
 export const REBALANCE_SCOPE_NH_ACCOUNTS = new Set(['위탁', 'ISA', '금현물']);
 
-// body(카카오 알림 원문)에서 "계좌번호 209-02-89***2" 형태를 찾아 { account, acctNo }로
-// 변환. 매핑에 없는 계좌번호(예: 등록 안 된 새 NH 계좌)는 account:null — 추정하지
-// 않는다. acctNo(마스킹된 원문)는 매핑 여부와 무관하게 항상 반환 — 감사·디버깅용
+// body(카카오 알림 원문)에서 마스킹된 전체 계좌번호를 찾는다. 알림 종류마다 형식이
+// 달라 두 가지를 지원:
+//   ①"계좌번호 209-02-89***2"(체결·입출금 안내류, 대시 있음)
+//   ②"2090289***2 정*호 님 계좌로 분배금 입금 안내"(NH 분배금 입금 안내, 대시 없이
+//     11자리 붙어서 옴, "이름 님 계좌로" 바로 앞) — 2026-08-19 실제 알림으로 확인
+//     (오너 제보: "분배금 알림도 계좌정보 포함돼 있다"). 이전엔 이 형식을 못 잡아서
+//     NH 분배금 알림의 acctRaw가 항상 빈 문자열이었고(update-holdings-from-executions.mjs
+//     주석에 "실측상 항상 비어있다"로 잘못 고착돼 있었음), 종목 정식명(카카오 알림)과
+//     보유파일의 축약명이 달라 이름매칭 폴백도 실패해 계좌귀속이 안 됐다(실사고).
+//   ②는 NH 계좌번호 관행상 3-2-6 자릿수 구조(예: 209-02-89***2)가 그대로 붙어서 오므로
+//   ①과 같은 대시 위치로 재구성해 반환 — 호출부(resolveNhAccount·NH_ACCOUNT_MAP)가
+//   형식 하나만 알면 되게 한다.
+// 매핑에 없는 계좌번호(예: 등록 안 된 새 NH 계좌)는 account:null — 추정하지 않는다.
+// acctNo(마스킹된 원문, 대시 재구성됨)는 매핑 여부와 무관하게 항상 반환 — 감사·디버깅용
 // 원본 보존(다른 파서들의 acctRaw 필드와 동일 관례).
 export function extractNhAccountNo(body) {
-  const m = String(body ?? '').match(/계좌번호\s*([\d]{3}-[\d]{2}-[\d*]+)/);
-  return m ? m[1] : null;
+  const b = String(body ?? '');
+  const withKeyword = b.match(/계좌번호\s*([\d]{3}-[\d]{2}-[\d*]+)/);
+  if (withKeyword) return withKeyword[1];
+  const dividendStyle = b.match(/(\d{3})(\d{2})(\d[\d*]{5})\s+\S+\s*님\s*계좌로/);
+  if (dividendStyle) return `${dividendStyle[1]}-${dividendStyle[2]}-${dividendStyle[3]}`;
+  return null;
 }
 
 export function resolveNhAccount(body) {

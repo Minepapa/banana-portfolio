@@ -44,10 +44,13 @@
  *   1) 체결 처리 시 이제 account를 체결 원본 프론트매터에도 영구 기록한다(더 이상 휘발
  *      안 됨 — 계좌귀속불가로 건너뛴 체결은 그대로 account 없이 남아 다음 실행에 재시도).
  *   2) 체결 처리가 끝난 뒤(최신 보유현황 확보 후) 배당도 마저 훑어 계좌를 확정한다.
- *      배당 알림 실측 결과(2026-08-18) NH는 원문에 계좌번호가 아예 없어(acctRaw 항상
- *      빈 문자열) 체결과 똑같이 "종목명+보유현황" 후보좁히기가 필요 — 그래서 새 함수를
- *      만들지 않고 resolveExecutionAccount를 그대로 재사용한다(stockCode·acctNo 없이
- *      호출하면 이름 기반 매칭으로 안전하게 폴백, 로직은 이미 동일 문제를 풀고 있음).
+ *      resolveExecutionAccount를 그대로 재사용(stockCode 없이 호출, 종목명·acctNo 매칭은
+ *      함수 내부가 판단). ⚠️ 2026-08-18 당시엔 "NH 배당 알림엔 계좌번호가 원문에 아예
+ *      없다"고 판단해 acctNo 없이 호출했으나(종목명 매칭 폴백만 의존), 이건 틀린
+ *      가정이었다 — 2026-08-19 오너 제보로 "2090289***2 정*호 님 계좌로" 형태의 계좌
+ *      번호가 실제로 있는 걸 확인(notification-parsers.mjs parseDividend·nh-accounts.mjs
+ *      extractNhAccountNo 참고). 이제 acctRaw를 채워 넘긴다 — 계좌번호로 확정되면
+ *      정식명 vs 보유파일 축약명 불일치로 실패하던 이름매칭 폴백을 아예 안 거친다.
  *      배당은 보유수량·평단가에 영향이 없으므로(현금만 늘림) holdingsApplied가 아니라
  *      account 필드 자체의 유무로 멱등 판정한다(체결처럼 별도 플래그 불필요).
  *
@@ -102,12 +105,30 @@ export function pickUnprocessedExecutions(executionFiles) {
 // 진짜 거래가 우연히 존재할 확률은 무시할 수준이고(이 프로젝트 자체의 dedupKey 관례
 // — ledger-vault-writer.mjs buildExecutionRecord — 도 애초에 단가 없이 이 넷만으로
 // 유일성을 정의한다, 여기서도 그 관례를 그대로 따르는 게 맞다).
-export function matchesLegacyExecution(exec, legacyExecutions) {
-  return legacyExecutions.some((g) =>
+// matchesLegacyExecution의 실제 매치 레코드 버전(불리언 대신 레코드 자체 반환) — legacy
+// 쪽에만 남아있는 정보(예: account, v1 마이그레이션 시점엔 알던 계좌)를 재사용하기 위해
+// 2026-08-19 추가(아래 findLegacyAccountFallback 참고). 판정 조건은 matchesLegacyExecution
+// 과 완전히 동일 — 둘이 서로 다른 기준으로 갈리면 "중복으로는 잡았는데 계좌는 못 씀" 같은
+// 불일치가 생기므로 하나만 정의하고 matchesLegacyExecution이 이걸 재사용한다.
+export function findMatchingLegacyExecution(exec, legacyExecutions) {
+  const matches = legacyExecutions.filter((g) =>
     String(g.tradeDate).slice(0, 10) === String(exec.tradeDate).slice(0, 10) &&
     g.tradeType === exec.tradeType && g.stockName === exec.stockName &&
     g.quantity === exec.quantity,
   );
+  if (!matches.length) return null;
+  // 후보가 여럿인데 계좌가 서로 갈리면(같은 날 같은 종목·구분·수량을 다른 계좌로 거래한
+  // 우연 — 이론상 가능) 어느 쪽 계좌인지 추정하지 않는다(코드리뷰 지적, 2026-08-19 —
+  // 이 프로젝트의 "추정하지 않는다" 원칙과 일관되게 방어). account만 null로 낮추고
+  // 레코드 자체는 반환 — "이 이벤트가 legacy와 중복"이라는 dedup 판정(matchesLegacy
+  // Execution)은 계좌 모호성과 무관하게 여전히 유효해야 하므로.
+  const accounts = new Set(matches.map((m) => m.account));
+  if (accounts.size > 1) return { ...matches[0], account: null };
+  return matches[0];
+}
+
+export function matchesLegacyExecution(exec, legacyExecutions) {
+  return findMatchingLegacyExecution(exec, legacyExecutions) != null;
 }
 
 // 배당은 holdingsApplied 플래그가 없다(보유수량에 영향 없음) — account 필드 유무로
@@ -192,13 +213,23 @@ async function main() {
   if (targets.length === 0) console.log('처리할 체결 없음 — 배당 계좌귀속으로 진행.');
   for (const { filepath, content, parsed: exec } of targets) {
     const currentHoldings = [...holdingsMap.values()];
-    const account = exec.account || resolveExecutionAccount({ broker: exec.broker, stockName: exec.stockName, stockCode: exec.stockCode, acctNo: exec.acctNo }, currentHoldings);
+    const legacyMatch = findMatchingLegacyExecution(exec, legacyExecutions);
+    // ⚠️ 버그 수정(2026-08-19, 오너 지시 "체결도 매핑 가능하면 매핑해봐") — 전량청산돼
+    // 지금은 보유 파일 자체가 없는 종목(예: 삼성바이오로직스·현대차 매도)은 acctNo도
+    // 없고(NH 체결 원문엔 애초에 계좌번호가 없음) 이름매칭도 대조할 보유 파일이 없어
+    // 영구히 계좌귀속불가였다. 그런데 이 사건이 legacyMatch로 잡히면(날짜·구분·종목명·
+    // 수량 일치 — matchesLegacyExecution과 동일 기준) v1 마이그레이션 스냅샷이 이미
+    // 그 계좌를 알고 있다(legacyMatch.account) — 굳이 다시 추정하지 않고 그 값을 그대로
+    // 재사용한다(추정이 아니라 기존에 이미 확정됐던 사실 재사용).
+    const account = exec.account
+      || resolveExecutionAccount({ broker: exec.broker, stockName: exec.stockName, stockCode: exec.stockCode, acctNo: exec.acctNo }, currentHoldings)
+      || legacyMatch?.account || null;
     if (!account) {
       console.log(`  ⚠️  계좌 귀속 불가 — 건너뜀: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName} (${exec.broker})`);
       unresolvedAccount++;
       continue;
     }
-    if (matchesLegacyExecution(exec, legacyExecutions)) {
+    if (legacyMatch) {
       console.log(`  ↩️  마이그레이션 스냅샷과 중복(이미 반영됨) — 적용 없이 플래그만 기록: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName}`);
       duplicateOfLegacy++;
       if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
@@ -283,7 +314,11 @@ async function main() {
     console.log(`\n🔎 체결 계좌귀속 소급백필 대상 ${backfillTargets.length}건`);
     const currentHoldings = [...holdingsMap.values()];
     for (const { filepath, content, parsed: exec } of backfillTargets) {
-      const account = resolveExecutionAccount({ broker: exec.broker, stockName: exec.stockName, stockCode: exec.stockCode, acctNo: exec.acctNo }, currentHoldings);
+      // 메인 루프와 동일하게 legacyMatch.account를 마지막 폴백으로 쓴다(2026-08-19,
+      // 전량청산돼 보유 파일이 없는 종목의 소급백필도 구제).
+      const legacyMatch = findMatchingLegacyExecution(exec, legacyExecutions);
+      const account = resolveExecutionAccount({ broker: exec.broker, stockName: exec.stockName, stockCode: exec.stockCode, acctNo: exec.acctNo }, currentHoldings)
+        || legacyMatch?.account || null;
       if (!account) {
         console.log(`  ⚠️  소급백필 계좌귀속 불가 — 건너뜀: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName} (${exec.broker})`);
         backfillUnresolved++;
@@ -315,9 +350,13 @@ async function main() {
     console.log(`\n🔎 배당 계좌귀속 미처리 ${divTargets.length}건 (전체 ${dividendFiles.length}건 중)`);
     const currentHoldings = [...holdingsMap.values()];
     for (const { filepath, content, parsed: div } of divTargets) {
-      // acctRaw는 실측상 NH 배당 알림엔 항상 비어있다(2026-08-18 확인) — 체결과 동일한
-      // "종목명+보유현황" 후보좁히기로 폴백(stockCode·acctNo 없이 호출).
-      const account = resolveExecutionAccount({ broker: div.broker, stockName: div.stockName }, currentHoldings);
+      // ⚠️ 2026-08-19 버그 수정 — "NH 배당 알림엔 계좌번호가 없다"는 이전 가정이 틀렸다
+      // (오너 제보로 발견: "2090289***2 정*호 님 계좌로" 형태로 실제론 있었는데
+      // notification-parsers.mjs가 그 형식을 못 잡고 있었음, nh-accounts.mjs
+      // extractNhAccountNo 참고). 이제 acctRaw가 채워지므로 넘겨준다 — 계좌번호가
+      // 잡히면 resolveExecutionAccount가 종목명 매칭(정식명 vs 보유파일 축약명 불일치로
+      // 실패할 수 있음)보다 우선해서 바로 확정한다.
+      const account = resolveExecutionAccount({ broker: div.broker, stockName: div.stockName, acctNo: div.acctRaw || undefined }, currentHoldings);
       if (!account) {
         console.log(`  ⚠️  배당 계좌 귀속 불가 — 건너뜀: ${div.date} ${div.stockName} (${div.broker})`);
         divUnresolved++;

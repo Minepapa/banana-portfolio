@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.telegram-session-restart</string>
+  <!-- 매일 새벽 04:00 KST — com.banana2.telegram-session 예방적 재시작(2026-08-19,
+       "Remote Control disconnected" 실사고 이후 오너 확정). Weekday 키를 안 둬서
+       요일 무관 매일 실행 — 세션 상태 문제는 장중·장외와 무관하게 생길 수 있고,
+       오너가 주말에도 텔레그램으로 말을 걸 수 있어 매일 새벽 갱신해둔다. 04:00은
+       국내·해외 정규장(09:00~15:30, 22:30~05:00 KST 근사) 둘 다 피하려던 의도였으나
+       해외장과는 살짝 겹칠 수 있다 — 재시작 자체는 수 초면 끝나고 재연결도 빨라
+       그 시간대에 주문승인 메시지가 온다 해도 짧은 지연 정도로 감수 가능한 리스크로
+       판단(오너 확인 없이 이 시간대를 임의 선택했다는 점은 기록해둠 — 문제되면 조정). -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/restart-telegram-session.sh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-session-restart.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-session-restart.log</string>
+</dict>
+</plist>

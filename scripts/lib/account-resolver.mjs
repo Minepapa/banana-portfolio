@@ -17,6 +17,8 @@
 // 판정하고(실데이터 근거), 양쪽에 다 있거나 어느 쪽에도 없으면(신규 종목 첫 매수 등)
 // null을 반환해 호출부가 자동 적용을 건너뛰고 사람에게 맡기게 한다.
 
+import { NH_ACCOUNT_MAP } from './nh-accounts.mjs';
+
 // 퀀트 트랙 전용 계좌번호 — parse-notifications-to-vault.mjs가 이 계좌의 카카오 체결
 // 자체를 Facts/Ledger에 아예 안 쓰게 걸러내는 데도 쓴다(단일 진실 소스, 2026-08-13).
 export const QUANT_ACCOUNT_NO = '46****07-01';
@@ -34,7 +36,15 @@ export const IRP_ACCOUNT_NO = '43****82-29';
 // 계좌번호로 확정되는 경우 — 증권사명보다 우선. 퀀트 계좌는 의도적으로 null: KIS API가
 // 정본이라(Phase 9 확정) State/Holdings에 절대 반영하면 안 되고, 카카오로 잡힌 건
 // 순수 중복이므로 "귀속 불가"와 동일하게 취급해 호출부가 자동 적용을 건너뛰게 한다.
+//
+// ⚠️ NH_ACCOUNT_MAP도 여기 합친다(2026-08-19, 오너 제보로 발견 — NH 분배금 입금
+// 안내에 실제로 계좌번호가 있었는데 파서가 그 형식을 못 잡아서 늘 종목명 매칭 폴백만
+// 타고 있었다, notification-parsers.mjs parseDividend 주석 참고). acctNo가 NH 계좌
+// 번호와 일치하면 종목명 매칭(AMBIGUOUS_BROKER_CANDIDATES, 정식명 vs 보유파일 축약명
+// 불일치로 실패할 수 있음)을 거치지 않고 여기서 바로 확정한다 — 계좌번호는 이름
+// 표기법과 무관하게 항상 유일하므로 더 안전하다.
 const KNOWN_ACCOUNT_NUMBERS = {
+  ...NH_ACCOUNT_MAP,
   [IRP_ACCOUNT_NO]: 'IRP',
   [QUANT_ACCOUNT_NO]: null, // 퀀트 트랙 전용 계좌 — State/Holdings 반영 대상 아님
 };

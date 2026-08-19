@@ -25,6 +25,24 @@ test('한국투자증권 — 모르는 계좌번호(신규 계좌 등)면 추정
   assert.equal(resolveExecutionAccount({ broker: '한국투자증권', stockName: '아무거나', acctNo: '99****99-99' }, []), null);
 });
 
+// 실사고 회귀 테스트(2026-08-19, 오너 제보) — NH 분배금 알림은 카카오에 정식 상품명
+// 전체("...증권상장지수투자신탁(주식)" 포함)로 오는데 보유파일은 축약명이라 이름매칭이
+// 실패한다. account-resolver.mjs가 NH_ACCOUNT_MAP을 KNOWN_ACCOUNT_NUMBERS에 합쳐서
+// acctNo가 있으면 이름매칭을 아예 안 거치고 바로 확정하도록 고쳤다 — 그 회귀 검증.
+test('[막아야 함] NH — acctNo(분배금 계좌번호)가 있으면 종목명이 보유파일과 안 맞아도(정식명 vs 축약명 불일치) 바로 확정', () => {
+  const holdings = [{ account: 'ISA', name: 'TIGER 미국배당다우존스타겟데일리커버드콜' }]; // 보유파일은 축약명
+  const r = resolveExecutionAccount({
+    broker: 'NH투자증권',
+    stockName: '미래에셋 TIGER 미국배당다우존스타겟데일리커버드콜증권상장지', // 알림은 정식명(다름)
+    acctNo: '209-02-89***2', // ISA
+  }, holdings);
+  assert.equal(r, 'ISA');
+});
+
+test('NH — acctNo가 금현물 계좌번호면 종목명·보유현황과 무관하게 금현물로 확정', () => {
+  assert.equal(resolveExecutionAccount({ broker: 'NH투자증권', stockName: '아무이름', acctNo: '209-02-92***6' }, []), '금현물');
+});
+
 test('NH — 종목이 ISA에만 있으면 ISA로 확정', () => {
   const holdings = [{ account: 'ISA', name: 'TIGER 배당성장' }];
   assert.equal(resolveExecutionAccount({ broker: 'NH투자증권', stockName: 'TIGER 배당성장' }, holdings), 'ISA');

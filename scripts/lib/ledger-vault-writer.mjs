@@ -34,6 +34,15 @@ const ACCOUNT_NOTE = 'Phase 8·9(State/Holdings) 이후 별도 배치로 채워�
 // null로 남겨 혼동을 주지 않기 위함).
 // 금현물도 이 함수를 그대로 쓴다(별도 함수 없음) — v1이 "금현물을 별도 원장으로 뒀다가
 // 버그나서 체결내역에 통합"한 전례를 반영(폴더 하나로 합침, 위 import 주석 참고).
+// ⚠️ 버그 수정(2026-08-19, 오너 제보로 발견한 배당 계좌귀속 버그를 조사하다 같은 클래스로
+// 발견) — parseExecution은 한국투자증권 체결 원문에서 acctNo(예: "43****82-29")를 이미
+// 정확히 뽑고 있었는데(2026-08-13 캡처 추가), 이 함수가 그 값을 frontmatter에 아예 안
+// 쓰고 버리고 있었다. 그 결과 update-holdings-from-executions.mjs가 나중에 파일을 다시
+// 읽을 때 exec.acctNo가 항상 undefined라 IRP 계좌번호 직접매칭(account-resolver.mjs
+// KNOWN_ACCOUNT_NUMBERS)이 한 번도 발동 못 하고, 게다가 한국투자증권은 애초에
+// AMBIGUOUS_BROKER_CANDIDATES에도 없어 이름매칭 폴백조차 안 타서 무조건 계좌귀속불가로
+// 떨어졌다(실측: TIGER TDF2045 적격 매수 2건). 다른 필드(broker·stockCode 등)와 동일하게
+// acctNo도 이제 그대로 보존한다.
 export function buildExecutionRecord(e) {
   const dedupKey = `${e.tradeDate}|${e.tradeType}|${e.stockName}|${e.quantity}`;
   const datePart = e.tradeDate.slice(0, 10);
@@ -56,6 +65,7 @@ export function buildExecutionRecord(e) {
     price: e.price,
     currency: e.currency,
     broker: e.broker,
+    acctNo: e.acctNo || '',
     account: e.account ?? null,
     accountNote: e.account ? null : ACCOUNT_NOTE,
     dedupKey,

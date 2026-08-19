@@ -53,6 +53,20 @@ test('buildExecutionRecord: frontmatter에 필수 필드와 account=null(사유 
   assert.match(content, /dedupKey: "2026-08-04 09:12:33\|매수\|삼성전자\|10"/);
 });
 
+// 실사고 회귀 테스트(2026-08-19) — parseExecution이 한국투자증권 원문에서 뽑은 acctNo를
+// 이 함수가 frontmatter에 안 쓰고 버려서, IRP 계좌번호 직접매칭이 한 번도 못 타고 있었다
+// (한국투자증권은 AMBIGUOUS_BROKER_CANDIDATES에도 없어 이름매칭 폴백조차 없음 — 실측:
+// TIGER TDF2045 적격 매수 2건이 영구히 계좌귀속불가로 떨어짐).
+test('buildExecutionRecord: acctNo가 있으면 frontmatter에 보존됨(계좌번호 직접매칭에 필요)', () => {
+  const { content } = buildExecutionRecord(exec({ broker: '한국투자증권', acctNo: '43****82-29' }));
+  assert.match(content, /acctNo: "43\*\*\*\*82-29"/);
+});
+
+test('buildExecutionRecord: acctNo 없으면 빈 문자열(다른 acctRaw류 필드와 동일 관례)', () => {
+  const { content } = buildExecutionRecord(exec());
+  assert.match(content, /acctNo: ""/);
+});
+
 test('buildExecutionRecord: 호출부가 account를 이미 알면(퀀트 트랙 등) 그 자리에서 채우고 accountNote는 null(더 이상 미룰 이유 없음)', () => {
   const { content } = buildExecutionRecord(exec({ account: '퀀트' }));
   assert.match(content, /account: "퀀트"/);

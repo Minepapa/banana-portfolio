@@ -77,7 +77,15 @@ export function parseDividend(body, tsRaw) {
   const ts = normalizeDateTime(tsRaw);
   const datePart = ts.slice(0, 10);
   const timePart = ts.slice(11, 19) || '00:00:00';
-  const acctRaw = (body.match(/계좌번호\s*:\s*([0-9*\-]+)/)?.[1] ?? '').trim();
+  // ⚠️ 버그 수정(2026-08-19, 오너 제보로 발견) — 예전엔 "계좌번호: 209-02-89***2" 형태만
+  // 찾았는데, NH 분배금 입금 안내는 "2090289***2 정*호 님 계좌로"처럼 다른 형식(대시
+  // 없음, "계좌번호" 키워드 자체가 없음)으로 계좌번호를 담고 있어 매번 못 찾고 있었다
+  // (실측: acctRaw가 항상 빈 문자열 → update-holdings-from-executions.mjs가 종목명
+  // 매칭으로 폴백하는데, 카카오 알림의 정식 상품명과 보유파일의 축약명이 달라 그마저도
+  // 실패해 계좌귀속 자체가 영구히 안 되던 실사고). extractNhAccountNo가 두 형식을 모두
+  // 인식해 대시 포함 형태로 통일해 반환한다(nh-accounts.mjs 참고) — NH가 아닌 증권사
+  // (삼성증권 등)는 이 함수가 null을 반환해 그냥 빈 문자열로 떨어진다(기존과 동일).
+  const acctRaw = extractNhAccountNo(body) ?? '';
   const broker = (body.match(/\[(NH투자증권|삼성증권|한국투자증권)[^\]]*\]/)?.[1] ?? '').trim();
   const mk = (date, amount, stockName) => ({ date, afterTaxAmount: amount, stockName: stockName.trim(), acctRaw, broker, receivedTime: timePart, uniqueKey: `${timePart}_${amount}` });
 

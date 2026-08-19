@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickUnprocessedExecutions, pickUnprocessedDividends, pickAccountlessAppliedExecutions, matchesLegacyExecution } from './update-holdings-from-executions.mjs';
+import { pickUnprocessedExecutions, pickUnprocessedDividends, pickAccountlessAppliedExecutions, matchesLegacyExecution, findMatchingLegacyExecution } from './update-holdings-from-executions.mjs';
 
 const f = (parsed) => ({ filepath: '/x', content: '', parsed });
 
@@ -84,4 +84,39 @@ test('matchesLegacyExecution: 수량이 다르면 중복 아님(진짜 다른 �
 
 test('matchesLegacyExecution: legacy 없으면 false', () => {
   assert.equal(matchesLegacyExecution(exec(), []), false);
+});
+
+// 실사고 회귀 테스트(2026-08-19, 오너 지시 "체결도 매핑 가능하면 매핑해봐") — 전량청산돼
+// 보유 파일이 없는 종목(삼성바이오로직스·현대차 매도 등)은 이름매칭 대조 대상 자체가
+// 없어 영구히 계좌귀속불가였는데, legacy 스냅샷엔 이미 그 계좌가 남아있었다.
+test('[막아야 함/실사고3] findMatchingLegacyExecution: 매치되면 그 legacy 레코드(account 포함) 자체를 반환', () => {
+  const legacy = [{ tradeDate: '2026-07-13', tradeType: '매도', stockName: '삼성바이오로직스', quantity: 1, account: '위탁' }];
+  const r = findMatchingLegacyExecution({ tradeDate: '2026-07-13 12:27:53', tradeType: '매도', stockName: '삼성바이오로직스', quantity: 1 }, legacy);
+  assert.equal(r?.account, '위탁');
+});
+
+test('findMatchingLegacyExecution: 매치 없으면 null', () => {
+  assert.equal(findMatchingLegacyExecution(exec(), []), null);
+});
+
+// 코드리뷰 지적(2026-08-19) — 같은 날·구분·종목명·수량인데 계좌가 다른 legacy 후보가
+// 둘 이상이면(이론상 가능) 어느 쪽인지 추정하지 않는다. dedup 판정(레코드 자체 반환)은
+// 유지하되 account만 null로 낮춘다.
+test('[막아야 함] findMatchingLegacyExecution: 후보가 여럿인데 계좌가 갈리면 추정하지 않고 account:null(레코드는 반환 — dedup 판정은 유지)', () => {
+  const legacy = [
+    { tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 2, account: 'ISA' },
+    { tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 2, account: '위탁' },
+  ];
+  const r = findMatchingLegacyExecution(exec(), legacy);
+  assert.notEqual(r, null);
+  assert.equal(r.account, null);
+});
+
+test('findMatchingLegacyExecution: 후보가 여럿이어도 계좌가 전부 같으면 그 계좌 그대로', () => {
+  const legacy = [
+    { tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 2, account: 'ISA' },
+    { tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 2, account: 'ISA' },
+  ];
+  const r = findMatchingLegacyExecution(exec(), legacy);
+  assert.equal(r.account, 'ISA');
 });
