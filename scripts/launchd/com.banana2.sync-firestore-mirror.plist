@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.sync-firestore-mirror</string>
+  <!-- 30분 간격(2026-08-19) — 코드(Vault→mirror 빌더, src/App.jsx 구독)는 Phase 6에서
+       이미 완성돼 있었지만 이 잡을 실제로 도는 스케줄이 어디에도 없어서(launchd에도
+       GitHub Actions에도) 배포된 대시보드가 최신 Vault 상태를 반영 못 하고 있었다
+       (오너가 "포트폴리오 앱을 v2로 대체하자"고 물어봐서 조사 중 발견 — 사실 대체는
+       이미 끝나있었고 이 스케줄만 빠져 있었음, 2026-08-19). update-holdings-prices와
+       같은 30분 간격으로 맞춰 시세 갱신 직후 정도의 신선도를 유지 — mirrorFreshness.js
+       의 2시간 임계값(오래된 데이터 경고 배너)보다 충분히 촘촘하다. -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>sync-firestore-mirror</string>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/sync-firestore-mirror.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/sync-firestore-mirror.log</string>
+</dict>
+</plist>
