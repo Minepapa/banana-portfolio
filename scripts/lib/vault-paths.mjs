@@ -92,5 +92,8 @@ export const VAULT_PATHS = {
     profile: join(VAULT_ROOT, 'Knowledge', 'Profile'),
     playbook: join(VAULT_ROOT, 'Knowledge', 'Playbook'),
     reports: join(VAULT_ROOT, 'Knowledge', 'Reports'),
+    // 성향관찰(구 구글시트 "성향관찰" 탭) Vault 네이티브 대체 — 한 관찰당 파일 하나.
+    // weekly-report.mjs(v2, 2026-08-20 재작성)가 유일한 쓰기 주체.
+    preferenceObservations: join(VAULT_ROOT, 'Knowledge', 'Profile', 'PreferenceObservations'),
   },
 };

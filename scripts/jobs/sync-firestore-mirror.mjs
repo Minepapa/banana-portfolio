@@ -6,12 +6,12 @@
  * 파일은 Vault를 읽어 그 함수들에 넣고 firebase-admin으로 쓰는 I/O 글루만 담당
  * (parse-notifications-to-vault.mjs와 같은 역할 분담).
  *
- * ⚠️ 범위(2026-08-05, Phase 6): State/Holdings·State/Allocation은 아직 자산분배·
- * 퀀트 트랙 부서 로직(Phase 8·9)이 없어 실제로 채워지지 않는다 — 그래서 holdings·
- * allocation·home 미러는 지금 정직하게 빈 값(0·[])으로 나간다(가짜 숫자를 만들지
- * 않는다). Facts/Ledger(체결·배당)는 Phase 2에서 이미 실제로 기록되므로 trades·
- * dividends 미러는 진짜 데이터로 채워진다. Knowledge/Reports도 아직 없어
- * latestReport는 빈 값.
+ * ⚠️ 범위(2026-08-05, Phase 6): State/Allocation은 아직 자산분배 트랙 목표비중 갱신
+ * 주체가 없어(legacy 마이그레이션 스냅샷만 있음) allocation 미러는 그 한계 그대로
+ * 반영한다. State/Holdings·Facts/Ledger(체결·배당)는 Phase 8·2에서 이미 실제로
+ * 기록되므로 holdings·trades·dividends 미러는 진짜 데이터로 채워진다.
+ * Knowledge/Reports도 2026-08-20 weekly-report.mjs v2 재작성 이후 실제로 쌓여
+ * latestReport가 최신 리포트를 반영한다(그 전까진 디렉토리가 비어있어 빈 값이었음).
  *
  * 인증: Firebase Admin SDK 서비스계정 키(~/.config/banana-portfolio-v2/
  * firebase-adminsdk-key.json, 2026-08-05 Firebase 콘솔에서 발급) — sa-key.json과
@@ -44,6 +44,21 @@ export function readVaultRecords(dir) {
     .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
 }
 
+// Knowledge/Reports 중 가장 최신(파일명 YYYY-MM-DD.md) 리포트를 ReportTab.jsx가 기대하는
+// {date, headline, summary, body} 형태로 반환. 2026-08-20 weekly-report.mjs v2 재작성
+// 전까진 이 디렉토리가 항상 비어있어 latestReport 미러가 늘 빈 값이었다(원래 알려진 공백,
+// sync-firestore-mirror.mjs 헤더 주석 참고) — 이제 실제 리포트가 쌓이므로 배선한다.
+export function readLatestReport(dir = VAULT_PATHS.knowledge.reports) {
+  if (!existsSync(dir)) return null;
+  const files = readdirSync(dir).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).sort().reverse();
+  if (!files.length) return null;
+  const content = readFileSync(join(dir, files[0]), 'utf8');
+  const fm = parseFrontmatter(content);
+  const m = content.match(/^---\n[\s\S]*?\n---\n?/);
+  const body = m ? content.slice(m[0].length).replace(/^\n+/, '') : content;
+  return { date: fm.date || files[0].slice(0, 10), headline: fm.headline || '', summary: fm.summary || '', body };
+}
+
 export function collectMirrorInput({ now = new Date() } = {}) {
   const executionEvents = readVaultRecords(VAULT_PATHS.facts.ledger.executions);
   const dividendEvents = readVaultRecords(VAULT_PATHS.facts.ledger.dividends);
@@ -53,7 +68,8 @@ export function collectMirrorInput({ now = new Date() } = {}) {
   // 그대로 반영(부서 로직이 생기면 이 잡은 코드 변경 없이 자동으로 진짜 값을 미러링).
   const holdings = readVaultRecords(VAULT_PATHS.state.holdings);
   const accounts = readVaultRecords(VAULT_PATHS.state.allocation);
-  return { executionEvents, dividendEvents, pendingProposalCount, holdings, accounts, now };
+  const report = readLatestReport();
+  return { executionEvents, dividendEvents, pendingProposalCount, holdings, accounts, report, now };
 }
 
 async function main() {

@@ -35,8 +35,8 @@ test('4대분류 하위경로가 전부 VAULT_ROOT 밑에 걸린다', () => {
   // (marketPolls는 2026-08-17 삭제됨 — 전제였던 추세추종이 기각돼 한 번도 안 쓰임),
   // state 9(+jobHealth, +Phase 8 macroOverlay, +Phase 9 killSwitch·executionMode,
   // +Phase 11 executedOrders, +2026-08-16 cashAccumulator), decisions 4(+riskMonitor),
-  // knowledge 3
-  assert.equal(flat.length, 24);
+  // knowledge 4(+2026-08-20 preferenceObservations, 주간리포트 v2 성향학습 재작성)
+  assert.equal(flat.length, 25);
   for (const p of flat) assert.ok(p.startsWith(VAULT_ROOT), `${p} should start with ${VAULT_ROOT}`);
 });
 

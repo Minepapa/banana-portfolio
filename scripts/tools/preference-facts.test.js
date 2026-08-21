@@ -3,9 +3,8 @@ import assert from 'node:assert/strict';
 import { parseArgs, assemblePreferences, renderPreferenceFacts } from './preference-facts.mjs';
 
 // preference-facts.mjs — 비서실 Apollo 대화형 보고용 Node 결정론 사실 조립기.
-// Apollo의 KPI(profile/kpi_baseline.md)·주간리포트(reports/*.md)는 이미 로컬 파일이라
-// Read 도구가 리터럴 원문을 그대로 보여준다 — 그 자체로 무결성 하드 보장(fetch 아님, 지어낼 수 없음).
-// 성향관찰만 실시간 구글시트 조회가 필요해 이 CLI가 담당한다.
+// 2026-08-20 Vault 네이티브 전환 — 입력이 구글시트 row-array에서
+// Knowledge/Profile/PreferenceObservations/*.md frontmatter 객체로 바뀌었다.
 
 test('parseArgs — 기본은 전체, --status/--json', () => {
   assert.deepEqual(parseArgs([]), { status: null, json: false });
@@ -17,12 +16,11 @@ test('parseArgs — 잘못된 status 거부', () => {
   assert.throws(() => parseArgs(['--status', 'x']), /status/i);
 });
 
-// 성향관찰!A2:H = 날짜0 신호유형1 관찰2 증거3 §3대비4 신뢰도5 상태6 갱신시각7
 const prefFixture = () => [
-  ['2026-07-10', '매수패턴', '분할매수 선호', '체결이력 3건', '일치(보강)', '높음', '확정', ''],
-  ['2026-07-15', '보유심리', '급락 시 관망', '평가요청 지연', '신규', '보통', '관찰', ''],
-  ['2026-07-16', '리스크', '손절 주저', '체결이력', '상충', '보통', '승격후보', ''],
-  ['2026-07-05', '매도패턴', '추격매도 성향', '', '', '낮음', '기각', ''],
+  { date: '2026-07-10', signalType: '매수패턴', observation: '분할매수 선호', evidence: '체결이력 3건', vsProfile: '일치(보강)', confidence: '높음', status: '확정' },
+  { date: '2026-07-15', signalType: '보유심리', observation: '급락 시 관망', evidence: '평가요청 지연', vsProfile: '신규', confidence: '보통', status: '관찰' },
+  { date: '2026-07-16', signalType: '리스크', observation: '손절 주저', evidence: '체결이력', vsProfile: '상충', confidence: '보통', status: '승격후보' },
+  { date: '2026-07-05', signalType: '매도패턴', observation: '추격매도 성향', evidence: '', vsProfile: '', confidence: '낮음', status: '기각' },
 ];
 
 test('assemblePreferences — 상태별 카운트 집계', () => {
@@ -45,18 +43,18 @@ test('assemblePreferences — status="pending"은 관찰+승격후보 별칭', (
 test('assemblePreferences — status="확정"은 정확 필터', () => {
   const { rows } = assemblePreferences(prefFixture(), { status: '확정' });
   assert.equal(rows.length, 1);
-  assert.equal(rows[0][2], '분할매수 선호');
+  assert.equal(rows[0].observation, '분할매수 선호');
 });
 
 test('assemblePreferences — status="기각"도 조회 가능(번복 이력 추적용, renderPrefRows와 달리 배제 안 함)', () => {
   const { rows } = assemblePreferences(prefFixture(), { status: '기각' });
   assert.equal(rows.length, 1);
-  assert.match(rows[0][2], /추격매도/);
+  assert.match(rows[0].observation, /추격매도/);
 });
 
-test('assemblePreferences — 상태 미기입 행은 preferences.mjs renderPrefRows 관례대로 관찰로 집계(리뷰 지적: 버킷 합이 total과 어긋나지 않게)', () => {
-  const rows = [...prefFixture(), ['2026-07-18', '테스트', '상태없음', '', '', '보통', '', '']];
-  const { counts } = assemblePreferences(rows, {});
+test('assemblePreferences — 상태 미기입 레코드는 preferences.mjs renderPrefRows 관례대로 관찰로 집계(버킷 합이 total과 어긋나지 않게)', () => {
+  const records = [...prefFixture(), { date: '2026-07-18', signalType: '테스트', observation: '상태없음', evidence: '', vsProfile: '', confidence: '보통', status: '' }];
+  const { counts } = assemblePreferences(records, {});
   assert.equal(counts.관찰, 2);   // 기존 1 + 상태없음 1
   assert.equal(counts.total, 5);
 });
