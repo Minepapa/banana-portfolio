@@ -1,65 +1,49 @@
 #!/usr/bin/env node
 // risk-facts.mjs — 리스크관리실 Themis 대화형 보고용 Node 결정론 사실 조립기.
 //
-// 앱 최우선 원칙(LLM 숫자 날조 금지)의 Themis 확장(Phase 1 Athena·Phase 2 Hermes와 동일 패턴).
-// Themis는 이미 read-only(Write/Edit 차단)였으나 숫자 fetch(Bash·MCP)는 막혀 있지 않았다 —
-// 이 CLI + hermes.md와 같은 frontmatter tools 제한으로 하드 보장을 완성한다.
+// ⚠️ 2026-08-20 축소 재작성 — v1 "리스크모니터"(B/D 신호 로그)·"리스크기준선"(개별종목
+// 펀더멘털 기준선) 섹션을 통째로 뺐다. 배경(오너와 Themis 역할 재검토,
+// project-v2-gap-audit-20260820 메모리 참고): B신호(논리훼손)는 "재량적 개별종목
+// 매수논리가 무너졌는가"를 감시하는 개념인데, 지금 두 트랙 다 그 전제가 없다 —
+// Athena(자산분배)는 신규 매수가 ETF뿐이라 재량적 매수논리 자체가 안 생기고,
+// Kairos(퀀트)는 팩터스코어로 기계 선정이라 "재량 논리"가 없으며 그 재평가는 월간
+// 리컨스티튜션이 이미 담당한다. 위탁 계좌에 남은 레거시 개별종목 7종(2트랙 확정
+// 이전 매수분)도 "시스템 감시 대상에서 빼고 오너 재량 판단"으로 명시 결정(2026-08-20)
+// — 그래서 리스크기준선을 갱신하던 backfill-baselines.mjs도 같이 용도 폐기(포팅 안
+// 함). 퀀트 전략-불가지론적 안전장치(포지션사이징·서킷브레이커)도 전략 확정(task
+// #33) 이후로 보류 결정 — 지금 만들 게 없다.
+//
+// 남은 건 거시지표(자산분배 D신호와 같은 소스, Themis 자체 조회용)와 감시 잡 상태뿐.
+// Themis의 실제 살아있는 역할은 이 CLI가 아니라 "Athena/Kairos 제안 2차검증"(LLM
+// 판단, 헌장 §2)이다 — 그건 데이터 조회가 아니라 제안 자체를 비판적으로 읽는 일이라
+// 이 CLI의 소관이 아니다.
 //
 // /themis 커맨드가 스폰 전 이 CLI를 실행해 factsText를 주입한다.
 
-import { loadEnv, hasServiceAccount, getToken, getRange } from '../lib/sheets-common.mjs';
-import { RISK_COL, BASELINE_COL } from '../lib/sheet-contracts.mjs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadEnv } from '../lib/auth.mjs';
+import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { fetchMacroIndicators } from '../lib/fundamentals.mjs';
 import { assembleJobs } from './ledger-facts.mjs';
 
-const SECTIONS = ['all', 'signals', 'baseline', 'macro', 'jobs'];
-const RISK_JOBS = ['risk-b', 'risk-d'];
+const SECTIONS = ['all', 'macro', 'jobs'];
+// 리스크 감시와 직결된 잡만 — daily-asset-allocation-check(거시 D신호+5/25 이탈 매일
+// 점검), health-watcher(전체 잡 헬스). v1 risk-b·risk-d 잡은 더 이상 없음(위 설명).
+const RISK_JOBS = ['daily-asset-allocation-check', 'health-watcher'];
 
 export function parseArgs(argv) {
-  let section = 'all', target = null, json = false;
+  let section = 'all', json = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') json = true;
     else if (a === '--section') {
       section = argv[++i];
       if (!SECTIONS.includes(section)) throw new Error(`--section 값은 ${SECTIONS.join('|')} 여야 함: "${section}"`);
-    } else if (a === '--target') target = argv[++i];
+    }
   }
-  return { section, target, json };
-}
-
-const clamp = (s, max = 100) => (s.length <= max ? s : s.slice(0, max - 1) + '…');
-// 정확일치 또는 선행 단어 매칭("알파벳"→"알파벳 Class A") — stock-facts.mjs findHolding과 동일
-// 원칙(공백 경계로 과매칭 방지).
-const nameMatch = (nm, target) => nm === target || nm.startsWith(target + ' ');
-
-// 리스크모니터!A2:H(RISK_COL). target 지정 시 필터, 항상 날짜 내림차순(시트 append 순서는
-// 시간순이 아니므로 — ledger-facts.mjs assembleTrades와 동일 교훈).
-export function assembleSignals(rows, { target = null, limit = 10 } = {}) {
-  const all = rows || [];
-  if (!all.length) return { rows: [], text: '(리스크 신호 데이터 부족: 빈 응답)' };
-  const filtered = target ? all.filter((r) => nameMatch(String(r[RISK_COL.TARGET] ?? '').trim(), target)) : all;
-  if (!filtered.length) return { rows: [], text: `(리스크 신호 없음: "${target}" 매칭 없음)` };
-  const sorted = [...filtered].sort((a, b) => String(b[RISK_COL.DATE] ?? '').localeCompare(String(a[RISK_COL.DATE] ?? '')));
-  const recent = sorted.slice(0, limit);
-  // clamp 400 — risk-monitor.mjs가 쓰기 시 clampLen(detail, 400)으로 저장하는 계약과 정합.
-  // 더 짧게 자르면 Themis의 "걸린 트리거 원문 인용" 원칙이 실제 저장된 근거보다 먼저 잘려나간다.
-  const lines = recent.map((r) =>
-    `  ${r[RISK_COL.DATE]} [${r[RISK_COL.TYPE]}] ${r[RISK_COL.TARGET]} ${r[RISK_COL.SIGNAL]} ${r[RISK_COL.SUMMARY]} — ${clamp(String(r[RISK_COL.DETAIL] ?? ''), 400)}`
-  );
-  return { rows: recent, text: lines.join('\n') };
-}
-
-// 리스크기준선!A2:K(BASELINE_COL). target 지정 시 선행단어 매칭.
-export function assembleBaseline(rows, { target = null } = {}) {
-  const all = rows || [];
-  if (!all.length) return { rows: [], text: '(기준선 데이터 부족: 빈 응답)' };
-  const filtered = target ? all.filter((r) => nameMatch(String(r[BASELINE_COL.NAME] ?? '').trim(), target)) : all;
-  if (!filtered.length) return { rows: [], text: `(기준선 없음: "${target}" 매칭 없음)` };
-  const lines = filtered.map((r) =>
-    `  ${r[BASELINE_COL.NAME]}(${r[BASELINE_COL.TICKER]}) 기준일 ${r[BASELINE_COL.DATE]}: 매출총이익률 ${r[BASELINE_COL.GROSS_MARGIN]}, 영업이익률 ${r[BASELINE_COL.OP_MARGIN]}, ROE ${r[BASELINE_COL.ROE]}, 부채비율 ${r[BASELINE_COL.DEBT_RATIO]}, EPS ${r[BASELINE_COL.EPS]}, PBR ${r[BASELINE_COL.PBR]}`
-  );
-  return { rows: filtered, text: lines.join('\n') };
+  return { section, json };
 }
 
 // macroData: fetchMacroIndicators() 반환 형태({KEY: {value, change5d, source}}) — 이 함수는
@@ -85,21 +69,19 @@ export function assembleMacro(macroData) {
   return lines.join('\n');
 }
 
-export function renderRiskFacts({ signals, baseline, macro, jobs }, { json = false } = {}) {
+function readVaultDir(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
+}
+
+export function renderRiskFacts({ macro, jobs }, { json = false } = {}) {
   if (json) {
-    return JSON.stringify({
-      signals: { rows: signals?.rows ?? [], text: signals?.text ?? '' },
-      baseline: { rows: baseline?.rows ?? [], text: baseline?.text ?? '' },
-      macro: macro ?? '',
-      jobs: { failing: jobs?.failing ?? [], text: jobs?.text ?? '' },
-    });
+    return JSON.stringify({ macro: macro ?? '', jobs: { failing: jobs?.failing ?? [], text: jobs?.text ?? '' } });
   }
-  const lines = ['[Node 검증 숫자 — 리스크관리실] (Google Sheets·yfinance 결정론 조회 — 재조회·수정 금지)'];
-  if (signals) lines.push('', '[리스크 신호 — 리스크모니터]', signals.text);
-  if (baseline) lines.push('', '[펀더멘털 기준선]', baseline.text);
+  const lines = ['[Node 검증 숫자 — 리스크관리실] (Vault·KRX·yfinance 결정론 조회 — 재조회·수정 금지)'];
   if (macro) lines.push('', '[거시지표]', macro);
-  if (jobs) lines.push('', '[감시 잡 상태 — risk-b·risk-d]', jobs.text);
-  lines.push('', '⚠️ 위 숫자만 사용하라. 어떤 수치도 직접 fetch·추정하지 말 것 — 걸린 트리거는 원문 그대로 인용하라.');
+  if (jobs) lines.push('', '[감시 잡 상태 — daily-asset-allocation-check·health-watcher]', jobs.text);
+  lines.push('', '⚠️ 위 숫자만 사용하라. 어떤 수치도 직접 fetch·추정하지 말 것.');
   return lines.join('\n');
 }
 
@@ -112,36 +94,17 @@ async function main() {
     console.error(e.message);
     process.exit(2);
   }
-  try {
-    const want = (s) => opts.section === 'all' || opts.section === s;
-    const sheetTasks = [];
-    if (want('signals') || want('baseline') || want('jobs')) {
-      if (!hasServiceAccount()) throw new Error('서비스계정 없음 — 시트 조회 불가');
-      const token = await getToken(null, { allowBrowser: false });
-      sheetTasks.push(
-        want('signals') ? getRange(token, '리스크모니터!A2:H').catch(() => []) : Promise.resolve(null),
-        want('baseline') ? getRange(token, '리스크기준선!A2:K').catch(() => []) : Promise.resolve(null),
-        want('jobs') ? getRange(token, '잡상태!A2:F').catch(() => []) : Promise.resolve(null),
-      );
-    } else {
-      sheetTasks.push(Promise.resolve(null), Promise.resolve(null), Promise.resolve(null));
-    }
-    const macroTask = want('macro')
-      ? Promise.resolve().then(() => fetchMacroIndicators()).catch((e) => { console.error(`⚠️ 거시지표 조회 실패: ${e.message}`); return null; })
-      : Promise.resolve(null);
+  const want = (s) => opts.section === 'all' || opts.section === s;
+  const macroData = want('macro')
+    ? await fetchMacroIndicators().catch((e) => { console.error(`⚠️ 거시지표 조회 실패: ${e.message}`); return null; })
+    : null;
+  const jobRecords = want('jobs') ? readVaultDir(VAULT_PATHS.state.jobHealth).filter((r) => RISK_JOBS.includes(r.job)) : null;
 
-    const [signalRows, baselineRows, jobRows, macroData] = await Promise.all([...sheetTasks, macroTask]);
-    const facts = {
-      signals: signalRows ? assembleSignals(signalRows, { target: opts.target }) : null,
-      baseline: baselineRows ? assembleBaseline(baselineRows, { target: opts.target }) : null,
-      macro: macroData ? assembleMacro(macroData) : (want('macro') ? '(거시지표 데이터 부족: 조회 실패)' : null),
-      jobs: jobRows ? assembleJobs(jobRows.filter((r) => RISK_JOBS.includes(String(r[0] ?? '').trim()))) : null,
-    };
-    process.stdout.write(renderRiskFacts(facts, { json: opts.json }) + '\n');
-  } catch (e) {
-    console.error(`⚠️ risk facts 조립 실패: ${e.message} — 데이터 부족으로 처리(추정 금지)`);
-    process.exit(1);
-  }
+  const facts = {
+    macro: macroData ? assembleMacro(macroData) : (want('macro') ? '(거시지표 데이터 부족: 조회 실패)' : null),
+    jobs: jobRecords ? assembleJobs(jobRecords) : null,
+  };
+  process.stdout.write(renderRiskFacts(facts, { json: opts.json }) + '\n');
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main();
