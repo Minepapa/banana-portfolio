@@ -11,13 +11,17 @@ export function accountsFromMirror(holdingsMirror) {
   const accounts = {};
   for (const [key, meta] of Object.entries(DEFAULT_ACCOUNTS)) {
     const rows = items.filter((h) => h.account === key);
-    const total_invest = rows.reduce((s, h) => s + (h.avgPrice * h.qty || 0), 0);
+    // ⚠️ 버그 수정(2026-08-21, 실사고 — 총 투자금이 130억원으로 표시됨) — avgPrice*qty로
+    // 재계산하면 한국 펀드 1,000좌당 기준가 관례가 있는 보유(예: VIP펀드)의 투자금이
+    // 1,000배 부풀려진다. mirror.items의 invest 필드(State/Holdings가 이미 정확히
+    // 계산한 값)를 그대로 써야 한다 — firestore-mirror.mjs buildHomeMirror와 동일 원칙.
+    const total_invest = rows.reduce((s, h) => s + (h.invest || 0), 0);
     const total_eval = rows.reduce((s, h) => s + (h.evalAmount || 0), 0);
     accounts[key] = {
       label: meta.label, sub: meta.sub, color: meta.color,
       total_invest, total_eval, profit: total_eval - total_invest,
       holdings: rows.map((h) => {
-        const invest = h.avgPrice * h.qty || 0;
+        const invest = h.invest ?? 0;
         return {
           name: h.name, type: h.assetClass || '', isCashLike: !!h.isCashLike,
           price: h.avgPrice, qty: h.qty, invest,
@@ -39,7 +43,8 @@ export function rebalanceAccountFromMirror({ allocationMirror, holdingsMirror, a
   const meta = DEFAULT_ACCOUNTS[acctKey];
   const allocRows = (allocationMirror?.accounts ?? []).filter((r) => r.account === acctKey);
   const holdingRows = (holdingsMirror?.items ?? []).filter((h) => h.account === acctKey);
-  const total_invest = holdingRows.reduce((s, h) => s + (h.avgPrice * h.qty || 0), 0);
+  // accountsFromMirror와 동일 이유(위 주석 참고) — invest 필드를 그대로 합산.
+  const total_invest = holdingRows.reduce((s, h) => s + (h.invest || 0), 0);
   const total_eval = holdingRows.reduce((s, h) => s + (h.evalAmount || 0), 0);
   const assets = meta.assets.map((a) => {
     const row = allocRows.find((r) => r.assetName === a.name);

@@ -8,8 +8,8 @@ import {
 test('accountsFromMirror: 계좌별로 보유종목을 나누고 투자금·평가금·손익을 합산', () => {
   const holdingsMirror = {
     items: [
-      { account: 'ISA', name: 'A', avgPrice: 1000, qty: 10, evalAmount: 12000, assetClass: '배당주' },
-      { account: '위탁', name: 'B', avgPrice: 2000, qty: 5, evalAmount: 9000, assetClass: '국내주식' },
+      { account: 'ISA', name: 'A', avgPrice: 1000, qty: 10, invest: 10000, evalAmount: 12000, assetClass: '배당주' },
+      { account: '위탁', name: 'B', avgPrice: 2000, qty: 5, invest: 10000, evalAmount: 9000, assetClass: '국내주식' },
     ],
   };
   const r = accountsFromMirror(holdingsMirror);
@@ -23,15 +23,24 @@ test('accountsFromMirror: 계좌별로 보유종목을 나누고 투자금·평�
 });
 
 test('accountsFromMirror: profitAmount·profitPct가 없으면(구버전 미러) invest 기반으로 계산', () => {
-  const holdingsMirror = { items: [{ account: 'IRP', name: 'X', avgPrice: 1000, qty: 10, evalAmount: 11000 }] };
+  const holdingsMirror = { items: [{ account: 'IRP', name: 'X', avgPrice: 1000, qty: 10, invest: 10000, evalAmount: 11000 }] };
   const r = accountsFromMirror(holdingsMirror);
   assert.equal(r.IRP.holdings[0].profit, 1000);
   assert.equal(r.IRP.holdings[0].rate, 10);
 });
 
+test('accountsFromMirror: total_invest는 invest 필드를 그대로 합산(avgPrice*qty 재계산 안 함) — 2026-08-21 실사고(총 투자금 130억원 오표시) 회귀 재현', () => {
+  // VIP펀드처럼 avgPrice가 1,000좌당 기준가 관례라 avgPrice*qty로 재계산하면
+  // 128억원까지 부풀려지는 케이스. invest 필드(실제 투자금)를 그대로 써야 한다.
+  const holdingsMirror = { items: [{ account: '연금저축', name: 'VIP펀드', avgPrice: 1560, qty: 8202681, invest: 12800000, evalAmount: 15716337 }] };
+  const r = accountsFromMirror(holdingsMirror);
+  assert.equal(r.연금저축.total_invest, 12800000);
+  assert.equal(r.연금저축.holdings[0].invest, 12800000);
+});
+
 test('rebalanceAccountFromMirror: allocation의 target/current + holdings의 자산군별 평가금 합산', () => {
   const allocationMirror = { accounts: [{ account: 'ISA', assetName: '배당주', targetPct: 100, currentPct: 95, rebalAmt: 50000 }] };
-  const holdingsMirror = { items: [{ account: 'ISA', name: 'A', assetClass: '배당주', avgPrice: 1000, qty: 10, evalAmount: 12000 }] };
+  const holdingsMirror = { items: [{ account: 'ISA', name: 'A', assetClass: '배당주', avgPrice: 1000, qty: 10, invest: 10000, evalAmount: 12000 }] };
   const r = rebalanceAccountFromMirror({ allocationMirror, holdingsMirror, acctKey: 'ISA' });
   assert.equal(r.assets.length, 1);
   assert.equal(r.assets[0].target, 100);

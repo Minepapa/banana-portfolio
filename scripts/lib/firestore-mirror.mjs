@@ -20,7 +20,13 @@ function withinLastYear(dateStr, now) {
 }
 
 export function buildHomeMirror({ holdings = [], accounts = [], pendingProposalCount = 0, usdRate = null, now = new Date() }) {
-  const totalInvest = holdings.reduce((s, h) => s + (h.avgPrice * h.qty || 0), 0);
+  // ⚠️ 버그 수정(2026-08-21, 실사고 — 로그인 후 총 투자금이 130억원으로 잘못 표시됨,
+  // 오너가 대시보드에서 직접 발견) — avgPrice*qty로 재계산하면 한국 펀드 기준가
+  // 관례(1,000좌당 표기, 예: VIP펀드 avgPrice=1560/qty=8202681)가 있는 보유는 실제
+  // 투자금보다 1,000배 부풀려진다. State/Holdings가 이미 정확히 계산해 저장한
+  // invest 필드를 그대로 합산해야 한다(재계산 금지 — update-holdings-prices.mjs의
+  // unitScale 보정과 같은 값을 여기서 다시 만들 필요가 없다).
+  const totalInvest = holdings.reduce((s, h) => s + (h.invest || 0), 0);
   const totalEval = holdings.reduce((s, h) => s + (h.evalAmount || 0), 0);
   const totalProfit = totalEval - totalInvest;
   const totalProfitPct = totalInvest > 0 ? (totalProfit / totalInvest) * 100 : 0;
@@ -42,6 +48,10 @@ export function buildHoldingsMirror({ holdings = [], now = new Date() }) {
     account: h.account ?? null, name: h.name, ticker: h.ticker ?? '', market: h.market ?? '',
     assetClass: h.assetClass ?? '', isCashLike: h.isCashLike ?? false,
     qty: h.qty, avgPrice: h.avgPrice, curPrice: h.curPrice ?? null,
+    // invest: State/Holdings가 이미 정확히 계산한 값 — 화면에서 avgPrice*qty로
+    // 재계산하지 말고 이 필드를 그대로 쓸 것(위 buildHomeMirror 주석과 같은 이유,
+    // 한국 펀드 1,000좌당 기준가 관례에서 avgPrice*qty가 실제 투자금과 안 맞음).
+    invest: h.invest ?? null,
     evalAmount: h.evalAmount, profitAmount: h.profitAmount ?? null, profitPct: h.profitPct ?? null,
     weightPct: totalEval > 0 ? ((h.evalAmount || 0) / totalEval) * 100 : 0,
   }));

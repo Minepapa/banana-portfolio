@@ -26,8 +26,8 @@ test('buildHomeMirror: 보유종목 없으면 0값 + 빈 accounts, 가짜 숫자
 
 test('buildHomeMirror: 보유종목 있으면 손익 계산', () => {
   const holdings = [
-    { avgPrice: 10000, qty: 10, evalAmount: 120000 },
-    { avgPrice: 5000, qty: 4, evalAmount: 18000 },
+    { avgPrice: 10000, qty: 10, invest: 100000, evalAmount: 120000 },
+    { avgPrice: 5000, qty: 4, invest: 20000, evalAmount: 18000 },
   ];
   const r = buildHomeMirror({ holdings, pendingProposalCount: 2, usdRate: 1350, now: NOW });
   assert.equal(r.totalInvest, 120000);
@@ -36,6 +36,15 @@ test('buildHomeMirror: 보유종목 있으면 손익 계산', () => {
   assert.equal(r.totalProfitPct, 15);
   assert.equal(r.pendingProposalCount, 2);
   assert.equal(r.usdRate, 1350);
+});
+
+test('buildHomeMirror: totalInvest는 invest 필드를 그대로 합산(avgPrice*qty 재계산 안 함) — 2026-08-21 실사고(총 투자금 130억원 오표시) 회귀 재현', () => {
+  // 실사고 재현: VIP펀드는 avgPrice가 1,000좌당 기준가 관례(1560)라 avgPrice*qty(8202681주)로
+  // 재계산하면 128억원까지 부풀려진다. 실제 투자금(invest 필드)은 1,280만원이다.
+  const holdings = [{ avgPrice: 1560, qty: 8202681, invest: 12800000, evalAmount: 15716337 }];
+  const r = buildHomeMirror({ holdings, now: NOW });
+  assert.equal(r.totalInvest, 12800000);
+  assert.ok(r.totalProfitPct > -100 && r.totalProfitPct < 100, `비정상 totalProfitPct: ${r.totalProfitPct}`);
 });
 
 test('buildHoldingsMirror: 빈 배열이면 items 빈 배열', () => {
@@ -51,6 +60,12 @@ test('buildHoldingsMirror: weightPct는 evalAmount 비중으로 계산', () => {
   const r = buildHoldingsMirror({ holdings, now: NOW });
   assert.equal(r.items[0].weightPct, 30);
   assert.equal(r.items[1].weightPct, 70);
+});
+
+test('buildHoldingsMirror: invest 필드를 그대로 전달(2026-08-21 — 프론트가 avgPrice*qty로 재계산하지 않도록)', () => {
+  const holdings = [{ name: 'A', avgPrice: 1560, qty: 8202681, invest: 12800000, evalAmount: 15716337 }];
+  const r = buildHoldingsMirror({ holdings, now: NOW });
+  assert.equal(r.items[0].invest, 12800000);
 });
 
 test('buildHoldingsMirror: assetClass·isCashLike를 그대로 전달(App.jsx 7탭 재배선용, 2026-08-13)', () => {
