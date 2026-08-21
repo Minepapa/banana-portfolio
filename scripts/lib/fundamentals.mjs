@@ -794,6 +794,24 @@ export const MACRO_TICKERS = {
   KOSDAQ: '^KQ11', NASDAQ: '^IXIC', GOLD: 'GC=F', WTI: 'CL=F',  // 주간리포트 §1 외부변수 결정론화
 };
 
+// 현재 USD/KRW 환율(원/달러) 하나만 필요할 때 — 해외주식 보유의 curPrice(USD)를 invest
+// (KRW로 저장됨)와 같은 통화로 환산해 evalAmount를 계산하는 용도(update-holdings-
+// prices.mjs). fetchMacroIndicators()는 거시지표 9종 전체(KRX 지수 2개 포함)를 받아와
+// 무겁다 — 환율 하나만 필요한 호출부를 위해 분리(2026-08-19, 실사고로 발견: 이 환산을
+// 안 하고 curPrice×qty를 그대로 KRW로 취급해 해외주식 4종목의 profitPct가 -99.9%대로
+// 잘못 기록되던 버그 수정 과정에서 신설). 실패 시 throw(추정 안 함 — 원/달러를 몰라서
+// 잘못된 값으로 환산하는 것보다 그 종목만 이번엔 건너뛰는 게 안전).
+export function fetchUsdKrwRate() {
+  const py = new URL('./yf-macro.py', import.meta.url).pathname;
+  const r = spawnSync('python3', [py, 'KRW=X'], { encoding: 'utf8', timeout: 60000 });
+  if (r.status !== 0) throw new Error(`USD/KRW 환율 조회 실패: ${(r.stderr || '').slice(-200)}`);
+  const raw = JSON.parse(r.stdout);
+  const closes = raw['KRW=X'] || [];
+  const rate = closes[closes.length - 1];
+  if (!Number.isFinite(rate) || rate <= 0) throw new Error(`USD/KRW 환율 응답 이상: ${JSON.stringify(closes.slice(-3))}`);
+  return rate;
+}
+
 export async function fetchMacroIndicators() {
   const py = new URL('./yf-macro.py', import.meta.url).pathname;
   // KOSPI·KOSDAQ은 이제 KRX로만 조회하므로(아래) yfinance엔 요청하지 않는다 — 안 쓸 데이터를

@@ -37,6 +37,20 @@ test('classifyHolding: KR·US 둘 다 실패했고 금현물 계좌도 아니면
   assert.match(r.reason, /매핑 없음/);
 });
 
+test('classifyHolding: VIP펀드 정식명과 정확히 일치하면 FUND(다른 KR/US/GOLD 모두 실패했을 때)', () => {
+  const r = classifyHolding({ name: 'VIP한국형가치투자증권자투자신탁(주식)-C-Pe', account: '연금저축' }, {
+    resolveKr: () => null, resolveUs: () => null,
+  });
+  assert.deepEqual(r, { kind: 'FUND' });
+});
+
+test('classifyHolding: VIP펀드와 이름이 비슷해도 정확히 안 맞으면 unmapped(오탐 방지)', () => {
+  const r = classifyHolding({ name: 'VIP한국형가치투자증권자투자신탁(주식)-A', account: '연금저축' }, {
+    resolveKr: () => null, resolveUs: () => null,
+  });
+  assert.equal(r.kind, 'unmapped');
+});
+
 test('classifyHolding: "TIGER KRX금현물"처럼 금현물 계좌가 아니어도 krStockCode가 풀리면 KR(ETF 정상경로)', () => {
   // 연금저축 계좌의 금현물 추종 ETF — account가 '금현물'이 아니라 krStockCode가 먼저
   // 풀려서 GOLD가 아니라 KR로 가야 한다(실제 KRX 상장 ETF라 KIS 실시간조회 대상).
@@ -57,4 +71,21 @@ test('recomputeValuation: invest가 0/결측이면 profitPct는 추정하지 않
   assert.equal(r.profitPct, null);
   const r2 = recomputeValuation({ qty: 10 }, 1000);
   assert.equal(r2.profitPct, null);
+});
+
+test('recomputeValuation: usdKrwRate 지정 시 해외주식 curPrice(USD)를 KRW로 환산 — 2026-08-19 실사고 회귀방지', () => {
+  // 마이크로소프트 실사고 케이스 재현: curPrice 481.34(USD), invest는 KRW로 저장.
+  // usdKrwRate 없이(기본값 1) 계산하면 evalAmount가 USD 그대로라 profitPct가
+  // -99.9%대로 잘못 나왔던 버그.
+  const r = recomputeValuation({ qty: 15, invest: 8463615 }, 481.34, { usdKrwRate: 1400 });
+  assert.equal(r.evalAmount, 481.34 * 15 * 1400);
+  assert.ok(r.profitPct > -50 && r.profitPct < 200, `비정상 profitPct: ${r.profitPct}`);
+});
+
+test('recomputeValuation: unitScale 지정 시 1,000좌당 기준가를 좌당으로 환산(한국 펀드 관례)', () => {
+  // VIP펀드 실측 케이스: curPrice(1,000좌당 기준가) 1950, qty(보유 좌수) 8202681.
+  // unitScale 없이(기본값 1) 계산하면 qty×curPrice가 1,000배 부풀려진 평가금이 된다.
+  const r = recomputeValuation({ qty: 8202681, invest: 12800000 }, 1950, { unitScale: 0.001 });
+  assert.equal(r.evalAmount, 1950 * 8202681 * 0.001);
+  assert.ok(r.evalAmount > 10_000_000 && r.evalAmount < 20_000_000, `비정상 evalAmount: ${r.evalAmount}`);
 });
