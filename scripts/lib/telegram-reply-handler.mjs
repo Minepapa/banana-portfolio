@@ -11,6 +11,27 @@
 import { parseReplyDecision } from './telegram-messages.mjs';
 import { findProposalByTelegramMessageId } from './proposal-vault.mjs';
 
+// ⚠️ 텔레그램 플러그인이 <channel> 태그에 reply_to(Frank가 어느 메시지에 답했는지)를
+// 노출하지 않는다(2026-08-12 발견, project-telegram-approval-flow 메모리) — 상시세션
+// (com.banana2.telegram-session)으로 들어오는 승인/거부 답장은 진짜 reply_to를 못
+// 받는다. 이 함수가 유일한 안전한 대체 경로: "대기" 상태 제안이 **정확히 1건**일 때만
+// 그 telegramMessageId로 추론한다. 0건·2건 이상이면 절대 추정하지 않고 null(호출부가
+// Frank에게 재확인하도록) — 예전엔 이 판단을 Zeus(LLM)가 매번 수동으로 Vault 파일을
+// 세어 판별했는데, 이건 완전히 기계적 판정이라 Node 함수로 옮겨야 셀 때마다 실수할
+// 여지가 없다(feedback-no-hardcoded-judgment와 같은 결 — 판단은 LLM, 카운트는 Node).
+// 순수함수 — 테스트 가능.
+export function inferReplyTargetFromPendingProposals(proposals) {
+  const pending = proposals.filter((p) => p.status === '대기');
+  if (pending.length === 0) {
+    return { telegramMessageId: null, reason: '대기 중인 제안이 없습니다 — 무엇에 대한 답장인지 Frank에게 확인 필요' };
+  }
+  if (pending.length > 1) {
+    const labels = pending.map((p) => p.id ?? p.assetKey ?? '(id 없음)').join(', ');
+    return { telegramMessageId: null, reason: `대기 중인 제안이 ${pending.length}건이라 어느 것인지 추정할 수 없습니다(${labels}) — Frank에게 어느 제안인지 확인 필요` };
+  }
+  return { telegramMessageId: pending[0].telegramMessageId, reason: null };
+}
+
 // proposals: proposal-vault.parseProposal()로 이미 파싱된 배열(호출부가 Decisions/
 // Proposals 디렉토리를 읽어 넘긴다 — 이 모듈은 fs를 만지지 않는다).
 export function resolveReplyAction({ replyTo, replyText, proposals, now = new Date() }) {

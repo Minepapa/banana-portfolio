@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveReplyAction } from './telegram-reply-handler.mjs';
+import { resolveReplyAction, inferReplyTargetFromPendingProposals } from './telegram-reply-handler.mjs';
 import { buildProposalRecord, parseProposal } from './proposal-vault.mjs';
 
 function waitingProposal(overrides = {}) {
@@ -49,4 +49,28 @@ test('여러 제안 중 정확히 매칭되는 것만 대상으로 삼는다', (
   const p2 = waitingProposal({ telegramMessageId: 222, id: 'other-id' });
   const r = resolveReplyAction({ replyTo: 222, replyText: '승인', proposals: [p1, p2] });
   assert.equal(r.proposal.id, 'other-id');
+});
+
+// inferReplyTargetFromPendingProposals — 텔레그램 플러그인이 reply_to를 안 주는
+// 상시세션 경로의 유일한 안전한 대체. 대기 제안 개수가 정확히 1건일 때만 추론한다.
+test('inferReplyTargetFromPendingProposals: 대기 제안이 정확히 1건이면 그 telegramMessageId 반환', () => {
+  const p = waitingProposal({ telegramMessageId: 777 });
+  const r = inferReplyTargetFromPendingProposals([p]);
+  assert.equal(r.telegramMessageId, 777);
+  assert.equal(r.reason, null);
+});
+
+test('[막아야 함] inferReplyTargetFromPendingProposals: 대기 제안이 0건이면 추정하지 않고 null', () => {
+  const p = waitingProposal({ status: '체결' });
+  const r = inferReplyTargetFromPendingProposals([p]);
+  assert.equal(r.telegramMessageId, null);
+  assert.match(r.reason, /없습니다/);
+});
+
+test('[막아야 함] inferReplyTargetFromPendingProposals: 대기 제안이 2건 이상이면 추정하지 않고 null(오승인 방지)', () => {
+  const p1 = waitingProposal({ telegramMessageId: 111, id: 'a' });
+  const p2 = waitingProposal({ telegramMessageId: 222, id: 'b' });
+  const r = inferReplyTargetFromPendingProposals([p1, p2]);
+  assert.equal(r.telegramMessageId, null);
+  assert.match(r.reason, /2건/);
 });

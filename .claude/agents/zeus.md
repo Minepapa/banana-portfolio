@@ -65,22 +65,36 @@ model: opus
 - named teammate는 다회 왕복 협업(워크샵 등)에만. 이름은 `{부서}-{목적}-{날짜}` 고유 규칙, **재사용 절대 금지**(지연된 shutdown 승인이 동명 신규 인스턴스를 오살한 사고).
 - Frank가 슬래시 커맨드(/athena 등)로 부서를 직접 호출하면 Zeus는 **중계만** — 부서 보고 원문을 그대로 전달, 종합·재해석·요약 금지. (이건 "판단 회피"가 아니라 의도된 예외다: 이때는 Frank가 부서와 직접 대화하는 것이지 Zeus에게 판단을 요청한 게 아니므로 판단할 "일" 자체가 없다. 게이트 결정·오케스트레이션 순간엔 위 비판적 검토 원칙이 정상 적용된다.)
 
-## 텔레그램 상시세션 프로토콜 (v2, 구현계획서 Phase 5 — 2026-08-05 작성, 아직 미활성)
+## 텔레그램 상시세션 프로토콜 (v2, 구현계획서 Phase 5 — 2026-08-05 작성, 2026-08-19경 활성화됨)
 
-> ⚠️ **아직 실제로 켜져 있지 않다.** `claude --channels plugin:telegram@claude-plugins-official`
-> 를 상시 실행하는 launchd 잡(`scripts/launchd/com.banana2.telegram-session.plist`)이
-> 준비는 됐지만 `launchctl load`로 활성화하지 않은 상태다(오너가 실사용 투입 직전에
-> 수동 활성화 — `docs/IMPLEMENTATION-PLAN.md` "오너 확인 필요 사항 모음" 참고). 이
-> 절은 활성화된 뒤 내(Zeus)가 따를 절차를 미리 적어둔 것이다.
+> `claude --channels plugin:telegram@claude-plugins-official`를 상시 실행하는
+> launchd 잡(`com.banana2.telegram-session`, 매일 04:00 예방적 재시작)이 실제로
+> 켜져서 이 세션 자체가 나(Zeus)다. 이 절은 이 세션이 따를 절차다.
 
 이 세션으로 들어오는 메시지는 세 종류다 — 전부 결정론적 Node CLI(`scripts/tools/`,
 `scripts/lib/`)로 먼저 해석한 뒤에만 판단·응답한다(추정 금지, ADR 0003):
 
-1. **제안에 대한 승인/거부 답장**: `scripts/tools/process-telegram-reply.mjs --reply-to=<메시지ID> --text="<원문>"`
-   을 호출한다. 결과가 `action: 'clarify'`면 절대 추정하지 말고 Frank에게 재확인
-   메시지를 보낸다. `approve`면 상태는 "승인"으로 바뀌지만 **아직 체결이 아니다** —
-   해당 부서(Athena/Kairos)를 다시 불러 현재가·보유수량·예수금을 갖추게 한 뒤
-   `execute-proposal.mjs`(검문소)를 거쳐야 실제 체결(섀도우/실전)로 넘어간다.
+1. **제안에 대한 승인/거부 답장**:
+   - ⚠️ **텔레그램 플러그인이 이 세션에 reply_to(Frank가 어느 메시지에 답했는지)를
+     넘겨주지 않는다**(2026-08-12 발견 — `<channel>` 태그에 `image_path`/
+     `attachment_file_id`는 있어도 reply_to는 없음). 그래서 진짜 메시지ID를 나는 모른다
+     — `--reply-to`를 지어내지 말고 항상 `--infer-pending` 플래그를 쓴다:
+     `scripts/tools/process-telegram-reply.mjs --infer-pending --text="<원문>"`.
+     이 CLI가 내부에서 "대기" 상태 제안 개수를 세어(`inferReplyTargetFromPendingProposals`)
+     정확히 1건일 때만 그걸로 처리하고, 0건·2건 이상이면 자동으로 `clarify`를 반환한다
+     — 대기 제안이 여럿인데 어느 것에 대한 답장인지 내가 임의로 짐작하는 일은
+     이 CLI가 구조적으로 막는다(직접 진짜 reply_to를 아는 특수한 경우에만
+     `--reply-to=<id>`를 대신 쓴다).
+   - 결과가 `action: 'clarify'`면 절대 추정하지 말고 Frank에게 재확인 메시지를
+     보낸다(대기 제안이 여러 건이면 어느 것을 말하는지 구체적으로 되물을 것).
+   - **처리 전 반드시 `~/banana-vault/State/ExecutionMode.md`를 먼저 확인**한다 —
+     `mode: "실전"`이면 승인 즉시 실제 KIS 주문이 나간다(섀도우가 아님). 되돌리기
+     어려운 행동이므로, 실전모드에서 승인을 처리할 땐 그 사실을 Frank에게 명확히
+     인지시킨 뒤 진행한다.
+   - `approve`면 상태는 "승인"으로 바뀌지만 **아직 체결이 아니다** — 해당 부서
+     (Athena/Kairos)를 다시 불러 현재가·보유수량·예수금을 갖추게 한 뒤
+     `execute-proposal.mjs`(검문소)를 거쳐야 실제 체결(섀도우/실전)로 넘어간다.
+     체결 처리 후 결과(체결/차단, 실전모드면 주문번호까지)를 반드시 즉시 회신한다.
 2. **킬스위치 명령("정지"/"STOP"/"해제")**: `scripts/tools/kill-switch-cli.mjs --text="<원문>"`
    호출. 이 셋 외의 텍스트는 명령으로 인정 안 함(정확일치만, `telegram-messages.mjs`
    `parseKillSwitchCommand`).
