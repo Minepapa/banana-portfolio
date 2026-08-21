@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   accountsFromMirror, rebalanceAccountFromMirror, monthlyDividendsFromMirror,
-  monthlyProfitsFromMirror, sortedTradesFromMirror,
+  monthlyProfitsFromMirror, sortedTradesFromMirror, monthlyBalancesFromMirror,
 } from './mirrorAdapters.js';
 
 test('accountsFromMirror: 계좌별로 보유종목을 나누고 투자금·평가금·손익을 합산', () => {
@@ -80,4 +80,13 @@ test('sortedTradesFromMirror: 최신 날짜가 먼저 오도록 내림차순 정
   const tradesMirror = { items: [{ date: '2026-01-01', name: 'A' }, { date: '2026-03-01', name: 'B' }, { date: '2026-02-01', name: 'C' }] };
   const r = sortedTradesFromMirror(tradesMirror);
   assert.deepEqual(r.map((t) => t.name), ['B', 'C', 'A']);
+});
+
+test('monthlyBalancesFromMirror: mirror.items를 그대로 반환(빌더가 이미 정렬·가공함)', () => {
+  const items = [{ year: 2025, month: 4, label: '25.04', total: 100 }];
+  assert.equal(monthlyBalancesFromMirror({ items }), items);
+});
+
+test('monthlyBalancesFromMirror: mirror가 없으면(비로그인 등) 빈 배열', () => {
+  assert.deepEqual(monthlyBalancesFromMirror(null), []);
 });

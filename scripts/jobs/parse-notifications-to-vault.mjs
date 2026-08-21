@@ -7,11 +7,12 @@
  * parsers.mjs)로 해석하지만, 출력 대상이 시트 탭이 아니라 Vault Facts/Ledger다
  * (docs/ARCHITECTURE-V2.md "카카오 알림 → Vault 파싱 파이프라인" 절).
  *
- * ⚠️ 범위(2026-08-04, 구현계획서 Phase 2 — 오너 확정): 처음엔 **체결(금현물 포함)·
- * 배당만** Vault에 기록했다. 펀드적립·환전은 파서는 이미 준비돼 있지만
- * (notification-parsers.mjs), 계좌 귀속·다계좌 회계·보유종목 갱신은 State/Holdings
- * 설계가 끝나는 Phase 8·9에서 마저 연결한다 — 지금 억지로 끼워 넣지 않는다(설계 없이
- * 만들면 나중에 다시 뜯어고쳐야 함).
+ * ⚠️ 범위 갱신(2026-08-21, v1→v2 전수 감사) — 원래(2026-08-04, Phase 2) 펀드적립·환전은
+ * "State/Holdings 설계가 끝나는 Phase 8·9에서 마저 연결한다"고 범위 밖으로 미뤄뒀는데,
+ * Phase 8·9가 이미 완료돼 그 전제가 채워졌다. 다만 펀드적립·환전을 보유종목에 실제
+ * 반영하는 배치 로직(계좌 귀속·다계좌 회계)은 아직 별도로 없다 — 그래서 체결·배당과
+ * 완전히 같은 수준으로: 원문만 Facts/Ledger에 그대로 적재(account:null + ACCOUNT_NOTE)
+ * 하고, 계좌 귀속 배치는 별도 후속 작업으로 남겨둔다(이 잡의 책임은 "원문 적재"까지).
  *
  * ⚠️ 예수금앵커(2026-08-18 추가, 오너 요청 — "예수금 관리가 정확한지 철저히 분석"):
  * v1은 기준점·거래를 날짜만 비교해 같은 날 오후 거래를 델타에서 빠뜨리는 버그가 있었다
@@ -21,9 +22,8 @@
  * 저장까지만 책임진다(cash-ledger.mjs의 계산 함수는 여기서 호출하지 않음).
  *
  * Ledger 하위폴더(2026-08-04, 오너 요청으로 세분화): Facts/Ledger/Executions(체결+
- * 금현물)·Dividends(배당)·CashEvents(예수금앵커, 2026-08-18 추가) — 나머지 2개 폴더
- * (FundPurchases·Exchanges)는 그 파서가 배선되는 뒷 Phase에서 자연히 채워진다
- * (vault-paths.mjs 참고).
+ * 금현물)·Dividends(배당)·CashEvents(예수금앵커, 2026-08-18 추가)·FundPurchases(펀드적립,
+ * 2026-08-21 배선)·Exchanges(환전, 2026-08-21 배선) — vault-paths.mjs 참고.
  *
  * 멱등: 파일명 자체가 dedup 키(ledger-vault-writer.mjs) — 같은 이벤트를 다시 읽어도
  * 같은 파일명이 나와 existsSync만으로 중복을 걸러낸다. "알람" 시트 원문 행 정리(삭제·
@@ -40,8 +40,8 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getToken, getRange } from '../lib/sheets-common.mjs';
-import { parseExecution, parseDividend, parseGoldBuy, parseCashAlarm } from '../lib/notification-parsers.mjs';
-import { buildExecutionRecord, buildDividendRecord, buildCashEventRecord } from '../lib/ledger-vault-writer.mjs';
+import { parseExecution, parseDividend, parseGoldBuy, parseCashAlarm, parseFundBuy, parseExchange } from '../lib/notification-parsers.mjs';
+import { buildExecutionRecord, buildDividendRecord, buildCashEventRecord, buildFundPurchaseRecord, buildExchangeRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { QUANT_ACCOUNT_NO } from '../lib/account-resolver.mjs';
@@ -79,19 +79,18 @@ async function main() {
   let token = explicitToken?.trim() || null;
   token = await getToken(token);
 
-  // 오늘 실제로 쓰는 하위폴더만 미리 만든다 — 나머지 3종(FundPurchases·CashEvents·
-  // Exchanges)은 그 빌더가 생기는 뒷 Phase에서 자연히 만들어진다(지금 미리 만들어도
-  // 무해하지만, "이 잡이 실제로 쓰는 폴더"만 만드는 쪽이 의도를 명확히 함).
   if (!DRY_RUN) {
     mkdirSync(VAULT_PATHS.facts.ledger.executions, { recursive: true });
     mkdirSync(VAULT_PATHS.facts.ledger.dividends, { recursive: true });
     mkdirSync(VAULT_PATHS.facts.ledger.cashEvents, { recursive: true });
+    mkdirSync(VAULT_PATHS.facts.ledger.fundPurchases, { recursive: true });
+    mkdirSync(VAULT_PATHS.facts.ledger.exchanges, { recursive: true });
   }
 
   const alarmRows = await getRange(token, `${ALARM_SHEET}!A2:D`);
   console.log(`📨 알람 ${alarmRows.length}행 스캔`);
 
-  let execNew = 0, divNew = 0, cashNew = 0, skip = 0, unrecognized = 0, quantExcluded = 0;
+  let execNew = 0, divNew = 0, cashNew = 0, fundNew = 0, exchNew = 0, skip = 0, unrecognized = 0, quantExcluded = 0;
   for (const r of alarmRows) {
     const body = String(r[3] ?? ''); // D: 내용
     const ts = String(r[0] ?? '');   // A: 시간
@@ -146,14 +145,36 @@ async function main() {
       continue;
     }
 
-    // 펀드적립·환전일 수도, 파싱 대상이 아예 아닌 알림(광고 등)일 수도 있다 — 이 2종은
-    // 아직 Phase 8·9(계좌 귀속·다계좌 회계) 전이라 범위 밖, 개수만 집계.
+    const f = parseFundBuy(body, ts);
+    if (f) {
+      const { filename, content, dir } = buildFundPurchaseRecord(f);
+      const filepath = join(dir, filename);
+      if (existsSync(filepath)) { skip++; continue; }
+      console.log(`  + [펀드적립] ${f.date} ${f.fundName} ${f.amount.toLocaleString()}원 (${f.units.toFixed(2)}좌)`);
+      if (!DRY_RUN) writeAtomic(filepath, content);
+      fundNew++;
+      continue;
+    }
+
+    const x = parseExchange(body, ts);
+    if (x) {
+      const { filename, content, dir } = buildExchangeRecord(x);
+      const filepath = join(dir, filename);
+      if (existsSync(filepath)) { skip++; continue; }
+      console.log(`  + [환전] ${x.date} ${x.kind} USD ${x.usd.toLocaleString()}` + (x.won ? ` (${x.won.toLocaleString()}원)` : ''));
+      if (!DRY_RUN) writeAtomic(filepath, content);
+      exchNew++;
+      continue;
+    }
+
+    // 파싱 대상이 아예 아닌 알림(광고 등) — 개수만 집계.
     unrecognized++;
   }
 
   console.log(
     `\n✅ 완료 — 체결 +${execNew}(금현물 포함) · 배당 +${divNew} · 예수금앵커 +${cashNew} · ` +
-    `중복스킵 ${skip} · 퀀트계좌 제외 ${quantExcluded}(KIS API가 정본) · 범위밖/미인식 ${unrecognized}` +
+    `펀드적립 +${fundNew} · 환전 +${exchNew} · ` +
+    `중복스킵 ${skip} · 퀀트계좌 제외 ${quantExcluded}(KIS API가 정본) · 미인식 ${unrecognized}` +
     (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
 }

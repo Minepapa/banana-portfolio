@@ -111,3 +111,11 @@ export function sortedTradesFromMirror(tradesMirror) {
   const items = tradesMirror?.items ?? [];
   return [...items].sort((a, b) => String(b.date ?? '').localeCompare(String(a.date ?? '')));
 }
+
+// mirror/monthlyBalances.items({year, month, label, total}, 이미 오름차순 정렬됨) →
+// 그대로 반환. buildMonthlyBalancesMirror가 이미 화면이 쓸 모양으로 만들어놓아 여기선
+// 변환이 없다 — 다른 어댑터와 형태를 맞추기 위한 얇은 통과 함수(mirror 원본 구조 변경
+// 시 화면 코드가 아니라 이 파일만 고치면 되게 하는 관례 유지).
+export function monthlyBalancesFromMirror(monthlyBalancesMirror) {
+  return monthlyBalancesMirror?.items ?? [];
+}

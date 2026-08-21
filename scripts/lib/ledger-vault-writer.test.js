@@ -2,7 +2,7 @@
 // YAML 형태인지 확인.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildExecutionRecord, buildDividendRecord, buildProfitRecord, buildCashEventRecord } from './ledger-vault-writer.mjs';
+import { buildExecutionRecord, buildDividendRecord, buildProfitRecord, buildCashEventRecord, buildFundPurchaseRecord, buildExchangeRecord } from './ledger-vault-writer.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
 
 const exec = (overrides = {}) => ({
@@ -194,4 +194,69 @@ test('buildCashEventRecord: 같은 계좌·같은 시각이라도 잔고가 다�
   const a = buildCashEventRecord(cashEvent({ balance: 100 }));
   const b = buildCashEventRecord(cashEvent({ balance: 200 }));
   assert.notEqual(a.dedupKey, b.dedupKey);
+});
+
+// 2026-08-21 — v1→v2 전수감사에서 확인된 gap. 파서(parseFundBuy)는 이미 있었지만
+// Vault 빌더·잡 배선이 안 돼 있었다(Phase 2엔 State/Holdings 미완성이라 의도적으로
+// 미룸 — Phase 8·9 완료 후 마저 연결).
+const fundBuy = (overrides = {}) => ({
+  fundName: 'VIP한국형가치투자증권투자신탁', amount: 500000, nav: 1523.45, date: '2026-08-04', units: 328.185,
+  ...overrides,
+});
+
+test('buildFundPurchaseRecord: FundPurchases 하위폴더를 가리킨다', () => {
+  const { dir } = buildFundPurchaseRecord(fundBuy());
+  assert.equal(dir, VAULT_PATHS.facts.ledger.fundPurchases);
+});
+
+test('buildFundPurchaseRecord: 파일명·dedupKey가 결정론적(날짜-펀드명-금액, 시각 정보가 원문에 없음)', () => {
+  const a = buildFundPurchaseRecord(fundBuy());
+  const b = buildFundPurchaseRecord(fundBuy());
+  assert.equal(a.filename, b.filename);
+  assert.equal(a.filename, '2026-08-04-VIP한국형가치투자증권투자신탁-500000.md');
+  assert.equal(a.dedupKey, '2026-08-04|VIP한국형가치투자증권투자신탁|500000');
+});
+
+test('buildFundPurchaseRecord: 같은 펀드·같은 날이라도 금액이 다르면(분할매수) 다른 파일명', () => {
+  const a = buildFundPurchaseRecord(fundBuy({ amount: 500000 }));
+  const b = buildFundPurchaseRecord(fundBuy({ amount: 300000 }));
+  assert.notEqual(a.filename, b.filename);
+});
+
+test('buildFundPurchaseRecord: frontmatter에 펀드 필드 포함, account는 다른 이벤트와 동일하게 지연패턴', () => {
+  const { content } = buildFundPurchaseRecord(fundBuy());
+  assert.match(content, /type: "fund-purchase"/);
+  assert.match(content, /nav: 1523.45/);
+  assert.match(content, /units: 328.185/);
+  assert.match(content, /account: null/);
+  assert.match(content, /accountNote: ".*Phase 8·9.*"/);
+});
+
+const exchange = (overrides = {}) => ({
+  kind: '외화매수', usd: 3000, won: 4128000, date: '2026-08-04',
+  ...overrides,
+});
+
+test('buildExchangeRecord: Exchanges 하위폴더를 가리킨다', () => {
+  const { dir } = buildExchangeRecord(exchange());
+  assert.equal(dir, VAULT_PATHS.facts.ledger.exchanges);
+});
+
+test('buildExchangeRecord: 파일명·dedupKey가 결정론적(날짜-구분-USD금액)', () => {
+  const a = buildExchangeRecord(exchange());
+  const b = buildExchangeRecord(exchange());
+  assert.equal(a.filename, b.filename);
+  assert.equal(a.filename, '2026-08-04-외화매수-3000.md');
+  assert.equal(a.dedupKey, '2026-08-04|외화매수|3000');
+});
+
+test('buildExchangeRecord: 매수·매도가 같은 날 같은 USD금액이어도 kind가 다르면 다른 dedupKey', () => {
+  const a = buildExchangeRecord(exchange({ kind: '외화매수' }));
+  const b = buildExchangeRecord(exchange({ kind: '외화매도' }));
+  assert.notEqual(a.dedupKey, b.dedupKey);
+});
+
+test('buildExchangeRecord: won이 없으면(파싱 실패 허용 필드) null로 기록', () => {
+  const { content } = buildExchangeRecord(exchange({ won: null }));
+  assert.match(content, /won: null/);
 });

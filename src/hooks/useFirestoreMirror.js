@@ -1,4 +1,4 @@
-// Firestore mirror/* 7종 문서 구독 훅 — 구글 로그인 + 실시간 읽기(구현계획서 Phase 6).
+// Firestore mirror/* 8종 문서 구독 훅 — 구글 로그인 + 실시간 읽기(구현계획서 Phase 6).
 // useGoogleSheets.js와 같은 auth 상태 어휘('loading'|'signed-out'|'signed-in'|'error')를
 // 재사용해 App.jsx 쪽 UI 분기 패턴을 그대로 붙일 수 있게 한다. App.jsx에 이미 배선돼
 // 실제로 쓰이고 있다(위 2026-08-05 준비 단계 메모는 지나간 상태 — 지우지 않고 갱신).
@@ -11,7 +11,7 @@ import { onAuthStateChanged, signInWithPopup, signOut as fbSignOut } from 'fireb
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../lib/firebase.js';
 
-const MIRROR_DOC_IDS = ['home', 'holdings', 'allocation', 'dividends', 'profits', 'trades', 'latestReport'];
+const MIRROR_DOC_IDS = ['home', 'holdings', 'allocation', 'dividends', 'profits', 'trades', 'latestReport', 'monthlyBalances'];
 
 const EMPTY_MIRRORS = Object.fromEntries(MIRROR_DOC_IDS.map((id) => [id, null]));
 

@@ -5,7 +5,7 @@ import {
   buildMigratedDailySnapshotRecord, buildMigratedHoldingRecord, buildMigratedAllocationRecord,
   buildMigratedBaselineRecord, buildMigratedEvaluationRecord, buildMigratedPositionJournalRecord,
   buildMigratedRiskMonitorRecord, buildMigratedProposalRecord, buildMigratedReportRecord,
-  buildMigratedPreferenceRecord,
+  buildMigratedPreferenceRecord, buildMigratedMonthlyBalanceRecord,
 } from './migration-vault-writer.mjs';
 import { parseFrontmatter } from './vault-frontmatter.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
@@ -85,6 +85,43 @@ test('buildMigratedDailySnapshotRecord: JSON 문자열 필드는 재파싱 없�
   const fm = parseFrontmatter(r.content);
   assert.equal(fm.byAccountJson, byAccount);
   assert.equal(r.dir, VAULT_PATHS.facts.ledger.dailySnapshots);
+});
+
+// 2026-08-21 — v1→v2 전수감사에서 새로 발견돼 이관된 시트("월별잔고"). Phase 7의
+// 다른 12종과 달리 legacySourceRow 재실행 시 파일명이 시트 행번호가 아니라 연-월
+// 자체다(migration-vault-writer.mjs 주석 참고, 한 달에 한 행만 있다는 시트 전제).
+test('buildMigratedMonthlyBalanceRecord: 연-월-계좌별잔고-총잔고-지수 10열 매핑', () => {
+  const row = ['2025년', '4월', '3,000,000', '543,000', '13,498,868', '42,874,963', '1,000,000', '57,916,831', '2557', '5569'];
+  const r = buildMigratedMonthlyBalanceRecord(row, 2);
+  assertLegacyShape(r, 2);
+  const fm = parseFrontmatter(r.content);
+  assert.equal(fm.year, 2025);
+  assert.equal(fm.month, 4);
+  assert.equal(fm.ym, 202504);
+  assert.equal(fm.deposit, 3000000);
+  assert.equal(fm.isa, 543000);
+  assert.equal(fm.wita, 13498868);
+  assert.equal(fm.pension, 42874963);
+  assert.equal(fm.irp, 1000000);
+  assert.equal(fm.total, 57916831);
+  assert.equal(fm.kospiIndex, 2557);
+  assert.equal(fm.spIndex, 5569);
+  assert.equal(r.dir, VAULT_PATHS.facts.ledger.monthlyBalances);
+});
+
+test('buildMigratedMonthlyBalanceRecord: 파일명은 연-월(시트 행번호 아님, 한 달=한 행 전제)', () => {
+  const row = ['2026년', '8월', '', '32,047,756', '122,596,225', '66,987,014', '4,959,536', '226,590,531'];
+  const r = buildMigratedMonthlyBalanceRecord(row, 18);
+  assert.equal(r.filename, '2026-08.md');
+});
+
+test('buildMigratedMonthlyBalanceRecord: 지수 열(I·J)이 없는 행도 실패하지 않고 0으로', () => {
+  const row = ['2026년', '6월', '8,366,100', '31,993,875', '128,439,621', '69,310,460', '4,771,225', '234,515,181'];
+  const r = buildMigratedMonthlyBalanceRecord(row, 16);
+  const fm = parseFrontmatter(r.content);
+  assert.equal(fm.kospiIndex, 0);
+  assert.equal(fm.spIndex, 0);
+  assert.equal(fm.total, 234515181);
 });
 
 test('buildMigratedHoldingRecord: 티커·시장은 v1에 없어 빈 값(가공 안 함, 정직하게 빈 값)', () => {

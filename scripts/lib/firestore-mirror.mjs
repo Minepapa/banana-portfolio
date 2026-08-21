@@ -102,7 +102,24 @@ export function buildLatestReportMirror({ report = null, now = new Date() }) {
   return { updatedAt: now.toISOString(), ...report };
 }
 
-// 7개 문서를 한 번에 빌드 — sync-firestore-mirror.mjs가 이 결과를 그대로 setDoc한다.
+// monthlyBalances: Facts/Ledger/MonthlyBalances 파싱 결과({ year, month, ym, total, ... },
+// 2026-08-21 v1 "월별잔고" 시트 1회성 이관 — migrate-monthly-balance.mjs 참고). 다른
+// 이벤트로그류(withinLastYear로 최근 1년만 남김)와 달리 여기는 "시작부터 지금까지"
+// 전체 이력을 그래프로 보여주는 게 목적이라 기간 필터를 두지 않는다 — 데이터 자체가
+// 계속 자라지 않는 얼린 이력(17개월 안팎)이라 굳이 자를 이유도 없다.
+export function buildMonthlyBalancesMirror({ monthlyBalances = [], now = new Date() }) {
+  const items = monthlyBalances
+    .filter((m) => Number.isFinite(m.ym) && Number.isFinite(m.total))
+    .sort((a, b) => a.ym - b.ym)
+    .map((m) => ({
+      year: m.year, month: m.month,
+      label: `${String(m.year).slice(-2)}.${String(m.month).padStart(2, '0')}`,
+      total: m.total,
+    }));
+  return { updatedAt: now.toISOString(), items };
+}
+
+// 8개 문서를 한 번에 빌드 — sync-firestore-mirror.mjs가 이 결과를 그대로 setDoc한다.
 export function buildAllMirrors(input) {
   const now = input.now ?? new Date();
   return {
@@ -113,5 +130,6 @@ export function buildAllMirrors(input) {
     profits: buildProfitsMirror({ ...input, now }),
     trades: buildTradesMirror({ ...input, now }),
     latestReport: buildLatestReportMirror({ ...input, now }),
+    monthlyBalances: buildMonthlyBalancesMirror({ ...input, now }),
   };
 }

@@ -4,7 +4,7 @@ import { relTime, fmt } from './lib/textFormat.js';
 import { isMirrorStale } from './lib/mirrorFreshness.js';
 import {
   accountsFromMirror, rebalanceAccountFromMirror, monthlyDividendsFromMirror,
-  monthlyProfitsFromMirror, sortedTradesFromMirror,
+  monthlyProfitsFromMirror, sortedTradesFromMirror, monthlyBalancesFromMirror,
 } from './lib/mirrorAdapters.js';
 import { useIsMobile } from './hooks/useIsMobile.js';
 import { useFirestoreMirror } from './hooks/useFirestoreMirror.js';
@@ -46,6 +46,7 @@ export default function App() {
   const dividendData = useMemo(() => monthlyDividendsFromMirror(mirrors.dividends), [mirrors.dividends]);
   const profitData = useMemo(() => monthlyProfitsFromMirror(mirrors.profits), [mirrors.profits]);
   const trades = useMemo(() => sortedTradesFromMirror(mirrors.trades), [mirrors.trades]);
+  const monthlyBalances = useMemo(() => monthlyBalancesFromMirror(mirrors.monthlyBalances), [mirrors.monthlyBalances]);
 
   const totalEval = mirrors.home?.totalEval ?? 0;
   const totalInvest = mirrors.home?.totalInvest ?? 0;
@@ -219,7 +220,7 @@ export default function App() {
           <DashboardTab
             totalInvest={totalInvest} totalEval={totalEval} totalProfit={totalProfit}
             accounts={accounts} fmt={fmt} isMobile={isMobile}
-            setAcctKey={setAcctKey} setTab={setTab}
+            setAcctKey={setAcctKey} setTab={setTab} monthlyBalances={monthlyBalances}
           />
         )}
 

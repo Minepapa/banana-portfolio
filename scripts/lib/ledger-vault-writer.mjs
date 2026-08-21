@@ -119,6 +119,51 @@ export function buildCashEventRecord(c) {
   return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.cashEvents };
 }
 
+// f: parseFundBuy()의 반환값 { fundName, amount, nav, date, units }. 펀드 알림 원문은
+// 시각이 아니라 "매수신청일"(날짜)만 주므로(notification-parsers.mjs FUND_DATE), 다른
+// 빌더처럼 시각을 dedupKey에 못 넣는다 — 같은 펀드를 같은 날 다른 금액으로 두 번
+// 매수하는 경우까지 감안해 금액을 넣어 구분한다(executions의 수량 포함 관례와 동일 이유).
+// 2026-08-04 확정대로 Phase 2엔 없던 계좌 귀속은 이제 State/Holdings(Phase 8·9 완료,
+// 2026-08-XX)가 갖춰졌지만, 펀드적립을 보유종목에 반영하는 배치 로직 자체는 아직
+// 없다 — 그 배치가 생기기 전까지는 다른 이벤트와 동일하게 account:null로 원문만 남긴다.
+export function buildFundPurchaseRecord(f) {
+  const dedupKey = `${f.date}|${f.fundName}|${f.amount}`;
+  const filename = `${sanitizeSegment(f.date)}-${sanitizeSegment(f.fundName)}-${sanitizeSegment(f.amount)}.md`;
+  const content = buildFrontmatter({
+    type: 'fund-purchase',
+    date: f.date,
+    fundName: f.fundName,
+    amount: f.amount,
+    nav: f.nav,
+    units: f.units,
+    account: null,
+    accountNote: ACCOUNT_NOTE,
+    dedupKey,
+    recordedAt: new Date().toISOString(),
+  });
+  return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.fundPurchases };
+}
+
+// x: parseExchange()의 반환값 { kind, usd, won, date }. kind는 "외화매수"/"외화매도".
+// 펀드와 같은 이유로 date만 있고 시각이 없어, usd 금액을 dedupKey에 포함해 같은 날
+// 여러 건의 환전을 구분한다.
+export function buildExchangeRecord(x) {
+  const dedupKey = `${x.date}|${x.kind}|${x.usd}`;
+  const filename = `${sanitizeSegment(x.date)}-${sanitizeSegment(x.kind)}-${sanitizeSegment(x.usd)}.md`;
+  const content = buildFrontmatter({
+    type: 'exchange',
+    date: x.date,
+    kind: x.kind,
+    usd: x.usd,
+    won: x.won,
+    account: null,
+    accountNote: ACCOUNT_NOTE,
+    dedupKey,
+    recordedAt: new Date().toISOString(),
+  });
+  return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.exchanges };
+}
+
 // 매도 체결로 발생한 실현손익 — holdings-updater.mjs(구현계획서 Phase 8)가 매도 적용
 // 직후 호출한다. account는 여기선 null로 안 비워둔다 — 매도 자체가 계좌 귀속이 이미
 // 해결된 뒤에만(account-resolver.mjs) 처리되는 단계라, 실현손익 시점엔 계좌를 이미 안다.

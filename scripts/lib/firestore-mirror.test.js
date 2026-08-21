@@ -8,6 +8,7 @@ import {
   buildProfitsMirror,
   buildTradesMirror,
   buildLatestReportMirror,
+  buildMonthlyBalancesMirror,
   buildAllMirrors,
 } from './firestore-mirror.mjs';
 
@@ -161,7 +162,28 @@ test('buildLatestReportMirror: report 있으면 그대로 병합', () => {
   assert.equal(r.headline, '제목');
 });
 
-test('buildAllMirrors: 7개 문서 모두 반환', () => {
+test('buildMonthlyBalancesMirror: ym 오름차순 정렬 + label 조합("YY.MM")', () => {
+  const monthlyBalances = [
+    { year: 2026, month: 1, ym: 202601, total: 150000 },
+    { year: 2025, month: 4, ym: 202504, total: 57000 },
+  ];
+  const r = buildMonthlyBalancesMirror({ monthlyBalances, now: NOW });
+  assert.deepEqual(r.items.map((i) => i.label), ['25.04', '26.01']);
+  assert.equal(r.items[0].total, 57000);
+});
+
+test('buildMonthlyBalancesMirror: 데이터 없으면 빈 items(가짜 개월 채우지 않음)', () => {
+  const r = buildMonthlyBalancesMirror({ now: NOW });
+  assert.deepEqual(r.items, []);
+});
+
+test('buildMonthlyBalancesMirror: 최근 1년 필터 없음(dividends·profits와 달리 전체 이력을 그래프로 보여주는 게 목적)', () => {
+  const monthlyBalances = [{ year: 2020, month: 1, ym: 202001, total: 1000 }];
+  const r = buildMonthlyBalancesMirror({ monthlyBalances, now: NOW });
+  assert.equal(r.items.length, 1);
+});
+
+test('buildAllMirrors: 8개 문서 모두 반환', () => {
   const r = buildAllMirrors({ now: NOW });
-  assert.deepEqual(Object.keys(r).sort(), ['allocation', 'dividends', 'holdings', 'home', 'latestReport', 'profits', 'trades'].sort());
+  assert.deepEqual(Object.keys(r).sort(), ['allocation', 'dividends', 'holdings', 'home', 'latestReport', 'monthlyBalances', 'profits', 'trades'].sort());
 });

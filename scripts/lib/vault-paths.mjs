@@ -42,6 +42,12 @@ export const VAULT_PATHS = {
       // 필요한 시계열이라 State(현재값만)가 아니라 Facts/Ledger(이력)에 둔다.
       profits: join(VAULT_ROOT, 'Facts', 'Ledger', 'Profits'),
       dailySnapshots: join(VAULT_ROOT, 'Facts', 'Ledger', 'DailySnapshots'),
+      // 2026-08-21 추가 — v1 "월별잔고" 시트(계좌별 월말 잔고+총잔고, 오너가 수동
+      // 기록해온 이력) 1회성 이관. 오너 확정: 일별 스냅샷 신규 잡은 안 만들고(v1
+      // daily-snapshot.mjs는 CLEANUP), 이미 있는 월별 이력만 가져와 홈 화면 막대
+      // 그래프로 쓴다 — 그래서 이 폴더는 계속 자라는 이벤트로그가 아니라 v1이 손으로
+      // 채워온 기록을 얼린 스냅샷이다(migrate-monthly-balance.mjs가 유일한 쓰기 주체).
+      monthlyBalances: join(VAULT_ROOT, 'Facts', 'Ledger', 'MonthlyBalances'),
     },
     // ⚠️ marketPolls(가격폴링·추세신호 원자료) 경로는 2026-08-17 삭제됨 — 전제였던
     // 폴링 기반 추세추종이 ADR-0012 추신에서 이미 기각돼 코드로 한 번도 안 만들어졌음

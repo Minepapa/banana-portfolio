@@ -94,6 +94,31 @@ export function buildMigratedDailySnapshotRecord(row, rowNum) {
   return { filename, content, dir: VAULT_PATHS.facts.ledger.dailySnapshots };
 }
 
+// ── Facts/Ledger/MonthlyBalances (월별잔고 A~J: 연도,월,그달신규입금,ISA,위탁,연금저축,
+// IRP,총잔고,KOSPI월말지수,S&P500월말지수) — 2026-08-21, Phase 7과 별개로 뒤늦게 이관.
+// 다른 마이그레이션 레코드와 달리 이 시트는 v1에서도 매달 사람이 손으로 채워온
+// 이력이라(자동 파이프라인 아님) 앞으로도 계속 자라지 않는다 — v2는 일별/월별 스냅샷
+// 자동 잡을 새로 만들지 않기로 확정(오너 지시, daily-snapshot.mjs는 CLEANUP)했으므로
+// 이건 "최신 상태로 유지되는 이벤트로그"가 아니라 "가져온 시점까지의 얼린 이력"이다.
+// parseNum(parseFloat 기반)이 "2025년"→2025, "4월"→4처럼 숫자 뒤 한글 접미사를
+// 자연히 잘라내므로 연도·월도 그대로 재사용한다(별도 정규식 불필요).
+const MONTHLY_BALANCE_LEGACY_NOTE = 'v1(구글시트) → Vault 마이그레이션(2026-08-21, Phase 7과 별개로 뒤늦게 이관)으로 옮겨진 과거 기록';
+
+export function buildMigratedMonthlyBalanceRecord(row, rowNum) {
+  const [year, month, deposit, isa, wita, pension, irp, total, kospi, sp500] = row;
+  const y = parseNum(year), m = parseNum(month);
+  const content = buildFrontmatter({
+    type: 'monthly-balance', legacy: true, legacyNote: MONTHLY_BALANCE_LEGACY_NOTE, legacySourceRow: rowNum,
+    year: y, month: m, ym: y * 100 + m,
+    deposit: parseNum(deposit), isa: parseNum(isa), wita: parseNum(wita),
+    pension: parseNum(pension), irp: parseNum(irp), total: parseNum(total),
+    kospiIndex: parseNum(kospi), spIndex: parseNum(sp500),
+    recordedAt: new Date().toISOString(),
+  });
+  const filename = `${y}-${String(m).padStart(2, '0')}.md`;
+  return { filename, content, dir: VAULT_PATHS.facts.ledger.monthlyBalances };
+}
+
 // ── State/Holdings (ISA·위탁·연금저축·IRP, 계좌별 A~I) — 현재값만, 덮어쓰기 ─────
 // holding: { account, type(자산군), name, price(평단), qty, invest, currentPrice, profit, eval, rate, isCashLike }
 //
