@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseNum, toDateStr, stripEmoji,
   gradeColor, GRADE_COLORS, stripGrade, stripPeriod,
-  breakUnits, breakSentences,
+  breakUnits, breakSentences, relTime,
 } from './textFormat.js';
 
 // ── parseNum ────────────────────────────────────────────────────────────────
@@ -54,6 +54,37 @@ test('toDateStr: 소수점 시리얼도 처리', () => {
   const serial = 25569 + new Date('2026-06-15').getTime() / 86400000;
   const result = toDateStr(String(serial + 0.25));
   assert.equal(result, '2026-06-15');
+});
+
+// ── relTime ─────────────────────────────────────────────────────────────────
+// 2026-08-21 실사고 회귀 재현 — "e.getTime is not a function"(로그인 후 흰 화면).
+// Firestore mirror.updatedAt은 Date 객체가 아니라 ISO 문자열로 저장된다.
+test('relTime: ISO 문자열 입력도 처리(Date 객체로 안 감싸도 터지지 않음)', () => {
+  const isoString = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  assert.equal(relTime(isoString), '5분 전');
+});
+
+test('relTime: Date 객체 입력도 그대로 처리', () => {
+  const d = new Date(Date.now() - 2 * 3600 * 1000);
+  assert.equal(relTime(d), '2시간 전');
+});
+
+test('relTime: 빈 값 → 빈 문자열', () => {
+  assert.equal(relTime(null), '');
+  assert.equal(relTime(undefined), '');
+  assert.equal(relTime(''), '');
+});
+
+test('relTime: 파싱 불가능한 값 → 빈 문자열(예외 던지지 않음)', () => {
+  assert.equal(relTime('이상한값'), '');
+});
+
+test('relTime: 60초 미만은 "방금 전"', () => {
+  assert.equal(relTime(new Date(Date.now() - 30 * 1000).toISOString()), '방금 전');
+});
+
+test('relTime: 하루 이상은 "N일 전"', () => {
+  assert.equal(relTime(new Date(Date.now() - 3 * 86400 * 1000).toISOString()), '3일 전');
 });
 
 // ── stripEmoji ──────────────────────────────────────────────────────────────

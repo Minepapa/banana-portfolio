@@ -24,9 +24,17 @@ export function toDateStr(v) {
 }
 
 // 상대 시각 ("3분 전" · "2시간 전") — 마지막 갱신 표시용
+// ⚠️ 버그 수정(2026-08-21 실사고 — 로그인 후 흰 화면, "e.getTime is not a function")
+// — Firestore mirror.updatedAt은 Date 객체가 아니라 ISO 문자열(toISOString() 결과)로
+// 저장된다. 호출부(App.jsx)가 그 문자열을 그대로 넘기는데 이 함수가 Date 객체라고
+// 가정하고 .getTime()을 바로 불러서 렌더 중 예외가 터졌다 — ErrorBoundary가 없던
+// 시절엔 그 예외가 트리 전체를 조용히 내려서 흰 화면으로만 보였다. 문자열·Date
+// 객체 둘 다 받아들이도록 new Date()로 감싼다(이미 Date 객체여도 안전 — 그대로 복제됨).
 export const relTime = (date) => {
   if (!date) return '';
-  const sec = Math.floor((Date.now() - date.getTime()) / 1000);
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return '';
+  const sec = Math.floor((Date.now() - d.getTime()) / 1000);
   if (sec < 60) return '방금 전';
   if (sec < 3600) return `${Math.floor(sec / 60)}분 전`;
   if (sec < 86400) return `${Math.floor(sec / 3600)}시간 전`;
