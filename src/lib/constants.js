@@ -225,7 +225,7 @@ export const DEFAULT_ACCOUNTS = {
     holdings: [],
   },
   위탁: {
-    label: "위탁+기타", sub: "NH · 수비형포트",
+    label: "위탁", sub: "NH · 수비형포트",
     total_invest: 0, total_eval: 0, profit: 0, color: "#52C8D4",
     assets: [
       { name: "채권",    ratio: 0, invest: 0, eval: 0, target: 0 },
