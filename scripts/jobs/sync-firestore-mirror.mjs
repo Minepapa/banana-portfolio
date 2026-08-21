@@ -62,6 +62,11 @@ export function readLatestReport(dir = VAULT_PATHS.knowledge.reports) {
 export function collectMirrorInput({ now = new Date() } = {}) {
   const executionEvents = readVaultRecords(VAULT_PATHS.facts.ledger.executions);
   const dividendEvents = readVaultRecords(VAULT_PATHS.facts.ledger.dividends);
+  // ⚠️ 버그 수정(2026-08-21 — 수익금 탭이 항상 빈 화면이던 원인) — buildProfitsMirror는
+  // 처음부터 있었는데 이 잡이 profitEvents를 한 번도 안 넘겨서 늘 빈 배열로 빌드되고
+  // 있었다. Facts/Ledger/Profits는 실제로 25건 존재(Phase 7 마이그레이션, 정확한
+  // 매입가 대비 실현손익 기록) — 이제 연결.
+  const profitEvents = readVaultRecords(VAULT_PATHS.facts.ledger.profits);
   const proposals = readVaultRecords(VAULT_PATHS.decisions.proposals);
   const pendingProposalCount = proposals.filter((p) => p.status === '대기').length;
   // State/Holdings·Allocation: Phase 8·9 전이라 실제 항목이 없을 수 있음 — 있으면
@@ -69,7 +74,7 @@ export function collectMirrorInput({ now = new Date() } = {}) {
   const holdings = readVaultRecords(VAULT_PATHS.state.holdings);
   const accounts = readVaultRecords(VAULT_PATHS.state.allocation);
   const report = readLatestReport();
-  return { executionEvents, dividendEvents, pendingProposalCount, holdings, accounts, report, now };
+  return { executionEvents, dividendEvents, profitEvents, pendingProposalCount, holdings, accounts, report, now };
 }
 
 async function main() {
@@ -78,7 +83,8 @@ async function main() {
 
   console.log(
     `📊 미러 빌드 — trades ${mirrors.trades.items.length}건 · dividends ${mirrors.dividends.items.length}건 · ` +
-    `holdings ${mirrors.holdings.items.length}건 · pendingProposal ${mirrors.home.pendingProposalCount}건`,
+    `profits ${mirrors.profits.items.length}건 · holdings ${mirrors.holdings.items.length}건 · ` +
+    `pendingProposal ${mirrors.home.pendingProposalCount}건`,
   );
   if (mirrors.holdings.items.length === 0) {
     console.log('  ⚠️ holdings·allocation·home 손익은 State/Holdings가 아직 없어 빈 값(Phase 8·9 이후 채워짐) — 정상.');

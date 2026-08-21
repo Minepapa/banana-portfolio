@@ -258,4 +258,13 @@ export const DEFAULT_ACCOUNTS = {
     assets: [{ name: "TDF", ratio: 0, invest: 0, eval: 0, target: 0 }],
     holdings: [],
   },
+  // 2026-08-21 추가 — 이 계좌가 목록에 없어서 계좌 카드·자산분배 탭에서 완전히
+  // 안 보이고 있었다(홈 화면 총계엔 이미 포함돼 있었음 — accountsFromMirror가
+  // mirror.holdings.items를 이 목록으로만 순회해서 여기 없는 계좌는 그냥 버려짐).
+  CMA: {
+    label: "CMA", sub: "NH · 현금성",
+    total_invest: 0, total_eval: 0, profit: 0, color: "#8C8577",
+    assets: [{ name: "현금", ratio: 0, invest: 0, eval: 0, target: 0 }],
+    holdings: [],
+  },
 };

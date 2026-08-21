@@ -106,6 +106,30 @@ test('buildDividendsMirror: ytdTotal·monthTotal 합산', () => {
   assert.equal(r.monthTotal, 1000);
 });
 
+test('buildProfitsMirror: 필요한 필드만 골라 담는다(레거시 마이그레이션 잡필드 제외) — 2026-08-21', () => {
+  // Facts/Ledger/Profits 레코드엔 legacy·legacySourceRow·recordedAt·type·account 등
+  // ProfitTab이 안 쓰는 필드가 섞여있다 — 전체 스프레드하지 않고 명시적으로 골라야 한다
+  // (buildDividendsMirror·buildTradesMirror와 동일 원칙, 2026-08-05 보안리뷰).
+  const profitEvents = [{
+    type: 'realized-profit', legacy: true, legacySourceRow: 2,
+    date: '2026-08-01', stockName: '삼성전자', quantity: 10,
+    buyPrice: 70000, sellPrice: 75000, profit: 50000, account: null,
+    recordedAt: '2026-08-05T05:17:38.713Z',
+  }];
+  const r = buildProfitsMirror({ profitEvents, now: NOW });
+  assert.deepEqual(r.items, [{ date: '2026-08-01', stockName: '삼성전자', profit: 50000 }]);
+});
+
+test('buildProfitsMirror: 1년 이전 항목은 제외', () => {
+  const profitEvents = [
+    { date: '2026-08-01', stockName: '최근', profit: 1000 },
+    { date: '2024-01-01', stockName: '옛날', profit: 9999 },
+  ];
+  const r = buildProfitsMirror({ profitEvents, now: NOW });
+  assert.equal(r.items.length, 1);
+  assert.equal(r.items[0].stockName, '최근');
+});
+
 test('buildProfitsMirror: 빈 입력이면 빈 items', () => {
   const r = buildProfitsMirror({ now: NOW });
   assert.deepEqual(r.items, []);

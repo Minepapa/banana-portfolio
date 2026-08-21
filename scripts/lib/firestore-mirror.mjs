@@ -73,8 +73,15 @@ export function buildDividendsMirror({ dividendEvents = [], now = new Date() }) 
   return { updatedAt: now.toISOString(), items, ytdTotal, monthTotal };
 }
 
+// profitEvents: Facts/Ledger/Profits 파싱 결과({ date, stockName, quantity, buyPrice,
+// sellPrice, profit, account, ... } — 마이그레이션 레코드엔 legacy·legacySourceRow·
+// recordedAt 등 화면에 불필요한 필드도 섞여있다). buildDividendsMirror·buildTradesMirror와
+// 동일 원칙으로 필드를 명시적으로 골라 담는다(전체 스프레드 금지, 2026-08-05 보안리뷰
+// 지적과 같은 이유) — ProfitTab이 실제로 쓰는 건 date·stockName·profit뿐이다.
 export function buildProfitsMirror({ profitEvents = [], now = new Date() }) {
-  const items = profitEvents.filter((p) => withinLastYear(p.date, now));
+  const items = profitEvents
+    .filter((p) => withinLastYear(p.date, now))
+    .map((p) => ({ date: p.date, stockName: p.stockName, profit: p.profit }));
   return { updatedAt: now.toISOString(), items };
 }
 
