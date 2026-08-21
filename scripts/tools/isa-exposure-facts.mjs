@@ -28,7 +28,7 @@ const won = (n) => Math.round(n).toLocaleString('ko-KR');
 
 function main() {
   const holdings = readHoldings();
-  const { currentPct: targetBasisPct } = computeCurrentAllocation(holdings); // 위탁+연금저축만(목표비중 계산 기준)
+  const { currentPct: targetBasisPct } = computeCurrentAllocation(holdings); // 위탁+연금저축 합산 풀(금현물은 위탁으로 정규화 포함, 목표비중 계산 기준)
   const exposure = computeThreeAccountExposure(holdings); // 위탁+연금저축+ISA
   const isaSummary = summarizeIsaHoldings(holdings);
 

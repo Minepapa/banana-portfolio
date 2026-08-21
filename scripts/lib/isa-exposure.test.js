@@ -58,6 +58,16 @@ test('computeThreeAccountExposure: byClassIsaEval은 ISA만의 기여액(단일 
   assert.equal(r.byClassEval.배당주, 600000);
 });
 
+test('computeThreeAccountExposure: 금현물 계좌는 위탁으로 정규화돼 분모에 포함(2026-08-21 발견 — 안 하면 분모가 작아져 노출%가 부풀려짐)', () => {
+  const holdings = [
+    { account: '금현물', assetClass: '금', evalAmount: 500000 },
+    { account: '위탁', assetClass: '배당주', evalAmount: 500000 },
+  ];
+  const r = computeThreeAccountExposure(holdings);
+  assert.equal(r.totalEval, 1000000); // 금현물 500000이 분모에 포함돼야 함
+  assert.equal(r.exposurePct.배당주, 50); // 금현물 누락 시 100%로 잘못 계산됨
+});
+
 test('summarizeIsaHoldings: ISA만 필터링, weightPct는 ISA 내부 기준', () => {
   const holdings = [
     { account: 'ISA', name: 'A', assetClass: '배당주', evalAmount: 300000, profitPct: 5 },

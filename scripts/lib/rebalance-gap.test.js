@@ -41,6 +41,43 @@ test('computeCurrentAllocation: 위탁+연금저축 합산', () => {
   assert.equal(r.currentPct.국내주식, 70);
 });
 
+test('computeCurrentAllocation: 금현물 계좌는 위탁으로 합산(ARCHITECTURE-V2.md 금현물 각주)', () => {
+  // 실제 사고 재현값(2026-08-21, 코드리뷰에서 실 Vault로 검증한 수치) — 이 합산이
+  // 없으면 금 갭이 -6.67%p로 잘못 계산돼 불필요한 신규 ETF(KODEX 골드선물(H)) 제안이
+  // 나갔다. 다른 5개 자산군은 168,696,863원으로 뭉뚱그려도 금 비중·갭 계산엔 무관하다.
+  const holdings = [
+    { account: '금현물', assetClass: '금', evalAmount: 5443740 },
+    { account: '연금저축', assetClass: '금', evalAmount: 5806515 },
+    { account: '위탁', assetClass: '국내주식', evalAmount: 168696863 },
+  ];
+  const r = computeCurrentAllocation(holdings);
+  assert.equal(r.byClassEval.금, 5443740 + 5806515);
+  assert.equal(r.totalEval, 179947118);
+  assert.equal(Math.round(r.currentPct.금 * 100) / 100, 6.25);
+  const gap = checkBand(TARGET_ALLOCATION.금, r.currentPct.금);
+  assert.equal(Math.round(gap.absDeltaPct * 100) / 100, -3.75);
+});
+
+test('computeCurrentAllocation: 금현물 계좌라도 금 외 자산군(현금)은 여전히 분모 밖', () => {
+  const holdings = [
+    { account: '금현물', assetClass: '금', evalAmount: 5443740 },
+    { account: '금현물', assetClass: '현금', evalAmount: 15647 },
+    { account: '위탁', assetClass: '국내주식', evalAmount: 100000000 },
+  ];
+  const r = computeCurrentAllocation(holdings);
+  assert.equal(r.totalEval, 5443740 + 100000000); // 금현물 예수금(현금)은 안 새어 들어감
+});
+
+test('computeCurrentAllocation: 금현물 외의 계좌명(CMA·ISA·IRP)은 정규화 대상 아님', () => {
+  const holdings = [
+    { account: 'CMA', assetClass: '금', evalAmount: 1000000 },
+    { account: '위탁', assetClass: '국내주식', evalAmount: 100000 },
+  ];
+  const r = computeCurrentAllocation(holdings);
+  assert.equal(r.byClassEval.금, 0); // CMA는 위탁으로 합산되지 않음
+  assert.equal(r.totalEval, 100000);
+});
+
 test('checkBand: 목표 20%(채권)는 절대 5%p·상대 25%가 수학적으로 정확히 같은 지점(설계서 확정 사실)', () => {
   const r = checkBand(20, 25); // +5%p 이탈, 25% 목표대비 상대 25%
   assert.equal(r.absDeltaPct, 5);

@@ -55,3 +55,23 @@ test('findExistingInstruments: 해당 계좌·자산군의 보유만 필터', ()
 test('findExistingInstruments: 일치하는 보유 없으면 빈 배열', () => {
   assert.deepEqual(findExistingInstruments([], '위탁', '국내주식'), []);
 });
+
+test('findExistingInstruments: 금현물 계좌 보유는 위탁 조회 시 실존 후보로 잡힘(2026-08-21 사고 재발방지)', () => {
+  const holdings = [
+    { account: '금현물', assetClass: '금', name: '금 99.99K' },
+    { account: '연금저축', assetClass: '금', name: 'TIGER KRX금현물' },
+  ];
+  const found = findExistingInstruments(holdings, '위탁', '금');
+  assert.deepEqual(found.map((h) => h.name), ['금 99.99K']);
+});
+
+test('findExistingInstruments: 계좌 파라미터로 금현물을 넘겨도 위탁과 동일하게 정규화됨(대칭성, 코드리뷰 지적)', () => {
+  const holdings = [
+    { account: '금현물', assetClass: '금', name: '금 99.99K' },
+    { account: '위탁', assetClass: '금', name: '가상의 위탁금ETF' },
+  ];
+  const foundViaGold = findExistingInstruments(holdings, '금현물', '금');
+  const foundViaWt = findExistingInstruments(holdings, '위탁', '금');
+  assert.deepEqual(foundViaGold, foundViaWt); // 둘 다 위탁으로 정규화되니 결과가 같아야 함
+  assert.equal(foundViaGold.length, 2);
+});

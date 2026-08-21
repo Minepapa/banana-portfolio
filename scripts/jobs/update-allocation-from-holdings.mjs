@@ -7,10 +7,10 @@
  * 읽어 계좌별 실제 목표대비현재 비중을 계산해 덮어쓴다.
  *
  * ⚠️ Athena의 실제 리밸런싱 판단(rebalance-facts.mjs → rebalance-gap.mjs
- * computeRebalanceGaps)은 이 파일을 안 읽는다 — 위탁+연금저축 "합산 풀" 기준으로
+ * computeRebalanceGaps)은 이 파일을 안 읽는다 — 위탁+연금저축+금현물 "합산 풀" 기준으로
  * 매번 새로 계산해서 그 자체로 항상 정확하다. 이 잡은 순수하게 대시보드 표시용
- * (계좌별 관점, scripts/lib/allocation-snapshot.mjs 주석 참고) — 실패해도 실제
- * 리밸런싱 판단엔 영향 없음.
+ * (위탁·연금저축·금현물 탭 모두 같은 합산 풀 숫자를 보여준다, 2026-08-21 오너 확정 —
+ * scripts/lib/allocation-snapshot.mjs 주석 참고) — 실패해도 실제 리밸런싱 판단엔 영향 없음.
  *
  * 사용법: node scripts/jobs/update-allocation-from-holdings.mjs [--dry-run]
  */
@@ -22,7 +22,10 @@ import { writeAtomic } from '../lib/state-writer.mjs';
 import { computeAccountAllocationSnapshot } from '../lib/allocation-snapshot.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const ACCOUNTS = ['위탁', '연금저축', 'ISA', 'IRP'];
+// 금현물은 2026-08-21 추가 — CMA와 동일 패턴(대시보드에 계좌 블록이 아예 없어 보유가
+// 안 보이던 것 발견·수정). 위탁·연금저축과 같은 합산 풀 숫자를 그대로 받는다
+// (allocation-snapshot.mjs computeAccountAllocationSnapshot 참고).
+const ACCOUNTS = ['위탁', '연금저축', '금현물', 'ISA', 'IRP'];
 
 function readHoldings() {
   const dir = VAULT_PATHS.state.holdings;

@@ -267,4 +267,29 @@ export const DEFAULT_ACCOUNTS = {
     assets: [{ name: "현금", ratio: 0, invest: 0, eval: 0, target: 0 }],
     holdings: [],
   },
+  // 2026-08-21 추가 — CMA와 동일 사유로 누락돼 있었다(금 99.99K 실물이 State/Holdings엔
+  // account: "금현물"로 정확히 기록되는데, 이 목록에 키가 없어 어느 계좌 카드에도 안
+  // 뜨고 있었음). 자산분배(목표비중) 계산상으로는 위탁에 합산되지만(rebalance-gap.mjs
+  // normalizeAccount), 실제 매매·보유는 별도 NH 계좌(209-02-92***6)라 자기 자신의 계좌
+  // 블록이 따로 있어야 한다(ARCHITECTURE-V2.md 금현물 각주). assets 목록은 위탁·연금저축과
+  // 동일 7종 — 이 계좌도 같은 합산 풀(위탁+연금저축+금현물)의 목표비중을 보여준다.
+  금현물: {
+    label: "금현물", sub: "NH · 실물자산",
+    // 색상 주의: 처음엔 골드 계열(#D4A94A)을 골랐으나 이 계좌가 "금"을 담는다는 이유로
+    // 화면에서 자산군 금 색상(colors.js COLORS.금 #F5C842)·SIGNAL_AMBER(#E0A000)·
+    // Apollo(#B8862F)와 같은 색 군집에 바로 붙어 보여 육안 혼동 위험(코드리뷰 지적) —
+    // 계좌 선택 버튼 색과 그 옆 자산군 점 색이 둘 다 금색이면 구별이 안 된다. 골드
+    // 계열에서 완전히 벗어난 스틸블루로 교체.
+    total_invest: 0, total_eval: 0, profit: 0, color: "#6E8FB0",
+    assets: [
+      { name: "채권",    ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "금",      ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "달러",    ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "배당주",  ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "리츠",    ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "국내주식", ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "해외주식", ratio: 0, invest: 0, eval: 0, target: 0 },
+    ],
+    holdings: [],
+  },
 };

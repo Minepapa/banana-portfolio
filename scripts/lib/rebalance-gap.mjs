@@ -15,11 +15,22 @@ export const TARGET_ALLOCATION = {
 
 const IN_SCOPE_ACCOUNTS = new Set(['위탁', '연금저축']);
 
+// 금현물은 실제 매매·보유가 위탁과 별개 계좌에서 이뤄지지만(ARCHITECTURE-V2.md "금현물의
+// 실제 거래 계좌는 위탁과 별개다" 각주), 자산배분 계산(목표비중 갱신)에는 위탁 소속으로
+// 합산한다고 이미 확정돼 있다 — cash-ledger.mjs CASH_ELIGIBLE_ACCOUNTS/new-cash-
+// allocation.mjs의 금현물→위탁 합산과 동일한 규칙.
+const ACCOUNT_ALIASES = Object.assign(Object.create(null), { 금현물: '위탁' });
+// cash-allocation-candidates.mjs findExistingInstruments 등 계좌명을 직접 비교하는
+// 다른 소비자도 같은 정규화가 필요해 export한다(2026-08-21 코드리뷰 지적 — 이 규칙을
+// 여러 곳에 각자 하드코딩하면 다음 소비자가 또 이 버그를 반복한다).
+export const normalizeAccount = (account) => ACCOUNT_ALIASES[account] ?? account;
+
 // holdings: State/Holdings 전체 배열({ account, assetClass, evalAmount, ... }).
-// 위탁+연금저축만, 그 안에서도 TARGET_ALLOCATION 6개 자산군만 분모에 포함한다 — 현금성·
-// 달러·TDF 등은 원칙 자체가 배분 대상 밖이라 있어도 무시(제외가 아니라 애초에 범위 밖).
+// 위탁+연금저축만(금현물은 위탁으로 정규화), 그 안에서도 TARGET_ALLOCATION 6개 자산군만
+// 분모에 포함한다 — 현금성·달러·TDF 등은 원칙 자체가 배분 대상 밖이라 있어도 무시(제외가
+// 아니라 애초에 범위 밖).
 export function computeCurrentAllocation(holdings) {
-  const inScope = holdings.filter((h) => IN_SCOPE_ACCOUNTS.has(h.account) && TARGET_ALLOCATION[h.assetClass] != null);
+  const inScope = holdings.filter((h) => IN_SCOPE_ACCOUNTS.has(normalizeAccount(h.account)) && TARGET_ALLOCATION[h.assetClass] != null);
   const byClassEval = Object.fromEntries(Object.keys(TARGET_ALLOCATION).map((c) => [c, 0]));
   for (const h of inScope) byClassEval[h.assetClass] += h.evalAmount ?? 0;
   const totalEval = Object.values(byClassEval).reduce((s, v) => s + v, 0);

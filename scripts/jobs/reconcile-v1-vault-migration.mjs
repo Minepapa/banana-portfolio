@@ -86,6 +86,10 @@ async function verifyEventLogCounts(token, mismatches) {
 }
 
 // 자산분배 — assetNames 길이로 잘라내는 migrate-v1-to-vault.mjs와 동일 규칙으로 기대건수 계산.
+// ⚠️ 금현물은 v1(구글시트)엔 없던 계좌라 REBAL_RANGES에 없다(2026-08-21 추가 — CMA와
+// 동일 사유로 대시보드 계좌 블록 신설). v1엔 대응물이 없으므로 이 마이그레이션 대조에서는
+// 제외하고, 금현물-*.md 7건은 "기대되는 추가분"으로 별도 표시한다 — v1에 없던 파일이라고
+// 건수 불일치로 잘못 보고하면 이 잡이 실제 문제를 놓치게 된다.
 async function verifyAllocationCounts(token, mismatches) {
   console.log('\n[자산분배 건수 대조]');
   const REBAL_RANGES = { 위탁: '자산분배!B3:D9', 연금저축: '자산분배!B12:D18', ISA: '자산분배!B21:D21', IRP: '자산분배!B24:D24' };
@@ -95,8 +99,10 @@ async function verifyAllocationCounts(token, mismatches) {
     const assetCount = DEFAULT_ACCOUNTS[acctKey].assets.length;
     v1Total += Math.min(rows.length, assetCount);
   }
-  const vaultCount = countVaultFiles(VAULT_PATHS.state.allocation);
-  console.log(`  자산분배(4계좌 합산): v1(기대) ${v1Total}건 / Vault ${vaultCount}건`);
+  const allFiles = readdirSync(VAULT_PATHS.state.allocation).filter((f) => f.endsWith('.md'));
+  const goldFiles = allFiles.filter((f) => f.startsWith('금현물-'));
+  const vaultCount = allFiles.length - goldFiles.length;
+  console.log(`  자산분배(4계좌 합산): v1(기대) ${v1Total}건 / Vault ${vaultCount}건` + (goldFiles.length ? ` (+금현물 ${goldFiles.length}건, v1에 없던 계좌라 대조 제외)` : ''));
   if (v1Total !== vaultCount) mismatches.push(`자산분배: 건수 불일치(v1 ${v1Total} vs Vault ${vaultCount})`);
 }
 

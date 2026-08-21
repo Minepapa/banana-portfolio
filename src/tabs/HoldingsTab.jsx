@@ -22,11 +22,13 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
 
   return (
     <div>
-      {/* 계좌 선택 (4개) */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+      {/* 계좌 선택 — 6개(ISA·위탁·연금저축·IRP·CMA·금현물, 2026-08-21 금현물 추가).
+          flexWrap: 좁은 화면에서 6칸이 한 줄에 다 안 들어가면 둘째 줄로 넘어가게(브라우저
+          실측 전이라 방어적으로 추가 — 코드리뷰 지적). */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
         {Object.entries(accounts).map(([k, a]) => (
           <button key={k} onClick={() => setAcctKey(k)} style={{
-            flex: 1, padding: isMobile ? "8px 4px" : "6px 4px",
+            flex: "1 1 auto", minWidth: 72, padding: isMobile ? "8px 4px" : "6px 4px",
             textAlign: 'center',
             borderRadius: 0,
             border: `1px solid ${acctKey === k ? a.color : "#141414"}`,

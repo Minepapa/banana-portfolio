@@ -10,6 +10,8 @@
 // 그대로 두고(설계서 확정), 여기서 계산한 3계좌 합산 노출은 위탁·연금저축 매수량을
 // 자동으로 줄이는 데 쓰이지 않는다. "이중노출을 자동 보정하지 않고 오너에게 보이게만
 // 한다" — 최종 판단은 오너 재량(Zeus 의사결정 범위 원칙과 일치).
+import { normalizeAccount } from './rebalance-gap.mjs';
+
 const EXPOSURE_ACCOUNTS = new Set(['위탁', '연금저축', 'ISA']);
 
 // ISA가 담는 자산군과 겹치는 3종(설계서 명시) — 이 3개만 별도 보고 대상.
@@ -20,7 +22,10 @@ export const OVERLAP_CLASSES = ['배당주', '리츠', '채권'];
 // 게 목적이라 일부러 좁히지 않는다(이게 좁혀지면 원래 발견됐던 이중노출 공백을 이 모듈
 // 스스로 다시 재현하게 됨).
 export function computeThreeAccountExposure(holdings) {
-  const inScope = holdings.filter((h) => EXPOSURE_ACCOUNTS.has(h.account));
+  // 금현물은 위탁으로 정규화(rebalance-gap.mjs normalizeAccount) — 안 하면 "실제 총자산
+  // 기준"이라는 이 모듈의 취지와 달리 금현물 평가액이 분모에서 빠져 배당주·채권·리츠
+  // 비중이 실제보다 부풀려진다(2026-08-21 발견).
+  const inScope = holdings.filter((h) => EXPOSURE_ACCOUNTS.has(normalizeAccount(h.account)));
   const totalEval = inScope.reduce((s, h) => s + (h.evalAmount ?? 0), 0);
   const byClassEval = Object.fromEntries(OVERLAP_CLASSES.map((c) => [c, 0]));
   const byClassIsaEval = Object.fromEntries(OVERLAP_CLASSES.map((c) => [c, 0]));
