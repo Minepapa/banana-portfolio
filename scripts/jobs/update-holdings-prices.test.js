@@ -97,6 +97,15 @@ test('recomputeValuation: usdKrwRate 지정 시 해외주식 curPrice(USD)를 KR
   assert.ok(r.profitPct > -50 && r.profitPct < 200, `비정상 profitPct: ${r.profitPct}`);
 });
 
+// 2026-08-22 — 외화 현금성 보유(달러 RP 등)의 환율 재평가 패턴. curPrice 자리에
+// 환율 자체를 넘기고(usdKrwRate 옵션은 기본값 1) qty(보유 USD 금액)를 곱한다 —
+// update-holdings-prices.mjs main()의 fxCashFiles 루프가 실제로 이렇게 호출한다.
+test('recomputeValuation: 외화 현금성 보유는 curPrice 자리에 환율을 넘기면 qty(USD)×환율=평가액(KRW)', () => {
+  const r = recomputeValuation({ qty: 651, invest: 928140 }, 1452.30);
+  assert.equal(r.curPrice, 1452.30);
+  assert.equal(r.evalAmount, 651 * 1452.30);
+});
+
 test('recomputeValuation: unitScale 지정 시 1,000좌당 기준가를 좌당으로 환산(한국 펀드 관례)', () => {
   // VIP펀드 실측 케이스: curPrice(1,000좌당 기준가) 1950, qty(보유 좌수) 8202681.
   // unitScale 없이(기본값 1) 계산하면 qty×curPrice가 1,000배 부풀려진 평가금이 된다.

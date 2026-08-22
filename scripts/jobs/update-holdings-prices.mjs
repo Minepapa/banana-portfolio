@@ -128,8 +128,15 @@ export function recomputeValuation(holding, curPrice, { usdKrwRate = 1, unitScal
 }
 
 async function main() {
-  const files = readHoldingFiles().filter(({ parsed }) => !parsed.isCashLike);
-  if (!files.length) { console.log('갱신 대상 보유종목 0건'); return; }
+  const allFiles = readHoldingFiles();
+  const files = allFiles.filter(({ parsed }) => !parsed.isCashLike);
+  // 외화 현금성 보유(예: 위탁-외화 RP) — 주가 조회 대상은 아니지만(isCashLike라 위에서
+  // 제외됨) 환율 재평가는 필요하다(2026-08-22 버그 수정, 오너 지적 — 이 필터 때문에
+  // 애초에 시세갱신 잡 대상에서 통째로 빠져있어 마지막 갱신이 9일째 그대로 정지돼
+  // 있었다). assetClass "달러"인 현금성 보유만 대상 — curPrice 필드에 환율 자체를
+  // 저장하는 관례(qty=보유 USD 금액, curPrice=그 순간 환율).
+  const fxCashFiles = allFiles.filter(({ parsed }) => parsed.isCashLike && parsed.assetClass === '달러');
+  if (!files.length && !fxCashFiles.length) { console.log('갱신 대상 보유종목 0건'); return; }
 
   const krOpen = isKrMarketOpen();
   const usOpen = isUsMarketOpen();
@@ -142,18 +149,22 @@ async function main() {
     kisToken = await getKisToken({ appkey, appsecret });
   }
 
-  // 해외주식 evalAmount를 invest(KRW 저장)와 같은 통화로 맞추는 데 필요한 환율 — US
-  // 보유가 실제로 있고 이번 실행에서 조회를 시도할 때만 가져온다(불필요한 네트워크
-  // 호출 방지). 실패하면 이번 실행의 해외주식은 전부 건너뛴다(잘못된 통화로 계산하는
-  // 것보다 이전 값 유지가 안전 — 추정 안 함).
+  // USD/KRW 환율 — 미국 "주식시장" 개장 여부(usOpen)·KIS 크리덴셜(hasKis)과 무관하게
+  // 필요하면 가져온다(2026-08-22 버그 수정, 오너 지적 — "환율이 실시간 반영 안 되는
+  // 것 같다"). 이 조회(fetchUsdKrwRate, yfinance KRW=X)는 애초에 KIS도 미국
+  // 주식시장 시간도 아닌 FX 시세라 그 둘에 묶일 이유가 없었는데, 원래 hasUsTarget이
+  // `usOpen && hasKis`에 묶여있어 미국 장이 닫혀있는 하루 대부분(한국 낮시간 포함)
+  // 환율 자체를 아예 조회하지 않고 있었다. 이제 "USD로 표시되는 보유(해외주식 또는
+  // 외화 현금성)가 있으면" 항상 시도한다 — 주식시장이 닫혀 새 가격을 못 가져올 때도
+  // 마지막으로 저장된 USD 가격을 최신 환율로 재환산한다(아래 revalue-only 분기).
   let usdKrwRate = null;
-  const hasUsTarget = usOpen && hasKis && files.some((f) => classifyHolding(f.parsed).kind === 'US');
-  if (hasUsTarget) {
+  const hasUsdTarget = files.some((f) => classifyHolding(f.parsed).kind === 'US') || fxCashFiles.length > 0;
+  if (hasUsdTarget) {
     try {
       usdKrwRate = fetchUsdKrwRate();
       console.log(`   💱 USD/KRW ${usdKrwRate.toFixed(2)}`);
     } catch (e) {
-      collectWarning(`USD/KRW 환율 조회 실패 — 해외주식 평가금 갱신 이번엔 스킵: ${e.message}`);
+      collectWarning(`USD/KRW 환율 조회 실패 — 해외주식·외화 보유 평가금 갱신 이번엔 스킵: ${e.message}`);
     }
   }
 
@@ -168,8 +179,20 @@ async function main() {
       continue;
     }
     if (cls.kind === 'KR' && (!krOpen || !hasKis)) { skipped++; continue; }
-    if (cls.kind === 'US' && (!usOpen || !hasKis)) { skipped++; continue; }
     if (cls.kind === 'US' && usdKrwRate == null) { skipped++; continue; }
+
+    // 미국 주식시장이 닫혀있거나(또는 KIS 크리덴셜이 없어) 새 가격을 못 가져올 때도
+    // 환율만은 최신이니, 마지막으로 저장된 USD curPrice에 그 환율을 다시 곱해 KRW
+    // 평가금을 갱신한다 — 가격 자체는 장이 닫혀있으니 그대로 두는 게 맞고(추정 금지),
+    // 환율은 계속 움직이므로 이렇게라도 안 하면 평가금이 계속 뒤처진 값으로 남는다.
+    if (cls.kind === 'US' && (!usOpen || !hasKis)) {
+      if (h.curPrice == null) { skipped++; continue; } // 저장된 가격 자체가 없으면 재평가 불가(추정 안 함)
+      const valuation = recomputeValuation(h, h.curPrice, { usdKrwRate });
+      console.log(`   · ${h.name}(US, 장외 — 환율만 재평가): $${h.curPrice} × ₩${usdKrwRate.toFixed(2)} → 평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원`);
+      if (!DRY_RUN) writeAtomic(f.filepath, updateFrontmatter(f.content, { ...valuation, updatedAt: new Date().toISOString() }));
+      updated++;
+      continue;
+    }
 
     let curPrice = null;
     try {
@@ -201,6 +224,18 @@ async function main() {
     if (!DRY_RUN) writeAtomic(f.filepath, updateFrontmatter(f.content, { ...valuation, updatedAt: new Date().toISOString() }));
     updated++;
     if (cls.kind === 'KR' || cls.kind === 'US') await sleep(STAGGER_MS);
+  }
+
+  // 외화 현금성 보유(달러 RP 등) — KIS 시세조회 대상이 아니라 환율만 다시 곱해 재평가.
+  // curPrice 필드에 환율 자체를 저장하는 관례이므로 recomputeValuation(h, usdKrwRate)로
+  // 호출(usdKrwRate 옵션은 기본값 1 그대로 둬서 curPrice*qty가 곧 평가액이 되게 함).
+  for (const f of fxCashFiles) {
+    const h = f.parsed;
+    if (usdKrwRate == null) { skipped++; continue; }
+    const valuation = recomputeValuation(h, usdKrwRate);
+    console.log(`   · ${h.name}(FX현금): 환율 ${h.curPrice ?? '없음'} → ${usdKrwRate.toFixed(2)} (평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원)`);
+    if (!DRY_RUN) writeAtomic(f.filepath, updateFrontmatter(f.content, { ...valuation, updatedAt: new Date().toISOString() }));
+    updated++;
   }
 
   console.log(
