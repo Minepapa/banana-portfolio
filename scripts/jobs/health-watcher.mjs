@@ -64,6 +64,15 @@ const EXPECTED_INTERVALS_MS = {
   // 1회.
   'reconcile-irp': 24 * 60 * 60 * 1000,
   'update-cash-from-ledger': 24 * 60 * 60 * 1000,
+  // ⚠️ 버그 수정(2026-08-23, 오너 신고 — 리포트는 실제로 발행됐는데 "조용하다" 오알람) —
+  // backup-vault와 완전히 같은 클래스의 재발이다: 이 두 잡을 추가할 때 기본값(1시간)
+  // 이 적용된 채 여기 등록을 안 해서, 정상 실행 후 2시간만 지나면 매번 오탐이 났다.
+  // update-monthly-balance-snapshot은 매일 23:50 KST 1회(com.banana2.update-monthly-
+  // balance-snapshot.plist StartCalendarInterval).
+  'update-monthly-balance-snapshot': 24 * 60 * 60 * 1000,
+  // weekly-report는 매주 일요일 03:00 KST 1회(com.banana2.weekly-report.plist
+  // Weekday:0). 60분 기준이면 실행 직후에도 항상 "조용하다"로 잘못 잡힌다.
+  'weekly-report': 7 * 24 * 60 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 

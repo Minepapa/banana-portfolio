@@ -16,6 +16,8 @@ export const JOB_LABELS = {
   'reconcile-irp': 'IRP 계좌 KIS API 종목·예수금 대사(예수금은 CashEvent로도 기록)',
   'update-cash-from-ledger': '계좌별(위탁·ISA·CMA·금현물·연금저축·IRP) 예수금 실잔고 계산',
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
+  'update-monthly-balance-snapshot': '월별 잔고 스냅샷 매일 자동 기록(대시보드 막대그래프용)',
+  'weekly-report': '주간 리포트 자동 생성·발행(성향학습 파이프라인 동반)',
 };
 
 // 라벨 있으면 "잡이름(한글설명)", 없으면(등록 안 된 새 잡) 이름만 — 조용히 빈 문자열로

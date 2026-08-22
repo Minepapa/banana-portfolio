@@ -84,6 +84,28 @@ test('findStaleJobs: backup-vault가 이틀 넘게(48시간+) 조용하면 진�
   rmSync(dir, { recursive: true, force: true });
 });
 
+// ── update-monthly-balance-snapshot·weekly-report 실제 설정값 회귀 테스트
+// (2026-08-23, 오너 신고 — 리포트는 실제로 발행됐는데 "조용하다" 오알람). backup-vault
+// 때와 같은 클래스: 두 잡을 EXPECTED_INTERVALS_MS에 등록 안 해 기본 1시간이 적용되던
+// 버그. expectedIntervals를 안 넘겨 모듈의 실제 기본 파라미터가 쓰이게 한다.
+test('[막아야 함] findStaleJobs: update-monthly-balance-snapshot은 매일 23:50 1회 잡이라 20시간 조용해도 stale 아님', () => {
+  const dir = makeTmpDir();
+  const now = new Date('2026-08-23T19:00:00.000Z'); // 다음날 낮(KST 04:00)
+  writeFileSync(join(dir, 'update-monthly-balance-snapshot.md'), buildJobHealthRecord({ job: 'update-monthly-balance-snapshot', status: 'OK', now: new Date('2026-08-22T14:50:06.052Z') }).content);
+  const stale = findStaleJobs(dir, { now });
+  assert.deepEqual(stale, []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('[막아야 함] findStaleJobs: weekly-report는 매주 1회 잡이라 며칠 조용해도 stale 아님', () => {
+  const dir = makeTmpDir();
+  const now = new Date('2026-08-26T00:00:00.000Z'); // 발행 3일 후
+  writeFileSync(join(dir, 'weekly-report.md'), buildJobHealthRecord({ job: 'weekly-report', status: 'OK', now: new Date('2026-08-22T18:05:47.649Z') }).content);
+  const stale = findStaleJobs(dir, { now });
+  assert.deepEqual(stale, []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 // ── isPollingStuck (좀비 세션 감지, task #34) ─────────────────────
 test('[막아야 함] isPollingStuck: 미수신 업데이트가 큐에 남아있으면 좀비로 판정', () => {
   assert.equal(isPollingStuck({ pendingUpdateCount: 3 }), true);
