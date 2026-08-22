@@ -27,7 +27,14 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
     eval_desc:   (a, b) => b.eval   - a.eval,
     profit_desc: (a, b) => b.profit - a.profit,
   };
-  const sortedHoldings = [...rawHoldings].sort(SORT_FN[holdSort] || SORT_FN.sheet);
+  // 예수금은 정렬 방식과 무관하게 항상 최상단(오너 지시, 2026-08-22) — 선택된 정렬은
+  // 예수금을 제외한 나머지에만 2차 기준으로 적용.
+  const withCashFirst = (cmp) => (a, b) => {
+    const aCash = a.name === '예수금' ? 1 : 0;
+    const bCash = b.name === '예수금' ? 1 : 0;
+    return aCash !== bCash ? bCash - aCash : cmp(a, b);
+  };
+  const sortedHoldings = [...rawHoldings].sort(withCashFirst(SORT_FN[holdSort] || SORT_FN.sheet));
 
   return (
     <div>
@@ -84,9 +91,8 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
         </div>
       </div>
 
-      {/* 정렬 버튼 */}
+      {/* 정렬 버튼 — "정렬" 라벨 삭제(오너 지시, 2026-08-22): 버튼 자체가 키워드라 라벨 불필요. */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 12, alignItems: 'center' }}>
-        <span style={{ fontSize: 10, color: '#6B675C', flexShrink: 0 }}>정렬</span>
         {[
           { key: 'sheet',       label: '자산군순' },
           { key: 'rate_desc',   label: '수익률↓' },
@@ -120,8 +126,6 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
               <div style={{
                 padding: isMobile ? "10px 16px" : "12px 16px",
                 display: "flex", alignItems: "center", gap: 8,
-                // 현금성 보유(예수금 등)는 배경색으로 종목 보유와 구분(오너 지시, 2026-08-22).
-                background: h.isCashLike ? '#EAE6DA' : 'transparent',
               }}>
                 {typeName && (
                   <div style={{ fontSize: 10, background: (COLORS[typeName] || '#aaa') + '33', color: COLORS[typeName] || '#aaa', padding: '2px 6px', borderRadius: 0, flexShrink: 0, whiteSpace: 'nowrap' }}>

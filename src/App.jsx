@@ -69,11 +69,14 @@ export default function App() {
     mirrors.home?.updatedAt ? `${relTime(mirrors.home.updatedAt)} 갱신` :
     '';
 
-  const sheetBtnStyle = {
-    padding: "5px 10px", minHeight: 32, borderRadius: 0,
-    border: "1px solid #141414", background: CARD_BG, boxShadow: "none",
-    color: INK, cursor: "pointer", fontWeight: 700,
-    fontSize: 11, fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
+  // 왼쪽 BANANA 배지와 높이를 맞추기 위한 버튼 스타일(2026-08-22 오너 지시) — 배지와
+  // 동일하게 fontSize 9·padding "2px 6px"·fontWeight 800·letterSpacing 없음으로
+  // 통일. 헤더 타이틀 줄의 숨기기·로그인/로그아웃 버튼이 전부 이걸 쓴다.
+  const badgeHeightBtn = {
+    padding: "2px 6px", borderRadius: 0,
+    border: "1px solid #141414", background: PAPER,
+    color: INK, cursor: "pointer", fontWeight: 800, lineHeight: 1.4,
+    fontSize: 9, fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
   };
 
   const baseFont = "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif";
@@ -90,21 +93,48 @@ export default function App() {
         padding: isMobile ? "14px 16px 12px" : "20px 24px 16px",
         position: "sticky", top: 0, zIndex: 100,
       }}>
-        {/* 타이틀 줄 — 배지·숨기기 토글·제안대기 배지(금액과 분리된 자기 줄, 2026-08-22
-            재정렬 — 전엔 총잔고 숫자 위에 얹혀있어 좌우 블록 구조가 안 맞았음). */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-          <div style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: isMobile ? 1 : 2, color: INK, background: ACCENT, padding: "2px 6px" }}>
-            BANANA · 은퇴 준비 포트폴리오
-          </div>
-          <button onClick={toggleHideAmounts} aria-label={hideAmounts ? "금액 표시" : "금액 숨기기"} title={hideAmounts ? "금액 표시" : "금액 숨기기"}
-            style={{ flexShrink: 0, border: "1px solid #141414", borderRadius: 0, background: hideAmounts ? ACCENT : PAPER, color: INK, cursor: "pointer", fontSize: 11, lineHeight: 1, padding: "3px 6px" }}>
-            {hideAmounts ? "🙈" : "👁"}
-          </button>
-          {pendingProposalCount > 0 && (
-            <div title="텔레그램에서 승인/거부 대기 중인 제안" style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: 1, color: "#fff", background: "#E0A000", padding: "2px 6px" }}>
-              제안 대기 {pendingProposalCount}건
+        {/* 타이틀 줄 — 왼쪽: 배지·제안대기 배지 / 오른쪽: 숨기기 토글·로그인·로그아웃
+            (2026-08-22 오너 지시 — 로그아웃·숨기기 버튼을 평가손익 위 이 줄로 올리고,
+            왼쪽 BANANA 배지와 높이를 맞춤: fontSize 9·padding "2px 6px"·fontWeight 800로
+            통일해 badgeHeightBtn 하나로 관리). */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: 'wrap' }}>
+            <div style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: isMobile ? 1 : 2, color: INK, background: ACCENT, padding: "2px 6px" }}>
+              BANANA · 은퇴 준비 포트폴리오
             </div>
-          )}
+            {pendingProposalCount > 0 && (
+              <div title="텔레그램에서 승인/거부 대기 중인 제안" style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: 1, color: "#fff", background: "#E0A000", padding: "2px 6px" }}>
+                제안 대기 {pendingProposalCount}건
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
+            {auth === 'loading' && (
+              <span style={{ fontSize: 9, color: INK_2 }}>Google 초기화 중...</span>
+            )}
+            {auth === 'signed-in' && (
+              <span style={{ fontSize: 9, fontWeight: 700, color: sync === 'error' ? "#E5484D" : INK_2, whiteSpace: 'nowrap' }}>
+                {syncLabel}
+              </span>
+            )}
+            <button onClick={toggleHideAmounts} aria-label={hideAmounts ? "금액 표시" : "금액 숨기기"} title={hideAmounts ? "금액 표시" : "금액 숨기기"}
+              style={{ ...badgeHeightBtn, background: hideAmounts ? ACCENT : PAPER }}>
+              {hideAmounts ? "🙈" : "👀"}
+            </button>
+            {auth === 'signed-out' && (
+              <button onClick={signIn} aria-label="Google 계정으로 로그인" style={{ ...badgeHeightBtn, background: ACCENT }}>
+                로그인
+              </button>
+            )}
+            {auth === 'signed-in' && (
+              <button onClick={signOut} aria-label="로그아웃" style={{ ...badgeHeightBtn, color: "#E5484D" }}>
+                로그아웃
+              </button>
+            )}
+            {auth === 'error' && (
+              <span style={{ fontSize: 9, fontWeight: 700, color: "#E5484D" }}>Google 연결 오류</span>
+            )}
+          </div>
         </div>
 
         {/* 총잔고 | 평가손익 — 둘 다 라벨+금액 2단 구조로 맞춰서 alignItems: center로
@@ -123,32 +153,6 @@ export default function App() {
               {hideAmounts ? "••••••" : <>{totalProfit > 0 ? '▲ ' : totalProfit < 0 ? '▼ ' : ''}₩{fmt(Math.abs(totalProfit))}</>}
             </div>
           </div>
-        </div>
-
-        {/* 구글 로그인(Firestore mirror 구독용) */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-          {auth === 'loading' && (
-            <span style={{ fontSize: 10, color: INK_2 }}>Google 초기화 중...</span>
-          )}
-          {auth === 'signed-out' && (
-            <button onClick={signIn} aria-label="Google 계정으로 로그인"
-              style={{ ...sheetBtnStyle, background: ACCENT, color: INK }}>
-              로그인
-            </button>
-          )}
-          {auth === 'signed-in' && (
-            <>
-              <span style={{ fontSize: 10, fontWeight: 700, color: sync === 'error' ? "#E5484D" : INK_2 }}>
-                {syncLabel}
-              </span>
-              <button onClick={signOut} aria-label="로그아웃" style={{ ...sheetBtnStyle, color: "#E5484D" }}>
-                로그아웃
-              </button>
-            </>
-          )}
-          {auth === 'error' && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: "#E5484D" }}>Google 연결 오류</span>
-          )}
         </div>
 
         {/* 탭 */}

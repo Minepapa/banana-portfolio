@@ -135,7 +135,8 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
         })}
       </div>
 
-      {/* 리밸런싱 필요 */}
+      {/* 리밸런싱 필요 — 강조 배경은 진하지 않게(투명도 낮춤)+파랑/빨강 좌측강조선
+          없앰(오너 지시, 2026-08-22, ExecutionsTab과 동일 원칙: 색은 최소한으로). */}
       <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px" }}>
         <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 12 }}>리밸런싱 필요</div>
         {acct.assets.map((a) => {
@@ -146,8 +147,7 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
             <div key={a.name} style={{
               display: 'flex', alignItems: 'center', padding: '10px 12px',
               borderRadius: 0, marginBottom: 4,
-              background: highlight ? '#EAE6DA' : 'transparent',
-              borderLeft: highlight ? `3px solid ${amt > 0 ? PROFIT_POS : PROFIT_NEG}` : '3px solid transparent',
+              background: highlight ? '#EAE6DA66' : 'transparent',
             }}>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ width: 8, height: 8, borderRadius: 0, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />

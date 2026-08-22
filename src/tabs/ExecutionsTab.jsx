@@ -18,9 +18,9 @@ export default function ExecutionsTab({ trades, isMobile, fmt }) {
         )}
         {trades.map((t, i) => {
           const isBuy = String(t.side ?? '').includes('매수');
-          // 매수=파랑(PROFIT_NEG)·매도=빨강(PROFIT_POS) — 카드 배경·글자색 전체를
-          // 구분(오너 지시, 2026-08-22). 이 앱의 기존 색 관례(이익=빨강·손실=파랑)를
-          // 그대로 재사용 — 매수·매도 전용 새 색을 추가하지 않는다.
+          // 매수=파랑(PROFIT_NEG)·매도=빨강(PROFIT_POS) — [매수/매도] 배지 색으로만
+          // 구분한다(오너 지시, 2026-08-22 — 카드 전체 배경·좌측 강조선·금액 글자색은
+          // 다시 뺌, 배지 하나만 색이 있으면 충분하다는 판단).
           const sideColor = isBuy ? PROFIT_NEG : PROFIT_POS;
           const isUsDollar = t.assetClass === '해외주식' && t.account === '위탁';
           const currencySymbol = isUsDollar ? '$' : '₩';
@@ -28,8 +28,6 @@ export default function ExecutionsTab({ trades, isMobile, fmt }) {
             <div key={i} style={{
               padding: isMobile ? "10px 16px" : "12px 16px",
               borderBottom: i < trades.length - 1 ? '1px solid #EAE6DA' : 'none',
-              borderLeft: `3px solid ${sideColor}`,
-              background: `${sideColor}11`,
               display: 'flex', alignItems: 'center', gap: 12,
             }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -51,7 +49,7 @@ export default function ExecutionsTab({ trades, isMobile, fmt }) {
                   {t.qty > 0 ? `${t.qty}주` : ''}{t.qty > 0 && t.price > 0 ? ' · ' : ''}{t.price > 0 ? `${currencySymbol}${t.price.toLocaleString()}` : ''}
                 </div>
               </div>
-              <div style={{ textAlign: 'right', flexShrink: 0, fontSize: 12, color: sideColor, fontFamily: MONO, fontWeight: 700 }}>
+              <div style={{ textAlign: 'right', flexShrink: 0, fontSize: 12, color: '#141414', fontFamily: MONO }}>
                 {t.amount ? `${currencySymbol}${fmt(t.amount)}` : ''}
               </div>
             </div>
