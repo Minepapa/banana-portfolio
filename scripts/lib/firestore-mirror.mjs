@@ -102,11 +102,12 @@ export function buildLatestReportMirror({ report = null, now = new Date() }) {
   return { updatedAt: now.toISOString(), ...report };
 }
 
-// monthlyBalances: Facts/Ledger/MonthlyBalances 파싱 결과({ year, month, ym, total, ... },
-// 2026-08-21 v1 "월별잔고" 시트 1회성 이관 — migrate-monthly-balance.mjs 참고). 다른
-// 이벤트로그류(withinLastYear로 최근 1년만 남김)와 달리 여기는 "시작부터 지금까지"
-// 전체 이력을 그래프로 보여주는 게 목적이라 기간 필터를 두지 않는다 — 데이터 자체가
-// 계속 자라지 않는 얼린 이력(17개월 안팎)이라 굳이 자를 이유도 없다.
+// monthlyBalances: Facts/Ledger/MonthlyBalances 파싱 결과({ year, month, ym, total, ... }
+// — 과거분은 migrate-monthly-balance.mjs 1회성 이관, 이번 달분은 2026-08-22부터
+// update-monthly-balance-snapshot.mjs가 매일 갱신). 다른 이벤트로그류(withinLastYear로
+// 최근 1년만 남김)와 달리 여기는 "시작부터 지금까지" 전체 이력을 그래프로 보여주는 게
+// 목적이라 기간 필터를 두지 않는다 — 매달 1건씩만 늘어나 규모가 작아 굳이 자를
+// 이유가 없다(수백~수천 건 단위로 자라는 배당·체결과 다름).
 export function buildMonthlyBalancesMirror({ monthlyBalances = [], now = new Date() }) {
   const items = monthlyBalances
     .filter((m) => Number.isFinite(m.ym) && Number.isFinite(m.total))

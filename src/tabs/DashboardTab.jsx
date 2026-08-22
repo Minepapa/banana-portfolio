@@ -2,25 +2,24 @@
 // (2026-08-13): 읽기 전용(Firestore mirror는 쓰기 API가 없음 — useFirestoreMirror.js
 // 참고), 편집 기능 전부 제거. 월별 잔고 추이 차트는 당시 v1 "월별잔고" 시트 전용이라
 // 미러 문서에 대응 값이 없어 뺐었는데(가짜 데이터로 대체하지 않는다는 원칙), 2026-08-21
-// v1→v2 전수감사에서 그 시트를 mirror/monthlyBalances로 1회성 이관(migrate-monthly-
-// balance.mjs)하며 되살렸다 — 일별 스냅샷 신규 잡은 만들지 않기로 확정했으므로
-// (daily-snapshot.mjs는 CLEANUP) 이 막대그래프는 v1이 손으로 채워온 이력까지만
-// 보여주고 이후로는 자동으로 늘어나지 않는다.
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+// v1→v2 전수감사에서 그 시트를 mirror/monthlyBalances로 1회성 이관하며 되살렸다.
+// 2026-08-22 오너 확정으로 한 번 더 바뀜 — v1 시트는 더 이상 안 쓰고,
+// update-monthly-balance-snapshot.mjs(매일 23:50 KST)가 State/Holdings 합산 총자산을
+// 이번 달 파일에 매일 덮어쓴다(달이 바뀌면 지난달 파일은 더 이상 안 건드려져 그
+// 마지막 값이 자연히 그 달 확정치가 됨). 차트 스타일은 DividendTab/ProfitTab과
+// 동일하게 맞춤(오너 지시) — 연도 필터·클릭 하이라이트 포함.
+import { useState } from 'react';
+import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { profitColor, CHART_BAR_COLOR } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
-
-// 억/만 단위 축약 — 도넛 중앙 라벨(₩{fmt(_te)} 옆 evalAmt)과 동일한 표기 관례.
-function compactWon(n) {
-  if (n == null) return '—';
-  const abs = Math.abs(n);
-  if (abs >= 100000000) return `${(n / 100000000).toFixed(1)}억`;
-  return `${Math.round(n / 10000).toLocaleString('ko-KR')}만`;
-}
 
 export default function DashboardTab({
   totalInvest, totalEval, totalProfit, accounts, fmt, isMobile, setAcctKey, setTab, monthlyBalances = [],
 }) {
+  const [balYear, setBalYear] = useState('전체');
+  const [selectedBalKey, setSelectedBalKey] = useState(null);
+  const balYears = ['전체', ...[...new Set(monthlyBalances.map(m => String(m.year)))].sort()];
+  const filteredBalances = balYear === '전체' ? monthlyBalances : monthlyBalances.filter(m => String(m.year) === balYear);
   return (
     <div>
       {/* 요약 카드 3개 */}
@@ -149,29 +148,51 @@ export default function DashboardTab({
         );
       })()}
 
-      {/* 월별 잔고 추이 막대그래프 — v1 "월별잔고" 시트 1회성 이관(mirror/monthlyBalances) */}
+      {/* 월별 잔고 추이 — DividendTab/ProfitTab과 동일한 차트 스타일(오너 지시, 2026-08-22) */}
       {monthlyBalances.length > 0 && (
-        <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: '#141414', marginBottom: 4 }}>
-            월별 잔고 추이
+        <>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+            {balYears.map(y => (
+              <button key={y} onClick={() => { setBalYear(y); setSelectedBalKey(null); }} style={{
+                padding: isMobile ? "8px 14px" : "6px 14px",
+                borderRadius: 0,
+                border: '1px solid #141414',
+                background: balYear === y ? '#E4F5A0' : 'transparent',
+                color: balYear === y ? '#141414' : '#6B675C',
+                cursor: 'pointer', fontSize: 11,
+              }}>{y}</button>
+            ))}
           </div>
-          <div style={{ fontSize: 9, color: '#6B675C', marginBottom: 10 }}>
-            {monthlyBalances[0].label} ~ {monthlyBalances[monthlyBalances.length - 1].label}
+          <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px", marginBottom: 16 }}>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 16 }}>월별 잔고 추이</div>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart
+                data={filteredBalances}
+                barSize={isMobile ? 10 : 16}
+                accessibilityLayer={false}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#141414" />
+                <XAxis dataKey="label" tick={{ fill: "#6B675C", fontSize: 9 }} />
+                <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: "#6B675C", fontSize: 9 }} width={55} />
+                <Tooltip
+                  formatter={v => [`₩${v.toLocaleString()}`, '총잔고']}
+                  contentStyle={{ background: "#EAE6DA", border: "1px solid #141414", borderRadius: 0, fontSize: 11 }}
+                  labelStyle={{ color: '#141414' }}
+                  itemStyle={{ color: '#141414' }}
+                />
+                <Bar dataKey="total" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} cursor="pointer" activeBar={false}
+                  onClick={(data) => {
+                    setSelectedBalKey(prev => prev === data.label ? null : data.label);
+                  }}>
+                  {filteredBalances.map((m, i) => {
+                    const dim = selectedBalKey && m.label !== selectedBalKey;
+                    return <Cell key={i} fill={CHART_BAR_COLOR} fillOpacity={dim ? 0.3 : 1} />;
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
-          <ResponsiveContainer width="100%" height={isMobile ? 160 : 200}>
-            <BarChart data={monthlyBalances} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-              <CartesianGrid vertical={false} stroke="#EAE6DA" />
-              <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#6B675C' }} axisLine={{ stroke: '#141414' }} tickLine={false} />
-              <YAxis tick={{ fontSize: 9, fill: '#6B675C' }} axisLine={false} tickLine={false} tickFormatter={compactWon} width={40} />
-              <Tooltip
-                formatter={(value) => [`₩${fmt(value)}`, '총잔고']}
-                labelFormatter={(label) => `${label}`}
-                contentStyle={{ border: '1px solid #141414', borderRadius: 0, fontSize: 11 }}
-              />
-              <Bar dataKey="total" fill={CHART_BAR_COLOR} stroke="#141414" strokeWidth={1} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        </>
       )}
     </div>
   );

@@ -74,8 +74,8 @@ export function collectMirrorInput({ now = new Date() } = {}) {
   const holdings = readVaultRecords(VAULT_PATHS.state.holdings);
   const accounts = readVaultRecords(VAULT_PATHS.state.allocation);
   const report = readLatestReport();
-  // 2026-08-21 추가 — v1 "월별잔고" 시트 1회성 이관본(migrate-monthly-balance.mjs).
-  // 계속 자라는 이벤트로그가 아니라 얼린 이력이라 다른 것들과 달리 갱신 잡이 따로 없다.
+  // 2026-08-21 추가(과거분은 migrate-monthly-balance.mjs 1회성 이관) — 2026-08-22부터
+  // update-monthly-balance-snapshot.mjs가 이번 달분을 매일 갱신.
   const monthlyBalances = readVaultRecords(VAULT_PATHS.facts.ledger.monthlyBalances);
   return { executionEvents, dividendEvents, profitEvents, pendingProposalCount, holdings, accounts, report, monthlyBalances, now };
 }

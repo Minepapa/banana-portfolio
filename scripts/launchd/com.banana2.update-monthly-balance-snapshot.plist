@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.update-monthly-balance-snapshot</string>
+  <!-- 매일 23:50 KST(2026-08-22 신설, 오너 확정 — v1 "월별잔고" 시트 더 이상 안 씀).
+       요일 제한 없음(주말에도 배당·수동갱신 등으로 잔고가 바뀔 수 있음) — 그날의
+       "최종" 총자산을 이번 달 Facts/Ledger/MonthlyBalances/{연}-{월}.md에 덮어쓴다
+       (스크립트 헤더 주석 참고 — 달이 바뀌면 지난달 파일은 자연히 더 이상 안
+       건드려져 그 마지막 값이 확정치가 된다, 별도 "월말 스냅" 로직 불필요).
+       23:50으로 늦게 잡은 이유: 그날 국내·해외 정규장(~05:00 KST)이 아직 안
+       끝났을 수 있지만, update-holdings-prices(30분 주기)가 이미 그날 대부분의
+       갱신을 반영했을 시점이라 "그날의 대략적 종가 기준" 값을 얻기에 충분하고,
+       04:00 텔레그램 세션 재시작·다른 새벽 잡들과도 안 겹친다. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>23</integer>
+    <key>Minute</key>
+    <integer>50</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>update-monthly-balance-snapshot</string>
+  </array>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-monthly-balance-snapshot.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-monthly-balance-snapshot.log</string>
+</dict>
+</plist>
