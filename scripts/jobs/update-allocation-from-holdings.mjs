@@ -25,7 +25,11 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // 금현물은 2026-08-21 추가 — CMA와 동일 패턴(대시보드에 계좌 블록이 아예 없어 보유가
 // 안 보이던 것 발견·수정). 위탁·연금저축과 같은 합산 풀 숫자를 그대로 받는다
 // (allocation-snapshot.mjs computeAccountAllocationSnapshot 참고).
-const ACCOUNTS = ['위탁', '연금저축', '금현물', 'ISA', 'IRP'];
+// ⚠️ CMA 자신은 그 "동일 패턴"이라던 비교 대상인데 정작 이 목록엔 빠져있었다
+// (2026-08-22 오너 지적 — CMA 목표비중이 항상 0%로 나옴). allocation-snapshot.mjs의
+// SINGLE_ASSET_ACCOUNTS엔 같은 날 추가했지만, 그걸 실제로 호출해 State/Allocation에
+// 쓰는 이 잡의 목록엔 반영이 안 돼있었던 것 — 두 군데 다 고쳐야 실제로 반영된다.
+const ACCOUNTS = ['위탁', '연금저축', '금현물', 'ISA', 'IRP', 'CMA'];
 
 function readHoldings() {
   const dir = VAULT_PATHS.state.holdings;

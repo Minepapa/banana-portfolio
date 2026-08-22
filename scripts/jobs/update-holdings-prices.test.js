@@ -73,6 +73,16 @@ test('classifyHolding: ticker가 6자리가 아니면(빈 문자열 등) 기존�
   assert.deepEqual(r, { kind: 'KR', code: '005930' });
 });
 
+// 2026-08-22 — 개별채권(구조적으로 시세 소스가 없는 보유) 대응. resolveKr/resolveUs가
+// 호출되면 즉시 실패하도록 넘겨서 "이름매칭을 아예 안 타고 먼저 걸러진다"를 검증.
+test('classifyHolding: 개별채권(삼척블루파워12)은 이름매칭 없이 바로 NO_PRICE_SOURCE(collectWarning 안 타는 별도 종류)', () => {
+  const r = classifyHolding({ name: '삼척블루파워12', account: '위탁' }, {
+    resolveKr: () => { throw new Error('resolveKr이 호출되면 안 됨'); },
+    resolveUs: () => { throw new Error('resolveUs가 호출되면 안 됨'); },
+  });
+  assert.deepEqual(r, { kind: 'NO_PRICE_SOURCE' });
+});
+
 test('recomputeValuation: 정상 — evalAmount·profitAmount·profitPct 재계산', () => {
   const r = recomputeValuation({ qty: 27, invest: 5628771 }, 210000);
   assert.equal(r.curPrice, 210000);

@@ -96,8 +96,18 @@ test('computeAccountAllocationSnapshot: IRP는 TDF 단일자산, 목표 100%', (
   assert.equal(rows[0].currentPct, 100);
 });
 
-test('computeAccountAllocationSnapshot: 알 수 없는 계좌는 빈 배열(추정 안 함) — CMA는 예금이라 배분 대상 밖', () => {
-  assert.deepEqual(computeAccountAllocationSnapshot([], 'CMA'), []);
+// 2026-08-22 버그 수정(오너 지적) — CMA가 SINGLE_ASSET_ACCOUNTS에 없어서 목표비중이
+// 항상 0%로 나오고 있었다. CMA도 ISA·IRP와 동일하게 단일자산(현금) 목표 100%.
+test('computeAccountAllocationSnapshot: CMA는 현금 단일자산, 목표 100%(2026-08-22 이전엔 누락돼 0%로 나오던 버그)', () => {
+  const holdings = [{ account: 'CMA', assetClass: '현금', evalAmount: 700 }];
+  const rows = computeAccountAllocationSnapshot(holdings, 'CMA');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].assetName, '현금');
+  assert.equal(rows[0].targetPct, 100);
+  assert.equal(rows[0].currentPct, 100);
+});
+
+test('computeAccountAllocationSnapshot: 정말 알 수 없는 계좌(퀀트 등)는 빈 배열(추정 안 함)', () => {
   assert.deepEqual(computeAccountAllocationSnapshot([], '퀀트'), []);
 });
 

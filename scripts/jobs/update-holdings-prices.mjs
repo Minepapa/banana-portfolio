@@ -58,6 +58,16 @@ import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 // 경로를 타지 않게).
 const VIP_FUND_NAME = 'VIP한국형가치투자증권자투자신탁(주식)-C-Pe';
 
+// 개별채권(회사채 등) — KRX 상장주식·ETF가 아니라 애초에 KIS/DART 종목코드가 없어
+// classifyHolding이 구조적으로 절대 못 푼다(오탐이 아니라 이 시장 자체의 한계).
+// 2026-08-22 오너 지적 — 삼척블루파워12(매달 고정쿠폰 118,985원 개별채권)가 매 실행마다
+// "매핑없음"으로 collectWarning을 타 텔레그램에 계속 알람이 갔다(job-alerts.mjs의 24h
+// 억제는 그 실행에서 나온 경고 "세트" 전체를 해시해서, 다른 경고가 같이 섞이면 매번
+// 새 시그니처가 돼 억제가 깨짐 — 근본적으로 "언젠가 풀릴 수도 있는 실패"가 아니라
+// "구조적으로 영원히 안 풀리는 것"을 매번 경고로 취급한 게 잘못). 이런 종목은 아예
+// NO_PRICE_SOURCE로 분류해 조용히 건너뛴다(콘솔 로그만 남기고 collectWarning 안 함).
+const NO_PRICE_SOURCE_NAMES = new Set(['삼척블루파워12']);
+
 loadEnv(); // KRX_API_KEY(금현물 조회용) — DART_API_KEY와 동일 관례
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -88,6 +98,7 @@ export function classifyHolding(holding, { resolveKr = krStockCode, resolveUs = 
   // 관리하다 보니 DART/KIS 종목마스터의 정식 명칭과 이름이 안 맞아 resolveKr(name)이
   // 항상 null로 떨어짐). 이런 경우까지 이름매칭에만 의존하면 시세가 영원히 안 갱신된다.
   if (/^\d{6}$/.test(holding.ticker ?? '')) return { kind: 'KR', code: holding.ticker };
+  if (NO_PRICE_SOURCE_NAMES.has(holding.name)) return { kind: 'NO_PRICE_SOURCE' };
   const krCode = resolveKr(holding.name);
   if (krCode) return { kind: 'KR', code: krCode };
   const ticker = resolveUs(holding.name);
@@ -168,11 +179,19 @@ async function main() {
     }
   }
 
-  let updated = 0, skipped = 0, failed = 0, unmapped = 0;
+  let updated = 0, skipped = 0, failed = 0, unmapped = 0, noPriceSource = 0;
   for (const f of files) {
     const h = f.parsed;
     const cls = classifyHolding(h);
 
+    // 구조적으로 영원히 시세를 못 가져오는 보유(개별채권 등) — collectWarning을 안 타서
+    // 텔레그램 알람이 안 간다. unmapped(언젠가 매핑을 추가하면 풀릴 수도 있는 진짜 갭)와
+    // 의미가 다르다 — 여기 걸린 건 "그럴 수도 있는" 게 아니라 "절대 안 풀리는" 것.
+    if (cls.kind === 'NO_PRICE_SOURCE') {
+      console.log(`   · ${h.name}: 시세 소스 없음(개별채권 등, 정상 — 알람 안 보냄)`);
+      noPriceSource++;
+      continue;
+    }
     if (cls.kind === 'unmapped') {
       collectWarning(`시세 갱신 제외: ${h.name} — ${cls.reason}`);
       unmapped++;
@@ -239,7 +258,7 @@ async function main() {
   }
 
   console.log(
-    `\n✅ 시세 갱신 ${updated}건 · 장외/크리덴셜없음 스킵 ${skipped}건 · 조회실패 ${failed}건 · 매핑없음 ${unmapped}건`
+    `\n✅ 시세 갱신 ${updated}건 · 장외/크리덴셜없음 스킵 ${skipped}건 · 조회실패 ${failed}건 · 매핑없음 ${unmapped}건 · 시세소스없음(정상) ${noPriceSource}건`
     + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
   await flushWarnings('update-holdings-prices');

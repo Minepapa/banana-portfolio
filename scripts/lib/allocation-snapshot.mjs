@@ -30,7 +30,10 @@ const POOLED_ACCOUNTS = new Set(['위탁', '연금저축']);
 // ACCOUNT_ALIASES가 바뀌었을 때 여기가 조용히 잘못된 의미로 흘러갈 수 있다.
 const POOLED_QUERY_KEYS = new Set(['위탁', '연금저축', '금현물']);
 // 단일자산 계좌 — 목표 100%(그 자산군 하나만 있어야 정상), 실제 드리프트가 있으면 정직하게 반영.
-const SINGLE_ASSET_ACCOUNTS = { ISA: '배당주', IRP: 'TDF' };
+// ⚠️ CMA 누락 버그(2026-08-22 오너 지적) — CMA는 애초에 이 목록에 없어서 목표비중이
+// 항상 0%로 나오고 있었다(위 SINGLE_ASSET_ACCOUNTS[account] 조회가 undefined→falsy라
+// 아래 풀링 분기로 새서 CMA 자신은 POOLED_ACCOUNTS에도 없어 결국 아무 목표도 못 얻음).
+const SINGLE_ASSET_ACCOUNTS = { ISA: '배당주', IRP: 'TDF', CMA: '현금' };
 
 const round1 = (n) => Math.round(n * 10) / 10;
 
