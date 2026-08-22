@@ -98,7 +98,7 @@ export default function App() {
               )}
             </div>
             <div style={{ fontSize: isMobile ? 22 : 27, fontWeight: 800, letterSpacing: -0.5, color: INK, fontFamily: MONO }}>
-              {hideAmounts ? "₩••••••" : `₩${totalEval.toLocaleString()}`}
+              {hideAmounts ? "₩••••••" : `₩${fmt(totalEval)}`}
             </div>
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>

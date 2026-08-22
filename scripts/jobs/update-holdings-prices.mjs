@@ -82,6 +82,12 @@ function readHoldingFiles() {
 // 보유 하나를 어느 시세 소스로 조회할지 판정. resolveKr/resolveUs/resolveUsExcd
 // 주입 가능(테스트에서 네트워크·캐시 파일 없이 순수 검증). 순수함수 — 테스트 가능.
 export function classifyHolding(holding, { resolveKr = krStockCode, resolveUs = usTicker, resolveUsExcd = usExchange } = {}) {
+  // ticker가 이미 채워져 있고 KR 6자리 코드 형태면 이름 조회를 건너뛴다(2026-08-22) —
+  // 자동 파이프라인 밖에서 수동 등록한 보유(예: "삼성전자(자사주)" — 자사주 계좌는
+  // Kakao·KIS 파이프라인에 안 잡혀 수동 기록, 종목명을 원본과 다르게 붙여 별도
+  // 관리하다 보니 DART/KIS 종목마스터의 정식 명칭과 이름이 안 맞아 resolveKr(name)이
+  // 항상 null로 떨어짐). 이런 경우까지 이름매칭에만 의존하면 시세가 영원히 안 갱신된다.
+  if (/^\d{6}$/.test(holding.ticker ?? '')) return { kind: 'KR', code: holding.ticker };
   const krCode = resolveKr(holding.name);
   if (krCode) return { kind: 'KR', code: krCode };
   const ticker = resolveUs(holding.name);

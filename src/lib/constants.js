@@ -217,13 +217,11 @@ export const SAMPLE_EVALUATION = {
 };
 
 // ── 기본 데이터 ───────────────────────────────────────────────────────────────
+// 계좌 순서·표기 통일(2026-08-22 오너 확정): 위탁·연금저축·금·ISA·IRP·CMA. 객체 key
+// 순서 = 화면 표시 순서(accountsFromMirror가 Object.entries(DEFAULT_ACCOUNTS)를 그
+// 순서 그대로 순회해 만들고, HoldingsTab·RebalanceTab도 그 결과 객체를
+// Object.entries/keys로 그대로 순회 — 여기 순서만 바꾸면 화면 전체에 자동 반영).
 export const DEFAULT_ACCOUNTS = {
-  ISA: {
-    label: "ISA", sub: "NH · 배당포트",
-    total_invest: 0, total_eval: 0, profit: 0, color: "#F4845F",
-    assets: [{ name: "배당주", ratio: 0, invest: 0, eval: 0, target: 0 }],
-    holdings: [],
-  },
   위탁: {
     label: "위탁", sub: "NH · 수비형포트",
     total_invest: 0, total_eval: 0, profit: 0, color: "#52C8D4",
@@ -252,29 +250,18 @@ export const DEFAULT_ACCOUNTS = {
     ],
     holdings: [],
   },
-  IRP: {
-    label: "IRP", sub: "한투 · TDF",
-    total_invest: 0, total_eval: 0, profit: 0, color: "#A8D672",
-    assets: [{ name: "TDF", ratio: 0, invest: 0, eval: 0, target: 0 }],
-    holdings: [],
-  },
-  // 2026-08-21 추가 — 이 계좌가 목록에 없어서 계좌 카드·자산분배 탭에서 완전히
-  // 안 보이고 있었다(홈 화면 총계엔 이미 포함돼 있었음 — accountsFromMirror가
-  // mirror.holdings.items를 이 목록으로만 순회해서 여기 없는 계좌는 그냥 버려짐).
-  CMA: {
-    label: "CMA", sub: "NH · 현금성",
-    total_invest: 0, total_eval: 0, profit: 0, color: "#8C8577",
-    assets: [{ name: "현금", ratio: 0, invest: 0, eval: 0, target: 0 }],
-    holdings: [],
-  },
   // 2026-08-21 추가 — CMA와 동일 사유로 누락돼 있었다(금 99.99K 실물이 State/Holdings엔
   // account: "금현물"로 정확히 기록되는데, 이 목록에 키가 없어 어느 계좌 카드에도 안
   // 뜨고 있었음). 자산분배(목표비중) 계산상으로는 위탁에 합산되지만(rebalance-gap.mjs
   // normalizeAccount), 실제 매매·보유는 별도 NH 계좌(209-02-92***6)라 자기 자신의 계좌
   // 블록이 따로 있어야 한다(ARCHITECTURE-V2.md 금현물 각주). assets 목록은 위탁·연금저축과
   // 동일 7종 — 이 계좌도 같은 합산 풀(위탁+연금저축+금현물)의 목표비중을 보여준다.
+  // ⚠️ 객체 key는 "금현물"로 유지(Vault State/Holdings의 account 필드·
+  // rebalance-gap.mjs normalizeAccount·isa-exposure.mjs 등 내부 매칭 로직이 전부 이
+  // 문자열을 그대로 쓴다 — key까지 바꾸면 그 전부를 같이 고쳐야 해서 리스크만 커짐).
+  // 화면 표기만 오너 확정대로 "금"으로 통일(2026-08-22, label만 변경).
   금현물: {
-    label: "금현물", sub: "NH · 실물자산",
+    label: "금", sub: "NH · 실물자산",
     // 색상 주의: 처음엔 골드 계열(#D4A94A)을 골랐으나 이 계좌가 "금"을 담는다는 이유로
     // 화면에서 자산군 금 색상(colors.js COLORS.금 #F5C842)·SIGNAL_AMBER(#E0A000)·
     // Apollo(#B8862F)와 같은 색 군집에 바로 붙어 보여 육안 혼동 위험(코드리뷰 지적) —
@@ -290,6 +277,27 @@ export const DEFAULT_ACCOUNTS = {
       { name: "국내주식", ratio: 0, invest: 0, eval: 0, target: 0 },
       { name: "해외주식", ratio: 0, invest: 0, eval: 0, target: 0 },
     ],
+    holdings: [],
+  },
+  ISA: {
+    label: "ISA", sub: "NH · 배당포트",
+    total_invest: 0, total_eval: 0, profit: 0, color: "#F4845F",
+    assets: [{ name: "배당주", ratio: 0, invest: 0, eval: 0, target: 0 }],
+    holdings: [],
+  },
+  IRP: {
+    label: "IRP", sub: "한투 · TDF",
+    total_invest: 0, total_eval: 0, profit: 0, color: "#A8D672",
+    assets: [{ name: "TDF", ratio: 0, invest: 0, eval: 0, target: 0 }],
+    holdings: [],
+  },
+  // 2026-08-21 추가 — 이 계좌가 목록에 없어서 계좌 카드·자산분배 탭에서 완전히
+  // 안 보이고 있었다(홈 화면 총계엔 이미 포함돼 있었음 — accountsFromMirror가
+  // mirror.holdings.items를 이 목록으로만 순회해서 여기 없는 계좌는 그냥 버려짐).
+  CMA: {
+    label: "CMA", sub: "NH · 현금성",
+    total_invest: 0, total_eval: 0, profit: 0, color: "#8C8577",
+    assets: [{ name: "현금", ratio: 0, invest: 0, eval: 0, target: 0 }],
     holdings: [],
   },
 };

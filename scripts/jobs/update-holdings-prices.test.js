@@ -58,6 +58,21 @@ test('classifyHolding: "TIGER KRX금현물"처럼 금현물 계좌가 아니어�
   assert.deepEqual(r, { kind: 'KR', code: '132030' });
 });
 
+// 2026-08-22 — 자사주 계좌(파이프라인 밖에서 수동 등록, 이름을 원본과 다르게 붙임)
+// 대응. ticker가 이미 6자리 KR코드로 채워져 있으면 이름 조회(resolveKr)를 아예
+// 안 타야 한다 — resolveKr을 "절대 안 불림" 자체로 검증(호출되면 즉시 실패).
+test('classifyHolding: ticker가 KR 6자리면 이름매칭 없이 바로 KR(수동등록 보유 대응)', () => {
+  const r = classifyHolding({ name: '삼성전자(자사주)', account: '위탁', ticker: '005930' }, {
+    resolveKr: () => { throw new Error('resolveKr이 호출되면 안 됨'); },
+  });
+  assert.deepEqual(r, { kind: 'KR', code: '005930' });
+});
+
+test('classifyHolding: ticker가 6자리가 아니면(빈 문자열 등) 기존처럼 이름매칭으로 폴백', () => {
+  const r = classifyHolding({ name: '삼성전자', account: '위탁', ticker: '' }, { resolveKr: () => '005930' });
+  assert.deepEqual(r, { kind: 'KR', code: '005930' });
+});
+
 test('recomputeValuation: 정상 — evalAmount·profitAmount·profitPct 재계산', () => {
   const r = recomputeValuation({ qty: 27, invest: 5628771 }, 210000);
   assert.equal(r.curPrice, 210000);
