@@ -33,6 +33,19 @@ export const QUANT_TRACK_LABEL = '퀀트';
 // 동일 원칙).
 export const IRP_ACCOUNT_NO = '43****82-29';
 
+// 펀드적립(삼성증권 "펀드 매수 완료 안내") 계좌 — parseFundBuy(notification-parsers.mjs)
+// 자체가 삼성증권 알림 포맷 하나만 파싱하도록 스코프돼 있어, 아래 UNIQUE_BROKER_ACCOUNT의
+// 삼성증권=연금저축과 완전히 같은 사실이다. 종목명 매칭 같은 판정 로직 없이 상수로
+// 확정해도 안전(2026-08-22, parse-notifications-to-vault.mjs 배선).
+export const FUND_PURCHASE_ACCOUNT = '연금저축';
+
+// 환전(NH투자증권 "환전내역 안내") 계좌 — NH는 위탁·ISA·금현물·CMA 4계좌를 다 갖고 있어
+// 증권사명만으론 못 풀고, 환전엔 종목이 없어 체결처럼 종목명 매칭(AMBIGUOUS_BROKER_CANDIDATES)도
+// 적용 불가. 2026-08-22 오너 확인 — 실측 Vault 보유파일에 "위탁-외화-RP"(외화 RP)가
+// 있고 ISA·금현물·CMA엔 달러성 보유가 전혀 없다는 근거로 위탁 확정. 다른 계좌가 실제로
+// 환전을 쓰게 되면(예: ISA 해외ETF 편입) 그때 다시 조정 필요.
+export const EXCHANGE_ACCOUNT = '위탁';
+
 // 계좌번호로 확정되는 경우 — 증권사명보다 우선. 퀀트 계좌는 의도적으로 null: KIS API가
 // 정본이라(Phase 9 확정) State/Holdings에 절대 반영하면 안 되고, 카카오로 잡힌 건
 // 순수 중복이므로 "귀속 불가"와 동일하게 취급해 호출부가 자동 적용을 건너뛰게 한다.

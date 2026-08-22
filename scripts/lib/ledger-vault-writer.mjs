@@ -126,6 +126,10 @@ export function buildCashEventRecord(c) {
 // 2026-08-04 확정대로 Phase 2엔 없던 계좌 귀속은 이제 State/Holdings(Phase 8·9 완료,
 // 2026-08-XX)가 갖춰졌지만, 펀드적립을 보유종목에 반영하는 배치 로직 자체는 아직
 // 없다 — 그 배치가 생기기 전까지는 다른 이벤트와 동일하게 account:null로 원문만 남긴다.
+// f: parseFundBuy()의 반환값 { fundName, amount, nav, date, units, account? }. account는
+// buildExecutionRecord와 동일한 선택 필드 관례(2026-08-13) — 호출부(parse-notifications-
+// to-vault.mjs)가 account-resolver.mjs의 FUND_PURCHASE_ACCOUNT(삼성증권=연금저축 1:1
+// 확정, 판정 로직 불필요)를 파싱 시점에 바로 넘긴다(2026-08-22).
 export function buildFundPurchaseRecord(f) {
   const dedupKey = `${f.date}|${f.fundName}|${f.amount}`;
   const filename = `${sanitizeSegment(f.date)}-${sanitizeSegment(f.fundName)}-${sanitizeSegment(f.amount)}.md`;
@@ -136,17 +140,18 @@ export function buildFundPurchaseRecord(f) {
     amount: f.amount,
     nav: f.nav,
     units: f.units,
-    account: null,
-    accountNote: ACCOUNT_NOTE,
+    account: f.account ?? null,
+    accountNote: f.account ? null : ACCOUNT_NOTE,
     dedupKey,
     recordedAt: new Date().toISOString(),
   });
   return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.fundPurchases };
 }
 
-// x: parseExchange()의 반환값 { kind, usd, won, date }. kind는 "외화매수"/"외화매도".
-// 펀드와 같은 이유로 date만 있고 시각이 없어, usd 금액을 dedupKey에 포함해 같은 날
-// 여러 건의 환전을 구분한다.
+// x: parseExchange()의 반환값 { kind, usd, won, date, account? }. kind는 "외화매수"/
+// "외화매도". 펀드와 같은 이유로 date만 있고 시각이 없어, usd 금액을 dedupKey에 포함해
+// 같은 날 여러 건의 환전을 구분한다. account는 위 펀드적립과 동일 관례 — 호출부가
+// account-resolver.mjs의 EXCHANGE_ACCOUNT(2026-08-22 오너 확인, 위탁 확정)를 넘긴다.
 export function buildExchangeRecord(x) {
   const dedupKey = `${x.date}|${x.kind}|${x.usd}`;
   const filename = `${sanitizeSegment(x.date)}-${sanitizeSegment(x.kind)}-${sanitizeSegment(x.usd)}.md`;
@@ -156,8 +161,8 @@ export function buildExchangeRecord(x) {
     kind: x.kind,
     usd: x.usd,
     won: x.won,
-    account: null,
-    accountNote: ACCOUNT_NOTE,
+    account: x.account ?? null,
+    accountNote: x.account ? null : ACCOUNT_NOTE,
     dedupKey,
     recordedAt: new Date().toISOString(),
   });

@@ -50,17 +50,49 @@
  * 계좌 단위로 등록시켜(2026-07 실측: 최상위 앱키로는 INVALID_CHECK_ACNO 거부, IRP 전용으로
  * 새로 신청한 앱키로 바꾸니 통과), 시세용 앱키로는 이 계좌를 애초에 조회할 수 없다.
  *
- * 사용: node scripts/jobs/reconcile-irp.mjs [token]
+ * ⚠️ 대사 기준(2026-08-22 변경) — 종목 수량 대사(아래 buildIrpMismatches)는 원래 v1
+ * 구글시트(계좌별 탭)를 "장부"로 삼아 KIS 실계좌와 비교했는데, 그 시트는 v2 전환 이후
+ * 더 이상 갱신되지 않아 조용히 낡아가고 있었다. Phase 8·9로 State/Holdings가 IRP
+ * 실보유를 이미 반영하고 있어(update-holdings-from-executions.mjs가 계좌번호
+ * 43****82-29 매칭으로 유지) 이제 그쪽을 기준으로 쓴다 — 구글시트 의존 제거.
+ *
+ * 사용: node scripts/jobs/reconcile-irp.mjs
  */
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getToken, readHoldings } from '../lib/sheets-common.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { hasKisCredentials, loadIrpAccount, getKisToken, getAccountBalance } from '../lib/kis.mjs';
 import { IRP_ACCOUNT_NO } from '../lib/account-resolver.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { buildCashEventRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
+
+// IRP 보유(State/Holdings) — 순수 함수. 2026-08-22 이전엔 v1 구글시트(계좌별 탭)를
+// 장부 기준으로 썼는데, Phase 8·9 완료로 State/Holdings가 이미 IRP 실보유를 반영하고
+// 있어 더 이상 시트를 거칠 이유가 없다(v1 시트는 더 갱신되지 않아 조용히 낡아가는 중이었음).
+// isCashLike(예수금)은 종목 대사 대상이 아니라 제외(holdings-vault-writer.mjs 관례).
+export function readIrpHoldings(holdingsDir = VAULT_PATHS.state.holdings) {
+  if (!existsSync(holdingsDir)) return [];
+  return readdirSync(holdingsDir).filter((f) => f.endsWith('.md'))
+    .map((f) => parseFrontmatter(readFileSync(join(holdingsDir, f), 'utf8')))
+    .filter((h) => h.account === 'IRP' && !h.isCashLike);
+}
+
+// vaultHoldings: readIrpHoldings() 반환값. kisHoldings: getAccountBalance().holdings({name,qty}[]).
+// 순수 — 양쪽 다 이름 기준으로 합쳐 수량이 다른 종목만 반환한다.
+export function buildIrpMismatches(vaultHoldings, kisHoldings) {
+  const vaultByName = new Map((vaultHoldings || []).map((h) => [h.name, h.qty ?? 0]));
+  const kisByName = new Map((kisHoldings || []).map((h) => [h.name, h.qty]));
+  const allNames = new Set([...vaultByName.keys(), ...kisByName.keys()]);
+  const mismatches = [];
+  for (const name of allNames) {
+    const vaultQty = vaultByName.get(name) ?? 0;
+    const kisQty = kisByName.get(name) ?? 0;
+    if (vaultQty !== kisQty) mismatches.push({ name, vaultQty, kisQty });
+  }
+  return { mismatches, totalNames: allNames.size };
+}
 
 async function main() {
   if (!hasKisCredentials()) {
@@ -72,9 +104,6 @@ async function main() {
     console.log('ℹ️ IRP 계좌정보(irpAccount) 미설정 — 스킵(kis-key.json에 {cano, acntPrdtCd, appkey, appsecret} 추가 시 활성화)');
     return;
   }
-
-  const explicitToken = process.argv[2];
-  const token = await getToken(explicitToken?.trim() || null, { allowBrowser: false });
 
   const { appkey, appsecret, cano, acntPrdtCd } = irpAccount;
   const kisToken = await getKisToken({ appkey, appsecret });
@@ -112,39 +141,29 @@ async function main() {
     console.log('  ⚠️ IRP 예수금 조회 실패(null) — CashEvent 기록 건너뜀(기존 기준점 유지)');
   }
 
-  // 예수금(현금성) 행은 수량 개념이 없어 종목 대사 대상이 아니다 — readHoldings()가 qty를
-  // 빈칸→0으로 채워서, 종목 루프에 그대로 두면 0=0으로 조용히 "일치" 취급된다. 이름
-  // 포함매칭(includes)으로 걸러서 애초에 대사 대상에서 뺀다. 예수금 자체는 이제 위에서
-  // CashEvent로 따로 기록되므로(2026-08-18), 여기 남은 건 "시트 vs KIS 종목 수량"만
-  // 비교하는 순수 대사 로직 — 예수금 값끼리의 대사(비교)는 여전히 이 잡 스코프 밖.
-  const holdingsRaw = await readHoldings(token);
-  const sheetIrp = new Map();
-  for (const h of holdingsRaw) {
-    const irp = h.accounts.find(a => a.acct === 'IRP');
-    if (!irp) continue;
-    if (h.name.includes('예수금')) continue;
-    sheetIrp.set(h.name, irp.qty);
-  }
-  const kisByName = new Map(kisHoldings.map(h => [h.name, h.qty]));
-  const allNames = new Set([...sheetIrp.keys(), ...kisByName.keys()]);
-
-  let mismatches = 0;
-  for (const name of allNames) {
-    const sheetQty = sheetIrp.get(name) ?? 0;
-    const kisQty = kisByName.get(name) ?? 0;
-    if (sheetQty !== kisQty) {
-      mismatches++;
-      collectWarning(`IRP 대사 불일치: ${name} — 시트 ${sheetQty}주 vs KIS 실계좌 ${kisQty}주`);
-    }
+  // 예수금(현금성) 행은 수량 개념이 없어 종목 대사 대상이 아니다 — readIrpHoldings()가
+  // isCashLike로 이미 걸러준다(holdings-vault-writer.mjs 관례). 예수금 자체는 이제 위에서
+  // CashEvent로 따로 기록되므로(2026-08-18), 여기 남은 건 "Vault State/Holdings vs KIS
+  // 종목 수량"만 비교하는 순수 대사 로직(2026-08-22, v1 시트 기준을 대체) — 예수금
+  // 값끼리의 대사(비교)는 여전히 이 잡 스코프 밖.
+  const { mismatches, totalNames } = buildIrpMismatches(readIrpHoldings(), kisHoldings);
+  for (const m of mismatches) {
+    collectWarning(`IRP 대사 불일치: ${m.name} — Vault ${m.vaultQty}주 vs KIS 실계좌 ${m.kisQty}주`);
   }
 
-  if (mismatches === 0) console.log(`✅ IRP 종목 대사 일치 (종목 ${allNames.size}개, 예수금 자체는 위에서 별도로 CashEvent 기록됨)`);
-  else console.log(`⚠️ IRP 종목 대사 불일치 ${mismatches}건 (종목 ${allNames.size}개, 예수금 자체는 위에서 별도로 CashEvent 기록됨)`);
+  if (mismatches.length === 0) console.log(`✅ IRP 종목 대사 일치 (종목 ${totalNames}개, 예수금 자체는 위에서 별도로 CashEvent 기록됨)`);
+  else console.log(`⚠️ IRP 종목 대사 불일치 ${mismatches.length}건 (종목 ${totalNames}개, 예수금 자체는 위에서 별도로 CashEvent 기록됨)`);
   await flushWarnings('reconcile-irp');
 }
 
-main().catch(async (e) => {
-  console.error('\n❌ 오류:', e.message);
-  await flushWarnings('reconcile-irp').catch(() => {});
-  process.exit(1);
-});
+// 2026-08-22 — entrypoint 가드 추가(다른 잡들과 동일 관례, update-cash-from-ledger.mjs
+// 등). 이게 없으면 테스트가 이 파일을 import(readIrpHoldings·buildIrpMismatches 사용)만
+// 해도 main()이 실행돼 KIS 네트워크 호출·process.exit이 side effect로 발생한다 —
+// 순수 함수를 분리해도 이 가드가 없으면 테스트 자체가 불가능했다.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(async (e) => {
+    console.error('\n❌ 오류:', e.message);
+    await flushWarnings('reconcile-irp').catch(() => {});
+    process.exit(1);
+  });
+}

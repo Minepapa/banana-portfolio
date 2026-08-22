@@ -32,19 +32,20 @@
  * 합치지 않는다 — cash-ledger.mjs의 resolveDesignatedCashBalance가 그 관점만 별도
  * 계산해주고, 실제 소비(신규현금배분 판단)는 new-cash-allocation.mjs 재작성 몫이다.
  *
- * ⚠️ 알려진 한계(2026-08-18):
- * - 펀드적립(연금저축 VIP 펀드)·환전은 아직 파싱은 되지만(notification-parsers.mjs
- *   parseFundBuy/parseExchange) Facts/Ledger에 배선 안 됨(parse-notifications-to-vault.mjs
- *   범위 밖, 의도적) — 이 두 종류가 실제로 발생한 계좌는 그만큼 잔고가 소폭 부정확할 수 있다.
- * - 연금저축·IRP는 지금 자동 CashEvent가 없어 오너가 수동으로 갱신해줘야 최신 상태
- *   유지됨. 둘 다 알림 없는 고정성 자동입금이 있다 — IRP는 매월 26일 25만원 고정,
- *   연금저축은 매월 21일(연봉 연동 비율이라 매달 조금씩 다름, 2026년 기준 48만~50만원
- *   추정) — 어느 쪽도 정확한 금액을 추정해 자동 반영하지 않는다.
- * - IRP는 사실 KIS API(getAccountBalance, tr_id TTTC8434R)로 예수금 자동조회가 가능함이
- *   확인됐다(2026-08-18 — reconcile-irp.mjs의 2026-07-26 "API로 조회 불가" 기록은 그
- *   시점의 일시적 상태였던 것으로 정정됨, 같은 파일 헤더 정정 주석 참고). 다만 이 잡
- *   자체를 API 자동조회로 바꾸는 배선은 아직 안 함(오너 확인 후 진행 예정) — 지금은
- *   NH 4계좌와 동일하게 수동 CashEvent만 쓴다.
+ * ⚠️ 알려진 한계(2026-08-22 갱신, 원래 2026-08-18):
+ * - 펀드적립(연금저축 VIP 펀드)·환전은 2026-08-22부로 계좌귀속까지 배선 완료
+ *   (account-resolver.mjs FUND_PURCHASE_ACCOUNT·EXCHANGE_ACCOUNT, parse-notifications-
+ *   to-vault.mjs가 파싱 시점에 바로 채움) — 아래 buildFlows가 두 원장을 읽어 델타에
+ *   반영한다. 단 두 이벤트 모두 원문에 시각 정보가 없어(날짜만) 00:00:00으로 채우는
+ *   한계는 남아있다(buildFlows 주석 참고, goldBuy가 이미 겪었던 것과 같은 계열).
+ * - 연금저축은 지금도 자동 CashEvent가 없어 오너가 수동으로 갱신해줘야 최신 상태
+ *   유지됨(매월 21일경 연봉 연동 자동입금, 알림 없음 — 정확한 금액을 추정해 자동
+ *   반영하지 않는다). IRP는 아래 참고 — 이미 자동화됨.
+ * - IRP는 reconcile-irp.mjs가 KIS API(getAccountBalance, tr_id TTTC8434R)로 예수금을
+ *   자동조회해 CashEvent로 기록한다(2026-08-18 배선, launchd 평일 16:07 — update-
+ *   holdings-from-executions 직후·이 잡보다 먼저 실행돼 그날 안에 반영됨). cash===0
+ *   응답은 이 계좌에서 간헐적으로 발생함이 실측돼 신뢰 불가로 스킵한다(reconcile-irp.mjs
+ *   헤더 주석 참고) — 그 경우엔 여전히 수동 CashEvent로 보정해야 한다.
  *
  * 매 실행마다 기준점+델타를 처음부터 다시 계산해 전체를 덮어쓴다("지금 상태" 원칙,
  * vault-paths.mjs state.* 관례와 동일) — 누적 증분이 아니라 순수 재계산이라 같은
@@ -89,12 +90,12 @@ function loadStoredAnchor(account) {
   return { base: parsed.anchorBase, baseTs: parsed.anchorTs ?? '', source: parsed.anchorSource ?? '' };
 }
 
-// 계좌별 현금흐름(체결+배당) — legacy(마이그레이션 스냅샷) 제외: 그 시점 값은 이미
-// 별도 스냅샷으로 반영돼 있어 델타로 다시 더하면 이중계상된다. 체결은 매수(-)/매도(+),
-// 배당은 항상(+). 계좌가 아직 안 풀린(account:null) 레코드는 어느 계좌 것인지 몰라
-// 자동으로 전부 제외된다(추정 없음 — update-holdings-from-executions.mjs가 풀어줄
-// 때까지 이 잡의 계산에서는 조용히 빠짐, 다음 실행에 자연히 반영됨).
-function buildFlows(account, executions, dividends) {
+// 계좌별 현금흐름(체결+배당+펀드적립+환전) — legacy(마이그레이션 스냅샷) 제외: 그 시점
+// 값은 이미 별도 스냅샷으로 반영돼 있어 델타로 다시 더하면 이중계상된다. 체결은
+// 매수(-)/매도(+), 배당은 항상(+). 계좌가 아직 안 풀린(account:null) 레코드는 어느
+// 계좌 것인지 몰라 자동으로 전부 제외된다(추정 없음 — update-holdings-from-executions.mjs가
+// 풀어줄 때까지 이 잡의 계산에서는 조용히 빠짐, 다음 실행에 자연히 반영됨).
+export function buildFlows(account, executions, dividends, fundPurchases, exchanges) {
   const flows = [];
   for (const e of executions) {
     if (e.legacy || e.account !== account) continue;
@@ -108,6 +109,29 @@ function buildFlows(account, executions, dividends) {
     if (!Number.isFinite(amount)) continue;
     flows.push({ ts: `${d.date} ${d.receivedTime || '00:00:00'}`, amount });
   }
+  // 펀드적립(연금저축 VIP펀드 매수) — 계좌 귀속은 파싱 시점에 이미 확정됨(account-
+  // resolver.mjs FUND_PURCHASE_ACCOUNT, 2026-08-22 배선). 적립식 매수뿐이라 항상
+  // 현금유출(-)만 있다. ⚠️ 알림 원문에 매수신청일만 있고 시각이 없어(notification-
+  // parsers.mjs parseFundBuy 주석) 00:00:00으로 채운다 — 같은 날 안에서 앵커보다 늦게
+  // 일어난 매수면 이 flow가 앵커 이전으로 오판돼 델타에서 빠질 수 있다(goldBuy가 이미
+  // 겪었던 것과 같은 계열의 한계이나, 여긴 원문 자체에 시각이 없어 코드로 더 못 고침).
+  for (const f of fundPurchases) {
+    if (f.legacy || f.account !== account) continue;
+    const amount = f.amount ?? 0;
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    flows.push({ ts: `${f.date} 00:00:00`, amount: -amount });
+  }
+  // 환전 — 계좌 귀속은 위탁 1:1 확정(account-resolver.mjs EXCHANGE_ACCOUNT, 2026-08-22
+  // 오너 확인). 외화매수(원화→USD)는 현금유출(-), 외화매도(USD→원화)는 현금유입(+).
+  // won이 파싱 실패로 null이면(원문에 원화금액 줄이 없는 변종) 건너뛴다 — usd금액에
+  // 임의 환율을 가정해 원화를 역산하면 실제 체결환율과 달라 부정확해질 위험이 있어
+  // 추정하지 않는다. 시각 정보 없는 한계는 펀드적립과 동일(위 주석 참고).
+  for (const x of exchanges) {
+    if (x.legacy || x.account !== account) continue;
+    const won = x.won;
+    if (!Number.isFinite(won) || won <= 0) continue;
+    flows.push({ ts: `${x.date} 00:00:00`, amount: x.kind === '외화매수' ? -won : won });
+  }
   return flows;
 }
 
@@ -120,7 +144,12 @@ async function main() {
   const executions = readVaultFiles(VAULT_PATHS.facts.ledger.executions);
   const dividends = readVaultFiles(VAULT_PATHS.facts.ledger.dividends);
   const cashEvents = readVaultFiles(VAULT_PATHS.facts.ledger.cashEvents);
-  console.log(`🔎 체결 ${executions.length}건 · 배당 ${dividends.length}건 · 예수금앵커 ${cashEvents.length}건 로드`);
+  const fundPurchases = readVaultFiles(VAULT_PATHS.facts.ledger.fundPurchases);
+  const exchanges = readVaultFiles(VAULT_PATHS.facts.ledger.exchanges);
+  console.log(
+    `🔎 체결 ${executions.length}건 · 배당 ${dividends.length}건 · 예수금앵커 ${cashEvents.length}건 · ` +
+    `펀드적립 ${fundPurchases.length}건 · 환전 ${exchanges.length}건 로드`,
+  );
 
   let written = 0, skippedNoAnchor = 0, negativeWarnings = 0;
 
@@ -142,7 +171,7 @@ async function main() {
       continue;
     }
 
-    const flows = buildFlows(account, executions, dividends);
+    const flows = buildFlows(account, executions, dividends, fundPurchases, exchanges);
     const delta = computeCashDelta({ anchorTs: anchor.baseTs, flows });
     const settled = settleCash(anchor.base, delta);
     const flag = settled.negative ? ' ⚠️ 마이너스(데이터 점검 필요)' : '';

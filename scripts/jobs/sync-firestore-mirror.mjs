@@ -24,14 +24,12 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cert, initializeApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { buildAllMirrors } from '../lib/firestore-mirror.mjs';
+import { getFirestoreAdmin, FIREBASE_ADMIN_KEY_FILE } from '../lib/firestore-admin.mjs';
 
-export const FIREBASE_ADMIN_KEY_FILE = process.env.FIREBASE_ADMIN_KEY_FILE
-  || `${process.env.HOME}/.config/banana-portfolio-v2/firebase-adminsdk-key.json`;
+export { FIREBASE_ADMIN_KEY_FILE };
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -99,12 +97,7 @@ async function main() {
     return;
   }
 
-  if (!existsSync(FIREBASE_ADMIN_KEY_FILE)) {
-    throw new Error(`Firebase Admin 키 파일이 없습니다: ${FIREBASE_ADMIN_KEY_FILE}`);
-  }
-  const serviceAccount = JSON.parse(readFileSync(FIREBASE_ADMIN_KEY_FILE, 'utf8'));
-  const app = initializeApp({ credential: cert(serviceAccount) });
-  const db = getFirestore(app);
+  const db = getFirestoreAdmin();
 
   for (const [docId, data] of Object.entries(mirrors)) {
     await db.collection('mirror').doc(docId).set(data);

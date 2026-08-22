@@ -28,13 +28,13 @@ export const VAULT_PATHS = {
     ledger: {
       executions: join(VAULT_ROOT, 'Facts', 'Ledger', 'Executions'), // 체결(주식+금현물)
       dividends: join(VAULT_ROOT, 'Facts', 'Ledger', 'Dividends'),
-      fundPurchases: join(VAULT_ROOT, 'Facts', 'Ledger', 'FundPurchases'), // 아직 미배선(파서만 존재)
+      fundPurchases: join(VAULT_ROOT, 'Facts', 'Ledger', 'FundPurchases'), // 2026-08-22 계좌귀속(연금저축)까지 배선 완료
       // "이 시각에 이 계좌 잔고가 이 값이었다"는 사실 기록(잔고 재계산은 State 몫).
       // NH 4계좌는 카카오 입출금 알림 자동파싱, 연금저축·IRP는 알림이 없어 오너가
       // 앱에서 직접 확인한 값을 수동으로 기록 — 2026-08-18부터 자동/수동 구분 없이
       // 같은 폴더·같은 레코드 모양(cash-ledger.mjs resolveCashAnchor 참고).
       cashEvents: join(VAULT_ROOT, 'Facts', 'Ledger', 'CashEvents'),
-      exchanges: join(VAULT_ROOT, 'Facts', 'Ledger', 'Exchanges'), // 아직 미배선(파서만 존재)
+      exchanges: join(VAULT_ROOT, 'Facts', 'Ledger', 'Exchanges'), // 2026-08-22 계좌귀속(위탁)까지 배선 완료
       // 2026-08-05 Phase 7(v1→Vault 마이그레이션) 추가 — v1 시트에 있었지만 지금까지
       // Ledger 하위폴더가 없던 2종. 실현손익은 체결(매수·매도) 두 이벤트의 파생값이라
       // 다시 계산할 수도 있지만, v1이 이미 계산해둔 값을 그대로 옮기는 쪽이 손실 없음

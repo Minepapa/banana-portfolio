@@ -223,13 +223,22 @@ test('buildFundPurchaseRecord: 같은 펀드·같은 날이라도 금액이 다�
   assert.notEqual(a.filename, b.filename);
 });
 
-test('buildFundPurchaseRecord: frontmatter에 펀드 필드 포함, account는 다른 이벤트와 동일하게 지연패턴', () => {
+test('buildFundPurchaseRecord: frontmatter에 펀드 필드 포함, account 안 넘기면 다른 이벤트와 동일하게 지연패턴', () => {
   const { content } = buildFundPurchaseRecord(fundBuy());
   assert.match(content, /type: "fund-purchase"/);
   assert.match(content, /nav: 1523.45/);
   assert.match(content, /units: 328.185/);
   assert.match(content, /account: null/);
   assert.match(content, /accountNote: ".*Phase 8·9.*"/);
+});
+
+// 2026-08-22 — buildExecutionRecord와 동일한 선택 필드 관례(2026-08-13)로 확장:
+// 호출부(parse-notifications-to-vault.mjs)가 account-resolver.mjs의
+// FUND_PURCHASE_ACCOUNT(삼성증권=연금저축 1:1 확정)를 파싱 시점에 바로 넘긴다.
+test('buildFundPurchaseRecord: account를 넘기면 그대로 채워지고 accountNote는 비움', () => {
+  const { content } = buildFundPurchaseRecord(fundBuy({ account: '연금저축' }));
+  assert.match(content, /account: "연금저축"/);
+  assert.match(content, /accountNote: null/);
 });
 
 const exchange = (overrides = {}) => ({
@@ -259,4 +268,18 @@ test('buildExchangeRecord: 매수·매도가 같은 날 같은 USD금액이어�
 test('buildExchangeRecord: won이 없으면(파싱 실패 허용 필드) null로 기록', () => {
   const { content } = buildExchangeRecord(exchange({ won: null }));
   assert.match(content, /won: null/);
+});
+
+test('buildExchangeRecord: account 안 넘기면 지연패턴(다른 이벤트와 동일)', () => {
+  const { content } = buildExchangeRecord(exchange());
+  assert.match(content, /account: null/);
+  assert.match(content, /accountNote: ".*Phase 8·9.*"/);
+});
+
+// 2026-08-22 — account-resolver.mjs EXCHANGE_ACCOUNT(위탁, 오너 확인)를 호출부가
+// 파싱 시점에 바로 넘기는 배선.
+test('buildExchangeRecord: account를 넘기면 그대로 채워지고 accountNote는 비움', () => {
+  const { content } = buildExchangeRecord(exchange({ account: '위탁' }));
+  assert.match(content, /account: "위탁"/);
+  assert.match(content, /accountNote: null/);
 });
