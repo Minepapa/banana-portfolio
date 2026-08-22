@@ -90,28 +90,35 @@ export default function App() {
         padding: isMobile ? "14px 16px 12px" : "20px 24px 16px",
         position: "sticky", top: 0, zIndex: 100,
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-              <div style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: isMobile ? 1 : 2, color: INK, background: ACCENT, padding: "2px 6px" }}>
-                BANANA · 은퇴 준비 포트폴리오
-              </div>
-              <button onClick={toggleHideAmounts} aria-label={hideAmounts ? "금액 표시" : "금액 숨기기"} title={hideAmounts ? "금액 표시" : "금액 숨기기"}
-                style={{ flexShrink: 0, border: "1px solid #141414", borderRadius: 0, background: hideAmounts ? ACCENT : PAPER, color: INK, cursor: "pointer", fontSize: 11, lineHeight: 1, padding: "3px 6px" }}>
-                {hideAmounts ? "🙈" : "👁"}
-              </button>
-              {pendingProposalCount > 0 && (
-                <div title="텔레그램에서 승인/거부 대기 중인 제안" style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: 1, color: "#fff", background: "#E0A000", padding: "2px 6px" }}>
-                  제안 대기 {pendingProposalCount}건
-                </div>
-              )}
+        {/* 타이틀 줄 — 배지·숨기기 토글·제안대기 배지(금액과 분리된 자기 줄, 2026-08-22
+            재정렬 — 전엔 총잔고 숫자 위에 얹혀있어 좌우 블록 구조가 안 맞았음). */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: isMobile ? 1 : 2, color: INK, background: ACCENT, padding: "2px 6px" }}>
+            BANANA · 은퇴 준비 포트폴리오
+          </div>
+          <button onClick={toggleHideAmounts} aria-label={hideAmounts ? "금액 표시" : "금액 숨기기"} title={hideAmounts ? "금액 표시" : "금액 숨기기"}
+            style={{ flexShrink: 0, border: "1px solid #141414", borderRadius: 0, background: hideAmounts ? ACCENT : PAPER, color: INK, cursor: "pointer", fontSize: 11, lineHeight: 1, padding: "3px 6px" }}>
+            {hideAmounts ? "🙈" : "👁"}
+          </button>
+          {pendingProposalCount > 0 && (
+            <div title="텔레그램에서 승인/거부 대기 중인 제안" style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: 1, color: "#fff", background: "#E0A000", padding: "2px 6px" }}>
+              제안 대기 {pendingProposalCount}건
             </div>
+          )}
+        </div>
+
+        {/* 총잔고 | 평가손익 — 둘 다 라벨+금액 2단 구조로 맞춰서 alignItems: center로
+            금액 글자를 가운데 정렬(2026-08-22 오너 지시 — 전엔 왼쪽은 라벨 없이 숫자만,
+            오른쪽은 라벨+숫자라 구조가 안 맞아 가운데가 안 맞았음). */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: INK_2, letterSpacing: 2, marginBottom: 2 }}>총 잔고</div>
             <div style={{ fontSize: isMobile ? 22 : 27, fontWeight: 800, letterSpacing: -0.5, color: INK, fontFamily: MONO }}>
               {hideAmounts ? "₩••••••" : `₩${fmt(totalEval)}`}
             </div>
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>
-            <div style={{ fontSize: 9, fontWeight: 700, color: INK_2, letterSpacing: 2 }}>평가손익</div>
+            <div style={{ fontSize: 9, fontWeight: 700, color: INK_2, letterSpacing: 2, marginBottom: 2 }}>평가손익</div>
             <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: hideAmounts ? INK_2 : (totalProfit >= 0 ? '#159E52' : '#E5484D'), fontFamily: MONO }}>
               {hideAmounts ? "••••••" : <>{totalProfit > 0 ? '▲ ' : totalProfit < 0 ? '▼ ' : ''}₩{fmt(Math.abs(totalProfit))}</>}
             </div>

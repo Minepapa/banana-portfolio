@@ -5,38 +5,48 @@
 import { PROFIT_POS, PROFIT_NEG, COLORS } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
 
+// RebalanceTab의 자산분배 자산군 순서와 동일(2026-08-22 오너 지시 — 두 탭의 자산군
+// 순서가 서로 다르면 같은 개념인데 다르게 읽혀 혼동을 준다). 이 목록에 없는 타입
+// (ISA "배당주"는 이미 포함, IRP "TDF"·CMA "현금"처럼 단일자산 계좌 전용 타입)은
+// 끝으로 보낸다 — 정렬 안정성 위해 원래 순서 유지(Array.sort는 stable).
+const ASSET_ORDER = ['채권', '금', '달러', '배당주', '리츠', '국내주식', '해외주식'];
+const assetRank = (type) => {
+  const i = ASSET_ORDER.indexOf(type);
+  return i === -1 ? ASSET_ORDER.length : i;
+};
+
 export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMobile, baseFont, fmt, holdSort, setHoldSort }) {
   const rawHoldings = (acct.holdings || [])
     // 현금성 행(예수금·외화RP·MMF)은 잔액이 0이어도 유지 — 음수→행 소멸 버그 방지.
     .filter(h => h.isCashLike || (h.invest > 0 && h.eval > 0));
 
   const SORT_FN = {
+    sheet:       (a, b) => assetRank(a.type) - assetRank(b.type),
     rate_desc:   (a, b) => b.rate   - a.rate,
     rate_asc:    (a, b) => a.rate   - b.rate,
     eval_desc:   (a, b) => b.eval   - a.eval,
     profit_desc: (a, b) => b.profit - a.profit,
   };
-  const sortedHoldings = holdSort === 'sheet'
-    ? rawHoldings
-    : [...rawHoldings].sort(SORT_FN[holdSort] || SORT_FN.rate_desc);
+  const sortedHoldings = [...rawHoldings].sort(SORT_FN[holdSort] || SORT_FN.sheet);
 
   return (
     <div>
-      {/* 계좌 선택 — 6개(ISA·위탁·연금저축·IRP·CMA·금현물, 2026-08-21 금현물 추가).
-          flexWrap: 좁은 화면에서 6칸이 한 줄에 다 안 들어가면 둘째 줄로 넘어가게(브라우저
-          실측 전이라 방어적으로 추가 — 코드리뷰 지적). */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+      {/* 계좌 선택 — 6개(ISA·위탁·연금저축·IRP·CMA·금현물). 2026-08-22 오너 지시로 한
+          줄 고정(flexWrap 제거) + 좌우 폭 축소 — 공간이 모자란 연금저축만 "연금"으로
+          줄여서 6칸이 좁은 화면에서도 한 줄에 들어가게 함. */}
+      <div style={{ display: "flex", flexWrap: "nowrap", gap: 4, marginBottom: 16 }}>
         {Object.entries(accounts).map(([k, a]) => (
           <button key={k} onClick={() => setAcctKey(k)} style={{
-            flex: "1 1 auto", minWidth: 72, padding: isMobile ? "8px 4px" : "6px 4px",
+            flex: "1 1 0", minWidth: 0, padding: isMobile ? "7px 2px" : "6px 3px",
             textAlign: 'center',
             borderRadius: 0,
             border: `1px solid ${acctKey === k ? a.color : "#141414"}`,
             background: acctKey === k ? `${a.color}22` : "transparent",
             color: acctKey === k ? a.color : "#6B675C",
-            cursor: "pointer", fontSize: 11, fontFamily: baseFont,
+            cursor: "pointer", fontSize: isMobile ? 10 : 11, fontFamily: baseFont,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>
-            {a.label}
+            {a.label === '연금저축' ? '연금' : a.label}
           </button>
         ))}
       </div>
@@ -110,6 +120,8 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
               <div style={{
                 padding: isMobile ? "10px 16px" : "12px 16px",
                 display: "flex", alignItems: "center", gap: 8,
+                // 현금성 보유(예수금 등)는 배경색으로 종목 보유와 구분(오너 지시, 2026-08-22).
+                background: h.isCashLike ? '#EAE6DA' : 'transparent',
               }}>
                 {typeName && (
                   <div style={{ fontSize: 10, background: (COLORS[typeName] || '#aaa') + '33', color: COLORS[typeName] || '#aaa', padding: '2px 6px', borderRadius: 0, flexShrink: 0, whiteSpace: 'nowrap' }}>
