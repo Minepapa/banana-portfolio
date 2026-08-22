@@ -2,6 +2,15 @@
 // (2026-08-13): 읽기 전용. 목표비중은 Athena 5/25 룰의 확정값(20/10/5/5/30/30)이라
 // 애초에 앱에서 수동 조정하는 대상이 아니다(문서: "목표비중(확정 정본)") — 편집 UI
 // 제거.
+//
+// ⚠️ 2026-08-22 오너 확정 — 위탁·연금저축·금(금현물)은 "전체를 100으로 두고 나눈"
+// 하나의 합산 풀이지 서로 다른 3개 관점이 아니다. 예전엔(2026-08-21 pooled 계산
+// 도입 직후) 계산값은 이미 합산 풀 기준이면서도 화면엔 여전히 계좌별 탭 3개로
+// 쪼개져 같은 숫자가 3번 보이는 것처럼 보였다 — 이제 그 셋을 "통합" 탭 하나로
+// 합치고, ISA·IRP·CMA(각자 다른 목적의 단일자산 계좌)만 별도 탭으로 남긴다.
+// 이 선택 상태는 대시보드·보유종목 탭이 공유하는 acctKey(실계좌 6개 전용)와
+// 의도적으로 분리한다 — 여긴 "통합" 같은 가상 항목이 섞여 의미가 다르다.
+import { useState } from 'react';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -9,27 +18,34 @@ import { COLORS, PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
 import { DeptBadge } from '../lib/primitives.jsx';
 
-export default function RebalanceTab({ accounts, acctKey, acct, setAcctKey, isMobile, baseFont, fmt }) {
+const POOLED_KEY = 'POOLED';
+
+// views: { POOLED, ISA, IRP, CMA } — 전부 rebalanceAccountFromMirror(또는
+// pooledAccountFromMirror)와 같은 모양({label, color, assets: [{name,target,ratio,
+// rebalAmt,eval}], ...}). App.jsx가 미리 조립해 넘긴다(HoldingsTab이 쓰는
+// accountsFromMirror의 `accounts`는 assets가 없는 다른 모양이라 여기 재사용 불가).
+export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
+  const [rebalKey, setRebalKey] = useState(POOLED_KEY);
+  const acct = views[rebalKey];
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
         <DeptBadge dept="athena" />
       </div>
-      {/* 계좌 선택 — 6개(ISA·위탁·연금저축·IRP·CMA·금현물, 2026-08-21 금현물 추가).
-          flexWrap: 좁은 화면에서 6칸이 한 줄에 다 안 들어가면 둘째 줄로 넘어가게(브라우저
-          실측 전이라 방어적으로 추가 — 코드리뷰 지적). */}
+      {/* 선택 — 통합(위탁+연금저축+금) + ISA·IRP·CMA(각자 단일목적 계좌) 4개. */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
-        {Object.keys(accounts).map((k) => (
-          <button key={k} onClick={() => setAcctKey(k)} style={{
+        {Object.entries(views).map(([k, v]) => (
+          <button key={k} onClick={() => setRebalKey(k)} style={{
             flex: "1 1 auto", minWidth: 72, padding: isMobile ? "8px 4px" : "6px 4px",
             textAlign: 'center',
             borderRadius: 0,
-            border: `1px solid ${acctKey === k ? accounts[k].color : "#141414"}`,
-            background: acctKey === k ? `${accounts[k].color}22` : "transparent",
-            color: acctKey === k ? accounts[k].color : "#6B675C",
+            border: `1px solid ${rebalKey === k ? v.color : "#141414"}`,
+            background: rebalKey === k ? `${v.color}22` : "transparent",
+            color: rebalKey === k ? v.color : "#6B675C",
             cursor: "pointer", fontSize: 11, fontFamily: baseFont,
           }}>
-            {accounts[k].label}
+            {v.label}
           </button>
         ))}
       </div>
@@ -46,7 +62,9 @@ export default function RebalanceTab({ accounts, acctKey, acct, setAcctKey, isMo
         const pieTotal = pieAssets.reduce((s, a) => s + a.eval, 0);
         return (
           <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 12 }}>자산군 구성 (이 계좌 보유 기준)</div>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 12 }}>
+              자산군 구성 ({rebalKey === POOLED_KEY ? '위탁+연금저축+금 합산 기준' : '이 계좌 보유 기준'})
+            </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <ResponsiveContainer width="100%" height={160}>

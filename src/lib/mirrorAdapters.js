@@ -62,6 +62,39 @@ export function rebalanceAccountFromMirror({ allocationMirror, holdingsMirror, a
   return { label: meta.label, sub: meta.sub, color: meta.color, total_invest, total_eval, profit: total_eval - total_invest, assets };
 }
 
+// 위탁·연금저축·금(금현물) 3계좌를 하나로 합친 "통합" 자산분배 뷰(2026-08-22 오너
+// 확정) — 그 전엔 이 3계좌가 target/current/rebalAmt는 이미 같은 합산 풀 값을
+// 쓰면서도(allocation-snapshot.mjs computePooledSnapshot) 화면엔 여전히 탭 3개로
+// 쪼개져 있어 같은 숫자를 3번 보여주는 것처럼 보였다 — 진짜 "전체를 100으로 두고
+// 나눈" 통합 뷰가 없었다. rebalanceAccountFromMirror와 달리 eval도 3계좌 보유를
+// 전부 합쳐서 계산한다(위 파이차트가 "그 계좌 혼자"가 아니라 "합산 풀 전체"를
+// 보여주도록).
+const POOLED_ACCOUNT_KEYS = ['위탁', '연금저축', '금현물'];
+
+export function pooledAccountFromMirror({ allocationMirror, holdingsMirror }) {
+  const anchor = DEFAULT_ACCOUNTS['위탁'];
+  // target/current/rebalAmt는 POOLED_ACCOUNT_KEYS 중 아무 계좌에서 읽어도 동일하다
+  // (computePooledSnapshot이 셋 다 같은 값을 쓴다) — 첫 번째로 매치되는 계좌 기준.
+  const allocRows = (allocationMirror?.accounts ?? []).filter((r) => POOLED_ACCOUNT_KEYS.includes(r.account));
+  const holdingRows = (holdingsMirror?.items ?? []).filter((h) => POOLED_ACCOUNT_KEYS.includes(h.account));
+  const total_invest = holdingRows.reduce((s, h) => s + (h.invest || 0), 0);
+  const total_eval = holdingRows.reduce((s, h) => s + (h.evalAmount || 0), 0);
+  const assets = anchor.assets.map((a) => {
+    const row = allocRows.find((r) => r.assetName === a.name);
+    const evalSum = holdingRows
+      .filter((h) => (h.assetClass || '') === a.name)
+      .reduce((s, h) => s + (h.evalAmount || 0), 0);
+    return {
+      name: a.name,
+      target: row?.targetPct ?? 0,
+      ratio: row?.currentPct ?? 0,
+      rebalAmt: row?.rebalAmt ?? 0,
+      eval: evalSum,
+    };
+  });
+  return { label: "통합", sub: "위탁 · 연금저축 · 금 합산", color: anchor.color, total_invest, total_eval, profit: total_eval - total_invest, assets };
+}
+
 function monthKey(dateStr) {
   return String(dateStr ?? '').slice(0, 7); // "YYYY-MM"
 }

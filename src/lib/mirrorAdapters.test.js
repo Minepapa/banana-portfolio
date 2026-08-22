@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  accountsFromMirror, rebalanceAccountFromMirror, monthlyDividendsFromMirror,
-  monthlyProfitsFromMirror, sortedTradesFromMirror, monthlyBalancesFromMirror,
+  accountsFromMirror, rebalanceAccountFromMirror, pooledAccountFromMirror,
+  monthlyDividendsFromMirror, monthlyProfitsFromMirror, sortedTradesFromMirror,
+  monthlyBalancesFromMirror,
 } from './mirrorAdapters.js';
 
 test('accountsFromMirror: 계좌별로 보유종목을 나누고 투자금·평가금·손익을 합산', () => {
@@ -53,6 +54,41 @@ test('rebalanceAccountFromMirror: allocation 기록이 없는 자산군은 0(추
   const r = rebalanceAccountFromMirror({ allocationMirror: { accounts: [] }, holdingsMirror: { items: [] }, acctKey: '위탁' });
   assert.equal(r.assets.length, 7); // 위탁의 DEFAULT_ACCOUNTS 자산군 7개
   assert.ok(r.assets.every((a) => a.target === 0 && a.ratio === 0 && a.rebalAmt === 0 && a.eval === 0));
+});
+
+// 2026-08-22 — 위탁·연금저축·금(금현물) 3계좌를 "통합" 하나로 합친 뷰(오너 확정,
+// 자산분배 탭이 계좌별로 쪼개져 같은 숫자를 3번 보여주던 걸 없앰).
+test('pooledAccountFromMirror: 3계좌(위탁·연금저축·금현물)의 같은 자산군 eval을 전부 합산', () => {
+  const allocationMirror = { accounts: [{ account: '위탁', assetName: '국내주식', targetPct: 30, currentPct: 32.1, rebalAmt: -100 }] };
+  const holdingsMirror = {
+    items: [
+      { account: '위탁', name: 'A', assetClass: '국내주식', invest: 1000, evalAmount: 1200 },
+      { account: '연금저축', name: 'B', assetClass: '국내주식', invest: 2000, evalAmount: 2100 },
+      { account: '금현물', name: '금 99.99K', assetClass: '금', invest: 500, evalAmount: 600 },
+      { account: 'ISA', name: 'C', assetClass: '배당주', invest: 9999, evalAmount: 9999 }, // 풀 밖 계좌는 무시
+    ],
+  };
+  const r = pooledAccountFromMirror({ allocationMirror, holdingsMirror });
+  const stock = r.assets.find((a) => a.name === '국내주식');
+  assert.equal(stock.eval, 1200 + 2100); // 위탁+연금저축 합산, ISA 제외
+  assert.equal(stock.target, 30);
+  assert.equal(stock.ratio, 32.1);
+  assert.equal(r.total_invest, 1000 + 2000 + 500); // ISA 제외한 3계좌 합산
+  assert.equal(r.total_eval, 1200 + 2100 + 600);
+});
+
+test('pooledAccountFromMirror: target/current/rebalAmt는 위탁·연금저축·금현물 중 아무 계좌에서 읽어도 이미 같은 값(computePooledSnapshot 전제)', () => {
+  const allocationMirror = {
+    accounts: [
+      { account: '위탁', assetName: '금', targetPct: 10, currentPct: 8, rebalAmt: 200 },
+      { account: '연금저축', assetName: '금', targetPct: 10, currentPct: 8, rebalAmt: 200 },
+      { account: '금현물', assetName: '금', targetPct: 10, currentPct: 8, rebalAmt: 200 },
+    ],
+  };
+  const r = pooledAccountFromMirror({ allocationMirror, holdingsMirror: { items: [] } });
+  const gold = r.assets.find((a) => a.name === '금');
+  assert.equal(gold.target, 10);
+  assert.equal(gold.ratio, 8);
 });
 
 test('monthlyDividendsFromMirror: 날짜 기준 월별 그룹 + 오름차순 정렬', () => {

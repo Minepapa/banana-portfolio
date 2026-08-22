@@ -3,8 +3,9 @@ import { PAPER, INK, INK_2, ACCENT, CARD_BG, MONO, BORDER_HEAVY } from './lib/th
 import { relTime, fmt } from './lib/textFormat.js';
 import { isMirrorStale } from './lib/mirrorFreshness.js';
 import {
-  accountsFromMirror, rebalanceAccountFromMirror, monthlyDividendsFromMirror,
-  monthlyProfitsFromMirror, sortedTradesFromMirror, monthlyBalancesFromMirror,
+  accountsFromMirror, rebalanceAccountFromMirror, pooledAccountFromMirror,
+  monthlyDividendsFromMirror, monthlyProfitsFromMirror, sortedTradesFromMirror,
+  monthlyBalancesFromMirror,
 } from './lib/mirrorAdapters.js';
 import { useIsMobile } from './hooks/useIsMobile.js';
 import { useFirestoreMirror } from './hooks/useFirestoreMirror.js';
@@ -39,10 +40,18 @@ export default function App() {
 
   const accounts = useMemo(() => accountsFromMirror(mirrors.holdings), [mirrors.holdings]);
   const acct = accounts[acctKey] ?? Object.values(accounts)[0];
-  const rebalanceAcct = useMemo(
-    () => rebalanceAccountFromMirror({ allocationMirror: mirrors.allocation, holdingsMirror: mirrors.holdings, acctKey }),
-    [mirrors.allocation, mirrors.holdings, acctKey],
-  );
+  // 자산분배 탭 전용 4개 뷰(2026-08-22 오너 확정 — 위탁·연금저축·금은 "통합" 하나로,
+  // ISA·IRP·CMA만 각자 별도) — acctKey(홈·보유종목 탭이 쓰는 실계좌 선택)와 무관하게
+  // 항상 이 4개를 전부 준비해둔다(RebalanceTab이 자기 안에서 고른다).
+  const rebalanceViews = useMemo(() => {
+    const base = { allocationMirror: mirrors.allocation, holdingsMirror: mirrors.holdings };
+    return {
+      POOLED: pooledAccountFromMirror(base),
+      ISA: rebalanceAccountFromMirror({ ...base, acctKey: 'ISA' }),
+      IRP: rebalanceAccountFromMirror({ ...base, acctKey: 'IRP' }),
+      CMA: rebalanceAccountFromMirror({ ...base, acctKey: 'CMA' }),
+    };
+  }, [mirrors.allocation, mirrors.holdings]);
   const dividendData = useMemo(() => monthlyDividendsFromMirror(mirrors.dividends), [mirrors.dividends]);
   const profitData = useMemo(() => monthlyProfitsFromMirror(mirrors.profits), [mirrors.profits]);
   const trades = useMemo(() => sortedTradesFromMirror(mirrors.trades), [mirrors.trades]);
@@ -232,7 +241,7 @@ export default function App() {
         {/* ── 자산분배 탭 ── */}
         {tab === "rebalance" && (
           <RebalanceTab
-            accounts={accounts} acctKey={acctKey} acct={rebalanceAcct} setAcctKey={setAcctKey}
+            views={rebalanceViews}
             isMobile={isMobile} baseFont={baseFont} fmt={fmt}
           />
         )}
