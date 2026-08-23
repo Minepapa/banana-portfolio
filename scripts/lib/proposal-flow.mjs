@@ -77,7 +77,7 @@ export async function createAndSendProposal({
   // 서술(reason)은 그 뒤에 문단으로 — buildProposalMessageBody(한 줄 요약형)는 이제
   // DRY-RUN 미리보기 전용, 실제 발송은 여기서 조립한다.
   const facts = buildProposalFacts({ side, name: name ?? assetKey, assetKey, quantity, proposedPrice });
-  const messageText = formatFactsMessage({ departmentLabel, facts, interpretation: reason || null, zeusComment });
+  const messageText = formatFactsMessage({ departmentLabel, facts, interpretation: reason || null, zeusComment, tag: '제안' });
   const sendResult = await sendMessage(messageText);
   const telegramMessageId = sendResult?.message_id ?? null;
 

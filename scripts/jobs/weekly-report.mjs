@@ -46,6 +46,12 @@ import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+
+// 2026-08-23 — 이 발송도 부서 라벨이 없었다(오너 지시로 전체 텔레그램 메시지 구조
+// 재점검 중 발견) — 주간리포트·KPI는 비서실(Apollo) 소관(위 APOLLO_REPORT/APOLLO_PREFS
+// 로 이미 이 잡 전체가 Apollo 에이전트 정의를 쓰고 있는 것과 일관).
+const DEPARTMENT_LABEL = '비서실 Apollo';
 
 loadEnv(); // KRX_API_KEY(거시지표) — 다른 v2 잡과 동일 관례
 
@@ -135,7 +141,7 @@ ${factsText}
 
 【1. 가독성 — 스캔되는 글】
 - 한 불릿에 수치 6~7개를 욱여넣지 말 것. **결론 먼저, 근거는 짧게.**
-- 자산군 진단은 \`**🟢 국내주식 — (한 줄 결론)**\` 헤더 → 그 아래 짧은 근거 1줄 + \`내 판단:\` 1줄 구조.
+- 자산군 진단은 \`**[국내주식] (한 줄 결론)**\` 헤더 → 그 아래 짧은 근거 1줄 + \`내 판단:\` 1줄 구조.
 - 긴 만연체 금지. 문장은 짧게 끊고, 핵심 수치만 굵게.
 
 【2. 정확한 수치 + 너의 시선】
@@ -161,29 +167,29 @@ ${factsText}
 
 > 요약: (3줄·200자 이내, 이 라인 형식 그대로 제목 바로 아래)
 
-## 🎯 이번 주 한눈에
+## [한눈에] 이번 주 요약
 - **가장 큰 변화**: (한 줄)
 - **잘 가고 있는 것**: (한 줄)
 - **주의·행동 필요**: (한 줄)
 
-## 📊 자산 현황
+## [자산현황]
 - 총 평가액·총손익(원금 대비) + 계좌별 표 + 자산군 비중 표. 표는 간결히, 종목 전수 나열 금지.
 - **내 판단:** 이번 주 자산 상태를 한두 줄로 평가(Frank 목표 대비 어디인지).
 
-## 🌍 이번 주 시장 환경 (내 포트폴리오 관점)
+## [시장환경] 이번 주 시장 환경 (내 포트폴리오 관점)
 - 핵심 이슈 1~2개 — 각 이슈를 "내 어느 자산/계좌에 어떻게"로 연결(일반론 금지).
 - 지표 표: facts에 있는 거시지표(값 + 5일 변화).
 
-## ⚡ 이번 주 체결·배당
+## [체결·배당] 이번 주 체결·배당
 - facts의 체결·배당 정리(없으면 "없음") + 각 체결이 Frank 성향에 부합했는지 짧은 코멘트.
 - **매도의 익절/손절은 facts에 표시된 실현손익(매입평균 대비) 부호만 근거로 쓸 것.** 그 숫자가
   없거나 일부만 추적된 경우 익절/손절을 단정하지 말고 "손익 미확정"으로 쓸 것.
 
-## 💡 다음 주 행동 (Frank 맞춤 처방)
-- **⚠️ 즉시**: 근거 = 밸류·현금 여력·**성향 적합성**. 없으면 "현 포지션 유지" + 이유.
-- **🔵 조건부**: 가격/이벤트 트리거별 액션.
-- **📅 다음 주 일정**: 실적·FOMC·지표(WebSearch 가능).
-- **🟢 유지·관망**: 손대지 않을 자산군 + 이유 한 줄.
+## [행동] 다음 주 행동 (Frank 맞춤 처방)
+- **[즉시]**: 근거 = 밸류·현금 여력·**성향 적합성**. 없으면 "현 포지션 유지" + 이유.
+- **[조건부]**: 가격/이벤트 트리거별 액션.
+- **[일정]**: 실적·FOMC·지표(WebSearch 가능).
+- **[유지·관망]**: 손대지 않을 자산군 + 이유 한 줄.
 
 ---
 *결정론 데이터(Vault·KRX·yfinance) 기반 자동 생성. 최종 결정은 Frank님이 직접.*
@@ -322,7 +328,11 @@ async function main() {
   // ⑦ 텔레그램 요약 푸시
   if (!NO_PUSH) {
     try {
-      await sendTelegram(`📰 <b>주간 리포트</b> · ${asof}\n\n${summary}\n\n<i>앱 리포트 탭에서 전문 확인</i>`);
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL,
+        tag: '안내',
+        body: `<b>주간 리포트</b> · ${asof}\n\n${summary}\n\n<i>앱 리포트 탭에서 전문 확인</i>`,
+      }));
       console.log('   📲 텔레그램 요약 푸시');
     } catch (e) { console.error(`   ⚠️ 텔레그램 실패: ${e.message}`); }
   }

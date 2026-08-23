@@ -1,26 +1,40 @@
 // 텔레그램 메시지 포맷 + 인바운드 텍스트 해석 — 순수 함수.
 // docs/ARCHITECTURE-V2.md "메시지 형식 — 부서 라벨 + Zeus 판단 코멘트" 절 +
 // 구현계획서 Phase 5(오너 확정, 2026-08-05: 부서 보고+Zeus 코멘트는 한 메시지에 합침).
+//
+// ⚠️ 전면 개정(2026-08-23, 오너 지시 — "텔레그램 구조 개선, 이모티콘 전부 제외,
+// 기호 충분히 활용, 모바일 줄바꿈 고려") — 이모지(✅❌⚠️⏳⛔📰 등)를 전부 없애고
+// 대괄호 태그(예: [경고][완료][취소][차단][만료][오류][제안][안내])로 상태를 명시하는
+// 방식으로 교체(오너가 미리보기 3안 중 "대괄호 태그형"을 확정). 부서 헤더 아래 구분선
+// (SEPARATOR)을 추가해 모바일에서 헤더/본문 경계가 시각적으로 분명해지게 했다.
+const SEPARATOR = '─'.repeat(16);
+
+// tag: 이 메시지의 상태를 나타내는 대괄호 단어(예: '제안'·'완료'·'경고') — 없으면
+// (기본값) 태그 없이 부서 헤더만. 아래 두 포맷 함수가 공유하는 헤더 규칙.
+function buildHeader(departmentLabel, tag) {
+  return tag ? `[${tag}] [${departmentLabel}]` : `[${departmentLabel}]`;
+}
 
 // 부서 보고와 [Zeus] 판단 코멘트를 한 메시지에 합친다(2026-08-05 오너 확정 — 텔레그램
 // 알림 개수를 늘리지 않기 위함). zeusComment가 없으면(아직 Zeus 판단 전 등) 부서
 // 보고만 나간다.
-export function formatDepartmentMessage({ departmentLabel, body, zeusComment = null }) {
-  const header = `[${departmentLabel}]`;
-  if (!zeusComment) return `${header}\n${body}`;
-  return `${header}\n${body}\n\n[Zeus] ${zeusComment}`;
+export function formatDepartmentMessage({ departmentLabel, body, zeusComment = null, tag = null }) {
+  const header = buildHeader(departmentLabel, tag);
+  let msg = `${header}\n${SEPARATOR}\n${body}`;
+  if (zeusComment) msg += `\n\n[Zeus] ${zeusComment}`;
+  return msg;
 }
 
-// 텔레그램 알림 표준 구조(2026-08-17 오너 확정) — [부서]로 시작 → Node가 계산한
-// 사실을 개조식(불릿)으로 나열 → 그 뒤에 LLM이 그 사실을 보고 낸 해석을 서술형
-// 문단으로 붙인다. interpretation이 없으면(health-watcher처럼 애초에 LLM을 안 부르는
-// 순수 운영 알림) 사실만 나간다 — 오너가 명시한 "필요에 따라 이 구조에서 변형" 허용
-// 범위. formatDepartmentMessage와 달리 body를 자유 문자열로 안 받고 facts 배열을
-// 강제해, 호출부가 사실과 해석을 섞어서 쓰지 않도록 구조로 유도한다.
-export function formatFactsMessage({ departmentLabel, facts, interpretation = null, zeusComment = null }) {
-  const header = `[${departmentLabel}]`;
-  const factBlock = (facts ?? []).map((f) => `• ${f}`).join('\n');
-  let msg = `${header}\n${factBlock}`;
+// 텔레그램 알림 표준 구조(2026-08-17 오너 확정, 2026-08-23 태그·구분선 추가) — [부서]로
+// 시작 → Node가 계산한 사실을 개조식(중점 불릿)으로 나열 → 그 뒤에 LLM이 그 사실을 보고
+// 낸 해석을 서술형 문단으로 붙인다. interpretation이 없으면(health-watcher처럼 애초에
+// LLM을 안 부르는 순수 운영 알림) 사실만 나간다 — 오너가 명시한 "필요에 따라 이 구조에서
+// 변형" 허용 범위. formatDepartmentMessage와 달리 body를 자유 문자열로 안 받고 facts
+// 배열을 강제해, 호출부가 사실과 해석을 섞어서 쓰지 않도록 구조로 유도한다.
+export function formatFactsMessage({ departmentLabel, facts, interpretation = null, zeusComment = null, tag = null }) {
+  const header = buildHeader(departmentLabel, tag);
+  const factBlock = (facts ?? []).map((f) => `· ${f}`).join('\n');
+  let msg = `${header}\n${SEPARATOR}\n${factBlock}`;
   if (interpretation) msg += `\n\n${interpretation}`;
   if (zeusComment) msg += `\n\n[Zeus] ${zeusComment}`;
   return msg;

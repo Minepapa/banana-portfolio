@@ -41,10 +41,14 @@ function main() {
   // 오독될 수 있어 범위를 명시한다.
   console.log(`[자산분배 5/25 밴드 점검] 위탁+연금저축 리밸런싱 대상(6개 자산군) 합산 평가액 ${won(totalEval)}원\n`);
   for (const g of gaps) {
-    const flag = g.breached ? `⚠️ 이탈(${g.breachType})` : '정상';
+    const flag = g.breached ? `[경고] 이탈(${g.breachType})` : '정상';
     console.log(`  ${g.assetClass}: 목표 ${g.targetPct}% / 현재 ${g.currentPct.toFixed(2)}% (${pct(g.currentPct - g.targetPct)}p) — ${flag}`);
   }
-  console.log(anyBreached ? '\n⚠️ 밴드 이탈 자산군 있음 — Athena 리밸런싱 판단 필요' : '\n✅ 전 자산군 밴드 안 — 이번 분기 리밸런싱 불필요');
+  // ⚠️ "[경고]" 문자열은 단순 장식이 아니다 — daily-asset-allocation-check.mjs가 이
+  // stdout 전체를 캡처해 .includes('[경고]')로 "텔레그램으로 보낼 만한 변화가 있는가"를
+  // 판정하는 시그널이다(2026-08-23, 이모지⚠️→대괄호 태그로 교체하며 시그널 문자열도
+  // 같이 바꿈 — 두 파일이 어긋나면 daily-asset-allocation-check가 영원히 조용해진다).
+  console.log(anyBreached ? '\n[경고] 밴드 이탈 자산군 있음 — Athena 리밸런싱 판단 필요' : '\n[정상] 전 자산군 밴드 안 — 이번 분기 리밸런싱 불필요');
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main();

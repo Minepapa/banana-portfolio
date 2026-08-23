@@ -48,7 +48,7 @@ const won = (n) => (n == null ? '확인 필요' : Math.round(n).toLocaleString('
 // 보여주지 않고 "확인 필요"로 명시한다.
 function buildFilledMessage({ name, code, orderNo, filledQty, avgFillPrice }) {
   const amount = avgFillPrice != null ? won(filledQty * avgFillPrice) : '확인 필요';
-  return `✅ <b>체결 확인</b>\n${name}(${code}) 주문번호 ${orderNo}\n${filledQty}주 전량 체결 @${won(avgFillPrice)} ≈ ${amount}`;
+  return `<b>체결 확인</b>\n${name}(${code}) 주문번호 ${orderNo}\n${filledQty}주 전량 체결 @${won(avgFillPrice)} ≈ ${amount}`;
 }
 
 async function main() {
@@ -96,7 +96,8 @@ async function main() {
       console.log('[취소 확인] 주문이 취소됨');
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL,
-        body: `❌ <b>주문 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — 취소되었습니다.`,
+        tag: '취소',
+        body: `<b>주문 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — 취소되었습니다.`,
       }));
       return true;
     }
@@ -104,6 +105,7 @@ async function main() {
       console.log(`[체결 확인] 전량 체결 — 평균단가 ${result.avgFillPrice}원`);
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL,
+        tag: '완료',
         body: buildFilledMessage({ name, code, orderNo, filledQty: result.filledQty, avgFillPrice: result.avgFillPrice }),
       }));
       // avgFillPrice가 없으면(알려진 한계, 위 buildFilledMessage 주석 참고) Ledger에 가격
@@ -155,8 +157,10 @@ async function main() {
   console.log('[타임아웃] 확인 시간 내 전량체결 미확인 — 알림 발송');
   await sendTelegram(formatDepartmentMessage({
     departmentLabel: DEPARTMENT_LABEL,
-    body: `⚠️ <b>체결 확인 시간 초과</b>\n${name}(${code}) 주문번호 ${orderNo} — ${timeoutMin}분 동안 전량체결 확인 안 됨. ` +
-      `KIS 앱에서 직접 확인해 주세요(미체결로 남아있거나 부분체결됐을 수 있음).`,
+    tag: '경고',
+    body: `<b>체결 확인 시간 초과</b>\n${name}(${code}) 주문번호 ${orderNo}\n` +
+      `${timeoutMin}분 동안 전량체결 확인 안 됨 — KIS 앱에서 직접 확인해 주세요.\n` +
+      `(미체결로 남아있거나 부분체결됐을 수 있음)`,
   }));
 }
 

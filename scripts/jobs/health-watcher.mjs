@@ -159,9 +159,9 @@ export function isPollingStuck({ pendingUpdateCount }) {
 // 채우지 않는다는 그 파일의 원칙 그대로.
 export function formatStaleJobIssue(s) {
   const lastRunDesc = s.lastRun ? `마지막 실행 ${s.lastRun}` : '실행 기록 없음';
-  let line = `⚠️ 잡 <code>${describeJob(s.job)}</code>이(가) 조용합니다 — ${lastRunDesc}(기대주기 ${Math.round(s.expectedIntervalMs / 60000)}분의 2배 초과)`;
+  let line = `잡 <code>${describeJob(s.job)}</code>이(가) 조용합니다 — ${lastRunDesc}(기대주기 ${Math.round(s.expectedIntervalMs / 60000)}분의 2배 초과)`;
   const remediation = JOB_REMEDIATION[s.job];
-  if (remediation) line += `\n   → 확인: ${remediation}`;
+  if (remediation) line += `\n  → 확인: ${remediation}`;
   return line;
 }
 
@@ -170,7 +170,7 @@ async function main() {
 
   if (WATCH_TELEGRAM_SESSION) {
     if (!isProcessAlive(TELEGRAM_SESSION_PATTERN)) {
-      issues.push('⚠️ 텔레그램 상시 세션이 응답하지 않습니다(프로세스 없음).');
+      issues.push('텔레그램 상시 세션이 응답하지 않습니다(프로세스 없음).');
     } else {
       // 프로세스는 살아있어도 폴링이 멈췄을 수 있다(좀비 상태, 위 isPollingStuck 주석
       // 참고) — 이 체크는 실패해도(네트워크 오류 등) 다른 잡의 stale 판정을 막지 않게
@@ -179,12 +179,12 @@ async function main() {
         const info = await getTelegramWebhookInfo();
         if (isPollingStuck({ pendingUpdateCount: info.pending_update_count })) {
           issues.push(
-            `⚠️ 텔레그램 상시 세션이 좀비 상태로 보입니다 — 프로세스는 살아있지만 ` +
-            `미수신 메시지 ${info.pending_update_count}건이 큐에 쌓여있습니다(폴링 중단 의심). 세션 재시작 필요.`,
+            `텔레그램 상시 세션이 좀비 상태로 보입니다 — 프로세스는 살아있지만\n` +
+            `미수신 메시지 ${info.pending_update_count}건이 큐에 쌓여있습니다(폴링 중단 의심).\n세션 재시작 필요.`,
           );
         }
       } catch (e) {
-        issues.push(`⚠️ 텔레그램 폴링 상태 확인 실패(getWebhookInfo): ${e.message}`);
+        issues.push(`텔레그램 폴링 상태 확인 실패(getWebhookInfo): ${e.message}`);
       }
     }
   }
@@ -202,7 +202,8 @@ async function main() {
       // 나간다 — 오너 확정 표준 구조의 "변형" 허용 범위(2026-08-17).
       await sendTelegram(formatFactsMessage({
         departmentLabel: DEPARTMENT_LABEL,
-        facts: [`<b>banana v2 장애감지 ${issues.length}건</b>`, ...issues],
+        tag: '경고',
+        facts: [`<b>장애감지 ${issues.length}건</b>`, ...issues],
       }));
     } catch (e) {
       console.error('텔레그램 알림 실패:', e.message);

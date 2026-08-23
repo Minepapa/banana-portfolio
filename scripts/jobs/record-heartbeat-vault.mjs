@@ -13,7 +13,12 @@ import { join } from 'node:path';
 import { buildJobHealthRecord, parseFrontmatter } from '../lib/job-health.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { describeJob } from '../lib/job-labels.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+
+// 2026-08-23 — 이 알림도 job-alerts.mjs와 같은 이유로 라벨이 없었다 — 운영실(Hermes) 소관.
+const DEPARTMENT_LABEL = '운영실 Hermes';
 
 const job = process.argv[2];
 const status = process.argv[3] || 'OK';
@@ -33,7 +38,11 @@ async function main() {
 
   if (shouldAlert) {
     try {
-      await sendTelegram(`⚠️ <b>banana v2 잡 실패</b> (연속 ${failStreak}회)\njob: <code>${job}</code>\n${detail || '(detail 없음)'}`);
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL,
+        tag: '오류',
+        body: `<b>잡 실패</b> (연속 ${failStreak}회)\n잡: <code>${describeJob(job)}</code>\n${detail || '(detail 없음)'}`,
+      }));
     } catch (e) {
       console.error('텔레그램 알림 실패(무시):', e.message);
     }

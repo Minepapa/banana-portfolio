@@ -14,6 +14,13 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { sendTelegram } from './telegram.mjs';
+import { formatDepartmentMessage } from './telegram-messages.mjs';
+import { describeJob } from './job-labels.mjs';
+
+// 2026-08-23 — 이 알림엔 부서 라벨이 아예 없었다(오너 지시로 전체 텔레그램 메시지
+// 구조 재점검 중 발견) — 잡·인프라 배관은 운영실(Hermes) 소관 원칙(health-watcher.mjs
+// DEPARTMENT_LABEL과 동일)을 그대로 따른다.
+const DEPARTMENT_LABEL = '운영실 Hermes';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = join(HERE, '..', '.cache', 'job-alerts.json');
@@ -53,9 +60,13 @@ export async function flushWarnings(jobName, { dryRun = false } = {}) {
   try { state = JSON.parse(readFileSync(STATE_FILE, 'utf8')); } catch { state = {}; }
   if (!shouldNotify(state, jobName, sig)) return;
   try {
-    const list = warnings.slice(0, 8).map(w => `• ${w}`).join('\n');
+    const list = warnings.slice(0, 8).map(w => `· ${w}`).join('\n');
     const more = warnings.length > 8 ? `\n… 외 ${warnings.length - 8}건` : '';
-    await sendTelegram(`⚠️ <b>banana ${jobName} 경고 ${warnings.length}건</b>\n${list}${more}`);
+    await sendTelegram(formatDepartmentMessage({
+      departmentLabel: DEPARTMENT_LABEL,
+      tag: '경고',
+      body: `<b>${describeJob(jobName)} 경고 ${warnings.length}건</b>\n${list}${more}`,
+    }));
     mkdirSync(dirname(STATE_FILE), { recursive: true });
     state[jobName] = { sig, ts: Date.now() };
     writeFileSync(STATE_FILE, JSON.stringify(state));

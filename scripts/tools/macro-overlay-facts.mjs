@@ -89,23 +89,26 @@ function main() {
 
   console.log('[거시 전술 오버레이 점검] (ECOS 한국채권스프레드 미연동 — 4개 신호만)\n');
   const faberLine = (label, sig, crossed) => sig
-    ? `  ${label}: ${sig.aboveMA ? '10개월선 위' : '10개월선 아래'}(${sig.deviationPct.toFixed(2)}%)${crossed ? ' ⚠️ 크로스 발생' : ''}`
+    ? `  ${label}: ${sig.aboveMA ? '10개월선 위' : '10개월선 아래'}(${sig.deviationPct.toFixed(2)}%)${crossed ? ' [경고] 크로스 발생' : ''}`
     : `  ${label}: 데이터 부족(판정 보류)`;
   console.log(faberLine('Faber 국내주식(KOSPI)', signals.faberDomestic, signals.faberDomesticCrossed));
   console.log(faberLine('Faber 해외주식(S&P500)', signals.faberForeign, signals.faberForeignCrossed));
 
   if (signals.rateSpread) {
-    console.log(`  미국금리차(10Y-3M): ${signals.rateSpread.currentSpread.toFixed(2)}%p${signals.rateSpread.inverted ? ' ⚠️ 역전' : ''}`);
+    console.log(`  미국금리차(10Y-3M): ${signals.rateSpread.currentSpread.toFixed(2)}%p${signals.rateSpread.inverted ? ' [경고] 역전' : ''}`);
   } else {
     console.log('  미국금리차: 데이터 없음');
   }
   for (const [label, sig] of [['DXY', signals.dxy], ['VIX', signals.vix], ['WTI 유가', signals.wti]]) {
-    console.log(sig ? `  ${label}: ${sig.current.toFixed(2)}${sig.breached ? ` ⚠️ 이탈(z=${sig.bands?.zscore})` : ' 정상'}` : `  ${label}: 데이터 없음`);
+    console.log(sig ? `  ${label}: ${sig.current.toFixed(2)}${sig.breached ? ` [경고] 이탈(z=${sig.bands?.zscore})` : ' 정상'}` : `  ${label}: 데이터 없음`);
   }
 
+  // ⚠️ "[경고]" 문자열은 daily-asset-allocation-check.mjs가 .includes('[경고]')로
+  // "텔레그램 발송 여부"를 판정하는 시그널이다(2026-08-23, rebalance-facts.mjs와 같은
+  // 이유로 이모지⚠️→대괄호 태그 교체) — 이 문자열을 바꾸면 그 판정도 같이 깨진다.
   console.log(signals.anyMeaningfulChange
-    ? '\n⚠️ 의미있는 변화 감지 — Athena 종합판단 필요(진짜 국면전환인지 노이즈인지)'
-    : '\n✅ 5개 신호 전부 조용함 — 협의체 소집 불필요');
+    ? '\n[경고] 의미있는 변화 감지 — Athena 종합판단 필요(진짜 국면전환인지 노이즈인지)'
+    : '\n[정상] 5개 신호 전부 조용함 — 협의체 소집 불필요');
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main();

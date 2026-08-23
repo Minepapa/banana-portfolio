@@ -126,7 +126,9 @@ async function main() {
     try {
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL,
-        body: `⏳ <b>승인 만료</b>\n${p.side} ${p.assetKey} ${p.quantity}주 (제안 ${p.id})\n승인 당일 안에 체결되지 않아 자동 만료되었습니다. 계속 진행하려면 다시 제안해 주세요.`,
+        tag: '만료',
+        body: `<b>승인 만료</b>\n${p.side} ${p.assetKey} ${p.quantity}주 (제안 ${p.id})\n` +
+          `승인 당일 안에 체결되지 않아 자동 만료되었습니다.\n계속 진행하려면 다시 제안해 주세요.`,
       }));
     } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
   }
@@ -155,7 +157,8 @@ async function main() {
       try {
         await sendTelegram(formatDepartmentMessage({
           departmentLabel: DEPARTMENT_LABEL,
-          body: `⚠️ <b>제안 정합성 이상</b>\n같은 안건에 "승인" 상태가 2건 이상 동시에 있어 자동체결을 보류했습니다 — ` +
+          tag: '경고',
+          body: `<b>제안 정합성 이상</b>\n같은 안건에 "승인" 상태가 2건 이상 동시에 있어 자동체결을 보류했습니다.\n` +
             `수동으로 확인 후 하나만 남기고 나머지는 거부/대체 처리해 주세요.\n${lines.join('\n')}`,
         }));
       } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
@@ -281,7 +284,8 @@ async function main() {
         try {
           await sendTelegram(formatDepartmentMessage({
             departmentLabel: DEPARTMENT_LABEL,
-            body: `⛔ <b>검문소 차단</b>\n${proposal.side} ${proposal.assetKey} ${proposal.quantity}주 (제안 ${proposal.id})\n${newReason}`,
+            tag: '차단',
+            body: `<b>검문소 차단</b>\n${proposal.side} ${proposal.assetKey} ${proposal.quantity}주 (제안 ${proposal.id})\n${newReason}`,
           }));
         } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
       }

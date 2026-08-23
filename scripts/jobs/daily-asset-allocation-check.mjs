@@ -13,7 +13,7 @@
  *   - macro-overlay-facts.mjs를 --json 없이 돌려야 Faber 크로스 상태 파일이 실제로
  *     갱신된다(그 파일 자체 주석 참고 — --json 조회는 의도적으로 상태를 안 건드림).
  *     이 잡이 "그날의 공식 확인"이므로 반드시 이 모드로 불러야 한다.
- *   - 두 도구 다 "⚠️ ..." 마커 문자열이 있으면 사람이 볼 만한 변화가 있다는 뜻 —
+ *   - 두 도구 다 "[경고] ..." 마커 문자열이 있으면 사람이 볼 만한 변화가 있다는 뜻 —
  *     그 경우에만 보고 원문을 그대로 텔레그램으로 전달한다(조용하면 알림 없음, 스팸 방지).
  *
  * ⚠️ 알려진 한계 — v1 risk-b(개별종목 투자논리훼손 B신호)에 대응하는 Vault-native
@@ -41,7 +41,7 @@ function runFacts(scriptName) {
   } catch (e) {
     // 도구 자체가 실패해도(yfinance 일시 오류 등) 다른 쪽 점검까지 막지 않는다 —
     // 실패 사실 자체를 보고에 남겨 조용히 넘어가지 않게 한다.
-    return `⚠️ ${scriptName} 실행 실패: ${e.message.slice(0, 300)}`;
+    return `[경고] ${scriptName} 실행 실패: ${e.message.slice(0, 300)}`;
   }
 }
 
@@ -49,9 +49,13 @@ async function main() {
   const rebalanceReport = runFacts('rebalance-facts.mjs');
   const macroReport = runFacts('macro-overlay-facts.mjs'); // --json 없이 — Faber 상태 갱신 필요
 
+  // ⚠️ 2026-08-23 — 시그널 마커를 이모지(⚠️)에서 대괄호 태그([경고])로 교체(오너 지시,
+  // 텔레그램 이모지 전면 제거). rebalance-facts.mjs·macro-overlay-facts.mjs 양쪽의
+  // 실제 출력 문자열도 같이 바꿔뒀다 — 세 파일이 이 문자열로 묶여있으니 하나만
+  // 바꾸면 이 잡이 영원히 조용해진다.
   const noteworthy = [];
-  if (rebalanceReport.includes('⚠️')) noteworthy.push(`[5/25 리밸런싱]\n${rebalanceReport.trim()}`);
-  if (macroReport.includes('⚠️')) noteworthy.push(`[거시 전술 오버레이]\n${macroReport.trim()}`);
+  if (rebalanceReport.includes('[경고]')) noteworthy.push(`[5/25 리밸런싱]\n${rebalanceReport.trim()}`);
+  if (macroReport.includes('[경고]')) noteworthy.push(`[거시 전술 오버레이]\n${macroReport.trim()}`);
 
   console.log(rebalanceReport);
   console.log(macroReport);
@@ -66,6 +70,7 @@ async function main() {
     try {
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL,
+        tag: '경고',
         body: noteworthy.join('\n\n'),
       }));
     } catch (e) {
