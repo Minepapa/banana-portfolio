@@ -18,6 +18,12 @@ export const JOB_LABELS = {
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
   'update-monthly-balance-snapshot': '월별 잔고 스냅샷 매일 자동 기록(대시보드 막대그래프용)',
   'weekly-report': '주간 리포트 자동 생성·발행(성향학습 파이프라인 동반)',
+  // 2026-08-23 전수 재점검(오너 지시)에서 발견 — 아래 셋은 실제 launchd에 등록돼
+  // 30분마다 도는데(health-watcher.mjs EXPECTED_INTERVALS_MS 참고) 여기 라벨이 없어
+  // 지금까지 알림에 영어 이름만 뜨고 있었다.
+  'sync-firestore-mirror': 'Vault → Firestore 미러 동기화(대시보드가 읽는 데이터)',
+  'update-allocation-from-holdings': '보유종목 기준 자산분배 탭 목표·현재비중 재계산',
+  'update-holdings-prices': '보유종목 실시간 시세 갱신(KRX·해외·환율)',
 };
 
 // 라벨 있으면 "잡이름(한글설명)", 없으면(등록 안 된 새 잡) 이름만 — 조용히 빈 문자열로
@@ -26,3 +32,22 @@ export function describeJob(jobName) {
   const label = JOB_LABELS[jobName];
   return label ? `${jobName}(${label})` : jobName;
 }
+
+// 잡이 조용해졌을 때(stale) 바로 확인해볼 만한 구체적 조치 — 코드에 이미 문서화된
+// 알려진 의존성(크리덴셜 파일 경로 등)이 있는 잡만 등록한다(2026-08-23, 오너 지시
+// "조치사항이 필요하면 등록"). 근거 없는 일반론("로그 확인해보세요")은 안 채운다 —
+// 등록 안 된 잡은 remediation 없이 잡 이름·마지막 실행시각만으로 충분히 단서가 된다.
+export const JOB_REMEDIATION = {
+  // reconcile-irp.mjs·execute-quant-proposal.mjs 둘 다 이 파일이 없으면 "미설정 —
+  // 스킵"으로 조용히 넘어간다(정상, 에러 아님) — 하지만 예전엔 잘 돌던 잡이 갑자기
+  // stale해졌다면 이 파일 경로·내용이 깨졌을 가능성이 1순위 확인 대상.
+  'execute-quant': '~/.config/banana-portfolio/kis-key.json(KIS 크리덴셜·퀀트계좌 설정) 확인',
+  'reconcile-irp': '~/.config/banana-portfolio/kis-key.json(KIS 크리덴셜·IRP계좌 설정) 확인',
+  // sync-firestore-mirror.mjs·parse-notifications-to-vault.mjs(2026-08-22 Firestore
+  // 전환 이후) 둘 다 이 서비스계정 키가 없으면 즉시 throw로 죽는다.
+  'sync-firestore-mirror': '~/.config/banana-portfolio-v2/firebase-adminsdk-key.json(Firebase Admin 키) 확인',
+  'parse-notifications-to-vault': '~/.config/banana-portfolio-v2/firebase-adminsdk-key.json(Firebase Admin 키) 확인',
+  // backup-vault-snapshot.mjs — Vault 루트 경로가 없으면 즉시 에러. Google Drive
+  // for desktop 마운트가 풀렸을 때 실제로 겪었던 실패 양상(ADR 0002 Drive 동기화 구조).
+  'backup-vault': 'Vault 경로(~/banana-vault) 존재 여부 — Google Drive for desktop 마운트 확인',
+};

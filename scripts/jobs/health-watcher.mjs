@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { parseFrontmatter, isStale } from '../lib/job-health.mjs';
 import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
-import { describeJob } from '../lib/job-labels.mjs';
+import { describeJob, JOB_REMEDIATION } from '../lib/job-labels.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -33,46 +33,82 @@ const DEPARTMENT_LABEL = '운영실 Hermes';
 
 // 잡별 기대 실행 주기 — 새 v2 잡이 생길 때마다 여기 추가한다(구현계획서 Phase 5+).
 // 값이 없는 잡은 기본값(EXPECTED_INTERVAL_DEFAULT_MS)을 쓴다.
+//
+// ⚠️ 전수 재점검(2026-08-23, 오너 지시 — "지금 적용한 사항 모든 잡에 동일하게") —
+// update-monthly-balance-snapshot·weekly-report 오알람을 고치면서, 등록된 launchd
+// 잡 16개 전체를 실제 StartCalendarInterval/StartInterval과 대조했다. 이 표가
+// "새 잡 추가 시 누락"뿐 아니라 "평일 전용 잡의 주말 간격"도 놓치고 있었다 —
+// 둘 다 여기서 함께 고친다.
 const EXPECTED_INTERVALS_MS = {
   // ⚠️ 빈도 수정(2026-08-14, 오너 확인) — 기존엔 v1 주기(매시간)를 그대로 계승했지만,
   // 자산분배 트랙엔 이 기록을 당일 즉시 소비하는 자동화가 없어(퀀트 트랙과 달리 같은
   // 날 바로 사고파는 파이프라인이 없음) 하루 1회(평일 16:00 KST)로 충분하다 —
   // com.banana2.parse-notifications-to-vault.plist 참고.
-  'parse-notifications-to-vault': 24 * 60 * 60 * 1000,
+  //
+  // ⚠️ 재수정(2026-08-23) — "하루 1회"가 24h로만 등록돼 있었는데, 이 잡들은 **평일
+  // 전용**(Weekday 1~4/5, 토·일엔 launchd가 아예 안 돈다)이라 금요일 실행→월요일
+  // 실행 사이는 실제로 사흘(72시간)이 정상이다. 24h×2=48h 기준이면 토요일 낮부터
+  // 월요일 오후까지 매주 "조용하다"고 오판했을 것(실측: 2026-08-23 일요일 낮 시점
+  // 이미 41시간 경과 — 48h 문턱을 곧 넘길 뻔했다). 주말을 안전하게 넘기면서도
+  // 실제 평일 장애는 며칠 안에 잡히도록 48h(2일)로 올린다 — ×2=96h(4일), 금~월
+  // 72시간 간격에 24시간 여유를 더한 값(연휴로 하루 더 밀려도 안전).
+  'parse-notifications-to-vault': 48 * 60 * 60 * 1000,
   // ⚠️ 버그 수정(2026-08-14, 오너 신고 — 30분마다 알람 반복) — backup-vault는 밤 23:50
   // 하루 1회만 도는 잡인데(scripts/launchd/com.banana2.backup-vault.plist,
   // StartCalendarInterval) 여기 항목이 없어 기본값(1시간)이 적용됐다. 그 결과 정상
   // 실행 후 2시간(기대주기×2)만 지나면 매일 "조용하다"고 오판해 다음날 23:50까지
   // 22시간 동안 30분마다 계속 알림이 나갔다 — 이 잡을 처음 활성화할 때(2026-08-13)
-  // backup-vault의 실제(하루 1회) 주기를 안 넣은 설정 누락.
+  // backup-vault의 실제(하루 1회) 주기를 안 넣은 설정 누락. (⚠️ 이 잡은 요일 제한이
+  // 없는 매일 실행이라 위 평일전용 잡들과 달리 24h를 그대로 유지 — 주말 간격 문제
+  // 없음.)
   'backup-vault': 24 * 60 * 60 * 1000,
   // daily-asset-allocation-check도 backup-vault와 같은 이유로 하루 1회 잡 — 처음부터
-  // 여기 넣어 같은 오탐이 재발하지 않게 한다(2026-08-14).
-  'daily-asset-allocation-check': 24 * 60 * 60 * 1000,
+  // 여기 넣어 같은 오탐이 재발하지 않게 한다(2026-08-14). ⚠️ 평일 전용이라 2026-08-23
+  // 48h로 상향(위 parse-notifications-to-vault 주석과 동일 사유).
+  'daily-asset-allocation-check': 48 * 60 * 60 * 1000,
   // update-holdings-from-executions(2026-08-15 신설 스케줄) — 로직 자체는 이미 있었지만
   // (퀀트 체결은 KIS API가 정본이라 skip, 그 외 자산분배 트랙 체결만 반영) 무인 스케줄이
   // 없어 watch-order-fill.mjs의 퀀트 트리거에만 의존하던 잡. 평일 16:05 KST 하루 1회
-  // (parse-notifications-to-vault 16:00 직후).
-  'update-holdings-from-executions': 24 * 60 * 60 * 1000,
+  // (parse-notifications-to-vault 16:00 직후). ⚠️ 평일 전용, 2026-08-23 48h로 상향.
+  'update-holdings-from-executions': 48 * 60 * 60 * 1000,
   // new-cash-allocation은 2026-08-16 신설 다음날(08-17) 10배 부풀림 사고로 잠정
   // 중단됐다가, 예수금앵커 배선 완료 후 실잔고 기반으로 전면 재작성돼 2026-08-18
   // 재활성화됐다(오너 확인) — 상세 경위는 job-labels.mjs·new-cash-allocation.mjs
   // 헤더 주석 참고. 평일 16:13 하루 1회(update-cash-from-ledger 16:10 직후).
-  'new-cash-allocation': 24 * 60 * 60 * 1000,
+  // ⚠️ 평일 전용, 2026-08-23 48h로 상향.
+  'new-cash-allocation': 48 * 60 * 60 * 1000,
   // reconcile-irp·update-cash-from-ledger(2026-08-18 신설 — 예수금앵커 배선 마지막
   // 조립, IRP는 여기서 KIS API로 자동 CashEvent도 기록) 둘 다 평일 16:07·16:10 하루
-  // 1회.
-  'reconcile-irp': 24 * 60 * 60 * 1000,
-  'update-cash-from-ledger': 24 * 60 * 60 * 1000,
+  // 1회. ⚠️ 평일 전용, 2026-08-23 48h로 상향.
+  'reconcile-irp': 48 * 60 * 60 * 1000,
+  'update-cash-from-ledger': 48 * 60 * 60 * 1000,
   // ⚠️ 버그 수정(2026-08-23, 오너 신고 — 리포트는 실제로 발행됐는데 "조용하다" 오알람) —
   // backup-vault와 완전히 같은 클래스의 재발이다: 이 두 잡을 추가할 때 기본값(1시간)
   // 이 적용된 채 여기 등록을 안 해서, 정상 실행 후 2시간만 지나면 매번 오탐이 났다.
   // update-monthly-balance-snapshot은 매일 23:50 KST 1회(com.banana2.update-monthly-
-  // balance-snapshot.plist StartCalendarInterval).
+  // balance-snapshot.plist StartCalendarInterval) — 요일 제한 없이 매일이라 24h 유지.
   'update-monthly-balance-snapshot': 24 * 60 * 60 * 1000,
   // weekly-report는 매주 일요일 03:00 KST 1회(com.banana2.weekly-report.plist
   // Weekday:0). 60분 기준이면 실행 직후에도 항상 "조용하다"로 잘못 잡힌다.
   'weekly-report': 7 * 24 * 60 * 60 * 1000,
+  // ── 2026-08-23 전수 재점검에서 새로 발견한 누락(이전엔 오탐이 아니라 "실제보다
+  // 느슨하게"만 감시되고 있었다 — 60분 기본값이 각 잡의 실제 주기보다 커서, 진짜
+  // 멈춰도 최대 2시간까지는 못 잡았다는 뜻. false negative 쪽 갭이라 오너 신고가
+  // 없었을 뿐 같은 종류의 설정 누락) ──
+  // execute-quant: com.banana2.execute-quant.plist StartInterval=300(5분마다). 퀀트
+  // 트랙 실주문 집행 잡이라 감시 지연이 가장 부담스러운 축 — 5분 그대로 등록.
+  'execute-quant': 5 * 60 * 1000,
+  // sync-firestore-mirror·update-allocation-from-holdings·update-holdings-prices
+  // 셋 다 StartInterval=1800(30분마다) — 대시보드가 읽는 미러/시세/자산분배 갱신.
+  'sync-firestore-mirror': 30 * 60 * 1000,
+  'update-allocation-from-holdings': 30 * 60 * 1000,
+  'update-holdings-prices': 30 * 60 * 1000,
+  // health-watcher 자기 자신도 StartInterval=1800(30분마다)이라 등록 — 다만 여기 등록해도
+  // 구조적 사각은 남는다: findStaleJobs는 health-watcher **자신이 실행될 때만** 호출된다.
+  // health-watcher 프로세스 자체가(launchd unload·크래시 등으로) 아예 안 돌기 시작하면
+  // 아무도 그 정지를 감지하지 못한다 — "감시자가 감시자 자신의 죽음은 못 본다"는
+  // 구조적 한계, 이 등록 하나로는 못 고친다(별도 외부 워치독이 필요, 아직 없음).
+  'health-watcher': 30 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 
@@ -115,15 +151,22 @@ export function isPollingStuck({ pendingUpdateCount }) {
   return Number.isFinite(pendingUpdateCount) && pendingUpdateCount > 0;
 }
 
-async function main() {
-  const issues = [];
+// s: findStaleJobs()가 반환한 { job, lastRun, expectedIntervalMs } 하나. 순수 함수 —
+// describeJob·JOB_REMEDIATION 조회만 하고 I/O 없음. 잡 이름만 영어로 나오면 오너가
+// 어떤 잡인지 못 알아본다(2026-08-17 지적) — describeJob으로 한글 설명을 괄호로
+// 덧붙인다. 2026-08-23(오너 지시) — 알려진 조치사항이 있는 잡이면 바로 뭘 확인해야
+// 하는지 덧붙인다(JOB_REMEDIATION). 없는 잡은 그냥 안 붙는다 — 근거 없는 일반론을
+// 채우지 않는다는 그 파일의 원칙 그대로.
+export function formatStaleJobIssue(s) {
+  const lastRunDesc = s.lastRun ? `마지막 실행 ${s.lastRun}` : '실행 기록 없음';
+  let line = `⚠️ 잡 <code>${describeJob(s.job)}</code>이(가) 조용합니다 — ${lastRunDesc}(기대주기 ${Math.round(s.expectedIntervalMs / 60000)}분의 2배 초과)`;
+  const remediation = JOB_REMEDIATION[s.job];
+  if (remediation) line += `\n   → 확인: ${remediation}`;
+  return line;
+}
 
-  for (const s of findStaleJobs(VAULT_PATHS.state.jobHealth)) {
-    const lastRunDesc = s.lastRun ? `마지막 실행 ${s.lastRun}` : '실행 기록 없음';
-    // 잡 이름만 영어로 나오면 오너가 어떤 잡인지 못 알아본다(2026-08-17 지적) —
-    // describeJob으로 한글 설명을 괄호로 덧붙인다.
-    issues.push(`⚠️ 잡 <code>${describeJob(s.job)}</code>이(가) 조용합니다 — ${lastRunDesc}(기대주기 ${Math.round(s.expectedIntervalMs / 60000)}분의 2배 초과)`);
-  }
+async function main() {
+  const issues = findStaleJobs(VAULT_PATHS.state.jobHealth).map(formatStaleJobIssue);
 
   if (WATCH_TELEGRAM_SESSION) {
     if (!isProcessAlive(TELEGRAM_SESSION_PATTERN)) {
