@@ -46,7 +46,8 @@ case "$JOB" in
   update-monthly-balance-snapshot) CMD=(scripts/jobs/update-monthly-balance-snapshot.mjs) ;;
   morning-briefing) CMD=(scripts/jobs/morning-briefing.mjs) ;;
   themis-risk-review) CMD=(scripts/jobs/themis-risk-review.mjs) ;;
-  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review}" >&2; exit 2 ;;
+  weekly-schedule-summary) CMD=(scripts/jobs/weekly-schedule-summary.mjs) ;;
+  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)

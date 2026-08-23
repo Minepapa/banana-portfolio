@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.weekly-schedule-summary</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>weekly-schedule-summary</string>
+  </array>
+  <!-- 매주 월요일 07:00 KST — morning-briefing(평일 08:00)보다 먼저 도착하도록 배치
+       (2026-08-23 신설, 오너 지시 — 무인 잡·부서 보고를 다 못 파악하겠다는 지적에서
+       시작). 이번 주 "이벤트 무관 주기적 보고" 4건(아침브리핑·리밸런싱점검·Themis
+       주간위험재검토·주간리포트)을 한 번에 요약해 알려준다. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>
+    <key>Hour</key><integer>7</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/weekly-schedule-summary.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/weekly-schedule-summary.log</string>
+</dict>
+</plist>
