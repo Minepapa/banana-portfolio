@@ -58,10 +58,14 @@ import {
   getKisToken, getKrQuote, getAccountBalance, placeKrOrder,
 } from '../lib/kis.mjs';
 
-// 이 잡의 운영 알림(승인만료·검문소차단·정합성이상)은 부서 라벨 없이 나가고 있었다
-// (2026-08-17 지적 — 모든 텔레그램 알림은 [부서]로 시작해야 함). 퀀트 트랙 소관이라
-// Kairos로 통일.
-const DEPARTMENT_LABEL = '퀀트전략실 Kairos';
+// 이 잡의 운영 알림(승인만료·검문소차단·정합성이상) 3종은 전부 이 파일 안의 순수 Node
+// 판정(날짜비교·중복탐지·order-gate.mjs 결정론적 게이트)이 낸 결과다 — 부서(LLM) 판단이
+// 개입한 적이 없다. 처음엔(2026-08-17) 퀀트 트랙 소관이라는 이유로 Kairos로 묶었지만,
+// 2026-08-23 오너 지적으로 재검토 — order-gate.mjs 자체 헌장이 "어떤 부서도 이 검문소를
+// 우회 못한다"고 명시한 무(無)부서 인프라이고, 나머지 두 알림도 같은 성격이라 세 곳
+// 전부 job-alerts.mjs·health-watcher.mjs와 같은 카테고리(운영실 Hermes)로 재배정.
+// 어느 트랙 주문인지는 본문(track/assetKey)에 그대로 남아 추적성은 안 잃는다.
+const DEPARTMENT_LABEL = '운영실 Hermes';
 
 function parseArgs(argv) {
   const out = {};
@@ -317,4 +321,10 @@ async function main() {
   }
 }
 
-main().catch((e) => { console.error('\n❌ 오류:', e.message); process.exit(1); });
+// import.meta.url 가드(2026-08-23, 독립 코드리뷰 지적 — 실제 KIS 주문을 내는 파일이라
+// morning-briefing.mjs 사고의 재발 방지 차원에서 선제 적용) — 지금은 이 파일이 아무것도
+// export하지 않아 당장 import될 일은 없지만, 나중에 순수함수를 뽑아 테스트하려고 import만
+// 해도 main()이 실행돼 실주문이 나가는 사고를 원천 차단한다.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((e) => { console.error('\n❌ 오류:', e.message); process.exit(1); });
+}

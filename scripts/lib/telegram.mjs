@@ -43,6 +43,29 @@ export async function sendTelegram(text, chatId) {
   return res.json();
 }
 
+// 원본 제안 메시지(제안 발송 시 sendTelegram이 반환한 message_id)를 승인/거부 처리 후
+// 갱신하는 용도(2026-08-23 신설, ARCHITECTURE-V2.md 설계에 있었지만 미구현이던 부분) —
+// 지금은 승인/거부해도 텔레그램 화면에 아무 표시가 안 남아 나중에 스크롤해서 어느
+// 제안이 어떻게 됐는지 찾기 어려웠다. Bot API editMessageText는 append가 아니라 전체
+// 텍스트를 새로 보내는 방식이라, 호출부(process-telegram-reply.mjs)가 상태를 반영한
+// 완성된 텍스트를 통째로 넘겨야 한다.
+export async function editTelegramMessage(messageId, text, chatId) {
+  const cfg = loadTelegramConfig();
+  const res = await fetch(`https://api.telegram.org/bot${cfg.botToken}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId || cfg.chatId,
+      message_id: messageId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    }),
+  });
+  if (!res.ok) throw new Error(`텔레그램 메시지 편집 실패: ${await res.text()}`);
+  return res.json();
+}
+
 // getWebhookInfo — 상시세션의 getUpdates 롱폴링이 실제로 큐를 비우고 있는지 외부에서
 // 확인하는 용도(2026-08-13, task #34 — 프로세스는 살아있는데 폴링만 조용히 끊긴
 // "좀비" 상태 감지). getUpdates 자체를 호출하지 않는 별개 read-only 엔드포인트라

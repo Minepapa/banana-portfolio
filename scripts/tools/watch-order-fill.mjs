@@ -27,9 +27,10 @@ import { QUANT_TRACK_LABEL } from '../lib/account-resolver.mjs';
 
 const BROKER = '한국투자증권';
 const ACCOUNT_LABEL = QUANT_TRACK_LABEL; // account-resolver.mjs·update-holdings-from-executions.mjs와 동일 라벨(단일 진실 소스)
-// 이 잡의 체결확인 알림도 부서 라벨 없이 나가고 있었다(2026-08-17 지적) — 퀀트 트랙
-// 소관이라 execute-quant-proposal.mjs와 동일하게 Kairos로 통일.
-const DEPARTMENT_LABEL = '퀀트전략실 Kairos';
+// 이 잡의 체결확인 알림(체결/취소/타임아웃)도 전부 KIS API 조회 결과를 그대로 전달하는
+// 순수 Node 알림이라 부서 판단이 없다 — execute-quant-proposal.mjs와 같은 이유(2026-08-23
+// 재배정)로 운영실 Hermes로 통일. 처음(2026-08-17)엔 트랙 소관이라는 이유로 Kairos였음.
+const DEPARTMENT_LABEL = '운영실 Hermes';
 
 function parseArgs(argv) {
   const out = {};
@@ -164,4 +165,8 @@ async function main() {
   }));
 }
 
-main().catch((e) => { console.error('\n❌ 오류:', e.message); process.exit(1); });
+// import.meta.url 가드(2026-08-23, 독립 코드리뷰 지적 — execute-quant-proposal.mjs와
+// 같은 이유로 선제 적용, morning-briefing.mjs 사고 재발 방지).
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((e) => { console.error('\n❌ 오류:', e.message); process.exit(1); });
+}

@@ -57,6 +57,36 @@ function writeFaberState(domesticAboveMA, foreignAboveMA) {
   writeAtomic(join(dir, FABER_STATE_FILE), content);
 }
 
+// 사람이 읽는 보고 문자열 조립 — main()과 morning-briefing.mjs(아침 브리핑, 2026-08-23
+// 신설)가 같은 렌더러를 공유한다. 포맷을 두 곳에 따로 베끼면 "[경고]" 시그널 문자열
+// (daily-asset-allocation-check.mjs가 .includes로 읽음, 아래 주석 참고)이 한쪽만
+// 바뀌는 사고가 재발할 수 있어 단일 진실 소스로 뺐다.
+export function renderSignalsReport(signals) {
+  const lines = ['[거시 전술 오버레이 점검] (ECOS 한국채권스프레드 미연동 — 4개 신호만)', ''];
+  const faberLine = (label, sig, crossed) => sig
+    ? `  ${label}: ${sig.aboveMA ? '10개월선 위' : '10개월선 아래'}(${sig.deviationPct.toFixed(2)}%)${crossed ? ' [경고] 크로스 발생' : ''}`
+    : `  ${label}: 데이터 부족(판정 보류)`;
+  lines.push(faberLine('Faber 국내주식(KOSPI)', signals.faberDomestic, signals.faberDomesticCrossed));
+  lines.push(faberLine('Faber 해외주식(S&P500)', signals.faberForeign, signals.faberForeignCrossed));
+
+  if (signals.rateSpread) {
+    lines.push(`  미국금리차(10Y-3M): ${signals.rateSpread.currentSpread.toFixed(2)}%p${signals.rateSpread.inverted ? ' [경고] 역전' : ''}`);
+  } else {
+    lines.push('  미국금리차: 데이터 없음');
+  }
+  for (const [label, sig] of [['DXY', signals.dxy], ['VIX', signals.vix], ['WTI 유가', signals.wti]]) {
+    lines.push(sig ? `  ${label}: ${sig.current.toFixed(2)}${sig.breached ? ` [경고] 이탈(z=${sig.bands?.zscore})` : ' 정상'}` : `  ${label}: 데이터 없음`);
+  }
+
+  // ⚠️ "[경고]" 문자열은 daily-asset-allocation-check.mjs가 .includes('[경고]')로
+  // "텔레그램 발송 여부"를 판정하는 시그널이다(2026-08-23, rebalance-facts.mjs와 같은
+  // 이유로 이모지⚠️→대괄호 태그 교체) — 이 문자열을 바꾸면 그 판정도 같이 깨진다.
+  lines.push(signals.anyMeaningfulChange
+    ? '\n[경고] 의미있는 변화 감지 — Athena 종합판단 필요(진짜 국면전환인지 노이즈인지)'
+    : '\n[정상] 5개 신호 전부 조용함 — 협의체 소집 불필요');
+  return lines.join('\n');
+}
+
 function main() {
   const raw = fetchCloses();
   const previousFaberState = readPreviousFaberState();
@@ -87,28 +117,7 @@ function main() {
     return;
   }
 
-  console.log('[거시 전술 오버레이 점검] (ECOS 한국채권스프레드 미연동 — 4개 신호만)\n');
-  const faberLine = (label, sig, crossed) => sig
-    ? `  ${label}: ${sig.aboveMA ? '10개월선 위' : '10개월선 아래'}(${sig.deviationPct.toFixed(2)}%)${crossed ? ' [경고] 크로스 발생' : ''}`
-    : `  ${label}: 데이터 부족(판정 보류)`;
-  console.log(faberLine('Faber 국내주식(KOSPI)', signals.faberDomestic, signals.faberDomesticCrossed));
-  console.log(faberLine('Faber 해외주식(S&P500)', signals.faberForeign, signals.faberForeignCrossed));
-
-  if (signals.rateSpread) {
-    console.log(`  미국금리차(10Y-3M): ${signals.rateSpread.currentSpread.toFixed(2)}%p${signals.rateSpread.inverted ? ' [경고] 역전' : ''}`);
-  } else {
-    console.log('  미국금리차: 데이터 없음');
-  }
-  for (const [label, sig] of [['DXY', signals.dxy], ['VIX', signals.vix], ['WTI 유가', signals.wti]]) {
-    console.log(sig ? `  ${label}: ${sig.current.toFixed(2)}${sig.breached ? ` [경고] 이탈(z=${sig.bands?.zscore})` : ' 정상'}` : `  ${label}: 데이터 없음`);
-  }
-
-  // ⚠️ "[경고]" 문자열은 daily-asset-allocation-check.mjs가 .includes('[경고]')로
-  // "텔레그램 발송 여부"를 판정하는 시그널이다(2026-08-23, rebalance-facts.mjs와 같은
-  // 이유로 이모지⚠️→대괄호 태그 교체) — 이 문자열을 바꾸면 그 판정도 같이 깨진다.
-  console.log(signals.anyMeaningfulChange
-    ? '\n[경고] 의미있는 변화 감지 — Athena 종합판단 필요(진짜 국면전환인지 노이즈인지)'
-    : '\n[정상] 5개 신호 전부 조용함 — 협의체 소집 불필요');
+  console.log(renderSignalsReport(signals));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main();

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createAndSendProposal, buildProposalMessageBody, buildProposalFacts } from './proposal-flow.mjs';
+import { createAndSendProposal, buildProposalMessageBody, buildProposalFacts, buildProposalStatusEditText } from './proposal-flow.mjs';
 import { buildProposalRecord, parseProposal } from './proposal-vault.mjs';
 
 // existingProposals 로더 출력을 흉내(process-telegram-reply.mjs loadProposals와 동일 형태:
@@ -130,4 +130,45 @@ test('createAndSendProposal: 발송 응답에 message_id가 없으면 telegramMe
   });
   assert.equal(result.telegramMessageId, null);
   assert.equal(writer.writes.length, 1); // 최초 생성 1회만 — 갱신 재쓰기 없음
+});
+
+test('buildProposalStatusEditText: 승인 — 트랙에서 부서 라벨을 되짚고 [승인] 태그를 단다', () => {
+  const proposal = fixture({ track: '퀀트' });
+  const text = buildProposalStatusEditText({
+    proposal: { ...proposal, status: '승인', decidedAt: '2026-08-23T01:30:00.000Z' },
+    action: 'approve',
+    decidedAt: '2026-08-23T01:30:00.000Z',
+  });
+  assert.match(text, /^\[승인\] \[퀀트전략실 Kairos\]/);
+  assert.match(text, /매수 005930\(005930\)/);
+  assert.match(text, /승인됨 \(2026-08-23 10:30 KST\)/); // UTC+9
+  assert.match(text, /기존안건/); // 원래 사유(reason) 보존
+});
+
+test('buildProposalStatusEditText: 거부 — [거부] 태그 + 거부사유가 사유 뒤에 붙는다', () => {
+  const proposal = fixture({ track: '자산분배' });
+  const text = buildProposalStatusEditText({
+    proposal: { ...proposal, status: '거부', decidedAt: '2026-08-23T01:30:00.000Z', rejectReason: '지금은 필요 없음' },
+    action: 'reject',
+    decidedAt: '2026-08-23T01:30:00.000Z',
+  });
+  assert.match(text, /^\[거부\] \[투자전략실 Athena\]/);
+  assert.match(text, /거부됨 \(2026-08-23 10:30 KST\)/);
+  assert.match(text, /거부 사유: 지금은 필요 없음/);
+});
+
+test('buildProposalStatusEditText: 매핑에 없는 track이면 raw 문자열로 폴백(throw 없이 계속 진행)', () => {
+  const proposal = fixture({ track: '신규트랙' });
+  const text = buildProposalStatusEditText({
+    proposal: { ...proposal, status: '승인', decidedAt: '2026-08-23T01:30:00.000Z' },
+    action: 'approve',
+    decidedAt: '2026-08-23T01:30:00.000Z',
+  });
+  assert.match(text, /^\[승인\] \[신규트랙\]/);
+});
+
+test('buildProposalStatusEditText: decidedAt이 없거나 파싱 불가여도 throw하지 않고 안전 문구로 폴백', () => {
+  const proposal = fixture({ track: '퀀트' });
+  const text = buildProposalStatusEditText({ proposal: { ...proposal, status: '승인' }, action: 'approve', decidedAt: undefined });
+  assert.match(text, /승인됨 \(\(시각 불명\) KST\)/);
 });

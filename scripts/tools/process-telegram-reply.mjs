@@ -23,8 +23,10 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveReplyAction, inferReplyTargetFromPendingProposals } from '../lib/telegram-reply-handler.mjs';
 import { parseProposal, updateProposalRecord } from '../lib/proposal-vault.mjs';
+import { buildProposalStatusEditText } from '../lib/proposal-flow.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { editTelegramMessage } from '../lib/telegram.mjs';
 
 function parseArgs(argv) {
   const out = {};
@@ -86,6 +88,27 @@ async function main() {
     console.log(`✅ 승인 처리: ${result.proposal.id}`);
     console.log(`   다음 단계: ${result.nextStep}`);
   }
+
+  // 원본 제안 메시지 갱신(2026-08-23 신설, ARCHITECTURE-V2.md 설계엔 있었지만 미구현
+  // 이던 부분) — 지금까지는 승인/거부해도 텔레그램 화면에 티가 안 나 나중에 어느 제안이
+  // 어떻게 됐는지 스크롤해서 찾아야 했다. 부가 기능이라 실패해도(예: 원본 메시지가
+  // 48시간 지나 Bot API 편집 제한에 걸림) 승인/거부 자체(위에서 이미 완료)를 막지 않는다.
+  if (result.proposal.telegramMessageId != null) {
+    const editText = buildProposalStatusEditText({
+      proposal: { ...result.proposal, ...result.updates },
+      action: result.action,
+      decidedAt: result.updates.decidedAt,
+    });
+    try {
+      await editTelegramMessage(result.proposal.telegramMessageId, editText);
+    } catch (e) { console.error('원본 메시지 갱신 실패(무시):', e.message); }
+  }
 }
 
-main().catch((e) => { console.error('❌ 오류:', e.message); process.exit(1); });
+// import.meta.url 가드(2026-08-23, 독립 코드리뷰 MEDIUM 지적) — 이 파일은 실제 Vault
+// 쓰기+텔레그램 편집을 하는 main()을 갖고 있다. 가드 없이 최상위에서 그냥 호출하면
+// 나중에 이 파일의 parseArgs 같은 순수함수를 테스트하려고 import만 해도 main()이 실행돼
+// 버린다 — morning-briefing.mjs가 실제로 이 사고를 낸 적이 있다(위 해당 파일 참고).
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((e) => { console.error('❌ 오류:', e.message); process.exit(1); });
+}
