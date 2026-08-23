@@ -88,8 +88,9 @@ const EXPECTED_INTERVALS_MS = {
   // update-monthly-balance-snapshot은 매일 23:50 KST 1회(com.banana2.update-monthly-
   // balance-snapshot.plist StartCalendarInterval) — 요일 제한 없이 매일이라 24h 유지.
   'update-monthly-balance-snapshot': 24 * 60 * 60 * 1000,
-  // weekly-report는 매주 일요일 03:00 KST 1회(com.banana2.weekly-report.plist
-  // Weekday:0). 60분 기준이면 실행 직후에도 항상 "조용하다"로 잘못 잡힌다.
+  // weekly-report는 매주 일요일 08:00 KST 1회(com.banana2.weekly-report.plist
+  // Weekday:0, 2026-08-23 03:00→08:00 재조정). 60분 기준이면 실행 직후에도 항상
+  // "조용하다"로 잘못 잡힌다.
   'weekly-report': 7 * 24 * 60 * 60 * 1000,
   // ── 2026-08-23 전수 재점검에서 새로 발견한 누락(이전엔 오탐이 아니라 "실제보다
   // 느슨하게"만 감시되고 있었다 — 60분 기본값이 각 잡의 실제 주기보다 커서, 진짜

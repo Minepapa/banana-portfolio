@@ -28,8 +28,8 @@ const DEPARTMENT_LABEL = '운영실 Hermes';
 export const SCHEDULE = [
   { day: '평일', time: '08:00', dept: '운영실 Hermes', what: '아침 브리핑 — 자산현황+간밤 이벤트+거시 5신호' },
   { day: '평일', time: '16:30', dept: '투자전략실 Athena', what: '리밸런싱·거시 점검(이상 있을 때만 실제 발송)' },
-  { day: '일요일', time: '02:30', dept: '리스크관리실 Themis', what: '주간 위험 재검토' },
-  { day: '일요일', time: '03:00', dept: '비서실 Apollo', what: '주간 리포트' },
+  { day: '일요일', time: '07:00', dept: '리스크관리실 Themis', what: '주간 위험 재검토' },
+  { day: '일요일', time: '08:00', dept: '비서실 Apollo', what: '주간 리포트' },
 ];
 
 // 순수함수 — SCHEDULE을 텔레그램 본문 텍스트로. 테스트 가능.

@@ -10,12 +10,13 @@
     <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>themis-risk-review</string>
   </array>
-  <!-- 매주 일요일 02:30 KST — weekly-report(03:00, Apollo)보다 먼저 돌아 Themis의
+  <!-- 매주 일요일 07:00 KST — weekly-report(08:00, Apollo)보다 먼저 돌아 Themis의
        주간 위험 재검토가 먼저 도착하게 한다(2026-08-23 신설, 오너 지시 — Themis가
-       그동안 자동발송 잡이 하나도 없었던 공백을 메움). -->
+       그동안 자동발송 잡이 하나도 없었던 공백을 메움). 원래 02:30이었다가 같은 날
+       오너가 "오너 취침 시간대"라며 07:00으로 재조정(weekly-report와 함께). -->
   <key>StartCalendarInterval</key>
   <array>
-    <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
   </array>
   <key>RunAtLoad</key>
   <false/>

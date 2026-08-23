@@ -10,13 +10,15 @@
     <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>weekly-report</string>
   </array>
-  <!-- 일요일 03:00 KST — v1 com.banana.weekly-report.plist와 동일 주기(2026-08-20 v2
-       전면 재작성으로 부활). claude -p 서술 생성이 수 분 걸릴 수 있어(runHeadlessClaude
-       12분 타임아웃) 다른 잡과 안 겹치는 새벽 시간대 유지. -->
+  <!-- 일요일 08:00 KST(2026-08-23 재조정) — 원래 03:00이었으나(v1과 동일 주기,
+       2026-08-20 v2 전면 재작성으로 부활) 오너가 "그 시간엔 자고 있다"고 지적해
+       themis-risk-review(같은 날 07:00)와 함께 아침 시간대로 옮김. claude -p 서술
+       생성이 수 분 걸릴 수 있어(runHeadlessClaude 12분 타임아웃) 이 시각도 다른
+       잡과는 안 겹침. -->
   <key>StartCalendarInterval</key>
   <dict>
     <key>Weekday</key><integer>0</integer>
-    <key>Hour</key><integer>3</integer>
+    <key>Hour</key><integer>8</integer>
     <key>Minute</key><integer>0</integer>
   </dict>
   <key>RunAtLoad</key>
