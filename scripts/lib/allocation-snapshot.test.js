@@ -2,18 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeAccountAllocationSnapshot } from './allocation-snapshot.mjs';
 
-test('computeAccountAllocationSnapshot: 위탁 계좌는 6개 목표자산군+달러(목표 0%) 7건 반환', () => {
+test('computeAccountAllocationSnapshot: 위탁 계좌는 5개 목표자산군 반환(2026-08-23 배당주·리츠 삭제, 달러 10% 승격)', () => {
   const holdings = [
     { account: '위탁', assetClass: '국내주식', evalAmount: 3000 },
     { account: '위탁', assetClass: '채권', evalAmount: 2000 },
   ];
   const rows = computeAccountAllocationSnapshot(holdings, '위탁');
-  assert.equal(rows.length, 7);
+  assert.equal(rows.length, 5);
   const stock = rows.find((r) => r.assetName === '국내주식');
   assert.equal(stock.targetPct, 30);
   assert.equal(stock.currentPct, 60); // 3000/(3000+2000)*100
   const usd = rows.find((r) => r.assetName === '달러');
-  assert.equal(usd.targetPct, 0);
+  assert.equal(usd.targetPct, 10); // 더 이상 화면표시 전용 0%가 아니라 정식 목표군
   assert.equal(usd.currentPct, 0);
 });
 
@@ -52,7 +52,7 @@ test('computeAccountAllocationSnapshot: "금현물" 조회 키로도 금현물 �
   assert.equal(rows.find((r) => r.assetName === '금').currentPct, 3.1); // 5443740/(5443740+168696863)*100
 });
 
-test('computeAccountAllocationSnapshot: 달러 보유는 분모에 포함됨 — rebalance-gap.mjs(달러 제외)와 소폭 다른 값이 나오는 지점', () => {
+test('computeAccountAllocationSnapshot: 달러 보유는 분모에 포함됨 — 2026-08-23부터 rebalance-gap.mjs와 완전히 동일한 계산(예전엔 달러가 화면표시 전용이라 소폭 달랐음)', () => {
   const holdings = [
     { account: '위탁', assetClass: '국내주식', evalAmount: 9000 },
     { account: '위탁', assetClass: '달러', evalAmount: 1000 },
@@ -61,6 +61,7 @@ test('computeAccountAllocationSnapshot: 달러 보유는 분모에 포함됨 —
   // 달러가 분모(10000)에 포함되므로 국내주식은 100%가 아니라 90%
   assert.equal(rows.find((r) => r.assetName === '국내주식').currentPct, 90);
   assert.equal(rows.find((r) => r.assetName === '달러').currentPct, 10);
+  assert.equal(rows.find((r) => r.assetName === '달러').targetPct, 10);
 });
 
 test('computeAccountAllocationSnapshot: rebalAmt는 (목표%-현재%)*총평가액/100', () => {

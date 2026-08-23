@@ -2,7 +2,8 @@
 /**
  * 장 시작 전 아침 브리핑 자동발송 — ARCHITECTURE-V2.md 설계에 있었지만 미구현이던 것
  * (2026-08-23 오너 지시로 구현). 총자산 현황(State/Holdings 합산)·간밤 배당/체결 이벤트
- * (Facts/Ledger)·거시 5신호(macro-overlay-facts.mjs)를 매일 아침 텔레그램으로 보낸다.
+ * (Facts/Ledger)·자산배분 밴드 상태(rebalance-gap.mjs, 자산분배 트랙 최소개입 자동화
+ * 계획 Part 6)·거시 5신호(macro-overlay-facts.mjs)를 매일 아침 텔레그램으로 보낸다.
  *
  * ⚠️ 설계 판단 — LLM 호출 없음(Node 전용). 매일 도는 잡에서 "간밤 이벤트 요약"을 LLM
  * 서술로 만들면 비용·환각 위험이 매일 누적된다. 이 잡의 세 섹션은 전부 이미 존재하는
@@ -41,6 +42,7 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { buildHomeMirror } from '../lib/firestore-mirror.mjs';
+import { computeRebalanceGaps } from '../lib/rebalance-gap.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { renderSignalsReport } from '../tools/macro-overlay-facts.mjs';
@@ -105,6 +107,18 @@ export function buildEventsSection(dividends, executions, sinceTimestamp) {
   return lines.join('\n');
 }
 
+// 순수함수 — computeRebalanceGaps 재사용해 조용한 "밴드 내 정상" 한 줄 또는 이탈
+// 자산군만 짚는 한 줄을 만든다(2026-08-23, 자산분배 트랙 최소개입 자동화 계획 Part 6).
+// 새 발송 채널을 늘리지 않고 이미 매일 나가는 아침 브리핑에 끼워 넣는다 — "조용하면
+// 조용하다"는 신호 자체가 "손 안 대도 된다"는 안심을 준다(daily-asset-allocation-check.mjs
+// 처럼 이탈 있을 때만 따로 알림 보내는 것과 별개로, 이건 매일 상태를 보여주는 용도).
+export function buildAllocationSection(holdings) {
+  const { gaps } = computeRebalanceGaps(holdings);
+  const breached = gaps.filter((g) => g.breached);
+  if (!breached.length) return '자산배분: 밴드 내 정상';
+  return `자산배분: ${breached.length}개 자산군 이탈 중(${breached.map((g) => g.assetClass).join(', ')})`;
+}
+
 function fetchMacroText() {
   try {
     const raw = execFileSync('node', [join(HERE, '..', 'tools', 'macro-overlay-facts.mjs'), '--json'], {
@@ -132,9 +146,12 @@ async function main() {
     ? renderSignalsReport(macroResult.signals)
     : `(거시신호 조회 실패: ${macroResult.error})`;
 
+  const allocationText = buildAllocationSection(holdings);
+
   const body = [
     '[자산현황]', asset.text,
     '', '[간밤 이벤트]', eventsText,
+    '', allocationText,
     '', macroText,
   ].join('\n');
 

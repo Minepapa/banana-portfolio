@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAssetSection, buildEventsSection } from './morning-briefing.mjs';
+import { buildAssetSection, buildEventsSection, buildAllocationSection } from './morning-briefing.mjs';
 
 test('buildAssetSection: 첫 실행(직전 총자산 없음)은 비교 없이 총자산만 보고', () => {
   const holdings = [{ invest: 1000, evalAmount: 1200 }];
@@ -60,4 +60,24 @@ test('buildEventsSection: 회귀 방지 — 마지막 실행 당일(같은 날�
 test('buildEventsSection: 창 안에 이벤트가 없으면 조용함 명시', () => {
   const text = buildEventsSection([], [], '2026-08-20T00:00:00.000Z');
   assert.equal(text, '간밤 배당·체결 이벤트 없음');
+});
+
+test('buildAllocationSection: 목표비중 그대로면 "밴드 내 정상"(2026-08-23 Part 6)', () => {
+  const holdings = [
+    { account: '위탁', assetClass: '채권', evalAmount: 200000 },
+    { account: '위탁', assetClass: '금', evalAmount: 100000 },
+    { account: '위탁', assetClass: '달러', evalAmount: 100000 },
+    { account: '위탁', assetClass: '국내주식', evalAmount: 300000 },
+    { account: '위탁', assetClass: '해외주식', evalAmount: 300000 },
+  ];
+  assert.equal(buildAllocationSection(holdings), '자산배분: 밴드 내 정상');
+});
+
+test('buildAllocationSection: 이탈 자산군이 있으면 개수와 이름을 짚는다', () => {
+  const holdings = [
+    { account: '위탁', assetClass: '국내주식', evalAmount: 1000000 }, // 나머지 0 — 국내주식만 100%, 전부 이탈
+  ];
+  const text = buildAllocationSection(holdings);
+  assert.match(text, /자산배분: \d+개 자산군 이탈 중/);
+  assert.match(text, /국내주식/);
 });

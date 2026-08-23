@@ -52,6 +52,22 @@ test('buildProposalFacts: 가격 없으면(정액 리밸런싱 등) 제안가·�
   assert.deepEqual(facts, ['매도 채권ETF(채권)', '수량 5주']);
 });
 
+test('buildProposalFacts: 수량 null(신규종목·가격 미확인)이면 amountWon으로 목표 배분액 표시 — quantity*price의 null→0 강제변환 버그 회귀 방지(2026-08-23)', () => {
+  const facts = buildProposalFacts({ side: '매수', name: '미국달러ETF', assetKey: '미국달러ETF', quantity: null, proposedPrice: 10000, amountWon: 300000 });
+  assert.deepEqual(facts, ['매수 미국달러ETF(미국달러ETF)', '제안가 10,000원', '목표 배분액 ≈ 300,000원(수량은 체결 시 확정)']);
+  assert.ok(!facts.some((f) => f.startsWith('개산금액')), '개산금액 ≈ 0원처럼 quantity=null이 강제변환된 값이 나오면 안 됨');
+});
+
+test('buildProposalFacts: 수량 null이고 amountWon도 없으면 금액 관련 라인 전부 생략', () => {
+  const facts = buildProposalFacts({ side: '매수', name: '미국달러ETF', assetKey: '미국달러ETF', quantity: null, proposedPrice: null });
+  assert.deepEqual(facts, ['매수 미국달러ETF(미국달러ETF)']);
+});
+
+test('buildProposalMessageBody: 수량 null이어도 amountWon 있으면 목표 배분액 표시', () => {
+  const body = buildProposalMessageBody({ side: '매수', name: '미국달러ETF', assetKey: '미국달러ETF', quantity: null, proposedPrice: null, amountWon: 300000, reason: '분산' });
+  assert.equal(body, '매수 미국달러ETF(미국달러ETF) 약 300,000원어치(수량은 체결 시 확정)\n사유: 분산');
+});
+
 test('createAndSendProposal: 신규 생성 — 파일 쓰고 텔레그램 발송 후 telegramMessageId까지 갱신', async () => {
   const writer = mockWriter();
   const sender = mockSender({ message_id: 12345 });

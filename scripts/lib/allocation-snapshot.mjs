@@ -8,18 +8,17 @@
 // (rebalance-gap.mjs computeCurrentAllocation, 위탁+연금저축+금현물 합산 풀)과 같은
 // 원리(normalizeAccount)를 쓴다 — 위탁 탭·연금저축 탭·금현물 탭이 이제 서로 다른
 // 계좌가 아니라 같은 합산 풀을 보여주는 세 개의 창이다.
-// ⚠️ 단, 숫자가 rebalance-gap.mjs와 "완전히 동일"하지는 않다 — 이 모듈의 분모엔
-// "달러"(공식 목표 밖, 잔여 헤지성 소액)가 화면 표시용으로 포함돼 있는데
-// rebalance-gap.mjs의 TARGET_ALLOCATION 6개엔 달러가 없다. 달러 보유가 있는 한
-// 두 분모는 소폭(보통 1%p 미만) 다르다 — 근사가 아니라 의도된 표시상 차이다.
+// ⚠️ 2026-08-23 — "달러"는 더 이상 화면표시 전용 특별취급이 아니다. rebalance-gap.mjs
+// TARGET_ALLOCATION에 정식 10% 목표군으로 승격됐고, Object.keys(TARGET_ALLOCATION)에
+// 이미 포함되므로 예전처럼 별도로 덧붙이면 배열에 "달러"가 중복된다 — 그래서 아래
+// POOLED_ASSET_NAMES는 이제 TARGET_ALLOCATION의 키를 그대로 쓴다(수동 append 제거).
 // 각 탭의 개별 보유종목 목록(eval)은 여전히 그 계좌 자신의 보유만 보여주지만
 // (프론트엔드 mirrorAdapters.js), 목표/현재비중/리밸필요액(target/current/rebalAmt)은
 // 합산 풀 기준 공통값이다.
 import { TARGET_ALLOCATION, normalizeAccount } from './rebalance-gap.mjs';
 
-// DEFAULT_ACCOUNTS(src/lib/constants.js)의 위탁·연금저축·금현물 자산군 목록과 정합 —
-// TARGET_ALLOCATION 6개 + "달러"(잔여 헤지성 소액, 공식 목표 없음=0%지만 화면엔 표시).
-const POOLED_ASSET_NAMES = [...Object.keys(TARGET_ALLOCATION), '달러'];
+// DEFAULT_ACCOUNTS(src/lib/constants.js)의 위탁·연금저축·금현물 자산군 목록과 정합.
+const POOLED_ASSET_NAMES = Object.keys(TARGET_ALLOCATION);
 // 실제 합산 풀의 구성원(정규화된 계좌명 기준) — 금현물은 normalizeAccount가 항상
 // 위탁으로 바꿔주므로 여기엔 안 들어간다(들어가도 절대 매치되지 않는 죽은 멤버가 된다).
 const POOLED_ACCOUNTS = new Set(['위탁', '연금저축']);
@@ -46,7 +45,7 @@ function computePooledSnapshot(holdings) {
   for (const h of inScope) byClass[h.assetClass] += h.evalAmount || 0;
   const totalEval = Object.values(byClass).reduce((s, v) => s + v, 0);
   return POOLED_ASSET_NAMES.map((assetName) => {
-    const targetPct = TARGET_ALLOCATION[assetName] ?? 0; // 달러는 0(공식 목표 밖)
+    const targetPct = TARGET_ALLOCATION[assetName] ?? 0;
     const currentPct = totalEval > 0 ? (byClass[assetName] / totalEval) * 100 : 0;
     return { assetName, targetPct, currentPct: round1(currentPct), rebalAmt: Math.round(((targetPct - currentPct) / 100) * totalEval) };
   });

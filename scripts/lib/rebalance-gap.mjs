@@ -8,9 +8,23 @@
 // 참고). 이 모듈의 역할은 정확히 "지금 갭이 얼마고 밴드를 넘었는가"까지.
 
 // 목표 배분 %(확정 정본, ARCHITECTURE-V2.md "목표 배분 % — 산출 방법론" 절) — 위탁+
-// 연금저축 합산 자산에만 적용. ISA·IRP·현금성·달러(잔여 헤지성 소액)는 범위 밖.
+// 연금저축 합산 자산에만 적용. ISA·IRP·현금성은 범위 밖.
+//
+// ⚠️ 2026-08-23 오너 확정 재조정 — 배당주5%·리츠5%를 삭제하고 달러10%를 신설.
+// 이유: ISA가 이미 독자적으로(오너 수동 적립) 배당주·리츠 익스포션을 계속 쌓아가고
+// 있어서(isa-exposure.mjs가 그 사실만 보고할 뿐 이 풀에 반영은 안 함, 의도된 설계),
+// 이 통합 풀에 또 배당주5%·리츠5%를 잡아두면 이중 계산이 된다. 0으로 남기지 않고
+// 키 자체를 삭제한 이유: 목표 0%면 checkBand의 relDeltaPct(상대이탈)가 절대 못
+// 잡혀(0으로 나누는 분기라 항상 0) 절대이탈만 영구적으로 계속 [경고]를 울리게 된다
+// (연금저축에 남아있는 기존 배당주·리츠 보유 ₩10.28M어치가 그 대상 — 강제 매도 안
+// 하기로 확정했으니 이 보유는 조용히 목표비중 계산 밖으로 빠지는 게 맞다, 현금성·TDF와
+// 동일 취급). "달러"는 allocation-snapshot.mjs가 이미 화면표시용 0%항목으로 별도
+// 취급해오던 걸 정식 목표군으로 승격한 것 — 해외주식은 이미 미국주식 위주라 별도
+// "달러 노출" 자산군을 또 만드는 대신 그냥 해외주식을 키우는 방안도 검토했으나,
+// 오너가 미국달러ETF+엔선물ETF 분할매수라는 구체적 상품 계획을 갖고 있어 독립
+// 자산군으로 신설.
 export const TARGET_ALLOCATION = {
-  채권: 20, 금: 10, 배당주: 5, 리츠: 5, 국내주식: 30, 해외주식: 30,
+  채권: 20, 금: 10, 달러: 10, 국내주식: 30, 해외주식: 30,
 };
 
 const IN_SCOPE_ACCOUNTS = new Set(['위탁', '연금저축']);
@@ -26,9 +40,9 @@ const ACCOUNT_ALIASES = Object.assign(Object.create(null), { 금현물: '위탁'
 export const normalizeAccount = (account) => ACCOUNT_ALIASES[account] ?? account;
 
 // holdings: State/Holdings 전체 배열({ account, assetClass, evalAmount, ... }).
-// 위탁+연금저축만(금현물은 위탁으로 정규화), 그 안에서도 TARGET_ALLOCATION 6개 자산군만
-// 분모에 포함한다 — 현금성·달러·TDF 등은 원칙 자체가 배분 대상 밖이라 있어도 무시(제외가
-// 아니라 애초에 범위 밖).
+// 위탁+연금저축만(금현물은 위탁으로 정규화), 그 안에서도 TARGET_ALLOCATION 5개 자산군만
+// 분모에 포함한다 — 현금성·TDF·배당주·리츠 등은 원칙 자체가 배분 대상 밖이라 있어도
+// 무시(제외가 아니라 애초에 범위 밖).
 export function computeCurrentAllocation(holdings) {
   const inScope = holdings.filter((h) => IN_SCOPE_ACCOUNTS.has(normalizeAccount(h.account)) && TARGET_ALLOCATION[h.assetClass] != null);
   const byClassEval = Object.fromEntries(Object.keys(TARGET_ALLOCATION).map((c) => [c, 0]));
@@ -53,7 +67,7 @@ export function checkBand(targetPct, currentPct) {
   return { absDeltaPct: absDelta, relDeltaPct, breached: absBreach || relBreach, breachType };
 }
 
-// 6개 자산군 전부에 대해 갭·밴드판정을 계산 — 이탈 없으면 협의체 자체가 조용히 종료
+// 5개 자산군 전부에 대해 갭·밴드판정을 계산 — 이탈 없으면 협의체 자체가 조용히 종료
 // 로그만 남기고 텔레그램 발송 없음(ARCHITECTURE-V2.md "실행 프로토콜" 절, 오너 확정).
 export function computeRebalanceGaps(holdings) {
   const { totalEval, byClassEval, currentPct } = computeCurrentAllocation(holdings);

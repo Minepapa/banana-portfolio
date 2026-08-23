@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeCurrentAllocation, checkBand, computeRebalanceGaps, TARGET_ALLOCATION } from './rebalance-gap.mjs';
 
-test('TARGET_ALLOCATION: 6개 자산군 합이 정확히 100%(확정 정본)', () => {
+test('TARGET_ALLOCATION: 5개 자산군 합이 정확히 100%(확정 정본, 2026-08-23 배당주·리츠→달러 재조정)', () => {
   const sum = Object.values(TARGET_ALLOCATION).reduce((s, v) => s + v, 0);
   assert.equal(sum, 100);
 });
@@ -18,14 +18,18 @@ test('computeCurrentAllocation: ISA·IRP는 범위 밖(위탁+연금저축만)',
   assert.equal(r.currentPct.국내주식, 100);
 });
 
-test('computeCurrentAllocation: 현금성·달러·TDF 등 목표 6종 밖의 자산군은 분모에서 제외', () => {
+test('computeCurrentAllocation: 현금성·TDF·배당주·리츠 등 목표 5종 밖의 자산군은 분모에서 제외', () => {
+  // ⚠️ 2026-08-23 — "달러"는 더 이상 범위 밖 예시가 아니다(정식 10% 목표군으로 승격).
+  // 대신 배당주·리츠(연금저축 기존 보유가 이제 여기 해당 — 강제매도 없이 조용히
+  // 분모에서 빠지는 게 의도된 동작)를 범위 밖 예시로 사용.
   const holdings = [
     { account: '위탁', assetClass: '현금성', evalAmount: 5000000 },
-    { account: '위탁', assetClass: '달러', evalAmount: 2000000 },
+    { account: '위탁', assetClass: '배당주', evalAmount: 2000000 },
+    { account: '위탁', assetClass: '리츠', evalAmount: 1000000 },
     { account: '위탁', assetClass: '국내주식', evalAmount: 100000 },
   ];
   const r = computeCurrentAllocation(holdings);
-  assert.equal(r.totalEval, 100000); // 현금성·달러는 분모에 안 들어감
+  assert.equal(r.totalEval, 100000); // 현금성·배당주·리츠는 분모에 안 들어감
   assert.equal(r.currentPct.국내주식, 100);
 });
 
@@ -113,8 +117,7 @@ test('computeRebalanceGaps: 목표비중 그대로면 이탈 없음', () => {
   const holdings = [
     { account: '위탁', assetClass: '채권', evalAmount: 200000 },
     { account: '위탁', assetClass: '금', evalAmount: 100000 },
-    { account: '위탁', assetClass: '배당주', evalAmount: 50000 },
-    { account: '위탁', assetClass: '리츠', evalAmount: 50000 },
+    { account: '위탁', assetClass: '달러', evalAmount: 100000 },
     { account: '위탁', assetClass: '국내주식', evalAmount: 300000 },
     { account: '위탁', assetClass: '해외주식', evalAmount: 300000 },
   ];

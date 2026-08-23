@@ -52,7 +52,7 @@ test('rebalanceAccountFromMirror: allocation의 target/current + holdings의 자
 
 test('rebalanceAccountFromMirror: allocation 기록이 없는 자산군은 0(추정 안 함)', () => {
   const r = rebalanceAccountFromMirror({ allocationMirror: { accounts: [] }, holdingsMirror: { items: [] }, acctKey: '위탁' });
-  assert.equal(r.assets.length, 7); // 위탁의 DEFAULT_ACCOUNTS 자산군 7개
+  assert.equal(r.assets.length, 5); // 위탁의 DEFAULT_ACCOUNTS 자산군 5개(2026-08-23 배당주·리츠 삭제)
   assert.ok(r.assets.every((a) => a.target === 0 && a.ratio === 0 && a.rebalAmt === 0 && a.eval === 0));
 });
 

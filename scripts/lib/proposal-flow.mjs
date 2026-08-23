@@ -30,23 +30,36 @@ const formatKstDateTime = (iso) => {
 // 텔레그램 메시지 본문(주문 상세 + 사유, 한 줄 요약형) — DRY-RUN 미리보기 등 사람이
 // 짧게 훑어볼 용도로 계속 보존. 실제 발송 텔레그램 메시지는 아래 buildProposalFacts+
 // formatFactsMessage(사실 개조식+해석 서술형 표준 구조, 2026-08-17 오너 확정)를 쓴다.
-export function buildProposalMessageBody({ side, name, assetKey, quantity, proposedPrice, reason }) {
-  const amount = proposedPrice != null ? quantity * proposedPrice : null;
-  const priceLine = proposedPrice != null
-    ? `${side} ${name}(${assetKey}) ${quantity}주 @${won(proposedPrice)}원 ≈ ${won(amount)}원`
-    : `${side} ${name}(${assetKey}) ${quantity}주`;
+//
+// ⚠️ quantity가 null(가격 미확인 신규종목 등)이면 amount를 계산하지 않는다(2026-08-23
+// 코드리뷰 지적) — `null * price`는 JS에서 0으로 강제변환돼 "개산금액 ≈ 0원"이라는
+// 틀린 값이 조용히 나갔던 버그. amountWon이 주어지면(Athena가 판단한 금액, 가격 조회
+// 실패로 quantity·수량 환산은 못했지만 목표 배분액 자체는 있는 경우) 그걸 그대로
+// 대신 보여준다 — 신규종목 제안이 오너에게 "얼마인지도 모르는 매수"로 도착하는 걸 막는다.
+export function buildProposalMessageBody({ side, name, assetKey, quantity, proposedPrice, reason, amountWon = null }) {
+  const amount = quantity != null && proposedPrice != null ? quantity * proposedPrice : null;
+  let priceLine;
+  if (amount != null) {
+    priceLine = `${side} ${name}(${assetKey}) ${quantity}주 @${won(proposedPrice)}원 ≈ ${won(amount)}원`;
+  } else if (amountWon != null) {
+    priceLine = `${side} ${name}(${assetKey}) 약 ${won(amountWon)}원어치(수량은 체결 시 확정)`;
+  } else {
+    priceLine = `${side} ${name}(${assetKey}) ${quantity}주`;
+  }
   return reason ? `${priceLine}\n사유: ${reason}` : priceLine;
 }
 
 // 제안의 결정론적 사실(Node가 계산한 값) — 개조식 텔레그램 메시지의 facts 배열로
 // 쓰인다. reason(부서 LLM의 판단 서술)은 여기 안 넣는다 — 사실과 해석을 구조로
-// 분리하는 게 표준 구조의 핵심이라 섞으면 안 된다.
-export function buildProposalFacts({ side, name, assetKey, quantity, proposedPrice }) {
-  const amount = proposedPrice != null ? quantity * proposedPrice : null;
+// 분리하는 게 표준 구조의 핵심이라 섞으면 안 된다. amountWon 폴백 배경은
+// buildProposalMessageBody 주석과 동일.
+export function buildProposalFacts({ side, name, assetKey, quantity, proposedPrice, amountWon = null }) {
+  const amount = quantity != null && proposedPrice != null ? quantity * proposedPrice : null;
   const facts = [`${side} ${name}(${assetKey})`];
   if (quantity != null) facts.push(`수량 ${quantity}주`);
   if (proposedPrice != null) facts.push(`제안가 ${won(proposedPrice)}원`);
   if (amount != null) facts.push(`개산금액 ≈ ${won(amount)}원`);
+  else if (amountWon != null) facts.push(`목표 배분액 ≈ ${won(amountWon)}원(수량은 체결 시 확정)`);
   return facts;
 }
 
@@ -94,6 +107,7 @@ export async function createAndSendProposal({
   existingProposals,
   writeProposalFile,
   sendMessage,
+  amountWon = null,
 }) {
   const intake = resolveProposalIntake({ track, assetKey, side, existingProposals, conditionsChanged, now });
   if (intake.action === 'blocked') {
@@ -116,7 +130,7 @@ export async function createAndSendProposal({
   // 표준 구조(2026-08-17 오너 확정): 사실(Node 계산값)은 개조식, 부서 LLM의 판단
   // 서술(reason)은 그 뒤에 문단으로 — buildProposalMessageBody(한 줄 요약형)는 이제
   // DRY-RUN 미리보기 전용, 실제 발송은 여기서 조립한다.
-  const facts = buildProposalFacts({ side, name: name ?? assetKey, assetKey, quantity, proposedPrice });
+  const facts = buildProposalFacts({ side, name: name ?? assetKey, assetKey, quantity, proposedPrice, amountWon });
   const messageText = formatFactsMessage({ departmentLabel, facts, interpretation: reason || null, zeusComment, tag: '제안' });
   const sendResult = await sendMessage(messageText);
   const telegramMessageId = sendResult?.message_id ?? null;

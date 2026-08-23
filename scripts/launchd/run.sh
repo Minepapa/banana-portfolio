@@ -47,7 +47,10 @@ case "$JOB" in
   morning-briefing) CMD=(scripts/jobs/morning-briefing.mjs) ;;
   themis-risk-review) CMD=(scripts/jobs/themis-risk-review.mjs) ;;
   weekly-schedule-summary) CMD=(scripts/jobs/weekly-schedule-summary.mjs) ;;
-  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary}" >&2; exit 2 ;;
+  quarterly-allocation-review) CMD=(scripts/jobs/quarterly-allocation-review.mjs) ;;
+  rebalance-proposal) CMD=(scripts/jobs/rebalance-proposal.mjs) ;;
+  proposal-execution-reminder) CMD=(scripts/jobs/proposal-execution-reminder.mjs) ;;
+  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)

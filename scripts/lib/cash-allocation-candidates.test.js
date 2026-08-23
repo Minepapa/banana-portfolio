@@ -2,31 +2,32 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rankEligibleGaps, findExistingInstruments, ACCOUNT_ELIGIBLE_ASSET_CLASSES } from './cash-allocation-candidates.mjs';
 
+// ⚠️ 2026-08-23 — 배당주·리츠는 TARGET_ALLOCATION에서 삭제됐고(오너 확정, ISA와
+// 이중계산 방지) 달러가 신규 10% 목표군으로 들어왔다 — 픽스처도 함께 갱신.
 const GAPS = [
   { assetClass: '채권', targetPct: 20, currentPct: 15, absDeltaPct: -5 },
   { assetClass: '금', targetPct: 10, currentPct: 12, absDeltaPct: 2 },
-  { assetClass: '배당주', targetPct: 5, currentPct: 2, absDeltaPct: -3 },
-  { assetClass: '리츠', targetPct: 5, currentPct: 5, absDeltaPct: 0 },
+  { assetClass: '달러', targetPct: 10, currentPct: 7, absDeltaPct: -3 },
   { assetClass: '국내주식', targetPct: 30, currentPct: 20, absDeltaPct: -10 },
   { assetClass: '해외주식', targetPct: 30, currentPct: 35, absDeltaPct: 5 },
 ];
 
-test('rankEligibleGaps: 위탁은 배당주·리츠 후보에서 제외(세금상 담을 수 없음)', () => {
-  const ranked = rankEligibleGaps(GAPS, '위탁');
-  assert.ok(!ranked.some((g) => g.assetClass === '배당주'));
-  assert.ok(!ranked.some((g) => g.assetClass === '리츠'));
+test('rankEligibleGaps: 연금저축은 달러 후보에서 제외(위탁 전용 배정, 통화선물 ETF 연금저축 편입 여부 미확인)', () => {
+  const ranked = rankEligibleGaps(GAPS, '연금저축');
+  assert.ok(!ranked.some((g) => g.assetClass === '달러'));
 });
 
-test('rankEligibleGaps: 위탁 후보 중 언더웨이트만 남고 가장 부족한 순 정렬', () => {
+test('rankEligibleGaps: 위탁 후보 중 언더웨이트만 남고 가장 부족한 순 정렬(달러 포함)', () => {
   const ranked = rankEligibleGaps(GAPS, '위탁');
-  assert.deepEqual(ranked.map((g) => g.assetClass), ['국내주식', '채권']);
+  assert.deepEqual(ranked.map((g) => g.assetClass), ['국내주식', '채권', '달러']);
 });
 
-test('rankEligibleGaps: 연금저축은 국내주식·금이 후보에서 제외', () => {
+test('rankEligibleGaps: 연금저축은 국내주식·달러가 후보에서 제외, 금은 오버웨이트라 별도 제외', () => {
   const ranked = rankEligibleGaps(GAPS, '연금저축');
   assert.ok(!ranked.some((g) => g.assetClass === '국내주식'));
-  assert.ok(!ranked.some((g) => g.assetClass === '금'));
-  assert.deepEqual(ranked.map((g) => g.assetClass), ['채권', '배당주']);
+  assert.ok(!ranked.some((g) => g.assetClass === '달러'));
+  assert.ok(!ranked.some((g) => g.assetClass === '금')); // 연금저축 자격은 있지만 오버웨이트(absDeltaPct=2)
+  assert.deepEqual(ranked.map((g) => g.assetClass), ['채권']);
 });
 
 test('rankEligibleGaps: 오버웨이트(양수 갭)인 자산군은 후보에서 제외', () => {

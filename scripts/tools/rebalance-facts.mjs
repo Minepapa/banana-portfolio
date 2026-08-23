@@ -39,7 +39,7 @@ function main() {
   // 자산군만의 합계다(현금성·달러·TDF 등은 원칙상 배분 대상 밖이라 분모에서 제외) —
   // 코드리뷰 지적(2026-08-05): 라벨이 "합산 평가액"이라고만 하면 계좌 전체 잔고로
   // 오독될 수 있어 범위를 명시한다.
-  console.log(`[자산분배 5/25 밴드 점검] 위탁+연금저축 리밸런싱 대상(6개 자산군) 합산 평가액 ${won(totalEval)}원\n`);
+  console.log(`[자산분배 5/25 밴드 점검] 위탁+연금저축 리밸런싱 대상(5개 자산군) 합산 평가액 ${won(totalEval)}원\n`);
   for (const g of gaps) {
     const flag = g.breached ? `[경고] 이탈(${g.breachType})` : '정상';
     console.log(`  ${g.assetClass}: 목표 ${g.targetPct}% / 현재 ${g.currentPct.toFixed(2)}% (${pct(g.currentPct - g.targetPct)}p) — ${flag}`);

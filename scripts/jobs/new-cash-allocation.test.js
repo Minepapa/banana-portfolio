@@ -23,19 +23,35 @@ test('buildCashAllocationPrompt: 개별종목 배분 금지 규칙이 항상 포
   assert.match(prompt, /개별 회사 주식.*절대 배분하지 말 것/);
 });
 
+test('buildCashAllocationPrompt: 분할매수 지시(전액 배분 금지)가 항상 포함됨(2026-08-23 오너 지적)', () => {
+  const prompt = buildCashAllocationPrompt({ account: '위탁', availableCash: 500_000, rankedGaps: [], candidatesByClass: {} });
+  assert.match(prompt, /전액을 한 번에 배분하려 하지 마라/);
+});
+
 test('buildCashAllocationPrompt: 언더웨이트 후보 없으면 안내 문구', () => {
   const prompt = buildCashAllocationPrompt({ account: '연금저축', availableCash: 500_000, rankedGaps: [], candidatesByClass: {} });
   assert.match(prompt, /언더웨이트 없음/);
 });
 
-test('validateAllocations: 정상 라인은 유지', () => {
+test('validateAllocations: 캡(가용잔고의 50%) 이내 라인은 그대로 유지', () => {
   const { kept, dropped } = validateAllocations(
-    [{ assetClass: '국내주식', instrumentName: 'TIGER 200', amountWon: 300000, reasoning: '갭 큼' }],
+    [{ assetClass: '국내주식', instrumentName: 'TIGER 200', amountWon: 200000, reasoning: '갭 큼' }],
     { account: '위탁', availableCash: 500000, eligibleClasses: ['국내주식', '해외주식'] },
   );
   assert.equal(kept.length, 1);
   assert.equal(dropped.length, 0);
   assert.equal(kept[0].instrumentName, 'TIGER 200');
+  assert.equal(kept[0].amountWon, 200000);
+});
+
+test('validateAllocations: 분할매수 하드 캡(2026-08-23 오너 지적) — 가용잔고 50% 초과분은 드롭 아니라 캡까지 축소', () => {
+  const { kept, dropped } = validateAllocations(
+    [{ assetClass: '국내주식', instrumentName: 'TIGER 200', amountWon: 500000, reasoning: '갭 큼' }],
+    { account: '위탁', availableCash: 500000, eligibleClasses: ['국내주식'] },
+  );
+  assert.equal(kept.length, 1);
+  assert.equal(dropped.length, 0); // 드롭이 아니라 캡까지 축소
+  assert.equal(kept[0].amountWon, 250000); // 500000 * 0.5
 });
 
 test('[막아야 함] validateAllocations: 그 계좌가 세금상 담을 수 없는 자산군은 드롭', () => {
@@ -48,18 +64,20 @@ test('[막아야 함] validateAllocations: 그 계좌가 세금상 담을 수 �
   assert.match(dropped[0].reason, /담을 수 없는 자산군/);
 });
 
-test('validateAllocations: 잔여잔고 초과 요청은 뒤에서부터 드롭(먼저 온 라인 우선)', () => {
+test('validateAllocations: 캡 소진 후 뒤에 오는 라인은 드롭(먼저 온 라인이 캡 우선순위)', () => {
   const { kept, dropped } = validateAllocations(
     [
-      { assetClass: '국내주식', instrumentName: 'A', amountWon: 400000 },
-      { assetClass: '해외주식', instrumentName: 'B', amountWon: 300000 },
+      { assetClass: '국내주식', instrumentName: 'A', amountWon: 400000 }, // 캡(250000)까지 축소돼 캡 전부 소진
+      { assetClass: '해외주식', instrumentName: 'B', amountWon: 300000 }, // 남은 캡 없어 드롭
     ],
     { account: '위탁', availableCash: 500000, eligibleClasses: ['국내주식', '해외주식'] },
   );
   assert.equal(kept.length, 1);
   assert.equal(kept[0].instrumentName, 'A');
+  assert.equal(kept[0].amountWon, 250000);
   assert.equal(dropped.length, 1);
-  assert.match(dropped[0].reason, /초과 요청/);
+  assert.equal(dropped[0].a.instrumentName, 'B');
+  assert.match(dropped[0].reason, /분할매수 캡/);
 });
 
 test('validateAllocations: 금액이 0 이하·비숫자면 드롭', () => {

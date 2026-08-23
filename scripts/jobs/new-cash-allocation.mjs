@@ -116,6 +116,9 @@ ${candLines}
 판단 규칙:
 - 개별 회사 주식(삼성전자·엔비디아 등 레거시 전환 대상)에는 절대 배분하지 말 것 — ETF만.
 - 갭이 가장 큰 자산군 하나에 몰아줘도 되고, 여러 자산군에 나눠도 된다(고정 비율 없음).
+- **가용 예수금 전액을 한 번에 배분하려 하지 마라.** 이번엔 최대 절반 정도만 배분
+  계획을 세우고, 나머지는 다음 현금 발생 시 이어가라 — 이 잡은 잔고가 바뀔 때마다
+  다시 도니 "지금 다 써야 한다"는 압박을 가질 필요 없다.
 - allocations의 amountWon 합계는 ${availableCash}원을 넘지 말 것.
 - instrumentName은 위 후보 목록의 이름을 정확히 그대로 쓸 것(새로 짓지 말 것) — 신규
   제안일 때만 새 ETF명 사용 가능.
@@ -136,19 +139,29 @@ ${candLines}
 \`\`\``;
 }
 
-// LLM 응답 검증 — 후보에 없는 자산군·개별종목·합계초과는 여기서 드롭(THROW 아님, 나머지
-// 유효한 라인은 살린다 — 부분 오염이 전체 제안을 막지 않게). 순수 함수.
+// 분할매수 하드 캡(2026-08-23 오너 지적, rebalance-proposal.mjs validateRebalanceActions와
+// 동일 원칙) — 프롬프트 지시("절반 정도만")를 Athena가 어겨도 한 번에 전액 배분이
+// 물리적으로 불가능하게 만든다. 이 잡은 잔고가 바뀔 때마다 다시 돌기 때문에(트리거
+// 상태가 실잔고 그대로라 캡을 걸어도 "다음 기회"가 자동으로 온다) 새 상태관리 없이
+// 캡만 추가하면 된다.
+const CAP_FRACTION = 0.5;
+
+// LLM 응답 검증 — 후보에 없는 자산군·개별종목은 드롭(THROW 아님, 나머지 유효한 라인은
+// 살린다 — 부분 오염이 전체 제안을 막지 않게). 합계초과는 드롭이 아니라 캡까지 축소
+// (rebalance-proposal.mjs와 동일 철학 — 초과분만 깎아 "일부라도 진행"이 되게 함).
+// 순수 함수.
 export function validateAllocations(allocations, { account, availableCash, eligibleClasses }) {
   const kept = [], dropped = [];
-  let remaining = availableCash;
+  let remaining = availableCash * CAP_FRACTION;
   for (const a of allocations ?? []) {
     const assetClass = String(a?.assetClass ?? '').trim();
-    const amountWon = Number(a?.amountWon);
+    let amountWon = Number(a?.amountWon);
     const instrumentName = String(a?.instrumentName ?? '').trim();
     if (!eligibleClasses.includes(assetClass)) { dropped.push({ a, reason: `${account} 계좌가 담을 수 없는 자산군: ${assetClass}` }); continue; }
     if (!instrumentName) { dropped.push({ a, reason: '종목명 없음' }); continue; }
     if (!Number.isFinite(amountWon) || amountWon <= 0) { dropped.push({ a, reason: '금액 값 이상' }); continue; }
-    if (amountWon > remaining) { dropped.push({ a, reason: `잔여잔고(${remaining}원) 초과 요청(${amountWon}원)` }); continue; }
+    if (remaining <= 0) { dropped.push({ a, reason: `분할매수 캡(가용잔고의 ${CAP_FRACTION * 100}%) 이미 소진` }); continue; }
+    if (amountWon > remaining) amountWon = remaining; // 초과분은 드롭이 아니라 캡까지 축소
     remaining -= amountWon;
     kept.push({ assetClass, instrumentName, amountWon, reasoning: String(a?.reasoning ?? '') });
   }
@@ -288,6 +301,7 @@ async function main() {
         const result = await createAndSendProposal({
           track: '자산분배', account, assetKey: pricing.assetKey, name: alloc.instrumentName,
           side: '매수', quantity: pricing.quantity, proposedPrice: pricing.proposedPrice,
+          amountWon: alloc.amountWon,
           reason: alloc.reasoning, departmentLabel: DEPARTMENT_LABEL,
           existingProposals,
           writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),

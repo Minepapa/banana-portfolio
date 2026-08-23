@@ -18,7 +18,7 @@ const EXPOSURE_ACCOUNTS = new Set(['위탁', '연금저축', 'ISA']);
 export const OVERLAP_CLASSES = ['배당주', '리츠', '채권'];
 
 // holdings: State/Holdings 전체 배열. 분모는 3계좌의 **전체** 평가액(현금성·달러 포함) —
-// rebalance-gap.mjs의 6개 자산군 한정 분모와 다르다. "실제 총자산 기준" 노출을 보이는
+// rebalance-gap.mjs의 5개 자산군 한정 분모와 다르다. "실제 총자산 기준" 노출을 보이는
 // 게 목적이라 일부러 좁히지 않는다(이게 좁혀지면 원래 발견됐던 이중노출 공백을 이 모듈
 // 스스로 다시 재현하게 됨).
 export function computeThreeAccountExposure(holdings) {
