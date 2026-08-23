@@ -76,17 +76,18 @@ export const VAULT_PATHS = {
     // (State/Holdings/{계좌}-예수금.md) 기반으로 전면 교체했다. 이제 "누적"이 아니라
     // "마지막으로 이 잔고값으로 트리거했다"는 dedup 마커일 뿐이다.
     cashAccumulator: join(VAULT_ROOT, 'State', 'CashAccumulator'),
-    // 킬스위치·체결모드(섀도우|실전) — 시스템 전체에 하나뿐인 상태라 폴더가 아니라 단일
-    // 파일(구현계획서 Phase 9, 제안 흐름 연결 — kill-switch.mjs·shadow-mode.mjs는
-    // Phase 4에서 순수 판정 로직만 만들어졌고 실제 파일 경로는 없었다). 파일이 아직
-    // 없으면 두 모듈 다 안전한 기본값(킬스위치 꺼짐·섀도우모드)으로 떨어지므로 최초
-    // 배포 시 이 파일들을 미리 만들 필요는 없다.
-    killSwitch: join(VAULT_ROOT, 'State', 'KillSwitch.md'),
-    executionMode: join(VAULT_ROOT, 'State', 'ExecutionMode.md'),
+    // 킬스위치·체결모드(섀도우|실전) — 시스템 전체에 하나뿐인 상태라는 성격은 그대로지만
+    // (Phase 9), 2026-08-23 오너 지시로 State/ 바로 밑에 파일을 헐렁하게 흩어두지 않고
+    // State의 다른 항목들(Holdings·Allocation·...)처럼 전부 자기 폴더 하나씩을 갖도록
+    // 구조를 통일했다 — 폴더명=파일명(단일 상태 파일이라 개당 폴더 하나면 충분, 여러
+    // 파일이 쌓이는 종류가 아님). 파일이 아직 없으면 두 모듈 다 안전한 기본값(킬스위치
+    // 꺼짐·섀도우모드)으로 떨어지므로 최초 배포 시 이 파일들을 미리 만들 필요는 없다.
+    killSwitch: join(VAULT_ROOT, 'State', 'KillSwitch', 'KillSwitch.md'),
+    executionMode: join(VAULT_ROOT, 'State', 'ExecutionMode', 'ExecutionMode.md'),
     // 체결 완료된 제안 ID의 영속 목록(Phase 11, 2026-08-09) — 크래시 후 재실행돼도
     // 이미 체결된 제안이 다시 브로커에 나가지 않도록 하는 idempotency 저장소.
     // executed-orders.mjs 헤더 주석 참고. 파일 없으면(최초) 빈 목록으로 안전하게 폴백.
-    executedOrders: join(VAULT_ROOT, 'State', 'ExecutedOrders.md'),
+    executedOrders: join(VAULT_ROOT, 'State', 'ExecutedOrders', 'ExecutedOrders.md'),
   },
   decisions: {
     evaluations: join(VAULT_ROOT, 'Decisions', 'Evaluations'),

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * 체결모드(섀도우|실전) 전환 — Phase 12. Zeus(상시 세션)가 Frank의 "실전전환"/"섀도우전환"
- * 텍스트를 받으면 이 CLI를 호출한다. State/ExecutionMode.md를 갱신한다 — 킬스위치
+ * 텍스트를 받으면 이 CLI를 호출한다. State/ExecutionMode/ExecutionMode.md를 갱신한다 — 킬스위치
  * 전환(kill-switch-cli.mjs)과 동일한 패턴.
  *
  * ⚠️ 자동전환 없음(구현계획서 Phase 12 원칙) — 오너의 명시적 텍스트 명령으로만 전환된다.
@@ -14,7 +14,7 @@
  * 사용법: node scripts/tools/execution-mode-cli.mjs --text="실전전환"
  */
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname } from 'node:path';
 import { parseExecutionModeCommand } from '../lib/telegram-messages.mjs';
 import { buildExecutionModeState, getExecutionMode, MODE_LIVE, MODE_SHADOW } from '../lib/shadow-mode.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
@@ -48,7 +48,7 @@ async function main() {
     return;
   }
 
-  mkdirSync(join(VAULT_PATHS.root, 'State'), { recursive: true });
+  mkdirSync(dirname(VAULT_PATHS.state.executionMode), { recursive: true });
   const content = buildExecutionModeState({ mode: targetMode, reason: `Frank 명령: "${text}"` });
   await writeStateFile(VAULT_PATHS.state.executionMode, content);
 

@@ -4,12 +4,13 @@
 // 성공과 그 결과를 Proposal 파일에 쓰는 것 사이에 크래시가 나면 재실행 시 같은 제안이 다시
 // 체결될 수 있었다(섀도우모드에선 로그 한 줄 더뿐이라 무해했지만 실주문에선 중복 매수/매도).
 //
-// State/ExecutedOrders.md — 킬스위치·체결모드와 동일 원칙("시스템 전체에 하나뿐인 상태"라
+// State/ExecutedOrders/ExecutedOrders.md — 킬스위치·체결모드와 동일 원칙("시스템 전체에 하나뿐인 상태"라
 // 폴더가 아니라 단일 파일). vault-frontmatter.mjs는 의도적으로 평평한(중첩 없는) key:value
 // 전용이라 배열을 직접 못 담는다 — 새 중첩 포맷을 만드는 대신 콤마join 문자열 하나로 담는다
 // (제안 ID는 proposal-vault.mjs buildProposalRecord가 track-side-assetKey-timestamp를
 // sanitizeSegment로 만들어 콤마가 절대 안 섞인다 — 안전).
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { withLock, writeAtomic } from './state-writer.mjs';
 import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 
@@ -52,6 +53,9 @@ export async function recordExecutedOrder(filePath, proposalId) {
   return withLock(filePath, () => {
     const ids = parseExecutedOrderIds(readOrNull(filePath));
     if (ids.includes(proposalId)) return false;
+    // State/ExecutedOrders/ 구조(2026-08-23, 단일 상태 파일도 자기 폴더를 갖도록 통일)로
+    // 바뀌면서 최초 실행 시 이 폴더가 아직 없을 수 있다 — 방어적으로 매번 보장.
+    mkdirSync(dirname(filePath), { recursive: true });
     writeAtomic(filePath, buildFrontmatter({ ids: [...ids, proposalId].join(',') }));
     return true;
   });
