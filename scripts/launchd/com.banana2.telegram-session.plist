@@ -38,7 +38,18 @@
        모드라 인터랙티브 전용 파일이 로드 안 됨) bun을 못 찾아 MCP 서버 기동 자체가
        조용히 실패했다(에러 로그도 없음 — claude 자체는 PATH 문제 없이 떠서 겉으로는
        "잘 도는 것처럼" 보였음). PATH를 셸 프로파일에 의존하지 않고 커맨드 안에서 직접
-       명시. -->
+       명시.
+       ⚠️ --permission-mode auto 추가(2026-08-24, 오너 지시) — 위 --allowedTools로
+       Bash/Read/reply/react/edit_message는 이미 무프롬프트였지만, 그 목록 밖의 도구
+       (Write·Edit·다른 MCP 도구 등)를 세션이 쓰려 하면 여전히 기본 권한모드(대화형
+       확인)가 걸려, 오너가 텔레그램 질문 하나 할 때마다 매번 승인해야 하는 마찰이
+       있었다. --permission-mode auto(claude CLI 정식 플래그, --help 확인됨)를 추가해
+       세션 시작부터 자동승인 모드로 뜨게 한다 — --allowedTools의 명시적 도구 스코프는
+       그대로 유지(이 플래그는 "어떤 도구를 쓸 수 있는가"가 아니라 "그 안에서 프롬프트를
+       띄울지 말지"만 바꾼다). 텔레그램 세션 구현 금지 규칙(CLAUDE.md)과 마찬가지로
+       "시작 파일에 박아 매번 재시작해도 지켜지게" 하는 동일한 원칙 — 매일 04:00
+       telegram-session-restart(launchctl kickstart -k)가 이 plist를 그대로 다시
+       읽으므로 별도 동기화 지점 없음. -->
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/script</string>
@@ -46,7 +57,7 @@
     <string>/dev/null</string>
     <string>/bin/bash</string>
     <string>-lc</string>
-    <string>export PATH="$HOME/.bun/bin:$PATH"; claude --channels plugin:telegram@claude-plugins-official --allowedTools "Bash Read mcp__plugin_telegram_telegram__reply mcp__plugin_telegram_telegram__react mcp__plugin_telegram_telegram__edit_message"</string>
+    <string>export PATH="$HOME/.bun/bin:$PATH"; claude --channels plugin:telegram@claude-plugins-official --permission-mode auto --allowedTools "Bash Read mcp__plugin_telegram_telegram__reply mcp__plugin_telegram_telegram__react mcp__plugin_telegram_telegram__edit_message"</string>
   </array>
   <key>KeepAlive</key>
   <true/>
