@@ -57,11 +57,26 @@ export function applyBuy(existingHolding, exec) {
   }
   const newQty = existingHolding.qty + exec.quantity;
   const newInvest = existingHolding.invest + buyInvest;
+  // ⚠️ 버그 수정(2026-08-24, 오너 신고 — evalAmount 0원으로 화면 필터 누락) — curPrice는
+  // 그대로 이어받되(체결 자체가 새 시세를 알려주지 않음, 다음 update-holdings-prices.mjs
+  // 실행이 갱신할 몫), evalAmount·profitAmount·profitPct는 새 qty·invest 기준으로 즉시
+  // 재계산해야 한다. 예전엔 `...existingHolding`로 옛 값을 그대로 들고 가서, 매수 직후~
+  // 다음 시세갱신 사이에 "매수 이전 수량 기준" 평가액이 남아있었다 — 과거 전량매도 후
+  // 종목만 남겨둔 0-qty 플레이스홀더 보유(예: findExistingInstruments 후보용으로 유지되던
+  // ACE 미국달러SOFR금리(합성)·TIGER 일본엔선물)에 새로 매수가 들어오면 evalAmount가
+  // 0에서 다음 시세갱신 전까지 그대로 남아, 프론트엔드 필터(invest>0 && eval>0)에 걸려
+  // 화면에서 통째로 사라지는 사고로 표면화됐다. consolidateLots의 재계산 방식과 동일
+  // 원칙(curPrice가 없으면 추정하지 않고 null 그대로).
+  const curPrice = existingHolding.curPrice ?? null;
+  const evalAmount = curPrice != null ? curPrice * newQty : null;
+  const profitAmount = evalAmount != null ? evalAmount - newInvest : null;
+  const profitPct = profitAmount != null && newInvest > 0 ? (profitAmount / newInvest) * 100 : null;
   return {
     ...existingHolding,
     avgPrice: newInvest / newQty,
     qty: newQty,
     invest: newInvest,
+    curPrice, evalAmount, profitAmount, profitPct,
   };
 }
 
@@ -85,8 +100,16 @@ export function applySell(existingHolding, exec) {
   if (newQty <= EPS) {
     return { updatedHolding: null, realizedProfit, closed: true, warning: null };
   }
+  // applyBuy와 동일한 이유(2026-08-24) — curPrice는 이어받고 evalAmount·profitAmount·
+  // profitPct는 축소된 새 qty·invest 기준으로 즉시 재계산(옛 값을 그대로 들고 가면
+  // 일부 매도 직후 화면 평가액이 매도 전 수량 기준으로 부풀려진 채 남는다).
+  const newInvest = newQty * existingHolding.avgPrice;
+  const curPrice = existingHolding.curPrice ?? null;
+  const evalAmount = curPrice != null ? curPrice * newQty : null;
+  const profitAmount = evalAmount != null ? evalAmount - newInvest : null;
+  const profitPct = profitAmount != null && newInvest > 0 ? (profitAmount / newInvest) * 100 : null;
   return {
-    updatedHolding: { ...existingHolding, qty: newQty, invest: newQty * existingHolding.avgPrice },
+    updatedHolding: { ...existingHolding, qty: newQty, invest: newInvest, curPrice, evalAmount, profitAmount, profitPct },
     realizedProfit, closed: false, warning: null,
   };
 }
