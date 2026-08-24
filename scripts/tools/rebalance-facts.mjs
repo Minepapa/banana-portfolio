@@ -40,9 +40,15 @@ function main() {
   // 코드리뷰 지적(2026-08-05): 라벨이 "합산 평가액"이라고만 하면 계좌 전체 잔고로
   // 오독될 수 있어 범위를 명시한다.
   console.log(`[자산분배 5/25 밴드 점검] 위탁+연금저축 리밸런싱 대상(5개 자산군) 합산 평가액 ${won(totalEval)}원\n`);
+  // ⚠️ 한 줄에 다 넣지 않는다(2026-08-24 오너 지적) — "목표/현재/갭 — [경고] 이탈(유형)"을
+  // 한 줄로 붙이면 텔레그램 좁은 화면에서 "[경고]" 직후에 어중간하게 줄바꿈돼(터미널
+  // 폭 기준 줄바꿈에 기대던 걸 그대로 텔레그램에 재사용한 게 원인) 어느 자산군 줄인지
+  // 헷갈리는 형태로 보였다. 정상은 숫자 줄에 짧게 붙여 한 줄로 끝내고, 이탈은 원인
+  // 태그를 강제 줄바꿈으로 분리해 항상 두 줄로 명확히 나눈다 — 뷰포트 폭에 따라
+  // 우연히 갈라지는 게 아니라 매번 똑같은 자리에서 갈라지게.
   for (const g of gaps) {
-    const flag = g.breached ? `[경고] 이탈(${g.breachType})` : '정상';
-    console.log(`  ${g.assetClass}: 목표 ${g.targetPct}% / 현재 ${g.currentPct.toFixed(2)}% (${pct(g.currentPct - g.targetPct)}p) — ${flag}`);
+    const numbers = `  ${g.assetClass}: 목표 ${g.targetPct}% / 현재 ${g.currentPct.toFixed(2)}% (${pct(g.currentPct - g.targetPct)}p)`;
+    console.log(g.breached ? `${numbers}\n    → [경고] 이탈(${g.breachType})` : `${numbers} — 정상`);
   }
   // ⚠️ "[경고]" 문자열은 단순 장식이 아니다 — daily-asset-allocation-check.mjs가 이
   // stdout 전체를 캡처해 .includes('[경고]')로 "텔레그램으로 보낼 만한 변화가 있는가"를

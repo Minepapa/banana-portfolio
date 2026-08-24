@@ -61,21 +61,34 @@ function writeFaberState(domesticAboveMA, foreignAboveMA) {
 // 신설)가 같은 렌더러를 공유한다. 포맷을 두 곳에 따로 베끼면 "[경고]" 시그널 문자열
 // (daily-asset-allocation-check.mjs가 .includes로 읽음, 아래 주석 참고)이 한쪽만
 // 바뀌는 사고가 재발할 수 있어 단일 진실 소스로 뺐다.
+// ⚠️ [경고] 태그는 숫자 뒤에 이어붙이지 않고 항상 강제 줄바꿈으로 분리한다
+// (2026-08-24 오너 지적 — 텔레그램 좁은 화면에서 "숫자 — [경고] 사유"를 한 줄로
+// 붙이면 뷰포트 폭 기준으로 어중간하게 줄바꿈돼 어느 신호 줄인지 헷갈리는 형태로
+// 보였다). 정상은 숫자 줄에 짧게 붙여 한 줄로 끝내고, 경고는 두 줄로 명확히 나눈다 —
+// rebalance-facts.mjs의 같은 수정과 동일 원칙.
+function signalLine(numbers, warningSuffix) {
+  return warningSuffix ? `${numbers}\n    → [경고] ${warningSuffix}` : `${numbers} 정상`;
+}
+
 export function renderSignalsReport(signals) {
   const lines = ['[거시 전술 오버레이 점검] (ECOS 한국채권스프레드 미연동 — 4개 신호만)', ''];
-  const faberLine = (label, sig, crossed) => sig
-    ? `  ${label}: ${sig.aboveMA ? '10개월선 위' : '10개월선 아래'}(${sig.deviationPct.toFixed(2)}%)${crossed ? ' [경고] 크로스 발생' : ''}`
-    : `  ${label}: 데이터 부족(판정 보류)`;
+  const faberLine = (label, sig, crossed) => {
+    if (!sig) return `  ${label}: 데이터 부족(판정 보류)`;
+    const numbers = `  ${label}: ${sig.aboveMA ? '10개월선 위' : '10개월선 아래'}(${sig.deviationPct.toFixed(2)}%)`;
+    return crossed ? `${numbers}\n    → [경고] 크로스 발생` : numbers;
+  };
   lines.push(faberLine('Faber 국내주식(KOSPI)', signals.faberDomestic, signals.faberDomesticCrossed));
   lines.push(faberLine('Faber 해외주식(S&P500)', signals.faberForeign, signals.faberForeignCrossed));
 
   if (signals.rateSpread) {
-    lines.push(`  미국금리차(10Y-3M): ${signals.rateSpread.currentSpread.toFixed(2)}%p${signals.rateSpread.inverted ? ' [경고] 역전' : ''}`);
+    const numbers = `  미국금리차(10Y-3M): ${signals.rateSpread.currentSpread.toFixed(2)}%p`;
+    lines.push(signals.rateSpread.inverted ? `${numbers}\n    → [경고] 역전` : numbers);
   } else {
     lines.push('  미국금리차: 데이터 없음');
   }
   for (const [label, sig] of [['DXY', signals.dxy], ['VIX', signals.vix], ['WTI 유가', signals.wti]]) {
-    lines.push(sig ? `  ${label}: ${sig.current.toFixed(2)}${sig.breached ? ` [경고] 이탈(z=${sig.bands?.zscore})` : ' 정상'}` : `  ${label}: 데이터 없음`);
+    if (!sig) { lines.push(`  ${label}: 데이터 없음`); continue; }
+    lines.push(signalLine(`  ${label}: ${sig.current.toFixed(2)}`, sig.breached ? `이탈(z=${sig.bands?.zscore})` : null));
   }
 
   // ⚠️ "[경고]" 문자열은 daily-asset-allocation-check.mjs가 .includes('[경고]')로
