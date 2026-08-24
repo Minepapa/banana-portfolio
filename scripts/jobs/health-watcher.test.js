@@ -1,10 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildJobHealthRecord } from '../lib/job-health.mjs';
-import { findStaleJobs, isPollingStuck, formatStaleJobIssue } from './health-watcher.mjs';
+import { findStaleJobs, isPollingStuck, formatStaleJobIssue, EXPECTED_INTERVALS_MS } from './health-watcher.mjs';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// run.sh의 case문에서 실제로 디스패치되는 잡 이름만 뽑는다(usage 안내줄의 '*'는 제외).
+// 예: "  backup-vault)   CMD=(scripts/jobs/backup-vault-snapshot.mjs) ;;" → "backup-vault"
+function listDispatchedJobs() {
+  const runSh = readFileSync(join(__dirname, '..', 'launchd', 'run.sh'), 'utf8');
+  return [...runSh.matchAll(/^\s*([a-z][a-z0-9-]*)\)\s+CMD=/gm)].map((m) => m[1]);
+}
 
 function makeTmpDir() {
   return mkdtempSync(join(tmpdir(), 'health-watcher-test-'));
@@ -182,4 +192,19 @@ test('formatStaleJobIssue: 조치사항이 없는 잡은 기존과 동일하게 
 test('formatStaleJobIssue: 실행 기록 자체가 없으면 "실행 기록 없음"으로 정직하게 표시', () => {
   const line = formatStaleJobIssue({ job: 'execute-quant', lastRun: null, expectedIntervalMs: 5 * 60 * 1000 });
   assert.match(line, /실행 기록 없음/);
+});
+
+// ── EXPECTED_INTERVALS_MS 누락 방지 구조적 가드(2026-08-24) ──────────────
+// "새 v2 잡이 생길 때마다 여기 추가한다"는 이 파일 안의 프로즈 주석이 2026-08-14부터
+// 있었는데도 그 뒤로 다섯 번(backup-vault·daily-asset-allocation-check·update-monthly-
+// balance-snapshot·weekly-report·이번 6개)이나 같은 누락이 반복됐다 — 기본값(60분)이
+// 하루 1회~분기 1회 잡에 조용히 적용돼 몇 시간~며칠 뒤 오알람이 나가는 패턴. 프로즈
+// 규칙은 안 지켜진다는 게 다섯 번으로 증명됐으니, run.sh가 실제로 디스패치하는 잡은
+// 전부 EXPECTED_INTERVALS_MS에 등록돼 있어야 한다는 걸 테스트로 강제한다 — 새 잡을
+// run.sh case문에 추가하고 이 등록을 빠뜨리면 npm test가 그 자리에서 실패한다.
+test('EXPECTED_INTERVALS_MS: run.sh가 디스패치하는 잡은 전부 등록돼 있어야 함(기본값 60분 오알람 재발 방지)', () => {
+  const dispatched = listDispatchedJobs();
+  assert.ok(dispatched.length > 10, 'run.sh case문 파싱이 깨졌을 가능성 — 잡 이름이 거의 안 뽑힘');
+  const missing = dispatched.filter((job) => !(job in EXPECTED_INTERVALS_MS));
+  assert.deepEqual(missing, [], `EXPECTED_INTERVALS_MS에 등록 안 된 잡: ${missing.join(', ')} — health-watcher.mjs에 실제 launchd 주기에 맞는 값을 추가할 것(기본값 60분을 그대로 두면 몇 시간 안에 오알람 발생)`);
 });

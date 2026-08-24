@@ -39,7 +39,7 @@ const DEPARTMENT_LABEL = '운영실 Hermes';
 // 잡 16개 전체를 실제 StartCalendarInterval/StartInterval과 대조했다. 이 표가
 // "새 잡 추가 시 누락"뿐 아니라 "평일 전용 잡의 주말 간격"도 놓치고 있었다 —
 // 둘 다 여기서 함께 고친다.
-const EXPECTED_INTERVALS_MS = {
+export const EXPECTED_INTERVALS_MS = {
   // ⚠️ 빈도 수정(2026-08-14, 오너 확인) — 기존엔 v1 주기(매시간)를 그대로 계승했지만,
   // 자산분배 트랙엔 이 기록을 당일 즉시 소비하는 자동화가 없어(퀀트 트랙과 달리 같은
   // 날 바로 사고파는 파이프라인이 없음) 하루 1회(평일 16:00 KST)로 충분하다 —
@@ -110,6 +110,39 @@ const EXPECTED_INTERVALS_MS = {
   // 아무도 그 정지를 감지하지 못한다 — "감시자가 감시자 자신의 죽음은 못 본다"는
   // 구조적 한계, 이 등록 하나로는 못 고친다(별도 외부 워치독이 필요, 아직 없음).
   'health-watcher': 30 * 60 * 1000,
+
+  // ── 2026-08-24 다섯 번째 재발(오너 신고 — weekly-schedule-summary 오알람) ──
+  // 이 파일 자체가 "새 v2 잡이 생길 때마다 여기 추가한다"고 2026-08-14부터 프로즈로
+  // 적어뒀는데도 그새 backup-vault·daily-asset-allocation-check(08-14), update-monthly-
+  // balance-snapshot·weekly-report(08-23), 그리고 이번 6개(08-24)까지 같은 클래스의
+  // 누락이 다섯 번째로 반복됐다 — "기억해서 채워넣기"는 구조적으로 안 지켜진다는 뜻.
+  // 그래서 이번엔 프로즈 주석 추가에서 그치지 않고, health-watcher.test.js에 "run.sh가
+  // 디스패치하는 모든 잡은 반드시 여기 등록돼 있어야 한다"는 걸 강제하는 테스트를
+  // 추가했다(scripts/launchd/*.plist ↔ EXPECTED_INTERVALS_MS 키 대조) — 앞으로 새 잡을
+  // run.sh에 추가하고 여기 등록을 빠뜨리면 npm test가 그 자리에서 실패한다. 프로즈
+  // 규칙을 CI가 강제하는 불변식으로 승격한 것 — 이게 이 세션 전체가 반복해온 원칙
+  // ("기억하지 말고 구조로 막을 것")과 같은 결의 수정이다.
+  //
+  // weekly-schedule-summary·themis-risk-review — 매주 1회(월요일 07:00·일요일 07:00
+  // KST). weekly-report와 동일 패턴이라 그대로 7일.
+  'weekly-schedule-summary': 7 * 24 * 60 * 60 * 1000,
+  'themis-risk-review': 7 * 24 * 60 * 60 * 1000,
+  // morning-briefing·rebalance-proposal·proposal-execution-reminder — 평일 전용 하루
+  // 1회(각각 08:00·16:32·09:10 KST). 위 parse-notifications-to-vault 등과 동일 사유로
+  // 48h(금~월 72시간 간격에 여유를 더한 값).
+  'morning-briefing': 48 * 60 * 60 * 1000,
+  'rebalance-proposal': 48 * 60 * 60 * 1000,
+  'proposal-execution-reminder': 48 * 60 * 60 * 1000,
+  // quarterly-allocation-review — 분기 시작월(1·4·7·10월) 1~3일에 launchd가 3일 연속
+  // 실행되지만(run.sh가 매번 record-heartbeat-vault를 부르므로 heartbeat 자체는 3일
+  // 연속 남음), 잡 내부 dedup(shouldRunToday)으로 실제 판단·발송은 분기당 1회뿐이다.
+  // 즉 실제 heartbeat 간격은 "3일 연속 찍힘 → 최대 약 92일(10/3→1/1) 공백"인 불규칙
+  // 패턴 — 짧은 쪽(하루~이틀)에 맞추면 분기 사이 공백에서 매번 오알람, 긴 쪽에
+  // 맞추면 그 며칠의 burst 안에서는 문제 없다. 최대 공백(약 92일)+여유를 100일로 잡고
+  // ×2=200일 문턱 — 분기 burst를 두 번 연속 통째로 놓쳐야만(약 6개월 무응답) 알람이
+  // 뜬다. 분기 1회짜리 순수 의견보고 잡이라 이 정도 지연 허용은 합리적(daily 배관
+  // 잡처럼 즉각 감지가 필요한 성격이 아님).
+  'quarterly-allocation-review': 100 * 24 * 60 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 
