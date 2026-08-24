@@ -96,11 +96,15 @@ export default function App() {
         {/* 타이틀 줄 — 왼쪽: 배지·제안대기 배지 / 오른쪽: 숨기기 토글·로그인·로그아웃
             (2026-08-22 오너 지시 — 로그아웃·숨기기 버튼을 평가손익 위 이 줄로 올리고,
             왼쪽 BANANA 배지와 높이를 맞춤: fontSize 9·padding "2px 6px"·fontWeight 800로
-            통일해 badgeHeightBtn 하나로 관리). */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: 'wrap' }}>
+            통일해 badgeHeightBtn 하나로 관리).
+            ⚠️ 줄바꿈 금지(2026-08-24 오너 지적) — 제안대기 배지가 뜨면(예: "제안 대기
+            12건") 폭이 늘어나 오른쪽 토글·로그아웃 버튼이 다음 줄로 밀렸다. 세 컨테이너
+            전부 flexWrap을 nowrap으로 고정해 항상 한 줄을 유지한다(제목을 "BANANA
+            포트폴리오"로 줄인 것도 같은 목적 — 왼쪽 폭 자체를 줄여 여유를 만듦). */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: 'nowrap' }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: 'nowrap', minWidth: 0 }}>
             <div style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: isMobile ? 1 : 2, color: INK, background: ACCENT, padding: "2px 6px" }}>
-              BANANA · 은퇴 준비 포트폴리오
+              BANANA 포트폴리오
             </div>
             {pendingProposalCount > 0 && (
               <div title="텔레그램에서 승인/거부 대기 중인 제안" style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: 1, color: "#fff", background: "#E0A000", padding: "2px 6px" }}>
@@ -108,7 +112,7 @@ export default function App() {
               </div>
             )}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, flexWrap: 'nowrap' }}>
             {auth === 'loading' && (
               <span style={{ fontSize: 9, color: INK_2 }}>Google 초기화 중...</span>
             )}
