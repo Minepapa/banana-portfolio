@@ -133,6 +133,10 @@ export const EXPECTED_INTERVALS_MS = {
   'morning-briefing': 48 * 60 * 60 * 1000,
   'rebalance-proposal': 48 * 60 * 60 * 1000,
   'proposal-execution-reminder': 48 * 60 * 60 * 1000,
+  // daily-execution-report(2026-08-24 신설, 오너 명시 요청 — 장마감 이후 당일 체결내역
+  // 텔레그램 보고) — 평일 16:15 KST 하루 1회. 위 평일전용 잡들과 동일 사유로 48h
+  // (금~월 72시간 간격에 여유를 더한 값).
+  'daily-execution-report': 48 * 60 * 60 * 1000,
   // quarterly-allocation-review — 분기 시작월(1·4·7·10월) 1~3일에 launchd가 3일 연속
   // 실행되지만(run.sh가 매번 record-heartbeat-vault를 부르므로 heartbeat 자체는 3일
   // 연속 남음), 잡 내부 dedup(shouldRunToday)으로 실제 판단·발송은 분기당 1회뿐이다.

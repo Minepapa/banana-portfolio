@@ -36,6 +36,7 @@ case "$JOB" in
   daily-asset-allocation-check) CMD=(scripts/jobs/daily-asset-allocation-check.mjs) ;;
   parse-notifications-to-vault) CMD=(scripts/jobs/parse-notifications-to-vault.mjs) ;;
   update-holdings-from-executions) CMD=(scripts/jobs/update-holdings-from-executions.mjs) ;;
+  daily-execution-report) CMD=(scripts/jobs/daily-execution-report.mjs) ;;
   update-holdings-prices) CMD=(scripts/jobs/update-holdings-prices.mjs) ;;
   sync-firestore-mirror) CMD=(scripts/jobs/sync-firestore-mirror.mjs) ;;
   new-cash-allocation) CMD=(scripts/jobs/new-cash-allocation.mjs) ;;
@@ -50,7 +51,7 @@ case "$JOB" in
   quarterly-allocation-review) CMD=(scripts/jobs/quarterly-allocation-review.mjs) ;;
   rebalance-proposal) CMD=(scripts/jobs/rebalance-proposal.mjs) ;;
   proposal-execution-reminder) CMD=(scripts/jobs/proposal-execution-reminder.mjs) ;;
-  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder}" >&2; exit 2 ;;
+  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)
