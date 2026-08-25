@@ -10,11 +10,12 @@
     <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>update-allocation-from-holdings</string>
   </array>
-  <!-- 30분 간격(2026-08-21) — update-holdings-prices와 같은 주기. State/Allocation은
-       그 잡이 갱신한 curPrice/evalAmount로 계산하므로 그보다 더 자주 돌 이유가 없고,
-       더 느리면 대시보드 "자산분배" 탭이 방금 고친 시세보다 뒤처진 값을 보여주게 된다. -->
+  <!-- 10분 간격(2026-08-25, 오너 지시 — 갱신주기 단축) — update-holdings-prices와
+       같은 주기를 그대로 유지(30분→10분). State/Allocation은 그 잡이 갱신한
+       curPrice/evalAmount로 계산하므로 그보다 더 자주 돌 이유가 없고, 더 느리면
+       대시보드 "자산분배" 탭이 방금 고친 시세보다 뒤처진 값을 보여주게 된다. -->
   <key>StartInterval</key>
-  <integer>1800</integer>
+  <integer>600</integer>
   <key>RunAtLoad</key>
   <false/>
   <key>ProcessType</key>

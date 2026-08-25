@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyHolding, recomputeValuation } from './update-holdings-prices.mjs';
+import { classifyHolding, recomputeValuation, recomputeFxCashValuation } from './update-holdings-prices.mjs';
 
 test('classifyHolding: KR 종목코드가 풀리면 KR(krStockCode 우선)', () => {
   const r = classifyHolding({ name: '삼성전자', account: '위탁' }, { resolveKr: () => '005930' });
@@ -107,13 +107,26 @@ test('recomputeValuation: usdKrwRate 지정 시 해외주식 curPrice(USD)를 KR
   assert.ok(r.profitPct > -50 && r.profitPct < 200, `비정상 profitPct: ${r.profitPct}`);
 });
 
-// 2026-08-22 — 외화 현금성 보유(달러 RP 등)의 환율 재평가 패턴. curPrice 자리에
-// 환율 자체를 넘기고(usdKrwRate 옵션은 기본값 1) qty(보유 USD 금액)를 곱한다 —
-// update-holdings-prices.mjs main()의 fxCashFiles 루프가 실제로 이렇게 호출한다.
-test('recomputeValuation: 외화 현금성 보유는 curPrice 자리에 환율을 넘기면 qty(USD)×환율=평가액(KRW)', () => {
-  const r = recomputeValuation({ qty: 651, invest: 928140 }, 1452.30);
+// 2026-08-25 오너 지시 — 외화 현금성 보유(달러 RP 등)는 recomputeValuation이 아니라
+// 전용 recomputeFxCashValuation을 쓴다. 투자 포지션이 아니라 "현금을 외화로 들고
+// 있는 것"뿐이라 매수 시점 환율(옛 avgPrice)을 원가로 고정해두면 그 뒤 환율 변동이
+// 마치 투자손익처럼 표시됐다 — avgPrice·invest도 매번 이번 환율로 재기준해 손익을
+// 항상 0으로 유지한다.
+test('recomputeFxCashValuation: curPrice·avgPrice 둘 다 이번 환율로 맞춰 손익을 항상 0으로', () => {
+  const r = recomputeFxCashValuation({ qty: 651, invest: 928140, avgPrice: 1426 }, 1452.30);
   assert.equal(r.curPrice, 1452.30);
+  assert.equal(r.avgPrice, 1452.30);
   assert.equal(r.evalAmount, 651 * 1452.30);
+  assert.equal(r.invest, 651 * 1452.30);
+  assert.equal(r.profitAmount, 0);
+  assert.equal(r.profitPct, 0);
+});
+
+test('recomputeFxCashValuation: 환율이 매수 시점보다 크게 움직여도(원화 약세) 여전히 손익 0 — 환전타이밍 손익을 추적하는 게 아님', () => {
+  const r = recomputeFxCashValuation({ qty: 100, invest: 130000, avgPrice: 1300 }, 1500);
+  assert.equal(r.profitAmount, 0);
+  assert.equal(r.profitPct, 0);
+  assert.equal(r.evalAmount, 100 * 1500);
 });
 
 test('recomputeValuation: unitScale 지정 시 1,000좌당 기준가를 좌당으로 환산(한국 펀드 관례)', () => {

@@ -156,9 +156,9 @@ test('findStaleJobs: 평일전용 잡도 진짜 며칠(96시간+) 조용하면 s
 
 // ── 30분·5분 주기 잡 등록 회귀 테스트(2026-08-23, 같은 전수 재점검) — 등록 전엔
 // 기본값(60분)이 적용돼 진짜 장애도 최대 2시간까지 못 잡았다(false negative 쪽 갭).
-test('[막아야 함] findStaleJobs: sync-firestore-mirror(30분 주기)는 70분만 조용해도 stale — 예전 기본값(60분×2=120분)이면 못 잡았을 것', () => {
+test('[막아야 함] findStaleJobs: sync-firestore-mirror(2026-08-25부터 10분 주기)는 25분만 조용해도 stale — 예전 30분 주기(×2=60분)였다면 못 잡았을 것', () => {
   const dir = makeTmpDir();
-  const now = new Date('2026-08-23T02:10:00.000Z'); // 70분 전 실행
+  const now = new Date('2026-08-23T01:25:00.000Z'); // 25분 전 실행
   writeFileSync(join(dir, 'sync-firestore-mirror.md'), buildJobHealthRecord({ job: 'sync-firestore-mirror', status: 'OK', now: new Date('2026-08-23T01:00:00.000Z') }).content);
   const stale = findStaleJobs(dir, { now });
   assert.equal(stale.length, 1);

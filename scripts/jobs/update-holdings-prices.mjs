@@ -138,6 +138,19 @@ export function recomputeValuation(holding, curPrice, { usdKrwRate = 1, unitScal
   return { curPrice, evalAmount, profitAmount, profitPct };
 }
 
+// 외화 현금성 보유(예: 위탁 외화 RP) 전용 재평가(2026-08-25 오너 지시) — 일반
+// recomputeValuation과 달리 avgPrice·invest도 매번 현재 환율로 재기준한다. 외화 RP는
+// "투자 포지션"이 아니라 "현금을 외화로 들고 있는 것"뿐이라, 매수 시점 환율을 평단가로
+// 고정해두면 그 뒤 환율 변동분이 마치 투자손익처럼(실제로는 환전 타이밍을 노린 게
+// 아닌데도) 화면에 표시됐다 — 매번 avgPrice·invest를 이번 curPrice(환율)에 맞춰
+// 재기준해 손익을 항상 0으로 유지한다. ⚠️ 일반 종목(recomputeValuation)엔 이 재기준을
+// 하면 안 됨(원가가 매수 시점에 고정돼야 진짜 손익이 나옴) — 그래서 별도 함수로 분리.
+export function recomputeFxCashValuation(holding, usdKrwRate) {
+  const qty = Number(holding.qty) || 0;
+  const invest = usdKrwRate * qty;
+  return { curPrice: usdKrwRate, avgPrice: usdKrwRate, invest, evalAmount: invest, profitAmount: 0, profitPct: 0 };
+}
+
 async function main() {
   const allFiles = readHoldingFiles();
   const files = allFiles.filter(({ parsed }) => !parsed.isCashLike);
@@ -246,13 +259,14 @@ async function main() {
   }
 
   // 외화 현금성 보유(달러 RP 등) — KIS 시세조회 대상이 아니라 환율만 다시 곱해 재평가.
-  // curPrice 필드에 환율 자체를 저장하는 관례이므로 recomputeValuation(h, usdKrwRate)로
-  // 호출(usdKrwRate 옵션은 기본값 1 그대로 둬서 curPrice*qty가 곧 평가액이 되게 함).
+  // curPrice 필드에 환율 자체를 저장하는 관례. 2026-08-25부터 recomputeFxCashValuation
+  // 사용 — avgPrice·invest도 이번 환율로 재기준해 손익을 항상 0으로 유지(오너 지시,
+  // 위 함수 주석 참고).
   for (const f of fxCashFiles) {
     const h = f.parsed;
     if (usdKrwRate == null) { skipped++; continue; }
-    const valuation = recomputeValuation(h, usdKrwRate);
-    console.log(`   · ${h.name}(FX현금): 환율 ${h.curPrice ?? '없음'} → ${usdKrwRate.toFixed(2)} (평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원)`);
+    const valuation = recomputeFxCashValuation(h, usdKrwRate);
+    console.log(`   · ${h.name}(FX현금): 환율 ${h.curPrice ?? '없음'} → ${usdKrwRate.toFixed(2)} (평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원, 손익 항상 0)`);
     if (!DRY_RUN) writeAtomic(f.filepath, updateFrontmatter(f.content, { ...valuation, updatedAt: new Date().toISOString() }));
     updated++;
   }

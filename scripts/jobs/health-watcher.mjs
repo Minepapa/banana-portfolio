@@ -100,10 +100,14 @@ export const EXPECTED_INTERVALS_MS = {
   // 트랙 실주문 집행 잡이라 감시 지연이 가장 부담스러운 축 — 5분 그대로 등록.
   'execute-quant': 5 * 60 * 1000,
   // sync-firestore-mirror·update-allocation-from-holdings·update-holdings-prices
-  // 셋 다 StartInterval=1800(30분마다) — 대시보드가 읽는 미러/시세/자산분배 갱신.
-  'sync-firestore-mirror': 30 * 60 * 1000,
-  'update-allocation-from-holdings': 30 * 60 * 1000,
-  'update-holdings-prices': 30 * 60 * 1000,
+  // 셋 다 StartInterval=600(10분마다, 2026-08-25 오너 지시로 30분→10분 단축) —
+  // 대시보드가 읽는 미러/시세/자산분배 갱신. 세 잡이 항상 같은 주기여야 한다는 원칙은
+  // 그대로(위 update-allocation-from-holdings.plist 주석 참고) — 여기 값도 실제
+  // StartInterval과 같이 움직여야 한다(등록값이 실제 주기보다 느슨하면 진짜 정지를
+  // 늦게 잡는다, 2026-08-24 EXPECTED_INTERVALS_MS 신설 취지와 동일).
+  'sync-firestore-mirror': 10 * 60 * 1000,
+  'update-allocation-from-holdings': 10 * 60 * 1000,
+  'update-holdings-prices': 10 * 60 * 1000,
   // health-watcher 자기 자신도 StartInterval=1800(30분마다)이라 등록 — 다만 여기 등록해도
   // 구조적 사각은 남는다: findStaleJobs는 health-watcher **자신이 실행될 때만** 호출된다.
   // health-watcher 프로세스 자체가(launchd unload·크래시 등으로) 아예 안 돌기 시작하면
