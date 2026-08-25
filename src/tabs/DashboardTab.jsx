@@ -118,9 +118,11 @@ export default function DashboardTab({
                 <div style={{ fontSize: isMobile ? 21 : 25, fontWeight: 800, color: '#141414', fontFamily: MONO, letterSpacing: -0.5 }}>₩{fmt(_te)}</div>
                 <div style={{ fontSize: 11, color: '#6B675C', marginTop: 2 }}>투자원금 ₩{fmt(_ti)}</div>
               </div>
+              {/* ⚠️ 색상 통일(2026-08-25 오너 지적) — 서구식 초록/빨강 하드코딩을 profitColor
+                  (한국 관례 이익=빨강/손실=파랑)로 교체, App.jsx 총 잔고와 동일 수정. */}
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 17, fontWeight: 800, color: _tp >= 0 ? '#159E52' : '#E5484D', fontFamily: MONO, letterSpacing: -0.3 }}>₩{fmt(_tp)}</div>
-                <div style={{ fontSize: 13, fontWeight: 800, color: _tp >= 0 ? '#159E52' : '#E5484D' }}>{_tr >= 0 ? '+' : ''}{_tr.toFixed(1)}%</div>
+                <div style={{ fontSize: 17, fontWeight: 800, color: profitColor(_tp), fontFamily: MONO, letterSpacing: -0.3 }}>₩{fmt(_tp)}</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: profitColor(_tp) }}>{_tr >= 0 ? '+' : ''}{_tr.toFixed(1)}%</div>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>

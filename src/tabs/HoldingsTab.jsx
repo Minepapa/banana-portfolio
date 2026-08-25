@@ -2,7 +2,7 @@
 // 쓰기 API가 없음 — useFirestoreMirror.js 참고). 추가/삭제/인라인 편집·실시간시세(KIS
 // 웹소켓, 미러 문서 밖)는 제거. 보유종목을 직접 고치고 싶으면 텔레그램으로 판테온에
 // 요청 — 실제 반영은 여전히 검문소를 통과해야 한다(useFirestoreMirror.js 원칙 그대로).
-import { PROFIT_POS, PROFIT_NEG, COLORS } from '../lib/colors.js';
+import { profitColor, COLORS } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
 
 // RebalanceTab의 자산분배 자산군 순서와 동일(2026-08-22 오너 지시 — 두 탭의 자산군
@@ -79,11 +79,11 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
           <div style={{ textAlign: "right" }}>
             <div style={{
               fontSize: isMobile ? 13 : 16, fontWeight: 700,
-              color: acct.profit >= 0 ? PROFIT_POS : PROFIT_NEG,
+              color: profitColor(acct.profit),
             fontFamily: MONO}}>
               ₩{fmt(acct.profit)}
             </div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: acct.profit >= 0 ? PROFIT_POS : PROFIT_NEG }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: profitColor(acct.profit) }}>
               {acct.profit >= 0 ? '+' : ''}
               {acct.total_invest > 0 ? ((acct.profit / acct.total_invest) * 100).toFixed(1) : '0.0'}%
             </div>
@@ -118,7 +118,7 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
           <div style={{ padding: 24, textAlign: 'center', color: '#6B675C', fontSize: 12 }}>종목이 없습니다</div>
         )}
         {sortedHoldings.map((h, vi) => {
-          const color = h.rate >= 0 ? PROFIT_POS : PROFIT_NEG;
+          const color = profitColor(h.rate);
           const typeName = h.type || '';
           const isUsDollar = String(typeName).includes('해외') && acctKey === '위탁';
           return (

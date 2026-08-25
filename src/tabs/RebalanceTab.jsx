@@ -116,7 +116,6 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
               display: 'flex', alignItems: 'center', padding: '7px 8px',
               borderRadius: 0, marginBottom: 2,
               background: highlight ? '#EAE6DA' : 'transparent',
-              borderLeft: highlight ? `3px solid ${diff > 0 ? PROFIT_POS : PROFIT_NEG}` : '3px solid transparent',
             }}>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ width: 8, height: 8, borderRadius: 0, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
@@ -153,7 +152,13 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
                 <div style={{ width: 8, height: 8, borderRadius: 0, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
                 <span style={{ fontSize: 12 }}>{a.name}</span>
               </div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: amt > 0 ? PROFIT_POS : amt < 0 ? PROFIT_NEG : '#6B675C' , fontFamily: MONO}}>
+              {/* ⚠️ amt(rebalAmt)는 "목표-현재"라 diff("현재-목표")와 부호가 반대다 —
+                  그대로 amt>0?POS:NEG를 쓰면 위 "차이" 열과 색이 정반대로 나온다
+                  (2026-08-25 오너 지적 — 같은 자산군인데 두 표가 반대색). 색은 항상
+                  "초과(매도 필요)=빨강, 부족(매수 필요)=파랑" 기준으로 통일한다 —
+                  amt<0(=목표보다 현재가 많음=초과=매도)일 때 PROFIT_POS(빨강),
+                  amt>0(=부족=매수)일 때 PROFIT_NEG(파랑)로 diff 열과 부호를 맞춤. */}
+              <div style={{ fontSize: 12, fontWeight: 700, color: amt < 0 ? PROFIT_POS : amt > 0 ? PROFIT_NEG : '#6B675C' , fontFamily: MONO}}>
                 ₩{fmt(amt)}
               </div>
             </div>

@@ -3,7 +3,7 @@ import { useState } from "react";
 import {
   ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
-import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
+import { profitColor } from '../lib/colors.js';
 import { MONO } from '../lib/theme.js';
 
 export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
@@ -58,7 +58,7 @@ export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
                 }}>
                 {filtered.map((d, i) => {
                   const dim = selectedProfitKey && `${d.year}-${d.month}` !== selectedProfitKey;
-                  return <Cell key={i} fill={d.total >= 0 ? PROFIT_POS : PROFIT_NEG} fillOpacity={dim ? 0.3 : 1} />;
+                  return <Cell key={i} fill={profitColor(d.total)} fillOpacity={dim ? 0.3 : 1} />;
                 })}
               </Bar>
             </BarChart>
@@ -77,14 +77,14 @@ export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
             {selectedItem.items.map((item, i) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #EAE6DA' }}>
                 <span style={{ fontSize: 12, color: '#141414' }}>{item.name}</span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: item.profit >= 0 ? PROFIT_POS : PROFIT_NEG , fontFamily: MONO}}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: profitColor(item.profit) , fontFamily: MONO}}>
                   ₩{fmt(Math.abs(item.profit))}
                 </span>
               </div>
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8 }}>
               <span style={{ fontSize: 11, color: '#6B675C' }}>합계</span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: selectedItem.total >= 0 ? PROFIT_POS : PROFIT_NEG , fontFamily: MONO}}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: profitColor(selectedItem.total) , fontFamily: MONO}}>
                 ₩{fmt(Math.abs(selectedItem.total))}
               </span>
             </div>
@@ -97,7 +97,7 @@ export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
         {yearTotals.map(row => (
           <div key={row.year} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #EAE6DA' }}>
             <span style={{ fontSize: 12, color: '#6B675C' }}>{row.year}년 합계</span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: row.total >= 0 ? PROFIT_POS : PROFIT_NEG , fontFamily: MONO}}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: profitColor(row.total) , fontFamily: MONO}}>
               ₩{fmt(Math.abs(row.total))}
             </span>
           </div>
@@ -105,7 +105,7 @@ export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
         {(() => { const gt = profitData.reduce((s, d) => s + d.total, 0); return (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10 }}>
             <span style={{ fontSize: 12, color: '#141414', fontWeight: 700 }}>전체 합계</span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: gt >= 0 ? PROFIT_POS : PROFIT_NEG , fontFamily: MONO}}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: profitColor(gt) , fontFamily: MONO}}>
               ₩{fmt(Math.abs(gt))}
             </span>
           </div>

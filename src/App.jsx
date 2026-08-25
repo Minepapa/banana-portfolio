@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { PAPER, INK, INK_2, ACCENT, CARD_BG, MONO, BORDER_HEAVY } from './lib/theme.js';
+import { profitColor } from './lib/colors.js';
 import { relTime, fmt } from './lib/textFormat.js';
 import { isMirrorStale } from './lib/mirrorFreshness.js';
 import {
@@ -153,7 +154,10 @@ export default function App() {
           </div>
           <div style={{ textAlign: "right", flexShrink: 0 }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: INK_2, letterSpacing: 2, marginBottom: 2 }}>평가손익</div>
-            <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: hideAmounts ? INK_2 : (totalProfit >= 0 ? '#159E52' : '#E5484D'), fontFamily: MONO }}>
+            {/* ⚠️ 색상 통일(2026-08-25 오너 지적) — 여긴 원래 서구식 초록(이익)/빨강(손실)을
+                하드코딩해서, 앱 나머지 전체(colors.js profitColor — 한국 관례 이익=빨강/
+                손실=파랑)와 정반대로 보였다. profitColor로 교체. */}
+            <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: hideAmounts ? INK_2 : profitColor(totalProfit), fontFamily: MONO }}>
               {hideAmounts ? "••••••" : <>{totalProfit > 0 ? '▲ ' : totalProfit < 0 ? '▼ ' : ''}₩{fmt(Math.abs(totalProfit))}</>}
             </div>
           </div>
