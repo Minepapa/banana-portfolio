@@ -60,7 +60,13 @@
        설계돼 있어(CLAUDE.md), 이 알람은 의도한 동작이 아니라 순수 누출이었다. 이
        env var를 load_hook.sh가 확인해 텔레그램 세션이면 조용히 스킵하도록 배선
        (~/.claude/skills/handoff-load/scripts/load_hook.sh 참고, 이 리포 밖 전역
-       설정이라 여기서 직접 못 봄). -->
+       설정이라 여기서 직접 못 봄).
+       ⚠️ --name "판테온 텔레그램 가상세션"(2026-08-29, 오너 지시) — 이름을 안 주면
+       Claude Code가 "gimhwiyeong-ui-macmini-local-swift-nebula" 같은 자동생성
+       이름(user-hostname-형용사-명사)을 붙여, /resume 피커·터미널 타이틀에서 이
+       세션을 알아보기 어려웠다. claude CLI 정식 플래그(-n/--name, --help 확인됨)로
+       고정 표시명을 준다 — 매일 04:00 재시작도 이 plist를 그대로 다시 읽으므로
+       별도 동기화 지점 없음. -->
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/script</string>
@@ -68,7 +74,7 @@
     <string>/dev/null</string>
     <string>/bin/bash</string>
     <string>-lc</string>
-    <string>export PATH="$HOME/.bun/bin:$PATH"; export CLAUDE_TELEGRAM_SESSION=1; claude --channels plugin:telegram@claude-plugins-official --permission-mode auto --allowedTools "Bash Read mcp__plugin_telegram_telegram__reply mcp__plugin_telegram_telegram__react mcp__plugin_telegram_telegram__edit_message"</string>
+    <string>export PATH="$HOME/.bun/bin:$PATH"; export CLAUDE_TELEGRAM_SESSION=1; claude --channels plugin:telegram@claude-plugins-official --name "판테온 텔레그램 가상세션" --permission-mode auto --allowedTools "Bash Read mcp__plugin_telegram_telegram__reply mcp__plugin_telegram_telegram__react mcp__plugin_telegram_telegram__edit_message"</string>
   </array>
   <key>KeepAlive</key>
   <true/>
