@@ -2,27 +2,36 @@
 /**
  * 자동 리밸런싱 제안 — 자산분배 트랙 최소개입 자동화 계획 Part 3(2026-08-23, 오너 지시).
  *
- * ⚠️ 메꾸는 공백 — daily-asset-allocation-check.mjs(평일 16:30)는 5/25 밴드 이탈을
- * 매일 점검하지만 텔레그램 알림만 보내고 끝난다(Proposal 생성 없음, "새 판정 로직을
- * 만들지 않는다"는 그 잡의 명시적 설계 원칙). 지금까지는 이탈 알림을 받은 뒤 오너가
- * 직접 "리밸런싱안 줘"라고 물어야만 실제 매수/매도 제안이 나왔다 — 신규현금배분
- * (new-cash-allocation.mjs)은 이미 완전 자동인데 순수 밴드이탈만 이 구멍이 있었다.
+ * ⚠️ 메꾸는 공백 — daily-asset-allocation-check.mjs는 원래 평일 16:30마다 5/25 밴드
+ * 이탈을 점검하고 텔레그램 알림만 보내고 끝났다(Proposal 생성 없음). 이탈 알림을 받은
+ * 뒤 오너가 직접 "리밸런싱안 줘"라고 물어야만 실제 매수/매도 제안이 나왔다 — 신규현금
+ * 배분(new-cash-allocation.mjs)은 이미 완전 자동인데 순수 밴드이탈만 이 구멍이 있었다.
  * 이 잡이 그 구멍을 메운다 — new-cash-allocation.mjs와 같은 골격(Node 사실계산 →
- * Athena 헤드리스 판단 → createAndSendProposal)이지만 별도 파일이다
- * (daily-asset-allocation-check.mjs는 "LLM 호출 없음"이 설계 원칙이라 여기 못 얹음).
+ * Athena 헤드리스 판단 → createAndSendProposal)이지만 별도 파일이다.
  *
- * 트리거·중복방지 — 평일 16:32 KST(daily-asset-allocation-check 16:30 직후, 그날 최신
- * 데이터 확보 후). 분기가 아니라 매일 검사한다 — 5/25 밴드 이탈은 시세 이벤트지 캘린더
- * 이벤트가 아니라 분기까지 기다리면 방치된다. 대신 State/RebalanceProposal/
- * last-triggered.md에 "이탈 자산군 집합의 지문"(자산군+이탈유형+방향)을 저장해 지난번과
- * 똑같으면 Athena 호출·발송을 생략한다(new-cash-allocation.mjs의 CashAccumulator
- * dedup과 동일 원리 — 비용은 여기서 잡힌다).
+ * ⚠️ 트리거를 매일→분기로 전환(2026-08-29, 오너 지적+Athena 검토) — 원래는 매일
+ * 검사하고 "이탈 자산군 집합의 지문"이 지난번과 같으면 스킵하는 dedup을 썼는데, 이건
+ * `docs/ARCHITECTURE-V2.md`의 "리밸런싱 규칙 — Swedroe 5/25 룰" 절(정본, 확정됨)이
+ * 이미 명시한 "분기 1회 점검"(Vanguard 60/40 연구 근거 — 더 자주 리밸런싱해도 성과
+ * 개선 없이 거래비용만 증가, 위탁은 과세 계좌라 회전 최소화가 더 중요)을 구현 단계에서
+ * 조용히 어긴 것이었다. 오너가 자산 축적기엔 매일 밴드체크가 안 맞는다고 직접 지적했고,
+ * Athena 검토 결과도 일치 — 이제 `quarterly-allocation-review.mjs`와 정확히 같은
+ * 트리거 패턴(`getQuarterLabel`·`shouldRunToday` 재사용)을 쓴다: 분기 시작월(1·4·7·10월)
+ * 1~3일 중 첫 평일에만 실행, `State/RebalanceProposal/last-quarter.md`로 같은 분기
+ * 중복실행 방지. 5/25 밴드 이탈 자체가 "시세 이벤트라 방치 위험"이라는 옛 근거는, 이미
+ * 매일 도는 거시 전술 오버레이(daily-asset-allocation-check.mjs)가 시장 급변을 별도로
+ * 잡아내므로 여기서 떠안을 필요가 없다는 게 이번 검토 결론이다(그 잡 헤더 주석 참고).
+ * 옛 지문 기반 dedup(computeBreachFingerprint)은 매일 재검사 전제였던 장치라 분기
+ * 트리거에선 구조적으로 불필요해져 제거했다.
  *
- * 분할매수(오너 지적 반영) — Athena가 프롬프트 지시를 어겨도 "갭 전체를 한 번에 채우기"가
- * 물리적으로 불가능하도록 validateRebalanceActions가 각 자산군 갭의 최대 50%로
- * 하드 캡을 건다. 갭이 매번 절반씩만 줄어드는 자연스러운 단계적 접근이 되고, 잔여 갭이
- * 남아있으니(지문이 안 사라짐) 다음 실행에서 자동으로 이어서 제안된다. 달러 자산군은
- * 미국달러ETF·엔선물ETF 두 상품에 나눠 담으라고 프롬프트에 명시(오너의 구체적 상품 계획).
+ * 분할매수(오너 지적 반영, 2026-08-23) — Athena가 프롬프트 지시를 어겨도 "갭 전체를
+ * 한 번에 채우기"가 물리적으로 불가능하도록 validateRebalanceActions가 각 자산군 갭의
+ * 최대 50%로 하드 캡을 건다. ⚠️ 분기 전환 이후 이 캡의 의미가 달라졌다 — 원래는 "내일
+ * 다시 검사해 나머지를 이어서 채운다"는 전제였지만, 이제 다음 기회는 최소 다음 분기다.
+ * 즉 한 번 크게 이탈하면 캡 때문에 완전히 정상화되기까지 최대 2개 분기(약 6개월)가
+ * 걸릴 수 있다 — 이 트레이드오프는 이번 전환에서 그대로 남겨뒀다(캡 값 자체를 바꾸는
+ * 건 별도 판단이 필요해 오너에게 보고, 이번엔 주기만 고쳤다). 달러 자산군은 미국달러
+ * ETF·엔선물ETF 두 상품에 나눠 담으라고 프롬프트에 명시(오너의 구체적 상품 계획).
  *
  * 승인·체결: new-cash-allocation.mjs와 동일 원칙 — 이 잡은 제안 생성·발송까지만 한다.
  * 실제 체결은 오너가 직접(자산분배 트랙엔 자동 브로커 실행이 없음, proposal-execution-
@@ -37,8 +46,9 @@
  * 운영 중인 위험을 그대로 물려받음, 이번에 새로 만든 구멍이 아님).
  *
  * 사용법:
- *   node scripts/jobs/rebalance-proposal.mjs            # 실제 판단+발송
- *   node scripts/jobs/rebalance-proposal.mjs --dry-run  # 지문·프롬프트까지, 발송 없음
+ *   node scripts/jobs/rebalance-proposal.mjs            # 실제 판단+발송(분기 트리거일 때만)
+ *   node scripts/jobs/rebalance-proposal.mjs --dry-run  # 프롬프트까지, 발송 없음
+ *   node scripts/jobs/rebalance-proposal.mjs --force    # 분기 dedup 무시하고 강제 실행(수동 테스트용)
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -53,13 +63,15 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { getQuarterLabel, shouldRunToday } from './quarterly-allocation-review.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
+const FORCE = process.argv.includes('--force');
 const DEPARTMENT_LABEL = '투자전략실 Athena';
 const IN_SCOPE_ACCOUNTS = ['위탁', '연금저축'];
 const CAP_FRACTION = 0.5; // 갭의 최대 50%만 한 번에 제안(분할매수 하드 캡)
 const STATE_DIR = join(VAULT_PATHS.root, 'State', 'RebalanceProposal');
-const STATE_FILE = join(STATE_DIR, 'last-triggered.md');
+const STATE_FILE = join(STATE_DIR, 'last-quarter.md');
 
 function readMdDir(dir) {
   if (!existsSync(dir)) return [];
@@ -91,19 +103,6 @@ export function buildBreachFacts(holdings, gaps, totalEval) {
   });
 }
 
-// 순수함수 — 이탈 자산군 집합의 지문(자산군+이탈유형+방향+갭크기버킷, 정렬됨). 지난번과
-// 같으면 재트리거 안 함 — 방향이 뒤집히거나(초과↔부족) 갭 크기가 1%p 이상 바뀌면 다른
-// 지문이 돼 다시 트리거된다. 갭버킷이 없으면(2026-08-23 코드리뷰 지적) 50% 캡으로 절반만
-// 사서 갭이 줄어도 breachType·direction이 그대로면 지문이 안 바뀌어 "잔여 갭은 다음
-// 실행에서 이어서 제안"이 실제로는 영원히 멈춘다 — 분할매수의 핵심 전제가 깨지는 버그.
-export function computeBreachFingerprint(breachFacts) {
-  return JSON.stringify(
-    breachFacts
-      .map((b) => [b.assetClass, b.breachType, b.direction, Math.round(b.absDeltaPct)])
-      .sort((a, b) => a[0].localeCompare(b[0])),
-  );
-}
-
 // 순수함수 — Athena에게 줄 프롬프트. 이탈 사실·후보만 주고 "구체적으로 뭘 얼마나
 // 팔고 살지"만 판단시킨다(rebalance-gap.mjs 헤더 주석의 경계와 동일).
 export function buildRebalanceProposalPrompt(breachFacts) {
@@ -133,7 +132,7 @@ ${sections}
   개별종목의 전환 시점·방향은 오너 직접 판단 영역이라 이 시스템이 관여하지 않는다.
   후보 중 ETF(펀드형 상품)만 골라라.
 - **이탈 금액 전체를 한 번에 채우려 하지 마라.** 이번엔 갭의 절반 정도만 제안하고
-  나머지는 다음 기회로 남겨라 — 시스템이 어차피 매일 재점검해 이어서 제안한다.
+  나머지는 다음 기회로 남겨라 — 이 점검은 분기 1회라 다음 기회는 다음 분기다.
 - **"달러" 자산군을 채울 때는 미국달러ETF와 엔선물ETF 두 상품에 나눠 담아라**(한쪽에
   몰지 말 것) — 통화 하나에 타이밍 리스크를 몰아주지 않기 위함.
 - instrumentName은 후보 목록의 이름을 정확히 그대로 쓸 것(신규 제안일 때만 새 ETF명).
@@ -207,21 +206,16 @@ export function resolveRebalanceInstrumentPricing(action, holdings) {
   return { assetKey: match.ticker || match.name, ticker: match.ticker || '', quantity: quantity > 0 ? quantity : null, proposedPrice: match.curPrice };
 }
 
-function readLastFingerprint() {
+function readLastQuarter() {
   if (!existsSync(STATE_FILE)) return null;
   const fm = parseFrontmatter(readFileSync(STATE_FILE, 'utf8'));
-  return fm.fingerprint ?? null;
+  return fm.quarter ?? null;
 }
 
-async function writeLastFingerprint(fingerprint) {
+async function writeLastQuarter(quarter) {
   if (DRY_RUN) return;
   mkdirSync(STATE_DIR, { recursive: true });
-  await writeStateFile(STATE_FILE, buildFrontmatter({ type: 'rebalance-proposal-state', fingerprint, updatedAt: new Date().toISOString() }));
-}
-
-function clearLastFingerprint() {
-  if (DRY_RUN || !existsSync(STATE_FILE)) return;
-  writeStateFile(STATE_FILE, buildFrontmatter({ type: 'rebalance-proposal-state', fingerprint: null, updatedAt: new Date().toISOString() }));
+  await writeStateFile(STATE_FILE, buildFrontmatter({ type: 'rebalance-proposal-state', quarter, updatedAt: new Date().toISOString() }));
 }
 
 function loadExistingProposals(dir) {
@@ -239,12 +233,19 @@ export function allActionsSent(sendResults) {
 }
 
 async function main() {
+  const now = new Date();
+  const lastQuarter = readLastQuarter();
+  if (!FORCE && !shouldRunToday(now, lastQuarter)) {
+    console.log('ℹ️ 오늘은 분기 점검 대상 아님(이번 분기 이미 실행됐거나 평일/분기시작월 아님) — 건너뜀');
+    return;
+  }
+
   loadEnv();
   const AGENT = loadAgent('athena', { fallbackModel: 'sonnet' });
   if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
   const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
 
-  console.log('⚖️  rebalance-proposal — 5/25 밴드 이탈 자동 리밸런싱 제안 점검');
+  console.log('⚖️  rebalance-proposal — 5/25 밴드 이탈 분기 리밸런싱 제안 점검');
   if (DRY_RUN) console.log('   (--dry-run: 쓰기·발송 없음)');
 
   const holdings = readMdDir(VAULT_PATHS.state.holdings);
@@ -252,15 +253,8 @@ async function main() {
   const breachFacts = buildBreachFacts(holdings, gaps, totalEval);
 
   if (!breachFacts.length) {
-    console.log('  ✅ 이탈 없음 — 조용히 종료');
-    clearLastFingerprint();
-    return;
-  }
-
-  const fingerprint = computeBreachFingerprint(breachFacts);
-  const lastFingerprint = readLastFingerprint();
-  if (fingerprint === lastFingerprint) {
-    console.log('  → 지난번과 동일한 이탈 집합 — 재트리거 안 함(이미 제안 발송됨, 오너 응답 대기 중)');
+    console.log('  ✅ 이탈 없음 — 이번 분기 리밸런싱 불필요, 조용히 종료');
+    await writeLastQuarter(getQuarterLabel(now));
     return;
   }
 
@@ -311,10 +305,10 @@ async function main() {
   }
 
   if (allActionsSent(sendResults)) {
-    await writeLastFingerprint(fingerprint);
-    console.log('  🔄 이탈 지문 갱신 — 이 집합으로는 재트리거 안 함(잔여 갭은 다음 실행에서 새 지문으로 이어서 제안)');
+    await writeLastQuarter(getQuarterLabel(now));
+    console.log('  🔄 분기 마커 갱신 — 이번 분기는 완료(잔여 갭은 다음 분기에 새로 이어서 제안)');
   } else {
-    console.log('  ⚠️ 일부 미발송(차단·실패) — 지문 미갱신(다음 실행 재시도)');
+    console.log('  ⚠️ 일부 미발송(차단·실패) — 분기 마커 미갱신(다음 평일 재시도)');
   }
 }
 

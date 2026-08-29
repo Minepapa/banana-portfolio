@@ -10,18 +10,28 @@
     <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>rebalance-proposal</string>
   </array>
-  <!-- 평일 16:32 KST — daily-asset-allocation-check(16:30, 순수 알림만)의 바로 뒤,
-       update-cash-from-ledger(16:10)·new-cash-allocation(16:13) 이후라 그날 최신
-       데이터 확보 후(2026-08-23 신설, 자산분배 트랙 최소개입 자동화 계획 Part 3). 매일
-       검사하되 State/RebalanceProposal 지문 dedup으로 실제 Athena 호출·발송은 이탈
-       집합이 바뀔 때만. -->
+  <!-- 분기 시작월(1·4·7·10월) 1~3일 16:32 KST — 2026-08-29 오너 지적+Athena 검토로
+       평일 매일→분기 1회로 전환(docs/ARCHITECTURE-V2.md "리밸런싱 규칙" 절의 정본
+       "분기 1회 점검"을 구현이 조용히 어기고 있던 걸 복원, quarterly-allocation-review.
+       plist와 동일 패턴 — launchd에 "분기 첫 평일"을 직접 표현할 방법이 없어(달력상
+       매번 다른 요일) 1~3일 전부 걸어두고, 잡 내부(shouldRunToday)가 평일인지 + 이번
+       분기 이미 실행됐는지(State/RebalanceProposal 마커)를 판정해 그중 정확히 한 번만
+       실제로 돈다. 16:32는 원래 스케줄 그대로 유지(update-cash-from-ledger·new-cash-
+       allocation 이후, 그날 최신 데이터 확보 후). -->
   <key>StartCalendarInterval</key>
   <array>
-    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
-    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
-    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
-    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
-    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>1</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>1</integer><key>Day</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>1</integer><key>Day</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>4</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>4</integer><key>Day</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>4</integer><key>Day</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>7</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>7</integer><key>Day</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>7</integer><key>Day</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>10</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>10</integer><key>Day</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Month</key><integer>10</integer><key>Day</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>32</integer></dict>
   </array>
   <key>RunAtLoad</key>
   <false/>

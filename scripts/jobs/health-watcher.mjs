@@ -122,11 +122,11 @@ export const EXPECTED_INTERVALS_MS = {
   // KST). weekly-report와 동일 패턴이라 그대로 7일.
   'weekly-schedule-summary': 7 * 24 * 60 * 60 * 1000,
   'themis-risk-review': 7 * 24 * 60 * 60 * 1000,
-  // morning-briefing·rebalance-proposal·proposal-execution-reminder — 평일 전용 하루
-  // 1회(각각 08:00·16:32·09:10 KST). 위 parse-notifications-to-vault 등과 동일 사유로
-  // 48h(금~월 72시간 간격에 여유를 더한 값).
+  // morning-briefing·proposal-execution-reminder — 평일 전용 하루 1회(각각 08:00·
+  // 09:10 KST). 위 parse-notifications-to-vault 등과 동일 사유로 48h(금~월 72시간
+  // 간격에 여유를 더한 값). rebalance-proposal은 2026-08-29 분기 전환으로 아래
+  // quarterly-allocation-review와 같은 그룹으로 이동했다(바로 아래 참고).
   'morning-briefing': 48 * 60 * 60 * 1000,
-  'rebalance-proposal': 48 * 60 * 60 * 1000,
   'proposal-execution-reminder': 48 * 60 * 60 * 1000,
   // daily-execution-report(2026-08-24 신설, 오너 명시 요청 — 장마감 이후 당일 체결내역
   // 텔레그램 보고) — 평일 16:15 KST 하루 1회. 위 평일전용 잡들과 동일 사유로 48h
@@ -142,6 +142,10 @@ export const EXPECTED_INTERVALS_MS = {
   // 뜬다. 분기 1회짜리 순수 의견보고 잡이라 이 정도 지연 허용은 합리적(daily 배관
   // 잡처럼 즉각 감지가 필요한 성격이 아님).
   'quarterly-allocation-review': 100 * 24 * 60 * 60 * 1000,
+  // rebalance-proposal — 2026-08-29 평일 매일→분기 전환(위 quarterly-allocation-review와
+  // 완전히 동일한 트리거 패턴, 같은 이유로 같은 값). daily-asset-allocation-check(거시
+  // 오버레이 전용으로 축소)와 혼동하지 말 것 — 그 잡은 계속 매일 돈다.
+  'rebalance-proposal': 100 * 24 * 60 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 

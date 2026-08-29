@@ -1,20 +1,28 @@
 #!/usr/bin/env node
 /**
- * 자산분배 트랙(Athena) 일일 리스크·리밸런싱 점검 — v1 risk-d.mjs가 하던 "매일 알아서
- * 확인하고 필요하면 알려주는" 역할의 v2/Vault-native 대체(2026-08-14, 오너 지시로
- * v1 무인 잡 14개 전부 중단 직후 발견한 공백 — Athena의 실제 판단 도구(rebalance-
- * facts.mjs·macro-overlay-facts.mjs)는 전부 Vault 직접 읽기라 v1 중단의 영향이 없지만,
- * 그 도구들을 "매일 알아서 돌려보고 필요하면 알림"까지 해주던 스케줄 자체가 v2엔
- * 하나도 없었다).
+ * 자산분배 트랙(Athena) 일일 거시 전술 오버레이 점검 — v1 risk-d.mjs가 하던 "매일
+ * 알아서 확인하고 필요하면 알려주는" 역할의 v2/Vault-native 대체(2026-08-14, 오너
+ * 지시로 v1 무인 잡 14개 전부 중단 직후 발견한 공백).
  *
- * 이 잡은 새 판정 로직을 만들지 않는다 — 이미 완성·검증된 두 CLI(rebalance-facts.mjs·
- * macro-overlay-facts.mjs)를 그대로 하위 프로세스로 돌려 사람이 읽는 보고 모드(기본,
- * --json 아님)의 출력을 그대로 재사용한다:
+ * ⚠️ 범위 축소(2026-08-29, 오너 지적+Athena 검토) — 원래는 macro-overlay-facts.mjs
+ * (거시 전술 오버레이, Faber 이평·금리차·DXY·VIX·유가)와 rebalance-facts.mjs(5/25
+ * 구조적 밴드 점검)를 둘 다 매일 돌렸는데, `docs/ARCHITECTURE-V2.md`의 "리밸런싱 규칙
+ * — Swedroe 5/25 룰" 절(정본)이 이미 "분기 1회 점검"을 Vanguard 60/40 연구 근거로
+ * 확정해뒀음에도(더 자주 리밸런싱해도 성과 개선 없이 거래비용만 증가, 위탁은 과세
+ * 계좌라 회전 최소화가 더 중요) 이 잡이 그 정본을 어기고 5/25 밴드까지 매일 점검·
+ * 알림하고 있었다. 5/25 밴드 점검은 `rebalance-proposal.mjs`(분기 시작월 1~3일
+ * 첫 평일 전용으로 전환)로 이관하고, 이 잡은 거시 전술 오버레이(같은 정본 문서가
+ * "일 단위 폴링"으로 명시한 영역)만 남긴다 — 시장 급변에 대한 방치 위험은 이 채널이
+ * 이미 매일 잡아내므로, 5/25 밴드까지 매일 검사할 필요가 없다는 게 Athena의 판단.
+ *
+ * 이 잡은 새 판정 로직을 만들지 않는다 — 이미 완성·검증된 CLI(macro-overlay-facts.mjs)
+ * 를 그대로 하위 프로세스로 돌려 사람이 읽는 보고 모드(기본, --json 아님)의 출력을
+ * 그대로 재사용한다:
  *   - macro-overlay-facts.mjs를 --json 없이 돌려야 Faber 크로스 상태 파일이 실제로
  *     갱신된다(그 파일 자체 주석 참고 — --json 조회는 의도적으로 상태를 안 건드림).
  *     이 잡이 "그날의 공식 확인"이므로 반드시 이 모드로 불러야 한다.
- *   - 두 도구 다 "[경고] ..." 마커 문자열이 있으면 사람이 볼 만한 변화가 있다는 뜻 —
- *     그 경우에만 보고 원문을 그대로 텔레그램으로 전달한다(조용하면 알림 없음, 스팸 방지).
+ *   - "[경고] ..." 마커 문자열이 있으면 사람이 볼 만한 변화가 있다는 뜻 — 그 경우에만
+ *     보고 원문을 그대로 텔레그램으로 전달한다(조용하면 알림 없음, 스팸 방지).
  *
  * ⚠️ 알려진 한계 — v1 risk-b(개별종목 투자논리훼손 B신호)에 대응하는 Vault-native
  * 도구가 아직 없다. Phase 8 완료 4종(보유종목 업데이터·5/25 리밸런싱·거시오버레이·
@@ -46,18 +54,14 @@ function runFacts(scriptName) {
 }
 
 async function main() {
-  const rebalanceReport = runFacts('rebalance-facts.mjs');
   const macroReport = runFacts('macro-overlay-facts.mjs'); // --json 없이 — Faber 상태 갱신 필요
 
   // ⚠️ 2026-08-23 — 시그널 마커를 이모지(⚠️)에서 대괄호 태그([경고])로 교체(오너 지시,
-  // 텔레그램 이모지 전면 제거). rebalance-facts.mjs·macro-overlay-facts.mjs 양쪽의
-  // 실제 출력 문자열도 같이 바꿔뒀다 — 세 파일이 이 문자열로 묶여있으니 하나만
-  // 바꾸면 이 잡이 영원히 조용해진다.
+  // 텔레그램 이모지 전면 제거). macro-overlay-facts.mjs의 실제 출력 문자열도 같이
+  // 바꿔뒀다 — 두 파일이 이 문자열로 묶여있으니 하나만 바꾸면 이 잡이 영원히 조용해진다.
   const noteworthy = [];
-  if (rebalanceReport.includes('[경고]')) noteworthy.push(`[5/25 리밸런싱]\n${rebalanceReport.trim()}`);
   if (macroReport.includes('[경고]')) noteworthy.push(`[거시 전술 오버레이]\n${macroReport.trim()}`);
 
-  console.log(rebalanceReport);
   console.log(macroReport);
 
   if (!noteworthy.length) {

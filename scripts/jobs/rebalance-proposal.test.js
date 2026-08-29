@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildBreachFacts, computeBreachFingerprint, buildRebalanceProposalPrompt,
+  buildBreachFacts, buildRebalanceProposalPrompt,
   validateRebalanceActions, resolveRebalanceInstrumentPricing, allActionsSent,
 } from './rebalance-proposal.mjs';
 import { computeRebalanceGaps } from '../lib/rebalance-gap.mjs';
@@ -29,29 +29,6 @@ test('buildBreachFacts: 초과 자산군엔 매도후보(qty 필드 포함), 부
   assert.equal(usd.direction, '부족');
   assert.ok(usd.buyCandidatesByAccount.위탁);
   assert.equal(usd.buyCandidatesByAccount.연금저축, undefined); // 연금저축은 달러 자격 없음
-});
-
-test('computeBreachFingerprint: 같은 이탈집합이면 같은 지문, 방향이 바뀌면 다른 지문', () => {
-  const holdings = makeHoldings();
-  const { gaps, totalEval } = computeRebalanceGaps(holdings);
-  const facts = buildBreachFacts(holdings, gaps, totalEval);
-  const fp1 = computeBreachFingerprint(facts);
-  const fp2 = computeBreachFingerprint(buildBreachFacts(holdings, gaps, totalEval));
-  assert.equal(fp1, fp2);
-
-  const flipped = facts.map((f) => (f.assetClass === '국내주식' ? { ...f, direction: '부족' } : f));
-  assert.notEqual(computeBreachFingerprint(flipped), fp1);
-});
-
-test('computeBreachFingerprint: 같은 자산군·같은 방향이어도 갭 크기가 1%p 이상 줄면 다른 지문 — 50% 캡 분할매수 후 재트리거가 실제로 이어지는지 회귀 방지(2026-08-23 코드리뷰 지적)', () => {
-  const holdings = makeHoldings();
-  const { gaps, totalEval } = computeRebalanceGaps(holdings);
-  const facts = buildBreachFacts(holdings, gaps, totalEval);
-  const fp1 = computeBreachFingerprint(facts);
-
-  // 절반만 매수 체결됐다고 가정 — 이탈유형·방향은 그대로지만 갭(absDeltaPct)이 좁혀짐.
-  const halfExecuted = facts.map((f) => (f.assetClass === '달러' ? { ...f, absDeltaPct: f.absDeltaPct / 2 } : f));
-  assert.notEqual(computeBreachFingerprint(halfExecuted), fp1, '갭이 줄었는데 지문이 그대로면 다음 실행에서 영원히 재트리거 안 됨');
 });
 
 test('buildRebalanceProposalPrompt: 분할매수 원칙·달러 분산 지시·재조회 금지 문구가 전부 포함', () => {
