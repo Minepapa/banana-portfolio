@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.telegram-session-handoff</string>
+  <!-- 매일 03:55 KST(2026-08-29 신설) — com.banana2.telegram-session-restart(04:00)
+       직전 5분. `launchctl kickstart -k`는 우아한 종료 훅이 없어 살아있는 Zeus
+       세션이 죽기 전에 스스로 요약을 남길 방법이 없다(telegram-session-handoff.mjs
+       헤더 주석 참고) — 대신 이 잡이 그 직전에 그날 하루 므네모시네에 남은 사실을
+       결정론으로 모아 Log/TelegramSession/{어제날짜}.md에 기록한다. 재시작 후 새
+       세션이 이 파일을 읽어오는 쪽은 SessionStart 훅(scripts/hooks/telegram-
+       session-context.mjs, .claude/settings.json에 등록)이 담당 — 이 잡은 "쓰기"만.
+       요일 무관 매일(텔레그램 세션 자체가 주말에도 응답하므로 restart와 동일 원칙). -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>55</integer>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>telegram-session-handoff</string>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-session-handoff.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-session-handoff.log</string>
+</dict>
+</plist>

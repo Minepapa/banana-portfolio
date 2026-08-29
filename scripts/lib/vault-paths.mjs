@@ -91,6 +91,16 @@ export const VAULT_PATHS = {
     // 이미 체결된 제안이 다시 브로커에 나가지 않도록 하는 idempotency 저장소.
     // executed-orders.mjs 헤더 주석 참고. 파일 없으면(최초) 빈 목록으로 안전하게 폴백.
     executedOrders: join(VAULT_ROOT, 'State', 'ExecutedOrders', 'ExecutedOrders.md'),
+    // 텔레그램 세션이 마지막으로 읽은 handoff 파일 마커(2026-08-29 신설) — SessionStart
+    // 훅(scripts/hooks/telegram-session-context.mjs)이 매 세션 시작마다 갱신. "재시작
+    // 시 이전 어떤 기록을 읽어왔다"는 오너 요구사항의 실제 증적.
+    telegramSessionLastRead: join(VAULT_ROOT, 'State', 'TelegramSession', 'last-read.md'),
+  },
+  // Log/는 대부분 인터랙티브 세션이 Write 도구로 직접 쓰는 자유서술 기록이라 지금까지
+  // VAULT_PATHS에 없었다(코드가 안 건드림) — telegramSession만 예외로 Node 잡
+  // (telegram-session-handoff.mjs)이 직접 쓰는 구조화된 로그라 경로 상수가 필요하다.
+  log: {
+    telegramSession: join(VAULT_ROOT, 'Log', 'TelegramSession'),
   },
   decisions: {
     evaluations: join(VAULT_ROOT, 'Decisions', 'Evaluations'),

@@ -37,6 +37,7 @@ import { execFileSync } from 'node:child_process';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { SCHEDULE } from './weekly-schedule-summary.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LAUNCHD_DIR = join(__dirname, '..', 'launchd');
@@ -69,6 +70,24 @@ function isDepartmentFacing(scriptPath) {
   const abs = join(__dirname, '..', '..', scriptPath);
   if (!existsSync(abs)) return false;
   return readFileSync(abs, 'utf8').includes('DEPARTMENT_LABEL');
+}
+
+// 부서별-텔레그램-보고.md 표에서 "**주기적**"이면서 보고시점에 "분기"가 없는(=매주
+// 반복되는) 행의 스크립트 파일명만 뽑는다. 분기 단위 잡(rebalance-proposal·
+// quarterly-allocation-review)은 weekly-schedule-summary.mjs가 "이번 주" 요약이라
+// 설계상 의도적으로 빠지므로 제외한다(그 잡 헤더 주석 참고).
+function listWeeklyPeriodicSenders(deptDoc) {
+  const result = [];
+  for (const row of deptDoc.split('\n')) {
+    if (!row.includes('**주기적**')) continue;
+    const cells = row.split('|').map((c) => c.trim());
+    const senderCell = cells[1] ?? '';
+    const timingCell = cells[3] ?? '';
+    if (timingCell.includes('분기')) continue;
+    const m = senderCell.match(/`([a-zA-Z0-9_-]+\.mjs)`/);
+    if (m) result.push(m[1]);
+  }
+  return result;
 }
 
 test('vault-job-catalog-audit: launchd로 도는 잡은 전부 무인잡-카탈로그.md에 이름이 있어야 함(신규 잡 누락 방지)', { skip: !CAN_RUN }, () => {
@@ -104,4 +123,13 @@ test('vault-job-catalog-audit: DEPARTMENT_LABEL을 정의하는 잡은 전부 �
     .map(({ scriptPath }) => basename(scriptPath))
     .filter((filename) => !deptDoc.includes(filename));
   assert.deepEqual(missing, [], `부서별-텔레그램-보고.md에 없는 발신처: ${missing.join(', ')} — 해당 부서 표에 행을 추가할 것`);
+});
+
+test('vault-job-catalog-audit: 부서별-텔레그램-보고.md의 "매주" 주기적 발신처는 전부 weekly-schedule-summary.mjs SCHEDULE 배열에도 있어야 함(daily-execution-report 누락 재발 방지)', { skip: !CAN_RUN }, () => {
+  const deptDoc = readFileSync(DEPT_DOC_PATH, 'utf8');
+  const weeklyPeriodic = listWeeklyPeriodicSenders(deptDoc);
+  assert.ok(weeklyPeriodic.length > 0, '부서별-텔레그램-보고.md 파싱이 깨졌을 가능성 — 매주 주기적 발신처가 하나도 안 뽑힘');
+  const scheduledScripts = new Set(SCHEDULE.map((s) => s.script));
+  const missing = weeklyPeriodic.filter((script) => !scheduledScripts.has(script));
+  assert.deepEqual(missing, [], `weekly-schedule-summary.mjs SCHEDULE 배열에 없는 주기적 발신처: ${missing.join(', ')} — SCHEDULE 배열에 항목을 추가할 것(분기 단위 잡은 의도적으로 제외 대상)`);
 });

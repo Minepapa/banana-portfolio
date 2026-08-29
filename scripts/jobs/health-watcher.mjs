@@ -53,6 +53,10 @@ export const EXPECTED_INTERVALS_MS = {
   // 없는 매일 실행이라 위 평일전용 잡들과 달리 24h를 그대로 유지 — 주말 간격 문제
   // 없음.)
   'backup-vault': 24 * 60 * 60 * 1000,
+  // telegram-session-handoff(2026-08-29 신설) — 매일 03:55 KST 하루 1회, 요일 제한
+  // 없음(텔레그램 세션 자체가 주말에도 응답하므로 restart와 동일 원칙) — backup-vault와
+  // 같은 클래스.
+  'telegram-session-handoff': 24 * 60 * 60 * 1000,
   // daily-asset-allocation-check도 backup-vault와 같은 이유로 하루 1회 잡 — 처음부터
   // 여기 넣어 같은 오탐이 재발하지 않게 한다(2026-08-14). ⚠️ 평일 전용이라 2026-08-23
   // 48h로 상향(위 parse-notifications-to-vault 주석과 동일 사유).

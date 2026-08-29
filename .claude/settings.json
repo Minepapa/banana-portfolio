@@ -11,6 +11,18 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/hooks/telegram-session-context.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

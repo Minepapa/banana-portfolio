@@ -30,12 +30,16 @@ const DRY_RUN = process.argv.includes('--dry-run');
 const DEPARTMENT_LABEL = '운영실 Hermes';
 
 // 순수 데이터 — Knowledge/Jobs/부서별-텔레그램-보고.md의 "주기적" 표와 반드시 일치시킬 것.
+// script 필드(2026-08-29 추가)는 화면 표시엔 안 쓰이지만(buildWeeklyScheduleText 참고)
+// vault-job-catalog-audit.test.js(코드 저장소)가 부서별-텔레그램-보고.md의 "**주기적**"
+// 행과 이 배열을 스크립트 파일명 기준으로 자동 대조하는 데 쓴다 — daily-execution-report
+// 누락 재발을 막는 구조적 가드.
 export const SCHEDULE = [
-  { day: '평일', time: '08:00', dept: '운영실 Hermes', what: '아침 브리핑 — 자산현황+간밤 이벤트+거시 5신호' },
-  { day: '평일', time: '16:15', dept: '운영실 Hermes', what: '당일 체결 내역 보고(체결 없어도 "오늘 체결 없음"으로 보고)' },
-  { day: '평일', time: '16:30', dept: '투자전략실 Athena', what: '리밸런싱·거시 점검(이상 있을 때만 실제 발송)' },
-  { day: '일요일', time: '07:00', dept: '리스크관리실 Themis', what: '주간 위험 재검토' },
-  { day: '일요일', time: '08:00', dept: '비서실 Apollo', what: '주간 리포트' },
+  { day: '평일', time: '08:00', dept: '운영실 Hermes', what: '아침 브리핑 — 자산현황+간밤 이벤트+거시 5신호', script: 'morning-briefing.mjs' },
+  { day: '평일', time: '16:15', dept: '운영실 Hermes', what: '당일 체결 내역 보고(체결 없어도 "오늘 체결 없음"으로 보고)', script: 'daily-execution-report.mjs' },
+  { day: '평일', time: '16:30', dept: '투자전략실 Athena', what: '리밸런싱·거시 점검(이상 있을 때만 실제 발송)', script: 'daily-asset-allocation-check.mjs' },
+  { day: '일요일', time: '07:00', dept: '리스크관리실 Themis', what: '주간 위험 재검토', script: 'themis-risk-review.mjs' },
+  { day: '일요일', time: '08:00', dept: '비서실 Apollo', what: '주간 리포트', script: 'weekly-report.mjs' },
 ];
 
 // 순수함수 — SCHEDULE을 텔레그램 본문 텍스트로. 테스트 가능.
