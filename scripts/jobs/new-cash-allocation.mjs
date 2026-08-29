@@ -40,6 +40,9 @@
  * 영역(ARCHITECTURE-V2.md "정리된 항목과 그 이유" 표, 2026-08-02 확정). Athena 에이전트
  * 정의(athena.md)에 이미 "자산분배 트랙은 개별종목 신규 매수를 하지 않는다"가 있어
  * 시스템프롬프트로 1차 방어, 이 잡의 태스크 프롬프트에서도 명시적으로 재확인한다.
+ * 2026-08-29부터 `cash-allocation-candidates.mjs`의 `findExistingInstruments`가
+ * `rebalance-gap.mjs` `LEGACY_INDIVIDUAL_STOCKS`로 이 8종목을 후보 자체에서 Node
+ * 레벨로 걸러내 — 프롬프트는 이제 이중 방어(자산분배 트랙 감사에서 발견·해소).
  *
  * 승인·체결: 이 잡은 제안 생성·발송까지만 한다. 자산분배 트랙엔 자동 브로커 실행이
  * 없다 — Frank가 텔레그램 승인 답장 후 본인이 직접 브로커 앱에서 주문하고, 그 체결이

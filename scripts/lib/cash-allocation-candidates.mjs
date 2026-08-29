@@ -4,7 +4,7 @@
 // 판단이 아니므로 하드코딩 금지 원칙에 위배되지 않는다("판단에 하드코딩 금지"는 *무엇을
 // 얼마나 살지*의 판단을 가리키는 것이지, 세법이 정한 계좌별 자산군 자격 자체를 가리키지
 // 않는다 — 어느 쪽으로 배분할지·얼마나 배분할지는 이 모듈이 정하지 않고 후보만 좁힌다).
-import { normalizeAccount } from './rebalance-gap.mjs';
+import { normalizeAccount, isLegacyIndividualStock } from './rebalance-gap.mjs';
 
 // ⚠️ 2026-08-23 오너 확정 재조정(rebalance-gap.mjs TARGET_ALLOCATION 변경과 동일 배경) —
 // 배당주·리츠가 목표군에서 빠지며 연금저축의 배당주·리츠 자격도 자연히 죽은 코드경로가
@@ -41,7 +41,10 @@ export function rankEligibleGaps(gaps, account) {
 // 넘겼을 때 normalizeAccount(h.account)가 절대 '금현물'을 반환하지 않아 항상 빈
 // 배열이 나온다(코드리뷰 지적, 2026-08-21 — 금현물이 대시보드 1급 계좌 키로 승격되면서
 // 이 비대칭이 실제로 호출될 가능성이 생김).
+// 위탁 레거시 개별종목(rebalance-gap.mjs LEGACY_INDIVIDUAL_STOCKS)은 제외한다 — 안 하면
+// "이미 보유 중이니 재사용해라" 로직이 전량매도 대상인 개별주식을 매수 후보로 다시
+// 추천하는 정반대 결과가 난다(2026-08-29 자산분배 트랙 감사에서 발견).
 export function findExistingInstruments(holdings, account, assetClass) {
   const target = normalizeAccount(account);
-  return holdings.filter((h) => normalizeAccount(h.account) === target && h.assetClass === assetClass);
+  return holdings.filter((h) => normalizeAccount(h.account) === target && h.assetClass === assetClass && !isLegacyIndividualStock(h.name));
 }

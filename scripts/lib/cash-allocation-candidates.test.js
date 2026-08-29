@@ -76,3 +76,14 @@ test('findExistingInstruments: 계좌 파라미터로 금현물을 넘겨도 위
   assert.deepEqual(foundViaGold, foundViaWt); // 둘 다 위탁으로 정규화되니 결과가 같아야 함
   assert.equal(foundViaGold.length, 2);
 });
+
+test('findExistingInstruments: 위탁 레거시 개별종목은 매수후보 재사용 목록에서도 하드 제외(2026-08-29)', () => {
+  const holdings = [
+    { account: '위탁', assetClass: '국내주식', name: '삼성전자' },
+    { account: '위탁', assetClass: '국내주식', name: 'KODEX 200' },
+    { account: '위탁', assetClass: '해외주식', name: '엔비디아' },
+  ];
+  const found = findExistingInstruments(holdings, '위탁', '국내주식');
+  assert.deepEqual(found.map((h) => h.name), ['KODEX 200']);
+  assert.deepEqual(findExistingInstruments(holdings, '위탁', '해외주식'), []);
+});

@@ -31,6 +31,42 @@ test('buildBreachFacts: 초과 자산군엔 매도후보(qty 필드 포함), 부
   assert.equal(usd.buyCandidatesByAccount.연금저축, undefined); // 연금저축은 달러 자격 없음
 });
 
+test('buildBreachFacts: 위탁 레거시 개별종목은 매도후보에서 하드 제외(2026-08-29)', () => {
+  const holdings = [
+    ...makeHoldings(),
+    { account: '위탁', assetClass: '국내주식', name: '삼성전자', ticker: '005930', qty: 20, curPrice: 70000, evalAmount: 1400000 },
+    { account: '위탁', assetClass: '해외주식', name: '테슬라', ticker: 'TSLA', qty: 3, curPrice: 300000, evalAmount: 900000 },
+  ];
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const facts = buildBreachFacts(holdings, gaps, totalEval);
+  const kr = facts.find((f) => f.assetClass === '국내주식');
+  assert.ok(!kr.sellCandidates.some((c) => c.name === '삼성전자'));
+  // 해외주식도 초과 방향이면 같은 원칙 적용 확인(비대칭 누락 방지)
+  const overseasBreach = facts.find((f) => f.assetClass === '해외주식' && f.direction === '초과');
+  if (overseasBreach) assert.ok(!overseasBreach.sellCandidates.some((c) => c.name === '테슬라'));
+});
+
+test('buildBreachFacts: legacyExcludedEval이 레거시 종목 제외분을 정확히 집계(코드리뷰 지적 — gapWon과 후보 목록의 불일치 방지)', () => {
+  const holdings = [
+    ...makeHoldings(),
+    { account: '위탁', assetClass: '국내주식', name: '삼성전자', ticker: '005930', qty: 20, curPrice: 70000, evalAmount: 1400000 },
+    { account: '위탁', assetClass: '국내주식', name: 'SK하이닉스', ticker: '000660', qty: 5, curPrice: 200000, evalAmount: 1000000 },
+  ];
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const facts = buildBreachFacts(holdings, gaps, totalEval);
+  const kr = facts.find((f) => f.assetClass === '국내주식');
+  assert.equal(kr.legacyExcludedEval, 2400000); // 삼성전자 140만 + SK하이닉스 100만
+});
+
+test('buildBreachFacts: 부족(매수) 방향은 legacyExcludedEval 필드 자체가 없음(초과 방향 전용)', () => {
+  const holdings = makeHoldings();
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const facts = buildBreachFacts(holdings, gaps, totalEval);
+  const usd = facts.find((f) => f.assetClass === '달러');
+  assert.equal(usd.direction, '부족');
+  assert.equal(usd.legacyExcludedEval, undefined);
+});
+
 test('buildRebalanceProposalPrompt: 분할매수 원칙·달러 분산 지시·재조회 금지 문구가 전부 포함', () => {
   const holdings = makeHoldings();
   const { gaps, totalEval } = computeRebalanceGaps(holdings);
@@ -39,6 +75,26 @@ test('buildRebalanceProposalPrompt: 분할매수 원칙·달러 분산 지시·�
   assert.match(prompt, /한 번에 채우려 하지 마라/);
   assert.match(prompt, /미국달러ETF와 엔선물ETF/);
   assert.match(prompt, /재조회·추정 금지/);
+});
+
+test('buildRebalanceProposalPrompt: 레거시 제외분이 있으면 "갭 전체를 후보만으로 메우지 말라"는 경고가 포함(코드리뷰 지적)', () => {
+  const holdings = [
+    ...makeHoldings(),
+    { account: '위탁', assetClass: '국내주식', name: '삼성전자', ticker: '005930', qty: 20, curPrice: 70000, evalAmount: 1400000 },
+  ];
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const facts = buildBreachFacts(holdings, gaps, totalEval);
+  const prompt = buildRebalanceProposalPrompt(facts);
+  assert.match(prompt, /1,400,000원은 위탁 레거시 개별종목/);
+  assert.match(prompt, /갭 전체.*메우려 하지 마라/);
+});
+
+test('buildRebalanceProposalPrompt: 레거시 제외분이 없으면 경고 문구 자체가 없음', () => {
+  const holdings = makeHoldings();
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const facts = buildBreachFacts(holdings, gaps, totalEval);
+  const prompt = buildRebalanceProposalPrompt(facts);
+  assert.doesNotMatch(prompt, /레거시 개별종목/);
 });
 
 test('validateRebalanceActions: 방향 불일치는 드롭', () => {

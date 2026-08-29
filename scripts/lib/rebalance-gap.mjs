@@ -39,6 +39,24 @@ const ACCOUNT_ALIASES = Object.assign(Object.create(null), { 금현물: '위탁'
 // 여러 곳에 각자 하드코딩하면 다음 소비자가 또 이 버그를 반복한다).
 export const normalizeAccount = (account) => ACCOUNT_ALIASES[account] ?? account;
 
+// 위탁 레거시 개별종목 — 2트랙 확정 이전 매수분, 자산분배 트랙 자동판단(매도후보·매수후보
+// 재사용 둘 다) 대상에서 하드 제외한다(2026-08-29 신설).
+//
+// ⚠️ 이건 "이름 패턴 추정"이 아니라 오너가 이미 명시적으로 확정한 목록의 그대로 옮김이다
+// (Log/Strategy/2026-08-24-위탁-개별종목-전면매도-ETF전환-결정.md — 오너가 이 8종목
+// 전량매도+ETF전환을 텔레그램 제안으로 이미 승인, "당장 실행 아님, 차차 전환" 중이라
+// 지금(2026-08-29)도 holdings에 그대로 남아있다). Vault holdings 스키마에 ETF/개별주식
+// 구분 필드가 없어 일반적으로는 못 거른다는 한계는 여전히 유효 — 이 목록은 "지금 확정된
+// 8종목"만 안다는 뜻이라, 오너가 새로 다른 개별종목을 사면(위탁 레거시 정리와 무관하게)
+// 이 목록이 자동으로 못 잡는다. 그런 경우가 생기면 이 Set에 수동으로 추가해야 한다 —
+// 스키마 자체에 ETF/개별주식 구분 필드를 추가하는 게 근본 해법이지만 이번엔 범위 밖.
+export const LEGACY_INDIVIDUAL_STOCKS = new Set([
+  '삼성전자', '삼성전자(자사주)', 'SK하이닉스', '메리츠금융지주',
+  '마이크로소프트', '알파벳 Class A', '엔비디아', '테슬라',
+]);
+
+export const isLegacyIndividualStock = (name) => LEGACY_INDIVIDUAL_STOCKS.has(name);
+
 // holdings: State/Holdings 전체 배열({ account, assetClass, evalAmount, ... }).
 // 위탁+연금저축만(금현물은 위탁으로 정규화), 그 안에서도 TARGET_ALLOCATION 5개 자산군만
 // 분모에 포함한다 — 현금성·TDF·배당주·리츠 등은 원칙 자체가 배분 대상 밖이라 있어도

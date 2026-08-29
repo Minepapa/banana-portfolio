@@ -1,10 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeCurrentAllocation, checkBand, computeRebalanceGaps, TARGET_ALLOCATION } from './rebalance-gap.mjs';
+import { computeCurrentAllocation, checkBand, computeRebalanceGaps, TARGET_ALLOCATION, LEGACY_INDIVIDUAL_STOCKS, isLegacyIndividualStock } from './rebalance-gap.mjs';
 
 test('TARGET_ALLOCATION: 5개 자산군 합이 정확히 100%(확정 정본, 2026-08-23 배당주·리츠→달러 재조정)', () => {
   const sum = Object.values(TARGET_ALLOCATION).reduce((s, v) => s + v, 0);
   assert.equal(sum, 100);
+});
+
+test('isLegacyIndividualStock: 2026-08-24 확정 전량매도 8종목 전부 매치(정확한 이름)', () => {
+  for (const name of LEGACY_INDIVIDUAL_STOCKS) assert.equal(isLegacyIndividualStock(name), true);
+  assert.equal(LEGACY_INDIVIDUAL_STOCKS.size, 8);
+});
+
+test('isLegacyIndividualStock: ETF·목록 밖 종목은 false', () => {
+  assert.equal(isLegacyIndividualStock('KODEX 200'), false);
+  assert.equal(isLegacyIndividualStock('VOO'), false);
+  assert.equal(isLegacyIndividualStock('삼성전자우'), false); // 유사이름 오탐 방지(정확일치만)
 });
 
 test('computeCurrentAllocation: ISA·IRP는 범위 밖(위탁+연금저축만)', () => {

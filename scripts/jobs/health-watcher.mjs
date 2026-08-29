@@ -150,6 +150,10 @@ export const EXPECTED_INTERVALS_MS = {
   // 완전히 동일한 트리거 패턴, 같은 이유로 같은 값). daily-asset-allocation-check(거시
   // 오버레이 전용으로 축소)와 혼동하지 말 것 — 그 잡은 계속 매일 돈다.
   'rebalance-proposal': 100 * 24 * 60 * 60 * 1000,
+  // isa-maturity-check(2026-08-29 신설) — 매주 월 07:10, 실제 이벤트(ISA 3년 만기
+  // 2028-04-06)는 ~1.5년 뒤 1회뿐이지만 heartbeat 자체는 매주 남는다 — weekly-
+  // schedule-summary와 동일 클래스(7일).
+  'isa-maturity-check': 7 * 24 * 60 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.isa-maturity-check</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>isa-maturity-check</string>
+  </array>
+  <!-- ISA 3년 만기(2025-04-06 + 3년 = 2028-04-06)를 감시하는 잡 — athena.md 책임목록
+       "3년 만기 시 ISA→연금계좌 일괄이전 제안(1회성)"을 실제로 구현(2026-08-29, 자산분배
+       트랙 감사). 실제 이벤트는 ~1.5년 뒤 딱 한 번뿐이라 매일 돌 필요 없이 주1회로
+       충분 — 잡 내부(hasReachedMaturity)가 만기 도달 여부를, State/IsaMaturity/
+       triggered.md 마커가 중복발송을 막는다. 다른 주간 잡(weekly-schedule-summary
+       월 07:00·themis-risk-review 일 07:00)과 겹치지 않게 월 07:10. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>
+    <key>Hour</key><integer>7</integer>
+    <key>Minute</key><integer>10</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/isa-maturity-check.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/isa-maturity-check.log</string>
+</dict>
+</plist>

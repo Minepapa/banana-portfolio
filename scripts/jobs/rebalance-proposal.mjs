@@ -37,13 +37,21 @@
  * 실제 체결은 오너가 직접(자산분배 트랙엔 자동 브로커 실행이 없음, proposal-execution-
  * reminder.mjs가 미체결을 리마인드로 보완).
  *
- * ⚠️ 알려진 한계(new-cash-allocation.mjs와 공유) — 이 리밸런싱은 매도 방향(초과 자산군)도
- * 다루는데, 매도 후보 목록에 위탁 레거시 개별종목(삼성전자 등)이 실보유로 그대로
- * 섞여 나온다(Vault holdings 스키마에 ETF/개별주식을 구분하는 필드가 없어 Node가
- * 구조적으로 걸러낼 수 없음 — 이름 패턴 추정은 "추정 금지" 원칙 위반). "절대 제안하지
- * 말 것" 지시는 프롬프트+Athena 시스템프롬프트(athena.md) 이중 방어뿐, Node 하드가드는
- * 없다 — new-cash-allocation.mjs의 매수 후보 목록도 동일한 한계를 이미 갖고 있다(기존
- * 운영 중인 위험을 그대로 물려받음, 이번에 새로 만든 구멍이 아님).
+ * ⚠️ 레거시 개별종목 하드가드(2026-08-29 신설, 자산분배 트랙 감사에서 해소) — 매도
+ * 방향(초과 자산군)의 후보 목록에 위탁 레거시 개별종목(삼성전자 등)이 실보유로 섞여
+ * 나오던 문제를 `rebalance-gap.mjs`의 `LEGACY_INDIVIDUAL_STOCKS`(오너가 이미 확정한
+ * 8종목 전량매도 목록 그대로, 이름 패턴 추정 아님)로 이제 Node가 직접 걸러낸다 —
+ * 프롬프트 지시는 이중 방어로 계속 유지. `cash-allocation-candidates.mjs`의
+ * `findExistingInstruments`도 같은 필터를 적용해 매수 후보 재사용 목록에서도 제외됨
+ * (new-cash-allocation.mjs도 동일 함수를 공유해 같이 해소). 단, 이 목록은 "지금 확정된
+ * 8종목"만 알아 스키마 자체의 ETF/개별주식 구분 필드 부재라는 근본 한계까지 없앤 건
+ * 아니다 — 오너가 새로 다른 개별종목을 사면 이 하드가드가 자동으로 못 잡는다(그 경우
+ * LEGACY_INDIVIDUAL_STOCKS에 수동 추가 필요). ⚠️ 후속 코드리뷰 지적(같은 날, 커밋 전) —
+ * 후보만 거르고 gapWon(갭 금액)은 그대로 두면, "초과분 대부분이 레거시 종목 때문"인
+ * 자산군에서 정상 ETF만 후보로 남아 Athena가 그 ETF를 대신 팔아 갭을 메우라는 압력을
+ * 받는다(라이브 데이터로 실제 재현 — 국내주식 초과 9.9M원 중 4,240만원이 레거시
+ * 8종목). buildBreachFacts가 legacyExcludedEval을 별도 계산해 프롬프트에 "이 초과분
+ * 중 얼마는 레거시라 갭 전체를 후보만으로 메우려 하지 마라"는 맥락을 추가해 해소.
  *
  * 사용법:
  *   node scripts/jobs/rebalance-proposal.mjs            # 실제 판단+발송(분기 트리거일 때만)
@@ -56,7 +64,7 @@ import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
-import { computeRebalanceGaps, normalizeAccount } from '../lib/rebalance-gap.mjs';
+import { computeRebalanceGaps, normalizeAccount, isLegacyIndividualStock } from '../lib/rebalance-gap.mjs';
 import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/cash-allocation-candidates.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
@@ -89,10 +97,21 @@ export function buildBreachFacts(holdings, gaps, totalEval) {
     const direction = g.absDeltaPct > 0 ? '초과' : '부족';
     const gapWon = Math.round(((g.targetPct - g.currentPct) / 100) * totalEval); // 음수=팔아야, 양수=사야
     if (direction === '초과') {
-      const sellCandidates = holdings
-        .filter((h) => IN_SCOPE_ACCOUNTS.includes(normalizeAccount(h.account)) && h.assetClass === g.assetClass)
+      const inClassHoldings = holdings.filter((h) => IN_SCOPE_ACCOUNTS.includes(normalizeAccount(h.account)) && h.assetClass === g.assetClass);
+      const sellCandidates = inClassHoldings
+        .filter((h) => !isLegacyIndividualStock(h.name))
         .map((h) => ({ account: normalizeAccount(h.account), name: h.name, ticker: h.ticker, qty: h.qty, curPrice: h.curPrice, evalAmount: h.evalAmount }));
-      return { ...g, direction, gapWon, sellCandidates };
+      // 코드리뷰 지적(2026-08-29) — 레거시 개별종목을 매도후보에서만 빼고 gapWon은
+      // 그대로 두면, "초과분 대부분이 사실 레거시 종목 때문"인데 후보엔 정상 ETF만
+      // 남아 Athena가 그 ETF를 대신 팔아 갭을 메우라는 압력을 받는다(실제로 지금
+      // 라이브 데이터로 재현됨 — 국내주식 초과 9.9M원 중 4,240만원이 레거시 8종목).
+      // Athena가 "이 초과분은 손댈 수 없는 레거시 때문"이라고 판단할 수 있게 그 금액을
+      // 별도로 알려준다 — gapWon 자체는 안 바꾼다(그건 여전히 사실이므로), 프롬프트에서
+      // 맥락만 보탠다.
+      const legacyExcludedEval = inClassHoldings
+        .filter((h) => isLegacyIndividualStock(h.name))
+        .reduce((s, h) => s + (h.evalAmount ?? 0), 0);
+      return { ...g, direction, gapWon, sellCandidates, legacyExcludedEval };
     }
     const buyCandidatesByAccount = {};
     for (const account of IN_SCOPE_ACCOUNTS) {
@@ -113,7 +132,10 @@ export function buildRebalanceProposalPrompt(breachFacts) {
       const lines = b.sellCandidates.length
         ? b.sellCandidates.map((h) => `    - [${h.account}] ${h.name} ${h.qty}주 @${h.curPrice ?? '?'}원 (평가액 ${h.evalAmount?.toLocaleString('ko-KR') ?? '?'}원)`).join('\n')
         : '    (실보유 없음 — 이 방향은 제안하지 말 것)';
-      return `${header}\n  매도 후보(실보유):\n${lines}`;
+      const legacyNote = b.legacyExcludedEval > 0
+        ? `\n  ⚠️ 이 초과분 중 ${b.legacyExcludedEval.toLocaleString('ko-KR')}원은 위탁 레거시 개별종목(전량매도 확정, 오너 직접 처리 중) 때문이다 — 매도후보 목록에선 이미 제외했다. 갭 전체(위 "초과" 금액)를 위 매도후보만으로 메우려 하지 마라 — 레거시 종목분을 제외한 나머지 초과분만 대상으로 판단해라.`
+        : '';
+      return `${header}\n  매도 후보(실보유):\n${lines}${legacyNote}`;
     }
     const accLines = Object.entries(b.buyCandidatesByAccount).map(([acc, insts]) => {
       if (!insts.length) return `    [${acc}] 현재 보유 없음 — 신규 ETF 제안 가능(가격 미확인, 아래 "신규 종목 선정 기준" 참고)`;

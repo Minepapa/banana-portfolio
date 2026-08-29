@@ -11,7 +11,7 @@
 import { findActiveProposal, findRecentRejection, proposalMatchKey } from './proposal-vault.mjs';
 import { isKillSwitchActive } from './kill-switch.mjs';
 
-const REJECTION_COOLDOWN_MS_DEFAULT = 24 * 60 * 60 * 1000; // 24시간 — 근거: 오너 확정값 없어 "최소 하루는 재상정 안 함"으로 보수적 기본값. 실제 운용값은 구현 단계에서 오너 확인 필요.
+const REJECTION_COOLDOWN_MS_DEFAULT = 24 * 60 * 60 * 1000; // 24시간 — 오너 확정(2026-08-29, 자산분배 트랙 감사). "최소 하루는 재상정 안 함"이 최종 운용값.
 
 // ── 1) 제안 생성 시점 ──────────────────────────────────────────────
 // existingProposals: proposal-vault.parseProposal()로 파싱된 객체 배열(호출부가 이미
