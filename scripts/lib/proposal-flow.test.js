@@ -89,6 +89,21 @@ test('createAndSendProposal: 신규 생성 — 파일 쓰고 텔레그램 발송
   assert.match(sender.calls[0], /매수 삼성전자\(005930\)/);
 });
 
+test('createAndSendProposal: proposalsBlocked=true면 blocked — 파일도 안 쓰고 발송도 안 함(단일활성제안 판정보다도 먼저 막힘)', async () => {
+  const writer = mockWriter();
+  const sender = mockSender();
+  const result = await createAndSendProposal({
+    track: '퀀트', assetKey: '005930', name: '삼성전자', side: '매수', quantity: 10, proposedPrice: 70000,
+    reason: 'OCF/P 1위', departmentLabel: '카이로스',
+    existingProposals: [], writeProposalFile: writer, sendMessage: sender,
+    proposalsBlocked: true,
+  });
+  assert.equal(result.action, 'blocked');
+  assert.match(result.reason, /제안금지/);
+  assert.equal(writer.writes.length, 0);
+  assert.equal(sender.calls.length, 0);
+});
+
 test('createAndSendProposal: 거부 재상정 쿨다운이면 blocked — 파일도 안 쓰고 발송도 안 함', async () => {
   const recentlyRejected = fixture({ status: '거부', decidedAt: new Date().toISOString() });
   const writer = mockWriter();

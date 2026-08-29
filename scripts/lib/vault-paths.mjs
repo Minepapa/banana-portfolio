@@ -84,6 +84,9 @@ export const VAULT_PATHS = {
     // 꺼짐·섀도우모드)으로 떨어지므로 최초 배포 시 이 파일들을 미리 만들 필요는 없다.
     killSwitch: join(VAULT_ROOT, 'State', 'KillSwitch', 'KillSwitch.md'),
     executionMode: join(VAULT_ROOT, 'State', 'ExecutionMode', 'ExecutionMode.md'),
+    // 제안모드(허용|금지, 2026-08-29 신설) — 킬스위치·체결모드와 동일 패턴(파일 없으면
+    // 안전한 기본값인 "허용"으로 폴백, proposal-mode.mjs 참고).
+    proposalMode: join(VAULT_ROOT, 'State', 'ProposalMode', 'ProposalMode.md'),
     // 체결 완료된 제안 ID의 영속 목록(Phase 11, 2026-08-09) — 크래시 후 재실행돼도
     // 이미 체결된 제안이 다시 브로커에 나가지 않도록 하는 idempotency 저장소.
     // executed-orders.mjs 헤더 주석 참고. 파일 없으면(최초) 빈 목록으로 안전하게 폴백.

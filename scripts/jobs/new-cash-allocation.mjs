@@ -66,6 +66,7 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 loadEnv();
 
@@ -97,7 +98,7 @@ export function buildCashAllocationPrompt({ account, availableCash, rankedGaps, 
   ).join('\n') || '  (이 계좌가 담을 수 있는 자산군 중 언더웨이트 없음)';
 
   const candLines = Object.entries(candidatesByClass).map(([cls, insts]) => {
-    if (!insts.length) return `  [${cls}] 현재 이 계좌에 보유 없음 — 신규 ETF 제안 가능(가격 미확인)`;
+    if (!insts.length) return `  [${cls}] 현재 이 계좌에 보유 없음 — 신규 ETF 제안 가능(가격 미확인, 아래 "신규 종목 선정 기준" 참고)`;
     const lines = insts.map((h) => `    - ${h.name}${h.ticker ? `(${h.ticker})` : ''} 현재가 ${h.curPrice ?? '데이터 부족'}원`).join('\n');
     return `  [${cls}]\n${lines}`;
   }).join('\n');
@@ -122,6 +123,13 @@ ${candLines}
 - allocations의 amountWon 합계는 ${availableCash}원을 넘지 말 것.
 - instrumentName은 위 후보 목록의 이름을 정확히 그대로 쓸 것(새로 짓지 말 것) — 신규
   제안일 때만 새 ETF명 사용 가능.
+- **이미 보유 중인 종목이 후보에 있으면 그걸 최우선으로 재사용해라** — 새 브랜드를
+  또 고르지 마라(같은 자산군에 매번 다른 ETF를 새로 제안하면 "같은 안건"으로 인식이
+  안 돼 승인 대기 목록에 중복으로 쌓인다, 2026-08-29 오너 지적으로 실제로 발생한 문제).
+- **신규 종목 선정 기준(보유 후보가 전혀 없을 때만)**: 보수율(총보수)·유동성(거래대금·
+  괴리율)·추적오차를 고려해 이 자산군을 대표할 브랜드 하나를 판단해 골라라 — "아무
+  ETF나" 임의로 짓지 말 것. 그리고 이후에도 이 계좌·이 자산군에 다시 배분할 일이
+  생기면, 이번에 고른 이름과 일관되게 유지해라(매번 다른 브랜드를 새로 짓지 말 것).
 - reasoning은 시스템 프롬프트에 이미 주어진 네(아테나) 성격대로 써라 — 근거 없는
   낙관·비관 없이, 왜 이 자산군·종목을 골랐는지 침착하고 위엄 있게 1~2문장으로 풀어
   설명할 것. "갭이 커서"처럼 사실을 그대로 반복하는 기계적 문장 대신, 그 갭이 왜
@@ -229,6 +237,12 @@ function clearTriggerState(account) {
 async function main() {
   console.log('💰 new-cash-allocation — 신규 현금 배분 점검(실잔고 기반)');
   if (DRY_RUN) console.log('   (--dry-run: 쓰기·발송 없음)');
+
+  const proposalsBlocked = isProposalBlocked(existsSync(VAULT_PATHS.state.proposalMode) ? readFileSync(VAULT_PATHS.state.proposalMode, 'utf8') : null);
+  if (proposalsBlocked) {
+    console.log('  🚫 제안금지 모드 — 점검 자체를 건너뜀("제안요청"으로 해제 전까지)');
+    return;
+  }
 
   const holdings = readMdDir(VAULT_PATHS.state.holdings);
 

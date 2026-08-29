@@ -85,6 +85,20 @@ export function parseExecutionModeCommand(text) {
   return null;
 }
 
+// 제안모드(허용|금지) 전환 명령 — 2026-08-29 오너 지시(기준 없이 쌓이는 자동 제안을
+// 멈출 수 있는 스위치 신설). 킬스위치·체결모드와 동일 원칙(이 목적 전용 복합어, 정확
+// 일치만 인정 — "제안 좀 그만해줘" 같은 캐주얼한 언급과 구분하기 위해 일부러 딱딱한
+// 고정 문구로 확정).
+const PROPOSAL_BLOCK_WORDS = new Set(['제안금지']);
+const PROPOSAL_ALLOW_WORDS = new Set(['제안요청']);
+
+export function parseProposalModeCommand(text) {
+  const t = String(text ?? '').trim();
+  if (PROPOSAL_BLOCK_WORDS.has(t)) return 'blocked';
+  if (PROPOSAL_ALLOW_WORDS.has(t)) return 'allowed';
+  return null;
+}
+
 // "카이로스, ~" 같은 부서 직접호출 — 메시지 시작 부분의 부서명 키워드만 본다(구현
 // 메모: "메시지 시작 부분의 부서명 키워드 매칭으로 우선 단순 구현 가능"). 구분자는
 // 쉼표·공백 어느 쪽이든 허용.

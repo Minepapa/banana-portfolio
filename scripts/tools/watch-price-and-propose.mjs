@@ -15,6 +15,7 @@ import { parseProposal } from '../lib/proposal-vault.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 import { hasKisCredentials, loadKisCredentials, getKisToken, getKrQuote, isKrMarketOpen } from '../lib/kis.mjs';
 
 function parseArgs(argv) {
@@ -93,9 +94,10 @@ async function main() {
       const writeProposalFile = (filename, content) => writeStateFile(join(proposalsDir, filename), content);
       const sendMessage = async (text) => sendTelegram(text).then((r) => r?.result ?? r);
 
+      const proposalsBlocked = isProposalBlocked(existsSync(VAULT_PATHS.state.proposalMode) ? readFileSync(VAULT_PATHS.state.proposalMode, 'utf8') : null);
       const result = await createAndSendProposal({
         track: '퀀트', assetKey: code, name, side, quantity, proposedPrice: target, reason,
-        departmentLabel: '퀀트전략실 Kairos', existingProposals, writeProposalFile, sendMessage,
+        departmentLabel: '퀀트전략실 Kairos', existingProposals, writeProposalFile, sendMessage, proposalsBlocked,
       });
 
       if (result.action === 'blocked') {

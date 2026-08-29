@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   formatDepartmentMessage, formatFactsMessage, parseReplyDecision, parseKillSwitchCommand,
-  parseDepartmentCall, parseExecutionModeCommand,
+  parseDepartmentCall, parseExecutionModeCommand, parseProposalModeCommand,
 } from './telegram-messages.mjs';
 
 const SEP = '─'.repeat(16);
@@ -113,6 +113,17 @@ test('[막아야 함] parseExecutionModeCommand: 캐주얼한 문장 속 언급�
   assert.equal(parseExecutionModeCommand('이제 실전전환 해도 될까?'), null);
   assert.equal(parseExecutionModeCommand('아직 섀도우전환은 이르지'), null);
   assert.equal(parseExecutionModeCommand('실전'), null);
+});
+
+test('parseProposalModeCommand: "제안금지" → blocked, "제안요청" → allowed', () => {
+  assert.equal(parseProposalModeCommand('제안금지'), 'blocked');
+  assert.equal(parseProposalModeCommand('제안요청'), 'allowed');
+});
+
+test('[막아야 함] parseProposalModeCommand: 캐주얼한 문장 속 언급은 명령으로 인정 안 함(정확일치만)', () => {
+  assert.equal(parseProposalModeCommand('이제 제안금지 좀 시켜줘'), null);
+  assert.equal(parseProposalModeCommand('제안'), null);
+  assert.equal(parseProposalModeCommand(''), null);
 });
 
 test('parseDepartmentCall: "카이로스, ~" 형식 파싱', () => {

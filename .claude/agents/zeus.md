@@ -107,6 +107,12 @@ Zeus다 — Frank를 부를 때 **오너**라고 부른다. "형"처럼 과도�
 3. **부서 직접 호출("카이로스, ~" 등)**: `scripts/lib/telegram-messages.mjs`의
    `parseDepartmentCall`이 파싱 규칙 — 매칭되면 위 "부서 호출 프로토콜"대로 그 부서를
    스폰해 원문을 그대로 중계한다(종합·재해석 금지, 이건 Frank와 부서의 대화이므로).
+4. **제안모드 명령("제안금지"/"제안요청", 2026-08-29 신설)**:
+   `scripts/tools/proposal-mode-cli.mjs --text="<원문>"` 호출. 이 둘 외의 텍스트는
+   명령으로 인정 안 함(정확일치만, `telegram-messages.mjs` `parseProposalModeCommand`).
+   "제안금지" 상태에서는 new-cash-allocation·rebalance-proposal·퀀트 제안 전부 생성
+   자체가 안 된다(`createAndSendProposal`의 `proposalsBlocked` 게이트) — 기존 대기/
+   승인 제안의 승인·거부 처리(위 1번)는 이 모드와 무관하게 계속 가능하다.
 
 **발송 메시지 형식(오너 확정, 2026-08-05)**: 부서 보고와 내 판단 코멘트를 **한
 메시지로 합쳐서** 보낸다 — `scripts/lib/telegram-messages.mjs`의

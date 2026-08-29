@@ -49,7 +49,18 @@
        띄울지 말지"만 바꾼다). 텔레그램 세션 구현 금지 규칙(CLAUDE.md)과 마찬가지로
        "시작 파일에 박아 매번 재시작해도 지켜지게" 하는 동일한 원칙 — 매일 04:00
        telegram-session-restart(launchctl kickstart -k)가 이 plist를 그대로 다시
-       읽으므로 별도 동기화 지점 없음. -->
+       읽으므로 별도 동기화 지점 없음.
+       ⚠️ CLAUDE_TELEGRAM_SESSION=1(2026-08-29, 오너 신고 — 매일 재시작 후 "핸드오프
+       저장 N일 전" 알람이 텔레그램으로 옴) — ~/.claude/settings.json에 SessionStart
+       훅(handoff-load의 load_hook.sh)이 matcher "*"로 전역 등록돼 있어, 이 세션이
+       매일 재시작될 때도 같이 발동한다. WorkingDirectory가 이 리포라 본 세션(터미널
+       대화형)이 만든 /handoff-save 체크포인트를 그대로 찾아내 systemMessage 배너로
+       띄우는데, 이게 텔레그램 채널로도 릴레이돼 오너에게 노출됐다 — 이 텔레그램
+       세션은 원래 핸드오프 문서가 아니라 므네모시네(Vault)로 연속성을 유지하도록
+       설계돼 있어(CLAUDE.md), 이 알람은 의도한 동작이 아니라 순수 누출이었다. 이
+       env var를 load_hook.sh가 확인해 텔레그램 세션이면 조용히 스킵하도록 배선
+       (~/.claude/skills/handoff-load/scripts/load_hook.sh 참고, 이 리포 밖 전역
+       설정이라 여기서 직접 못 봄). -->
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/script</string>
@@ -57,7 +68,7 @@
     <string>/dev/null</string>
     <string>/bin/bash</string>
     <string>-lc</string>
-    <string>export PATH="$HOME/.bun/bin:$PATH"; claude --channels plugin:telegram@claude-plugins-official --permission-mode auto --allowedTools "Bash Read mcp__plugin_telegram_telegram__reply mcp__plugin_telegram_telegram__react mcp__plugin_telegram_telegram__edit_message"</string>
+    <string>export PATH="$HOME/.bun/bin:$PATH"; export CLAUDE_TELEGRAM_SESSION=1; claude --channels plugin:telegram@claude-plugins-official --permission-mode auto --allowedTools "Bash Read mcp__plugin_telegram_telegram__reply mcp__plugin_telegram_telegram__react mcp__plugin_telegram_telegram__edit_message"</string>
   </array>
   <key>KeepAlive</key>
   <true/>

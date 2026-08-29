@@ -99,6 +99,16 @@ export function buildProposalStatusEditText({ proposal, action, decidedAt }) {
 // supersededId }. 발송 자체가 실패하면(sendMessage throw) 제안 파일은 이미 쓰여진 상태로
 // 남는다 — 텔레그램 실패가 "제안이 아예 없던 일"이 되면 안 되므로(재시도 시 중복 생성
 // 방지를 위해 단일활성제안 원칙이 이미 다음 실행에서 자연히 막아준다) 예외를 그대로 던진다.
+//
+// proposalsBlocked(2026-08-29 신설, proposal-mode.mjs) — "제안금지" 모드일 때 여기서
+// 막는다. 4개 제안 생성 잡(new-cash-allocation·rebalance-proposal·create-quant-proposal·
+// watch-price-and-propose) 전부 이 함수를 거치는 유일한 지점이라, 각 잡에 개별적으로
+// 체크를 넣기보다 여기 한 곳에서 막는 게 "새 제안 경로가 생겨도 이 게이트를 빠뜨릴 수
+// 없는" 구조를 만든다(이 프로젝트가 이번 세션 내내 지켜온 원칙 — health-watcher.test.js·
+// vault-job-catalog-audit.test.js와 동일한 "기억 대신 구조" 철학). 호출부가 비용이 큰
+// LLM 판단 자체를 아끼고 싶으면 자기 main() 시작부에서 별도로 먼저 체크해도 되지만
+// (new-cash-allocation.mjs·rebalance-proposal.mjs가 그렇게 함), 여기 체크는 그것과
+// 무관하게 항상 최종 방어선으로 남는다.
 export async function createAndSendProposal({
   track, account = null, assetKey, name, side, quantity, proposedPrice, reason = '',
   departmentLabel, zeusComment = null,
@@ -108,7 +118,11 @@ export async function createAndSendProposal({
   writeProposalFile,
   sendMessage,
   amountWon = null,
+  proposalsBlocked = false,
 }) {
+  if (proposalsBlocked) {
+    return { action: 'blocked', reason: '제안금지 모드 — 오너가 "제안요청"으로 해제할 때까지 새 제안 생성 안 함' };
+  }
   const intake = resolveProposalIntake({ track, assetKey, side, existingProposals, conditionsChanged, now });
   if (intake.action === 'blocked') {
     return { action: 'blocked', reason: intake.reason };

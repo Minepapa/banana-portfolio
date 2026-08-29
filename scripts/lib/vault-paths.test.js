@@ -33,11 +33,11 @@ test('4대분류 하위경로가 전부 VAULT_ROOT 밑에 걸린다', () => {
   ];
   // facts: ledgerRoot(1) + ledger 하위 8종(Phase 7에서 profits·dailySnapshots 추가,
   // 2026-08-21 monthlyBalances 추가) = 9 (marketPolls는 2026-08-17 삭제됨 — 전제였던
-  // 추세추종이 기각돼 한 번도 안 쓰임), state 9(+jobHealth, +Phase 8 macroOverlay,
+  // 추세추종이 기각돼 한 번도 안 쓰임), state 10(+jobHealth, +Phase 8 macroOverlay,
   // +Phase 9 killSwitch·executionMode, +Phase 11 executedOrders, +2026-08-16
-  // cashAccumulator), decisions 4(+riskMonitor), knowledge 4(+2026-08-20
-  // preferenceObservations, 주간리포트 v2 성향학습 재작성)
-  assert.equal(flat.length, 26);
+  // cashAccumulator, +2026-08-29 proposalMode), decisions 4(+riskMonitor), knowledge 4
+  // (+2026-08-20 preferenceObservations, 주간리포트 v2 성향학습 재작성)
+  assert.equal(flat.length, 27);
   for (const p of flat) assert.ok(p.startsWith(VAULT_ROOT), `${p} should start with ${VAULT_ROOT}`);
 });
 

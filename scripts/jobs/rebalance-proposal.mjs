@@ -64,6 +64,7 @@ import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { getQuarterLabel, shouldRunToday } from './quarterly-allocation-review.mjs';
+import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
@@ -115,7 +116,7 @@ export function buildRebalanceProposalPrompt(breachFacts) {
       return `${header}\n  매도 후보(실보유):\n${lines}`;
     }
     const accLines = Object.entries(b.buyCandidatesByAccount).map(([acc, insts]) => {
-      if (!insts.length) return `    [${acc}] 현재 보유 없음 — 신규 ETF 제안 가능(가격 미확인)`;
+      if (!insts.length) return `    [${acc}] 현재 보유 없음 — 신규 ETF 제안 가능(가격 미확인, 아래 "신규 종목 선정 기준" 참고)`;
       const lines = insts.map((h) => `      - ${h.name}${h.ticker ? `(${h.ticker})` : ''} 현재가 ${h.curPrice ?? '데이터 부족'}원`).join('\n');
       return `    [${acc}]\n${lines}`;
     }).join('\n');
@@ -136,6 +137,16 @@ ${sections}
 - **"달러" 자산군을 채울 때는 미국달러ETF와 엔선물ETF 두 상품에 나눠 담아라**(한쪽에
   몰지 말 것) — 통화 하나에 타이밍 리스크를 몰아주지 않기 위함.
 - instrumentName은 후보 목록의 이름을 정확히 그대로 쓸 것(신규 제안일 때만 새 ETF명).
+- **이미 보유 중인 종목이 후보에 있으면 그걸 최우선으로 재사용해라** — 새 브랜드를
+  또 고르지 마라(같은 계좌·자산군에 매번 다른 ETF를 새로 제안하면 "같은 안건"으로
+  인식이 안 돼 승인 대기 목록에 중복으로 쌓인다, 2026-08-29 오너 지적으로 실제로
+  발생한 문제).
+- **신규 종목 선정 기준(그 계좌에 보유 후보가 전혀 없을 때만)**: 보수율(총보수)·
+  유동성(거래대금·괴리율)·추적오차를 고려해 이 자산군을 대표할 브랜드 하나를 판단해
+  골라라 — "아무 ETF나" 임의로 짓지 말 것. 이후에도 같은 계좌·자산군에 다시 제안할
+  일이 생기면, 이번에 고른 이름과 일관되게 유지해라(매번 다른 브랜드를 새로 짓지
+  말 것). 단, "달러" 자산군처럼 원래 여러 상품에 나눠 담으라는 지시가 있으면 그
+  지시가 우선한다(위 문단 참고).
 - side는 그 자산군의 방향과 정확히 일치해야 한다("초과"면 "매도"만, "부족"이면 "매수"만).
 - reasoning은 네(아테나) 성격대로 — 왜 이 계좌·종목·타이밍인지 1~2문장, Frank에게
   텔레그램으로 그대로 전달된다.
@@ -247,6 +258,12 @@ async function main() {
 
   console.log('⚖️  rebalance-proposal — 5/25 밴드 이탈 분기 리밸런싱 제안 점검');
   if (DRY_RUN) console.log('   (--dry-run: 쓰기·발송 없음)');
+
+  const proposalsBlocked = isProposalBlocked(existsSync(VAULT_PATHS.state.proposalMode) ? readFileSync(VAULT_PATHS.state.proposalMode, 'utf8') : null);
+  if (proposalsBlocked) {
+    console.log('  🚫 제안금지 모드 — 점검 자체를 건너뜀("제안요청"으로 해제 전까지, 분기 마커도 안 건드림)');
+    return;
+  }
 
   const holdings = readMdDir(VAULT_PATHS.state.holdings);
   const { gaps, totalEval } = computeRebalanceGaps(holdings);
