@@ -281,20 +281,100 @@ test('buildReportFacts: profitRows를 아예 안 넘겨도(undefined) 기존 동
   assert.equal(facts.weekTrades.length, 1); // 기존 테스트와 동일 결과
 });
 
-// ── CMA 이중계산 방지 노트(2026-08-30 신설, 오너 신고 재현) ─────────────────────────
+// ── 계좌별 현금 가용성(2026-08-30 신설, 오너 신고 재현 + 구조 확장) ─────────────────
 // 실사고: 리포트가 "CMA(21,054,004원) + 현금(30,132,560원) 실탄 충분"이라고 서술 —
 // CMA는 전액 현금 계좌라 이미 "현금" 자산군 합계 안에 포함돼 있는데 별도로 더해
-// 실탄을 51,186,564원으로 부풀려 보고했다.
+// 실탄을 51,186,564원으로 부풀려 보고했다. 오너가 "그 경우만 고치지 말고 전체를
+// 보라"고 지적해 조사한 결과, 문제는 CMA 이중계산 하나가 아니라 "현금 합계 하나 =
+// 실탄"이라는 프레임 자체였다 — ARCHITECTURE-V2.md가 이미 확정한 "연금저축·IRP·ISA는
+// 세제혜택 계좌라 계좌 밖으로 현금을 뺄 수 없다" 원칙과 충돌한다. 계좌별로 가용성을
+// 분리해서 보여주도록 확장.
 
-test('buildReportFacts: CMA 계좌가 있으면 이중계산 방지 경고가 factsText에 포함', () => {
+// ⚠️ 현금 보유는 반드시 name: '예수금'(findCashBalance·holdings-vault-writer.mjs 관례,
+// 실측 Vault 6계좌 전부 이 이름 그대로) — "위탁예수금"처럼 계좌명을 붙이면 매칭 안 됨.
+// 이전 버전 테스트가 이 관례를 안 지켜 통과했던 건 findCashBalance 도입 전 assetClass
+// 기반 자체 합산을 쓰던 시절 얘기 — 지금 이 이름 규칙 자체가 회귀 감지 대상이다.
+
+test('buildReportFacts: 위탁+금현물 현금은 "자유 재투자 가능"으로 합산(cash-ledger.mjs resolveDesignatedCashBalance 재사용, 신규현금배분 잡과 동일 정의)', () => {
   const input = baseInput();
-  input.holdings.push({ account: 'CMA', name: '예수금', assetClass: '현금', qty: 0, invest: 21054004, evalAmount: 21054004, isCashLike: true });
+  input.holdings.push({ account: '위탁', name: '예수금', assetClass: '현금', qty: 0, invest: 3000000, evalAmount: 3000000, isCashLike: true });
+  input.holdings.push({ account: '금현물', name: '예수금', assetClass: '현금', qty: 0, invest: 1000000, evalAmount: 1000000, isCashLike: true });
   const { factsText } = buildReportFacts(input);
-  assert.match(factsText, /CMA\(21,054,004원\)는 전액 현금이라.*이미 포함/);
-  assert.match(factsText, /별도로 또 더하지 말 것/);
+  assert.match(factsText, /자유 재투자 가능\(위탁\+금현물, 신규현금배분 실제 배정 대상\): 4,000,000원/);
 });
 
-test('buildReportFacts: CMA 계좌가 없으면 경고 노트 자체가 안 나옴(불필요한 경고 방지)', () => {
+test('buildReportFacts: CMA는 별도 표시(위탁과 자동 합산 안 됨, 오너 재량 명시)', () => {
+  const input = baseInput();
+  // 위탁 현금도 같이 넣어 designated 합산이 실제로 0이 아닌 상태에서 CMA가 안 섞여
+  // 들어가는지 검증(코드리뷰 지적 — baseInput()만으로는 designated가 항상 0이라 이
+  // doesNotMatch가 공허하게 통과할 수 있었음).
+  input.holdings.push({ account: '위탁', name: '예수금', assetClass: '현금', qty: 0, invest: 3000000, evalAmount: 3000000, isCashLike: true });
+  input.holdings.push({ account: 'CMA', name: '예수금', assetClass: '현금', qty: 0, invest: 21054004, evalAmount: 21054004, isCashLike: true });
+  const { factsText } = buildReportFacts(input);
+  assert.match(factsText, /자유 재투자 가능\(위탁\+금현물, 신규현금배분 실제 배정 대상\): 3,000,000원/); // CMA 21M이 안 섞임
+  assert.match(factsText, /CMA: 21,054,004원 \(위탁과 별도 계좌.*자동배분 대상은 아님.*오너 재량\)/);
+});
+
+test('buildReportFacts: 세제혜택 계좌(연금저축·ISA·IRP)는 "이 계좌 안에서만" 문구와 함께 개별 표시', () => {
+  const input = baseInput();
+  input.holdings.push({ account: '연금저축', name: '예수금', assetClass: '현금', qty: 0, invest: 2000000, evalAmount: 2000000, isCashLike: true });
+  input.holdings.push({ account: 'ISA', name: '예수금', assetClass: '현금', qty: 0, invest: 87336, evalAmount: 87336, isCashLike: true });
+  const { factsText } = buildReportFacts(input);
+  assert.match(factsText, /연금저축: 2,000,000원 \(세제혜택 계좌.*이 계좌 안에서만 재투자 가능.*못 옮김/);
+  assert.match(factsText, /ISA: 87,336원 \(세제혜택 계좌/);
+});
+
+test('buildReportFacts: 연금저축은 세제혜택 계좌면서 동시에 신규현금배분 자동 배정 대상 — 두 사실을 한 줄에 명시(코드리뷰 지적: 예전엔 "이 계좌 안에서만"이라고만 써서 자동배분 대상이라는 사실이 누락됨)', () => {
+  const input = baseInput();
+  input.holdings.push({ account: '연금저축', name: '예수금', assetClass: '현금', qty: 0, invest: 2000000, evalAmount: 2000000, isCashLike: true });
+  input.holdings.push({ account: 'ISA', name: '예수금', assetClass: '현금', qty: 0, invest: 87336, evalAmount: 87336, isCashLike: true });
+  const { factsText } = buildReportFacts(input);
+  assert.match(factsText, /연금저축: 2,000,000원 \(.*신규현금배분 자동 배정 대상\)/);
+  assert.doesNotMatch(factsText, /ISA: 87,336원 \(.*신규현금배분/); // ISA는 배정 대상 아님(CASH_ELIGIBLE_ACCOUNTS 밖)
+});
+
+test('buildReportFacts: 계좌는 있는데 예수금 레코드가 없는(null) 경우와 실제 0원인 경우를 구분 — 둘 다 절대 조용히 빠지지 않음(코드리뷰 HIGH 지적)', () => {
+  const input = baseInput();
+  // 위탁 예수금 자체가 없음(holdings에 위탁 예수금 행이 아예 없음) → cashByAcct['위탁']=null
+  input.holdings.push({ account: '퀀트KIS', name: '삼성전자', assetClass: '국내주식', qty: 1, invest: 100000, evalAmount: 100000 });
+  input.holdings.push({ account: 'IRP', name: '예수금', assetClass: '현금', qty: 0, invest: 0, evalAmount: 0, isCashLike: true });
+  const { factsText } = buildReportFacts(input);
+  // 위탁 예수금 데이터가 없으므로 "자유 재투자 가능"을 0원으로 확정 서술하지 않고 경고를 단다
+  assert.match(factsText, /자유 재투자 가능\(위탁\+금현물.*\): 0원 \(⚠️ 위탁.*데이터 없음/);
+  // 퀀트KIS는 예수금 레코드 자체가 없음(null) — "0원"이 아니라 "데이터 부족"으로, 조용히 안 빠짐
+  assert.match(factsText, /퀀트KIS: 데이터 부족\(예수금 레코드 없음/);
+  // IRP는 실제로 0원임이 확인됨(레코드 있음, 값이 0) — "데이터 부족"이 아니라 0원으로 명시, 역시 안 빠짐
+  assert.match(factsText, /IRP: 0원 \(세제혜택 계좌/);
+});
+
+test('buildReportFacts: 위탁·금현물·CMA·세제혜택 어디에도 안 속하는 새 계좌는 "분류 미정"으로 표시(닫힌 계좌 집합 하드코딩 방지, 코드리뷰 지적)', () => {
+  const input = baseInput();
+  input.holdings.push({ account: '퀀트KIS', name: '예수금', assetClass: '현금', qty: 0, invest: 500000, evalAmount: 500000, isCashLike: true });
+  const { factsText } = buildReportFacts(input);
+  assert.match(factsText, /퀀트KIS: 500,000원 \(분류 미정 계좌/);
+});
+
+test('buildReportFacts: 이름이 "예수금"이 아닌 현금성 보유(예: 외화RP)는 계좌별 현금 가용성에서 안 잡힘 — findCashBalance 정확일치 규칙 그대로', () => {
+  const input = baseInput();
+  input.holdings.push({ account: '위탁', name: '외화 RP', assetClass: '달러', qty: 100, invest: 892846, evalAmount: 892846, isCashLike: true });
+  const { factsText } = buildReportFacts(input);
+  assert.match(factsText, /자유 재투자 가능\(위탁\+금현물, 신규현금배분 실제 배정 대상\): 0원/);
+});
+
+test('buildReportFacts: "총 실탄으로 합산 금지" 경고가 항상 포함', () => {
   const { factsText } = buildReportFacts(baseInput());
-  assert.doesNotMatch(factsText, /CMA/);
+  assert.match(factsText, /서로 더해 "총 실탄"이라고 쓰지 마라/);
+});
+
+test('buildReportFacts: 현금 계좌가 전혀 없으면 자유 재투자 가능 0원으로 명시(추정 아님)', () => {
+  const input = { ...baseInput(), holdings: [{ account: '위탁', name: 'SK하이닉스', assetClass: '국내주식', qty: 8, invest: 15920000, evalAmount: 17200000 }] };
+  const { factsText } = buildReportFacts(input);
+  assert.match(factsText, /자유 재투자 가능\(위탁\+금현물, 신규현금배분 실제 배정 대상\): 0원/);
+});
+
+test('buildReportFacts: 보유 전부 evalValue=0(null 아님)이면 totalEval도 실제로 0(코드리뷰 지적 — 예전엔 weightPct용 나눗셈 가드 `|| 1`이 그대로 노출돼 "총 평가액 1원"이라는 틀린 값이 나갈 뻔했다)', () => {
+  const input = { ...baseInput(), holdings: [{ account: '위탁', name: 'X', assetClass: '국내주식', qty: 1, invest: 0, evalAmount: 0 }] };
+  const { facts, factsText } = buildReportFacts(input);
+  assert.equal(facts.totalEval, 0);
+  assert.match(factsText, /총 평가액: 0원/);
 });

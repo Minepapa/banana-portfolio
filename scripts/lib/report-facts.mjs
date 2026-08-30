@@ -19,24 +19,46 @@
 // row-array로 변환해 넘긴다.
 import { EXEC_COL as T } from './sheet-contracts.mjs';
 import { parseSell, collectBuys } from './behavior-signals.mjs';
+import { buildProfitLookup } from './realized-profit-ledger.mjs';
+import { resolveDesignatedCashBalance, findCashBalance, DESIGNATED_CASH_ACCOUNTS, CASH_ELIGIBLE_ACCOUNTS } from './cash-ledger.mjs';
 
-const round1 = (v) => Number.isFinite(v) ? Math.round(v * 10) / 10 : null;
 const won = (v) => Number.isFinite(v) ? Math.round(v).toLocaleString('en-US') : '데이터 부족';
 
-// Facts/Ledger/Profits(type: "realized-profit") 정본 조회 키 — date|account|name|qty
-// 정확일치만(추정 금지, ADR 0003과 동일 원칙). 2026-08-30 오너 신고로 발견: PLUS
-// 고배당주·TIGER 미국배당다우존스가 리포트에서 "손익 미확정"으로 나왔는데, 이유는
-// Executions 원장에 매수 체결이 하나도 없어서였다(v1→v2 이관 이전 매수 포지션이라
-// 매수 "체결" 자체가 기록된 적 없음, 매도 4건만 있음) — 그래서 아래 parseSell의
-// 매입평균 재구성이 항상 실패. 그런데 Facts/Ledger/Profits엔 이미 정확한 실현손익이
-// 있다(대시보드 "수익금" 탭이 정확히 읽고 있는 바로 그 원장) — 리포트가 이 원장
-// 자체를 안 읽고 있던 게 진짜 원인. 이 키 함수를 만들고 정확일치로 우선 조회한다.
-const profitKey = (date, account, name, qty) => `${date}|${account}|${name}|${qty}`;
+// ⚠️ 계좌 간 현금 이동 가능 여부(2026-08-30 신설, 오너 지적으로 발견) — 리포트가
+// "현금 합계(6계좌 전부) = 실탄"이라고 서술했는데, ARCHITECTURE-V2.md "계좌를 실제로
+// 어떻게 옮기나" 절(2026-08-01/04 확정)이 이미 "연금저축은 중도 인출 시 세액공제
+// 클로백·소득세가 붙어 계좌 밖으로 현금을 뺄 수 없다 — 계좌 간 조정은 실제 이체가
+// 아니라 각 계좌가 자기 자금으로 내부에서만 매도·매수"라고 명시해뒀다. IRP(퇴직연금)·
+// ISA(만기 전 인출 시 세제혜택 상실)도 같은 성격. 즉 "실탄"은 계좌 하나로 뭉뚱그려
+// 말할 수 없고, 그 매수를 할 계좌 자신의 현금만 봐야 한다 — CMA 이중계산은 그 원칙이
+// 드러난 한 사례일 뿐이었다.
+//
+// "위탁+금현물"만 자유롭게 합쳐 쓸 수 있는 현금이라는 정의는 이미 cash-ledger.mjs
+// resolveDesignatedCashBalance에 있다(신규현금배분 잡이 실제로 쓰는 바로 그 함수) —
+// 여기서 새로 정의하지 않고 그 함수를 그대로 재사용한다(같은 개념을 두 번 정의하면
+// 갈라진다는 게 이번 사고 전체의 교훈).
+//
+// ⚠️ 후속 코드리뷰 지적(같은 날) — 처음엔 "그 계좌의 현금"을 `assetClass === '현금'`인
+// 보유 전부를 더해서 독립적으로 재구현했는데, 이게 정확히 이 리팩터가 막으려던
+// "같은 개념을 두 번 정의" 패턴의 재발이었다(new-cash-allocation.mjs는 "이름이
+// 정확히 '예수금'인 보유 하나"라는 더 엄격한 규칙을 씀 — 외화RP처럼 isCashLike인데
+// assetClass가 "현금"이 아닌 보유나, 계좌에 "현금" 보유가 두 개 이상 생기면 조용히
+// 갈라질 뻔했다). findCashBalance 하나로 통일 — "그 계좌 현금이 뭔지"의 선택 규칙은
+// 이제 cash-ledger.mjs 한 곳에만 있다.
+const LOCKED_TAX_ADVANTAGED_ACCOUNTS = new Set(['연금저축', 'ISA', 'IRP']);
+// cash-ledger.mjs DESIGNATED_CASH_ACCOUNTS(resolveDesignatedCashBalance의 실제
+// 파라미터 목록)에서 그대로 파생 — 별도 계좌명 목록을 여기서 다시 하드코딩하지
+// 않는다(코드리뷰 지적: 그러면 두 목록이 갈라질 수 있음).
+const KNOWN_DESIGNATED_ACCOUNTS = new Set(DESIGNATED_CASH_ACCOUNTS);
 
 // 체결내역 스키마: A날짜0 B구분1 C계좌2 D코드3 E자산군4 F종목명5 G체결가6 H수량7 I금액8
-// profitByKey: Facts/Ledger/Profits 정본을 위 profitKey로 인덱싱한 Map(비어있으면 항상
-// fallback으로 감 — 하위호환, 호출부가 안 넘겨도 기존 동작 그대로).
-function parseTrade(r, buysAll, profitByKey, profitByKeyNoAccount) {
+// profitLookup: realized-profit-ledger.mjs buildProfitLookup() 결과(비어있으면 항상
+// fallback으로 감 — 하위호환, 호출부가 안 넘겨도 기존 동작 그대로). Profits 정본 조회
+// "먼저 원장, 없으면 재구성" 분기 자체는 behavior-signals.mjs의 parseSell이 이미
+// 구현하고 있다 — 여기서 같은 분기를 다시 쓰면 그 분기 로직 자체가 두 곳에 존재하게
+// 돼(코드리뷰 지적, 2026-08-30) 한쪽만 고치면 갈라진다. parseSell에 위임하고 여기선
+// 매도 행의 부가 필드(구분·계좌 등 문자열 원본)만 조립한다.
+function parseTrade(r, buysAll, profitLookup) {
   const side = String(r[T.SIDE] ?? '').trim();
   const date = String(r[T.DATE] ?? '').trim();
   const account = String(r[T.ACCT] ?? '').trim();
@@ -48,21 +70,8 @@ function parseTrade(r, buysAll, profitByKey, profitByKeyNoAccount) {
   };
   if (side !== '매도') return { ...base, realizedPct: null, realizedWon: null, partialHistory: false, ledgerMatched: false };
 
-  // ⚠️ 코드리뷰 지적(2026-08-30) — ledgerMatched를 매칭 성공 여부만으로 true 처리하면,
-  // 원장 레코드에 profit이 없는(malformed) 극단 케이스에서 realizedWon이 null인데도
-  // "정본 원장" 표시가 나가 렌더링 시 `null >= 0`이 JS에서 true로 강제변환돼
-  // "실현손익 +데이터 부족원(정본 원장)" 같은 말이 안 되는 텍스트가 LLM에 그대로
-  // 주입될 뻔했다(프롬프트가 "정본 원장 표시가 있으면 그대로 인용해라"라고 시키므로
-  // 그대로 리포트에 나갈 수 있었음). profit이 실제로 유한수일 때만 매칭 성공으로 친다.
-  const ledgerHit = profitByKey?.get(profitKey(date, account, name, qty))
-    ?? profitByKeyNoAccount?.get(`${date}|${name}|${qty}`);
-  if (ledgerHit && Number.isFinite(ledgerHit.profit)) {
-    const pct = Number.isFinite(ledgerHit.buyPrice) && ledgerHit.buyPrice > 0
-      ? round1((ledgerHit.sellPrice - ledgerHit.buyPrice) / ledgerHit.buyPrice * 100) : null;
-    return { ...base, realizedPct: pct, realizedWon: Math.round(ledgerHit.profit), partialHistory: false, ledgerMatched: true };
-  }
-  const { realizedPct, partialHistory } = parseSell(r, buysAll);
-  return { ...base, realizedPct, realizedWon: null, partialHistory, ledgerMatched: false };
+  const sell = parseSell(r, buysAll, profitLookup);
+  return { ...base, realizedPct: sell.realizedPct, realizedWon: sell.realizedWon, partialHistory: sell.partialHistory, ledgerMatched: sell.ledgerMatched };
 }
 // 배당금 스키마: A날짜0 B금액1 C종목명2
 function parseDividend(r) {
@@ -104,7 +113,13 @@ export function buildReportFacts(input) {
   }));
 
   // ── 자산군 비중(평가액 기준) ─────────────────────────
-  const totalEval = hList.reduce((s, h) => s + (h.evalValue || 0), 0) || 1;
+  // ⚠️ 코드리뷰 지적(2026-08-30) — rawTotalEval에 `|| 1`을 씌운 값을 그대로
+  // facts.totalEval로 노출하고 있었다. 그 `|| 1`은 아래 weightPct 나눗셈(0으로 나누기
+  // 방지)에만 필요한데, 보유가 전부 evalValue=0(null 아님)인 극단 케이스에서
+  // "총 평가액: 1원"이라는 틀린 사실이 그대로 리포트에 노출될 뻔했다. 나눗셈용
+  // 가드와 실제 노출값을 분리한다.
+  const rawTotalEval = hList.reduce((s, h) => s + (h.evalValue || 0), 0);
+  const totalEval = rawTotalEval || 1; // weightPct 분모 전용 — facts.totalEval엔 쓰지 않음
   const byType = {};
   for (const h of hList) byType[h.type || '기타'] = (byType[h.type || '기타'] || 0) + (h.evalValue || 0);
   const assetClasses = Object.entries(byType)
@@ -117,48 +132,29 @@ export function buildReportFacts(input) {
   for (const h of holdings) {
     const acct = String(h.account ?? '').trim();
     if (!acct) continue;
-    // allCash: 코드리뷰 지적(2026-08-30) — "이 계좌는 전액 현금이라 현금 합계에 이미
-    // 포함됨" 노트를 문장으로 단정하지 말고 실제로 검증하라는 지적. 계좌 안의 보유가
-    // 전부 assetClass "현금"일 때만 true로 남는다(현금 아닌 보유가 하나라도 섞이면
-    // 그 즉시 false로 굳어짐 — 나중에 그 계좌에 다른 자산이 들어와도 이 판정이 자동
-    // 갱신되게).
-    byAcct[acct] = byAcct[acct] || { acct, invest: 0, evalValue: 0, allCash: true };
+    byAcct[acct] = byAcct[acct] || { acct, invest: 0, evalValue: 0 };
     byAcct[acct].invest += Number(h.invest) || 0;
     if (Number.isFinite(h.evalAmount)) byAcct[acct].evalValue += h.evalAmount;
-    if (h.assetClass !== '현금') byAcct[acct].allCash = false;
   }
   const accounts = Object.values(byAcct).map((a) => ({ ...a, evalValue: Math.round(a.evalValue) }));
 
   // ── 이번 주 체결·배당 (weekStart 이상) ────────────────
   const inWeek = (d) => weekStart ? (d && d >= weekStart) : true;
   const buysAll = collectBuys(tradeRows);
-  // ⚠️ 코드리뷰 지적(2026-08-30) — account가 정확일치 키에 필수라 v1 이관 레거시
-  // Profits 레코드(account: null, 실측 37건 중 23건)가 전부 조용히 버려지고 있었다
-  // (feedback-no-silent-fallback 원칙 위반 — 가용성보다 출처 추적성이 우선이라지만
-  // "매칭 안 됨"과 "데이터 자체가 없음"은 다른 사실이라 최소한 매칭은 시도해야 한다).
-  // account 있는 레코드는 기존처럼 4필드 정확일치(우선), account 없는 레코드만 3필드
-  // (date|name|qty)로 별도 보조 조회 — 완전정본(계좌까지 일치)이 항상 우선이고, 보조
-  // 조회는 그게 없을 때만 쓰인다.
-  const profitByKey = new Map();
-  const profitByKeyNoAccount = new Map();
-  for (const p of profitRows) {
-    if (!p.date || !p.stockName || p.quantity == null) continue;
-    if (p.account) profitByKey.set(profitKey(String(p.date), String(p.account), String(p.stockName), String(p.quantity)), p);
-    else profitByKeyNoAccount.set(`${p.date}|${p.stockName}|${p.quantity}`, p);
-  }
-  const weekTrades = tradeRows.map(r => parseTrade(r, buysAll, profitByKey, profitByKeyNoAccount)).filter(t => t.name && inWeek(t.date));
+  const profitLookup = buildProfitLookup(profitRows);
+  const weekTrades = tradeRows.map(r => parseTrade(r, buysAll, profitLookup)).filter(t => t.name && inWeek(t.date));
   const weekDividends = dividendRows.map(parseDividend).filter(d => d.name && inWeek(d.date));
 
   const facts = {
-    asof, weekStart, totalEval: hList.some(h => h.evalValue != null) ? totalEval : null,
+    asof, weekStart, totalEval: hList.some(h => h.evalValue != null) ? rawTotalEval : null,
     macro, holdings: hList, assetClasses, accounts, weekTrades, weekDividends, prevReport,
   };
 
-  return { facts, factsText: renderFactsText(facts) };
+  return { facts, factsText: renderFactsText(facts, holdings) };
 }
 
 // LLM 프롬프트 주입용 — facts를 압축 텍스트로. 모든 수치는 여기 값만 인용하도록 강제.
-function renderFactsText(f) {
+function renderFactsText(f, holdings = []) {
   const L = [];
   L.push(`■ 발행일 ${f.asof} · 주간 구간 ${f.weekStart}~${f.asof}`);
   if (f.prevReport) L.push(`■ 직전 리포트(${f.prevReport.date}) 요약: ${f.prevReport.summary}`);
@@ -183,25 +179,68 @@ function renderFactsText(f) {
 
   L.push('\n■ 계좌별 합계');
   for (const a of f.accounts) L.push(`  - ${a.acct}: 원금 ${won(a.invest)}원 · 평가액 ${won(a.evalValue)}원`);
-  // ⚠️ 전액 현금 계좌(예: CMA)는 위 "자산군 비중"의 현금 항목에 이미 포함돼 있다 —
-  // 둘을 따로 더하면 이중계산이다(2026-08-30 오너 신고로 발견: 리포트가 "CMA
-  // (21,054,004원) + 현금(30,132,560원) 실탄 충분"이라고 둘을 더해 써서, 실제
-  // 30,132,560원인 총 실탄을 51,186,564원으로 부풀려 보고한 사고). 코드리뷰 지적으로
-  // "CMA는 전액 현금이다"를 문장으로 단정하지 않고 실제 보유 구성에서 검증
-  // (allCash, 위 계좌별 합계 계산부 참고) — 'CMA'라는 계좌명 하드코딩도 제거해
-  // 앞으로 다른 계좌가 전액현금이 돼도 동일하게 잡힌다.
-  for (const a of f.accounts) {
-    if (a.allCash && a.evalValue > 0) L.push(`  ⚠️ ${a.acct}(${won(a.evalValue)}원)는 전액 현금이라 위 "자산군 비중"의 현금 합계 안에 이미 포함됨 — 실탄 계산 시 현금 합계에 ${a.acct}를 별도로 또 더하지 말 것.`);
+
+  // ⚠️ 계좌별 현금 가용성(2026-08-30 신설, 오너 지적으로 발견) — 원래 리포트가 "CMA
+  // (21,054,004원) + 현금(30,132,560원) 실탄 충분"이라고 서술해, CMA가 이미 "현금"
+  // 자산군 합계의 부분집합인데 별도로 더해 실탄을 51,186,564원으로 부풀렸다. 원인을
+  // 더 파보니 문제는 CMA 하나가 아니었다 — ARCHITECTURE-V2.md "계좌를 실제로 어떻게
+  // 옮기나" 절(2026-08-01/04 확정)이 이미 "연금저축·IRP·ISA는 세제혜택 계좌라 중도
+  // 인출 시 페널티가 붙어 계좌 밖으로 현금을 뺄 수 없다 — 계좌 간 조정은 실제 이체가
+  // 아니라 각 계좌가 자기 자금으로 내부에서만" 원칙을 명시해뒀다. 즉 "현금 합계 하나 =
+  // 실탄"이라는 틀 자체가 틀렸다 — 그 매수를 할 계좌 자신의 현금만 실탄이다.
+  //
+  // "그 계좌의 현금이 뭔지"는 findCashBalance(cash-ledger.mjs, new-cash-allocation.mjs와
+  // 공유)로만 조회한다 — assetClass 기반 자체 합산을 쓰지 않는다(코드리뷰 지적: 그러면
+  // "같은 개념을 두 번 정의"가 재발함). "자유 재투자 가능" 합산도 resolveDesignatedCashBalance
+  // (신규현금배분 잡이 실제로 쓰는 정의) 그대로 재사용.
+  //
+  // ⚠️ 계좌 목록을 닫힌 집합으로 하드코딩하지 않는다(코드리뷰 지적) — holdings에 실제
+  // 등장하는 계좌를 전부 훑어 분류하고, 위탁·금현물·CMA·세제혜택 계좌 어디에도 안 속하는
+  // 새 계좌(예: 향후 퀀트 KIS 계좌)가 생기면 "분류 미정"으로 명시해 조용히 사라지지
+  // 않게 한다.
+  const acctNames = [...new Set(holdings.map((h) => String(h.account ?? '').trim()).filter(Boolean))];
+  // findCashBalance는 그 계좌에 예수금 레코드가 아예 없으면 null을 준다(0으로 추정
+  // 안 함, cash-ledger.mjs 참고) — 여기서 실제로 보유가 있는 계좌인데 예수금만 없는
+  // 경우(null)와 예수금이 실제로 0원인 경우를 절대 같은 값으로 합치지 않는다. 하나로
+  // 합치면(예전엔 `cashByAcct[acct] ?? 0`) "위탁 예수금 데이터가 아직 없음"이 "위탁에
+  // 쓸 돈이 0원"이라는 확정적 거짓 사실로 리포트에 그대로 나갈 뻔했다(코드리뷰 지적,
+  // 2026-08-30 — LLM 프롬프트에 들어가는 텍스트라 이 차이가 실제 판단을 오도한다).
+  const cashByAcct = Object.fromEntries(acctNames.map((acct) => [acct, findCashBalance(holdings, acct)]));
+  const [wtCash, goldCash] = DESIGNATED_CASH_ACCOUNTS.map((acct) => cashByAcct[acct] ?? null);
+  const designatedCash = resolveDesignatedCashBalance({ wtCash: wtCash ?? 0, goldCash: goldCash ?? 0 });
+  const designatedUnknown = DESIGNATED_CASH_ACCOUNTS.filter((acct) => cashByAcct[acct] == null);
+  const designatedNote = designatedUnknown.length
+    ? ` (⚠️ ${designatedUnknown.join('·')} 예수금 데이터 없음 — 없는 부분은 0으로 간주해 계산됨, 실제보다 적을 수 있음)`
+    : '';
+  L.push('\n■ 계좌별 현금 가용성 (계좌 간 이동 불가 — 세제혜택 계좌 중도인출 페널티, 서로 못 더함)');
+  L.push(`  - 자유 재투자 가능(위탁+금현물, 신규현금배분 실제 배정 대상): ${won(designatedCash)}원${designatedNote}`);
+  // ⚠️ 계좌를 하나도 조용히 빠뜨리지 않는다(코드리뷰 지적) — 예전엔 `!(cash > 0)`이면
+  // continue해서, 예수금 레코드가 아예 없는 계좌(퀀트KIS 등 신규 계좌)와 실제로 0원인
+  // 계좌가 둘 다 리스트에서 사라졌다. 이제 지정계좌(위탁·금현물, 위에서 이미 별도
+  // 서술)를 뺀 모든 계좌를 반드시 한 줄씩 남기고, null(데이터 없음)과 0(확인된 0원)을
+  // 명확히 구분해 서술한다.
+  for (const [acct, cash] of Object.entries(cashByAcct)) {
+    if (KNOWN_DESIGNATED_ACCOUNTS.has(acct)) continue;
+    if (cash == null) { L.push(`  - ${acct}: 데이터 부족(예수금 레코드 없음 — 0으로 추정 안 함)`); continue; }
+    if (acct === 'CMA') L.push(`  - CMA: ${won(cash)}원 (위탁과 별도 계좌 — 세제혜택은 없어 자유롭게 옮길 수 있지만 자동배분 대상은 아님, 오너 재량)`);
+    else if (LOCKED_TAX_ADVANTAGED_ACCOUNTS.has(acct)) {
+      const elig = CASH_ELIGIBLE_ACCOUNTS.has(acct) ? ' · 신규현금배분 자동 배정 대상' : '';
+      L.push(`  - ${acct}: ${won(cash)}원 (세제혜택 계좌 — 이 계좌 안에서만 재투자 가능, 다른 계좌로 못 옮김${elig})`);
+    } else L.push(`  - ${acct}: ${won(cash)}원 (분류 미정 계좌 — 다른 계좌와 합산 가능 여부 확인 안 됨, 이 계좌 단독으로만 언급할 것)`);
   }
+  L.push(`  ⚠️ 위 항목들을 서로 더해 "총 실탄"이라고 쓰지 마라 — 계좌마다 각자의 현금만 그 계좌의 매수에 쓸 수 있다. "자산군 비중"의 현금 합계(${won(f.assetClasses.find((a) => a.type === '현금')?.evalValue ?? 0)}원)는 전체 현황 참고용일 뿐 실탄이 아니다.`);
 
   L.push('\n■ 이번 주 체결');
   if (f.weekTrades.length) for (const t of f.weekTrades)
     L.push(`  - ${t.date} ${t.side} ${t.name} ${t.qty}주 @${t.price} (${t.account})`
       + (t.side === '매도'
-        ? t.ledgerMatched
+        ? (t.ledgerMatched && Number.isFinite(t.realizedWon))
           // Facts/Ledger/Profits 정본 매칭(2026-08-30 신설) — 대시보드 "수익금" 탭과
           // 같은 원장, 정확한 원화 실현손익. 재구성(추정)이 아니라 기록된 사실이라
-          // "정본" 표기로 프롬프트에서도 구분되게 한다.
+          // "정본" 표기로 프롬프트에서도 구분되게 한다. Number.isFinite 가드는
+          // ledgerMatched=true가 항상 realizedWon 유한수를 함의한다는 암묵 전제를
+          // 명시화한 방어(2026-08-31 코드리뷰 지적 — behavior-signals.mjs의 동일
+          // 렌더 블록과 대칭 맞춤).
           ? ` · 실현손익 ${t.realizedWon >= 0 ? '+' : ''}${won(t.realizedWon)}원(${t.realizedPct != null ? `${t.realizedPct >= 0 ? '+' : ''}${t.realizedPct}%, ` : ''}정본 원장)`
           : ` · 실현 ${t.realizedPct != null ? (t.realizedPct >= 0 ? '+' : '') + t.realizedPct + '%' : '매입평균 불명'}`
             + (t.partialHistory ? ' (매입이력 일부만 추적됨)' : '')

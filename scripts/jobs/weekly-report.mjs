@@ -223,8 +223,10 @@ ${factsText}
 ## [자산현황]
 - 총 평가액·총손익(원금 대비) + 계좌별 표 + 자산군 비중 표. 표는 간결히, 종목 전수 나열 금지.
 - **내 판단:** 이번 주 자산 상태를 한두 줄로 평가(Frank 목표 대비 어디인지).
-- **현금 여력을 언급할 땐 "자산군 비중"의 현금 합계 하나만 써라.** CMA는 그 안에 이미
-  포함된 계좌다(facts의 ⚠️ 표시 참고) — "CMA + 현금"처럼 둘을 따로 더하지 마라.
+- **현금 총액은 "자산군 비중"의 현금 합계 하나로 보여주되, "실탄"·"매수 여력"이라고
+  부르지 마라.** 계좌 간 현금은 자유롭게 못 옮긴다(facts의 "계좌별 현금 가용성" 절
+  참고 — 연금저축·IRP·ISA는 세제혜택 계좌라 계좌 밖으로 못 뺀다). 실탄은 [행동] 절에서
+  계좌별로 따로 말해라.
 
 ## [시장환경] 이번 주 시장 환경 (내 포트폴리오 관점)
 - 핵심 이슈 1~2개 — 각 이슈를 "내 어느 자산/계좌에 어떻게"로 연결(일반론 금지).
@@ -239,8 +241,11 @@ ${factsText}
 
 ## [행동] 다음 주 행동 (Frank 맞춤 처방)
 - **[즉시]**: 근거 = 밸류·현금 여력·**성향 적합성**. 없으면 "현 포지션 유지" + 이유.
-- **[조건부]**: 가격/이벤트 트리거별 액션. "실탄"·"매수 여력"을 말할 땐 위 [자산현황]과
-  똑같이 현금 합계 하나만 써라 — CMA를 또 더해 실탄을 부풀리지 마라.
+- **[조건부]**: 가격/이벤트 트리거별 액션. "실탄"·"매수 여력"은 반드시 **그 매수를 할
+  계좌 자신의 현금**만 써라(facts의 "계좌별 현금 가용성" 절 참고) — 위탁에서 살 계획
+  이면 "자유 재투자 가능(위탁+금현물)" 금액만, 연금저축이면 연금저축 현금만. 서로
+  다른 계좌 현금을 더해서 "실탄 충분"이라고 쓰지 마라 — 세제혜택 계좌는 밖으로 못
+  나온다.
 - **[일정]**: 실적·FOMC·지표(WebSearch 가능).
 - **[유지·관망]**: 손대지 않을 자산군 + 이유 한 줄.
 
@@ -350,7 +355,11 @@ async function main() {
 
   // ③ facts 조립 + 행동 신호(체결만 — MVP 범위, 노트·리스크·저널 신호는 아직 없음)
   const { facts, factsText } = buildReportFacts({ asof, weekStart, holdings, macro, tradeRows, dividendRows, profitRows, prevReport });
-  const { signalsText } = buildBehaviorSignals({ asof, weekStart, tradeRows, noteRows: [], journalRows: [], riskRows: [] });
+  // profitRows(2026-08-30 신설) — report-facts.mjs와 같은 이유로 여기도 필요하다.
+  // 이 함수의 익절/손절 판정·평균수익률이 "성향 학습"(⑧단계, buildObservationPrompt)의
+  // 입력이 되므로, 매입평균 재구성이 실패하는 이관 이전 포지션은 여기서도 틀린 값을
+  // 낼 수 있었다(오너가 "그 리포트 하나만 고치지 말고 전체를 보라"고 지적해서 발견).
+  const { signalsText } = buildBehaviorSignals({ asof, weekStart, tradeRows, noteRows: [], journalRows: [], riskRows: [], profitRows });
   const confirmedPrefsText = renderPrefRows(prefRecords, { confirmedOnly: true });
   const priorPrefsText = renderPrefRows(prefRecords);
 

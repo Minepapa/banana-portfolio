@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeCashDelta, settleCash, resolveCashAnchor, resolveDesignatedCashBalance } from './cash-ledger.mjs';
+import { computeCashDelta, settleCash, resolveCashAnchor, resolveDesignatedCashBalance, findCashBalance } from './cash-ledger.mjs';
 
 test('[막아야 함/v1 버그 재현 방지] computeCashDelta: 기준점과 같은 날 오후에 생긴 거래도 정밀 타임스탬프로 정확히 포함', () => {
   // v1 버그 재현: 기준점(NH 알림)이 "2026-08-04 09:00:00"에 왔고, 같은 날 오후
@@ -86,4 +86,25 @@ test('resolveDesignatedCashBalance: 위탁+금현물 합산(오너 확정 — �
 test('resolveDesignatedCashBalance: null/undefined 안전(터지지 않음)', () => {
   assert.equal(resolveDesignatedCashBalance({ wtCash: null, goldCash: undefined }), 0);
   assert.equal(resolveDesignatedCashBalance({}), 0);
+});
+
+// findCashBalance(2026-08-30 이전 — new-cash-allocation.mjs에 있던 것을 여기로 옮김,
+// 코드리뷰 지적: report-facts.mjs가 "그 계좌 현금이 뭔지"를 독립적으로 재구현하려다
+// 이 정의와 갈라질 뻔했다 — 이제 이 함수 하나만 모든 소비자가 공유한다).
+
+test('findCashBalance: 예수금 보유(isCashLike, name="예수금")의 evalAmount를 그대로 반환', () => {
+  const holdings = [
+    { account: '위탁', name: '예수금', isCashLike: true, evalAmount: 1164516 },
+    { account: '위탁', name: 'SK하이닉스', assetClass: '국내주식', evalAmount: 17200000 },
+  ];
+  assert.equal(findCashBalance(holdings, '위탁'), 1164516);
+});
+
+test('findCashBalance: 그 계좌 예수금 보유가 없으면 null(0으로 추정 안 함)', () => {
+  assert.equal(findCashBalance([{ account: 'ISA', name: '예수금', isCashLike: true, evalAmount: 1000 }], '위탁'), null);
+});
+
+test('findCashBalance: 이름이 "예수금"이 아니면(예: 외화RP) isCashLike=true여도 안 잡힘 — 정확일치만', () => {
+  const holdings = [{ account: '위탁', name: '외화 RP', isCashLike: true, assetClass: '달러', evalAmount: 892846 }];
+  assert.equal(findCashBalance(holdings, '위탁'), null);
 });

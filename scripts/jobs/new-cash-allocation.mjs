@@ -61,7 +61,7 @@ import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
-import { NEW_CASH_THRESHOLD_WON, CASH_ELIGIBLE_ACCOUNTS, resolveDesignatedCashBalance } from '../lib/cash-ledger.mjs';
+import { NEW_CASH_THRESHOLD_WON, CASH_ELIGIBLE_ACCOUNTS, resolveDesignatedCashBalance, findCashBalance } from '../lib/cash-ledger.mjs';
 import { rankEligibleGaps, findExistingInstruments, ACCOUNT_ELIGIBLE_ASSET_CLASSES } from '../lib/cash-allocation-candidates.mjs';
 import { computeRebalanceGaps } from '../lib/rebalance-gap.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
@@ -85,13 +85,12 @@ function readMdDir(dir) {
     .map((f) => ({ file: f, filepath: join(dir, f), ...parseFrontmatter(readFileSync(join(dir, f), 'utf8')) }));
 }
 
-// State/Holdings에서 그 계좌의 예수금 보유(isCashLike, name="예수금")를 찾는다 —
-// buildCashHoldingRecord가 쓰는 관례 그대로(holdings-vault-writer.mjs). 없으면(그
-// 계좌 예수금 계산이 아직 한 번도 안 됨 등) null — 0으로 추정하지 않는다.
-export function findCashBalance(holdings, account) {
-  const h = holdings.find((x) => x.account === account && x.name === '예수금' && x.isCashLike);
-  return h && Number.isFinite(h.evalAmount) ? h.evalAmount : null;
-}
+// findCashBalance는 2026-08-30에 cash-ledger.mjs로 이전(코드리뷰 지적 — report-
+// facts.mjs가 "그 계좌의 현금이 뭔지" 선택 규칙을 독립적으로 재구현하다 이 잡의
+// 실제 정의와 갈라질 뻔했다). 여기서는 위 import로 그대로 받아쓰고, 기존
+// import 경로(`from './new-cash-allocation.mjs'`)를 쓰던 테스트가 안 깨지게
+// re-export만 유지한다.
+export { findCashBalance };
 
 // Athena에게 줄 프롬프트 — 갭·후보(실존 보유)만 주고 "어디에 얼마씩"은 판단시킨다.
 // 순수 함수(테스트 가능) — candidatesByClass: { [assetClass]: [{name,ticker,curPrice}] }.

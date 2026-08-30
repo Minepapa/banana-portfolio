@@ -78,3 +78,43 @@ export const CASH_ELIGIBLE_ACCOUNTS = new Set(['위탁', '연금저축']);
 export function resolveDesignatedCashBalance({ wtCash, goldCash }) {
   return (wtCash ?? 0) + (goldCash ?? 0);
 }
+
+// resolveDesignatedCashBalance가 받는 파라미터 이름(wtCash·goldCash)이 "어느 계좌가
+// 자유 재투자 대상인지"를 사실상 결정한다 — report-facts.mjs가 이 판단을 별도로
+// KNOWN_DESIGNATED_ACCOUNTS Set으로 다시 하드코딩하면, 여기 파라미터가 3번째 계좌로
+// 늘어나도 그쪽 Set은 조용히 안 늘어난다(코드리뷰 지적, 2026-08-30). 계좌명 목록
+// 자체를 여기서 내보내 소비자가 이 배열 하나만 따라가게 한다.
+//
+// ⚠️ 후속 코드리뷰 지적(2026-08-31) — 위 문단이 사실과 다르다. resolveDesignatedCashBalance는
+// 여전히 `{wtCash, goldCash}` 2필드 고정 시그니처이고, report-facts.mjs도 이 배열을
+// `const [wtCash, goldCash] = DESIGNATED_CASH_ACCOUNTS.map(...)`로 앞 2개만 취해 쓴다 —
+// 이 배열에 3번째 계좌를 추가해도 그 계좌는 두 소비자 모두에서 조용히 버려진다("배열
+// 하나만 따라가게 한다"는 주장이 거짓이 되는 지점). 완전한 일반화(N개 계좌 배열을
+// 받는 시그니처로 교체) 대신, 길이가 어긋나면 즉시 실패하게 해서 이 사실이 다시
+// 잊혀지지 않게 한다 — 배열을 확장하려면 resolveDesignatedCashBalance와
+// report-facts.mjs 호출부를 함께 고쳐야 한다.
+export const DESIGNATED_CASH_ACCOUNTS = ['위탁', '금현물'];
+if (DESIGNATED_CASH_ACCOUNTS.length !== 2) {
+  throw new Error('DESIGNATED_CASH_ACCOUNTS 길이가 2가 아님 — resolveDesignatedCashBalance({wtCash, goldCash})와 report-facts.mjs의 [wtCash, goldCash] 구조분해를 함께 일반화한 뒤에만 배열을 확장할 것');
+}
+
+// 2026-08-30 신설 — new-cash-allocation.mjs에서 여기로 이전(코드리뷰 HIGH 지적).
+// report-facts.mjs(주간 리포트)가 "위탁+금현물 자유 재투자 가능 현금"을 보여줄 때
+// resolveDesignatedCashBalance는 재사용했지만, 그 입력(wtCash·goldCash)을 직접
+// 계산하는 "그 계좌의 현금이 정확히 무엇인가"라는 선택 규칙은 따로 재구현했다
+// (assetClass==='현금'인 보유 전부를 합산 — new-cash-allocation.mjs가 실제로 쓰는
+// "이름이 정확히 '예수금'인 보유 하나"라는 더 엄격한 규칙과 다름). 지금은 두 계좌
+// 다 예수금 홀딩이 하나뿐이라 우연히 같은 값이 나오지만, "달러" 자산군의 외화RP처럼
+// isCashLike이지만 assetClass가 "현금"이 아닌 보유가 계좌에 추가되거나, 같은 계좌에
+// "현금" assetClass 보유가 두 개 이상 생기면(신규 MMF 등) 조용히 갈라진다 — 정확히
+// 이 리팩터가 막으려던 "같은 개념을 두 번 정의" 패턴의 재발이라 코드리뷰에서 지적됨.
+// 이제 findCashBalance 하나만 두 소비자(new-cash-allocation.mjs·report-facts.mjs)가
+// 공유한다 — "그 계좌의 현금 잔고"라는 선택 규칙 자체가 한 곳에만 존재.
+//
+// State/Holdings에서 그 계좌의 예수금 보유(isCashLike, name="예수금")를 찾는다 —
+// buildCashHoldingRecord가 쓰는 관례 그대로(holdings-vault-writer.mjs). 없으면(그
+// 계좌 예수금 계산이 아직 한 번도 안 됨 등) null — 0으로 추정하지 않는다.
+export function findCashBalance(holdings, account) {
+  const h = holdings.find((x) => x.account === account && x.name === '예수금' && x.isCashLike);
+  return h && Number.isFinite(h.evalAmount) ? h.evalAmount : null;
+}

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildBehaviorSignals, parseSell, collectBuys } from './behavior-signals.mjs';
+import { buildProfitLookup } from './realized-profit-ledger.mjs';
 
 // 체결내역: A날짜0 B구분1 C계좌2 D코드3 E자산군4 F종목명5 G체결가6 H수량7 I금액8 J현재가9 K손익10 L평가11 M수익률12
 const baseInput = () => ({
@@ -172,4 +173,55 @@ test('buildBehaviorSignals: 빈 입력도 안전', () => {
   const { signals } = buildBehaviorSignals({ asof: '2026-06-14', weekStart: '2026-06-08' });
   assert.equal(signals.week.buys.length, 0);
   assert.equal(signals.lessons.length, 0);
+});
+
+// ── Facts/Ledger/Profits 정본 조회(2026-08-30 신설, 오너 지적 재현) ────────────────
+// 실사고: report-facts.mjs("체결 서술" 섹션)만 먼저 고쳐졌고, 이 파일("성향 분석"
+// 섹션 — 익절/손절 판정·평균수익률이 여기서 나옴)은 매입평균 재구성만 계속 써서
+// PLUS 고배당주 같은 이관 이전 포지션(매수 이력 0건)의 매도가 여전히 "매입평균 불명"
+// 으로 분류에서 누락되고 있었다.
+
+test('parseSell: profitLookup에 매칭되면 매입이력 없이도 실현손익을 정확히 반환(매수 이력 0건 재현)', () => {
+  const lookup = buildProfitLookup([
+    { date: '2026-08-27 10:06:45', stockName: 'PLUS 고배당주', quantity: 30, buyPrice: 17766, sellPrice: 25500, profit: 232020, account: '연금저축' },
+  ]);
+  const sellRow = ['2026-08-27 10:06:45', '매도', '연금저축', '', '배당주', 'PLUS 고배당주', '25500', '30', '765000', '', '', '', ''];
+  const result = parseSell(sellRow, [], lookup); // buysAll=[] — 매수 이력 0건인데도
+  assert.equal(result.ledgerMatched, true);
+  assert.equal(result.realizedWon, 232020);
+  assert.equal(result.realizedPct, 43.5);
+  assert.equal(result.partialHistory, false);
+});
+
+test('parseSell: profitLookup 안 넘기면(undefined) 기존 재구성 동작 그대로(하위호환, report-facts.mjs 폴백 호출과 동일 사용법)', () => {
+  const input = baseInput();
+  const buysAll = collectBuys(input.tradeRows);
+  const sellRow = input.tradeRows.find(r => r[5] === 'SK하이닉스' && r[1] === '매도');
+  const result = parseSell(sellRow, buysAll); // 3번째 인자 없음
+  assert.equal(result.ledgerMatched, false);
+  assert.equal(result.realizedWon, null);
+  assert.equal(result.realizedPct, 14); // 기존과 동일(228만 vs 200만)
+});
+
+test('buildBehaviorSignals: profitRows를 넘기면 매수이력 0건 매도도 익절/손절 분류에 정상 포함(수정 전엔 realizedPct null이라 분류에서 누락됐다)', () => {
+  const input = {
+    asof: '2026-08-30', weekStart: '2026-08-24',
+    tradeRows: [
+      ['2026-08-27 10:06:45', '매도', '연금저축', '', '배당주', 'PLUS 고배당주', '25500', '30', '765000', '', '', '', ''],
+    ],
+    noteRows: [], journalRows: [], riskRows: [],
+    profitRows: [
+      { date: '2026-08-27 10:06:45', stockName: 'PLUS 고배당주', quantity: 30, buyPrice: 17766, sellPrice: 25500, profit: 232020, account: '연금저축' },
+    ],
+  };
+  const { signals, signalsText } = buildBehaviorSignals(input);
+  assert.equal(signals.takeProfit.count, 1); // 수정 전엔 realizedPct null이라 tp/sl 둘 다 0건이었음
+  assert.equal(signals.takeProfit.avgPct, 43.5);
+  assert.match(signalsText, /PLUS 고배당주.*실현손익 \+232,020원.*정본 원장/);
+});
+
+test('buildBehaviorSignals: profitRows 없이 호출해도(기존 호출부) 회귀 없음', () => {
+  const { signals } = buildBehaviorSignals(baseInput());
+  assert.equal(signals.week.sells.length, 2);
+  assert.equal(signals.takeProfit.count + signals.stopLoss.count, 2);
 });
