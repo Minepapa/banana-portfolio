@@ -45,7 +45,7 @@ import { summarizeIsaHoldings } from '../lib/isa-exposure.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -83,8 +83,23 @@ export function shouldSend({ now, maturityDate, alreadyTriggered, force = false 
 // reminder.mjs의 kstDateStr 패턴과 동일(en-CA 로케일이 YYYY-MM-DD로 포맷).
 const kstDateStr = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(d);
 
+// 순수함수 — Node가 계산한 ISA 보유내역을 텔레그램용 개조식 불릿으로. 텔레그램 메시지
+// 표준 구조(2026-08-17 오너 확정, formatFactsMessage 헤더 주석 참고)를 이 잡에도 적용
+// (2026-08-30 — themis-risk-review.mjs에서 먼저 발견·수정된 결함과 동일 패턴이라 신설
+// 당일이지만 같이 적용, 뒤늦게 같은 문제로 다시 지적받지 않기 위해).
+export function buildIsaMaturityFacts({ isaSummary, maturityDate }) {
+  const itemLines = isaSummary.items.map((it) => `${it.name}(${it.assetClass}) 평가액 ${Math.round(it.evalAmount).toLocaleString('ko-KR')}원, 비중 ${it.weightPct.toFixed(1)}%${it.profitPct != null ? `, 손익 ${it.profitPct.toFixed(1)}%` : ''}`);
+  return [
+    `만기일: ${kstDateStr(maturityDate)}`,
+    `ISA 총 평가액: ${Math.round(isaSummary.totalEval).toLocaleString('ko-KR')}원`,
+    ...(itemLines.length ? itemLines : ['보유 없음']),
+  ];
+}
+
 // 순수함수 — Athena에게 줄 프롬프트. ISA 보유내역(사실)만 주고 이전 여부·유의사항
 // 판단은 시킨다(다른 자산분배 잡과 동일 경계 — 무엇을 할지는 Node가 정하지 않음).
+// ⚠️ 만기일·보유내역은 이제 위 buildIsaMaturityFacts로 별도 불릿 처리돼 먼저 나가므로
+// (formatFactsMessage), LLM 출력은 숫자 재나열이 아니라 판단에 집중한다.
 export function buildIsaMaturityPrompt({ isaSummary, maturityDate }) {
   const maturityLabel = kstDateStr(maturityDate);
   const lines = isaSummary.items.length
@@ -92,6 +107,7 @@ export function buildIsaMaturityPrompt({ isaSummary, maturityDate }) {
     : '  (보유 없음)';
 
   return `[ISA 3년 만기 도달] ISA 계좌가 만기일(${maturityLabel})에 도달했다(재조회·추정 금지, 이 사실만 사용).
+만기일·보유내역은 텔레그램 메시지에 이미 불릿으로 따로 나간다 — 아래 출력에서 다시 나열하지 마라.
 
 [ISA 현재 보유내역 — 총 평가액 ${Math.round(isaSummary.totalEval).toLocaleString('ko-KR')}원]
 ${lines}
@@ -105,7 +121,8 @@ ${lines}
    직접 확인해야 한다는 점을 명시해라(이 시스템은 세무 계산기가 아니다).
 3. 이건 이 시스템이 대신 실행할 수 있는 주문이 아니라 오너가 증권사에서 직접 신청해야
    하는 계좌이전 절차임을 분명히 밝혀라.
-4. 형식: 설명 없이 4~7문장, 서술형. JSON·마크다운 없이 순수 텍스트만 출력.`;
+4. 형식: 결론 문장 하나 + 근거 3~6문장, 합쳐서 4~7문장. 문장 사이는 줄바꿈으로
+   분리해라 — 한 문단에 몰아쓰지 마라. JSON·마크다운 없이 순수 텍스트만 출력.`;
 }
 
 function readVaultDir(dir) {
@@ -149,6 +166,7 @@ async function main() {
   const holdings = readVaultDir(VAULT_PATHS.state.holdings);
   const isaSummary = summarizeIsaHoldings(holdings);
   const prompt = buildIsaMaturityPrompt({ isaSummary, maturityDate });
+  const facts = buildIsaMaturityFacts({ isaSummary, maturityDate });
 
   if (DRY_RUN) {
     console.log('(드라이런 — 텔레그램 발송·상태갱신 없음)\n');
@@ -167,7 +185,7 @@ async function main() {
   console.log(judgment);
 
   try {
-    await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '제안', body: judgment }));
+    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '제안', facts, interpretation: judgment }));
     // hasReachedMaturity를 여기서 다시 확인 — --force로 만기 전에 강제 발송한 경우까지
     // 마커를 영구 기록하면 진짜 만기(2028-04-06)가 와도 이 잡이 평생 스킵된다(코드리뷰
     // 지적). force 테스트는 위에서 이미 --dry-run과만 조합하도록 안내했지만, 혹시라도

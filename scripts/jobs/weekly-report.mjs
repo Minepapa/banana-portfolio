@@ -53,20 +53,12 @@ import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 // 로 이미 이 잡 전체가 Apollo 에이전트 정의를 쓰고 있는 것과 일관).
 const DEPARTMENT_LABEL = '비서실 Apollo';
 
-loadEnv(); // KRX_API_KEY(거시지표) — 다른 v2 잡과 동일 관례
-
 const PROFILE = new URL('../../profile/investor-profile.md', import.meta.url).pathname;
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
 const NO_PUSH = args.includes('--no-push');
 const FORCE = args.includes('--force');
-// 리포트 서사·성향 추출 모두 비서실(Apollo) 소관 — 에이전트 정의가 모델·원칙의 단일 진실 소스.
-const APOLLO_REPORT = loadAgent('apollo', { fallbackModel: 'opus' });
-const APOLLO_PREFS = loadAgent('apollo', { fallbackModel: 'sonnet' });
-if (APOLLO_REPORT.warning) collectWarning(APOLLO_REPORT.warning);
-const modelArg = args.find(a => a.startsWith('--model='));
-const MODEL = modelArg ? modelArg.split('=')[1] : APOLLO_REPORT.model;
 
 // asof 기준 직전 7일(월~일 주간)을 커버하는 시작일.
 function weekStartOf(asofYmd) {
@@ -114,13 +106,68 @@ function loadPrevReport(asof) {
   return { date: files[0].date, summary: parsed.summary || '' };
 }
 
-function extractSummary(md) {
-  const explicit = md.match(/^[>\s]*\*{0,2}\s*요약\s*[:：]\s*(.+)$/m);
-  if (explicit) return explicit[1].trim().slice(0, 200);
+// 공백 경계에서만 자른다(단어·숫자 중간 절단 방지 — 2026-08-30 오너 신고: 텔레그램
+// 요약이 "손실 약 -2,504,0"처럼 숫자 한가운데서 끊겨 발송됐다. 원인은 옛
+// extractSummary가 `.slice(0, 200)`로 하드 컷했던 것 — 마지막 공백까지만 남기고
+// "…"을 붙여 최소한 사람이 읽을 수 있는 경계에서 끊는다).
+export function safeTrim(text, maxLen) {
+  if (text.length <= maxLen) return text;
+  const cut = text.slice(0, maxLen);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trim()}…`;
+}
+
+// "## [한눈에] 이번 주 요약" 섹션의 불릿들을 배열로 그대로 가져온다 — 리포트 본문에
+// 이미 사람이 읽기 좋게 구조화돼 있는 걸 재사용(2026-08-30 수정). 예전엔 "> 요약:" 한
+// 줄만 정규식으로 찾고 실패하면 본문 전체를 공백으로 이어붙여 200자에서 하드컷했는데,
+// LLM이 "> 요약:" 리터럴 접두사를 항상 쓰는 게 아니라서 그 폴백이 매번 걸렸고, 그
+// 폴백 자체가 불릿 구조·문장 경계를 무시하고 숫자 한가운데를 잘라 텔레그램으로
+// 나갔다(오너 신고 실사고). 섹션 자체를 못 찾는 극단적 경우에만 안전한 폴백을 쓴다.
+// ⚠️ 코드리뷰 지적(2026-08-30) — 첫 버전은 헤더 뒤 공백·`*` 불릿·불릿 사이 빈 줄 같은
+// 사소한 포맷 이탈에도 조용히 폴백(뭉친 한 줄)으로 떨어졌다 — 매칭을 느슨하게 하고,
+// 폴백을 탄 경우 콘솔에 남겨 다음에 또 조용히 재발하지 않게 한다.
+export function extractSummaryBullets(md) {
+  // ⚠️ 여기서 lookahead에 bare `$`를 쓰면 안 된다 — /m 플래그에서 `$`는 "문자열 끝"이
+  // 아니라 "모든 줄 끝"에 매칭돼, 지연매칭(lazy)이 불릿 1개짜리 첫 줄 끝에서 바로
+  // 멈춰버린다(코드리뷰 통과 후 자체 재검증 중 발견한 회귀 — 처음 "포맷 이탈 완화"
+  // 시도가 오히려 정상 케이스를 3줄→1줄로 깨뜨렸었다). `\n##`·`\n---`를 lookahead가
+  // 아니라 실제 소비되는 종료 패턴으로 써서, 그 둘을 만나기 전까지는(중간 빈 줄이
+  // 있어도) 계속 확장하게 한다.
+  const section = md.match(/^##\s*\[한눈에\][^\n]*\n([\s\S]*?)\n(?:##\s|---)/m);
+  if (section) {
+    const bullets = section[1].split('\n').map((l) => l.trim()).filter((l) => /^[-*·]\s/.test(l));
+    if (bullets.length) return bullets;
+  }
+  console.warn('   ⚠️ extractSummaryBullets: "## [한눈에] 이번 주 요약" 섹션을 못 찾아 폴백(뭉친 한 줄)으로 넘어감 — 리포트 포맷이 바뀌었는지 확인할 것');
   const body = md.split('\n')
     .filter(l => !/^\s*#/.test(l) && !/^\s*>/.test(l) && !/^[\s\-=*_]*$/.test(l) && !/^\s*\|/.test(l))
     .join(' ').replace(/\s+/g, ' ').trim();
-  return body.slice(0, 200);
+  return [safeTrim(body, 200)];
+}
+
+// frontmatter·직전 리포트 컨텍스트용 — 반드시 한 줄이어야 한다(vault-frontmatter.mjs
+// yamlValue가 개행을 이스케이프하지 않아, 여러 줄을 그대로 넣으면 YAML이 깨지고
+// 2번째 줄부터는 parseFrontmatter가 통째로 잃어버린다 — 코드리뷰 HIGH 지적, 실제
+// 재현: 3불릿 중 1개만 남고 나머지 소실). 불릿을 " · "로 압축.
+export function extractSummary(md) {
+  return extractSummaryBullets(md).join(' · ');
+}
+
+// HTML 특수문자 이스케이프 — parse_mode:'HTML' 앞에 항상 먼저 해야 한다(코드리뷰
+// 지적 — "PER < 10 & 저평가" 같은 문장이 그대로 나가면 텔레그램이 "can't parse
+// entities"로 발송 자체를 거부한다, weekly-report.mjs는 발송 실패를 콘솔에만 남기고
+// 삼켜서 오너는 그 주 리포트가 아예 안 온 것도 몰랐을 것).
+function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// 마크다운 굵게(**text**) → 텔레그램 HTML(<b>text</b>) — sendTelegram이 parse_mode:'HTML'을
+// 쓰는데 리포트 본문은 마크다운이라, 변환 없이 그대로 보내면 별표(**)가 문자 그대로
+// 찍혀서 나간다(2026-08-30 오너 신고 스크린샷에서 확인 — "- **가장 큰 변화**:"가
+// 굵게 안 되고 별표 그대로 노출됨). escapeHtml을 먼저 해야 **변환으로 만든 <b> 태그
+// 자체가 다시 이스케이프되지 않는다(순서 중요).
+export function markdownBoldToHtml(text) {
+  return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 }
 
 function buildReportPrompt(factsText, asof, confirmedPrefsText) {
@@ -165,7 +212,8 @@ ${factsText}
 ━━━ 구조 (마크다운) ━━━
 # 주간 자산 종합 점검 — ${asof}
 
-> 요약: (3줄·200자 이내, 이 라인 형식 그대로 제목 바로 아래)
+> (제목 바로 아래, 1~2문장 인용구 형식의 도입부 — 전문 앞에서 바로 읽히는 훅. 텔레그램
+> 요약은 이 줄이 아니라 아래 "## [한눈에] 이번 주 요약" 3개 불릿에서 뽑힌다.)
 
 ## [한눈에] 이번 주 요약
 - **가장 큰 변화**: (한 줄)
@@ -258,6 +306,20 @@ async function main() {
   console.log('📰 주간 리포트 발행 v2 (Vault → claude -p 서술)');
   if (DRY_RUN) console.log('   (--dry-run: facts·프롬프트만 출력)');
 
+  // ⚠️ loadEnv·loadAgent는 여기(main 안)에서만 부른다(2026-08-30 코드리뷰 지적 —
+  // themis-risk-review.mjs 헤더 주석과 동일한 이유: 최상위에서 부르면 이 파일의
+  // 순수함수만 가져다 쓰려는 테스트가 import하는 순간 .env·apollo.md 파일 읽기와
+  // process.env 변경이 실행돼버린다. 이 파일은 실제로 그 버그가 있었다 — weekly-
+  // report.test.js를 처음 작성하며 재현(import만 해도 거시지표 네트워크 조회가
+  // 실행됨), import.meta.url 가드는 그때 같이 고쳤고 이 이동으로 마무리한다).
+  loadEnv(); // KRX_API_KEY(거시지표) — 다른 v2 잡과 동일 관례
+  // 리포트 서사·성향 추출 모두 비서실(Apollo) 소관 — 에이전트 정의가 모델·원칙의 단일 진실 소스.
+  const APOLLO_REPORT = loadAgent('apollo', { fallbackModel: 'opus' });
+  const APOLLO_PREFS = loadAgent('apollo', { fallbackModel: 'sonnet' });
+  if (APOLLO_REPORT.warning) collectWarning(APOLLO_REPORT.warning);
+  const modelArg = args.find(a => a.startsWith('--model='));
+  const MODEL = modelArg ? modelArg.split('=')[1] : APOLLO_REPORT.model;
+
   const asof = todayKST();
   const weekStart = weekStartOf(asof);
 
@@ -318,20 +380,22 @@ async function main() {
   const reportClaims = claimViolationsInDoc(md, /논리\s*훼손/, universe, []);
   if (reportClaims.length) collectWarning(`주간리포트 자동검증: "논리훼손" 언급 — 이번 버전엔 근거 소스가 없어 전부 미확인 주장: ${reportClaims.join(', ')}`);
 
-  // ⑥ Vault 저장
-  const summary = extractSummary(md);
+  // ⑥ Vault 저장 — frontmatter는 반드시 한 줄(위 extractSummary 주석 참고).
+  const summaryBullets = extractSummaryBullets(md);
+  const summary = summaryBullets.join(' · ');
   const headline = md.match(/^# (.+)$/m)?.[1] ?? `주간 자산 종합 점검 — ${asof}`;
   const record = buildFrontmatter({ type: 'weekly-report', date: asof, headline, summary }) + '\n' + md;
   writeAtomic(reportPath, record);
   console.log(`   💾 저장: Knowledge/Reports/${asof}.md`);
 
-  // ⑦ 텔레그램 요약 푸시
+  // ⑦ 텔레그램 요약 푸시 — 여긴 불릿 줄바꿈을 그대로 살린 버전 사용(frontmatter와 달리
+  // 텔레그램 메시지 body는 자유 문자열이라 개행이 안전하다).
   if (!NO_PUSH) {
     try {
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL,
         tag: '안내',
-        body: `<b>주간 리포트</b> · ${asof}\n\n${summary}\n\n<i>앱 리포트 탭에서 전문 확인</i>`,
+        body: `<b>주간 리포트</b> · ${asof}\n\n${markdownBoldToHtml(summaryBullets.join('\n'))}\n\n<i>앱 리포트 탭에서 전문 확인</i>`,
       }));
       console.log('   📲 텔레그램 요약 푸시');
     } catch (e) { console.error(`   ⚠️ 텔레그램 실패: ${e.message}`); }
@@ -370,8 +434,15 @@ async function main() {
   console.log('\n🏁 주간 리포트 발행 완료');
 }
 
-main().catch(async (e) => {
-  console.error('\n❌ 오류:', e.message);
-  await flushWarnings('weekly-report').catch(() => {});
-  process.exit(1);
-});
+// 2026-08-30 발견 — 이 잡은 다른 모든 launchd 잡과 달리 main()을 무조건 최상위에서
+// 호출하고 있었다(import.meta.url 가드 없음). 그 결과 이 파일을 순수함수 테스트
+// 목적으로 import만 해도 실제 거시지표 네트워크 조회·리포트 발행 파이프라인 전체가
+// 뒤따라 실행됐다 — weekly-report.test.js를 처음 작성하며 실제로 재현(거시지표 fetch가
+// 트리거됨). 다른 모든 잡(quarterly-allocation-review.mjs 등)과 동일한 가드로 통일.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(async (e) => {
+    console.error('\n❌ 오류:', e.message);
+    await flushWarnings('weekly-report').catch(() => {});
+    process.exit(1);
+  });
+}

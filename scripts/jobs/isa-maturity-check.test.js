@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeMaturityDate, hasReachedMaturity, shouldSend, buildIsaMaturityPrompt } from './isa-maturity-check.mjs';
+import { computeMaturityDate, hasReachedMaturity, shouldSend, buildIsaMaturityPrompt, buildIsaMaturityFacts } from './isa-maturity-check.mjs';
 
 const kstDateStr = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(d);
 
@@ -76,4 +76,26 @@ test('shouldSend: force면 만기 전·이미 발송됐어도 true(발송은 강
   const maturityDate = new Date('2028-04-06T00:00:00+09:00');
   const before = new Date('2028-04-05T00:00:00+09:00');
   assert.equal(shouldSend({ now: before, maturityDate, alreadyTriggered: true, force: true }), true);
+});
+
+// ── buildIsaMaturityFacts(2026-08-30 신설) — themis-risk-review.mjs·quarterly-
+// allocation-review.mjs와 동일한 결함(raw LLM 텍스트를 formatDepartmentMessage로
+// 그대로 보내 불릿 구조가 없던 문제) 수정. 신설 당일 발견돼 같이 적용.
+
+test('buildIsaMaturityFacts: 만기일·총평가액·보유종목이 각각 개별 불릿으로', () => {
+  const isaSummary = {
+    totalEval: 5_000_000,
+    items: [
+      { name: 'TIGER 리츠부동산인프라', assetClass: '리츠', evalAmount: 3_000_000, weightPct: 60, profitPct: 5.2 },
+    ],
+  };
+  const facts = buildIsaMaturityFacts({ isaSummary, maturityDate: new Date('2028-04-06T00:00:00+09:00') });
+  assert.equal(facts[0], '만기일: 2028-04-06');
+  assert.equal(facts[1], 'ISA 총 평가액: 5,000,000원');
+  assert.ok(facts[2].includes('TIGER 리츠부동산인프라'));
+});
+
+test('buildIsaMaturityFacts: 보유 없으면 "보유 없음" 불릿', () => {
+  const facts = buildIsaMaturityFacts({ isaSummary: { totalEval: 0, items: [] }, maturityDate: new Date('2028-04-06T00:00:00+09:00') });
+  assert.equal(facts.at(-1), '보유 없음');
 });

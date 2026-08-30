@@ -39,7 +39,7 @@ import { assembleMacro } from '../tools/risk-facts.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
@@ -84,12 +84,18 @@ function writeLastQuarter(quarter) {
   writeAtomic(STATE_FILE, buildFrontmatter({ type: 'quarterly-allocation-review-state', quarter, updatedAt: new Date().toISOString() }));
 }
 
+// 최근 1분기 생성분 필터 — buildRecentAllocationProposalsSummary(텍스트)와 main()의
+// 건수 집계가 같은 필터를 공유하게 한다(2026-08-30 코드리뷰 지적 — themis-risk-
+// review.mjs와 동일 결함: 필터를 두 군데 각자 인라인해두면 한쪽만 고쳤을 때 불릿
+// 건수와 본문 목록이 조용히 어긋난다).
+function filterRecentAllocationProposals(proposals, now) {
+  const cutoff = now.getTime() - LOOKBACK_MS;
+  return (proposals || []).filter((p) => p.track === '자산분배' && p.createdAt && new Date(p.createdAt).getTime() >= cutoff);
+}
+
 // 순수함수 — 최근 1분기 생성된 자산분배 트랙 제안만 텍스트로. 판단은 안 함(사실 나열만).
 export function buildRecentAllocationProposalsSummary(proposals, now = new Date()) {
-  const cutoff = now.getTime() - LOOKBACK_MS;
-  const recent = (proposals || []).filter(
-    (p) => p.track === '자산분배' && p.createdAt && new Date(p.createdAt).getTime() >= cutoff,
-  );
+  const recent = filterRecentAllocationProposals(proposals, now);
   if (!recent.length) return '(최근 1분기 생성된 자산분배 트랙 제안 없음)';
   return recent
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
@@ -97,11 +103,24 @@ export function buildRecentAllocationProposalsSummary(proposals, now = new Date(
     .join('\n');
 }
 
+// 순수함수 — Node가 계산한 사실(목표비중·최근 제안이력 건수)을 텔레그램용 개조식
+// 불릿으로. 텔레그램 메시지 표준 구조(2026-08-17 오너 확정, formatFactsMessage 헤더
+// 주석 참고)를 이 잡에도 적용 — themis-risk-review.mjs와 동일 패턴(2026-08-30, 오너
+// 지적으로 Themis에서 먼저 발견·수정 후 같은 결함이 있던 이 잡에도 동일 적용).
+export function buildQuarterlyReviewFacts({ targetAllocation, recentProposalsCount }) {
+  const targetLines = Object.entries(targetAllocation).map(([k, v]) => `${k}: ${v}%`);
+  return [...targetLines, `최근 1분기 생성된 자산분배 트랙 제안: ${recentProposalsCount}건`];
+}
+
 // 순수함수 — Athena에게 줄 프롬프트. 목표비중·최근 제안이력·거시신호 전부 주입된
 // 사실만 쓰게 강제(재조회·추정 금지), 판단(비중 자체가 적절한지)만 시킨다.
+// ⚠️ 목표비중·제안건수는 이제 위 buildQuarterlyReviewFacts로 별도 불릿 처리돼 먼저
+// 나가므로(formatFactsMessage), LLM 출력은 숫자 재나열이 아니라 판단에 집중한다.
 export function buildQuarterlyReviewPrompt({ targetAllocation, recentProposalsText, macro }) {
   const targetLines = Object.entries(targetAllocation).map(([k, v]) => `  ${k}: ${v}%`).join('\n');
   return `[분기별 목표비중 적정성 점검] 아래는 검증된 사실이다(재조회·추정 금지, 이 숫자만 사용).
+목표비중·최근 제안 건수는 텔레그램 메시지에 이미 불릿으로 따로 나간다 — 아래 출력에서
+다시 나열하지 마라.
 
 [현재 목표비중 — 위탁+연금저축 합산]
 ${targetLines}
@@ -121,7 +140,9 @@ ${macro}
    마라) — 이 잡은 목표비중을 직접 바꾸지 않는다.
 3. 특별한 문제가 없으면 "지금 비중이 여전히 적절하다"고 명확히 말해라 — 억지로 지적
    하지 마라.
-4. 형식: 설명 없이 3~6문장, 서술형. JSON·마크다운 없이 순수 텍스트만 출력.`;
+4. 형식: 결론 문장 하나 + 필요하면 근거 1~3문장, 합쳐서 2~4문장. 문장 사이는
+   줄바꿈으로 분리해라 — 한 문단에 몰아쓰지 마라. JSON·마크다운 없이 순수
+   텍스트만 출력.`;
 }
 
 async function main() {
@@ -140,6 +161,7 @@ async function main() {
 
   const proposals = readVaultDir(VAULT_PATHS.decisions.proposals);
   const recentProposalsText = buildRecentAllocationProposalsSummary(proposals, now);
+  const recentProposalsCount = filterRecentAllocationProposals(proposals, now).length;
 
   const macroData = await fetchMacroIndicators().catch((e) => {
     console.error(`⚠️ 거시지표 조회 실패: ${e.message}`);
@@ -148,6 +170,7 @@ async function main() {
   const macro = macroData ? assembleMacro(macroData) : '(거시지표 데이터 부족: 조회 실패)';
 
   const prompt = buildQuarterlyReviewPrompt({ targetAllocation: TARGET_ALLOCATION, recentProposalsText, macro });
+  const facts = buildQuarterlyReviewFacts({ targetAllocation: TARGET_ALLOCATION, recentProposalsCount });
 
   if (DRY_RUN) {
     console.log('(드라이런 — 텔레그램 발송·상태갱신 없음)\n');
@@ -166,7 +189,7 @@ async function main() {
   console.log(judgment);
 
   try {
-    await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', body: judgment }));
+    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', facts, interpretation: judgment }));
     writeLastQuarter(getQuarterLabel(now));
   } catch (e) {
     // 발송 실패 시 분기 마커를 안 갱신 — 다음 날(2일·3일)에 재시도되게 한다

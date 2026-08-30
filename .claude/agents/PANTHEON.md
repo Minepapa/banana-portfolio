@@ -99,6 +99,36 @@ Zeus는 부서 산출물을 그대로 이어붙이는 중계자가 아니라 **�
 - 보고형 작업(1질문→1보고)은 **이름 없는 동기 스폰이 기본** — 결과가 도구 결과로 직접 반환된다. (named 스폰은 SendMessage 회신 의존이라 응답 지연·유실이 기본 실패 모드였음 — Themis 자체평가 보고가 이틀 뒤 도착한 실증)
 - named teammate는 다회 왕복 협업(워크샵 등)에만 사용. 이름은 `{부서}-{목적}-{날짜}` 고유 규칙 — **재사용 절대 금지**(구 인스턴스의 지연된 shutdown 승인이 동명 신규 인스턴스를 종료시킨 실증 사고).
 
+**텔레그램 메시지 표준 구조 (2026-08-17 오너 확정, 2026-08-30 이 절로 명문화)**
+- 헤드리스 무인 잡이 텔레그램으로 발송하는 모든 메시지는 다음 구조를 따른다: **Node가
+  계산한 사실을 개조식(중점 `·` 불릿)으로 먼저 나열 → 그 뒤에 LLM의 해석·판정을 서술형
+  문단으로 붙인다.** 구현은 `scripts/lib/telegram-messages.mjs`의 `formatFactsMessage`
+  (facts 배열 + interpretation) — 새 헤드리스 잡을 만들 때 **`formatDepartmentMessage`에
+  LLM 원문을 그대로 통째로(raw body) 넘기지 말 것**, 그건 자유 문자열 전용(순수 Node
+  알림처럼 애초에 LLM이 안 끼는 경우, 또는 Node가 이미 완성된 body 문자열을 직접
+  조립하는 경우 — 예: `morning-briefing.mjs`)이지 "LLM 판정문을 그대로 body에 꽂는"
+  용도가 아니다.
+  - ⚠️ **실사고(2026-08-30, 오너 신고)** — 이 표준이 코드 주석에만 있고 이 헌장엔 없어서
+    실제로 안 지켜졌다: `themis-risk-review.mjs`·`quarterly-allocation-review.mjs`·
+    신설 당일의 `isa-maturity-check.mjs` 셋 다 LLM 판정 원문을 `formatDepartmentMessage`
+    의 `body`에 그대로 넣어 발송하고 있었다 — 그 결과 이 세 잡의 메시지만 Hermes(Node
+    전용)·Athena 제안(formatFactsMessage 기반)과 달리 불릿 없이 숫자·판정이 한 문단에
+    뭉쳐 나갔다("그냥 막 보낸다"는 오너 지적). 셋 다 이 절 신설과 같은 턴에
+    `formatFactsMessage`로 교체·재검증 완료. 같은 날 별개로 `weekly-report.mjs`(Apollo
+    주간리포트)의 텔레그램 요약도 `.slice(0, 200)` 하드컷이 숫자 한가운데를 자르고
+    마크다운 `**굵게**`가 HTML로 안 바뀌어 그대로 노출되던 버그를 발견·수정(이건 구조
+    문제가 아니라 별개의 추출·렌더링 버그) — 상세 경위는 `Log/Implementation/
+    2026-08-30-텔레그램메시지-구조표준화.md` 참고. ⚠️ `weekly-report.mjs`는 이 절의
+    "새 잡" 체크리스트 대상이 아니다 — Node가 리포트 마크다운(이미 사람이 읽기 좋게
+    구조화됨)에서 3줄 요약을 뽑아 `formatDepartmentMessage`로 보내는 구조라, LLM
+    판정 원문을 그대로 body에 꽂는 문제 자체가 없다(facts/interpretation 분리가
+    필요 없는 케이스).
+  - 새 헤드리스 잡을 만들 때 체크리스트: ①Node가 계산한 숫자·목록이 있으면 배열로
+    뽑아 `facts`에 ②LLM 프롬프트엔 "이 숫자는 텔레그램에 불릿으로 이미 나가니 다시
+    나열하지 말고 판정만" 명시 ③`sendTelegram(formatFactsMessage({ facts, interpretation:
+    judgment, ... }))`로 발송. 순수 Node 알림(LLM 없음)은 이 체크리스트 대상이 아니다
+    (그 경우 `formatDepartmentMessage`에 직접 조립한 body를 넘기는 게 정상).
+
 ## 4. 기록 의무 — worklog (2026-08-29 폐기 — 죽은 참조였음이 확인됨)
 
 ~~위치: `.claude/agents/memory/worklog.md` (로컬 전용). 형식: `| 날짜 | 부서 | 업무 | 결과 | Zeus 결정 |`~~

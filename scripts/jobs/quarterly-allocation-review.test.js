@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getQuarterLabel, shouldRunToday, buildRecentAllocationProposalsSummary, buildQuarterlyReviewPrompt,
+  buildQuarterlyReviewFacts,
 } from './quarterly-allocation-review.mjs';
 
 test('getQuarterLabel: 월별로 올바른 분기 라벨', () => {
@@ -71,4 +72,18 @@ test('buildQuarterlyReviewPrompt: 목표비중·제안이력·거시지표가 �
   assert.match(prompt, /VIX: 15\.13/);
   assert.match(prompt, /재조회·추정 금지/);
   assert.match(prompt, /아테나/);
+});
+
+// ── buildQuarterlyReviewFacts(2026-08-30 신설) — themis-risk-review.mjs와 동일 결함
+// (raw LLM 텍스트를 formatDepartmentMessage로 그대로 보내 불릿 구조가 없던 문제) 수정.
+
+test('buildQuarterlyReviewFacts: 목표비중 각 자산군이 개별 불릿으로', () => {
+  const facts = buildQuarterlyReviewFacts({ targetAllocation: { 채권: 20, 금: 10 }, recentProposalsCount: 0 });
+  assert.ok(facts.includes('채권: 20%'));
+  assert.ok(facts.includes('금: 10%'));
+});
+
+test('buildQuarterlyReviewFacts: 최근 제안 건수가 마지막 불릿', () => {
+  const facts = buildQuarterlyReviewFacts({ targetAllocation: { 채권: 20 }, recentProposalsCount: 4 });
+  assert.equal(facts.at(-1), '최근 1분기 생성된 자산분배 트랙 제안: 4건');
 });
