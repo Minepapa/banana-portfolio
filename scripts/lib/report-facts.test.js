@@ -142,3 +142,159 @@ test('buildReportFacts: factsText에 핵심 수치가 포함되고 추정 표현
   assert.ok(factsText.includes('SK하이닉스'));
   assert.ok(!/추정/.test(factsText));                    // 추정 단어가 facts엔 없어야
 });
+
+// ── Facts/Ledger/Profits 정본 매칭(2026-08-30 신설, 오너 신고 재현) ─────────────────
+// 실사고: PLUS 고배당주·TIGER 미국배당다우존스가 리포트에서 "손익 미확정"으로 나왔다.
+// 원인은 Executions 원장에 매수 체결이 하나도 없어서(v1→v2 이관 이전 매수 포지션이라
+// 매수 "체결" 자체가 기록된 적 없음, 매도만 있음) — 매입평균 재구성이 항상 실패.
+// Facts/Ledger/Profits엔 이미 정확한 실현손익이 있는데(대시보드 수익금 탭이 읽는 바로
+// 그 원장) 리포트가 그 원장 자체를 안 읽고 있던 게 진짜 원인이었다.
+
+test('buildReportFacts: 매수 이력이 전혀 없어도 Profits 정본에 매칭되면 실현손익을 정확히 보고(실사고 재현)', () => {
+  const input = {
+    ...baseInput(),
+    weekStart: '2026-08-24',
+    asof: '2026-08-30',
+    tradeRows: [
+      // PLUS 고배당주 실사고 그대로 — 매수 체결 자체가 없음(v1→v2 이관 이전 포지션).
+      ['2026-08-27 10:06:45', '매도', '연금저축', '', '배당주', 'PLUS 고배당주', '25500', '30', '765000'],
+    ],
+    profitRows: [
+      { date: '2026-08-27 10:06:45', stockName: 'PLUS 고배당주', quantity: 30, buyPrice: 17766, sellPrice: 25500, profit: 232020, account: '연금저축' },
+    ],
+  };
+  const { facts, factsText } = buildReportFacts(input);
+  const sell = facts.weekTrades.find(t => t.name === 'PLUS 고배당주');
+  assert.equal(sell.ledgerMatched, true);
+  assert.equal(sell.realizedWon, 232020);
+  assert.equal(sell.partialHistory, false); // 재구성이 아니라 정본이라 "일부만 추적" 플래그 자체가 무의미
+  assert.match(factsText, /PLUS 고배당주.*실현손익 \+232,020원.*정본 원장/);
+  assert.doesNotMatch(factsText, /PLUS 고배당주.*손익 미확정/);
+});
+
+test('buildReportFacts: Profits에 매칭되는 기록이 없으면 기존처럼 Executions 재구성으로 폴백(하위호환)', () => {
+  const input = {
+    ...baseInput(),
+    weekStart: '2026-07-24',
+    asof: '2026-07-26',
+    tradeRows: [
+      ['2026-06-23', '매수', '위탁', '005380', '국내주식', '현대차', '524000', '8', '4192000'],
+      ['2026-07-24', '매도', '위탁', '005380', '국내주식', '현대차', '396000', '8', '3168000'],
+    ],
+    profitRows: [], // 없음 — 기존 재구성 경로를 타야 함
+  };
+  const { facts } = buildReportFacts(input);
+  const sell = facts.weekTrades.find(t => t.name === '현대차');
+  assert.equal(sell.ledgerMatched, false);
+  assert.equal(sell.realizedWon, null);
+  assert.equal(sell.realizedPct, -24.4); // 기존 재구성 로직 그대로 동작(회귀 없음)
+});
+
+test('buildReportFacts: account 없는 레거시 Profits 레코드도 date|name|qty 보조 조회로 매칭(코드리뷰 지적 — 실측 37건 중 23건이 account:null이라 정확일치 4필드 키로는 전부 누락됨)', () => {
+  const input = {
+    ...baseInput(),
+    weekStart: '2026-07-01',
+    asof: '2026-07-10',
+    tradeRows: [
+      ['2026-07-09 12:36:44', '매도', '연금저축', '', '배당주', 'TIGER 미국배당다우존스', '15200', '10', '152000'],
+    ],
+    profitRows: [
+      // account 없음 — v1 이관 레거시 레코드 그대로 재현.
+      { date: '2026-07-09 12:36:44', stockName: 'TIGER 미국배당다우존스', quantity: 10, buyPrice: 13000, sellPrice: 15200, profit: 22000, account: null },
+    ],
+  };
+  const { facts } = buildReportFacts(input);
+  const sell = facts.weekTrades.find(t => t.name === 'TIGER 미국배당다우존스');
+  assert.equal(sell.ledgerMatched, true);
+  assert.equal(sell.realizedWon, 22000);
+});
+
+test('buildReportFacts: account 있는 정확일치가 있으면 보조 조회보다 우선(둘 다 있을 때 계좌까지 맞는 쪽을 신뢰)', () => {
+  const input = {
+    ...baseInput(),
+    weekStart: '2026-07-01',
+    asof: '2026-07-10',
+    tradeRows: [
+      ['2026-07-09 12:36:44', '매도', '연금저축', '', '배당주', 'TIGER 미국배당다우존스', '15200', '10', '152000'],
+    ],
+    profitRows: [
+      { date: '2026-07-09 12:36:44', stockName: 'TIGER 미국배당다우존스', quantity: 10, buyPrice: 999, sellPrice: 999, profit: 999, account: null }, // 계좌 없는 잡음 레코드
+      { date: '2026-07-09 12:36:44', stockName: 'TIGER 미국배당다우존스', quantity: 10, buyPrice: 13000, sellPrice: 15200, profit: 22000, account: '연금저축' }, // 정확일치
+    ],
+  };
+  const { facts } = buildReportFacts(input);
+  const sell = facts.weekTrades.find(t => t.name === 'TIGER 미국배당다우존스');
+  assert.equal(sell.realizedWon, 22000); // 999가 아니라 정확일치 22000이 선택돼야 함
+});
+
+test('buildReportFacts: ledgerMatched는 profit이 유한수일 때만 true(malformed 레코드는 재구성 폴백으로) — null>=0 JS 강제변환 방지', () => {
+  const input = {
+    ...baseInput(),
+    weekStart: '2026-06-23',
+    asof: '2026-07-26',
+    tradeRows: [
+      ['2026-06-23', '매수', '위탁', '005380', '국내주식', '현대차', '524000', '8', '4192000'],
+      ['2026-07-24', '매도', '위탁', '005380', '국내주식', '현대차', '396000', '8', '3168000'],
+    ],
+    profitRows: [
+      { date: '2026-07-24', stockName: '현대차', quantity: 8, buyPrice: 524000, sellPrice: 396000, profit: null, account: '위탁' }, // profit 결측(malformed)
+    ],
+  };
+  const { facts } = buildReportFacts(input);
+  const sell = facts.weekTrades.find(t => t.name === '현대차' && t.side === '매도');
+  assert.equal(sell.ledgerMatched, false); // malformed 레코드는 매칭 성공으로 안 침
+  assert.equal(sell.realizedWon, null);
+  assert.equal(sell.realizedPct, -24.4); // 재구성 폴백이 정상 동작
+});
+
+test('buildReportFacts: 같은 종목이 같은 주에 정본매칭 매도와 재구성폴백 매도로 섞여도 서로 안 간섭', () => {
+  const input = {
+    ...baseInput(),
+    weekStart: '2026-08-24',
+    asof: '2026-08-30',
+    tradeRows: [
+      ['2026-06-23', '매수', '위탁', '005380', '국내주식', '현대차', '524000', '8', '4192000'], // 매수 이력(재구성용)
+      ['2026-08-25', '매도', '위탁', '005380', '국내주식', '현대차', '400000', '3', '1200000'],  // Profits 매칭 안 됨 → 재구성
+      ['2026-08-27', '매도', '위탁', '005380', '국내주식', '현대차', '410000', '5', '2050000'],  // Profits 매칭됨 → 정본
+    ],
+    profitRows: [
+      { date: '2026-08-27', stockName: '현대차', quantity: 5, buyPrice: 524000, sellPrice: 410000, profit: -570000, account: '위탁' },
+    ],
+  };
+  const { facts } = buildReportFacts(input);
+  const sells = facts.weekTrades.filter(t => t.name === '현대차' && t.side === '매도');
+  assert.equal(sells.length, 2);
+  const fallback = sells.find(t => t.qty === '3');
+  const matched = sells.find(t => t.qty === '5');
+  assert.equal(fallback.ledgerMatched, false);
+  assert.equal(fallback.realizedPct, round1((400000 - 524000) / 524000 * 100));
+  assert.equal(matched.ledgerMatched, true);
+  assert.equal(matched.realizedWon, -570000);
+});
+
+function round1(v) { return Math.round(v * 10) / 10; }
+
+test('buildReportFacts: profitRows를 아예 안 넘겨도(undefined) 기존 동작 그대로(하위호환)', () => {
+  const input = { ...baseInput(), weekStart: '2026-06-01' };
+  delete input.profitRows;
+  const { facts } = buildReportFacts(input);
+  assert.equal(facts.weekTrades.length, 1); // 기존 테스트와 동일 결과
+});
+
+// ── CMA 이중계산 방지 노트(2026-08-30 신설, 오너 신고 재현) ─────────────────────────
+// 실사고: 리포트가 "CMA(21,054,004원) + 현금(30,132,560원) 실탄 충분"이라고 서술 —
+// CMA는 전액 현금 계좌라 이미 "현금" 자산군 합계 안에 포함돼 있는데 별도로 더해
+// 실탄을 51,186,564원으로 부풀려 보고했다.
+
+test('buildReportFacts: CMA 계좌가 있으면 이중계산 방지 경고가 factsText에 포함', () => {
+  const input = baseInput();
+  input.holdings.push({ account: 'CMA', name: '예수금', assetClass: '현금', qty: 0, invest: 21054004, evalAmount: 21054004, isCashLike: true });
+  const { factsText } = buildReportFacts(input);
+  assert.match(factsText, /CMA\(21,054,004원\)는 전액 현금이라.*이미 포함/);
+  assert.match(factsText, /별도로 또 더하지 말 것/);
+});
+
+test('buildReportFacts: CMA 계좌가 없으면 경고 노트 자체가 안 나옴(불필요한 경고 방지)', () => {
+  const { factsText } = buildReportFacts(baseInput());
+  assert.doesNotMatch(factsText, /CMA/);
+});

@@ -223,6 +223,8 @@ ${factsText}
 ## [자산현황]
 - 총 평가액·총손익(원금 대비) + 계좌별 표 + 자산군 비중 표. 표는 간결히, 종목 전수 나열 금지.
 - **내 판단:** 이번 주 자산 상태를 한두 줄로 평가(Frank 목표 대비 어디인지).
+- **현금 여력을 언급할 땐 "자산군 비중"의 현금 합계 하나만 써라.** CMA는 그 안에 이미
+  포함된 계좌다(facts의 ⚠️ 표시 참고) — "CMA + 현금"처럼 둘을 따로 더하지 마라.
 
 ## [시장환경] 이번 주 시장 환경 (내 포트폴리오 관점)
 - 핵심 이슈 1~2개 — 각 이슈를 "내 어느 자산/계좌에 어떻게"로 연결(일반론 금지).
@@ -230,12 +232,15 @@ ${factsText}
 
 ## [체결·배당] 이번 주 체결·배당
 - facts의 체결·배당 정리(없으면 "없음") + 각 체결이 Frank 성향에 부합했는지 짧은 코멘트.
-- **매도의 익절/손절은 facts에 표시된 실현손익(매입평균 대비) 부호만 근거로 쓸 것.** 그 숫자가
-  없거나 일부만 추적된 경우 익절/손절을 단정하지 말고 "손익 미확정"으로 쓸 것.
+- **매도의 익절/손절은 facts에 표시된 실현손익 숫자·부호만 근거로 쓸 것.** "(정본 원장)"
+  표시가 있으면 원화 금액까지 그대로 인용해라(대시보드 수익금 탭과 같은 정확한 값).
+  그 표시 없이 "매입평균 불명"만 있으면 재구성이 안 된 것이니 익절/손절을 단정하지
+  말고 "손익 미확정"으로 쓸 것 — 숫자를 지어내지 마라.
 
 ## [행동] 다음 주 행동 (Frank 맞춤 처방)
 - **[즉시]**: 근거 = 밸류·현금 여력·**성향 적합성**. 없으면 "현 포지션 유지" + 이유.
-- **[조건부]**: 가격/이벤트 트리거별 액션.
+- **[조건부]**: 가격/이벤트 트리거별 액션. "실탄"·"매수 여력"을 말할 땐 위 [자산현황]과
+  똑같이 현금 합계 하나만 써라 — CMA를 또 더해 실탄을 부풀리지 마라.
 - **[일정]**: 실적·FOMC·지표(WebSearch 가능).
 - **[유지·관망]**: 손대지 않을 자산군 + 이유 한 줄.
 
@@ -331,6 +336,12 @@ async function main() {
   const holdings = readVaultDir(VAULT_PATHS.state.holdings); // 현금성 포함(자산 현황엔 필요)
   const executions = readVaultDir(VAULT_PATHS.facts.ledger.executions);
   const dividends = readVaultDir(VAULT_PATHS.facts.ledger.dividends);
+  // Facts/Ledger/Profits(2026-08-30 신설 배선, 오너 신고) — 대시보드 "수익금" 탭이 읽는
+  // 바로 그 정본 원장. Executions만으로 매입평균을 재구성하는 기존 방식은 v1→v2 이관
+  // 이전에 산 포지션(매수 "체결" 자체가 기록된 적 없는 종목, 예: PLUS 고배당주·TIGER
+  // 미국배당다우존스)에서 항상 실패해 "손익 미확정"으로만 나갔다 — 이 원장을 우선
+  // 조회하면 그 사각을 없앤다(report-facts.mjs profitByKey 참고).
+  const profitRows = readVaultDir(VAULT_PATHS.facts.ledger.profits);
   const prefRecords = readVaultDir(VAULT_PATHS.knowledge.preferenceObservations);
   const prevReport = loadPrevReport(asof);
 
@@ -338,7 +349,7 @@ async function main() {
   const dividendRows = dividendsToRows(dividends);
 
   // ③ facts 조립 + 행동 신호(체결만 — MVP 범위, 노트·리스크·저널 신호는 아직 없음)
-  const { facts, factsText } = buildReportFacts({ asof, weekStart, holdings, macro, tradeRows, dividendRows, prevReport });
+  const { facts, factsText } = buildReportFacts({ asof, weekStart, holdings, macro, tradeRows, dividendRows, profitRows, prevReport });
   const { signalsText } = buildBehaviorSignals({ asof, weekStart, tradeRows, noteRows: [], journalRows: [], riskRows: [] });
   const confirmedPrefsText = renderPrefRows(prefRecords, { confirmedOnly: true });
   const priorPrefsText = renderPrefRows(prefRecords);

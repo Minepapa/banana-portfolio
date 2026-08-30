@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildExecutionRecord, buildDividendRecord, buildProfitRecord, buildCashEventRecord, buildFundPurchaseRecord, buildExchangeRecord } from './ledger-vault-writer.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
+import { parseFrontmatter } from './vault-frontmatter.mjs';
 
 const exec = (overrides = {}) => ({
   tradeDate: '2026-08-04 09:12:33',
@@ -145,6 +146,24 @@ test('buildProfitRecord: account가 null이 아니다(매도 시점엔 이미 �
 test('buildProfitRecord: Profits 하위폴더를 가리킨다', () => {
   const { dir } = buildProfitRecord(sellExec(), 50000, 80000);
   assert.equal(dir, VAULT_PATHS.facts.ledger.profits);
+});
+
+// ── 구조적 가드(2026-08-30 코드리뷰 지적) ────────────────────────────────────────
+// report-facts.mjs의 매도 실현손익 조회(profitKey: date|account|name|qty)는 Executions
+// 원장과 Profits 원장이 같은 값을 같은 필드명 밑에 쓴다는 가정에 기댄다. 둘은 같은
+// 시점에 같은 함수가 쓰는 게 아니라(체결은 먼저, 손익은 나중에 별도 배치가 씀) 이
+// 가정이 코드 어디에도 강제돼 있지 않다 — 둘 중 한쪽 필드명이나 값 형식이 바뀌면
+// report-facts.mjs의 매칭이 아무 테스트도 안 깨진 채 조용히 "손익 미확정"으로
+// 되돌아간다. 같은 입력(e)에서 두 레코드를 동시에 만들어 조인 키 4필드가 실제로
+// 일치하는지 직접 검증한다.
+test('buildExecutionRecord·buildProfitRecord: 같은 e에서 만든 두 레코드의 조인 키(날짜·계좌·종목명·수량)가 일치(report-facts.mjs profitKey 가정의 구조적 가드)', () => {
+  const e = { tradeDate: '2026-08-27 10:06:45', tradeType: '매도', stockCode: '', stockName: 'PLUS 고배당주', quantity: 30, price: 25500, currency: 'KRW', broker: '', account: '연금저축' };
+  const execFm = parseFrontmatter(buildExecutionRecord(e).content);
+  const profitFm = parseFrontmatter(buildProfitRecord(e, 17766, 232020).content);
+  assert.equal(String(execFm.tradeDate), String(profitFm.date));
+  assert.equal(String(execFm.stockName), String(profitFm.stockName));
+  assert.equal(String(execFm.quantity), String(profitFm.quantity));
+  assert.equal(String(e.account), String(profitFm.account)); // Execution 자체엔 account가 없음(별도 배치가 나중에 채움) — e에서 직접 비교
 });
 
 test('buildProfitRecord: 파일명이 결정론적(날짜·시각·종목명·계좌)', () => {

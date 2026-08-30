@@ -23,17 +23,46 @@ import { parseSell, collectBuys } from './behavior-signals.mjs';
 const round1 = (v) => Number.isFinite(v) ? Math.round(v * 10) / 10 : null;
 const won = (v) => Number.isFinite(v) ? Math.round(v).toLocaleString('en-US') : '데이터 부족';
 
+// Facts/Ledger/Profits(type: "realized-profit") 정본 조회 키 — date|account|name|qty
+// 정확일치만(추정 금지, ADR 0003과 동일 원칙). 2026-08-30 오너 신고로 발견: PLUS
+// 고배당주·TIGER 미국배당다우존스가 리포트에서 "손익 미확정"으로 나왔는데, 이유는
+// Executions 원장에 매수 체결이 하나도 없어서였다(v1→v2 이관 이전 매수 포지션이라
+// 매수 "체결" 자체가 기록된 적 없음, 매도 4건만 있음) — 그래서 아래 parseSell의
+// 매입평균 재구성이 항상 실패. 그런데 Facts/Ledger/Profits엔 이미 정확한 실현손익이
+// 있다(대시보드 "수익금" 탭이 정확히 읽고 있는 바로 그 원장) — 리포트가 이 원장
+// 자체를 안 읽고 있던 게 진짜 원인. 이 키 함수를 만들고 정확일치로 우선 조회한다.
+const profitKey = (date, account, name, qty) => `${date}|${account}|${name}|${qty}`;
+
 // 체결내역 스키마: A날짜0 B구분1 C계좌2 D코드3 E자산군4 F종목명5 G체결가6 H수량7 I금액8
-function parseTrade(r, buysAll) {
+// profitByKey: Facts/Ledger/Profits 정본을 위 profitKey로 인덱싱한 Map(비어있으면 항상
+// fallback으로 감 — 하위호환, 호출부가 안 넘겨도 기존 동작 그대로).
+function parseTrade(r, buysAll, profitByKey, profitByKeyNoAccount) {
   const side = String(r[T.SIDE] ?? '').trim();
+  const date = String(r[T.DATE] ?? '').trim();
+  const account = String(r[T.ACCT] ?? '').trim();
+  const name = String(r[T.NAME] ?? '').trim();
+  const qty = String(r[T.QTY] ?? '').trim();
   const base = {
-    date: String(r[T.DATE] ?? '').trim(), side,
-    account: String(r[T.ACCT] ?? '').trim(), name: String(r[T.NAME] ?? '').trim(),
-    price: String(r[T.PRICE] ?? '').trim(), qty: String(r[T.QTY] ?? '').trim(), amount: String(r[T.AMOUNT] ?? '').trim(),
+    date, side, account, name,
+    price: String(r[T.PRICE] ?? '').trim(), qty, amount: String(r[T.AMOUNT] ?? '').trim(),
   };
-  if (side !== '매도') return { ...base, realizedPct: null, partialHistory: false };
+  if (side !== '매도') return { ...base, realizedPct: null, realizedWon: null, partialHistory: false, ledgerMatched: false };
+
+  // ⚠️ 코드리뷰 지적(2026-08-30) — ledgerMatched를 매칭 성공 여부만으로 true 처리하면,
+  // 원장 레코드에 profit이 없는(malformed) 극단 케이스에서 realizedWon이 null인데도
+  // "정본 원장" 표시가 나가 렌더링 시 `null >= 0`이 JS에서 true로 강제변환돼
+  // "실현손익 +데이터 부족원(정본 원장)" 같은 말이 안 되는 텍스트가 LLM에 그대로
+  // 주입될 뻔했다(프롬프트가 "정본 원장 표시가 있으면 그대로 인용해라"라고 시키므로
+  // 그대로 리포트에 나갈 수 있었음). profit이 실제로 유한수일 때만 매칭 성공으로 친다.
+  const ledgerHit = profitByKey?.get(profitKey(date, account, name, qty))
+    ?? profitByKeyNoAccount?.get(`${date}|${name}|${qty}`);
+  if (ledgerHit && Number.isFinite(ledgerHit.profit)) {
+    const pct = Number.isFinite(ledgerHit.buyPrice) && ledgerHit.buyPrice > 0
+      ? round1((ledgerHit.sellPrice - ledgerHit.buyPrice) / ledgerHit.buyPrice * 100) : null;
+    return { ...base, realizedPct: pct, realizedWon: Math.round(ledgerHit.profit), partialHistory: false, ledgerMatched: true };
+  }
   const { realizedPct, partialHistory } = parseSell(r, buysAll);
-  return { ...base, realizedPct, partialHistory };
+  return { ...base, realizedPct, realizedWon: null, partialHistory, ledgerMatched: false };
 }
 // 배당금 스키마: A날짜0 B금액1 C종목명2
 function parseDividend(r) {
@@ -51,7 +80,7 @@ function parseDividend(r) {
  */
 export function buildReportFacts(input) {
   const {
-    asof, weekStart, holdings = [], macro = {}, tradeRows = [], dividendRows = [], prevReport = null,
+    asof, weekStart, holdings = [], macro = {}, tradeRows = [], dividendRows = [], profitRows = [], prevReport = null,
   } = input;
 
   // ── 종목명 기준 집계(같은 종목이 여러 계좌에 걸치면 합산 — 위탁+연금저축 동시보유 등) ──
@@ -88,16 +117,36 @@ export function buildReportFacts(input) {
   for (const h of holdings) {
     const acct = String(h.account ?? '').trim();
     if (!acct) continue;
-    byAcct[acct] = byAcct[acct] || { acct, invest: 0, evalValue: 0 };
+    // allCash: 코드리뷰 지적(2026-08-30) — "이 계좌는 전액 현금이라 현금 합계에 이미
+    // 포함됨" 노트를 문장으로 단정하지 말고 실제로 검증하라는 지적. 계좌 안의 보유가
+    // 전부 assetClass "현금"일 때만 true로 남는다(현금 아닌 보유가 하나라도 섞이면
+    // 그 즉시 false로 굳어짐 — 나중에 그 계좌에 다른 자산이 들어와도 이 판정이 자동
+    // 갱신되게).
+    byAcct[acct] = byAcct[acct] || { acct, invest: 0, evalValue: 0, allCash: true };
     byAcct[acct].invest += Number(h.invest) || 0;
     if (Number.isFinite(h.evalAmount)) byAcct[acct].evalValue += h.evalAmount;
+    if (h.assetClass !== '현금') byAcct[acct].allCash = false;
   }
   const accounts = Object.values(byAcct).map((a) => ({ ...a, evalValue: Math.round(a.evalValue) }));
 
   // ── 이번 주 체결·배당 (weekStart 이상) ────────────────
   const inWeek = (d) => weekStart ? (d && d >= weekStart) : true;
   const buysAll = collectBuys(tradeRows);
-  const weekTrades = tradeRows.map(r => parseTrade(r, buysAll)).filter(t => t.name && inWeek(t.date));
+  // ⚠️ 코드리뷰 지적(2026-08-30) — account가 정확일치 키에 필수라 v1 이관 레거시
+  // Profits 레코드(account: null, 실측 37건 중 23건)가 전부 조용히 버려지고 있었다
+  // (feedback-no-silent-fallback 원칙 위반 — 가용성보다 출처 추적성이 우선이라지만
+  // "매칭 안 됨"과 "데이터 자체가 없음"은 다른 사실이라 최소한 매칭은 시도해야 한다).
+  // account 있는 레코드는 기존처럼 4필드 정확일치(우선), account 없는 레코드만 3필드
+  // (date|name|qty)로 별도 보조 조회 — 완전정본(계좌까지 일치)이 항상 우선이고, 보조
+  // 조회는 그게 없을 때만 쓰인다.
+  const profitByKey = new Map();
+  const profitByKeyNoAccount = new Map();
+  for (const p of profitRows) {
+    if (!p.date || !p.stockName || p.quantity == null) continue;
+    if (p.account) profitByKey.set(profitKey(String(p.date), String(p.account), String(p.stockName), String(p.quantity)), p);
+    else profitByKeyNoAccount.set(`${p.date}|${p.stockName}|${p.quantity}`, p);
+  }
+  const weekTrades = tradeRows.map(r => parseTrade(r, buysAll, profitByKey, profitByKeyNoAccount)).filter(t => t.name && inWeek(t.date));
   const weekDividends = dividendRows.map(parseDividend).filter(d => d.name && inWeek(d.date));
 
   const facts = {
@@ -134,13 +183,28 @@ function renderFactsText(f) {
 
   L.push('\n■ 계좌별 합계');
   for (const a of f.accounts) L.push(`  - ${a.acct}: 원금 ${won(a.invest)}원 · 평가액 ${won(a.evalValue)}원`);
+  // ⚠️ 전액 현금 계좌(예: CMA)는 위 "자산군 비중"의 현금 항목에 이미 포함돼 있다 —
+  // 둘을 따로 더하면 이중계산이다(2026-08-30 오너 신고로 발견: 리포트가 "CMA
+  // (21,054,004원) + 현금(30,132,560원) 실탄 충분"이라고 둘을 더해 써서, 실제
+  // 30,132,560원인 총 실탄을 51,186,564원으로 부풀려 보고한 사고). 코드리뷰 지적으로
+  // "CMA는 전액 현금이다"를 문장으로 단정하지 않고 실제 보유 구성에서 검증
+  // (allCash, 위 계좌별 합계 계산부 참고) — 'CMA'라는 계좌명 하드코딩도 제거해
+  // 앞으로 다른 계좌가 전액현금이 돼도 동일하게 잡힌다.
+  for (const a of f.accounts) {
+    if (a.allCash && a.evalValue > 0) L.push(`  ⚠️ ${a.acct}(${won(a.evalValue)}원)는 전액 현금이라 위 "자산군 비중"의 현금 합계 안에 이미 포함됨 — 실탄 계산 시 현금 합계에 ${a.acct}를 별도로 또 더하지 말 것.`);
+  }
 
   L.push('\n■ 이번 주 체결');
   if (f.weekTrades.length) for (const t of f.weekTrades)
     L.push(`  - ${t.date} ${t.side} ${t.name} ${t.qty}주 @${t.price} (${t.account})`
       + (t.side === '매도'
-        ? ` · 실현 ${t.realizedPct != null ? (t.realizedPct >= 0 ? '+' : '') + t.realizedPct + '%' : '매입평균 불명'}`
-          + (t.partialHistory ? ' (매입이력 일부만 추적됨)' : '')
+        ? t.ledgerMatched
+          // Facts/Ledger/Profits 정본 매칭(2026-08-30 신설) — 대시보드 "수익금" 탭과
+          // 같은 원장, 정확한 원화 실현손익. 재구성(추정)이 아니라 기록된 사실이라
+          // "정본" 표기로 프롬프트에서도 구분되게 한다.
+          ? ` · 실현손익 ${t.realizedWon >= 0 ? '+' : ''}${won(t.realizedWon)}원(${t.realizedPct != null ? `${t.realizedPct >= 0 ? '+' : ''}${t.realizedPct}%, ` : ''}정본 원장)`
+          : ` · 실현 ${t.realizedPct != null ? (t.realizedPct >= 0 ? '+' : '') + t.realizedPct + '%' : '매입평균 불명'}`
+            + (t.partialHistory ? ' (매입이력 일부만 추적됨)' : '')
         : ''));
   else L.push('  - (이번 주 체결 없음)');
 
