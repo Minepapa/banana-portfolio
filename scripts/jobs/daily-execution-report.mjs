@@ -53,8 +53,10 @@ export function filterTodayExecutions(executions, todayDate) {
 // 순수함수 — 오늘자 체결 레코드 배열을 계좌별로 묶어 사람이 읽는 텍스트로 만든다.
 // 각 줄은 "[매도] 종목명 수량주 @가격 (계좌)" 형태(같은 계좌끼리는 이어서 나열해
 // 자연히 계좌별로 묶인다), 그 뒤에 계좌·통화별 합산 금액(quantity*price)을 붙인다.
-// 빈 배열이면 "오늘 체결 없음"을 명시적으로 반환 — daily-asset-allocation-check류의
-// "조용하면 조용하다" 관례처럼, 이 문구 자체가 잡이 살아있다는 신호다.
+// 빈 배열이면 "오늘 체결 없음"을 명시적으로 반환 — ⚠️ 2026-08-31부터 이 문구는
+// 텔레그램으로 안 나간다(저정보 메시지 억제, main() 참고). console.log에만 남아
+// "잡이 살아있다"는 증거 역할만 한다 — 예전 주석처럼 오너에게 이 문구가 신호로
+// 도달한다고 오해하지 말 것.
 export function buildExecutionReportText(executions) {
   if (!executions.length) return '오늘 체결 없음';
 
@@ -90,6 +92,14 @@ async function main() {
   const body = buildExecutionReportText(today);
 
   console.log(body);
+
+  // 저정보 메시지 억제(2026-08-31 오너 지적) — 체결 없는 날 "오늘 체결 없음" 한 줄만
+  // 매번 발송하던 걸 멈춘다. daily-asset-allocation-check.mjs의 "조용하면 알림 없음"과
+  // 동일 원칙 — console.log는 그대로 남겨(잡이 살아있다는 증거는 유지) 텔레그램만 스킵.
+  if (!today.length) {
+    console.log('ℹ️ daily-execution-report: 오늘 체결 없음(조용함, 알림 생략)');
+    return;
+  }
 
   if (!DRY_RUN) {
     try {

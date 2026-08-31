@@ -36,8 +36,12 @@
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadEnv } from '../lib/auth.mjs';
+import { loadAgent } from '../lib/agent-loader.mjs';
+import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { formatFactsMessage, parseContextConsiderations, CONTEXT_MARKER, CONSIDERATIONS_MARKER } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -53,34 +57,107 @@ function runFacts(scriptName) {
   }
 }
 
+// 순수함수 — macro-overlay-facts.mjs 원문 보고를 텔레그램용 개조식 불릿으로(2026-08-31,
+// 오너 지적으로 신설 — 예전엔 이 원문을 그대로 body에 통째로 넣어 formatDepartmentMessage
+// 자유 문자열로만 보냈다). 여러 줄짜리 원문 블록 하나 = fact 1개(themis-risk-review.mjs·
+// morning-briefing.mjs와 동일 관례).
+export function buildAllocationCheckFacts(macroReport) {
+  return [`[거시 전술 오버레이]\n${macroReport.trim()}`];
+}
+
+// 순수함수 — Athena에게 줄 프롬프트. 원문 신호는 이미 위 facts로 불릿 처리돼 먼저
+// 나가므로, LLM 출력은 숫자 재나열이 아니라 판단(시급성·국면전환 여부)에 집중한다.
+export function buildAllocationCheckPrompt(macroReport) {
+  return `[일일 거시 전술 오버레이 경고] 아래는 오늘 시점의 검증된 사실이다(재조회·추정
+금지, 이 숫자만 사용). 이 숫자는 텔레그램 메시지에 이미 불릿으로 따로 나간다 — 아래
+출력에서 다시 나열하지 마라.
+
+[거시 전술 오버레이]
+${macroReport.trim()}
+
+판단 요청:
+1. 어떤 신호가 왜 경고 상태인지, 지금 자산분배 트랙(위탁·연금저축·ISA) 관점에서 얼마나
+   시급한 변화인지 네(아테나) 성격대로 판단해라 — 과잉반응하지 마라, 노이즈일 가능성도
+   솔직히 인정해라.
+2. 이게 진짜 국면전환처럼 보이는지 일시적 변동으로 보이는지, 판단 근거를 밝혀라.
+
+형식(반드시 정확히 이 두 마커로 응답을 나눠라, 다른 마커·JSON·마크다운 없이 순수
+텍스트만):
+${CONTEXT_MARKER}
+1·2번 내용을 결론 문장 하나(심각도 표현 포함) + 근거 1~3문장, 합쳐서 2~4문장. 문장
+사이는 줄바꿈으로 분리해라 — 한 문단에 몰아쓰지 마라.
+
+${CONSIDERATIONS_MARKER}
+오너가 지금 판단할 수 있는 선택지를 "- "로 시작하는 줄로 1~3개(예: "리밸런싱을
+앞당길지 분기 정기점검까지 기다릴지", "신규현금 배분 비중을 이 신호 반영해 조정할지").`;
+}
+
 async function main() {
   const macroReport = runFacts('macro-overlay-facts.mjs'); // --json 없이 — Faber 상태 갱신 필요
 
   // ⚠️ 2026-08-23 — 시그널 마커를 이모지(⚠️)에서 대괄호 태그([경고])로 교체(오너 지시,
   // 텔레그램 이모지 전면 제거). macro-overlay-facts.mjs의 실제 출력 문자열도 같이
   // 바꿔뒀다 — 두 파일이 이 문자열로 묶여있으니 하나만 바꾸면 이 잡이 영원히 조용해진다.
-  const noteworthy = [];
-  if (macroReport.includes('[경고]')) noteworthy.push(`[거시 전술 오버레이]\n${macroReport.trim()}`);
+  const hasWarning = macroReport.includes('[경고]');
 
   console.log(macroReport);
 
-  if (!noteworthy.length) {
+  if (!hasWarning) {
     console.log('✅ daily-asset-allocation-check: 이상 없음(조용함, 알림 생략)');
     return;
   }
 
-  console.log(`🔔 daily-asset-allocation-check: 알릴 변화 ${noteworthy.length}건`);
-  if (!DRY_RUN) {
+  console.log('🔔 daily-asset-allocation-check: 알릴 변화 있음');
+
+  const facts = buildAllocationCheckFacts(macroReport);
+  const prompt = buildAllocationCheckPrompt(macroReport);
+
+  if (DRY_RUN) {
+    console.log('(드라이런 — 텔레그램 발송 없음)\n');
+    console.log(prompt);
+    return;
+  }
+
+  loadEnv();
+  const AGENT = loadAgent('athena', { fallbackModel: 'sonnet' });
+  if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
+  const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
+
+  // ⚠️ 코드리뷰 지적(2026-08-31, HIGH) — 예전엔 여기서 실패하면 process.exit(1)로 잡
+  // 자체를 죽였는데, 이 잡은 [경고]가 있을 때만 도는 잡이라 그 경고 자체가 통째로
+  // 유실된다(health-watcher는 failStreak>=2에서만 알림, 이 잡은 조용한 날엔 실행 자체가
+  // "성공"으로 안 잡히니 streak가 쌓이지도 않아 이 실패가 어디서도 안 드러남). 사실
+  // (facts)만이라도 발송하는 쪽이 통째로 유실보다 낫다 — morning-briefing.mjs와 동일
+  // 원칙(그 파일에서 먼저 적용된 패턴).
+  let context = null;
+  let considerations = null;
+  // AGENTS.md "claude 호출 규칙" — 새 claude 호출 잡은 호출 전 cooldownActive() 가드
+  // 필수(쿨다운 중이면 skip). 이 잡은 2026-08-31에 처음 LLM을 부르게 된 잡이라 이 규칙
+  // 대상 — 쿨다운 중이어도 사실만은 발송한다(위 HIGH 수정과 동일 원칙, 통째로 유실 안 함).
+  if (cooldownActive()) {
+    console.log('⏳ 쿨다운 중 — Athena 판단 생략, 사실만 발송');
+  } else {
     try {
-      await sendTelegram(formatDepartmentMessage({
-        departmentLabel: DEPARTMENT_LABEL,
-        tag: '경고',
-        body: noteworthy.join('\n\n'),
-      }));
+      const judgment = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
+      console.log(judgment);
+      ({ context, considerations } = parseContextConsiderations(judgment));
     } catch (e) {
-      console.error('텔레그램 알림 실패:', e.message);
+      console.error(`⚠ Athena 헤드리스 판단 실패(사실만 발송): ${e.message}`);
     }
+  }
+
+  try {
+    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', facts, context, considerations }));
+  } catch (e) {
+    console.error('텔레그램 알림 실패:', e.message);
   }
 }
 
-main().catch((e) => { console.error('❌ daily-asset-allocation-check 오류:', e.message); process.exit(1); });
+// import.meta.url 가드(2026-08-31 신설) — 이 파일이 이제 buildAllocationCheckFacts·
+// buildAllocationCheckPrompt(순수함수) export를 갖게 돼 daily-asset-allocation-check.test.js가
+// 직접 import한다. 가드 없이 최상위에서 main()을 그냥 부르면 테스트가 이 모듈을 import하는
+// 순간 macro-overlay-facts.mjs 서브프로세스 실행·실제 텔레그램 발송까지 실행돼 버린다
+// (weekly-report.mjs 헤더 주석의 사고 사례와 동일 이유).
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((e) => { console.error('❌ daily-asset-allocation-check 오류:', e.message); process.exit(1); });
+}

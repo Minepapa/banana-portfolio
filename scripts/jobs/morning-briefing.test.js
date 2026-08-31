@@ -1,6 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAssetSection, buildEventsSection, buildAllocationSection } from './morning-briefing.mjs';
+import {
+  buildAssetSection, buildEventsSection, buildAllocationSection,
+  isFullyQuiet, buildMorningBriefingFacts, buildMorningBriefingPrompt,
+} from './morning-briefing.mjs';
+
+const QUIET_SECTIONS = {
+  eventsText: '간밤 배당·체결 이벤트 없음',
+  allocationText: '자산배분: 밴드 내 정상',
+  macroText: '[거시 전술 오버레이 점검]\n\n[정상] 5개 신호 전부 조용함 — 협의체 소집 불필요',
+};
 
 test('buildAssetSection: 첫 실행(직전 총자산 없음)은 비교 없이 총자산만 보고', () => {
   const holdings = [{ invest: 1000, evalAmount: 1200 }];
@@ -80,4 +89,47 @@ test('buildAllocationSection: 이탈 자산군이 있으면 개수와 이름을 
   const text = buildAllocationSection(holdings);
   assert.match(text, /자산배분: \d+개 자산군 이탈 중/);
   assert.match(text, /국내주식/);
+});
+
+// isFullyQuiet — 2026-08-31 신설(오너 지적으로 LLM 해석 조건부 추가하며 함께 도입).
+// "완전히 조용한 날"에만 LLM 호출을 생략한다.
+
+test('isFullyQuiet: 간밤 이벤트 없음 + 밴드 내 정상 + 거시 신호 조용 → true(LLM 생략)', () => {
+  assert.equal(isFullyQuiet({ ...QUIET_SECTIONS, hasSignals: true }), true);
+});
+
+test('isFullyQuiet: 첫 실행이라 이벤트 섹션이 "생략" 문구여도 조용함으로 취급', () => {
+  assert.equal(isFullyQuiet({ ...QUIET_SECTIONS, eventsText: '(첫 실행 — 비교 기준 없어 이벤트 생략)', hasSignals: true }), true);
+});
+
+test('isFullyQuiet: 간밤 이벤트가 있으면 false', () => {
+  assert.equal(isFullyQuiet({ ...QUIET_SECTIONS, eventsText: '  [배당] 2026-08-31 삼성전자 5,000원', hasSignals: true }), false);
+});
+
+test('isFullyQuiet: 자산배분 이탈이 있으면 false', () => {
+  assert.equal(isFullyQuiet({ ...QUIET_SECTIONS, allocationText: '자산배분: 1개 자산군 이탈 중(금)', hasSignals: true }), false);
+});
+
+test('isFullyQuiet: 거시 신호에 [경고]가 있으면 false', () => {
+  assert.equal(isFullyQuiet({ ...QUIET_SECTIONS, macroText: '[거시 전술 오버레이 점검]\n\n[경고] 의미있는 변화 감지', hasSignals: true }), false);
+});
+
+test('isFullyQuiet: 거시신호 조회 자체가 실패(hasSignals=false)하면 "조용함"이 아니라 확인 필요로 취급 — 실패가 조용한 날 뒤에 묻히지 않게', () => {
+  assert.equal(isFullyQuiet({ ...QUIET_SECTIONS, hasSignals: false }), false);
+});
+
+test('buildMorningBriefingFacts: 네 섹션을 각각 fact 1개씩(멀티라인 블록 그대로)', () => {
+  const facts = buildMorningBriefingFacts({ assetText: '총자산: 1,000원', ...QUIET_SECTIONS });
+  assert.equal(facts.length, 4);
+  assert.equal(facts[0], '[자산현황]\n총자산: 1,000원');
+  assert.equal(facts[1], '[간밤 이벤트]\n간밤 배당·체결 이벤트 없음');
+  assert.equal(facts[2], '자산배분: 밴드 내 정상');
+  assert.match(facts[3], /^\[거시 전술 오버레이 점검\]/);
+});
+
+test('buildMorningBriefingPrompt: 네 섹션 전부 포함하고 [맥락]·[생각해볼 점] 형식을 지시', () => {
+  const prompt = buildMorningBriefingPrompt({ assetText: '총자산: 1,000원', ...QUIET_SECTIONS });
+  assert.match(prompt, /총자산: 1,000원/);
+  assert.match(prompt, /\[맥락\]/);
+  assert.match(prompt, /\[생각해볼 점\]/);
 });

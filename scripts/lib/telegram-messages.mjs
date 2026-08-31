@@ -25,19 +25,77 @@ export function formatDepartmentMessage({ departmentLabel, body, zeusComment = n
   return msg;
 }
 
-// 텔레그램 알림 표준 구조(2026-08-17 오너 확정, 2026-08-23 태그·구분선 추가) — [부서]로
-// 시작 → Node가 계산한 사실을 개조식(중점 불릿)으로 나열 → 그 뒤에 LLM이 그 사실을 보고
-// 낸 해석을 서술형 문단으로 붙인다. interpretation이 없으면(health-watcher처럼 애초에
-// LLM을 안 부르는 순수 운영 알림) 사실만 나간다 — 오너가 명시한 "필요에 따라 이 구조에서
-// 변형" 허용 범위. formatDepartmentMessage와 달리 body를 자유 문자열로 안 받고 facts
-// 배열을 강제해, 호출부가 사실과 해석을 섞어서 쓰지 않도록 구조로 유도한다.
-export function formatFactsMessage({ departmentLabel, facts, interpretation = null, zeusComment = null, tag = null }) {
+// 텔레그램 알림 표준 구조(2026-08-17 오너 확정, 2026-08-23 태그·구분선 추가, 2026-08-31
+// 3단 구조로 확장) — [부서]로 시작 → Node가 계산한 사실을 개조식(중점 불릿)으로 나열 →
+// LLM이 그 사실이 왜 중요한지 서술형 문단(context)으로 붙이고 → 생각해볼 점/선택지를
+// 다시 개조식(considerations)으로 붙인다. 오너 지적(2026-08-31) — 예전엔 "사실+해석
+// 문단 1개"뿐이라 숫자만 보고 실제로 뭘 고민해야 하는지가 안 나왔다. context·considerations
+// 둘 다 없으면(health-watcher처럼 애초에 LLM을 안 부르는 순수 운영 알림, 또는 조용한
+// 날의 morning-briefing처럼 LLM 호출 자체를 생략한 경우) 사실만 나간다 —
+// formatDepartmentMessage와 달리 body를 자유 문자열로 안 받고 facts 배열을 강제해,
+// 호출부가 사실과 해석을 섞어서 쓰지 않도록 구조로 유도한다.
+export function formatFactsMessage({ departmentLabel, facts, context = null, considerations = null, zeusComment = null, tag = null }) {
   const header = buildHeader(departmentLabel, tag);
   const factBlock = (facts ?? []).map((f) => `· ${f}`).join('\n');
   let msg = `${header}\n${SEPARATOR}\n${factBlock}`;
-  if (interpretation) msg += `\n\n${interpretation}`;
+  if (context) msg += `\n\n${context}`;
+  if (considerations?.length) msg += `\n\n[생각해볼 점]\n${considerations.map((c) => `· ${c}`).join('\n')}`;
   if (zeusComment) msg += `\n\n[Zeus] ${zeusComment}`;
   return msg;
+}
+
+// 마커 상수(2026-08-31 신설, 코드리뷰 지적) — 이 두 마커 문자열이 파서(아래)와 5개
+// 잡의 프롬프트에 각자 하드코딩돼 있으면, 한쪽만 표기를 바꿔도 나머지가 조용히
+// 폴백 모드로 떨어진다(테스트도 안 잡아줌) — macro-overlay-facts.mjs의 "[경고]" 문자열
+// 커플링과 같은 클래스. 프롬프트 쪽은 이 상수를 템플릿 리터럴로 참조해서 쓴다.
+export const CONTEXT_MARKER = '[맥락]';
+export const CONSIDERATIONS_MARKER = '[생각해볼 점]';
+
+// LLM 응답에서 [맥락]·[생각해볼 점] 두 섹션을 분리 — formatFactsMessage의 context·
+// considerations 계약을 채우기 위한 출력 파서(2026-08-31 신설). 프롬프트가 정확히 이
+// 두 마커로 나눠 응답하도록 요청하는 게 전제(각 잡의 프롬프트에 명시). 마커가 하나도
+// 없으면(모델이 형식을 안 지킨 예외) 전체 텍스트를 context로 보존하고 considerations는
+// null — 파싱 실패로 내용을 통째로 버리지 않는다(추정 금지 원칙과 동일하게, 손실 없는
+// 쪽으로 폴백).
+//
+// ⚠️ 코드리뷰 지적(2026-08-31, MEDIUM 2건) — 첫 버전은 (1) [맥락] 마커를 문자열
+// "맨 앞"에서만 벗겨내(정규식 ^앵커) 모델이 서두 인사말을 붙이면 마커가 그대로
+// 텔레그램에 노출됐고, (2) [생각해볼 점] 아래 모든 줄을 각각 별개 항목으로 취급해
+// 한 항목이 줄바꿈으로 감싸지면(모델이 긴 문장을 두 줄로 나눠 쓰면) 하나가 두 개
+// 불릿으로 쪼개졌다. [맥락]도 indexOf로 위치를 찾고(앵커 아님), considerations는
+// 불릿 프리픽스가 있는 줄만 "새 항목"으로 취급하고 프리픽스 없는 줄은 직전 항목에
+// 이어붙인다.
+const CONSIDERATION_BULLET_RE = /^[·\-*•]\s*/;
+// 모델이 "생각해볼 점 없음"을 프롬프트 지시("섹션을 빈 채로 둬라")대로 안 하고 굳이
+// "없음"류 채움말을 써서 항목 1개짜리로 응답하는 경우 — 정보 없는 불릿을 그대로
+// 노출하면 이 개선 자체의 취지(저정보 메시지 제거)에 반한다.
+const NO_OP_CONSIDERATION_RE = /^\(?(해당\s*)?없음\)?$/;
+
+export function parseContextConsiderations(text) {
+  const t = String(text ?? '').trim();
+  if (!t) return { context: null, considerations: null };
+  const considerationsIdx = t.indexOf(CONSIDERATIONS_MARKER);
+  const contextIdx = t.indexOf(CONTEXT_MARKER);
+  if (considerationsIdx === -1) {
+    const context = (contextIdx === -1 ? t : t.slice(contextIdx + CONTEXT_MARKER.length).trim()) || null;
+    return { context, considerations: null };
+  }
+  const contextPart = contextIdx === -1
+    ? t.slice(0, considerationsIdx).trim()
+    : t.slice(contextIdx + CONTEXT_MARKER.length, considerationsIdx).trim();
+  const considerationsPart = t.slice(considerationsIdx + CONSIDERATIONS_MARKER.length).trim();
+
+  const considerations = [];
+  for (const raw of considerationsPart.split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (CONSIDERATION_BULLET_RE.test(line)) considerations.push(line.replace(CONSIDERATION_BULLET_RE, ''));
+    else if (considerations.length) considerations[considerations.length - 1] += ` ${line}`;
+    else considerations.push(line);
+  }
+  const filtered = considerations.filter((c) => !NO_OP_CONSIDERATION_RE.test(c));
+
+  return { context: contextPart || null, considerations: filtered.length ? filtered : null };
 }
 
 // Frank의 답장 텍스트에서 승인/거부 의사를 읽는다. "승인"·"거부"가 둘 다 있거나(모순)

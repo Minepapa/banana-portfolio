@@ -36,7 +36,7 @@ const DEPARTMENT_LABEL = '운영실 Hermes';
 // 누락 재발을 막는 구조적 가드.
 export const SCHEDULE = [
   { day: '평일', time: '08:00', dept: '운영실 Hermes', what: '아침 브리핑 — 자산현황+간밤 이벤트+거시 5신호', script: 'morning-briefing.mjs' },
-  { day: '평일', time: '16:15', dept: '운영실 Hermes', what: '당일 체결 내역 보고(체결 없어도 "오늘 체결 없음"으로 보고)', script: 'daily-execution-report.mjs' },
+  { day: '평일', time: '16:15', dept: '운영실 Hermes', what: '당일 체결 내역 보고(체결 있을 때만 실제 발송, 2026-08-31부터 저정보 메시지 억제)', script: 'daily-execution-report.mjs' },
   { day: '평일', time: '16:30', dept: '투자전략실 Athena', what: '리밸런싱·거시 점검(이상 있을 때만 실제 발송)', script: 'daily-asset-allocation-check.mjs' },
   { day: '일요일', time: '07:00', dept: '리스크관리실 Themis', what: '주간 위험 재검토', script: 'themis-risk-review.mjs' },
   { day: '일요일', time: '08:00', dept: '비서실 Apollo', what: '주간 리포트', script: 'weekly-report.mjs' },

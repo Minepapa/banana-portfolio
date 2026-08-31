@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  formatDepartmentMessage, formatFactsMessage, parseReplyDecision, parseKillSwitchCommand,
+  formatDepartmentMessage, formatFactsMessage, parseContextConsiderations, parseReplyDecision, parseKillSwitchCommand,
   parseDepartmentCall, parseExecutionModeCommand, parseProposalModeCommand,
 } from './telegram-messages.mjs';
 
@@ -28,28 +28,39 @@ test('formatDepartmentMessage: tag 안 넘기면(기본값) 태그 없이 부서
   assert.doesNotMatch(msg, /^\[[가-힣]+\] \[운영실/);
 });
 
-test('formatFactsMessage: 사실은 개조식, 해석은 뒤에 서술형 문단으로(오너 확정 표준 구조, 2026-08-17)', () => {
+test('formatFactsMessage: 사실→맥락→생각해볼 점 3단 구조(2026-08-31 확장 — 숫자만 던지지 말고 왜 중요한지·뭘 고민할지까지)', () => {
   const msg = formatFactsMessage({
     departmentLabel: '투자전략실 Athena',
     facts: ['리츠 갭 -1.98%p(밴드 이탈)', '연금저축 누적현금 962,000원'],
-    interpretation: '리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.',
+    context: '리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.',
+    considerations: ['지금 배분할지, 다음 현금 유입까지 기다릴지', '리츠 대신 국내주식 갭부터 메울지'],
   });
   assert.equal(
     msg,
-    `[투자전략실 Athena]\n${SEP}\n· 리츠 갭 -1.98%p(밴드 이탈)\n· 연금저축 누적현금 962,000원\n\n리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.`,
+    `[투자전략실 Athena]\n${SEP}\n· 리츠 갭 -1.98%p(밴드 이탈)\n· 연금저축 누적현금 962,000원\n\n리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.\n\n[생각해볼 점]\n· 지금 배분할지, 다음 현금 유입까지 기다릴지\n· 리츠 대신 국내주식 갭부터 메울지`,
   );
 });
 
-test('formatFactsMessage: interpretation 없으면 사실만(LLM 없는 순수 운영 알림 변형)', () => {
+test('formatFactsMessage: context·considerations 둘 다 없으면 사실만(LLM 없는 순수 운영 알림, 또는 조용한 날 LLM 생략)', () => {
   const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['잡 A가 조용함', '잡 B가 조용함'] });
   assert.equal(msg, `[운영실 Hermes]\n${SEP}\n· 잡 A가 조용함\n· 잡 B가 조용함`);
 });
 
+test('formatFactsMessage: considerations 없이 context만 있어도 됨(2단 구조 그대로 허용)', () => {
+  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['사실1'], context: '맥락문단' });
+  assert.equal(msg, `[운영실 Hermes]\n${SEP}\n· 사실1\n\n맥락문단`);
+});
+
+test('formatFactsMessage: considerations가 빈 배열이면(마커는 있었지만 항목 없음) [생각해볼 점] 섹션 자체를 안 붙임', () => {
+  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['사실1'], context: '맥락문단', considerations: [] });
+  assert.equal(msg, `[운영실 Hermes]\n${SEP}\n· 사실1\n\n맥락문단`);
+});
+
 test('formatFactsMessage: zeusComment까지 있으면 맨 뒤에 붙음', () => {
   const msg = formatFactsMessage({
-    departmentLabel: '투자전략실 Athena', facts: ['사실1'], interpretation: '해석문단', zeusComment: '승인',
+    departmentLabel: '투자전략실 Athena', facts: ['사실1'], context: '맥락문단', considerations: ['고민점1'], zeusComment: '승인',
   });
-  assert.equal(msg, `[투자전략실 Athena]\n${SEP}\n· 사실1\n\n해석문단\n\n[Zeus] 승인`);
+  assert.equal(msg, `[투자전략실 Athena]\n${SEP}\n· 사실1\n\n맥락문단\n\n[생각해볼 점]\n· 고민점1\n\n[Zeus] 승인`);
 });
 
 test('formatFactsMessage: facts 없어도(빈 배열) 헤더+구분선+빈 줄만 남고 안 터짐', () => {
@@ -60,6 +71,75 @@ test('formatFactsMessage: facts 없어도(빈 배열) 헤더+구분선+빈 줄�
 test('[막아야 함] formatFactsMessage: tag를 넘기면 부서 헤더 앞에 대괄호로 붙는다', () => {
   const msg = formatFactsMessage({ departmentLabel: '투자전략실 Athena', facts: ['사실1'], tag: '제안' });
   assert.equal(msg, `[제안] [투자전략실 Athena]\n${SEP}\n· 사실1`);
+});
+
+// parseContextConsiderations — LLM 응답을 formatFactsMessage의 context·considerations
+// 계약으로 분리(2026-08-31 신설). 각 잡 프롬프트가 [맥락]·[생각해볼 점] 마커로 응답을
+// 나누도록 지시하는 게 전제.
+test('parseContextConsiderations: [맥락]·[생각해볼 점] 두 마커로 정확히 분리', () => {
+  const text = '[맥락]\n리츠 비중이 목표 대비 부족합니다.\n\n[생각해볼 점]\n· 지금 배분할지 기다릴지\n· 다른 자산군부터 메울지';
+  const { context, considerations } = parseContextConsiderations(text);
+  assert.equal(context, '리츠 비중이 목표 대비 부족합니다.');
+  assert.deepEqual(considerations, ['지금 배분할지 기다릴지', '다른 자산군부터 메울지']);
+});
+
+test('parseContextConsiderations: "- " 불릿도 "· "와 동일하게 벗겨냄', () => {
+  const text = '[맥락]\n맥락문단\n\n[생각해볼 점]\n- 고민점1\n- 고민점2';
+  const { considerations } = parseContextConsiderations(text);
+  assert.deepEqual(considerations, ['고민점1', '고민점2']);
+});
+
+test('parseContextConsiderations: [생각해볼 점] 마커가 없으면(형식 위반) 전체를 context로 보존, considerations는 null(내용 손실 없이 폴백)', () => {
+  const text = '리츠 비중이 목표 대비 부족합니다. 배분을 고려해보세요.';
+  const { context, considerations } = parseContextConsiderations(text);
+  assert.equal(context, text);
+  assert.equal(considerations, null);
+});
+
+test('parseContextConsiderations: 빈 입력이면 둘 다 null(안 터짐)', () => {
+  assert.deepEqual(parseContextConsiderations(''), { context: null, considerations: null });
+  assert.deepEqual(parseContextConsiderations(undefined), { context: null, considerations: null });
+});
+
+// 코드리뷰 지적(2026-08-31, MEDIUM 2건) 재발 방지 회귀 테스트
+
+test('[막아야 함] parseContextConsiderations: 모델이 서두 인사말을 붙여도 [맥락] 마커가 결과에 안 남음', () => {
+  const text = '알겠습니다.\n\n[맥락]\n리츠 비중이 부족합니다.\n\n[생각해볼 점]\n- 배분할지 기다릴지';
+  const { context } = parseContextConsiderations(text);
+  assert.equal(context, '리츠 비중이 부족합니다.');
+  assert.doesNotMatch(context, /\[맥락\]/);
+});
+
+test('[막아야 함] parseContextConsiderations: 한 항목이 줄바꿈으로 두 줄에 걸쳐도 불릿 1개로 합쳐짐(줄바꿈 자체를 새 항목으로 오인 안 함)', () => {
+  const text = '[맥락]\n맥락\n\n[생각해볼 점]\n- 아주 긴 항목인데\n  두 번째 줄로 넘어감\n- 두번째';
+  const { considerations } = parseContextConsiderations(text);
+  assert.deepEqual(considerations, ['아주 긴 항목인데 두 번째 줄로 넘어감', '두번째']);
+});
+
+test('parseContextConsiderations: "•" 불릿도 인식', () => {
+  const text = '[맥락]\n맥락\n\n[생각해볼 점]\n• 고민점1';
+  const { considerations } = parseContextConsiderations(text);
+  assert.deepEqual(considerations, ['고민점1']);
+});
+
+test('parseContextConsiderations: 모델이 "빈 채로 둬라" 지시를 안 지키고 "없음"류 채움말만 쓰면 저정보 불릿 대신 null', () => {
+  const text = '[맥락]\n맥락\n\n[생각해볼 점]\n- 없음';
+  const { considerations } = parseContextConsiderations(text);
+  assert.equal(considerations, null);
+});
+
+test('parseContextConsiderations: [맥락]은 있는데 [생각해볼 점]이 없으면(부분 형식 위반) 마커 이후 텍스트를 context로, considerations는 null', () => {
+  const text = '[맥락]\n리츠 비중이 부족합니다.';
+  const { context, considerations } = parseContextConsiderations(text);
+  assert.equal(context, '리츠 비중이 부족합니다.');
+  assert.equal(considerations, null);
+});
+
+test('parseContextConsiderations: [생각해볼 점] 섹션이 비어있으면(프롬프트 지시대로 "빈 채로 둠") considerations는 null', () => {
+  const text = '[맥락]\n지금 비중이 적절합니다.\n\n[생각해볼 점]';
+  const { context, considerations } = parseContextConsiderations(text);
+  assert.equal(context, '지금 비중이 적절합니다.');
+  assert.equal(considerations, null);
 });
 
 test('parseReplyDecision: "승인"이 포함되면 승인(부가 코멘트 있어도)', () => {

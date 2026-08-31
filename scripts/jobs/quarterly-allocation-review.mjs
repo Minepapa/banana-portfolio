@@ -39,7 +39,7 @@ import { assembleMacro } from '../tools/risk-facts.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
-import { formatFactsMessage } from '../lib/telegram-messages.mjs';
+import { formatFactsMessage, parseContextConsiderations, CONTEXT_MARKER, CONSIDERATIONS_MARKER } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
@@ -140,9 +140,17 @@ ${macro}
    마라) — 이 잡은 목표비중을 직접 바꾸지 않는다.
 3. 특별한 문제가 없으면 "지금 비중이 여전히 적절하다"고 명확히 말해라 — 억지로 지적
    하지 마라.
-4. 형식: 결론 문장 하나 + 필요하면 근거 1~3문장, 합쳐서 2~4문장. 문장 사이는
-   줄바꿈으로 분리해라 — 한 문단에 몰아쓰지 마라. JSON·마크다운 없이 순수
-   텍스트만 출력.`;
+
+형식(반드시 정확히 이 두 마커로 응답을 나눠라, 다른 마커·JSON·마크다운 없이 순수
+텍스트만):
+${CONTEXT_MARKER}
+1·3번 내용을 결론 문장 하나 + 필요하면 근거 1~3문장, 합쳐서 2~4문장. 문장 사이는
+줄바꿈으로 분리해라 — 한 문단에 몰아쓰지 마라.
+
+${CONSIDERATIONS_MARKER}
+재검토가 필요하다고 판단했다면(2번) 오너가 결정할 선택지를 "- "로 시작하는 줄로
+1~3개(예: "이번 분기부터 조정할지 다음 분기까지 관찰할지", "어느 자산군부터 조정
+검토할지"). 지금 비중이 적절하다면 이 섹션은 빈 채로 둬라(억지로 만들지 마라).`;
 }
 
 async function main() {
@@ -187,9 +195,10 @@ async function main() {
   }
 
   console.log(judgment);
+  const { context, considerations } = parseContextConsiderations(judgment);
 
   try {
-    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', facts, interpretation: judgment }));
+    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', facts, context, considerations }));
     writeLastQuarter(getQuarterLabel(now));
   } catch (e) {
     // 발송 실패 시 분기 마커를 안 갱신 — 다음 날(2일·3일)에 재시도되게 한다

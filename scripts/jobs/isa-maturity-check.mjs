@@ -45,7 +45,7 @@ import { summarizeIsaHoldings } from '../lib/isa-exposure.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
-import { formatFactsMessage } from '../lib/telegram-messages.mjs';
+import { formatFactsMessage, parseContextConsiderations, CONTEXT_MARKER, CONSIDERATIONS_MARKER } from '../lib/telegram-messages.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -121,8 +121,17 @@ ${lines}
    직접 확인해야 한다는 점을 명시해라(이 시스템은 세무 계산기가 아니다).
 3. 이건 이 시스템이 대신 실행할 수 있는 주문이 아니라 오너가 증권사에서 직접 신청해야
    하는 계좌이전 절차임을 분명히 밝혀라.
-4. 형식: 결론 문장 하나 + 근거 3~6문장, 합쳐서 4~7문장. 문장 사이는 줄바꿈으로
-   분리해라 — 한 문단에 몰아쓰지 마라. JSON·마크다운 없이 순수 텍스트만 출력.`;
+
+형식(반드시 정확히 이 두 마커로 응답을 나눠라, 다른 마커·JSON·마크다운 없이 순수
+텍스트만):
+${CONTEXT_MARKER}
+위 1·3번 내용을 결론 문장 하나 + 근거 2~4문장으로. 문장 사이는 줄바꿈으로 분리하고
+한 문단에 몰아쓰지 마라.
+
+${CONSIDERATIONS_MARKER}
+위 2번(어떤 걸 어떻게 정리할지) + 오너가 실제로 결정해야 할 선택지를 "- "로 시작하는
+줄 2~4개로. 각 줄은 오너가 바로 답할 수 있는 구체적 질문·옵션 형태로("A할지 B할지"
+같은 식) — 이미 나온 사실을 다시 요약하지 마라.`;
 }
 
 function readVaultDir(dir) {
@@ -183,9 +192,10 @@ async function main() {
   }
 
   console.log(judgment);
+  const { context, considerations } = parseContextConsiderations(judgment);
 
   try {
-    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '제안', facts, interpretation: judgment }));
+    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '제안', facts, context, considerations }));
     // hasReachedMaturity를 여기서 다시 확인 — --force로 만기 전에 강제 발송한 경우까지
     // 마커를 영구 기록하면 진짜 만기(2028-04-06)가 와도 이 잡이 평생 스킵된다(코드리뷰
     // 지적). force 테스트는 위에서 이미 --dry-run과만 조합하도록 안내했지만, 혹시라도

@@ -82,10 +82,12 @@ export function buildProposalStatusEditText({ proposal, action, decidedAt }) {
     quantity: proposal.quantity, proposedPrice: proposal.proposedPrice,
   });
   const decidedLine = `${tag}됨 (${formatKstDateTime(decidedAt)} KST)`;
-  const interpretationParts = [proposal.reason || null];
-  if (action === 'reject' && proposal.rejectReason) interpretationParts.push(`거부 사유: ${proposal.rejectReason}`);
-  const interpretation = [decidedLine, ...interpretationParts.filter(Boolean)].join('\n\n');
-  return formatFactsMessage({ departmentLabel, facts, interpretation, tag });
+  const contextParts = [proposal.reason || null];
+  if (action === 'reject' && proposal.rejectReason) contextParts.push(`거부 사유: ${proposal.rejectReason}`);
+  const context = [decidedLine, ...contextParts.filter(Boolean)].join('\n\n');
+  // 이미 결정이 끝난 제안의 상태 편집 텍스트라 "생각해볼 점"은 해당 없음(considerations
+  // 없이 context만 — formatFactsMessage 2026-08-31 확장이 2단 구조도 그대로 허용).
+  return formatFactsMessage({ departmentLabel, facts, context, tag });
 }
 
 // existingProposals: [{filename, content, ...parseProposal() 결과}] — 호출부가 Decisions/
@@ -145,7 +147,7 @@ export async function createAndSendProposal({
   // 서술(reason)은 그 뒤에 문단으로 — buildProposalMessageBody(한 줄 요약형)는 이제
   // DRY-RUN 미리보기 전용, 실제 발송은 여기서 조립한다.
   const facts = buildProposalFacts({ side, name: name ?? assetKey, assetKey, quantity, proposedPrice, amountWon });
-  const messageText = formatFactsMessage({ departmentLabel, facts, interpretation: reason || null, zeusComment, tag: '제안' });
+  const messageText = formatFactsMessage({ departmentLabel, facts, context: reason || null, zeusComment, tag: '제안' });
   const sendResult = await sendMessage(messageText);
   const telegramMessageId = sendResult?.message_id ?? null;
 

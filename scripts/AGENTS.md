@@ -15,7 +15,10 @@ launchd로 도는 Node 자동화. plist는 `scripts/launchd/`(설치본 `~/Libra
 - 데이터 없으면 "(데이터 부족)" 표기 강제, 추정 금지.
 
 ## claude 호출 규칙 (quota)
-- 헤드리스 호출은 `runHeadlessClaude`(`lib/sheets-common.mjs`)만 사용. 한도 감지 시 전역 쿨다운 설정 + `err.isLimit` 태그.
+- 헤드리스 호출은 `runHeadlessClaude`만 사용 — v1 잔재 스크립트는 `lib/sheets-common.mjs`,
+  v2 잡(scripts/jobs/*.mjs)은 `lib/headless-claude.mjs`(2026-08-31 확인 — 실제 소비되는
+  쪽은 이 파일, quota-cooldown.mjs의 setCooldown·isLimit 태깅도 이 안에서 처리). 한도
+  감지 시 전역 쿨다운 설정 + `err.isLimit` 태그.
 - **새 claude 호출 잡은 반드시**: ① 호출 전 `cooldownActive()` 가드(쿨다운 중 skip), ② 한도(`e.isLimit`) catch 시 루프 중단. 확정 성향 주입은 `lib/preferences.mjs`(`renderPrefRows`·`prefBlock`, confirmedOnly).
 - 빈 작업이면 claude 호출하지 말 것(예: drain 빈 큐 → 즉시 exit).
 

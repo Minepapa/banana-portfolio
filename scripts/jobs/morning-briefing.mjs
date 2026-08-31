@@ -5,13 +5,14 @@
  * (Facts/Ledger)·자산배분 밴드 상태(rebalance-gap.mjs, 자산분배 트랙 최소개입 자동화
  * 계획 Part 6)·거시 5신호(macro-overlay-facts.mjs)를 매일 아침 텔레그램으로 보낸다.
  *
- * ⚠️ 설계 판단 — LLM 호출 없음(Node 전용). 매일 도는 잡에서 "간밤 이벤트 요약"을 LLM
- * 서술로 만들면 비용·환각 위험이 매일 누적된다. 이 잡의 세 섹션은 전부 이미 존재하는
- * 순수 Node 계산(buildHomeMirror·Facts/Ledger 읽기·macro-overlay-facts.mjs)의 재조립일
- * 뿐이라 판단(department reasoning)이 필요한 지점이 없다 — 그래서 daily-asset-allocation-
- * check.mjs·job-alerts.mjs와 같은 카테고리(순수 Node 인프라 알림)로 분류해 **운영실
- * Hermes**로 라벨링한다(execute-quant-proposal.mjs·watch-order-fill.mjs를 Kairos에서
- * Hermes로 재배정한 것과 동일 원칙, 같은 날 결정).
+ * ⚠️ 설계 판단 변경(2026-08-31, 오너 지적 — "숫자만 던지고 왜 중요한지·뭘 고민할지가
+ * 없다") — 원래는 LLM 호출이 아예 없었다(비용·환각 위험 회피). 이제 "완전히 조용한
+ * 날"(간밤 이벤트 없음 + 자산배분 밴드 내 정상 + 거시 5신호 전부 조용)엔 여전히 LLM을
+ * 안 부르고 사실만 보낸다(비용 절감 + "할 말 없으면 짧게" 원칙, 오너 확정) — 하지만
+ * 뭔가 하나라도 있으면 Hermes 헤드리스 판단으로 맥락·생각해볼 점을 붙인다. 부서 라벨은
+ * 그대로 **운영실 Hermes**(현황 브리핑 영역, LLM 추가가 판단 소관을 바꾸지 않음 —
+ * execute-quant-proposal.mjs·watch-order-fill.mjs를 Kairos에서 Hermes로 재배정한 것과
+ * 동일 원칙).
  *
  * 전일 대비 총자산 변화는 update-monthly-balance-snapshot.mjs의 MonthlyBalances 파일을
  * 재사용하지 않는다 — 그 파일은 "이번 달"을 매일 덮어써 어제 값이 남지 않는다(설계
@@ -43,8 +44,12 @@ import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { buildHomeMirror } from '../lib/firestore-mirror.mjs';
 import { computeRebalanceGaps } from '../lib/rebalance-gap.mjs';
+import { loadEnv } from '../lib/auth.mjs';
+import { loadAgent } from '../lib/agent-loader.mjs';
+import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { formatFactsMessage, parseContextConsiderations, CONTEXT_MARKER, CONSIDERATIONS_MARKER } from '../lib/telegram-messages.mjs';
 import { renderSignalsReport } from '../tools/macro-overlay-facts.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -119,6 +124,70 @@ export function buildAllocationSection(holdings) {
   return `자산배분: ${breached.length}개 자산군 이탈 중(${breached.map((g) => g.assetClass).join(', ')})`;
 }
 
+// 순수함수(2026-08-31 신설) — 네 섹션이 전부 "특별한 거 없음" 상태인지 판정. 이 경우만
+// LLM 호출을 생략(비용 절감, 오너 확정) — 나머지 경우는 전부 Hermes 판단을 붙인다.
+// hasSignals=false(거시신호 조회 자체가 실패)면 "조용함"이 아니라 "확인 필요"로 취급해
+// 실패가 조용한 날 뒤에 조용히 묻히지 않게 한다.
+// ⚠️ macroText.includes('[경고]')는 5개 신호 중 하나라도 개별 이탈이면 걸린다(코드리뷰
+// 지적) — renderSignalsReport의 종합판정 "[정상] 5개 신호 전부 조용함"보다 더 민감한
+// 기준이라, "완전히 조용한 날"이 이 설계 의도(daily-asset-allocation-check.mjs가 매일
+// 16:30에 이미 잡아내는 것과 같은 기준)보다 드물게 나올 수 있다 — 안전한 방향(과소
+// 발송보다 과다 호출)이라 의도적으로 이렇게 뒀다.
+export function isFullyQuiet({ eventsText, allocationText, macroText, hasSignals }) {
+  const eventsQuiet = eventsText === '간밤 배당·체결 이벤트 없음' || eventsText === '(첫 실행 — 비교 기준 없어 이벤트 생략)';
+  const allocationQuiet = allocationText === '자산배분: 밴드 내 정상';
+  const macroQuiet = hasSignals && !macroText.includes('[경고]');
+  return eventsQuiet && allocationQuiet && macroQuiet;
+}
+
+// 순수함수 — 네 섹션을 formatFactsMessage용 facts 배열로. 각 섹션 자체가 이미 여러 줄일
+// 수 있어(themis-risk-review.mjs·daily-asset-allocation-check.mjs와 동일 관례) fact
+// 1개 = 섹션 1개로 묶는다.
+export function buildMorningBriefingFacts({ assetText, eventsText, allocationText, macroText }) {
+  return [
+    `[자산현황]\n${assetText}`,
+    `[간밤 이벤트]\n${eventsText}`,
+    allocationText,
+    macroText,
+  ];
+}
+
+// 순수함수 — Hermes에게 줄 프롬프트. 네 섹션은 이미 위 facts로 불릿 처리돼 먼저
+// 나가므로, LLM 출력은 숫자 재나열이 아니라 "오늘 뭘 신경 써야 하는지"에 집중한다.
+export function buildMorningBriefingPrompt({ assetText, eventsText, allocationText, macroText }) {
+  return `[아침 브리핑] 아래는 오늘 아침 시점의 검증된 사실이다(재조회·추정 금지, 이
+숫자만 사용). 전부 텔레그램 메시지에 이미 불릿으로 따로 나간다 — 아래 출력에서 다시
+나열하지 마라.
+
+[자산현황]
+${assetText}
+
+[간밤 이벤트]
+${eventsText}
+
+[자산배분]
+${allocationText}
+
+[거시 전술 오버레이]
+${macroText}
+
+판단 요청:
+1. 오늘 아침 시점에서 오너가 실제로 신경 써야 할 게 무엇인지 짚어라 — 위 네 섹션 중
+   특별한 게 없는 건 언급하지 말고, 실제로 눈에 띄는 것(자산배분 이탈폭이 큰지, 거시
+   경고가 있는지, 간밤 이벤트가 큰 금액인지 등)만 짚어라.
+2. 오늘 하루 시장을 지켜볼 때 뭘 눈여겨봐야 할지 방향을 제시해라(구체적 매수·매도
+   지시는 아님 — 이 잡은 순수 현황 브리핑이다).
+
+형식(반드시 정확히 이 두 마커로 응답을 나눠라, 다른 마커·JSON·마크다운 없이 순수
+텍스트만):
+${CONTEXT_MARKER}
+결론 문장 하나 + 근거 1~3문장, 합쳐서 2~4문장. 문장 사이는 줄바꿈으로 분리해라 — 한
+문단에 몰아쓰지 마라.
+
+${CONSIDERATIONS_MARKER}
+오늘 신경 쓸 점을 "- "로 시작하는 줄로 1~3개.`;
+}
+
 function fetchMacroText() {
   try {
     const raw = execFileSync('node', [join(HERE, '..', 'tools', 'macro-overlay-facts.mjs'), '--json'], {
@@ -147,22 +216,53 @@ async function main() {
     : `(거시신호 조회 실패: ${macroResult.error})`;
 
   const allocationText = buildAllocationSection(holdings);
+  const sections = { assetText: asset.text, eventsText, allocationText, macroText };
 
-  const body = [
+  console.log([
     '[자산현황]', asset.text,
     '', '[간밤 이벤트]', eventsText,
     '', allocationText,
     '', macroText,
-  ].join('\n');
+  ].join('\n'));
 
-  console.log(body);
+  const facts = buildMorningBriefingFacts(sections);
+  const quiet = isFullyQuiet({ ...sections, hasSignals: !!macroResult.signals });
+
+  let context = null;
+  let considerations = null;
+
+  if (quiet) {
+    console.log('ℹ️ morning-briefing: 완전히 조용한 날 — LLM 해석 생략, 사실만 발송');
+  } else if (DRY_RUN) {
+    console.log('(드라이런 — LLM 프롬프트만 확인, 실제 호출 없음)\n');
+    console.log(buildMorningBriefingPrompt(sections));
+  } else if (cooldownActive()) {
+    // AGENTS.md "claude 호출 규칙" — 새 claude 호출 잡은 호출 전 cooldownActive() 가드
+    // 필수(쿨다운 중이면 skip). 이 잡은 2026-08-31에 처음 LLM을 부르게 된 잡이라 이
+    // 규칙 대상 — 사실만 발송(아래 catch와 동일하게 통째로 유실 안 함).
+    console.log('⏳ 쿨다운 중 — Hermes 판단 생략, 사실만 발송');
+  } else {
+    loadEnv();
+    const AGENT = loadAgent('hermes', { fallbackModel: 'sonnet' });
+    if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
+    const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
+    try {
+      const judgment = (await runHeadlessClaude(buildMorningBriefingPrompt(sections), MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
+      console.log(judgment);
+      ({ context, considerations } = parseContextConsiderations(judgment));
+    } catch (e) {
+      // Hermes 판단 실패해도 브리핑 자체(사실)는 여전히 유용하니 잡을 죽이지 않는다 —
+      // 사실만이라도 발송(context·considerations는 null로 남음).
+      console.error(`⚠ Hermes 헤드리스 판단 실패(사실만 발송): ${e.message}`);
+    }
+  }
 
   if (!DRY_RUN) {
     // 워터마크는 발송이 실제로 성공한 뒤에만 전진시킨다(위 헤더 주석 HIGH 지적 2번) —
     // 먼저 갱신하고 발송을 try/catch로 무시하면, 발송 실패 시 이번에 보고하려던 이벤트가
     // 다음 실행에서도 "이미 지난 워터마크"가 돼 영원히 안 나간다.
     try {
-      await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', body }));
+      await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', facts, context, considerations }));
       writePreviousState(asset.total, new Date().toISOString());
     } catch (e) { console.error('텔레그램 알림 실패(워터마크 미전진, 다음 실행에서 재시도):', e.message); }
   }

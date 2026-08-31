@@ -36,7 +36,7 @@ import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
-import { formatFactsMessage } from '../lib/telegram-messages.mjs';
+import { formatFactsMessage, parseContextConsiderations, CONTEXT_MARKER, CONSIDERATIONS_MARKER } from '../lib/telegram-messages.mjs';
 
 // loadEnv()·loadAgent()는 main() 안에서만 부른다(2026-08-23, 독립 코드리뷰 MEDIUM 지적) —
 // 최상위에서 부르면 이 파일의 순수함수(buildRecentProposalsSummary 등)만 가져다 쓰려는
@@ -73,7 +73,7 @@ export function buildRecentProposalsSummary(proposals, now = new Date()) {
 }
 
 // 순수함수 — Node가 계산한 사실을 텔레그램용 개조식 불릿으로 변환. LLM은 이 숫자를
-// 재조회·재계산하지 않고 판정(interpretation)만 붙인다 — 텔레그램 메시지 표준 구조
+// 재조회·재계산하지 않고 판정(맥락·생각해볼 점)만 붙인다 — 텔레그램 메시지 표준 구조
 // (2026-08-17 오너 확정, telegram-messages.mjs formatFactsMessage 헤더 주석 참고: "Node가
 // 계산한 사실을 개조식으로 나열 → LLM 해석을 서술형으로 붙인다")를 이 잡에도 적용한다
 // (2026-08-30, 오너 지적 — Themis 메시지만 다른 부서와 달리 불릿 없이 숫자·판정·제안
@@ -112,10 +112,18 @@ ${recentProposalsText}
 2. 위 "최근 7일 생성된 제안" 중 우려되는 게 있으면(예: 거시 위험 신호와 동시에 나간 제안,
    같은 방향으로 반복되는 제안 등) 구체적으로 짚어라(어떤 제안인지 인용 포함). 없으면
    없다고 말해라 — 있는 척 억지로 지적하지 마라.
-3. 형식: 거시지표·잡상태 숫자를 다시 나열하지 말고 판정 결론 문장 하나(심각도
-   🟢/🟡/🔴 포함) + 필요하면 근거 문장 1~2개, 합쳐서 2~4문장. 문장 사이는
-   줄바꿈으로 분리해라 — 한 문단에 전부 몰아쓰지 마라. 판관의 언어로(인용과 함께
-   짚는 서술형). JSON·마크다운 없이 순수 텍스트만 출력.`;
+
+형식(반드시 정확히 이 두 마커로 응답을 나눠라, 다른 마커·JSON·마크다운 없이 순수
+텍스트만):
+${CONTEXT_MARKER}
+거시지표·잡상태 숫자를 다시 나열하지 말고 판정 결론 문장 하나(심각도 🟢/🟡/🔴 포함) +
+필요하면 근거 문장 1~2개, 합쳐서 2~4문장. 문장 사이는 줄바꿈으로 분리해라 — 한 문단에
+전부 몰아쓰지 마라. 판관의 언어로(인용과 함께 짚는 서술형).
+
+${CONSIDERATIONS_MARKER}
+2번에서 짚은 우려되는 제안이 있으면 오너가 확인해볼 점을 "- "로 시작하는 줄로 1~3개
+(예: "이 제안을 재검토할지", "다음 리밸런싱까지 보류할지"). 우려되는 게 전혀 없으면
+이 섹션은 빈 채로 둬라(억지로 만들지 마라).`;
 }
 
 async function main() {
@@ -158,9 +166,10 @@ async function main() {
   }
 
   console.log(judgment);
+  const { context, considerations } = parseContextConsiderations(judgment);
 
   try {
-    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', facts, interpretation: judgment }));
+    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', facts, context, considerations }));
   } catch (e) { console.error('텔레그램 알림 실패:', e.message); }
 }
 
