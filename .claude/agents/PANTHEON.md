@@ -99,15 +99,27 @@ Zeus는 부서 산출물을 그대로 이어붙이는 중계자가 아니라 **�
 - 보고형 작업(1질문→1보고)은 **이름 없는 동기 스폰이 기본** — 결과가 도구 결과로 직접 반환된다. (named 스폰은 SendMessage 회신 의존이라 응답 지연·유실이 기본 실패 모드였음 — Themis 자체평가 보고가 이틀 뒤 도착한 실증)
 - named teammate는 다회 왕복 협업(워크샵 등)에만 사용. 이름은 `{부서}-{목적}-{날짜}` 고유 규칙 — **재사용 절대 금지**(구 인스턴스의 지연된 shutdown 승인이 동명 신규 인스턴스를 종료시킨 실증 사고).
 
-**텔레그램 메시지 표준 구조 (2026-08-17 오너 확정, 2026-08-30 이 절로 명문화)**
+**텔레그램 메시지 표준 구조 (2026-08-17 오너 확정, 2026-08-30 이 절로 명문화, 2026-08-31
+3단 구조로 확장)**
 - 헤드리스 무인 잡이 텔레그램으로 발송하는 모든 메시지는 다음 구조를 따른다: **Node가
-  계산한 사실을 개조식(중점 `·` 불릿)으로 먼저 나열 → 그 뒤에 LLM의 해석·판정을 서술형
-  문단으로 붙인다.** 구현은 `scripts/lib/telegram-messages.mjs`의 `formatFactsMessage`
-  (facts 배열 + interpretation) — 새 헤드리스 잡을 만들 때 **`formatDepartmentMessage`에
-  LLM 원문을 그대로 통째로(raw body) 넘기지 말 것**, 그건 자유 문자열 전용(순수 Node
-  알림처럼 애초에 LLM이 안 끼는 경우, 또는 Node가 이미 완성된 body 문자열을 직접
-  조립하는 경우 — 예: `morning-briefing.mjs`)이지 "LLM 판정문을 그대로 body에 꽂는"
+  계산한 사실을 개조식(중점 `·` 불릿)으로 먼저 나열 → LLM이 왜 중요한지 서술형 문단
+  (context)으로 붙이고 → 생각해볼 점/선택지를 다시 개조식(considerations)으로 붙인다.**
+  구현은 `scripts/lib/telegram-messages.mjs`의 `formatFactsMessage`(facts 배열 +
+  context + considerations, 2026-08-31 이전엔 interpretation 단일 필드였음) —
+  새 헤드리스 잡을 만들 때 **`formatDepartmentMessage`에 LLM 원문을 그대로 통째로
+  (raw body) 넘기지 말 것**, 그건 자유 문자열 전용(순수 Node 알림처럼 애초에 LLM이
+  안 끼는 경우, 또는 Node가 이미 완성된 body 문자열을 직접 조립하는 경우 — 예:
+  `morning-briefing.mjs`의 완전히 조용한 날)이지 "LLM 판정문을 그대로 body에 꽂는"
   용도가 아니다.
+- ⚠️ **이모지·이모티콘 전면 금지(2026-08-23 최초 확정, 2026-08-31 오너 재확인 —
+  "모든 텔레그램 메세지에서 이모지, 이모티콘은 제외해")** — 모든 텔레그램 메시지(Node가
+  조립하는 부분·LLM이 생성하는 context·considerations 전부)는 이모지·이모티콘을 절대
+  쓰지 않는다. 상태 표시는 `[경고][완료][취소][차단][만료][오류][제안][안내]` 같은
+  대괄호 태그로, 강조는 `<b>`(HTML parse_mode)로 한다. 헤드리스 잡의 LLM 프롬프트는
+  형식 지시에 "이모지·이모티콘 없이 순수 텍스트만"을 반드시 명시할 것 — 명시하지
+  않으면 모델이 스스로 이모지를 넣는 경우가 있다(2026-08-31 실사고: themis-risk-
+  review.mjs 프롬프트가 "심각도 🟢/🟡/🔴 포함"이라고 명시적으로 이모지를 요구하고
+  있었던 걸 오너 지적으로 발견·수정 — "정상"·"주의"·"위험" 같은 단어로 교체).
   - ⚠️ **실사고(2026-08-30, 오너 신고)** — 이 표준이 코드 주석에만 있고 이 헌장엔 없어서
     실제로 안 지켜졌다: `themis-risk-review.mjs`·`quarterly-allocation-review.mjs`·
     신설 당일의 `isa-maturity-check.mjs` 셋 다 LLM 판정 원문을 `formatDepartmentMessage`
@@ -125,9 +137,13 @@ Zeus는 부서 산출물을 그대로 이어붙이는 중계자가 아니라 **�
     필요 없는 케이스).
   - 새 헤드리스 잡을 만들 때 체크리스트: ①Node가 계산한 숫자·목록이 있으면 배열로
     뽑아 `facts`에 ②LLM 프롬프트엔 "이 숫자는 텔레그램에 불릿으로 이미 나가니 다시
-    나열하지 말고 판정만" 명시 ③`sendTelegram(formatFactsMessage({ facts, interpretation:
-    judgment, ... }))`로 발송. 순수 Node 알림(LLM 없음)은 이 체크리스트 대상이 아니다
-    (그 경우 `formatDepartmentMessage`에 직접 조립한 body를 넘기는 게 정상).
+    나열하지 말고 판정만" + "`[맥락]`·`[생각해볼 점]` 두 마커로 나눠 응답, 이모지·
+    이모티콘 없이 순수 텍스트만" 명시(마커 상수는 `telegram-messages.mjs`의
+    `CONTEXT_MARKER`·`CONSIDERATIONS_MARKER` 참조) ③응답을 `parseContextConsiderations`
+    로 분리해 `sendTelegram(formatFactsMessage({ facts, context, considerations, ... }))`
+    로 발송. 순수 Node 알림(LLM 없음)은 이 체크리스트 대상이 아니다(그 경우
+    `formatDepartmentMessage`에 직접 조립한 body를 넘기는 게 정상 — 이 경우도
+    이모지 금지 규칙은 그대로 적용됨).
 
 ## 4. 기록 의무 — worklog (2026-08-29 폐기 — 죽은 참조였음이 확인됨)
 
