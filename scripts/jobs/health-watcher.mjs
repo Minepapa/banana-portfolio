@@ -14,13 +14,19 @@
  * 사용법: node scripts/jobs/health-watcher.mjs [--dry-run]
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { parseFrontmatter, isStale } from '../lib/job-health.mjs';
 import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 import { describeJob, JOB_REMEDIATION } from '../lib/job-labels.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { isProcessAlive, isPollingStuck, TELEGRAM_SESSION_PROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
+
+// telegram-session-health-check.mjs와 공유하는 isPollingStuck을 예전 import 경로
+// (`from './health-watcher.mjs'`)로도 계속 쓸 수 있게 재수출(2026-08-31, 코드리뷰
+// 지적으로 lib/telegram-session-liveness.mjs로 이관 — health-watcher.test.js가
+// 기존 경로로 이미 import하고 있어 그 파일은 안 건드림).
+export { isPollingStuck };
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -103,6 +109,12 @@ export const EXPECTED_INTERVALS_MS = {
   'sync-firestore-mirror': 10 * 60 * 1000,
   'update-allocation-from-holdings': 10 * 60 * 1000,
   'update-holdings-prices': 10 * 60 * 1000,
+  // telegram-session-health-check(2026-08-31 신설) — 상시 텔레그램 세션 MCP 연결
+  // 끊김 감지·자동복구 잡 자체도 StartInterval=600(10분마다). 이 잡이 조용해지면
+  // "그 조용해짐을 감지해 복구할 다른 무엇"이 없다는 게 health-watcher 자기 자신과
+  // 같은 구조적 한계(바로 아래 주석 참고) — 그래도 최소한 이 등록으로 health-watcher
+  // 자신이 살아있는 한은 잡힌다.
+  'telegram-session-health-check': 10 * 60 * 1000,
   // health-watcher 자기 자신도 StartInterval=1800(30분마다)이라 등록 — 다만 여기 등록해도
   // 구조적 사각은 남는다: findStaleJobs는 health-watcher **자신이 실행될 때만** 호출된다.
   // health-watcher 프로세스 자체가(launchd unload·크래시 등으로) 아예 안 돌기 시작하면
@@ -160,7 +172,6 @@ const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 // 텔레그램 상시세션 프로세스 감시 — 그 세션 자체가 Phase 5 산출물이라 아직 없다.
 // 환경변수로 명시적으로 켜지 않으면 이 체크는 건너뛴다(오탐 방지).
 const WATCH_TELEGRAM_SESSION = process.env.WATCH_TELEGRAM_SESSION === '1';
-const TELEGRAM_SESSION_PATTERN = 'claude.*--channels.*telegram';
 
 export function findStaleJobs(jobHealthDir, { now = new Date(), expectedIntervals = EXPECTED_INTERVALS_MS, defaultIntervalMs = EXPECTED_INTERVAL_DEFAULT_MS } = {}) {
   if (!existsSync(jobHealthDir)) return [];
@@ -175,25 +186,6 @@ export function findStaleJobs(jobHealthDir, { now = new Date(), expectedInterval
     }
   }
   return stale;
-}
-
-function isProcessAlive(pattern) {
-  try {
-    execSync(`pgrep -f "${pattern}"`, { stdio: ['ignore', 'ignore', 'ignore'] });
-    return true;
-  } catch {
-    return false; // pgrep이 못 찾으면 비영(exit 1) — 프로세스 없음
-  }
-}
-
-// 좀비 감지(2026-08-13, task #34) — pgrep은 "프로세스가 존재하는가"만 보고 "실제로
-// 메시지를 소비하고 있는가"는 못 본다. pending_update_count가 0보다 크면 텔레그램이
-// 배달을 시도했는데 상시세션이 아직 안 가져간 업데이트가 큐에 남아있다는 뜻 —
-// getUpdates 롱폴링이 정상이면 보통 즉시 소비되므로, 이 시점 스냅샷에서 잡힌다는 것
-// 자체가 폴링이 멈췄다는 강한 신호다(오탐 여지: 체크 순간과 다음 폴링 사이의 아주 좁은
-// 타이밍 경합 — 실무적으로 무시 가능한 수준으로 판단, 순수함수라 임계값 조정은 쉬움).
-export function isPollingStuck({ pendingUpdateCount }) {
-  return Number.isFinite(pendingUpdateCount) && pendingUpdateCount > 0;
 }
 
 // s: findStaleJobs()가 반환한 { job, lastRun, expectedIntervalMs } 하나. 순수 함수 —
@@ -214,7 +206,7 @@ async function main() {
   const issues = findStaleJobs(VAULT_PATHS.state.jobHealth).map(formatStaleJobIssue);
 
   if (WATCH_TELEGRAM_SESSION) {
-    if (!isProcessAlive(TELEGRAM_SESSION_PATTERN)) {
+    if (!isProcessAlive(TELEGRAM_SESSION_PROCESS_PATTERN)) {
       issues.push('텔레그램 상시 세션이 응답하지 않습니다(프로세스 없음).');
     } else {
       // 프로세스는 살아있어도 폴링이 멈췄을 수 있다(좀비 상태, 위 isPollingStuck 주석

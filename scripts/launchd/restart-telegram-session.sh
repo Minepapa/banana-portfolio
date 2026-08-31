@@ -22,6 +22,13 @@
 # ⚠️ getUpdates 소비자는 봇 토큰당 1개만 허용된다(com.banana2.telegram-session.plist
 # 주석 참고) — bootout이 완전히 내린 뒤에야 bootstrap이 새로 띄우므로(중간에 약간의
 # 공백 있음, kickstart보다 아주 살짝 느릴 뿐) 중복 소비자가 생기지 않는다.
+#
+# ⚠️ 재시도 추가(2026-08-31, 코드리뷰 지적) — bootout은 비동기라(호출이 반환돼도
+# 실제 종료는 살짝 늦게 끝날 수 있음) 그 직후 바로 bootstrap하면 "Bootstrap failed:
+# 5: Input/output error"로 실패할 여지가 있다. 예전엔 이 스크립트가 하루 1회만
+# 불려서 이 경합이 실무적으로 무시할 만했지만, telegram-session-health-check.mjs
+# (2026-08-31 신설)가 이제 최대 10분마다 이 스크립트를 부를 수 있어 노출 빈도가
+# ~144배 늘었다 — bootout 완료를 짧게 폴링하고, bootstrap도 몇 차례 재시도한다.
 set -euo pipefail
 
 LOG_DIR="$HOME/Library/Logs/banana-portfolio-v2"
@@ -29,4 +36,24 @@ mkdir -p "$LOG_DIR"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 텔레그램 상시세션 예방적 재시작" >> "$LOG_DIR/telegram-session-restart.log"
 
 launchctl bootout "gui/$(id -u)/com.banana2.telegram-session" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.banana2.telegram-session.plist"
+
+# bootout이 실제로 끝났는지(더 이상 print로 안 잡히는지) 최대 5초 폴링.
+for _ in 1 2 3 4 5; do
+  launchctl print "gui/$(id -u)/com.banana2.telegram-session" >/dev/null 2>&1 || break
+  sleep 1
+done
+
+BOOTSTRAPPED=0
+for attempt in 1 2 3; do
+  if launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.banana2.telegram-session.plist" 2>>"$LOG_DIR/telegram-session-restart.log"; then
+    BOOTSTRAPPED=1
+    break
+  fi
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] bootstrap 시도 $attempt 실패 — 재시도" >> "$LOG_DIR/telegram-session-restart.log"
+  sleep 2
+done
+
+if [ "$BOOTSTRAPPED" -ne 1 ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] bootstrap 3회 재시도 모두 실패 — 세션이 내려간 채로 남음" >> "$LOG_DIR/telegram-session-restart.log"
+  exit 1
+fi

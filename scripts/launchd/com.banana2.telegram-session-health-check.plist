@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.telegram-session-health-check</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>telegram-session-health-check</string>
+  </array>
+  <!-- 10분 간격(2026-08-31 신설) — com.banana2.telegram-session(상시 텔레그램 리스너)의
+       MCP 연결이 프로세스는 안 죽은 채로 조용히 끊기는 걸 launchd KeepAlive가 절대
+       못 잡는다는 걸 실측 확인(Log/DevRequests/2026-08-31-텔레그램세션-MCP연결끊김.md).
+       세션 프로세스 생존·telegram MCP 서브프로세스(bun) 생존·getWebhookInfo 폴링정체
+       세 신호를 결정론적으로 확인해(로그 grep 아님 — scripts/lib/telegram-session-
+       liveness.mjs 헤더 주석 참고, 원래 로그 문자열 매칭 방식은 TUI 차등 리페인트에
+       마커가 쪼개지는 걸 실측해 폐기함) 이상 시 restart-telegram-session.sh로 즉시
+       재시작(서킷브레이커 있음 — 연속 3회 넘으면 재시작 대신 수동개입 알림으로 전환).
+       하루 1회(04:00) 예방적 재시작만으로는 최대 24시간 방치될 수 있던 걸 최대
+       10분으로 단축. -->
+  <key>StartInterval</key>
+  <integer>600</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-session-health-check.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-session-health-check.log</string>
+</dict>
+</plist>

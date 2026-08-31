@@ -24,6 +24,7 @@ export const JOB_LABELS = {
   'sync-firestore-mirror': 'Vault → Firestore 미러 동기화(대시보드가 읽는 데이터)',
   'update-allocation-from-holdings': '보유종목 기준 자산분배 탭 목표·현재비중 재계산',
   'update-holdings-prices': '보유종목 실시간 시세 갱신(KRX·해외·환율)',
+  'telegram-session-health-check': '상시 텔레그램 세션 MCP 연결 끊김 감지·자동복구',
 };
 
 // 라벨 있으면 "잡이름(한글설명)", 없으면(등록 안 된 새 잡) 이름만 — 조용히 빈 문자열로
