@@ -99,3 +99,30 @@ Header: AUTH_KEY: <키>
 | Naver KOSPI/KOSDAQ 지수 종가(비지연 목적) | KRX `idx/kospi_dd_trd`·`idx/kosdaq_dd_trd` | 당일 반영 확인됨 |
 | FDR 시가총액 상위 200/150 근사(코스피200/코스닥150 대신) | **없음 — KRX에 지수 구성종목 API 부재, 대체 불가** | |
 | yfinance 미국 시세·거시지표(환율/금리/VIX 등) | **없음 — KRX는 국내 전용, 대체 불가** | |
+
+---
+
+## 6. NH PLUG(NH투자증권 Namuh PLUG) API
+
+`~/.config/banana-portfolio/nhplug-key.json`의 appkey/appsecret 사용(KIS와 달리 실전·모의
+공용 — 이 코드베이스는 실전 도메인 `https://api.nhplug.com:8443`만 씀). `scripts/lib/
+nhplug.mjs`(공용 호출·인증·성공판정)+`nhplug-krstock.mjs`(국내주식)+`nhplug-krgold.mjs`
+(금현물)가 전담. 2026-09-01 신설.
+
+**필드 스펙 출처(재현성 기록, 2026-09-02 코드리뷰 MEDIUM 지적 대응)**: 공식 SDK
+(`nhplug-sdk`, `vendor/nhplug-sdk`에 클론·gitignore 대상)는 krstock 정정/취소, krgold
+전체에 참고구현이 아예 없어, 아래 두 경로에서 직접 추출한 `openapi.json`으로 필드명·
+타입을 검증했다(로컬에 커밋하지 않음 — NH가 배포하는 원본을 그대로 재배포하는 것보다
+"어디서 언제 가져왔는지"를 기록해 필요시 재요청하는 쪽을 택함):
+- `https://www.nhplug.com/openapi-docs/krstock/openapi.json` (2026-09-01 curl로 조회)
+- `https://www.nhplug.com/openapi-docs/krgold/openapi.json` (2026-09-02 curl로 조회)
+
+교차검증은 NH의 로그인된 인터랙티브 API 가이드 포털(`https://www.nhplug.com/apiservice`,
+JS 렌더링 SPA — 정적 WebFetch로는 페이지 뼈대만 보여 Playwright로 렌더링 후 읽음)의
+실제 요청/응답 예시로 진행. 포털 URL은 로그인 세션에 종속돼 재현 가능한 고정 링크가
+아니라 별도로 남기지 않음 — 스펙 재확인이 필요하면 위 openapi.json URL을 다시 curl로
+조회할 것(NH가 API를 변경하면 이 문서의 필드 설명도 같이 갱신 필요).
+
+상세 API 커버리지(자산군×카테고리별 구현 현황)는 므네모시네
+`Knowledge/NH-PLUG-API-가이드.md` 참고 — 이 문서(DATA-SOURCES.md)는 출처 재현성만
+다룬다.

@@ -99,6 +99,15 @@ export async function getNhToken({ appkey, appsecret, fetchImpl = fetch }) {
 
 // NH 응답의 성공/실패 판정 — rsp_cd 단일값 비교 금지(API마다 성공코드가 다름).
 // 순수함수. nhplug-sdk의 DEFAULT_SUCCESS_CODES·"완료" 정규식 판정을 그대로 이식.
+//
+// ⚠️ '00048'(금현물 매수주문 성공, 2026-09-01 NH API 가이드 포털 실제 예시 응답
+// {"rsp_cd":"00048","rsp_msg":"매수 주문이 완료되었습니다."}에서 실측 확인)은 이
+// 집합에 안 넣는다 — 코드리뷰 지적(2026-09-02): 이 집합은 isNhSuccess뿐 아니라
+// callNh의 HTTP 오류 우회판정(아래, "!res.ok && 알려진 성공코드면 통과")에도 쓰여서,
+// 여기에 넣으면 HTTP 4xx/5xx가 우연히 rsp_cd:'00048'을 실어보내는 모든 엔드포인트
+// (금현물뿐 아니라 전부)에서 오류가 성공으로 오판될 여지가 넓어진다. rsp_msg의
+// "완료" 폴백만으로 이미 이 케이스는 정상 판정되므로(아래 두 번째 return), 이
+// 코드를 목록에 추가할 실익이 없다 — 이득보다 손해가 큰 트레이드오프라 넣지 않음.
 const DEFAULT_SUCCESS_CODES = new Set(['00000', '00166', '00221', '13578']);
 export function isNhSuccess(rsp_cd, rsp_msg) {
   if (rsp_cd == null) return true;

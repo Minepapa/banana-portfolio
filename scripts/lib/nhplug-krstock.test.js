@@ -167,6 +167,19 @@ test('[핵심 안전장치] placeKrCashBuyOrder: 429(유량초과)로 실패해�
   }
 });
 
+// 2026-09-02 코드리뷰 LOW 지적 — krgold 리뷰 때 이 케이스(429 아닌 HTTP 4xx/5xx)
+// 테스트가 krgold에만 있고 krstock엔 없다는 게 드러남(둘 다 동일한 callNh를 쓰므로
+// 원래 있었어야 함).
+test('[핵심 안전장치] placeKrCashBuyOrder: HTTP 4xx(비-429)여도 confirmedNotSent 안 붙음(불명 — 전송계층 실패)', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 500, text: async () => JSON.stringify({ error: 'internal' }) });
+  try {
+    await placeKrCashBuyOrder({ token: 't', actNo: '1', iemCd: '005930', quantity: 10, price: 70000, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
 test('[핵심 안전장치] placeKrCashBuyOrder: rsp_cd는 성공인데 mkt_orr_no가 없으면 throw하되 confirmedNotSent는 안 붙음(불명 — 롤백 금지)', async () => {
   const fetchImpl = mockFetch([{ body: { Output_0: {} } }]);
   try {
