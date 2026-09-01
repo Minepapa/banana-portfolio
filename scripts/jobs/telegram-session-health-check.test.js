@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diagnose, shouldEscalateInsteadOfRestart } from './telegram-session-health-check.mjs';
+import { diagnose, shouldEscalateInsteadOfRestart, checkWithRecheck } from './telegram-session-health-check.mjs';
 
 // 2026-08-31 신설 — Log/DevRequests/2026-08-31-텔레그램세션-MCP연결끊김.md 대응.
 // launchd KeepAlive는 프로세스 생존만 보고, "프로세스는 살아있지만 MCP만 죽은"
@@ -51,4 +51,59 @@ test('[막아야 함] shouldEscalateInsteadOfRestart: 한도를 넘으면(4회�
 test('shouldEscalateInsteadOfRestart: 커스텀 한도 지정 가능', () => {
   assert.equal(shouldEscalateInsteadOfRestart(2, 1), true);
   assert.equal(shouldEscalateInsteadOfRestart(1, 1), false);
+});
+
+// 순간포착 재확인(2026-09-01, 오너 신고 대응) — 1차 확인이 정상이면 재확인 없이
+// 즉시 반환(불필요한 지연 없음), 1차에서 이상이 잡히면 sleep 후 재확인해서 그때도
+// 여전히 이상이어야만 조치 대상으로 본다. 실측 근거: bun 크래시·OOM·절전 이벤트
+// 전부 없는데도 "MCP 서브프로세스 소실"이 반복 감지됐던 것 — 순간적인 흔들림을
+// 영구 장애로 오판해 매번 launchd 레벨 재시작(활성 세션 강제종료 포함)을 트리거하고
+// 있었다(Log/Implementation 참고). sleep을 주입해 실제 대기 없이 검증한다.
+
+test('checkWithRecheck: 1차 확인이 정상이면 재확인 없이 즉시 반환(sleep 안 부름)', async () => {
+  let calls = 0;
+  const checkSignals = async () => { calls++; return { sessionAlive: true, mcpSubprocessAlive: true }; };
+  let slept = false;
+  const sleep = async () => { slept = true; };
+  const r = await checkWithRecheck(checkSignals, { sleep });
+  assert.equal(calls, 1);
+  assert.equal(slept, false);
+  assert.equal(r.recheckedAndRecovered, false);
+  assert.equal(r.sessionAlive, true);
+});
+
+test('[막아야 함] checkWithRecheck: 1차에서만 순간적으로 이상하고 재확인에서 회복되면 recheckedAndRecovered=true, 재확인 결과(정상)를 반환', async () => {
+  let calls = 0;
+  const checkSignals = async () => {
+    calls++;
+    if (calls === 1) return { sessionAlive: true, mcpSubprocessAlive: false }; // 1차: 순간적 흔들림
+    return { sessionAlive: true, mcpSubprocessAlive: true }; // 재확인: 회복
+  };
+  let sleptMs = null;
+  const sleep = async (ms) => { sleptMs = ms; };
+  const r = await checkWithRecheck(checkSignals, { sleep, recheckDelayMs: 15000 });
+  assert.equal(calls, 2);
+  assert.equal(sleptMs, 15000);
+  assert.equal(r.recheckedAndRecovered, true);
+  assert.equal(r.mcpSubprocessAlive, true, '반환값은 재확인 시점의 최신 상태여야 함');
+});
+
+test('checkWithRecheck: 재확인에서도 여전히 이상이면 recheckedAndRecovered=false(진짜 장애로 취급)', async () => {
+  const checkSignals = async () => ({ sessionAlive: true, mcpSubprocessAlive: false });
+  const sleep = async () => {};
+  const r = await checkWithRecheck(checkSignals, { sleep });
+  assert.equal(r.recheckedAndRecovered, false);
+  assert.equal(r.mcpSubprocessAlive, false);
+});
+
+test('checkWithRecheck: 세션 프로세스 자체가 죽은 경우도 동일하게 재확인 대상', async () => {
+  let calls = 0;
+  const checkSignals = async () => {
+    calls++;
+    return calls === 1 ? { sessionAlive: false, mcpSubprocessAlive: false } : { sessionAlive: true, mcpSubprocessAlive: true };
+  };
+  const sleep = async () => {};
+  const r = await checkWithRecheck(checkSignals, { sleep });
+  assert.equal(calls, 2);
+  assert.equal(r.recheckedAndRecovered, true);
 });

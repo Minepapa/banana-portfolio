@@ -31,6 +31,22 @@
  * RESTARTS(3회)를 넘으면 재시작을 멈추고 "수동 개입 필요" 알림으로 전환한다(정상
  * 회복이 확인되면 — 즉 한 번이라도 "조용함"이 나오면 — 카운터를 0으로 리셋).
  *
+ * ⚠️ 순간포착 재확인(2026-09-01, 오너 신고 — "어제 오늘부터 가상세션이 자주
+ * 끊어지고 재시작 알람도 자주 온다") — 원인 조사 결과 이 잡이 신설된 직후부터
+ * (2026-08-31 이전엔 하루 1회 예방적 재시작뿐이었는데, 이 잡 신설 이후 하루 여러
+ * 차례 추가 재시작이 발생) 사실이 아닌 장애를 잡고 있었다는 정황이 강하다: bun
+ * 크래시 리포트 없음(`~/Library/Logs/DiagnosticReports`), OOM/jetsam 로그 없음,
+ * 절전·잠자기 이벤트 없음, 실시간으로 몇 분간 촘촘히(2초 간격) 관찰해도 서브프로세스
+ * 소실이 재현 안 됨 — 반면 세션 로그엔 "Claude.ai login expired → Remote Control
+ * 재연결(/rc)" 사이클이 관찰돼, 이 재인증 순간 MCP 서브프로세스가 아주 짧게(수 초)
+ * 흔들렸다 스스로 복구되는 경우를 이 잡의 단발성 pgrep 스냅샷이 "영구 소실"로
+ * 오판했을 가능성이 높다고 결론지었다. **재시작은 최후의 수단이어야지, 매 순간
+ * 포착에 반응해 활성 세션을 통째로 끊는 게 정상 동작이 되면 안 된다**(오너 지시) —
+ * 그래서 이상 감지 시 즉시 조치하지 않고, 짧게 대기한 뒤 한 번 더 확인해서(아래
+ * `checkWithRecheck`) 그때도 여전히 죽어있어야만 실제 조치(재시작/에스컬레이션)
+ * 대상으로 삼는다. 진짜 장애(세션 프로세스 자체 사망 등)는 재확인에서도 당연히
+ * 그대로 걸리므로 이 방어에 놓치는 손실은 재확인 지연시간(수십 초)뿐이다.
+ *
  * 조치: 실패 감지 시 기존 `restart-telegram-session.sh`(예방적 일일 04:00 재시작과
  * 동일 스크립트)를 그대로 재사용 — 재시작 로직을 여기서 새로 만들지 않는다. 알림은
  * sendTelegram()으로 발송(MCP를 안 거치고 Bot API를 직접 호출해서 세션 MCP가
@@ -57,6 +73,8 @@ const STATE_DIR = join(VAULT_PATHS.root, 'State', 'TelegramSessionHealth');
 const STATE_FILE = join(STATE_DIR, 'status.md');
 const MAX_CONSECUTIVE_RESTARTS = 3;
 const RESTART_TIMEOUT_MS = 120_000; // bootout+bootstrap는 보통 수 초, 넉넉히 2분
+const RECHECK_DELAY_MS = 15_000; // 순간포착 재확인 대기(위 헤더 주석 참고)
+const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // 순수함수 — 세 신호를 종합해 "재시작이 필요한가"와 그 이유를 판정. 인자는 이미
 // 조회된 값(프로세스 생존 여부·폴링정체 여부)만 받는다 — I/O는 호출부(main)가 담당.
@@ -73,6 +91,20 @@ export function shouldEscalateInsteadOfRestart(consecutiveRestarts, max = MAX_CO
   return consecutiveRestarts > max;
 }
 
+// checkSignals(주입 가능한 async 함수, 실제 IO는 main()의 기본 구현이 담당)를 즉시
+// 신뢰하지 않고, 이상이 잡히면 sleep 후 한 번 더 불러 재확인한다 — 1차 확인에서
+// 순간적으로만 이상했다가 재확인에서 회복되면 "일시적 현상"으로 보고 조치하지 않는다
+// (위 헤더 주석의 "순간포착 재확인" 근거). sleep을 주입받아 테스트에서 실제 대기
+// 없이 검증 가능(state-writer.mjs withLock의 sleep 주입과 동일 패턴).
+export async function checkWithRecheck(checkSignals, { sleep = defaultSleep, recheckDelayMs = RECHECK_DELAY_MS } = {}) {
+  const first = await checkSignals();
+  if (first.sessionAlive && first.mcpSubprocessAlive) return { ...first, recheckedAndRecovered: false };
+  await sleep(recheckDelayMs);
+  const second = await checkSignals();
+  const recovered = second.sessionAlive && second.mcpSubprocessAlive;
+  return { ...second, recheckedAndRecovered: recovered };
+}
+
 function readState() {
   if (!existsSync(STATE_FILE)) return { consecutiveRestarts: 0 };
   const fm = parseFrontmatter(readFileSync(STATE_FILE, 'utf8'));
@@ -86,9 +118,17 @@ function writeState({ consecutiveRestarts }) {
   }));
 }
 
-async function main() {
+function checkSignalsOnce() {
   const sessionAlive = isProcessAlive(TELEGRAM_SESSION_PROCESS_PATTERN);
   const mcpSubprocessAlive = sessionAlive ? isProcessAlive(TELEGRAM_MCP_SUBPROCESS_PATTERN) : false;
+  return { sessionAlive, mcpSubprocessAlive };
+}
+
+async function main() {
+  const { sessionAlive, mcpSubprocessAlive, recheckedAndRecovered } = await checkWithRecheck(checkSignalsOnce);
+  if (recheckedAndRecovered) {
+    console.log(`⏳ 1차 확인에서 이상 감지됐으나 ${RECHECK_DELAY_MS / 1000}초 후 재확인에서 정상 회복 — 일시적 현상으로 판단, 조치 없음`);
+  }
 
   let pollingStuck = false;
   if (sessionAlive && mcpSubprocessAlive) {
