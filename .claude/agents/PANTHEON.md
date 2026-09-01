@@ -99,21 +99,26 @@ Zeus는 부서 산출물을 그대로 이어붙이는 중계자가 아니라 **�
 - 보고형 작업(1질문→1보고)은 **이름 없는 동기 스폰이 기본** — 결과가 도구 결과로 직접 반환된다. (named 스폰은 SendMessage 회신 의존이라 응답 지연·유실이 기본 실패 모드였음 — Themis 자체평가 보고가 이틀 뒤 도착한 실증)
 - named teammate는 다회 왕복 협업(워크샵 등)에만 사용. 이름은 `{부서}-{목적}-{날짜}` 고유 규칙 — **재사용 절대 금지**(구 인스턴스의 지연된 shutdown 승인이 동명 신규 인스턴스를 종료시킨 실증 사고).
 
-**텔레그램 메시지 표준 구조 (2026-08-17 오너 확정, 2026-08-30 이 절로 명문화, 2026-08-31
-3단 구조로 확장)**
-- 헤드리스 무인 잡이 텔레그램으로 발송하는 모든 메시지는 다음 구조를 따른다: **Node가
-  계산한 사실을 개조식(중점 `·` 불릿)으로 먼저 나열 → LLM이 왜 중요한지 서술형 문단
-  (context)으로 붙이고 → 생각해볼 점/선택지를 다시 개조식(considerations)으로 붙인다.**
-  구현은 `scripts/lib/telegram-messages.mjs`의 `formatFactsMessage`(facts 배열 +
-  context + considerations, 2026-08-31 이전엔 interpretation 단일 필드였음) —
-  새 헤드리스 잡을 만들 때 **`formatDepartmentMessage`에 LLM 원문을 그대로 통째로
-  (raw body) 넘기지 말 것**, 그건 자유 문자열 전용(순수 Node 알림처럼 애초에 LLM이
-  안 끼는 경우, 또는 Node가 이미 완성된 body 문자열을 직접 조립하는 경우 — 예:
+**텔레그램 메시지 표준 구조 (2026-08-17 오너 확정, 2026-08-30 이 절로 명문화,
+2026-08-31 3단 구조로 확장, 2026-09-01 오너가 실제 메시지를 직접 손으로 고쳐
+4단 구조로 재확정)**
+- 헤드리스 무인 잡이 텔레그램으로 발송하는 모든 메시지는 다음 구조를 따른다:
+  **`[결론]`(LLM 한 줄 결론 — 오늘 뭘 해야/안 해야 하는지) → `[사실]`(Node가 계산한
+  사실, 개조식 `·` 불릿) → `[맥락]`(LLM 근거 서술 — 왜 그 결론·의사결정이 나왔는지)
+  → `[의사결정]`(LLM이 제시하는 실제 의사결정 항목, 개조식).** 구현은
+  `scripts/lib/telegram-messages.mjs`의 `formatFactsMessage`(facts 배열 +
+  conclusion + context + decisions, 2026-08-31 이전엔 interpretation 단일 필드,
+  2026-08-31~09-01 사이엔 context+considerations 2필드였음 — `decisions`는
+  "생각해볼 점"에서 개명, 오너 지시: "생각해볼 점 대신 의사결정 항목"). 예전
+  구분선(`─` 반복)은 뺐다 — 대괄호 섹션 4개가 이미 시각적 구분을 준다. 새 헤드리스
+  잡을 만들 때 **`formatDepartmentMessage`에 LLM 원문을 그대로 통째로(raw body)
+  넘기지 말 것**, 그건 자유 문자열 전용(순수 Node 알림처럼 애초에 LLM이 안 끼는
+  경우, 또는 Node가 이미 완성된 body 문자열을 직접 조립하는 경우 — 예:
   `morning-briefing.mjs`의 완전히 조용한 날)이지 "LLM 판정문을 그대로 body에 꽂는"
   용도가 아니다.
 - ⚠️ **이모지·이모티콘 전면 금지(2026-08-23 최초 확정, 2026-08-31 오너 재확인 —
   "모든 텔레그램 메세지에서 이모지, 이모티콘은 제외해")** — 모든 텔레그램 메시지(Node가
-  조립하는 부분·LLM이 생성하는 context·considerations 전부)는 이모지·이모티콘을 절대
+  조립하는 부분·LLM이 생성하는 conclusion·context·decisions 전부)는 이모지·이모티콘을 절대
   쓰지 않는다. 상태 표시는 `[경고][완료][취소][차단][만료][오류][제안][안내]` 같은
   대괄호 태그로, 강조는 `<b>`(HTML parse_mode)로 한다. 헤드리스 잡의 LLM 프롬프트는
   형식 지시에 "이모지·이모티콘 없이 순수 텍스트만"을 반드시 명시할 것 — 명시하지
@@ -137,13 +142,22 @@ Zeus는 부서 산출물을 그대로 이어붙이는 중계자가 아니라 **�
     필요 없는 케이스).
   - 새 헤드리스 잡을 만들 때 체크리스트: ①Node가 계산한 숫자·목록이 있으면 배열로
     뽑아 `facts`에 ②LLM 프롬프트엔 "이 숫자는 텔레그램에 불릿으로 이미 나가니 다시
-    나열하지 말고 판정만" + "`[맥락]`·`[생각해볼 점]` 두 마커로 나눠 응답, 이모지·
-    이모티콘 없이 순수 텍스트만" 명시(마커 상수는 `telegram-messages.mjs`의
-    `CONTEXT_MARKER`·`CONSIDERATIONS_MARKER` 참조) ③응답을 `parseContextConsiderations`
-    로 분리해 `sendTelegram(formatFactsMessage({ facts, context, considerations, ... }))`
+    나열하지 말고 판정만" + "`[결론]`·`[맥락]`·`[의사결정]` 세 마커로 나눠 응답,
+    이모지·이모티콘·긴 하이픈(—) 없이 순수 텍스트만" 명시(마커 상수는
+    `telegram-messages.mjs`의 `CONCLUSION_MARKER`·`CONTEXT_MARKER`·`DECISIONS_MARKER`
+    참조) ③응답을 `parseDepartmentResponse`로 분리해
+    `sendTelegram(formatFactsMessage({ facts, conclusion, context, decisions, ... }))`
     로 발송. 순수 Node 알림(LLM 없음)은 이 체크리스트 대상이 아니다(그 경우
     `formatDepartmentMessage`에 직접 조립한 body를 넘기는 게 정상 — 이 경우도
     이모지 금지 규칙은 그대로 적용됨).
+  - **동적 부서 자문(2026-09-01 신설, `intraday-market-move-monitor.mjs`가 첫
+    사례)** — 서브에이전트는 서로 직접 못 부른다(위 §3 구조적 제약, 라이브 세션에선
+    Zeus가 순차 스폰으로 중계). 헤드리스 잡엔 Zeus가 없으므로, 한 부서의 헤드리스
+    판단이 다른 부서 의견을 필요로 할 수 있는 잡은 **Node 코드가 그 중계 역할을
+    대신**한다: 1차 호출에서 소관 부서에게 "필요하면 다른 부서를 요청하라"는 여섯
+    번째 마커(예: `[자문요청]`, 부서명 정확일치 + 이유)를 함께 받고, 요청이 있을 때만
+    그 부서에 2차 호출, 마지막으로 소관 부서에 3차 호출로 재종합시킨다. 대부분은
+    1차 호출만으로 끝나 비용이 늘지 않는다.
 
 ## 4. 기록 의무 — worklog (2026-08-29 폐기 — 죽은 참조였음이 확인됨)
 

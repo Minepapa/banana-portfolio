@@ -77,16 +77,22 @@ export function buildProposalStatusEditText({ proposal, action, decidedAt }) {
     console.error(`⚠️ TRACK_DEPARTMENT_LABEL에 없는 track — 부서 라벨 대신 원본 표기: ${proposal.track}`);
   }
   const departmentLabel = TRACK_DEPARTMENT_LABEL[proposal.track] ?? proposal.track;
-  const facts = buildProposalFacts({
-    side: proposal.side, name: proposal.assetKey, assetKey: proposal.assetKey,
-    quantity: proposal.quantity, proposedPrice: proposal.proposedPrice,
-  });
   const decidedLine = `${tag}됨 (${formatKstDateTime(decidedAt)} KST)`;
+  // ⚠️ 코드리뷰 지적(2026-09-01, MEDIUM) — decidedLine(Node가 계산한 결정 시각)을
+  // 예전엔 context에 넣어 [맥락](LLM 근거 서술 전용 섹션, 2026-09-01 4단 구조 확정)
+  // 아래 표시했다 — Node 사실이 LLM 근거인 것처럼 보이는 라벨 오분류. facts로 옮긴다.
+  const facts = [
+    ...buildProposalFacts({
+      side: proposal.side, name: proposal.assetKey, assetKey: proposal.assetKey,
+      quantity: proposal.quantity, proposedPrice: proposal.proposedPrice,
+    }),
+    decidedLine,
+  ];
   const contextParts = [proposal.reason || null];
   if (action === 'reject' && proposal.rejectReason) contextParts.push(`거부 사유: ${proposal.rejectReason}`);
-  const context = [decidedLine, ...contextParts.filter(Boolean)].join('\n\n');
-  // 이미 결정이 끝난 제안의 상태 편집 텍스트라 "생각해볼 점"은 해당 없음(considerations
-  // 없이 context만 — formatFactsMessage 2026-08-31 확장이 2단 구조도 그대로 허용).
+  const context = contextParts.filter(Boolean).join('\n\n') || null;
+  // 이미 결정이 끝난 제안의 상태 편집 텍스트라 [의사결정] 섹션은 해당 없음(decisions
+  // 없이 context만 — formatFactsMessage는 부분 구조도 그대로 허용).
   return formatFactsMessage({ departmentLabel, facts, context, tag });
 }
 

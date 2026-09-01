@@ -9,7 +9,7 @@
  * 없다") — 원래는 LLM 호출이 아예 없었다(비용·환각 위험 회피). 이제 "완전히 조용한
  * 날"(간밤 이벤트 없음 + 자산배분 밴드 내 정상 + 거시 5신호 전부 조용)엔 여전히 LLM을
  * 안 부르고 사실만 보낸다(비용 절감 + "할 말 없으면 짧게" 원칙, 오너 확정) — 하지만
- * 뭔가 하나라도 있으면 Hermes 헤드리스 판단으로 맥락·생각해볼 점을 붙인다. 부서 라벨은
+ * 뭔가 하나라도 있으면 Hermes 헤드리스 판단으로 결론·맥락·의사결정을 붙인다. 부서 라벨은
  * 그대로 **운영실 Hermes**(현황 브리핑 영역, LLM 추가가 판단 소관을 바꾸지 않음 —
  * execute-quant-proposal.mjs·watch-order-fill.mjs를 Kairos에서 Hermes로 재배정한 것과
  * 동일 원칙).
@@ -49,7 +49,7 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
-import { formatFactsMessage, parseContextConsiderations, CONTEXT_MARKER, CONSIDERATIONS_MARKER } from '../lib/telegram-messages.mjs';
+import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 import { renderSignalsReport } from '../tools/macro-overlay-facts.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -178,13 +178,16 @@ ${macroText}
 2. 오늘 하루 시장을 지켜볼 때 뭘 눈여겨봐야 할지 방향을 제시해라(구체적 매수·매도
    지시는 아님 — 이 잡은 순수 현황 브리핑이다).
 
-형식(반드시 정확히 이 두 마커로 응답을 나눠라, 다른 마커·JSON·마크다운·이모지·
-이모티콘 없이 순수 텍스트만):
-${CONTEXT_MARKER}
-결론 문장 하나 + 근거 1~3문장, 합쳐서 2~4문장. 문장 사이는 줄바꿈으로 분리해라 — 한
-문단에 몰아쓰지 마라.
+형식(반드시 정확히 이 세 마커로 응답을 나눠라, 다른 마커·JSON·마크다운·이모지·
+이모티콘·긴 하이픈(—) 없이 순수 텍스트만 — 문장은 마침표로 끊어라):
+${CONCLUSION_MARKER}
+오늘 한 줄로(예: "특별히 서두를 일 없는 하루입니다" / "달러 갭을 주시할 만합니다").
 
-${CONSIDERATIONS_MARKER}
+${CONTEXT_MARKER}
+왜 그렇게 보는지 근거 1~3문장. 문장 사이는 줄바꿈으로 분리해라 — 한 문단에 몰아쓰지
+마라.
+
+${DECISIONS_MARKER}
 오늘 신경 쓸 점을 "- "로 시작하는 줄로 1~3개.`;
 }
 
@@ -228,8 +231,9 @@ async function main() {
   const facts = buildMorningBriefingFacts(sections);
   const quiet = isFullyQuiet({ ...sections, hasSignals: !!macroResult.signals });
 
+  let conclusion = null;
   let context = null;
-  let considerations = null;
+  let decisions = null;
 
   if (quiet) {
     console.log('ℹ️ morning-briefing: 완전히 조용한 날 — LLM 해석 생략, 사실만 발송');
@@ -249,10 +253,10 @@ async function main() {
     try {
       const judgment = (await runHeadlessClaude(buildMorningBriefingPrompt(sections), MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
       console.log(judgment);
-      ({ context, considerations } = parseContextConsiderations(judgment));
+      ({ conclusion, context, decisions } = parseDepartmentResponse(judgment));
     } catch (e) {
       // Hermes 판단 실패해도 브리핑 자체(사실)는 여전히 유용하니 잡을 죽이지 않는다 —
-      // 사실만이라도 발송(context·considerations는 null로 남음).
+      // 사실만이라도 발송(conclusion·context·decisions는 null로 남음).
       console.error(`⚠ Hermes 헤드리스 판단 실패(사실만 발송): ${e.message}`);
     }
   }
@@ -262,7 +266,7 @@ async function main() {
     // 먼저 갱신하고 발송을 try/catch로 무시하면, 발송 실패 시 이번에 보고하려던 이벤트가
     // 다음 실행에서도 "이미 지난 워터마크"가 돼 영원히 안 나간다.
     try {
-      await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', facts, context, considerations }));
+      await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', facts, conclusion, context, decisions }));
       writePreviousState(asset.total, new Date().toISOString());
     } catch (e) { console.error('텔레그램 알림 실패(워터마크 미전진, 다음 실행에서 재시도):', e.message); }
   }

@@ -26,76 +26,135 @@ export function formatDepartmentMessage({ departmentLabel, body, zeusComment = n
 }
 
 // 텔레그램 알림 표준 구조(2026-08-17 오너 확정, 2026-08-23 태그·구분선 추가, 2026-08-31
-// 3단 구조로 확장) — [부서]로 시작 → Node가 계산한 사실을 개조식(중점 불릿)으로 나열 →
-// LLM이 그 사실이 왜 중요한지 서술형 문단(context)으로 붙이고 → 생각해볼 점/선택지를
-// 다시 개조식(considerations)으로 붙인다. 오너 지적(2026-08-31) — 예전엔 "사실+해석
-// 문단 1개"뿐이라 숫자만 보고 실제로 뭘 고민해야 하는지가 안 나왔다. context·considerations
-// 둘 다 없으면(health-watcher처럼 애초에 LLM을 안 부르는 순수 운영 알림, 또는 조용한
-// 날의 morning-briefing처럼 LLM 호출 자체를 생략한 경우) 사실만 나간다 —
+// 3단 구조로 확장, 2026-09-01 오너가 실제 메시지를 손으로 고쳐 4단 구조로 재확정) —
+// [부서] → [결론](LLM 한 줄 결론) → [사실](Node가 계산한 사실, 개조식) → [맥락]
+// (LLM 근거 서술 — 왜 그 결론·의사결정이 나왔는지) → [의사결정](LLM이 제시하는 실제
+// 의사결정 항목, 개조식 — "생각해볼 점"에서 개명, 오너 지시: "생각해볼 점 대신
+// 의사결정 항목"). 구분선(SEPARATOR)은 뺐다 — 대괄호 섹션 4개가 이미 시각적 구분을
+// 준다(오너가 보여준 예시에 구분선 없음). conclusion·context·decisions 전부 없으면
+// (health-watcher처럼 애초에 LLM을 안 부르는 순수 운영 알림, 또는 조용한 날의
+// morning-briefing처럼 LLM 호출 자체를 생략한 경우) [사실]만 나간다 —
 // formatDepartmentMessage와 달리 body를 자유 문자열로 안 받고 facts 배열을 강제해,
 // 호출부가 사실과 해석을 섞어서 쓰지 않도록 구조로 유도한다.
-export function formatFactsMessage({ departmentLabel, facts, context = null, considerations = null, zeusComment = null, tag = null }) {
+// 마커 상수(2026-08-31 신설, 코드리뷰 지적 — 2026-09-01 4단 구조로 확장하며 갱신) —
+// 이 마커 문자열들이 파서(아래)와 각 잡의 프롬프트에 각자 하드코딩돼 있으면, 한쪽만
+// 표기를 바꿔도 나머지가 조용히 폴백 모드로 떨어진다(테스트도 안 잡아줌) —
+// macro-overlay-facts.mjs의 "[경고]" 문자열 커플링과 같은 클래스. 프롬프트 쪽은 이
+// 상수를 템플릿 리터럴로 참조해서 쓴다.
+export const CONCLUSION_MARKER = '[결론]';
+export const FACTS_MARKER = '[사실]';
+export const CONTEXT_MARKER = '[맥락]';
+export const DECISIONS_MARKER = '[의사결정]'; // 2026-09-01 CONSIDERATIONS_MARKER('[생각해볼 점]')에서 개명
+
+// 긴 하이픈(em dash, —) 전면 금지(2026-09-01 오너 지시 — "문장에 긴 하이픈이 많은데
+// 이건 다 제외하면 돼"). 프롬프트에도 금지 지시를 명시하지만(1차 방어), 모델이 그래도
+// 쓰는 경우를 대비해 방어적으로 마침표+공백으로 치환(2차 방어) — 완전 삭제(공백으로만
+// 치환)하면 두 절이 접속사 없이 붙어버려 오히려 안 읽히므로, 문장 경계로 취급하는
+// 쪽이 더 자연스럽다.
+//
+// ⚠️ 코드리뷰 지적(2026-09-01, HIGH 2건) — (1) 첫 버전은 `\s{2,}` 압축이 줄바꿈까지
+// 삼켜서, 빈 줄로 구분된 여러 [의사결정] 불릿이나 여러 문장으로 나뉜 [맥락]을 한
+// 줄로 뭉개버렸다(각 프롬프트가 명시하는 "문장 사이는 줄바꿈으로 분리해라"를 정면
+// 위반) — `[^\S\n]`(줄바꿈 제외 공백)로 좁혀 가로 공백만 압축한다. (2) 이 함수를
+// 파서(parseDepartmentResponse) 안에서만 부르고 있어서, 그 파서를 안 거치는 다른
+// 소비자(예: proposal-flow.mjs가 부서 LLM의 reason을 직접 context에 꽂는 경로)엔
+// 긴 하이픈 금지가 전혀 적용되지 않았다 — 실제로 가장 자주 나가는 메시지 클래스(매수·
+// 매도 제안)에서 규칙이 조용히 안 지켜지고 있었다. 파싱 시점이 아니라 **렌더링
+// 시점**(formatFactsMessage)에서 걸어 모든 소비자에게 일괄 적용한다.
+export function stripEmDash(s) {
+  return String(s ?? '')
+    .replace(/[^\S\n]*—[^\S\n]*/g, '. ')
+    .replace(/\.(\s*\.)+/g, '.')
+    .replace(/^\s*\.\s*/, '') // 섹션 맨 앞의 하이픈이 남긴 선행 마침표 제거
+    .replace(/[^\S\n]{2,}/g, ' ')
+    .trim();
+}
+
+export function formatFactsMessage({ departmentLabel, facts, conclusion = null, context = null, decisions = null, zeusComment = null, tag = null }) {
   const header = buildHeader(departmentLabel, tag);
+  let msg = header;
+  if (conclusion) msg += `\n\n${CONCLUSION_MARKER}\n${stripEmDash(conclusion)}`;
   const factBlock = (facts ?? []).map((f) => `· ${f}`).join('\n');
-  let msg = `${header}\n${SEPARATOR}\n${factBlock}`;
-  if (context) msg += `\n\n${context}`;
-  if (considerations?.length) msg += `\n\n[생각해볼 점]\n${considerations.map((c) => `· ${c}`).join('\n')}`;
-  if (zeusComment) msg += `\n\n[Zeus] ${zeusComment}`;
+  msg += `\n\n${FACTS_MARKER}\n${factBlock}`;
+  if (context) msg += `\n\n${CONTEXT_MARKER}\n${stripEmDash(context)}`;
+  if (decisions?.length) msg += `\n\n${DECISIONS_MARKER}\n${decisions.map((d) => `· ${stripEmDash(d)}`).join('\n')}`;
+  if (zeusComment) msg += `\n\n[Zeus] ${stripEmDash(zeusComment)}`;
   return msg;
 }
 
-// 마커 상수(2026-08-31 신설, 코드리뷰 지적) — 이 두 마커 문자열이 파서(아래)와 5개
-// 잡의 프롬프트에 각자 하드코딩돼 있으면, 한쪽만 표기를 바꿔도 나머지가 조용히
-// 폴백 모드로 떨어진다(테스트도 안 잡아줌) — macro-overlay-facts.mjs의 "[경고]" 문자열
-// 커플링과 같은 클래스. 프롬프트 쪽은 이 상수를 템플릿 리터럴로 참조해서 쓴다.
-export const CONTEXT_MARKER = '[맥락]';
-export const CONSIDERATIONS_MARKER = '[생각해볼 점]';
+const BULLET_RE = /^[·\-*•]\s*/;
+// 모델이 "빈 채로 둬라" 지시를 안 지키고 굳이 "없음"류 채움말을 써서 항목 1개짜리로
+// 응답하는 경우 — 정보 없는 불릿을 그대로 노출하면 저정보 메시지 제거 취지에 반한다.
+const NO_OP_RE = /^\(?(해당\s*)?없음\)?$/;
 
-// LLM 응답에서 [맥락]·[생각해볼 점] 두 섹션을 분리 — formatFactsMessage의 context·
-// considerations 계약을 채우기 위한 출력 파서(2026-08-31 신설). 프롬프트가 정확히 이
-// 두 마커로 나눠 응답하도록 요청하는 게 전제(각 잡의 프롬프트에 명시). 마커가 하나도
-// 없으면(모델이 형식을 안 지킨 예외) 전체 텍스트를 context로 보존하고 considerations는
-// null — 파싱 실패로 내용을 통째로 버리지 않는다(추정 금지 원칙과 동일하게, 손실 없는
-// 쪽으로 폴백).
-//
-// ⚠️ 코드리뷰 지적(2026-08-31, MEDIUM 2건) — 첫 버전은 (1) [맥락] 마커를 문자열
-// "맨 앞"에서만 벗겨내(정규식 ^앵커) 모델이 서두 인사말을 붙이면 마커가 그대로
-// 텔레그램에 노출됐고, (2) [생각해볼 점] 아래 모든 줄을 각각 별개 항목으로 취급해
-// 한 항목이 줄바꿈으로 감싸지면(모델이 긴 문장을 두 줄로 나눠 쓰면) 하나가 두 개
-// 불릿으로 쪼개졌다. [맥락]도 indexOf로 위치를 찾고(앵커 아님), considerations는
-// 불릿 프리픽스가 있는 줄만 "새 항목"으로 취급하고 프리픽스 없는 줄은 직전 항목에
-// 이어붙인다.
-const CONSIDERATION_BULLET_RE = /^[·\-*•]\s*/;
-// 모델이 "생각해볼 점 없음"을 프롬프트 지시("섹션을 빈 채로 둬라")대로 안 하고 굳이
-// "없음"류 채움말을 써서 항목 1개짜리로 응답하는 경우 — 정보 없는 불릿을 그대로
-// 노출하면 이 개선 자체의 취지(저정보 메시지 제거)에 반한다.
-const NO_OP_CONSIDERATION_RE = /^\(?(해당\s*)?없음\)?$/;
-
-export function parseContextConsiderations(text) {
-  const t = String(text ?? '').trim();
-  if (!t) return { context: null, considerations: null };
-  const considerationsIdx = t.indexOf(CONSIDERATIONS_MARKER);
-  const contextIdx = t.indexOf(CONTEXT_MARKER);
-  if (considerationsIdx === -1) {
-    const context = (contextIdx === -1 ? t : t.slice(contextIdx + CONTEXT_MARKER.length).trim()) || null;
-    return { context, considerations: null };
-  }
-  const contextPart = contextIdx === -1
-    ? t.slice(0, considerationsIdx).trim()
-    : t.slice(contextIdx + CONTEXT_MARKER.length, considerationsIdx).trim();
-  const considerationsPart = t.slice(considerationsIdx + CONSIDERATIONS_MARKER.length).trim();
-
-  const considerations = [];
-  for (const raw of considerationsPart.split('\n')) {
+// 불릿 목록 파싱 — 불릿 프리픽스가 있는 줄만 "새 항목"으로 취급하고 프리픽스 없는
+// 줄(모델이 긴 문장을 줄바꿈으로 감싼 경우)은 직전 항목에 이어붙인다(2026-08-31
+// 코드리뷰 지적 재발 방지 — 그렇게 안 하면 한 항목이 여러 불릿으로 쪼개짐).
+function parseBulletList(sectionText) {
+  const items = [];
+  for (const raw of sectionText.split('\n')) {
     const line = raw.trim();
     if (!line) continue;
-    if (CONSIDERATION_BULLET_RE.test(line)) considerations.push(line.replace(CONSIDERATION_BULLET_RE, ''));
-    else if (considerations.length) considerations[considerations.length - 1] += ` ${line}`;
-    else considerations.push(line);
+    if (BULLET_RE.test(line)) items.push(line.replace(BULLET_RE, ''));
+    else if (items.length) items[items.length - 1] += ` ${line}`;
+    else items.push(line);
   }
-  const filtered = considerations.filter((c) => !NO_OP_CONSIDERATION_RE.test(c));
+  return items.filter((c) => !NO_OP_RE.test(c));
+}
 
-  return { context: contextPart || null, considerations: filtered.length ? filtered : null };
+// 마커 위치 탐색 — 줄 맨 앞(line-start)에 있는 걸 우선한다(정규식 `^marker`, multiline).
+// 모델이 서두에 "요청하신 [결론]/[맥락]/[의사결정] 형식으로 답변드립니다" 같은 프리앰블을
+// 붙이면, 그 안의 마커 문자열은 같은 줄 중간(다른 텍스트 뒤)에 있어 `^` 앵커에 안 걸린다
+// — 오직 실제로 그 줄을 "그 마커로 시작"한 경우만 잡힌다(2026-09-01 코드리뷰 지적,
+// MEDIUM — 프리앰블이 세 마커를 전부 나열해버리면 실제 답변 전체가 decisions로 밀려
+// 들어가는 사고가 있었음). 줄 맨 앞에서 하나도 못 찾으면(모델이 마커를 문장 중간에
+// 섞어 쓴 완전한 형식 위반) 기존처럼 어디든 있는 위치로 폴백 — 완벽하진 않아도 아예
+// 놓치는 것보다 낫다(손실 없는 쪽 우선 원칙).
+function findMarkerIndex(t, marker) {
+  const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const lineStart = t.match(new RegExp(`^${escaped}`, 'm'));
+  if (lineStart) return lineStart.index;
+  return t.indexOf(marker);
+}
+
+// LLM 응답에서 [결론]·[맥락]·[의사결정] 세 섹션을 분리 — formatFactsMessage의
+// conclusion·context·decisions 계약을 채우기 위한 출력 파서(2026-08-31 신설,
+// 2026-09-01 2섹션→3섹션으로 확장). 프롬프트가 정확히 이 마커들로 나눠 응답하도록
+// 요청하는 게 전제. 각 마커 위치를 findMarkerIndex로 찾아 등장 순서대로 정렬한 뒤
+// 구간을 자른다 — 마커 순서가 뒤바뀌거나 일부가 없어도(형식 일부 위반) 있는 것만
+// 최대한 살린다. 마커가 하나도 없으면 전체 텍스트를 context에 보존 — 파싱 실패로
+// 내용을 통째로 버리지 않는다(추정 금지 원칙과 동일하게, 손실 없는 쪽으로 폴백).
+export function parseDepartmentResponse(text) {
+  const t = String(text ?? '').trim();
+  if (!t) return { conclusion: null, context: null, decisions: null };
+
+  const candidates = [
+    { key: 'conclusion', marker: CONCLUSION_MARKER },
+    { key: 'context', marker: CONTEXT_MARKER },
+    { key: 'decisions', marker: DECISIONS_MARKER },
+  ];
+  const found = candidates
+    .map((c) => ({ ...c, idx: findMarkerIndex(t, c.marker) }))
+    .filter((c) => c.idx !== -1)
+    .sort((a, b) => a.idx - b.idx);
+
+  if (!found.length) {
+    return { conclusion: null, context: stripEmDash(t) || null, decisions: null };
+  }
+
+  const result = { conclusion: null, context: null, decisions: null };
+  for (let i = 0; i < found.length; i++) {
+    const start = found[i].idx + found[i].marker.length;
+    const end = i + 1 < found.length ? found[i + 1].idx : t.length;
+    const sectionText = stripEmDash(t.slice(start, end).trim());
+    if (found[i].key === 'decisions') {
+      const items = parseBulletList(sectionText);
+      result.decisions = items.length ? items : null;
+    } else {
+      result[found[i].key] = sectionText || null;
+    }
+  }
+  return result;
 }
 
 // Frank의 답장 텍스트에서 승인/거부 의사를 읽는다. "승인"·"거부"가 둘 다 있거나(모순)

@@ -89,6 +89,23 @@ test('createAndSendProposal: 신규 생성 — 파일 쓰고 텔레그램 발송
   assert.match(sender.calls[0], /매수 삼성전자\(005930\)/);
 });
 
+// 전체 텍스트 스냅샷(2026-09-01 코드리뷰 지적, MEDIUM) — reason(부서 LLM 판단)이
+// context로 들어가 [맥락] 아래 렌더되는 게 맞는지, [결론]·[의사결정]은 안 넘겼으니
+// 안 붙는지 고정.
+test('[막아야 함] createAndSendProposal: 발송 메시지 전체 텍스트 스냅샷 — reason은 [맥락] 아래, [결론]·[의사결정]은 안 붙음', async () => {
+  const writer = mockWriter();
+  const sender = mockSender({ message_id: 12345 });
+  await createAndSendProposal({
+    track: '퀀트', assetKey: '005930', name: '삼성전자', side: '매수', quantity: 10, proposedPrice: 70000,
+    reason: 'OCF/P 1위', departmentLabel: '퀀트전략실 Kairos',
+    existingProposals: [], writeProposalFile: writer, sendMessage: sender,
+  });
+  assert.equal(
+    sender.calls[0],
+    '[제안] [퀀트전략실 Kairos]\n\n[사실]\n· 매수 삼성전자(005930)\n· 수량 10주\n· 제안가 70,000원\n· 개산금액 ≈ 700,000원\n\n[맥락]\nOCF/P 1위',
+  );
+});
+
 test('createAndSendProposal: proposalsBlocked=true면 blocked — 파일도 안 쓰고 발송도 안 함(단일활성제안 판정보다도 먼저 막힘)', async () => {
   const writer = mockWriter();
   const sender = mockSender();
@@ -174,6 +191,25 @@ test('buildProposalStatusEditText: 승인 — 트랙에서 부서 라벨을 되�
   assert.match(text, /매수 005930\(005930\)/);
   assert.match(text, /승인됨 \(2026-08-23 10:30 KST\)/); // UTC+9
   assert.match(text, /기존안건/); // 원래 사유(reason) 보존
+});
+
+// 전체 텍스트 스냅샷(2026-09-01 코드리뷰 지적, MEDIUM) — 위 느슨한 regex 조합만으로는
+// decidedLine이 어느 섹션([사실] vs [맥락]) 아래 렌더되는지 못 잡는다(실제로 그게
+// 4단 구조 개정 때 처음엔 [맥락] 아래 잘못 렌더됐었는데도 위 테스트들은 계속 통과했음).
+// decidedLine은 Node가 계산한 사실이라 [사실] 아래(불릿)에 있어야 하고, reason(부서
+// LLM의 원래 판단 서술)만 [맥락] 아래 있어야 한다 — 전체 문자열을 고정해 그 배치가
+// 조용히 다시 틀어지는 걸 막는다.
+test('[막아야 함] buildProposalStatusEditText: 전체 텍스트 스냅샷 — decidedLine은 [사실] 아래(Node 사실), reason만 [맥락] 아래(LLM 근거)', () => {
+  const proposal = fixture({ track: '퀀트' });
+  const text = buildProposalStatusEditText({
+    proposal: { ...proposal, status: '승인', decidedAt: '2026-08-23T01:30:00.000Z' },
+    action: 'approve',
+    decidedAt: '2026-08-23T01:30:00.000Z',
+  });
+  assert.equal(
+    text,
+    '[승인] [퀀트전략실 Kairos]\n\n[사실]\n· 매수 005930(005930)\n· 수량 10주\n· 제안가 70,000원\n· 개산금액 ≈ 700,000원\n· 승인됨 (2026-08-23 10:30 KST)\n\n[맥락]\n기존안건',
+  );
 });
 
 test('buildProposalStatusEditText: 거부 — [거부] 태그 + 거부사유가 사유 뒤에 붙는다', () => {

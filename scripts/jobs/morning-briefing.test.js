@@ -127,9 +127,10 @@ test('buildMorningBriefingFacts: 네 섹션을 각각 fact 1개씩(멀티라인 
   assert.match(facts[3], /^\[거시 전술 오버레이 점검\]/);
 });
 
-test('buildMorningBriefingPrompt: 네 섹션 전부 포함하고 [맥락]·[생각해볼 점] 형식을 지시', () => {
+test('buildMorningBriefingPrompt: 네 섹션 전부 포함하고 [결론]·[맥락]·[의사결정] 형식을 지시', () => {
   const prompt = buildMorningBriefingPrompt({ assetText: '총자산: 1,000원', ...QUIET_SECTIONS });
   assert.match(prompt, /총자산: 1,000원/);
+  assert.match(prompt, /\[결론\]/);
   assert.match(prompt, /\[맥락\]/);
-  assert.match(prompt, /\[생각해볼 점\]/);
+  assert.match(prompt, /\[의사결정\]/);
 });

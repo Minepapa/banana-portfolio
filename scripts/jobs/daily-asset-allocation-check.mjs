@@ -41,7 +41,7 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
-import { formatFactsMessage, parseContextConsiderations, CONTEXT_MARKER, CONSIDERATIONS_MARKER } from '../lib/telegram-messages.mjs';
+import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -81,13 +81,16 @@ ${macroReport.trim()}
    솔직히 인정해라.
 2. 이게 진짜 국면전환처럼 보이는지 일시적 변동으로 보이는지, 판단 근거를 밝혀라.
 
-형식(반드시 정확히 이 두 마커로 응답을 나눠라, 다른 마커·JSON·마크다운·이모지·
-이모티콘 없이 순수 텍스트만):
-${CONTEXT_MARKER}
-1·2번 내용을 결론 문장 하나(심각도 표현 포함) + 근거 1~3문장, 합쳐서 2~4문장. 문장
-사이는 줄바꿈으로 분리해라 — 한 문단에 몰아쓰지 마라.
+형식(반드시 정확히 이 세 마커로 응답을 나눠라, 다른 마커·JSON·마크다운·이모지·
+이모티콘·긴 하이픈(—) 없이 순수 텍스트만 — 문장은 마침표로 끊어라):
+${CONCLUSION_MARKER}
+결론을 한 문장으로(심각도 표현 포함, 예: "지금은 지켜볼 단계입니다").
 
-${CONSIDERATIONS_MARKER}
+${CONTEXT_MARKER}
+1·2번 내용을 근거로 왜 그 결론인지 1~3문장. 문장 사이는 줄바꿈으로 분리해라 — 한
+문단에 몰아쓰지 마라.
+
+${DECISIONS_MARKER}
 오너가 지금 판단할 수 있는 선택지를 "- "로 시작하는 줄로 1~3개(예: "리밸런싱을
 앞당길지 분기 정기점검까지 기다릴지", "신규현금 배분 비중을 이 신호 반영해 조정할지").`;
 }
@@ -129,8 +132,9 @@ async function main() {
   // "성공"으로 안 잡히니 streak가 쌓이지도 않아 이 실패가 어디서도 안 드러남). 사실
   // (facts)만이라도 발송하는 쪽이 통째로 유실보다 낫다 — morning-briefing.mjs와 동일
   // 원칙(그 파일에서 먼저 적용된 패턴).
+  let conclusion = null;
   let context = null;
-  let considerations = null;
+  let decisions = null;
   // AGENTS.md "claude 호출 규칙" — 새 claude 호출 잡은 호출 전 cooldownActive() 가드
   // 필수(쿨다운 중이면 skip). 이 잡은 2026-08-31에 처음 LLM을 부르게 된 잡이라 이 규칙
   // 대상 — 쿨다운 중이어도 사실만은 발송한다(위 HIGH 수정과 동일 원칙, 통째로 유실 안 함).
@@ -140,14 +144,14 @@ async function main() {
     try {
       const judgment = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
       console.log(judgment);
-      ({ context, considerations } = parseContextConsiderations(judgment));
+      ({ conclusion, context, decisions } = parseDepartmentResponse(judgment));
     } catch (e) {
       console.error(`⚠ Athena 헤드리스 판단 실패(사실만 발송): ${e.message}`);
     }
   }
 
   try {
-    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', facts, context, considerations }));
+    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', facts, conclusion, context, decisions }));
   } catch (e) {
     console.error('텔레그램 알림 실패:', e.message);
   }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  formatDepartmentMessage, formatFactsMessage, parseContextConsiderations, parseReplyDecision, parseKillSwitchCommand,
+  formatDepartmentMessage, formatFactsMessage, parseDepartmentResponse, stripEmDash, parseReplyDecision, parseKillSwitchCommand,
   parseDepartmentCall, parseExecutionModeCommand, parseProposalModeCommand,
 } from './telegram-messages.mjs';
 
@@ -28,118 +28,190 @@ test('formatDepartmentMessage: tag 안 넘기면(기본값) 태그 없이 부서
   assert.doesNotMatch(msg, /^\[[가-힣]+\] \[운영실/);
 });
 
-test('formatFactsMessage: 사실→맥락→생각해볼 점 3단 구조(2026-08-31 확장 — 숫자만 던지지 말고 왜 중요한지·뭘 고민할지까지)', () => {
+test('formatFactsMessage: 결론→사실→맥락→의사결정 4단 구조(2026-09-01 오너가 직접 예시 메시지를 손으로 고쳐 확정)', () => {
   const msg = formatFactsMessage({
     departmentLabel: '투자전략실 Athena',
     facts: ['리츠 갭 -1.98%p(밴드 이탈)', '연금저축 누적현금 962,000원'],
+    conclusion: '지금 배분할 필요는 없습니다.',
     context: '리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.',
-    considerations: ['지금 배분할지, 다음 현금 유입까지 기다릴지', '리츠 대신 국내주식 갭부터 메울지'],
+    decisions: ['지금 배분할지, 다음 현금 유입까지 기다릴지', '리츠 대신 국내주식 갭부터 메울지'],
   });
   assert.equal(
     msg,
-    `[투자전략실 Athena]\n${SEP}\n· 리츠 갭 -1.98%p(밴드 이탈)\n· 연금저축 누적현금 962,000원\n\n리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.\n\n[생각해볼 점]\n· 지금 배분할지, 다음 현금 유입까지 기다릴지\n· 리츠 대신 국내주식 갭부터 메울지`,
+    `[투자전략실 Athena]\n\n[결론]\n지금 배분할 필요는 없습니다.\n\n[사실]\n· 리츠 갭 -1.98%p(밴드 이탈)\n· 연금저축 누적현금 962,000원\n\n[맥락]\n리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.\n\n[의사결정]\n· 지금 배분할지, 다음 현금 유입까지 기다릴지\n· 리츠 대신 국내주식 갭부터 메울지`,
   );
 });
 
-test('formatFactsMessage: context·considerations 둘 다 없으면 사실만(LLM 없는 순수 운영 알림, 또는 조용한 날 LLM 생략)', () => {
+test('formatFactsMessage: conclusion·context·decisions 전부 없으면 [사실]만(LLM 없는 순수 운영 알림, 또는 조용한 날 LLM 생략)', () => {
   const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['잡 A가 조용함', '잡 B가 조용함'] });
-  assert.equal(msg, `[운영실 Hermes]\n${SEP}\n· 잡 A가 조용함\n· 잡 B가 조용함`);
+  assert.equal(msg, `[운영실 Hermes]\n\n[사실]\n· 잡 A가 조용함\n· 잡 B가 조용함`);
 });
 
-test('formatFactsMessage: considerations 없이 context만 있어도 됨(2단 구조 그대로 허용)', () => {
+test('formatFactsMessage: decisions 없이 context만 있어도 됨(부분 구조 허용)', () => {
   const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['사실1'], context: '맥락문단' });
-  assert.equal(msg, `[운영실 Hermes]\n${SEP}\n· 사실1\n\n맥락문단`);
+  assert.equal(msg, `[운영실 Hermes]\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단`);
 });
 
-test('formatFactsMessage: considerations가 빈 배열이면(마커는 있었지만 항목 없음) [생각해볼 점] 섹션 자체를 안 붙임', () => {
-  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['사실1'], context: '맥락문단', considerations: [] });
-  assert.equal(msg, `[운영실 Hermes]\n${SEP}\n· 사실1\n\n맥락문단`);
+test('formatFactsMessage: decisions가 빈 배열이면(마커는 있었지만 항목 없음) [의사결정] 섹션 자체를 안 붙임', () => {
+  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['사실1'], context: '맥락문단', decisions: [] });
+  assert.equal(msg, `[운영실 Hermes]\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단`);
 });
 
 test('formatFactsMessage: zeusComment까지 있으면 맨 뒤에 붙음', () => {
   const msg = formatFactsMessage({
-    departmentLabel: '투자전략실 Athena', facts: ['사실1'], context: '맥락문단', considerations: ['고민점1'], zeusComment: '승인',
+    departmentLabel: '투자전략실 Athena', facts: ['사실1'], conclusion: '결론문장', context: '맥락문단', decisions: ['고민점1'], zeusComment: '승인',
   });
-  assert.equal(msg, `[투자전략실 Athena]\n${SEP}\n· 사실1\n\n맥락문단\n\n[생각해볼 점]\n· 고민점1\n\n[Zeus] 승인`);
+  assert.equal(msg, `[투자전략실 Athena]\n\n[결론]\n결론문장\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단\n\n[의사결정]\n· 고민점1\n\n[Zeus] 승인`);
 });
 
-test('formatFactsMessage: facts 없어도(빈 배열) 헤더+구분선+빈 줄만 남고 안 터짐', () => {
+test('formatFactsMessage: facts 없어도(빈 배열) 헤더+[사실] 빈 줄만 남고 안 터짐', () => {
   const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: [] });
-  assert.equal(msg, `[운영실 Hermes]\n${SEP}\n`);
+  assert.equal(msg, `[운영실 Hermes]\n\n[사실]\n`);
 });
 
 test('[막아야 함] formatFactsMessage: tag를 넘기면 부서 헤더 앞에 대괄호로 붙는다', () => {
   const msg = formatFactsMessage({ departmentLabel: '투자전략실 Athena', facts: ['사실1'], tag: '제안' });
-  assert.equal(msg, `[제안] [투자전략실 Athena]\n${SEP}\n· 사실1`);
+  assert.equal(msg, `[제안] [투자전략실 Athena]\n\n[사실]\n· 사실1`);
 });
 
-// parseContextConsiderations — LLM 응답을 formatFactsMessage의 context·considerations
-// 계약으로 분리(2026-08-31 신설). 각 잡 프롬프트가 [맥락]·[생각해볼 점] 마커로 응답을
-// 나누도록 지시하는 게 전제.
-test('parseContextConsiderations: [맥락]·[생각해볼 점] 두 마커로 정확히 분리', () => {
-  const text = '[맥락]\n리츠 비중이 목표 대비 부족합니다.\n\n[생각해볼 점]\n· 지금 배분할지 기다릴지\n· 다른 자산군부터 메울지';
-  const { context, considerations } = parseContextConsiderations(text);
+// parseDepartmentResponse — LLM 응답을 formatFactsMessage의 conclusion·context·decisions
+// 계약으로 분리(2026-08-31 신설, 2026-09-01 3섹션으로 확장). 각 잡 프롬프트가 [결론]·
+// [맥락]·[의사결정] 마커로 응답을 나누도록 지시하는 게 전제.
+test('parseDepartmentResponse: [결론]·[맥락]·[의사결정] 세 마커로 정확히 분리', () => {
+  const text = '[결론]\n배분을 보류합니다.\n\n[맥락]\n리츠 비중이 목표 대비 부족합니다.\n\n[의사결정]\n· 지금 배분할지 기다릴지\n· 다른 자산군부터 메울지';
+  const { conclusion, context, decisions } = parseDepartmentResponse(text);
+  assert.equal(conclusion, '배분을 보류합니다.');
   assert.equal(context, '리츠 비중이 목표 대비 부족합니다.');
-  assert.deepEqual(considerations, ['지금 배분할지 기다릴지', '다른 자산군부터 메울지']);
+  assert.deepEqual(decisions, ['지금 배분할지 기다릴지', '다른 자산군부터 메울지']);
 });
 
-test('parseContextConsiderations: "- " 불릿도 "· "와 동일하게 벗겨냄', () => {
-  const text = '[맥락]\n맥락문단\n\n[생각해볼 점]\n- 고민점1\n- 고민점2';
-  const { considerations } = parseContextConsiderations(text);
-  assert.deepEqual(considerations, ['고민점1', '고민점2']);
+test('parseDepartmentResponse: "- " 불릿도 "· "와 동일하게 벗겨냄', () => {
+  const text = '[맥락]\n맥락문단\n\n[의사결정]\n- 고민점1\n- 고민점2';
+  const { decisions } = parseDepartmentResponse(text);
+  assert.deepEqual(decisions, ['고민점1', '고민점2']);
 });
 
-test('parseContextConsiderations: [생각해볼 점] 마커가 없으면(형식 위반) 전체를 context로 보존, considerations는 null(내용 손실 없이 폴백)', () => {
+test('parseDepartmentResponse: 마커가 하나도 없으면(형식 위반) 전체를 context로 보존, 나머지는 null(내용 손실 없이 폴백)', () => {
   const text = '리츠 비중이 목표 대비 부족합니다. 배분을 고려해보세요.';
-  const { context, considerations } = parseContextConsiderations(text);
+  const { conclusion, context, decisions } = parseDepartmentResponse(text);
+  assert.equal(conclusion, null);
   assert.equal(context, text);
-  assert.equal(considerations, null);
+  assert.equal(decisions, null);
 });
 
-test('parseContextConsiderations: 빈 입력이면 둘 다 null(안 터짐)', () => {
-  assert.deepEqual(parseContextConsiderations(''), { context: null, considerations: null });
-  assert.deepEqual(parseContextConsiderations(undefined), { context: null, considerations: null });
+test('parseDepartmentResponse: 빈 입력이면 전부 null(안 터짐)', () => {
+  assert.deepEqual(parseDepartmentResponse(''), { conclusion: null, context: null, decisions: null });
+  assert.deepEqual(parseDepartmentResponse(undefined), { conclusion: null, context: null, decisions: null });
 });
 
-// 코드리뷰 지적(2026-08-31, MEDIUM 2건) 재발 방지 회귀 테스트
+// 코드리뷰 지적(2026-08-31, MEDIUM 2건) 재발 방지 회귀 테스트 — 3섹션 파서에서도 유지
 
-test('[막아야 함] parseContextConsiderations: 모델이 서두 인사말을 붙여도 [맥락] 마커가 결과에 안 남음', () => {
-  const text = '알겠습니다.\n\n[맥락]\n리츠 비중이 부족합니다.\n\n[생각해볼 점]\n- 배분할지 기다릴지';
-  const { context } = parseContextConsiderations(text);
+test('[막아야 함] parseDepartmentResponse: 모델이 서두 인사말을 붙여도 마커 앞 텍스트는 결과에 안 섞임', () => {
+  const text = '알겠습니다.\n\n[결론]\n배분 보류.\n\n[맥락]\n리츠 비중이 부족합니다.\n\n[의사결정]\n- 배분할지 기다릴지';
+  const { conclusion, context } = parseDepartmentResponse(text);
+  assert.equal(conclusion, '배분 보류.');
   assert.equal(context, '리츠 비중이 부족합니다.');
-  assert.doesNotMatch(context, /\[맥락\]/);
+  assert.doesNotMatch(context, /\[맥락\]|알겠습니다/);
 });
 
-test('[막아야 함] parseContextConsiderations: 한 항목이 줄바꿈으로 두 줄에 걸쳐도 불릿 1개로 합쳐짐(줄바꿈 자체를 새 항목으로 오인 안 함)', () => {
-  const text = '[맥락]\n맥락\n\n[생각해볼 점]\n- 아주 긴 항목인데\n  두 번째 줄로 넘어감\n- 두번째';
-  const { considerations } = parseContextConsiderations(text);
-  assert.deepEqual(considerations, ['아주 긴 항목인데 두 번째 줄로 넘어감', '두번째']);
+test('[막아야 함] parseDepartmentResponse: 한 항목이 줄바꿈으로 두 줄에 걸쳐도 불릿 1개로 합쳐짐(줄바꿈 자체를 새 항목으로 오인 안 함)', () => {
+  const text = '[맥락]\n맥락\n\n[의사결정]\n- 아주 긴 항목인데\n  두 번째 줄로 넘어감\n- 두번째';
+  const { decisions } = parseDepartmentResponse(text);
+  assert.deepEqual(decisions, ['아주 긴 항목인데 두 번째 줄로 넘어감', '두번째']);
 });
 
-test('parseContextConsiderations: "•" 불릿도 인식', () => {
-  const text = '[맥락]\n맥락\n\n[생각해볼 점]\n• 고민점1';
-  const { considerations } = parseContextConsiderations(text);
-  assert.deepEqual(considerations, ['고민점1']);
+test('parseDepartmentResponse: "•" 불릿도 인식', () => {
+  const text = '[맥락]\n맥락\n\n[의사결정]\n• 고민점1';
+  const { decisions } = parseDepartmentResponse(text);
+  assert.deepEqual(decisions, ['고민점1']);
 });
 
-test('parseContextConsiderations: 모델이 "빈 채로 둬라" 지시를 안 지키고 "없음"류 채움말만 쓰면 저정보 불릿 대신 null', () => {
-  const text = '[맥락]\n맥락\n\n[생각해볼 점]\n- 없음';
-  const { considerations } = parseContextConsiderations(text);
-  assert.equal(considerations, null);
+test('parseDepartmentResponse: 모델이 "빈 채로 둬라" 지시를 안 지키고 "없음"류 채움말만 쓰면 저정보 불릿 대신 null', () => {
+  const text = '[맥락]\n맥락\n\n[의사결정]\n- 없음';
+  const { decisions } = parseDepartmentResponse(text);
+  assert.equal(decisions, null);
 });
 
-test('parseContextConsiderations: [맥락]은 있는데 [생각해볼 점]이 없으면(부분 형식 위반) 마커 이후 텍스트를 context로, considerations는 null', () => {
+test('parseDepartmentResponse: [맥락]은 있는데 [의사결정]이 없으면(부분 형식 위반) 마커 이후 텍스트를 context로, decisions는 null', () => {
   const text = '[맥락]\n리츠 비중이 부족합니다.';
-  const { context, considerations } = parseContextConsiderations(text);
+  const { context, decisions } = parseDepartmentResponse(text);
   assert.equal(context, '리츠 비중이 부족합니다.');
-  assert.equal(considerations, null);
+  assert.equal(decisions, null);
 });
 
-test('parseContextConsiderations: [생각해볼 점] 섹션이 비어있으면(프롬프트 지시대로 "빈 채로 둠") considerations는 null', () => {
-  const text = '[맥락]\n지금 비중이 적절합니다.\n\n[생각해볼 점]';
-  const { context, considerations } = parseContextConsiderations(text);
+test('parseDepartmentResponse: [의사결정] 섹션이 비어있으면(프롬프트 지시대로 "빈 채로 둠") decisions는 null', () => {
+  const text = '[맥락]\n지금 비중이 적절합니다.\n\n[의사결정]';
+  const { context, decisions } = parseDepartmentResponse(text);
   assert.equal(context, '지금 비중이 적절합니다.');
-  assert.equal(considerations, null);
+  assert.equal(decisions, null);
+});
+
+test('[막아야 함] parseDepartmentResponse: 긴 하이픈(em dash)이 마침표로 치환됨(2026-09-01 오너 지시 — "긴 하이픈 다 제외")', () => {
+  const text = '[결론]\n정상입니다 — 특별한 이상 없음.\n\n[맥락]\n지표가 조용합니다 — 근거는 다음과 같습니다.';
+  const { conclusion, context } = parseDepartmentResponse(text);
+  assert.doesNotMatch(conclusion, /—/);
+  assert.doesNotMatch(context, /—/);
+  assert.equal(conclusion, '정상입니다. 특별한 이상 없음.');
+});
+
+test('parseDepartmentResponse: 마커 순서가 뒤바뀌어도(의사결정이 맥락보다 먼저) 위치 기준으로 정확히 분리', () => {
+  const text = '[의사결정]\n- 항목1\n\n[맥락]\n근거 문단';
+  const { context, decisions } = parseDepartmentResponse(text);
+  assert.equal(context, '근거 문단');
+  assert.deepEqual(decisions, ['항목1']);
+});
+
+test('[막아야 함] parseDepartmentResponse: 모델이 프리앰블에 마커 세 개를 나열해도(문장 중간) 실제 마커 위치를 정확히 찾음(2026-09-01 코드리뷰 지적 — 프리앰블이 [결론]/[맥락]/[의사결정]을 언급하면 예전엔 진짜 답변 전체가 decisions로 밀려 들어갔음)', () => {
+  const text = '요청하신 [결론]/[맥락]/[의사결정] 형식으로 답변드립니다.\n\n[결론]\n진짜 결론.\n\n[맥락]\n진짜 근거.\n\n[의사결정]\n- 진짜 항목';
+  const { conclusion, context, decisions } = parseDepartmentResponse(text);
+  assert.equal(conclusion, '진짜 결론.');
+  assert.equal(context, '진짜 근거.');
+  assert.deepEqual(decisions, ['진짜 항목']);
+});
+
+// stripEmDash — 2026-09-01 코드리뷰 HIGH 지적: 첫 버전은 \s{2,} 압축이 줄바꿈까지
+// 삼켜서 여러 줄로 나뉜 문장·불릿을 한 줄로 뭉갰다. 줄바꿈은 보존해야 한다.
+
+test('[막아야 함] stripEmDash: 줄바꿈은 보존(빈 줄로 구분된 여러 문장을 한 문단으로 뭉개지 않음)', () => {
+  const text = '첫째.\n\n둘째.\n\n셋째.';
+  assert.equal(stripEmDash(text), '첫째.\n\n둘째.\n\n셋째.');
+});
+
+test('[막아야 함] stripEmDash: 빈 줄로 구분된 여러 [의사결정] 불릿이 하나로 뭉개지지 않음(formatFactsMessage 경유 확인)', () => {
+  const { decisions } = parseDepartmentResponse('[의사결정]\n- 항목1\n\n- 항목2\n\n- 항목3');
+  assert.deepEqual(decisions, ['항목1', '항목2', '항목3']);
+});
+
+test('stripEmDash: 한글 조사 바로 뒤(공백 없음)에 붙은 긴 하이픈도 치환', () => {
+  assert.equal(stripEmDash('부족합니다—근거는 다음과 같습니다.'), '부족합니다. 근거는 다음과 같습니다.');
+});
+
+test('stripEmDash: 문장 맨 앞의 긴 하이픈은 선행 마침표 없이 깔끔하게 제거', () => {
+  assert.equal(stripEmDash('— 지켜볼 단계입니다.'), '지켜볼 단계입니다.');
+});
+
+test('stripEmDash: en dash(–)·하이픈(-)·날짜범위·음수 부호는 손대지 않음(진짜 em dash만 대상)', () => {
+  assert.equal(stripEmDash('2026-08-01–2026-08-31 기간, 갭 -1.98%p'), '2026-08-01–2026-08-31 기간, 갭 -1.98%p');
+});
+
+test('stripEmDash: 빈 값이면 빈 문자열(안 터짐)', () => {
+  assert.equal(stripEmDash(null), '');
+  assert.equal(stripEmDash(undefined), '');
+});
+
+// formatFactsMessage 레벨에서도 긴 하이픈이 걸러짐(2026-09-01 코드리뷰 HIGH 지적 —
+// parseDepartmentResponse를 안 거치는 소비자(예: proposal-flow.mjs가 LLM reason을
+// 직접 context에 꽂는 경로)엔 예전엔 이 규칙이 전혀 안 걸렸다. 렌더링 시점에 일괄
+// 적용해 모든 소비자를 커버한다).
+test('[막아야 함] formatFactsMessage: parseDepartmentResponse를 안 거치고 직접 넘긴 context·conclusion·decisions에도 긴 하이픈이 제거됨', () => {
+  const msg = formatFactsMessage({
+    departmentLabel: '투자전략실 Athena',
+    facts: ['사실1'],
+    conclusion: '승인됨 — 검토 완료.',
+    context: '리츠 비중이 부족합니다 — 배분을 제안합니다.',
+    decisions: ['배분할지 — 기다릴지'],
+  });
+  assert.doesNotMatch(msg, /—/);
 });
 
 test('parseReplyDecision: "승인"이 포함되면 승인(부가 코멘트 있어도)', () => {
