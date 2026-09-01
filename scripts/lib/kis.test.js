@@ -4,7 +4,8 @@ import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  parseKisExpiry, parseQuoteResponse, parseUsQuoteResponse, buildRealtimeRows, getKrQuote,
+  parseKisExpiry, parseQuoteResponse, parseIndexQuoteResponse, parseUsQuoteResponse,
+  buildRealtimeRows, getKrQuote, getKrIndexQuote,
   getUsQuote, isKrMarketOpen, isUsMarketOpen, parseBalanceResponse, getAccountBalance,
   loadIrpAccount, parseInvestorFlowResponse, getKrInvestorFlow,
   parseInvestOpinionResponse, summarizeInvestOpinion, getKrInvestOpinion,
@@ -56,6 +57,30 @@ test('parseQuoteResponse: rt_cd 실패 코드면 throw(msg1 인용)', () => {
 test('parseQuoteResponse: 현재가 파싱 불가면 throw', () => {
   assert.throws(() => parseQuoteResponse({ rt_cd: '0', output: { stck_prpr: '' } }));
   assert.throws(() => parseQuoteResponse({ rt_cd: '0', output: {} }));
+});
+
+test('parseIndexQuoteResponse: 정상 응답에서 지수 현재가·등락률 추출(bstp_nmix_prpr/bstp_nmix_prdy_ctrt, 실측 필드명)', () => {
+  const q = parseIndexQuoteResponse({ rt_cd: '0', output: { bstp_nmix_prpr: '6820.02', bstp_nmix_prdy_ctrt: '0.35' } });
+  assert.equal(q.price, 6820.02);
+  assert.equal(q.changePct, 0.35);
+});
+
+test('parseIndexQuoteResponse: 등락률 없으면 null(가격은 살아있으면 통과)', () => {
+  const q = parseIndexQuoteResponse({ rt_cd: '0', output: { bstp_nmix_prpr: '6820.02', bstp_nmix_prdy_ctrt: '' } });
+  assert.equal(q.price, 6820.02);
+  assert.equal(q.changePct, null);
+});
+
+test('parseIndexQuoteResponse: rt_cd 실패 코드면 throw(msg1 인용)', () => {
+  assert.throws(
+    () => parseIndexQuoteResponse({ rt_cd: '1', msg1: '유효하지 않은 지수코드' }),
+    /유효하지 않은 지수코드/
+  );
+});
+
+test('parseIndexQuoteResponse: 현재가 파싱 불가면 throw(개별종목 필드명 stck_prpr로 잘못 넘어와도 지수 필드가 없으면 실패해야 함)', () => {
+  assert.throws(() => parseIndexQuoteResponse({ rt_cd: '0', output: { stck_prpr: '75000' } }));
+  assert.throws(() => parseIndexQuoteResponse({ rt_cd: '0', output: {} }));
 });
 
 test('buildRealtimeRows: 성공 종목은 새 행, 실패 종목은 직전 행 carry-forward', () => {
@@ -187,6 +212,33 @@ test('getKrQuote: 레이트리밋 아닌 오류는 code가 그 msg_cd 그대로(
   } catch (e) {
     assert.equal(e.code, 'OTHER');
   }
+});
+
+test('getKrIndexQuote: tr_id·URL·파라미터가 개별종목 조회와 다르게 올바르게 실림(FHPUP02100000, inquire-index-price, FID_INPUT_ISCD)', async () => {
+  let capturedUrl, capturedHeaders;
+  const fetchImpl = async (url, init) => {
+    capturedUrl = url;
+    capturedHeaders = init.headers;
+    return {
+      ok: true, status: 200,
+      json: async () => ({ rt_cd: '0', output: { bstp_nmix_prpr: '6820.02', bstp_nmix_prdy_ctrt: '0.35' } }),
+      text: async () => JSON.stringify({ rt_cd: '0', output: { bstp_nmix_prpr: '6820.02', bstp_nmix_prdy_ctrt: '0.35' } }),
+    };
+  };
+  const q = await getKrIndexQuote({ token: 't', appkey: 'k', appsecret: 's', iscd: '0001', fetchImpl, retryDelayMs: 1 });
+  assert.equal(q.price, 6820.02);
+  assert.match(capturedUrl, /inquire-index-price/);
+  assert.match(capturedUrl, /FID_INPUT_ISCD=0001/);
+  assert.equal(capturedHeaders.tr_id, 'FHPUP02100000');
+});
+
+test('getKrIndexQuote: 레이트리밋(EGW00201) 응답이면 재시도 후 성공(fetchKis 공유 로직 재사용 확인)', async () => {
+  const fetchImpl = mockFetch([
+    { body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } },
+    { body: { rt_cd: '0', output: { bstp_nmix_prpr: '6820.02', bstp_nmix_prdy_ctrt: '0.35' } } },
+  ]);
+  const q = await getKrIndexQuote({ token: 't', appkey: 'k', appsecret: 's', iscd: '0001', fetchImpl, retryDelayMs: 1 });
+  assert.equal(q.price, 6820.02);
 });
 
 test('buildRealtimeRows: 보유종목이 매도돼 사라지면(더 이상 holdings에 없음) 그 행도 자연히 빠짐', () => {

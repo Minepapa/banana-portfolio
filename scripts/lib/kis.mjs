@@ -133,6 +133,19 @@ export function parseQuoteResponse(json) {
   return { price, changePct: Number.isFinite(changePct) ? changePct : null };
 }
 
+// KIS 국내업종현재지수(inquire-index-price) 원본 응답 → {price, changePct}. 필드명이
+// 개별종목(stck_prpr/prdy_ctrt)과 달리 bstp_nmix_prpr(지수 현재가)·bstp_nmix_prdy_ctrt
+// (전일대비 등락률, KIS가 이미 계산해서 줌 — 별도 전일종가 대조 불필요). 실측 확인
+// (2026-09-01, rt_cd:"0", 장외 시간대라 거래량 필드는 0이었지만 지수값 자체는 정상).
+export function parseIndexQuoteResponse(json) {
+  if (json?.rt_cd !== '0') throw kisRtError('KIS 지수 시세 오류', json);
+  const price = Number(json?.output?.bstp_nmix_prpr);
+  if (!(price > 0)) throw new Error('KIS 지수 응답에 유효한 현재가 없음');
+  const changePctRaw = json?.output?.bstp_nmix_prdy_ctrt;
+  const changePct = changePctRaw !== undefined && changePctRaw !== '' ? Number(changePctRaw) : NaN;
+  return { price, changePct: Number.isFinite(changePct) ? changePct : null };
+}
+
 // KIS 해외주식 현재체결가(overseas-price/quotations/price) 원본 응답 → {price, changePct}.
 // 응답 envelope(rt_cd/msg_cd/msg1)은 국내와 동일, output 필드명만 다름(last/rate — 확인:
 // examples_llm/overseas_stock/price/chk_price.py COLUMN_MAPPING). 순수함수 — 테스트 가능.
@@ -225,6 +238,26 @@ export async function getKrQuote({ token, appkey, appsecret, code, fetchImpl, re
   };
   const json = await fetchKis(url, headers, code, { fetchImpl, retries, retryDelayMs });
   return parseQuoteResponse(json);
+}
+
+// 국내업종현재지수(코스피 등 지수) 조회 — 2026-09-01 실계좌 라이브 확인 완료
+// (rt_cd:"0", 정상 응답). tr_id FHPUP02100000, iscd: 지수코드("0001"=코스피,
+// "1001"=코스닥 — KIS 관례). 개별종목(inquire-price)과 엔드포인트·tr_id·응답
+// 필드명이 전혀 달라 별도 함수로 분리 — getKrQuote를 지수코드로 억지로 호출하면
+// 안 됨(코스피가 KRX 종가 전용이던 원칙과의 관계는 intraday-market-move-monitor.mjs
+// 헤더 주석 참고 — 이 함수는 장중 실시간 근사치 전용, 일별 공식 종가는 여전히 KRX).
+export async function getKrIndexQuote({ token, appkey, appsecret, iscd, fetchImpl, retries, retryDelayMs }) {
+  const url = `${BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-index-price`
+    + `?FID_COND_MRKT_DIV_CODE=U&FID_INPUT_ISCD=${encodeURIComponent(iscd)}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    authorization: `Bearer ${token}`,
+    appkey, appsecret,
+    tr_id: 'FHPUP02100000',
+    custtype: 'P',
+  };
+  const json = await fetchKis(url, headers, iscd, { fetchImpl, retries, retryDelayMs });
+  return parseIndexQuoteResponse(json);
 }
 
 // 해외주식 현재체결가 조회. excd: 거래소코드(NAS/NYS/AMS 등, scripts/lib/instruments.mjs

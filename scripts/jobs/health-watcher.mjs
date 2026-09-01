@@ -115,6 +115,11 @@ export const EXPECTED_INTERVALS_MS = {
   // 같은 구조적 한계(바로 아래 주석 참고) — 그래도 최소한 이 등록으로 health-watcher
   // 자신이 살아있는 한은 잡힌다.
   'telegram-session-health-check': 10 * 60 * 1000,
+  // intraday-market-move-monitor(2026-09-01 신설) — 텔레그램 메시지 2단계, 장중 시장
+  // 급변 감시. StartInterval=600(10분), telegram-session-health-check와 동일 클래스.
+  // ⚠️ 이 잡은 장 마감 후·주말엔 실행돼도 즉시 조용히 종료하는 게 정상 동작(isKrMarketOpen
+  // ||isUsMarketOpen 게이트) — run.sh가 종료코드 0으로 하트비트를 남기므로 stale 오탐 없음.
+  'intraday-market-move-monitor': 10 * 60 * 1000,
   // health-watcher 자기 자신도 StartInterval=1800(30분마다)이라 등록 — 다만 여기 등록해도
   // 구조적 사각은 남는다: findStaleJobs는 health-watcher **자신이 실행될 때만** 호출된다.
   // health-watcher 프로세스 자체가(launchd unload·크래시 등으로) 아예 안 돌기 시작하면

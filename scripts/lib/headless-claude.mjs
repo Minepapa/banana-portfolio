@@ -31,11 +31,15 @@ export function buildArgs(prompt, model, allowedTools, { appendSystemPrompt } = 
 }
 
 export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools = 'Bash,Read,Glob,Grep,WebFetch', opts = {}) {
+  // timeoutMs(선택) — 기본 12분 그대로 유지. 여러 호출을 순차로 거는 잡(예:
+  // intraday-market-move-monitor.mjs의 Call A/B/C)은 기본값이면 최악의 경우 36분까지
+  // 감시가 완전히 멈출 수 있어 더 짧은 값을 넘길 수 있게 열어둠(2026-09-01, 코드리뷰 지적).
+  const timeoutMs = opts.timeoutMs ?? 12 * 60 * 1000;
   return new Promise((resolve, reject) => {
     const cp = spawn('claude', buildArgs(prompt, model, allowedTools, opts),
       { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
-    const timer = setTimeout(() => { cp.kill('SIGKILL'); reject(new Error('헤드리스 타임아웃 (12분 초과)')); }, 12 * 60 * 1000);
+    const timer = setTimeout(() => { cp.kill('SIGKILL'); reject(new Error(`헤드리스 타임아웃 (${Math.round(timeoutMs / 60000)}분 초과)`)); }, timeoutMs);
     cp.stdout.on('data', d => { out += d; });
     cp.stderr.on('data', d => { err += d; });
     cp.on('error', e => { clearTimeout(timer); reject(e); });

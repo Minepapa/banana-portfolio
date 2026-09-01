@@ -64,6 +64,10 @@ export const VAULT_PATHS = {
     // Vault판. 폴더가 아니라 이 State 카테고리에 두는 이유: "지금 상태"이지 이벤트 로그가
     // 아니다(잡이 실행될 때마다 파일이 늘지 않고 같은 파일이 갱신됨).
     jobHealth: join(VAULT_ROOT, 'State', 'JobHealth'),
+    // 장중 시장 급변 감시(intraday-market-move-monitor.mjs, 2026-09-01 신설) 신호별
+    // 중복방지 마커 — 신호 1개=파일 1개(코스피·S&P500·VIX·DXY·USD/KRW·10Y수익률),
+    // {date, tier} 덮어쓰기. jobHealth·macroOverlay와 같은 "지금 상태" 원칙.
+    marketMoveMonitor: join(VAULT_ROOT, 'State', 'MarketMoveMonitor'),
     // Faber 10개월 이평 "지난 확인 시점 상태"(위/아래) 저장 — 구현계획서 Phase 8.
     // 크로스(상태변화) 판정에 필요(macro-overlay.mjs detectFaberCrossover). 이벤트로그가
     // 아니라 "지금 상태"라 jobHealth와 같은 원칙(1파일=덮어쓰기).

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.intraday-market-move-monitor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>intraday-market-move-monitor</string>
+  </array>
+  <!-- 10분 간격(2026-09-01 신설, 텔레그램 메시지 2단계) — 장중 시장 급변(코스피·S&P500·
+       VIX·DXY·USD/KRW·미국10Y) 감시. 잡 자신이 isKrMarketOpen()||isUsMarketOpen()으로
+       장 시간 게이트를 거니 장 마감 후·주말에도 그냥 이 간격으로 계속 돌아도 무해(즉시
+       조용히 종료, 코스피·yfinance 조회 자체를 안 함) — telegram-session-health-check와
+       동일하게 요일·시간 제한 없는 StartInterval로 단순화. -->
+  <key>StartInterval</key>
+  <integer>600</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/intraday-market-move-monitor.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/intraday-market-move-monitor.log</string>
+</dict>
+</plist>
