@@ -8,6 +8,10 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+
+# 외부 참고 저장소 클론(연구용, 이 프로젝트 코드 아님) — 2026-09-01 NH PLUG 통합
+# 참고용 nhplug-auto-trader·nhplug-sdk
+vendor
 dist
 dist-ssr
 *.local
