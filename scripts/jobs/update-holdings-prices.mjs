@@ -10,10 +10,16 @@
  * "정본"이 되려면 시세도 Vault에 들어가야 한다는 지적을 받아 신설.
  *
  * 시세 소스(대상별로 다름 — 하나로 통일 안 됨, 각자 대체 불가한 이유가 있음):
- *   - KR 주식·ETF: KIS getKrQuote(실시간)
- *   - 해외주식: KIS getUsQuote(실시간)
+ *   - KR 주식·ETF: **NH** getKrCurrentPrice(krstock) — 2026-09-02 이관(오너 확정,
+ *     Log/Strategy/2026-09-02-NH-API-우선-KIS-카카오파싱-역할축소-결정.md 참고).
+ *     단 **IRP 계좌 보유분만 예외로 KIS getKrQuote 유지**(NH가 IRP를 지원 안 함).
+ *   - 해외주식: **NH** getGbCurrentPrice(gbstock) — 위와 동일 이관, IRP만 KIS
+ *     getUsQuote 유지.
  *   - 금현물(NH증권 실물자산 — KIS·DART 어디에도 종목코드가 없어 KIS 조회 자체가
  *     불가능): KRX gen/gold_bydd_trd(일별 배치, 장마감 후 발행 — 실시간 아님).
+ *     ⚠️ NH krgold에 실시간 현재가(getGoldCurrentPrice)가 이미 있지만 이 필드는
+ *     아직 안 바꿈(이번 이관 범위는 KR/US 시세뿐 — krgold 시세 전환은 별도 배치로
+ *     미룸, 이 잡의 GOLD 분기는 기존 KRX 경로 그대로).
  *     "TIGER KRX금현물"(ETF, 연금저축 보유)은 이거 아니라 위 KR 경로로 정상 처리됨
  *     — krStockCode가 먼저 풀리므로 계좌명이 아니라 실제 상품 종류로 자동 분기.
  *   - VIP한국형가치투자증권자투자신탁(주식)-C-Pe(연금저축 보유 사모펀드 — 마찬가지로
@@ -48,6 +54,9 @@ import {
   hasKisCredentials, loadKisCredentials, getKisToken, getKrQuote, getUsQuote,
   isKrMarketOpen, isUsMarketOpen, KIS_RATE_LIMIT_CODE,
 } from '../lib/kis.mjs';
+import { hasNhplugCredentials, loadNhplugCredentials, getNhToken } from '../lib/nhplug.mjs';
+import { getKrCurrentPrice } from '../lib/nhplug-krstock.mjs';
+import { getGbCurrentPrice } from '../lib/nhplug-gbstock.mjs';
 import { fetchGoldClose } from '../lib/krx.mjs';
 import { fetchUsdKrwRate } from '../lib/fundamentals.mjs';
 import { fetchVipFundPrice } from '../lib/vip-fund.mjs';
@@ -89,6 +98,13 @@ function readHoldingFiles() {
   });
 }
 
+// KR/US 시세 소스 판정 — IRP만 KIS 유지, 나머지는 전부 NH(2026-09-02 오너 확정
+// 이관). 계좌명 문자열 하나로 갈리는 유일한 분기라 별도 상수로 뽑아 테스트하기
+// 쉽게 함.
+export function quoteSourceForAccount(account) {
+  return account === 'IRP' ? 'KIS' : 'NH';
+}
+
 // 보유 하나를 어느 시세 소스로 조회할지 판정. resolveKr/resolveUs/resolveUsExcd
 // 주입 가능(테스트에서 네트워크·캐시 파일 없이 순수 검증). 순수함수 — 테스트 가능.
 export function classifyHolding(holding, { resolveKr = krStockCode, resolveUs = usTicker, resolveUsExcd = usExchange } = {}) {
@@ -97,15 +113,17 @@ export function classifyHolding(holding, { resolveKr = krStockCode, resolveUs = 
   // Kakao·KIS 파이프라인에 안 잡혀 수동 기록, 종목명을 원본과 다르게 붙여 별도
   // 관리하다 보니 DART/KIS 종목마스터의 정식 명칭과 이름이 안 맞아 resolveKr(name)이
   // 항상 null로 떨어짐). 이런 경우까지 이름매칭에만 의존하면 시세가 영원히 안 갱신된다.
-  if (/^\d{6}$/.test(holding.ticker ?? '')) return { kind: 'KR', code: holding.ticker };
+  if (/^\d{6}$/.test(holding.ticker ?? '')) return { kind: 'KR', code: holding.ticker, source: quoteSourceForAccount(holding.account) };
   if (NO_PRICE_SOURCE_NAMES.has(holding.name)) return { kind: 'NO_PRICE_SOURCE' };
   const krCode = resolveKr(holding.name);
-  if (krCode) return { kind: 'KR', code: krCode };
+  if (krCode) return { kind: 'KR', code: krCode, source: quoteSourceForAccount(holding.account) };
   const ticker = resolveUs(holding.name);
   if (ticker) {
     const excd = resolveUsExcd(ticker);
     if (!excd) return { kind: 'unmapped', reason: '거래소코드(EXCD) 미등록(usExchange 등록 필요)' };
-    return { kind: 'US', code: ticker, excd };
+    return {
+      kind: 'US', code: ticker, excd, source: quoteSourceForAccount(holding.account),
+    };
   }
   if (holding.account === '금현물') return { kind: 'GOLD' };
   if (holding.name === VIP_FUND_NAME) return { kind: 'FUND' };
@@ -151,6 +169,40 @@ export function recomputeFxCashValuation(holding, usdKrwRate) {
   return { curPrice: usdKrwRate, avgPrice: usdKrwRate, invest, evalAmount: invest, profitAmount: 0, profitPct: 0 };
 }
 
+// NH 시세응답에서 가격 필드를 뽑아 검증(2026-09-02 코드리뷰 HIGH 지적) — 처음엔
+// `Number.isFinite(curPrice)`로만 확인했는데, `Number(null)`·`Number('')`·
+// `Number('0')`가 전부 `0`(유한수)이라 "필드 없음"·"빈 문자열"·"진짜 0원"을
+// 못 걸러냈다. NH가 거래정지·조회불가 종목에 stck_prpr:null 같은 값을 실어보내면
+// 그대로 curPrice=0으로 통과해 평가액 0원·손익률 -100%가 조용히 Vault에 기록될
+// 뻔했다 — kis.mjs의 기존 시세 파서(parseQuoteResponse 등)가 이미 `price > 0`으로
+// 검증하는 것과 동일 기준으로 맞춤. 순수함수 — 테스트 가능.
+export function extractNhPrice(output0, field) {
+  const price = Number(output0?.[field]);
+  if (!(price > 0)) throw new Error(`NH 응답에 유효한 현재가(${field}) 없음: ${JSON.stringify(output0)}`);
+  return price;
+}
+
+// NH 시세 조회 1회 실패는 재시도(2026-09-02 코드리뷰 MEDIUM 지적) — callNh 자체는
+// 주문 안전성 때문에 재시도를 안 하지만(429를 재시도하면 안 되는 이유는
+// nhplug.mjs 헤더 주석 참고, 주문처럼 부작용 있는 호출 기준), 시세 조회는 읽기
+// 전용이라 그 제약이 적용될 이유가 없다 — 이 잡으로 넘어오기 전엔 KIS 경로가
+// 항상 QUOTE_RETRIES(3회)를 갖고 있었는데 NH로 이관하면서 그 안전망이 빠질 뻔했다.
+// 429(RATE_LIMIT)는 재시도해도 어차피 또 걸릴 확률이 높으니 제외 — 네트워크
+// 예외·일시적 실패만 재시도 대상으로 좁힌다.
+async function fetchNhPriceWithRetry(fetchFn, { retries = QUOTE_RETRIES, retryDelayMs = QUOTE_RETRY_DELAY_MS } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetchFn();
+    } catch (e) {
+      lastErr = e;
+      if (e.code === 'RATE_LIMIT' || attempt === retries) throw e;
+      await sleep(retryDelayMs);
+    }
+  }
+  throw lastErr;
+}
+
 async function main() {
   const allFiles = readHoldingFiles();
   const files = allFiles.filter(({ parsed }) => !parsed.isCashLike);
@@ -165,12 +217,32 @@ async function main() {
   const krOpen = isKrMarketOpen();
   const usOpen = isUsMarketOpen();
   const hasKis = hasKisCredentials();
-  if (!hasKis) console.log('ℹ️ KIS 크리덴셜 미설정 — KR/US 시세는 스킵, 금현물만 시도');
+  const hasNh = hasNhplugCredentials();
+  if (!hasKis) console.log('ℹ️ KIS 크리덴셜 미설정 — IRP KR/US 시세는 스킵, 금현물만 시도');
+  if (!hasNh) console.log('ℹ️ NH 크리덴셜 미설정 — IRP 외 계좌 KR/US 시세는 스킵');
+
+  // 2026-09-02 이관 — KR/US 시세는 IRP만 KIS, 나머지는 NH(quoteSourceForAccount).
+  // 두 토큰 다 "그 소스를 실제로 쓰는 보유가 있을 때만" 발급한다(불필요한 인증
+  // 호출 방지, 기존 KIS 토큰 발급 조건과 동일 원칙을 NH에도 그대로 적용).
+  const hasKisTarget = files.some((f) => {
+    const c = classifyHolding(f.parsed);
+    return (c.kind === 'KR' || c.kind === 'US') && c.source === 'KIS';
+  });
+  const hasNhTarget = files.some((f) => {
+    const c = classifyHolding(f.parsed);
+    return (c.kind === 'KR' || c.kind === 'US') && c.source === 'NH';
+  });
 
   let kisToken = null, appkey = null, appsecret = null;
-  if (hasKis && (krOpen || usOpen)) {
+  if (hasKis && hasKisTarget && (krOpen || usOpen)) {
     ({ appkey, appsecret } = loadKisCredentials());
     kisToken = await getKisToken({ appkey, appsecret });
+  }
+
+  let nhToken = null;
+  if (hasNh && hasNhTarget && (krOpen || usOpen)) {
+    const nhCreds = loadNhplugCredentials();
+    nhToken = await getNhToken(nhCreds);
   }
 
   // USD/KRW 환율 — 미국 "주식시장" 개장 여부(usOpen)·KIS 크리덴셜(hasKis)과 무관하게
@@ -210,17 +282,29 @@ async function main() {
       unmapped++;
       continue;
     }
-    if (cls.kind === 'KR' && (!krOpen || !hasKis)) { skipped++; continue; }
+    // 2026-09-02 이관 — source가 'KIS'(IRP 전용)면 hasKis, 'NH'(나머지 전부)면
+    // hasNh로 크리덴셜 유무를 확인. GOLD·FUND는 source 필드 자체가 없어(항상
+    // true) — 이 블록은 KR·US 가드 전용이라 실제로는 안 쓰이지만, 나중에 다른
+    // kind가 credOk를 참조하게 될 경우를 대비해 명시적으로 분기해둔다(2026-09-02
+    // 코드리뷰 MEDIUM 지적 — 예전엔 `cls.source === 'KIS' ? hasKis : hasNh`라
+    // source가 없는 kind가 암묵적으로 hasNh에 묶였었음). 시장개장 여부(krOpen/
+    // usOpen)는 소스와 무관.
+    const credOk = cls.source === 'KIS' ? hasKis : cls.source === 'NH' ? hasNh : true;
+    if (cls.kind === 'KR' && (!krOpen || !credOk)) { skipped++; continue; }
     if (cls.kind === 'US' && usdKrwRate == null) { skipped++; continue; }
 
-    // 미국 주식시장이 닫혀있거나(또는 KIS 크리덴셜이 없어) 새 가격을 못 가져올 때도
-    // 환율만은 최신이니, 마지막으로 저장된 USD curPrice에 그 환율을 다시 곱해 KRW
-    // 평가금을 갱신한다 — 가격 자체는 장이 닫혀있으니 그대로 두는 게 맞고(추정 금지),
-    // 환율은 계속 움직이므로 이렇게라도 안 하면 평가금이 계속 뒤처진 값으로 남는다.
-    if (cls.kind === 'US' && (!usOpen || !hasKis)) {
+    // 미국 주식시장이 닫혀있거나(또는 해당 소스 크리덴셜이 없어) 새 가격을 못 가져올
+    // 때도 환율만은 최신이니, 마지막으로 저장된 USD curPrice에 그 환율을 다시 곱해
+    // KRW 평가금을 갱신한다 — 가격 자체는 장이 닫혀있으니 그대로 두는 게 맞고(추정
+    // 금지), 환율은 계속 움직이므로 이렇게라도 안 하면 평가금이 계속 뒤처진 값으로
+    // 남는다.
+    if (cls.kind === 'US' && (!usOpen || !credOk)) {
       if (h.curPrice == null) { skipped++; continue; } // 저장된 가격 자체가 없으면 재평가 불가(추정 안 함)
       const valuation = recomputeValuation(h, h.curPrice, { usdKrwRate });
-      console.log(`   · ${h.name}(US, 장외 — 환율만 재평가): $${h.curPrice} × ₩${usdKrwRate.toFixed(2)} → 평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원`);
+      // 2026-09-02 코드리뷰 LOW 지적 — 원인이 "장 닫힘"인지 "크리덴셜 없음"인지
+      // 로그에서 구분(예전엔 항상 "장외"라고만 적어 크리덴셜 문제를 오인할 수 있었음).
+      const reason = !usOpen ? '장외' : '크리덴셜 없음';
+      console.log(`   · ${h.name}(US, ${reason} — 환율만 재평가): $${h.curPrice} × ₩${usdKrwRate.toFixed(2)} → 평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원`);
       if (!DRY_RUN) writeAtomic(f.filepath, updateFrontmatter(f.content, { ...valuation, updatedAt: new Date().toISOString() }));
       updated++;
       continue;
@@ -228,12 +312,18 @@ async function main() {
 
     let curPrice = null;
     try {
-      if (cls.kind === 'KR') {
+      if (cls.kind === 'KR' && cls.source === 'KIS') {
         const q = await getKrQuote({ token: kisToken, appkey, appsecret, code: cls.code, retries: QUOTE_RETRIES, retryDelayMs: QUOTE_RETRY_DELAY_MS });
         curPrice = q.price;
-      } else if (cls.kind === 'US') {
+      } else if (cls.kind === 'KR') { // source === 'NH'
+        const q = await fetchNhPriceWithRetry(() => getKrCurrentPrice({ token: nhToken, iemCd: cls.code }));
+        curPrice = extractNhPrice(q.Output_0, 'stck_prpr');
+      } else if (cls.kind === 'US' && cls.source === 'KIS') {
         const q = await getUsQuote({ token: kisToken, appkey, appsecret, excd: cls.excd, symb: cls.code, retries: QUOTE_RETRIES, retryDelayMs: QUOTE_RETRY_DELAY_MS });
         curPrice = q.price;
+      } else if (cls.kind === 'US') { // source === 'NH'(gbstock)
+        const q = await fetchNhPriceWithRetry(() => getGbCurrentPrice({ token: nhToken, iemCd: cls.code }));
+        curPrice = extractNhPrice(q.Output_0, 'trdprc');
       } else if (cls.kind === 'GOLD') {
         curPrice = (await fetchGoldClose()).price;
       } else if (cls.kind === 'FUND') {
@@ -243,19 +333,21 @@ async function main() {
       if (e.code === KIS_RATE_LIMIT_CODE) {
         console.log(`   ⏳ ${h.name}: 레이트리밋(EGW00201) — 이전 값 유지, 다음 실행 재시도`);
       } else {
-        collectWarning(`시세 조회 실패: ${h.name}(${cls.kind}) — ${e.message.slice(0, 150)}`);
+        collectWarning(`시세 조회 실패: ${h.name}(${cls.kind}/${cls.source ?? '-'}) — ${e.message.slice(0, 150)}`);
       }
       failed++;
-      if (cls.kind === 'KR' || cls.kind === 'US') await sleep(STAGGER_MS);
+      // NH 호출은 callNh 내부 슬라이딩 윈도우(초당 4회)가 이미 자체 속도제한을
+      // 하므로 여기서 추가로 안 재운다 — KIS(EGW00201 회피용 800ms 간격)만 스태거.
+      if ((cls.kind === 'KR' || cls.kind === 'US') && cls.source === 'KIS') await sleep(STAGGER_MS);
       continue;
     }
 
     const opts = cls.kind === 'US' ? { usdKrwRate } : cls.kind === 'FUND' ? { unitScale: 0.001 } : {};
     const valuation = recomputeValuation(h, curPrice, opts);
-    console.log(`   · ${h.name}(${cls.kind}): ${h.curPrice ?? '없음'} → ${curPrice} (평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원)`);
+    console.log(`   · ${h.name}(${cls.kind}${cls.source ? `/${cls.source}` : ''}): ${h.curPrice ?? '없음'} → ${curPrice} (평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원)`);
     if (!DRY_RUN) writeAtomic(f.filepath, updateFrontmatter(f.content, { ...valuation, updatedAt: new Date().toISOString() }));
     updated++;
-    if (cls.kind === 'KR' || cls.kind === 'US') await sleep(STAGGER_MS);
+    if ((cls.kind === 'KR' || cls.kind === 'US') && cls.source === 'KIS') await sleep(STAGGER_MS);
   }
 
   // 외화 현금성 보유(달러 RP 등) — KIS 시세조회 대상이 아니라 환율만 다시 곱해 재평가.

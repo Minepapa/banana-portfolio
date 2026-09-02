@@ -1,17 +1,74 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyHolding, recomputeValuation, recomputeFxCashValuation } from './update-holdings-prices.mjs';
+import {
+  classifyHolding, recomputeValuation, recomputeFxCashValuation, quoteSourceForAccount, extractNhPrice,
+} from './update-holdings-prices.mjs';
 
-test('classifyHolding: KR 종목코드가 풀리면 KR(krStockCode 우선)', () => {
-  const r = classifyHolding({ name: '삼성전자', account: '위탁' }, { resolveKr: () => '005930' });
-  assert.deepEqual(r, { kind: 'KR', code: '005930' });
+// 2026-09-02 코드리뷰 HIGH 지적 — 처음엔 `Number.isFinite(curPrice)`로만
+// 검증했는데, `Number(null)`·`Number('')`·`Number('0')`가 전부 0(유한수)이라
+// "필드 없음"·"빈 문자열"·"진짜 0원"을 못 걸렀다. NH가 거래정지 종목에
+// stck_prpr:null 같은 값을 실어보내면 평가액 0원·손익률 -100%가 조용히
+// Vault에 기록될 뻔했던 실제 버그 — kis.mjs 기존 시세 파서와 동일 기준
+// (price > 0)으로 맞춤.
+test('extractNhPrice: 정상 숫자·숫자문자열은 통과', () => {
+  assert.equal(extractNhPrice({ stck_prpr: 250500 }, 'stck_prpr'), 250500);
+  assert.equal(extractNhPrice({ stck_prpr: '250500' }, 'stck_prpr'), 250500);
+  assert.equal(extractNhPrice({ trdprc: 326.54 }, 'trdprc'), 326.54);
 });
 
-test('classifyHolding: KR 실패·US 티커+거래소코드 둘 다 풀리면 US', () => {
+test('[핵심 안전장치] extractNhPrice: null·빈문자열·"0"·0·필드누락·output0자체누락은 전부 throw(0원 조용히 기록 방지)', () => {
+  const cases = [
+    [{ stck_prpr: null }, 'null'],
+    [{ stck_prpr: '' }, '빈 문자열'],
+    [{ stck_prpr: '0' }, '문자열 0'],
+    [{ stck_prpr: 0 }, '숫자 0'],
+    [{}, '필드 자체 누락'],
+    [undefined, 'Output_0 자체 누락'],
+  ];
+  for (const [output0, label] of cases) {
+    assert.throws(() => extractNhPrice(output0, 'stck_prpr'), new RegExp('유효한 현재가'), label);
+  }
+});
+
+test('[핵심 안전장치] extractNhPrice: 음수는 throw(가격이 음수일 수 없음)', () => {
+  assert.throws(() => extractNhPrice({ stck_prpr: -100 }, 'stck_prpr'));
+});
+
+// 2026-09-02 이관(Log/Strategy/2026-09-02-NH-API-우선-KIS-카카오파싱-역할축소-결정.md) —
+// KR/US 시세는 IRP만 KIS, 나머지 전부 NH. quoteSourceForAccount가 그 분기 하나를 전담.
+test('quoteSourceForAccount: IRP만 KIS, 나머지 전부 NH', () => {
+  assert.equal(quoteSourceForAccount('IRP'), 'KIS');
+  for (const account of ['위탁', 'CMA', '금현물', '연금저축', 'ISA', undefined, null, '']) {
+    assert.equal(quoteSourceForAccount(account), 'NH', `account=${JSON.stringify(account)}`);
+  }
+});
+
+test('classifyHolding: KR 종목코드가 풀리면 KR(krStockCode 우선), source는 계좌로 결정(위탁→NH)', () => {
+  const r = classifyHolding({ name: '삼성전자', account: '위탁' }, { resolveKr: () => '005930' });
+  assert.deepEqual(r, { kind: 'KR', code: '005930', source: 'NH' });
+});
+
+test('classifyHolding: IRP 계좌는 KR이어도 source가 KIS(NH 미지원 계좌 예외)', () => {
+  const r = classifyHolding({ name: '삼성전자', account: 'IRP' }, { resolveKr: () => '005930' });
+  assert.deepEqual(r, { kind: 'KR', code: '005930', source: 'KIS' });
+});
+
+test('classifyHolding: KR 실패·US 티커+거래소코드 둘 다 풀리면 US, source는 계좌로 결정(위탁→NH)', () => {
   const r = classifyHolding({ name: '마이크로소프트', account: '위탁' }, {
     resolveKr: () => null, resolveUs: () => 'MSFT', resolveUsExcd: () => 'NAS',
   });
-  assert.deepEqual(r, { kind: 'US', code: 'MSFT', excd: 'NAS' });
+  assert.deepEqual(r, {
+    kind: 'US', code: 'MSFT', excd: 'NAS', source: 'NH',
+  });
+});
+
+test('classifyHolding: IRP 계좌의 US 보유도 source가 KIS(NH 미지원 계좌 예외)', () => {
+  const r = classifyHolding({ name: '마이크로소프트', account: 'IRP' }, {
+    resolveKr: () => null, resolveUs: () => 'MSFT', resolveUsExcd: () => 'NAS',
+  });
+  assert.deepEqual(r, {
+    kind: 'US', code: 'MSFT', excd: 'NAS', source: 'KIS',
+  });
 });
 
 test('classifyHolding: US 티커는 풀렸는데 거래소코드 미등록이면 unmapped(추정 안 함)', () => {
@@ -53,9 +110,9 @@ test('classifyHolding: VIP펀드와 이름이 비슷해도 정확히 안 맞으�
 
 test('classifyHolding: "TIGER KRX금현물"처럼 금현물 계좌가 아니어도 krStockCode가 풀리면 KR(ETF 정상경로)', () => {
   // 연금저축 계좌의 금현물 추종 ETF — account가 '금현물'이 아니라 krStockCode가 먼저
-  // 풀려서 GOLD가 아니라 KR로 가야 한다(실제 KRX 상장 ETF라 KIS 실시간조회 대상).
+  // 풀려서 GOLD가 아니라 KR로 가야 한다(실제 KRX 상장 ETF라 NH 시세조회 대상).
   const r = classifyHolding({ name: 'TIGER KRX금현물', account: '연금저축' }, { resolveKr: () => '132030' });
-  assert.deepEqual(r, { kind: 'KR', code: '132030' });
+  assert.deepEqual(r, { kind: 'KR', code: '132030', source: 'NH' });
 });
 
 // 2026-08-22 — 자사주 계좌(파이프라인 밖에서 수동 등록, 이름을 원본과 다르게 붙임)
@@ -65,12 +122,12 @@ test('classifyHolding: ticker가 KR 6자리면 이름매칭 없이 바로 KR(수
   const r = classifyHolding({ name: '삼성전자(자사주)', account: '위탁', ticker: '005930' }, {
     resolveKr: () => { throw new Error('resolveKr이 호출되면 안 됨'); },
   });
-  assert.deepEqual(r, { kind: 'KR', code: '005930' });
+  assert.deepEqual(r, { kind: 'KR', code: '005930', source: 'NH' });
 });
 
 test('classifyHolding: ticker가 6자리가 아니면(빈 문자열 등) 기존처럼 이름매칭으로 폴백', () => {
   const r = classifyHolding({ name: '삼성전자', account: '위탁', ticker: '' }, { resolveKr: () => '005930' });
-  assert.deepEqual(r, { kind: 'KR', code: '005930' });
+  assert.deepEqual(r, { kind: 'KR', code: '005930', source: 'NH' });
 });
 
 // 2026-08-22 — 개별채권(구조적으로 시세 소스가 없는 보유) 대응. resolveKr/resolveUs가
