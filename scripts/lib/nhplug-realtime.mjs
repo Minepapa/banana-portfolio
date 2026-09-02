@@ -1,12 +1,22 @@
 // NH PLUG 실시간(WebSocket) 클라이언트 — 2026-09-02 신설. REST(callNh, nhplug.mjs)와
 // 완전히 다른 프로토콜이라 별도 파일로 분리(지속 연결·구독/해제 메시지·서버 푸시,
-// 요청/응답 1:1 아님).
+// 요청/응답 1:1 아님). krstock·gbstock·krgold 3개 자산군 실시간 채널을 전부 이
+// 한 모듈이 담당(프로토콜 자체는 자산군 무관 — 채널코드·tr_key 형식만 다름).
 //
-// 프로토콜 정본: krstock openapi.json의 `x-realtime-channels` 블록(2026-09-02
+// 프로토콜 정본: 각 자산군 openapi.json의 `x-realtime-channels` 블록(2026-09-02
 // curl로 확인) + 공식 SDK(nhplug-sdk) `nhplug/realtime.py`·`docs/realtime_channels.md`
 // (Python 전용이라 코드는 재사용 못 하지만 서버 실측 한도·프로토콜 세부사항의
 // 근거로 참고 — 이 프로젝트가 krstock REST를 만들 때와 동일한 이유로 SDK 자체는
 // 못 쓰되 문서·실측치는 정본으로 씀).
+//
+// ⚠️ gbstock tr_key는 GIC 코드가 아니라 그냥 티커(2026-09-02 오너가 API 가이드
+// 포털의 실제 예시를 지적해 확인·정정) — openapi.json의 x-realtime-channels가
+// tr_key.name을 "gicz15"(길이 15)라고 적어놔서 처음엔 "구독하려면 별도 GIC 코드를
+// 어디선가 조회해야 한다"고 오판했다. 실제 포털 예시(해외_주식_실시간_호가)를
+// 보면 요청 body는 `tr_key: "AAPL"`(티커 그대로)이고, "gicz15"는 응답 header·body에
+// 되돌아오는 필드명일 뿐이었다(예: 응답 tr_key·gicz15 둘 다 "USAAAPL" — 국가prefix+
+// 티커 조합, REST 조회 응답의 iem_cd와 동일 값). 별도 코드 획득 경로 자체가
+// 필요 없었다 — 이 오판으로 gbstock 실시간을 한 차례 보류했던 것을 정정.
 //
 // ⚠️ TLS 주의사항(SDK 문서에 기록됐지만 이 프로젝트는 문제 없음, 2026-09-02 확인):
 // 공식 SDK는 "실거래 WebSocket이 중간 CA를 안 보내 Python OpenSSL 기본 검증이
@@ -69,6 +79,54 @@ export const KRSTOCK_REALTIME_CHANNELS = {
   uB: { name: '채권지수 실시간 체결가', trKeyKind: 'jisuId' },
   d2: { name: '국내주식 실시간체결통보', trKeyKind: 'userId', isNotification: true },
   d3: { name: '국내주식 실시간주문내역통보', trKeyKind: 'userId', isNotification: true },
+};
+
+// gbstock 실시간 채널 6개(시세 4 + 통보 2) — openapi.json x-realtime-channels
+// 그대로(2026-09-02). trKeyKind 'ticker': 티커 그대로(예: "AAPL") — 위 파일 헤더
+// 주석 참고, GIC 코드 별도 조회 불필요.
+//
+// ⚠️ 대문자(RH·RC, 진짜 실시간)는 유료 시세 등록이 안 돼 있으면 구독 자체가
+// 거부된다(2026-09-02 라이브 실측 — ACK `WSS10013 유료 실시간 시세 등록이
+// 필요합니다`, 포털 Description에도 "유료시세 사용 약정 고객만 이용 가능"으로
+// 명시돼 있었음). **소문자(rh·rc, 지연호가/체결가 — "아시아 지연" 표기가 있지만
+// 실측상 미국 종목도 정상 동작)는 유료 등록 없이도 바로 구독·수신 확인됨** —
+// 이 계정은 유료 실시간 시세 약정이 없으므로 지금은 rh·rc만 실사용 가능. 통보
+// 채널(d0·d1)은 시세가 아니라 계좌 알림이라 유료 등록과 무관하게 정상 동작
+// 확인(둘 다 ACK 00000).
+// requiresPaidQuote: true(2026-09-02 코드리뷰 MEDIUM 지적) — 유료 게이트를
+// name 문자열(프로즈)에만 적어두면 호출측이 기계적으로 걸러낼 방법이 없다.
+// 캐치를 원하면 문자열 부분일치("유료")로 파싱해야 하는데, 이 프로젝트가
+// 프로즈 규칙보다 구조적 가드를 선호하는 것과 반대 방향이라 플래그로 승격.
+export const GBSTOCK_REALTIME_CHANNELS = {
+  rh: { name: '해외주식 지연호가(무료, 실사용 채널)', trKeyKind: 'ticker' },
+  rc: { name: '해외주식 지연체결가(무료, 실사용 채널)', trKeyKind: 'ticker' },
+  RH: { name: '해외주식 실시간호가', trKeyKind: 'ticker', requiresPaidQuote: true },
+  RC: { name: '해외주식 실시간체결가', trKeyKind: 'ticker', requiresPaidQuote: true },
+  d0: { name: '해외주식 실시간체결통보', trKeyKind: 'userId', isNotification: true },
+  d1: { name: '해외주식 실시간주문내역통보', trKeyKind: 'userId', isNotification: true },
+};
+
+// krgold 실시간 채널 5개(시세 3 + 통보 2) — openapi.json x-realtime-channels
+// 그대로(2026-09-02). trKeyKind 'goldCode': shcode(종목코드) 9자리 — krgold
+// REST의 GOLD_ITEM_CODE(M04020000·M04020100)와 동일 값 체계(nhplug-krgold.mjs
+// 참고, 여기선 도메인 결합을 피해 형식만 느슨히 검증). ⚠️ d3(주문내역통보)는
+// krstock의 d3와 tr_cd가 동일 — 공식 문서상 이 채널이 자산군 구분 없이 계좌
+// 단위로 전체 주문내역을 통보하는 것으로 추정(userid 키만 있고 종목 키가 없음).
+// 실제로는 같은 물리 채널이라 krstock·krgold 어느 쪽 카탈로그로 구독해도 동일.
+export const KRGOLD_REALTIME_CHANNELS = {
+  g5: { name: '금현물 실시간 호가', trKeyKind: 'goldCode' },
+  g4: { name: '금현물 실시간 체결가', trKeyKind: 'goldCode' },
+  gE: { name: '금현물 실시간 예상체결가', trKeyKind: 'goldCode' },
+  de: { name: '금현물 실시간 체결내역 통보', trKeyKind: 'userId', isNotification: true },
+  d3: { name: '금현물 실시간 주문내역 통보(krstock과 동일 채널)', trKeyKind: 'userId', isNotification: true },
+};
+
+// 세 자산군 채널을 합쳐 구독 시점 검증에 쓴다 — subscribeRealtime은 자산군을
+// 몰라도 되게(호출측이 trCd만 넘기면 알아서 어느 카탈로그 소속인지 찾음) 설계.
+// d3(krstock·krgold 공유)처럼 겹치는 코드는 메타데이터(trKeyKind·isNotification)가
+// 동일해 병합 시 문제 없음(둘 다 userId·통보).
+const ALL_REALTIME_CHANNELS = {
+  ...KRSTOCK_REALTIME_CHANNELS, ...GBSTOCK_REALTIME_CHANNELS, ...KRGOLD_REALTIME_CHANNELS,
 };
 
 // 서버 실측 한도(공식 SDK realtime.py 문서화 + 2026-09-02 이 프로젝트가 라이브로
@@ -150,12 +208,20 @@ async function throttleSend() {
 // tr_key 형식 검증(2026-09-02 코드리뷰 MEDIUM 지적 — 검증 없이 `.map(String)`만
 // 하면 null·undefined·객체가 각각 'null'·'undefined'·'[object Object]' 문자열로
 // 그대로 서버에 나갈 수 있었다). code·ecnCode는 6자리 숫자 종목코드로 형식이
-// 고정돼 있어 정규식 검증, userId·jisuId는 서버 스펙에 고정 형식이 없어 문자열
-// 여부만 확인.
+// 고정돼 있어 정규식 검증. ticker(gbstock)는 알파벳·숫자·점(BRK.B류) 1~10자,
+// goldCode(krgold)는 9자 영숫자(정확한 2개 값 화이트리스트는 nhplug-krgold.mjs
+// 쪽 책임 — 이 모듈은 프로토콜 형식만 봄, 도메인 결합 안 함). userId·jisuId는
+// 서버 스펙에 고정 형식이 없어 문자열 여부만 확인.
 function validateTrKey(trKeyKind, key) {
   if (typeof key !== 'string') throw new Error(`tr_key는 문자열이어야 함(${trKeyKind}): ${key}`);
   if ((trKeyKind === 'code' || trKeyKind === 'ecnCode') && !/^\d{6}$/.test(key)) {
     throw new Error(`tr_key(${trKeyKind})는 6자리 숫자 종목코드여야 함: ${key}`);
+  }
+  if (trKeyKind === 'ticker' && !/^[A-Za-z0-9.]{1,10}$/.test(key)) {
+    throw new Error(`tr_key(ticker)는 영숫자·점 1~10자 티커여야 함: ${key}`);
+  }
+  if (trKeyKind === 'goldCode' && !/^[A-Za-z0-9]{9}$/.test(key)) {
+    throw new Error(`tr_key(goldCode)는 9자 영숫자 종목코드여야 함: ${key}`);
   }
 }
 
@@ -164,8 +230,8 @@ function validateTrKey(trKeyKind, key) {
 // 최소 1개 필요(2026-09-02 코드리뷰 MEDIUM 지적 — 예전엔 아무 채널에나 빈
 // trKeys를 주면 조용히 tr_key:""로 구독돼 등록 슬롯만 낭비했다).
 function normalizeSubscription({ trCd, trKeys }) {
-  if (!Object.hasOwn(KRSTOCK_REALTIME_CHANNELS, trCd)) throw new Error(`알 수 없는 실시간 채널코드: ${trCd}`);
-  const channel = KRSTOCK_REALTIME_CHANNELS[trCd];
+  if (!Object.hasOwn(ALL_REALTIME_CHANNELS, trCd)) throw new Error(`알 수 없는 실시간 채널코드: ${trCd}`);
+  const channel = ALL_REALTIME_CHANNELS[trCd];
   if (!trKeys || trKeys.length === 0) {
     if (!channel.isNotification) throw new Error(`tr_key가 필요한 채널(${trCd})에 빈 trKeys는 허용 안 됨`);
     return { trCd, keys: [''] };
@@ -178,9 +244,12 @@ function normalizeSubscription({ trCd, trKeys }) {
 // 실시간 세션 하나를 연다 — 소켓 하나에 여러 tr_cd를 동시에 등록할 수 있다(예:
 // 시세(mc)+체결통보(d2)를 한 소켓으로 — 2026-09-02 코드리뷰 MEDIUM 지적: 앱키당
 // 동시 세션이 2개뿐이라 채널마다 소켓을 하나씩 열면 시세+통보만으로 한도를 다
-// 쓴다). `subscriptions`의 모든 tr_cd는 같은 포트로 귀결돼야 한다(국내 시세+통보는
-// 전부 7070이라 이 프로젝트 범위에선 항상 통과 — 해외 시세(7080)와 섞으려 하면
-// throw).
+// 쓴다). `subscriptions`의 모든 tr_cd는 같은 포트로 귀결돼야 한다 — krstock·krgold는
+// 시세+통보가 전부 7070이라 항상 섞을 수 있지만, **gbstock은 시세(rh·rc·RH·RC)가
+// 7080·통보(d0·d1)가 7070이라 같은 소켓에 못 섞는다**(2026-09-02 라이브로 직접
+// 재현·확인 — gbstock을 붙이기 전엔 이 조합 자체가 없어서 몰랐던 제약). gbstock
+// 시세+통보를 동시에 받으려면 세션 2개(앱키당 한도와 정확히 같음)를 각각 열어야
+// 함, 캐치가 필요하면 이 부분 설계 재검토 대상.
 //
 // ⚠️ v1 범위: 한 세션당 최대 10건(maxKeysPerSession, 모든 tr_cd 합산)까지만
 // 지원 — 그 이상은 여러 세션으로 나눠야 하는데(공식 SDK가 하는 방식) 이 프로젝트의

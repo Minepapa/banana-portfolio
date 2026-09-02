@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   wsUrl, isAck, isAckSuccess, subscribeRealtime,
   setNhWsRateLimitForTests, resetNhWsThrottleForTests,
-  KRSTOCK_REALTIME_CHANNELS, WS_SERVER_LIMITS,
+  KRSTOCK_REALTIME_CHANNELS, GBSTOCK_REALTIME_CHANNELS, KRGOLD_REALTIME_CHANNELS, WS_SERVER_LIMITS,
 } from './nhplug-realtime.mjs';
 
 // nhplug.mjs REST 속도제한 테스트와 동일 이유(전송제한이 테스트를 실제로 늦추는 걸
@@ -308,6 +308,161 @@ test('KRSTOCK_REALTIME_CHANNELS: 21개 채널(시세/depth 19 + 통보 2) 등록
   assert.equal(all.length, 21);
   const notifications = all.filter((k) => KRSTOCK_REALTIME_CHANNELS[k].isNotification);
   assert.deepEqual(notifications.sort(), ['d2', 'd3']);
+});
+
+test('GBSTOCK_REALTIME_CHANNELS: 6개 채널(시세 4 + 통보 2) 등록 확인, tr_key는 ticker(GIC 아님), RH·RC만 유료게이트 플래그', () => {
+  const all = Object.keys(GBSTOCK_REALTIME_CHANNELS);
+  assert.equal(all.length, 6);
+  const notifications = all.filter((k) => GBSTOCK_REALTIME_CHANNELS[k].isNotification);
+  assert.deepEqual(notifications.sort(), ['d0', 'd1']);
+  assert.equal(GBSTOCK_REALTIME_CHANNELS.rh.trKeyKind, 'ticker');
+  assert.equal(GBSTOCK_REALTIME_CHANNELS.RH.requiresPaidQuote, true);
+  assert.equal(GBSTOCK_REALTIME_CHANNELS.RC.requiresPaidQuote, true);
+  assert.equal(GBSTOCK_REALTIME_CHANNELS.rh.requiresPaidQuote, undefined);
+  assert.equal(GBSTOCK_REALTIME_CHANNELS.rc.requiresPaidQuote, undefined);
+});
+
+test('KRGOLD_REALTIME_CHANNELS: 5개 채널(시세 3 + 통보 2) 등록 확인', () => {
+  const all = Object.keys(KRGOLD_REALTIME_CHANNELS);
+  assert.equal(all.length, 5);
+  const notifications = all.filter((k) => KRGOLD_REALTIME_CHANNELS[k].isNotification);
+  assert.deepEqual(notifications.sort(), ['d3', 'de']);
+  assert.equal(KRGOLD_REALTIME_CHANNELS.g5.trKeyKind, 'goldCode');
+});
+
+// 2026-09-02 코드리뷰 MEDIUM 지적 — 세 카탈로그 사이에 코드가 겹치면(현재는 d3
+// 하나, krstock·krgold 공유) 뒤에 스프레드된 쪽이 조용히 덮어쓴다. name만 다르면
+// 무해하지만(currently 그렇다는 걸 리뷰가 실측 확인), 나중에 trKeyKind나
+// isNotification까지 달라지는 진짜 충돌이 생기면 이 merge가 그걸 조용히 숨긴다 —
+// 프로즈 주석 대신 테스트로 강제.
+test('세 카탈로그 간 코드 충돌은 trKeyKind·isNotification이 반드시 일치해야 함(프로즈 대신 구조적 가드)', () => {
+  const catalogs = { krstock: KRSTOCK_REALTIME_CHANNELS, gbstock: GBSTOCK_REALTIME_CHANNELS, krgold: KRGOLD_REALTIME_CHANNELS };
+  const seen = {};
+  for (const [catalogName, catalog] of Object.entries(catalogs)) {
+    for (const [code, meta] of Object.entries(catalog)) {
+      if (seen[code]) {
+        assert.equal(meta.trKeyKind, seen[code].meta.trKeyKind, `${code}: ${catalogName} vs ${seen[code].catalogName} trKeyKind 불일치`);
+        assert.equal(!!meta.isNotification, !!seen[code].meta.isNotification, `${code}: ${catalogName} vs ${seen[code].catalogName} isNotification 불일치`);
+      } else {
+        seen[code] = { catalogName, meta };
+      }
+    }
+  }
+});
+
+// 2026-09-02 코드리뷰 LOW 지적 — normalizeSubscription의 가드가
+// KRSTOCK_REALTIME_CHANNELS 단독 조회에서 병합된 ALL_REALTIME_CHANNELS 조회로
+// 바뀐 게 이 통합의 유일한 회귀 위험 지점이었다. 정문(subscribeRealtime)으로
+// 직접 검증해 고정.
+test('subscribeRealtime: 병합 후에도 krstock 코드(mc)는 그대로 동작하고 6자리 숫자 검증도 그대로 적용됨', async () => {
+  let ws;
+  const Impl = class extends FakeWebSocket { constructor(url) { super(url); ws = this; } };
+  subscribeRealtime({ subscriptions: [{ trCd: 'mc', trKeys: ['005930'] }], token: 'TOK', WebSocketImpl: Impl });
+  ws.emitOpen();
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.deepEqual(ws.sent[0].body, { tr_cd: 'mc', tr_key: '005930' });
+  assert.throws(() => subscribeRealtime({
+    subscriptions: [{ trCd: 'mc', trKeys: ['AAPL'] }], token: 't', WebSocketImpl: FakeWebSocket,
+  }));
+});
+
+// gbstock 시세 채널은 실사용 가능한 rh·rc를 happy path로 쓴다(RH·RC는 유료 게이트로
+// 이 계정에서 실제로 막힘 — 2026-09-02 라이브 확인, 아래 별도 테스트로 게이트
+// 자체를 문서화).
+test('subscribeRealtime: gbstock 지연시세 채널(rh)은 티커 그대로 구독(GIC 조회 불필요, 2026-09-02 정정 확인·실사용 가능 채널)', async () => {
+  let ws;
+  const Impl = class extends FakeWebSocket { constructor(url) { super(url); ws = this; } };
+  subscribeRealtime({ subscriptions: [{ trCd: 'rh', trKeys: ['AAPL'] }], token: 'TOK', WebSocketImpl: Impl });
+  ws.emitOpen();
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.equal(ws.sent.length, 1);
+  assert.deepEqual(ws.sent[0], { header: { token: 'TOK', tr_type: '1' }, body: { tr_cd: 'rh', tr_key: 'AAPL' } });
+});
+
+test('subscribeRealtime: gbstock 지연체결가(rc)도 동일하게 구독 가능', async () => {
+  let ws;
+  const Impl = class extends FakeWebSocket { constructor(url) { super(url); ws = this; } };
+  subscribeRealtime({ subscriptions: [{ trCd: 'rc', trKeys: ['AAPL'] }], token: 'TOK', WebSocketImpl: Impl });
+  ws.emitOpen();
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.deepEqual(ws.sent[0].body, { tr_cd: 'rc', tr_key: 'AAPL' });
+});
+
+test('subscribeRealtime: gbstock 통보 채널(d0)은 trKeys를 비우면 빈 문자열 하나로 구독(krstock 외 첫 통보채널 경로 확인)', async () => {
+  let ws;
+  const Impl = class extends FakeWebSocket { constructor(url) { super(url); ws = this; } };
+  subscribeRealtime({ subscriptions: [{ trCd: 'd0', trKeys: [] }], token: 'TOK', WebSocketImpl: Impl });
+  ws.emitOpen();
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.equal(ws.sent[0].body.tr_key, '');
+});
+
+// 2026-09-02 라이브 확인 — RH·RC(진짜 실시간)는 이 계정에 유료 시세 등록이 없어
+// ACK WSS10013으로 거부됨. 여기선 구독 메시지 자체는 정상 전송됨만 확인(서버
+// 거부는 ACK 레벨이라 이 유닛테스트 범위 밖 — FakeWebSocket이 실제 NH 서버의
+// 유료게이트 응답을 흉내낼 이유가 없음, requiresPaidQuote 플래그로 문서화가 목적).
+test('subscribeRealtime: gbstock RH(유료게이트)도 구독 메시지 자체는 정상 전송(서버 거부는 ACK 레벨, requiresPaidQuote 플래그로 문서화됨)', async () => {
+  let ws;
+  const Impl = class extends FakeWebSocket { constructor(url) { super(url); ws = this; } };
+  subscribeRealtime({ subscriptions: [{ trCd: 'RH', trKeys: ['AAPL'] }], token: 'TOK', WebSocketImpl: Impl });
+  ws.emitOpen();
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.deepEqual(ws.sent[0].body, { tr_cd: 'RH', tr_key: 'AAPL' });
+});
+
+test('[핵심 안전장치] subscribeRealtime: gbstock ticker가 형식에 안 맞으면(11자 초과·잘못된 문자) 즉시 throw', () => {
+  assert.throws(() => subscribeRealtime({
+    subscriptions: [{ trCd: 'rh', trKeys: ['TOOLONGTICKER1'] }], token: 't', WebSocketImpl: FakeWebSocket,
+  }));
+  assert.throws(() => subscribeRealtime({
+    subscriptions: [{ trCd: 'rh', trKeys: ['BRK-B'] }], token: 't', WebSocketImpl: FakeWebSocket,
+  }), '하이픈은 문자클래스 밖이라 거부돼야 함(점만 허용)');
+});
+
+test('subscribeRealtime: gbstock 티커의 점(BRK.B류)은 정상 통과', async () => {
+  let ws;
+  const Impl = class extends FakeWebSocket { constructor(url) { super(url); ws = this; } };
+  subscribeRealtime({ subscriptions: [{ trCd: 'rh', trKeys: ['BRK.B'] }], token: 'TOK', WebSocketImpl: Impl });
+  ws.emitOpen();
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.equal(ws.sent[0].body.tr_key, 'BRK.B');
+});
+
+// 2026-09-02 라이브 확인 — gbstock은 krstock·krgold와 달리 시세(7080)·통보(7070)
+// 포트가 갈려서 한 소켓에 못 섞는다(코드리뷰 LOW 지적 — 이 조합이 gbstock 추가
+// 전엔 존재하지 않아 몰랐던 제약, subscribeRealtime 헤더 주석에도 반영).
+test('subscribeRealtime: gbstock 시세(rh)+통보(d0)는 포트가 갈려 한 소켓에 못 섞음(krstock·krgold와 다른 제약)', () => {
+  assert.throws(() => subscribeRealtime({
+    subscriptions: [{ trCd: 'rh', trKeys: ['AAPL'] }, { trCd: 'd0', trKeys: [] }],
+    token: 't', WebSocketImpl: FakeWebSocket,
+  }));
+});
+
+test('subscribeRealtime: krgold 시세 채널(g5)은 GOLD_ITEM_CODE(M04020000) 그대로 구독', async () => {
+  let ws;
+  const Impl = class extends FakeWebSocket { constructor(url) { super(url); ws = this; } };
+  subscribeRealtime({ subscriptions: [{ trCd: 'g5', trKeys: ['M04020000'] }], token: 'TOK', WebSocketImpl: Impl });
+  ws.emitOpen();
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.deepEqual(ws.sent[0].body, { tr_cd: 'g5', tr_key: 'M04020000' });
+});
+
+test('[핵심 안전장치] subscribeRealtime: krgold goldCode가 9자가 아니면 즉시 throw', () => {
+  assert.throws(() => subscribeRealtime({
+    subscriptions: [{ trCd: 'g5', trKeys: ['M0402000'] }], token: 't', WebSocketImpl: FakeWebSocket,
+  }));
+});
+
+test('subscribeRealtime: krgold 시세(g5)+통보(de)는 둘 다 7070이라 한 소켓에 정상 공존', async () => {
+  let ws;
+  const Impl = class extends FakeWebSocket { constructor(url) { super(url); ws = this; } };
+  subscribeRealtime({
+    subscriptions: [{ trCd: 'g5', trKeys: ['M04020000'] }, { trCd: 'de', trKeys: [] }],
+    token: 'TOK', WebSocketImpl: Impl,
+  });
+  ws.emitOpen();
+  await new Promise((r) => { setTimeout(r, 10); });
+  assert.equal(ws.sent.length, 2);
 });
 
 test('WS_SERVER_LIMITS: 서버 실측 한도(2026-09-02 라이브 재현 확인값) 노출', () => {
