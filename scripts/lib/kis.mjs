@@ -523,6 +523,101 @@ export function parseOrderFillResponse(json, odno) {
   };
 }
 
+// ── 퇴직연금(IRP) 체결조회 — 2026-09-02 신설 ─────────────────────────────
+// ⚠️ 일반 국내주식 체결조회(TTTC0081R, checkOrderFill)는 IRP 계좌에서 거부됨
+// (2026-09-02 라이브 실측: rt_cd:'7', msg1:"퇴직연금계좌는 해당 서비스가
+// 불가합니다") — reconcile-irp.mjs 헤더 주석이 예수금 조회 관련해서도 이미
+// "퇴직연금 계좌 전용 별도 API가 있을 가능성이 높으나 문서에서 못 찾음"이라고
+// 적어뒀던 것과 같은 패턴. KIS 공식 예제 저장소(github.com/koreainvestment/
+// open-trading-api, examples_llm/domestic_stock/pension_inquire_daily_ccld/)
+// 에서 퇴직연금 전용 엔드포인트를 찾아 확인 — tr_id TTTC2201R,
+// `/uapi/domestic-stock/v1/trading/pension/inquire-daily-ccld`. 이름은
+// "퇴직연금 미체결내역"이지만 CCLD_NCCS_DVSN 파라미터로 체결(01)/미체결(02)/
+// 전체(%%)를 선택할 수 있어 체결조회에도 쓴다.
+//
+// ⚠️ **필드 구조 미실측 경고**(2026-09-02) — IRP 계좌에 이 API를 실제로
+// 호출해 rt_cd:'0'(정상) 응답은 확인했으나, 그날 체결이 없어(IRP 자동매수는
+// 매월 26일경) output 배열이 빈 채로 왔다 — 실제 데이터가 있는 응답을 아직
+// 못 봤다. 아래 필드명은 KIS 공식 예제(chk_pension_inquire_daily_ccld.py)의
+// COLUMN_MAPPING(한글 라벨 명시)을 정본으로 삼았지만, 실측 전까지는 "공식
+// 문서 기반 추정"이다(오너 확인: "지금 만들어봐. 내일 장 중에 테스트 매수
+// 진행해볼게" — 다음 실제 체결 발생 시 재검증 예정, 그때까지 이 경고 유지).
+// 특히 pchs_avg_pric("매입평균가격")이 "이번 체결의 평균단가"인지 "계좌
+// 누적 평단가"인지 명칭만으로는 모호 — 실측으로 확정할 것. ord_qty(주문수량)도
+// 같은 미실측 상태 — 이 필드가 틀렸으면 fullyFilled가 항상 false로 떨어져
+// 아래 fullyFilled 안전장치 자체가 무력화된다(내일 실측 시 함께 확인).
+//
+// ⚠️ 페이지네이션 미구현(CTX_AREA_FK100/NK100을 항상 빈 값으로 보냄) — IRP
+// 거래량상 한 페이지를 넘길 가능성은 낮지만, 응답 tr_cont가 다음 페이지 존재를
+// 뜻하는 값이면 이 함수는 그 사실을 모르고 첫 페이지만 반환한다. checkOrderFill은
+// ODNO로 1건만 좁혀 조회라 페이지네이션이 애초에 무관했지만(그 함수 주석 참고),
+// 이 함수는 계좌 전체 조회라 근거가 다르다 — 넘칠 경우 조용히 잘릴 수 있다.
+//
+// 날짜 범위 파라미터가 없어(INQR_STRT_DT/END_DT 없음) 당일 조회로 추정 —
+// 이 잡을 매일 폴링해야 그날 체결을 놓치지 않는다(reconcile-irp.mjs와 같은
+// 스케줄 권장).
+//
+// ⚠️ 부분체결 폴링 멱등성(2026-09-02, code-reviewer 지적으로 발견+수정) —
+// tot_ccld_qty는 그 주문의 "누적" 총체결수량이라, 부분체결 상태에서 한 번
+// 기록한 뒤 다음 폴링에서 전량체결로 바뀌어도 파일명(주문시각 기준)이 같아
+// existsSync dedup에 걸려 나머지 수량이 영구 누락될 수 있다(watch-order-
+// fill.mjs가 이미 겪은 것과 동일 클래스 문제). 그래서 ord_qty(주문수량)도
+// 같이 뽑아 fullyFilled(총체결수량==주문수량)를 노출하고, 호출부
+// (reconcile-irp-executions.mjs)가 fullyFilled인 행만 원장에 기록한다 —
+// 부분체결 중간 상태는 기록을 미루고 확정된 최종 수량으로 한 번만 기록.
+export async function getIrpPensionExecutions({ token, appkey, appsecret, cano, acntPrdtCd, fetchImpl, retries, retryDelayMs }) {
+  const params = new URLSearchParams({
+    CANO: cano, ACNT_PRDT_CD: acntPrdtCd,
+    USER_DVSN_CD: '%%', SLL_BUY_DVSN_CD: '00', CCLD_NCCS_DVSN: '01', INQR_DVSN_3: '00',
+    CTX_AREA_FK100: '', CTX_AREA_NK100: '',
+  });
+  const url = `${BASE_URL}/uapi/domestic-stock/v1/trading/pension/inquire-daily-ccld?${params}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    authorization: `Bearer ${token}`,
+    appkey, appsecret,
+    tr_id: 'TTTC2201R',
+    custtype: 'P',
+  };
+  const json = await fetchKis(url, headers, 'IRP 퇴직연금 체결조회', { fetchImpl, retries, retryDelayMs });
+  return parseIrpPensionExecutions(json);
+}
+
+// KIS 퇴직연금 체결조회 원본 응답 → { executions, rawCount }. 순수함수 — 테스트 가능.
+// tot_ccld_qty(총체결수량)가 0(또는 결측)인 행은 미체결이라 제외 — CCLD_NCCS_DVSN
+// ='01'(체결)로 이미 서버측 필터를 걸어뒀지만, 응답이 그 필터를 완벽히 보장 안 할
+// 가능성에 대비해 클라이언트에서도 재확인한다(추정 대신 확인, 이 프로젝트 원칙).
+//
+// rawCount(필터 전 원본 행 수)를 같이 반환하는 이유(2026-09-02, code-reviewer 지적) —
+// num()은 필드가 아예 없어도(undefined) Number('')===0이 돼 quantity·price가 조용히
+// 0으로 떨어지고, 그러면 필터에서 전부 탈락해 "체결 0건"과 "필드명이 틀려 전부
+// 유실"을 구분할 수 없다. 호출부가 rawCount>0인데 executions가 비었으면 이를 필드
+// 구조 이상 신호로 보고 경고를 올릴 수 있게 한다.
+export function parseIrpPensionExecutions(json) {
+  if (json?.rt_cd !== '0') throw kisRtError('KIS 퇴직연금 체결조회 오류', json);
+  const rows = Array.isArray(json?.output) ? json.output : [];
+  const num = (v) => { const n = Number(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
+  const executions = rows
+    .map((row) => {
+      const quantity = num(row.tot_ccld_qty);
+      const orderQty = num(row.ord_qty);
+      const price = num(row.pchs_avg_pric);
+      return {
+        orderNo: String(row.odno ?? '').trim(),
+        stockCode: String(row.pdno ?? '').trim(),
+        stockName: String(row.prdt_name ?? '').trim(),
+        tradeType: String(row.trad_dvsn_name ?? '').includes('매도') ? '매도' : '매수',
+        quantity,
+        orderQty,
+        fullyFilled: quantity != null && orderQty != null && quantity === orderQty,
+        price,
+        orderTime: String(row.ord_tmd ?? '').trim(),
+      };
+    })
+    .filter((e) => e.quantity != null && e.quantity > 0 && e.price != null && e.price > 0);
+  return { executions, rawCount: rows.length };
+}
+
 // ── 국내주식 현금 매수/매도 주문 — Phase 11(2026-08-09) ────────────────────
 // tr_id 확인: github.com/koreainvestment/open-trading-api
 // examples_llm/domestic_stock/order_cash/order_cash.py — env_dv/ord_dv 분기 로직 원문에서

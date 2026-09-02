@@ -11,6 +11,7 @@ import {
   parseInvestOpinionResponse, summarizeInvestOpinion, getKrInvestOpinion,
   ORDER_TR_ID, parseOrderResponse, placeKrOrder,
   checkOrderFill, parseOrderFillResponse,
+  parseIrpPensionExecutions, getIrpPensionExecutions,
 } from './kis.mjs';
 
 // fetch 모킹 헬퍼 — 호출마다 큐에서 다음 응답을 꺼내 반환.
@@ -858,6 +859,105 @@ test('[핵심 안전장치] parseOrderFillResponse: odno가 0패딩("0006693100"
   const r = parseOrderFillResponse(json, '6693100');
   assert.notEqual(r, null);
   assert.equal(r.fullyFilled, true);
+});
+
+// ── 퇴직연금(IRP) 체결조회 — 2026-09-02 신설 ─────────────────────────────
+// ⚠️ 아래 필드명(pdno·prdt_name·trad_dvsn_name·tot_ccld_qty·pchs_avg_pric·
+// ord_tmd 등)은 KIS 공식 예제(chk_pension_inquire_daily_ccld.py의
+// COLUMN_MAPPING)를 정본으로 삼았지만, 실제 체결 데이터가 있는 응답을 아직
+// 못 봤다(2026-09-02 라이브 호출 시 그날 체결이 없어 빈 배열만 확인) —
+// kis.mjs 헤더 주석과 동일 경고. 다음 실제 체결 발생 시 이 테스트 픽스처도
+// 같이 재검증할 것.
+test('parseIrpPensionExecutions: 정상 체결 1건 파싱(공식 예제 COLUMN_MAPPING 필드명 기준)', () => {
+  const json = {
+    rt_cd: '0',
+    output: [{
+      odno: '12345', pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격',
+      trad_dvsn_name: '매수', tot_ccld_qty: '10', ord_qty: '10', pchs_avg_pric: '11504.4', ord_tmd: '093015',
+    }],
+  };
+  const { executions, rawCount } = parseIrpPensionExecutions(json);
+  assert.equal(rawCount, 1);
+  assert.equal(executions.length, 1);
+  assert.deepEqual(executions[0], {
+    orderNo: '12345', stockCode: '0025N0', stockName: 'TIGER TDF2045 적격',
+    tradeType: '매수', quantity: 10, orderQty: 10, fullyFilled: true, price: 11504.4, orderTime: '093015',
+  });
+});
+
+test('parseIrpPensionExecutions: trad_dvsn_name에 "매도"가 포함되면 매도, 그 외(매수 등)는 전부 매수로 정규화', () => {
+  const json = {
+    rt_cd: '0',
+    output: [
+      { odno: '1', pdno: 'A', prdt_name: 'X', trad_dvsn_name: '현금매도', tot_ccld_qty: '1', ord_qty: '1', pchs_avg_pric: '100', ord_tmd: '090000' },
+      { odno: '2', pdno: 'B', prdt_name: 'Y', trad_dvsn_name: '현금매수', tot_ccld_qty: '1', ord_qty: '1', pchs_avg_pric: '100', ord_tmd: '090000' },
+    ],
+  };
+  const { executions } = parseIrpPensionExecutions(json);
+  assert.equal(executions[0].tradeType, '매도');
+  assert.equal(executions[1].tradeType, '매수');
+});
+
+test('parseIrpPensionExecutions: output이 빈 배열이면(당일 체결 없음) executions 빈 배열·rawCount 0', () => {
+  assert.deepEqual(parseIrpPensionExecutions({ rt_cd: '0', output: [] }), { executions: [], rawCount: 0 });
+});
+
+test('[핵심 안전장치] parseIrpPensionExecutions: 체결수량 0(미체결)이거나 가격 0/결측인 행은 제외(추정 대신 확인)', () => {
+  const json = {
+    rt_cd: '0',
+    output: [
+      { odno: '1', pdno: 'A', prdt_name: '미체결종목', trad_dvsn_name: '매수', tot_ccld_qty: '0', ord_qty: '10', pchs_avg_pric: '0', ord_tmd: '090000' },
+      { odno: '2', pdno: 'B', prdt_name: '가격결측종목', trad_dvsn_name: '매수', tot_ccld_qty: '10', ord_qty: '10', pchs_avg_pric: '', ord_tmd: '090000' },
+      { odno: '3', pdno: 'C', prdt_name: '정상체결종목', trad_dvsn_name: '매수', tot_ccld_qty: '10', ord_qty: '10', pchs_avg_pric: '11504', ord_tmd: '090000' },
+    ],
+  };
+  const { executions, rawCount } = parseIrpPensionExecutions(json);
+  assert.equal(rawCount, 3);
+  assert.equal(executions.length, 1);
+  assert.equal(executions[0].stockName, '정상체결종목');
+});
+
+test('[핵심 안전장치] parseIrpPensionExecutions: rt_cd가 0이 아니면 throw(KIS 업무오류, 추정 안 함)', () => {
+  assert.throws(() => parseIrpPensionExecutions({ rt_cd: '7', msg1: '퇴직연금계좌는 해당 서비스가 불가합니다.' }));
+});
+
+// [핵심 안전장치] 2026-09-02, code-reviewer 지적 — tot_ccld_qty는 "누적" 총체결수량이라
+// 부분체결 상태를 그대로 기록하면 다음 폴링에서 전량체결로 바뀌어도 파일명(주문시각
+// 기준) dedup에 걸려 나머지 수량이 영구 누락된다. fullyFilled로 이 상태를 노출해
+// 호출부가 부분체결 행을 걸러낼 수 있게 한다.
+test('[핵심 안전장치] parseIrpPensionExecutions: 총체결수량<주문수량(부분체결)이면 fullyFilled=false', () => {
+  const json = {
+    rt_cd: '0',
+    output: [{ odno: '1', pdno: 'A', prdt_name: '부분체결종목', trad_dvsn_name: '매수', tot_ccld_qty: '5', ord_qty: '10', pchs_avg_pric: '100', ord_tmd: '090000' }],
+  };
+  const { executions } = parseIrpPensionExecutions(json);
+  assert.equal(executions[0].fullyFilled, false);
+});
+
+test('[핵심 안전장치] parseIrpPensionExecutions: ord_qty 필드가 없거나(구조 이상) 결측이면 fullyFilled=false(추정 안 함)', () => {
+  const json = {
+    rt_cd: '0',
+    output: [{ odno: '1', pdno: 'A', prdt_name: 'X', trad_dvsn_name: '매수', tot_ccld_qty: '10', pchs_avg_pric: '100', ord_tmd: '090000' }],
+  };
+  const { executions } = parseIrpPensionExecutions(json);
+  assert.equal(executions[0].fullyFilled, false);
+});
+
+test('[핵심] getIrpPensionExecutions: TTTC2201R tr_id + 체결(01)·전체구분 파라미터로 요청', async () => {
+  let capturedUrl = null, capturedHeaders = null;
+  const fetchImpl = async (url, init) => {
+    capturedUrl = url; capturedHeaders = init.headers;
+    const body = { rt_cd: '0', output: [] };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await getIrpPensionExecutions({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '29', fetchImpl,
+  });
+  assert.equal(capturedHeaders.tr_id, 'TTTC2201R');
+  assert.match(capturedUrl, /\/uapi\/domestic-stock\/v1\/trading\/pension\/inquire-daily-ccld/);
+  assert.match(capturedUrl, /CANO=12345678/);
+  assert.match(capturedUrl, /ACNT_PRDT_CD=29/);
+  assert.match(capturedUrl, /CCLD_NCCS_DVSN=01/);
 });
 
 test('parseOrderFillResponse: output1이 비어있으면 null', () => {

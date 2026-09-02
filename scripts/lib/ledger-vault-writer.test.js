@@ -18,9 +18,18 @@ const exec = (overrides = {}) => ({
   ...overrides,
 });
 
-test('buildExecutionRecord: 파일명에 날짜·시각·구분·종목명이 들어간다(종류 접두사 없음 — 폴더가 이미 말해줌)', () => {
+test('buildExecutionRecord: 파일명에 날짜·시각·구분·종목명·수량이 들어간다(종류 접두사 없음 — 폴더가 이미 말해줌)', () => {
   const { filename } = buildExecutionRecord(exec());
-  assert.equal(filename, '2026-08-04-091233-매수-삼성전자.md');
+  assert.equal(filename, '2026-08-04-091233-매수-삼성전자-10.md');
+});
+
+// [핵심 안전장치] 2026-09-02 — 수량이 파일명에 없던 시절엔 같은 날짜·시각(시각 미상
+// 폴백 포함)·매매구분·종목명인데 수량만 다른 체결 2건이 파일명 충돌로 1건만 남는
+// 사고 경로가 있었다(reconcile-irp-executions.mjs 개발 중 실행으로 재현).
+test('[핵심 안전장치] buildExecutionRecord: 같은 시각·수량 다른 체결 2건은 다른 파일명(조용한 파일명 충돌 방지)', () => {
+  const a = buildExecutionRecord(exec({ quantity: 10 }));
+  const b = buildExecutionRecord(exec({ quantity: 7 }));
+  assert.notEqual(a.filename, b.filename);
 });
 
 test('buildExecutionRecord: Executions 하위폴더를 가리킨다', () => {

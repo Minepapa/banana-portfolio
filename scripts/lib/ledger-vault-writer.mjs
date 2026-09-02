@@ -54,7 +54,12 @@ export function buildExecutionRecord(e) {
   // 필드(tradeType·stockName)와 일관되게 방어한다. 지금은 알람 시트 "시간" 열(기기가
   // 생성)이 소스라 공격 경로는 없지만, 파일명 조립 규칙 전체를 균일하게 유지하는 게
   // 나중에 다른 소스가 추가돼도 안전하다.
-  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.tradeType)}-${sanitizeSegment(e.stockName)}.md`;
+  // 수량을 파일명에 포함(2026-09-02, code-reviewer 지적으로 buildProfitRecord·
+  // buildCashEventRecord와 동일 원칙 소급 적용) — 원래 dedupKey엔 이미 수량이
+  // 들어있었지만 파일명엔 빠져 있어서, 같은 날짜·시각(시각 미상 폴백 00:00:00 포함)·
+  // 매매구분·종목명인데 수량만 다른 체결 2건이 파일명 충돌로 조용히 1건만 남는
+  // 사고 경로가 있었다(reconcile-irp-executions.mjs 신설 중 실행으로 재현 확인).
+  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.tradeType)}-${sanitizeSegment(e.stockName)}-${sanitizeSegment(e.quantity)}.md`;
   const content = buildFrontmatter({
     type: 'execution',
     tradeDate: e.tradeDate,
