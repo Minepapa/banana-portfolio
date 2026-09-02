@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   validateOrderInputs, validateIdentity, validateOrgOrderRef, validatePartialQty, rethrowOrderError,
+  validateSbyDitCd, validateFixedOption, extractOrderNo,
 } from './nhplug-order-safety.mjs';
 
 // 2026-09-01 신설 — krstock에서 검증됐던 로직을 krgold와 공유하도록 뽑은 모듈이라
@@ -54,6 +55,54 @@ test('validateOrgOrderRef: 양의 정수면 통과, 그 외(undefined·0·음수
   for (const bad of [undefined, 0, -1, '123']) {
     try { validateOrgOrderRef({ orgMktOrrNo: bad }); assert.fail(`throw 됐어야 함(${bad})`); }
     catch (e) { assert.equal(e.confirmedNotSent, true); }
+  }
+});
+
+test('validateOrgOrderRef: label을 주면 에러 메시지가 실제 파라미터명을 가리킴(기본값은 하위호환용 orgMktOrrNo)', () => {
+  try {
+    validateOrgOrderRef({ orgMktOrrNo: undefined, label: '예약주문번호(bkgOrrNo)' });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /예약주문번호\(bkgOrrNo\)/);
+    assert.doesNotMatch(e.message, /orgMktOrrNo/);
+  }
+  try {
+    validateOrgOrderRef({ orgMktOrrNo: undefined });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /orgMktOrrNo/);
+  }
+});
+
+test('validateSbyDitCd: "1"·"2"는 통과, 그 외는 throw + confirmedNotSent=true', () => {
+  assert.doesNotThrow(() => validateSbyDitCd('1'));
+  assert.doesNotThrow(() => validateSbyDitCd('2'));
+  for (const bad of [undefined, null, '0', '3', 1, 2]) {
+    try { validateSbyDitCd(bad); assert.fail(`throw 됐어야 함(${bad})`); }
+    catch (e) { assert.equal(e.confirmedNotSent, true); }
+  }
+});
+
+test('validateFixedOption: 지정값과 같으면 통과, 다르면 throw + confirmedNotSent=true', () => {
+  assert.doesNotThrow(() => validateFixedOption('KRX', 'KRX', '요청시장코드'));
+  try {
+    validateFixedOption('NXT', 'KRX', '요청시장코드');
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, true);
+    assert.match(e.message, /요청시장코드/);
+  }
+});
+
+test('extractOrderNo: 필드가 있으면 문자열로 반환(숫자·문자열 둘 다), 없으면 throw(confirmedNotSent 안 붙음 — 불명 상태 유지가 호출부 책임)', () => {
+  assert.equal(extractOrderNo({ Output_0: { mkt_orr_no: 113 } }, 'mkt_orr_no', '주문'), '113');
+  assert.equal(extractOrderNo({ Output_0: { bkg_orr_no: '555' } }, 'bkg_orr_no', '예약주문'), '555');
+  try {
+    extractOrderNo({ Output_0: {} }, 'mkt_orr_no', '주문');
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+    assert.match(e.message, /mkt_orr_no/);
   }
 });
 

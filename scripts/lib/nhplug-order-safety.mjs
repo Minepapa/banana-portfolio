@@ -41,10 +41,12 @@ export function validateIdentity({ actNo, iemCd }) {
 
 // 정정/취소 대상 원주문번호 검증 — modify·cancel 전용(주문 자체가 없던 place와 달리
 // "어느 주문을 건드릴지"가 반드시 있어야 함, 이것도 위와 같은 이유로 예전엔 검증이
-// 아예 없었다).
-export function validateOrgOrderRef({ orgMktOrrNo }) {
+// 아예 없었다). label: 에러 메시지에 쓸 필드 표기 — 예약취소의 bkgOrrNo처럼 실제
+// 파라미터명이 orgMktOrrNo가 아닌 호출부에서 잘못된 이름을 보여주지 않기 위해
+// 2026-09-02 코드리뷰 LOW 지적으로 추가(기본값은 기존 호출부 호환을 위해 유지).
+export function validateOrgOrderRef({ orgMktOrrNo, label = '원주문번호(orgMktOrrNo)' }) {
   if (!(Number.isInteger(orgMktOrrNo) && orgMktOrrNo > 0)) {
-    const e = new Error(`원주문번호(orgMktOrrNo)는 양의 정수여야 함: ${orgMktOrrNo}`); e.confirmedNotSent = true; throw e;
+    const e = new Error(`${label}는 양의 정수여야 함: ${orgMktOrrNo}`); e.confirmedNotSent = true; throw e;
   }
 }
 
@@ -64,6 +66,45 @@ export function validatePartialQty({ allPatDitCd, corQty }) {
     const e = new Error(`corQty를 지정했지만 allPatDitCd가 '2'(일부)가 아님 — 이대로면 corQty가 무시되고 전체(1)로 처리됨. allPatDitCd:'2'를 함께 지정할 것`);
     e.confirmedNotSent = true; throw e;
   }
+}
+
+// 매매구분코드('1'=매도·'2'=매수) 검증 — 2026-09-02 코드리뷰 MEDIUM 지적: krgold의
+// 읽기전용 조회 함수(getGoldOrderableQuantity)에 있던 동일 로직을 krstock 예약주문
+// (주문 계열, 돈이 움직임)에 복붙하면서 confirmedNotSent=true 승격이 빠졌었다 —
+// 이 계약의 다른 모든 사전검증(validateOrderInputs 등)과 다르게 동작해 idempotency
+// 롤백 판단을 흐릴 수 있었다. 공유 모듈로 빼서 주문 계열은 항상 이걸 쓰게 강제.
+export function validateSbyDitCd(sbyDitCd) {
+  if (sbyDitCd !== '1' && sbyDitCd !== '2') {
+    const e = new Error(`sbyDitCd는 '1'(매도) 또는 '2'(매수)여야 함: ${sbyDitCd}`);
+    e.confirmedNotSent = true; throw e;
+  }
+}
+
+// "이 프로젝트가 지금 지원하는 값은 하나뿐"인 옵션 필드 검증 — 2026-09-02 코드리뷰
+// HIGH 지적: krstock 예약주문의 bkgOrrTpCd('2'·'3'=기간예약)·bkgOrrEnfTpCd
+// ('2'=기준가격대비)는 값을 받아들이면서도 그 값이 요구하는 조건부 필수 필드
+// (bkg_orr_sta_dt·bkg_orr_end_dt·bkg_rtn_dt·end_pr_cmp_ftw_amt 등)를 이 프로젝트
+// 함수들이 아예 안 받아서, 지원 안 하는 옵션을 골라도 필수필드 누락 요청이 조용히
+// 나갈 수 있었다(allPatDitCd/corQty 상호관계 버그와 같은 클래스 — 값은 받는데
+// 그 값이 요구하는 나머지 계약을 못 지키는 상태). 확장이 필요해지면 이 가드를
+// 지우고 조건부 필드를 실제로 받는 파라미터를 추가할 것.
+export function validateFixedOption(value, supported, label) {
+  if (value !== supported) {
+    const e = new Error(`${label}는 현재 '${supported}'만 지원(그 외 값은 필수 동반 필드를 이 함수가 못 받아 누락 요청이 나감): ${value}`);
+    e.confirmedNotSent = true; throw e;
+  }
+}
+
+// 주문 응답에서 주문식별번호를 뽑는 공용 헬퍼 — 필드명이 엔드포인트마다 다르다
+// (즉시체결 주문류는 mkt_orr_no, 예약주문류는 bkg_orr_no). 2026-09-02 코드리뷰 LOW
+// 지적: `String(body?.Output_0?.X ?? '').trim()` + 없으면 throw 패턴이 6곳에 복붙돼
+// 있어 하나로 모음. label은 에러 메시지에만 쓰임(actionLabel: "주문"·"정정"·"취소" 등).
+export function extractOrderNo(body, fieldName, actionLabel) {
+  const orderNo = String(body?.Output_0?.[fieldName] ?? '').trim();
+  if (!orderNo) {
+    throw new Error(`NH PLUG ${actionLabel} 응답에 주문식별번호(${fieldName}) 없음 — 실제 처리 여부 불확실, 즉시 확인 필요`);
+  }
+  return orderNo;
 }
 
 // callNh 예외를 confirmedNotSent로 승격할지 판단하는 공용 catch 헬퍼 — NH가 명시적으로

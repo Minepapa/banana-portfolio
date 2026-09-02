@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import {
   getKrBalance, getKrCurrentPrice, getKrBuyableQuantity, getKrSellableQuantity,
   placeKrCashBuyOrder, placeKrCashSellOrder, modifyKrOrder, cancelKrOrder,
+  placeKrReservedOrder, cancelKrReservedOrder,
+  getKrDailyOrderExecution, getKrReservedOrders, getKrRealizedPnl, getKrAssetStatus,
+  getKrDailyPnl, getKrTradingPnl, getKrIntegratedMargin, getKrRightsHeld, getKrRightsScheduled,
+  getKrExecutionTrend, getKrDailyPrice, getKrInvestorTrend, getKrPeriodPrice,
+  getKrAfterHoursCurrentPrice, getKrAfterHoursDailyPrice, getKrAfterHoursExecutionTrend,
+  getKrAfterHoursExpectedPrice, getKrEtfCurrentPrice, getKrEtfComponents,
 } from './nhplug-krstock.mjs';
 import { setNhRateLimitForTests } from './nhplug.mjs';
 
@@ -397,4 +403,431 @@ test('[핵심 안전장치] cancelKrOrder: 네트워크 예외면 confirmedNotSe
   } catch (e) {
     assert.equal(e.confirmedNotSent, undefined);
   }
+});
+
+// ============================================================================
+// 예약주문(placeKrReservedOrder·cancelKrReservedOrder) — 2026-09-02 신설. 응답
+// 식별자가 bkg_orr_no(예약주문번호)로 cashBuy 등과 다르다는 점이 핵심 회귀 대상.
+
+test('placeKrReservedOrder: 정상 응답이면 bkg_orr_no를 orderNo로 반환', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: { bkg_orr_no: 555 } } }]);
+  const r = await placeKrReservedOrder({
+    token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', quantity: 10, price: 70000, fetchImpl,
+  });
+  assert.equal(r.orderNo, '555');
+  const input0 = fetchImpl.calls[0].body.Input_0;
+  assert.equal(input0.sby_dit_cd, '2');
+  assert.equal(input0.orr_uit_pr, 70000);
+  assert.equal(input0.bkg_orr_tp_cd, '1');
+  assert.equal(input0.rmt_mkt_cd, 'KRX');
+});
+
+test('[핵심 안전장치] placeKrReservedOrder: price 없으면 즉시 throw(예약주문도 시장가 없음) + confirmedNotSent=true', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: { bkg_orr_no: 1 } } }]);
+  try {
+    await placeKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', quantity: 10, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, true);
+  }
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('[핵심 안전장치] placeKrReservedOrder: sbyDitCd가 1·2 외의 값이면 즉시 throw + confirmedNotSent=true(공유 검증기 호출 확인)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: { bkg_orr_no: 1 } } }]);
+  try {
+    await placeKrReservedOrder({
+      token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '9', quantity: 10, price: 70000, fetchImpl,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, true);
+  }
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+// 2026-09-02 코드리뷰 HIGH 지적 — bkgOrrTpCd·bkgOrrEnfTpCd·rmtMktCd·cfdLonCd를
+// 파라미터로 노출하면서 '1'(또는 'KRX'·'00') 외 값이 요구하는 조건부 필수 필드는
+// 못 받아, 다른 값을 고르면 필수필드 누락 요청이 조용히 나갈 뻔했다. 이 프로젝트가
+// 지금 그런 파라미터 자체를 없앴으므로(신용거래 배제 포함) 이 테스트는 "그 값을
+// 아예 줄 수 없다"는 계약을 고정한다(TypeScript 없는 프로젝트라 런타임 계약 테스트가
+// 유일한 회귀 방지막).
+test('[핵심 안전장치] placeKrReservedOrder: cfdLonCd·bkgOrrTpCd·bkgOrrEnfTpCd는 파라미터로 노출 안 됨(신용·기간예약 원천 차단)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: { bkg_orr_no: 1 } } }]);
+  await placeKrReservedOrder({
+    token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', quantity: 10, price: 70000,
+    cfdLonCd: '01', bkgOrrTpCd: '2', bkgOrrEnfTpCd: '2', fetchImpl,
+  });
+  const input0 = fetchImpl.calls[0].body.Input_0;
+  assert.equal(input0.cfd_lon_cd, '00');
+  assert.equal(input0.bkg_orr_tp_cd, '1');
+  assert.equal(input0.bkg_orr_enf_tp_cd, '1');
+});
+
+test('[핵심 안전장치] placeKrReservedOrder: rmtMktCd가 KRX가 아니면 즉시 throw + confirmedNotSent=true', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: { bkg_orr_no: 1 } } }]);
+  try {
+    await placeKrReservedOrder({
+      token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', quantity: 10, price: 70000, rmtMktCd: 'NXT', fetchImpl,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, true);
+  }
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('[핵심 안전장치] placeKrReservedOrder: 429여도 confirmedNotSent 안 붙음(불명)', async () => {
+  const fetchImpl = mockFetch([{ status: 429, body: { rsp_msg: '초당 호출한도 초과' } }]);
+  try {
+    await placeKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', quantity: 10, price: 70000, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
+test('[핵심 안전장치] placeKrReservedOrder: HTTP 4xx(비-429)여도 confirmedNotSent 안 붙음(불명 — 전송계층 실패)', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 500, text: async () => JSON.stringify({ error: 'internal' }) });
+  try {
+    await placeKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', quantity: 10, price: 70000, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
+test('[핵심 안전장치] placeKrReservedOrder: actNo·iemCd 없으면 즉시 throw + confirmedNotSent=true(공유 검증기 호출 확인)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: { bkg_orr_no: 1 } } }]);
+  try {
+    await placeKrReservedOrder({ token: 't', sbyDitCd: '2', quantity: 10, price: 70000, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, true);
+  }
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('[핵심 안전장치] placeKrReservedOrder: NH 업무거부면 confirmedNotSent=true', async () => {
+  const fetchImpl = mockFetch([{ body: { rsp_cd: '10006', rsp_msg: '주문가능금액이 부족합니다.' } }]);
+  try {
+    await placeKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', quantity: 10, price: 70000, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+test('[핵심 안전장치] placeKrReservedOrder: 응답 성공인데 bkg_orr_no 없으면 confirmedNotSent 안 붙음(불명)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: {} } }]);
+  try {
+    await placeKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', quantity: 10, price: 70000, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
+test('[핵심 안전장치] placeKrReservedOrder: 네트워크 예외면 confirmedNotSent 안 붙음(불명)', async () => {
+  const fetchImpl = async () => { throw new Error('fetch failed'); };
+  try {
+    await placeKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', quantity: 10, price: 70000, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
+test('cancelKrReservedOrder: 정상 응답이면 bkg_orr_no를 orderNo로 반환', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: { bkg_orr_no: 555 } } }]);
+  const r = await cancelKrReservedOrder({
+    token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', bkgOrrNo: 555, fetchImpl,
+  });
+  assert.equal(r.orderNo, '555');
+  assert.equal(fetchImpl.calls[0].body.Input_0.bkg_orr_no, 555);
+});
+
+test('[핵심 안전장치] cancelKrReservedOrder: bkgOrrNo 없으면 즉시 throw + confirmedNotSent=true(공유 검증기 호출 확인)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: { bkg_orr_no: 1 } } }]);
+  try {
+    await cancelKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, true);
+    assert.match(e.message, /bkgOrrNo/);
+  }
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('[핵심 안전장치] cancelKrReservedOrder: actNo·iemCd 없으면 즉시 throw + confirmedNotSent=true(공유 검증기 호출 확인)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: { bkg_orr_no: 1 } } }]);
+  try {
+    await cancelKrReservedOrder({ token: 't', sbyDitCd: '2', bkgOrrNo: 555, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, true);
+  }
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('[핵심 안전장치] cancelKrReservedOrder: sbyDitCd가 1·2 외의 값이면 즉시 throw + confirmedNotSent=true(공유 검증기 호출 확인)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: { bkg_orr_no: 1 } } }]);
+  try {
+    await cancelKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '9', bkgOrrNo: 555, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, true);
+  }
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('[핵심 안전장치] cancelKrReservedOrder: rmtMktCd가 KRX가 아니면 즉시 throw + confirmedNotSent=true', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: { bkg_orr_no: 1 } } }]);
+  try {
+    await cancelKrReservedOrder({
+      token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', bkgOrrNo: 555, rmtMktCd: 'NXT', fetchImpl,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, true);
+  }
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('[핵심 안전장치] cancelKrReservedOrder: NH 업무거부면 confirmedNotSent=true', async () => {
+  const fetchImpl = mockFetch([{ body: { rsp_cd: '10006', rsp_msg: '예약주문이 존재하지 않습니다.' } }]);
+  try {
+    await cancelKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', bkgOrrNo: 555, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+test('[핵심 안전장치] cancelKrReservedOrder: 응답 성공인데 bkg_orr_no 없으면 confirmedNotSent 안 붙음(불명)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: {} } }]);
+  try {
+    await cancelKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', bkgOrrNo: 555, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
+test('[핵심 안전장치] cancelKrReservedOrder: 429여도 confirmedNotSent 안 붙음(불명)', async () => {
+  const fetchImpl = mockFetch([{ status: 429, body: { rsp_msg: '초당 호출한도 초과' } }]);
+  try {
+    await cancelKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', bkgOrrNo: 555, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
+test('[핵심 안전장치] cancelKrReservedOrder: HTTP 4xx(비-429)여도 confirmedNotSent 안 붙음(불명 — 전송계층 실패)', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 500, text: async () => JSON.stringify({ error: 'internal' }) });
+  try {
+    await cancelKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', bkgOrrNo: 555, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
+test('[핵심 안전장치] cancelKrReservedOrder: 네트워크 예외면 confirmedNotSent 안 붙음(불명)', async () => {
+  const fetchImpl = async () => { throw new Error('fetch failed'); };
+  try {
+    await cancelKrReservedOrder({ token: 't', actNo: '1', iemCd: '005930', sbyDitCd: '2', bkgOrrNo: 555, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+  }
+});
+
+// ============================================================================
+// 조회(inquiry) 잔여 9종 — 읽기 전용이라 필드 배선(Input_0에 정확히 실리는지)만
+// 확인. 안전장치 대상 아님(주문이 아니라 조회).
+
+test('getKrDailyOrderExecution: 필수 필드 + 기본값(ostCnsDit=0·orrMktCd=00) 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrDailyOrderExecution({ token: 't', actNo: '1', orrDt: '20260902', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, {
+    act_no: '1', orr_dt: '20260902', ost_cns_dit: '0', orr_mkt_cd: '00',
+  });
+});
+
+test('getKrDailyOrderExecution: itgOrrNo를 주면 itg_orr_no로 포함(2026-09-02 코드리뷰 지적 — 준 경우 배선 미검증이었음)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrDailyOrderExecution({
+    token: 't', actNo: '1', orrDt: '20260902', itgOrrNo: 42, fetchImpl,
+  });
+  assert.equal(fetchImpl.calls[0].body.Input_0.itg_orr_no, 42);
+});
+
+test('getKrReservedOrders: 기본값(sbyDitCd=0·bkgOrrTpCd=0) 배선, 선택 필드는 준 경우만 포함', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrReservedOrders({ token: 't', actNo: '1', iemCd: '005930', fetchImpl });
+  const input0 = fetchImpl.calls[0].body.Input_0;
+  assert.equal(input0.sby_dit_cd, '0');
+  assert.equal(input0.bkg_orr_tp_cd, '0');
+  assert.equal(input0.iem_cd, '005930');
+  assert.equal('cfd_lon_cd' in input0, false);
+});
+
+test('getKrReservedOrders: bkgOrrRtnDt·cfdLonCd·bkgOrrCanDitCd를 주면 전부 배선(2026-09-02 코드리뷰 지적 — 준 경우 배선 미검증이었음)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrReservedOrders({
+    token: 't', actNo: '1', bkgOrrRtnDt: '20260901', cfdLonCd: '00', bkgOrrCanDitCd: '0', fetchImpl,
+  });
+  const input0 = fetchImpl.calls[0].body.Input_0;
+  assert.equal(input0.bkg_orr_rtn_dt, '20260901');
+  assert.equal(input0.cfd_lon_cd, '00');
+  assert.equal(input0.bkg_orr_can_dit_cd, '0');
+});
+
+test('getKrRealizedPnl: 기본값(iqrDitCd1=0·feeDitCd=1·qutDitCd=UNT) 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: {} } }]);
+  await getKrRealizedPnl({ token: 't', actNo: '1', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, {
+    act_no: '1', iqr_dit_cd1: '0', fee_dit_cd: '1', qut_dit_cd: 'UNT',
+  });
+});
+
+test('getKrAssetStatus: 기본값(ealAlyCd=2·aetBse=1·qutDitCd=UNT) 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: {} } }]);
+  await getKrAssetStatus({ token: 't', actNo: '1', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, {
+    act_no: '1', eal_aly_cd: '2', aet_bse: '1', qut_dit_cd: 'UNT',
+  });
+});
+
+test('getKrDailyPnl: iqrStaDt·iqrEndDt 필수값 그대로 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrDailyPnl({
+    token: 't', actNo: '1', iqrStaDt: '20260801', iqrEndDt: '20260902', fetchImpl,
+  });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, {
+    act_no: '1', iqr_sta_dt: '20260801', iqr_end_dt: '20260902',
+  });
+});
+
+test('getKrDailyPnl: iemCd를 주면 배선(2026-09-02 코드리뷰 지적 — 준 경우 배선 미검증이었음)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrDailyPnl({
+    token: 't', actNo: '1', iqrStaDt: '20260801', iqrEndDt: '20260902', iemCd: '005930', fetchImpl,
+  });
+  assert.equal(fetchImpl.calls[0].body.Input_0.iem_cd, '005930');
+});
+
+test('getKrTradingPnl: iqrStaDt·iqrEndDt 필수값 그대로 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrTradingPnl({
+    token: 't', actNo: '1', iqrStaDt: '20260801', iqrEndDt: '20260902', fetchImpl,
+  });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, {
+    act_no: '1', iqr_sta_dt: '20260801', iqr_end_dt: '20260902',
+  });
+});
+
+test('getKrIntegratedMargin: act_no만 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: {} } }]);
+  await getKrIntegratedMargin({ token: 't', actNo: '1', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, { act_no: '1' });
+});
+
+test('getKrRightsHeld: act_no만 필수, staDt·ritTpCd는 준 경우만 포함', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrRightsHeld({ token: 't', actNo: '1', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, { act_no: '1' });
+});
+
+test('getKrRightsHeld: staDt·ritTpCd를 주면 전부 배선(2026-09-02 코드리뷰 지적 — 준 경우 배선 미검증이었음)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrRightsHeld({
+    token: 't', actNo: '1', staDt: '20260101', ritTpCd: '01', fetchImpl,
+  });
+  const input0 = fetchImpl.calls[0].body.Input_0;
+  assert.equal(input0.sta_dt, '20260101');
+  assert.equal(input0.rit_tp_cd, '01');
+});
+
+test('getKrRightsScheduled: act_no만 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrRightsScheduled({ token: 't', actNo: '1', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, { act_no: '1' });
+});
+
+// ============================================================================
+// 시세(quote) 잔여 10종 — 읽기 전용, 필드 배선만 확인.
+
+test('getKrExecutionTrend: market_cd 기본값 KRX·array_cnt 기본값 30', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrExecutionTrend({ token: 't', iemCd: '005930', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, { market_cd: 'KRX', iem_cd: '005930', array_cnt: '30' });
+});
+
+test('getKrDailyPrice: market_cd 기본값 KRX·array_cnt 기본값 30', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrDailyPrice({ token: 't', iemCd: '005930', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, { market_cd: 'KRX', iem_cd: '005930', array_cnt: '30' });
+});
+
+test('getKrInvestorTrend: market_cd 기본값 KRX·array_cnt 기본값 30', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrInvestorTrend({ token: 't', iemCd: '005930', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, { market_cd: 'KRX', iem_cd: '005930', array_cnt: '30' });
+});
+
+test('getKrPeriodPrice: gubun 기본값 1(일)·array_cnt 기본값 30, edate는 준 경우만 포함', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrPeriodPrice({ token: 't', iemCd: '005930000', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, {
+    market_cd: 'KRX', iem_cd: '005930000', gubun: '1', array_cnt: '30',
+  });
+});
+
+test('getKrPeriodPrice: edate를 주면 배선(2026-09-02 코드리뷰 지적 — 준 경우 배선 미검증이었음)', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrPeriodPrice({
+    token: 't', iemCd: '005930000', edate: '20260902', fetchImpl,
+  });
+  assert.equal(fetchImpl.calls[0].body.Input_0.edate, '20260902');
+});
+
+test('getKrAfterHoursCurrentPrice: iem_cd만 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: {} } }]);
+  await getKrAfterHoursCurrentPrice({ token: 't', iemCd: '005930', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, { iem_cd: '005930' });
+});
+
+test('getKrAfterHoursDailyPrice: date 필수값 + 기본값(arrayCnt=30·maxavg=0·gubun=1) 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrAfterHoursDailyPrice({ token: 't', iemCd: '005930', date: '20260902', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, {
+    iem_cd: '005930', date: '20260902', array_cnt: '30', maxavg: '0', gubun: '1',
+  });
+});
+
+test('getKrAfterHoursExecutionTrend: iem_cd만 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: {} } }]);
+  await getKrAfterHoursExecutionTrend({ token: 't', iemCd: '005930', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, { iem_cd: '005930' });
+});
+
+test('getKrAfterHoursExpectedPrice: iem_cd만 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: {} } }]);
+  await getKrAfterHoursExpectedPrice({ token: 't', iemCd: '005930', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, { iem_cd: '005930' });
+});
+
+test('getKrEtfCurrentPrice: iem_cd만 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: {} } }]);
+  await getKrEtfCurrentPrice({ token: 't', iemCd: '069500', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, { iem_cd: '069500' });
+});
+
+test('getKrEtfComponents: iem_cd만 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getKrEtfComponents({ token: 't', iemCd: '069500', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, { iem_cd: '069500' });
 });
