@@ -1,51 +1,43 @@
 #!/usr/bin/env node
 /**
- * 계좌별 예수금(현금) 잔고 계산 → State/Holdings/{계좌}-예수금.md (예수금앵커 배선 4단계)
+ * 예수금(현금) 잔고 계산 → State/Holdings/{계좌}-예수금.md (예수금앵커 배선 4단계)
  *
- * 지금까지 배선된 조각을 실제로 조립하는 마지막 단계 — Facts/Ledger의 세 원장을 읽어
- * 계좌별 실제 잔고를 계산한다:
+ * Facts/Ledger의 세 원장을 읽어 계좌별 실제 잔고를 계산한다:
  *   - CashEvents(예수금앵커): "이 시각에 이 계좌 잔고가 이 값이었다"는 사실 기록.
- *     NH 4계좌(위탁·ISA·금현물·CMA)는 카카오 입출금 알림에서 자동 파싱(nh-accounts.mjs
- *     전체계좌번호매칭), 연금저축·IRP는 알림이 없어(2026-08-18 오너 확인) 오너가 앱에서
- *     직접 확인한 값을 수동으로 기록한다 — 자동/수동 구분 없이 그냥 "가장 최근 값"이
- *     기준점이 된다(cash-ledger.mjs resolveCashAnchor).
  *   - Executions(체결): 계좌는 update-holdings-from-executions.mjs가 영구기록한다
  *     (2026-08-18 확장). 매수는 현금유출(-), 매도는 현금유입(+).
  *   - Dividends(배당): 계좌는 같은 잡이 영구기록한다. 항상 현금유입(+).
  *
- * ⚠️ 설계 통합(2026-08-18) — 처음엔 "NH 4계좌(자동 알림)"과 "연금저축(알림 없음,
- * 0원-이후-복식부기)"을 별도 로직으로 나눴었다. 그런데 오너가 IRP(한국투자증권,
- * 알림 없음·매월 26일 고정 25만원 자동입금)까지 "모든 계좌 동일하게" 원했고, 연금저축도
- * 실은 잔고 확인이 가능함이 드러났다(MMF 보유 평가금액이 곧 예수금 — 배당·수익금이
- * 자동으로 MMF에 쌓이고 매수 시 MMF를 먼저 매도하는 구조). "자동 알림 유무"가 아니라
- * "기준점을 어떻게 얻는가"만 다를 뿐 델타 계산은 6계좌 전부 동일해야 맞다 —
- * 계좌별 특수 함수(resolvePensionCashLedger 등) 없이 전부 같은 루프를 돈다.
- * 알림 없는 계좌(연금저축·IRP)는 오너가 확인한 값을 수동 CashEvent로 넣어두면
- * (자동 알림과 완전히 같은 레코드 모양) 그게 그대로 기준점이 된다.
+ * ⚠️ 범위 축소(2026-09-03, 마이그레이션 3단계) — 원래(2026-08-18 확정) 이 잡은
+ * 6계좌(위탁·ISA·금현물·CMA·연금저축·IRP) 전부를 "기준점+델타" 재구성 루프로
+ * 동일하게 처리했다. Strategy 문서(`Log/Strategy/2026-09-02-NH-API-우선-KIS-
+ * 카카오파싱-역할축소-결정.md`)의 오너 확정 원문("예수금 앵커는 통일 루프 깸.
+ * 계좌별 분기")에 따라, **API로 직접 예수금 조회가 가능한 계좌는 이 루프를
+ * 아예 안 탄다** — 위탁·CMA·금현물은 `reconcile-nh-cash.mjs`(NH PLUG API),
+ * IRP는 `reconcile-irp.mjs`(KIS API)가 각각 조회 즉시 State/Holdings를 직접
+ * 덮어쓴다(CashEvent를 거치지 않음). 이 재구성 루프를 없앤 이유는 정확히 이
+ * 프로젝트가 예수금 이중반영 실사고 2건을 겪은 지점이 "기준점+델타 재구성"
+ * 방식이었기 때문(Strategy 문서 "왜" 절 참고) — API 응답 자체가 이미 "지금
+ * 이 순간의 정확한 예수금"이라 그 위에 델타를 얹으면 시차 버그의 원천만 남는다.
  *
- * 기준점+델타 계산은 전체 타임스탬프 비교라 v1의 날짜절삭 버그가 구조적으로 재발
- * 불가능하다(cash-ledger.mjs 헤더 주석 참고).
+ * 이 잡은 이제 **API가 없는 2계좌(연금저축·ISA)만** 처리한다 — 둘 다 NH가
+ * 아직 지원하지 않아(연금저축은 애초에 삼성증권 계좌, ISA는 NH가 API 계좌목록
+ * 자체에 노출 안 함, 2026-09-03 라이브 확인) 여전히 카카오 알림(ISA는
+ * nh-accounts.mjs 전체계좌번호매칭 자동 파싱)/수동 기준점(연금저축, 오너가 앱
+ * 확인 후 수동 CashEvent)+델타 방식이 유일한 경로다. 이 재구성 방식 자체가
+ * 잘못된 게 아니라 "API가 없을 때의 차선책"이라는 원래 설계 취지에 맞게 범위가
+ * 좁혀진 것 — 기준점+델타 계산은 전체 타임스탬프 비교라 v1의 날짜절삭 버그가
+ * 구조적으로 재발 불가능하다(cash-ledger.mjs 헤더 주석 참고).
  *
- * ⚠️ 범위: 이 잡은 6계좌(위탁·ISA·금현물·CMA·연금저축·IRP)의 "각자 실제 잔고"만
- * 계산해 그대로 저장한다(감사 정확성 우선 — 계좌 하나엔 그 계좌의 진짜 숫자만 남긴다).
- * "금현물 대기현금을 위탁과 합쳐서 본다"는 정책(오너 확정)은 여기서 물리적으로
- * 합치지 않는다 — cash-ledger.mjs의 resolveDesignatedCashBalance가 그 관점만 별도
- * 계산해주고, 실제 소비(신규현금배분 판단)는 new-cash-allocation.mjs 재작성 몫이다.
- *
- * ⚠️ 알려진 한계(2026-08-22 갱신, 원래 2026-08-18):
+ * ⚠️ 알려진 한계(2026-08-22):
  * - 펀드적립(연금저축 VIP 펀드)·환전은 2026-08-22부로 계좌귀속까지 배선 완료
  *   (account-resolver.mjs FUND_PURCHASE_ACCOUNT·EXCHANGE_ACCOUNT, parse-notifications-
  *   to-vault.mjs가 파싱 시점에 바로 채움) — 아래 buildFlows가 두 원장을 읽어 델타에
  *   반영한다. 단 두 이벤트 모두 원문에 시각 정보가 없어(날짜만) 00:00:00으로 채우는
  *   한계는 남아있다(buildFlows 주석 참고, goldBuy가 이미 겪었던 것과 같은 계열).
- * - 연금저축은 지금도 자동 CashEvent가 없어 오너가 수동으로 갱신해줘야 최신 상태
+ * - 연금저축은 자동 CashEvent가 없어 오너가 수동으로 갱신해줘야 최신 상태
  *   유지됨(매월 21일경 연봉 연동 자동입금, 알림 없음 — 정확한 금액을 추정해 자동
- *   반영하지 않는다). IRP는 아래 참고 — 이미 자동화됨.
- * - IRP는 reconcile-irp.mjs가 KIS API(getAccountBalance, tr_id TTTC8434R)로 예수금을
- *   자동조회해 CashEvent로 기록한다(2026-08-18 배선, launchd 평일 16:07 — update-
- *   holdings-from-executions 직후·이 잡보다 먼저 실행돼 그날 안에 반영됨). cash===0
- *   응답은 이 계좌에서 간헐적으로 발생함이 실측돼 신뢰 불가로 스킵한다(reconcile-irp.mjs
- *   헤더 주석 참고) — 그 경우엔 여전히 수동 CashEvent로 보정해야 한다.
+ *   반영하지 않는다).
  *
  * 매 실행마다 기준점+델타를 처음부터 다시 계산해 전체를 덮어쓴다("지금 상태" 원칙,
  * vault-paths.mjs state.* 관례와 동일) — 누적 증분이 아니라 순수 재계산이라 같은
@@ -61,15 +53,16 @@ import { join } from 'node:path';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
-import { NH_ACCOUNT_MAP } from '../lib/nh-accounts.mjs';
 import { resolveCashAnchor, computeCashDelta, settleCash } from '../lib/cash-ledger.mjs';
 import { buildCashHoldingRecord, holdingFilename } from '../lib/holdings-vault-writer.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
-// 위탁·ISA·금현물·CMA(자동 알림) + 연금저축·IRP(수동 스냅샷, 2026-08-18 추가) — 6계좌
-// 전부 동일 로직(resolveCashAnchor+computeCashDelta+settleCash)을 탄다.
-const ALL_ACCOUNTS = [...new Set(Object.values(NH_ACCOUNT_MAP)), '연금저축', 'IRP'];
+// ISA(카카오 자동 알림)·연금저축(수동 스냅샷) — API 직접조회가 없는 2계좌만.
+// 위탁·CMA·금현물·IRP는 2026-09-03부로 각자의 API 직접조회 잡(reconcile-nh-cash.mjs·
+// reconcile-irp.mjs)이 State/Holdings를 직접 덮어써 이 재구성 루프를 안 탄다(파일
+// 상단 "범위 축소" 주석 참고).
+const ALL_ACCOUNTS = ['ISA', '연금저축'];
 
 function readVaultFiles(dir) {
   if (!existsSync(dir)) return [];

@@ -32,11 +32,23 @@
  * 정상, 실제 앱과 일치 확인됨 — 그 사이 실제로 돈이 빠질 이유 없음). 즉 2026-07-26
  * 원본 기록이 말한 "이 필드가 가끔 0으로 온다"는 여전히 유효한 현상이었다 — 단지
  * "항상 0"이 아니라 "간헐적으로 0"이라는 게 이번에 새로 드러난 정확한 실태. 잘못된
- * 0을 CashEvent로 그대로 기록했으면 다음 예수금 계산이 기준점을 0으로 잘못 잡을
- * 뻔했다(발견 즉시 해당 CashEvent 파일 삭제로 정리). 아래 cash>0 가드가 그 재발
- * 방지책 — "0으로 추정하지 않는다"는 이 코드베이스 원칙(parseBalanceResponse의
- * null 처리와 동일 정신)을 "필드가 없을 때"뿐 아니라 "이 계좌에서 이 필드가
- * 간헐적으로 신뢰 불가함이 이미 실측된 경우"까지 확장 적용한다.
+ * 0을 그대로 기록했으면 다음 예수금 계산이 기준점을 0으로 잘못 잡을 뻔했다(발견
+ * 즉시 정리). 아래 cash>0 가드가 그 재발 방지책 — "0으로 추정하지 않는다"는 이
+ * 코드베이스 원칙(parseBalanceResponse의 null 처리와 동일 정신)을 "필드가 없을
+ * 때"뿐 아니라 "이 계좌에서 이 필드가 간헐적으로 신뢰 불가함이 이미 실측된 경우"
+ * 까지 확장 적용한다.
+ *
+ * ⚠️ 설계 재정정(2026-09-03, 마이그레이션 3단계) — 처음(2026-08-18)엔 이 조회값을
+ * CashEvent로 기록해 update-cash-from-ledger.mjs의 기준점+델타 재구성 루프에
+ * 태웠다. Strategy 문서(`Log/Strategy/2026-09-02-NH-API-우선-KIS-카카오파싱-
+ * 역할축소-결정.md`) 재검토 결과 오너 확정 원문이 "예수금 앵커는 통일 루프 깸"
+ * 이었음이 명확해져(code-reviewer 지적, 2026-09-03 오너 재확인) — API로 직접
+ * 조회 가능한 계좌는 재구성 루프를 아예 안 타야 한다. 이제 State/Holdings/
+ * IRP-예수금.md를 이 조회값으로 직접 덮어쓴다(CashEvent·update-cash-from-
+ * ledger.mjs 완전 배제) — `reconcile-nh-cash.mjs`(위탁·CMA·금현물)와 같은
+ * 원칙. cash>0 가드는 그대로 유지 — 신뢰 불가한 값이면 기존 State/Holdings
+ * 파일을 그대로 둔다(덮어쓰지 않음, 이전엔 "기존 앵커 유지"였던 것과 동일한
+ * 효과를 직접 파일 스킵으로 달성).
  *
  * 스코프: "계좌 잔고·체결 자동대사"는 원래 4계좌(위탁/연금저축/ISA/IRP) 전체를 노렸으나,
  * KIS API로 조회 가능한 건 한투에 있는 계좌뿐이다 — 위탁·ISA는 NH투자증권, 연금저축은
@@ -62,10 +74,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { hasKisCredentials, loadIrpAccount, getKisToken, getAccountBalance } from '../lib/kis.mjs';
-import { IRP_ACCOUNT_NO } from '../lib/account-resolver.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { buildCashEventRecord } from '../lib/ledger-vault-writer.mjs';
+import { buildCashHoldingRecord } from '../lib/holdings-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 
 // IRP 보유(State/Holdings) — 순수 함수. 2026-08-22 이전엔 v1 구글시트(계좌별 탭)를
@@ -109,10 +120,10 @@ async function main() {
   const kisToken = await getKisToken({ appkey, appsecret });
   const { holdings: kisHoldings, cash } = await getAccountBalance({ token: kisToken, appkey, appsecret, cano, acntPrdtCd });
 
-  // 예수금앵커 자동화(2026-08-18) — cash가 이제 신뢰 가능함이 실측으로 확인됐다(파일
-  // 상단 정정 주석). NH 4계좌의 카카오 알림과 동일한 역할 — CashEvents에 기록만 해두면
-  // update-cash-from-ledger.mjs가 그걸 최신 기준점으로 읽어 IRP 실잔고를 계산한다.
-  // null(진짜 조회 실패)이면 기록하지 않는다 — 0으로 추정해 기존 앵커를 덮어쓰면 더 위험.
+  // 예수금 자동화(2026-08-18 신설, 2026-09-03 설계 재정정 — 파일 상단 주석 참고) —
+  // cash가 신뢰 가능함이 실측으로 확인됐다. State/Holdings/IRP-예수금.md를 이 값으로
+  // 직접 덮어쓴다(CashEvent·update-cash-from-ledger.mjs 완전 배제, "통일 루프 깸").
+  // null(진짜 조회 실패)이면 기록하지 않는다 — 0으로 추정해 기존 값을 덮어쓰면 더 위험.
   // ⚠️ cash===0도 같은 이유로 기록하지 않는다(2026-08-18 재정정, 파일 상단 주석) —
   // 이 필드가 이 계좌에서 간헐적으로 0을 반환함이 실측됐다(직전 두 번은 320,899로
   // 정상, 세 번째 호출만 0 — 그 사이 실제로 돈이 빠질 이유 없음). 알려진 한계: IRP
@@ -122,28 +133,35 @@ async function main() {
   if (cash != null && cash > 0) {
     // ⚠️ 버그 수정(2026-08-18, 배선 직후 발견) — toISOString()은 UTC라 KST보다 9시간
     // 느리다. 이 Vault의 모든 타임스탬프(카카오 알림 파싱·오너 수동 앵커 등)는 KST
-    // 벽시계 기준이라, UTC로 쓰면 computeCashDelta의 사전식 비교가 실제보다 9시간
-    // 이른 시각으로 착각해 그 사이(진짜로는 앵커 이전인) 체결·배당이 델타에 잘못
-    // 포함될 위험이 있었다(order-gate.mjs checkMarketOpen과 동일 Asia/Seoul 관례로 통일).
+    // 벽시계 기준이라, UTC로 쓰면 anchorTs가 실제보다 9시간 이른 시각으로 착각돼
+    // 감사 기록(언제 이 값을 조회했는지)이 어긋난다(order-gate.mjs checkMarketOpen과
+    // 동일 Asia/Seoul 관례로 통일). 2026-09-03 이전엔 이 값이 computeCashDelta의
+    // 델타 재구성 기준점으로도 쓰였으나(사전식 비교라 9시간 어긋나면 실제 델타
+    // 계산까지 틀렸을 것), 이제는 State/Holdings에 직접 쓰는 감사용 anchorTs일
+    // 뿐이라도 KST 통일은 여전히 지킨다.
     const kstParts = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Seoul', hour12: false,
       year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
     }).formatToParts(new Date());
     const get = (type) => kstParts.find((p) => p.type === type).value;
     const nowTs = `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
-    const { filename, content, dir } = buildCashEventRecord({ account: 'IRP', acctNo: IRP_ACCOUNT_NO, balance: cash, ts: nowTs });
+    const { filename, content, dir } = buildCashHoldingRecord({
+      account: 'IRP', balance: cash, raw: cash, negative: cash < 0,
+      anchorBase: cash, anchorTs: nowTs, anchorSource: 'KIS API 직접조회',
+    });
     mkdirSync(dir, { recursive: true });
     writeAtomic(join(dir, filename), content);
-    console.log(`  + [예수금앵커] IRP ${nowTs} 잔고 ${cash.toLocaleString()}원`);
+    console.log(`  + [예수금] IRP ${nowTs} 잔고 ${cash.toLocaleString()}원`);
   } else if (cash === 0) {
-    console.log('  ⚠️ IRP 예수금이 0으로 응답(이 계좌에서 간헐적으로 발생하는 걸로 실측됨) — 신뢰 불가로 CashEvent 기록 건너뜀(기존 기준점 유지)');
+    console.log('  ⚠️ IRP 예수금이 0으로 응답(이 계좌에서 간헐적으로 발생하는 걸로 실측됨) — 신뢰 불가로 기록 건너뜀(기존 State/Holdings 값 유지)');
   } else {
-    console.log('  ⚠️ IRP 예수금 조회 실패(null) — CashEvent 기록 건너뜀(기존 기준점 유지)');
+    console.log('  ⚠️ IRP 예수금 조회 실패(null) — 기록 건너뜀(기존 State/Holdings 값 유지)');
   }
 
   // 예수금(현금성) 행은 수량 개념이 없어 종목 대사 대상이 아니다 — readIrpHoldings()가
   // isCashLike로 이미 걸러준다(holdings-vault-writer.mjs 관례). 예수금 자체는 이제 위에서
-  // CashEvent로 따로 기록되므로(2026-08-18), 여기 남은 건 "Vault State/Holdings vs KIS
+  // State/Holdings에 직접 기록되므로(2026-08-18 신설, 2026-09-03 CashEvent 경로 폐지),
+  // 여기 남은 건 "Vault State/Holdings vs KIS
   // 종목 수량"만 비교하는 순수 대사 로직(2026-08-22, v1 시트 기준을 대체) — 예수금
   // 값끼리의 대사(비교)는 여전히 이 잡 스코프 밖.
   const { mismatches, totalNames } = buildIrpMismatches(readIrpHoldings(), kisHoldings);
@@ -151,8 +169,8 @@ async function main() {
     collectWarning(`IRP 대사 불일치: ${m.name} — Vault ${m.vaultQty}주 vs KIS 실계좌 ${m.kisQty}주`);
   }
 
-  if (mismatches.length === 0) console.log(`✅ IRP 종목 대사 일치 (종목 ${totalNames}개, 예수금 자체는 위에서 별도로 CashEvent 기록됨)`);
-  else console.log(`⚠️ IRP 종목 대사 불일치 ${mismatches.length}건 (종목 ${totalNames}개, 예수금 자체는 위에서 별도로 CashEvent 기록됨)`);
+  if (mismatches.length === 0) console.log(`✅ IRP 종목 대사 일치 (종목 ${totalNames}개, 예수금 자체는 위에서 별도로 State/Holdings에 직접 기록됨)`);
+  else console.log(`⚠️ IRP 종목 대사 불일치 ${mismatches.length}건 (종목 ${totalNames}개, 예수금 자체는 위에서 별도로 State/Holdings에 직접 기록됨)`);
   await flushWarnings('reconcile-irp');
 }
 

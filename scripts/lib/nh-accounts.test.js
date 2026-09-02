@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveNhAccount, extractNhAccountNo, NH_ACCOUNT_MAP, REBALANCE_SCOPE_NH_ACCOUNTS } from './nh-accounts.mjs';
+import {
+  resolveNhAccount, extractNhAccountNo, NH_ACCOUNT_MAP, REBALANCE_SCOPE_NH_ACCOUNTS,
+  maskNhActNo, resolveNhAccountLabelFromActNo,
+} from './nh-accounts.mjs';
 
 test('resolveNhAccount: 등록된 4계좌 각각 정확히 구분', () => {
   assert.equal(resolveNhAccount('[NH투자증권] 입금안내\n계좌번호 205-01-59***9'), '위탁');
@@ -53,4 +56,33 @@ test('resolveNhAccount: 분배금 형식 원문으로도 정확히 금현물로 
 test('extractNhAccountNo: 기존 "계좌번호" 키워드 형식이 분배금 형식보다 우선 매칭(둘 다 있어도 안전)', () => {
   const body = '계좌번호 205-01-59***9 안내\n2090292***6 홍*동 님 계좌로';
   assert.equal(extractNhAccountNo(body), '205-01-59***9');
+});
+
+// 2026-09-03 신설 — 마이그레이션 3단계(예수금 NH 직접조회), 실계좌번호(NH PLUG API
+// 응답)를 카카오와 같은 마스킹 형식으로 변환. 라이브 조회로 확인한 실제 3계좌.
+test('maskNhActNo: 실계좌번호(11자리) → 카카오와 동일한 마스킹 형식', () => {
+  assert.equal(maskNhActNo('20501596019'), '205-01-59***9');
+  assert.equal(maskNhActNo('20901920556'), '209-01-92***6');
+  assert.equal(maskNhActNo('20902920556'), '209-02-92***6');
+});
+
+test('maskNhActNo: 대시가 이미 섞여 있어도(하이픈 제거 후 재조합) 동일 결과', () => {
+  assert.equal(maskNhActNo('205-01-596019'), '205-01-59***9');
+});
+
+test('[핵심 안전장치] maskNhActNo: 11자리가 아니면 null(추정 안 함)', () => {
+  assert.equal(maskNhActNo('123'), null);
+  assert.equal(maskNhActNo(''), null);
+  assert.equal(maskNhActNo(undefined), null);
+  assert.equal(maskNhActNo('123456789012'), null);
+});
+
+test('resolveNhAccountLabelFromActNo: 실계좌번호로 바로 계좌명 해석(위탁·CMA·금현물)', () => {
+  assert.equal(resolveNhAccountLabelFromActNo('20501596019'), '위탁');
+  assert.equal(resolveNhAccountLabelFromActNo('20901920556'), 'CMA');
+  assert.equal(resolveNhAccountLabelFromActNo('20902920556'), '금현물');
+});
+
+test('resolveNhAccountLabelFromActNo: 매핑에 없는 계좌(예: ISA — NH API 계좌목록에 아예 안 나옴)는 null', () => {
+  assert.equal(resolveNhAccountLabelFromActNo('99999999999'), null);
 });

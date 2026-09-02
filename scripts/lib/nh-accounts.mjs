@@ -50,3 +50,24 @@ export function resolveNhAccount(body) {
   if (!acctNo) return null;
   return NH_ACCOUNT_MAP[acctNo] ?? null;
 }
+
+// NH PLUG API(/n2/acctinfo 등)가 반환하는 마스킹 안 된 실계좌번호(11자리, 예:
+// "20501596019") → 카카오 알림과 동일한 마스킹 형식("205-01-59***9")으로 변환.
+// 2026-09-03 신설(마이그레이션 3단계, 예수금 NH 직접조회) — 실계좌번호를 새로
+// 하드코딩한 별도 매핑표를 안 만들고, 이미 있는 NH_ACCOUNT_MAP(마스킹 형식→계좌명)을
+// 그대로 재사용하기 위한 변환기. 라이브 조회로 3-2-6자리(뒤 2자리 보임+3자리
+// 마스킹+1자리 보임) 구조를 확인(위탁 20501596019·CMA 20901920556·금현물
+// 20902920556 — 전부 NH_ACCOUNT_MAP의 마스킹 패턴과 정확히 일치). 순수함수.
+export function maskNhActNo(actNo) {
+  const digits = String(actNo ?? '').replace(/\D/g, '');
+  if (digits.length !== 11) return null;
+  const seg3 = digits.slice(5, 11);
+  return `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${seg3.slice(0, 2)}***${seg3.slice(5)}`;
+}
+
+// maskNhActNo+NH_ACCOUNT_MAP 조합 — API가 반환한 실계좌번호를 바로 계좌명으로.
+export function resolveNhAccountLabelFromActNo(actNo) {
+  const masked = maskNhActNo(actNo);
+  if (!masked) return null;
+  return NH_ACCOUNT_MAP[masked] ?? null;
+}

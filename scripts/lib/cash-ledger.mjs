@@ -24,6 +24,16 @@
 // 스냅샷"을 구분하지 않고 그냥 "이 시각에 이 계좌 잔고가 이 값이었다"는 사실만 담는
 // 폴더다). resolveCashAnchor는 그래서 더 이상 NH 전용이 아니다 — 모든 계좌에 그대로
 // 쓴다(이름에서 "Nh" 제거).
+//
+// ⚠️ 범위 축소(2026-09-03, 마이그레이션 3단계) — 위 "6계좌 전부 동일 루프" 결정을
+// 오너가 다시 뒤집었다("예수금 앵커는 통일 루프 깸. 계좌별 분기" — `Log/Strategy/
+// 2026-09-02-NH-API-우선-KIS-카카오파싱-역할축소-결정.md`). API로 직접 예수금
+// 조회가 가능해진 4계좌(위탁·CMA·금현물·IRP)는 이제 이 기준점+델타 재구성 자체를
+// 건너뛴다(reconcile-nh-cash.mjs·reconcile-irp.mjs가 State/Holdings를 직접 씀) —
+// 여기 함수들(resolveCashAnchor·computeCashDelta·settleCash)은 API가 없는 2계좌
+// (ISA·연금저축, update-cash-from-ledger.mjs)에만 계속 쓰인다. 위 설계 자체(전체
+// 타임스탬프 비교로 v1 날짜절삭 버그 재발 방지)는 여전히 유효 — "몇 계좌에
+// 적용하는가"만 좁아졌다.
 
 // anchorTs 이후(엄격히 이후, 같은 시각은 이미 그 잔고에 반영된 것으로 간주)에 발생한
 // flow만 델타에 포함한다 — 위 v1 버그를 막는 핵심. flow: { ts: 'YYYY-MM-DD HH:mm:ss',
