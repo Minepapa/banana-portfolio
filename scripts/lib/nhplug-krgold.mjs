@@ -54,6 +54,20 @@ export async function getGoldBalance({ token, actNo, fetchImpl }) {
   });
 }
 
+// 주문체결조회(POST /krgold/inquiry/v1/goldExecution) — 2026-09-02 신설(krstock의
+// getKrDailyOrderExecution과 대응, 그동안 빠져있던 "실제 체결됐는지" 확인 수단).
+// ostCnsDit: '0'=전체(기본) '1'=미체결 '2'=체결. orrMktCd: '08'=금현물(기본,
+// openapi.json에 이 값만 유효한 것으로 명시).
+export async function getGoldExecution({
+  token, actNo, orrDt, ostCnsDit = '0', orrMktCd = '08', itgOrrNo, fetchImpl,
+}) {
+  const input0 = {
+    orr_dt: orrDt, act_no: actNo, ost_cns_dit: ostCnsDit, orr_mkt_cd: orrMktCd,
+  };
+  if (itgOrrNo != null) input0.itg_orr_no = itgOrrNo;
+  return callNh({ token, uri: '/krgold/inquiry/v1/goldExecution', input0, fetchImpl });
+}
+
 // 현재가조회(POST /krgold/quote/v1/goldCurrent). iemCd 길이 9(주문 API의 12와 다름 —
 // openapi.json에 그대로 그렇게 돼 있음, 실제 값 자체(M04020000)는 동일하게 씀).
 export async function getGoldCurrentPrice({ token, iemCd, fetchImpl }) {

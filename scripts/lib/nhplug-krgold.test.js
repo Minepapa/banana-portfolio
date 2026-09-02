@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  getGoldBalance, getGoldCurrentPrice, getGoldOrderableQuantity,
+  getGoldBalance, getGoldExecution, getGoldCurrentPrice, getGoldOrderableQuantity,
   placeGoldBuyOrder, placeGoldSellOrder, modifyGoldOrder, cancelGoldOrder,
 } from './nhplug-krgold.mjs';
 import { setNhRateLimitForTests } from './nhplug.mjs';
@@ -26,6 +26,14 @@ test('getGoldBalance: act_no만 Input_0에 실림', async () => {
   await getGoldBalance({ token: 't', actNo: '20902920556', fetchImpl });
   assert.match(fetchImpl.calls[0].url, /\/krgold\/inquiry\/v1\/goldDepositAndBalance$/);
   assert.deepEqual(fetchImpl.calls[0].body.Input_0, { act_no: '20902920556' });
+});
+
+test('getGoldExecution: 필수 필드 + 기본값(ostCnsDit=0·orrMktCd=08) 배선', async () => {
+  const fetchImpl = mockFetch([{ body: { Output_0: [] } }]);
+  await getGoldExecution({ token: 't', actNo: '20902920556', orrDt: '20260902', fetchImpl });
+  assert.deepEqual(fetchImpl.calls[0].body.Input_0, {
+    orr_dt: '20260902', act_no: '20902920556', ost_cns_dit: '0', orr_mkt_cd: '08',
+  });
 });
 
 test('getGoldCurrentPrice: iem_cd 그대로 전달', async () => {
