@@ -1,12 +1,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderPrefRows, prefBlock, findExpiredPromotions } from './preferences.mjs';
+import { renderPrefRows, prefBlock, findExpiredPromotions, isLivePreferenceObservation } from './preferences.mjs';
 
 // 2026-08-20 Vault 네이티브 재작성 — 입력이 구글시트 row-array에서
 // Knowledge/Profile/*.md frontmatter 객체로 바뀌었다.
 
 const mkRec = (signalType, obs, vsProfile, status, overrides = {}) =>
   ({ date: '2026-06-10', signalType, observation: obs, evidence: '체결', vsProfile, confidence: '높음', status, ...overrides });
+
+// 2026-09-04 므네모시네 대정리 — Profile/ 평탄화로 "폴더가 곧 필터"이던 경계가 사라져,
+// migration-vault-writer.mjs가 쓰는 legacy:true 레코드가 라이브 폴더에 섞일 수 있게 됐다.
+test('isLivePreferenceObservation: legacy 이관분은 배제, v2 관찰만 통과', () => {
+  assert.equal(isLivePreferenceObservation({ type: 'preference-observation', status: '확정' }), true);
+  // v1 마이그레이션 산출물(migration-vault-writer.mjs가 legacy:true로 기록)
+  assert.equal(isLivePreferenceObservation({ type: 'preference-observation', legacy: true }), false);
+  // 같은 폴더에 흘러든 다른 종류의 노트는 관찰로 오인하지 않는다
+  assert.equal(isLivePreferenceObservation({ type: 'hub' }), false);
+  // type이 없는 수기 관찰은 버리지 않는다(기록 누락 방지)
+  assert.equal(isLivePreferenceObservation({ observation: '손으로 적은 관찰' }), true);
+  assert.equal(isLivePreferenceObservation(null), false);
+});
 
 test('renderPrefRows: 기각 레코드는 항상 제외', () => {
   const records = [

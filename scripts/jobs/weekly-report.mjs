@@ -40,7 +40,7 @@ import { writeAtomic } from '../lib/state-writer.mjs';
 import { fetchMacroIndicators } from '../lib/fundamentals.mjs';
 import { buildReportFacts } from '../lib/report-facts.mjs';
 import { buildBehaviorSignals } from '../lib/behavior-signals.mjs';
-import { renderPrefRows, findExpiredPromotions } from '../lib/preferences.mjs';
+import { renderPrefRows, findExpiredPromotions, isLivePreferenceObservation } from '../lib/preferences.mjs';
 import { filterObservations, claimViolationsInDoc } from '../lib/llm-guard.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
@@ -347,7 +347,7 @@ async function main() {
   // 미국배당다우존스)에서 항상 실패해 "손익 미확정"으로만 나갔다 — 이 원장을 우선
   // 조회하면 그 사각을 없앤다(report-facts.mjs profitByKey 참고).
   const profitRows = readVaultDir(VAULT_PATHS.facts.ledger.profits);
-  const prefRecords = readVaultDir(VAULT_PATHS.knowledge.profile);
+  const prefRecords = readVaultDir(VAULT_PATHS.knowledge.profile).filter(isLivePreferenceObservation);
   const prevReport = loadPrevReport(asof);
 
   const tradeRows = executionsToTradeRows(executions);
@@ -438,7 +438,7 @@ async function main() {
 
   // ⑧-b 승격후보 TTL(4주 무응답이면 자동으로 관찰 보류) — ⑧과 분리된 독립 단계.
   try {
-    const freshPrefRecords = readVaultDir(VAULT_PATHS.knowledge.profile);
+    const freshPrefRecords = readVaultDir(VAULT_PATHS.knowledge.profile).filter(isLivePreferenceObservation);
     const expired = findExpiredPromotions(freshPrefRecords, { now: new Date() });
     if (expired.length) {
       for (const e of expired) {

@@ -16,6 +16,24 @@ export const PREF_SHEET = '성향관찰';
 // 자체를 뜻한다(holding/execution/preference-observation 등) — 관찰의 신호유형까지
 // "type"으로 쓰면 그 레코드종류 필드와 충돌한다.)
 
+// Knowledge/Profile/ 폴더에서 읽은 레코드 중 "살아있는 v2 성향관찰"만 통과시키는 술어.
+//
+// 왜 필요한가(2026-09-04 므네모시네 대정리): 원래 v1 이관분은 Knowledge/Profile/ 최상위,
+// v2 관찰은 Knowledge/Profile/PreferenceObservations/ 하위폴더로 **폴더가 곧 필터**였다.
+// 대정리에서 v1 이관분을 지우고 하위폴더를 평탄화하면서 그 경계가 사라졌는데,
+// migration-vault-writer.mjs(buildMigratedPreferenceRecord)는 여전히 legacy:true 레코드를
+// 같은 폴더에 쓴다 — v1 마이그레이션을 다시 돌리면 방금 지운 관찰 22건이 라이브 폴더로
+// 되살아나 Apollo/주간리포트 프롬프트에 "확정된 관찰"인 척 섞여 들어간다.
+// 폴더 경계가 하던 일을 이 술어가 대신한다(읽는 쪽 3곳이 전부 이걸 공유 — 필터를
+// 복제하면 한 곳만 고쳐지는 사고가 난다).
+export function isLivePreferenceObservation(rec) {
+  if (!rec || rec.legacy === true) return false;
+  // type이 아예 없는 옛 레코드는 통과시킨다(v2 관찰은 처음부터 type을 달고 저장되지만,
+  // 손으로 적어둔 관찰까지 조용히 버리면 오히려 기록 누락이 된다) — 배제하는 건
+  // "명백히 다른 종류"임이 type으로 확인되는 경우뿐.
+  return rec.type === undefined || rec.type === 'preference-observation';
+}
+
 // records → 프롬프트용 압축 텍스트. signalType·observation·vsProfile·status만. 기각은 제외.
 // confirmedOnly=true 면 status='확정'만(평가·리스크·리포트 주입용), false 면 기각 외 전체(관찰 추출용).
 export function renderPrefRows(records, { confirmedOnly = false } = {}) {

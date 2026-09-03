@@ -6,6 +6,11 @@
 export function yamlValue(v) {
   if (v === null || v === undefined) return 'null';
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  // 문자열 배열(현재 유일한 용도는 `related:` 노트간 링크 — 2026-09-04 므네모시네
+  // 대정리에서 도입) — 아래 parseFrontmatter의 배열 분기와 짝을 이뤄 왕복을 보장한다.
+  // 이게 없으면 배열이 통짜 문자열로 파싱됐다가 다시 이스케이프돼 저장되면서
+  // `related: "[\"[[허브]]\"]"`처럼 뭉개진다(= Obsidian이 링크로 못 읽음).
+  if (Array.isArray(v)) return `[${v.map((el) => yamlValue(el)).join(', ')}]`;
   const s = String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   return `"${s}"`;
 }
@@ -25,6 +30,21 @@ export function updateFrontmatter(currentContent, updates) {
   return buildFrontmatter(merged);
 }
 
+// `["a", "b"]` 한 줄을 문자열 배열로 — 따옴표로 감싼 원소를 우선 인식하고(원소 안의
+// 쉼표·대괄호를 안전하게 통과), 따옴표 없이 손으로 쓴 `[a, b]`도 관대하게 받는다.
+function parseArrayValue(raw) {
+  const inner = raw.slice(1, -1).trim();
+  if (!inner) return [];
+  const items = [];
+  const re = /"((?:[^"\\]|\\.)*)"|([^,]+)/g;
+  let m;
+  while ((m = re.exec(inner)) !== null) {
+    if (m[1] !== undefined) items.push(m[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\'));
+    else if (m[2].trim()) items.push(m[2].trim());
+  }
+  return items;
+}
+
 // 아주 단순한 "key: value" frontmatter 파서 — buildFrontmatter의 역함수(왕복 보장).
 export function parseFrontmatter(content) {
   const m = String(content ?? '').match(/^---\n([\s\S]*?)\n---/);
@@ -37,6 +57,9 @@ export function parseFrontmatter(content) {
     if (raw === 'null') out[key] = null;
     else if (/^-?\d+(\.\d+)?$/.test(raw)) out[key] = Number(raw);
     else if (raw === 'true' || raw === 'false') out[key] = raw === 'true';
+    // 따옴표 없이 `[`로 시작·`]`로 끝나면 배열(yamlValue의 배열 분기가 만든 형태).
+    // 문자열 값은 항상 따옴표로 감싸여 저장되므로("[중요] ..." 같은 값) 여기 안 걸린다.
+    else if (raw.startsWith('[') && raw.endsWith(']')) out[key] = parseArrayValue(raw);
     else out[key] = raw.replace(/^"|"$/g, '').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
   }
   return out;

@@ -20,6 +20,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { isLivePreferenceObservation } from '../lib/preferences.mjs';
 
 const STATUSES = ['관찰', '승격후보', '확정', '기각'];
 const PENDING = ['관찰', '승격후보'];
@@ -85,7 +86,9 @@ function main() {
   }
   const dir = VAULT_PATHS.knowledge.profile;
   const records = existsSync(dir)
-    ? readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')))
+    ? readdirSync(dir).filter((f) => f.endsWith('.md'))
+      .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')))
+      .filter(isLivePreferenceObservation)
     : [];
   const facts = assemblePreferences(records, { status: opts.status });
   process.stdout.write(renderPreferenceFacts(facts, { json: opts.json }) + '\n');

@@ -275,5 +275,11 @@ export function buildMigratedPreferenceRecord(row, rowNum) {
     recordedAt: new Date().toISOString(),
   });
   const filename = `${sanitizeSegment(date)}-r${rowNum}.md`;
+  // ⚠️ 2026-09-04 므네모시네 대정리 이후 이 dir은 **라이브 v2 성향관찰 폴더와 같다**
+  // (예전엔 v2가 Profile/PreferenceObservations/ 하위폴더라 폴더 자체가 경계였다).
+  // 이 마이그레이션을 다시 돌리면 대정리에서 지운 v1 관찰 22건이 라이브 폴더로 되살아난다.
+  // 읽는 쪽이 preferences.mjs의 isLivePreferenceObservation으로 legacy:true를 걸러내므로
+  // 프롬프트에 섞이진 않지만(그 술어가 이 방어의 본체다), 파일 자체는 되살아나니
+  // 재실행 전엔 정말 필요한지 확인할 것.
   return { filename, content, dir: VAULT_PATHS.knowledge.profile };
 }
