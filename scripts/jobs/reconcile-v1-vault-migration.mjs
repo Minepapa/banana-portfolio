@@ -61,17 +61,18 @@ function readVaultHoldings() {
 // 조용히 몇 건을 못 쓴" 가장 심각한 실패 유형을 잡아낸다 — 그 이상의 필드별 정밀검증은
 // Holdings 하나로 이미 "같은 버그 클래스(숫자 파싱)가 이 코드 전반에 없다"는 걸
 // 증명했으므로 나머지 12종에 똑같은 로직을 반복하는 건 낮은 한계효용.
-// ⚠️ 2026-09-04 므네모시네 대정리 — 아래 `retired`가 붙은 6종은 이 대조의 전제("Vault는
+// ⚠️ 2026-09-04 므네모시네 대정리 — 아래 `retired`가 붙은 종목은 이 대조의 전제("Vault는
 // 2026-08-05 마이그레이션 산출물을 그대로 갖고 있다")가 오너 지시로 깨졌다. v1 이관분을
 // 의도적으로 삭제했으므로 v1 시트와 건수가 다른 게 **정상**이다. 그런데도 대조를 계속하면
 // 영구 오탐이 나고, 그걸 본 사람이 "마이그레이션이 덜 됐다"고 오판해 재실행하면 방금 지운
 // 141개가 되살아난다 — 그래서 조용히 통과시키지 않고 사유와 함께 명시적으로 스킵한다
-// (조용한 폴백 금지 원칙과 같은 선상). Facts/Ledger 4종은 대정리 범위 밖이라 그대로 유효.
+// (조용한 폴백 금지 원칙과 같은 선상). 배당금·수익금은 실제 재무 이력(대정리 범위 밖,
+// 삭제 안 함)이라 그대로 유효 — 일별스냅샷만 2026-09-04에 같은 이유로 추가 은퇴.
 const EVENT_LOG_CHECKS = [
   ['체결내역!A2:M', VAULT_PATHS.facts.ledger.executions, '체결내역'],
   ['배당금!A2:C', VAULT_PATHS.facts.ledger.dividends, '배당금'],
   ['수익금!A2:F', VAULT_PATHS.facts.ledger.profits, '수익금'],
-  ['일별스냅샷!A2:E', VAULT_PATHS.facts.ledger.dailySnapshots, '일별스냅샷'],
+  ['일별스냅샷!A2:E', VAULT_PATHS.facts.ledger.dailySnapshots, '일별스냅샷', '2026-09-04 v1 이관분 삭제, 오늘부터 라이브 값(월별잔고와 동일 잡이 매일 신규 기록)만 쌓음'],
   ['종목투자노트!A2:U', VAULT_PATHS.decisions.evaluations, '종목투자노트', '대정리에서 폴더째 삭제(19건)'],
   ['포지션저널!A2:P', VAULT_PATHS.decisions.positionJournal, '포지션저널', '대정리에서 폴더째 삭제(30건)'],
   ['리스크모니터!A2:H', VAULT_PATHS.decisions.riskMonitor, '리스크모니터', '대정리에서 폴더째 삭제(41건)'],

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeMonthlyBalanceSnapshot } from './update-monthly-balance-snapshot.mjs';
+import { computeMonthlyBalanceSnapshot, computeDailySnapshot } from './update-monthly-balance-snapshot.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
@@ -42,5 +42,43 @@ test('computeMonthlyBalanceSnapshot: 같은 달 안에서는 매번 같은 파�
 
 test('computeMonthlyBalanceSnapshot: 보유가 비어있어도(추정 안 하고) 0으로 정직하게', () => {
   const r = computeMonthlyBalanceSnapshot([], '2026-09-01');
+  assert.equal(r.total, 0);
+});
+
+// 2026-09-04 신설 — TWR·Sharpe·MDD 재계산용 일별 불변 이력(v1 이관분은 오너 지시로
+// 삭제, 오늘부터 라이브 값만 쌓는다).
+test('computeDailySnapshot: 파일명은 그날 날짜 그대로(연-월-일, -r{N} 없음)', () => {
+  const { filename } = computeDailySnapshot(holdings, '2026-09-05');
+  assert.equal(filename, '2026-09-05.md');
+});
+
+test('computeDailySnapshot: total은 MonthlyBalances와 같은 계산(buildHomeMirror 재사용, 재계산 로직 중복 없음)', () => {
+  const daily = computeDailySnapshot(holdings, '2026-09-05');
+  const monthly = computeMonthlyBalanceSnapshot(holdings, '2026-09-05');
+  assert.equal(daily.total, monthly.total);
+  assert.equal(daily.total, 15000000);
+  const fm = parseFrontmatter(daily.content);
+  assert.equal(fm.date, '2026-09-05');
+  assert.equal(fm.total, 15000000);
+});
+
+test('computeDailySnapshot: legacy 필드 없음(v1 이관분과 구분 — 이건 라이브 값)', () => {
+  const r = computeDailySnapshot(holdings, '2026-09-05');
+  assert.doesNotMatch(r.content, /legacy/);
+});
+
+test('computeDailySnapshot: DailySnapshots 폴더를 가리킨다', () => {
+  const r = computeDailySnapshot(holdings, '2026-09-05');
+  assert.equal(r.dir, VAULT_PATHS.facts.ledger.dailySnapshots);
+});
+
+test('computeDailySnapshot: 날짜가 다르면 파일명도 달라진다(월별잔고와 달리 매일 새 파일 — 불변 원장)', () => {
+  const a = computeDailySnapshot(holdings, '2026-09-05');
+  const b = computeDailySnapshot(holdings, '2026-09-06');
+  assert.notEqual(a.filename, b.filename);
+});
+
+test('computeDailySnapshot: 보유가 비어있어도 0으로 정직하게', () => {
+  const r = computeDailySnapshot([], '2026-09-05');
   assert.equal(r.total, 0);
 });
