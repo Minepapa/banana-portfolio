@@ -21,10 +21,15 @@
  * 재설계 — State/Holdings를 직접 쓰고 CashEvent·update-cash-from-ledger.mjs를
  * 아예 거치지 않는다. `reconcile-irp.mjs`도 같은 턴에 동일하게 재설계.
  *
- * 카카오 알림 파싱(parseCashAlarm)은 그대로 둔다(제거는 5단계, "안정화 후" —
- * Strategy 문서 참고) — 그 경로가 계속 Facts/Ledger/CashEvents에 기록하더라도
- * 이 세 계좌는 이제 update-cash-from-ledger.mjs가 그 파일들을 안 읽으므로
- * (ALL_ACCOUNTS에서 제외, update-cash-from-ledger.mjs 참고) 무해하게 무시된다.
+ * ⚠️ 카카오 알림 파싱(parseCashAlarm) 갱신(2026-09-03) — 원래는 "5단계, 안정화
+ * 후"까지 전부 그대로 둘 계획이었으나, 위탁·CMA는 오너가 이 잡의 결과를 나무
+ * 앱과 직접 대조해 실측 검증한 뒤 "위탁·CMA 먼저 진행" 지시로 5단계를 앞당겨
+ * parse-notifications-to-vault.mjs가 이제 이 두 계좌의 카카오 예수금 알림을
+ * 인식은 하되 Facts/Ledger/CashEvents엔 안 쓴다(그 파일 헤더 주석 참고). 즉
+ * 위탁·CMA는 카카오 원본 자체가 더 이상 안 쌓인다. **금현물만** 이번 정리
+ * 범위 밖이라 여전히 카카오가 계속 Facts/Ledger/CashEvents에 기록하고,
+ * update-cash-from-ledger.mjs가 그 파일들을 안 읽으므로(ALL_ACCOUNTS에서 제외)
+ * 무해하게 무시된다 — 원래 이 문단이 설명하던 "무해한 방치" 상태.
  *
  * IRP·연금저축·ISA는 스코프 밖: IRP는 reconcile-irp.mjs가 동일 원칙(직접기록,
  * 델타 없음)으로 별도 처리, 연금저축은 애초에 NH 계좌가 아님(삼성증권), ISA는
@@ -61,7 +66,14 @@ import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 const DRY_RUN = process.argv.includes('--dry-run');
 
 // 이 잡이 대사하는 계좌 — ISA·연금저축·IRP는 위 헤더 주석 참고, 스코프 밖.
-const NH_CASH_ACCOUNTS = new Set(['위탁', 'CMA', '금현물']);
+// export(2026-09-03, code-reviewer 지적) — 같은 결정("이 계좌는 API가 정본이라
+// 카카오/재구성 루프를 안 탄다")이 update-cash-from-ledger.mjs의 ALL_ACCOUNTS·
+// parse-notifications-to-vault.mjs의 인라인 제외 조건에도 각각 흩어져 있다.
+// 세 곳이 어긋나면(예: 여기서 계좌 하나를 빼먹으면 그 계좌 예수금이 영구
+// 동결) 조용한 사고로 이어지므로, vault-job-catalog-audit.test.js 같은
+// 구조적 가드가 세 상수를 대조할 수 있게 export한다(nh-accounts.test.js의
+// 신규 가드 테스트가 소비).
+export const NH_CASH_ACCOUNTS = new Set(['위탁', 'CMA', '금현물']);
 
 // 계좌잔고(getKrBalance) / 예수금및잔고(getGoldBalance) 응답 Output_0 → 예수금(원).
 // 순수함수 — 테스트 가능. drn_pbl_amt(출금가능금액) 우선, 없으면(금현물 응답엔

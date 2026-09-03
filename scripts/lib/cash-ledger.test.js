@@ -79,6 +79,27 @@ test('resolveCashAnchor: 저장값도 CashEvent도 없으면(완전 최초) base
   assert.equal(r.base, null);
 });
 
+// [핵심 안전장치] 2026-09-03, code-reviewer 지적 — 마이그레이션 3단계 롤백 함정
+// 재현. 위탁·CMA처럼 CashEvent 파싱이 중단된 계좌는 latestEvent가 중단 시점에
+// 영구 동결된다 — stored(직접 API로 매일 갱신)가 latestEvent보다 최신이면
+// stored를 우선해야, 실수로 이 계좌를 되돌렸을 때 동결된 옛 앵커로 기준점이
+// 튀어 예수금이 이중반영되는 사고를 막을 수 있다.
+test('[핵심 안전장치] resolveCashAnchor: stored가 latestEvent보다 최신이면 stored 우선(동결된 옛 CashEvent에 안 밀림)', () => {
+  const r = resolveCashAnchor({
+    stored: { base: 5797267, baseTs: '2026-09-03 16:08:00', source: 'NH API 직접조회' },
+    latestEvent: { balance: 1234567, ts: '2026-08-19 10:00:00' },
+  });
+  assert.deepEqual(r, { base: 5797267, baseTs: '2026-09-03 16:08:00', source: 'NH API 직접조회' });
+});
+
+test('resolveCashAnchor: latestEvent가 stored보다 최신이면 기존대로 latestEvent 우선(회귀 방지)', () => {
+  const r = resolveCashAnchor({
+    stored: { base: 100, baseTs: '2026-08-01 00:00:00', source: '자동' },
+    latestEvent: { balance: 200, ts: '2026-08-02 00:00:00' },
+  });
+  assert.deepEqual(r, { base: 200, baseTs: '2026-08-02 00:00:00', source: '자동' });
+});
+
 test('resolveDesignatedCashBalance: 위탁+금현물 합산(오너 확정 — 금현물 대기현금은 위탁과 합쳐 취급)', () => {
   assert.equal(resolveDesignatedCashBalance({ wtCash: 1164516, goldCash: 538637 }), 1703153);
 });

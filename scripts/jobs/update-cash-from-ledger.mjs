@@ -62,7 +62,10 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // 위탁·CMA·금현물·IRP는 2026-09-03부로 각자의 API 직접조회 잡(reconcile-nh-cash.mjs·
 // reconcile-irp.mjs)이 State/Holdings를 직접 덮어써 이 재구성 루프를 안 탄다(파일
 // 상단 "범위 축소" 주석 참고).
-const ALL_ACCOUNTS = ['ISA', '연금저축'];
+// export(2026-09-03, code-reviewer 지적) — reconcile-nh-cash.mjs의 NH_CASH_ACCOUNTS·
+// parse-notifications-to-vault.mjs의 카카오 예수금 제외 목록과 서로 어긋나지 않는지
+// 구조적으로 대조하기 위해(nh-accounts.test.js 신규 가드 테스트가 소비).
+export const ALL_ACCOUNTS = ['ISA', '연금저축'];
 
 function readVaultFiles(dir) {
   if (!existsSync(dir)) return [];

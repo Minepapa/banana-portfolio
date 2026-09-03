@@ -26,6 +26,17 @@
  * (기준점+델타)은 State 쓰기 잡(뒤 Phase)이 이 원문들을 읽어 수행한다 — 이 잡은 원문
  * 저장까지만 책임진다(cash-ledger.mjs의 계산 함수는 여기서 호출하지 않음).
  *
+ * ⚠️ 마이그레이션 3단계 실측 검증 후 카카오 예수금 파싱 일부 중단(2026-09-03,
+ * `Log/Strategy/2026-09-02-NH-API-우선-KIS-카카오파싱-역할축소-결정.md`) — 위탁·CMA
+ * 예수금은 이제 reconcile-nh-cash.mjs(NH API 직접조회)가 State/Holdings를 직접
+ * 덮어쓴다("통일 루프 깸"). update-cash-from-ledger.mjs도 이 두 계좌의 CashEvents를
+ * 더 이상 안 읽어서(ALL_ACCOUNTS가 ISA·연금저축 2계좌로 축소, 2026-09-03), 계속
+ * 파싱해봐야 아무도 안 읽는 죽은 데이터다 — 인식은 하되(Firestore 정리 비용 회피)
+ * 장부엔 안 쓴다. 오너가 위탁 계좌 실제 예수금으로 필드 매핑을 직접 검증한 뒤 승인
+ * (나무 앱 출금가능금액과 정확히 일치 확인). 금현물은 예수금도 같은 방식으로
+ * 검증됐지만 이번 정리 범위엔 명시적으로 안 넣음(사유 미확인, CASH_ALARM_
+ * API_EXCLUDED 참고) — ISA·연금저축은 API 대안이 없어 그대로 유지.
+ *
  * Ledger 하위폴더(2026-08-04, 오너 요청으로 세분화): Facts/Ledger/Executions(체결+
  * 금현물)·Dividends(배당)·CashEvents(예수금앵커, 2026-08-18 추가)·FundPurchases(펀드적립,
  * 2026-08-21 배선)·Exchanges(환전, 2026-08-21 배선) — vault-paths.mjs 참고.
@@ -83,6 +94,13 @@ function goldToExecutionEvent(g) {
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
+// 카카오 예수금 알림을 인식은 하되 Facts/Ledger/CashEvents엔 안 쓰는 계좌
+// (2026-09-03, "위탁·CMA 먼저 진행" — 위 헤더 주석 참고). export(code-reviewer
+// 지적) — reconcile-nh-cash.mjs의 NH_CASH_ACCOUNTS의 부분집합이어야 한다(API로
+// 직접 커버 안 되는 계좌를 실수로 여기 넣으면 그 계좌 예수금이 영구 유실) —
+// nh-accounts.test.js의 구조적 가드 테스트가 이 관계를 대조한다.
+export const CASH_ALARM_API_EXCLUDED = new Set(['위탁', 'CMA']);
+
 async function main() {
   if (!DRY_RUN) {
     mkdirSync(VAULT_PATHS.facts.ledger.executions, { recursive: true });
@@ -96,7 +114,7 @@ async function main() {
   const inboxDocs = await readKakaoInbox(db);
   console.log(`📨 카카오 수신함(Firestore kakaoInbox) ${inboxDocs.length}건 스캔`);
 
-  let execNew = 0, divNew = 0, cashNew = 0, fundNew = 0, exchNew = 0, skip = 0, unrecognized = 0, quantExcluded = 0;
+  let execNew = 0, divNew = 0, cashNew = 0, fundNew = 0, exchNew = 0, skip = 0, unrecognized = 0, quantExcluded = 0, cashApiExcluded = 0;
   // ⚠️ 코드리뷰 지적(2026-08-22, 커밋 전) — 처음엔 훑은 문서를 결과와 무관하게 전부
   // 지웠는데, 그러면 "어느 파서도 못 알아본 알림"(광고가 아니라 새 브로커 문구·아직
   // 안 만든 이벤트 타입일 수 있음)이 Vault에 아무 기록도 안 남긴 채 원문째로 영구
@@ -152,6 +170,18 @@ async function main() {
 
     const c = parseCashAlarm(body, ts);
     if (c) {
+      // ⚠️ 예수금 카카오 파싱 중단(2026-09-03, 마이그레이션 3단계 실측 검증 완료 후
+      // 오너 확인 — "위탁·CMA 먼저 진행") — reconcile-nh-cash.mjs(NH API 직접조회)가
+      // 위탁·CMA 예수금을 State/Holdings에 직접 덮어쓰고, update-cash-from-ledger.mjs
+      // 는 이제 이 두 계좌의 CashEvents를 아예 안 읽는다(ALL_ACCOUNTS가 ISA·연금저축
+      // 2계좌로 축소됨, 2026-09-03). 즉 이 두 계좌의 CashEvent는 이미 완전히 죽은
+      // 데이터라 계속 써봐야 아무도 안 읽는다 — 인식은 하되(Firestore 정리 비용
+      // 회피) 장부엔 안 쓴다. 금현물은 예수금도 같은 잡으로 검증됐지만(오너 확인:
+      // "위탁,CMA, 금현물 예수금은 맞아") 이번 정리 범위엔 명시적으로 안 들어감 —
+      // 사유 미확인, 금현물 체결(iem_nm) 검증이 아직 안 끝난 것과 관련 있을 수
+      // 있음. 금현물 CashEvent는 그대로 유지(update-cash-from-ledger.mjs가
+      // 안 읽으므로 무해).
+      if (CASH_ALARM_API_EXCLUDED.has(c.account)) { cashApiExcluded++; processedIds.push(id); continue; }
       const { filename, content, dir } = buildCashEventRecord(c);
       const filepath = join(dir, filename);
       if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
@@ -197,7 +227,8 @@ async function main() {
   console.log(
     `\n✅ 완료 — 체결 +${execNew}(금현물 포함) · 배당 +${divNew} · 예수금앵커 +${cashNew} · ` +
     `펀드적립 +${fundNew} · 환전 +${exchNew} · ` +
-    `중복스킵 ${skip} · 퀀트계좌 제외 ${quantExcluded}(KIS API가 정본) · 미인식 ${unrecognized} · ` +
+    `중복스킵 ${skip} · 퀀트계좌 제외 ${quantExcluded}(KIS API가 정본) · ` +
+    `위탁·CMA 예수금 제외 ${cashApiExcluded}(NH API가 정본) · 미인식 ${unrecognized} · ` +
     `수신함 정리 ${DRY_RUN ? 0 : processedIds.length}건` +
     (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );

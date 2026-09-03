@@ -51,17 +51,31 @@ export function settleCash(base, delta) {
   return { cash: Math.max(0, raw), raw, negative: raw < 0 };
 }
 
-// 계좌 기준점 결정 — 항상 "가장 최근 CashEvent"를 신뢰한다(자동 알림·수동 스냅샷
+// 계좌 기준점 결정 — 기본은 "가장 최근 CashEvent"를 신뢰(자동 알림·수동 스냅샷
 // 구분 없이 시각 기준 최신 것이 이긴다 — 2026-08-18 설계통합, 위 헤더 주석 참고).
 // CashEvent가 아직 하나도 없으면(이 기능 최초 실행 등) 기존 저장값(마이그레이션
 // 스냅샷 등)을 임시 기준으로 유지 — source:'이관'으로 표시해 첫 실제 기록이 오면
 // 반드시 대체되게 한다. latestEvent: { balance, ts } | null. stored: { base, baseTs,
 // source } | null.
+//
+// ⚠️ 버그 수정(2026-09-03, code-reviewer 지적 — 마이그레이션 3단계 롤백 함정) —
+// 원래는 latestEvent가 있으면 시각 비교 없이 무조건 그걸 썼다. 위탁·CMA처럼
+// CashEvent 파싱이 중단된 계좌(reconcile-nh-cash.mjs가 State/Holdings를 직접
+// 쓰는 계좌, parse-notifications-to-vault.mjs 참고)는 latestEvent가 그 중단
+// 시점에 영구 동결된다 — 만약 나중에 이 계좌를 실수로 ALL_ACCOUNTS에 되돌리면
+// (예: 마이그레이션 롤백), 동결된 옛 latestEvent가 stored(직접 API로 매일
+// 갱신되던 최신값)보다 무조건 우선시돼 기준점이 수개월 전으로 튀고, 그 사이
+// 쌓인 flow가 델타로 다시 더해져 예수금 이중반영이 난다 — 이 프로젝트가 이미
+// 두 번 겪은 사고 클래스. stored.baseTs가 latestEvent.ts보다 최신이면 stored를
+// 우선하도록 시각 비교를 추가해 이 경로를 구조적으로 막는다.
 export function resolveCashAnchor({ stored, latestEvent }) {
-  if (latestEvent) {
+  const hasStored = !!(stored && Number.isFinite(stored.base));
+  const storedIsNewer = hasStored && stored.baseTs && latestEvent
+    && String(stored.baseTs) > String(latestEvent.ts);
+  if (latestEvent && !storedIsNewer) {
     return { base: latestEvent.balance, baseTs: latestEvent.ts, source: '자동' };
   }
-  if (stored && Number.isFinite(stored.base)) {
+  if (hasStored) {
     return { base: stored.base, baseTs: stored.baseTs ?? '', source: stored.source || '이관' };
   }
   return { base: null, baseTs: '', source: null };
