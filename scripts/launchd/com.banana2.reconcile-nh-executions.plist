@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.reconcile-nh-executions</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>reconcile-nh-executions</string>
+  </array>
+  <!-- 평일 15:55 KST(2026-09-03 신설, 마이그레이션 4단계) — NH REST 체결조회
+       (getKrDailyOrderExecution·getGoldExecution)로 위탁·금현물 당일 체결을 직접
+       폴링해 Facts/Ledger/Executions에 기록(CMA는 체결 자체가 없는 계좌라 제외).
+       ⚠️ 실측 확인(2026-09-03): 이 API도 IRP(reconcile-irp-executions)와 같은
+       패턴으로 장중엔 빈 응답(rsp_cd 11512)만 반환, 장마감(15:30) 이후에야 데이터가
+       뜨는 것으로 보임 — 15:55이면 여유. update-holdings-from-executions(16:05)
+       보다 먼저 돌아야 그날 체결을 그날 안에 보유수량에 반영할 수 있다. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>55</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>55</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>55</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>55</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>55</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/reconcile-nh-executions.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/reconcile-nh-executions.log</string>
+</dict>
+</plist>

@@ -19,6 +19,8 @@ export const JOB_LABELS = {
   // API 없는 ISA·연금저축 2계좌만 처리(6계좌→2계좌로 범위 축소).
   'reconcile-irp': 'IRP 계좌 KIS API 종목 대사 + 예수금 State/Holdings 직접기록',
   'reconcile-nh-cash': '위탁·CMA·금현물 예수금 NH PLUG API 직접조회(State/Holdings 직접기록, 2026-09-03 신설)',
+  'reconcile-irp-executions': 'IRP 체결을 KIS 퇴직연금 체결조회 API로 직접 폴링해 Facts/Ledger/Executions 기록(2026-09-03 신설)',
+  'reconcile-nh-executions': '위탁·금현물 체결을 NH REST 체결조회 API로 직접 폴링해 Facts/Ledger/Executions 기록(2026-09-03 신설)',
   'update-cash-from-ledger': '계좌별(ISA·연금저축, API 없는 2계좌만) 예수금 실잔고 계산',
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
   'update-monthly-balance-snapshot': '월별 잔고 스냅샷 매일 자동 기록(대시보드 막대그래프용)',
@@ -51,6 +53,8 @@ export const JOB_REMEDIATION = {
   'execute-quant': '~/.config/banana-portfolio/kis-key.json(KIS 크리덴셜·퀀트계좌 설정) 확인',
   'reconcile-irp': '~/.config/banana-portfolio/kis-key.json(KIS 크리덴셜·IRP계좌 설정) 확인',
   'reconcile-nh-cash': '~/.config/banana-portfolio/nhplug-key.json(NH PLUG 크리덴셜) 확인',
+  'reconcile-irp-executions': '~/.config/banana-portfolio/kis-key.json(KIS 크리덴셜·IRP계좌 설정) 확인',
+  'reconcile-nh-executions': '~/.config/banana-portfolio/nhplug-key.json(NH PLUG 크리덴셜) 확인',
   // sync-firestore-mirror.mjs·parse-notifications-to-vault.mjs(2026-08-22 Firestore
   // 전환 이후) 둘 다 이 서비스계정 키가 없으면 즉시 throw로 죽는다.
   'sync-firestore-mirror': '~/.config/banana-portfolio-v2/firebase-adminsdk-key.json(Firebase Admin 키) 확인',
