@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 /**
- * 장중 포트폴리오 동기화 — 위탁·금현물·IRP 체결/예수금 감지→반영을 하루 종일
- * 10분 간격으로 돌려, 기존 "장마감 후 한 번" 배치의 반영 지연을 줄인다.
+ * 장중 포트폴리오 동기화 — 위탁·금현물·IRP·ISA·연금저축 체결/예수금 감지→반영을
+ * 하루 종일 10분 간격으로 돌려, 기존 "장마감 후 한 번" 배치의 반영 지연을 줄인다.
  *
  * 왜(2026-09-03, 오너 지시): "체결이나 금액 변경이 있어도 16시경 배치까지 확인이
  * 안 되는 게 불편하다"는 요청 — 그 사이엔 앱(대시보드)에서 최신 값을 볼 수 없었다.
  * 기존 고정시각 잡들(reconcile-nh-executions 평일 15:55·reconcile-irp-executions
  * 평일 15:50·update-holdings-from-executions 평일 16:05·reconcile-nh-cash 평일
- * 16:08·reconcile-irp 평일 16:07)은 **의도적으로 그대로 둔다** — 오너 명시("지금
- * 구조를 백업으로 가지고 있으면서") — 이 오케스트레이터가 언젠가 조용히 실패해도
- * 하루 최소 1회는 확실히 도는 안전망 역할. 이 잡은 그 다섯 스크립트를 전혀
- * 수정하지 않고 그대로 자식 프로세스로 순서대로 실행한다 — update-holdings-
- * prices.mjs(10분마다, 2026-08-25)가 이미 증명한 패턴을 그대로 재사용.
+ * 16:08·reconcile-irp 평일 16:07·update-cash-from-ledger 평일 16:10)은 **의도적으로
+ * 그대로 둔다** — 오너 명시("지금 구조를 백업으로 가지고 있으면서") — 이
+ * 오케스트레이터가 언젠가 조용히 실패해도 하루 최소 1회는 확실히 도는 안전망 역할.
+ * 이 잡은 그 여섯 스크립트를 전혀 수정하지 않고 그대로 자식 프로세스로 순서대로
+ * 실행한다 — update-holdings-prices.mjs(10분마다, 2026-08-25)가 이미 증명한 패턴을
+ * 그대로 재사용.
  *
  * 순서가 중요하다(체결 감지 → 반영 → 예수금 대사):
  *   1. reconcile-nh-executions.mjs   — 위탁·금현물 체결 감지 → Facts/Ledger/Executions
@@ -23,6 +24,11 @@
  *      계속 막아준다 — 2026-09-03 신설)
  *   4. reconcile-nh-cash.mjs   — 위탁·CMA·금현물 예수금 State/Holdings 직접기록
  *   5. reconcile-irp.mjs      — IRP 잔고 대사 + 예수금 State/Holdings 직접기록
+ *   6. update-cash-from-ledger.mjs — ISA·연금저축(API 없는 2계좌) 예수금을 CashEvent
+ *      원장에서 재계산. scripts/tools/record-cash-anchor.mjs로 텔레그램 세션이 기록한
+ *      수동 앵커도 이 단계에서 반영된다 — 빠지면 그 두 계좌만 16:10 고정시각까지 못
+ *      읽혀 "체결·금액 변경이 바로 안 보인다"는 원래 오너 불편이 그대로 남는다
+ *      (2026-09-03 기존 5단계에서 누락된 걸 뒤늦게 발견해 추가).
  *
  * sync-firestore-mirror.mjs(대시보드가 읽는 데이터)는 이미 독립적으로 10분마다
  * 돌고 있어(2026-08-23) 여기서 다시 호출하지 않는다 — 최악의 경우 이 잡이 방금 쓴
@@ -32,13 +38,13 @@
  *
  * 각 단계는 자식 프로세스로 독립 실행(60초 타임아웃) — 한 단계가 실패하거나 멎어도
  * 나머지 단계는 계속 진행한다(reconcile-nh-executions.mjs의 "계좌 하나 실패해도
- * 나머지는 계속"과 동일 원칙을 오케스트레이션 레벨로 확장). 5개 스크립트 각각이
+ * 나머지는 계속"과 동일 원칙을 오케스트레이션 레벨로 확장). 6개 스크립트 각각이
  * 이미 자기 자신의 크리덴셜 확인·경고·dedup을 갖고 있으므로, 이 오케스트레이터는
  * 순서 보장과 장애 격리만 책임진다 — 판단 로직을 중복 구현하지 않는다.
  *
  * 사용법:
  *   node scripts/jobs/intraday-portfolio-sync.mjs            # 실제로 반영
- *   node scripts/jobs/intraday-portfolio-sync.mjs --dry-run  # 5개 전부 드라이런으로 전달
+ *   node scripts/jobs/intraday-portfolio-sync.mjs --dry-run  # 6개 전부 드라이런으로 전달
  */
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -54,6 +60,7 @@ const STEPS = [
   'update-holdings-from-executions.mjs',
   'reconcile-nh-cash.mjs',
   'reconcile-irp.mjs',
+  'update-cash-from-ledger.mjs',
 ];
 
 async function main() {

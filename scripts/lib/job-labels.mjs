@@ -21,7 +21,7 @@ export const JOB_LABELS = {
   'reconcile-nh-cash': '위탁·CMA·금현물 예수금 NH PLUG API 직접조회(State/Holdings 직접기록, 2026-09-03 신설)',
   'reconcile-irp-executions': 'IRP 체결을 KIS 퇴직연금 체결조회 API로 직접 폴링해 Facts/Ledger/Executions 기록(2026-09-03 신설)',
   'reconcile-nh-executions': '위탁·금현물 체결을 NH REST 체결조회 API로 직접 폴링해 Facts/Ledger/Executions 기록(2026-09-03 신설)',
-  'intraday-portfolio-sync': '체결·예수금 감지→반영 5단계(reconcile-nh-executions 등)를 10분마다 순서대로 실행해 장마감까지 안 기다리고 빠르게 반영(2026-09-03 신설, 고정시각 잡은 안전망으로 그대로 유지)',
+  'intraday-portfolio-sync': '체결·예수금 감지→반영 6단계(reconcile-nh-executions 등 + update-cash-from-ledger)를 10분마다 순서대로 실행해 장마감까지 안 기다리고 빠르게 반영(2026-09-03 신설, 고정시각 잡은 안전망으로 그대로 유지)',
   'update-cash-from-ledger': '계좌별(ISA·연금저축, API 없는 2계좌만) 예수금 실잔고 계산',
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
   'update-monthly-balance-snapshot': '월별 잔고 스냅샷 매일 자동 기록(대시보드 막대그래프용)',
