@@ -42,9 +42,11 @@ import { SCHEDULE } from './weekly-schedule-summary.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LAUNCHD_DIR = join(__dirname, '..', 'launchd');
 // 2026-08-29: README.md → 무인잡-카탈로그.md로 개명("README"는 어디서나 쓰이는 일반
-// 명칭이라 무슨 노트인지 알기 어렵다는 오너 지적).
-const JOB_CATALOG_PATH = join(VAULT_PATHS.root, 'Knowledge', 'Jobs', '무인잡-카탈로그.md');
-const DEPT_DOC_PATH = join(VAULT_PATHS.root, 'Knowledge', 'Jobs', '부서별-텔레그램-보고.md');
+// 명칭이라 무슨 노트인지 알기 어렵다는 오너 지적). 2026-09-04: Knowledge/Jobs/ →
+// Knowledge/Meta/로 이동(므네모시네 대정리 — "볼트 전체가 바뀔 때 일괄 갱신해야
+// 하는 문서"를 Index.md·사용안내·파일배선도와 한 폴더로 통합, 오너 지시).
+const JOB_CATALOG_PATH = join(VAULT_PATHS.root, 'Knowledge', 'Meta', '무인잡-카탈로그.md');
+const DEPT_DOC_PATH = join(VAULT_PATHS.root, 'Knowledge', 'Meta', '부서별-텔레그램-보고.md');
 
 const PLUTIL_AVAILABLE = (() => {
   try { execFileSync('plutil', ['-help'], { stdio: 'ignore' }); return true; } catch { return false; }

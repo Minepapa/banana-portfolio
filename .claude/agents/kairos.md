@@ -76,7 +76,7 @@ tools: Read, Grep, Glob
 
 ## 메모리 (2026-08-29 폐기 — 죽은 참조였음이 확인됨)
 ~~작업 시작 시 `.claude/agents/memory/kairos.md`를 읽는다~~ — 이 디렉토리는 실존한 적
-없었다(`PANTHEON.md` §5, `Knowledge/므네모시네-파일배선도.md` 클러스터 5 참고). 팩터 판단
+없었다(`PANTHEON.md` §5, `Knowledge/Meta/므네모시네-파일배선도.md` 클러스터 5 참고). 팩터 판단
 교훈·백테스트 결과 패턴은 보고 본문에 그때그때 담아 전달하는 것으로 갈음 — 별도 영속
 기록 없음.
 

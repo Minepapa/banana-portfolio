@@ -50,4 +50,4 @@ tools: Read, Grep, Glob
 ~~작업 시작 시 `.claude/agents/memory/hermes.md`를 읽는다~~ — 이 디렉토리는 실존한 적 없었다.
 정합 사고·소스 신뢰도 교훈은 보고 본문에 그때그때 담아 전달하는 것으로 갈음 — 별도 영속
 기록 없음. ~~worklog(memory/worklog.md) "정책" 주무 부서~~ 역할도 같은 이유로 폐기됨
-(`PANTHEON.md` §4·§5, `Knowledge/므네모시네-파일배선도.md` 클러스터 5 참고).
+(`PANTHEON.md` §4·§5, `Knowledge/Meta/므네모시네-파일배선도.md` 클러스터 5 참고).

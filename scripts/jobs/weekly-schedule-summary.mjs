@@ -7,7 +7,7 @@
  * ⚠️ 설계 판단 — 완전 정적 목록(하드코딩), Vault 조회·LLM 호출 없음. 이 잡의 역할은
  * "지금 시스템에 어떤 주기적 보고가 배선돼 있는지"를 알려주는 것뿐이라 매번 계산할
  * 게 없다 — launchd plist가 실제 스케줄의 정본이고, 이 목록은 그걸 사람이 읽기 좋게
- * 옮겨 적은 사본이다(므네모시네 Knowledge/Jobs/부서별-텔레그램-보고.md의 "주기적" 표와
+ * 옮겨 적은 사본이다(므네모시네 Knowledge/Meta/부서별-텔레그램-보고.md의 "주기적" 표와
  * 동일 내용 — 그 문서와 이 배열 둘 다 갱신해야 함, 아래 SCHEDULE 주석 참고).
  *
  * ⚠️ 실사고(2026-08-29 오너 지적) — daily-execution-report(평일 16:15, 2026-08-24
@@ -16,7 +16,7 @@
  * 어긴 사례, 추가함.
  *
  * ⚠️ 유지보수 — 새 주기적(이벤트 무관 스케줄) 보고가 추가되거나 시각이 바뀌면 반드시
- * ①아래 SCHEDULE 배열 ②Knowledge/Jobs/부서별-텔레그램-보고.md의 "주기적" 표
+ * ①아래 SCHEDULE 배열 ②Knowledge/Meta/부서별-텔레그램-보고.md의 "주기적" 표
  * ③해당 launchd plist 세 곳을 같이 갱신할 것 — 하나만 바꾸면 이 요약이 거짓말을 하게
  * 된다. 이벤트기반 보고(가격워치·신규현금배분·퀀트제안·잡경고 등)는 여기 안 넣는다
  * — "이벤트와 상관없이 주기적으로 일어나는 보고"만 다루기로 오너가 명시했다.
@@ -29,7 +29,7 @@ import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 const DRY_RUN = process.argv.includes('--dry-run');
 const DEPARTMENT_LABEL = '운영실 Hermes';
 
-// 순수 데이터 — Knowledge/Jobs/부서별-텔레그램-보고.md의 "주기적" 표와 반드시 일치시킬 것.
+// 순수 데이터 — Knowledge/Meta/부서별-텔레그램-보고.md의 "주기적" 표와 반드시 일치시킬 것.
 // script 필드(2026-08-29 추가)는 화면 표시엔 안 쓰이지만(buildWeeklyScheduleText 참고)
 // vault-job-catalog-audit.test.js(코드 저장소)가 부서별-텔레그램-보고.md의 "**주기적**"
 // 행과 이 배열을 스크립트 파일명 기준으로 자동 대조하는 데 쓴다 — daily-execution-report
@@ -54,7 +54,7 @@ export function buildWeeklyScheduleText(schedule = SCHEDULE) {
     ...lines,
     '',
     '이 외 나머지는 전부 이벤트 발생 시에만 오는 보고입니다(가격워치·신규현금배분·',
-    '퀀트제안·잡경고 등) — 전체 목록은 Knowledge/Jobs/부서별-텔레그램-보고.md 참고.',
+    '퀀트제안·잡경고 등) — 전체 목록은 Knowledge/Meta/부서별-텔레그램-보고.md 참고.',
   ].join('\n');
 }
 
