@@ -68,7 +68,10 @@
  * 실보유를 이미 반영하고 있어(update-holdings-from-executions.mjs가 계좌번호
  * 43****82-29 매칭으로 유지) 이제 그쪽을 기준으로 쓴다 — 구글시트 의존 제거.
  *
- * 사용: node scripts/jobs/reconcile-irp.mjs
+ * 사용:
+ *   node scripts/jobs/reconcile-irp.mjs            # 실제로 반영
+ *   node scripts/jobs/reconcile-irp.mjs --dry-run  # 조회만, 쓰기 없음(2026-09-03
+ *     신설 — intraday-portfolio-sync.mjs가 이 잡을 안전하게 테스트할 수 있도록)
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -78,6 +81,8 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { buildCashHoldingRecord } from '../lib/holdings-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
+
+const DRY_RUN = process.argv.includes('--dry-run');
 
 // IRP 보유(State/Holdings) — 순수 함수. 2026-08-22 이전엔 v1 구글시트(계좌별 탭)를
 // 장부 기준으로 썼는데, Phase 8·9 완료로 State/Holdings가 이미 IRP 실보유를 반영하고
@@ -149,9 +154,11 @@ async function main() {
       account: 'IRP', balance: cash, raw: cash, negative: cash < 0,
       anchorBase: cash, anchorTs: nowTs, anchorSource: 'KIS API 직접조회',
     });
-    mkdirSync(dir, { recursive: true });
-    writeAtomic(join(dir, filename), content);
-    console.log(`  + [예수금] IRP ${nowTs} 잔고 ${cash.toLocaleString()}원`);
+    console.log(`  + [예수금${DRY_RUN ? '(예정)' : ''}] IRP ${nowTs} 잔고 ${cash.toLocaleString()}원`);
+    if (!DRY_RUN) {
+      mkdirSync(dir, { recursive: true });
+      writeAtomic(join(dir, filename), content);
+    }
   } else if (cash === 0) {
     console.log('  ⚠️ IRP 예수금이 0으로 응답(이 계좌에서 간헐적으로 발생하는 걸로 실측됨) — 신뢰 불가로 기록 건너뜀(기존 State/Holdings 값 유지)');
   } else {

@@ -118,6 +118,10 @@ export const EXPECTED_INTERVALS_MS = {
   'sync-firestore-mirror': 10 * 60 * 1000,
   'update-allocation-from-holdings': 10 * 60 * 1000,
   'update-holdings-prices': 10 * 60 * 1000,
+  // intraday-portfolio-sync(2026-09-03 신설) — 같은 10분 패턴(StartInterval=600).
+  // 위 세 잡과 동일 원칙: 등록값이 실제 주기와 정확히 같아야 진짜 정지를 늦게
+  // 안 잡는다.
+  'intraday-portfolio-sync': 10 * 60 * 1000,
   // telegram-session-health-check(2026-08-31 신설) — 상시 텔레그램 세션 MCP 연결
   // 끊김 감지·자동복구 잡 자체도 StartInterval=600(10분마다). 이 잡이 조용해지면
   // "그 조용해짐을 감지해 복구할 다른 무엇"이 없다는 게 health-watcher 자기 자신과

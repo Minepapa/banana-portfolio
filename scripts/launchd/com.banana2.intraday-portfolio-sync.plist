@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.intraday-portfolio-sync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>intraday-portfolio-sync</string>
+  </array>
+  <!-- 10분 간격(2026-09-03 신설, 오너 지시 — "체결이나 금액 변경을 16시경 배치까지
+       기다리지 않고 확인하고 싶다"). update-holdings-prices.mjs(2026-08-25, 10분마다)
+       와 동일 패턴 — 하루 종일 이 간격으로 돌아도 장외엔 각 단계(reconcile-nh-
+       executions 등)가 내부적으로 "오늘 체결 없음"만 반환하며 스스로 조용히
+       끝난다. 기존 고정시각 잡(reconcile-nh-executions 15:55 등)은 안전망으로
+       그대로 유지 — 이 잡은 그걸 대체하지 않고 같은 스크립트를 더 자주 돌릴
+       뿐이다(intraday-portfolio-sync.mjs 헤더 주석 참고). -->
+  <key>StartInterval</key>
+  <integer>600</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/intraday-portfolio-sync.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/intraday-portfolio-sync.log</string>
+</dict>
+</plist>
