@@ -121,6 +121,45 @@ export function parseFundBuy(body, tsRaw) {
   return { fundName, amount, nav, date, units: (amount / nav) * 1000 };
 }
 
+// ── 펀드 정기 평가 파서 (삼성증권 "펀드수익률 및 평가금액 안내", 매달 발송) ─
+// parseFundBuy(매수 트리거 이벤트)와 다른 메시지 — 매달 정기적으로 "이 날짜 기준
+// 원금·평가금액·수익률"을 보고하는 스냅샷이다(2026-09-02 오너 공유, Strategy 문서
+// "신규 발견" 절 — Log/Strategy/2026-09-02-NH-API-우선-KIS-카카오파싱-역할축소-
+// 결정.md 참고). "매수기준가" 문구가 없어 parseFundBuy와 안 겹친다.
+const FUND_VAL_DATE = /(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\s*기준/;
+const FUND_VAL_NAME = /종목명\s*:\s*([^\n\r]+)/;
+const FUND_VAL_PRINCIPAL = /원금\s*:\s*([\d,]+)\s*원/;
+const FUND_VAL_AMOUNT = /평가금액\s*:\s*([\d,]+)\s*원/;
+// 수익금·수익률은 손실 구간(펀드 평가손)이면 음수로 올 수 있어 cleanNum(부호 제거)을
+// 안 쓴다 — 부호를 보존한 채 직접 파싱(콤마만 제거).
+const FUND_VAL_PROFIT = /수익금\s*:\s*(-?[\d,]+)\s*원/;
+const FUND_VAL_RATE = /수익률\s*:\s*(-?[\d.]+)\s*%/;
+
+export function parseFundValuation(body, tsRaw) {
+  if (!(body.includes('펀드수익률') && body.includes('평가금액'))) return null;
+  const nm = body.match(FUND_VAL_NAME);
+  const pm = body.match(FUND_VAL_PRINCIPAL);
+  const am = body.match(FUND_VAL_AMOUNT);
+  if (!nm || !pm || !am) return null;
+  const fundName = nm[1].trim();
+  const principal = parseInt(cleanNum(pm[1]), 10);
+  const valuationAmount = parseInt(cleanNum(am[1]), 10);
+  if (!fundName || !Number.isFinite(principal) || principal <= 0 || !Number.isFinite(valuationAmount) || valuationAmount < 0) return null;
+  const gm = body.match(FUND_VAL_PROFIT);
+  const rm = body.match(FUND_VAL_RATE);
+  const profitAmount = gm ? parseInt(gm[1].replace(/,/g, ''), 10) : null;
+  const profitPct = rm ? parseFloat(rm[1]) : null;
+  const dm = body.match(FUND_VAL_DATE);
+  const p = (n) => String(n).padStart(2, '0');
+  const date = dm ? `${dm[1]}-${p(dm[2])}-${p(dm[3])}` : normalizeDateTime(tsRaw).slice(0, 10);
+  return {
+    fundName, principal, valuationAmount,
+    profitAmount: Number.isFinite(profitAmount) ? profitAmount : null,
+    profitPct: Number.isFinite(profitPct) ? profitPct : null,
+    date,
+  };
+}
+
 // ── 금현물 매수 파서 (NH투자증권 "매수 주문체결", 단위 g) ─
 // 주식 체결은 "주" 단위라 parseExecution(NH)에 먼저 잡히고, 금은 "g" 단위라 거기서 미스 →
 // 여기로 떨어진다. 가드를 g 단위로 둬 일반 체결과 충돌하지 않음.

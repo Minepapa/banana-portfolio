@@ -39,7 +39,8 @@
  *
  * Ledger 하위폴더(2026-08-04, 오너 요청으로 세분화): Facts/Ledger/Executions(체결+
  * 금현물)·Dividends(배당)·CashEvents(예수금앵커, 2026-08-18 추가)·FundPurchases(펀드적립,
- * 2026-08-21 배선)·Exchanges(환전, 2026-08-21 배선) — vault-paths.mjs 참고.
+ * 2026-08-21 배선)·FundValuations(펀드 정기평가, 2026-09-03 신설)·Exchanges(환전,
+ * 2026-08-21 배선) — vault-paths.mjs 참고.
  *
  * 멱등: 파일명 자체가 dedup 키(ledger-vault-writer.mjs) — 같은 이벤트를 다시 읽어도
  * 같은 파일명이 나와 existsSync만으로 중복을 걸러낸다. Firestore `kakaoInbox` 문서는
@@ -63,8 +64,8 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getFirestoreAdmin } from '../lib/firestore-admin.mjs';
 import { readKakaoInbox, deleteKakaoInboxDocs } from '../lib/kakao-inbox.mjs';
-import { parseExecution, parseDividend, parseGoldBuy, parseCashAlarm, parseFundBuy, parseExchange } from '../lib/notification-parsers.mjs';
-import { buildExecutionRecord, buildDividendRecord, buildCashEventRecord, buildFundPurchaseRecord, buildExchangeRecord } from '../lib/ledger-vault-writer.mjs';
+import { parseExecution, parseDividend, parseGoldBuy, parseCashAlarm, parseFundBuy, parseFundValuation, parseExchange } from '../lib/notification-parsers.mjs';
+import { buildExecutionRecord, buildDividendRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { QUANT_ACCOUNT_NO, FUND_PURCHASE_ACCOUNT, EXCHANGE_ACCOUNT } from '../lib/account-resolver.mjs';
@@ -107,6 +108,7 @@ async function main() {
     mkdirSync(VAULT_PATHS.facts.ledger.dividends, { recursive: true });
     mkdirSync(VAULT_PATHS.facts.ledger.cashEvents, { recursive: true });
     mkdirSync(VAULT_PATHS.facts.ledger.fundPurchases, { recursive: true });
+    mkdirSync(VAULT_PATHS.facts.ledger.fundValuations, { recursive: true });
     mkdirSync(VAULT_PATHS.facts.ledger.exchanges, { recursive: true });
   }
 
@@ -114,7 +116,7 @@ async function main() {
   const inboxDocs = await readKakaoInbox(db);
   console.log(`📨 카카오 수신함(Firestore kakaoInbox) ${inboxDocs.length}건 스캔`);
 
-  let execNew = 0, divNew = 0, cashNew = 0, fundNew = 0, exchNew = 0, skip = 0, unrecognized = 0, quantExcluded = 0, cashApiExcluded = 0;
+  let execNew = 0, divNew = 0, cashNew = 0, fundNew = 0, fundValNew = 0, exchNew = 0, skip = 0, unrecognized = 0, quantExcluded = 0, cashApiExcluded = 0;
   // ⚠️ 코드리뷰 지적(2026-08-22, 커밋 전) — 처음엔 훑은 문서를 결과와 무관하게 전부
   // 지웠는데, 그러면 "어느 파서도 못 알아본 알림"(광고가 아니라 새 브로커 문구·아직
   // 안 만든 이벤트 타입일 수 있음)이 Vault에 아무 기록도 안 남긴 채 원문째로 영구
@@ -204,6 +206,21 @@ async function main() {
       continue;
     }
 
+    // 삼성증권 "펀드수익률 및 평가금액 안내"(매달 발송 정기 스냅샷, 2026-09-03 신설) —
+    // parseFundBuy(매수 트리거)와 다른 메시지·다른 폴더(FundValuations). account는
+    // parseFundBuy와 동일 관례로 파싱 시점에 확정(이 메시지도 삼성증권/연금저축 전용).
+    const v = parseFundValuation(body, ts);
+    if (v) {
+      const { filename, content, dir } = buildFundValuationRecord({ ...v, account: FUND_PURCHASE_ACCOUNT });
+      const filepath = join(dir, filename);
+      if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
+      console.log(`  + [펀드평가] ${v.date} ${v.fundName} 평가금액 ${v.valuationAmount.toLocaleString()}원(원금 ${v.principal.toLocaleString()}원)`);
+      if (!DRY_RUN) writeAtomic(filepath, content);
+      fundValNew++;
+      processedIds.push(id);
+      continue;
+    }
+
     const x = parseExchange(body, ts);
     if (x) {
       const { filename, content, dir } = buildExchangeRecord({ ...x, account: EXCHANGE_ACCOUNT });
@@ -226,7 +243,7 @@ async function main() {
 
   console.log(
     `\n✅ 완료 — 체결 +${execNew}(금현물 포함) · 배당 +${divNew} · 예수금앵커 +${cashNew} · ` +
-    `펀드적립 +${fundNew} · 환전 +${exchNew} · ` +
+    `펀드적립 +${fundNew} · 펀드평가 +${fundValNew} · 환전 +${exchNew} · ` +
     `중복스킵 ${skip} · 퀀트계좌 제외 ${quantExcluded}(KIS API가 정본) · ` +
     `위탁·CMA 예수금 제외 ${cashApiExcluded}(NH API가 정본) · 미인식 ${unrecognized} · ` +
     `수신함 정리 ${DRY_RUN ? 0 : processedIds.length}건` +

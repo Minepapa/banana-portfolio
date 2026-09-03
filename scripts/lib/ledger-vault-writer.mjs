@@ -162,6 +162,33 @@ export function buildFundPurchaseRecord(f) {
   return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.fundPurchases };
 }
 
+// v: parseFundValuation()의 반환값 { fundName, principal, valuationAmount, profitAmount,
+// profitPct, date, account? }. 매수 이벤트가 아니라 "이 날짜 기준 원금·평가금액"
+// 정기 스냅샷(매달 발송) — buildFundPurchaseRecord와 폴더·성격 모두 분리(vault-paths.mjs
+// fundValuations 주석 참고). dedupKey는 date|fundName|valuationAmount — 시각 정보가
+// 원문에 없어(날짜만) 같은 날 같은 펀드의 값이 다르면(재발송·정정 등) 구분하기 위해
+// 평가금액도 포함(다른 이벤트의 수량/잔고 포함 관례와 동일 이유). account는
+// buildFundPurchaseRecord와 동일 관례(2026-08-13) — 호출부가 FUND_PURCHASE_ACCOUNT를
+// 파싱 시점에 바로 넘긴다.
+export function buildFundValuationRecord(v) {
+  const dedupKey = `${v.date}|${v.fundName}|${v.valuationAmount}`;
+  const filename = `${sanitizeSegment(v.date)}-${sanitizeSegment(v.fundName)}-${sanitizeSegment(v.valuationAmount)}.md`;
+  const content = buildFrontmatter({
+    type: 'fund-valuation',
+    date: v.date,
+    fundName: v.fundName,
+    principal: v.principal,
+    valuationAmount: v.valuationAmount,
+    profitAmount: v.profitAmount ?? null,
+    profitPct: v.profitPct ?? null,
+    account: v.account ?? null,
+    accountNote: v.account ? null : ACCOUNT_NOTE,
+    dedupKey,
+    recordedAt: new Date().toISOString(),
+  });
+  return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.fundValuations };
+}
+
 // x: parseExchange()의 반환값 { kind, usd, won, date, account? }. kind는 "외화매수"/
 // "외화매도". 펀드와 같은 이유로 date만 있고 시각이 없어, usd 금액을 dedupKey에 포함해
 // 같은 날 여러 건의 환전을 구분한다. account는 위 펀드적립과 동일 관례 — 호출부가

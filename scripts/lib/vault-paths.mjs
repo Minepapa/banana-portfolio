@@ -29,6 +29,13 @@ export const VAULT_PATHS = {
       executions: join(VAULT_ROOT, 'Facts', 'Ledger', 'Executions'), // 체결(주식+금현물)
       dividends: join(VAULT_ROOT, 'Facts', 'Ledger', 'Dividends'),
       fundPurchases: join(VAULT_ROOT, 'Facts', 'Ledger', 'FundPurchases'), // 2026-08-22 계좌귀속(연금저축)까지 배선 완료
+      // 2026-09-03 신설 — 삼성증권 "펀드수익률 및 평가금액 안내"(매달 발송, 매수
+      // 트리거가 아니라 정기 평가 스냅샷). FundPurchases와 성격이 달라 폴더 분리
+      // (매수 이벤트가 아니라 "이 날짜 기준 원금·평가금액·수익률" 사실 기록) — 그래도
+      // State가 아니라 Facts인 이유: 이 잡은 "원문 저장까지만" 책임진다는 파일 원칙
+      // (parse-notifications-to-vault.mjs 헤더 참고) 그대로 유지, State/Holdings의
+      // 현재값과 대조·검증하는 소비는 별도 몫으로 미룸(Strategy 문서 설계메모 참고).
+      fundValuations: join(VAULT_ROOT, 'Facts', 'Ledger', 'FundValuations'),
       // "이 시각에 이 계좌 잔고가 이 값이었다"는 사실 기록(잔고 재계산은 State 몫).
       // NH 4계좌는 카카오 입출금 알림 자동파싱, 연금저축·IRP는 알림이 없어 오너가
       // 앱에서 직접 확인한 값을 수동으로 기록 — 2026-08-18부터 자동/수동 구분 없이

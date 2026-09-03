@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   cleanNum, normalizeDateTime,
-  parseExecution, parseDividend, parseFundBuy, parseGoldBuy, parseCashAlarm, parseExchange,
+  parseExecution, parseDividend, parseFundBuy, parseFundValuation, parseGoldBuy, parseCashAlarm, parseExchange,
 } from './notification-parsers.mjs';
 
 test('cleanNum: 콤마 제거, allowDot으로 소수점 유지 여부 제어', () => {
@@ -139,6 +139,78 @@ test('parseFundBuy: 삼성증권 펀드 매수 완료 안내', () => {
 
 test('parseFundBuy: 펀드·매수기준가 키워드 없으면 null', () => {
   assert.equal(parseFundBuy('일반 알림', '2026-08-04 00:00:00'), null);
+});
+
+// 2026-09-03 신설 — 오너가 실제 원문을 그대로 공유(삼성증권 "펀드수익률 및 평가금액
+// 안내", 매달 발송되는 정기 평가 스냅샷 — parseFundBuy와 다른 메시지).
+const FUND_VAL_BODY = `[삼성증권] <펀드수익률 및 평가금액 안내>
+
+2026년 9월 1일 기준 보유 중인 펀드 수익률 및 평가금액을 알려드립니다.
+
+- 종목명 : VIP한국형가치투자증권자투자(주식)-C-Pe
+- 계좌번호 : 71612*****-15 (잔고번호:002)
+- 원금 : 12,800,000원
+- 평가금액 : 16,582,868원
+- 수익금 : 3,782,868원
+- 수익률 : 29.55%
+
+문의사항은 패밀리센터(1588-2323)로 연락하세요. 감사합니다.`;
+
+test('parseFundValuation: 실제 원문 그대로(오너 공유) 전 필드 정확히 추출', () => {
+  const r = parseFundValuation(FUND_VAL_BODY, '2026-09-01 09:00:00');
+  assert.deepEqual(r, {
+    fundName: 'VIP한국형가치투자증권자투자(주식)-C-Pe',
+    principal: 12800000,
+    valuationAmount: 16582868,
+    profitAmount: 3782868,
+    profitPct: 29.55,
+    date: '2026-09-01',
+  });
+});
+
+test('[핵심 안전장치] parseFundValuation: parseFundBuy와 서로 오매칭하지 않음(다른 메시지)', () => {
+  assert.equal(parseFundBuy(FUND_VAL_BODY, '2026-09-01 09:00:00'), null);
+  const buyBody = '펀드 매수 완료 안내\n펀드명 : VIP한국형가치투자증권자투자신탁(주식)-C-Pe\n매수금액 : 500,000원\n매수기준가 : 1,200.50\n매수신청일 : 2026년 8월 4일';
+  assert.equal(parseFundValuation(buyBody, '2026-08-04 09:00:00'), null);
+});
+
+// [핵심 안전장치] 손실 구간(펀드 평가손)이면 수익금·수익률이 음수로 온다 — cleanNum이
+// 부호를 지워버리면 손실이 이익으로 뒤집혀 기록될 뻔했다.
+test('[핵심 안전장치] parseFundValuation: 수익금·수익률이 음수(평가손)여도 부호 보존', () => {
+  const body = FUND_VAL_BODY
+    .replace('수익금 : 3,782,868원', '수익금 : -500,000원')
+    .replace('수익률 : 29.55%', '수익률 : -3.91%');
+  const r = parseFundValuation(body, '2026-09-01 09:00:00');
+  assert.equal(r.profitAmount, -500000);
+  assert.equal(r.profitPct, -3.91);
+});
+
+test('parseFundValuation: 수익금·수익률 필드가 없어도(선택 필드) 원금·평가금액만으로 파싱', () => {
+  const body = FUND_VAL_BODY.replace(/- 수익금 : .*\n/, '').replace(/- 수익률 : .*\n/, '');
+  const r = parseFundValuation(body, '2026-09-01 09:00:00');
+  assert.equal(r.principal, 12800000);
+  assert.equal(r.valuationAmount, 16582868);
+  assert.equal(r.profitAmount, null);
+  assert.equal(r.profitPct, null);
+});
+
+test('parseFundValuation: 기준일 문구가 없으면 알림 수신시각 날짜로 폴백', () => {
+  const body = FUND_VAL_BODY.replace('2026년 9월 1일 기준 ', '');
+  const r = parseFundValuation(body, '2026-09-02 08:30:00');
+  assert.equal(r.date, '2026-09-02');
+});
+
+test('[핵심 안전장치] parseFundValuation: 필수 키워드("펀드수익률"·"평가금액") 없으면 null', () => {
+  assert.equal(parseFundValuation('일반 알림', '2026-09-01 00:00:00'), null);
+});
+
+test('[핵심 안전장치] parseFundValuation: 종목명·원금·평가금액 중 하나라도 없으면 null(추정 안 함)', () => {
+  const noName = FUND_VAL_BODY.replace(/- 종목명 : .*\n/, '');
+  assert.equal(parseFundValuation(noName, '2026-09-01 09:00:00'), null);
+  const noPrincipal = FUND_VAL_BODY.replace(/- 원금 : .*\n/, '');
+  assert.equal(parseFundValuation(noPrincipal, '2026-09-01 09:00:00'), null);
+  const noAmount = FUND_VAL_BODY.replace(/- 평가금액 : .*\n/, '');
+  assert.equal(parseFundValuation(noAmount, '2026-09-01 09:00:00'), null);
 });
 
 test('parseGoldBuy: NH 금현물 매수 체결(g 단위)', () => {

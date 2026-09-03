@@ -2,7 +2,7 @@
 // YAML 형태인지 확인.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildExecutionRecord, buildDividendRecord, buildProfitRecord, buildCashEventRecord, buildFundPurchaseRecord, buildExchangeRecord } from './ledger-vault-writer.mjs';
+import { buildExecutionRecord, buildDividendRecord, buildProfitRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from './ledger-vault-writer.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
 import { parseFrontmatter } from './vault-frontmatter.mjs';
 
@@ -291,6 +291,61 @@ test('buildFundPurchaseRecord: frontmatter에 펀드 필드 포함, account 안 
 // FUND_PURCHASE_ACCOUNT(삼성증권=연금저축 1:1 확정)를 파싱 시점에 바로 넘긴다.
 test('buildFundPurchaseRecord: account를 넘기면 그대로 채워지고 accountNote는 비움', () => {
   const { content } = buildFundPurchaseRecord(fundBuy({ account: '연금저축' }));
+  assert.match(content, /account: "연금저축"/);
+  assert.match(content, /accountNote: null/);
+});
+
+// 2026-09-03 신설 — 삼성증권 "펀드수익률 및 평가금액 안내"(매달 발송 정기 스냅샷).
+const fundVal = (overrides = {}) => ({
+  fundName: 'VIP한국형가치투자증권자투자(주식)-C-Pe', principal: 12800000,
+  valuationAmount: 16582868, profitAmount: 3782868, profitPct: 29.55, date: '2026-09-01',
+  ...overrides,
+});
+
+test('buildFundValuationRecord: FundValuations 하위폴더를 가리킨다', () => {
+  const { dir } = buildFundValuationRecord(fundVal());
+  assert.equal(dir, VAULT_PATHS.facts.ledger.fundValuations);
+});
+
+test('buildFundValuationRecord: 파일명·dedupKey가 결정론적(날짜-펀드명-평가금액, 시각 정보가 원문에 없음)', () => {
+  const a = buildFundValuationRecord(fundVal());
+  const b = buildFundValuationRecord(fundVal());
+  assert.equal(a.filename, b.filename);
+  assert.equal(a.filename, '2026-09-01-VIP한국형가치투자증권자투자(주식)-C-Pe-16582868.md');
+  assert.equal(a.dedupKey, '2026-09-01|VIP한국형가치투자증권자투자(주식)-C-Pe|16582868');
+});
+
+test('buildFundValuationRecord: 같은 펀드·같은 날이라도 평가금액이 다르면(재발송·정정) 다른 파일명', () => {
+  const a = buildFundValuationRecord(fundVal({ valuationAmount: 16582868 }));
+  const b = buildFundValuationRecord(fundVal({ valuationAmount: 16000000 }));
+  assert.notEqual(a.filename, b.filename);
+});
+
+test('buildFundValuationRecord: frontmatter에 원금·평가금액·수익금·수익률 포함, account 안 넘기면 지연패턴', () => {
+  const { content } = buildFundValuationRecord(fundVal());
+  assert.match(content, /type: "fund-valuation"/);
+  assert.match(content, /principal: 12800000/);
+  assert.match(content, /valuationAmount: 16582868/);
+  assert.match(content, /profitAmount: 3782868/);
+  assert.match(content, /profitPct: 29.55/);
+  assert.match(content, /account: null/);
+  assert.match(content, /accountNote: ".*Phase 8·9.*"/);
+});
+
+test('buildFundValuationRecord: 수익금·수익률이 음수(평가손)여도 그대로 기록', () => {
+  const { content } = buildFundValuationRecord(fundVal({ profitAmount: -500000, profitPct: -3.91 }));
+  assert.match(content, /profitAmount: -500000/);
+  assert.match(content, /profitPct: -3.91/);
+});
+
+test('buildFundValuationRecord: 수익금·수익률이 null이어도(선택 필드) 안전(null로 기록)', () => {
+  const { content } = buildFundValuationRecord(fundVal({ profitAmount: null, profitPct: null }));
+  assert.match(content, /profitAmount: null/);
+  assert.match(content, /profitPct: null/);
+});
+
+test('buildFundValuationRecord: account를 넘기면 그대로 채워지고 accountNote는 비움', () => {
+  const { content } = buildFundValuationRecord(fundVal({ account: '연금저축' }));
   assert.match(content, /account: "연금저축"/);
   assert.match(content, /accountNote: null/);
 });

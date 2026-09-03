@@ -32,22 +32,23 @@ test('5대분류 하위경로가 전부 VAULT_ROOT 밑에 걸린다', () => {
     ...flattenPaths(VAULT_PATHS.knowledge),
     ...flattenPaths(VAULT_PATHS.log),
   ];
-  // facts: ledgerRoot(1) + ledger 하위 8종(Phase 7에서 profits·dailySnapshots 추가,
-  // 2026-08-21 monthlyBalances 추가) = 9 (marketPolls는 2026-08-17 삭제됨 — 전제였던
-  // 추세추종이 기각돼 한 번도 안 쓰임), state 12(+jobHealth, +Phase 8 macroOverlay,
+  // facts: ledgerRoot(1) + ledger 하위 9종(Phase 7에서 profits·dailySnapshots 추가,
+  // 2026-08-21 monthlyBalances 추가, 2026-09-03 fundValuations 추가) = 10
+  // (marketPolls는 2026-08-17 삭제됨 — 전제였던 추세추종이 기각돼 한 번도 안 쓰임),
+  // state 12(+jobHealth, +Phase 8 macroOverlay,
   // +Phase 9 killSwitch·executionMode, +Phase 11 executedOrders, +2026-08-16
   // cashAccumulator, +2026-08-29 proposalMode·telegramSessionLastRead, +2026-09-01
   // marketMoveMonitor), decisions 4
   // (+riskMonitor), knowledge 4(+2026-08-20 preferenceObservations, 주간리포트 v2
   // 성향학습 재작성), log 1(2026-08-29 신설 — telegramSession, Log/ 최초로 코드가
   // 직접 쓰는 경로가 생겨 VAULT_PATHS에 처음 등록됨)
-  assert.equal(flat.length, 30);
+  assert.equal(flat.length, 31);
   for (const p of flat) assert.ok(p.startsWith(VAULT_ROOT), `${p} should start with ${VAULT_ROOT}`);
 });
 
-test('Ledger 이벤트 종류별 하위폴더 8종이 전부 Facts/Ledger 밑에 걸린다', () => {
+test('Ledger 이벤트 종류별 하위폴더 9종이 전부 Facts/Ledger 밑에 걸린다', () => {
   const subfolders = Object.values(VAULT_PATHS.facts.ledger);
-  assert.equal(subfolders.length, 8);
+  assert.equal(subfolders.length, 9);
   for (const p of subfolders) assert.ok(p.startsWith(VAULT_PATHS.facts.ledgerRoot));
 });
 
