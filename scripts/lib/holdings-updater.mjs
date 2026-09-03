@@ -44,19 +44,41 @@ export function consolidateLots(lots) {
   };
 }
 
-export function applyBuy(existingHolding, exec) {
-  const buyInvest = exec.price * exec.quantity;
+// ⚠️ 버그 수정(2026-09-04, 오너 신고 — 대시보드에 해외주식 손익이 달러 숫자에 원화
+// 기호만 붙어 나옴) — Holdings 스키마 관례(update-holdings-prices.mjs recomputeValuation
+// 참고)는 `avgPrice`·`curPrice`가 원어(USD 등) 그대로, `invest`·`evalAmount`는 항상
+// KRW다. 그런데 이 함수는 `buyInvest = exec.price * exec.quantity`를 환율 없이 그대로
+// invest에 넣고 있었다 — 국내종목(원=KRW)은 우연히 맞았지만, 해외종목은 invest가
+// KRW가 아니라 USD 숫자로 저장되는 채였다. 지금까지 실제 Vault에 이 버그가 안 보인
+// 건 현재 보유 중인 해외종목이 전부 v1 마이그레이션 값 그대로(`appliedDedupKeys: []`)
+// 였기 때문 — 이 함수가 해외종목 매수에 실제로 쓰인 적이 아직 없었을 뿐, 다음
+// 해외주식 신규매수/추가매수부터 바로 터질 잠복 버그였다.
+// `usdKrwRate`는 exec.currency==='USD'일 때만 쓰고, 조회 실패로 null이면 잘못된 값을
+// 쓰지 않고 warning으로 건너뛴다(applySell과 동일 원칙 — ADR 0003 폴백 금지).
+export function applyBuy(existingHolding, exec, { usdKrwRate = null } = {}) {
+  const fx = exec.currency === 'USD' ? usdKrwRate : 1;
+  if (fx == null) {
+    return { holding: null, warning: `USD 매수 체결인데 환율을 못 가져와 KRW 환산 불가 — ${exec.account ?? '(계좌미상)'} ${exec.stockName}` };
+  }
+  const buyInvest = exec.price * exec.quantity * fx; // KRW
   if (!existingHolding) {
     return {
-      account: exec.account, assetClass: exec.assetClass ?? '', name: exec.stockName,
-      ticker: exec.stockCode ?? '', market: '',
-      avgPrice: exec.price, qty: exec.quantity, invest: buyInvest,
-      curPrice: null, evalAmount: null, profitAmount: null, profitPct: null,
-      isCashLike: false,
+      holding: {
+        account: exec.account, assetClass: exec.assetClass ?? '', name: exec.stockName,
+        ticker: exec.stockCode ?? '', market: '',
+        avgPrice: exec.price, qty: exec.quantity, invest: buyInvest,
+        curPrice: null, evalAmount: null, profitAmount: null, profitPct: null,
+        isCashLike: false,
+      },
+      warning: null,
     };
   }
   const newQty = existingHolding.qty + exec.quantity;
-  const newInvest = existingHolding.invest + buyInvest;
+  const newInvest = existingHolding.invest + buyInvest; // KRW + KRW
+  // avgPrice는 원어(raw currency) 가중평균 — invest(KRW)/qty로 구하면 환산이 섞여
+  // avgPrice의 통화 관례(raw)가 깨진다. existingHolding.avgPrice도 raw이므로 그대로
+  // qty 가중평균하면 통화가 일관되게 유지된다.
+  const newAvgPrice = (existingHolding.avgPrice * existingHolding.qty + exec.price * exec.quantity) / newQty;
   // ⚠️ 버그 수정(2026-08-24, 오너 신고 — evalAmount 0원으로 화면 필터 누락) — curPrice는
   // 그대로 이어받되(체결 자체가 새 시세를 알려주지 않음, 다음 update-holdings-prices.mjs
   // 실행이 갱신할 몫), evalAmount·profitAmount·profitPct는 새 qty·invest 기준으로 즉시
@@ -72,11 +94,14 @@ export function applyBuy(existingHolding, exec) {
   const profitAmount = evalAmount != null ? evalAmount - newInvest : null;
   const profitPct = profitAmount != null && newInvest > 0 ? (profitAmount / newInvest) * 100 : null;
   return {
-    ...existingHolding,
-    avgPrice: newInvest / newQty,
-    qty: newQty,
-    invest: newInvest,
-    curPrice, evalAmount, profitAmount, profitPct,
+    holding: {
+      ...existingHolding,
+      avgPrice: newAvgPrice,
+      qty: newQty,
+      invest: newInvest,
+      curPrice, evalAmount, profitAmount, profitPct,
+    },
+    warning: null,
   };
 }
 
@@ -85,7 +110,12 @@ export function applyBuy(existingHolding, exec) {
 //   상태에서 잘못된 값을 State에 남기지 않기 위함 — 원인 규명 전까지 이전 값 그대로 유지).
 // - closed:true면 updatedHolding이 null이지만 warning은 없다 — 정상적으로 전량 매도됨,
 //   호출부가 그 보유 파일을 삭제해야 한다는 신호.
-export function applySell(existingHolding, exec) {
+// ⚠️ 버그 수정(2026-09-04, applyBuy와 동일 사고) — realizedProfit을 환율 없이
+// `(exec.price - avgPrice) * quantity`로 계산했다. avgPrice·exec.price 둘 다 원어라
+// 차는 원어 단위인데, 이걸 그대로 "원(KRW) 실현손익"으로 기록해 Facts/Ledger/Profits·
+// 대시보드까지 달러 숫자에 원화 기호만 붙어 나갔다(2026-09-03 엔비디아 매도 24주 —
+// 실제 발견된 사례). usdKrwRate는 exec.currency==='USD'일 때만 곱한다.
+export function applySell(existingHolding, exec, { usdKrwRate = null } = {}) {
   if (!existingHolding) {
     return { updatedHolding: null, realizedProfit: null, closed: false, warning: `매도 체결인데 보유 기록이 없음: ${exec.account ?? '(계좌미상)'} ${exec.stockName}` };
   }
@@ -95,7 +125,14 @@ export function applySell(existingHolding, exec) {
       warning: `매도수량(${exec.quantity})이 보유수량(${existingHolding.qty})을 초과 — ${existingHolding.account} ${existingHolding.name}, 이전 매수 체결 누락 가능성`,
     };
   }
-  const realizedProfit = (exec.price - existingHolding.avgPrice) * exec.quantity;
+  const fx = exec.currency === 'USD' ? usdKrwRate : 1;
+  if (fx == null) {
+    return {
+      updatedHolding: null, realizedProfit: null, closed: false,
+      warning: `USD 매도 체결인데 환율을 못 가져와 KRW 환산 불가 — ${existingHolding.account} ${existingHolding.name}`,
+    };
+  }
+  const realizedProfit = (exec.price - existingHolding.avgPrice) * exec.quantity * fx; // KRW
   const newQty = existingHolding.qty - exec.quantity;
   if (newQty <= EPS) {
     return { updatedHolding: null, realizedProfit, closed: true, warning: null };
@@ -103,7 +140,11 @@ export function applySell(existingHolding, exec) {
   // applyBuy와 동일한 이유(2026-08-24) — curPrice는 이어받고 evalAmount·profitAmount·
   // profitPct는 축소된 새 qty·invest 기준으로 즉시 재계산(옛 값을 그대로 들고 가면
   // 일부 매도 직후 화면 평가액이 매도 전 수량 기준으로 부풀려진 채 남는다).
-  const newInvest = newQty * existingHolding.avgPrice;
+  // newInvest는 기존 KRW 원가(invest)를 수량 비율로 그대로 줄인다 — avgPrice(원어)에
+  // 오늘 환율을 다시 곱해 재기준하면 매수 시점 원가가 아니라 "오늘 재평가한 원가"가
+  // 되어 실제 손익과 어긋난다(recomputeFxCashValuation 주석의 같은 원칙 — 원가는
+  // 매수 시점에 고정돼야 한다). 이 방식은 fx 없이도 항상 정확하다.
+  const newInvest = existingHolding.qty > 0 ? (existingHolding.invest / existingHolding.qty) * newQty : 0;
   const curPrice = existingHolding.curPrice ?? null;
   const evalAmount = curPrice != null ? curPrice * newQty : null;
   const profitAmount = evalAmount != null ? evalAmount - newInvest : null;

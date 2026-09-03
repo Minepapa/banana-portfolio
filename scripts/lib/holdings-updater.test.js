@@ -4,7 +4,8 @@ import { applyBuy, applySell, consolidateLots } from './holdings-updater.mjs';
 
 test('applyBuy: 기존 보유 없으면 새 보유 생성', () => {
   const exec = { account: '위탁', assetClass: '국내주식', stockName: '삼성전자', stockCode: '005930', price: 70000, quantity: 10 };
-  const h = applyBuy(null, exec);
+  const { holding: h, warning } = applyBuy(null, exec);
+  assert.equal(warning, null);
   assert.equal(h.qty, 10);
   assert.equal(h.avgPrice, 70000);
   assert.equal(h.invest, 700000);
@@ -14,7 +15,7 @@ test('applyBuy: 기존 보유 없으면 새 보유 생성', () => {
 test('applyBuy: 기존 보유 있으면 가중평균으로 합침', () => {
   const existing = { account: '위탁', assetClass: '국내주식', name: '삼성전자', ticker: '005930', market: '', avgPrice: 50450, qty: 40, invest: 2018000, curPrice: null, evalAmount: null, profitAmount: null, profitPct: null, isCashLike: false };
   const exec = { account: '위탁', stockName: '삼성전자', price: 60000, quantity: 10 };
-  const h = applyBuy(existing, exec);
+  const { holding: h } = applyBuy(existing, exec);
   assert.equal(h.qty, 50);
   assert.equal(h.invest, 2018000 + 600000);
   assert.equal(h.avgPrice, (2018000 + 600000) / 50);
@@ -22,7 +23,7 @@ test('applyBuy: 기존 보유 있으면 가중평균으로 합침', () => {
 
 test('applyBuy: 기존 필드(assetClass 등)는 보존', () => {
   const existing = { account: '위탁', assetClass: '국내주식', name: '삼성전자', ticker: '005930', market: '', avgPrice: 100, qty: 1, invest: 100, curPrice: 105, evalAmount: 105, profitAmount: 5, profitPct: 5, isCashLike: false };
-  const h = applyBuy(existing, { account: '위탁', stockName: '삼성전자', price: 100, quantity: 1 });
+  const { holding: h } = applyBuy(existing, { account: '위탁', stockName: '삼성전자', price: 100, quantity: 1 });
   assert.equal(h.assetClass, '국내주식');
   assert.equal(h.ticker, '005930');
 });
@@ -34,7 +35,7 @@ test('applyBuy: 기존 필드(assetClass 등)는 보존', () => {
 // 재계산을 안 한 게 근본원인.
 test('applyBuy: 0-qty 플레이스홀더(curPrice는 있고 qty만 0)에 매수가 들어오면 evalAmount를 새 수량 기준으로 즉시 재계산 — 0원에 머물지 않음', () => {
   const existing = { account: '연금저축', assetClass: '달러', name: 'ACE 미국달러SOFR금리(합성)', ticker: '', market: '', avgPrice: 12200, qty: 0, invest: 0, curPrice: 12130, evalAmount: 0, profitAmount: 0, profitPct: null, isCashLike: false };
-  const h = applyBuy(existing, { account: '연금저축', stockName: 'ACE 미국달러SOFR금리(합성)', price: 12130, quantity: 100 });
+  const { holding: h } = applyBuy(existing, { account: '연금저축', stockName: 'ACE 미국달러SOFR금리(합성)', price: 12130, quantity: 100 });
   assert.equal(h.qty, 100);
   assert.equal(h.invest, 1213000);
   assert.equal(h.curPrice, 12130); // 체결 자체가 새 시세를 알려주진 않음 — 기존 curPrice 이어받음
@@ -44,16 +45,49 @@ test('applyBuy: 0-qty 플레이스홀더(curPrice는 있고 qty만 0)에 매수�
 
 test('applyBuy: 기존 curPrice가 null(진짜 신규종목 성격)이면 매수 후에도 evalAmount는 추정하지 않고 null', () => {
   const existing = { account: '위탁', assetClass: '국내주식', name: 'X', ticker: '', market: '', avgPrice: 100, qty: 1, invest: 100, curPrice: null, evalAmount: null, profitAmount: null, profitPct: null, isCashLike: false };
-  const h = applyBuy(existing, { account: '위탁', stockName: 'X', price: 100, quantity: 1 });
+  const { holding: h } = applyBuy(existing, { account: '위탁', stockName: 'X', price: 100, quantity: 1 });
   assert.equal(h.curPrice, null);
   assert.equal(h.evalAmount, null);
 });
 
 test('applyBuy: 일반적인 추가매수(qty>0)도 매수 직후 evalAmount가 새 수량 기준으로 즉시 갱신됨(예전엔 다음 시세갱신 전까지 매수 이전 수량 기준값으로 과소표시됐음)', () => {
   const existing = { account: '위탁', assetClass: '국내주식', name: '삼성전자', ticker: '005930', market: '', avgPrice: 50450, qty: 40, invest: 2018000, curPrice: 281000, evalAmount: 281000 * 40, profitAmount: 281000 * 40 - 2018000, profitPct: 5, isCashLike: false };
-  const h = applyBuy(existing, { account: '위탁', stockName: '삼성전자', price: 281000, quantity: 10 });
+  const { holding: h } = applyBuy(existing, { account: '위탁', stockName: '삼성전자', price: 281000, quantity: 10 });
   assert.equal(h.qty, 50);
   assert.equal(h.evalAmount, 281000 * 50);
+});
+
+// ⚠️ 실사고 재현(2026-09-04, 오너 신고 — 대시보드 해외주식 손익이 달러 숫자에 원화
+// 기호만 붙어 나옴). 해외종목(exec.currency==='USD')은 invest를 KRW로 환산해야 한다 —
+// avgPrice는 원어 그대로 유지(Holdings 스키마 관례).
+test('applyBuy: USD 체결은 invest가 환율 반영 KRW, avgPrice는 원어(USD) 그대로', () => {
+  const exec = { account: '위탁', assetClass: '해외주식', stockName: '엔비디아', stockCode: 'NVDA', price: 169.9, quantity: 24, currency: 'USD' };
+  const { holding: h, warning } = applyBuy(null, exec, { usdKrwRate: 1400 });
+  assert.equal(warning, null);
+  assert.equal(h.avgPrice, 169.9); // 원어(USD) 그대로
+  assert.equal(h.invest, 169.9 * 24 * 1400); // KRW 환산
+});
+
+test('applyBuy: USD 체결 + 환율 조회 실패(usdKrwRate 없음)면 경고, holding null(잘못된 값 안 씀)', () => {
+  const exec = { account: '위탁', stockName: '엔비디아', price: 169.9, quantity: 24, currency: 'USD' };
+  const { holding, warning } = applyBuy(null, exec, { usdKrwRate: null });
+  assert.equal(holding, null);
+  assert.ok(warning.includes('환율'));
+});
+
+test('applyBuy: USD 종목 추가매수 — avgPrice는 원어 가중평균, invest는 KRW 누적', () => {
+  const existing = { account: '위탁', assetClass: '해외주식', name: '알파벳 Class A', ticker: '', market: '', avgPrice: 300, qty: 10, invest: 4200000, curPrice: null, evalAmount: null, profitAmount: null, profitPct: null, isCashLike: false };
+  const exec = { account: '위탁', stockName: '알파벳 Class A', price: 330, quantity: 5, currency: 'USD' };
+  const { holding: h } = applyBuy(existing, exec, { usdKrwRate: 1400 });
+  assert.equal(h.qty, 15);
+  assert.equal(h.avgPrice, (300 * 10 + 330 * 5) / 15); // 원어 가중평균, 환율 안 섞임
+  assert.equal(h.invest, 4200000 + 330 * 5 * 1400); // KRW 누적
+});
+
+test('applyBuy: KRW 종목은 usdKrwRate 없어도(호출부가 아예 안 넘겨도) 정상 동작 — currency 미기재는 KRW로 취급', () => {
+  const { holding: h, warning } = applyBuy(null, { account: '위탁', stockName: '삼성전자', price: 70000, quantity: 10 });
+  assert.equal(warning, null);
+  assert.equal(h.invest, 700000);
 });
 
 test('applySell: 기존 보유 없으면 경고, 아무것도 안 씀', () => {
@@ -101,6 +135,34 @@ test('applySell: 부동소수점 오차로 남은 극소수량은 전량매도�
   const existing = { account: '위탁', name: 'X', avgPrice: 100, qty: 0.3, invest: 30 };
   const r = applySell(existing, { account: '위탁', stockName: 'X', price: 100, quantity: 0.1 + 0.2 }); // 부동소수점 0.30000000000000004
   assert.equal(r.closed, true);
+});
+
+// ⚠️ 실사고 재현(2026-09-04) — 2026-09-03 엔비디아 24주 매도가 실제로 이 버그를 냈다:
+// (223.2-169.9)*24 = 1279.2를 그대로 "원"으로 기록해 프론트엔드에 달러 숫자가
+// ₩ 기호만 붙어 나갔다. 환율을 곱해야 실제 KRW 실현손익이 나온다.
+test('applySell: USD 종목은 realizedProfit에 환율을 곱해 KRW로 — 2026-09-03 엔비디아 실사고 재현', () => {
+  const existing = { account: '위탁', name: '엔비디아', avgPrice: 169.9, qty: 24, invest: 5813153 };
+  const r = applySell(existing, { account: '위탁', stockName: '엔비디아', price: 223.2, quantity: 24, currency: 'USD' }, { usdKrwRate: 1400 });
+  assert.equal(r.closed, true);
+  assert.equal(r.realizedProfit, (223.2 - 169.9) * 24 * 1400);
+  assert.notEqual(Math.round(r.realizedProfit), 1279, '환율 미반영이면 여기서 실사고와 같은 원시 달러 숫자가 나온다');
+});
+
+test('applySell: USD 종목 + 환율 조회 실패(usdKrwRate 없음)면 경고, 아무것도 안 씀(잘못된 값 대신 스킵)', () => {
+  const existing = { account: '위탁', name: '엔비디아', avgPrice: 169.9, qty: 24, invest: 5813153 };
+  const r = applySell(existing, { account: '위탁', stockName: '엔비디아', price: 223.2, quantity: 24, currency: 'USD' }, { usdKrwRate: null });
+  assert.equal(r.updatedHolding, null);
+  assert.equal(r.realizedProfit, null);
+  assert.ok(r.warning.includes('환율'));
+});
+
+test('applySell: USD 종목 일부 매도 — newInvest는 환율 없이 기존 KRW 원가를 수량비례로 축소(매수시점 원가 보존)', () => {
+  const existing = { account: '위탁', name: '알파벳 Class A', avgPrice: 300, qty: 18, invest: 8102538, curPrice: 342.34 };
+  const r = applySell(existing, { account: '위탁', stockName: '알파벳 Class A', price: 330, quantity: 5, currency: 'USD' }, { usdKrwRate: 1450 });
+  assert.equal(r.closed, false);
+  assert.equal(r.updatedHolding.qty, 13);
+  // 오늘 환율(1450)로 재기준하지 않고, 기존 KRW invest를 수량 비례로만 축소
+  assert.equal(r.updatedHolding.invest, (8102538 / 18) * 13);
 });
 
 // consolidateLots — 코드리뷰 지적으로 추가(2026-08-05): 위탁 삼성전자 40주@50,450원 +

@@ -78,6 +78,7 @@ import { resolveExecutionAccount, QUANT_TRACK_LABEL } from '../lib/account-resol
 import { applyBuy, applySell, consolidateLots } from '../lib/holdings-updater.mjs';
 import { buildLiveHoldingRecord, holdingFilename, parseAppliedDedupKeys } from '../lib/holdings-vault-writer.mjs';
 import { buildProfitRecord } from '../lib/ledger-vault-writer.mjs';
+import { fetchUsdKrwRate } from '../lib/fundamentals.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -233,6 +234,20 @@ async function main() {
   const targets = pickUnprocessedExecutions(executionFiles);
   console.log(`🔎 미처리 체결 ${targets.length}건 (전체 ${executionFiles.length}건 중)`);
 
+  // ⚠️ 버그 수정(2026-09-04) — applyBuy/applySell가 USD 체결의 invest·실현손익을
+  // KRW로 환산하려면 환율이 필요하다(update-holdings-prices.mjs와 동일 패턴). USD
+  // 체결 대상이 있을 때만 조회 — 실패해도 잡 전체를 죽이지 않고, 대상 체결만
+  // applyBuy/applySell의 warning 경로로 건너뛴다(다음 실행 때 재시도).
+  let usdKrwRate = null;
+  if (targets.some(({ parsed }) => parsed.currency === 'USD')) {
+    try {
+      usdKrwRate = fetchUsdKrwRate();
+      console.log(`   💱 USD/KRW ${usdKrwRate.toFixed(2)}`);
+    } catch (e) {
+      console.log(`  ⚠️  USD/KRW 환율 조회 실패 — USD 체결은 이번엔 건너뜀: ${e.message}`);
+    }
+  }
+
   const holdingsMap = loadConsolidatedHoldings();
 
   let buys = 0, sells = 0, closed = 0, unresolvedAccount = 0, warnings = 0, alreadyApplied = 0, duplicateOfKnown = 0, totalRealizedProfit = 0;
@@ -299,13 +314,19 @@ async function main() {
     }
 
     if (exec.tradeType === '매수') {
-      const updated = { ...applyBuy(existing, execWithAccount), appliedDedupKeys: [...(existing?.appliedDedupKeys ?? []), exec.dedupKey] };
+      const buyResult = applyBuy(existing, execWithAccount, { usdKrwRate });
+      if (buyResult.warning) {
+        console.log(`  ⚠️  ${buyResult.warning} — 건너뜀`);
+        warnings++;
+        continue;
+      }
+      const updated = { ...buyResult.holding, appliedDedupKeys: [...(existing?.appliedDedupKeys ?? []), exec.dedupKey] };
       console.log(`  + [매수] ${account} ${exec.stockName} ${exec.quantity}주 @${exec.price} → 보유 ${updated.qty}주(평단 ${Math.round(updated.avgPrice)})`);
       writeHolding(updated);
       holdingsMap.set(key, updated);
       buys++;
     } else if (exec.tradeType === '매도') {
-      const result = applySell(existing, execWithAccount);
+      const result = applySell(existing, execWithAccount, { usdKrwRate });
       if (result.warning) {
         console.log(`  ⚠️  ${result.warning} — 건너뜀`);
         warnings++;
@@ -314,7 +335,7 @@ async function main() {
       console.log(`  - [매도] ${account} ${exec.stockName} ${exec.quantity}주 @${exec.price} → 실현손익 ${Math.round(result.realizedProfit).toLocaleString()}원${result.closed ? ' (전량청산)' : ''}`);
       totalRealizedProfit += result.realizedProfit;
       if (!DRY_RUN) {
-        const { filename: pFilename, content: pContent, dir: pDir } = buildProfitRecord(execWithAccount, existing.avgPrice, result.realizedProfit);
+        const { filename: pFilename, content: pContent, dir: pDir } = buildProfitRecord(execWithAccount, existing.avgPrice, result.realizedProfit, exec.currency === 'USD' ? usdKrwRate : 1);
         mkdirSync(pDir, { recursive: true });
         writeAtomic(join(pDir, pFilename), pContent);
       }

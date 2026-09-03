@@ -183,6 +183,27 @@ test('buildProfitRecord: Profits 하위폴더를 가리킨다', () => {
   assert.equal(dir, VAULT_PATHS.facts.ledger.profits);
 });
 
+// ⚠️ 2026-09-04 신설 — currency·usdKrwRate 필드로 profit이 어느 통화·환율 기준인지
+// 감사 가능하게 남긴다(2026-09-03 엔비디아 매도 실사고 이후). currency 미지정이면
+// 기존 국내종목과 동일하게 "KRW"로 취급(하위호환).
+test('buildProfitRecord: currency 미지정이면 KRW로 기록(국내종목, 기존 동작 유지)', () => {
+  const { content } = buildProfitRecord(sellExec(), 50000, 80000);
+  assert.match(content, /currency: "KRW"/);
+  assert.match(content, /usdKrwRate: 1/);
+});
+
+test('buildProfitRecord: USD 체결은 currency·usdKrwRate를 그대로 기록, profit은 이미 KRW로 환산된 값을 그대로 저장(재환산 안 함)', () => {
+  const usdSell = sellExec({ stockName: '엔비디아', quantity: 24, price: 223.2, currency: 'USD' });
+  const realizedProfitKRW = (223.2 - 169.9) * 24 * 1400;
+  const { content } = buildProfitRecord(usdSell, 169.9, realizedProfitKRW, 1400);
+  assert.match(content, /currency: "USD"/);
+  assert.match(content, /usdKrwRate: 1400/);
+  assert.match(content, /buyPrice: 169.9/); // 원어(USD) 그대로 — 감사·재현용
+  assert.match(content, /sellPrice: 223.2/);
+  const fm = parseFrontmatter(content);
+  assert.equal(fm.profit, realizedProfitKRW); // profit만 KRW
+});
+
 // ── 구조적 가드(2026-08-30 코드리뷰 지적) ────────────────────────────────────────
 // report-facts.mjs의 매도 실현손익 조회(profitKey: date|account|name|qty)는 Executions
 // 원장과 Profits 원장이 같은 값을 같은 필드명 밑에 쓴다는 가정에 기댄다. 둘은 같은

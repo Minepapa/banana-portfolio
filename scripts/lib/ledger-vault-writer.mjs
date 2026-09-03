@@ -213,9 +213,12 @@ export function buildExchangeRecord(x) {
 // 매도 체결로 발생한 실현손익 — holdings-updater.mjs(구현계획서 Phase 8)가 매도 적용
 // 직후 호출한다. account는 여기선 null로 안 비워둔다 — 매도 자체가 계좌 귀속이 이미
 // 해결된 뒤에만(account-resolver.mjs) 처리되는 단계라, 실현손익 시점엔 계좌를 이미 안다.
-// e: { tradeDate, stockName, quantity, price, account }, avgPrice: 매도 직전 평단가,
-// realizedProfit: holdings-updater.mjs applySell()의 계산 결과.
-export function buildProfitRecord(e, avgPrice, realizedProfit) {
+// e: { tradeDate, stockName, quantity, price, account, currency }, avgPrice: 매도 직전
+// 평단가(원어), realizedProfit: holdings-updater.mjs applySell()의 계산 결과(KRW,
+// 2026-09-04부터 환율 반영). usdKrwRate: applySell이 실제로 곱한 환율(KRW 종목이면 1) —
+// buyPrice·sellPrice는 감사·재현 가능성을 위해 원어(raw currency) 그대로 남겨둔다(
+// State/Holdings의 avgPrice·curPrice가 원어인 것과 같은 관례) — profit만 KRW다.
+export function buildProfitRecord(e, avgPrice, realizedProfit, usdKrwRate = 1) {
   const dedupKey = `${e.tradeDate}|매도|${e.stockName}|${e.quantity}|profit`;
   const datePart = e.tradeDate.slice(0, 10);
   const timePart = e.tradeDate.slice(11).replace(/:/g, '') || '000000';
@@ -227,8 +230,10 @@ export function buildProfitRecord(e, avgPrice, realizedProfit) {
     date: e.tradeDate,
     stockName: e.stockName,
     quantity: e.quantity,
+    currency: e.currency ?? 'KRW',
     buyPrice: avgPrice,
     sellPrice: e.price,
+    usdKrwRate,
     profit: realizedProfit,
     account: e.account,
     dedupKey,
