@@ -22,7 +22,7 @@
  *   ② claude -p 는 profile/investor-profile.md + 주입된 facts만으로 "서술·해석·처방"만 생성
  *   ③ Knowledge/Reports/{asof}.md 저장 + (선택)텔레그램 푸시
  *   ④ 행동 신호(체결 기반)를 §3와 대조해 성향 관찰 추출(sonnet) →
- *      Knowledge/Profile/PreferenceObservations/*.md 신규 파일
+ *      Knowledge/Profile/*.md 신규 파일
  *
  * 사용법:
  *   node scripts/jobs/weekly-report.mjs                 # 발행
@@ -288,10 +288,10 @@ ${signalsText}
 \`\`\``;
 }
 
-// 관찰 JSON → Knowledge/Profile/PreferenceObservations/*.md 신규 파일. 상충/promote면
+// 관찰 JSON → Knowledge/Profile/*.md 신규 파일. 상충/promote면
 // 상태=승격후보, 아니면 관찰. 한 관찰당 파일 하나(다른 Vault 레코드와 동일 관례).
 function writeObservations(asof, observations) {
-  const dir = VAULT_PATHS.knowledge.preferenceObservations;
+  const dir = VAULT_PATHS.knowledge.profile;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const now = new Date();
   const nowIso = now.toISOString();
@@ -347,7 +347,7 @@ async function main() {
   // 미국배당다우존스)에서 항상 실패해 "손익 미확정"으로만 나갔다 — 이 원장을 우선
   // 조회하면 그 사각을 없앤다(report-facts.mjs profitByKey 참고).
   const profitRows = readVaultDir(VAULT_PATHS.facts.ledger.profits);
-  const prefRecords = readVaultDir(VAULT_PATHS.knowledge.preferenceObservations);
+  const prefRecords = readVaultDir(VAULT_PATHS.knowledge.profile);
   const prevReport = loadPrevReport(asof);
 
   const tradeRows = executionsToTradeRows(executions);
@@ -432,13 +432,13 @@ async function main() {
     });
     dropped.forEach(d => collectWarning(`성향관찰 자동폐기: "${String(d.obs?.observation ?? '').slice(0, 60)}" — ${d.reason}`));
     const n = writeObservations(asof, kept);
-    console.log(n ? `   🧠 성향 관찰 ${n}건 기록 (Knowledge/Profile/PreferenceObservations)` : '   🧠 이번 주 뚜렷한 성향 관찰 없음');
+    console.log(n ? `   🧠 성향 관찰 ${n}건 기록 (Knowledge/Profile)` : '   🧠 이번 주 뚜렷한 성향 관찰 없음');
     if (dropped.length) console.log(`   🛡 자동 검증 실패로 폐기 ${dropped.length}건(텔레그램 경고)`);
   } catch (e) { console.error(`   ⚠️ 성향 관찰 단계 실패(리포트는 정상): ${e.message}`); }
 
   // ⑧-b 승격후보 TTL(4주 무응답이면 자동으로 관찰 보류) — ⑧과 분리된 독립 단계.
   try {
-    const freshPrefRecords = readVaultDir(VAULT_PATHS.knowledge.preferenceObservations);
+    const freshPrefRecords = readVaultDir(VAULT_PATHS.knowledge.profile);
     const expired = findExpiredPromotions(freshPrefRecords, { now: new Date() });
     if (expired.length) {
       for (const e of expired) {

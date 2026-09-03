@@ -122,11 +122,13 @@ export const VAULT_PATHS = {
     riskMonitor: join(VAULT_ROOT, 'Decisions', 'RiskMonitor'),
   },
   knowledge: {
+    // 성향관찰(구 구글시트 "성향관찰" 탭) Vault 네이티브 대체 — 한 관찰당 파일 하나.
+    // weekly-report.mjs(v2, 2026-08-20 재작성)가 유일한 쓰기 주체. 2026-09-04 므네모시네
+    // 대정리 — v1 이관분(Profile/ 최상위 22개, PreferenceObservations/ 하위폴더로 분리돼
+    // 있던 구조)을 삭제하고 이 폴더 하나로 평탄화(preferenceObservations 키를 profile로
+    // 통합) — 별도 하위폴더로 나눌 이유(v1/v2 구분)가 사라졌기 때문.
     profile: join(VAULT_ROOT, 'Knowledge', 'Profile'),
     playbook: join(VAULT_ROOT, 'Knowledge', 'Playbook'),
     reports: join(VAULT_ROOT, 'Knowledge', 'Reports'),
-    // 성향관찰(구 구글시트 "성향관찰" 탭) Vault 네이티브 대체 — 한 관찰당 파일 하나.
-    // weekly-report.mjs(v2, 2026-08-20 재작성)가 유일한 쓰기 주체.
-    preferenceObservations: join(VAULT_ROOT, 'Knowledge', 'Profile', 'PreferenceObservations'),
   },
 };

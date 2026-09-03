@@ -9,7 +9,7 @@
 // 파일에서 실제로 쓰이진 않음 — 애초에 v1 시트 파이프라인 중단으로 이미 죽은 경로).
 export const PREF_SHEET = '성향관찰';
 //
-// 레코드 스키마(Knowledge/Profile/PreferenceObservations/*.md frontmatter):
+// 레코드 스키마(Knowledge/Profile/*.md frontmatter):
 //   { date, signalType, observation, evidence, vsProfile, confidence, status, updatedAt }
 // (구 구글시트 "성향관찰" A~H와 1:1 대응 — 필드명만 named로 바뀜. "type"이 아니라
 // "signalType"인 이유: 이 프로젝트의 Vault 레코드 관례상 "type" 필드는 레코드 종류

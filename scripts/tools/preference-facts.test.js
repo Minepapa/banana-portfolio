@@ -4,7 +4,7 @@ import { parseArgs, assemblePreferences, renderPreferenceFacts } from './prefere
 
 // preference-facts.mjs — 비서실 Apollo 대화형 보고용 Node 결정론 사실 조립기.
 // 2026-08-20 Vault 네이티브 전환 — 입력이 구글시트 row-array에서
-// Knowledge/Profile/PreferenceObservations/*.md frontmatter 객체로 바뀌었다.
+// Knowledge/Profile/*.md frontmatter 객체로 바뀌었다.
 
 test('parseArgs — 기본은 전체, --status/--json', () => {
   assert.deepEqual(parseArgs([]), { status: null, json: false });

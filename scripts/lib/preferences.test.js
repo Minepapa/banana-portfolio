@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { renderPrefRows, prefBlock, findExpiredPromotions } from './preferences.mjs';
 
 // 2026-08-20 Vault 네이티브 재작성 — 입력이 구글시트 row-array에서
-// Knowledge/Profile/PreferenceObservations/*.md frontmatter 객체로 바뀌었다.
+// Knowledge/Profile/*.md frontmatter 객체로 바뀌었다.
 
 const mkRec = (signalType, obs, vsProfile, status, overrides = {}) =>
   ({ date: '2026-06-10', signalType, observation: obs, evidence: '체결', vsProfile, confidence: '높음', status, ...overrides });
