@@ -239,7 +239,10 @@ export async function cancelKrReservedOrder({
 // openapi.json 필드명 그대로.
 
 // 당일 주문체결 조회(POST /krstock/inquiry/v1/dailyOrderExecution). ostCnsDit:
-// '0'=전체(기본) '1'=미체결 '2'=체결. orrMktCd: '00'=전체(기본).
+// '0'=전체(기본) '1'=체결 '2'=미체결(2026-09-03 NH 공식 API 가이드 페이지 라이브
+// 확인으로 정정 — 이전 주석이 1·2를 뒤바꿔 적어놨었다, reconcile-nh-executions.mjs가
+// "체결만"을 의도해 '2'를 넘겼다가 실제로는 미체결만 조회하고 있었던 실사고 원인).
+// orrMktCd: '00'=전체(기본).
 export async function getKrDailyOrderExecution({
   token, actNo, orrDt, ostCnsDit = '0', orrMktCd = '00', itgOrrNo, fetchImpl,
 }) {

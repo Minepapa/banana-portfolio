@@ -56,8 +56,11 @@ export async function getGoldBalance({ token, actNo, fetchImpl }) {
 
 // 주문체결조회(POST /krgold/inquiry/v1/goldExecution) — 2026-09-02 신설(krstock의
 // getKrDailyOrderExecution과 대응, 그동안 빠져있던 "실제 체결됐는지" 확인 수단).
-// ostCnsDit: '0'=전체(기본) '1'=미체결 '2'=체결. orrMktCd: '08'=금현물(기본,
-// openapi.json에 이 값만 유효한 것으로 명시).
+// ostCnsDit: '0'=전체(기본) '1'=체결 '2'=미체결(2026-09-03 정정 — krstock
+// getKrDailyOrderExecution과 동일한 1·2 반전 오류가 여기도 그대로 있었다, 아직
+// 실측 확인 전이라 krstock과 같은 규칙이라는 가정 — 금현물 실체결 데이터로
+// 재확인 필요). orrMktCd: '08'=금현물(기본, openapi.json에 이 값만 유효한
+// 것으로 명시).
 export async function getGoldExecution({
   token, actNo, orrDt, ostCnsDit = '0', orrMktCd = '08', itgOrrNo, fetchImpl,
 }) {

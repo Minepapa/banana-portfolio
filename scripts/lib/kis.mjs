@@ -535,17 +535,31 @@ export function parseOrderFillResponse(json, odno) {
 // "퇴직연금 미체결내역"이지만 CCLD_NCCS_DVSN 파라미터로 체결(01)/미체결(02)/
 // 전체(%%)를 선택할 수 있어 체결조회에도 쓴다.
 //
-// ⚠️ **필드 구조 미실측 경고**(2026-09-02) — IRP 계좌에 이 API를 실제로
-// 호출해 rt_cd:'0'(정상) 응답은 확인했으나, 그날 체결이 없어(IRP 자동매수는
-// 매월 26일경) output 배열이 빈 채로 왔다 — 실제 데이터가 있는 응답을 아직
-// 못 봤다. 아래 필드명은 KIS 공식 예제(chk_pension_inquire_daily_ccld.py)의
-// COLUMN_MAPPING(한글 라벨 명시)을 정본으로 삼았지만, 실측 전까지는 "공식
-// 문서 기반 추정"이다(오너 확인: "지금 만들어봐. 내일 장 중에 테스트 매수
-// 진행해볼게" — 다음 실제 체결 발생 시 재검증 예정, 그때까지 이 경고 유지).
-// 특히 pchs_avg_pric("매입평균가격")이 "이번 체결의 평균단가"인지 "계좌
-// 누적 평단가"인지 명칭만으로는 모호 — 실측으로 확정할 것. ord_qty(주문수량)도
-// 같은 미실측 상태 — 이 필드가 틀렸으면 fullyFilled가 항상 false로 떨어져
-// 아래 fullyFilled 안전장치 자체가 무력화된다(내일 실측 시 함께 확인).
+// ⚠️ **필드 구조 미실측 경고**(2026-09-02, 2026-09-03 일부 해소) — IRP 계좌에
+// 이 API를 실제로 호출해 rt_cd:'0'(정상) 응답은 확인했으나, 이 엔드포인트
+// (TTTC2201R, "퇴직연금 미체결내역")는 실제 체결(TIGER TDF2045 411→412주 증가,
+// KIS 잔고조회 API로 확인됨)이 발생한 뒤에도 계속 output 배열이 빈 채로
+// 왔다 — 이 특정 엔드포인트가 실제 데이터를 반환하는 응답을 아직 한 번도
+// 못 봤다(다른 엔드포인트인 TTTC2202R "퇴직연금 체결기준잔고"는 정상 데이터를
+// 반환함 — 아래 참고). 원인 미확정: ①이 API 특유의 배치/집계 지연 ②자동
+// 적립식 매수가 이 "주문" 중심 API가 다루는 경로 자체를 안 타는 구조일 가능성
+// (예: NH 백오피스가 스케줄 매수를 별도 파이프라인으로 처리) — 실측 전까지는
+// 추정.
+//
+// ⚠️ pchs_avg_pric 필드 의미 확정(2026-09-03, 오너 제보 — KIS 공식 API 포털
+// "퇴직연금 체결기준잔고"(TTTC2202R, GET /uapi/domestic-stock/v1/trading/
+// pension/inquire-present-balance) 페이지 라이브 확인) — 이 엔드포인트(잔고
+// 조회, 체결내역 아님)를 직접 호출해 실측: hldg_qty가 412(=오늘 신규매수
+// 반영된 최신 보유수량)일 때 pchs_avg_pric은 "11504.5388"로, 기존 Vault
+// 평단가(11504.40389294404, 411주 기준)와 거의 같고 신규 매수 1주가 가중
+// 평균에 미세하게 반영된 값과 정확히 일치 — **"계좌 누적 평단가"임을 확정**
+// (이번 체결의 개별 단가가 아님). 같은 필드명이 TTTC2201R의 행에도 있다면
+// 같은 의미일 개연성이 높아, 아래 price 추출을 pchs_avg_pric 대신 ord_unpr
+// (주문단가)로 교체했다 — 단 ord_unpr 자체가 TTTC2201R 실제 응답에 있는지는
+// (그 엔드포인트가 아직 빈 응답만 줘서) 여전히 미실측, 다음 실제 데이터
+// 확인 시 재검증 필요. ord_qty(주문수량)도 같은 미실측 상태 — 이 필드가
+// 틀렸으면 fullyFilled가 항상 false로 떨어져 아래 fullyFilled 안전장치
+// 자체가 무력화된다.
 //
 // ⚠️ 페이지네이션 미구현(CTX_AREA_FK100/NK100을 항상 빈 값으로 보냄) — IRP
 // 거래량상 한 페이지를 넘길 가능성은 낮지만, 응답 tr_cont가 다음 페이지 존재를
@@ -601,7 +615,9 @@ export function parseIrpPensionExecutions(json) {
     .map((row) => {
       const quantity = num(row.tot_ccld_qty);
       const orderQty = num(row.ord_qty);
-      const price = num(row.pchs_avg_pric);
+      // ord_unpr(주문단가) — pchs_avg_pric("매입평균가격")은 계좌 누적 평단가로
+      // 확정됐으므로(위 헤더 주석 참고) 개별 체결가로 쓰면 안 된다.
+      const price = num(row.ord_unpr);
       return {
         orderNo: String(row.odno ?? '').trim(),
         stockCode: String(row.pdno ?? '').trim(),

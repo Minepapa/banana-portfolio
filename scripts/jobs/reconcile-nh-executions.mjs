@@ -153,14 +153,19 @@ async function main() {
   for (const [label, actNo] of byLabel) {
     let rawRows;
     try {
-      // ostCnsDit: '2'(체결)로 명시 — 기본값 '0'(전체)이면 미체결 주문 행까지 같이
+      // ostCnsDit: '1'(체결)로 명시 — 기본값 '0'(전체)이면 미체결 주문 행까지 같이
       // 와서, 그날 지정가 주문이 하나도 체결 안 된 평범한 날에도 rawRows.length>0인데
       // 전부 quantity=0으로 필터 탈락해 아래 "구조 이상" 경고가 오탐 발사된다(2026-09-03
       // code-reviewer 지적 — 이 경고의 전제는 "성공 응답에 담긴 행은 전부 체결"인데
       // 기본값 '0'은 그 전제를 깬다).
+      // ⚠️ 버그 수정(2026-09-03, 오너가 공식 API 가이드 페이지를 직접 대조해 발견) —
+      // 처음엔 '2'를 "체결"로 잘못 알고 넣었다(nhplug-krstock.mjs의 옛 주석이 1·2를
+      // 뒤바꿔 적어놨던 게 원인). 실제로는 '2'=미체결이라 이 잡이 신설된 이래 계속
+      // "체결 없음"만 반환하고 있었다 — 진짜 체결 데이터를 못 본 게 아니라 애초에
+      // 미체결 행만 조회하고 있었던 것. '1'로 정정.
       const body = label === '금현물'
-        ? await getGoldExecution({ token, actNo, orrDt, ostCnsDit: '2' })
-        : await getKrDailyOrderExecution({ token, actNo, orrDt, ostCnsDit: '2' });
+        ? await getGoldExecution({ token, actNo, orrDt, ostCnsDit: '1' })
+        : await getKrDailyOrderExecution({ token, actNo, orrDt, ostCnsDit: '1' });
       rawRows = body?.Output_0;
     } catch (e) {
       // ⚠️ NH는 "당일 체결 없음"을 성공+빈배열이 아니라 업무거부(rsp_cd 11512,

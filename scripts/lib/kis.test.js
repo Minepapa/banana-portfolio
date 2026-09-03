@@ -862,7 +862,7 @@ test('[핵심 안전장치] parseOrderFillResponse: odno가 0패딩("0006693100"
 });
 
 // ── 퇴직연금(IRP) 체결조회 — 2026-09-02 신설 ─────────────────────────────
-// ⚠️ 아래 필드명(pdno·prdt_name·trad_dvsn_name·tot_ccld_qty·pchs_avg_pric·
+// ⚠️ 아래 필드명(pdno·prdt_name·trad_dvsn_name·tot_ccld_qty·ord_unpr·
 // ord_tmd 등)은 KIS 공식 예제(chk_pension_inquire_daily_ccld.py의
 // COLUMN_MAPPING)를 정본으로 삼았지만, 실제 체결 데이터가 있는 응답을 아직
 // 못 봤다(2026-09-02 라이브 호출 시 그날 체결이 없어 빈 배열만 확인) —
@@ -873,7 +873,7 @@ test('parseIrpPensionExecutions: 정상 체결 1건 파싱(공식 예제 COLUMN_
     rt_cd: '0',
     output: [{
       odno: '12345', pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격',
-      trad_dvsn_name: '매수', tot_ccld_qty: '10', ord_qty: '10', pchs_avg_pric: '11504.4', ord_tmd: '093015',
+      trad_dvsn_name: '매수', tot_ccld_qty: '10', ord_qty: '10', ord_unpr: '11504.4', ord_tmd: '093015',
     }],
   };
   const { executions, rawCount } = parseIrpPensionExecutions(json);
@@ -889,8 +889,8 @@ test('parseIrpPensionExecutions: trad_dvsn_name에 "매도"가 포함되면 매�
   const json = {
     rt_cd: '0',
     output: [
-      { odno: '1', pdno: 'A', prdt_name: 'X', trad_dvsn_name: '현금매도', tot_ccld_qty: '1', ord_qty: '1', pchs_avg_pric: '100', ord_tmd: '090000' },
-      { odno: '2', pdno: 'B', prdt_name: 'Y', trad_dvsn_name: '현금매수', tot_ccld_qty: '1', ord_qty: '1', pchs_avg_pric: '100', ord_tmd: '090000' },
+      { odno: '1', pdno: 'A', prdt_name: 'X', trad_dvsn_name: '현금매도', tot_ccld_qty: '1', ord_qty: '1', ord_unpr: '100', ord_tmd: '090000' },
+      { odno: '2', pdno: 'B', prdt_name: 'Y', trad_dvsn_name: '현금매수', tot_ccld_qty: '1', ord_qty: '1', ord_unpr: '100', ord_tmd: '090000' },
     ],
   };
   const { executions } = parseIrpPensionExecutions(json);
@@ -906,9 +906,9 @@ test('[핵심 안전장치] parseIrpPensionExecutions: 체결수량 0(미체결)
   const json = {
     rt_cd: '0',
     output: [
-      { odno: '1', pdno: 'A', prdt_name: '미체결종목', trad_dvsn_name: '매수', tot_ccld_qty: '0', ord_qty: '10', pchs_avg_pric: '0', ord_tmd: '090000' },
-      { odno: '2', pdno: 'B', prdt_name: '가격결측종목', trad_dvsn_name: '매수', tot_ccld_qty: '10', ord_qty: '10', pchs_avg_pric: '', ord_tmd: '090000' },
-      { odno: '3', pdno: 'C', prdt_name: '정상체결종목', trad_dvsn_name: '매수', tot_ccld_qty: '10', ord_qty: '10', pchs_avg_pric: '11504', ord_tmd: '090000' },
+      { odno: '1', pdno: 'A', prdt_name: '미체결종목', trad_dvsn_name: '매수', tot_ccld_qty: '0', ord_qty: '10', ord_unpr: '0', ord_tmd: '090000' },
+      { odno: '2', pdno: 'B', prdt_name: '가격결측종목', trad_dvsn_name: '매수', tot_ccld_qty: '10', ord_qty: '10', ord_unpr: '', ord_tmd: '090000' },
+      { odno: '3', pdno: 'C', prdt_name: '정상체결종목', trad_dvsn_name: '매수', tot_ccld_qty: '10', ord_qty: '10', ord_unpr: '11504', ord_tmd: '090000' },
     ],
   };
   const { executions, rawCount } = parseIrpPensionExecutions(json);
@@ -928,7 +928,7 @@ test('[핵심 안전장치] parseIrpPensionExecutions: rt_cd가 0이 아니면 t
 test('[핵심 안전장치] parseIrpPensionExecutions: 총체결수량<주문수량(부분체결)이면 fullyFilled=false', () => {
   const json = {
     rt_cd: '0',
-    output: [{ odno: '1', pdno: 'A', prdt_name: '부분체결종목', trad_dvsn_name: '매수', tot_ccld_qty: '5', ord_qty: '10', pchs_avg_pric: '100', ord_tmd: '090000' }],
+    output: [{ odno: '1', pdno: 'A', prdt_name: '부분체결종목', trad_dvsn_name: '매수', tot_ccld_qty: '5', ord_qty: '10', ord_unpr: '100', ord_tmd: '090000' }],
   };
   const { executions } = parseIrpPensionExecutions(json);
   assert.equal(executions[0].fullyFilled, false);
@@ -937,7 +937,7 @@ test('[핵심 안전장치] parseIrpPensionExecutions: 총체결수량<주문수
 test('[핵심 안전장치] parseIrpPensionExecutions: ord_qty 필드가 없거나(구조 이상) 결측이면 fullyFilled=false(추정 안 함)', () => {
   const json = {
     rt_cd: '0',
-    output: [{ odno: '1', pdno: 'A', prdt_name: 'X', trad_dvsn_name: '매수', tot_ccld_qty: '10', pchs_avg_pric: '100', ord_tmd: '090000' }],
+    output: [{ odno: '1', pdno: 'A', prdt_name: 'X', trad_dvsn_name: '매수', tot_ccld_qty: '10', ord_unpr: '100', ord_tmd: '090000' }],
   };
   const { executions } = parseIrpPensionExecutions(json);
   assert.equal(executions[0].fullyFilled, false);
