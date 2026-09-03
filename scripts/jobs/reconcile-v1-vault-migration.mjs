@@ -117,13 +117,14 @@ async function verifyAllocationCounts(token, mismatches) {
   if (v1Total !== vaultCount) mismatches.push(`자산분배: 건수 불일치(v1 ${v1Total} vs Vault ${vaultCount})`);
 }
 
-async function verifyBaselineCounts(token, mismatches) {
+// ⚠️ 2026-09-04 대조 은퇴 — 오너 지시로 State/Baselines의 v1 이관분(legacy:true 9개)을
+// 삭제했다("지금 사용하지 않고 있고 삭제하면 됨" — 분기마다 자동 갱신한다던 잡이
+// 실제로는 구현된 적이 없어 3개월째 정체된 값이었다). v1 시트와 건수가 다른 게
+// 이제 정상이라 계속 대조하면 영구 오탐 → 재실행 → 삭제분 부활로 이어진다(위
+// EVENT_LOG_CHECKS의 `retired` 패턴과 동일 이유).
+async function verifyBaselineCounts(_token, _mismatches) {
   console.log('\n[리스크기준선 건수 대조]');
-  const rows = await getRange(token, '리스크기준선!A2:K');
-  const v1Count = rows.filter((r) => r[0]).length;
-  const vaultCount = countVaultFiles(VAULT_PATHS.state.baselines);
-  console.log(`  리스크기준선: v1 ${v1Count}건 / Vault ${vaultCount}건`);
-  if (v1Count !== vaultCount) mismatches.push(`리스크기준선: 건수 불일치(v1 ${v1Count} vs Vault ${vaultCount})`);
+  console.log('  리스크기준선: 대조 은퇴 — 2026-09-04 v1 이관분 삭제(사용 안 함, 분기 자동갱신 잡 미구현이라 정체값이었음)');
 }
 
 async function main() {
