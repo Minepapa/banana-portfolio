@@ -79,9 +79,13 @@ export const EXPECTED_INTERVALS_MS = {
   // ⚠️ 평일 전용, 2026-08-23 48h로 상향.
   'new-cash-allocation': 48 * 60 * 60 * 1000,
   // reconcile-irp·update-cash-from-ledger(2026-08-18 신설 — 예수금앵커 배선 마지막
-  // 조립, IRP는 여기서 KIS API로 자동 CashEvent도 기록) 둘 다 평일 16:07·16:10 하루
-  // 1회. ⚠️ 평일 전용, 2026-08-23 48h로 상향.
+  // 조립) 둘 다 평일 16:07·16:10 하루 1회. ⚠️ 평일 전용, 2026-08-23 48h로 상향.
+  // ⚠️ 2026-09-03(마이그레이션 3단계, "통일 루프 깸") — reconcile-irp는 이제
+  // CashEvent가 아니라 State/Holdings를 직접 기록. update-cash-from-ledger는
+  // API 없는 ISA·연금저축 2계좌만 처리(6→2계좌 범위축소). reconcile-nh-cash 신설
+  // (위탁·CMA·금현물, 평일 16:08) — 같은 배치그룹이라 동일 48h 간격.
   'reconcile-irp': 48 * 60 * 60 * 1000,
+  'reconcile-nh-cash': 48 * 60 * 60 * 1000,
   'update-cash-from-ledger': 48 * 60 * 60 * 1000,
   // ⚠️ 버그 수정(2026-08-23, 오너 신고 — 리포트는 실제로 발행됐는데 "조용하다" 오알람) —
   // backup-vault와 완전히 같은 클래스의 재발이다: 이 두 잡을 추가할 때 기본값(1시간)

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.reconcile-nh-cash</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>reconcile-nh-cash</string>
+  </array>
+  <!-- 평일 16:08 KST(2026-09-03 신설, 마이그레이션 3단계) — 위탁·CMA·금현물 예수금을
+       NH PLUG API로 직접 조회해 State/Holdings를 직접 덮어쓴다(reconcile-irp.mjs와
+       동일 원칙 — "통일 루프 깸", CashEvent·update-cash-from-ledger.mjs 미경유).
+       update-holdings-from-executions(16:05)·reconcile-irp(16:07) 직후, update-cash-
+       from-ledger(16:10, 이제 ISA·연금저축만 처리)보다 먼저 두되 — 이 잡은 그 잡을
+       거치지 않으므로 순서 자체는 상관없지만, 하루 마감 배치 그룹으로 나란히 유지. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>8</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>8</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>8</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>8</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>8</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/reconcile-nh-cash.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/reconcile-nh-cash.log</string>
+</dict>
+</plist>

@@ -13,8 +13,13 @@ export const JOB_LABELS = {
   'parse-notifications-to-vault': '카카오 체결·배당 알림 → Vault 기록',
   'update-holdings-from-executions': '체결 반영 → 보유종목 잔고 갱신',
   'new-cash-allocation': '신규 현금 배분 판단(2026-08-18 실잔고 기반 재작성 후 재활성화)',
-  'reconcile-irp': 'IRP 계좌 KIS API 종목·예수금 대사(예수금은 CashEvent로도 기록)',
-  'update-cash-from-ledger': '계좌별(위탁·ISA·CMA·금현물·연금저축·IRP) 예수금 실잔고 계산',
+  // ⚠️ 개명(2026-09-03, 마이그레이션 3단계 "통일 루프 깸") — reconcile-irp는 원래
+  // 예수금을 CashEvent로 기록해 update-cash-from-ledger가 재구성했지만, 이제
+  // State/Holdings를 직접 덮어쓴다(CashEvent 미경유). update-cash-from-ledger는
+  // API 없는 ISA·연금저축 2계좌만 처리(6계좌→2계좌로 범위 축소).
+  'reconcile-irp': 'IRP 계좌 KIS API 종목 대사 + 예수금 State/Holdings 직접기록',
+  'reconcile-nh-cash': '위탁·CMA·금현물 예수금 NH PLUG API 직접조회(State/Holdings 직접기록, 2026-09-03 신설)',
+  'update-cash-from-ledger': '계좌별(ISA·연금저축, API 없는 2계좌만) 예수금 실잔고 계산',
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
   'update-monthly-balance-snapshot': '월별 잔고 스냅샷 매일 자동 기록(대시보드 막대그래프용)',
   'weekly-report': '주간 리포트 자동 생성·발행(성향학습 파이프라인 동반)',
@@ -45,6 +50,7 @@ export const JOB_REMEDIATION = {
   // stale해졌다면 이 파일 경로·내용이 깨졌을 가능성이 1순위 확인 대상.
   'execute-quant': '~/.config/banana-portfolio/kis-key.json(KIS 크리덴셜·퀀트계좌 설정) 확인',
   'reconcile-irp': '~/.config/banana-portfolio/kis-key.json(KIS 크리덴셜·IRP계좌 설정) 확인',
+  'reconcile-nh-cash': '~/.config/banana-portfolio/nhplug-key.json(NH PLUG 크리덴셜) 확인',
   // sync-firestore-mirror.mjs·parse-notifications-to-vault.mjs(2026-08-22 Firestore
   // 전환 이후) 둘 다 이 서비스계정 키가 없으면 즉시 throw로 죽는다.
   'sync-firestore-mirror': '~/.config/banana-portfolio-v2/firebase-adminsdk-key.json(Firebase Admin 키) 확인',

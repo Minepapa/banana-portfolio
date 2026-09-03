@@ -41,6 +41,7 @@ case "$JOB" in
   sync-firestore-mirror) CMD=(scripts/jobs/sync-firestore-mirror.mjs) ;;
   new-cash-allocation) CMD=(scripts/jobs/new-cash-allocation.mjs) ;;
   reconcile-irp) CMD=(scripts/jobs/reconcile-irp.mjs) ;;
+  reconcile-nh-cash) CMD=(scripts/jobs/reconcile-nh-cash.mjs) ;;
   update-cash-from-ledger) CMD=(scripts/jobs/update-cash-from-ledger.mjs) ;;
   weekly-report) CMD=(scripts/jobs/weekly-report.mjs) ;;
   update-allocation-from-holdings) CMD=(scripts/jobs/update-allocation-from-holdings.mjs) ;;
@@ -55,7 +56,7 @@ case "$JOB" in
   isa-maturity-check) CMD=(scripts/jobs/isa-maturity-check.mjs) ;;
   telegram-session-health-check) CMD=(scripts/jobs/telegram-session-health-check.mjs) ;;
   intraday-market-move-monitor) CMD=(scripts/jobs/intraday-market-move-monitor.mjs) ;;
-  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|isa-maturity-check|telegram-session-health-check|intraday-market-move-monitor}" >&2; exit 2 ;;
+  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|isa-maturity-check|telegram-session-health-check|intraday-market-move-monitor}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)
