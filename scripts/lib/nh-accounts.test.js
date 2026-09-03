@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resolveNhAccount, extractNhAccountNo, NH_ACCOUNT_MAP, REBALANCE_SCOPE_NH_ACCOUNTS,
-  maskNhActNo, resolveNhAccountLabelFromActNo,
+  maskNhActNo, resolveNhAccountLabelFromActNo, resolveNhAccountsByLabel,
 } from './nh-accounts.mjs';
 
 test('resolveNhAccount: 등록된 4계좌 각각 정확히 구분', () => {
@@ -85,4 +85,44 @@ test('resolveNhAccountLabelFromActNo: 실계좌번호로 바로 계좌명 해석
 
 test('resolveNhAccountLabelFromActNo: 매핑에 없는 계좌(예: ISA — NH API 계좌목록에 아예 안 나옴)는 null', () => {
   assert.equal(resolveNhAccountLabelFromActNo('99999999999'), null);
+});
+
+// 2026-09-03 신설 — reconcile-nh-cash.mjs·reconcile-nh-executions.mjs 공용 계좌 매핑.
+test('resolveNhAccountsByLabel: allowedLabels에 속한 계좌만 골라 맵으로', () => {
+  const accounts = [
+    { acctNo: '50071002617', acctType: '03' }, // 모의투자 — 매핑 없음(제외)
+    { acctNo: '20902920556', acctType: '01' }, // 금현물
+    { acctNo: '20901920556', acctType: '01' }, // CMA
+    { acctNo: '20501596019', acctType: '01' }, // 위탁
+  ];
+  const map = resolveNhAccountsByLabel(accounts, new Set(['위탁', '금현물']));
+  assert.equal(map.size, 2);
+  assert.equal(map.get('위탁'), '20501596019');
+  assert.equal(map.get('금현물'), '20902920556');
+  assert.equal(map.has('CMA'), false);
+});
+
+test('resolveNhAccountsByLabel: 빈 배열/undefined 입력이면 빈 맵', () => {
+  assert.equal(resolveNhAccountsByLabel([], new Set(['위탁'])).size, 0);
+  assert.equal(resolveNhAccountsByLabel(undefined, new Set(['위탁'])).size, 0);
+});
+
+// [핵심 안전장치] 마스킹(가운데 3자리 소실)으로 서로 다른 두 실계좌번호가 같은
+// 라벨에 매칭되는 이론상 충돌 — 조용히 마지막 값으로 덮어쓰지 않고 throw해야
+// 잘못된 계좌 잔고·체결이 엉뚱한 라벨로 기록되는 사고를 막는다.
+test('[핵심 안전장치] resolveNhAccountsByLabel: 같은 라벨에 서로 다른 실계좌번호가 매칭되면 throw(조용히 덮어쓰지 않음)', () => {
+  const accounts = [
+    { acctNo: '20501596019', acctType: '01' }, // 위탁
+    { acctNo: '20501590009', acctType: '01' }, // 마스킹하면 우연히 같은 라벨(가상 시나리오)
+  ];
+  assert.throws(() => resolveNhAccountsByLabel(accounts, new Set(['위탁'])), /마스킹 충돌/);
+});
+
+test('resolveNhAccountsByLabel: 같은 실계좌번호가 두 번 나와도(중복 응답) 충돌 아님', () => {
+  const accounts = [
+    { acctNo: '20501596019', acctType: '01' },
+    { acctNo: '20501596019', acctType: '01' },
+  ];
+  const map = resolveNhAccountsByLabel(accounts, new Set(['위탁']));
+  assert.equal(map.get('위탁'), '20501596019');
 });

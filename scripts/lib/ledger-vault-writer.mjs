@@ -43,8 +43,15 @@ const ACCOUNT_NOTE = 'Phase 8·9(State/Holdings) 이후 별도 배치로 채워�
 // AMBIGUOUS_BROKER_CANDIDATES에도 없어 이름매칭 폴백조차 안 타서 무조건 계좌귀속불가로
 // 떨어졌다(실측: TIGER TDF2045 적격 매수 2건). 다른 필드(broker·stockCode 등)와 동일하게
 // acctNo도 이제 그대로 보존한다.
+// orderNo(선택 필드, 2026-09-03 신설) — 소스가 체결별 시각을 안 주는 경우(NH
+// getKrDailyOrderExecution/getGoldExecution, 아래 reconcile-nh-executions.mjs가
+// 처음 쓰는 소비처) 같은 날 같은 종목·수량·방향의 서로 다른 체결 2건이 시각까지
+// 겹쳐(둘 다 00:00:00 등) 파일명이 충돌할 수 있다 — 브로커가 발급한 고유 주문번호를
+// dedupKey·파일명에 더해 그 경우에도 서로 다른 레코드로 구분되게 한다.
+// 선택 필드라 기존 호출부(카카오 파싱·퀀트 watch-order-fill.mjs 등, orderNo 없이
+// 호출)는 파일명·dedupKey가 이전과 완전히 동일 — 하위호환 깨지지 않음.
 export function buildExecutionRecord(e) {
-  const dedupKey = `${e.tradeDate}|${e.tradeType}|${e.stockName}|${e.quantity}`;
+  const dedupKey = `${e.tradeDate}|${e.tradeType}|${e.stockName}|${e.quantity}${e.orderNo ? `|${sanitizeSegment(e.orderNo)}` : ''}`;
   const datePart = e.tradeDate.slice(0, 10);
   const timePart = e.tradeDate.slice(11).replace(/:/g, '') || '000000';
   // 폴더가 이미 "체결"임을 말해주므로 파일명엔 종류 접두사를 안 붙인다 — 날짜부터
@@ -59,7 +66,8 @@ export function buildExecutionRecord(e) {
   // 들어있었지만 파일명엔 빠져 있어서, 같은 날짜·시각(시각 미상 폴백 00:00:00 포함)·
   // 매매구분·종목명인데 수량만 다른 체결 2건이 파일명 충돌로 조용히 1건만 남는
   // 사고 경로가 있었다(reconcile-irp-executions.mjs 신설 중 실행으로 재현 확인).
-  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.tradeType)}-${sanitizeSegment(e.stockName)}-${sanitizeSegment(e.quantity)}.md`;
+  const orderNoSuffix = e.orderNo ? `-${sanitizeSegment(e.orderNo)}` : '';
+  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.tradeType)}-${sanitizeSegment(e.stockName)}-${sanitizeSegment(e.quantity)}${orderNoSuffix}.md`;
   const content = buildFrontmatter({
     type: 'execution',
     tradeDate: e.tradeDate,
@@ -71,6 +79,7 @@ export function buildExecutionRecord(e) {
     currency: e.currency,
     broker: e.broker,
     acctNo: e.acctNo || '',
+    orderNo: e.orderNo || '',
     account: e.account ?? null,
     accountNote: e.account ? null : ACCOUNT_NOTE,
     dedupKey,

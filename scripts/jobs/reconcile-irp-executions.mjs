@@ -113,6 +113,15 @@ async function main() {
   }
 
   const fullyFilled = executions.filter((e) => e.fullyFilled);
+  // [핵심 안전장치] 부분체결 상태로 장 마감(또는 잔량 취소)되면 tot_ccld_qty<
+  // 주문수량이 영구 고정돼 이 잡이 그 체결을 영원히 기록하지 않는다(2026-09-03,
+  // reconcile-nh-executions.mjs 코드리뷰에서 같은 클래스로 지적 — console.log만으로는
+  // launchd 잡의 stdout을 아무도 안 봐서 오너에게 알림이 안 감). collectWarning으로
+  // 명시 노출한다.
+  const partialCount = executions.length - fullyFilled.length;
+  if (partialCount > 0) {
+    collectWarning(`IRP 체결조회: 부분체결 ${partialCount}건 미기록 — 잔량 취소/미체결로 끝났으면 영구 누락이므로 수동 확인 필요`);
+  }
   if (!fullyFilled.length) {
     console.log(rawCount === 0 ? '오늘 IRP 체결 0건' : `전량체결 확정 행 없음(부분체결 ${executions.length}건 대기 중 — 다음 폴링에서 재확인)`);
     await flushWarnings('reconcile-irp-executions');
@@ -133,6 +142,7 @@ async function main() {
       broker: BROKER,
       account: ACCOUNT_LABEL,
       acctNo: IRP_ACCOUNT_NO,
+      orderNo: e.orderNo,
     });
     const filepath = join(dir, filename);
     if (existsSync(filepath)) {

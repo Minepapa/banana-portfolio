@@ -32,6 +32,32 @@ test('[핵심 안전장치] buildExecutionRecord: 같은 시각·수량 다른 �
   assert.notEqual(a.filename, b.filename);
 });
 
+// 2026-09-03 신설 — orderNo(선택 필드). NH 체결조회(getKrDailyOrderExecution 등)처럼
+// 체결별 시각을 안 주는 소스는 날짜·시각·수량·방향·종목명이 전부 같은 두 체결이 있을
+// 수 있다(reconcile-nh-executions.mjs) — 주문번호로 구분.
+test('buildExecutionRecord: orderNo 없으면 기존과 동일한 파일명·dedupKey(하위호환)', () => {
+  const withoutOrderNo = buildExecutionRecord(exec());
+  assert.equal(withoutOrderNo.filename, '2026-08-04-091233-매수-삼성전자-10.md');
+  assert.equal(withoutOrderNo.dedupKey, '2026-08-04 09:12:33|매수|삼성전자|10');
+});
+
+test('[핵심 안전장치] buildExecutionRecord: orderNo가 있으면 날짜·시각·수량·방향·종목명이 전부 같아도 다른 파일명', () => {
+  const a = buildExecutionRecord(exec({ orderNo: '824268' }));
+  const b = buildExecutionRecord(exec({ orderNo: '824999' }));
+  assert.notEqual(a.filename, b.filename);
+  assert.notEqual(a.dedupKey, b.dedupKey);
+});
+
+test('buildExecutionRecord: orderNo가 frontmatter에 보존됨', () => {
+  const { content } = buildExecutionRecord(exec({ orderNo: '824268' }));
+  assert.match(content, /orderNo: "824268"/);
+});
+
+test('buildExecutionRecord: orderNo 없으면 frontmatter에 빈 문자열(다른 선택 필드와 동일 관례)', () => {
+  const { content } = buildExecutionRecord(exec());
+  assert.match(content, /orderNo: ""/);
+});
+
 test('buildExecutionRecord: Executions 하위폴더를 가리킨다', () => {
   const { dir } = buildExecutionRecord(exec());
   assert.equal(dir, VAULT_PATHS.facts.ledger.executions);

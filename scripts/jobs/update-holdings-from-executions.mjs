@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 신규 체결(카카오 파싱, 라이브) → State/Holdings 반영 (구현계획서 Phase 8)
+ * 신규 체결(카카오 파싱 + NH/KIS API 직접조회) → State/Holdings 반영 (구현계획서 Phase 8)
  *
  * Phase 2가 "계좌 귀속·보유종목갱신은 Phase 8·9 몫"이라며 의도적으로 비워둔 부분을
  * 마저 연결한다. docs/ARCHITECTURE-V2.md "체결 기록 권위 소스" 절의 원칙(State는 항상
@@ -9,6 +9,17 @@
  * 범위: Facts/Ledger/Executions 중 legacy(Phase 7 마이그레이션 스냅샷)가 아니고 아직
  * holdingsApplied 안 된 것만 대상 — legacy는 이미 그 시점 스냅샷이 State/Holdings로
  * 직접 옮겨졌으므로 체결을 다시 재생하면 이중 반영된다(제외 이유).
+ *
+ * ⚠️ 크로스소스 이중반영 방지(2026-09-03, code-reviewer 지적으로 발견 — 마이그레이션
+ * 4단계 `reconcile-nh-executions.mjs` 리뷰 도중) — 카카오 파싱과 NH/KIS API 직접조회
+ * (`reconcile-nh-executions.mjs`·`reconcile-irp-executions.mjs`)가 같은 실제 체결을
+ * 각자 별도 파일로 기록할 수 있다(의도된 병행기간, `Log/Strategy/2026-09-02-NH-API-
+ * 우선-KIS-카카오파싱-역할축소-결정.md` 참고 — 신규 경로가 안정화된 뒤 카카오를
+ * 정리하는 5단계 전까지는 두 소스가 나란히 돈다). `findMatchingKnownExecution`이
+ * legacy뿐 아니라 "이미 holdingsApplied된 다른 소스의 체결"까지 대조 대상에 넣어
+ * (날짜 일단위·구분·종목명·수량 기준, legacy dedup과 동일 원칙) 같은 실제 거래가
+ * applyBuy/applySell로 두 번 적용되는 걸 막는다 — 실제 라이브 Vault 데이터(2026-09-02
+ * 메리츠금융지주 매도 30주, 카카오로 이미 반영됨)로 재현·검증 완료.
  *
  * ⚠️ 실행 시작 시 항상 먼저 로트 통합(consolidateLots)부터 한다 — 독립 코드리뷰
  * (oh-my-claudecode:code-reviewer) 지적, 2026-08-05: Phase 7 마이그레이션이 계좌당
@@ -105,13 +116,26 @@ export function pickUnprocessedExecutions(executionFiles) {
 // 진짜 거래가 우연히 존재할 확률은 무시할 수준이고(이 프로젝트 자체의 dedupKey 관례
 // — ledger-vault-writer.mjs buildExecutionRecord — 도 애초에 단가 없이 이 넷만으로
 // 유일성을 정의한다, 여기서도 그 관례를 그대로 따르는 게 맞다).
-// matchesLegacyExecution의 실제 매치 레코드 버전(불리언 대신 레코드 자체 반환) — legacy
+// matchesKnownExecution의 실제 매치 레코드 버전(불리언 대신 레코드 자체 반환) — 매치된
 // 쪽에만 남아있는 정보(예: account, v1 마이그레이션 시점엔 알던 계좌)를 재사용하기 위해
-// 2026-08-19 추가(아래 findLegacyAccountFallback 참고). 판정 조건은 matchesLegacyExecution
+// 2026-08-19 추가(아래 findLegacyAccountFallback 참고). 판정 조건은 matchesKnownExecution
 // 과 완전히 동일 — 둘이 서로 다른 기준으로 갈리면 "중복으로는 잡았는데 계좌는 못 씀" 같은
-// 불일치가 생기므로 하나만 정의하고 matchesLegacyExecution이 이걸 재사용한다.
-export function findMatchingLegacyExecution(exec, legacyExecutions) {
-  const matches = legacyExecutions.filter((g) =>
+// 불일치가 생기므로 하나만 정의하고 matchesKnownExecution이 이걸 재사용한다.
+//
+// ⚠️ 개명(2026-09-03, "Legacy"→"Known") — 원래는 v1 마이그레이션 스냅샷(legacy)과만
+// 대조했다. code-reviewer 지적으로 발견: 카카오 파싱과 reconcile-nh-executions.mjs
+// (NH API 직접조회, 위탁·금현물 체결을 API로 직접 폴링)가 같은 실제 체결을 각자 별도
+// 파일로 기록할 수 있는데(마이그레이션 병행기간 중 의도된 상황, Strategy 문서 참고),
+// legacy만 보던 이전 로직은 이 크로스소스 중복을 못 잡아 같은 체결이 applyBuy/applySell
+// 로 두 번 적용될 뻔했다(실제 라이브 Vault 데이터로 재현 확인 — 2026-08-18 legacy
+// 중복 실사고와 동일 클래스). 판정 기준(날짜 일단위·구분·종목명·수량, 단가·정확한
+// 시각은 소스마다 표현이 달라 비교 안 함) 자체는 "legacy 여부"와 무관하게 "같은 실제
+// 거래를 가리키는가"를 정확히 판별하므로, 함수 이름과 인자 의미를 legacy 전용에서
+// "이미 알려진(= legacy 스냅샷이거나 다른 소스가 이미 holdingsApplied 처리한) 체결
+// 전체"로 넓힌다 — 함수 로직 자체는 무변경, 호출부가 넘기는 배열 구성만 넓어진다
+// (main()의 knownExecutions 참고).
+export function findMatchingKnownExecution(exec, knownExecutions) {
+  const matches = knownExecutions.filter((g) =>
     String(g.tradeDate).slice(0, 10) === String(exec.tradeDate).slice(0, 10) &&
     g.tradeType === exec.tradeType && g.stockName === exec.stockName &&
     g.quantity === exec.quantity,
@@ -120,15 +144,15 @@ export function findMatchingLegacyExecution(exec, legacyExecutions) {
   // 후보가 여럿인데 계좌가 서로 갈리면(같은 날 같은 종목·구분·수량을 다른 계좌로 거래한
   // 우연 — 이론상 가능) 어느 쪽 계좌인지 추정하지 않는다(코드리뷰 지적, 2026-08-19 —
   // 이 프로젝트의 "추정하지 않는다" 원칙과 일관되게 방어). account만 null로 낮추고
-  // 레코드 자체는 반환 — "이 이벤트가 legacy와 중복"이라는 dedup 판정(matchesLegacy
-  // Execution)은 계좌 모호성과 무관하게 여전히 유효해야 하므로.
+  // 레코드 자체는 반환 — "이 이벤트가 이미 알려진 체결과 중복"이라는 dedup 판정
+  // (matchesKnownExecution)은 계좌 모호성과 무관하게 여전히 유효해야 하므로.
   const accounts = new Set(matches.map((m) => m.account));
   if (accounts.size > 1) return { ...matches[0], account: null };
   return matches[0];
 }
 
-export function matchesLegacyExecution(exec, legacyExecutions) {
-  return findMatchingLegacyExecution(exec, legacyExecutions) != null;
+export function matchesKnownExecution(exec, knownExecutions) {
+  return findMatchingKnownExecution(exec, knownExecutions) != null;
 }
 
 // 배당은 holdingsApplied 플래그가 없다(보유수량에 영향 없음) — account 필드 유무로
@@ -197,12 +221,21 @@ function loadConsolidatedHoldings() {
 async function main() {
   const executionFiles = readVaultFiles(VAULT_PATHS.facts.ledger.executions);
   const legacyExecutions = executionFiles.filter(({ parsed }) => parsed.legacy).map(({ parsed }) => parsed);
+  // ⚠️ 크로스소스 이중반영 방지(2026-09-03, code-reviewer 지적으로 발견 — findMatching
+  // KnownExecution 헤더 주석 참고) — legacy뿐 아니라 이미 holdingsApplied된 다른 소스의
+  // 체결도 dedup 대조 대상에 넣는다. mutable — 이 루프가 새로 적용/스킵 판정한 체결도
+  // 그때그때 이 배열에 추가해, 카카오·NH API 두 소스의 같은 체결이 "같은 실행" 안에서
+  // 나란히 들어와도(둘 다 오늘 막 파싱된 경우) 서로를 잡아낸다.
+  const knownExecutions = [
+    ...legacyExecutions,
+    ...executionFiles.filter(({ parsed }) => !parsed.legacy && parsed.holdingsApplied).map(({ parsed }) => parsed),
+  ];
   const targets = pickUnprocessedExecutions(executionFiles);
   console.log(`🔎 미처리 체결 ${targets.length}건 (전체 ${executionFiles.length}건 중)`);
 
   const holdingsMap = loadConsolidatedHoldings();
 
-  let buys = 0, sells = 0, closed = 0, unresolvedAccount = 0, warnings = 0, alreadyApplied = 0, duplicateOfLegacy = 0, totalRealizedProfit = 0;
+  let buys = 0, sells = 0, closed = 0, unresolvedAccount = 0, warnings = 0, alreadyApplied = 0, duplicateOfKnown = 0, totalRealizedProfit = 0;
 
   // ⚠️ 버그 수정(2026-08-18, 독립 코드리뷰 HIGH 지적) — 예전엔 targets가 비면 여기서
   // 바로 return해 아래 배당 계좌귀속 패스까지 통째로 건너뛰었다. 이 잡은 launchd
@@ -213,26 +246,27 @@ async function main() {
   if (targets.length === 0) console.log('처리할 체결 없음 — 배당 계좌귀속으로 진행.');
   for (const { filepath, content, parsed: exec } of targets) {
     const currentHoldings = [...holdingsMap.values()];
-    const legacyMatch = findMatchingLegacyExecution(exec, legacyExecutions);
+    const knownMatch = findMatchingKnownExecution(exec, knownExecutions);
     // ⚠️ 버그 수정(2026-08-19, 오너 지시 "체결도 매핑 가능하면 매핑해봐") — 전량청산돼
     // 지금은 보유 파일 자체가 없는 종목(예: 삼성바이오로직스·현대차 매도)은 acctNo도
     // 없고(NH 체결 원문엔 애초에 계좌번호가 없음) 이름매칭도 대조할 보유 파일이 없어
-    // 영구히 계좌귀속불가였다. 그런데 이 사건이 legacyMatch로 잡히면(날짜·구분·종목명·
-    // 수량 일치 — matchesLegacyExecution과 동일 기준) v1 마이그레이션 스냅샷이 이미
-    // 그 계좌를 알고 있다(legacyMatch.account) — 굳이 다시 추정하지 않고 그 값을 그대로
+    // 영구히 계좌귀속불가였다. 그런데 이 사건이 knownMatch로 잡히면(날짜·구분·종목명·
+    // 수량 일치 — matchesKnownExecution과 동일 기준) legacy 스냅샷이나 다른 소스가 이미
+    // 그 계좌를 알고 있다(knownMatch.account) — 굳이 다시 추정하지 않고 그 값을 그대로
     // 재사용한다(추정이 아니라 기존에 이미 확정됐던 사실 재사용).
     const account = exec.account
       || resolveExecutionAccount({ broker: exec.broker, stockName: exec.stockName, stockCode: exec.stockCode, acctNo: exec.acctNo }, currentHoldings)
-      || legacyMatch?.account || null;
+      || knownMatch?.account || null;
     if (!account) {
       console.log(`  ⚠️  계좌 귀속 불가 — 건너뜀: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName} (${exec.broker})`);
       unresolvedAccount++;
       continue;
     }
-    if (legacyMatch) {
-      console.log(`  ↩️  마이그레이션 스냅샷과 중복(이미 반영됨) — 적용 없이 플래그만 기록: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName}`);
-      duplicateOfLegacy++;
+    if (knownMatch) {
+      console.log(`  ↩️  이미 알려진 체결과 중복(마이그레이션 스냅샷 또는 다른 소스에서 이미 반영됨) — 적용 없이 플래그만 기록: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName}`);
+      duplicateOfKnown++;
       if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+      knownExecutions.push({ ...exec, account });
       continue;
     }
     // ⚠️ 버그 수정(2026-08-13, 독립 코드리뷰 HIGH 지적) — 퀀트 트랙 체결(exec.account가
@@ -246,6 +280,7 @@ async function main() {
     if (account === QUANT_TRACK_LABEL) {
       console.log(`  ↪️  퀀트 트랙 체결 — State/Holdings 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
       if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+      knownExecutions.push({ ...exec, account });
       continue;
     }
 
@@ -259,6 +294,7 @@ async function main() {
       console.log(`  ↩️  이미 반영된 체결(재시도) — 재적용 없이 플래그만 기록: ${exec.stockName}`);
       alreadyApplied++;
       if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+      knownExecutions.push({ ...exec, account });
       continue;
     }
 
@@ -298,11 +334,12 @@ async function main() {
     }
 
     if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+    knownExecutions.push(execWithAccount);
   }
 
   console.log(
     `\n📊 매수 ${buys}건 · 매도 ${sells}건(전량청산 ${closed}건, 실현손익 합계 ${Math.round(totalRealizedProfit).toLocaleString()}원) · ` +
-    `계좌귀속불가 ${unresolvedAccount}건 · 경고스킵 ${warnings}건 · 재시도(이미반영) ${alreadyApplied}건 · 마이그레이션중복(적용스킵) ${duplicateOfLegacy}건` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
+    `계좌귀속불가 ${unresolvedAccount}건 · 경고스킵 ${warnings}건 · 재시도(이미반영) ${alreadyApplied}건 · 기존체결중복(적용스킵) ${duplicateOfKnown}건` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
 
   // 체결 계좌귀속 소급 백필 — 2026-08-18 이전에 이미 holdingsApplied:true로 처리된
@@ -315,8 +352,11 @@ async function main() {
     const currentHoldings = [...holdingsMap.values()];
     for (const { filepath, content, parsed: exec } of backfillTargets) {
       // 메인 루프와 동일하게 legacyMatch.account를 마지막 폴백으로 쓴다(2026-08-19,
-      // 전량청산돼 보유 파일이 없는 종목의 소급백필도 구제).
-      const legacyMatch = findMatchingLegacyExecution(exec, legacyExecutions);
+      // 전량청산돼 보유 파일이 없는 종목의 소급백필도 구제). 이미 holdingsApplied된
+      // 레코드의 account만 채우는 단계라(수량 재적용 없음) knownExecutions로 넓힐
+      // 필요는 없다 — legacy 스냅샷만으로 충분(findMatchingKnownExecution 자체는
+      // 2026-09-03 개명, 동작은 무변경).
+      const legacyMatch = findMatchingKnownExecution(exec, legacyExecutions);
       const account = resolveExecutionAccount({ broker: exec.broker, stockName: exec.stockName, stockCode: exec.stockCode, acctNo: exec.acctNo }, currentHoldings)
         || legacyMatch?.account || null;
       if (!account) {

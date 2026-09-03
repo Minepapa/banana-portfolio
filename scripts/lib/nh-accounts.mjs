@@ -71,3 +71,26 @@ export function resolveNhAccountLabelFromActNo(actNo) {
   if (!masked) return null;
   return NH_ACCOUNT_MAP[masked] ?? null;
 }
+
+// listNhAccounts() 결과 → {계좌명: 실계좌번호} 맵, allowedLabels(Set)에 속한 계좌만.
+// 2026-09-03 신설 — reconcile-nh-cash.mjs가 처음 만들었던 resolveNhCashAccountMap을
+// reconcile-nh-executions.mjs가 두 번째로 필요로 하며 공용 모듈로 승격(DRY + 아래
+// 충돌가드를 두 잡이 항상 같이 갖게 함). 순수함수, 테스트 가능.
+//
+// [핵심 안전장치] 마스킹(가운데 3자리 소실)으로 서로 다른 두 실계좌번호가 같은
+// 라벨에 매칭되면(이론상 극히 드묾) 조용히 마지막 값으로 덮어쓰지 않고 throw —
+// 잘못된 계좌 잔고·체결이 엉뚱한 라벨로 기록되는 사고를 막는다(code-reviewer
+// 지적, 2026-09-03, reconcile-nh-cash.mjs에서 최초 반영).
+export function resolveNhAccountsByLabel(accounts, allowedLabels) {
+  const map = new Map();
+  for (const a of accounts || []) {
+    const label = resolveNhAccountLabelFromActNo(a.acctNo);
+    if (!label || !allowedLabels.has(label)) continue;
+    const prev = map.get(label);
+    if (prev && prev !== a.acctNo) {
+      throw new Error(`계좌번호 마스킹 충돌: ${label}에 ${prev}·${a.acctNo} 둘 다 매칭됨 — NH_ACCOUNT_MAP 확인 필요(추정 금지)`);
+    }
+    map.set(label, a.acctNo);
+  }
+  return map;
+}

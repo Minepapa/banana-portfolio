@@ -53,7 +53,7 @@ import { join } from 'node:path';
 import { hasNhplugCredentials, loadNhplugCredentials, getNhToken, listNhAccounts } from '../lib/nhplug.mjs';
 import { getKrBalance } from '../lib/nhplug-krstock.mjs';
 import { getGoldBalance } from '../lib/nhplug-krgold.mjs';
-import { resolveNhAccountLabelFromActNo } from '../lib/nh-accounts.mjs';
+import { resolveNhAccountsByLabel } from '../lib/nh-accounts.mjs';
 import { buildCashHoldingRecord } from '../lib/holdings-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
@@ -78,23 +78,12 @@ export function extractNhCashDeposit(output0) {
 }
 
 // listNhAccounts() 결과 → {계좌명: 실계좌번호} 맵. NH_CASH_ACCOUNTS 밖의 계좌(모의
-// 투자·아직 매핑 안 된 신규 계좌 등)는 조용히 제외 — 순수함수, 테스트 가능.
-// [핵심 안전장치] 마스킹(가운데 3자리 소실)으로 서로 다른 두 실계좌번호가 같은
-// 라벨에 매칭되면(이론상 극히 드묾) 조용히 마지막 값으로 덮어쓰지 않고 throw —
-// 잘못된 계좌 잔고가 엉뚱한 라벨로 기록되는 사고를 막는다(code-reviewer 지적,
-// 2026-09-03).
+// 투자·아직 매핑 안 된 신규 계좌 등)는 조용히 제외.
+// ⚠️ 공용 모듈로 승격(2026-09-03) — 마스킹 충돌 가드를 포함한 실제 로직은
+// nh-accounts.mjs의 resolveNhAccountsByLabel로 옮겼다(reconcile-nh-executions.mjs가
+// 두 번째 소비처가 되며 DRY). 이 함수는 얇은 래퍼로 남겨 기존 이름·테스트를 그대로 유지.
 export function resolveNhCashAccountMap(accounts) {
-  const map = new Map();
-  for (const a of accounts || []) {
-    const label = resolveNhAccountLabelFromActNo(a.acctNo);
-    if (!label || !NH_CASH_ACCOUNTS.has(label)) continue;
-    const prev = map.get(label);
-    if (prev && prev !== a.acctNo) {
-      throw new Error(`계좌번호 마스킹 충돌: ${label}에 ${prev}·${a.acctNo} 둘 다 매칭됨 — NH_ACCOUNT_MAP 확인 필요(추정 금지)`);
-    }
-    map.set(label, a.acctNo);
-  }
-  return map;
+  return resolveNhAccountsByLabel(accounts, NH_CASH_ACCOUNTS);
 }
 
 function kstNow() {
