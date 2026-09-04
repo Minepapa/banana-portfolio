@@ -74,7 +74,7 @@ import { join } from 'node:path';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
-import { resolveExecutionAccount, QUANT_TRACK_LABEL } from '../lib/account-resolver.mjs';
+import { resolveExecutionAccount, QUANT_TRACK_LABEL, IRP_ACCOUNT_LABEL } from '../lib/account-resolver.mjs';
 import { applyBuy, applySell, consolidateLots } from '../lib/holdings-updater.mjs';
 import { buildLiveHoldingRecord, holdingFilename, parseAppliedDedupKeys } from '../lib/holdings-vault-writer.mjs';
 import { buildProfitRecord } from '../lib/ledger-vault-writer.mjs';
@@ -294,6 +294,46 @@ async function main() {
     // 재처리 대상에서 빠지게 한다(Holdings에는 안 씀).
     if (account === QUANT_TRACK_LABEL) {
       console.log(`  ↪️  퀀트 트랙 체결 — State/Holdings 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+      knownExecutions.push({ ...exec, account });
+      continue;
+    }
+    // IRP 체결 — 2026-09-04부터 보유수량·평단가는 State/Holdings에 반영 대상 아님(KIS
+    // API가 정본, 퀀트와 동일 원칙). reconcile-irp.mjs가 10분마다 KIS 잔고조회로
+    // 수량+평단가+원가를 직접 덮어쓴다(parseBalanceResponse가 pchs_avg_pric·pchs_amt
+    // 까지 실측 확인, kis.mjs 헤더 주석 참고) — 카카오 체결누적은 이제 이 계좌 보유
+    // 수량엔 안 쓴다.
+    //
+    // ⚠️ 단, 매도 실현손익은 예외(코드리뷰 HIGH 지적, 2026-09-04) — KIS 잔고조회
+    // API는 "현재 스냅샷"만 주지 다음 시점의 스냅샷이 자체적으로 판매손익을 알려주지
+    // 않는다(과거 특정 매도 건의 체결가를 되짚을 방법이 없음). 퀀트는 애초에 Vault에
+    // 원가를 가진 적이 없어 이 문제가 없었지만, IRP는 있었다 — 그래서 매도 체결만
+    // applySell로 실현손익을 계산해 Facts/Ledger/Profits에 기록한다(weekly-report.mjs가
+    // 이 원장을 읽으므로, 안 하면 오너 보고 실현손익이 조용히 누락된다). 단
+    // holdingsMap·State/Holdings는 건드리지 않는다(qty/avgPrice 갱신은 여전히
+    // reconcile-irp.mjs 몫) — existingHolding은 "계산용 기준"으로만 쓰고 결과의
+    // updatedHolding은 버린다. 매수 체결은 실현손익이 없어 여전히 완전 스킵.
+    if (account === IRP_ACCOUNT_LABEL) {
+      if (exec.tradeType === '매도') {
+        const irpKey = `${account}|${exec.stockName}`;
+        const irpExisting = holdingsMap.get(irpKey) ?? null;
+        const sellResult = applySell(irpExisting, { ...exec, account }, { usdKrwRate });
+        if (sellResult.warning) {
+          console.log(`  ⚠️  IRP 매도 실현손익 계산 실패 — ${sellResult.warning} — 건너뜀`);
+          warnings++;
+        } else {
+          console.log(`  - [매도] IRP ${exec.stockName} ${exec.quantity}주 @${exec.price} → 실현손익 ${Math.round(sellResult.realizedProfit).toLocaleString()}원(보유수량 갱신은 KIS 잔고조회가 담당)`);
+          totalRealizedProfit += sellResult.realizedProfit;
+          if (!DRY_RUN) {
+            const { filename: pFilename, content: pContent, dir: pDir } = buildProfitRecord({ ...exec, account }, irpExisting.avgPrice, sellResult.realizedProfit, exec.currency === 'USD' ? usdKrwRate : 1);
+            mkdirSync(pDir, { recursive: true });
+            writeAtomic(join(pDir, pFilename), pContent);
+          }
+          sells++;
+        }
+      } else {
+        console.log(`  ↪️  IRP 매수 체결 — State/Holdings 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
+      }
       if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       knownExecutions.push({ ...exec, account });
       continue;

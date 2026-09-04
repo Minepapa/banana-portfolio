@@ -62,25 +62,26 @@
  * 계좌 단위로 등록시켜(2026-07 실측: 최상위 앱키로는 INVALID_CHECK_ACNO 거부, IRP 전용으로
  * 새로 신청한 앱키로 바꾸니 통과), 시세용 앱키로는 이 계좌를 애초에 조회할 수 없다.
  *
- * ⚠️ 대사 기준(2026-08-22 변경) — 종목 수량 대사(아래 buildIrpMismatches)는 원래 v1
- * 구글시트(계좌별 탭)를 "장부"로 삼아 KIS 실계좌와 비교했는데, 그 시트는 v2 전환 이후
- * 더 이상 갱신되지 않아 조용히 낡아가고 있었다. Phase 8·9로 State/Holdings가 IRP
- * 실보유를 이미 반영하고 있어(update-holdings-from-executions.mjs가 계좌번호
- * 43****82-29 매칭으로 유지) 이제 그쪽을 기준으로 쓴다 — 구글시트 의존 제거.
+ * ⚠️ 종목 대사 기준 변천 — ①(2026-08-22) v1 구글시트(계좌별 탭)를 "장부"로 삼아 KIS
+ * 실계좌와 비교하던 걸, v2 전환 이후 시트가 안 갱신돼 State/Holdings 기준으로 교체.
+ * ②(2026-09-04) "비교해서 경고"였던 걸 "KIS가 정본, 직접 덮어쓰기"로 재전환(아래
+ * buildIrpHoldingsPlan 헤더 주석 참고) — 예수금과 같은 원칙으로 통일, 카카오 체결누적
+ * (update-holdings-from-executions.mjs)은 이제 IRP 종목엔 안 쓴다.
  *
  * 사용:
  *   node scripts/jobs/reconcile-irp.mjs            # 실제로 반영
  *   node scripts/jobs/reconcile-irp.mjs --dry-run  # 조회만, 쓰기 없음(2026-09-03
  *     신설 — intraday-portfolio-sync.mjs가 이 잡을 안전하게 테스트할 수 있도록)
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { hasKisCredentials, loadIrpAccount, getKisToken, getAccountBalance } from '../lib/kis.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { buildCashHoldingRecord } from '../lib/holdings-vault-writer.mjs';
+import { buildCashHoldingRecord, buildLiveHoldingRecord, holdingFilename } from '../lib/holdings-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
+import { IRP_ACCOUNT_LABEL } from '../lib/account-resolver.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -92,22 +93,79 @@ export function readIrpHoldings(holdingsDir = VAULT_PATHS.state.holdings) {
   if (!existsSync(holdingsDir)) return [];
   return readdirSync(holdingsDir).filter((f) => f.endsWith('.md'))
     .map((f) => parseFrontmatter(readFileSync(join(holdingsDir, f), 'utf8')))
-    .filter((h) => h.account === 'IRP' && !h.isCashLike);
+    .filter((h) => h.account === IRP_ACCOUNT_LABEL && !h.isCashLike);
 }
 
-// vaultHoldings: readIrpHoldings() 반환값. kisHoldings: getAccountBalance().holdings({name,qty}[]).
-// 순수 — 양쪽 다 이름 기준으로 합쳐 수량이 다른 종목만 반환한다.
-export function buildIrpMismatches(vaultHoldings, kisHoldings) {
-  const vaultByName = new Map((vaultHoldings || []).map((h) => [h.name, h.qty ?? 0]));
-  const kisByName = new Map((kisHoldings || []).map((h) => [h.name, h.qty]));
-  const allNames = new Set([...vaultByName.keys(), ...kisByName.keys()]);
-  const mismatches = [];
-  for (const name of allNames) {
-    const vaultQty = vaultByName.get(name) ?? 0;
-    const kisQty = kisByName.get(name) ?? 0;
-    if (vaultQty !== kisQty) mismatches.push({ name, vaultQty, kisQty });
+// vaultHoldings: readIrpHoldings() 반환값. kisHoldings: getAccountBalance().holdings
+// ({code, name, qty, avgPrice, invest, curPrice, evalAmount, profitAmount, profitPct}[]).
+// 순수 함수 — "무엇을 쓰고 무엇을 지울지"만 계산, 실제 파일 I/O는 main()이 담당.
+//
+// 2026-09-04 설계 변경(buildIrpMismatches 대체) — 예전엔 수량만 비교해 불일치를
+// 경고만 했지만(v1 시트 대체 이후에도 "종목은 카카오 체결누적이 정본"이었기 때문),
+// KIS 잔고조회(TTTC8434R)의 output1에 avgPrice(pchs_avg_pric)·invest(pchs_amt)까지
+// 실측 확인되면서(kis.mjs parseBalanceResponse 헤더 주석 참고) 예수금과 같은 "KIS
+// API 직접조회 덮어쓰기" 모델로 전환했다 — 이제 KIS가 정본, 불일치는 경고가 아니라
+// 그 자리에서 바로 반영해야 할 갱신이다.
+//
+// avgPrice/invest가 결측(필드는 있는데 파싱 불가, 혹은 이번 KIS 응답에서 그 종목
+// 행 자체가 avgPrice 없이 옴)인 종목은 skipped로 분리해 반영하지 않는다 — 추정하지
+// 않고 기존 Vault 값을 그대로 둔다(parseBalanceResponse의 null 처리와 동일 원칙).
+// assetClass/market은 identity 필드라 KIS 응답에 없으므로 기존 Vault 파일 값을 그대로
+// 이어받는다(신규 종목이면 빈 문자열 — assetClassMissing에 담아 호출측이 경고할 수
+// 있게 한다, 다음에 오너가 채울 수 있게 남겨둠). ticker는 반대로 매번 kh.code로 채운다
+// (이후 실행에서 종목명 대신 code로 매칭할 수 있도록 — 아래 참고).
+//
+// ⚠️ 이름매칭의 한계 + code 우선매칭(코드리뷰 지적, 2026-09-04) — 이름(prdt_name)만
+// 으로 KIS↔Vault를 매칭하면 종목명이 살짝 바뀌는 경우(상품명 개정 등) 기존 파일을
+// "전량청산"으로 오판해 지우고 새 파일을 assetClass 빈 채로 새로 만들 위험이 있다.
+// 그래서 기존 Vault 파일에 ticker(=지난 실행에서 저장해둔 code)가 있으면 이름 대신
+// code로 먼저 매칭한다 — 최초 1회(ticker가 아직 비어있는 마이그레이션 시점)만 이름
+// 매칭에 의존하고, 그 다음부터는 code가 안전망이 된다.
+//
+// ⚠️ 전량청산(closes) 오탐 가드(코드리뷰 CRITICAL 지적, 2026-09-04) — 이 파일 상단
+// "설계 재정정" 주석이 이미 문서화했듯 이 API(TTTC8434R)의 output2(예수금)는
+// 간헐적으로 신뢰 불가한 빈 응답을 준 전례가 실측됐다(2026-08-18). 같은 응답의
+// output1(보유종목)도 같은 클래스의 실패를 낼 수 있다고 보수적으로 가정 — Vault에
+// 종목이 있는데 KIS 응답이 통째로 비어 오면(kisHoldings.length===0) "전부 팔았다"로
+// 추정하지 않고 이번 실행은 아무것도 지우지 않는다(suspiciousEmpty로 알림, 갱신 자체는
+// kisByName이 비어 writes도 자동으로 0건이라 별도 분기 불필요). KIS가 실제로 최소
+// 1개 종목을 보고하는 정상 응답일 때만 "그 응답에 없는 Vault 종목=진짜 청산"으로
+// 판단한다.
+export function buildIrpHoldingsPlan(vaultHoldings, kisHoldings) {
+  const vaultList = vaultHoldings || [];
+  const kisList = kisHoldings || [];
+  const vaultByCode = new Map(vaultList.filter((h) => h.ticker).map((h) => [h.ticker, h]));
+  const vaultByName = new Map(vaultList.map((h) => [h.name, h]));
+  const matchedVaultKeys = new Set();
+  const writes = [];
+  const skipped = [];
+  const assetClassMissing = [];
+  for (const kh of kisList) {
+    // 매칭(existing 찾기·matchedVaultKeys 표시)은 avgPrice 결측 여부와 무관하게 항상
+    // 먼저 한다 — skipped로 빠지는 종목도 "KIS가 여전히 보유 중이라고 보고한 종목"이라
+    // Vault에서 지우면 안 된다(matchedVaultKeys에 못 들어가면 closes로 오분류되는 버그
+    // 방지).
+    const existing = (kh.code && vaultByCode.get(kh.code)) || vaultByName.get(kh.name);
+    if (existing) matchedVaultKeys.add(existing.name);
+    if (kh.avgPrice == null || kh.invest == null) { skipped.push(kh.name); continue; }
+    if (!existing?.assetClass) assetClassMissing.push(kh.name);
+    writes.push({
+      account: IRP_ACCOUNT_LABEL,
+      assetClass: existing?.assetClass ?? '',
+      name: kh.name,
+      ticker: kh.code ?? '',
+      market: existing?.market ?? '',
+      avgPrice: kh.avgPrice, qty: kh.qty, invest: kh.invest,
+      curPrice: kh.curPrice, evalAmount: kh.evalAmount,
+      profitAmount: kh.profitAmount, profitPct: kh.profitPct,
+      isCashLike: false,
+      appliedDedupKeys: [],
+      changed: !existing || existing.qty !== kh.qty || existing.avgPrice !== kh.avgPrice,
+    });
   }
-  return { mismatches, totalNames: allNames.size };
+  const suspiciousEmpty = kisList.length === 0 && vaultList.length > 0;
+  const closes = suspiciousEmpty ? [] : vaultList.filter((h) => !matchedVaultKeys.has(h.name)).map((h) => h.name);
+  return { writes, closes, skipped, assetClassMissing, suspiciousEmpty };
 }
 
 async function main() {
@@ -151,7 +209,7 @@ async function main() {
     const get = (type) => kstParts.find((p) => p.type === type).value;
     const nowTs = `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
     const { filename, content, dir } = buildCashHoldingRecord({
-      account: 'IRP', balance: cash, raw: cash, negative: cash < 0,
+      account: IRP_ACCOUNT_LABEL, balance: cash, raw: cash, negative: cash < 0,
       anchorBase: cash, anchorTs: nowTs, anchorSource: 'KIS API 직접조회',
     });
     console.log(`  + [예수금${DRY_RUN ? '(예정)' : ''}] IRP ${nowTs} 잔고 ${cash.toLocaleString()}원`);
@@ -165,24 +223,54 @@ async function main() {
     console.log('  ⚠️ IRP 예수금 조회 실패(null) — 기록 건너뜀(기존 State/Holdings 값 유지)');
   }
 
-  // 예수금(현금성) 행은 수량 개념이 없어 종목 대사 대상이 아니다 — readIrpHoldings()가
-  // isCashLike로 이미 걸러준다(holdings-vault-writer.mjs 관례). 예수금 자체는 이제 위에서
-  // State/Holdings에 직접 기록되므로(2026-08-18 신설, 2026-09-03 CashEvent 경로 폐지),
-  // 여기 남은 건 "Vault State/Holdings vs KIS
-  // 종목 수량"만 비교하는 순수 대사 로직(2026-08-22, v1 시트 기준을 대체) — 예수금
-  // 값끼리의 대사(비교)는 여전히 이 잡 스코프 밖.
-  const { mismatches, totalNames } = buildIrpMismatches(readIrpHoldings(), kisHoldings);
-  for (const m of mismatches) {
-    collectWarning(`IRP 대사 불일치: ${m.name} — Vault ${m.vaultQty}주 vs KIS 실계좌 ${m.kisQty}주`);
+  // 예수금(현금성) 행은 수량 개념이 없어 종목 반영 대상이 아니다 — readIrpHoldings()가
+  // isCashLike로 이미 걸러준다(holdings-vault-writer.mjs 관례). 예수금 자체는 위에서
+  // State/Holdings에 직접 기록됨(2026-08-18 신설, 2026-09-03 CashEvent 경로 폐지).
+  //
+  // 종목 보유 — 2026-09-04부터 예수금과 동일하게 KIS 잔고조회로 직접 덮어쓴다(위 파일
+  // 헤더 "설계 재정정" 참고). update-holdings-from-executions.mjs도 이제 IRP 체결을
+  // State/Holdings에 반영하지 않는다(퀀트와 동일 스킵) — 카카오 체결누적은 이 계좌에서
+  // 완전히 손을 뗐다, buildIrpHoldingsPlan 헤더 주석 참고.
+  const { writes, closes, skipped, assetClassMissing, suspiciousEmpty } = buildIrpHoldingsPlan(readIrpHoldings(), kisHoldings);
+  if (suspiciousEmpty) {
+    collectWarning('IRP 종목 KIS 잔고조회가 빈 응답 — 예수금과 같은 API 호출의 output1이 통째로 비었다(간헐적 결측 가능성, 파일 상단 주석 참고), 전량청산으로 추정하지 않고 이번 실행은 종목 반영을 건너뜀');
+    console.log('  ⚠️ IRP 종목 KIS 잔고조회 빈 응답 — 전량청산 추정 안 함, 기존 State/Holdings 그대로 유지');
+  }
+  for (const name of skipped) {
+    collectWarning(`IRP ${name} — KIS 잔고조회에 평단가/원가 필드 결측, 갱신 건너뜀(기존 값 유지)`);
+  }
+  for (const name of assetClassMissing) {
+    collectWarning(`IRP ${name} — assetClass 정보 없음(신규 종목이거나 기존 Vault 파일에 미기재), 빈 값으로 기록됨 — 오너 확인 필요`);
+  }
+  for (const w of writes) {
+    const { changed, ...holding } = w;
+    const { filename, content, dir } = buildLiveHoldingRecord(holding);
+    console.log(`  ${changed ? '↻' : '='} [종목${DRY_RUN ? '(예정)' : ''}] IRP ${holding.name} ${holding.qty}주 @${Math.round(holding.avgPrice)}원(KIS 직접조회)`);
+    if (!DRY_RUN) {
+      mkdirSync(dir, { recursive: true });
+      writeAtomic(join(dir, filename), content);
+    }
+  }
+  // ⚠️ 실현손익 기록 공백(코드리뷰 지적, 2026-09-04) — 여기서 감지되는 청산은 카카오
+  // 매도 알림이 아니라 "KIS 스냅샷에서 그냥 사라짐"으로 판정된 경우다(예: 카카오
+  // 파싱이 놓친 매도). update-holdings-from-executions.mjs의 IRP 매도 분기가 실현손익을
+  // 기록하는 유일한 경로인데, 이 경로를 안 거친 청산은 KIS 스냅샷만으론 과거 매도
+  // 체결가를 알 수 없어(잔고조회 API는 "지금 상태"만 줌, 이전 시점 되짚기 불가)
+  // 실현손익을 추정하지 않는다 — IRP 체결내역 API 자체가 사실상 작동 불가라는 기존
+  // 제약(getIrpPensionExecutions 헤더 주석)과 같은 한계, 현재로선 해소 불가.
+  for (const name of closes) {
+    console.log(`  - [전량청산${DRY_RUN ? '(예정)' : ''}] IRP ${name}`);
+    if (!DRY_RUN) rmSync(join(VAULT_PATHS.state.holdings, holdingFilename(IRP_ACCOUNT_LABEL, name)), { force: true });
   }
 
-  if (mismatches.length === 0) console.log(`✅ IRP 종목 대사 일치 (종목 ${totalNames}개, 예수금 자체는 위에서 별도로 State/Holdings에 직접 기록됨)`);
-  else console.log(`⚠️ IRP 종목 대사 불일치 ${mismatches.length}건 (종목 ${totalNames}개, 예수금 자체는 위에서 별도로 State/Holdings에 직접 기록됨)`);
+  const changedCount = writes.filter((w) => w.changed).length;
+  if (changedCount === 0 && closes.length === 0) console.log('✅ IRP 종목 KIS 직접조회 반영 완료(변경 없음)');
+  else console.log(`✅ IRP 종목 KIS 직접조회 반영 완료(갱신 ${changedCount}건 · 청산 ${closes.length}건)`);
   await flushWarnings('reconcile-irp');
 }
 
 // 2026-08-22 — entrypoint 가드 추가(다른 잡들과 동일 관례, update-cash-from-ledger.mjs
-// 등). 이게 없으면 테스트가 이 파일을 import(readIrpHoldings·buildIrpMismatches 사용)만
+// 등). 이게 없으면 테스트가 이 파일을 import(readIrpHoldings·buildIrpHoldingsPlan 사용)만
 // 해도 main()이 실행돼 KIS 네트워크 호출·process.exit이 side effect로 발생한다 —
 // 순수 함수를 분리해도 이 가드가 없으면 테스트 자체가 불가능했다.
 if (import.meta.url === `file://${process.argv[1]}`) {

@@ -33,6 +33,13 @@ export const QUANT_TRACK_LABEL = '퀀트';
 // 동일 원칙).
 export const IRP_ACCOUNT_NO = '43****82-29';
 
+// IRP 계좌 라벨 — 문자열 리터럴 중복 방지(QUANT_TRACK_LABEL과 동일 원칙). 2026-09-04부터
+// update-holdings-from-executions.mjs가 이 라벨이면 QUANT_TRACK_LABEL과 마찬가지로
+// State/Holdings 반영을 건너뛴다 — IRP 보유종목(수량+평단가+원가)도 reconcile-irp.mjs가
+// KIS API 잔고조회로 직접 덮어쓰는 게 정본이 됐다(카카오 체결누적은 더 이상 안 씀,
+// scripts/lib/kis.mjs parseBalanceResponse 헤더 주석 참고).
+export const IRP_ACCOUNT_LABEL = 'IRP';
+
 // 펀드적립(삼성증권 "펀드 매수 완료 안내") 계좌 — parseFundBuy(notification-parsers.mjs)
 // 자체가 삼성증권 알림 포맷 하나만 파싱하도록 스코프돼 있어, 아래 UNIQUE_BROKER_ACCOUNT의
 // 삼성증권=연금저축과 완전히 같은 사실이다. 종목명 매칭 같은 판정 로직 없이 상수로
@@ -58,7 +65,7 @@ export const EXCHANGE_ACCOUNT = '위탁';
 // 표기법과 무관하게 항상 유일하므로 더 안전하다.
 const KNOWN_ACCOUNT_NUMBERS = {
   ...NH_ACCOUNT_MAP,
-  [IRP_ACCOUNT_NO]: 'IRP',
+  [IRP_ACCOUNT_NO]: IRP_ACCOUNT_LABEL,
   [QUANT_ACCOUNT_NO]: null, // 퀀트 트랙 전용 계좌 — State/Holdings 반영 대상 아님
 };
 

@@ -347,7 +347,37 @@ test('parseBalanceResponse: output1에서 보유종목 추출, 수량 0은 제�
       { pdno: '005930', prdt_name: '삼성전자', hldg_qty: '0' }, // 전량 매도된 잔존 행 — 제외돼야 함
     ],
   });
-  assert.deepEqual(holdings, [{ code: '0025N0', name: 'TIGER TDF2045 적격', qty: 120 }]);
+  assert.deepEqual(holdings, [{
+    code: '0025N0', name: 'TIGER TDF2045 적격', qty: 120,
+    avgPrice: null, invest: null, curPrice: null, evalAmount: null, profitAmount: null, profitPct: null,
+  }]);
+});
+
+test('parseBalanceResponse: 평단가·원가·현재가·평가손익 필드 추출(2026-09-04 IRP 실측 필드)', () => {
+  const { holdings } = parseBalanceResponse({
+    rt_cd: '0',
+    output1: [
+      {
+        pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격', hldg_qty: '413',
+        pchs_avg_pric: '11505.5690', pchs_amt: '4751800', prpr: '11925',
+        evlu_amt: '4925025', evlu_pfls_amt: '173225', evlu_pfls_rt: '3.64',
+      },
+    ],
+  });
+  assert.deepEqual(holdings, [{
+    code: '0025N0', name: 'TIGER TDF2045 적격', qty: 413,
+    avgPrice: 11505.569, invest: 4751800, curPrice: 11925,
+    evalAmount: 4925025, profitAmount: 173225, profitPct: 3.64,
+  }]);
+});
+
+test('parseBalanceResponse: 평단가 등 필드 결측이면 0이 아니라 null(추정 안 함)', () => {
+  const { holdings } = parseBalanceResponse({
+    rt_cd: '0',
+    output1: [{ pdno: '005930', prdt_name: '삼성전자', hldg_qty: '10' }],
+  });
+  assert.equal(holdings[0].avgPrice, null);
+  assert.equal(holdings[0].invest, null);
 });
 
 test('parseBalanceResponse: output1 비어있으면 빈 배열', () => {

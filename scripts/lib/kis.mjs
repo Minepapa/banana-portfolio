@@ -441,19 +441,44 @@ export async function getAccountBalance({ token, appkey, appsecret, cano, acntPr
   return parseBalanceResponse(json);
 }
 
-// KIS 잔고조회 원본 응답 → {holdings: [{code, name, qty}, ...], cash}. 순수함수 — 테스트
-// 가능. holdings: output1(종목별 보유내역)에서 수량 0(매도돼 사라진 종목이 잔존 행으로
-// 남는 경우가 있음)은 제외 — "보유 중"만 대사 대상. cash: output2(계좌 요약)의
-// dnca_tot_amt(예수금총금액) — output2 자체가 없거나 파싱 불가면 null(0으로 추정하지
-// 않음 — 호출측이 "데이터 없음"과 "진짜 0원"을 구분해야 오탐 없이 대사 가능).
+// KIS 잔고조회 원본 응답 → {holdings: [{code, name, qty, avgPrice, invest, curPrice,
+// evalAmount, profitAmount, profitPct}, ...], cash}. 순수함수 — 테스트 가능. holdings:
+// output1(종목별 보유내역)에서 수량 0(매도돼 사라진 종목이 잔존 행으로 남는 경우가
+// 있음)은 제외 — "보유 중"만 대사 대상. cash: output2(계좌 요약)의 dnca_tot_amt
+// (예수금총금액) — output2 자체가 없거나 파싱 불가면 null(0으로 추정하지 않음 —
+// 호출측이 "데이터 없음"과 "진짜 0원"을 구분해야 오탐 없이 대사 가능).
+//
+// avgPrice(pchs_avg_pric)·invest(pchs_amt) 필드 확정(2026-09-04, reconcile-irp.mjs
+// IRP 실계좌 라이브 조회로 실측) — pchs_avg_pric이 "계좌 누적 평단가"임은 이미
+// 2026-09-03 별도 엔드포인트(TTTC2202R, 아래 getIrpPensionExecutions 헤더 주석 참고)
+// 로 확인돼 있었는데, 이 함수가 쓰는 일반 잔고조회(TTTC8434R) output1에도 같은 필드가
+// 그대로 있고(pchs_amt=매입금액=KRW 원가, prpr=현재가, evlu_amt=평가금액,
+// evlu_pfls_amt/rt=평가손익) Vault가 카카오 체결누적으로 이미 계산해둔 값(평단가
+// 11506.27)과 KIS 응답(11505.57)이 거의 일치함을 실측 확인 — API 단독 조회만으로
+// Holdings 스키마(avgPrice/invest/curPrice/evalAmount/profitAmount/profitPct) 전체를
+// 재현 가능함이 드러나, IRP 보유종목도 예수금(reconcile-irp.mjs)과 같은 "KIS API
+// 직접조회 덮어쓰기" 모델로 전환했다(update-holdings-from-executions.mjs의 IRP 스킵
+// 참고). num()은 필드 결측 시 Number('')===0으로 조용히 0이 되는 함정을 피하려고
+// undefined/빈문자열이면 null로 처리(이 파일의 다른 파서들과 동일 원칙).
 export function parseBalanceResponse(json) {
   if (json?.rt_cd !== '0') throw kisRtError('KIS 잔고조회 오류', json);
   const output1 = Array.isArray(json?.output1) ? json.output1 : [];
+  const num = (v) => {
+    if (v === undefined || v === null || String(v).trim() === '') return null;
+    const n = Number(String(v).replace(/,/g, ''));
+    return Number.isFinite(n) ? n : null;
+  };
   const holdings = output1
     .map(o => ({
       code: String(o?.pdno ?? '').trim(),
       name: String(o?.prdt_name ?? '').trim(),
       qty: Number(o?.hldg_qty) || 0,
+      avgPrice: num(o?.pchs_avg_pric),
+      invest: num(o?.pchs_amt),
+      curPrice: num(o?.prpr),
+      evalAmount: num(o?.evlu_amt),
+      profitAmount: num(o?.evlu_pfls_amt),
+      profitPct: num(o?.evlu_pfls_rt),
     }))
     .filter(h => h.qty > 0);
   // Number('')===0이라 "필드 자체가 없음"과 "빈 문자열"을 구분 못 하는 함정이 있다(이 파일의
