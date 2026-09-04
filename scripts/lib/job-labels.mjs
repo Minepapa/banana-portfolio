@@ -34,6 +34,7 @@ export const JOB_LABELS = {
   'update-holdings-prices': '보유종목 실시간 시세 갱신(KRX·해외·환율)',
   'telegram-session-health-check': '상시 텔레그램 세션 MCP 연결 끊김 감지·자동복구',
   'intraday-market-move-monitor': '장중 시장 급변 실시간 감시(코스피·S&P500·VIX·DXY·USD/KRW·미국10Y, 리스크관리실 Themis 소관)',
+  'weekly-vault-health-check': '므네모시네 주간 건강검진(구조 정합성·데이터 정합성·미완료 작업, 비서실 Apollo "관리 총괄" 소관, 2026-09-04 신설)',
 };
 
 // 라벨 있으면 "잡이름(한글설명)", 없으면(등록 안 된 새 잡) 이름만 — 조용히 빈 문자열로

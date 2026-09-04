@@ -39,10 +39,13 @@ test('5대분류 하위경로가 전부 VAULT_ROOT 밑에 걸린다', () => {
   // +Phase 9 killSwitch·executionMode, +Phase 11 executedOrders, +2026-08-16
   // cashAccumulator, +2026-08-29 proposalMode·telegramSessionLastRead, +2026-09-01
   // marketMoveMonitor), decisions 4
-  // (+riskMonitor), knowledge 3(2026-09-04 므네모시네 대정리 — preferenceObservations를
-  // profile로 통합, PreferenceObservations/ 하위폴더 평탄화), log 1(2026-08-29 신설
-  // — telegramSession, Log/ 최초로 코드가 직접 쓰는 경로가 생겨 VAULT_PATHS에 처음 등록됨)
-  assert.equal(flat.length, 30);
+  // (+riskMonitor), knowledge 6(2026-09-04 므네모시네 대정리 — preferenceObservations를
+  // profile로 통합, PreferenceObservations/ 하위폴더 평탄화 후 +hubs·meta·infra 3개
+  // 신설분(weekly-vault-health-check.mjs가 읽음)), log 3(2026-08-29 신설 —
+  // telegramSession, Log/ 최초로 코드가 직접 쓰는 경로가 생겨 VAULT_PATHS에 처음
+  // 등록됨. 2026-09-04 +implementation·devRequests(weekly-vault-health-check.mjs가
+  // progress 필드·"남은 것" 섹션을 읽음))
+  assert.equal(flat.length, 35);
   for (const p of flat) assert.ok(p.startsWith(VAULT_ROOT), `${p} should start with ${VAULT_ROOT}`);
 });
 

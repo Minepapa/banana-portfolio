@@ -2,17 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildWeeklyScheduleText, SCHEDULE } from './weekly-schedule-summary.mjs';
 
-test('SCHEDULE: 6건(주기적 보고 6개, 2026-08-29 isa-maturity-check 추가) — 이벤트기반은 포함되지 않는다', () => {
-  assert.equal(SCHEDULE.length, 6);
+test('SCHEDULE: 7건(주기적 보고 7개, 2026-09-04 weekly-vault-health-check 추가) — 이벤트기반은 포함되지 않는다', () => {
+  assert.equal(SCHEDULE.length, 7);
 });
 
-test('buildWeeklyScheduleText: 제목과 6건 부서·시각이 전부 본문에 포함된다', () => {
+test('buildWeeklyScheduleText: 제목과 7건 부서·시각이 전부 본문에 포함된다', () => {
   const text = buildWeeklyScheduleText();
   assert.match(text, /<b>주간 보고 스케쥴<\/b>/);
   assert.match(text, /평일 08:00 \[운영실 Hermes\]/);
   assert.match(text, /평일 16:15 \[운영실 Hermes\]/);
   assert.match(text, /평일 16:30 \[투자전략실 Athena\]/);
   assert.match(text, /일요일 07:00 \[리스크관리실 Themis\]/);
+  assert.match(text, /일요일 07:30 \[비서실 Apollo\]/);
   assert.match(text, /일요일 08:00 \[비서실 Apollo\]/);
   assert.match(text, /월요일 07:10 \[투자전략실 Athena\]/);
 });

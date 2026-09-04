@@ -112,6 +112,11 @@ export const VAULT_PATHS = {
   // (telegram-session-handoff.mjs)이 직접 쓰는 구조화된 로그라 경로 상수가 필요하다.
   log: {
     telegramSession: join(VAULT_ROOT, 'Log', 'TelegramSession'),
+    // 2026-09-04 신설 — weekly-vault-health-check.mjs가 progress:"진행중"/"보류" 문서와
+    // "## 남은 것" 섹션을 훑어 미완료 작업을 집계하려면 코드가 이 폴더들을 직접 읽어야
+    // 한다(CLAUDE.md "완료 상태 추적" 절이 progress 필드를 규정하는 대상 그대로).
+    implementation: join(VAULT_ROOT, 'Log', 'Implementation'),
+    devRequests: join(VAULT_ROOT, 'Log', 'DevRequests'),
   },
   decisions: {
     evaluations: join(VAULT_ROOT, 'Decisions', 'Evaluations'),
@@ -130,5 +135,10 @@ export const VAULT_PATHS = {
     profile: join(VAULT_ROOT, 'Knowledge', 'Profile'),
     playbook: join(VAULT_ROOT, 'Knowledge', 'Playbook'),
     reports: join(VAULT_ROOT, 'Knowledge', 'Reports'),
+    // 2026-09-04 므네모시네 대정리에서 신설 — weekly-vault-health-check.mjs가 고립
+    // 노트·"자동 갱신" 주장 대비 최신성을 이 세 폴더 대상으로 점검한다.
+    hubs: join(VAULT_ROOT, 'Knowledge', 'Hubs'),
+    meta: join(VAULT_ROOT, 'Knowledge', 'Meta'),
+    infra: join(VAULT_ROOT, 'Knowledge', 'Infra'),
   },
 };

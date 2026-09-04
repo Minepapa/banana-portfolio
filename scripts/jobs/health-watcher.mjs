@@ -184,6 +184,9 @@ export const EXPECTED_INTERVALS_MS = {
   // 2028-04-06)는 ~1.5년 뒤 1회뿐이지만 heartbeat 자체는 매주 남는다 — weekly-
   // schedule-summary와 동일 클래스(7일).
   'isa-maturity-check': 7 * 24 * 60 * 60 * 1000,
+  // weekly-vault-health-check(2026-09-04 신설) — 매주 일 07:30, isa-maturity-check와
+  // 동일 클래스(저정보 억제라 텔레그램 발송 없는 주도 많지만 heartbeat 자체는 매주).
+  'weekly-vault-health-check': 7 * 24 * 60 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 

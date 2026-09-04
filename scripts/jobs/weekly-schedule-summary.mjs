@@ -39,6 +39,7 @@ export const SCHEDULE = [
   { day: '평일', time: '16:15', dept: '운영실 Hermes', what: '당일 체결 내역 보고(체결 있을 때만 실제 발송, 2026-08-31부터 저정보 메시지 억제)', script: 'daily-execution-report.mjs' },
   { day: '평일', time: '16:30', dept: '투자전략실 Athena', what: '리밸런싱·거시 점검(이상 있을 때만 실제 발송)', script: 'daily-asset-allocation-check.mjs' },
   { day: '일요일', time: '07:00', dept: '리스크관리실 Themis', what: '주간 위험 재검토', script: 'themis-risk-review.mjs' },
+  { day: '일요일', time: '07:30', dept: '비서실 Apollo', what: '므네모시네 주간 건강검진(구조·데이터 정합성·미완료 작업, 이상 있을 때만 실제 발송)', script: 'weekly-vault-health-check.mjs' },
   { day: '일요일', time: '08:00', dept: '비서실 Apollo', what: '주간 리포트', script: 'weekly-report.mjs' },
   { day: '월요일', time: '07:10', dept: '투자전략실 Athena', what: 'ISA 3년 만기 감시(만기 도달 전까지는 조용히 스킵)', script: 'isa-maturity-check.mjs' },
 ];
