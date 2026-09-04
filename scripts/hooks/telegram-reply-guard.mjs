@@ -137,9 +137,13 @@ export function analyzeTranscriptTail(lines) {
   return { shouldForceReply: !delivered, chatId, messageId };
 }
 
-// transcript 파일 끝 TAIL_BYTES만 읽어 JSONL로 파싱 — 텔레그램 세션 transcript는
-// 하루 종일 누적돼 수십 MB까지 자라므로(2026-09-04 실측, 55MB) 전체를 매번 읽지
-// 않는다. 앞부분 잘린 줄 하나는 버림(어차피 우리가 찾는 최신 메시지는 끝쪽에 있음).
+// ⚠️ "55MB" 정정(2026-09-04 후속 코드리뷰) — 이전 주석이 인용한 55MB는 실제로는
+// 이 프로젝트 cwd로 뜬 다른(오너 인터랙티브) 세션의 transcript였다(CLAUDE.md 프롬프트가
+// 예시로 채널 태그 원문을 인용해서 grep이 오탐한 것) — 실측으로 재확인한 진짜 텔레그램
+// 세션 transcript 크기는 최대 362KB뿐(telegram-session-handoff.mjs 헤더 주석 참고).
+// 그래도 tail-read 자체는 무해한 안전마진이라 유지 — TAIL_BYTES만 읽어 JSONL로 파싱,
+// 하루 종일 누적되는 파일 전체를 매번 읽지 않는다. 앞부분 잘린 줄 하나는 버림(어차피
+// 우리가 찾는 최신 메시지는 끝쪽에 있음).
 export function readTranscriptTailLines(transcriptPath, maxBytes = TAIL_BYTES) {
   const fd = openSync(transcriptPath, 'r');
   try {
