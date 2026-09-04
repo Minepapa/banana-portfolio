@@ -52,18 +52,34 @@
  * sendTelegram()으로 발송(MCP를 안 거치고 Bot API를 직접 호출해서 세션 MCP가
  * 죽어있어도 정상 작동함).
  *
+ * ⚠️ 근본원인 진단 계측(2026-09-04, 오너 재요청 — "근본 원인을 다시 파악해보자") —
+ * 2026-09-01·2026-09-04 두 번 다 크래시 리포트·OOM/jetsam·절전이벤트·네트워크단절
+ * 전부 확인했지만 원인을 못 찾았다(Wi-Fi "Deauth" 로그도 재조사해보니 20초마다
+ * 반복되는 무관한 배경 노이즈였을 뿐, 재시작 시각과 무상관으로 확인됨 — 오탐). 과거
+ * 로그를 더 뒤져서는 못 찾을 가능성이 높다고 판단 — 대신 **다음에 감지되는 순간**
+ * 시스템 상태(여유메모리·loadavg·가동시간) 스냅샷을 별도로 계속 기록해 며칠 치
+ * 패턴이 쌓이면 그때 다시 분석한다(하루 1~3회 발생하는 걸로 실측됨 — 며칠이면
+ * 표본이 쌓임). recordMcpLossSnapshot 참고. 재확인에서 회복되는 경우도 포함해서
+ * 전부 기록한다(회복되는 "일시적" 경우도 나중에 패턴 비교에 필요한 데이터).
+ *
  * 사용법: node scripts/jobs/telegram-session-health-check.mjs [--dry-run]
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 import { isProcessAlive, isPollingStuck, TELEGRAM_SESSION_PROCESS_PATTERN, TELEGRAM_MCP_SUBPROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
+
+const MCP_LOSS_LOG_FILE = join(VAULT_PATHS.log.telegramSession, 'mcp-loss-diagnostics.md');
+const MCP_LOSS_LOG_HEADER = '# 텔레그램 MCP 소실 진단 로그\n\n' +
+  '감지될 때마다(재확인 후 회복된 경우 포함) 그 순간의 시스템 상태를 누적 기록 —\n' +
+  '근본원인 패턴 분석용(2026-09-04 신설, `Log/Implementation/2026-09-04-텔레그램MCP소실-진단계측.md` 참고).\n\n';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -98,11 +114,38 @@ export function shouldEscalateInsteadOfRestart(consecutiveRestarts, max = MAX_CO
 // 없이 검증 가능(state-writer.mjs withLock의 sleep 주입과 동일 패턴).
 export async function checkWithRecheck(checkSignals, { sleep = defaultSleep, recheckDelayMs = RECHECK_DELAY_MS } = {}) {
   const first = await checkSignals();
-  if (first.sessionAlive && first.mcpSubprocessAlive) return { ...first, recheckedAndRecovered: false };
+  if (first.sessionAlive && first.mcpSubprocessAlive) return { ...first, recheckedAndRecovered: false, firstCheckUnhealthy: false };
   await sleep(recheckDelayMs);
   const second = await checkSignals();
   const recovered = second.sessionAlive && second.mcpSubprocessAlive;
-  return { ...second, recheckedAndRecovered: recovered };
+  // firstCheckUnhealthy(2026-09-04 신설, 근본원인 진단 계측용) — 1차 확인에서 이상이
+  // 감지됐다는 사실 자체는 최종 recheckedAndRecovered 결과와 별개로 항상 알려준다.
+  // main()이 이 값을 보고 "재확인 후 회복됐든 안 됐든 일단 감지는 됐다"는 매 순간을
+  // 놓치지 않고 시스템 스냅샷을 남길 수 있게(위 파일 헤더 주석 참고).
+  return { ...second, recheckedAndRecovered: recovered, firstCheckUnhealthy: true };
+}
+
+// 순수함수(테스트 가능) — 시스템 스냅샷 하나를 사람이 읽는 마크다운 한 줄로.
+export function buildMcpLossSnapshotLine({ timestampIso, recheckedAndRecovered, freeMemBytes, totalMemBytes, loadavg, uptimeSec }) {
+  const freeMB = Math.round(freeMemBytes / 1024 / 1024);
+  const totalMB = Math.round(totalMemBytes / 1024 / 1024);
+  const freePct = totalMemBytes > 0 ? ((freeMemBytes / totalMemBytes) * 100).toFixed(1) : 'N/A';
+  const uptimeHours = (uptimeSec / 3600).toFixed(1);
+  const status = recheckedAndRecovered ? '일시적(재확인 후 회복)' : '지속(조치 대상)';
+  const loadStr = (loadavg || []).map((l) => l.toFixed(2)).join('/');
+  return `- ${timestampIso} — ${status} · 여유메모리 ${freeMB.toLocaleString()}MB/${totalMB.toLocaleString()}MB(${freePct}%) · loadavg ${loadStr} · 시스템가동 ${uptimeHours}시간`;
+}
+
+// IO — os 모듈 값만 그대로 모아 반환(부작용 없음, 순수 조회). 별도 함수로 분리해
+// buildMcpLossSnapshotLine 자체는 순수 유지.
+function captureSystemSnapshot() {
+  return { freeMemBytes: os.freemem(), totalMemBytes: os.totalmem(), loadavg: os.loadavg(), uptimeSec: os.uptime() };
+}
+
+function appendMcpLossLine(line) {
+  mkdirSync(VAULT_PATHS.log.telegramSession, { recursive: true });
+  const existing = existsSync(MCP_LOSS_LOG_FILE) ? readFileSync(MCP_LOSS_LOG_FILE, 'utf8') : MCP_LOSS_LOG_HEADER;
+  writeAtomic(MCP_LOSS_LOG_FILE, existing.trimEnd() + '\n' + line + '\n');
 }
 
 function readState() {
@@ -125,9 +168,17 @@ function checkSignalsOnce() {
 }
 
 async function main() {
-  const { sessionAlive, mcpSubprocessAlive, recheckedAndRecovered } = await checkWithRecheck(checkSignalsOnce);
+  const { sessionAlive, mcpSubprocessAlive, recheckedAndRecovered, firstCheckUnhealthy } = await checkWithRecheck(checkSignalsOnce);
   if (recheckedAndRecovered) {
     console.log(`⏳ 1차 확인에서 이상 감지됐으나 ${RECHECK_DELAY_MS / 1000}초 후 재확인에서 정상 회복 — 일시적 현상으로 판단, 조치 없음`);
+  }
+
+  // 근본원인 진단 계측(2026-09-04, 파일 헤더 주석 참고) — 재확인 후 회복됐든 안
+  // 됐든 1차 감지가 있었으면 그 순간의 시스템 스냅샷을 남긴다.
+  if (firstCheckUnhealthy) {
+    const line = buildMcpLossSnapshotLine({ timestampIso: new Date().toISOString(), recheckedAndRecovered, ...captureSystemSnapshot() });
+    console.log(`📊 진단 스냅샷: ${line}`);
+    if (!DRY_RUN) appendMcpLossLine(line);
   }
 
   let pollingStuck = false;

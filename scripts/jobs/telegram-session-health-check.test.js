@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diagnose, shouldEscalateInsteadOfRestart, checkWithRecheck } from './telegram-session-health-check.mjs';
+import { diagnose, shouldEscalateInsteadOfRestart, checkWithRecheck, buildMcpLossSnapshotLine } from './telegram-session-health-check.mjs';
 
 // 2026-08-31 신설 — Log/DevRequests/2026-08-31-텔레그램세션-MCP연결끊김.md 대응.
 // launchd KeepAlive는 프로세스 생존만 보고, "프로세스는 살아있지만 MCP만 죽은"
@@ -70,6 +70,7 @@ test('checkWithRecheck: 1차 확인이 정상이면 재확인 없이 즉시 반�
   assert.equal(slept, false);
   assert.equal(r.recheckedAndRecovered, false);
   assert.equal(r.sessionAlive, true);
+  assert.equal(r.firstCheckUnhealthy, false, '[코드리뷰 대비/2026-09-04 신설] 1차부터 정상이면 감지 자체가 없었다는 뜻');
 });
 
 test('[막아야 함] checkWithRecheck: 1차에서만 순간적으로 이상하고 재확인에서 회복되면 recheckedAndRecovered=true, 재확인 결과(정상)를 반환', async () => {
@@ -86,6 +87,7 @@ test('[막아야 함] checkWithRecheck: 1차에서만 순간적으로 이상하�
   assert.equal(sleptMs, 15000);
   assert.equal(r.recheckedAndRecovered, true);
   assert.equal(r.mcpSubprocessAlive, true, '반환값은 재확인 시점의 최신 상태여야 함');
+  assert.equal(r.firstCheckUnhealthy, true, '[2026-09-04 신설] 회복됐어도 1차 감지 자체는 있었다는 걸 알아야 진단 스냅샷을 남길 수 있음');
 });
 
 test('checkWithRecheck: 재확인에서도 여전히 이상이면 recheckedAndRecovered=false(진짜 장애로 취급)', async () => {
@@ -106,4 +108,32 @@ test('checkWithRecheck: 세션 프로세스 자체가 죽은 경우도 동일하
   const r = await checkWithRecheck(checkSignals, { sleep });
   assert.equal(calls, 2);
   assert.equal(r.recheckedAndRecovered, true);
+});
+
+// ── buildMcpLossSnapshotLine(2026-09-04 신설, 근본원인 진단 계측) ──────────────
+// 2026-09-01·2026-09-04 두 번 다 크래시 리포트·OOM·절전·네트워크단절 다 확인해도
+// 원인을 못 찾았다 — 다음 발생 시 시스템 스냅샷을 남겨 패턴을 쌓기 위한 함수.
+
+test('buildMcpLossSnapshotLine: 여유메모리·loadavg·가동시간을 사람이 읽는 한 줄로', () => {
+  const line = buildMcpLossSnapshotLine({
+    timestampIso: '2026-09-04T06:47:59.000Z',
+    recheckedAndRecovered: false,
+    freeMemBytes: 64 * 1024 * 1024,
+    totalMemBytes: 16 * 1024 * 1024 * 1024,
+    loadavg: [2.04, 1.88, 2.00],
+    uptimeSec: 3600 * 5,
+  });
+  assert.match(line, /2026-09-04T06:47:59\.000Z/);
+  assert.match(line, /지속\(조치 대상\)/);
+  assert.match(line, /여유메모리 64MB\/16,384MB\(0\.4%\)/);
+  assert.match(line, /loadavg 2\.04\/1\.88\/2\.00/);
+  assert.match(line, /시스템가동 5\.0시간/);
+});
+
+test('buildMcpLossSnapshotLine: 재확인 후 회복된 경우는 "일시적"로 표시', () => {
+  const line = buildMcpLossSnapshotLine({
+    timestampIso: '2026-09-04T00:00:00.000Z', recheckedAndRecovered: true,
+    freeMemBytes: 1024 * 1024 * 1024, totalMemBytes: 16 * 1024 * 1024 * 1024, loadavg: [1, 1, 1], uptimeSec: 0,
+  });
+  assert.match(line, /일시적\(재확인 후 회복\)/);
 });
