@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { withLock, writeAtomic, writeStateFile } from './state-writer.mjs';
+import { withLock, writeAtomic, writeStateFile, patchFrontmatterFileSafely } from './state-writer.mjs';
 
 function makeTmpDir() {
   return mkdtempSync(join(tmpdir(), 'state-writer-test-'));
@@ -122,5 +122,59 @@ test('writeStateFile: 락+원자적쓰기를 한 번에 수행', async () => {
   await writeStateFile(file, '{"holdings":[]}');
   assert.equal(readFileSync(file, 'utf8'), '{"holdings":[]}');
   assert.equal(existsSync(`${file}.lock`), false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// ── patchFrontmatterFileSafely(2026-09-04 신설) ──────────────────────────────
+// State/Holdings 동시쓰기 경합 방지 — VIP펀드 매수누적 작업 코드리뷰에서 발견된
+// 잔여 리스크(Log/Implementation/2026-09-04-VIP펀드매수누적반영.md "남은 것" 참고)
+// 를 이번에 마저 해소.
+
+test('patchFrontmatterFileSafely: patch 필드만 갱신, 나머지 필드는 보존', async () => {
+  const dir = makeTmpDir();
+  const file = join(dir, 'holding.md');
+  writeFileSync(file, '---\naccount: "위탁"\nname: "삼성전자"\nqty: 100\ncurPrice: 70000\n---\n');
+  await patchFrontmatterFileSafely(file, { curPrice: 71000 });
+  const content = readFileSync(file, 'utf8');
+  assert.match(content, /curPrice: 71000/);
+  assert.match(content, /qty: 100/, 'patch에 없는 필드(qty)는 그대로 보존돼야 함');
+  assert.match(content, /account: "위탁"/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('[실사고 재현/막아야 함] patchFrontmatterFileSafely: 호출 시점에 파일을 다시 읽어서 patch — 호출 전에 다른 프로세스가 써놓은 필드를 안 지움', async () => {
+  const dir = makeTmpDir();
+  const file = join(dir, 'holding.md');
+  // "예전에 읽어둔" 내용(stale) — qty:100 시절.
+  const staleContent = '---\naccount: "위탁"\nname: "삼성전자"\nqty: 100\ncurPrice: 70000\n---\n';
+  writeFileSync(file, staleContent);
+  // 그 사이 다른 프로세스(예: update-holdings-from-executions.mjs)가 qty를 120으로 갱신.
+  writeFileSync(file, '---\naccount: "위탁"\nname: "삼성전자"\nqty: 120\ncurPrice: 70000\n---\n');
+  // 이제 가격갱신 잡이 patch를 쓴다 — staleContent를 참고하지 않고 파일을 다시 읽어야
+  // qty:120이 살아남는다.
+  await patchFrontmatterFileSafely(file, { curPrice: 71500 });
+  const content = readFileSync(file, 'utf8');
+  assert.match(content, /qty: 120/, '다른 프로세스가 갱신한 qty가 지워지면 안 됨(경합 방지의 핵심)');
+  assert.match(content, /curPrice: 71500/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('patchFrontmatterFileSafely: 락 파일이 끝나고 정리됨', async () => {
+  const dir = makeTmpDir();
+  const file = join(dir, 'holding.md');
+  writeFileSync(file, '---\nqty: 1\n---\n');
+  await patchFrontmatterFileSafely(file, { qty: 2 });
+  assert.equal(existsSync(`${file}.lock`), false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('[코드리뷰 MEDIUM 지적] patchFrontmatterFileSafely: 파일이 없으면(동시 전량청산 등으로 삭제) throw 대신 false 반환', async () => {
+  const dir = makeTmpDir();
+  const file = join(dir, 'gone.md');
+  // 파일을 아예 만들지 않음 — 배치로 목록을 미리 읽어둔 뒤 한참 뒤 patch를 시도하는데
+  // 그 사이 다른 잡이 전량청산으로 파일 자체를 지운 상황을 재현.
+  const result = await patchFrontmatterFileSafely(file, { qty: 2 });
+  assert.equal(result, false);
+  assert.equal(existsSync(`${file}.lock`), false, '실패해도 락파일은 남지 않아야 함');
   rmSync(dir, { recursive: true, force: true });
 });

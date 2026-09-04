@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { holdingFilename, buildLiveHoldingRecord, parseAppliedDedupKeys, buildCashHoldingRecord } from './holdings-vault-writer.mjs';
-import { parseFrontmatter } from './vault-frontmatter.mjs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { holdingFilename, buildLiveHoldingRecord, parseAppliedDedupKeys, buildCashHoldingRecord, writeHoldingSafely } from './holdings-vault-writer.mjs';
+import { parseFrontmatter, buildFrontmatter } from './vault-frontmatter.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
 
 test('holdingFilename: 계좌-종목명 고정 형태(로트 구분 없음 — 항상 하나로 수렴)', () => {
@@ -66,4 +68,72 @@ test('buildCashHoldingRecord: 감사 필드(anchorBase·anchorTs·anchorSource·
 test('buildCashHoldingRecord: appliedDedupKeys 없음(증분 반영 방어 불필요 — 매번 전체 재계산)', () => {
   const r = buildCashHoldingRecord({ account: '위탁', balance: 100 });
   assert.doesNotMatch(r.content, /appliedDedupKeys/);
+});
+
+// ── writeHoldingSafely(2026-09-04 신설, 2차 코드리뷰로 정정) ────────────────────
+// VAULT_PATHS.state.holdings가 하드코딩이라(다른 이 코드베이스 함수들과 동일 제약)
+// 임시 디렉터리로 주입할 수 없다 — 실제 Vault 디렉터리에 이름이 명백히 테스트용인
+// 파일을 만들고 try/finally로 반드시 지운다(reconcile-irp.test.js 등 이 파일을
+// 직접 못 건드리는 다른 테스트들과 다른 점 — writeHoldingSafely만 이 방식이 필요).
+const TEST_ACCOUNT = '__단위테스트계좌__';
+const TEST_NAME = '__단위테스트종목__';
+function testHoldingPath() {
+  return join(VAULT_PATHS.state.holdings, holdingFilename(TEST_ACCOUNT, TEST_NAME));
+}
+function cleanupTestHolding() {
+  try { rmSync(testHoldingPath(), { force: true }); } catch { /* 무시 */ }
+  try { rmSync(`${testHoldingPath()}.lock`, { force: true }); } catch { /* 무시 */ }
+}
+
+test('[코드리뷰 HIGH 지적/실사고 재현] writeHoldingSafely: 기존 파일이 있어도 identity 필드(ticker 등)를 실제로 갱신함', async () => {
+  cleanupTestHolding();
+  try {
+    // 기존 파일 — ticker가 비어있던 상태를 재현(reconcile-irp.mjs의 ticker 백필
+    // 대상이 되는 실제 시나리오와 동일 형태).
+    writeFileSync(testHoldingPath(), buildFrontmatter({
+      type: 'holding', account: TEST_ACCOUNT, assetClass: 'TDF', name: TEST_NAME,
+      ticker: '', market: '', avgPrice: 100, qty: 10, invest: 1000,
+      curPrice: 100, evalAmount: 1000, profitAmount: 0, profitPct: 0,
+      isCashLike: false, appliedDedupKeys: '[]', updatedAt: '2026-01-01T00:00:00.000Z',
+    }));
+    await writeHoldingSafely({
+      account: TEST_ACCOUNT, assetClass: 'TDF', name: TEST_NAME, ticker: '0025N0', market: '',
+      avgPrice: 105, qty: 11, invest: 1155, curPrice: 105, evalAmount: 1155, profitAmount: 0, profitPct: 0,
+      isCashLike: false, appliedDedupKeys: [],
+    });
+    const fm = parseFrontmatter(readFileSync(testHoldingPath(), 'utf8'));
+    assert.equal(fm.ticker, '0025N0', '기존 파일이 있어도 identity 필드(ticker)가 갱신돼야 함 — 처음엔 이게 안 됐던 회귀');
+    assert.equal(fm.qty, 11);
+    assert.equal(fm.assetClass, 'TDF');
+  } finally {
+    cleanupTestHolding();
+  }
+});
+
+test('writeHoldingSafely: 파일이 없으면 새로 생성', async () => {
+  cleanupTestHolding();
+  try {
+    assert.equal(existsSync(testHoldingPath()), false);
+    await writeHoldingSafely({
+      account: TEST_ACCOUNT, assetClass: '국내주식', name: TEST_NAME, ticker: '005930', market: 'KRX',
+      avgPrice: 50000, qty: 5, invest: 250000, curPrice: 50000, evalAmount: 250000, profitAmount: 0, profitPct: 0,
+      isCashLike: false, appliedDedupKeys: ['key1'],
+    });
+    const fm = parseFrontmatter(readFileSync(testHoldingPath(), 'utf8'));
+    assert.equal(fm.qty, 5);
+    assert.equal(fm.ticker, '005930');
+    assert.deepEqual(parseAppliedDedupKeys(fm), ['key1']);
+  } finally {
+    cleanupTestHolding();
+  }
+});
+
+test('writeHoldingSafely: 쓰기 후 락파일이 남지 않음', async () => {
+  cleanupTestHolding();
+  try {
+    await writeHoldingSafely({ account: TEST_ACCOUNT, name: TEST_NAME, avgPrice: 1, qty: 1, invest: 1 });
+    assert.equal(existsSync(`${testHoldingPath()}.lock`), false);
+  } finally {
+    cleanupTestHolding();
+  }
 });

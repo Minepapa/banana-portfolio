@@ -32,13 +32,13 @@
  *   node scripts/jobs/update-fund-holdings-from-purchases.mjs            # 실제 반영
  *   node scripts/jobs/update-fund-holdings-from-purchases.mjs --dry-run  # 반영 대상만 출력
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { writeAtomic, writeStateFile } from '../lib/state-writer.mjs';
+import { writeAtomic } from '../lib/state-writer.mjs';
 import { applyFundPurchase, checkFundValuationDrift, isValuationStale } from '../lib/fund-holdings-updater.mjs';
-import { buildLiveHoldingRecord, holdingFilename } from '../lib/holdings-vault-writer.mjs';
+import { writeHoldingSafely, holdingFilename } from '../lib/holdings-vault-writer.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { FUND_PURCHASE_ACCOUNT } from '../lib/account-resolver.mjs';
 
@@ -130,15 +130,11 @@ async function main() {
     }
     console.log(`  + [펀드적립반영${DRY_RUN ? '(예정)' : ''}] ${purchase.date} ${purchase.fundName} ${purchase.amount.toLocaleString()}원(${purchase.units.toFixed(2)}좌) → 누적 ${updated.qty.toFixed(2)}좌, 원금 ${updated.invest.toLocaleString()}원`);
     if (!DRY_RUN) {
-      const { filename, content: hContent, dir } = buildLiveHoldingRecord(updated);
-      mkdirSync(dir, { recursive: true });
-      // ⚠️ writeStateFile(락)로 전환(코드리뷰 HIGH 지적, 2026-09-04) — update-
-      // holdings-prices.mjs(같은 파일에 curPrice 등을 쓰는 다른 잡)가 아직 bare
-      // writeAtomic을 쓰고 있어 이 락은 "이 파일을 쓰는 모든 잡"을 완전히 보호하진
-      // 못한다(그쪽도 락을 쓰도록 바꿔야 완전해짐 — 오늘 스코프 밖, 별도 후속과제로
-      // 남김). 그래도 최소한 이 잡 자신의 중복 실행·락을 존중하는 다른 쓰기와는
-      // 안전하게 직렬화된다.
-      await writeStateFile(join(dir, filename), hContent);
+      // writeHoldingSafely로 전환(2026-09-04 후속 — 처음엔 writeStateFile만 썼는데,
+      // 그것만으론 update-holdings-prices.mjs가 이 파일에 stale 내용으로 덮어쓸 위험이
+      // 남아있었다. 그 잡도 오늘 같은 안전장치로 전환해 이제 양쪽 다 보호됨 —
+      // scripts/lib/state-writer.mjs patchFrontmatterFileSafely 헤더 주석 참고).
+      await writeHoldingSafely(updated);
       writeAtomic(filepath, updateFrontmatter(content, { holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
     }
     holding = updated;

@@ -47,8 +47,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { writeAtomic } from '../lib/state-writer.mjs';
+import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { patchFrontmatterFileSafely } from '../lib/state-writer.mjs';
 import { krStockCode, usTicker, usExchange } from '../lib/instruments.mjs';
 import {
   hasKisCredentials, loadKisCredentials, getKisToken, getKrQuote, getUsQuote,
@@ -305,7 +305,10 @@ async function main() {
       // 로그에서 구분(예전엔 항상 "장외"라고만 적어 크리덴셜 문제를 오인할 수 있었음).
       const reason = !usOpen ? '장외' : '크리덴셜 없음';
       console.log(`   · ${h.name}(US, ${reason} — 환율만 재평가): $${h.curPrice} × ₩${usdKrwRate.toFixed(2)} → 평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원`);
-      if (!DRY_RUN) writeAtomic(f.filepath, updateFrontmatter(f.content, { ...valuation, updatedAt: new Date().toISOString() }));
+      if (!DRY_RUN) {
+        const ok = await patchFrontmatterFileSafely(f.filepath, { ...valuation, updatedAt: new Date().toISOString() });
+        if (!ok) { console.log(`   ⚠️ ${h.name}: 갱신 직전 파일이 사라짐(전량청산 등과 경합) — 스킵`); skipped++; continue; }
+      }
       updated++;
       continue;
     }
@@ -345,8 +348,14 @@ async function main() {
     const opts = cls.kind === 'US' ? { usdKrwRate } : cls.kind === 'FUND' ? { unitScale: 0.001 } : {};
     const valuation = recomputeValuation(h, curPrice, opts);
     console.log(`   · ${h.name}(${cls.kind}${cls.source ? `/${cls.source}` : ''}): ${h.curPrice ?? '없음'} → ${curPrice} (평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원)`);
-    if (!DRY_RUN) writeAtomic(f.filepath, updateFrontmatter(f.content, { ...valuation, updatedAt: new Date().toISOString() }));
-    updated++;
+    let wroteOk = true;
+    if (!DRY_RUN) {
+      wroteOk = await patchFrontmatterFileSafely(f.filepath, { ...valuation, updatedAt: new Date().toISOString() });
+      if (!wroteOk) console.log(`   ⚠️ ${h.name}: 갱신 직전 파일이 사라짐(전량청산 등과 경합) — 스킵`);
+    }
+    if (wroteOk) updated++; else skipped++;
+    // 레이트리밋 스태거는 쓰기 성공 여부와 무관하게 항상 적용(KIS 호출 자체는 이미
+    // 했으므로).
     if ((cls.kind === 'KR' || cls.kind === 'US') && cls.source === 'KIS') await sleep(STAGGER_MS);
   }
 
@@ -359,8 +368,12 @@ async function main() {
     if (usdKrwRate == null) { skipped++; continue; }
     const valuation = recomputeFxCashValuation(h, usdKrwRate);
     console.log(`   · ${h.name}(FX현금): 환율 ${h.curPrice ?? '없음'} → ${usdKrwRate.toFixed(2)} (평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원, 손익 항상 0)`);
-    if (!DRY_RUN) writeAtomic(f.filepath, updateFrontmatter(f.content, { ...valuation, updatedAt: new Date().toISOString() }));
-    updated++;
+    let wroteOk = true;
+    if (!DRY_RUN) {
+      wroteOk = await patchFrontmatterFileSafely(f.filepath, { ...valuation, updatedAt: new Date().toISOString() });
+      if (!wroteOk) console.log(`   ⚠️ ${h.name}: 갱신 직전 파일이 사라짐(전량청산 등과 경합) — 스킵`);
+    }
+    if (wroteOk) updated++; else skipped++;
   }
 
   console.log(

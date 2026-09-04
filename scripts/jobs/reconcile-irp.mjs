@@ -79,7 +79,7 @@ import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { hasKisCredentials, loadIrpAccount, getKisToken, getAccountBalance } from '../lib/kis.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { buildCashHoldingRecord, buildLiveHoldingRecord, holdingFilename } from '../lib/holdings-vault-writer.mjs';
+import { buildCashHoldingRecord, writeHoldingSafely, holdingFilename } from '../lib/holdings-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { IRP_ACCOUNT_LABEL } from '../lib/account-resolver.mjs';
 
@@ -244,12 +244,12 @@ async function main() {
   }
   for (const w of writes) {
     const { changed, ...holding } = w;
-    const { filename, content, dir } = buildLiveHoldingRecord(holding);
     console.log(`  ${changed ? '↻' : '='} [종목${DRY_RUN ? '(예정)' : ''}] IRP ${holding.name} ${holding.qty}주 @${Math.round(holding.avgPrice)}원(KIS 직접조회)`);
-    if (!DRY_RUN) {
-      mkdirSync(dir, { recursive: true });
-      writeAtomic(join(dir, filename), content);
-    }
+    // ⚠️ writeHoldingSafely로 전환(2026-09-04, State/Holdings 동시쓰기 경합 방지) —
+    // update-holdings-prices.mjs도 IRP 보유분 curPrice를 별도로 갱신한다(getKrQuote,
+    // IRP만 KIS 유지하는 예외 경로) — 이 잡과 그 잡이 같은 IRP 보유 파일을 거의 동시에
+    // 쓸 수 있어 락+재확인읽기가 필요하다.
+    if (!DRY_RUN) await writeHoldingSafely(holding);
   }
   // ⚠️ 실현손익 기록 공백(코드리뷰 지적, 2026-09-04) — 여기서 감지되는 청산은 카카오
   // 매도 알림이 아니라 "KIS 스냅샷에서 그냥 사라짐"으로 판정된 경우다(예: 카카오

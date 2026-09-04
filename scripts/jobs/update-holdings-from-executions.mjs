@@ -76,7 +76,7 @@ import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mj
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { resolveExecutionAccount, QUANT_TRACK_LABEL, IRP_ACCOUNT_LABEL } from '../lib/account-resolver.mjs';
 import { applyBuy, applySell, consolidateLots } from '../lib/holdings-updater.mjs';
-import { buildLiveHoldingRecord, holdingFilename, parseAppliedDedupKeys } from '../lib/holdings-vault-writer.mjs';
+import { writeHoldingSafely, holdingFilename, parseAppliedDedupKeys } from '../lib/holdings-vault-writer.mjs';
 import { buildProfitRecord } from '../lib/ledger-vault-writer.mjs';
 import { fetchUsdKrwRate } from '../lib/fundamentals.mjs';
 
@@ -175,9 +175,12 @@ export function pickAccountlessAppliedExecutions(executionFiles) {
   return executionFiles.filter(({ parsed }) => !parsed.legacy && parsed.holdingsApplied && !parsed.account);
 }
 
-function writeHolding(holding) {
-  const { filename, content, dir } = buildLiveHoldingRecord(holding);
-  if (!DRY_RUN) { mkdirSync(dir, { recursive: true }); writeAtomic(join(dir, filename), content); }
+// ⚠️ writeHoldingSafely로 전환(2026-09-04, State/Holdings 동시쓰기 경합 방지 — 남은
+// 것 목록의 후속과제) — update-holdings-prices.mjs(같은 파일에 curPrice 등을 쓰는
+// 다른 잡)가 이 잡의 체결 처리 도중 같은 보유 파일을 갱신하면, 예전(bare writeAtomic
+// + buildLiveHoldingRecord 전체재작성) 방식은 그 갱신을 조용히 되돌릴 수 있었다.
+async function writeHolding(holding) {
+  if (!DRY_RUN) await writeHoldingSafely(holding);
 }
 
 // 계좌당 종목 하나 = 파일 하나로 수렴시킨다. 여러 로트가 있던 항목은 통합 결과를 쓰고
@@ -193,7 +196,7 @@ function writeHolding(holding) {
 // 파일과 나란히 남음). 이제 로트 개수와 무관하게 "이 파일 경로가 정식 파일명과 다르면"
 // 무조건 정리한다 — 다음 잡 실행 때 아직 안 건드려진 나머지 레거시 파일명도 전부
 // 자연히 정규화된다(에러 없이 조용히 발생하던 종류의 버그라 여기서 한 번에 청소).
-function loadConsolidatedHoldings() {
+async function loadConsolidatedHoldings() {
   const files = readVaultFiles(VAULT_PATHS.state.holdings);
   const groups = new Map();
   for (const f of files) {
@@ -209,7 +212,7 @@ function loadConsolidatedHoldings() {
     if (needsRewrite) {
       if (group.length > 1) console.log(`  🔀 로트 통합: ${key} (${group.length}개 파일 → 1개, 합산 ${merged.qty}주)`);
       else console.log(`  📝 파일명 정규화(레거시 잔재 정리): ${key}`);
-      writeHolding(merged);
+      await writeHolding(merged);
       for (const f of group) {
         if (f.filepath !== survivingFilename && !DRY_RUN) rmSync(f.filepath, { force: true });
       }
@@ -248,7 +251,7 @@ async function main() {
     }
   }
 
-  const holdingsMap = loadConsolidatedHoldings();
+  const holdingsMap = await loadConsolidatedHoldings();
 
   let buys = 0, sells = 0, closed = 0, unresolvedAccount = 0, warnings = 0, alreadyApplied = 0, duplicateOfKnown = 0, totalRealizedProfit = 0;
 
@@ -362,7 +365,7 @@ async function main() {
       }
       const updated = { ...buyResult.holding, appliedDedupKeys: [...(existing?.appliedDedupKeys ?? []), exec.dedupKey] };
       console.log(`  + [매수] ${account} ${exec.stockName} ${exec.quantity}주 @${exec.price} → 보유 ${updated.qty}주(평단 ${Math.round(updated.avgPrice)})`);
-      writeHolding(updated);
+      await writeHolding(updated);
       holdingsMap.set(key, updated);
       buys++;
     } else if (exec.tradeType === '매도') {
@@ -385,7 +388,7 @@ async function main() {
         closed++;
       } else {
         const updated = { ...result.updatedHolding, appliedDedupKeys: [...(existing?.appliedDedupKeys ?? []), exec.dedupKey] };
-        writeHolding(updated);
+        await writeHolding(updated);
         holdingsMap.set(key, updated);
       }
       sells++;
