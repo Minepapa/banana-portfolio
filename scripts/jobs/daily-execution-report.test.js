@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filterTodayExecutions, buildExecutionReportText } from './daily-execution-report.mjs';
+import { filterTodayExecutions, buildExecutionReportText, dedupExecutionsForReport } from './daily-execution-report.mjs';
 
 test('filterTodayExecutions: tradeDate 앞 10자리가 오늘 날짜와 일치하는 것만 남긴다', () => {
   const executions = [
@@ -75,4 +75,39 @@ test('buildExecutionReportText: account가 없으면 "미배정"으로 표시', 
   const text = buildExecutionReportText(executions);
   assert.match(text, /\(미배정\)/);
   assert.match(text, /거래대금 합산\(매수\+매도, 상계 없음\) — 미배정 \(KRW\): 1,000/);
+});
+
+// ── dedupExecutionsForReport(2026-09-04 신설, 오너 실거래 재현) ──────────────────
+
+test('[실사고 재현] dedupExecutionsForReport: 금현물 금 99.99K 1주 매수를 NH API·카카오 두 소스가 각자 기록해도 한 줄만 남김', () => {
+  // 실제 2026-09-04 라이브 Vault 레코드 그대로(파일명 다름·dedupKey 다름, 같은 실제 체결).
+  const nhExec = {
+    tradeDate: '2026-09-04 00:00:00', tradeType: '매수', stockName: '금 99.99K', quantity: 1, price: 195760,
+    account: '금현물', currency: 'KRW', orderNo: '2344110', recordedAt: '2026-09-04T02:36:40.605Z',
+  };
+  const kakaoExec = {
+    tradeDate: '2026-09-04 11:33:57', tradeType: '매수', stockName: '금 99.99K', quantity: 1, price: 195760,
+    account: '금현물', currency: 'KRW', recordedAt: '2026-09-04T02:38:31.996Z',
+  };
+  const deduped = dedupExecutionsForReport([kakaoExec, nhExec]);
+  assert.equal(deduped.length, 1);
+});
+
+test('dedupExecutionsForReport: recordedAt 오름차순으로 먼저 기록된 쪽을 대표로 남김', () => {
+  const later = { tradeDate: '2026-09-04', tradeType: '매수', stockName: 'X', quantity: 1, price: 100, recordedAt: '2026-09-04T02:38:00.000Z', account: 'A' };
+  const earlier = { tradeDate: '2026-09-04', tradeType: '매수', stockName: 'X', quantity: 1, price: 100, recordedAt: '2026-09-04T02:36:00.000Z', account: 'B' };
+  const deduped = dedupExecutionsForReport([later, earlier]);
+  assert.equal(deduped.length, 1);
+  assert.equal(deduped[0].account, 'B'); // 더 먼저 기록된 쪽
+});
+
+test('dedupExecutionsForReport: 진짜 다른 체결(수량 다름)은 안 지워짐 — 위탁 사례처럼 정당한 병행', () => {
+  const buy1 = { tradeDate: '2026-09-04', tradeType: '매수', stockName: 'X', quantity: 1, price: 100, recordedAt: '2026-09-04T02:36:00.000Z' };
+  const buy2 = { tradeDate: '2026-09-04', tradeType: '매수', stockName: 'X', quantity: 2, price: 100, recordedAt: '2026-09-04T02:37:00.000Z' };
+  assert.equal(dedupExecutionsForReport([buy1, buy2]).length, 2);
+});
+
+test('dedupExecutionsForReport: 빈 배열/undefined 입력도 안전', () => {
+  assert.deepEqual(dedupExecutionsForReport([]), []);
+  assert.deepEqual(dedupExecutionsForReport(undefined), []);
 });

@@ -35,6 +35,7 @@ import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { todayKST } from '../lib/sheets-api.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { findMatchingKnownExecution } from './update-holdings-from-executions.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const DEPARTMENT_LABEL = '운영실 Hermes';
@@ -48,6 +49,26 @@ function readVaultDir(dir) {
 // 10자리(YYYY-MM-DD)가 일치하는 것만 골라낸다. 테스트 가능.
 export function filterTodayExecutions(executions, todayDate) {
   return (executions || []).filter((e) => String(e.tradeDate ?? '').slice(0, 10) === todayDate);
+}
+
+// 순수함수(2026-09-04 신설, 오너 신고 — 오늘 실거래로 재현: 금현물 금 99.99K 1주
+// 매수가 보고서에 2줄로 나옴) — Facts/Ledger/Executions는 같은 실제 체결을 서로 다른
+// 소스(카카오·NH/KIS API)가 각자 기록할 수 있다(의도된 병행기간, update-holdings-
+// from-executions.mjs 헤더 "크로스소스 이중반영 방지" 참고). 그 잡은 findMatchingKnownExecution
+// 으로 보유수량엔 한 번만 반영하지만(qty는 이미 정확했음, 실측 확인), 두 원본 레코드
+// 파일 자체는 둘 다 그대로 남는다 — 이 보고서는 그 raw 레코드를 그대로 나열해서
+// 보유수량과 달리 화면에는 중복으로 보였다. 같은 판정 기준(날짜 일단위·구분·종목명·
+// 수량)을 여기서도 재사용해 표시 직전에 한 번 더 걸러낸다. recordedAt 오름차순으로
+// 먼저 Vault에 기록된 쪽을 대표로 남긴다(어느 소스든 표시값은 동일하므로 어느 걸
+// 남겨도 무방하지만, 먼저 감지한 쪽을 남기는 게 가장 직관적인 규칙).
+export function dedupExecutionsForReport(executions) {
+  const sorted = [...(executions || [])].sort((a, b) => String(a.recordedAt ?? '').localeCompare(String(b.recordedAt ?? '')));
+  const kept = [];
+  for (const exec of sorted) {
+    if (findMatchingKnownExecution(exec, kept)) continue;
+    kept.push(exec);
+  }
+  return kept;
 }
 
 // 순수함수 — 오늘자 체결 레코드 배열을 계좌별로 묶어 사람이 읽는 텍스트로 만든다.
@@ -88,7 +109,7 @@ export function buildExecutionReportText(executions) {
 
 async function main() {
   const executions = readVaultDir(VAULT_PATHS.facts.ledger.executions);
-  const today = filterTodayExecutions(executions, todayKST());
+  const today = dedupExecutionsForReport(filterTodayExecutions(executions, todayKST()));
   const body = buildExecutionReportText(today);
 
   console.log(body);
