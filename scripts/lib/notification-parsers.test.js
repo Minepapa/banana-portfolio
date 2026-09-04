@@ -213,10 +213,13 @@ test('[핵심 안전장치] parseFundValuation: 종목명·원금·평가금액 
   assert.equal(parseFundValuation(noAmount, '2026-09-01 09:00:00'), null);
 });
 
+// ⚠️ 2026-09-04 실거래로 검증(Log/Implementation/2026-09-04-금현물IRP-체결검증.md 참고)
+// — 종목명 "금 99.99K"가 실제 카카오 알림·NH API(iem_nm) 양쪽에서 정확히 일치함을
+// 확인. 이전엔 "KRX금99.99K"(추정, 미검증)를 썼었다 — 실측으로 교체.
 test('parseGoldBuy: NH 금현물 매수 체결(g 단위)', () => {
-  const body = '체결통보\n종목명 : KRX금99.99K\n체결수량 : 10.5g\n체결단가 : 95,000원\n주문번호 : 12345\n매수';
+  const body = '체결통보\n종목명 : 금 99.99K\n체결수량 : 10.5g\n체결단가 : 95,000원\n주문번호 : 12345\n매수';
   const r = parseGoldBuy(body, '2026-08-04 09:00:00');
-  assert.equal(r.stockName, 'KRX금99.99K');
+  assert.equal(r.stockName, '금 99.99K');
   assert.equal(r.qty, 10.5);
   assert.equal(r.price, 95000);
   assert.equal(r.tradeType, '매수');
@@ -224,7 +227,7 @@ test('parseGoldBuy: NH 금현물 매수 체결(g 단위)', () => {
 });
 
 test('parseGoldBuy: 매도도 지원(동일 포맷 가정)', () => {
-  const body = '체결통보\n종목명 : KRX금99.99K\n체결수량 : 5g\n체결단가 : 96,000원\n매도';
+  const body = '체결통보\n종목명 : 금 99.99K\n체결수량 : 5g\n체결단가 : 96,000원\n매도';
   const r = parseGoldBuy(body, '2026-08-04 09:00:00');
   assert.equal(r.tradeType, '매도');
 });
@@ -235,7 +238,7 @@ test('parseGoldBuy: 주 단위(일반 주식)는 매칭 안 됨(g 가드)', () =
 });
 
 test('[막아야 함/날짜절삭 재발방지] parseGoldBuy: date가 날짜만이 아니라 전체 타임스탬프(시각 보존) — cash-ledger.mjs 델타 비교가 사전식으로 안전하려면 필수', () => {
-  const body = '체결통보\n종목명 : KRX금99.99K\n체결수량 : 10.5g\n체결단가 : 95,000원\n매수';
+  const body = '체결통보\n종목명 : 금 99.99K\n체결수량 : 10.5g\n체결단가 : 95,000원\n매수';
   const r = parseGoldBuy(body, '2026-08-04 13:02:15');
   assert.equal(r.date, '2026-08-04 13:02:15');
 });
