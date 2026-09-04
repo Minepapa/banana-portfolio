@@ -187,6 +187,9 @@ export const EXPECTED_INTERVALS_MS = {
   // weekly-vault-health-check(2026-09-04 신설) — 매주 일 07:30, isa-maturity-check와
   // 동일 클래스(저정보 억제라 텔레그램 발송 없는 주도 많지만 heartbeat 자체는 매주).
   'weekly-vault-health-check': 7 * 24 * 60 * 60 * 1000,
+  // pension-balance-reminder(2026-09-04 신설) — 매월 22일, rebalance-proposal(분기,
+  // 100일)과 동일 원칙으로 달 길이(28~31일) 편차를 흡수하는 여유(35일)를 둔다.
+  'pension-balance-reminder': 35 * 24 * 60 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 

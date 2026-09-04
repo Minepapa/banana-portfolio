@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.pension-balance-reminder</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>pension-balance-reminder</string>
+  </array>
+  <!-- 매월 22일 09:00 KST — 연금저축 계좌는 카카오 자동알림·API가 둘 다 없어 수동
+       확인이 유일한 방법이다(2026-08-27~08-28 세 차례 실측 재기준 필요했던 전례,
+       Knowledge/Hubs/연금저축-데이터보정.md 참고). 근본원인 재조사는 2026-09-04
+       오너 지시로 중단하고 이 가벼운 리마인더로 대체. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Day</key><integer>22</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/pension-balance-reminder.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/pension-balance-reminder.log</string>
+</dict>
+</plist>
