@@ -92,6 +92,10 @@ export const EXPECTED_INTERVALS_MS = {
   // 보다 먼저 돌아 그날 체결을 그날 안에 반영. 같은 배치그룹 관례로 48h.
   'reconcile-irp-executions': 48 * 60 * 60 * 1000,
   'reconcile-nh-executions': 48 * 60 * 60 * 1000,
+  // update-fund-holdings-from-purchases(평일 16:11, 2026-09-04 신설) — 위 배치그룹
+  // 안전망들과 동일 원칙(intraday-portfolio-sync 10분마다 + 고정시각 안전망 1개),
+  // 동일 48h 간격.
+  'update-fund-holdings-from-purchases': 48 * 60 * 60 * 1000,
   // ⚠️ 버그 수정(2026-08-23, 오너 신고 — 리포트는 실제로 발행됐는데 "조용하다" 오알람) —
   // backup-vault와 완전히 같은 클래스의 재발이다: 이 두 잡을 추가할 때 기본값(1시간)
   // 이 적용된 채 여기 등록을 안 해서, 정상 실행 후 2시간만 지나면 매번 오탐이 났다.

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.update-fund-holdings-from-purchases</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>update-fund-holdings-from-purchases</string>
+  </array>
+  <!-- 평일 16:11 KST(2026-09-04 신설) — intraday-portfolio-sync.mjs가 10분마다 이미
+       이 스크립트를 7번째 단계로 돌리지만, 그 오케스트레이터가 다른 6개 고정시각
+       잡과 동일하게 "언젠가 조용히 실패해도 하루 최소 1회는 확실히 도는 안전망"이
+       필요하다(intraday-portfolio-sync.mjs 헤더 주석과 동일 원칙). update-cash-
+       from-ledger(16:10) 바로 다음 분에 배치 — 예수금까지 다 반영된 뒤 마지막
+       확인이라는 자연스러운 순서일 뿐 의존관계는 없음. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>11</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>11</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>11</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>11</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>11</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-fund-holdings-from-purchases.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-fund-holdings-from-purchases.log</string>
+</dict>
+</plist>
