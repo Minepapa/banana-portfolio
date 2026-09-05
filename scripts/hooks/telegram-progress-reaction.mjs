@@ -62,12 +62,27 @@
  * 채팅으로 진짜 setMessageReaction 호출이 한 번 나갔다(오너에게 별도 보고·확인
  * 요청함). 앞으로 이 훅을 라이브로 검증할 때는 반드시 존재하지 않는 transcript_path
  * 또는 빈 TELEGRAM_BOT_TOKEN으로 실제 API 호출 자체가 안 나가는 조건에서 할 것.
+ *
+ * ⚠️ 실사용 1차 검증 실패 → Happy Eyeballs 버그 재발 확인(2026-09-05) — 배포 직후
+ * 실제 "안녕" 2회 테스트에서 😘가 안 붙어 transcript의 훅 attachment stderr를 직접
+ * 확인한 결과 매번 `TypeError: fetch failed`. 이건 `scripts/lib/telegram.mjs`
+ * 헤더 주석(2026-08-18, task #34)이 이미 이 머신에서 확정 진단해둔 것과 정확히
+ * 같은 버그 — Node 20+ 기본 활성화된 Happy Eyeballs(RFC 8305, IPv6/IPv4 동시접속
+ * 경쟁)가 "IPv6는 즉각 거부되지만 IPv4는 느리게 응답하는" 이 머신의 네트워크
+ * 조건에서 api.telegram.org 연결 시 오작동해 ETIMEDOUT으로 멈춘다. 그 문서가
+ * 발견한 고정(`setDefaultAutoSelectFamily(false)`)을 이 훅도 적용해야 하는데,
+ * 처음 구현할 때 그 선례를 확인 안 하고 새 파일을 만들어 놓쳤다 — telegram.mjs를
+ * 쓰는 다른 잡(sendTelegram 등)들은 멀쩡히 동작하니 "다른 잡은 되는데 이 훅만
+ * 안 된다"가 재발하면 이 주석부터 볼 것.
  */
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
+import { setDefaultAutoSelectFamily } from 'node:net';
 import { readTranscriptTailLines, getMessageText, readStdin, cleanupStaleGuardFiles } from './telegram-reply-guard.mjs';
+
+setDefaultAutoSelectFamily(false);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GUARD_DIR = join(HERE, '..', '.cache', 'telegram-progress-reaction');
