@@ -28,6 +28,9 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { buildAllMirrors } from '../lib/firestore-mirror.mjs';
 import { getFirestoreAdmin, FIREBASE_ADMIN_KEY_FILE } from '../lib/firestore-admin.mjs';
+// 종목명 표준화(2026-09-05, firestore-mirror.mjs 헤더 주석 참고) — Vault 원본은
+// 안 건드리고 미러 계층에서만 표시명을 통일한다.
+import { getCodeRegistry } from '../lib/stock-registry.mjs';
 
 export { FIREBASE_ADMIN_KEY_FILE };
 
@@ -75,7 +78,8 @@ export function collectMirrorInput({ now = new Date() } = {}) {
   // 2026-08-21 추가(과거분은 migrate-monthly-balance.mjs 1회성 이관) — 2026-08-22부터
   // update-monthly-balance-snapshot.mjs가 이번 달분을 매일 갱신.
   const monthlyBalances = readVaultRecords(VAULT_PATHS.facts.ledger.monthlyBalances);
-  return { executionEvents, dividendEvents, profitEvents, pendingProposalCount, holdings, accounts, report, monthlyBalances, now };
+  const registry = getCodeRegistry();
+  return { executionEvents, dividendEvents, profitEvents, pendingProposalCount, holdings, accounts, report, monthlyBalances, registry, now };
 }
 
 async function main() {

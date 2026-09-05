@@ -8,6 +8,17 @@
 // home 미러는 지금 빈 값(0·[])으로 정확하게 나온다(가짜 숫자를 채우지 않는다). Facts/
 // Ledger(체결·배당)는 Phase 2에서 이미 실제로 기록되므로 trades·dividends 미러는
 // 진짜 데이터로 채워진다.
+//
+// ⚠️ 종목명 표준화(2026-09-05, 오너 지시 — "최대한 원문 그대로를 지키면서 통일된
+// 명칭으로 보고 싶어") — Vault 원본 파일(Facts/Ledger/*, State/Holdings)의 stockName·
+// name 필드는 절대 안 건드린다(카카오 알림 원문 그대로 영구 보존이 이 코드베이스의
+// 원칙, ledger-vault-writer.mjs 헤더 주석 참고). 이 미러 계층(대시보드가 실제로
+// 읽는 파생 데이터)에서만 scripts/lib/stock-registry.mjs의
+// resolveCanonicalStockName으로 표시명을 정규화한다 — 원본은 그대로, 화면에
+// 보이는 것만 통일. registry는 이 모듈이 스스로 로드하지 않고(순수함수 원칙 유지)
+// 호출부(sync-firestore-mirror.mjs)가 stock-registry.mjs에서 만들어 넘긴다.
+
+import { resolveCanonicalStockName } from './stock-registry.mjs';
 
 // 최근 1년 이내 항목만 남긴다(mirror의 "이력형" 문서 원칙 — 그 이전은 Vault에서 조회).
 function withinLastYear(dateStr, now) {
@@ -42,10 +53,10 @@ export function buildHomeMirror({ holdings = [], accounts = [], pendingProposalC
 // 필드를 명시적으로 골라 담는다(전체 스프레드 금지) — State/Holdings frontmatter에
 // 나중에(Phase 8·9) 어떤 필드가 추가되든 여기 나열 안 한 값은 미러로 새 나가지 않는다
 // (보안리뷰 지적, 2026-08-05 — buildTradesMirror·buildDividendsMirror와 같은 방식으로 통일).
-export function buildHoldingsMirror({ holdings = [], now = new Date() }) {
+export function buildHoldingsMirror({ holdings = [], now = new Date(), registry = new Map() }) {
   const totalEval = holdings.reduce((s, h) => s + (h.evalAmount || 0), 0);
   const items = holdings.map((h) => ({
-    account: h.account ?? null, name: h.name, ticker: h.ticker ?? '', market: h.market ?? '',
+    account: h.account ?? null, name: resolveCanonicalStockName(h.name, registry), ticker: h.ticker ?? '', market: h.market ?? '',
     assetClass: h.assetClass ?? '', isCashLike: h.isCashLike ?? false,
     qty: h.qty, avgPrice: h.avgPrice, curPrice: h.curPrice ?? null,
     // invest: State/Holdings가 이미 정확히 계산한 값 — 화면에서 avgPrice*qty로
@@ -63,9 +74,9 @@ export function buildAllocationMirror({ accounts = [], now = new Date() }) {
 }
 
 // dividendEvents: Facts/Ledger/Dividends 파싱 결과 배열({ date, stockName, afterTaxAmount, ... })
-export function buildDividendsMirror({ dividendEvents = [], now = new Date() }) {
+export function buildDividendsMirror({ dividendEvents = [], now = new Date(), registry = new Map() }) {
   const recent = dividendEvents.filter((d) => withinLastYear(d.date, now));
-  const items = recent.map((d) => ({ date: d.date, ticker: d.ticker ?? '', name: d.stockName, amount: d.afterTaxAmount }));
+  const items = recent.map((d) => ({ date: d.date, ticker: d.ticker ?? '', name: resolveCanonicalStockName(d.stockName, registry), amount: d.afterTaxAmount }));
   const ytdStart = `${now.getFullYear()}-01-01`;
   const monthStart = now.toISOString().slice(0, 7);
   const ytdTotal = items.filter((i) => i.date >= ytdStart).reduce((s, i) => s + i.amount, 0);
@@ -78,20 +89,20 @@ export function buildDividendsMirror({ dividendEvents = [], now = new Date() }) 
 // recordedAt 등 화면에 불필요한 필드도 섞여있다). buildDividendsMirror·buildTradesMirror와
 // 동일 원칙으로 필드를 명시적으로 골라 담는다(전체 스프레드 금지, 2026-08-05 보안리뷰
 // 지적과 같은 이유) — ProfitTab이 실제로 쓰는 건 date·stockName·profit뿐이다.
-export function buildProfitsMirror({ profitEvents = [], now = new Date() }) {
+export function buildProfitsMirror({ profitEvents = [], now = new Date(), registry = new Map() }) {
   const items = profitEvents
     .filter((p) => withinLastYear(p.date, now))
-    .map((p) => ({ date: p.date, stockName: p.stockName, profit: p.profit }));
+    .map((p) => ({ date: p.date, stockName: resolveCanonicalStockName(p.stockName, registry), profit: p.profit }));
   return { updatedAt: now.toISOString(), items };
 }
 
 // executionEvents: Facts/Ledger/Executions 파싱 결과({ tradeDate, tradeType, stockName, quantity, price, ... })
-export function buildTradesMirror({ executionEvents = [], now = new Date() }) {
+export function buildTradesMirror({ executionEvents = [], now = new Date(), registry = new Map() }) {
   const items = executionEvents
     .filter((e) => withinLastYear(e.tradeDate, now))
     .map((e) => ({
       date: e.tradeDate, side: e.tradeType, account: e.account ?? null, ticker: e.stockCode ?? '',
-      assetClass: e.assetClass ?? '', name: e.stockName, price: e.price, qty: e.quantity,
+      assetClass: e.assetClass ?? '', name: resolveCanonicalStockName(e.stockName, registry), price: e.price, qty: e.quantity,
       amount: e.price * e.quantity, fee: e.fee ?? 0, tax: e.tax ?? 0,
     }));
   return { updatedAt: now.toISOString(), items };

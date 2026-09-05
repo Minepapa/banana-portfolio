@@ -187,3 +187,48 @@ test('buildAllMirrors: 8개 문서 모두 반환', () => {
   const r = buildAllMirrors({ now: NOW });
   assert.deepEqual(Object.keys(r).sort(), ['allocation', 'dividends', 'holdings', 'home', 'latestReport', 'monthlyBalances', 'profits', 'trades'].sort());
 });
+
+// ── 종목명 표준화 연동(2026-09-05, 오너 지시 — "최대한 원문 그대로를 지키면서
+// 통일된 명칭으로 보고 싶어") — Vault 원본은 그대로, 대시보드가 실제로 읽는 이
+// 미러 계층에서만 표시명을 정규화한다. ────────────────────────────────────────
+
+test('[표시명 정규화] buildDividendsMirror: registry로 name이 표준명으로 치환됨', () => {
+  const registry = new Map([['017670', 'SK텔레콤']]);
+  const r = buildDividendsMirror({
+    dividendEvents: [{ date: '2026-08-01', stockName: '하이닉스', afterTaxAmount: 1000 }],
+    now: NOW, registry,
+  });
+  // "하이닉스"는 stock-aliases.mjs 별칭표에 등록된 실제 파편화 사례 — registry
+  // 인자와 무관하게 항상 적용된다(resolveCanonicalStockName이 별칭표 우선 확인).
+  assert.equal(r.items[0].name, 'SK하이닉스');
+});
+
+test('[표시명 정규화] buildProfitsMirror: registry로 stockName이 표준명으로 치환됨', () => {
+  const r = buildProfitsMirror({
+    profitEvents: [{ date: '2026-08-01', stockName: '삼성전자보통주', profit: 1000 }],
+    now: NOW,
+  });
+  assert.equal(r.items[0].stockName, '삼성전자');
+});
+
+test('[표시명 정규화] buildTradesMirror: registry로 name이 표준명으로 치환됨', () => {
+  const registry = new Map([['017670', 'SK텔레콤']]);
+  const r = buildTradesMirror({
+    executionEvents: [{ tradeDate: '2026-08-01', tradeType: '매수', stockName: '017670', stockCode: '017670', price: 1, quantity: 1 }],
+    now: NOW, registry,
+  });
+  assert.equal(r.items[0].name, 'SK텔레콤');
+});
+
+test('[표시명 정규화] buildHoldingsMirror: registry로 name이 표준명으로 치환됨', () => {
+  const r = buildHoldingsMirror({
+    holdings: [{ name: 'SK텔레콤보통주', evalAmount: 100 }],
+    now: NOW,
+  });
+  assert.equal(r.items[0].name, 'SK텔레콤');
+});
+
+test('[표시명 정규화] registry 없이 호출해도(하위호환) 별칭표는 적용되고 죽지 않음', () => {
+  const r = buildDividendsMirror({ dividendEvents: [{ date: '2026-08-01', stockName: '하이닉스', afterTaxAmount: 1000 }], now: NOW });
+  assert.equal(r.items[0].name, 'SK하이닉스');
+});

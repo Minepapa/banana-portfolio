@@ -67,6 +67,18 @@ test('[오너 확인 2026-09-05] 한국투자 ACE 미국하이일드액티브 �
   );
 });
 
+test('[오너 확인 2026-09-05] 미래에셋 TIGER 리츠부동산인프라 혼합자산 정식장문명 → TIGER 리츠부동산인프라(일반, TOP10액티브와 별도)', () => {
+  assert.equal(
+    MANUAL_STOCK_ALIASES.get(canonName('미래에셋 TIGER 리츠부동산인프라혼합자산상장지수투자신탁(재간')),
+    'TIGER 리츠부동산인프라',
+  );
+  // TOP10액티브 별칭과 혼동되지 않는지 교차 확인.
+  assert.notEqual(
+    MANUAL_STOCK_ALIASES.get(canonName('미래에셋 TIGER 리츠부동산인프라혼합자산상장지수투자신탁(재간')),
+    'TIGER 리츠부동산인프라TOP10액티브',
+  );
+});
+
 test('키는 canonName 기준이라 대소문자·공백 차이는 흡수', () => {
   assert.equal(MANUAL_STOCK_ALIASES.get(canonName('  하이닉스  ')), 'SK하이닉스');
 });

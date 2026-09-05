@@ -47,6 +47,12 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+// 종목명 표준화(2026-09-05, 오너 지시 — "최대한 원문 그대로를 지키면서 통일된
+// 명칭으로 보고 싶어") — Vault 원본(Facts/Ledger)의 stockName은 안 건드리고,
+// 리포트 텍스트로 나가기 직전(LLM에 팩트로 주입되는 시점)에만 표준명으로
+// 정규화한다. firestore-mirror.mjs와 동일 원칙(scripts/lib/firestore-mirror.mjs
+// 헤더 주석 참고).
+import { getCodeRegistry, resolveCanonicalStockName } from '../lib/stock-registry.mjs';
 
 // 2026-08-23 — 이 발송도 부서 라벨이 없었다(오너 지시로 전체 텔레그램 메시지 구조
 // 재점검 중 발견) — 주간리포트·KPI는 비서실(Apollo) 소관(위 APOLLO_REPORT/APOLLO_PREFS
@@ -80,16 +86,16 @@ function readVaultDir(dir) {
 // Facts/Ledger/Executions 객체 → EXEC_COL 인덱스 row-array. behavior-signals.mjs·
 // report-facts.mjs의 매입평균 기반 실현손익 로직(2026-07 현대차·삼성바이오로직스
 // 회귀방지)을 안 건드리고 그대로 재사용하기 위한 어댑터.
-function executionsToTradeRows(executions) {
+function executionsToTradeRows(executions, registry) {
   return executions.map((e) => [
     e.tradeDate ?? '', e.tradeType ?? '', e.account ?? '', e.stockCode ?? '',
-    '', e.stockName ?? '', String(e.price ?? ''), String(e.quantity ?? ''),
+    '', resolveCanonicalStockName(e.stockName, registry) ?? '', String(e.price ?? ''), String(e.quantity ?? ''),
     String((Number(e.quantity) || 0) * (Number(e.price) || 0)),
   ]);
 }
 // Facts/Ledger/Dividends 객체 → [날짜, 금액, 종목명] row-array.
-function dividendsToRows(dividends) {
-  return dividends.map((d) => [d.date ?? '', String(d.afterTaxAmount ?? ''), d.stockName ?? '']);
+function dividendsToRows(dividends, registry) {
+  return dividends.map((d) => [d.date ?? '', String(d.afterTaxAmount ?? ''), resolveCanonicalStockName(d.stockName, registry) ?? '']);
 }
 
 // Knowledge/Reports/{date}.md 중 asof 이전 가장 최신 리포트 요약 → 직전 맥락.
@@ -350,16 +356,17 @@ async function main() {
   const prefRecords = readVaultDir(VAULT_PATHS.knowledge.profile).filter(isLivePreferenceObservation);
   const prevReport = loadPrevReport(asof);
 
-  const tradeRows = executionsToTradeRows(executions);
-  const dividendRows = dividendsToRows(dividends);
+  const stockRegistry = getCodeRegistry();
+  const tradeRows = executionsToTradeRows(executions, stockRegistry);
+  const dividendRows = dividendsToRows(dividends, stockRegistry);
 
   // ③ facts 조립 + 행동 신호(체결만 — MVP 범위, 노트·리스크·저널 신호는 아직 없음)
-  const { facts, factsText } = buildReportFacts({ asof, weekStart, holdings, macro, tradeRows, dividendRows, profitRows, prevReport });
+  const { facts, factsText } = buildReportFacts({ asof, weekStart, holdings, macro, tradeRows, dividendRows, profitRows, prevReport, registry: stockRegistry });
   // profitRows(2026-08-30 신설) — report-facts.mjs와 같은 이유로 여기도 필요하다.
   // 이 함수의 익절/손절 판정·평균수익률이 "성향 학습"(⑧단계, buildObservationPrompt)의
   // 입력이 되므로, 매입평균 재구성이 실패하는 이관 이전 포지션은 여기서도 틀린 값을
   // 낼 수 있었다(오너가 "그 리포트 하나만 고치지 말고 전체를 보라"고 지적해서 발견).
-  const { signalsText } = buildBehaviorSignals({ asof, weekStart, tradeRows, noteRows: [], journalRows: [], riskRows: [], profitRows });
+  const { signalsText } = buildBehaviorSignals({ asof, weekStart, tradeRows, noteRows: [], journalRows: [], riskRows: [], profitRows, registry: stockRegistry });
   const confirmedPrefsText = renderPrefRows(prefRecords, { confirmedOnly: true });
   const priorPrefsText = renderPrefRows(prefRecords);
 

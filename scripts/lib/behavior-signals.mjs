@@ -46,10 +46,13 @@ export function collectBuys(tradeRows) {
 // profitLookup(선택, realized-profit-ledger.mjs buildProfitLookup 결과) — 넘기면 Profits
 // 정본을 먼저 조회하고, 매칭되면 재구성 없이 그 값을 그대로 쓴다(2026-08-30 신설). 안
 // 넘기면(report-facts.mjs의 폴백 호출처럼) 기존 재구성 동작 그대로 — 하위호환.
-export function parseSell(r, buysAll, profitLookup) {
+// registry(선택, 2026-09-05) — realized-profit-ledger.mjs에 그대로 전달. buildProfitLookup
+// 을 만들 때와 같은 registry를 넘겨야 한다(안 그러면 인덱싱·조회 양쪽의 정규화 기준이
+// 어긋나 매칭이 오히려 깨질 수 있음).
+export function parseSell(r, buysAll, profitLookup, registry) {
   const date = s(r[T.DATE]); const name = s(r[T.NAME]); const account = s(r[T.ACCT]);
   const price = num(r[T.PRICE]); const qty = num(r[T.QTY]);
-  const ledgerHit = lookupRealizedProfit({ date, account, name, qty: s(r[T.QTY]) }, profitLookup);
+  const ledgerHit = lookupRealizedProfit({ date, account, name, qty: s(r[T.QTY]) }, profitLookup, registry);
   if (ledgerHit) return { date, name, account, price, qty, avgBuy: null, realizedPct: ledgerHit.realizedPct, realizedWon: ledgerHit.realizedWon, partialHistory: false, ledgerMatched: true };
 
   const priorBuys = buysAll.filter(b => b.name === name && b.date && b.date < date && b.amount != null && b.qty);
@@ -78,14 +81,17 @@ export function parseSell(r, buysAll, profitLookup) {
  * @param input.profitRows  Facts/Ledger/Profits 정본(선택, 2026-08-30 신설) — 넘기면
  *   익절/손절 판정·평균수익률이 매입평균 재구성 대신 이 정본을 우선 쓴다. 안 넘기면
  *   기존 재구성 동작 그대로(하위호환).
+ * @param input.registry    stock-registry.mjs getCodeRegistry() 결과(선택, 2026-09-05
+ *   신설) — Executions·Profits가 같은 종목을 다른 표기로 기록해도 정확일치 매칭이
+ *   성공하도록 양쪽을 표준명으로 정규화. 안 넘기면 별칭표만 적용(빈 Map 기본값).
  */
 export function buildBehaviorSignals(input) {
-  const { asof, weekStart, tradeRows = [], noteRows = [], journalRows = [], riskRows = [], profitRows = [] } = input;
+  const { asof, weekStart, tradeRows = [], noteRows = [], journalRows = [], riskRows = [], profitRows = [], registry } = input;
   const inWeek = (d) => weekStart ? (d && d >= weekStart) : true;
 
   const buysAll = collectBuys(tradeRows);
-  const profitLookup = buildProfitLookup(profitRows);
-  const sellsAll = tradeRows.filter(r => s(r[T.SIDE]) === '매도' && s(r[T.NAME])).map(r => parseSell(r, buysAll, profitLookup));
+  const profitLookup = buildProfitLookup(profitRows, registry);
+  const sellsAll = tradeRows.filter(r => s(r[T.SIDE]) === '매도' && s(r[T.NAME])).map(r => parseSell(r, buysAll, profitLookup, registry));
 
   const week = {
     buys: buysAll.filter(b => inWeek(b.date)),

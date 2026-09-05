@@ -79,6 +79,21 @@ test('lookupRealizedProfit: 빈 qty("")는 quantity:0인 레코드와 절대 안
   assert.equal(lookupRealizedProfit({ date: '2026-08-27', account: '위탁', name: 'X', qty: '0' }, lookup)?.realizedWon, 100000);
 });
 
+// ── 종목명 파편화가 실제 매칭 실패로 이어지던 위험 재현(2026-09-05) ────────────────
+// Executions("SK하이닉스")와 Profits("에스케이하이닉스보통주")가 같은 종목을 다른
+// 표기로 기록하면, registry 없이는 정확일치 키가 서로 달라져 조회가 실패한다 —
+// 오너 지시로 stock-registry.mjs 연동한 뒤엔 양쪽 다 표준명으로 정규화되므로
+// 매칭이 성공해야 한다.
+test('[종목명 파편화 매칭 재현/막아야 함] lookupRealizedProfit: registry로 양쪽 표기가 달라도 매칭', () => {
+  const lookup = buildProfitLookup([
+    { date: '2026-08-27', stockName: '에스케이하이닉스보통주', quantity: 10, buyPrice: 100000, sellPrice: 120000, profit: 200000, account: '위탁' },
+  ]);
+  // registry 없이(기본값 빈 Map) 조회하면 별칭표만 적용 — "SK하이닉스"로 조회해도
+  // 별칭표가 "에스케이하이닉스보통주"→"SK하이닉스"를 알고 있어 매칭 성공.
+  const hit = lookupRealizedProfit({ date: '2026-08-27', account: '위탁', name: 'SK하이닉스', qty: '10' }, lookup);
+  assert.equal(hit?.realizedWon, 200000);
+});
+
 test('buildProfitLookup: date·stockName·quantity 중 하나라도 없으면 인덱싱에서 제외', () => {
   const lookup = buildProfitLookup([
     { date: null, stockName: 'X', quantity: 1, profit: 100, account: '위탁' },

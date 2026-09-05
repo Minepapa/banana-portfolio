@@ -21,6 +21,8 @@ import { EXEC_COL as T } from './sheet-contracts.mjs';
 import { parseSell, collectBuys } from './behavior-signals.mjs';
 import { buildProfitLookup } from './realized-profit-ledger.mjs';
 import { resolveDesignatedCashBalance, findCashBalance, DESIGNATED_CASH_ACCOUNTS, CASH_ELIGIBLE_ACCOUNTS } from './cash-ledger.mjs';
+// 종목명 표준화(2026-09-05) — realized-profit-ledger.mjs 헤더 주석과 동일 원칙.
+import { resolveCanonicalStockName } from './stock-registry.mjs';
 
 const won = (v) => Number.isFinite(v) ? Math.round(v).toLocaleString('en-US') : '데이터 부족';
 
@@ -58,7 +60,7 @@ const KNOWN_DESIGNATED_ACCOUNTS = new Set(DESIGNATED_CASH_ACCOUNTS);
 // 구현하고 있다 — 여기서 같은 분기를 다시 쓰면 그 분기 로직 자체가 두 곳에 존재하게
 // 돼(코드리뷰 지적, 2026-08-30) 한쪽만 고치면 갈라진다. parseSell에 위임하고 여기선
 // 매도 행의 부가 필드(구분·계좌 등 문자열 원본)만 조립한다.
-function parseTrade(r, buysAll, profitLookup) {
+function parseTrade(r, buysAll, profitLookup, registry) {
   const side = String(r[T.SIDE] ?? '').trim();
   const date = String(r[T.DATE] ?? '').trim();
   const account = String(r[T.ACCT] ?? '').trim();
@@ -70,7 +72,7 @@ function parseTrade(r, buysAll, profitLookup) {
   };
   if (side !== '매도') return { ...base, realizedPct: null, realizedWon: null, partialHistory: false, ledgerMatched: false };
 
-  const sell = parseSell(r, buysAll, profitLookup);
+  const sell = parseSell(r, buysAll, profitLookup, registry);
   return { ...base, realizedPct: sell.realizedPct, realizedWon: sell.realizedWon, partialHistory: sell.partialHistory, ledgerMatched: sell.ledgerMatched };
 }
 // 배당금 스키마: A날짜0 B금액1 C종목명2
@@ -86,16 +88,20 @@ function parseDividend(r) {
  * @param input.tradeRows     체결내역 row-array(EXEC_COL 인덱스, weekly-report.mjs가 변환)
  * @param input.dividendRows  배당 row-array([날짜, 금액, 종목명], weekly-report.mjs가 변환)
  * @param input.prevReport    {date, summary} | null
+ * @param input.registry      stock-registry.mjs getCodeRegistry() 결과(선택, 2026-09-05
+ *   신설) — 종목명 표시·Profits 매칭 정규화(behavior-signals.mjs @param input.registry
+ *   와 동일 이유).
  */
 export function buildReportFacts(input) {
   const {
     asof, weekStart, holdings = [], macro = {}, tradeRows = [], dividendRows = [], profitRows = [], prevReport = null,
+    registry = new Map(),
   } = input;
 
   // ── 종목명 기준 집계(같은 종목이 여러 계좌에 걸치면 합산 — 위탁+연금저축 동시보유 등) ──
   const byName = new Map();
   for (const h of holdings) {
-    const name = String(h.name ?? '').trim();
+    const name = resolveCanonicalStockName(String(h.name ?? '').trim(), registry);
     if (!name) continue;
     const cur = byName.get(name) || {
       name, market: String(h.assetClass ?? '').includes('해외') ? 'US' : 'KR',
@@ -141,8 +147,8 @@ export function buildReportFacts(input) {
   // ── 이번 주 체결·배당 (weekStart 이상) ────────────────
   const inWeek = (d) => weekStart ? (d && d >= weekStart) : true;
   const buysAll = collectBuys(tradeRows);
-  const profitLookup = buildProfitLookup(profitRows);
-  const weekTrades = tradeRows.map(r => parseTrade(r, buysAll, profitLookup)).filter(t => t.name && inWeek(t.date));
+  const profitLookup = buildProfitLookup(profitRows, registry);
+  const weekTrades = tradeRows.map(r => parseTrade(r, buysAll, profitLookup, registry)).filter(t => t.name && inWeek(t.date));
   const weekDividends = dividendRows.map(parseDividend).filter(d => d.name && inWeek(d.date));
 
   const facts = {
