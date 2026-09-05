@@ -56,6 +56,17 @@ test('한화 PLUS 고배당주 정식장문명 → PLUS 고배당주', () => {
   assert.equal(MANUAL_STOCK_ALIASES.get(canonName('한화 PLUS 고배당주 증권상장지수투자신탁(주식)')), 'PLUS 고배당주');
 });
 
+test('[오너 확인 2026-09-05] TIMEFOLIO Korea배당액티브 → TIME Korea플러스배당액티브', () => {
+  assert.equal(MANUAL_STOCK_ALIASES.get(canonName('TIMEFOLIO Korea배당액티브')), 'TIME Korea플러스배당액티브');
+});
+
+test('[오너 확인 2026-09-05] 한국투자 ACE 미국하이일드액티브 정식장문명(헤지형) → ACE 미국하이일드액티브(H)', () => {
+  assert.equal(
+    MANUAL_STOCK_ALIASES.get(canonName('한국투자 ACE 미국하이일드액티브증권상장지수투자신탁[채권-재')),
+    'ACE 미국하이일드액티브(H)',
+  );
+});
+
 test('키는 canonName 기준이라 대소문자·공백 차이는 흡수', () => {
   assert.equal(MANUAL_STOCK_ALIASES.get(canonName('  하이닉스  ')), 'SK하이닉스');
 });
