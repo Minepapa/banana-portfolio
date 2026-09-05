@@ -413,3 +413,40 @@ test('buildExchangeRecord: account를 넘기면 그대로 채워지고 accountNo
   assert.match(content, /account: "위탁"/);
   assert.match(content, /accountNote: null/);
 });
+
+// ── 그래프 뷰 다중축 태그(2026-09-05, vault-tags.mjs 참고) ──────────────────────
+
+test('buildExecutionRecord: tags에 계좌·종목 둘 다 반영', () => {
+  const { content } = buildExecutionRecord(exec({ account: '위탁' }));
+  assert.deepEqual(parseFrontmatter(content).tags, ['계좌/위탁', '종목/삼성전자']);
+});
+
+test('buildDividendRecord: account가 항상 지연패턴(null)이라 tags엔 종목만 남음', () => {
+  const { content } = buildDividendRecord(div());
+  assert.deepEqual(parseFrontmatter(content).tags, ['종목/TIGER-리츠부동산인프라']);
+});
+
+test('buildProfitRecord: tags에 계좌·종목 둘 다 반영', () => {
+  const { content } = buildProfitRecord(sellExec(), 50000, 80000);
+  assert.deepEqual(parseFrontmatter(content).tags, ['계좌/위탁', '종목/삼성전자']);
+});
+
+test('buildCashEventRecord: 종목이 없는 레코드라 tags엔 계좌만', () => {
+  const { content } = buildCashEventRecord(cashEvent());
+  assert.deepEqual(parseFrontmatter(content).tags, ['계좌/위탁']);
+});
+
+test('buildFundPurchaseRecord: account 안 넘기면(지연패턴) tags엔 종목(펀드명)만', () => {
+  const { content } = buildFundPurchaseRecord(fundBuy());
+  assert.deepEqual(parseFrontmatter(content).tags, ['종목/VIP한국형가치투자증권투자신탁']);
+});
+
+test('buildFundValuationRecord: account 넘기면 tags에 계좌·종목 둘 다', () => {
+  const { content } = buildFundValuationRecord(fundVal({ account: '연금저축' }));
+  assert.deepEqual(parseFrontmatter(content).tags, ['계좌/연금저축', '종목/VIP한국형가치투자증권자투자주식-C-Pe']);
+});
+
+test('buildExchangeRecord: 종목이 없는 레코드라 account를 넘겨도 tags엔 계좌만', () => {
+  const { content } = buildExchangeRecord(exchange({ account: '위탁' }));
+  assert.deepEqual(parseFrontmatter(content).tags, ['계좌/위탁']);
+});

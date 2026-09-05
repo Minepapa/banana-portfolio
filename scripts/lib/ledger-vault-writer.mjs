@@ -19,6 +19,8 @@
 import { VAULT_PATHS } from './vault-paths.mjs';
 // frontmatter 빌드는 vault-frontmatter.mjs 공용 모듈 사용(2026-08-05 리팩터).
 import { buildFrontmatter } from './vault-frontmatter.mjs';
+// 그래프 뷰 다중축 클러스터링용 태그(2026-09-05, vault-tags.mjs 헤더 주석 참고).
+import { buildVaultTags } from './vault-tags.mjs';
 
 function sanitizeSegment(s) {
   return String(s ?? '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '-');
@@ -82,6 +84,7 @@ export function buildExecutionRecord(e) {
     orderNo: e.orderNo || '',
     account: e.account ?? null,
     accountNote: e.account ? null : ACCOUNT_NOTE,
+    tags: buildVaultTags({ account: e.account, stockName: e.stockName }),
     dedupKey,
     recordedAt: new Date().toISOString(),
   });
@@ -104,6 +107,7 @@ export function buildDividendRecord(d) {
     acctRaw: d.acctRaw || '',
     account: null,
     accountNote: ACCOUNT_NOTE,
+    tags: buildVaultTags({ stockName: d.stockName }),
     dedupKey,
     recordedAt: new Date().toISOString(),
   });
@@ -127,6 +131,7 @@ export function buildCashEventRecord(c) {
     account: c.account,
     acctNo: c.acctNo || '',
     balance: c.balance,
+    tags: buildVaultTags({ account: c.account }),
     dedupKey,
     recordedAt: new Date().toISOString(),
   });
@@ -156,6 +161,7 @@ export function buildFundPurchaseRecord(f) {
     units: f.units,
     account: f.account ?? null,
     accountNote: f.account ? null : ACCOUNT_NOTE,
+    tags: buildVaultTags({ account: f.account, stockName: f.fundName }),
     dedupKey,
     recordedAt: new Date().toISOString(),
   });
@@ -183,6 +189,7 @@ export function buildFundValuationRecord(v) {
     profitPct: v.profitPct ?? null,
     account: v.account ?? null,
     accountNote: v.account ? null : ACCOUNT_NOTE,
+    tags: buildVaultTags({ account: v.account, stockName: v.fundName }),
     dedupKey,
     recordedAt: new Date().toISOString(),
   });
@@ -204,6 +211,7 @@ export function buildExchangeRecord(x) {
     won: x.won,
     account: x.account ?? null,
     accountNote: x.account ? null : ACCOUNT_NOTE,
+    tags: buildVaultTags({ account: x.account }),
     dedupKey,
     recordedAt: new Date().toISOString(),
   });
@@ -236,6 +244,7 @@ export function buildProfitRecord(e, avgPrice, realizedProfit, usdKrwRate = 1) {
     usdKrwRate,
     profit: realizedProfit,
     account: e.account,
+    tags: buildVaultTags({ account: e.account, stockName: e.stockName }),
     dedupKey,
     recordedAt: new Date().toISOString(),
   });

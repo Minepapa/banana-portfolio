@@ -79,6 +79,10 @@ import { applyBuy, applySell, consolidateLots } from '../lib/holdings-updater.mj
 import { writeHoldingSafely, holdingFilename, parseAppliedDedupKeys } from '../lib/holdings-vault-writer.mjs';
 import { buildProfitRecord } from '../lib/ledger-vault-writer.mjs';
 import { fetchUsdKrwRate } from '../lib/fundamentals.mjs';
+// 그래프 뷰 다중축 태그(2026-09-05) — 계좌 지연귀속 지점마다 태그도 같이 재계산해야
+// 한다(2026-09-05 코드리뷰 HIGH 지적 — account:null로 쓰여진 뒤 여기서 나중에 채워지는
+// 레코드가, 쓰기 시점 스냅샷인 tags를 그대로 두면 계좌 축이 영구히 빠진 채 남는다).
+import { buildVaultTags } from '../lib/vault-tags.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -283,7 +287,7 @@ async function main() {
     if (knownMatch) {
       console.log(`  ↩️  이미 알려진 체결과 중복(마이그레이션 스냅샷 또는 다른 소스에서 이미 반영됨) — 적용 없이 플래그만 기록: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName}`);
       duplicateOfKnown++;
-      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, tags: buildVaultTags({ account, stockName: exec.stockName }), holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       knownExecutions.push({ ...exec, account });
       continue;
     }
@@ -297,7 +301,7 @@ async function main() {
     // 재처리 대상에서 빠지게 한다(Holdings에는 안 씀).
     if (account === QUANT_TRACK_LABEL) {
       console.log(`  ↪️  퀀트 트랙 체결 — State/Holdings 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
-      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, tags: buildVaultTags({ account, stockName: exec.stockName }), holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       knownExecutions.push({ ...exec, account });
       continue;
     }
@@ -337,7 +341,7 @@ async function main() {
       } else {
         console.log(`  ↪️  IRP 매수 체결 — State/Holdings 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
       }
-      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, tags: buildVaultTags({ account, stockName: exec.stockName }), holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       knownExecutions.push({ ...exec, account });
       continue;
     }
@@ -351,7 +355,7 @@ async function main() {
     if (existing?.appliedDedupKeys?.includes(exec.dedupKey)) {
       console.log(`  ↩️  이미 반영된 체결(재시도) — 재적용 없이 플래그만 기록: ${exec.stockName}`);
       alreadyApplied++;
-      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, tags: buildVaultTags({ account, stockName: exec.stockName }), holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       knownExecutions.push({ ...exec, account });
       continue;
     }
@@ -429,7 +433,7 @@ async function main() {
         continue;
       }
       console.log(`  + [소급백필] ${exec.tradeDate} ${exec.tradeType} ${exec.stockName} → ${account}`);
-      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account }));
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, tags: buildVaultTags({ account, stockName: exec.stockName }) }));
       backfillResolved++;
     }
     console.log(`📊 소급백필 완료 ${backfillResolved}건 · 계좌귀속불가 ${backfillUnresolved}건` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''));
@@ -467,7 +471,7 @@ async function main() {
         continue;
       }
       console.log(`  + [배당] ${div.date} ${div.stockName} → ${account}`);
-      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account }));
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, tags: buildVaultTags({ account, stockName: div.stockName }) }));
       divResolved++;
     }
     console.log(`📊 배당 계좌귀속 완료 ${divResolved}건 · 계좌귀속불가 ${divUnresolved}건` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''));

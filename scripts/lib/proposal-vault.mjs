@@ -6,6 +6,8 @@
 // 지우지 않고 갱신만 한다 — "왜 거부했는지 나중에 되짚기 위함"(ARCHITECTURE-V2.md
 // "실행 흐름(주문)" 절)과 "단일 활성 제안 원칙"의 대체(supersede) 이력 추적을 위해서다.
 import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
+// 그래프 뷰 다중축 클러스터링용 태그(2026-09-05, vault-tags.mjs 헤더 주석 참고).
+import { buildVaultTags } from './vault-tags.mjs';
 
 function sanitizeSegment(s) {
   return String(s ?? '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '-');
@@ -31,6 +33,12 @@ export function buildProposalRecord({ track, account = null, assetKey, side, qua
     // 텔레그램 발송 후 채워짐(구현계획서 Phase 5) — 이 메시지ID가 Frank의 reply_to와
     // 정확히 일치할 때만 승인/거부로 인정한다(order-gate.checkApprovalMatch).
     telegramMessageId: null,
+    // 그래프 뷰 다중축 클러스터링용 태그(2026-09-05) — account가 null인 퀀트 제안은
+    // track("퀀트")으로 계좌 축을 대체한다(퀀트 트랙 자체가 별도 KIS 계좌 하나뿐이라
+    // 실질적으로 "계좌" 역할을 함). assetKey는 종목코드·종목명이 혼재하는 원본 데이터라
+    // (vault-tags.mjs 헤더 주석 참고) State/Holdings·Executions의 종목명 태그와 항상
+    // 일치하진 않음 — 알려진 한계, 코드↔이름 매핑을 여기서 추정하지 않는다.
+    tags: buildVaultTags({ account: account ?? (track === '퀀트' ? track : null), stockName: assetKey }),
   });
   return { id, filename, content };
 }

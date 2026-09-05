@@ -137,3 +137,16 @@ test('writeHoldingSafely: 쓰기 후 락파일이 남지 않음', async () => {
     cleanupTestHolding();
   }
 });
+
+// ── 그래프 뷰 다중축 태그(2026-09-05, vault-tags.mjs 참고) ──────────────────────
+
+test('buildLiveHoldingRecord: tags에 계좌·자산군·종목 전부 반영', () => {
+  const holding = { account: '위탁', assetClass: '국내주식', name: '삼성전자', avgPrice: 1, qty: 1, invest: 1 };
+  const fm = parseFrontmatter(buildLiveHoldingRecord(holding).content);
+  assert.deepEqual(fm.tags, ['계좌/위탁', '자산군/국내주식', '종목/삼성전자']);
+});
+
+test('buildCashHoldingRecord: 종목 태그 없이 계좌·자산군(현금)만', () => {
+  const fm = parseFrontmatter(buildCashHoldingRecord({ account: 'CMA', balance: 100 }).content);
+  assert.deepEqual(fm.tags, ['계좌/CMA', '자산군/현금']);
+});

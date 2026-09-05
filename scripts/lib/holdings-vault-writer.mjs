@@ -10,6 +10,8 @@ import { join } from 'node:path';
 import { buildFrontmatter, updateFrontmatter } from './vault-frontmatter.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
 import { withLock, writeAtomic } from './state-writer.mjs';
+// 그래프 뷰 다중축 클러스터링용 태그(2026-09-05, vault-tags.mjs 헤더 주석 참고).
+import { buildVaultTags } from './vault-tags.mjs';
 
 function sanitizeSegment(s) {
   return String(s ?? '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '-') || '_';
@@ -49,6 +51,11 @@ function buildFullHoldingPatch(holding) {
     // 2026-08-05: 파일쓰기 성공 후 플래그쓰기가 실패하면 다음 실행에서 같은 체결이
     // 다시 적용돼 수량이 두 번 반영되는 문제가 있었음.
     appliedDedupKeys: JSON.stringify(holding.appliedDedupKeys ?? []),
+    // isCashLike면 종목 태그 생략(2026-09-05 코드리뷰 MEDIUM 지적 — 지금은 예수금이
+    // buildCashHoldingRecord라는 별도 경로로만 흐르므로 이 함수 호출자 관례상 안전하지만,
+    // 불변식을 함수 자체에도 걸어 호출 관례가 깨져도 실수로 "종목/예수금" 태그가 안
+    // 붙게 방어 — buildCashHoldingRecord가 종목 태그를 의도적으로 생략한 것과 동일 원칙).
+    tags: buildVaultTags({ account: holding.account, assetClass: holding.assetClass, stockName: holding.isCashLike ? undefined : holding.name }),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -114,6 +121,9 @@ export function buildCashHoldingRecord(cash) {
     // 보존, cash-ledger.mjs resolveCashAnchor 참고).
     anchorBase: cash.anchorBase ?? null, anchorTs: cash.anchorTs ?? '', anchorSource: cash.anchorSource ?? '',
     raw: cash.raw ?? cash.balance, negative: cash.negative ?? false,
+    // 종목 태그는 안 붙임(2026-09-05) — 예수금은 매수/매도/배당 같은 거래 스레드가
+    // 없는 현금이라 "종목"으로 묶을 대상이 아님, 계좌·자산군(현금)만 태깅.
+    tags: buildVaultTags({ account: cash.account, assetClass: '현금' }),
     updatedAt: new Date().toISOString(),
   });
   return { filename: holdingFilename(cash.account, '예수금'), content, dir: VAULT_PATHS.state.holdings };

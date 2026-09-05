@@ -20,6 +20,8 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { computeAccountAllocationSnapshot } from '../lib/allocation-snapshot.mjs';
+// 그래프 뷰 다중축 클러스터링용 태그(2026-09-05, vault-tags.mjs 헤더 주석 참고).
+import { buildVaultTags } from '../lib/vault-tags.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 // 금현물은 2026-08-21 추가 — CMA와 동일 패턴(대시보드에 계좌 블록이 아예 없어 보유가
@@ -60,6 +62,7 @@ function main() {
       const record = buildFrontmatter({
         type: 'allocation', account, assetName: row.assetName,
         targetPct: row.targetPct, currentPct: row.currentPct, rebalAmt: row.rebalAmt,
+        tags: buildVaultTags({ account, assetClass: row.assetName }),
         updatedAt: new Date().toISOString(),
       });
       console.log(`  · ${filename}: 목표 ${row.targetPct}% / 현재 ${row.currentPct}% (갭 ${(row.currentPct - row.targetPct).toFixed(1)}%p)`);
