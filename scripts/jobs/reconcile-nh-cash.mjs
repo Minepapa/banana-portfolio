@@ -62,6 +62,7 @@ import { resolveNhAccountsByLabel } from '../lib/nh-accounts.mjs';
 import { buildCashHoldingRecord } from '../lib/holdings-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
+import { extractNhCashDeposit } from '../lib/nh-response-parse.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -75,19 +76,10 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // 신규 가드 테스트가 소비).
 export const NH_CASH_ACCOUNTS = new Set(['위탁', 'CMA', '금현물']);
 
-// 계좌잔고(getKrBalance) / 예수금및잔고(getGoldBalance) 응답 Output_0 → 예수금(원).
-// 순수함수 — 테스트 가능. drn_pbl_amt(출금가능금액) 우선, 없으면(금현물 응답엔
-// 이 필드 자체가 없음, 라이브 확인) dca(당일예수금)로 폴백 — 위 헤더 주석의 필드
-// 선택 근거 참고. 둘 다 없으면(구조 변경 등 신호) throw — 0으로 추정하지 않는다.
-// 값 자체가 0인 건 허용(전액 매수 등 실제로 가능한 상태이므로 price>0류 가드를
-// 쓰면 안 됨 — `??`는 null/undefined에서만 다음으로 넘어가고 0은 그대로 보존한다).
-export function extractNhCashDeposit(output0) {
-  const raw = output0?.drn_pbl_amt ?? output0?.dca;
-  if (raw == null) throw new Error('NH 계좌잔고 응답에 drn_pbl_amt(출금가능금액)·dca(예수금) 필드 모두 없음 — 구조 확인 필요');
-  const n = Number(String(raw).replace(/,/g, ''));
-  if (!Number.isFinite(n)) throw new Error(`NH 계좌잔고 예수금 값이 숫자가 아님: ${raw}`);
-  return n;
-}
+// extractNhCashDeposit — 2026-09-06 scripts/lib/nh-response-parse.mjs로 승격(asset-
+// allocation 자동체결 잡이 두 번째 소비처가 되며 공용 lib로 이동, 위 import 참고).
+// 기존 테스트가 이 파일에서 직접 import하므로 재수출(re-export)해 하위호환 유지.
+export { extractNhCashDeposit };
 
 // listNhAccounts() 결과 → {계좌명: 실계좌번호} 맵. NH_CASH_ACCOUNTS 밖의 계좌(모의
 // 투자·아직 매핑 안 된 신규 계좌 등)는 조용히 제외.

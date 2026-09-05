@@ -55,6 +55,7 @@ import {
   isKrMarketOpen, isUsMarketOpen, KIS_RATE_LIMIT_CODE,
 } from '../lib/kis.mjs';
 import { hasNhplugCredentials, loadNhplugCredentials, getNhToken } from '../lib/nhplug.mjs';
+import { extractNhPrice } from '../lib/nh-response-parse.mjs';
 import { getKrCurrentPrice } from '../lib/nhplug-krstock.mjs';
 import { getGbCurrentPrice } from '../lib/nhplug-gbstock.mjs';
 import { fetchGoldClose } from '../lib/krx.mjs';
@@ -169,18 +170,10 @@ export function recomputeFxCashValuation(holding, usdKrwRate) {
   return { curPrice: usdKrwRate, avgPrice: usdKrwRate, invest, evalAmount: invest, profitAmount: 0, profitPct: 0 };
 }
 
-// NH 시세응답에서 가격 필드를 뽑아 검증(2026-09-02 코드리뷰 HIGH 지적) — 처음엔
-// `Number.isFinite(curPrice)`로만 확인했는데, `Number(null)`·`Number('')`·
-// `Number('0')`가 전부 `0`(유한수)이라 "필드 없음"·"빈 문자열"·"진짜 0원"을
-// 못 걸러냈다. NH가 거래정지·조회불가 종목에 stck_prpr:null 같은 값을 실어보내면
-// 그대로 curPrice=0으로 통과해 평가액 0원·손익률 -100%가 조용히 Vault에 기록될
-// 뻔했다 — kis.mjs의 기존 시세 파서(parseQuoteResponse 등)가 이미 `price > 0`으로
-// 검증하는 것과 동일 기준으로 맞춤. 순수함수 — 테스트 가능.
-export function extractNhPrice(output0, field) {
-  const price = Number(output0?.[field]);
-  if (!(price > 0)) throw new Error(`NH 응답에 유효한 현재가(${field}) 없음: ${JSON.stringify(output0)}`);
-  return price;
-}
+// extractNhPrice — 2026-09-06 scripts/lib/nh-response-parse.mjs로 승격(asset-
+// allocation 자동체결 잡이 두 번째 소비처가 되며 공용 lib로 이동, 위 import 참고).
+// 기존 테스트가 이 파일에서 직접 import하므로 재수출(re-export)해 하위호환 유지.
+export { extractNhPrice };
 
 // NH 시세 조회 1회 실패는 재시도(2026-09-02 코드리뷰 MEDIUM 지적) — callNh 자체는
 // 주문 안전성 때문에 재시도를 안 하지만(429를 재시도하면 안 되는 이유는

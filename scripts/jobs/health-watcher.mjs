@@ -113,6 +113,10 @@ export const EXPECTED_INTERVALS_MS = {
   // execute-quant: com.banana2.execute-quant.plist StartInterval=300(5분마다). 퀀트
   // 트랙 실주문 집행 잡이라 감시 지연이 가장 부담스러운 축 — 5분 그대로 등록.
   'execute-quant': 5 * 60 * 1000,
+  // execute-asset-allocation(2026-09-05 신설): com.banana2.execute-asset-allocation.plist
+  // StartInterval=600(10분마다, 오너 지시 — 퀀트보다 느슨). 자산분배 트랙(위탁·금현물)
+  // 실주문 집행 잡이라 execute-quant와 같은 이유로 실제 StartInterval과 정확히 맞춘다.
+  'execute-asset-allocation': 10 * 60 * 1000,
   // sync-firestore-mirror·update-allocation-from-holdings·update-holdings-prices
   // 셋 다 StartInterval=600(10분마다, 2026-08-25 오너 지시로 30분→10분 단축) —
   // 대시보드가 읽는 미러/시세/자산분배 갱신. 세 잡이 항상 같은 주기여야 한다는 원칙은

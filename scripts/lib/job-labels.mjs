@@ -9,6 +9,7 @@ export const JOB_LABELS = {
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
   'health-watcher': '무인 잡 장애·텔레그램 세션 감시(이 알림을 보내는 잡 자신)',
   'execute-quant': '퀀트 트랙 승인된 제안 KIS 실주문 집행',
+  'execute-asset-allocation': '자산분배 트랙(위탁·금현물) 승인된 제안 NH PLUG 실주문 집행(연금저축은 리마인더 전용 유지, 2026-09-05 신설)',
   'daily-asset-allocation-check': '자산분배 트랙 일일 리밸런싱·거시오버레이 점검',
   'parse-notifications-to-vault': '카카오 체결·배당 알림 → Vault 기록',
   'update-holdings-from-executions': '체결 반영 → 보유종목 잔고 갱신',
@@ -55,6 +56,7 @@ export const JOB_REMEDIATION = {
   // 스킵"으로 조용히 넘어간다(정상, 에러 아님) — 하지만 예전엔 잘 돌던 잡이 갑자기
   // stale해졌다면 이 파일 경로·내용이 깨졌을 가능성이 1순위 확인 대상.
   'execute-quant': '~/.config/banana-portfolio/kis-key.json(KIS 크리덴셜·퀀트계좌 설정) 확인',
+  'execute-asset-allocation': '~/.config/banana-portfolio/nhplug-key.json(NH PLUG 크리덴셜) 확인',
   'reconcile-irp': '~/.config/banana-portfolio/kis-key.json(KIS 크리덴셜·IRP계좌 설정) 확인',
   'reconcile-nh-cash': '~/.config/banana-portfolio/nhplug-key.json(NH PLUG 크리덴셜) 확인',
   'reconcile-irp-executions': '~/.config/banana-portfolio/kis-key.json(KIS 크리덴셜·IRP계좌 설정) 확인',

@@ -33,6 +33,7 @@ case "$JOB" in
   backup-vault)   CMD=(scripts/jobs/backup-vault-snapshot.mjs) ;;
   health-watcher) CMD=(scripts/jobs/health-watcher.mjs) ;;
   execute-quant)  CMD=(scripts/tools/execute-quant-proposal.mjs) ;;
+  execute-asset-allocation) CMD=(scripts/tools/execute-asset-allocation-proposal.mjs) ;;
   daily-asset-allocation-check) CMD=(scripts/jobs/daily-asset-allocation-check.mjs) ;;
   parse-notifications-to-vault) CMD=(scripts/jobs/parse-notifications-to-vault.mjs) ;;
   update-holdings-from-executions) CMD=(scripts/jobs/update-holdings-from-executions.mjs) ;;
@@ -62,7 +63,7 @@ case "$JOB" in
   weekly-vault-health-check) CMD=(scripts/jobs/weekly-vault-health-check.mjs) ;;
   pension-balance-reminder) CMD=(scripts/jobs/pension-balance-reminder.mjs) ;;
   update-fund-holdings-from-purchases) CMD=(scripts/jobs/update-fund-holdings-from-purchases.mjs) ;;
-  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-irp-executions|reconcile-nh-executions|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|isa-maturity-check|telegram-session-health-check|intraday-market-move-monitor|weekly-vault-health-check|pension-balance-reminder|update-fund-holdings-from-purchases}" >&2; exit 2 ;;
+  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-irp-executions|reconcile-nh-executions|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|isa-maturity-check|telegram-session-health-check|intraday-market-move-monitor|weekly-vault-health-check|pension-balance-reminder|update-fund-holdings-from-purchases}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)

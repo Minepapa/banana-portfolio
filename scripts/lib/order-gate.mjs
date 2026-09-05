@@ -82,23 +82,36 @@ export function checkApprovalMatch({ replyTo, expectedProposalId }) {
   return { pass: true, reason: '제안-승인 일치' };
 }
 
-// ⚠️ 알려진 한계: 요일+시간대(평일 09:00-15:30 KST)만 본다. 공휴일 캘린더는 아직 없다
-// (구현 단계에서 데이터 소스 확보 필요 — 지금 "완료"라고 조용히 넘기지 않기 위해 여기
-// 명시한다). 공휴일에 이 체크를 통과시켜버리면 시장이 실제로 닫혀 있어도 "개장"으로
-// 오판할 수 있다 — 브로커 API 자체도 거부하겠지만 이중 방어가 아직 안 갖춰진 상태.
+// 시장별 타임존·개장시간 — KR(09:00-15:30 KST)은 원래부터 있던 값. US(09:30-16:00
+// America/New_York)는 2026-09-06 asset-allocation 자동체결 코드리뷰 HIGH 지적으로
+// 추가(해외주식 제안이 market 기본값 'KR'로만 게이트돼, KR 장중(KST 09:00-15:30 =
+// 미국장은 닫혀있는 시간대)에만 통과하고 실제 미국장 시간엔 오히려 차단되는 거꾸로
+// 된 게이트였다 — 이 프로젝트 다른 곳의 KST/NY 구분(scripts/lib/kis.mjs의
+// isKrMarketOpen/isUsMarketOpen)과 같은 시간대 값을 쓰되, order-gate.mjs는 브로커
+// 무관 순수 모듈 원칙을 지키기 위해 kis.mjs를 import하지 않고 동일 로직을 그대로 둔다.
+const MARKET_SESSIONS = {
+  KR: { timeZone: 'Asia/Seoul', label: 'KST', openHHMM: 900, closeHHMM: 1530 },
+  US: { timeZone: 'America/New_York', label: 'NY', openHHMM: 930, closeHHMM: 1600 },
+};
+
+// ⚠️ 알려진 한계: 요일+시간대만 본다. 공휴일 캘린더는 아직 없다(구현 단계에서 데이터
+// 소스 확보 필요 — 지금 "완료"라고 조용히 넘기지 않기 위해 여기 명시한다). 공휴일에
+// 이 체크를 통과시켜버리면 시장이 실제로 닫혀 있어도 "개장"으로 오판할 수 있다 —
+// 브로커 API 자체도 거부하겠지만 이중 방어가 아직 안 갖춰진 상태.
 export function checkMarketOpen({ now = new Date(), market = 'KR' }) {
-  if (market !== 'KR') return { pass: false, reason: `지원 안 하는 시장: ${market}` };
-  const kstParts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Seoul', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  const session = MARKET_SESSIONS[market];
+  if (!session) return { pass: false, reason: `지원 안 하는 시장: ${market}` };
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: session.timeZone, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
   }).formatToParts(now);
-  const weekday = kstParts.find((p) => p.type === 'weekday').value;
-  const hour = Number(kstParts.find((p) => p.type === 'hour').value);
-  const minute = Number(kstParts.find((p) => p.type === 'minute').value);
+  const weekday = parts.find((p) => p.type === 'weekday').value;
+  const hour = Number(parts.find((p) => p.type === 'hour').value);
+  const minute = Number(parts.find((p) => p.type === 'minute').value);
   const hhmm = hour * 100 + minute;
   const isWeekday = !['Sat', 'Sun'].includes(weekday);
-  const inSession = hhmm >= 900 && hhmm <= 1530;
+  const inSession = hhmm >= session.openHHMM && hhmm <= session.closeHHMM;
   if (!isWeekday) return { pass: false, reason: `주말(${weekday}) — 장 마감. 다음 개장까지 보류` };
-  if (!inSession) return { pass: false, reason: `장중 시간 아님(KST ${hour}:${String(minute).padStart(2, '0')}) — 다음 개장까지 보류` };
+  if (!inSession) return { pass: false, reason: `장중 시간 아님(${session.label} ${hour}:${String(minute).padStart(2, '0')}) — 다음 개장까지 보류` };
   return { pass: true, reason: '장중(공휴일 캘린더 미적용 — 알려진 한계)' };
 }
 

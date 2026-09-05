@@ -159,6 +159,29 @@ test('[막아야 함] checkMarketOpen: 주말(토요일 10:00 KST)은 차단', (
   assert.equal(r.pass, false);
 });
 
+// market:'US' — 2026-09-06 asset-allocation 자동체결 코드리뷰 HIGH 지적으로 추가
+// (해외주식 제안이 market 기본값 'KR'로만 게이트돼 실제 미국장 시간대와 반대로
+// 동작하던 버그의 회귀 방지).
+test('checkMarketOpen: market:"US" — 미국 장중(수요일 10:00 EDT)은 통과', () => {
+  const r = checkMarketOpen({ now: new Date('2026-08-05T14:00:00.000Z'), market: 'US' }); // 수 10:00 EDT
+  assert.equal(r.pass, true);
+});
+
+test('[막아야 함] checkMarketOpen: market:"US" — 이 시각은 미국장 마감 후(수요일 17:00 EDT)라 차단', () => {
+  const r = checkMarketOpen({ now: new Date('2026-08-05T21:00:00.000Z'), market: 'US' }); // 수 17:00 EDT
+  assert.equal(r.pass, false);
+});
+
+test('[막아야 함] checkMarketOpen: market:"US" — 같은 시각(KST 10:00)이 KR은 장중이어도 US는 마감 후라 차단(거꾸로 게이트되던 버그의 핵심 재현)', () => {
+  const r = checkMarketOpen({ now: new Date('2026-08-05T01:00:00.000Z'), market: 'US' }); // 수 10:00 KST = 수 전날 21:00 EDT
+  assert.equal(r.pass, false);
+});
+
+test('[막아야 함] checkMarketOpen: 지원 안 하는 시장 문자열은 차단', () => {
+  const r = checkMarketOpen({ now: new Date('2026-08-05T01:00:00.000Z'), market: 'JP' });
+  assert.equal(r.pass, false);
+});
+
 // ── checkKillSwitch ────────────────────────────────────────────────
 
 test('[막아야 함] checkKillSwitch: 킬스위치 켜져 있으면 차단', () => {

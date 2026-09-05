@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.execute-asset-allocation</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>execute-asset-allocation</string>
+  </array>
+  <!-- 승인된 자산분배 제안의 "장중/장마감 후 재시도" 정책 — com.banana2.execute-quant와
+       동일 이유(그 plist 주석 참고)로 상시 폴링한다. 오너 지시(2026-09-05)로 퀀트(5분)
+       보다 느슨한 10분 간격으로 설계 — 자산분배는 퀀트만큼 초 단위 타이밍이 급하지
+       않고, NH PLUG 초당 호출제한(4~5회)을 여러 자산군(국내·해외·금현물) 조회로
+       나눠 쓰는 잡이라 주기를 넉넉히 둔다. 대상 없으면 로컬 파일만 읽고 즉시
+       종료(장외시간에도 비용 사실상 0). -->
+  <key>StartInterval</key>
+  <integer>600</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/execute-asset-allocation.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/execute-asset-allocation.log</string>
+</dict>
+</plist>
