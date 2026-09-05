@@ -74,16 +74,20 @@ test('Proposals: account 있으면 그대로', () => {
 });
 
 test('[오너 결정 2026-09-05] Proposals: account가 null인 퀀트 제안은 track으로 계좌 축 대체', () => {
+  // assetKey는 실제 vault의 code 레지스트리·별칭표와 안 겹치는 값을 씀(2026-09-05
+  // stock-registry.mjs 연동 후 — 이 테스트의 관심사는 계좌 축 대체 로직이지 종목명
+  // 해석이 아니므로, 실존 종목코드를 쓰면 registry 기본값(실제 Vault 스캔)이 이걸
+  // 실제 회사명으로 치환해버려 무관한 이유로 테스트가 깨질 수 있다).
   assert.deepEqual(
-    computeBackfillTags({ account: null, track: '퀀트', assetKey: '017670' }, extractFor('Proposals')),
-    ['계좌/퀀트', '종목/017670'],
+    computeBackfillTags({ account: null, track: '퀀트', assetKey: '__테스트종목__' }, extractFor('Proposals')),
+    ['계좌/퀀트', '종목/__테스트종목__'],
   );
 });
 
 test('Proposals: account도 null이고 track도 퀀트가 아니면(자산분배인데 account 누락) 계좌 축 없음', () => {
   assert.deepEqual(
-    computeBackfillTags({ account: null, track: '자산분배', assetKey: '005930' }, extractFor('Proposals')),
-    ['종목/005930'],
+    computeBackfillTags({ account: null, track: '자산분배', assetKey: '__테스트종목__' }, extractFor('Proposals')),
+    ['종목/__테스트종목__'],
   );
 });
 

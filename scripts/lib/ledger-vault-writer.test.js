@@ -443,7 +443,10 @@ test('buildFundPurchaseRecord: account 안 넘기면(지연패턴) tags엔 종�
 
 test('buildFundValuationRecord: account 넘기면 tags에 계좌·종목 둘 다', () => {
   const { content } = buildFundValuationRecord(fundVal({ account: '연금저축' }));
-  assert.deepEqual(parseFrontmatter(content).tags, ['계좌/연금저축', '종목/VIP한국형가치투자증권자투자주식-C-Pe']);
+  // fundVal()의 기본 fundName("...(주식)-C-Pe", 신탁 누락)은 stock-aliases.mjs에
+  // 등록된 실제 파편화 사례라 표준명("...신탁(주식)-C-Pe")으로 정규화된 태그가 나온다
+  // (2026-09-05 stock-registry.mjs 연동 후).
+  assert.deepEqual(parseFrontmatter(content).tags, ['계좌/연금저축', '종목/VIP한국형가치투자증권자투자신탁주식-C-Pe']);
 });
 
 test('buildExchangeRecord: 종목이 없는 레코드라 account를 넘겨도 tags엔 계좌만', () => {
