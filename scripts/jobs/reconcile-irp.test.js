@@ -48,6 +48,35 @@ test('buildIrpHoldingsPlan: code로 매칭 — 종목명이 바뀌어도 같은 
   assert.deepEqual(closes, []); // 이름이 바뀐 것뿐, 청산 아님
 });
 
+test('[코드리뷰 발견/이중계상 재현] buildIrpHoldingsPlan: 상품명이 바뀌면 옛 이름을 renames로 담아 옛 파일을 정리 대상으로 표시', () => {
+  const { writes, closes, renames } = buildIrpHoldingsPlan(
+    [{ name: 'TIGER TDF2045 적격(구)', ticker: '0025N0', qty: 413, avgPrice: 11505, assetClass: 'TDF' }],
+    [{ code: '0025N0', name: 'TIGER TDF2045 적격(신)', qty: 413, avgPrice: 11505.57, invest: 4751800, curPrice: 11925, evalAmount: 4925025, profitAmount: 173225, profitPct: 3.64 }],
+  );
+  // 새 이름으로 파일을 쓰고(writes) + 청산 목록엔 안 들어가면서(closes 비어있음) +
+  // 동시에 옛 이름 파일을 지워야 한다는 신호(renames)가 함께 있어야 한다 — 셋 중
+  // 하나라도 빠지면 옛 파일이 남아 이중계상된다.
+  assert.equal(writes[0].name, 'TIGER TDF2045 적격(신)');
+  assert.deepEqual(closes, []);
+  assert.deepEqual(renames, [{ oldName: 'TIGER TDF2045 적격(구)', newName: 'TIGER TDF2045 적격(신)' }]);
+});
+
+test('buildIrpHoldingsPlan: 상품명이 그대로면(이름매칭) renames 없음', () => {
+  const { renames } = buildIrpHoldingsPlan(
+    [{ name: 'TIGER TDF2045', ticker: '0025N0', qty: 100, avgPrice: 11500, assetClass: 'TDF' }],
+    [{ code: '0025N0', name: 'TIGER TDF2045', qty: 100, avgPrice: 11500, invest: 1150000, curPrice: 11900, evalAmount: 1190000, profitAmount: 40000, profitPct: 3.48 }],
+  );
+  assert.deepEqual(renames, []);
+});
+
+test('buildIrpHoldingsPlan: 신규 종목(기존 Vault에 없음)은 renames 없음(이름 변경이 아니라 진짜 신규)', () => {
+  const { renames } = buildIrpHoldingsPlan(
+    [],
+    [{ code: '999999', name: '신규매수종목', qty: 5, avgPrice: 10000, invest: 50000, curPrice: 10100, evalAmount: 50500, profitAmount: 500, profitPct: 1 }],
+  );
+  assert.deepEqual(renames, []);
+});
+
 test('buildIrpHoldingsPlan: KIS에만 있는 신규 종목 — assetClass 빈 문자열 + assetClassMissing에 담김', () => {
   const { writes, assetClassMissing } = buildIrpHoldingsPlan(
     [],

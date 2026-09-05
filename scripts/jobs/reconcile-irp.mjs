@@ -140,6 +140,9 @@ export function buildIrpHoldingsPlan(vaultHoldings, kisHoldings) {
   const writes = [];
   const skipped = [];
   const assetClassMissing = [];
+  // 상품명 변경으로 옛 파일을 명시적으로 지워야 할 목록(2026-09-05 코드리뷰 발견,
+  // 아래 참고) — {oldName, newName}.
+  const renames = [];
   for (const kh of kisList) {
     // 매칭(existing 찾기·matchedVaultKeys 표시)은 avgPrice 결측 여부와 무관하게 항상
     // 먼저 한다 — skipped로 빠지는 종목도 "KIS가 여전히 보유 중이라고 보고한 종목"이라
@@ -149,6 +152,18 @@ export function buildIrpHoldingsPlan(vaultHoldings, kisHoldings) {
     if (existing) matchedVaultKeys.add(existing.name);
     if (kh.avgPrice == null || kh.invest == null) { skipped.push(kh.name); continue; }
     if (!existing?.assetClass) assetClassMissing.push(kh.name);
+    // ⚠️ 상품명 변경 시 이중계상 버그 수정(코드리뷰 발견, 2026-09-05) — code로
+    // 매칭됐는데 이름이 다르면(상품명 개정) writeHoldingSafely가 `holding.name`
+    // (새 이름) 기준으로 새 파일을 쓴다(holdingFilename이 계좌+이름으로 파일명을
+    // 정하므로). 그런데 matchedVaultKeys엔 옛 이름(existing.name)이 들어가 closes
+    // 판정에서 "여전히 보유 중"으로 빠지기 때문에, 옛 이름 파일을 지우는 코드
+    // 경로가 어디에도 없었다 — 결과적으로 같은 보유가 옛 파일+새 파일 두 개로
+    // 남아 총자산이 이중계상됐다(실제 사고는 아직 없었고 2차 코드리뷰가 로직
+    // 분석만으로 발견, 재현 테스트로 확인). closes(전량청산 판정)와는 성격이
+    // 달라 그 경로에 합치지 않는다 — 이건 진짜 청산이 아니라 "파일명이 새 이름
+    // 으로 옮겨간 것"이므로 suspiciousEmpty 가드(전량청산 오탐 방지)를 안 타야
+    // 하고, 항상 즉시 정리돼야 한다.
+    if (existing && existing.name !== kh.name) renames.push({ oldName: existing.name, newName: kh.name });
     writes.push({
       account: IRP_ACCOUNT_LABEL,
       assetClass: existing?.assetClass ?? '',
@@ -165,7 +180,7 @@ export function buildIrpHoldingsPlan(vaultHoldings, kisHoldings) {
   }
   const suspiciousEmpty = kisList.length === 0 && vaultList.length > 0;
   const closes = suspiciousEmpty ? [] : vaultList.filter((h) => !matchedVaultKeys.has(h.name)).map((h) => h.name);
-  return { writes, closes, skipped, assetClassMissing, suspiciousEmpty };
+  return { writes, closes, skipped, assetClassMissing, suspiciousEmpty, renames };
 }
 
 async function main() {
@@ -231,7 +246,7 @@ async function main() {
   // 헤더 "설계 재정정" 참고). update-holdings-from-executions.mjs도 이제 IRP 체결을
   // State/Holdings에 반영하지 않는다(퀀트와 동일 스킵) — 카카오 체결누적은 이 계좌에서
   // 완전히 손을 뗐다, buildIrpHoldingsPlan 헤더 주석 참고.
-  const { writes, closes, skipped, assetClassMissing, suspiciousEmpty } = buildIrpHoldingsPlan(readIrpHoldings(), kisHoldings);
+  const { writes, closes, skipped, assetClassMissing, suspiciousEmpty, renames } = buildIrpHoldingsPlan(readIrpHoldings(), kisHoldings);
   if (suspiciousEmpty) {
     collectWarning('IRP 종목 KIS 잔고조회가 빈 응답 — 예수금과 같은 API 호출의 output1이 통째로 비었다(간헐적 결측 가능성, 파일 상단 주석 참고), 전량청산으로 추정하지 않고 이번 실행은 종목 반영을 건너뜀');
     console.log('  ⚠️ IRP 종목 KIS 잔고조회 빈 응답 — 전량청산 추정 안 함, 기존 State/Holdings 그대로 유지');
@@ -250,6 +265,14 @@ async function main() {
     // IRP만 KIS 유지하는 예외 경로) — 이 잡과 그 잡이 같은 IRP 보유 파일을 거의 동시에
     // 쓸 수 있어 락+재확인읽기가 필요하다.
     if (!DRY_RUN) await writeHoldingSafely(holding);
+  }
+  // 상품명 변경으로 남는 옛 파일 정리(코드리뷰 발견, 2026-09-05 — buildIrpHoldingsPlan
+  // 헤더 주석 참고) — 위 writes 루프가 이미 새 이름으로 파일을 썼으니, 옛 이름 파일을
+  // 그대로 두면 같은 보유가 두 파일로 남아 이중계상된다. closes와 달리 이건 항상
+  // 즉시 정리한다(suspiciousEmpty 가드 대상 아님 — 진짜 청산이 아니므로).
+  for (const { oldName, newName } of renames) {
+    console.log(`  ↻ [상품명변경${DRY_RUN ? '(예정)' : ''}] IRP ${oldName} → ${newName}(옛 파일 정리)`);
+    if (!DRY_RUN) rmSync(join(VAULT_PATHS.state.holdings, holdingFilename(IRP_ACCOUNT_LABEL, oldName)), { force: true });
   }
   // ⚠️ 실현손익 기록 공백(코드리뷰 지적, 2026-09-04) — 여기서 감지되는 청산은 카카오
   // 매도 알림이 아니라 "KIS 스냅샷에서 그냥 사라짐"으로 판정된 경우다(예: 카카오
