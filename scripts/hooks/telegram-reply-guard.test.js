@@ -3,9 +3,16 @@ import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { analyzeTranscriptTail, readTranscriptTailLines, shouldSkipBlocking } from './telegram-reply-guard.mjs';
+import {
+  analyzeTranscriptTail, readTranscriptTailLines, shouldSkipBlocking, findLastGreetingChannelMessage,
+} from './telegram-reply-guard.mjs';
 
-const CHANNEL_USER = (messageId, text = '안녕') => ({
+// ⚠️ 기본 텍스트를 "안녕"이 아닌 값으로 둔다(2026-09-05, findLastGreetingChannelMessage
+// 신설과 함께 변경) — "안녕"은 이제 analyzeTranscriptTail에서 예외 처리(항상
+// shouldForceReply=false)되므로, 아래 대부분의 기존 테스트(원래는 "채널 메시지가
+// 하나 있다"는 것만 필요했지 문구 자체는 무관했음)가 조용히 깨지는 걸 막는다.
+// "안녕" 전용 동작은 이 파일 맨 아래 별도 테스트 블록에서 명시적으로 검증한다.
+const CHANNEL_USER = (messageId, text = '리밸런싱 상황 어때') => ({
   type: 'user',
   message: {
     content: `<channel source="plugin:telegram:telegram" chat_id="8722755985" message_id="${messageId}" user="8722755985" user_id="8722755985" ts="2026-09-04T00:00:00.000Z">\n${text}\n</channel>`,
@@ -15,7 +22,7 @@ const CHANNEL_USER = (messageId, text = '안녕') => ({
 const ASSISTANT_TEXT = (text) => ({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
 const ASSISTANT_TOOL = (name, input = {}) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input }] } });
 
-test('[막아야 함/실사고] analyzeTranscriptTail: 채널 메시지 뒤 텍스트만 있고 도구 호출 없으면 강제재시도 필요(2026-09-04 실제 재현 케이스)', () => {
+test('[막아야 함/실사고] analyzeTranscriptTail: 채널 메시지 뒤 텍스트만 있고 도구 호출 없으면 강제재시도 필요(2026-09-04 실제 재현 케이스 — 원본 사고는 "안녕"이었으나, "안녕"은 2026-09-05부터 예외 처리되므로 일반 메시지로 재현)', () => {
   const lines = [CHANNEL_USER('653'), ASSISTANT_TEXT('안녕하세요! 무엇을 도와드릴까요?')];
   const r = analyzeTranscriptTail(lines);
   assert.equal(r.shouldForceReply, true);
@@ -118,4 +125,63 @@ test('readTranscriptTailLines: 파일이 maxBytes보다 작으면 전체를 그�
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── "안녕" 전용 동작(2026-09-05, 오너 결정) ──────────────────────────────────────
+// "이모티콘 변화가 확실히 되면 답장은 안 해도 될 것 같아 — 세션이 살아있는지 보는
+// 용도니까." telegram-progress-reaction.mjs의 Stop 훅이 😘 확정 리액션을 별도
+// 보장하므로, "안녕"은 reply/react 호출 여부와 무관하게 강제재시도 대상에서 뺀다.
+
+test('[오너 결정 2026-09-05] analyzeTranscriptTail: "안녕"은 아무 도구도 안 불러도 강제재시도 안 함', () => {
+  const lines = [CHANNEL_USER('700', '안녕'), ASSISTANT_TEXT('안녕하세요!')];
+  assert.equal(analyzeTranscriptTail(lines).shouldForceReply, false);
+});
+
+test('[오너 결정 2026-09-05] analyzeTranscriptTail: "안녕" 뒤에 진짜 질문이 이어지면 그 질문은 여전히 강제재시도 대상', () => {
+  const lines = [
+    CHANNEL_USER('700', '안녕'),
+    CHANNEL_USER('701', '리밸런싱 확인해줘'),
+    ASSISTANT_TEXT('확인 중입니다'),
+  ];
+  const r = analyzeTranscriptTail(lines);
+  assert.equal(r.shouldForceReply, true);
+  assert.equal(r.messageId, '701');
+});
+
+test('findLastGreetingChannelMessage: 마지막 채널 메시지가 정확히 "안녕"이면 chatId·messageId 반환', () => {
+  const lines = [CHANNEL_USER('653', '안녕')];
+  assert.deepEqual(findLastGreetingChannelMessage(lines), { chatId: '8722755985', messageId: '653' });
+});
+
+test('findLastGreetingChannelMessage: "안녕하세요" 등 다른 문구는 대상 아님(null)', () => {
+  const lines = [CHANNEL_USER('1', '안녕하세요')];
+  assert.equal(findLastGreetingChannelMessage(lines), null);
+});
+
+test('findLastGreetingChannelMessage: 앞뒤 공백만 붙은 "안녕 "도 trim 후 일치하면 대상', () => {
+  const lines = [CHANNEL_USER('2', '  안녕  ')];
+  assert.deepEqual(findLastGreetingChannelMessage(lines), { chatId: '8722755985', messageId: '2' });
+});
+
+test('findLastGreetingChannelMessage: 채널 메시지가 아예 없으면 null', () => {
+  const lines = [{ type: 'user', message: { content: '그냥 터미널 프롬프트' } }];
+  assert.equal(findLastGreetingChannelMessage(lines), null);
+});
+
+test('findLastGreetingChannelMessage: 가장 최근 채널 메시지 기준 — "안녕" 다음에 다른 메시지가 왔으면 그게 최신', () => {
+  const lines = [CHANNEL_USER('1', '안녕'), ASSISTANT_TOOL('mcp__plugin_telegram_telegram__reply', {}), CHANNEL_USER('2', '리밸런싱 어때')];
+  assert.equal(findLastGreetingChannelMessage(lines), null);
+});
+
+test('findLastGreetingChannelMessage: 사이드체인(위임된 서브에이전트)이 원본 인사를 인용해도, 진짜 최신 메인라인 메시지 기준으로 판정', () => {
+  const lines = [
+    CHANNEL_USER('10', '안녕'),
+    ASSISTANT_TOOL('mcp__plugin_telegram_telegram__reply', {}),
+    CHANNEL_USER('11', '리밸런싱 어때'),
+    // 서브에이전트가 위임 프롬프트에 원본 "안녕" 채널 태그를 그대로 인용하는 사이드체인
+    // — 이걸 무시하지 않으면 진짜 최신 메시지('리밸런싱 어때')가 아니라 옛 "안녕"이
+    // 잘못 최신으로 잡힘.
+    { ...CHANNEL_USER('10', '안녕'), isSidechain: true },
+  ];
+  assert.equal(findLastGreetingChannelMessage(lines), null);
 });

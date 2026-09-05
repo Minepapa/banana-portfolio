@@ -5,61 +5,17 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import {
-  findLastGreetingChannelMessage, guardFilePath, hasAlreadySentReaction, markReactionSent, readBotToken,
-} from './telegram-progress-reaction.mjs';
+import { guardFilePath, hasAlreadySentReaction, markReactionSent, readBotToken } from './telegram-progress-reaction.mjs';
+
+// findLastGreetingChannelMessage는 2026-09-05 telegram-reply-guard.mjs로 이전됨
+// (analyzeTranscriptTail이 "안녕" 예외 처리에 같이 써야 해서) — 그 테스트는
+// telegram-reply-guard.test.js에 있다.
 
 const HOOK_PATH = join(dirname(fileURLToPath(import.meta.url)), 'telegram-progress-reaction.mjs');
-
-const CHANNEL_USER = (messageId, text = '안녕') => ({
-  type: 'user',
-  message: {
-    content: `<channel source="plugin:telegram:telegram" chat_id="8722755985" message_id="${messageId}" user="8722755985" user_id="8722755985" ts="2026-09-05T00:00:00.000Z">\n${text}\n</channel>`,
-  },
-});
-const ASSISTANT_TOOL = (name, input = {}) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input }] } });
 
 function makeTmpDir() {
   return mkdtempSync(join(tmpdir(), 'telegram-progress-reaction-test-'));
 }
-
-test('findLastGreetingChannelMessage: 마지막 채널 메시지가 정확히 "안녕"이면 chatId·messageId 반환', () => {
-  const lines = [CHANNEL_USER('653')];
-  assert.deepEqual(findLastGreetingChannelMessage(lines), { chatId: '8722755985', messageId: '653' });
-});
-
-test('findLastGreetingChannelMessage: "안녕하세요" 등 다른 문구는 대상 아님(null)', () => {
-  const lines = [CHANNEL_USER('1', '안녕하세요')];
-  assert.equal(findLastGreetingChannelMessage(lines), null);
-});
-
-test('findLastGreetingChannelMessage: 앞뒤 공백만 붙은 "안녕 "도 trim 후 일치하면 대상', () => {
-  const lines = [CHANNEL_USER('2', '  안녕  ')];
-  assert.deepEqual(findLastGreetingChannelMessage(lines), { chatId: '8722755985', messageId: '2' });
-});
-
-test('findLastGreetingChannelMessage: 채널 메시지가 아예 없으면 null', () => {
-  const lines = [{ type: 'user', message: { content: '그냥 터미널 프롬프트' } }];
-  assert.equal(findLastGreetingChannelMessage(lines), null);
-});
-
-test('findLastGreetingChannelMessage: 가장 최근 채널 메시지 기준 — "안녕" 다음에 다른 메시지가 왔으면 그게 최신', () => {
-  const lines = [CHANNEL_USER('1', '안녕'), ASSISTANT_TOOL('mcp__plugin_telegram_telegram__reply', {}), CHANNEL_USER('2', '리밸런싱 어때')];
-  assert.equal(findLastGreetingChannelMessage(lines), null);
-});
-
-test('findLastGreetingChannelMessage: 사이드체인(위임된 서브에이전트)이 원본 인사를 인용해도, 진짜 최신 메인라인 메시지 기준으로 판정', () => {
-  const lines = [
-    CHANNEL_USER('10', '안녕'),
-    ASSISTANT_TOOL('mcp__plugin_telegram_telegram__reply', {}),
-    CHANNEL_USER('11', '리밸런싱 어때'),
-    // 서브에이전트가 위임 프롬프트에 원본 "안녕" 채널 태그를 그대로 인용하는 사이드체인
-    // — 이걸 무시하지 않으면 진짜 최신 메시지('리밸런싱 어때')가 아니라 옛 "안녕"이
-    // 잘못 최신으로 잡힘.
-    { ...CHANNEL_USER('10', '안녕'), isSidechain: true },
-  ];
-  assert.equal(findLastGreetingChannelMessage(lines), null);
-});
 
 test('guardFilePath: chatId·messageId 조합별로 다른 경로', () => {
   const p1 = guardFilePath('/tmp/g', '111', '1');
@@ -122,13 +78,12 @@ test('readBotToken: 파일이 없으면 null(throw 아님)', () => {
   }
 });
 
-// ── 서브프로세스 안전성 테스트(2026-09-05 코드리뷰 LOW 지적) ────────────────────
-// 이 훅의 가장 중요한 계약은 "무슨 입력이 와도 stdout을 오염시키지 않고 exit 0"이다
-// (PreToolUse는 stdout에 뭔가 찍히면 reply 자체를 막을 수 있는 hookSpecificOutput으로
-// 해석될 위험이 있음). 순수함수 테스트만으론 이 계약 자체가 검증되지 않아 실제
-// 서브프로세스로 훅을 실행한다 — 단, 실제 Telegram API 호출이 나가면 안 되므로
-// (코드리뷰 중 실제로 한 번 사고가 났음, 헤더 주석 참고) transcript_path를 존재하지
-// 않는 경로로 고정해 fetch 이전에 항상 조기 반환하게 만든다.
+// ── 서브프로세스 안전성 테스트(2026-09-05 코드리뷰 LOW 지적, Stop 훅 전환 후 갱신) ──
+// 이 훅의 가장 중요한 계약은 "무슨 입력이 와도 Stop을 막지 않고(continue:true) exit
+// 0"이다. 순수함수 테스트만으론 이 계약 자체가 검증되지 않아 실제 서브프로세스로
+// 훅을 실행한다 — 단, 실제 Telegram API 호출이 나가면 안 되므로(코드리뷰 중 실제로
+// 한 번 사고가 났음, 헤더 주석 참고) transcript_path를 존재하지 않는 경로로 고정해
+// fetch 이전에 항상 조기 반환하게 만든다.
 function runHook(stdin, envOverrides = {}) {
   return spawnSync(process.execPath, [HOOK_PATH], {
     input: stdin,
@@ -138,7 +93,7 @@ function runHook(stdin, envOverrides = {}) {
   });
 }
 
-test('[코드리뷰 안전성 검증] 훅은 어떤 입력에도 stdout을 오염시키지 않고 exit 0(hookSpecificOutput 없음)', () => {
+test('[코드리뷰 안전성 검증] 훅은 어떤 입력에도 Stop을 막지 않고 exit 0(continue:true)', () => {
   const inputs = [
     '',
     'not json',
@@ -147,12 +102,12 @@ test('[코드리뷰 안전성 검증] 훅은 어떤 입력에도 stdout을 오�
   for (const stdin of inputs) {
     const r = runHook(stdin);
     assert.equal(r.status, 0, `input=${JSON.stringify(stdin)}`);
-    assert.equal(r.stdout, '', `input=${JSON.stringify(stdin)} 는 stdout이 비어야 함(deny/block 절대 금지)`);
+    assert.deepEqual(JSON.parse(r.stdout), { continue: true, suppressOutput: true }, `input=${JSON.stringify(stdin)}`);
   }
 });
 
-test('CLAUDE_TELEGRAM_SESSION 없으면 즉시 통과(stdout 없음, exit 0)', () => {
+test('CLAUDE_TELEGRAM_SESSION 없으면 즉시 통과(continue:true, exit 0)', () => {
   const r = runHook('{}', { CLAUDE_TELEGRAM_SESSION: '' });
   assert.equal(r.status, 0);
-  assert.equal(r.stdout, '');
+  assert.deepEqual(JSON.parse(r.stdout), { continue: true, suppressOutput: true });
 });

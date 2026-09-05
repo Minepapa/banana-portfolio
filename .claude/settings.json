@@ -31,14 +31,7 @@
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR/scripts/hooks/telegram-reply-guard.mjs\"",
             "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "^mcp__plugin_telegram_telegram__reply$",
-        "hooks": [
+          },
           {
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR/scripts/hooks/telegram-progress-reaction.mjs\"",

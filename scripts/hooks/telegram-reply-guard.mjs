@@ -88,6 +88,14 @@ const DELIVERY_TOOL_NAMES = new Set([
 
 const CHANNEL_TAG_RE = /<channel\s+source="plugin:telegram:telegram"[^>]*\bchat_id="([^"]*)"[^>]*\bmessage_id="([^"]*)"/;
 
+// 채널 메시지 태그 안의 실제 텍스트(태그 속성이 아니라 본문)까지 캡처 — "안녕"
+// 전용 생존확인 판정(findLastGreetingChannelMessage)에 필요해 CHANNEL_TAG_RE(속성만
+// 캡처)와 별도로 둔다(2026-09-05, telegram-progress-reaction.mjs에서 이 파일로
+// 이전). ⚠️ chat_id → message_id 속성 순서에 의존 — 현재 플러그인 출력과 동일
+// 가정이라 지금은 안전하지만, 플러그인이 속성 순서를 바꾸면 조용히 매치 실패한다.
+const CHANNEL_MSG_RE = /<channel\s+source="plugin:telegram:telegram"[^>]*\bchat_id="([^"]*)"[^>]*\bmessage_id="([^"]*)"[^>]*>\n?([\s\S]*?)\n?<\/channel>/;
+const GREETING_TEXT = '안녕';
+
 // telegram-progress-reaction.mjs가 그대로 재사용(2026-09-05 코드리뷰 MEDIUM 지적 —
 // 두 훅에 동일 구현이 복제돼 있던 것을 여기 하나로 통일).
 export function getMessageText(message) {
@@ -99,6 +107,26 @@ export function getMessageText(message) {
   return '';
 }
 
+// 순수함수(테스트 가능) — 가장 최근 텔레그램 채널 메시지가 정확히 "안녕"이면
+// {chatId, messageId}, 아니면(다른 문구·채널 메시지 없음) null. analyzeTranscriptTail
+// 과 마찬가지로 사이드체인(위임된 서브에이전트가 채널 태그 원문을 인용하는 경우)
+// 라인은 오탐 방지를 위해 제외한다. telegram-progress-reaction.mjs(Stop 훅, 😘
+// 확정 리액션)와 아래 analyzeTranscriptTail(같은 Stop 훅 그룹의 텍스트 답장 강제
+// 여부 판정) 둘 다 이 함수를 쓴다 — 2026-09-05, telegram-progress-reaction.mjs에서
+// 이 파일로 이전(오너 결정: "안녕"은 이모지 확정 신호만으로 충분, 텍스트 답장 불필요).
+export function findLastGreetingChannelMessage(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const d = lines[i];
+    if (d?.isSidechain === true) continue;
+    if (d?.type !== 'user') continue;
+    const text = getMessageText(d.message);
+    const m = CHANNEL_MSG_RE.exec(text);
+    if (!m) continue;
+    return m[3].trim() === GREETING_TEXT ? { chatId: m[1], messageId: m[2] } : null;
+  }
+  return null;
+}
+
 // 순수함수(테스트 가능) — 파싱된 JSONL 라인(오래된 것→최신 순) 중 가장 최근 텔레그램
 // 채널 사용자 메시지를 찾는다. 그 이후(=index 뒤)로 reply/react/edit_message/Agent
 // 도구 호출이 있었는지까지 같이 판단해 "강제 재시도가 필요한가"를 반환한다.
@@ -107,6 +135,12 @@ export function getMessageText(message) {
 // 채널 태그 원문을 그대로 인용하는 경우, 그 사이드체인 라인까지 "최근 채널 메시지"로
 // 잘못 잡으면 실제로는 이미 정상 답장한 뒤인데도 강제재시도가 될 수 있다 — 메인
 // 대화 라인(isSidechain !== true)만 본다.
+//
+// ⚠️ "안녕"은 텍스트 답장을 강제하지 않는다(2026-09-05 오너 결정) — telegram-
+// progress-reaction.mjs의 Stop 훅이 😘 리액션으로 확정적 생존신호를 별도 보장하므로,
+// "안녕"에 대한 reply/react 호출 여부와 무관하게 shouldForceReply=false. 오너 발언:
+// "이모티콘 변화가 확실히 되면 답장은 안 해도 될 것 같아, 세션이 살아있는지 보는
+// 용도니까".
 export function analyzeTranscriptTail(lines) {
   let lastChannelIdx = -1;
   let chatId = null, messageId = null;
@@ -123,6 +157,8 @@ export function analyzeTranscriptTail(lines) {
     }
   }
   if (lastChannelIdx === -1) return { shouldForceReply: false, chatId: null, messageId: null };
+
+  if (findLastGreetingChannelMessage(lines)) return { shouldForceReply: false, chatId, messageId };
 
   let delivered = false;
   for (let i = lastChannelIdx + 1; i < lines.length; i++) {
