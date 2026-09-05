@@ -47,7 +47,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, fstatSync, readSync, closeSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GUARD_DIR = join(HERE, '..', '.cache', 'telegram-reply-guard');
@@ -88,7 +88,9 @@ const DELIVERY_TOOL_NAMES = new Set([
 
 const CHANNEL_TAG_RE = /<channel\s+source="plugin:telegram:telegram"[^>]*\bchat_id="([^"]*)"[^>]*\bmessage_id="([^"]*)"/;
 
-function getMessageText(message) {
+// telegram-progress-reaction.mjs가 그대로 재사용(2026-09-05 코드리뷰 MEDIUM 지적 —
+// 두 훅에 동일 구현이 복제돼 있던 것을 여기 하나로 통일).
+export function getMessageText(message) {
   const content = message?.content;
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
@@ -208,21 +210,23 @@ function incrementRetryCount(sessionId, chatId, messageId) {
 // 가드파일은 message_id마다 하나씩 영구히 남아 상시세션이 오래 돌수록 조용히
 // 쌓인다 — 매 실행마다 24시간 지난 파일을 베스트에포트로 정리(실패해도 훅 판단에
 // 영향 없음, 순수 하우스키핑). 락 없이 단순 삭제라 동시성 걱정 없음(이 세션은
-// 항상 순차 실행되는 단일 프로세스).
-function cleanupStaleGuardFiles() {
+// 항상 순차 실행되는 단일 프로세스). guardDir 인자화(2026-09-05 코드리뷰 지적) —
+// telegram-progress-reaction.mjs가 자기 가드 디렉터리를 넘겨 재사용한다.
+export function cleanupStaleGuardFiles(guardDir = GUARD_DIR, ttlMs = GUARD_FILE_TTL_MS) {
   try {
-    if (!existsSync(GUARD_DIR)) return;
+    if (!existsSync(guardDir)) return;
     const now = Date.now();
-    for (const f of readdirSync(GUARD_DIR)) {
-      const fp = join(GUARD_DIR, f);
+    for (const f of readdirSync(guardDir)) {
+      const fp = join(guardDir, f);
       try {
-        if (now - statSync(fp).mtimeMs > GUARD_FILE_TTL_MS) unlinkSync(fp);
+        if (now - statSync(fp).mtimeMs > ttlMs) unlinkSync(fp);
       } catch { /* 개별 파일 정리 실패는 무시 */ }
     }
   } catch { /* 디렉터리 읽기 실패도 무시 — 하우스키핑일 뿐 */ }
 }
 
-async function readStdin(timeoutMs = 5000) {
+// telegram-progress-reaction.mjs가 그대로 재사용(2026-09-05 코드리뷰 MEDIUM 지적).
+export async function readStdin(timeoutMs = 5000) {
   return new Promise((resolve) => {
     const chunks = [];
     let settled = false;
@@ -287,7 +291,10 @@ async function main() {
 
 // entrypoint 가드 — 없으면 테스트가 이 파일을 import(analyzeTranscriptTail 등 순수함수
 // 사용)만 해도 main()이 실행돼 stdin 대기·stdout 오염이 side effect로 발생한다
-// (reconcile-irp.mjs 등 이 코드베이스 관례와 동일).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// (reconcile-irp.mjs 등 이 코드베이스 관례와 동일). pathToFileURL 사용(2026-09-05
+// 코드리뷰 지적) — 예전 `file://${process.argv[1]}` 수동 조합은 경로에 공백·비ASCII가
+// 있으면 퍼센트 인코딩 불일치로 이 가드가 항상 false가 돼 훅이 완전히 무성 no-op이
+// 될 수 있었다.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
