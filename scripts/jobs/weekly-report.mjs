@@ -41,7 +41,9 @@ import { fetchMacroIndicators } from '../lib/fundamentals.mjs';
 import { buildReportFacts } from '../lib/report-facts.mjs';
 import { buildBehaviorSignals } from '../lib/behavior-signals.mjs';
 import { renderPrefRows, findExpiredPromotions, isLivePreferenceObservation } from '../lib/preferences.mjs';
-import { filterObservations, claimViolationsInDoc } from '../lib/llm-guard.mjs';
+import {
+  filterObservations, claimViolationsInDoc, collectFactPercentages, numericClaimViolations,
+} from '../lib/llm-guard.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
@@ -174,6 +176,34 @@ function escapeHtml(text) {
 // 자체가 다시 이스케이프되지 않는다(순서 중요).
 export function markdownBoldToHtml(text) {
   return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+}
+
+// ── "가장 큰 변화" 강제 정정(2026-09-06 신설) ────────────────────────────
+// 사고: LLM이 이 불릿에 facts와 다른 수치를 썼다(themis-risk-review.mjs가 같은 날
+// 같은 데이터로 낸 값과 불일치 — Log/DevRequests/2026-09-06-weekly-report-facts-
+// 불일치-버그.md, 오너 지시 "LLM이 마음대로 숫자를 지어내면 절대 안 됨"). 프롬프트
+// 지시("facts 값만, WebSearch 수치 금지")만으로는 이미 한 번 뚫렸으므로, 발행 직전
+// 코드로 검증하고 위반이면 Node가 계산한 검증된 값으로 강제 치환한다 — 사후 경고만
+// 남기고 틀린 문장을 그대로 내보내지 않는다.
+
+// facts.macro에서 |change5d|가 가장 큰 지표 하나(themis-risk-review.mjs와 동일
+// 소스·동일 정의라 그쪽과 절대 어긋나지 않음). 전부 데이터 없으면 null.
+export function biggestMacroMover(macro) {
+  let best = null;
+  for (const [key, o] of Object.entries(macro || {})) {
+    if (o?.change5d == null) continue;
+    if (!best || Math.abs(o.change5d) > Math.abs(best.change5d)) best = { key, ...o };
+  }
+  return best;
+}
+
+// biggestMacroMover 결과 → "가장 큰 변화" 불릿 텍스트(마크다운 굵게 포함). Node가
+// 직접 조립하므로 수치가 틀릴 수가 없다 — 해석 문구는 일부러 짧게 남겨 LLM 원문의
+// 색깔을 완전히 지우지 않되, 숫자 자체는 절대 LLM이 재서술하지 못하게 한다.
+export function formatMacroMoverBullet(mover) {
+  if (!mover) return '- **가장 큰 변화**: 이번 주 유의미한 거시지표 변화 없음(데이터 부족)';
+  const pct = `${mover.change5d >= 0 ? '+' : ''}${mover.change5d}%`;
+  return `- **가장 큰 변화**: ${mover.key} 5일 ${pct}(${mover.source || '출처 미상'})`;
 }
 
 function buildReportPrompt(factsText, asof, confirmedPrefsText) {
@@ -406,6 +436,24 @@ async function main() {
   const universe = holdings.map((h) => h.name).filter(Boolean);
   const reportClaims = claimViolationsInDoc(md, /논리\s*훼손/, universe, []);
   if (reportClaims.length) collectWarning(`주간리포트 자동검증: "논리훼손" 언급 — 이번 버전엔 근거 소스가 없어 전부 미확인 주장: ${reportClaims.join(', ')}`);
+
+  // ⑤-c 수치 사실검증(2026-09-06 신설, 오너 지시 — "LLM이 마음대로 숫자를 지어내면
+  // 절대 안 됨"). facts에 없는 퍼센트가 리포트 어딘가에 등장하면 경고만(발행은 계속
+  // — 리포트 전체엔 facts로 표현 안 되는 정성적 수치도 섞일 수 있어 전면 차단은
+  // 과함, 근거: 위 4원칙 §2 "profile 적용" 문구 등). 다만 "가장 큰 변화" 불릿은
+  // 실제로 사고가 난 지점이라 그 줄만은 위반 시 Node 검증값으로 강제 치환한다.
+  const factPercentages = collectFactPercentages(facts);
+  const docViolations = numericClaimViolations(md, factPercentages);
+  if (docViolations.length) {
+    collectWarning(`주간리포트 자동검증: facts에 없는 수치 언급(오차범위 밖) — ${docViolations.map((n) => `${n}%`).join(', ')}. 원문 재확인 필요.`);
+  }
+  const bulletMatch = md.match(/^([-*·]\s*\*\*가장\s*큰\s*변화\*\*.*)$/m);
+  if (bulletMatch && numericClaimViolations(bulletMatch[1], factPercentages).length) {
+    const corrected = formatMacroMoverBullet(biggestMacroMover(facts.macro));
+    md = md.replace(bulletMatch[1], corrected);
+    collectWarning(`주간리포트 "가장 큰 변화" 불릿이 facts와 불일치해 Node 검증값으로 강제 교체함 — 원문: "${bulletMatch[1]}" → 교체: "${corrected}"`);
+    console.log(`   🛡 "가장 큰 변화" 불릿 수치 불일치 감지 — Node 검증값으로 강제 교체: ${corrected}`);
+  }
 
   // ⑥ Vault 저장 — frontmatter는 반드시 한 줄(위 extractSummary 주석 참고).
   const summaryBullets = extractSummaryBullets(md);

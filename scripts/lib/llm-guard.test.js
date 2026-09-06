@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   coerceEnum, extractSignal, mentionedNames, unknownMentions, claimViolations,
   claimViolationsInDoc, clampLen, filterObservations, SIGNAL_EMOJI, CONFIDENCE,
+  extractPercentages, collectFactPercentages, numericClaimViolations,
 } from './llm-guard.mjs';
 
 test('coerceEnum: 정확값 통과·변형 흡수·목록밖은 fallback+coerced', () => {
@@ -168,4 +169,59 @@ test('filterObservations: 최대 건수 초과분은 DROP', () => {
   const { kept, dropped } = filterObservations(observations, { universe, factsText, maxRows: 3 });
   assert.equal(kept.length, 3);
   assert.equal(dropped.length, 2);
+});
+
+// ── 수치 주장 검증(2026-09-06 신설) — weekly-report "가장 큰 변화" facts 불일치
+// 사고(Log/DevRequests/2026-09-06-weekly-report-facts-불일치-버그.md) 회귀 방지 ──
+
+test('extractPercentages: 부호·소수 보존, 여러 개 추출', () => {
+  assert.deepEqual(extractPercentages('WTI +9.7% 급등, KOSDAQ -3.0% 하락'), [9.7, -3.0]);
+});
+
+test('extractPercentages: 퍼센트 없으면 빈 배열', () => {
+  assert.deepEqual(extractPercentages('이번 주 특이사항 없음'), []);
+});
+
+test('collectFactPercentages: macro·holdings·assetClasses·weekTrades 전부 수집', () => {
+  const facts = {
+    macro: { KOSDAQ: { change5d: -5.66 }, WTI: { change5d: 2.1 }, VIX: { change5d: null } },
+    holdings: [{ totalReturnPct: 12.3 }, { totalReturnPct: null }],
+    assetClasses: [{ weightPct: 30.5 }],
+    weekTrades: [{ realizedPct: -8.2 }, { realizedPct: null }],
+  };
+  const nums = collectFactPercentages(facts);
+  assert.deepEqual(nums.sort((a, b) => a - b), [-8.2, -5.66, 2.1, 12.3, 30.5]);
+});
+
+test('[실사고 재현] numericClaimViolations: Themis 실측(KOSDAQ -5.66%)과 다른 weekly-report 서술(-3.0%, WTI +9.7%)을 위반으로 잡음', () => {
+  const facts = { macro: { KOSDAQ: { change5d: -5.66 }, NASDAQ: { change5d: 0.4 } } };
+  const bullet = '**가장 큰 변화**: WTI +9.7% 급등 — 에너지 인플레이션 재점화 경계, KOSPI -1.5%·KOSDAQ -3.0%로 국내 시장 추가 약세';
+  const violations = numericClaimViolations(bullet, collectFactPercentages(facts));
+  // KOSDAQ -3.0%는 실제(-5.66%)와 tolerance(0.5) 밖 → 위반. WTI 9.7%·KOSPI -1.5%는
+  // facts에 그 항목 자체가 없어(위 macro엔 KOSDAQ·NASDAQ만 있음) 역시 위반.
+  assert.ok(violations.includes(9.7));
+  assert.ok(violations.includes(-1.5));
+  assert.ok(violations.includes(-3.0));
+});
+
+test('numericClaimViolations: facts와 정확히 일치하는 퍼센트는 위반 아님', () => {
+  const facts = { macro: { KOSDAQ: { change5d: -5.66 } } };
+  const bullet = '**가장 큰 변화**: KOSDAQ 5일 -5.66% 하락';
+  assert.deepEqual(numericClaimViolations(bullet, collectFactPercentages(facts)), []);
+});
+
+test('numericClaimViolations: tolerance 이내 반올림 표기는 위반 아님', () => {
+  const facts = { macro: { KOSDAQ: { change5d: -5.66 } } };
+  const bullet = 'KOSDAQ 5일 -5.7% 하락(반올림 표기)';
+  assert.deepEqual(numericClaimViolations(bullet, collectFactPercentages(facts)), []);
+});
+
+test('numericClaimViolations: tolerance 밖으로 벗어난 값은 위반', () => {
+  const facts = { macro: { KOSDAQ: { change5d: -5.66 } } };
+  const bullet = 'KOSDAQ 5일 -7% 하락'; // 실제(-5.66)와 1.34%p 차이 — tolerance(0.5) 밖
+  assert.deepEqual(numericClaimViolations(bullet, collectFactPercentages(facts)), [-7]);
+});
+
+test('numericClaimViolations: 허용 퍼센트가 비어있으면 언급된 모든 퍼센트가 위반', () => {
+  assert.deepEqual(numericClaimViolations('알 수 없는 근거로 +10% 상승', []), [10]);
 });

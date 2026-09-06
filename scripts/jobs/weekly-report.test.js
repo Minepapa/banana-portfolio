@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractSummary, extractSummaryBullets, safeTrim, markdownBoldToHtml } from './weekly-report.mjs';
+import {
+  extractSummary, extractSummaryBullets, safeTrim, markdownBoldToHtml,
+  biggestMacroMover, formatMacroMoverBullet,
+} from './weekly-report.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 
 // 2026-08-30 오너 신고 — 텔레그램 주간 리포트 요약이 숫자 한가운데서("-2,504,0") 잘려
@@ -120,4 +123,39 @@ test('markdownBoldToHtml: <·>·& 이스케이프(코드리뷰 지적 — 안 �
 test('markdownBoldToHtml: 이스케이프와 굵게 변환이 함께 있어도 <b> 태그 자체는 안 망가짐', () => {
   const result = markdownBoldToHtml('PER < 10 & **저평가** 구간');
   assert.equal(result, 'PER &lt; 10 &amp; <b>저평가</b> 구간');
+});
+
+// ── biggestMacroMover / formatMacroMoverBullet(2026-09-06 신설) — "가장 큰 변화"
+// 불릿이 facts와 다른 수치를 서술하던 실사고(Log/DevRequests/2026-09-06-weekly-
+// report-facts-불일치-버그.md, 오너 지시 "LLM이 마음대로 숫자를 지어내면 절대
+// 안 됨") 회귀 방지. ───────────────────────────────────────────────
+
+test('biggestMacroMover: |change5d|가 가장 큰 지표를 고른다(부호 무관)', () => {
+  const macro = { KOSDAQ: { change5d: -5.66, source: 'KRX(비지연)' }, NASDAQ: { change5d: 0.4, source: 'yfinance' } };
+  const r = biggestMacroMover(macro);
+  assert.equal(r.key, 'KOSDAQ');
+  assert.equal(r.change5d, -5.66);
+});
+
+test('biggestMacroMover: change5d 없는 지표는 제외', () => {
+  const macro = { VIX: { change5d: null }, WTI: { change5d: 2.1, source: 'yfinance' } };
+  assert.equal(biggestMacroMover(macro).key, 'WTI');
+});
+
+test('biggestMacroMover: 전부 데이터 없으면 null', () => {
+  assert.equal(biggestMacroMover({ VIX: { change5d: null } }), null);
+});
+
+test('formatMacroMoverBullet: 음수는 부호 그대로, 출처 포함', () => {
+  const bullet = formatMacroMoverBullet({ key: 'KOSDAQ', change5d: -5.66, source: 'KRX(비지연)' });
+  assert.equal(bullet, '- **가장 큰 변화**: KOSDAQ 5일 -5.66%(KRX(비지연))');
+});
+
+test('formatMacroMoverBullet: 양수는 + 부호 명시', () => {
+  const bullet = formatMacroMoverBullet({ key: 'WTI', change5d: 2.1, source: 'yfinance' });
+  assert.equal(bullet, '- **가장 큰 변화**: WTI 5일 +2.1%(yfinance)');
+});
+
+test('formatMacroMoverBullet: mover가 null이면 데이터 부족 문구', () => {
+  assert.match(formatMacroMoverBullet(null), /데이터 부족/);
 });
