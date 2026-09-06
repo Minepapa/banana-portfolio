@@ -31,14 +31,34 @@ test('보유 중(ticker 필드 없음) — krStockCodeFn으로 해석', () => {
   assert.deepEqual(r, { type: INSTRUMENT_TYPE.KR_STOCK, iemCd: '000660', nhAccountLabel: '위탁', resolvedName: 'SK하이닉스' });
 });
 
-test('보유 중(채권, 직접채권이라 krStockCodeFn 실패) — UNSUPPORTED, 추측 안 함', () => {
-  const holdingsIndex = new Map([['삼척블루파워12', { account: '위탁', assetClass: '채권', name: '삼척블루파워12', ticker: '', isCashLike: false }]]);
+test('보유 중(채권, 직접채권이고 bondCode도 아직 없음) — UNSUPPORTED, 추측 안 함', () => {
+  const holdingsIndex = new Map([['삼척블루파워12', { account: '위탁', assetClass: '채권', name: '삼척블루파워12', ticker: '', bondCode: null, isCashLike: false }]]);
   const r = classifyAssetAllocationInstrument({
     assetKey: '삼척블루파워12', holdingsIndex, registry: new Map(),
     krStockCodeFn: () => null,
   });
   assert.equal(r.type, INSTRUMENT_TYPE.UNSUPPORTED);
-  assert.match(r.reason, /국내 종목코드 해석 실패/);
+  assert.match(r.reason, /직접채권으로 추정되나 종목코드 미확인/);
+});
+
+test('보유 중(채권, 직접채권 + bondCode 확인됨) — KR_BOND, 실측(삼척블루파워12)', () => {
+  const holdingsIndex = new Map([['삼척블루파워12', { account: '위탁', assetClass: '채권', name: '삼척블루파워12', ticker: '', bondCode: 'B150351F4', isCashLike: false }]]);
+  const r = classifyAssetAllocationInstrument({
+    assetKey: '삼척블루파워12', holdingsIndex, registry: new Map(),
+    krStockCodeFn: () => null,
+  });
+  assert.deepEqual(r, { type: INSTRUMENT_TYPE.KR_BOND, iemCd: 'B150351F4', nhAccountLabel: '위탁', resolvedName: '삼척블루파워12' });
+});
+
+test('보유 중(채권이지만 실제로는 ETF) — bondCode가 있어도 krStockCodeFn이 먼저 풀리면 KR_STOCK', () => {
+  const holdingsIndex = new Map([['kodex cd금리액티브(합성)', {
+    account: '연금저축', assetClass: '채권', name: 'KODEX CD금리액티브(합성)', ticker: '', bondCode: null, isCashLike: false,
+  }]]);
+  const r = classifyAssetAllocationInstrument({
+    assetKey: 'KODEX CD금리액티브(합성)', holdingsIndex, registry: new Map(),
+    krStockCodeFn: (name) => (name === 'KODEX CD금리액티브(합성)' ? '157450' : null),
+  });
+  assert.deepEqual(r, { type: INSTRUMENT_TYPE.KR_STOCK, iemCd: '157450', nhAccountLabel: '연금저축', resolvedName: 'KODEX CD금리액티브(합성)' });
 });
 
 test('실물금(account=금현물) — GOLD, iemCd 고정값', () => {

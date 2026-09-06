@@ -19,8 +19,12 @@
 //   - 실물금·해외주식 포함 전체 스코프로 1차 구현(연금저축만 제외)
 //
 // ⚠️ 알려진 한계(1차 구현 범위 밖, 실측 빈도 낮거나 대안이 이미 있어 의도적으로 미룸):
-//   - 직접채권(예: 삼척블루파워12 — KRX 마스터파일 미등재라 krStockCode가 null 반환)
-//     은 라우터가 UNSUPPORTED로 분류해 자동체결 대상에서 빠진다(수동 처리 유지).
+//   - 직접채권(예: 삼척블루파워12) 매수는 2026-09-06 확장으로 지원한다(KR_BOND,
+//     nhplug-krbond.mjs) — 매도는 여전히 자동체결 대상 아님. placeBondSellOrder가
+//     bynDt(매수일자)를 필수로 받는데, 실측 확인 결과 이 채권 하나에도 매수일자가
+//     다른 로트가 2개(2025-08-14·2026-02-20) 이미 존재한다 — "어느 로트를 팔지"는
+//     일반 제안 스키마(assetKey/side/quantity/price)로 표현이 안 되는 정보라 추측
+//     대신 UNSUPPORTED로 막는다.
 //   - 외화 RP는 NH가 USD 예수금 발생 시 자동 스윕하는 브로커 기능이라 별도 주문
 //     자체가 없음(오너 확인 2026-09-05) — 라우터가 UNSUPPORTED로 분류. ⚠️ 게다가
 //     잔고 조회조차 NH PLUG 공개 API로 불가능하다(2026-09-06 확인 — nhplug.com
@@ -54,7 +58,9 @@ import { getCodeRegistry } from '../lib/stock-registry.mjs';
 import {
   INSTRUMENT_TYPE, buildHoldingsIndex, classifyAssetAllocationInstrument,
 } from '../lib/asset-allocation-instrument-router.mjs';
-import { normalizeKrHoldings, normalizeGbHoldings, normalizeGoldHoldings } from '../lib/nh-holdings-normalize.mjs';
+import {
+  normalizeKrHoldings, normalizeGbHoldings, normalizeGoldHoldings, normalizeBondHoldings,
+} from '../lib/nh-holdings-normalize.mjs';
 import { extractNhPrice, extractNhCashDeposit } from '../lib/nh-response-parse.mjs';
 import { canonName } from '../../src/lib/stockIdentity.js';
 import { hasNhplugCredentials, loadNhplugCredentials, getNhToken, listNhAccounts } from '../lib/nhplug.mjs';
@@ -62,6 +68,7 @@ import { resolveNhAccountsByLabel } from '../lib/nh-accounts.mjs';
 import { getKrBalance, getKrCurrentPrice, placeKrCashBuyOrder, placeKrCashSellOrder } from '../lib/nhplug-krstock.mjs';
 import { getGbBalance, getGbCurrentPrice, placeGbBuyOrder, placeGbSellOrder } from '../lib/nhplug-gbstock.mjs';
 import { getGoldBalance, getGoldCurrentPrice, placeGoldBuyOrder, placeGoldSellOrder } from '../lib/nhplug-krgold.mjs';
+import { getBondBalance, getBondCurrentPrice, placeBondBuyOrder } from '../lib/nhplug-krbond.mjs';
 
 // execute-quant-proposal.mjs와 동일 원칙 — 이 잡의 알림 3종(만료·정합성 경고·검문소
 // 차단)은 전부 결정론적 Node 판정이지 부서(LLM) 판단이 아니라 무(無)부서 인프라
@@ -144,7 +151,9 @@ export function filterExecutableProposals(proposals, { log = () => {} } = {}) {
 // 매수 가능 여부를 판정하게 된다(2026-09-06 코드리뷰 M3 지적 — 알 수 없는 자산군은
 // 조용히 아무 풀에나 매칭하지 않고 명시적으로 throw).
 export function selectCashPool(instrumentType, { krCash, gbCash, goldCash }) {
-  if (instrumentType === INSTRUMENT_TYPE.KR_STOCK) return krCash;
+  // KR_BOND(2026-09-06 추가)는 KR_STOCK과 같은 위탁 KRW 예수금 풀을 공유한다 —
+  // 다른 계좌·통화가 아니라 같은 위탁 계좌 안에서 그냥 자산군만 다른 것뿐이라서다.
+  if (instrumentType === INSTRUMENT_TYPE.KR_STOCK || instrumentType === INSTRUMENT_TYPE.KR_BOND) return krCash;
   if (instrumentType === INSTRUMENT_TYPE.OVERSEAS_STOCK) return gbCash;
   if (instrumentType === INSTRUMENT_TYPE.GOLD) return goldCash;
   throw new Error(`알 수 없는 자산군: ${instrumentType}`);
@@ -158,7 +167,7 @@ export function selectCashPool(instrumentType, { krCash, gbCash, goldCash }) {
 // 오판됐었다). 알 수 없는 type은 명시적으로 throw(2026-09-06 코드리뷰 M3 지적 —
 // 예전엔 KR/해외 둘 다 아니면 조용히 GOLD로 폴스루해, 나중에 자산군이 추가되면
 // 엉뚱하게 금현물 API로 주문이 나갈 위험이 있었다).
-function resolveInstrumentContext(classification, { token, actNoByLabel, krHoldings, gbHoldings, goldHoldings }) {
+function resolveInstrumentContext(classification, { token, actNoByLabel, krHoldings, gbHoldings, goldHoldings, bondHoldings }) {
   const actNo = actNoByLabel.get(classification.nhAccountLabel);
   if (classification.type === INSTRUMENT_TYPE.KR_STOCK) {
     return {
@@ -179,6 +188,17 @@ function resolveInstrumentContext(classification, { token, actNoByLabel, krHoldi
       actNo, holdings: goldHoldings,
       getCurrentPrice: async () => extractNhPrice((await getGoldCurrentPrice({ token, iemCd: classification.iemCd })).Output_0, 'stck_prpr'),
       placeBuy: placeGoldBuyOrder, placeSell: placeGoldSellOrder,
+    };
+  }
+  if (classification.type === INSTRUMENT_TYPE.KR_BOND) {
+    return {
+      actNo, holdings: bondHoldings,
+      getCurrentPrice: async () => extractNhPrice((await getBondCurrentPrice({ token, iemCd: classification.iemCd })).Output_0, 'bond_prpr'),
+      placeBuy: placeBondBuyOrder,
+      // 매도는 미지원(파일 헤더 "알려진 한계" 참고 — bynDt 로트 선택이 필요해 추측
+      // 불가) — 호출되면 명시적으로 실패하게 해서 조용히 잘못된 주문이 나가는 걸
+      // 막는다. 실제로는 이 함수가 호출되기 전에 main()의 매도 가드가 먼저 막는다.
+      placeSell: () => { throw new Error('직접채권 매도는 자동체결 미지원(매수일자별 로트 선택 필요) — 이 경로는 호출되면 안 됨'); },
     };
   }
   throw new Error(`알 수 없는 자산군: ${classification.type}`);
@@ -276,10 +296,16 @@ async function main() {
   // 자체는 동일했지만, 의도를 명시해 향후 다통화 보유 시에도 안전하게 한다.
   try { gbBalanceBody = krActNo ? await getGbBalance({ token, actNo: krActNo, curCd: 'USD' }) : null; } catch (e) { console.error(`  ⚠️ 위탁 해외잔고 조회 실패(무시, 이 배치의 OVERSEAS_STOCK 제안은 건너뜀): ${e.message}`); }
   try { goldBalanceBody = goldActNo ? await getGoldBalance({ token, actNo: goldActNo }) : null; } catch (e) { console.error(`  ⚠️ 금현물 잔고 조회 실패(무시, 이 배치의 GOLD 제안은 건너뜀): ${e.message}`); }
+  // 장내채권(2026-09-06 추가) — 위탁 계좌와 같은 actNo(krActNo) 재사용, iqr_dt(조회
+  // 일자, YYYYMMDD)는 필수 파라미터라 오늘 날짜를 KST 기준으로 매번 새로 넣는다.
+  let bondBalanceBody = null;
+  const todayYmd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date()).replace(/-/g, '');
+  try { bondBalanceBody = krActNo ? await getBondBalance({ token, actNo: krActNo, iqrDt: todayYmd }) : null; } catch (e) { console.error(`  ⚠️ 위탁 채권 잔고 조회 실패(무시, 이 배치의 KR_BOND 제안은 건너뜀): ${e.message}`); }
 
   const krHoldings = normalizeKrHoldings(krBalanceBody?.Output_1);
   const gbHoldings = normalizeGbHoldings(gbBalanceBody?.Output_1);
   const goldHoldings = normalizeGoldHoldings(goldBalanceBody?.Output_1);
+  const bondHoldings = normalizeBondHoldings(bondBalanceBody?.Output_1);
 
   // 매수 가용예수금 — 자산군마다 다른 계좌·통화 풀(2026-09-05/06 실측 확인):
   //   - KR_STOCK: 위탁 KRW 예수금 — dca(당일예수금)가 아니라 drn_pbl_amt(출금가능
@@ -312,8 +338,17 @@ async function main() {
       console.log(`  ℹ️ ${proposal.id} — 분류된 계좌(${classification.nhAccountLabel})가 이 잡의 대상 계좌(위탁·금현물) 밖 — 건너뜀`);
       continue;
     }
+    // 직접채권 매도 가드(2026-09-06 추가, 파일 헤더 "알려진 한계" 참고) — bynDt
+    // (매수일자) 로트 선택이 필요한데 일반 제안 스키마엔 그 정보가 없다. 실측
+    // 확인(삼척블루파워12)으로 로트가 이미 2개 존재해 "그냥 아무 로트나"도 안전하지
+    // 않다 — 추측 대신 여기서 명시적으로 막는다(resolveInstrumentContext의
+    // placeSell throw는 이 가드가 뚫렸을 때의 2차 방어일 뿐).
+    if (classification.type === INSTRUMENT_TYPE.KR_BOND && proposal.side === '매도') {
+      console.log(`  ℹ️ ${proposal.id} — 직접채권 매도는 자동체결 대상 아님(매수일자별 로트 선택 필요, 추측 금지), 건너뜀`);
+      continue;
+    }
 
-    const ctx = resolveInstrumentContext(classification, { token, actNoByLabel, krHoldings, gbHoldings, goldHoldings });
+    const ctx = resolveInstrumentContext(classification, { token, actNoByLabel, krHoldings, gbHoldings, goldHoldings, bondHoldings });
     if (!ctx.actNo) {
       console.log(`  ⚠️ ${proposal.id} — NH 계좌(${classification.nhAccountLabel}) 조회 실패(미등록 가능성), 건너뜀(다음 실행에서 재시도)`);
       continue;
@@ -428,7 +463,7 @@ async function main() {
       // 안에서만" 유효한 근사치면 충분하다.
       const orderAmount = proposal.quantity * proposal.proposedPrice;
       if (proposal.side === '매수') {
-        if (classification.type === INSTRUMENT_TYPE.KR_STOCK && krCash != null) krCash -= orderAmount;
+        if ((classification.type === INSTRUMENT_TYPE.KR_STOCK || classification.type === INSTRUMENT_TYPE.KR_BOND) && krCash != null) krCash -= orderAmount;
         else if (classification.type === INSTRUMENT_TYPE.OVERSEAS_STOCK && gbCash != null) gbCash -= orderAmount;
         else if (classification.type === INSTRUMENT_TYPE.GOLD && goldCash != null) goldCash -= orderAmount;
       }

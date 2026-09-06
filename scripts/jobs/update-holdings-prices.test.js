@@ -130,14 +130,31 @@ test('classifyHolding: ticker가 6자리가 아니면(빈 문자열 등) 기존�
   assert.deepEqual(r, { kind: 'KR', code: '005930', source: 'NH' });
 });
 
-// 2026-08-22 — 개별채권(구조적으로 시세 소스가 없는 보유) 대응. resolveKr/resolveUs가
-// 호출되면 즉시 실패하도록 넘겨서 "이름매칭을 아예 안 타고 먼저 걸러진다"를 검증.
-test('classifyHolding: 개별채권(삼척블루파워12)은 이름매칭 없이 바로 NO_PRICE_SOURCE(collectWarning 안 타는 별도 종류)', () => {
-  const r = classifyHolding({ name: '삼척블루파워12', account: '위탁' }, {
-    resolveKr: () => { throw new Error('resolveKr이 호출되면 안 됨'); },
-    resolveUs: () => { throw new Error('resolveUs가 호출되면 안 됨'); },
+// 2026-09-06 정정 — 개별채권(삼척블루파워12)은 예전엔 이름 하드코딩 목록
+// (NO_PRICE_SOURCE_NAMES)으로 resolveKr/resolveUs 호출 전에 걸러 시세 자체를
+// 포기했다. NH krbond 도메인으로 실제 조회 가능함을 확인(2026-09-06, 오너 지적)한
+// 뒤로는 GOLD/FUND와 같은 위치(krCode·usTicker 둘 다 실패한 *다음*)의 최후
+// 분기로 옮겨 assetClass:"채권"이면 BOND로 분류한다 — resolveKr/resolveUs는
+// 정상적으로 먼저 시도된다(ETF일 수 있으므로).
+test('classifyHolding: 개별채권(삼척블루파워12) — krCode/usTicker 둘 다 실패하고 assetClass가 채권이면 BOND', () => {
+  const r = classifyHolding({ name: '삼척블루파워12', account: '위탁', assetClass: '채권' }, {
+    resolveKr: () => null, resolveUs: () => null,
   });
-  assert.deepEqual(r, { kind: 'NO_PRICE_SOURCE' });
+  assert.deepEqual(r, { kind: 'BOND' });
+});
+
+test('classifyHolding: assetClass가 채권이어도 krStockCode가 풀리면 KR(ETF 정상경로, 삼척블루파워12와 반대 사례)', () => {
+  const r = classifyHolding({ name: 'KODEX CD금리액티브(합성)', account: '연금저축', assetClass: '채권' }, {
+    resolveKr: () => '157450',
+  });
+  assert.deepEqual(r, { kind: 'KR', code: '157450', source: 'NH' });
+});
+
+test('classifyHolding: assetClass가 채권이 아니면 여전히 unmapped(오분류 방지)', () => {
+  const r = classifyHolding({ name: '알 수 없는 자산', account: '위탁', assetClass: '기타' }, {
+    resolveKr: () => null, resolveUs: () => null,
+  });
+  assert.equal(r.kind, 'unmapped');
 });
 
 test('recomputeValuation: 정상 — evalAmount·profitAmount·profitPct 재계산', () => {

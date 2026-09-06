@@ -54,29 +54,32 @@ import {
   hasKisCredentials, loadKisCredentials, getKisToken, getKrQuote, getUsQuote,
   isKrMarketOpen, isUsMarketOpen, KIS_RATE_LIMIT_CODE,
 } from '../lib/kis.mjs';
-import { hasNhplugCredentials, loadNhplugCredentials, getNhToken } from '../lib/nhplug.mjs';
+import { hasNhplugCredentials, loadNhplugCredentials, getNhToken, listNhAccounts } from '../lib/nhplug.mjs';
 import { extractNhPrice } from '../lib/nh-response-parse.mjs';
 import { getKrCurrentPrice } from '../lib/nhplug-krstock.mjs';
 import { getGbCurrentPrice } from '../lib/nhplug-gbstock.mjs';
+import { getBondBalance } from '../lib/nhplug-krbond.mjs';
+import { resolveNhAccountsByLabel } from '../lib/nh-accounts.mjs';
 import { fetchGoldClose } from '../lib/krx.mjs';
 import { fetchUsdKrwRate } from '../lib/fundamentals.mjs';
 import { fetchVipFundPrice } from '../lib/vip-fund.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
+import { canonName } from '../../src/lib/stockIdentity.js';
 
 // vipasset.co.kr opt2=C-Pe(클래스 코드)에 대응하는 Vault holding 정식명 — 이 이름과
 // 정확히 일치할 때만 FUND로 분류한다(오탐 방지, 다른 펀드가 추가돼도 자동으로 같은
 // 경로를 타지 않게).
 const VIP_FUND_NAME = 'VIP한국형가치투자증권자투자신탁(주식)-C-Pe';
 
-// 개별채권(회사채 등) — KRX 상장주식·ETF가 아니라 애초에 KIS/DART 종목코드가 없어
-// classifyHolding이 구조적으로 절대 못 푼다(오탐이 아니라 이 시장 자체의 한계).
-// 2026-08-22 오너 지적 — 삼척블루파워12(매달 고정쿠폰 118,985원 개별채권)가 매 실행마다
-// "매핑없음"으로 collectWarning을 타 텔레그램에 계속 알람이 갔다(job-alerts.mjs의 24h
-// 억제는 그 실행에서 나온 경고 "세트" 전체를 해시해서, 다른 경고가 같이 섞이면 매번
-// 새 시그니처가 돼 억제가 깨짐 — 근본적으로 "언젠가 풀릴 수도 있는 실패"가 아니라
-// "구조적으로 영원히 안 풀리는 것"을 매번 경고로 취급한 게 잘못). 이런 종목은 아예
-// NO_PRICE_SOURCE로 분류해 조용히 건너뛴다(콘솔 로그만 남기고 collectWarning 안 함).
-const NO_PRICE_SOURCE_NAMES = new Set(['삼척블루파워12']);
+// 개별채권(회사채 등, assetClass:"채권"인데 krStockCode(ETF/주식 마스터파일 조회)로
+// 안 풀리는 것들 — 삼척블루파워12가 실측 사례) — 2026-09-06 이전엔 KRX 상장주식·
+// ETF가 아니라 애초에 KIS/DART 종목코드가 없어 시세 조회가 구조적으로 불가능하다고
+// 보고 NO_PRICE_SOURCE_NAMES 하드코딩 목록으로 조용히 건너뛰었다. 그런데 오너 지적
+// (2026-09-06, "삼척블루파워12도 평가금액·평가손익이 반영되도록")으로 재조사한 결과
+// NH PLUG krbond 도메인(getBondBalance)이 이미 이 채권을 실측으로 조회 가능함을
+// 확인 — 그 잔고 응답 자체가 평가금액(eal_amt)·평가손익(eal_pls_amt)을 이미 계산해
+// 주므로, 시세를 따로 조회할 필요 없이 그 값을 그대로 가져와 반영한다(아래 BOND
+// 분기, 하드코딩 목록·NO_PRICE_SOURCE kind는 완전 폐기).
 
 loadEnv(); // KRX_API_KEY(금현물 조회용) — DART_API_KEY와 동일 관례
 
@@ -115,7 +118,6 @@ export function classifyHolding(holding, { resolveKr = krStockCode, resolveUs = 
   // 관리하다 보니 DART/KIS 종목마스터의 정식 명칭과 이름이 안 맞아 resolveKr(name)이
   // 항상 null로 떨어짐). 이런 경우까지 이름매칭에만 의존하면 시세가 영원히 안 갱신된다.
   if (/^\d{6}$/.test(holding.ticker ?? '')) return { kind: 'KR', code: holding.ticker, source: quoteSourceForAccount(holding.account) };
-  if (NO_PRICE_SOURCE_NAMES.has(holding.name)) return { kind: 'NO_PRICE_SOURCE' };
   const krCode = resolveKr(holding.name);
   if (krCode) return { kind: 'KR', code: krCode, source: quoteSourceForAccount(holding.account) };
   const ticker = resolveUs(holding.name);
@@ -128,6 +130,13 @@ export function classifyHolding(holding, { resolveKr = krStockCode, resolveUs = 
   }
   if (holding.account === '금현물') return { kind: 'GOLD' };
   if (holding.name === VIP_FUND_NAME) return { kind: 'FUND' };
+  // 직접채권(2026-09-06 추가) — resolveKr(ETF/주식 마스터파일)로 못 푼 "채권"
+  // assetClass는 직접채권으로 간주(krbond 배치조회로 평가금액을 가져온다, 아래
+  // main()의 bondValuationByKey 참고). assetClass 텍스트를 게이트로 안 쓴다는
+  // 이 함수의 기존 원칙과 배치되는 것 같지만, 이건 이미 krCode 해석이 실패한
+  // *다음*(즉 "주식·ETF는 아니다"가 확인된 뒤)의 최후 분기라 GOLD/FUND 판정과
+  // 같은 위치·같은 신뢰도다.
+  if (holding.assetClass === '채권') return { kind: 'BOND' };
   return { kind: 'unmapped', reason: '종목코드/티커 매핑 없음' };
 }
 
@@ -225,6 +234,11 @@ async function main() {
     const c = classifyHolding(f.parsed);
     return (c.kind === 'KR' || c.kind === 'US') && c.source === 'NH';
   });
+  // 채권(BOND, 2026-09-06 추가)은 krOpen/usOpen(주식시장 개장여부)과 무관하게 항상
+  // 시도한다 — 장내채권 잔고평가(getBondBalance)는 그날그날 채권시장 자체 스케줄로
+  // 갱신되는 별개 값이라 주식시장 개폐와 결부시킬 이유가 없다(krgold/FUND가 이미
+  // krOpen/usOpen과 무관하게 처리되는 것과 같은 원칙).
+  const hasBondTarget = files.some((f) => classifyHolding(f.parsed).kind === 'BOND');
 
   let kisToken = null, appkey = null, appsecret = null;
   if (hasKis && hasKisTarget && (krOpen || usOpen)) {
@@ -233,9 +247,39 @@ async function main() {
   }
 
   let nhToken = null;
-  if (hasNh && hasNhTarget && (krOpen || usOpen)) {
+  if (hasNh && (hasBondTarget || (hasNhTarget && (krOpen || usOpen)))) {
     const nhCreds = loadNhplugCredentials();
     nhToken = await getNhToken(nhCreds);
+  }
+
+  // 채권 잔고 배치조회(2026-09-06 추가) — getBondBalance가 계좌당 보유 채권 전부를
+  // 한 번에 반환(krgold의 getGoldBalance와 동일 패턴)하므로, 종목마다 개별 조회하지
+  // 않고 계좌 단위로 한 번만 부른 뒤 이름으로 매칭한다. 이 응답 자체에 평가금액
+  // (eal_amt)·평가손익(eal_pls_amt)이 이미 계산돼 있어(2026-09-06 라이브 확인, 삼척
+  // 블루파워12) 별도 현재가 조회가 필요 없다 — Vault의 qty는 "1만원 액면 좌수"
+  // 관례(예: 3000좌=3천만원 액면)라 eal_amt를 그 qty로 나눠 좌당 현재가를 역산하고
+  // 기존 recomputeValuation을 그대로 재사용한다(단위 환산만 여기서 하고 나머지 계산
+  // 공식은 안 바꿈).
+  const bondValuationByKey = new Map(); // `${account}|${canonName(name)}` → { bondCode, evalAmount, profitAmount, profitPct }
+  if (hasBondTarget && nhToken) {
+    const bondAccounts = [...new Set(files.filter((f) => classifyHolding(f.parsed).kind === 'BOND').map((f) => f.parsed.account))];
+    const accounts = await listNhAccounts({ token: nhToken });
+    const actNoByLabel = resolveNhAccountsByLabel(accounts, new Set(bondAccounts));
+    const todayYmd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date()).replace(/-/g, '');
+    for (const account of bondAccounts) {
+      const actNo = actNoByLabel.get(account);
+      if (!actNo) { collectWarning(`채권 잔고조회: ${account} 계좌를 NH 계좌목록에서 못 찾음`); continue; }
+      try {
+        const body = await getBondBalance({ token: nhToken, actNo, iqrDt: todayYmd });
+        for (const b of body.Output_1 ?? []) {
+          bondValuationByKey.set(`${account}|${canonName(b.iem_nm)}`, {
+            bondCode: b.iem_cd, evalAmount: Number(b.eal_amt), profitAmount: Number(b.eal_pls_amt),
+          });
+        }
+      } catch (e) {
+        collectWarning(`채권 잔고조회 실패(${account}): ${e.message}`);
+      }
+    }
   }
 
   // USD/KRW 환율 — 미국 "주식시장" 개장 여부(usOpen)·KIS 크리덴셜(hasKis)과 무관하게
@@ -257,22 +301,45 @@ async function main() {
     }
   }
 
-  let updated = 0, skipped = 0, failed = 0, unmapped = 0, noPriceSource = 0;
+  let updated = 0, skipped = 0, failed = 0, unmapped = 0;
   for (const f of files) {
     const h = f.parsed;
     const cls = classifyHolding(h);
 
-    // 구조적으로 영원히 시세를 못 가져오는 보유(개별채권 등) — collectWarning을 안 타서
-    // 텔레그램 알람이 안 간다. unmapped(언젠가 매핑을 추가하면 풀릴 수도 있는 진짜 갭)와
-    // 의미가 다르다 — 여기 걸린 건 "그럴 수도 있는" 게 아니라 "절대 안 풀리는" 것.
-    if (cls.kind === 'NO_PRICE_SOURCE') {
-      console.log(`   · ${h.name}: 시세 소스 없음(개별채권 등, 정상 — 알람 안 보냄)`);
-      noPriceSource++;
-      continue;
-    }
     if (cls.kind === 'unmapped') {
       collectWarning(`시세 갱신 제외: ${h.name} — ${cls.reason}`);
       unmapped++;
+      continue;
+    }
+
+    // 채권(2026-09-06 추가) — 배치 시작 시 미리 조회해둔 bondValuationByKey에서
+    // 이름으로 매칭(위 사전조회 블록 참고). 그 응답 자체가 평가금액·평가손익을
+    // 이미 계산해주므로 별도 curPrice 조회 없이, Vault qty("1만원 액면 좌수" 관례)
+    // 로 나눠 좌당 단가를 역산해 기존 recomputeValuation을 그대로 재사용한다.
+    if (cls.kind === 'BOND') {
+      const bondData = bondValuationByKey.get(`${h.account}|${canonName(h.name)}`);
+      if (!bondData) {
+        collectWarning(`채권 평가 실패: ${h.name} — NH 채권 잔고 응답에서 못 찾음(보유 확인 필요)`);
+        failed++;
+        continue;
+      }
+      const qty = Number(h.qty) || 0;
+      if (!qty) {
+        collectWarning(`채권 평가 실패: ${h.name} — Holdings qty가 0/결측이라 단가 역산 불가`);
+        failed++;
+        continue;
+      }
+      const curPrice = bondData.evalAmount / qty;
+      const valuation = recomputeValuation(h, curPrice);
+      console.log(`   · ${h.name}(BOND): 평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원(평가손익 ${Math.round(valuation.profitAmount).toLocaleString()}원)`);
+      let wroteOk = true;
+      if (!DRY_RUN) {
+        wroteOk = await patchFrontmatterFileSafely(f.filepath, {
+          ...valuation, bondCode: bondData.bondCode, updatedAt: new Date().toISOString(),
+        });
+        if (!wroteOk) console.log(`   ⚠️ ${h.name}: 갱신 직전 파일이 사라짐(전량청산 등과 경합) — 스킵`);
+      }
+      if (wroteOk) updated++; else skipped++;
       continue;
     }
     // 2026-09-02 이관 — source가 'KIS'(IRP 전용)면 hasKis, 'NH'(나머지 전부)면
@@ -370,7 +437,7 @@ async function main() {
   }
 
   console.log(
-    `\n✅ 시세 갱신 ${updated}건 · 장외/크리덴셜없음 스킵 ${skipped}건 · 조회실패 ${failed}건 · 매핑없음 ${unmapped}건 · 시세소스없음(정상) ${noPriceSource}건`
+    `\n✅ 시세 갱신 ${updated}건 · 장외/크리덴셜없음 스킵 ${skipped}건 · 조회실패 ${failed}건 · 매핑없음 ${unmapped}건`
     + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
   await flushWarnings('update-holdings-prices');

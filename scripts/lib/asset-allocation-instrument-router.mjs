@@ -56,6 +56,7 @@ export const INSTRUMENT_TYPE = {
   KR_STOCK: 'KR_STOCK',
   OVERSEAS_STOCK: 'OVERSEAS_STOCK',
   GOLD: 'GOLD',
+  KR_BOND: 'KR_BOND',
   UNSUPPORTED: 'UNSUPPORTED',
 };
 
@@ -97,6 +98,12 @@ export function buildHoldingsIndex({ holdingsDir = VAULT_PATHS.state.holdings } 
       // proposal.mjs의 해외주식 가용현금 계산 참고). 다른 소비처엔 영향 없음(기존
       // 필드는 그대로).
       qty: Number.isFinite(fm.qty) ? fm.qty : null,
+      // bondCode(2026-09-06 추가) — 직접채권(삼척블루파워12 등) 전용 NH krbond
+      // 종목코드. ticker와 일부러 분리한 필드: ticker는 krstock 도메인(6자리 KR
+      // 코드) 전용이라 채권 코드(예: "B150351F4", 9자리 영숫자)를 거기 섞으면 이
+      // 라우터가 krstock으로 잘못 라우팅해 엉뚱한 API 도메인으로 주문을 낼 위험이
+      // 있다. update-holdings-prices.mjs가 NH 채권 잔고조회로 채워둔다.
+      bondCode: fm.bondCode || null,
     };
     const existing = index.get(key);
     // 같은 이름이 서로 다른 계좌에 보유돼 있으면(예: 같은 ETF를 위탁·연금저축 양쪽에
@@ -167,14 +174,28 @@ export function classifyAssetAllocationInstrument({
       if (!iemCd) return { type: INSTRUMENT_TYPE.UNSUPPORTED, reason: `해외주식 티커 해석 실패(추측 금지): ${holding.name}` };
       return { type: INSTRUMENT_TYPE.OVERSEAS_STOCK, iemCd, nhAccountLabel: holding.account, resolvedName: holding.name };
     }
-    // 국내주식·리츠·배당주·TDF·채권(ETF)·금(ETF, 금현물 계좌 아님) 등 — 전부 krstock.
-    // 직접채권(삼척블루파워12 등)은 마스터파일에 없어 krStockCodeFn이 null을 반환
-    // → UNSUPPORTED로 자연히 떨어진다(추측 없음).
+    // 채권(2026-09-06 확장, 오너 지시 — "장내채권도 주문 넣을 수 있게") — ETF(예:
+    // KODEX CD금리액티브(합성))와 직접채권(삼척블루파워12 등) 두 갈래가 같은
+    // assetClass를 쓴다. ETF는 krStockCodeFn으로 정상 해석되니 먼저 시도하고,
+    // 실패하면 bondCode(update-holdings-prices.mjs가 NH krbond 잔고조회로 채워둠)로
+    // 직접채권 여부를 확인한다 — 이 순서를 바꾸면 ETF가 잘못 KR_BOND로 갈 위험이 있다.
+    if (holding.assetClass === '채권') {
+      const etfCode = holding.ticker || krStockCodeFn(holding.name, dartApiKey);
+      if (etfCode) return { type: INSTRUMENT_TYPE.KR_STOCK, iemCd: etfCode, nhAccountLabel: holding.account, resolvedName: holding.name };
+      if (holding.bondCode) {
+        return { type: INSTRUMENT_TYPE.KR_BOND, iemCd: holding.bondCode, nhAccountLabel: holding.account, resolvedName: holding.name };
+      }
+      return {
+        type: INSTRUMENT_TYPE.UNSUPPORTED,
+        reason: `직접채권으로 추정되나 종목코드 미확인(가격갱신 잡이 아직 못 채움) — 추측 금지: ${holding.name}`,
+      };
+    }
+    // 국내주식·리츠·배당주·TDF·금(ETF, 금현물 계좌 아님) 등 — 전부 krstock.
     const iemCd = holding.ticker || krStockCodeFn(holding.name, dartApiKey);
     if (!iemCd) {
       return {
         type: INSTRUMENT_TYPE.UNSUPPORTED,
-        reason: `국내 종목코드 해석 실패(직접채권 등 마스터파일 미등재 가능성) — 추측 금지: ${holding.name}`,
+        reason: `국내 종목코드 해석 실패(마스터파일 미등재) — 추측 금지: ${holding.name}`,
       };
     }
     return { type: INSTRUMENT_TYPE.KR_STOCK, iemCd, nhAccountLabel: holding.account, resolvedName: holding.name };

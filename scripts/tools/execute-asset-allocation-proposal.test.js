@@ -37,6 +37,10 @@ test('selectCashPool: GOLD → goldCash', () => {
   assert.equal(selectCashPool(INSTRUMENT_TYPE.GOLD, { krCash: 1, gbCash: 2, goldCash: 3 }), 3);
 });
 
+test('selectCashPool: KR_BOND → krCash(위탁 계좌 같은 KRW 예수금 풀 공유, 2026-09-06 추가)', () => {
+  assert.equal(selectCashPool(INSTRUMENT_TYPE.KR_BOND, { krCash: 1, gbCash: 2, goldCash: 3 }), 1);
+});
+
 test('selectCashPool: 알 수 없는 자산군은 throw(추측 안 함)', () => {
   assert.throws(() => selectCashPool('UNKNOWN', { krCash: 1, gbCash: 2, goldCash: 3 }));
 });
