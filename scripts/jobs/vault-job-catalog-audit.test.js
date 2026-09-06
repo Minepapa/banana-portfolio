@@ -74,11 +74,12 @@ function isDepartmentFacing(scriptPath) {
   return readFileSync(abs, 'utf8').includes('DEPARTMENT_LABEL');
 }
 
-// 부서별-텔레그램-보고.md 표에서 "**주기적**"이면서 보고시점에 "분기"·"매월"이 없는
-// (=매주 반복되는) 행의 스크립트 파일명만 뽑는다. 분기 단위 잡(rebalance-proposal·
+// 부서별-텔레그램-보고.md 표에서 "**주기적**"이면서 보고시점에 "분기"·"매월"·"매년"이
+// 없는(=매주 반복되는) 행의 스크립트 파일명만 뽑는다. 분기 단위 잡(rebalance-proposal·
 // quarterly-allocation-review)·월 단위 잡(pension-balance-reminder, 2026-09-04
-// 신설)은 weekly-schedule-summary.mjs가 "이번 주" 요약이라 설계상 의도적으로 빠지므로
-// 제외한다(그 잡 헤더 주석 참고).
+// 신설, monthly-macro-tilt-proposal, 2026-09-06 신설)·연 단위 잡(annual-instrument-
+// rescore, 2026-09-06 신설)은 weekly-schedule-summary.mjs가 "이번 주" 요약이라 설계상
+// 의도적으로 빠지므로 제외한다(그 잡 헤더 주석 참고).
 function listWeeklyPeriodicSenders(deptDoc) {
   const result = [];
   for (const row of deptDoc.split('\n')) {
@@ -86,7 +87,7 @@ function listWeeklyPeriodicSenders(deptDoc) {
     const cells = row.split('|').map((c) => c.trim());
     const senderCell = cells[1] ?? '';
     const timingCell = cells[3] ?? '';
-    if (timingCell.includes('분기') || timingCell.includes('매월')) continue;
+    if (timingCell.includes('분기') || timingCell.includes('매월') || timingCell.includes('매년')) continue;
     const m = senderCell.match(/`([a-zA-Z0-9_-]+\.mjs)`/);
     if (m) result.push(m[1]);
   }

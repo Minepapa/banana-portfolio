@@ -97,6 +97,61 @@ test('buildRebalanceProposalPrompt: 레거시 제외분이 없으면 경고 문�
   assert.doesNotMatch(prompt, /레거시 개별종목/);
 });
 
+test('buildRebalanceProposalPrompt: rankedUniverseByClass가 있으면 "데이터 기반 순위" 블록 렌더 + 자유선택 문구 대체', () => {
+  const holdings = makeHoldings(); // 금 자산군은 보유가 전혀 없음(부족, 양쪽 계좌 다 자격 있음)
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const facts = buildBreachFacts(holdings, gaps, totalEval);
+  const ranked = [
+    { name: '금ETF-A', composite: 82.3, axes: {}, dataGaps: [] },
+    { name: '금ETF-B', composite: 55.0, axes: {}, dataGaps: ['expenseRatio'] },
+  ];
+  const prompt = buildRebalanceProposalPrompt(facts, { 금: ranked });
+  assert.match(prompt, /데이터 기반 순위 중에서만 골라라/);
+  assert.match(prompt, /1\. 금ETF-A \(점수 82\.3\/100\)/);
+  assert.match(prompt, /2\. 금ETF-B \(점수 55\.0\/100, 데이터 부족축: expenseRatio\)/);
+});
+
+test('buildRebalanceProposalPrompt: rankedUniverseByClass 없으면 기존 "신규 ETF 제안 가능" 자유선택 문구 그대로(계좌별 블록엔 순위 안 나옴)', () => {
+  const holdings = makeHoldings();
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const facts = buildBreachFacts(holdings, gaps, totalEval);
+  const prompt = buildRebalanceProposalPrompt(facts);
+  assert.match(prompt, /신규 ETF 제안 가능/);
+  assert.doesNotMatch(prompt, /데이터 기반 순위 중에서만 골라라/); // 계좌별 블록엔 순위 렌더 안 됨(일반 지시 문구와는 별개)
+});
+
+test('validateRebalanceActions: 보유 후보 0건인 계좌의 매수 액션이 순위 목록 밖 이름이면 드롭(브랜드 지어내기 차단)', () => {
+  const holdings = makeHoldings();
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const breachFacts = buildBreachFacts(holdings, gaps, totalEval);
+  const rankedUniverseByClass = { 금: [{ name: '금ETF-A', composite: 80, axes: {}, dataGaps: [] }] };
+  const actions = [{ assetClass: '금', side: '매수', account: '위탁', instrumentName: '아무거나ETF', amountWon: 10000 }];
+  const { kept, dropped } = validateRebalanceActions(actions, { breachFacts, holdings, rankedUniverseByClass });
+  assert.equal(kept.length, 0);
+  assert.match(dropped[0].reason, /순위에 없는 이름/);
+});
+
+test('validateRebalanceActions: 보유 후보 0건인 계좌라도 순위 목록 안의 이름이면 통과', () => {
+  const holdings = makeHoldings();
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const breachFacts = buildBreachFacts(holdings, gaps, totalEval);
+  const rankedUniverseByClass = { 금: [{ name: '금ETF-A', composite: 80, axes: {}, dataGaps: [] }] };
+  const actions = [{ assetClass: '금', side: '매수', account: '위탁', instrumentName: '금ETF-A', amountWon: 10000 }];
+  const { kept, dropped } = validateRebalanceActions(actions, { breachFacts, holdings, rankedUniverseByClass });
+  assert.equal(dropped.length, 0);
+  assert.equal(kept.length, 1);
+});
+
+test('validateRebalanceActions: rankedUniverseByClass 생략하면 기존처럼 어떤 신규 이름도 통과(하위호환)', () => {
+  const holdings = makeHoldings();
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const breachFacts = buildBreachFacts(holdings, gaps, totalEval);
+  const actions = [{ assetClass: '금', side: '매수', account: '위탁', instrumentName: '아무거나ETF', amountWon: 10000 }];
+  const { kept, dropped } = validateRebalanceActions(actions, { breachFacts, holdings });
+  assert.equal(dropped.length, 0);
+  assert.equal(kept.length, 1);
+});
+
 test('validateRebalanceActions: 방향 불일치는 드롭', () => {
   const holdings = makeHoldings();
   const { gaps, totalEval } = computeRebalanceGaps(holdings);

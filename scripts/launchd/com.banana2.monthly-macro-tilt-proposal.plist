@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.monthly-macro-tilt-proposal</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>monthly-macro-tilt-proposal</string>
+  </array>
+  <!-- 매월 마지막 3일 16:35 KST — launchd는 "그 달의 마지막 날에서 N일 전"을 직접
+       표현 못 해(28~31일로 달마다 다름) 26~31일을 전부 걸어두고, 잡 내부
+       (shouldRunThisMonth)가 그 달의 실제 마지막 3일인지 + 평일인지 + 이번 달 이미
+       실행됐는지(State/MacroTiltProposal 마커)를 판정해 진짜 해당하는 날에만 돈다
+       (26~31 전체 구간은 daysInMonth∈{28,29,30,31} 어떤 경우든 "마지막 3일"이 반드시
+       이 안에 들어오도록 계산한 범위 — 28일짜리 2월이면 26~28만, 31일짜리 달이면
+       29~31만 실제로 실행됨). rebalance-proposal(16:32)과 같은 늦은 오후 시간대로
+       잡아 그날 holdings 갱신(update-holdings-prices 등, 16:0x대)이 끝난 뒤 돈다. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Day</key><integer>26</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>35</integer></dict>
+    <dict><key>Day</key><integer>27</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>35</integer></dict>
+    <dict><key>Day</key><integer>28</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>35</integer></dict>
+    <dict><key>Day</key><integer>29</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>35</integer></dict>
+    <dict><key>Day</key><integer>30</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>35</integer></dict>
+    <dict><key>Day</key><integer>31</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>35</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/monthly-macro-tilt-proposal.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/monthly-macro-tilt-proposal.log</string>
+</dict>
+</plist>

@@ -28,9 +28,11 @@ const DRY_RUN = process.argv.includes('--dry-run');
 
 // ⚠️ 한국 국고채 스프레드(ECOS)는 API 키 미신청 — 오너 확정(2026-08-05) "나머지 4개
 // 신호부터". 미국 금리차(^TNX-^IRX)·DXY(DX-Y.NYB)·VIX·유가(CL=F)·Faber용 KOSPI/SP500만.
-const TICKERS = { KOSPI: '^KS11', SP500: '^GSPC', TNX: '^TNX', IRX: '^IRX', DXY: 'DX-Y.NYB', VIX: '^VIX', WTI: 'CL=F' };
+export const TICKERS = { KOSPI: '^KS11', SP500: '^GSPC', TNX: '^TNX', IRX: '^IRX', DXY: 'DX-Y.NYB', VIX: '^VIX', WTI: 'CL=F' };
 
-function fetchCloses() {
+// export(2026-09-06, "자산분배 트랙 핵심 로직 설계" §4) — monthly-macro-tilt-
+// proposal.mjs가 같은 yfinance 조회를 새로 베끼지 않고 이 함수를 그대로 재사용한다.
+export function fetchCloses() {
   const py = new URL('../lib/yf-macro.py', import.meta.url).pathname;
   const r = spawnSync('python3', [py, ...Object.values(TICKERS)], { encoding: 'utf8', timeout: 120000 });
   if (r.status !== 0) throw new Error(`yfinance 거시 조회 실패: ${(r.stderr || '').slice(-200)}`);
@@ -39,22 +41,27 @@ function fetchCloses() {
 
 const FABER_STATE_FILE = 'faber-state.md';
 
-function readPreviousFaberState() {
-  const filepath = join(VAULT_PATHS.state.macroOverlay, FABER_STATE_FILE);
+// stateDir 파라미터화(2026-09-06, §4) — 기본값은 기존 daily-asset-allocation-check.mjs가
+// 매 평일 갱신하는 공유 경로(VAULT_PATHS.state.macroOverlay) 그대로라 이 CLI 자체의
+// 동작은 안 바뀐다. monthly-macro-tilt-proposal.mjs는 자기 전용 디렉터리
+// (VAULT_PATHS.state.macroTiltProposal)를 넘겨 완전히 독립된 크로스 판정 상태를 갖는다
+// — 안 그러면 "직전 확인"이 매일 도는 일일 점검 기준이 돼버려 월간 크로스 감지 의미가
+// 깨진다(§4 설계 근거).
+export function readPreviousFaberState(stateDir = VAULT_PATHS.state.macroOverlay) {
+  const filepath = join(stateDir, FABER_STATE_FILE);
   if (!existsSync(filepath)) return { domestic: null, foreign: null };
   const fm = parseFrontmatter(readFileSync(filepath, 'utf8'));
   return { domestic: fm.domesticAboveMA ?? null, foreign: fm.foreignAboveMA ?? null };
 }
 
-function writeFaberState(domesticAboveMA, foreignAboveMA) {
-  const dir = VAULT_PATHS.state.macroOverlay;
-  mkdirSync(dir, { recursive: true });
+export function writeFaberState(domesticAboveMA, foreignAboveMA, stateDir = VAULT_PATHS.state.macroOverlay) {
+  mkdirSync(stateDir, { recursive: true });
   const content = buildFrontmatter({
     type: 'macro-overlay-faber-state',
     domesticAboveMA, foreignAboveMA,
     checkedAt: new Date().toISOString(),
   });
-  writeAtomic(join(dir, FABER_STATE_FILE), content);
+  writeAtomic(join(stateDir, FABER_STATE_FILE), content);
 }
 
 // 사람이 읽는 보고 문자열 조립 — main()과 morning-briefing.mjs(아침 브리핑, 2026-08-23

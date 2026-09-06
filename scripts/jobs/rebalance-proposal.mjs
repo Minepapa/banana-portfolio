@@ -65,7 +65,9 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { computeRebalanceGaps, normalizeAccount, isLegacyIndividualStock } from '../lib/rebalance-gap.mjs';
+import { CAP_FRACTION, applyCappedAllocation, resolveAllocationPricing } from '../lib/allocation-proposal-shared.mjs';
 import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/cash-allocation-candidates.mjs';
+import { rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
@@ -78,7 +80,6 @@ const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
 const DEPARTMENT_LABEL = '투자전략실 Athena';
 const IN_SCOPE_ACCOUNTS = ['위탁', '연금저축'];
-const CAP_FRACTION = 0.5; // 갭의 최대 50%만 한 번에 제안(분할매수 하드 캡)
 const STATE_DIR = join(VAULT_PATHS.root, 'State', 'RebalanceProposal');
 const STATE_FILE = join(STATE_DIR, 'last-quarter.md');
 
@@ -123,9 +124,22 @@ export function buildBreachFacts(holdings, gaps, totalEval) {
   });
 }
 
+// 스코어링된 후보(scripts/lib/instrument-scoring.mjs computeInstrumentScore 반환 모양)
+// 상위 N개를 프롬프트용 텍스트 블록으로 렌더. 순수함수.
+function formatRankedUniverse(ranked, topN = 3) {
+  return ranked.slice(0, topN).map((r, i) => {
+    const score = r.composite != null ? r.composite.toFixed(1) : '?';
+    const gapNote = r.dataGaps.length ? `, 데이터 부족축: ${r.dataGaps.join('·')}` : '';
+    return `        ${i + 1}. ${r.name} (점수 ${score}/100${gapNote})`;
+  }).join('\n');
+}
+
 // 순수함수 — Athena에게 줄 프롬프트. 이탈 사실·후보만 주고 "구체적으로 뭘 얼마나
 // 팔고 살지"만 판단시킨다(rebalance-gap.mjs 헤더 주석의 경계와 동일).
-export function buildRebalanceProposalPrompt(breachFacts) {
+// rankedUniverseByClass: { [assetClass]: rankInstruments 반환 배열 } — 그 자산군에
+// "보유 후보가 전혀 없는 계좌"가 있을 때만 채워짐(§2, 2026-09-06 신설). 신규 종목을
+// Athena가 자유롭게 지어내지 못하게, 이 목록이 있으면 그 안에서만 고르도록 지시한다.
+export function buildRebalanceProposalPrompt(breachFacts, rankedUniverseByClass = {}) {
   const sections = breachFacts.map((b) => {
     const header = `[${b.assetClass}] 목표 ${b.targetPct}% / 현재 ${b.currentPct.toFixed(2)}% — ${b.direction}(갭 약 ${Math.abs(b.gapWon).toLocaleString('ko-KR')}원)`;
     if (b.direction === '초과') {
@@ -137,8 +151,12 @@ export function buildRebalanceProposalPrompt(breachFacts) {
         : '';
       return `${header}\n  매도 후보(실보유):\n${lines}${legacyNote}`;
     }
+    const ranked = rankedUniverseByClass[b.assetClass];
     const accLines = Object.entries(b.buyCandidatesByAccount).map(([acc, insts]) => {
-      if (!insts.length) return `    [${acc}] 현재 보유 없음 — 신규 ETF 제안 가능(가격 미확인, 아래 "신규 종목 선정 기준" 참고)`;
+      if (!insts.length) {
+        if (ranked && ranked.length) return `    [${acc}] 현재 보유 없음 — 아래 데이터 기반 순위 중에서만 골라라:\n${formatRankedUniverse(ranked)}`;
+        return `    [${acc}] 현재 보유 없음 — 신규 ETF 제안 가능(가격 미확인, 아래 "신규 종목 선정 기준" 참고)`;
+      }
       const lines = insts.map((h) => `      - ${h.name}${h.ticker ? `(${h.ticker})` : ''} 현재가 ${h.curPrice ?? '데이터 부족'}원`).join('\n');
       return `    [${acc}]\n${lines}`;
     }).join('\n');
@@ -163,12 +181,14 @@ ${sections}
   또 고르지 마라(같은 계좌·자산군에 매번 다른 ETF를 새로 제안하면 "같은 안건"으로
   인식이 안 돼 승인 대기 목록에 중복으로 쌓인다, 2026-08-29 오너 지적으로 실제로
   발생한 문제).
-- **신규 종목 선정 기준(그 계좌에 보유 후보가 전혀 없을 때만)**: 보수율(총보수)·
-  유동성(거래대금·괴리율)·추적오차를 고려해 이 자산군을 대표할 브랜드 하나를 판단해
-  골라라 — "아무 ETF나" 임의로 짓지 말 것. 이후에도 같은 계좌·자산군에 다시 제안할
-  일이 생기면, 이번에 고른 이름과 일관되게 유지해라(매번 다른 브랜드를 새로 짓지
-  말 것). 단, "달러" 자산군처럼 원래 여러 상품에 나눠 담으라는 지시가 있으면 그
-  지시가 우선한다(위 문단 참고).
+- **신규 종목 선정 기준(그 계좌에 보유 후보가 전혀 없을 때만)**: "데이터 기반 순위"가
+  제시된 자산군은 **반드시 그 목록 안에서만** 골라라 — 스스로 다른 브랜드를 지어내지
+  마라(2026-09-06부터 이 목록 밖 이름은 시스템이 자동으로 드롭한다). 순위가 제시되지
+  않은 자산군(아직 후보 데이터가 없음)은 기존대로 보수율(총보수)·유동성(거래대금·
+  괴리율)·추적오차를 고려해 판단해라. 이후에도 같은 계좌·자산군에 다시 제안할 일이
+  생기면, 이번에 고른 이름과 일관되게 유지해라(매번 다른 브랜드를 새로 짓지 말 것).
+  단, "달러" 자산군처럼 원래 여러 상품에 나눠 담으라는 지시가 있으면 그 지시가
+  우선한다(위 문단 참고).
 - side는 그 자산군의 방향과 정확히 일치해야 한다("초과"면 "매도"만, "부족"이면 "매수"만).
 - reasoning은 네(아테나) 성격대로 — 왜 이 계좌·종목·타이밍인지 1~2문장, Frank에게
   텔레그램으로 그대로 전달된다.
@@ -186,57 +206,64 @@ ${sections}
 
 // 순수함수 — LLM 응답 검증(new-cash-allocation.mjs validateAllocations와 동일 철학:
 // 드롭이지 throw 아님, 부분 오염이 전체를 막지 않음) + 분할매수 하드 캡.
-export function validateRebalanceActions(actions, { breachFacts, holdings }) {
+// rankedUniverseByClass가 있으면(buildRebalanceProposalPrompt와 동일 데이터) "그 계좌에
+// 보유 후보가 전혀 없던" 매수 액션의 instrumentName이 그 순위 목록 밖이면 드롭한다
+// (2026-09-06 신설 — Athena가 순위 목록을 무시하고 브랜드를 지어내도 물리적으로
+// 막히게, §2 "어느 쪽에도 없는 이름은 드롭" 설계). 순위 목록이 아직 없는 자산군(오너가
+// 유니버스를 안 채웠거나 계좌에 이미 보유 후보가 있던 경우)은 이 게이트가 적용 안 됨 —
+// 기존처럼 자유 이름을 허용(추정 데이터로 막지 않음).
+export function validateRebalanceActions(actions, { breachFacts, holdings, rankedUniverseByClass = {} }) {
   const breachByClass = Object.fromEntries(breachFacts.map((b) => [b.assetClass, b]));
-  const remainingCap = Object.fromEntries(breachFacts.map((b) => [b.assetClass, Math.abs(b.gapWon) * CAP_FRACTION]));
-  const kept = [], dropped = [];
-  for (const a of actions ?? []) {
-    const assetClass = String(a?.assetClass ?? '').trim();
-    const side = String(a?.side ?? '').trim();
-    const account = String(a?.account ?? '').trim();
-    const instrumentName = String(a?.instrumentName ?? '').trim();
-    let amountWon = Number(a?.amountWon);
+  const capBudget = Object.fromEntries(breachFacts.map((b) => [b.assetClass, Math.abs(b.gapWon) * CAP_FRACTION]));
+  return applyCappedAllocation(actions, {
+    capBudget,
+    capLabel: '갭의 50%',
+    validateItem: (a) => {
+      const assetClass = String(a?.assetClass ?? '').trim();
+      const side = String(a?.side ?? '').trim();
+      const account = String(a?.account ?? '').trim();
+      const instrumentName = String(a?.instrumentName ?? '').trim();
+      let amountWon = Number(a?.amountWon);
 
-    const breach = breachByClass[assetClass];
-    if (!breach) { dropped.push({ a, reason: `이탈 집합 밖 자산군: ${assetClass}` }); continue; }
-    const expectedSide = breach.direction === '초과' ? '매도' : '매수';
-    if (side !== expectedSide) { dropped.push({ a, reason: `방향 불일치(${assetClass}은 "${expectedSide}"만 가능)` }); continue; }
-    if (!IN_SCOPE_ACCOUNTS.includes(account)) { dropped.push({ a, reason: `부적격 계좌: ${account}` }); continue; }
-    if (!instrumentName) { dropped.push({ a, reason: '종목명 없음' }); continue; }
-    if (!Number.isFinite(amountWon) || amountWon <= 0) { dropped.push({ a, reason: '금액 값 이상' }); continue; }
+      const breach = breachByClass[assetClass];
+      if (!breach) return { ok: false, reason: `이탈 집합 밖 자산군: ${assetClass}` };
+      const expectedSide = breach.direction === '초과' ? '매도' : '매수';
+      if (side !== expectedSide) return { ok: false, reason: `방향 불일치(${assetClass}은 "${expectedSide}"만 가능)` };
+      if (!IN_SCOPE_ACCOUNTS.includes(account)) return { ok: false, reason: `부적격 계좌: ${account}` };
+      if (!instrumentName) return { ok: false, reason: '종목명 없음' };
+      if (!Number.isFinite(amountWon) || amountWon <= 0) return { ok: false, reason: '금액 값 이상' };
 
-    if (side === '매수' && !ACCOUNT_ELIGIBLE_ASSET_CLASSES[account]?.includes(assetClass)) {
-      dropped.push({ a, reason: `${account} 계좌가 담을 수 없는 자산군: ${assetClass}` }); continue;
-    }
-    let heldEval = null;
-    if (side === '매도') {
-      const held = holdings.find((h) => normalizeAccount(h.account) === account && h.assetClass === assetClass && h.name === instrumentName);
-      if (!held) { dropped.push({ a, reason: `실보유 없음(매도 불가): [${account}] ${instrumentName}` }); continue; }
-      heldEval = held.evalAmount ?? 0;
-      if (amountWon > heldEval) amountWon = heldEval; // 보유액 초과 매도 방지
-      if (heldEval <= 0) { dropped.push({ a, reason: `보유평가액 0 이하(매도 불가): [${account}] ${instrumentName}` }); continue; }
-    }
+      if (side === '매수' && !ACCOUNT_ELIGIBLE_ASSET_CLASSES[account]?.includes(assetClass)) {
+        return { ok: false, reason: `${account} 계좌가 담을 수 없는 자산군: ${assetClass}` };
+      }
+      if (side === '매수') {
+        const existingCandidates = breach.buyCandidatesByAccount?.[account] ?? [];
+        const ranked = rankedUniverseByClass[assetClass];
+        if (existingCandidates.length === 0 && ranked && ranked.length) {
+          const allowedNames = new Set(ranked.map((r) => r.name));
+          if (!allowedNames.has(instrumentName)) {
+            return { ok: false, reason: `신규 종목 후보 목록 밖(데이터 기반 순위에 없는 이름): [${account}] ${instrumentName}` };
+          }
+        }
+      }
+      if (side === '매도') {
+        const held = holdings.find((h) => normalizeAccount(h.account) === normalizeAccount(account) && h.assetClass === assetClass && h.name === instrumentName);
+        if (!held) return { ok: false, reason: `실보유 없음(매도 불가): [${account}] ${instrumentName}` };
+        const heldEval = held.evalAmount ?? 0;
+        if (heldEval <= 0) return { ok: false, reason: `보유평가액 0 이하(매도 불가): [${account}] ${instrumentName}` };
+        if (amountWon > heldEval) amountWon = heldEval; // 보유액 초과 매도 방지
+      }
 
-    const remaining = remainingCap[assetClass] ?? 0;
-    if (remaining <= 0) { dropped.push({ a, reason: `분할매수 캡(갭의 ${CAP_FRACTION * 100}%) 이미 소진: ${assetClass}` }); continue; }
-    if (amountWon > remaining) amountWon = remaining; // 초과분은 드롭이 아니라 캡까지 축소
-    remainingCap[assetClass] = remaining - amountWon;
-
-    kept.push({ assetClass, side, account, instrumentName, amountWon, reasoning: String(a?.reasoning ?? '') });
-  }
-  return { kept, dropped };
+      return { ok: true, key: assetClass, amountWon, normalized: { assetClass, side, account, instrumentName, reasoning: String(a?.reasoning ?? '') } };
+    },
+  });
 }
 
 // 순수함수 — 확정된 action의 실제 보유(가격·수량) 조회해 quantity·proposedPrice 산출.
 // new-cash-allocation.mjs resolveInstrumentPricing과 동일 철학(신규 매수 후보는
 // quantity/proposedPrice null → order-gate가 "적용 대상 아님"으로 안전 처리).
 export function resolveRebalanceInstrumentPricing(action, holdings) {
-  const match = holdings.find((h) => normalizeAccount(h.account) === action.account && h.assetClass === action.assetClass && h.name === action.instrumentName);
-  if (!match || !Number.isFinite(match.curPrice) || match.curPrice <= 0) {
-    return { assetKey: action.instrumentName, ticker: '', quantity: null, proposedPrice: null };
-  }
-  const quantity = Math.floor(action.amountWon / match.curPrice);
-  return { assetKey: match.ticker || match.name, ticker: match.ticker || '', quantity: quantity > 0 ? quantity : null, proposedPrice: match.curPrice };
+  return resolveAllocationPricing(holdings, { account: action.account, assetClass: action.assetClass, instrumentName: action.instrumentName, amountWon: action.amountWon });
 }
 
 function readLastQuarter() {
@@ -299,13 +326,26 @@ async function main() {
 
   console.log(`  이탈 자산군 ${breachFacts.length}개: ${breachFacts.map((b) => `${b.assetClass}(${b.direction})`).join(', ')}`);
 
-  const prompt = buildRebalanceProposalPrompt(breachFacts);
+  // "그 계좌에 보유 후보가 전혀 없는" 부족 자산군만 순위 계산(불필요한 KRX 조회 방지) —
+  // 자산군별로 한 번만(계좌가 여러 개라도 순위는 자산군 단위로 공유). ASSET_CLASS_ETF_
+  // UNIVERSE가 비어있으면(오너 미확인) rankAssetClassUniverse가 즉시 빈 배열 반환(네트워크
+  // 호출 없음) — §2, 2026-09-06 신설.
+  const rankedUniverseByClass = {};
+  for (const b of breachFacts) {
+    if (b.direction !== '부족') continue;
+    const hasEmptyAccount = Object.values(b.buyCandidatesByAccount).some((insts) => !insts.length);
+    if (!hasEmptyAccount) continue;
+    const ranked = await rankAssetClassUniverse(b.assetClass);
+    if (ranked.length) rankedUniverseByClass[b.assetClass] = ranked;
+  }
+
+  const prompt = buildRebalanceProposalPrompt(breachFacts, rankedUniverseByClass);
   if (DRY_RUN) { console.log(`\n┌─── 프롬프트 ───┐\n${prompt}\n└──────────────────┘`); return; }
 
   let actions;
   try {
     const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt }));
-    const { kept, dropped } = validateRebalanceActions(r.actions, { breachFacts, holdings });
+    const { kept, dropped } = validateRebalanceActions(r.actions, { breachFacts, holdings, rankedUniverseByClass });
     dropped.forEach((d) => console.log(`  ⚠️ 액션 드롭: ${d.reason}`));
     actions = kept;
   } catch (e) {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeCurrentAllocation, checkBand, computeRebalanceGaps, TARGET_ALLOCATION, LEGACY_INDIVIDUAL_STOCKS, isLegacyIndividualStock } from './rebalance-gap.mjs';
+import { computeCurrentAllocation, checkBand, computeRebalanceGaps, computeBandEdgeDistance, TARGET_ALLOCATION, LEGACY_INDIVIDUAL_STOCKS, isLegacyIndividualStock } from './rebalance-gap.mjs';
 
 test('TARGET_ALLOCATION: 5개 자산군 합이 정확히 100%(확정 정본, 2026-08-23 배당주·리츠→달러 재조정)', () => {
   const sum = Object.values(TARGET_ALLOCATION).reduce((s, v) => s + v, 0);
@@ -116,6 +116,46 @@ test('checkBand: 목표 30%(국내·해외주식)는 절대 5%p가 상대 25%(=7
   const r = checkBand(30, 35.2); // +5.2%p, 상대 17.3% → 절대만 이탈
   assert.equal(r.breached, true);
   assert.equal(r.breachType, '절대');
+});
+
+test('computeBandEdgeDistance: 목표 20%(채권) — 밴드 폭은 절대 5%p(=상대 25%와 동일 지점)', () => {
+  const r = computeBandEdgeDistance(20, 20);
+  assert.equal(r.edgeAbsDelta, 5);
+  assert.equal(r.currentAbsDelta, 0);
+  assert.equal(r.room, 5); // 정중앙 — 밴드 폭 전체가 여유
+});
+
+test('computeBandEdgeDistance: 목표 10%(금) — 상대 25%(2.5%p)가 절대 5%p보다 좁아 그쪽이 밴드 폭', () => {
+  const r = computeBandEdgeDistance(10, 10);
+  assert.equal(r.edgeAbsDelta, 2.5);
+});
+
+test('computeBandEdgeDistance: 목표 30%(주식) — 절대 5%p가 상대 25%(7.5%p)보다 좁아 그쪽이 밴드 폭', () => {
+  const r = computeBandEdgeDistance(30, 30);
+  assert.equal(r.edgeAbsDelta, 5);
+});
+
+test('computeBandEdgeDistance: 아직 안 터졌으면 room > 0(밴드 안쪽 여유폭)', () => {
+  const r = computeBandEdgeDistance(20, 22); // +2%p, 밴드폭 5%p → 여유 3%p
+  assert.equal(r.currentAbsDelta, 2);
+  assert.equal(r.room, 3);
+});
+
+test('computeBandEdgeDistance: 이미 이탈했으면(밴드 폭 초과) room <= 0 — 분기 리밸런싱 소관', () => {
+  const r = computeBandEdgeDistance(20, 26); // +6%p, 밴드폭 5%p 초과
+  assert.ok(r.room <= 0);
+});
+
+test('computeBandEdgeDistance: 부호 있는 currentAbsDelta — 미달(음수) 방향도 동일하게 처리', () => {
+  const r = computeBandEdgeDistance(30, 27); // -3%p, 밴드폭 5%p(절대쪽) → 여유 2%p
+  assert.equal(r.currentAbsDelta, -3);
+  assert.equal(r.room, 2);
+});
+
+test('computeBandEdgeDistance: checkBand의 breached 경계와 room=0 지점이 정확히 일치', () => {
+  const edge = computeBandEdgeDistance(20, 25); // 정확히 밴드 경계(+5%p)
+  assert.equal(edge.room, 0);
+  assert.equal(checkBand(20, 25).breached, true); // 그 경계에서 checkBand는 이미 이탈로 판정
 });
 
 test('checkBand: 부족 방향(현재가 목표보다 낮음)도 동일하게 판정', () => {

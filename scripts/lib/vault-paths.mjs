@@ -110,6 +110,13 @@ export const VAULT_PATHS = {
     // KST 달력일 하나당 계산 1회만 — 같은 날 여러 무인 잡(Themis·weekly-report·
     // quarterly-review)이 각자 독립 호출하다 서로 다른 수치를 내던 사고 방지.
     macroIndicators: join(VAULT_ROOT, 'State', 'MacroIndicators', 'MacroIndicators.md'),
+    // monthly-macro-tilt-proposal.mjs 전용 Faber 크로스 상태(2026-09-06 신설, "자산분배
+    // 트랙 핵심 로직 설계" §4) — daily-asset-allocation-check.mjs가 매 평일 갱신하는
+    // State/MacroOverlay(macroOverlay 키)와 의도적으로 분리된 폴더. 같은 파일을 공유하면
+    // "직전 확인"이 매일 도는 일일 점검 기준이 돼버려 이 잡의 월간 크로스 판정이 무의미
+    // 해진다 — macro-overlay-facts.mjs readPreviousFaberState/writeFaberState의
+    // stateDir 파라미터로 이 경로를 넘겨 쓴다.
+    macroTiltProposal: join(VAULT_ROOT, 'State', 'MacroTiltProposal'),
   },
   // Log/는 대부분 인터랙티브 세션이 Write 도구로 직접 쓰는 자유서술 기록이라 지금까지
   // VAULT_PATHS에 없었다(코드가 안 건드림) — telegramSession만 예외로 Node 잡

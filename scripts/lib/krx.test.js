@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ymd, fetchKrx, fetchTradingDaySeries, fetchIndexCloses, fetchGoldClose } from './krx.mjs';
+import { ymd, fetchKrx, fetchTradingDaySeries, fetchIndexCloses, fetchGoldClose, fetchEtfSeries } from './krx.mjs';
 
 test('ymd: YYYYMMDD 포맷(월·일 0패딩)', () => {
   assert.equal(ymd(new Date(2026, 0, 5)), '20260105');
@@ -106,6 +106,44 @@ test('fetchIndexCloses: 지수명 정확매칭 + 빈 문자열(값없음) 스킵
   });
   const closes = await fetchIndexCloses('KOSPI', '코스피', 2, { apiKey: 'K', fetchImpl, delayMs: 0, startDate: new Date(2026, 7, 19) });
   assert.deepEqual(closes, [2500.55, 2500.55]); // 두 거래일 모두 같은 mock 응답
+});
+
+test('fetchEtfSeries: 종목명 정확매칭 + NAV·거래대금·추적지수 필드 파싱(2026-09-06 실측 필드명)', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
+      OutBlock_1: [
+        { ISU_NM: 'TIGER 200', TDD_CLSPRC: '30000', NAV: '30005.10', ACC_TRDVAL: '1000000', IDX_IND_NM: '코스피 200', OBJ_STKPRC_IDX: '350.10' },
+        { ISU_NM: 'KODEX 200', TDD_CLSPRC: '105720', NAV: '105725.30', ACC_TRDVAL: '2216831099306', IDX_IND_NM: '코스피 200', OBJ_STKPRC_IDX: '1051.52' },
+      ],
+    }),
+  });
+  const series = await fetchEtfSeries('TIGER 200', 2, { apiKey: 'K', fetchImpl, delayMs: 0, startDate: new Date(2026, 7, 19) });
+  assert.equal(series.length, 2);
+  assert.deepEqual(series[0], { basDd: series[0].basDd, close: 30000, nav: 30005.10, accTrdVal: 1000000, idxClose: 350.10, idxName: '코스피 200' });
+});
+
+test('fetchEtfSeries: 종가 필드가 빈 문자열(값없음)이면 그 거래일 스킵', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ OutBlock_1: [{ ISU_NM: 'TIGER 200', TDD_CLSPRC: '', NAV: '', ACC_TRDVAL: '', IDX_IND_NM: '', OBJ_STKPRC_IDX: '' }] }),
+  });
+  const series = await fetchEtfSeries('TIGER 200', 2, { apiKey: 'K', fetchImpl, delayMs: 0, startDate: new Date(2026, 7, 19), maxScanDays: 3 });
+  assert.equal(series.length, 0);
+});
+
+test('fetchEtfSeries: 종목이 그날 응답에 없으면(매칭 실패) 스킵, NAV 없어도 close만 있으면 포함', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ OutBlock_1: [{ ISU_NM: '다른ETF', TDD_CLSPRC: '10000', NAV: '', ACC_TRDVAL: '', IDX_IND_NM: '', OBJ_STKPRC_IDX: '' }] }),
+  });
+  const series = await fetchEtfSeries('다른ETF', 1, { apiKey: 'K', fetchImpl, delayMs: 0, startDate: new Date(2026, 7, 19) });
+  assert.equal(series.length, 1);
+  assert.equal(series[0].nav, null);
+  assert.equal(series[0].close, 10000);
 });
 
 test('fetchGoldClose: 정상 — "금 99.99_1kg" 종가만 정확매칭(미니금 등 다른 상품 배제)', async () => {

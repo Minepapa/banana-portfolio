@@ -198,6 +198,18 @@ export const EXPECTED_INTERVALS_MS = {
   // pension-balance-reminder(2026-09-04 신설) — 매월 22일, rebalance-proposal(분기,
   // 100일)과 동일 원칙으로 달 길이(28~31일) 편차를 흡수하는 여유(35일)를 둔다.
   'pension-balance-reminder': 35 * 24 * 60 * 60 * 1000,
+  // monthly-macro-tilt-proposal(2026-09-06 신설, "자산분배 트랙 핵심 로직 설계" §4) —
+  // launchd는 매월 26~31일 6일 연속 걸어두지만(달마다 실제 마지막 3일이 어디인지
+  // launchd가 직접 표현 못 해 넉넉히 잡음) 잡 내부(shouldRunThisMonth) dedup으로 실제
+  // 판단·발송은 월 1회뿐 — pension-balance-reminder와 동일 원칙(35일)을 그대로 적용.
+  'monthly-macro-tilt-proposal': 35 * 24 * 60 * 60 * 1000,
+  // annual-instrument-rescore(2026-09-06 신설, §3) — quarterly-allocation-review와
+  // 완전히 같은 구조(1월 1~3일 launchd 3일 연속, 내부 dedup으로 연 1회)를 연 단위로
+  // 늘린 것. 실제 최대 공백은 "올해 실행일→내년 실행일" 약 363~368일(요일 정렬에 따라
+  // ±2~3일 편차) — quarterly가 실제공백(92일)에 준 여유 비율(등록값/실공백≈1.09)을
+  // 그대로 적용해 400일로 등록(×2 알람 문턱=800일, 연 1회 잡이 두 해 연속 완전히
+  // 죽어야만 알람 — 이 cadence 자체의 한계이지 과도한 관대함이 아님).
+  'annual-instrument-rescore': 400 * 24 * 60 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 

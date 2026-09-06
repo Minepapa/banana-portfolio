@@ -33,6 +33,22 @@ test('buildCashAllocationPrompt: 언더웨이트 후보 없으면 안내 문구'
   assert.match(prompt, /언더웨이트 없음/);
 });
 
+test('buildCashAllocationPrompt: rankedUniverseByClass가 있으면 "데이터 기반 순위" 블록 렌더', () => {
+  const prompt = buildCashAllocationPrompt({
+    account: '위탁', availableCash: 500_000, rankedGaps: [],
+    candidatesByClass: { 금: [] },
+    rankedUniverseByClass: { 금: [{ name: '금ETF-A', composite: 91.2, axes: {}, dataGaps: [] }] },
+  });
+  assert.match(prompt, /데이터 기반 순위 중에서만 골라라/);
+  assert.match(prompt, /1\. 금ETF-A \(점수 91\.2\/100\)/);
+});
+
+test('buildCashAllocationPrompt: rankedUniverseByClass 없으면 그 자산군은 기존 자유선택 문구', () => {
+  const prompt = buildCashAllocationPrompt({ account: '위탁', availableCash: 500_000, rankedGaps: [], candidatesByClass: { 금: [] } });
+  assert.match(prompt, /신규 ETF 제안 가능/);
+  assert.doesNotMatch(prompt, /데이터 기반 순위 중에서만 골라라/);
+});
+
 test('validateAllocations: 캡(가용잔고의 50%) 이내 라인은 그대로 유지', () => {
   const { kept, dropped } = validateAllocations(
     [{ assetClass: '국내주식', instrumentName: 'TIGER 200', amountWon: 200000, reasoning: '갭 큼' }],
@@ -62,6 +78,41 @@ test('[막아야 함] validateAllocations: 그 계좌가 세금상 담을 수 �
   assert.equal(kept.length, 0);
   assert.equal(dropped.length, 1);
   assert.match(dropped[0].reason, /담을 수 없는 자산군/);
+});
+
+test('validateAllocations: 보유 후보 0건인 자산군의 라인이 순위 목록 밖 이름이면 드롭(브랜드 지어내기 차단)', () => {
+  const { kept, dropped } = validateAllocations(
+    [{ assetClass: '금', instrumentName: '아무거나ETF', amountWon: 100000 }],
+    {
+      account: '위탁', availableCash: 500000, eligibleClasses: ['금'],
+      candidatesByClass: { 금: [] },
+      rankedUniverseByClass: { 금: [{ name: '금ETF-A', composite: 80, axes: {}, dataGaps: [] }] },
+    },
+  );
+  assert.equal(kept.length, 0);
+  assert.match(dropped[0].reason, /순위에 없는 이름/);
+});
+
+test('validateAllocations: 보유 후보 0건인 자산군이라도 순위 목록 안의 이름이면 통과', () => {
+  const { kept, dropped } = validateAllocations(
+    [{ assetClass: '금', instrumentName: '금ETF-A', amountWon: 100000 }],
+    {
+      account: '위탁', availableCash: 500000, eligibleClasses: ['금'],
+      candidatesByClass: { 금: [] },
+      rankedUniverseByClass: { 금: [{ name: '금ETF-A', composite: 80, axes: {}, dataGaps: [] }] },
+    },
+  );
+  assert.equal(dropped.length, 0);
+  assert.equal(kept.length, 1);
+});
+
+test('validateAllocations: candidatesByClass·rankedUniverseByClass 생략하면 기존처럼 어떤 신규 이름도 통과(하위호환)', () => {
+  const { kept, dropped } = validateAllocations(
+    [{ assetClass: '금', instrumentName: '아무거나ETF', amountWon: 100000 }],
+    { account: '위탁', availableCash: 500000, eligibleClasses: ['금'] },
+  );
+  assert.equal(dropped.length, 0);
+  assert.equal(kept.length, 1);
 });
 
 test('validateAllocations: 캡 소진 후 뒤에 오는 라인은 드롭(먼저 온 라인이 캡 우선순위)', () => {

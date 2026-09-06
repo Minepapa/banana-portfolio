@@ -38,6 +38,8 @@ export const JOB_LABELS = {
   'intraday-market-move-monitor': '장중 시장 급변 실시간 감시(코스피·S&P500·VIX·DXY·USD/KRW·미국10Y, 리스크관리실 Themis 소관)',
   'weekly-vault-health-check': '므네모시네 주간 건강검진(구조 정합성·데이터 정합성·미완료 작업, 비서실 Apollo "관리 총괄" 소관, 2026-09-04 신설)',
   'pension-balance-reminder': '연금저축 잔고 확인 요청(매월 22일, 카카오 알림·API 둘 다 없는 계좌라 수동 확인만 가능, 2026-09-04 신설)',
+  'annual-instrument-rescore': '보유 ETF 연 1회 재스코어링(1월 1~3일 첫 평일, 보수율·유동성·NAV괴리율·추적오차 재비교 후 격차 크면 Athena에게 유지/교체 판단 요청, 투자전략실 Athena, 2026-09-06 신설)',
+  'monthly-macro-tilt-proposal': '월간 거시틸트 제안(매월 마지막 3일 중 첫 평일, 거시 전술 오버레이 신호 변화 시 5/25 밴드 안 여유폭 내에서 선제 조정 제안 + 리스크관리실 Themis 2차검증, 투자전략실 Athena, 2026-09-06 신설)',
 };
 
 // 라벨 있으면 "잡이름(한글설명)", 없으면(등록 안 된 새 잡) 이름만 — 조용히 빈 문자열로

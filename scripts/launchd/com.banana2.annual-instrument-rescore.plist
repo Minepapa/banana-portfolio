@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.annual-instrument-rescore</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>annual-instrument-rescore</string>
+  </array>
+  <!-- 1월 1~3일 10:00 KST — quarterly-allocation-review(같은 3일, 9:30)와 같은 이유로
+       "1월 첫 평일"을 launchd가 직접 표현 못 해(달력상 매번 다른 요일) 1~3일 전부
+       걸어두고, 잡 내부(shouldRunThisYear)가 평일인지 + 올해 이미 실행됐는지
+       (State/InstrumentRescoring 마커)를 판정해 그중 정확히 한 번만 실제로 돈다.
+       quarterly-allocation-review(9:30) 30분 뒤로 잡아 같은 날 다른 헤드리스 호출과
+       안 겹치게 함. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Month</key><integer>1</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Month</key><integer>1</integer><key>Day</key><integer>2</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Month</key><integer>1</integer><key>Day</key><integer>3</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/annual-instrument-rescore.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/annual-instrument-rescore.log</string>
+</dict>
+</plist>

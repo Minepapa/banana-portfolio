@@ -112,6 +112,32 @@ export async function fetchIndexCloses(market, indexNm, days, opts = {}) {
   return closes;
 }
 
+// isuNm(ETF 종목명, etp/etf_bydd_trd 응답의 ISU_NM과 정확히 일치)의 최근 days거래일
+// 시계열 — 종가·NAV·거래대금·추적지수 종가를 한 번에 뽑는다(scripts/lib/instrument-
+// scoring.mjs의 유동성·NAV괴리율·추적오차 스코어링 입력). 실측(2026-09-06, KODEX 200):
+// ACC_TRDVAL=거래대금(원), NAV=순자산가치, IDX_IND_NM=추적 지수명, OBJ_STKPRC_IDX=그
+// 지수 종가 — 같은 행에 다 있어 별도 지수매핑표가 필요 없다. fetchIndexCloses와 동일하게
+// Number('')===0 함정 방어(값 없는 필드는 빈 문자열로 옴).
+export async function fetchEtfSeries(isuNm, days, opts = {}) {
+  const series = await fetchTradingDaySeries((basDd) => fetchEtfDaily(basDd, opts), days, opts);
+  const out = [];
+  const numOrNull = (v) => (String(v ?? '').trim() === '' ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
+  for (const { basDd, rows } of series) {
+    const row = rows.find((r) => r.ISU_NM === isuNm);
+    if (!row) continue;
+    const close = numOrNull(row.TDD_CLSPRC);
+    if (close === null) continue;
+    out.push({
+      basDd, close,
+      nav: numOrNull(row.NAV),
+      accTrdVal: numOrNull(row.ACC_TRDVAL),
+      idxClose: numOrNull(row.OBJ_STKPRC_IDX),
+      idxName: row.IDX_IND_NM || null,
+    });
+  }
+  return out;
+}
+
 // 금현물(1kg 단위 상품, 원/g 단가) 최근 거래일 종가 — NH 금현물 계좌(KIS·DART 어디에도
 // 종목코드가 없는 실물자산이라 다른 수단이 없음)의 시세 원천. 실측(2026-08-19): 이
 // 상품의 TDD_CLSPRC는 원/g 단가로 온다(보유 평단가와 자릿수·단위 정합 확인됨,

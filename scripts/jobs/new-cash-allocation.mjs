@@ -63,7 +63,9 @@ import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { NEW_CASH_THRESHOLD_WON, CASH_ELIGIBLE_ACCOUNTS, resolveDesignatedCashBalance, findCashBalance } from '../lib/cash-ledger.mjs';
 import { rankEligibleGaps, findExistingInstruments, ACCOUNT_ELIGIBLE_ASSET_CLASSES } from '../lib/cash-allocation-candidates.mjs';
+import { rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
 import { computeRebalanceGaps } from '../lib/rebalance-gap.mjs';
+import { CAP_FRACTION, applyCappedAllocation, resolveAllocationPricingByName } from '../lib/allocation-proposal-shared.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
@@ -92,15 +94,33 @@ function readMdDir(dir) {
 // re-export만 유지한다.
 export { findCashBalance };
 
+// 스코어링된 후보(scripts/lib/instrument-scoring.mjs computeInstrumentScore 반환 모양)
+// 상위 N개를 프롬프트용 텍스트 블록으로 렌더. 순수함수(rebalance-proposal.mjs
+// formatRankedUniverse와 동일 로직 — 두 잡이 공유하는 프롬프트 관용구라 파일마다
+// 따로 두되 형식은 맞춘다).
+function formatRankedUniverse(ranked, topN = 3) {
+  return ranked.slice(0, topN).map((r, i) => {
+    const score = r.composite != null ? r.composite.toFixed(1) : '?';
+    const gapNote = r.dataGaps.length ? `, 데이터 부족축: ${r.dataGaps.join('·')}` : '';
+    return `    ${i + 1}. ${r.name} (점수 ${score}/100${gapNote})`;
+  }).join('\n');
+}
+
 // Athena에게 줄 프롬프트 — 갭·후보(실존 보유)만 주고 "어디에 얼마씩"은 판단시킨다.
 // 순수 함수(테스트 가능) — candidatesByClass: { [assetClass]: [{name,ticker,curPrice}] }.
-export function buildCashAllocationPrompt({ account, availableCash, rankedGaps, candidatesByClass }) {
+// rankedUniverseByClass: { [assetClass]: rankInstruments 반환 배열 } — 그 자산군에 보유
+// 후보가 전혀 없을 때만 채워짐(§2, 2026-09-06 신설, rebalance-proposal.mjs와 동일 설계).
+export function buildCashAllocationPrompt({ account, availableCash, rankedGaps, candidatesByClass, rankedUniverseByClass = {} }) {
   const gapLines = rankedGaps.map((g) =>
     `  ${g.assetClass}: 목표 ${g.targetPct}% / 현재 ${g.currentPct.toFixed(2)}% (갭 ${g.absDeltaPct.toFixed(2)}%p, 부족)`,
   ).join('\n') || '  (이 계좌가 담을 수 있는 자산군 중 언더웨이트 없음)';
 
   const candLines = Object.entries(candidatesByClass).map(([cls, insts]) => {
-    if (!insts.length) return `  [${cls}] 현재 이 계좌에 보유 없음 — 신규 ETF 제안 가능(가격 미확인, 아래 "신규 종목 선정 기준" 참고)`;
+    if (!insts.length) {
+      const ranked = rankedUniverseByClass[cls];
+      if (ranked && ranked.length) return `  [${cls}] 현재 이 계좌에 보유 없음 — 아래 데이터 기반 순위 중에서만 골라라:\n${formatRankedUniverse(ranked)}`;
+      return `  [${cls}] 현재 이 계좌에 보유 없음 — 신규 ETF 제안 가능(가격 미확인, 아래 "신규 종목 선정 기준" 참고)`;
+    }
     const lines = insts.map((h) => `    - ${h.name}${h.ticker ? `(${h.ticker})` : ''} 현재가 ${h.curPrice ?? '데이터 부족'}원`).join('\n');
     return `  [${cls}]\n${lines}`;
   }).join('\n');
@@ -128,10 +148,13 @@ ${candLines}
 - **이미 보유 중인 종목이 후보에 있으면 그걸 최우선으로 재사용해라** — 새 브랜드를
   또 고르지 마라(같은 자산군에 매번 다른 ETF를 새로 제안하면 "같은 안건"으로 인식이
   안 돼 승인 대기 목록에 중복으로 쌓인다, 2026-08-29 오너 지적으로 실제로 발생한 문제).
-- **신규 종목 선정 기준(보유 후보가 전혀 없을 때만)**: 보수율(총보수)·유동성(거래대금·
-  괴리율)·추적오차를 고려해 이 자산군을 대표할 브랜드 하나를 판단해 골라라 — "아무
-  ETF나" 임의로 짓지 말 것. 그리고 이후에도 이 계좌·이 자산군에 다시 배분할 일이
-  생기면, 이번에 고른 이름과 일관되게 유지해라(매번 다른 브랜드를 새로 짓지 말 것).
+- **신규 종목 선정 기준(보유 후보가 전혀 없을 때만)**: "데이터 기반 순위"가 제시된
+  자산군은 **반드시 그 목록 안에서만** 골라라 — 스스로 다른 브랜드를 지어내지 마라
+  (2026-09-06부터 이 목록 밖 이름은 시스템이 자동으로 드롭한다). 순위가 제시되지
+  않은 자산군(아직 후보 데이터가 없음)은 기존대로 보수율(총보수)·유동성(거래대금·
+  괴리율)·추적오차를 고려해 판단해라. 그리고 이후에도 이 계좌·이 자산군에 다시
+  배분할 일이 생기면, 이번에 고른 이름과 일관되게 유지해라(매번 다른 브랜드를
+  새로 짓지 말 것).
 - reasoning은 시스템 프롬프트에 이미 주어진 네(아테나) 성격대로 써라 — 근거 없는
   낙관·비관 없이, 왜 이 자산군·종목을 골랐는지 침착하고 위엄 있게 1~2문장으로 풀어
   설명할 것. "갭이 커서"처럼 사실을 그대로 반복하는 기계적 문장 대신, 그 갭이 왜
@@ -154,40 +177,49 @@ ${candLines}
 // 물리적으로 불가능하게 만든다. 이 잡은 잔고가 바뀔 때마다 다시 돌기 때문에(트리거
 // 상태가 실잔고 그대로라 캡을 걸어도 "다음 기회"가 자동으로 온다) 새 상태관리 없이
 // 캡만 추가하면 된다.
-const CAP_FRACTION = 0.5;
-
+//
 // LLM 응답 검증 — 후보에 없는 자산군·개별종목은 드롭(THROW 아님, 나머지 유효한 라인은
 // 살린다 — 부분 오염이 전체 제안을 막지 않게). 합계초과는 드롭이 아니라 캡까지 축소
 // (rebalance-proposal.mjs와 동일 철학 — 초과분만 깎아 "일부라도 진행"이 되게 함).
-// 순수 함수.
-export function validateAllocations(allocations, { account, availableCash, eligibleClasses }) {
-  const kept = [], dropped = [];
-  let remaining = availableCash * CAP_FRACTION;
-  for (const a of allocations ?? []) {
-    const assetClass = String(a?.assetClass ?? '').trim();
-    let amountWon = Number(a?.amountWon);
-    const instrumentName = String(a?.instrumentName ?? '').trim();
-    if (!eligibleClasses.includes(assetClass)) { dropped.push({ a, reason: `${account} 계좌가 담을 수 없는 자산군: ${assetClass}` }); continue; }
-    if (!instrumentName) { dropped.push({ a, reason: '종목명 없음' }); continue; }
-    if (!Number.isFinite(amountWon) || amountWon <= 0) { dropped.push({ a, reason: '금액 값 이상' }); continue; }
-    if (remaining <= 0) { dropped.push({ a, reason: `분할매수 캡(가용잔고의 ${CAP_FRACTION * 100}%) 이미 소진` }); continue; }
-    if (amountWon > remaining) amountWon = remaining; // 초과분은 드롭이 아니라 캡까지 축소
-    remaining -= amountWon;
-    kept.push({ assetClass, instrumentName, amountWon, reasoning: String(a?.reasoning ?? '') });
-  }
-  return { kept, dropped };
+// 공유모듈(allocation-proposal-shared.mjs) 위임 — 순수 함수. 여긴 자산군별이 아니라
+// "가용잔고 전체" 단일 버킷이라 capBudget 키를 고정 문자열 하나로 둔다.
+// candidatesByClass·rankedUniverseByClass가 있으면(buildCashAllocationPrompt와 동일
+// 데이터) "보유 후보가 전혀 없던" 자산군의 instrumentName이 그 순위 목록 밖이면 드롭한다
+// (2026-09-06 신설, rebalance-proposal.mjs validateRebalanceActions와 동일 설계 —
+// Athena가 순위 목록을 무시하고 브랜드를 지어내도 물리적으로 막히게).
+export function validateAllocations(allocations, { account, availableCash, eligibleClasses, candidatesByClass = {}, rankedUniverseByClass = {} }) {
+  const capBudget = { ALL: availableCash * CAP_FRACTION };
+  return applyCappedAllocation(allocations, {
+    capBudget,
+    capLabel: '가용잔고의 50%',
+    validateItem: (a) => {
+      const assetClass = String(a?.assetClass ?? '').trim();
+      const amountWon = Number(a?.amountWon);
+      const instrumentName = String(a?.instrumentName ?? '').trim();
+      if (!eligibleClasses.includes(assetClass)) return { ok: false, reason: `${account} 계좌가 담을 수 없는 자산군: ${assetClass}` };
+      if (!instrumentName) return { ok: false, reason: '종목명 없음' };
+      if (!Number.isFinite(amountWon) || amountWon <= 0) return { ok: false, reason: '금액 값 이상' };
+      const existingCandidates = candidatesByClass[assetClass] ?? [];
+      const ranked = rankedUniverseByClass[assetClass];
+      if (existingCandidates.length === 0 && ranked && ranked.length) {
+        const allowedNames = new Set(ranked.map((r) => r.name));
+        if (!allowedNames.has(instrumentName)) {
+          return { ok: false, reason: `신규 종목 후보 목록 밖(데이터 기반 순위에 없는 이름): ${instrumentName}` };
+        }
+      }
+      return { ok: true, key: 'ALL', amountWon, normalized: { assetClass, instrumentName, reasoning: String(a?.reasoning ?? '') } };
+    },
+  });
 }
 
 // 후보 보유 중 이름이 정확히 일치하는 것 찾아 가격 정보를 붙인다 — 없으면(신규 제안)
 // quantity·proposedPrice는 null(order-gate.checkPriceDeviation이 null을 "적용 대상 아님"
-// 으로 이미 처리하므로 안전). 순수 함수.
+// 으로 이미 처리하므로 안전). candidates는 호출부(main())가 이미 계좌+자산군으로 걸러
+// 넘기므로 여긴 이름으로만 재확인(resolveAllocationPricingByName — account/assetClass
+// 축을 아예 안 받는 별도 함수, 2026-09-06 코드리뷰 지적으로 optional-필터 설계에서
+// 분리: "일부러 생략"과 "실수로 안 넘김"을 구분 못 하는 위험을 없앰). 순수 함수.
 export function resolveInstrumentPricing(allocation, candidates) {
-  const match = candidates.find((h) => h.name === allocation.instrumentName);
-  if (!match || !Number.isFinite(match.curPrice) || match.curPrice <= 0) {
-    return { assetKey: allocation.instrumentName, ticker: '', quantity: null, proposedPrice: null };
-  }
-  const quantity = Math.floor(allocation.amountWon / match.curPrice);
-  return { assetKey: match.ticker || match.name, ticker: match.ticker || '', quantity: quantity > 0 ? quantity : null, proposedPrice: match.curPrice };
+  return resolveAllocationPricingByName(candidates, { instrumentName: allocation.instrumentName, amountWon: allocation.amountWon });
 }
 
 // 배분 라인 발송 결과가 전부 'created'(실제 발송 성공)여야 트리거 상태를 갱신한다 —
@@ -264,6 +296,9 @@ async function main() {
   };
 
   let existingProposals = null;
+  // 자산군별 순위는 계좌와 무관(같은 자산군이면 위탁·연금저축이 같은 순위를 공유) —
+  // 계좌 루프 안에서 반복 계산·중복 KRX 조회를 피하려고 이번 실행 동안 캐시한다.
+  const rankedUniverseCache = {};
   for (const account of CASH_ELIGIBLE_ACCOUNTS) {
     const availableCash = availableCashByAccount[account];
     if (availableCash == null) {
@@ -292,13 +327,20 @@ async function main() {
     const eligibleClasses = ACCOUNT_ELIGIBLE_ASSET_CLASSES[account];
     const candidatesByClass = Object.fromEntries(eligibleClasses.map((c) => [c, findExistingInstruments(holdings, account, c)]));
 
-    const prompt = buildCashAllocationPrompt({ account, availableCash, rankedGaps, candidatesByClass });
+    const rankedUniverseByClass = {};
+    for (const cls of eligibleClasses) {
+      if (candidatesByClass[cls].length) continue; // 보유 후보가 있으면 순위 불필요(재사용 우선)
+      if (!(cls in rankedUniverseCache)) rankedUniverseCache[cls] = await rankAssetClassUniverse(cls);
+      if (rankedUniverseCache[cls].length) rankedUniverseByClass[cls] = rankedUniverseCache[cls];
+    }
+
+    const prompt = buildCashAllocationPrompt({ account, availableCash, rankedGaps, candidatesByClass, rankedUniverseByClass });
     if (DRY_RUN) { console.log(`\n┌─── 프롬프트 [${account}] ───┐\n${prompt}\n└──────────────────┘`); continue; }
 
     let allocations;
     try {
       const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt }));
-      const { kept, dropped } = validateAllocations(r.allocations, { account, availableCash, eligibleClasses });
+      const { kept, dropped } = validateAllocations(r.allocations, { account, availableCash, eligibleClasses, candidatesByClass, rankedUniverseByClass });
       dropped.forEach((d) => console.log(`  ⚠️ 배분 라인 드롭: ${d.reason}`));
       allocations = kept;
     } catch (e) {

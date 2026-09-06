@@ -85,6 +85,20 @@ export function checkBand(targetPct, currentPct) {
   return { absDeltaPct: absDelta, relDeltaPct, breached: absBreach || relBreach, breachType };
 }
 
+// 밴드가 "터지는" 바로 그 경계까지 남은 폭(%p, 부호 있음) — checkBand와 동일한 두
+// 임계값(절대5%p·상대25%) 중 더 좁은 쪽이 실제 밴드 폭이라는 사실을 그대로 재사용한다
+// (월간 거시틸트 잡의 틸트 규모 산정용, 2026-09-06 신설 — 아직 5/25 이탈 전이라 분기
+// 리밸런싱의 "갭"이 없는 상태에서 "얼마나 틸트해도 안전한지"의 기준). room<=0이면
+// 이미 이탈(분기 리밸런싱 소관) — 이 함수는 TARGET_ALLOCATION의 5개 자산군처럼
+// targetPct>0인 입력만 상정한다(target 0%는 checkBand도 절대 임계값만 보는 특수
+// 케이스라 이 공식이 안 맞음 — 이 저장소에 target 0%인 자산군은 없음).
+export function computeBandEdgeDistance(targetPct, currentPct) {
+  const edgeAbsDelta = Math.min(5, targetPct * 0.25);
+  const currentAbsDelta = currentPct - targetPct;
+  const room = edgeAbsDelta - Math.abs(currentAbsDelta);
+  return { edgeAbsDelta, currentAbsDelta, room };
+}
+
 // 5개 자산군 전부에 대해 갭·밴드판정을 계산 — 이탈 없으면 협의체 자체가 조용히 종료
 // 로그만 남기고 텔레그램 발송 없음(ARCHITECTURE-V2.md "실행 프로토콜" 절, 오너 확정).
 export function computeRebalanceGaps(holdings) {
