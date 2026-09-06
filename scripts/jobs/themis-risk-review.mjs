@@ -29,7 +29,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { fetchMacroIndicators } from '../lib/fundamentals.mjs';
+import { getCachedMacroIndicators } from '../lib/macro-cache.mjs';
 import { assembleMacro } from '../tools/risk-facts.mjs';
 import { assembleJobs } from '../tools/ledger-facts.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -135,7 +135,11 @@ async function main() {
   if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
   const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
 
-  const macroData = await fetchMacroIndicators().catch((e) => {
+  // 2026-09-06 — 하루(KST 달력일) 한 번만 계산해 공유(macro-cache.mjs 참고). weekly-
+  // report.mjs와 서로 다른 거시지표 수치를 내던 사고 방지(Log/DevRequests/2026-09-06-
+  // weekly-report-facts-불일치-버그.md) — 오늘 Themis가 먼저 실행되면 이 잡이 그날의
+  // 계산·캐시 주체가 되고, weekly-report는 이 값을 그대로 재사용한다.
+  const macroData = await getCachedMacroIndicators().catch((e) => {
     console.error(`⚠️ 거시지표 조회 실패: ${e.message}`);
     return null;
   });

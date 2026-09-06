@@ -106,6 +106,10 @@ export const VAULT_PATHS = {
     // 훅(scripts/hooks/telegram-session-context.mjs)이 매 세션 시작마다 갱신. "재시작
     // 시 이전 어떤 기록을 읽어왔다"는 오너 요구사항의 실제 증적.
     telegramSessionLastRead: join(VAULT_ROOT, 'State', 'TelegramSession', 'last-read.md'),
+    // 거시지표(fetchMacroIndicators) 공유 캐시(2026-09-06 신설) — macro-cache.mjs 참고.
+    // KST 달력일 하나당 계산 1회만 — 같은 날 여러 무인 잡(Themis·weekly-report·
+    // quarterly-review)이 각자 독립 호출하다 서로 다른 수치를 내던 사고 방지.
+    macroIndicators: join(VAULT_ROOT, 'State', 'MacroIndicators', 'MacroIndicators.md'),
   },
   // Log/는 대부분 인터랙티브 세션이 Write 도구로 직접 쓰는 자유서술 기록이라 지금까지
   // VAULT_PATHS에 없었다(코드가 안 건드림) — telegramSession만 예외로 Node 잡

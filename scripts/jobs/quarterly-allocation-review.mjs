@@ -34,7 +34,7 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { TARGET_ALLOCATION } from '../lib/rebalance-gap.mjs';
-import { fetchMacroIndicators } from '../lib/fundamentals.mjs';
+import { getCachedMacroIndicators } from '../lib/macro-cache.mjs';
 import { assembleMacro } from '../tools/risk-facts.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
@@ -175,7 +175,10 @@ async function main() {
   const recentProposalsText = buildRecentAllocationProposalsSummary(proposals, now);
   const recentProposalsCount = filterRecentAllocationProposals(proposals, now).length;
 
-  const macroData = await fetchMacroIndicators().catch((e) => {
+  // 2026-09-06 — 하루(KST 달력일) 한 번만 계산해 공유(macro-cache.mjs 참고). 같은 날
+  // 다른 무인 잡(themis-risk-review·weekly-report)과 서로 다른 거시지표 수치를
+  // 내던 사고 방지(Log/DevRequests/2026-09-06-weekly-report-facts-불일치-버그.md).
+  const macroData = await getCachedMacroIndicators().catch((e) => {
     console.error(`⚠️ 거시지표 조회 실패: ${e.message}`);
     return null;
   });

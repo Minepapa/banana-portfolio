@@ -35,7 +35,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 날도 스킵한다 — 둘 다 결과 목록엔 안 남지만 "평일 호출" 쪽만 scanned 예산을 소모한다
 // (주말은 API 호출 자체가 없어 예산 대상이 아님). fetchOneDay(basDd:string) => rows(배열,
 // 빈 배열=비거래일) 을 주입받는다(네트워크와 분리 — 테스트는 mock으로). 과거→현재 순 반환.
-export async function fetchTradingDaySeries(fetchOneDay, days, { maxScanDays, delayMs = 120, startDate = new Date() } = {}) {
+//
+// ⚠️ 평일 빈 응답 재시도(2026-09-06 신설) — 공휴일 캘린더가 없어(order-gate.mjs
+// checkMarketOpen과 동일 한계) "진짜 휴장일"과 "KRX 서버 측 일시적 미발행"을 코드로
+// 구분할 방법이 없었다. 실사고로 발견: themis-risk-review.mjs(07:00)와 weekly-
+// report.mjs(08:00)가 같은 일요일 아침 1시간 간격으로 이 함수를 호출했는데 5거래일
+// 변화율이 서로 크게 달랐다(Log/DevRequests/2026-09-06-weekly-report-facts-불일치-
+// 버그.md) — 유력한 설명은 특정 과거 거래일 하나가 한쪽 호출 시점엔 KRX 서버에서
+// 일시적으로 빈 응답이었다가 다른 쪽 호출 시점엔 정상 발행돼 있어, "5거래일 전"
+// 기준점 자체가 실행마다 하루씩 밀렸다는 것. 빈 응답을 받으면 짧게 기다렸다가 그
+// 날짜로 한 번 더 확인한다 — 진짜 휴장일이면 재시도해도 여전히 비어있고(정상,
+// scanned만 소모), 일시적 문제였다면 대부분 해소된다.
+export async function fetchTradingDaySeries(fetchOneDay, days, {
+  maxScanDays, delayMs = 120, startDate = new Date(), emptyRetryDelayMs = 500,
+} = {}) {
   const budget = maxScanDays ?? days * 2 + 15;
   const out = [];
   let d = new Date(startDate);
@@ -44,7 +57,11 @@ export async function fetchTradingDaySeries(fetchOneDay, days, { maxScanDays, de
     const dow = d.getDay();
     if (dow !== 0 && dow !== 6) {
       const basDd = ymd(d);
-      const rows = await fetchOneDay(basDd);
+      let rows = await fetchOneDay(basDd);
+      if (!(rows && rows.length)) {
+        if (emptyRetryDelayMs > 0) await sleep(emptyRetryDelayMs);
+        rows = await fetchOneDay(basDd);
+      }
       if (rows && rows.length) out.push({ basDd, rows });
       scanned++;
       if (delayMs > 0 && scanned < budget && out.length < days) await sleep(delayMs);

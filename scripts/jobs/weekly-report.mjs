@@ -37,7 +37,7 @@ import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
-import { fetchMacroIndicators } from '../lib/fundamentals.mjs';
+import { getCachedMacroIndicators } from '../lib/macro-cache.mjs';
 import { buildReportFacts } from '../lib/report-facts.mjs';
 import { buildBehaviorSignals } from '../lib/behavior-signals.mjs';
 import { renderPrefRows, findExpiredPromotions, isLivePreferenceObservation } from '../lib/preferences.mjs';
@@ -369,9 +369,12 @@ async function main() {
   const asof = todayKST();
   const weekStart = weekStartOf(asof);
 
-  // ① 거시지표 (결정론)
-  console.log('\n⏳ 거시지표 조회(KRX/yfinance)...');
-  const macro = await fetchMacroIndicators();
+  // ① 거시지표 (결정론) — 2026-09-06부터 하루(KST 달력일) 한 번만 계산해 공유
+  // (macro-cache.mjs 참고). themis-risk-review.mjs(07:00)가 이 잡(08:00)보다 먼저
+  // 도니 보통 그쪽이 그날의 계산 주체가 되고 이 잡은 캐시를 재사용한다 — 사고 방지
+  // (Log/DevRequests/2026-09-06-weekly-report-facts-불일치-버그.md).
+  console.log('\n⏳ 거시지표 조회(KRX/yfinance, 오늘 이미 계산됐으면 캐시 재사용)...');
+  const macro = await getCachedMacroIndicators();
 
   // ② Vault 원본 읽기
   const holdings = readVaultDir(VAULT_PATHS.state.holdings); // 현금성 포함(자산 현황엔 필요)

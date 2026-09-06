@@ -55,11 +55,28 @@ test('fetchTradingDaySeries: 주말엔 API를 아예 호출하지 않음', async
   }
 });
 
-test('fetchTradingDaySeries: 빈 배열(휴장일·미발행)은 건너뛰고 목표 개수엔 안 셈', async () => {
+test('fetchTradingDaySeries: 재시도해도 계속 빈 배열(진짜 휴장일)이면 건너뛰고 목표 개수엔 안 셈', async () => {
   let n = 0;
-  const fetchOneDay = async () => { n++; return n === 2 ? [] : [{ x: n }]; }; // 두 번째 호출만 휴장
-  const out = await fetchTradingDaySeries(fetchOneDay, 3, { startDate: new Date(2026, 7, 19), delayMs: 0 });
+  // 평일1(n=1,데이터)·평일2(n=2,데이터)·평일3(진짜 휴장 — 최초 호출 n=3, 재시도 n=4
+  // 둘 다 빈 배열)·평일4(n=5,데이터) → 목표 3건은 평일1·2·4로 채워짐.
+  const fetchOneDay = async () => { n++; return (n === 3 || n === 4) ? [] : [{ x: n }]; };
+  const out = await fetchTradingDaySeries(fetchOneDay, 3, { startDate: new Date(2026, 7, 19), delayMs: 0, emptyRetryDelayMs: 0 });
   assert.equal(out.length, 3);
+});
+
+// 2026-09-06 신설 — 실사고 회귀 방지(Log/DevRequests/2026-09-06-weekly-report-facts-
+// 불일치-버그.md). 첫 호출은 비어있어도(일시적 KRX 미발행 추정) 재시도에서 데이터가
+// 오면 그 거래일을 "휴장"으로 잘못 건너뛰지 않고 정상 포함해야 한다.
+test('fetchTradingDaySeries: 첫 응답이 비어도 재시도에서 데이터가 오면 그 날을 포함(일시적 조회 실패 구제)', async () => {
+  const calls = {};
+  const fetchOneDay = async (basDd) => {
+    calls[basDd] = (calls[basDd] || 0) + 1;
+    // 각 날짜의 "첫 호출"만 비우고, 재시도(2번째 호출)부터는 데이터를 준다.
+    return calls[basDd] === 1 ? [] : [{ basDd }];
+  };
+  const out = await fetchTradingDaySeries(fetchOneDay, 3, { startDate: new Date(2026, 7, 19), delayMs: 0, emptyRetryDelayMs: 0 });
+  assert.equal(out.length, 3); // 재시도로 전부 구제됨 — 하나도 "진짜 휴장"으로 안 빠짐
+  for (const basDd of out.map((o) => o.basDd)) assert.equal(calls[basDd], 2, `${basDd}는 재시도까지 정확히 2번 호출돼야 함`);
 });
 
 test('fetchTradingDaySeries: 과거→현재 오름차순으로 반환', async () => {
@@ -71,7 +88,7 @@ test('fetchTradingDaySeries: 과거→현재 오름차순으로 반환', async (
 
 test('fetchTradingDaySeries: maxScanDays 예산 소진되면 목표 미달이어도 중단', async () => {
   const fetchOneDay = async () => []; // 전부 휴장 취급
-  const out = await fetchTradingDaySeries(fetchOneDay, 5, { startDate: new Date(2026, 7, 19), delayMs: 0, maxScanDays: 3 });
+  const out = await fetchTradingDaySeries(fetchOneDay, 5, { startDate: new Date(2026, 7, 19), delayMs: 0, emptyRetryDelayMs: 0, maxScanDays: 3 });
   assert.equal(out.length, 0);
 });
 
@@ -113,14 +130,14 @@ test('fetchGoldClose: 당일 미발행(빈 배열)이면 과거로 물러나 최
     const rows = call < 3 ? [] : [{ ISU_NM: '금 99.99_1kg', TDD_CLSPRC: '150000' }];
     return { ok: true, status: 200, text: async () => JSON.stringify({ OutBlock_1: rows }) };
   };
-  const r = await fetchGoldClose({ apiKey: 'K', fetchImpl, delayMs: 0, startDate: new Date(2026, 7, 19) });
+  const r = await fetchGoldClose({ apiKey: 'K', fetchImpl, delayMs: 0, emptyRetryDelayMs: 0, startDate: new Date(2026, 7, 19) });
   assert.equal(r.price, 150000);
 });
 
 test('fetchGoldClose: 최근 거래일 전부 데이터 없으면 throw(다른 소스로 폴백 없음)', async () => {
   const fetchImpl = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ OutBlock_1: [] }) });
   await assert.rejects(
-    () => fetchGoldClose({ apiKey: 'K', fetchImpl, delayMs: 0, startDate: new Date(2026, 7, 19), maxScanDays: 3 }),
+    () => fetchGoldClose({ apiKey: 'K', fetchImpl, delayMs: 0, emptyRetryDelayMs: 0, startDate: new Date(2026, 7, 19), maxScanDays: 3 }),
     /KRX 금 시세 조회 실패/,
   );
 });

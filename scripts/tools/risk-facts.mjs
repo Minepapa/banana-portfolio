@@ -25,7 +25,7 @@ import { join } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { fetchMacroIndicators } from '../lib/fundamentals.mjs';
+import { getCachedMacroIndicators } from '../lib/macro-cache.mjs';
 import { assembleJobs } from './ledger-facts.mjs';
 
 const SECTIONS = ['all', 'macro', 'jobs'];
@@ -47,7 +47,8 @@ export function parseArgs(argv) {
 }
 
 // macroData: fetchMacroIndicators() 반환 형태({KEY: {value, change5d, source}}) — 이 함수는
-// 순수(IO 없음), 실 조회는 main()에서 fetchMacroIndicators()로 수행해 주입한다(테스트 용이성).
+// 순수(IO 없음), 실 조회는 main()에서 getCachedMacroIndicators()(2026-09-06부터, macro-
+// cache.mjs)로 수행해 주입한다(테스트 용이성).
 // yfinance 원본은 부동소수점 그대로(예: 1487.4599609375) — 값을 바꾸는 게 아니라 반올림 표기만.
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -95,8 +96,12 @@ async function main() {
     process.exit(2);
   }
   const want = (s) => opts.section === 'all' || opts.section === s;
+  // 2026-09-06 — 하루(KST 달력일) 한 번만 계산해 공유(macro-cache.mjs 참고). 오너가
+  // /themis를 오늘 무인 잡(Themis·weekly-report 등)이 이미 도는 날 실행하면 그 값을
+  // 그대로 재사용 — 사고 방지(Log/DevRequests/2026-09-06-weekly-report-facts-불일치-
+  // 버그.md).
   const macroData = want('macro')
-    ? await fetchMacroIndicators().catch((e) => { console.error(`⚠️ 거시지표 조회 실패: ${e.message}`); return null; })
+    ? await getCachedMacroIndicators().catch((e) => { console.error(`⚠️ 거시지표 조회 실패: ${e.message}`); return null; })
     : null;
   const jobRecords = want('jobs') ? readVaultDir(VAULT_PATHS.state.jobHealth).filter((r) => RISK_JOBS.includes(r.job)) : null;
 
