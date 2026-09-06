@@ -92,6 +92,11 @@ export function buildHoldingsIndex({ holdingsDir = VAULT_PATHS.state.holdings } 
       name: fm.name,
       ticker: fm.ticker || null,
       isCashLike: fm.isCashLike === true,
+      // qty(2026-09-06 추가) — 외화 RP처럼 NH API로 조회 불가해 오너가 수동 갱신하는
+      // 보유값을 실행 잡이 예수금 계산에 참고할 수 있게(execute-asset-allocation-
+      // proposal.mjs의 해외주식 가용현금 계산 참고). 다른 소비처엔 영향 없음(기존
+      // 필드는 그대로).
+      qty: Number.isFinite(fm.qty) ? fm.qty : null,
     };
     const existing = index.get(key);
     // 같은 이름이 서로 다른 계좌에 보유돼 있으면(예: 같은 ETF를 위탁·연금저축 양쪽에

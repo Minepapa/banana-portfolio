@@ -22,7 +22,12 @@
 //   - 직접채권(예: 삼척블루파워12 — KRX 마스터파일 미등재라 krStockCode가 null 반환)
 //     은 라우터가 UNSUPPORTED로 분류해 자동체결 대상에서 빠진다(수동 처리 유지).
 //   - 외화 RP는 NH가 USD 예수금 발생 시 자동 스윕하는 브로커 기능이라 별도 주문
-//     자체가 없음(오너 확인 2026-09-05) — 라우터가 UNSUPPORTED로 분류.
+//     자체가 없음(오너 확인 2026-09-05) — 라우터가 UNSUPPORTED로 분류. ⚠️ 게다가
+//     잔고 조회조차 NH PLUG 공개 API로 불가능하다(2026-09-06 확인 — nhplug.com
+//     API가이드 전체 6개 대분류에 RP 도메인 자체가 없음, MTS 앱 전용 상품으로
+//     추정) — 그래서 해외주식 가용현금 계산이 fc_dca(API로 확인되는 미투자
+//     외화현금) + State/Holdings/위탁-외화-RP.md의 qty(오너가 "외화 상품매도·
+//     환전 직후 수동 갱신"하기로 확정)를 합산한다(아래 gbCash 계산부 주석 참고).
 //   - ISA는 NH PLUG API(/n2/acctinfo)가 애초에 노출하지 않아(2026-09-03 라이브
 //     확인, nh-accounts.mjs 참고) 이 잡이 배선할 방법 자체가 없다 — ISA 자산분배
 //     제안은 계속 수동 처리(자동 만료 알림은 그대로 발송돼 오너에게 도달함).
@@ -51,6 +56,7 @@ import {
 } from '../lib/asset-allocation-instrument-router.mjs';
 import { normalizeKrHoldings, normalizeGbHoldings, normalizeGoldHoldings } from '../lib/nh-holdings-normalize.mjs';
 import { extractNhPrice, extractNhCashDeposit } from '../lib/nh-response-parse.mjs';
+import { canonName } from '../../src/lib/stockIdentity.js';
 import { hasNhplugCredentials, loadNhplugCredentials, getNhToken, listNhAccounts } from '../lib/nhplug.mjs';
 import { resolveNhAccountsByLabel } from '../lib/nh-accounts.mjs';
 import { getKrBalance, getKrCurrentPrice, placeKrCashBuyOrder, placeKrCashSellOrder } from '../lib/nhplug-krstock.mjs';
@@ -91,12 +97,31 @@ function readStateFileOrNull(filepath) {
 }
 
 // 콤마 포함 문자열도 안전하게 숫자로(구글시트 숫자 파싱 함정과 동일 클래스 —
-// extractNhCashDeposit과 같은 방어를 fc_abk_amt(KRW 계좌잔고 필드가 아니라 외화
-// 필드라 그 함수를 그대로 못 씀)에도 적용). null/NaN이면 null(0으로 추정 안 함).
+// extractNhCashDeposit과 같은 방어를 fc_dca(KRW 계좌잔고 필드가 아니라 외화 필드라
+// 그 함수를 그대로 못 씀)에도 적용). null/NaN이면 null(0으로 추정 안 함).
 function parseNhNumber(raw) {
   if (raw == null) return null;
   const n = Number(String(raw).replace(/,/g, ''));
   return Number.isFinite(n) ? n : null;
+}
+
+// 순수함수(테스트 가능) — 해외주식 매수 가용현금 = fc_dca(API로 확인되는 미투자
+// 외화현금) + State/Holdings/위탁-외화-RP.md의 qty(오너가 수동 갱신하는 RP 잔고).
+// ⚠️ 2026-09-06 정정 — 원래 fc_abk_amt(외화보관금액)를 RP 포함 가용현금으로
+// 잘못 썼다가, 오너가 준 실제 NH 앱 스크린샷 대조 + nhplug.com 공식 API 문서
+// 확인 결과 fc_abk_amt는 "외화장부금액"(보유 해외주식 매입원가)이지 예수금이
+// 아님을 확인했다(앱의 "매입금액 18,416.20"과 정확히 일치). 외화RP는 이 API가
+// 다루는 6개 대분류(국내/해외 주식·파생, 장내채권, 금현물) 전체에 도메인 자체가
+// 없어 API로 조회가 불가능 — 오너가 "외화 상품매도·환전 직후 RP를 수동으로
+// 업데이트"하기로 확정(2026-09-06)했으므로 그 Vault 값을 신뢰한다. gbBalanceBody가
+// 없으면(조회 실패) null(0으로 추정 안 함) — fc_dca가 있으면 RP qty는 없어도(null)
+// 0으로 더한다(RP를 아직 한 번도 수동 기록 안 한 신규 계좌 등 정상 상태 포함).
+export function computeOverseasCash({ gbBalanceBody, holdingsIndex }) {
+  if (!gbBalanceBody) return null;
+  const fcDca = parseNhNumber(gbBalanceBody.Output_0?.fc_dca);
+  if (fcDca == null) return null;
+  const manualRpQty = holdingsIndex.get(canonName('외화 RP'))?.qty;
+  return fcDca + (Number.isFinite(manualRpQty) ? manualRpQty : 0);
 }
 
 // 순수함수(테스트 가능) — 수량/가격 미정 제안(정성적 갭 신호 — 아직 구체적 수량·
@@ -256,19 +281,13 @@ async function main() {
   const gbHoldings = normalizeGbHoldings(gbBalanceBody?.Output_1);
   const goldHoldings = normalizeGoldHoldings(goldBalanceBody?.Output_1);
 
-  // 매수 가용예수금 — 자산군마다 다른 계좌·통화 풀(2026-09-05 실측 확인):
+  // 매수 가용예수금 — 자산군마다 다른 계좌·통화 풀(2026-09-05/06 실측 확인):
   //   - KR_STOCK: 위탁 KRW 예수금 — dca(당일예수금)가 아니라 drn_pbl_amt(출금가능
   //     금액) 우선(reconcile-nh-cash.mjs 2026-09-03 결정과 동일 이유: dca는 결제
   //     T+2 반영 전 값이라 매수 직후 며칠간 부풀려질 수 있음 — extractNhCashDeposit
   //     이 이 우선순위를 담당, 2026-09-06 코드리뷰 H4 지적으로 정정).
-  //   - OVERSEAS_STOCK: 위탁 외화 예수금 중 fc_dca(당장 미투자 현금)가 아니라
-  //     fc_abk_amt(외화보관금액 합계, RP 포함)를 쓴다 — 오너 확인(2026-09-05):
-  //     "외화예수금이 있으면 자동으로 외화RP를 구매하는 옵션"이라 매도 직후엔
-  //     fc_dca가 거의 항상 0이고 실제 가용 자금은 RP에 있다. NH가 주문 시점에
-  //     RP↔현금 전환을 자체 처리하는 브로커 기능이라 이 시스템이 별도 인출 주문을
-  //     낼 필요가 없다(오너 확인 — "외화예수금 또는 환전은 외화 RP라고 생각해도 돼").
-  //     이 필드는 extractNhCashDeposit의 drn_pbl_amt/dca 체계와 달라(콤마 방어만
-  //     공유) parseNhNumber로 직접 파싱.
+  //   - OVERSEAS_STOCK: computeOverseasCash 참고(fc_dca + 오너가 수동 갱신하는
+  //     외화 RP Vault 값 — 2026-09-06 정정, 아래 함수 주석에 상세 근거).
   //   - GOLD: 금현물 계좌 자체 KRW 예수금(위와 동일 이유로 drn_pbl_amt 우선, 위탁과
   //     별개 풀).
   const safeExtractCash = (output0) => {
@@ -276,7 +295,7 @@ async function main() {
     try { return extractNhCashDeposit(output0); } catch (e) { console.error(`  ⚠️ 예수금 파싱 실패(무시): ${e.message}`); return null; }
   };
   let krCash = safeExtractCash(krBalanceBody?.Output_0);
-  let gbCash = parseNhNumber(gbBalanceBody?.Output_0?.fc_abk_amt);
+  let gbCash = computeOverseasCash({ gbBalanceBody, holdingsIndex });
   let goldCash = safeExtractCash(goldBalanceBody?.Output_0);
 
   console.log(`[체결] 모드=${mode} · 대상 ${targets.length}건`);
