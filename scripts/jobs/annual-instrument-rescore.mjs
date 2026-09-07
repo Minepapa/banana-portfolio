@@ -35,8 +35,7 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic, writeStateFile } from '../lib/state-writer.mjs';
 import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/cash-allocation-candidates.mjs';
-import { computeInstrumentScore, rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
-import { fetchEtfSeries } from '../lib/krx.mjs';
+import { computeInstrumentScore, rankAssetClassUniverse, fetchInstrumentSeries } from '../lib/instrument-scoring.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
@@ -48,7 +47,11 @@ const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
 const DEPARTMENT_LABEL = '투자전략실 Athena';
 const IN_SCOPE_ACCOUNTS = ['위탁', '연금저축'];
-const SERIES_DAYS = 60; // instrument-scoring.mjs scoreTrackingError와 같은 여유(3일 최소 요구보다 넉넉히)
+// 2026-09-07 60→252(≈1년) 상향 — rankAssetClassUniverse의 기본값과 반드시 같아야
+// 한다(instrument-scoring.mjs 헤더 주석 참고: absoluteReturn·excessReturn 축이
+// 의미 있으려면 충분히 긴 구간이 필요하고, 보유종목·유니버스 대안을 다른 길이로
+// 재면 공정 비교가 깨진다).
+const SERIES_DAYS = 252;
 const RESCORE_THRESHOLD = 10; // 1차 placeholder(100점 만점) — 오너가 나중에 조정
 const STATE_DIR = join(VAULT_PATHS.root, 'State', 'InstrumentRescoring');
 const STATE_FILE = join(STATE_DIR, 'last-year.md');
@@ -188,7 +191,7 @@ async function main() {
       }
 
       for (const inst of held) {
-        const series = await fetchEtfSeries(inst.name, SERIES_DAYS);
+        const series = await fetchInstrumentSeries(inst.name, SERIES_DAYS);
         if (!series.length) {
           console.log(`  ⏭️  [${account}/${assetClass}] ${inst.name}: KRX 조회 실패(상장폐지·이름불일치 등) — 건너뜀`);
           continue;
@@ -229,7 +232,7 @@ async function main() {
           continue;
         }
 
-        const altSeries = await fetchEtfSeries(evaluation.bestAlternative.name, 5);
+        const altSeries = await fetchInstrumentSeries(evaluation.bestAlternative.name, 5);
         const altLatest = altSeries[altSeries.length - 1];
         if (!altLatest || !Number.isFinite(altLatest.close) || altLatest.close <= 0) {
           console.error(`  ❌ [${account}/${assetClass}] 교체 대상 ${evaluation.bestAlternative.name} 가격 조회 실패 — 제안 생성 보류`);

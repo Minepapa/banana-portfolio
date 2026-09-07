@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ymd, fetchKrx, fetchTradingDaySeries, fetchIndexCloses, fetchGoldClose, fetchEtfSeries } from './krx.mjs';
+import { ymd, fetchKrx, fetchTradingDaySeries, fetchIndexCloses, fetchGoldClose, fetchEtfSeries, fetchEtfSeriesForNames } from './krx.mjs';
 
 test('ymd: YYYYMMDD 포맷(월·일 0패딩)', () => {
   assert.equal(ymd(new Date(2026, 0, 5)), '20260105');
@@ -144,6 +144,39 @@ test('fetchEtfSeries: 종목이 그날 응답에 없으면(매칭 실패) 스킵
   assert.equal(series.length, 1);
   assert.equal(series[0].nav, null);
   assert.equal(series[0].close, 10000);
+});
+
+test('fetchEtfSeriesForNames: 여러 종목명을 같은 날짜 응답에서 한 번에 뽑음(HTTP 호출은 날짜당 1회만)', async () => {
+  let callCount = 0;
+  const fetchImpl = async () => {
+    callCount++;
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        OutBlock_1: [
+          { ISU_NM: 'TIGER 200', TDD_CLSPRC: '30000', NAV: '30005', ACC_TRDVAL: '1000', IDX_IND_NM: '코스피 200', OBJ_STKPRC_IDX: '350' },
+          { ISU_NM: 'KODEX 200', TDD_CLSPRC: '40000', NAV: '40005', ACC_TRDVAL: '2000', IDX_IND_NM: '코스피 200', OBJ_STKPRC_IDX: '350' },
+        ],
+      }),
+    };
+  };
+  const result = await fetchEtfSeriesForNames(['TIGER 200', 'KODEX 200'], 1, { apiKey: 'K', fetchImpl, delayMs: 0, startDate: new Date(2026, 7, 19) });
+  assert.equal(callCount, 1); // 종목 2개인데 KRX HTTP 호출은 그 날짜 1번뿐
+  assert.equal(result['TIGER 200'].length, 1);
+  assert.equal(result['TIGER 200'][0].close, 30000);
+  assert.equal(result['KODEX 200'][0].close, 40000);
+});
+
+test('fetchEtfSeriesForNames: 요청한 이름 중 그날 응답에 없는 종목은 빈 배열(다른 종목엔 영향 없음)', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ OutBlock_1: [{ ISU_NM: 'TIGER 200', TDD_CLSPRC: '30000', NAV: '', ACC_TRDVAL: '', IDX_IND_NM: '', OBJ_STKPRC_IDX: '' }] }),
+  });
+  const result = await fetchEtfSeriesForNames(['TIGER 200', '상장전ETF'], 1, { apiKey: 'K', fetchImpl, delayMs: 0, startDate: new Date(2026, 7, 19) });
+  assert.equal(result['TIGER 200'].length, 1);
+  assert.deepEqual(result['상장전ETF'], []);
 });
 
 test('fetchGoldClose: 정상 — "금 99.99_1kg" 종가만 정확매칭(미니금 등 다른 상품 배제)', async () => {

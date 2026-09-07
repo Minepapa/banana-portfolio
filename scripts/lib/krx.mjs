@@ -112,30 +112,48 @@ export async function fetchIndexCloses(market, indexNm, days, opts = {}) {
   return closes;
 }
 
-// isuNm(ETF 종목명, etp/etf_bydd_trd 응답의 ISU_NM과 정확히 일치)의 최근 days거래일
-// 시계열 — 종가·NAV·거래대금·추적지수 종가를 한 번에 뽑는다(scripts/lib/instrument-
-// scoring.mjs의 유동성·NAV괴리율·추적오차 스코어링 입력). 실측(2026-09-06, KODEX 200):
-// ACC_TRDVAL=거래대금(원), NAV=순자산가치, IDX_IND_NM=추적 지수명, OBJ_STKPRC_IDX=그
-// 지수 종가 — 같은 행에 다 있어 별도 지수매핑표가 필요 없다. fetchIndexCloses와 동일하게
-// Number('')===0 함정 방어(값 없는 필드는 빈 문자열로 옴).
-export async function fetchEtfSeries(isuNm, days, opts = {}) {
+const numOrNull = (v) => (String(v ?? '').trim() === '' ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
+
+// isuNms(ETF 종목명 배열, etp/etf_bydd_trd 응답의 ISU_NM과 정확히 일치)의 최근
+// days거래일 시계열을 종목별로 한 번에 뽑는다 — 종가·NAV·거래대금·추적지수 종가
+// (scripts/lib/instrument-scoring.mjs의 유동성·NAV괴리율·추적오차·수익률 스코어링
+// 입력). 실측(2026-09-06, KODEX 200): ACC_TRDVAL=거래대금(원), NAV=순자산가치,
+// IDX_IND_NM=추적 지수명, OBJ_STKPRC_IDX=그 지수 종가 — 같은 행에 다 있어 별도
+// 지수매핑표가 필요 없다. fetchIndexCloses와 동일하게 Number('')===0 함정 방어(값
+// 없는 필드는 빈 문자열로 옴).
+//
+// ⚠️ 종목별로 나눠 호출(fetchEtfSeries)하면 매번 같은 날짜들을 처음부터 다시
+// 스캔한다(days=252 기준 종목당 최대 ~250회 HTTP 호출) — 코드리뷰 지적(2026-09-06)
+// 으로 발견한 실측 병목(자산군 하나 스코어링에 분 단위 소요, KRX 서버가 긴 연속
+// 호출 도중 연결을 끊는 사례도 실제로 확인됨). 이 함수는 날짜별 원본 응답(rows)을
+// 한 번만 받아 그 안에서 여러 ISU_NM을 동시에 찾는다 — 네트워크 호출 횟수가
+// O(종목수 × days)에서 O(days)로 준다. rankAssetClassUniverse가 한 자산군의 KRX
+// 후보 전체를 이걸로 한 번에 조회한다.
+export async function fetchEtfSeriesForNames(isuNms, days, opts = {}) {
   const series = await fetchTradingDaySeries((basDd) => fetchEtfDaily(basDd, opts), days, opts);
-  const out = [];
-  const numOrNull = (v) => (String(v ?? '').trim() === '' ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
+  const out = Object.fromEntries(isuNms.map((n) => [n, []]));
   for (const { basDd, rows } of series) {
-    const row = rows.find((r) => r.ISU_NM === isuNm);
-    if (!row) continue;
-    const close = numOrNull(row.TDD_CLSPRC);
-    if (close === null) continue;
-    out.push({
-      basDd, close,
-      nav: numOrNull(row.NAV),
-      accTrdVal: numOrNull(row.ACC_TRDVAL),
-      idxClose: numOrNull(row.OBJ_STKPRC_IDX),
-      idxName: row.IDX_IND_NM || null,
-    });
+    for (const isuNm of isuNms) {
+      const row = rows.find((r) => r.ISU_NM === isuNm);
+      if (!row) continue;
+      const close = numOrNull(row.TDD_CLSPRC);
+      if (close === null) continue;
+      out[isuNm].push({
+        basDd, close,
+        nav: numOrNull(row.NAV),
+        accTrdVal: numOrNull(row.ACC_TRDVAL),
+        idxClose: numOrNull(row.OBJ_STKPRC_IDX),
+        idxName: row.IDX_IND_NM || null,
+      });
+    }
   }
   return out;
+}
+
+// 종목 하나만 필요할 때의 얇은 래퍼(기존 호출부·테스트 호환 유지).
+export async function fetchEtfSeries(isuNm, days, opts = {}) {
+  const result = await fetchEtfSeriesForNames([isuNm], days, opts);
+  return result[isuNm];
 }
 
 // 금현물(1kg 단위 상품, 원/g 단가) 최근 거래일 종가 — NH 금현물 계좌(KIS·DART 어디에도
