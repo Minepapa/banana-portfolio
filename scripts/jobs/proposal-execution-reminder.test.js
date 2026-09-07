@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kstDayDiff, findMatchingExecution, shouldRemind, buildReminderText } from './proposal-execution-reminder.mjs';
+import {
+  kstDayDiff, findMatchingExecution, shouldRemind, buildReminderText,
+  shouldRemindPending, buildPendingReminderText,
+} from './proposal-execution-reminder.mjs';
 
 test('kstDayDiff: 정확히 3일 차이', () => {
   assert.equal(kstDayDiff('2026-08-20T01:00:00.000Z', new Date('2026-08-23T01:00:00.000Z')), 3);
@@ -83,4 +86,39 @@ test('buildReminderText: 며칠째인지·제안ID·안내문구 포함', () => 
   assert.match(text, /3일째/);
   assert.match(text, /test-id/);
   assert.match(text, /이미 브로커 앱에서 직접 체결하셨다면 무시/);
+});
+
+test('shouldRemindPending: 생성 1일 미만(같은 KST 캘린더일)이면 false', () => {
+  const proposal = { status: '대기', createdAt: '2026-09-07T00:30:00.000Z' }; // KST 09:30
+  assert.equal(shouldRemindPending({ proposal, now: new Date('2026-09-07T10:00:00.000Z') }), false); // KST 19:00, 같은 날
+});
+
+test('shouldRemindPending: 생성 1일 이상이고 첫 리마인드면 true', () => {
+  const proposal = { status: '대기', createdAt: '2026-09-05T00:00:00.000Z' };
+  assert.equal(shouldRemindPending({ proposal, now: new Date('2026-09-07T00:00:00.000Z') }), true);
+});
+
+test('shouldRemindPending: 마지막 리마인드 후 1일 안 지났으면 false(naggy 방지)', () => {
+  const proposal = { status: '대기', createdAt: '2026-09-01T00:00:00.000Z' };
+  const lastRemindedAt = '2026-09-07T00:00:00.000Z';
+  assert.equal(shouldRemindPending({ proposal, now: new Date('2026-09-07T12:00:00.000Z'), lastRemindedAt }), false);
+});
+
+test('shouldRemindPending: 마지막 리마인드 후 1일 지났으면 재발송 true', () => {
+  const proposal = { status: '대기', createdAt: '2026-09-01T00:00:00.000Z' };
+  const lastRemindedAt = '2026-09-05T00:00:00.000Z';
+  assert.equal(shouldRemindPending({ proposal, now: new Date('2026-09-07T00:00:00.000Z'), lastRemindedAt }), true);
+});
+
+test('shouldRemindPending: 대기 상태가 아니면 false(승인·거부·대체됨 등 — 이미 응답함)', () => {
+  const proposal = { status: '승인', createdAt: '2026-09-01T00:00:00.000Z' };
+  assert.equal(shouldRemindPending({ proposal, now: new Date('2026-09-07T00:00:00.000Z') }), false);
+});
+
+test('buildPendingReminderText: 며칠째인지·제안ID·응답방법·사유 포함', () => {
+  const text = buildPendingReminderText({ side: '매수', account: '위탁', assetKey: 'TIGER 200', id: 'test-id', reason: '갭이 커서' }, 2);
+  assert.match(text, /2일째/);
+  assert.match(text, /test-id/);
+  assert.match(text, /"승인" 또는 "거부"로 답장/);
+  assert.match(text, /갭이 커서/);
 });

@@ -7,6 +7,13 @@
  * 실행 시점 데이터가 필요한데 그건 Phase 8·9(자산분배·퀀트 트랙 부서 로직)가 공급한다
  * — 없는 데이터로 체결을 흉내 내지 않는다(scripts/lib/telegram-reply-handler.mjs 참고).
  *
+ * ⚠️ 연속 거부 감지(2026-09-07 신설, 오너 지시 — "내가 흔들리지 않고 최소한의 개입
+ * 으로 자산분배 전략을 수행할 수 있도록... 이걸 잘 지키게 하는 게 너의 몫"). 자산분배
+ * 트랙 제안을 거부할 때마다 최근 연속 거부 횟수를 확인해, 3의 배수(3·6·9...)에
+ * 도달하면 별도 텔레그램 메시지로 원칙을 되짚어준다(scripts/lib/rejection-
+ * pattern.mjs). 거부 자체를 막지 않는다 — 오너의 거부권은 그대로 유지, 그저 "지금
+ * 계속 흔들리고 있다"는 사실만 알아차리게 한다.
+ *
  * ⚠️ --infer-pending: 텔레그램 플러그인이 상시세션(com.banana2.telegram-session)에
  * reply_to를 안 넘겨준다(2026-08-12 발견) — 진짜 메시지ID를 모를 때 이 플래그로
  * 대체한다. "대기" 상태 제안이 정확히 1건일 때만 그걸로 진행하고, 0건·2건 이상이면
@@ -26,7 +33,9 @@ import { parseProposal, updateProposalRecord } from '../lib/proposal-vault.mjs';
 import { buildProposalStatusEditText } from '../lib/proposal-flow.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { editTelegramMessage } from '../lib/telegram.mjs';
+import { editTelegramMessage, sendTelegram } from '../lib/telegram.mjs';
+import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { detectRejectionStreak, shouldNudgeRejectionStreak, buildRejectionStreakNudge } from '../lib/rejection-pattern.mjs';
 
 function parseArgs(argv) {
   const out = {};
@@ -84,6 +93,20 @@ async function main() {
 
   if (result.action === 'reject') {
     console.log(`🚫 거부 처리: ${result.proposal.id}`);
+
+    // 연속 거부 감지(2026-09-07 신설) — 자산분배 트랙만 대상. `proposals`는 이 거부를
+    // 반영하기 전 상태로 로드됐으므로, 방금 쓴 result.updates를 반영한 뷰로 다시
+    // 계산한다(디스크 재조회 없이 — 동시성 걱정 없는 단발 CLI라 충분).
+    if (result.proposal.track === '자산분배') {
+      const updatedProposals = proposals.map((p) => (p.filename === result.proposal.filename ? { ...p, ...result.updates } : p));
+      const streak = detectRejectionStreak(updatedProposals, { track: '자산분배' });
+      if (shouldNudgeRejectionStreak(streak)) {
+        try {
+          await sendTelegram(formatDepartmentMessage({ departmentLabel: '비서실 Apollo', tag: '안내', body: buildRejectionStreakNudge(streak) }));
+          console.log(`  📣 연속 거부 ${streak}회 — 원칙 재확인 안내 발송`);
+        } catch (e) { console.error('연속 거부 안내 발송 실패(무시, 거부 처리 자체는 완료됨):', e.message); }
+      }
+    }
   } else {
     console.log(`✅ 승인 처리: ${result.proposal.id}`);
     console.log(`   다음 단계: ${result.nextStep}`);
