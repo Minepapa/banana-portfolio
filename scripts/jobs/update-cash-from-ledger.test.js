@@ -158,20 +158,27 @@ test('resolveAccountAnchor: 동결 대상이 아닌 계좌(연금저축)는 기�
 // 필터와 실제로 맞물려 09-02 배당·09-08 09:42:32 입금(앵커 이전)은 제외되고
 // 앵커 이후 flow만 더해지는지, 통합해서 확인(2026-09-11 code-reviewer 2차 지적).
 test('[신설/2026-09-11] 통합: FROZEN_ANCHORS.ISA 시각 이전 cashEvent·배당은 델타에서 제외됨', () => {
+  // FROZEN_ANCHORS.ISA는 오너 재확인 때마다 값·시각이 바뀔 수 있는 살아있는 상수라
+  // (파일 헤더 주석 참고, 실제로 2026-09-08→2026-09-11로 이미 한 번 갱신됨) 특정
+  // 실제 날짜를 하드코딩하지 않는다 — 그 앵커 시각 "1초 전/1초 후"를 동적으로
+  // 계산해 경계 자체(> anchorTs)만 검증한다.
+  const anchorTs = FROZEN_ANCHORS.ISA.baseTs;
+  const before = new Date(new Date(`${anchorTs.replace(' ', 'T')}Z`).getTime() - 1000).toISOString().slice(0, 19).replace('T', ' ');
+  const after = new Date(new Date(`${anchorTs.replace(' ', 'T')}Z`).getTime() + 1000).toISOString().slice(0, 19).replace('T', ' ');
   const flows = buildFlows(
     'ISA',
     [],
     [
-      { account: 'ISA', date: '2026-09-02', receivedTime: '10:00:00', afterTaxAmount: 48840 }, // 앵커(09-08 16:23:37) 이전
+      { account: 'ISA', date: before.slice(0, 10), receivedTime: before.slice(11), afterTaxAmount: 48840 }, // 앵커 이전
     ],
     [], [],
     [
-      { ts: '2026-09-08 09:42:32', account: 'ISA', depositAmount: 1000000 }, // 앵커 이전(같은 날 더 이른 시각)
-      { ts: '2026-09-09 00:00:00', account: 'ISA', depositAmount: 50000 },   // 앵커 이후 — 포함돼야 함
+      { ts: before, account: 'ISA', depositAmount: 1000000 }, // 앵커 이전
+      { ts: after, account: 'ISA', depositAmount: 50000 },    // 앵커 이후 — 포함돼야 함
     ],
   );
-  const delta = computeCashDelta({ anchorTs: FROZEN_ANCHORS.ISA.baseTs, flows });
-  assert.equal(delta, 50000); // 09-02 배당·09-08 09:42:32 입금은 제외, 09-09 입금만 포함
+  const delta = computeCashDelta({ anchorTs, flows });
+  assert.equal(delta, 50000); // 앵커 이전 배당·입금은 제외, 앵커 이후 입금만 포함
 });
 
 // checkDriftWarning — 2026-09-11 신설 직후 실측(--dry-run)으로 오탐이 재현됐던
@@ -181,9 +188,9 @@ test('[신설/2026-09-11] 통합: FROZEN_ANCHORS.ISA 시각 이전 cashEvent·�
 test('[회귀방지/2026-09-11] checkDriftWarning: latestEvent가 앵커 시각 이하(새 정보 없음)면 정상 매수로 값이 줄어도 경보 안 함', () => {
   const w = checkDriftWarning({
     account: 'ISA',
-    anchorBaseTs: FROZEN_ANCHORS.ISA.baseTs, // 2026-09-08 16:23:37
+    anchorBaseTs: FROZEN_ANCHORS.ISA.baseTs,
     latestEvent: { balance: FROZEN_ANCHORS.ISA.base, ts: FROZEN_ANCHORS.ISA.baseTs }, // 앵커 자신
-    settledCash: 181426, // 앵커 고정 후 실제 ISA 매수로 줄어든 값(실측)
+    settledCash: FROZEN_ANCHORS.ISA.base - 481400, // 앵커 고정 후 매수로 줄어든 값(예시)
   });
   assert.equal(w, null);
 });
