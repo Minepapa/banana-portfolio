@@ -51,6 +51,7 @@ import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 import { renderSignalsReport } from '../tools/macro-overlay-facts.mjs';
+import { dedupExecutionsForReport } from './daily-execution-report.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -97,10 +98,19 @@ export function buildAssetSection(holdings, previousTotal) {
 // 시차만큼 어긋난다(위 헤더 주석 참고). sinceTimestamp가 null이면(첫 실행) 전부 "간밤"
 // 으로 보지 않고 빈 결과를 반환한다 — 과거 전체 이력을 "간밤"이라고 잘못 보고하지 않기
 // 위함(추정 금지 원칙).
+//
+// ⚠️ 크로스소스 중복 제거(2026-09-11, 텔레그램 세션이 남긴 DevRequest 반영 — 오너가
+// "금현물 1주 매수했는데 왜 2주라고 하냐" 신고, `Log/DevRequests/2026-09-11-morning-
+// briefing-체결중복노출-버그.md`). 위탁·금현물은 NH API+카카오 영구 병행이 최종설계라
+// (2026-09-04 오너 확정 — API 잡이 크리덴셜 만료·Mac 절전 등으로 조용히 실패할 때
+// 카카오가 유일한 안전망) 같은 실제 체결이 Facts/Ledger/Executions에 레코드 2개로
+// 남는 게 정상이다. daily-execution-report.mjs는 dedupExecutionsForReport로 이미
+// 걸러 보고하는데 이 섹션엔 같은 처리가 빠져 있었다 — 동일 함수를 그대로 재사용한다
+// (새 판정 로직을 따로 만들면 두 보고서가 서로 다른 기준으로 갈라질 위험).
 export function buildEventsSection(dividends, executions, sinceTimestamp) {
   if (!sinceTimestamp) return '(첫 실행 — 비교 기준 없어 이벤트 생략)';
   const divs = (dividends || []).filter((d) => String(d.recordedAt ?? '') > sinceTimestamp);
-  const execs = (executions || []).filter((e) => String(e.recordedAt ?? '') > sinceTimestamp);
+  const execs = dedupExecutionsForReport((executions || []).filter((e) => String(e.recordedAt ?? '') > sinceTimestamp));
   if (!divs.length && !execs.length) return '간밤 배당·체결 이벤트 없음';
   const lines = [];
   for (const d of divs) {

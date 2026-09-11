@@ -71,6 +71,16 @@ test('buildEventsSection: 창 안에 이벤트가 없으면 조용함 명시', (
   assert.equal(text, '간밤 배당·체결 이벤트 없음');
 });
 
+test('buildEventsSection: 회귀 방지 — NH API+카카오 크로스소스 중복 체결을 한 줄로 합친다(2026-09-11 오너 신고 — 금현물 1주 매수가 2주로 보임)', () => {
+  const executions = [
+    { tradeDate: '2026-09-11 00:00:00', tradeType: '매수', stockName: '금 99.99K', quantity: 1, recordedAt: '2026-09-11T00:00:00.000Z' }, // NH API
+    { tradeDate: '2026-09-11 09:33:57', tradeType: '매수', stockName: '금 99.99K', quantity: 1, recordedAt: '2026-09-11T00:33:57.000Z' }, // 카카오(같은 날 나중 기록)
+  ];
+  const text = buildEventsSection([], executions, '2026-08-20T00:00:00.000Z');
+  const occurrences = text.split('금 99.99K').length - 1;
+  assert.equal(occurrences, 1);
+});
+
 test('buildAllocationSection: 목표비중 그대로면 "밴드 내 정상"(2026-08-23 Part 6)', () => {
   const holdings = [
     { account: '위탁', assetClass: '채권', evalAmount: 200000 },
