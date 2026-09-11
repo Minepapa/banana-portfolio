@@ -213,13 +213,33 @@ export function parseCashAlarm(body, tsRaw) {
   const withdrawable = parseInt(cleanNum(bm[1]), 10);
   if (!Number.isFinite(withdrawable) || withdrawable < 0) return null;
   let balance = withdrawable;
+  // depositAmount(2026-09-11 신설, ISA 예수금 배당누락 사고 근본수정) — ISA는 이제
+  // 이 "출금가능금액" 스냅샷 자체를 앵커로 더 이상 안 쓴다(update-cash-from-ledger.mjs
+  // 헤더 주석 참고 — 배당·매매차익이 만기 전 출금 제한돼 출금가능금액이 실제 예수금보다
+  // 낮게 잡힐 수 있어, 이 값으로 앵커를 계속 갈아치우면 그 괴리가 반복 재발한다). 대신
+  // 이 입금액을 그 자체로 하나의 flow(+)로 취급해 고정 기준점 위에 누적한다 — 배당·
+  // 체결과 같은 층위의 "사실"로 다룬다. account==='ISA'로 좁힌 이유는 이 필드
+  // (CASH_DEPOSIT_AMOUNT)가 애초에 ISA의 "출금가능금액≠실제예수금" 문제를 풀려고
+  // 2026-07-14 신설된 것이라 다른 계좌 알림 형식에서 안정적으로 같은 의미인지 검증된
+  // 적이 없음(위탁은 출금가능금액 자체가 이미 정확함이 실증돼 이 필드가 애초에 불필요).
+  //
+  // ⚠️ 미검증 전제(2026-09-11, code-reviewer 2차 지적) — "ISA 입금안내는 외부 실입금
+  // (계좌이체 등)에만 온다"고 가정하고 있다. 만약 NH가 ISA 매도 결제대금이나 배당
+  // 입금에도 이 "입금안내"를 보낸다면, 그 depositAmount가 이미 Executions(매도 +)·
+  // Dividends(+)로 잡히는 흐름과 이중계상된다 — update-cash-from-ledger.mjs가 앵커를
+  // 더 이상 재조정 안 하는 동결 설계라(파일 헤더 참고) 이런 이중계상은 다음 앵커
+  // 교체로 자연 소거되지 않고 영구 누적된다. 현재는 실제 원장 실측(2026-07-20 ISA
+  // 매도 T+2 무알림 1건)으로 안전 쪽에 기울어 있으나 표본이 1건뿐 — 다음 ISA 매도
+  // 후 이 계좌에 입금안내가 실제로 오는지 오너와 함께 재확인할 것.
+  let depositAmount = null;
   if (isDeposit && account === 'ISA') {
     const dm = body.match(CASH_DEPOSIT_AMOUNT);
     const deposit = dm ? parseInt(cleanNum(dm[1]), 10) : NaN;
+    if (Number.isFinite(deposit) && deposit > 0) depositAmount = deposit;
     balance = resolveDepositAnchorBalance(withdrawable, deposit);
   }
   if (!Number.isFinite(balance) || balance < 0) return null;
-  return { account, acctNo: extractNhAccountNo(body), balance, ts: normalizeDateTime(tsRaw) };
+  return { account, acctNo: extractNhAccountNo(body), balance, depositAmount, ts: normalizeDateTime(tsRaw) };
 }
 
 // ── 환전 파서 (NH투자증권 "환전내역 안내") ────────────

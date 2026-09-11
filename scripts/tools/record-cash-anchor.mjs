@@ -18,6 +18,11 @@
  * update-cash-from-ledger.mjs가 다음 실행에서 이 값을 기준점으로 그대로 읽는다
  * (신규 로직 없음, 기존 예수금앵커 파이프라인 그대로 재사용).
  *
+ * ⚠️ 예외(2026-09-11 신설) — ISA는 update-cash-from-ledger.mjs의 FROZEN_ANCHORS에
+ * 앵커가 코드 상수로 고정돼 있어(배당누락 실사고 근본수정, 그 파일 헤더 참고) 이
+ * 도구로 CashEvent를 써도 무시된다 — main()이 그 계좌면 즉시 거부한다(조용한
+ * no-op 방지). ISA 앵커를 재조정하려면 FROZEN_ANCHORS를 코드로 직접 고칠 것.
+ *
  * 사용법:
  *   node scripts/tools/record-cash-anchor.mjs --account=연금저축 --balance=1079918
  *   node scripts/tools/record-cash-anchor.mjs --account=연금저축 --balance=1079918 --dry-run
@@ -32,6 +37,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildCashEventRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
+import { FROZEN_ANCHORS } from '../jobs/update-cash-from-ledger.mjs';
 
 function parseArgs(argv) {
   const out = {};
@@ -64,6 +70,16 @@ async function main() {
   // (일부러) — 대신 balance 자체를 엄격히 검증해 "0으로 추정" 같은 사고를 막는다.
   if (!account) { console.error('❌ --account=계좌명 필요(예: --account=연금저축)'); process.exit(2); }
   if (!Number.isFinite(balance) || balance < 0) { console.error('❌ --balance=잔고(0 이상 숫자) 필요'); process.exit(2); }
+  // 앵커 동결 계좌 거부(2026-09-11 신설, code-reviewer 지적) — ISA는
+  // update-cash-from-ledger.mjs가 FROZEN_ANCHORS 코드 상수만 보고 CashEvent를
+  // 더 이상 앵커로 안 읽는다(그 파일 헤더 "ISA 앵커 설계 변경" 참고). 이 가드
+  // 없이 CashEvent만 쓰고 "기록 완료" 메시지를 내보내면, 실제로는 아무 효과 없는
+  // 조용한 no-op인데도 오너에게는 성공한 것처럼 보인다 — 재조정이 필요하면
+  // FROZEN_ANCHORS를 코드로 직접 고치라고 명시적으로 안내한다.
+  if (FROZEN_ANCHORS[account]) {
+    console.error(`❌ ${account}는 앵커 동결 계좌라 이 도구로 갱신 안 됨 — scripts/jobs/update-cash-from-ledger.mjs의 FROZEN_ANCHORS.${account}를 코드로 직접 고치세요.`);
+    process.exit(2);
+  }
 
   const ts = kstNow();
   const { filename, content, dir } = buildCashEventRecord({ account, balance, ts });

@@ -436,6 +436,16 @@ test('buildCashEventRecord: 종목이 없는 레코드라 tags엔 계좌만', ()
   assert.deepEqual(parseFrontmatter(content).tags, ['계좌/위탁']);
 });
 
+test('[신설/2026-09-11] buildCashEventRecord: depositAmount가 있으면(ISA 입금안내) 그대로 기록', () => {
+  const { content } = buildCashEventRecord(cashEvent({ account: 'ISA', depositAmount: 300000 }));
+  assert.equal(parseFrontmatter(content).depositAmount, 300000);
+});
+
+test('[신설/2026-09-11] buildCashEventRecord: depositAmount 없으면(위탁·ISA 출금안내 등) null', () => {
+  const { content } = buildCashEventRecord(cashEvent());
+  assert.equal(parseFrontmatter(content).depositAmount, null);
+});
+
 test('buildFundPurchaseRecord: account 안 넘기면(지연패턴) tags엔 종목(펀드명)만', () => {
   const { content } = buildFundPurchaseRecord(fundBuy());
   assert.deepEqual(parseFrontmatter(content).tags, ['종목/VIP한국형가치투자증권투자신탁']);

@@ -39,6 +39,49 @@
  *   유지됨(매월 21일경 연봉 연동 자동입금, 알림 없음 — 정확한 금액을 추정해 자동
  *   반영하지 않는다).
  *
+ * ⚠️ ISA 앵커 설계 변경(2026-09-11, 배당누락 실사고 근본수정 — 오너 지시: "출금가능
+ * 금액이 아니라 입금금액을 보면 될 것 같은데. 기본 앵커에서 더하기 빼기하고 배당금도
+ * 반영하고. 어느 시점에 값으로 대체하는 로직을 없앤다"). 배경: NH가 알려주는 ISA
+ * "출금가능금액"은 배당·매매차익 등 만기 전 출금이 제한된 현금을 못 담을 수 있다
+ * (cash-base.mjs resolveDepositAnchorBalance 주석). 실사고(2026-09-08): 09-02
+ * 배당 3건(146,630원) 발생 후 새 NH 알림 앵커가 그 배당을 반영 못 한 값으로
+ * 들어와, resolveCashAnchor가 그걸 그대로 새 기준점으로 갈아치우면서 배당이 두
+ * 계산(새 기준점 자체·그 이전 델타) 어디에도 안 잡히고 사라졌다. 첫 수정 시도
+ * (재구성값과 NH값 중 큰 쪽 채택)는 code-reviewer가 실제 원장으로 재생해 무력화
+ * 시나리오를 실증했다 — 같은 구간에 정상 입금이 섞이면 그 큰 금액이 작은 배당
+ * 누락을 가려버려 보정이 한 번도 발동하지 않았고, 설령 발동해도 같은 anchorTs로
+ * 저장해 10분마다 도는 다음 실행(intraday-portfolio-sync)에서 조용히 원복됐다.
+ *
+ * 그래서 "새 스냅샷으로 앵커를 갈아치우는" 로직 자체를 ISA에서 없앴다. ISA는
+ * 2026-09-08 16:23:37(오너 실측 확인값 662,826원)를 마지막으로 앵커를 고정한다.
+ * 대신 입금액(신규, notification-parsers.mjs parseCashAlarm의 depositAmount —
+ * ISA 입금안내에서만 채워짐)을 체결·배당과 같은 층위의 flow(+)로 편입해
+ * buildFlows가 함께 더한다. 즉 ISA 잔고는 이제 "고정 기준점 + 체결(±) + 배당(+)
+ * + 입금(+)"만으로 계산된다 — 출금액은 아직 flow로 못 잡는다(ISA는 만기 전
+ * 출금 자체가 제한적이라 알림 원문에서 확정된 필드가 없음 — 추정해서 만들지
+ * 않음, 실제 출금 알림을 받으면 그때 원문을 보고 판단할 것).
+ *
+ * ⚠️ 재설계(2026-09-11, code-reviewer 2차 지적 반영) — 최초 구현은 이 고정값을
+ * State/Holdings 파일에만 암묵적으로 남기고(loadStoredAnchor가 매번 자기 출력을
+ * 다시 읽어오는 "자기 영속" 방식) 코드 어디에도 662,826원이라는 숫자 자체가
+ * 없었다. 이러면 ①그 State 파일이 유실되면 ISA 앵커가 영구 소실되고 ②므네모시네
+ * Obsidian LiveSync 충돌해소나 vault git revert로 더 오래된 State 파일이 복원되면
+ * (project-vault-sync-infra 메모리 참고 — 예상 밖 파일 변경의 후보로 이미 알려짐)
+ * 그 옛 앵커 시각 이후의 flow가 전부 다시 더해져 이 프로젝트가 이미 2번 겪은
+ * 이중반영 사고가 재발할 수 있었다(resolveCashAnchor의 storedIsNewer 가드는
+ * latestEvent와 대조하는 방식이라, latestEvent를 아예 안 넘기는 이 설계에서는
+ * 무력화된 채 죽은 코드가 됨). 그래서 고정값을 아래 FROZEN_ANCHORS로 **코드 상수화**
+ * 했다 — State 파일 상태와 완전히 무관하게 항상 같은 값에서 출발한다(git diff로
+ * 리뷰·추적 가능, 상태 유실에도 Facts+코드만으로 완전 재현).
+ *
+ * ⚠️ 재조정 경로 — 오너가 나중에 실측으로 앵커를 다시 맞추고 싶으면(예: 이번처럼
+ * 또 미추적 오차가 쌓인 게 확인되면) FROZEN_ANCHORS의 값을 코드로 직접 고쳐야
+ * 한다(record-cash-anchor.mjs는 ISA에 대해 의도적으로 거부하도록 막아뒀다 —
+ * 그 도구 헤더 주석 참고, 조용한 no-op을 방지하기 위함). 이 앵커 갱신은 항상
+ * FROZEN_ANCHORS.ISA.ts 이후 생성된 CashEvent만 depositAmount를 갖고 있다는
+ * 전제에 의존한다(그 이전 레코드는 구버전 스키마라 이 필드가 없음) — 앵커를
+ * 2026-09-11 이전 시점으로 되돌리면 그 사이 입금이 flow로 안 잡혀 누락된다.
+ *
  * 매 실행마다 기준점+델타를 처음부터 다시 계산해 전체를 덮어쓴다("지금 상태" 원칙,
  * vault-paths.mjs state.* 관례와 동일) — 누적 증분이 아니라 순수 재계산이라 같은
  * 입력이면 항상 같은 출력이 나온다(2026-08-17 신규현금배분 10배 부풀림 사고— 증분
@@ -67,6 +110,41 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // 구조적으로 대조하기 위해(nh-accounts.test.js 신규 가드 테스트가 소비).
 export const ALL_ACCOUNTS = ['ISA', '연금저축'];
 
+// ISA는 더 이상 새 CashEvent 스냅샷으로 앵커를 갈아치우지 않는다(파일 상단 "ISA
+// 앵커 설계 변경/재설계" 주석 참고) — 값 자체를 코드 상수로 고정해 State 파일
+// 유실·롤백과 완전히 무관하게 만든다. 여기 있는 계좌는 main()이 loadStoredAnchor/
+// resolveCashAnchor를 아예 안 타고 이 값을 그대로 쓴다.
+export const FROZEN_ANCHORS = {
+  ISA: { base: 662826, baseTs: '2026-09-08 16:23:37', source: '고정(2026-09-08 오너 실측)' },
+};
+
+// 계좌의 앵커를 결정한다 — FROZEN_ANCHORS에 있으면 그 값을 그대로(State·CashEvent와
+// 완전히 무관), 아니면 기존 resolveCashAnchor(stored vs latestEvent) 그대로. 순수
+// 함수로 분리해 "동결이 실제로 흔들리지 않는지"를 main() 없이 테스트할 수 있게 한다
+// (2026-09-11 code-reviewer 2차 지적 — 이전엔 이 분기가 main() 안에 있어 테스트가
+// 자기 영속 루프의 안정성을 검증 못 했음).
+export function resolveAccountAnchor(account, { stored, latestEvent }) {
+  if (FROZEN_ANCHORS[account]) return FROZEN_ANCHORS[account];
+  return resolveCashAnchor({ stored, latestEvent });
+}
+
+// 드리프트 경보 판정(2026-09-11 신설) — FROZEN_ANCHORS 계좌는 새 NH 스냅샷으로
+// 자동 교정이 안 되므로(파일 헤더 주석), 미추적 오차(수수료 등)가 쌓여도 아무도
+// 모를 수 있다. NH "출금가능금액"은 실제 예수금의 하한선(cash-base.mjs 주석 — 낮게
+// 잡힐 순 있어도 높게 잡힐 순 없음)이라, settledCash가 그보다 낮으면 계산이 확실히
+// 틀렸다는 뜻 — 값은 안 건드리고(오너 지시 "대체 로직 없앤다"와 무충돌) 알리기만
+// 한다. latestEvent.ts가 anchorBaseTs 이하면 그 이후 새 정보가 없다는 뜻이라 항상
+// null(경보 안 함) — 앵커를 세운 그 CashEvent 자신과 비교하면, 그 이후 정상적인
+// 매수만 있어도 settledCash가 항상 작아져 매번 오탐한다(실측 재현됨, 순수함수로
+// 분리한 이유 — 이 경계조건을 회귀 테스트로 고정하기 위함).
+export function checkDriftWarning({ account, anchorBaseTs, latestEvent, settledCash }) {
+  if (!FROZEN_ANCHORS[account] || !latestEvent || !Number.isFinite(latestEvent.balance)) return null;
+  if (!(String(latestEvent.ts) > String(anchorBaseTs))) return null;
+  const gap = settledCash - latestEvent.balance;
+  if (gap >= 0) return null;
+  return `🚨 ${account}: 계산값(${settledCash.toLocaleString()}원)이 최근 NH 출금가능금액 하한선(${latestEvent.balance.toLocaleString()}원, ${latestEvent.ts})보다 낮음 — 미추적 유출(수수료 등) 가능성, 확인 필요`;
+}
+
 function readVaultFiles(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => {
@@ -91,8 +169,15 @@ function loadStoredAnchor(account) {
 // 매수(-)/매도(+), 배당은 항상(+). 계좌가 아직 안 풀린(account:null) 레코드는 어느
 // 계좌 것인지 몰라 자동으로 전부 제외된다(추정 없음 — update-holdings-from-executions.mjs가
 // 풀어줄 때까지 이 잡의 계산에서는 조용히 빠짐, 다음 실행에 자연히 반영됨).
-export function buildFlows(account, executions, dividends, fundPurchases, exchanges) {
+export function buildFlows(account, executions, dividends, fundPurchases, exchanges, cashEvents = []) {
   const flows = [];
+  // 입금(신규, 2026-09-11) — ISA 앵커 고정 설계의 짝. depositAmount는 ISA 입금안내
+  // 알림에서만 채워진다(notification-parsers.mjs parseCashAlarm) — 다른 계좌·다른
+  // 알림 유형(출금안내 등)은 항상 undefined/null이라 자연히 여기서 걸러진다.
+  for (const c of cashEvents) {
+    if (c.legacy || c.account !== account || !Number.isFinite(c.depositAmount)) continue;
+    flows.push({ ts: c.ts, amount: c.depositAmount });
+  }
   for (const e of executions) {
     if (e.legacy || e.account !== account) continue;
     const amount = (e.quantity ?? 0) * (e.price ?? 0);
@@ -156,7 +241,10 @@ async function main() {
     const latestEvent = accountEvents.length > 0
       ? accountEvents[accountEvents.length - 1]
       : null;
-    const anchor = resolveCashAnchor({
+    // FROZEN_ANCHORS(ISA)는 State 파일(storedAnchor)도 CashEvent(latestEvent)도 안 보고
+    // 코드 상수를 그대로 쓴다(resolveAccountAnchor 참고) — State 파일이 사라지거나
+    // 므네모시네 동기화로 옛 버전이 복원돼도 앵커 자체는 흔들리지 않는다.
+    const anchor = resolveAccountAnchor(account, {
       stored: loadStoredAnchor(account),
       latestEvent: latestEvent ? { balance: latestEvent.balance, ts: latestEvent.ts } : null,
     });
@@ -167,12 +255,15 @@ async function main() {
       continue;
     }
 
-    const flows = buildFlows(account, executions, dividends, fundPurchases, exchanges);
+    const flows = buildFlows(account, executions, dividends, fundPurchases, exchanges, cashEvents);
     const delta = computeCashDelta({ anchorTs: anchor.baseTs, flows });
     const settled = settleCash(anchor.base, delta);
     const flag = settled.negative ? ' ⚠️ 마이너스(데이터 점검 필요)' : '';
     console.log(`  ${account}: 기준 ${anchor.base.toLocaleString()}원(${anchor.baseTs || '이관'}, ${anchor.source}) + 델타 ${delta.toLocaleString()}원 → ${settled.cash.toLocaleString()}원${flag}`);
     if (settled.negative) negativeWarnings++;
+
+    const driftWarning = checkDriftWarning({ account, anchorBaseTs: anchor.baseTs, latestEvent, settledCash: settled.cash });
+    if (driftWarning) console.log(`  ${driftWarning}`);
 
     writeCash({
       account, balance: settled.cash, raw: settled.raw, negative: settled.negative,

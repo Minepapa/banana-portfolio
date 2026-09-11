@@ -249,6 +249,7 @@ test('parseCashAlarm: NH 위탁 입금안내(정상 — 출금가능금액이 �
   assert.equal(r.account, '위탁');
   assert.equal(r.acctNo, '205-01-59***9');
   assert.equal(r.balance, 7224098); // 위탁은 출금가능금액이 이미 정확 → 그대로
+  assert.equal(r.depositAmount, null); // 위탁은 depositAmount 안 채움(ISA 전용 필드)
 });
 
 test('parseCashAlarm: NH ISA 입금안내(출금가능금액이 입금보다 작아 뒤처짐 — 입금액 우선)', () => {
@@ -256,6 +257,14 @@ test('parseCashAlarm: NH ISA 입금안내(출금가능금액이 입금보다 작
   const r = parseCashAlarm(body, '2026-08-04 09:00:00');
   assert.equal(r.account, 'ISA');
   assert.equal(r.balance, 300000); // resolveDepositAnchorBalance가 더 큰 입금액 채택
+  assert.equal(r.depositAmount, 300000); // 2026-09-11 신설 — buildFlows가 이 값을 입금 flow(+)로 씀
+});
+
+test('[신설/2026-09-11] parseCashAlarm: ISA 출금안내는 depositAmount 없음(입금안내 전용 필드)', () => {
+  const body = '[NH투자증권] 출금안내\n계좌번호 209-02-89***2\n금액 100,000원\n출금가능금액 : 50,000원';
+  const r = parseCashAlarm(body, '2026-08-04 09:00:00');
+  assert.equal(r.account, 'ISA');
+  assert.equal(r.depositAmount, null);
 });
 
 test('[막아야 함] parseCashAlarm: 접두사(209-02)가 같은 금현물 계좌는 ISA와 섞이지 않음', () => {

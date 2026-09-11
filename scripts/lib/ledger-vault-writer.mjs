@@ -131,6 +131,10 @@ export function buildCashEventRecord(c) {
     account: c.account,
     acctNo: c.acctNo || '',
     balance: c.balance,
+    // depositAmount(2026-09-11 신설) — ISA 입금안내에서만 채워짐(notification-
+    // parsers.mjs parseCashAlarm 참고). update-cash-from-ledger.mjs가 ISA 예수금을
+    // 고정 기준점+flow 누적으로 계산할 때 이 값을 입금 flow(+)로 쓴다.
+    depositAmount: Number.isFinite(c.depositAmount) ? c.depositAmount : null,
     tags: buildVaultTags({ account: c.account }),
     dedupKey,
     recordedAt: new Date().toISOString(),
