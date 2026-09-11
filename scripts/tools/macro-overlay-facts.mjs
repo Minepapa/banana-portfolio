@@ -21,13 +21,19 @@ import { join } from 'node:path';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
-import { computeMacroOverlaySignals } from '../lib/macro-overlay.mjs';
+import { computeMacroOverlaySignals, isRateSpreadBreached } from '../lib/macro-overlay.mjs';
+import { fetchGovBondCloses } from '../lib/ecos.mjs';
+import { loadEnv } from '../lib/auth.mjs';
+
+loadEnv(); // ECOS_API_KEY(2026-09-12 신설, 국고채 스프레드용) — DART_API_KEY·KRX_API_KEY와 동일 관례
 
 const JSON_OUT = process.argv.includes('--json');
 const DRY_RUN = process.argv.includes('--dry-run');
 
-// ⚠️ 한국 국고채 스프레드(ECOS)는 API 키 미신청 — 오너 확정(2026-08-05) "나머지 4개
-// 신호부터". 미국 금리차(^TNX-^IRX)·DXY(DX-Y.NYB)·VIX·유가(CL=F)·Faber용 KOSPI/SP500만.
+// 미국 금리차(^TNX-^IRX)·DXY(DX-Y.NYB)·VIX·유가(CL=F)·Faber용 KOSPI/SP500 —
+// yfinance 조회 대상만. 한국 국고채(장단기 스프레드)는 별도 소스(ECOS, 아래
+// fetchGovBondCloses)라 이 목록엔 없다 — 2026-09-12 ECOS 키 발급 전까진 이 신호
+// 자체가 없었다("나머지 4개 신호부터", 2026-08-05 오너 확정).
 export const TICKERS = { KOSPI: '^KS11', SP500: '^GSPC', TNX: '^TNX', IRX: '^IRX', DXY: 'DX-Y.NYB', VIX: '^VIX', WTI: 'CL=F' };
 
 // export(2026-09-06, "자산분배 트랙 핵심 로직 설계" §4) — monthly-macro-tilt-
@@ -78,7 +84,7 @@ function signalLine(numbers, warningSuffix) {
 }
 
 export function renderSignalsReport(signals) {
-  const lines = ['[거시 전술 오버레이 점검] (ECOS 한국채권스프레드 미연동 — 4개 신호만)', ''];
+  const lines = ['[거시 전술 오버레이 점검]', ''];
   const faberLine = (label, sig, crossed) => {
     if (!sig) return `  ${label}: 데이터 부족(판정 보류)`;
     const numbers = `  ${label}: ${sig.aboveMA ? '10개월선 위' : '10개월선 아래'}(${sig.deviationPct.toFixed(2)}%)`;
@@ -87,12 +93,25 @@ export function renderSignalsReport(signals) {
   lines.push(faberLine('Faber 국내주식(KOSPI)', signals.faberDomestic, signals.faberDomesticCrossed));
   lines.push(faberLine('Faber 해외주식(S&P500)', signals.faberForeign, signals.faberForeignCrossed));
 
-  if (signals.rateSpread) {
-    const numbers = `  미국금리차(10Y-3M): ${signals.rateSpread.currentSpread.toFixed(2)}%p`;
-    lines.push(signals.rateSpread.inverted ? `${numbers}\n    → [경고] 역전` : numbers);
-  } else {
-    lines.push('  미국금리차: 데이터 없음');
-  }
+  // ⚠️ 버그 수정(2026-09-12, 한국 스프레드 라이브 dry-run 중 발견) — 이 라인은 원래
+  // sig.inverted만 [경고]로 표시했는데, anyMeaningfulChange를 실제로 정하는
+  // isRateSpreadBreached는 역전 "또는" 볼린저 ±2σ 이탈 둘 다 본다(macro-overlay.mjs).
+  // 그래서 스프레드가 역전은 안 됐는데 자기 역사 대비 비정상적으로 벌어지거나
+  // 좁아지기만 해도(볼린저 이탈) anyMeaningfulChange=true로 협의체가 소집되는데,
+  // 정작 이 사람이 읽는 보고엔 왜 소집됐는지 아무 표시가 없었다 — 실측 재현(한국
+  // 금리차가 역전 없이 볼린저만 이탈해 anyMeaningfulChange=true였는데 이 줄엔
+  // "정상"으로만 나옴). isRateSpreadBreached로 통일해 원인(역전/변동성 이탈)을
+  // 구분해 표시한다.
+  const rateSpreadLine = (label, sig) => {
+    if (!sig) return `  ${label}: 데이터 없음`;
+    const numbers = `  ${label}: ${sig.currentSpread.toFixed(2)}%p`;
+    if (sig.inverted) return `${numbers}\n    → [경고] 역전`;
+    if (isRateSpreadBreached(sig)) return `${numbers}\n    → [경고] 변동성 이탈(z=${sig.bands?.zscore})`;
+    return numbers;
+  };
+  lines.push(rateSpreadLine('한국금리차(국고채10Y-3Y)', signals.koreaRateSpread));
+  lines.push(rateSpreadLine('미국금리차(10Y-3M)', signals.usRateSpread));
+
   for (const [label, sig] of [['DXY', signals.dxy], ['VIX', signals.vix], ['WTI 유가', signals.wti]]) {
     if (!sig) { lines.push(`  ${label}: 데이터 없음`); continue; }
     lines.push(signalLine(`  ${label}: ${sig.current.toFixed(2)}`, sig.breached ? `이탈(z=${sig.bands?.zscore})` : null));
@@ -103,16 +122,28 @@ export function renderSignalsReport(signals) {
   // 이유로 이모지⚠️→대괄호 태그 교체) — 이 문자열을 바꾸면 그 판정도 같이 깨진다.
   lines.push(signals.anyMeaningfulChange
     ? '\n[경고] 의미있는 변화 감지 — Athena 종합판단 필요(진짜 국면전환인지 노이즈인지)'
-    : '\n[정상] 5개 신호 전부 조용함 — 협의체 소집 불필요');
+    : '\n[정상] 5개 신호(한국·미국 금리차 포함 7개 계산) 전부 조용함 — 협의체 소집 불필요');
   return lines.join('\n');
 }
 
-function main() {
+async function main() {
   const raw = fetchCloses();
+  // ECOS 실패를 별도로 격리한다(2026-09-12, code-reviewer 지적 — computeMacroOverlaySignals
+  // 는 krBond*Closes를 "안 넘기면 koreaRateSpread만 null이 되고 나머지는 전과 동일하게
+  // 계속 작동"하는 옵션으로 설계했는데, 여기서 fetchCloses()와 다른 try/catch 없이
+  // 그냥 await만 하면 ECOS 인증키 만료·일시 장애 하나로 나머지 6개 신호(Faber·DXY·
+  // VIX·유가·미국금리차)까지 전부 죽는다 — 옵션 계약이 실제로는 도달 불가능했다).
+  let krBond10yCloses, krBond3yCloses;
+  try {
+    ({ tenYear: krBond10yCloses, threeYear: krBond3yCloses } = await fetchGovBondCloses());
+  } catch (e) {
+    console.error(`⚠️ ECOS 국고채 스프레드 조회 실패(나머지 신호는 계속 계산): ${e.message}`);
+  }
   const previousFaberState = readPreviousFaberState();
   const signals = computeMacroOverlaySignals({
     kospiCloses: raw[TICKERS.KOSPI], sp500Closes: raw[TICKERS.SP500],
     tnxCloses: raw[TICKERS.TNX], irxCloses: raw[TICKERS.IRX],
+    krBond10yCloses, krBond3yCloses,
     dxyCloses: raw[TICKERS.DXY], vixCloses: raw[TICKERS.VIX], wtiCloses: raw[TICKERS.WTI],
     previousFaberState,
   });
@@ -140,4 +171,6 @@ function main() {
   console.log(renderSignalsReport(signals));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((e) => { console.error('❌ macro-overlay-facts 오류:', e.message); process.exit(1); });
+}

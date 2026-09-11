@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   computeFaberSignal, computeRateSpreadSignal, computeSimpleBollingerSignal,
-  detectFaberCrossover, computeMacroOverlaySignals,
+  detectFaberCrossover, computeMacroOverlaySignals, isRateSpreadBreached,
 } from './macro-overlay.mjs';
 
 function series(n, fn) { return Array.from({ length: n }, (_, i) => fn(i)); }
@@ -133,6 +133,45 @@ test('computeMacroOverlaySignals: 금리차 역전만 있어도 anyMeaningfulCha
     dxyCloses: flat, vixCloses: flat, wtiCloses: flat,
     previousFaberState: { domestic: null, foreign: null },
   });
-  assert.equal(r.rateSpreadBreached, true);
+  assert.equal(r.usRateSpreadBreached, true);
   assert.equal(r.anyMeaningfulChange, true);
+});
+
+test('isRateSpreadBreached: 역전이면 true(볼린저 이력 없어도)', () => {
+  assert.equal(isRateSpreadBreached({ currentSpread: -0.5, inverted: true, bands: null }), true);
+});
+
+test('isRateSpreadBreached: 정상 스프레드+볼린저 이탈 없음이면 false', () => {
+  assert.equal(isRateSpreadBreached({ currentSpread: 0.5, inverted: false, bands: { zscore: 0.3 } }), false);
+});
+
+test('isRateSpreadBreached: null 입력이면 false(터지지 않음)', () => {
+  assert.equal(isRateSpreadBreached(null), false);
+});
+
+// 2026-09-12 신설 — 한국 국고채 스프레드(krBond10yCloses/krBond3yCloses).
+test('[신설/2026-09-12] computeMacroOverlaySignals: 한국 국고채 스프레드 역전만 있어도 anyMeaningfulChange true(미국 금리차는 정상)', () => {
+  const flat = series(300, () => 100);
+  const r = computeMacroOverlaySignals({
+    kospiCloses: flat, sp500Closes: flat,
+    tnxCloses: [4.5], irxCloses: [4.0], // 미국은 정상(양수)
+    krBond10yCloses: [3.5], krBond3yCloses: [4.0], // 한국은 역전
+    dxyCloses: flat, vixCloses: flat, wtiCloses: flat,
+    previousFaberState: { domestic: null, foreign: null },
+  });
+  assert.equal(r.usRateSpreadBreached, false);
+  assert.equal(r.koreaRateSpreadBreached, true);
+  assert.equal(r.anyMeaningfulChange, true);
+});
+
+test('[신설/2026-09-12] computeMacroOverlaySignals: krBond 종가를 안 넘기면(옵션, 과거 호출부 호환) koreaRateSpread는 null이고 나머지는 그대로 작동', () => {
+  const flat = series(300, () => 100);
+  const r = computeMacroOverlaySignals({
+    kospiCloses: flat, sp500Closes: flat, tnxCloses: [4.5], irxCloses: [4.0],
+    dxyCloses: flat, vixCloses: flat, wtiCloses: flat,
+    previousFaberState: { domestic: null, foreign: null },
+  });
+  assert.equal(r.koreaRateSpread, null);
+  assert.equal(r.koreaRateSpreadBreached, false);
+  assert.equal(r.anyMeaningfulChange, false);
 });
