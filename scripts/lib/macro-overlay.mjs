@@ -87,18 +87,20 @@ export function detectFaberCrossover(previousAboveMA, currentAboveMA) {
 // 시점 상태(없으면 첫 확인). anyMeaningfulChange: "소집 규칙"(설계서) — 하나라도
 // 의미있는 변화가 있으면 협의체 소집.
 //
-// krBond10yCloses/krBond3yCloses(2026-09-12 신설) — ECOS 국고채 10년·3년 종가
-// (scripts/lib/ecos.mjs fetchGovBondCloses). 옵션 취급: 아직 안 넘기면(과거 호출부
-// 호환) koreaRateSpread는 그냥 null이 되고 anyMeaningfulChange 판정에서도 조용히
-// 빠진다 — 미국 금리차와 나머지 신호는 전과 동일하게 계속 작동한다.
+// krBond10yCloses/krCd91dCloses(2026-09-12 신설) — ECOS 국고채 10년·CD(91일) 종가
+// (scripts/lib/ecos.mjs fetchRateSpreadCloses). 단기 레그로 CD(91일)를 쓰는 이유는
+// ecos.mjs 헤더 주석 참고(미국 ^IRX 13주 국채와 대응하는 실제 단기금리 대용물 —
+// 국고채 3년은 "단기"가 아니라는 오너 확정, 2026-09-12). 옵션 취급: 아직 안 넘기면
+// (과거 호출부 호환) koreaRateSpread는 그냥 null이 되고 anyMeaningfulChange
+// 판정에서도 조용히 빠진다 — 미국 금리차와 나머지 신호는 전과 동일하게 계속 작동한다.
 export function computeMacroOverlaySignals({
-  kospiCloses, sp500Closes, tnxCloses, irxCloses, krBond10yCloses, krBond3yCloses,
+  kospiCloses, sp500Closes, tnxCloses, irxCloses, krBond10yCloses, krCd91dCloses,
   dxyCloses, vixCloses, wtiCloses, previousFaberState = {},
 }) {
   const faberDomestic = computeFaberSignal(kospiCloses);
   const faberForeign = computeFaberSignal(sp500Closes);
   const usRateSpread = computeRateSpreadSignal(tnxCloses, irxCloses);
-  const koreaRateSpread = computeRateSpreadSignal(krBond10yCloses, krBond3yCloses);
+  const koreaRateSpread = computeRateSpreadSignal(krBond10yCloses, krCd91dCloses);
   const dxy = computeSimpleBollingerSignal(dxyCloses);
   const vix = computeSimpleBollingerSignal(vixCloses);
   const wti = computeSimpleBollingerSignal(wtiCloses);

@@ -149,13 +149,13 @@ test('isRateSpreadBreached: null 입력이면 false(터지지 않음)', () => {
   assert.equal(isRateSpreadBreached(null), false);
 });
 
-// 2026-09-12 신설 — 한국 국고채 스프레드(krBond10yCloses/krBond3yCloses).
+// 2026-09-12 신설 — 한국 국고채 스프레드(krBond10yCloses/krCd91dCloses).
 test('[신설/2026-09-12] computeMacroOverlaySignals: 한국 국고채 스프레드 역전만 있어도 anyMeaningfulChange true(미국 금리차는 정상)', () => {
   const flat = series(300, () => 100);
   const r = computeMacroOverlaySignals({
     kospiCloses: flat, sp500Closes: flat,
     tnxCloses: [4.5], irxCloses: [4.0], // 미국은 정상(양수)
-    krBond10yCloses: [3.5], krBond3yCloses: [4.0], // 한국은 역전
+    krBond10yCloses: [3.5], krCd91dCloses: [4.0], // 한국은 역전
     dxyCloses: flat, vixCloses: flat, wtiCloses: flat,
     previousFaberState: { domestic: null, foreign: null },
   });

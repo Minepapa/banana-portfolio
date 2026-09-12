@@ -39,7 +39,7 @@ import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs
 import { writeAtomic, writeStateFile } from '../lib/state-writer.mjs';
 import { computeMacroOverlaySignals } from '../lib/macro-overlay.mjs';
 import { fetchCloses, TICKERS, readPreviousFaberState, writeFaberState, renderSignalsReport } from '../tools/macro-overlay-facts.mjs';
-import { fetchGovBondCloses } from '../lib/ecos.mjs';
+import { fetchRateSpreadCloses } from '../lib/ecos.mjs';
 import { computeRebalanceGaps, computeBandEdgeDistance, normalizeAccount } from '../lib/rebalance-gap.mjs';
 import { CAP_FRACTION, applyCappedAllocation, resolveAllocationPricing } from '../lib/allocation-proposal-shared.mjs';
 import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/cash-allocation-candidates.mjs';
@@ -329,9 +329,9 @@ async function main() {
   // 점검 전체를 텔레그램 알림도 없이 조용히 건너뛰게 만든다 — 나머지 6개 신호는
   // 멀쩡한데도. 이 잡은 월말 3일 창에서만 도는데다 실패해도 마커를 안 갱신하니 재시도는
   // 되지만, 인증키 만료처럼 지속되는 실패면 그 창 전체를 놓칠 수 있다.
-  let krBond10yCloses, krBond3yCloses;
+  let krBond10yCloses, krCd91dCloses;
   try {
-    ({ tenYear: krBond10yCloses, threeYear: krBond3yCloses } = await fetchGovBondCloses());
+    ({ longTerm: krBond10yCloses, shortTerm: krCd91dCloses } = await fetchRateSpreadCloses());
   } catch (e) {
     console.error(`  ⚠️ ECOS 국고채 스프레드 조회 실패(나머지 신호로 계속 진행): ${e.message}`);
   }
@@ -339,7 +339,7 @@ async function main() {
   const signals = computeMacroOverlaySignals({
     kospiCloses: raw[TICKERS.KOSPI], sp500Closes: raw[TICKERS.SP500],
     tnxCloses: raw[TICKERS.TNX], irxCloses: raw[TICKERS.IRX],
-    krBond10yCloses, krBond3yCloses,
+    krBond10yCloses, krCd91dCloses,
     dxyCloses: raw[TICKERS.DXY], vixCloses: raw[TICKERS.VIX], wtiCloses: raw[TICKERS.WTI],
     previousFaberState,
   });

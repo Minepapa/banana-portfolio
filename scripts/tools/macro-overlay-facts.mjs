@@ -22,7 +22,7 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { computeMacroOverlaySignals, isRateSpreadBreached } from '../lib/macro-overlay.mjs';
-import { fetchGovBondCloses } from '../lib/ecos.mjs';
+import { fetchRateSpreadCloses } from '../lib/ecos.mjs';
 import { loadEnv } from '../lib/auth.mjs';
 
 loadEnv(); // ECOS_API_KEY(2026-09-12 신설, 국고채 스프레드용) — DART_API_KEY·KRX_API_KEY와 동일 관례
@@ -32,7 +32,7 @@ const DRY_RUN = process.argv.includes('--dry-run');
 
 // 미국 금리차(^TNX-^IRX)·DXY(DX-Y.NYB)·VIX·유가(CL=F)·Faber용 KOSPI/SP500 —
 // yfinance 조회 대상만. 한국 국고채(장단기 스프레드)는 별도 소스(ECOS, 아래
-// fetchGovBondCloses)라 이 목록엔 없다 — 2026-09-12 ECOS 키 발급 전까진 이 신호
+// fetchRateSpreadCloses)라 이 목록엔 없다 — 2026-09-12 ECOS 키 발급 전까진 이 신호
 // 자체가 없었다("나머지 4개 신호부터", 2026-08-05 오너 확정).
 export const TICKERS = { KOSPI: '^KS11', SP500: '^GSPC', TNX: '^TNX', IRX: '^IRX', DXY: 'DX-Y.NYB', VIX: '^VIX', WTI: 'CL=F' };
 
@@ -109,7 +109,7 @@ export function renderSignalsReport(signals) {
     if (isRateSpreadBreached(sig)) return `${numbers}\n    → [경고] 변동성 이탈(z=${sig.bands?.zscore})`;
     return numbers;
   };
-  lines.push(rateSpreadLine('한국금리차(국고채10Y-3Y)', signals.koreaRateSpread));
+  lines.push(rateSpreadLine('한국금리차(국고채10Y-CD91D)', signals.koreaRateSpread));
   lines.push(rateSpreadLine('미국금리차(10Y-3M)', signals.usRateSpread));
 
   for (const [label, sig] of [['DXY', signals.dxy], ['VIX', signals.vix], ['WTI 유가', signals.wti]]) {
@@ -133,9 +133,9 @@ async function main() {
   // 계속 작동"하는 옵션으로 설계했는데, 여기서 fetchCloses()와 다른 try/catch 없이
   // 그냥 await만 하면 ECOS 인증키 만료·일시 장애 하나로 나머지 6개 신호(Faber·DXY·
   // VIX·유가·미국금리차)까지 전부 죽는다 — 옵션 계약이 실제로는 도달 불가능했다).
-  let krBond10yCloses, krBond3yCloses;
+  let krBond10yCloses, krCd91dCloses;
   try {
-    ({ tenYear: krBond10yCloses, threeYear: krBond3yCloses } = await fetchGovBondCloses());
+    ({ longTerm: krBond10yCloses, shortTerm: krCd91dCloses } = await fetchRateSpreadCloses());
   } catch (e) {
     console.error(`⚠️ ECOS 국고채 스프레드 조회 실패(나머지 신호는 계속 계산): ${e.message}`);
   }
@@ -143,7 +143,7 @@ async function main() {
   const signals = computeMacroOverlaySignals({
     kospiCloses: raw[TICKERS.KOSPI], sp500Closes: raw[TICKERS.SP500],
     tnxCloses: raw[TICKERS.TNX], irxCloses: raw[TICKERS.IRX],
-    krBond10yCloses, krBond3yCloses,
+    krBond10yCloses, krCd91dCloses,
     dxyCloses: raw[TICKERS.DXY], vixCloses: raw[TICKERS.VIX], wtiCloses: raw[TICKERS.WTI],
     previousFaberState,
   });

@@ -83,7 +83,7 @@ test('[신설/2026-09-12] renderSignalsReport: ECOS 미연동 안내 문구가 �
 
 test('[신설/2026-09-12] renderSignalsReport: 한국·미국 금리차 둘 다 라인으로 렌더', () => {
   const text = renderSignalsReport(normal());
-  assert.match(text, /한국금리차\(국고채10Y-3Y\): 0\.60%p/);
+  assert.match(text, /한국금리차\(국고채10Y-CD91D\): 0\.60%p/);
   assert.match(text, /미국금리차\(10Y-3M\): 0\.50%p/);
 });
 
@@ -91,21 +91,21 @@ test('renderSignalsReport: 한국 금리차 역전이면 [경고] 표시', () =>
   const s = normal();
   s.koreaRateSpread = { currentSpread: -0.3, inverted: true };
   const text = renderSignalsReport(s);
-  assert.match(text, /한국금리차\(국고채10Y-3Y\): -0\.30%p\n {4}→ \[경고\] 역전/);
+  assert.match(text, /한국금리차\(국고채10Y-CD91D\): -0\.30%p\n {4}→ \[경고\] 역전/);
 });
 
 test('[회귀방지/2026-09-12] renderSignalsReport: 역전은 안 됐지만 볼린저 ±2σ 이탈이면(변동성 이탈) 여전히 [경고] 표시 — 실측 라이브 dry-run 중 발견된 버그', () => {
   const s = normal();
   s.koreaRateSpread = { currentSpread: 0.53, inverted: false, bands: { zscore: 2.3 } };
   const text = renderSignalsReport(s);
-  assert.match(text, /한국금리차\(국고채10Y-3Y\): 0\.53%p\n {4}→ \[경고\] 변동성 이탈\(z=2\.3\)/);
+  assert.match(text, /한국금리차\(국고채10Y-CD91D\): 0\.53%p\n {4}→ \[경고\] 변동성 이탈\(z=2\.3\)/);
 });
 
 test('renderSignalsReport: 금리차 데이터 없으면(null) "데이터 없음"', () => {
   const s = normal();
   s.koreaRateSpread = null;
   const text = renderSignalsReport(s);
-  assert.match(text, /한국금리차\(국고채10Y-3Y\): 데이터 없음/);
+  assert.match(text, /한국금리차\(국고채10Y-CD91D\): 데이터 없음/);
 });
 
 test('renderSignalsReport: anyMeaningfulChange=false면 [정상] 요약, true면 [경고] 요약(daily-asset-allocation-check.mjs가 .includes("[경고]")로 판정하는 신호이므로 문자열 자체를 회귀 고정)', () => {

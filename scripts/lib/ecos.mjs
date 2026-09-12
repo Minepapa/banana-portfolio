@@ -1,14 +1,20 @@
-// 한국은행 ECOS(경제통계시스템) API 클라이언트 — 국고채 금리 시계열 조회 전용.
+// 한국은행 ECOS(경제통계시스템) API 클라이언트 — 장단기 금리차 시계열 조회 전용.
 // 인증: .env ECOS_API_KEY(auth.mjs loadEnv()로 로드 — DART_API_KEY·KRX_API_KEY와 동일 관례,
 // 호출측 진입점이 loadEnv()를 먼저 불러야 process.env에 채워진다).
 //
 // 통계표코드·통계항목코드는 추정하지 않고 실제 API(StatisticItemList)로 확정했다
 // (2026-09-12, ~/banana-vault/Knowledge/API/ECOS.md 참고) — "1.3.2.1. 시장금리(일별)"
-// (817Y002) 아래 국고채 3년(010200000)·10년(010210000) 항목.
+// (817Y002) 아래 국고채 10년(010210000)·CD(91일)(010502000) 항목.
+//
+// ⚠️ 단기 레그 선택(2026-09-12, 오너 확정) — 처음엔 국고채 3년(010200000)을 단기
+// 레그로 썼는데, 이 신호의 인용 근거(Estrella-Mishkin 1996)와 미국 축(^TNX-^IRX)이
+// 둘 다 10Y-3M(3개월) 스프레드라 3년물은 "단기"가 아니라는 오너 지적으로 CD(91일,
+// ≈3개월)로 교체했다 — 미국 ^IRX(13주 국채)와 대응하는 실제 단기금리 대용물.
 
 const BASE_URL = 'https://ecos.bok.or.kr/api';
 export const MARKET_RATE_STAT_CODE = '817Y002';
-export const GOV_BOND_ITEM_CODE = { '3Y': '010200000', '10Y': '010210000' };
+export const GOV_BOND_10Y_ITEM_CODE = '010210000';
+export const CD_91D_ITEM_CODE = '010502000';
 const MAX_ROWS = 1000; // ECOS 요청 URL의 조회건수 범위(1~1000) — 아래 fetchEcosSeries 참고.
 
 function ymd(d) {
@@ -21,11 +27,11 @@ function ymd(d) {
 // 날짜는 응답 자체에서 빠져 있어(실측 확인) KRX처럼 거래일 스캔 루프가 필요 없다 —
 // 날짜 범위 한 번 요청으로 끝난다.
 //
-// ⚠️ time을 버리지 않고 그대로 반환한다(2026-09-12, code-reviewer 지적 — 국고채
-// 10년·3년을 각자 독립적으로 NaN 필터링하면 서로 다른 날짜가 같은 개수만큼 결측이라
-// 우연히 길이가 같아지는 경우, 그 사실을 모른 채 서로 다른 날짜끼리 짝지어 스프레드를
+// ⚠️ time을 버리지 않고 그대로 반환한다(2026-09-12, code-reviewer 지적 — 두 시계열을
+// 각자 독립적으로 NaN 필터링하면 서로 다른 날짜가 같은 개수만큼 결측이라 우연히
+// 길이가 같아지는 경우, 그 사실을 모른 채 서로 다른 날짜끼리 짝지어 스프레드를
 // 계산할 위험이 있다 — 2026-08-05 코드리뷰가 미국 10Y-3M 경로에서 이미 한 번 지적한
-// 것과 같은 버그 클래스. time을 유지해 fetchGovBondCloses가 실제로 같은 날짜끼리만
+// 것과 같은 버그 클래스. time을 유지해 fetchRateSpreadCloses가 실제로 같은 날짜끼리만
 // 짝짓게 한다.
 //
 // ⚠️ 응답이 `{"RESULT":{"CODE":..., "MESSAGE":...}}` 형태면(정상 데이터 응답과 스키마
@@ -62,23 +68,23 @@ export async function fetchEcosSeries(itemCode, {
     .filter((r) => r.time && Number.isFinite(r.value));
 }
 
-// 국고채 10년·3년 종가를 시각(TIME) 기준으로 짝지어 반환한다 —
+// 국고채 10년·CD(91일) 종가를 시각(TIME) 기준으로 짝지어 반환한다 —
 // computeRateSpreadSignal(macro-overlay.mjs, 미국 10Y-3M과 동일 함수 재사용)에 바로
 // 넘길 수 있는 두 숫자 배열(같은 인덱스=같은 날짜가 보장됨, 각자 독립 필터링 후
 // 우연히 길이만 같아지는 위험 없음).
-export async function fetchGovBondCloses(opts = {}) {
-  const [tenYear, threeYear] = await Promise.all([
-    fetchEcosSeries(GOV_BOND_ITEM_CODE['10Y'], opts),
-    fetchEcosSeries(GOV_BOND_ITEM_CODE['3Y'], opts),
+export async function fetchRateSpreadCloses(opts = {}) {
+  const [longTerm, shortTerm] = await Promise.all([
+    fetchEcosSeries(GOV_BOND_10Y_ITEM_CODE, opts),
+    fetchEcosSeries(CD_91D_ITEM_CODE, opts),
   ]);
-  const threeYearByTime = new Map(threeYear.map((r) => [r.time, r.value]));
-  const tenYearAligned = [];
-  const threeYearAligned = [];
-  for (const r of tenYear) {
-    if (threeYearByTime.has(r.time)) {
-      tenYearAligned.push(r.value);
-      threeYearAligned.push(threeYearByTime.get(r.time));
+  const shortTermByTime = new Map(shortTerm.map((r) => [r.time, r.value]));
+  const longTermAligned = [];
+  const shortTermAligned = [];
+  for (const r of longTerm) {
+    if (shortTermByTime.has(r.time)) {
+      longTermAligned.push(r.value);
+      shortTermAligned.push(shortTermByTime.get(r.time));
     }
   }
-  return { tenYear: tenYearAligned, threeYear: threeYearAligned };
+  return { longTerm: longTermAligned, shortTerm: shortTermAligned };
 }

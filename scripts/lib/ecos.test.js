@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchEcosSeries, fetchGovBondCloses, GOV_BOND_ITEM_CODE, MARKET_RATE_STAT_CODE } from './ecos.mjs';
+import { fetchEcosSeries, fetchRateSpreadCloses, GOV_BOND_10Y_ITEM_CODE, CD_91D_ITEM_CODE, MARKET_RATE_STAT_CODE } from './ecos.mjs';
 
 test('fetchEcosSeries: apiKey 없으면 즉시 실패(추정 안 함)', async () => {
   await assert.rejects(
-    () => fetchEcosSeries(GOV_BOND_ITEM_CODE['3Y'], { apiKey: '' }),
+    () => fetchEcosSeries(CD_91D_ITEM_CODE, { apiKey: '' }),
     /ECOS_API_KEY 미설정/,
   );
 });
@@ -27,13 +27,13 @@ test('fetchEcosSeries: 정상 응답 — URL 구성(통계표코드·날짜범�
         }),
       };
     };
-    const closes = await fetchEcosSeries(GOV_BOND_ITEM_CODE['3Y'], {
+    const closes = await fetchEcosSeries(CD_91D_ITEM_CODE, {
       apiKey: 'K', fetchImpl, endDate: new Date('2026-09-11'), daysBack: 400,
     });
     assert.deepEqual(closes, [{ time: '20260901', value: 3.878 }, { time: '20260902', value: 3.93 }]);
     assert.equal(
       capturedUrl,
-      `https://ecos.bok.or.kr/api/StatisticSearch/K/json/kr/1/1000/${MARKET_RATE_STAT_CODE}/D/20250807/20260911/${GOV_BOND_ITEM_CODE['3Y']}`,
+      `https://ecos.bok.or.kr/api/StatisticSearch/K/json/kr/1/1000/${MARKET_RATE_STAT_CODE}/D/20250807/20260911/${CD_91D_ITEM_CODE}`,
     );
   })();
 });
@@ -88,9 +88,9 @@ test('fetchEcosSeries: DATA_VALUE가 숫자로 안 읽히는 행은 걸러냄(�
   assert.deepEqual(closes, [{ time: '20260901', value: 3.9 }, { time: '20260903', value: 4.0 }]);
 });
 
-test('fetchGovBondCloses: 10년·3년을 병렬로 가져와 같은 날짜끼리만 짝지어 반환', async () => {
+test('fetchRateSpreadCloses: 국고채10년·CD91일을 병렬로 가져와 같은 날짜끼리만 짝지어 반환', async () => {
   const fetchImpl = async (url) => {
-    const is10y = url.includes(`/${GOV_BOND_ITEM_CODE['10Y']}`);
+    const is10y = url.includes(`/${GOV_BOND_10Y_ITEM_CODE}`);
     return {
       ok: true,
       text: async () => JSON.stringify({
@@ -103,23 +103,23 @@ test('fetchGovBondCloses: 10년·3년을 병렬로 가져와 같은 날짜끼리
       }),
     };
   };
-  const { tenYear, threeYear } = await fetchGovBondCloses({ apiKey: 'K', fetchImpl });
-  assert.deepEqual(tenYear, [4.5, 4.55]);
-  assert.deepEqual(threeYear, [3.9, 3.95]);
+  const { longTerm, shortTerm } = await fetchRateSpreadCloses({ apiKey: 'K', fetchImpl });
+  assert.deepEqual(longTerm, [4.5, 4.55]);
+  assert.deepEqual(shortTerm, [3.9, 3.95]);
 });
 
-test('[신설/2026-09-12] fetchGovBondCloses: 날짜 정합 — 한쪽에만 있는 날짜(서로 다른 결측)는 짝짓기에서 제외되고, 같은 날짜끼리만 인덱스가 맞음', () => {
+test('[신설/2026-09-12] fetchRateSpreadCloses: 날짜 정합 — 한쪽에만 있는 날짜(서로 다른 결측)는 짝짓기에서 제외되고, 같은 날짜끼리만 인덱스가 맞음', () => {
   return (async () => {
     const fetchImpl = async (url) => {
-      const is10y = url.includes(`/${GOV_BOND_ITEM_CODE['10Y']}`);
+      const is10y = url.includes(`/${GOV_BOND_10Y_ITEM_CODE}`);
       return {
         ok: true,
         text: async () => JSON.stringify({
           StatisticSearch: {
             list_total_count: 3,
-            // 10년물은 09-01·09-02·09-03 세 날짜, 3년물은 09-01·09-03만(09-02 결측)
-            // — 필터링 전 길이는 다르지만("우연히 같아지는" 케이스가 아니라 명백히
-            // 다른 경우), 짝짓기 결과는 반드시 공통 날짜(09-01·09-03)만 남아야 한다.
+            // 국고채10년은 09-01·09-02·09-03 세 날짜, CD91일은 09-01·09-03만(09-02
+            // 결측) — 필터링 전 길이는 다르지만("우연히 같아지는" 케이스가 아니라
+            // 명백히 다른 경우), 짝짓기 결과는 반드시 공통 날짜(09-01·09-03)만 남아야 한다.
             row: is10y
               ? [{ TIME: '20260901', DATA_VALUE: '4.5' }, { TIME: '20260902', DATA_VALUE: '4.6' }, { TIME: '20260903', DATA_VALUE: '4.7' }]
               : [{ TIME: '20260901', DATA_VALUE: '3.9' }, { TIME: '20260903', DATA_VALUE: '4.0' }],
@@ -127,8 +127,8 @@ test('[신설/2026-09-12] fetchGovBondCloses: 날짜 정합 — 한쪽에만 있
         }),
       };
     };
-    const { tenYear, threeYear } = await fetchGovBondCloses({ apiKey: 'K', fetchImpl });
-    assert.deepEqual(tenYear, [4.5, 4.7]); // 09-02(4.6) 제외
-    assert.deepEqual(threeYear, [3.9, 4.0]);
+    const { longTerm, shortTerm } = await fetchRateSpreadCloses({ apiKey: 'K', fetchImpl });
+    assert.deepEqual(longTerm, [4.5, 4.7]); // 09-02(4.6) 제외
+    assert.deepEqual(shortTerm, [3.9, 4.0]);
   })();
 });

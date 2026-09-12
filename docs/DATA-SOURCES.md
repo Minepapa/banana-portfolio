@@ -129,15 +129,18 @@ JS 렌더링 SPA — 정적 WebFetch로는 페이지 뼈대만 보여 Playwright
 
 ## 7. ECOS(한국은행 경제통계시스템) API
 
-거시 전술 오버레이의 "금리" 축 완성용(한국 국고채 10년-3년 스프레드) — 2026-09-12
+거시 전술 오버레이의 "금리" 축 완성용(한국 국고채10년-CD91일 스프레드) — 2026-09-12
 인증키 발급+코드 연동 완료. `.env`의 `ECOS_API_KEY` 사용(DART_API_KEY·KRX_API_KEY와
-동일 관례). `scripts/lib/ecos.mjs`(`fetchEcosSeries`/`fetchGovBondCloses`) 전담.
+동일 관례). `scripts/lib/ecos.mjs`(`fetchEcosSeries`/`fetchRateSpreadCloses`) 전담.
 
 **엔드포인트**: `https://ecos.bok.or.kr/api/StatisticSearch/{키}/json/kr/1/1000/
 817Y002/D/{시작일}/{종료일}/{통계항목코드}`. 통계표코드(`817Y002`, "시장금리(일별)")·
-통계항목코드(국고채 3년=`010200000`, 10년=`010210000`)는 추정하지 않고 ECOS
-`StatisticItemList` API를 실제 curl로 조회해 확정했다(2026-09-12) — 나머지 만기
-(1·2·5·20·30·50년) 코드도 같은 조회로 확보해 필요시 재사용 가능.
+통계항목코드(국고채10년=`010210000`, CD91일=`010502000`)는 추정하지 않고 ECOS
+`StatisticItemList` API를 실제 curl로 조회해 확정했다(2026-09-12). 단기 레그는
+원래 국고채 3년을 썼다가 "한국에서 3년은 단기채가 아니다"는 오너 지적으로 CD91일
+로 교체(같은 날) — 인용 근거(Estrella-Mishkin 1996)·미국 축(10Y-3M)과 만기 성격을
+맞춤. 나머지 국고채 만기(1·2·3·5·20·30·50년) 코드도 같은 조회로 확보해 필요시
+재사용 가능.
 
 상세 근거·검증 과정은 므네모시네 `Knowledge/API/ECOS.md` 참고 — 이 문서
 (DATA-SOURCES.md)는 출처 재현성만 다룬다.
