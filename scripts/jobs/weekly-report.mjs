@@ -373,8 +373,21 @@ async function main() {
   // (macro-cache.mjs 참고). themis-risk-review.mjs(07:00)가 이 잡(08:00)보다 먼저
   // 도니 보통 그쪽이 그날의 계산 주체가 되고 이 잡은 캐시를 재사용한다 — 사고 방지
   // (Log/DevRequests/2026-09-06-weekly-report-facts-불일치-버그.md).
+  //
+  // ⚠️ 실패 격리(2026-09-12, code-reviewer 지적) — 원래 이 호출에 catch가 없어서
+  // 거시지표 조회(KRX·yfinance) 하나만 실패해도 주간리포트 전체(원장·보유·수익금
+  // 등 환율과 무관한 섹션까지)가 통째로 죽었다. 같은 함수를 쓰는 형제 3곳
+  // (themis-risk-review.mjs·quarterly-allocation-review.mjs·risk-facts.mjs)은
+  // 전부 이미 `.catch(() => null)`로 격리돼 있었는데 이 잡만 빠져 있었다 —
+  // 일관성 맞춤. `report-facts.mjs`의 `macro = {}` 기본값은 undefined에만
+  // 적용되므로 null이 들어오면 `?? {}`로 직접 보정해야 한다(안 하면
+  // Object.entries(f.macro)가 throw).
   console.log('\n⏳ 거시지표 조회(KRX/yfinance, 오늘 이미 계산됐으면 캐시 재사용)...');
-  const macro = await getCachedMacroIndicators();
+  const macro = await getCachedMacroIndicators().catch((e) => {
+    collectWarning(`거시지표 조회 실패 — 이번 리포트는 거시지표 없이 진행: ${e.message}`);
+    console.error(`⚠️ 거시지표 조회 실패: ${e.message}`);
+    return null;
+  }) ?? {};
 
   // ② Vault 원본 읽기
   const holdings = readVaultDir(VAULT_PATHS.state.holdings); // 현금성 포함(자산 현황엔 필요)
