@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchEcosSeries, fetchRateSpreadCloses, GOV_BOND_10Y_ITEM_CODE, CD_91D_ITEM_CODE, MARKET_RATE_STAT_CODE } from './ecos.mjs';
+import {
+  fetchEcosSeries, fetchRateSpreadCloses,
+  GOV_BOND_10Y_ITEM_CODE, CD_91D_ITEM_CODE, MARKET_RATE_STAT_CODE,
+} from './ecos.mjs';
 
 test('fetchEcosSeries: apiKey 없으면 즉시 실패(추정 안 함)', async () => {
   await assert.rejects(

@@ -17,6 +17,16 @@ export const GOV_BOND_10Y_ITEM_CODE = '010210000';
 export const CD_91D_ITEM_CODE = '010502000';
 const MAX_ROWS = 1000; // ECOS 요청 URL의 조회건수 범위(1~1000) — 아래 fetchEcosSeries 참고.
 
+// ⚠️ 원/달러 매매기준율(731Y001/0000001) 대체는 검토 후 기각(2026-09-12) — 오너
+// 지시 "ECOS로 대체할 수 있는 지표는 1순위로"에 따라 fundamentals.mjs의 USDKRW를
+// 이 통계로 교체 시도했으나, code-reviewer가 이 값이 "오늘 환율"이 아니라
+// **전영업일 시장 반영값**임을 실측으로 발견(예: 주말 최신 데이터가 목요일 장을
+// 반영, 금요일 장은 다음 월요일에야 반영) — 일요일에 도는 weekly-report·themis-
+// risk-review가 금요일 환율 급변을 구조적으로 놓칠 수 있어 오너 확인 후 전면
+// 기각, yfinance(KRW=X) 유지로 확정. 상세는 ~/banana-vault/Knowledge/API/
+// ECOS.md 참고 — 이 판단 자체가 재현 가능한 근거라 여기 남겨둔다(같은 조사
+// 반복 방지). 이 파일엔 관련 코드를 남겨두지 않는다(실사용 없는 코드).
+
 function ymd(d) {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
 }

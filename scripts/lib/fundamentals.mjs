@@ -801,6 +801,13 @@ export const MACRO_TICKERS = {
 // 안 하고 curPrice×qty를 그대로 KRW로 취급해 해외주식 4종목의 profitPct가 -99.9%대로
 // 잘못 기록되던 버그 수정 과정에서 신설). 실패 시 throw(추정 안 함 — 원/달러를 몰라서
 // 잘못된 값으로 환산하는 것보다 그 종목만 이번엔 건너뛰는 게 안전).
+//
+// ⚠️ ECOS 대체 검토·기각(2026-09-12) — 한국은행 ECOS(731Y001/0000001, 원/달러
+// 매매기준율)로 대체를 시도했으나, 이 값이 "오늘 환율"이 아니라 **전영업일 시장을
+// 반영한 값**임을 code-reviewer가 실측으로 발견(예: 토요일 최신 데이터가 목요일
+// 장을 반영, 금요일 장은 다음 월요일에야 반영됨) — 이 함수·아래 fetchMacroIndicators()
+// 둘 다 이 1영업일 지연을 감수할 이유가 없어 yfinance 유지로 확정(오너 확인).
+// 상세는 ~/banana-vault/Knowledge/API/ECOS.md 참고.
 export function fetchUsdKrwRate() {
   const py = new URL('./yf-macro.py', import.meta.url).pathname;
   const r = spawnSync('python3', [py, 'KRW=X'], { encoding: 'utf8', timeout: 60000 });
@@ -816,6 +823,14 @@ export async function fetchMacroIndicators() {
   const py = new URL('./yf-macro.py', import.meta.url).pathname;
   // KOSPI·KOSDAQ은 이제 KRX로만 조회하므로(아래) yfinance엔 요청하지 않는다 — 안 쓸 데이터를
   // 받아오는 낭비 방지(2026-08-19).
+  //
+  // ⚠️ USDKRW도 ECOS(731Y001/0000001, 원/달러 매매기준율)로 대체를 검토했으나
+  // 기각했다(2026-09-12) — ECOS는 하루 1회 고정이라 통계 신호 용도엔 맞겠다고
+  // 판단했지만, 그 값 자체가 "오늘 환율"이 아니라 **전영업일 시장 반영값**임을
+  // code-reviewer가 실측으로 발견(주말 최신 데이터가 목요일 장 반영, 금요일 장은
+  // 다음 월요일에야 반영). 일요일에 도는 weekly-report·themis-risk-review가
+  // 금요일 환율 급변을 구조적으로 놓칠 수 있어 오너 확인 후 yfinance 유지로
+  // 확정 — 상세는 ~/banana-vault/Knowledge/API/ECOS.md 참고.
   const yfTickers = Object.entries(MACRO_TICKERS).filter(([key]) => key !== 'KOSPI' && key !== 'KOSDAQ');
   const r = spawnSync('python3', [py, ...yfTickers.map(([, tk]) => tk)], { encoding: 'utf8', timeout: 120000 });
   if (r.status !== 0) throw new Error(`yfinance 거시 조회 실패: ${(r.stderr || '').slice(-200)}`);
