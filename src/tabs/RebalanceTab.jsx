@@ -20,6 +20,25 @@ import { DeptBadge } from '../lib/primitives.jsx';
 
 const POOLED_KEY = 'POOLED';
 
+// 5/25 밴드 이탈 판정(2026-09-12 수정, 오너 지적 — "음영표시가 사라졌어") — 원래
+// 여기 두 곳(비중 테이블·리밸런싱 필요 목록) 모두 절대 5%p 고정 임계값만 썼는데,
+// 이 프로젝트의 실제 5/25 룰(scripts/lib/rebalance-gap.mjs computeBandEdgeDistance)
+// 은 "절대 5%p·상대 25% 중 더 좁은 쪽"이다 — 목표비중이 작은 자산군(금·달러 10%)은
+// 상대 25%=2.5%p가 더 좁아 실제로는 진작 이탈인데도 5%p 기준으로는 하이라이트가
+// 안 뜨고 있었다("사라진 것처럼" 보인 원인). 백엔드가 이 판정 자체를 화면용 데이터에
+// 안 실어줘(allocation-snapshot.mjs가 breached를 계산 안 함) target 값만으로 프론트가
+// 동일 공식을 그대로 재현한다.
+function isBandBreached(target, diff) {
+  const bandEdge = Math.min(5, target * 0.25);
+  return Math.abs(diff) >= bandEdge;
+}
+
+// 밴드 이탈 강조 배경(2026-09-12, 오너 지시 — "퍼센트와 금액에 동일한 투명도로,
+// 금에 적용된 색으로 통일") — 비중 테이블은 불투명 베이지(#EAE6DA), 리밸런싱
+// 필요 목록은 같은 색의 40% 투명도(#EAE6DA66)로 서로 달랐다. 이제 두 곳 다 이
+// 상수 하나(금 자산군 색 COLORS.금=#F5C842에 40% 알파)로 통일한다.
+const BAND_BREACH_BG = `${COLORS.금}66`;
+
 // views: { POOLED, ISA, IRP, CMA } — 전부 rebalanceAccountFromMirror(또는
 // pooledAccountFromMirror)와 같은 모양({label, color, assets: [{name,target,ratio,
 // rebalAmt,eval}], ...}). App.jsx가 미리 조립해 넘긴다(HoldingsTab이 쓰는
@@ -110,12 +129,12 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
         </div>
         {acct.assets.map((a) => {
           const diff = parseFloat((a.ratio - a.target).toFixed(1));
-          const highlight = Math.abs(diff) >= 5;
+          const highlight = isBandBreached(a.target, diff);
           return (
             <div key={a.name} style={{
               display: 'flex', alignItems: 'center', padding: '7px 8px',
               borderRadius: 0, marginBottom: 2,
-              background: highlight ? '#EAE6DA' : 'transparent',
+              background: highlight ? BAND_BREACH_BG : 'transparent',
             }}>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ width: 8, height: 8, borderRadius: 0, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
@@ -141,12 +160,12 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
         {acct.assets.map((a) => {
           const amt = a.rebalAmt ?? 0;
           const diff = parseFloat((a.ratio - a.target).toFixed(1));
-          const highlight = Math.abs(diff) >= 5;
+          const highlight = isBandBreached(a.target, diff);
           return (
             <div key={a.name} style={{
               display: 'flex', alignItems: 'center', padding: '10px 12px',
               borderRadius: 0, marginBottom: 4,
-              background: highlight ? '#EAE6DA66' : 'transparent',
+              background: highlight ? BAND_BREACH_BG : 'transparent',
             }}>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ width: 8, height: 8, borderRadius: 0, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
