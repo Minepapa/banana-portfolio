@@ -9,7 +9,7 @@ import {
   getUsQuote, isKrMarketOpen, isUsMarketOpen, parseBalanceResponse, getAccountBalance,
   loadIrpAccount, parseInvestorFlowResponse, getKrInvestorFlow,
   parseInvestOpinionResponse, summarizeInvestOpinion, getKrInvestOpinion,
-  ORDER_TR_ID, parseOrderResponse, placeKrOrder,
+  ORDER_TR_ID, parseOrderResponse, placeKrOrder, reviseKrOrder,
   checkOrderFill, parseOrderFillResponse,
   parseIrpPensionExecutions, getIrpPensionExecutions,
 } from './kis.mjs';
@@ -745,6 +745,205 @@ test('[핵심] placeKrOrder: 매도는 TTTC0011U tr_id + SLL_TYPE=01(일반매�
   });
   assert.equal(capturedHeaders.tr_id, 'TTTC0011U');
   assert.equal(capturedBody.SLL_TYPE, '01');
+});
+
+// [핵심] 스톱지정가(2026-09-13 확장, 돌파매매 전략 손절/부분익절용) — KIS 정식
+// 스펙 문서 확인: ORD_DVSN='22' + CNDT_PRIC(조건가격)만 추가, tr_id는 그대로.
+test('[핵심] placeKrOrder: conditionPrice 전달 시 ORD_DVSN=22(스톱지정가)+CNDT_PRIC로 요청', async () => {
+  let capturedBody = null;
+  const fetchImpl = async (url, init) => {
+    capturedBody = JSON.parse(init.body);
+    const body = { rt_cd: '0', output: { ODNO: '1', ORD_TMD: '1', KRX_FWDG_ORD_ORGNO: '1' } };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await placeKrOrder({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    code: '005930', side: '매도', quantity: 10, price: 65000, conditionPrice: 65000, fetchImpl,
+  });
+  assert.equal(capturedBody.ORD_DVSN, '22');
+  assert.equal(capturedBody.CNDT_PRIC, '65000');
+  assert.equal(capturedBody.ORD_UNPR, '65000');
+});
+
+test('placeKrOrder: conditionPrice 없으면 기존과 동일하게 ORD_DVSN=00(지정가), CNDT_PRIC 필드 자체가 없음', async () => {
+  let capturedBody = null;
+  const fetchImpl = async (url, init) => {
+    capturedBody = JSON.parse(init.body);
+    const body = { rt_cd: '0', output: { ODNO: '1', ORD_TMD: '1', KRX_FWDG_ORD_ORGNO: '1' } };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await placeKrOrder({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    code: '005930', side: '매도', quantity: 10, price: 65000, fetchImpl,
+  });
+  assert.equal(capturedBody.ORD_DVSN, '00');
+  assert.equal(capturedBody.CNDT_PRIC, undefined);
+});
+
+test('placeKrOrder: conditionPrice가 0 이하면 즉시 throw(네트워크 호출 안 함) + confirmedNotSent=true', async () => {
+  try {
+    await placeKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: 'c', acntPrdtCd: 'p',
+      code: '005930', side: '매도', quantity: 1, price: 1000, conditionPrice: 0,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /조건가격/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+// [핵심] 장후시간외(2026-09-13 확장, 돌파매매 전략 진입체결용) — KIS 정식 스펙 문서
+// 확인: ORD_DVSN='06' + ORD_UNPR="0"("시장가 등 주문시 0으로 입력" 원문, 06은
+// 당일종가로 고정 체결돼 시장가류와 동일 취급), CNDT_PRIC은 22 전용이라 안 붙음.
+test('[핵심] placeKrOrder: afterHoursClose:true면 ORD_DVSN=06+ORD_UNPR="0"으로 요청(넘긴 price는 무시)', async () => {
+  let capturedBody = null;
+  const fetchImpl = async (url, init) => {
+    capturedBody = JSON.parse(init.body);
+    const body = { rt_cd: '0', output: { ODNO: '1', ORD_TMD: '1', KRX_FWDG_ORD_ORGNO: '1' } };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await placeKrOrder({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    code: '005930', side: '매수', quantity: 10, afterHoursClose: true, fetchImpl,
+  });
+  assert.equal(capturedBody.ORD_DVSN, '06');
+  assert.equal(capturedBody.ORD_UNPR, '0');
+  assert.equal(capturedBody.CNDT_PRIC, undefined);
+});
+
+test('placeKrOrder: afterHoursClose와 conditionPrice를 동시에 넘기면 즉시 throw(네트워크 호출 안 함) + confirmedNotSent=true', async () => {
+  try {
+    await placeKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: 'c', acntPrdtCd: 'p',
+      code: '005930', side: '매수', quantity: 1, afterHoursClose: true, conditionPrice: 65000,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /afterHoursClose/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+// [핵심] 시장가(2026-09-13 확장, 돌파매매 진입이 장후시간외에서 미체결일 때 다음날
+// 시가로 넘기는 폴백 전용) — 장후시간외와 동일 스펙 원칙(ORD_UNPR="0"), ORD_DVSN만 다름.
+test('[핵심] placeKrOrder: marketOrder:true면 ORD_DVSN=01+ORD_UNPR="0"으로 요청(넘긴 price는 무시)', async () => {
+  let capturedBody = null;
+  const fetchImpl = async (url, init) => {
+    capturedBody = JSON.parse(init.body);
+    const body = { rt_cd: '0', output: { ODNO: '1', ORD_TMD: '1', KRX_FWDG_ORD_ORGNO: '1' } };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await placeKrOrder({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    code: '005930', side: '매수', quantity: 10, marketOrder: true, fetchImpl,
+  });
+  assert.equal(capturedBody.ORD_DVSN, '01');
+  assert.equal(capturedBody.ORD_UNPR, '0');
+  assert.equal(capturedBody.CNDT_PRIC, undefined);
+});
+
+test('placeKrOrder: afterHoursClose와 marketOrder를 동시에 넘기면 즉시 throw(네트워크 호출 안 함) + confirmedNotSent=true', async () => {
+  try {
+    await placeKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: 'c', acntPrdtCd: 'p',
+      code: '005930', side: '매수', quantity: 1, afterHoursClose: true, marketOrder: true,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /동시에 쓸 수 없음/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+// [핵심] reviseKrOrder — 트레일링스탑 재계산용 정정/취소(2026-09-13, TTTC0013U).
+test('[핵심] reviseKrOrder: 정정 시 TTTC0013U tr_id + RVSE_CNCL_DVSN_CD=01 + 새 조건가격으로 요청', async () => {
+  let capturedHeaders = null, capturedBody = null;
+  const fetchImpl = async (url, init) => {
+    capturedHeaders = init.headers; capturedBody = JSON.parse(init.body);
+    const body = { rt_cd: '0', output: { ODNO: '1', ORD_TMD: '1', KRX_FWDG_ORD_ORGNO: '06010' } };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await reviseKrOrder({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    orgNo: '06010', orderNo: '1234', action: '정정', quantity: 10, price: 68000, conditionPrice: 68000, fetchImpl,
+  });
+  assert.equal(capturedHeaders.tr_id, 'TTTC0013U');
+  assert.equal(capturedBody.RVSE_CNCL_DVSN_CD, '01');
+  assert.equal(capturedBody.ORGN_ODNO, '1234');
+  assert.equal(capturedBody.KRX_FWDG_ORD_ORGNO, '06010');
+  assert.equal(capturedBody.CNDT_PRIC, '68000');
+  assert.equal(capturedBody.QTY_ALL_ORD_YN, 'Y');
+  assert.equal(capturedBody.ORD_DVSN, '22');
+});
+
+test('reviseKrOrder: 취소 시 RVSE_CNCL_DVSN_CD=02', async () => {
+  let capturedBody = null;
+  const fetchImpl = async (url, init) => {
+    capturedBody = JSON.parse(init.body);
+    const body = { rt_cd: '0', output: { ODNO: '1', ORD_TMD: '1', KRX_FWDG_ORD_ORGNO: '06010' } };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await reviseKrOrder({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    orgNo: '06010', orderNo: '1234', action: '취소', quantity: 10, price: 68000, fetchImpl,
+  });
+  assert.equal(capturedBody.RVSE_CNCL_DVSN_CD, '02');
+});
+
+test('reviseKrOrder: 알 수 없는 action은 즉시 throw + confirmedNotSent=true', async () => {
+  try {
+    await reviseKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: 'c', acntPrdtCd: 'p',
+      orgNo: '06010', orderNo: '1', action: '보류', quantity: 1, price: 1000,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /알 수 없는 action/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+test('reviseKrOrder: orgNo·orderNo 없으면 즉시 throw(네트워크 호출 안 함) + confirmedNotSent=true', async () => {
+  try {
+    await reviseKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: 'c', acntPrdtCd: 'p',
+      orgNo: '', orderNo: '', action: '정정', quantity: 1, price: 1000,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /orgNo|orderNo/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+// [핵심 안전장치] 이미 체결/취소된 원주문에 대한 정정 시도 — KIS가 명시적으로 거부하면
+// confirmedNotSent=true(정정 자체가 확정 실패, placeKrOrder와 동일 원칙).
+test('[핵심 안전장치] reviseKrOrder: KIS 업무거부(rt_cd!=0, 이미 체결된 주문 등)면 throw + confirmedNotSent=true', async () => {
+  const fetchImpl = mockFetch([{ body: { rt_cd: '1', msg_cd: 'APBK0919', msg1: '이미 체결된 주문입니다.' } }]);
+  try {
+    await reviseKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+      orgNo: '06010', orderNo: '1234', action: '정정', quantity: 10, price: 68000, conditionPrice: 68000, fetchImpl,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /이미 체결된 주문입니다/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+test('[핵심 안전장치] reviseKrOrder: 네트워크 예외는 confirmedNotSent 안 붙음(불명 — 함부로 재시도해 이중정정하면 안 됨)', async () => {
+  const fetchImpl = async () => { throw new Error('ECONNRESET'); };
+  try {
+    await reviseKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+      orgNo: '06010', orderNo: '1234', action: '정정', quantity: 10, price: 68000, conditionPrice: 68000, fetchImpl,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.confirmedNotSent, undefined);
+  }
 });
 
 test('placeKrOrder: 알 수 없는 side는 네트워크 호출 전에 즉시 throw + confirmedNotSent=true(네트워크 자체를 안 탐 — 롤백 안전)', async () => {

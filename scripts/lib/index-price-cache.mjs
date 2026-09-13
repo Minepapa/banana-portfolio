@@ -114,6 +114,15 @@ export function indexPriceAtOrBefore(indexName, targetDate) {
   return best ? best.close : null;
 }
 
+// 캐시된 지수 시계열 전체를 {dates, closes}(오름차순 배열)로 반환 — 돌파매매 일별
+// 백테스트(breakout-simulator.mjs)가 특정 날짜들만 점조회하는 게 아니라 상대강도(RS)
+// 계산에 전체 구간이 필요해 신설(2026-09-12). 캐시 없으면 null(추정 안 함).
+export function loadIndexSeries(indexName) {
+  const series = loadSeries(indexName);
+  if (!series || !series.length) return null;
+  return { dates: series.map((r) => r.date), closes: series.map((r) => r.close) };
+}
+
 // indexName × targetDates 여러 개를 한 번에 조회(로드-후-질의 패턴).
 export function indexPricesAt(indexName, targetDates) {
   targetDates.forEach(assertDateString);

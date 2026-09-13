@@ -1,0 +1,254 @@
+// 돌파매매 전략 — 일별 이벤트 기반 백테스트 시뮬레이터 (2026-09-12). OCF/P의 월간
+// 리밸런싱(walk-forward-simulator.mjs)과 달리 이 전략은 매일 신호를 확인하고 포지션별
+// 트레일링스탑/피라미딩을 추적해야 해서 별도 엔진이 필요하다.
+//
+// 후보군 단순화(오너 확정 반영): 코스피200+코스닥150 지수 근사 랭킹을 따로 안 거친다 —
+// 오너가 지정한 시가총액 하한(1조원) 자체가 이미 대형주만 남기는 훨씬 강한 필터라(보통
+// 코스피200 편입 하한보다 높음), 그 위에 또 지수 근사 랭킹을 얹는 건 이중 작업. 후보군
+// = build_candidate_pool() 전체(코스피+코스닥 보통주) 중 그 날짜에 상장돼 있고
+// (listingDate<=date<delistingDate) 시가총액 1조원↑ + 유동성 필터 통과 종목.
+import { computeBreakoutEntrySignal } from './breakout-factor.mjs';
+import {
+  computeTrailingStop, computePositionSize, shouldPyramid,
+  shouldTakePartialProfit, rMultiplePrice, PARTIAL_PROFIT_TRIGGER_R, PARTIAL_PROFIT_SELL_FRACTION,
+  MAX_CONCURRENT_POSITIONS,
+} from './breakout-risk.mjs';
+import { findIndexAtOrBefore } from './breakout-price-series.mjs';
+
+export const LIQUIDITY_FLOOR_WON = 3_000_000_000; // 일평균거래대금 30억원(기존 프로젝트 관례, rebalance-gap.mjs 등과 동일 기준 재사용)
+export const RS_LOOKBACK_DAYS = 60; // 상대강도 비교 구간(2~3개월, blog의 "3~6~9~12개월 가중평균 RS Rating"보다 단순화 — 근거는 Log/Implementation 참고)
+export const HIGH_LOOKBACK_DAYS = 252; // 52주(거래일 기준)
+
+// closes/volumes 배열에서 endIndex(포함) 기준 최근 days거래일 평균 거래대금(종가×거래량).
+// 윈도우가 짧으면(신규상장 직후 등) null(추정 안 함, avg_trading_value_at과 동일 원칙).
+export function computeAvgTradingValue(closes, volumes, endIndex, days = 20, minWindowRatio = 0.9) {
+  const startIndex = endIndex - days + 1;
+  if (startIndex < 0) return null;
+  let sum = 0;
+  let count = 0;
+  for (let i = startIndex; i <= endIndex; i++) {
+    if (closes[i] != null && volumes[i] != null) {
+      sum += closes[i] * volumes[i];
+      count += 1;
+    }
+  }
+  if (count < days * minWindowRatio) return null;
+  return sum / count;
+}
+
+// 포지션 상태 갱신 — 오늘의 (high, low, close)를 반영해 트레일링스탑·피라미딩·3R
+// 부분익절 판정.
+//
+// ⚠️ 청산 판정은 반드시 "어제까지 확정된 손절선"(position.stopPrice, 오늘 갱신 전)
+// 기준으로 먼저 한다 — 오늘의 고가로 손절선을 오늘 안에 미리 올려버린 뒤 그 새
+// 손절선을 오늘의 저가와 비교하면, 일중 고가·저가 중 어느 게 먼저 일어났는지 알 수
+// 없는데도 "고가가 먼저 찍히고 그 다음 저가로 빠졌다"고 암묵적으로 가정하는 게 된다
+// (일봉만으로는 일중 순서를 알 수 없음 — 직접 실측: 이 순서를 반대로 하니 1~2일 만에
+// 손익 정확히 0%로 청산되는 부자연스러운 거래 다수 발견, 원인 확인 후 수정).
+// 트레일링 갱신(오늘 고가 반영)은 청산이 안 났을 때만, 내일 판정에 쓰일 손절선으로 갱신한다.
+//
+// 3R 부분익절(오너 확정, 2026-09-13)은 트레일링스탑과 같은 컨벤션으로 "오늘 고가가
+// 3R 가격을 찍었는지"로 판정 — 3R가는 진입가로부터 고정 계산되는 값이라(오늘 데이터로
+// 새로 만들어내는 임계치가 아님) 트레일링스탑 순서버그와 같은 문제는 없다. 손절
+// 청산이 먼저 체크되므로, 같은 날 손절도 나고 3R도 찍는 극단적 경우는 손절이 우선
+// (포지션 자체가 사라지니 부분익절 대상이 없음).
+export function updatePositionForDay(position, dayBar) {
+  if (dayBar.low <= position.stopPrice) {
+    return {
+      position,
+      exit: { exitPrice: position.stopPrice, reason: '트레일링스탑' },
+      partialExit: null,
+    };
+  }
+  const highSinceEntry = Math.max(position.highSinceEntry, dayBar.high);
+
+  let partialExit = null;
+  let partialSold = position.partialSold;
+  if (shouldTakePartialProfit(position.entryPrice, highSinceEntry, position.partialSold)) {
+    partialExit = { exitPrice: rMultiplePrice(position.entryPrice, PARTIAL_PROFIT_TRIGGER_R), sellFraction: PARTIAL_PROFIT_SELL_FRACTION };
+    partialSold = true;
+  }
+
+  const rawStop = computeTrailingStop(position.entryPrice, highSinceEntry);
+  const stopPrice = Math.max(position.stopPrice, rawStop); // 래칫 — 절대 하향 안 함
+  const addUnit = !position.pyramided && shouldPyramid(position.entryPrice, highSinceEntry, position.units);
+  return {
+    position: {
+      ...position,
+      highSinceEntry,
+      stopPrice,
+      partialSold,
+      units: addUnit ? position.units + 1 : position.units,
+      pyramided: addUnit || position.pyramided,
+    },
+    exit: null,
+    partialExit,
+  };
+}
+
+// 하루치 후보 유니버스 산출 — pool: buildCandidatePool() 결과, seriesByCode: code→
+// loadPriceSeries 결과, date: 'YYYY-MM-DD'. 반환: [{code, marcap, closeIdx}] (오늘
+// 상장돼 있고 시가총액 하한+유동성 통과한 종목만, 실보유 여부는 호출측이 따로 거른다).
+export function computeDailyCandidates(pool, seriesByCode, date, { marketCapFloor, liquidityFloor = LIQUIDITY_FLOOR_WON } = {}) {
+  const out = [];
+  for (const p of pool) {
+    if (p.listingDate && p.listingDate > date) continue;
+    if (p.delistingDate && p.delistingDate <= date) continue;
+    const series = seriesByCode[p.code];
+    if (!series) continue;
+    const idx = findIndexAtOrBefore(series.dates, date);
+    if (idx < 0 || series.dates[idx] !== date) continue; // 그 날 실제 거래 없으면(휴장 등) 제외
+    const close = series.closes[idx];
+    if (!(close > 0) || !(p.sharesOutstanding > 0)) continue;
+    const marcap = close * p.sharesOutstanding;
+    if (marcap < marketCapFloor) continue;
+    const avgTradingValue = computeAvgTradingValue(series.closes, series.volumes, idx);
+    if (avgTradingValue == null || avgTradingValue < liquidityFloor) continue;
+    out.push({ code: p.code, name: p.name, marcap, idx });
+  }
+  return out;
+}
+
+// 전체 백테스트 구동 — pool/seriesByCode/benchmarkSeries는 호출측이 미리 로드해서 넘긴다
+// (이 함수 자체는 파일 I/O 안 함, 순수 시뮬레이션 로직). tradingDates: 벤치마크 기준
+// 거래일 목록(오름차순). 반환: { trades, equityCurve, finalCapital }.
+//
+// ⚠️ 체결 타이밍(2026-09-13 수정, 오너 지적): 신호는 당일 "종가"로 확정되지만, 그
+// 종가는 장이 끝나야 알 수 있어서 그 가격에 바로 살 수 없다(최초 버전의 문제 —
+// 실제로 체결 불가능한 가격을 썼음). 그래서 신호가 뜬 날은 매수를 "예약"만 해두고,
+// 실제 진입은 다음 거래일의 시가(Open)로 체결한다 — 하루 뒤처지지만 실제로 낼 수
+// 있는 주문이다. 손절/트레일링(저가 터치)은 이미 실제 스탑오더처럼 당일 체결
+// 가능해서 그대로 둔다.
+export function runBreakoutBacktest({
+  pool, seriesByCode, benchmarkSeries, tradingDates, initialCapital,
+  marketCapFloor, riskPerTradePct, maxConcurrentPositions = MAX_CONCURRENT_POSITIONS,
+  consolidationMethod = 'stddev', volatilityOpts,
+  entryTiming = 'nextDayOpen', // 'nextDayOpen'(기존, 실현가능 지연체결) | 'sameDayClose'(장후시간외 우선체결 가정 — 2026-09-13 오너 요청, 아래 3)단계 참고)
+}) {
+  let capital = initialCapital;
+  const openPositions = new Map(); // code -> position + investedWon
+  let pendingEntries = []; // 어제 신호가 확인돼 오늘 시가에 체결 대기 중인 {code, relativeStrength} 목록
+  const trades = [];
+  const equityCurve = [];
+  let skippedNoOpenPrice = 0; // Open 데이터가 없어 예약 체결을 못 한 건수(투명성용)
+
+  for (const date of tradingDates) {
+    // 1) 어제 예약된 진입을 오늘 시가로 체결 — 슬롯이 모자라면 RS(상대강도)가 더 강한
+    // 종목부터 채운다(오너 지적, 2026-09-13 — 이전엔 후보풀 순서(임의, 경제적 근거
+    // 없음)로 아무거나 채웠음, 진입일의 26%가 신호 2건 이상 겹치는 날이라 실제 영향
+    // 있는 지점이었음).
+    if (pendingEntries.length && openPositions.size < maxConcurrentPositions) {
+      const sortedPending = [...pendingEntries].sort((a, b) => b.relativeStrength - a.relativeStrength);
+      for (const { code } of sortedPending) {
+        if (openPositions.size >= maxConcurrentPositions) break;
+        if (openPositions.has(code)) continue;
+        const series = seriesByCode[code];
+        const idx = series ? findIndexAtOrBefore(series.dates, date) : -1;
+        if (idx < 0 || series.dates[idx] !== date) continue; // 오늘 거래 없음(휴장 등) — 그냥 흘려보냄(재시도 안 함)
+        const openPrice = series.opens[idx];
+        if (openPrice == null || !(openPrice > 0)) { skippedNoOpenPrice += 1; continue; } // Open 데이터 없음 — 추정 안 함
+        const sizeWon = Math.min(computePositionSize(capital, { riskPct: riskPerTradePct }), capital);
+        if (!(sizeWon > 0)) continue;
+        capital -= sizeWon;
+        openPositions.set(code, {
+          code, entryDate: date, entryPrice: openPrice, units: 1,
+          highSinceEntry: openPrice, stopPrice: openPrice * (1 - 0.08), pyramided: false,
+          partialSold: false, investedWon: sizeWon,
+        });
+      }
+    }
+    pendingEntries = [];
+
+    // 2) 보유 포지션 갱신(트레일링/피라미딩/청산) — 오늘 막 체결된 포지션도 포함(당일 손절 가능)
+    for (const [code, pos] of [...openPositions.entries()]) {
+      const series = seriesByCode[code];
+      const idx = series ? findIndexAtOrBefore(series.dates, date) : -1;
+      if (idx < 0 || series.dates[idx] !== date) continue; // 오늘 거래 없음(휴장 등) — 유지
+      const dayBar = { high: series.highs[idx], low: series.lows[idx], close: series.closes[idx] };
+      if (dayBar.high == null || dayBar.low == null) continue; // 고가/저가 결측 — 판단 보류
+      const { position, exit, partialExit } = updatePositionForDay(pos, dayBar);
+      if (exit) {
+        const pnlWon = position.investedWon * (exit.exitPrice / position.entryPrice - 1);
+        capital += position.investedWon + pnlWon;
+        trades.push({
+          code, entryDate: position.entryDate, exitDate: date,
+          entryPrice: position.entryPrice, exitPrice: exit.exitPrice,
+          units: position.units, investedWon: position.investedWon, pnlWon, reason: exit.reason,
+        });
+        openPositions.delete(code);
+      } else {
+        let finalPosition = position;
+        if (partialExit) {
+          const soldWon = position.investedWon * partialExit.sellFraction;
+          const pnlWon = soldWon * (partialExit.exitPrice / position.entryPrice - 1);
+          capital += soldWon + pnlWon;
+          trades.push({
+            code, entryDate: position.entryDate, exitDate: date,
+            entryPrice: position.entryPrice, exitPrice: partialExit.exitPrice,
+            units: position.units, investedWon: soldWon, pnlWon, reason: '3R 부분익절(50%)',
+          });
+          finalPosition = { ...position, investedWon: position.investedWon - soldWon };
+        }
+        openPositions.set(code, finalPosition);
+      }
+    }
+
+    // 3) 오늘 종가 기준 신규 신호 탐색
+    //    - 'nextDayOpen'(기존): 바로 체결하지 않고 "내일 시가 진입"으로 예약.
+    //    - 'sameDayClose': 장후시간외 종가 매수가 우선 시도된다고 가정 — 오늘 종가로
+    //      즉시 체결(오늘 중 발견된 신호들끼리는 1)단계와 동일하게 RS 내림차순으로
+    //      슬롯을 채운다). 실전 반영 시 이건 "장후시간외 우선 체결" 시나리오의
+    //      상한선 근사(체결 성공률 100% 가정)라는 점에 유의 — 실제 체결률은 미실측.
+    if (openPositions.size < maxConcurrentPositions) {
+      const benchIdx = findIndexAtOrBefore(benchmarkSeries.dates, date);
+      const benchmarkCloses = benchIdx >= 0 ? benchmarkSeries.closes.slice(0, benchIdx + 1) : [];
+      const candidates = computeDailyCandidates(pool, seriesByCode, date, { marketCapFloor });
+      const todaySignals = [];
+      for (const cand of candidates) {
+        if (openPositions.has(cand.code) || pendingEntries.some((p) => p.code === cand.code)) continue;
+        const series = seriesByCode[cand.code];
+        const closes = series.closes.slice(0, cand.idx + 1);
+        const highs = series.highs.slice(0, cand.idx + 1);
+        const lows = series.lows.slice(0, cand.idx + 1);
+        const signal = computeBreakoutEntrySignal(
+          { closes, highs, lows, benchmarkCloses, marcap: cand.marcap },
+          { rsLookbackDays: RS_LOOKBACK_DAYS, week52High: { lookbackDays: HIGH_LOOKBACK_DAYS }, marketCapFloor, consolidationMethod, volatility: volatilityOpts },
+        );
+        if (!signal.pass) continue;
+        todaySignals.push({ code: cand.code, relativeStrength: signal.relativeStrength, closePrice: series.closes[cand.idx] });
+      }
+      if (entryTiming === 'sameDayClose') {
+        const sortedSignals = [...todaySignals].sort((a, b) => b.relativeStrength - a.relativeStrength);
+        for (const { code, closePrice } of sortedSignals) {
+          if (openPositions.size >= maxConcurrentPositions) break;
+          if (!(closePrice > 0)) continue; // 종가 결측 — 체결 안 함(추정 안 함)
+          const sizeWon = Math.min(computePositionSize(capital, { riskPct: riskPerTradePct }), capital);
+          if (!(sizeWon > 0)) continue;
+          capital -= sizeWon;
+          openPositions.set(code, {
+            code, entryDate: date, entryPrice: closePrice, units: 1,
+            highSinceEntry: closePrice, stopPrice: closePrice * (1 - 0.08), pyramided: false,
+            partialSold: false, investedWon: sizeWon,
+          });
+        }
+      } else {
+        for (const { code, relativeStrength } of todaySignals) pendingEntries.push({ code, relativeStrength });
+      }
+    }
+
+    const openValue = [...openPositions.values()].reduce((sum, pos) => {
+      const series = seriesByCode[pos.code];
+      const idx = findIndexAtOrBefore(series.dates, date);
+      const close = idx >= 0 ? series.closes[idx] : pos.entryPrice;
+      return sum + pos.investedWon * (close / pos.entryPrice);
+    }, 0);
+    equityCurve.push({ date, capital, openValue, totalEquity: capital + openValue });
+  }
+
+  const openPositionsAtEnd = [...openPositions.values()].map((pos) => ({
+    code: pos.code, entryDate: pos.entryDate, entryPrice: pos.entryPrice,
+    units: pos.units, investedWon: pos.investedWon,
+  }));
+
+  return { trades, equityCurve, finalCapital: capital, openPositionsAtEnd, skippedNoOpenPrice };
+}

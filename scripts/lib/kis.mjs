@@ -668,9 +668,26 @@ export function parseIrpPensionExecutions(json) {
 // kis.test.js에 이 매핑 자체를 하드코딩 값으로 직접 대조하는 테스트를 둔다(연구 권고사항).
 export const ORDER_TR_ID = { 매수: 'TTTC0012U', 매도: 'TTTC0011U' };
 
-// 지정가만 지원(ORD_DVSN='00') — 구현계획서 Phase 11 "지정가 우선 원칙" 그대로. 시장가('01')는
-// 지금 쓰임이 없어 미구현(필요해지면 그때 추가 — 과설계 방지). SLL_TYPE은 매도일 때만 필요
-// (01=일반매도 — 이 프로젝트는 신용·대차 계좌를 안 쓰므로 이 값 고정, order_cash.py 확인).
+// 지정가(ORD_DVSN='00') + 스톱지정가(ORD_DVSN='22', 2026-09-13 확장) + 장후시간외
+// (ORD_DVSN='06', 2026-09-13 확장) + 시장가(ORD_DVSN='01', 2026-09-13 확장 — 돌파매매
+// 진입이 장후시간외에서 미체결일 때 다음날 시가로 넘기는 폴백 전용) 지원 — 구현계획서
+// Phase 11 "지정가 우선 원칙" 위에 돌파매매 전략(퀀트 트랙)의 장중 자동 손절/부분익절·
+// 장후시간외 우선체결·그 폴백용으로 추가. SLL_TYPE은 매도일 때만 필요(01=일반매도,
+// order_cash.py 확인).
+//
+// 스톱지정가(conditionPrice 전달 시)·장후시간외(afterHoursClose:true)·시장가
+// (marketOrder:true): 전부 KIS 정식 스펙 문서("[국내주식] 주문/계좌 > 주식주문(현금)
+// [v1_국내주식-001]", 오너가 개발자센터에서 다운로드해 확인, 2026-09-13)로 확정 —
+// 별도 tr_id 없이 기존 매수/매도 tr_id 그대로 파라미터만 다르다.
+// - 스톱지정가: ORD_DVSN=22 + CNDT_PRIC(조건가격, 이때만 필수)만 추가. 이 가격에
+//   도달하면 주문이 발동돼 ORD_UNPR(지정가)로 체결을 시도한다 — 스탑-시장가가
+//   아니라 스탑-지정가라, 조건가 도달 후 급락이 그 지정가를 순식간에 뚫으면
+//   미체결 가능성이 남는다(완전한 체결 보장 아님, Knowledge/API/KIS.md 참고).
+// - 장후시간외·시장가: 둘 다 ORD_DVSN만 다르고(06/01) ORD_UNPR="0"(스펙 문서 원문 —
+//   "주문단가: 시장가 등 주문시 '0'으로 입력", 06은 당일 종가로 고정 체결돼 시장가류와
+//   동일 취급). CNDT_PRIC은 필요 없음(22 전용). 호출측이 넘긴 price는 무시됨(검증도
+//   스킵) — 이 필드가 실제 체결가를 결정하지 않으므로.
+//
 // ⚠️ 던지는 에러의 confirmedNotSent 플래그(코드리뷰 지적, 2026-08-09 — "롤백이 애매한 실패
 // 에도 무조건 실행돼 이중주문 위험을 되살림"): 호출측(execute-quant-proposal.mjs)이 주문
 // 실패 시 idempotency 선점을 롤백해도 되는지 판단하려면 "확실히 미체결"과 "체결 여부
@@ -680,19 +697,37 @@ export const ORDER_TR_ID = { 매수: 'TTTC0012U', 매도: 'TTTC0011U' };
 // 업무거부를 응답(레이트리밋 재시도 소진 포함 — 그 경우도 KIS가 msg_cd로 명시 응답한 것).
 // false/미설정(기본값)이면 네트워크 예외·응답파싱 실패·"성공인데 주문번호 없음"처럼 실제로
 // 접수됐을 가능성을 배제할 수 없는 경우 — 호출측은 절대 롤백하면 안 되고 수동확인으로 넘겨야 한다.
-export async function placeKrOrder({ token, appkey, appsecret, cano, acntPrdtCd, code, side, quantity, price, fetchImpl, retries, retryDelayMs }) {
+export async function placeKrOrder({
+  token, appkey, appsecret, cano, acntPrdtCd, code, side, quantity, price, conditionPrice,
+  afterHoursClose, marketOrder,
+  fetchImpl, retries, retryDelayMs,
+}) {
   const trId = ORDER_TR_ID[side];
   if (!trId) { const e = new Error(`알 수 없는 side: ${side} (허용: 매수|매도)`); e.confirmedNotSent = true; throw e; }
   if (!(Number.isInteger(quantity) && quantity > 0)) {
     const e = new Error(`주문수량은 양의 정수여야 함: ${quantity}`); e.confirmedNotSent = true; throw e;
   }
-  if (!(price > 0)) { const e = new Error(`주문단가는 양수여야 함: ${price}`); e.confirmedNotSent = true; throw e; }
+  const zeroPriceMode = afterHoursClose || marketOrder; // 둘 다 ORD_UNPR="0"(스펙 문서 — "시장가 등 주문시 0으로 입력")
+  if (afterHoursClose && marketOrder) {
+    const e = new Error('afterHoursClose와 marketOrder는 동시에 쓸 수 없음(같은 주문에 두 구분을 넣을 수 없음)'); e.confirmedNotSent = true; throw e;
+  }
+  if (zeroPriceMode && conditionPrice !== undefined) {
+    const e = new Error('afterHoursClose/marketOrder와 conditionPrice는 동시에 쓸 수 없음(스톱지정가가 아님)'); e.confirmedNotSent = true; throw e;
+  }
+  if (!zeroPriceMode) {
+    if (!(price > 0)) { const e = new Error(`주문단가는 양수여야 함: ${price}`); e.confirmedNotSent = true; throw e; }
+    if (conditionPrice !== undefined && !(conditionPrice > 0)) {
+      const e = new Error(`조건가격(conditionPrice)은 양수여야 함: ${conditionPrice}`); e.confirmedNotSent = true; throw e;
+    }
+  }
 
   const body = {
     CANO: cano, ACNT_PRDT_CD: acntPrdtCd, PDNO: code,
-    ORD_DVSN: '00', ORD_QTY: String(quantity), ORD_UNPR: String(price),
+    ORD_DVSN: afterHoursClose ? '06' : marketOrder ? '01' : (conditionPrice !== undefined ? '22' : '00'),
+    ORD_QTY: String(quantity), ORD_UNPR: zeroPriceMode ? '0' : String(price),
     EXCG_ID_DVSN_CD: 'KRX',
   };
+  if (conditionPrice !== undefined) body.CNDT_PRIC = String(conditionPrice);
   if (side === '매도') body.SLL_TYPE = '01';
 
   const headers = {
@@ -732,6 +767,65 @@ export function parseOrderResponse(json) {
     orderTime: String(json?.output?.ORD_TMD ?? '').trim(),
     orgNo: String(json?.output?.KRX_FWDG_ORD_ORGNO ?? '').trim(),
   };
+}
+
+// ── 국내주식 주문 정정/취소 — 2026-09-13(돌파매매 전략 트레일링스탑 재계산용) ──
+// tr_id 확인: KIS 정식 스펙 문서("[국내주식] 주문/계좌 > 주식주문(정정취소)
+// [v1_국내주식-003]", 오너가 개발자센터에서 다운로드해 공유) + 공식 GitHub 예제
+// (examples_llm/domestic_stock/order_rvsecncl/order_rvsecncl.py)로 확정: 실전
+// tr_id=TTTC0013U(정정·취소 공용, rvse_cncl_dvsn_cd로 구분: 01=정정, 02=취소).
+//
+// ⚠️ 스톱지정가(ORD_DVSN=22) 손절선을 "정정"(01)으로 CNDT_PRIC만 바꿔치기하면
+// 손절 주문이 아예 없는 틈을 만들지 않고 트레일링을 구현할 수 있다(취소 후
+// 재주문 방식보다 안전 — 그 사이 무방비 노출 없음). 원주문 자체가 이미
+// 체결·취소됐으면 이 API가 거부하므로(공식 문서: "이미 체결된 건은 정정 및
+// 취소 불가"), 호출측이 그 실패를 "이미 체결/취소됨"으로 해석해 포지션 상태를
+// 재확인해야 한다(추정 금지 — 이 함수 자체는 판단하지 않고 KIS 응답만 그대로 전달).
+//
+// qty_all_ord_yn(잔량전부주문여부)은 항상 'Y'로 고정 — 이 프로젝트는 부분 수량
+// 정정을 쓸 일이 없다(전량 취소 또는 조건가만 바꾸는 전량 정정뿐).
+export async function reviseKrOrder({
+  token, appkey, appsecret, cano, acntPrdtCd, orgNo, orderNo, action, quantity, price, conditionPrice,
+  fetchImpl, retries, retryDelayMs,
+}) {
+  const RVSE_CNCL_DVSN = { 정정: '01', 취소: '02' };
+  const dvsn = RVSE_CNCL_DVSN[action];
+  if (!dvsn) { const e = new Error(`알 수 없는 action: ${action} (허용: 정정|취소)`); e.confirmedNotSent = true; throw e; }
+  if (!orgNo || !orderNo) {
+    const e = new Error('orgNo(계좌관리점코드)·orderNo(원주문번호)는 필수'); e.confirmedNotSent = true; throw e;
+  }
+  if (!(Number.isInteger(quantity) && quantity > 0)) {
+    const e = new Error(`주문수량은 양의 정수여야 함: ${quantity}`); e.confirmedNotSent = true; throw e;
+  }
+  if (!(price > 0)) { const e = new Error(`주문단가는 양수여야 함: ${price}`); e.confirmedNotSent = true; throw e; }
+  if (conditionPrice !== undefined && !(conditionPrice > 0)) {
+    const e = new Error(`조건가격(conditionPrice)은 양수여야 함: ${conditionPrice}`); e.confirmedNotSent = true; throw e;
+  }
+
+  const body = {
+    CANO: cano, ACNT_PRDT_CD: acntPrdtCd, KRX_FWDG_ORD_ORGNO: orgNo, ORGN_ODNO: orderNo,
+    ORD_DVSN: conditionPrice !== undefined ? '22' : '00',
+    RVSE_CNCL_DVSN_CD: dvsn, ORD_QTY: String(quantity), ORD_UNPR: String(price),
+    QTY_ALL_ORD_YN: 'Y', EXCG_ID_DVSN_CD: 'KRX',
+  };
+  if (conditionPrice !== undefined) body.CNDT_PRIC = String(conditionPrice);
+
+  const headers = {
+    'Content-Type': 'application/json',
+    authorization: `Bearer ${token}`,
+    appkey, appsecret,
+    tr_id: 'TTTC0013U',
+    custtype: 'P',
+  };
+  const url = `${BASE_URL}/uapi/domestic-stock/v1/trading/order-rvsecncl`;
+  let json;
+  try {
+    json = await fetchKis(url, headers, `${action} ${orderNo}`, { fetchImpl, retries, retryDelayMs, method: 'POST', body });
+  } catch (e) {
+    if (e.code) e.confirmedNotSent = true;
+    throw e;
+  }
+  return parseOrderResponse(json);
 }
 
 // 보유종목 + 이번 폴링 시세결과 + 직전 실시간시세 행 → 시트에 쓸 행 배열.

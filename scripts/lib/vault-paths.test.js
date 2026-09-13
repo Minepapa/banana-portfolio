@@ -35,19 +35,24 @@ test('5대분류 하위경로가 전부 VAULT_ROOT 밑에 걸린다', () => {
   // facts: ledgerRoot(1) + ledger 하위 9종(Phase 7에서 profits·dailySnapshots 추가,
   // 2026-08-21 monthlyBalances 추가, 2026-09-03 fundValuations 추가) = 10
   // (marketPolls는 2026-08-17 삭제됨 — 전제였던 추세추종이 기각돼 한 번도 안 쓰임),
-  // state 14(+jobHealth, +Phase 8 macroOverlay,
+  // state 17(+jobHealth, +Phase 8 macroOverlay,
   // +Phase 9 killSwitch·executionMode, +Phase 11 executedOrders, +2026-08-16
   // cashAccumulator, +2026-08-29 proposalMode·telegramSessionLastRead, +2026-09-01
   // marketMoveMonitor, +2026-09-06 macroIndicators(macro-cache.mjs — 거시지표
   // 하루 1회 계산 공유 캐시), +2026-09-06 macroTiltProposal(monthly-macro-tilt-
-  // proposal.mjs 전용 Faber 상태 — daily-asset-allocation-check.mjs와 분리)), decisions 4
+  // proposal.mjs 전용 Faber 상태 — daily-asset-allocation-check.mjs와 분리),
+  // +2026-09-13 breakoutPositions(돌파매매 전략 포지션 상태, breakout-position-
+  // vault.mjs) + breakoutPendingEntries(장후시간외 미체결→다음날시가 폴백 대기열,
+  // breakout-pending-entry-vault.mjs) + breakoutScanRuns(일별 신호스캔 하루1회
+  // 실행보장 마커, daily-breakout-signal-scan.mjs — 코드리뷰 지적 재발방지)),
+  // decisions 4
   // (+riskMonitor), knowledge 6(2026-09-04 므네모시네 대정리 — preferenceObservations를
   // profile로 통합, PreferenceObservations/ 하위폴더 평탄화 후 +hubs·meta·infra 3개
   // 신설분(weekly-vault-health-check.mjs가 읽음)), log 3(2026-08-29 신설 —
   // telegramSession, Log/ 최초로 코드가 직접 쓰는 경로가 생겨 VAULT_PATHS에 처음
   // 등록됨. 2026-09-04 +implementation·devRequests(weekly-vault-health-check.mjs가
   // progress 필드·"남은 것" 섹션을 읽음))
-  assert.equal(flat.length, 37);
+  assert.equal(flat.length, 40);
   for (const p of flat) assert.ok(p.startsWith(VAULT_ROOT), `${p} should start with ${VAULT_ROOT}`);
 });
 

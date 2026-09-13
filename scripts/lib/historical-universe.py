@@ -113,11 +113,16 @@ def cache_path(code):
 
 
 def cache_prices(codes, start_date, end_date=None, delay=0.05, max_fail_ratio=MAX_CACHE_FAIL_RATIO):
-    """codes 각각의 일별 종가+거래량 시계열을 로컬 CSV로 캐싱(이미 있으면 스킵 —
-    재실행해도 안전, 중단 후 재개 가능). Volume도 같이 저장하는 이유: 유동성 필터
-    (avg_trading_value_at, 30억원 기준)가 종가×거래량을 요구하는데 처음엔 Close만
-    캐싱해뒀다가 뒤늦게 빠진 걸 발견함(2026-08-08 — 백테스트가 실전 전략의 유동성
-    필터를 재현 못 하고 있었음). 반환: {code: 'cached'|'fetched'|'empty'|'error:...'} 요약.
+    """codes 각각의 일별 시세를 로컬 CSV로 캐싱(이미 있으면 스킵 — 재실행해도 안전,
+    중단 후 재개 가능). Close+Volume은 기존 OCF/P 백테스트(유동성 필터)가 쓰고,
+    High+Low는 돌파매매 전략(2026-09-12 추가) — 52주 신고가·R배수 손절/트레일링
+    시뮬레이션이 종가만으로는 장중 손절 터치를 놓칠 수 있어 필요해졌다. Open은
+    같은 날 재수집(2026-09-13 추가) — 신호는 당일 종가로 확정되지만 실제 체결은
+    다음날 시가에 이뤄진다는 걸 백테스트에 반영하려면 필요(오너 지적 — 당일 종가에
+    바로 체결된다고 가정한 최초 버전은 실제로 불가능한 가격을 쓰고 있었음). 데이터소스
+    (FinanceDataReader)는 원래도 OHLCV 전체를 주는데 저장 시 일부만 남기고 버렸던
+    것 — 새 데이터소스 없이 재수집(re-fetch)만으로 해결된다. 반환:
+    {code: 'cached'|'fetched'|'empty'|'error:...'} 요약.
 
     빈 결과(진짜 데이터 없음)는 이번 실행 전체가 "건강"할 때만 캐시에 확정한다 —
     전역장애(SSL 깨짐·레이트리밋 등)가 개별 종목 결측인 척 위장하면서 "빈 결과"를
@@ -139,7 +144,7 @@ def cache_prices(codes, start_date, end_date=None, delay=0.05, max_fail_ratio=MA
                 result[code] = 'empty'
                 pending_empty.append(code)
             else:
-                cols = [c for c in ('Close', 'Volume') if c in df.columns]
+                cols = [c for c in ('Open', 'Close', 'High', 'Low', 'Volume') if c in df.columns]
                 df[cols].to_csv(cache_path(code))
                 result[code] = 'fetched'
         except Exception as e:
@@ -162,7 +167,7 @@ def cache_prices(codes, start_date, end_date=None, delay=0.05, max_fail_ratio=MA
     # 여기 도달했다는 건 실패율이 정상 범위 — 빈 결과를 이제 캐시에 확정한다(헤더만
     # 있는 빈 CSV로 "조회했지만 없음"을 기록, 다음 실행부터 재조회 스킵).
     for code in pending_empty:
-        pd.DataFrame(columns=['Close', 'Volume']).to_csv(cache_path(code))
+        pd.DataFrame(columns=['Open', 'Close', 'High', 'Low', 'Volume']).to_csv(cache_path(code))
 
     for code in codes:
         if code not in result:

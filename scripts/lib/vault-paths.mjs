@@ -117,6 +117,22 @@ export const VAULT_PATHS = {
     // 해진다 — macro-overlay-facts.mjs readPreviousFaberState/writeFaberState의
     // stateDir 파라미터로 이 경로를 넘겨 쓴다.
     macroTiltProposal: join(VAULT_ROOT, 'State', 'MacroTiltProposal'),
+    // 돌파매매 전략(퀀트 트랙, 2026-09-13 실전 구현) 포지션 상태 — 포지션 1건=파일
+    // 1개(proposals·holdings와 같은 폴더 패턴, breakout-position-vault.mjs 참고).
+    // "지금 상태"이면서 동시에 "이력"(청산 후에도 파일을 지우지 않고 status만
+    // 갱신 — proposal-vault.mjs와 동일 이유, 나중에 되짚기 위함)이라 killSwitch류
+    // 단일파일이 아니라 holdings류 폴더로 분류.
+    breakoutPositions: join(VAULT_ROOT, 'State', 'BreakoutPositions'),
+    // 돌파매매 진입이 장후시간외(15:40~16:00)에서 전혀 체결 안 됐을 때(다음날 시가로
+    // 넘겨야 할 항목) 대기열 — 대기 1건=파일 1개(breakoutPositions와 동일 패턴),
+    // breakout-pending-entry-vault.mjs 참고. place-breakout-entry-order.mjs가 쓰고
+    // place-breakout-fallback-entry.mjs(시가 근처 실행)가 읽어 소비한다.
+    breakoutPendingEntries: join(VAULT_ROOT, 'State', 'BreakoutPendingEntries'),
+    // 일별 신호스캔 잡(daily-breakout-signal-scan.mjs)의 하루 1회 실행 보장 마커 —
+    // monthly-macro-tilt-proposal.mjs의 last-month.md와 동일 원칙(1파일=덮어쓰기,
+    // "오늘 이미 돌았다"만 기억). 코드리뷰 HIGH 지적(2026-09-13) 재발방지 — 재실행이
+    // 같은 신호를 또 발주하는 이중매수를 막는다.
+    breakoutScanRuns: join(VAULT_ROOT, 'State', 'BreakoutScanRuns', 'last-run.md'),
   },
   // Log/는 대부분 인터랙티브 세션이 Write 도구로 직접 쓰는 자유서술 기록이라 지금까지
   // VAULT_PATHS에 없었다(코드가 안 건드림) — telegramSession만 예외로 Node 잡
