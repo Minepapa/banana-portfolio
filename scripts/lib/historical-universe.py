@@ -188,20 +188,36 @@ def _atomic_to_csv(df, path):
     os.replace(tmp_path, path)
 
 
-def _is_market_hours_kst(now=None):
-    """KST 평일 09:00~15:30(정규장) 안이면 True — 이 시간대엔 오늘자 데이터가 아직
-    미완성 봉일 수 있어 캐싱 대상에서 제외해야 한다(2026-09-14 코드리뷰 지적).
-    update-breakout-price-cache.mjs는 장 시작 전 아침에 도는 게 정상 스케줄이라
-    평소엔 안 걸리지만, 수동 재실행이 장중에 일어날 가능성에 대한 방어."""
+def _todays_session_not_closed_kst(now=None):
+    """KST 평일이고 아직 정규장 마감(15:30) 전이면 True — 이 경우 오늘자 데이터는
+    아직 존재하지 않거나(장 시작 전) 미완성 봉일 수 있어(장중) end_date에서
+    제외해야 한다.
+    ⚠️ 2026-09-15 실사고로 수정 — 원래 이름·조건이 `_is_market_hours_kst`(09:00~
+    15:30만 True)였는데, 이 잡의 정상 스케줄인 "장 시작 전 아침"(예: 07:30)은
+    그 범위 **밖**이라 가드가 아예 발동을 안 했다. 그 결과 실제 첫 아침 실행에서
+    end_date가 "오늘"로 그대로 남아, 이미 전일까지 최신이던 2,647종목 전부가
+    "아직 최신 아님"으로 오판정돼 쓸데없이 네트워크 재조회를 시도했다(실행 시간
+    급증의 원인). 조건을 "장 시작 전(00:00~09:00)"까지 포함하는 "오늘 세션이
+    아직 안 끝남"으로 넓혀 이 사각지대를 없앴다."""
     now_kst = now or pd.Timestamp.now(tz='Asia/Seoul')
     if now_kst.weekday() >= 5:  # 토(5)·일(6)
         return False
     minutes = now_kst.hour * 60 + now_kst.minute
-    return 9 * 60 <= minutes < 15 * 60 + 30
+    return minutes < 15 * 60 + 30
 
 
-CORPORATE_ACTION_TOLERANCE = 0.03  # 액면분할/병합 감지 허용오차(겹침구간 종가 3%
-# 초과 차이 — 정상적인 데이터 수정 오차는 이보다 훨씬 작고, 분할/병합은 배수로 튐)
+CORPORATE_ACTION_TOLERANCE = 0.15  # 액면분할/병합 감지 허용오차(겹침구간 종가
+# 15% 초과 차이). ⚠️ 2026-09-15 실사고로 3%→15% 상향 — 첫 실전 아침 실행에서
+# "액면조정감지" 185건이 찍혔는데, 하루에 실제 분할/병합이 그렇게 많이 날 수는
+# 없다. 그날 워치리스트 상위가 전부 배당수익률 높은 금융·보험주(신한지주·
+# 하나금융·KB금융 등)였던 것과 맞물려, **배당락 등 데이터소스의 정상적인
+# 수정주가 재계산**이 3% 문턱을 흔히 넘는 것으로 보고 판단(백투백 재조회로
+# FinanceDataReader 자체의 응답 흔들림은 배제 확인 — 같은 요청을 두 번 연속
+# 보내면 완전히 동일한 값이 옴). 실제 분할/병합은 최소 30%(2:1 이상) 수준으로
+# 훨씬 크게 튀므로, 15%면 배당 수준 조정(한국 고배당주도 보통 한 자릿수%대)과는
+# 확실히 구간이 갈리면서 진짜 분할/병합은 여전히 잡는다. 다음 실행에서 실제로
+# 몇 건이나 걸리는지, 어느 종목인지(아래 로깅 추가) 재확인 필요.
+OVERLAP_CALENDAR_DAYS = 20  # 겹침재조회 기간(캘린더 기준, 거래일 10일 안팎을 넉넉히 커버)
 OVERLAP_CALENDAR_DAYS = 20  # 겹침재조회 기간(캘린더 기준, 거래일 10일 안팎을 넉넉히 커버)
 
 
@@ -244,7 +260,7 @@ def update_prices(codes, end_date=None, delay=0.05, max_fail_ratio=MAX_CACHE_FAI
     이유가 없다(단순히 파일을 안 건드리고 넘어간다). 실패율 가드는 error만으로 계산.
     """
     end = end_date or pd.Timestamp.today().strftime('%Y-%m-%d')
-    if end_date is None and _is_market_hours_kst():
+    if end_date is None and _todays_session_not_closed_kst():
         end = (pd.Timestamp.today() - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
 
     result = {}
@@ -297,6 +313,11 @@ def update_prices(codes, end_date=None, delay=0.05, max_fail_ratio=MAX_CACHE_FAI
                         diff_ratio = ((new_close - old_close).abs() / old_close.replace(0, pd.NA)).max()
                         if pd.notna(diff_ratio) and diff_ratio > CORPORATE_ACTION_TOLERANCE:
                             mismatch = True
+                            # 2026-09-15 신설 — 예전엔 몇 건인지만 찍히고 어느 종목·얼마나
+                            # 튀었는지가 전혀 안 남아, 185건이 찍혔던 날 원인 추적이
+                            # 불가능했다(3%→15% 상향 조치 근거). 앞으로는 진짜 분할/병합인지
+                            # 매번 눈으로 확인할 수 있게 종목·최대차이율을 stderr에 남긴다.
+                            print(f'  [액면조정의심] {code}: 겹침구간 최대 종가차이 {diff_ratio * 100:.1f}% — 전체 재수집', file=sys.stderr)
                     if mismatch:
                         full_start = existing.index[0].strftime('%Y-%m-%d')
                         refetched = fdr.DataReader(code, full_start, end)
