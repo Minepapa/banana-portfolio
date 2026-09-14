@@ -9,6 +9,9 @@ import {
   findPendingWork,
   findRemainingWorkSections,
   findStaleAutoClaims,
+  findInvalidProgressFields,
+  findStaleEmptyClaims,
+  syncIndexCounts,
   buildHealthCheckFacts,
   hasAnyIssue,
   buildApolloPrompt,
@@ -168,18 +171,119 @@ test('findStaleAutoClaims: "자동" 문구가 아예 없으면(예: 영구 결�
   assert.equal(findStaleAutoClaims(files, new Date('2026-09-04'), 56).length, 0);
 });
 
+// [핵심] 2026-09-14 신설 — 므네모시네 정합성 구조적 가드 1단계(오너 지시).
+test('findInvalidProgressFields: progress 필드 결측이면 잡음', () => {
+  const records = [{ progress: undefined, __relPath: 'Log/Implementation/A' }];
+  const result = findInvalidProgressFields(records);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].file, 'Log/Implementation/A');
+  assert.equal(result[0].progress, null);
+});
+
+test('findInvalidProgressFields: 4종 캐노니컬 값은 전부 통과', () => {
+  const records = ['완료', '진행중', '보류', '폐기'].map((progress, i) => ({ progress, __relPath: `Log/Implementation/${i}` }));
+  assert.equal(findInvalidProgressFields(records).length, 0);
+});
+
+test('findInvalidProgressFields: 4종 밖의 자유서술("부분완료" 등)은 잡음 — 2026-09-13 실측 재발 케이스', () => {
+  const records = [{ progress: '부분완료', __relPath: 'Log/Implementation/A' }];
+  const result = findInvalidProgressFields(records);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].progress, '부분완료');
+});
+
+test('findStaleEmptyClaims: "비어있음"인데 실제로 파일이 있으면 잡음 — FundPurchases 재발 케이스', () => {
+  const indexMd = [
+    '## Facts/ — 원장',
+    '### Facts/Ledger/ — 돈이 실제로 움직인 기록',
+    '| 하위 폴더 | 무엇 | 언제 | 지금 상태 |',
+    '|---|---|---|---|',
+    '| `FundPurchases/` | 펀드 적립 | 알림 도착 시 | **⬜ 비어있음** — 아직 안 옴 |',
+  ].join('\n');
+  const allFiles = [{ relPath: 'Facts/Ledger/FundPurchases/2026-09-13-펀드적립.md' }];
+  const result = findStaleEmptyClaims(indexMd, allFiles);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].folder, 'Facts/Ledger/FundPurchases');
+  assert.equal(result[0].actualCount, 1);
+});
+
+test('findStaleEmptyClaims: 실제로도 비어있으면 안 잡음', () => {
+  const indexMd = [
+    '## State/ — 지금 이 순간의 값',
+    '| 폴더 | 무엇 | 언제 | 지금 상태 |',
+    '|---|---|---|---|',
+    '| `KillSwitch/` | 킬스위치 | 발동 시 | **⬜ 비어있음(폴더 자체가 없음)** |',
+  ].join('\n');
+  assert.equal(findStaleEmptyClaims(indexMd, []).length, 0);
+});
+
+test('findStaleEmptyClaims: "✅"로 이미 채워졌다고 정확히 표기된 행은 대상 아님(개수 드리프트는 감내)', () => {
+  const indexMd = [
+    '## State/ — 지금 이 순간의 값',
+    '| 폴더 | 무엇 | 언제 | 지금 상태 |',
+    '|---|---|---|---|',
+    '| `Holdings/` | 보유현황 | 체결 시 | ✅ 35개 파일 |',
+  ].join('\n');
+  const allFiles = [{ relPath: 'State/Holdings/위탁-삼성전자' }, { relPath: 'State/Holdings/위탁-현대차' }];
+  assert.equal(findStaleEmptyClaims(indexMd, allFiles).length, 0); // 개수(35 vs 실제 2)는 검사 대상 아님
+});
+
+// [핵심] 2026-09-14 신설 — 개수 자동동기화(오너 지시: "개수 차이도 맞출 수 있을 것 같다").
+test('syncIndexCounts: 실제 개수와 다르면 그 줄의 숫자만 교체, changes에 기록', () => {
+  const indexMd = [
+    '## Facts/ — 원장',
+    '### Facts/Ledger/ — 돈이 실제로 움직인 기록',
+    '| 하위 폴더 | 무엇 | 언제 | 지금 상태 |',
+    '|---|---|---|---|',
+    '| `Executions/` | 체결 | 알림 도착 시 | ✅ 86개 파일 |',
+  ].join('\n');
+  const allFiles = [
+    { relPath: 'Facts/Ledger/Executions/a' }, { relPath: 'Facts/Ledger/Executions/b' }, { relPath: 'Facts/Ledger/Executions/c' },
+  ];
+  const { updatedContent, changes } = syncIndexCounts(indexMd, allFiles);
+  assert.equal(changes.length, 1);
+  assert.deepEqual(changes[0], { folder: 'Facts/Ledger/Executions', oldCount: 86, newCount: 3 });
+  assert.match(updatedContent, /✅ 3개 파일/);
+  assert.doesNotMatch(updatedContent, /86개 파일/);
+});
+
+test('syncIndexCounts: 실제 개수와 같으면 변경 없음(changes 빈 배열, 내용 그대로)', () => {
+  const indexMd = [
+    '## State/ — 지금 이 순간의 값',
+    '| 폴더 | 무엇 | 언제 | 지금 상태 |',
+    '|---|---|---|---|',
+    '| `Holdings/` | 보유현황 | 체결 시 | ✅ 2개 파일 |',
+  ].join('\n');
+  const allFiles = [{ relPath: 'State/Holdings/a' }, { relPath: 'State/Holdings/b' }];
+  const { updatedContent, changes } = syncIndexCounts(indexMd, allFiles);
+  assert.equal(changes.length, 0);
+  assert.equal(updatedContent, indexMd);
+});
+
+test('syncIndexCounts: "비어있음"류(형식이 다른 행)는 대상 아님 — findStaleEmptyClaims 소관', () => {
+  const indexMd = [
+    '## State/ — 지금 이 순간의 값',
+    '| 폴더 | 무엇 | 언제 | 지금 상태 |',
+    '|---|---|---|---|',
+    '| `MorningBriefing/` | 브리핑 | 발송 시 | **⬜ 비어있음** — 아직 안 돎 |',
+  ].join('\n');
+  const allFiles = [{ relPath: 'State/MorningBriefing/a' }];
+  const { changes } = syncIndexCounts(indexMd, allFiles);
+  assert.equal(changes.length, 0); // countRe가 "✅ N개 파일" 형식이 아니면 매칭 안 됨
+});
+
 test('hasAnyIssue: 전부 빈 배열이면 false(조용함)', () => {
-  const empty = { broken: [], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], pendingWork: [], remainingSections: [], staleAutoClaims: [] };
+  const empty = { broken: [], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], pendingWork: [], remainingSections: [], staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
   assert.equal(hasAnyIssue(empty), false);
 });
 
 test('hasAnyIssue: 하나라도 있으면 true', () => {
-  const oneIssue = { broken: [{ file: 'A', target: 'B' }], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], pendingWork: [], remainingSections: [], staleAutoClaims: [] };
+  const oneIssue = { broken: [{ file: 'A', target: 'B' }], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], pendingWork: [], remainingSections: [], staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
   assert.equal(hasAnyIssue(oneIssue), true);
 });
 
 test('buildHealthCheckFacts: 발견된 것만 줄로 나열, 빈 항목은 줄 자체가 안 생김', () => {
-  const r = { broken: [{ file: 'A', target: 'B' }], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], pendingWork: [], remainingSections: [], staleAutoClaims: [] };
+  const r = { broken: [{ file: 'A', target: 'B' }], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], pendingWork: [], remainingSections: [], staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
   const facts = buildHealthCheckFacts(r);
   assert.equal(facts.length, 1);
   assert.match(facts[0], /깨진 링크 1건/);

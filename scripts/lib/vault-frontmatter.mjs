@@ -3,6 +3,14 @@
 // 공유한다(2026-08-05 리팩터 — 3번째 사본이 생기기 전에 정리). 범용 YAML이 필요해지면
 // (중첩 구조 등) 그때 라이브러리 도입을 검토한다 — 지금은 과설계 방지.
 
+// Log/Implementation/*.md의 `progress:` 필드가 쓸 수 있는 4종 — Knowledge/Meta/
+// Index.md "완료 상태 추적" 절이 정의한 값과 정확히 일치해야 한다(그 문서가 사람이
+// 읽는 정본, 이 배열이 코드 쪽 단일 진실 소스 — 둘 중 하나만 고치면 어긋난다).
+// scripts/hooks/vault-progress-guard.mjs(쓰는 순간 즉시 검사)와
+// scripts/jobs/weekly-vault-health-check.mjs(주간 백스톱 스윕) 둘 다 이 배열을
+// 공유한다(2026-09-14, 오너 지시 — "므네모시네 기록 누락 구조적 방지" 1단계).
+export const CANONICAL_PROGRESS_VALUES = ['완료', '진행중', '보류', '폐기'];
+
 export function yamlValue(v) {
   if (v === null || v === undefined) return 'null';
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);

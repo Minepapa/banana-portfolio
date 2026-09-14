@@ -33,10 +33,12 @@ import { join, relative } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS, VAULT_ROOT } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { writeAtomic } from '../lib/state-writer.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
+import { CANONICAL_PROGRESS_VALUES } from '../lib/vault-frontmatter.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const DEPARTMENT_LABEL = '비서실 Apollo';
@@ -201,6 +203,80 @@ export function findStaleAutoClaims(files, now = new Date(), staleDays = STALE_A
   return results;
 }
 
+// ── C4. progress 필드 4종 컴플라이언스(백스톱, 2026-09-14 신설) ─────────
+// scripts/hooks/vault-progress-guard.mjs가 "쓰는 순간" 이미 잡지만, 그 훅이
+// 배선되기 전에 쓰인 과거 문서나 훅을 우회한 직접 편집까지 커버하려면 이
+// 주간스윕이 전수를 다시 훑어야 한다 — 2026-09-13 실측에서 92개 중 9개가 결측/
+// 자유서술이었던 것과 같은 재발을 이 함수가 그물처럼 다시 잡는다. Log/DevRequests
+// 는 애초에 이 필드를 쓰지 않는 별개 관례(status: 자유서술)라 대상에서 제외
+// (records를 Log/Implementation/만으로 좁혀서 넘기는 건 호출측 책임).
+export function findInvalidProgressFields(records) {
+  return records
+    .filter((r) => r.progress == null || r.progress === '' || !CANONICAL_PROGRESS_VALUES.includes(r.progress))
+    .map((r) => ({ file: r.__relPath, progress: r.progress ?? null }));
+}
+
+// ── D. Index.md "비어있음/폴더 자체가 없음" 표기 vs 실측(2026-09-14 신설) ──
+// 개수 자체(예: 86개→133개)는 매일 자연스럽게 늘어나는 값이라 검사 대상이 아니다
+// (그 드리프트는 감내 — Index.md 자신도 "지금 상태는 스냅샷"이라고 명시함).
+// 대신 "비어있다/아직 한 번도 안 돎"이라고 **적극적으로 주장**하는 항목이 실제로는
+// 채워져 있는 경우만 잡는다 — 2026-09-13 실측에서 Facts/Ledger/FundPurchases·
+// State/MorningBriefing 두 건이 정확히 이 패턴이었다(잡이 이미 돌기 시작했는데
+// 문서만 "안 돎"으로 남아있어, 그 시스템이 아직 죽어있다는 잘못된 인상을 줌 —
+// 반대 방향(채워졌다는데 실제로 비어있음)보다 훨씬 위험한 오독이라 이쪽만 좁혀서
+// 잡는다). 헤더로 현재 섹션의 경로 접두사를 추적하며 표 행을 순회하는 라이트
+// 파서 — Obsidian 링크 파서만큼 엄밀하진 않지만 이 문서의 실제 구조(## 폴더/ —
+// 설명, ### 하위폴더/ — 설명, 표 첫 칸이 백틱으로 감싼 폴더명)에 맞춰져 있다.
+export function findStaleEmptyClaims(indexMdContent, allFiles) {
+  const headerRe = /^#{2,3}\s+([^\s—]+\/)\s*—/;
+  const rowRe = /^\|\s*`([^`]+)`/;
+  const results = [];
+  let prefix = null;
+  for (const line of indexMdContent.split('\n')) {
+    const h = line.match(headerRe);
+    if (h) { prefix = h[1]; continue; }
+    const r = line.match(rowRe);
+    if (!r || !prefix) continue;
+    const statusText = (line.split('|').map((c) => c.trim()).filter(Boolean).pop()) || '';
+    const claimsEmpty = statusText.includes('비어있음') || statusText.includes('폴더 자체가 없음');
+    if (!claimsEmpty) continue;
+    const fullPath = (prefix + r[1]).replace(/\/+$/, '');
+    const actualCount = allFiles.filter((f) => f.relPath === fullPath || f.relPath.startsWith(`${fullPath}/`)).length;
+    if (actualCount > 0) results.push({ folder: fullPath, claimed: statusText.slice(0, 60), actualCount });
+  }
+  return results;
+}
+
+// ── E. Index.md "✅ N개 파일" 표기 자동 동기화(2026-09-14 신설, 오너 지시) ──
+// 개수 자체는 판단이 필요 없는 순수 산술이라(맞다/틀리다만 있음) Apollo를 거치지
+// 않고 Node가 그 자리에서 직접 고친다 — findStaleEmptyClaims(위)가 다루는
+// "비어있음/폴더 자체가 없음" 표기는 실제 채워졌을 때 주변 서술("아직 안 옴" 등)
+// 까지 다시 써야 해서 여전히 사람 판단이 필요해 자동수정 대상에서 제외(그대로
+// 감지만 함) — 이미 "✅ N개 파일" 형식을 갖춘 행의 숫자만 교체한다는 점에서
+// 위험도가 다르다. 같은 헤더-접두사 추적 파서를 재사용.
+export function syncIndexCounts(indexMdContent, allFiles) {
+  const headerRe = /^#{2,3}\s+([^\s—]+\/)\s*—/;
+  const rowRe = /^\|\s*`([^`]+)`/;
+  const countRe = /✅\s*(\d+)개\s*파일/;
+  let prefix = null;
+  const changes = [];
+  const lines = indexMdContent.split('\n').map((line) => {
+    const h = line.match(headerRe);
+    if (h) { prefix = h[1]; return line; }
+    const r = line.match(rowRe);
+    if (!r || !prefix) return line;
+    const m = line.match(countRe);
+    if (!m) return line;
+    const claimedCount = Number(m[1]);
+    const fullPath = (prefix + r[1]).replace(/\/+$/, '');
+    const actualCount = allFiles.filter((f) => f.relPath === fullPath || f.relPath.startsWith(`${fullPath}/`)).length;
+    if (actualCount === claimedCount) return line;
+    changes.push({ folder: fullPath, oldCount: claimedCount, newCount: actualCount });
+    return line.replace(countRe, `✅ ${actualCount}개 파일`);
+  });
+  return { updatedContent: lines.join('\n'), changes };
+}
+
 // ── 사실 조립 ─────────────────────────────────────────────────────────
 export function buildHealthCheckFacts(r) {
   const lines = [];
@@ -213,6 +289,8 @@ export function buildHealthCheckFacts(r) {
   if (r.pendingWork.length) lines.push(`미완료 작업(진행중/보류) ${r.pendingWork.length}건: ${r.pendingWork.slice(0, 8).map((p) => `${p.file}(${p.progress})`).join(', ')}${r.pendingWork.length > 8 ? ' 외' : ''}`);
   if (r.remainingSections.length) lines.push(`"남은 것" 섹션 있는 문서 ${r.remainingSections.length}건: ${r.remainingSections.slice(0, 8).map((s) => s.file).join(', ')}${r.remainingSections.length > 8 ? ' 외' : ''}`);
   if (r.staleAutoClaims.length) lines.push(`"자동 갱신" 주장 대비 ${STALE_AUTO_CLAIM_DAYS}일 이상 정체(재확인 후보) ${r.staleAutoClaims.length}건: ${r.staleAutoClaims.map((s) => `${s.file}(${s.ageDays}일)`).join(', ')}`);
+  if (r.invalidProgress.length) lines.push(`progress 필드 결측/자유서술(4종 밖) ${r.invalidProgress.length}건: ${r.invalidProgress.slice(0, 8).map((p) => `${p.file}(${p.progress ?? '결측'})`).join(', ')}${r.invalidProgress.length > 8 ? ' 외' : ''}`);
+  if (r.staleEmptyClaims.length) lines.push(`Index.md가 "비어있음"이라는데 실제로 채워진 폴더 ${r.staleEmptyClaims.length}건: ${r.staleEmptyClaims.map((s) => `${s.folder}(실제 ${s.actualCount}건)`).join(', ')}`);
   return lines;
 }
 
@@ -220,7 +298,8 @@ export function hasAnyIssue(r) {
   return Boolean(
     r.broken.length || r.ambiguous.length || r.orphaned.length || r.recentLegacy.length
     || r.fxAnomalies.length || r.missingCurrency.length
-    || r.pendingWork.length || r.remainingSections.length || r.staleAutoClaims.length,
+    || r.pendingWork.length || r.remainingSections.length || r.staleAutoClaims.length
+    || r.invalidProgress.length || r.staleEmptyClaims.length,
   );
 }
 
@@ -281,7 +360,31 @@ async function main() {
     allFiles.filter((f) => f.relPath.startsWith('Knowledge/Meta/') || f.relPath.startsWith('Knowledge/Infra/') || f.relPath.startsWith('Knowledge/API/')),
   );
 
-  const results = { broken, ambiguous, orphaned, recentLegacy, fxAnomalies, missingCurrency, pendingWork, remainingSections, staleAutoClaims };
+  // C4·D — 2026-09-14 신설(구조적 재발방지 1단계). Log/DevRequests는 progress:
+  // 필드 관례 자체가 다르므로(status: 자유서술) Log/Implementation/만 좁혀서 검사.
+  const implOnlyRecords = allFiles
+    .filter((f) => f.relPath.startsWith('Log/Implementation/'))
+    .map((f) => ({ ...f.frontmatter, __relPath: f.relPath }));
+  const invalidProgress = findInvalidProgressFields(implOnlyRecords);
+  const indexMdFile = allFiles.find((f) => f.relPath === 'Knowledge/Meta/Index');
+  const staleEmptyClaims = indexMdFile ? findStaleEmptyClaims(indexMdFile.content, allFiles) : [];
+
+  // E — 개수 자동동기화(판단 불필요한 순수 산술이라 hasAnyIssue/Apollo 대상이
+  // 아님 — 조용히 고치고 콘솔에만 남긴다, 오너를 호출할 일이 아님). --dry-run은
+  // 계산만 하고 실제 파일에는 안 씀(이 프로젝트 --dry-run 관례와 동일).
+  if (indexMdFile) {
+    const { updatedContent, changes } = syncIndexCounts(indexMdFile.content, allFiles);
+    if (changes.length) {
+      console.log(`🔧 Index.md 개수 자동동기화 ${changes.length}건: ${changes.map((c) => `${c.folder}(${c.oldCount}→${c.newCount})`).join(', ')}`);
+      if (!DRY_RUN) writeAtomic(join(VAULT_ROOT, 'Knowledge', 'Meta', 'Index.md'), updatedContent);
+      else console.log('  (드라이런 — 실제 파일엔 안 씀)');
+    }
+  }
+
+  const results = {
+    broken, ambiguous, orphaned, recentLegacy, fxAnomalies, missingCurrency,
+    pendingWork, remainingSections, staleAutoClaims, invalidProgress, staleEmptyClaims,
+  };
 
   if (!hasAnyIssue(results)) {
     console.log('✅ weekly-vault-health-check: 세 갈래 전부 이상 없음(조용함, 알림 생략)');
