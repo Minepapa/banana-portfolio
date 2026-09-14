@@ -7,6 +7,7 @@
 // 사용법:
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-12
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2023-01-01 --to=2025-01-01 --initialCapital=40000000
+//   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-12 --useBettingUnits=true  # 점진적 배팅(유닛) 사이징 비교(2026-09-14)
 import { buildCandidatePool } from '../lib/historical-universe.mjs';
 import { loadPriceSeriesBatch } from '../lib/breakout-price-series.mjs';
 import { cacheIndexPrices, loadIndexSeries } from '../lib/index-price-cache.mjs';
@@ -37,6 +38,12 @@ async function main() {
   const marketCapFloor = args.marketCapFloor != null ? Number(args.marketCapFloor) : MARKET_CAP_FLOOR_WON;
   const consolidationMethod = args.consolidationMethod === 'range' ? 'range' : 'stddev'; // 2026-09-13 VCP 정의 비교용
   const entryTiming = args.entryTiming === 'sameDayClose' ? 'sameDayClose' : 'nextDayOpen'; // 2026-09-13 장후시간외 우선체결 비교용
+  // 2026-09-14 점진적 배팅(유닛) 사이징 비교용 — breakout-unit-tracker.mjs. 오타·오입력이
+  // 조용히 false로 처리되지 않도록(2026-09-14 코드리뷰 지적) true/false 외 값은 즉시 throw.
+  if (args.useBettingUnits != null && args.useBettingUnits !== 'true' && args.useBettingUnits !== 'false') {
+    throw new Error(`--useBettingUnits는 true|false만 허용(받은 값: "${args.useBettingUnits}")`);
+  }
+  const useBettingUnits = args.useBettingUnits === 'true';
 
   if (!DATE_RE.test(fromDate)) throw new Error(`--from 형식 오류(YYYY-MM-DD 필요): ${fromDate}`);
   if (!DATE_RE.test(toDate)) throw new Error(`--to 형식 오류(YYYY-MM-DD 필요): ${toDate}`);
@@ -71,7 +78,7 @@ async function main() {
   console.error(`[4/4] 일별 시뮬레이션 실행 중(진입: 52주신고가+변동성확장(${consolidationMethod})+RS+시총${(marketCapFloor / 1e12).toFixed(1)}조원, 청산: -8%+R배수트레일링+3R부분익절)...`);
   const result = runBreakoutBacktest({
     pool, seriesByCode, benchmarkSeries, tradingDates, initialCapital,
-    marketCapFloor, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming,
+    marketCapFloor, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming, useBettingUnits,
   });
   console.error(`  거래 ${result.trades.length}건, 최종 현금 ${Math.round(result.finalCapital).toLocaleString()}원(시가 데이터 없어 예약체결 스킵 ${result.skippedNoOpenPrice}건)`);
 
@@ -101,7 +108,7 @@ async function main() {
 
   console.log(JSON.stringify({
     period: { from: fromDate, to: toDate, tradingDays: tradingDates.length },
-    params: { initialCapital, marketCapFloor, liquidityFloor: LIQUIDITY_FLOOR_WON, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming },
+    params: { initialCapital, marketCapFloor, liquidityFloor: LIQUIDITY_FLOOR_WON, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming, useBettingUnits },
     tradeStats: {
       totalTrades: closedTrades.length,
       partialProfitTrades,
@@ -110,6 +117,7 @@ async function main() {
       avgLossPct,
       openPositionsAtEnd: result.openPositionsAtEnd,
       skippedNoOpenPrice: result.skippedNoOpenPrice,
+      finalBettingUnits: result.finalBettingUnits,
     },
     comparison,
     strategy: {

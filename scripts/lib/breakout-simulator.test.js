@@ -6,6 +6,7 @@ import {
   computeDailyCandidates,
   runBreakoutBacktest,
 } from './breakout-simulator.mjs';
+import { TOTAL_BETTING_UNITS, MIN_BETTING_UNITS } from './breakout-unit-tracker.mjs';
 
 test('computeAvgTradingValue: 정상 계산', () => {
   const closes = [100, 100, 100, 100, 100];
@@ -198,6 +199,140 @@ test('runBreakoutBacktest: 3R 도달 시 50% 부분익절 거래가 별도로 �
   assert.ok(Math.abs(partial.investedWon - final.investedWon) < 1, '부분익절·잔여 청산 두 거래의 투입금이 원래 포지션의 절반씩으로 같아야 함');
 });
 
+test('runBreakoutBacktest: useBettingUnits=true면 첫 진입은 1유닛(=Max2%룰 최대한도÷5)으로만 들어가고, 3R 성공 후 카운터가 오른다', () => {
+  const dates = [nthDateString('2020-01-01', 0)];
+  const opens = [100];
+  const closes = [100];
+  const highs = [100];
+  const lows = [100];
+  const volumes = [50_000_000];
+  for (let i = 1; i <= 262; i++) {
+    dates.push(nthDateString('2020-01-01', i));
+    if (i < 259) {
+      const wiggle = i % 2 === 0 ? 1.001 : 0.999;
+      const c = closes[closes.length - 1] * wiggle;
+      opens.push(closes[closes.length - 1]); closes.push(c); highs.push(c * 1.001); lows.push(c * 0.999); volumes.push(50_000_000);
+    } else if (i === 259) {
+      const c = closes[closes.length - 1] * 1.05; // 돌파(신호 확정)
+      opens.push(closes[closes.length - 1]); closes.push(c); highs.push(c * 1.01); lows.push(closes[closes.length - 1]); volumes.push(50_000_000);
+    } else if (i === 260) {
+      const openPrice = closes[closes.length - 1];
+      opens.push(openPrice); closes.push(openPrice); highs.push(openPrice * 1.01); lows.push(openPrice * 0.99); volumes.push(50_000_000);
+    } else if (i === 261) {
+      const entryPrice = closes[260];
+      opens.push(closes[closes.length - 1]);
+      closes.push(entryPrice * 1.22); highs.push(entryPrice * 1.25); lows.push(entryPrice * 1.20); volumes.push(50_000_000); // 3R(+24%) 돌파 → 성공 크레딧
+    } else {
+      const entryPrice = closes[260];
+      opens.push(closes[closes.length - 1]);
+      closes.push(entryPrice * 1.10); highs.push(entryPrice * 1.16); lows.push(entryPrice * 1.10); volumes.push(50_000_000);
+    }
+  }
+  const pool = [{ code: 'A', name: 'A사', sharesOutstanding: 2_000_000_000, listingDate: null, delistingDate: null }];
+  const seriesByCode = { A: { dates, opens, closes, highs, lows, volumes } };
+  const benchmarkSeries = { dates, closes: new Array(dates.length).fill(100) };
+
+  const result = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    useBettingUnits: true,
+  });
+
+  // ceiling = 40,000,000 × 0.02 / 0.08 = 10,000,000 → 1유닛(MIN_BETTING_UNITS=1/TOTAL_BETTING_UNITS=5) = 2,000,000
+  const ceiling = (40_000_000 * 0.02) / 0.08;
+  const firstEntryExpected = ceiling * (MIN_BETTING_UNITS / TOTAL_BETTING_UNITS);
+  const partial = result.trades.find((t) => t.reason === '3R 부분익절(50%)');
+  assert.notEqual(partial, undefined);
+  assert.equal(partial.bettingUnitsAtEntry, MIN_BETTING_UNITS, '이 백테스트의 첫(유일한) 거래이므로 1유닛에서 시작해야 함');
+  assert.ok(Math.abs(partial.investedWon * 2 - firstEntryExpected) < 1, '진입 투입금은 최대한도의 1/5(1유닛)이어야 함(2로 곱한 건 부분익절이 절반이라서)');
+  assert.equal(result.finalBettingUnits, MIN_BETTING_UNITS + 1, '3R 성공 1건 후 카운터가 1→2로 올라가야 함');
+});
+
+test('runBreakoutBacktest: 성공(3R) 후 실패(-8%손절) 순서로 카운터가 1→2→1로 실제 차감된다(실패 경로 배선 검증)', () => {
+  // 이 테스트가 존재하는 이유(2026-09-14 코드리뷰 지적) — 기존 테스트는 성공 경로만
+  // 탔다: 실패 시 카운터를 깎는 코드 한 줄을 통째로 지워도 그 테스트들은 전부
+  // 통과했다. 이 테스트는 그 한 줄이 실제로 배선돼 있는지를 검증한다.
+  const TOTAL_DAYS = 275;
+  const quietWiggle = (prevClose, i) => prevClose * (i % 2 === 0 ? 1.001 : 0.999);
+
+  // A: day259에 돌파 → day260 진입 → day261에 3R 도달(성공, 카운터 1→2). 이후는
+  // 조용히 유지(다시 건드리지 않음 — partialSold=true라 나중에 청산돼도 무관).
+  const aDates = [nthDateString('2020-01-01', 0)];
+  const aOpens = [100]; const aCloses = [100]; const aHighs = [100]; const aLows = [100]; const aVolumes = [50_000_000];
+  // B: day264에 돌파 → day265 진입(이때 A는 이미 성공해 카운터=2, B는 2유닛으로
+  // 시작) → day266에 -8% 손절(3R는 안 건드림, 실패 — 카운터 2→1).
+  const bDates = [nthDateString('2020-01-01', 0)];
+  const bOpens = [100]; const bCloses = [100]; const bHighs = [100]; const bLows = [100]; const bVolumes = [50_000_000];
+
+  for (let i = 1; i < TOTAL_DAYS; i++) {
+    aDates.push(nthDateString('2020-01-01', i));
+    bDates.push(nthDateString('2020-01-01', i));
+
+    if (i === 259) { // A 돌파
+      const c = aCloses[aCloses.length - 1] * 1.05;
+      aOpens.push(aCloses[aCloses.length - 1]); aCloses.push(c); aHighs.push(c * 1.01); aLows.push(aCloses[aCloses.length - 2]); aVolumes.push(50_000_000);
+    } else if (i === 260) { // A 진입 체결일(조용)
+      const openPrice = aCloses[aCloses.length - 1];
+      aOpens.push(openPrice); aCloses.push(openPrice); aHighs.push(openPrice * 1.01); aLows.push(openPrice * 0.99); aVolumes.push(50_000_000);
+    } else if (i === 261) { // A 3R 도달(성공)
+      const entryPrice = aCloses[260];
+      aOpens.push(aCloses[aCloses.length - 1]);
+      aCloses.push(entryPrice * 1.22); aHighs.push(entryPrice * 1.25); aLows.push(entryPrice * 1.20); aVolumes.push(50_000_000);
+    } else { // 나머지는 전부 조용(신규 신호·재청산 유발 안 함)
+      const c = quietWiggle(aCloses[aCloses.length - 1], i);
+      aOpens.push(aCloses[aCloses.length - 1]); aCloses.push(c); aHighs.push(c * 1.001); aLows.push(c * 0.999); aVolumes.push(50_000_000);
+    }
+
+    if (i === 264) { // B 돌파
+      const c = bCloses[bCloses.length - 1] * 1.05;
+      bOpens.push(bCloses[bCloses.length - 1]); bCloses.push(c); bHighs.push(c * 1.01); bLows.push(bCloses[bCloses.length - 2]); bVolumes.push(50_000_000);
+    } else if (i === 265) { // B 진입 체결일(조용)
+      const openPrice = bCloses[bCloses.length - 1];
+      bOpens.push(openPrice); bCloses.push(openPrice); bHighs.push(openPrice * 1.01); bLows.push(openPrice * 0.99); bVolumes.push(50_000_000);
+    } else if (i === 266) { // B -8% 손절(3R는 전혀 안 건드림 — 명백한 실패)
+      const entryPrice = bCloses[265];
+      bOpens.push(bCloses[bCloses.length - 1]);
+      bCloses.push(entryPrice * 0.95); bHighs.push(entryPrice * 1.02); bLows.push(entryPrice * 0.90); bVolumes.push(50_000_000);
+    } else {
+      const c = quietWiggle(bCloses[bCloses.length - 1], i);
+      bOpens.push(bCloses[bCloses.length - 1]); bCloses.push(c); bHighs.push(c * 1.001); bLows.push(c * 0.999); bVolumes.push(50_000_000);
+    }
+  }
+
+  const pool = [
+    { code: 'A', name: 'A사', sharesOutstanding: 2_000_000_000, listingDate: null, delistingDate: null },
+    { code: 'B', name: 'B사', sharesOutstanding: 2_000_000_000, listingDate: null, delistingDate: null },
+  ];
+  const seriesByCode = {
+    A: { dates: aDates, opens: aOpens, closes: aCloses, highs: aHighs, lows: aLows, volumes: aVolumes },
+    B: { dates: bDates, opens: bOpens, closes: bCloses, highs: bHighs, lows: bLows, volumes: bVolumes },
+  };
+  const benchmarkSeries = { dates: aDates, closes: new Array(aDates.length).fill(100) };
+
+  const result = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: aDates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    useBettingUnits: true,
+  });
+
+  const bEntry = result.trades.find((t) => t.code === 'B' && t.reason === '트레일링스탑');
+  assert.notEqual(bEntry, undefined, 'B가 손절로 청산돼야 함');
+  assert.equal(bEntry.bettingUnitsAtEntry, MIN_BETTING_UNITS + 1, 'B는 A의 성공 크레딧을 물려받아 2유닛으로 시작해야 함');
+  assert.equal(result.finalBettingUnits, MIN_BETTING_UNITS, 'A 성공(1→2) 후 B 실패(2→1)로 결국 1로 돌아와야 함');
+});
+
+test('runBreakoutBacktest: useBettingUnits=false(기본값)면 finalBettingUnits는 null', () => {
+  const dates = [nthDateString('2020-01-01', 0), nthDateString('2020-01-01', 1)];
+  const pool = [];
+  const seriesByCode = {};
+  const benchmarkSeries = { dates, closes: [100, 100] };
+  const result = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+  });
+  assert.equal(result.finalBettingUnits, null);
+});
+
 test('runBreakoutBacktest: Open 데이터 없는 종목은 예약 진입을 스킵(추정 안 함)', () => {
   const dates = [nthDateString('2020-01-01', 0)];
   const closes = [100];
@@ -318,6 +453,48 @@ test("runBreakoutBacktest: entryTiming='sameDayClose'면 신호 확정일 종가
   assert.notEqual(entered, undefined, '신호 확정 즉시 체결돼야 함');
   assert.equal(entered.entryDate, dates[259], '진입일이 신호 확정일(다음 거래일이 아님)이어야 함');
   assert.ok(Math.abs(entered.entryPrice - closes[259]) < 1e-6, '진입가가 신호 확정일 종가여야 함');
+});
+
+test("runBreakoutBacktest: entryTiming='sameDayClose'에서도 useBettingUnits가 적용된다(진입 지점 2곳이 어긋나지 않는지 검증)", () => {
+  // 2026-09-14 코드리뷰 지적 — nextDayOpen 경로만 테스트가 있었고 sameDayClose
+  // 경로는 사이징 로직을 원래 computePositionSize로 되돌려도 아무 테스트도 실패하지
+  // 않는 상태였다. 두 진입 지점이 공유 클로저(sizeNewEntry)를 쓰도록 고친 뒤,
+  // 이 테스트로 실제 배선을 확인한다.
+  const dates = [nthDateString('2020-01-01', 0)];
+  const opens = [100];
+  const closes = [100];
+  const highs = [100];
+  const lows = [100];
+  const volumes = [50_000_000];
+  for (let i = 1; i <= 260; i++) {
+    dates.push(nthDateString('2020-01-01', i));
+    if (i < 259) {
+      const wiggle = i % 2 === 0 ? 1.001 : 0.999;
+      const c = closes[closes.length - 1] * wiggle;
+      opens.push(closes[closes.length - 1]); closes.push(c); highs.push(c * 1.001); lows.push(c * 0.999); volumes.push(50_000_000);
+    } else if (i === 259) {
+      const c = closes[closes.length - 1] * 1.05; // 돌파(종가로 신호 확정)
+      opens.push(closes[closes.length - 1]); closes.push(c); highs.push(c * 1.01); lows.push(closes[closes.length - 1]); volumes.push(50_000_000);
+    } else {
+      opens.push(closes[closes.length - 1]); closes.push(closes[closes.length - 1]);
+      highs.push(closes[closes.length - 1]); lows.push(closes[closes.length - 1]); volumes.push(50_000_000);
+    }
+  }
+  const pool = [{ code: 'A', name: 'A사', sharesOutstanding: 2_000_000_000, listingDate: null, delistingDate: null }];
+  const seriesByCode = { A: { dates, opens, closes, highs, lows, volumes } };
+  const benchmarkSeries = { dates, closes: new Array(dates.length).fill(100) };
+
+  const result = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    entryTiming: 'sameDayClose', useBettingUnits: true,
+  });
+
+  const ceiling = (40_000_000 * 0.02) / 0.08;
+  const entered = result.openPositionsAtEnd.find((p) => p.code === 'A');
+  assert.notEqual(entered, undefined);
+  assert.equal(entered.units, 1); // position.units(불타기 카운트)는 무관 — 항상 1에서 시작
+  assert.ok(Math.abs(entered.investedWon - ceiling / 5) < 1, '첫 거래이므로 1유닛(=최대한도의 1/5)으로 들어가야 함 — 기존 방식(풀사이즈)이었다면 이 값의 5배였을 것');
 });
 
 test("runBreakoutBacktest: entryTiming='sameDayClose'에서도 슬롯 부족 시 RS 더 강한 종목부터 당일 체결", () => {

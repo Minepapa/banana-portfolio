@@ -13,6 +13,9 @@ import {
   shouldTakePartialProfit, rMultiplePrice, PARTIAL_PROFIT_TRIGGER_R, PARTIAL_PROFIT_SELL_FRACTION,
   MAX_CONCURRENT_POSITIONS,
 } from './breakout-risk.mjs';
+import {
+  computeBettingUnitInvestment, MIN_BETTING_UNITS, TOTAL_BETTING_UNITS, BETTING_UNIT_SUCCESS_R,
+} from './breakout-unit-tracker.mjs';
 import { findIndexAtOrBefore } from './breakout-price-series.mjs';
 
 export const LIQUIDITY_FLOOR_WON = 3_000_000_000; // 일평균거래대금 30억원(기존 프로젝트 관례, rebalance-gap.mjs 등과 동일 기준 재사용)
@@ -124,6 +127,8 @@ export function runBreakoutBacktest({
   marketCapFloor, riskPerTradePct, maxConcurrentPositions = MAX_CONCURRENT_POSITIONS,
   consolidationMethod = 'stddev', volatilityOpts,
   entryTiming = 'nextDayOpen', // 'nextDayOpen'(기존, 실현가능 지연체결) | 'sameDayClose'(장후시간외 우선체결 가정 — 2026-09-13 오너 요청, 아래 3)단계 참고)
+  useBettingUnits = false, // 점진적 배팅(유닛) 사이징 — 오너 지시, 2026-09-14(breakout-unit-tracker.mjs 참고). false(기존 기본값)면 항상 Max2%룰 최대한도로 진입(기존 동작 그대로, 회귀 없음). 2026-09-14 코드리뷰 지적으로 bettingUnits(불리언 플래그)에서 개명 — 같은 파일 안의 currentBettingUnits(개수)와 타입이 헷갈리는 걸 방지.
+  initialBettingUnits = MIN_BETTING_UNITS, // 유닛 카운터 시작값 — 백테스트는 기본 1(영상 예시)이지만, 실전(Kairos) State에서 이어받을 카운터를 주입할 통로로 남겨둠(모듈 헤더의 "상태 영속은 호출측 책임" 계약과 일치, 2026-09-14 코드리뷰 지적).
 }) {
   let capital = initialCapital;
   const openPositions = new Map(); // code -> position + investedWon
@@ -131,8 +136,26 @@ export function runBreakoutBacktest({
   const trades = [];
   const equityCurve = [];
   let skippedNoOpenPrice = 0; // Open 데이터가 없어 예약 체결을 못 한 건수(투명성용)
+  let currentBettingUnits = initialBettingUnits; // 계좌 전체 누적 카운터(useBettingUnits=true일 때만 의미 있음)
+
+  // 신규 진입 사이징 — 두 체결 경로(1) nextDayOpen 예약체결, 3) sameDayClose 즉시체결)가
+  // 완전히 같은 로직을 써야 해서(2026-09-14 코드리뷰 지적 — 복붙 2곳이 서로 어긋날 여지)
+  // 클로저 하나로 뽑음. capital/currentBettingUnits는 let 바인딩이라 호출 시점의 최신값을
+  // 그대로 읽는다(클로저가 참조를 캡처, 값이 아님).
+  const sizeNewEntry = () => Math.min(
+    useBettingUnits
+      ? computeBettingUnitInvestment(capital, currentBettingUnits, { riskPct: riskPerTradePct })
+      : computePositionSize(capital, { riskPct: riskPerTradePct }),
+    capital,
+  );
 
   for (const date of tradingDates) {
+    // 오늘 하루치 성공/실패 순변화 — 같은 날 여러 포지션이 동시에 청산될 때 Map
+    // 순회순서(=진입순서, 경제적 의미 없음)에 카운터 최종값이 좌우되던 버그를
+    // 막기 위해(2026-09-14 코드리뷰 지적) 이벤트를 즉시 반영하지 않고 하루치를
+    // 다 모아서 순변화만 계산한 뒤 아래(2단계 끝)에서 딱 한 번 클램프한다 — 덧셈은
+    // 교환법칙이 성립해 순서 무관.
+    let bettingUnitDelta = 0;
     // 1) 어제 예약된 진입을 오늘 시가로 체결 — 슬롯이 모자라면 RS(상대강도)가 더 강한
     // 종목부터 채운다(오너 지적, 2026-09-13 — 이전엔 후보풀 순서(임의, 경제적 근거
     // 없음)로 아무거나 채웠음, 진입일의 26%가 신호 2건 이상 겹치는 날이라 실제 영향
@@ -147,13 +170,13 @@ export function runBreakoutBacktest({
         if (idx < 0 || series.dates[idx] !== date) continue; // 오늘 거래 없음(휴장 등) — 그냥 흘려보냄(재시도 안 함)
         const openPrice = series.opens[idx];
         if (openPrice == null || !(openPrice > 0)) { skippedNoOpenPrice += 1; continue; } // Open 데이터 없음 — 추정 안 함
-        const sizeWon = Math.min(computePositionSize(capital, { riskPct: riskPerTradePct }), capital);
+        const sizeWon = sizeNewEntry();
         if (!(sizeWon > 0)) continue;
         capital -= sizeWon;
         openPositions.set(code, {
           code, entryDate: date, entryPrice: openPrice, units: 1,
           highSinceEntry: openPrice, stopPrice: openPrice * (1 - 0.08), pyramided: false,
-          partialSold: false, investedWon: sizeWon,
+          partialSold: false, investedWon: sizeWon, bettingUnitsAtEntry: useBettingUnits ? currentBettingUnits : null,
         });
       }
     }
@@ -168,17 +191,31 @@ export function runBreakoutBacktest({
       if (dayBar.high == null || dayBar.low == null) continue; // 고가/저가 결측 — 판단 보류
       const { position, exit, partialExit } = updatePositionForDay(pos, dayBar);
       if (exit) {
+        // 유닛 카운터 갱신(순변화만 누적, 클램프는 2단계 끝에서 한 번만 — 위 설명 참고)
+        // — 3R 성공 크레딧을 이미 받은 포지션(partialSold=true, 청산 전 상태 기준)이
+        // 나중에 트레일링스탑에 걸려도 "실패"로 다시 깎지 않는다(이미 성공한 거래이므로).
+        // 3R 도달 전에 청산되면(원금이 -8%보다 덜 깎였어도) "실패"로 취급하되, 같은 날
+        // 3R가도 함께 터치했으면(고가 기준) 미판정으로 남긴다(가정 4, breakout-unit-
+        // tracker.mjs 참고 — 실전은 손절·3R익절 주문을 동시에 걸어둬 일중 순서가 불명).
+        if (useBettingUnits && !pos.partialSold) {
+          const touchedThreeRSameDay = dayBar.high >= rMultiplePrice(pos.entryPrice, BETTING_UNIT_SUCCESS_R);
+          if (!touchedThreeRSameDay) bettingUnitDelta -= 1;
+        }
         const pnlWon = position.investedWon * (exit.exitPrice / position.entryPrice - 1);
         capital += position.investedWon + pnlWon;
         trades.push({
           code, entryDate: position.entryDate, exitDate: date,
           entryPrice: position.entryPrice, exitPrice: exit.exitPrice,
           units: position.units, investedWon: position.investedWon, pnlWon, reason: exit.reason,
+          bettingUnitsAtEntry: position.bettingUnitsAtEntry,
         });
         openPositions.delete(code);
       } else {
         let finalPosition = position;
         if (partialExit) {
+          // 3R 최초 도달 = "성공" 크레딧(순변화 누적, breakout-unit-tracker.mjs). partialExit는
+          // shouldTakePartialProfit의 !alreadyTaken 가드 덕분에 포지션당 정확히 1회만 발생.
+          if (useBettingUnits) bettingUnitDelta += 1;
           const soldWon = position.investedWon * partialExit.sellFraction;
           const pnlWon = soldWon * (partialExit.exitPrice / position.entryPrice - 1);
           capital += soldWon + pnlWon;
@@ -186,11 +223,21 @@ export function runBreakoutBacktest({
             code, entryDate: position.entryDate, exitDate: date,
             entryPrice: position.entryPrice, exitPrice: partialExit.exitPrice,
             units: position.units, investedWon: soldWon, pnlWon, reason: '3R 부분익절(50%)',
+            bettingUnitsAtEntry: position.bettingUnitsAtEntry,
           });
           finalPosition = { ...position, investedWon: position.investedWon - soldWon };
         }
         openPositions.set(code, finalPosition);
       }
+    }
+
+    // 오늘 하루치 성공/실패 순변화를 한 번에 반영 — 3)단계(오늘 신규 진입, sameDayClose
+    // 즉시체결 포함)가 "오늘 이미 일어난 청산까지 반영된" 최신 카운터를 보도록 여기서
+    // 클램프한다(영상 예시 — 같은 날 먼저 성공한 종목의 카운터를 그 다음 신규 진입이
+    // 그대로 물려받음, 순서 무관하게 동일 결과가 나옴은 breakout-unit-tracker.mjs
+    // nextBettingUnits 상단 주석 참고).
+    if (useBettingUnits && bettingUnitDelta !== 0) {
+      currentBettingUnits = Math.max(MIN_BETTING_UNITS, Math.min(TOTAL_BETTING_UNITS, currentBettingUnits + bettingUnitDelta));
     }
 
     // 3) 오늘 종가 기준 신규 신호 탐색
@@ -222,13 +269,13 @@ export function runBreakoutBacktest({
         for (const { code, closePrice } of sortedSignals) {
           if (openPositions.size >= maxConcurrentPositions) break;
           if (!(closePrice > 0)) continue; // 종가 결측 — 체결 안 함(추정 안 함)
-          const sizeWon = Math.min(computePositionSize(capital, { riskPct: riskPerTradePct }), capital);
+          const sizeWon = sizeNewEntry();
           if (!(sizeWon > 0)) continue;
           capital -= sizeWon;
           openPositions.set(code, {
             code, entryDate: date, entryPrice: closePrice, units: 1,
             highSinceEntry: closePrice, stopPrice: closePrice * (1 - 0.08), pyramided: false,
-            partialSold: false, investedWon: sizeWon,
+            partialSold: false, investedWon: sizeWon, bettingUnitsAtEntry: useBettingUnits ? currentBettingUnits : null,
           });
         }
       } else {
@@ -250,5 +297,8 @@ export function runBreakoutBacktest({
     units: pos.units, investedWon: pos.investedWon,
   }));
 
-  return { trades, equityCurve, finalCapital: capital, openPositionsAtEnd, skippedNoOpenPrice };
+  return {
+    trades, equityCurve, finalCapital: capital, openPositionsAtEnd, skippedNoOpenPrice,
+    finalBettingUnits: useBettingUnits ? currentBettingUnits : null,
+  };
 }
