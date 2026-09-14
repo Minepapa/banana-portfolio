@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadPriceSeries, loadPriceSeriesBatch, findIndexAtOrBefore } from './breakout-price-series.mjs';
+import { loadPriceSeries, loadPriceSeriesBatch, findIndexAtOrBefore, findLatestDateStrictlyBefore } from './breakout-price-series.mjs';
 
 function withFixtureDir(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'breakout-price-series-test-'));
@@ -71,6 +71,31 @@ test('findIndexAtOrBefore: 주말/공휴일(정확히 없는 날짜)은 그 이�
 test('findIndexAtOrBefore: 범위 밖(그 이전 데이터 없음)은 -1', () => {
   const dates = ['2020-01-02', '2020-01-03'];
   assert.equal(findIndexAtOrBefore(dates, '2019-12-31'), -1);
+});
+
+test('findLatestDateStrictlyBefore: targetDate 자신이 캐시에 있어도(라이브 소스가 오늘자를 포함한 경우) 그 전날을 반환 — "오늘"을 사전필터 기준일로 쓰던 2026-09-14 실사고 재현·수정 검증', () => {
+  const dates = ['2020-01-02', '2020-01-03', '2020-01-06'];
+  assert.equal(findLatestDateStrictlyBefore(dates, '2020-01-06'), '2020-01-03');
+});
+
+test('findLatestDateStrictlyBefore: targetDate가 캐시에 없으면(정상 케이스 — 아직 오늘자가 안 들어옴) 그 이하 최근 거래일 그대로', () => {
+  const dates = ['2020-01-02', '2020-01-03', '2020-01-06'];
+  assert.equal(findLatestDateStrictlyBefore(dates, '2020-01-07'), '2020-01-06');
+});
+
+test('findLatestDateStrictlyBefore: 캐시 첫 날짜 자체가 targetDate면(그 이전 데이터 전혀 없음) null', () => {
+  const dates = ['2020-01-02', '2020-01-03'];
+  assert.equal(findLatestDateStrictlyBefore(dates, '2020-01-02'), null);
+});
+
+test('findLatestDateStrictlyBefore: targetDate보다 이전 데이터가 아예 없으면(범위 밖) null', () => {
+  const dates = ['2020-01-02', '2020-01-03'];
+  assert.equal(findLatestDateStrictlyBefore(dates, '2019-12-31'), null);
+});
+
+test('findLatestDateStrictlyBefore: targetDate가 중복으로 들어있어도(이 함수의 존재 이유인 "절대 오늘 자신은 안 씀" 불변식을 지켜야 함) 전부 건너뛴다(2026-09-14 코드리뷰 지적)', () => {
+  const dates = ['2020-01-02', '2020-01-06', '2020-01-06'];
+  assert.equal(findLatestDateStrictlyBefore(dates, '2020-01-06'), '2020-01-02');
 });
 
 test('findIndexAtOrBefore: 범위 뒤(가장 최근보다 미래)는 마지막 인덱스', () => {

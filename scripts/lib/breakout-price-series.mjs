@@ -68,3 +68,23 @@ export function findIndexAtOrBefore(dates, targetDate) {
   }
   return result;
 }
+
+// targetDate "이하"가 아니라 targetDate보다 **엄격히 이전**인 가장 최근 날짜를 찾는다
+// (2026-09-14 신설) — daily-breakout-signal-scan.mjs가 "오늘"을 사전필터 기준일로
+// 잘못 쓰던 실사고 수정용. 개별종목 시세 캐시(historical-prices/*.csv)는 매일 아침
+// 전일까지만 갱신되므로 장중엔 구조적으로 "오늘"자 데이터를 가질 수 없는데, 벤치마크
+// (코스피 지수) 캐시는 라이브 소스(cacheIndexPrices)라 장마감 직후 이미 오늘자를
+// 포함할 수 있다 — 그 오늘자를 그대로 사전필터 기준일(cachedDate)로 쓰면 개별종목
+// 캐시와 날짜가 구조적으로 절대 안 맞아 전 종목이 탈락한다(2026-09-14 실전 첫
+// 테스트에서 발견 — 상세 경위는 Log/Implementation/2026-09-13-돌파매매-백테스트엔진-
+// 구현.md "실전 첫 테스트 결과" 절 참고). findIndexAtOrBefore를 재사용해 targetDate
+// 자신이 걸리면 한 칸 더 물러난다. dates에 targetDate보다 이전 날짜가 없으면 null.
+export function findLatestDateStrictlyBefore(dates, targetDate) {
+  let idx = findIndexAtOrBefore(dates, targetDate);
+  // 코드리뷰 지적(2026-09-14, LOW) — dates에 targetDate 중복이 있으면(이 프로젝트의
+  // 실제 캐시엔 없지만, 이 함수의 존재 이유가 "오늘을 절대 안 씀"을 강제하는 것이라
+  // 입력 가정이 깨졌을 때도 그 불변식만은 지켜야 함) 한 칸만 물러나서는 여전히
+  // targetDate 자신을 가리킬 수 있다 — while로 전부 건너뛴다.
+  while (idx >= 0 && dates[idx] === targetDate) idx -= 1;
+  return idx >= 0 ? dates[idx] : null;
+}

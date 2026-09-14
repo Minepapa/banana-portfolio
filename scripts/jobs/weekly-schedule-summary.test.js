@@ -23,3 +23,37 @@ test('buildWeeklyScheduleText: 커스텀 schedule 배열을 받으면 그것만 
   assert.match(text, /화요일 09:00 \[테스트부서\] 테스트 보고/);
   assert.doesNotMatch(text, /운영실 Hermes/);
 });
+
+test('buildWeeklyScheduleText: conditional 항목은 [조건부] 그룹으로 분리되고 발송조건이 괄호로 붙는다(2026-09-14, 오너 지적 반영)', () => {
+  const text = buildWeeklyScheduleText([
+    { day: '화요일', time: '09:00', dept: 'A부서', what: '고정 보고' },
+    { day: '수요일', time: '10:00', dept: 'B부서', what: '조건부 보고', conditional: '이상 있을 때만' },
+  ]);
+  assert.match(text, /\[매주 고정으로 옴 — 1건\]/);
+  assert.match(text, /\[조건부 — 웬만해선 조용함, 1건\]/);
+  assert.match(text, /· 화요일 09:00 \[A부서\] 고정 보고\n/); // 고정 항목엔 괄호 없음
+  assert.match(text, /· 수요일 10:00 \[B부서\] 조건부 보고\(이상 있을 때만\)/);
+});
+
+test('buildWeeklyScheduleText: 그룹 건수는 배열 길이에서 그대로 셈(하드코딩 아님) — 실제 SCHEDULE로도 확인', () => {
+  const text = buildWeeklyScheduleText();
+  const fixedCount = SCHEDULE.filter((s) => !s.conditional).length;
+  const conditionalCount = SCHEDULE.filter((s) => s.conditional).length;
+  assert.match(text, new RegExp(`\\[매주 고정으로 옴 — ${fixedCount}건\\]`));
+  assert.match(text, new RegExp(`\\[조건부 — 웬만해선 조용함, ${conditionalCount}건\\]`));
+});
+
+test('SCHEDULE: ISA 만기 감시는 conditional 항목이어야 함(2026-09-14 오너 지적 — "이번주 이벤트가 아닌데 몇 주째 스케줄에 뜬다")', () => {
+  const isa = SCHEDULE.find((s) => s.script === 'isa-maturity-check.mjs');
+  assert.notEqual(isa, undefined);
+  assert.ok(isa.conditional, 'ISA 만기 감시는 매번 발송되는 항목이 아니므로 conditional 필드가 있어야 함');
+});
+
+test('SCHEDULE: conditional 필드가 있으면 반드시 비어있지 않은 문자열이어야 함(2026-09-14 코드리뷰 지적 — conditional: "" 이면 !s.conditional로 [매주 고정] 그룹에 조용히 섞여 원래 버그와 동일한 증상 재발)', () => {
+  for (const s of SCHEDULE) {
+    if ('conditional' in s) {
+      assert.equal(typeof s.conditional, 'string', `${s.script}의 conditional은 문자열이어야 함`);
+      assert.ok(s.conditional.trim().length > 0, `${s.script}의 conditional이 빈 문자열이면 조건부인데 [매주 고정] 그룹으로 조용히 오분류됨`);
+    }
+  }
+});

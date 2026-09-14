@@ -2,14 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   formatDepartmentMessage, formatFactsMessage, parseDepartmentResponse, stripEmDash, parseReplyDecision, parseKillSwitchCommand,
-  parseDepartmentCall, parseExecutionModeCommand, parseProposalModeCommand,
+  parseDepartmentCall, parseExecutionModeCommand, parseProposalModeCommand, ZEUS_MARKER,
 } from './telegram-messages.mjs';
 
 const SEP = '─'.repeat(16);
 
 test('formatDepartmentMessage: 부서보고+Zeus코멘트를 한 메시지로 합침(오너 확정 형식)', () => {
   const msg = formatDepartmentMessage({ departmentLabel: '투자전략실 Athena', body: '리밸런싱 제안입니다.', zeusComment: '승인합니다.' });
-  assert.equal(msg, `[투자전략실 Athena]\n${SEP}\n리밸런싱 제안입니다.\n\n[Zeus] 승인합니다.`);
+  assert.equal(msg, `[투자전략실 Athena]\n${SEP}\n리밸런싱 제안입니다.\n\n${ZEUS_MARKER} 승인합니다.`);
+});
+
+test('ZEUS_MARKER: "[제우스]"(국문) — zeus.md/PANTHEON.md의 발신자 라벨 규칙과 표기 통일(2026-09-14, 코드리뷰 지적으로 [Zeus]에서 교체)', () => {
+  assert.equal(ZEUS_MARKER, '[제우스]');
 });
 
 test('formatDepartmentMessage: zeusComment 없으면 부서보고만', () => {
@@ -61,7 +65,7 @@ test('formatFactsMessage: zeusComment까지 있으면 맨 뒤에 붙음', () => 
   const msg = formatFactsMessage({
     departmentLabel: '투자전략실 Athena', facts: ['사실1'], conclusion: '결론문장', context: '맥락문단', decisions: ['고민점1'], zeusComment: '승인',
   });
-  assert.equal(msg, `[투자전략실 Athena]\n\n[결론]\n결론문장\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단\n\n[의사결정]\n· 고민점1\n\n[Zeus] 승인`);
+  assert.equal(msg, `[투자전략실 Athena]\n\n[결론]\n결론문장\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단\n\n[의사결정]\n· 고민점1\n\n${ZEUS_MARKER} 승인`);
 });
 
 test('formatFactsMessage: facts 없어도(빈 배열) 헤더+[사실] 빈 줄만 남고 안 터짐', () => {

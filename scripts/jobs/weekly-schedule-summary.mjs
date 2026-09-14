@@ -34,29 +34,47 @@ const DEPARTMENT_LABEL = '운영실 Hermes';
 // vault-job-catalog-audit.test.js(코드 저장소)가 부서별-텔레그램-보고.md의 "**주기적**"
 // 행과 이 배열을 스크립트 파일명 기준으로 자동 대조하는 데 쓴다 — daily-execution-report
 // 누락 재발을 막는 구조적 가드.
+// conditional 필드(2026-09-14 신설, 오너 지적 — "ISA 만기알람이 이번주 이벤트가
+// 아닌데 몇 주째 스케줄에 뜬다") — 실제로 매번 발송되는 항목과 "조건 충족 시에만"
+// 발송되는 항목이 이 배열 안에 구분 없이 섞여 있어, 매주 똑같은 조건부 항목이
+// 마치 "이번 주 예정된 일"처럼 반복 노출되던 게 원인. 이 필드가 있으면 그 항목은
+// buildWeeklyScheduleText에서 별도 [조건부] 그룹으로 묶이고, 값은 발송 조건을
+// 짧게 설명하는 문구(사람이 읽는 텍스트에 그대로 붙음).
 export const SCHEDULE = [
   { day: '평일', time: '08:00', dept: '운영실 Hermes', what: '아침 브리핑 — 자산현황+간밤 이벤트+거시 5신호', script: 'morning-briefing.mjs' },
-  { day: '평일', time: '16:15', dept: '운영실 Hermes', what: '당일 체결 내역 보고(체결 있을 때만 실제 발송, 2026-08-31부터 저정보 메시지 억제)', script: 'daily-execution-report.mjs' },
-  { day: '평일', time: '16:30', dept: '투자전략실 Athena', what: '리밸런싱·거시 점검(이상 있을 때만 실제 발송)', script: 'daily-asset-allocation-check.mjs' },
+  { day: '평일', time: '16:15', dept: '운영실 Hermes', what: '당일 체결 내역 보고', conditional: '체결 있을 때만', script: 'daily-execution-report.mjs' },
+  { day: '평일', time: '16:30', dept: '투자전략실 Athena', what: '리밸런싱·거시 점검', conditional: '이상 있을 때만', script: 'daily-asset-allocation-check.mjs' },
   { day: '일요일', time: '07:00', dept: '리스크관리실 Themis', what: '주간 위험 재검토', script: 'themis-risk-review.mjs' },
-  { day: '일요일', time: '07:30', dept: '비서실 Apollo', what: '므네모시네 주간 건강검진(구조·데이터 정합성·미완료 작업, 이상 있을 때만 실제 발송)', script: 'weekly-vault-health-check.mjs' },
+  { day: '일요일', time: '07:30', dept: '비서실 Apollo', what: '므네모시네 주간 건강검진 — 구조·데이터 정합성·미완료 작업', conditional: '이상 있을 때만', script: 'weekly-vault-health-check.mjs' },
   { day: '일요일', time: '08:00', dept: '비서실 Apollo', what: '주간 리포트', script: 'weekly-report.mjs' },
-  { day: '월요일', time: '07:10', dept: '투자전략실 Athena', what: 'ISA 3년 만기 감시(만기 도달 전까지는 조용히 스킵)', script: 'isa-maturity-check.mjs' },
+  { day: '월요일', time: '07:10', dept: '투자전략실 Athena', what: 'ISA 3년 만기 감시', conditional: '만기 도달 임박 시에만', script: 'isa-maturity-check.mjs' },
 ];
 
 // 순수함수 — SCHEDULE을 텔레그램 본문 텍스트로. 테스트 가능.
+//
+// [매주 고정]/[조건부] 두 그룹으로 나눠 표시(2026-09-14, 오너 지적 반영) — 조건부
+// 항목(ISA 만기감시 등)이 나머지와 구분 없이 한 줄로 섞여 있으면 매주 똑같이
+// 나열되는 것 자체가 "이번 주 예정된 일"처럼 잘못 읽힌다. 그룹 건수는 배열
+// 길이에서 그대로 세므로(하드코딩 아님) 항목이 늘거나 줄어도 문구가 저절로 맞다
+// — 예전엔 "아래 5건"이 고정 문자열이라 배열이 7건으로 늘어난 뒤에도 몇 주째
+// "5건"으로 잘못 표시되고 있었다(같은 종류의 정체 버그).
 export function buildWeeklyScheduleText(schedule = SCHEDULE) {
-  const lines = schedule.map((s) => `· ${s.day} ${s.time} [${s.dept}] ${s.what}`);
-  return [
-    '<b>주간 보고 스케쥴</b>',
-    '이번 주에도 이벤트와 무관하게 아래 5건이 정해진 시각에 자동으로 옵니다(조용하면',
-    '표시대로 안 오는 것도 있음 — Athena 리밸런싱 점검은 이상 없으면 미발송).',
-    '',
-    ...lines,
-    '',
+  const lineOf = (s) => `· ${s.day} ${s.time} [${s.dept}] ${s.what}${s.conditional ? `(${s.conditional})` : ''}`;
+  const fixed = schedule.filter((s) => !s.conditional);
+  const conditional = schedule.filter((s) => s.conditional);
+
+  const lines = ['<b>주간 보고 스케쥴</b>', ''];
+  if (fixed.length) {
+    lines.push(`[매주 고정으로 옴 — ${fixed.length}건]`, ...fixed.map(lineOf), '');
+  }
+  if (conditional.length) {
+    lines.push(`[조건부 — 웬만해선 조용함, ${conditional.length}건]`, ...conditional.map(lineOf), '');
+  }
+  lines.push(
     '이 외 나머지는 전부 이벤트 발생 시에만 오는 보고입니다(가격워치·신규현금배분·',
     '퀀트제안·잡경고 등) — 전체 목록은 Knowledge/Meta/부서별-텔레그램-보고.md 참고.',
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 async function main() {

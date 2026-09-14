@@ -33,7 +33,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { buildCandidatePool } from '../lib/historical-universe.mjs';
-import { loadPriceSeriesBatch } from '../lib/breakout-price-series.mjs';
+import { loadPriceSeriesBatch, findLatestDateStrictlyBefore, findIndexAtOrBefore } from '../lib/breakout-price-series.mjs';
 import { cacheIndexPrices, loadIndexSeries } from '../lib/index-price-cache.mjs';
 import { computeDailyCandidates } from '../lib/breakout-simulator.mjs';
 import { computeBreakoutEntrySignal, MARKET_CAP_FLOOR_WON } from '../lib/breakout-factor.mjs';
@@ -54,6 +54,14 @@ const DEPARTMENT_LABEL = '운영실 Hermes';
 // 동일 수치(2026-07 재실측 확정값 그대로 재사용, 별도 튜닝 근거 없음).
 const STAGGER_MS = 800;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// 사전필터 기준일(cachedDate) 시점 데이터를 실제로 가진 상장종목 비율이 이 아래로
+// 떨어지면 개별종목 캐시 갱신(update-breakout-price-cache.mjs)이 정상적으로 안 돈
+// 것으로 의심하고 경고한다(2026-09-14 신설, 코드리뷰 HIGH 지적 반영 — 최초엔 "며칠
+// 전인지"(달력일)로 쟀는데 그 기준일 자체가 항상 라이브로 최신 유지되는 캐시라
+// 이 사고를 하나도 못 잡는다는 지적으로 교체). 평시엔 사실상 100%에 가까워야 정상
+// (당일 거래정지·신규상장 직후 등 소수 예외만 빠짐) — 2026-09-14 사고 당일 이
+// 비율은 0%였다.
+const MIN_CACHE_COVERAGE_RATIO = 0.8;
 
 function loadOpenPositionCodes() {
   const dir = VAULT_PATHS.state.breakoutPositions;
@@ -118,19 +126,48 @@ async function main() {
   cacheIndexPrices('KOSPI', '2014-01-01', todayKST());
   const benchmarkSeries = loadIndexSeries('KOSPI');
   if (!benchmarkSeries) throw new Error('코스피 지수 캐시 로드 실패');
-  const cachedDate = benchmarkSeries.dates[benchmarkSeries.dates.length - 1]; // 캐시상 최신 거래일(보통 전일)
 
-  // 코드리뷰 HIGH 지적(2026-09-13) — 이 캐시의 마지막 날짜가 "오늘"이 돼버리면(장
-  // 마감 직후 지수 캐시가 이미 갱신됐는데 개별종목 시세 캐시는 아직 어제 것일 때)
-  // computeDailyCandidates의 엄격 날짜비교(series.dates[idx]!==date)로 전 종목이
-  // 탈락해 "신호 0건"이 실제 무신호인지 캐시 불일치인지 구분 안 되는 조용한 실패가
-  // 된다. 최소한 그 상황 자체는 눈에 띄게 로그+텔레그램으로 남긴다(추정해서 넘어가지
-  // 않음 — 원인 조사는 사람 몫).
-  if (cachedDate === todayKST()) {
-    console.error(`⚠️ 코스피 지수 캐시의 최신 날짜(${cachedDate})가 오늘과 같음 — 개별종목 시세 캐시와 기준일이 어긋났을 수 있음(모든 후보가 탈락할 위험), 아래 후보수를 눈여겨볼 것`);
+  // 2026-09-14 수정(실전 첫 테스트에서 발견한 실사고) — 사전필터 기준일은 "오늘"이면
+  // 절대 안 된다(위 "데이터 소스 설계" 절 — "전일까지의 캐시 데이터"가 설계 전제,
+  // 오늘 종가는 뒤에서 라이브로 따로 조회). 예전엔 benchmarkSeries의 절대 최신
+  // 날짜를 그대로 썼는데, 코스피 지수 캐시는 라이브 소스(cacheIndexPrices)라 장마감
+  // 직후 이미 오늘자를 포함해버려서, 매일 아침 전일까지만 갱신되는 개별종목 캐시
+  // (historical-prices/*.csv)와 날짜가 구조적으로 어긋나 전 종목이 탈락하고 있었다
+  // (코드리뷰 HIGH 지적, 2026-09-13에 경고 로그까지만 심어뒀던 걸 이번에 실제 수정 —
+  // 상세 경위는 Log/Implementation/2026-09-13-돌파매매-백테스트엔진-구현.md "실전
+  // 첫 테스트 결과" 절 참고). findLatestDateStrictlyBefore로 "오늘보다 전"만 기준일
+  // 후보로 명시적으로 강제한다.
+  const cachedDate = findLatestDateStrictlyBefore(benchmarkSeries.dates, todayKST());
+  if (!cachedDate) throw new Error('코스피 지수 캐시에 오늘 이전 거래일 데이터가 없음');
+
+  // 개별종목 캐시 정합률 체크(2026-09-14 코드리뷰 HIGH 지적으로 교체) — 처음엔
+  // "cachedDate가 오늘보다 며칠 전인지"(달력일)로 staleness를 쟀는데, cachedDate는
+  // 코스피 지수 캐시(cacheIndexPrices가 매 실행 오늘까지 라이브로 재조회 — 절대
+  // 안 낡음) 기준이라 정작 낡을 수 있는 개별종목 캐시 상태와는 무관했다 — "개별
+  // 종목 캐시 갱신 잡이 하루만 빠져도" 2026-09-14와 같은 사고가 재발하는데 이
+  // 체크로는 하나도 못 잡는다는 지적(실측 재현됨). 대신 cachedDate 시점 데이터를
+  // 실제로 가진 종목 비율을 직접 잰다 — 이게 이 사고를 그대로 재현·검출한다
+  // (2026-09-14 사고 당일 기준 이 비율은 0%였을 것).
+  const liveCandidates = pool.filter((p) => !p.delistingDate || p.delistingDate > cachedDate);
+  const haveCachedDate = liveCandidates.filter((p) => {
+    const s = seriesByCode[p.code];
+    if (!s) return false;
+    const i = findIndexAtOrBefore(s.dates, cachedDate);
+    return i >= 0 && s.dates[i] === cachedDate;
+  }).length;
+  const cacheCoverageRatio = liveCandidates.length ? haveCachedDate / liveCandidates.length : 0;
+  if (cacheCoverageRatio < MIN_CACHE_COVERAGE_RATIO) {
+    const msg = `개별종목 시세 캐시 정합률 ${(cacheCoverageRatio * 100).toFixed(0)}%(기준일 ${cachedDate} 데이터 보유 ${haveCachedDate}/${liveCandidates.length}종목) — update-breakout-price-cache.mjs가 최근에 정상적으로 안 돈 것으로 의심됨. 신호 결과를 신뢰하지 말 것.`;
+    console.error(`⚠️ ${msg}`);
+    if (!dryRun) {
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL, tag: '경고',
+        body: `<b>돌파매매 일별 신호스캔 — 시세 캐시 정합률 이상</b>\n${msg}`,
+      }));
+    }
   }
 
-  console.error(`[3/5] 시가총액+유동성 사전필터 중(기준일 ${cachedDate})...`);
+  console.error(`[3/5] 시가총액+유동성 사전필터 중(기준일 ${cachedDate}, 캐시 정합률 ${(cacheCoverageRatio * 100).toFixed(0)}%)...`);
   const candidates = computeDailyCandidates(pool, seriesByCode, cachedDate, { marketCapFloor: MARKET_CAP_FLOOR_WON });
   console.error(`  통과 후보 ${candidates.length}종목`);
 

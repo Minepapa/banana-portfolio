@@ -63,6 +63,23 @@ export function cachePrices(codes, startDate, { timeout = 30 * 60 * 1000 } = {})
   return runPy(['cache-prices', startDate, codes.join(',')], { timeout });
 }
 
+// 이미 캐시된 종목을 최신 거래일까지 증분 갱신(2026-09-14 신설) — cachePrices()와
+// 달리 파일이 이미 있어도 스킵하지 않고 캐시 최신일 다음날부터 이어붙인다. 최초
+// 백필 안 된 종목은 여전히 건너뛴다(cachePrices()가 그 역할, 관심사 분리) —
+// daily-breakout-signal-scan.mjs가 신호 판정에 쓰는 개별종목 시세 캐시가 매일
+// 갱신되지 않아 전 종목이 날짜 불일치로 탈락하던 실사고(2026-09-14, 실전 첫
+// 테스트에서 발견) 재발 방지용. 대부분의 호출이 종목당 하루치만 조회해 가벼운
+// 편이지만 종목 수가 많으면(전체 유니버스 기준 수천 건) 여전히 수 분 걸릴 수
+// 있어 기본 timeout을 cachePrices()와 동일하게 넉넉히 잡는다.
+export function updatePrices(codes, { timeout = 30 * 60 * 1000 } = {}) {
+  // 코드리뷰 지적(2026-09-14, LOW) — codes가 빈 배열이면 join(',')이 ''가 되고
+  // Python 쪽 len(sys.argv)>2 체크를 통과해버려 ['']( 빈 문자열 종목코드 1건)로
+  // 해석된다. 무해하지만("no-cache-skip" 1건으로 끝남) 인자 자체를 생략했을 때의
+  // 폴백(전체 후보풀 조회)과 혼동 여지가 있어 조기 반환으로 명확히 함.
+  if (!codes.length) return {};
+  return runPy(['update-prices', codes.join(',')], { timeout });
+}
+
 // codes × targetDates 조합의 "그 날짜 이하 가장 최근 거래일 종가"를 캐시에서 조회.
 // 캐시가 없거나(cachePrices 선행 필요) 그 시점 거래 데이터가 없으면 해당 (code,date)는
 // null. 반환: { [code]: { [date]: price|null } }.

@@ -19,7 +19,8 @@
 
 사용법:
   python3 historical-universe.py build-pool                    # 후보풀 JSON 출력
-  python3 historical-universe.py cache-prices <시작일> [<종목코드,...>]  # 시세+거래량 캐시 채우기
+  python3 historical-universe.py cache-prices <시작일> [<종목코드,...>]  # 시세+거래량 캐시 채우기(최초 백필 전용, 이미 캐시된 종목은 스킵)
+  python3 historical-universe.py update-prices [<종목코드,...>]  # 이미 캐시된 종목을 최신 거래일까지 증분 갱신(2026-09-14 신설, 일별 라이브 파이프라인용)
   python3 historical-universe.py prices-at <날짜배열JSON> [<종목코드,...>]
   python3 historical-universe.py liquidity-at <날짜배열JSON> [<종목코드,...>]
 """
@@ -175,6 +176,162 @@ def cache_prices(codes, start_date, end_date=None, delay=0.05, max_fail_ratio=MA
     return result
 
 
+def _atomic_to_csv(df, path):
+    """to_csv를 원자적으로(임시파일→os.replace) 쓴다(2026-09-14 코드리뷰 MEDIUM
+    지적) — index-price-cache.mjs가 이미 겪은 것과 같은 버그 클래스: read-modify-
+    whole-file-write를 df.to_csv(최종경로)로 직접 하면 타임아웃·강제종료 시 잘린
+    파일이 그대로 "캐시됨"으로 영구 고정될 수 있다. update_prices()는
+    cache_prices()와 달리 파일당 매일 다시 쓰므로(최초 1회뿐인 cache_prices()보다
+    노출 빈도가 훨씬 높음) 이 보호가 특히 중요하다."""
+    tmp_path = f'{path}.tmp'
+    df.to_csv(tmp_path)
+    os.replace(tmp_path, path)
+
+
+def _is_market_hours_kst(now=None):
+    """KST 평일 09:00~15:30(정규장) 안이면 True — 이 시간대엔 오늘자 데이터가 아직
+    미완성 봉일 수 있어 캐싱 대상에서 제외해야 한다(2026-09-14 코드리뷰 지적).
+    update-breakout-price-cache.mjs는 장 시작 전 아침에 도는 게 정상 스케줄이라
+    평소엔 안 걸리지만, 수동 재실행이 장중에 일어날 가능성에 대한 방어."""
+    now_kst = now or pd.Timestamp.now(tz='Asia/Seoul')
+    if now_kst.weekday() >= 5:  # 토(5)·일(6)
+        return False
+    minutes = now_kst.hour * 60 + now_kst.minute
+    return 9 * 60 <= minutes < 15 * 60 + 30
+
+
+CORPORATE_ACTION_TOLERANCE = 0.03  # 액면분할/병합 감지 허용오차(겹침구간 종가 3%
+# 초과 차이 — 정상적인 데이터 수정 오차는 이보다 훨씬 작고, 분할/병합은 배수로 튐)
+OVERLAP_CALENDAR_DAYS = 20  # 겹침재조회 기간(캘린더 기준, 거래일 10일 안팎을 넉넉히 커버)
+
+
+def update_prices(codes, end_date=None, delay=0.05, max_fail_ratio=MAX_CACHE_FAIL_RATIO):
+    """cache_prices()와 달리 "이미 캐시된 종목을 최신 날짜까지 증분 갱신"하는 함수
+    (2026-09-14 신설) — cache_prices()는 `to_fetch = [c for c in codes if not
+    os.path.exists(cache_path(c))]`라 파일이 이미 있으면 그 종목은 영원히 다시
+    안 건드린다(최초 백필 전용 설계). 이게 daily-breakout-signal-scan.mjs가 매번
+    3거래일 밀린 캐시로 신호 0건만 내던 실제 사고의 원인이었다(2026-09-14, 첫
+    실전 테스트에서 발견 — 개별종목 캐시는 09-11에서 멈춰있는데 코스피 지수 캐시는
+    당일까지 갱신돼 있어 전 종목이 날짜 불일치로 탈락).
+
+    캐시가 아예 없는 종목(파일 자체가 없음, 'no-cache-file')은 건너뛴다 — 최초
+    백필은 여전히 cache_prices() 책임(관심사 분리), 다만 Node 쪽 호출부
+    (update-breakout-price-cache.mjs)가 이 상태를 받아 그 종목들만 골라 자동
+    후속 백필을 시도한다. 조회했지만 데이터가 없다고 이미 확정된 빈 캐시(헤더만
+    있는 CSV)는 'empty-confirmed'로 별도 구분 — 2026-09-14 코드리뷰 지적: 예전엔
+    두 경우가 똑같이 'no-cache-skip'으로 뭉개져서 "최초 백필이 필요한 신규상장"과
+    "이미 조사 끝난 정상 상태"를 구분할 수 없었다(전자를 놓치면 신규상장 종목이
+    영원히 후보풀에 못 들어와도 아무 신호가 없음).
+
+    캐시 최신일 다음날부터 end_date까지만 조회해 기존 CSV에 이어붙인다 — 단
+    "겹침재조회"(2026-09-14 코드리뷰 HIGH 지적)로 최근 OVERLAP_CALENDAR_DAYS도
+    같이 다시 받아 기존 값과 대조한다: FinanceDataReader는 조회 시점 기준
+    수정주가(액면분할/병합 반영)를 돌려주므로, 이미 캐시된 옛 데이터(미수정)와
+    새로 받은 데이터(수정됨)가 섞이면 52주 신고가 판정이 조용히 틀어질 수 있다 —
+    분할이면 과거 고가가 그대로 높게 남아 신고가가 영원히 안 뚫리는 조용한
+    false negative, 병합이면 신규 가격이 배수로 튀어 가짜 돌파 신호가 나
+    **승인 없이 자동매수되는 실주문 경로**(place-breakout-entry-order.mjs)까지
+    이어질 수 있다. 불일치 발견 시 이어붙이지 않고 기존 캐시 시작일부터 통째로
+    재수집(수정주가로 일관되게 통일) — "그런가보다" 하고 넘어가지 않는다(추정
+    금지 원칙과 동일).
+
+    end_date를 안 넘기고 지금이 KST 정규장 시간대(평일 09:00~15:30)면 오늘자를
+    자동으로 제외한다(장중 수동 실행 시 미완성 봉이 영구 고정되는 것 방지).
+
+    cache_prices()와 달리 "빈 결과"(no-new-rows)를 실패로 세지 않는다 — 이미
+    데이터가 있는 종목의 증분 조회가 빈 결과인 건 흔한 정상 케이스(공휴일·거래정지
+    등)이지, "그 종목이 원래 데이터가 없다"는 사실이 아니라 빈 CSV로 확정 지을
+    이유가 없다(단순히 파일을 안 건드리고 넘어간다). 실패율 가드는 error만으로 계산.
+    """
+    end = end_date or pd.Timestamp.today().strftime('%Y-%m-%d')
+    if end_date is None and _is_market_hours_kst():
+        end = (pd.Timestamp.today() - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+
+    result = {}
+    to_update = []  # (code, overlap_start, existing_df, last_date)
+    for code in codes:
+        path = cache_path(code)
+        if not os.path.exists(path):
+            result[code] = 'no-cache-file'
+            continue
+        # 코드리뷰 지적(2026-09-14, MEDIUM) — 이 루프는 원래 예외 보호가 없어서
+        # CSV 1개만 깨져도(잘린 파일 등) 전체 갱신이 죽었다. cache_prices() 두 번째
+        # 루프와 동일하게 종목별로 격리.
+        try:
+            existing = pd.read_csv(path, index_col=0, parse_dates=True)
+        except Exception as e:
+            result[code] = f'error:기존 캐시 파일 파싱 실패({e})'
+            continue
+        if existing.empty:
+            result[code] = 'empty-confirmed'
+            continue
+        last_date = existing.index[-1]
+        next_day = (last_date + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+        if next_day > end:
+            result[code] = 'already-current'
+            continue
+        overlap_start = (last_date - pd.Timedelta(days=OVERLAP_CALENDAR_DAYS)).strftime('%Y-%m-%d')
+        to_update.append((code, overlap_start, existing, last_date))
+
+    for i, (code, overlap_start, existing, last_date) in enumerate(to_update):
+        try:
+            fetched = fdr.DataReader(code, overlap_start, end)
+            if fetched is None or fetched.empty:
+                result[code] = 'no-new-rows'
+            else:
+                cols = list(existing.columns)
+                missing_cols = [c for c in cols if c not in fetched.columns]
+                if missing_cols:
+                    # 코드리뷰 지적(2026-09-14, MEDIUM) — 신규 조회가 기존 컬럼 일부를
+                    # 못 주면(예: Volume 결측) pd.concat이 컬럼 합집합을 만들어 그
+                    # 칸이 NaN→CSV 빈칸→Node 로더에서 0으로 둔갑한다("추정 안 함"
+                    # 계약 위반). 조용히 진행하지 않고 에러로 기록, 그 종목은 안 건드림.
+                    result[code] = f'error:신규 조회에 기존 컬럼 누락({missing_cols})'
+                else:
+                    fetched = fetched[cols]
+                    overlap_dates = fetched.index.intersection(existing.index)
+                    mismatch = False
+                    if len(overlap_dates) > 0 and 'Close' in cols:
+                        old_close = existing.loc[overlap_dates, 'Close']
+                        new_close = fetched.loc[overlap_dates, 'Close']
+                        diff_ratio = ((new_close - old_close).abs() / old_close.replace(0, pd.NA)).max()
+                        if pd.notna(diff_ratio) and diff_ratio > CORPORATE_ACTION_TOLERANCE:
+                            mismatch = True
+                    if mismatch:
+                        full_start = existing.index[0].strftime('%Y-%m-%d')
+                        refetched = fdr.DataReader(code, full_start, end)
+                        if refetched is None or refetched.empty:
+                            result[code] = 'error:불일치 감지(액면분할/병합 의심) 후 전체 재수집 실패(빈 응답)'
+                        else:
+                            refetch_cols = [c for c in cols if c in refetched.columns]
+                            if len(refetch_cols) < len(cols):
+                                result[code] = f'error:불일치 감지 후 전체 재수집에도 컬럼 누락({[c for c in cols if c not in refetch_cols]})'
+                            else:
+                                _atomic_to_csv(refetched[cols], path=cache_path(code))
+                                result[code] = f'corporate-action-refetched+{len(refetched)}'
+                    else:
+                        combined = pd.concat([existing, fetched])
+                        combined = combined[~combined.index.duplicated(keep='last')].sort_index()
+                        _atomic_to_csv(combined, path=cache_path(code))
+                        new_count = int((fetched.index > last_date).sum())
+                        result[code] = f'updated+{new_count}'
+        except Exception as e:
+            result[code] = f'error:{e}'
+        if (i + 1) % 200 == 0:
+            print(f'  ...{i + 1}/{len(to_update)}건 처리', file=sys.stderr)
+        time.sleep(delay)
+
+    if to_update:
+        error_count = sum(1 for v in result.values() if v.startswith('error'))
+        fail_ratio = error_count / len(to_update)
+        if fail_ratio > max_fail_ratio:
+            raise RuntimeError(
+                f'시세 증분갱신 실패율 과다: 오류 {error_count}건 / 시도 {len(to_update)}건'
+                f'({fail_ratio * 100:.0f}%) — 데이터소스 전체 장애로 의심됨.'
+            )
+    return result
+
+
 def load_price_series(code):
     """캐시된 종목의 전체 시계열을 한 번만 읽어온다(DataFrame) — 캐시가 없거나
     비어있으면 None. price_at_or_before/prices_at가 종목당 CSV를 여러 번 다시 읽는
@@ -265,6 +422,16 @@ def main():
             key = v.split(':')[0]
             summary[key] = summary.get(key, 0) + 1
         print(json.dumps({'summary': summary, 'total': len(result)}, ensure_ascii=False))
+    elif cmd == 'update-prices':
+        # ⚠️ 2026-09-14 코드리뷰 CRITICAL 지적 — 원래 이 분기가 요약(summary)만
+        # 찍어서, historical-universe.mjs의 updatePrices()가 기대하는 "{code: 상태}"
+        # 전체 맵과 계약이 안 맞아 Node 쪽(summarizeUpdateResult)이 매번 크래시했다
+        # (Python은 CSV를 정상적으로 갱신했지만 잡 자체는 항상 exit 1로 끝나던 상태
+        # — "검증됐다"고 볼 수 없는 상태였음). prices-at/liquidity-at과 동일하게
+        # 전체 result 맵을 그대로 출력 — 집계는 이미 Node 쪽 summarizeUpdateResult가
+        # 담당(중복 집계 제거).
+        codes = sys.argv[2].split(',') if len(sys.argv) > 2 else [c['code'] for c in build_candidate_pool()]
+        print(json.dumps(update_prices(codes), ensure_ascii=False))
     elif cmd == 'prices-at':
         target_dates = json.loads(sys.argv[2])
         codes = sys.argv[3].split(',') if len(sys.argv) > 3 else [c['code'] for c in build_candidate_pool()]

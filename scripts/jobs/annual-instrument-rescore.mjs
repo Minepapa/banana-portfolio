@@ -42,6 +42,7 @@ import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
+import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
@@ -292,9 +293,23 @@ async function main() {
         // 안에서 재시도 — 성공한 다리는 단일활성제안 판정이 재중복 안 되게 막아준다).
         if (!isSent(sellResult) || !isSent(buyResult)) {
           hadPartialFailure = true;
-          const alertMsg = `⚠️ [연 1회 재스코어링] 교체 제안 반쪽 발송 — [${account}] ${inst.name}→${evaluation.bestAlternative.name}: 매도 ${sellResult.action}${sellResult.reason ? `(${sellResult.reason})` : ''}, 매수 ${buyResult.action}${buyResult.reason ? `(${buyResult.reason})` : ''} — 수동 확인 필요`;
-          console.error(alertMsg);
-          try { await sendTelegram(alertMsg); } catch (e2) { console.error(`  ❌ 반쪽 발송 경고 텔레그램 실패: ${e2.message}`); }
+          const plainAlert = `[연 1회 재스코어링] 교체 제안 반쪽 발송 — [${account}] ${inst.name}→${evaluation.bestAlternative.name}: 매도 ${sellResult.action}${sellResult.reason ? `(${sellResult.reason})` : ''}, 매수 ${buyResult.action}${buyResult.reason ? `(${buyResult.reason})` : ''} — 수동 확인 필요`;
+          console.error(plainAlert);
+          // 2026-09-14 오너 지적 반영 — 이 경고가 raw 문자열로 나가 이모지(⚠️, 전면
+          // 금지 규칙 위반)와 형식 없는 한 문단으로 발송되고 있었다. 다른 텔레그램
+          // 메시지와 동일한 [사실] 구조로 통일.
+          try {
+            await sendTelegram(formatFactsMessage({
+              departmentLabel: DEPARTMENT_LABEL,
+              tag: '경고',
+              facts: [
+                `[${account}] ${inst.name} → ${evaluation.bestAlternative.name} 교체 제안이 반쪽만 발송됨`,
+                `매도: ${sellResult.action}${sellResult.reason ? `(${sellResult.reason})` : ''}`,
+                `매수: ${buyResult.action}${buyResult.reason ? `(${buyResult.reason})` : ''}`,
+                '수동 확인 필요',
+              ],
+            }));
+          } catch (e2) { console.error(`  ❌ 반쪽 발송 경고 텔레그램 실패: ${e2.message}`); }
         }
       }
     }

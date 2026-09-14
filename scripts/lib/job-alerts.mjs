@@ -14,7 +14,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { sendTelegram } from './telegram.mjs';
-import { formatDepartmentMessage } from './telegram-messages.mjs';
+import { formatFactsMessage } from './telegram-messages.mjs';
 import { describeJob } from './job-labels.mjs';
 
 // 2026-08-23 — 이 알림엔 부서 라벨이 아예 없었다(오너 지시로 전체 텔레그램 메시지
@@ -60,12 +60,22 @@ export async function flushWarnings(jobName, { dryRun = false } = {}) {
   try { state = JSON.parse(readFileSync(STATE_FILE, 'utf8')); } catch { state = {}; }
   if (!shouldNotify(state, jobName, sig)) return;
   try {
-    const list = warnings.slice(0, 8).map(w => `· ${w}`).join('\n');
-    const more = warnings.length > 8 ? `\n… 외 ${warnings.length - 8}건` : '';
-    await sendTelegram(formatDepartmentMessage({
+    // 2026-09-14 오너 지적 반영 — 이 알림이 다른 부서 보고(formatFactsMessage 쓰는
+    // 것들)와 다른 임시 서식(굵은 제목+불릿 혼합)을 써서 "정리 안 된 채 던져지는"
+    // 느낌을 줬다. [사실] 마커로 통일해 시각적 언어를 맞춘다 — 첫 줄은 Node가 계산한
+    // 순수 사실(잡 설명+건수, 판단 아님), 나머지는 각 경고 원문을 그대로 개조식으로.
+    // 개별 경고 문구 자체(내부 API 필드명 등 기술용어)를 업무언어로 바꾸는 건 이
+    // 잡 하나가 아니라 15개+ 호출부를 전부 고쳐야 하는 별도 과제로 남겨둠.
+    const shown = warnings.slice(0, 8);
+    const facts = [
+      `${describeJob(jobName)} — 경고 ${warnings.length}건 발생`,
+      ...shown,
+    ];
+    if (warnings.length > shown.length) facts.push(`… 외 ${warnings.length - shown.length}건(로그 확인 필요)`);
+    await sendTelegram(formatFactsMessage({
       departmentLabel: DEPARTMENT_LABEL,
       tag: '경고',
-      body: `<b>${describeJob(jobName)} 경고 ${warnings.length}건</b>\n${list}${more}`,
+      facts,
     }));
     mkdirSync(dirname(STATE_FILE), { recursive: true });
     state[jobName] = { sig, ts: Date.now() };

@@ -15,13 +15,20 @@ function buildHeader(departmentLabel, tag) {
   return tag ? `[${tag}] [${departmentLabel}]` : `[${departmentLabel}]`;
 }
 
-// 부서 보고와 [Zeus] 판단 코멘트를 한 메시지에 합친다(2026-08-05 오너 확정 — 텔레그램
+// Zeus가 텔레그램에서 직접(부서를 안 거치고) 말할 때·부서 보고에 판단 코멘트를 얹을
+// 때 공통으로 쓰는 마커 — 2026-09-14 오너 재지적("제우스인가 헤르메스인가 여전히 안
+// 보인다")으로 "[Zeus]"(영문)와 zeus.md/PANTHEON.md가 새로 규정한 "[제우스]"(국문)
+// 두 표기가 같은 화자를 가리키며 공존하던 걸 발견·통일(코드리뷰 지적) — 다른 모든
+// 부서 라벨이 국문(운영실 Hermes 등)인 것과도 맞춤.
+export const ZEUS_MARKER = '[제우스]';
+
+// 부서 보고와 Zeus 판단 코멘트를 한 메시지에 합친다(2026-08-05 오너 확정 — 텔레그램
 // 알림 개수를 늘리지 않기 위함). zeusComment가 없으면(아직 Zeus 판단 전 등) 부서
 // 보고만 나간다.
 export function formatDepartmentMessage({ departmentLabel, body, zeusComment = null, tag = null }) {
   const header = buildHeader(departmentLabel, tag);
   let msg = `${header}\n${SEPARATOR}\n${body}`;
-  if (zeusComment) msg += `\n\n[Zeus] ${zeusComment}`;
+  if (zeusComment) msg += `\n\n${ZEUS_MARKER} ${zeusComment}`;
   return msg;
 }
 
@@ -74,11 +81,18 @@ export function formatFactsMessage({ departmentLabel, facts, conclusion = null, 
   const header = buildHeader(departmentLabel, tag);
   let msg = header;
   if (conclusion) msg += `\n\n${CONCLUSION_MARKER}\n${stripEmDash(conclusion)}`;
+  // ⚠️ facts는 stripEmDash 대상이 아니다(2026-09-14 코드리뷰 지적으로 명시) — 긴
+  // 하이픈 전면 금지(2026-09-01)는 LLM이 생성하는 conclusion·context·decisions·
+  // zeusComment를 겨냥한 규칙이었다. facts는 Node가 직접 조립하는 사실 배열이고,
+  // 이 코드베이스 전반에 이미 "· 항목 — 부연설명" 식으로 em dash를 쓰는 하드코딩
+  // facts 라인이 다수 존재한다(기존 관행) — 여기서 새삼 stripEmDash를 걸면 그
+  // 기존 관행 전체가 조용히 바뀌는 훨씬 큰 변경이 된다. facts에도 금지를 확장할지는
+  // 오너 확인 후 별도 결정.
   const factBlock = (facts ?? []).map((f) => `· ${f}`).join('\n');
   msg += `\n\n${FACTS_MARKER}\n${factBlock}`;
   if (context) msg += `\n\n${CONTEXT_MARKER}\n${stripEmDash(context)}`;
   if (decisions?.length) msg += `\n\n${DECISIONS_MARKER}\n${decisions.map((d) => `· ${stripEmDash(d)}`).join('\n')}`;
-  if (zeusComment) msg += `\n\n[Zeus] ${stripEmDash(zeusComment)}`;
+  if (zeusComment) msg += `\n\n${ZEUS_MARKER} ${stripEmDash(zeusComment)}`;
   return msg;
 }
 
