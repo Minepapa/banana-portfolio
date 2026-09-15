@@ -36,7 +36,7 @@ import { buildCandidatePool } from '../lib/historical-universe.mjs';
 import { loadPriceSeriesBatch, findLatestDateStrictlyBefore, findIndexAtOrBefore } from '../lib/breakout-price-series.mjs';
 import { cacheIndexPrices, loadIndexSeries } from '../lib/index-price-cache.mjs';
 import { computeDailyCandidates } from '../lib/breakout-simulator.mjs';
-import { computeBreakoutEntrySignal, MARKET_CAP_FLOOR_WON } from '../lib/breakout-factor.mjs';
+import { computeBreakoutEntrySignal, MARKET_CAP_FLOOR_WON, RS_ANCHOR_SMOOTH_DAYS } from '../lib/breakout-factor.mjs';
 import { computePositionSize, RISK_PER_TRADE_PCT, MAX_CONCURRENT_POSITIONS } from '../lib/breakout-risk.mjs';
 import { parseBreakoutPosition, findOpenPositions } from '../lib/breakout-position-vault.mjs';
 import {
@@ -62,6 +62,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // (당일 거래정지·신규상장 직후 등 소수 예외만 빠짐) — 2026-09-14 사고 당일 이
 // 비율은 0%였다.
 const MIN_CACHE_COVERAGE_RATIO = 0.8;
+// computeBreakoutEntrySignal에 넘기는 opts — main() 밖으로 뽑아 export(2026-09-15
+// 코드리뷰 MEDIUM 지적: main() 안에만 있으면 이 잡이 실제로 RS_ANCHOR_SMOOTH_DAYS를
+// 넘기는지 고정하는 테스트가 없어, 오타나 삭제가 생겨도 npm test는 전부 초록인 채
+// 실전 전략만 조용히 바뀔 수 있었다 — daily-breakout-signal-scan.test.js의
+// 회귀 테스트가 이 상수를 직접 검사한다).
+//
+// RS_ANCHOR_SMOOTH_DAYS 자체는 breakout-factor.mjs를 단일 진실소스로 가져온다
+// (2026-09-15 코드리뷰 HIGH 지적 — 이 잡 파일에만 리터럴로 있으면
+// --rsAnchorSmoothDays 없이 도는 모든 백테스트가 실전과 다른 전략을 검증하게 됨,
+// RS_LOOKBACK_DAYS를 그 파일로 승격시킨 것과 동일 클래스의 재발이었음). 배선
+// 배경·백테스트 근거는 그 상수 정의부 주석과
+// Log/Implementation/2026-09-15-RS앵커스무딩-백테스트비교.md 참고 — 요약: 기존
+// (단일시점) 대비 연환산 +0.2%p 개선(거래 ~1400건 기준 노이즈 수준)이었으나
+// 오너가 "그래도 배선"을 명시 확정. 이 배선 자체는 launchd 상시가동과 무관하며
+// 그 상태는 파일 헤더(위 `⚠️ 실행 시각` 절)에서 관리한다.
+export const ENTRY_SIGNAL_OPTS = { marketCapFloor: MARKET_CAP_FLOOR_WON, rsAnchorSmoothDays: RS_ANCHOR_SMOOTH_DAYS };
 
 function loadOpenPositionCodes() {
   const dir = VAULT_PATHS.state.breakoutPositions;
@@ -199,7 +215,20 @@ async function main() {
     }
     return;
   }
-  const benchmarkCloses = [...benchmarkSeries.closes, benchmarkToday];
+  // ⚠️ "오늘" 중복 삽입 방어(2026-09-15 코드리뷰 HIGH 지적) — benchmarkSeries는
+  // cacheIndexPrices(라이브 소스)로 이 함수 앞부분(위)에서 이미 로드했는데, 코스피
+  // 지수 캐시가 KRX API로 마이그레이션된(2026-09-15, index-price-cache.mjs) 뒤로
+  // 장마감~장후시간외 사이 이 시각(15:32경)에 오늘자가 이미 캐시에 들어와 있을지
+  // (구 FDR 시절 가정이던 "라이브 소스라 항상 즉시 포함"이 KRX 발행 타이밍에서도
+  // 여전히 성립하는지) 실측 확인 전이다 — 성립한다면 아래서 benchmarkToday를 그냥
+  // append할 때 오늘이 두 번 들어가 RS 앵커 인덱스가 종목 쪽(cachedDate 기준
+  // 정확히 slice)보다 하루 밀린다(RS가 실제 매수 게이팅·슬롯순위를 결정하는
+  // 값이라 이 어긋남이 조용히 실거래에 반영될 수 있음). 캐시 마지막 날짜가 이미
+  // 오늘이면 그 원소를 빼고 붙여, 어느 발행 타이밍이든 "오늘"이 정확히 한 번만
+  // 들어가게 한다.
+  const benchmarkAlreadyHasToday = benchmarkSeries.dates[benchmarkSeries.dates.length - 1] === todayKST();
+  const benchmarkClosesBase = benchmarkAlreadyHasToday ? benchmarkSeries.closes.slice(0, -1) : benchmarkSeries.closes;
+  const benchmarkCloses = [...benchmarkClosesBase, benchmarkToday];
 
   const passed = [];
   for (const cand of freeCandidates) {
@@ -220,7 +249,7 @@ async function main() {
     const lows = [...series.lows.slice(0, cand.idx + 1), livePrice]; // consolidationMethod 기본값(stddev)에서는 안 쓰임
     const signal = computeBreakoutEntrySignal(
       { closes, highs, lows, benchmarkCloses, marcap: cand.marcap },
-      { marketCapFloor: MARKET_CAP_FLOOR_WON },
+      ENTRY_SIGNAL_OPTS,
     );
     if (signal.pass) {
       console.error(`  🟢 ${cand.name}(${cand.code}) 신호 통과 — RS=${signal.relativeStrength.toFixed(1)}`);
@@ -243,6 +272,9 @@ async function main() {
     return;
   }
 
+  // RS(ENTRY_SIGNAL_OPTS 기준, 현재 앵커 스무딩)가 통과/탈락뿐 아니라 슬롯이 모자랄
+  // 때 누구부터 채울지도 결정한다(2026-09-15 코드리뷰 LOW 지적 — 이 파일 위쪽
+  // 주석이 "기준점"으로만 설명해 이 우선순위 용도를 안 짚었었음).
   passed.sort((a, b) => b.relativeStrength - a.relativeStrength);
   const rawSelected = passed.slice(0, remainingSlots);
   const selected = maxEntries ? rawSelected.slice(0, maxEntries) : rawSelected;

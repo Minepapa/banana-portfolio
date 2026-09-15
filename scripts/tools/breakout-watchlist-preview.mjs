@@ -23,7 +23,7 @@ import { buildCandidatePool } from '../lib/historical-universe.mjs';
 import { loadPriceSeriesBatch, findLatestDateStrictlyBefore, findIndexAtOrBefore } from '../lib/breakout-price-series.mjs';
 import { cacheIndexPrices, loadIndexSeries } from '../lib/index-price-cache.mjs';
 import { computeDailyCandidates } from '../lib/breakout-simulator.mjs';
-import { is52WeekHighBreakout, computeRelativeStrength, computeVcpReadiness, RS_LOOKBACK_DAYS, MARKET_CAP_FLOOR_WON } from '../lib/breakout-factor.mjs';
+import { is52WeekHighBreakout, computeRelativeStrengthSmoothedAnchor, computeVcpReadiness, RS_LOOKBACK_DAYS, RS_ANCHOR_SMOOTH_DAYS, MARKET_CAP_FLOOR_WON } from '../lib/breakout-factor.mjs';
 import { todayKST } from '../lib/sheets-api.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
@@ -47,13 +47,16 @@ function parseArgs(argv) {
 // computeVcpReadiness를 그대로 재사용(라이브 신호스캔과 동일한 계산 로직 — 별도
 // 재구현 안 함, 값만 다르게 해석). ⚠️ VCP는 "준비도"까지만 — 오늘 종가를 몰라
 // changePct(당일 상승률)는 확인 불가하므로 완전 판정(isVolatilityExpansionBreakout)
-// 이 아니다(computeVcpReadiness 자체 주석 참고).
+// 이 아니다(computeVcpReadiness 자체 주석 참고). RS는 computeRelativeStrengthSmoothedAnchor
+// (앵커 스무딩, RS_ANCHOR_SMOOTH_DAYS)로 라이브 신호스캔과 완전히 동일한 방법론을
+// 쓴다(2026-09-15 코드리뷰 MEDIUM 지적 — 프리뷰가 단일시점 RS를 계속 쓰면 오너가
+// 아침에 보는 숫자와 오후 실제 매수판정 숫자가 서로 달라 혼동 소지가 있었음).
 export function computeProximity({ closes, highs, benchmarkCloses }) {
   const lastClose = closes[closes.length - 1];
   const week52 = is52WeekHighBreakout(highs, lastClose, { lookbackDays: HIGH_LOOKBACK_DAYS });
   if (!(week52.priorHigh > 0)) return null;
   const distancePct = (lastClose / week52.priorHigh - 1) * 100;
-  const relativeStrength = computeRelativeStrength(closes, benchmarkCloses, RS_LOOKBACK_DAYS);
+  const relativeStrength = computeRelativeStrengthSmoothedAnchor(closes, benchmarkCloses, RS_LOOKBACK_DAYS, RS_ANCHOR_SMOOTH_DAYS);
   const vcp = computeVcpReadiness(closes);
   return {
     distancePct, relativeStrength, alreadyAboveHigh: week52.pass, priorHigh: week52.priorHigh, lastClose,

@@ -18,6 +18,16 @@ export const RS_LOOKBACK_DAYS = 60;
 // 갈라짐). 단일 진실소스로 승격.
 export const VCP_LOOKBACK_DAYS = 10;
 export const VCP_MARGIN_RATIO = 1.1;
+// RS 앵커 스무딩 실전 배선값(2026-09-15, 오너 확정) — daily-breakout-signal-scan.mjs
+// 가 실제로 쓰는 값을 여기 단일 진실소스로 둔다(2026-09-15 코드리뷰 HIGH 지적 —
+// 처음엔 그 잡 파일 안에만 상수가 있어서, --rsAnchorSmoothDays 플래그 없이 돌리는
+// 모든 백테스트(run-breakout-backtest.mjs 기본 baseline)가 실전과 다른 전략을
+// 검증하는 상태가 조용히 생길 뻔했다 — RS_LOOKBACK_DAYS를 이 파일로 승격시킨 것과
+// 동일 클래스의 재발). 백테스트 결과는 기존(단일시점) 대비 연환산 +0.2%p·샤프+0.011로
+// 거래 ~1400건 기준 노이즈 수준의 개선이었다 — Zeus는 "기존 유지"를 권고했으나 오너가
+// "그래도 5일평균으로 배선"을 명시 확정(2026-09-15)해 배선함
+// (Log/Implementation/2026-09-15-RS앵커스무딩-백테스트비교.md 참고).
+export const RS_ANCHOR_SMOOTH_DAYS = 5;
 
 // closes(오름차순, 마지막이 최신)에서 일별 수익률 배열(길이 n-1) 산출. 0 이하 종가는
 // null(추정 안 함 — 상장폐지 직전 이상치 등 방어).

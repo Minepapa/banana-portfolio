@@ -14,7 +14,7 @@ import { buildCandidatePool } from '../lib/historical-universe.mjs';
 import { loadPriceSeriesBatch } from '../lib/breakout-price-series.mjs';
 import { cacheIndexPrices, loadIndexSeries } from '../lib/index-price-cache.mjs';
 import { runBreakoutBacktest, LIQUIDITY_FLOOR_WON } from '../lib/breakout-simulator.mjs';
-import { MARKET_CAP_FLOOR_WON } from '../lib/breakout-factor.mjs';
+import { MARKET_CAP_FLOOR_WON, RS_ANCHOR_SMOOTH_DAYS } from '../lib/breakout-factor.mjs';
 import { RISK_PER_TRADE_PCT } from '../lib/breakout-risk.mjs';
 import { buildComparisonReport } from '../lib/benchmark-comparison.mjs';
 import { cumulativeReturns } from '../lib/walk-forward-simulator.mjs';
@@ -83,6 +83,13 @@ async function main() {
     if (rsMethod !== 'baseline') {
       throw new Error(`--rsAnchorSmoothDays는 --rsMethod=baseline(또는 미지정)과만 같이 쓸 수 있음 — rsPeriods가 우선 적용돼 조용히 무시되는 조합은 금지(받은 rsMethod: "${rsMethod}")`);
     }
+  }
+  // ⚠️ 실전과의 조용한 괴리 경고(2026-09-15 코드리뷰 HIGH 지적 — daily-breakout-
+  // signal-scan.mjs는 RS_ANCHOR_SMOOTH_DAYS를 항상 씀. 이 CLI의 baseline 기본값은
+  // "순수 단일시점"이라는 이 프로젝트 문서 전체의 기존 의미를 깨지 않기 위해 그대로
+  // 두되 — 무플래그 실행이 실전과 다른 설정을 검증 중임을 눈에 띄게 알린다).
+  if (rsAnchorSmoothDays == null) {
+    console.error(`⚠️ 참고: 실전(daily-breakout-signal-scan.mjs)은 현재 RS 앵커 ${RS_ANCHOR_SMOOTH_DAYS}일 스무딩을 씁니다 — 이 실행은 --rsAnchorSmoothDays를 안 줘서 순수 단일시점으로 도는 중이라 실전과 다른 설정입니다. 실전과 맞추려면 --rsAnchorSmoothDays=${RS_ANCHOR_SMOOTH_DAYS} 추가.`);
   }
   // 2026-09-14 점진적 배팅(유닛) 사이징 비교용 — breakout-unit-tracker.mjs. 오타·오입력이
   // 조용히 false로 처리되지 않도록(2026-09-14 코드리뷰 지적) true/false 외 값은 즉시 throw.
