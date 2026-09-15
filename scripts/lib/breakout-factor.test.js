@@ -4,6 +4,7 @@ import {
   computeDailyReturns,
   rollingVolatility,
   isVolatilityExpansionBreakout,
+  computeVcpReadiness,
   isPriceRangeConsolidationBreakout,
   is52WeekHighBreakout,
   computeRelativeStrength,
@@ -67,6 +68,76 @@ test('isVolatilityExpansionBreakout: 변동성 수축이어도 당일 상승률 
   const closes = buildQuietThenBreakoutCloses({ breakoutPct: 0.5 });
   const result = isVolatilityExpansionBreakout(closes, { lookbackDays: 10, breakoutPct: 3.0 });
   assert.equal(result.pass, false);
+});
+
+test('computeVcpReadiness: 조용한 구간이 이어지고 있으면(전일까지) ready=true — 오늘 종가 없이도 판정', () => {
+  // 돌파일(마지막 급등)을 뺀, 순수 조용한 구간만(오늘 종가를 모르는 아침 프리뷰 상황과 동일)
+  const closes = buildQuietThenBreakoutCloses().slice(0, -1);
+  const result = computeVcpReadiness(closes, { lookbackDays: 10 });
+  assert.notEqual(result, null);
+  assert.equal(result.ready, true);
+});
+
+test('computeVcpReadiness: 데이터 부족이면 null(추정 안 함)', () => {
+  assert.equal(computeVcpReadiness([100, 101, 102], { lookbackDays: 10 }), null);
+});
+
+test('computeVcpReadiness: 경계값 — vol이 정확히 lookbackDays개면(윈도우 꽉 참) 계산됨, 하나 모자라면 null', () => {
+  // rollingVolatility는 returns가 lookbackDays개 있어야 vol[lookbackDays-1] 하나가 나온다.
+  // computeVcpReadiness의 window는 vol 중 lookbackDays개(자기 포함)가 필요 — 즉 vol
+  // 유효값이 정확히 lookbackDays개(returns lookbackDays*2-1개)일 때가 최소 통과 경계.
+  const lookbackDays = 5;
+  const closesEnough = [100];
+  for (let i = 0; i < lookbackDays * 2 - 1; i++) closesEnough.push(closesEnough[closesEnough.length - 1] * (1 + (i % 2 === 0 ? 0.01 : -0.01)));
+  assert.notEqual(computeVcpReadiness(closesEnough, { lookbackDays }), null);
+
+  const closesShort = closesEnough.slice(0, -1); // 수익률 하나 모자람
+  assert.equal(computeVcpReadiness(closesShort, { lookbackDays }), null);
+});
+
+test('computeVcpReadiness: 최근 변동성이 이미 확대돼 있으면(조용하지 않음) ready=false', () => {
+  // 앞부분은 조용하다가, 관찰구간(마지막 10일)에 큰 등락을 섞어 최근 변동성을 끌어올림
+  const closes = [100];
+  for (let i = 0; i < 15; i++) closes.push(closes[closes.length - 1] * (1 + (i % 2 === 0 ? 0.001 : -0.001))); // 조용한 과거
+  for (let i = 0; i < 11; i++) closes.push(closes[closes.length - 1] * (1 + (i % 2 === 0 ? 0.04 : -0.04))); // 최근 변동성 확대
+  const result = computeVcpReadiness(closes, { lookbackDays: 10 });
+  assert.notEqual(result, null);
+  assert.equal(result.ready, false);
+});
+
+test('computeVcpReadiness: isVolatilityExpansionBreakout의 "조용함" 절반과 정확히 동치(고정진폭 픽스처 — 최소 스모크 확인용)', () => {
+  const fullCloses = buildQuietThenBreakoutCloses();
+  const readiness = computeVcpReadiness(fullCloses.slice(0, -1), { lookbackDays: 10 });
+  const fullResult = isVolatilityExpansionBreakout(fullCloses, { lookbackDays: 10, breakoutPct: 3.0 });
+  assert.equal(readiness.ready, fullResult.priorVol <= fullResult.minVol * 1.1);
+});
+
+// ⚠️ 위 고정진폭(±0.1%) 픽스처만으로는 이 동치성을 실제로 검증하지 못한다(2026-09-15
+// 코드리뷰 HIGH 지적 — 돌파 전 롤링변동성 값들이 전부 동일해 Math.min이 윈도우
+// 선택과 무관해지고, 실제로 윈도우가 하루 밀리는 버그가 있었는데도 이 테스트가
+// 계속 통과했었다). 진폭이 매일 달라지는 랜덤워크로 다건 반복해야 윈도우 경계가
+// 실제로 검증된다 — 결정론적 시드(간단한 LCG)로 재현 가능하게 구성.
+function seededRandom(seed) {
+  let s = seed;
+  return () => {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+}
+
+test('computeVcpReadiness: 랜덤워크 다건에서 isVolatilityExpansionBreakout의 조용함 판정과 정확히 일치(윈도우 경계 프로퍼티 검증)', () => {
+  const rand = seededRandom(42);
+  for (let trial = 0; trial < 200; trial++) {
+    const closes = [100 + rand() * 50];
+    for (let i = 0; i < 30; i++) {
+      const changePct = (rand() - 0.5) * 6; // -3%~+3% 가변 진폭(고정진폭 아님)
+      closes.push(closes[closes.length - 1] * (1 + changePct / 100));
+    }
+    const readiness = computeVcpReadiness(closes.slice(0, -1), { lookbackDays: 10 });
+    const full = isVolatilityExpansionBreakout(closes, { lookbackDays: 10, breakoutPct: -999 }); // breakoutPct를 극단적으로 낮춰 quiet 판정만 분리
+    if (readiness == null || full.reason) continue; // 양쪽 다 데이터 충분한 경우만 비교
+    assert.equal(readiness.ready, full.priorVol <= full.minVol * 1.1, `trial ${trial}에서 불일치`);
+  }
 });
 
 test('isPriceRangeConsolidationBreakout: 좁은 박스권 + 당일 급등이면 통과', () => {

@@ -12,6 +12,12 @@ export const MARKET_CAP_FLOOR_WON = 1_000_000_000_000; // 1조원(오너 확정,
 // 에러 없이 조용히 갈라질 수 있었음). 단일 진실소스로 여기로 옮기고
 // breakout-simulator.mjs는 이 값을 재수출(하위호환 — 기존 import 경로 안 깨짐).
 export const RS_LOOKBACK_DAYS = 60;
+// VCP(변동성확장) 기본 파라미터 — isVolatilityExpansionBreakout·computeVcpReadiness
+// 양쪽이 각자 리터럴 기본값을 따로 들고 있었다(2026-09-15 코드리뷰 MEDIUM 지적 —
+// RS_LOOKBACK_DAYS와 동일 클래스: 한쪽만 튜닝하면 라이브와 프리뷰가 조용히
+// 갈라짐). 단일 진실소스로 승격.
+export const VCP_LOOKBACK_DAYS = 10;
+export const VCP_MARGIN_RATIO = 1.1;
 
 // closes(오름차순, 마지막이 최신)에서 일별 수익률 배열(길이 n-1) 산출. 0 이하 종가는
 // null(추정 안 함 — 상장폐지 직전 이상치 등 방어).
@@ -38,6 +44,24 @@ export function rollingVolatility(returns, lookbackDays) {
   return out;
 }
 
+// vol(rollingVolatility 결과) 시리즈에서 endIdx 지점이 "그 지점을 포함한 직전
+// lookbackDays 구간 중 최저 변동성 대비 marginRatio 이내"인지 판정하는 공유
+// 헬퍼(2026-09-15 코드리뷰 MEDIUM 지적으로 추출) — isVolatilityExpansionBreakout와
+// computeVcpReadiness가 이 판정 로직 6줄을 각각 복제해 갖고 있었는데, 둘의 유일한
+// 차이(라이브="오늘 이전"=vol.length-2, 프리뷰="오늘까지 확정된 마지막"=
+// vol.length-1)가 슬라이스 산술 안에 암묵적으로 숨어 있어 실제로 하루 밀리는
+// 버그가 나서도 저자·테스트 양쪽이 못 잡았다(실측: 랜덤워크 3만건 비교 시 2.41%
+// 불일치 — 전부 "라이브 기준 조용함인데 프리뷰가 미준비로 오판"방향, 거짓
+// "준비됨"은 구조적으로 불가능하지만 그래도 실제 회귀였음). endIdx를 인자로
+// 받게 해 그 하루 차이를 슬라이스 산술이 아니라 호출부의 숫자 하나로 명시한다.
+function isQuietAt(vol, endIdx, lookbackDays, marginRatio) {
+  const current = vol[endIdx];
+  const window = vol.slice(endIdx - lookbackDays + 1, endIdx + 1); // current 자신을 포함한 최근 lookbackDays개
+  if (current == null || window.length < lookbackDays || window.some((v) => v == null)) return null;
+  const minVol = Math.min(...window);
+  return { quiet: current <= minVol * marginRatio, currentVol: current, minVol };
+}
+
 // 변동성확장(변동성 수축 후 돌파, VCP식) — KIS 공식 프리셋 strategy_08_volatility의
 // 개념을 가져오되 구현을 하나 고쳤다: 원본은 "당일 포함 롤링변동성"을 그대로
 // "현재 변동성"으로 써서 최근 최저치와 비교하는데, 이러면 당일 돌파(예: +3%)
@@ -46,20 +70,37 @@ export function rollingVolatility(returns, lookbackDays) {
 // 평상시 일간 변동폭이 아주 작을 때(0.1%대) +3% 돌파는 통과율 0%, 평상시
 // 변동폭이 이미 2%대로 커야 통과함 — VCP의 취지와 반대). 그래서 "조용한 상태"는
 // 어제까지의 변동성으로 측정하고, 오늘의 급등은 별도로 확인한다.
-export function isVolatilityExpansionBreakout(closes, { lookbackDays = 10, breakoutPct = 3.0, marginRatio = 1.1 } = {}) {
+export function isVolatilityExpansionBreakout(closes, { lookbackDays = VCP_LOOKBACK_DAYS, breakoutPct = 3.0, marginRatio = VCP_MARGIN_RATIO } = {}) {
   const returns = computeDailyReturns(closes);
   const vol = rollingVolatility(returns, lookbackDays);
   if (vol.length < lookbackDays + 1) return { pass: false, reason: '데이터 부족' };
-  const priorVol = vol[vol.length - 2]; // 어제까지의 변동성(오늘 수익률 미포함)
-  const window = vol.slice(-(lookbackDays + 1), -1);
-  if (priorVol == null || window.some((v) => v == null)) return { pass: false, reason: '변동성 계산 불가' };
-  const minVol = Math.min(...window);
+  const quiet = isQuietAt(vol, vol.length - 2, lookbackDays, marginRatio); // vol.length-2 = "오늘(closes 마지막) 이전"까지의 변동성
+  if (!quiet) return { pass: false, reason: '변동성 계산 불가' };
   const prevClose = closes[closes.length - 2];
   const currentClose = closes[closes.length - 1];
   if (!(prevClose > 0)) return { pass: false, reason: '전일 종가 없음' };
   const changePct = (currentClose / prevClose - 1) * 100;
-  const pass = priorVol <= minVol * marginRatio && changePct >= breakoutPct;
-  return { pass, priorVol, minVol, changePct };
+  const pass = quiet.quiet && changePct >= breakoutPct;
+  return { pass, priorVol: quiet.currentVol, minVol: quiet.minVol, changePct };
+}
+
+// VCP "준비도"(2026-09-15, breakout-watchlist-preview.mjs 전용) — 위
+// isVolatilityExpansionBreakout는 "오늘 종가"가 있어야 changePct까지 판정할 수
+// 있는데, 아침 워치리스트 프리뷰는 장 시작 전이라 오늘 종가를 모른다(오늘 종가를
+// 알아야만 완전 판정 가능한 조건은 이 함수로 우회할 수 없음 — 추정 안 함 원칙).
+// 대신 "조용함"(변동성 수축) 절반만 어제까지의 데이터로 미리 확인할 수 있다 —
+// closes의 마지막 값(전일 종가)까지 반영된 최신 변동성이 그 자신을 포함한 직전
+// lookbackDays 구간의 최저 변동성 대비 marginRatio 이내면, 오늘 breakoutPct
+// 이상만 오르면 VCP 조건 자체는 통과할 "준비된" 상태라는 뜻.
+// isVolatilityExpansionBreakout와 endIdx가 하루 어긋나는 이유: 그 함수는 "closes
+// 마지막 = 오늘(미확정)"을 전제해 vol.length-2(오늘 이전)를 보지만, 이 함수는
+// "closes 마지막 = 어제(확정)"를 전제해 vol.length-1(어제 자신까지 포함)을 본다.
+export function computeVcpReadiness(closes, { lookbackDays = VCP_LOOKBACK_DAYS, marginRatio = VCP_MARGIN_RATIO } = {}) {
+  const returns = computeDailyReturns(closes);
+  const vol = rollingVolatility(returns, lookbackDays);
+  const quiet = isQuietAt(vol, vol.length - 1, lookbackDays, marginRatio); // vol.length-1 = "어제(closes 마지막)까지 확정된" 변동성 자신을 포함
+  if (!quiet) return null;
+  return { ready: quiet.quiet, currentVol: quiet.currentVol, minVol: quiet.minVol };
 }
 
 // 박스권(가격범위) 기반 변동성수축 — VCP의 더 문자 그대로의 근사(2026-09-13, 오너
