@@ -87,7 +87,7 @@ async function main() {
   const marketcapSim = simulateWalkForward(marketcapRankingsByDate, prices, { buyRank, sellRank });
   console.error('[3/3] 두 시뮬레이션 완료');
 
-  cacheIndexPrices('KOSPI', dates[0], dates[dates.length - 1]);
+  await cacheIndexPrices('KOSPI', dates[0], dates[dates.length - 1]);
   const kospiPrices = indexPricesAt('KOSPI', dates);
 
   function pairWithBenchmark(sim) {

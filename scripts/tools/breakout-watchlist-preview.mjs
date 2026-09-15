@@ -71,7 +71,7 @@ async function main() {
   const seriesByCode = loadPriceSeriesBatch(codes);
 
   console.error('[2/3] 코스피 지수 캐시 로드 중...');
-  cacheIndexPrices('KOSPI', '2014-01-01', todayKST());
+  await cacheIndexPrices('KOSPI', '2014-01-01', todayKST());
   const benchmarkSeries = loadIndexSeries('KOSPI');
   if (!benchmarkSeries) throw new Error('코스피 지수 캐시 로드 실패');
   const cachedDate = findLatestDateStrictlyBefore(benchmarkSeries.dates, todayKST());

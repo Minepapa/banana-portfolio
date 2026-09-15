@@ -81,7 +81,8 @@ Header: AUTH_KEY: <키>
 
 | 소스 | 파일 | 데이터 | 정확도 이슈 / 선택 이유 |
 |---|---|---|---|
-| **Naver Finance** (`api.finance.naver.com/siseJson.naver`) | `fetchNaverIndexCloses` (fundamentals.mjs) | KOSPI/KOSDAQ 지수 종가 | 무인증, **당일 장마감 즉시 반영**(yfinance `^KS11`이 일봉 확정에 지연 있어 이걸 씀). → KRX `idx/kospi_dd_trd`도 당일 반영 확인됨(20260818 데이터 정상 조회) — **대체 유력 후보** |
+| **Naver Finance** (`api.finance.naver.com/siseJson.naver`) | `fetchNaverIndexCloses` (fundamentals.mjs) | KOSPI/KOSDAQ 지수 종가 | 무인증, **당일 장마감 즉시 반영**(yfinance `^KS11`이 일봉 확정에 지연 있어 이걸 씀). → KRX `idx/kospi_dd_trd`도 당일 반영 확인됨(20260818 데이터 정상 조회) — **대체 유력 후보(미실행, 아래 §5)** |
+| ~~FinanceDataReader(KS11·KQ11)~~ → **KRX `idx/kospi_dd_trd`·`idx/kosdaq_dd_trd`** | `cacheIndexPrices`(index-price-cache.mjs, 돌파매매 백테스트·RS 계산의 벤치마크 캐시 전용) | KOSPI/KOSDAQ 지수 종가(임의 과거 구간) | **2026-09-15 전환 완료**(이 파일이 §5 후보 목록에서 누락된 채 FDR을 계속 쓰고 있던 걸 발견해 마이그레이션). `fetchIndexCloseSeriesInRange`로 구간 조회, 전환 전후 값 KRX 독립대조로 동일함 확인(2020~2026 표본 5건) — 정확도 문제였던 적 없고 소스 일관성·FDR 지연 이슈 제거 목적 |
 | **yfinance** — `yf-marketdata.py` | KR·US 종목 시세: `forwardPE`, `priceToBook`, `marketCap`, `currentPrice`, 52주 고저, `freeCashflow`, `payoutRatio`, OHLCV 90개(RSI·MACD·ATR·스토캐스틱·거래량서지는 Node가 이 closes로 계산) | KR분(.KS/.KQ)의 OHLCV·시가총액은 **KRX `sto/stk_bydd_trd`로 대체 가능**(실거래대금·실시총 필드 보유). US분은 대체 불가(KRX는 국내 전용) |
 | yfinance — `yf-fundamentals.py` | US 종목 분기 펀더멘털(매출/영업이익 YoY, FCF, 마진율, ROE, 부채비율, PBR) | US 전용 — OpenDart·KRX 둘 다 커버 못 함, 대체 불가 |
 | yfinance — `yf-macro.py` | 거시지표 종가 1년치: `USDKRW`, 미국채10년(`TNX`), `VIX`, `KOSPI`(`^KS11`), `S&P500`, `KOSDAQ`, `NASDAQ`, `GOLD`, `WTI` | KOSPI/KOSDAQ만 KRX로 대체 가능(위 Naver 항목과 동일 논리). 환율·금리·VIX·미국지수·금·유가는 KRX 카탈로그에 없음(금 현물시장만 있음 — `gen/gold_bydd_trd`는 국내 금시장 현물가, `GC=F` 선물가와 다른 상품이라 단순 대체 아님) |

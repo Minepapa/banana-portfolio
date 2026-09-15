@@ -1,20 +1,36 @@
 // 코스피·코스닥 지수 종가 캐싱 — 백테스트 벤치마크 비교용(구현계획서 Phase 10).
 // historical-universe.py의 개별종목 시세 캐싱과 별도 파일인 이유: 대상이 지수 2개뿐이라
 // 그 파일의 대량(4천여 종목) 후보풀·유동성 로직이 전혀 필요 없다 — 훨씬 작고 단순한
-// 전용 캐시. FinanceDataReader의 지수 데이터(KS11·KQ11)는 개별종목과 달리
-// 2014-05-19 바닥이 없음(실측 확인: 2014-01-02부터 정상 제공) — 그래도 백테스트
-// 자체가 개별종목 시세의 2014-05-19 바닥에 묶여 있어 실질적 이득은 없지만, 벤치마크
-// 쪽에서 추가 제약이 안 생긴다는 것만 확인해둔다.
-import { spawnSync } from 'node:child_process';
+// 전용 캐시.
+//
+// ⚠️ 데이터소스 마이그레이션(2026-09-15) — 원래 FinanceDataReader(KS11·KQ11)를 썼는데,
+// docs/DATA-SOURCES.md §5가 이 대체(Naver/FDR류 지수종가 → KRX)를 "미실행 후보"로만
+// 올려뒀을 뿐 실제 전환은 안 돼 있었다(발견 경위: 2026-09-15 오전 돌파매매 RS 계산이
+// "코스피 60거래일 -26%"라는 극단값을 내서 데이터 오염을 의심했으나, 같은 날짜를
+// KRX 공식 API(`idx/kospi_dd_trd`)로 독립 대조한 결과 **완전히 동일한 값**이 나와
+// FDR 자체는 정상이었다고 확인됨 — 2026년 6월 이후 코스피가 실제로 그 정도로
+// 극심한 변동장이었음. 다만 이 기회에 나머지 프로젝트와 동일한 정본 소스(KRX)로
+// 맞춰 일관성을 확보 + yfinance/FDR 지연 이슈에서도 벗어난다, docs/DATA-SOURCES.md
+// §4에 반영). `krx.mjs`의 `fetchIndexCloseSeriesInRange`를 사용 — 날짜별 순차 조회라
+// FDR의 한 번에 구간 조회보다 느리다(전체 이력 첫 백필은 수 분 걸릴 수 있음).
+// **증분 병합**(2026-09-15 코드리뷰 CRITICAL 지적으로 신설) — 최초 버전은 캐시가
+// 요청범위를 못 덮으면 "기존범위∪요청범위" 전체를 매번 통째로 재조회했다. 이러면
+// 라이브 잡(daily-breakout-signal-scan.mjs)이 매일 `endDate=todayKST()`로 부르는데
+// endDate가 매일 바뀌어 캐시가 절대 "완전히 덮음" 판정을 못 받고, 매일 2014년부터
+// 전체(3천여 거래일 = 수천 회 순차 HTTP 호출, 실측 15~30분)를 다시 받는 회귀가
+// 있었다(실측 재현 확인) — 15:32 신호스캔→15:40 발주창을 넘길 수 있는 실거래 리스크.
+// 지금은 기존 캐시 앞/뒤로 **부족한 구간만** 추가 조회해 이어붙인다(아래
+// cacheIndexPrices 본문 참고) — 일일 증분은 보통 1~3거래일이라 수 초.
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fetchIndexCloseSeriesInRange } from './krx.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = join(HERE, '..', '.cache', 'index-prices');
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-export const INDEX_SYMBOLS = { KOSPI: 'KS11', KOSDAQ: 'KQ11' };
+export const INDEX_NAMES_KR = { KOSPI: '코스피', KOSDAQ: '코스닥' }; // krx.mjs fetchIndexDaily의 IDX_NM 매칭용
 
 function cachePath(indexName) {
   return join(CACHE_DIR, `${indexName}.json`);
@@ -24,13 +40,6 @@ function writeAtomic(path, content) {
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
   writeFileSync(tmp, content, 'utf8');
   renameSync(tmp, path);
-}
-
-function resolveCertPath() {
-  const r = spawnSync('python3', ['-c', 'import certifi; print(certifi.where())'], { encoding: 'utf8' });
-  const certPath = r.stdout?.trim();
-  if (r.status !== 0 || !certPath) throw new Error(`certifi 인증서 경로 조회 실패: ${(r.stderr || '').slice(-200)}`);
-  return certPath;
 }
 
 // ocf-history-cache.mjs와 동일한 이유로 캐시에 실제 조회 범위(startDate/endDate)도
@@ -48,46 +57,77 @@ function coversRange(cached, startDate, endDate) {
   return cached.startDate <= startDate && cached.endDate >= endDate;
 }
 
-// indexName: 'KOSPI'|'KOSDAQ'. 캐시가 없거나 요청 범위를 못 덮으면 (재)조회 — 기존
-// 범위와의 합집합으로 다시 전부 받는다(부분 병합 안 함, ocf-history-cache.mjs와 동일
-// 단순화). 반환: 'cached'|'fetched'.
-export function cacheIndexPrices(indexName, startDate, endDate) {
-  mkdirSync(CACHE_DIR, { recursive: true });
+function addDays(dateStr, n) {
+  const d = new Date(`${dateStr}T12:00:00`); // 정오 파싱(파일 상단 마이그레이션 노트와 동일 이유)
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function calendarDaysBetween(fromDate, toDate) {
+  return Math.round((new Date(`${toDate}T12:00:00`) - new Date(`${fromDate}T12:00:00`)) / 86400000);
+}
+
+// 연휴(설·추석 등)가 며칠씩 겹칠 수 있어 여유를 둔다 — 요청 경계와 실제 첫/마지막
+// 거래일 사이 차이가 이 값을 넘으면 "그 경계 부근에 소스가 데이터를 안 가진 것"으로
+// 보고 조용히 부분캐시하지 않고 throw(feedback-no-silent-fallback 원칙, 2026-09-15
+// 코드리뷰 HIGH 지적 — 원래는 요청한 effStart/effEnd를 실제 수신 여부와 무관하게
+// 그대로 캐시에 "커버함"으로 기록해, 소스가 일부만 갖고 있어도 이후 영원히
+// 재조회되지 않는 무언 오염 버그가 있었다).
+const COVERAGE_TOLERANCE_DAYS = 10;
+
+// 요청 구간을 실제로 커버하는지 검증 — 못 미치면 throw(부분 캐시 금지).
+function assertCoverage(series, reqStart, reqEnd, indexName) {
+  if (!series.length) {
+    throw new Error(`${indexName} 지수 조회 결과 0건(${reqStart}~${reqEnd}) — 데이터 소스 장애 의심`);
+  }
+  const actualStart = series[0].date;
+  const actualEnd = series[series.length - 1].date;
+  if (calendarDaysBetween(reqStart, actualStart) > COVERAGE_TOLERANCE_DAYS) {
+    throw new Error(`${indexName} 지수 데이터가 요청 시작일(${reqStart})을 못 덮음 — 실제 첫 거래일 ${actualStart}(소스가 이 구간을 갖고 있지 않을 가능성, 부분캐시 안 함)`);
+  }
+  if (calendarDaysBetween(actualEnd, reqEnd) > COVERAGE_TOLERANCE_DAYS) {
+    throw new Error(`${indexName} 지수 데이터가 요청 종료일(${reqEnd})을 못 덮음 — 실제 마지막 거래일 ${actualEnd}(소스가 이 구간을 갖고 있지 않을 가능성, 부분캐시 안 함)`);
+  }
+}
+
+// indexName: 'KOSPI'|'KOSDAQ'. 캐시가 요청 범위를 이미 덮으면 그대로 반환. 못 덮으면
+// **부족한 구간만** 추가 조회해 기존 캐시 앞/뒤로 이어붙인다(2026-09-15 코드리뷰
+// CRITICAL 지적으로 전면 재작성 — 이전엔 매번 합집합 범위 전체를 재조회했음, 위
+// 파일 상단 마이그레이션 노트 참고). 캐시엔 요청범위가 아니라 **실제 수신한
+// 첫/마지막 날짜**를 저장(부분 응답을 "완전 커버"로 잘못 기록하는 걸 구조적으로
+// 방지). fetchSeries는 테스트 주입용(DI, 기본값 실제 KRX 조회). 반환:
+// 'cached'|'fetched'. ⚠️ 2026-09-15부터 async(KRX API는 날짜별 순차 조회라 네트워크
+// 호출 — 기존 FDR 버전은 spawnSync라 동기였음, 호출부 전부 await로 갱신 필요).
+export async function cacheIndexPrices(indexName, startDate, endDate, { fetchSeries = fetchIndexCloseSeriesInRange } = {}) {
+  assertDateString(startDate);
   const end = endDate || new Date().toISOString().slice(0, 10);
+  assertDateString(end);
+  if (startDate > end) throw new Error(`시작일(${startDate})이 종료일(${end})보다 나중일 수 없음`);
+
+  mkdirSync(CACHE_DIR, { recursive: true });
   const existing = readCacheFile(indexName);
   if (coversRange(existing, startDate, end)) return 'cached';
 
-  const symbol = INDEX_SYMBOLS[indexName];
-  if (!symbol) throw new Error(`알 수 없는 지수명: ${indexName}(허용: ${Object.keys(INDEX_SYMBOLS).join(', ')})`);
-  const effStart = existing?.startDate ? (existing.startDate < startDate ? existing.startDate : startDate) : startDate;
-  const effEnd = existing?.endDate ? (existing.endDate > end ? existing.endDate : end) : end;
+  const indexNm = INDEX_NAMES_KR[indexName];
+  if (!indexNm) throw new Error(`알 수 없는 지수명: ${indexName}(허용: ${Object.keys(INDEX_NAMES_KR).join(', ')})`);
 
-  const certPath = resolveCertPath();
-  // Python이 최종 경로에 바로 쓰지 않고 stdout으로 CSV를 돌려준다 — 여기(JS)에서
-  // writeAtomic으로 임시파일→rename하기 위함(코드리뷰 지적, 2026-08-08: Python이
-  // 직접 최종 경로에 df.to_csv()로 쓰면 타임아웃·중단 시 잘린 파일이 "캐시됨"으로
-  // 영구 고정될 수 있었음 — historical-universe.py처럼 이미 있던 writeAtomic 헬퍼가
-  // 정작 안 쓰이고 있었던 버그).
-  const script = `
-import sys, FinanceDataReader as fdr
-df = fdr.DataReader(sys.argv[1], sys.argv[2], sys.argv[3])
-if df is None or df.empty:
-    print('', end='')
-else:
-    df[['Close']].to_csv(sys.stdout)
-`;
-  const r = spawnSync('python3', ['-c', script, symbol, effStart, effEnd], {
-    encoding: 'utf8', timeout: 60_000, env: { ...process.env, SSL_CERT_FILE: certPath },
-  });
-  if (r.status !== 0) throw new Error(`${indexName} 지수 조회 실패: ${(r.stderr || '').slice(-300)}`);
-  if (!r.stdout.trim()) throw new Error(`${indexName} 지수 조회 결과가 비어있음(${effStart}~${effEnd}) — 데이터 소스 장애 의심`);
+  let merged = existing?.series ?? [];
+  if (!existing || startDate < existing.startDate) {
+    const prefixEnd = existing ? addDays(existing.startDate, -1) : end;
+    const prefixSeries = await fetchSeries(indexName, indexNm, startDate, prefixEnd);
+    assertCoverage(prefixSeries, startDate, prefixEnd, indexName);
+    merged = [...prefixSeries, ...merged];
+  }
+  if (existing && end > existing.endDate) {
+    const suffixStart = addDays(existing.endDate, 1);
+    const suffixSeries = await fetchSeries(indexName, indexNm, suffixStart, end);
+    assertCoverage(suffixSeries, suffixStart, end, indexName);
+    merged = [...merged, ...suffixSeries];
+  }
 
-  const lines = r.stdout.trim().split('\n').slice(1); // 헤더(Date,Close) 제외
-  const series = lines.map((l) => { const [date, close] = l.split(','); return { date, close: Number(close) }; })
-    .filter((row) => DATE_RE.test(row.date) && Number.isFinite(row.close));
-  if (!series.length) throw new Error(`${indexName} 지수 파싱 결과 0건(${effStart}~${effEnd}) — 응답 형식 확인 필요`);
-
-  writeAtomic(cachePath(indexName), JSON.stringify({ startDate: effStart, endDate: effEnd, series }));
+  const observedStart = merged[0]?.date ?? startDate;
+  const observedEnd = merged[merged.length - 1]?.date ?? end;
+  writeAtomic(cachePath(indexName), JSON.stringify({ startDate: observedStart, endDate: observedEnd, series: merged }));
   return 'fetched';
 }
 

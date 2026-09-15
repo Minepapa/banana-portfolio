@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ymd, fetchKrx, fetchTradingDaySeries, fetchIndexCloses, fetchGoldClose, fetchEtfSeries, fetchEtfSeriesForNames } from './krx.mjs';
+import { ymd, fetchKrx, fetchTradingDaySeries, fetchIndexCloses, fetchIndexCloseSeriesInRange, fetchGoldClose, fetchEtfSeries, fetchEtfSeriesForNames } from './krx.mjs';
 
 test('ymd: YYYYMMDD 포맷(월·일 0패딩)', () => {
   assert.equal(ymd(new Date(2026, 0, 5)), '20260105');
@@ -106,6 +106,62 @@ test('fetchIndexCloses: 지수명 정확매칭 + 빈 문자열(값없음) 스킵
   });
   const closes = await fetchIndexCloses('KOSPI', '코스피', 2, { apiKey: 'K', fetchImpl, delayMs: 0, startDate: new Date(2026, 7, 19) });
   assert.deepEqual(closes, [2500.55, 2500.55]); // 두 거래일 모두 같은 mock 응답
+});
+
+function mockIndexFetchImpl() {
+  return async (url) => {
+    const basDd = url.match(/basDd=(\d{8})/)[1];
+    const close = 2000 + Number(basDd.slice(6, 8)); // 일자별로 다른 값(경계·정렬 검증용)
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        OutBlock_1: [{ IDX_NM: '코스피', CLSPRC_IDX: String(close) }],
+      }),
+    };
+  };
+}
+
+test('fetchIndexCloseSeriesInRange: 요청구간 경계 정확 + 과거→현재 오름차순', async () => {
+  // 2026-08-17(월)~08-19(수) — mock은 훨씬 이전 날짜까지도 항상 데이터를 주므로
+  // estTradingDays 여유분으로 startDate 이전까지 스캔됐다가 필터링되는지 확인.
+  const series = await fetchIndexCloseSeriesInRange('KOSPI', '코스피', '2026-08-17', '2026-08-19', {
+    apiKey: 'K', fetchImpl: mockIndexFetchImpl(), delayMs: 0, emptyRetryDelayMs: 0,
+  });
+  assert.deepEqual(series.map((r) => r.date), ['2026-08-17', '2026-08-18', '2026-08-19']);
+  assert.deepEqual(series.map((r) => r.close), [2017, 2018, 2019]);
+});
+
+test('fetchIndexCloseSeriesInRange: 지수명 정확매칭 + 빈 문자열(값없음) 스킵', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
+      OutBlock_1: [
+        { IDX_NM: '코스피 (외국주포함)', CLSPRC_IDX: '' },
+        { IDX_NM: '코스피', CLSPRC_IDX: '2500.55' },
+        { IDX_NM: '코스피 200', CLSPRC_IDX: '350.10' },
+      ],
+    }),
+  });
+  const series = await fetchIndexCloseSeriesInRange('KOSPI', '코스피', '2026-08-19', '2026-08-19', {
+    apiKey: 'K', fetchImpl, delayMs: 0, emptyRetryDelayMs: 0,
+  });
+  assert.deepEqual(series, [{ date: '2026-08-19', close: 2500.55 }]);
+});
+
+test('fetchIndexCloseSeriesInRange: startDate가 endDate보다 나중이면 즉시 에러(호출부 버그, 데이터소스 탓 아님)', async () => {
+  await assert.rejects(
+    () => fetchIndexCloseSeriesInRange('KOSPI', '코스피', '2025-12-31', '2025-01-01', { apiKey: 'K', fetchImpl: mockIndexFetchImpl() }),
+    /나중일 수 없음/,
+  );
+});
+
+test('fetchIndexCloseSeriesInRange: 날짜 형식이 YYYY-MM-DD가 아니면 즉시 에러', async () => {
+  await assert.rejects(
+    () => fetchIndexCloseSeriesInRange('KOSPI', '코스피', '2025/01/01', '2025-01-31', { apiKey: 'K', fetchImpl: mockIndexFetchImpl() }),
+    /YYYY-MM-DD/,
+  );
 });
 
 test('fetchEtfSeries: 종목명 정확매칭 + NAV·거래대금·추적지수 필드 파싱(2026-09-06 실측 필드명)', async () => {

@@ -141,7 +141,7 @@ async function main() {
   // 때 "그 이하 최근 거래일"이 하나도 없어 첫 구간이 비대칭적으로 빠질 수 있다(코드리뷰
   // 지적, 2026-08-08).
   const indexBufferStart = new Date(new Date(`${dates[0]}T00:00:00.000Z`).getTime() - 7 * 86400000).toISOString().slice(0, 10);
-  cacheIndexPrices('KOSPI', indexBufferStart, dates[dates.length - 1]);
+  await cacheIndexPrices('KOSPI', indexBufferStart, dates[dates.length - 1]);
   const kospiPrices = indexPricesAt('KOSPI', dates);
   const paired = [];
   for (let i = 1; i < dates.length; i++) {

@@ -12,7 +12,15 @@ export const SA_KEY_FILE = process.env.SA_KEY_FILE
 
 const AUTH_TIMEOUT_MS = 120_000;
 
+// ⚠️ 모듈스코프 1회성 가드(2026-09-15 신설) — krx.mjs의 fetchKrx가 매 호출(백필 1회당
+// 수천 건 가능)마다 이 함수를 자체호출하도록 바뀌면서(구조적 실패클래스 제거 목적),
+// 가드 없이는 호출마다 동기 readFileSync+전체라인 정규식이 반복돼 이벤트루프를 블록한다
+// (코드리뷰 지적) — 이미 로드됐으면 파일 I/O 자체를 스킵해 진짜 "저렴"하게 만든다.
+let envLoaded = false;
+
 export function loadEnv() {
+  if (envLoaded) return;
+  envLoaded = true;
   try {
     const txt = readFileSync(new URL('../../.env', import.meta.url), 'utf8');
     for (const line of txt.split('\n')) {

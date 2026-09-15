@@ -1,9 +1,24 @@
 // KRX Data Marketplace API 클라이언트 — 일별 배치 시세·기본정보 조회 전용(거래소 원천
 // 데이터, Naver 스크래핑·yfinance·FDR 근사치보다 정확 — docs/DATA-SOURCES.md 참고).
-// 인증: .env KRX_API_KEY(scripts/lib/auth.mjs loadEnv()로 로드 — DART_API_KEY와 동일 관례,
-// 호출측 진입점이 loadEnv()를 먼저 불러야 process.env에 채워진다).
+// 인증: .env KRX_API_KEY(scripts/lib/auth.mjs loadEnv()로 로드).
+import { loadEnv } from './auth.mjs';
+import { fetchRetry } from './fetch-retry.mjs';
 
 const BASE_URL = 'https://data-dbg.krx.co.kr/svc/apis';
+const REQUEST_TIMEOUT_MS = 15_000;
+
+// 재시도+타임아웃 기본 fetchImpl(2026-09-15 신설) — 이 파일 자신이 164~170행에 적어둔
+// 대로 "KRX 서버가 긴 연속 호출 도중 연결을 끊는 사례"가 실측 확인돼 있는데,
+// fetchIndexCloseSeriesInRange 신설로 한 번의 백필이 수천 건 순차호출을 낼 수 있게 되면서
+// (코드리뷰 지적) 이 노출이 커졌다. fetchRetry(429/5xx+네트워크오류 지수백오프 재시도)를
+// 기본값으로 채택 + 매 시도마다 독립된 15초 타임아웃(AbortSignal.timeout, 재시도 전체가
+// 아니라 시도 1회당 — 재시도할수록 예산이 눌리지 않게). 테스트는 fetchImpl을 직접
+// 주입하므로 영향 없음.
+async function defaultFetchImpl(url, opts) {
+  return fetchRetry(url, opts, {
+    fetchImpl: (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }),
+  });
+}
 // ⚠️ "-dbg"가 붙어있지만 실제 운영 호스트다(2026-08-19 KRX 개발명세서 PDF로 확정 —
 // data.krx.co.kr·openapi.krx.co.kr 등 다른 후보는 전부 404, curl 실측). 비거래일(주말·
 // 공휴일·데이터 미발행 당일)은 에러가 아니라 {"OutBlock_1":[]} 빈 배열로 온다(실측 확인,
@@ -11,10 +26,23 @@ const BASE_URL = 'https://data-dbg.krx.co.kr/svc/apis';
 
 // 단건 조회 — category(예: 'sto'|'idx'|'etp'|'gen') + API_ID(예: 'stk_bydd_trd') +
 // params(예: {basDd:'20260818'}) → OutBlock_1 배열. 인증키 없으면 즉시 실패(추정 안 함).
-export async function fetchKrx(category, apiId, params, { apiKey = process.env.KRX_API_KEY, fetchImpl = fetch } = {}) {
-  if (!apiKey) throw new Error('KRX_API_KEY 미설정');
+//
+// ⚠️ loadEnv() 자체 호출(2026-09-15 신설) — 원래는 "호출측 진입점이 loadEnv()를
+// 먼저 불러야 한다"는 관례였는데(update-holdings-prices.mjs가 이 관례를 지킨 예),
+// index-price-cache.mjs를 KRX API로 마이그레이션하면서 그 관례를 몰랐던(또는
+// 안 지켜도 되던 FDR 시절 그대로 남아있던) 새 호출측 5~6곳이 전부 즉시 크래시했다
+// (daily-breakout-signal-scan.mjs 등, KRX_API_KEY가 필요해진 줄도 모르고 있었음).
+// loadEnv()는 idempotent+저렴(auth.mjs의 모듈스코프 가드로 두 번째 호출부터는 파일
+// I/O 자체를 스킵 — 2026-09-15 코드리뷰 지적으로 실제로 그렇게 만듦, 이전엔 매
+// 호출마다 동기 readFileSync가 반복돼 대량호출 시 이벤트루프 블록 우려가 있었다)라,
+// 매번 호출측이 기억해야 하는 대신 이 함수 자신이 보장하는 쪽으로 바꿔 이 실패
+// 클래스를 구조적으로 없앤다.
+export async function fetchKrx(category, apiId, params, { apiKey, fetchImpl = defaultFetchImpl } = {}) {
+  if (!apiKey) loadEnv();
+  const key = apiKey ?? process.env.KRX_API_KEY;
+  if (!key) throw new Error('KRX_API_KEY 미설정');
   const q = new URLSearchParams(params);
-  const res = await fetchImpl(`${BASE_URL}/${category}/${apiId}?${q}`, { headers: { AUTH_KEY: apiKey } });
+  const res = await fetchImpl(`${BASE_URL}/${category}/${apiId}?${q}`, { headers: { AUTH_KEY: key } });
   const text = await res.text();
   let json;
   try { json = JSON.parse(text); } catch { throw new Error(`KRX API 응답 파싱 실패(${category}/${apiId}): ${text.slice(0, 200)}`); }
@@ -110,6 +138,44 @@ export async function fetchIndexCloses(market, indexNm, days, opts = {}) {
     if (Number.isFinite(v)) closes.push(v);
   }
   return closes;
+}
+
+// startDate~endDate("YYYY-MM-DD") 사이 지수 종가 시계열(날짜+값 쌍)을 정확한 구간으로
+// 뽑는다 — fetchIndexCloses는 "오늘 기준 최근 N거래일"만 지원해 장기 백테스트 벤치마크
+// (임의 과거 구간)엔 못 쓴다(2026-09-15 신설, index-price-cache.mjs가 FinanceDataReader
+// 의존을 KRX 공식 API로 교체하며 필요해짐 — docs/DATA-SOURCES.md §5는 이 대체를
+// "미실행 후보"로만 올려뒀었다, "전환 완료"가 아니었음. 이 마이그레이션은 그 후보를
+// 실제로 실행에 옮긴 것 + FDR 값 자체는 KRX와 독립대조해 동일함을 확인, 정확도
+// 문제가 아니라 소스 일관성/지연이슈 제거 목적. docs/DATA-SOURCES.md §4에 반영).
+// 날짜 문자열을 정오(T12:00:00) 기준으로 Date 파싱 — 자정 기준으로 하면 시스템
+// 타임존이 UTC보다 뒤일 때 하루 밀려 요일판정이 틀어질 수 있어(assertDateStrings류
+// 함정과 동일 클래스) 정오로 여유를 둔다.
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export async function fetchIndexCloseSeriesInRange(market, indexNm, startDate, endDate, opts = {}) {
+  if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate)) {
+    throw new Error(`fetchIndexCloseSeriesInRange: startDate/endDate는 "YYYY-MM-DD" 형식이어야 함(받은 값: ${JSON.stringify(startDate)}, ${JSON.stringify(endDate)})`);
+  }
+  if (startDate > endDate) {
+    throw new Error(`fetchIndexCloseSeriesInRange: startDate(${startDate})가 endDate(${endDate})보다 나중일 수 없음`);
+  }
+  const start = new Date(`${startDate}T12:00:00`);
+  const end = new Date(`${endDate}T12:00:00`);
+  const calendarDays = Math.max(1, Math.round((end - start) / 86400000)) + 1;
+  const estTradingDays = Math.ceil((calendarDays * 5) / 7) + 15; // 공휴일 여유
+  const raw = await fetchTradingDaySeries((basDd) => fetchIndexDaily(market, basDd, opts), estTradingDays, {
+    ...opts, startDate: end, maxScanDays: calendarDays + 30,
+  });
+  const out = [];
+  for (const { basDd, rows } of raw) {
+    const date = `${basDd.slice(0, 4)}-${basDd.slice(4, 6)}-${basDd.slice(6, 8)}`;
+    if (date < startDate) continue; // estTradingDays가 넉넉해 startDate보다 이전 것도 섞여 들어올 수 있음
+    const row = rows.find((r) => r.IDX_NM === indexNm);
+    if (!row || String(row.CLSPRC_IDX ?? '').trim() === '') continue;
+    const close = Number(row.CLSPRC_IDX);
+    if (Number.isFinite(close)) out.push({ date, close });
+  }
+  return out;
 }
 
 const numOrNull = (v) => (String(v ?? '').trim() === '' ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
