@@ -9,6 +9,7 @@
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2023-01-01 --to=2025-01-01 --initialCapital=40000000
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-12 --useBettingUnits=true  # 점진적 배팅(유닛) 사이징 비교(2026-09-14)
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-14 --rsMethod=short  # RS 다구간 방법론 비교(2026-09-15, 아래 RS_METHOD_PERIODS 참고)
+//   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-14 --rsAnchorSmoothDays=5  # RS 앵커 스무딩 비교(2026-09-15, 오너 재지적 — 다구간 블렌드와는 다른 접근)
 import { buildCandidatePool } from '../lib/historical-universe.mjs';
 import { loadPriceSeriesBatch } from '../lib/breakout-price-series.mjs';
 import { cacheIndexPrices, loadIndexSeries } from '../lib/index-price-cache.mjs';
@@ -67,6 +68,22 @@ async function main() {
     throw new Error(`--rsMethod는 ${RS_METHODS.join('|')}만 허용(받은 값: "${rsMethod}")`);
   }
   const rsPeriods = RS_METHOD_PERIODS[rsMethod];
+  // RS 앵커 스무딩 비교용(2026-09-15, 오너 재지적 — "60일 전 단일시점 대신 5일
+  // 정도 롤링평균이 어떤지" — 위 rsMethod(다구간 블렌드, 서로 다른 길이의 구간을
+  // 섞음)와는 다른 접근으로, 구간 길이(60일)는 그대로 두고 비교 기준점 한 곳만
+  // 그 날짜 근처 며칠 평균으로 대체한다). rsMethod가 baseline이 아닐 때 같이
+  // 넘기면 breakout-factor.mjs의 computeBreakoutEntrySignal이 rsPeriods를 우선
+  // 적용해 이 값이 조용히 무시되므로(no-silent-fallback 원칙 위반) 즉시 throw.
+  let rsAnchorSmoothDays;
+  if (args.rsAnchorSmoothDays != null) {
+    rsAnchorSmoothDays = Number(args.rsAnchorSmoothDays);
+    if (!Number.isInteger(rsAnchorSmoothDays) || rsAnchorSmoothDays < 1) {
+      throw new Error(`--rsAnchorSmoothDays는 1 이상의 정수여야 함(받은 값: "${args.rsAnchorSmoothDays}")`);
+    }
+    if (rsMethod !== 'baseline') {
+      throw new Error(`--rsAnchorSmoothDays는 --rsMethod=baseline(또는 미지정)과만 같이 쓸 수 있음 — rsPeriods가 우선 적용돼 조용히 무시되는 조합은 금지(받은 rsMethod: "${rsMethod}")`);
+    }
+  }
   // 2026-09-14 점진적 배팅(유닛) 사이징 비교용 — breakout-unit-tracker.mjs. 오타·오입력이
   // 조용히 false로 처리되지 않도록(2026-09-14 코드리뷰 지적) true/false 외 값은 즉시 throw.
   if (args.useBettingUnits != null && args.useBettingUnits !== 'true' && args.useBettingUnits !== 'false') {
@@ -113,10 +130,17 @@ async function main() {
   // fromDate보다 앞선 이력을 포함하므로(단, --from을 캐시 최초일자보다 이르게 주면
   // 그 구간만큼은 물리적 워밍업 한계 — 실제 데이터가 없어 못 채움) 워밍업으로 쓰인다.
   // tradingDates(시뮬레이션 창 정의)는 그대로 fromDate~toDate로 트리밍된 값.
-  console.error(`[4/4] 일별 시뮬레이션 실행 중(진입: 52주신고가+변동성확장(${consolidationMethod})+RS(${rsMethod})+시총${(marketCapFloor / 1e12).toFixed(1)}조원, 청산: -8%+R배수트레일링+3R부분익절)...`);
+  // rsAnchorSmoothDays=1은 수학적으로 baseline과 완전 동일(no-op) — 별개 조건처럼
+  // 라벨링되면 오독 소지가 있어(2026-09-15 코드리뷰 LOW 지적) 그 경우만 명시.
+  const rsLabel = rsAnchorSmoothDays == null
+    ? rsMethod
+    : rsAnchorSmoothDays === 1
+      ? `${rsMethod}+앵커1일평균(=baseline과 동일)`
+      : `${rsMethod}+앵커${rsAnchorSmoothDays}일평균`;
+  console.error(`[4/4] 일별 시뮬레이션 실행 중(진입: 52주신고가+변동성확장(${consolidationMethod})+RS(${rsLabel})+시총${(marketCapFloor / 1e12).toFixed(1)}조원, 청산: -8%+R배수트레일링+3R부분익절)...`);
   const result = runBreakoutBacktest({
     pool, seriesByCode, benchmarkSeries: fullBenchmark, tradingDates, initialCapital,
-    marketCapFloor, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming, useBettingUnits, rsPeriods,
+    marketCapFloor, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming, useBettingUnits, rsPeriods, rsAnchorSmoothDays,
   });
   console.error(`  거래 ${result.trades.length}건, 최종 현금 ${Math.round(result.finalCapital).toLocaleString()}원(시가 데이터 없어 예약체결 스킵 ${result.skippedNoOpenPrice}건)`);
 
@@ -150,6 +174,7 @@ async function main() {
       initialCapital, marketCapFloor, liquidityFloor: LIQUIDITY_FLOOR_WON, riskPerTradePct: RISK_PER_TRADE_PCT,
       consolidationMethod, entryTiming, useBettingUnits, rsMethod,
       rsPeriods: rsPeriods ?? null, // rsMethod 정의(RS_METHOD_PERIODS)가 나중에 바뀌어도 이 결과가 어떤 파라미터였는지 재현 가능하도록 같이 기록(2026-09-15 코드리뷰 LOW 지적)
+      rsAnchorSmoothDays: rsAnchorSmoothDays ?? null,
     },
     tradeStats: {
       totalTrades: closedTrades.length,

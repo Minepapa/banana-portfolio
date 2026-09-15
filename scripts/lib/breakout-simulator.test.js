@@ -159,6 +159,16 @@ test('runBreakoutBacktest: 신호(종가)→다음날 시가 진입→트레일�
     rsPeriods: [{ days: RS_LOOKBACK_DAYS, weight: 1 }],
   });
   assert.deepEqual(resultViaPeriods.trades, result.trades);
+
+  // rsAnchorSmoothDays 배선 검증(2026-09-15, 오너 재지적 — "5일 롤링평균 앵커"
+  // 비교용 신설) — anchorSmoothDays=1(기본값과 동치)로 명시 지정해도 완전히 같은
+  // 결과가 나와야 배선이 올바른 것.
+  const resultViaAnchorSmooth1 = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    rsAnchorSmoothDays: 1,
+  });
+  assert.deepEqual(resultViaAnchorSmooth1.trades, result.trades);
 });
 
 test('runBreakoutBacktest: 3R 도달 시 50% 부분익절 거래가 별도로 기록되고, 나머지 50%는 계속 트레일링 후 청산', () => {

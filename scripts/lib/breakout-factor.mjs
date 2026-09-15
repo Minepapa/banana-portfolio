@@ -159,6 +159,50 @@ export function computeRelativeStrength(stockCloses, benchmarkCloses, lookbackDa
   return (stockReturn - benchReturn) * 100;
 }
 
+// 상대강도(RS) — 앵커 스무딩 버전(2026-09-15, 오너 재지적 대응). 아래
+// computeRelativeStrengthMultiPeriod("여러 다른 기간을 섞는다")와는 다른 접근 —
+// 그 방식은 60일·126일·252일처럼 서로 다른 "길이의 구간"을 섞어 정상적으로 평가한
+// 결과 이 전략에서는 오히려 성과를 깎는 것으로 실측됨(2026-09-15 백테스트,
+// Log/Implementation 참고). 이건 구간 길이(lookbackDays=60)는 그대로 두고, 대신
+// 비교 기준점 한 곳("60거래일 전 그 하루")만 그 날 근처 며칠의 **평균**으로
+// 대체한다 — "60거래일 전이라는 시점 자체가 하필 급등/급락일이면 지표가
+// 흔들린다"는 오너의 원래 우려에 더 직접적으로 대응(다구간 블렌드는 서로 다른
+// 모멘텀 시간축을 섞어버려 원래 취지에서 벗어났었다는 반성).
+//
+// ⚠️ 윈도우를 앵커일 **중심으로 대칭 배치**한다(2026-09-15 코드리뷰 HIGH 지적으로
+// 수정 — 최초 버전은 앵커일부터 과거 쪽으로만 뻗는 후행 윈도우였는데, 이러면
+// 기준점의 무게중심이 lookbackDays+(anchorSmoothDays-1)/2로 밀려서 "스무딩 효과"와
+// "룩백을 며칠 늘린 효과"가 뒤섞인다 — 실측: anchorSmoothDays=5는 lookbackDays를
+// 62일로 늘린 것과 소수점 셋째 자리까지 거의 동일한 값을 냈다. 이 전략의 후보군이
+// 상승추세만 남도록 구성돼 있어(52주 신고가+당일 급등) 이 오염이 RS를 체계적으로
+// 부풀리는 방향 편향까지 만든다. 중심정렬이면 대칭이라 이 편향이 없다(홀수
+// anchorSmoothDays는 정확히 무게중심=lookbackDays, 짝수는 0.5일 이내 오차 —
+// 무시 가능). 앵커일보다 미래(=오늘) 데이터는 여전히 안 쓴다 — 다만 이건 "룩어헤드
+// 금지"(미확정 데이터 참조 금지) 때문이 아니라(중심정렬 창의 더 최근 쪽 절반도
+// 전부 신호계산 시점에 이미 확정된 과거 데이터라 룩어헤드가 아님) 단순히 "오늘
+// 자신을 기준점 계산에 넣지 않는다"는 설계 선택이다(이전 버전 주석의 근거 서술이
+// 부정확했음, 코드리뷰 MEDIUM 지적).
+export function computeRelativeStrengthSmoothedAnchor(stockCloses, benchmarkCloses, lookbackDays, anchorSmoothDays = 1) {
+  if (!Number.isInteger(anchorSmoothDays) || anchorSmoothDays < 1) {
+    throw new Error(`computeRelativeStrengthSmoothedAnchor: anchorSmoothDays는 1 이상의 정수여야 함(받은 값: ${anchorSmoothDays})`);
+  }
+  const half = Math.floor((anchorSmoothDays - 1) / 2); // 짝수 anchorSmoothDays는 과거 쪽에 한 칸 더(오늘 쪽으로 안 치우치게)
+  const anchorMean = (closes) => {
+    const anchorIdx = closes.length - 1 - lookbackDays; // 기존 단일시점 앵커와 동일 인덱스
+    const start = anchorIdx - half;
+    const end = start + anchorSmoothDays; // slice 상한(배타적)
+    if (start < 0 || end > closes.length - 1) return null; // end<=length-1 → 마지막 포함 인덱스가 "오늘" 전날 이하
+    const window = closes.slice(start, end);
+    return window.some((c) => c == null) ? null : mean(window);
+  };
+  const stockBase = anchorMean(stockCloses);
+  const benchBase = anchorMean(benchmarkCloses);
+  if (!(stockBase > 0) || !(benchBase > 0)) return null;
+  const stockReturn = stockCloses[stockCloses.length - 1] / stockBase - 1;
+  const benchReturn = benchmarkCloses[benchmarkCloses.length - 1] / benchBase - 1;
+  return (stockReturn - benchReturn) * 100;
+}
+
 // 상대강도(RS) — 다구간 가중평균 버전(2026-09-15, 오너 지적 대응). 단일 시점(예:
 // "정확히 60거래일 전") 비교는 그 하루가 우연히 급등/급락한 날이면 지표 전체가
 // 흔들리는 약점이 있다(단일 앵커 취약성) — IBD RS Rating의 취지(최근 분기 비중을
@@ -204,6 +248,24 @@ export function passesMarketCapFloor(marcap, floorWon = MARKET_CAP_FLOOR_WON) {
   return marcap != null && marcap >= floorWon;
 }
 
+// RS 계산 경로 선택 — opts.rsPeriods(다구간 블렌드) > opts.rsAnchorSmoothDays(앵커
+// 스무딩) > 기본(단일시점). 둘 다 opts 미지정(null/undefined) 시 기존과 완전
+// 동일(하위호환, 기존 호출측/테스트 회귀 없음) — computeBreakoutEntrySignal에서
+// 분리(2026-09-15 코드리뷰 LOW 지적 — 3중 중첩 삼항이라 우선순위가 코드가 아니라
+// 주석에만 있었음, RS 방법론이 더 늘어날 걸 대비해 헬퍼로 승격). rsPeriods와
+// rsAnchorSmoothDays를 동시에 넘기는 조합은 아직 지원 안 함(rsPeriods 우선).
+// ⚠️ `!= null`(truthy 아님) 체크 — 2026-09-15 코드리뷰 MEDIUM 지적: truthy 체크였으면
+// rsAnchorSmoothDays=0이나 NaN이 falsy라 조용히 기본 경로로 흡수돼(feedback-no-silent-
+// fallback 위반) 호출측 설정 오류가 "baseline과 결과 같네"로만 보이고 원인불명이었다.
+// `!= null`로 넘기면 computeRelativeStrengthSmoothedAnchor 자신의 정수·1이상 검증이
+// throw하므로 설정 오류가 즉시 드러난다.
+function resolveRelativeStrength(closes, benchmarkCloses, opts) {
+  if (opts.rsPeriods != null) return computeRelativeStrengthMultiPeriod(closes, benchmarkCloses, opts.rsPeriods);
+  const lookbackDays = opts.rsLookbackDays ?? RS_LOOKBACK_DAYS;
+  if (opts.rsAnchorSmoothDays != null) return computeRelativeStrengthSmoothedAnchor(closes, benchmarkCloses, lookbackDays, opts.rsAnchorSmoothDays);
+  return computeRelativeStrength(closes, benchmarkCloses, lookbackDays);
+}
+
 // 네 조건 종합 — 하나라도 데이터 부족/미충족이면 매수 신호 아님(폴백 없음).
 // candidate: { closes, highs, lows, benchmarkCloses, marcap }(closes/highs/lows는
 // 오름차순, 마지막이 오늘. lows는 consolidationMethod='range'일 때만 필요).
@@ -214,11 +276,7 @@ export function computeBreakoutEntrySignal(candidate, opts = {}) {
   const volatility = opts.consolidationMethod === 'range'
     ? isPriceRangeConsolidationBreakout(candidate.closes, candidate.highs, candidate.lows, opts.volatility)
     : isVolatilityExpansionBreakout(candidate.closes, opts.volatility);
-  // opts.rsPeriods가 있으면 다구간 가중평균(신규 비교용), 없으면 기존 단일시점(기본값
-  // 유지 — 하위호환, 기존 호출측/테스트 회귀 없음).
-  const relativeStrength = opts.rsPeriods
-    ? computeRelativeStrengthMultiPeriod(candidate.closes, candidate.benchmarkCloses, opts.rsPeriods)
-    : computeRelativeStrength(candidate.closes, candidate.benchmarkCloses, opts.rsLookbackDays ?? RS_LOOKBACK_DAYS);
+  const relativeStrength = resolveRelativeStrength(candidate.closes, candidate.benchmarkCloses, opts);
   const marketCapOk = passesMarketCapFloor(candidate.marcap, opts.marketCapFloor);
   const pass = week52.pass && volatility.pass && passesRelativeStrengthFilter(relativeStrength) && marketCapOk;
   return { pass, week52, volatility, relativeStrength, marketCapOk };

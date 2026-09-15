@@ -127,6 +127,7 @@ export function runBreakoutBacktest({
   marketCapFloor, riskPerTradePct, maxConcurrentPositions = MAX_CONCURRENT_POSITIONS,
   consolidationMethod = 'stddev', volatilityOpts,
   rsPeriods, // 2026-09-15 RS 다구간 비교용 — 지정 안 하면 기존 RS_LOOKBACK_DAYS 단일시점 그대로(회귀 없음)
+  rsAnchorSmoothDays, // 2026-09-15 RS 앵커 스무딩 비교용 — 지정 안 하면 기존과 동일(회귀 없음), rsPeriods와 동시지정 시 rsPeriods 우선(breakout-factor.mjs computeBreakoutEntrySignal 참고)
   entryTiming = 'nextDayOpen', // 'nextDayOpen'(기존, 실현가능 지연체결) | 'sameDayClose'(장후시간외 우선체결 가정 — 2026-09-13 오너 요청, 아래 3)단계 참고)
   useBettingUnits = false, // 점진적 배팅(유닛) 사이징 — 오너 지시, 2026-09-14(breakout-unit-tracker.mjs 참고). false(기존 기본값)면 항상 Max2%룰 최대한도로 진입(기존 동작 그대로, 회귀 없음). 2026-09-14 코드리뷰 지적으로 bettingUnits(불리언 플래그)에서 개명 — 같은 파일 안의 currentBettingUnits(개수)와 타입이 헷갈리는 걸 방지.
   initialBettingUnits = MIN_BETTING_UNITS, // 유닛 카운터 시작값 — 백테스트는 기본 1(영상 예시)이지만, 실전(Kairos) State에서 이어받을 카운터를 주입할 통로로 남겨둠(모듈 헤더의 "상태 영속은 호출측 책임" 계약과 일치, 2026-09-14 코드리뷰 지적).
@@ -260,7 +261,7 @@ export function runBreakoutBacktest({
         const lows = series.lows.slice(0, cand.idx + 1);
         const signal = computeBreakoutEntrySignal(
           { closes, highs, lows, benchmarkCloses, marcap: cand.marcap },
-          { rsLookbackDays: RS_LOOKBACK_DAYS, rsPeriods, week52High: { lookbackDays: HIGH_LOOKBACK_DAYS }, marketCapFloor, consolidationMethod, volatility: volatilityOpts },
+          { rsLookbackDays: RS_LOOKBACK_DAYS, rsPeriods, rsAnchorSmoothDays, week52High: { lookbackDays: HIGH_LOOKBACK_DAYS }, marketCapFloor, consolidationMethod, volatility: volatilityOpts },
         );
         if (!signal.pass) continue;
         todaySignals.push({ code: cand.code, relativeStrength: signal.relativeStrength, closePrice: series.closes[cand.idx] });

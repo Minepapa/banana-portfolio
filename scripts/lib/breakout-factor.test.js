@@ -8,6 +8,7 @@ import {
   isPriceRangeConsolidationBreakout,
   is52WeekHighBreakout,
   computeRelativeStrength,
+  computeRelativeStrengthSmoothedAnchor,
   computeRelativeStrengthMultiPeriod,
   passesRelativeStrengthFilter,
   passesMarketCapFloor,
@@ -215,6 +216,83 @@ test('computeRelativeStrength: 데이터 부족이면 null', () => {
   assert.equal(computeRelativeStrength([100], [100], 5), null);
 });
 
+test('computeRelativeStrengthSmoothedAnchor: anchorSmoothDays=1(기본값)이면 computeRelativeStrength와 정확히 동일(하위호환)', () => {
+  const stock = [100, 90, 95, 100, 110, 120]; // 임의 시리즈
+  const bench = [100, 100, 100, 100, 100, 105];
+  const single = computeRelativeStrength(stock, bench, 3);
+  assert.notEqual(single, null);
+  const smoothed = computeRelativeStrengthSmoothedAnchor(stock, bench, 3, 1);
+  assert.equal(smoothed, single);
+  // anchorSmoothDays 생략 시에도 동일(기본값 1)
+  assert.equal(computeRelativeStrengthSmoothedAnchor(stock, bench, 3), single);
+});
+
+test('computeRelativeStrengthSmoothedAnchor: anchorSmoothDays=N이면 앵커일을 중심으로 대칭 윈도우 평균을 기준점으로 씀(2026-09-15 코드리뷰 HIGH 지적 반영 — 후행 아님)', () => {
+  // closes.length=6, lookbackDays=2 → 앵커일 인덱스 = 6-1-2 = 3(값 999).
+  // anchorSmoothDays=3 → half=floor((3-1)/2)=1 → start=3-1=2, end=2+3=5 →
+  // 인덱스[2,3,4]=[30,999,100] 3일 평균이 기준점(앵커일 중심 대칭, 오늘(인덱스5)은 제외).
+  const stock = [10, 20, 30, 999, 100, 200]; // 인덱스3(=999)이 앵커일, 인덱스5(=200)가 오늘
+  const bench = [100, 100, 100, 100, 100, 100]; // 벤치마크 고정 → RS=종목 수익률만
+  const expectedAnchor = (30 + 999 + 100) / 3;
+  const expectedStockReturn = (stock[5] / expectedAnchor - 1) * 100;
+  const actual = computeRelativeStrengthSmoothedAnchor(stock, bench, 2, 3);
+  assert.ok(Math.abs(actual - expectedStockReturn) < 1e-9);
+});
+
+test('computeRelativeStrengthSmoothedAnchor: 벤치마크 쪽도 동일하게 스무딩됨(2026-09-15 코드리뷰 MEDIUM 지적 — 평탄 벤치마크만 쓰면 이 부분이 무방비였음)', () => {
+  const stock = [500, 500, 500, 500, 500, 500]; // 종목은 안 움직임 → RS = -벤치마크수익률
+  const bench = [10, 20, 30, 999, 100, 200]; // 인덱스3(=999)이 앵커일
+  const stockAnchor = 500; // 종목 쪽 window는 전부 500이라 평균도 500
+  const benchAnchor = (30 + 999 + 100) / 3;
+  const expected = ((stock[5] / stockAnchor - 1) - (bench[5] / benchAnchor - 1)) * 100;
+  const actual = computeRelativeStrengthSmoothedAnchor(stock, bench, 2, 3);
+  assert.ok(Math.abs(actual - expected) < 1e-9);
+});
+
+test('computeRelativeStrengthSmoothedAnchor: 스무딩 구간에 결측(null)이 섞이면 null(부분평균 안 함)', () => {
+  // lookbackDays=2, anchorSmoothDays=3 → 윈도우는 인덱스[2,3,4](위 테스트와 동일 산출) — 그 안에 null 배치.
+  const stock = [10, 20, null, 40, 50, 60];
+  const bench = [100, 100, 100, 100, 100, 100];
+  assert.equal(computeRelativeStrengthSmoothedAnchor(stock, bench, 2, 3), null);
+});
+
+test('computeRelativeStrengthSmoothedAnchor: 경계값 — 윈도우가 딱 맞으면 계산됨, 하나 모자라면 null(2026-09-15 코드리뷰 MEDIUM 지적 — 이전엔 이 경계가 62일이나 떨어진 테스트라 미고정이었음)', () => {
+  // lookbackDays=60, anchorSmoothDays=5 → half=2 → 필요한 최소 길이는
+  // start=anchorIdx-2>=0이 성립하는 길이. anchorIdx=len-1-60이므로 len>=63이면 start=0.
+  const lookbackDays = 60;
+  const anchorSmoothDays = 5;
+  const buildCloses = (n) => Array.from({ length: n }, (_, i) => 100 + i);
+  const minimal = buildCloses(63); // start = 63-1-60-2 = 0(경계 정확히 충족)
+  assert.notEqual(computeRelativeStrengthSmoothedAnchor(minimal, minimal, lookbackDays, anchorSmoothDays), null);
+  const tooShort = buildCloses(62); // start = -1(범위 밖)
+  assert.equal(computeRelativeStrengthSmoothedAnchor(tooShort, tooShort, lookbackDays, anchorSmoothDays), null);
+});
+
+test('computeRelativeStrengthSmoothedAnchor: 데이터 부족(lookbackDays+anchorSmoothDays 미달)이면 null', () => {
+  assert.equal(computeRelativeStrengthSmoothedAnchor([100, 101, 102], [100, 101, 102], 60, 5), null);
+});
+
+test('computeRelativeStrengthSmoothedAnchor: anchorSmoothDays가 1 미만/정수 아니면 throw(설정 오류, 데이터부족 null과 구분)', () => {
+  assert.throws(() => computeRelativeStrengthSmoothedAnchor([100, 101], [100, 101], 1, 0), /anchorSmoothDays는 1 이상의 정수/);
+  assert.throws(() => computeRelativeStrengthSmoothedAnchor([100, 101], [100, 101], 1, 2.5), /anchorSmoothDays는 1 이상의 정수/);
+});
+
+test('computeRelativeStrengthSmoothedAnchor: 무게중심이 앵커일(lookbackDays 지점)에 정확히 있음(홀수 anchorSmoothDays — 룩백 길이 이동 없음 검증, 2026-09-15 코드리뷰 HIGH 재발방지)', () => {
+  // 완만한 추세(일 +0.1%)에서 anchorSmoothDays=5(대칭) 결과가 순수 단일시점
+  // lookbackDays와 lookbackDays+2(대칭폭 절반만큼 이동한 값)의 "중간"에 가까운지
+  // 확인 — 대칭이면 정확히 lookbackDays 지점의 단일시점 값과 사실상 같아야 한다
+  // (추세가 선형에 가까우면 대칭평균≈중앙값). 후행(대칭 아님) 버전이었다면
+  // lookbackDays+2 쪽에 훨씬 가까웠을 것(코드리뷰가 실측한 실패 모드).
+  const closes = [1000];
+  for (let i = 0; i < 200; i++) closes.push(closes[closes.length - 1] * 1.001);
+  const bench = new Array(closes.length).fill(1000);
+  const singleAt60 = computeRelativeStrength(closes, bench, 60);
+  const singleAt62 = computeRelativeStrength(closes, bench, 62); // 후행 버전이었다면 이 값에 근접했을 것
+  const smoothed5 = computeRelativeStrengthSmoothedAnchor(closes, bench, 60, 5);
+  assert.ok(Math.abs(smoothed5 - singleAt60) < Math.abs(smoothed5 - singleAt62),
+    `대칭 윈도우라면 lookbackDays=60 단일시점에 더 가까워야 함(60과의 거리 ${Math.abs(smoothed5 - singleAt60)}, 62와의 거리 ${Math.abs(smoothed5 - singleAt62)})`);
+});
+
 test('computeRelativeStrengthMultiPeriod: 단일 구간(weight 1개)은 computeRelativeStrength와 정확히 동일(하위호환)', () => {
   const stock = [100, 110, 120];
   const bench = [100, 100, 105];
@@ -316,6 +394,36 @@ test('computeBreakoutEntrySignal: rsPeriods 단일구간([{days:N,weight:1}])은
   const viaPeriods = computeBreakoutEntrySignal(candidate, { rsPeriods: [{ days: 5, weight: 1 }] });
   assert.equal(viaPeriods.relativeStrength, viaLookback.relativeStrength);
   assert.equal(viaPeriods.pass, viaLookback.pass);
+});
+
+test('computeBreakoutEntrySignal: rsAnchorSmoothDays=1은 rsLookbackDays:N과 결과 완전 동일(하위호환 — 회귀 가드)', () => {
+  const candidate = buildEntrySignalCandidate();
+  const viaLookback = computeBreakoutEntrySignal(candidate, { rsLookbackDays: 5 });
+  const viaSmoothed = computeBreakoutEntrySignal(candidate, { rsLookbackDays: 5, rsAnchorSmoothDays: 1 });
+  assert.equal(viaSmoothed.relativeStrength, viaLookback.relativeStrength);
+  assert.equal(viaSmoothed.pass, viaLookback.pass);
+});
+
+test('computeBreakoutEntrySignal: rsAnchorSmoothDays>1이면 rsPeriods 미지정 시에도 단일시점과 다른 값을 냄(실제로 경로를 탐)', () => {
+  const candidate = buildEntrySignalCandidate();
+  const viaLookback = computeBreakoutEntrySignal(candidate, { rsLookbackDays: 5 });
+  const viaSmoothed = computeBreakoutEntrySignal(candidate, { rsLookbackDays: 5, rsAnchorSmoothDays: 5 });
+  assert.notEqual(viaSmoothed.relativeStrength, null);
+  assert.notEqual(viaLookback.relativeStrength, null);
+  assert.notEqual(viaSmoothed.relativeStrength, viaLookback.relativeStrength);
+});
+
+test('computeBreakoutEntrySignal: rsPeriods와 rsAnchorSmoothDays가 동시에 있으면 rsPeriods가 우선(rsAnchorSmoothDays 무시)', () => {
+  const candidate = buildEntrySignalCandidate();
+  const viaPeriodsOnly = computeBreakoutEntrySignal(candidate, { rsPeriods: [{ days: 5, weight: 1 }] });
+  const viaBoth = computeBreakoutEntrySignal(candidate, { rsPeriods: [{ days: 5, weight: 1 }], rsAnchorSmoothDays: 5 });
+  assert.equal(viaBoth.relativeStrength, viaPeriodsOnly.relativeStrength);
+});
+
+test('computeBreakoutEntrySignal: rsAnchorSmoothDays=0/NaN은 조용히 기본 경로로 흡수되지 않고 throw(2026-09-15 코드리뷰 MEDIUM 지적 — truthy 체크였으면 falsy값이 기본값으로 위장됐을 것)', () => {
+  const candidate = buildEntrySignalCandidate();
+  assert.throws(() => computeBreakoutEntrySignal(candidate, { rsAnchorSmoothDays: 0 }), /anchorSmoothDays는 1 이상의 정수/);
+  assert.throws(() => computeBreakoutEntrySignal(candidate, { rsAnchorSmoothDays: NaN }), /anchorSmoothDays는 1 이상의 정수/);
 });
 
 test('computeBreakoutEntrySignal: rsPeriods 미지정이면 rsLookbackDays 기본값(RS_LOOKBACK_DAYS=60) 경로 그대로(회귀 없음 고정)', () => {
