@@ -7,6 +7,7 @@ import {
   isPriceRangeConsolidationBreakout,
   is52WeekHighBreakout,
   computeRelativeStrength,
+  computeRelativeStrengthMultiPeriod,
   passesRelativeStrengthFilter,
   passesMarketCapFloor,
   computeBreakoutEntrySignal,
@@ -143,6 +144,69 @@ test('computeRelativeStrength: 데이터 부족이면 null', () => {
   assert.equal(computeRelativeStrength([100], [100], 5), null);
 });
 
+test('computeRelativeStrengthMultiPeriod: 단일 구간(weight 1개)은 computeRelativeStrength와 정확히 동일(하위호환)', () => {
+  const stock = [100, 110, 120];
+  const bench = [100, 100, 105];
+  const single = computeRelativeStrength(stock, bench, 2);
+  assert.ok(single != null, '전제: 단일구간 RS가 계산 가능해야 함(테스트 자체가 무의미해지지 않도록)');
+  const multi = computeRelativeStrengthMultiPeriod(stock, bench, [{ days: 2, weight: 1 }]);
+  assert.equal(multi, single); // weight=1/weightTotal=1이면 x*1/1===x가 부동소수점상 정확히 성립
+});
+
+test('computeRelativeStrengthMultiPeriod: 여러 구간 가중평균(weight 합≠1 정규화 포함)', () => {
+  const stock = [100, 110, 120];
+  const bench = [100, 100, 105];
+  const rs1 = computeRelativeStrength(stock, bench, 1);
+  const rs2 = computeRelativeStrength(stock, bench, 2);
+  assert.ok(rs1 != null && rs2 != null, '전제: 두 구간 모두 RS 계산 가능해야 함');
+  const expected = (rs1 * 2 + rs2 * 1) / 3; // weight 2:1(합 3, 정규화 경로를 실제로 탐)
+  const actual = computeRelativeStrengthMultiPeriod(stock, bench, [{ days: 1, weight: 2 }, { days: 2, weight: 1 }]);
+  assert.ok(Math.abs(actual - expected) < 1e-9);
+});
+
+test('computeRelativeStrengthMultiPeriod: 3개 이상 구간(실전 short/long arm과 동일 형태)도 가중평균', () => {
+  const stock = [90, 95, 100, 110, 120];
+  const bench = [100, 100, 100, 100, 105];
+  const rs1 = computeRelativeStrength(stock, bench, 1);
+  const rs2 = computeRelativeStrength(stock, bench, 2);
+  const rs3 = computeRelativeStrength(stock, bench, 3);
+  assert.ok(rs1 != null && rs2 != null && rs3 != null);
+  const expected = (rs1 * 0.4 + rs2 * 0.3 + rs3 * 0.3) / 1.0;
+  const actual = computeRelativeStrengthMultiPeriod(stock, bench, [
+    { days: 1, weight: 0.4 }, { days: 2, weight: 0.3 }, { days: 3, weight: 0.3 },
+  ]);
+  assert.ok(Math.abs(actual - expected) < 1e-9);
+});
+
+test('computeRelativeStrengthMultiPeriod: 구간별 부호가 반대(한쪽은 양수, 한쪽은 음수)여도 정확히 가중평균(상쇄) — 이 기능의 핵심 효과', () => {
+  // 종목이 1일 전엔 하락(-)했다가 2일 전 기준으론 상승(+)해 있는 합성 시나리오
+  const stock = [100, 120, 90]; // 2일전:100, 1일전:120, 오늘:90
+  const bench = [100, 100, 100]; // 벤치마크 고정 — RS = 종목수익률
+  const rs1 = computeRelativeStrength(stock, bench, 1); // (90/120-1)*100 = -25
+  const rs2 = computeRelativeStrength(stock, bench, 2); // (90/100-1)*100 = -10
+  assert.ok(rs1 < 0 && rs2 < 0); // 이 시나리오에선 둘 다 음수(부호 상쇄가 아니라 가중평균 자체를 검증)
+  const actual = computeRelativeStrengthMultiPeriod(stock, bench, [{ days: 1, weight: 1 }, { days: 2, weight: 1 }]);
+  assert.ok(Math.abs(actual - (rs1 + rs2) / 2) < 1e-9);
+});
+
+test('computeRelativeStrengthMultiPeriod: 구간 중 하나라도 데이터 부족이면 전체 null(부분 추정 안 함)', () => {
+  const stock = [100, 110, 120];
+  const bench = [100, 100, 105];
+  assert.equal(computeRelativeStrengthMultiPeriod(stock, bench, [{ days: 1, weight: 1 }, { days: 5, weight: 1 }]), null);
+});
+
+test('computeRelativeStrengthMultiPeriod: 빈 periods는 설정 오류 — throw(데이터부족 null과 구분)', () => {
+  assert.throws(() => computeRelativeStrengthMultiPeriod([100, 110], [100, 105], []), /비어있지 않은 배열/);
+});
+
+test('computeRelativeStrengthMultiPeriod: weight 누락·0·음수는 설정 오류 — throw(조용히 null로 위장하지 않음)', () => {
+  const stock = [100, 110];
+  const bench = [100, 105];
+  assert.throws(() => computeRelativeStrengthMultiPeriod(stock, bench, [{ days: 1 }]), /weight는 유한한 양수/);
+  assert.throws(() => computeRelativeStrengthMultiPeriod(stock, bench, [{ days: 1, weight: 0 }]), /weight는 유한한 양수/);
+  assert.throws(() => computeRelativeStrengthMultiPeriod(stock, bench, [{ days: 1, weight: -1 }, { days: 2, weight: 1 }]), /weight는 유한한 양수/);
+});
+
 test('passesRelativeStrengthFilter: 시장 RS 이상(0 이상)이면 통과', () => {
   assert.equal(passesRelativeStrengthFilter(0), true);
   assert.equal(passesRelativeStrengthFilter(5), true);
@@ -173,6 +237,21 @@ test('computeBreakoutEntrySignal: 네 조건 전부 충족해야 pass=true', () 
   assert.equal(result.volatility.pass, true);
   assert.equal(result.marketCapOk, true);
   assert.equal(result.pass, true);
+});
+
+test('computeBreakoutEntrySignal: rsPeriods 단일구간([{days:N,weight:1}])은 rsLookbackDays:N과 결과 완전 동일(분기 등가성 — 회귀 가드)', () => {
+  const candidate = buildEntrySignalCandidate();
+  const viaLookback = computeBreakoutEntrySignal(candidate, { rsLookbackDays: 5 });
+  const viaPeriods = computeBreakoutEntrySignal(candidate, { rsPeriods: [{ days: 5, weight: 1 }] });
+  assert.equal(viaPeriods.relativeStrength, viaLookback.relativeStrength);
+  assert.equal(viaPeriods.pass, viaLookback.pass);
+});
+
+test('computeBreakoutEntrySignal: rsPeriods 미지정이면 rsLookbackDays 기본값(RS_LOOKBACK_DAYS=60) 경로 그대로(회귀 없음 고정)', () => {
+  const candidate = buildEntrySignalCandidate();
+  const noOpts = computeBreakoutEntrySignal(candidate, {});
+  const explicit60 = computeBreakoutEntrySignal(candidate, { rsLookbackDays: 60 });
+  assert.equal(noOpts.relativeStrength, explicit60.relativeStrength);
 });
 
 test('computeBreakoutEntrySignal: 시가총액 미달이면 다른 조건 다 충족해도 pass=false', () => {

@@ -8,6 +8,7 @@
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-12
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2023-01-01 --to=2025-01-01 --initialCapital=40000000
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-12 --useBettingUnits=true  # 점진적 배팅(유닛) 사이징 비교(2026-09-14)
+//   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-14 --rsMethod=short  # RS 다구간 방법론 비교(2026-09-15, 아래 RS_METHOD_PERIODS 참고)
 import { buildCandidatePool } from '../lib/historical-universe.mjs';
 import { loadPriceSeriesBatch } from '../lib/breakout-price-series.mjs';
 import { cacheIndexPrices, loadIndexSeries } from '../lib/index-price-cache.mjs';
@@ -20,6 +21,27 @@ import { maxDrawdown, annualizedReturn } from '../lib/stats.mjs';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TRADING_DAYS_PER_YEAR = 252;
+
+// RS 방법론 비교용(2026-09-15, 오너 지적 — 단일 60거래일 시점 비교는 그 하루
+// 급등락에 취약, 여러 구간을 섞은 게 나은지 실측 필요). 모듈 최상단으로(2026-09-15
+// 코드리뷰 LOW 지적 — 원래 main() 내부에 있어 매 실행마다 재생성되고 테스트/import가
+// 불가능했음):
+// - baseline: 기존(단일 60거래일 시점, rsPeriods 미지정 — RS_LOOKBACK_DAYS 사용)
+// - baselineMulti: **통제군**(코드리뷰 HIGH 지적으로 신설) — 중심 룩백을 60일로
+//   고정한 채 54/60/66일 3구간 균등가중만 섞는다. baseline과의 차이가 "다구간
+//   평균화 자체의 효과"만 순수하게 분리해 보여준다(룩백 길이 변화와 뒤섞이지 않음).
+// - short: 1/3/6개월 균등가중(21/63/126거래일, 21일/개월 관례)
+// - long: IBD RS Rating 스타일 3/6/9/12개월(63/126/189/252거래일, 최근분기 40%+
+//   나머지 20%씩)
+const RS_METHOD_PERIODS = {
+  baselineMulti: [{ days: 54, weight: 1 }, { days: 60, weight: 1 }, { days: 66, weight: 1 }],
+  short: [{ days: 21, weight: 1 }, { days: 63, weight: 1 }, { days: 126, weight: 1 }],
+  long: [{ days: 63, weight: 0.4 }, { days: 126, weight: 0.2 }, { days: 189, weight: 0.2 }, { days: 252, weight: 0.2 }],
+};
+// allow-list를 RS_METHOD_PERIODS 키에서 자동 도출(2026-09-15 코드리뷰 LOW 지적 —
+// 방법론 추가 시 이 배열과 위 맵 양쪽을 따로 고쳐야 하면, 한쪽만 고쳤을 때 "allow-list는
+// 통과하는데 실제론 undefined→baseline으로 조용히 동작"하는 함정이 있었다).
+const RS_METHODS = ['baseline', ...Object.keys(RS_METHOD_PERIODS)];
 
 function parseArgs(argv) {
   const out = {};
@@ -38,6 +60,13 @@ async function main() {
   const marketCapFloor = args.marketCapFloor != null ? Number(args.marketCapFloor) : MARKET_CAP_FLOOR_WON;
   const consolidationMethod = args.consolidationMethod === 'range' ? 'range' : 'stddev'; // 2026-09-13 VCP 정의 비교용
   const entryTiming = args.entryTiming === 'sameDayClose' ? 'sameDayClose' : 'nextDayOpen'; // 2026-09-13 장후시간외 우선체결 비교용
+  // ??(2026-09-15 코드리뷰 LOW 지적 — ||였으면 --rsMethod=(빈 문자열)가 조용히
+  // baseline으로 흡수됨, useBettingUnits처럼 명시값 오타는 즉시 걸려야 함)
+  const rsMethod = args.rsMethod ?? 'baseline';
+  if (!RS_METHODS.includes(rsMethod)) {
+    throw new Error(`--rsMethod는 ${RS_METHODS.join('|')}만 허용(받은 값: "${rsMethod}")`);
+  }
+  const rsPeriods = RS_METHOD_PERIODS[rsMethod];
   // 2026-09-14 점진적 배팅(유닛) 사이징 비교용 — breakout-unit-tracker.mjs. 오타·오입력이
   // 조용히 false로 처리되지 않도록(2026-09-14 코드리뷰 지적) true/false 외 값은 즉시 throw.
   if (args.useBettingUnits != null && args.useBettingUnits !== 'true' && args.useBettingUnits !== 'false') {
@@ -60,7 +89,7 @@ async function main() {
   console.error(`  ${withData}/${pool.length}종목 시세 확보(나머지는 캐시 없음/빈 결과)`);
 
   console.error(`[3/4] 코스피 지수 벤치마크 확보 중...`);
-  cacheIndexPrices('KOSPI', fromDate, toDate);
+  await cacheIndexPrices('KOSPI', fromDate, toDate);
   const fullBenchmark = loadIndexSeries('KOSPI');
   if (!fullBenchmark) throw new Error('코스피 지수 캐시 로드 실패');
   const startIdx = fullBenchmark.dates.findIndex((d) => d >= fromDate);
@@ -71,14 +100,23 @@ async function main() {
   })();
   if (startIdx < 0 || endIdx < startIdx) throw new Error(`코스피 지수 데이터가 요청 구간(${fromDate}~${toDate})을 못 덮음`);
   const tradingDates = fullBenchmark.dates.slice(startIdx, endIdx + 1);
-  const benchmarkCloses = fullBenchmark.closes.slice(startIdx, endIdx + 1);
-  const benchmarkSeries = { dates: tradingDates, closes: benchmarkCloses };
+  const benchmarkCloses = fullBenchmark.closes.slice(startIdx, endIdx + 1); // 리포트(전략 vs 벤치마크 수익률 비교)용 — 트리밍 유지
   console.error(`  거래일 ${tradingDates.length}개(${tradingDates[0]} ~ ${tradingDates[tradingDates.length - 1]})`);
 
-  console.error(`[4/4] 일별 시뮬레이션 실행 중(진입: 52주신고가+변동성확장(${consolidationMethod})+RS+시총${(marketCapFloor / 1e12).toFixed(1)}조원, 청산: -8%+R배수트레일링+3R부분익절)...`);
+  // ⚠️ 시뮬레이터에는 트리밍 안 한 fullBenchmark를 그대로 넘긴다(2026-09-15 코드리뷰
+  // HIGH 지적 — 트리밍된 benchmarkSeries를 넘기면 RS 룩백(computeRelativeStrength가
+  // benchmarkCloses.length<lookbackDays+1이면 null)이 창 앞부분에서 구조적으로
+  // 미달돼 진입이 0건이 되는데, 이 워밍업 손실 기간이 방법론마다 다르다(baseline
+  // 60거래일 vs short 최대126일 vs long 최대252일≈1년) — arm마다 실효 시작일이
+  // 최대 1년까지 달라져 "다구간 평균이 도움되는가"라는 질문에 "시작 시점이 다르다"는
+  // 별개 효과가 섞여버린다. fullBenchmark는 캐시에 있는 만큼(현재 2014-01-02~) 항상
+  // fromDate보다 앞선 이력을 포함하므로(단, --from을 캐시 최초일자보다 이르게 주면
+  // 그 구간만큼은 물리적 워밍업 한계 — 실제 데이터가 없어 못 채움) 워밍업으로 쓰인다.
+  // tradingDates(시뮬레이션 창 정의)는 그대로 fromDate~toDate로 트리밍된 값.
+  console.error(`[4/4] 일별 시뮬레이션 실행 중(진입: 52주신고가+변동성확장(${consolidationMethod})+RS(${rsMethod})+시총${(marketCapFloor / 1e12).toFixed(1)}조원, 청산: -8%+R배수트레일링+3R부분익절)...`);
   const result = runBreakoutBacktest({
-    pool, seriesByCode, benchmarkSeries, tradingDates, initialCapital,
-    marketCapFloor, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming, useBettingUnits,
+    pool, seriesByCode, benchmarkSeries: fullBenchmark, tradingDates, initialCapital,
+    marketCapFloor, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming, useBettingUnits, rsPeriods,
   });
   console.error(`  거래 ${result.trades.length}건, 최종 현금 ${Math.round(result.finalCapital).toLocaleString()}원(시가 데이터 없어 예약체결 스킵 ${result.skippedNoOpenPrice}건)`);
 
@@ -108,7 +146,11 @@ async function main() {
 
   console.log(JSON.stringify({
     period: { from: fromDate, to: toDate, tradingDays: tradingDates.length },
-    params: { initialCapital, marketCapFloor, liquidityFloor: LIQUIDITY_FLOOR_WON, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming, useBettingUnits },
+    params: {
+      initialCapital, marketCapFloor, liquidityFloor: LIQUIDITY_FLOOR_WON, riskPerTradePct: RISK_PER_TRADE_PCT,
+      consolidationMethod, entryTiming, useBettingUnits, rsMethod,
+      rsPeriods: rsPeriods ?? null, // rsMethod 정의(RS_METHOD_PERIODS)가 나중에 바뀌어도 이 결과가 어떤 파라미터였는지 재현 가능하도록 같이 기록(2026-09-15 코드리뷰 LOW 지적)
+    },
     tradeStats: {
       totalTrades: closedTrades.length,
       partialProfitTrades,

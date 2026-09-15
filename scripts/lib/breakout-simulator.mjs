@@ -7,7 +7,7 @@
 // 코스피200 편입 하한보다 높음), 그 위에 또 지수 근사 랭킹을 얹는 건 이중 작업. 후보군
 // = build_candidate_pool() 전체(코스피+코스닥 보통주) 중 그 날짜에 상장돼 있고
 // (listingDate<=date<delistingDate) 시가총액 1조원↑ + 유동성 필터 통과 종목.
-import { computeBreakoutEntrySignal } from './breakout-factor.mjs';
+import { computeBreakoutEntrySignal, RS_LOOKBACK_DAYS } from './breakout-factor.mjs';
 import {
   computeTrailingStop, computePositionSize, shouldPyramid,
   shouldTakePartialProfit, rMultiplePrice, PARTIAL_PROFIT_TRIGGER_R, PARTIAL_PROFIT_SELL_FRACTION,
@@ -19,7 +19,7 @@ import {
 import { findIndexAtOrBefore } from './breakout-price-series.mjs';
 
 export const LIQUIDITY_FLOOR_WON = 3_000_000_000; // 일평균거래대금 30억원(기존 프로젝트 관례, rebalance-gap.mjs 등과 동일 기준 재사용)
-export const RS_LOOKBACK_DAYS = 60; // 상대강도 비교 구간(2~3개월, blog의 "3~6~9~12개월 가중평균 RS Rating"보다 단순화 — 근거는 Log/Implementation 참고)
+export { RS_LOOKBACK_DAYS }; // breakout-factor.mjs로 이전(2026-09-15, 위 import 참고) — 기존 호출부 하위호환용 재수출
 export const HIGH_LOOKBACK_DAYS = 252; // 52주(거래일 기준)
 
 // closes/volumes 배열에서 endIndex(포함) 기준 최근 days거래일 평균 거래대금(종가×거래량).
@@ -126,6 +126,7 @@ export function runBreakoutBacktest({
   pool, seriesByCode, benchmarkSeries, tradingDates, initialCapital,
   marketCapFloor, riskPerTradePct, maxConcurrentPositions = MAX_CONCURRENT_POSITIONS,
   consolidationMethod = 'stddev', volatilityOpts,
+  rsPeriods, // 2026-09-15 RS 다구간 비교용 — 지정 안 하면 기존 RS_LOOKBACK_DAYS 단일시점 그대로(회귀 없음)
   entryTiming = 'nextDayOpen', // 'nextDayOpen'(기존, 실현가능 지연체결) | 'sameDayClose'(장후시간외 우선체결 가정 — 2026-09-13 오너 요청, 아래 3)단계 참고)
   useBettingUnits = false, // 점진적 배팅(유닛) 사이징 — 오너 지시, 2026-09-14(breakout-unit-tracker.mjs 참고). false(기존 기본값)면 항상 Max2%룰 최대한도로 진입(기존 동작 그대로, 회귀 없음). 2026-09-14 코드리뷰 지적으로 bettingUnits(불리언 플래그)에서 개명 — 같은 파일 안의 currentBettingUnits(개수)와 타입이 헷갈리는 걸 방지.
   initialBettingUnits = MIN_BETTING_UNITS, // 유닛 카운터 시작값 — 백테스트는 기본 1(영상 예시)이지만, 실전(Kairos) State에서 이어받을 카운터를 주입할 통로로 남겨둠(모듈 헤더의 "상태 영속은 호출측 책임" 계약과 일치, 2026-09-14 코드리뷰 지적).
@@ -259,7 +260,7 @@ export function runBreakoutBacktest({
         const lows = series.lows.slice(0, cand.idx + 1);
         const signal = computeBreakoutEntrySignal(
           { closes, highs, lows, benchmarkCloses, marcap: cand.marcap },
-          { rsLookbackDays: RS_LOOKBACK_DAYS, week52High: { lookbackDays: HIGH_LOOKBACK_DAYS }, marketCapFloor, consolidationMethod, volatility: volatilityOpts },
+          { rsLookbackDays: RS_LOOKBACK_DAYS, rsPeriods, week52High: { lookbackDays: HIGH_LOOKBACK_DAYS }, marketCapFloor, consolidationMethod, volatility: volatilityOpts },
         );
         if (!signal.pass) continue;
         todaySignals.push({ code: cand.code, relativeStrength: signal.relativeStrength, closePrice: series.closes[cand.idx] });

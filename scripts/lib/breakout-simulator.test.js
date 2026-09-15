@@ -5,6 +5,7 @@ import {
   updatePositionForDay,
   computeDailyCandidates,
   runBreakoutBacktest,
+  RS_LOOKBACK_DAYS,
 } from './breakout-simulator.mjs';
 import { TOTAL_BETTING_UNITS, MIN_BETTING_UNITS } from './breakout-unit-tracker.mjs';
 
@@ -147,6 +148,17 @@ test('runBreakoutBacktest: 신호(종가)→다음날 시가 진입→트레일�
   assert.equal(trade.entryDate, dates[260], '진입일은 신호가 뜬 259일이 아니라 다음 거래일(260일)이어야 함');
   assert.ok(trade.pnlWon < 0, '급락 후 손절이라 손실 거래여야 함');
   assert.equal(result.equityCurve.length, dates.length);
+
+  // rsPeriods 배선 검증(2026-09-15 코드리뷰 MEDIUM 지적 — runBreakoutBacktest→
+  // computeBreakoutEntrySignal로 가는 경로가 테스트 0건이었음) — 기존 기본값(단일
+  // RS_LOOKBACK_DAYS 시점)과 동치인 rsPeriods를 명시로 넘겨도 완전히 같은 결과가
+  // 나와야 배선이 올바른 것.
+  const resultViaPeriods = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    rsPeriods: [{ days: RS_LOOKBACK_DAYS, weight: 1 }],
+  });
+  assert.deepEqual(resultViaPeriods.trades, result.trades);
 });
 
 test('runBreakoutBacktest: 3R 도달 시 50% 부분익절 거래가 별도로 기록되고, 나머지 50%는 계속 트레일링 후 청산', () => {

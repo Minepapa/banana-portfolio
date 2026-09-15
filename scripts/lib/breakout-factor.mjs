@@ -5,6 +5,13 @@
 import { mean, sampleVariance } from './stats.mjs';
 
 export const MARKET_CAP_FLOOR_WON = 1_000_000_000_000; // 1조원(오너 확정, 2026-09-12)
+// 상대강도(RS) 기본 비교 구간 — 원래 breakout-simulator.mjs에만 있고 이 파일의
+// computeBreakoutEntrySignal은 별도로 리터럴 60을 하드코딩하고 있었다(2026-09-15
+// 코드리뷰 LOW 지적 — 같은 숫자가 두 곳에 따로 있어, 한쪽만 바꾸면 백테스트와
+// 실전(daily-breakout-signal-scan.mjs, rsLookbackDays 미전달로 이 기본값에 의존)이
+// 에러 없이 조용히 갈라질 수 있었음). 단일 진실소스로 여기로 옮기고
+// breakout-simulator.mjs는 이 값을 재수출(하위호환 — 기존 import 경로 안 깨짐).
+export const RS_LOOKBACK_DAYS = 60;
 
 // closes(오름차순, 마지막이 최신)에서 일별 수익률 배열(길이 n-1) 산출. 0 이하 종가는
 // null(추정 안 함 — 상장폐지 직전 이상치 등 방어).
@@ -111,6 +118,43 @@ export function computeRelativeStrength(stockCloses, benchmarkCloses, lookbackDa
   return (stockReturn - benchReturn) * 100;
 }
 
+// 상대강도(RS) — 다구간 가중평균 버전(2026-09-15, 오너 지적 대응). 단일 시점(예:
+// "정확히 60거래일 전") 비교는 그 하루가 우연히 급등/급락한 날이면 지표 전체가
+// 흔들리는 약점이 있다(단일 앵커 취약성) — IBD RS Rating의 취지(최근 분기 비중을
+// 높이되 여러 구간을 섞어 노이즈를 평균으로 죽임)를 periods 배열로 일반화한다.
+// periods: [{days, weight}, ...] — 각 구간을 computeRelativeStrength와 동일한 방식
+// (그 구간 시작일 대비 현재까지 수익률차)으로 계산한 뒤 weight 가중평균(자동 정규화,
+// 합이 1이 아니어도 됨). 구간 중 하나라도 데이터 부족(null)이면 전체 null(부분 추정
+// 안 함 — 프로젝트 "폴백 없음" 원칙). periods가 1개([{days:60,weight:1}])면
+// computeRelativeStrength(., ., 60)과 정확히 동일한 값(하위호환 확인용).
+//
+// ⚠️ null(데이터 부족)과 설정 오류를 구분(2026-09-15 코드리뷰 MEDIUM 지적 3건 반영) —
+// periods가 빈 배열이거나 weight가 유한한 양수가 아니면 **즉시 throw**한다. 이전엔
+// 둘 다 null을 반환해서 "데이터가 아직 안 쌓인 것"과 "호출측이 빈 배열/오타
+// weight를 넘긴 프로그래밍 오류"를 구분할 수 없었다 — 후자는 백테스트가 거래
+// 0건으로 조용히 끝나버리는데 원인을 알 방법이 없었다(project convention:
+// "조용한 폴백 금지, throw+로그로 즉시 노출" — feedback-no-silent-fallback). 음수
+// weight도 막는다(볼록결합이 깨져 가중평균이 아니라 구간값 범위 밖으로 나가는
+// 외삽이 됨 — 코드리뷰 실측 확인: {days:1,w:2},{days:2,w:-1}처럼 두 구간 다
+// 양수인데 결과가 음수로 나옴).
+export function computeRelativeStrengthMultiPeriod(stockCloses, benchmarkCloses, periods) {
+  if (!Array.isArray(periods) || !periods.length) {
+    throw new Error('computeRelativeStrengthMultiPeriod: periods는 비어있지 않은 배열이어야 함');
+  }
+  let weightedSum = 0;
+  let weightTotal = 0;
+  for (const { days, weight } of periods) {
+    if (!Number.isFinite(weight) || weight <= 0) {
+      throw new Error(`computeRelativeStrengthMultiPeriod: weight는 유한한 양수여야 함(받은 값: ${weight}, days: ${days})`);
+    }
+    const rs = computeRelativeStrength(stockCloses, benchmarkCloses, days);
+    if (rs == null) return null;
+    weightedSum += rs * weight;
+    weightTotal += weight;
+  }
+  return weightedSum / weightTotal;
+}
+
 export function passesRelativeStrengthFilter(relativeStrength) {
   return relativeStrength != null && relativeStrength >= 0;
 }
@@ -129,7 +173,11 @@ export function computeBreakoutEntrySignal(candidate, opts = {}) {
   const volatility = opts.consolidationMethod === 'range'
     ? isPriceRangeConsolidationBreakout(candidate.closes, candidate.highs, candidate.lows, opts.volatility)
     : isVolatilityExpansionBreakout(candidate.closes, opts.volatility);
-  const relativeStrength = computeRelativeStrength(candidate.closes, candidate.benchmarkCloses, opts.rsLookbackDays ?? 60);
+  // opts.rsPeriods가 있으면 다구간 가중평균(신규 비교용), 없으면 기존 단일시점(기본값
+  // 유지 — 하위호환, 기존 호출측/테스트 회귀 없음).
+  const relativeStrength = opts.rsPeriods
+    ? computeRelativeStrengthMultiPeriod(candidate.closes, candidate.benchmarkCloses, opts.rsPeriods)
+    : computeRelativeStrength(candidate.closes, candidate.benchmarkCloses, opts.rsLookbackDays ?? RS_LOOKBACK_DAYS);
   const marketCapOk = passesMarketCapFloor(candidate.marcap, opts.marketCapFloor);
   const pass = week52.pass && volatility.pass && passesRelativeStrengthFilter(relativeStrength) && marketCapOk;
   return { pass, week52, volatility, relativeStrength, marketCapOk };
