@@ -16,12 +16,13 @@
 // 데이터 소스 설계(핵심): 52주신고가·변동성수축 임계값은 전일까지의 캐시된 일별
 // 시세(loadPriceSeriesBatch)로 미리 계산 가능 — 그래서 시가총액+유동성 사전필터
 // (computeDailyCandidates)까지는 라이브 데이터가 전혀 필요 없다. 라이브 데이터가
-// 필요한 건 "오늘 종가"뿐(KRX 일별 배치데이터는 당일 장중엔 아직 없음) — KIS
-// 실시간 현재가(getKrQuote)를 장마감 직후 "오늘 종가"로 근사한다(intraday-market-
-// move-monitor.mjs가 이미 코스피 실시간지수를 같은 방식으로 쓰는 선례 재사용,
-// Knowledge/API/KIS.md 참고). 요일(토/일)만 걸러내고 KRX 평일휴장(공휴일)은 별도
-// 체크 안 함 — 그런 날은 라이브가=전일종가라 등락률 조건(3%p 이상)이 저절로
-// 불통과되므로 필요 없음.
+// 필요한 건 "오늘 종가"뿐(KRX 일별 배치데이터는 당일 장중엔 아직 없음, 심지어
+// 장마감 직후에도 한동안 없을 수 있음 — 2026-09-15 15:33 KST 실측, 아래 [2/5]
+// 단계 참고) — KIS 실시간 현재가(getKrQuote)를 장마감 직후 "오늘 종가"로
+// 근사한다(intraday-market-move-monitor.mjs가 이미 코스피 실시간지수를 같은
+// 방식으로 쓰는 선례 재사용, Knowledge/API/KIS.md 참고). 요일(토/일)만 걸러내고
+// KRX 평일휴장(공휴일)은 별도 체크 안 함 — 그런 날은 라이브가=전일종가라 등락률
+// 조건(3%p 이상)이 저절로 불통과되므로 필요 없음.
 //
 // ⚠️ 하루 1회 실행 보장(코드리뷰 HIGH 지적, 2026-09-13) — State/BreakoutScanRuns로
 // 재실행 시 이중매수를 방지한다(--force로 무시 가능, 테스트용). --dry-run은 실주문이
@@ -34,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { buildCandidatePool } from '../lib/historical-universe.mjs';
 import { loadPriceSeriesBatch, findLatestDateStrictlyBefore, findIndexAtOrBefore } from '../lib/breakout-price-series.mjs';
-import { cacheIndexPrices, loadIndexSeries } from '../lib/index-price-cache.mjs';
+import { cacheIndexPrices, loadIndexSeries, addDays } from '../lib/index-price-cache.mjs';
 import { computeDailyCandidates } from '../lib/breakout-simulator.mjs';
 import { computeBreakoutEntrySignal, MARKET_CAP_FLOOR_WON, RS_ANCHOR_SMOOTH_DAYS } from '../lib/breakout-factor.mjs';
 import { computePositionSize, RISK_PER_TRADE_PCT, MAX_CONCURRENT_POSITIONS } from '../lib/breakout-risk.mjs';
@@ -139,7 +140,24 @@ async function main() {
   const seriesByCode = loadPriceSeriesBatch(codes);
 
   console.error('[2/5] 코스피 지수 캐시 로드 중...');
-  await cacheIndexPrices('KOSPI', '2014-01-01', todayKST());
+  // ⚠️ endDate=오늘이 아니라 어제까지만 요청(2026-09-16 실사고로 발견·수정) — "오늘
+  // 값"은 이 함수가 필요로 한 적이 없다(RS 실시간 비교는 아래 getKrIndexQuote로
+  // 별도 라이브 조회, benchmarkToday 참고). 그런데 원래 endDate=todayKST()로
+  // 요청하고 있었던 탓에, KRX 지수 배치데이터(idx/kospi_dd_trd)가 당일 장마감 직후
+  // 아직 발행 전이면(2026-09-15 15:33 KST 실측 확인 — 이 시각에도 미발행) 이 호출
+  // 자체가 "KOSPI 지수 조회 결과 0건 — 데이터 소스 장애 의심"으로 매일 실패할 수
+  // 있었다(실거래 자동발주 잡이 KRX의 발행 시각이라는, 애초에 필요하지도 않은
+  // 외부 의존성에 매일 걸려 넘어질 뻔한 구조적 결함).
+  //
+  // ⚠️ "어제"라고 항상 안전한 건 아니다(2026-09-16 코드리뷰 HIGH 지적 — 어제가
+  // 주말·공휴일이면 그날 자체에 거래일이 없어 요청창이 빈 채로 올 수 있고, 특히
+  // 연휴 직후 첫 거래일에는 요청창(토~월 등)에 거래일이 아예 0개일 수 있다). 이걸
+  // "데이터 소스 장애"로 오판하지 않도록 index-price-cache.mjs의 assertCoverage가
+  // 요청창이 COVERAGE_TOLERANCE_DAYS 이내로 작으면 빈 응답도 정상(그 구간에 거래일
+  // 자체가 없었을 뿐)으로 받아들이게 함께 수정했다 — 같은 코드리뷰에서 발견된
+  // 근본원인(요청범위 대신 실제관측범위로 커버리지를 판정하던 구조)까지 고쳤으므로,
+  // endDate를 어제로 당긴 것과 그 아래쪽 관용 처리가 함께 있어야 실제로 안전하다.
+  await cacheIndexPrices('KOSPI', '2014-01-01', addDays(todayKST(), -1));
   const benchmarkSeries = loadIndexSeries('KOSPI');
   if (!benchmarkSeries) throw new Error('코스피 지수 캐시 로드 실패');
 
@@ -152,14 +170,18 @@ async function main() {
   // (코드리뷰 HIGH 지적, 2026-09-13에 경고 로그까지만 심어뒀던 걸 이번에 실제 수정 —
   // 상세 경위는 Log/Implementation/2026-09-13-돌파매매-백테스트엔진-구현.md "실전
   // 첫 테스트 결과" 절 참고). findLatestDateStrictlyBefore로 "오늘보다 전"만 기준일
-  // 후보로 명시적으로 강제한다.
+  // 후보로 명시적으로 강제한다 — 위 endDate 수정 이후로도 이 이중 방어는 그대로
+  // 유지(예: 이 잡을 수동으로 재실행하다 자정을 넘기는 등 극단적 케이스 대비).
   const cachedDate = findLatestDateStrictlyBefore(benchmarkSeries.dates, todayKST());
   if (!cachedDate) throw new Error('코스피 지수 캐시에 오늘 이전 거래일 데이터가 없음');
 
   // 개별종목 캐시 정합률 체크(2026-09-14 코드리뷰 HIGH 지적으로 교체) — 처음엔
   // "cachedDate가 오늘보다 며칠 전인지"(달력일)로 staleness를 쟀는데, cachedDate는
-  // 코스피 지수 캐시(cacheIndexPrices가 매 실행 오늘까지 라이브로 재조회 — 절대
-  // 안 낡음) 기준이라 정작 낡을 수 있는 개별종목 캐시 상태와는 무관했다 — "개별
+  // 코스피 지수 캐시(cacheIndexPrices가 이미 어제까지 덮여 있으면 네트워크 조회
+  // 없이 'cached'로 단락되고, 안 덮여 있으면 그 자리에서 증분 갱신 — 어느 쪽이든
+  // 결과적으로 이 잡이 실행될 때마다 전일까지는 항상 최신 상태가 보장됨, 2026-09-16
+  // 요청 종료일을 어제로 수정) 기준이라 정작 낡을 수 있는 개별종목 캐시 상태와는
+  // 무관했다 — "개별
   // 종목 캐시 갱신 잡이 하루만 빠져도" 2026-09-14와 같은 사고가 재발하는데 이
   // 체크로는 하나도 못 잡는다는 지적(실측 재현됨). 대신 cachedDate 시점 데이터를
   // 실제로 가진 종목 비율을 직접 잰다 — 이게 이 사고를 그대로 재현·검출한다
@@ -215,17 +237,17 @@ async function main() {
     }
     return;
   }
-  // ⚠️ "오늘" 중복 삽입 방어(2026-09-15 코드리뷰 HIGH 지적) — benchmarkSeries는
-  // cacheIndexPrices(라이브 소스)로 이 함수 앞부분(위)에서 이미 로드했는데, 코스피
-  // 지수 캐시가 KRX API로 마이그레이션된(2026-09-15, index-price-cache.mjs) 뒤로
-  // 장마감~장후시간외 사이 이 시각(15:32경)에 오늘자가 이미 캐시에 들어와 있을지
-  // (구 FDR 시절 가정이던 "라이브 소스라 항상 즉시 포함"이 KRX 발행 타이밍에서도
-  // 여전히 성립하는지) 실측 확인 전이다 — 성립한다면 아래서 benchmarkToday를 그냥
-  // append할 때 오늘이 두 번 들어가 RS 앵커 인덱스가 종목 쪽(cachedDate 기준
+  // ⚠️ "오늘" 중복 삽입 방어(2026-09-15 코드리뷰 HIGH 지적, 2026-09-16 endDate
+  // 수정 이후로는 발생 확률이 크게 낮아짐 — 위에서 cacheIndexPrices를 이제
+  // addDays(오늘,-1)까지만 요청해 이 파일 자신의 호출로는 오늘자가 캐시에 안 들어
+  // 있어야 정상이다). 다만 이 캐시 파일은 다른 잡·수동 백테스트 실행(예: 명시적
+  // --to=오늘로 돌린 run-breakout-backtest.mjs)과 공유되므로, 그런 경로로 오늘자가
+  // 이미 들어와 있을 가능성은 구조적으로 남아있다 — 그 경우 benchmarkToday를
+  // 그냥 append하면 오늘이 두 번 들어가 RS 앵커 인덱스가 종목 쪽(cachedDate 기준
   // 정확히 slice)보다 하루 밀린다(RS가 실제 매수 게이팅·슬롯순위를 결정하는
   // 값이라 이 어긋남이 조용히 실거래에 반영될 수 있음). 캐시 마지막 날짜가 이미
-  // 오늘이면 그 원소를 빼고 붙여, 어느 발행 타이밍이든 "오늘"이 정확히 한 번만
-  // 들어가게 한다.
+  // 오늘이면 그 원소를 빼고 붙여, 어느 경로로 캐시가 갱신됐든 "오늘"이 정확히
+  // 한 번만 들어가게 한다.
   const benchmarkAlreadyHasToday = benchmarkSeries.dates[benchmarkSeries.dates.length - 1] === todayKST();
   const benchmarkClosesBase = benchmarkAlreadyHasToday ? benchmarkSeries.closes.slice(0, -1) : benchmarkSeries.closes;
   const benchmarkCloses = [...benchmarkClosesBase, benchmarkToday];

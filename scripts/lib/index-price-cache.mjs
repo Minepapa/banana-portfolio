@@ -57,7 +57,11 @@ function coversRange(cached, startDate, endDate) {
   return cached.startDate <= startDate && cached.endDate >= endDate;
 }
 
-function addDays(dateStr, n) {
+// export(2026-09-16) — daily-breakout-signal-scan.mjs·breakout-watchlist-preview.mjs가
+// "오늘"이 아니라 "어제"까지만 캐시를 요청하려고 재사용한다(아래 두 파일의 사용처
+// 주석 참고 — KRX 지수 배치데이터가 당일엔 아직 미발행일 수 있어 endDate=오늘로
+// 요청하면 실패하는데, 그 두 잡은 애초에 "오늘" 값이 필요하지도 않았다).
+export function addDays(dateStr, n) {
   const d = new Date(`${dateStr}T12:00:00`); // 정오 파싱(파일 상단 마이그레이션 노트와 동일 이유)
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0, 10);
@@ -76,8 +80,25 @@ function calendarDaysBetween(fromDate, toDate) {
 const COVERAGE_TOLERANCE_DAYS = 10;
 
 // 요청 구간을 실제로 커버하는지 검증 — 못 미치면 throw(부분 캐시 금지).
+//
+// ⚠️ 빈 응답(series.length===0) 처리를 관용일 기반으로 수정(2026-09-16 코드리뷰
+// CRITICAL/HIGH 지적으로 재작성) — 원래는 빈 응답을 무조건 "데이터 소스 장애"로
+// 단정해 throw했는데, 이게 실제로는 **이 프로젝트 전체가 이미 확립한 계약**(krx.mjs
+// 상단 주석: "비거래일(주말·공휴일·데이터 미발행 당일)은 에러가 아니라 빈 배열로
+// 온다 — 호출측이 빈 배열을 휴장일/미발행으로 스킵 처리하면 된다")을 이 함수만
+// 어기고 있었다. 실사고로 재현됨: ①모든 호출부가 관례로 쓰는 startDate='2014-01-01'
+// 이 신정 공휴일이라 실제 첫 거래일(2014-01-02)과 하루 어긋나는데, 캐시가 이미
+// 2014-01-02부터 있으면 매 실행마다 "2014-01-01~2014-01-01"(1일짜리 빈 창) prefix
+// 재조회를 시도해 무조건 throw — **라이브 신호스캔 잡이 단 한 번도 성공할 수
+// 없었다**(2026-09-16 실측, npm test는 이 경로를 안 타서 놓침). ②suffix 쪽도
+// "월요일 2회차 실행"(주말만 요청)이나 "연휴 다음 첫 거래일"(주말+공휴일 연속)처럼
+// 요청창에 거래일이 아예 없는 정상적인 경우가 흔한데 그때마다 throw. 요청창의
+// 달력일 길이가 COVERAGE_TOLERANCE_DAYS(연휴 흡수용 여유) 이내면 "이 구간엔 거래일
+// 자체가 없었다"로 보고 빈 채로 통과시킨다(병합할 게 없으니 merged는 그대로 유지됨,
+// 별도 처리 불필요) — 그보다 큰 창이 통째로 비면 여전히 데이터 소스 장애로 throw.
 function assertCoverage(series, reqStart, reqEnd, indexName) {
   if (!series.length) {
+    if (calendarDaysBetween(reqStart, reqEnd) <= COVERAGE_TOLERANCE_DAYS) return; // 정상 — 그 구간에 거래일이 없었을 뿐
     throw new Error(`${indexName} 지수 조회 결과 0건(${reqStart}~${reqEnd}) — 데이터 소스 장애 의심`);
   }
   const actualStart = series[0].date;

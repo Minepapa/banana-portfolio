@@ -21,7 +21,7 @@
 // 사용법: node scripts/tools/breakout-watchlist-preview.mjs [--dry-run] [--top=15]
 import { buildCandidatePool } from '../lib/historical-universe.mjs';
 import { loadPriceSeriesBatch, findLatestDateStrictlyBefore, findIndexAtOrBefore } from '../lib/breakout-price-series.mjs';
-import { cacheIndexPrices, loadIndexSeries } from '../lib/index-price-cache.mjs';
+import { cacheIndexPrices, loadIndexSeries, addDays } from '../lib/index-price-cache.mjs';
 import { computeDailyCandidates } from '../lib/breakout-simulator.mjs';
 import { is52WeekHighBreakout, computeRelativeStrengthSmoothedAnchor, computeVcpReadiness, RS_LOOKBACK_DAYS, RS_ANCHOR_SMOOTH_DAYS, MARKET_CAP_FLOOR_WON } from '../lib/breakout-factor.mjs';
 import { todayKST } from '../lib/sheets-api.mjs';
@@ -105,7 +105,11 @@ async function main() {
   const seriesByCode = loadPriceSeriesBatch(codes);
 
   console.error('[2/3] 코스피 지수 캐시 로드 중...');
-  await cacheIndexPrices('KOSPI', '2014-01-01', todayKST());
+  // endDate=오늘이 아니라 어제까지만 요청(2026-09-16 수정, daily-breakout-signal-
+  // scan.mjs와 동일 버그·동일 수정 — 이 스크립트는 애초에 장 시작 "전" 아침에 도는
+  // 게 설계 전제라, "오늘" 값을 요청하는 게 이 파일에선 더더욱 말이 안 됐다: 오늘
+  // 장이 열리기도 전이니 KRX 배치데이터가 있을 리 없다).
+  await cacheIndexPrices('KOSPI', '2014-01-01', addDays(todayKST(), -1));
   const benchmarkSeries = loadIndexSeries('KOSPI');
   if (!benchmarkSeries) throw new Error('코스피 지수 캐시 로드 실패');
   const cachedDate = findLatestDateStrictlyBefore(benchmarkSeries.dates, todayKST());
