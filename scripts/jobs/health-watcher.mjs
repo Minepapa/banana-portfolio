@@ -195,6 +195,10 @@ export const EXPECTED_INTERVALS_MS = {
   // weekly-vault-health-check(2026-09-04 신설) — 매주 일 07:30, isa-maturity-check와
   // 동일 클래스(저정보 억제라 텔레그램 발송 없는 주도 많지만 heartbeat 자체는 매주).
   'weekly-vault-health-check': 7 * 24 * 60 * 60 * 1000,
+  // update-breakout-price-cache(2026-09-16 신설, 돌파매매 전략 개별종목 시세 캐시
+  // 갱신) — 평일 07:00 하루 1회, daily-asset-allocation-check 등과 동일 클래스
+  // (평일 전용이라 48h로 주말 간격 흡수).
+  'update-breakout-price-cache': 48 * 60 * 60 * 1000,
   // pension-balance-reminder(2026-09-04 신설) — 매월 22일, rebalance-proposal(분기,
   // 100일)과 동일 원칙으로 달 길이(28~31일) 편차를 흡수하는 여유(35일)를 둔다.
   'pension-balance-reminder': 35 * 24 * 60 * 60 * 1000,

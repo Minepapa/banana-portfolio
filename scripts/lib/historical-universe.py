@@ -43,6 +43,19 @@ CACHE_DIR = os.path.join(HERE, '..', '.cache', 'historical-prices')
 MIN_KOSPI_LISTED = 500
 MIN_KOSDAQ_LISTED = 800
 MIN_DELISTING_ROWS = 1000
+# 시장별 post-filter(보통주 판정 후) 하한 가드(2026-09-16 신설) — 위 세 가드는
+# fdr.StockListing()의 "원본 행수"만 보므로, 목록 자체는 정상적으로 받아왔지만
+# 그 다음 행 단위 필터(Stocks 등)에서 그 시장만 전멸하는 경우를 못 잡는다. 실측
+# (2026-09-16, 아래 Stocks 필터 주석 참고): 정상 832(KOSPI)+1814(KOSDAQ)+1375(상장
+# 폐지)=4021건인데, 원본 행수(943/1820)는 정상 하한(500/800) 훨씬 위인 채로 KOSPI·
+# KOSDAQ 보통주가 나란히 0건까지 떨어졌다 — 원본 행수 가드로는 구조적으로 검출
+# 불가능한 실패모드. 하한은 실측치 대비 25~30% 정도 여유(정상 변동 흡수 목적).
+MIN_KOSPI_COMMON = 600
+MIN_KOSDAQ_COMMON = 1400
+# 병합 후보풀 최종 크기 가드(2026-09-16 신설, 위 시장별 가드의 백스톱) — 시장별
+# 가드를 우회하는 다른 실패모드(예: 상장폐지 세그먼트 자체의 붕괴)에 대비해 병합
+# 총계도 별도로 검사한다. 정상범위(4000~4200대) 대비 25% 이상 이탈하면 실패시킨다.
+MIN_MERGED_POOL_SIZE = 3000
 MAX_CACHE_FAIL_RATIO = 0.3  # 시세 캐싱 시도 중 오류+빈결과 비율 상한
 
 
@@ -61,15 +74,41 @@ def build_candidate_pool():
     없어 제외됨, 이 함수 차원에서 추가로 걸러낼 정보 자체가 없음).
     """
     pool = []
+    segment_counts = {}  # 세그먼트별 확보 건수 — 최종 병합풀 가드 에러 메시지에 내역 표시용
     min_listed = {'KOSPI': MIN_KOSPI_LISTED, 'KOSDAQ': MIN_KOSDAQ_LISTED}
     for market in ('KOSPI', 'KOSDAQ'):
         df = fdr.StockListing(market)
-        if len(df) < min_listed[market]:
+        raw_len = len(df)
+        if raw_len < min_listed[market]:
             raise RuntimeError(
-                f'{market} 상장목록 확보 부족: {len(df)}건(최소 {min_listed[market]}건 기대) — '
+                f'{market} 상장목록 확보 부족: {raw_len}건(최소 {min_listed[market]}건 기대) — '
                 f'데이터 소스 장애 의심(개별 종목 결측이 아니라 목록 조회 자체가 깨진 상태일 수 있음)'
             )
-        df = df[df['Marcap'].notna() & (df['Marcap'] > 0) & df['Stocks'].notna() & (df['Stocks'] > 0)]
+        # ⚠️ Marcap(시가총액) 조건 제거(2026-09-16 실사고로 발견·수정, 09-15에
+        # "일시적 데이터소스 이슈"로 오진했던 것의 정정) — 이 함수가 반환하는 pool
+        # 객체는 code/name/market/sharesOutstanding만 담고 Marcap 값 자체는 아무
+        # 데서도 안 쓰는데(아래 for문 참고), "이 행이 진짜 유효한 상장종목인지"
+        # 방어용으로만 Marcap.notna()를 걸어뒀었다. 그런데 fdr.StockListing
+        # ('KOSPI'/'KOSDAQ')는 서드파티 GitHub 캐시(FinanceData/fdr_krx_data_cache)
+        # 에서 "오늘 날짜" 파일을 받아오는데, 그 파일이 당일 종가(Close)가 아직
+        # 반영 안 된 채(Close='-') 먼저 게시될 수 있다는 게 실측 확인됨(2026-09-16
+        # 09:33 KST, 943개 KOSPI 종목 전부 Close='-') — Marcap=Close×Stocks라 이
+        # 경우 Marcap이 전부 NaN이 되고, 그러면 현재상장종목 전체(832+1814건)가 이
+        # 필터에서 탈락해 병합 후보풀이 4021→1375건(상장폐지 세그먼트만 생존, 그쪽은
+        # 하나도 안 줄었음)으로 붕괴했다. 개별 원본행수 가드(위 MIN_KOSPI_LISTED 등)
+        # 는 원본 943/1820건이 정상 범위라 전혀 못 잡았다. Stocks(발행주식수)는
+        # 정적 참조데이터라 Close 발행 타이밍과 무관 — 정상 거래일 3일치(09-11·
+        # 09-14·09-15) 스냅샷을 직접 대조해 이 필터로 바꿔도 결과가 완전히
+        # 동일함(delta 0)을 확인했다(코드리뷰 검증).
+        #
+        # ⚠️ Stocks도 같은 플레이스홀더('-')에 오염될 가능성 자체는 이론상 있다(정적
+        # 데이터라 가능성은 낮지만 구조적으로 배제 못 함) — pd.to_numeric(errors=
+        # 'coerce')로 그런 값을 명시적으로 NaN 처리해, 섞였을 때 불투명한 TypeError
+        # (object dtype에서 '>' 비교 실패) 대신 아래 시장별 가드가 의미있는 에러
+        # 메시지로 잡게 한다(2026-09-16 코드리뷰 지적).
+        stocks = pd.to_numeric(df['Stocks'], errors='coerce')
+        df = df[stocks.notna() & (stocks > 0)]
+        before = len(pool)
         for _, r in df.iterrows():
             if not is_common_share(r['Code'], r['Name']):
                 continue
@@ -77,6 +116,16 @@ def build_candidate_pool():
                 'code': str(r['Code']), 'name': str(r['Name']), 'market': market,
                 'sharesOutstanding': float(r['Stocks']), 'listingDate': None, 'delistingDate': None,
             })
+        added = len(pool) - before
+        segment_counts[market] = added
+        min_common = {'KOSPI': MIN_KOSPI_COMMON, 'KOSDAQ': MIN_KOSDAQ_COMMON}
+        if added < min_common[market]:
+            raise RuntimeError(
+                f'{market} 보통주 후보 확보 부족: {added}건(최소 {min_common[market]}건 기대, '
+                f'원본 목록은 {raw_len}건으로 정상 범위) — 목록은 받았지만 행 단위 필터에서 '
+                f'이 시장만 전멸한 상태. Close/Stocks 등 컬럼 결측 의심(2026-09-16 Marcap '
+                f'사고와 동일 클래스).'
+            )
 
     dl = fdr.StockListing('KRX-DELISTING')
     if len(dl) < MIN_DELISTING_ROWS:
@@ -106,6 +155,16 @@ def build_candidate_pool():
             'code': code, 'name': name, 'market': market,
             'sharesOutstanding': float(r['ListingShares']), 'listingDate': listing_date, 'delistingDate': delisting_date,
         })
+    segment_counts['상장폐지'] = len(pool) - segment_counts.get('KOSPI', 0) - segment_counts.get('KOSDAQ', 0)
+    if len(pool) < MIN_MERGED_POOL_SIZE:
+        breakdown = ', '.join(f'{k} {v}건' for k, v in segment_counts.items())
+        raise RuntimeError(
+            f'병합 후보풀 크기 비정상: {len(pool)}건(최소 {MIN_MERGED_POOL_SIZE}건 기대, '
+            f'내역: {breakdown}) — 개별 리스트 가드(KOSPI/KOSDAQ/상장폐지)와 시장별 보통주 '
+            f'가드(MIN_KOSPI_COMMON/MIN_KOSDAQ_COMMON)는 전부 통과했지만 병합 결과가 비정상적으로 '
+            f'작음(예: 상장폐지 세그먼트 자체의 결측). 데이터 소스 부분 장애 의심(2026-09-16 '
+            f'Marcap 필터 붕괴 사고의 재발방지 백스톱 가드).'
+        )
     return pool
 
 
