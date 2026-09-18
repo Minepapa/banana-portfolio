@@ -1,6 +1,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isWithinAfterHoursSubmitWindow } from './place-breakout-entry-order.mjs';
+import { isWithinAfterHoursSubmitWindow, buildWatchArgs } from './place-breakout-entry-order.mjs';
+
+// [MEDIUM 재발방지] 2026-09-19 코드리뷰 — order.orgNo → --org-no 플러밍이 지금까지
+// 아무 테스트도 없어, place-breakout-fallback-entry.mjs 취소시도 기능이 조용히
+// 영구 무력화돼도(예: KIS 응답에 KRX_FWDG_ORD_ORGNO가 없는 경우) 이 스위트가 계속
+// 초록이었을 것 — 최소한 --org-no가 실제로 인자에 실리는지는 고정해둔다.
+test('buildWatchArgs: --org-no에 order.orgNo가 실림', () => {
+  const args = buildWatchArgs({
+    order: { orderNo: '6693100', orgNo: '06010' }, code: '005930', name: '삼성전자',
+    entryDate: '2026-09-19', budgetForFallback: 10_000_000,
+  });
+  assert.ok(args.includes('--org-no=06010'), args.join(' '));
+  assert.ok(args.includes('--order-no=6693100'), args.join(' '));
+  assert.ok(args.includes('--fallback=nextDayOpen'), args.join(' '));
+});
+
+test('buildWatchArgs: order.orgNo가 빈 문자열(KIS 응답에 KRX_FWDG_ORD_ORGNO 없음)이면 --org-no=만 실림(빈 값 그대로 전달, 숨기지 않음)', () => {
+  const args = buildWatchArgs({
+    order: { orderNo: '6693100', orgNo: '' }, code: '005930', name: '삼성전자',
+    entryDate: '2026-09-19', budgetForFallback: 10_000_000,
+  });
+  assert.ok(args.includes('--org-no='), args.join(' '));
+});
 
 // [핵심 안전장치] 코드리뷰 MEDIUM 지적(2026-09-13) 재발방지 — ORD_DVSN=06(장후시간외)는
 // 15:40~16:00 KRX에만 유효, 그 밖에서 호출되면 KIS에 던지기 전에 여기서 막아야 한다.

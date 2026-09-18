@@ -27,6 +27,27 @@ test('buildPendingEntryRecord: afterHoursOrderNo 생략 시 null(장후시간외
   assert.equal(parsePendingEntry(content).afterHoursOrderNo, null);
 });
 
+// [취소시도 신설, 2026-09-19] afterHoursOrgNo·afterHoursOrderQty가 왕복 보존되는지
+// 확인 — 없으면 place-breakout-fallback-entry.mjs의 취소시도가 항상 스킵된다.
+test('buildPendingEntryRecord: afterHoursOrgNo·afterHoursOrderQty 왕복 보존', () => {
+  const { content } = buildPendingEntryRecord({
+    code: '005930', name: '삼성전자', signalDate: '2026-09-13', investedWon: 10_000_000,
+    afterHoursOrderNo: '123', afterHoursOrgNo: '06010', afterHoursOrderQty: 5, now,
+  });
+  const p = parsePendingEntry(content);
+  assert.equal(p.afterHoursOrgNo, '06010');
+  assert.equal(p.afterHoursOrderQty, 5);
+});
+
+test('buildPendingEntryRecord: afterHoursOrgNo·afterHoursOrderQty 생략 시 null(과거 레코드와 하위호환)', () => {
+  const { content } = buildPendingEntryRecord({
+    code: '005930', signalDate: '2026-09-13', investedWon: 10_000_000, afterHoursOrderNo: '123', now,
+  });
+  const p = parsePendingEntry(content);
+  assert.equal(p.afterHoursOrgNo, null);
+  assert.equal(p.afterHoursOrderQty, null);
+});
+
 test('updatePendingEntryRecord: 처리완료 반영 — 다른 필드는 보존', () => {
   const { content } = buildPendingEntryRecord({
     code: '005930', name: '삼성전자', signalDate: '2026-09-13', investedWon: 10_000_000, now,

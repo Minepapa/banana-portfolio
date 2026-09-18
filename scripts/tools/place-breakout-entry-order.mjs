@@ -52,6 +52,18 @@ function parseArgs(argv) {
   return out;
 }
 
+// watch-breakout-entry-fill.mjs 자식 프로세스에 넘길 CLI 인자 — 순수함수로 분리해
+// 테스트 가능하게(2026-09-19 코드리뷰 MEDIUM 지적: order.orgNo → --org-no 플러밍이
+// 지금까지 아무 테스트도 없어, place-breakout-fallback-entry.mjs의 취소시도 기능이
+// 영구적으로 조용히 무력화돼도(예: KIS 응답에 KRX_FWDG_ORD_ORGNO가 없어 orgNo가
+// 빈 문자열인 경우) npm test는 계속 초록이었을 것).
+export function buildWatchArgs({ order, code, name, entryDate, budgetForFallback }) {
+  return [
+    `--order-no=${order.orderNo}`, `--org-no=${order.orgNo}`, `--code=${code}`, `--name=${name}`, `--entry-date=${entryDate}`,
+    '--fallback=nextDayOpen', `--invested-won=${Math.round(budgetForFallback)}`,
+  ];
+}
+
 // 순수함수 — KST 15:00~16:00 안인지(코드리뷰 MEDIUM 지적, 2026-09-13: ORD_DVSN=06
 // 장후시간외는 15:40~16:00에만 유효하고 16:00 이후엔 시간외단일가(07)로 넘어가
 // 더 이상 맞는 구분이 아니다 — 15:40보다 조금 일찍 여유를 둔 이유는 daily-breakout-
@@ -169,8 +181,7 @@ async function main() {
   const here = dirname(fileURLToPath(import.meta.url));
   const child = spawn('node', [
     join(here, 'watch-breakout-entry-fill.mjs'),
-    `--order-no=${order.orderNo}`, `--code=${code}`, `--name=${name}`, `--entry-date=${entryDate}`,
-    '--fallback=nextDayOpen', `--invested-won=${Math.round(budgetForFallback)}`,
+    ...buildWatchArgs({ order, code, name, entryDate, budgetForFallback }),
   ], { detached: true, stdio: 'ignore' });
   // ⚠️ 코드리뷰 HIGH 지적(2026-09-13, 가장 위험한 경로) — 이 시점에 매수 주문은 이미
   // 접수돼 있다. 감시 스폰이 실패하면 체결여부 확인·포지션기록·보호주문(손절/3R익절)

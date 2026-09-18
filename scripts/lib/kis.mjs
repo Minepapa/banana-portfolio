@@ -798,6 +798,18 @@ export function parseOrderResponse(json) {
 //
 // qty_all_ord_yn(잔량전부주문여부)은 항상 'Y'로 고정 — 이 프로젝트는 부분 수량
 // 정정을 쓸 일이 없다(전량 취소 또는 조건가만 바꾸는 전량 정정뿐).
+//
+// ⚠️ price=0 허용은 action==='취소'로만 한정(2026-09-19, place-breakout-fallback-
+// entry.mjs 취소시도 기능 추가로 확장, 2026-09-19 코드리뷰 MEDIUM 지적으로 범위를
+// action별로 좁힘) — 장후시간외(ORD_DVSN=06)·시장가(01) 주문은 애초에 ORD_UNPR="0"
+// 으로 접수됐다(placeKrOrder 스펙 문서 원문 — "시장가 등 주문시 0으로 입력"). 그
+// 주문을 취소할 때도 같은 규약을 따를 걸로 보고 취소 요청에 한해 price=0을 유효값으로
+// 받는다 — 이 부분은 실주문으로 검증 전이라 미검증. "정정"(스톱지정가 트레일링 재계산
+// 용도, 아직 실전 배선 안 됨)은 항상 실제 양수 조건가를 쓰므로 이 완화를 그대로
+// 물려받으면 안 된다 — 0이 실수로 들어와도(피처 미구현 경로) 지금까지처럼 여전히
+// 막아야 한다(코드리뷰 지적: "가격 0이 조용히 통과하면 0으로 스톱주문을 정정하는"
+// 이 프로젝트가 이미 한 번 겪은 클래스의 버그, feedback-sheets-numeric-parsing과
+// 같은 원칙).
 export async function reviseKrOrder({
   token, appkey, appsecret, cano, acntPrdtCd, orgNo, orderNo, action, quantity, price, conditionPrice,
   fetchImpl, retries, retryDelayMs,
@@ -811,11 +823,20 @@ export async function reviseKrOrder({
   if (!(Number.isInteger(quantity) && quantity > 0)) {
     const e = new Error(`주문수량은 양의 정수여야 함: ${quantity}`); e.confirmedNotSent = true; throw e;
   }
-  if (!(price > 0)) { const e = new Error(`주문단가는 양수여야 함: ${price}`); e.confirmedNotSent = true; throw e; }
+  const zeroPriceAllowed = action === '취소';
+  if (!(price > 0) && !(zeroPriceAllowed && price === 0)) {
+    const e = new Error(`주문단가는 양수여야 함${zeroPriceAllowed ? '(또는 취소 시 0)' : ''}: ${price}`); e.confirmedNotSent = true; throw e;
+  }
   if (conditionPrice !== undefined && !(conditionPrice > 0)) {
     const e = new Error(`조건가격(conditionPrice)은 양수여야 함: ${conditionPrice}`); e.confirmedNotSent = true; throw e;
   }
 
+  // ⚠️ conditionPrice가 없을 때 ORD_DVSN='00'(지정가) 고정 — 지금까지는 항상 원주문이
+  // 스톱지정가(22)인 케이스만 다뤘다. 2026-09-19 취소시도 기능 확장으로 원주문이
+  // 장후시간외(06)·시장가(01)인 경우도 이 경로를 타게 됐는데, order-rvsecncl API가
+  // 취소 요청의 ORD_DVSN을 원주문 구분과 무관하게 받아들이는지는 아직 실주문으로
+  // 검증 전이다(KIS 문서상 취소는 통상 구분과 무관하다고 알려져 있으나 이 프로젝트
+  // 기준 미실측 — 실전 첫 취소시도 결과를 반드시 확인할 것).
   const body = {
     CANO: cano, ACNT_PRDT_CD: acntPrdtCd, KRX_FWDG_ORD_ORGNO: orgNo, ORGN_ODNO: orderNo,
     ORD_DVSN: conditionPrice !== undefined ? '22' : '00',

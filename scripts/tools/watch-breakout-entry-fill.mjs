@@ -97,6 +97,7 @@ function buildProtectionMessage({ name, code, entryPrice, quantity, protection }
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const orderNo = args['order-no'];
+  const orgNo = args['org-no'] || null; // 취소시도용(2026-09-19) — 없으면(과거 호출부 등) 그냥 취소시도를 스킵
   const code = args.code || '';
   const name = args.name || code;
   const entryDate = args['entry-date'];
@@ -110,6 +111,13 @@ async function main() {
   if (!code) { console.error('❌ --code 필요'); process.exit(2); }
   if (!entryDate) { console.error('❌ --entry-date 필요(포지션 레코드 id에 사용)'); process.exit(2); }
   if (fallback && !investedWon) { console.error('❌ --fallback=nextDayOpen을 쓰려면 --invested-won도 필요(폴백 주문 규모 산정용)'); process.exit(2); }
+  // orgNo 없으면 취소시도 기능이 이 대기항목에 한해 조용히 꺼진다(에러는 아님, 정상
+  // 폴백 흐름은 그대로 진행) — 하지만 아무 로그도 없으면 왜 항상 uncertain으로만
+  // 빠지는지 원인을 못 찾는다(2026-09-19 코드리뷰 MEDIUM 지적, "silently disabled
+  // feature is visible in the job log").
+  if (fallback && !orgNo) {
+    console.warn('⚠️ --org-no 없음 — 이 대기항목은 다음날 폴백 시 전날주문 취소시도를 못 함(holdings 교차검증 경로만 적용됨)');
+  }
 
   mkdirSync(VAULT_PATHS.facts.ledger.executions, { recursive: true });
   mkdirSync(VAULT_PATHS.state.breakoutPositions, { recursive: true });
@@ -228,6 +236,7 @@ async function main() {
     console.log('[장후시간외 미체결] 다음날 시가 폴백 큐잉');
     const { id, filename, content } = buildPendingEntryRecord({
       code, name, signalDate: entryDate, investedWon, afterHoursOrderNo: orderNo,
+      afterHoursOrgNo: orgNo, afterHoursOrderQty: last.result?.orderQty ?? null,
       reason: `장후시간외 세션 내 미체결(${timeoutMin}분 감시)`,
     });
     writeAtomic(join(VAULT_PATHS.state.breakoutPendingEntries, filename), content);

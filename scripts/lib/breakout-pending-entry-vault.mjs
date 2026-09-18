@@ -43,13 +43,20 @@ export function isPendingEntryStale(entry, { maxAgeDays = 5, now = new Date() } 
   return ageDays > maxAgeDays;
 }
 
+// afterHoursOrgNo(KRX_FWDG_ORD_ORGNO)·afterHoursOrderQty — 2026-09-19 신설. 전날
+// 장후시간외 주문을 다음날 시가 폴백 직전에 직접 취소시도할 수 있으려면(계좌보유
+// 교차검증만으로는 unfilled 케이스를 안전하게 자동 해소할 수 없었던 문제,
+// place-breakout-fallback-entry.mjs attemptCancelPriorOrder 참고) orgNo·수량이
+// 필요한데 지금까지는 afterHoursOrderNo(주문번호)만 기록하고 버려지고 있었다.
+// 둘 다 없어도(과거 레코드·이번 세션 이전에 큐잉된 항목) 정상 동작 — 취소시도는
+// 그냥 스킵하고 기존 checkOrderFill+holdings 경로로 넘어간다(하위호환, 기본값 null).
 export function buildPendingEntryRecord({
-  code, name = '', signalDate, investedWon, afterHoursOrderNo = null, reason = '', now = new Date(),
+  code, name = '', signalDate, investedWon, afterHoursOrderNo = null, afterHoursOrgNo = null, afterHoursOrderQty = null, reason = '', now = new Date(),
 }) {
   const id = `${sanitizeSegment(code)}-${sanitizeSegment(signalDate)}`;
   const filename = `${id}.md`;
   const content = buildFrontmatter({
-    id, code, name, signalDate, investedWon, afterHoursOrderNo, reason,
+    id, code, name, signalDate, investedWon, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, reason,
     status: PENDING_ENTRY_STATUS.PENDING,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),

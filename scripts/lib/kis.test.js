@@ -906,6 +906,58 @@ test('reviseKrOrder: 취소 시 RVSE_CNCL_DVSN_CD=02', async () => {
   assert.equal(capturedBody.RVSE_CNCL_DVSN_CD, '02');
 });
 
+// [핵심] 2026-09-19 — 장후시간외/시장가 취소시도(place-breakout-fallback-entry.mjs)
+// 지원 확장. 그 원주문들은 애초에 ORD_UNPR="0"으로 접수됐으므로(placeKrOrder의
+// zeroPriceMode) 취소 요청도 price=0을 받아줘야 한다 — 예전엔 이 함수가 price>0을
+// 강제해 스톱지정가(항상 양수 조건가)만 취소/정정할 수 있었다.
+test('reviseKrOrder: price=0(장후시간외/시장가 원주문 취소)도 허용 — ORD_UNPR="0"으로 전송', async () => {
+  let capturedBody = null;
+  const fetchImpl = async (url, init) => {
+    capturedBody = JSON.parse(init.body);
+    const body = { rt_cd: '0', output: { ODNO: '1', ORD_TMD: '1', KRX_FWDG_ORD_ORGNO: '06010' } };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await reviseKrOrder({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    orgNo: '06010', orderNo: '1234', action: '취소', quantity: 10, price: 0, fetchImpl,
+  });
+  assert.equal(capturedBody.ORD_UNPR, '0');
+  assert.equal(capturedBody.RVSE_CNCL_DVSN_CD, '02');
+  // ORD_DVSN='00' 고정이 이 코드가 명시적으로 미검증이라 플래그해둔 부분(kis.mjs
+  // reviseKrOrder 헤더 주석 참고, 2026-09-19 코드리뷰 MEDIUM 지적) — 값 자체를
+  // 여기 고정해둬 누군가 조용히 바꿔도(혹은 안 바꿔도) 그 변경이 항상 눈에 띄게 한다.
+  assert.equal(capturedBody.ORD_DVSN, '00');
+});
+
+// [MEDIUM 재발방지] 2026-09-19 코드리뷰 — price=0 허용을 action==='취소'로만 한정.
+// "정정"(스톱지정가 트레일링 재계산용, 아직 실전배선 안 됨)까지 이 완화가 새면
+// 미래에 조건가 0으로 스톱주문을 조용히 정정하는 사고로 이어질 수 있다.
+test('reviseKrOrder: action이 "정정"이면 price=0은 여전히 거부(취소 전용 완화가 정정까지 새면 안 됨)', async () => {
+  try {
+    await reviseKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+      orgNo: '06010', orderNo: '1234', action: '정정', quantity: 10, price: 0, conditionPrice: 68000,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /주문단가는 양수여야 함/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
+test('reviseKrOrder: price가 음수면 여전히 거부(0 허용이 음수까지 풀어주면 안 됨)', async () => {
+  try {
+    await reviseKrOrder({
+      token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+      orgNo: '06010', orderNo: '1234', action: '취소', quantity: 10, price: -1,
+    });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.match(e.message, /주문단가는 양수여야 함/);
+    assert.equal(e.confirmedNotSent, true);
+  }
+});
+
 test('reviseKrOrder: 알 수 없는 action은 즉시 throw + confirmedNotSent=true', async () => {
   try {
     await reviseKrOrder({
