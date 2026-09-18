@@ -274,7 +274,7 @@ async function main() {
 
   const proposalsBlocked = isProposalBlocked(existsSync(VAULT_PATHS.state.proposalMode) ? readFileSync(VAULT_PATHS.state.proposalMode, 'utf8') : null);
   if (proposalsBlocked) {
-    console.log('  🚫 제안금지 모드 — 점검 자체를 건너뜀("제안요청"으로 해제 전까지)');
+    console.log('  🚫 제안금지 모드 — 점검 자체를 건너뜀("제안모드 온"으로 해제 전까지)');
     return;
   }
 

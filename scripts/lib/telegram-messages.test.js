@@ -237,48 +237,50 @@ test('[막아야 함] parseReplyDecision: 승인/거부가 둘 다 있으면(모
   assert.equal(parseReplyDecision('승인 아니 거부할래'), null);
 });
 
-// 최종 확정(오너, 2026-08-12) — "정지"/"해제"는 일상 대화에 흔한 단어라 오작동 위험이
-// 있어 "실전전환"/"섀도우전환"과 같은 원칙(목적 전용 복합어)으로 "긴급정지"/"정지해제"로
-// 교체. STOP/stop은 영문 명령으로 유지.
-test('parseKillSwitchCommand: "긴급정지"/"STOP" → activate', () => {
-  assert.equal(parseKillSwitchCommand('긴급정지'), 'activate');
-  assert.equal(parseKillSwitchCommand('STOP'), 'activate');
-  assert.equal(parseKillSwitchCommand('stop'), 'activate');
+// 2026-09-18 오너 지시 — 세 스위치(킬스위치·체결모드·제안모드) 명령어를 "OO 온"/
+// "OO 오프" 공통 패턴으로 재통일(구 "긴급정지"/"정지해제"/"STOP", 2026-08-12 확정
+// 당시엔 이게 최종형이었으나 스위치마다 어휘가 달라 외우기 어렵다는 지적으로 재개명).
+test('parseKillSwitchCommand: "킬스위치 온" → activate', () => {
+  assert.equal(parseKillSwitchCommand('킬스위치 온'), 'activate');
 });
 
-test('parseKillSwitchCommand: "정지해제" → deactivate', () => {
-  assert.equal(parseKillSwitchCommand('정지해제'), 'deactivate');
+test('parseKillSwitchCommand: "킬스위치 오프" → deactivate', () => {
+  assert.equal(parseKillSwitchCommand('킬스위치 오프'), 'deactivate');
 });
 
-test('[막아야 함] parseKillSwitchCommand: 캐주얼한 문장 속 단어·옛 단일단어("정지"/"해제")는 더 이상 명령으로 인정 안 함(정확일치만)', () => {
-  assert.equal(parseKillSwitchCommand('오늘 장 긴급정지될까?'), null);
-  assert.equal(parseKillSwitchCommand('그만 stop 하자'), null);
-  assert.equal(parseKillSwitchCommand('정지'), null); // 옛 단일단어 — 더 이상 인정 안 함
-  assert.equal(parseKillSwitchCommand('해제'), null); // 옛 단일단어 — 더 이상 인정 안 함
+test('[막아야 함] parseKillSwitchCommand: 캐주얼한 문장 속 단어·옛 명령어는 더 이상 인정 안 함(정확일치만)', () => {
+  assert.equal(parseKillSwitchCommand('오늘 장 킬스위치 켜야하나?'), null);
+  assert.equal(parseKillSwitchCommand('킬스위치'), null);
+  assert.equal(parseKillSwitchCommand('긴급정지'), null); // 옛 명령어 — 더 이상 인정 안 함
+  assert.equal(parseKillSwitchCommand('정지해제'), null); // 옛 명령어 — 더 이상 인정 안 함
+  assert.equal(parseKillSwitchCommand('STOP'), null); // 옛 영문 별칭 — 이번 개명에서 제거됨
 });
 
-test('parseExecutionModeCommand: "실전전환" → live', () => {
-  assert.equal(parseExecutionModeCommand('실전전환'), 'live');
+test('parseExecutionModeCommand: "실전모드 온" → live', () => {
+  assert.equal(parseExecutionModeCommand('실전모드 온'), 'live');
 });
 
-test('parseExecutionModeCommand: "섀도우전환" → shadow', () => {
-  assert.equal(parseExecutionModeCommand('섀도우전환'), 'shadow');
+test('parseExecutionModeCommand: "실전모드 오프" → shadow', () => {
+  assert.equal(parseExecutionModeCommand('실전모드 오프'), 'shadow');
 });
 
-test('[막아야 함] parseExecutionModeCommand: 캐주얼한 문장 속 언급은 명령으로 인정 안 함(정확일치만)', () => {
-  assert.equal(parseExecutionModeCommand('이제 실전전환 해도 될까?'), null);
-  assert.equal(parseExecutionModeCommand('아직 섀도우전환은 이르지'), null);
+test('[막아야 함] parseExecutionModeCommand: 캐주얼한 문장 속 언급·옛 명령어는 명령으로 인정 안 함(정확일치만)', () => {
+  assert.equal(parseExecutionModeCommand('이제 실전모드 켜도 될까?'), null);
   assert.equal(parseExecutionModeCommand('실전'), null);
+  assert.equal(parseExecutionModeCommand('실전전환'), null); // 옛 명령어
+  assert.equal(parseExecutionModeCommand('섀도우전환'), null); // 옛 명령어
 });
 
-test('parseProposalModeCommand: "제안금지" → blocked, "제안요청" → allowed', () => {
-  assert.equal(parseProposalModeCommand('제안금지'), 'blocked');
-  assert.equal(parseProposalModeCommand('제안요청'), 'allowed');
+test('parseProposalModeCommand: "제안모드 온" → allowed, "제안모드 오프" → blocked', () => {
+  assert.equal(parseProposalModeCommand('제안모드 온'), 'allowed');
+  assert.equal(parseProposalModeCommand('제안모드 오프'), 'blocked');
 });
 
-test('[막아야 함] parseProposalModeCommand: 캐주얼한 문장 속 언급은 명령으로 인정 안 함(정확일치만)', () => {
-  assert.equal(parseProposalModeCommand('이제 제안금지 좀 시켜줘'), null);
+test('[막아야 함] parseProposalModeCommand: 캐주얼한 문장 속 언급·옛 명령어는 명령으로 인정 안 함(정확일치만)', () => {
+  assert.equal(parseProposalModeCommand('이제 제안모드 좀 꺼줘'), null);
   assert.equal(parseProposalModeCommand('제안'), null);
+  assert.equal(parseProposalModeCommand('제안금지'), null); // 옛 명령어
+  assert.equal(parseProposalModeCommand('제안요청'), null); // 옛 명령어
   assert.equal(parseProposalModeCommand(''), null);
 });
 

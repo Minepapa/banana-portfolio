@@ -28,6 +28,36 @@ export const VCP_MARGIN_RATIO = 1.1;
 // "그래도 5일평균으로 배선"을 명시 확정(2026-09-15)해 배선함
 // (Log/Implementation/2026-09-15-RS앵커스무딩-백테스트비교.md 참고).
 export const RS_ANCHOR_SMOOTH_DAYS = 5;
+// 거래량 확인(볼륨 컨펌) 기본 파라미터(2026-09-19, 오너 지시 — 코드리뷰가 지적한
+// "가격 돌파에 거래량 확인이 없다"는 공백 보강). 20일 창은 유동성 사전필터
+// (breakout-simulator.mjs LIQUIDITY_FLOOR_WON, computeAvgTradingValue)가 이미 쓰는
+// 창과 동일하게 맞춰 세 번째 다른 창을 새로 만들지 않는다(일관성). 배수(1.5)는
+// IBD/미너비니류 돌파매매가 통상 요구하는 "평균대비 +40~50%"(=1.4~1.5배) 문턱과
+// 일치하는 값으로 오너가 확정.
+//
+// ⚠️ 호출부가 candidate.volumes/todayVolume을 안 넘기면 이 조건 자체가 평가되지
+// 않고 조용히 통과한다(하위호환 — opt-in 설계). 2026-09-19 백테스트(2014~2026,
+// 승률+1.6%p·샤프 0.66→0.70·MDD 25.1%→19.5% 개선 확인, Log/Implementation/
+// 2026-09-19-돌파매매-거래량확인·RS문턱-백테스트비교.md 참고)로 실전 배선
+// 확정(daily-breakout-signal-scan.mjs) — 오너 승인.
+export const VOLUME_LOOKBACK_DAYS = 20;
+export const VOLUME_CONFIRMATION_MULTIPLIER = 1.5;
+// ⚠️ 미검증 가정(코드리뷰 Open Question, 2026-09-19) — 이 조건은 서로 다른 소스의
+// 거래량을 직접 비율 비교한다: 분모(평균)는 FinanceDataReader 경유 KRX 일별
+// Volume(캐시), 분자(오늘)는 KIS 라이브 acml_vol(15:32 시점 누적치). 두 소스의
+// "거래량" 정의(시간외 포함 여부 등)가 정확히 같은지 이번 세션에서 확정 못 했다 —
+// 다르다면 문턱(1.5배)이 실효적으로 살짝 어긋날 수 있음(fail-closed 방향으로
+// 추정: 유효 매수를 가끔 놓치는 쪽, 반대로 가짜통과가 느는 방향은 아닐 것). 다음
+// 거래일 캐시 갱신 후 같은 종목의 acml_vol(15:32)과 캐시 Volume을 직접 대조하면
+// 확인 가능 — 필요해지면.
+
+// RS 절대 문턱(2026-09-19, 오너 지적 — "RS≥0은 너무 열려있다") — passesRelativeStrengthFilter의
+// minRs 기본값(0)을 이 값으로 실전 배선(daily-breakout-signal-scan.mjs). 후보군
+// 크기가 매일 들쭉날쭉해 순위(백분위) 기반 문턱은 후보가 적은 날 품질보장이 안
+// 된다고 판단해 기각(논의 경위: Log/Implementation/2026-09-19-돌파매매-거래량확인
+// ·RS문턱-백테스트비교.md) — 절대 문턱만 채택. 0/3/5/8 백테스트 비교(2014~2026)
+// 결과 8이 가장 나은 연환산·샤프를 냄(같은 조합 내에서 일관되게 개선) — 오너 확정.
+export const MIN_RELATIVE_STRENGTH = 8;
 
 // closes(오름차순, 마지막이 최신)에서 일별 수익률 배열(길이 n-1) 산출. 0 이하 종가는
 // null(추정 안 함 — 상장폐지 직전 이상치 등 방어).
@@ -250,12 +280,42 @@ export function computeRelativeStrengthMultiPeriod(stockCloses, benchmarkCloses,
   return weightedSum / weightTotal;
 }
 
-export function passesRelativeStrengthFilter(relativeStrength) {
-  return relativeStrength != null && relativeStrength >= 0;
+// minRs 파라미터화(2026-09-19, 오너 지적 — "RS≥0은 너무 열려있다"). 기본값 0은
+// 기존 동작 그대로(하위호환·회귀 없음) — 절대 문턱을 몇 %p로 올리는 게 적정한지는
+// 백테스트로 정할 대상이라 여기서 임의로 올리지 않는다. 순위(백분위) 기반 대안은
+// 오너와 논의 후 기각(후보 수가 적은 날엔 상위%가 품질을 보장 못 함 — 슬롯이
+// 이미 RS 내림차순으로 채워지고 있어 "여럿 중 최선"은 별도 게이트 없이도 확보됨,
+// 진짜 필요한 건 절대 하한).
+export function passesRelativeStrengthFilter(relativeStrength, minRs = 0) {
+  return relativeStrength != null && relativeStrength >= minRs;
 }
 
 export function passesMarketCapFloor(marcap, floorWon = MARKET_CAP_FLOOR_WON) {
   return marcap != null && marcap >= floorWon;
+}
+
+// volumes(오름차순, 마지막=어제 — "오늘"은 포함 안 함, breakout-simulator.mjs의
+// computeAvgTradingValue와 동일 원칙: endIndex가 곧 마지막으로 반영할 거래일)에서
+// endIndex 포함 최근 days거래일 평균 거래량(주식수). 표본 부족(신규상장 직후 등)이면
+// null(추정 안 함) — computeAvgTradingValue와 동일 관용구, 다만 거래대금(종가×거래량)이
+// 아니라 순수 거래량이라 "오늘 거래량이 평소 몇 배인지" 비율 비교에 쓴다.
+export function computeAvgVolume(volumes, endIndex, days = VOLUME_LOOKBACK_DAYS, minWindowRatio = 0.9) {
+  const startIndex = endIndex - days + 1;
+  if (startIndex < 0) return null;
+  let sum = 0;
+  let count = 0;
+  for (let i = startIndex; i <= endIndex; i++) {
+    if (volumes[i] != null) { sum += volumes[i]; count += 1; }
+  }
+  if (count < days * minWindowRatio) return null;
+  return sum / count;
+}
+
+// 거래량 확인 — 오늘 거래량이 평소(어제까지 평균)의 multiplier배 이상인지. 데이터
+// 부족(avgVolume 계산 불가) 또는 todayVolume 자체가 없으면 통과 안 시킴(추정 안 함).
+export function passesVolumeConfirmation(todayVolume, avgVolume, multiplier = VOLUME_CONFIRMATION_MULTIPLIER) {
+  if (todayVolume == null || avgVolume == null || !(avgVolume > 0)) return false;
+  return todayVolume >= avgVolume * multiplier;
 }
 
 // RS 계산 경로 선택 — opts.rsPeriods(다구간 블렌드) > opts.rsAnchorSmoothDays(앵커
@@ -276,9 +336,12 @@ function resolveRelativeStrength(closes, benchmarkCloses, opts) {
   return computeRelativeStrength(closes, benchmarkCloses, lookbackDays);
 }
 
-// 네 조건 종합 — 하나라도 데이터 부족/미충족이면 매수 신호 아님(폴백 없음).
-// candidate: { closes, highs, lows, benchmarkCloses, marcap }(closes/highs/lows는
-// 오름차순, 마지막이 오늘. lows는 consolidationMethod='range'일 때만 필요).
+// 네·다섯 조건 종합 — 하나라도 데이터 부족/미충족이면 매수 신호 아님(폴백 없음).
+// candidate: { closes, highs, lows, benchmarkCloses, marcap, volumes, todayVolume }
+// (closes/highs/lows는 오름차순, 마지막이 오늘. lows는 consolidationMethod='range'일
+// 때만 필요. volumes/todayVolume은 opt-in — 2026-09-19 거래량 확인 조건 참고,
+// VOLUME_LOOKBACK_DAYS 주석의 하위호환 설명 그대로 candidate.volumes가 없으면 이
+// 다섯 번째 조건은 평가되지 않고 조용히 통과한다).
 // opts.consolidationMethod: 'stddev'(기본, 기존 isVolatilityExpansionBreakout) |
 // 'range'(신규, isPriceRangeConsolidationBreakout — 박스권 근사, 2026-09-13 비교용).
 export function computeBreakoutEntrySignal(candidate, opts = {}) {
@@ -288,6 +351,26 @@ export function computeBreakoutEntrySignal(candidate, opts = {}) {
     : isVolatilityExpansionBreakout(candidate.closes, opts.volatility);
   const relativeStrength = resolveRelativeStrength(candidate.closes, candidate.benchmarkCloses, opts);
   const marketCapOk = passesMarketCapFloor(candidate.marcap, opts.marketCapFloor);
-  const pass = week52.pass && volatility.pass && passesRelativeStrengthFilter(relativeStrength) && marketCapOk;
-  return { pass, week52, volatility, relativeStrength, marketCapOk };
+  let volumeOk = true;
+  let avgVolume = null;
+  if (candidate.volumes != null) {
+    // 불변식 가드(2026-09-19 코드리뷰 MEDIUM 지적) — candidate.volumes는 반드시
+    // "오늘 제외"(closes보다 정확히 1 짧음)여야 한다. 이걸 안 지키고 오늘을 포함해
+    // 넘기면 오늘 거래량이 자기 평균 계산에 섞여 경계 근처 판정이 조용히 뒤집힌다
+    // (예: 평소1.0·오늘1.5배는 정상 통과해야 하는데, 오늘 포함 평균이면 탈락으로
+    // 둔갑) — 현재 두 호출부(daily-breakout-signal-scan.mjs·breakout-simulator.mjs)
+    // 는 이미 이 불변식을 만족하지만, 주석만으로는 다음 호출부가 안 지킬 수 있어
+    // throw로 강제한다(추정 안 함 원칙).
+    if (candidate.volumes.length !== candidate.closes.length - 1) {
+      throw new Error(`computeBreakoutEntrySignal: candidate.volumes는 closes보다 정확히 1 짧아야 함("오늘 제외") — closes ${candidate.closes.length}, volumes ${candidate.volumes.length}`);
+    }
+    avgVolume = computeAvgVolume(candidate.volumes, candidate.volumes.length - 1, opts.volumeLookbackDays);
+    volumeOk = passesVolumeConfirmation(candidate.todayVolume, avgVolume, opts.volumeMultiplier);
+  }
+  const relativeStrengthOk = passesRelativeStrengthFilter(relativeStrength, opts.minRelativeStrength);
+  const pass = week52.pass && volatility.pass && relativeStrengthOk && marketCapOk && volumeOk;
+  return {
+    pass, week52, volatility, relativeStrength, marketCapOk,
+    volume: candidate.volumes != null ? { pass: volumeOk, avgVolume, todayVolume: candidate.todayVolume } : null,
+  };
 }

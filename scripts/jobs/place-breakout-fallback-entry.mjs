@@ -224,7 +224,7 @@ async function main() {
     }
     if (isKillSwitchActive(killSwitchState.content)) {
       console.log(`  ℹ️ 킬스위치 활성 — ${name}(${code}) 발주 보류(대기 상태 유지, 자동 재시도됨)`);
-      await notify('스킵', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 활성</b>\n${name}(${code}) 전날 미체결 확인됐지만 킬스위치가 켜져 있어 발주하지 않았습니다. "정지해제" 명령으로 해제하면 다음 실행에서 자동 재시도됩니다.`);
+      await notify('스킵', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 활성</b>\n${name}(${code}) 전날 미체결 확인됐지만 킬스위치가 켜져 있어 발주하지 않았습니다. "킬스위치 오프" 명령으로 해제하면 다음 실행에서 자동 재시도됩니다.`);
       continue;
     }
 

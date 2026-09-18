@@ -167,7 +167,7 @@ async function main() {
   const proposalModePath = VAULT_PATHS.state.proposalMode;
   const proposalsBlocked = isProposalBlocked(existsSync(proposalModePath) ? readFileSync(proposalModePath, 'utf8') : null);
   if (proposalsBlocked && !DRY_RUN) {
-    console.log('🚫 제안금지 모드 — 이 잡도 건너뜀("제안요청"으로 해제 전까지, 마커도 안 건드림 — 다음 주에 재시도)');
+    console.log('🚫 제안금지 모드 — 이 잡도 건너뜀("제안모드 온"으로 해제 전까지, 마커도 안 건드림 — 다음 주에 재시도)');
     return;
   }
 

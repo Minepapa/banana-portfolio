@@ -10,11 +10,16 @@
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-12 --useBettingUnits=true  # 점진적 배팅(유닛) 사이징 비교(2026-09-14)
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-14 --rsMethod=short  # RS 다구간 방법론 비교(2026-09-15, 아래 RS_METHOD_PERIODS 참고)
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-14 --rsAnchorSmoothDays=5  # RS 앵커 스무딩 비교(2026-09-15, 오너 재지적 — 다구간 블렌드와는 다른 접근)
+//   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-19 --useVolumeConfirmation=true  # 거래량 확인(평균 1.5배) 조건 비교(2026-09-19)
+//   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-19 --useAdaptiveStop=true  # ATR 가변손절(4%/8%) 비교(2026-09-19)
+//   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-19 --minRs=5  # RS 절대문턱 상향 비교(2026-09-19, 기본 0)
 import { buildCandidatePool } from '../lib/historical-universe.mjs';
 import { loadPriceSeriesBatch } from '../lib/breakout-price-series.mjs';
 import { cacheIndexPrices, loadIndexSeries } from '../lib/index-price-cache.mjs';
 import { runBreakoutBacktest, LIQUIDITY_FLOOR_WON } from '../lib/breakout-simulator.mjs';
-import { MARKET_CAP_FLOOR_WON, RS_ANCHOR_SMOOTH_DAYS } from '../lib/breakout-factor.mjs';
+import {
+  MARKET_CAP_FLOOR_WON, RS_ANCHOR_SMOOTH_DAYS, MIN_RELATIVE_STRENGTH, VOLUME_CONFIRMATION_MULTIPLIER,
+} from '../lib/breakout-factor.mjs';
 import { RISK_PER_TRADE_PCT } from '../lib/breakout-risk.mjs';
 import { buildComparisonReport } from '../lib/benchmark-comparison.mjs';
 import { cumulativeReturns } from '../lib/walk-forward-simulator.mjs';
@@ -98,6 +103,39 @@ async function main() {
   }
   const useBettingUnits = args.useBettingUnits === 'true';
 
+  // 2026-09-19 오너 지시 3종 비교용(거래량 확인·ATR 가변손절·RS 절대문턱) — 동일하게
+  // 오타·오입력이 조용히 흡수되지 않도록 검증.
+  if (args.useVolumeConfirmation != null && args.useVolumeConfirmation !== 'true' && args.useVolumeConfirmation !== 'false') {
+    throw new Error(`--useVolumeConfirmation은 true|false만 허용(받은 값: "${args.useVolumeConfirmation}")`);
+  }
+  const useVolumeConfirmation = args.useVolumeConfirmation === 'true';
+
+  if (args.useAdaptiveStop != null && args.useAdaptiveStop !== 'true' && args.useAdaptiveStop !== 'false') {
+    throw new Error(`--useAdaptiveStop은 true|false만 허용(받은 값: "${args.useAdaptiveStop}")`);
+  }
+  const useAdaptiveStop = args.useAdaptiveStop === 'true';
+
+  // 코드리뷰 LOW 지적(2026-09-19) — `--minRs=`(빈 문자열)이 `Number('')===0`이라
+  // 조용히 문턱 0으로 흡수될 뻔했다(오타·잘림 입력이 "문턱 없음"으로 둔갑) —
+  // --rsAnchorSmoothDays처럼 빈 값도 명시적으로 막는다.
+  let minRelativeStrength;
+  if (args.minRs != null) {
+    if (args.minRs === '') throw new Error('--minRs에 빈 값을 줄 수 없음(문턱을 지정하려면 숫자를 넘길 것)');
+    minRelativeStrength = Number(args.minRs);
+    if (!Number.isFinite(minRelativeStrength)) {
+      throw new Error(`--minRs는 유한한 숫자여야 함(받은 값: "${args.minRs}")`);
+    }
+  }
+  // 백테스트 무플래그 실행이 실전과 조용히 어긋나는 걸 경고(코드리뷰 MEDIUM 지적,
+  // 2026-09-19) — rsAnchorSmoothDays 경고와 동일 원칙(2026-09-15 선례). 실전은
+  // 2026-09-19부터 거래량 확인 ON + RS≥MIN_RELATIVE_STRENGTH로 확정 배선됨.
+  if (!useVolumeConfirmation) {
+    console.error(`⚠️ 참고: 실전(daily-breakout-signal-scan.mjs)은 거래량 확인(평균 ${VOLUME_CONFIRMATION_MULTIPLIER}배 이상)을 켜고 돕니다 — 이 실행은 --useVolumeConfirmation을 안 줘서 꺼진 채로 도는 중이라 실전과 다른 설정입니다. 실전과 맞추려면 --useVolumeConfirmation=true 추가.`);
+  }
+  if (minRelativeStrength == null) {
+    console.error(`⚠️ 참고: 실전은 RS 절대문턱 ${MIN_RELATIVE_STRENGTH}를 씁니다 — 이 실행은 --minRs를 안 줘서 문턱 0으로 도는 중이라 실전과 다른 설정입니다. 실전과 맞추려면 --minRs=${MIN_RELATIVE_STRENGTH} 추가.`);
+  }
+
   if (!DATE_RE.test(fromDate)) throw new Error(`--from 형식 오류(YYYY-MM-DD 필요): ${fromDate}`);
   if (!DATE_RE.test(toDate)) throw new Error(`--to 형식 오류(YYYY-MM-DD 필요): ${toDate}`);
   if (fromDate > toDate) throw new Error(`--from(${fromDate})이 --to(${toDate})보다 나중일 수 없음`);
@@ -144,10 +182,11 @@ async function main() {
     : rsAnchorSmoothDays === 1
       ? `${rsMethod}+앵커1일평균(=baseline과 동일)`
       : `${rsMethod}+앵커${rsAnchorSmoothDays}일평균`;
-  console.error(`[4/4] 일별 시뮬레이션 실행 중(진입: 52주신고가+변동성확장(${consolidationMethod})+RS(${rsLabel})+시총${(marketCapFloor / 1e12).toFixed(1)}조원, 청산: -8%+R배수트레일링+3R부분익절)...`);
+  console.error(`[4/4] 일별 시뮬레이션 실행 중(진입: 52주신고가+변동성확장(${consolidationMethod})+RS(${rsLabel})${minRelativeStrength != null ? `≥${minRelativeStrength}` : ''}${useVolumeConfirmation ? '+거래량확인' : ''}+시총${(marketCapFloor / 1e12).toFixed(1)}조원, 청산: ${useAdaptiveStop ? 'ATR가변손절(4%/8%)' : '-8%고정'}+R배수트레일링+3R부분익절)...`);
   const result = runBreakoutBacktest({
     pool, seriesByCode, benchmarkSeries: fullBenchmark, tradingDates, initialCapital,
     marketCapFloor, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming, useBettingUnits, rsPeriods, rsAnchorSmoothDays,
+    minRelativeStrength, useVolumeConfirmation, useAdaptiveStop,
   });
   console.error(`  거래 ${result.trades.length}건, 최종 현금 ${Math.round(result.finalCapital).toLocaleString()}원(시가 데이터 없어 예약체결 스킵 ${result.skippedNoOpenPrice}건)`);
 
@@ -174,6 +213,11 @@ async function main() {
   const losses = closedTrades.filter((t) => t.pnlWon <= 0);
   const avgLossPct = losses.length ? losses.reduce((s, t) => s + t.pnlWon / t.investedWon, 0) / losses.length : null;
   const partialProfitTrades = closedTrades.filter((t) => t.reason === '3R 부분익절(50%)').length;
+  // 손익비(2026-09-19 신설 — 오너 목표 "승률 30%+·손익비 1:3+"를 CLI 출력에서 바로
+  // 확인 가능하게). |평균손실|이 0이거나 손실 거래가 없으면(전부 익절) 비율 정의 불가 — null.
+  const profitLossRatio = avgWinPct != null && avgLossPct != null && avgLossPct !== 0
+    ? Math.abs(avgWinPct / avgLossPct)
+    : null;
 
   console.log(JSON.stringify({
     period: { from: fromDate, to: toDate, tradingDays: tradingDates.length },
@@ -182,6 +226,8 @@ async function main() {
       consolidationMethod, entryTiming, useBettingUnits, rsMethod,
       rsPeriods: rsPeriods ?? null, // rsMethod 정의(RS_METHOD_PERIODS)가 나중에 바뀌어도 이 결과가 어떤 파라미터였는지 재현 가능하도록 같이 기록(2026-09-15 코드리뷰 LOW 지적)
       rsAnchorSmoothDays: rsAnchorSmoothDays ?? null,
+      minRelativeStrength: minRelativeStrength ?? null,
+      useVolumeConfirmation, useAdaptiveStop,
     },
     tradeStats: {
       totalTrades: closedTrades.length,
@@ -189,6 +235,7 @@ async function main() {
       winRate,
       avgWinPct,
       avgLossPct,
+      profitLossRatio,
       openPositionsAtEnd: result.openPositionsAtEnd,
       skippedNoOpenPrice: result.skippedNoOpenPrice,
       finalBettingUnits: result.finalBettingUnits,

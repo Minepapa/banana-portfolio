@@ -11,7 +11,7 @@ import { computeBreakoutEntrySignal, RS_LOOKBACK_DAYS } from './breakout-factor.
 import {
   computeTrailingStop, computePositionSize, shouldPyramid,
   shouldTakePartialProfit, rMultiplePrice, PARTIAL_PROFIT_TRIGGER_R, PARTIAL_PROFIT_SELL_FRACTION,
-  MAX_CONCURRENT_POSITIONS,
+  MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT, computeATR, selectAdaptiveStopLossPct,
 } from './breakout-risk.mjs';
 import {
   computeBettingUnitInvestment, MIN_BETTING_UNITS, TOTAL_BETTING_UNITS, BETTING_UNIT_SUCCESS_R,
@@ -55,7 +55,13 @@ export function computeAvgTradingValue(closes, volumes, endIndex, days = 20, min
 // 새로 만들어내는 임계치가 아님) 트레일링스탑 순서버그와 같은 문제는 없다. 손절
 // 청산이 먼저 체크되므로, 같은 날 손절도 나고 3R도 찍는 극단적 경우는 손절이 우선
 // (포지션 자체가 사라지니 부분익절 대상이 없음).
+// position.stopLossPct(2026-09-19, ATR 가변손절 — 없으면(기존 포지션 객체·
+// useAdaptiveStop=false 경로) 기존 고정값 STOP_LOSS_PCT로 하위호환) 기준으로 R배수
+// 트리거·트레일링선을 계산한다 — 진입 시점에 정해진 값을 그 포지션의 생애 내내
+// 그대로 쓴다(도중에 ATR이 바뀌어도 재계산 안 함 — "그 종목의 진입 당시 변동성
+// 성격"으로 손절 체계 자체를 고정하는 설계, 트레일링 자체는 기존처럼 매일 갱신됨).
 export function updatePositionForDay(position, dayBar) {
+  const stopLossPct = position.stopLossPct ?? STOP_LOSS_PCT;
   if (dayBar.low <= position.stopPrice) {
     return {
       position,
@@ -67,14 +73,14 @@ export function updatePositionForDay(position, dayBar) {
 
   let partialExit = null;
   let partialSold = position.partialSold;
-  if (shouldTakePartialProfit(position.entryPrice, highSinceEntry, position.partialSold)) {
-    partialExit = { exitPrice: rMultiplePrice(position.entryPrice, PARTIAL_PROFIT_TRIGGER_R), sellFraction: PARTIAL_PROFIT_SELL_FRACTION };
+  if (shouldTakePartialProfit(position.entryPrice, highSinceEntry, position.partialSold, stopLossPct)) {
+    partialExit = { exitPrice: rMultiplePrice(position.entryPrice, PARTIAL_PROFIT_TRIGGER_R, stopLossPct), sellFraction: PARTIAL_PROFIT_SELL_FRACTION };
     partialSold = true;
   }
 
-  const rawStop = computeTrailingStop(position.entryPrice, highSinceEntry);
+  const rawStop = computeTrailingStop(position.entryPrice, highSinceEntry, stopLossPct);
   const stopPrice = Math.max(position.stopPrice, rawStop); // 래칫 — 절대 하향 안 함
-  const addUnit = !position.pyramided && shouldPyramid(position.entryPrice, highSinceEntry, position.units);
+  const addUnit = !position.pyramided && shouldPyramid(position.entryPrice, highSinceEntry, position.units, stopLossPct);
   return {
     position: {
       ...position,
@@ -131,6 +137,25 @@ export function runBreakoutBacktest({
   entryTiming = 'nextDayOpen', // 'nextDayOpen'(기존, 실현가능 지연체결) | 'sameDayClose'(장후시간외 우선체결 가정 — 2026-09-13 오너 요청, 아래 3)단계 참고)
   useBettingUnits = false, // 점진적 배팅(유닛) 사이징 — 오너 지시, 2026-09-14(breakout-unit-tracker.mjs 참고). false(기존 기본값)면 항상 Max2%룰 최대한도로 진입(기존 동작 그대로, 회귀 없음). 2026-09-14 코드리뷰 지적으로 bettingUnits(불리언 플래그)에서 개명 — 같은 파일 안의 currentBettingUnits(개수)와 타입이 헷갈리는 걸 방지.
   initialBettingUnits = MIN_BETTING_UNITS, // 유닛 카운터 시작값 — 백테스트는 기본 1(영상 예시)이지만, 실전(Kairos) State에서 이어받을 카운터를 주입할 통로로 남겨둠(모듈 헤더의 "상태 영속은 호출측 책임" 계약과 일치, 2026-09-14 코드리뷰 지적).
+  minRelativeStrength, // 2026-09-19 오너 지적("RS≥0은 너무 열려있다") 대응 — 지정 안 하면 기존과 동일(0, 회귀 없음). breakout-factor.mjs passesRelativeStrengthFilter로 그대로 전달.
+  useVolumeConfirmation = false, // 2026-09-19 거래량 확인 조건 비교용 — false(기본)면 기존과 완전 동일(candidate.volumes를 아예 안 넘겨 breakout-factor.mjs가 이 조건 자체를 평가 안 함, 회귀 없음). true면 series.volumes를 신호 계산에 실어 보냄.
+  volumeMultiplier, // useVolumeConfirmation=true일 때만 의미 있음 — 지정 안 하면 breakout-factor.mjs VOLUME_CONFIRMATION_MULTIPLIER(1.5) 기본값
+  // 2026-09-19 ATR 가변손절(-4%/-8%) 비교용 — false(기본)면 기존과 완전 동일(모든
+  // 포지션이 고정 STOP_LOSS_PCT=8%, 회귀 없음). true면 진입 시점 ATR로 포지션별
+  // stopLossPct를 정해 생애 내내 고정.
+  //
+  // ⚠️ 손절폭만 바뀌는 게 아니다(코드리뷰 MEDIUM 지적, 2026-09-19 백테스트 실측) —
+  // Max 2%룰 사이징(computePositionSize = capital×riskPct÷stopLossPct)이 손절폭에
+  // 반비례라, 좁은 손절(4%)로 진입하는 포지션은 넓은 손절(8%) 대비 투입금액이
+  // 정확히 2배(자본의 25%→50%)가 된다. 실측(2026-09-19, 시총1조↑ 318종목 기준):
+  // ATR_STOP_THRESHOLD_PCT=4.0 문턱에서 약 31%가 좁은 손절(2배 사이징)을 받는다.
+  // 이 때문에 (a) MAX_CONCURRENT_POSITIONS=10 슬롯이 자본 소진으로 다 안 채워질
+  // 수 있고(분산 붕괴), (b) 시초가 갭하락으로 손절선을 건너뛸 때 원화 손실도
+  // 2배가 된다. 첫 백테스트(2014~2026)에서 useAdaptiveStop=true가 baseline보다
+  // 성과가 나빠진 원인이 "손절폭 선택 자체"가 아니라 "동반된 사이징·분산 변화"일
+  // 가능성이 있다 — 이 임계값을 재조정해 재검증할 때는 stopLossPct와 사이징을
+  // 분리해서(예: 사이징은 8% 기준 고정) 비교해야 두 효과가 안 섞인다.
+  useAdaptiveStop = false,
 }) {
   let capital = initialCapital;
   const openPositions = new Map(); // code -> position + investedWon
@@ -143,11 +168,14 @@ export function runBreakoutBacktest({
   // 신규 진입 사이징 — 두 체결 경로(1) nextDayOpen 예약체결, 3) sameDayClose 즉시체결)가
   // 완전히 같은 로직을 써야 해서(2026-09-14 코드리뷰 지적 — 복붙 2곳이 서로 어긋날 여지)
   // 클로저 하나로 뽑음. capital/currentBettingUnits는 let 바인딩이라 호출 시점의 최신값을
-  // 그대로 읽는다(클로저가 참조를 캡처, 값이 아님).
-  const sizeNewEntry = () => Math.min(
+  // 그대로 읽는다(클로저가 참조를 캡처, 값이 아님). stopLossPct 파라미터 추가(2026-09-19,
+  // ATR 가변손절) — Max 2%룰 자체가 "손절폭에 반비례하는 사이징"이라, 좁은 손절(4%)로
+  // 진입하는 포지션은 같은 리스크금액으로 더 큰 금액을 투입해야 원래 취지(리스크 고정)가
+  // 맞다. 기본값 STOP_LOSS_PCT 유지로 useAdaptiveStop=false 경로는 기존과 완전 동일.
+  const sizeNewEntry = (stopLossPct = STOP_LOSS_PCT) => Math.min(
     useBettingUnits
-      ? computeBettingUnitInvestment(capital, currentBettingUnits, { riskPct: riskPerTradePct })
-      : computePositionSize(capital, { riskPct: riskPerTradePct }),
+      ? computeBettingUnitInvestment(capital, currentBettingUnits, { riskPct: riskPerTradePct, stopLossPct })
+      : computePositionSize(capital, { riskPct: riskPerTradePct, stopLossPct }),
     capital,
   );
 
@@ -164,7 +192,7 @@ export function runBreakoutBacktest({
     // 있는 지점이었음).
     if (pendingEntries.length && openPositions.size < maxConcurrentPositions) {
       const sortedPending = [...pendingEntries].sort((a, b) => b.relativeStrength - a.relativeStrength);
-      for (const { code } of sortedPending) {
+      for (const { code, stopLossPct: pendingStopLossPct } of sortedPending) {
         if (openPositions.size >= maxConcurrentPositions) break;
         if (openPositions.has(code)) continue;
         const series = seriesByCode[code];
@@ -172,13 +200,15 @@ export function runBreakoutBacktest({
         if (idx < 0 || series.dates[idx] !== date) continue; // 오늘 거래 없음(휴장 등) — 그냥 흘려보냄(재시도 안 함)
         const openPrice = series.opens[idx];
         if (openPrice == null || !(openPrice > 0)) { skippedNoOpenPrice += 1; continue; } // Open 데이터 없음 — 추정 안 함
-        const sizeWon = sizeNewEntry();
+        const stopLossPct = pendingStopLossPct ?? STOP_LOSS_PCT;
+        const sizeWon = sizeNewEntry(stopLossPct);
         if (!(sizeWon > 0)) continue;
         capital -= sizeWon;
         openPositions.set(code, {
           code, entryDate: date, entryPrice: openPrice, units: 1,
-          highSinceEntry: openPrice, stopPrice: openPrice * (1 - 0.08), pyramided: false,
+          highSinceEntry: openPrice, stopPrice: openPrice * (1 - stopLossPct), pyramided: false,
           partialSold: false, investedWon: sizeWon, bettingUnitsAtEntry: useBettingUnits ? currentBettingUnits : null,
+          stopLossPct,
         });
       }
     }
@@ -259,29 +289,54 @@ export function runBreakoutBacktest({
         const closes = series.closes.slice(0, cand.idx + 1);
         const highs = series.highs.slice(0, cand.idx + 1);
         const lows = series.lows.slice(0, cand.idx + 1);
+        // 거래량 확인(2026-09-19, useVolumeConfirmation) — "오늘"=cand.idx, 평균은
+        // 어제까지(cand.idx 미포함)라 candidate.volumes는 today를 뺀 슬라이스여야
+        // breakout-factor.mjs computeAvgVolume의 "마지막 원소=어제" 관례와 맞는다.
+        const volumes = useVolumeConfirmation ? series.volumes.slice(0, cand.idx) : undefined;
+        const todayVolume = useVolumeConfirmation ? series.volumes[cand.idx] : undefined;
         const signal = computeBreakoutEntrySignal(
-          { closes, highs, lows, benchmarkCloses, marcap: cand.marcap },
-          { rsLookbackDays: RS_LOOKBACK_DAYS, rsPeriods, rsAnchorSmoothDays, week52High: { lookbackDays: HIGH_LOOKBACK_DAYS }, marketCapFloor, consolidationMethod, volatility: volatilityOpts },
+          {
+            closes, highs, lows, benchmarkCloses, marcap: cand.marcap, volumes, todayVolume,
+          },
+          {
+            rsLookbackDays: RS_LOOKBACK_DAYS, rsPeriods, rsAnchorSmoothDays, minRelativeStrength,
+            week52High: { lookbackDays: HIGH_LOOKBACK_DAYS }, marketCapFloor, consolidationMethod, volatility: volatilityOpts,
+            volumeMultiplier,
+          },
         );
         if (!signal.pass) continue;
-        todaySignals.push({ code: cand.code, relativeStrength: signal.relativeStrength, closePrice: series.closes[cand.idx] });
+        // ATR 가변손절(2026-09-19, useAdaptiveStop) — 신호 시점(cand.idx, "오늘")의
+        // 가격·변동성으로 그 포지션 생애 전체에 쓸 손절폭을 확정한다. ATR 계산 불가
+        // (데이터 부족)면 안전한 기존 고정값(STOP_LOSS_PCT, "넓은" 쪽)으로 폴백 —
+        // 폴백 자체는 명시적(selectAdaptiveStopLossPct가 null을 돌려줄 때만, 조용히
+        // 아무 값이나 쓰지 않음).
+        let stopLossPct = STOP_LOSS_PCT;
+        if (useAdaptiveStop) {
+          const atr = computeATR(highs, lows, closes, closes.length - 1);
+          const selected = selectAdaptiveStopLossPct(atr, closes[closes.length - 1]);
+          if (selected != null) stopLossPct = selected;
+        }
+        todaySignals.push({
+          code: cand.code, relativeStrength: signal.relativeStrength, closePrice: series.closes[cand.idx], stopLossPct,
+        });
       }
       if (entryTiming === 'sameDayClose') {
         const sortedSignals = [...todaySignals].sort((a, b) => b.relativeStrength - a.relativeStrength);
-        for (const { code, closePrice } of sortedSignals) {
+        for (const { code, closePrice, stopLossPct } of sortedSignals) {
           if (openPositions.size >= maxConcurrentPositions) break;
           if (!(closePrice > 0)) continue; // 종가 결측 — 체결 안 함(추정 안 함)
-          const sizeWon = sizeNewEntry();
+          const sizeWon = sizeNewEntry(stopLossPct);
           if (!(sizeWon > 0)) continue;
           capital -= sizeWon;
           openPositions.set(code, {
             code, entryDate: date, entryPrice: closePrice, units: 1,
-            highSinceEntry: closePrice, stopPrice: closePrice * (1 - 0.08), pyramided: false,
+            highSinceEntry: closePrice, stopPrice: closePrice * (1 - stopLossPct), pyramided: false,
             partialSold: false, investedWon: sizeWon, bettingUnitsAtEntry: useBettingUnits ? currentBettingUnits : null,
+            stopLossPct,
           });
         }
       } else {
-        for (const { code, relativeStrength } of todaySignals) pendingEntries.push({ code, relativeStrength });
+        for (const { code, relativeStrength, stopLossPct } of todaySignals) pendingEntries.push({ code, relativeStrength, stopLossPct });
       }
     }
 

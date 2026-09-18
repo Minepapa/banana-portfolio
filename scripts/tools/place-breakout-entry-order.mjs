@@ -143,7 +143,7 @@ async function main() {
     console.log(`ℹ️ 킬스위치 활성 — ${name}(${code}) ${quantity}주 매수 발주 안 함(신호는 정상 통과했음)`);
     await sendTelegram(formatDepartmentMessage({
       departmentLabel: DEPARTMENT_LABEL, tag: '스킵',
-      body: `<b>돌파매매 진입 보류 — 킬스위치 활성</b>\n${name}(${code}) 신호 통과(${quantity}주, 예산 ${won(investedWon)})했지만 킬스위치가 켜져 있어 발주하지 않았습니다. "정지해제" 명령으로 해제해야 다음 신호부터 다시 발주됩니다.`,
+      body: `<b>돌파매매 진입 보류 — 킬스위치 활성</b>\n${name}(${code}) 신호 통과(${quantity}주, 예산 ${won(investedWon)})했지만 킬스위치가 켜져 있어 발주하지 않았습니다. "킬스위치 오프" 명령으로 해제해야 다음 신호부터 다시 발주됩니다.`,
     }));
     return;
   }

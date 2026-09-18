@@ -37,7 +37,9 @@ import { buildCandidatePool } from '../lib/historical-universe.mjs';
 import { loadPriceSeriesBatch, findLatestDateStrictlyBefore, findIndexAtOrBefore } from '../lib/breakout-price-series.mjs';
 import { cacheIndexPrices, loadIndexSeries, addDays } from '../lib/index-price-cache.mjs';
 import { computeDailyCandidates } from '../lib/breakout-simulator.mjs';
-import { computeBreakoutEntrySignal, MARKET_CAP_FLOOR_WON, RS_ANCHOR_SMOOTH_DAYS } from '../lib/breakout-factor.mjs';
+import {
+  computeBreakoutEntrySignal, MARKET_CAP_FLOOR_WON, RS_ANCHOR_SMOOTH_DAYS, MIN_RELATIVE_STRENGTH,
+} from '../lib/breakout-factor.mjs';
 import { computePositionSize, RISK_PER_TRADE_PCT, MAX_CONCURRENT_POSITIONS } from '../lib/breakout-risk.mjs';
 import { parseBreakoutPosition, findOpenPositions } from '../lib/breakout-position-vault.mjs';
 import {
@@ -78,7 +80,14 @@ const MIN_CACHE_COVERAGE_RATIO = 0.8;
 // (단일시점) 대비 연환산 +0.2%p 개선(거래 ~1400건 기준 노이즈 수준)이었으나
 // 오너가 "그래도 배선"을 명시 확정. 이 배선 자체는 launchd 상시가동과 무관하며
 // 그 상태는 파일 헤더(위 `⚠️ 실행 시각` 절)에서 관리한다.
-export const ENTRY_SIGNAL_OPTS = { marketCapFloor: MARKET_CAP_FLOOR_WON, rsAnchorSmoothDays: RS_ANCHOR_SMOOTH_DAYS };
+//
+// minRelativeStrength(2026-09-19 신설)도 MIN_RELATIVE_STRENGTH를 단일 진실소스로
+// 가져온다(동일 원칙). 백테스트 근거·경위는 그 상수 정의부 주석과
+// Log/Implementation/2026-09-19-돌파매매-거래량확인·RS문턱-백테스트비교.md 참고 —
+// 승률·연환산·샤프 전부 baseline(RS≥0) 대비 개선, 오너 확정.
+export const ENTRY_SIGNAL_OPTS = {
+  marketCapFloor: MARKET_CAP_FLOOR_WON, rsAnchorSmoothDays: RS_ANCHOR_SMOOTH_DAYS, minRelativeStrength: MIN_RELATIVE_STRENGTH,
+};
 
 function loadOpenPositionCodes() {
   const dir = VAULT_PATHS.state.breakoutPositions;
@@ -263,8 +272,9 @@ async function main() {
   for (const cand of freeCandidates) {
     const series = seriesByCode[cand.code];
     let livePrice;
+    let liveVolume;
     try {
-      ({ price: livePrice } = await getKrQuote({ token: quoteToken, appkey: quoteAppkey, appsecret: quoteAppsecret, code: cand.code }));
+      ({ price: livePrice, volume: liveVolume } = await getKrQuote({ token: quoteToken, appkey: quoteAppkey, appsecret: quoteAppsecret, code: cand.code }));
     } catch (e) {
       console.error(`  ⚠️ ${cand.code} 현재가 조회 실패(${e.message}) — 이 종목만 스킵`);
       await sleep(STAGGER_MS);
@@ -276,8 +286,16 @@ async function main() {
     const closes = [...series.closes.slice(0, cand.idx + 1), livePrice];
     const highs = [...series.highs.slice(0, cand.idx + 1), livePrice]; // 오늘의 고가 placeholder — is52WeekHighBreakout은 이 마지막 원소를 안 씀(priorHighs가 직전까지만 봄)
     const lows = [...series.lows.slice(0, cand.idx + 1), livePrice]; // consolidationMethod 기본값(stddev)에서는 안 쓰임
+    // 거래량 확인(2026-09-19 실전 배선) — volumes는 "어제까지"(cand.idx 포함, 오늘은
+    // 안 들어감 — cand.idx 자체가 이미 개별종목 캐시의 최신 확정일이라 closes와 달리
+    // 여기엔 라이브값을 안 붙인다), todayVolume은 방금 조회한 acml_vol. liveVolume이
+    // null(장 극초반 등 acml_vol 미형성)이면 passesVolumeConfirmation이 그대로
+    // false를 돌려줘 신호 자체가 안 뜸(추정 안 함 — breakout-factor.mjs 참고).
+    const volumes = series.volumes.slice(0, cand.idx + 1);
     const signal = computeBreakoutEntrySignal(
-      { closes, highs, lows, benchmarkCloses, marcap: cand.marcap },
+      {
+        closes, highs, lows, benchmarkCloses, marcap: cand.marcap, volumes, todayVolume: liveVolume,
+      },
       ENTRY_SIGNAL_OPTS,
     );
     if (signal.pass) {

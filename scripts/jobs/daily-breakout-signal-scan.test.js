@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { shouldRunToday, ENTRY_SIGNAL_OPTS } from './daily-breakout-signal-scan.mjs';
-import { computeBreakoutEntrySignal, RS_ANCHOR_SMOOTH_DAYS, MARKET_CAP_FLOOR_WON } from '../lib/breakout-factor.mjs';
+import {
+  computeBreakoutEntrySignal, RS_ANCHOR_SMOOTH_DAYS, MARKET_CAP_FLOOR_WON, MIN_RELATIVE_STRENGTH,
+} from '../lib/breakout-factor.mjs';
 
 // KST 기준 날짜 확인: 2026-09-14는 월요일, 2026-09-12는 토요일, 2026-09-13은 일요일.
 // UTC 06:32는 KST 15:32(같은 달력일, 자정 넘김 없음)로 이 시각을 기준으로 삼는다.
@@ -38,6 +40,38 @@ test('shouldRunToday: 일요일이면 실행 기록과 무관하게 항상 false
 test('ENTRY_SIGNAL_OPTS: rsAnchorSmoothDays가 breakout-factor.mjs의 RS_ANCHOR_SMOOTH_DAYS와 일치(단일 진실소스 배선 확인)', () => {
   assert.equal(ENTRY_SIGNAL_OPTS.rsAnchorSmoothDays, RS_ANCHOR_SMOOTH_DAYS);
   assert.equal(ENTRY_SIGNAL_OPTS.marketCapFloor, MARKET_CAP_FLOOR_WON);
+});
+
+// [핵심 안전장치] 2026-09-19 오너 확정(백테스트 근거: Log/Implementation/
+// 2026-09-19-돌파매매-거래량확인·RS문턱-백테스트비교.md) — RS≥8 실전 배선이
+// 단일 진실소스(breakout-factor.mjs MIN_RELATIVE_STRENGTH)에서 오는지 고정.
+test('ENTRY_SIGNAL_OPTS: minRelativeStrength가 breakout-factor.mjs의 MIN_RELATIVE_STRENGTH와 일치', () => {
+  assert.equal(ENTRY_SIGNAL_OPTS.minRelativeStrength, MIN_RELATIVE_STRENGTH);
+  assert.equal(MIN_RELATIVE_STRENGTH, 8);
+});
+
+test('ENTRY_SIGNAL_OPTS: 실제로 RS 문턱 경로를 태움(RS가 0~8 사이인 완만한 상승은 이 배선에서만 pass 자체가 막힘)', () => {
+  // 완만한 상승(다른 세 조건은 전부 만족하도록: 52주 신고가+VCP 통과) — RS는 0보다는
+  // 크지만 MIN_RELATIVE_STRENGTH(8)보다는 작게 나오도록 설계.
+  const flatDays = 251;
+  const closes = [...new Array(flatDays).fill(100)];
+  for (let i = 0; i < 20; i++) closes.push(closes[closes.length - 1] * 1.0002); // 20일 조용한 미세 상승(VCP 준비)
+  closes.push(closes[closes.length - 1] * 1.05); // 마지막날 돌파
+  const highs = closes.slice();
+  const bench = new Array(closes.length).fill(100); // 벤치마크는 안 움직임 — RS = 종목 누적상승률
+  const candidate = {
+    closes, highs, lows: closes, benchmarkCloses: bench, marcap: MARKET_CAP_FLOOR_WON * 2,
+  };
+
+  const viaEntrySignalOpts = computeBreakoutEntrySignal(candidate, { ...ENTRY_SIGNAL_OPTS, rsAnchorSmoothDays: undefined, rsLookbackDays: 1 });
+  const viaNoThreshold = computeBreakoutEntrySignal(candidate, { ...ENTRY_SIGNAL_OPTS, rsAnchorSmoothDays: undefined, rsLookbackDays: 1, minRelativeStrength: 0 });
+
+  assert.ok(
+    viaNoThreshold.relativeStrength > 0 && viaNoThreshold.relativeStrength < MIN_RELATIVE_STRENGTH,
+    `이 fixture는 RS가 0~${MIN_RELATIVE_STRENGTH} 사이여야 문턱 차이를 실제로 검증함 — 실제값: ${viaNoThreshold.relativeStrength}`,
+  );
+  assert.equal(viaNoThreshold.pass, true, '문턱 0이면 이 완만한 상승도 통과해야 함(다른 세 조건은 만족하도록 설계)');
+  assert.equal(viaEntrySignalOpts.pass, false, 'RS≥8 문턱에서는 이 완만한 상승이 막혀야 함 — 배선이 죽어있지 않다는 증거');
 });
 
 test('ENTRY_SIGNAL_OPTS: 실제로 앵커 스무딩 경로를 태움(단일시점과 다른 RS값을 냄 — 배선이 죽은 설정이 아님을 증명)', () => {

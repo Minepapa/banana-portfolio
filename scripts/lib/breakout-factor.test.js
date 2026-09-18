@@ -13,7 +13,10 @@ import {
   passesRelativeStrengthFilter,
   passesMarketCapFloor,
   computeBreakoutEntrySignal,
+  computeAvgVolume,
+  passesVolumeConfirmation,
   MARKET_CAP_FLOOR_WON,
+  VOLUME_CONFIRMATION_MULTIPLIER,
 } from './breakout-factor.mjs';
 
 test('computeDailyReturns: 정상 계산', () => {
@@ -363,6 +366,12 @@ test('passesRelativeStrengthFilter: 시장 RS 이상(0 이상)이면 통과', ()
   assert.equal(passesRelativeStrengthFilter(null), false);
 });
 
+test('passesRelativeStrengthFilter: minRs 커스텀 문턱(2026-09-19, RS≥0이 너무 느슨하다는 오너 지적 대응)', () => {
+  assert.equal(passesRelativeStrengthFilter(3, 5), false);
+  assert.equal(passesRelativeStrengthFilter(5, 5), true); // 경계값 통과
+  assert.equal(passesRelativeStrengthFilter(4.99, 5), false);
+});
+
 test('passesMarketCapFloor: 1조원 기본 하한', () => {
   assert.equal(passesMarketCapFloor(MARKET_CAP_FLOOR_WON), true);
   assert.equal(passesMarketCapFloor(MARKET_CAP_FLOOR_WON - 1), false);
@@ -386,6 +395,72 @@ test('computeBreakoutEntrySignal: 네 조건 전부 충족해야 pass=true', () 
   assert.equal(result.volatility.pass, true);
   assert.equal(result.marketCapOk, true);
   assert.equal(result.pass, true);
+});
+
+// 거래량 확인(2026-09-19 오너 지시로 신설, 아직 opt-in — breakout-factor.mjs
+// VOLUME_LOOKBACK_DAYS 주석 참고). computeAvgVolume/passesVolumeConfirmation
+// 순수함수 단위테스트 + computeBreakoutEntrySignal 하위호환·opt-in 회귀가드.
+test('computeAvgVolume: 정상 계산(20일 창)', () => {
+  const volumes = new Array(20).fill(1000);
+  assert.equal(computeAvgVolume(volumes, 19), 1000);
+});
+
+test('computeAvgVolume: 표본 부족(창 시작이 0 미만)이면 null', () => {
+  const volumes = new Array(10).fill(1000);
+  assert.equal(computeAvgVolume(volumes, 9, 20), null);
+});
+
+test('computeAvgVolume: 창 안에 null이 minWindowRatio 이상 섞이면 null(추정 안 함)', () => {
+  const volumes = [...new Array(19).fill(null), 1000];
+  assert.equal(computeAvgVolume(volumes, 19, 20, 0.9), null);
+});
+
+test('passesVolumeConfirmation: 오늘 거래량이 평균의 배수(기본 1.5배) 이상이어야 통과', () => {
+  assert.equal(passesVolumeConfirmation(1500, 1000), true); // 정확히 1.5배 — 경계값 통과
+  assert.equal(passesVolumeConfirmation(1499, 1000), false);
+  assert.equal(passesVolumeConfirmation(3000, 1000, 3), true); // 커스텀 배수
+  assert.equal(passesVolumeConfirmation(2999, 1000, 3), false);
+});
+
+test('passesVolumeConfirmation: todayVolume/avgVolume 없으면(null) 통과 안 시킴(추정 안 함)', () => {
+  assert.equal(passesVolumeConfirmation(null, 1000), false);
+  assert.equal(passesVolumeConfirmation(1500, null), false);
+  assert.equal(passesVolumeConfirmation(1500, 0), false);
+});
+
+test('VOLUME_CONFIRMATION_MULTIPLIER: 오너 확정값 1.5', () => {
+  assert.equal(VOLUME_CONFIRMATION_MULTIPLIER, 1.5);
+});
+
+test('computeBreakoutEntrySignal: opts.minRelativeStrength가 실제로 pass를 좌우함(2026-09-19)', () => {
+  const candidate = buildEntrySignalCandidate();
+  const loose = computeBreakoutEntrySignal(candidate, { rsLookbackDays: 1 });
+  assert.equal(loose.pass, true); // 기본(minRs 미지정=0)은 통과
+  const strict = computeBreakoutEntrySignal(candidate, { rsLookbackDays: 1, minRelativeStrength: 1_000_000 });
+  assert.equal(strict.pass, false); // 도달 불가능한 문턱이면 나머지 조건 다 통과해도 실패
+});
+
+test('computeBreakoutEntrySignal: candidate.volumes 없으면(기존 호출부) 거래량 조건 평가 안 하고 조용히 통과 — 하위호환', () => {
+  const candidate = buildEntrySignalCandidate();
+  const result = computeBreakoutEntrySignal(candidate, { rsLookbackDays: 1 });
+  assert.equal(result.volume, null);
+  assert.equal(result.pass, true); // 나머지 조건만으로 그대로 통과
+});
+
+test('computeBreakoutEntrySignal: candidate.volumes를 넘기면 거래량 조건이 실제로 pass를 좌우함', () => {
+  const candidate = buildEntrySignalCandidate();
+  const volumes = new Array(candidate.closes.length - 1).fill(1000); // "어제까지" — closes보다 하루 적음
+  const strongVolume = computeBreakoutEntrySignal(
+    { ...candidate, volumes, todayVolume: 1500 }, { rsLookbackDays: 1 },
+  );
+  assert.equal(strongVolume.volume.pass, true);
+  assert.equal(strongVolume.pass, true);
+
+  const weakVolume = computeBreakoutEntrySignal(
+    { ...candidate, volumes, todayVolume: 1000 }, { rsLookbackDays: 1 },
+  );
+  assert.equal(weakVolume.volume.pass, false);
+  assert.equal(weakVolume.pass, false); // 나머지 조건 다 통과해도 거래량 미달이면 전체 실패
 });
 
 test('computeBreakoutEntrySignal: rsPeriods 단일구간([{days:N,weight:1}])은 rsLookbackDays:N과 결과 완전 동일(분기 등가성 — 회귀 가드)', () => {

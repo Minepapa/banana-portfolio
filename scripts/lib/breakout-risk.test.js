@@ -7,8 +7,14 @@ import {
   computePositionSize,
   shouldPyramid,
   shouldTakePartialProfit,
+  computeTrueRange,
+  computeATR,
+  selectAdaptiveStopLossPct,
   STOP_LOSS_PCT,
   RISK_PER_TRADE_PCT,
+  TIGHT_STOP_LOSS_PCT,
+  ATR_LOOKBACK_DAYS,
+  ATR_STOP_THRESHOLD_PCT,
 } from './breakout-risk.mjs';
 
 test('rMultiplePrice: 1R=+8%, 2R=+16%, 3R=+24%', () => {
@@ -93,4 +99,77 @@ test('shouldTakePartialProfit: 이미 실행했으면 다시 안 함(1회성)', 
 test('상수값 확인 — 오너 확정치', () => {
   assert.equal(STOP_LOSS_PCT, 0.08);
   assert.equal(RISK_PER_TRADE_PCT, 0.02);
+});
+
+// ATR 가변 손절(2026-09-19, 오너 지시) — rMultiplePrice/reachedRMultiple/
+// computeTrailingStop의 stopLossPct 파라미터화(기본값 유지 하위호환) + ATR 계산 +
+// 손절폭 선택 함수.
+test('rMultiplePrice: stopLossPct를 커스텀하면 R배수 가격도 그에 비례(3R=+12% for 4% stop)', () => {
+  assert.ok(Math.abs(rMultiplePrice(10000, 1, 0.04) - 10400) < 1e-6);
+  assert.ok(Math.abs(rMultiplePrice(10000, 3, 0.04) - 11200) < 1e-6); // 3R = +12%(24%가 아님)
+});
+
+test('reachedRMultiple: stopLossPct 4%면 절반 상승만으로도 같은 R단계 도달', () => {
+  assert.equal(reachedRMultiple(10000, 10400, 0.04), 1); // 8%짜리였으면 아직 0R
+  assert.equal(reachedRMultiple(10000, 10400, STOP_LOSS_PCT), 0);
+});
+
+test('computeTrailingStop: stopLossPct 4%면 최초 손절이 -4%', () => {
+  assert.ok(Math.abs(computeTrailingStop(10000, 10000, 0.04) - 9600) < 1e-6);
+});
+
+test('computeTrueRange: index 0은 null, 이후는 고가-저가/갭 중 최댓값', () => {
+  const highs = [100, 110, 108];
+  const lows = [95, 104, 100];
+  const closes = [98, 106, 105];
+  const tr = computeTrueRange(highs, lows, closes);
+  assert.equal(tr[0], null);
+  assert.equal(tr[1], 12); // max(110-104=6, |110-98|=12, |104-98|=6)
+  assert.equal(tr[2], 8); // max(108-100=8, |108-106|=2, |100-106|=6)
+});
+
+test('computeATR: 균일한 TR이면 그 값 그대로(단순평균)', () => {
+  const n = ATR_LOOKBACK_DAYS + 1;
+  const highs = new Array(n).fill(110);
+  const lows = new Array(n).fill(100);
+  const closes = new Array(n).fill(105);
+  const atr = computeATR(highs, lows, closes, n - 1);
+  assert.ok(Math.abs(atr - 10) < 1e-6); // TR = 고가-저가 = 10 매일 동일
+});
+
+test('computeATR: 창 부족이면 null', () => {
+  const highs = new Array(5).fill(110);
+  const lows = new Array(5).fill(100);
+  const closes = new Array(5).fill(105);
+  assert.equal(computeATR(highs, lows, closes, 4), null);
+});
+
+test('selectAdaptiveStopLossPct: ATR%가 임계값 이상이면 넓은 손절(STOP_LOSS_PCT)', () => {
+  // atr=500, price=10000 → ATR%=5.0 ≥ 4.0(기본 임계값)
+  assert.equal(selectAdaptiveStopLossPct(500, 10000), STOP_LOSS_PCT);
+});
+
+test('selectAdaptiveStopLossPct: ATR%가 임계값 미만이면 좁은 손절(TIGHT_STOP_LOSS_PCT)', () => {
+  // atr=300, price=10000 → ATR%=3.0 < 4.0
+  assert.equal(selectAdaptiveStopLossPct(300, 10000), TIGHT_STOP_LOSS_PCT);
+});
+
+test('selectAdaptiveStopLossPct: 경계값(정확히 임계값)은 넓은 손절 쪽', () => {
+  assert.equal(selectAdaptiveStopLossPct(400, 10000), STOP_LOSS_PCT); // ATR%=4.0=임계값
+});
+
+test('selectAdaptiveStopLossPct: 데이터 부족(atr=null)이나 가격 무효면 null(추정 안 함)', () => {
+  assert.equal(selectAdaptiveStopLossPct(null, 10000), null);
+  assert.equal(selectAdaptiveStopLossPct(500, 0), null);
+  assert.equal(selectAdaptiveStopLossPct(500, null), null);
+});
+
+test('selectAdaptiveStopLossPct: 커스텀 임계값·손절폭도 반영', () => {
+  assert.equal(selectAdaptiveStopLossPct(500, 10000, { thresholdPct: 6, tightPct: 0.03, widePct: 0.1 }), 0.03); // 5.0 < 6 → tight
+  assert.equal(selectAdaptiveStopLossPct(700, 10000, { thresholdPct: 6, tightPct: 0.03, widePct: 0.1 }), 0.1); // 7.0 ≥ 6 → wide
+});
+
+test('ATR_STOP_THRESHOLD_PCT: 오너 확정 초기값(TIGHT_STOP_LOSS_PCT와 동일 수치)', () => {
+  assert.equal(ATR_STOP_THRESHOLD_PCT, 4.0);
+  assert.equal(TIGHT_STOP_LOSS_PCT, 0.04);
 });

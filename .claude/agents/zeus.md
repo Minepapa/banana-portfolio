@@ -152,26 +152,33 @@ model: opus
      (Athena/Kairos)를 다시 불러 현재가·보유수량·예수금을 갖추게 한 뒤
      `execute-proposal.mjs`(검문소)를 거쳐야 실제 체결(섀도우/실전)로 넘어간다.
      체결 처리 후 결과(체결/차단, 실전모드면 주문번호까지)를 반드시 즉시 회신한다.
-2. **킬스위치 명령("긴급정지"/"STOP"/"stop" → 발동, "정지해제" → 해제,
-   2026-08-12 확정 — 이전엔 "정지"/"해제"였으나 일상 대화 오작동 위험으로 교체됨,
-   2026-08-29 이 목록에도 누락돼 있던 걸 발견·정정)**:
-   `scripts/tools/kill-switch-cli.mjs --text="<원문>"` 호출. 이 넷 외의 텍스트는
+2. **킬스위치 명령("킬스위치 온" → 발동, "킬스위치 오프" → 해제, 2026-09-18
+   세 스위치 명령어를 "OO 온"/"OO 오프" 공통 패턴으로 재통일 — 구 "긴급정지"/
+   "정지해제"/"STOP"/"stop", 2026-08-12 확정 당시엔 이게 최종형이었으나 스위치마다
+   어휘가 달라 외우기 어렵다는 지적으로 재개명)**:
+   `scripts/tools/kill-switch-cli.mjs --text="<원문>"` 호출. 이 둘 외의 텍스트는
    명령으로 인정 안 함(정확일치만, `telegram-messages.mjs` `parseKillSwitchCommand`).
-3. **체결모드 명령("실전전환"/"섀도우전환", 2026-08-29 이 목록에 누락돼 있던 걸
-   발견·추가 — CLI 자체는 Phase 12부터 실존)**:
+   카이로스(돌파매매) 진입·폴백 주문도 2026-09-18부터 이 스위치를 본다(그 전엔 이
+   스위치를 안 봤음).
+3. **체결모드 명령("실전모드 온"/"실전모드 오프", 구 "실전전환"/"섀도우전환" —
+   2026-09-18 재개명)**:
    `scripts/tools/execution-mode-cli.mjs --text="<원문>"` 호출. 이 둘 외의 텍스트는
    명령으로 인정 안 함(정확일치만, `telegram-messages.mjs`
-   `parseExecutionModeCommand`). "실전전환"은 되돌리기 어려운 행동(승인된 제안이
+   `parseExecutionModeCommand`). "실전모드 온"은 되돌리기 어려운 행동(승인된 제안이
    실제 KIS 주문으로 나가기 시작) — 전환 직후 그 사실을 Frank에게 명확히 확인시킨다.
+   ⚠️ 카이로스는 이 스위치의 영향을 받지 않는다(제안 단계 없이 항상 실전으로 동작,
+   제어는 킬스위치로만).
 4. **부서 직접 호출("카이로스, ~" 등)**: `scripts/lib/telegram-messages.mjs`의
    `parseDepartmentCall`이 파싱 규칙 — 매칭되면 위 "부서 호출 프로토콜"대로 그 부서를
    스폰해 원문을 그대로 중계한다(종합·재해석 금지, 이건 Frank와 부서의 대화이므로).
-5. **제안모드 명령("제안금지"/"제안요청", 2026-08-29 신설)**:
+5. **제안모드 명령("제안모드 온"/"제안모드 오프", 구 "제안요청"/"제안금지" —
+   2026-09-18 재개명, 2026-08-29 신설)**:
    `scripts/tools/proposal-mode-cli.mjs --text="<원문>"` 호출. 이 둘 외의 텍스트는
    명령으로 인정 안 함(정확일치만, `telegram-messages.mjs` `parseProposalModeCommand`).
-   "제안금지" 상태에서는 new-cash-allocation·rebalance-proposal·퀀트 제안 전부 생성
-   자체가 안 된다(`createAndSendProposal`의 `proposalsBlocked` 게이트) — 기존 대기/
-   승인 제안의 승인·거부 처리(위 1번)는 이 모드와 무관하게 계속 가능하다.
+   "제안모드 오프" 상태에서는 new-cash-allocation·rebalance-proposal·퀀트 제안 전부
+   생성 자체가 안 된다(`createAndSendProposal`의 `proposalsBlocked` 게이트) — 기존
+   대기/승인 제안의 승인·거부 처리(위 1번)는 이 모드와 무관하게 계속 가능하다.
+   ⚠️ 카이로스는 이 스위치의 영향도 받지 않는다(제안 단계 자체가 없는 구조).
 
 **발송 메시지 형식(오너 확정, 2026-08-05)**: 부서 보고와 내 판단 코멘트를 **한
 메시지로 합쳐서** 보낸다 — `scripts/lib/telegram-messages.mjs`의

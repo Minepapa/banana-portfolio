@@ -48,6 +48,21 @@ test('parseQuoteResponse: 등락률 없으면 null(가격은 살아있으면 통
   assert.equal(q.changePct, null);
 });
 
+// 2026-09-19 추가 — 돌파매매 거래량 확인 조건용(breakout-factor.mjs passesVolumeConfirmation).
+test('parseQuoteResponse: acml_vol(누적거래량) 추출 — 2026-09-19 라이브 실측 형식', () => {
+  const q = parseQuoteResponse({ rt_cd: '0', output: { stck_prpr: '261000', prdy_ctrt: '3.37', acml_vol: '14652390' } });
+  assert.equal(q.volume, 14652390);
+});
+
+test('parseQuoteResponse: acml_vol 없거나 빈 문자열이면 volume=null(가격 파싱은 그대로 성공)', () => {
+  assert.equal(parseQuoteResponse({ rt_cd: '0', output: { stck_prpr: '75000' } }).volume, null);
+  assert.equal(parseQuoteResponse({ rt_cd: '0', output: { stck_prpr: '75000', acml_vol: '' } }).volume, null);
+});
+
+test('parseQuoteResponse: acml_vol="0"(미체결·장외시간대 등)은 null이 아니라 0(코드리뷰 LOW 지적, 2026-09-19)', () => {
+  assert.equal(parseQuoteResponse({ rt_cd: '0', output: { stck_prpr: '75000', acml_vol: '0' } }).volume, 0);
+});
+
 test('parseQuoteResponse: rt_cd 실패 코드면 throw(msg1 인용)', () => {
   assert.throws(
     () => parseQuoteResponse({ rt_cd: '1', msg1: '모의투자 미지원 종목' }),

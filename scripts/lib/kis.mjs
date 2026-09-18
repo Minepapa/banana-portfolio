@@ -122,15 +122,29 @@ function kisRtError(prefix, json) {
   return err;
 }
 
-// KIS 국내주식 현재가(inquire-price) 원본 응답 → {price, changePct}. 네트워크와 분리된
-// 순수함수 — 테스트 가능. rt_cd!=='0'(KIS 성공 코드) 또는 현재가 파싱 실패면 throw.
+// KIS 국내주식 현재가(inquire-price) 원본 응답 → {price, changePct, volume}. 네트워크와
+// 분리된 순수함수 — 테스트 가능. rt_cd!=='0'(KIS 성공 코드) 또는 현재가 파싱 실패면 throw.
+// volume(2026-09-19 추가, 돌파매매 거래량 확인 조건용) — acml_vol(누적거래량, 당일
+// 장중 계속 누적). 라이브 실측(2026-09-19, 삼성전자 정규장중): acml_vol="14652390"
+// 정상 수신 확인. 필드가 없거나 빈 문자열이면(파싱 불가) null(가격과 달리 거래량은
+// 이 함수의 필수 반환값이 아님 — 호출측이 null이면 거래량 조건을 그냥 평가 안
+// 하면 됨, breakout-factor.mjs 참고). ⚠️ acml_vol="0"(미체결·장외시간대 등)은
+// null이 아니라 0이 그대로 반환된다(코드리뷰 LOW 지적, 2026-09-19 — 이전 주석이
+// "0이면 null로 떨어뜨린다"고 잘못 적어뒀었음) — Number('0')===0은 유한수라 파싱
+// 실패로 안 잡힌다. 결과적 안전성은 동일(passesVolumeConfirmation(0, avg)은
+// 항상 false라 조건 불통과로 자연히 귀결, fail-closed).
 export function parseQuoteResponse(json) {
   if (json?.rt_cd !== '0') throw kisRtError('KIS 시세 오류', json);
   const price = Number(json?.output?.stck_prpr);
   if (!(price > 0)) throw new Error('KIS 응답에 유효한 현재가 없음');
   const changePctRaw = json?.output?.prdy_ctrt;
   const changePct = changePctRaw !== undefined && changePctRaw !== '' ? Number(changePctRaw) : NaN;
-  return { price, changePct: Number.isFinite(changePct) ? changePct : null };
+  const volumeRaw = json?.output?.acml_vol;
+  const volume = volumeRaw !== undefined && volumeRaw !== '' ? Number(volumeRaw) : NaN;
+  return {
+    price, changePct: Number.isFinite(changePct) ? changePct : null,
+    volume: Number.isFinite(volume) ? volume : null,
+  };
 }
 
 // KIS 국내업종현재지수(inquire-index-price) 원본 응답 → {price, changePct}. 필드명이

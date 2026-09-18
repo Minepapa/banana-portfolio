@@ -185,14 +185,15 @@ export function parseReplyDecision(text) {
 }
 
 // 킬스위치 명령 — 정확히 일치하는 명령어만 인정한다(캐주얼한 언급과 구분하기 위해
-// 부분일치 대신 정확일치). ✅ 최종 확정(오너, 2026-08-12) — 2026-08-05에 "정지"/"해제"가
-// 일상 대화에서도 흔히 쓰는 일반 단어라 오작동 위험이 있다고 지적돼 "재정의 전까지의
-// 임시값"으로 남아있던 것을 이번에 확정. "실전전환"/"섀도우전환"과 동일한 원칙(이 목적
-// 전용 복합어로 캐주얼한 단독 언급 위험을 낮춤)으로 "긴급정지"/"정지해제"로 교체.
-// STOP/stop은 영문 명령으로 남겨둠(한국어 일상 대화에 섞여 나올 위험이 낮음, 오너가
-// 이 부분은 이의 없음).
-const ACTIVATE_WORDS = new Set(['긴급정지', 'STOP', 'stop']);
-const DEACTIVATE_WORDS = new Set(['정지해제']);
+// 부분일치 대신 정확일치). 2026-09-18 오너 지시로 세 스위치(킬스위치·체결모드·
+// 제안모드) 명령어를 전부 "OO 온"/"OO 오프" 공통 패턴으로 통일 — "긴급정지"/
+// "정지해제"·"실전전환"/"섀도우전환"·"제안금지"/"제안요청"처럼 스위치마다 어휘가
+// 제각각이라 외우기 어렵다는 지적(2026-08-12에 "정지"/"해제" 단일단어에서
+// "긴급정지"/"정지해제" 복합어로 한 번 바꿨던 것의 연장 — 그때도 기억하기 쉬운
+// 방향으로 못 갔었음). STOP/stop 영문 별칭은 이번에 제거(오너가 명시한 최종형이
+// "킬스위치 온"/"킬스위치 오프" 둘뿐이라, 요청에 없는 별칭을 임의로 유지하지 않음).
+const ACTIVATE_WORDS = new Set(['킬스위치 온']);
+const DEACTIVATE_WORDS = new Set(['킬스위치 오프']);
 
 export function parseKillSwitchCommand(text) {
   const t = String(text ?? '').trim();
@@ -201,13 +202,11 @@ export function parseKillSwitchCommand(text) {
   return null;
 }
 
-// 체결모드(섀도우|실전) 전환 명령 — Phase 12. "실전전환"/"섀도우전환"은 구현계획서
-// Phase 12 작업 설명에 이미 그대로 지정된 명령어라 그대로 채택(킬스위치의 "정지"/"해제"
-// 처럼 일상 대화에 흔한 단일 단어가 아니라 이 목적 전용 복합어라 오작동 위험이 낮음 —
-// 킬스위치 쪽 오너 지적과 동일한 우려가 여기선 상대적으로 적음). 정확일치만 인정
-// (킬스위치와 동일 원칙 — "전환해볼까 실전전환처럼?" 같은 캐주얼한 언급과 구분).
-const LIVE_WORDS = new Set(['실전전환']);
-const SHADOW_WORDS = new Set(['섀도우전환']);
+// 체결모드(섀도우|실전) 전환 명령 — 2026-09-18 "OO 온"/"OO 오프" 공통 패턴으로 개명
+// (구 "실전전환"/"섀도우전환", 위 킬스위치 주석 참고). 정확일치만 인정(캐주얼한
+// 언급과 구분).
+const LIVE_WORDS = new Set(['실전모드 온']);
+const SHADOW_WORDS = new Set(['실전모드 오프']);
 
 export function parseExecutionModeCommand(text) {
   const t = String(text ?? '').trim();
@@ -216,12 +215,11 @@ export function parseExecutionModeCommand(text) {
   return null;
 }
 
-// 제안모드(허용|금지) 전환 명령 — 2026-08-29 오너 지시(기준 없이 쌓이는 자동 제안을
-// 멈출 수 있는 스위치 신설). 킬스위치·체결모드와 동일 원칙(이 목적 전용 복합어, 정확
-// 일치만 인정 — "제안 좀 그만해줘" 같은 캐주얼한 언급과 구분하기 위해 일부러 딱딱한
-// 고정 문구로 확정).
-const PROPOSAL_BLOCK_WORDS = new Set(['제안금지']);
-const PROPOSAL_ALLOW_WORDS = new Set(['제안요청']);
+// 제안모드(허용|금지) 전환 명령 — 2026-09-18 "OO 온"/"OO 오프" 공통 패턴으로 개명
+// (구 "제안금지"/"제안요청", 위 킬스위치 주석 참고). "온"=제안 생성 허용(평소
+// 기본값), "오프"=제안 생성 금지. 정확일치만 인정.
+const PROPOSAL_BLOCK_WORDS = new Set(['제안모드 오프']);
+const PROPOSAL_ALLOW_WORDS = new Set(['제안모드 온']);
 
 export function parseProposalModeCommand(text) {
   const t = String(text ?? '').trim();

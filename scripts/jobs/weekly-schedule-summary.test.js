@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildWeeklyScheduleText, SCHEDULE } from './weekly-schedule-summary.mjs';
+import { buildWeeklyScheduleText, describeSwitchStatus, SCHEDULE } from './weekly-schedule-summary.mjs';
+import { buildKillSwitchState } from '../lib/kill-switch.mjs';
+import { buildExecutionModeState, MODE_LIVE, MODE_SHADOW } from '../lib/shadow-mode.mjs';
+import { buildProposalModeState, MODE_ALLOWED, MODE_BLOCKED } from '../lib/proposal-mode.mjs';
 
 test('SCHEDULE: 8건(주기적 보고 8개, 2026-09-18 daily-breakout-signal-scan 추가) — 이벤트기반은 포함되지 않는다', () => {
   assert.equal(SCHEDULE.length, 8);
@@ -57,4 +60,51 @@ test('SCHEDULE: conditional 필드가 있으면 반드시 비어있지 않은 �
       assert.ok(s.conditional.trim().length > 0, `${s.script}의 conditional이 빈 문자열이면 조건부인데 [매주 고정] 그룹으로 조용히 오분류됨`);
     }
   }
+});
+
+// 2026-09-18 오너 지시("매주 운영실 보고에 세 가지 스위치의 상태도 함께 알려줘")로
+// 신설 — describeSwitchStatus는 이미 읽어온 State 파일 content(문자열|null)만 받는
+// 순수함수라 I/O 없이 8가지 on/off 조합을 전부 테스트 가능.
+test('describeSwitchStatus: 전부 파일 없음(null) → 안전 기본값(킬스위치 오프·섀도우·제안 온)', () => {
+  const text = describeSwitchStatus({ killSwitchContent: null, executionModeContent: null, proposalModeContent: null });
+  assert.match(text, /킬스위치: 오프/);
+  assert.match(text, /실전모드: 오프\(섀도우/);
+  assert.match(text, /제안모드: 온/);
+});
+
+test('describeSwitchStatus: 킬스위치 온이면 표시', () => {
+  const content = buildKillSwitchState({ active: true, reason: 'test' });
+  const text = describeSwitchStatus({ killSwitchContent: content, executionModeContent: null, proposalModeContent: null });
+  assert.match(text, /킬스위치: 온/);
+});
+
+test('describeSwitchStatus: 실전모드 온(MODE_LIVE)이면 표시', () => {
+  const content = buildExecutionModeState({ mode: MODE_LIVE, reason: 'test' });
+  const text = describeSwitchStatus({ killSwitchContent: null, executionModeContent: content, proposalModeContent: null });
+  assert.match(text, /실전모드: 온/);
+});
+
+test('describeSwitchStatus: 실전모드 오프(MODE_SHADOW)면 섀도우로 표시', () => {
+  const content = buildExecutionModeState({ mode: MODE_SHADOW, reason: 'test' });
+  const text = describeSwitchStatus({ killSwitchContent: null, executionModeContent: content, proposalModeContent: null });
+  assert.match(text, /실전모드: 오프\(섀도우/);
+});
+
+test('describeSwitchStatus: 제안모드 금지(MODE_BLOCKED)면 오프로 표시', () => {
+  const content = buildProposalModeState({ mode: MODE_BLOCKED, reason: 'test' });
+  const text = describeSwitchStatus({ killSwitchContent: null, executionModeContent: null, proposalModeContent: content });
+  assert.match(text, /제안모드: 오프/);
+});
+
+test('describeSwitchStatus: 제안모드 허용(MODE_ALLOWED)이면 온으로 표시', () => {
+  const content = buildProposalModeState({ mode: MODE_ALLOWED, reason: 'test' });
+  const text = describeSwitchStatus({ killSwitchContent: null, executionModeContent: null, proposalModeContent: content });
+  assert.match(text, /제안모드: 온/);
+});
+
+test('buildWeeklyScheduleText: switchStatus를 넘기면 본문에 포함, 생략하면(기존 호출부 하위호환) 포함 안 됨', () => {
+  const withStatus = buildWeeklyScheduleText(SCHEDULE, '[스위치 상태]\n· 킬스위치: 오프');
+  assert.match(withStatus, /\[스위치 상태\]/);
+  const withoutStatus = buildWeeklyScheduleText();
+  assert.doesNotMatch(withoutStatus, /\[스위치 상태\]/);
 });

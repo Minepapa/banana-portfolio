@@ -542,3 +542,107 @@ test("runBreakoutBacktest: entryTiming='sameDayClose'에서도 슬롯 부족 시
   const positionB = result.openPositionsAtEnd.find((p) => p.code === 'B');
   assert.equal(positionB.entryDate, dates[259], '체결일은 신호 확정일 당일이어야 함(다음날 아님)');
 });
+
+// 2026-09-19 오너 지시 3종(거래량 확인·ATR 가변손절·RS 절대문턱) — runBreakoutBacktest
+// 배선 검증. 위 첫 번째 test("신호(종가)→다음날 시가 진입...")와 동일한 fixture
+// 패턴(260일 조용한 흐름 + 259일째 돌파 + 260일째 진입당일 급락손절)을 재사용하되
+// breakoutDayVolumeMultiplier로 돌파일 거래량만 조절할 수 있게 파라미터화.
+function buildSingleStockBreakoutFixture({ breakoutDayVolumeMultiplier = 1 } = {}) {
+  const dates = [nthDateString('2020-01-01', 0)];
+  const opens = [100];
+  const closes = [100];
+  const highs = [100];
+  const lows = [100];
+  const volumes = [50_000_000];
+  for (let i = 1; i <= 260; i++) {
+    dates.push(nthDateString('2020-01-01', i));
+    if (i < 259) {
+      const wiggle = i % 2 === 0 ? 1.001 : 0.999;
+      const c = closes[closes.length - 1] * wiggle;
+      opens.push(closes[closes.length - 1]); closes.push(c); highs.push(c * 1.001); lows.push(c * 0.999); volumes.push(50_000_000);
+    } else if (i === 259) {
+      const c = closes[closes.length - 1] * 1.05;
+      opens.push(closes[closes.length - 1]); closes.push(c); highs.push(c * 1.01); lows.push(closes[closes.length - 1]);
+      volumes.push(Math.round(50_000_000 * breakoutDayVolumeMultiplier));
+    } else {
+      const openPrice = closes[closes.length - 1];
+      const c = openPrice * 0.85;
+      opens.push(openPrice); closes.push(c); highs.push(openPrice); lows.push(c * 0.98); volumes.push(50_000_000);
+    }
+  }
+  const pool = [{ code: 'A', name: 'A사', sharesOutstanding: 2_000_000_000, listingDate: null, delistingDate: null }];
+  const seriesByCode = { A: { dates, opens, closes, highs, lows, volumes } };
+  const benchmarkSeries = { dates, closes: new Array(dates.length).fill(100) };
+  return { dates, pool, seriesByCode, benchmarkSeries };
+}
+
+test('runBreakoutBacktest: useAdaptiveStop=true면 조용한 종목은 좁은 손절(4%)로 진입 — 손절 청산가가 -8%가 아니라 -4% 수준', () => {
+  const { dates, pool, seriesByCode, benchmarkSeries } = buildSingleStockBreakoutFixture();
+  const result = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    useAdaptiveStop: true,
+  });
+  assert.ok(result.trades.length >= 1);
+  const trade = result.trades[0];
+  const entryPrice = trade.entryPrice;
+  const stopPctImplied = 1 - trade.exitPrice / entryPrice;
+  assert.ok(Math.abs(stopPctImplied - 0.04) < 1e-3, `조용한 흐름(ATR% 낮음)이라 좁은 손절(4%)이 선택돼야 함 — 실제 ${(stopPctImplied * 100).toFixed(2)}%`);
+});
+
+test('runBreakoutBacktest: useAdaptiveStop=false(기본값)면 기존과 동일하게 항상 -8% 손절', () => {
+  const { dates, pool, seriesByCode, benchmarkSeries } = buildSingleStockBreakoutFixture();
+  const result = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+  });
+  const trade = result.trades[0];
+  const stopPctImplied = 1 - trade.exitPrice / trade.entryPrice;
+  assert.ok(Math.abs(stopPctImplied - 0.08) < 1e-3);
+});
+
+test('runBreakoutBacktest: useVolumeConfirmation=true — 돌파일 거래량이 평균의 1.5배 미만이면 진입 자체가 차단됨', () => {
+  const weak = buildSingleStockBreakoutFixture({ breakoutDayVolumeMultiplier: 1.4 }); // 1.5배 미달
+  const result = runBreakoutBacktest({
+    pool: weak.pool, seriesByCode: weak.seriesByCode, benchmarkSeries: weak.benchmarkSeries, tradingDates: weak.dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    useVolumeConfirmation: true,
+  });
+  assert.equal(result.trades.length, 0, '거래량 확인 미달로 신호 자체가 안 뜨고 거래 0건이어야 함');
+});
+
+test('runBreakoutBacktest: useVolumeConfirmation=true — 돌파일 거래량이 평균의 1.5배 이상이면 정상 진입', () => {
+  const strong = buildSingleStockBreakoutFixture({ breakoutDayVolumeMultiplier: 1.6 }); // 1.5배 이상
+  const result = runBreakoutBacktest({
+    pool: strong.pool, seriesByCode: strong.seriesByCode, benchmarkSeries: strong.benchmarkSeries, tradingDates: strong.dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    useVolumeConfirmation: true,
+  });
+  assert.ok(result.trades.length >= 1, '거래량 조건을 충족했으니 정상적으로 진입해야 함');
+});
+
+test('runBreakoutBacktest: useVolumeConfirmation=false(기본값)면 거래량 무관하게 기존과 동일(회귀 없음)', () => {
+  const weak = buildSingleStockBreakoutFixture({ breakoutDayVolumeMultiplier: 1.0 }); // 평균과 동일(1.5배 미달)
+  const result = runBreakoutBacktest({
+    pool: weak.pool, seriesByCode: weak.seriesByCode, benchmarkSeries: weak.benchmarkSeries, tradingDates: weak.dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+  });
+  assert.ok(result.trades.length >= 1, '거래량 조건을 안 켰으니 평소처럼 진입해야 함');
+});
+
+test('runBreakoutBacktest: minRelativeStrength로 RS 절대문턱을 올리면 미달 신호가 차단됨', () => {
+  const { dates, pool, seriesByCode, benchmarkSeries } = buildSingleStockBreakoutFixture();
+  const passes = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    minRelativeStrength: 3,
+  });
+  assert.ok(passes.trades.length >= 1, '이 돌파(약 +5%)는 RS≥3 문턱은 넘어야 함');
+
+  const blocked = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    minRelativeStrength: 50,
+  });
+  assert.equal(blocked.trades.length, 0, 'RS≥50은 이 돌파로 절대 못 넘으므로 거래 0건이어야 함');
+});

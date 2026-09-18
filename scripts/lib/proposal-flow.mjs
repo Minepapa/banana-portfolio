@@ -129,7 +129,7 @@ export async function createAndSendProposal({
   proposalsBlocked = false,
 }) {
   if (proposalsBlocked) {
-    return { action: 'blocked', reason: '제안금지 모드 — 오너가 "제안요청"으로 해제할 때까지 새 제안 생성 안 함' };
+    return { action: 'blocked', reason: '제안금지 모드 — 오너가 "제안모드 온"으로 해제할 때까지 새 제안 생성 안 함' };
   }
   const intake = resolveProposalIntake({ track, assetKey, side, existingProposals, conditionsChanged, now });
   if (intake.action === 'blocked') {
