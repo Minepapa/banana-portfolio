@@ -92,26 +92,90 @@ function loadOpenPositionCount() {
 // 참고) — checkOrderFill의 결과(또는 null/예외)만 보고 "확실히 취소/실효됐다"고
 // 안전하게 판단할 수 있는지 분류한다. 애매하면 전부 voided=false(폴백 보류) 쪽으로.
 export function classifyPriorOrderStatus(result) {
-  if (result == null) return { voided: false, note: '전날 주문 조회 결과 없음(응답에 해당 주문 없음) — 생사 확인 불가, 추정 안 함' };
-  if (result.canceled) return { voided: true, note: '전날 주문이 취소/실효 상태로 확인됨' };
-  if (result.fullyFilled) return { voided: false, note: `전날 주문이 실제로는 전량체결(${result.avgFillPrice}원)된 것으로 확인됨 — 폴백 대상 아님, 이미 포지션이 있을 수 있음` };
-  if (result.filledQty > 0) return { voided: false, note: `전날 주문이 일부(${result.filledQty}주) 체결된 것으로 확인됨 — 잔여수량 처리 불명확, 자동폴백 대상 아님` };
-  return { voided: false, note: '전날 주문이 아직 미체결 상태로 남아있는 것으로 확인됨(자동실효 가정이 틀렸을 가능성) — 폴백 보류' };
+  if (result == null) return { voided: false, kind: 'no_result', note: '전날 주문 조회 결과 없음(응답에 해당 주문 없음) — 생사 확인 불가, 추정 안 함' };
+  if (result.canceled) return { voided: true, kind: 'canceled', note: '전날 주문이 취소/실효 상태로 확인됨' };
+  if (result.fullyFilled) return { voided: false, kind: 'fullyFilled', note: `전날 주문이 실제로는 전량체결(${result.avgFillPrice}원)된 것으로 확인됨 — 폴백 대상 아님, 이미 포지션이 있을 수 있음` };
+  if (result.filledQty > 0) return { voided: false, kind: 'partial', note: `전날 주문이 일부(${result.filledQty}주) 체결된 것으로 확인됨 — 잔여수량 처리 불명확, 자동폴백 대상 아님` };
+  return { voided: false, kind: 'unfilled', note: '전날 주문이 아직 미체결 상태로 남아있는 것으로 확인됨(자동실효 가정이 틀렸을 가능성) — 폴백 보류' };
+}
+
+// holdings 교차검증 대상 — no_result(당일 주문 조회에 아예 안 잡힘)만 해당된다.
+// ⚠️ unfilled는 의도적으로 제외(2026-09-19 코드리뷰 HIGH 지적) — checkOrderFill이
+// 이미 filledQty=0(미체결)이라고 직접 말해준 상태라, holdings에 없다는 사실이
+// 거기 더할 새 정보가 없다. "아직 체결 안 됨"과 "주문 자체가 (자동실효 등으로)
+// 죽었음"은 서로 다른 명제이고, 이 파일 헤더(:10-16)가 명시하듯 "장후시간외
+// 미체결 주문이 세션 종료 시 자동실효된다"는 가정은 여전히 검증되지 않았다.
+// 그 가정이 틀렸다면 전날 주문이 지금도 살아있을 수 있고, holdings만으로
+// voided=true로 승격시키면 이 안전장치가 막으려던 바로 그 이중매수 시나리오
+// (죽지 않은 주문 위에 새 시장가 주문을 얹음)를 열어버린다. no_result는
+// 사정이 다르다 — 당일 주문 목록에 아예 안 잡히는 상태라 holdings 부재와
+// 결합했을 때 훨씬 방어 가능한 추론이 된다.
+const HOLDINGS_CROSSCHECK_KINDS = new Set(['no_result']);
+export function needsHoldingsCrossCheck(classification) {
+  return HOLDINGS_CROSSCHECK_KINDS.has(classification.kind);
+}
+
+// 종목코드 비교 정규화 — 프론트매터 왕복·업스트림 인자 파싱 경로가 문자열/숫자 중
+// 어느 쪽으로도 code를 줄 수 있고, 선행 0(예: "005930")이 숫자로 변환되면 소실될 수
+// 있다(코드리뷰 LOW 지적). 정규화 없이 엄격 비교하면 형 불일치 시 "보유 없음"으로
+// 조용히 오판해 실주문으로 이어질 수 있어, 6자리 0패딩 문자열로 맞춰 비교한다.
+const normalizeCode = (c) => String(c ?? '').trim().padStart(6, '0');
+
+// checkOrderFill 응답만으로는 애매한 경우(주문 자체를 못 찾음)에 한해, 실제 계좌
+// 보유종목(getAccountBalance의 holdings)을 교차검증 증거로 추가한다. 2026-09-19
+// 오너 지적 — 이 잡은 예수금 사이징을 위해 이미 getAccountBalance를 호출하면서도
+// 같이 반환되는 holdings는 버리고 있었다. "그 종목이 실제 계좌에 없다"는 사실
+// 자체가 "주문이 살아있지 않다"는 직접증거가 되는 no_result 케이스에 한해서만
+// 활용한다(055550/신한지주 건 재발 방지 — 단, 그 건은 실제로는 unfilled였으므로
+// 이 최소수정으로는 자동 해소되지 않는다, 아래 needsHoldingsCrossCheck 주석 참고).
+// holdings가 배열이 아니면(응답 파싱 실패·필드명 변경 등, 코드리뷰 HIGH 지적) 그
+// 자체를 "보유 없음"의 증거로 쓰지 않고 원래 판정을 그대로 유지한다.
+export function refineWithHoldings(classification, code, holdings) {
+  if (!needsHoldingsCrossCheck(classification)) return classification;
+  if (!Array.isArray(holdings)) return classification;
+  const held = holdings.find((h) => normalizeCode(h.code) === normalizeCode(code) && h.qty > 0);
+  if (held) {
+    return {
+      voided: false,
+      kind: classification.kind,
+      note: `${classification.note} — 단, 계좌 보유종목 조회에서 실제 보유 확인됨(${held.qty}주, 교차검증) — 체결됐을 가능성 높음, 수동확인 필요`,
+    };
+  }
+  return {
+    voided: true,
+    kind: classification.kind,
+    note: `${classification.note} — 계좌 보유종목 조회 결과 실제 보유 없음(교차검증) — 폴백 진행`,
+  };
 }
 
 // 전날 장후시간외 주문의 생사를 확인 — "확실히 취소/실효됨"일 때만 true. 그 외(조회
-// 실패·응답 없음·이미 체결됨·부분체결 등 애매한 모든 경우)는 false로 안전하게 처리.
-async function confirmPriorOrderVoided({ token, appkey, appsecret, cano, acntPrdtCd, afterHoursOrderNo, signalDate }) {
+// 실패·응답 없음·이미 체결됨·부분체결·미체결 등 애매한 모든 경우)는 일단 false로
+// 안전하게 처리한 뒤, needsHoldingsCrossCheck가 참인 경우(현재 no_result만)에 한해
+// refineWithHoldings로 한 번 더 교차검증한다. checkOrderFillImpl/getAccountBalanceImpl은
+// 테스트 주입용(2026-09-19 코드리뷰 MEDIUM 지적 — 이 파일의 순수함수 분리 컨벤션을
+// 이 래퍼도 따르도록, kis.mjs의 fetchImpl 패턴과 동일한 이유).
+export async function confirmPriorOrderVoided({
+  token, appkey, appsecret, cano, acntPrdtCd, code, afterHoursOrderNo, signalDate,
+  checkOrderFillImpl = checkOrderFill, getAccountBalanceImpl = getAccountBalance,
+}) {
   if (!afterHoursOrderNo) return { voided: true, note: '전날 장후시간외 주문번호 자체가 없음(주문 자체가 실패했던 케이스)' };
   let result;
   try {
-    result = await checkOrderFill({
+    result = await checkOrderFillImpl({
       token, appkey, appsecret, cano, acntPrdtCd, odno: afterHoursOrderNo, now: new Date(signalDate),
     });
   } catch (e) {
     return { voided: false, note: `전날 주문 상태 조회 실패(${e.message}) — 생사 확인 불가` };
   }
-  return classifyPriorOrderStatus(result);
+  const classification = classifyPriorOrderStatus(result);
+  if (!needsHoldingsCrossCheck(classification)) return classification;
+  let holdings;
+  try {
+    ({ holdings } = await getAccountBalanceImpl({ token, appkey, appsecret, cano, acntPrdtCd }));
+  } catch (e) {
+    return { ...classification, note: `${classification.note} — 계좌 보유종목 교차검증 실패(${e.message}), 원래 판정 유지` };
+  }
+  return refineWithHoldings(classification, code, holdings);
 }
 
 async function main() {
@@ -179,7 +243,7 @@ async function main() {
       continue;
     }
 
-    const priorCheck = await confirmPriorOrderVoided({ token, appkey, appsecret, cano, acntPrdtCd, afterHoursOrderNo, signalDate });
+    const priorCheck = await confirmPriorOrderVoided({ token, appkey, appsecret, cano, acntPrdtCd, code, afterHoursOrderNo, signalDate });
     if (!priorCheck.voided) {
       console.log(`  ⚠️ 전날 주문 생사 미확인 — 자동폴백 보류: ${priorCheck.note}`);
       markUncertain(dir, filename, content, priorCheck.note);
