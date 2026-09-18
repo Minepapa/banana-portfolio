@@ -33,7 +33,7 @@ import { isKillSwitchActive } from '../lib/kill-switch.mjs';
 import { todayKST } from '../lib/sheets-api.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import {
   parsePendingEntry, updatePendingEntryRecord, findUnprocessedPendingEntries, isPendingEntryStale, PENDING_ENTRY_STATUS,
@@ -143,7 +143,7 @@ async function main() {
   try {
     ({ cash: remainingCash } = await getAccountBalance({ token, appkey, appsecret, cano, acntPrdtCd }));
   } catch (e) {
-    await notify('경고', `<b>돌파매매 다음날시가 폴백 중단 — 예수금 조회 실패</b>\n예수금을 확인할 수 없어(${e.message}) 이번 실행에서 모든 대기 항목 처리를 보류합니다. 다음 실행에서 재시도됩니다.`);
+    await notify('경고', `<b>돌파매매 다음날시가 폴백 중단 — 예수금 조회 실패</b>\n예수금을 확인할 수 없어(${escapeHtml(e.message)}) 이번 실행에서 모든 대기 항목 처리를 보류합니다. 다음 실행에서 재시도됩니다.`);
     return;
   }
   if (remainingCash == null) {
@@ -183,7 +183,7 @@ async function main() {
     if (!priorCheck.voided) {
       console.log(`  ⚠️ 전날 주문 생사 미확인 — 자동폴백 보류: ${priorCheck.note}`);
       markUncertain(dir, filename, content, priorCheck.note);
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 수동확인 필요</b>\n${name}(${code}) — ${priorCheck.note}\n중복매수 위험이 있어 자동 발주하지 않았습니다. KIS 앱에서 직접 확인해 주세요.`);
+      await notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 수동확인 필요</b>\n${name}(${code}) — ${escapeHtml(priorCheck.note)}\n중복매수 위험이 있어 자동 발주하지 않았습니다. KIS 앱에서 직접 확인해 주세요.`);
       continue;
     }
 
@@ -192,7 +192,7 @@ async function main() {
       ({ price: currentPrice } = await getKrQuote({ token, appkey, appsecret, code }));
     } catch (e) {
       console.log(`  ⚠️ 현재가 조회 실패(${e.message}) — 이번 실행은 건너뜀(다음 실행에서 재시도, 파일 그대로 pending 유지)`);
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 — 현재가 조회 실패</b>\n${name}(${code}) 현재가를 못 가져와(${e.message}) 이번 실행은 건너뜁니다. 다음 실행에서 재시도됩니다.`);
+      await notify('경고', `<b>돌파매매 다음날시가 폴백 — 현재가 조회 실패</b>\n${name}(${code}) 현재가를 못 가져와(${escapeHtml(e.message)}) 이번 실행은 건너뜁니다. 다음 실행에서 재시도됩니다.`);
       continue;
     }
 
@@ -219,7 +219,7 @@ async function main() {
     const killSwitchState = readKillSwitchState(VAULT_PATHS.state.killSwitch);
     if (killSwitchState.readFailed) {
       console.log(`  ⚠️ 킬스위치 상태 확인 불가(${killSwitchState.error.message}) — 안전하게 발주 보류(대기 상태 유지)`);
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 확인 불가</b>\n${name}(${code}) 킬스위치 파일을 읽을 수 없어(${killSwitchState.error.message}) 안전하게 발주를 보류했습니다. 볼트 접근 상태를 확인해 주세요.`);
+      await notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 확인 불가</b>\n${name}(${code}) 킬스위치 파일을 읽을 수 없어(${escapeHtml(killSwitchState.error.message)}) 안전하게 발주를 보류했습니다. 볼트 접근 상태를 확인해 주세요.`);
       continue;
     }
     if (isKillSwitchActive(killSwitchState.content)) {
@@ -249,7 +249,7 @@ async function main() {
         : `시장가 주문 응답 불명(${e.message}) — 실제로는 접수됐을 수 있음`;
       console.log(`  ❌ 시장가 주문 실패(${reason})`);
       writeAtomic(join(dir, filename), updatePendingEntryRecord(content, { status, reason, updatedAt: new Date().toISOString() }));
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 실패</b>\n${name}(${code}) ${quantity}주 시장가 매수 — ${reason}. 수동 확인 바랍니다.`);
+      await notify('경고', `<b>돌파매매 다음날시가 폴백 실패</b>\n${name}(${code}) ${quantity}주 시장가 매수 — ${escapeHtml(reason)}. 수동 확인 바랍니다.`);
       continue;
     }
 
@@ -278,7 +278,7 @@ async function main() {
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(async (e) => {
     console.error('\n❌ 오류:', e.message);
-    await notify('경고', `<b>돌파매매 다음날시가 폴백 잡 예외 종료</b>\n예상 못 한 오류로 중단됐습니다: ${e.message}`);
+    await notify('경고', `<b>돌파매매 다음날시가 폴백 잡 예외 종료</b>\n예상 못 한 오류로 중단됐습니다: ${escapeHtml(e.message)}`);
     process.exit(1);
   });
 }

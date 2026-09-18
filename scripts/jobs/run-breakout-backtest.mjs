@@ -115,6 +115,22 @@ async function main() {
   }
   const useAdaptiveStop = args.useAdaptiveStop === 'true';
 
+  // ATR 손절폭 선택 임계값 재조정용(2026-09-19) — 기본 백테스트(임계값 4.0%)가
+  // baseline보다 성과가 나빠(좁은 손절이 Max2%룰과 결합해 2배 사이징을 받는
+  // 포지션이 31%나 돼 분산이 무너짐, 코드리뷰 지적) 더 높은 문턱으로 재검증하려는
+  // 목적. 지정 안 하면 breakout-risk.mjs ATR_STOP_THRESHOLD_PCT 기본값(4.0) 그대로.
+  let adaptiveStopThresholdPct;
+  if (args.adaptiveStopThreshold != null) {
+    if (args.adaptiveStopThreshold === '') throw new Error('--adaptiveStopThreshold에 빈 값을 줄 수 없음');
+    adaptiveStopThresholdPct = Number(args.adaptiveStopThreshold);
+    if (!Number.isFinite(adaptiveStopThresholdPct) || adaptiveStopThresholdPct <= 0) {
+      throw new Error(`--adaptiveStopThreshold는 양의 유한한 숫자여야 함(받은 값: "${args.adaptiveStopThreshold}")`);
+    }
+    if (!useAdaptiveStop) {
+      throw new Error('--adaptiveStopThreshold는 --useAdaptiveStop=true와만 같이 쓸 수 있음 — 조용히 무시되는 조합 금지');
+    }
+  }
+
   // 코드리뷰 LOW 지적(2026-09-19) — `--minRs=`(빈 문자열)이 `Number('')===0`이라
   // 조용히 문턱 0으로 흡수될 뻔했다(오타·잘림 입력이 "문턱 없음"으로 둔갑) —
   // --rsAnchorSmoothDays처럼 빈 값도 명시적으로 막는다.
@@ -186,7 +202,7 @@ async function main() {
   const result = runBreakoutBacktest({
     pool, seriesByCode, benchmarkSeries: fullBenchmark, tradingDates, initialCapital,
     marketCapFloor, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming, useBettingUnits, rsPeriods, rsAnchorSmoothDays,
-    minRelativeStrength, useVolumeConfirmation, useAdaptiveStop,
+    minRelativeStrength, useVolumeConfirmation, useAdaptiveStop, adaptiveStopThresholdPct,
   });
   console.error(`  거래 ${result.trades.length}건, 최종 현금 ${Math.round(result.finalCapital).toLocaleString()}원(시가 데이터 없어 예약체결 스킵 ${result.skippedNoOpenPrice}건)`);
 
@@ -227,7 +243,7 @@ async function main() {
       rsPeriods: rsPeriods ?? null, // rsMethod 정의(RS_METHOD_PERIODS)가 나중에 바뀌어도 이 결과가 어떤 파라미터였는지 재현 가능하도록 같이 기록(2026-09-15 코드리뷰 LOW 지적)
       rsAnchorSmoothDays: rsAnchorSmoothDays ?? null,
       minRelativeStrength: minRelativeStrength ?? null,
-      useVolumeConfirmation, useAdaptiveStop,
+      useVolumeConfirmation, useAdaptiveStop, adaptiveStopThresholdPct: adaptiveStopThresholdPct ?? null,
     },
     tradeStats: {
       totalTrades: closedTrades.length,

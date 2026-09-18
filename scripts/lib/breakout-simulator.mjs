@@ -156,6 +156,7 @@ export function runBreakoutBacktest({
   // 가능성이 있다 — 이 임계값을 재조정해 재검증할 때는 stopLossPct와 사이징을
   // 분리해서(예: 사이징은 8% 기준 고정) 비교해야 두 효과가 안 섞인다.
   useAdaptiveStop = false,
+  adaptiveStopThresholdPct, // 2026-09-19 재조정 백테스트용 — 지정 안 하면 selectAdaptiveStopLossPct 기본값(ATR_STOP_THRESHOLD_PCT=4.0) 그대로(회귀 없음). useAdaptiveStop=false면 무의미.
 }) {
   let capital = initialCapital;
   const openPositions = new Map(); // code -> position + investedWon
@@ -313,7 +314,7 @@ export function runBreakoutBacktest({
         let stopLossPct = STOP_LOSS_PCT;
         if (useAdaptiveStop) {
           const atr = computeATR(highs, lows, closes, closes.length - 1);
-          const selected = selectAdaptiveStopLossPct(atr, closes[closes.length - 1]);
+          const selected = selectAdaptiveStopLossPct(atr, closes[closes.length - 1], { thresholdPct: adaptiveStopThresholdPct });
           if (selected != null) stopLossPct = selected;
         }
         todaySignals.push({

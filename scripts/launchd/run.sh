@@ -51,6 +51,13 @@ if [ -z "$NODE" ]; then echo "[run.sh] node를 PATH에서 찾지 못했습니다
 export NODE_OPTIONS="${NODE_OPTIONS:-} --no-network-family-autoselection"
 
 JOB="${1:-}"
+# $1(잡 이름)을 소비한 뒤 나머지 인자(--dry-run·--force 등)는 그대로 스크립트에
+# 전달한다(2026-09-19 코드리뷰 지적 — 이전엔 이 스크립트가 인자를 아예 안 받아서
+# `bash scripts/launchd/run.sh <job> --dry-run`으로 실제 launchd 경로를 흉내내
+# 테스트하려 해도 --dry-run이 조용히 사라졌다. 그 탓에 한 번은 의도치 않게 실제
+# 오늘자 락을 건드린 적도 있음). shift 실패(인자가 아예 없을 때)는 무시 — 그러면
+# 아래 case문이 빈 JOB으로 usage를 출력하고 정상 종료.
+shift || true
 case "$JOB" in
   backup-vault)   CMD=(scripts/jobs/backup-vault-snapshot.mjs) ;;
   health-watcher) CMD=(scripts/jobs/health-watcher.mjs) ;;
@@ -94,10 +101,11 @@ case "$JOB" in
   *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-irp-executions|reconcile-nh-executions|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|isa-maturity-check|telegram-session-health-check|intraday-market-move-monitor|weekly-vault-health-check|pension-balance-reminder|update-fund-holdings-from-purchases|annual-instrument-rescore|monthly-macro-tilt-proposal|update-breakout-price-cache|daily-breakout-signal-scan|place-breakout-fallback-entry|update-macro-indicators-cache}" >&2; exit 2 ;;
 esac
 
-# 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)
+# 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지). "$@"는 위 shift 이후라
+# 잡 이름을 뺀 나머지 인자(--dry-run 등, 없으면 빈 배열이라 무해)만 남아있다.
 START=$(date +%s)
 set +e
-"$NODE" "${CMD[@]}"
+"$NODE" "${CMD[@]}" "$@"
 CODE=$?
 set -e
 DUR=$(( $(date +%s) - START ))
