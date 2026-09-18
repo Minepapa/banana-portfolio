@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildJobHealthRecord, parseFrontmatter } from '../lib/job-health.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { describeJob } from '../lib/job-labels.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
@@ -38,10 +38,14 @@ async function main() {
 
   if (shouldAlert) {
     try {
+      // detail은 run.sh의 `tail -n 3 로그` 원문(코드리뷰 지적, 2026-09-18 실사고
+      // 발신 지점 — 파이썬 트레이스백의 "<module>" 같은 문자열이 <b>/<code> 서식과
+      // 구분 안 돼 텔레그램이 발송 자체를 거부했었음) — 반드시 이스케이프 후 삽입.
+      // describeJob(job)은 job-labels.mjs의 우리 자신이 쓴 정적 상수라 안전.
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL,
         tag: '오류',
-        body: `<b>잡 실패</b> (연속 ${failStreak}회)\n잡: <code>${describeJob(job)}</code>\n${detail || '(detail 없음)'}`,
+        body: `<b>잡 실패</b> (연속 ${failStreak}회)\n잡: <code>${describeJob(job)}</code>\n${detail ? escapeHtml(detail) : '(detail 없음)'}`,
       }));
     } catch (e) {
       console.error('텔레그램 알림 실패(무시):', e.message);

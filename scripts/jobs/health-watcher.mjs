@@ -208,6 +208,12 @@ export const EXPECTED_INTERVALS_MS = {
   // 1회, 위 두 잡과 동일 클래스(평일 전용 48h). 대기 항목이 없는 날엔 "처리할 것
   // 없음"으로 조용히 끝나지만(정상) heartbeat 자체는 매 실행 남긴다.
   'place-breakout-fallback-entry': 48 * 60 * 60 * 1000,
+  // update-macro-indicators-cache(2026-09-18 신설) — 평일 07:05 하루 1회, 위와
+  // 동일 클래스(평일 전용 48h). 이 잡이 꾸준히 도는 것 자체가 거시지표 캐시(USD/KRW
+  // 환율 등)가 매일 갱신된다는 간접 보증 — 잡 자체는 실패해도 캐시가 "그대로
+  // 유지"될 뿐 조용히 나빠지지 않지만, stale해지면(=이 잡이 며칠 안 돎) 캐시도
+  // 그만큼 묵는다(Log/DevRequests/2026-09-18-macro-cache-데이터신선도-알람공백.md).
+  'update-macro-indicators-cache': 48 * 60 * 60 * 1000,
   // pension-balance-reminder(2026-09-04 신설) — 매월 22일, rebalance-proposal(분기,
   // 100일)과 동일 원칙으로 달 길이(28~31일) 편차를 흡수하는 여유(35일)를 둔다.
   'pension-balance-reminder': 35 * 24 * 60 * 60 * 1000,

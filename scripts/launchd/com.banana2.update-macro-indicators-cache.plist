@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.update-macro-indicators-cache</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>update-macro-indicators-cache</string>
+  </array>
+  <!-- 평일 07:05 KST — update-breakout-price-cache(07:00)와 같은 "장 시작 전 아침"
+       시간대, 몇 분 여유를 둬 launchd 동시다발 트리거를 피한다(기존 프로젝트 관례).
+       2026-09-18 신설 — 거시지표 캐시(USD/KRW 환율 등)가 실제로는 일요일(Themis·
+       주간리포트)에만 갱신되는 지연캐시라 평일 중간에 물으면 최대 6일 묵은 값이
+       나올 수 있었던 설계 공백 보강(오너 신고, Log/DevRequests/2026-09-18-macro-
+       cache-데이터신선도-알람공백.md). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>5</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-macro-indicators-cache.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-macro-indicators-cache.log</string>
+</dict>
+</plist>

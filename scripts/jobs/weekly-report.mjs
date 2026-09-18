@@ -47,7 +47,7 @@ import {
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 // 종목명 표준화(2026-09-05, 오너 지시 — "최대한 원문 그대로를 지키면서 통일된
 // 명칭으로 보고 싶어") — Vault 원본(Facts/Ledger)의 stockName은 안 건드리고,
@@ -161,14 +161,9 @@ export function extractSummary(md) {
   return extractSummaryBullets(md).join(' · ');
 }
 
-// HTML 특수문자 이스케이프 — parse_mode:'HTML' 앞에 항상 먼저 해야 한다(코드리뷰
-// 지적 — "PER < 10 & 저평가" 같은 문장이 그대로 나가면 텔레그램이 "can't parse
-// entities"로 발송 자체를 거부한다, weekly-report.mjs는 발송 실패를 콘솔에만 남기고
-// 삼켜서 오너는 그 주 리포트가 아예 안 온 것도 몰랐을 것).
-function escapeHtml(text) {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
+// escapeHtml은 telegram.mjs로 승격(2026-09-18, 코드리뷰 지적 — record-heartbeat-
+// vault.mjs 등 다른 호출부도 같은 함수가 필요해 공유 위치로 이동, 동작은 동일).
+//
 // 마크다운 굵게(**text**) → 텔레그램 HTML(<b>text</b>) — sendTelegram이 parse_mode:'HTML'을
 // 쓰는데 리포트 본문은 마크다운이라, 변환 없이 그대로 보내면 별표(**)가 문자 그대로
 // 찍혀서 나간다(2026-08-30 오너 신고 스크린샷에서 확인 — "- **가장 큰 변화**:"가

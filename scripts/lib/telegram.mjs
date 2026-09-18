@@ -17,6 +17,19 @@ setDefaultAutoSelectFamily(false);
 const TG_ENV = `${process.env.HOME}/.claude/channels/telegram/.env`;
 const TG_ACCESS = `${process.env.HOME}/.claude/channels/telegram/access.json`;
 
+// HTML 특수문자 이스케이프 — parse_mode:'HTML'로 보내기 전에 "우리가 의도한 태그가
+// 아닌" 동적/원문 텍스트(로그 원문·예외 메시지·오너 자유입력 등)에 먼저 적용해야
+// 한다. 원래 weekly-report.mjs에만 로컬로 있던 함수를 공유 위치로 승격(2026-09-18,
+// 코드리뷰 지적 — record-heartbeat-vault.mjs:44가 잡 로그 tail 원문을 그대로
+// <b>/<code> 서식 안에 끼워 넣다가 파이썬 트레이스백의 "<module>"에 걸려 텔레그램
+// 발송 자체가 거부된 실사고의 발신 지점이었음). sendTelegram/editTelegramMessage의
+// HTML-파싱-실패 시 plain text 재시도는 "모르는 경로"용 안전망이고, 이 함수는
+// "아는 경로"(호출부가 직접 원문을 끼워넣는 지점)에서 원천적으로 막는 용도 —
+// 두 방어는 서로 대체가 아니라 보완 관계.
+export function escapeHtml(text) {
+  return String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 export function loadTelegramConfig() {
   const env = readFileSync(TG_ENV, 'utf8');
   const m = env.match(/TELEGRAM_BOT_TOKEN\s*=\s*(\S+)/);
@@ -27,19 +40,60 @@ export function loadTelegramConfig() {
   return { botToken: m[1], chatId };
 }
 
-export async function sendTelegram(text, chatId) {
+// HTML parse_mode 요청이 "can't parse entities" 계열로 거부되면 서식을 포기하고
+// plain text로 한 번 더 시도 — 순수 판정 로직만 분리(테스트 가능, 2026-09-18
+// 실사고 대응 아래 sendTelegram 주석 참고).
+export function isHtmlParseFailure(status, bodyText) {
+  return status === 400 && /can't parse entities/i.test(bodyText || '');
+}
+
+// ⚠️ 실사고 근본원인(2026-09-18, Log/DevRequests/2026-09-18-macro-cache-데이터신선도
+// -알람공백.md) — 잡이 파이썬 예외 메시지(예: 트레이스백의 "<module>")를 그대로
+// 텔레그램 본문에 넣으면, 그 문자열이 우리가 의도한 <b> 서식 태그와 구분 안 돼
+// Telegram이 "Bad Request: can't parse entities: Unsupported start tag \"module\""
+// 로 전송 자체를 거부한다. 로그엔 실패가 찍히지만 오너에게는 그 실패 사실조차
+// 전혀 도달하지 않는 완전한 침묵 장애였다(호출부가 전부 catch해서 console.error만
+// 남기고 넘어가는 관행 — 알림 발송 실패로 또 알림을 보내려 하면 무한루프 위험이라
+// 그 관행 자체는 맞음, 문제는 애초에 발송이 실패한다는 것).
+//
+// 모든 호출부(수십 곳)에서 매번 이스케이프하도록 강제하는 대신(누락 위험이 계속
+// 남음, feedback-no-silent-fallback과 같은 "구조적 가드 우선" 원칙), 이 함수
+// 자신이 안전망 역할을 한다 — HTML 파싱 실패를 감지하면 같은 텍스트를 parse_mode
+// 없이(plain text) 한 번 더 시도한다. <b> 등 의도한 서식은 깨져서 화면에 그대로
+// 보이지만("<b>제목</b>" 처럼), 그보다 "메시지 자체가 오너에게 안 감"이 훨씬 나쁜
+// 실패모드라 이쪽을 택한다.
+//
+// ⚠️ 코드리뷰 지적(2026-09-18) 2건 반영 — ①폴백이 조용히 성공하면(예외 없음,
+// job-alerts.mjs가 텔레그램 실패 자체는 또 삼킴) "어디선가 서식이 깨지고 있다"는
+// 사실이 영원히 아무 데도 안 남는다 — 폴백 본문 맨 앞에 눈에 띄는 마커를 붙여
+// 오너 화면에서 바로 보이게 한다. ②`bodyText`(텔레그램 응답 전문, 길 수 있음)를
+// 그대로 console.error에 찍으면 run.sh의 `tail -n 3`(잡상태 detail)가 이 긴 줄에
+// 밀려 정작 원래 경고 요약(job-alerts.mjs가 먼저 찍은 "⚠ 경고 N건: ...")을 못
+// 담을 수 있어 길이를 제한한다.
+const FALLBACK_ERROR_LOG_MAX_LEN = 200;
+export async function sendTelegram(text, chatId, { fetchImpl = fetch } = {}) {
   const cfg = loadTelegramConfig();
-  const res = await fetch(`https://api.telegram.org/bot${cfg.botToken}/sendMessage`, {
+  const url = `https://api.telegram.org/bot${cfg.botToken}/sendMessage`;
+  const payload = { chat_id: chatId || cfg.chatId, text, disable_web_page_preview: true };
+  let res = await fetchImpl(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId || cfg.chatId,
-      text,
-      parse_mode: 'HTML',
-      disable_web_page_preview: true,
-    }),
+    body: JSON.stringify({ ...payload, parse_mode: 'HTML' }),
   });
-  if (!res.ok) throw new Error(`텔레그램 전송 실패: ${await res.text()}`);
+  if (!res.ok) {
+    const bodyText = await res.text();
+    if (isHtmlParseFailure(res.status, bodyText)) {
+      console.error(`⚠️ 텔레그램 HTML 파싱 실패 — 서식 포기하고 plain text로 재시도: ${bodyText.slice(0, FALLBACK_ERROR_LOG_MAX_LEN)}`);
+      res = await fetchImpl(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, text: `[서식 오류 — 원문 그대로 발송]\n${text}` }), // parse_mode 없음 = plain text
+      });
+      if (!res.ok) throw new Error(`텔레그램 전송 실패(plain text 재시도도 실패): ${await res.text()}`);
+      return res.json();
+    }
+    throw new Error(`텔레그램 전송 실패: ${bodyText}`);
+  }
   return res.json();
 }
 
@@ -49,20 +103,31 @@ export async function sendTelegram(text, chatId) {
 // 제안이 어떻게 됐는지 찾기 어려웠다. Bot API editMessageText는 append가 아니라 전체
 // 텍스트를 새로 보내는 방식이라, 호출부(process-telegram-reply.mjs)가 상태를 반영한
 // 완성된 텍스트를 통째로 넘겨야 한다.
-export async function editTelegramMessage(messageId, text, chatId) {
+// sendTelegram과 동일한 HTML 파싱 실패 안전망(2026-09-18) — 이 경로도 동적 텍스트를
+// <b> 서식과 함께 보낼 수 있어 같은 실패모드에 노출된다.
+export async function editTelegramMessage(messageId, text, chatId, { fetchImpl = fetch } = {}) {
   const cfg = loadTelegramConfig();
-  const res = await fetch(`https://api.telegram.org/bot${cfg.botToken}/editMessageText`, {
+  const url = `https://api.telegram.org/bot${cfg.botToken}/editMessageText`;
+  const payload = { chat_id: chatId || cfg.chatId, message_id: messageId, text, disable_web_page_preview: true };
+  let res = await fetchImpl(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId || cfg.chatId,
-      message_id: messageId,
-      text,
-      parse_mode: 'HTML',
-      disable_web_page_preview: true,
-    }),
+    body: JSON.stringify({ ...payload, parse_mode: 'HTML' }),
   });
-  if (!res.ok) throw new Error(`텔레그램 메시지 편집 실패: ${await res.text()}`);
+  if (!res.ok) {
+    const bodyText = await res.text();
+    if (isHtmlParseFailure(res.status, bodyText)) {
+      console.error(`⚠️ 텔레그램 메시지 편집 HTML 파싱 실패 — plain text로 재시도: ${bodyText.slice(0, FALLBACK_ERROR_LOG_MAX_LEN)}`);
+      res = await fetchImpl(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, text: `[서식 오류 — 원문 그대로 발송]\n${text}` }),
+      });
+      if (!res.ok) throw new Error(`텔레그램 메시지 편집 실패(plain text 재시도도 실패): ${await res.text()}`);
+      return res.json();
+    }
+    throw new Error(`텔레그램 메시지 편집 실패: ${bodyText}`);
+  }
   return res.json();
 }
 
