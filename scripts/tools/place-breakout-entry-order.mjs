@@ -12,17 +12,36 @@
 // 사용법(15:40~16:00 KRX 장후시간외 세션 안에 실행돼야 함):
 //   node scripts/tools/place-breakout-entry-order.mjs --code=005930 --name=삼성전자 --entry-date=2026-09-13 --invested-won=10000000
 //   node scripts/tools/place-breakout-entry-order.mjs --code=005930 --entry-date=2026-09-13 --quantity=140  # 수량 직접 지정(테스트용)
+import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   loadQuantAccount, getKisToken, getKrQuote, placeKrOrder,
 } from '../lib/kis.mjs';
+import { isKillSwitchActive } from '../lib/kill-switch.mjs';
+import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 
 const DEPARTMENT_LABEL = '운영실 Hermes'; // watch-breakout-entry-fill.mjs와 동일 원칙 — 순수 API조회+발주 결과 전달, 부서 판단 없음
 const won = (n) => (n == null ? '확인 필요' : Math.round(n).toLocaleString('ko-KR') + '원');
+
+// execute-quant-proposal.mjs·execute-asset-allocation-proposal.mjs의 readStateFileOrNull과
+// 달리 ENOENT(파일 없음 = 킬스위치 한 번도 안 켜짐, 정상 기본 상태)만 "꺼짐"으로
+// 처리한다(2026-09-18 코드리뷰 MEDIUM 지적) — 그 두 실행부는 오너 승인이 선행하는
+// 경로라 fail-open(모든 읽기 오류를 꺼짐으로)이 받아들일 만한 위험이었지만, 이
+// 스크립트는 승인 없는 완전자동 실거래 경로라 같은 기본값을 물려받을 이유가 약하다.
+// EACCES·EIO·볼트 볼륨 언마운트 등 ENOENT 외 오류는 "킬스위치가 켜져 있는데 못
+// 읽는 것"일 수도 있으므로 안전한 쪽(발주 중단)으로 처리한다.
+function readKillSwitchState(filepath) {
+  try {
+    return { content: readFileSync(filepath, 'utf8'), readFailed: false };
+  } catch (e) {
+    if (e.code === 'ENOENT') return { content: null, readFailed: false };
+    return { content: null, readFailed: true, error: e };
+  }
+}
 
 function parseArgs(argv) {
   const out = {};
@@ -105,6 +124,29 @@ async function main() {
     return;
   }
   const budgetForFallback = investedWon ?? currentPrice * quantity; // --quantity로 직접 지정된 경우 폴백용 예산은 현재가 기준으로 역산
+
+  // 킬스위치 — 브로커 호출 직전(order-gate.mjs checkKillSwitch와 동일 원칙·동일
+  // State 파일, execute-quant-proposal.mjs·execute-asset-allocation-proposal.mjs가
+  // 이미 쓰는 것과 같은 전역 스위치를 여기서도 재사용한다. 오너 지시(2026-09-18) —
+  // "카이로스 자동거래를 앞으로 승인하되, on/off 스위치를 만들어 쓴다"에 대응.
+  // 신호판정(daily-breakout-signal-scan.mjs)이 아니라 여기서 막는 이유는 order-gate의
+  // 기존 2단계 설계("제안 생성 시점"엔 안 막고 "실행 시점"에만 막음)와 동일 — 신호
+  // 자체는 계속 계산·기록되게 두고, 실제 돈이 나가는 지점만 잠근다. 텔레그램/CLI로
+  // 언제든 껐다 켤 수 있게 매 호출마다 새로 읽는다(장시간 실행 중 스위치가 바뀔 수
+  // 있는 daily-breakout-signal-scan.mjs의 반복 발주와 달리 이 스크립트는 단발성
+  // 호출이라 실질적 차이는 없지만, 나머지 두 실행부와 코드 형태를 통일해둔다).
+  const killSwitchState = readKillSwitchState(VAULT_PATHS.state.killSwitch);
+  if (killSwitchState.readFailed) {
+    return alertAndExit(`<b>돌파매매 진입 보류 — 킬스위치 상태 확인 불가</b>\n${name}(${code}) 신호 통과(${quantity}주, 예산 ${won(investedWon)})했지만 킬스위치 파일을 읽을 수 없어(${killSwitchState.error.message}) 안전하게 발주를 보류했습니다. 볼트 접근 상태를 확인해 주세요.`);
+  }
+  if (isKillSwitchActive(killSwitchState.content)) {
+    console.log(`ℹ️ 킬스위치 활성 — ${name}(${code}) ${quantity}주 매수 발주 안 함(신호는 정상 통과했음)`);
+    await sendTelegram(formatDepartmentMessage({
+      departmentLabel: DEPARTMENT_LABEL, tag: '스킵',
+      body: `<b>돌파매매 진입 보류 — 킬스위치 활성</b>\n${name}(${code}) 신호 통과(${quantity}주, 예산 ${won(investedWon)})했지만 킬스위치가 켜져 있어 발주하지 않았습니다. "정지해제" 명령으로 해제해야 다음 신호부터 다시 발주됩니다.`,
+    }));
+    return;
+  }
 
   let order;
   try {

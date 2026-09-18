@@ -42,6 +42,10 @@ const DEPARTMENT_LABEL = '운영실 Hermes';
 // 짧게 설명하는 문구(사람이 읽는 텍스트에 그대로 붙음).
 export const SCHEDULE = [
   { day: '평일', time: '08:00', dept: '운영실 Hermes', what: '아침 브리핑 — 자산현황+간밤 이벤트+거시 5신호', script: 'morning-briefing.mjs' },
+  // 2026-09-18 코드리뷰 MEDIUM 지적으로 추가 — daily-breakout-signal-scan.mjs가
+  // 신설(2026-09-13) 당시 부서별-텔레그램-보고.md에 "이벤트기반"으로 잘못 분류돼
+  // 있어 이 배열에도 빠져 있었다(daily-execution-report와 동일 클래스의 누락).
+  { day: '평일', time: '15:32', dept: '운영실 Hermes', what: '돌파매매(카이로스) 일별 신호판정 결과 — 신호 없어도 항상 발송', script: 'daily-breakout-signal-scan.mjs' },
   { day: '평일', time: '16:15', dept: '운영실 Hermes', what: '당일 체결 내역 보고', conditional: '체결 있을 때만', script: 'daily-execution-report.mjs' },
   { day: '평일', time: '16:30', dept: '투자전략실 Athena', what: '리밸런싱·거시 점검', conditional: '이상 있을 때만', script: 'daily-asset-allocation-check.mjs' },
   { day: '일요일', time: '07:00', dept: '리스크관리실 Themis', what: '주간 위험 재검토', script: 'themis-risk-review.mjs' },

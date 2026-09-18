@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.place-breakout-fallback-entry</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>place-breakout-fallback-entry</string>
+  </array>
+  <!-- 평일 09:03 KST — 장 시작(09:00) 직후, 시장가 주문이 시가 단일가에 참여할 수
+       있는 시점. 전날 장후시간외(daily-breakout-signal-scan.mjs→place-breakout-entry-
+       order.mjs)에서 미체결로 State/BreakoutPendingEntries에 큐잉된 항목을 다음날
+       시가로 재시도(마지막 폴백). 스크립트 자신의 "launchd 배선은 아직 안 함" 주석은
+       2026-09-18 이 배선으로 해소 — 2026-09-16 세션크론 1회성 실행(오너 승인, 발주
+       메커니즘 검증)에서 안전장치(classifyPriorOrderStatus)가 정상 작동함을 확인한
+       뒤 상시 배선(오너 지시, "카이로스 자동거래 승인" 2026-09-18 — 킬스위치
+       배선(place-breakout-entry-order.mjs·이 스크립트 양쪽)과 같은 턴에 진행). 분(03)은
+       09:00 정각 동시다발 launchd 트리거 몰림을 피하려는 기존 프로젝트 관례(다른
+       09시대 잡들과 동일 여유). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>3</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>3</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>3</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>3</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>3</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/place-breakout-fallback-entry.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/place-breakout-fallback-entry.log</string>
+</dict>
+</plist>

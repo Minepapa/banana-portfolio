@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.daily-breakout-signal-scan</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>daily-breakout-signal-scan</string>
+  </array>
+  <!-- 평일 15:32 KST — KRX 정규장 마감(15:30)+버퍼 뒤, 장후시간외(15:40) 시작 전.
+       돌파매매(카이로스) 실전 신호판정+승인없는 자동발주 스위치(오너 확정,
+       2026-09-13 — "자동체결+사후통보", 20분 창이 좁아 텔레그램 승인 경유가
+       불가능하다는 이유. daily-breakout-signal-scan.mjs 헤더 참고). 2026-09-18
+       최초 launchd 배선(오너 지시, "앞단부터 순서대로" 실배선 — 코스피 지수
+       캐시 CRITICAL 버그 수정(커밋 025fee5)으로 --dry-run 전체 파이프라인
+       완주를 라이브로 확인한 뒤 진행). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>32</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>32</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/daily-breakout-signal-scan.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/daily-breakout-signal-scan.log</string>
+</dict>
+</plist>

@@ -125,6 +125,13 @@ async function main() {
   // 비-dry-run 경로에서만 잠근다. 무엇을 하기도 전에 가장 먼저 선점(claim)해야
   // 거의 동시에 두 번 실행돼도(수동 재실행 등) 둘 다 통과하는 경쟁조건을 막는다
   // (execute-quant-proposal.mjs의 recordExecutedOrder 선점 원칙과 동일).
+  // ⚠️ 킬스위치 활성 중 신호가 나온 날은 그 신호가 영구 소실된다(2026-09-18 코드리뷰
+  // LOW 지적) — 이 잠금이 오늘 실행을 이미 선점했기 때문에, 같은 날 나중에 오너가
+  // 스위치를 꺼도 이 잡이 재실행되지 않는다(이중매수 방지가 최우선이라 의도적으로
+  // 보수적인 동작 — 스위치를 끈 뒤 정말 그날 사고 싶으면 --force로 수동 재실행).
+  // 또한 여러 종목이 동시에 신호 통과+킬스위치 활성이면, 각 종목마다 독립 스폰되는
+  // place-breakout-entry-order.mjs가 각자 "스킵" 텔레그램을 보내 거의 동일한 메시지가
+  // N통 옴(하나로 묶지 않음, 종목별 예산·수량이 달라 병합하면 정보 손실).
   if (!dryRun) {
     const lastRunDay = readLastRunDay(VAULT_PATHS.state.breakoutScanRuns);
     if (!force && !shouldRunToday(new Date(), lastRunDay)) {

@@ -28,6 +28,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime, timedelta
 import FinanceDataReader as fdr
 import pandas as pd
 
@@ -64,6 +65,76 @@ def is_common_share(code, name):
     이름 끝 "우"/"우B" 이중확인."""
     code = str(code)
     return len(code) > 0 and code[-1] == '0' and not str(name).endswith(('우', '우B'))
+
+
+DELISTING_CSV_URL_TMPL = (
+    'https://raw.githubusercontent.com/FinanceData/fdr_krx_data_cache/'
+    'refs/heads/master/data/listing/delisting/{date}.csv'
+)
+
+
+def fetch_delisting_with_fallback(max_lookback_days=10):
+    """fdr.StockListing('KRX-DELISTING')는 내부적으로 KRX API가 보고하는 "최신
+    작업일"(max_work_dt)을 그대로 GitHub 캐시 리포(FinanceData/fdr_krx_data_cache)의
+    스냅샷 파일명으로 써서 요청하는데, 그 리포의 실제 발행이 하루 정도 늦어질 수
+    있다(2026-09-18 실측 — max_work_dt가 이미 오늘인데 그 날짜 CSV는 아직 404, 전날치
+    까지는 이미 200으로 존재). FDR 라이브러리 내부(KrxDelistingCache.read())가 이
+    CSV 조회 실패를 전부 `except: df = pd.DataFrame()`로 삼켜 빈 DataFrame을
+    돌려주므로(이 프로젝트가 지양하는 "조용한 폴백"을 라이브러리 쪽에서 하고 있는
+    셈), 우리 쪽 MIN_DELISTING_ROWS 가드가 없었다면 이 사고가 "상장폐지 0건"으로
+    조용히 통과했을 것 — 2026-09-16 Marcap 사고와 같은 클래스의 퍼블리시-지연 문제다.
+
+    상장폐지 기록은 과거 누적 데이터라 며칠 전 스냅샷을 써도 결과에 실질적
+    차이가 없다(그 사이 새로 상장폐지된 종목 몇 건이 반영 안 되는 정도) — 그래서 정상
+    호출을 먼저 시도하고, 부족하면 우리가 직접 날짜를 하루씩 물러나며 같은 리포의
+    과거 스냅샷을 재시도한다. 실패를 삼키지 않고 몇 번째 시도에서·어느 날짜로
+    성공했는지 항상 stderr에 남긴다(2026-09-16 코드리뷰가 강조한 "조용한 폴백 금지"
+    원칙 그대로 — 폴백 자체는 하되 반드시 보이게). max_lookback_days 기본값(10)은
+    GitHub 캐시 리포 자체가 KRX 영업일에만 발행되므로(2026-09-18 코드리뷰 LOW 지적
+    — 설·추석 등 최대 5일 연휴+주말이 겹치면 7일로는 부족할 수 있음) 여유를 둔 값.
+    """
+    dl = fdr.StockListing('KRX-DELISTING')
+    if len(dl) >= MIN_DELISTING_ROWS:
+        return dl
+
+    print(f'⚠️ KRX-DELISTING 1차 조회 {len(dl)}건(부족, 최소 {MIN_DELISTING_ROWS}건) — '
+          f'GitHub 캐시 리포 퍼블리시 지연 의심, 날짜를 물러나며 재시도', file=sys.stderr)
+    for back in range(1, max_lookback_days + 1):
+        date_str = (datetime.today() - timedelta(days=back)).strftime('%Y-%m-%d')
+        csv_url = DELISTING_CSV_URL_TMPL.format(date=date_str)
+        try:
+            df = pd.read_csv(csv_url, index_col=0, dtype={'Symbol': str, 'ToSymbol': str})
+            df = df.reset_index(drop=True)
+        except Exception as e:
+            print(f'  {date_str} 스냅샷 조회 실패({e}) — 더 이전 날짜로 재시도', file=sys.stderr)
+            continue
+        # 아래 build_candidate_pool이 실제로 쓰는 컬럼만 최소 가공(FDR 원본
+        # KrxDelistingCache.read()의 전체 후처리를 그대로 복제하지 않는다 — 우리가
+        # 안 쓰는 Arrant* 등 컬럼까지 맞출 필요 없음). 이 세 줄은 일부러 try 밖에
+        # 둔다(2026-09-18 코드리뷰 LOW) — CSV 스키마 자체가 바뀐 경우(컬럼 삭제 등)는
+        # 모든 날짜에 똑같이 영향을 주므로 다음 날짜로 재시도해도 소용없고, 조용히
+        # 넘어가는 대신 시끄럽게 죽는 게 맞다.
+        df['ListingDate'] = pd.to_datetime(df['ListingDate'], format='%Y-%m-%d', errors='coerce')
+        df['DelistingDate'] = pd.to_datetime(df['DelistingDate'], format='%Y-%m-%d', errors='coerce')
+        df['ListingShares'] = pd.to_numeric(df['ListingShares'].astype(str).str.replace(',', ''), errors='coerce')
+        # KrxDelistingCache.read()가 원래 하는 날짜범위 필터(listing.py:300)와 동일 —
+        # 2026-09-18 코드리뷰 LOW 지적: 빠뜨리면 NaT/미래 DelistingDate 행이 안 걸러져
+        # build_candidate_pool이 "살아있는 종목"으로 오판(daily-breakout-signal-scan.mjs의
+        # delistingDate>cachedDate 판정)해 상장목록과 중복 집계될 수 있음(실측 영향은
+        # 0이었지만, 이 폴백이 퍼블리시 지연 때문에 상시 경로가 될 가능성이 높아 동일하게 맞춰둠).
+        # 이 필터를 MIN_DELISTING_ROWS 체크 "앞"에 둔 이유 — fdr.StockListing()도
+        # 내부적으로 이 필터를 먼저 적용한 뒤 반환하므로, 1차(정상) 경로의
+        # len(dl)>=MIN_DELISTING_ROWS 판정과 동일 기준으로 맞춘다.
+        start, end = datetime(1960, 1, 1), datetime.today()
+        df = df[(start <= df['DelistingDate']) & (df['DelistingDate'] <= end)].reset_index(drop=True)
+        if len(df) < MIN_DELISTING_ROWS:
+            print(f'  {date_str} 스냅샷도 {len(df)}건으로 부족 — 더 이전 날짜로 재시도', file=sys.stderr)
+            continue
+        print(f'✅ KRX-DELISTING {date_str} 스냅샷({back}일 전)으로 대체 성공 — {len(df)}건', file=sys.stderr)
+        return df
+
+    print(f'❌ KRX-DELISTING 최근 {max_lookback_days}일 전부 조회 실패 — 원래(빈) 결과 반환', file=sys.stderr)
+    return dl
 
 
 def build_candidate_pool():
@@ -127,7 +198,7 @@ def build_candidate_pool():
                 f'사고와 동일 클래스).'
             )
 
-    dl = fdr.StockListing('KRX-DELISTING')
+    dl = fetch_delisting_with_fallback()
     if len(dl) < MIN_DELISTING_ROWS:
         raise RuntimeError(
             f'상장폐지목록 확보 부족: {len(dl)}건(최소 {MIN_DELISTING_ROWS}건 기대, 1960년 이후 '

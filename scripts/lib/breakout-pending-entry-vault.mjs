@@ -20,8 +20,28 @@ function sanitizeSegment(s) {
 // (주문이 확실히 미접수로 거부됨, 수동확인 필요) | 'uncertain'(전날 장후시간외
 // 주문의 생사를 확인 못했거나, 시장가 주문 응답이 불명(confirmedNotSent 없음)해서
 // 실제로는 접수됐을 수 있음 — 둘 다 "재시도하면 이중매수 위험"이라 findUnprocessed
-// 대상에서 제외하고 수동확인으로 넘김).
-export const PENDING_ENTRY_STATUS = { PENDING: 'pending', PLACING: 'placing', PLACED: 'placed', FAILED: 'failed', UNCERTAIN: 'uncertain' };
+// 대상에서 제외하고 수동확인으로 넘김) | 'expired'(킬스위치가 여러 날 켜져 있는
+// 동안 신호일이 너무 오래돼 조건 재검증 없이 그대로 발주하면 위험하다고 판단해
+// 자동 거부됨, isPendingEntryStale 참고 — 2026-09-18 코드리뷰 HIGH 지적).
+export const PENDING_ENTRY_STATUS = {
+  PENDING: 'pending', PLACING: 'placing', PLACED: 'placed', FAILED: 'failed', UNCERTAIN: 'uncertain', EXPIRED: 'expired',
+};
+
+// 킬스위치가 여러 날 켜져 있다가 꺼지면, 그동안 쌓인 'pending' 항목이 다음 실행에서
+// 한꺼번에 "신호일 가격·조건" 재검증 없이 시가 시장가로 나갈 수 있다(2026-09-18
+// 코드리뷰 HIGH — place-breakout-fallback-entry.mjs가 findUnprocessedPendingEntries의
+// 결과를 나이 구분 없이 전부 처리했음). 정상 운영 중엔 이 잡이 매 평일 09:03 돌아
+// 'pending'이 하루 이상 버티는 유일한 경우가 주말(금요일 저녁 신호 → 월요일 아침
+// 폴백, 최대 3일)뿐이므로, maxAgeDays 기본값은 그보다 여유 있게 5(연휴 등 흡수)로
+// 잡는다 — 그 이상 묵었다면 킬스위치가 개입했거나 이 잡 자체가 며칠 못 돈 비정상
+// 상황으로 보고 자동발주 대신 수동확인으로 넘긴다.
+export function isPendingEntryStale(entry, { maxAgeDays = 5, now = new Date() } = {}) {
+  if (!entry.signalDate) return false; // 신호일 자체가 없으면 나이를 판단할 근거가 없다 — 안전하지 않은 쪽(자동거부)으로 다루지 않고 기존 처리 경로에 맡김
+  const signal = new Date(`${entry.signalDate}T00:00:00+09:00`);
+  if (Number.isNaN(signal.getTime())) return false;
+  const ageDays = (now.getTime() - signal.getTime()) / (24 * 60 * 60 * 1000);
+  return ageDays > maxAgeDays;
+}
 
 export function buildPendingEntryRecord({
   code, name = '', signalDate, investedWon, afterHoursOrderNo = null, reason = '', now = new Date(),

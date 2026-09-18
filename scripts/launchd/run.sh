@@ -15,8 +15,30 @@ LOG_DIR="$HOME/Library/Logs/banana-portfolio-v2"
 mkdir -p "$LOG_DIR"
 cd "$REPO"
 
-# launchd는 최소 PATH로 실행되므로 node를 찾도록 보강
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+# launchd는 최소 PATH로 실행되므로 node/python3를 찾도록 보강.
+#
+# ⚠️ 순서 CRITICAL(2026-09-18 실사고) — 이 머신엔 python3가 두 곳에 따로 설치돼
+# 있다: /opt/homebrew/bin(Homebrew, 2026-09-14경 설치/갱신된 것으로 보임 — 패키지
+# 없는 맨몸)과 /usr/local/bin(Python.framework 심볼릭링크, FinanceDataReader·certifi
+# 등 이 프로젝트가 실제로 쓰는 패키지가 전부 이쪽에 pip install돼 있음). 예전엔
+# /opt/homebrew/bin이 먼저라 launchd로 도는 모든 python3 호출(historical-universe.py
+# 등)이 조용히 "패키지 없는" 쪽으로 resolve되고 있었다 — update-breakout-price-cache가
+# 2026-09-17·18 이틀 연속 FAIL(ModuleNotFoundError: FinanceDataReader)로 처음 표면화,
+# daily-breakout-signal-scan.mjs(같은 buildCandidatePool 경유)도 2026-09-18 첫 launchd
+# 실행부터 동일하게 실패할 뻔했다(우연히 그 전까지의 검증은 전부 대화형 셸의 python3로
+# 돌려서 — 즉 run.sh를 실제로 거치지 않아서 — 이 버그를 못 잡았다는 뜻이기도 함, 교훈:
+# "라이브 재검증"도 실제 launchd 경로(run.sh)를 통해야 의미 있다). node는 양쪽 다
+# 있어(버전만 다름, 24.7.0 vs 24.15.0) 순서를 바꿔도 무해 — 그래서 /usr/local/bin을
+# 앞에 둔다. 향후 또 다른 homebrew 패키지가 같은 방식으로 끼어들 수 있으니, python3를
+# pip install할 일이 생기면 반드시 이 경로(/usr/local/bin/python3)에 설치할 것.
+#
+# ⚠️ 이 재정렬로 launchd 잡이 쓰는 node도 24.7.0(/opt/homebrew/bin)→24.15.0
+# (/usr/local/bin)으로 같이 바뀐다(공통 바이너리라 분리 불가) — 코드리뷰(2026-09-18)
+# 가 v24.15.0으로 전체 스위트를 재실행해 2561건 전부 통과 확인. 대화형 셸의
+# `node`는 여전히 24.7.0을 가리키므로(PATH가 다름), 이후 "npm test 통과했다"는
+# 확인만으로는 이 재정렬 이후 실제 launchd 경로에서 쓰는 node 버전까지 검증한 게
+# 아니라는 점을 기억할 것 — 필요하면 `PATH="/usr/local/bin:$PATH" npm test`로 재확인.
+export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:$PATH"
 NODE="$(command -v node || true)"
 if [ -z "$NODE" ]; then echo "[run.sh] node를 PATH에서 찾지 못했습니다" >&2; exit 127; fi
 
@@ -66,7 +88,9 @@ case "$JOB" in
   annual-instrument-rescore) CMD=(scripts/jobs/annual-instrument-rescore.mjs) ;;
   monthly-macro-tilt-proposal) CMD=(scripts/jobs/monthly-macro-tilt-proposal.mjs) ;;
   update-breakout-price-cache) CMD=(scripts/jobs/update-breakout-price-cache.mjs) ;;
-  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-irp-executions|reconcile-nh-executions|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|isa-maturity-check|telegram-session-health-check|intraday-market-move-monitor|weekly-vault-health-check|pension-balance-reminder|update-fund-holdings-from-purchases|annual-instrument-rescore|monthly-macro-tilt-proposal|update-breakout-price-cache}" >&2; exit 2 ;;
+  daily-breakout-signal-scan) CMD=(scripts/jobs/daily-breakout-signal-scan.mjs) ;;
+  place-breakout-fallback-entry) CMD=(scripts/jobs/place-breakout-fallback-entry.mjs) ;;
+  *) echo "usage: run.sh {backup-vault|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-irp-executions|reconcile-nh-executions|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|isa-maturity-check|telegram-session-health-check|intraday-market-move-monitor|weekly-vault-health-check|pension-balance-reminder|update-fund-holdings-from-purchases|annual-instrument-rescore|monthly-macro-tilt-proposal|update-breakout-price-cache|daily-breakout-signal-scan|place-breakout-fallback-entry}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지)

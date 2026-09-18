@@ -15,8 +15,11 @@
 // 낸다 — 조회가 실패하거나 상태가 애매하면 자동 발주를 보류하고 수동확인으로 넘긴다
 // (findUnprocessedPendingEntries가 'uncertain' 상태는 재시도 대상에서 자동 제외).
 //
-// launchd 배선은 아직 안 함(2026-09-13) — 이 스크립트를 실제로 호출할 상위 잡(일별
-// 신호스캔)은 있지만, 실거래 자동배선 자체는 별도의 명시적 "가동" 결정으로 남겨둠.
+// launchd 배선: 평일 09:03 KST(com.banana2.place-breakout-fallback-entry.plist,
+// 2026-09-18 — 오너의 "카이로스 자동거래 승인" 지시로 상시 가동. 2026-09-16 세션크론
+// 1회 실행에서 안전장치(classifyPriorOrderStatus, 이중매수 방지)가 실제로 정상
+// 작동함을 확인한 뒤 상시 배선으로 전환. 킬스위치(State/KillSwitch)도 같은 턴에
+// 이 파일 주문 직전 지점에 연결됨, 아래 confirmPriorOrderVoided 다음 참고).
 //
 // 사용법: node scripts/jobs/place-breakout-fallback-entry.mjs   # 장 시작 직후(09:00~09:05 KST) 실행 전제
 import { existsSync, readdirSync, readFileSync, mkdirSync } from 'node:fs';
@@ -26,14 +29,17 @@ import { spawn } from 'node:child_process';
 import {
   loadQuantAccount, getKisToken, getKrQuote, getAccountBalance, checkOrderFill, placeKrOrder,
 } from '../lib/kis.mjs';
+import { isKillSwitchActive } from '../lib/kill-switch.mjs';
 import { todayKST } from '../lib/sheets-api.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import {
-  parsePendingEntry, updatePendingEntryRecord, findUnprocessedPendingEntries, PENDING_ENTRY_STATUS,
+  parsePendingEntry, updatePendingEntryRecord, findUnprocessedPendingEntries, isPendingEntryStale, PENDING_ENTRY_STATUS,
 } from '../lib/breakout-pending-entry-vault.mjs';
+import { parseBreakoutPosition, findOpenPositions } from '../lib/breakout-position-vault.mjs';
+import { MAX_CONCURRENT_POSITIONS } from '../lib/breakout-risk.mjs';
 
 const DEPARTMENT_LABEL = '운영실 Hermes';
 const won = (n) => (n == null ? '확인 필요' : Math.round(n).toLocaleString('ko-KR') + '원');
@@ -52,10 +58,34 @@ async function notify(tag, body) {
   } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
 }
 
+// place-breakout-entry-order.mjs와 동일 패턴(ENOENT만 "꺼짐", 그 외 읽기 오류는
+// 안전한 쪽인 "활성"으로 — 2026-09-18 코드리뷰 MEDIUM, 승인 없는 완전자동 경로라
+// execute-quant-proposal.mjs류의 전역 fail-open 기본값을 그대로 물려받지 않는다).
+function readKillSwitchState(filepath) {
+  try {
+    return { content: readFileSync(filepath, 'utf8'), readFailed: false };
+  } catch (e) {
+    if (e.code === 'ENOENT') return { content: null, readFailed: false };
+    return { content: null, readFailed: true, error: e };
+  }
+}
+
 function markUncertain(dir, filename, content, reason) {
   writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
     status: PENDING_ENTRY_STATUS.UNCERTAIN, reason, updatedAt: new Date().toISOString(),
   }));
+}
+
+// daily-breakout-signal-scan.mjs의 loadOpenPositionCodes()와 동일 패턴 — 2026-09-18
+// 코드리뷰 MEDIUM 지적: 이 잡은 지금까지 슬롯(MAX_CONCURRENT_POSITIONS)을 전혀
+// 확인하지 않고 예수금만 보고 순차 발주했다. 신호스캔은 슬롯을 체크하는데 이 잡만
+// 빠져 있으면, 대기 여러 건이 한꺼번에 풀릴 때(킬스위치 장기 활성 후 해제 등)
+// 보유종목 상한을 조용히 넘길 수 있다.
+function loadOpenPositionCount() {
+  const dir = VAULT_PATHS.state.breakoutPositions;
+  if (!existsSync(dir)) return 0;
+  const contents = readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => readFileSync(join(dir, f), 'utf8'));
+  return findOpenPositions(contents.map((c) => parseBreakoutPosition(c))).length;
 }
 
 // 순수함수로 분리(테스트 가능하게, 코드리뷰 지적과 동일한 원칙 — decideEntryOutcome
@@ -91,6 +121,16 @@ async function main() {
   const targets = findUnprocessedPendingEntries(all);
   if (!targets.length) { console.log('ℹ️ 다음날시가 폴백 대기 중인 항목 없음'); return; }
 
+  // 슬롯 상한 체크(2026-09-18 코드리뷰 MEDIUM) — daily-breakout-signal-scan.mjs와
+  // 동일하게 여기서도 확인. 이미 다 찼으면 이번 실행에서 아무것도 처리하지 않고
+  // 그대로 둔다(상태 변경 없음 — 킬스위치 스킵과 동일 원칙, 슬롯이 열리면 다음
+  // 실행에서 자동 재시도).
+  let remainingSlots = MAX_CONCURRENT_POSITIONS - loadOpenPositionCount();
+  if (remainingSlots <= 0) {
+    console.log(`ℹ️ 슬롯이 이미 다 참(보유 ${MAX_CONCURRENT_POSITIONS}종목) — 대기 ${targets.length}건 처리 보류`);
+    return;
+  }
+
   const quant = loadQuantAccount();
   if (!quant) { console.log('ℹ️ 퀀트 계좌정보(quantAccount) 미설정 — 스킵'); return; }
   const { appkey, appsecret, cano, acntPrdtCd } = quant;
@@ -115,6 +155,29 @@ async function main() {
   for (const entry of targets) {
     const { code, name, investedWon, afterHoursOrderNo, signalDate, filename, content } = entry;
     console.log(`[처리] ${entry.id} — ${name}(${code})`);
+
+    // 나이 게이트(2026-09-18 코드리뷰 HIGH) — 킬스위치가 여러 날 켜져 있다가 꺼지면
+    // 그 사이 쌓인 대기 항목이 신호일 가격·조건 재검증 없이 한꺼번에 시가 시장가로
+    // 나갈 위험이 있다. 정상 운영(주말 포함)에서는 절대 안 걸리는 문턱(5일)이라
+    // 이 체크가 발동한다는 것 자체가 이례적 상황임을 뜻한다 — 자동발주 대신
+    // 수동확인으로 넘긴다.
+    if (isPendingEntryStale(entry)) {
+      console.log(`  ⚠️ 신호일(${signalDate})이 너무 오래됨 — 자동폴백 거부(expired)`);
+      writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
+        status: PENDING_ENTRY_STATUS.EXPIRED, reason: `신호일(${signalDate})로부터 시간이 많이 지나 조건 재검증 없이 자동발주하지 않음(킬스위치 장기 활성 등 이례적 상황 의심)`, updatedAt: new Date().toISOString(),
+      }));
+      await notify('경고', `<b>돌파매매 다음날시가 폴백 거부 — 신호일 만료</b>\n${name}(${code}) 신호일(${signalDate})이 너무 오래돼 자동발주하지 않았습니다. 지금도 매수하고 싶으면 조건을 다시 확인하고 수동으로 진행해 주세요.`);
+      continue;
+    }
+
+    // 슬롯 상한(2026-09-18 코드리뷰 MEDIUM) — 루프 진입 전 한 번만 확인하면 이번
+    // 실행에서 여러 건을 연달아 접수할 때 상한을 넘길 수 있어, 접수 성공마다
+    // 차감해 매 건 재확인한다.
+    if (remainingSlots <= 0) {
+      console.log(`  ℹ️ 슬롯 소진 — ${name}(${code}) 처리 보류(대기 유지, 다음 실행 재시도)`);
+      await notify('스킵', `<b>돌파매매 다음날시가 폴백 보류 — 슬롯 소진</b>\n${name}(${code}) — 이번 실행에서 보유종목 상한(${MAX_CONCURRENT_POSITIONS})에 도달해 처리하지 못했습니다. 다음 실행에서 재시도됩니다.`);
+      continue;
+    }
 
     const priorCheck = await confirmPriorOrderVoided({ token, appkey, appsecret, cano, acntPrdtCd, afterHoursOrderNo, signalDate });
     if (!priorCheck.voided) {
@@ -147,6 +210,24 @@ async function main() {
       continue;
     }
 
+    // 킬스위치 — place-breakout-entry-order.mjs와 동일 원칙·동일 State 파일(전역
+    // 공유, execute-quant-proposal.mjs 등과 동일). 오너 지시(2026-09-18) 대응. 여러
+    // 건을 순차 처리하는 루프라 매 건마다 새로 읽는다(execute-quant-proposal.mjs가
+    // 제안마다 다시 읽는 것과 동일 이유 — 처리 도중 오너가 스위치를 켤 수 있음).
+    // 'pending' 상태를 그대로 유지해(마킹 안 함) 스위치 해제 후 다음 실행에서 자동
+    // 재시도되게 한다 — 'uncertain'과 달리 사람 개입이 필요한 상황이 아니므로.
+    const killSwitchState = readKillSwitchState(VAULT_PATHS.state.killSwitch);
+    if (killSwitchState.readFailed) {
+      console.log(`  ⚠️ 킬스위치 상태 확인 불가(${killSwitchState.error.message}) — 안전하게 발주 보류(대기 상태 유지)`);
+      await notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 확인 불가</b>\n${name}(${code}) 킬스위치 파일을 읽을 수 없어(${killSwitchState.error.message}) 안전하게 발주를 보류했습니다. 볼트 접근 상태를 확인해 주세요.`);
+      continue;
+    }
+    if (isKillSwitchActive(killSwitchState.content)) {
+      console.log(`  ℹ️ 킬스위치 활성 — ${name}(${code}) 발주 보류(대기 상태 유지, 자동 재시도됨)`);
+      await notify('스킵', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 활성</b>\n${name}(${code}) 전날 미체결 확인됐지만 킬스위치가 켜져 있어 발주하지 않았습니다. "정지해제" 명령으로 해제하면 다음 실행에서 자동 재시도됩니다.`);
+      continue;
+    }
+
     // 접수 직전에 먼저 'placing'으로 기록 — 접수 성공 직후 크래시해도(코드리뷰 MEDIUM
     // 지적) 재실행 시 findUnprocessedPendingEntries가 'pending'만 골라내므로 이 항목은
     // 자동으로 다시 시도되지 않는다(안전 쪽으로 정지, 수동확인).
@@ -173,6 +254,7 @@ async function main() {
     }
 
     remainingCash -= budget;
+    remainingSlots -= 1;
     console.log(`  ✅ 시장가 매수 접수 — 주문번호 ${order.orderNo}`);
     writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
       status: PENDING_ENTRY_STATUS.PLACED, updatedAt: new Date().toISOString(),

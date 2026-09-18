@@ -199,6 +199,15 @@ export const EXPECTED_INTERVALS_MS = {
   // 갱신) — 평일 07:00 하루 1회, daily-asset-allocation-check 등과 동일 클래스
   // (평일 전용이라 48h로 주말 간격 흡수).
   'update-breakout-price-cache': 48 * 60 * 60 * 1000,
+  // daily-breakout-signal-scan(2026-09-18 최초 launchd 배선) — 평일 15:32 하루 1회,
+  // update-breakout-price-cache와 동일 클래스(평일 전용 48h). 돌파매매 승인없는
+  // 자동발주 스위치라 이 heartbeat 정지가 곧 "그날 매매판단 자체가 실행 안 됐을
+  // 수 있다"는 의미 — 다른 하루1회 잡보다 무거운 신호이니 경고 뜨면 즉시 확인할 것.
+  'daily-breakout-signal-scan': 48 * 60 * 60 * 1000,
+  // place-breakout-fallback-entry(2026-09-18 최초 launchd 배선) — 평일 09:03 하루
+  // 1회, 위 두 잡과 동일 클래스(평일 전용 48h). 대기 항목이 없는 날엔 "처리할 것
+  // 없음"으로 조용히 끝나지만(정상) heartbeat 자체는 매 실행 남긴다.
+  'place-breakout-fallback-entry': 48 * 60 * 60 * 1000,
   // pension-balance-reminder(2026-09-04 신설) — 매월 22일, rebalance-proposal(분기,
   // 100일)과 동일 원칙으로 달 길이(28~31일) 편차를 흡수하는 여유(35일)를 둔다.
   'pension-balance-reminder': 35 * 24 * 60 * 60 * 1000,

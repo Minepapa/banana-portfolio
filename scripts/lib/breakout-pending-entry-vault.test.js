@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildPendingEntryRecord, updatePendingEntryRecord, parsePendingEntry,
-  findUnprocessedPendingEntries, PENDING_ENTRY_STATUS,
+  findUnprocessedPendingEntries, isPendingEntryStale, PENDING_ENTRY_STATUS,
 } from './breakout-pending-entry-vault.mjs';
 
 const now = new Date('2026-09-13T00:00:00.000Z');
@@ -46,4 +46,32 @@ test('findUnprocessedPendingEntries: pending만 남기고 placed/failed는 제�
   ];
   const result = findUnprocessedPendingEntries(entries);
   assert.deepEqual(result.map((e) => e.code), ['A']);
+});
+
+// 2026-09-18 코드리뷰 HIGH 지적 — 킬스위치가 여러 날 켜져 있다가 꺼지면 묵은
+// 대기항목이 조건 재검증 없이 한꺼번에 발주될 위험. isPendingEntryStale이 그
+// 임계값을 정확히 지키는지 검증.
+test('isPendingEntryStale: 정상 범위(주말 포함 3일)는 stale 아님', () => {
+  const now = new Date('2026-09-21T00:03:00+09:00'); // 월요일 09:03 KST 실행
+  assert.equal(isPendingEntryStale({ signalDate: '2026-09-18' }, { now }), false); // 금요일 신호 → 월요일 처리
+});
+
+test('isPendingEntryStale: maxAgeDays(기본 5일)를 넘으면 stale', () => {
+  const now = new Date('2026-09-24T00:03:00+09:00');
+  assert.equal(isPendingEntryStale({ signalDate: '2026-09-18' }, { now }), true); // 6일 경과
+});
+
+test('isPendingEntryStale: 경계값(정확히 maxAgeDays)은 stale 아님', () => {
+  const now = new Date('2026-09-18T00:00:00+09:00');
+  assert.equal(isPendingEntryStale({ signalDate: '2026-09-13' }, { maxAgeDays: 5, now }), false);
+});
+
+test('isPendingEntryStale: signalDate 없으면 판단 근거 없어 false(기존 처리 경로에 맡김)', () => {
+  assert.equal(isPendingEntryStale({}), false);
+});
+
+test('isPendingEntryStale: maxAgeDays를 좁게 넘기면 그 값으로 판정', () => {
+  const now = new Date('2026-09-19T00:00:00+09:00');
+  assert.equal(isPendingEntryStale({ signalDate: '2026-09-18' }, { maxAgeDays: 1, now }), false);
+  assert.equal(isPendingEntryStale({ signalDate: '2026-09-17' }, { maxAgeDays: 1, now }), true);
 });
