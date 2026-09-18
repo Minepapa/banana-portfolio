@@ -203,10 +203,13 @@ export function parseKillSwitchCommand(text) {
 }
 
 // 체결모드(섀도우|실전) 전환 명령 — 2026-09-18 "OO 온"/"OO 오프" 공통 패턴으로 개명
-// (구 "실전전환"/"섀도우전환", 위 킬스위치 주석 참고). 정확일치만 인정(캐주얼한
-// 언급과 구분).
-const LIVE_WORDS = new Set(['실전모드 온']);
-const SHADOW_WORDS = new Set(['실전모드 오프']);
+// (구 "실전전환"/"섀도우전환", 위 킬스위치 주석 참고). 2026-09-19 재개명 — 세 스위치
+// 중 이 스위치만 명령어 접두어("실전모드")가 스위치 이름("체결모드")과 달라 오너가
+// 헷갈린다고 지적(다른 둘은 "킬스위치 온/오프"·"제안모드 온/오프"로 접두어=스위치
+// 이름). 구 "실전모드 온"/"실전모드 오프"는 하위호환 없이 즉시 폐기(킬스위치 재개명
+// 때와 동일 원칙 — 요청에 없는 별칭을 임의로 유지하지 않음). 정확일치만 인정.
+const LIVE_WORDS = new Set(['체결모드 온']);
+const SHADOW_WORDS = new Set(['체결모드 오프']);
 
 export function parseExecutionModeCommand(text) {
   const t = String(text ?? '').trim();

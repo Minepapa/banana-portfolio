@@ -68,7 +68,7 @@ test('SCHEDULE: conditional 필드가 있으면 반드시 비어있지 않은 �
 test('describeSwitchStatus: 전부 파일 없음(null) → 안전 기본값(킬스위치 오프·섀도우·제안 온)', () => {
   const text = describeSwitchStatus({ killSwitchContent: null, executionModeContent: null, proposalModeContent: null });
   assert.match(text, /킬스위치: 오프/);
-  assert.match(text, /실전모드: 오프\(섀도우/);
+  assert.match(text, /체결모드: 오프\(섀도우/);
   assert.match(text, /제안모드: 온/);
 });
 
@@ -78,16 +78,16 @@ test('describeSwitchStatus: 킬스위치 온이면 표시', () => {
   assert.match(text, /킬스위치: 온/);
 });
 
-test('describeSwitchStatus: 실전모드 온(MODE_LIVE)이면 표시', () => {
+test('describeSwitchStatus: 체결모드 온(MODE_LIVE)이면 표시', () => {
   const content = buildExecutionModeState({ mode: MODE_LIVE, reason: 'test' });
   const text = describeSwitchStatus({ killSwitchContent: null, executionModeContent: content, proposalModeContent: null });
-  assert.match(text, /실전모드: 온/);
+  assert.match(text, /체결모드: 온/);
 });
 
-test('describeSwitchStatus: 실전모드 오프(MODE_SHADOW)면 섀도우로 표시', () => {
+test('describeSwitchStatus: 체결모드 오프(MODE_SHADOW)면 섀도우로 표시', () => {
   const content = buildExecutionModeState({ mode: MODE_SHADOW, reason: 'test' });
   const text = describeSwitchStatus({ killSwitchContent: null, executionModeContent: content, proposalModeContent: null });
-  assert.match(text, /실전모드: 오프\(섀도우/);
+  assert.match(text, /체결모드: 오프\(섀도우/);
 });
 
 test('describeSwitchStatus: 제안모드 금지(MODE_BLOCKED)면 오프로 표시', () => {

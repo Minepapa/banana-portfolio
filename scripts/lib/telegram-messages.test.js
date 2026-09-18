@@ -256,19 +256,21 @@ test('[막아야 함] parseKillSwitchCommand: 캐주얼한 문장 속 단어·�
   assert.equal(parseKillSwitchCommand('STOP'), null); // 옛 영문 별칭 — 이번 개명에서 제거됨
 });
 
-test('parseExecutionModeCommand: "실전모드 온" → live', () => {
-  assert.equal(parseExecutionModeCommand('실전모드 온'), 'live');
+test('parseExecutionModeCommand: "체결모드 온" → live', () => {
+  assert.equal(parseExecutionModeCommand('체결모드 온'), 'live');
 });
 
-test('parseExecutionModeCommand: "실전모드 오프" → shadow', () => {
-  assert.equal(parseExecutionModeCommand('실전모드 오프'), 'shadow');
+test('parseExecutionModeCommand: "체결모드 오프" → shadow', () => {
+  assert.equal(parseExecutionModeCommand('체결모드 오프'), 'shadow');
 });
 
 test('[막아야 함] parseExecutionModeCommand: 캐주얼한 문장 속 언급·옛 명령어는 명령으로 인정 안 함(정확일치만)', () => {
-  assert.equal(parseExecutionModeCommand('이제 실전모드 켜도 될까?'), null);
+  assert.equal(parseExecutionModeCommand('이제 체결모드 켜도 될까?'), null);
   assert.equal(parseExecutionModeCommand('실전'), null);
-  assert.equal(parseExecutionModeCommand('실전전환'), null); // 옛 명령어
-  assert.equal(parseExecutionModeCommand('섀도우전환'), null); // 옛 명령어
+  assert.equal(parseExecutionModeCommand('실전전환'), null); // 옛 명령어(2026-08-12 이전)
+  assert.equal(parseExecutionModeCommand('섀도우전환'), null); // 옛 명령어(2026-08-12 이전)
+  assert.equal(parseExecutionModeCommand('실전모드 온'), null); // 옛 명령어(2026-09-18~09-19, 재개명 전)
+  assert.equal(parseExecutionModeCommand('실전모드 오프'), null); // 옛 명령어(2026-09-18~09-19, 재개명 전)
 });
 
 test('parseProposalModeCommand: "제안모드 온" → allowed, "제안모드 오프" → blocked', () => {

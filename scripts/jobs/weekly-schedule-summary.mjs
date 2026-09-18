@@ -58,7 +58,7 @@ export function describeSwitchStatus({ killSwitchContent, executionModeContent, 
   const lines = [
     '[스위치 상태]',
     `· 킬스위치: ${killOn ? '온(모든 자동 체결 중단 중 — 카이로스 포함)' : '오프(평소)'}`,
-    `· 실전모드: ${execMode === MODE_LIVE ? '온(자산분배·구퀀트 실제 체결)' : '오프(섀도우 — 자산분배·구퀀트는 로그만, 카이로스는 이 스위치와 무관하게 항상 실전)'}`,
+    `· 체결모드: ${execMode === MODE_LIVE ? '온(자산분배·구퀀트 실제 체결)' : '오프(섀도우 — 자산분배·구퀀트는 로그만, 카이로스는 이 스위치와 무관하게 항상 실전)'}`,
     `· 제안모드: ${proposalBlocked ? '오프(new-cash-allocation 등 신규 제안 생성 중단 중)' : '온(평소)'}`,
   ];
   return lines.join('\n');
