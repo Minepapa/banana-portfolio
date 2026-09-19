@@ -122,11 +122,25 @@ export function filterDividendRows(rows) {
 //
 // cur_cd가 비어있는(=원화) 행은 처음부터 제외(2026-09-19 코드리뷰 HIGH 지적 —
 // 원화 RP가 섞이는 문제가 있었음).
+//
+// ⚠️ 같은 날짜 동률 처리(2026-09-19 코드리뷰 MEDIUM 지적) — trd_dt만으로 정렬하면
+// 같은 날짜 안에서는 배열 원본 순서(API 응답 순서, 문서화 안 됨)가 그대로 유지되는
+// 안정정렬 특성에 기댄다. 이 상품의 정상 패턴(만기 롤오버=매도+동액매수 같은 날)이
+// 하필 "열린 로트가 없는 창 시작 경계일"에 걸리면, 매수가 매도보다 먼저 처리될 때
+// (그 매수가 로트를 열고, 바로 그 매도가 그 로트를 자기 자신인 줄 모르고 닫아버림)
+// 과소계상이 생긴다 — 같은 날짜는 매도를 매수보다 먼저 처리해 이 경계 케이스를
+// 정렬 순서 자체로 없앤다(API 응답 순서에 의존하지 않음).
 export function reconstructForeignRpLots(rows) {
   const fxRows = (rows || [])
     .filter((r) => r?.trd_dt && r?.cur_cd)
     .slice()
-    .sort((a, b) => (a.trd_dt < b.trd_dt ? -1 : a.trd_dt > b.trd_dt ? 1 : 0));
+    .sort((a, b) => {
+      if (a.trd_dt !== b.trd_dt) return a.trd_dt < b.trd_dt ? -1 : 1;
+      const aIsSell = /매도/.test(a.sps_cd_krl_anm || '');
+      const bIsSell = /매도/.test(b.sps_cd_krl_anm || '');
+      if (aIsSell === bIsSell) return 0;
+      return aIsSell ? -1 : 1;
+    });
 
   const openLots = []; // FIFO 큐 — push로 열고 shift로 닫는다.
   for (const r of fxRows) {

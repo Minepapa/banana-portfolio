@@ -113,16 +113,21 @@ function parseNhNumber(raw) {
 }
 
 // 순수함수(테스트 가능) — 해외주식 매수 가용현금 = fc_dca(API로 확인되는 미투자
-// 외화현금) + State/Holdings/위탁-외화-RP.md의 qty(오너가 수동 갱신하는 RP 잔고).
+// 외화현금) + State/Holdings/위탁-외화-RP.md의 qty.
 // ⚠️ 2026-09-06 정정 — 원래 fc_abk_amt(외화보관금액)를 RP 포함 가용현금으로
 // 잘못 썼다가, 오너가 준 실제 NH 앱 스크린샷 대조 + nhplug.com 공식 API 문서
 // 확인 결과 fc_abk_amt는 "외화장부금액"(보유 해외주식 매입원가)이지 예수금이
-// 아님을 확인했다(앱의 "매입금액 18,416.20"과 정확히 일치). 외화RP는 이 API가
-// 다루는 6개 대분류(국내/해외 주식·파생, 장내채권, 금현물) 전체에 도메인 자체가
-// 없어 API로 조회가 불가능 — 오너가 "외화 상품매도·환전 직후 RP를 수동으로
-// 업데이트"하기로 확정(2026-09-06)했으므로 그 Vault 값을 신뢰한다. gbBalanceBody가
-// 없으면(조회 실패) null(0으로 추정 안 함) — fc_dca가 있으면 RP qty는 없어도(null)
-// 0으로 더한다(RP를 아직 한 번도 수동 기록 안 한 신규 계좌 등 정상 상태 포함).
+// 아님을 확인했다(앱의 "매입금액 18,416.20"과 정확히 일치).
+// ⚠️ 2026-09-19 갱신 — 위 fc_abk_amt 정정 당시엔 "외화RP는 API 조회 도메인
+// 자체가 없어 오너가 수동 갱신"이 사실이었으나, NH PLUG 신규 공통_계좌_조회 API
+// (종합거래내역)로 그 결론이 뒤집혔다(scripts/lib/nhplug-common.mjs
+// reconstructForeignRpLots). 이제 scripts/jobs/reconcile-nh-fx-rp.mjs(평일
+// 16:09)가 이 qty를 FIFO 로트재구성으로 자동 갱신한다(안전장치: 데이터 이상·
+// 50%+ 급변·통화혼재 시엔 쓰지 않고 오너에게 경고만) — 이 함수가 읽는 값은
+// 이제 "오너가 직접 본 값"이 아니라 "그 안전장치를 통과한 자동 갱신값"이다.
+// gbBalanceBody가 없으면(조회 실패) null(0으로 추정 안 함) — fc_dca가 있으면
+// RP qty는 없어도(null) 0으로 더한다(RP를 아직 기록한 적 없는 신규 계좌 등
+// 정상 상태 포함).
 export function computeOverseasCash({ gbBalanceBody, holdingsIndex }) {
   if (!gbBalanceBody) return null;
   const fcDca = parseNhNumber(gbBalanceBody.Output_0?.fc_dca);

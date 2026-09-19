@@ -11,8 +11,11 @@
 //   - 채권: 삼척블루파워12(위탁, 직접채권 — krbond 도메인 별도 소스, ETF 아님)
 //   - 금: 금 99.99K(금현물, 실물 상품 — gen/gold_bydd_trd 소스, ETF 아님. TIGER
 //     KRX금현물은 같은 금 익스포저를 주는 실제 ETF라 이건 포함)
-//   - 달러: 외화 RP(위탁, isCashLike 예금성 상품 — RP는 API로도 조회 불가, 기존
-//     project-nh-fx-rp-not-queryable 메모)
+//   - 달러: 외화 RP(위탁, isCashLike 예금성 상품 — RP는 KRX 상장 ETF가 아니라
+//     애초에 etp/etf_bydd_trd 소스로 스코어링할 대상 자체가 아님. 보유수량(qty) 자체는
+//     2026-09-19부터 reconcile-nh-fx-rp.mjs가 NH API로 자동 갱신함 — 예전엔 qty
+//     조회도 API로 안 됐지만[[project-nh-fx-rp-not-queryable]] 결론이 뒤집혔음,
+//     단 이 목록에서 빠지는 이유(ETF 스코어링 대상 아님)와는 무관)
 //   - 국내주식: SK하이닉스·삼성전자·삼성전자(자사주)(위탁, LEGACY_INDIVIDUAL_STOCKS
 //     — 개별주식), VIP한국형가치투자증권자투자신탁(주식)-C-Pe(연금저축, KRX 비상장
 //     펀드 — vipasset.co.kr 별도 소스)

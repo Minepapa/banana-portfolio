@@ -86,6 +86,10 @@ export const EXPECTED_INTERVALS_MS = {
   // (위탁·CMA·금현물, 평일 16:08) — 같은 배치그룹이라 동일 48h 간격.
   'reconcile-irp': 48 * 60 * 60 * 1000,
   'reconcile-nh-cash': 48 * 60 * 60 * 1000,
+  // reconcile-nh-fx-rp(2026-09-19 신설, 오너 지시 — "예수금·금현물처럼 외화RP도
+  // 주기적으로 자동 갱신") — 평일 16:09(reconcile-nh-cash 16:08 직후), 같은 배치
+  // 그룹 관례로 동일 48h.
+  'reconcile-nh-fx-rp': 48 * 60 * 60 * 1000,
   'update-cash-from-ledger': 48 * 60 * 60 * 1000,
   // reconcile-irp-executions(평일 15:50)·reconcile-nh-executions(평일 15:55) —
   // 마이그레이션 2·4단계(2026-09-03 신설), update-holdings-from-executions(16:05)

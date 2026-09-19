@@ -123,6 +123,22 @@ test('[막아야 함] reconstructForeignRpLots: 매도금액이 매수원금과 
   assert.equal(total, 2000);
 });
 
+// 2026-09-19 코드리뷰 MEDIUM 지적 — 같은 날짜 안에서 "매수"가 배열상 "매도"보다
+// 먼저 오면(API 응답 순서가 어느 쪽일지 문서화 안 됨), 빈 큐 상태(창 시작 경계일)
+// 에서 그 매수가 로트를 열고 바로 그 매도가 자기 자신을 닫아버려 과소계상된다.
+// trd_dt만 보는 정렬이면 안정정렬 특성상 입력 순서 그대로 유지돼 이 버그가 난다 —
+// 매도를 매수보다 먼저 처리하는 동률 규칙으로 입력 순서와 무관하게 정확해야 한다.
+test('[막아야 함] reconstructForeignRpLots: 같은 날짜에 매수가 매도보다 배열상 먼저 와도(API 응답 순서 무관) 매도를 먼저 처리해 과소계상 안 함', () => {
+  const rows = [
+    // 입력 순서가 위 "실계좌 재현" 테스트와 반대(매수가 먼저) — 빈 큐에서 시작.
+    { trd_dt: '20260826', sps_cd_krl_anm: '외화RP매수', trd_amt: 652.47, cur_cd: 'USD', iem_nm: '자유약정형' },
+    { trd_dt: '20260826', sps_cd_krl_anm: '외화RP매도', trd_amt: 652.47, cur_cd: 'USD', iem_nm: '자유약정형' },
+  ];
+  const { lots, total } = reconstructForeignRpLots(rows);
+  assert.equal(lots.length, 1); // 매도가 먼저 처리(no-op)된 뒤 매수가 로트를 열어야 함
+  assert.equal(total, 652.47);
+});
+
 test('reconstructForeignRpLots: 조회기간 시작 이전에 열린 로트의 매도는 매칭할 열린 로트가 없어 조용히 무시(원금을 더한 적 없으니 뺄 것도 없음)', () => {
   const rows = [
     { trd_dt: '20260101', sps_cd_krl_anm: '외화RP매도', trd_amt: 999, trd_af_bnc_qty: 0, cur_cd: 'USD' },

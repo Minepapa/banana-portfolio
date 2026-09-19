@@ -93,10 +93,11 @@ export function buildHoldingsIndex({ holdingsDir = VAULT_PATHS.state.holdings } 
       name: fm.name,
       ticker: fm.ticker || null,
       isCashLike: fm.isCashLike === true,
-      // qty(2026-09-06 추가) — 외화 RP처럼 NH API로 조회 불가해 오너가 수동 갱신하는
-      // 보유값을 실행 잡이 예수금 계산에 참고할 수 있게(execute-asset-allocation-
-      // proposal.mjs의 해외주식 가용현금 계산 참고). 다른 소비처엔 영향 없음(기존
-      // 필드는 그대로).
+      // qty(2026-09-06 추가) — 외화 RP 보유값을 실행 잡이 예수금 계산에 참고할 수
+      // 있게(execute-asset-allocation-proposal.mjs의 해외주식 가용현금 계산 참고).
+      // 2026-09-19부터 이 qty는 reconcile-nh-fx-rp.mjs가 NH PLUG API로 자동 갱신
+      // 한다(과거엔 API 조회 불가라 오너 수동 갱신이었음 — [[project-nh-fx-rp-not-
+      // queryable]] 결론 뒤집힘). 다른 소비처엔 영향 없음(기존 필드는 그대로).
       qty: Number.isFinite(fm.qty) ? fm.qty : null,
       // bondCode(2026-09-06 추가) — 직접채권(삼척블루파워12 등) 전용 NH krbond
       // 종목코드. ticker와 일부러 분리한 필드: ticker는 krstock 도메인(6자리 KR
