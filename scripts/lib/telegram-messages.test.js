@@ -12,8 +12,8 @@ test('formatDepartmentMessage: 부서보고+Zeus코멘트를 한 메시지로 �
   assert.equal(msg, `[투자전략실 Athena]\n${SEP}\n리밸런싱 제안입니다.\n\n${ZEUS_MARKER} 승인합니다.`);
 });
 
-test('ZEUS_MARKER: "[제우스]"(국문) — zeus.md/PANTHEON.md의 발신자 라벨 규칙과 표기 통일(2026-09-14, 코드리뷰 지적으로 [Zeus]에서 교체)', () => {
-  assert.equal(ZEUS_MARKER, '[제우스]');
+test('ZEUS_MARKER: "[Zeus]"(영문) — 2026-09-19 오너 지시로 환원(부서 라벨이 전부 "부서명+영문이름" 형식인데 제우스는 부서가 없어 영문이름만 표기)', () => {
+  assert.equal(ZEUS_MARKER, '[Zeus]');
 });
 
 test('formatDepartmentMessage: zeusComment 없으면 부서보고만', () => {
