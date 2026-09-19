@@ -58,7 +58,7 @@ import { join } from 'node:path';
 import { hasNhplugCredentials, loadNhplugCredentials, getNhToken, listNhAccounts } from '../lib/nhplug.mjs';
 import { getKrBalance } from '../lib/nhplug-krstock.mjs';
 import { getGoldBalance } from '../lib/nhplug-krgold.mjs';
-import { resolveNhAccountsByLabel } from '../lib/nh-accounts.mjs';
+import { resolveNhAccountsByLabel, NH_CASH_ACCOUNTS } from '../lib/nh-accounts.mjs';
 import { buildCashHoldingRecord } from '../lib/holdings-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
@@ -67,14 +67,11 @@ import { extractNhCashDeposit } from '../lib/nh-response-parse.mjs';
 const DRY_RUN = process.argv.includes('--dry-run');
 
 // 이 잡이 대사하는 계좌 — ISA·연금저축·IRP는 위 헤더 주석 참고, 스코프 밖.
-// export(2026-09-03, code-reviewer 지적) — 같은 결정("이 계좌는 API가 정본이라
-// 카카오/재구성 루프를 안 탄다")이 update-cash-from-ledger.mjs의 ALL_ACCOUNTS·
-// parse-notifications-to-vault.mjs의 인라인 제외 조건에도 각각 흩어져 있다.
-// 세 곳이 어긋나면(예: 여기서 계좌 하나를 빼먹으면 그 계좌 예수금이 영구
-// 동결) 조용한 사고로 이어지므로, vault-job-catalog-audit.test.js 같은
-// 구조적 가드가 세 상수를 대조할 수 있게 export한다(nh-accounts.test.js의
-// 신규 가드 테스트가 소비).
-export const NH_CASH_ACCOUNTS = new Set(['위탁', 'CMA', '금현물']);
+// 2026-09-19 scripts/lib/nh-accounts.mjs로 승격(reconcile-nh-dividends.mjs가
+// 두 번째 소비처가 되며, 잡이 다른 잡의 전체 모듈 그래프를 끌어오는 결합을 피하려고
+// — 코드리뷰 LOW 지적). 이 이름으로 재수출해 기존 import·vault-job-catalog-audit.test.js
+// 같은 구조적 가드·nh-accounts.test.js의 대조 테스트가 그대로 동작하게 하위호환 유지.
+export { NH_CASH_ACCOUNTS };
 
 // extractNhCashDeposit — 2026-09-06 scripts/lib/nh-response-parse.mjs로 승격(asset-
 // allocation 자동체결 잡이 두 번째 소비처가 되며 공용 lib로 이동, 위 import 참고).

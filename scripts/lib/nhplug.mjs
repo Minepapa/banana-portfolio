@@ -160,6 +160,11 @@ async function throttle() {
 //      있으면(RATE_LIMIT 포함) 무조건 confirmedNotSent를 붙이는 버그가 있었음(코드
 //      리뷰 실측 재현 — 429 주문 응답이 confirmedNotSent=true로 잘못 승격돼, 실제로는
 //      브로커에 접수됐을 수 있는 주문을 "안전하게 롤백 가능"으로 오판할 뻔했다).
+// ⚠️ callNhForPaging(아래)이 이 함수의 429·JSON파싱·HTTP우회판정·businessRejection
+// 승격 로직을 거의 그대로 복제하고 있다(2026-09-19 코드리뷰 MEDIUM 지적 — 공통 코어로
+// 추출하지 않고 남겨둔 의도적 부채, 당장은 리스크보다 두 함수의 계약을 각각 명시하는
+// 쪽을 택함). **이 에러 분류 로직을 고치면 callNhForPaging도 반드시 대조해서 같이
+// 고칠 것** — 특히 businessRejection 판정은 주문 confirmedNotSent 승격에 직결된다.
 export async function callNh({ token, uri, input0 = {}, fetchImpl = fetch }) {
   await throttle();
   const res = await fetchImpl(`${NHPLUG_BASE_URL}${uri}`, {
@@ -198,6 +203,66 @@ export async function callNh({ token, uri, input0 = {}, fetchImpl = fetch }) {
     throw err;
   }
   return body;
+}
+
+// 연속조회(페이지네이션) 안내 코드 — 2026-09-19 신설 공통_계좌_조회 API(종합거래내역·
+// 입출금내역)에서 실측 확인. rsp_cd='00218'/rsp_msg="계속 조회시 다음(연속조회) 버튼을
+// 누르시기 바랍니다"는 오류가 아니라 "이 페이지엔 데이터가 있고, 더 있으니 cts로 이어
+// 받아라"라는 뜻이다 — isNhSuccess가 이걸 모르고 업무오류로 던져서 유효한 Output_0을
+// 통째로 버리는 걸 실측으로 발견(위탁 계좌 90일 조회, 20건이 있었는데 "실패"로만 찍힘).
+export const CONTINUATION_RSP_CD = '00218';
+
+// callNh와 달리 (a) HTTP 응답 헤더의 cts·cts_flag(연속거래키·연속거래여부)까지 노출하고
+// (b) CONTINUATION_RSP_CD를 오류로 던지지 않는다 — 공통_계좌_조회처럼 페이지네이션이
+// 있는 API 전용. throttle()은 그대로 공유해(모듈 전역 _callTimestamps) 기존 callNh
+// 호출(주문 등)과 같은 속도제한 창을 쓴다 — 별도 페이스로 돌면 실제 NH 초당한도를
+// 합산 초과할 수 있어서 반드시 같은 스로틀을 타야 한다.
+//
+// 요청 Header의 cts·cts_flag(문서: "연속일 경우 응답에 내려온 연속키 값 설정")는 이전
+// 페이지 응답 헤더에서 그대로 되돌려주면 된다 — 첫 페이지는 둘 다 생략.
+//
+// ⚠️ 아래 429·JSON파싱·HTTP우회판정·businessRejection 로직은 위 callNh의 복제다 —
+// callNh 쪽 주석 참고, 한쪽을 고치면 반드시 반대쪽도 대조해서 고칠 것.
+export async function callNhForPaging({ token, uri, input0 = {}, cts, ctsFlag, fetchImpl = fetch }) {
+  await throttle();
+  const headers = { 'content-type': 'application/json', Authorization: `Bearer ${token}` };
+  if (cts) headers.cts = cts;
+  if (ctsFlag) headers.cts_flag = ctsFlag;
+  const res = await fetchImpl(`${NHPLUG_BASE_URL}${uri}`, {
+    method: 'POST', headers, body: JSON.stringify({ Input_0: input0 }),
+  });
+  const text = await res.text();
+
+  if (res.status === 429) {
+    let parsedMsg;
+    try { parsedMsg = JSON.parse(text)?.rsp_msg; } catch { /* 몸통이 JSON 아니면 원문 인용으로 폴백 */ }
+    const err = new Error(`NH PLUG 유량초과(${uri}): ${parsedMsg || text.slice(0, 200)}`);
+    err.code = 'RATE_LIMIT';
+    throw err;
+  }
+
+  let body;
+  try { body = JSON.parse(text); } catch { throw new Error(`NH PLUG 조회 실패(${uri}, JSON 아님): ${text.slice(0, 200)}`); }
+
+  const rspCd = String(body?.rsp_cd ?? '');
+  const isContinuation = rspCd === CONTINUATION_RSP_CD;
+
+  if (!res.ok && !DEFAULT_SUCCESS_CODES.has(rspCd) && !isContinuation) {
+    throw new Error(`NH PLUG HTTP ${res.status}(${uri}): ${body?.rsp_msg || text.slice(0, 200)}`);
+  }
+  if (!isContinuation && !isNhSuccess(body?.rsp_cd, body?.rsp_msg)) {
+    const err = new Error(`NH PLUG 업무오류(${uri}): ${body?.rsp_msg || body?.rsp_cd || '알 수 없음'}`);
+    err.code = body?.rsp_cd;
+    err.businessRejection = true;
+    throw err;
+  }
+
+  return {
+    body,
+    cts: res.headers.get('cts') || null,
+    ctsFlag: res.headers.get('cts_flag') || null,
+    hasMore: isContinuation,
+  };
 }
 
 // 계좌목록 조회(POST /n2/acctinfo) — 모든 호출의 선행 단계. acct_type 01(운영 일반)·

@@ -21,6 +21,14 @@ export const NH_ACCOUNT_MAP = {
 // 않는다 — cash-ledger.mjs의 합산 로직에서 처리.
 export const REBALANCE_SCOPE_NH_ACCOUNTS = new Set(['위탁', 'ISA', '금현물']);
 
+// NH PLUG API로 직접 조회 가능한 계좌(예수금·배당 등) — ISA는 이 API 자체가 계좌목록에
+// 안 돌려줘서 제외([[project-isa-cash-anchor-dividend-gap]] 2026-09-19 업데이트 참고).
+// 2026-09-03 reconcile-nh-cash.mjs에서 처음 정의됐던 걸 2026-09-19 이 공용 모듈로
+// 승격(reconcile-nh-dividends.mjs가 두 번째 소비처가 되며, 잡이 다른 잡의 전체
+// 모듈 그래프를 import하는 결합을 피하기 위해 — 코드리뷰 LOW 지적). reconcile-nh-cash.mjs는
+// 재수출로 하위호환 유지(resolveNhAccountLabelFromActNo 등과 동일 관례).
+export const NH_CASH_ACCOUNTS = new Set(['위탁', 'CMA', '금현물']);
+
 // body(카카오 알림 원문)에서 마스킹된 전체 계좌번호를 찾는다. 알림 종류마다 형식이
 // 달라 두 가지를 지원:
 //   ①"계좌번호 209-02-89***2"(체결·입출금 안내류, 대시 있음)

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isNhSuccess, classifyAcctType, callNh, listNhAccounts, setNhRateLimitForTests, getNhToken,
+  callNhForPaging, CONTINUATION_RSP_CD,
 } from './nhplug.mjs';
 
 // 실제 속도제한(초당 4회 슬라이딩 윈도우)을 끄지 않으면 이 파일이 callNh를 여러 번
@@ -214,5 +215,70 @@ test('callNh: 속도제한이 켜져 있으면(초당 2회) 3번째 호출부터
     assert.ok(elapsed >= 900, `3번째 호출이 슬라이딩 윈도우에 걸려 최소 ~1초 지연돼야 함(실측 ${elapsed}ms)`);
   } finally {
     setNhRateLimitForTests(Infinity);
+  }
+});
+
+// callNhForPaging — 2026-09-19 신설(공통_계좌_조회 페이지네이션 지원). 헤더까지
+// 흉내내야 해서 이 파일 전용 mockFetch(헤더 있는 버전)를 따로 둔다.
+const mockFetchWithHeaders = (responses) => {
+  let i = 0;
+  const calls = [];
+  const fn = async (url, opts) => {
+    calls.push({ url, opts });
+    const r = responses[Math.min(i++, responses.length - 1)];
+    const headerMap = r.responseHeaders || {};
+    return {
+      ok: r.ok !== false,
+      status: r.status ?? 200,
+      text: async () => JSON.stringify(r.body),
+      headers: { get: (name) => headerMap[name] ?? null },
+    };
+  };
+  fn.calls = calls;
+  return fn;
+};
+
+test('callNhForPaging: rsp_cd=00218(연속조회 안내)은 throw 안 하고 hasMore:true + 응답헤더 cts·cts_flag 반환', async () => {
+  const fetchImpl = mockFetchWithHeaders([{
+    body: { rsp_cd: CONTINUATION_RSP_CD, rsp_msg: '계속 조회시 다음(연속조회) 버튼을 누르시기 바랍니다.', Output_0: [{ a: 1 }] },
+    responseHeaders: { cts: 'CTS123', cts_flag: 'Y' },
+  }]);
+  const { body, cts, ctsFlag, hasMore } = await callNhForPaging({ token: 't', uri: '/common/inquiry/v1/totalTransaction', input0: {}, fetchImpl });
+  assert.deepEqual(body.Output_0, [{ a: 1 }]);
+  assert.equal(cts, 'CTS123');
+  assert.equal(ctsFlag, 'Y');
+  assert.equal(hasMore, true);
+});
+
+test('callNhForPaging: 정상 완료(00166 등)면 hasMore:false', async () => {
+  const fetchImpl = mockFetchWithHeaders([{ body: { rsp_cd: '00166', rsp_msg: '조회가 완료되었습니다.', Output_0: [] }, responseHeaders: {} }]);
+  const { hasMore } = await callNhForPaging({ token: 't', uri: '/common/inquiry/v1/totalTransaction', input0: {}, fetchImpl });
+  assert.equal(hasMore, false);
+});
+
+test('callNhForPaging: cts·ctsFlag를 넘기면 다음 페이지 요청 헤더에 그대로 실어보냄', async () => {
+  const fetchImpl = mockFetchWithHeaders([{ body: { rsp_cd: '00166', Output_0: [] }, responseHeaders: {} }]);
+  await callNhForPaging({ token: 't', uri: '/common/inquiry/v1/totalTransaction', input0: {}, cts: 'PREV_CTS', ctsFlag: 'Y', fetchImpl });
+  assert.equal(fetchImpl.calls[0].opts.headers.cts, 'PREV_CTS');
+  assert.equal(fetchImpl.calls[0].opts.headers.cts_flag, 'Y');
+});
+
+test('[막아야 함] callNhForPaging: 진짜 업무거부 코드는 여전히 throw + businessRejection(00218과 혼동 안 함)', async () => {
+  const fetchImpl = mockFetchWithHeaders([{ body: { rsp_cd: '10006', rsp_msg: '종목코드 항목을 입력하세요.' }, responseHeaders: {} }]);
+  try {
+    await callNhForPaging({ token: 't', uri: '/common/inquiry/v1/totalTransaction', input0: {}, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.businessRejection, true);
+  }
+});
+
+test('callNhForPaging: HTTP 429는 기존과 동일하게 즉시 throw(RATE_LIMIT)', async () => {
+  const fetchImpl = mockFetchWithHeaders([{ status: 429, body: { rsp_msg: '초당 호출한도 초과' }, responseHeaders: {} }]);
+  try {
+    await callNhForPaging({ token: 't', uri: '/common/inquiry/v1/totalTransaction', input0: {}, fetchImpl });
+    assert.fail('throw 됐어야 함');
+  } catch (e) {
+    assert.equal(e.code, 'RATE_LIMIT');
   }
 });
