@@ -147,16 +147,25 @@ export function runBreakoutBacktest({
   // ⚠️ 손절폭만 바뀌는 게 아니다(코드리뷰 MEDIUM 지적, 2026-09-19 백테스트 실측) —
   // Max 2%룰 사이징(computePositionSize = capital×riskPct÷stopLossPct)이 손절폭에
   // 반비례라, 좁은 손절(4%)로 진입하는 포지션은 넓은 손절(8%) 대비 투입금액이
-  // 정확히 2배(자본의 25%→50%)가 된다. 실측(2026-09-19, 시총1조↑ 318종목 기준):
-  // ATR_STOP_THRESHOLD_PCT=4.0 문턱에서 약 31%가 좁은 손절(2배 사이징)을 받는다.
-  // 이 때문에 (a) MAX_CONCURRENT_POSITIONS=10 슬롯이 자본 소진으로 다 안 채워질
-  // 수 있고(분산 붕괴), (b) 시초가 갭하락으로 손절선을 건너뛸 때 원화 손실도
-  // 2배가 된다. 첫 백테스트(2014~2026)에서 useAdaptiveStop=true가 baseline보다
-  // 성과가 나빠진 원인이 "손절폭 선택 자체"가 아니라 "동반된 사이징·분산 변화"일
-  // 가능성이 있다 — 이 임계값을 재조정해 재검증할 때는 stopLossPct와 사이징을
-  // 분리해서(예: 사이징은 8% 기준 고정) 비교해야 두 효과가 안 섞인다.
+  // 정확히 2배(자본의 25%→50%)가 된다. 실측(2026-09-19, 시총1조↑ 318종목 기준,
+  // 임계값 4.0 당시): ATR_STOP_THRESHOLD_PCT=4.0 문턱에서 약 31%가 좁은 손절
+  // (2배 사이징)을 받는다. 이 때문에 (a) MAX_CONCURRENT_POSITIONS=10 슬롯이
+  // 자본 소진으로 다 안 채워질 수 있고(분산 붕괴), (b) 시초가 갭하락으로
+  // 손절선을 건너뛸 때 원화 손실도 2배가 된다. 첫 백테스트(2014~2026)에서
+  // useAdaptiveStop=true가 baseline보다 성과가 나빠진 원인이 "손절폭 선택
+  // 자체"가 아니라 "동반된 사이징·분산 변화"일 가능성이 있다는 가설로 임계값을
+  // 8.0으로 올려 재검증했는데(현재 ATR_STOP_THRESHOLD_PCT 실전값), 코드리뷰
+  // (2026-09-19)가 실측 재확인한 결과 **임계값을 올리면 좁은 손절 비율이 오히려
+  // 39.5%→84.6%로 늘어난다**(selectAdaptiveStopLossPct는 atrPct<thresholdPct일
+  // 때 tight를 주므로, 임계값을 올릴수록 tight 조건을 만족하는 종목이 늘어남 —
+  // 위 "분산 붕괴 완화" 가설은 틀렸다). 그런데도 8.0의 백테스트 성과(연환산
+  // 13.0%·샤프0.74)가 baseline(9.7%·0.66)보다 우수한 건 실측 사실 — 돌파신호
+  // 종목 자체가 VCP(변동성수축) 패턴이라 애초에 ATR%가 낮은 경우가 대부분이라,
+  // 임계값 8.0은 사실상 "대부분 4%+2배 사이징으로 통일, 드물게 진짜 변동성 큰
+  // 종목만 8%로 완화"에 가깝다 — "종목별로 4%/8%를 적절히 섞는 전략"이라는
+  // 원래 프레이밍과는 다른 동작이니 재조정 시 이 해석을 기준으로 판단할 것.
   useAdaptiveStop = false,
-  adaptiveStopThresholdPct, // 2026-09-19 재조정 백테스트용 — 지정 안 하면 selectAdaptiveStopLossPct 기본값(ATR_STOP_THRESHOLD_PCT=4.0) 그대로(회귀 없음). useAdaptiveStop=false면 무의미.
+  adaptiveStopThresholdPct, // 2026-09-19 재조정 백테스트용 — 지정 안 하면 selectAdaptiveStopLossPct 기본값(ATR_STOP_THRESHOLD_PCT=8.0, 2026-09-19 실전배선 확정값) 그대로(회귀 없음). useAdaptiveStop=false면 무의미.
 }) {
   let capital = initialCapital;
   const openPositions = new Map(); // code -> position + investedWon

@@ -20,8 +20,15 @@ function sanitizeSegment(s) {
 // 주문 둘 다 살아있음 확인됨) | 'failed'(재시도 소진 후에도 못 걸음 — 즉시 알림 대상).
 export const PROTECTION_STATUS = { PENDING: 'pending', PROTECTED: 'protected', FAILED: 'failed' };
 
+// stopLossPct(2026-09-19, ATR 가변손절 실전배선) — 이 포지션이 진입 신호 시점에
+// 확정받은 손절폭(4%/8%). 명시 저장하는 이유: stopPrice/entryPrice로 역산 가능해
+// 보여도 부동소수점 나눗셈에 기대는 대신, 트레일링스탑(computeTrailingStop)·3R
+// 재시도(ensurePositionProtected)가 원래 확정값을 그대로 다시 쓸 수 있어야 한다
+// (breakout-simulator.mjs 백테스트가 position.stopLossPct를 쓰는 것과 동일 패턴,
+// 라이브·백테스트 정합성 유지). 기본값 null — 과거(이 필드 신설 전) 레코드와
+// 하위호환, null이면 호출측이 STOP_LOSS_PCT(8%)로 폴백.
 export function buildBreakoutPositionRecord({
-  code, name = '', entryDate, entryPrice, units = 1, quantity, investedWon, stopPrice,
+  code, name = '', entryDate, entryPrice, units = 1, quantity, investedWon, stopPrice, stopLossPct = null,
   profitOrderApplicable = true, now = new Date(),
 }) {
   const id = `${sanitizeSegment(code)}-${sanitizeSegment(entryDate)}`;
@@ -29,7 +36,7 @@ export function buildBreakoutPositionRecord({
   const content = buildFrontmatter({
     id, code, name, entryDate, entryPrice, units, quantity, investedWon,
     highSinceEntry: entryPrice,
-    stopPrice,
+    stopPrice, stopLossPct,
     partialSold: false,
     pyramided: false,
     protectionStatus: PROTECTION_STATUS.PENDING,

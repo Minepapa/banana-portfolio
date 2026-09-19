@@ -23,6 +23,20 @@ test('computeProtectionOrders: 수량이 1주뿐이면 부분익절 수량이 0 
   assert.equal(profitOrder, null);
 });
 
+// [MEDIUM 재발방지] 2026-09-19 코드리뷰 — ATR 가변손절(stopLossPct) 실전배선.
+// stopLossPct가 손절가·3R 목표가 둘 다에 비례 반영되는지 직접 고정.
+test('computeProtectionOrders: stopLossPct=4%면 손절가·3R목표가 둘 다 그 비율로 계산됨(8%의 절반 폭)', () => {
+  const { stopOrder, profitOrder } = computeProtectionOrders(10000, 15, 0.04);
+  assert.ok(Math.abs(stopOrder.conditionPrice - 9600) < 1e-6); // 10000×(1-0.04)
+  assert.ok(Math.abs(profitOrder.conditionPrice - 11200) < 1e-6); // 3R = +3×4% = +12%
+});
+
+test('computeProtectionOrders: stopLossPct 생략 시 기존 STOP_LOSS_PCT(8%)와 동일(회귀 없음)', () => {
+  const { stopOrder, profitOrder } = computeProtectionOrders(10000, 15);
+  assert.ok(Math.abs(stopOrder.conditionPrice - 9200) < 1e-6);
+  assert.ok(Math.abs(profitOrder.conditionPrice - 12400) < 1e-6);
+});
+
 test('placeProtectionOrders: 둘 다 성공하면 fullyProtected=true, 주문번호 기록', () => {
   let calls = [];
   const placeOrder = async (params) => {
@@ -79,6 +93,18 @@ test('ensurePositionProtected: 이미 손절만 걸려있으면 부분익절만 
   assert.equal(result.stopOrderNo, 's1'); // 기존 값 그대로 보존
   assert.equal(result.profitOrderNo, 'p1');
   assert.equal(result.protectionStatus, PROTECTION_STATUS.PROTECTED);
+});
+
+// [MEDIUM 재발방지] 2026-09-19 코드리뷰 — 부분익절 재시도 가격이 position.stopLossPct
+// 를 실제로 반영하는지(4% 포지션이면 첫 시도와 재시도 둘 다 +12%가 나와야 함, 기본
+// 8% 기준 +24%가 나오면 원래 포지션의 R배수 목표와 어긋난 가격으로 주문이 나가는
+// 회귀). 손절 다리는 이미 걸려 있다고 두고 부분익절만 재시도시켜 가격을 직접 확인.
+test('ensurePositionProtected: position.stopLossPct=4%면 부분익절 재시도 가격이 +12%(4%의 3R) — 기본 8% 기준 +24%와 다름', async () => {
+  const position = { ...basePosition, stopLossPct: 0.04, stopOrderNo: 's1', stopOrderOrgNo: 'org' };
+  let captured = null;
+  const placeOrder = async (params) => { captured = params; return { orderNo: 'p1', orgNo: 'org' }; };
+  await ensurePositionProtected(position, { placeOrder, sleep: noSleep });
+  assert.ok(Math.abs(captured.conditionPrice - 11200) < 1e-6); // 10000×(1+3×0.04)
 });
 
 test('ensurePositionProtected: 첫 시도가 confirmedNotSent=true(확실히 미접수)로 실패해도 재시도로 성공하면 attempts에 반영, 시도 사이 sleep 호출', async () => {

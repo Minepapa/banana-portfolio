@@ -144,18 +144,22 @@ test('computeATR: 창 부족이면 null', () => {
   assert.equal(computeATR(highs, lows, closes, 4), null);
 });
 
+// 2026-09-19 재조정으로 기본 임계값이 4.0→8.0으로 바뀌어 ATR% 예시값도 같이 조정
+// (아래 세 테스트는 "기본값이 실제로 얼마인지"를 검증하는 게 목적이라, 상수가
+// 바뀌면 여기 리터럴도 같이 바뀌는 게 맞다 — thresholdPct를 명시로 고정한
+// "커스텀 임계값" 테스트와는 다른 성격).
 test('selectAdaptiveStopLossPct: ATR%가 임계값 이상이면 넓은 손절(STOP_LOSS_PCT)', () => {
-  // atr=500, price=10000 → ATR%=5.0 ≥ 4.0(기본 임계값)
-  assert.equal(selectAdaptiveStopLossPct(500, 10000), STOP_LOSS_PCT);
+  // atr=900, price=10000 → ATR%=9.0 ≥ 8.0(기본 임계값)
+  assert.equal(selectAdaptiveStopLossPct(900, 10000), STOP_LOSS_PCT);
 });
 
 test('selectAdaptiveStopLossPct: ATR%가 임계값 미만이면 좁은 손절(TIGHT_STOP_LOSS_PCT)', () => {
-  // atr=300, price=10000 → ATR%=3.0 < 4.0
+  // atr=300, price=10000 → ATR%=3.0 < 8.0
   assert.equal(selectAdaptiveStopLossPct(300, 10000), TIGHT_STOP_LOSS_PCT);
 });
 
 test('selectAdaptiveStopLossPct: 경계값(정확히 임계값)은 넓은 손절 쪽', () => {
-  assert.equal(selectAdaptiveStopLossPct(400, 10000), STOP_LOSS_PCT); // ATR%=4.0=임계값
+  assert.equal(selectAdaptiveStopLossPct(800, 10000), STOP_LOSS_PCT); // ATR%=8.0=임계값
 });
 
 test('selectAdaptiveStopLossPct: 데이터 부족(atr=null)이나 가격 무효면 null(추정 안 함)', () => {
@@ -169,7 +173,9 @@ test('selectAdaptiveStopLossPct: 커스텀 임계값·손절폭도 반영', () =
   assert.equal(selectAdaptiveStopLossPct(700, 10000, { thresholdPct: 6, tightPct: 0.03, widePct: 0.1 }), 0.1); // 7.0 ≥ 6 → wide
 });
 
-test('ATR_STOP_THRESHOLD_PCT: 오너 확정 초기값(TIGHT_STOP_LOSS_PCT와 동일 수치)', () => {
-  assert.equal(ATR_STOP_THRESHOLD_PCT, 4.0);
+// 2026-09-19 재조정 — 백테스트(4/6/8/10% 스윕, 2014~2026)로 8%가 4%(초기값) 대비
+// 연환산 8.8%→13.0%·샤프 0.60→0.74 개선을 확인한 뒤 오너가 실전배선 확정.
+test('ATR_STOP_THRESHOLD_PCT: 백테스트로 재조정된 실전값(8%), TIGHT_STOP_LOSS_PCT는 그대로', () => {
+  assert.equal(ATR_STOP_THRESHOLD_PCT, 8.0);
   assert.equal(TIGHT_STOP_LOSS_PCT, 0.04);
 });

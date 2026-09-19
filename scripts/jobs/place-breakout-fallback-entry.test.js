@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   classifyPriorOrderStatus, refineWithHoldings, needsHoldingsCrossCheck, confirmPriorOrderVoided, attemptCancelPriorOrder,
+  buildFallbackWatchArgs,
 } from './place-breakout-fallback-entry.mjs';
 
 // [핵심 안전장치] 코드리뷰 CRITICAL 지적(2026-09-13) 재발방지 — "전날 장후시간외
@@ -345,4 +346,24 @@ test('attemptCancelPriorOrder: 성공하면 취소응답의 orderNo를 cancelOrd
   assert.equal(r.attempted, true);
   assert.equal(r.canceled, true);
   assert.equal(r.cancelOrderNo, '9999');
+});
+
+// [CRITICAL 재발방지] 2026-09-19 코드리뷰 — 폴백 다리(watch-breakout-entry-fill.mjs
+// 재스폰)에 stopLossPct가 안 실리면 장후시간외 미체결→다음날시가 폴백 경로에서
+// 손절폭이 소실돼, 4%로 사이징(2배 투입)된 포지션에 8% 손절이 걸리는 사고로
+// 이어진다(실제 리스크가 Max2%룰의 2배). place-breakout-entry-order.mjs의
+// buildWatchArgs --org-no 가드와 정확히 같은 이유·같은 형태.
+test('buildFallbackWatchArgs: stopLossPct가 --stop-loss-pct로 실림', () => {
+  const args = buildFallbackWatchArgs({
+    order: { orderNo: '9' }, code: '055550', name: '신한지주', entryDate: '2026-09-21', stopLossPct: 0.04,
+  });
+  assert.ok(args.includes('--stop-loss-pct=0.04'), args.join(' '));
+  assert.ok(args.includes('--order-no=9'), args.join(' '));
+});
+
+test('buildFallbackWatchArgs: stopLossPct 없음(과거 대기항목 레코드) → STOP_LOSS_PCT(0.08)로 폴백', () => {
+  const args = buildFallbackWatchArgs({
+    order: { orderNo: '9' }, code: '055550', name: '신한지주', entryDate: '2026-09-21', stopLossPct: undefined,
+  });
+  assert.ok(args.includes('--stop-loss-pct=0.08'), args.join(' '));
 });

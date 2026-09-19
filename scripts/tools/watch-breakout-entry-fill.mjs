@@ -71,8 +71,8 @@ export function decideEntryOutcome({ fallbackEnabled, resultKnown, filledQty }) 
   return { action: 'manualReview', reason: '확인 시간 내 전량체결 미확인' };
 }
 
-function buildProtectionMessage({ name, code, entryPrice, quantity, protection }) {
-  const stopPct = (STOP_LOSS_PCT * 100).toFixed(0);
+function buildProtectionMessage({ name, code, entryPrice, quantity, protection, stopLossPct = STOP_LOSS_PCT }) {
+  const stopPct = (stopLossPct * 100).toFixed(0);
   if (protection.protectionStatus === 'protected') {
     const lines = [`<b>매수 체결 + 보호주문 완료</b>`, `${name}(${code}) ${quantity}주 @${won(entryPrice)}`];
     lines.push(`손절(-${stopPct}%) 주문번호 ${protection.stopOrderNo}`);
@@ -106,6 +106,14 @@ async function main() {
   const fallback = args.fallback === 'nextDayOpen' ? 'nextDayOpen' : null;
   const investedWonArg = Number(args['invested-won']);
   const investedWon = Number.isFinite(investedWonArg) && investedWonArg > 0 ? investedWonArg : null;
+  // ATR 가변손절(2026-09-19 실전배선) — 신호 시점(daily-breakout-signal-scan.mjs)에
+  // 확정된 값을 그대로 물려받는다. 없거나 형식이 이상하면(과거 호출부·수동 테스트
+  // 등) 기존 고정값 STOP_LOSS_PCT로 안전하게 폴백 — 조용히 다른 값을 추정하지 않음.
+  // 타당범위 검사(코드리뷰 LOW 지적, place-breakout-entry-order.mjs와 동일 이유) —
+  // >0만 보면 비율 대신 퍼센트 단위(4 vs 0.04)가 그대로 통과해 음수 손절가로
+  // 이어질 수 있다.
+  const stopLossPctArg = Number(args['stop-loss-pct']);
+  const stopLossPct = Number.isFinite(stopLossPctArg) && stopLossPctArg > 0 && stopLossPctArg < 0.5 ? stopLossPctArg : STOP_LOSS_PCT;
 
   if (!orderNo) { console.error('❌ --order-no 필요'); process.exit(2); }
   if (!code) { console.error('❌ --code 필요'); process.exit(2); }
@@ -136,17 +144,17 @@ async function main() {
 
   // 매수 체결 확정 후 포지션 생성+보호주문 자동 발주(오너 확정, 별도 승인 불필요).
   async function protectAfterFill(filledQty, avgFillPrice) {
-    const { profitOrder } = computeProtectionOrders(avgFillPrice, filledQty);
-    const stopPrice = avgFillPrice * (1 - STOP_LOSS_PCT);
+    const { profitOrder } = computeProtectionOrders(avgFillPrice, filledQty, stopLossPct);
+    const stopPrice = avgFillPrice * (1 - stopLossPct);
     const { id, filename, content } = buildBreakoutPositionRecord({
       code, name, entryDate, entryPrice: avgFillPrice, quantity: filledQty,
-      investedWon: avgFillPrice * filledQty, stopPrice, profitOrderApplicable: profitOrder != null,
+      investedWon: avgFillPrice * filledQty, stopPrice, stopLossPct, profitOrderApplicable: profitOrder != null,
     });
     const filePath = join(VAULT_PATHS.state.breakoutPositions, filename);
     writeAtomic(filePath, content);
     console.log(`[포지션 생성] ${id}`);
 
-    const position = { entryPrice: avgFillPrice, quantity: filledQty, stopPrice, stopOrderNo: null, stopOrderOrgNo: null, profitOrderNo: null, profitOrderOrgNo: null, profitOrderApplicable: profitOrder != null };
+    const position = { entryPrice: avgFillPrice, quantity: filledQty, stopPrice, stopLossPct, stopOrderNo: null, stopOrderOrgNo: null, profitOrderNo: null, profitOrderOrgNo: null, profitOrderApplicable: profitOrder != null };
     // 재시도 사이 토큰이 만료될 수 있어(1일 유효지만 이 잡이 오래 걸릴 이유는 없음에도
     // 방어적으로) 매 시도마다 getKisToken을 다시 호출 — 캐시가 있어 실제 재발급은
     // 거의 안 일어남(kis.mjs getKisToken 헤더 주석 참고).
@@ -167,7 +175,7 @@ async function main() {
     await sendTelegram(formatDepartmentMessage({
       departmentLabel: DEPARTMENT_LABEL,
       tag: protection.protectionStatus === 'protected' ? '완료' : '경고',
-      body: buildProtectionMessage({ name, code, entryPrice: avgFillPrice, quantity: filledQty, protection: { ...protection, profitOrderApplicable: profitOrder != null } }),
+      body: buildProtectionMessage({ name, code, entryPrice: avgFillPrice, quantity: filledQty, stopLossPct, protection: { ...protection, profitOrderApplicable: profitOrder != null } }),
     }));
   }
 
@@ -236,7 +244,7 @@ async function main() {
     console.log('[장후시간외 미체결] 다음날 시가 폴백 큐잉');
     const { id, filename, content } = buildPendingEntryRecord({
       code, name, signalDate: entryDate, investedWon, afterHoursOrderNo: orderNo,
-      afterHoursOrgNo: orgNo, afterHoursOrderQty: last.result?.orderQty ?? null,
+      afterHoursOrgNo: orgNo, afterHoursOrderQty: last.result?.orderQty ?? null, stopLossPct,
       reason: `장후시간외 세션 내 미체결(${timeoutMin}분 감시)`,
     });
     writeAtomic(join(VAULT_PATHS.state.breakoutPendingEntries, filename), content);

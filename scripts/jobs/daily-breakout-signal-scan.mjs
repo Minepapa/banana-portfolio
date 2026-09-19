@@ -28,7 +28,7 @@
 // 재실행 시 이중매수를 방지한다(--force로 무시 가능, 테스트용). --dry-run은 실주문이
 // 없어 이 잠금 대상이 아니다(반복 실행 자유).
 //
-// 사용법: node scripts/jobs/daily-breakout-signal-scan.mjs [--dry-run] [--force] [--max-entries=N]
+// 사용법: node scripts/jobs/daily-breakout-signal-scan.mjs [--dry-run] [--force] [--max-entries=N] [--no-adaptive-stop]
 import { existsSync, readdirSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,7 +40,9 @@ import { computeDailyCandidates } from '../lib/breakout-simulator.mjs';
 import {
   computeBreakoutEntrySignal, MARKET_CAP_FLOOR_WON, RS_ANCHOR_SMOOTH_DAYS, MIN_RELATIVE_STRENGTH,
 } from '../lib/breakout-factor.mjs';
-import { computePositionSize, RISK_PER_TRADE_PCT, MAX_CONCURRENT_POSITIONS } from '../lib/breakout-risk.mjs';
+import {
+  computePositionSize, RISK_PER_TRADE_PCT, MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT, computeATR, selectAdaptiveStopLossPct,
+} from '../lib/breakout-risk.mjs';
 import { parseBreakoutPosition, findOpenPositions } from '../lib/breakout-position-vault.mjs';
 import {
   hasKisCredentials, loadKisCredentials, loadQuantAccount, getKisToken, getKrQuote, getKrIndexQuote, getAccountBalance,
@@ -129,6 +131,13 @@ async function main() {
   const force = process.argv.includes('--force');
   const maxEntriesArg = Number(process.argv.find((a) => a.startsWith('--max-entries='))?.split('=')[1]);
   const maxEntries = Number.isInteger(maxEntriesArg) && maxEntriesArg > 0 ? maxEntriesArg : null;
+  // ATR 가변손절 끄기(2026-09-19, 코드리뷰 LOW 지적) — 백테스트는 useAdaptiveStop
+  // 플래그로 껐다 켰다 할 수 있는데 실전은 배선 이후 무조건 적용이라, 되돌리려면
+  // 코드 수정+배포가 필요했다(킬스위치는 "전부 정지"만 가능, "ATR만 끄고 기존
+  // 8% 고정으로 복귀"는 불가). 신호의 약 85%가 좁은손절(4%)+2배사이징을 받는
+  // 것으로 실측됐다는 걸 고려하면 첫 몇 주는 되돌릴 필요가 생길 가능성이 낮지
+  // 않다 — 코드 재배포 없이 즉시 되돌릴 수 있는 스위치를 남겨둔다.
+  const noAdaptiveStop = process.argv.includes('--no-adaptive-stop');
 
   // 하루 1회 실행 보장(코드리뷰 HIGH 지적, 2026-09-13) — 실주문이 나갈 수 있는
   // 비-dry-run 경로에서만 잠근다. 무엇을 하기도 전에 가장 먼저 선점(claim)해야
@@ -273,8 +282,10 @@ async function main() {
     const series = seriesByCode[cand.code];
     let livePrice;
     let liveVolume;
+    let liveHigh;
+    let liveLow;
     try {
-      ({ price: livePrice, volume: liveVolume } = await getKrQuote({ token: quoteToken, appkey: quoteAppkey, appsecret: quoteAppsecret, code: cand.code }));
+      ({ price: livePrice, volume: liveVolume, high: liveHigh, low: liveLow } = await getKrQuote({ token: quoteToken, appkey: quoteAppkey, appsecret: quoteAppsecret, code: cand.code }));
     } catch (e) {
       console.error(`  ⚠️ ${cand.code} 현재가 조회 실패(${e.message}) — 이 종목만 스킵`);
       await sleep(STAGGER_MS);
@@ -286,6 +297,24 @@ async function main() {
     const closes = [...series.closes.slice(0, cand.idx + 1), livePrice];
     const highs = [...series.highs.slice(0, cand.idx + 1), livePrice]; // 오늘의 고가 placeholder — is52WeekHighBreakout은 이 마지막 원소를 안 씀(priorHighs가 직전까지만 봄)
     const lows = [...series.lows.slice(0, cand.idx + 1), livePrice]; // consolidationMethod 기본값(stddev)에서는 안 쓰임
+    // ATR 전용 고가/저가(2026-09-19 코드리뷰 HIGH 지적 재발방지) — 위 highs/lows는
+    // 신호판정(52주신고가·VCP)이 마지막 원소를 안 쓰므로 livePrice placeholder로
+    // 충분하지만, ATR은 오늘 바의 True Range(고가-저가 포함)를 직접 쓰므로 같은
+    // 근사를 쓰면 안 된다 — livePrice 하나로 고가=저가=종가를 근사하면 오늘 바의
+    // TR이 종가갭만 반영해 체계적으로 과소평가되고(실측: 52주신고가 신호일
+    // 41,028건 중 2.73%가 이 근사 때문에 WIDE→TIGHT로 뒤집힘, 역방향은 0건 —
+    // 항상 위험이 늘어나는 방향으로만 편향), 백테스트(신호일의 실제 고가·저가·
+    // 종가를 그대로 씀)와의 파리티가 깨진다. KIS가 실제로 당일 고가·저가를
+    // 반환하므로(stck_hgpr/stck_lwpr, 2026-09-19 라이브 실측 확인) 그대로 쓴다 —
+    // 못 받으면(null) 종가로 근사(기존 방식 그대로, 완전 결측보다 낫다) — 단 이
+    // 근사로 조용히 되돌아가면 위 편향(항상 위험 증가 방향)이 다시 새는데 아무도
+    // 모르게 되므로, KIS 필드명이 바뀌는 등으로 결측이 시작되면 로그에 남긴다
+    // (코드리뷰 LOW 지적).
+    if (liveHigh == null || liveLow == null) {
+      console.error(`  ⚠️ ${cand.code} 당일 고가·저가(stck_hgpr/stck_lwpr) 결측 — ATR 계산에 종가 근사 사용(과소평가 가능)`);
+    }
+    const atrHighs = [...series.highs.slice(0, cand.idx + 1), liveHigh ?? livePrice];
+    const atrLows = [...series.lows.slice(0, cand.idx + 1), liveLow ?? livePrice];
     // 거래량 확인(2026-09-19 실전 배선) — volumes는 "어제까지"(cand.idx 포함, 오늘은
     // 안 들어감 — cand.idx 자체가 이미 개별종목 캐시의 최신 확정일이라 closes와 달리
     // 여기엔 라이브값을 안 붙인다), todayVolume은 방금 조회한 acml_vol. liveVolume이
@@ -299,8 +328,19 @@ async function main() {
       ENTRY_SIGNAL_OPTS,
     );
     if (signal.pass) {
-      console.error(`  🟢 ${cand.name}(${cand.code}) 신호 통과 — RS=${signal.relativeStrength.toFixed(1)}`);
-      passed.push({ code: cand.code, name: cand.name, relativeStrength: signal.relativeStrength });
+      // ATR 가변손절(2026-09-19 실전배선) — 신호 시점("오늘", closes.length-1)의
+      // 가격·변동성으로 그 포지션 생애 전체에 쓸 손절폭을 확정한다. endIndex 규약은
+      // 백테스트(breakout-simulator.mjs useAdaptiveStop)와 동일. 고가/저가는 위
+      // atrHighs/atrLows(오늘 바에 실제 당일 고가·저가 반영, entry-signal용
+      // highs/lows와는 다른 배열 — 그쪽은 마지막 원소를 안 써서 livePrice
+      // placeholder로 충분함). ATR 계산 불가(데이터 부족)면 안전한 기존 고정값
+      // (STOP_LOSS_PCT, "넓은" 쪽)으로 명시적으로 폴백(추정 안 함).
+      const atr = noAdaptiveStop ? null : computeATR(atrHighs, atrLows, closes, closes.length - 1);
+      const adaptiveStopLossPct = noAdaptiveStop ? null : selectAdaptiveStopLossPct(atr, livePrice);
+      const stopLossPct = adaptiveStopLossPct ?? STOP_LOSS_PCT;
+      const stopLossNote = noAdaptiveStop ? '(--no-adaptive-stop)' : (adaptiveStopLossPct == null ? '(ATR 계산불가로 고정값 폴백)' : '');
+      console.error(`  🟢 ${cand.name}(${cand.code}) 신호 통과 — RS=${signal.relativeStrength.toFixed(1)}, 손절폭=${(stopLossPct * 100).toFixed(0)}%${stopLossNote}`);
+      passed.push({ code: cand.code, name: cand.name, relativeStrength: signal.relativeStrength, stopLossPct });
     }
     await sleep(STAGGER_MS);
   }
@@ -339,26 +379,35 @@ async function main() {
   const entryDate = todayKST();
   const here = dirname(fileURLToPath(import.meta.url));
   for (const s of selected) {
-    // Math.min(...): 현재 RISK_PER_TRADE_PCT(2%)/STOP_LOSS_PCT(8%) 조합에서는
-    // computePositionSize가 항상 remainingCash×0.25를 돌려줘 이 min이 실질적으로
-    // 안 묶인다(코드리뷰 LOW 지적, 2026-09-13) — 그래도 남겨둔다: 나중에 이 두
-    // 상수 비율이 바뀌어(예: riskPct를 올리는 실험) 산정치가 remainingCash를
-    // 넘어서는 조합이 되면 이 min이 실제 안전장치로 작동해야 하기 때문
-    // (자본 초과 배정 방지 최후 방어선). 죽은 코드 아님 — 의도된 방어적 게이트.
-    const sizeWon = Math.min(computePositionSize(remainingCash, { riskPct: RISK_PER_TRADE_PCT }), remainingCash);
+    // Math.min(...): RISK_PER_TRADE_PCT(2%)÷stopLossPct(4% 또는 8%)는 항상 1보다
+    // 작은 비율(0.5 또는 0.25)이라 computePositionSize가 항상 remainingCash보다
+    // 작은 값을 돌려줘 이 min이 실질적으로 안 묶인다(코드리뷰 LOW 지적,
+    // 2026-09-13 — 2026-09-19 ATR 가변손절 실전배선으로 stopLossPct가 종목마다
+    // 4%/8% 둘 중 하나로 달라지지만, 결론은 그대로 유지됨). 그래도 남겨둔다:
+    // 나중에 이 상수 비율이 더 바뀌어 산정치가 remainingCash를 넘어서는 조합이
+    // 되면 이 min이 실제 안전장치로 작동해야 하기 때문(자본 초과 배정 방지
+    // 최후 방어선). 죽은 코드 아님 — 의도된 방어적 게이트.
+    //
+    // ⚠️ 실측 분포(2026-09-19 코드리뷰, breakout-risk.mjs ATR_STOP_THRESHOLD_PCT
+    // 주석 참고) — 돌파신호 종목은 정의상 VCP(변동성수축) 패턴이라 ATR%가 원래
+    // 낮은 경우가 대부분이라, 임계값 8.0 기준으로 신호의 약 85%가 stopLossPct=4%
+    // (즉 예수금의 50%)를 받는다. 첫 진입이 예수금 절반을 먹으므로
+    // MAX_CONCURRENT_POSITIONS=10 슬롯은 자본 소진으로 실질 2~3종목에서 멈추는
+    // 게 일반적 — "10종목 분산" 전제가 이 배선으로 사실상 약해졌음을 참고할 것.
+    const sizeWon = Math.min(computePositionSize(remainingCash, { riskPct: RISK_PER_TRADE_PCT, stopLossPct: s.stopLossPct }), remainingCash);
     if (!(sizeWon > 0)) { console.log(`  ℹ️ ${s.name} — 가용 예수금 소진으로 스킵`); continue; }
     remainingCash -= sizeWon;
     if (dryRun) {
-      console.log(`  [DRY-RUN] ${s.name}(${s.code}) 투입예산 ${Math.round(sizeWon).toLocaleString('ko-KR')}원 — 실제 발주 안 함`);
+      console.log(`  [DRY-RUN] ${s.name}(${s.code}) 투입예산 ${Math.round(sizeWon).toLocaleString('ko-KR')}원(손절폭 ${(s.stopLossPct * 100).toFixed(0)}%) — 실제 발주 안 함`);
       continue;
     }
     const child = spawn('node', [
       join(here, '..', 'tools', 'place-breakout-entry-order.mjs'),
-      `--code=${s.code}`, `--name=${s.name}`, `--entry-date=${entryDate}`, `--invested-won=${Math.round(sizeWon)}`,
+      `--code=${s.code}`, `--name=${s.name}`, `--entry-date=${entryDate}`, `--invested-won=${Math.round(sizeWon)}`, `--stop-loss-pct=${s.stopLossPct}`,
     ], { detached: true, stdio: 'ignore' });
     child.on('error', (e) => console.error(`  ⚠️ ${s.name} 발주 스크립트 기동 실패: ${e.message}`));
     child.unref();
-    console.log(`  👉 ${s.name}(${s.code}) 발주 시작 — 투입예산 ${Math.round(sizeWon).toLocaleString('ko-KR')}원`);
+    console.log(`  👉 ${s.name}(${s.code}) 발주 시작 — 투입예산 ${Math.round(sizeWon).toLocaleString('ko-KR')}원(손절폭 ${(s.stopLossPct * 100).toFixed(0)}%)`);
   }
 }
 

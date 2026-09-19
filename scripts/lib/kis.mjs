@@ -133,6 +133,16 @@ function kisRtError(prefix, json) {
 // "0이면 null로 떨어뜨린다"고 잘못 적어뒀었음) — Number('0')===0은 유한수라 파싱
 // 실패로 안 잡힌다. 결과적 안전성은 동일(passesVolumeConfirmation(0, avg)은
 // 항상 false라 조건 불통과로 자연히 귀결, fail-closed).
+// high/low(2026-09-19 추가, ATR 가변손절 실전배선의 live/backtest 파리티용) —
+// stck_hgpr(당일고가)·stck_lwpr(당일저가). 라이브 실측(2026-09-19, 삼성전자,
+// 장마감 후 조회): stck_prpr=260000, stck_hgpr=262000, stck_lwpr=257500 — 정상
+// 수신 확인(직접 호출한 raw 응답으로 확인, parseQuoteResponse 경유 아님). 이전엔
+// 이 필드들을 조회하고도 버려서, daily-breakout-signal-scan.mjs가 오늘 바의
+// True Range를 "livePrice 하나로 고가=저가=종가"로 근사할 수밖에 없었다 — 그러면
+// 오늘처럼 변동폭이 큰 날(돌파일은 정의상 그런 날)의 ATR이 체계적으로 과소평가돼
+// 좁은 손절(4%, 2배 사이징) 쪽으로 편향된다(코드리뷰 HIGH 지적, 실측 41,028
+// 신호일 중 2.73%가 이 근사 때문에 WIDE→TIGHT로 뒤집힘, 역방향은 0건). volume과
+// 동일 원칙(price와 달리 필수 아님, 없으면 null — 호출측이 판단).
 export function parseQuoteResponse(json) {
   if (json?.rt_cd !== '0') throw kisRtError('KIS 시세 오류', json);
   const price = Number(json?.output?.stck_prpr);
@@ -141,9 +151,13 @@ export function parseQuoteResponse(json) {
   const changePct = changePctRaw !== undefined && changePctRaw !== '' ? Number(changePctRaw) : NaN;
   const volumeRaw = json?.output?.acml_vol;
   const volume = volumeRaw !== undefined && volumeRaw !== '' ? Number(volumeRaw) : NaN;
+  const high = Number(json?.output?.stck_hgpr);
+  const low = Number(json?.output?.stck_lwpr);
   return {
     price, changePct: Number.isFinite(changePct) ? changePct : null,
     volume: Number.isFinite(volume) ? volume : null,
+    high: high > 0 ? high : null,
+    low: low > 0 ? low : null,
   };
 }
 

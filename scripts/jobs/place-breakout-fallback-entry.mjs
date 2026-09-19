@@ -39,7 +39,7 @@ import {
   parsePendingEntry, updatePendingEntryRecord, findUnprocessedPendingEntries, isPendingEntryStale, PENDING_ENTRY_STATUS,
 } from '../lib/breakout-pending-entry-vault.mjs';
 import { parseBreakoutPosition, findOpenPositions } from '../lib/breakout-position-vault.mjs';
-import { MAX_CONCURRENT_POSITIONS } from '../lib/breakout-risk.mjs';
+import { MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
 
 const DEPARTMENT_LABEL = '운영실 Hermes';
 const won = (n) => (n == null ? '확인 필요' : Math.round(n).toLocaleString('ko-KR') + '원');
@@ -56,6 +56,21 @@ async function notify(tag, body) {
   try {
     await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag, body }));
   } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
+}
+
+// watch-breakout-entry-fill.mjs 자식 프로세스에 넘길 CLI 인자(폴백 다리 — --fallback
+// 없이 호출, place-breakout-entry-order.mjs의 buildWatchArgs와 동일 이유로 순수함수
+// 분리: 2026-09-19 코드리뷰 CRITICAL 지적 재발방지 — stopLossPct 플러밍이 조용히
+// 무력화돼도(예: entryStopLossPct가 undefined인데 아무도 못 알아챔) npm test가 계속
+// 초록이면 안 된다). stopLossPct 없으면(과거 대기항목 레코드) STOP_LOSS_PCT로 폴백 —
+// 4%로 사이징(2배 투입)된 포지션에 8% 손절이 걸리는 CRITICAL 사고 재발방지가
+// 이 함수를 만든 이유이므로, 이 폴백 자체가 회귀하지 않게 테스트로 고정한다.
+export function buildFallbackWatchArgs({ order, code, name, entryDate, stopLossPct }) {
+  const resolvedStopLossPct = stopLossPct ?? STOP_LOSS_PCT;
+  return [
+    `--order-no=${order.orderNo}`, `--code=${code}`, `--name=${name}`, `--entry-date=${entryDate}`,
+    `--stop-loss-pct=${resolvedStopLossPct}`,
+  ];
 }
 
 // place-breakout-entry-order.mjs와 동일 패턴(ENOENT만 "꺼짐", 그 외 읽기 오류는
@@ -308,7 +323,7 @@ async function main() {
 
   const here = dirname(fileURLToPath(import.meta.url));
   for (const entry of targets) {
-    const { code, name, investedWon, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, signalDate, filename, content } = entry;
+    const { code, name, investedWon, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, stopLossPct: entryStopLossPct, signalDate, filename, content } = entry;
     console.log(`[처리] ${entry.id} — ${name}(${code})`);
 
     // 나이 게이트(2026-09-18 코드리뷰 HIGH) — 킬스위치가 여러 날 켜져 있다가 꺼지면
@@ -442,9 +457,21 @@ async function main() {
     // entry-date는 신호일(signalDate)이 아니라 오늘(실제 체결 시도일) — 포지션의
     // entryDate는 "실제로 진입한 날"이어야 트레일링스탑 기산일이 맞다.
     // 이 다리는 더 이상의 폴백이 없다 — --fallback 없이 호출(미체결 시 통상 타임아웃 알림).
+    //
+    // ⚠️ entryStopLossPct 결측 경고(2026-09-19 코드리뷰 검증패스 MEDIUM 지적) —
+    // buildFallbackWatchArgs 자체는 null이면 조용히 STOP_LOSS_PCT(8%)로 폴백한다
+    // (과거 대기항목 레코드 하위호환용). 그런데 place-breakout-entry-order.mjs가
+    // 이제 자동호출 경로에서 이 필드를 항상 채우도록 강제하므로(alertAndExit 가드),
+    // 이 시점에 null이 실제로 온다는 건 배선 버그일 가능성이 높다(하위호환이
+    // 필요한 레거시 레코드가 실측상 존재하지 않음 — CRITICAL 사고 재발 경로를
+    // 조용히 통과시키면 안 된다는 지적, entry-order.mjs의 loud-failure 가드와
+    // 비대칭이었음).
+    if (entryStopLossPct == null) {
+      console.warn(`  ⚠️ ${name}(${code}) 대기항목에 stopLossPct 없음 — STOP_LOSS_PCT(8%)로 폴백함(배선 버그 의심, 레거시 레코드가 아니라면 확인 필요)`);
+    }
     const child = spawn('node', [
       join(here, '..', 'tools', 'watch-breakout-entry-fill.mjs'),
-      `--order-no=${order.orderNo}`, `--code=${code}`, `--name=${name}`, `--entry-date=${todayKST()}`,
+      ...buildFallbackWatchArgs({ order, code, name, entryDate: todayKST(), stopLossPct: entryStopLossPct }),
     ], { detached: true, stdio: 'ignore' });
     child.on('error', (e) => {
       console.error(`  ⚠️ 체결감시 기동 실패(주문 자체는 이미 접수됨): ${e.message}`);

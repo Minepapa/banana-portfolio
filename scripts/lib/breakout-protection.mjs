@@ -20,10 +20,14 @@ import { PROTECTION_STATUS } from './breakout-position-vault.mjs';
 // 계좌에서 사전 확인 필요. 만약 겹치는 예약이 거부되면, 부분익절 수량만큼을 손절
 // 주문에서 미리 빼는 방식(손절 전량 대신 "손절 수량 = 전체-부분익절수량"으로 걸고,
 // 부분익절 체결 시 나머지에 대해 새 손절을 거는 방식)으로 재설계해야 할 수 있다.
-export function computeProtectionOrders(entryPrice, quantity) {
-  const stopPrice = entryPrice * (1 - STOP_LOSS_PCT);
+// stopLossPct 파라미터화(2026-09-19, ATR 가변손절 실전배선) — 기본값은 기존
+// STOP_LOSS_PCT(8%) 그대로라 안 넘기는 호출부는 하위호환(회귀 없음). 3R
+// 부분익절 목표가 stopLossPct에 비례하는 건 breakout-risk.mjs rMultiplePrice의
+// 기존 설계 그대로(손절폭 4%인 포지션은 3R 목표가 +12%가 됨, +24%가 아님).
+export function computeProtectionOrders(entryPrice, quantity, stopLossPct = STOP_LOSS_PCT) {
+  const stopPrice = entryPrice * (1 - stopLossPct);
   const partialQty = Math.floor(quantity * PARTIAL_PROFIT_SELL_FRACTION);
-  const profitPrice = rMultiplePrice(entryPrice, PARTIAL_PROFIT_TRIGGER_R);
+  const profitPrice = rMultiplePrice(entryPrice, PARTIAL_PROFIT_TRIGGER_R, stopLossPct);
   return {
     stopOrder: { quantity, conditionPrice: stopPrice, price: stopPrice },
     profitOrder: partialQty > 0 ? { quantity: partialQty, conditionPrice: profitPrice, price: profitPrice } : null,
@@ -45,8 +49,8 @@ async function tryPlace(placeOrder, params) {
 // — kis.mjs placeKrOrder를 code/side 고정해 부분적용한 함수를 호출측이 주입(테스트
 // 시엔 스텁 주입). 반환: { stopOrder: {...계산값, ...tryPlace결과}, profitOrder,
 // fullyProtected }.
-export async function placeProtectionOrders({ entryPrice, quantity, placeOrder }) {
-  const { stopOrder, profitOrder } = computeProtectionOrders(entryPrice, quantity);
+export async function placeProtectionOrders({ entryPrice, quantity, placeOrder, stopLossPct = STOP_LOSS_PCT }) {
+  const { stopOrder, profitOrder } = computeProtectionOrders(entryPrice, quantity, stopLossPct);
 
   const stopResult = { ...stopOrder, ...await tryPlace(placeOrder, { side: '매도', quantity: stopOrder.quantity, price: stopOrder.price, conditionPrice: stopOrder.conditionPrice }) };
   const profitResult = profitOrder
@@ -84,7 +88,11 @@ export async function ensurePositionProtected(position, {
     return { ...out, protectionStatus: PROTECTION_STATUS.PROTECTED, attempts: 0 };
   }
 
-  const { stopOrder, profitOrder } = computeProtectionOrders(position.entryPrice, position.quantity);
+  // position.stopLossPct 사용(2026-09-19, ATR 가변손절) — 없으면(과거 레코드,
+  // ATR 계산 불가로 폴백됐던 포지션 등) 기존 고정값. 3R 부분익절 재시도 가격이
+  // 이 값에 비례하므로, 원래 진입 시 확정됐던 손절폭과 반드시 같아야 한다(재시도
+  // 때 다른 값을 쓰면 원래 포지션의 3R 목표가와 어긋난 가격으로 주문이 나간다).
+  const { stopOrder, profitOrder } = computeProtectionOrders(position.entryPrice, position.quantity, position.stopLossPct ?? STOP_LOSS_PCT);
   let attempts = 0;
   let stopDone = !needsStop;
   let profitDone = !needsProfit;

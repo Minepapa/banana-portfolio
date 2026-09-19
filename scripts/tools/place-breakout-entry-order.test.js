@@ -24,6 +24,24 @@ test('buildWatchArgs: order.orgNo가 빈 문자열(KIS 응답에 KRX_FWDG_ORD_OR
   assert.ok(args.includes('--org-no='), args.join(' '));
 });
 
+// [MEDIUM 재발방지] 2026-09-19 코드리뷰 — ATR 가변손절(stopLossPct) 플러밍도
+// --org-no와 똑같은 위험(조용히 무력화돼도 테스트가 안 잡음)에 노출돼 있었다.
+test('buildWatchArgs: stopLossPct가 --stop-loss-pct로 실림', () => {
+  const args = buildWatchArgs({
+    order: { orderNo: '6693100', orgNo: '06010' }, code: '005930', name: '삼성전자',
+    entryDate: '2026-09-19', budgetForFallback: 10_000_000, stopLossPct: 0.04,
+  });
+  assert.ok(args.includes('--stop-loss-pct=0.04'), args.join(' '));
+});
+
+test('buildWatchArgs: stopLossPct 생략 시 기본값(STOP_LOSS_PCT=0.08)으로 실림', () => {
+  const args = buildWatchArgs({
+    order: { orderNo: '6693100', orgNo: '06010' }, code: '005930', name: '삼성전자',
+    entryDate: '2026-09-19', budgetForFallback: 10_000_000,
+  });
+  assert.ok(args.includes('--stop-loss-pct=0.08'), args.join(' '));
+});
+
 // [핵심 안전장치] 코드리뷰 MEDIUM 지적(2026-09-13) 재발방지 — ORD_DVSN=06(장후시간외)는
 // 15:40~16:00 KRX에만 유효, 그 밖에서 호출되면 KIS에 던지기 전에 여기서 막아야 한다.
 test('isWithinAfterHoursSubmitWindow: KST 15:37(신호스캔이 실제로 호출하는 시각대)는 true', () => {

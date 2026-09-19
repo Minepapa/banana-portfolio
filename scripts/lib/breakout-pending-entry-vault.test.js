@@ -39,6 +39,19 @@ test('buildPendingEntryRecord: afterHoursOrgNo·afterHoursOrderQty 왕복 보존
   assert.equal(p.afterHoursOrderQty, 5);
 });
 
+// [CRITICAL 재발방지] 2026-09-19 코드리뷰 — stopLossPct가 이 레코드에 안 실리면
+// 장후시간외 미체결→다음날시가 폴백 경로에서 손절폭이 완전히 소실돼, 4%로
+// 사이징(2배 투입)된 포지션에 8% 손절이 걸리는 사고로 이어진다(실제 리스크가
+// Max2%룰의 2배가 됨). 신호의 약 85%가 4% 쪽이라 예외 케이스가 아니라 폴백
+// 경로 대부분이 여기 해당한다.
+test('buildPendingEntryRecord: stopLossPct 왕복 보존 — 폴백 경로 손절폭 소실 재발방지', () => {
+  const { content } = buildPendingEntryRecord({
+    code: '005930', name: '삼성전자', signalDate: '2026-09-13', investedWon: 10_000_000,
+    afterHoursOrderNo: '123', stopLossPct: 0.04, now,
+  });
+  assert.equal(parsePendingEntry(content).stopLossPct, 0.04);
+});
+
 test('buildPendingEntryRecord: afterHoursOrgNo·afterHoursOrderQty 생략 시 null(과거 레코드와 하위호환)', () => {
   const { content } = buildPendingEntryRecord({
     code: '005930', signalDate: '2026-09-13', investedWon: 10_000_000, afterHoursOrderNo: '123', now,

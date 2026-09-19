@@ -63,6 +63,24 @@ test('parseQuoteResponse: acml_vol="0"(미체결·장외시간대 등)은 null�
   assert.equal(parseQuoteResponse({ rt_cd: '0', output: { stck_prpr: '75000', acml_vol: '0' } }).volume, 0);
 });
 
+// 2026-09-19 추가 — ATR 가변손절 live/backtest 파리티용(daily-breakout-signal-scan.mjs
+// 코드리뷰 HIGH 지적 재발방지). 라이브 실측 형식(삼성전자, 2026-09-19 장마감 후):
+// stck_prpr=260000, stck_hgpr=262000, stck_lwpr=257500.
+test('parseQuoteResponse: stck_hgpr·stck_lwpr(당일고가·저가) 추출 — 라이브 실측 형식', () => {
+  const q = parseQuoteResponse({ rt_cd: '0', output: { stck_prpr: '260000', stck_hgpr: '262000', stck_lwpr: '257500' } });
+  assert.equal(q.high, 262000);
+  assert.equal(q.low, 257500);
+});
+
+test('parseQuoteResponse: stck_hgpr·stck_lwpr 없거나 0 이하면 high/low=null(가격 파싱은 그대로 성공)', () => {
+  const q = parseQuoteResponse({ rt_cd: '0', output: { stck_prpr: '75000' } });
+  assert.equal(q.high, null);
+  assert.equal(q.low, null);
+  const q2 = parseQuoteResponse({ rt_cd: '0', output: { stck_prpr: '75000', stck_hgpr: '0', stck_lwpr: '0' } });
+  assert.equal(q2.high, null);
+  assert.equal(q2.low, null);
+});
+
 test('parseQuoteResponse: rt_cd 실패 코드면 throw(msg1 인용)', () => {
   assert.throws(
     () => parseQuoteResponse({ rt_cd: '1', msg1: '모의투자 미지원 종목' }),

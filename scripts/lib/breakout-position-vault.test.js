@@ -29,6 +29,28 @@ test('buildBreakoutPositionRecord: 생성 시 보호상태 pending, 청산 전 �
   assert.equal(p.profitOrderApplicable, true);
 });
 
+// [MEDIUM 재발방지] 2026-09-19 코드리뷰 — ATR 가변손절 실전배선. stopLossPct가
+// frontmatter 왕복(buildFrontmatter→parseFrontmatter)에서 문자열이 아니라 숫자로
+// 정확히 복원되는지(0.04처럼 정수 아닌 값 포함) 직접 고정 — 산술 강제변환으로
+// 조용히 통과하는 값이 아니라 실제 숫자여야 트레일링·3R 재시도 계산이 정확하다.
+test('buildBreakoutPositionRecord: stopLossPct 왕복 — 숫자로 정확히 복원됨(0.04)', () => {
+  const { content } = buildBreakoutPositionRecord({
+    code: '005930', entryDate: '2026-09-13', entryPrice: 71000, quantity: 140,
+    investedWon: 10_000_000, stopPrice: 68160, stopLossPct: 0.04, now,
+  });
+  const p = parseBreakoutPosition(content);
+  assert.equal(p.stopLossPct, 0.04);
+  assert.equal(typeof p.stopLossPct, 'number');
+});
+
+test('buildBreakoutPositionRecord: stopLossPct 생략 시 null(과거 레코드 하위호환)', () => {
+  const { content } = buildBreakoutPositionRecord({
+    code: '005930', entryDate: '2026-09-13', entryPrice: 71000, quantity: 140,
+    investedWon: 10_000_000, stopPrice: 65320, now,
+  });
+  assert.equal(parseBreakoutPosition(content).stopLossPct, null);
+});
+
 test('buildBreakoutPositionRecord: profitOrderApplicable=false로 생성 가능(수량이 적어 부분익절 주문 자체가 불필요한 경우)', () => {
   const { content } = buildBreakoutPositionRecord({
     code: 'A', entryDate: '2026-09-13', entryPrice: 100, quantity: 1, investedWon: 100, stopPrice: 92,

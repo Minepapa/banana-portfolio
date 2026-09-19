@@ -50,13 +50,23 @@ export function isPendingEntryStale(entry, { maxAgeDays = 5, now = new Date() } 
 // 필요한데 지금까지는 afterHoursOrderNo(주문번호)만 기록하고 버려지고 있었다.
 // 둘 다 없어도(과거 레코드·이번 세션 이전에 큐잉된 항목) 정상 동작 — 취소시도는
 // 그냥 스킵하고 기존 checkOrderFill+holdings 경로로 넘어간다(하위호환, 기본값 null).
+//
+// stopLossPct(2026-09-19, ATR 가변손절 실전배선) — ⚠️ CRITICAL 버그 재발방지
+// (코드리뷰): 이 필드가 없으면 장후시간외 미체결 → 다음날시가 폴백 경로에서
+// 손절폭이 완전히 소실된다. investedWon은 신호 시점 stopLossPct(4% 또는 8%)
+// 기준으로 이미 사이징된 금액인데, 폴백 체결 후 watch-breakout-entry-fill.mjs가
+// stopLossPct를 못 받으면 무조건 STOP_LOSS_PCT(8%)로 손절을 건다 — 4%로
+// 사이징된(=2배 투입된) 포지션에 8% 손절이 걸리면 실제 리스크가 Max2%룰의
+// 2배가 된다. 기본값 null은 과거 레코드(이 필드 신설 전) 하위호환용일 뿐 —
+// 신규 레코드는 항상 호출측(watch-breakout-entry-fill.mjs)이 명시적으로 넘긴다.
 export function buildPendingEntryRecord({
-  code, name = '', signalDate, investedWon, afterHoursOrderNo = null, afterHoursOrgNo = null, afterHoursOrderQty = null, reason = '', now = new Date(),
+  code, name = '', signalDate, investedWon, afterHoursOrderNo = null, afterHoursOrgNo = null, afterHoursOrderQty = null,
+  stopLossPct = null, reason = '', now = new Date(),
 }) {
   const id = `${sanitizeSegment(code)}-${sanitizeSegment(signalDate)}`;
   const filename = `${id}.md`;
   const content = buildFrontmatter({
-    id, code, name, signalDate, investedWon, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, reason,
+    id, code, name, signalDate, investedWon, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, stopLossPct, reason,
     status: PENDING_ENTRY_STATUS.PENDING,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),

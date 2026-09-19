@@ -20,6 +20,7 @@ import {
   loadQuantAccount, getKisToken, getKrQuote, placeKrOrder,
 } from '../lib/kis.mjs';
 import { isKillSwitchActive } from '../lib/kill-switch.mjs';
+import { STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
@@ -57,10 +58,10 @@ function parseArgs(argv) {
 // 지금까지 아무 테스트도 없어, place-breakout-fallback-entry.mjs의 취소시도 기능이
 // 영구적으로 조용히 무력화돼도(예: KIS 응답에 KRX_FWDG_ORD_ORGNO가 없어 orgNo가
 // 빈 문자열인 경우) npm test는 계속 초록이었을 것).
-export function buildWatchArgs({ order, code, name, entryDate, budgetForFallback }) {
+export function buildWatchArgs({ order, code, name, entryDate, budgetForFallback, stopLossPct = STOP_LOSS_PCT }) {
   return [
     `--order-no=${order.orderNo}`, `--org-no=${order.orgNo}`, `--code=${code}`, `--name=${name}`, `--entry-date=${entryDate}`,
-    '--fallback=nextDayOpen', `--invested-won=${Math.round(budgetForFallback)}`,
+    '--fallback=nextDayOpen', `--invested-won=${Math.round(budgetForFallback)}`, `--stop-loss-pct=${stopLossPct}`,
   ];
 }
 
@@ -99,6 +100,23 @@ async function main() {
   const investedWon = Number.isFinite(investedWonArg) && investedWonArg > 0 ? investedWonArg : null;
   const quantityArg = Number(args.quantity);
   const fixedQuantity = Number.isInteger(quantityArg) && quantityArg > 0 ? quantityArg : null;
+  // ATR 가변손절(2026-09-19 실전배선) — daily-breakout-signal-scan.mjs가 신호
+  // 시점에 확정한 값을 그대로 물려받아 watch-breakout-entry-fill.mjs로 전달만
+  // 한다(이 스크립트 자체는 손절가를 계산하지 않음). 없으면(수동 --quantity
+  // 테스트 등) 기존 고정값으로 안전 폴백 — 단, --invested-won(자동호출 경로,
+  // 신호스캔이 이미 특정 stopLossPct 기준으로 사이징해 보낸 금액)이 있는데
+  // --stop-loss-pct가 빠졌다면 그건 "수동 테스트"가 아니라 상류 배선이 깨진
+  // 것이므로 조용히 8%로 폴백하지 않는다(코드리뷰 MEDIUM 지적 — "조용한 폴백
+  // 금지" 원칙, feedback-no-silent-fallback과 동일). investedWon은 이미 4%
+  // 기준(2배)으로 사이징돼 있을 수 있는데 손절만 조용히 8%로 나가면 실제
+  // 리스크가 규정의 2배가 되는 CRITICAL 사고 재현 경로라 아래에서 별도 검증.
+  // 타당범위 검사(코드리뷰 LOW 지적) — >0만 보면 퍼센트/비율 단위 실수(예: 4를
+  // 0.04 대신 넘김)가 그대로 통과해 stopPrice=entry×(1-4)=음수로 실주문이 나갈
+  // 수 있다. 이 값은 항상 비율(0.04/0.08류)이라 0.5(50% 손절)를 넘길 일이
+  // 현실적으로 없음 — 그보다 크면 형식 오류로 간주해 거부.
+  const stopLossPctArg = Number(args['stop-loss-pct']);
+  const stopLossPctValid = Number.isFinite(stopLossPctArg) && stopLossPctArg > 0 && stopLossPctArg < 0.5;
+  const stopLossPct = stopLossPctValid ? stopLossPctArg : STOP_LOSS_PCT;
 
   if (!code) return alertAndExit('<b>돌파매매 진입 스크립트 호출 오류</b>\n--code 누락 — 호출측(신호스캔 잡) 버그 의심.', 2);
   if (!entryDate) return alertAndExit(`<b>돌파매매 진입 스크립트 호출 오류</b>\n${name}(${code}) --entry-date 누락 — 호출측(신호스캔 잡) 버그 의심.`, 2);
@@ -106,6 +124,9 @@ async function main() {
     return alertAndExit(`<b>돌파매매 진입 실패 — 시간대 밖 호출</b>\n${name}(${code}) 장후시간외(ORD_DVSN=06) 유효 시간(15:00~16:00 KST) 밖에서 호출돼 발주하지 않았습니다. 의도된 수동 테스트라면 --skip-time-check를 넘겨주세요.`, 2);
   }
   if (!fixedQuantity && !investedWon) return alertAndExit(`<b>돌파매매 진입 스크립트 호출 오류</b>\n${name}(${code}) --quantity/--invested-won 둘 다 없음 — 호출측(신호스캔 잡) 버그 의심.`, 2);
+  if (investedWon && !stopLossPctValid) {
+    return alertAndExit(`<b>돌파매매 진입 스크립트 호출 오류</b>\n${name}(${code}) --invested-won은 있는데 --stop-loss-pct가 없거나 형식이 이상함 — 자동호출(신호스캔) 경로 배선 버그 의심. 이 투입예산은 특정 손절폭 기준으로 이미 사이징됐을 수 있어, 다른 손절폭으로 조용히 진행하면 실제 리스크가 의도와 달라질 수 있음 — 발주하지 않음.`, 2);
+  }
 
   const quant = loadQuantAccount();
   if (!quant) return alertAndExit(`<b>돌파매매 진입 실패</b>\n${name}(${code}) 퀀트 계좌정보(quantAccount) 미설정 — 발주 못 함.`);
@@ -172,7 +193,7 @@ async function main() {
   console.log(`[발주 완료] 장후시간외 매수 ${name}(${code}) ${quantity}주 — 주문번호 ${order.orderNo}`);
   await sendTelegram(formatDepartmentMessage({
     departmentLabel: DEPARTMENT_LABEL, tag: '접수',
-    body: `<b>돌파매매 진입 — 장후시간외 매수 접수</b>\n${name}(${code}) ${quantity}주 @약${won(currentPrice)} (주문번호 ${order.orderNo})\n체결 확인 후 자동으로 보호주문(손절/3R부분익절)을 겁니다. 세션 안에 미체결이면 다음날 시가로 자동 전환됩니다.`,
+    body: `<b>돌파매매 진입 — 장후시간외 매수 접수</b>\n${name}(${code}) ${quantity}주 @약${won(currentPrice)} (주문번호 ${order.orderNo})\n체결 확인 후 자동으로 보호주문(손절 -${(stopLossPct * 100).toFixed(0)}%/3R부분익절)을 겁니다. 세션 안에 미체결이면 다음날 시가로 자동 전환됩니다.`,
   }));
 
   // 체결감시+보호주문(전량체결 시)·폴백큐잉(미체결 시)은 watch-breakout-entry-fill.mjs가
@@ -181,7 +202,7 @@ async function main() {
   const here = dirname(fileURLToPath(import.meta.url));
   const child = spawn('node', [
     join(here, 'watch-breakout-entry-fill.mjs'),
-    ...buildWatchArgs({ order, code, name, entryDate, budgetForFallback }),
+    ...buildWatchArgs({ order, code, name, entryDate, budgetForFallback, stopLossPct }),
   ], { detached: true, stdio: 'ignore' });
   // ⚠️ 코드리뷰 HIGH 지적(2026-09-13, 가장 위험한 경로) — 이 시점에 매수 주문은 이미
   // 접수돼 있다. 감시 스폰이 실패하면 체결여부 확인·포지션기록·보호주문(손절/3R익절)
