@@ -143,7 +143,8 @@ async function main() {
     try {
       result = await getTotalTransaction({ token, actNo, iqrStaDt, iqrEndDt, actTrdDtlCd: '01' });
     } catch (e) {
-      collectWarning(`NH 배당대조(${label}): 조회 실패 — ${e.message}`);
+      console.error(`NH 배당대조(${label}): 조회 실패 —`, e.message);
+      collectWarning(`NH 배당대조(${label}): 조회 실패`);
       continue;
     }
     if (result.truncated) {

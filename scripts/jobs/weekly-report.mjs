@@ -42,7 +42,7 @@ import { buildReportFacts } from '../lib/report-facts.mjs';
 import { buildBehaviorSignals } from '../lib/behavior-signals.mjs';
 import { renderPrefRows, findExpiredPromotions, isLivePreferenceObservation } from '../lib/preferences.mjs';
 import {
-  filterObservations, claimViolationsInDoc, collectFactPercentages, numericClaimViolations,
+  filterObservations, claimViolationsInDoc, collectFactPercentages, numericClaimViolations, numericClaimViolationsWithLocation,
 } from '../lib/llm-guard.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
@@ -321,6 +321,10 @@ ${signalsText}
 
 // 관찰 JSON → Knowledge/Profile/*.md 신규 파일. 상충/promote면
 // 상태=승격후보, 아니면 관찰. 한 관찰당 파일 하나(다른 Vault 레코드와 동일 관례).
+// 반환값에 promoted(신규 승격후보 목록)를 같이 담는다(2026-09-20 오너 DevRequest —
+// "성향관찰 승격 후보가 생기면 텔레그램 메시지로 확인을 요청한다. 오너는 므네모시네를
+// 열어 보기 전까지 승격 후보 존재를 알 수 없다"). 기존엔 4주 TTL 만료 때만(step ⑧-b)
+// 신호가 나갔고, 생성 시점엔 아무 알림이 없었다.
 function writeObservations(asof, observations) {
   const dir = VAULT_PATHS.knowledge.profile;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -328,6 +332,7 @@ function writeObservations(asof, observations) {
   const nowIso = now.toISOString();
   const timeSlug = nowIso.replace(/[-:]/g, '').replace(/\..+/, '');
   let n = 0;
+  const promoted = [];
   observations.forEach((o, i) => {
     const promote = o.promote || /상충/.test(o.vsProfile || '');
     const record = {
@@ -339,8 +344,9 @@ function writeObservations(asof, observations) {
     const filename = `${asof}-${timeSlug}-${i + 1}.md`;
     writeAtomic(join(dir, filename), buildFrontmatter(record) + '\n');
     n++;
+    if (promote) promoted.push({ observation: record.observation, vsProfile: record.vsProfile });
   });
-  return n;
+  return { written: n, promoted };
 }
 
 async function main() {
@@ -379,7 +385,7 @@ async function main() {
   // Object.entries(f.macro)가 throw).
   console.log('\n⏳ 거시지표 조회(KRX/yfinance, 오늘 이미 계산됐으면 캐시 재사용)...');
   const macro = await getCachedMacroIndicators().catch((e) => {
-    collectWarning(`거시지표 조회 실패 — 이번 리포트는 거시지표 없이 진행: ${e.message}`);
+    collectWarning('거시지표 조회 실패 — 이번 리포트는 거시지표 없이 진행');
     console.error(`⚠️ 거시지표 조회 실패: ${e.message}`);
     return null;
   }) ?? {};
@@ -454,9 +460,20 @@ async function main() {
   // 과함, 근거: 위 4원칙 §2 "profile 적용" 문구 등). 다만 "가장 큰 변화" 불릿은
   // 실제로 사고가 난 지점이라 그 줄만은 위반 시 Node 검증값으로 강제 치환한다.
   const factPercentages = collectFactPercentages(facts);
-  const docViolations = numericClaimViolations(md, factPercentages);
+  const docViolations = numericClaimViolationsWithLocation(md, factPercentages);
   if (docViolations.length) {
-    collectWarning(`주간리포트 자동검증: facts에 없는 수치 언급(오차범위 밖) — ${docViolations.map((n) => `${n}%`).join(', ')}. 원문 재확인 필요.`);
+    // 위치(헤딩+줄+원문 스니펫)를 같이 알려줘 오너가 리포트 전체를 다시 훑지 않아도
+    // 되게 한다(2026-09-20 오너 DevRequest). 위반이 많으면 최대 8건만 보여준다
+    // (job-alerts.mjs의 기존 관례와 동일 상한) — 스니펫까지 붙어 항목당 최대 130자
+    // 안팎이라 무제한이면 Telegram 4096자 상한(sendTelegram의 truncateForTelegram이
+    // 최종 안전망이긴 하나)에 걸려 메시지가 중간에 잘리기 쉽다(2026-09-20 독립
+    // 코드리뷰 MEDIUM 지적).
+    const shown = docViolations.slice(0, 8);
+    const detail = shown
+      .map((v) => `${v.value}%(${v.heading ?? '헤딩 없음'} ${v.line}행 — "${v.snippet}")`)
+      .join(' | ');
+    const more = docViolations.length > shown.length ? ` 외 ${docViolations.length - shown.length}건` : '';
+    collectWarning(`주간리포트 자동검증: facts에 없는 수치 언급(오차범위 밖) — ${detail}${more}`);
   }
   const bulletMatch = md.match(/^([-*·]\s*\*\*가장\s*큰\s*변화\*\*.*)$/m);
   if (bulletMatch && numericClaimViolations(bulletMatch[1], factPercentages).length) {
@@ -497,9 +514,15 @@ async function main() {
       universe, factsText: signalsText, claimAllowed: [], priorTexts: priorObsTexts, maxRows: 3,
     });
     dropped.forEach(d => collectWarning(`성향관찰 자동폐기: "${String(d.obs?.observation ?? '').slice(0, 60)}" — ${d.reason}`));
-    const n = writeObservations(asof, kept);
+    const { written: n, promoted } = writeObservations(asof, kept);
     console.log(n ? `   🧠 성향 관찰 ${n}건 기록 (Knowledge/Profile)` : '   🧠 이번 주 뚜렷한 성향 관찰 없음');
     if (dropped.length) console.log(`   🛡 자동 검증 실패로 폐기 ${dropped.length}건(텔레그램 경고)`);
+    // 승격후보는 생성 즉시 안내한다(2026-09-20 오너 DevRequest) — 므네모시네를 직접
+    // 열어보기 전까진 오너가 존재 자체를 모른다. 승인/거부를 텔레그램에서 바로 받는
+    // 인터랙티브 플로우는 이번 범위 밖(오너 선택) — 단순 FYI만.
+    if (promoted.length) {
+      collectWarning(`성향관찰 승격후보 ${promoted.length}건 신규 생성 — 므네모시네(Knowledge/Profile)에서 확인 필요: ${promoted.map((p) => `"${p.observation.slice(0, 60)}"(${p.vsProfile})`).join(' | ')}`);
+    }
   } catch (e) { console.error(`   ⚠️ 성향 관찰 단계 실패(리포트는 정상): ${e.message}`); }
 
   // ⑧-b 승격후보 TTL(4주 무응답이면 자동으로 관찰 보류) — ⑧과 분리된 독립 단계.

@@ -71,10 +71,27 @@ export function isHtmlParseFailure(status, bodyText) {
 // 밀려 정작 원래 경고 요약(job-alerts.mjs가 먼저 찍은 "⚠ 경고 N건: ...")을 못
 // 담을 수 있어 길이를 제한한다.
 const FALLBACK_ERROR_LOG_MAX_LEN = 200;
+
+// Telegram Bot API 메시지 본문 상한(4096 UTF-16 코드유닛) — 안 지키면 400 "message
+// is too long"으로 발송 자체가 거부되고, job-alerts.mjs의 flushWarnings가 그 실패를
+// catch해 경고 배치 전체가 조용히 유실된다(2026-09-20 독립 코드리뷰 MEDIUM 지적 —
+// weekly-report.mjs의 위치정보 포함 경고나 facts 항목이 많은 메시지가 이 상한을
+// 넘기기 쉬워짐: "· " 불릿 + 빈 줄 분리를 이번에 추가하면서 메시지 길이가 더 늘었다).
+// 각 호출부에서 개별적으로 길이를 신경 쓰게 하는 대신(누락 위험) 발송 함수 자신이
+// 최종 안전망으로 자른다 — HTML 태그가 잘려 파싱 실패가 나도 아래 plain text
+// 폴백이 이미 있어 "아예 안 감"보다는 낫다.
+const MAX_TELEGRAM_TEXT_LEN = 4096;
+const TRUNCATE_MARKER = '\n\n…(길이 제한으로 생략됨, 전체 내용은 로그 파일 참고)';
+export function truncateForTelegram(text) {
+  const t = String(text ?? '');
+  if (t.length <= MAX_TELEGRAM_TEXT_LEN) return t;
+  return t.slice(0, MAX_TELEGRAM_TEXT_LEN - TRUNCATE_MARKER.length) + TRUNCATE_MARKER;
+}
+
 export async function sendTelegram(text, chatId, { fetchImpl = fetch } = {}) {
   const cfg = loadTelegramConfig();
   const url = `https://api.telegram.org/bot${cfg.botToken}/sendMessage`;
-  const payload = { chat_id: chatId || cfg.chatId, text, disable_web_page_preview: true };
+  const payload = { chat_id: chatId || cfg.chatId, text: truncateForTelegram(text), disable_web_page_preview: true };
   let res = await fetchImpl(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -87,7 +104,7 @@ export async function sendTelegram(text, chatId, { fetchImpl = fetch } = {}) {
       res = await fetchImpl(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, text: `[서식 오류 — 원문 그대로 발송]\n${text}` }), // parse_mode 없음 = plain text
+        body: JSON.stringify({ ...payload, text: truncateForTelegram(`[서식 오류 — 원문 그대로 발송]\n${payload.text}`) }), // parse_mode 없음 = plain text
       });
       if (!res.ok) throw new Error(`텔레그램 전송 실패(plain text 재시도도 실패): ${await res.text()}`);
       return res.json();
@@ -108,7 +125,7 @@ export async function sendTelegram(text, chatId, { fetchImpl = fetch } = {}) {
 export async function editTelegramMessage(messageId, text, chatId, { fetchImpl = fetch } = {}) {
   const cfg = loadTelegramConfig();
   const url = `https://api.telegram.org/bot${cfg.botToken}/editMessageText`;
-  const payload = { chat_id: chatId || cfg.chatId, message_id: messageId, text, disable_web_page_preview: true };
+  const payload = { chat_id: chatId || cfg.chatId, message_id: messageId, text: truncateForTelegram(text), disable_web_page_preview: true };
   let res = await fetchImpl(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -121,7 +138,7 @@ export async function editTelegramMessage(messageId, text, chatId, { fetchImpl =
       res = await fetchImpl(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, text: `[서식 오류 — 원문 그대로 발송]\n${text}` }),
+        body: JSON.stringify({ ...payload, text: truncateForTelegram(`[서식 오류 — 원문 그대로 발송]\n${payload.text}`) }),
       });
       if (!res.ok) throw new Error(`텔레그램 메시지 편집 실패(plain text 재시도도 실패): ${await res.text()}`);
       return res.json();

@@ -317,7 +317,7 @@ async function fetchKospiBreach() {
       detailText: `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%(현재 ${price})`,
     };
   } catch (e) {
-    collectWarning(`코스피 실시간 조회 실패: ${e.message}`);
+    collectWarning('코스피 실시간 조회 실패');
     console.error(`⚠️ 코스피 실시간 조회 실패: ${e.message}`);
     return null;
   }
@@ -332,13 +332,13 @@ function fetchMacroBreaches() {
   const tickers = { SP500: '^GSPC', VIX: '^VIX', DXY: 'DX-Y.NYB', USDKRW: 'KRW=X', TNX: '^TNX' };
   const r = spawnSync('python3', [py, ...Object.values(tickers)], { encoding: 'utf8', timeout: 120000 });
   if (r.status !== 0) {
-    collectWarning(`yfinance 거시 조회 실패: ${(r.stderr || '').slice(-200)}`);
+    collectWarning('yfinance 거시 조회 실패');
     console.error(`⚠️ yfinance 거시 조회 실패: ${(r.stderr || '').slice(-200)}`);
     return [];
   }
   let raw;
   try { raw = JSON.parse(r.stdout); } catch (e) {
-    collectWarning(`yfinance 응답 파싱 실패: ${e.message}`);
+    collectWarning('yfinance 응답 파싱 실패');
     console.error(`⚠️ yfinance 응답 파싱 실패: ${e.message}`);
     return [];
   }

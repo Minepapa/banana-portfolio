@@ -227,7 +227,7 @@ export async function confirmPriorOrderVoided({
       token, appkey, appsecret, cano, acntPrdtCd, odno: afterHoursOrderNo, now: new Date(signalDate),
     });
   } catch (e) {
-    return { voided: false, note: `전날 주문 상태 조회 실패(${e.message}) — 생사 확인 불가` };
+    return { voided: false, note: '전날 주문 상태 조회 실패 — 생사 확인 불가' };
   }
   const classification = classifyPriorOrderStatus(result);
 
@@ -255,7 +255,7 @@ export async function confirmPriorOrderVoided({
           token, appkey, appsecret, cano, acntPrdtCd, odno: afterHoursOrderNo, now: new Date(signalDate),
         });
       } catch (e) {
-        return { voided: false, kind: 'unfilled', note: `${classification.note} — 취소 요청은 성공(rt_cd=0) 응답을 받았으나 재확인 조회 실패(${e.message}), 적용 여부 불확실해 자동진행 보류` };
+        return { voided: false, kind: 'unfilled', note: `${classification.note} — 취소 요청은 성공(rt_cd=0) 응답을 받았으나 재확인 조회 실패, 적용 여부 불확실해 자동진행 보류` };
       }
       const recheckClassification = classifyPriorOrderStatus(recheckResult);
       if (recheckClassification.kind === 'canceled') {
@@ -269,7 +269,7 @@ export async function confirmPriorOrderVoided({
     if (cancelAttempt.attempted) {
       // 실패 사유를 note에 남겨(코드리뷰 LOW 지적) uncertain 알림에 진단정보로 노출되게
       // 한다 — 지금까지는 error를 반환값에 담아두고 아무도 안 읽었다.
-      return { ...classification, note: `${classification.note} — 취소시도 실패(${cancelAttempt.error?.message ?? '알 수 없음'})` };
+      return { ...classification, note: `${classification.note} — 취소시도 실패` };
     }
     return classification; // orgNo·quantity 없음(과거 레코드) — 시도 자체를 안 함, 원판정 그대로
   }
@@ -279,7 +279,7 @@ export async function confirmPriorOrderVoided({
   try {
     ({ holdings } = await getAccountBalanceImpl({ token, appkey, appsecret, cano, acntPrdtCd }));
   } catch (e) {
-    return { ...classification, note: `${classification.note} — 계좌 보유종목 교차검증 실패(${e.message}), 원래 판정 유지` };
+    return { ...classification, note: `${classification.note} — 계좌 보유종목 교차검증 실패, 원래 판정 유지` };
   }
   return refineWithHoldings(classification, code, holdings);
 }
@@ -313,7 +313,7 @@ async function main() {
   try {
     ({ cash: remainingCash } = await getAccountBalance({ token, appkey, appsecret, cano, acntPrdtCd }));
   } catch (e) {
-    await notify('경고', `<b>돌파매매 다음날시가 폴백 중단 — 예수금 조회 실패</b>\n예수금을 확인할 수 없어(${escapeHtml(e.message)}) 이번 실행에서 모든 대기 항목 처리를 보류합니다. 다음 실행에서 재시도됩니다.`);
+    await notify('경고', '<b>돌파매매 다음날시가 폴백 중단 — 예수금 조회 실패</b>\n예수금을 확인할 수 없어 이번 실행에서 모든 대기 항목 처리를 보류합니다. 다음 실행에서 재시도됩니다.');
     return;
   }
   if (remainingCash == null) {
@@ -360,7 +360,7 @@ async function main() {
       ({ price: currentPrice } = await getKrQuote({ token, appkey, appsecret, code }));
     } catch (e) {
       console.log(`  ⚠️ 현재가 조회 실패(${e.message}) — 이번 실행은 건너뜀(다음 실행에서 재시도, 파일 그대로 pending 유지)`);
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 — 현재가 조회 실패</b>\n${name}(${code}) 현재가를 못 가져와(${escapeHtml(e.message)}) 이번 실행은 건너뜁니다. 다음 실행에서 재시도됩니다.`);
+      await notify('경고', `<b>돌파매매 다음날시가 폴백 — 현재가 조회 실패</b>\n${name}(${code}) 현재가를 못 가져와 이번 실행은 건너뜁니다. 다음 실행에서 재시도됩니다.`);
       continue;
     }
 
@@ -389,7 +389,7 @@ async function main() {
     const killSwitchState = readKillSwitchState(VAULT_PATHS.state.killSwitch);
     if (killSwitchState.readFailed) {
       console.log(`  ⚠️ 킬스위치 상태 확인 불가(${killSwitchState.error.message}) — 안전하게 발주 보류(대기 상태 유지)`);
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 확인 불가</b>\n${name}(${code}) 킬스위치 파일을 읽을 수 없어(${escapeHtml(killSwitchState.error.message)}) 안전하게 발주를 보류했습니다. 볼트 접근 상태를 확인해 주세요.`);
+      await notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 확인 불가</b>\n${name}(${code}) 킬스위치 파일을 읽을 수 없어 안전하게 발주를 보류했습니다. 볼트 접근 상태를 확인해 주세요.`);
       continue;
     }
     if (isKillSwitchActive(killSwitchState.content)) {
@@ -438,12 +438,17 @@ async function main() {
         : `시장가 주문 응답 불명(${e.message}) — 실제로는 접수됐을 수 있음`;
       // 취소 사실을 여기서도 이어붙임(코드리뷰 검증패스 MEDIUM 지적) — 안 이어붙이면
       // "전날 주문은 우리가 취소했는데 오늘 새 주문도 실패"라는 최악의 조합에서
-      // 볼트 레코드만으론 전날 주문이 왜 사라졌는지 설명이 안 남는다(텔레그램
-      // 알림엔 이미 남지만, 이 프로젝트는 볼트 레코드로 사후 복기하는 게 주 경로).
+      // 볼트 레코드만으론 전날 주문이 왜 사라졌는지 설명이 안 남는다(볼트 레코드로
+      // 사후 복기하는 게 이 프로젝트의 주 경로라 e.message 원문은 여기 남긴다 —
+      // 오너에게 직접 나가는 텔레그램 알림에만 별도로 안전한 문구를 쓴다, 아래).
       const reason = cancelReason ? `${cancelReason} / ${orderFailReason}` : orderFailReason;
+      const orderFailReasonSafe = e.confirmedNotSent === true
+        ? '시장가 주문 거부 확인됨'
+        : '시장가 주문 응답 불명(실제로는 접수됐을 수 있음)';
+      const reasonSafe = cancelReason ? `${cancelReason} / ${orderFailReasonSafe}` : orderFailReasonSafe;
       console.log(`  ❌ 시장가 주문 실패(${reason})`);
       writeAtomic(join(dir, filename), updatePendingEntryRecord(content, { status, reason, updatedAt: new Date().toISOString() }));
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 실패</b>\n${name}(${code}) ${quantity}주 시장가 매수 — ${escapeHtml(reason)}. 수동 확인 바랍니다.`);
+      await notify('경고', `<b>돌파매매 다음날시가 폴백 실패</b>\n${name}(${code}) ${quantity}주 시장가 매수 — ${escapeHtml(reasonSafe)}. 수동 확인 바랍니다.`);
       continue;
     }
 
@@ -475,7 +480,7 @@ async function main() {
     ], { detached: true, stdio: 'ignore' });
     child.on('error', (e) => {
       console.error(`  ⚠️ 체결감시 기동 실패(주문 자체는 이미 접수됨): ${e.message}`);
-      notify('경고', `<b>🚨 체결감시 기동 실패 — 무방비 포지션 위험</b>\n${name}(${code}) ${quantity}주 시장가 매수(주문번호 ${order.orderNo})는 접수됐지만 체결감시를 못 띄웠습니다. 즉시 KIS 앱에서 확인해 주세요.`);
+      notify('경고', `<b>체결감시 기동 실패 — 무방비 포지션 위험</b>\n${name}(${code}) ${quantity}주 시장가 매수(주문번호 ${order.orderNo})는 접수됐지만 체결감시를 못 띄웠습니다. 즉시 KIS 앱에서 확인해 주세요.`);
     });
     child.unref();
   }
@@ -484,7 +489,7 @@ async function main() {
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(async (e) => {
     console.error('\n❌ 오류:', e.message);
-    await notify('경고', `<b>돌파매매 다음날시가 폴백 잡 예외 종료</b>\n예상 못 한 오류로 중단됐습니다: ${escapeHtml(e.message)}`);
+    await notify('경고', '<b>돌파매매 다음날시가 폴백 잡 예외 종료</b>\n예상 못 한 오류로 중단됐습니다. 로그를 확인해 주세요.');
     process.exit(1);
   });
 }

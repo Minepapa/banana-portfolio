@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  formatDepartmentMessage, formatFactsMessage, parseDepartmentResponse, stripEmDash, parseReplyDecision, parseKillSwitchCommand,
+  formatDepartmentMessage, formatFactsMessage, parseDepartmentResponse, stripEmDash, stripEmoji, parseReplyDecision, parseKillSwitchCommand,
   parseDepartmentCall, parseExecutionModeCommand, parseProposalModeCommand, ZEUS_MARKER,
 } from './telegram-messages.mjs';
 
@@ -42,13 +42,13 @@ test('formatFactsMessage: 결론→사실→맥락→의사결정 4단 구조(20
   });
   assert.equal(
     msg,
-    `[투자전략실 Athena]\n\n[결론]\n지금 배분할 필요는 없습니다.\n\n[사실]\n· 리츠 갭 -1.98%p(밴드 이탈)\n· 연금저축 누적현금 962,000원\n\n[맥락]\n리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.\n\n[의사결정]\n· 지금 배분할지, 다음 현금 유입까지 기다릴지\n· 리츠 대신 국내주식 갭부터 메울지`,
+    `[투자전략실 Athena]\n\n[결론]\n지금 배분할 필요는 없습니다.\n\n[사실]\n· 리츠 갭 -1.98%p(밴드 이탈)\n\n· 연금저축 누적현금 962,000원\n\n[맥락]\n리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.\n\n[의사결정]\n· 지금 배분할지, 다음 현금 유입까지 기다릴지\n\n· 리츠 대신 국내주식 갭부터 메울지`,
   );
 });
 
 test('formatFactsMessage: conclusion·context·decisions 전부 없으면 [사실]만(LLM 없는 순수 운영 알림, 또는 조용한 날 LLM 생략)', () => {
   const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['잡 A가 조용함', '잡 B가 조용함'] });
-  assert.equal(msg, `[운영실 Hermes]\n\n[사실]\n· 잡 A가 조용함\n· 잡 B가 조용함`);
+  assert.equal(msg, `[운영실 Hermes]\n\n[사실]\n· 잡 A가 조용함\n\n· 잡 B가 조용함`);
 });
 
 test('formatFactsMessage: decisions 없이 context만 있어도 됨(부분 구조 허용)', () => {
@@ -201,6 +201,64 @@ test('stripEmDash: en dash(–)·하이픈(-)·날짜범위·음수 부호는 �
 test('stripEmDash: 빈 값이면 빈 문자열(안 터짐)', () => {
   assert.equal(stripEmDash(null), '');
   assert.equal(stripEmDash(undefined), '');
+});
+
+// ── stripEmoji(2026-09-20 오너 DevRequest — 이모티콘 전면 금지, 구조적 가드) ──
+// ⚠️ 독립 코드리뷰 지적(CRITICAL) 재발방지 회귀 테스트 — 최초 버전은 src/lib/
+// textFormat.js의 대시보드용 정규식을 그대로 재사용해 일반 화살표(→ U+2190대)까지
+// 지웠다. "qty 100 → 250", "점수 8.1→9.2"처럼 화살표가 실제 숫자 표기에 쓰이는
+// 이 코드베이스(annual-instrument-rescore.mjs·order-candidates.mjs·
+// reconcile-nh-fx-rp.mjs 등)에서 화살표가 지워지면 서로 다른 두 숫자가
+// "8.19.2"처럼 하나로 붙어 가짜 숫자로 보이는 사고가 난다.
+test('[막아야 함] stripEmoji: 일반 화살표(→)는 지우지 않음(2026-09-20 CRITICAL 재발방지 — 숫자 표기 훼손 사고)', () => {
+  assert.equal(stripEmoji('qty 100 → 250 자동 갱신'), 'qty 100 → 250 자동 갱신');
+  assert.equal(stripEmoji('점수 8.1→9.2로 개선'), '점수 8.1→9.2로 개선');
+});
+
+test('stripEmoji: 실제 이모지(색상 원·상태 아이콘 등)는 제거', () => {
+  assert.equal(stripEmoji('위험 수준은 🟢다'), '위험 수준은 다');
+  assert.equal(stripEmoji('완료 ✅ 확인하세요'), '완료  확인하세요');
+});
+
+test('stripEmoji: 이모지 스타일 검정 화살표(U+2B00대, ⬅➡ 등)는 계속 제거(일반 화살표와 다른 블록)', () => {
+  assert.equal(stripEmoji('다음 ⬅ 이전'), '다음  이전');
+});
+
+test('stripEmoji: 가로 공백을 압축하지 않음(facts에 담기는 고정폭 표 정렬 보존용)', () => {
+  assert.equal(stripEmoji('A     B'), 'A     B');
+});
+
+test('stripEmoji: 빈 값이면 빈 문자열(안 터짐)', () => {
+  assert.equal(stripEmoji(null), '');
+  assert.equal(stripEmoji(undefined), '');
+});
+
+test('formatFactsMessage: facts·conclusion·context·decisions·zeusComment 전부에서 이모지가 제거됨', () => {
+  const msg = formatFactsMessage({
+    departmentLabel: '리스크관리실 Themis',
+    facts: ['VIX 14.51 🟢'],
+    conclusion: '위험 수준은 🟢 정상이다.',
+    context: '지표가 🟢 안정적이다.',
+    decisions: ['재확인 🟡 필요'],
+    zeusComment: '동의 ✅',
+  });
+  assert.doesNotMatch(msg, /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/u);
+});
+
+test('formatFactsMessage: facts 안의 화살표(→)는 이모지 제거를 거쳐도 보존됨(회귀 테스트)', () => {
+  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['외화RP qty 100 → 250 자동 갱신'] });
+  assert.match(msg, /qty 100 → 250/);
+});
+
+test('formatFactsMessage: <pre>로 시작하는 fact(고정폭 표)는 "· " 불릿을 안 붙임(2026-09-20 코드리뷰 LOW 지적, 코스메틱)', () => {
+  const msg = formatFactsMessage({ departmentLabel: '리스크관리실 Themis', facts: ['<pre>VIX  14.51</pre>', '잡 상태 정상'] });
+  assert.match(msg, /\[사실\]\n<pre>VIX {2}14\.51<\/pre>\n\n· 잡 상태 정상/);
+});
+
+test('formatDepartmentMessage: body의 이모지는 제거되고 화살표는 보존됨', () => {
+  const msg = formatDepartmentMessage({ departmentLabel: '운영실 Hermes', body: '체결 완료 ✅ 100 → 250주로 갱신' });
+  assert.doesNotMatch(msg, /✅/);
+  assert.match(msg, /100 → 250/);
 });
 
 // formatFactsMessage 레벨에서도 긴 하이픈이 걸러짐(2026-09-01 코드리뷰 HIGH 지적 —

@@ -83,10 +83,10 @@ function buildProtectionMessage({ name, code, entryPrice, quantity, protection, 
   // 확실히 실패"와 다른 문구를 쓴다(코드리뷰 HIGH 지적 — 재시도를 멈춘 건 이중주문을
   // 막기 위해서지 실패가 확정돼서가 아니다. KIS 체결내역과 직접 대조해야 확실해짐).
   const ambiguousNote = protection.stopAmbiguous || protection.profitAmbiguous
-    ? `\n⚠️ 응답 불명 상태로 재시도를 중단한 다리가 있습니다(손절=${protection.stopAmbiguous ? '불명' : '정상시도'}, 부분익절=${protection.profitAmbiguous ? '불명' : '정상시도'}) — 실제로는 이미 주문이 접수됐을 수 있으니, 한 번 더 걸기 전에 반드시 KIS 앱에서 먼저 확인하세요(중복주문 위험).`
+    ? `\n응답 불명 상태로 재시도를 중단한 다리가 있습니다(손절=${protection.stopAmbiguous ? '불명' : '정상시도'}, 부분익절=${protection.profitAmbiguous ? '불명' : '정상시도'}) — 실제로는 이미 주문이 접수됐을 수 있으니, 한 번 더 걸기 전에 반드시 KIS 앱에서 먼저 확인하세요(중복주문 위험).`
     : '';
   return [
-    `<b>⚠️ 보호주문 실패 — 즉시 확인 필요</b>`,
+    `<b>보호주문 실패 — 즉시 확인 필요</b>`,
     `${name}(${code}) ${quantity}주 @${won(entryPrice)}는 매수 체결됐지만,`,
     `손절/부분익절 주문이 ${protection.attempts}회 시도 후에도 안 걸렸습니다.`,
     `손절걸림=${protection.stopOrderNo ? 'O' : 'X'}, 부분익절걸림=${protection.profitOrderNo ? 'O' : (protection.profitOrderApplicable === false ? '해당없음' : 'X')}`,
@@ -204,7 +204,7 @@ async function main() {
         console.error('[중단] avgFillPrice 없음 — 보호주문 계산 불가, 수동 확인 필요');
         await sendTelegram(formatDepartmentMessage({
           departmentLabel: DEPARTMENT_LABEL, tag: '경고',
-          body: `<b>⚠️ 돌파매매 매수 체결됐으나 평균단가 확인 불가</b>\n${name}(${code}) 주문번호 ${orderNo} — 보호주문을 자동으로 못 걸었습니다. 즉시 수동 확인 바랍니다.`,
+          body: `<b>돌파매매 매수 체결됐으나 평균단가 확인 불가</b>\n${name}(${code}) 주문번호 ${orderNo} — 보호주문을 자동으로 못 걸었습니다. 즉시 수동 확인 바랍니다.`,
         }));
         return { done: true, result };
       }

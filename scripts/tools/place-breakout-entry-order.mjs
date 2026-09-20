@@ -22,7 +22,7 @@ import {
 import { isKillSwitchActive } from '../lib/kill-switch.mjs';
 import { STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
+import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 
 const DEPARTMENT_LABEL = '운영실 Hermes'; // watch-breakout-entry-fill.mjs와 동일 원칙 — 순수 API조회+발주 결과 전달, 부서 판단 없음
@@ -137,7 +137,8 @@ async function main() {
   try {
     ({ price: currentPrice } = await getKrQuote({ token, appkey, appsecret, code }));
   } catch (e) {
-    return alertAndExit(`<b>돌파매매 진입 실패 — 현재가 조회 불가</b>\n${name}(${code}) 장후시간외 진입을 시도했으나 현재가를 못 가져와 발주하지 못했습니다(${escapeHtml(e.message)}). 수동 확인 바랍니다.`);
+    console.error('현재가 조회 실패 —', e.message);
+    return alertAndExit(`<b>돌파매매 진입 실패 — 현재가 조회 불가</b>\n${name}(${code}) 장후시간외 진입을 시도했으나 현재가를 못 가져와 발주하지 못했습니다. 수동 확인 바랍니다.`);
   }
   // getKrQuote(parseQuoteResponse)는 이미 price<=0이면 throw하므로 여기 도달하는
   // currentPrice는 항상 양수다(불필요한 재검증 아님 — 방금 위 try/catch가 그 경로를
@@ -170,7 +171,8 @@ async function main() {
   // 호출이라 실질적 차이는 없지만, 나머지 두 실행부와 코드 형태를 통일해둔다).
   const killSwitchState = readKillSwitchState(VAULT_PATHS.state.killSwitch);
   if (killSwitchState.readFailed) {
-    return alertAndExit(`<b>돌파매매 진입 보류 — 킬스위치 상태 확인 불가</b>\n${name}(${code}) 신호 통과(${quantity}주, 예산 ${won(investedWon)})했지만 킬스위치 파일을 읽을 수 없어(${killSwitchState.error.message}) 안전하게 발주를 보류했습니다. 볼트 접근 상태를 확인해 주세요.`);
+    console.error('킬스위치 파일 읽기 실패 —', killSwitchState.error.message);
+    return alertAndExit(`<b>돌파매매 진입 보류 — 킬스위치 상태 확인 불가</b>\n${name}(${code}) 신호 통과(${quantity}주, 예산 ${won(investedWon)})했지만 킬스위치 파일을 읽을 수 없어 안전하게 발주를 보류했습니다. 볼트 접근 상태를 확인해 주세요.`);
   }
   if (isKillSwitchActive(killSwitchState.content)) {
     console.log(`ℹ️ 킬스위치 활성 — ${name}(${code}) ${quantity}주 매수 발주 안 함(신호는 정상 통과했음)`);
@@ -187,7 +189,8 @@ async function main() {
       token, appkey, appsecret, cano, acntPrdtCd, code, side: '매수', quantity, afterHoursClose: true,
     });
   } catch (e) {
-    return alertAndExit(`<b>돌파매매 진입 실패 — 장후시간외 주문 거부</b>\n${name}(${code}) ${quantity}주 장후시간외 매수가 거부됐습니다(${escapeHtml(e.message)}). 자동 폴백 없이 수동 확인이 필요합니다.`);
+    console.error('장후시간외 매수 거부 —', e.message);
+    return alertAndExit(`<b>돌파매매 진입 실패 — 장후시간외 주문 거부</b>\n${name}(${code}) ${quantity}주 장후시간외 매수가 거부됐습니다. 자동 폴백 없이 수동 확인이 필요합니다.`);
   }
 
   console.log(`[발주 완료] 장후시간외 매수 ${name}(${code}) ${quantity}주 — 주문번호 ${order.orderNo}`);
@@ -212,7 +215,7 @@ async function main() {
     console.error(`  ⚠️ 체결감시 기동 실패(주문 자체는 이미 접수됨): ${e.message}`);
     sendTelegram(formatDepartmentMessage({
       departmentLabel: DEPARTMENT_LABEL, tag: '경고',
-      body: `<b>🚨 체결감시 기동 실패 — 무방비 포지션 위험</b>\n${name}(${code}) ${quantity}주 장후시간외 매수 주문(번호 ${order.orderNo})은 이미 접수됐지만, 체결감시 프로세스를 못 띄워 체결확인·보호주문(손절/3R익절)이 걸리지 않습니다. 즉시 KIS 앱에서 체결 여부를 확인하고 필요하면 수동으로 보호주문을 걸어주세요.`,
+      body: `<b>체결감시 기동 실패 — 무방비 포지션 위험</b>\n${name}(${code}) ${quantity}주 장후시간외 매수 주문(번호 ${order.orderNo})은 이미 접수됐지만, 체결감시 프로세스를 못 띄워 체결확인·보호주문(손절/3R익절)이 걸리지 않습니다. 즉시 KIS 앱에서 체결 여부를 확인하고 필요하면 수동으로 보호주문을 걸어주세요.`,
     })).catch((telegramErr) => console.error(`  ⚠️ 텔레그램 발송도 실패: ${telegramErr.message}`));
   });
   child.unref();
@@ -227,7 +230,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     try {
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL, tag: '경고',
-        body: `<b>돌파매매 진입 스크립트 예외 종료</b>\n예상 못 한 오류로 중단됐습니다: ${escapeHtml(e.message)}\n주문이 실제로 나갔는지 KIS 앱에서 확인 바랍니다.`,
+        body: '<b>돌파매매 진입 스크립트 예외 종료</b>\n예상 못 한 오류로 중단됐습니다. 주문이 실제로 나갔는지 KIS 앱에서 확인 바랍니다(상세 원인은 로그 참고).',
       }));
     } catch (telegramErr) { console.error(`  ⚠️ 텔레그램 발송도 실패: ${telegramErr.message}`); }
     process.exit(1);

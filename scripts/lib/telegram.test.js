@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { isHtmlParseFailure, sendTelegram } from './telegram.mjs';
+import { isHtmlParseFailure, sendTelegram, truncateForTelegram } from './telegram.mjs';
 
 // 2026-09-18 실사고 대응(Log/DevRequests/2026-09-18-macro-cache-데이터신선도-알람공백.md)
 // — isHtmlParseFailure는 순수함수라 무조건 테스트. sendTelegram의 재시도 "배선"
@@ -68,4 +68,37 @@ test('sendTelegram: HTML 파싱 실패가 아닌 다른 400 오류는 재시도 
     /텔레그램 전송 실패/,
   );
   assert.equal(calls.length, 1, '파싱실패가 아닌 400은 재시도하면 안 됨(회귀 시 조용한 이중발송 위험 — 코드리뷰 지적)');
+});
+
+// ── truncateForTelegram(2026-09-20 독립 코드리뷰 MEDIUM 지적) — Telegram 메시지
+// 상한(4096자)을 넘기면 400 "message is too long"으로 발송이 통째로 거부되고,
+// job-alerts.mjs의 flushWarnings가 그 실패를 catch해 경고 배치 전체가 조용히
+// 유실된다. weekly-report.mjs의 위치정보 포함 경고나 facts 항목이 많은 메시지가
+// 이 상한을 넘기기 쉬워져(이번 세션에서 facts 사이 빈 줄 추가로 메시지 길이 자체도
+// 늘어남) 발송 함수 자신이 최종 안전망으로 자른다.
+test('truncateForTelegram: 4096자 이하면 그대로 통과', () => {
+  const short = 'A'.repeat(100);
+  assert.equal(truncateForTelegram(short), short);
+});
+
+test('truncateForTelegram: 4096자를 넘으면 잘리고 생략 마커가 붙음, 전체 길이는 상한 이내', () => {
+  const long = 'A'.repeat(5000);
+  const result = truncateForTelegram(long);
+  assert.ok(result.length <= 4096);
+  assert.match(result, /생략됨/);
+});
+
+test('truncateForTelegram: 빈 값이면 빈 문자열(안 터짐)', () => {
+  assert.equal(truncateForTelegram(null), '');
+  assert.equal(truncateForTelegram(undefined), '');
+});
+
+test('sendTelegram: 4096자 넘는 텍스트도 발송 자체는 잘려서라도 나감(경고 배치 전체 유실 방지)', { skip: !CAN_RUN }, async () => {
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push(JSON.parse(opts.body));
+    return { ok: true, json: async () => ({ ok: true, result: { message_id: 1 } }) };
+  };
+  await sendTelegram('A'.repeat(5000), undefined, { fetchImpl });
+  assert.ok(calls[0].text.length <= 4096, 'Telegram에 실제로 나가는 payload.text는 상한 이내여야 함');
 });

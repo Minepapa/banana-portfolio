@@ -434,7 +434,7 @@ async function main() {
     // 없는 무인 실행이라 검증 단계 하나가 죽었다고 액션 전체가 유실되면 안 됨). 검증을
     // 못 받았다는 사실 자체를 caveat로 남긴다.
     console.error(`  ⚠️ Themis 2차 검증 실패(발송은 진행): ${e.message}`);
-    themisVerdict = { verdict: '검증실패', caveat: `2차 검증 실행 자체가 실패함(${e.message.slice(0, 100)})` };
+    themisVerdict = { verdict: '검증실패', caveat: '2차 검증 실행 자체가 실패함(로그 확인 필요)' };
   }
   console.log(`  🔍 Themis 검증: ${themisVerdict.verdict}${themisVerdict.caveat ? ` — ${themisVerdict.caveat}` : ''}`);
 

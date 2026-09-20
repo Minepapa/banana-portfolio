@@ -50,7 +50,7 @@ import {
 import { todayKST } from '../lib/sheets-api.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
+import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
@@ -257,7 +257,7 @@ async function main() {
     if (!dryRun) {
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL, tag: '경고',
-        body: `<b>돌파매매 일별 신호스캔 중단 — 코스피 실시간지수 조회 실패</b>\n${escapeHtml(e.message)}\n오늘은 신호판정 자체를 못 했습니다(발주 없음).`,
+        body: '<b>돌파매매 일별 신호스캔 중단 — 코스피 실시간지수 조회 실패</b>\n오늘은 신호판정 자체를 못 했습니다(발주 없음). 상세 원인은 로그를 확인해 주세요.',
       }));
     }
     return;

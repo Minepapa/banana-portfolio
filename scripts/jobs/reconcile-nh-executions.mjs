@@ -176,7 +176,8 @@ async function main() {
         console.log(`  · ${label}: 오늘 체결 없음(NH 11512)`);
         continue;
       }
-      collectWarning(`NH 체결조회 실패(${label}): ${e.message}`);
+      console.error(`NH 체결조회 실패(${label}) —`, e.message);
+      collectWarning(`NH 체결조회 실패(${label})`);
       continue;
     }
 

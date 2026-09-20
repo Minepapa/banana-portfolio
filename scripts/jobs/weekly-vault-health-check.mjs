@@ -174,9 +174,16 @@ export function findPendingWork(records) {
 }
 
 // ── C2. "## 남은 것" 섹션 ─────────────────────────────────────────────
+// progress:"완료"/"폐기"로 닫힌 문서는 건너뛴다(2026-09-20 오너 DevRequest — "사실
+// 내용 중 실제로 해결이 필요한 것만 정리하고, 이미 완료된 것은 완료 처리해 목록에서
+// 뺀다"). 실측(Apollo 로그) — 완료된 NH 마이그레이션 구현 로그들이 몇 주째 "남은 것
+// 섹션 있는 문서 N건" 카운트에 매주 그대로 다시 잡혀 배경소음이 돼 있었다. progress
+// 필드가 없는 문서(Log/Sessions — append 전용, Log/DevRequests — status: 자유서술
+// 관례라 이 필드 자체를 안 씀)는 판단 근거가 없으니 그대로 포함한다(누락 방지 우선).
 export function findRemainingWorkSections(files) {
   const results = [];
   for (const f of files) {
+    if (f.frontmatter?.progress === '완료' || f.frontmatter?.progress === '폐기') continue;
     const m = f.content.match(/## 남은 것\n([\s\S]*?)(?=\n## |\n---|\n?$)/);
     if (m && m[1].trim()) {
       const firstLine = m[1].trim().split('\n')[0].replace(/^[-*]\s*/, '');

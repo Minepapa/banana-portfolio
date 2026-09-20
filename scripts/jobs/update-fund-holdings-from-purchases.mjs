@@ -124,7 +124,8 @@ async function main() {
     try {
       updated = applyFundPurchase(holding, { ...purchase, account: purchase.account ?? FUND_PURCHASE_ACCOUNT });
     } catch (e) {
-      collectWarning(`펀드 매수 반영 실패(${purchase.date} ${purchase.fundName}): ${e.message} — 건너뜀, 원본 카카오 메시지 재확인 필요`);
+      console.error(`펀드 매수 반영 실패(${purchase.date} ${purchase.fundName}) —`, e.message);
+      collectWarning(`펀드 매수 반영 실패(${purchase.date} ${purchase.fundName}) — 건너뜀, 원본 카카오 메시지 재확인 필요`);
       skipped++;
       continue;
     }

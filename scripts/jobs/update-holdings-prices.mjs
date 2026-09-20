@@ -277,7 +277,8 @@ async function main() {
           });
         }
       } catch (e) {
-        collectWarning(`채권 잔고조회 실패(${account}): ${e.message}`);
+        console.error(`채권 잔고조회 실패(${account}) —`, e.message);
+        collectWarning(`채권 잔고조회 실패(${account})`);
       }
     }
   }
@@ -297,7 +298,8 @@ async function main() {
       usdKrwRate = fetchUsdKrwRate();
       console.log(`   💱 USD/KRW ${usdKrwRate.toFixed(2)}`);
     } catch (e) {
-      collectWarning(`USD/KRW 환율 조회 실패 — 해외주식·외화 보유 평가금 갱신 이번엔 스킵: ${e.message}`);
+      console.error('USD/KRW 환율 조회 실패 —', e.message);
+      collectWarning('USD/KRW 환율 조회 실패 — 해외주식·외화 보유 평가금 갱신 이번엔 스킵');
     }
   }
 
@@ -396,7 +398,8 @@ async function main() {
       if (e.code === KIS_RATE_LIMIT_CODE) {
         console.log(`   ⏳ ${h.name}: 레이트리밋(EGW00201) — 이전 값 유지, 다음 실행 재시도`);
       } else {
-        collectWarning(`시세 조회 실패: ${h.name}(${cls.kind}/${cls.source ?? '-'}) — ${e.message.slice(0, 150)}`);
+        console.error(`시세 조회 실패: ${h.name}(${cls.kind}/${cls.source ?? '-'}) —`, e.message);
+        collectWarning(`시세 조회 실패: ${h.name}(${cls.kind}/${cls.source ?? '-'})`);
       }
       failed++;
       // NH 호출은 callNh 내부 슬라이딩 윈도우(초당 4회)가 이미 자체 속도제한을

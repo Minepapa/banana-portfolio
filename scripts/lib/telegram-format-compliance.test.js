@@ -54,6 +54,72 @@ function stripComments(content) {
     .replace(/^\s*\/\/.*$/gm, '');
 }
 
+// ── 공통 규칙 0 확장(2026-09-20 오너 DevRequest) — 이모티콘·오류 원문이 formatFactsMessage/
+// formatDepartmentMessage를 안 거치고 오너에게 직접 나가는 지점(collectWarning·notify·
+// alertAndExit·body:·facts: 리터럴)을 소스 스캔으로 잡는다. LLM이 런타임에 생성하는
+// conclusion/context/decisions/zeusComment는 telegram-messages.mjs의 stripEmoji/
+// stripEmDash(런타임 2차 방어)가 처리하므로 소스에 안 나타나 이 스캐너 대상이 아니다 —
+// 여기는 Node가 소스에서 직접 문자열을 조립해 그 방어선을 우회하는 지점만 겨냥한다.
+// 완전한 파서가 아니라 이 파일의 기존 라이트 스캐너와 같은 정밀도(호출 지점 근처
+// 400자 창, 세미콜론 줄에서 컷)로 본다.
+//
+// ⚠️ 독립 코드리뷰 지적(2026-09-20, MEDIUM) — 최초 버전은 facts: 배열 리터럴을 sink로
+// 안 봤다. facts는 이 코드베이스에서 오너에게 가장 자주 나가는 채널인데(job-alerts.mjs
+// 15개+ 잡이 공유, themis-risk-review·health-watcher·morning-briefing 등) `facts:
+// [\`실패 ${e.message}\`]`처럼 배열 리터럴 안에 직접 보간하면 잡지 못했다 — 추가.
+// (알려진 한계: body:/facts:의 값이 리터럴이 아니라 함수 호출(예:
+// `body: buildProtectionMessage(...)`)이면 그 함수 내부까지는 이 라이트 스캐너가
+// 못 본다 — proposal-flow.mjs 콜백 주입 예외와 같은 종류의 한계, 완전한 파서가 아님.)
+const SINK_RE = /\b(?:collectWarning|notify|alertAndExit)\(|body:\s*[`"']|facts:\s*\[/g;
+const ERROR_LEAK_RE = /\.\s*(?:message|stack)\b/;
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]|\u{FE0F}/u;
+// 매치 직전이 `function notify(`/`async function alertAndExit(` 같은 정의부 자체면
+// 호출이 아니다 — 그 안의 console.error 등은 로컬 로그라 대상 밖(2026-09-20 실측
+// 오탐 — place-breakout-entry-order.mjs의 alertAndExit 정의부 자체가 매치됨).
+const SINK_DEFINITION_RE = /(?:async\s+)?function\s+$/;
+
+function scanSinkWindows(rawContent) {
+  const content = stripComments(rawContent);
+  const windows = [];
+  let m;
+  while ((m = SINK_RE.exec(content))) {
+    const before = content.slice(Math.max(0, m.index - 30), m.index);
+    if (SINK_DEFINITION_RE.test(before)) continue;
+    const raw = content.slice(m.index, Math.min(content.length, m.index + 400));
+    // 창을 문장 끝(`;`+줄바꿈)이나 감싸는 호출의 닫힘(`}))`)중 먼저 오는 지점에서
+    // 자른다 — 후자가 없으면 `sendTelegram(formatDepartmentMessage({...})).catch(...)`
+    // 처럼 "텔레그램 발송 자체가 실패했을 때의 로컬 콘솔 폴백"(오너에게 안 나감)까지
+    // 같은 문장으로 묶여 오탐이 난다(2026-09-20 실측 — place-breakout-entry-order.mjs).
+    const stmtEndSemi = raw.search(/;\s*\n/);
+    const stmtEndClose = raw.search(/\}\)\)/);
+    // facts: [ ... ] 배열 리터럴은 `]`에서 끝난다(2026-09-20 MEDIUM 지적으로 facts:
+    // sink 추가하며 같이 필요해짐) — facts sink에만 적용한다. 다른 sink(collectWarning
+    // 등)의 메시지 문자열엔 "[경고]" 같은 대괄호 태그가 흔해서, 전체에 적용하면 그
+    // 태그에서 창이 조기 절단돼 오히려 탐지범위가 크게 줄어든다.
+    const stmtEndBracket = m[0].startsWith('facts') ? raw.search(/\]/) : -1;
+    const candidates = [stmtEndSemi, stmtEndClose, stmtEndBracket].filter((i) => i !== -1);
+    const stmtEnd = candidates.length ? Math.min(...candidates) : -1;
+    windows.push({ index: m.index, text: stmtEnd === -1 ? raw : raw.slice(0, stmtEnd) });
+  }
+  return windows;
+}
+
+// 순수함수 — collectWarning()·notify()·alertAndExit()·body: 리터럴 근처에 e.message/
+// err.message/error.message/.stack 등 원본 에러 텍스트를 그대로 보간하는지 탐지.
+export function findRawErrorLeaks(rawContent) {
+  return scanSinkWindows(rawContent)
+    .filter((w) => ERROR_LEAK_RE.test(w.text))
+    .map((w) => ({ snippet: w.text.replace(/\s+/g, ' ').trim().slice(0, 140) }));
+}
+
+// 순수함수 — 같은 sink 근처에 이모지 리터럴이 하드코딩돼 있는지 탐지(LLM 출력은 런타임
+// stripEmoji가 별도로 방어 — 여기는 소스에 직접 박아넣은 경우만).
+export function findEmojiLiterals(rawContent) {
+  return scanSinkWindows(rawContent)
+    .filter((w) => EMOJI_RE.test(w.text))
+    .map((w) => ({ snippet: w.text.replace(/\s+/g, ' ').trim().slice(0, 140) }));
+}
+
 // 순수함수 — 파일 내용 하나를 스캔해 위반 목록 반환(테스트 가능하도록 분리).
 export function findUnformattedSendTelegramCalls(rawContent) {
   const content = stripComments(rawContent);
@@ -125,4 +191,50 @@ test('scripts/jobs·scripts/tools·scripts/lib 전수 — sendTelegram() 호출�
     }
   }
   assert.deepEqual(offenders, [], `표준 포맷터(formatFactsMessage/formatDepartmentMessage)를 안 거치는 sendTelegram() 호출 발견:\n${offenders.join('\n')}`);
+});
+
+test('findRawErrorLeaks: collectWarning() 근처에 e.message를 보간하면 잡힘', () => {
+  const content = "collectWarning(`조회 실패: ${e.message}`);";
+  const violations = findRawErrorLeaks(content);
+  assert.equal(violations.length, 1);
+});
+
+test('findRawErrorLeaks: e.message 없이 설명만 있으면 통과', () => {
+  const content = "collectWarning(`코스피 실시간지수 조회 실패`);";
+  assert.equal(findRawErrorLeaks(content).length, 0);
+});
+
+test('findEmojiLiterals: body: 리터럴에 이모지가 하드코딩돼 있으면 잡힘', () => {
+  const content = "body: `완료 ✅ 확인하세요`,";
+  assert.equal(findEmojiLiterals(content).length, 1);
+});
+
+test('findEmojiLiterals: sink와 무관한 곳(예: console.log)의 이모지는 대상 아님', () => {
+  const content = "console.log(`🫀 ${job} OK`);";
+  assert.equal(findEmojiLiterals(content).length, 0);
+});
+
+// ── facts: 배열 리터럴 sink(2026-09-20 독립 코드리뷰 MEDIUM 지적) — facts는 이
+// 코드베이스에서 오너에게 가장 자주 나가는 채널인데 최초 버전은 sink 목록에서
+// 빠져 있었다.
+test('findRawErrorLeaks: facts 배열 리터럴 안의 e.message도 잡힘', () => {
+  const content = 'return { facts: [`실패 ${e.message}`] };';
+  assert.equal(findRawErrorLeaks(content).length, 1);
+});
+
+test('findEmojiLiterals: facts 배열 리터럴 안의 이모지도 잡힘', () => {
+  const content = "facts: ['🔴 위험'],";
+  assert.equal(findEmojiLiterals(content).length, 1);
+});
+
+test('scripts/jobs·scripts/tools·scripts/lib 전수 — collectWarning/notify/alertAndExit/body:에 에러 원문·이모지 직접 보간 금지(2026-09-20 오너 DevRequest)', () => {
+  const errorOffenders = [];
+  const emojiOffenders = [];
+  for (const filePath of listScriptFiles()) {
+    const content = readFileSync(filePath, 'utf8');
+    for (const v of findRawErrorLeaks(content)) errorOffenders.push(`${filePath}: ${v.snippet}`);
+    for (const v of findEmojiLiterals(content)) emojiOffenders.push(`${filePath}: ${v.snippet}`);
+  }
+  assert.deepEqual(errorOffenders, [], `오류 원문(e.message/.stack)이 오너 발신 문자열에 직접 보간됨:\n${errorOffenders.join('\n')}`);
+  assert.deepEqual(emojiOffenders, [], `이모지가 오너 발신 문자열에 하드코딩됨:\n${emojiOffenders.join('\n')}`);
 });

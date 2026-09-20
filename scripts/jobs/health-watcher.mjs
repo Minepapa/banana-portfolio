@@ -288,7 +288,8 @@ async function main() {
           );
         }
       } catch (e) {
-        issues.push(`텔레그램 폴링 상태 확인 실패(getWebhookInfo): ${e.message}`);
+        console.error('텔레그램 폴링 상태 확인 실패(getWebhookInfo) —', e.message);
+        issues.push('텔레그램 폴링 상태 확인 실패(getWebhookInfo) — 로그 확인 필요');
       }
     }
   }

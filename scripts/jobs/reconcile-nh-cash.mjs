@@ -139,7 +139,8 @@ async function main() {
       }
       written++;
     } catch (e) {
-      collectWarning(`NH 예수금조회 실패(${label}): ${e.message}`);
+      console.error(`NH 예수금조회 실패(${label}) —`, e.message);
+      collectWarning(`NH 예수금조회 실패(${label})`);
     }
   }
 

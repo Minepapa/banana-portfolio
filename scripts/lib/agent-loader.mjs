@@ -37,10 +37,14 @@ export function loadAgent(agentName, { fallbackModel, dir = DEFAULT_DIR } = {}) 
     const parsed = parseAgentMd(readFileSync(join(dir, `${agentName}.md`), 'utf8'));
     return { model: parsed.model, systemPrompt: parsed.systemPrompt, warning: null };
   } catch (e) {
+    // warning 필드는 weekly-report.mjs처럼 collectWarning()을 거쳐 텔레그램으로 그대로
+    // 나가는 호출부가 있어(2026-09-20 오너 DevRequest 확인) e.message 원문을 담지 않는다
+    // — 상세는 여기 콘솔에만 남긴다.
+    console.error(`에이전트 정의 로드 실패(${agentName}) —`, e.message);
     return {
       model: fallbackModel,
       systemPrompt: '',
-      warning: `에이전트 정의 손상/누락: ${agentName} (${e.message}) — 기본값(${fallbackModel})으로 대체`,
+      warning: `에이전트 정의 손상/누락: ${agentName} — 기본값(${fallbackModel})으로 대체`,
     };
   }
 }

@@ -116,7 +116,8 @@ async function main() {
         collectWarning(`시세 캐시 최초 백필 ${noCacheFileCodes.length}건 중 오류 ${backfillResult.summary.error}건 발생`);
       }
     } catch (e) {
-      collectWarning(`시세 캐시 최초 백필 실패(${noCacheFileCodes.length}종목): ${e.message}`);
+      console.error(`시세 캐시 최초 백필 실패(${noCacheFileCodes.length}종목) —`, e.message);
+      collectWarning(`시세 캐시 최초 백필 실패(${noCacheFileCodes.length}종목)`);
     }
   } else {
     console.error('[3/3] 최초 백필 필요 종목 없음 — 스킵');
@@ -128,7 +129,7 @@ async function main() {
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(async (e) => {
     console.error('\n❌ update-breakout-price-cache 오류:', e.message);
-    collectWarning(`잡 실행 중단: ${e.message}`);
+    collectWarning('잡 실행 중단');
     await flushWarnings(JOB_NAME).catch(() => {});
     process.exit(1);
   });

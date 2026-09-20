@@ -89,7 +89,8 @@ async function main() {
   try {
     token = await getKisToken({ appkey, appsecret });
   } catch (e) {
-    collectWarning(`IRP 체결조회: KIS 토큰 발급 실패 — ${e.message}`);
+    console.error('IRP 체결조회: KIS 토큰 발급 실패 —', e.message);
+    collectWarning('IRP 체결조회: KIS 토큰 발급 실패');
     await flushWarnings('reconcile-irp-executions');
     return;
   }
@@ -100,7 +101,8 @@ async function main() {
       token, appkey, appsecret, cano, acntPrdtCd,
     }));
   } catch (e) {
-    collectWarning(`IRP 체결조회 실패: ${e.message}`);
+    console.error('IRP 체결조회 실패 —', e.message);
+    collectWarning('IRP 체결조회 실패');
     await flushWarnings('reconcile-irp-executions');
     return;
   }

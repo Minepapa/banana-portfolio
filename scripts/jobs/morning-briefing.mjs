@@ -208,7 +208,8 @@ function fetchMacroText() {
     });
     return { signals: JSON.parse(raw) };
   } catch (e) {
-    return { error: e.message.slice(0, 300) };
+    console.error('거시신호 조회 실패 —', e.message);
+    return { error: true };
   }
 }
 
@@ -226,7 +227,7 @@ async function main() {
   const macroResult = fetchMacroText();
   const macroText = macroResult.signals
     ? renderSignalsReport(macroResult.signals)
-    : `(거시신호 조회 실패: ${macroResult.error})`;
+    : '(거시신호 조회 실패 — 로그 확인 필요)';
 
   const allocationText = buildAllocationSection(holdings);
   const sections = { assetText: asset.text, eventsText, allocationText, macroText };

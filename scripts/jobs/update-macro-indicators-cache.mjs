@@ -61,7 +61,7 @@ async function main() {
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(async (e) => {
     console.error('\n❌ update-macro-indicators-cache 오류:', e.message);
-    collectWarning(`잡 실행 중단: ${e.message}`);
+    collectWarning('잡 실행 중단');
     await flushWarnings(JOB_NAME).catch(() => {});
     process.exit(1);
   });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   coerceEnum, extractSignal, mentionedNames, unknownMentions, claimViolations,
   claimViolationsInDoc, clampLen, filterObservations, SIGNAL_EMOJI, CONFIDENCE,
-  extractPercentages, collectFactPercentages, numericClaimViolations,
+  extractPercentages, collectFactPercentages, numericClaimViolations, numericClaimViolationsWithLocation,
 } from './llm-guard.mjs';
 
 test('coerceEnum: 정확값 통과·변형 흡수·목록밖은 fallback+coerced', () => {
@@ -224,4 +224,53 @@ test('numericClaimViolations: tolerance 밖으로 벗어난 값은 위반', () =
 
 test('numericClaimViolations: 허용 퍼센트가 비어있으면 언급된 모든 퍼센트가 위반', () => {
   assert.deepEqual(numericClaimViolations('알 수 없는 근거로 +10% 상승', []), [10]);
+});
+
+// ── numericClaimViolationsWithLocation(2026-09-20 오너 DevRequest — "fact 근거가
+// 없는 수치가 리포트의 어디에 있는지 위치를 표기한다") ──
+
+test('numericClaimViolationsWithLocation: 가장 가까운 앞쪽 헤딩과 줄 번호를 같이 반환', () => {
+  const md = [
+    '# 주간 리포트',
+    '',
+    '## 자산배분',
+    '',
+    '리츠 비중이 16%로 과다하다.',
+  ].join('\n');
+  const violations = numericClaimViolationsWithLocation(md, []);
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].value, 16);
+  assert.equal(violations[0].heading, '자산배분');
+  assert.equal(violations[0].line, 5);
+  assert.match(violations[0].snippet, /리츠 비중이 16%로 과다하다/);
+});
+
+test('numericClaimViolationsWithLocation: 헤딩 앞(문서 최상단)에 있으면 heading은 null', () => {
+  const violations = numericClaimViolationsWithLocation('+10% 상승', []);
+  assert.equal(violations[0].heading, null);
+});
+
+test('numericClaimViolationsWithLocation: numericClaimViolations와 위반 값 집합이 동일함', () => {
+  const facts = { macro: { KOSDAQ: { change5d: -5.66 } } };
+  const md = '## 거시\n\nKOSDAQ 5일 -7% 하락';
+  const plain = numericClaimViolations(md, collectFactPercentages(facts));
+  const located = numericClaimViolationsWithLocation(md, collectFactPercentages(facts));
+  assert.deepEqual(located.map((v) => v.value), plain);
+});
+
+// ⚠️ 독립 코드리뷰 지적(2026-09-20, MEDIUM) 재발방지 — 첫 버전은 헤딩 줄 자체를
+// return으로 건너뛰어, "## 리츠 16% 비중 점검"처럼 헤딩 안에 위반 수치가 있으면
+// numericClaimViolations(잡음)와 numericClaimViolationsWithLocation(놓침)이
+// 서로 다른 결과를 냈다. 위 등가성 테스트는 헤딩에 퍼센트가 없는 문서만 써서
+// 이 버그를 못 잡았다(수정된 동작을 그대로 인코딩할 뿐 검증이 안 됨) — 헤딩 자체에
+// 퍼센트가 있는 문서로 실제 동치성을 검증한다.
+test('numericClaimViolationsWithLocation: 헤딩 줄 자체에 있는 위반 수치도 잡음(등가성 테스트가 놓쳤던 버그)', () => {
+  const md = '## 리츠 16% 비중 점검\n\n본문 서술.';
+  const plain = numericClaimViolations(md, []);
+  const located = numericClaimViolationsWithLocation(md, []);
+  assert.deepEqual(located.map((v) => v.value), plain);
+  assert.equal(located.length, 1);
+  assert.equal(located[0].value, 16);
+  assert.equal(located[0].heading, '리츠 16% 비중 점검');
+  assert.equal(located[0].line, 1);
 });

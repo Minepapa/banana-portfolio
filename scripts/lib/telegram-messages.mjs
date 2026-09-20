@@ -31,8 +31,11 @@ export const ZEUS_MARKER = '[Zeus]';
 // 보고만 나간다.
 export function formatDepartmentMessage({ departmentLabel, body, zeusComment = null, tag = null }) {
   const header = buildHeader(departmentLabel, tag);
-  let msg = `${header}\n${SEPARATOR}\n${body}`;
-  if (zeusComment) msg += `\n\n${ZEUS_MARKER} ${zeusComment}`;
+  // body는 stripEmDash 대상이 아니다(formatFactsMessage의 facts와 동일 이유 — 호출부가
+  // 이미 조립한 문장 구조를 함부로 재단하지 않는다). 이모지만은 "예외 없이" 제거한다
+  // (아래 stripEmoji import 주석 참고, 2026-09-20 DevRequest).
+  let msg = `${header}\n${SEPARATOR}\n${stripEmoji(body)}`;
+  if (zeusComment) msg += `\n\n${ZEUS_MARKER} ${sanitizeLlmText(zeusComment)}`;
   return msg;
 }
 
@@ -81,10 +84,40 @@ export function stripEmDash(s) {
     .trim();
 }
 
+// 이모티콘 전면 금지(2026-09-20 오너 DevRequest — "이모티콘 사용 금지 원칙 위배
+// 사례가 있었다. 예외 없이 지킨다(구조적 가드로 강제할 것)"). 2026-08-23에 이미
+// 대괄호 태그 방식으로 전환하며 이모지를 없애기로 했었지만, 프롬프트 지시(1차
+// 방어)만으로는 LLM이 그래도 이모지를 쓰는 경우를 못 막는다(실제로
+// themis-risk-review.log에 "🟢" 포함 메시지가 발송된 전례 확인) — stripEmDash와
+// 같은 자리(렌더링 시점)에서 2차 방어로 정규식 제거한다.
+//
+// ⚠️ 독립 코드리뷰 지적(2026-09-20, CRITICAL) — 최초 버전은 src/lib/textFormat.js의
+// 대시보드용 stripEmoji를 그대로 재사용했는데, 그 정규식이 U+2190-U+21FF(일반
+// 화살표 → ← ↑ ↓)까지 이모지로 취급해 지워버렸다. 이 코드베이스는 "qty 100 → 250",
+// "점수 8.1→9.2"처럼 화살표를 숫자 표기에 실제로 쓴다(annual-instrument-rescore.mjs·
+// order-candidates.mjs·reconcile-nh-fx-rp.mjs·weekly-report.mjs 등) — 화살표가
+// 지워지면 "8.1→9.2"가 "8.19.2"로 붙어버려, 서로 다른 두 숫자가 하나의 그럴듯한
+// 가짜 숫자처럼 보이는 사고가 난다(제안·경고 메시지에서 실측 재현됨). 이모지 스타일
+// "검정 화살표"(U+2B05 ⬅ 등, U+2B00-U+2BFF 블록)는 계속 제거하되, 일반 화살표
+// 블록(U+2190-U+21FF)은 절대 건드리지 않는다 — 대시보드 stripEmoji는 이 위험이
+// 없는 프론트엔드 카드 텍스트 전용이라 그대로 두고, 텔레그램용은 이 파일 안에
+// 독립적으로 정의한다(교차 임포트 안 함).
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]|\u{FE0F}|\u{200D}|\u{20E3}/gu;
+export function stripEmoji(s) {
+  return String(s ?? '').replace(EMOJI_RE, '');
+}
+
+// LLM 프로즈(conclusion·context·decisions·zeusComment)는 stripEmoji 다음에 stripEmDash를
+// 거친다 — stripEmDash 자신의 마지막 단계(`[^\S\n]{2,}→' '`)가 이모지 제거로 생긴
+// 이중 공백을 정리해주므로 별도 공백압축이 불필요하다.
+function sanitizeLlmText(s) {
+  return stripEmDash(stripEmoji(s));
+}
+
 export function formatFactsMessage({ departmentLabel, facts, conclusion = null, context = null, decisions = null, zeusComment = null, tag = null }) {
   const header = buildHeader(departmentLabel, tag);
   let msg = header;
-  if (conclusion) msg += `\n\n${CONCLUSION_MARKER}\n${stripEmDash(conclusion)}`;
+  if (conclusion) msg += `\n\n${CONCLUSION_MARKER}\n${sanitizeLlmText(conclusion)}`;
   // ⚠️ facts는 stripEmDash 대상이 아니다(2026-09-14 코드리뷰 지적으로 명시) — 긴
   // 하이픈 전면 금지(2026-09-01)는 LLM이 생성하는 conclusion·context·decisions·
   // zeusComment를 겨냥한 규칙이었다. facts는 Node가 직접 조립하는 사실 배열이고,
@@ -92,11 +125,21 @@ export function formatFactsMessage({ departmentLabel, facts, conclusion = null, 
   // facts 라인이 다수 존재한다(기존 관행) — 여기서 새삼 stripEmDash를 걸면 그
   // 기존 관행 전체가 조용히 바뀌는 훨씬 큰 변경이 된다. facts에도 금지를 확장할지는
   // 오너 확인 후 별도 결정.
-  const factBlock = (facts ?? []).map((f) => `· ${f}`).join('\n');
+  // facts 항목 사이는 빈 줄로 분리한다(2026-09-20 오너 DevRequest 공통규칙 0 —
+  // "내용이 달라지거나 가독성이 떨어지는 지점에서 줄을 바꾸는 것도 전 메시지에
+  // 적용". weekly-vault-health-check처럼 이질적 카테고리 5개+가 한 메시지에 붙어
+  // 나오는 경우 특히 가독성이 떨어졌던 사례 — Apollo 로그 실측 확인).
+  // <pre> 블록(예: themis-risk-review.mjs의 거시지표 표)은 불릿("· ") 없이 그대로
+  // 둔다 — 개조식 한 줄이 아니라 독립된 고정폭 블록이라 앞에 불릿이 붙으면 표 위에
+  // 어색하게 홀로 걸린다(2026-09-20 독립 코드리뷰 LOW 지적, 코스메틱).
+  const factBlock = (facts ?? []).map((f) => {
+    const cleaned = stripEmoji(f);
+    return cleaned.startsWith('<pre>') ? cleaned : `· ${cleaned}`;
+  }).join('\n\n');
   msg += `\n\n${FACTS_MARKER}\n${factBlock}`;
-  if (context) msg += `\n\n${CONTEXT_MARKER}\n${stripEmDash(context)}`;
-  if (decisions?.length) msg += `\n\n${DECISIONS_MARKER}\n${decisions.map((d) => `· ${stripEmDash(d)}`).join('\n')}`;
-  if (zeusComment) msg += `\n\n${ZEUS_MARKER} ${stripEmDash(zeusComment)}`;
+  if (context) msg += `\n\n${CONTEXT_MARKER}\n${sanitizeLlmText(context)}`;
+  if (decisions?.length) msg += `\n\n${DECISIONS_MARKER}\n${decisions.map((d) => `· ${sanitizeLlmText(d)}`).join('\n\n')}`;
+  if (zeusComment) msg += `\n\n${ZEUS_MARKER} ${sanitizeLlmText(zeusComment)}`;
   return msg;
 }
 

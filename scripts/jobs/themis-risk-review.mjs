@@ -35,7 +35,7 @@ import { assembleJobs } from '../tools/ledger-facts.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 
 // loadEnv()·loadAgent()는 main() 안에서만 부른다(2026-08-23, 독립 코드리뷰 MEDIUM 지적) —
@@ -80,10 +80,68 @@ export function buildRecentProposalsSummary(proposals, now = new Date()) {
 // 재검토가 전부 한 문단에 뭉쳐 나가고 있었다. 원인: formatDepartmentMessage에 LLM
 // 원문을 그대로 넘겨써 왔던 것 — Hermes(morning-briefing, Node 전용)·Athena(제안 메시지,
 // formatFactsMessage)는 애초에 이 구조를 안 벗어났었다).
-export function buildThemisFacts({ macro, jobsText, recentProposalsCount }) {
-  const macroLines = String(macro || '').split('\n').map((l) => l.trim()).filter(Boolean);
+// 순수함수 — 지표·값·5일변동·출처처럼 형식이 동일하게 반복되는 거시지표를 표로
+// 정리한다(2026-09-20 오너 DevRequest — "형식이 비슷한 항목은 표 형태로 정리해 본문에
+// 삽입"). sendTelegram이 이미 parse_mode:'HTML'로 나가므로(telegram.mjs) <pre>로 감싸
+// 모바일에서도 열이 안 흐트러지게 고정폭 정렬한다. macroData가 없으면(조회 실패) null —
+// 호출부가 facts에서 통째로 생략한다.
+// 표시폭 계산 — 한글(완성형 음절)·전각 문자는 모노스페이스 폰트에서 라틴 문자 2개
+// 자리를 차지한다. padEnd(JS 문자열 length, UTF-16 code unit 기준)로 그냥 정렬하면
+// 헤더("지표"·"값"·"5일변동"·"비고" 전부 한글)가 매번 실제 렌더 폭보다 짧게 계산돼
+// 열이 어긋난다 — 독립 코드리뷰 지적(2026-09-20, HIGH), 실측 재현됨.
+function displayWidth(s) {
+  let w = 0;
+  for (const ch of String(s)) {
+    const cp = ch.codePointAt(0);
+    const wide = (cp >= 0x1100 && cp <= 0x115F) // 한글 자모
+      || (cp >= 0x2E80 && cp <= 0xA4CF) // CJK 부수~이(Yi) 음절
+      || (cp >= 0xAC00 && cp <= 0xD7A3) // 한글 완성형 음절
+      || (cp >= 0xF900 && cp <= 0xFAFF) // CJK 호환 한자
+      || (cp >= 0xFF00 && cp <= 0xFF60) || (cp >= 0xFFE0 && cp <= 0xFFE6); // 전각 형태
+    w += wide ? 2 : 1;
+  }
+  return w;
+}
+function padEndDisplay(s, width) {
+  const w = displayWidth(s);
+  return w >= width ? s : s + ' '.repeat(width - w);
+}
+
+export function buildMacroTable(macroData) {
+  const entries = Object.entries(macroData || {});
+  if (!entries.length) return null;
+  const round = (n) => (n == null ? null : Math.round(n * 100) / 100);
+  const header = ['지표', '값', '5일변동', '비고', '출처'];
+  const rows = entries.map(([key, d]) => {
+    if (d?.value == null) return [key, '데이터없음', '-', '-', '-'];
+    const chg = d.change5d != null ? `${d.change5d > 0 ? '+' : ''}${round(d.change5d)}%` : '?';
+    const noteParts = [];
+    if (d.drawdown5d != null) noteParts.push(`고점대비 ${round(d.drawdown5d)}%`);
+    // rally5d(저점대비 상승)는 정의상 항상 0 이상이라 "+"를 하드코딩해도 되지만,
+    // 상류 계산이 음수를 낼 가능성을 방어적으로 배제하지 않는다 — 하드코딩하면
+    // "+-1.2%"처럼 부호가 겹쳐 보이는 사고가 날 수 있다(2026-09-20 독립 코드리뷰
+    // LOW 지적). change5d와 동일하게 조건부로 붙인다.
+    if (d.rally5d != null) noteParts.push(`저점대비 ${d.rally5d > 0 ? '+' : ''}${round(d.rally5d)}%`);
+    return [key, String(round(d.value)), chg, noteParts.join(', ') || '-', d.source || '?'];
+  });
+  const table = [header, ...rows].map((r) => r.map((c) => String(c)));
+  // 폭은 반드시 이스케이프 전(=실제 렌더 문자) 기준으로 잰다 — 이스케이프 후 재면
+  // "S&P500"이 "S&amp;P500"(10자)로 계산돼 실제 렌더 폭(6칸)보다 훨씬 넓게 패딩된다
+  // (독립 코드리뷰 지적, CRITICAL급 — "S&amp;" 같은 HTML 엔티티가 있는 지표명이
+  // 나올 때마다 표 전체가 어긋남). 패딩까지 끝낸 뒤에만 escapeHtml을 적용한다 —
+  // 엔티티가 늘어난 소스 길이는 Telegram이 HTML로 파싱해 원래 폭으로 렌더하므로
+  // 정렬에 영향 없다.
+  const widths = header.map((_, i) => Math.max(...table.map((r) => displayWidth(r[i]))));
+  const lines = table.map((r) => r.map((c, i) => escapeHtml(padEndDisplay(c, widths[i]))).join('  ').replace(/\s+$/, ''));
+  return `<pre>${lines.join('\n')}</pre>`;
+}
+
+export function buildThemisFacts({ macroTable, jobsText, recentProposalsCount }) {
   const jobLines = String(jobsText || '').split('\n').map((l) => l.trim()).filter(Boolean);
-  return [...macroLines, ...jobLines, `최근 7일 생성된 제안: ${recentProposalsCount}건`];
+  const facts = [];
+  if (macroTable) facts.push(macroTable);
+  facts.push(...jobLines, `최근 7일 생성된 제안: ${recentProposalsCount}건`);
+  return facts;
 }
 
 // 순수함수 — Themis에게 줄 프롬프트. 숫자는 전부 주입된 사실(macro·jobsText·
@@ -121,7 +179,12 @@ ${CONCLUSION_MARKER}
 ${CONTEXT_MARKER}
 거시지표·잡상태 숫자를 다시 나열하지 말고 왜 그 결론인지 근거 문장 1~3개(판관의
 언어로, 인용과 함께 짚는 서술형). 문장 사이는 줄바꿈으로 분리해라 — 한 문단에
-전부 몰아쓰지 마라.
+전부 몰아쓰지 마라. 오너가 매일 시세창을 들여다보는 사람이 아니다 — 전문용어나
+트리거명을 쓸 땐 괄호로 짧게 풀어써라(예: "볼린저밴드(가격이 평소 오가던 범위를
+벗어났는지 보는 지표)"). 등급·심각도는 이모지가 아니라 "정상"·"주의"·"위험" 같은
+단어로 표현해라 — 문장이 이모지 없이는 뜻이 안 통하게 쓰면 안 된다(이모지는 발송
+직전 자동으로 제거되므로 "위험 수준은 🟢다"처럼 쓰면 "위험 수준은 다"로 깨져서
+나간다).
 
 ${DECISIONS_MARKER}
 2번에서 짚은 우려되는 제안이 있으면 오너가 확인해볼 점을 "- "로 시작하는 줄로 1~3개
@@ -156,7 +219,8 @@ async function main() {
   const recentProposalsCount = filterRecentProposals(proposals, new Date()).length;
 
   const prompt = buildThemisPrompt({ macro, jobsText: jobs.text, recentProposalsText });
-  const facts = buildThemisFacts({ macro, jobsText: jobs.text, recentProposalsCount });
+  const macroTable = macroData ? buildMacroTable(macroData) : null;
+  const facts = buildThemisFacts({ macroTable, jobsText: jobs.text, recentProposalsCount });
 
   if (DRY_RUN) {
     console.log('(드라이런 — 텔레그램 발송 없음)\n');

@@ -155,6 +155,22 @@ test('findRemainingWorkSections: 섹션 없으면 빈 배열', () => {
   assert.deepEqual(findRemainingWorkSections([mkFile('A', '# 제목\n\n내용만 있음')]), []);
 });
 
+test('findRemainingWorkSections: progress:"완료"/"폐기"로 닫힌 문서는 제외(2026-09-20 오너 DevRequest — 이미 완료된 건 목록에서 뺀다)', () => {
+  const files = [
+    mkFile('A-완료', '## 남은 것\n\n- 완료됐는데 안 지운 잔재', { progress: '완료' }),
+    mkFile('B-폐기', '## 남은 것\n\n- 폐기됐는데 안 지운 잔재', { progress: '폐기' }),
+    mkFile('C-진행중', '## 남은 것\n\n- 실제로 해결 필요', { progress: '진행중' }),
+  ];
+  const result = findRemainingWorkSections(files);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].file, 'C-진행중');
+});
+
+test('findRemainingWorkSections: progress 필드 자체가 없는 문서(Sessions·DevRequests 관례)는 계속 포함(누락 방지 우선)', () => {
+  const files = [mkFile('Log/Sessions/A', '## 남은 것\n\n- 세션 로그 잔여')];
+  assert.equal(findRemainingWorkSections(files).length, 1);
+});
+
 test('findStaleAutoClaims: "자동 갱신" 문구 있는데 오래 안 바뀌면 재확인 후보', () => {
   const files = [mkFile('A', '분기보고서 발행 직후 자동 갱신된다.', { updatedAt: '2026-06-01' })];
   const result = findStaleAutoClaims(files, new Date('2026-09-04'), 56);

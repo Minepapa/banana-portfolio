@@ -52,8 +52,11 @@ function runFacts(scriptName) {
     return execFileSync('node', [join(HERE, '..', 'tools', scriptName)], { encoding: 'utf8', timeout: 180000 });
   } catch (e) {
     // 도구 자체가 실패해도(yfinance 일시 오류 등) 다른 쪽 점검까지 막지 않는다 —
-    // 실패 사실 자체를 보고에 남겨 조용히 넘어가지 않게 한다.
-    return `[경고] ${scriptName} 실행 실패: ${e.message.slice(0, 300)}`;
+    // 실패 사실 자체를 보고에 남겨 조용히 넘어가지 않게 한다. 이 리턴값은
+    // buildAllocationCheckFacts를 거쳐 그대로 오너 facts 불릿이 되므로 e.message
+    // 원문은 콘솔에만 남긴다(2026-09-20 오너 DevRequest).
+    console.error(`${scriptName} 실행 실패 —`, e.message);
+    return `[경고] ${scriptName} 실행 실패 — 로그 확인 필요`;
   }
 }
 

@@ -268,8 +268,13 @@ test('confirmPriorOrderVoided: allowCancel:true + unfilled인데 취소시도 �
   });
   assert.equal(r.voided, false);
   assert.equal(r.kind, 'unfilled');
-  assert.match(r.note, /취소시도 실패/);
-  assert.match(r.note, /이미 체결된 주문입니다/);
+  // note는 notify()를 거쳐 오너에게 직접 나갈 수 있어(place-breakout-fallback-entry.mjs
+  // "수동확인 필요" 알림 경로) 2026-09-20부터 원본 에러 텍스트(e.message)를 담지 않는다
+  // — 상세는 console.error로만 남긴다(오너 DevRequest, 공통규칙 0). 부재 확인만으론
+  // note가 통째로 비어도 통과하므로(독립 코드리뷰 LOW 지적), 실제로 남아야 할 안전한
+  // 문구까지 정확히 일치시켜 검증한다.
+  assert.equal(r.note, '전날 주문이 아직 미체결 상태로 남아있는 것으로 확인됨(자동실효 가정이 틀렸을 가능성) — 폴백 보류 — 취소시도 실패');
+  assert.doesNotMatch(r.note, /이미 체결된 주문입니다/);
 });
 
 test('confirmPriorOrderVoided: allowCancel:true + no_result → 취소시도가 아니라 기존 holdings 교차검증 경로로 감(취소는 unfilled 전용)', async () => {
