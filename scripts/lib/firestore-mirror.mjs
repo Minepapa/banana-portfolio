@@ -19,6 +19,7 @@
 // 호출부(sync-firestore-mirror.mjs)가 stock-registry.mjs에서 만들어 넘긴다.
 
 import { resolveCanonicalStockName } from './stock-registry.mjs';
+import { dedupExecutionsForReport } from '../jobs/daily-execution-report.mjs';
 
 // 최근 1년 이내 항목만 남긴다(mirror의 "이력형" 문서 원칙 — 그 이전은 Vault에서 조회).
 function withinLastYear(dateStr, now) {
@@ -97,8 +98,25 @@ export function buildProfitsMirror({ profitEvents = [], now = new Date(), regist
 }
 
 // executionEvents: Facts/Ledger/Executions 파싱 결과({ tradeDate, tradeType, stockName, quantity, price, ... })
+//
+// ⚠️ 크로스소스 중복표시 제거(2026-09-21, 오너 신고 — 앱 체결 탭에 TIGER 리츠
+// 부동산인프라TOP10액티브 49주 매도가 두 줄로 나옴). 위탁·금현물은 카카오 파싱
+// (parse-notifications-to-vault.mjs)과 NH API(reconcile-nh-executions.mjs·이번
+// 세션 신설 watch-nh-order-fill.mjs)가 같은 실제 체결을 각자 별도 Facts/Ledger/
+// Executions 파일로 기록하는 게 최종 설계다(Log/Strategy/2026-09-02-NH-API-우선-
+// KIS-카카오파싱-역할축소-결정.md — 위탁은 ISA와 카카오 파싱 시점에 구분이 안 되는
+// 구조적 제약으로 정리 불가, 금현물도 API 단독장애 시 안전망 필요로 영구 병행이
+// 최종설계). `update-holdings-from-executions.mjs`의 `findMatchingKnownExecution`이
+// 보유수량·실현손익엔 이미 한 번만 반영되게 막아왔지만(장부는 항상 정확했음), 이
+// 미러는 raw executionEvents를 그대로 나열해 화면에만 중복이 보였다 — 정확히 같은
+// 클래스의 버그가 2026-09-04 daily-execution-report.mjs(텔레그램 체결보고)에서도
+// 있었고 그때 `dedupExecutionsForReport`(findMatchingKnownExecution 재사용, recordedAt
+// 오름차순으로 먼저 기록된 쪽을 대표로 남김)로 고쳤다 — 그 수정이 이 앱 탭까지는
+// 안 미쳤던 게 이번에 드러난 갭. 같은 판정 함수를 그대로 재사용해 두 표시 경로
+// (텔레그램 보고·앱 체결 탭)가 항상 같은 기준으로 dedup되게 통일한다(Facts/Ledger의
+// 원본 파일 자체는 그대로 둠 — 출처 추적성 유지, 화면 표시 직전에만 걸러냄).
 export function buildTradesMirror({ executionEvents = [], now = new Date(), registry = new Map() }) {
-  const items = executionEvents
+  const items = dedupExecutionsForReport(executionEvents)
     .filter((e) => withinLastYear(e.tradeDate, now))
     .map((e) => ({
       date: e.tradeDate, side: e.tradeType, account: e.account ?? null, ticker: e.stockCode ?? '',

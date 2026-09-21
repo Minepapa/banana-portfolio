@@ -151,6 +151,27 @@ test('buildTradesMirror: 1년 이전 제외 + 필드 매핑', () => {
   assert.equal(r.items[0].side, '매수');
 });
 
+test('buildTradesMirror: 카카오·NH API 크로스소스 중복 체결은 1건만 남김(2026-09-21 오너 신고 재현)', () => {
+  // 실제 재현 사례 — TIGER 리츠부동산인프라TOP10액티브 49주 매도(주문번호 847026)가
+  // NH API(reconcile-nh-executions.mjs·watch-nh-order-fill.mjs, tradeDate 00:00:00
+  // 고정)와 카카오 파싱(parse-notifications-to-vault.mjs, 실제 체결시각) 두 파일로
+  // 각각 기록됨 — findMatchingKnownExecution 기준(날짜 일단위·구분·종목명·수량)으로는
+  // 같은 거래이므로 recordedAt이 더 이른 쪽만 남아야 한다.
+  const executionEvents = [
+    {
+      tradeDate: '2026-09-21 00:00:00', tradeType: '매도', stockName: 'TIGER 리츠부동산인프라TOP10액티브',
+      stockCode: '0086B0', quantity: 49, price: 9455, orderNo: '847026', recordedAt: '2026-09-21T05:11:03.864Z',
+    },
+    {
+      tradeDate: '2026-09-21 14:10:47', tradeType: '매도', stockName: 'TIGER 리츠부동산인프라TOP10액티브',
+      stockCode: '0086B0', quantity: 49, price: 9455, recordedAt: '2026-09-21T05:13:31.121Z',
+    },
+  ];
+  const r = buildTradesMirror({ executionEvents, now: NOW });
+  assert.equal(r.items.length, 1, '같은 실제 체결이 두 줄로 표시되면 안 됨');
+  assert.equal(r.items[0].date, '2026-09-21 00:00:00', 'recordedAt이 더 이른 쪽(API 소스)이 대표로 남아야 함');
+});
+
 test('buildLatestReportMirror: report 없으면 빈 값', () => {
   const r = buildLatestReportMirror({ now: NOW });
   assert.equal(r.headline, '');
