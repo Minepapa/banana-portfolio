@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNhExecutionRows } from './reconcile-nh-executions.mjs';
+import { parseNhExecutionRows, buildNhFillLedgerInput } from './reconcile-nh-executions.mjs';
+import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
 
 // 실제 라이브 조회로 확인한 실제 체결 1건 그대로("메리츠금융지주 매도 30주
 // @132,000원" — Vault에 이미 카카오 파싱으로 기록된 값과 정확히 일치 확인, 2026-09-03).
@@ -82,4 +83,37 @@ test('[핵심 안전장치] parseNhExecutionRows: orr_qty 필드가 없거나 �
   const rows = [{ itg_orr_no: '1', iem_cd: 'A', iem_nm: 'X', sby_dit_cd_nm: '현금매수', tot_cns_qty: 10, cns_avg_uit_pr: 100 }];
   const r = parseNhExecutionRows(rows);
   assert.equal(r[0].fullyFilled, false);
+});
+
+// ── buildNhFillLedgerInput(2026-09-21 독립 코드리뷰 지적, MEDIUM 재발방지 — 최초
+// watch-nh-order-fill.mjs는 이 필드들을 CLI 인자에서 따로 채워, reconcile 경로와
+// dedup 키가 "우연히 같은 문자열"에만 의존했다(CRITICAL 사고 경로). 이 함수를 두
+// 경로가 공유하게 해 dedupKey 일치를 구조적으로 보장한다 — 같은 row를 넣으면 둘
+// 다 반드시 같은 dedupKey가 나와야 한다.) ──
+
+test('buildNhFillLedgerInput: row 하나로 buildExecutionRecord 입력을 만들면 reconcile-nh-executions.mjs와 watch-nh-order-fill.mjs가 항상 같은 dedupKey를 냄', () => {
+  const row = parseNhExecutionRows([{
+    itg_orr_no: 847026, iem_cd: '0086B0', iem_nm: 'TIGER 리츠부동산인프라TOP10액티브',
+    sby_dit_cd_nm: '현금매도', orr_qty: 49, tot_cns_qty: 49, cns_avg_uit_pr: 9455,
+  }])[0];
+  // reconcile-nh-executions.mjs의 일일 폴링 경로가 이 row를 만났을 때와
+  const fromReconcile = buildExecutionRecord(buildNhFillLedgerInput(row, { today: '2026-09-21', account: '위탁', actNo: '20501596019' }));
+  // watch-nh-order-fill.mjs의 즉시감시 경로가 *같은* row를 만났을 때(주문 접수
+  // 직후 CLI 인자로 받은 --account/--code/--name/--side가 무엇이었든, Ledger에는
+  // row 쪽 값만 쓰므로 결과가 같아야 한다) — 두 경로 모두 같은 함수를 호출.
+  const fromWatcher = buildExecutionRecord(buildNhFillLedgerInput(row, { today: '2026-09-21', account: '위탁', actNo: '20501596019' }));
+  assert.equal(fromReconcile.dedupKey, fromWatcher.dedupKey);
+  assert.equal(fromReconcile.filename, fromWatcher.filename);
+  assert.equal(fromReconcile.dedupKey, '2026-09-21 00:00:00|매도|TIGER 리츠부동산인프라TOP10액티브|49|847026');
+});
+
+test('buildNhFillLedgerInput: account·actNo는 호출부가 주입한 값을 그대로 쓰고 acctNo는 마스킹됨', () => {
+  const row = parseNhExecutionRows([{
+    itg_orr_no: '1', iem_cd: 'A', iem_nm: '금 99.99K', sby_dit_cd_nm: '현금매수', orr_qty: 1, tot_cns_qty: 1, cns_avg_uit_pr: 130000,
+  }])[0];
+  const input = buildNhFillLedgerInput(row, { today: '2026-09-21', account: '금현물', actNo: '20902920556' });
+  assert.equal(input.account, '금현물');
+  assert.equal(input.broker, 'NH투자증권');
+  assert.notEqual(input.acctNo, '20902920556'); // 마스킹돼야 함(원본 그대로 노출 금지)
+  assert.ok(input.acctNo.length > 0);
 });

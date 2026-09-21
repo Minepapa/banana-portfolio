@@ -124,6 +124,32 @@ export function parseNhExecutionRows(rows) {
     .filter((e) => e.tradeType != null && e.orderNo !== '' && e.quantity != null && e.quantity > 0 && e.price != null && e.price > 0);
 }
 
+// 순수함수(테스트 가능, 2026-09-21 독립 코드리뷰 지적으로 신설 — MEDIUM/CRITICAL
+// 재발방지) — parseNhExecutionRows가 만든 row 하나를 buildExecutionRecord 입력으로
+// 변환한다. watch-nh-order-fill.mjs(주문 접수 직후 즉시감시)도 이 함수를 그대로
+// 써서, 두 경로가 같은 체결을 만나면 dedupKey가 "우연히 같은 문자열을 쓴다"가
+// 아니라 "같은 함수를 호출한다"로 구조적으로 보장된다 — CLI 인자·Vault 홀딩명
+// 같은 별도 소스에서 stockName/tradeType을 따로 채우면(최초 버전의 실제 버그)
+// 한쪽만 표기가 달라져도 같은 체결이 파일 2개로 갈라지고,
+// update-holdings-from-executions.mjs의 findMatchingKnownExecution(같은 필드
+// 조합으로 매칭)까지 동시에 뚫려 이중 적용 사고로 이어질 수 있다(2026-09-03
+// 실사고와 동일 클래스).
+export function buildNhFillLedgerInput(row, { today, account, actNo }) {
+  return {
+    tradeDate: `${today} 00:00:00`,
+    tradeType: row.tradeType,
+    stockCode: row.stockCode,
+    stockName: row.stockName,
+    quantity: row.quantity,
+    price: row.price,
+    currency: 'KRW',
+    broker: BROKER,
+    account,
+    acctNo: maskNhActNo(actNo) || '',
+    orderNo: row.orderNo,
+  };
+}
+
 function kstTodayParts() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).formatToParts(new Date());
   const get = (type) => parts.find((p) => p.type === type).value;
@@ -198,19 +224,9 @@ async function main() {
 
     for (const e of executions) {
       if (!e.fullyFilled) { partial++; continue; }
-      const { filename, content, dir, dedupKey } = buildExecutionRecord({
-        tradeDate: `${today} 00:00:00`,
-        tradeType: e.tradeType,
-        stockCode: e.stockCode,
-        stockName: e.stockName,
-        quantity: e.quantity,
-        price: e.price,
-        currency: 'KRW',
-        broker: BROKER,
-        account: label,
-        acctNo: maskNhActNo(actNo) || '',
-        orderNo: e.orderNo,
-      });
+      const { filename, content, dir, dedupKey } = buildExecutionRecord(
+        buildNhFillLedgerInput(e, { today, account: label, actNo }),
+      );
       const filepath = join(dir, filename);
       if (existsSync(filepath)) {
         const existing = parseFrontmatter(readFileSync(filepath, 'utf8'));

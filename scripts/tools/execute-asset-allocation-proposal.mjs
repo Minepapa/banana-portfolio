@@ -35,15 +35,18 @@
 //   - ISA는 NH PLUG API(/n2/acctinfo)가 애초에 노출하지 않아(2026-09-03 라이브
 //     확인, nh-accounts.mjs 참고) 이 잡이 배선할 방법 자체가 없다 — ISA 자산분배
 //     제안은 계속 수동 처리(자동 만료 알림은 그대로 발송돼 오너에게 도달함).
-//   - watch-order-fill.mjs(체결 확인 백그라운드 감시)는 KIS 전용 구현이라 NH 주문에는
-//     아직 대응하는 게 없다 — 실주문 접수(brokerOrderId)까지만 확인하고, 실제 체결
-//     여부는 카카오 알림 파싱 경로(parse-notifications-to-vault.mjs)에 의존한다.
+//   - (2026-09-21 해소) 체결 확인 백그라운드 감시는 이제 watch-nh-order-fill.mjs가
+//     NH 체결조회 API로 직접 한다(watch-order-fill.mjs의 KIS 패턴을 그대로 이식) —
+//     실주문 접수 직후 이 파일이 자동으로 띄운다. 카카오 알림 파싱은 안정화 기간
+//     동안 병행 유지(Log/Strategy/2026-09-02 결정 문서의 5단계, 아직 제거 안 함).
 //
 // 사용법:
 //   node scripts/tools/execute-asset-allocation-proposal.mjs
 //   node scripts/tools/execute-asset-allocation-proposal.mjs --proposal-id=<id>
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseProposal, proposalMatchKey, updateProposalRecord } from '../lib/proposal-vault.mjs';
 import { executeProposal } from '../lib/execute-proposal.mjs';
 import { isApprovalStale } from '../lib/order-gate.mjs';
@@ -461,8 +464,42 @@ async function main() {
       }
     } else {
       console.log(`  ✅ ${proposal.id} — ${result.settlement.status} (${result.settlement.log})`);
-      // ⚠️ watch-order-fill.mjs는 KIS 전용이라 여기서 못 띄운다(파일 헤더 주석
-      // "알려진 한계" 참고) — 실제 체결 확인은 카카오 알림 파싱 경로에 의존.
+      // 실주문이 실제로 NH에 접수되면(brokerOrderId 있음) watch-nh-order-fill.mjs를
+      // 분리된 백그라운드 프로세스로 띄워 NH 체결조회 API로 직접 확인 후 텔레그램으로
+      // 알린다(2026-09-21, 오너 지시 — "실제 체결을 왜 api로 확인하지 않고 카카오
+      // 알림 파싱으로 확인하는거지?"). execute-quant-proposal.mjs가 watch-order-
+      // fill.mjs(KIS)를 띄우는 것과 동일 패턴 — detached+unref로 이 잡이 끝나도 감시가
+      // 계속되게 한다. 섀도우 모드는 brokerOrderId가 없어(실주문 자체가 없음) 자연히
+      // 이 분기를 안 탄다.
+      // ⚠️ 독립 코드리뷰 지적(2026-09-21, HIGH) — watch-nh-order-fill.mjs는 krstock·
+      // krgold 체결조회 엔드포인트만 안다(계좌가 아니라 "국내주식 하나뿐인 도메인"
+      // 전제로 만들어짐). 위탁 계좌는 국내주식·해외주식·직접채권을 전부 담는데,
+      // 첫 버전은 classification.type을 안 가려 해외주식(gbstock, 별도 체결조회
+      // 엔드포인트 필요)·직접채권(체결조회 함수 자체가 없어 미검증) 제안에도 이
+      // watcher를 그대로 띄웠다 — krstock에서 그 주문을 못 찾으니 30분 뒤 "체결
+      // 확인 시간 초과, NH 앱에서 확인" 이라는 **거짓 경고**가 실제로는 정상
+      // 체결됐어도 매번 나가고, Ledger 기록도 안 된다. KR_STOCK·GOLD로 좁힌다 —
+      // OVERSEAS_STOCK·KR_BOND는 이 watcher가 지원할 때까지 여전히 카카오 알림에
+      // 의존(기존 상태 유지, 새로 나빠지는 건 아님).
+      const WATCHABLE_TYPES = new Set([INSTRUMENT_TYPE.KR_STOCK, INSTRUMENT_TYPE.GOLD]);
+      if (result.settlement.brokerOrderId && WATCHABLE_TYPES.has(classification.type)) {
+        const here = dirname(fileURLToPath(import.meta.url));
+        const child = spawn('node', [
+          join(here, 'watch-nh-order-fill.mjs'),
+          `--order-no=${result.settlement.brokerOrderId}`,
+          `--account=${classification.nhAccountLabel}`,
+          `--code=${classification.iemCd}`,
+          `--name=${classification.resolvedName ?? proposal.assetKey}`,
+          `--side=${proposal.side}`,
+        ], { detached: true, stdio: 'ignore' });
+        // spawn()은 실행 자체가 실패해도 동기 throw가 아니라 비동기 'error' 이벤트로만
+        // 알려준다 — execute-quant-proposal.mjs와 동일 이유로 리스너를 반드시 둔다
+        // (안 두면 unhandled 'error'가 이 배치 전체를 죽인다). 주문 자체는 이미
+        // writeStateFile로 기록된 뒤라 감시 기동 실패는 로그만 남기고 배치는 계속.
+        child.on('error', (e) => console.error(`  ⚠️ 체결감시 기동 실패(주문 자체는 이미 기록됨): ${e.message}`));
+        child.unref();
+        console.log(`  👁️ 체결감시 시작(백그라운드) — 주문번호 ${result.settlement.brokerOrderId}`);
+      }
 
       // 배치 내 다음 제안이 같은 풀을 다시 쓸 때를 대비해 이번 체결분을 로컬
       // 스냅샷에 반영(2026-09-06 코드리뷰 M2 지적 — 예전엔 잔고를 배치 시작 시
