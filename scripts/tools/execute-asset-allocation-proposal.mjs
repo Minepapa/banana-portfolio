@@ -78,7 +78,11 @@ const DEPARTMENT_LABEL = '운영실 Hermes';
 // ISA도 결과적으로 빠지지만 이유가 다르다 — NH PLUG API(/n2/acctinfo)가 ISA 계좌
 // 자체를 노출하지 않아(2026-09-03 라이브 확인, nh-accounts.mjs 헤더 주석 참고)
 // 배선할 방법이 없다(2026-09-06 코드리뷰 지적으로 이유 명시).
-const ALLOWED_NH_ACCOUNTS = new Set(['위탁', '금현물']);
+// export — place-nh-direct-order.mjs(오너 직접주문 CLI, 2026-09-21)가 제안 레코드를
+// 만들기 *전에* 같은 허용 계좌 판정을 먼저 해서, 이 잡이 나중에 "대상 계좌 밖"으로
+// 조용히 건너뛰기만 하고 텔레그램 알림은 없는 채로 승인된 제안이 고아로 남는 걸
+// 막는다(2026-09-21 독립 코드리뷰 HIGH 지적).
+export const ALLOWED_NH_ACCOUNTS = new Set(['위탁', '금현물']);
 
 function parseArgs(argv) {
   const out = {};
