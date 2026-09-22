@@ -5,6 +5,7 @@ import {
   STOP_LOSS_PCT, rMultiplePrice, PARTIAL_PROFIT_TRIGGER_R, PARTIAL_PROFIT_SELL_FRACTION,
 } from './breakout-risk.mjs';
 import { PROTECTION_STATUS } from './breakout-position-vault.mjs';
+import { roundToKrxTick } from './krx-tick.mjs';
 
 // entryPrice/quantity: 실제 매수 체결 결과(체결가·체결수량 — 예약 시점의 예상치가
 // 아니라 실제 값이어야 함, 시가 갭으로 예상과 다를 수 있어서). 반환: 두 스톱지정가
@@ -24,10 +25,18 @@ import { PROTECTION_STATUS } from './breakout-position-vault.mjs';
 // STOP_LOSS_PCT(8%) 그대로라 안 넘기는 호출부는 하위호환(회귀 없음). 3R
 // 부분익절 목표가 stopLossPct에 비례하는 건 breakout-risk.mjs rMultiplePrice의
 // 기존 설계 그대로(손절폭 4%인 포지션은 3R 목표가 +12%가 됨, +24%가 아님).
+// ⚠️ 호가단위 보정(2026-09-22, 실전 첫 손절주문 시도가 KIS "주식주문호가단위
+// 오류입니다"로 거부되며 발견 — SK텔레콤 87,400원×0.92=80,408원은 이 가격대
+// (50,000~200,000원) 호가단위 100원의 배수가 아니었다). entryPrice*(1±비율)
+// 퍼센트 계산은 호가단위를 모르므로, 실제 주문 가격으로 쓰기 직전에 여기서만
+// roundToKrxTick으로 보정한다 — breakout-risk.mjs의 rMultiplePrice·
+// computeTrailingStop 자체는 안 건드림(백테스트 시뮬레이터(breakout-simulator.mjs)
+// 도 같은 함수를 쓰는데, 거기 반올림을 넣으면 과거 검증된 백테스트 성과 수치가
+// 미세하게 달라진다 — 실주문 경계에서만 보정하는 게 맞다).
 export function computeProtectionOrders(entryPrice, quantity, stopLossPct = STOP_LOSS_PCT) {
-  const stopPrice = entryPrice * (1 - stopLossPct);
+  const stopPrice = roundToKrxTick(entryPrice * (1 - stopLossPct));
   const partialQty = Math.floor(quantity * PARTIAL_PROFIT_SELL_FRACTION);
-  const profitPrice = rMultiplePrice(entryPrice, PARTIAL_PROFIT_TRIGGER_R, stopLossPct);
+  const profitPrice = roundToKrxTick(rMultiplePrice(entryPrice, PARTIAL_PROFIT_TRIGGER_R, stopLossPct));
   return {
     stopOrder: { quantity, conditionPrice: stopPrice, price: stopPrice },
     profitOrder: partialQty > 0 ? { quantity: partialQty, conditionPrice: profitPrice, price: profitPrice } : null,

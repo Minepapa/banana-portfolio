@@ -10,6 +10,17 @@ const basePosition = {
 };
 const noSleep = async () => {};
 
+// [실사고 재발방지] 2026-09-22 — SK텔레콤 87,400원 진입 × 0.92(8% 손절) = 80,408원,
+// 이 가격대(50,000~200,000원) KRX 호가단위는 100원이라 KIS가 "주식주문호가단위
+// 오류입니다"로 3회 재시도 전부 거부했다(포지션이 무방비로 남음). computeProtectionOrders
+// 가 이제 krx-tick.mjs로 손절·익절가를 실제 호가단위에 맞춰 반올림한다.
+test('computeProtectionOrders: 호가단위 보정 — 2026-09-22 SK텔레콤 실사고 재현(87,400원 진입, 8% 손절)', () => {
+  const { stopOrder, profitOrder } = computeProtectionOrders(87400, 1); // 1주 → 부분익절 없음
+  assert.equal(stopOrder.conditionPrice, 80400); // 80,408 → 100원 단위로 보정
+  assert.equal(stopOrder.conditionPrice % 100, 0);
+  assert.equal(profitOrder, null); // 1주는 부분익절 수량 0(기존 동작 그대로 — 회귀 없음)
+});
+
 test('computeProtectionOrders: 손절은 전량, 부분익절은 절반(내림)', () => {
   const { stopOrder, profitOrder } = computeProtectionOrders(10000, 15); // 15주 × 50% = 7.5 → 내림 7
   assert.equal(stopOrder.quantity, 15);

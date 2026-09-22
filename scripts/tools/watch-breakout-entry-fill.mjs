@@ -38,6 +38,7 @@ import { buildBreakoutPositionRecord, updateBreakoutPositionRecord } from '../li
 import { buildPendingEntryRecord } from '../lib/breakout-pending-entry-vault.mjs';
 import { computeProtectionOrders, ensurePositionProtected } from '../lib/breakout-protection.mjs';
 import { STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
+import { roundToKrxTick } from '../lib/krx-tick.mjs';
 
 const BROKER = '한국투자증권';
 const DEPARTMENT_LABEL = '운영실 Hermes'; // watch-order-fill.mjs와 동일 원칙 — 순수 API조회 결과 전달, 부서 판단 없음
@@ -145,7 +146,12 @@ async function main() {
   // 매수 체결 확정 후 포지션 생성+보호주문 자동 발주(오너 확정, 별도 승인 불필요).
   async function protectAfterFill(filledQty, avgFillPrice) {
     const { profitOrder } = computeProtectionOrders(avgFillPrice, filledQty, stopLossPct);
-    const stopPrice = avgFillPrice * (1 - stopLossPct);
+    // ⚠️ 호가단위 보정(2026-09-22, 실사고로 발견 — krx-tick.mjs 헤더 참고). 이
+    // stopPrice는 포지션 레코드(State/BreakoutPositions)에 그대로 저장돼
+    // ensurePositionProtected(breakout-protection.mjs)가 재시도 때마다 이 값을
+    // 실제 주문가로 재사용한다 — 여기서 안 보정하면 매 재시도가 같은 사유로
+    // 계속 거부된다(실사고: 3회 재시도 전부 80,408원으로 실패).
+    const stopPrice = roundToKrxTick(avgFillPrice * (1 - stopLossPct));
     const { id, filename, content } = buildBreakoutPositionRecord({
       code, name, entryDate, entryPrice: avgFillPrice, quantity: filledQty,
       investedWon: avgFillPrice * filledQty, stopPrice, stopLossPct, profitOrderApplicable: profitOrder != null,

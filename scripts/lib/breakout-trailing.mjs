@@ -4,6 +4,7 @@
 // scripts/lib/kis.mjs)해 조건가를 올려야 진짜 트레일링이 된다. 이 파일은 그 판정만
 // 하는 순수함수(주문 정정 자체는 호출측 잡이 reviseKrOrder로 실행).
 import { computeTrailingStop, STOP_LOSS_PCT } from './breakout-risk.mjs';
+import { roundToKrxTick } from './krx-tick.mjs';
 
 // position: breakout-position-vault.mjs가 만든 레코드(parseBreakoutPosition 결과) —
 // entryPrice·highSinceEntry·stopPrice(·stopLossPct, 2026-09-19 ATR 가변손절 실전배선)
@@ -22,9 +23,16 @@ import { computeTrailingStop, STOP_LOSS_PCT } from './breakout-risk.mjs';
 // 오직 위로만 래칫(computeTrailingStop 자체가 이미 이 성질을 가짐 — reachedRMultiple이
 // highSinceEntry 기준 단조증가). 같은 값이면(진전 없음) 갱신 안 함(불필요한 정정 API
 // 호출·수수료성 이벤트 방지).
+// ⚠️ 호가단위 보정(2026-09-22, krx-tick.mjs 헤더 참고) — computeTrailingStop 자체는
+// 안 건드림(breakout-simulator.mjs 백테스트도 같은 함수를 씀). 이 함수가 반환하는
+// newStopPrice는 실제 KIS 정정주문(reviseKrOrder) 조건가로 바로 쓰이므로 여기서만
+// roundToKrxTick 적용 — position.stopPrice(이미 호가단위로 저장돼 있음, watch-
+// breakout-entry-fill.mjs 참고)와의 비교도 보정된 값끼리 해야 사소한 소수점
+// 차이로 불필요한 정정이 나가지 않는다.
 export function computeTrailingRevision(position, latestHigh) {
   const newHighSinceEntry = Math.max(position.highSinceEntry, latestHigh);
-  const newStopPrice = computeTrailingStop(position.entryPrice, newHighSinceEntry, position.stopLossPct ?? STOP_LOSS_PCT);
+  const rawStopPrice = computeTrailingStop(position.entryPrice, newHighSinceEntry, position.stopLossPct ?? STOP_LOSS_PCT);
+  const newStopPrice = roundToKrxTick(rawStopPrice);
   if (!(newStopPrice > position.stopPrice)) return null;
   return { newHighSinceEntry, newStopPrice };
 }
