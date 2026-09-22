@@ -15,6 +15,15 @@
 // 낸다 — 조회가 실패하거나 상태가 애매하면 자동 발주를 보류하고 수동확인으로 넘긴다
 // (findUnprocessedPendingEntries가 'uncertain' 상태는 재시도 대상에서 자동 제외).
 //
+// ✅ 자동실효 가정 검증 완료(2026-09-22, 실전 첫 실행 — SK텔레콤 017670 테스트
+// 주문) — 가정 자체는 맞았다: 세션 종료 후 KIS 체결조회 응답이 cncl_yn:""(빈
+// 문자열, 'Y' 아님)·tot_ccld_qty:"0"·rmn_qty:"0"·rjct_qty:"1"(주문수량 전체)로
+// 왔다. 다만 그때까지 코드가 "voided"로 인정하는 신호가 cncl_yn==='Y'뿐이라 이
+// 패턴을 못 알아보고 'unfilled'로 오분류 → 이미 죽은 주문에 취소를 또 시도 →
+// KIS가 거부 → uncertain에 갇혀 폴백이 하루 지연됐다. classifyPriorOrderStatus에
+// remainingQty===0·filledQty===0 분기(rejectedOrExpired)를 추가해 해소 — 상세는
+// 그 함수 헤더 주석 참고.
+//
 // launchd 배선: 평일 09:03 KST(com.banana2.place-breakout-fallback-entry.plist,
 // 2026-09-18 — 오너의 "카이로스 자동거래 승인" 지시로 상시 가동. 2026-09-16 세션크론
 // 1회 실행에서 안전장치(classifyPriorOrderStatus, 이중매수 방지)가 실제로 정상
@@ -106,11 +115,29 @@ function loadOpenPositionCount() {
 // 순수함수로 분리(테스트 가능하게, 코드리뷰 지적과 동일한 원칙 — decideEntryOutcome
 // 참고) — checkOrderFill의 결과(또는 null/예외)만 보고 "확실히 취소/실효됐다"고
 // 안전하게 판단할 수 있는지 분류한다. 애매하면 전부 voided=false(폴백 보류) 쪽으로.
+// ⚠️ rejectedOrExpired 분기 추가(2026-09-22, 실전 첫 실행 라이브 데이터로 발견) —
+// 헤더(:10-16)가 명시한 "장후시간외 미체결 주문은 세션 종료 시 자동실효된다"는
+// 가정을 검증할 첫 실제 사례(SK텔레콤 017670, 2026-09-21 장후시간외 1주 매수
+// 시도)에서, KIS 체결조회(TTTC0081R) 원본 응답이 cncl_yn:""(빈 문자열, 'Y' 아님)
+// ·tot_ccld_qty:"0"·rmn_qty:"0"·rjct_qty:"1"(=주문수량 전체)로 왔다 — 즉 자동실효
+// 가정 자체는 맞았지만(주문이 실제로 죽어있음), 이 코드가 "voided"로 인정하는
+// 유일한 신호가 cncl_yn==='Y'뿐이라 못 잡았다. remainingQty(rmn_qty)가 0인데
+// filledQty도 0이면(체결 0에 잔여수량도 0) 그 수량이 갈 곳은 거부/실효뿐이다 —
+// 체결됐으면 filledQty>0, 아직 살아있으면 remainingQty>0이어야 하므로(기존
+// kis.test.js 라이브 계약 — 부분체결 rmn_qty:'7'·완전미체결 rmn_qty:'10' 케이스
+// 참고, 둘 다 remainingQty>0). 이 신호를 몰라서 이 잡이 이미 죽은 주문에 대해
+// attemptCancelPriorOrder(실제 KIS 취소요청)를 또 시도했고, "취소가능수량 없음"류
+// 사유로 그 취소 요청 자체가 실패해 uncertain에 갇혔다(오늘 아침 실사고 — SK텔레콤
+// 폴백이 진행 안 됨). cncl_yn 체크보다 먼저 두지 않는 이유: 명시적 canceled 판정이
+// 더 강한 증거라 우선순위를 유지한다.
 export function classifyPriorOrderStatus(result) {
   if (result == null) return { voided: false, kind: 'no_result', note: '전날 주문 조회 결과 없음(응답에 해당 주문 없음) — 생사 확인 불가, 추정 안 함' };
   if (result.canceled) return { voided: true, kind: 'canceled', note: '전날 주문이 취소/실효 상태로 확인됨' };
   if (result.fullyFilled) return { voided: false, kind: 'fullyFilled', note: `전날 주문이 실제로는 전량체결(${result.avgFillPrice}원)된 것으로 확인됨 — 폴백 대상 아님, 이미 포지션이 있을 수 있음` };
   if (result.filledQty > 0) return { voided: false, kind: 'partial', note: `전날 주문이 일부(${result.filledQty}주) 체결된 것으로 확인됨 — 잔여수량 처리 불명확, 자동폴백 대상 아님` };
+  if (result.filledQty === 0 && result.remainingQty === 0) {
+    return { voided: true, kind: 'rejectedOrExpired', note: '전날 주문이 거부되었거나 장후시간외 세션 종료로 자동실효된 것으로 확인됨(체결 0주·잔여수량 0) — 취소시도 없이 폴백 진행' };
+  }
   return { voided: false, kind: 'unfilled', note: '전날 주문이 아직 미체결 상태로 남아있는 것으로 확인됨(자동실효 가정이 틀렸을 가능성) — 폴백 보류' };
 }
 

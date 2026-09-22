@@ -36,6 +36,26 @@ test('classifyPriorOrderStatus: 미체결(filledQty=0)이지만 canceled 아니�
   assert.match(r.note, /미체결 상태로 남아있는/);
 });
 
+// [실사고 재발방지] 2026-09-22 실전 첫 실행 — SK텔레콤(017670) 장후시간외 1주
+// 매수가 거부/자동실효됐는데(KIS 응답: cncl_yn:""·tot_ccld_qty:"0"·rmn_qty:"0"·
+// rjct_qty:"1") canceled==='Y'가 아니라서 예전 로직은 'unfilled'로 오분류 →
+// 이미 죽은 주문에 취소를 또 시도 → KIS가 거부(취소가능수량 없음) → uncertain에
+// 갇혀 다음날시가 폴백이 하루 지연됐다. remainingQty===0인데 filledQty도 0이면
+// (체결 0·잔여도 0) 거부/실효뿐이라 voided=true여야 한다 — attemptCancelPriorOrder
+// 재시도 없이 바로 폴백 진행.
+test('classifyPriorOrderStatus: filledQty=0·remainingQty=0(체결도 잔여도 없음)이면 거부/자동실효로 voided=true — 2026-09-22 실사고 재현', () => {
+  const r = classifyPriorOrderStatus({ fullyFilled: false, filledQty: 0, remainingQty: 0, canceled: false });
+  assert.equal(r.voided, true);
+  assert.equal(r.kind, 'rejectedOrExpired');
+  assert.match(r.note, /거부되었거나.*자동실효/);
+});
+
+test('classifyPriorOrderStatus: filledQty=0인데 remainingQty>0(아직 살아있음)이면 여전히 voided=false — 위 분기와 안 헷갈려야 함', () => {
+  const r = classifyPriorOrderStatus({ fullyFilled: false, filledQty: 0, remainingQty: 10, canceled: false });
+  assert.equal(r.voided, false);
+  assert.equal(r.kind, 'unfilled');
+});
+
 // [교차검증 대상 범위] 2026-09-19 코드리뷰 HIGH 지적 재발방지 — unfilled는
 // checkOrderFill이 이미 filledQty=0을 직접 말해준 상태라 holdings 부재가 거기
 // 더할 새 정보가 없다("아직 체결 안 됨" ≠ "주문이 죽었음"). no_result만 대상.
@@ -134,6 +154,27 @@ test('confirmPriorOrderVoided: unfilled(주입)이면 holdings 조회까지 가�
     getAccountBalanceImpl: async () => { balanceCalled = true; return { holdings: [], cash: 0 }; },
   });
   assert.equal(r.voided, false);
+  assert.equal(balanceCalled, false);
+});
+
+// [실사고 재현, 2026-09-22] rejectedOrExpired는 취소시도·holdings 조회 둘 다 없이
+// 바로 voided=true — 2026-09-22 SK텔레콤 건의 실제 KIS 원본 응답값(체결 0·잔여 0·
+// cncl_yn 빈값)을 그대로 넣어 confirmPriorOrderVoided 전체 경로로 검증.
+test('confirmPriorOrderVoided: 거부/자동실효(체결·잔여 모두 0) → 취소시도·holdings 조회 없이 바로 voided=true', async () => {
+  let reviseCalled = false, balanceCalled = false;
+  const r = await confirmPriorOrderVoided({
+    token: 't', appkey: 'k', appsecret: 's', cano: 'c', acntPrdtCd: '01', code: '017670',
+    afterHoursOrderNo: '0018416600', afterHoursOrgNo: '91257', afterHoursOrderQty: 1, signalDate: '2026-09-21',
+    allowCancel: true,
+    checkOrderFillImpl: async () => ({
+      orderNo: '0018416600', orderQty: 1, filledQty: 0, remainingQty: 0, avgFillPrice: 0, canceled: false, fullyFilled: false,
+    }),
+    reviseKrOrderImpl: async () => { reviseCalled = true; return { orderNo: '9' }; },
+    getAccountBalanceImpl: async () => { balanceCalled = true; return { holdings: [], cash: 0 }; },
+  });
+  assert.equal(r.voided, true);
+  assert.equal(r.kind, 'rejectedOrExpired');
+  assert.equal(reviseCalled, false, '이미 죽은 주문에 취소요청을 또 보내면 안 됨');
   assert.equal(balanceCalled, false);
 });
 
@@ -240,11 +281,12 @@ test('confirmPriorOrderVoided: allowCancel 생략(기본 false) → unfilled여�
 // 부분체결 잔량까지 지워버려 "이미 체결된 수량 + 오늘 폴백 매수"의 이중매수+
 // 무보호 잔량을 만들 수 있기 때문(read-then-write로 이미 확정판단이 난 kind는
 // 건드리지 않는다).
-test('confirmPriorOrderVoided: allowCancel:true여도 partial/fullyFilled/canceled는 취소시도 안 함', async () => {
+test('confirmPriorOrderVoided: allowCancel:true여도 partial/fullyFilled/canceled/rejectedOrExpired는 취소시도 안 함', async () => {
   for (const result of [
     { fullyFilled: false, filledQty: 3, canceled: false }, // partial
     { fullyFilled: true, avgFillPrice: 71000 }, // fullyFilled
     { canceled: true }, // canceled
+    { fullyFilled: false, filledQty: 0, remainingQty: 0, canceled: false }, // rejectedOrExpired(2026-09-22 실사고) — 이미 죽어있어 취소할 게 없음
   ]) {
     let reviseCalled = false;
     await confirmPriorOrderVoided({
