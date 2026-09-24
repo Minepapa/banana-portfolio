@@ -77,6 +77,7 @@ export function describeSwitchStatus({ killSwitchContent, executionModeContent, 
 // 짧게 설명하는 문구(사람이 읽는 텍스트에 그대로 붙음).
 export const SCHEDULE = [
   { day: '평일', time: '08:00', dept: '운영실 Hermes', what: '아침 브리핑 — 자산현황+간밤 이벤트+거시 5신호', script: 'morning-briefing.mjs' },
+  { day: '평일', time: '08:35', dept: '운영실 Hermes', what: '카이로스 보유종목 손절·3R 보호주문 상태 대조 및 누락분 복구', conditional: '이상/복구 대상이 있을 때만', script: 'reconcile-breakout-protection.mjs' },
   // 2026-09-18 코드리뷰 MEDIUM 지적으로 추가 — daily-breakout-signal-scan.mjs가
   // 신설(2026-09-13) 당시 부서별-텔레그램-보고.md에 "이벤트기반"으로 잘못 분류돼
   // 있어 이 배열에도 빠져 있었다(daily-execution-report와 동일 클래스의 누락).

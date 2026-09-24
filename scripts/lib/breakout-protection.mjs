@@ -46,6 +46,11 @@ export function computeProtectionOrders(entryPrice, quantity, stopLossPct = STOP
 async function tryPlace(placeOrder, params) {
   try {
     const order = await placeOrder(params);
+    // HTTP/업무 응답이 성공으로 풀렸더라도 주문번호가 없으면 실제 접수 여부를
+    // 추적할 수 없다. 이미 접수됐을 가능성이 있으므로 confirmedNotSent로 재시도하지 않는다.
+    if (!order?.orderNo || !String(order.orderNo).trim()) {
+      return { ok: false, error: 'KIS 주문 응답에 주문번호가 없어 접수 여부 확인 필요', confirmedNotSent: false };
+    }
     return { ok: true, orderNo: order.orderNo, orgNo: order.orgNo };
   } catch (e) {
     return { ok: false, error: e.message, confirmedNotSent: e.confirmedNotSent === true };
@@ -82,7 +87,7 @@ const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // profitOrderOrgNo, protectionStatus, attempts } — 호출측이 이 값을
 // updateBreakoutPositionRecord에 그대로 병합하면 됨.
 export async function ensurePositionProtected(position, {
-  placeOrder, maxAttempts = 3, delayMs = 5000, sleep = defaultSleep,
+  placeOrder, beforePlaceOrder = async () => true, maxAttempts = 3, delayMs = 5000, sleep = defaultSleep,
 }) {
   const needsStop = !position.stopOrderNo;
   const needsProfit = position.profitOrderApplicable && !position.profitOrderNo;
@@ -111,15 +116,18 @@ export async function ensurePositionProtected(position, {
   // confirmedNotSent 계약과 동일 원칙). 애매한 실패는 그 다리만 즉시 재시도 중단.
   let stopAmbiguous = false;
   let profitAmbiguous = false;
+  let gateBlocked = false;
 
   while (attempts < maxAttempts && (!stopDone || !profitDone)) {
     attempts += 1;
     if (!stopDone) {
+      if (!await beforePlaceOrder({ leg: 'stop', attempt: attempts })) { gateBlocked = true; break; }
       const r = await tryPlace(placeOrder, { side: '매도', quantity: stopOrder.quantity, price: position.stopPrice, conditionPrice: position.stopPrice });
       if (r.ok) { out.stopOrderNo = r.orderNo; out.stopOrderOrgNo = r.orgNo; stopDone = true; }
       else if (!r.confirmedNotSent) { stopDone = true; stopAmbiguous = true; }
     }
     if (!profitDone && profitOrder) {
+      if (!await beforePlaceOrder({ leg: 'profit', attempt: attempts })) { gateBlocked = true; break; }
       const r = await tryPlace(placeOrder, { side: '매도', quantity: profitOrder.quantity, price: profitOrder.price, conditionPrice: profitOrder.conditionPrice });
       if (r.ok) { out.profitOrderNo = r.orderNo; out.profitOrderOrgNo = r.orgNo; profitDone = true; }
       else if (!r.confirmedNotSent) { profitDone = true; profitAmbiguous = true; }
@@ -129,5 +137,5 @@ export async function ensurePositionProtected(position, {
 
   const protectionStatus = (stopDone && profitDone && !stopAmbiguous && !profitAmbiguous)
     ? PROTECTION_STATUS.PROTECTED : PROTECTION_STATUS.FAILED;
-  return { ...out, protectionStatus, attempts, stopAmbiguous, profitAmbiguous };
+  return { ...out, protectionStatus, attempts, stopAmbiguous, profitAmbiguous, gateBlocked };
 }

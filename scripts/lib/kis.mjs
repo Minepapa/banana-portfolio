@@ -229,11 +229,12 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // 어떤 조회였는지 알 수 있어야 다른 호출측이 붙어도 맥락이 안 사라진다. method/body는
 // 주문 API(POST) 추가 시 확장(Phase 11, 2026-08-09) — 기존 GET 호출측은 인자를 안 바꿔도
 // method 기본값(GET)·body 미설정으로 그대로 동작한다.
-async function fetchKis(url, headers, label, { fetchImpl = fetch, retries = 2, retryDelayMs = 700, method = 'GET', body } = {}) {
+async function fetchKis(url, headers, label, { fetchImpl = fetch, retries = 2, retryDelayMs = 700, method = 'GET', body, onResponse } = {}) {
   for (let attempt = 0; ; attempt++) {
     const init = { method, headers };
     if (body !== undefined) init.body = JSON.stringify(body);
     const res = await fetchImpl(url, init);
+    onResponse?.(res);
     const text = await res.text();
     let json = null;
     try { json = JSON.parse(text); } catch { /* 아래에서 처리 — 몸통이 JSON이 아닌 진짜 알 수 없는 실패 */ }
@@ -249,6 +250,75 @@ async function fetchKis(url, headers, label, { fetchImpl = fetch, retries = 2, r
     }
     return json;
   }
+}
+
+// 주식정정취소가능주문조회[v1_국내주식-004] — TTTC0084R. 미체결/정정취소 가능
+// 주문 전체를 페이지네이션해 반환한다. KIS 공식 예제의 output 필드(COLUMN_MAPPING)
+// 기준이며, 미체결 보호주문 중복 방지·전일 주문 상태확인에 사용한다.
+export async function getCancelableOrders({ token, appkey, appsecret, cano, acntPrdtCd, fetchImpl, retries, retryDelayMs, maxPages = 10 }) {
+  const headers = {
+    'Content-Type': 'application/json', authorization: `Bearer ${token}`, appkey, appsecret,
+    tr_id: 'TTTC0084R', custtype: 'P',
+  };
+  const rows = [];
+  let fk = '';
+  let nk = '';
+  let trCont = '';
+  for (let page = 0; page < maxPages; page++) {
+    const params = new URLSearchParams({
+      CANO: cano, ACNT_PRDT_CD: acntPrdtCd, INQR_DVSN_1: '0', INQR_DVSN_2: '0',
+      CTX_AREA_FK100: fk, CTX_AREA_NK100: nk,
+    });
+    let responseTrCont = '';
+    const json = await fetchKis(`${BASE_URL}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl?${params}`, headers,
+      '정정취소가능주문조회', {
+        fetchImpl, retries, retryDelayMs,
+        onResponse: (res) => { responseTrCont = res.headers?.get?.('tr_cont') ?? ''; },
+      });
+    // fetchKis는 HTTP 전송 오류를 처리하지만, KIS는 HTTP 200과 rt_cd 실패를 함께
+    // 반환할 수 있다. 이를 빈 주문목록으로 해석하면 이미 살아 있는 보호주문을 놓치고
+    // 중복 매도주문을 낼 수 있으므로 각 페이지의 업무 성공코드를 먼저 검증한다.
+    if (json?.rt_cd !== '0') throw kisRtError('KIS 정정취소가능주문조회 오류', json);
+    if (!Array.isArray(json?.output)) throw new Error('KIS 정정취소가능주문조회 응답에 output 배열 없음');
+    rows.push(...json.output);
+    fk = String(json.ctx_area_fk100 ?? '').trimEnd();
+    nk = String(json.ctx_area_nk100 ?? '').trimEnd();
+    if (!['M', 'F'].includes(responseTrCont)) return parseCancelableOrdersResponse({ rt_cd: '0', output: rows });
+    if (!fk && !nk) throw new Error('KIS 정정취소가능주문조회 다음 페이지 신호는 있으나 cursor 없음');
+    headers.tr_cont = 'N';
+    trCont = responseTrCont;
+  }
+  if (['M', 'F'].includes(trCont)) throw new Error(`KIS 정정취소가능주문조회 페이지 한도(${maxPages}) 도달 — 결과 불완전`);
+  return parseCancelableOrdersResponse({ rt_cd: '0', output: rows });
+}
+
+export function parseCancelableOrdersResponse(json) {
+  if (json?.rt_cd !== '0') throw kisRtError('KIS 정정취소가능주문조회 오류', json);
+  if (!Array.isArray(json?.output)) throw new Error('KIS 정정취소가능주문조회 응답에 output 배열 없음');
+  const num = (v) => {
+    if (v == null || String(v).trim() === '') return null;
+    const n = Number(String(v).replace(/,/g, ''));
+    return Number.isFinite(n) ? n : null;
+  };
+  return json.output.map((r) => {
+    const orderNo = String(r?.odno ?? '').trim();
+    const code = String(r?.pdno ?? '').trim();
+    const sideCode = String(r?.sll_buy_dvsn_cd ?? '').trim();
+    const cancelableQty = num(r?.psbl_qty);
+    if (!orderNo || !code || !['01', '02'].includes(sideCode) || cancelableQty == null) {
+      throw new Error('KIS 정정취소가능주문조회 행의 필수 식별 필드가 누락됨');
+    }
+    return ({
+    orderNo, orgOrderNo: String(r?.orgn_odno ?? '').trim(),
+    branchNo: String(r?.ord_gno_brno ?? '').trim(), code,
+    name: String(r?.prdt_name ?? '').trim(), sideCode,
+    side: sideCode === '01' ? '매도' : '매수',
+    orderTypeCode: String(r?.ord_dvsn_cd ?? '').trim(), orderType: String(r?.ord_dvsn_name ?? '').trim(),
+    quantity: num(r?.ord_qty), filledQty: num(r?.tot_ccld_qty), cancelableQty,
+    orderPrice: num(r?.ord_unpr), conditionPrice: num(r?.stpm_cndt_pric),
+    stopEffective: String(r?.stpm_efct_occr_yn ?? '').trim(), orderTime: String(r?.ord_tmd ?? '').trim(),
+    });
+  });
 }
 
 // 국내주식 현재가 조회. code: 6자리 종목코드(scripts/lib/instruments.mjs krStockCode 결과).

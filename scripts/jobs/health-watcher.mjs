@@ -212,6 +212,8 @@ export const EXPECTED_INTERVALS_MS = {
   // 1회, 위 두 잡과 동일 클래스(평일 전용 48h). 대기 항목이 없는 날엔 "처리할 것
   // 없음"으로 조용히 끝나지만(정상) heartbeat 자체는 매 실행 남긴다.
   'place-breakout-fallback-entry': 48 * 60 * 60 * 1000,
+  // 보호주문 조정(평일 08:35 KRX 시가단일가) — 평일 전용 일일 잡, 주말 간격 흡수.
+  'reconcile-breakout-protection': 48 * 60 * 60 * 1000,
   // update-macro-indicators-cache(2026-09-18 신설) — 평일 07:05 하루 1회, 위와
   // 동일 클래스(평일 전용 48h). 이 잡이 꾸준히 도는 것 자체가 거시지표 캐시(USD/KRW
   // 환율 등)가 매일 갱신된다는 간접 보증 — 잡 자체는 실패해도 캐시가 "그대로

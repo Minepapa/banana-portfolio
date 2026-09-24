@@ -87,12 +87,64 @@ test('placeProtectionOrders: 수량 1주(부분익절 없음)면 profitOrder는 
   assert.equal(result.fullyProtected, true);
 });
 
+test('placeProtectionOrders: KIS 응답에 주문번호가 없으면 미접수로 단정하지 않고 재시도 없이 실패 처리', async () => {
+  let calls = 0;
+  const result = await placeProtectionOrders({
+    entryPrice: 10000, quantity: 10,
+    placeOrder: async () => { calls += 1; return { orderNo: '' }; },
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.fullyProtected, false);
+  assert.equal(result.stopOrder.ok, false);
+  assert.equal(result.stopOrder.confirmedNotSent, false);
+  assert.equal(result.profitOrder.ok, false);
+  assert.equal(result.profitOrder.confirmedNotSent, false);
+});
+
 test('ensurePositionProtected: 이미 둘 다 걸려있으면 재시도 없이 즉시 protected(attempts=0)', async () => {
   const position = { ...basePosition, stopOrderNo: 's1', stopOrderOrgNo: 'org', profitOrderNo: 'p1', profitOrderOrgNo: 'org' };
   const placeOrder = async () => { throw new Error('호출되면 안 됨'); };
   const result = await ensurePositionProtected(position, { placeOrder, sleep: noSleep });
   assert.equal(result.protectionStatus, PROTECTION_STATUS.PROTECTED);
   assert.equal(result.attempts, 0);
+});
+
+test('ensurePositionProtected: 게이트가 손절 접수 후 바뀌면 3R 주문을 내지 않고 손절 번호는 보존', async () => {
+  let calls = 0;
+  let gateChecks = 0;
+  const result = await ensurePositionProtected(basePosition, {
+    placeOrder: async () => ({ orderNo: `order-${++calls}`, orgNo: 'org' }),
+    beforePlaceOrder: async () => ++gateChecks === 1,
+    sleep: noSleep,
+  });
+  assert.equal(calls, 1);
+  assert.equal(gateChecks, 2);
+  assert.equal(result.stopOrderNo, 'order-1');
+  assert.equal(result.profitOrderNo, null);
+  assert.equal(result.gateBlocked, true);
+  assert.equal(result.protectionStatus, PROTECTION_STATUS.FAILED);
+});
+
+test('ensurePositionProtected: 게이트가 재시도 전에 닫히면 추가 주문 없이 종료', async () => {
+  let calls = 0;
+  let checks = 0;
+  const placeOrder = async () => {
+    calls += 1;
+    const error = new Error('일시적 거부');
+    error.confirmedNotSent = true;
+    throw error;
+  };
+  const result = await ensurePositionProtected(basePosition, {
+    placeOrder,
+    beforePlaceOrder: async () => ++checks <= 2,
+    maxAttempts: 3,
+    sleep: noSleep,
+  });
+  assert.equal(calls, 2);
+  assert.equal(checks, 3);
+  assert.equal(result.gateBlocked, true);
+  assert.equal(result.attempts, 2);
+  assert.equal(result.protectionStatus, PROTECTION_STATUS.FAILED);
 });
 
 test('ensurePositionProtected: 이미 손절만 걸려있으면 부분익절만 재시도(손절은 다시 안 부름)', async () => {

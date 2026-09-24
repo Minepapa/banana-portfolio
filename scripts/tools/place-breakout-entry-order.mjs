@@ -61,7 +61,8 @@ function parseArgs(argv) {
 export function buildWatchArgs({ order, code, name, entryDate, budgetForFallback, stopLossPct = STOP_LOSS_PCT }) {
   return [
     `--order-no=${order.orderNo}`, `--org-no=${order.orgNo}`, `--code=${code}`, `--name=${name}`, `--entry-date=${entryDate}`,
-    '--fallback=nextDayOpen', `--invested-won=${Math.round(budgetForFallback)}`, `--stop-loss-pct=${stopLossPct}`,
+    '--fallback=nextDayOpen', '--defer-protection-until=nextKrxPreMarket',
+    `--invested-won=${Math.round(budgetForFallback)}`, `--stop-loss-pct=${stopLossPct}`,
   ];
 }
 

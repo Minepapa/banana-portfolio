@@ -14,6 +14,7 @@ test('buildWatchArgs: --org-no에 order.orgNo가 실림', () => {
   assert.ok(args.includes('--org-no=06010'), args.join(' '));
   assert.ok(args.includes('--order-no=6693100'), args.join(' '));
   assert.ok(args.includes('--fallback=nextDayOpen'), args.join(' '));
+  assert.ok(args.includes('--defer-protection-until=nextKrxPreMarket'), args.join(' '));
 });
 
 test('buildWatchArgs: order.orgNo가 빈 문자열(KIS 응답에 KRX_FWDG_ORD_ORGNO 없음)이면 --org-no=만 실림(빈 값 그대로 전달, 숨기지 않음)', () => {

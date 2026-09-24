@@ -5,14 +5,16 @@ import { buildKillSwitchState } from '../lib/kill-switch.mjs';
 import { buildExecutionModeState, MODE_LIVE, MODE_SHADOW } from '../lib/shadow-mode.mjs';
 import { buildProposalModeState, MODE_ALLOWED, MODE_BLOCKED } from '../lib/proposal-mode.mjs';
 
-test('SCHEDULE: 8건(주기적 보고 8개, 2026-09-18 daily-breakout-signal-scan 추가) — 이벤트기반은 포함되지 않는다', () => {
-  assert.equal(SCHEDULE.length, 8);
+test('SCHEDULE: 주기적 보고와 정기 보호주문 대조가 포함되고 이벤트기반은 제외된다', () => {
+  assert.equal(SCHEDULE.length, 9);
+  assert.ok(SCHEDULE.some((s) => s.script === 'reconcile-breakout-protection.mjs'));
 });
 
-test('buildWeeklyScheduleText: 제목과 8건 부서·시각이 전부 본문에 포함된다', () => {
+test('buildWeeklyScheduleText: 제목과 주기 일정 부서·시각이 본문에 포함된다', () => {
   const text = buildWeeklyScheduleText();
   assert.match(text, /<b>주간 보고 스케쥴<\/b>/);
   assert.match(text, /평일 08:00 \[운영실 Hermes\]/);
+  assert.match(text, /평일 08:35 \[운영실 Hermes\]/);
   assert.match(text, /평일 15:32 \[운영실 Hermes\]/);
   assert.match(text, /평일 16:15 \[운영실 Hermes\]/);
   assert.match(text, /평일 16:30 \[투자전략실 Athena\]/);

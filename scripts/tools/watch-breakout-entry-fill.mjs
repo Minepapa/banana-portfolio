@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// watch-breakout-entry-fill.mjs — 돌파매매 전략(퀀트 트랙) 매수 주문의 체결을
-// 확인하고, 전량체결되면 포지션 상태를 만들고 손절+3R부분익절 보호주문을 즉시
-// 자동으로 건다(2026-09-13, 오너 확정 — 보호주문은 매수 승인 하나로 충분, 별도
-// 텔레그램 승인 불필요. Log/Strategy/2026-09-13-퀀트트랙-돌파매매전략-설계 참고).
+// watch-breakout-entry-fill.mjs — 돌파매매 전략(퀀트 트랙) 매수 주문 체결을 확인하고
+// 실제 체결가·수량으로 포지션을 기록한다. 기본 경로(정규장/익일 풀백)는 체결 직후
+// 손절+3R 보호주문을 자동 발주한다. 단, 장후시간외 체결은 오너의 대한항공 실거래
+// 확인(2026-09-24)에 따라 다음 거래일 08:35 KRX 시가단일가 조정 잡으로 이관한다.
+// 보호주문은 매수 승인 하나로 충분하며 별도 텔레그램 승인은 불필요.
 //
 // watch-order-fill.mjs(범용 체결감시)와 별도 파일인 이유: 그건 매수/매도 어느
 // 쪽에도 쓰이는 일반 도구라 돌파매매 전용 후속조치(포지션 생성+보호주문)를
@@ -18,7 +19,8 @@
 // 또 얼마를 사야 할지는 기계적으로 정할 수 없어(중복매수 위험) 수동확인 알림으로
 // 넘긴다. fallback 옵션이 없으면(이 스크립트가 폴백 다리(다음날 시가) 자체의
 // 체결감시로 쓰일 때 등) 기존과 완전히 동일하게 동작 — 그 다리는 더 이상 폴백이
-// 없는 마지막 시도라 타임아웃 알림이 그대로 맞다.
+// 없는 마지막 시도라 타임아웃 알림이 그대로 맞다. 단 장후 부분체결은 잔여 주문의
+// 취소/실효가 API로 확인될 때만 실제 체결분을 익일 보호 대상으로 이관한다.
 //
 // 사용법:
 //   node scripts/tools/watch-breakout-entry-fill.mjs --order-no=6693100 --code=005930 --name=삼성전자 --entry-date=2026-09-14
@@ -26,7 +28,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  loadKisCredentials, loadQuantAccount, getKisToken, checkOrderFill, placeKrOrder,
+  loadQuantAccount, getKisToken, checkOrderFill, placeKrOrder,
 } from '../lib/kis.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
@@ -61,15 +63,22 @@ const won = (n) => (n == null ? '확인 필요' : Math.round(n).toLocaleString('
 // 실패한 경우에도 다음날시가 폴백이 걸려 ①이미 있는 포지션 위에 중복매수 ②원래
 // 체결분은 보호주문(손절/3R익절) 없이 무방비로 방치되는 사고로 이어진다. 반드시
 // "확인 자체가 실패"를 별도 케이스로 먼저 걸러낸다.
-export function decideEntryOutcome({ fallbackEnabled, resultKnown, filledQty }) {
+export function decideEntryOutcome({ fallbackEnabled, resultKnown, filledQty, deferProtection = false }) {
   if (!resultKnown) {
     return { action: 'manualReview', reason: '체결상태 확인 자체가 실패(마지막 조회 오류) — 체결 여부를 알 수 없음, 폴백 금지' };
   }
   if (filledQty > 0) {
+    if (deferProtection) return { action: 'manualReview', reason: '장후시간외 부분체결 — 잔여 진입주문의 취소/실효가 확인되지 않아 추가체결 위험, 자동 장부·보호 이관 보류' };
     return { action: 'manualReview', reason: `일부(${filledQty}주)만 체결된 상태 — 자동 폴백 대상 아님(중복매수 위험), 잔여 수량 처리를 직접 판단 필요` };
   }
   if (fallbackEnabled) return { action: 'queueFallback', reason: null };
   return { action: 'manualReview', reason: '확인 시간 내 전량체결 미확인' };
+}
+
+export function decideCanceledEntryOutcome({ deferProtection = false, filledQty = 0 }) {
+  if (filledQty > 0 && deferProtection) return { action: 'protectPartialAfterHours' };
+  if (filledQty > 0) return { action: 'manualReview' };
+  return { action: 'canceled' };
 }
 
 function buildProtectionMessage({ name, code, entryPrice, quantity, protection, stopLossPct = STOP_LOSS_PCT }) {
@@ -105,6 +114,7 @@ async function main() {
   const timeoutArg = Number(args.timeout);
   const timeoutMin = Number.isFinite(timeoutArg) && timeoutArg > 0 ? timeoutArg : 30;
   const fallback = args.fallback === 'nextDayOpen' ? 'nextDayOpen' : null;
+  const deferProtection = args['defer-protection-until'] === 'nextKrxPreMarket';
   const investedWonArg = Number(args['invested-won']);
   const investedWon = Number.isFinite(investedWonArg) && investedWonArg > 0 ? investedWonArg : null;
   // ATR 가변손절(2026-09-19 실전배선) — 신호 시점(daily-breakout-signal-scan.mjs)에
@@ -134,7 +144,7 @@ async function main() {
 
   const quant = loadQuantAccount();
   if (!quant) { console.error('❌ 퀀트 계좌정보(quantAccount) 미설정'); process.exit(1); }
-  const { appkey, appsecret } = loadKisCredentials();
+  const { appkey, appsecret } = quant;
 
   async function pollOnce() {
     const token = await getKisToken({ appkey, appsecret });
@@ -143,8 +153,29 @@ async function main() {
     });
   }
 
-  // 매수 체결 확정 후 포지션 생성+보호주문 자동 발주(오너 확정, 별도 승인 불필요).
+  // 매수 체결 확정 후 포지션 생성. 기본은 즉시 보호, 장후체결 플래그가 있으면
+  // 오너가 실거래 확인한 다음날 KRX 프리장 주문으로 이관한다.
   async function protectAfterFill(filledQty, avgFillPrice) {
+    if (deferProtection) {
+      const { profitOrder } = computeProtectionOrders(avgFillPrice, filledQty, stopLossPct);
+      const stopPrice = roundToKrxTick(avgFillPrice * (1 - stopLossPct));
+      const { id, filename, content } = buildBreakoutPositionRecord({
+        code, name, entryDate, entryPrice: avgFillPrice, quantity: filledQty,
+        investedWon: avgFillPrice * filledQty, stopPrice, stopLossPct,
+        profitOrderApplicable: profitOrder != null,
+      });
+      const deferredContent = updateBreakoutPositionRecord(content, {
+        protectionDeferredUntil: 'nextKrxPreMarket', protectionDeferredAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      writeAtomic(join(VAULT_PATHS.state.breakoutPositions, filename), deferredContent);
+      console.log(`[포지션 생성] ${id} — 다음 거래일 KRX 프리장 보호주문 대기`);
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL, tag: '전환',
+        body: `<b>장후시간외 매수 체결분 — 다음 거래일 프리장 보호주문 예정</b>\n${name}(${code}) ${filledQty}주 @${won(avgFillPrice)}\n손절 ${won(stopPrice)} · 3R 부분익절 ${profitOrder ? won(profitOrder.price) : '수량 부족으로 없음'}\n대한항공 실거래 확인에 따라 장후 체결 직후 발주하지 않고 다음 거래일 08:35 KRX 시가단일가에 설정합니다.`,
+      }));
+      return;
+    }
     const { profitOrder } = computeProtectionOrders(avgFillPrice, filledQty, stopLossPct);
     // ⚠️ 호가단위 보정(2026-09-22, 실사고로 발견 — krx-tick.mjs 헤더 참고). 이
     // stopPrice는 포지션 레코드(State/BreakoutPositions)에 그대로 저장돼
@@ -185,6 +216,23 @@ async function main() {
     }));
   }
 
+  async function recordDeferredAfterHoursFill(filledQty, avgFillPrice, label) {
+    if (!(filledQty > 0) || !(avgFillPrice > 0)) {
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL, tag: '경고',
+        body: `<b>장후시간외 부분체결 — 평균가 확인 불가</b>\n${name}(${code}) 주문번호 ${orderNo} — ${label}, 체결분을 기록하고 보호주문으로 넘기지 못했습니다. KIS 앱에서 즉시 확인 바랍니다.`,
+      }));
+      return;
+    }
+    const { filename, content, dir } = buildExecutionRecord({
+      tradeDate: new Date().toISOString(), tradeType: '매수', stockCode: code, stockName: name,
+      quantity: filledQty, price: avgFillPrice, currency: 'KRW', broker: BROKER, account: QUANT_TRACK_LABEL,
+    });
+    writeAtomic(join(dir, filename), content);
+    console.log(`[부분체결 기록] ${filledQty}주 @${avgFillPrice}원 — ${label}, 익일 보호 이관`);
+    await protectAfterFill(filledQty, avgFillPrice);
+  }
+
   // done=true면 더 감시할 필요 없음(취소 확정·전량체결 처리 완료). lastResult는
   // 타임아웃 시(done=false로 끝났을 때) 마지막으로 확인한 체결 상태를 main()이
   // 폴백 여부 판단에 쓸 수 있도록 그대로 넘겨준다.
@@ -197,6 +245,19 @@ async function main() {
       return { done: false, result: null };
     }
     if (result?.canceled) {
+      const canceledOutcome = decideCanceledEntryOutcome({ deferProtection, filledQty: result.filledQty ?? 0 });
+      if (canceledOutcome.action === 'protectPartialAfterHours') {
+        await recordDeferredAfterHoursFill(result.filledQty, result.avgFillPrice, '잔여 진입수량 취소 확인');
+        return { done: true, result };
+      }
+      if (canceledOutcome.action === 'manualReview') {
+        console.error('[취소 확인] 일부 체결된 주문 — 체결분 포지션·보호주문은 수동 확인 필요');
+        await sendTelegram(formatDepartmentMessage({
+          departmentLabel: DEPARTMENT_LABEL, tag: '경고',
+          body: `<b>돌파매매 부분체결 후 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — ${result.filledQty}주 체결 후 주문이 취소됐습니다. 체결분 포지션과 보호주문을 KIS 앱에서 확인 바랍니다.`,
+        }));
+        return { done: true, result };
+      }
       console.log('[취소 확인] 매수 주문이 취소됨 — 포지션 생성 안 함');
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL, tag: '취소',
@@ -239,6 +300,7 @@ async function main() {
 
   const decision = decideEntryOutcome({
     fallbackEnabled: !!fallback, resultKnown: last.result != null, filledQty: last.result?.filledQty ?? 0,
+    deferProtection,
   });
 
   if (decision.action === 'queueFallback') {

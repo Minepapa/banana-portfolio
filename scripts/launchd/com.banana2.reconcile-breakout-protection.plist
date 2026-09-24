@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.reconcile-breakout-protection</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>reconcile-breakout-protection</string>
+  </array>
+  <!-- Owner-confirmed KRX premarket route (대한항공 live test, 2026-09-24):
+       after-hours fills defer protection here; fallback fills are protected immediately by
+       watch-breakout-entry-fill.mjs. This job still rechecks every position held at each run. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>35</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>35</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>35</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>35</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>35</integer></dict>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>WorkingDirectory</key><string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/reconcile-breakout-protection.log</string>
+  <key>StandardErrorPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/reconcile-breakout-protection.log</string>
+</dict>
+</plist>

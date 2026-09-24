@@ -12,6 +12,7 @@ import {
   ORDER_TR_ID, parseOrderResponse, placeKrOrder, reviseKrOrder,
   checkOrderFill, parseOrderFillResponse,
   parseIrpPensionExecutions, getIrpPensionExecutions,
+  getCancelableOrders, parseCancelableOrdersResponse,
 } from './kis.mjs';
 
 // fetch 모킹 헬퍼 — 호출마다 큐에서 다음 응답을 꺼내 반환.
@@ -22,6 +23,70 @@ const mockFetch = (responses) => {
     return { ok: r.ok !== false, status: r.status ?? 200, json: async () => r.body, text: async () => JSON.stringify(r.body) };
   };
 };
+
+test('parseCancelableOrdersResponse: KIS 공식 컬럼으로 스톱지정가 미체결 주문 파싱', () => {
+  const [order] = parseCancelableOrdersResponse({ rt_cd: '0', output: [{
+    odno: '0001234567', orgn_odno: '0001234000', ord_gno_brno: '06010', pdno: '003490',
+    prdt_name: '대한항공', sll_buy_dvsn_cd: '01', ord_dvsn_cd: '22', ord_dvsn_name: '스톱지정가',
+    ord_qty: '8', tot_ccld_qty: '0', psbl_qty: '8', ord_unpr: '28000', stpm_cndt_pric: '28000',
+    stpm_efct_occr_yn: 'N', ord_tmd: '083500',
+  }] });
+  assert.equal(order.orderNo, '0001234567');
+  assert.equal(order.side, '매도');
+  assert.equal(order.code, '003490');
+  assert.equal(order.orderTypeCode, '22');
+  assert.equal(order.cancelableQty, 8);
+  assert.equal(order.conditionPrice, 28000);
+});
+
+test('parseCancelableOrdersResponse: 필수 식별필드 결손은 빈 주문목록으로 오인하지 않고 실패', () => {
+  assert.throws(() => parseCancelableOrdersResponse({ rt_cd: '0', output: [{ odno: '1' }] }), /필수 식별 필드/);
+  assert.throws(() => parseCancelableOrdersResponse({ rt_cd: '0' }), /output 배열 없음/);
+});
+
+test('getCancelableOrders: TTTC0084R 계좌전체 조회를 하고 정상 빈 응답을 빈 배열로 반환', async () => {
+  let captured;
+  const fetchImpl = async (url, init) => {
+    captured = { url, init };
+    return { ok: true, headers: { get: () => 'E' }, text: async () => JSON.stringify({ rt_cd: '0', output: [], ctx_area_fk100: '', ctx_area_nk100: '' }) };
+  };
+  const rows = await getCancelableOrders({ token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01', fetchImpl });
+  assert.deepEqual(rows, []);
+  assert.match(captured.url, /inquire-psbl-rvsecncl/);
+  assert.equal(captured.init.headers.tr_id, 'TTTC0084R');
+  assert.equal(new URL(captured.url).searchParams.get('INQR_DVSN_1'), '0');
+});
+
+test('getCancelableOrders: HTTP 200이어도 KIS 업무오류를 빈 주문목록으로 오인하지 않음', async () => {
+  const fetchImpl = async () => ({
+    ok: true, headers: { get: () => 'E' },
+    text: async () => JSON.stringify({ rt_cd: '1', msg_cd: 'OPSQ0001', msg1: '조회 오류', output: [] }),
+  });
+  await assert.rejects(
+    getCancelableOrders({ token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01', fetchImpl }),
+    /KIS 정정취소가능주문조회 오류/,
+  );
+});
+
+test('getCancelableOrders: 다음 페이지 신호면 cursor와 연속조회 헤더로 끝까지 조회', async () => {
+  const calls = [];
+  const pages = [
+    { trCont: 'M', body: { rt_cd: '0', output: [], ctx_area_fk100: 'FK1', ctx_area_nk100: 'NK1' } },
+    { trCont: 'E', body: { rt_cd: '0', output: [{ odno: '0000000001', pdno: '003490', sll_buy_dvsn_cd: '01', psbl_qty: '1' }] } },
+  ];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, headers: { ...init.headers } });
+    const page = pages.shift();
+    return { ok: true, headers: { get: () => page.trCont }, text: async () => JSON.stringify(page.body) };
+  };
+  const rows = await getCancelableOrders({ token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01', fetchImpl });
+  assert.equal(rows.length, 1);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].headers.tr_cont, undefined);
+  assert.equal(calls[1].headers.tr_cont, 'N');
+  assert.equal(new URL(calls[1].url).searchParams.get('CTX_AREA_FK100'), 'FK1');
+  assert.equal(new URL(calls[1].url).searchParams.get('CTX_AREA_NK100'), 'NK1');
+});
 
 test('parseKisExpiry: KIS 만료 형식(YYYY-MM-DD HH:MM:SS, KST) → UTC epoch', () => {
   // 2026-07-23 15:00:00 KST = 2026-07-23 06:00:00 UTC
