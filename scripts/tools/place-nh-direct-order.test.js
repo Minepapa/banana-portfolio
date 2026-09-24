@@ -150,7 +150,7 @@ test('[재발방지] 직접주문 제안은 checkApprovalMatch를 통과함(CRIT
   const now = new Date('2026-09-21T02:30:00.000Z');
   const gate = runExecutionGateChecks({
     proposalId: proposal.id, proposedPrice: proposal.proposedPrice, side: proposal.side, quantity: proposal.quantity,
-    ...gateInput, now,
+    ...gateInput, now, krxTradingDayStatus: { date: '2026-09-21', isOpen: true },
   });
   assert.equal(gate.checks.approvalMatch.pass, true, gate.checks.approvalMatch.reason);
   assert.equal(gate.pass, true, JSON.stringify(gate.failures));

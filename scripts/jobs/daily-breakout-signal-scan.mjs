@@ -22,7 +22,8 @@
 // 근사한다(intraday-market-move-monitor.mjs가 이미 코스피 실시간지수를 같은
 // 방식으로 쓰는 선례 재사용, Knowledge/API/KIS.md 참고). 요일(토/일)만 걸러내고
 // KRX 평일휴장(공휴일)은 별도 체크 안 함 — 그런 날은 라이브가=전일종가라 등락률
-// 조건(3%p 이상)이 저절로 불통과되므로 필요 없음.
+// 조건(3%p 이상)이 저절로 불통과된다고 가정하지 않는다. KIS 휴장일 API의 당일
+// 캐시가 개장으로 확인된 경우에만 아래 신호판정을 시작한다.
 //
 // ⚠️ 하루 1회 실행 보장(코드리뷰 HIGH 지적, 2026-09-13) — State/BreakoutScanRuns로
 // 재실행 시 이중매수를 방지한다(--force로 무시 가능, 테스트용). --dry-run은 실주문이
@@ -53,6 +54,7 @@ import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 
 const DEPARTMENT_LABEL = '운영실 Hermes';
 // KIS 레이트리밋(EGW00201) 실측 기반 — update-holdings-prices.mjs·realtime-quotes.mjs와
@@ -106,7 +108,8 @@ function loadOpenPositionCodes() {
 // ⚠️ 요일·날짜 판정 둘 다 date.getDay()/getFullYear() 같은 "시스템 로컬 타임존"
 // 함수 대신 UTC+9h 수동계산(todayKSTLabel과 동일 방식)만 쓴다 — 이 프로세스가
 // KST가 아닌 타임존에서 돌 가능성(CI 등)을 배제하지 않기 위함.
-export function shouldRunToday(date, lastRunDayLabel) {
+export function shouldRunToday(date, lastRunDayLabel, { isTradingDay = true } = {}) {
+  if (!isTradingDay) return false;
   const kst = new Date(date.getTime() + 9 * 3600_000);
   const dow = kst.getUTCDay();
   if (dow === 0 || dow === 6) return false;
@@ -151,8 +154,13 @@ async function main() {
   // place-breakout-entry-order.mjs가 각자 "스킵" 텔레그램을 보내 거의 동일한 메시지가
   // N통 옴(하나로 묶지 않음, 종목별 예산·수량이 달라 병합하면 정보 손실).
   if (!dryRun) {
+    const calendar = readKrxTradingDayStatus();
+    if (calendar.isOpen !== true) {
+      console.log(`[건너뜀] ${calendar.date} KRX 개장일이 확인되지 않아 돌파 신호판정·자동발주를 하지 않음: ${calendar.reason || '휴장일'}`);
+      return;
+    }
     const lastRunDay = readLastRunDay(VAULT_PATHS.state.breakoutScanRuns);
-    if (!force && !shouldRunToday(new Date(), lastRunDay)) {
+    if (!force && !shouldRunToday(new Date(), lastRunDay, { isTradingDay: calendar.isOpen === true })) {
       console.log(`ℹ️ 오늘(${todayKST()}) 이미 실행됐거나 주말 — 중복 실행 방지로 중단(--force로 무시 가능)`);
       return;
     }

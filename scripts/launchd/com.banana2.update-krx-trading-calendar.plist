@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.update-krx-trading-calendar</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>update-krx-trading-calendar</string>
+  </array>
+  <!-- 평일 08:15 KST — morning-briefing(08:00) 뒤, 08:35 보호주문·09:03 폴백 전에 캐시를 채운다.
+       KIS 공식 샘플은 국내휴장일조회(CTCA0903R)를 원장 부하 때문에 하루 1회 권고한다.
+       평일 휴장일에도 실행해 휴장 상태를 명시적으로 기록한다. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>15</integer></dict>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>WorkingDirectory</key><string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>StandardOutPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-krx-trading-calendar.log</string>
+  <key>StandardErrorPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-krx-trading-calendar.log</string>
+</dict>
+</plist>

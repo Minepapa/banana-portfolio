@@ -56,7 +56,8 @@ test('킬스위치 활성 상태면 나머지 조건이 전부 통과여도 체�
   // checkMarketOpen은 gateInput에 now가 없으면 실제 현재시각을 쓴다(운영 코드에선 맞는
   // 동작이지만, 테스트는 "장중"을 고정해야 킬스위치 실패만 정확히 걸러낼 수 있어 여기서
   // 명시로 덮어씀).
-  const gateInput = { ...buildGateInput({ proposal, currentPrice: 70000, holdings: [], cash: 10_000_000, killSwitchContent }), now };
+  const gateInput = { ...buildGateInput({ proposal, currentPrice: 70000, holdings: [], cash: 10_000_000, killSwitchContent }), now,
+    krxTradingDayStatus: { date: '2026-08-10', isOpen: true } };
 
   const result = await executeProposal({ proposal, proposalContent: withApproval, gateInput, mode: '섀도우' });
 
@@ -72,7 +73,8 @@ test('킬스위치 비활성(null, 파일 미존재)이면 나머지 조건 통�
   const withApproval = content.replace(/^status: .*$/m, 'status: "승인"').replace(/^telegramMessageId: .*$/m, 'telegramMessageId: 999');
   const proposal = { id, telegramMessageId: 999, ...parseProposal(withApproval) };
 
-  const gateInput = { ...buildGateInput({ proposal, currentPrice: 70000, holdings: [], cash: 10_000_000, killSwitchContent: null }), now };
+  const gateInput = { ...buildGateInput({ proposal, currentPrice: 70000, holdings: [], cash: 10_000_000, killSwitchContent: null }), now,
+    krxTradingDayStatus: { date: '2026-08-10', isOpen: true } };
   const result = await executeProposal({ proposal, proposalContent: withApproval, gateInput, mode: '섀도우' });
 
   assert.equal(result.executed, true);

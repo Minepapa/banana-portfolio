@@ -140,8 +140,20 @@ test('checkApprovalMatch: 정확히 일치하면 통과', () => {
 // ── checkMarketOpen ────────────────────────────────────────────────
 
 test('checkMarketOpen: 평일 장중(수요일 10:00 KST)은 통과', () => {
-  const r = checkMarketOpen({ now: new Date('2026-08-05T01:00:00.000Z') }); // 수 10:00 KST
+  const r = checkMarketOpen({ now: new Date('2026-08-05T01:00:00.000Z'), krxTradingDayStatus: { date: '2026-08-05', isOpen: true } }); // 수 10:00 KST
   assert.equal(r.pass, true);
+});
+
+test('[막아야 함] checkMarketOpen: 평일 장중이어도 KRX 휴장일이면 차단', () => {
+  const r = checkMarketOpen({ now: new Date('2026-09-24T01:00:00.000Z'), krxTradingDayStatus: { date: '2026-09-24', isOpen: false } });
+  assert.equal(r.pass, false);
+  assert.match(r.reason, /휴장일/);
+});
+
+test('[막아야 함] checkMarketOpen: 당일 캘린더 조회 실패·캐시 누락이면 fail-closed', () => {
+  const r = checkMarketOpen({ now: new Date('2026-08-05T01:00:00.000Z'), krxTradingDayStatus: { date: '2026-08-05', isOpen: null, reason: '캐시 없음' } });
+  assert.equal(r.pass, false);
+  assert.match(r.reason, /캐시 없음/);
 });
 
 test('[막아야 함] checkMarketOpen: 장 시작 전(수요일 08:00 KST)은 차단', () => {
@@ -203,6 +215,7 @@ const ALL_PASS_INPUT = {
   proposalId: 'p1', alreadyExecutedIds: [],
   replyTo: 'p1', expectedProposalId: 'p1',
   now: new Date('2026-08-05T01:00:00.000Z'), // 평일 장중
+  krxTradingDayStatus: { date: '2026-08-05', isOpen: true },
   killSwitchContent: null,
 };
 

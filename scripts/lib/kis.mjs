@@ -15,6 +15,7 @@
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { readKrxTradingDayStatus } from './krx-trading-calendar.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -189,8 +190,8 @@ export function parseUsQuoteResponse(json) {
 // 국내·해외 정규장 개장 여부. Intl 타임존 변환이 DST를 자동 반영하므로(America/New_York이
 // EST/EDT 전환을 tzdata로 처리) 수동 서머타임 계산이 필요 없다 — 각 시간대의 "그 지역
 // 로컬 요일"을 직접 물어보므로 자정을 넘나드는 케이스(예: 미국장이 KST 기준 토요일 새벽까지
-// 이어지는 경우)도 별도 분기 없이 올바르게 처리된다. 공휴일은 반영하지 않음(기존
-// parse-notifications 평일 게이트와 동일한 한계 — 알려진 제약).
+// 이어지는 경우)도 별도 분기 없이 올바르게 처리된다. KR은 KIS 국내휴장일 API의
+// 당일 캐시도 요구하며, 캐시 누락/휴장은 장중으로 보지 않는다. US 휴장은 별도 미지원.
 function localDowAndHHMM(date, timeZone) {
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone, hourCycle: 'h23', weekday: 'short', hour: '2-digit', minute: '2-digit',
@@ -200,14 +201,44 @@ function localDowAndHHMM(date, timeZone) {
   return { dow: dowMap[parts.weekday], hhmm: Number(parts.hour) * 100 + Number(parts.minute) };
 }
 
-export function isKrMarketOpen(date = new Date()) {
+export function isKrMarketOpen(date = new Date(), { tradingDayStatus } = {}) {
   const { dow, hhmm } = localDowAndHHMM(date, 'Asia/Seoul');
-  return dow <= 5 && hhmm >= 900 && hhmm <= 1530;
+  if (dow > 5 || hhmm < 900 || hhmm > 1530) return false;
+  const status = tradingDayStatus ?? readKrxTradingDayStatus(date);
+  return status.isOpen === true;
 }
 
 export function isUsMarketOpen(date = new Date()) {
   const { dow, hhmm } = localDowAndHHMM(date, 'America/New_York');
   return dow <= 5 && hhmm >= 930 && hhmm <= 1600;
+}
+
+// 국내휴장일조회[v1_국내주식-040]. KIS 공식 예제는 주문 가능 여부 판단에
+// output.opnd_yn을 사용하고, 원장 서비스 부하를 위해 하루 1회 호출을 권고한다.
+// 날짜별 호출·캐시는 krx-trading-calendar.mjs가 담당한다.
+export function parseKrHolidayResponse(json, requestedDate) {
+  if (json?.rt_cd !== '0') throw kisRtError('KIS 국내휴장일조회 오류', json);
+  const rows = Array.isArray(json?.output) ? json.output : json?.output ? [json.output] : [];
+  const date = String(requestedDate ?? '').replace(/-/g, '');
+  if (!/^\d{8}$/.test(date)) throw new Error('KIS 국내휴장일조회 요청일 형식 오류');
+  const row = rows.find((r) => String(r?.bass_dt ?? '').trim() === date);
+  if (!row) throw new Error('KIS 국내휴장일조회 응답에 요청일 행 없음');
+  const open = String(row.opnd_yn ?? '').trim();
+  if (open !== 'Y' && open !== 'N') throw new Error('KIS 국내휴장일조회 응답에 유효한 opnd_yn 없음');
+  return { date: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6)}`, isOpen: open === 'Y' };
+}
+
+export async function getKrHoliday({ token, appkey, appsecret, date, fetchImpl, retries, retryDelayMs }) {
+  const bassDt = String(date ?? '').replace(/-/g, '');
+  if (!/^\d{8}$/.test(bassDt)) throw new Error('국내휴장일조회 기준일은 YYYYMMDD 형식이어야 함');
+  const params = new URLSearchParams({ BASS_DT: bassDt, CTX_AREA_FK: '', CTX_AREA_NK: '' });
+  const headers = {
+    'Content-Type': 'application/json', authorization: `Bearer ${token}`, appkey, appsecret,
+    tr_id: 'CTCA0903R', custtype: 'P',
+  };
+  const json = await fetchKis(`${BASE_URL}/uapi/domestic-stock/v1/quotations/chk-holiday?${params}`,
+    headers, `국내휴장일 ${bassDt}`, { fetchImpl, retries, retryDelayMs });
+  return parseKrHolidayResponse(json, bassDt);
 }
 
 // KIS 레이트리밋(msg_cd=EGW00201)의 HTTP status는 일정하지 않다 — 기존엔 "HTTP 200 + 바디

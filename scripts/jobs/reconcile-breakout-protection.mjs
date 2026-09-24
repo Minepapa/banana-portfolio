@@ -10,6 +10,7 @@ import {
   getCancelableOrders, placeKrOrder,
 } from '../lib/kis.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 import { getExecutionMode, MODE_LIVE } from '../lib/shadow-mode.mjs';
 import { isKillSwitchActive } from '../lib/kill-switch.mjs';
 import { computeProtectionOrders, ensurePositionProtected } from '../lib/breakout-protection.mjs';
@@ -65,6 +66,13 @@ async function notify(lines, tag = '보호') {
 
 async function main() {
   const now = new Date();
+  if (!DRY_RUN) {
+    const calendar = readKrxTradingDayStatus(now);
+    if (calendar.isOpen !== true) {
+      console.log(`[건너뜀] ${calendar.date} KRX 개장일이 확인되지 않아 아침 보호주문을 조정하지 않음: ${calendar.reason || '휴장일'}`);
+      return;
+    }
+  }
   if (!DRY_RUN && !isKrxPreMarketWindow(now)) {
     console.log('[건너뜀] KRX 평일 08:30~09:00 시가단일가 시간이 아님');
     return;

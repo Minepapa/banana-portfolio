@@ -33,6 +33,10 @@ test('shouldRunToday: 일요일이면 실행 기록과 무관하게 항상 false
   assert.equal(shouldRunToday(SUNDAY_1532_KST, null), false);
 });
 
+test('shouldRunToday: 평일이어도 KRX 캘린더가 휴장으로 판정하면 false', () => {
+  assert.equal(shouldRunToday(new Date('2026-09-24T06:32:00.000Z'), null, { isTradingDay: false }), false);
+});
+
 // [핵심 안전장치] 이 잡이 실제로 RS 앵커 스무딩(RS_ANCHOR_SMOOTH_DAYS, 오너
 // 2026-09-15 확정 배선)을 쓰는지 고정 — computeBreakoutEntrySignal 호출부가
 // main() 안에만 있어 이 배선을 직접 검증하는 테스트가 없었다(2026-09-15

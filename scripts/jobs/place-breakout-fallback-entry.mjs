@@ -39,6 +39,7 @@ import {
   loadQuantAccount, getKisToken, getKrQuote, getAccountBalance, checkOrderFill, placeKrOrder, reviseKrOrder,
 } from '../lib/kis.mjs';
 import { isKillSwitchActive } from '../lib/kill-switch.mjs';
+import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 import { todayKST } from '../lib/sheets-api.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
@@ -312,6 +313,11 @@ export async function confirmPriorOrderVoided({
 }
 
 async function main() {
+  const calendar = readKrxTradingDayStatus();
+  if (calendar.isOpen !== true) {
+    console.log(`[건너뜀] ${calendar.date} KRX 개장일이 확인되지 않아 다음날시가 폴백을 실행하지 않음: ${calendar.reason || '휴장일'}`);
+    return;
+  }
   const dir = VAULT_PATHS.state.breakoutPendingEntries;
   mkdirSync(dir, { recursive: true });
   const all = loadPendingEntries(dir);

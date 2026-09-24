@@ -22,6 +22,7 @@ import {
 import { isKillSwitchActive } from '../lib/kill-switch.mjs';
 import { STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 
@@ -120,6 +121,10 @@ async function main() {
   const stopLossPct = stopLossPctValid ? stopLossPctArg : STOP_LOSS_PCT;
 
   if (!code) return alertAndExit('<b>돌파매매 진입 스크립트 호출 오류</b>\n--code 누락 — 호출측(신호스캔 잡) 버그 의심.', 2);
+  const calendar = readKrxTradingDayStatus();
+  if (calendar.isOpen !== true) {
+    return alertAndExit(`<b>돌파매매 진입 보류 — KRX 개장일 확인 불가</b>\n${calendar.date} 거래일 확인이 되지 않아 주문하지 않았습니다(${calendar.reason || '휴장일'}).`, 2);
+  }
   if (!entryDate) return alertAndExit(`<b>돌파매매 진입 스크립트 호출 오류</b>\n${name}(${code}) --entry-date 누락 — 호출측(신호스캔 잡) 버그 의심.`, 2);
   if (!args['skip-time-check'] && !isWithinAfterHoursSubmitWindow(new Date())) {
     return alertAndExit(`<b>돌파매매 진입 실패 — 시간대 밖 호출</b>\n${name}(${code}) 장후시간외(ORD_DVSN=06) 유효 시간(15:00~16:00 KST) 밖에서 호출돼 발주하지 않았습니다. 의도된 수동 테스트라면 --skip-time-check를 넘겨주세요.`, 2);

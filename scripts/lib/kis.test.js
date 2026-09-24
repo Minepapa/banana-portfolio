@@ -13,6 +13,7 @@ import {
   checkOrderFill, parseOrderFillResponse,
   parseIrpPensionExecutions, getIrpPensionExecutions,
   getCancelableOrders, parseCancelableOrdersResponse,
+  parseKrHolidayResponse, getKrHoliday,
 } from './kis.mjs';
 
 // fetch 모킹 헬퍼 — 호출마다 큐에서 다음 응답을 꺼내 반환.
@@ -42,6 +43,34 @@ test('parseCancelableOrdersResponse: KIS 공식 컬럼으로 스톱지정가 미
 test('parseCancelableOrdersResponse: 필수 식별필드 결손은 빈 주문목록으로 오인하지 않고 실패', () => {
   assert.throws(() => parseCancelableOrdersResponse({ rt_cd: '0', output: [{ odno: '1' }] }), /필수 식별 필드/);
   assert.throws(() => parseCancelableOrdersResponse({ rt_cd: '0' }), /output 배열 없음/);
+});
+
+test('parseKrHolidayResponse: 요청일의 opnd_yn을 개장 여부로 변환', () => {
+  assert.deepEqual(parseKrHolidayResponse({ rt_cd: '0', output: [{ bass_dt: '20260925', opnd_yn: 'N' }] }, '2026-09-25'), {
+    date: '2026-09-25', isOpen: false,
+  });
+  assert.deepEqual(parseKrHolidayResponse({ rt_cd: '0', output: { bass_dt: '20260928', opnd_yn: 'Y' } }, '20260928'), {
+    date: '2026-09-28', isOpen: true,
+  });
+});
+
+test('parseKrHolidayResponse: 누락·불명 응답을 개장으로 추정하지 않고 실패', () => {
+  assert.throws(() => parseKrHolidayResponse({ rt_cd: '0', output: [] }, '20260925'), /요청일 행 없음/);
+  assert.throws(() => parseKrHolidayResponse({ rt_cd: '0', output: [{ bass_dt: '20260925', opnd_yn: '' }] }, '20260925'), /유효한 opnd_yn/);
+  assert.throws(() => parseKrHolidayResponse({ rt_cd: '1', msg1: '오류' }, '20260925'), /국내휴장일조회 오류/);
+});
+
+test('getKrHoliday: CTCA0903R로 요청일을 조회하고 파싱한다', async () => {
+  let captured;
+  const fetchImpl = async (url, init) => {
+    captured = { url, init };
+    return { ok: true, headers: { get: () => 'E' }, text: async () => JSON.stringify({ rt_cd: '0', output: [{ bass_dt: '20260925', opnd_yn: 'N' }] }) };
+  };
+  const result = await getKrHoliday({ token: 't', appkey: 'k', appsecret: 's', date: '2026-09-25', fetchImpl });
+  assert.equal(result.isOpen, false);
+  assert.match(captured.url, /chk-holiday/);
+  assert.equal(new URL(captured.url).searchParams.get('BASS_DT'), '20260925');
+  assert.equal(captured.init.headers.tr_id, 'CTCA0903R');
 });
 
 test('getCancelableOrders: TTTC0084R 계좌전체 조회를 하고 정상 빈 응답을 빈 배열로 반환', async () => {
@@ -403,7 +432,13 @@ test('getUsQuote: 재시도 소진 후 throw된 에러의 code가 msg_cd(EGW0020
 
 test('isKrMarketOpen: 평일 정규장 시각이면 true', () => {
   // 2026-07-23(목) 10:00 KST = 2026-07-23T01:00:00Z
-  assert.equal(isKrMarketOpen(new Date('2026-07-23T01:00:00Z')), true);
+  assert.equal(isKrMarketOpen(new Date('2026-07-23T01:00:00Z'), { tradingDayStatus: { isOpen: true } }), true);
+});
+
+test('isKrMarketOpen: 평일 장중이라도 KRX 휴장일이거나 캘린더가 없으면 false', () => {
+  const date = new Date('2026-09-24T01:00:00Z');
+  assert.equal(isKrMarketOpen(date, { tradingDayStatus: { isOpen: false } }), false);
+  assert.equal(isKrMarketOpen(date, { tradingDayStatus: { isOpen: null } }), false);
 });
 
 test('isKrMarketOpen: 평일 장 마감 후면 false', () => {

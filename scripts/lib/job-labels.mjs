@@ -50,6 +50,7 @@ export const JOB_LABELS = {
   'place-breakout-fallback-entry': '돌파매매(카이로스) 전날 장후시간외 미체결 진입을 다음날 시가로 폴백 — 승인 없이 자동발주(평일 09:03, 2026-09-13 신설·2026-09-18 launchd 상시배선)',
   'reconcile-breakout-protection': '돌파매매(카이로스) 장후 체결 포지션을 KRX 시가단일가(08:35)에 잔고·미체결주문 대조 후 보호주문 설정',
   'update-macro-indicators-cache': '거시지표 캐시(USD/KRW 환율 등) 매일 갱신 — 기존 일요일 전용(Themis·주간리포트) 지연캐시가 평일엔 최대 6일 묵은 값을 낼 수 있던 설계 공백 보강(평일 07:05, 2026-09-18 신설)',
+  'update-krx-trading-calendar': '평일 08:15 KIS 국내휴장일조회로 당일 KRX 개장 여부 캐시 갱신 — 카이로스 신호·주문 차단 기준',
   // 2026-09-19 발견(DevRequest 잡실패알림-잡한글설명추가 처리 중 신설한 구조적 가드가
   // 잡아낸 실제 공백 9건) — 등록 시점부터 라벨 없이 돌고 있던 잡들. 아래 vault-job-
   // catalog-audit.test.js가 이미 잡는 "무인잡-카탈로그.md 누락"과는 별개 축(그 문서엔

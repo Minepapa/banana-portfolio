@@ -220,6 +220,9 @@ export const EXPECTED_INTERVALS_MS = {
   // 유지"될 뿐 조용히 나빠지지 않지만, stale해지면(=이 잡이 며칠 안 돎) 캐시도
   // 그만큼 묵는다(Log/DevRequests/2026-09-18-macro-cache-데이터신선도-알람공백.md).
   'update-macro-indicators-cache': 48 * 60 * 60 * 1000,
+  // update-krx-trading-calendar(2026-09-24 신설) — 평일 08:15 KIS 휴장일 API 1회
+  // 조회. 주말 간격을 흡수하는 다른 평일 전용 일일 잡과 동일하게 48h.
+  'update-krx-trading-calendar': 48 * 60 * 60 * 1000,
   // pension-balance-reminder(2026-09-04 신설) — 매월 22일, rebalance-proposal(분기,
   // 100일)과 동일 원칙으로 달 길이(28~31일) 편차를 흡수하는 여유(35일)를 둔다.
   'pension-balance-reminder': 35 * 24 * 60 * 60 * 1000,

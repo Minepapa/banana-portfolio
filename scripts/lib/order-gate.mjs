@@ -10,6 +10,7 @@
 
 import { findActiveProposal, findRecentRejection, proposalMatchKey } from './proposal-vault.mjs';
 import { isKillSwitchActive } from './kill-switch.mjs';
+import { readKrxTradingDayStatus } from './krx-trading-calendar.mjs';
 
 const REJECTION_COOLDOWN_MS_DEFAULT = 24 * 60 * 60 * 1000; // 24시간 — 오너 확정(2026-08-29, 자산분배 트랙 감사). "최소 하루는 재상정 안 함"이 최종 운용값.
 
@@ -94,11 +95,10 @@ const MARKET_SESSIONS = {
   US: { timeZone: 'America/New_York', label: 'NY', openHHMM: 930, closeHHMM: 1600 },
 };
 
-// ⚠️ 알려진 한계: 요일+시간대만 본다. 공휴일 캘린더는 아직 없다(구현 단계에서 데이터
-// 소스 확보 필요 — 지금 "완료"라고 조용히 넘기지 않기 위해 여기 명시한다). 공휴일에
-// 이 체크를 통과시켜버리면 시장이 실제로 닫혀 있어도 "개장"으로 오판할 수 있다 —
-// 브로커 API 자체도 거부하겠지만 이중 방어가 아직 안 갖춰진 상태.
-export function checkMarketOpen({ now = new Date(), market = 'KR' }) {
+// KRX 공휴일은 updater가 매일 기록한 KIS 캐시로 판정한다. 오늘자 값이 없으면
+// fail-closed — 달력 API 장애/잡 누락을 거래일로 추정하지 않는다. 테스트·명시적
+// 호출자는 krxTradingDayStatus를 주입할 수 있고 운영 호출부는 캐시를 읽는다.
+export function checkMarketOpen({ now = new Date(), market = 'KR', krxTradingDayStatus } = {}) {
   const session = MARKET_SESSIONS[market];
   if (!session) return { pass: false, reason: `지원 안 하는 시장: ${market}` };
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -111,8 +111,15 @@ export function checkMarketOpen({ now = new Date(), market = 'KR' }) {
   const isWeekday = !['Sat', 'Sun'].includes(weekday);
   const inSession = hhmm >= session.openHHMM && hhmm <= session.closeHHMM;
   if (!isWeekday) return { pass: false, reason: `주말(${weekday}) — 장 마감. 다음 개장까지 보류` };
+  if (market === 'KR') {
+    const tradingDay = krxTradingDayStatus ?? readKrxTradingDayStatus(now);
+    if (tradingDay.isOpen !== true) {
+      const detail = tradingDay.isOpen === false ? 'KRX 휴장일' : (tradingDay.reason || '당일 KRX 거래일 확인 불가');
+      return { pass: false, reason: `${detail}(${tradingDay.date}) — 주문 보류` };
+    }
+  }
   if (!inSession) return { pass: false, reason: `장중 시간 아님(${session.label} ${hour}:${String(minute).padStart(2, '0')}) — 다음 개장까지 보류` };
-  return { pass: true, reason: '장중(공휴일 캘린더 미적용 — 알려진 한계)' };
+  return { pass: true, reason: '장중(당일 KRX 개장 확인 완료)' };
 }
 
 // 승인의 당일 유효기간 — 오너 확정(2026-08-13): "승인"은 승인한 그날(KST 달력일)에만

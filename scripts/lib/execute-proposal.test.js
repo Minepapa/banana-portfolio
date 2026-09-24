@@ -10,6 +10,7 @@ const PASS_GATE_INPUT = {
   currentPrice: 71000, orderCost: 400000, availableCash: 500000,
   alreadyExecutedIds: [], replyTo: null, expectedProposalId: null,
   now: new Date('2026-08-05T01:00:00.000Z'), killSwitchContent: null,
+  krxTradingDayStatus: { date: '2026-08-05', isOpen: true },
 };
 
 function makeProposal(overrides = {}) {
