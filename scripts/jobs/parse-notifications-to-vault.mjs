@@ -68,7 +68,8 @@ import { parseExecution, parseDividend, parseGoldBuy, parseCashAlarm, parseFundB
 import { buildExecutionRecord, buildDividendRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { QUANT_ACCOUNT_NO, FUND_PURCHASE_ACCOUNT, EXCHANGE_ACCOUNT } from '../lib/account-resolver.mjs';
+import { FUND_PURCHASE_ACCOUNT, EXCHANGE_ACCOUNT } from '../lib/account-resolver.mjs';
+import { classifyKakaoExecution } from '../lib/execution-source-policy.mjs';
 
 // 금현물은 별도 Ledger 종류를 만들지 않고 체결(Executions)에 합류시킨다 — v1이 "금현물을
 // 별도 원장으로 뒀다가 버그나서 체결내역에 통합"한 전례를 반영(vault-paths.mjs 주석 참고).
@@ -117,7 +118,7 @@ async function main() {
   const inboxDocs = await readKakaoInbox(db);
   console.log(`📨 카카오 수신함(Firestore kakaoInbox) ${inboxDocs.length}건 스캔`);
 
-  let execNew = 0, divNew = 0, cashNew = 0, fundNew = 0, fundValNew = 0, exchNew = 0, skip = 0, unrecognized = 0, quantExcluded = 0, cashApiExcluded = 0;
+  let execNew = 0, divNew = 0, cashNew = 0, fundNew = 0, fundValNew = 0, exchNew = 0, skip = 0, unrecognized = 0, executionApiExcluded = 0, executionUnresolved = 0, cashApiExcluded = 0;
   // ⚠️ 코드리뷰 지적(2026-08-22, 커밋 전) — 처음엔 훑은 문서를 결과와 무관하게 전부
   // 지웠는데, 그러면 "어느 파서도 못 알아본 알림"(광고가 아니라 새 브로커 문구·아직
   // 안 만든 이벤트 타입일 수 있음)이 Vault에 아무 기록도 안 남긴 채 원문째로 영구
@@ -132,12 +133,12 @@ async function main() {
 
     const e = parseExecution(body, ts);
     if (e) {
-      // 퀀트 전용 계좌 체결은 Facts/Ledger에 아예 안 쓴다(2026-08-13) — KIS API가
-      // 정본이고(watch-order-fill.mjs가 이미 직접 기록), 카카오로 잡힌 건 순수 중복
-      // 이라 계좌 오귀속 위험(account-resolver.mjs 참고)뿐 아니라 장부에 같은 거래가
-      // 두 번 남는 것 자체가 혼란이다 — 아예 원천에서 걸러낸다.
-      if (e.acctNo === QUANT_ACCOUNT_NO) { quantExcluded++; processedIds.push(id); continue; }
-      const { filename, content, dir } = buildExecutionRecord(e);
+      const route = classifyKakaoExecution({ kind: 'stock', event: e });
+      if (route.action === 'exclude-api') { executionApiExcluded++; processedIds.push(id); continue; }
+      // 계좌 미상 NH/KIS 체결은 API 계좌일 수도, API 미지원 계좌일 수도 있다. 어느
+      // 쪽으로도 추정하지 않고 Firestore 원문을 남겨 다음 확인 때 재처리한다.
+      if (route.action === 'unresolved') { executionUnresolved++; continue; }
+      const { filename, content, dir } = buildExecutionRecord({ ...e, account: route.account });
       const filepath = join(dir, filename);
       if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
       console.log(`  + [체결] ${e.tradeDate} ${e.tradeType} ${e.stockName} ${e.quantity}주 @${e.price} (${e.broker})`);
@@ -161,6 +162,8 @@ async function main() {
 
     const g = parseGoldBuy(body, ts);
     if (g) {
+      const route = classifyKakaoExecution({ kind: 'gold', event: g });
+      if (route.action === 'exclude-api') { executionApiExcluded++; processedIds.push(id); continue; }
       const { filename, content, dir } = buildExecutionRecord(goldToExecutionEvent(g));
       const filepath = join(dir, filename);
       if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
@@ -245,7 +248,7 @@ async function main() {
   console.log(
     `\n✅ 완료 — 체결 +${execNew}(금현물 포함) · 배당 +${divNew} · 예수금앵커 +${cashNew} · ` +
     `펀드적립 +${fundNew} · 펀드평가 +${fundValNew} · 환전 +${exchNew} · ` +
-    `중복스킵 ${skip} · 퀀트계좌 제외 ${quantExcluded}(KIS API가 정본) · ` +
+    `중복스킵 ${skip} · API 정본 체결 제외 ${executionApiExcluded} · 계좌 미상 체결 보류 ${executionUnresolved} · ` +
     `위탁·CMA 예수금 제외 ${cashApiExcluded}(NH API가 정본) · 미인식 ${unrecognized} · ` +
     `수신함 정리 ${DRY_RUN ? 0 : processedIds.length}건` +
     (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),

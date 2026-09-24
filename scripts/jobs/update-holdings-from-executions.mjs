@@ -13,9 +13,9 @@
  * ⚠️ 크로스소스 이중반영 방지(2026-09-03, code-reviewer 지적으로 발견 — 마이그레이션
  * 4단계 `reconcile-nh-executions.mjs` 리뷰 도중) — 카카오 파싱과 NH/KIS API 직접조회
  * (`reconcile-nh-executions.mjs`·`reconcile-irp-executions.mjs`)가 같은 실제 체결을
- * 각자 별도 파일로 기록할 수 있다(의도된 병행기간, `Log/Strategy/2026-09-02-NH-API-
- * 우선-KIS-카카오파싱-역할축소-결정.md` 참고 — 신규 경로가 안정화된 뒤 카카오를
- * 정리하는 5단계 전까지는 두 소스가 나란히 돈다). `findMatchingKnownExecution`이
+ * 각자 별도 파일로 기록했던 전환기 데이터가 남아 있다(`Log/Strategy/2026-09-02-NH-API-
+ * 우선-KIS-카카오파싱-역할축소-결정.md` 참고). 2026-09-25 이후 API 지원 범위의 신규
+ * 카카오 체결은 수신 단계에서 제외하지만, `findMatchingKnownExecution`이
  * legacy뿐 아니라 "이미 holdingsApplied된 다른 소스의 체결"까지 대조 대상에 넣어
  * API 주문번호가 양쪽에 있으면 브로커+주문번호를 우선 비교하고, 구형/번호 누락 행만
  * 날짜 일단위·구분·종목명·수량 기준으로 보완 대조해 같은 실제 거래의 이중 적용을 막는다 —
@@ -140,25 +140,57 @@ export function pickUnprocessedExecutions(executionFiles) {
 // 호환하되, 서로 다른 명시적 주문번호를 가진 별개 주문은 합치지 않는다. 함수 이름과 인자 의미를 legacy 전용에서
 // "이미 알려진(= legacy 스냅샷이거나 다른 소스가 이미 holdingsApplied 처리한) 체결
 // 전체"로 넓힌다 — main()은 legacy와 이미 반영된 다른 소스를 knownExecutions로 제공한다.
-export function findMatchingKnownExecution(exec, knownExecutions) {
-  const matches = knownExecutions.filter((g) =>
+function sameExecutionInstrument(a, b) {
+  const aCode = String(a.stockCode ?? '').trim();
+  const bCode = String(b.stockCode ?? '').trim();
+  if (aCode && bCode) return aCode === bCode;
+  return a.stockName === b.stockName;
+}
+
+export function findMatchingKnownExecution(exec, knownExecutions, allExecutions = knownExecutions) {
+  const isNhApi = exec.source === 'NH_API' && exec.orderNo;
+  const baseMatch = (g) =>
     String(g.tradeDate).slice(0, 10) === String(exec.tradeDate).slice(0, 10) &&
-    g.tradeType === exec.tradeType && g.stockName === exec.stockName &&
-    (g.quantity === exec.quantity
-      // NH API 행은 한 주문의 누적수량을 보고하지만 카카오 알림은 부분 체결마다
-      // 개별수량으로 올 수 있다. 새 API 원장 이벤트의 누적표시가 카카오 이벤트를
-      // 포함하면, 같은 주문의 서로 다른 체결분으로 오인해 두 번 적용하지 않는다.
-      || (g.source === 'NH_API' && exec.source !== 'NH_API'
-        && g.orderNo && exec.orderNo && String(g.orderNo) === String(exec.orderNo)
-        && Number(g.orderCumulativeQty) >= Number(exec.quantity))) &&
+    g.tradeType === exec.tradeType && sameExecutionInstrument(g, exec) &&
     // 양쪽 레코드에 브로커/주문번호가 있으면 그 식별자가 같아야 같은 체결이다.
     // 주문번호가 다른 실제 거래를 날짜·종목·수량만으로 합쳐 버리면 안 된다.
     // 주문번호는 계좌별로 발급될 수 있으므로 양쪽 계좌가 알려져 다르면 매치하지 않는다.
     // 구형 알림처럼 orderNo가 없어도 계좌가 서로 다르면 별개 거래다.
     (!g.broker || !exec.broker || g.broker === exec.broker) &&
     (!g.orderNo || !exec.orderNo || String(g.orderNo) === String(exec.orderNo)) &&
-    (!g.account || !exec.account || g.account === exec.account),
-  );
+    (!g.account || !exec.account || g.account === exec.account);
+
+  const orderMatch = (g) => baseMatch(g) && g.orderNo && exec.orderNo
+    && String(g.orderNo) === String(exec.orderNo);
+
+  // NH API 기록은 카카오 개별 체결과 수량이 우연히 같다는 이유로 중복 처리하면 안 된다.
+  // API 이벤트는 카카오에 이미 기록된 체결분을 차감한 잔여분이므로 항상 별도 반영한다.
+  // 동일 주문의 이미 반영된 API 누적 스냅샷이 이 이벤트를 포함하면 그때만 건너뛴다.
+  if (isNhApi) {
+    const apiMatches = knownExecutions.filter((g) => orderMatch(g) && g.source === 'NH_API');
+    const cumulative = Number(exec.orderCumulativeQty ?? exec.quantity);
+    if (apiMatches.some((g) => Number(g.orderCumulativeQty ?? g.quantity) >= cumulative)) return apiMatches[0];
+    return null;
+  }
+
+  // API 누적 체결량은 같은 주문의 모든 카카오 분할 알림을 합친 값과 대조한다.
+  // 알림 각각의 개별 수량을 독립 비교하면 API 누적량을 여러 번 소비한 것으로 처리해
+  // 총량 불일치를 숨길 수 있으므로, 합계가 API 수량 이하일 때만 크로스소스 중복으로 본다.
+  if (exec.orderNo) {
+    const apiMatches = knownExecutions.filter((g) => orderMatch(g) && g.source === 'NH_API');
+    if (apiMatches.length) {
+      const relevantKakao = allExecutions.filter((g) => g.source !== 'NH_API' && orderMatch(g));
+      const accounts = new Set(allExecutions.filter((g) => orderMatch(g) && g.source === 'NH_API').map((g) => g.account).filter(Boolean));
+      if (!exec.account) return { crossSourceConflict: true, reason: '카카오 체결의 계좌가 없어 NH API 주문과 같은 계좌인지 판정할 수 없음' };
+      if (accounts.size > 1) return { crossSourceConflict: true, reason: '같은 주문번호가 복수 계좌에 있어 카카오 알림 계좌를 판정할 수 없음' };
+      const kakaoQty = relevantKakao.reduce((sum, g) => sum + (Number(g.quantity) || 0), 0);
+      const apiQty = Math.max(...apiMatches.map((g) => Number(g.orderCumulativeQty ?? g.quantity) || 0));
+      if (apiQty >= kakaoQty) return apiMatches[0];
+      return { crossSourceConflict: true, reason: `카카오 누적 ${kakaoQty}주가 NH API 누적 ${apiQty}주보다 큼` };
+    }
+  }
+
+  const matches = knownExecutions.filter((g) => baseMatch(g) && g.quantity === exec.quantity);
   if (!matches.length) return null;
   // 후보가 여럿인데 계좌가 서로 갈리면(같은 날 같은 종목·구분·수량을 다른 계좌로 거래한
   // 우연 — 이론상 가능) 어느 쪽 계좌인지 추정하지 않는다(코드리뷰 지적, 2026-08-19 —
@@ -170,8 +202,9 @@ export function findMatchingKnownExecution(exec, knownExecutions) {
   return matches[0];
 }
 
-export function matchesKnownExecution(exec, knownExecutions) {
-  return findMatchingKnownExecution(exec, knownExecutions) != null;
+export function matchesKnownExecution(exec, knownExecutions, allExecutions = knownExecutions) {
+  const match = findMatchingKnownExecution(exec, knownExecutions, allExecutions);
+  return match != null && !match.crossSourceConflict;
 }
 
 // 배당은 holdingsApplied 플래그가 없다(보유수량에 영향 없음) — account 필드 유무로
@@ -282,7 +315,7 @@ async function main() {
   if (targets.length === 0) console.log('처리할 체결 없음 — 배당 계좌귀속으로 진행.');
   for (const { filepath, content, parsed: exec } of targets) {
     const currentHoldings = [...holdingsMap.values()];
-    const knownMatch = findMatchingKnownExecution(exec, knownExecutions);
+    const knownMatch = findMatchingKnownExecution(exec, knownExecutions, executionFiles.map(({ parsed }) => parsed));
     // ⚠️ 버그 수정(2026-08-19, 오너 지시 "체결도 매핑 가능하면 매핑해봐") — 전량청산돼
     // 지금은 보유 파일 자체가 없는 종목(예: 삼성바이오로직스·현대차 매도)은 acctNo도
     // 없고(NH 체결 원문엔 애초에 계좌번호가 없음) 이름매칭도 대조할 보유 파일이 없어
@@ -296,6 +329,11 @@ async function main() {
     if (!account) {
       console.log(`  ⚠️  계좌 귀속 불가 — 건너뜀: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName} (${exec.broker})`);
       unresolvedAccount++;
+      continue;
+    }
+    if (knownMatch?.crossSourceConflict) {
+      console.log(`  ⚠️  API·카카오 체결 대조가 모호해 적용 보류: ${exec.tradeDate} ${exec.stockName} 주문번호 ${exec.orderNo} — ${knownMatch.reason}`);
+      warnings++;
       continue;
     }
     if (knownMatch) {

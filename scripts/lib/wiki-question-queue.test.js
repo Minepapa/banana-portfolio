@@ -68,7 +68,8 @@ test('질문 생성은 발송 전에 영속화하고 중복 질문은 재발송�
     createIndex();
     putVaultNote('Knowledge/Topics/예시-키워드');
     let sendCount = 0;
-    const sender = async () => ({ result: { message_id: ++sendCount } });
+    let sentText = '';
+    const sender = async (text) => { sentText = text; return { result: { message_id: ++sendCount } }; };
 
     const first = await createWikiQuestion(keywordInput(), { sender });
     const duplicate = await createWikiQuestion(keywordInput(), { sender });
@@ -77,6 +78,8 @@ test('질문 생성은 발송 전에 영속화하고 중복 질문은 재발송�
     assert.equal(first.sent, true);
     assert.equal(duplicate.duplicate, true);
     assert.equal(sendCount, 1);
+    assert.match(sentText, /Knowledge\/Topics\/예시-키워드/);
+    assert.match(sentText, /Knowledge\/Meta\/evidence/);
     assert.ok(readFileSync(join(vaultRoot, 'State', 'WikiQuestions', `${first.questionId}.md`), 'utf8').includes('예시 키워드'));
 
     const cli = fileURLToPath(new URL('../tools/wiki-question-cli.mjs', import.meta.url));
@@ -145,6 +148,7 @@ test('발송 실패는 결과 불명으로 보존하고 자동 중복 발송하�
     const resendSender = async () => ({ result: { message_id: 99 } });
     await assert.rejects(resendWikiQuestion(questionId, { sender: resendSender }), /수동 확인한 질문만/);
     await reconcileWikiQuestion(questionId, { delivered: false });
+    assert.equal((await listPendingWikiQuestions()).some((q) => q.questionId === questionId && q.status === '재발송허용'), true);
     const resent = await resendWikiQuestion(questionId, { sender: resendSender });
     assert.equal(resent.status, '답변대기');
     assert.equal(resent.telegramMessageId, 99);

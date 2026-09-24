@@ -172,6 +172,24 @@ test('buildTradesMirror: 카카오·NH API 크로스소스 중복 체결은 1건
   assert.equal(r.items[0].date, '2026-09-21 00:00:00', 'recordedAt이 더 이른 쪽(API 소스)이 대표로 남아야 함');
 });
 
+test('[부분체결 재현] buildTradesMirror: 카카오 3주와 NH API 잔여 2주는 API 누적 5주 한 건으로 표시한다', () => {
+  const executionEvents = [
+    {
+      tradeDate: '2026-09-24 09:10:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자',
+      quantity: 3, price: 90, broker: 'NH투자증권', orderNo: '847026', account: '위탁', holdingsApplied: true,
+    },
+    {
+      tradeDate: '2026-09-24 00:00:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자',
+      quantity: 2, price: 105, broker: 'NH투자증권', orderNo: '847026', account: '위탁', source: 'NH_API',
+      orderCumulativeQty: 5, orderCumulativeAmount: 480,
+    },
+  ];
+  const r = buildTradesMirror({ executionEvents, now: NOW });
+  assert.deepEqual(r.items.map(({ qty, price, amount, account }) => ({ qty, price, amount, account })), [
+    { qty: 5, price: 96, amount: 480, account: '위탁' },
+  ]);
+});
+
 test('buildLatestReportMirror: report 없으면 빈 값', () => {
   const r = buildLatestReportMirror({ now: NOW });
   assert.equal(r.headline, '');

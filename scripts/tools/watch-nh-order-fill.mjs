@@ -180,8 +180,9 @@ async function main() {
     }
     if (!row) { console.log('[미체결] 계속 감시'); return false; }
     if (!row.fullyFilled) {
-      console.log(`[부분체결] ${row.quantity}/${row.orderQty}주${row.unfilledQty == null ? '' : ` · 미체결잔량 ${row.unfilledQty}주`} — ${isTerminalNhExecution(row) ? '주문 잔량 없음 확인' : '계속 감시'}`);
-      if (proposalId && row.quantity > 0) {
+      const terminal = isTerminalNhExecution(row);
+      console.log(`[부분체결] ${row.quantity}/${row.orderQty}주${row.unfilledQty == null ? '' : ` · 미체결잔량 ${row.unfilledQty}주`} — ${terminal ? '주문 잔량 없음 확인' : '계속 감시'}`);
+      if (proposalId && row.quantity > 0 && !terminal) {
         try {
           await recordProposalExecutionStatus({
             proposalsDir: VAULT_PATHS.decisions.proposals,
@@ -194,20 +195,20 @@ async function main() {
           console.error(`[Proposal] ${proposalId} 부분체결 상태 기록 실패(감시는 계속): ${error.message}`);
         }
       }
-      if (!isTerminalNhExecution(row)) return false;
+      if (!terminal) return false;
     }
 
-    if (row.fullyFilled && proposalId) {
+    if (proposalId) {
       try {
         const updated = await recordProposalExecutionStatus({
           proposalsDir: VAULT_PATHS.decisions.proposals,
           proposalId,
           brokerOrderId: orderNo,
-          status: '체결',
+          status: row.fullyFilled ? '체결' : '취소',
           filledQty: row.quantity,
           avgFillPrice: row.price,
         });
-        console.log(updated ? `[Proposal] ${proposalId} — 주문접수→체결` : `[Proposal] ${proposalId} — 상태 갱신 대상 아님(현재 파일 상태 확인 필요)`);
+        console.log(updated ? `[Proposal] ${proposalId} — ${row.fullyFilled ? '체결' : '부분체결 후 취소'} 종결` : `[Proposal] ${proposalId} — 상태 갱신 대상 아님(현재 파일 상태 확인 필요)`);
       } catch (error) {
         console.error(`[Proposal] ${proposalId} 체결 상태 기록 실패(체결 알림·Ledger 처리는 계속): ${error.message}`);
       }

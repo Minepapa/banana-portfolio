@@ -35,7 +35,7 @@ import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { todayKST } from '../lib/sheets-api.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
-import { findMatchingKnownExecution } from './update-holdings-from-executions.mjs';
+import { matchesKnownExecution } from './update-holdings-from-executions.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const DEPARTMENT_LABEL = '운영실 Hermes';
@@ -53,19 +53,49 @@ export function filterTodayExecutions(executions, todayDate) {
 
 // 순수함수(2026-09-04 신설, 오너 신고 — 오늘 실거래로 재현: 금현물 금 99.99K 1주
 // 매수가 보고서에 2줄로 나옴) — Facts/Ledger/Executions는 같은 실제 체결을 서로 다른
-// 소스(카카오·NH/KIS API)가 각자 기록할 수 있다(의도된 병행기간, update-holdings-
-// from-executions.mjs 헤더 "크로스소스 이중반영 방지" 참고). 그 잡은 findMatchingKnownExecution
-// 으로 보유수량엔 한 번만 반영하지만(qty는 이미 정확했음, 실측 확인), 두 원본 레코드
-// 파일 자체는 둘 다 그대로 남는다 — 이 보고서는 그 raw 레코드를 그대로 나열해서
-// 보유수량과 달리 화면에는 중복으로 보였다. 같은 판정 기준(날짜 일단위·구분·종목명·
-// 수량)을 여기서도 재사용해 표시 직전에 한 번 더 걸러낸다. recordedAt 오름차순으로
-// 먼저 Vault에 기록된 쪽을 대표로 남긴다(어느 소스든 표시값은 동일하므로 어느 걸
-// 남겨도 무방하지만, 먼저 감지한 쪽을 남기는 게 가장 직관적인 규칙).
+// 소스(카카오·NH/KIS API)가 각자 기록했던 전환기 데이터가 남아 있다(update-holdings-
+// from-executions.mjs 헤더 "크로스소스 이중반영 방지" 참고). API 누적 체결량과 카카오
+// 분할 알림이 같은 주문번호·계좌로 만날 때는 API 누적값 한 건으로 정규화한다. 그 밖의
+// 구형·주문번호 없는 중복은 recordedAt 오름차순으로 먼저 Vault에 기록된 쪽을 대표로
+// 남긴다. 계좌를 판별할 수 없는 카카오 원문은 안전하게 별도 표시한다.
 export function dedupExecutionsForReport(executions) {
-  const sorted = [...(executions || [])].sort((a, b) => String(a.recordedAt ?? '').localeCompare(String(b.recordedAt ?? '')));
+  const input = [...(executions || [])];
+  const consumed = new Set();
+  const normalizedApi = [];
+  const sameOrder = (a, b) => {
+    const aCode = String(a.stockCode ?? '').trim();
+    const bCode = String(b.stockCode ?? '').trim();
+    return String(a.tradeDate ?? '').slice(0, 10) === String(b.tradeDate ?? '').slice(0, 10)
+      && a.tradeType === b.tradeType
+      && String(a.orderNo ?? '') !== '' && String(a.orderNo) === String(b.orderNo ?? '')
+      && (!a.broker || !b.broker || a.broker === b.broker)
+      && (aCode && bCode ? aCode === bCode : a.stockName === b.stockName)
+      // 계좌 미상 카카오 알림은 같은 주문번호라도 API 계좌와 같은 주문인지
+      // 확정할 수 없다. 보고서에서 한 줄로 합치지 않고 두 원문을 남긴다.
+      && Boolean(a.account) && Boolean(b.account) && a.account === b.account;
+  };
+  for (let i = 0; i < input.length; i++) {
+    const api = input[i];
+    if (api.source !== 'NH_API' || !api.orderNo || consumed.has(i)) continue;
+    const group = input.map((row, index) => ({ row, index })).filter(({ row }) => sameOrder(api, row));
+    const preferred = group
+      .filter(({ row }) => row.source === 'NH_API')
+      .reduce((best, item) => {
+        const bestQty = Number(best?.row.orderCumulativeQty ?? best?.row.quantity) || 0;
+        const itemQty = Number(item.row.orderCumulativeQty ?? item.row.quantity) || 0;
+        if (itemQty !== bestQty) return itemQty > bestQty ? item : best;
+        return String(item.row.recordedAt ?? '') > String(best?.row.recordedAt ?? '') ? item : best;
+      }, null);
+    group.forEach(({ index }) => consumed.add(index));
+    const quantity = Number(preferred.row.orderCumulativeQty ?? preferred.row.quantity);
+    const amount = Number(preferred.row.orderCumulativeAmount ?? quantity * Number(preferred.row.price));
+    normalizedApi.push({ ...preferred.row, quantity, price: Number.isFinite(amount) && quantity > 0 ? amount / quantity : preferred.row.price });
+  }
+  const sorted = input.filter((_, index) => !consumed.has(index)).concat(normalizedApi)
+    .sort((a, b) => String(a.recordedAt ?? '').localeCompare(String(b.recordedAt ?? '')));
   const kept = [];
   for (const exec of sorted) {
-    if (findMatchingKnownExecution(exec, kept)) continue;
+    if (matchesKnownExecution(exec, kept, sorted)) continue;
     kept.push(exec);
   }
   return kept;

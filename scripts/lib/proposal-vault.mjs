@@ -70,12 +70,20 @@ export function listProposalsFromContents(contents) {
 // 제안 작성 단계의 활성 상태. 주문 접수·부분체결은 승인 대기 제안과 처리 방식이
 // 다르므로 resolveProposalIntake가 별도로 찾아 새 제안 생성을 차단한다.
 const ACTIVE_PROPOSAL_STATUSES = new Set(['대기', '승인']);
+const BLOCKING_PROPOSAL_STATUSES = new Set(['대기', '승인', '주문접수', '부분체결']);
 
 // 같은 안건(track+assetKey+side)의 활성(대기·승인) 상태 제안 중 가장 최근 것 — 없으면
 // null. 있으면 "단일 활성 제안 원칙"에 따라 새 제안이 이걸 대체(supersede)해야 한다.
 export function findActiveProposal(proposals, { track, assetKey, side }) {
   const key = proposalMatchKey({ track, assetKey, side });
   const candidates = proposals.filter((p) => ACTIVE_PROPOSAL_STATUSES.has(p.status) && proposalMatchKey(p) === key);
+  if (!candidates.length) return null;
+  return candidates.reduce((latest, p) => (!latest || p.createdAt > latest.createdAt ? p : latest), null);
+}
+
+export function findBlockingProposal(proposals, { track, assetKey, side }) {
+  const key = proposalMatchKey({ track, assetKey, side });
+  const candidates = proposals.filter((p) => BLOCKING_PROPOSAL_STATUSES.has(p.status) && proposalMatchKey(p) === key);
   if (!candidates.length) return null;
   return candidates.reduce((latest, p) => (!latest || p.createdAt > latest.createdAt ? p : latest), null);
 }

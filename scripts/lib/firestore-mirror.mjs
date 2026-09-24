@@ -100,21 +100,13 @@ export function buildProfitsMirror({ profitEvents = [], now = new Date(), regist
 // executionEvents: Facts/Ledger/Executions 파싱 결과({ tradeDate, tradeType, stockName, quantity, price, ... })
 //
 // ⚠️ 크로스소스 중복표시 제거(2026-09-21, 오너 신고 — 앱 체결 탭에 TIGER 리츠
-// 부동산인프라TOP10액티브 49주 매도가 두 줄로 나옴). 위탁·금현물은 카카오 파싱
-// (parse-notifications-to-vault.mjs)과 NH API(reconcile-nh-executions.mjs·이번
-// 세션 신설 watch-nh-order-fill.mjs)가 같은 실제 체결을 각자 별도 Facts/Ledger/
-// Executions 파일로 기록하는 게 최종 설계다(Log/Strategy/2026-09-02-NH-API-우선-
-// KIS-카카오파싱-역할축소-결정.md — 위탁은 ISA와 카카오 파싱 시점에 구분이 안 되는
-// 구조적 제약으로 정리 불가, 금현물도 API 단독장애 시 안전망 필요로 영구 병행이
-// 최종설계). `update-holdings-from-executions.mjs`의 `findMatchingKnownExecution`이
-// 보유수량·실현손익엔 이미 한 번만 반영되게 막아왔지만(장부는 항상 정확했음), 이
-// 미러는 raw executionEvents를 그대로 나열해 화면에만 중복이 보였다 — 정확히 같은
-// 클래스의 버그가 2026-09-04 daily-execution-report.mjs(텔레그램 체결보고)에서도
-// 있었고 그때 `dedupExecutionsForReport`(findMatchingKnownExecution 재사용, recordedAt
-// 오름차순으로 먼저 기록된 쪽을 대표로 남김)로 고쳤다 — 그 수정이 이 앱 탭까지는
-// 안 미쳤던 게 이번에 드러난 갭. 같은 판정 함수를 그대로 재사용해 두 표시 경로
-// (텔레그램 보고·앱 체결 탭)가 항상 같은 기준으로 dedup되게 통일한다(Facts/Ledger의
-// 원본 파일 자체는 그대로 둠 — 출처 추적성 유지, 화면 표시 직전에만 걸러냄).
+// 부동산인프라TOP10액티브 49주 매도가 두 줄로 나옴). 위탁 국내주식·금현물은 2026-09-25
+// 이후 NH API가 정본이며 카카오 체결은 수신 단계에서 Ledger 기록을 제외한다. 다만 그 전
+// 전환기 원본은 API·카카오 양쪽 파일로 남아 있고, API 미지원 ISA·연금저축·위탁 해외주식은
+// 카카오가 계속 정본이다. 이 미러는 과거 중복 원본을 그대로 나열해 화면에만 중복이 보이던
+// 문제를 막기 위해 `dedupExecutionsForReport`를 재사용한다. API 누적 체결과 카카오 분할
+// 알림은 주문번호·계좌 기준으로 API 누적값 한 건으로 정규화하며, 계좌 미상 원문은 추정해
+// 합치지 않는다. Facts/Ledger의 원본 파일은 출처 추적을 위해 보존한다.
 export function buildTradesMirror({ executionEvents = [], now = new Date(), registry = new Map() }) {
   const items = dedupExecutionsForReport(executionEvents)
     .filter((e) => withinLastYear(e.tradeDate, now))

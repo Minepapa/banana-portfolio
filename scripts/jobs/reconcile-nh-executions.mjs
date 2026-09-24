@@ -9,8 +9,9 @@
  * 철학으로, 카카오 알림 파싱 없이 API로 직접 원장을 채운다. CMA는 스코프 밖
  * (Strategy 문서: "CMA는 체결 자체가 없는 계좌라 제외").
  *
- * 카카오 알림 파싱(NH투자증권 패턴)은 그대로 둔다(제거는 5단계, "안정화 후" —
- * Strategy 문서 참고) — 두 경로가 같은 체결을 각자 별도 파일로 기록할 수 있다
+ * 2026-09-25부터 API가 실제로 덮는 위탁 국내주식·금현물 카카오 체결은 수신 단계에서
+ * 원장 기록을 중단했다. 아래 크로스소스 처리는 전환 전에 생긴 과거 이중 기록을 위한
+ * 호환 경로다. 두 경로가 같은 체결을 각자 별도 파일로 기록했던 시기에는
  * (`buildExecutionRecord`의 dedupKey·파일명이 `tradeDate|tradeType|stockName|
  * quantity`(+이 잡만 쓰는 orderNo)로 결정되는데, 두 소스의 tradeDate 계산 방식이
  * 달라 — 카카오는 실제 체결시각, 이 잡은 시각 정보가 없어 00:00:00 — 같은 체결이
@@ -176,7 +177,7 @@ export function buildNhProposalStatusInput(proposal, execution, proposalsDir) {
     proposalsDir,
     proposalId: proposal.id,
     brokerOrderId: execution.orderNo,
-    status: execution.fullyFilled ? '체결' : '부분체결',
+    status: execution.fullyFilled ? '체결' : execution.unfilledQty === 0 ? '취소' : '부분체결',
     filledQty: execution.quantity,
     avgFillPrice: execution.price,
   };

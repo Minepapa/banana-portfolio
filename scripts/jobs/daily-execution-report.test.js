@@ -123,3 +123,26 @@ test('dedupExecutionsForReport: 빈 배열/undefined 입력도 안전', () => {
   assert.deepEqual(dedupExecutionsForReport([]), []);
   assert.deepEqual(dedupExecutionsForReport(undefined), []);
 });
+
+test('[실사고 재현] API 증분 2주와 이미 적용된 Kakao 3주는 누적 5주 한 건으로 보고한다', () => {
+  const kakao = { tradeDate: '2026-09-24 09:10:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자', quantity: 3, price: 90, broker: 'NH투자증권', orderNo: '847026', account: '위탁', holdingsApplied: true };
+  const api = { tradeDate: '2026-09-24 00:00:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자', quantity: 2, price: 105, broker: 'NH투자증권', orderNo: '847026', account: '위탁', source: 'NH_API', orderCumulativeQty: 5, orderCumulativeAmount: 480 };
+  assert.deepEqual(dedupExecutionsForReport([kakao, api]).map((e) => ({ quantity: e.quantity, price: e.price, account: e.account })), [
+    { quantity: 5, price: 96, account: '위탁' },
+  ]);
+});
+
+test('[막아야 함] 계좌 미상 Kakao 체결은 API 주문과 한 줄로 합쳐 숨기지 않는다', () => {
+  const api = { tradeDate: '2026-09-24 00:00:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자', quantity: 5, price: 96, broker: 'NH투자증권', orderNo: '847026', account: '위탁', source: 'NH_API', orderCumulativeQty: 5, orderCumulativeAmount: 480 };
+  const kakao = { tradeDate: '2026-09-24 09:10:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자', quantity: 2, price: 90, broker: 'NH투자증권', orderNo: '847026', account: null };
+  assert.equal(dedupExecutionsForReport([api, kakao]).length, 2);
+});
+
+test('같은 주문의 API 누적 스냅샷이 여러 개면 가장 큰 누적수량 하나로 보고한다', () => {
+  const first = { tradeDate: '2026-09-24 00:00:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자', quantity: 3, price: 100, broker: 'NH투자증권', orderNo: '847026', account: '위탁', source: 'NH_API', orderCumulativeQty: 3, orderCumulativeAmount: 300, recordedAt: '2026-09-24T09:01:00Z' };
+  const latest = { ...first, quantity: 2, price: 105, orderCumulativeQty: 5, orderCumulativeAmount: 510, recordedAt: '2026-09-24T09:02:00Z' };
+  const rows = dedupExecutionsForReport([first, latest]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].quantity, 5);
+  assert.equal(rows[0].price, 102);
+});

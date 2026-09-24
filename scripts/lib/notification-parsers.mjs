@@ -64,7 +64,7 @@ export function parseExecution(body, tsRaw) {
       stockName, quantity, price,
       currency: p.overseas ? 'USD' : 'KRW',
       broker: p.broker,
-      acctNo: g.acctNo?.trim() || '', // 한국투자증권만 현재 캡처(다른 증권사는 빈 문자열)
+      acctNo: g.acctNo?.trim() || (p.broker === 'NH투자증권' ? extractNhAccountNo(body) : '') || '',
       orderNo,
     };
   }

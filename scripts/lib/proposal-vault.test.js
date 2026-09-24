@@ -2,9 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildProposalRecord, updateProposalRecord, parseProposal, proposalMatchKey,
-  findActiveProposal, findRecentRejection, findProposalByTelegramMessageId,
+  findActiveProposal, findBlockingProposal, findRecentRejection, findProposalByTelegramMessageId,
   findProposalByBrokerOrderId,
 } from './proposal-vault.mjs';
+
+test('findBlockingProposal: 대기·승인·주문접수·부분체결은 새 직접주문을 차단한다', () => {
+  for (const status of ['대기', '승인', '주문접수', '부분체결']) {
+    const proposal = { id: status, track: '자산분배', assetKey: '삼성전자', side: '매수', status, createdAt: '2026-09-24T00:00:00Z' };
+    assert.equal(findBlockingProposal([proposal], { track: '자산분배', assetKey: '삼성전자', side: '매수' })?.id, status);
+  }
+});
 
 const now = new Date('2026-08-05T09:00:00.000Z');
 

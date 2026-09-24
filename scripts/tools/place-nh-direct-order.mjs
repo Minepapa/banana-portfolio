@@ -37,7 +37,7 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { createDirectOrderProposalOnce, validateDirectOrderRequestId } from '../lib/direct-order-request.mjs';
 import {
-  buildProposalRecord, parseProposal, findActiveProposal,
+  buildProposalRecord, parseProposal, findBlockingProposal,
 } from '../lib/proposal-vault.mjs';
 import { getCodeRegistry } from '../lib/stock-registry.mjs';
 import {
@@ -170,7 +170,7 @@ async function main() {
     requestId,
     proposalsDir,
     loadProposals: async () => loadProposals(proposalsDir),
-    findActive: (proposals) => findActiveProposal(proposals, {
+    findActive: (proposals) => findBlockingProposal(proposals, {
       track: '자산분배', assetKey: proposalAssetKey, side,
     }),
     createProposal: async () => buildProposalRecord({

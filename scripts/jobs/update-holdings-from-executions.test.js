@@ -174,7 +174,7 @@ test('[중복방지] NH API 누적 체결수량이 카카오 개별 부분체결
   }];
   const kakaoPartial = {
     tradeDate: '2026-09-24 09:10:00', tradeType: '매수', stockName: '삼성전자',
-    quantity: 2, broker: 'NH투자증권', orderNo: '847026',
+    quantity: 2, broker: 'NH투자증권', orderNo: '847026', account: '위탁',
   };
   assert.equal(findMatchingKnownExecution(kakaoPartial, alreadyApplied), alreadyApplied[0]);
 });
@@ -190,4 +190,57 @@ test('NH API 누적수량만으로 주문번호 없는 카카오 이벤트를 �
     quantity: 2, broker: 'NH투자증권', orderNo: '',
   };
   assert.equal(findMatchingKnownExecution(noOrderId, api), null);
+});
+
+test('[막아야 함] API가 Kakao와 같은 주문의 잔여 2주를 기록한 경우, Kakao 2주와 수량이 같아도 API 이벤트를 중복 처리하지 않음', () => {
+  const kakao = {
+    tradeDate: '2026-09-24 09:10:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자',
+    quantity: 2, broker: 'NH투자증권', orderNo: '847026', account: null, holdingsApplied: true,
+  };
+  const apiRemainder = {
+    tradeDate: '2026-09-24 00:00:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자',
+    quantity: 2, orderCumulativeQty: 5, source: 'NH_API', broker: 'NH투자증권',
+    orderNo: '847026', account: '위탁',
+  };
+  assert.equal(findMatchingKnownExecution(apiRemainder, [kakao], [kakao, apiRemainder]), null);
+});
+
+test('[막아야 함] 여러 카카오 부분체결 합계가 API 누적량을 넘으면 각각을 중복 처리하지 않고 충돌로 보류', () => {
+  const api = {
+    tradeDate: '2026-09-24 00:00:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자',
+    quantity: 2, orderCumulativeQty: 5, source: 'NH_API', broker: 'NH투자증권',
+    orderNo: '847026', account: '위탁', holdingsApplied: true,
+  };
+  const kakaoA = { tradeDate: '2026-09-24 09:10:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자', quantity: 4, broker: 'NH투자증권', orderNo: '847026', account: '위탁' };
+  const kakaoB = { ...kakaoA, tradeDate: '2026-09-24 09:11:00', account: '위탁' };
+  const result = findMatchingKnownExecution(kakaoA, [api], [api, kakaoA, kakaoB]);
+  assert.equal(result.crossSourceConflict, true);
+  assert.match(result.reason, /카카오 누적 8주.*NH API 누적 5주/);
+  assert.equal(matchesKnownExecution(kakaoA, [api], [api, kakaoA, kakaoB]), false);
+});
+
+test('같은 주문은 종목코드 일치 시 API·Kakao 종목명 표기가 달라도 대조하고, 코드가 다르면 제외', () => {
+  const api = {
+    tradeDate: '2026-09-24 00:00:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자보통주',
+    quantity: 5, orderCumulativeQty: 5, source: 'NH_API', broker: 'NH투자증권',
+    orderNo: '847026', account: '위탁', holdingsApplied: true,
+  };
+  const kakao = { tradeDate: '2026-09-24 09:10:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자', quantity: 2, broker: 'NH투자증권', orderNo: '847026', account: '위탁' };
+  assert.equal(findMatchingKnownExecution(kakao, [api], [api, kakao]), api);
+  assert.equal(findMatchingKnownExecution({ ...kakao, stockCode: '000660' }, [api], [api, kakao]), null);
+});
+
+test('[막아야 함] 계좌 미상 Kakao 체결은 단일 NH API 주문번호가 있어도 자동 중복판정하지 않음', () => {
+  const api = {
+    tradeDate: '2026-09-24 00:00:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자',
+    quantity: 5, orderCumulativeQty: 5, source: 'NH_API', broker: 'NH투자증권',
+    orderNo: '847026', account: '위탁', holdingsApplied: true,
+  };
+  const kakao = {
+    tradeDate: '2026-09-24 09:10:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자',
+    quantity: 2, broker: 'NH투자증권', orderNo: '847026', account: null,
+  };
+  const result = findMatchingKnownExecution(kakao, [api], [api, kakao]);
+  assert.equal(result.crossSourceConflict, true);
+  assert.match(result.reason, /계좌가 없어/);
 });

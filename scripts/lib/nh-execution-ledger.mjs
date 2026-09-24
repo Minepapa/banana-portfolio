@@ -11,15 +11,20 @@ import { withLock, writeAtomic } from './state-writer.mjs';
 const BROKER = 'NH투자증권';
 const clean = (value) => String(value ?? '').trim();
 
+function sameInstrument(record, input) {
+  const recordCode = clean(record.stockCode);
+  const inputCode = clean(input.stockCode);
+  if (recordCode && inputCode) return recordCode === inputCode;
+  return record.stockName === input.stockName;
+}
+
 function sameOrder(record, input) {
   return record.type === 'execution'
     && String(record.tradeDate ?? '').slice(0, 10) === input.tradeDate.slice(0, 10)
     && record.broker === BROKER
     && String(record.orderNo ?? '') === String(input.orderNo)
-    && record.stockName === input.stockName
-    && record.tradeType === input.tradeType
-    && (!record.stockCode || !input.stockCode || record.stockCode === input.stockCode)
-    && (!record.account || !input.account || record.account === input.account);
+    && sameInstrument(record, input)
+    && record.tradeType === input.tradeType;
 }
 
 function readOrderRecords(dir, input) {
@@ -46,6 +51,10 @@ function findCoveredSnapshot(records) {
       if (Number.isFinite(quantity) && Number.isFinite(amount)
         && (!api || quantity > api.quantity)) api = { quantity, amount };
     } else {
+      // 아직 Holdings에 반영되지 않은 카카오 행은 API 누적량을 이미 적용한 것으로
+      // 볼 수 없다. 여기서 차감하면 API delta만 적용되고 카카오 행은 뒤에서 중복으로
+      // 건너뛰어 실제 수량보다 적게 반영된다.
+      if (record.holdingsApplied !== true) continue;
       const quantity = Number(record.quantity);
       const amount = quantity * Number(record.price);
       if (Number.isFinite(quantity) && quantity > 0 && Number.isFinite(amount) && amount > 0) {
@@ -88,10 +97,22 @@ export function buildNhTerminalExecutionEvent({ row, tradeDate, account, acctNo 
     tradeDate, tradeType: row.tradeType, stockCode: clean(row.stockCode), stockName: clean(row.stockName),
     quantity, price, currency: 'KRW', broker: BROKER, account, acctNo, orderNo,
   };
+  // 계좌를 알 수 없는 과거 카카오 체결은 주문번호가 계좌별로 발급되는 경우 다른
+  // 계좌의 주문일 수 있다. API 누적값에서 임의로 차감하지 않고, 원문을 보존한 채
+  // 대사 보류로 남긴다.
+  if (records.some((record) => record.source !== 'NH_API' && !record.account)) {
+    return { ok: false, reason: '같은 주문번호의 계좌 미상 카카오 체결이 있어 API 누적수량을 안전하게 대조할 수 없음' };
+  }
+  if (records.some((record) => record.account && record.account !== account)) {
+    return { ok: false, reason: '같은 주문번호·종목·방향이 다른 계좌 기록에도 있어 계좌 중복 여부 확인 필요' };
+  }
   const previous = findCoveredSnapshot(records);
   const coveredQty = previous?.quantity ?? 0;
   const coveredAmount = previous?.amount ?? 0;
-  if (coveredQty >= quantity) return { ok: true, event: null, coveredQty };
+  if (coveredQty > quantity) {
+    return { ok: false, reason: '기존 체결기록 수량이 NH 주문 누적수량보다 큼 — 주문번호·계좌 대조 필요' };
+  }
+  if (coveredQty === quantity) return { ok: true, event: null, coveredQty };
 
   const deltaQty = quantity - coveredQty;
   const deltaAmount = totalAmount - coveredAmount;

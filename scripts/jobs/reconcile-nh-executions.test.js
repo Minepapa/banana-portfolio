@@ -140,6 +140,14 @@ test('buildNhProposalStatusInput: 부분체결도 당일 대사에서 Proposal �
   });
 });
 
+test('buildNhProposalStatusInput: 미체결 잔량 0인 종료 부분체결은 취소로 종결한다', () => {
+  assert.equal(buildNhProposalStatusInput(
+    { id: 'proposal-1' },
+    { orderNo: '847026', fullyFilled: false, orderQty: 10, quantity: 7, price: 9450, unfilledQty: 0 },
+    '/tmp/proposals',
+  ).status, '취소');
+});
+
 test('buildNhProposalStatusInput: 주문수량이 없어 부분/전량 판정 불가면 상태전이를 보류한다', () => {
   assert.equal(buildNhProposalStatusInput(
     { id: 'proposal-1' }, { orderNo: '847026', fullyFilled: false, orderQty: null, quantity: 7, price: 9450 }, '/tmp/proposals',

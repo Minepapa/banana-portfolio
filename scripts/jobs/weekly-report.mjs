@@ -55,6 +55,7 @@ import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 // 정규화한다. firestore-mirror.mjs와 동일 원칙(scripts/lib/firestore-mirror.mjs
 // 헤더 주석 참고).
 import { getCodeRegistry, resolveCanonicalStockName } from '../lib/stock-registry.mjs';
+import { dedupExecutionsForReport } from './daily-execution-report.mjs';
 
 // 2026-08-23 — 이 발송도 부서 라벨이 없었다(오너 지시로 전체 텔레그램 메시지 구조
 // 재점검 중 발견) — 주간리포트·KPI는 비서실(Apollo) 소관(위 APOLLO_REPORT/APOLLO_PREFS
@@ -404,7 +405,7 @@ async function main() {
   const prevReport = loadPrevReport(asof);
 
   const stockRegistry = getCodeRegistry();
-  const tradeRows = executionsToTradeRows(executions, stockRegistry);
+  const tradeRows = executionsToTradeRows(dedupExecutionsForReport(executions), stockRegistry);
   const dividendRows = dividendsToRows(dividends, stockRegistry);
 
   // ③ facts 조립 + 행동 신호(체결만 — MVP 범위, 노트·리스크·저널 신호는 아직 없음)

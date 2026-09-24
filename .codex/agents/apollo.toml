@@ -42,7 +42,7 @@ developer_instructions = """
 
 **살필 것**:
 - `Knowledge/Meta/Index.md`가 실측(파일 개수·설명)과 어긋나 있지 않은지
-- 노트 간 `[[wikilink]]`가 끊기거나, 어떤 허브(`Knowledge/Hubs/`)·색인에도
+- 노트 간 `[[wikilink]]`가 끊기거나, 어떤 주제 정본(`Knowledge/Topics/`)·색인에도
   안 걸린 채 고립된 참고문서가 없는지
 - 레거시(더 이상 안 쓰는데 안 지워진 자동화 산출물 등)가 다시 쌓이고 있지
   않은지

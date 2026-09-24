@@ -12,7 +12,7 @@ const QUEUE_DIR = join(VAULT_PATHS.root, 'State', 'WikiQuestions');
 const QUEUE_LOCK = join(QUEUE_DIR, '.queue');
 const INDEX_PATH = join(VAULT_PATHS.root, 'Knowledge', 'Index.md');
 const QUESTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const ACTIVE_STATUSES = new Set(['발송중', '발송결과불명', '답변대기', '승인', '반영대기']);
+const ACTIVE_STATUSES = new Set(['발송중', '발송결과불명', '재발송허용', '답변대기', '승인', '반영대기']);
 const ACTIONS = new Map([
   ['등록', 'approve'], ['승인', 'approve'], ['예', 'approve'],
   ['보류', 'hold'], ['나중에', 'hold'],
@@ -121,8 +121,17 @@ function formatQuestion(fields, questionText = '') {
   const evidence = fields.evidenceNotes.length
     ? `\n\n근거 노트: ${fields.evidenceNotes.map((x) => `\`${escapeHtml(x)}\``).join(', ')}`
     : '';
+  let plan = '';
+  if (fields.changePlan) {
+    try {
+      const parsed = typeof fields.changePlan === 'string' ? JSON.parse(fields.changePlan) : fields.changePlan;
+      plan = `\n\n반영 예정: 표준어 <code>${escapeHtml(parsed.standardTerm)}</code> · 정본 <code>${escapeHtml(parsed.canonicalNote)}</code> · 색인 <code>${escapeHtml(parsed.indexSection)}</code>`;
+      if (parsed.aliases?.length) plan += ` · 별칭 <code>${parsed.aliases.map(escapeHtml).join(', ')}</code>`;
+      if (parsed.backlinkNotes?.length) plan += `\n역링크 추가: ${parsed.backlinkNotes.map((x) => `<code>${escapeHtml(x)}</code>`).join(', ')}`;
+    } catch { plan = '\n\n반영 예정안을 읽을 수 없습니다. 질문 노트를 확인해주세요.'; }
+  }
   const choices = `\n\n답변 방법: 아래 중 한 줄로 답해주세요.\n<code>${id} 등록</code>\n<code>${id} 보류</code>\n<code>${id} 제외</code>`;
-  const body = `<b>질문 ID: ${id}</b>\n\n${stripEmDash(escapeHtml(questionText))}${evidence}${choices}`;
+  const body = `<b>질문 ID: ${id}</b>\n\n${stripEmDash(escapeHtml(questionText))}${evidence}${plan}${choices}`;
   return formatDepartmentMessage({ departmentLabel: '비서실 Apollo', tag: '확인요청', body });
 }
 function normalizeAnswer(text) {

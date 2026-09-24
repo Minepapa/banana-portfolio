@@ -101,10 +101,9 @@ export function buildAssetSection(holdings, previousTotal) {
 //
 // ⚠️ 크로스소스 중복 제거(2026-09-11, 텔레그램 세션이 남긴 DevRequest 반영 — 오너가
 // "금현물 1주 매수했는데 왜 2주라고 하냐" 신고, `Log/DevRequests/2026-09-11-morning-
-// briefing-체결중복노출-버그.md`). 위탁·금현물은 NH API+카카오 영구 병행이 최종설계라
-// (2026-09-04 오너 확정 — API 잡이 크리덴셜 만료·Mac 절전 등으로 조용히 실패할 때
-// 카카오가 유일한 안전망) 같은 실제 체결이 Facts/Ledger/Executions에 레코드 2개로
-// 남는 게 정상이다. daily-execution-report.mjs는 dedupExecutionsForReport로 이미
+// briefing-체결중복노출-버그.md`). 위탁·금현물의 과거 NH API+카카오 병행 기록은
+// Facts/Ledger/Executions에 레코드 2개로 남아 있다. daily-execution-report.mjs는
+// dedupExecutionsForReport로 이미
 // 걸러 보고하는데 이 섹션엔 같은 처리가 빠져 있었다 — 동일 함수를 그대로 재사용한다
 // (새 판정 로직을 따로 만들면 두 보고서가 서로 다른 기준으로 갈라질 위험).
 export function buildEventsSection(dividends, executions, sinceTimestamp) {
