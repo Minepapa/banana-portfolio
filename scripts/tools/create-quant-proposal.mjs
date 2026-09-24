@@ -85,6 +85,10 @@ async function main() {
     console.log(`⛔ 제안 생성 차단: ${result.reason}`);
     process.exit(1);
   }
+  if (result.action !== 'created') {
+    console.error(`❌ 제안 발송 실패: ${result.reason ?? '결과 확인 필요'}`);
+    process.exit(1);
+  }
 
   console.log(`✅ 제안 생성: ${result.id}`);
   if (result.supersededId) console.log(`   기존 제안 대체됨: ${result.supersededId}`);

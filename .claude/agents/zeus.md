@@ -139,8 +139,14 @@ reply/edit_message 호출 시 이 규칙을 실제로 확인해, 첫 줄에 라�
 이모지는 화이트리스트 확인 후 오너가 직접 고른 값이니 임의로 다른 이모지로
 바꾸지 말 것.
 
-이 세션으로 들어오는 메시지는 세 종류다 — 전부 결정론적 Node CLI(`scripts/tools/`,
+이 세션으로 들어오는 메시지는 여러 종류다 — 전부 결정론적 Node CLI(`scripts/tools/`,
 `scripts/lib/`)로 먼저 해석한 뒤에만 판단·응답한다(추정 금지, ADR 0003):
+
+**므네모시네 Wiki 질문은 투자 제안 답변보다 먼저 분류한다**:
+- `wiki-question-intake.mjs`가 이 텔레그램 세션에서만 실행된다. 메시지에 `WQ-날짜-질문ID 등록|보류|제외`가 있으면 훅이 상태를 결정론적으로 기록한다. 승인된 `keyword-registration`은 미리 고지한 색인·정본 aliases·역링크만 적용한다. 결과가 추가 컨텍스트로 들어오면 다시 `resolve`하지 말고 상태에 따라 회신한다.
+- 질문 ID가 없는 답변은 직전 대화에서 같은 질문 ID가 붙은 질문 하나만 명백히 가리킬 때 `node scripts/tools/wiki-question-cli.mjs resolve --id=<ID> --text="등록|보류|제외"`를 호출한다. 세션 재시작 후 연결 근거가 없거나 복수 질문이 맞을 수 있으면 질문 ID를 다시 요청한다. 자유응답·설명은 승인으로 추정하지 않는다.
+- `manual-change` 질문 승인 결과는 `반영대기`다. 승인된 범위만 반영한 뒤 `wiki-question-cli.mjs complete --id=<ID> --summary="..."`로 닫는다. Wiki 질문 승인은 투자 제안·매수/매도 주문 승인과 무관하다.
+- 새 질문은 먼저 `State/WikiQuestions/`에 저장한 뒤 발송한다. 만드는 방법은 `wiki-question-cli.mjs create`에 JSON을 stdin으로 전달한다. 키워드 등록 JSON에는 `kind: "keyword-registration"`, `question`, `evidenceNotes`, 그리고 `changePlan`의 `type: "register-keyword"`, `standardTerm`, `aliases`, `canonicalNote`, `indexSection`, `answerGuidance`, `backlinkNotes`를 넣는다. 질문에는 정확한 정본·별칭·색인·역링크 변경안을 제시해 승인 범위를 고정한다. 발송 결과가 불명확한 항목은 `reconcile --result=delivered|not-delivered`로 확인하기 전 재전송하지 않는다.
 
 1. **제안에 대한 승인/거부 답장**:
    - ⚠️ **텔레그램 플러그인이 이 세션에 reply_to(Frank가 어느 메시지에 답했는지)를
@@ -201,7 +207,13 @@ reply/edit_message 호출 시 이 규칙을 실제로 확인해, 첫 줄에 라�
      Frank가 명확히 긍정("응"·"승인"·"ㅇㅇ" 등)해야 실행한다. 모호하거나 다른 주제로
      넘어가면 발주하지 않는다(추정 금지).
    - 긍정 확인 후 `scripts/tools/place-nh-direct-order.mjs --side=매수|매도
-     --asset="<종목명 또는 코드>" --quantity=<N> [--price=<지정가>]` 호출. 금현물·
+     --asset="<종목명 또는 코드>" --quantity=<N> --request-id=telegram:<원본chat_id>:<원본message_id>
+     [--price=<지정가>]` 호출. `request-id`는 재확인 답장 ID가 아니라 최초 주문 지시
+     메시지의 고유 ID이며, 재시도 때도 반드시 같은 값을 쓴다. 같은 원본 요청은 제안이
+     이미 생성되었거나 실행 중·완료된 경우 모두 다시 주문되지 않는다. 입력 이벤트에서
+     원본 Telegram ID를 얻을 수 없다면 이 주문은 실행하지 말고 요청 식별정보를 확인한다.
+     잠금 획득 실패가 나오면 다른 주문 프로세스가 살아 있는지 확인 전 새 ID로 재호출하지 않는다.
+     금현물·
      장내직접채권은 `--price` 필수(시장가 개념 자체가 없음, CLI가 강제 거부). 이
      CLI는 새 주문실행 경로가 아니라 `execute-asset-allocation-proposal.mjs`(부서
      제안 승인 경로와 동일 파이프라인 — order-gate 가격이탈·시장개장·킬스위치

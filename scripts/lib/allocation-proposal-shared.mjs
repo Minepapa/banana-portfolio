@@ -15,6 +15,14 @@ import { normalizeAccount } from './rebalance-gap.mjs';
 // 분할매수 하드 캡(2026-08-23 오너 확정) — 두 파일에 각자 있던 동일 상수를 여기 하나로.
 export const CAP_FRACTION = 0.5;
 
+// 순수함수 — 매수 종목은 해당 계좌의 정확한 기존 후보 또는 데이터 기반 순위에
+// 있어야 한다. 랭킹 데이터가 없는 호출은 기존 호환 동작(자유 이름 허용)을 유지한다.
+export function isAllowedAllocationInstrument(instrumentName, existingCandidates = [], rankedUniverse = []) {
+  if (existingCandidates.some((candidate) => candidate?.name === instrumentName)) return true;
+  if (!Array.isArray(rankedUniverse) || rankedUniverse.length === 0) return true;
+  return rankedUniverse.some((candidate) => candidate?.name === instrumentName);
+}
+
 // 순수함수 — "제안 항목 배열 → 도메인검증(콜백) → 캡 소진까지 축소" 공통 뼈대.
 // validateItem(rawItem) => { ok:true, key, amountWon, normalized } | { ok:false, reason }
 //   - key: 이 항목이 소진하는 캡 예산 버킷(자산군명 등 — 의미는 호출부가 정한다,

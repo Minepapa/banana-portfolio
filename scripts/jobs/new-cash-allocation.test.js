@@ -106,6 +106,24 @@ test('validateAllocations: 보유 후보 0건인 자산군이라도 순위 목�
   assert.equal(kept.length, 1);
 });
 
+test('validateAllocations: 다른 보유 후보가 있어도 순위 밖 신규 종목은 드롭하고 실보유 후보는 허용', () => {
+  const { kept, dropped } = validateAllocations(
+    [
+      { assetClass: '금', instrumentName: '임의금ETF', amountWon: 100000 },
+      { assetClass: '금', instrumentName: '보유금ETF', amountWon: 100000 },
+    ],
+    {
+      account: '위탁', availableCash: 500000, eligibleClasses: ['금'],
+      candidatesByClass: { 금: [{ name: '보유금ETF' }] },
+      rankedUniverseByClass: { 금: [{ name: '순위금ETF', composite: 80, axes: {}, dataGaps: [] }] },
+    },
+  );
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].instrumentName, '보유금ETF');
+  assert.equal(dropped.length, 1);
+  assert.match(dropped[0].reason, /순위에 없는 이름/);
+});
+
 test('validateAllocations: candidatesByClass·rankedUniverseByClass 생략하면 기존처럼 어떤 신규 이름도 통과(하위호환)', () => {
   const { kept, dropped } = validateAllocations(
     [{ assetClass: '금', instrumentName: '아무거나ETF', amountWon: 100000 }],

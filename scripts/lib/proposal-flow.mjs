@@ -103,10 +103,10 @@ export function buildProposalStatusEditText({ proposal, action, decidedAt }) {
 // 의 원본 응답에서 result.message_id로 뽑아 호출부가 넘겨줘도 되고, 이 함수 안에서 처리해도
 // 됨 — 아래 CLI는 후자를 택함).
 //
-// 반환: { action: 'blocked', reason } | { action: 'created', id, filename, telegramMessageId,
-// supersededId }. 발송 자체가 실패하면(sendMessage throw) 제안 파일은 이미 쓰여진 상태로
-// 남는다 — 텔레그램 실패가 "제안이 아예 없던 일"이 되면 안 되므로(재시도 시 중복 생성
-// 방지를 위해 단일활성제안 원칙이 이미 다음 실행에서 자연히 막아준다) 예외를 그대로 던진다.
+// 반환: { action: 'blocked'|'failed', reason } | { action: 'created', id, filename,
+// telegramMessageId, supersededId }. 활성 상태(대기)는 Telegram 메시지 ID까지 기록된
+// 경우에만 부여한다. 그래야 발송 후 Vault 쓰기가 실패해도 reply 매칭이 불가능한 제안이
+// 활성 상태로 남아 후속 제안 생성을 막지 않는다.
 //
 // proposalsBlocked(2026-08-29 신설, proposal-mode.mjs) — "제안금지" 모드일 때 여기서
 // 막는다. 4개 제안 생성 잡(new-cash-allocation·rebalance-proposal·create-quant-proposal·
@@ -139,29 +139,121 @@ export async function createAndSendProposal({
   const { id, filename, content } = buildProposalRecord({ track, account, assetKey, side, quantity, proposedPrice, reason, now });
 
   let supersededId = null;
-  if (intake.action === 'supersede') {
-    const old = existingProposals.find((p) => p.id === intake.supersedeId);
-    if (!old) throw new Error(`대체 대상 제안(${intake.supersedeId})을 existingProposals에서 찾을 수 없음 — 내부 일관성 오류`);
-    const updatedOldContent = updateProposalRecord(old.content, { status: '대체됨', supersededBy: id });
-    await writeProposalFile(old.filename, updatedOldContent);
-    supersededId = old.id;
+  const supersededProposal = intake.action === 'supersede'
+    ? existingProposals.find((p) => p.id === intake.supersedeId)
+    : null;
+  if (intake.action === 'supersede' && !supersededProposal) {
+    throw new Error(`대체 대상 제안(${intake.supersedeId})을 existingProposals에서 찾을 수 없음 — 내부 일관성 오류`);
   }
 
-  await writeProposalFile(filename, content);
+  // 발송 전에는 비활성 상태로 기록한다. Telegram 발송 후 message_id 저장까지 성공해야
+  // 비로소 reply 승인 가능한 "대기"로 승격한다.
+  const sendingContent = updateProposalRecord(content, { status: '발송중' });
+  try {
+    await writeProposalFile(filename, sendingContent);
+  } catch (error) {
+    console.error(`[proposal-flow] 발송중 제안 저장 실패(${id}): ${error?.message ?? 'unknown error'}`);
+    await markProposalFailed(writeProposalFile, filename, sendingContent, id);
+    await notifyProposalNotApprovable(sendMessage, id, 'Vault에 제안 레코드를 저장하지 못해 제안 메시지는 발송하지 않았습니다.');
+    return { action: 'failed', id, filename, telegramMessageId: null, supersededId, reason: '제안 레코드 저장 실패' };
+  }
 
   // 표준 구조(2026-08-17 오너 확정): 사실(Node 계산값)은 개조식, 부서 LLM의 판단
   // 서술(reason)은 그 뒤에 문단으로 — buildProposalMessageBody(한 줄 요약형)는 이제
   // DRY-RUN 미리보기 전용, 실제 발송은 여기서 조립한다.
   const facts = buildProposalFacts({ side, name: name ?? assetKey, assetKey, quantity, proposedPrice, amountWon });
   const messageText = formatFactsMessage({ departmentLabel, facts, context: reason || null, zeusComment, tag: '제안' });
-  const sendResult = await sendMessage(messageText);
+  let sendResult;
+  try {
+    sendResult = await sendMessage(messageText);
+  } catch (error) {
+    console.error(`[proposal-flow] Telegram 발송 실패(${id}): ${error?.message ?? 'unknown error'}`);
+    await markProposalFailed(writeProposalFile, filename, sendingContent, id);
+    await notifyProposalNotApprovable(sendMessage, id, 'Telegram 발송 결과를 확인할 수 없습니다.');
+    return { action: 'failed', id, filename, telegramMessageId: null, supersededId, reason: 'Telegram 발송 실패' };
+  }
   const telegramMessageId = sendResult?.message_id ?? null;
 
-  let finalContent = content;
-  if (telegramMessageId != null) {
-    finalContent = updateProposalRecord(content, { telegramMessageId });
-    await writeProposalFile(filename, finalContent);
+  if (telegramMessageId == null) {
+    await markProposalFailed(writeProposalFile, filename, sendingContent, id);
+    await notifyProposalNotApprovable(sendMessage, id, 'Telegram 응답에 메시지 ID가 없습니다.');
+    return { action: 'failed', id, filename, telegramMessageId: null, supersededId, reason: 'Telegram 메시지 ID 누락' };
   }
 
-  return { action: 'created', id, filename, telegramMessageId, supersededId };
+  // 기존 제안은 새 메시지가 정상 발송되고 ID를 확보한 뒤에만 대체한다. 발송 실패 시
+  // 기존 대기안을 그대로 살려 둔다. 대체 후 새 레코드 활성화가 실패하면 원본을 복구한다.
+  if (supersededProposal) {
+    try {
+      await writeProposalFile(
+        supersededProposal.filename,
+        updateProposalRecord(supersededProposal.content, { status: '대체됨', supersededBy: id }),
+      );
+      supersededId = supersededProposal.id;
+    } catch (error) {
+      console.error(`[proposal-flow] 기존 제안 대체 기록 실패(${id}): ${error?.message ?? 'unknown error'}`);
+      let oldRestored = false;
+      try {
+        await writeProposalFile(supersededProposal.filename, supersededProposal.content);
+        oldRestored = true;
+      } catch (restoreError) {
+        console.error(`[proposal-flow] 기존 제안 복구 실패(${supersededProposal.id}): ${restoreError?.message ?? 'unknown error'}`);
+      }
+      await markProposalFailed(writeProposalFile, filename, sendingContent, id);
+      const detail = oldRestored
+        ? '새 제안은 전송됐지만 기존 제안을 대체하지 못했습니다. 기존 제안 상태를 확인하세요.'
+        : `새 제안은 전송됐고 기존 제안 ${supersededProposal.id}의 상태 복구도 실패했습니다. Vault에서 기존 제안 상태를 확인하세요.`;
+      await notifyProposalNotApprovable(sendMessage, id, detail);
+      return { action: 'failed', id, filename, telegramMessageId: null, supersededId: null, reason: '기존 제안 대체 실패' };
+    }
+  }
+
+  const finalContent = updateProposalRecord(sendingContent, { status: '대기', telegramMessageId });
+  try {
+    await writeProposalFile(filename, finalContent);
+  } catch (error) {
+    console.error(`[proposal-flow] Telegram ID 저장 실패(${id}): ${error?.message ?? 'unknown error'}`);
+    let oldRestored = !supersededProposal;
+    if (supersededProposal) {
+      try {
+        await writeProposalFile(supersededProposal.filename, supersededProposal.content);
+        supersededId = null;
+        oldRestored = true;
+      } catch (restoreError) {
+        console.error(`[proposal-flow] 기존 제안 복구 실패(${supersededProposal.id}): ${restoreError?.message ?? 'unknown error'}`);
+      }
+    }
+    await markProposalFailed(writeProposalFile, filename, sendingContent, id);
+    const detail = oldRestored
+      ? 'Telegram 메시지는 전송됐지만 Vault에 승인 연결정보를 저장하지 못했습니다.'
+      : `Telegram 메시지는 전송됐고, 기존 제안 ${supersededProposal.id}의 상태 복구도 실패했습니다. Vault에서 기존 제안 상태를 확인하세요.`;
+    await notifyProposalNotApprovable(sendMessage, id, detail);
+    return {
+      action: 'failed', id, filename, telegramMessageId: null, supersededId,
+      reason: 'Telegram 발송 후 승인 연결정보 저장 실패',
+    };
+  }
+
+  return { action: 'created', id, filename, content: finalContent, telegramMessageId, supersededId };
+}
+
+async function markProposalFailed(writeProposalFile, filename, sendingContent, id) {
+  try {
+    await writeProposalFile(filename, updateProposalRecord(sendingContent, { status: '발송오류' }));
+  } catch (error) {
+    console.error(`[proposal-flow] 발송오류 상태 기록 실패(${id}): ${error?.message ?? 'unknown error'}`);
+  }
+}
+
+async function notifyProposalNotApprovable(sendMessage, id, detail) {
+  const warning = formatFactsMessage({
+    departmentLabel: '운영실 Hermes',
+    tag: '경고',
+    facts: [`제안 ${id}는 승인 연결정보가 없어 승인할 수 없습니다.`],
+    context: `${detail} 새 제안은 승인하지 말고, 기존 안건 상태를 확인한 뒤 필요하면 다시 요청하세요.`,
+  });
+  try {
+    await sendMessage(warning);
+  } catch (error) {
+    console.error(`[proposal-flow] 승인 불가 경고 발송 실패(${id}): ${error?.message ?? 'unknown error'}`);
+  }
 }

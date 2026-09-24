@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findOrphanedAllocationFiles } from './update-allocation-from-holdings.mjs';
+import { findOrphanedAllocationFiles, hasHoldingsForAllocationSnapshot } from './update-allocation-from-holdings.mjs';
+
+test('hasHoldingsForAllocationSnapshot: 비어 있으면 snapshot 갱신을 성공 처리하지 않는다', () => {
+  assert.equal(hasHoldingsForAllocationSnapshot([]), false);
+  assert.equal(hasHoldingsForAllocationSnapshot(null), false);
+  assert.equal(hasHoldingsForAllocationSnapshot([{ account: '위탁' }]), true);
+});
 
 test('findOrphanedAllocationFiles: 기대 목록에 없는 기존 파일만 골라냄', () => {
   const existing = ['위탁-채권.md', '위탁-배당주.md', '연금저축-리츠.md', '위탁-금.md'];

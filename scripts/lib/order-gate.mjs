@@ -26,6 +26,17 @@ export function resolveProposalIntake({ track, assetKey, side, existingProposals
     return { action: 'blocked', reason: `거부 재상정 쿨다운 — ${recentRejection.decidedAt}에 거부된 안건, 조건 변화 없이는 재상정 불가` };
   }
 
+  const matchKey = proposalMatchKey({ track, assetKey, side });
+  const openOrder = existingProposals.find((proposal) =>
+    ['주문접수', '부분체결'].includes(proposal.status) && proposalMatchKey(proposal) === matchKey,
+  );
+  if (openOrder) {
+    return {
+      action: 'blocked',
+      reason: `기존 브로커 주문(${openOrder.brokerOrderId || '주문번호 확인 필요'})이 ${openOrder.status} 상태 — 실제 체결/취소 확인 전 새 제안 보류`,
+    };
+  }
+
   const active = findActiveProposal(existingProposals, { track, assetKey, side });
   if (active) {
     return { action: 'supersede', supersedeId: active.id, reason: '같은 안건의 활성(대기/승인) 제안을 최신 정보로 교체' };

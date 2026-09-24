@@ -22,7 +22,7 @@ export function buildJobHealthRecord({ job, status, detail = '', durationSec = n
   const lastRun = now.toISOString();
   const filename = `${job}.md`;
   const content = buildFrontmatter({
-    job, lastRun, status, detail: String(detail ?? '').slice(0, 200),
+    type: 'job-health', job, lastRun, status, detail: String(detail ?? '').slice(0, 200),
     durationSec: durationSec === null ? null : Number(durationSec),
     failStreak,
   });

@@ -261,7 +261,7 @@ async function main() {
           // (account,assetClass) 안의 다른 보유 종목이 같은 bestAlternative로 교체될 때
           // 단일활성제안 판정이 이 방금 만든 제안을 못 보고 중복 매수 제안을 또 만든다.
           if (isSent(sellResult)) {
-            existingProposals.push({ filename: sellResult.filename, ...parseProposal(readFileSync(join(VAULT_PATHS.decisions.proposals, sellResult.filename), 'utf8')) });
+            existingProposals.push({ filename: sellResult.filename, content: sellResult.content, ...parseProposal(sellResult.content) });
           }
         } catch (e) {
           console.error(`  ❌ [${account}/${assetClass}] 매도 제안 발송 실패: ${e.message}`);
@@ -280,7 +280,7 @@ async function main() {
             });
             console.log(`  📤 [${account}/${assetClass}] 매수 ${evaluation.bestAlternative.name}: ${buyResult.action}${buyResult.reason ? ` (${buyResult.reason})` : ''}`);
             if (isSent(buyResult)) {
-              existingProposals.push({ filename: buyResult.filename, ...parseProposal(readFileSync(join(VAULT_PATHS.decisions.proposals, buyResult.filename), 'utf8')) });
+              existingProposals.push({ filename: buyResult.filename, content: buyResult.content, ...parseProposal(buyResult.content) });
             }
           } catch (e) {
             console.error(`  ❌ [${account}/${assetClass}] 매수 제안 발송 실패: ${e.message}`);

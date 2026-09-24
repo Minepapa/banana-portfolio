@@ -30,6 +30,18 @@ test('[막아야 함] resolveProposalIntake: 같은 안건이 이미 "승인"(�
   assert.equal(r.supersedeId, blocked.id);
 });
 
+test('[안전장치] resolveProposalIntake: 주문접수·부분체결 중인 브로커 주문은 대체하지 않고 새 제안을 차단', () => {
+  for (const status of ['주문접수', '부분체결']) {
+    const openOrder = { id: `open-${status}`, track: '자산분배', assetKey: '삼성전자', side: '매수', status, brokerOrderId: '847026' };
+    const result = resolveProposalIntake({
+      track: '자산분배', assetKey: '삼성전자', side: '매수', existingProposals: [openOrder],
+    });
+    assert.equal(result.action, 'blocked');
+    assert.match(result.reason, /실제 체결\/취소 확인 전/);
+    assert.doesNotMatch(result.reason, /대체/);
+  }
+});
+
 test('[막아야 함] resolveProposalIntake: 24시간 이내 거부 이력이 있으면 조건변화 명시 없이는 차단', () => {
   const rejected = { ...parseProposal(buildProposalRecord({ track: '자산분배', assetKey: 'Y', side: '매도', quantity: 1, proposedPrice: 100, now: new Date('2026-08-05T08:00:00.000Z') }).content), status: '거부', decidedAt: '2026-08-05T08:05:00.000Z' };
   const r = resolveProposalIntake({ track: '자산분배', assetKey: 'Y', side: '매도', existingProposals: [rejected], now: new Date('2026-08-05T09:00:00.000Z') });

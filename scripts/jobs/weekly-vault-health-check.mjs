@@ -347,7 +347,7 @@ async function main() {
   const allFiles = readAllVaultFiles();
 
   const { broken, ambiguous } = findBrokenAndAmbiguousLinks(allFiles);
-  const orphaned = findOrphanedNotes(allFiles, ['Knowledge/Hubs', 'Knowledge/Meta', 'Knowledge/Infra', 'Knowledge/API']);
+  const orphaned = findOrphanedNotes(allFiles, ['Knowledge/Topics', 'Knowledge/Meta', 'Knowledge/Infra', 'Knowledge/API']);
   const recentLegacy = findRecentLegacyFiles(allFiles);
 
   const profitRecords = allFiles

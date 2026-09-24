@@ -11,7 +11,7 @@
  * 리스크기준선 → State/Baselines, 종목투자노트 → Decisions/Evaluations, 포지션저널 →
  * Decisions/PositionJournal, 리스크모니터 → Decisions/RiskMonitor, 주문제안 →
  * Decisions/Proposals(원본 필드 그대로 아카이브, legacy:true), 주간리포트 →
- * Knowledge/Reports, 성향관찰 → Knowledge/Profile. "평가요청"·"실시간시세"는 그 순간의
+ * 주간 리포트 → Log/Reports, 성향관찰 → Decisions/Profile. "평가요청"·"실시간시세"는 그 순간의
  * 파생 작업큐/시세라 이관 대상 아님(오너 확정, 2026-08-05).
  *
  * 멱등: 이벤트 로그류는 시트 행번호 기반 파일명(r{n})이라 재실행해도 같은 파일 →

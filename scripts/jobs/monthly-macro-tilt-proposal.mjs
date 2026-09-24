@@ -41,7 +41,7 @@ import { computeMacroOverlaySignals } from '../lib/macro-overlay.mjs';
 import { fetchCloses, TICKERS, readPreviousFaberState, writeFaberState, renderSignalsReport } from '../tools/macro-overlay-facts.mjs';
 import { fetchRateSpreadCloses } from '../lib/ecos.mjs';
 import { computeRebalanceGaps, computeBandEdgeDistance, normalizeAccount } from '../lib/rebalance-gap.mjs';
-import { CAP_FRACTION, applyCappedAllocation, resolveAllocationPricing } from '../lib/allocation-proposal-shared.mjs';
+import { CAP_FRACTION, applyCappedAllocation, isAllowedAllocationInstrument, resolveAllocationPricing } from '../lib/allocation-proposal-shared.mjs';
 import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/cash-allocation-candidates.mjs';
 import { findCashBalance, resolveDesignatedCashBalance } from '../lib/cash-ledger.mjs';
 import { rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
@@ -217,11 +217,8 @@ export function validateMacroTiltActions(actions, { capBudgetByClass, holdings, 
       if (side === '매수') {
         const existingCandidates = findExistingInstruments(holdings, account, assetClass);
         const ranked = rankedUniverseByClass[assetClass];
-        if (existingCandidates.length === 0 && ranked && ranked.length) {
-          const allowedNames = new Set(ranked.map((r) => r.name));
-          if (!allowedNames.has(instrumentName)) {
-            return { ok: false, reason: `신규 종목 후보 목록 밖(데이터 기반 순위에 없는 이름): [${account}] ${instrumentName}` };
-          }
+        if (!isAllowedAllocationInstrument(instrumentName, existingCandidates, ranked)) {
+          return { ok: false, reason: `신규 종목 후보 목록 밖(데이터 기반 순위에 없는 이름): [${account}] ${instrumentName}` };
         }
       }
       if (side === '매도') {
@@ -459,7 +456,7 @@ async function main() {
       // 단일활성제안 판정이 방금 만든 제안을 못 보고 중복 제안을 또 만든다
       // (rebalance-proposal.mjs·new-cash-allocation.mjs는 이미 이렇게 함).
       if (result.action === 'created') {
-        existingProposals.push({ filename: result.filename, ...parseProposal(readFileSync(join(VAULT_PATHS.decisions.proposals, result.filename), 'utf8')) });
+        existingProposals.push({ filename: result.filename, content: result.content, ...parseProposal(result.content) });
       }
       sendResults.push(result);
     } catch (e) {

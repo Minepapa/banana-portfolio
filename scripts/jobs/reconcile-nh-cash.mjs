@@ -87,6 +87,13 @@ export function resolveNhCashAccountMap(accounts) {
   return resolveNhAccountsByLabel(accounts, NH_CASH_ACCOUNTS);
 }
 
+// run.sh는 프로세스 종료코드로 heartbeat 상태를 기록한다. 일부 계좌만 기록된 실행을
+// 성공으로 표시하지 않도록, 기대 계좌 각각의 조회·기록 완료 여부를 판정한다.
+export function hasCompleteNhCashCoverage(expectedAccounts, writtenAccounts) {
+  const written = new Set(writtenAccounts);
+  return expectedAccounts.length > 0 && expectedAccounts.every((label) => written.has(label));
+}
+
 function kstNow() {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Seoul', hour12: false,
@@ -99,6 +106,7 @@ function kstNow() {
 async function main() {
   if (!hasNhplugCredentials()) {
     console.log('ℹ️ NH PLUG 크리덴셜 미설정 — 스킵');
+    process.exitCode = 1;
     return;
   }
 
@@ -114,6 +122,7 @@ async function main() {
   }
 
   let written = 0;
+  const writtenAccounts = [];
   for (const [label, actNo] of byLabel) {
     // 계좌별로 조회 직후 시각을 찍는다(루프 진입 전 한 번만 찍으면 3계좌 순차
     // 조회 사이에 생긴 체결이 "조회 시점 이후"로 잘못 해석될 여지가 있었음 —
@@ -138,15 +147,18 @@ async function main() {
         writeAtomic(join(dir, filename), content);
       }
       written++;
+      writtenAccounts.push(label);
     } catch (e) {
       console.error(`NH 예수금조회 실패(${label}) —`, e.message);
       collectWarning(`NH 예수금조회 실패(${label})`);
     }
   }
 
-  const flag = written === 0 && byLabel.size > 0 ? '⚠️' : '✅';
-  console.log(`\n${flag} NH 예수금 ${written}/${byLabel.size}계좌 기록` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''));
+  const complete = hasCompleteNhCashCoverage(NH_CASH_ACCOUNTS, writtenAccounts);
+  const flag = complete ? '✅' : '⚠️';
+  console.log(`\n${flag} NH 예수금 ${written}/${NH_CASH_ACCOUNTS.length}계좌 기록` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''));
   await flushWarnings('reconcile-nh-cash');
+  if (!complete) process.exitCode = 1;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

@@ -99,6 +99,34 @@ test('findMatchingKnownExecution: 매치 없으면 null', () => {
   assert.equal(findMatchingKnownExecution(exec(), []), null);
 });
 
+test('[중복방지] 양쪽에 주문번호가 있으면 정확히 같은 브로커 주문만 크로스소스 중복으로 본다', () => {
+  const apiExecution = exec({ broker: 'NH투자증권', orderNo: '847026' });
+  assert.ok(findMatchingKnownExecution(apiExecution, [
+    exec({ broker: 'NH투자증권', orderNo: '847026', holdingsApplied: true }),
+  ]));
+  assert.equal(findMatchingKnownExecution(apiExecution, [
+    exec({ broker: 'NH투자증권', orderNo: '847027', holdingsApplied: true }),
+  ]), null);
+  assert.equal(findMatchingKnownExecution(apiExecution, [
+    exec({ broker: '한국투자증권', orderNo: '847026', holdingsApplied: true }),
+  ]), null);
+  assert.equal(findMatchingKnownExecution({ ...apiExecution, account: '위탁' }, [
+    exec({ broker: 'NH투자증권', orderNo: '847026', account: 'ISA', holdingsApplied: true }),
+  ]), null);
+});
+
+test('findMatchingKnownExecution: 한쪽 주문번호가 없는 구형 기록은 기존 호환 매칭 유지', () => {
+  const apiExecution = exec({ broker: 'NH투자증권', orderNo: '847026' });
+  assert.ok(findMatchingKnownExecution(apiExecution, [exec({ broker: 'NH투자증권', holdingsApplied: true })]));
+});
+
+test('[중복방지] 한쪽 주문번호가 빠져도 알려진 계좌가 다르면 별개 거래로 둔다', () => {
+  const apiExecution = exec({ broker: 'NH투자증권', orderNo: '847026', account: '위탁' });
+  assert.equal(findMatchingKnownExecution(apiExecution, [
+    exec({ broker: 'NH투자증권', account: 'ISA', holdingsApplied: true }),
+  ]), null);
+});
+
 // 코드리뷰 지적(2026-08-19) — 같은 날·구분·종목명·수량인데 계좌가 다른 legacy 후보가
 // 둘 이상이면(이론상 가능) 어느 쪽인지 추정하지 않는다. dedup 판정(레코드 자체 반환)은
 // 유지하되 account만 null로 낮춘다.
@@ -136,4 +164,30 @@ test('[막아야 함/실사고4] findMatchingKnownExecution: legacy가 아니라
   const r = findMatchingKnownExecution(nhApiExec, alreadyApplied);
   assert.notEqual(r, null);
   assert.equal(r.account, '위탁');
+});
+
+test('[중복방지] NH API 누적 체결수량이 카카오 개별 부분체결을 포함하면 수량이 달라도 이미 반영된 주문으로 매치', () => {
+  const alreadyApplied = [{
+    tradeDate: '2026-09-24 00:00:00', tradeType: '매수', stockName: '삼성전자',
+    quantity: 5, orderCumulativeQty: 5, source: 'NH_API', broker: 'NH투자증권',
+    orderNo: '847026', account: '위탁', holdingsApplied: true,
+  }];
+  const kakaoPartial = {
+    tradeDate: '2026-09-24 09:10:00', tradeType: '매수', stockName: '삼성전자',
+    quantity: 2, broker: 'NH투자증권', orderNo: '847026',
+  };
+  assert.equal(findMatchingKnownExecution(kakaoPartial, alreadyApplied), alreadyApplied[0]);
+});
+
+test('NH API 누적수량만으로 주문번호 없는 카카오 이벤트를 덮어 매칭하지 않음', () => {
+  const api = [{
+    tradeDate: '2026-09-24 00:00:00', tradeType: '매수', stockName: '삼성전자',
+    quantity: 5, orderCumulativeQty: 5, source: 'NH_API', broker: 'NH투자증권',
+    orderNo: '847026', account: '위탁', holdingsApplied: true,
+  }];
+  const noOrderId = {
+    tradeDate: '2026-09-24 09:10:00', tradeType: '매수', stockName: '삼성전자',
+    quantity: 2, broker: 'NH투자증권', orderNo: '',
+  };
+  assert.equal(findMatchingKnownExecution(noOrderId, api), null);
 });

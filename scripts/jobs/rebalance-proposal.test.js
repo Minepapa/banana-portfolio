@@ -142,6 +142,24 @@ test('validateRebalanceActions: 보유 후보 0건인 계좌라도 순위 목록
   assert.equal(kept.length, 1);
 });
 
+test('validateRebalanceActions: 다른 보유 후보가 있어도 순위 밖 신규 종목은 드롭하고 실보유 후보는 허용', () => {
+  const holdings = makeHoldings();
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const breachFacts = buildBreachFacts(holdings, gaps, totalEval);
+  const rankedUniverseByClass = { 달러: [{ name: '신규달러ETF', composite: 80, axes: {}, dataGaps: [] }] };
+  const actions = [
+    { assetClass: '달러', side: '매수', account: '위탁', instrumentName: '임의달러ETF', amountWon: 10000 },
+    { assetClass: '달러', side: '매수', account: '위탁', instrumentName: '미국달러ETF', amountWon: 10000 },
+  ];
+
+  const { kept, dropped } = validateRebalanceActions(actions, { breachFacts, holdings, rankedUniverseByClass });
+
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].instrumentName, '미국달러ETF');
+  assert.equal(dropped.length, 1);
+  assert.match(dropped[0].reason, /순위에 없는 이름/);
+});
+
 test('validateRebalanceActions: rankedUniverseByClass 생략하면 기존처럼 어떤 신규 이름도 통과(하위호환)', () => {
   const holdings = makeHoldings();
   const { gaps, totalEval } = computeRebalanceGaps(holdings);
@@ -150,6 +168,22 @@ test('validateRebalanceActions: rankedUniverseByClass 생략하면 기존처럼 
   const { kept, dropped } = validateRebalanceActions(actions, { breachFacts, holdings });
   assert.equal(dropped.length, 0);
   assert.equal(kept.length, 1);
+});
+
+test('validateRebalanceActions: 후보 목록에서 제외된 위탁 레거시 종목 매도는 검증 단계에서도 드롭', () => {
+  const holdings = [
+    ...makeHoldings(),
+    { account: '위탁', assetClass: '국내주식', name: '삼성전자', ticker: '005930', qty: 20, curPrice: 70000, evalAmount: 1400000 },
+  ];
+  const { gaps, totalEval } = computeRebalanceGaps(holdings);
+  const breachFacts = buildBreachFacts(holdings, gaps, totalEval);
+  const actions = [{ assetClass: '국내주식', side: '매도', account: '위탁', instrumentName: '삼성전자', amountWon: 100000 }];
+
+  const { kept, dropped } = validateRebalanceActions(actions, { breachFacts, holdings });
+
+  assert.equal(kept.length, 0);
+  assert.equal(dropped.length, 1);
+  assert.match(dropped[0].reason, /레거시 개별종목.*매도 제외/);
 });
 
 test('validateRebalanceActions: 방향 불일치는 드롭', () => {
@@ -276,5 +310,6 @@ test('resolveRebalanceInstrumentPricing: 신규 종목(보유 없음)이면 quan
 test('allActionsSent: 전부 created여야 true', () => {
   assert.equal(allActionsSent([{ action: 'created' }, { action: 'created' }]), true);
   assert.equal(allActionsSent([{ action: 'created' }, { action: 'blocked' }]), false);
+  assert.equal(allActionsSent([{ action: 'created' }, { action: 'failed' }]), false);
   assert.equal(allActionsSent([]), false);
 });

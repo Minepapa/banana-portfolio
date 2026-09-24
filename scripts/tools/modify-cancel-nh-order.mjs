@@ -52,6 +52,7 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { readOptionalStateFile } from '../lib/state-reader.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { parseProposal, updateProposalRecord } from '../lib/proposal-vault.mjs';
 import { checkKillSwitch, checkPriceDeviation } from '../lib/order-gate.mjs';
@@ -74,10 +75,6 @@ function parseArgs(argv) {
     if (m) out[m[1]] = m[2];
   }
   return out;
-}
-
-function readStateFileOrNull(filepath) {
-  try { return readFileSync(filepath, 'utf8'); } catch { return null; }
 }
 
 // ⚠️ watch-nh-order-fill.mjs의 alertAndExit(텔레그램도 같이 보냄)과 달리 여기선
@@ -121,12 +118,19 @@ export function buildProposalUpdates({ action, proposal, newOrderNo, newPrice, n
   const sep = proposal.executionLog ? `${proposal.executionLog} | ` : '';
   if (action === '정정') {
     return {
+      status: '주문접수',
       proposedPrice: newPrice,
+      submittedAt: now,
+      executedAt: null,
+      brokerOrderId: newOrderNo,
+      filledQuantity: null,
+      avgFillPrice: null,
       executionLog: `${sep}정정 — 새 주문번호 ${newOrderNo}, 새 가격 ${newPrice}(${now})`,
     };
   }
   return {
     status: '취소',
+    brokerOrderId: newOrderNo,
     rejectReason: `오너 직접 취소(텔레그램) — 취소주문번호 ${newOrderNo}`,
     executionLog: `${sep}취소 — 취소주문번호 ${newOrderNo}(${now})`,
   };
@@ -173,7 +177,7 @@ async function main() {
 
   // 킬스위치 — 모든 것보다 먼저, NH 호출 전 확인(위 파일 헤더 "취소도 킬스위치를
   // 똑같이 통과해야 한다" 참고 — 이 순서 자체가 안전장치다).
-  const killCheck = checkKillSwitch({ killSwitchContent: readStateFileOrNull(VAULT_PATHS.state.killSwitch) });
+  const killCheck = checkKillSwitch({ killSwitchContent: readOptionalStateFile(VAULT_PATHS.state.killSwitch) });
   if (!killCheck.pass) { alertAndExit(`킬스위치 활성 — ${action} 실행 안 함(${killCheck.reason})`, 1); return; }
 
   if (!hasNhplugCredentials()) { alertAndExit('NH PLUG 크리덴셜 미설정', 1); return; }
@@ -201,7 +205,7 @@ async function main() {
     if (!deviation.pass) { alertAndExit(`가격이탈 검문소 차단 — ${deviation.reason}`, 1); return; }
   }
 
-  const mode = getExecutionMode(readStateFileOrNull(VAULT_PATHS.state.executionMode));
+  const mode = getExecutionMode(readOptionalStateFile(VAULT_PATHS.state.executionMode));
   if (mode !== MODE_LIVE) {
     console.log(`[섀도우] 실제 NH ${action} 없이 로그만 — 주문번호 ${orderNo}(${account} ${name})${action === '정정' ? ` → ${explicitPrice}원` : ''}`);
     return;
@@ -260,6 +264,7 @@ async function main() {
       `--code=${code}`,
       `--name=${name}`,
       `--side=${side}`,
+      ...(proposal ? [`--proposal-id=${proposal.id}`] : []),
     ], { detached: true, stdio: 'ignore' });
     child.on('error', (e) => console.error(`  ⚠️ 체결감시 기동 실패(정정 자체는 이미 접수됨): ${e.message}`));
     child.unref();

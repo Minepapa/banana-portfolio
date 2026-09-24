@@ -53,7 +53,8 @@ const ACCOUNT_NOTE = 'Phase 8·9(State/Holdings) 이후 별도 배치로 채워�
 // 선택 필드라 기존 호출부(카카오 파싱·퀀트 watch-order-fill.mjs 등, orderNo 없이
 // 호출)는 파일명·dedupKey가 이전과 완전히 동일 — 하위호환 깨지지 않음.
 export function buildExecutionRecord(e) {
-  const dedupKey = `${e.tradeDate}|${e.tradeType}|${e.stockName}|${e.quantity}${e.orderNo ? `|${sanitizeSegment(e.orderNo)}` : ''}`;
+  const sourceEventSuffix = e.sourceEventId ? `|${sanitizeSegment(e.sourceEventId)}` : '';
+  const dedupKey = `${e.tradeDate}|${e.tradeType}|${e.stockName}|${e.quantity}${e.orderNo ? `|${sanitizeSegment(e.orderNo)}` : ''}${sourceEventSuffix}`;
   const datePart = e.tradeDate.slice(0, 10);
   const timePart = e.tradeDate.slice(11).replace(/:/g, '') || '000000';
   // 폴더가 이미 "체결"임을 말해주므로 파일명엔 종류 접두사를 안 붙인다 — 날짜부터
@@ -69,7 +70,8 @@ export function buildExecutionRecord(e) {
   // 매매구분·종목명인데 수량만 다른 체결 2건이 파일명 충돌로 조용히 1건만 남는
   // 사고 경로가 있었다(reconcile-irp-executions.mjs 신설 중 실행으로 재현 확인).
   const orderNoSuffix = e.orderNo ? `-${sanitizeSegment(e.orderNo)}` : '';
-  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.tradeType)}-${sanitizeSegment(e.stockName)}-${sanitizeSegment(e.quantity)}${orderNoSuffix}.md`;
+  const eventSuffix = e.sourceEventId ? `-${sanitizeSegment(e.sourceEventId)}` : '';
+  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.tradeType)}-${sanitizeSegment(e.stockName)}-${sanitizeSegment(e.quantity)}${orderNoSuffix}${eventSuffix}.md`;
   const content = buildFrontmatter({
     type: 'execution',
     tradeDate: e.tradeDate,
@@ -82,6 +84,10 @@ export function buildExecutionRecord(e) {
     broker: e.broker,
     acctNo: e.acctNo || '',
     orderNo: e.orderNo || '',
+    ...(e.source ? { source: e.source } : {}),
+    ...(e.sourceEventId ? { sourceEventId: e.sourceEventId } : {}),
+    ...(e.orderCumulativeQty != null ? { orderCumulativeQty: e.orderCumulativeQty } : {}),
+    ...(e.orderCumulativeAmount != null ? { orderCumulativeAmount: e.orderCumulativeAmount } : {}),
     account: e.account ?? null,
     accountNote: e.account ? null : ACCOUNT_NOTE,
     tags: buildVaultTags({ account: e.account, stockName: e.stockName }),

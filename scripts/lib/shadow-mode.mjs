@@ -30,7 +30,7 @@ export function isShadowMode(content) {
   return getExecutionMode(content) === MODE_SHADOW;
 }
 
-// 실제 "체결" 처리 — 섀도우면 브로커를 부르지 않고 로그 문자열만 만든다. 실전이면 이
+// 실행 처리 — 섀도우면 브로커를 부르지 않고 로그 문자열만 만든다. 실전이면 이
 // 함수는 브로커를 직접 호출하지 않는다(그건 Phase 11의 일, liveExecutor 주입으로 연결) —
 // 호출부가 executor를 주입하지 않고 실전 모드로 들어오면 명시적으로 에러를 던져, "아직
 // 없는 실주문 경로가 조용히 아무 일도 안 하는" 사고를 막는다.
@@ -52,5 +52,7 @@ export async function settleExecution({ mode, proposal, liveExecutor }) {
     throw new Error('실전 모드이지만 liveExecutor가 주입되지 않았습니다 — KIS 실주문 API(Phase 11) 미구현');
   }
   const result = await liveExecutor(proposal);
-  return { status: '체결', ...result, writesToLedger: true };
+  // 브로커가 접수 응답을 반환한 시점은 실제 체결이 아니다. 실제 전량체결은
+  // API 체결감시기가 확인한 뒤 Proposal을 "체결"로 전환한다.
+  return { ...result, status: '주문접수', writesToLedger: false };
 }

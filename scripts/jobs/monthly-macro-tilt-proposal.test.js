@@ -166,6 +166,21 @@ test('validateMacroTiltActions: 보유 후보 0건 계좌의 신규매수가 순
   assert.match(dropped[0].reason, /순위에 없는 이름/);
 });
 
+test('validateMacroTiltActions: 다른 보유 종목이 있어도 순위 밖 신규 종목은 드롭하고 실보유 종목은 허용', () => {
+  const capBudgetByClass = { 금: 100_000 };
+  const holdings = [{ account: '위탁', assetClass: '금', name: '보유금ETF', evalAmount: 50_000 }];
+  const rankedUniverseByClass = { 금: [{ name: '순위금ETF', composite: 80, axes: {}, dataGaps: [] }] };
+  const actions = [
+    { assetClass: '금', side: '매수', account: '위탁', instrumentName: '임의금ETF', amountWon: 10_000 },
+    { assetClass: '금', side: '매수', account: '위탁', instrumentName: '보유금ETF', amountWon: 10_000 },
+  ];
+  const { kept, dropped } = validateMacroTiltActions(actions, { capBudgetByClass, holdings, rankedUniverseByClass });
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].instrumentName, '보유금ETF');
+  assert.equal(dropped.length, 1);
+  assert.match(dropped[0].reason, /순위에 없는 이름/);
+});
+
 test('buildThemisTiltReviewPrompt: 액션 목록·금액·신호 원문이 포함, 통과/보류 판정 요청', () => {
   const actions = [{ account: '위탁', side: '매수', instrumentName: '채권ETF', assetClass: '채권', amountWon: 100_000, reasoning: '테스트 근거' }];
   const prompt = buildThemisTiltReviewPrompt({ signalsReport: '[신호]', actions });

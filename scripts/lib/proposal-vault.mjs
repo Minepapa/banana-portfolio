@@ -2,9 +2,11 @@
 // 실제 파일 I/O는 호출부(scripts/lib/order-gate.mjs가 쓰는 오케스트레이션 잡, 향후
 // Phase 5 텔레그램 승인 흐름)가 state-writer.mjs로 수행한다.
 //
-// 상태 전이: 대기 → (승인|거부|대체됨). 승인 → (체결|섀도우체결). 파일은 상태가 바뀌어도
-// 지우지 않고 갱신만 한다 — "왜 거부했는지 나중에 되짚기 위함"(ARCHITECTURE-V2.md
-// "실행 흐름(주문)" 절)과 "단일 활성 제안 원칙"의 대체(supersede) 이력 추적을 위해서다.
+// 상태 전이: 발송중 → 대기(telegramMessageId 저장 성공 시) 또는 발송오류. 대기 →
+// (승인|거부|대체됨). 승인 → (주문접수|섀도우체결), 주문접수 → (부분체결|체결|취소).
+// 브로커 접수와 실제 체결은 별도 상태다. 발송중·발송오류는 비활성 상태다.
+// 파일은 상태가 바뀌어도 지우지 않고 갱신만 한다 — "왜 거부했는지 나중에 되짚기 위함"
+// (ARCHITECTURE-V2.md "실행 흐름(주문)" 절)과 "단일 활성 제안 원칙"의 대체 이력 추적.
 import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 // 그래프 뷰 다중축 클러스터링용 태그(2026-09-05, vault-tags.mjs 헤더 주석 참고).
 import { buildVaultTags } from './vault-tags.mjs';
@@ -28,6 +30,8 @@ export function buildProposalRecord({ track, account = null, assetKey, side, qua
     createdAt: now.toISOString(),
     decidedAt: null,
     executedAt: null,
+    submittedAt: null,
+    brokerOrderId: null,
     rejectReason: null,
     supersededBy: null,
     // 텔레그램 발송 후 채워짐(구현계획서 Phase 5) — 이 메시지ID가 Frank의 reply_to와
@@ -63,12 +67,8 @@ export function listProposalsFromContents(contents) {
   return contents.map((c) => parseProposal(c));
 }
 
-// "활성" = 아직 최종 결론(체결·섀도우체결·거부·대체됨)에 이르지 않은 상태. "승인"도
-// 활성이다 — 검문소에 막혀 체결까지 못 갔거나(gateBlockedReason) 아직 execute-quant-
-// proposal.mjs가 안 돌았을 뿐 Frank는 이미 "예"라고 답한 상태라, 여기서 빠지면 같은
-// 종목에 "승인" 두 건이 동시에 존재할 수 있다 — 무인 잡이 어느 쪽이 맞는지 추정 못 하고
-// 최악엔 둘 다 체결(중복 실거래)로 이어진다(오너 지적, 2026-08-12 — 검문소 테스트 중
-// 가격이탈로 막힌 제안이 "승인" 상태로 남았는데 재제안이 이를 대체하지 않던 실사례).
+// 제안 작성 단계의 활성 상태. 주문 접수·부분체결은 승인 대기 제안과 처리 방식이
+// 다르므로 resolveProposalIntake가 별도로 찾아 새 제안 생성을 차단한다.
 const ACTIVE_PROPOSAL_STATUSES = new Set(['대기', '승인']);
 
 // 같은 안건(track+assetKey+side)의 활성(대기·승인) 상태 제안 중 가장 최근 것 — 없으면
@@ -78,6 +78,18 @@ export function findActiveProposal(proposals, { track, assetKey, side }) {
   const candidates = proposals.filter((p) => ACTIVE_PROPOSAL_STATUSES.has(p.status) && proposalMatchKey(p) === key);
   if (!candidates.length) return null;
   return candidates.reduce((latest, p) => (!latest || p.createdAt > latest.createdAt ? p : latest), null);
+}
+
+// 실제 브로커 주문번호로 제안을 찾는다. 주문번호는 계좌별 범위일 수 있으므로
+// 트랙·계좌도 확인하고, 중복 매칭은 추정하지 않는다.
+export function findProposalByBrokerOrderId(proposals, { brokerOrderId, account }) {
+  if (brokerOrderId == null || brokerOrderId === '') return null;
+  const matches = proposals.filter((proposal) =>
+    proposal.track === '자산분배'
+    && String(proposal.brokerOrderId ?? '') === String(brokerOrderId)
+    && (!proposal.account || proposal.account === account),
+  );
+  return matches.length === 1 ? matches[0] : null;
 }
 
 // 같은 안건에 대해 "거부"된 제안 중 withinMs 이내에 결정된 것이 있으면 반환(없으면 null).

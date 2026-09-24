@@ -2,14 +2,14 @@
 // preference-facts.mjs — 비서실 Apollo 대화형 보고용 Node 결정론 사실 조립기(성향관찰만).
 //
 // Apollo는 다른 부서와 무결성 구멍의 성격이 다르다: KPI(profile/kpi_baseline.md)·주간리포트
-// (Knowledge/Reports/*.md)는 이미 로컬 파일이라 Read 도구가 리터럴 원문을 그대로 보여준다 —
+// (Log/Reports/*.md)는 이미 로컬 파일이라 Read 도구가 리터럴 원문을 그대로 보여준다 —
 // fetch가 아니므로 지어낼 수가 없고 그 자체로 하드 보장이다. 성향관찰만 여러 파일에 흩어진
 // 실시간 상태(신뢰도·상태 등)를 집계해야 해서 이 CLI가 그것만 담당한다.
 //
 // ⚠️ 2026-08-20 Vault 네이티브 전환 — 원래 구글시트 "성향관찰" 탭을 읽었는데, 그 시트를
 // 채우던 유일한 주체(weekly-report.mjs)가 v1 전용이라 v2 전환(2026-08-14 v1 무인 잡 전체
 // 중단) 이후 정지된 데이터를 계속 보고하고 있었다. weekly-report.mjs를 Vault 네이티브로
-// 재작성하면서 성향관찰 자체도 Knowledge/Profile/*.md(한 관찰당
+// 재작성하면서 성향관찰 자체도 Decisions/Profile/*.md(한 관찰당
 // 파일 하나)로 옮김 — 이 CLI도 그쪽을 읽도록 교체.
 //
 // preferences.mjs의 renderPrefRows는 "다른 프롬프트에 확정 성향만 주입"용이라 기각을 항상
@@ -43,7 +43,7 @@ export function parseArgs(argv) {
 // 상태 미기입은 preferences.mjs renderPrefRows와 동일 관례로 '관찰' 취급.
 const normStatus = (r) => { const raw = String(r.status ?? '').trim(); return STATUSES.includes(raw) ? raw : '관찰'; };
 
-// records: Knowledge/Profile/*.md frontmatter 배열
+// records: Decisions/Profile/*.md frontmatter 배열
 // ({ date, signalType, observation, evidence, vsProfile, confidence, status, updatedAt }).
 export function assemblePreferences(records, { status = null } = {}) {
   const all = records || [];
@@ -71,7 +71,7 @@ export function renderPreferenceFacts({ rows, counts, text }, { json = false } =
     '',
     text,
     '',
-    '⚠️ 위 숫자만 사용하라. KPI·주간리포트는 로컬 파일(profile/kpi_baseline.md, Knowledge/Reports/*.md)을 Read로 직접 읽어라 — 이미 결정론이다.',
+    '⚠️ 위 숫자만 사용하라. KPI·주간리포트는 로컬 파일(profile/kpi_baseline.md, Log/Reports/*.md)을 Read로 직접 읽어라 — 이미 결정론이다.',
   ];
   return lines.join('\n');
 }
@@ -84,7 +84,7 @@ function main() {
     console.error(e.message);
     process.exit(2);
   }
-  const dir = VAULT_PATHS.knowledge.profile;
+  const dir = VAULT_PATHS.decisions.profile;
   const records = existsSync(dir)
     ? readdirSync(dir).filter((f) => f.endsWith('.md'))
       .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')))

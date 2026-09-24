@@ -54,6 +54,9 @@ export function parseExecution(body, tsRaw) {
     const quantity = parseInt(cleanNum(g.quantity), 10);
     const price = parseFloat(cleanNum(g.price, true));
     if (!stockName || !Number.isFinite(quantity) || !Number.isFinite(price)) return null;
+    // 가능한 알림 형식에서 증권사 주문번호를 보존해 API 체결과의 크로스소스 조인에 쓴다.
+    // 알림별 필드 유무가 달라 선택값이며, 없는 경우에만 구형 휴리스틱 대조가 남는다.
+    const orderNo = body.match(/주문\s*번호\s*[:：]?\s*(\d+)/)?.[1] ?? '';
     return {
       tradeDate: normalizeDateTime(tsRaw),
       tradeType: body.includes('매수') ? '매수' : '매도',
@@ -62,6 +65,7 @@ export function parseExecution(body, tsRaw) {
       currency: p.overseas ? 'USD' : 'KRW',
       broker: p.broker,
       acctNo: g.acctNo?.trim() || '', // 한국투자증권만 현재 캡처(다른 증권사는 빈 문자열)
+      orderNo,
     };
   }
   return null;

@@ -82,6 +82,6 @@ export async function getCachedMacroIndicators({
     console.warn(`⚠️ 거시지표 이상치 의심(5거래일 변화율 ±${ANOMALY_THRESHOLD_PCT}% 초과, 원문 확인 권장): ${anomalies.join(', ')}`);
   }
   mkdirSync(dirname(filepath), { recursive: true });
-  writeAtomic(filepath, buildFrontmatter({ asof: today, macroJson: JSON.stringify(macro), computedAt: now.toISOString() }));
+  writeAtomic(filepath, buildFrontmatter({ type: 'macro-indicators-cache-state', asof: today, macroJson: JSON.stringify(macro), computedAt: now.toISOString() }));
   return macro;
 }

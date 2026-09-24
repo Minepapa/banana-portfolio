@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractNhCashDeposit, resolveNhCashAccountMap } from './reconcile-nh-cash.mjs';
+import { extractNhCashDeposit, hasCompleteNhCashCoverage, resolveNhCashAccountMap } from './reconcile-nh-cash.mjs';
+
+test('hasCompleteNhCashCoverage: 일부 성공·계좌 누락은 heartbeat 실패 대상', () => {
+  const expected = ['위탁', 'CMA', '금현물'];
+  assert.equal(hasCompleteNhCashCoverage(expected, ['위탁', 'CMA']), false);
+  assert.equal(hasCompleteNhCashCoverage(expected, []), false);
+  assert.equal(hasCompleteNhCashCoverage(expected, expected), true);
+  assert.equal(hasCompleteNhCashCoverage([], []), false);
+});
 
 test('extractNhCashDeposit: drn_pbl_amt(출금가능금액)을 우선 사용', () => {
   assert.equal(extractNhCashDeposit({ drn_pbl_amt: '5797267', dca: '5797267' }), 5797267);

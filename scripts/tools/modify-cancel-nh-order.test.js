@@ -46,12 +46,17 @@ test('findProposalByOrderNo: 왼쪽 경계 — "취소주문번호 847026"은 "�
   assert.equal(findProposalByOrderNo(proposals, '900001'), null);
 });
 
-test('buildProposalUpdates: 정정 — proposedPrice 갱신 + executionLog는 개행 없이 한 줄로 이어붙임', () => {
+test('buildProposalUpdates: 정정은 새 주문을 주문접수 상태로 기록 + executionLog 한 줄', () => {
   const proposal = { executionLog: 'NH PLUG 실주문 접수 — 주문번호 847026(매도 49주 @9455)' };
   const updates = buildProposalUpdates({
     action: '정정', proposal, newOrderNo: 900001, newPrice: 9450, now: '2026-09-21T00:00:00.000Z',
   });
   assert.equal(updates.proposedPrice, 9450);
+  assert.equal(updates.status, '주문접수');
+  assert.equal(updates.brokerOrderId, 900001);
+  assert.equal(updates.submittedAt, '2026-09-21T00:00:00.000Z');
+  assert.equal(updates.executedAt, null);
+  assert.equal(updates.filledQuantity, null);
   assert.ok(!updates.executionLog.includes('\n'), 'executionLog에 개행이 있으면 안 됨(vault-frontmatter.mjs 왕복 파괴, HIGH 재발방지)');
   assert.equal(
     updates.executionLog,
@@ -65,6 +70,7 @@ test('buildProposalUpdates: 취소 — status/rejectReason 세팅 + executionLog
     action: '취소', proposal, newOrderNo: 900002, newPrice: null, now: '2026-09-21T00:00:00.000Z',
   });
   assert.equal(updates.status, '취소');
+  assert.equal(updates.brokerOrderId, 900002);
   assert.match(updates.rejectReason, /900002/);
   assert.ok(!updates.executionLog.includes('\n'));
 });

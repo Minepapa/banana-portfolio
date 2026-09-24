@@ -10,6 +10,15 @@
             "statusMessage": "판테온 라우팅 점검"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/hooks/wiki-question-intake.mjs\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SessionStart": [

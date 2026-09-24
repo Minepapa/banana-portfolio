@@ -93,12 +93,24 @@ test('[실사고 재현] dedupExecutionsForReport: 금현물 금 99.99K 1주 매
   assert.equal(deduped.length, 1);
 });
 
+test('dedupExecutionsForReport: 브로커 주문번호가 다르거나 확인된 계좌가 다르면 별도 거래로 남긴다', () => {
+  const base = { tradeDate: '2026-09-24 09:00:00', tradeType: '매도', stockName: '종목A', quantity: 2, broker: 'NH투자증권', account: '위탁' };
+  assert.equal(dedupExecutionsForReport([
+    { ...base, orderNo: '847026', recordedAt: '2026-09-24T00:00:00Z' },
+    { ...base, orderNo: '847027', recordedAt: '2026-09-24T00:01:00Z' },
+  ]).length, 2);
+  assert.equal(dedupExecutionsForReport([
+    { ...base, orderNo: '847026', recordedAt: '2026-09-24T00:00:00Z' },
+    { ...base, account: 'ISA', orderNo: '847026', recordedAt: '2026-09-24T00:01:00Z' },
+  ]).length, 2);
+});
+
 test('dedupExecutionsForReport: recordedAt 오름차순으로 먼저 기록된 쪽을 대표로 남김', () => {
   const later = { tradeDate: '2026-09-04', tradeType: '매수', stockName: 'X', quantity: 1, price: 100, recordedAt: '2026-09-04T02:38:00.000Z', account: 'A' };
-  const earlier = { tradeDate: '2026-09-04', tradeType: '매수', stockName: 'X', quantity: 1, price: 100, recordedAt: '2026-09-04T02:36:00.000Z', account: 'B' };
+  const earlier = { tradeDate: '2026-09-04', tradeType: '매수', stockName: 'X', quantity: 1, price: 100, recordedAt: '2026-09-04T02:36:00.000Z', account: 'A' };
   const deduped = dedupExecutionsForReport([later, earlier]);
   assert.equal(deduped.length, 1);
-  assert.equal(deduped[0].account, 'B'); // 더 먼저 기록된 쪽
+  assert.equal(deduped[0].account, 'A'); // 더 먼저 기록된 쪽
 });
 
 test('dedupExecutionsForReport: 진짜 다른 체결(수량 다름)은 안 지워짐 — 위탁 사례처럼 정당한 병행', () => {

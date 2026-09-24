@@ -55,6 +55,7 @@ import { getExecutionMode, MODE_LIVE } from '../lib/shadow-mode.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { loadExecutedOrderIds, recordExecutedOrder, unrecordExecutedOrder } from '../lib/executed-orders.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { readOptionalStateFile } from '../lib/state-reader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { getCodeRegistry } from '../lib/stock-registry.mjs';
@@ -104,10 +105,6 @@ function loadProposals(dir) {
       const content = readFileSync(join(dir, f), 'utf8');
       return { filename: f, content, ...parseProposal(content) };
     });
-}
-
-function readStateFileOrNull(filepath) {
-  try { return readFileSync(filepath, 'utf8'); } catch { return null; }
 }
 
 // 콤마 포함 문자열도 안전하게 숫자로(구글시트 숫자 파싱 함정과 동일 클래스 —
@@ -281,7 +278,7 @@ async function main() {
   targets = filterExecutableProposals(targets, { log: console.log });
   if (!targets.length) { console.log('ℹ️ 체결 대기 중인 승인된 자산분배 제안 없음'); return; }
 
-  const mode = getExecutionMode(readStateFileOrNull(VAULT_PATHS.state.executionMode));
+  const mode = getExecutionMode(readOptionalStateFile(VAULT_PATHS.state.executionMode));
 
   const { appkey, appsecret } = loadNhplugCredentials();
   const token = await getNhToken({ appkey, appsecret });
@@ -383,7 +380,7 @@ async function main() {
       continue;
     }
 
-    const killSwitchContent = readStateFileOrNull(VAULT_PATHS.state.killSwitch);
+    const killSwitchContent = readOptionalStateFile(VAULT_PATHS.state.killSwitch);
     const alreadyExecutedIds = loadExecutedOrderIds(VAULT_PATHS.state.executedOrders);
 
     // buildGateInput은 holdings.find(h => h.code === proposal.assetKey)로 보유수량을
@@ -491,6 +488,7 @@ async function main() {
           `--code=${classification.iemCd}`,
           `--name=${classification.resolvedName ?? proposal.assetKey}`,
           `--side=${proposal.side}`,
+          `--proposal-id=${proposal.id}`,
         ], { detached: true, stdio: 'ignore' });
         // spawn()은 실행 자체가 실패해도 동기 throw가 아니라 비동기 'error' 이벤트로만
         // 알려준다 — execute-quant-proposal.mjs와 동일 이유로 리스너를 반드시 둔다

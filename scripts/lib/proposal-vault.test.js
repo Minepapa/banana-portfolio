@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildProposalRecord, updateProposalRecord, parseProposal, proposalMatchKey,
   findActiveProposal, findRecentRejection, findProposalByTelegramMessageId,
+  findProposalByBrokerOrderId,
 } from './proposal-vault.mjs';
 
 const now = new Date('2026-08-05T09:00:00.000Z');
@@ -69,8 +70,8 @@ test('[막아야 함] findActiveProposal: "승인" 상태도 활성으로 취급
   assert.equal(found.id, approved.id);
 });
 
-test('findActiveProposal: "체결"·"섀도우체결"·"거부"·"대체됨"은 최종 상태라 활성 아님', () => {
-  for (const status of ['체결', '섀도우체결', '거부', '대체됨']) {
+test('findActiveProposal: "체결"·"섀도우체결"·"주문접수"·"부분체결"·"취소"·"거부"·"대체됨"은 승인대기 활성 제안이 아님', () => {
+  for (const status of ['체결', '섀도우체결', '주문접수', '부분체결', '취소', '거부', '대체됨']) {
     const done = { ...parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'X', side: '매수', quantity: 1, proposedPrice: 100, now }).content), status };
     assert.equal(findActiveProposal([done], { track: '퀀트', assetKey: 'X', side: '매수' }), null, `status=${status}`);
   }
@@ -116,6 +117,14 @@ test('[막아야 함] findProposalByTelegramMessageId: 같은 메시지ID가 둘
   const p1 = { ...parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'X', side: '매수', quantity: 1, proposedPrice: 100, now }).content), telegramMessageId: 555 };
   const p2 = { ...parseProposal(buildProposalRecord({ track: '퀀트', assetKey: 'Y', side: '매수', quantity: 1, proposedPrice: 100, now }).content), telegramMessageId: 555 };
   assert.equal(findProposalByTelegramMessageId([p1, p2], 555), null);
+});
+
+test('findProposalByBrokerOrderId: 자산분배 트랙·주문번호·계좌가 일치하는 제안만 찾음', () => {
+  const proposal = { id: 'p1', track: '자산분배', brokerOrderId: 847026, account: '위탁' };
+  assert.equal(findProposalByBrokerOrderId([proposal], { brokerOrderId: '847026', account: '위탁' }), proposal);
+  assert.equal(findProposalByBrokerOrderId([proposal], { brokerOrderId: '847026', account: '금현물' }), null);
+  assert.equal(findProposalByBrokerOrderId([{ ...proposal, track: '퀀트' }], { brokerOrderId: '847026', account: '위탁' }), null);
+  assert.equal(findProposalByBrokerOrderId([proposal, { ...proposal, id: 'p2', account: null }], { brokerOrderId: 847026, account: '위탁' }), null);
 });
 
 test('findRecentRejection: 승인/체결된 건은 거부 이력으로 안 잡힘', () => {

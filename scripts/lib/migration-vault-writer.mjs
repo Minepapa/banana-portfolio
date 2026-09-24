@@ -251,7 +251,7 @@ export function buildMigratedProposalRecord(row, rowNum) {
   return { filename, content, dir: VAULT_PATHS.decisions.proposals };
 }
 
-// ── Knowledge/Reports (주간리포트 A~C: 날짜,요약,본문) ─────────────────────────
+// ── Log/Reports (주간리포트 A~C: 날짜,요약,본문) ───────────────────────────────
 export function buildMigratedReportRecord(row, rowNum) {
   const [date, summary, body] = row;
   const content = buildFrontmatter({
@@ -260,10 +260,10 @@ export function buildMigratedReportRecord(row, rowNum) {
     recordedAt: new Date().toISOString(),
   });
   const filename = `${sanitizeSegment(date)}-r${rowNum}.md`;
-  return { filename, content, dir: VAULT_PATHS.knowledge.reports };
+  return { filename, content, dir: VAULT_PATHS.log.reports };
 }
 
-// ── Knowledge/Profile (성향관찰 A~H) ────────────────────────────────────────
+// ── Decisions/Profile (성향관찰 A~H) ─────────────────────────────────────────
 export function buildMigratedPreferenceRecord(row, rowNum) {
   const [date, type, observation, evidence, vsProfile, confidence, status, updated] = row;
   const content = buildFrontmatter({
@@ -281,5 +281,5 @@ export function buildMigratedPreferenceRecord(row, rowNum) {
   // 읽는 쪽이 preferences.mjs의 isLivePreferenceObservation으로 legacy:true를 걸러내므로
   // 프롬프트에 섞이진 않지만(그 술어가 이 방어의 본체다), 파일 자체는 되살아나니
   // 재실행 전엔 정말 필요한지 확인할 것.
-  return { filename, content, dir: VAULT_PATHS.knowledge.profile };
+  return { filename, content, dir: VAULT_PATHS.decisions.profile };
 }

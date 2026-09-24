@@ -38,7 +38,7 @@ test('findBrokenAndAmbiguousLinks: 존재하지 않는 대상은 깨진 링크',
 
 test('findBrokenAndAmbiguousLinks: 베이스네임이 유일하면 폴더 경로 없이도 정상 해석', () => {
   const files = [
-    mkFile('Knowledge/Hubs/X', '내용 [[Y]]'),
+    mkFile('Knowledge/Topics/X', '내용 [[Y]]'),
     mkFile('Knowledge/Meta/Y', '내용'),
   ];
   const { broken, ambiguous } = findBrokenAndAmbiguousLinks(files);
@@ -84,7 +84,7 @@ test('findOrphanedNotes: 인바운드 링크가 하나도 없는 대상 폴더 �
 
 test('findOrphanedNotes: 베이스네임으로만 걸린 링크도 인바운드로 인정', () => {
   const files = [
-    mkFile('Knowledge/Hubs/X', '내용 [[동기화-인프라]]'),
+    mkFile('Knowledge/Topics/X', '내용 [[동기화-인프라]]'),
     mkFile('Knowledge/Infra/동기화-인프라', '내용'),
   ];
   const orphaned = findOrphanedNotes(files, ['Knowledge/Infra']);

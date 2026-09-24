@@ -83,6 +83,7 @@ function goldToExecutionEvent(g) {
     stockName: g.stockName,
     quantity: g.qty,
     price: g.price,
+    orderNo: g.orderNo,
     currency: 'KRW',
     broker: 'NH투자증권', // parseGoldBuy는 NH "매수 주문체결" 포맷 전용
     // ⚠️ 사실 기록(2026-08-05, 오너 확인): 자산배분상 금현물은 위탁 소속으로 취급하지만

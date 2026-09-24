@@ -66,7 +66,7 @@ export function buildPendingEntryRecord({
   const id = `${sanitizeSegment(code)}-${sanitizeSegment(signalDate)}`;
   const filename = `${id}.md`;
   const content = buildFrontmatter({
-    id, code, name, signalDate, investedWon, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, stopLossPct, reason,
+    type: 'breakout-pending-entry', id, code, name, signalDate, investedWon, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, stopLossPct, reason,
     status: PENDING_ENTRY_STATUS.PENDING,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
@@ -75,7 +75,7 @@ export function buildPendingEntryRecord({
 }
 
 export function updatePendingEntryRecord(currentContent, updates) {
-  const merged = { ...parseFrontmatter(currentContent), ...updates };
+  const merged = { ...parseFrontmatter(currentContent), type: 'breakout-pending-entry', ...updates };
   return buildFrontmatter(merged);
 }
 

@@ -22,7 +22,7 @@ test('readVaultRecords: .md 파일들의 frontmatter를 전부 파싱', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-// 2026-08-20: weekly-report.mjs v2가 Knowledge/Reports/{date}.md를 실제로 쓰기
+// 2026-08-20: weekly-report.mjs v2가 Log/Reports/{date}.md를 실제로 쓰기
 // 시작하면서 latestReport 미러를 배선 — 그 전까진 디렉토리가 항상 비어 빈 값이었다.
 test('readLatestReport: 디렉토리 없으면 null(리포트 아직 한 번도 발행 안 됨)', () => {
   const dir = join(mkdtempSync(join(tmpdir(), 'mirror-report-')), 'does-not-exist');

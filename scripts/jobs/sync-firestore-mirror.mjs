@@ -10,7 +10,7 @@
  * 주체가 없어(legacy 마이그레이션 스냅샷만 있음) allocation 미러는 그 한계 그대로
  * 반영한다. State/Holdings·Facts/Ledger(체결·배당)는 Phase 8·2에서 이미 실제로
  * 기록되므로 holdings·trades·dividends 미러는 진짜 데이터로 채워진다.
- * Knowledge/Reports도 2026-08-20 weekly-report.mjs v2 재작성 이후 실제로 쌓여
+ * Log/Reports도 2026-08-20 weekly-report.mjs v2 재작성 이후 실제로 쌓여
  * latestReport가 최신 리포트를 반영한다(그 전까진 디렉토리가 비어있어 빈 값이었음).
  *
  * 인증: Firebase Admin SDK 서비스계정 키(~/.config/banana-portfolio-v2/
@@ -45,11 +45,11 @@ export function readVaultRecords(dir) {
     .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
 }
 
-// Knowledge/Reports 중 가장 최신(파일명 YYYY-MM-DD.md) 리포트를 ReportTab.jsx가 기대하는
+// Log/Reports 중 가장 최신(파일명 YYYY-MM-DD.md) 리포트를 ReportTab.jsx가 기대하는
 // {date, headline, summary, body} 형태로 반환. 2026-08-20 weekly-report.mjs v2 재작성
 // 전까진 이 디렉토리가 항상 비어있어 latestReport 미러가 늘 빈 값이었다(원래 알려진 공백,
 // sync-firestore-mirror.mjs 헤더 주석 참고) — 이제 실제 리포트가 쌓이므로 배선한다.
-export function readLatestReport(dir = VAULT_PATHS.knowledge.reports) {
+export function readLatestReport(dir = VAULT_PATHS.log.reports) {
   if (!existsSync(dir)) return null;
   const files = readdirSync(dir).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).sort().reverse();
   if (!files.length) return null;

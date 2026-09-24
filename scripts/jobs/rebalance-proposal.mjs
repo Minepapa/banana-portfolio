@@ -33,9 +33,10 @@
  * 건 별도 판단이 필요해 오너에게 보고, 이번엔 주기만 고쳤다). 달러 자산군은 미국달러
  * ETF·엔선물ETF 두 상품에 나눠 담으라고 프롬프트에 명시(오너의 구체적 상품 계획).
  *
- * 승인·체결: new-cash-allocation.mjs와 동일 원칙 — 이 잡은 제안 생성·발송까지만 한다.
- * 실제 체결은 오너가 직접(자산분배 트랙엔 자동 브로커 실행이 없음, proposal-execution-
- * reminder.mjs가 미체결을 리마인드로 보완).
+ * 승인·주문: 이 잡은 제안 생성·발송까지만 한다. 승인 후 위탁·금현물 제안은
+ * execute-asset-allocation-proposal.mjs가 NH PLUG 주문을 자동 제출한다. 연금저축은
+ * 자동 실행 대상 계좌가 아니어서 오너가 직접 주문하며 reminder가 보조한다. 주문 접수는
+ * 실제 체결을 보장하지 않는다.
  *
  * ⚠️ 레거시 개별종목 하드가드(2026-08-29 신설, 자산분배 트랙 감사에서 해소) — 매도
  * 방향(초과 자산군)의 후보 목록에 위탁 레거시 개별종목(삼성전자 등)이 실보유로 섞여
@@ -65,7 +66,7 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { computeRebalanceGaps, normalizeAccount, isLegacyIndividualStock } from '../lib/rebalance-gap.mjs';
-import { CAP_FRACTION, applyCappedAllocation, resolveAllocationPricing } from '../lib/allocation-proposal-shared.mjs';
+import { CAP_FRACTION, applyCappedAllocation, isAllowedAllocationInstrument, resolveAllocationPricing } from '../lib/allocation-proposal-shared.mjs';
 import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/cash-allocation-candidates.mjs';
 import { rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
@@ -206,12 +207,10 @@ ${sections}
 
 // 순수함수 — LLM 응답 검증(new-cash-allocation.mjs validateAllocations와 동일 철학:
 // 드롭이지 throw 아님, 부분 오염이 전체를 막지 않음) + 분할매수 하드 캡.
-// rankedUniverseByClass가 있으면(buildRebalanceProposalPrompt와 동일 데이터) "그 계좌에
-// 보유 후보가 전혀 없던" 매수 액션의 instrumentName이 그 순위 목록 밖이면 드롭한다
-// (2026-09-06 신설 — Athena가 순위 목록을 무시하고 브랜드를 지어내도 물리적으로
-// 막히게, §2 "어느 쪽에도 없는 이름은 드롭" 설계). 순위 목록이 아직 없는 자산군(오너가
-// 유니버스를 안 채웠거나 계좌에 이미 보유 후보가 있던 경우)은 이 게이트가 적용 안 됨 —
-// 기존처럼 자유 이름을 허용(추정 데이터로 막지 않음).
+// rankedUniverseByClass가 있으면(buildRebalanceProposalPrompt와 동일 데이터) 매수
+// instrumentName은 계좌의 정확한 기존 후보 또는 순위 목록에 있어야 한다. 같은 자산군에
+// 다른 보유 후보가 있다는 이유만으로 임의 신규 종목을 통과시키지 않는다. 순위 목록이
+// 없으면 기존 하위호환 동작대로 자유 이름을 허용한다.
 export function validateRebalanceActions(actions, { breachFacts, holdings, rankedUniverseByClass = {} }) {
   const breachByClass = Object.fromEntries(breachFacts.map((b) => [b.assetClass, b]));
   const capBudget = Object.fromEntries(breachFacts.map((b) => [b.assetClass, Math.abs(b.gapWon) * CAP_FRACTION]));
@@ -239,14 +238,14 @@ export function validateRebalanceActions(actions, { breachFacts, holdings, ranke
       if (side === '매수') {
         const existingCandidates = breach.buyCandidatesByAccount?.[account] ?? [];
         const ranked = rankedUniverseByClass[assetClass];
-        if (existingCandidates.length === 0 && ranked && ranked.length) {
-          const allowedNames = new Set(ranked.map((r) => r.name));
-          if (!allowedNames.has(instrumentName)) {
-            return { ok: false, reason: `신규 종목 후보 목록 밖(데이터 기반 순위에 없는 이름): [${account}] ${instrumentName}` };
-          }
+        if (!isAllowedAllocationInstrument(instrumentName, existingCandidates, ranked)) {
+          return { ok: false, reason: `신규 종목 후보 목록 밖(데이터 기반 순위에 없는 이름): [${account}] ${instrumentName}` };
         }
       }
       if (side === '매도') {
+        if (isLegacyIndividualStock(instrumentName)) {
+          return { ok: false, reason: `레거시 개별종목은 리밸런싱 매도 제외: ${instrumentName}` };
+        }
         const held = holdings.find((h) => normalizeAccount(h.account) === normalizeAccount(account) && h.assetClass === assetClass && h.name === instrumentName);
         if (!held) return { ok: false, reason: `실보유 없음(매도 불가): [${account}] ${instrumentName}` };
         const heldEval = held.evalAmount ?? 0;
@@ -371,12 +370,17 @@ async function main() {
       });
       if (result.action === 'blocked') {
         console.log(`  ⛔ ${action.instrumentName} 제안 차단: ${result.reason}`);
-        sendResults.push({ action: 'blocked' });
+        sendResults.push(result);
+        continue;
+      }
+      if (result.action !== 'created') {
+        console.error(`  ❌ ${action.instrumentName} 제안 발송 실패: ${result.reason ?? '결과 확인 필요'}`);
+        sendResults.push(result);
         continue;
       }
       console.log(`  ✅ 제안 발송: [${action.account}] ${action.side} ${action.instrumentName} ${action.amountWon.toLocaleString('ko-KR')}원`);
-      existingProposals.push({ filename: result.filename, ...parseProposal(readFileSync(join(VAULT_PATHS.decisions.proposals, result.filename), 'utf8')) });
-      sendResults.push({ action: 'created' });
+      existingProposals.push({ filename: result.filename, content: result.content, ...parseProposal(result.content) });
+      sendResults.push(result);
     } catch (e) {
       console.error(`  ❌ ${action.instrumentName} 제안 발송 실패: ${e.message}`);
       sendResults.push({ action: 'failed' });

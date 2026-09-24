@@ -21,7 +21,7 @@ test('normalizeDateTime: leading-zero 보정', () => {
 });
 
 test('parseExecution: NH투자증권 국내 체결', () => {
-  const body = '[NH투자증권]\n매수체결통보\n종목명 : 삼성전자\n종목코드 : 005930\n체결수량 : 10주\n체결단가 : 71,000원';
+  const body = '[NH투자증권]\n매수체결통보\n종목명 : 삼성전자\n종목코드 : 005930\n체결수량 : 10주\n체결단가 : 71,000원\n주문번호 : 847026';
   const r = parseExecution(body, '2026-08-04 09:12:33');
   assert.deepEqual(r, {
     tradeDate: '2026-08-04 09:12:33',
@@ -33,7 +33,13 @@ test('parseExecution: NH투자증권 국내 체결', () => {
     currency: 'KRW',
     broker: 'NH투자증권',
     acctNo: '',
+    orderNo: '847026',
   });
+});
+
+test('parseExecution: 주문번호가 없는 구형 알림은 빈 값으로 두고 파싱은 유지', () => {
+  const body = '[NH투자증권]\n매수체결통보\n종목명 : 삼성전자\n종목코드 : 005930\n체결수량 : 10주\n체결단가 : 71,000원';
+  assert.equal(parseExecution(body, '2026-08-04 09:12:33').orderNo, '');
 });
 
 test('parseExecution: NH투자증권 해외 체결(USD)', () => {

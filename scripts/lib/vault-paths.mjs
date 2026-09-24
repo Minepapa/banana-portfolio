@@ -134,11 +134,11 @@ export const VAULT_PATHS = {
     // 같은 신호를 또 발주하는 이중매수를 막는다.
     breakoutScanRuns: join(VAULT_ROOT, 'State', 'BreakoutScanRuns', 'last-run.md'),
   },
-  // Log/는 대부분 인터랙티브 세션이 Write 도구로 직접 쓰는 자유서술 기록이라 지금까지
-  // VAULT_PATHS에 없었다(코드가 안 건드림) — telegramSession만 예외로 Node 잡
-  // (telegram-session-handoff.mjs)이 직접 쓰는 구조화된 로그라 경로 상수가 필요하다.
+  // Log/는 대부분 인터랙티브 세션이 Write 도구로 직접 쓰지만, 자동 리포트와
+  // TelegramSession은 Node 잡도 기록하므로 해당 경로를 상수로 관리한다.
   log: {
     telegramSession: join(VAULT_ROOT, 'Log', 'TelegramSession'),
+    reports: join(VAULT_ROOT, 'Log', 'Reports'),
     // 2026-09-04 신설 — weekly-vault-health-check.mjs가 progress:"진행중"/"보류" 문서와
     // "## 남은 것" 섹션을 훑어 미완료 작업을 집계하려면 코드가 이 폴더들을 직접 읽어야
     // 한다(CLAUDE.md "완료 상태 추적" 절이 progress 필드를 규정하는 대상 그대로).
@@ -149,22 +149,17 @@ export const VAULT_PATHS = {
     evaluations: join(VAULT_ROOT, 'Decisions', 'Evaluations'),
     positionJournal: join(VAULT_ROOT, 'Decisions', 'PositionJournal'),
     proposals: join(VAULT_ROOT, 'Decisions', 'Proposals'),
+    // 주간 리포트에서 자동 추출한 투자성향 관찰과 승격 상태 기록.
+    profile: join(VAULT_ROOT, 'Decisions', 'Profile'),
     // 2026-08-05 Phase 7 추가 — v1 "리스크모니터" 탭(과거 리스크 판정 이력) 이관 대상.
     // Themis의 판정 결과이지 아직 미확정 안건이 아니므로 Decisions 대분류가 맞다.
     riskMonitor: join(VAULT_ROOT, 'Decisions', 'RiskMonitor'),
   },
   knowledge: {
-    // 성향관찰(구 구글시트 "성향관찰" 탭) Vault 네이티브 대체 — 한 관찰당 파일 하나.
-    // weekly-report.mjs(v2, 2026-08-20 재작성)가 유일한 쓰기 주체. 2026-09-04 므네모시네
-    // 대정리 — v1 이관분(Profile/ 최상위 22개, PreferenceObservations/ 하위폴더로 분리돼
-    // 있던 구조)을 삭제하고 이 폴더 하나로 평탄화(preferenceObservations 키를 profile로
-    // 통합) — 별도 하위폴더로 나눌 이유(v1/v2 구분)가 사라졌기 때문.
-    profile: join(VAULT_ROOT, 'Knowledge', 'Profile'),
     playbook: join(VAULT_ROOT, 'Knowledge', 'Playbook'),
-    reports: join(VAULT_ROOT, 'Knowledge', 'Reports'),
     // 2026-09-04 므네모시네 대정리에서 신설 — weekly-vault-health-check.mjs가 고립
     // 노트·"자동 갱신" 주장 대비 최신성을 이 세 폴더 대상으로 점검한다.
-    hubs: join(VAULT_ROOT, 'Knowledge', 'Hubs'),
+    topics: join(VAULT_ROOT, 'Knowledge', 'Topics'),
     meta: join(VAULT_ROOT, 'Knowledge', 'Meta'),
     infra: join(VAULT_ROOT, 'Knowledge', 'Infra'),
   },

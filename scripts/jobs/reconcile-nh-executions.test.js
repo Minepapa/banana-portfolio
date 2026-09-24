@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNhExecutionRows, buildNhFillLedgerInput } from './reconcile-nh-executions.mjs';
+import { parseNhExecutionRows, buildNhFillLedgerInput, buildNhProposalStatusInput, isTerminalNhExecution } from './reconcile-nh-executions.mjs';
 import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
 
 // 실제 라이브 조회로 확인한 실제 체결 1건 그대로("메리츠금융지주 매도 30주
@@ -15,6 +15,7 @@ test('parseNhExecutionRows: 실측 필드 구조로 정상 체결 1건 파싱', 
   assert.deepEqual(r[0], {
     orderNo: '824268', stockCode: '138040', stockName: '메리츠금융지주',
     tradeType: '매도', quantity: 30, orderQty: 30, fullyFilled: true, price: 132000,
+    unfilledQty: null, canceledQty: null, executionAmount: null,
   });
 });
 
@@ -74,9 +75,19 @@ test('[핵심 안전장치] parseNhExecutionRows: 체결수량 0(미체결)이�
 // 기록하면 다음 폴링에서 전량체결로 바뀌어도 파일명 dedup에 걸려 나머지 수량이
 // 영구 누락된다(reconcile-irp-executions.mjs가 이미 겪은 것과 동일 클래스).
 test('[핵심 안전장치] parseNhExecutionRows: 총체결수량<주문수량(부분체결)이면 fullyFilled=false', () => {
-  const rows = [{ itg_orr_no: '1', iem_cd: 'A', iem_nm: '부분체결종목', sby_dit_cd_nm: '현금매수', orr_qty: 10, tot_cns_qty: 5, cns_avg_uit_pr: 100 }];
+  const rows = [{ itg_orr_no: '1', iem_cd: 'A', iem_nm: '부분체결종목', sby_dit_cd_nm: '현금매수', orr_qty: 10, tot_cns_qty: 5, cns_avg_uit_pr: 100, cns_amt: 500, ny_cns_qty: 5, can_qty: 0 }];
   const r = parseNhExecutionRows(rows);
   assert.equal(r[0].fullyFilled, false);
+  assert.equal(r[0].executionAmount, 500);
+  assert.equal(r[0].unfilledQty, 5);
+  assert.equal(r[0].canceledQty, 0);
+});
+
+test('isTerminalNhExecution: 부분체결은 미체결 잔량 0을 확인한 뒤에만 종결로 판정', () => {
+  assert.equal(isTerminalNhExecution({ fullyFilled: true }), true);
+  assert.equal(isTerminalNhExecution({ fullyFilled: false, quantity: 5, orderQty: 10, unfilledQty: 0 }), true);
+  assert.equal(isTerminalNhExecution({ fullyFilled: false, quantity: 5, orderQty: 10, unfilledQty: 5 }), false);
+  assert.equal(isTerminalNhExecution({ fullyFilled: false, quantity: 5, orderQty: 10, unfilledQty: null }), false);
 });
 
 test('[핵심 안전장치] parseNhExecutionRows: orr_qty 필드가 없거나 결측이면 fullyFilled=false(추정 안 함)', () => {
@@ -116,4 +127,21 @@ test('buildNhFillLedgerInput: account·actNo는 호출부가 주입한 값을 �
   assert.equal(input.broker, 'NH투자증권');
   assert.notEqual(input.acctNo, '20902920556'); // 마스킹돼야 함(원본 그대로 노출 금지)
   assert.ok(input.acctNo.length > 0);
+});
+
+test('buildNhProposalStatusInput: 부분체결도 당일 대사에서 Proposal 누적수량 갱신 대상으로 만든다', () => {
+  assert.deepEqual(buildNhProposalStatusInput(
+    { id: 'proposal-1' },
+    { orderNo: '847026', fullyFilled: false, orderQty: 10, quantity: 7, price: 9450 },
+    '/tmp/proposals',
+  ), {
+    proposalsDir: '/tmp/proposals', proposalId: 'proposal-1', brokerOrderId: '847026',
+    status: '부분체결', filledQty: 7, avgFillPrice: 9450,
+  });
+});
+
+test('buildNhProposalStatusInput: 주문수량이 없어 부분/전량 판정 불가면 상태전이를 보류한다', () => {
+  assert.equal(buildNhProposalStatusInput(
+    { id: 'proposal-1' }, { orderNo: '847026', fullyFilled: false, orderQty: null, quantity: 7, price: 9450 }, '/tmp/proposals',
+  ), null);
 });

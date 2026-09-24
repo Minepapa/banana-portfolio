@@ -60,13 +60,17 @@ test('실전 모드 + liveExecutor 없이 검문소를 통과하면(가정) 명�
   await assert.rejects(() => executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_LIVE }));
 });
 
-test('실전 모드 + liveExecutor 주입 시 상태가 "체결"로 바뀐다', async () => {
+test('실전 모드 + liveExecutor 주문 접수 시 상태는 "주문접수"이고 실제 체결시각은 비워둔다', async () => {
   const { proposal, content } = makeProposal();
   const gateInput = { ...PASS_GATE_INPUT, replyTo: proposal.id, expectedProposalId: proposal.id };
   const liveExecutor = async () => ({ brokerOrderId: 'KIS-1' });
   const r = await executeProposal({ proposal, proposalContent: content, gateInput, mode: MODE_LIVE, liveExecutor });
   assert.equal(r.executed, true);
-  assert.equal(parseProposal(r.updatedContent).status, '체결');
+  const updated = parseProposal(r.updatedContent);
+  assert.equal(updated.status, '주문접수');
+  assert.equal(updated.brokerOrderId, 'KIS-1');
+  assert.ok(updated.submittedAt);
+  assert.equal(updated.executedAt, null);
 });
 
 // 실주문이 검문소를 통과했지만 KIS 자체가 거부(예: 주문가능금액 초과)하면 체결로 기록되면

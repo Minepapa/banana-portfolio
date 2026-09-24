@@ -47,9 +47,18 @@ export function findOrphanedAllocationFiles(existingFilenames, expectedFilenames
   return existingFilenames.filter((f) => !expected.has(f));
 }
 
+// 빈 Holdings는 표시용 snapshot을 0으로 덮어쓰지 않고 잡 실패 heartbeat로 드러낸다.
+export function hasHoldingsForAllocationSnapshot(holdings) {
+  return Array.isArray(holdings) && holdings.length > 0;
+}
+
 function main() {
   const holdings = readHoldings();
-  if (!holdings.length) { console.log('⚠️ State/Holdings가 비어있음 — 갱신 건너뜀(추정 안 함)'); return; }
+  if (!hasHoldingsForAllocationSnapshot(holdings)) {
+    console.error('⚠️ State/Holdings가 비어있음 — 잘못된 0% snapshot 방지를 위해 갱신을 보류하고 실패 heartbeat를 남김');
+    process.exitCode = 1;
+    return;
+  }
 
   let updated = 0;
   const expectedFilenames = new Set();

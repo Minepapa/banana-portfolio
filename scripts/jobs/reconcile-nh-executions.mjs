@@ -45,9 +45,11 @@
  * 의 새 선택 필드 `orderNo`로 넘겨 그 경우에도 항상 서로 다른 레코드로 구분되게
  * 한다(ledger-vault-writer.mjs 2026-09-03 확장, 이 잡이 첫 소비처).
  *
- * ⚠️ 부분체결 폴링 멱등성 — tot_cns_qty는 그 주문의 누적 체결수량이라
- * (reconcile-irp-executions.mjs가 이미 겪은 것과 동일 클래스), 전량체결
- * (tot_cns_qty===orr_qty)인 행만 기록한다. 부분체결은 다음 폴링에서 재확인.
+ * ⚠️ 부분체결 폴링 멱등성 — tot_cns_qty는 주문의 누적 체결수량이다. 활성 부분체결은
+ * 미체결수량(ny_cns_qty)이 남아있는 동안 장부 반영을 보류하고, 전량체결 또는 잔량
+ * 0으로 종료된 부분체결만 공용 nh-execution-ledger.mjs를 통해 기록한다. 기록기는
+ * 주문별 락으로 watcher/정기대사 경합을 막고, 카카오 알림이 이미 남긴 체결수량을
+ * 차감한 증분만 단일 이벤트로 기록한다. cns_amt와 누적 평균단가가 모순되면 보류한다.
  *
  * 안전: 조회 전용(매매 API 미사용). 계좌 하나가 실패해도 나머지는 계속 진행.
  * 범위: 날짜 범위 파라미터가 없는 API라(orrDt 단일 날짜) 당일 조회만 된다 —
@@ -68,22 +70,32 @@
  *   node scripts/jobs/reconcile-nh-executions.mjs            # 실제로 Vault에 씀
  *   node scripts/jobs/reconcile-nh-executions.mjs --dry-run  # 조회만, 쓰기 없음
  */
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { hasNhplugCredentials, loadNhplugCredentials, getNhToken, listNhAccounts } from '../lib/nhplug.mjs';
 import { getKrDailyOrderExecution } from '../lib/nhplug-krstock.mjs';
 import { getGoldExecution } from '../lib/nhplug-krgold.mjs';
 import { resolveNhAccountsByLabel, maskNhActNo } from '../lib/nh-accounts.mjs';
-import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
-import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { writeAtomic } from '../lib/state-writer.mjs';
+import { recordNhTerminalExecution } from '../lib/nh-execution-ledger.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
+import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { findProposalByBrokerOrderId, parseProposal } from '../lib/proposal-vault.mjs';
+import { recordProposalExecutionStatus } from '../lib/proposal-execution-status.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const BROKER = 'NH투자증권';
 
 // CMA 제외 — 위 헤더 주석 참고(체결 자체가 없는 계좌).
 const NH_EXECUTION_ACCOUNTS = new Set(['위탁', '금현물']);
+
+function loadProposalsForOrderTracking() {
+  const dir = VAULT_PATHS.decisions.proposals;
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((file) => file.endsWith('.md')).map((filename) => {
+    const content = readFileSync(join(dir, filename), 'utf8');
+    return { filename, ...parseProposal(content) };
+  });
+}
 
 // KIS 응답의 output/output1 패턴과 달리 NH krstock·krgold 체결조회는 둘 다
 // Output_0(대문자, 배열)에 담아 준다 — nhplug.mjs callNh의 공용 응답 형태.
@@ -96,12 +108,18 @@ const NH_EXECUTION_ACCOUNTS = new Set(['위탁', '금현물']);
 // 부호를 결정하는 값이라 오판이 applyBuy/applySell을 통째로 뒤집을 수 있어, 여기서만은
 // "매도가 아니면 매수"라는 단순 폴백을 안 쓴다(추정 대신 확인 원칙).
 export function parseNhExecutionRows(rows) {
-  const num = (v) => { const n = Number(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
+  const num = (v) => {
+    if (v == null || String(v).trim() === '') return null;
+    const n = Number(String(v).replace(/,/g, ''));
+    return Number.isFinite(n) ? n : null;
+  };
   return (Array.isArray(rows) ? rows : [])
     .map((row) => {
       const quantity = num(row.tot_cns_qty);
       const orderQty = num(row.orr_qty);
       const price = num(row.cns_avg_uit_pr);
+      const unfilledQty = num(row.ny_cns_qty);
+      const canceledQty = num(row.can_qty);
       const dirRaw = String(row.sby_dit_cd_nm ?? '');
       const tradeType = dirRaw.includes('매도') ? '매도' : dirRaw.includes('매수') ? '매수' : null;
       return {
@@ -113,6 +131,9 @@ export function parseNhExecutionRows(rows) {
         orderQty,
         fullyFilled: quantity != null && orderQty != null && quantity === orderQty,
         price,
+        unfilledQty,
+        canceledQty,
+        executionAmount: num(row.cns_amt),
       };
     })
     // tradeType!=null: 위 화이트리스트에서 탈락한 행 제외. orderNo!=='': 이 잡의
@@ -124,16 +145,13 @@ export function parseNhExecutionRows(rows) {
     .filter((e) => e.tradeType != null && e.orderNo !== '' && e.quantity != null && e.quantity > 0 && e.price != null && e.price > 0);
 }
 
-// 순수함수(테스트 가능, 2026-09-21 독립 코드리뷰 지적으로 신설 — MEDIUM/CRITICAL
-// 재발방지) — parseNhExecutionRows가 만든 row 하나를 buildExecutionRecord 입력으로
-// 변환한다. watch-nh-order-fill.mjs(주문 접수 직후 즉시감시)도 이 함수를 그대로
-// 써서, 두 경로가 같은 체결을 만나면 dedupKey가 "우연히 같은 문자열을 쓴다"가
-// 아니라 "같은 함수를 호출한다"로 구조적으로 보장된다 — CLI 인자·Vault 홀딩명
-// 같은 별도 소스에서 stockName/tradeType을 따로 채우면(최초 버전의 실제 버그)
-// 한쪽만 표기가 달라져도 같은 체결이 파일 2개로 갈라지고,
-// update-holdings-from-executions.mjs의 findMatchingKnownExecution(같은 필드
-// 조합으로 매칭)까지 동시에 뚫려 이중 적용 사고로 이어질 수 있다(2026-09-03
-// 실사고와 동일 클래스).
+export function isTerminalNhExecution(row) {
+  if (row?.fullyFilled) return true;
+  return row?.quantity > 0 && row?.orderQty > row.quantity && row?.unfilledQty === 0;
+}
+
+// 호환용 순수 변환기(테스트·기존 외부 소비자용). 실제 정기대사와 즉시감시는 이제
+// 누적 부분체결·카카오 상호대조까지 처리하는 nh-execution-ledger.mjs를 공용 사용한다.
 export function buildNhFillLedgerInput(row, { today, account, actNo }) {
   return {
     tradeDate: `${today} 00:00:00`,
@@ -147,6 +165,20 @@ export function buildNhFillLedgerInput(row, { today, account, actNo }) {
     account,
     acctNo: maskNhActNo(actNo) || '',
     orderNo: row.orderNo,
+  };
+}
+
+// 부분·전량 체결 모두 Proposal 상태 대사 대상이다. 원장에는 전량체결만 기록해
+// 누적수량을 중복 기록하지 않지만, 현재 누적 체결상태는 매 폴링마다 갱신한다.
+export function buildNhProposalStatusInput(proposal, execution, proposalsDir) {
+  if (!Number.isFinite(execution.orderQty) || execution.orderQty <= 0) return null;
+  return {
+    proposalsDir,
+    proposalId: proposal.id,
+    brokerOrderId: execution.orderNo,
+    status: execution.fullyFilled ? '체결' : '부분체결',
+    filledQty: execution.quantity,
+    avgFillPrice: execution.price,
   };
 }
 
@@ -174,6 +206,7 @@ async function main() {
   }
 
   const { dashed: today, compact: orrDt } = kstTodayParts();
+  const trackedProposals = DRY_RUN ? [] : loadProposalsForOrderTracking();
   let recorded = 0, skipped = 0, partial = 0;
 
   for (const [label, actNo] of byLabel) {
@@ -223,37 +256,47 @@ async function main() {
     }
 
     for (const e of executions) {
-      if (!e.fullyFilled) { partial++; continue; }
-      const { filename, content, dir, dedupKey } = buildExecutionRecord(
-        buildNhFillLedgerInput(e, { today, account: label, actNo }),
-      );
-      const filepath = join(dir, filename);
-      if (existsSync(filepath)) {
-        const existing = parseFrontmatter(readFileSync(filepath, 'utf8'));
-        if (existing.dedupKey !== dedupKey) {
-          collectWarning(`NH 체결기록: 파일명 충돌(내용 다름) — ${filepath} 기존 dedupKey="${existing.dedupKey}" vs 신규="${dedupKey}"`);
+      const proposal = findProposalByBrokerOrderId(trackedProposals, { brokerOrderId: e.orderNo, account: label });
+      if (proposal) {
+        const statusInput = buildNhProposalStatusInput(proposal, e, VAULT_PATHS.decisions.proposals);
+        if (!statusInput) {
+          collectWarning(`NH 체결 대사: ${proposal.id} — 주문수량 확인 불가, Proposal 상태 갱신 보류`);
         } else {
-          console.log(`  · 이미 기록됨(중복 아님) — ${label} ${e.stockName} ${e.quantity}주`);
+          try {
+            const updated = await recordProposalExecutionStatus(statusInput);
+            if (updated) {
+              const labelText = e.fullyFilled ? '전량체결' : `부분체결 ${e.quantity}/${e.orderQty}주`;
+              console.log(`  ✓ [Proposal] ${proposal.id} — 일일 NH 대사로 ${labelText} 확인`);
+            }
+          } catch (error) {
+            console.error(`Proposal 체결상태 기록 실패(${proposal.id}) —`, error.message);
+            collectWarning('NH 체결 대사: 주문접수 제안의 체결상태를 갱신하지 못함 — 상태 파일 확인 필요');
+          }
         }
+      }
+      if (!isTerminalNhExecution(e)) { partial++; continue; }
+      const result = await recordNhTerminalExecution({
+        row: e, tradeDate: `${today} 00:00:00`, account: label,
+        acctNo: maskNhActNo(actNo) || '', dir: VAULT_PATHS.facts.ledger.executions, dryRun: DRY_RUN,
+      });
+      if (!result.ok) {
+        collectWarning(`NH 체결기록: ${label} ${e.stockName} 주문번호 ${e.orderNo} — ${result.reason}`);
         skipped++;
-        continue;
+      } else if (!result.event) {
+        console.log(`  · 이미 기존 체결기록으로 반영됨 — ${label} ${e.stockName} ${e.quantity}주`);
+        skipped++;
+      } else {
+        console.log(`  + [체결기록${DRY_RUN ? '(예정)' : ''}] ${label} ${e.tradeType} ${e.stockName} ${result.event.quantity}주 @${result.event.price}원${result.event.quantity < e.quantity ? ` (누적 ${e.quantity}주 중 기존 기록 제외)` : ''} — ${result.filepath}`);
+        recorded++;
       }
-      console.log(`  + [체결기록${DRY_RUN ? '(예정)' : ''}] ${label} ${e.tradeType} ${e.stockName} ${e.quantity}주 @${e.price}원 — ${filepath}`);
-      if (!DRY_RUN) {
-        mkdirSync(dir, { recursive: true });
-        writeAtomic(filepath, content);
-      }
-      recorded++;
     }
   }
 
-  // [핵심 안전장치] 지정가 주문이 부분체결 상태로 장 마감(또는 잔량 취소)되면
-  // tot_cns_qty<orr_qty가 영구 고정돼 이 잡은 그 체결을 영원히 기록하지 않는다
-  // (2026-09-03 code-reviewer 지적 — partial++만으로는 stdout에만 남고 launchd
-  // 잡의 stdout은 아무도 안 봐서 오너에게 알림이 안 감). 카카오 경로가 지금은 이
-  // 구멍을 메우고 있지만 5단계에서 사라지므로, 여기서도 명시적으로 경보한다.
+  // 활성 부분체결은 잔량이 끝날 때까지 보류한다. 종료된 부분체결은 위에서 NH
+  // 누적수량을 기존 카카오/API 기록과 대조해 증분만 남긴다. 잔량상태를 확인할 수
+  // 없는 부분체결은 종결을 추정하지 않고 경보한다.
   if (partial > 0) {
-    collectWarning(`NH 체결조회: 부분체결 ${partial}건 미기록 — 잔량 취소/미체결로 끝났으면 영구 누락이므로 수동 확인 필요`);
+    collectWarning(`NH 체결조회: ${partial}건 부분체결이 남아있거나 잔량상태를 확인할 수 없어 장부 반영 보류 — 다음 조회에서 재확인`);
   }
 
   console.log(`\n✅ NH 체결 ${recorded}건 신규 기록 · ${skipped}건 이미 존재 · ${partial}건 부분체결 대기` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''));

@@ -34,7 +34,7 @@ export function buildBreakoutPositionRecord({
   const id = `${sanitizeSegment(code)}-${sanitizeSegment(entryDate)}`;
   const filename = `${id}.md`;
   const content = buildFrontmatter({
-    id, code, name, entryDate, entryPrice, units, quantity, investedWon,
+    type: 'breakout-position', id, code, name, entryDate, entryPrice, units, quantity, investedWon,
     highSinceEntry: entryPrice,
     stopPrice, stopLossPct,
     partialSold: false,
@@ -63,7 +63,7 @@ export function buildBreakoutPositionRecord({
 // updatedAt은 호출부가 명시적으로 안 넘기면 자동 갱신하지 않는다(순수함수라 "지금
 // 시각"을 스스로 알 수 없음, 호출부가 now를 책임지고 넘김).
 export function updateBreakoutPositionRecord(currentContent, updates) {
-  const merged = { ...parseFrontmatter(currentContent), ...updates };
+  const merged = { ...parseFrontmatter(currentContent), type: 'breakout-position', ...updates };
   return buildFrontmatter(merged);
 }
 

@@ -77,8 +77,8 @@ const EVENT_LOG_CHECKS = [
   ['포지션저널!A2:P', VAULT_PATHS.decisions.positionJournal, '포지션저널', '대정리에서 폴더째 삭제(30건)'],
   ['리스크모니터!A2:H', VAULT_PATHS.decisions.riskMonitor, '리스크모니터', '대정리에서 폴더째 삭제(41건)'],
   ['주문제안!A2:N', VAULT_PATHS.decisions.proposals, '주문제안(아카이브)', '대정리에서 legacy-*.md 13건 삭제(v2 제안은 계속 쌓임)'],
-  ['주간리포트!A2:C', VAULT_PATHS.knowledge.reports, '주간리포트', '대정리에서 v1 이관분 15건 삭제'],
-  ['성향관찰!A2:H', VAULT_PATHS.knowledge.profile, '성향관찰', '대정리에서 v1 이관분 22건 삭제 + PreferenceObservations/ 평탄화'],
+  ['주간리포트!A2:C', VAULT_PATHS.log.reports, '주간리포트', '대정리에서 v1 이관분 15건 삭제'],
+  ['성향관찰!A2:H', VAULT_PATHS.decisions.profile, '성향관찰', '대정리에서 v1 이관분 22건 삭제 + PreferenceObservations/ 평탄화'],
 ];
 
 async function verifyEventLogCounts(token, mismatches) {

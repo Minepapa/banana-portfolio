@@ -51,6 +51,7 @@ import { getExecutionMode, MODE_LIVE } from '../lib/shadow-mode.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { loadExecutedOrderIds, recordExecutedOrder, unrecordExecutedOrder } from '../lib/executed-orders.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { readOptionalStateFile } from '../lib/state-reader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import {
@@ -84,10 +85,6 @@ function loadProposals(dir) {
       const content = readFileSync(join(dir, f), 'utf8');
       return { filename: f, content, ...parseProposal(content) };
     });
-}
-
-function readStateFileOrNull(filepath) {
-  try { return readFileSync(filepath, 'utf8'); } catch { return null; }
 }
 
 async function main() {
@@ -172,7 +169,7 @@ async function main() {
   }
   if (!targets.length) { console.log('ℹ️ 체결 대기 중인 승인된 퀀트 제안 없음'); return; }
 
-  const mode = getExecutionMode(readStateFileOrNull(VAULT_PATHS.state.executionMode));
+  const mode = getExecutionMode(readOptionalStateFile(VAULT_PATHS.state.executionMode));
 
   const { appkey: quoteAppkey, appsecret: quoteAppsecret } = loadKisCredentials();
   const quoteToken = await getKisToken({ appkey: quoteAppkey, appsecret: quoteAppsecret });
@@ -248,7 +245,7 @@ async function main() {
 
     // 킬스위치·멱등목록은 제안마다 다시 읽는다(배치 시작 시 1회 스냅샷이면 처리 도중
     // 킬스위치를 눌러도 이번 배치의 남은 제안들에 반영이 안 됨 — 파일 상단 주석 #2).
-    const killSwitchContent = readStateFileOrNull(VAULT_PATHS.state.killSwitch);
+    const killSwitchContent = readOptionalStateFile(VAULT_PATHS.state.killSwitch);
     const alreadyExecutedIds = loadExecutedOrderIds(VAULT_PATHS.state.executedOrders);
 
     let result;
@@ -307,6 +304,7 @@ async function main() {
           `--order-no=${result.settlement.brokerOrderId}`,
           `--code=${proposal.assetKey}`,
           `--side=${proposal.side}`,
+          `--proposal-id=${proposal.id}`,
         ], { detached: true, stdio: 'ignore' }); // name 생략 시 watch-order-fill.mjs가 code로 대체(proposal에 별도 종목명 필드 없음)
         // spawn()은 실행 자체가 실패해도(예: node 못 찾음) 동기 throw가 아니라 비동기
         // 'error' 이벤트로만 알려준다 — 리스너가 없으면 unhandled 'error'가 이 프로세스를

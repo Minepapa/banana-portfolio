@@ -21,22 +21,23 @@
 // 전역 공유된다(의도된 기존 설계 — 별도 상태 파일을 새로 안 만든다) — "킬스위치 온"은
 // 이 CLI로 내는 주문도 똑같이 막는다.
 //
-// ⚠️ 중복발주 가드 — execute-asset-allocation-proposal.mjs의 "같은 안건에 승인 2건"
-// 방어는 --proposal-id로 특정 1건만 실행할 때는 건너뛰도록 설계돼 있다(대량 배치용
-// 가드라서). 이 CLI는 프록시 제안을 만들기 *전에* findActiveProposal로 같은
-// track+assetKey+side의 활성(대기·승인) 제안이 이미 있는지 직접 확인해 그 갭을 막는다.
+// ⚠️ 직접주문은 원본 Telegram 요청 ID를 --request-id로 받아 영속화한다. 중복검사와
+// 승인 제안 생성은 proposal 폴더 락 안에서 원자적으로 수행하므로 같은 Telegram 요청의
+// 재시도·동시 호출은 완료된 제안까지 찾아 막는다. request ID가 다른 새 지시는 기존
+// 활성 안건 검사(track+assetKey+side)도 통과해야 생성된다.
 //
 // 사용법:
-//   node scripts/tools/place-nh-direct-order.mjs --side=매수 --asset=삼성전자 --quantity=10
-//   node scripts/tools/place-nh-direct-order.mjs --side=매도 --asset=005930 --quantity=5 --price=71000
+//   node scripts/tools/place-nh-direct-order.mjs --side=매수 --asset=삼성전자 --quantity=10 --request-id=telegram:12345:67890
+//   node scripts/tools/place-nh-direct-order.mjs --side=매도 --asset=005930 --quantity=5 --price=71000 --request-id=telegram:12345:67891
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
+import { createDirectOrderProposalOnce, validateDirectOrderRequestId } from '../lib/direct-order-request.mjs';
 import {
-  buildProposalRecord, updateProposalRecord, parseProposal, findActiveProposal,
+  buildProposalRecord, parseProposal, findActiveProposal,
 } from '../lib/proposal-vault.mjs';
 import { getCodeRegistry } from '../lib/stock-registry.mjs';
 import {
@@ -108,11 +109,13 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const side = args.side;
   const assetKey = (args.asset ?? '').trim();
+  const requestId = validateDirectOrderRequestId(args['request-id']);
   const quantity = Number(args.quantity);
   const explicitPrice = args.price != null ? Number(args.price) : null;
 
   if (side !== '매수' && side !== '매도') { console.error('❌ --side는 "매수" 또는 "매도"만 허용'); process.exit(2); }
   if (!assetKey) { console.error('❌ --asset 필요(종목명 또는 코드)'); process.exit(2); }
+  if (!requestId) { console.error('❌ --request-id 필요 — 원본 Telegram 요청에 고정된 재시도 멱등키를 전달할 것'); process.exit(2); }
   // nhplug-order-safety.mjs의 validateOrderInputs가 결국 Number.isInteger를 요구한다
   // (소수 수량은 NH 주문 자체가 거부) — 이 CLI 단계에서 먼저 걸러야 제안 레코드가
   // 만들어지기 전에 즉시 알린다(2026-09-21 독립 코드리뷰 MEDIUM 지적).
@@ -146,16 +149,7 @@ async function main() {
   // 가드가 Athena 쪽 이름 기반 레코드와 절대 매칭이 안 돼(코드 vs 이름) 무력화된다.
   const proposalAssetKey = classification.resolvedName ?? assetKey;
 
-  // 중복발주 가드 — 같은 안건(track+assetKey+side)의 활성(대기·승인) 제안이 이미
-  // 있으면 새로 만들지 않는다(파일 헤더 "중복발주 가드" 주석 참고). Athena 쪽 제안과
-  // 같은 assetKey 관례(표시명)를 써야 실제로 매칭된다(위 주석 참고).
   const proposalsDir = VAULT_PATHS.decisions.proposals;
-  const existingProposals = loadProposals(proposalsDir);
-  const active = findActiveProposal(existingProposals, { track: '자산분배', assetKey: proposalAssetKey, side });
-  if (active) {
-    console.error(`❌ 같은 안건(${side} ${proposalAssetKey})의 활성 제안이 이미 있음 — ${active.id}(상태: ${active.status}). 새로 만들지 않음, 필요하면 기존 것을 먼저 정리할 것.`);
-    process.exit(1);
-  }
 
   const { appkey, appsecret } = loadNhplugCredentials();
   const token = await getNhToken({ appkey, appsecret });
@@ -172,31 +166,34 @@ async function main() {
     }
   }
 
-  const { id, filename, content } = buildProposalRecord({
-    track: '자산분배',
-    account: classification.nhAccountLabel,
-    assetKey: proposalAssetKey,
-    side, quantity, proposedPrice,
-    reason: `오너 직접 지시(텔레그램) — ${proposalAssetKey}`,
+  const reservation = await createDirectOrderProposalOnce({
+    requestId,
+    proposalsDir,
+    loadProposals: async () => loadProposals(proposalsDir),
+    findActive: (proposals) => findActiveProposal(proposals, {
+      track: '자산분배', assetKey: proposalAssetKey, side,
+    }),
+    createProposal: async () => buildProposalRecord({
+      track: '자산분배',
+      account: classification.nhAccountLabel,
+      assetKey: proposalAssetKey,
+      side, quantity, proposedPrice,
+      reason: `오너 직접 지시(텔레그램) — ${proposalAssetKey}`,
+    }),
+    writeProposal: async (filename, content) => writeStateFile(join(proposalsDir, filename), content),
   });
-  // ⚠️ 독립 코드리뷰 지적(2026-09-21, CRITICAL) — 첫 버전은 telegramMessageId를 null로
-  // 남겨뒀다. order-gate.checkApprovalMatch(proposal-execution-input.buildGateInput이
-  // replyTo·expectedProposalId 둘 다 proposal.telegramMessageId에서 채움)는 이 값이
-  // null이면 무조건 차단한다("텔레그램 발송된 적 없이 승인 상태에 도달한 이상 상태"를
-  // 잡는 자기일관성 체크) — 즉 이 CLI로 낸 주문은 매번 검문소에서 막혀 단 한 건도
-  // 실제로 체결되지 않았다(실측 재현됨). 이 체크가 실제로 비교하는 건 "Frank의 진짜
-  // reply_to 위조 여부"가 아니다(그건 telegram-reply-handler.mjs가 대기→승인 전이
-  // 시점에 이미 처리) — 여기서는 replyTo와 expectedProposalId가 같은 필드에서 나와
-  // 항상 자기 자신과 같으므로, 사실상 "telegramMessageId가 null이 아닌가"만 본다.
-  // 직접주문은 Frank의 확인이 텔레그램 메시지 왕복이 아니라 Zeus와의 대화 턴(1회
-  // 재확인)으로 이미 이뤄졌으므로, 그 사실을 드러내는 고유하고 추적 가능한 값을
-  // 채운다(체크섬약화 아님 — Athena 경로는 여전히 실제 발송된 telegramMessageId만
-  // 통과한다, 이 CLI가 만드는 제안만 이 형식을 쓴다).
-  const directOrderProvenance = `직접주문:${id}`;
-  const approved = updateProposalRecord(content, {
-    status: '승인', decidedAt: new Date().toISOString(), telegramMessageId: directOrderProvenance,
-  });
-  await writeStateFile(join(proposalsDir, filename), approved);
+  if (reservation.action !== 'created') {
+    const existing = reservation.proposal;
+    if (reservation.action === 'duplicate-request') {
+      console.error(`❌ 이 Telegram 주문요청은 이미 처리 대상으로 기록됨 — ${existing.id}(상태: ${existing.status}). 재주문하지 않음. NH 주문/제안 상태를 먼저 확인할 것.`);
+    } else if (reservation.action === 'active-proposal') {
+      console.error(`❌ 같은 안건(${side} ${proposalAssetKey})의 활성 제안이 이미 있음 — ${existing.id}(상태: ${existing.status}). 새로 만들지 않음.`);
+    } else {
+      console.error('❌ 직접주문 요청을 안전하게 예약하지 못함 — 재시도 전에 제안 상태를 확인할 것.');
+    }
+    process.exit(1);
+  }
+  const { id } = reservation.proposal;
   console.log(`✅ 직접주문 제안 생성+즉시승인: ${id} (${classification.nhAccountLabel}, ${side} ${quantity} @${proposedPrice})`);
 
   // 10분 크론을 기다리지 않고 지금 즉시 1회 실행 — 실행 로직(검문소·체결·알림)은

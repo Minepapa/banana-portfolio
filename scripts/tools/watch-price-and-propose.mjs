@@ -102,8 +102,11 @@ async function main() {
 
       if (result.action === 'blocked') {
         console.log(`⛔ 제안 생성 차단: ${result.reason}`);
+      } else if (result.action === 'created') {
+        console.log(`✅ 제안 생성·발송 완료: ${result.id} (message_id=${result.telegramMessageId})`);
       } else {
-        console.log(`✅ 제안 생성·발송 완료: ${result.id} (message_id=${result.telegramMessageId ?? '없음'})`);
+        console.error(`❌ 제안 발송 실패: ${result.reason ?? '결과 확인 필요'}`);
+        process.exitCode = 1;
       }
       return;
     }

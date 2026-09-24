@@ -57,12 +57,12 @@ test('settleExecution: 실전 모드인데 liveExecutor 없으면 조용히 넘�
   await assert.rejects(() => settleExecution({ mode: MODE_LIVE, proposal }), /liveExecutor가 주입되지 않았습니다/);
 });
 
-test('settleExecution: 실전 모드 + liveExecutor 주입 시 그 결과를 그대로 반영(liveExecutor가 비동기여도 await됨)', async () => {
+test('settleExecution: 실전 모드 + liveExecutor 주입 시 주문접수 결과를 반영한다(liveExecutor가 비동기여도 await됨)', async () => {
   const proposal = { assetKey: '삼성전자', quantity: 10, side: '매수' };
   const liveExecutor = async (p) => ({ brokerOrderId: 'KIS-123', filledQty: p.quantity });
   const r = await settleExecution({ mode: MODE_LIVE, proposal, liveExecutor });
-  assert.equal(r.status, '체결');
-  assert.equal(r.writesToLedger, true);
+  assert.equal(r.status, '주문접수');
+  assert.equal(r.writesToLedger, false);
   assert.equal(r.brokerOrderId, 'KIS-123');
 });
 

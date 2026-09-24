@@ -17,8 +17,9 @@
  * 우선-KIS-카카오파싱-역할축소-결정.md` 참고 — 신규 경로가 안정화된 뒤 카카오를
  * 정리하는 5단계 전까지는 두 소스가 나란히 돈다). `findMatchingKnownExecution`이
  * legacy뿐 아니라 "이미 holdingsApplied된 다른 소스의 체결"까지 대조 대상에 넣어
- * (날짜 일단위·구분·종목명·수량 기준, legacy dedup과 동일 원칙) 같은 실제 거래가
- * applyBuy/applySell로 두 번 적용되는 걸 막는다 — 실제 라이브 Vault 데이터(2026-09-02
+ * API 주문번호가 양쪽에 있으면 브로커+주문번호를 우선 비교하고, 구형/번호 누락 행만
+ * 날짜 일단위·구분·종목명·수량 기준으로 보완 대조해 같은 실제 거래의 이중 적용을 막는다 —
+ * 실제 라이브 Vault 데이터(2026-09-02
  * 메리츠금융지주 매도 30주, 카카오로 이미 반영됨)로 재현·검증 완료.
  *
  * ⚠️ 실행 시작 시 항상 먼저 로트 통합(consolidateLots)부터 한다 — 독립 코드리뷰
@@ -117,10 +118,10 @@ export function pickUnprocessedExecutions(executionFiles) {
 // price:585919(원), live엔 price:410.565(달러)) 숫자가 절대 같아질 수 없다 — 그래서
 // 이 조건 때문에 해외주식 중복 7건이 전부 탐지를 피해 그대로 재적용됐다(마이크로소프트
 // +2·알파벳 Class A +8·엔비디아 +5주, 실제 앱 잔고와 다름을 오너 스크린샷으로 확인).
-// 단가 비교를 뺀다 — 날짜(초단위 포함)·구분·종목명·수량이 같은 두 개의 서로 다른
-// 진짜 거래가 우연히 존재할 확률은 무시할 수준이고(이 프로젝트 자체의 dedupKey 관례
-// — ledger-vault-writer.mjs buildExecutionRecord — 도 애초에 단가 없이 이 넷만으로
-// 유일성을 정의한다, 여기서도 그 관례를 그대로 따르는 게 맞다).
+// 단가 비교는 하지 않는다(해외 legacy 원화환산가와 live USD 단가처럼 소스별 통화가
+// 달라질 수 있음). 다만 양쪽에 브로커와 주문번호가 있으면 해당 식별자가 정확히 같아야
+// 한다. 이 값이 있는 신형 레코드에선 유사한 날짜·종목·수량만으로 별도 주문을 합치지 않는다.
+// 구형 알림·legacy처럼 주문번호가 없는 레코드만 기존 날짜·구분·종목·수량 fallback을 쓴다.
 // matchesKnownExecution의 실제 매치 레코드 버전(불리언 대신 레코드 자체 반환) — 매치된
 // 쪽에만 남아있는 정보(예: account, v1 마이그레이션 시점엔 알던 계좌)를 재사용하기 위해
 // 2026-08-19 추가(아래 findLegacyAccountFallback 참고). 판정 조건은 matchesKnownExecution
@@ -133,17 +134,30 @@ export function pickUnprocessedExecutions(executionFiles) {
 // 파일로 기록할 수 있는데(마이그레이션 병행기간 중 의도된 상황, Strategy 문서 참고),
 // legacy만 보던 이전 로직은 이 크로스소스 중복을 못 잡아 같은 체결이 applyBuy/applySell
 // 로 두 번 적용될 뻔했다(실제 라이브 Vault 데이터로 재현 확인 — 2026-08-18 legacy
-// 중복 실사고와 동일 클래스). 판정 기준(날짜 일단위·구분·종목명·수량, 단가·정확한
-// 시각은 소스마다 표현이 달라 비교 안 함) 자체는 "legacy 여부"와 무관하게 "같은 실제
-// 거래를 가리키는가"를 정확히 판별하므로, 함수 이름과 인자 의미를 legacy 전용에서
+// 중복 실사고와 동일 클래스). 날짜·방향·종목·수량을 후보키로 쓰고, 신형 양쪽 레코드에
+// 브로커 주문번호가 있으면 그 번호가 정확히 같은 경우에만 조인한다(단가·정확한 시각은
+// 소스마다 표현이 달라 비교하지 않음). 구형 ID 누락 건과 legacy는 기존 후보키로
+// 호환하되, 서로 다른 명시적 주문번호를 가진 별개 주문은 합치지 않는다. 함수 이름과 인자 의미를 legacy 전용에서
 // "이미 알려진(= legacy 스냅샷이거나 다른 소스가 이미 holdingsApplied 처리한) 체결
-// 전체"로 넓힌다 — 함수 로직 자체는 무변경, 호출부가 넘기는 배열 구성만 넓어진다
-// (main()의 knownExecutions 참고).
+// 전체"로 넓힌다 — main()은 legacy와 이미 반영된 다른 소스를 knownExecutions로 제공한다.
 export function findMatchingKnownExecution(exec, knownExecutions) {
   const matches = knownExecutions.filter((g) =>
     String(g.tradeDate).slice(0, 10) === String(exec.tradeDate).slice(0, 10) &&
     g.tradeType === exec.tradeType && g.stockName === exec.stockName &&
-    g.quantity === exec.quantity,
+    (g.quantity === exec.quantity
+      // NH API 행은 한 주문의 누적수량을 보고하지만 카카오 알림은 부분 체결마다
+      // 개별수량으로 올 수 있다. 새 API 원장 이벤트의 누적표시가 카카오 이벤트를
+      // 포함하면, 같은 주문의 서로 다른 체결분으로 오인해 두 번 적용하지 않는다.
+      || (g.source === 'NH_API' && exec.source !== 'NH_API'
+        && g.orderNo && exec.orderNo && String(g.orderNo) === String(exec.orderNo)
+        && Number(g.orderCumulativeQty) >= Number(exec.quantity))) &&
+    // 양쪽 레코드에 브로커/주문번호가 있으면 그 식별자가 같아야 같은 체결이다.
+    // 주문번호가 다른 실제 거래를 날짜·종목·수량만으로 합쳐 버리면 안 된다.
+    // 주문번호는 계좌별로 발급될 수 있으므로 양쪽 계좌가 알려져 다르면 매치하지 않는다.
+    // 구형 알림처럼 orderNo가 없어도 계좌가 서로 다르면 별개 거래다.
+    (!g.broker || !exec.broker || g.broker === exec.broker) &&
+    (!g.orderNo || !exec.orderNo || String(g.orderNo) === String(exec.orderNo)) &&
+    (!g.account || !exec.account || g.account === exec.account),
   );
   if (!matches.length) return null;
   // 후보가 여럿인데 계좌가 서로 갈리면(같은 날 같은 종목·구분·수량을 다른 계좌로 거래한

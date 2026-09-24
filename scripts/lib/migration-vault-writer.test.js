@@ -226,7 +226,7 @@ test('buildMigratedReportRecord: 주간리포트 3열', () => {
   assertLegacyShape(r, 1);
   const fm = parseFrontmatter(r.content);
   assert.equal(fm.summary, '요약텍스트');
-  assert.equal(r.dir, VAULT_PATHS.knowledge.reports);
+  assert.equal(r.dir, VAULT_PATHS.log.reports);
 });
 
 test('buildMigratedPreferenceRecord: 성향관찰 8열, 상태 없으면 "관찰" 기본값', () => {
@@ -234,5 +234,5 @@ test('buildMigratedPreferenceRecord: 성향관찰 8열, 상태 없으면 "관찰
   assertLegacyShape(r, 6);
   const fm = parseFrontmatter(r.content);
   assert.equal(fm.status, '관찰');
-  assert.equal(r.dir, VAULT_PATHS.knowledge.profile);
+  assert.equal(r.dir, VAULT_PATHS.decisions.profile);
 });

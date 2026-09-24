@@ -74,6 +74,14 @@ function isDepartmentFacing(scriptPath) {
   return readFileSync(abs, 'utf8').includes('DEPARTMENT_LABEL');
 }
 
+function catalogRowForJob(catalog, job) {
+  return catalog.split('\n').find((line) => line.trimStart().startsWith('|') && (
+    line.includes(`\`${job}\``)
+    || line.includes(`[[State/JobHealth/${job}|${job}]]`)
+    || line.includes(`[[${job}|${job}]]`)
+  ));
+}
+
 // 부서별-텔레그램-보고.md 표에서 "**주기적**"이면서 보고시점에 "분기"·"매월"·"매년"이
 // 없는(=매주 반복되는) 행의 스크립트 파일명만 뽑는다. 분기 단위 잡(rebalance-proposal·
 // quarterly-allocation-review)·월 단위 잡(pension-balance-reminder, 2026-09-04
@@ -94,12 +102,12 @@ function listWeeklyPeriodicSenders(deptDoc) {
   return result;
 }
 
-test('vault-job-catalog-audit: launchd로 도는 잡은 전부 무인잡-카탈로그.md에 이름이 있어야 함(신규 잡 누락 방지)', { skip: !CAN_RUN }, () => {
+test('vault-job-catalog-audit: launchd로 도는 잡은 전부 무인잡-카탈로그.md 표 행에 있어야 함(신규 잡 누락 방지)', { skip: !CAN_RUN }, () => {
   const catalog = readFileSync(JOB_CATALOG_PATH, 'utf8');
   const jobs = listDispatchedJobs();
   assert.ok(jobs.length > 10, 'run.sh case문 파싱이 깨졌을 가능성 — 잡 이름이 거의 안 뽑힘');
-  const missing = jobs.filter(({ job }) => !catalog.includes(`\`${job}\``)).map(({ job }) => job);
-  assert.deepEqual(missing, [], `무인잡-카탈로그.md에 이름이 없는 잡: ${missing.join(', ')} — Knowledge/Jobs/무인잡-카탈로그.md 스케줄 표에 행을 추가할 것`);
+  const missing = jobs.filter(({ job }) => !catalogRowForJob(catalog, job)).map(({ job }) => job);
+  assert.deepEqual(missing, [], `무인잡-카탈로그.md에 이름이 없는 잡: ${missing.join(', ')} — Knowledge/Meta/무인잡-카탈로그.md 스케줄 표에 행을 추가할 것`);
 });
 
 test('vault-job-catalog-audit: StartInterval(분 단위) 잡은 무인잡-카탈로그.md 표기 분이 실제 plist 값과 일치해야 함(스케줄 변경 후 문서 미갱신 방지)', { skip: !CAN_RUN }, () => {
@@ -110,7 +118,7 @@ test('vault-job-catalog-audit: StartInterval(분 단위) 잡은 무인잡-카탈
     const schedule = readPlistSchedule(job);
     if (!schedule || schedule.startIntervalSec == null) continue; // StartCalendarInterval 잡은 범위 밖(위 헤더 주석 참고)
     const minutes = schedule.startIntervalSec / 60;
-    const row = catalog.split('\n').find((line) => line.includes(`\`${job}\``));
+    const row = catalogRowForJob(catalog, job);
     if (!row) continue; // 첫 번째 테스트가 이미 누락을 잡음 — 여기선 중복 보고 안 함
     if (!row.includes(`${minutes}분마다`)) {
       mismatched.push(`${job}(plist=${minutes}분마다, 카탈로그 행에서 "${minutes}분마다" 못 찾음)`);

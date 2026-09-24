@@ -28,13 +28,13 @@ test('buildFrontmatter → parseFrontmatter 왕복 보장', () => {
 // 2026-09-04 므네모시네 대정리에서 도입한 `related:` 노트간 링크(문자열 배열)가
 // 실제로 깨졌던 버그의 회귀 가드 — 배열 지원 전에는 통짜 문자열로 파싱됐다가
 // 재저장 때 `related: "[\"[[허브]]\"]"`로 이스케이프돼 Obsidian이 링크로 못 읽었다.
-// weekly-report.mjs의 승격후보 TTL 갱신이 Knowledge/Profile/*.md를 updateFrontmatter로
+// weekly-report.mjs의 승격후보 TTL 갱신이 Decisions/Profile/*.md를 updateFrontmatter로
 // 재작성하기 때문에 실제로 터지는 경로였다.
 test('yamlValue·parseFrontmatter: 문자열 배열 왕복 보장(related 링크 보존)', () => {
   assert.equal(yamlValue(['[[A]]', '[[B]]']), '["[[A]]", "[[B]]"]');
   assert.equal(yamlValue([]), '[]');
 
-  const fields = { type: 'preference-observation', related: ['[[Knowledge/Hubs/500만원-1회매수-원칙]]'] };
+  const fields = { type: 'preference-observation', related: ['[[Knowledge/Topics/500만원-1회매수-원칙]]'] };
   assert.deepEqual(parseFrontmatter(buildFrontmatter(fields)), fields);
 
   // 여러 번 갱신돼도 계속 배열이어야 한다(이스케이프가 누적되지 않는다).

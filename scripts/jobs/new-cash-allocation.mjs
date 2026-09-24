@@ -44,9 +44,10 @@
  * `rebalance-gap.mjs` `LEGACY_INDIVIDUAL_STOCKS`로 이 8종목을 후보 자체에서 Node
  * 레벨로 걸러내 — 프롬프트는 이제 이중 방어(자산분배 트랙 감사에서 발견·해소).
  *
- * 승인·체결: 이 잡은 제안 생성·발송까지만 한다. 자산분배 트랙엔 자동 브로커 실행이
- * 없다 — Frank가 텔레그램 승인 답장 후 본인이 직접 브로커 앱에서 주문하고, 그 체결이
- * 카카오 알림으로 다시 Vault에 들어오는 루프로 닫힌다.
+ * 승인·주문: 이 잡은 제안 생성·발송까지만 한다. 승인 후 위탁·금현물 제안은
+ * execute-asset-allocation-proposal.mjs가 NH PLUG 주문을 자동 제출한다. 연금저축은
+ * 실행 대상 계좌가 아니므로 오너가 직접 브로커 앱에서 주문하고 리마인더가 보조한다.
+ * 주문 접수와 실제 체결은 다르며, 체결 감시·대사 경로가 별도로 확인한다.
  *
  * ⚠️ launchd 재활성화는 이 재작성만으로 자동으로 하지 않는다 — 실데이터 dry-run
  * 검증과 오너의 명시적 확인을 거친 뒤에 별도로 진행할 것(2026-08-17 사고 재발 방지 원칙).
@@ -65,7 +66,7 @@ import { NEW_CASH_THRESHOLD_WON, CASH_ELIGIBLE_ACCOUNTS, resolveDesignatedCashBa
 import { rankEligibleGaps, findExistingInstruments, ACCOUNT_ELIGIBLE_ASSET_CLASSES } from '../lib/cash-allocation-candidates.mjs';
 import { rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
 import { computeRebalanceGaps } from '../lib/rebalance-gap.mjs';
-import { CAP_FRACTION, applyCappedAllocation, resolveAllocationPricingByName } from '../lib/allocation-proposal-shared.mjs';
+import { CAP_FRACTION, applyCappedAllocation, isAllowedAllocationInstrument, resolveAllocationPricingByName } from '../lib/allocation-proposal-shared.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
@@ -184,9 +185,8 @@ ${candLines}
 // 공유모듈(allocation-proposal-shared.mjs) 위임 — 순수 함수. 여긴 자산군별이 아니라
 // "가용잔고 전체" 단일 버킷이라 capBudget 키를 고정 문자열 하나로 둔다.
 // candidatesByClass·rankedUniverseByClass가 있으면(buildCashAllocationPrompt와 동일
-// 데이터) "보유 후보가 전혀 없던" 자산군의 instrumentName이 그 순위 목록 밖이면 드롭한다
-// (2026-09-06 신설, rebalance-proposal.mjs validateRebalanceActions와 동일 설계 —
-// Athena가 순위 목록을 무시하고 브랜드를 지어내도 물리적으로 막히게).
+// 데이터) 매수 instrumentName은 해당 자산군의 정확한 기존 후보 또는 순위 목록에 있어야
+// 한다. 다른 보유 후보가 있다는 이유만으로 임의 신규 종목을 통과시키지 않는다.
 export function validateAllocations(allocations, { account, availableCash, eligibleClasses, candidatesByClass = {}, rankedUniverseByClass = {} }) {
   const capBudget = { ALL: availableCash * CAP_FRACTION };
   return applyCappedAllocation(allocations, {
@@ -201,11 +201,8 @@ export function validateAllocations(allocations, { account, availableCash, eligi
       if (!Number.isFinite(amountWon) || amountWon <= 0) return { ok: false, reason: '금액 값 이상' };
       const existingCandidates = candidatesByClass[assetClass] ?? [];
       const ranked = rankedUniverseByClass[assetClass];
-      if (existingCandidates.length === 0 && ranked && ranked.length) {
-        const allowedNames = new Set(ranked.map((r) => r.name));
-        if (!allowedNames.has(instrumentName)) {
-          return { ok: false, reason: `신규 종목 후보 목록 밖(데이터 기반 순위에 없는 이름): ${instrumentName}` };
-        }
+      if (!isAllowedAllocationInstrument(instrumentName, existingCandidates, ranked)) {
+        return { ok: false, reason: `신규 종목 후보 목록 밖(데이터 기반 순위에 없는 이름): ${instrumentName}` };
       }
       return { ok: true, key: 'ALL', amountWon, normalized: { assetClass, instrumentName, reasoning: String(a?.reasoning ?? '') } };
     },
@@ -367,12 +364,17 @@ async function main() {
         });
         if (result.action === 'blocked') {
           console.log(`  ⛔ ${alloc.instrumentName} 제안 차단: ${result.reason}`);
-          sendResults.push({ action: 'blocked' });
+          sendResults.push(result);
+          continue;
+        }
+        if (result.action !== 'created') {
+          console.error(`  ❌ ${alloc.instrumentName} 제안 발송 실패: ${result.reason ?? '결과 확인 필요'}`);
+          sendResults.push(result);
           continue;
         }
         console.log(`  ✅ 제안 발송: ${alloc.assetClass} → ${alloc.instrumentName} ${alloc.amountWon.toLocaleString('ko-KR')}원`);
-        existingProposals.push({ filename: result.filename, ...parseProposal(readFileSync(join(VAULT_PATHS.decisions.proposals, result.filename), 'utf8')) });
-        sendResults.push({ action: 'created' });
+        existingProposals.push({ filename: result.filename, content: result.content, ...parseProposal(result.content) });
+        sendResults.push(result);
       } catch (e) {
         console.error(`  ❌ ${alloc.instrumentName} 제안 발송 실패: ${e.message}`);
         sendResults.push({ action: 'failed' });

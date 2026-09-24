@@ -22,6 +22,7 @@ import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
+import { recordProposalExecutionStatus } from '../lib/proposal-execution-status.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { QUANT_TRACK_LABEL } from '../lib/account-resolver.mjs';
 
@@ -58,6 +59,7 @@ async function main() {
   const code = args.code || '';
   const name = args.name || code;
   const side = args.side;
+  const proposalId = args['proposal-id'];
   // --timeout이 숫자가 아니면(오타 등) NaN이 아니라 기본값 30분으로 안전하게 폴백
   // (코드리뷰 지적, 2026-08-12 — NaN이면 deadline 비교가 항상 false가 돼 즉시 타임아웃).
   const timeoutArg = Number(args.timeout);
@@ -93,17 +95,65 @@ async function main() {
       console.error(`[조회 실패] ${e.message}`);
       return false;
     }
-    if (result?.canceled) {
-      console.log('[취소 확인] 주문이 취소됨');
+    if (result?.canceled && !result?.fullyFilled) {
+      const filledQty = Number.isFinite(result.filledQty) && result.filledQty > 0 ? result.filledQty : 0;
+      const avgFillPrice = Number.isFinite(result.avgFillPrice) && result.avgFillPrice > 0 ? result.avgFillPrice : null;
+      console.log(filledQty > 0
+        ? `[부분체결 후 잔량 취소 확인] ${filledQty}/${result.orderQty}주`
+        : '[취소 확인] 주문이 취소됨');
+      if (filledQty > 0 && avgFillPrice != null) {
+        const { filename, content, dir } = buildExecutionRecord({
+          tradeDate: new Date().toISOString(),
+          tradeType: side,
+          stockCode: code,
+          stockName: name,
+          quantity: filledQty,
+          price: avgFillPrice,
+          currency: 'KRW',
+          broker: BROKER,
+          account: ACCOUNT_LABEL,
+          orderNo: result.orderNo || orderNo,
+        });
+        const filepath = join(dir, filename);
+        if (existsSync(filepath)) console.log(`[Ledger] 이미 기록됨(중복 아님) — ${filepath}`);
+        else {
+          writeAtomic(filepath, content);
+          console.log(`[Ledger] 취소 전 부분체결을 Facts/Ledger에 기록 — ${filepath}`);
+        }
+      } else if (filledQty > 0) {
+        console.error('[Ledger] 부분체결됐지만 평균 체결가가 없어 자동 기록 스킵, 수동 확인 필요');
+      }
+      if (proposalId) {
+        try {
+          await recordProposalExecutionStatus({
+            proposalsDir: VAULT_PATHS.decisions.proposals, proposalId, brokerOrderId: orderNo, status: '취소',
+            filledQty: filledQty || null, avgFillPrice,
+          });
+        } catch (error) { console.error(`[Proposal] ${proposalId} 취소 상태 기록 실패: ${error.message}`); }
+      }
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL,
         tag: '취소',
-        body: `<b>주문 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — 취소되었습니다.`,
+        body: filledQty > 0
+          ? `<b>부분체결 후 잔량 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — ${filledQty}/${result.orderQty}주 체결 후 잔량이 취소되었습니다.${avgFillPrice == null ? '\n평균 체결가가 없어 Ledger 수동 확인이 필요합니다.' : ` 평균체결가 ${avgFillPrice.toLocaleString()}원.`}`
+          : `<b>주문 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — 취소되었습니다.`,
       }));
       return true;
     }
     if (result?.fullyFilled) {
       console.log(`[체결 확인] 전량 체결 — 평균단가 ${result.avgFillPrice}원`);
+      if (proposalId) {
+        try {
+          await recordProposalExecutionStatus({
+            proposalsDir: VAULT_PATHS.decisions.proposals,
+            proposalId,
+            brokerOrderId: orderNo,
+            status: '체결',
+            filledQty: result.filledQty,
+            avgFillPrice: result.avgFillPrice,
+          });
+        } catch (error) { console.error(`[Proposal] ${proposalId} 체결 상태 기록 실패: ${error.message}`); }
+      }
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL,
         tag: '완료',
@@ -138,6 +188,17 @@ async function main() {
     }
     if (result && result.filledQty > 0) {
       console.log(`[부분체결] ${result.filledQty}/${result.orderQty}주 — 계속 감시`);
+      if (proposalId) {
+        try {
+          await recordProposalExecutionStatus({
+            proposalsDir: VAULT_PATHS.decisions.proposals,
+            proposalId,
+            brokerOrderId: orderNo,
+            status: '부분체결',
+            filledQty: result.filledQty,
+          });
+        } catch (error) { console.error(`[Proposal] ${proposalId} 부분체결 상태 기록 실패: ${error.message}`); }
+      }
     } else {
       console.log('[미체결] 계속 감시');
     }

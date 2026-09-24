@@ -1,5 +1,5 @@
 // 승인된 제안을 실제로 처리하는 오케스트레이션 — docs/ARCHITECTURE-V2.md "실행 흐름
-// (주문)" 4단계("결정론적 검문소 통과 → 브로커 API로 자동 체결")의 구현.
+// (주문)" 4단계("결정론적 검문소 통과 → 브로커 API 주문 제출")의 구현.
 //
 // 이 모듈은 **의도적으로 Facts/Ledger를 전혀 건드리지 않는다**(import조차 안 함) —
 // Ledger는 오직 실제 체결 확인 경로(카카오 알림 파싱, Phase 11의 브로커 API 응답)로만
@@ -37,9 +37,12 @@ export async function executeProposal({ proposal, proposalContent, gateInput, mo
   }
 
   const settlement = await settleExecution({ mode, proposal, liveExecutor });
+  const submitted = settlement.status === '주문접수';
   const updatedContent = updateProposalRecord(proposalContent, {
     status: settlement.status,
-    executedAt: new Date().toISOString(),
+    ...(submitted
+      ? { submittedAt: new Date().toISOString(), brokerOrderId: settlement.brokerOrderId ?? null }
+      : { executedAt: new Date().toISOString() }),
     executionLog: settlement.log ?? '',
     gateBlockedReason: null,
   });

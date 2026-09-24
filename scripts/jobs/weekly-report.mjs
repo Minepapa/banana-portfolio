@@ -20,9 +20,9 @@
  * 원칙(risk-monitor.mjs와 동일): raw 숫자는 LLM이 만들지 않는다.
  *   ① Node가 Vault에서 결정론 조회 → report-facts로 조립
  *   ② claude -p 는 profile/investor-profile.md + 주입된 facts만으로 "서술·해석·처방"만 생성
- *   ③ Knowledge/Reports/{asof}.md 저장 + (선택)텔레그램 푸시
+ *   ③ Log/Reports/{asof}.md 저장 + (선택)텔레그램 푸시
  *   ④ 행동 신호(체결 기반)를 §3와 대조해 성향 관찰 추출(sonnet) →
- *      Knowledge/Profile/*.md 신규 파일
+ *      Decisions/Profile/*.md 신규 파일
  *
  * 사용법:
  *   node scripts/jobs/weekly-report.mjs                 # 발행
@@ -100,9 +100,9 @@ function dividendsToRows(dividends, registry) {
   return dividends.map((d) => [d.date ?? '', String(d.afterTaxAmount ?? ''), resolveCanonicalStockName(d.stockName, registry) ?? '']);
 }
 
-// Knowledge/Reports/{date}.md 중 asof 이전 가장 최신 리포트 요약 → 직전 맥락.
+// Log/Reports/{date}.md 중 asof 이전 가장 최신 리포트 요약 → 직전 맥락.
 function loadPrevReport(asof) {
-  const dir = VAULT_PATHS.knowledge.reports;
+  const dir = VAULT_PATHS.log.reports;
   if (!existsSync(dir)) return null;
   const files = readdirSync(dir)
     .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
@@ -319,14 +319,14 @@ ${signalsText}
 \`\`\``;
 }
 
-// 관찰 JSON → Knowledge/Profile/*.md 신규 파일. 상충/promote면
+// 관찰 JSON → Decisions/Profile/*.md 신규 파일. 상충/promote면
 // 상태=승격후보, 아니면 관찰. 한 관찰당 파일 하나(다른 Vault 레코드와 동일 관례).
 // 반환값에 promoted(신규 승격후보 목록)를 같이 담는다(2026-09-20 오너 DevRequest —
 // "성향관찰 승격 후보가 생기면 텔레그램 메시지로 확인을 요청한다. 오너는 므네모시네를
 // 열어 보기 전까지 승격 후보 존재를 알 수 없다"). 기존엔 4주 TTL 만료 때만(step ⑧-b)
 // 신호가 나갔고, 생성 시점엔 아무 알림이 없었다.
 function writeObservations(asof, observations) {
-  const dir = VAULT_PATHS.knowledge.profile;
+  const dir = VAULT_PATHS.decisions.profile;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const now = new Date();
   const nowIso = now.toISOString();
@@ -400,7 +400,7 @@ async function main() {
   // 미국배당다우존스)에서 항상 실패해 "손익 미확정"으로만 나갔다 — 이 원장을 우선
   // 조회하면 그 사각을 없앤다(report-facts.mjs profitByKey 참고).
   const profitRows = readVaultDir(VAULT_PATHS.facts.ledger.profits);
-  const prefRecords = readVaultDir(VAULT_PATHS.knowledge.profile).filter(isLivePreferenceObservation);
+  const prefRecords = readVaultDir(VAULT_PATHS.decisions.profile).filter(isLivePreferenceObservation);
   const prevReport = loadPrevReport(asof);
 
   const stockRegistry = getCodeRegistry();
@@ -427,10 +427,10 @@ async function main() {
     return;
   }
 
-  // ④ Knowledge/Reports 중복 체크(멱등 — 같은 날짜 있으면 건너뜀, --force면 덮어씀)
-  const reportPath = join(VAULT_PATHS.knowledge.reports, `${asof}.md`);
+  // ④ Log/Reports 중복 체크(멱등 — 같은 날짜 있으면 건너뜀, --force면 덮어씀)
+  const reportPath = join(VAULT_PATHS.log.reports, `${asof}.md`);
   if (existsSync(reportPath) && !FORCE) {
-    console.log(`   ℹ️ Knowledge/Reports/${asof}.md 이미 존재 — 발행 건너뜀(재발행하려면 --force)`);
+    console.log(`   ℹ️ Log/Reports/${asof}.md 이미 존재 — 발행 건너뜀(재발행하려면 --force)`);
     await flushWarnings('weekly-report');
     return;
   }
@@ -488,8 +488,9 @@ async function main() {
   const summary = summaryBullets.join(' · ');
   const headline = md.match(/^# (.+)$/m)?.[1] ?? `주간 자산 종합 점검 — ${asof}`;
   const record = buildFrontmatter({ type: 'weekly-report', date: asof, headline, summary }) + '\n' + md;
+  mkdirSync(VAULT_PATHS.log.reports, { recursive: true });
   writeAtomic(reportPath, record);
-  console.log(`   💾 저장: Knowledge/Reports/${asof}.md`);
+  console.log(`   💾 저장: Log/Reports/${asof}.md`);
 
   // ⑦ 텔레그램 요약 푸시 — 여긴 불릿 줄바꿈을 그대로 살린 버전 사용(frontmatter와 달리
   // 텔레그램 메시지 body는 자유 문자열이라 개행이 안전하다).
@@ -515,19 +516,19 @@ async function main() {
     });
     dropped.forEach(d => collectWarning(`성향관찰 자동폐기: "${String(d.obs?.observation ?? '').slice(0, 60)}" — ${d.reason}`));
     const { written: n, promoted } = writeObservations(asof, kept);
-    console.log(n ? `   🧠 성향 관찰 ${n}건 기록 (Knowledge/Profile)` : '   🧠 이번 주 뚜렷한 성향 관찰 없음');
+    console.log(n ? `   🧠 성향 관찰 ${n}건 기록 (Decisions/Profile)` : '   🧠 이번 주 뚜렷한 성향 관찰 없음');
     if (dropped.length) console.log(`   🛡 자동 검증 실패로 폐기 ${dropped.length}건(텔레그램 경고)`);
     // 승격후보는 생성 즉시 안내한다(2026-09-20 오너 DevRequest) — 므네모시네를 직접
     // 열어보기 전까진 오너가 존재 자체를 모른다. 승인/거부를 텔레그램에서 바로 받는
     // 인터랙티브 플로우는 이번 범위 밖(오너 선택) — 단순 FYI만.
     if (promoted.length) {
-      collectWarning(`성향관찰 승격후보 ${promoted.length}건 신규 생성 — 므네모시네(Knowledge/Profile)에서 확인 필요: ${promoted.map((p) => `"${p.observation.slice(0, 60)}"(${p.vsProfile})`).join(' | ')}`);
+      collectWarning(`성향관찰 승격후보 ${promoted.length}건 신규 생성 — 므네모시네(Decisions/Profile)에서 확인 필요: ${promoted.map((p) => `"${p.observation.slice(0, 60)}"(${p.vsProfile})`).join(' | ')}`);
     }
   } catch (e) { console.error(`   ⚠️ 성향 관찰 단계 실패(리포트는 정상): ${e.message}`); }
 
   // ⑧-b 승격후보 TTL(4주 무응답이면 자동으로 관찰 보류) — ⑧과 분리된 독립 단계.
   try {
-    const freshPrefRecords = readVaultDir(VAULT_PATHS.knowledge.profile).filter(isLivePreferenceObservation);
+    const freshPrefRecords = readVaultDir(VAULT_PATHS.decisions.profile).filter(isLivePreferenceObservation);
     const expired = findExpiredPromotions(freshPrefRecords, { now: new Date() });
     if (expired.length) {
       for (const e of expired) {

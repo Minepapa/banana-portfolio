@@ -53,16 +53,14 @@
 // 사용법:
 //   node scripts/tools/watch-nh-order-fill.mjs --order-no=847026 --account=위탁 \
 //     --code=005930 --name=삼성전자 --side=매수
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { hasNhplugCredentials, loadNhplugCredentials, getNhToken, listNhAccounts } from '../lib/nhplug.mjs';
 import { getKrDailyOrderExecution } from '../lib/nhplug-krstock.mjs';
 import { getGoldExecution } from '../lib/nhplug-krgold.mjs';
-import { resolveNhAccountsByLabel } from '../lib/nh-accounts.mjs';
-import { parseNhExecutionRows, buildNhFillLedgerInput } from '../jobs/reconcile-nh-executions.mjs';
-import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
-import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { writeAtomic } from '../lib/state-writer.mjs';
+import { resolveNhAccountsByLabel, maskNhActNo } from '../lib/nh-accounts.mjs';
+import { parseNhExecutionRows, isTerminalNhExecution } from '../jobs/reconcile-nh-executions.mjs';
+import { recordNhTerminalExecution } from '../lib/nh-execution-ledger.mjs';
+import { recordProposalExecutionStatus } from '../lib/proposal-execution-status.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
@@ -119,6 +117,7 @@ async function main() {
   const code = args.code || '';
   const name = args.name || code;
   const side = args.side;
+  const proposalId = args['proposal-id'];
   const timeoutArg = Number(args.timeout);
   const timeoutMin = Number.isFinite(timeoutArg) && timeoutArg > 0 ? timeoutArg : 30;
 
@@ -180,31 +179,43 @@ async function main() {
       return false;
     }
     if (!row) { console.log('[미체결] 계속 감시'); return false; }
-    if (!row.fullyFilled) { console.log(`[부분체결] ${row.quantity}/${row.orderQty}주 — 계속 감시`); return false; }
+    if (!row.fullyFilled) {
+      console.log(`[부분체결] ${row.quantity}/${row.orderQty}주${row.unfilledQty == null ? '' : ` · 미체결잔량 ${row.unfilledQty}주`} — ${isTerminalNhExecution(row) ? '주문 잔량 없음 확인' : '계속 감시'}`);
+      if (proposalId && row.quantity > 0) {
+        try {
+          await recordProposalExecutionStatus({
+            proposalsDir: VAULT_PATHS.decisions.proposals,
+            proposalId,
+            brokerOrderId: orderNo,
+            status: '부분체결',
+            filledQty: row.quantity,
+          });
+        } catch (error) {
+          console.error(`[Proposal] ${proposalId} 부분체결 상태 기록 실패(감시는 계속): ${error.message}`);
+        }
+      }
+      if (!isTerminalNhExecution(row)) return false;
+    }
 
-    console.log(`[체결 확인] 전량 체결 — ${row.quantity}주 @${row.price}원`);
-    await sendTelegram(formatDepartmentMessage({
-      departmentLabel: DEPARTMENT_LABEL,
-      tag: '완료',
-      body: `<b>체결 확인</b>\n${name}(${code}) 주문번호 ${orderNo}(${account})\n${row.quantity}주 전량 체결 @${won(row.price)} ≈ ${won(row.quantity * row.price)}`,
-    }));
-
-    // ⚠️ 독립 코드리뷰 지적(2026-09-21, CRITICAL) — 첫 버전은 stockName·tradeType·
-    // stockCode·orderNo를 CLI 인자(--name/--side/--code/--order-no,
-    // execute-asset-allocation-proposal.mjs가 classification.resolvedName 등에서
-    // 넘긴 값)로 채웠다. reconcile-nh-executions.mjs는 이 필드들을 전부 NH API
-    // 응답 행(iem_nm·sby_dit_cd_nm·iem_cd·itg_orr_no)에서 뽑는다 — 두 소스가
-    // 우연히 같은 문자열을 쓸 뿐(오늘 실측: "TIGER 리츠부동산인프라TOP10액티브"
-    // 일치) 구조적으로 같다는 보장이 전혀 없다(특히 미보유 신규매수는 resolvedName
-    // 이 레지스트리 별칭에서 오므로 NH의 iem_nm과 표기가 다를 수 있음). 하나라도
-    // 어긋나면 dedup 파일명이 갈려 같은 체결이 두 파일로 중복 기록되고,
-    // update-holdings-from-executions.mjs의 findMatchingKnownExecution(같은 필드
-    // 조합으로 매칭)도 같이 뚫려 2026-09-03에 실제로 겪은 "두 소스가 각자
-    // applyBuy/applySell 적용" 사고가 재현된다. buildNhFillLedgerInput(reconcile-
-    // nh-executions.mjs와 공유하는 순수함수)을 그대로 써서 dedupKey 일치를 "우연히
-    // 같은 문자열"이 아니라 "같은 함수 호출"로 구조적으로 보장한다 — CLI 인자
-    // (side/code/name)는 텔레그램 문구용으로만 남기고, row와 다르면 경고로
-    // 노출한다(교차검증).
+    if (row.fullyFilled && proposalId) {
+      try {
+        const updated = await recordProposalExecutionStatus({
+          proposalsDir: VAULT_PATHS.decisions.proposals,
+          proposalId,
+          brokerOrderId: orderNo,
+          status: '체결',
+          filledQty: row.quantity,
+          avgFillPrice: row.price,
+        });
+        console.log(updated ? `[Proposal] ${proposalId} — 주문접수→체결` : `[Proposal] ${proposalId} — 상태 갱신 대상 아님(현재 파일 상태 확인 필요)`);
+      } catch (error) {
+        console.error(`[Proposal] ${proposalId} 체결 상태 기록 실패(체결 알림·Ledger 처리는 계속): ${error.message}`);
+      }
+    }
+    const terminalPartial = !row.fullyFilled;
+    console.log(terminalPartial
+      ? `[체결 확인] 잔량 없는 부분체결 — ${row.quantity}/${row.orderQty}주 @${row.price}원`
+      : `[체결 확인] 전량 체결 — ${row.quantity}주 @${row.price}원`);
     if (row.tradeType !== side) {
       console.error(`[불일치] --side=${side}인데 NH 응답 매매구분은 "${row.tradeType}" — row 쪽 값을 Ledger에 씀(원인 확인 필요)`);
     }
@@ -212,21 +223,29 @@ async function main() {
       console.error(`[불일치] --name="${name}"인데 NH 응답 종목명은 "${row.stockName}" — row 쪽 값을 Ledger에 씀(reconcile-nh-executions.mjs와 dedup 어긋남 방지)`);
     }
 
-    const { filename, content, dir, dedupKey } = buildExecutionRecord(
-      buildNhFillLedgerInput(row, { today, account, actNo }),
-    );
-    const filepath = join(dir, filename);
-    if (existsSync(filepath)) {
-      const existing = parseFrontmatter(readFileSync(filepath, 'utf8'));
-      if (existing.dedupKey !== dedupKey) {
-        console.error(`[Ledger] 파일명 충돌(내용 다름) — ${filepath} 기존 dedupKey="${existing.dedupKey}" vs 신규="${dedupKey}"`);
-      } else {
-        console.log(`[Ledger] 이미 기록됨(중복 아님) — ${filepath}`);
-      }
-    } else {
-      writeAtomic(filepath, content);
-      console.log(`[Ledger] Facts/Ledger 기록 — ${filepath}`);
+    const ledger = await recordNhTerminalExecution({
+      row, tradeDate: `${today} 00:00:00`, account, acctNo: maskNhActNo(actNo) || '',
+      dir: VAULT_PATHS.facts.ledger.executions,
+    });
+    if (!ledger.ok) {
+      console.error(`[Ledger] 기록 보류: ${ledger.reason}`);
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL,
+        tag: '경고',
+        body: `<b>NH 체결은 확인됐지만 장부 기록을 완료하지 못했습니다.</b>\n${name}(${code}) 주문번호 ${orderNo}(${account})\nNH 응답과 기존 체결기록을 확인해 주세요.`,
+      }));
+      return true;
     }
+    console.log(ledger.event
+      ? `[Ledger] Facts/Ledger 기록 — ${ledger.filepath} (${ledger.event.quantity}주)`
+      : `[Ledger] 기존 카카오/API 기록에 이미 포함 — ${row.quantity}주`);
+    await sendTelegram(formatDepartmentMessage({
+      departmentLabel: DEPARTMENT_LABEL,
+      tag: terminalPartial ? '안내' : '완료',
+      body: terminalPartial
+        ? `<b>부분체결 종료 확인</b>\n${name}(${code}) 주문번호 ${orderNo}(${account})\n${row.quantity}/${row.orderQty}주 체결 @${won(row.price)} · 현재 미체결 잔량 0주. 체결분은 장부에 반영했습니다.`
+        : `<b>체결 확인</b>\n${name}(${code}) 주문번호 ${orderNo}(${account})\n${row.quantity}주 전량 체결 @${won(row.price)} ≈ ${won(row.quantity * row.price)}`,
+    }));
     return true;
   }
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAndSendProposal, buildProposalMessageBody, buildProposalFacts, buildProposalStatusEditText } from './proposal-flow.mjs';
-import { buildProposalRecord, parseProposal } from './proposal-vault.mjs';
+import { buildProposalRecord, findActiveProposal, parseProposal } from './proposal-vault.mjs';
 
 // existingProposals 로더 출력을 흉내(process-telegram-reply.mjs loadProposals와 동일 형태:
 // {filename, content, ...parseProposal()}) — buildProposalRecord로 실제와 같은 content를
@@ -81,8 +81,10 @@ test('createAndSendProposal: 신규 생성 — 파일 쓰고 텔레그램 발송
   assert.equal(result.supersededId, null);
   // 파일이 최소 2번 쓰임(최초 생성 + telegramMessageId 갱신), 마지막 내용에 반영돼 있어야 함
   assert.ok(writer.writes.length >= 2);
+  assert.match(writer.writes[0].content, /status: "발송중"/);
   const last = writer.writes[writer.writes.length - 1];
   assert.equal(last.filename, result.filename);
+  assert.match(last.content, /status: "대기"/);
   assert.match(last.content, /telegramMessageId: 12345/);
   // 발송 메시지에 부서라벨+본문 포함
   assert.match(sender.calls[0], /\[카이로스\]/);
@@ -152,6 +154,29 @@ test('createAndSendProposal: 같은 안건에 대기 중 제안이 있으면 대
   assert.match(oldWrite.content, new RegExp(`supersededBy: "${result.id}"`));
 });
 
+test('createAndSendProposal: 성공 결과의 원문 content를 재사용해 같은 실행의 후속 제안 대체도 기존 필드를 보존', async () => {
+  const writer = mockWriter();
+  const first = await createAndSendProposal({
+    track: '자산분배', assetKey: 'TIGER 200', side: '매수', quantity: 1, proposedPrice: 40000,
+    departmentLabel: '투자전략실 Athena', now: new Date('2026-09-24T00:00:00.000Z'), existingProposals: [], writeProposalFile: writer,
+    sendMessage: mockSender({ message_id: 10 }),
+  });
+  const inMemoryProposal = { filename: first.filename, content: first.content, ...parseProposal(first.content) };
+  const second = await createAndSendProposal({
+    track: '자산분배', assetKey: 'TIGER 200', side: '매수', quantity: 2, proposedPrice: 41000,
+    departmentLabel: '투자전략실 Athena', now: new Date('2026-09-24T00:00:01.000Z'), existingProposals: [inMemoryProposal], writeProposalFile: writer,
+    sendMessage: mockSender({ message_id: 11 }),
+  });
+
+  const superseded = parseProposal(writer.writes.filter((write) => write.filename === first.filename).at(-1).content);
+  assert.equal(first.action, 'created');
+  assert.equal(second.supersededId, first.id);
+  assert.equal(superseded.id, first.id);
+  assert.equal(superseded.assetKey, 'TIGER 200');
+  assert.equal(superseded.side, '매수');
+  assert.equal(superseded.status, '대체됨');
+});
+
 test('[막아야 함] createAndSendProposal: 같은 안건이 "승인"(검문소에 막혀 미체결) 상태여도 대체(supersede) — 승인 두 건 동시존재 방지', async () => {
   const blockedApproved = fixture({ status: '승인', decidedAt: '2026-08-01T01:00:00.000Z' });
   const writer = mockWriter();
@@ -168,7 +193,7 @@ test('[막아야 함] createAndSendProposal: 같은 안건이 "승인"(검문소
   assert.match(oldWrite.content, /status: "대체됨"/);
 });
 
-test('createAndSendProposal: 발송 응답에 message_id가 없으면 telegramMessageId는 null, 두 번째 쓰기 없음', async () => {
+test('createAndSendProposal: 발송 응답에 message_id가 없으면 활성 대기 상태로 남기지 않는다', async () => {
   const writer = mockWriter();
   const sender = mockSender({}); // message_id 없음
   const result = await createAndSendProposal({
@@ -177,7 +202,124 @@ test('createAndSendProposal: 발송 응답에 message_id가 없으면 telegramMe
     existingProposals: [], writeProposalFile: writer, sendMessage: sender,
   });
   assert.equal(result.telegramMessageId, null);
-  assert.equal(writer.writes.length, 1); // 최초 생성 1회만 — 갱신 재쓰기 없음
+  assert.equal(result.action, 'failed');
+  assert.equal(writer.writes.length, 2);
+  assert.match(writer.writes.at(-1).content, /status: "발송오류"/);
+});
+
+test('[핵심 안전장치] createAndSendProposal: Telegram 성공 후 ID 저장 실패 시 비활성 발송오류로 격리하고 경고를 보낸다', async () => {
+  const persisted = new Map();
+  let writeCount = 0;
+  const writer = async (filename, content) => {
+    writeCount++;
+    if (writeCount === 2) throw new Error('simulated write failure');
+    persisted.set(filename, content);
+  };
+  const sender = mockSender({ message_id: 12345 });
+
+  const result = await createAndSendProposal({
+    track: '자산분배', assetKey: 'TIGER 200', name: 'TIGER 200', side: '매수', quantity: 1, proposedPrice: 40000,
+    departmentLabel: '투자전략실 Athena', existingProposals: [], writeProposalFile: writer, sendMessage: sender,
+  });
+
+  const storedProposal = parseProposal(persisted.get(result.filename));
+  assert.equal(result.action, 'failed');
+  assert.equal(storedProposal.status, '발송오류');
+  assert.equal(storedProposal.telegramMessageId, null);
+  assert.equal(findActiveProposal([storedProposal], { track: '자산분배', assetKey: 'TIGER 200', side: '매수' }), null);
+  assert.equal(sender.calls.length, 2);
+  assert.match(sender.calls[1], /전송됐지만.*승인 연결정보/);
+});
+
+test('[핵심 안전장치] createAndSendProposal: 재제안 발송이 실패하면 기존 대기 제안은 계속 활성', async () => {
+  const previous = fixture({ status: '대기' });
+  const persisted = new Map([[previous.filename, previous.content]]);
+  const writer = async (filename, content) => { persisted.set(filename, content); };
+  let sendCount = 0;
+  const sender = async () => {
+    sendCount++;
+    if (sendCount === 1) throw new Error('simulated network failure');
+    return { message_id: 200 };
+  };
+
+  const result = await createAndSendProposal({
+    track: '퀀트', assetKey: '005930', side: '매수', quantity: 20, proposedPrice: 71000,
+    departmentLabel: '퀀트전략실 Kairos', existingProposals: [previous], writeProposalFile: writer, sendMessage: sender,
+  });
+
+  assert.equal(result.action, 'failed');
+  assert.equal(parseProposal(persisted.get(previous.filename)).status, '대기');
+  assert.equal(findActiveProposal([parseProposal(persisted.get(previous.filename))], { track: '퀀트', assetKey: '005930', side: '매수' }).id, previous.id);
+  assert.equal(parseProposal(persisted.get(result.filename)).status, '발송오류');
+  assert.equal(sendCount, 2); // 원 제안 실패 뒤 승인 불가 경고 발송 재시도
+});
+
+test('[핵심 안전장치] createAndSendProposal: 새 제안 ID 저장이 실패하면 대체한 기존 제안을 복구', async () => {
+  const previous = fixture({ status: '대기' });
+  const persisted = new Map([[previous.filename, previous.content]]);
+  let writeCount = 0;
+  const writer = async (filename, content) => {
+    writeCount++;
+    if (writeCount === 3) throw new Error('simulated new proposal write failure');
+    persisted.set(filename, content);
+  };
+  const sender = mockSender({ message_id: 300 });
+
+  const result = await createAndSendProposal({
+    track: '퀀트', assetKey: '005930', side: '매수', quantity: 20, proposedPrice: 71000,
+    departmentLabel: '퀀트전략실 Kairos', existingProposals: [previous], writeProposalFile: writer, sendMessage: sender,
+  });
+
+  const restored = parseProposal(persisted.get(previous.filename));
+  assert.equal(result.action, 'failed');
+  assert.equal(restored.status, '대기');
+  assert.equal(findActiveProposal([restored], { track: '퀀트', assetKey: '005930', side: '매수' }).id, previous.id);
+  assert.equal(parseProposal(persisted.get(result.filename)).status, '발송오류');
+  assert.match(sender.calls[1], /저장하지 못했습니다/);
+});
+
+test('[핵심 안전장치] createAndSendProposal: 최초 발송중 파일 저장 실패는 Telegram을 발송하지 않고 경고', async () => {
+  const persisted = new Map();
+  let writeCount = 0;
+  const writer = async (filename, content) => {
+    writeCount++;
+    if (writeCount === 1) throw new Error('simulated initial write failure');
+    persisted.set(filename, content);
+  };
+  const sender = mockSender({ message_id: 400 });
+
+  const result = await createAndSendProposal({
+    track: '자산분배', assetKey: 'TIGER 200', side: '매수', quantity: 1, proposedPrice: 40000,
+    departmentLabel: '투자전략실 Athena', existingProposals: [], writeProposalFile: writer, sendMessage: sender,
+  });
+
+  assert.equal(result.action, 'failed');
+  assert.equal(sender.calls.length, 1); // 제안 본문이 아니라 경고만 발송
+  assert.match(sender.calls[0], /제안 메시지는 발송하지 않았습니다/);
+  assert.equal(parseProposal(persisted.get(result.filename)).status, '발송오류');
+});
+
+test('[핵심 안전장치] createAndSendProposal: 기존 제안 복구도 실패하면 경고에 수동 확인 필요를 명시', async () => {
+  const previous = fixture({ status: '대기' });
+  const persisted = new Map([[previous.filename, previous.content]]);
+  let writeCount = 0;
+  const writer = async (filename, content) => {
+    writeCount++;
+    if (writeCount === 3 || writeCount === 4) throw new Error(`simulated write failure ${writeCount}`);
+    persisted.set(filename, content);
+  };
+  const sender = mockSender({ message_id: 500 });
+
+  const result = await createAndSendProposal({
+    track: '퀀트', assetKey: '005930', side: '매수', quantity: 20, proposedPrice: 71000,
+    departmentLabel: '퀀트전략실 Kairos', existingProposals: [previous], writeProposalFile: writer, sendMessage: sender,
+  });
+
+  assert.equal(result.action, 'failed');
+  assert.equal(parseProposal(persisted.get(previous.filename)).status, '대체됨');
+  assert.match(sender.calls[1], /상태 복구도 실패했습니다/);
+  assert.match(sender.calls[1], new RegExp(previous.id));
+  assert.equal(parseProposal(persisted.get(result.filename)).status, '발송오류');
 });
 
 test('buildProposalStatusEditText: 승인 — 트랙에서 부서 라벨을 되짚고 [승인] 태그를 단다', () => {

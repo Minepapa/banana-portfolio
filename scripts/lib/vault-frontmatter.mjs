@@ -24,17 +24,65 @@ export function yamlValue(v) {
 }
 
 export function buildFrontmatter(fields) {
+  const normalizedFields = withGeneratedVaultRelations(fields);
   const lines = ['---'];
-  for (const [k, v] of Object.entries(fields)) lines.push(`${k}: ${yamlValue(v)}`);
+  for (const [k, v] of Object.entries(normalizedFields)) lines.push(`${k}: ${yamlValue(v)}`);
   lines.push('---', '');
   return lines.join('\n');
+}
+
+// 자동 생성되는 Facts/State/Decisions의 확정 메타데이터만 안정적인 주제 지도에 연결한다.
+// 키워드 출현만으로 링크를 추정하지 않으며 미확정/미등록 값은 건드리지 않는다.
+const ACCOUNT_TOPIC = new Map([
+  ['퀀트', '[[Knowledge/Topics/돌파매매-전략]]'],
+  ...['위탁', 'CMA', 'ISA', '연금저축', 'IRP', '금현물'].map((account) => [account, '[[Knowledge/Topics/자산분배-트랙-운영]]']),
+]);
+
+const TYPE_RELATED = new Map([
+  ['job-health', ['[[Knowledge/Meta/무인잡-카탈로그]]']],
+  ['daily-snapshot', [
+    '[[Knowledge/Playbook/PortfolioKPI/twr]]',
+    '[[Knowledge/Playbook/PortfolioKPI/sharpe]]',
+    '[[Knowledge/Playbook/PortfolioKPI/mdd]]',
+  ]],
+  ['market-move-monitor-state', ['[[Knowledge/Topics/거시지표-리스크-모니터링]]']],
+  ['macro-indicators-cache-state', ['[[Knowledge/Topics/거시지표-리스크-모니터링]]']],
+  ['breakout-position', ['[[Knowledge/Topics/돌파매매-전략]]']],
+  ['breakout-pending-entry', ['[[Knowledge/Topics/돌파매매-전략]]']],
+]);
+
+function withGeneratedVaultRelations(fields) {
+  const existingRelated = Array.isArray(fields.related)
+    ? fields.related
+    : (typeof fields.related === 'string' && fields.related ? [fields.related] : []);
+  const relations = [
+    ...existingRelated,
+    ...(ACCOUNT_TOPIC.has(fields.account) ? [ACCOUNT_TOPIC.get(fields.account)] : []),
+    ...(fields.track === '퀀트' ? ['[[Knowledge/Topics/돌파매매-전략]]'] : []),
+    ...(fields.track === '자산분배' ? ['[[Knowledge/Topics/자산분배-트랙-운영]]'] : []),
+    ...(TYPE_RELATED.get(fields.type) ?? []),
+  ];
+  const related = [...new Set(relations)];
+  return related.length ? { ...fields, related } : fields;
 }
 
 // 기존 frontmatter 필드에 updates를 병합해 새 content를 만든다(파일 자체를 새로 쓰는 게
 // 아니라 같은 파일을 갱신) — proposal-vault.mjs의 updateProposalRecord와 같은 패턴이라
 // Phase 8(holdings-updater가 체결에 holdingsApplied 마킹)에서 재사용하려고 공용화했다.
 export function updateFrontmatter(currentContent, updates) {
-  const merged = { ...parseFrontmatter(currentContent), ...updates };
+  const prior = parseFrontmatter(currentContent);
+  const merged = { ...prior, ...updates };
+  const priorRelated = Array.isArray(prior.related)
+    ? prior.related
+    : (typeof prior.related === 'string' && prior.related ? [prior.related] : []);
+  const updateRelated = Array.isArray(updates.related)
+    ? updates.related
+    : (typeof updates.related === 'string' && updates.related ? [updates.related] : []);
+  // RMW 패치는 관련 링크를 보존하고 자동 규칙에 따른 링크를 추가한다. 링크 제거는
+  // 명시적으로 문서를 다시 빌드할 때만 하도록 해 수동으로 관리한 탐색 관계가 사라지지 않게 한다.
+  if (priorRelated.length || updateRelated.length) {
+    merged.related = [...new Set([...priorRelated, ...updateRelated])];
+  }
   return buildFrontmatter(merged);
 }
 
