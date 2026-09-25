@@ -237,6 +237,18 @@ test('parseGoldBuy: NH 금현물 매수 체결(g 단위)', () => {
   assert.equal(r.orderNo, '12345');
 });
 
+test('parseGoldBuy: NH 발신 근거를 보존하고 다른 증권사의 g 체결은 파싱하지 않는다', () => {
+  const nh = '[NH투자증권]\n매수 주문체결\n종 목 명 : 금 99.99K\n체결수량 : 1g\n체결단가 : 195,760원';
+  const other = '[다른증권]\n매수 주문체결\n종 목 명 : 금\n체결수량 : 1g\n체결단가 : 195,760원';
+  assert.equal(parseGoldBuy(nh, '2026-09-25 10:00:00').broker, 'NH투자증권');
+  assert.equal(parseGoldBuy(other, '2026-09-25 10:00:00'), null);
+});
+
+test('[막아야 함] parseGoldBuy: 발신사가 없는 구형 원문은 NH API 정본으로 단정하지 않는다', () => {
+  const body = '매수 주문체결\n종 목 명 : 금 99.99K\n체결수량 : 1g\n체결단가 : 195,760원';
+  assert.equal(parseGoldBuy(body, '2026-09-25 10:00:00').broker, '');
+});
+
 test('parseGoldBuy: 매도도 지원(동일 포맷 가정)', () => {
   const body = '체결통보\n종목명 : 금 99.99K\n체결수량 : 5g\n체결단가 : 96,000원\n매도';
   const r = parseGoldBuy(body, '2026-08-04 09:00:00');

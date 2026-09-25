@@ -51,7 +51,7 @@ import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 import { renderSignalsReport } from '../tools/macro-overlay-facts.mjs';
-import { dedupExecutionsForReport } from './daily-execution-report.mjs';
+import { dedupIncrementalExecutionsForReport } from './daily-execution-report.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -109,7 +109,7 @@ export function buildAssetSection(holdings, previousTotal) {
 export function buildEventsSection(dividends, executions, sinceTimestamp) {
   if (!sinceTimestamp) return '(첫 실행 — 비교 기준 없어 이벤트 생략)';
   const divs = (dividends || []).filter((d) => String(d.recordedAt ?? '') > sinceTimestamp);
-  const execs = dedupExecutionsForReport((executions || []).filter((e) => String(e.recordedAt ?? '') > sinceTimestamp));
+  const execs = dedupIncrementalExecutionsForReport((executions || []).filter((e) => String(e.recordedAt ?? '') > sinceTimestamp));
   if (!divs.length && !execs.length) return '간밤 배당·체결 이벤트 없음';
   const lines = [];
   for (const d of divs) {

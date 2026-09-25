@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filterTodayExecutions, buildExecutionReportText, dedupExecutionsForReport } from './daily-execution-report.mjs';
+import { filterTodayExecutions, buildExecutionReportText, dedupExecutionsForReport, dedupIncrementalExecutionsForReport } from './daily-execution-report.mjs';
 
 test('filterTodayExecutions: tradeDate 앞 10자리가 오늘 날짜와 일치하는 것만 남긴다', () => {
   const executions = [
@@ -130,6 +130,11 @@ test('[실사고 재현] API 증분 2주와 이미 적용된 Kakao 3주는 누�
   assert.deepEqual(dedupExecutionsForReport([kakao, api]).map((e) => ({ quantity: e.quantity, price: e.price, account: e.account })), [
     { quantity: 5, price: 96, account: '위탁' },
   ]);
+});
+
+test('워터마크 증분 보고는 API 누적 5주 중 이번에 새로 기록된 2주만 보고한다', () => {
+  const apiDelta = { tradeDate: '2026-09-24 00:00:00', tradeType: '매수', stockCode: '005930', stockName: '삼성전자', quantity: 2, price: 105, broker: 'NH투자증권', orderNo: '847026', account: '위탁', source: 'NH_API', orderCumulativeQty: 5, orderCumulativeAmount: 480 };
+  assert.equal(dedupIncrementalExecutionsForReport([apiDelta])[0].quantity, 2);
 });
 
 test('[막아야 함] 계좌 미상 Kakao 체결은 API 주문과 한 줄로 합쳐 숨기지 않는다', () => {

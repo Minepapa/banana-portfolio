@@ -68,6 +68,8 @@ import { parseExecution, parseDividend, parseGoldBuy, parseCashAlarm, parseFundB
 import { buildExecutionRecord, buildDividendRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { FUND_PURCHASE_ACCOUNT, EXCHANGE_ACCOUNT } from '../lib/account-resolver.mjs';
 import { classifyKakaoExecution } from '../lib/execution-source-policy.mjs';
 
@@ -86,7 +88,7 @@ function goldToExecutionEvent(g) {
     price: g.price,
     orderNo: g.orderNo,
     currency: 'KRW',
-    broker: 'NH투자증권', // parseGoldBuy는 NH "매수 주문체결" 포맷 전용
+    broker: g.broker || '',
     // ⚠️ 사실 기록(2026-08-05, 오너 확인): 자산배분상 금현물은 위탁 소속으로 취급하지만
     // (ARCHITECTURE-V2.md "원칙 2 — 계좌별 역할" 표 각주), 실제 매매는 위탁과 다른
     // 별도의 금현물 전용 계좌에서 이뤄진다. account 필드는 어차피 Phase 8·9 전까지
@@ -104,6 +106,19 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // nh-accounts.test.js의 구조적 가드 테스트가 이 관계를 대조한다.
 export const CASH_ALARM_API_EXCLUDED = new Set(['위탁', 'CMA']);
 
+const API_COVERED_ARCHIVE_DIR = join(VAULT_PATHS.root, 'Facts', 'RawNotifications', 'ExecutionApiCovered');
+
+export function buildApiCoveredExecutionArchive({ id, ts, body, event, account }) {
+  const safeId = String(id ?? '').replace(/[^\p{L}\p{N}_.-]+/gu, '_') || 'unknown';
+  const filepath = join(API_COVERED_ARCHIVE_DIR, `${safeId}.md`);
+  const content = `${buildFrontmatter({
+    type: 'raw-execution-notification', source: 'KAKAO', sourceAuthority: event?.broker === '한국투자증권' ? 'KIS_API' : 'NH_API',
+    firestoreDocId: String(id ?? ''), receivedAt: ts, broker: event?.broker || '', account: account || null,
+    orderNo: event?.orderNo || '', stockName: event?.stockName || '', archivedAt: new Date().toISOString(),
+  })}\n${String(body ?? '')}\n`;
+  return { filepath, content };
+}
+
 async function main() {
   if (!DRY_RUN) {
     mkdirSync(VAULT_PATHS.facts.ledger.executions, { recursive: true });
@@ -112,6 +127,7 @@ async function main() {
     mkdirSync(VAULT_PATHS.facts.ledger.fundPurchases, { recursive: true });
     mkdirSync(VAULT_PATHS.facts.ledger.fundValuations, { recursive: true });
     mkdirSync(VAULT_PATHS.facts.ledger.exchanges, { recursive: true });
+    mkdirSync(API_COVERED_ARCHIVE_DIR, { recursive: true });
   }
 
   const db = getFirestoreAdmin();
@@ -134,10 +150,20 @@ async function main() {
     const e = parseExecution(body, ts);
     if (e) {
       const route = classifyKakaoExecution({ kind: 'stock', event: e });
-      if (route.action === 'exclude-api') { executionApiExcluded++; processedIds.push(id); continue; }
+      if (route.action === 'exclude-api') {
+        if (!DRY_RUN) {
+          const archive = buildApiCoveredExecutionArchive({ id, ts, body, event: e, account: route.account });
+          writeAtomic(archive.filepath, archive.content);
+        }
+        executionApiExcluded++; processedIds.push(id); continue;
+      }
       // 계좌 미상 NH/KIS 체결은 API 계좌일 수도, API 미지원 계좌일 수도 있다. 어느
       // 쪽으로도 추정하지 않고 Firestore 원문을 남겨 다음 확인 때 재처리한다.
-      if (route.action === 'unresolved') { executionUnresolved++; continue; }
+      if (route.action === 'unresolved') {
+        executionUnresolved++;
+        collectWarning(`카카오 체결 계좌 판별 불가: 문서 ${id}, 브로커 ${e.broker || '미상'}, 계좌 ${e.acctNo || '없음'} — 원문 보존, 장부 반영 보류`);
+        continue;
+      }
       const { filename, content, dir } = buildExecutionRecord({ ...e, account: route.account });
       const filepath = join(dir, filename);
       if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
@@ -163,7 +189,18 @@ async function main() {
     const g = parseGoldBuy(body, ts);
     if (g) {
       const route = classifyKakaoExecution({ kind: 'gold', event: g });
-      if (route.action === 'exclude-api') { executionApiExcluded++; processedIds.push(id); continue; }
+      if (route.action === 'exclude-api') {
+        if (!DRY_RUN) {
+          const archive = buildApiCoveredExecutionArchive({ id, ts, body, event: { ...g, stockName: g.stockName }, account: route.account });
+          writeAtomic(archive.filepath, archive.content);
+        }
+        executionApiExcluded++; processedIds.push(id); continue;
+      }
+      if (route.action === 'unresolved') {
+        executionUnresolved++;
+        collectWarning(`카카오 금현물 체결 발신사 판별 불가: 문서 ${id} — 원문 보존, 장부 반영 보류`);
+        continue;
+      }
       const { filename, content, dir } = buildExecutionRecord(goldToExecutionEvent(g));
       const filepath = join(dir, filename);
       if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
@@ -253,6 +290,7 @@ async function main() {
     `수신함 정리 ${DRY_RUN ? 0 : processedIds.length}건` +
     (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
+  await flushWarnings('parse-notifications-to-vault', { dryRun: DRY_RUN });
 }
 
 // entrypoint 가드(2026-08-22 — reconcile-irp.mjs와 동일 관례 적용) — 이제 이 파일이

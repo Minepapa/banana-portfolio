@@ -58,7 +58,7 @@ export function filterTodayExecutions(executions, todayDate) {
 // 분할 알림이 같은 주문번호·계좌로 만날 때는 API 누적값 한 건으로 정규화한다. 그 밖의
 // 구형·주문번호 없는 중복은 recordedAt 오름차순으로 먼저 Vault에 기록된 쪽을 대표로
 // 남긴다. 계좌를 판별할 수 없는 카카오 원문은 안전하게 별도 표시한다.
-export function dedupExecutionsForReport(executions) {
+function dedupExecutions(executions, { expandSingletonApi }) {
   const input = [...(executions || [])];
   const consumed = new Set();
   const normalizedApi = [];
@@ -78,6 +78,11 @@ export function dedupExecutionsForReport(executions) {
     const api = input[i];
     if (api.source !== 'NH_API' || !api.orderNo || consumed.has(i)) continue;
     const group = input.map((row, index) => ({ row, index })).filter(({ row }) => sameOrder(api, row));
+    if (!expandSingletonApi && group.length === 1) {
+      consumed.add(i);
+      normalizedApi.push(api);
+      continue;
+    }
     const preferred = group
       .filter(({ row }) => row.source === 'NH_API')
       .reduce((best, item) => {
@@ -99,6 +104,14 @@ export function dedupExecutionsForReport(executions) {
     kept.push(exec);
   }
   return kept;
+}
+
+export function dedupExecutionsForReport(executions) {
+  return dedupExecutions(executions, { expandSingletonApi: true });
+}
+
+export function dedupIncrementalExecutionsForReport(executions) {
+  return dedupExecutions(executions, { expandSingletonApi: false });
 }
 
 // 순수함수 — 오늘자 체결 레코드 배열을 계좌별로 묶어 사람이 읽는 텍스트로 만든다.

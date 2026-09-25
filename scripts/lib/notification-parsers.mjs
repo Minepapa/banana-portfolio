@@ -173,6 +173,10 @@ const GOLD_PRICE = /체결단가\s*:\s*([\d,]+)\s*원/;
 const GOLD_ORDER = /주문번호\s*:\s*(\d+)/;
 
 export function parseGoldBuy(body, tsRaw) {
+  const text = String(body ?? '');
+  const explicitBroker = text.match(/^\s*\[([^\]]+)\]/)?.[1]
+    ?? (text.includes('NH투자증권') ? 'NH투자증권' : '');
+  if (explicitBroker && explicitBroker !== 'NH투자증권') return null;
   const isSell = body.includes('매도');
   if (!(body.includes('체결') && (body.includes('매수') || isSell) && GOLD_QTY.test(body))) return null;
   const nm = body.match(GOLD_NAME);
@@ -191,7 +195,9 @@ export function parseGoldBuy(body, tsRaw) {
   // (짧은 문자열이 그 접두사를 공유하는 긴 문자열보다 먼저 정렬됨) 같은 날 오후에 산
   // 금이 델타에서 빠지는, 이 세션 전체가 고치고 있는 바로 그 날짜절삭 버그가 여기
   // 그대로 재발할 뻔했다. 다른 파서(체결·예수금앵커)처럼 전체 타임스탬프를 그대로 쓴다.
-  return { stockName, qty, price, tradeType: isSell ? '매도' : '매수', orderNo: om ? om[1] : '', date: normalizeDateTime(tsRaw) };
+  // 발신사가 빠진 구형 원문은 금현물 형식으로 읽을 수 있어도 NH API 정본 범위라고
+  // 단정하지 않는다. 호출부가 계좌 미상 원문으로 보존해 확인할 때까지 보류한다.
+  return { stockName, qty, price, tradeType: isSell ? '매도' : '매수', orderNo: om ? om[1] : '', date: normalizeDateTime(tsRaw), broker: explicitBroker, acctNo: extractNhAccountNo(body) || '' };
 }
 
 // ── 예수금 앵커 파서 (NH투자증권 "입금안내/출금안내", 잔고줄 보유) ─

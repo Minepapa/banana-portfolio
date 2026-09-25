@@ -7,6 +7,9 @@ import { NH_ACCOUNT_MAP } from './nh-accounts.mjs';
 
 export function classifyKakaoExecution({ kind = 'stock', event = {} } = {}) {
   if (kind === 'gold') {
+    if (event.broker !== 'NH투자증권') {
+      return { action: 'unresolved', account: null, reason: 'ACCOUNT_UNKNOWN' };
+    }
     return { action: 'exclude-api', account: '금현물', reason: 'NH_API' };
   }
 
