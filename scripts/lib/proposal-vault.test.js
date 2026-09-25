@@ -26,7 +26,7 @@ test('buildProposalRecord: 대기 상태로 생성, 필수 필드 포함', () =>
   assert.equal(p.assetKey, '국내주식');
   assert.equal(p.decidedAt, null);
   assert.equal(filename, `${id}.md`);
-  assert.match(id, /^자산분배-매수-국내주식-/);
+  assert.match(id, /^2026-08-05-자산분배-매수-국내주식-/);
 });
 
 test('buildProposalRecord: tags — account 있으면 계좌·종목 태그', () => {
@@ -39,6 +39,16 @@ test('buildProposalRecord: tags — account 있으면 계좌·종목 태그', ()
 test('[오너 결정 2026-09-05] buildProposalRecord: account가 null인 퀀트 제안은 track("퀀트")으로 계좌 태그 대체', () => {
   const { content } = buildProposalRecord({ track: '퀀트', assetKey: '삼성전자', side: '매수', quantity: 10, proposedPrice: 71000, now });
   assert.deepEqual(parseProposal(content).tags, ['계좌/퀀트', '종목/삼성전자']);
+});
+
+test('buildProposalRecord: 종목코드 017670은 파일명·태그에 SK텔레콤 표시명을 사용', () => {
+  const { id, content } = buildProposalRecord({
+    track: '퀀트', assetKey: '017670', side: '매수', quantity: 1, proposedPrice: 90000,
+    now: new Date('2026-09-25T01:02:03.000Z'),
+  });
+  assert.equal(id, '2026-09-25-퀀트-매수-SK텔레콤-010203Z');
+  assert.match(content, /assetKey: "017670"/);
+  assert.deepEqual(parseProposal(content).tags, ['계좌/퀀트', '종목/SK텔레콤']);
 });
 
 test('updateProposalRecord: 상태 전이(대기→승인) — 다른 필드는 보존', () => {

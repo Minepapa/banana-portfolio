@@ -34,6 +34,14 @@ import { VAULT_ROOT } from '../lib/vault-paths.mjs';
 
 export { CANONICAL_PROGRESS_VALUES }; // 이 파일을 직접 import하던 기존 코드/테스트 호환용 재수출
 
+export const CANONICAL_STATUS_VALUES = Object.freeze({
+  lifecycle: ['예정', '진행중', '차단됨', '완료', '보류', '폐기'],
+  knowledge: ['활성', '비활성', '진행중', '탐색지도', '대체됨'],
+  strategy: ['결정됨', '실행대기', '보류', '대체됨'],
+  proposal: ['대기', '승인', '거부', '대체됨', '체결', '섀도우체결'],
+  profile: ['관찰', '승격후보', '확정', '기각'],
+});
+
 function pass(reason) {
   console.log(JSON.stringify({ continue: true, suppressOutput: true }));
   if (reason && process.env.VAULT_PROGRESS_GUARD_DEBUG) console.error(`vault-progress-guard: pass(${reason})`);
@@ -53,6 +61,55 @@ export function shouldCheck(relPath) {
   return normalized.startsWith('Log/Implementation/') && normalized.endsWith('.md');
 }
 
+// status는 노트 종류별 집합을 쓰므로, progress 검사와 별도의 범위를 갖는다.
+export function shouldCheckStatus(relPath) {
+  if (!relPath) return false;
+  const normalized = relPath.replace(/\\/g, '/');
+  return (
+    normalized.startsWith('Log/Implementation/') ||
+    normalized.startsWith('Log/DevRequests/') ||
+    normalized.startsWith('Log/Strategy/') ||
+    normalized.startsWith('Decisions/Proposals/') ||
+    normalized.startsWith('Decisions/Profile/') ||
+    normalized.startsWith('Knowledge/')
+  ) && normalized.endsWith('.md');
+}
+
+function statusScope(relPath) {
+  const normalized = relPath.replace(/\\/g, '/');
+  if (normalized.startsWith('Log/Strategy/')) return 'strategy';
+  if (normalized.startsWith('Decisions/Proposals/')) return 'proposal';
+  if (normalized.startsWith('Decisions/Profile/')) return 'profile';
+  if (normalized.startsWith('Knowledge/')) return 'knowledge';
+  return 'lifecycle';
+}
+
+// 순수함수 — status가 있는 파일은 종류별 허용 집합만 사용하고, Implementation은
+// progress와 같은 생명주기 값을 가리키는지 함께 검사한다. Knowledge의 색인·지도처럼
+// status 자체가 필요 없는 파일은 status가 없으면 통과시켜 기존 구조를 보존한다.
+export function checkStatusField(frontmatter, relPath) {
+  const scope = statusScope(relPath);
+  const value = frontmatter?.status;
+  const hasStatus = Object.prototype.hasOwnProperty.call(frontmatter ?? {}, 'status');
+  if ((scope !== 'knowledge' || hasStatus) && (value == null || value === '')) {
+    return `⚠️ 므네모시네 정합성 — ${relPath}에 status: 필드가 없습니다. ` +
+      `${CANONICAL_STATUS_VALUES[scope].join('/')} 중 하나를 선택하세요.`;
+  }
+  if (value != null && value !== '' && !CANONICAL_STATUS_VALUES[scope].includes(value)) {
+    return `⚠️ 므네모시네 정합성 — ${relPath}의 status: "${value}"는 ` +
+      `${CANONICAL_STATUS_VALUES[scope].join('/')} 밖의 자유서술입니다. ` +
+      '긴 설명은 statusDetail에 적으세요.';
+  }
+  if (scope === 'lifecycle' && relPath.replace(/\\/g, '/').startsWith('Log/Implementation/')) {
+    const progress = frontmatter?.progress;
+    if (value != null && progress != null && value !== progress) {
+      return `⚠️ 므네모시네 정합성 — ${relPath}의 status(${value})와 progress(${progress})가 다릅니다. ` +
+        '둘을 같은 생명주기 값으로 맞추세요.';
+    }
+  }
+  return null;
+}
+
 // 순수함수 — frontmatter 객체를 받아 문제가 있으면 사람이 읽을 경고 문자열을,
 // 없으면 null을 반환.
 export function checkProgressField(frontmatter, relPath) {
@@ -63,7 +120,7 @@ export function checkProgressField(frontmatter, relPath) {
   }
   if (!CANONICAL_PROGRESS_VALUES.includes(value)) {
     return `⚠️ 므네모시네 정합성 — ${relPath}의 progress: "${value}"는 정해진 4종(${CANONICAL_PROGRESS_VALUES.join('/')}) 밖의 자유서술입니다. ` +
-      `세부 사정은 status: 필드에 그대로 적고, progress: 자체는 4종 중 하나로 정규화하세요(예: 일부만 끝났으면 "진행중").`;
+      `세부 사정은 statusDetail: 필드에 적고, progress: 자체는 4종 중 하나로 정규화하세요(예: 일부만 끝났으면 "진행중").`;
   }
   return null;
 }
@@ -87,7 +144,9 @@ async function main() {
   // VAULT_ROOT 밖이면(이 프로젝트 코드 포함) 대상 아님 — relative()가 '..'로
   // 시작하면 밖에 있다는 뜻.
   const relPath = relative(VAULT_ROOT, filePath);
-  if (relPath.startsWith('..') || !shouldCheck(relPath)) { pass('not-in-scope'); return; }
+  if (relPath.startsWith('..') || (!shouldCheck(relPath) && !shouldCheckStatus(relPath))) {
+    pass('not-in-scope'); return;
+  }
 
   if (!existsSync(filePath)) { pass('file-missing'); return; } // 삭제 등 — 검사 대상 아님
 
@@ -95,8 +154,17 @@ async function main() {
   try { content = readFileSync(filePath, 'utf8'); } catch { pass('read-fail'); return; }
 
   const frontmatter = parseFrontmatter(content);
-  const message = checkProgressField(frontmatter, relPath.replace(/\\/g, '/'));
-  if (message) warn(message); else pass('ok');
+  const normalizedRelPath = relPath.replace(/\\/g, '/');
+  const messages = [];
+  if (shouldCheck(normalizedRelPath)) {
+    const progressMessage = checkProgressField(frontmatter, normalizedRelPath);
+    if (progressMessage) messages.push(progressMessage);
+  }
+  if (shouldCheckStatus(normalizedRelPath)) {
+    const statusMessage = checkStatusField(frontmatter, normalizedRelPath);
+    if (statusMessage) messages.push(statusMessage);
+  }
+  if (messages.length) warn(messages.join('\n')); else pass('ok');
 }
 
 // entrypoint 가드 — 없으면 테스트가 이 파일을 import(shouldCheck·checkProgressField

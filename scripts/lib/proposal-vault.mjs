@@ -5,8 +5,10 @@
 // 상태 전이: 발송중 → 대기(telegramMessageId 저장 성공 시) 또는 발송오류. 대기 →
 // (승인|거부|대체됨). 승인 → (주문접수|섀도우체결), 주문접수 → (부분체결|체결|취소).
 // 브로커 접수와 실제 체결은 별도 상태다. 발송중·발송오류는 비활성 상태다.
-// 파일은 상태가 바뀌어도 지우지 않고 갱신만 한다 — "왜 거부했는지 나중에 되짚기 위함"
-// (ARCHITECTURE-V2.md "실행 흐름(주문)" 절)과 "단일 활성 제안 원칙"의 대체 이력 추적.
+// 운영 중인 제안 파일은 상태가 바뀌어도 지우지 않고 갱신만 한다 — "왜 거부했는지
+// 나중에 되짚기 위함"(ARCHITECTURE-V2.md "실행 흐름(주문)" 절)과 "단일 활성 제안
+// 원칙"의 대체 이력 추적. 과거 미체결 제안의 별도 정리 작업은 이 런타임 전이와
+// 구분하며, 정리 후에도 남은 파일만 현재 조회 대상이 된다.
 import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 // 그래프 뷰 다중축 클러스터링용 태그(2026-09-05, vault-tags.mjs 헤더 주석 참고).
 import { buildVaultTags } from './vault-tags.mjs';
@@ -15,14 +17,27 @@ function sanitizeSegment(s) {
   return String(s ?? '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '-');
 }
 
+// 파일명·태그에는 사람이 읽는 표준 종목명을 사용한다. assetKey frontmatter는
+// 주문·체결 매칭에 필요한 원본 코드/키를 그대로 보존한다.
+const DISPLAY_ASSET_NAMES = new Map([
+  ['017670', 'SK텔레콤'],
+]);
+
+function displayAssetName(assetKey) {
+  return DISPLAY_ASSET_NAMES.get(String(assetKey)) ?? assetKey;
+}
+
 // track+assetKey+side가 같으면 "같은 안건"으로 취급(단일 활성 제안·거부 쿨다운 판정의 키).
 export function proposalMatchKey({ track, assetKey, side }) {
   return `${track}|${assetKey}|${side}`;
 }
 
 export function buildProposalRecord({ track, account = null, assetKey, side, quantity, proposedPrice, reason = '', now = new Date() }) {
-  const ts = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-  const id = `${track}-${sanitizeSegment(side)}-${sanitizeSegment(assetKey)}-${ts}`;
+  const iso = now.toISOString();
+  const date = iso.slice(0, 10);
+  const time = iso.slice(11, 19).replaceAll(':', '') + 'Z';
+  const assetLabel = displayAssetName(assetKey);
+  const id = `${date}-${sanitizeSegment(track)}-${sanitizeSegment(side)}-${sanitizeSegment(assetLabel)}-${time}`;
   const filename = `${id}.md`;
   const content = buildFrontmatter({
     id, track, account, assetKey, side, quantity, proposedPrice, reason,
@@ -42,7 +57,7 @@ export function buildProposalRecord({ track, account = null, assetKey, side, qua
     // 실질적으로 "계좌" 역할을 함). assetKey는 종목코드·종목명이 혼재하는 원본 데이터라
     // (vault-tags.mjs 헤더 주석 참고) State/Holdings·Executions의 종목명 태그와 항상
     // 일치하진 않음 — 알려진 한계, 코드↔이름 매핑을 여기서 추정하지 않는다.
-    tags: buildVaultTags({ account: account ?? (track === '퀀트' ? track : null), stockName: assetKey }),
+    tags: buildVaultTags({ account: account ?? (track === '퀀트' ? track : null), stockName: assetLabel }),
   });
   return { id, filename, content };
 }
