@@ -35,25 +35,8 @@
  */
 import { pathToFileURL } from 'node:url';
 
-// zeus.md·각 에이전트 정의 파일(athena.md 등) "라벨만 유지한다" 절과 정확히
-// 동일한 문자열 — 한쪽만 바뀌면 이 목록도 같이 갱신할 것.
-//
-// ⚠️ "[제우스]"는 레거시로 당분간 병행 허용(2026-09-19, 오너 지시로 "[Zeus]"가
-// 정식 라벨로 환원 — DevRequest 2026-09-19-제우스-라벨-영문표기-Zeus.md). 상시
-// 텔레그램 세션(com.banana2.telegram-session)이 재시작 전까지는 옛 zeus.md
-// 지시문을 컨텍스트에 그대로 들고 있어 "[제우스]"를 계속 낼 수 있다 — 이 가드가
-// 그 즉시 거부하면 오너에게 응답 자체가 안 나가는 무응답 사고가 된다(위험을
-// DevRequest 자신이 명시).
-//
-// 제거 시점: `com.banana2.telegram-session-restart`가 **매일 04:00 KST**에
-// bootout+bootstrap으로 이 세션을 예방적으로 재시작한다(plist StartCalendarInterval
-// Hour=4·Minute=0 확인) — 다음 04:00 이후엔 구 지시문이 메모리에 남아있을 수
-// 없으므로, 2026-09-20 04:00 이후 세션에서 아래 LEGACY_ZEUS_LABEL 사용 로그
-// (stderr, 코드리뷰 지적 — 조용한 폴백 금지 원칙과 동일)가 더 안 찍히는지 확인한
-// 뒤 이 배열에서 "[제우스]"를 빼는 정리 커밋을 진행할 것.
-const LEGACY_ZEUS_LABEL = '[제우스]';
 export const VALID_SENDER_LABELS = [
-  '[Zeus]', LEGACY_ZEUS_LABEL,
+  '[Zeus]',
   '[투자전략실 Athena]', '[퀀트전략실 Kairos]', '[리스크관리실 Themis]', '[운영실 Hermes]', '[비서실 Apollo]',
 ];
 
@@ -105,12 +88,6 @@ async function main() {
     // 확인됐으나, 플러그인이 바뀌어도 조용히 무력화되지 않게 두 후보 다 확인).
     const text = data?.tool_input?.text ?? data?.tool_input?.message;
     if (hasSenderLabel(text)) {
-      // 레거시 라벨 사용을 stderr로 남긴다(코드리뷰 지적 — 위 VALID_SENDER_LABELS
-      // 주석의 "제거 시점" 판단 근거. stdout은 훅 계약상 JSON만 와야 해서 안전한
-      // stderr에만 남김, 108행의 기존 오류로그와 동일 패턴).
-      if (String(text ?? '').trimStart().startsWith(LEGACY_ZEUS_LABEL)) {
-        console.error(`[telegram-sender-label-guard] 레거시 라벨 "${LEGACY_ZEUS_LABEL}" 사용 감지 — 다음 04:00(com.banana2.telegram-session-restart) 이후에도 계속 찍히면 그 세션이 새 zeus.md를 아직 안 읽은 것`);
-      }
       allow();
       return;
     }

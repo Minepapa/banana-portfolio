@@ -334,6 +334,24 @@ Frank 승인/거부)는 실전과 동일하게 돌아가되, **마지막 브로�
   주문번호를 Frank에게 함께 안내한다(다음 정정·취소에 필요할 수 있음).
 - 지원 범위·계좌 제한은 직접주문 경로와 동일(`ALLOWED_NH_ACCOUNTS` = 위탁·금현물).
 
+### 카이로스 보호주문 수동 재시도 (2026-09-25 신설)
+
+이미 체결된 카이로스 포지션의 손절·3R 보호주문이 실패했을 때는
+`scripts/tools/retry-breakout-protection.mjs`를 사용한다. `--code` 또는
+`--position-id`로 하나의 `State/BreakoutPositions/*.md` 보유 포지션을 지정하며,
+여러 건이 매칭되면 추정하지 않고 중단한다.
+
+이 도구는 `reconcile-breakout-protection.mjs`와 같은 순서를 따른다. KIS 잔고·현재가·
+정정취소가능주문을 먼저 조회해 보유수량과 기존 보호주문을 대조하고, 이미 살아 있는
+다리는 `carryForwardProtectionOrders`로 넘겨 `ensurePositionProtected`가 누락된
+다리만 접수하게 한다. 같은 종목의 식별되지 않은 매도주문, 수량 불일치, 현재가가
+보호가격을 이미 통과한 경우에는 발주하지 않는다.
+
+실행 전 킬스위치와 체결모드를 다시 읽는다. 섀도우 모드 또는 `--dry-run`에서는 KIS
+주문 API를 호출하지 않는다. CLI는 텔레그램을 직접 보내지 않고 stdout으로 결과를
+반환하며, 매일 08:35 평일 launchd의 `reconcile-breakout-protection`이 모든 보유
+포지션을 자동으로 같은 방식으로 재확인한다.
+
 ## 신뢰경계 — 외부 콘텐츠 격리 원칙 (확정 — critic 리뷰 TIER 1 대응)
 
 **문제 범위를 먼저 정확히 좁힌다.** "외부 텍스트를 읽는 세션과 주문실행 권한을 가진

@@ -11,13 +11,8 @@ test('hasSenderLabel: "[Zeus] "로 시작하면 true', () => {
   assert.equal(hasSenderLabel('[Zeus] 안녕하세요, 확인했습니다.'), true);
 });
 
-// 2026-09-19 라벨 환원(DevRequest 2026-09-19-제우스-라벨-영문표기-Zeus.md) — 상시
-// 텔레그램 세션이 재시작 전까지 옛 지시문으로 이 라벨을 계속 낼 수 있어 레거시로
-// 당분간 병행 허용(telegram-sender-label-guard.mjs 상단 주석 참고). [막아야 함]이
-// 아님(다른 테스트의 그 태그는 false 단언용 컨벤션 — 이건 true를 확인하는 정상
-// 수용 테스트, 코드리뷰 지적으로 태그 제거).
-test('hasSenderLabel: 레거시 "[제우스] "도 당분간 인정(상시 세션 재시작 전 무응답 사고 방지)', () => {
-  assert.equal(hasSenderLabel('[제우스] 안녕하세요, 확인했습니다.'), true);
+test('[핵심 안전장치] hasSenderLabel: 레거시 "[제우스]"는 더 이상 허용하지 않음', () => {
+  assert.equal(hasSenderLabel('[제우스] 안녕하세요, 확인했습니다.'), false);
 });
 
 test('hasSenderLabel: 5개 부서 라벨 전부 인정', () => {
@@ -26,10 +21,10 @@ test('hasSenderLabel: 5개 부서 라벨 전부 인정', () => {
   }
 });
 
-test('hasSenderLabel: VALID_SENDER_LABELS는 정확히 7개(Zeus+레거시 제우스+부서5개), 순서·오탈자 없이', () => {
-  assert.equal(VALID_SENDER_LABELS.length, 7);
+test('hasSenderLabel: VALID_SENDER_LABELS는 정확히 6개(Zeus+부서5개), 순서·오탈자 없이', () => {
+  assert.equal(VALID_SENDER_LABELS.length, 6);
   assert.ok(VALID_SENDER_LABELS.includes('[Zeus]'));
-  assert.ok(VALID_SENDER_LABELS.includes('[제우스]'));
+  assert.ok(!VALID_SENDER_LABELS.includes('[제우스]'));
 });
 
 // [핵심 안전장치] 코드리뷰 지적(2026-09-19) — ZEUS_MARKER(telegram-messages.mjs,
