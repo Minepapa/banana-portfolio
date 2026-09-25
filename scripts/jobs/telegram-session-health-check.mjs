@@ -15,8 +15,8 @@
  * TUI **차등 리페인트**라 마커 문자열이 화면 갱신 경계에서 실제로 쪼개지는 걸 실측으로
  * 확인했다(예: "login expired"가 실제 로그에서 "login\x1b[49Gexpired"로, ANSI 커서이동
  * 코드가 단어 중간에 끼어들어 문자열 매칭이 새는 사례가 있었음 — 정확히 이 잡이
- * 잡아야 할 그 장애를 놓칠 수 있는 구조적 결함). 지금은 결정론적이고 ANSI 파싱이
- * 전혀 필요 없는 두 신호(scripts/lib/telegram-session-liveness.mjs)만 쓴다:
+ * 잡아야 할 그 장애를 놓칠 수 있는 구조적 결함). 지금은 결정론적이고 ANSI 내용
+ * 파싱이 전혀 필요 없는 신호들(scripts/lib/telegram-session-liveness.mjs)을 쓴다:
  *   1) TELEGRAM_MCP_SUBPROCESS_PATTERN — bun 서브프로세스가 실제로 떠있는지 직접 확인
  *      (2026-08-31 실제 장애 형태를 가장 직접적으로 잡는 1차 신호)
  *   2) isPollingStuck(getTelegramWebhookInfo) — health-watcher.mjs가 이미 쓰던 신호,
@@ -24,6 +24,9 @@
  *      신호 — 서브프로세스는 떠있는데 내부적으로 멎은 경우까지 잡음)
  *   3) TELEGRAM_SESSION_PROCESS_PATTERN — 세션 프로세스 자체가 죽은 경우(가장 드묾,
  *      launchd KeepAlive가 보통 먼저 잡지만 belt-and-suspenders)
+ *   4) raw 터미널 로그 mtime + transcript의 미답변 오너 메시지 — 프로세스·MCP·폴링이
+ *      모두 살아있어도 대화 중 대화형 확인창에 멎는 상태를 감지. 로그 정체 단독은
+ *      정상 유휴 시간과 구분되지 않으므로 반드시 미답변 메시지와 결합한다.
  *
  * ⚠️ 서킷브레이커(2026-08-31, 코드리뷰 HIGH 지적) — MCP가 지속적으로 고장난 상태면
  * 10분마다 계속 재시작을 시도하게 되는데, 이러면 오너가 쓰고 있을 수도 있는 세션을
@@ -64,7 +67,7 @@
  *
  * 사용법: node scripts/jobs/telegram-session-health-check.mjs [--dry-run]
  */
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -74,7 +77,8 @@ import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
-import { isProcessAlive, isPollingStuck, TELEGRAM_SESSION_PROCESS_PATTERN, TELEGRAM_MCP_SUBPROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
+import { isProcessAlive, isPollingStuck, isSessionLogStale, TELEGRAM_SESSION_PROCESS_PATTERN, TELEGRAM_MCP_SUBPROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
+import { findTelegramTranscripts, readTranscriptLines, findLatestUnansweredTelegramOwnerMessage } from './telegram-session-handoff.mjs';
 
 const MCP_LOSS_LOG_FILE = join(VAULT_PATHS.log.telegramSession, 'mcp-loss-diagnostics.md');
 const MCP_LOSS_LOG_HEADER = '# 텔레그램 MCP 소실 진단 로그\n\n' +
@@ -90,15 +94,26 @@ const STATE_FILE = join(STATE_DIR, 'status.md');
 const MAX_CONSECUTIVE_RESTARTS = 3;
 const RESTART_TIMEOUT_MS = 120_000; // bootout+bootstrap는 보통 수 초, 넉넉히 2분
 const RECHECK_DELAY_MS = 15_000; // 순간포착 재확인 대기(위 헤더 주석 참고)
+const SESSION_LOG_FILE = join(os.homedir(), 'Library', 'Logs', 'banana-portfolio-v2', 'telegram-session.log');
+// 2026-09-25 실제 transcript 92개 완료 turn의 최대 지연은 245.611초였다. 정상 상위
+// 지연의 7배 이상인 30분을 둬, 장시간 작업도 허용하면서 4시간 30분 멈춤은 감지한다.
+const OWNER_REPLY_STALE_THRESHOLD_MS = 30 * 60_000;
+// 재시작이 새 startup 로그를 남겨 다음 폴링에서 정상처럼 보이더라도, 같은 hang이
+// 다시 발생하면 서킷브레이커가 누적할 기간. 30분 stale 임계의 여러 배로 둔다.
+const SESSION_HANG_RESTART_WINDOW_MS = 6 * 60 * 60_000;
+const TRANSCRIPT_PENDING_WINDOW_MS = 6 * 60 * 60_000;
+const SESSION_HANG_REASON_KEY = 'session-log-stale-owner-message';
 const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// 순수함수 — 세 신호를 종합해 "재시작이 필요한가"와 그 이유를 판정. 인자는 이미
-// 조회된 값(프로세스 생존 여부·폴링정체 여부)만 받는다 — I/O는 호출부(main)가 담당.
-export function diagnose({ sessionAlive, mcpSubprocessAlive, pollingStuck }) {
-  if (!sessionAlive) return { unhealthy: true, reason: '세션 프로세스 자체가 응답하지 않음(생존 확인 실패)' };
-  if (!mcpSubprocessAlive) return { unhealthy: true, reason: 'telegram MCP 서버(bun 서브프로세스) 소실 — 세션 프로세스는 살아있지만 MCP 연결 끊김' };
-  if (pollingStuck) return { unhealthy: true, reason: '폴링 정체 의심(미수신 메시지가 큐에 쌓여있음) — 서브프로세스는 떠있지만 내부적으로 멎었을 가능성' };
-  return { unhealthy: false, reason: null };
+// 순수함수 — 네 신호를 종합해 "재시작이 필요한가"와 그 이유를 판정. 인자는 이미
+// 조회된 값(프로세스 생존 여부·폴링정체 여부·로그/미답변 상태)만 받는다 — I/O는
+// 호출부(main)가 담당.
+export function diagnose({ sessionAlive, mcpSubprocessAlive, pollingStuck, sessionLogStale = false, ownerMessageAwaitingReply = false }) {
+  if (!sessionAlive) return { unhealthy: true, reasonKey: 'session-process-missing', reason: '세션 프로세스 자체가 응답하지 않음(생존 확인 실패)' };
+  if (!mcpSubprocessAlive) return { unhealthy: true, reasonKey: 'mcp-subprocess-missing', reason: 'telegram MCP 서버(bun 서브프로세스) 소실 — 세션 프로세스는 살아있지만 MCP 연결 끊김' };
+  if (pollingStuck) return { unhealthy: true, reasonKey: 'polling-stuck', reason: '폴링 정체 의심(미수신 메시지가 큐에 쌓여있음) — 서브프로세스는 떠있지만 내부적으로 멎었을 가능성' };
+  if (sessionLogStale && ownerMessageAwaitingReply) return { unhealthy: true, reasonKey: SESSION_HANG_REASON_KEY, reason: '세션이 응답 없이 멈춰있음(로그 정체) — 대화형 확인창 등에 걸려있을 가능성' };
+  return { unhealthy: false, reasonKey: null, reason: null };
 }
 
 // 순수함수 — 서킷브레이커 판단. consecutiveRestarts는 "이번이 몇 번째 연속 감지인가"
@@ -110,14 +125,18 @@ export function shouldEscalateInsteadOfRestart(consecutiveRestarts, max = MAX_CO
 // checkSignals(주입 가능한 async 함수, 실제 IO는 main()의 기본 구현이 담당)를 즉시
 // 신뢰하지 않고, 이상이 잡히면 sleep 후 한 번 더 불러 재확인한다 — 1차 확인에서
 // 순간적으로만 이상했다가 재확인에서 회복되면 "일시적 현상"으로 보고 조치하지 않는다
-// (위 헤더 주석의 "순간포착 재확인" 근거). sleep을 주입받아 테스트에서 실제 대기
-// 없이 검증 가능(state-writer.mjs withLock의 sleep 주입과 동일 패턴).
-export async function checkWithRecheck(checkSignals, { sleep = defaultSleep, recheckDelayMs = RECHECK_DELAY_MS } = {}) {
+// (위 헤더 주석의 "순간포착 재확인" 근거). 15초는 프로세스/MCP 순간 흔들림용이다;
+// 30분 로그 정체 신호에는 현실적인 회복 검증 시간이 아니지만, 모든 신호에 같은
+// 보수적 조치 계약을 적용한다. sleep은 테스트에서 실제 대기 없이 주입 가능.
+export async function checkWithRecheck(checkSignals, {
+  sleep = defaultSleep, recheckDelayMs = RECHECK_DELAY_MS,
+  isUnhealthy = ({ sessionAlive, mcpSubprocessAlive }) => !sessionAlive || !mcpSubprocessAlive,
+} = {}) {
   const first = await checkSignals();
-  if (first.sessionAlive && first.mcpSubprocessAlive) return { ...first, recheckedAndRecovered: false, firstCheckUnhealthy: false };
+  if (!isUnhealthy(first)) return { ...first, recheckedAndRecovered: false, firstCheckUnhealthy: false };
   await sleep(recheckDelayMs);
   const second = await checkSignals();
-  const recovered = second.sessionAlive && second.mcpSubprocessAlive;
+  const recovered = !isUnhealthy(second);
   // firstCheckUnhealthy(2026-09-04 신설, 근본원인 진단 계측용) — 1차 확인에서 이상이
   // 감지됐다는 사실 자체는 최종 recheckedAndRecovered 결과와 별개로 항상 알려준다.
   // main()이 이 값을 보고 "재확인 후 회복됐든 안 됐든 일단 감지는 됐다"는 매 순간을
@@ -149,38 +168,120 @@ function appendMcpLossLine(line) {
 }
 
 function readState() {
-  if (!existsSync(STATE_FILE)) return { consecutiveRestarts: 0 };
+  if (!existsSync(STATE_FILE)) return { consecutiveRestarts: 0, consecutiveRestartReasonKey: null, lastUnhealthyAtMs: null, lastRestartAtMs: null, lastRestartReasonKey: null };
   const fm = parseFrontmatter(readFileSync(STATE_FILE, 'utf8'));
-  return { consecutiveRestarts: Number.isFinite(fm.consecutiveRestarts) ? fm.consecutiveRestarts : 0 };
+  return {
+    consecutiveRestarts: Number.isFinite(fm.consecutiveRestarts) ? fm.consecutiveRestarts : 0,
+    // 기존 State에는 사유가 하나뿐이었다. 새 필드가 없는 기존 레코드는 그 값을
+    // 연속장애 사유로도 읽어 다음 판정에서 안전하게 마이그레이션한다.
+    consecutiveRestartReasonKey: typeof fm.consecutiveRestartReasonKey === 'string'
+      ? fm.consecutiveRestartReasonKey
+      : (typeof fm.lastRestartReasonKey === 'string' ? fm.lastRestartReasonKey : null),
+    lastUnhealthyAtMs: Number.isFinite(fm.lastUnhealthyAtMs) ? fm.lastUnhealthyAtMs : null,
+    lastRestartAtMs: Number.isFinite(fm.lastRestartAtMs) ? fm.lastRestartAtMs : null,
+    lastRestartReasonKey: typeof fm.lastRestartReasonKey === 'string' ? fm.lastRestartReasonKey : null,
+  };
 }
 
-function writeState({ consecutiveRestarts }) {
+function writeState({ consecutiveRestarts, consecutiveRestartReasonKey = null, lastUnhealthyAtMs = null, lastRestartAtMs = null, lastRestartReasonKey = null }) {
   mkdirSync(STATE_DIR, { recursive: true });
   writeAtomic(STATE_FILE, buildFrontmatter({
-    type: 'telegram-session-health-check-state', consecutiveRestarts, checkedAt: new Date().toISOString(),
+    type: 'telegram-session-health-check-state', consecutiveRestarts, consecutiveRestartReasonKey, lastUnhealthyAtMs, lastRestartAtMs, lastRestartReasonKey, checkedAt: new Date().toISOString(),
   }));
 }
 
-function checkSignalsOnce() {
-  const sessionAlive = isProcessAlive(TELEGRAM_SESSION_PROCESS_PATTERN);
-  const mcpSubprocessAlive = sessionAlive ? isProcessAlive(TELEGRAM_MCP_SUBPROCESS_PATTERN) : false;
-  return { sessionAlive, mcpSubprocessAlive };
+// 순수함수 — timestamp 없는 메타 레코드는 비교 대상에서 제외한 뒤 시간순으로 정렬한다.
+// Date의 Invalid Date끼리 comparator가 NaN을 반환하면 V8이 동등으로 취급해 병합된
+// transcript가 실제 시간순이 아니게 되므로, 반드시 정렬 전에 걸러야 한다.
+export function sortTimestampedTranscriptLines(lines) {
+  return (lines || [])
+    .map((d) => ({ d, ms: new Date(d?.timestamp).getTime() }))
+    .filter(({ ms }) => Number.isFinite(ms))
+    .sort((a, b) => a.ms - b.ms)
+    .map(({ d }) => d);
 }
 
-async function main() {
-  const { sessionAlive, mcpSubprocessAlive, recheckedAndRecovered, firstCheckUnhealthy } = await checkWithRecheck(checkSignalsOnce);
-  if (recheckedAndRecovered) {
-    console.log(`⏳ 1차 확인에서 이상 감지됐으나 ${RECHECK_DELAY_MS / 1000}초 후 재확인에서 정상 회복 — 일시적 현상으로 판단, 조치 없음`);
-  }
+// 순수함수 — 직전 재시작보다 앞선 orphan pending은 무시한다. 상태가 아직 없는 첫
+// 실행만 최근 창으로 제한한다. transcript mtime은 실제 대화 시간과 역전될 수 있어
+// "가장 최근 파일" 판정에는 쓰지 않는다.
+export function filterPendingTranscriptLines(lines, { nowMs, lastRestartAtMs = null, windowMs = TRANSCRIPT_PENDING_WINDOW_MS }) {
+  const lowerBoundMs = Number.isFinite(lastRestartAtMs) ? lastRestartAtMs : nowMs - windowMs;
+  if (!Number.isFinite(lowerBoundMs)) return [];
+  return sortTimestampedTranscriptLines(lines).filter((d) => new Date(d.timestamp).getTime() > lowerBoundMs);
+}
 
-  // 근본원인 진단 계측(2026-09-04, 파일 헤더 주석 참고) — 재확인 후 회복됐든 안
-  // 됐든 1차 감지가 있었으면 그 순간의 시스템 스냅샷을 남긴다.
-  if (firstCheckUnhealthy) {
-    const line = buildMcpLossSnapshotLine({ timestampIso: new Date().toISOString(), recheckedAndRecovered, ...captureSystemSnapshot() });
-    console.log(`📊 진단 스냅샷: ${line}`);
-    if (!DRY_RUN) appendMcpLossLine(line);
+// 순수함수 — 최근 창 안에 반복된 개입은 사유가 교대해도 누적되게 상태를 전이한다.
+// 사유는 진단용 최신값으로만 기록한다.
+export function nextRestartState(state, {
+  unhealthy, reasonKey = null, nowMs, windowMs = SESSION_HANG_RESTART_WINDOW_MS,
+  transcriptWindowMs = TRANSCRIPT_PENDING_WINDOW_MS,
+}) {
+  const previous = {
+    consecutiveRestarts: Number.isFinite(state?.consecutiveRestarts) ? state.consecutiveRestarts : 0,
+    consecutiveRestartReasonKey: typeof state?.consecutiveRestartReasonKey === 'string'
+      ? state.consecutiveRestartReasonKey
+      : (typeof state?.lastRestartReasonKey === 'string' ? state.lastRestartReasonKey : null),
+    lastUnhealthyAtMs: Number.isFinite(state?.lastUnhealthyAtMs) ? state.lastUnhealthyAtMs : null,
+    lastRestartAtMs: Number.isFinite(state?.lastRestartAtMs) ? state.lastRestartAtMs : null,
+    lastRestartReasonKey: typeof state?.lastRestartReasonKey === 'string' ? state.lastRestartReasonKey : null,
+  };
+  if (unhealthy) {
+    const recentUnhealthy = Number.isFinite(previous.lastUnhealthyAtMs) && Number.isFinite(nowMs) &&
+      nowMs - previous.lastUnhealthyAtMs >= 0 && nowMs - previous.lastUnhealthyAtMs <= windowMs;
+    return {
+      // 서킷브레이커의 대상은 특정 장애 사유가 아니라 이 잡의 반복 개입 자체다.
+      // 따라서 polling-stuck과 로그 정체처럼 실제로 교대 가능한 사유도 최근 감지
+      // 창 안에서는 같은 연속 장애로 센다.
+      consecutiveRestarts: recentUnhealthy ? previous.consecutiveRestarts + 1 : 1,
+      consecutiveRestartReasonKey: reasonKey,
+      lastUnhealthyAtMs: nowMs,
+      // 여기서는 "감지/시도"만 기록한다. orphan 경계인 lastRestartAtMs는 실제
+      // restart 스크립트가 성공한 뒤 markRestartSucceeded에서만 움직인다.
+      lastRestartAtMs: previous.lastRestartAtMs,
+      lastRestartReasonKey: previous.lastRestartReasonKey,
+    };
   }
+  const retainRestartCount = Number.isFinite(previous.lastRestartAtMs) && Number.isFinite(nowMs) &&
+    nowMs - previous.lastRestartAtMs >= 0 && nowMs - previous.lastRestartAtMs <= windowMs;
+  const retainRestartBoundary = Number.isFinite(previous.lastRestartAtMs) && Number.isFinite(nowMs) &&
+    nowMs - previous.lastRestartAtMs >= 0 && nowMs - previous.lastRestartAtMs <= transcriptWindowMs;
+  return {
+    consecutiveRestarts: retainRestartCount ? previous.consecutiveRestarts : 0,
+    consecutiveRestartReasonKey: retainRestartCount ? previous.consecutiveRestartReasonKey : null,
+    lastUnhealthyAtMs: retainRestartCount ? previous.lastUnhealthyAtMs : null,
+    lastRestartAtMs: retainRestartBoundary ? previous.lastRestartAtMs : null,
+    lastRestartReasonKey: retainRestartCount ? previous.lastRestartReasonKey : null,
+  };
+}
 
+// 순수함수 — orphan 필터의 재시작 경계는 실제 restart 성공 후에만 기록한다. 실패한
+// 시도나 서킷브레이커 에스컬레이션이 살아있는 pending을 숨기면 안 된다.
+export function markRestartSucceeded(state, { nowMs, reasonKey }) {
+  return {
+    ...state,
+    lastRestartAtMs: nowMs,
+    lastRestartReasonKey: reasonKey,
+  };
+}
+
+function readOwnerMessageAwaitingReply(nowMs, lastRestartAtMs) {
+  try {
+    const lines = filterPendingTranscriptLines(
+      findTelegramTranscripts().flatMap(readTranscriptLines),
+      { nowMs, lastRestartAtMs },
+    );
+    const pendingTimestamp = findLatestUnansweredTelegramOwnerMessage(lines);
+    if (!pendingTimestamp) return false;
+    return isSessionLogStale({ lastModifiedMs: new Date(pendingTimestamp).getTime(), nowMs, thresholdMs: OWNER_REPLY_STALE_THRESHOLD_MS });
+  } catch (e) {
+    console.error(`⚠ transcript 미답변 확인 실패(재시작 판단에서 제외, 다음 실행 재시도): ${e.message}`);
+    return false;
+  }
+}
+
+async function checkSignalsOnce() {
+  const sessionAlive = isProcessAlive(TELEGRAM_SESSION_PROCESS_PATTERN);
+  const mcpSubprocessAlive = sessionAlive ? isProcessAlive(TELEGRAM_MCP_SUBPROCESS_PATTERN) : false;
   let pollingStuck = false;
   if (sessionAlive && mcpSubprocessAlive) {
     // 앞 두 신호가 정상일 때만 확인(불필요한 API 호출 절약) — 확인 자체가 실패해도
@@ -193,17 +294,42 @@ async function main() {
       console.error(`⚠ getWebhookInfo 확인 실패(재시작 판단에서 제외, 다음 실행 재시도): ${e.message}`);
     }
   }
+  let sessionLogStale = false;
+  try {
+    sessionLogStale = isSessionLogStale({ lastModifiedMs: statSync(SESSION_LOG_FILE).mtimeMs, nowMs: Date.now(), thresholdMs: OWNER_REPLY_STALE_THRESHOLD_MS });
+  } catch (e) {
+    console.error(`⚠ 세션 로그 mtime 확인 실패(재시작 판단에서 제외, 다음 실행 재시도): ${e.message}`);
+  }
+  const ownerMessageAwaitingReply = readOwnerMessageAwaitingReply(Date.now(), readState().lastRestartAtMs);
+  return { sessionAlive, mcpSubprocessAlive, pollingStuck, sessionLogStale, ownerMessageAwaitingReply };
+}
 
-  const { unhealthy, reason } = diagnose({ sessionAlive, mcpSubprocessAlive, pollingStuck });
+async function main() {
+  const health = (signals) => diagnose(signals).unhealthy;
+  const { sessionAlive, mcpSubprocessAlive, pollingStuck, sessionLogStale, ownerMessageAwaitingReply, recheckedAndRecovered, firstCheckUnhealthy } = await checkWithRecheck(checkSignalsOnce, { isUnhealthy: health });
+  if (recheckedAndRecovered) {
+    console.log(`⏳ 1차 확인에서 이상 감지됐으나 ${RECHECK_DELAY_MS / 1000}초 후 재확인에서 정상 회복 — 일시적 현상으로 판단, 조치 없음`);
+  }
+
+  // 근본원인 진단 계측(2026-09-04, 파일 헤더 주석 참고) — 재확인 후 회복됐든 안
+  // 됐든 1차 감지가 있었으면 그 순간의 시스템 스냅샷을 남긴다.
+  if (firstCheckUnhealthy) {
+    const line = buildMcpLossSnapshotLine({ timestampIso: new Date().toISOString(), recheckedAndRecovered, ...captureSystemSnapshot() });
+    console.log(`📊 진단 스냅샷: ${line}`);
+    if (!DRY_RUN) appendMcpLossLine(line);
+  }
+
+  const { unhealthy, reasonKey, reason } = diagnose({ sessionAlive, mcpSubprocessAlive, pollingStuck, sessionLogStale, ownerMessageAwaitingReply });
+  const nowMs = Date.now();
+  const nextState = nextRestartState(readState(), { unhealthy, reasonKey, nowMs });
 
   if (!unhealthy) {
-    if (!DRY_RUN) writeState({ consecutiveRestarts: 0 }); // 회복 확인 — 카운터 리셋
+    if (!DRY_RUN) writeState(nextState);
     console.log('✅ telegram-session-health-check: 이상 없음(조용함)');
     return;
   }
 
-  const { consecutiveRestarts: prevCount } = readState();
-  const consecutiveRestarts = prevCount + 1;
+  const { consecutiveRestarts } = nextState;
   const escalate = shouldEscalateInsteadOfRestart(consecutiveRestarts);
 
   console.log(`🔔 telegram-session-health-check: ${reason} (연속 ${consecutiveRestarts}회째)`);
@@ -213,9 +339,8 @@ async function main() {
     return;
   }
 
-  writeState({ consecutiveRestarts });
-
   if (escalate) {
+    writeState(nextState);
     console.log(`🚨 연속 ${consecutiveRestarts}회 — 재시작 중단, 수동 개입 필요 알림만 발송`);
     try {
       await sendTelegram(formatFactsMessage({
@@ -240,6 +365,8 @@ async function main() {
     restartOk = false;
     console.error('재시작 스크립트 실행 실패(타임아웃 포함):', e.message);
   }
+
+  writeState(restartOk ? markRestartSucceeded(nextState, { nowMs: Date.now(), reasonKey }) : nextState);
 
   try {
     await sendTelegram(formatFactsMessage({

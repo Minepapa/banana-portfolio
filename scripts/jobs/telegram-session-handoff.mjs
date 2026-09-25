@@ -218,6 +218,33 @@ export function extractConversationTurns(lines) {
   return turns;
 }
 
+// 순수함수 — 시간순으로 정렬된 텔레그램 세션 transcript에서, 세션의 완료 답변이 아직
+// 뒤따르지 않은 가장 최근 오너 메시지의 timestamp를 찾는다. health-check가 정상적인
+// 무대화 시간과 "대화 도중 멈춤"을 구분하는 데 재사용한다.
+export function findLatestUnansweredTelegramOwnerMessage(lines) {
+  let pendingTimestamp = null;
+  let latestAssistantCompletesReply = false;
+  for (const d of lines || []) {
+    if (d?.isSidechain === true) continue;
+    if (d?.type === 'user') {
+      const text = getUserMessageText(d.message);
+      if (CHANNEL_TAG_RE.test(text) && Number.isFinite(new Date(d.timestamp).getTime())) {
+        pendingTimestamp = d.timestamp;
+        latestAssistantCompletesReply = false;
+      }
+      continue;
+    }
+    if (pendingTimestamp && d?.type === 'assistant' && Array.isArray(d.message?.content)) {
+      // 중간의 순수 text로 즉시 해제하면 그 다음 assistant record의 tool_use를 놓친다.
+      // 오너 메시지 뒤 마지막 assistant record만으로 완료 여부를 판정한다.
+      const hasToolUse = d.message.content.some((c) => c?.type === 'tool_use');
+      const hasText = d.message.content.some((c) => c?.type === 'text' && c.text?.trim());
+      latestAssistantCompletesReply = !hasToolUse && hasText;
+    }
+  }
+  return pendingTimestamp && !latestAssistantCompletesReply ? pendingTimestamp : null;
+}
+
 // 순수함수 — 대화가 너무 길면(하루 종일 활발했던 날) 프롬프트 비용 폭주 방지로
 // 최근 부분만 남긴다(가장 최근 대화가 다음 세션에게 가장 중요하다는 전제).
 export function truncateConversationText(text, maxChars = CONVERSATION_MAX_CHARS) {
@@ -275,7 +302,7 @@ function readFileHead(path, maxBytes = 4096) {
 // 파일당 head 4KB만 읽어 마커를 확인하므로(agent-name 레코드는 파일 앞부분에 찍힘,
 // 2026-09-04 실측) 가벼움 — 실측 파일 크기는 최대 362KB(텔레그램 세션 자신은
 // 대화량이 적어 이 프로젝트의 다른 인터랙티브 세션 transcript보다 훨씬 작음).
-function findTelegramTranscripts(cwd = process.cwd()) {
+export function findTelegramTranscripts(cwd = process.cwd()) {
   const dir = join(claudeProjectsDir(), encodeProjectPath(cwd));
   if (!existsSync(dir)) return [];
   const entries = [];
@@ -292,7 +319,7 @@ function findTelegramTranscripts(cwd = process.cwd()) {
   return pickTelegramTranscriptPaths(entries);
 }
 
-function readTranscriptLines(path) {
+export function readTranscriptLines(path) {
   const text = readFileSync(path, 'utf8');
   const parsed = [];
   for (const line of text.split('\n')) {

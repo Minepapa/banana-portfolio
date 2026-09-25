@@ -4,7 +4,7 @@ import {
   kstDateStr, kstYesterdayStr, filterProposalsByCreatedDate, filterProposalsByDecidedDate,
   buildModeChangeNotes, buildHandoffText, hasTelegramSessionMarker, pickTelegramTranscriptPaths,
   filterLinesByKstDate, earliestTimestampMs,
-  extractConversationTurns, truncateConversationText, buildConversationPrompt,
+  extractConversationTurns, findLatestUnansweredTelegramOwnerMessage, truncateConversationText, buildConversationPrompt,
 } from './telegram-session-handoff.mjs';
 
 test('kstDateStr: UTC ISO를 KST 날짜로(자정 근처 날짜이월 확인)', () => {
@@ -178,6 +178,43 @@ test('extractConversationTurns: 사이드체인 라인은 제외(위임된 서�
     { role: 'owner', text: '정상 메시지' },
     { role: 'session', text: '정상 응답' },
   ]);
+});
+
+test('findLatestUnansweredTelegramOwnerMessage: 최신 오너 메시지 뒤 완료된 세션 답변이 없을 때만 그 시각을 반환', () => {
+  const lines = [
+    { ...CHANNEL_USER('먼저 답한 질문'), timestamp: '2026-09-25T07:00:00.000Z' },
+    { ...ASSISTANT_TEXT('답변 완료'), timestamp: '2026-09-25T07:00:05.000Z' },
+    { ...CHANNEL_USER('멈춘 질문'), timestamp: '2026-09-25T07:10:00.000Z' },
+  ];
+  assert.equal(findLatestUnansweredTelegramOwnerMessage(lines), '2026-09-25T07:10:00.000Z');
+});
+
+test('findLatestUnansweredTelegramOwnerMessage: 마지막 오너 메시지 뒤 세션 답변이 있으면 null', () => {
+  const lines = [
+    { ...CHANNEL_USER('질문'), timestamp: '2026-09-25T07:00:00.000Z' },
+    { ...ASSISTANT_TEXT('답변 완료'), timestamp: '2026-09-25T07:00:05.000Z' },
+  ];
+  assert.equal(findLatestUnansweredTelegramOwnerMessage(lines), null);
+});
+
+test('[실사고 재현] findLatestUnansweredTelegramOwnerMessage: tool_use를 동반한 설명 text는 완료 답변이 아니므로 pending을 유지', () => {
+  const lines = [
+    { ...CHANNEL_USER('도구로 확인해줘'), timestamp: '2026-09-25T07:00:00.000Z' },
+    { type: 'assistant', timestamp: '2026-09-25T07:00:05.000Z', message: { content: [
+      { type: 'text', text: '확인하겠습니다.' },
+      { type: 'tool_use', name: 'Read', input: {} },
+    ] } },
+  ];
+  assert.equal(findLatestUnansweredTelegramOwnerMessage(lines), '2026-09-25T07:00:00.000Z');
+});
+
+test('[실사고 재현] findLatestUnansweredTelegramOwnerMessage: 중간 순수 text 뒤 다음 assistant record의 tool_use도 pending을 유지', () => {
+  const lines = [
+    { ...CHANNEL_USER('도구로 확인해줘'), timestamp: '2026-09-25T07:00:00.000Z' },
+    { ...ASSISTANT_TEXT('확인하겠습니다.'), timestamp: '2026-09-25T07:00:05.000Z' },
+    { type: 'assistant', timestamp: '2026-09-25T07:00:06.000Z', message: { content: [{ type: 'tool_use', name: 'Read', input: {} }] } },
+  ];
+  assert.equal(findLatestUnansweredTelegramOwnerMessage(lines), '2026-09-25T07:00:00.000Z');
 });
 
 test('truncateConversationText: maxChars 이하면 그대로, 넘으면 뒷부분(최근)만 남김', () => {

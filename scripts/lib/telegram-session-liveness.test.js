@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isProcessAlive, TELEGRAM_SESSION_PROCESS_PATTERN, TELEGRAM_MCP_SUBPROCESS_PATTERN } from './telegram-session-liveness.mjs';
+import { isProcessAlive, isSessionLogStale, TELEGRAM_SESSION_PROCESS_PATTERN, TELEGRAM_MCP_SUBPROCESS_PATTERN } from './telegram-session-liveness.mjs';
 
 // 2026-08-31 신설 — health-watcher.mjs·telegram-session-health-check.mjs가 공유하는
 // 프로세스 생존 확인. isPollingStuck 자체는 health-watcher.test.js가 이미 커버(이
@@ -19,4 +19,16 @@ test('패턴 상수가 의도한 대로 정의돼 있음(세션 프로세스와 
   assert.match(TELEGRAM_SESSION_PROCESS_PATTERN, /channels/);
   assert.match(TELEGRAM_MCP_SUBPROCESS_PATTERN, /telegram/);
   assert.notEqual(TELEGRAM_SESSION_PROCESS_PATTERN, TELEGRAM_MCP_SUBPROCESS_PATTERN);
+});
+
+test('isSessionLogStale: 임계값을 넘은 로그만 정체로 판정(경계값은 정상)', () => {
+  const nowMs = 1_000_000;
+  const thresholdMs = 30 * 60_000;
+  assert.equal(isSessionLogStale({ lastModifiedMs: nowMs - thresholdMs, nowMs, thresholdMs }), false);
+  assert.equal(isSessionLogStale({ lastModifiedMs: nowMs - thresholdMs - 1, nowMs, thresholdMs }), true);
+});
+
+test('isSessionLogStale: mtime 또는 임계값이 유효하지 않으면 장애로 단정하지 않음', () => {
+  assert.equal(isSessionLogStale({ lastModifiedMs: undefined, nowMs: 1_000, thresholdMs: 1 }), false);
+  assert.equal(isSessionLogStale({ lastModifiedMs: 1_000, nowMs: 2_000, thresholdMs: 0 }), false);
 });

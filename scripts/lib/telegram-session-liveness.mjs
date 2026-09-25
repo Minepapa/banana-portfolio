@@ -46,3 +46,11 @@ export function isProcessAlive(pattern) {
 export function isPollingStuck({ pendingUpdateCount }) {
   return Number.isFinite(pendingUpdateCount) && pendingUpdateCount > 0;
 }
+
+// raw 터미널 로그의 mtime만으로 정체 여부를 판정하는 순수함수. 로그가 갱신되지 않는
+// 정상 유휴 시간도 있으므로, 호출부는 반드시 "미답변 오너 메시지" 신호와 함께 써야
+// 한다(telegram-session-health-check.mjs 참고).
+export function isSessionLogStale({ lastModifiedMs, nowMs, thresholdMs }) {
+  if (!Number.isFinite(lastModifiedMs) || !Number.isFinite(nowMs) || !Number.isFinite(thresholdMs) || thresholdMs <= 0) return false;
+  return nowMs - lastModifiedMs > thresholdMs;
+}

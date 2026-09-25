@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diagnose, shouldEscalateInsteadOfRestart, checkWithRecheck, buildMcpLossSnapshotLine } from './telegram-session-health-check.mjs';
+import { diagnose, shouldEscalateInsteadOfRestart, checkWithRecheck, buildMcpLossSnapshotLine, filterPendingTranscriptLines, markRestartSucceeded, nextRestartState, sortTimestampedTranscriptLines } from './telegram-session-health-check.mjs';
 
 // 2026-08-31 신설 — Log/DevRequests/2026-08-31-텔레그램세션-MCP연결끊김.md 대응.
 // launchd KeepAlive는 프로세스 생존만 보고, "프로세스는 살아있지만 MCP만 죽은"
@@ -32,6 +32,23 @@ test('diagnose: 프로세스는 다 살아있는데 폴링만 정체(좀비 상�
   const r = diagnose({ sessionAlive: true, mcpSubprocessAlive: true, pollingStuck: true });
   assert.equal(r.unhealthy, true);
   assert.match(r.reason, /폴링 정체/);
+});
+
+test('[실사고 재현] diagnose: 로그 정체와 미답변 오너 메시지가 함께 지속되면 대화 중간 멈춤으로 판정', () => {
+  const r = diagnose({
+    sessionAlive: true, mcpSubprocessAlive: true, pollingStuck: false,
+    sessionLogStale: true, ownerMessageAwaitingReply: true,
+  });
+  assert.equal(r.unhealthy, true);
+  assert.match(r.reason, /로그 정체.*대화형 확인창|대화형 확인창.*로그 정체/);
+});
+
+test('diagnose: 정상적으로 조용할 뿐 미답변 오너 메시지가 없으면 로그 정체만으로 재시작하지 않음', () => {
+  const r = diagnose({
+    sessionAlive: true, mcpSubprocessAlive: true, pollingStuck: false,
+    sessionLogStale: true, ownerMessageAwaitingReply: false,
+  });
+  assert.equal(r.unhealthy, false);
 });
 
 // 서킷브레이커 — 연속 재시작이 MAX를 넘으면 재시작을 멈추고 에스컬레이션(2026-08-31
@@ -108,6 +125,126 @@ test('checkWithRecheck: 세션 프로세스 자체가 죽은 경우도 동일하
   const r = await checkWithRecheck(checkSignals, { sleep });
   assert.equal(calls, 2);
   assert.equal(r.recheckedAndRecovered, true);
+});
+
+test('[공통 재확인 계약] checkWithRecheck: 로그 정체 결합값도 두 번째 조회값이 정상이면 조치하지 않음', async () => {
+  let calls = 0;
+  const checkSignals = async () => ({ sessionAlive: true, mcpSubprocessAlive: true, sessionLogStale: ++calls === 1, ownerMessageAwaitingReply: true });
+  const isUnhealthy = (signals) => signals.sessionLogStale && signals.ownerMessageAwaitingReply;
+  const r = await checkWithRecheck(checkSignals, { sleep: async () => {}, isUnhealthy });
+  assert.equal(calls, 2);
+  assert.equal(r.recheckedAndRecovered, true);
+  assert.equal(r.firstCheckUnhealthy, true);
+});
+
+test('[실사고 재현] sortTimestampedTranscriptLines: timestamp 없는 메타 레코드가 섞인 파일 병합도 실제 시간순으로 정렬', () => {
+  const lines = [
+    { type: 'last-prompt' },
+    { type: 'user', timestamp: '2026-09-25T07:10:00.000Z' },
+    { type: 'cost-state' },
+    { type: 'assistant', timestamp: '2026-09-25T07:00:00.000Z' },
+    { type: 'attachment' },
+  ];
+  assert.deepEqual(sortTimestampedTranscriptLines(lines).map((d) => d.timestamp), [
+    '2026-09-25T07:00:00.000Z', '2026-09-25T07:10:00.000Z',
+  ]);
+});
+
+test('[실사고 재현] filterPendingTranscriptLines: 재시작 전 orphan pending은 mtime과 무관하게 판정에서 제외', () => {
+  const lines = [
+    { type: 'user', timestamp: '2026-09-25T07:00:00.000Z' },
+    { type: 'user', timestamp: '2026-09-25T08:00:00.000Z' },
+  ];
+  assert.deepEqual(filterPendingTranscriptLines(lines, {
+    nowMs: new Date('2026-09-25T09:00:00.000Z').getTime(),
+    lastRestartAtMs: new Date('2026-09-25T07:30:00.000Z').getTime(),
+  }).map((d) => d.timestamp), ['2026-09-25T08:00:00.000Z']);
+});
+
+test('[막아야 함] nextRestartState: 같은 hang으로 3회 재시작 뒤 잠시 정상이어도 카운트를 리셋하지 않아 다음 감지에서 에스컬레이션', () => {
+  const options = { reasonKey: 'session-log-stale-owner-message', windowMs: 6 * 60 * 60_000 };
+  let state = { consecutiveRestarts: 0, lastRestartAtMs: null, lastRestartReasonKey: null };
+  state = nextRestartState(state, { unhealthy: true, nowMs: 1_000, ...options });
+  state = markRestartSucceeded(state, { nowMs: 1_100, reasonKey: options.reasonKey });
+  state = nextRestartState(state, { unhealthy: false, nowMs: 2_000, ...options });
+  state = nextRestartState(state, { unhealthy: true, nowMs: 3_000, ...options });
+  state = markRestartSucceeded(state, { nowMs: 3_100, reasonKey: options.reasonKey });
+  state = nextRestartState(state, { unhealthy: false, nowMs: 4_000, ...options });
+  state = nextRestartState(state, { unhealthy: true, nowMs: 5_000, ...options });
+  state = markRestartSucceeded(state, { nowMs: 5_100, reasonKey: options.reasonKey });
+  assert.equal(state.consecutiveRestarts, 3);
+  state = nextRestartState(state, { unhealthy: false, nowMs: 6_000, ...options });
+  state = nextRestartState(state, { unhealthy: true, nowMs: 7_000, ...options });
+  assert.equal(shouldEscalateInsteadOfRestart(state.consecutiveRestarts), true);
+});
+
+test('[막아야 함] nextRestartState: 기존 MCP 소실 신호도 정상 판정 전까지 계속 누적해 서킷브레이커를 보존', () => {
+  let state = { consecutiveRestarts: 0, lastRestartAtMs: null, lastRestartReasonKey: null };
+  for (let i = 0; i < 4; i++) {
+    state = nextRestartState(state, { unhealthy: true, reasonKey: 'mcp-subprocess-missing', nowMs: 1_000 + i });
+  }
+  assert.equal(state.consecutiveRestarts, 4);
+  assert.equal(shouldEscalateInsteadOfRestart(state.consecutiveRestarts), true);
+});
+
+test('[막아야 함] nextRestartState: 최근 창 안에서 hang과 polling-stuck 사유가 교대해도 서킷브레이커까지 누적', () => {
+  const reasonKeys = ['session-log-stale-owner-message', 'polling-stuck'];
+  let state = { consecutiveRestarts: 0, lastUnhealthyAtMs: null, lastRestartAtMs: null, lastRestartReasonKey: null };
+  for (let i = 0; i < 8; i++) {
+    state = nextRestartState(state, {
+      unhealthy: true,
+      reasonKey: reasonKeys[i % reasonKeys.length],
+      nowMs: 1_000 + i * 10 * 60_000,
+    });
+    assert.equal(shouldEscalateInsteadOfRestart(state.consecutiveRestarts), i >= 3);
+  }
+});
+
+test('nextRestartState: 오래 지난 chronic 카운트는 다른 일회성 신호의 에스컬레이션에 재사용하지 않음', () => {
+  const state = {
+    consecutiveRestarts: 3,
+    lastUnhealthyAtMs: 1_000,
+    lastRestartAtMs: 1_000,
+    lastRestartReasonKey: 'session-log-stale-owner-message',
+  };
+  const next = nextRestartState(state, {
+    unhealthy: true,
+    reasonKey: 'mcp-subprocess-missing',
+    nowMs: 6 * 60 * 60_000 + 1_001,
+  });
+  assert.equal(next.consecutiveRestarts, 1);
+  assert.equal(shouldEscalateInsteadOfRestart(next.consecutiveRestarts), false);
+});
+
+test('nextRestartState: 비-hang 재시작 뒤 짧은 정상 판정이어도 최근 창 동안 카운트와 orphan 차단 경계를 유지', () => {
+  const restarted = nextRestartState(
+    { consecutiveRestarts: 0, lastRestartAtMs: null, lastRestartReasonKey: null },
+    { unhealthy: true, reasonKey: 'mcp-subprocess-missing', nowMs: 1_000 },
+  );
+  const restartedSuccessfully = markRestartSucceeded(restarted, { nowMs: 1_500, reasonKey: 'mcp-subprocess-missing' });
+  const recovered = nextRestartState(restartedSuccessfully, { unhealthy: false, nowMs: 2_000 });
+  assert.equal(recovered.consecutiveRestarts, 1);
+  assert.equal(recovered.lastRestartAtMs, 1_500);
+});
+
+test('nextRestartState: 실패한 재시도는 orphan 차단 경계를 앞당기지 않고, 성공한 재시도만 경계를 기록', () => {
+  const attempted = nextRestartState(
+    { consecutiveRestarts: 0, consecutiveRestartReasonKey: null, lastRestartAtMs: 100, lastRestartReasonKey: 'mcp-subprocess-missing' },
+    { unhealthy: true, reasonKey: 'session-log-stale-owner-message', nowMs: 1_000 },
+  );
+  assert.equal(attempted.lastRestartAtMs, 100);
+  const succeeded = markRestartSucceeded(attempted, { nowMs: 1_100, reasonKey: 'session-log-stale-owner-message' });
+  assert.equal(succeeded.lastRestartAtMs, 1_100);
+});
+
+test('nextRestartState: 실패한 hang 재시도도 감지 시각을 별도로 누적해 서킷브레이커를 유지', () => {
+  let state = nextRestartState(
+    { consecutiveRestarts: 0, consecutiveRestartReasonKey: null, lastUnhealthyAtMs: null, lastRestartAtMs: null, lastRestartReasonKey: null },
+    { unhealthy: true, reasonKey: 'session-log-stale-owner-message', nowMs: 1_000 },
+  );
+  state = nextRestartState(state, { unhealthy: true, reasonKey: 'session-log-stale-owner-message', nowMs: 2_000 });
+  assert.equal(state.consecutiveRestarts, 2);
+  assert.equal(state.lastRestartAtMs, null);
 });
 
 // ── buildMcpLossSnapshotLine(2026-09-04 신설, 근본원인 진단 계측) ──────────────
