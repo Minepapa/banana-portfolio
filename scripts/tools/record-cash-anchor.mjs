@@ -25,6 +25,7 @@
  *
  * 사용법:
  *   node scripts/tools/record-cash-anchor.mjs --account=연금저축 --balance=1079918
+ *   node scripts/tools/record-cash-anchor.mjs --account=연금저축 --balance=1079918 --at="2026-09-25 14:30:00"
  *   node scripts/tools/record-cash-anchor.mjs --account=연금저축 --balance=1079918 --dry-run
  *
  * 기록 직후 실제 반영은 update-cash-from-ledger.mjs가 다음 정기 실행 때(평일 16:10)
@@ -37,13 +38,25 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildCashEventRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
-import { FROZEN_ANCHORS } from '../jobs/update-cash-from-ledger.mjs';
+import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { ALL_ACCOUNTS, FROZEN_ANCHORS, buildFlows, readVaultFiles } from '../jobs/update-cash-from-ledger.mjs';
 
-function parseArgs(argv) {
+// 앱에서 잔고 확인 후 텔레그램 전달·CLI 실행까지 걸리는 현실적인 지연을 보수적으로
+// 넉넉히 덮는 값이다. 정확한 실측값은 없으므로, 운영 경험이 쌓이면 조정할 수 있다.
+export const WINDOW_MINUTES = 60;
+const KST_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+const VALUE_OPTIONS = new Set(['account', 'balance', 'at']);
+
+export function parseArgs(argv) {
   const out = {};
   for (const a of argv) {
     const m = a.match(/^--([a-zA-Z-]+)=(.*)$/s);
-    if (m) out[m[1]] = m[2];
+    if (m) {
+      if (!VALUE_OPTIONS.has(m[1])) throw new Error(`알 수 없는 옵션: --${m[1]}`);
+      out[m[1]] = m[2];
+    } else if (a.startsWith('--') && a !== '--dry-run') {
+      throw new Error(`알 수 없는 옵션 형식: ${a} (값이 필요한 옵션은 --이름=값 형식으로 입력하세요)`);
+    }
   }
   return out;
 }
@@ -51,23 +64,156 @@ function parseArgs(argv) {
 // KST 벽시계 기준 "YYYY-MM-DD HH:MM:SS" — 이 프로젝트 전체가 쓰는 관례(order-
 // gate.mjs checkMarketOpen·reconcile-irp.mjs 등과 동일, UTC로 쓰면 9시간 어긋나는
 // 실사고가 이미 여러 번 있었음).
-function kstNow() {
+export function formatKstTimestamp(timestampMs) {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Seoul', hour12: false,
+    timeZone: 'Asia/Seoul', hourCycle: 'h23',
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(new Date());
+  }).formatToParts(new Date(timestampMs));
   const get = (type) => parts.find((p) => p.type === type).value;
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
 }
 
+function kstNow() {
+  return formatKstTimestamp(Date.now());
+}
+
+export function resolveAnchorTimestamp(at, now = kstNow) {
+  if (at === undefined) return now();
+  if (!KST_TIMESTAMP_RE.test(at)) {
+    throw new Error('--at=YYYY-MM-DD HH:MM:SS 형식 필요(예: --at="2026-09-25 14:30:00")');
+  }
+  const timestampMs = kstTimestampMs(at);
+  if (!Number.isFinite(timestampMs) || formatKstTimestamp(timestampMs) !== at) {
+    throw new Error('--at에 존재하지 않는 날짜 또는 시각이 있습니다');
+  }
+  const nowMs = kstTimestampMs(now());
+  if (!Number.isFinite(nowMs)) throw new Error('현재 KST 시각을 해석할 수 없습니다');
+  if (timestampMs > nowMs) throw new Error('--at은 미래 시각일 수 없습니다');
+  return at;
+}
+
+export function kstTimestampMs(ts) {
+  const value = String(ts ?? '').trim();
+  const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})$/i);
+  if (iso) {
+    const [, year, month, day, hour, minute, second, offset] = iso;
+    const wallClockMs = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+    const wallClock = new Date(wallClockMs);
+    const offsetValid = offset.toUpperCase() === 'Z' || (
+      Number(offset.slice(1, 3)) <= 23 && Number(offset.slice(-2)) <= 59
+    );
+    if (!offsetValid || wallClock.getUTCFullYear() !== Number(year) || wallClock.getUTCMonth() !== Number(month) - 1
+      || wallClock.getUTCDate() !== Number(day) || wallClock.getUTCHours() !== Number(hour)
+      || wallClock.getUTCMinutes() !== Number(minute) || wallClock.getUTCSeconds() !== Number(second)) return NaN;
+    return new Date(value).getTime();
+  }
+
+  const match = value.match(/^(\d{4}-\d{2}-\d{2}) (\d{1,2}):(\d{2}):(\d{2})$/);
+  if (!match) return NaN;
+  const [, date, hour, minute, second] = match;
+  const normalized = `${date} ${hour.padStart(2, '0')}:${minute}:${second}`;
+  const timestampMs = new Date(`${date}T${hour.padStart(2, '0')}:${minute}:${second}+09:00`).getTime();
+  return Number.isFinite(timestampMs) && formatKstTimestamp(timestampMs) === normalized ? timestampMs : NaN;
+}
+
+export function findNearbyFlows(anchorTs, flows, windowMinutes = WINDOW_MINUTES) {
+  const anchorMs = kstTimestampMs(anchorTs);
+  if (!Number.isFinite(anchorMs)) throw new Error(`앵커 시각 파싱 실패: ${anchorTs}`);
+  const windowMs = windowMinutes * 60 * 1000;
+  const nearby = [];
+  const unparseable = [];
+  for (const flow of flows) {
+    const flowMs = kstTimestampMs(flow.ts);
+    if (!Number.isFinite(flowMs)) {
+      unparseable.push(flow);
+    } else if (Math.abs(flowMs - anchorMs) <= windowMs) {
+      nearby.push(flow);
+    }
+  }
+  nearby.sort((a, b) => kstTimestampMs(a.ts) - kstTimestampMs(b.ts));
+  return { nearby, unparseable };
+}
+
+export function formatNearbyFlowWarning(account, ts, { nearby, unparseable }, windowMinutes = WINDOW_MINUTES) {
+  if (nearby.length === 0 && unparseable.length === 0) return null;
+  const details = nearby.map((flow) => {
+    const sign = flow.amount >= 0 ? '+' : '-';
+    return `  - ${flow.ts} ${sign}${Math.abs(flow.amount).toLocaleString()}원 (${flow.kind})`;
+  });
+  const lines = [];
+  if (nearby.length > 0) {
+    lines.push(`⚠️  ${account} 앵커 시각(${ts}) 근처 ${windowMinutes}분 이내에 흐름 ${nearby.length}건 발견 — 이 앵커 이후로 처리될지 확인하세요:`, ...details);
+  }
+  if (unparseable.length > 0) {
+    lines.push(`⚠️ 시각 파싱 실패 ${unparseable.length}건(수동 확인 필요): ${unparseable.map((flow) => flow.ts).join(', ')}`);
+  }
+  lines.push('   관측 시각이 이 목록의 흐름보다 이르면 --at="YYYY-MM-DD HH:MM:SS"로 다시 기록하세요.');
+  return lines.join('\n');
+}
+
+// buildFlows의 현금 계산 규칙을 그대로 재사용하되, 경고 문구에 필요한 원장 종류만
+// 덧붙인다. CashEvent는 depositAmount가 있는 ISA 입금안내만 flow가 되며, 수동 앵커
+// 자체에는 그 필드가 없어 buildFlows가 이미 제외하므로 여기서도 읽지 않는다.
+export function buildWarnableFlows(account, { executions, dividends, fundPurchases, exchanges }) {
+  const label = (flows, kind) => flows.map((flow) => ({ ...flow, kind }));
+  return [
+    ...label(buildFlows(account, executions, [], [], [], []), '체결'),
+    ...label(buildFlows(account, [], dividends, [], [], []), '배당'),
+    ...label(buildFlows(account, [], [], fundPurchases, [], []), '펀드적립'),
+    ...label(buildFlows(account, [], [], [], exchanges, []), '환전'),
+  ];
+}
+
+export function warnNearbyFlows(account, ts, windowMinutes = WINDOW_MINUTES) {
+  const flows = buildWarnableFlows(account, {
+    executions: readVaultFiles(VAULT_PATHS.facts.ledger.executions),
+    dividends: readVaultFiles(VAULT_PATHS.facts.ledger.dividends),
+    fundPurchases: readVaultFiles(VAULT_PATHS.facts.ledger.fundPurchases),
+    exchanges: readVaultFiles(VAULT_PATHS.facts.ledger.exchanges),
+  });
+  const warning = formatNearbyFlowWarning(account, ts, findNearbyFlows(ts, flows, windowMinutes), windowMinutes);
+  if (warning) console.warn(warning);
+}
+
+function writeAnchorRecord({ dir, filename, content }) {
+  mkdirSync(dir, { recursive: true });
+  writeAtomic(join(dir, filename), content);
+}
+
+// 근접흐름 점검은 보조 안전장치다. Vault 동기화 경합 등으로 실패해도 이미 검증된
+// 관측 잔고 기록은 반드시 계속한다. write 주입점은 이 순서를 파일 I/O 없이 검증한다.
+export function recordAnchor({ account, balance, ts, dryRun, windowMinutes = WINDOW_MINUTES, warn = warnNearbyFlows, write = writeAnchorRecord }) {
+  try {
+    warn(account, ts, windowMinutes);
+  } catch (e) {
+    console.warn(`⚠️ 근접 흐름 점검 실패(기록은 계속 진행): ${e.message}`);
+  }
+
+  const record = buildCashEventRecord({ account, balance, ts });
+  const filepath = join(record.dir, record.filename);
+  console.log(`  + [예수금앵커·수동] ${ts} ${account} 잔고 ${balance.toLocaleString()}원 — ${filepath}`);
+  if (!dryRun) {
+    write(record);
+    console.log('\n✅ 기록 완료 — 실제 계산 반영은 update-cash-from-ledger.mjs 다음 실행(평일 16:10) 때 자동 적용됩니다.');
+    console.log('   즉시 반영하려면: node scripts/jobs/update-cash-from-ledger.mjs');
+  } else {
+    console.log('\n✅ 드라이런 — 쓰기 없음');
+  }
+  return { account, balance, ts, filepath };
+}
+
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  let args;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch (e) {
+    console.error(`❌ ${e.message}`);
+    process.exit(2);
+  }
   const DRY_RUN = process.argv.includes('--dry-run');
 
   const account = args.account?.trim();
   const balance = Number(args.balance);
-  // 계좌명 오타로 엉뚱한 계좌를 덮어쓰는 걸 막기 위해 화이트리스트를 두지 않는다
-  // (일부러) — 대신 balance 자체를 엄격히 검증해 "0으로 추정" 같은 사고를 막는다.
   if (!account) { console.error('❌ --account=계좌명 필요(예: --account=연금저축)'); process.exit(2); }
   if (!Number.isFinite(balance) || balance < 0) { console.error('❌ --balance=잔고(0 이상 숫자) 필요'); process.exit(2); }
   // 앵커 동결 계좌 거부(2026-09-11 신설, code-reviewer 지적) — ISA는
@@ -80,20 +226,23 @@ async function main() {
     console.error(`❌ ${account}는 앵커 동결 계좌라 이 도구로 갱신 안 됨 — scripts/jobs/update-cash-from-ledger.mjs의 FROZEN_ANCHORS.${account}를 코드로 직접 고치세요.`);
     process.exit(2);
   }
-
-  const ts = kstNow();
-  const { filename, content, dir } = buildCashEventRecord({ account, balance, ts });
-  const filepath = join(dir, filename);
-
-  console.log(`  + [예수금앵커·수동] ${ts} ${account} 잔고 ${balance.toLocaleString()}원 — ${filepath}`);
-  if (!DRY_RUN) {
-    mkdirSync(dir, { recursive: true });
-    writeAtomic(filepath, content);
-    console.log('\n✅ 기록 완료 — 실제 계산 반영은 update-cash-from-ledger.mjs 다음 실행(평일 16:10) 때 자동 적용됩니다.');
-    console.log('   즉시 반영하려면: node scripts/jobs/update-cash-from-ledger.mjs');
-  } else {
-    console.log('\n✅ 드라이런 — 쓰기 없음');
+  if (!ALL_ACCOUNTS.includes(account)) {
+    console.error(`❌ ${account}는 이 도구의 예수금 재계산 대상이 아님 — 유효 계좌: ${ALL_ACCOUNTS.join(', ')}.`);
+    process.exit(2);
   }
+
+  let ts;
+  const nowTs = kstNow();
+  try {
+    ts = resolveAnchorTimestamp(args.at, () => nowTs);
+  } catch (e) {
+    console.error(`❌ ${e.message}`);
+    process.exit(2);
+  }
+  const lookbackMinutes = args.at === undefined
+    ? WINDOW_MINUTES
+    : Math.max(WINDOW_MINUTES, Math.ceil((kstTimestampMs(nowTs) - kstTimestampMs(ts)) / 60_000));
+  recordAnchor({ account, balance, ts, dryRun: DRY_RUN, windowMinutes: lookbackMinutes });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

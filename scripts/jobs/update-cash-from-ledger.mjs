@@ -156,7 +156,7 @@ export function checkDriftWarning({ account, anchorBaseTs, latestEvent, settledC
   return `🚨 ${account}: 계산값(${settledCash.toLocaleString()}원)이 최근 NH 출금가능금액 하한선(${latestEvent.balance.toLocaleString()}원, ${latestEvent.ts})보다 낮음 — 미추적 유출(수수료 등) 가능성, 확인 필요`;
 }
 
-function readVaultFiles(dir) {
+export function readVaultFiles(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => {
     const filepath = join(dir, f);
