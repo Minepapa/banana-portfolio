@@ -34,7 +34,7 @@ test('yamlValue·parseFrontmatter: 문자열 배열 왕복 보장(related 링크
   assert.equal(yamlValue(['[[A]]', '[[B]]']), '["[[A]]", "[[B]]"]');
   assert.equal(yamlValue([]), '[]');
 
-  const fields = { type: 'preference-observation', related: ['[[Knowledge/Topics/500만원-1회매수-원칙]]'] };
+  const fields = { type: 'preference-observation', related: ['[[Knowledge/Topics/매수규모-분할매수-기준]]'] };
   assert.deepEqual(parseFrontmatter(buildFrontmatter(fields)), fields);
 
   // 여러 번 갱신돼도 계속 배열이어야 한다(이스케이프가 누적되지 않는다).
@@ -64,7 +64,7 @@ test('[실사고 재현/막아야 함] parseFrontmatter: 배열 원소가 2개 �
 
 test('parseFrontmatter: 대괄호로 시작하는 문자열 값은 배열로 오인하지 않는다', () => {
   // 문자열은 항상 따옴표로 감싸여 저장되므로 배열 분기에 안 걸려야 한다.
-  const fields = { observation: '[중요] 500만원 초과 매수, 재검토 필요' };
+  const fields = { observation: '[중요] 매수 규모 재검토 필요' };
   assert.deepEqual(parseFrontmatter(buildFrontmatter(fields)), fields);
 });
 

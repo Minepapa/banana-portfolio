@@ -117,7 +117,7 @@ test('clampLen: 길이 제한 + 말줄임', () => {
 
 test('filterObservations: enum 보정·엔티티 DROP·주장 DROP·중복 DROP·최대건수', () => {
   const universe = ['SK하이닉스', '현대차', '삼성전자'];
-  const factsText = '■ 이번 주 매수\n  - 2026-07-09 삼성전자 5주\n■ 1회 500만 원칙: 위반 1건 (SK하이닉스)';
+  const factsText = '■ 이번 주 매수\n  - 2026-07-09 삼성전자 5주\n■ 평가 후 매수: 1건 (SK하이닉스)';
   const claimAllowed = []; // 이번 주 B🔴 종목 없음(사고 재현)
 
   const observations = [

@@ -7,7 +7,6 @@
 
 import { NOTE_COL as N, JOURNAL_COL as J, RISK_COL as R, EXEC_COL as T, JOURNAL_STATUS, PROPOSAL_SOURCE } from './sheet-contracts.mjs';
 
-export const RULE500_WON = 5_000_000;   // 1회 매수 상한 (profile §3 — 확신 종목은 예외 라벨)
 export const GAP_TRIGGER_PCT = 5;       // 리밸런싱 갭 트리거 ±5%p (오늘탭·자산분배와 동일)
 
 const s = (v) => String(v ?? '').trim();
@@ -140,14 +139,14 @@ export function buildRebalanceCandidates({ gaps, holdings, conviction, conclusio
   return out;
 }
 
-// 급락(O🔴) 매수: 보유 종목의 급락 신호 → 500만·예수금 이내 매수.
+// 급락(O🔴) 매수: 보유 종목의 급락 신호 → 계좌 예수금 범위에서 매수.
 export function buildCrashBuyCandidates({ oSignals, holdings, cash }) {
   const out = [];
   for (const [name, sig] of oSignals || new Map()) {
     if (!sig.signal.includes('🔴')) continue;
     const h = (holdings || []).find(x => x.name === name);   // 보유 계좌 그대로 추가 매수
     if (!h) continue;
-    const budget = Math.min(RULE500_WON, cash?.[h.acct] ?? 0);
+    const budget = cash?.[h.acct] ?? 0;
     const qty = Math.floor(budget / h.unitKrw);
     if (qty < 1) continue;
     out.push(mk(PROPOSAL_SOURCE.CRASH, h.acct, '매수', name, qty, h.unitKrw, {
@@ -191,7 +190,7 @@ export function buildBuyFromEval({ conclusions, execRows, holdings, cash, defaul
     if (buys.some(b => b.name === name && b.date >= card.date)) continue;   // 이미 실행함
     const h = (holdings || []).find(x => x.name === name);
     const acct = h?.acct ?? defaultAcct;
-    const budget = Math.min(RULE500_WON, cash?.[acct] ?? 0);
+    const budget = cash?.[acct] ?? 0;
     if (!(budget > 0)) continue;
     const qty = h ? Math.floor(budget / h.unitKrw) : null;   // 미보유 → 잡이 단가 해결 후 산출
     if (h && qty < 1) continue;
@@ -308,12 +307,6 @@ export function checkConstraints(c, { cash, conviction }) {
     const avail = cash?.[c.acct] ?? 0;
     checks.push({ k: '예수금', ok: c.amount != null ? avail >= c.amount : null,
       d: `${c.acct} ${Math.round(avail).toLocaleString()}원 보유${c.amount != null ? ` / 주문 ${Math.round(c.amount).toLocaleString()}원` : ''}` });
-    if (c.amount != null) {
-      const within = c.amount <= RULE500_WON;
-      const conv = conviction.get(c.name) === '확신';
-      checks.push({ k: '500만원칙', ok: within || conv,
-        d: within ? `${Math.round(c.amount).toLocaleString()}원 ≤ 500만` : (conv ? '초과하나 확신 종목 예외(확정 성향)' : '500만 초과') });
-    }
     // 논리훼손 가드가 스탬프한 충돌(B🟡) — 급락매수여도 펀더멘털 약화를 명시(최종 판단은 Frank).
     if (c.why?.논리충돌) checks.push({ k: '논리상태', ok: false, d: c.why.논리충돌 });
     // 차단해제 대기(구조조정 안건7) — B🔴에서 막 회복한 종목은 Zeus 반대검증 확인 전엔

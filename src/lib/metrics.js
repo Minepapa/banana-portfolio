@@ -1,5 +1,4 @@
 // 자산·KPI·행동 지표 계산 (순수 함수). App.jsx에서 추출 (동작 불변).
-import { parseNum } from './textFormat.js';
 import { sameStock } from './stockIdentity.js';
 
 export function computeAssets(holdings, totalEval, defaultAssets) {
@@ -91,12 +90,6 @@ export function computeBehaviorMetrics(kpiTrades, evaluations) {
   const buys  = kpiTrades.filter(r => String(r.row?.[1]||'').trim() === '매수');
   const sells = kpiTrades.filter(r => String(r.row?.[1]||'').trim() === '매도');
 
-  // 500만 원칙 (1회 매수 체결금액 ≤ 5,000,000)
-  const rule500OK = buys.filter(r => {
-    const amt = Math.round(parseNum(r.row?.[6]) * parseNum(r.row?.[7]));
-    return amt > 0 && amt <= 5000000;
-  }).length;
-
   // 🟢 평가 → 매수 매칭 (매칭 기간 내 동일 종목 매수 여부)
   // 3분류: 실행(matched) / 미실행-기간경과(missed, 진짜 누락) / 유예(pending, 기간 미경과)
   // 일치율 분모는 "실행 기회가 있었던 평가"(matched+missed)만 — 유예는 제외해야 의미 있음.
@@ -163,8 +156,6 @@ export function computeBehaviorMetrics(kpiTrades, evaluations) {
     sellDisciplineOK, sellDisciplineTotal: sells.length,
     sellDisciplineRate: sells.length > 0 ? Math.round(sellDisciplineOK / sells.length * 100) : null,
     freqAvg30, freqRatio,
-    rule500OK, rule500Total: buys.length,
-    rule500Rate: buys.length > 0 ? Math.round(rule500OK / buys.length * 100) : null,
     greenEvalTotal: greenEvals.length,
     evalMatchCount: matchedEvals.length,
     evalEligible,

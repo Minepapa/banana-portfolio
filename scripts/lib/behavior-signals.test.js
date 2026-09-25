@@ -100,13 +100,10 @@ test('buildBehaviorSignals: partialHistory 매도가 섞이면 익절/손절 집
   assert.match(signalsText, /일부 매입이력 미확정 포함/);
 });
 
-test('buildBehaviorSignals: 500만 원칙 — 초과 매수 감지(최근 90일)', () => {
-  const { signals } = buildBehaviorSignals(baseInput());
-  // 최근 90일 매수 5건(4/10·4/15·5/20·6/8·6/9) 중 하이닉스 1000만·삼성 600만 초과 → 위반 2
-  assert.equal(signals.rule500.total, 5);
-  assert.equal(signals.rule500.violations.length, 2);
-  const names = signals.rule500.violations.map(v => v.name);
-  assert.ok(names.includes('삼성전자') && names.includes('SK하이닉스'));
+test('buildBehaviorSignals: 고정 금액 상한 KPI를 만들거나 보고하지 않는다', () => {
+  const { signals, signalsText } = buildBehaviorSignals(baseInput());
+  assert.equal('rule500' in signals, false);
+  assert.doesNotMatch(signalsText, /500만/);
 });
 
 test('buildBehaviorSignals: 🟢 평가 후 미매수(망설임) 감지', () => {

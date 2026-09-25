@@ -127,15 +127,15 @@ test('computeBehaviorMetrics: 매수 매도 건수', () => {
   assert.equal(m.totalSells, 1);
 });
 
-test('computeBehaviorMetrics: 500만 원칙 초과 감지', () => {
+test('computeBehaviorMetrics: 고정 금액 상한 KPI를 만들지 않는다', () => {
   const trades = [
     mkTrade('2026-06-01', '매수', '위탁', '005930', '국내주식', '삼성전자', 60000, 100),
     mkTrade('2026-06-02', '매수', '위탁', 'AAPL', '해외주식', '애플', 200000, 2),
   ];
   const m = computeBehaviorMetrics(trades, []);
-  assert.equal(m.rule500Total, 2);
-  assert.equal(m.rule500OK, 1);
-  assert.equal(m.rule500Rate, 50);
+  assert.equal('rule500Total' in m, false);
+  assert.equal('rule500OK' in m, false);
+  assert.equal('rule500Rate' in m, false);
 });
 
 test('computeBehaviorMetrics: 평가 후 매수 매칭', () => {

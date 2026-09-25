@@ -2,7 +2,7 @@
 // Frank의 "드러난 성향"을 결정론으로 산출한다. LLM은 이 사실을 §3과 대조해 해석만 할 뿐,
 // 신호 자체는 LLM이 만들지 않는다(코드베이스 철학: raw 숫자는 LLM이 만들지 않는다).
 //
-// 임계값은 src/lib/metrics.js computeBehaviorMetrics와 일치(500만 원칙·30일 매칭창).
+// 매칭창은 src/lib/metrics.js computeBehaviorMetrics와 일치한다.
 
 // 컬럼 레이아웃은 sheet-contracts.mjs 단일 정본에서 import — 로컬 중복 하드코딩 금지
 // (writer HEADER와의 정합은 sheet-contracts.test.js가 고정).
@@ -17,10 +17,8 @@ import { toDateStr } from './order-candidates.mjs';
 // 여전히 틀린 값을 내는 상태였다(오너가 "그 케이스 말고 전체를 보라"고 지적해서 발견).
 import { buildProfitLookup, lookupRealizedProfit } from './realized-profit-ledger.mjs';
 
-const RULE500_WON = 5_000_000;        // 1회 매수 체결금액 상한(성향: 적립식)
 const MATCH_WINDOW_DAYS = 30;         // 🟢 평가 → 매수 매칭창
 const LESSON_LOOKBACK_DAYS = 60;      // 청산 교훈 수집 범위
-const RULE_LOOKBACK_DAYS = 90;        // 500만 원칙 집계 범위(주간은 표본이 작아 최근 누적으로 본다)
 
 const num = (v) => { const n = parseFloat(String(v ?? '').replace(/[,%+\s]/g, '')); return Number.isFinite(n) ? n : null; };
 const s = (v) => String(v ?? '').trim();
@@ -124,11 +122,6 @@ export function buildBehaviorSignals(input) {
   const takeProfit = { count: tp.length, avgPct: avg(tp), pctCount: tp.filter(x => x.realizedPct != null).length, items: tp, hasPartial: tp.some(x => x.partialHistory) };
   const stopLoss = { count: sl.length, avgPct: avg(sl), pctCount: sl.filter(x => x.realizedPct != null).length, items: sl, hasPartial: sl.some(x => x.partialHistory) };
 
-  // 500만 원칙 — 최근 RULE_LOOKBACK_DAYS 매수 누적 기준(주간 표본이 작아 최근 흐름으로 본다). 위반 목록.
-  const ruleBuys = buysAll.filter(b => !asof || !b.date || daysBetween(b.date, asof) <= RULE_LOOKBACK_DAYS);
-  const violations = ruleBuys.filter(b => b.amount != null && b.amount > RULE500_WON);
-  const rule500 = { total: ruleBuys.length, okCount: ruleBuys.length - violations.length, violations };
-
   // 🟢 평가 후 미매수(망설임) — status가 '매수'가 아니고, 결론 🟢/유효, 평가 후 매수 없음.
   const greenNotes = noteRows.filter(r => {
     const concl = s(r[N.CONCL]); const status = s(r[N.STATUS]);
@@ -163,7 +156,7 @@ export function buildBehaviorSignals(input) {
     return !exit || (asof && daysBetween(exit, asof) <= LESSON_LOOKBACK_DAYS);
   }).map(r => ({ name: s(r[J.NAME]), result: s(r[J.RESULT]), lesson: s(r[J.LESSON]), exitDate: s(r[J.EXITDATE]) }));
 
-  const signals = { asof, weekStart, week, takeProfit, stopLoss, rule500, missedGreen, unsoldRed, lessons };
+  const signals = { asof, weekStart, week, takeProfit, stopLoss, missedGreen, unsoldRed, lessons };
   return { signals, signalsText: renderSignalsText(signals) };
 }
 
@@ -198,9 +191,6 @@ function renderSignalsText(g) {
   const pctBasis = (g_) => g_.pctCount < g_.count ? `, ${g_.count}건 중 ${g_.pctCount}건 기준` : '';
   L.push(`\n■ 익절/손절: 익절 ${g.takeProfit.count}건(평균 ${g.takeProfit.avgPct ?? '–'}%${pctBasis(g.takeProfit)}${g.takeProfit.hasPartial ? ', 일부 매입이력 미확정 포함' : ''})`
     + ` · 손절 ${g.stopLoss.count}건(평균 ${g.stopLoss.avgPct ?? '–'}%${pctBasis(g.stopLoss)}${g.stopLoss.hasPartial ? ', 일부 매입이력 미확정 포함' : ''})`);
-  L.push(`■ 1회 500만 원칙: 매수 ${g.rule500.total}건 중 위반 ${g.rule500.violations.length}건`
-    + (g.rule500.violations.length ? ` (${g.rule500.violations.map(v => `${v.name} ${v.amount.toLocaleString('en-US')}원`).join(', ')})` : ''));
-
   L.push('\n■ 🟢 평가 후 미매수(망설임 신호)');
   if (g.missedGreen.length) for (const m of g.missedGreen) L.push(`  - ${m.name} (평가 ${m.date}, 30일 내 미매수)`);
   else L.push('  - (없음)');

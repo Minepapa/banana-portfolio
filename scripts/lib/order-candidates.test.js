@@ -4,7 +4,7 @@ import {
   parseHoldingRows, latestConclusions, convictionMap, latestRiskByType,
   buildRebalanceCandidates, buildCrashBuyCandidates, buildSellFromThesis, buildBuyFromEval,
   buildHoldingsFacts, resolveRotationSell, applyThesisGuard, detectThesisReleases, checkConstraints,
-  makeMatchKey, RULE500_WON, mk,
+  makeMatchKey, mk,
 } from './order-candidates.mjs';
 
 // ── 픽스처 헬퍼 ──────────────────────────────────────────────────────────────
@@ -101,15 +101,15 @@ test('buildRebalanceCandidates: 갭 5%p 미만·풀 전체 확신이면 후보 �
   }).length, 0);   // 유일 후보가 확신 → 매도 안 함
 });
 
-test('buildCrashBuyCandidates: O🔴만·500만/예수금 이내 수량·보유 계좌로', () => {
+test('buildCrashBuyCandidates: O🔴만·예수금 전액 기준 수량·보유 계좌로', () => {
   const oSignals = latestRiskByType([
     rrow('2026-07-09', 'O', '현대차', '🔴', '급락 매수 기회 — 5일 -12%'),
     rrow('2026-07-09', 'O', '삼성전자', '🟢', '트리거 없음'),
   ], 'O');
   const holdings = [{ acct: '위탁', name: '현대차', assetType: '국내주식', qty: 8, evalWon: 3856000, unitKrw: 482000 }];
-  const out = buildCrashBuyCandidates({ oSignals, holdings, cash: { 위탁: 1200000 } });
+  const out = buildCrashBuyCandidates({ oSignals, holdings, cash: { 위탁: 10000000 } });
   assert.equal(out.length, 1);                     // 🟢 제외
-  assert.equal(out[0].qty, 2);                     // floor(min(5M, 1.2M)/482,000)
+  assert.equal(out[0].qty, 20);                    // floor(10M / 482,000): 고정 상한 없음
   assert.equal(out[0].acct, '위탁');
 });
 
@@ -147,18 +147,17 @@ test('buildBuyFromEval: 🟢 후 미매수만·미보유는 price null(잡이 �
   assert.equal(out[0].qty, null);
 });
 
-test('checkConstraints: 매수 예수금·500만(확신 예외)·매도 확신보호', () => {
+test('checkConstraints: 매수 예수금·매도 확신보호만 검증', () => {
   const conviction = new Map([['SK하이닉스', '확신']]);
   // 예수금 부족 → ✗
   const c1 = checkConstraints({ side: '매수', acct: '위탁', name: '삼성전자', amount: 2000000 },
     { cash: { 위탁: 1000000 }, conviction });
   assert.equal(c1.find(x => x.k === '예수금').ok, false);
-  // 500만 초과 + 확신 → ok(예외 라벨)
+  // 예수금 이내의 500만 초과 매수도 고정 금액 규칙 없이 통과한다.
   const c2 = checkConstraints({ side: '매수', acct: '위탁', name: 'SK하이닉스', amount: 6000000 },
     { cash: { 위탁: 10000000 }, conviction });
-  const rule = c2.find(x => x.k === '500만원칙');
-  assert.equal(rule.ok, true);
-  assert.match(rule.d, /확신/);
+  assert.equal(c2.find(x => x.k === '예수금').ok, true);
+  assert.equal(c2.some(x => x.k === '500만원칙'), false);
   // 확신 종목 매도 → ✗ 플래그
   const c3 = checkConstraints({ side: '매도', acct: '위탁', name: 'SK하이닉스' }, { cash: {}, conviction });
   assert.equal(c3.find(x => x.k === '확신보호').ok, false);
@@ -350,9 +349,8 @@ test('checkConstraints: why.논리충돌 있으면 논리상태 ✗ 체크 산�
   assert.match(logic.d, /B🟡/);
 });
 
-test('makeMatchKey + RULE500 상수', () => {
+test('makeMatchKey', () => {
   assert.equal(makeMatchKey({ acct: '위탁', name: '삼성전자', side: '매수' }), '위탁|삼성전자|매수');
-  assert.equal(RULE500_WON, 5000000);
 });
 
 // ── isCashLike 정합 테스트 ────────────────────────────────────────────────────
