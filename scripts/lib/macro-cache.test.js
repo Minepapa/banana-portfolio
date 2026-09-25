@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import {
   getCachedMacroIndicators, parseMacroCache, findMacroAnomalies, ANOMALY_THRESHOLD_PCT,
 } from './macro-cache.mjs';
-import { buildFrontmatter } from './vault-frontmatter.mjs';
+import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 
 function tmpFile() {
   return join(mkdtempSync(join(tmpdir(), 'macro-cache-')), 'MacroIndicators.md');
@@ -21,6 +21,18 @@ test('parseMacroCache: asof·macroJson 있으면 파싱', () => {
   const r = parseMacroCache(content);
   assert.deepEqual(r.macro, { KOSPI: { value: 1, change5d: 1 } });
   assert.equal(r.asof, '2026-09-06');
+});
+
+test('macro 상태 레코드 frontmatter: 캐시와 Faber 상태가 거시 Topic으로 연결', async () => {
+  const filepath = tmpFile();
+  await getCachedMacroIndicators({
+    now: new Date('2026-09-06T08:03:00+09:00'),
+    fetchFn: async () => ({ KOSPI: { value: 1, change5d: 0 } }), filepath,
+  });
+  assert.match(readFileSync(filepath, 'utf8'), /related: \["\[\[Knowledge\/Topics\/거시지표-리스크-모니터링\]\]"\]/);
+
+  const faber = parseFrontmatter(buildFrontmatter({ type: 'macro-overlay-faber-state' }));
+  assert.deepEqual(faber.related, ['[[Knowledge/Topics/거시지표-리스크-모니터링]]']);
 });
 
 test('parseMacroCache: macroJson이 깨진 JSON이면 null(추정 안 함)', () => {

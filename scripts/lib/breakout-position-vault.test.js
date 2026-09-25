@@ -27,6 +27,7 @@ test('buildBreakoutPositionRecord: 생성 시 보호상태 pending, 청산 전 �
   assert.equal(p.highSinceEntry, 71000);
   assert.equal(p.exitDate, null);
   assert.equal(p.profitOrderApplicable, true);
+  assert.deepEqual(p.related, ['[[Knowledge/Topics/돌파매매-전략]]']);
 });
 
 // [MEDIUM 재발방지] 2026-09-19 코드리뷰 — ATR 가변손절 실전배선. stopLossPct가

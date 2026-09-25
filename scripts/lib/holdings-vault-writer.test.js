@@ -146,6 +146,21 @@ test('buildLiveHoldingRecord: tags에 계좌·자산군·종목 전부 반영', 
   assert.deepEqual(fm.tags, ['계좌/위탁', '자산군/국내주식', '종목/삼성전자']);
 });
 
+test('Holdings frontmatter: 알려진 계좌를 운영 Topic에 연결하고 연금저축은 보정 Topic도 포함', () => {
+  const pension = parseFrontmatter(buildLiveHoldingRecord({
+    account: '연금저축', assetClass: '해외주식', name: '테스트', avgPrice: 1, qty: 1, invest: 1,
+  }).content);
+  assert.deepEqual(pension.related, [
+    '[[Knowledge/Topics/자산분배-트랙-운영]]',
+    '[[Knowledge/Topics/연금저축-데이터보정]]',
+  ]);
+
+  const unknown = parseFrontmatter(buildLiveHoldingRecord({
+    account: '__미등록__', name: '테스트', avgPrice: 1, qty: 1, invest: 1,
+  }).content);
+  assert.equal(unknown.related, undefined, '미등록 계좌에 추정 링크를 만들지 않음');
+});
+
 test('buildCashHoldingRecord: 종목 태그 없이 계좌·자산군(현금)만', () => {
   const fm = parseFrontmatter(buildCashHoldingRecord({ account: 'CMA', balance: 100 }).content);
   assert.deepEqual(fm.tags, ['계좌/CMA', '자산군/현금']);

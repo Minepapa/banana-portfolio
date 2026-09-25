@@ -10,6 +10,7 @@ test('buildJobHealthRecord: OK 상태 — failStreak 0, 알림 없음', () => {
   assert.match(r.content, /job: "parse-notifications-to-vault"/);
   assert.match(r.content, /status: "OK"/);
   assert.match(r.content, /durationSec: 4.2/);
+  assert.match(r.content, /related: \["\[\[Knowledge\/Meta\/무인잡-카탈로그\]\]"\]/);
 });
 
 test('buildJobHealthRecord: 이전 기록 없이 첫 실패 — failStreak 1, 아직 알림 없음(1회는 무시)', () => {

@@ -38,6 +38,10 @@ const ACCOUNT_TOPIC = new Map([
   ...['위탁', 'CMA', 'ISA', '연금저축', 'IRP', '금현물'].map((account) => [account, '[[Knowledge/Topics/자산분배-트랙-운영]]']),
 ]);
 
+const ACCOUNT_EXTRA_TOPICS = new Map([
+  ['연금저축', ['[[Knowledge/Topics/연금저축-데이터보정]]']],
+]);
+
 const TYPE_RELATED = new Map([
   ['job-health', ['[[Knowledge/Meta/무인잡-카탈로그]]']],
   ['daily-snapshot', [
@@ -47,6 +51,7 @@ const TYPE_RELATED = new Map([
   ]],
   ['market-move-monitor-state', ['[[Knowledge/Topics/거시지표-리스크-모니터링]]']],
   ['macro-indicators-cache-state', ['[[Knowledge/Topics/거시지표-리스크-모니터링]]']],
+  ['macro-overlay-faber-state', ['[[Knowledge/Topics/거시지표-리스크-모니터링]]']],
   ['breakout-position', ['[[Knowledge/Topics/돌파매매-전략]]']],
   ['breakout-pending-entry', ['[[Knowledge/Topics/돌파매매-전략]]']],
 ]);
@@ -58,6 +63,7 @@ function withGeneratedVaultRelations(fields) {
   const relations = [
     ...existingRelated,
     ...(ACCOUNT_TOPIC.has(fields.account) ? [ACCOUNT_TOPIC.get(fields.account)] : []),
+    ...(ACCOUNT_EXTRA_TOPICS.get(fields.account) ?? []),
     ...(fields.track === '퀀트' ? ['[[Knowledge/Topics/돌파매매-전략]]'] : []),
     ...(fields.track === '자산분배' ? ['[[Knowledge/Topics/자산분배-트랙-운영]]'] : []),
     ...(TYPE_RELATED.get(fields.type) ?? []),
