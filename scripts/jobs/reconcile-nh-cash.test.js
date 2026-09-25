@@ -10,6 +10,12 @@ test('hasCompleteNhCashCoverage: 일부 성공·계좌 누락은 heartbeat 실�
   assert.equal(hasCompleteNhCashCoverage([], []), false);
 });
 
+test('hasCompleteNhCashCoverage: 실제 기대 계좌 Set도 3/3 완료로 판정', () => {
+  const expected = new Set(['위탁', 'CMA', '금현물']);
+  assert.equal(hasCompleteNhCashCoverage(expected, ['위탁', 'CMA', '금현물']), true);
+  assert.equal(hasCompleteNhCashCoverage(expected, ['위탁', 'CMA']), false);
+});
+
 test('extractNhCashDeposit: drn_pbl_amt(출금가능금액)을 우선 사용', () => {
   assert.equal(extractNhCashDeposit({ drn_pbl_amt: '5797267', dca: '5797267' }), 5797267);
 });

@@ -90,8 +90,9 @@ export function resolveNhCashAccountMap(accounts) {
 // run.sh는 프로세스 종료코드로 heartbeat 상태를 기록한다. 일부 계좌만 기록된 실행을
 // 성공으로 표시하지 않도록, 기대 계좌 각각의 조회·기록 완료 여부를 판정한다.
 export function hasCompleteNhCashCoverage(expectedAccounts, writtenAccounts) {
-  const written = new Set(writtenAccounts);
-  return expectedAccounts.length > 0 && expectedAccounts.every((label) => written.has(label));
+  const expected = [...(expectedAccounts ?? [])];
+  const written = new Set(writtenAccounts ?? []);
+  return expected.length > 0 && expected.every((label) => written.has(label));
 }
 
 function kstNow() {
@@ -156,7 +157,7 @@ async function main() {
 
   const complete = hasCompleteNhCashCoverage(NH_CASH_ACCOUNTS, writtenAccounts);
   const flag = complete ? '✅' : '⚠️';
-  console.log(`\n${flag} NH 예수금 ${written}/${NH_CASH_ACCOUNTS.length}계좌 기록` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''));
+  console.log(`\n${flag} NH 예수금 ${written}/${NH_CASH_ACCOUNTS.size}계좌 기록` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''));
   await flushWarnings('reconcile-nh-cash');
   if (!complete) process.exitCode = 1;
 }
