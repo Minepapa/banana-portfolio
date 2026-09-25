@@ -83,6 +83,19 @@ export function buildFallbackWatchArgs({ order, code, name, entryDate, stopLossP
   ];
 }
 
+// Pending Entry는 placed 뒤에도 출처 추적을 위해 보존한다. Position의 파일 ID는
+// {code}-{entryDate}이므로, 실제 진입 시도일을 한 번만 계산해 감시 인자와 이 링크가
+// 반드시 같은 Position을 가리키게 한다. placed는 주문 접수 상태라 아직 체결·Position
+// 생성이 보장되지는 않으므로, 필드명도 결과가 아니라 체결 시 생성될 예정 ID임을 밝힌다.
+export function buildPlacedPendingEntryUpdate({ code, entryDate, cancelReason = '', updatedAt }) {
+  return {
+    status: PENDING_ENTRY_STATUS.PLACED,
+    expectedPositionId: `${code}-${entryDate}`,
+    ...(cancelReason ? { reason: cancelReason } : {}),
+    updatedAt,
+  };
+}
+
 // place-breakout-entry-order.mjs와 동일 패턴(ENOENT만 "꺼짐", 그 외 읽기 오류는
 // 안전한 쪽인 "활성"으로 — 2026-09-18 코드리뷰 MEDIUM, 승인 없는 완전자동 경로라
 // execute-quant-proposal.mjs류의 전역 fail-open 기본값을 그대로 물려받지 않는다).
@@ -488,9 +501,10 @@ async function main() {
     remainingCash -= budget;
     remainingSlots -= 1;
     console.log(`  ✅ 시장가 매수 접수 — 주문번호 ${order.orderNo}`);
-    writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
-      status: PENDING_ENTRY_STATUS.PLACED, ...(cancelReason ? { reason: cancelReason } : {}), updatedAt: new Date().toISOString(),
-    }));
+    const entryDate = todayKST();
+    writeAtomic(join(dir, filename), updatePendingEntryRecord(content,
+      buildPlacedPendingEntryUpdate({ code, entryDate, cancelReason, updatedAt: new Date().toISOString() }),
+    ));
 
     // entry-date는 신호일(signalDate)이 아니라 오늘(실제 체결 시도일) — 포지션의
     // entryDate는 "실제로 진입한 날"이어야 트레일링스탑 기산일이 맞다.
@@ -509,7 +523,7 @@ async function main() {
     }
     const child = spawn('node', [
       join(here, '..', 'tools', 'watch-breakout-entry-fill.mjs'),
-      ...buildFallbackWatchArgs({ order, code, name, entryDate: todayKST(), stopLossPct: entryStopLossPct }),
+      ...buildFallbackWatchArgs({ order, code, name, entryDate, stopLossPct: entryStopLossPct }),
     ], { detached: true, stdio: 'ignore' });
     child.on('error', (e) => {
       console.error(`  ⚠️ 체결감시 기동 실패(주문 자체는 이미 접수됨): ${e.message}`);

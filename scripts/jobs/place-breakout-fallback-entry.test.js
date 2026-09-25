@@ -2,8 +2,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   classifyPriorOrderStatus, refineWithHoldings, needsHoldingsCrossCheck, confirmPriorOrderVoided, attemptCancelPriorOrder,
-  buildFallbackWatchArgs,
+  buildFallbackWatchArgs, buildPlacedPendingEntryUpdate,
 } from './place-breakout-fallback-entry.mjs';
+
+// 완료된 Pending Entry는 출처 추적을 위해 제자리에 보존한다. 이 테스트가 없으면
+// placed 전환 시 실제 진입일이 아닌 신호일을 링크하거나 링크 자체를 빼도 감지 못 한다.
+test('buildPlacedPendingEntryUpdate: 실제 진입일 기반 체결예정 Position id를 placed 레코드에 남긴다', () => {
+  const update = buildPlacedPendingEntryUpdate({
+    code: '017670', entryDate: '2026-09-25', updatedAt: '2026-09-25T00:03:00.000Z',
+  });
+
+  assert.deepEqual(update, {
+    status: 'placed',
+    expectedPositionId: '017670-2026-09-25',
+    updatedAt: '2026-09-25T00:03:00.000Z',
+  });
+});
 
 // [핵심 안전장치] 코드리뷰 CRITICAL 지적(2026-09-13) 재발방지 — "전날 장후시간외
 // 미체결 주문은 세션 종료 시 자동실효된다"는 가정이 틀렸을 경우, 확인 없이 다음날
