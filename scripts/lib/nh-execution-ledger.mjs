@@ -158,3 +158,28 @@ export async function recordNhTerminalExecution({ row, tradeDate, account, acctN
   const lockFile = join(dir, `.nh-order-${orderNo}.lock`);
   return withLock(lockFile, execute);
 }
+
+// gbstock 일별거래내역은 주문번호·부분체결 누적값을 제공하지 않는다. 이 경로는
+// 실측된 거래 행 자체를 하나의 종료 체결로 기록하며, API의 trd_sno 기반
+// sourceEventId로 반복 일일대조 사이를 멱등 처리한다.
+export async function recordNhDailyTransactionExecution({ event, dir, dryRun = false }) {
+  const required = ['tradeDate', 'tradeType', 'stockCode', 'stockName', 'currency', 'broker', 'account', 'sourceEventId'];
+  if (required.some((key) => !clean(event?.[key]))
+    || !Number.isFinite(Number(event?.quantity)) || Number(event.quantity) <= 0
+    || !Number.isFinite(Number(event?.price)) || Number(event.price) <= 0) {
+    return { ok: false, reason: 'NH 일별거래 체결 필수 필드 결측 또는 잘못된 값' };
+  }
+  if (!dryRun) mkdirSync(dir, { recursive: true });
+
+  const recordEvent = { ...event, source: 'NH_API', orderNo: '' };
+  const record = buildExecutionRecord(recordEvent);
+  const execute = async () => {
+    const filepath = join(dir, record.filename);
+    if (existsSync(filepath)) return { ok: true, event: null, duplicateFile: true };
+    if (!dryRun) writeAtomic(filepath, record.content);
+    return { ok: true, event: recordEvent, filepath, dryRun };
+  };
+
+  if (dryRun) return execute();
+  return withLock(join(dir, `.nh-daily-${record.filename}.lock`), execute);
+}

@@ -18,6 +18,7 @@
 // ③예약주문(reservedSubmit)에만 cfd_lon_cd가 선택 필드로 존재 — krstock과 동일
 // 이유로 파라미터 자체를 안 받고 '00'(현금) 고정.
 import { callNh } from './nhplug.mjs';
+import { fetchAllPages } from './nhplug-common.mjs';
 import {
   validateOrderInputs, validateIdentity, validateOrgOrderRef, validatePartialQty, rethrowOrderError,
   validateSbyDitCd, extractOrderNo,
@@ -66,13 +67,25 @@ export async function getGbBuyableAmount({
 // '00'=전체(기본). iemMlfCd: '00001'=외화주식(기본, 이 프로젝트가 다루는 유일한
 // 종류 — 채권·Warrant·수익증권은 krbond 등 별도 도메인).
 export async function getGbDailyTransaction({
-  token, actNo, iqrStaDt, iqrEndDt, actTrdCfcCd = '00', iemMlfCd = '00001', iemCd, fetchImpl,
+  token, actNo, iqrStaDt, iqrEndDt, actTrdCfcCd = '00', iemMlfCd = '00001', iemCd, fetchImpl, maxPages,
 }) {
   const input0 = {
     act_no: actNo, iqr_sta_dt: iqrStaDt, iqr_end_dt: iqrEndDt, act_trd_cfc_cd: actTrdCfcCd, iem_mlf_cd: iemMlfCd,
   };
   if (iemCd != null) input0.iem_cd = iemCd;
-  return callNh({ token, uri: '/gbstock/inquiry/v1/dailyTransaction', input0, fetchImpl });
+  // gbstock 연속조회는 아직 실계좌에서 재현하지 못했지만, 다른 NH 조회의 00218
+  // 프로토콜을 무시하면 첫 페이지가 조용히 유실된다. 공통 페이저의 불완전 표시는
+  // 호출자가 paginationTruncated로 운영 경고를 낸다.
+  const { rows, truncated, invalidOutput0 } = await fetchAllPages({
+    token, uri: '/gbstock/inquiry/v1/dailyTransaction', input0, fetchImpl, maxPages,
+  });
+  // 비배열 Output_0은 빈 체결과 구별해야 한다. 부분 행을 기록하면 카카오 원문까지
+  // 정본에서 제외한 상태에서 일부 거래만 반영할 수 있으므로 호출부가 전체를 보류한다.
+  return {
+    Output_0: invalidOutput0 ? null : rows,
+    paginationTruncated: truncated,
+    paginationInvalidOutput0: invalidOutput0,
+  };
 }
 
 // 해외증거금 통화별 조회(POST /gbstock/inquiry/v1/margin). act_no만 필요.

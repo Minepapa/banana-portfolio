@@ -468,16 +468,9 @@ async function main() {
       // fill.mjs(KIS)를 띄우는 것과 동일 패턴 — detached+unref로 이 잡이 끝나도 감시가
       // 계속되게 한다. 섀도우 모드는 brokerOrderId가 없어(실주문 자체가 없음) 자연히
       // 이 분기를 안 탄다.
-      // ⚠️ 독립 코드리뷰 지적(2026-09-21, HIGH) — watch-nh-order-fill.mjs는 krstock·
-      // krgold 체결조회 엔드포인트만 안다(계좌가 아니라 "국내주식 하나뿐인 도메인"
-      // 전제로 만들어짐). 위탁 계좌는 국내주식·해외주식·직접채권을 전부 담는데,
-      // 첫 버전은 classification.type을 안 가려 해외주식(gbstock, 별도 체결조회
-      // 엔드포인트 필요)·직접채권(체결조회 함수 자체가 없어 미검증) 제안에도 이
-      // watcher를 그대로 띄웠다 — krstock에서 그 주문을 못 찾으니 30분 뒤 "체결
-      // 확인 시간 초과, NH 앱에서 확인" 이라는 **거짓 경고**가 실제로는 정상
-      // 체결됐어도 매번 나가고, Ledger 기록도 안 된다. KR_STOCK·GOLD로 좁힌다 —
-      // OVERSEAS_STOCK·KR_BOND는 이 watcher가 지원할 때까지 여전히 카카오 알림에
-      // 의존(기존 상태 유지, 새로 나빠지는 건 아님).
+      // gbstock 일별거래내역은 주문번호가 없어 같은 날 동일 종목·수량 주문을 특정할
+      // 수 없다. 거짓 체결완료 알림을 막기 위해 해외주식은 정기 API 대조만 사용한다.
+      // 직접채권도 체결조회 API가 없어 감시 대상 밖이다.
       const WATCHABLE_TYPES = new Set([INSTRUMENT_TYPE.KR_STOCK, INSTRUMENT_TYPE.GOLD]);
       if (result.settlement.brokerOrderId && WATCHABLE_TYPES.has(classification.type)) {
         const here = dirname(fileURLToPath(import.meta.url));

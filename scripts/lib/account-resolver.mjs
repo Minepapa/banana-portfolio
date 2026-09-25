@@ -88,7 +88,10 @@ const UNIQUE_BROKER_ACCOUNT = {
 // 넣을 이유가 없다.
 const AMBIGUOUS_BROKER_CANDIDATES = {
   'NH투자증권': ['ISA', '위탁', '금현물'],
-  'NH투자증권 해외': ['ISA', '위탁'],
+  // 중개형 ISA는 해외 상장주식을 직접 보유할 수 없다. NH 해외주식 카카오 알림은
+  // 계좌번호가 없더라도 위탁 gbstock API의 확인용 원문이며, 혹시 이 일반 해석기가
+  // 호출되더라도 ISA로 귀속시키는 경로를 만들지 않는다.
+  'NH투자증권 해외': ['위탁'],
 };
 
 // holdings: State/Holdings에서 읽은 프론트매터 배열({ account, name, ticker, ... }).

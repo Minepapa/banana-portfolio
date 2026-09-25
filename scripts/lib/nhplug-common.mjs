@@ -17,8 +17,11 @@ const DEFAULT_MAX_PAGES = 50; // 안전판 — 정상 사용 범위(몇 달~1년
 // 페이지가 나올 일은 없다. 도달하면 truncated:true로 알리고 멈춘다(무한루프 방지, 조용한
 // 데이터 누락 방지 — 호출측이 truncated를 반드시 확인하게 강제). 테스트에서만 낮춰서 씀.
 
-async function fetchAllPages({ token, uri, input0, fetchImpl, maxPages = DEFAULT_MAX_PAGES }) {
+// 다른 NH 도메인도 같은 cts 프로토콜을 쓰면 재사용한다. 호출자는 반환된
+// truncated:true를 반드시 운영 경고로 승격해야 한다.
+export async function fetchAllPages({ token, uri, input0, fetchImpl, maxPages = DEFAULT_MAX_PAGES }) {
   const rows = [];
+  let invalidOutput0 = false;
   let cts;
   let ctsFlag;
   for (let page = 0; page < maxPages; page++) {
@@ -26,17 +29,18 @@ async function fetchAllPages({ token, uri, input0, fetchImpl, maxPages = DEFAULT
       token, uri, input0, cts, ctsFlag, fetchImpl,
     });
     const pageRows = Array.isArray(body?.Output_0) ? body.Output_0 : [];
+    if (!Array.isArray(body?.Output_0)) invalidOutput0 = true;
     rows.push(...pageRows);
-    if (!hasMore) return { rows, truncated: false };
+    if (!hasMore) return { rows, truncated: false, invalidOutput0 };
     // 서버가 연속신호(hasMore)는 줬는데 cts를 안 줌 — 더 못 간다는 점에선 maxPages
     // 소진과 똑같이 "아직 더 있는데 못 받은 페이지가 있다"는 뜻이므로 truncated:true로
     // 취급한다(2026-09-19 코드리뷰 HIGH 지적 — 예전엔 false로 반환해서 호출측이 "완전한
     // 데이터"로 오판했다. feedback-no-silent-fallback 원칙과 동일 — 불완전을 숨기지 않는다).
-    if (!nextCts) return { rows, truncated: true };
+    if (!nextCts) return { rows, truncated: true, invalidOutput0 };
     cts = nextCts;
     ctsFlag = nextCtsFlag || 'Y';
   }
-  return { rows, truncated: true };
+  return { rows, truncated: true, invalidOutput0 };
 }
 
 // 종합거래내역(HTS 8203) — 계좌의 입출금·입출고·매매 전체를 기간별로 조회.

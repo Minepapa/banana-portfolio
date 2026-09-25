@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
-import { recordNhTerminalExecution } from './nh-execution-ledger.mjs';
+import { recordNhDailyTransactionExecution, recordNhTerminalExecution } from './nh-execution-ledger.mjs';
 
 const row = (overrides = {}) => ({
   orderNo: '847026', stockCode: '005930', stockName: '삼성전자', tradeType: '매수',
@@ -17,6 +17,45 @@ function tempLedger(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
+
+test('recordNhDailyTransactionExecution: 같은 날·종목·방향·수량이라도 서로 다른 API 행 순번은 각각 기록한다', async (t) => {
+  const dir = tempLedger(t);
+  const event = {
+    tradeDate: '2026-06-10 00:00:00', tradeType: '매도', stockCode: 'AAPL', stockName: '애플',
+    quantity: 2, price: 314.5057, currency: 'USD', broker: 'NH투자증권', account: '위탁',
+    acctNo: '205-01-59***9',
+  };
+  const [first, second] = await Promise.all([
+    recordNhDailyTransactionExecution({ event: { ...event, sourceEventId: 'gb-20260610-1' }, dir }),
+    recordNhDailyTransactionExecution({ event: { ...event, sourceEventId: 'gb-20260610-2' }, dir }),
+  ]);
+
+  assert.equal([first, second].filter((result) => result.event).length, 2);
+  const files = readdirSync(dir).filter((name) => name.endsWith('.md'));
+  assert.equal(files.length, 2);
+  const record = parseFrontmatter(readFileSync(join(dir, files[0]), 'utf8'));
+  assert.equal(record.source, 'NH_API');
+  assert.equal(record.currency, 'USD');
+  assert.equal(record.orderNo, '');
+  assert.match(record.dedupKey, /^2026-06-10 00:00:00\|매도\|애플\|2\|gb-20260610-[12]$/);
+});
+
+test('recordNhDailyTransactionExecution: 같은 API 행을 동시·반복 대사해도 한 번만 기록한다', async (t) => {
+  const dir = tempLedger(t);
+  const event = {
+    tradeDate: '2026-06-10 00:00:00', tradeType: '매도', stockCode: 'AAPL', stockName: '애플',
+    quantity: 2, price: 314.5057, currency: 'USD', broker: 'NH투자증권 해외', account: '위탁',
+    sourceEventId: 'gb-20260610-1',
+  };
+  const concurrent = await Promise.all([
+    recordNhDailyTransactionExecution({ event, dir }),
+    recordNhDailyTransactionExecution({ event, dir }),
+  ]);
+  const repeated = await recordNhDailyTransactionExecution({ event, dir });
+  assert.equal(concurrent.filter((result) => result.event).length, 1);
+  assert.equal(repeated.event, null);
+  assert.equal(readdirSync(dir).filter((name) => name.endsWith('.md')).length, 1);
+});
 
 test('recordNhTerminalExecution: 종료된 부분체결은 체결분만 기록하고 재실행해도 중복하지 않음', async (t) => {
   const dir = tempLedger(t);

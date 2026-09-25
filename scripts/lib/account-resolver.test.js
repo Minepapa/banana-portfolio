@@ -80,9 +80,10 @@ test('NH — CMA는 여전히 후보 밖(순수 현금 경유지라 증권 보�
   assert.equal(resolveExecutionAccount({ broker: 'NH투자증권', stockName: '어쩌다생긴이름' }, holdings), null);
 });
 
-test('NH 해외(overseas) 브로커명도 동일 후보군으로 취급', () => {
+test('NH 해외(overseas)는 ISA 직접보유 불가 전제상 위탁만 후보로 취급', () => {
   const holdings = [{ account: '위탁', name: 'VOO' }];
   assert.equal(resolveExecutionAccount({ broker: 'NH투자증권 해외', stockName: 'VOO' }, holdings), '위탁');
+  assert.equal(resolveExecutionAccount({ broker: 'NH투자증권 해외', stockName: 'VOO' }, [{ account: 'ISA', name: 'VOO' }]), null);
 });
 
 test('알 수 없는 증권사는 안전하게 null', () => {

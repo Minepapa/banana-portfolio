@@ -18,7 +18,10 @@ const mockFetch = (responses) => {
   const fn = async (url, init) => {
     calls.push({ url, body: init?.body ? JSON.parse(init.body) : null });
     const r = responses[Math.min(i++, responses.length - 1)];
-    return { ok: r.ok !== false, status: r.status ?? 200, text: async () => JSON.stringify(r.body) };
+    return {
+      ok: r.ok !== false, status: r.status ?? 200, text: async () => JSON.stringify(r.body),
+      headers: { get: (name) => r.responseHeaders?.[name] ?? null },
+    };
   };
   fn.calls = calls;
   return fn;
@@ -43,6 +46,23 @@ test('getGbBuyableAmount: 기본값(pcsDit=2·ahiNmnPrTpCd=00 등) 배선, price
   assert.equal(input0.ahi_nmn_pr_tp_cd, '00');
   assert.equal(input0.wtm_cur_knd_cd, '1');
   assert.equal(input0.fc_orr_uit_pr, 230.5);
+});
+
+test('getGbDailyTransaction: 연속조회 응답을 모두 합치고 불완전하면 표시한다', async () => {
+  const fetchImpl = mockFetch([
+    { body: { rsp_cd: '00218', Output_0: [{ trd_sno: 1 }] }, responseHeaders: { cts: 'NEXT', cts_flag: 'Y' } },
+    { body: { rsp_cd: '00166', Output_0: [{ trd_sno: 2 }] } },
+  ]);
+  const body = await getGbDailyTransaction({ token: 't', actNo: '1', iqrStaDt: '20260801', iqrEndDt: '20260902', fetchImpl });
+  assert.deepEqual(body.Output_0, [{ trd_sno: 1 }, { trd_sno: 2 }]);
+  assert.equal(body.paginationTruncated, false);
+});
+
+test('getGbDailyTransaction: 성공 응답의 Output_0이 배열이 아니면 스키마 이상을 호출자에게 보존한다', async () => {
+  const fetchImpl = mockFetch([{ body: { rsp_cd: '00166', Output_0: { trd_sno: 1 } } }]);
+  const body = await getGbDailyTransaction({ token: 't', actNo: '1', iqrStaDt: '20260801', iqrEndDt: '20260902', fetchImpl });
+  assert.equal(body.paginationInvalidOutput0, true);
+  assert.equal(body.Output_0, null);
 });
 
 test('getGbDailyTransaction: 기본값(actTrdCfcCd=00·iemMlfCd=00001) 배선', async () => {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyKakaoExecution } from './execution-source-policy.mjs';
+import { classifyKakaoExecution, GB_EXECUTION_API_CUTOVER_KST_DATE } from './execution-source-policy.mjs';
 import { buildApiCoveredExecutionArchive } from '../jobs/parse-notifications-to-vault.mjs';
 
 test('NH API가 조회하는 위탁 국내주식과 금현물은 카카오 체결을 장부에 기록하지 않는다', () => {
@@ -22,16 +22,37 @@ test('실측상 체결 API가 동작하지 않는 IRP는 카카오를 유지하�
   }).action, 'exclude-api');
 });
 
-test('API 체결조회가 없는 ISA·연금저축·위탁 해외주식은 카카오 체결을 유지한다', () => {
+test('ISA·연금저축은 카카오를 유지한다', () => {
   assert.deepEqual(classifyKakaoExecution({
     kind: 'stock', event: { broker: 'NH투자증권', acctNo: '209-02-89***2' },
   }), { action: 'record', account: 'ISA', reason: 'API_UNAVAILABLE' });
   assert.deepEqual(classifyKakaoExecution({
     kind: 'stock', event: { broker: '삼성증권', acctNo: '' },
   }), { action: 'record', account: '연금저축', reason: 'API_UNAVAILABLE' });
+});
+
+test('NH 해외주식 카카오 체결은 컷오버 전·당일·후일에 각각 기존 기록·API 제외·API 제외한다', () => {
+  assert.equal(GB_EXECUTION_API_CUTOVER_KST_DATE, '2026-09-25');
+  const event = { broker: 'NH투자증권 해외', acctNo: '' };
   assert.deepEqual(classifyKakaoExecution({
-    kind: 'stock', event: { broker: 'NH투자증권 해외', acctNo: '' },
+    kind: 'stock', event: { ...event, tradeDate: '2026-09-24 23:59:59' }, receivedAt: '2026-09-24 23:59:59',
   }), { action: 'record', account: null, reason: 'API_UNAVAILABLE' });
+  assert.deepEqual(classifyKakaoExecution({
+    kind: 'stock', event: { ...event, tradeDate: '2026-09-25 00:00:00' }, receivedAt: '2026-09-25 00:00:00',
+  }), { action: 'exclude-api', account: '위탁', reason: 'NH_API' });
+  assert.deepEqual(classifyKakaoExecution({
+    kind: 'stock', event: { ...event, tradeDate: '2026-09-26 09:10:00' }, receivedAt: '2026-09-26 09:10:00',
+  }), { action: 'exclude-api', account: '위탁', reason: 'NH_API' });
+});
+
+test('NH 해외주식 카카오 체결은 이벤트 날짜가 애매하면 수신시각을 쓰고, 둘 다 애매하면 기존 기록을 유지한다', () => {
+  const event = { broker: 'NH투자증권 해외', acctNo: '', tradeDate: '주문일자 미상' };
+  assert.equal(classifyKakaoExecution({
+    kind: 'stock', event, receivedAt: '2026-09-25 09:10:00',
+  }).action, 'exclude-api');
+  assert.equal(classifyKakaoExecution({
+    kind: 'stock', event, receivedAt: '수신시각 미상',
+  }).action, 'record');
 });
 
 test('NH 국내주식 계좌를 판별할 수 없으면 중복 기록도 원문 삭제도 하지 않도록 보류한다', () => {

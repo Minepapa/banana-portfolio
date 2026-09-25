@@ -149,7 +149,7 @@ async function main() {
 
     const e = parseExecution(body, ts);
     if (e) {
-      const route = classifyKakaoExecution({ kind: 'stock', event: e });
+      const route = classifyKakaoExecution({ kind: 'stock', event: e, receivedAt: ts });
       if (route.action === 'exclude-api') {
         if (!DRY_RUN) {
           const archive = buildApiCoveredExecutionArchive({ id, ts, body, event: e, account: route.account });
