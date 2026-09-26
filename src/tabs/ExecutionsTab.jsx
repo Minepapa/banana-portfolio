@@ -1,10 +1,11 @@
 // 체결내역 탭 — Facts/Ledger/Executions 미러 목록. v2 재배선(2026-08-13): 읽기 전용.
 // v1의 수동 동기화·저축금 반영·셀 편집은 전부 제거 — 체결은 이제 카카오 파싱/KIS API가
 // 자동으로 Vault에 기록하고, 이 탭은 그 결과를 보여만 준다.
+import { maskAmountText } from '../lib/textFormat.js';
 import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
 
-export default function ExecutionsTab({ trades, isMobile, fmt }) {
+export default function ExecutionsTab({ trades, isMobile, fmt, hideAmounts = false }) {
   return (
     <div>
       <div style={{ background: CARD_BG, borderRadius: RADIUS, overflow: "hidden" }}>
@@ -46,11 +47,11 @@ export default function ExecutionsTab({ trades, isMobile, fmt }) {
                   {t.name || '—'}
                 </div>
                 <div style={{ fontSize: 10, color: INK_2, marginTop: 2 }}>
-                  {t.qty > 0 ? `${t.qty}주` : ''}{t.qty > 0 && t.price > 0 ? ' · ' : ''}{t.price > 0 ? `${currencySymbol}${t.price.toLocaleString()}` : ''}
+                  {t.qty > 0 ? `${t.qty}주` : ''}{t.qty > 0 && t.price > 0 ? ' · ' : ''}{t.price > 0 ? (hideAmounts ? maskAmountText(`${currencySymbol}${t.price.toLocaleString()}`) : `${currencySymbol}${t.price.toLocaleString()}`) : ''}
                 </div>
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0, fontSize: 12, color: INK, fontFamily: MONO }}>
-                {t.amount ? `${currencySymbol}${fmt(t.amount)}` : ''}
+                {t.amount ? (hideAmounts ? maskAmountText(`${currencySymbol}${fmt(t.amount)}`) : `${currencySymbol}${fmt(t.amount)}`) : ''}
               </div>
             </div>
           );

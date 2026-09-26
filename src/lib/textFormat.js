@@ -75,6 +75,17 @@ export function fmt(n) {
   return Math.round(Math.abs(n)).toLocaleString('ko-KR');
 }
 
+// hideAmounts일 때 이미 계산된 금액/퍼센트 표시 문자열의 숫자만 고정 마스크로
+// 바꾼다. 접두 기호(₩·$·+·-·▲·▼)는 그대로 둬 시각적 자리는 유지하되, 실제 자릿수와
+// 무관하게 항상 같은 길이로 가려서 자릿수 자체가 규모를 드러내지 않게 한다.
+export function maskAmountText(text) {
+  const s = String(text ?? '');
+  const prefixMatch = s.match(/^[▲▼+-]*\s*[₩$]?/);
+  const prefix = prefixMatch ? prefixMatch[0] : '';
+  if (/%p?$/.test(s)) return `${prefix}••.•${s.endsWith('%p') ? '%p' : '%'}`;
+  return `${prefix}••,•••,•••`;
+}
+
 // ── 마침표·의미(— · 등) 단위로 줄바꿈 ───────────────────────────────────────────
 export function breakUnits(text) {
   return String(text ?? '')

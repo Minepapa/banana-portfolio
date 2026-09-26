@@ -8,13 +8,14 @@
 // 이번 달 파일에 매일 덮어쓴다(달이 바뀌면 지난달 파일은 더 이상 안 건드려져 그
 // 마지막 값이 자연히 그 달 확정치가 됨). 차트 스타일은 DividendTab/ProfitTab과
 // 동일하게 맞춤(오너 지시) — 연도 필터·클릭 하이라이트 포함.
+import { maskAmountText } from '../lib/textFormat.js';
 import { useState } from 'react';
 import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { profitColor, CHART_BAR_COLOR } from '../lib/colors.js';
 import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
 
 export default function DashboardTab({
-  totalInvest, totalEval, totalProfit, accounts, fmt, isMobile, setAcctKey, setTab, monthlyBalances = [],
+  totalInvest, totalEval, totalProfit, accounts, fmt, isMobile, setAcctKey, setTab, monthlyBalances = [], hideAmounts = false,
 }) {
   const [balYear, setBalYear] = useState('전체');
   const [selectedBalKey, setSelectedBalKey] = useState(null);
@@ -41,7 +42,7 @@ export default function DashboardTab({
               fontSize: isMobile ? 12 : 15, fontWeight: 800, color: s.color, fontFamily: MONO,
               wordBreak: "break-all", letterSpacing: 0,
             }}>
-              {s.value}
+              {hideAmounts ? maskAmountText(s.value) : s.value}
             </div>
           </div>
         ))}
@@ -75,16 +76,16 @@ export default function DashboardTab({
                     {v.label}
                   </div>
                   <div style={{ fontSize: 17, fontWeight: 800, color: INK, marginBottom: 2, fontFamily: MONO, letterSpacing: 0 }}>
-                    ₩{fmt(v.total_eval)}
+                    {hideAmounts ? maskAmountText(`₩${fmt(v.total_eval)}`) : `₩${fmt(v.total_eval)}`}
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 9, color: INK_2, marginBottom: 2 }}>수익</div>
                   <div style={{ fontSize: 13, fontWeight: 700, color: pColor , fontFamily: MONO}}>
-                    ₩{fmt(v.profit)}
+                    {hideAmounts ? maskAmountText(`₩${fmt(v.profit)}`) : `₩${fmt(v.profit)}`}
                   </div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: pColor }}>
-                    {v.profit > 0 ? '+' : ''}{pRate}%
+                    {hideAmounts ? maskAmountText(`${v.profit > 0 ? '+' : ''}${pRate}%`) : `${v.profit > 0 ? '+' : ''}${pRate}%`}
                   </div>
                 </div>
               </div>
@@ -115,14 +116,14 @@ export default function DashboardTab({
           <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: 16, marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
               <div>
-                <div style={{ fontSize: isMobile ? 21 : 25, fontWeight: 800, color: INK, fontFamily: MONO, letterSpacing: 0 }}>₩{fmt(_te)}</div>
-                <div style={{ fontSize: 11, color: INK_2, marginTop: 2 }}>투자원금 ₩{fmt(_ti)}</div>
+                <div style={{ fontSize: isMobile ? 21 : 25, fontWeight: 800, color: INK, fontFamily: MONO, letterSpacing: 0 }}>{hideAmounts ? maskAmountText(`₩${fmt(_te)}`) : `₩${fmt(_te)}`}</div>
+                <div style={{ fontSize: 11, color: INK_2, marginTop: 2 }}>투자원금 {hideAmounts ? maskAmountText(`₩${fmt(_ti)}`) : `₩${fmt(_ti)}`}</div>
               </div>
               {/* ⚠️ 색상 통일(2026-08-25 오너 지적) — 서구식 초록/빨강 하드코딩을 profitColor
                   (한국 관례 이익=빨강/손실=파랑)로 교체, App.jsx 총 잔고와 동일 수정. */}
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 17, fontWeight: 700, color: profitColor(_tp), fontFamily: MONO, letterSpacing: 0 }}>₩{fmt(_tp)}</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: profitColor(_tp) }}>{_tr >= 0 ? '+' : ''}{_tr.toFixed(1)}%</div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: profitColor(_tp), fontFamily: MONO, letterSpacing: 0 }}>{hideAmounts ? maskAmountText(`₩${fmt(_tp)}`) : `₩${fmt(_tp)}`}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: profitColor(_tp) }}>{hideAmounts ? maskAmountText(`${_tr >= 0 ? '+' : ''}${_tr.toFixed(1)}%`) : `${_tr >= 0 ? '+' : ''}${_tr.toFixed(1)}%`}</div>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -131,7 +132,7 @@ export default function DashboardTab({
                   <circle key={i} cx="50" cy="50" r={r} fill="none" stroke={s.color} strokeWidth="20"
                     strokeDasharray={`${s.dash} ${circ - s.dash}`} strokeDashoffset={s.offset} />
                 ))}
-                <text x="50" y="47" textAnchor="middle" fill={INK} fontSize="9" fontWeight="700">{evalAmt}</text>
+                <text x="50" y="47" textAnchor="middle" fill={INK} fontSize="9" fontWeight="700">{hideAmounts ? maskAmountText(`₩${fmt(_te)}`) : evalAmt}</text>
                 <text x="50" y="58" textAnchor="middle" fill={INK_2} fontSize="7">총자산</text>
               </svg>
               <div style={{ flex: 1, minWidth: 80 }}>
@@ -141,7 +142,7 @@ export default function DashboardTab({
                       <div style={{ width: 7, height: 7, borderRadius: 0, background: s.color, flexShrink: 0 }} />
                       <span style={{ fontSize: 10, color: INK_2 }}>{s.label}</span>
                     </div>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: INK , fontFamily: MONO}}>{s.pctStr}%</span>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: INK , fontFamily: MONO}}>{hideAmounts ? maskAmountText(`${s.pctStr}%`) : `${s.pctStr}%`}</span>
                   </div>
                 ))}
               </div>
@@ -167,17 +168,18 @@ export default function DashboardTab({
           </div>
           <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: "16px", marginBottom: 16 }}>
             <div style={{ fontSize: 10, letterSpacing: 2, color: INK_2, marginBottom: 16 }}>월별 잔고 추이</div>
+            {hideAmounts && <div style={{ fontSize: 11, color: INK_2, marginBottom: 8 }}>금액 비공개 중</div>}
             <ResponsiveContainer width="100%" height={220}>
               <BarChart
-                data={filteredBalances}
+                data={filteredBalances.map(m => hideAmounts ? { ...m, total: 1 } : m)}
                 barSize={isMobile ? 10 : 16}
                 accessibilityLayer={false}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke={INK} />
                 <XAxis dataKey="label" tick={{ fill: INK_2, fontSize: 9 }} />
-                <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: INK_2, fontSize: 9 }} width={55} />
+                <YAxis tickFormatter={v => hideAmounts ? '' : v.toLocaleString()} tick={{ fill: INK_2, fontSize: 9 }} width={55} />
                 <Tooltip
-                  formatter={v => [`₩${v.toLocaleString()}`, '총잔고']}
+                  formatter={v => [hideAmounts ? maskAmountText(`₩${v.toLocaleString()}`) : `₩${v.toLocaleString()}`, '총잔고']}
                   contentStyle={{ background: PAPER_2, border: BORDER, borderRadius: RADIUS_SM, fontSize: 11 }}
                   labelStyle={{ color: INK }}
                   itemStyle={{ color: INK }}

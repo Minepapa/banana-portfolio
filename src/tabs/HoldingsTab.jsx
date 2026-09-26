@@ -2,6 +2,7 @@
 // 쓰기 API가 없음 — useFirestoreMirror.js 참고). 추가/삭제/인라인 편집·실시간시세(KIS
 // 웹소켓, 미러 문서 밖)는 제거. 보유종목을 직접 고치고 싶으면 텔레그램으로 판테온에
 // 요청 — 실제 반영은 여전히 검문소를 통과해야 한다(useFirestoreMirror.js 원칙 그대로).
+import { maskAmountText } from '../lib/textFormat.js';
 import { profitColor, COLORS } from '../lib/colors.js';
 import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, BORDER, BORDER_HEAVY, BORDER_COLOR, SHADOW, RADIUS_SM, MONO } from '../lib/theme.js';
 
@@ -15,7 +16,7 @@ const assetRank = (type) => {
   return i === -1 ? ASSET_ORDER.length : i;
 };
 
-export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMobile, baseFont, fmt, holdSort, setHoldSort }) {
+export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMobile, baseFont, fmt, holdSort, setHoldSort, hideAmounts = false }) {
   const rawHoldings = (acct.holdings || [])
     // 현금성 행(예수금·외화RP·MMF)은 잔액이 0이어도 유지 — 음수→행 소멸 버그 방지.
     .filter(h => h.isCashLike || (h.invest > 0 && h.eval > 0));
@@ -70,10 +71,10 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
             <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: INK , fontFamily: MONO}}>
-              ₩{fmt(acct.total_eval)}
+              {hideAmounts ? maskAmountText(`₩${fmt(acct.total_eval)}`) : `₩${fmt(acct.total_eval)}`}
             </div>
             <div style={{ fontSize: 11, color: INK_2, marginTop: 2 }}>
-              투자금 ₩{fmt(acct.total_invest)}
+              투자금 {hideAmounts ? maskAmountText(`₩${fmt(acct.total_invest)}`) : `₩${fmt(acct.total_invest)}`}
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
@@ -81,11 +82,10 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
               fontSize: isMobile ? 13 : 16, fontWeight: 700,
               color: profitColor(acct.profit),
             fontFamily: MONO}}>
-              ₩{fmt(acct.profit)}
+              {hideAmounts ? maskAmountText(`₩${fmt(acct.profit)}`) : `₩${fmt(acct.profit)}`}
             </div>
             <div style={{ fontSize: 11, fontWeight: 700, color: profitColor(acct.profit) }}>
-              {acct.profit >= 0 ? '+' : ''}
-              {acct.total_invest > 0 ? ((acct.profit / acct.total_invest) * 100).toFixed(1) : '0.0'}%
+              {hideAmounts ? maskAmountText(`${acct.profit >= 0 ? '+' : ''}${acct.total_invest > 0 ? ((acct.profit / acct.total_invest) * 100).toFixed(1) : '0.0'}%`) : `${acct.profit >= 0 ? '+' : ''}${acct.total_invest > 0 ? ((acct.profit / acct.total_invest) * 100).toFixed(1) : '0.0'}%`}
             </div>
           </div>
         </div>
@@ -137,21 +137,21 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
                     {h.name}
                   </div>
                   <div style={{ fontSize: 10, color: INK_2, marginTop: 2 }}>
-                    {h.qty}주 · 매수 {isUsDollar ? `$${Number(h.price).toFixed(2)}` : `₩${fmt(h.price)}`}
+                    {h.qty}주 · 매수 {hideAmounts ? maskAmountText(isUsDollar ? `$${Number(h.price).toFixed(2)}` : `₩${fmt(h.price)}`) : (isUsDollar ? `$${Number(h.price).toFixed(2)}` : `₩${fmt(h.price)}`)}
                   </div>
                   {h.currentPrice > 0 && (
                     <div style={{ fontSize: 10, color: INK_2 }}>
-                      현재 {isUsDollar ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`}
+                      현재 {hideAmounts ? maskAmountText(isUsDollar ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`) : (isUsDollar ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`)}
                     </div>
                   )}
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontSize: isMobile ? 11 : 12, color: INK, fontFamily: MONO }}>₩{fmt(h.eval)}</div>
+                  <div style={{ fontSize: isMobile ? 11 : 12, color: INK, fontFamily: MONO }}>{hideAmounts ? maskAmountText(`₩${fmt(h.eval)}`) : `₩${fmt(h.eval)}`}</div>
                   <div style={{ fontSize: isMobile ? 10 : 11, fontWeight: 700, color }}>
-                    {h.rate >= 0 ? '+' : ''}{h.rate.toFixed(1)}%
+                    {hideAmounts ? maskAmountText(`${h.rate >= 0 ? '+' : ''}${h.rate.toFixed(1)}%`) : `${h.rate >= 0 ? '+' : ''}${h.rate.toFixed(1)}%`}
                   </div>
                   <div style={{ fontSize: 10, color , fontFamily: MONO}}>
-                    ₩{fmt(Math.abs(h.profit))}
+                    {hideAmounts ? maskAmountText(`₩${fmt(Math.abs(h.profit))}`) : `₩${fmt(Math.abs(h.profit))}`}
                   </div>
                 </div>
               </div>

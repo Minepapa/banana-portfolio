@@ -3,8 +3,17 @@ import assert from 'node:assert/strict';
 import {
   parseNum, toDateStr, stripEmoji,
   gradeColor, GRADE_COLORS, stripGrade, stripPeriod,
-  breakUnits, breakSentences, relTime,
+  breakUnits, breakSentences, relTime, maskAmountText,
 } from './textFormat.js';
+
+test('maskAmountText: 숫자 자릿수와 무관하게 기호를 보존해 마스킹', () => {
+  assert.equal(maskAmountText(''), '••,•••,•••');
+  assert.equal(maskAmountText('₩1,234,567'), '₩••,•••,•••');
+  assert.equal(maskAmountText('+6.9%'), '+••.•%');
+  assert.equal(maskAmountText('-4.0%p'), '-••.•%p');
+  assert.equal(maskAmountText('▲ ₩8,210,000'), '▲ ₩••,•••,•••');
+  assert.equal(maskAmountText('$1,234.56'), '$••,•••,•••');
+});
 
 // ── parseNum ────────────────────────────────────────────────────────────────
 test('parseNum: 일반 숫자', () => {

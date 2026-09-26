@@ -1,5 +1,6 @@
 // 배당 탭 — 월별 배당 차트 + 연도별 합계. v2 재배선(2026-08-13): 읽기 전용(종목명
 // 인라인 편집은 시트 쓰기 기능이었음 — 제거).
+import { maskAmountText } from '../lib/textFormat.js';
 import { useState } from "react";
 import {
   ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -7,7 +8,7 @@ import {
 import { PROFIT_POS } from '../lib/colors.js';
 import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
 
-export default function DividendTab({ dividendData, isMobile, baseFont, fmt }) {
+export default function DividendTab({ dividendData, isMobile, baseFont, fmt, hideAmounts = false }) {
   const [divYear, setDivYear] = useState('전체');
   const [selectedDivKey, setSelectedDivKey] = useState(null);
 
@@ -40,17 +41,19 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt }) {
       <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: "16px", marginBottom: 16 }}>
         <div style={{ fontSize: 10, letterSpacing: 2, color: INK_2, marginBottom: 16 }}>월별 배당금</div>
         {filteredDividends.length > 0 ? (
+          <>
+          {hideAmounts && <div style={{ fontSize: 11, color: INK_2, marginBottom: 8 }}>금액 비공개 중</div>}
           <ResponsiveContainer width="100%" height={220}>
             <BarChart
-              data={filteredDividends.map(d => ({ ...d, label: `${String(d.year).slice(-2)}.${String(d.month).padStart(2, '0')}` }))}
+              data={filteredDividends.map(d => ({ ...d, label: `${String(d.year).slice(-2)}.${String(d.month).padStart(2, '0')}`, amount: hideAmounts ? 1 : d.amount }))}
               barSize={isMobile ? 10 : 16}
               accessibilityLayer={false}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={INK} />
               <XAxis dataKey="label" tick={{ fill: INK_2, fontSize: 9 }} />
-              <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: INK_2, fontSize: 9 }} width={55} />
+              <YAxis tickFormatter={v => hideAmounts ? '' : v.toLocaleString()} tick={{ fill: INK_2, fontSize: 9 }} width={55} />
               <Tooltip
-                formatter={v => [`₩${v.toLocaleString()}`, '배당금']}
+                formatter={v => [hideAmounts ? maskAmountText(`₩${v.toLocaleString()}`) : `₩${v.toLocaleString()}`, '배당금']}
                 contentStyle={{ background: PAPER_2, border: BORDER, borderRadius: RADIUS_SM, fontSize: 11 }}
                 labelStyle={{ color: INK }}
                 itemStyle={{ color: INK }}
@@ -67,6 +70,7 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt }) {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+          </>
         ) : (
           <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: INK_2, fontSize: 12 }}>
             배당 데이터가 없습니다
@@ -81,13 +85,13 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt }) {
             {selectedDivItem.items.map((item, i) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: `1px solid ${PAPER_2}` }}>
                 <span style={{ fontSize: 12, color: INK, flex: 1, minWidth: 0, textAlign: 'left' }}>{item.name || '(이름 없음)'}</span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS, flexShrink: 0, fontFamily: MONO }}>₩{fmt(item.amount)}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: PROFIT_POS, flexShrink: 0, fontFamily: MONO }}>{hideAmounts ? maskAmountText(`₩${fmt(item.amount)}`) : `₩${fmt(item.amount)}`}</span>
               </div>
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8 }}>
               <span style={{ fontSize: 11, color: INK_2 }}>합계</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: PROFIT_POS , fontFamily: MONO}}>
-                ₩{fmt(selectedDivItem.amount)}
+                {hideAmounts ? maskAmountText(`₩${fmt(selectedDivItem.amount)}`) : `₩${fmt(selectedDivItem.amount)}`}
               </span>
             </div>
           </div>
@@ -99,13 +103,13 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt }) {
         {divYearTotals.map(row => (
           <div key={row.year} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${PAPER_2}` }}>
             <span style={{ fontSize: 12, color: INK_2 }}>{row.year}년 합계</span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: PROFIT_POS, fontFamily: MONO }}>₩{fmt(row.total)}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: PROFIT_POS, fontFamily: MONO }}>{hideAmounts ? maskAmountText(`₩${fmt(row.total)}`) : `₩${fmt(row.total)}`}</span>
           </div>
         ))}
         {(() => { const gt = dividendData.reduce((s, d) => s + d.amount, 0); return (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10 }}>
             <span style={{ fontSize: 12, color: INK, fontWeight: 700 }}>전체 합계</span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: PROFIT_POS, fontFamily: MONO }}>₩{fmt(gt)}</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: PROFIT_POS, fontFamily: MONO }}>{hideAmounts ? maskAmountText(`₩${fmt(gt)}`) : `₩${fmt(gt)}`}</span>
           </div>
         ); })()}
       </div>

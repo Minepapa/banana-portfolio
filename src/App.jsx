@@ -248,7 +248,7 @@ export default function App() {
           <DashboardTab
             totalInvest={totalInvest} totalEval={totalEval} totalProfit={totalProfit}
             accounts={accounts} fmt={fmt} isMobile={isMobile}
-            setAcctKey={setAcctKey} setTab={setTab} monthlyBalances={monthlyBalances}
+            setAcctKey={setAcctKey} setTab={setTab} monthlyBalances={monthlyBalances} hideAmounts={hideAmounts}
           />
         )}
 
@@ -261,7 +261,7 @@ export default function App() {
         {tab === "rebalance" && (
           <RebalanceTab
             views={rebalanceViews}
-            isMobile={isMobile} baseFont={baseFont} fmt={fmt}
+            isMobile={isMobile} baseFont={baseFont} fmt={fmt} hideAmounts={hideAmounts}
           />
         )}
 
@@ -270,22 +270,22 @@ export default function App() {
           <HoldingsTab
             accounts={accounts} acct={acct} acctKey={acctKey} setAcctKey={setAcctKey}
             isMobile={isMobile} baseFont={baseFont} fmt={fmt}
-            holdSort={holdSort} setHoldSort={setHoldSort}
+            holdSort={holdSort} setHoldSort={setHoldSort} hideAmounts={hideAmounts}
           />
         )}
 
         {/* ── 배당금 탭 ── */}
         {tab === "dividend" && (
-          <DividendTab dividendData={dividendData} isMobile={isMobile} baseFont={baseFont} fmt={fmt} />
+          <DividendTab dividendData={dividendData} isMobile={isMobile} baseFont={baseFont} fmt={fmt} hideAmounts={hideAmounts} />
         )}
         {/* ── 수익금 탭 ── */}
         {tab === "profit" && (
-          <ProfitTab profitData={profitData} isMobile={isMobile} baseFont={baseFont} fmt={fmt} />
+          <ProfitTab profitData={profitData} isMobile={isMobile} baseFont={baseFont} fmt={fmt} hideAmounts={hideAmounts} />
         )}
 
         {/* ── 체결내역 탭 ── */}
         {tab === "체결내역" && (
-          <ExecutionsTab trades={trades} isMobile={isMobile} baseFont={baseFont} fmt={fmt} />
+          <ExecutionsTab trades={trades} isMobile={isMobile} baseFont={baseFont} fmt={fmt} hideAmounts={hideAmounts} />
         )}
 
       </div>
