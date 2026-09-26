@@ -23,29 +23,34 @@ export default function DashboardTab({
   const filteredBalances = balYear === '전체' ? monthlyBalances : monthlyBalances.filter(m => String(m.year) === balYear);
   return (
     <div>
-      {/* 요약 카드 3개 */}
+      {/* 요약 카드 2개 — 수익률은 전체 금액 표기 공간 확보를 위해 총 평가금 카드
+          안으로 옮김(오너 지시, 2026-09-27 — 축약 표기 대신 전체 자릿수 유지). */}
       <div style={{
         display: "grid",
-        gridTemplateColumns: "1fr 1fr 1fr",
+        gridTemplateColumns: "1fr 1fr",
         gap: 8, marginBottom: 20,
       }}>
-        {[
-          { label: "총 투자금", value: `₩${formatWonCompact(totalInvest)}`, color: INK_2, mask: true },
-          { label: "총 평가금", value: `₩${formatWonCompact(totalEval)}`, color: INK, mask: true },
-          { label: "수익률", value: `${totalProfit > 0 ? '+' : ''}${totalInvest > 0 ? ((totalProfit / totalInvest) * 100).toFixed(1) : '0.0'}%`, color: profitColor(totalProfit) },
-        ].map((s) => (
-          <div key={s.label} style={{
-            background: CARD_BG, borderRadius: RADIUS, padding: "12px 10px", textAlign: "center",
+        <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: "12px 10px", textAlign: "center" }}>
+          <div style={{ fontSize: 9, color: INK_2, marginBottom: 4, letterSpacing: 1 }}>총 투자금</div>
+          <div style={{
+            fontSize: isMobile ? 13 : 16, fontWeight: 800, color: INK_2, fontFamily: MONO,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: 0,
           }}>
-            <div style={{ fontSize: 9, color: INK_2, marginBottom: 4, letterSpacing: 1 }}>{s.label}</div>
-            <div style={{
-              fontSize: isMobile ? 12 : 15, fontWeight: 800, color: s.color, fontFamily: MONO,
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: 0,
-            }}>
-              {hideAmounts && s.mask ? maskAmountText(s.value) : s.value}
-            </div>
+            {hideAmounts ? maskAmountText(`₩${fmt(totalInvest)}`) : `₩${fmt(totalInvest)}`}
           </div>
-        ))}
+        </div>
+        <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: "12px 10px", textAlign: "center" }}>
+          <div style={{ fontSize: 9, color: INK_2, marginBottom: 4, letterSpacing: 1 }}>총 평가금</div>
+          <div style={{
+            fontSize: isMobile ? 13 : 16, fontWeight: 800, color: INK, fontFamily: MONO,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: 0,
+          }}>
+            {hideAmounts ? maskAmountText(`₩${fmt(totalEval)}`) : `₩${fmt(totalEval)}`}
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: profitColor(totalProfit), marginTop: 2 }}>
+            {totalProfit > 0 ? '+' : ''}{totalInvest > 0 ? ((totalProfit / totalInvest) * 100).toFixed(1) : '0.0'}%
+          </div>
+        </div>
       </div>
 
       {/* 계좌 카드 그리드 (2열) */}

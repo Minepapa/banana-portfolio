@@ -44,23 +44,25 @@ const BAND_BREACH_BG = `${COLORS.금}66`;
 // pooledAccountFromMirror)와 같은 모양({label, color, assets: [{name,target,ratio,
 // rebalAmt,eval}], ...}). App.jsx가 미리 조립해 넘긴다(HoldingsTab이 쓰는
 // accountsFromMirror의 `accounts`는 assets가 없는 다른 모양이라 여기 재사용 불가).
-export default function RebalanceTab({ views, baseFont, fmt }) {
+export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
   const [rebalKey, setRebalKey] = useState(POOLED_KEY);
   const acct = views[rebalKey];
 
   return (
     <div>
-      {/* 선택 — 통합(위탁+연금저축+금) + ISA·IRP·CMA(각자 단일목적 계좌) 4개. */}
+      {/* 선택 — 통합(위탁+연금저축+금) + ISA·IRP·CMA(각자 단일목적 계좌) 4개. 높이는
+          HoldingsTab의 계좌 선택 칩(보유 현황 화면)과 맞춘다(오너 지시, 2026-09-27 —
+          둘 중 더 낮은 쪽인 HoldingsTab 기준으로 통일: padding/fontSize 그대로 재사용). */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
         {Object.entries(views).map(([k, v]) => (
           <button key={k} onClick={() => setRebalKey(k)} style={{
-            flex: "1 1 auto", minWidth: 72, padding: '10px 8px',
+            flex: "1 1 auto", minWidth: 72, padding: isMobile ? "7px 8px" : "6px 8px",
             textAlign: 'center',
             borderRadius: RADIUS_SM,
             border: `1px solid ${rebalKey === k ? v.color : BORDER_COLOR}`,
             background: rebalKey === k ? `${v.color}22` : "transparent",
             color: rebalKey === k ? v.color : INK_2,
-            cursor: "pointer", fontFamily: baseFont,
+            cursor: "pointer", fontSize: isMobile ? 10 : 11, fontFamily: baseFont,
           }}>
             {v.label}
           </button>
