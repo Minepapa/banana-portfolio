@@ -1,5 +1,7 @@
 // 자산분배 탭 — 자산군 파이 + 목표 vs 현재 비중 + 리밸런싱 필요액. v2 재배선
-// (2026-08-13): 읽기 전용. 목표비중은 Athena 5/25 룰의 확정값(20/10/5/5/30/30)이라
+// (2026-08-13): 읽기 전용. 목표비중은 Athena 5/25 룰의 확정값이라(2026-08-23 재조정
+// 이후 5자산군 — 정확한 값은 docs/ARCHITECTURE-V2.md 확인, 여기 숫자를 복사해 캐싱
+// 하지 않는다 — 이 탭 자체는 mirror의 a.target을 그대로 표시할 뿐 하드코딩 없음)
 // 애초에 앱에서 수동 조정하는 대상이 아니다(문서: "목표비중(확정 정본)") — 편집 UI
 // 제거.
 //
@@ -15,7 +17,7 @@ import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { COLORS, PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
-import { MONO } from '../lib/theme.js';
+import { PAPER, PAPER_2, CARD_BG, RADIUS, INK, INK_2, BORDER, BORDER_COLOR, RADIUS_SM, MONO } from '../lib/theme.js';
 import { DeptBadge } from '../lib/primitives.jsx';
 
 const POOLED_KEY = 'POOLED';
@@ -58,10 +60,10 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
           <button key={k} onClick={() => setRebalKey(k)} style={{
             flex: "1 1 auto", minWidth: 72, padding: isMobile ? "8px 4px" : "6px 4px",
             textAlign: 'center',
-            borderRadius: 0,
-            border: `1px solid ${rebalKey === k ? v.color : "#141414"}`,
+            borderRadius: RADIUS_SM,
+            border: `1px solid ${rebalKey === k ? v.color : BORDER_COLOR}`,
             background: rebalKey === k ? `${v.color}22` : "transparent",
-            color: rebalKey === k ? v.color : "#6B675C",
+            color: rebalKey === k ? v.color : INK_2,
             cursor: "pointer", fontSize: 11, fontFamily: baseFont,
           }}>
             {v.label}
@@ -80,8 +82,8 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
         const pieAssets = acct.assets.filter(a => a.eval > 0);
         const pieTotal = pieAssets.reduce((s, a) => s + a.eval, 0);
         return (
-          <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 12 }}>
+          <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: "16px", marginBottom: 16 }}>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: INK_2, marginBottom: 12 }}>
               자산군 구성 ({rebalKey === POOLED_KEY ? '위탁+연금저축+금 합산 기준' : '이 계좌 보유 기준'})
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -92,11 +94,11 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
                       data={pieAssets.map(a => ({ name: a.name, value: a.eval }))}
                       cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" paddingAngle={3}>
                       {pieAssets.map((a, i) => (
-                        <Cell key={i} fill={COLORS[a.name] || "#aaa"} stroke="#F4F1E9" strokeWidth={2} />
+                        <Cell key={i} fill={COLORS[a.name] || "#aaa"} stroke={PAPER} strokeWidth={2} />
                       ))}
                     </Pie>
                     <Tooltip formatter={(v) => `₩${v.toLocaleString()}`}
-                      contentStyle={{ background: "#EAE6DA", border: "1px solid #141414", borderRadius: 0, fontSize: 11 }} />
+                      contentStyle={{ background: PAPER_2, border: BORDER, borderRadius: RADIUS_SM, fontSize: 11 }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -104,8 +106,8 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
                 {pieAssets.map(a => (
                   <div key={a.name} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                     <div style={{ width: 8, height: 8, borderRadius: 0, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
-                    <span style={{ fontSize: 11, color: '#6B675C', flex: 1 }}>{a.name}</span>
-                    <span style={{ fontSize: 11, color: '#141414' , fontFamily: MONO}}>
+                    <span style={{ fontSize: 11, color: INK_2, flex: 1 }}>{a.name}</span>
+                    <span style={{ fontSize: 11, color: INK , fontFamily: MONO}}>
                       {(pieTotal > 0 ? (a.eval / pieTotal) * 100 : 0).toFixed(1)}%
                     </span>
                   </div>
@@ -117,15 +119,15 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
       })()}
 
       {/* 현재 vs 목표 비중 테이블 */}
-      <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px", marginBottom: 16 }}>
+      <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: "16px", marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C" }}>목표 vs 현재 비중</div>
+          <div style={{ fontSize: 10, letterSpacing: 2, color: INK_2 }}>목표 vs 현재 비중</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', padding: '4px 8px', marginBottom: 4 }}>
-          <div style={{ flex: 1, fontSize: 10, color: '#6B675C', textAlign: 'center' }}>자산군</div>
-          <div style={{ width: 60, textAlign: 'center', fontSize: 10, color: '#6B675C' }}>목표%</div>
-          <div style={{ width: 50, textAlign: 'center', fontSize: 10, color: '#6B675C' }}>현재%</div>
-          <div style={{ width: 60, textAlign: 'center', fontSize: 10, color: '#6B675C' }}>차이</div>
+          <div style={{ flex: 1, fontSize: 10, color: INK_2, textAlign: 'center' }}>자산군</div>
+          <div style={{ width: 60, textAlign: 'center', fontSize: 10, color: INK_2 }}>목표%</div>
+          <div style={{ width: 50, textAlign: 'center', fontSize: 10, color: INK_2 }}>현재%</div>
+          <div style={{ width: 60, textAlign: 'center', fontSize: 10, color: INK_2 }}>차이</div>
         </div>
         {acct.assets.map((a) => {
           const diff = parseFloat((a.ratio - a.target).toFixed(1));
@@ -133,19 +135,19 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
           return (
             <div key={a.name} style={{
               display: 'flex', alignItems: 'center', padding: '7px 8px',
-              borderRadius: 0, marginBottom: 2,
+              borderRadius: RADIUS_SM, marginBottom: 2,
               background: highlight ? BAND_BREACH_BG : 'transparent',
             }}>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ width: 8, height: 8, borderRadius: 0, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
                 <span style={{ fontSize: 12 }}>{a.name}</span>
               </div>
-              <div style={{ width: 60, textAlign: 'center', fontSize: 12, color: '#6B675C' , fontFamily: MONO}}>
+              <div style={{ width: 60, textAlign: 'center', fontSize: 12, color: INK_2 , fontFamily: MONO}}>
                 {a.target}%
               </div>
-              <div style={{ width: 50, textAlign: 'center', fontSize: 12, color: '#141414' , fontFamily: MONO}}>{a.ratio}%</div>
+              <div style={{ width: 50, textAlign: 'center', fontSize: 12, color: INK , fontFamily: MONO}}>{a.ratio}%</div>
               <div style={{ width: 60, textAlign: 'right', fontSize: 12, fontWeight: 700,
-                color: diff > 0 ? PROFIT_POS : diff < 0 ? PROFIT_NEG : '#6B675C' }}>
+                color: diff > 0 ? PROFIT_POS : diff < 0 ? PROFIT_NEG : INK_2 }}>
                 {diff > 0 ? '+' : ''}{diff}%p
               </div>
             </div>
@@ -155,8 +157,8 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
 
       {/* 리밸런싱 필요 — 강조 배경은 진하지 않게(투명도 낮춤)+파랑/빨강 좌측강조선
           없앰(오너 지시, 2026-08-22, ExecutionsTab과 동일 원칙: 색은 최소한으로). */}
-      <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px" }}>
-        <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 12 }}>리밸런싱 필요</div>
+      <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: "16px" }}>
+        <div style={{ fontSize: 10, letterSpacing: 2, color: INK_2, marginBottom: 12 }}>리밸런싱 필요</div>
         {acct.assets.map((a) => {
           const amt = a.rebalAmt ?? 0;
           const diff = parseFloat((a.ratio - a.target).toFixed(1));
@@ -164,7 +166,7 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
           return (
             <div key={a.name} style={{
               display: 'flex', alignItems: 'center', padding: '10px 12px',
-              borderRadius: 0, marginBottom: 4,
+              borderRadius: RADIUS_SM, marginBottom: 4,
               background: highlight ? BAND_BREACH_BG : 'transparent',
             }}>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -177,7 +179,7 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt }) {
                   "초과(매도 필요)=빨강, 부족(매수 필요)=파랑" 기준으로 통일한다 —
                   amt<0(=목표보다 현재가 많음=초과=매도)일 때 PROFIT_POS(빨강),
                   amt>0(=부족=매수)일 때 PROFIT_NEG(파랑)로 diff 열과 부호를 맞춤. */}
-              <div style={{ fontSize: 12, fontWeight: 700, color: amt < 0 ? PROFIT_POS : amt > 0 ? PROFIT_NEG : '#6B675C' , fontFamily: MONO}}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: amt < 0 ? PROFIT_POS : amt > 0 ? PROFIT_NEG : INK_2 , fontFamily: MONO}}>
                 ₩{fmt(amt)}
               </div>
             </div>

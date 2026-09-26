@@ -3,6 +3,7 @@
 // docs/IMPLEMENTATION-PLAN.md Phase 6 확정 7종 문서 그대로 유지, 날짜 선택 UI 제거).
 import { useState } from "react";
 import { SectionTitle, DeptBadge } from '../lib/primitives.jsx';
+import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, BORDER, RADIUS_SM } from '../lib/theme.js';
 
 export default function ReportTab({ report }) {
   const [expanded, setExpanded] = useState(false);
@@ -17,7 +18,7 @@ export default function ReportTab({ report }) {
           <SectionTitle sub={`${dateStr} 기준`}>주간 리포트</SectionTitle>
           <DeptBadge dept="apollo" />
         </div>
-        <div style={{ padding: 32, textAlign: 'center', color: '#6B675C', fontSize: 12 }}>
+        <div style={{ padding: 32, textAlign: 'center', color: INK_2, fontSize: 12 }}>
           아직 리포트가 없습니다
         </div>
       </div>
@@ -39,28 +40,28 @@ export default function ReportTab({ report }) {
         <DeptBadge dept="apollo" />
       </div>
 
-      <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 12, marginTop: 12 }}>
+      <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: 16, marginBottom: 12, marginTop: 12 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontSize: 10, letterSpacing: 2, color: '#6B675C' }}>📋 주간 AI 리포트</div>
-          <div style={{ fontSize: 10, color: '#6B675C' }}>{report.date}</div>
+          <div style={{ fontSize: 10, letterSpacing: 2, color: INK_2 }}>📋 주간 AI 리포트</div>
+          <div style={{ fontSize: 10, color: INK_2 }}>{report.date}</div>
         </div>
         {visibleSections.map((sec, i) => (
           <div key={i} style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#141414', marginBottom: 6 }}>{sec.title}</div>
-            <div style={{ fontSize: 10, color: '#6B675C', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: INK, marginBottom: 6 }}>{sec.title}</div>
+            <div style={{ fontSize: 10, color: INK_2, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
               {sec.content.split('\n').map((line, j) => {
                 if (line.startsWith('|') && line.includes('|')) {
                   const cells = line.split('|').filter(Boolean).map(c => c.trim());
                   if (cells.every(c => /^[-:]+$/.test(c))) return null;
                   return (
-                    <div key={j} style={{ display: 'flex', gap: 8, padding: '2px 0', fontSize: 9, borderBottom: '1px solid #EAE6DA' }}>
+                    <div key={j} style={{ display: 'flex', gap: 8, padding: '2px 0', fontSize: 9, borderBottom: `1px solid ${PAPER_2}` }}>
                       {cells.map((c, k) => <span key={k} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.replace(/\*\*/g, '')}</span>)}
                     </div>
                   );
                 }
                 const cleaned = line.replace(/\*\*/g, '').replace(/^>\s*/, '');
                 if (!cleaned) return <br key={j} />;
-                if (line.startsWith('###')) return <div key={j} style={{ fontSize: 10, fontWeight: 600, color: '#141414', marginTop: 8, marginBottom: 4 }}>{cleaned.replace(/^#+\s*/, '')}</div>;
+                if (line.startsWith('###')) return <div key={j} style={{ fontSize: 10, fontWeight: 600, color: INK, marginTop: 8, marginBottom: 4 }}>{cleaned.replace(/^#+\s*/, '')}</div>;
                 return <div key={j}>{cleaned}</div>;
               })}
             </div>
@@ -68,8 +69,8 @@ export default function ReportTab({ report }) {
         ))}
         {sections.length > 3 && (
           <button onClick={() => setExpanded(!expanded)} style={{
-            width: '100%', padding: '8px', borderRadius: 0, border: '1px solid #141414',
-            background: 'transparent', color: '#6B675C', cursor: 'pointer', fontSize: 10,
+            width: '100%', padding: '8px', borderRadius: RADIUS_SM, border: BORDER,
+            background: 'transparent', color: INK_2, cursor: 'pointer', fontSize: 10,
           }}>
             {expanded ? '접기 ▲' : `전체 보기 (${sections.length}섹션) ▼`}
           </button>

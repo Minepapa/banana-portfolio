@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { PAPER, INK, INK_2, ACCENT, CARD_BG, MONO, BORDER_HEAVY } from './lib/theme.js';
+import { PAPER, CARD_BG, INK, INK_2, ACCENT, MONO, BORDER, BORDER_HEAVY, SHADOW, RADIUS_SM } from './lib/theme.js';
 import { profitColor } from './lib/colors.js';
 import { relTime, fmt } from './lib/textFormat.js';
 import { isMirrorStale } from './lib/mirrorFreshness.js';
@@ -74,8 +74,8 @@ export default function App() {
   // 동일하게 fontSize 9·padding "2px 6px"·fontWeight 800·letterSpacing 없음으로
   // 통일. 헤더 타이틀 줄의 숨기기·로그인/로그아웃 버튼이 전부 이걸 쓴다.
   const badgeHeightBtn = {
-    padding: "2px 6px", borderRadius: 0,
-    border: "1px solid #141414", background: PAPER,
+    padding: "2px 6px", borderRadius: RADIUS_SM,
+    border: BORDER, background: PAPER,
     color: INK, cursor: "pointer", fontWeight: 800, lineHeight: 1.4,
     fontSize: 9, fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif",
   };
@@ -148,7 +148,7 @@ export default function App() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: INK_2, letterSpacing: 2, marginBottom: 2 }}>총 잔고</div>
-            <div style={{ fontSize: isMobile ? 22 : 27, fontWeight: 800, letterSpacing: -0.5, color: INK, fontFamily: MONO }}>
+            <div style={{ fontSize: isMobile ? 22 : 27, fontWeight: 800, letterSpacing: 0, color: INK, fontFamily: MONO }}>
               {hideAmounts ? "₩••••••" : `₩${fmt(totalEval)}`}
             </div>
           </div>
@@ -179,9 +179,9 @@ export default function App() {
               padding: "5px 12px",
               minHeight: 32,
               flexShrink: 0,
-              borderRadius: 0, border: "1px solid #141414", cursor: "pointer",
+              borderRadius: RADIUS_SM, border: BORDER, cursor: "pointer",
               fontSize: 12, fontWeight: tab === key ? 800 : 600, letterSpacing: 0.5, fontFamily: baseFont,
-              background: tab === key ? "#E4F5A0" : CARD_BG,
+              background: tab === key ? ACCENT : CARD_BG,
               color: INK,
               boxShadow: "none",
               transition: "none",
@@ -198,7 +198,7 @@ export default function App() {
         {auth === 'signed-in' && sync === 'error' && (
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-            background: '#FBE3E4', border: '1px solid #E5484D', borderRadius: 0,
+            background: '#FBE3E4', border: '1px solid #E5484D', borderRadius: RADIUS_SM,
             padding: '8px 12px', marginBottom: 12,
           }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: '#E5484D', textAlign: 'left' }}>
@@ -210,7 +210,7 @@ export default function App() {
         {/* 데이터 신선도 배너 — updatedAt이 2시간 넘게 안 갱신되면 옛 데이터임을 명시 */}
         {auth === 'signed-in' && sync === 'synced' && stale && (
           <div style={{
-            background: '#FDF3D8', border: '1px solid #E0A000', borderRadius: 0,
+            background: '#FDF3D8', border: '1px solid #E0A000', borderRadius: RADIUS_SM,
             padding: '8px 12px', marginBottom: 12,
           }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: '#8A6200' }}>
@@ -222,7 +222,7 @@ export default function App() {
         {(auth === 'signed-out' || auth === 'error') && (
           <div style={{
             background: CARD_BG,
-            border: "1px solid #141414", borderRadius: 0, boxShadow: "3px 3px 0 #141414",
+            border: BORDER, borderRadius: RADIUS_SM, boxShadow: SHADOW,
             padding: "20px 16px", marginBottom: 16, textAlign: "center",
           }}>
             <div style={{ fontSize: 13, fontWeight: 800, color: INK, marginBottom: 6 }}>
@@ -234,7 +234,7 @@ export default function App() {
                 : '로그인하면 실제 포트폴리오가 표시됩니다.'}
             </div>
             <button onClick={signIn} style={{
-              padding: "10px 24px", borderRadius: 0, border: "1px solid #141414", boxShadow: "3px 3px 0 #141414",
+              padding: "10px 24px", borderRadius: RADIUS_SM, border: BORDER, boxShadow: SHADOW,
               background: ACCENT, color: INK, cursor: "pointer",
               fontSize: 13, fontWeight: 800, fontFamily: baseFont, minHeight: 44,
             }}>
@@ -290,7 +290,7 @@ export default function App() {
 
       </div>
 
-      <div style={{ padding: "12px 16px 32px", textAlign: "center", fontSize: 9, color: "#141414", letterSpacing: 2 }}>
+      <div style={{ padding: "12px 16px 32px", textAlign: "center", fontSize: 9, color: INK, letterSpacing: 2 }}>
         {(mirrors.home?.updatedAt ? new Date(mirrors.home.updatedAt) : new Date()).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })} · 바나나 은퇴 준비 포트폴리오
       </div>
     </div>

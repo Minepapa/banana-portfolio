@@ -3,7 +3,7 @@
 // 웹소켓, 미러 문서 밖)는 제거. 보유종목을 직접 고치고 싶으면 텔레그램으로 판테온에
 // 요청 — 실제 반영은 여전히 검문소를 통과해야 한다(useFirestoreMirror.js 원칙 그대로).
 import { profitColor, COLORS } from '../lib/colors.js';
-import { MONO } from '../lib/theme.js';
+import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, BORDER, BORDER_HEAVY, BORDER_COLOR, SHADOW, RADIUS_SM, MONO } from '../lib/theme.js';
 
 // RebalanceTab의 자산분배 자산군 순서와 동일(2026-08-22 오너 지시 — 두 탭의 자산군
 // 순서가 서로 다르면 같은 개념인데 다르게 읽혀 혼동을 준다). 이 목록에 없는 타입
@@ -46,10 +46,10 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
           <button key={k} onClick={() => setAcctKey(k)} style={{
             flex: "1 1 0", minWidth: 0, padding: isMobile ? "7px 2px" : "6px 3px",
             textAlign: 'center',
-            borderRadius: 0,
-            border: `1px solid ${acctKey === k ? a.color : "#141414"}`,
+            borderRadius: RADIUS_SM,
+            border: `1px solid ${acctKey === k ? a.color : BORDER_COLOR}`,
             background: acctKey === k ? `${a.color}22` : "transparent",
-            color: acctKey === k ? a.color : "#6B675C",
+            color: acctKey === k ? a.color : INK_2,
             cursor: "pointer", fontSize: isMobile ? 10 : 11, fontFamily: baseFont,
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>
@@ -61,18 +61,18 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
       {/* 계좌 요약 카드 */}
       <div style={{
         background: `${acct.color}22`,
-        border: '2px solid #141414', boxShadow: '4px 4px 0 #141414',
-        borderRadius: 0, padding: "16px", marginBottom: 16,
+        border: BORDER_HEAVY, boxShadow: SHADOW,
+        borderRadius: RADIUS_SM, padding: "16px", marginBottom: 16,
       }}>
         <div style={{ fontSize: 10, letterSpacing: 2, color: acct.color, marginBottom: 4 }}>
           {acct.sub.toUpperCase()}
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div>
-            <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: "#141414" , fontFamily: MONO}}>
+            <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, color: INK , fontFamily: MONO}}>
               ₩{fmt(acct.total_eval)}
             </div>
-            <div style={{ fontSize: 11, color: "#6B675C", marginTop: 2 }}>
+            <div style={{ fontSize: 11, color: INK_2, marginTop: 2 }}>
               투자금 ₩{fmt(acct.total_invest)}
             </div>
           </div>
@@ -100,53 +100,53 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
           { key: 'eval_desc',   label: '평가금↓' },
         ].map(s => (
           <button key={s.key} onClick={() => setHoldSort(s.key)} style={{
-            padding: '4px 8px', borderRadius: 0, fontSize: 10,
-            border: '1px solid #141414',
-            background: holdSort === s.key ? '#E4F5A0' : 'transparent',
-            color: '#141414', fontWeight: holdSort === s.key ? 800 : 600,
+            padding: '4px 8px', borderRadius: RADIUS_SM, fontSize: 10,
+            border: BORDER,
+            background: holdSort === s.key ? ACCENT : 'transparent',
+            color: INK, fontWeight: holdSort === s.key ? 800 : 600,
             cursor: 'pointer', fontFamily: baseFont,
           }}>{s.label}</button>
         ))}
       </div>
 
       {/* 보유 종목 목록 */}
-      <div style={{ background: "#FFFFFF", borderRadius: 0, overflow: "hidden" }}>
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid #141414", fontSize: 10, letterSpacing: 2, color: "#6B675C" }}>
+      <div style={{ background: CARD_BG, borderRadius: RADIUS, overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", borderBottom: BORDER, fontSize: 10, letterSpacing: 2, color: INK_2 }}>
           보유 종목 ({sortedHoldings.length})
         </div>
         {sortedHoldings.length === 0 && (
-          <div style={{ padding: 24, textAlign: 'center', color: '#6B675C', fontSize: 12 }}>종목이 없습니다</div>
+          <div style={{ padding: 24, textAlign: 'center', color: INK_2, fontSize: 12 }}>종목이 없습니다</div>
         )}
         {sortedHoldings.map((h, vi) => {
           const color = profitColor(h.rate);
           const typeName = h.type || '';
           const isUsDollar = String(typeName).includes('해외') && acctKey === '위탁';
           return (
-            <div key={`${acctKey}-${h.name}`} style={{ borderBottom: vi < sortedHoldings.length - 1 ? "1px solid #EAE6DA" : "none" }}>
+            <div key={`${acctKey}-${h.name}`} style={{ borderBottom: vi < sortedHoldings.length - 1 ? `1px solid ${PAPER_2}` : "none" }}>
               <div style={{
                 padding: isMobile ? "10px 16px" : "12px 16px",
                 display: "flex", alignItems: "center", gap: 8,
               }}>
                 {typeName && (
-                  <div style={{ fontSize: 10, background: (COLORS[typeName] || '#aaa') + '33', color: COLORS[typeName] || '#aaa', padding: '2px 6px', borderRadius: 0, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                  <div style={{ fontSize: 10, background: (COLORS[typeName] || '#aaa') + '33', color: COLORS[typeName] || '#aaa', padding: '2px 6px', borderRadius: RADIUS_SM, flexShrink: 0, whiteSpace: 'nowrap' }}>
                     {typeName}
                   </div>
                 )}
                 <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#141414", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: INK, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {h.name}
                   </div>
-                  <div style={{ fontSize: 10, color: "#6B675C", marginTop: 2 }}>
+                  <div style={{ fontSize: 10, color: INK_2, marginTop: 2 }}>
                     {h.qty}주 · 매수 {isUsDollar ? `$${Number(h.price).toFixed(2)}` : `₩${fmt(h.price)}`}
                   </div>
                   {h.currentPrice > 0 && (
-                    <div style={{ fontSize: 10, color: "#6B675C" }}>
+                    <div style={{ fontSize: 10, color: INK_2 }}>
                       현재 {isUsDollar ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`}
                     </div>
                   )}
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontSize: isMobile ? 11 : 12, color: "#141414", fontFamily: MONO }}>₩{fmt(h.eval)}</div>
+                  <div style={{ fontSize: isMobile ? 11 : 12, color: INK, fontFamily: MONO }}>₩{fmt(h.eval)}</div>
                   <div style={{ fontSize: isMobile ? 10 : 11, fontWeight: 700, color }}>
                     {h.rate >= 0 ? '+' : ''}{h.rate.toFixed(1)}%
                   </div>

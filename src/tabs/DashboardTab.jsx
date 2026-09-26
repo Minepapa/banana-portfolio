@@ -11,7 +11,7 @@
 import { useState } from 'react';
 import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { profitColor, CHART_BAR_COLOR } from '../lib/colors.js';
-import { MONO } from '../lib/theme.js';
+import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
 
 export default function DashboardTab({
   totalInvest, totalEval, totalProfit, accounts, fmt, isMobile, setAcctKey, setTab, monthlyBalances = [],
@@ -29,17 +29,17 @@ export default function DashboardTab({
         gap: 8, marginBottom: 20,
       }}>
         {[
-          { label: "총 투자금", value: `₩${fmt(totalInvest)}`, color: "#6B675C" },
-          { label: "총 평가금", value: `₩${fmt(totalEval)}`, color: "#141414" },
+          { label: "총 투자금", value: `₩${fmt(totalInvest)}`, color: INK_2 },
+          { label: "총 평가금", value: `₩${fmt(totalEval)}`, color: INK },
           { label: "수익률", value: `${totalProfit > 0 ? '+' : ''}${totalInvest > 0 ? ((totalProfit / totalInvest) * 100).toFixed(1) : '0.0'}%`, color: profitColor(totalProfit) },
         ].map((s) => (
           <div key={s.label} style={{
-            background: "#FFFFFF", borderRadius: 0, padding: "12px 10px", textAlign: "center",
+            background: CARD_BG, borderRadius: RADIUS, padding: "12px 10px", textAlign: "center",
           }}>
-            <div style={{ fontSize: 9, color: "#6B675C", marginBottom: 4, letterSpacing: 1 }}>{s.label}</div>
+            <div style={{ fontSize: 9, color: INK_2, marginBottom: 4, letterSpacing: 1 }}>{s.label}</div>
             <div style={{
               fontSize: isMobile ? 12 : 15, fontWeight: 800, color: s.color, fontFamily: MONO,
-              wordBreak: "break-all", letterSpacing: -0.3,
+              wordBreak: "break-all", letterSpacing: 0,
             }}>
               {s.value}
             </div>
@@ -61,8 +61,8 @@ export default function DashboardTab({
           return (
             <div key={k} onClick={() => { setAcctKey(k); setTab("holdings"); }}
               style={{
-                background: "#FFFFFF", border: `1px solid ${v.color}33`,
-                borderRadius: 0, padding: "14px 16px",
+                background: CARD_BG, border: `1px solid ${v.color}33`,
+                borderRadius: RADIUS_SM, padding: "14px 16px",
                 cursor: "pointer", transition: "all 0.2s",
                 boxShadow: `0 0 20px ${v.color}11`,
               }}>
@@ -71,16 +71,16 @@ export default function DashboardTab({
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: "#141414" }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: INK }}>
                     {v.label}
                   </div>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: "#141414", marginBottom: 2, fontFamily: MONO, letterSpacing: -0.3 }}>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: INK, marginBottom: 2, fontFamily: MONO, letterSpacing: 0 }}>
                     ₩{fmt(v.total_eval)}
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 9, color: "#6B675C", marginBottom: 2 }}>수익</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: pColor , fontFamily: MONO}}>
+                  <div style={{ fontSize: 9, color: INK_2, marginBottom: 2 }}>수익</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: pColor , fontFamily: MONO}}>
                     ₩{fmt(v.profit)}
                   </div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: pColor }}>
@@ -112,17 +112,17 @@ export default function DashboardTab({
         });
         const evalAmt = _te <= 0 ? '—' : _te >= 100000000 ? `${(_te/100000000).toFixed(1)}억` : `${(_te/10000).toFixed(0)}만`;
         return (
-          <div style={{ background: '#FFFFFF', borderRadius: 0, padding: 16, marginBottom: 16 }}>
+          <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: 16, marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
               <div>
-                <div style={{ fontSize: isMobile ? 21 : 25, fontWeight: 800, color: '#141414', fontFamily: MONO, letterSpacing: -0.5 }}>₩{fmt(_te)}</div>
-                <div style={{ fontSize: 11, color: '#6B675C', marginTop: 2 }}>투자원금 ₩{fmt(_ti)}</div>
+                <div style={{ fontSize: isMobile ? 21 : 25, fontWeight: 800, color: INK, fontFamily: MONO, letterSpacing: 0 }}>₩{fmt(_te)}</div>
+                <div style={{ fontSize: 11, color: INK_2, marginTop: 2 }}>투자원금 ₩{fmt(_ti)}</div>
               </div>
               {/* ⚠️ 색상 통일(2026-08-25 오너 지적) — 서구식 초록/빨강 하드코딩을 profitColor
                   (한국 관례 이익=빨강/손실=파랑)로 교체, App.jsx 총 잔고와 동일 수정. */}
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 17, fontWeight: 800, color: profitColor(_tp), fontFamily: MONO, letterSpacing: -0.3 }}>₩{fmt(_tp)}</div>
-                <div style={{ fontSize: 13, fontWeight: 800, color: profitColor(_tp) }}>{_tr >= 0 ? '+' : ''}{_tr.toFixed(1)}%</div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: profitColor(_tp), fontFamily: MONO, letterSpacing: 0 }}>₩{fmt(_tp)}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: profitColor(_tp) }}>{_tr >= 0 ? '+' : ''}{_tr.toFixed(1)}%</div>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -131,17 +131,17 @@ export default function DashboardTab({
                   <circle key={i} cx="50" cy="50" r={r} fill="none" stroke={s.color} strokeWidth="20"
                     strokeDasharray={`${s.dash} ${circ - s.dash}`} strokeDashoffset={s.offset} />
                 ))}
-                <text x="50" y="47" textAnchor="middle" fill="#141414" fontSize="9" fontWeight="700">{evalAmt}</text>
-                <text x="50" y="58" textAnchor="middle" fill="#6B675C" fontSize="7">총자산</text>
+                <text x="50" y="47" textAnchor="middle" fill={INK} fontSize="9" fontWeight="700">{evalAmt}</text>
+                <text x="50" y="58" textAnchor="middle" fill={INK_2} fontSize="7">총자산</text>
               </svg>
               <div style={{ flex: 1, minWidth: 80 }}>
                 {slices.map((s, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: i < slices.length - 1 ? '1px solid #EAE6DA' : 'none' }}>
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: i < slices.length - 1 ? `1px solid ${PAPER_2}` : 'none' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <div style={{ width: 7, height: 7, borderRadius: 0, background: s.color, flexShrink: 0 }} />
-                      <span style={{ fontSize: 10, color: '#6B675C' }}>{s.label}</span>
+                      <span style={{ fontSize: 10, color: INK_2 }}>{s.label}</span>
                     </div>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: '#141414' , fontFamily: MONO}}>{s.pctStr}%</span>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: INK , fontFamily: MONO}}>{s.pctStr}%</span>
                   </div>
                 ))}
               </div>
@@ -157,30 +157,30 @@ export default function DashboardTab({
             {balYears.map(y => (
               <button key={y} onClick={() => { setBalYear(y); setSelectedBalKey(null); }} style={{
                 padding: isMobile ? "8px 14px" : "6px 14px",
-                borderRadius: 0,
-                border: '1px solid #141414',
-                background: balYear === y ? '#E4F5A0' : 'transparent',
-                color: balYear === y ? '#141414' : '#6B675C',
+                borderRadius: RADIUS_SM,
+                border: BORDER,
+                background: balYear === y ? ACCENT : 'transparent',
+                color: balYear === y ? INK : INK_2,
                 cursor: 'pointer', fontSize: 11,
               }}>{y}</button>
             ))}
           </div>
-          <div style={{ background: "#FFFFFF", borderRadius: 0, padding: "16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 10, letterSpacing: 2, color: "#6B675C", marginBottom: 16 }}>월별 잔고 추이</div>
+          <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: "16px", marginBottom: 16 }}>
+            <div style={{ fontSize: 10, letterSpacing: 2, color: INK_2, marginBottom: 16 }}>월별 잔고 추이</div>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart
                 data={filteredBalances}
                 barSize={isMobile ? 10 : 16}
                 accessibilityLayer={false}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#141414" />
-                <XAxis dataKey="label" tick={{ fill: "#6B675C", fontSize: 9 }} />
-                <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: "#6B675C", fontSize: 9 }} width={55} />
+                <CartesianGrid strokeDasharray="3 3" stroke={INK} />
+                <XAxis dataKey="label" tick={{ fill: INK_2, fontSize: 9 }} />
+                <YAxis tickFormatter={v => v.toLocaleString()} tick={{ fill: INK_2, fontSize: 9 }} width={55} />
                 <Tooltip
                   formatter={v => [`₩${v.toLocaleString()}`, '총잔고']}
-                  contentStyle={{ background: "#EAE6DA", border: "1px solid #141414", borderRadius: 0, fontSize: 11 }}
-                  labelStyle={{ color: '#141414' }}
-                  itemStyle={{ color: '#141414' }}
+                  contentStyle={{ background: PAPER_2, border: BORDER, borderRadius: RADIUS_SM, fontSize: 11 }}
+                  labelStyle={{ color: INK }}
+                  itemStyle={{ color: INK }}
                 />
                 <Bar dataKey="total" fill={CHART_BAR_COLOR} radius={[3, 3, 0, 0]} cursor="pointer" activeBar={false}
                   onClick={(data) => {

@@ -2,10 +2,10 @@
 import { ACCENT } from './theme.js';
 
 // 한국 주식 색상 체계: 이익=빨강, 손실=파랑, 변동없음=중립회색 (브루탈 톤: 볼드·고대비)
-export const PROFIT_POS = '#E5484D';
-export const PROFIT_NEG = '#2F62E8';
-export const PROFIT_FLAT = '#6B675C';
-export const CHART_BAR_COLOR = '#C9F23E';
+export const PROFIT_POS = '#DD6B70';
+export const PROFIT_NEG = '#7C93E0';
+export const PROFIT_FLAT = '#7A7566';
+export const CHART_BAR_COLOR = ACCENT;
 
 // 손익 색상: 0은 중립색 (색맹·변동없음 혼란 방지)
 export const profitColor = (n) => n > 0 ? PROFIT_POS : n < 0 ? PROFIT_NEG : PROFIT_FLAT;
