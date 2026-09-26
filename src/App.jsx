@@ -12,11 +12,8 @@ import { useIsMobile } from './hooks/useIsMobile.js';
 import { useFirestoreMirror } from './hooks/useFirestoreMirror.js';
 import DashboardTab from './tabs/DashboardTab.jsx';
 import ReportTab from './tabs/ReportTab.jsx';
-import RebalanceTab from './tabs/RebalanceTab.jsx';
-import HoldingsTab from './tabs/HoldingsTab.jsx';
-import ExecutionsTab from './tabs/ExecutionsTab.jsx';
-import DividendTab from './tabs/DividendTab.jsx';
-import ProfitTab from './tabs/ProfitTab.jsx';
+import AssetsScreen from './tabs/AssetsScreen.jsx';
+import RecordsScreen from './tabs/RecordsScreen.jsx';
 
 // ── 앱(v2 — Firestore mirror 읽기 전용, 2026-08-13 재배선) ──────────────────────
 // docs/IMPLEMENTATION-PLAN.md Phase 6 확정: 7개 탭(홈·보유종목·자산분배·배당금·수익금·
@@ -248,7 +245,7 @@ export default function App() {
           <DashboardTab
             totalInvest={totalInvest} totalEval={totalEval} totalProfit={totalProfit}
             accounts={accounts} fmt={fmt} isMobile={isMobile}
-            setAcctKey={setAcctKey} setTab={setTab} monthlyBalances={monthlyBalances} hideAmounts={hideAmounts}
+            setAcctKey={setAcctKey} setTab={setTab} hideAmounts={hideAmounts}
           />
         )}
 
@@ -257,35 +254,26 @@ export default function App() {
           <ReportTab report={mirrors.latestReport} />
         )}
 
-        {/* ── 자산분배 탭 ── */}
-        {tab === "rebalance" && (
-          <RebalanceTab
-            views={rebalanceViews}
-            isMobile={isMobile} baseFont={baseFont} fmt={fmt} hideAmounts={hideAmounts}
+        {/* ── 자산 통합 화면 ── */}
+        {(tab === 'holdings' || tab === 'rebalance') && (
+          <AssetsScreen
+            key={tab}
+            initialView={tab === 'rebalance' ? 'target' : 'positions'}
+            holdingsProps={{ accounts, acct, acctKey, setAcctKey, isMobile, baseFont, fmt, holdSort, setHoldSort, hideAmounts }}
+            rebalanceProps={{ views: rebalanceViews, isMobile, baseFont, fmt, hideAmounts }}
+            monthlyBalances={monthlyBalances}
           />
         )}
 
-        {/* ── 종목 탭 ── */}
-        {tab === "holdings" && (
-          <HoldingsTab
-            accounts={accounts} acct={acct} acctKey={acctKey} setAcctKey={setAcctKey}
-            isMobile={isMobile} baseFont={baseFont} fmt={fmt}
-            holdSort={holdSort} setHoldSort={setHoldSort} hideAmounts={hideAmounts}
+        {/* ── 기록 통합 화면 ── */}
+        {(tab === '체결내역' || tab === 'dividend' || tab === 'profit') && (
+          <RecordsScreen
+            key={tab}
+            initialView={tab === 'dividend' ? 'div' : tab === 'profit' ? 'profit' : 'exec'}
+            executionsProps={{ trades, isMobile, fmt, hideAmounts }}
+            dividendProps={{ dividendData, isMobile, baseFont, fmt, hideAmounts }}
+            profitProps={{ profitData, isMobile, baseFont, fmt, hideAmounts }}
           />
-        )}
-
-        {/* ── 배당금 탭 ── */}
-        {tab === "dividend" && (
-          <DividendTab dividendData={dividendData} isMobile={isMobile} baseFont={baseFont} fmt={fmt} hideAmounts={hideAmounts} />
-        )}
-        {/* ── 수익금 탭 ── */}
-        {tab === "profit" && (
-          <ProfitTab profitData={profitData} isMobile={isMobile} baseFont={baseFont} fmt={fmt} hideAmounts={hideAmounts} />
-        )}
-
-        {/* ── 체결내역 탭 ── */}
-        {tab === "체결내역" && (
-          <ExecutionsTab trades={trades} isMobile={isMobile} baseFont={baseFont} fmt={fmt} hideAmounts={hideAmounts} />
         )}
 
       </div>
