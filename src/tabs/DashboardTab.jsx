@@ -54,7 +54,7 @@ export default function DashboardTab({
             ? ((v.profit / v.total_invest) * 100).toFixed(1)
             : '0.0';
           return (
-            <div key={k} onClick={() => { setAcctKey(k); setTab("holdings"); }}
+            <div key={k} onClick={() => { setAcctKey(k); setTab("assets"); }}
               style={{
                 background: CARD_BG, border: `1px solid ${v.color}33`,
                 borderRadius: RADIUS_SM, padding: "14px 16px",

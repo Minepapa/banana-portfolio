@@ -14,6 +14,8 @@ import DashboardTab from './tabs/DashboardTab.jsx';
 import ReportTab from './tabs/ReportTab.jsx';
 import AssetsScreen from './tabs/AssetsScreen.jsx';
 import RecordsScreen from './tabs/RecordsScreen.jsx';
+import MoreScreen from './tabs/MoreScreen.jsx';
+import BottomNav from './components/BottomNav.jsx';
 
 // ── 앱(v2 — Firestore mirror 읽기 전용, 2026-08-13 재배선) ──────────────────────
 // docs/IMPLEMENTATION-PLAN.md Phase 6 확정: 7개 탭(홈·보유종목·자산분배·배당금·수익금·
@@ -160,36 +162,9 @@ export default function App() {
           </div>
         </div>
 
-        {/* 탭 */}
-        <div className="tab-bar" role="tablist" aria-label="화면 전환" style={{ display: "flex", gap: 4, marginTop: isMobile ? 10 : 16, flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          {[
-            { key: "dashboard", label: "홈" },
-            { key: "holdings",  label: "보유종목" },
-            { key: "rebalance", label: "자산분배" },
-            { key: "체결내역",  label: "체결" },
-            { key: "dividend",  label: "배당금" },
-            { key: "profit",    label: "수익금" },
-            { key: "report",    label: "리포트" },
-          ].map(({ key, label }) => (
-            <button key={key} onClick={() => setTab(key)}
-              role="tab" aria-selected={tab === key} aria-label={label} style={{
-              padding: "5px 12px",
-              minHeight: 32,
-              flexShrink: 0,
-              borderRadius: RADIUS_SM, border: BORDER, cursor: "pointer",
-              fontSize: 12, fontWeight: tab === key ? 800 : 600, letterSpacing: 0.5, fontFamily: baseFont,
-              background: tab === key ? ACCENT : CARD_BG,
-              color: INK,
-              boxShadow: "none",
-              transition: "none",
-            }}>
-              {label}
-            </button>
-          ))}
-        </div>
       </div>
 
-      <div style={{ padding: "20px 16px" }}>
+      <div style={{ padding: "20px 16px 90px" }}>
 
         {/* 동기화 실패 배너 */}
         {auth === 'signed-in' && sync === 'error' && (
@@ -255,10 +230,9 @@ export default function App() {
         )}
 
         {/* ── 자산 통합 화면 ── */}
-        {(tab === 'holdings' || tab === 'rebalance') && (
+        {tab === 'assets' && (
           <AssetsScreen
-            key={tab}
-            initialView={tab === 'rebalance' ? 'target' : 'positions'}
+            initialView="positions"
             holdingsProps={{ accounts, acct, acctKey, setAcctKey, isMobile, baseFont, fmt, holdSort, setHoldSort, hideAmounts }}
             rebalanceProps={{ views: rebalanceViews, isMobile, baseFont, fmt, hideAmounts }}
             monthlyBalances={monthlyBalances}
@@ -266,21 +240,23 @@ export default function App() {
         )}
 
         {/* ── 기록 통합 화면 ── */}
-        {(tab === '체결내역' || tab === 'dividend' || tab === 'profit') && (
+        {tab === 'records' && (
           <RecordsScreen
-            key={tab}
-            initialView={tab === 'dividend' ? 'div' : tab === 'profit' ? 'profit' : 'exec'}
+            initialView="exec"
             executionsProps={{ trades, isMobile, fmt, hideAmounts }}
             dividendProps={{ dividendData, isMobile, baseFont, fmt, hideAmounts }}
             profitProps={{ profitData, isMobile, baseFont, fmt, hideAmounts }}
           />
         )}
 
+        {tab === 'more' && <MoreScreen hideAmounts={hideAmounts} syncLabel={syncLabel} auth={auth} />}
+
       </div>
 
-      <div style={{ padding: "12px 16px 32px", textAlign: "center", fontSize: 9, color: INK, letterSpacing: 2 }}>
+      <div style={{ padding: "12px 16px 110px", textAlign: "center", fontSize: 9, color: INK, letterSpacing: 2 }}>
         {(mirrors.home?.updatedAt ? new Date(mirrors.home.updatedAt) : new Date()).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })} · 바나나 은퇴 준비 포트폴리오
       </div>
+      <BottomNav tab={tab} setTab={setTab} />
     </div>
   );
 }
