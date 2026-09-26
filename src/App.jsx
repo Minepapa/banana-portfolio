@@ -43,7 +43,12 @@ export default function App() {
     try { localStorage.setItem('banana_hide_amounts', next ? '1' : '0'); } catch { /* 프라이빗 모드 등 — 세션 내에서만 유지 */ }
     return next;
   });
-  const [acctKey, setAcctKey] = useState("위탁");
+  const [acctKey, setAcctKey] = useState(() => {
+    try { return localStorage.getItem('banana_last_acct') || "위탁"; } catch { return "위탁"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('banana_last_acct', acctKey); } catch { /* 프라이빗 모드 등 */ }
+  }, [acctKey]);
   const [holdSort, setHoldSort] = useState('sheet');
   const isMobile = useIsMobile();
 

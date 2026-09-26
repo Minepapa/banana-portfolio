@@ -1,11 +1,14 @@
 // 체결내역 탭 — Facts/Ledger/Executions 미러 목록. v2 재배선(2026-08-13): 읽기 전용.
 // v1의 수동 동기화·저축금 반영·셀 편집은 전부 제거 — 체결은 이제 카카오 파싱/KIS API가
 // 자동으로 Vault에 기록하고, 이 탭은 그 결과를 보여만 준다.
+import { Fragment } from 'react';
 import { maskAmountText } from '../lib/textFormat.js';
 import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
 
 export default function ExecutionsTab({ trades, isMobile, fmt, hideAmounts = false }) {
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   return (
     <div>
       <div style={{ background: CARD_BG, borderRadius: RADIUS, overflow: "hidden" }}>
@@ -18,6 +21,15 @@ export default function ExecutionsTab({ trades, isMobile, fmt, hideAmounts = fal
           </div>
         )}
         {trades.map((t, i) => {
+          const dateKey = String(t.date ?? '');
+          const [year, month, day] = dateKey.split('-').map(Number);
+          const parsedDate = year && month && day ? new Date(year, month - 1, day) : null;
+          const dateLabel = dateKey === todayKey
+            ? '오늘'
+            : parsedDate && !Number.isNaN(parsedDate.getTime())
+              ? `${parsedDate.getMonth() + 1}월 ${parsedDate.getDate()}일`
+              : dateKey || '날짜 미확인';
+          const showDateHeader = i === 0 || dateKey !== String(trades[i - 1]?.date ?? '');
           const isBuy = String(t.side ?? '').includes('매수');
           // 매수=파랑(PROFIT_NEG)·매도=빨강(PROFIT_POS) — [매수/매도] 배지 색으로만
           // 구분한다(오너 지시, 2026-08-22 — 카드 전체 배경·좌측 강조선·금액 글자색은
@@ -26,7 +38,9 @@ export default function ExecutionsTab({ trades, isMobile, fmt, hideAmounts = fal
           const isUsDollar = t.assetClass === '해외주식' && t.account === '위탁';
           const currencySymbol = isUsDollar ? '$' : '₩';
           return (
-            <div key={i} style={{
+            <Fragment key={`${dateKey}-${i}`}>
+            {showDateHeader && <div style={{ background: PAPER_2, padding: '7px 16px', fontSize: 10, fontWeight: 700, color: INK_2 }}>{dateLabel}</div>}
+            <div style={{
               padding: isMobile ? "10px 16px" : "12px 16px",
               borderBottom: i < trades.length - 1 ? `1px solid ${PAPER_2}` : 'none',
               display: 'flex', alignItems: 'center', gap: 12,
@@ -54,6 +68,7 @@ export default function ExecutionsTab({ trades, isMobile, fmt, hideAmounts = fal
                 {t.amount ? (hideAmounts ? maskAmountText(`${currencySymbol}${fmt(t.amount)}`) : `${currencySymbol}${fmt(t.amount)}`) : ''}
               </div>
             </div>
+            </Fragment>
           );
         })}
       </div>

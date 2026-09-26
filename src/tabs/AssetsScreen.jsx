@@ -8,6 +8,7 @@ import RebalanceTab from './RebalanceTab.jsx';
 
 export default function AssetsScreen({ initialView = 'positions', holdingsProps, rebalanceProps, monthlyBalances = [] }) {
   const [view, setView] = useState(initialView);
+  const [touchStart, setTouchStart] = useState(null);
   const [balYear, setBalYear] = useState('전체');
   const [selectedBalKey, setSelectedBalKey] = useState(null);
   const { accounts = {}, isMobile, fmt, hideAmounts = false } = holdingsProps;
@@ -18,6 +19,15 @@ export default function AssetsScreen({ initialView = 'positions', holdingsProps,
     background: active ? ACCENT : CARD_BG, color: active ? EMPHASIS_INK : INK_2,
     fontWeight: 700, cursor: 'pointer',
   });
+  const handleContentTouchEnd = (event) => {
+    if (!touchStart) return;
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - touchStart.x;
+    const deltaY = touch.clientY - touchStart.y;
+    setTouchStart(null);
+    if (Math.abs(deltaX) < 50 || Math.abs(deltaY) > Math.abs(deltaX)) return;
+    setView(deltaX < 0 ? 'target' : 'positions');
+  };
 
   return (
     <div>
@@ -25,6 +35,7 @@ export default function AssetsScreen({ initialView = 'positions', holdingsProps,
         <button type="button" role="tab" aria-selected={view === 'positions'} onClick={() => setView('positions')} style={segmentStyle(view === 'positions')}>보유 현황</button>
         <button type="button" role="tab" aria-selected={view === 'target'} onClick={() => setView('target')} style={segmentStyle(view === 'target')}>목표비중</button>
       </div>
+      <div onTouchStart={event => setTouchStart({ x: event.touches[0].clientX, y: event.touches[0].clientY })} onTouchEnd={handleContentTouchEnd}>
       {view === 'positions' && (
         <>
           <HoldingsTab {...holdingsProps} />
@@ -102,6 +113,7 @@ export default function AssetsScreen({ initialView = 'positions', holdingsProps,
         </>
       )}
       {view === 'target' && <RebalanceTab {...rebalanceProps} />}
+      </div>
     </div>
   );
 }
