@@ -86,6 +86,22 @@ function readVaultDir(dir) {
     ({ filepath: join(dir, f), ...parseFrontmatter(readFileSync(join(dir, f), 'utf8')) }));
 }
 
+// 순수함수 — 활성 돌파매매 포지션 중 보호주문 실패 상태를 그대로 집계한다. 판단이
+// 아니라 State에 이미 기록된 protectionStatus 필드를 읽기만 한다 — 리스크관리실
+// Themis의 거시신호·제안검증·개별종목 논리 판단과는 무관한, 퀀트 실행계층 운영
+// 사실 하나뿐이다. LLM에는 절대 안 넘긴다(이 함수의 결과는 buildReportPrompt로
+// 안 들어간다 — frontmatter에만 별도로 기록).
+export function computeBreakoutProtectionRiskFlag(breakoutPositions) {
+  const failed = (breakoutPositions ?? [])
+    .filter((p) => p.status === '보유' && p.protectionStatus === 'failed')
+    .map((p) => p.name || p.code);
+  if (!failed.length) return { riskFlag: false, riskNote: '' };
+  return {
+    riskFlag: true,
+    riskNote: `보호주문 실패 상태 포지션 ${failed.length}건(${failed.join(', ')}) — 확인 필요`,
+  };
+}
+
 // Facts/Ledger/Executions 객체 → EXEC_COL 인덱스 row-array. behavior-signals.mjs·
 // report-facts.mjs의 매입평균 기반 실현손익 로직(2026-07 현대차·삼성바이오로직스
 // 회귀방지)을 안 건드리고 그대로 재사용하기 위한 어댑터.
@@ -403,6 +419,14 @@ async function main() {
   const profitRows = readVaultDir(VAULT_PATHS.facts.ledger.profits);
   const prefRecords = readVaultDir(VAULT_PATHS.decisions.profile).filter(isLivePreferenceObservation);
   const prevReport = loadPrevReport(asof);
+  // 활성 돌파매매 포지션의 이미 기록된 보호주문 상태만 집계한다. 이 운영 사실은
+  // LLM 프롬프트·facts·행동신호에 넣지 않고, 발행 리포트의 frontmatter에만 기록한다.
+  let breakoutProtectionRisk = { riskFlag: false, riskNote: '' };
+  try {
+    breakoutProtectionRisk = computeBreakoutProtectionRiskFlag(readVaultDir(VAULT_PATHS.state.breakoutPositions));
+  } catch (e) {
+    console.error(`⚠️ 돌파매매 보호주문 상태 조회 실패 — 위험 배지 없이 발행: ${e.message}`);
+  }
 
   const stockRegistry = getCodeRegistry();
   const tradeRows = executionsToTradeRows(dedupExecutionsForReport(executions), stockRegistry);
@@ -488,7 +512,10 @@ async function main() {
   const summaryBullets = extractSummaryBullets(md);
   const summary = summaryBullets.join(' · ');
   const headline = md.match(/^# (.+)$/m)?.[1] ?? `주간 자산 종합 점검 — ${asof}`;
-  const record = buildFrontmatter({ type: 'weekly-report', date: asof, headline, summary }) + '\n' + md;
+  const record = buildFrontmatter({
+    type: 'weekly-report', date: asof, headline, summary,
+    riskFlag: breakoutProtectionRisk.riskFlag, riskNote: breakoutProtectionRisk.riskNote,
+  }) + '\n' + md;
   mkdirSync(VAULT_PATHS.log.reports, { recursive: true });
   writeAtomic(reportPath, record);
   console.log(`   💾 저장: Log/Reports/${asof}.md`);

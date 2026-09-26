@@ -3,7 +3,7 @@
 // docs/IMPLEMENTATION-PLAN.md Phase 6 확정 7종 문서 그대로 유지, 날짜 선택 UI 제거).
 import { useState } from "react";
 import { SectionTitle, DeptBadge } from '../lib/primitives.jsx';
-import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, BORDER, RADIUS_SM } from '../lib/theme.js';
+import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ALERT, BORDER, RADIUS_SM } from '../lib/theme.js';
 
 export default function ReportTab({ report }) {
   const [expanded, setExpanded] = useState(false);
@@ -39,6 +39,12 @@ export default function ReportTab({ report }) {
         <SectionTitle sub={`${dateStr} 기준`}>주간 리포트</SectionTitle>
         <DeptBadge dept="apollo" />
       </div>
+
+      {report.riskFlag === true && (
+        <div style={{ display: 'inline-block', background: ALERT, color: INK, borderRadius: RADIUS_SM, padding: '5px 8px', marginTop: 10, fontSize: 10, fontWeight: 800, lineHeight: 1.4 }}>
+          ⚠ {report.riskNote}
+        </div>
+      )}
 
       <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: 16, marginBottom: 12, marginTop: 12 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>

@@ -256,7 +256,7 @@ export default function App() {
       <div style={{ padding: "12px 16px 110px", textAlign: "center", fontSize: 9, color: INK, letterSpacing: 2 }}>
         {(mirrors.home?.updatedAt ? new Date(mirrors.home.updatedAt) : new Date()).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })} · 바나나 은퇴 준비 포트폴리오
       </div>
-      <BottomNav tab={tab} setTab={setTab} />
+      <BottomNav tab={tab} setTab={setTab} reportNeedsAttention={mirrors.latestReport?.riskFlag === true} />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import {
   extractSummary, extractSummaryBullets, safeTrim, markdownBoldToHtml,
   biggestMacroMover, formatMacroMoverBullet,
 } from './weekly-report.mjs';
+import * as weeklyReport from './weekly-report.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 
 // 2026-08-30 오너 신고 — 텔레그램 주간 리포트 요약이 숫자 한가운데서("-2,504,0") 잘려
@@ -31,6 +32,28 @@ const REAL_REPORT_BODY = `# 주간 자산 종합 점검 — 2026-08-30
 |------|-----:|-------:|
 | 위탁 | 103,771,880원 | 120,701,650원 |
 `;
+
+// ── computeBreakoutProtectionRiskFlag ─────────────────────────────────────────
+// 이 테스트는 보호주문 실패를 새로 판단하지 않고, State에 기록된 활성 포지션의
+// protectionStatus만 그대로 집계하는 계약을 지킨다. 아래 status/protectionStatus
+// 분기 중 하나라도 바뀌면 실패해야 한다.
+test('computeBreakoutProtectionRiskFlag: 활성 보유의 failed만 집계하고 종목명을 알린다', () => {
+  const compute = weeklyReport.computeBreakoutProtectionRiskFlag;
+  assert.equal(typeof compute, 'function');
+
+  assert.deepEqual(compute([]), { riskFlag: false, riskNote: '' });
+  assert.deepEqual(compute([
+    { status: '보유', protectionStatus: 'failed', name: '삼성전자', code: '005930' },
+  ]), {
+    riskFlag: true,
+    riskNote: '보호주문 실패 상태 포지션 1건(삼성전자) — 확인 필요',
+  });
+  assert.deepEqual(compute([
+    { status: '청산', protectionStatus: 'failed', name: '무시할 종목' },
+    { status: '보유', protectionStatus: undefined, name: '미설정 종목' },
+    { status: '보유', protectionStatus: 'protected', name: '보호된 종목' },
+  ]), { riskFlag: false, riskNote: '' });
+});
 
 // ── extractSummaryBullets — 텔레그램용(개행 유지, 여러 줄 배열) ──────────────────
 

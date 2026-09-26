@@ -57,7 +57,10 @@ export function readLatestReport(dir = VAULT_PATHS.log.reports) {
   const fm = parseFrontmatter(content);
   const m = content.match(/^---\n[\s\S]*?\n---\n?/);
   const body = m ? content.slice(m[0].length).replace(/^\n+/, '') : content;
-  return { date: fm.date || files[0].slice(0, 10), headline: fm.headline || '', summary: fm.summary || '', body };
+  return {
+    date: fm.date || files[0].slice(0, 10), headline: fm.headline || '', summary: fm.summary || '', body,
+    riskFlag: fm.riskFlag === true, riskNote: fm.riskNote || '',
+  };
 }
 
 export function collectMirrorInput({ now = new Date() } = {}) {
