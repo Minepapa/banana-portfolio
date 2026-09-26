@@ -6,7 +6,7 @@ import {
   ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
 import { PROFIT_POS } from '../lib/colors.js';
-import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
+import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, EMPHASIS_INK, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
 
 export default function DividendTab({ dividendData, isMobile, baseFont, fmt, hideAmounts = false }) {
   const [divYear, setDivYear] = useState('전체');
@@ -32,7 +32,7 @@ export default function DividendTab({ dividendData, isMobile, baseFont, fmt, hid
             borderRadius: RADIUS_SM,
             border: BORDER,
             background: divYear === y ? ACCENT : 'transparent',
-            color: divYear === y ? INK : INK_2,
+            color: divYear === y ? EMPHASIS_INK : INK_2,
             cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
           }}>{y}</button>
         ))}

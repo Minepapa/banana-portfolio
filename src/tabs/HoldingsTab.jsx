@@ -4,7 +4,7 @@
 // 요청 — 실제 반영은 여전히 검문소를 통과해야 한다(useFirestoreMirror.js 원칙 그대로).
 import { maskAmountText } from '../lib/textFormat.js';
 import { profitColor, COLORS } from '../lib/colors.js';
-import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, BORDER, BORDER_HEAVY, BORDER_COLOR, SHADOW, RADIUS_SM, MONO } from '../lib/theme.js';
+import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, EMPHASIS_INK, BORDER, BORDER_HEAVY, BORDER_COLOR, SHADOW, RADIUS_SM, MONO } from '../lib/theme.js';
 
 // RebalanceTab의 자산분배 자산군 순서와 동일(2026-08-22 오너 지시 — 두 탭의 자산군
 // 순서가 서로 다르면 같은 개념인데 다르게 읽혀 혼동을 준다). 이 목록에 없는 타입
@@ -103,7 +103,7 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
             padding: '4px 8px', borderRadius: RADIUS_SM, fontSize: 10,
             border: BORDER,
             background: holdSort === s.key ? ACCENT : 'transparent',
-            color: INK, fontWeight: holdSort === s.key ? 800 : 600,
+            color: holdSort === s.key ? EMPHASIS_INK : INK, fontWeight: holdSort === s.key ? 800 : 600,
             cursor: 'pointer', fontFamily: baseFont,
           }}>{s.label}</button>
         ))}

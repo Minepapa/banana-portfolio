@@ -1,14 +1,15 @@
 // 공통 프레젠테이션 프리미티브. App.jsx에서 추출 (동작 불변).
 import { gradeColor, breakUnits, breakSentences } from './textFormat.js';
 import { DEPARTMENTS } from './colors.js';
+import { INK, INK_2 } from './theme.js';
 
 // ── 섹션/탭 제목: 모든 탭 진입 제목의 통일 포맷 (주간 리포트 헤더 기준) ─────────────
 // 제목 14px·weight 700·ink 좌측 정렬 + sub는 그 아래 10px 뮤트. (color prop은 하위호환용, 미사용)
 export function SectionTitle({ children, sub, size = 14, mb = 16 }) {
   return (
     <div style={{ textAlign: 'left', marginBottom: mb }}>
-      <div style={{ fontSize: size, fontWeight: 700, color: '#141414', letterSpacing: -0.2 }}>{children}</div>
-      {sub != null && sub !== '' && <div style={{ fontSize: 10, color: '#6B675C', marginTop: 4, lineHeight: 1.5 }}>{sub}</div>}
+      <div style={{ fontSize: size, fontWeight: 700, color: INK, letterSpacing: -0.2 }}>{children}</div>
+      {sub != null && sub !== '' && <div style={{ fontSize: 10, color: INK_2, marginTop: 4, lineHeight: 1.5 }}>{sub}</div>}
     </div>
   );
 }

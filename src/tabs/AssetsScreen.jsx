@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { maskAmountText } from '../lib/textFormat.js';
 import { profitColor, CHART_BAR_COLOR } from '../lib/colors.js';
-import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
+import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, EMPHASIS_INK, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
 import HoldingsTab from './HoldingsTab.jsx';
 import RebalanceTab from './RebalanceTab.jsx';
 
@@ -15,7 +15,7 @@ export default function AssetsScreen({ initialView = 'positions', holdingsProps,
   const filteredBalances = balYear === '전체' ? monthlyBalances : monthlyBalances.filter(m => String(m.year) === balYear);
   const segmentStyle = (active) => ({
     flex: 1, padding: '10px 12px', border: BORDER, borderRadius: RADIUS_SM,
-    background: active ? ACCENT : CARD_BG, color: active ? INK : INK_2,
+    background: active ? ACCENT : CARD_BG, color: active ? EMPHASIS_INK : INK_2,
     fontWeight: 700, cursor: 'pointer',
   });
 
@@ -80,7 +80,7 @@ export default function AssetsScreen({ initialView = 'positions', holdingsProps,
           {monthlyBalances.length > 0 && (
             <>
               <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
-                {balYears.map(y => <button key={y} onClick={() => { setBalYear(y); setSelectedBalKey(null); }} style={{ padding: isMobile ? '8px 14px' : '6px 14px', borderRadius: RADIUS_SM, border: BORDER, background: balYear === y ? ACCENT : 'transparent', color: balYear === y ? INK : INK_2, cursor: 'pointer', fontSize: 11 }}>{y}</button>)}
+                {balYears.map(y => <button key={y} onClick={() => { setBalYear(y); setSelectedBalKey(null); }} style={{ padding: isMobile ? '8px 14px' : '6px 14px', borderRadius: RADIUS_SM, border: BORDER, background: balYear === y ? ACCENT : 'transparent', color: balYear === y ? EMPHASIS_INK : INK_2, cursor: 'pointer', fontSize: 11 }}>{y}</button>)}
               </div>
               <div style={{ background: CARD_BG, borderRadius: RADIUS, padding: 16, marginBottom: 16 }}>
                 <div style={{ fontSize: 10, letterSpacing: 2, color: INK_2, marginBottom: 16 }}>월별 잔고 추이</div>

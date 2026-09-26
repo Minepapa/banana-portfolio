@@ -1,4 +1,4 @@
-import { CARD_BG, INK, INK_2, BORDER, RADIUS } from '../lib/theme.js';
+import { CARD_BG, INK, INK_2, ACCENT, EMPHASIS_INK, BORDER, RADIUS, RADIUS_SM } from '../lib/theme.js';
 
 function InfoCard({ title, children, muted = false }) {
   return (
@@ -12,7 +12,18 @@ function InfoCard({ title, children, muted = false }) {
   );
 }
 
-export default function MoreScreen({ hideAmounts, syncLabel, auth }) {
+export default function MoreScreen({ hideAmounts, syncLabel, auth, themePref, setThemePref }) {
+  const themeOptions = [
+    ['system', '시스템'],
+    ['light', '라이트'],
+    ['dark', '다크'],
+  ];
+  const segmentStyle = (active) => ({
+    flex: 1, padding: '10px 8px', border: BORDER, borderRadius: RADIUS_SM,
+    background: active ? ACCENT : CARD_BG, color: active ? EMPHASIS_INK : INK_2,
+    fontWeight: 700, cursor: 'pointer',
+  });
+
   return (
     <div>
       <InfoCard title="퀀트 트랙" muted>
@@ -23,6 +34,16 @@ export default function MoreScreen({ hideAmounts, syncLabel, auth }) {
       </InfoCard>
       <InfoCard title="금액 표시 설정">
         <div style={{ fontSize: 11, color: INK_2 }}>{hideAmounts ? '숨기기 켜짐' : '숨기기 꺼짐'}</div>
+      </InfoCard>
+      <InfoCard title="화면 테마">
+        <div role="group" aria-label="화면 테마 선택" style={{ display: 'flex', gap: 8 }}>
+          {themeOptions.map(([value, label]) => (
+            <button key={value} type="button" aria-pressed={themePref === value}
+              onClick={() => setThemePref(value)} style={segmentStyle(themePref === value)}>
+              {label}
+            </button>
+          ))}
+        </div>
       </InfoCard>
       <InfoCard title="데이터 갱신 상태">
         <div style={{ fontSize: 11, color: INK_2 }}>{syncLabel || '갱신 이력 없음'}</div>

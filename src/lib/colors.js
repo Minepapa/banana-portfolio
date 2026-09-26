@@ -1,10 +1,10 @@
 // 앱 색상 시스템 — 손익 색상·차트·자산군 팔레트. constants.js에서 분리 (동작 불변).
-import { ACCENT } from './theme.js';
+import { ACCENT, INK_2 } from './theme.js';
 
 // 한국 주식 색상 체계: 이익=빨강, 손실=파랑, 변동없음=중립회색 (브루탈 톤: 볼드·고대비)
-export const PROFIT_POS = '#DD6B70';
-export const PROFIT_NEG = '#7C93E0';
-export const PROFIT_FLAT = '#7A7566';
+export const PROFIT_POS = 'var(--profit-pos)';
+export const PROFIT_NEG = 'var(--profit-neg)';
+export const PROFIT_FLAT = INK_2;
 export const CHART_BAR_COLOR = ACCENT;
 
 // 손익 색상: 0은 중립색 (색맹·변동없음 혼란 방지)

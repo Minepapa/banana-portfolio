@@ -1,13 +1,15 @@
 :root {
-  /* 네오 브루탈리즘 토큰 (src/lib/theme.js와 동일 값 — CSS 측 미러) */
-  --paper: #f4f1e9;
-  --paper-2: #eae6da;
-  --card: #ffffff;
-  --ink: #141414;
-  --ink-2: #6b675c;
-  --accent: #c9f23e;
-  --alert: #ff5c2b;
-  --border: var(--ink);
+  /* 구조 토큰의 정본 — src/lib/theme.js는 이 CSS 변수를 인라인 스타일에 연결한다. */
+  --paper: #F5F2EA;
+  --paper-2: #ECE7DA;
+  --card: #FEFCF6;
+  --ink: #242019;
+  --ink-2: #7A7566;
+  --accent: #DCEEA3;
+  --alert: #FF9466;
+  --border-color: rgba(36, 32, 25, 0.6);
+  --profit-pos: #DD6B70;
+  --profit-neg: #7C93E0;
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
@@ -26,6 +28,36 @@
   @media (max-width: 1024px) {
     font-size: 16px;
   }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #1B1914;
+    --paper-2: #262319;
+    --card: #211E17;
+    --ink: #EFEADC;
+    --ink-2: #A69C89;
+    --accent: #CFE28A;
+    --alert: #E8935F;
+    --border-color: rgba(239, 234, 220, 0.22);
+    --profit-pos: #E58388;
+    --profit-neg: #8FA6F0;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #1B1914;
+  --paper-2: #262319;
+  --card: #211E17;
+  --ink: #EFEADC;
+  --ink-2: #A69C89;
+  --accent: #CFE28A;
+  --alert: #E8935F;
+  --border-color: rgba(239, 234, 220, 0.22);
+  --profit-pos: #E58388;
+  --profit-neg: #8FA6F0;
+  color-scheme: dark;
 }
 
 body {
@@ -64,7 +96,7 @@ body {
   max-width: 100%;
   margin: 0 auto;
   text-align: center;
-  border-inline: 1px solid var(--border);
+  border-inline: 1px solid var(--border-color);
   min-height: 100svh;
   display: flex;
   flex-direction: column;

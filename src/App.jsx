@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { PAPER, CARD_BG, INK, INK_2, ACCENT, MONO, BORDER, BORDER_HEAVY, SHADOW, RADIUS_SM } from './lib/theme.js';
+import { useState, useMemo, useEffect } from "react";
+import { PAPER, CARD_BG, INK, INK_2, ACCENT, EMPHASIS_INK, MONO, BORDER, BORDER_HEAVY, SHADOW, RADIUS_SM } from './lib/theme.js';
 import { profitColor } from './lib/colors.js';
 import { relTime, fmt } from './lib/textFormat.js';
 import { isMirrorStale } from './lib/mirrorFreshness.js';
@@ -27,6 +27,17 @@ export default function App() {
   const [hideAmounts, setHideAmounts] = useState(() => {
     try { return localStorage.getItem('banana_hide_amounts') === '1'; } catch { return false; }
   });
+  const [themePref, setThemePref] = useState(() => {
+    try { return localStorage.getItem('banana_theme_pref') || 'system'; } catch { return 'system'; }
+  });
+  useEffect(() => {
+    if (themePref === 'system') {
+      document.documentElement.removeAttribute('data-theme');
+    } else {
+      document.documentElement.setAttribute('data-theme', themePref);
+    }
+    try { localStorage.setItem('banana_theme_pref', themePref); } catch { /* 프라이빗 모드 등 */ }
+  }, [themePref]);
   const toggleHideAmounts = () => setHideAmounts(prev => {
     const next = !prev;
     try { localStorage.setItem('banana_hide_amounts', next ? '1' : '0'); } catch { /* 프라이빗 모드 등 — 세션 내에서만 유지 */ }
@@ -103,7 +114,7 @@ export default function App() {
             포트폴리오"로 줄인 것도 같은 목적 — 왼쪽 폭 자체를 줄여 여유를 만듦). */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: 'nowrap' }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: 'nowrap', minWidth: 0 }}>
-            <div style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: isMobile ? 1 : 2, color: INK, background: ACCENT, padding: "2px 6px" }}>
+            <div style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 9, fontWeight: 800, letterSpacing: isMobile ? 1 : 2, color: EMPHASIS_INK, background: ACCENT, padding: "2px 6px" }}>
               BANANA 포트폴리오
             </div>
             {pendingProposalCount > 0 && (
@@ -126,7 +137,7 @@ export default function App() {
               {hideAmounts ? "🙈" : "👀"}
             </button>
             {auth === 'signed-out' && (
-              <button onClick={signIn} aria-label="Google 계정으로 로그인" style={{ ...badgeHeightBtn, background: ACCENT }}>
+              <button onClick={signIn} aria-label="Google 계정으로 로그인" style={{ ...badgeHeightBtn, background: ACCENT, color: EMPHASIS_INK }}>
                 로그인
               </button>
             )}
@@ -207,7 +218,7 @@ export default function App() {
             </div>
             <button onClick={signIn} style={{
               padding: "10px 24px", borderRadius: RADIUS_SM, border: BORDER, boxShadow: SHADOW,
-              background: ACCENT, color: INK, cursor: "pointer",
+              background: ACCENT, color: EMPHASIS_INK, cursor: "pointer",
               fontSize: 13, fontWeight: 800, fontFamily: baseFont, minHeight: 44,
             }}>
               {auth === 'error' ? '다시 로그인' : 'Google 로그인'}
@@ -249,7 +260,7 @@ export default function App() {
           />
         )}
 
-        {tab === 'more' && <MoreScreen hideAmounts={hideAmounts} syncLabel={syncLabel} auth={auth} />}
+        {tab === 'more' && <MoreScreen hideAmounts={hideAmounts} syncLabel={syncLabel} auth={auth} themePref={themePref} setThemePref={setThemePref} />}
 
       </div>
 

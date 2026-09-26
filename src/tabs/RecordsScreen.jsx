@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CARD_BG, ACCENT, INK, INK_2, BORDER, RADIUS_SM } from '../lib/theme.js';
+import { CARD_BG, ACCENT, EMPHASIS_INK, INK_2, BORDER, RADIUS_SM } from '../lib/theme.js';
 import ExecutionsTab from './ExecutionsTab.jsx';
 import DividendTab from './DividendTab.jsx';
 import ProfitTab from './ProfitTab.jsx';
@@ -18,7 +18,7 @@ export default function RecordsScreen({ initialView = 'exec', executionsProps, d
         {views.map(([key, label]) => (
           <button key={key} type="button" role="tab" aria-selected={view === key} onClick={() => setView(key)} style={{
             flex: 1, padding: '10px 12px', border: BORDER, borderRadius: RADIUS_SM,
-            background: view === key ? ACCENT : CARD_BG, color: view === key ? INK : INK_2,
+            background: view === key ? ACCENT : CARD_BG, color: view === key ? EMPHASIS_INK : INK_2,
             fontWeight: 700, cursor: 'pointer',
           }}>{label}</button>
         ))}

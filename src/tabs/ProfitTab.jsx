@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
 import { profitColor } from '../lib/colors.js';
-import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
+import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, EMPHASIS_INK, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
 
 export default function ProfitTab({ profitData, isMobile, baseFont, fmt, hideAmounts = false }) {
   const [profitYear, setProfitYear] = useState('전체');
@@ -28,7 +28,7 @@ export default function ProfitTab({ profitData, isMobile, baseFont, fmt, hideAmo
             borderRadius: RADIUS_SM,
             border: `1px solid ${profitYear === y ? INK : INK}`,
             background: profitYear === y ? ACCENT : 'transparent',
-            color: profitYear === y ? INK : INK_2,
+            color: profitYear === y ? EMPHASIS_INK : INK_2,
             cursor: 'pointer', fontSize: 11, fontFamily: baseFont,
           }}>{y}</button>
         ))}
