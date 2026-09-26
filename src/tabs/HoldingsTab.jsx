@@ -16,7 +16,11 @@ const assetRank = (type) => {
   return i === -1 ? ASSET_ORDER.length : i;
 };
 
-export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMobile, baseFont, fmt, holdSort, setHoldSort, hideAmounts = false }) {
+export default function HoldingsTab({ accounts = {}, acct: selectedAcct, acctKey, setAcctKey, isMobile, baseFont, fmt, holdSort, setHoldSort, hideAmounts = false }) {
+  const acct = selectedAcct ?? {
+    holdings: [], label: '', sub: '', color: INK_2,
+    total_eval: 0, total_invest: 0, profit: 0,
+  };
   const rawHoldings = (acct.holdings || [])
     // 현금성 행(예수금·외화RP·MMF)은 잔액이 0이어도 유지 — 음수→행 소멸 버그 방지.
     .filter(h => h.isCashLike || (h.invest > 0 && h.eval > 0));
@@ -82,10 +86,10 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
               fontSize: isMobile ? 13 : 16, fontWeight: 700,
               color: profitColor(acct.profit),
             fontFamily: MONO}}>
-              {hideAmounts ? maskAmountText(`₩${fmt(acct.profit)}`) : `₩${fmt(acct.profit)}`}
+              ₩{fmt(acct.profit)}
             </div>
             <div style={{ fontSize: 11, fontWeight: 700, color: profitColor(acct.profit) }}>
-              {hideAmounts ? maskAmountText(`${acct.profit >= 0 ? '+' : ''}${acct.total_invest > 0 ? ((acct.profit / acct.total_invest) * 100).toFixed(1) : '0.0'}%`) : `${acct.profit >= 0 ? '+' : ''}${acct.total_invest > 0 ? ((acct.profit / acct.total_invest) * 100).toFixed(1) : '0.0'}%`}
+              {acct.profit >= 0 ? '+' : ''}{acct.total_invest > 0 ? ((acct.profit / acct.total_invest) * 100).toFixed(1) : '0.0'}%
             </div>
           </div>
         </div>
@@ -137,21 +141,21 @@ export default function HoldingsTab({ accounts, acct, acctKey, setAcctKey, isMob
                     {h.name}
                   </div>
                   <div style={{ fontSize: 10, color: INK_2, marginTop: 2 }}>
-                    {h.qty}주 · 매수 {hideAmounts ? maskAmountText(isUsDollar ? `$${Number(h.price).toFixed(2)}` : `₩${fmt(h.price)}`) : (isUsDollar ? `$${Number(h.price).toFixed(2)}` : `₩${fmt(h.price)}`)}
+                    {h.qty}주 · 매수 {isUsDollar ? `$${Number(h.price).toFixed(2)}` : `₩${fmt(h.price)}`}
                   </div>
                   {h.currentPrice > 0 && (
                     <div style={{ fontSize: 10, color: INK_2 }}>
-                      현재 {hideAmounts ? maskAmountText(isUsDollar ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`) : (isUsDollar ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`)}
+                      현재 {isUsDollar ? `$${Number(h.currentPrice).toFixed(2)}` : `₩${fmt(h.currentPrice)}`}
                     </div>
                   )}
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontSize: isMobile ? 11 : 12, color: INK, fontFamily: MONO }}>{hideAmounts ? maskAmountText(`₩${fmt(h.eval)}`) : `₩${fmt(h.eval)}`}</div>
+                  <div style={{ fontSize: isMobile ? 11 : 12, color: INK, fontFamily: MONO }}>₩{fmt(h.eval)}</div>
                   <div style={{ fontSize: isMobile ? 10 : 11, fontWeight: 700, color }}>
-                    {hideAmounts ? maskAmountText(`${h.rate >= 0 ? '+' : ''}${h.rate.toFixed(1)}%`) : `${h.rate >= 0 ? '+' : ''}${h.rate.toFixed(1)}%`}
+                    {h.rate >= 0 ? '+' : ''}{h.rate.toFixed(1)}%
                   </div>
                   <div style={{ fontSize: 10, color , fontFamily: MONO}}>
-                    {hideAmounts ? maskAmountText(`₩${fmt(Math.abs(h.profit))}`) : `₩${fmt(Math.abs(h.profit))}`}
+                    ₩{fmt(Math.abs(h.profit))}
                   </div>
                 </div>
               </div>

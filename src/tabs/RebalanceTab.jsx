@@ -12,14 +12,12 @@
 // 합치고, ISA·IRP·CMA(각자 다른 목적의 단일자산 계좌)만 별도 탭으로 남긴다.
 // 이 선택 상태는 대시보드·보유종목 탭이 공유하는 acctKey(실계좌 6개 전용)와
 // 의도적으로 분리한다 — 여긴 "통합" 같은 가상 항목이 섞여 의미가 다르다.
-import { maskAmountText } from '../lib/textFormat.js';
 import { useState } from 'react';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { COLORS, PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
 import { PAPER, PAPER_2, CARD_BG, RADIUS, INK, INK_2, BORDER, BORDER_COLOR, RADIUS_SM, MONO } from '../lib/theme.js';
-import { DeptBadge } from '../lib/primitives.jsx';
 
 const POOLED_KEY = 'POOLED';
 
@@ -46,26 +44,23 @@ const BAND_BREACH_BG = `${COLORS.금}66`;
 // pooledAccountFromMirror)와 같은 모양({label, color, assets: [{name,target,ratio,
 // rebalAmt,eval}], ...}). App.jsx가 미리 조립해 넘긴다(HoldingsTab이 쓰는
 // accountsFromMirror의 `accounts`는 assets가 없는 다른 모양이라 여기 재사용 불가).
-export default function RebalanceTab({ views, isMobile, baseFont, fmt, hideAmounts = false }) {
+export default function RebalanceTab({ views, baseFont, fmt }) {
   const [rebalKey, setRebalKey] = useState(POOLED_KEY);
   const acct = views[rebalKey];
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-        <DeptBadge dept="athena" />
-      </div>
       {/* 선택 — 통합(위탁+연금저축+금) + ISA·IRP·CMA(각자 단일목적 계좌) 4개. */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
         {Object.entries(views).map(([k, v]) => (
           <button key={k} onClick={() => setRebalKey(k)} style={{
-            flex: "1 1 auto", minWidth: 72, padding: isMobile ? "8px 4px" : "6px 4px",
+            flex: "1 1 auto", minWidth: 72, padding: '10px 8px',
             textAlign: 'center',
             borderRadius: RADIUS_SM,
             border: `1px solid ${rebalKey === k ? v.color : BORDER_COLOR}`,
             background: rebalKey === k ? `${v.color}22` : "transparent",
             color: rebalKey === k ? v.color : INK_2,
-            cursor: "pointer", fontSize: 11, fontFamily: baseFont,
+            cursor: "pointer", fontFamily: baseFont,
           }}>
             {v.label}
           </button>
@@ -98,7 +93,7 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt, hideAmoun
                         <Cell key={i} fill={COLORS[a.name] || "#aaa"} stroke={PAPER} strokeWidth={2} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(v) => hideAmounts ? maskAmountText(`₩${v.toLocaleString()}`) : `₩${v.toLocaleString()}`}
+                    <Tooltip formatter={(v) => `₩${v.toLocaleString()}`}
                       contentStyle={{ background: PAPER_2, border: BORDER, borderRadius: RADIUS_SM, fontSize: 11 }} />
                   </PieChart>
                 </ResponsiveContainer>
@@ -109,7 +104,7 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt, hideAmoun
                     <div style={{ width: 8, height: 8, borderRadius: 0, background: COLORS[a.name] || '#aaa', flexShrink: 0 }} />
                     <span style={{ fontSize: 11, color: INK_2, flex: 1 }}>{a.name}</span>
                     <span style={{ fontSize: 11, color: INK , fontFamily: MONO}}>
-                      {hideAmounts ? maskAmountText(`${(pieTotal > 0 ? (a.eval / pieTotal) * 100 : 0).toFixed(1)}%`) : `${(pieTotal > 0 ? (a.eval / pieTotal) * 100 : 0).toFixed(1)}%`}
+                      {(pieTotal > 0 ? (a.eval / pieTotal) * 100 : 0).toFixed(1)}%
                     </span>
                   </div>
                 ))}
@@ -144,12 +139,12 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt, hideAmoun
                 <span style={{ fontSize: 12 }}>{a.name}</span>
               </div>
               <div style={{ width: 60, textAlign: 'center', fontSize: 12, color: INK_2 , fontFamily: MONO}}>
-                {hideAmounts ? maskAmountText(`${a.target}%`) : `${a.target}%`}
+                {a.target}%
               </div>
-              <div style={{ width: 50, textAlign: 'center', fontSize: 12, color: INK , fontFamily: MONO}}>{hideAmounts ? maskAmountText(`${a.ratio}%`) : `${a.ratio}%`}</div>
+              <div style={{ width: 50, textAlign: 'center', fontSize: 12, color: INK , fontFamily: MONO}}>{a.ratio}%</div>
               <div style={{ width: 60, textAlign: 'right', fontSize: 12, fontWeight: 700,
                 color: diff > 0 ? PROFIT_POS : diff < 0 ? PROFIT_NEG : INK_2 }}>
-                {hideAmounts ? maskAmountText(`${diff > 0 ? '+' : ''}${diff}%p`) : `${diff > 0 ? '+' : ''}${diff}%p`}
+                {diff > 0 ? '+' : ''}{diff}%p
               </div>
             </div>
           );
@@ -181,7 +176,7 @@ export default function RebalanceTab({ views, isMobile, baseFont, fmt, hideAmoun
                   amt<0(=목표보다 현재가 많음=초과=매도)일 때 PROFIT_POS(빨강),
                   amt>0(=부족=매수)일 때 PROFIT_NEG(파랑)로 diff 열과 부호를 맞춤. */}
               <div style={{ fontSize: 12, fontWeight: 700, color: amt < 0 ? PROFIT_POS : amt > 0 ? PROFIT_NEG : INK_2 , fontFamily: MONO}}>
-                {hideAmounts ? maskAmountText(`₩${fmt(amt)}`) : `₩${fmt(amt)}`}
+                ₩{fmt(amt)}
               </div>
             </div>
           );

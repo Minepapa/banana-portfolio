@@ -75,6 +75,13 @@ export function fmt(n) {
   return Math.round(Math.abs(n)).toLocaleString('ko-KR');
 }
 
+// 큰 원화 금액을 억/만 단위로 축약한다. 부호는 호출부가 표시한다.
+export function formatWonCompact(n) {
+  const value = Math.abs(Number(n) || 0);
+  if (value <= 0) return String(n ?? 0);
+  return value >= 100000000 ? `${(value / 100000000).toFixed(1)}억` : `${(value / 10000).toFixed(0)}만`;
+}
+
 // hideAmounts일 때 이미 계산된 금액/퍼센트 표시 문자열의 숫자만 고정 마스크로
 // 바꾼다. 접두 기호(₩·$·+·-·▲·▼)는 그대로 둬 시각적 자리는 유지하되, 실제 자릿수와
 // 무관하게 항상 같은 길이로 가려서 자릿수 자체가 규모를 드러내지 않게 한다.

@@ -3,8 +3,15 @@ import assert from 'node:assert/strict';
 import {
   parseNum, toDateStr, stripEmoji,
   gradeColor, GRADE_COLORS, stripGrade, stripPeriod,
-  breakUnits, breakSentences, relTime, maskAmountText,
+  breakUnits, breakSentences, relTime, maskAmountText, formatWonCompact,
 } from './textFormat.js';
+
+test('formatWonCompact: 원화 금액을 억/만 단위로 축약하고 부호는 생략', () => {
+  assert.equal(formatWonCompact(123456789), '1.2억');
+  assert.equal(formatWonCompact(-123456789), '1.2억');
+  assert.equal(formatWonCompact(1234567), '123만');
+  assert.equal(formatWonCompact(0), '0');
+});
 
 test('maskAmountText: 숫자 자릿수와 무관하게 기호를 보존해 마스킹', () => {
   assert.equal(maskAmountText(''), '••,•••,•••');

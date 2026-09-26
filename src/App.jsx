@@ -172,8 +172,8 @@ export default function App() {
             {/* ⚠️ 색상 통일(2026-08-25 오너 지적) — 여긴 원래 서구식 초록(이익)/빨강(손실)을
                 하드코딩해서, 앱 나머지 전체(colors.js profitColor — 한국 관례 이익=빨강/
                 손실=파랑)와 정반대로 보였다. profitColor로 교체. */}
-            <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: hideAmounts ? INK_2 : profitColor(totalProfit), fontFamily: MONO }}>
-              {hideAmounts ? "••••••" : <>{totalProfit > 0 ? '▲ ' : totalProfit < 0 ? '▼ ' : ''}₩{fmt(Math.abs(totalProfit))}</>}
+            <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: profitColor(totalProfit), fontFamily: MONO }}>
+              {totalProfit > 0 ? '▲ ' : totalProfit < 0 ? '▼ ' : ''}₩{fmt(Math.abs(totalProfit))}
             </div>
           </div>
         </div>
@@ -236,7 +236,7 @@ export default function App() {
           <DashboardTab
             totalInvest={totalInvest} totalEval={totalEval} totalProfit={totalProfit}
             accounts={accounts} fmt={fmt} isMobile={isMobile}
-            setAcctKey={setAcctKey} setTab={setTab} hideAmounts={hideAmounts}
+            setAcctKey={setAcctKey} setTab={setTab} hideAmounts={hideAmounts} monthlyBalances={monthlyBalances}
           />
         )}
 
@@ -251,7 +251,6 @@ export default function App() {
             initialView="positions"
             holdingsProps={{ accounts, acct, acctKey, setAcctKey, isMobile, baseFont, fmt, holdSort, setHoldSort, hideAmounts }}
             rebalanceProps={{ views: rebalanceViews, isMobile, baseFont, fmt, hideAmounts }}
-            monthlyBalances={monthlyBalances}
           />
         )}
 

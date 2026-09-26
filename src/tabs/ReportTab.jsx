@@ -2,7 +2,7 @@
 // 문서 하나에 "가장 최근 리포트"만 담는다(과거 리포트 목록은 미러 스키마 밖 —
 // docs/IMPLEMENTATION-PLAN.md Phase 6 확정 7종 문서 그대로 유지, 날짜 선택 UI 제거).
 import { useState } from "react";
-import { SectionTitle, DeptBadge } from '../lib/primitives.jsx';
+import { SectionTitle } from '../lib/primitives.jsx';
 import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ALERT, BORDER, RADIUS_SM } from '../lib/theme.js';
 
 export default function ReportTab({ report }) {
@@ -14,10 +14,7 @@ export default function ReportTab({ report }) {
   if (!report?.body) {
     return (
       <div>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-          <SectionTitle sub={`${dateStr} 기준`}>주간 리포트</SectionTitle>
-          <DeptBadge dept="apollo" />
-        </div>
+        <SectionTitle sub={`${dateStr} 기준`}>주간 리포트</SectionTitle>
         <div style={{ padding: 32, textAlign: 'center', color: INK_2, fontSize: 12 }}>
           아직 리포트가 없습니다
         </div>
@@ -35,10 +32,7 @@ export default function ReportTab({ report }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-        <SectionTitle sub={`${dateStr} 기준`}>주간 리포트</SectionTitle>
-        <DeptBadge dept="apollo" />
-      </div>
+      <SectionTitle sub={`${dateStr} 기준`}>주간 리포트</SectionTitle>
 
       {report.riskFlag === true && (
         <div style={{ display: 'inline-block', background: ALERT, color: INK, borderRadius: RADIUS_SM, padding: '5px 8px', marginTop: 10, fontSize: 10, fontWeight: 800, lineHeight: 1.4 }}>

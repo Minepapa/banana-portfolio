@@ -1,4 +1,5 @@
 :root {
+  -webkit-tap-highlight-color: transparent;
   /* 구조 토큰의 정본 — src/lib/theme.js는 이 CSS 변수를 인라인 스타일에 연결한다. */
   --paper: #F5F2EA;
   --paper-2: #ECE7DA;
@@ -28,6 +29,10 @@
   @media (max-width: 1024px) {
     font-size: 16px;
   }
+}
+
+button, [role="tab"], [role="button"] {
+  -webkit-tap-highlight-color: transparent;
 }
 
 @media (prefers-color-scheme: dark) {
