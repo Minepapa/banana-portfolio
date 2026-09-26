@@ -139,7 +139,7 @@ export default function App() {
             )}
             <button onClick={toggleHideAmounts} aria-label={hideAmounts ? "금액 표시" : "금액 숨기기"} title={hideAmounts ? "금액 표시" : "금액 숨기기"}
               style={{ ...badgeHeightBtn, background: hideAmounts ? ACCENT : PAPER }}>
-              {hideAmounts ? "🙈" : "👀"}
+              {hideAmounts ? "🙈" : "🙉"}
             </button>
             {auth === 'signed-out' && (
               <button onClick={signIn} aria-label="Google 계정으로 로그인" style={{ ...badgeHeightBtn, background: ACCENT, color: EMPHASIS_INK }}>
