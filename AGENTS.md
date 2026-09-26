@@ -1,6 +1,11 @@
 # AGENTS.md — banana-portfolio
 
-개인 투자 포트폴리오 **React PWA** + **Node 자동화 파이프라인**(launchd). Google Sheets가 데이터 정본.
+개인 투자 포트폴리오 **React PWA** + **Node 자동화 파이프라인**(launchd). 데이터 정본은
+Obsidian Vault(`~/banana-vault`, Facts/State/Decisions/Knowledge 4대 분류)다 — 2026-08-20
+Vault 네이티브 전환 완료(`scripts/tools/ledger-facts.mjs` 헤더 주석 참고). Google Sheets는
+일부 레거시 입력 경로(예: [종목투자노트] 탭, 매수논리 기록 — 아직 Vault 미이관, `scripts/
+jobs/weekly-report.mjs` 헤더의 "아직 Vault 네이티브 쓰기 주체가 없는 입력" 목록 참고)에만
+남아있다.
 
 이 파일은 **코드 구조·작업 규칙** 레이어다. **투자 도메인 정본은 `CLAUDE.md`**(투자 성향·계좌 구조·데이터 기준·평가 규칙·성향 학습) — 도메인 내용은 여기 중복하지 말 것.
 
