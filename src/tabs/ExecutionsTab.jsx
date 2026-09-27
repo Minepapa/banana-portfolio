@@ -3,7 +3,7 @@
 // 자동으로 Vault에 기록하고, 이 탭은 그 결과를 보여만 준다.
 import { Fragment } from 'react';
 import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
-import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, BORDER, RADIUS_SM, MONO } from '../lib/theme.js';
+import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, RADIUS_SM, MONO } from '../lib/theme.js';
 
 export default function ExecutionsTab({ trades, isMobile, fmt }) {
   const today = new Date();
@@ -11,7 +11,7 @@ export default function ExecutionsTab({ trades, isMobile, fmt }) {
   return (
     <div>
       <div style={{ background: CARD_BG, borderRadius: RADIUS, overflow: "hidden" }}>
-        <div style={{ padding: '10px 16px', borderBottom: BORDER, fontSize: 10, letterSpacing: 2, color: INK_2 }}>
+        <div style={{ padding: '10px 16px', fontSize: 10, letterSpacing: 2, color: INK_2 }}>
           전체 {trades.length}건
         </div>
         {trades.length === 0 && (
