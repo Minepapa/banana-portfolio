@@ -2,7 +2,7 @@
 // v1의 수동 동기화·저축금 반영·셀 편집은 전부 제거 — 체결은 이제 카카오 파싱/KIS API가
 // 자동으로 Vault에 기록하고, 이 탭은 그 결과를 보여만 준다.
 import { PROFIT_POS, PROFIT_NEG } from '../lib/colors.js';
-import { CARD_BG, RADIUS, INK, INK_2, RADIUS_SM, MONO } from '../lib/theme.js';
+import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, RADIUS_SM, MONO } from '../lib/theme.js';
 
 export default function ExecutionsTab({ trades, isMobile, fmt }) {
   return (
@@ -25,31 +25,33 @@ export default function ExecutionsTab({ trades, isMobile, fmt }) {
           const isUsDollar = t.assetClass === '해외주식' && t.account === '위탁';
           const currencySymbol = isUsDollar ? '$' : '₩';
           return (
-            <div key={i} style={{
-              padding: isMobile ? "10px 16px" : "12px 16px",
-              display: 'flex', alignItems: 'center', gap: 12,
-            }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                  <span style={{
-                    fontSize: 10, padding: '1px 5px', borderRadius: RADIUS_SM,
-                    background: `${sideColor}22`,
-                    color: sideColor,
-                    fontWeight: 700,
-                  }}>{t.side || '—'}</span>
-                  <span style={{ fontSize: 10, color: INK_2 }}>{t.account || '미확인'}</span>
-                  <span style={{ fontSize: 10, color: INK_2 }}>·</span>
-                  <span style={{ fontSize: 10, color: INK_2 }}>{t.date}</span>
+            <div key={i} style={{ borderBottom: i < trades.length - 1 ? `1px solid ${PAPER_2}` : "none" }}>
+              <div style={{
+                padding: isMobile ? "10px 16px" : "12px 16px",
+                display: 'flex', alignItems: 'center', gap: 12,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                    <span style={{
+                      fontSize: 10, padding: '1px 5px', borderRadius: RADIUS_SM,
+                      background: `${sideColor}22`,
+                      color: sideColor,
+                      fontWeight: 700,
+                    }}>{t.side || '—'}</span>
+                    <span style={{ fontSize: 10, color: INK_2 }}>{t.account || '미확인'}</span>
+                    <span style={{ fontSize: 10, color: INK_2 }}>·</span>
+                    <span style={{ fontSize: 10, color: INK_2 }}>{t.date}</span>
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t.name || '—'}
+                  </div>
+                  <div style={{ fontSize: 10, color: INK_2, marginTop: 2 }}>
+                    {t.qty > 0 ? `${t.qty}주` : ''}{t.qty > 0 && t.price > 0 ? ' · ' : ''}{t.price > 0 ? `${currencySymbol}${t.price.toLocaleString()}` : ''}
+                  </div>
                 </div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: INK, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {t.name || '—'}
+                <div style={{ textAlign: 'right', flexShrink: 0, fontSize: 12, color: INK, fontFamily: MONO }}>
+                  {t.amount ? `${currencySymbol}${fmt(t.amount)}` : ''}
                 </div>
-                <div style={{ fontSize: 10, color: INK_2, marginTop: 2 }}>
-                  {t.qty > 0 ? `${t.qty}주` : ''}{t.qty > 0 && t.price > 0 ? ' · ' : ''}{t.price > 0 ? `${currencySymbol}${t.price.toLocaleString()}` : ''}
-                </div>
-              </div>
-              <div style={{ textAlign: 'right', flexShrink: 0, fontSize: 12, color: INK, fontFamily: MONO }}>
-                {t.amount ? `${currencySymbol}${fmt(t.amount)}` : ''}
               </div>
             </div>
           );
