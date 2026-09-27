@@ -25,7 +25,7 @@ export default function ProfitTab({ profitData, isMobile, baseFont, fmt }) {
           <button key={y} onClick={() => { setProfitYear(y); setSelectedProfitKey(null); }} style={{
             padding: isMobile ? "8px 14px" : "6px 14px",
             borderRadius: RADIUS_SM,
-            border: `1px solid ${profitYear === y ? INK : INK}`,
+            border: BORDER,
             background: profitYear === y ? ACCENT : 'transparent',
             color: profitYear === y ? EMPHASIS_INK : INK_2,
             cursor: 'pointer', fontSize: 11, fontFamily: baseFont,

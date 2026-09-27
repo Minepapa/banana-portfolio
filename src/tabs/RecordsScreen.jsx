@@ -49,7 +49,7 @@ export default function RecordsScreen({ initialView = 'exec', executionsProps, d
             placeholder="종목명 또는 계좌명 검색"
             value={search}
             onChange={event => setSearch(event.target.value)}
-            style={{ width: '100%', boxSizing: 'border-box', marginBottom: 12, padding: '10px 12px', border: BORDER, borderRadius: RADIUS_SM, background: PAPER_2, color: INK, fontSize: 12 }}
+            style={{ width: '100%', boxSizing: 'border-box', marginBottom: 12, padding: '8px 12px', border: BORDER, borderRadius: RADIUS_SM, background: PAPER_2, color: INK, fontSize: 12 }}
           />
           <ExecutionsTab {...executionsProps} trades={filteredTrades} />
         </>}
