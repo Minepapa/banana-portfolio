@@ -7,9 +7,9 @@ export default function AssetsScreen({ initialView = 'positions', holdingsProps,
   const [view, setView] = useState(initialView);
   const [touchStart, setTouchStart] = useState(null);
   const segmentStyle = (active) => ({
-    flex: 1, padding: '10px 12px', border: BORDER, borderRadius: RADIUS_SM,
+    flex: 1, padding: '8px 12px', border: BORDER, borderRadius: RADIUS_SM,
     background: active ? ACCENT : CARD_BG, color: active ? EMPHASIS_INK : INK_2,
-    fontWeight: 700, cursor: 'pointer',
+    fontSize: 12, fontWeight: 700, cursor: 'pointer',
   });
   const handleContentTouchEnd = (event) => {
     if (!touchStart) return;

@@ -35,9 +35,9 @@ export default function RecordsScreen({ initialView = 'exec', executionsProps, d
       <div role="tablist" aria-label="기록 화면" style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         {views.map(([key, label]) => (
           <button key={key} type="button" role="tab" aria-selected={view === key} onClick={() => setView(key)} style={{
-            flex: 1, padding: '10px 12px', border: BORDER, borderRadius: RADIUS_SM,
+            flex: 1, padding: '8px 12px', border: BORDER, borderRadius: RADIUS_SM,
             background: view === key ? ACCENT : CARD_BG, color: view === key ? EMPHASIS_INK : INK_2,
-            fontWeight: 700, cursor: 'pointer',
+            fontSize: 12, fontWeight: 700, cursor: 'pointer',
           }}>{label}</button>
         ))}
       </div>

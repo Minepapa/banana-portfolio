@@ -41,7 +41,6 @@ export default function ExecutionsTab({ trades, isMobile, fmt }) {
             {showDateHeader && <div style={{ background: PAPER_2, padding: '7px 16px', fontSize: 10, fontWeight: 700, color: INK_2 }}>{dateLabel}</div>}
             <div style={{
               padding: isMobile ? "10px 16px" : "12px 16px",
-              borderBottom: i < trades.length - 1 ? `1px solid ${PAPER_2}` : 'none',
               display: 'flex', alignItems: 'center', gap: 12,
             }}>
               <div style={{ flex: 1, minWidth: 0 }}>
