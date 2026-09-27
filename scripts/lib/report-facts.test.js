@@ -69,6 +69,18 @@ test('buildReportFacts: 계좌별 합계 = 총 평가액 (수량 0 현금성 보
   assert.ok(facts.accounts.find(a => a.acct === '위탁').evalValue >= 4800000);
 });
 
+test('buildReportFacts: 계좌별 수익률은 평가액과 원금으로 계산하고 원금 0이면 null', () => {
+  const input = baseInput();
+  input.holdings.push({ account: '원금없음', name: '테스트', assetClass: '기타', qty: 1, invest: 0, evalAmount: 1000000 });
+  const { facts, factsText } = buildReportFacts(input);
+  const consignment = facts.accounts.find(a => a.acct === '위탁');
+  const noInvest = facts.accounts.find(a => a.acct === '원금없음');
+  assert.equal(consignment.returnPct, 8.4);
+  assert.equal(noInvest.returnPct, null);
+  assert.match(factsText, /위탁:.*수익률 8\.4%/);
+  assert.match(factsText, /원금없음:.*수익률 데이터 부족/);
+});
+
 test('buildReportFacts: evalAmount 결측이면 null, 추정 금지', () => {
   const input = baseInput();
   input.holdings[0] = { account: '위탁', name: 'SK하이닉스', assetClass: '국내주식', qty: 8, invest: 15920000 }; // evalAmount 없음

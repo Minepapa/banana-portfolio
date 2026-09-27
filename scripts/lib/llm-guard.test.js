@@ -193,6 +193,57 @@ test('collectFactPercentages: macro·holdings·assetClasses·weekTrades 전부 �
   assert.deepEqual(nums.sort((a, b) => a - b), [-8.2, -5.66, 2.1, 12.3, 30.5]);
 });
 
+test('collectFactPercentages: 계좌 수익률·자산군 내 종목 점유율·직전 리포트·프로필 임계값을 수집', () => {
+  const facts = {
+    accounts: [{ returnPct: 16.8 }, { returnPct: null }],
+    holdings: [
+      { type: '채권', evalValue: 8000000 },
+      { type: '현금', evalValue: 1000000 },
+      { type: '미매칭', evalValue: 500000 },
+    ],
+    assetClasses: [
+      { type: '채권', evalValue: 10000000 },
+      { type: '현금', evalValue: 0 },
+    ],
+    prevReport: { summary: '리츠TOP10 수익률 -9.5%' },
+  };
+
+  const nums = collectFactPercentages(facts, { profileText: '손실 -10% 이상이면 점검' });
+  assert.ok(nums.includes(16.8));
+  assert.ok(nums.includes(80));
+  assert.ok(nums.includes(-9.5));
+  assert.ok(nums.includes(-10));
+  assert.ok(!nums.some((n) => !Number.isFinite(n)));
+});
+
+test('collectFactPercentages: 두 번째 인자 없이 기존 4종만 반환해 하위호환', () => {
+  const facts = {
+    macro: { KOSDAQ: { change5d: -5.66 } },
+    holdings: [{ totalReturnPct: 12.3 }],
+    assetClasses: [{ weightPct: 30.5 }],
+    weekTrades: [{ realizedPct: -8.2 }],
+  };
+  assert.deepEqual(
+    collectFactPercentages(facts).sort((a, b) => a - b),
+    [-8.2, -5.66, 12.3, 30.5],
+  );
+});
+
+test('[DevRequest 회귀] numericClaimViolations: 정상 4종은 허용하고 무관한 퍼센트는 계속 탐지', () => {
+  const facts = {
+    accounts: [{ returnPct: 16.8 }],
+    holdings: [{ type: '채권', evalValue: 8000000 }],
+    assetClasses: [{ type: '채권', evalValue: 10000000 }],
+    prevReport: { summary: '리츠TOP10 -9.5%' },
+  };
+  const allowed = collectFactPercentages(facts, { profileText: '손실 -10% 이상이면 점검' });
+  assert.deepEqual(
+    numericClaimViolations('연금저축 16.8%, 채권 80%, 리츠TOP10 -9.5%, 기준선 -10%', allowed),
+    [],
+  );
+  assert.deepEqual(numericClaimViolations('근거 없는 +37.2%', allowed), [37.2]);
+});
+
 test('[실사고 재현] numericClaimViolations: Themis 실측(KOSDAQ -5.66%)과 다른 weekly-report 서술(-3.0%, WTI +9.7%)을 위반으로 잡음', () => {
   const facts = { macro: { KOSDAQ: { change5d: -5.66 }, NASDAQ: { change5d: 0.4 } } };
   const bullet = '**가장 큰 변화**: WTI +9.7% 급등 — 에너지 인플레이션 재점화 경계, KOSPI -1.5%·KOSDAQ -3.0%로 국내 시장 추가 약세';

@@ -484,7 +484,8 @@ async function main() {
   // — 리포트 전체엔 facts로 표현 안 되는 정성적 수치도 섞일 수 있어 전면 차단은
   // 과함, 근거: 위 4원칙 §2 "profile 적용" 문구 등). 다만 "가장 큰 변화" 불릿은
   // 실제로 사고가 난 지점이라 그 줄만은 위반 시 Node 검증값으로 강제 치환한다.
-  const factPercentages = collectFactPercentages(facts);
+  const profileText = readFileSync(PROFILE, 'utf8');
+  const factPercentages = collectFactPercentages(facts, { profileText });
   const docViolations = numericClaimViolationsWithLocation(md, factPercentages);
   if (docViolations.length) {
     // 위치(헤딩+줄+원문 스니펫)를 같이 알려줘 오너가 리포트 전체를 다시 훑지 않아도

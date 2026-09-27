@@ -132,14 +132,25 @@ export function extractPercentages(text) {
 
 // facts 객체(report-facts.mjs buildReportFacts() 결과)에서 리포트가 인용해도 되는
 // 퍼센트값 전부 — 거시 5일변화(change5d)·보유종목 총수익률(totalReturnPct)·자산군
-// 비중(weightPct)·체결 실현손익률(realizedPct). 이 넷 중 어디에도 없는 퍼센트가
-// 리포트 본문에 등장하면 출처가 facts가 아니라는 뜻(WebSearch 뉴스 수치·환각 등).
-export function collectFactPercentages(facts) {
+// 비중(weightPct)·체결 실현손익률(realizedPct)·계좌 수익률(returnPct)·자산군 내 종목
+// 점유율(종목 평가액/자산군 평가액)·직전 리포트 요약·프로필의 정책 임계값, 총 8종이다.
+// 이 허용값 어디에도 없는 퍼센트가 리포트 본문에 등장하면 출처가 facts·직전 리포트·
+// 프로필 정책이 아니라는 뜻(WebSearch 뉴스 수치·환각 등).
+export function collectFactPercentages(facts, { profileText } = {}) {
   const nums = [];
   for (const o of Object.values(facts?.macro || {})) if (o?.change5d != null) nums.push(o.change5d);
   for (const h of facts?.holdings || []) if (h.totalReturnPct != null) nums.push(h.totalReturnPct);
   for (const a of facts?.assetClasses || []) if (a.weightPct != null) nums.push(a.weightPct);
   for (const t of facts?.weekTrades || []) if (t.realizedPct != null) nums.push(t.realizedPct);
+  for (const a of facts?.accounts || []) if (a.returnPct != null) nums.push(a.returnPct);
+  for (const h of facts?.holdings || []) {
+    if (!Number.isFinite(h.evalValue)) continue;
+    const assetClass = (facts?.assetClasses || []).find((a) => a?.type === h.type);
+    if (!Number.isFinite(assetClass?.evalValue) || assetClass.evalValue === 0) continue;
+    nums.push(h.evalValue / assetClass.evalValue * 100);
+  }
+  if (facts?.prevReport?.summary) nums.push(...extractPercentages(facts.prevReport.summary));
+  if (profileText) nums.push(...extractPercentages(profileText));
   return nums;
 }
 

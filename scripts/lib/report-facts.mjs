@@ -142,7 +142,11 @@ export function buildReportFacts(input) {
     byAcct[acct].invest += Number(h.invest) || 0;
     if (Number.isFinite(h.evalAmount)) byAcct[acct].evalValue += h.evalAmount;
   }
-  const accounts = Object.values(byAcct).map((a) => ({ ...a, evalValue: Math.round(a.evalValue) }));
+  const accounts = Object.values(byAcct).map((a) => ({
+    ...a,
+    evalValue: Math.round(a.evalValue),
+    returnPct: a.invest > 0 ? Math.round((a.evalValue - a.invest) / a.invest * 1000) / 10 : null,
+  }));
 
   // ── 이번 주 체결·배당 (weekStart 이상) ────────────────
   const inWeek = (d) => weekStart ? (d && d >= weekStart) : true;
@@ -184,7 +188,8 @@ function renderFactsText(f, holdings = []) {
   L.push(`  - 총 평가액: ${f.totalEval != null ? won(f.totalEval) + '원' : '데이터 부족'}`);
 
   L.push('\n■ 계좌별 합계');
-  for (const a of f.accounts) L.push(`  - ${a.acct}: 원금 ${won(a.invest)}원 · 평가액 ${won(a.evalValue)}원`);
+  for (const a of f.accounts) L.push(`  - ${a.acct}: 원금 ${won(a.invest)}원 · 평가액 ${won(a.evalValue)}원`
+    + ` · 수익률 ${a.returnPct != null ? `${a.returnPct}%` : '데이터 부족'}`);
 
   // ⚠️ 계좌별 현금 가용성(2026-08-30 신설, 오너 지적으로 발견) — 원래 리포트가 "CMA
   // (21,054,004원) + 현금(30,132,560원) 실탄 충분"이라고 서술해, CMA가 이미 "현금"
