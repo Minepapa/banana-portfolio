@@ -88,7 +88,7 @@ test('computeAccountAllocationSnapshot: ISA는 5개 배당 서브카테고리 �
   ];
   const rows = computeAccountAllocationSnapshot(holdings, 'ISA');
   assert.deepEqual(rows.map((row) => row.assetName), ['국내배당', '해외배당', '리츠', '해외채권', '국내채권']);
-  assert.deepEqual(rows.map((row) => row.targetPct), [40, 25, 20, 15, 0]);
+  assert.deepEqual(rows.map((row) => row.targetPct), [40, 30, 20, 10, 0]);
   assert.deepEqual(rows.map((row) => row.currentPct), [20, 12.5, 10, 7.5, 0]);
 });
 
