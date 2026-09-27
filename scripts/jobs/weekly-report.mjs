@@ -49,6 +49,7 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
 // 종목명 표준화(2026-09-05, 오너 지시 — "최대한 원문 그대로를 지키면서 통일된
 // 명칭으로 보고 싶어") — Vault 원본(Facts/Ledger)의 stockName은 안 건드리고,
 // 리포트 텍스트로 나가기 직전(LLM에 팩트로 주입되는 시점)에만 표준명으로
@@ -342,7 +343,7 @@ ${signalsText}
 // "성향관찰 승격 후보가 생기면 텔레그램 메시지로 확인을 요청한다. 오너는 므네모시네를
 // 열어 보기 전까지 승격 후보 존재를 알 수 없다"). 기존엔 4주 TTL 만료 때만(step ⑧-b)
 // 신호가 나갔고, 생성 시점엔 아무 알림이 없었다.
-function writeObservations(asof, observations) {
+export function writeObservations(asof, observations) {
   const dir = VAULT_PATHS.decisions.profile;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const now = new Date();
@@ -361,7 +362,11 @@ function writeObservations(asof, observations) {
     const filename = `${asof}-${timeSlug}-${i + 1}.md`;
     writeAtomic(join(dir, filename), buildFrontmatter(record) + '\n');
     n++;
-    if (promote) promoted.push({ observation: record.observation, vsProfile: record.vsProfile });
+    if (promote) promoted.push({
+      observation: record.observation,
+      vsProfile: record.vsProfile,
+      notePath: `Decisions/Profile/${filename.replace(/\.md$/, '')}`,
+    });
   });
   return { written: n, promoted };
 }
@@ -547,11 +552,22 @@ async function main() {
     const { written: n, promoted } = writeObservations(asof, kept);
     console.log(n ? `   🧠 성향 관찰 ${n}건 기록 (Decisions/Profile)` : '   🧠 이번 주 뚜렷한 성향 관찰 없음');
     if (dropped.length) console.log(`   🛡 자동 검증 실패로 폐기 ${dropped.length}건(텔레그램 경고)`);
-    // 승격후보는 생성 즉시 안내한다(2026-09-20 오너 DevRequest) — 므네모시네를 직접
-    // 열어보기 전까진 오너가 존재 자체를 모른다. 승인/거부를 텔레그램에서 바로 받는
-    // 인터랙티브 플로우는 이번 범위 밖(오너 선택) — 단순 FYI만.
+    // 승격후보는 생성 즉시 항목별 확인 질문을 보낸다. manual-change는 자동 문서 반영 없이
+    // 답변을 기록하고, 승인 뒤 담당 세션이 질문 본문의 변경을 수행하는 범용 플로우다.
     if (promoted.length) {
-      collectWarning(`성향관찰 승격후보 ${promoted.length}건 신규 생성 — 므네모시네(Decisions/Profile)에서 확인 필요: ${promoted.map((p) => `"${p.observation.slice(0, 60)}"(${p.vsProfile})`).join(' | ')}`);
+      for (const p of promoted) {
+        try {
+          const result = await createWikiQuestion({
+            kind: 'manual-change',
+            question: `성향관찰 승격후보: "${p.observation}"(기존 프로필과의 관계: ${p.vsProfile}). 승인하면 ${p.notePath}.md의 status 필드를 "확정"으로, 제외하면 "기각"으로 바꾸고 updatedAt을 지금 시각(ISO)으로 갱신해줘. 이것은 성향 관찰 기록을 확정할지 여부일 뿐, 투자 제안이나 주문 승인이 아니야.`,
+            evidenceNotes: [p.notePath],
+          });
+          console.log(`   📨 성향관찰 승격후보 질문 발송: ${result.questionId} (${result.status}${result.duplicate ? ', 중복' : ''})`);
+        } catch (e) {
+          console.error(`   ⚠️ 성향관찰 승격후보 질문 발송 실패(관찰 기록 자체는 정상 저장됨) — FYI 경고로 대체: ${e.message}`);
+          collectWarning(`성향관찰 승격후보 신규 생성(질문 발송 실패, 므네모시네에서 직접 확인 필요): "${p.observation.slice(0, 60)}"(${p.vsProfile})`);
+        }
+      }
     }
   } catch (e) { console.error(`   ⚠️ 성향 관찰 단계 실패(리포트는 정상): ${e.message}`); }
 

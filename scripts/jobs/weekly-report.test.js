@@ -1,11 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   extractSummary, extractSummaryBullets, safeTrim, markdownBoldToHtml,
   biggestMacroMover, formatMacroMoverBullet,
 } from './weekly-report.mjs';
 import * as weeklyReport from './weekly-report.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
 // 2026-08-30 오너 신고 — 텔레그램 주간 리포트 요약이 숫자 한가운데서("-2,504,0") 잘려
 // 발송됐다. 원인: 옛 extractSummary가 "> 요약:" 리터럴 라인을 정규식으로 찾다 실패하면
@@ -32,6 +36,26 @@ const REAL_REPORT_BODY = `# 주간 자산 종합 점검 — 2026-08-30
 |------|-----:|-------:|
 | 위탁 | 103,771,880원 | 120,701,650원 |
 `;
+
+test('writeObservations: 승격후보에 확장자 없는 Decisions/Profile notePath를 반환한다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'banana-weekly-report-'));
+  const previousProfileDir = VAULT_PATHS.decisions.profile;
+  VAULT_PATHS.decisions.profile = join(root, 'Decisions', 'Profile');
+  try {
+    const result = weeklyReport.writeObservations('2026-09-27', [{
+      type: '검증', observation: '프로필과 상충하는 관찰', vsProfile: '상충', promote: false,
+    }]);
+
+    assert.equal(result.written, 1);
+    assert.equal(result.promoted.length, 1);
+    assert.match(result.promoted[0].notePath, /^Decisions\/Profile\/2026-09-27-\d{8}T\d{6}-1$/);
+    assert.ok(!result.promoted[0].notePath.endsWith('.md'));
+    assert.equal(parseFrontmatter(readFileSync(join(root, `${result.promoted[0].notePath}.md`), 'utf8')).status, '승격후보');
+  } finally {
+    VAULT_PATHS.decisions.profile = previousProfileDir;
+    if (existsSync(root)) rmSync(root, { recursive: true, force: true });
+  }
+});
 
 // ── computeBreakoutProtectionRiskFlag ─────────────────────────────────────────
 // 이 테스트는 보호주문 실패를 새로 판단하지 않고, State에 기록된 활성 포지션의
