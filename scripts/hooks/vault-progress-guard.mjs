@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * PostToolUse 훅 — 므네모시네 `Log/Implementation/*.md` 파일을 쓰거나 고칠 때마다
- * `progress:` frontmatter 필드가 정해진 4종 값(완료/진행중/보류/폐기) 중 하나인지
+ * `progress:` frontmatter 필드가 정해진 6종 값(예정/진행중/차단됨/완료/보류/폐기) 중 하나인지
  * 그 자리에서 검사한다(2026-09-14, 오너 지시 — "구조적으로 기록 누락을 막자").
  *
  * ⚠️ 왜 필요한가 — Knowledge/Meta/Index.md가 스스로 "새 문서엔 progress: 반드시
@@ -119,8 +119,8 @@ export function checkProgressField(frontmatter, relPath) {
       `Knowledge/Meta/Index.md 규칙(완료 상태 추적)에 따라 ${CANONICAL_PROGRESS_VALUES.join('/')} 중 하나를 지금 추가하세요.`;
   }
   if (!CANONICAL_PROGRESS_VALUES.includes(value)) {
-    return `⚠️ 므네모시네 정합성 — ${relPath}의 progress: "${value}"는 정해진 4종(${CANONICAL_PROGRESS_VALUES.join('/')}) 밖의 자유서술입니다. ` +
-      `세부 사정은 statusDetail: 필드에 적고, progress: 자체는 4종 중 하나로 정규화하세요(예: 일부만 끝났으면 "진행중").`;
+    return `⚠️ 므네모시네 정합성 — ${relPath}의 progress: "${value}"는 정해진 ${CANONICAL_PROGRESS_VALUES.length}종(${CANONICAL_PROGRESS_VALUES.join('/')}) 밖의 자유서술입니다. ` +
+      `세부 사정은 statusDetail: 필드에 적고, progress: 자체는 ${CANONICAL_PROGRESS_VALUES.length}종 중 하나로 정규화하세요(예: 일부만 끝났으면 "진행중").`;
   }
   return null;
 }

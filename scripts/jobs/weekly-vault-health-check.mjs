@@ -210,7 +210,7 @@ export function findStaleAutoClaims(files, now = new Date(), staleDays = STALE_A
   return results;
 }
 
-// ── C4. progress 필드 4종 컴플라이언스(백스톱, 2026-09-14 신설) ─────────
+// ── C4. progress 필드 캐노니컬 값 컴플라이언스(백스톱, 2026-09-14 신설) ──
 // scripts/hooks/vault-progress-guard.mjs가 "쓰는 순간" 이미 잡지만, 그 훅이
 // 배선되기 전에 쓰인 과거 문서나 훅을 우회한 직접 편집까지 커버하려면 이
 // 주간스윕이 전수를 다시 훑어야 한다 — 2026-09-13 실측에서 92개 중 9개가 결측/
@@ -296,7 +296,7 @@ export function buildHealthCheckFacts(r) {
   if (r.pendingWork.length) lines.push(`미완료 작업(진행중/보류) ${r.pendingWork.length}건: ${r.pendingWork.slice(0, 8).map((p) => `${p.file}(${p.progress})`).join(', ')}${r.pendingWork.length > 8 ? ' 외' : ''}`);
   if (r.remainingSections.length) lines.push(`"남은 것" 섹션 있는 문서 ${r.remainingSections.length}건: ${r.remainingSections.slice(0, 8).map((s) => s.file).join(', ')}${r.remainingSections.length > 8 ? ' 외' : ''}`);
   if (r.staleAutoClaims.length) lines.push(`"자동 갱신" 주장 대비 ${STALE_AUTO_CLAIM_DAYS}일 이상 정체(재확인 후보) ${r.staleAutoClaims.length}건: ${r.staleAutoClaims.map((s) => `${s.file}(${s.ageDays}일)`).join(', ')}`);
-  if (r.invalidProgress.length) lines.push(`progress 필드 결측/자유서술(4종 밖) ${r.invalidProgress.length}건: ${r.invalidProgress.slice(0, 8).map((p) => `${p.file}(${p.progress ?? '결측'})`).join(', ')}${r.invalidProgress.length > 8 ? ' 외' : ''}`);
+  if (r.invalidProgress.length) lines.push(`progress 필드 결측/자유서술(캐노니컬 값 밖) ${r.invalidProgress.length}건: ${r.invalidProgress.slice(0, 8).map((p) => `${p.file}(${p.progress ?? '결측'})`).join(', ')}${r.invalidProgress.length > 8 ? ' 외' : ''}`);
   if (r.staleEmptyClaims.length) lines.push(`Index.md가 "비어있음"이라는데 실제로 채워진 폴더 ${r.staleEmptyClaims.length}건: ${r.staleEmptyClaims.map((s) => `${s.folder}(실제 ${s.actualCount}건)`).join(', ')}`);
   return lines;
 }

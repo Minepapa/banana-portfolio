@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { CANONICAL_PROGRESS_VALUES } from '../lib/vault-frontmatter.mjs';
 import {
   findBrokenAndAmbiguousLinks,
   findOrphanedNotes,
@@ -196,12 +197,17 @@ test('findInvalidProgressFields: progress 필드 결측이면 잡음', () => {
   assert.equal(result[0].progress, null);
 });
 
-test('findInvalidProgressFields: 4종 캐노니컬 값은 전부 통과', () => {
-  const records = ['완료', '진행중', '보류', '폐기'].map((progress, i) => ({ progress, __relPath: `Log/Implementation/${i}` }));
+test('findInvalidProgressFields: 캐노니컬 값은 전부 통과', () => {
+  const records = CANONICAL_PROGRESS_VALUES.map((progress, i) => ({ progress, __relPath: `Log/Implementation/${i}` }));
   assert.equal(findInvalidProgressFields(records).length, 0);
 });
 
-test('findInvalidProgressFields: 4종 밖의 자유서술("부분완료" 등)은 잡음 — 2026-09-13 실측 재발 케이스', () => {
+test('findInvalidProgressFields: 예정과 차단됨은 유효한 progress 값으로 통과 — 상태표준 재발 방지', () => {
+  const records = ['예정', '차단됨'].map((progress, i) => ({ progress, __relPath: `Log/Implementation/${i}` }));
+  assert.deepEqual(findInvalidProgressFields(records), []);
+});
+
+test('findInvalidProgressFields: 캐노니컬 값 밖의 자유서술("부분완료" 등)은 잡음 — 2026-09-13 실측 재발 케이스', () => {
   const records = [{ progress: '부분완료', __relPath: 'Log/Implementation/A' }];
   const result = findInvalidProgressFields(records);
   assert.equal(result.length, 1);

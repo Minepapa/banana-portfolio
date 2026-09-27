@@ -37,13 +37,18 @@ test('checkProgressField: progress가 빈 문자열이어도 결측과 동일 �
   assert.notEqual(msg, null);
 });
 
-test('checkProgressField: 4종 캐노니컬 값은 전부 통과(null 반환)', () => {
+test('checkProgressField: 캐노니컬 값은 전부 통과(null 반환)', () => {
   for (const v of CANONICAL_PROGRESS_VALUES) {
     assert.equal(checkProgressField({ progress: v }, 'Log/Implementation/x.md'), null);
   }
 });
 
-test('checkProgressField: 4종 밖의 자유서술 값은 경고 문자열 반환 — 재발 방지 핵심 케이스', () => {
+test('checkProgressField: 예정과 차단됨은 유효한 progress 값으로 통과 — 상태표준 재발 방지', () => {
+  assert.equal(checkProgressField({ progress: '예정' }, 'Log/Implementation/x.md'), null);
+  assert.equal(checkProgressField({ progress: '차단됨' }, 'Log/Implementation/x.md'), null);
+});
+
+test('checkProgressField: 캐노니컬 값 밖의 자유서술 값은 경고 문자열 반환 — 재발 방지 핵심 케이스', () => {
   const msg = checkProgressField({ progress: '부분완료 — 미해결 1건 남음' }, 'Log/Implementation/x.md');
   assert.notEqual(msg, null);
   assert.match(msg, /자유서술/);
