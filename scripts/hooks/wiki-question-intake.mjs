@@ -9,7 +9,26 @@ function emit(context) {
   })}\n`);
 }
 
-async function main() {
+const MANUAL_CHANGE_ACTION_LABELS = {
+  approve: '등록',
+  hold: '보류',
+  reject: '제외',
+};
+
+// ⚠️ wiki-question-queue.mjs의 completeManualWikiQuestion은 status==='반영대기'
+// (= action:'approve')인 질문만 마감할 수 있다 — '보류'·'제외'는 이미 ACTIVE_STATUSES
+// 밖이라(listPendingWikiQuestions에 더 이상 안 뜸) 그 자체로 종결 상태다. complete
+// CLI를 호출하라는 안내를 hold/reject에도 붙이면 큐 계약 위반으로 무조건 실패하는
+// 지시를 텔레그램 세션에 내리게 된다(2026-09-27 검증 중 발견) — approve일 때만 안내한다.
+export function buildManualChangeResultMessage({ questionId, action, status }) {
+  const actionLabel = MANUAL_CHANGE_ACTION_LABELS[action] ?? action;
+  const instruction = action === 'approve'
+    ? `질문 본문에 이 결과에 대한 문서 변경 지시가 있으면 정확히 그대로 수행하고, 없으면 아무 것도 바꾸지 마라. 처리 후(바꿀 게 없었어도) node scripts/tools/wiki-question-cli.mjs complete --id=${questionId} --summary="<수행한 내용 또는 '해당 없음'>"을 호출해 마감하라.`
+    : `질문 본문에 이 결과(${actionLabel})에 대한 문서 변경 지시가 있으면 정확히 그대로 수행하고, 없으면 아무 것도 바꾸지 마라. 이 상태는 이미 종결로 기록됐으니 별도 complete 호출은 필요 없다.`;
+  return `[므네모시네 질문 ${questionId}] 오너가 ${actionLabel}을(를) 선택했다(${status} 상태로 기록). ${instruction} 이 답변은 투자 제안·주문 승인과 무관하다.`;
+}
+
+export async function main() {
   if (!process.env.CLAUDE_TELEGRAM_SESSION) return;
   let input;
   try { input = JSON.parse(readFileSync(0, 'utf8')); } catch { return; }
@@ -32,8 +51,12 @@ async function main() {
       emit(`[므네모시네 질문 ${explicit.questionId}] 답변 선택이 명확하지 않아 상태를 바꾸지 않았다. 질문의 등록/승인, 보류, 제외/거절 중 하나로 재확인하라.`);
       return;
     }
-    if (result.action === 'approve' && result.kind === 'manual-change') {
-      emit(`[므네모시네 질문 ${explicit.questionId}] 오너 승인을 기록했다. 상태는 반영대기다. 제안된 문서 변경만 수행하고 완료 후 node scripts/tools/wiki-question-cli.mjs complete --id=${explicit.questionId} --summary="반영한 변경"을 호출하라. 투자 승인으로 해석하지 마라.`);
+    if (result.kind === 'manual-change' && ['approve', 'hold', 'reject'].includes(result.action)) {
+      emit(buildManualChangeResultMessage({
+        questionId: explicit.questionId,
+        action: result.action,
+        status: result.status,
+      }));
       return;
     }
     emit(`[므네모시네 질문 ${explicit.questionId}] 답변을 ${result.status ?? result.action} 상태로 기록했다. 투자 제안·주문 승인과 무관하다. 결과를 회신하라.`);
@@ -48,7 +71,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  // 훅 실패가 Telegram 메시지 처리를 막지 않게, 모델 쪽에서 안전한 재확인이 가능하도록 오류를 컨텍스트로 돌린다.
-  emit(`[므네모시네 질문 큐 점검 실패] ${error.message}. 답변을 임의로 승인·처리하지 말고 질문 ID를 다시 확인하라.`);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    // 훅 실패가 Telegram 메시지 처리를 막지 않게, 모델 쪽에서 안전한 재확인이 가능하도록 오류를 컨텍스트로 돌린다.
+    emit(`[므네모시네 질문 큐 점검 실패] ${error.message}. 답변을 임의로 승인·처리하지 말고 질문 ID를 다시 확인하라.`);
+  });
+}
