@@ -78,16 +78,18 @@ test('computeAccountAllocationSnapshot: 위탁·연금저축·금현물 어디�
   assert.ok(rows.every((r) => r.currentPct === 0));
 });
 
-test('computeAccountAllocationSnapshot: ISA는 배당주 단일자산, 목표 100%', () => {
+test('computeAccountAllocationSnapshot: ISA는 5개 배당 서브카테고리 목표비중을 반환', () => {
   const holdings = [
-    { account: 'ISA', assetClass: '배당주', evalAmount: 900 },
-    { account: 'ISA', assetClass: '현금', evalAmount: 100 },
+    { account: 'ISA', assetClass: '배당주', name: 'TIME Korea플러스배당액티브', evalAmount: 400 },
+    { account: 'ISA', assetClass: '배당주', name: 'TIGER 미국배당다우존스', evalAmount: 250 },
+    { account: 'ISA', assetClass: '배당주', name: 'TIGER 리츠부동산인프라', evalAmount: 200 },
+    { account: 'ISA', assetClass: '배당주', name: 'ACE 미국하이일드액티브(H)', evalAmount: 150 },
+    { account: 'ISA', assetClass: '현금', name: '예수금', evalAmount: 1000 },
   ];
   const rows = computeAccountAllocationSnapshot(holdings, 'ISA');
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].assetName, '배당주');
-  assert.equal(rows[0].targetPct, 100);
-  assert.equal(rows[0].currentPct, 90); // 900/1000*100 — 현금 섞였으면 정직하게 드리프트 반영
+  assert.deepEqual(rows.map((row) => row.assetName), ['국내배당', '해외배당', '리츠', '해외채권', '국내채권']);
+  assert.deepEqual(rows.map((row) => row.targetPct), [40, 25, 20, 15, 0]);
+  assert.deepEqual(rows.map((row) => row.currentPct), [20, 12.5, 10, 7.5, 0]);
 });
 
 test('computeAccountAllocationSnapshot: IRP는 TDF 단일자산, 목표 100%', () => {

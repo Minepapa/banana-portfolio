@@ -10,7 +10,9 @@ import { PAPER_2, CARD_BG, RADIUS, INK, INK_2, ACCENT, EMPHASIS_INK, BORDER, BOR
 // 순서가 서로 다르면 같은 개념인데 다르게 읽혀 혼동을 준다). 이 목록에 없는 타입
 // (ISA "배당주"는 이미 포함, IRP "TDF"·CMA "현금"처럼 단일자산 계좌 전용 타입)은
 // 끝으로 보낸다 — 정렬 안정성 위해 원래 순서 유지(Array.sort는 stable).
-const ASSET_ORDER = ['채권', '금', '달러', '배당주', '리츠', '국내주식', '해외주식'];
+// 국내배당·해외배당·국내채권·해외채권(2026-09-27, ISA 배당주 서브카테고리 신설)은
+// 배당주 바로 뒤·리츠 앞에 넣어 같은 인컴 계열끼리 묶어 정렬한다.
+const ASSET_ORDER = ['채권', '금', '달러', '배당주', '국내배당', '해외배당', '국내채권', '해외채권', '리츠', '국내주식', '해외주식'];
 const assetRank = (type) => {
   const i = ASSET_ORDER.indexOf(type);
   return i === -1 ? ASSET_ORDER.length : i;

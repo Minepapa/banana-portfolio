@@ -16,6 +16,7 @@
 // (프론트엔드 mirrorAdapters.js), 목표/현재비중/리밸필요액(target/current/rebalAmt)은
 // 합산 풀 기준 공통값이다.
 import { TARGET_ALLOCATION, normalizeAccount } from './rebalance-gap.mjs';
+import { computeIsaSubcategorySnapshot } from './isa-dividend-subcategory.mjs';
 
 // DEFAULT_ACCOUNTS(src/lib/constants.js)의 위탁·연금저축·금현물 자산군 목록과 정합.
 const POOLED_ASSET_NAMES = Object.keys(TARGET_ALLOCATION);
@@ -32,7 +33,7 @@ const POOLED_QUERY_KEYS = new Set(['위탁', '연금저축', '금현물']);
 // ⚠️ CMA 누락 버그(2026-08-22 오너 지적) — CMA는 애초에 이 목록에 없어서 목표비중이
 // 항상 0%로 나오고 있었다(위 SINGLE_ASSET_ACCOUNTS[account] 조회가 undefined→falsy라
 // 아래 풀링 분기로 새서 CMA 자신은 POOLED_ACCOUNTS에도 없어 결국 아무 목표도 못 얻음).
-const SINGLE_ASSET_ACCOUNTS = { ISA: '배당주', IRP: 'TDF', CMA: '현금' };
+const SINGLE_ASSET_ACCOUNTS = { IRP: 'TDF', CMA: '현금' };
 
 const round1 = (n) => Math.round(n * 10) / 10;
 
@@ -54,6 +55,7 @@ function computePooledSnapshot(holdings) {
 // holdings: State/Holdings 전체 배열({ account, assetClass, evalAmount, ... }).
 // account: '위탁'|'연금저축'|'금현물'|'ISA'|'IRP' 중 하나. 반환: [{assetName, targetPct, currentPct, rebalAmt}, ...]
 export function computeAccountAllocationSnapshot(holdings, account) {
+  if (account === 'ISA') return computeIsaSubcategorySnapshot(holdings);
   if (SINGLE_ASSET_ACCOUNTS[account]) {
     const assetName = SINGLE_ASSET_ACCOUNTS[account];
     const acctHoldings = (holdings || []).filter((h) => h.account === account);

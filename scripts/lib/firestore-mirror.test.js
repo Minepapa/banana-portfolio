@@ -81,6 +81,23 @@ test('buildHoldingsMirror: assetClass·isCashLike를 그대로 전달(App.jsx 7�
   assert.equal(r.items[1].isCashLike, true);
 });
 
+test('buildHoldingsMirror: ISA "배당주" 보유는 서브 카테고리 이름으로 assetClass 치환(2026-09-27, 목표비중 파이차트 eval 매칭용)', () => {
+  const holdings = [
+    { account: 'ISA', name: 'TIME Korea플러스배당액티브', assetClass: '배당주', evalAmount: 100 },
+    { account: 'ISA', name: 'TIGER 리츠부동산인프라', assetClass: '배당주', evalAmount: 100 },
+    { account: 'ISA', name: '아직 매핑 안 된 신규종목', assetClass: '배당주', evalAmount: 100 },
+    { account: 'ISA', name: '예수금', assetClass: '현금', isCashLike: true, evalAmount: 0 },
+    { account: '연금저축', name: 'PLUS 고배당주', assetClass: '배당주', evalAmount: 100 },
+  ];
+  const r = buildHoldingsMirror({ holdings, now: NOW });
+  assert.equal(r.items[0].assetClass, '국내배당');
+  assert.equal(r.items[1].assetClass, '리츠');
+  assert.equal(r.items[2].assetClass, '미분류');
+  assert.equal(r.items[3].assetClass, '현금');
+  // ISA가 아닌 계좌(연금저축)는 아직 매도 전이라 원본 "배당주" 그대로 유지.
+  assert.equal(r.items[4].assetClass, '배당주');
+});
+
 test('buildAllocationMirror: 빈 accounts 그대로 통과', () => {
   const r = buildAllocationMirror({ now: NOW });
   assert.deepEqual(r.accounts, []);

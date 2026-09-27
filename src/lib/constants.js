@@ -276,7 +276,13 @@ export const DEFAULT_ACCOUNTS = {
   ISA: {
     label: "ISA", sub: "NH · 배당포트",
     total_invest: 0, total_eval: 0, profit: 0, color: "#F4845F",
-    assets: [{ name: "배당주", ratio: 0, invest: 0, eval: 0, target: 0 }],
+    assets: [
+      { name: "국내배당", ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "해외배당", ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "리츠", ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "해외채권", ratio: 0, invest: 0, eval: 0, target: 0 },
+      { name: "국내채권", ratio: 0, invest: 0, eval: 0, target: 0 },
+    ],
     holdings: [],
   },
   IRP: {

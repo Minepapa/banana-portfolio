@@ -40,13 +40,13 @@ test('accountsFromMirror: total_invest는 invest 필드를 그대로 합산(avgP
 });
 
 test('rebalanceAccountFromMirror: allocation의 target/current + holdings의 자산군별 평가금 합산', () => {
-  const allocationMirror = { accounts: [{ account: 'ISA', assetName: '배당주', targetPct: 100, currentPct: 95, rebalAmt: 50000 }] };
-  const holdingsMirror = { items: [{ account: 'ISA', name: 'A', assetClass: '배당주', avgPrice: 1000, qty: 10, invest: 10000, evalAmount: 12000 }] };
+  const allocationMirror = { accounts: [{ account: 'ISA', assetName: '국내배당', targetPct: 40, currentPct: 20, rebalAmt: 12000 }] };
+  const holdingsMirror = { items: [{ account: 'ISA', name: 'TIME Korea플러스배당액티브', assetClass: '국내배당', avgPrice: 1000, qty: 10, invest: 10000, evalAmount: 12000 }] };
   const r = rebalanceAccountFromMirror({ allocationMirror, holdingsMirror, acctKey: 'ISA' });
-  assert.equal(r.assets.length, 1);
-  assert.equal(r.assets[0].target, 100);
-  assert.equal(r.assets[0].ratio, 95);
-  assert.equal(r.assets[0].rebalAmt, 50000);
+  assert.deepEqual(r.assets.map((asset) => asset.name), ['국내배당', '해외배당', '리츠', '해외채권', '국내채권']);
+  assert.equal(r.assets[0].target, 40);
+  assert.equal(r.assets[0].ratio, 20);
+  assert.equal(r.assets[0].rebalAmt, 12000);
   assert.equal(r.assets[0].eval, 12000);
 });
 

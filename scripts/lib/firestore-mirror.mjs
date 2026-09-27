@@ -20,6 +20,23 @@
 
 import { resolveCanonicalStockName } from './stock-registry.mjs';
 import { dedupExecutionsForReport } from '../jobs/daily-execution-report.mjs';
+import { ISA_HOLDING_SUBCATEGORY } from './isa-dividend-subcategory.mjs';
+
+// ISA 계좌의 "배당주" 보유는 화면(RebalanceTab 목표비중)에서 5개 서브 카테고리
+// (국내배당/해외배당/리츠/해외채권/국내채권)로 나눠 보여준다(2026-09-27). State/
+// Allocation 쪽 목표·현재 비중은 computeIsaSubcategorySnapshot이 이미 종목명으로
+// 직접 매핑해 정확히 계산하지만, 프론트엔드 rebalanceAccountFromMirror(mirrorAdapters.js)
+// 는 여전히 "h.assetClass === a.name"으로 보유를 자산군에 매칭한다 — 원본 assetClass가
+// 그대로 "배당주"면 이 매칭이 전부 실패해 파이차트 eval이 0이 되고(a.eval>0 게이트
+// 때문에 파이차트 섹션 자체가 안 보이는 회귀), 목표/현재 %는 맞는데 원 단위 금액·
+// 파이차트만 비어버린다. 그래서 이 미러 계층에서만(원본 Vault 파일은 그대로 "배당주"
+// 유지 — 소급 수정 금지 원칙) ISA의 배당주 보유에 한해 assetClass를 실제 서브
+// 카테고리 이름으로 바꿔 내보낸다. 매핑에 없는 신규 종목은 "미분류"로 남겨 조용히
+// 사라지지 않게 한다(computeIsaSubcategorySnapshot과 동일한 안전장치).
+function resolveIsaAssetClass(h) {
+  if (h.account !== 'ISA' || h.assetClass !== '배당주') return h.assetClass ?? '';
+  return ISA_HOLDING_SUBCATEGORY[h.name] ?? '미분류';
+}
 
 // 최근 1년 이내 항목만 남긴다(mirror의 "이력형" 문서 원칙 — 그 이전은 Vault에서 조회).
 function withinLastYear(dateStr, now) {
@@ -58,7 +75,7 @@ export function buildHoldingsMirror({ holdings = [], now = new Date(), registry 
   const totalEval = holdings.reduce((s, h) => s + (h.evalAmount || 0), 0);
   const items = holdings.map((h) => ({
     account: h.account ?? null, name: resolveCanonicalStockName(h.name, registry), ticker: h.ticker ?? '', market: h.market ?? '',
-    assetClass: h.assetClass ?? '', isCashLike: h.isCashLike ?? false,
+    assetClass: resolveIsaAssetClass(h), isCashLike: h.isCashLike ?? false,
     qty: h.qty, avgPrice: h.avgPrice, curPrice: h.curPrice ?? null,
     // invest: State/Holdings가 이미 정확히 계산한 값 — 화면에서 avgPrice*qty로
     // 재계산하지 말고 이 필드를 그대로 쓸 것(위 buildHomeMirror 주석과 같은 이유,
