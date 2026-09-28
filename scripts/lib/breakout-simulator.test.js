@@ -642,6 +642,75 @@ test('runBreakoutBacktest: useMarketRegimeFilter=true — 신호일에 코스피
   assert.ok(unfiltered.trades.length >= 1, '필터를 안 켜면 같은 데이터에서도 기존처럼 진입해야 함(회귀 없음)');
 });
 
+function buildPyramidFixture() {
+  // sameDayClose로 신호일 즉시 체결(entryPrice=105) — 이후 급락 없이 꾸준히 올라
+  // 3R(부분익절)·4R(피라미딩 조건 충족)을 모두 지나 백테스트 종료 시점까지 보유
+  // 상태로 남긴다(청산 이벤트 없이 openPositionsAtEnd로 entryPrice·investedWon
+  // 변화를 직접 검증하려는 목적 — 트레일링스탑에 걸리지 않도록 매일 완만히만 올림).
+  const dates = [];
+  const opens = [];
+  const closes = [];
+  const highs = [];
+  const lows = [];
+  const volumes = [];
+  let price = 100;
+  for (let i = 0; i <= 258; i++) {
+    dates.push(nthDateString('2020-01-01', i));
+    const wiggle = i % 2 === 0 ? 1.001 : 0.999;
+    const c = price * wiggle;
+    opens.push(price); closes.push(c); highs.push(c * 1.001); lows.push(c * 0.999); volumes.push(50_000_000);
+    price = c;
+  }
+  // 신호일: +5% 돌파(기존 픽스처와 동일 패턴, sameDayClose라 이 날 종가로 즉시 체결)
+  dates.push(nthDateString('2020-01-01', 259));
+  const breakoutClose = price * 1.05;
+  opens.push(price); closes.push(breakoutClose); highs.push(breakoutClose * 1.01); lows.push(price);
+  volumes.push(50_000_000);
+  price = breakoutClose;
+  // 이후 40거래일에 걸쳐 매일 +1.5%씩 완만히 상승 — 손절선(래칫)에 안 걸리면서도
+  // 3R(+24%)·4R(+32%)을 모두 통과한다.
+  for (let i = 260; i <= 300; i++) {
+    dates.push(nthDateString('2020-01-01', i));
+    const c = price * 1.015;
+    opens.push(price); closes.push(c); highs.push(c * 1.002); lows.push(price * 0.995); volumes.push(50_000_000);
+    price = c;
+  }
+  const pool = [{ code: 'A', name: 'A사', sharesOutstanding: 2_000_000_000, listingDate: null, delistingDate: null }];
+  const seriesByCode = { A: { dates, opens, closes, highs, lows, volumes } };
+  const benchmarkSeries = { dates, closes: new Array(dates.length).fill(100) }; // 평탄 → 항상 강세장 경계 판정(true)
+  return { dates, pool, seriesByCode, benchmarkSeries };
+}
+
+test('runBreakoutBacktest: usePyramiding=true — 3R 부분익절 후 4R+레짐강세에서 1회 추가매수(평단가·투입금 재계산)', () => {
+  const { dates, pool, seriesByCode, benchmarkSeries } = buildPyramidFixture();
+  const withPyramid = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    entryTiming: 'sameDayClose', usePyramiding: true,
+  });
+  assert.equal(withPyramid.trades.length, 1, '3R 부분익절 1건만 거래로 기록되고 나머지는 보유 중이어야 함');
+  assert.equal(withPyramid.trades[0].reason, '3R 부분익절(50%)');
+  assert.equal(withPyramid.openPositionsAtEnd.length, 1);
+  const heldPosition = withPyramid.openPositionsAtEnd[0];
+
+  const withoutPyramid = runBreakoutBacktest({
+    pool, seriesByCode, benchmarkSeries, tradingDates: dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    entryTiming: 'sameDayClose', // usePyramiding 미지정(기본 false)
+  });
+  const heldWithout = withoutPyramid.openPositionsAtEnd[0];
+  // units는 검증하지 않는다 — 2026-09-13부터 있던 기존 감지전용 `shouldPyramid`(3R
+  // 시점, 자본효과 없음)도 같은 필드를 건드려 이 테스트만으로는 원인을 못 가른다.
+  // 피라미딩의 실제 효과는 investedWon·entryPrice(둘 다 내 새 로직만 바꾼다)로 검증
+  // — 대조군(꺼짐)의 원 진입가를 기준으로 상대 비교한다(신호가 격일 wiggle 복리
+  // 누적을 거쳐 정확히 105는 아니라서 절대값 105를 가정하지 않는다).
+  assert.ok(
+    heldPosition.entryPrice > heldWithout.entryPrice,
+    `평단가가 추가매수로 대조군(${heldWithout.entryPrice})보다 올라가야 함 — 실제 ${heldPosition.entryPrice}`,
+  );
+  assert.ok(heldPosition.investedWon > heldWithout.investedWon, '피라미딩 켰을 때가 투입금이 더 커야 함');
+});
+
 test('runBreakoutBacktest: useVolumeConfirmation=true — 돌파일 거래량이 평균의 1.5배 미만이면 진입 자체가 차단됨', () => {
   const weak = buildSingleStockBreakoutFixture({ breakoutDayVolumeMultiplier: 1.4 }); // 1.5배 미달
   const result = runBreakoutBacktest({

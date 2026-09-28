@@ -14,6 +14,7 @@
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-19 --useAdaptiveStop=true  # ATR 가변손절(4%/8%) 비교(2026-09-19)
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-28 --exitMethod=bookPure  # 책(깡토) 원문 순수 청산법 비교(2026-09-28)
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-28 --useMarketRegimeFilter=true  # 마켓 레짐 필터(코스피 60일선) 비교(2026-09-28)
+//   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-28 --useMarketRegimeFilter=true --usePyramiding=true  # 피라미딩(3R부분익절 후 4R+레짐강세 시 1회 추가매수) 비교(2026-09-28)
 //   node scripts/jobs/run-breakout-backtest.mjs --from=2014-01-01 --to=2026-09-19 --minRs=5  # RS 절대문턱 상향 비교(2026-09-19, 기본 0)
 import { buildCandidatePool } from '../lib/historical-universe.mjs';
 import { loadPriceSeriesBatch } from '../lib/breakout-price-series.mjs';
@@ -126,6 +127,11 @@ async function main() {
   }
   const useMarketRegimeFilter = args.useMarketRegimeFilter === 'true';
 
+  if (args.usePyramiding != null && args.usePyramiding !== 'true' && args.usePyramiding !== 'false') {
+    throw new Error(`--usePyramiding은 true|false만 허용(받은 값: "${args.usePyramiding}")`);
+  }
+  const usePyramiding = args.usePyramiding === 'true';
+
   // ATR 손절폭 선택 임계값 재조정용(2026-09-19) — 기본 백테스트(임계값 4.0%)가
   // baseline보다 성과가 나빠(좁은 손절이 Max2%룰과 결합해 2배 사이징을 받는
   // 포지션이 31%나 돼 분산이 무너짐, 코드리뷰 지적) 더 높은 문턱으로 재검증하려는
@@ -209,11 +215,11 @@ async function main() {
     : rsAnchorSmoothDays === 1
       ? `${rsMethod}+앵커1일평균(=baseline과 동일)`
       : `${rsMethod}+앵커${rsAnchorSmoothDays}일평균`;
-  console.error(`[4/4] 일별 시뮬레이션 실행 중(진입: 52주신고가+변동성확장(${consolidationMethod})+RS(${rsLabel})${minRelativeStrength != null ? `≥${minRelativeStrength}` : ''}${useVolumeConfirmation ? '+거래량확인' : ''}+시총${(marketCapFloor / 1e12).toFixed(1)}조원${useMarketRegimeFilter ? '+마켓레짐필터(코스피MA60)' : ''}, 청산: ${useAdaptiveStop ? 'ATR가변손절(4%/8%)' : '-8%고정'}+${exitMethod === 'bookPure' ? '책순수(3R 본전·4R+래칫)' : 'R배수트레일링'}+3R부분익절)...`);
+  console.error(`[4/4] 일별 시뮬레이션 실행 중(진입: 52주신고가+변동성확장(${consolidationMethod})+RS(${rsLabel})${minRelativeStrength != null ? `≥${minRelativeStrength}` : ''}${useVolumeConfirmation ? '+거래량확인' : ''}+시총${(marketCapFloor / 1e12).toFixed(1)}조원${useMarketRegimeFilter ? '+마켓레짐필터(코스피MA60)' : ''}, 청산: ${useAdaptiveStop ? 'ATR가변손절(4%/8%)' : '-8%고정'}+${exitMethod === 'bookPure' ? '책순수(3R 본전·4R+래칫)' : 'R배수트레일링'}+3R부분익절${usePyramiding ? '+피라미딩(4R+레짐강세 시 1회 추가)' : ''})...`);
   const result = runBreakoutBacktest({
     pool, seriesByCode, benchmarkSeries: fullBenchmark, tradingDates, initialCapital,
     marketCapFloor, riskPerTradePct: RISK_PER_TRADE_PCT, consolidationMethod, entryTiming, useBettingUnits, rsPeriods, rsAnchorSmoothDays,
-    minRelativeStrength, useVolumeConfirmation, useAdaptiveStop, adaptiveStopThresholdPct, exitMethod, useMarketRegimeFilter,
+    minRelativeStrength, useVolumeConfirmation, useAdaptiveStop, adaptiveStopThresholdPct, exitMethod, useMarketRegimeFilter, usePyramiding,
   });
   console.error(`  거래 ${result.trades.length}건, 최종 현금 ${Math.round(result.finalCapital).toLocaleString()}원(시가 데이터 없어 예약체결 스킵 ${result.skippedNoOpenPrice}건)`);
 
@@ -250,7 +256,7 @@ async function main() {
     period: { from: fromDate, to: toDate, tradingDays: tradingDates.length },
     params: {
       initialCapital, marketCapFloor, liquidityFloor: LIQUIDITY_FLOOR_WON, riskPerTradePct: RISK_PER_TRADE_PCT,
-      consolidationMethod, entryTiming, exitMethod, useMarketRegimeFilter, useBettingUnits, rsMethod,
+      consolidationMethod, entryTiming, exitMethod, useMarketRegimeFilter, usePyramiding, useBettingUnits, rsMethod,
       rsPeriods: rsPeriods ?? null, // rsMethod 정의(RS_METHOD_PERIODS)가 나중에 바뀌어도 이 결과가 어떤 파라미터였는지 재현 가능하도록 같이 기록(2026-09-15 코드리뷰 LOW 지적)
       rsAnchorSmoothDays: rsAnchorSmoothDays ?? null,
       minRelativeStrength: minRelativeStrength ?? null,

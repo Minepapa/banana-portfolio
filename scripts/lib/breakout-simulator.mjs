@@ -12,6 +12,7 @@ import {
   computeTrailingStop, computeBookTrailingStop, computePositionSize, shouldPyramid,
   shouldTakePartialProfit, rMultiplePrice, PARTIAL_PROFIT_TRIGGER_R, PARTIAL_PROFIT_SELL_FRACTION,
   MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT, computeATR, selectAdaptiveStopLossPct, isMarketRegimeBullish,
+  shouldPyramidAfterPartialProfit, PYRAMID_ADD_FRACTION,
 } from './breakout-risk.mjs';
 import {
   computeBettingUnitInvestment, MIN_BETTING_UNITS, TOTAL_BETTING_UNITS, BETTING_UNIT_SUCCESS_R,
@@ -176,6 +177,13 @@ export function runBreakoutBacktest({
   // 그대로 처리 — "신규 매수 중단"이지 "전량 매도"가 아니다). MA60 계산에 필요한 데이터가
   // 아직 부족한 초반 구간(isMarketRegimeBullish가 null)은 필터 없음으로 취급(추정 금지).
   useMarketRegimeFilter = false,
+  // 2026-09-28 피라미딩(3R 부분익절 이후 추가매수) — false(기본, 회귀 없음)면 기존과
+  // 완전 동일(불타기 자본효과 없음, `shouldPyramid`/`units`는 예전처럼 감지 전용으로만
+  // 남음). true면 `shouldPyramidAfterPartialProfit` 조건(부분익절 완료+마켓레짐 강세+
+  // 4R 도달) 충족 시 1회, PYRAMID_ADD_FRACTION 비율만큼 자본을 추가 투입하고 평단가를
+  // won 기준 조화평균으로 재계산한다. useMarketRegimeFilter와 별개 옵션이다 — 신규
+  // 진입 차단과 무관하게 피라미딩 자체는 항상 마켓 레짐(코스피 MA60)을 직접 확인한다.
+  usePyramiding = false,
 }) {
   let capital = initialCapital;
   const openPositions = new Map(); // code -> position + investedWon
@@ -206,6 +214,12 @@ export function runBreakoutBacktest({
     // 다 모아서 순변화만 계산한 뒤 아래(2단계 끝)에서 딱 한 번 클램프한다 — 덧셈은
     // 교환법칙이 성립해 순서 무관.
     let bettingUnitDelta = 0;
+    // 벤치마크(코스피) 종가를 오늘까지 슬라이스 — 마켓 레짐 필터(3단계, 신규 진입
+    // 게이트)와 피라미딩(2단계, 보유 포지션 추가매수) 둘 다 같은 "오늘 강세/약세"
+    // 판정이 필요해 하루에 한 번만 계산해 공유한다(2026-09-28, 이전엔 3단계 안에서만
+    // 계산했음).
+    const benchIdx = findIndexAtOrBefore(benchmarkSeries.dates, date);
+    const benchmarkCloses = benchIdx >= 0 ? benchmarkSeries.closes.slice(0, benchIdx + 1) : [];
     // 1) 어제 예약된 진입을 오늘 시가로 체결 — 슬롯이 모자라면 RS(상대강도)가 더 강한
     // 종목부터 채운다(오너 지적, 2026-09-13 — 이전엔 후보풀 순서(임의, 경제적 근거
     // 없음)로 아무거나 채웠음, 진입일의 26%가 신호 2건 이상 겹치는 날이라 실제 영향
@@ -226,7 +240,7 @@ export function runBreakoutBacktest({
         capital -= sizeWon;
         openPositions.set(code, {
           code, entryDate: date, entryPrice: openPrice, units: 1,
-          highSinceEntry: openPrice, stopPrice: openPrice * (1 - stopLossPct), pyramided: false,
+          highSinceEntry: openPrice, stopPrice: openPrice * (1 - stopLossPct), pyramided: false, pyramidCapitalAdded: false,
           partialSold: false, investedWon: sizeWon, bettingUnitsAtEntry: useBettingUnits ? currentBettingUnits : null,
           stopLossPct,
         });
@@ -279,6 +293,39 @@ export function runBreakoutBacktest({
           });
           finalPosition = { ...position, investedWon: position.investedWon - soldWon };
         }
+        // 피라미딩(2026-09-28) — 전용 필드 `pyramidCapitalAdded`를 쓴다(기존
+        // `pyramided`/`units`는 2026-09-13부터 있던 감지전용 죽은 카운터
+        // (shouldPyramid, 3R 시점에 이미 무조건 true가 됨, 자본효과 없음)라 그대로
+        // 재사용하면 내 새 조건의 "아직 피라미딩 안 함" 가드가 3R 시점에 이미 꺼져버림
+        // — 완전히 별개 상태로 분리). partialExit와 같은 날 동시에 터지지 않는다
+        // (shouldPyramidAfterPartialProfit이 partialSold를 전제로 하는데, partialSold는
+        // 위 partialExit 처리에서 이번 갱신에 막 true가 된 것이라 같은 날엔 아직 4R에
+        // 못 미쳐 보통 다음날 이후에나 조건을 만족 — 3R에 팔면서 동시에 사는 충돌은
+        // 이 순서로 자연히 방지된다).
+        if (usePyramiding && !finalPosition.pyramidCapitalAdded) {
+          const regimeBullish = isMarketRegimeBullish(benchmarkCloses);
+          const pyramidNow = shouldPyramidAfterPartialProfit(
+            finalPosition.entryPrice, finalPosition.highSinceEntry, finalPosition.partialSold,
+            finalPosition.pyramidCapitalAdded, regimeBullish, finalPosition.stopLossPct ?? STOP_LOSS_PCT,
+          );
+          if (pyramidNow) {
+            const addWon = Math.min(sizeNewEntry(finalPosition.stopLossPct) * PYRAMID_ADD_FRACTION, capital);
+            const currentPrice = dayBar.close;
+            if (addWon > 0 && currentPrice > 0) {
+              // won 기준 조화평균 — 실제 평단가 계산과 동일한 방식(투입금÷수량 합산).
+              const blendedEntryPrice = (finalPosition.investedWon + addWon)
+                / (finalPosition.investedWon / finalPosition.entryPrice + addWon / currentPrice);
+              capital -= addWon;
+              finalPosition = {
+                ...finalPosition,
+                entryPrice: blendedEntryPrice,
+                investedWon: finalPosition.investedWon + addWon,
+                units: finalPosition.units + 1,
+                pyramidCapitalAdded: true,
+              };
+            }
+          }
+        }
         openPositions.set(code, finalPosition);
       }
     }
@@ -299,8 +346,6 @@ export function runBreakoutBacktest({
     //      슬롯을 채운다). 실전 반영 시 이건 "장후시간외 우선 체결" 시나리오의
     //      상한선 근사(체결 성공률 100% 가정)라는 점에 유의 — 실제 체결률은 미실측.
     if (openPositions.size < maxConcurrentPositions) {
-      const benchIdx = findIndexAtOrBefore(benchmarkSeries.dates, date);
-      const benchmarkCloses = benchIdx >= 0 ? benchmarkSeries.closes.slice(0, benchIdx + 1) : [];
       // 마켓 레짐 필터 — isMarketRegimeBullish가 false(명확히 약세장)일 때만 신규
       // 진입 탐색을 건너뛴다. null(데이터 부족)이나 true(강세장)면 평소처럼 진행.
       const regimeBlocksEntry = useMarketRegimeFilter && isMarketRegimeBullish(benchmarkCloses) === false;
@@ -353,7 +398,7 @@ export function runBreakoutBacktest({
           capital -= sizeWon;
           openPositions.set(code, {
             code, entryDate: date, entryPrice: closePrice, units: 1,
-            highSinceEntry: closePrice, stopPrice: closePrice * (1 - stopLossPct), pyramided: false,
+            highSinceEntry: closePrice, stopPrice: closePrice * (1 - stopLossPct), pyramided: false, pyramidCapitalAdded: false,
             partialSold: false, investedWon: sizeWon, bettingUnitsAtEntry: useBettingUnits ? currentBettingUnits : null,
             stopLossPct,
           });

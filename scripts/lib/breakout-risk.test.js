@@ -7,6 +7,8 @@ import {
   computeBookTrailingStop,
   isMarketRegimeBullish,
   MARKET_REGIME_MA_DAYS,
+  shouldPyramidAfterPartialProfit,
+  PYRAMID_TRIGGER_R_AFTER_PARTIAL,
   computePositionSize,
   shouldPyramid,
   shouldTakePartialProfit,
@@ -78,6 +80,23 @@ test('isMarketRegimeBullish: 데이터 부족(60개 미만)이면 null(판단 �
   assert.equal(isMarketRegimeBullish(bearish), false);
   const bullish = [...Array(MARKET_REGIME_MA_DAYS - 1).fill(1000), 1100];
   assert.equal(isMarketRegimeBullish(bullish), true);
+});
+
+test('shouldPyramidAfterPartialProfit: 부분익절 완료+레짐강세+4R 도달일 때만 true', () => {
+  const entryPrice = 10000;
+  const priceAt4R = entryPrice * (1 + PYRAMID_TRIGGER_R_AFTER_PARTIAL * STOP_LOSS_PCT);
+  const priceAt3R = entryPrice * (1 + 3 * STOP_LOSS_PCT);
+  // 4R 도달 + 부분익절 완료 + 레짐강세 → true
+  assert.equal(shouldPyramidAfterPartialProfit(entryPrice, priceAt4R, true, false, true), true);
+  // partialSold=false(아직 3R 부분익절 전)면 4R에 도달했어도 false — 3R 매도와 동시에 사는 충돌 방지
+  assert.equal(shouldPyramidAfterPartialProfit(entryPrice, priceAt4R, false, false, true), false);
+  // 이미 피라미딩했으면(최대 1회) false
+  assert.equal(shouldPyramidAfterPartialProfit(entryPrice, priceAt4R, true, true, true), false);
+  // 레짐 false(약세장)나 null(데이터 부족)이면 false — 확신 없으면 추가매수 안 함
+  assert.equal(shouldPyramidAfterPartialProfit(entryPrice, priceAt4R, true, false, false), false);
+  assert.equal(shouldPyramidAfterPartialProfit(entryPrice, priceAt4R, true, false, null), false);
+  // 3R까지만 도달(4R 미달)이면 조건 전부 만족해도 false
+  assert.equal(shouldPyramidAfterPartialProfit(entryPrice, priceAt3R, true, false, true), false);
 });
 
 test('computePositionSize: Max 2%룰 — 자본금 4천만원, 손절 8% → 1천만원', () => {

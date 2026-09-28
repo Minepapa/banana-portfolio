@@ -96,6 +96,28 @@ export function computeBookTrailingStop(entryPrice, highSinceEntry, partialSold,
   return rMultiplePrice(entryPrice, r - 1, stopLossPct);
 }
 
+// 3R 부분익절 이후 피라미딩(추가매수) — 2026-09-13 오너가 "3R에 50% 팔면서 동시에
+// 유닛을 추가하는 건 개념적으로 충돌한다"고 지적해 부분익절(3R)과 분리된 별도
+// R단계에서만 트리거한다. 마켓 레짐(코스피 MA60, 위 참고)이 강세로 확인될 때만
+// 허용 — 2026-09-13 당시 "시장 상황을 보고 2차 상승 징후가 있을 때"로 미뤄뒀던
+// 조건을 이 지표로 채운다(2026-09-14 므네모시네 기록에서 이미 후보로 지목돼 있었음).
+export const PYRAMID_TRIGGER_R_AFTER_PARTIAL = 4;
+// 추가매수 금액 = 그 시점 자본 기준 "신규 진입 사이즈"(Max 2%룰)의 이 비율. 책의
+// "피라미드형 비중(1차 30~50%·2차 15~20%·3차 10%)"을 정밀 재현한 값이 아니라, 2차
+// 비중대를 단순 근사한 1차 실험값이다(백테스트로 검증 후 조정 대상).
+export const PYRAMID_ADD_FRACTION = 0.5;
+
+// partialSold(3R 부분익절 완료)·alreadyPyramided(이미 1회 추가함, 최대 1회 한도)·
+// marketRegimeBullish(코스피 MA60 위, isMarketRegimeBullish 결과 — null(데이터부족)·
+// false는 전부 불허, true만 허용 — 확신 없으면 추가매수 안 함)를 모두 만족하고
+// R단계가 PYRAMID_TRIGGER_R_AFTER_PARTIAL 이상이면 true.
+export function shouldPyramidAfterPartialProfit(
+  entryPrice, highSinceEntry, partialSold, alreadyPyramided, marketRegimeBullish, stopLossPct = STOP_LOSS_PCT,
+) {
+  if (!partialSold || alreadyPyramided || marketRegimeBullish !== true) return false;
+  return reachedRMultiple(entryPrice, highSinceEntry, stopLossPct) >= PYRAMID_TRIGGER_R_AFTER_PARTIAL;
+}
+
 export const MARKET_REGIME_MA_DAYS = 60; // 깡토 유튜브 "진입시점·매수비중·손절기준 총정리" — 코스피 지수 60일선 기준 강세/약세 판정(종목 개별 MA60과는 무관한 시장 전체 레짐 판단, 혼동 주의)
 
 // 코스피(또는 다른 벤치마크) 종가 시계열이 "오늘" 강세장인지 판정 — 마지막 원소가
