@@ -86,6 +86,16 @@ export function computeTrailingStop(entryPrice, highSinceEntry, stopLossPct = ST
   return rMultiplePrice(entryPrice, r - 1, stopLossPct);
 }
 
+// 책(깡토 저자 본인 기술) 순수 방법 — 1R·2R 구간은 최초 손절을 유지한다. 3R에서
+// 50% 부분익절과 동시에 본전으로 올리고, 4R 이상부터 직전 R가로 래칫한다. 호출측은
+// 3R에 처음 도달한 그 갱신에서도 partialSold=true를 넘겨야 본전 전환이 함께 반영된다.
+export function computeBookTrailingStop(entryPrice, highSinceEntry, partialSold, stopLossPct = STOP_LOSS_PCT) {
+  const r = reachedRMultiple(entryPrice, highSinceEntry, stopLossPct);
+  if (!partialSold) return entryPrice * (1 - stopLossPct);
+  if (r <= PARTIAL_PROFIT_TRIGGER_R) return entryPrice;
+  return rMultiplePrice(entryPrice, r - 1, stopLossPct);
+}
+
 // True Range(당일 변동폭의 실제 범위, ATR의 구성요소) — max(고가-저가, |고가-전일
 // 종가|, |저가-전일종가|). 전일 갭(전일종가 대비 오늘 시가가 크게 뛰거나 떨어진
 // 경우)까지 반영한다는 게 단순 고가-저가와의 차이 — 위아래 갭 둘 다 고려.

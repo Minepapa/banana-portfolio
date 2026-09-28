@@ -4,6 +4,7 @@ import {
   rMultiplePrice,
   reachedRMultiple,
   computeTrailingStop,
+  computeBookTrailingStop,
   computePositionSize,
   shouldPyramid,
   shouldTakePartialProfit,
@@ -55,6 +56,16 @@ test('computeTrailingStop: 래칫은 호출측 책임 — 이 함수 자체는 �
   // 4R까지 갔다가 오늘 고점이 3R 수준으로 낮아 보이는 입력이 와도(호출측이 보통
   // "지금까지의 최고가"를 넘겨 이런 역전은 안 생기지만) 함수 자체는 입력 그대로 계산.
   assert.ok(Math.abs(computeTrailingStop(10000, 13200) - 12400) < 1e-6); // 4R 도달 → 3R가
+});
+
+test('computeBookTrailingStop: 1R·2R에는 최초 손절을 유지하고, 3R부터 본전·4R부터 직전 R가로 래칫', () => {
+  const entryPrice = 10000;
+  assert.equal(computeBookTrailingStop(entryPrice, 10800, false), 9200); // 1R: 최초 손절 유지
+  assert.equal(computeBookTrailingStop(entryPrice, 11600, false), 9200); // 2R: 최초 손절 유지
+  assert.equal(computeBookTrailingStop(entryPrice, 12400, true), 10000); // 3R: 부분익절과 함께 본전
+  assert.equal(computeBookTrailingStop(entryPrice, 13200, true), 12400); // 4R: 3R가
+  // 호출측 Math.max 래칫과 결합하면 고점이 낮아져도 손절선이 하향하지 않는다.
+  assert.equal(Math.max(12400, computeBookTrailingStop(entryPrice, 12400, true)), 12400);
 });
 
 test('computePositionSize: Max 2%룰 — 자본금 4천만원, 손절 8% → 1천만원', () => {

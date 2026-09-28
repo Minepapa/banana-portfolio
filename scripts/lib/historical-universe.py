@@ -73,7 +73,7 @@ DELISTING_CSV_URL_TMPL = (
 )
 
 
-def fetch_delisting_with_fallback(max_lookback_days=10):
+def fetch_delisting_with_fallback(max_lookback_days=20):
     """fdr.StockListing('KRX-DELISTING')는 내부적으로 KRX API가 보고하는 "최신
     작업일"(max_work_dt)을 그대로 GitHub 캐시 리포(FinanceData/fdr_krx_data_cache)의
     스냅샷 파일명으로 써서 요청하는데, 그 리포의 실제 발행이 하루 정도 늦어질 수
@@ -89,9 +89,13 @@ def fetch_delisting_with_fallback(max_lookback_days=10):
     호출을 먼저 시도하고, 부족하면 우리가 직접 날짜를 하루씩 물러나며 같은 리포의
     과거 스냅샷을 재시도한다. 실패를 삼키지 않고 몇 번째 시도에서·어느 날짜로
     성공했는지 항상 stderr에 남긴다(2026-09-16 코드리뷰가 강조한 "조용한 폴백 금지"
-    원칙 그대로 — 폴백 자체는 하되 반드시 보이게). max_lookback_days 기본값(10)은
+    원칙 그대로 — 폴백 자체는 하되 반드시 보이게). max_lookback_days 기본값은
     GitHub 캐시 리포 자체가 KRX 영업일에만 발행되므로(2026-09-18 코드리뷰 LOW 지적
-    — 설·추석 등 최대 5일 연휴+주말이 겹치면 7일로는 부족할 수 있음) 여유를 둔 값.
+    — 설·추석 등 최대 5일 연휴+주말이 겹치면 7일로는 부족할 수 있음) 여유를 둔 값 —
+    2026-09-28 실측으로 10→20 상향(그 리포가 2026-09-17 이후 11일째 미발행으로
+    확인돼 10일 마진이 하루 부족했음, `Log/DevRequests/2026-09-28-krx-delisting-
+    캐시리포-발행중단-의심.md` 참고 — 근본 원인은 리포 유지보수 중단 가능성이라
+    별도 확인 필요, 이 마진 확대는 임시 완화일 뿐).
     """
     dl = fdr.StockListing('KRX-DELISTING')
     if len(dl) >= MIN_DELISTING_ROWS:

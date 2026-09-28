@@ -9,7 +9,7 @@
 // (listingDate<=date<delistingDate) 시가총액 1조원↑ + 유동성 필터 통과 종목.
 import { computeBreakoutEntrySignal, RS_LOOKBACK_DAYS } from './breakout-factor.mjs';
 import {
-  computeTrailingStop, computePositionSize, shouldPyramid,
+  computeTrailingStop, computeBookTrailingStop, computePositionSize, shouldPyramid,
   shouldTakePartialProfit, rMultiplePrice, PARTIAL_PROFIT_TRIGGER_R, PARTIAL_PROFIT_SELL_FRACTION,
   MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT, computeATR, selectAdaptiveStopLossPct,
 } from './breakout-risk.mjs';
@@ -60,7 +60,7 @@ export function computeAvgTradingValue(closes, volumes, endIndex, days = 20, min
 // 트리거·트레일링선을 계산한다 — 진입 시점에 정해진 값을 그 포지션의 생애 내내
 // 그대로 쓴다(도중에 ATR이 바뀌어도 재계산 안 함 — "그 종목의 진입 당시 변동성
 // 성격"으로 손절 체계 자체를 고정하는 설계, 트레일링 자체는 기존처럼 매일 갱신됨).
-export function updatePositionForDay(position, dayBar) {
+export function updatePositionForDay(position, dayBar, exitMethod = 'ratchet') {
   const stopLossPct = position.stopLossPct ?? STOP_LOSS_PCT;
   if (dayBar.low <= position.stopPrice) {
     return {
@@ -78,7 +78,9 @@ export function updatePositionForDay(position, dayBar) {
     partialSold = true;
   }
 
-  const rawStop = computeTrailingStop(position.entryPrice, highSinceEntry, stopLossPct);
+  const rawStop = exitMethod === 'bookPure'
+    ? computeBookTrailingStop(position.entryPrice, highSinceEntry, partialSold, stopLossPct)
+    : computeTrailingStop(position.entryPrice, highSinceEntry, stopLossPct);
   const stopPrice = Math.max(position.stopPrice, rawStop); // 래칫 — 절대 하향 안 함
   const addUnit = !position.pyramided && shouldPyramid(position.entryPrice, highSinceEntry, position.units, stopLossPct);
   return {
@@ -166,6 +168,7 @@ export function runBreakoutBacktest({
   // 원래 프레이밍과는 다른 동작이니 재조정 시 이 해석을 기준으로 판단할 것.
   useAdaptiveStop = false,
   adaptiveStopThresholdPct, // 2026-09-19 재조정 백테스트용 — 지정 안 하면 selectAdaptiveStopLossPct 기본값(ATR_STOP_THRESHOLD_PCT=8.0, 2026-09-19 실전배선 확정값) 그대로(회귀 없음). useAdaptiveStop=false면 무의미.
+  exitMethod = 'ratchet', // 'ratchet'(기존) | 'bookPure'(깡토 저자 기본법: 3R 전 손절 불변, 3R 본전, 4R+ 래칫)
 }) {
   let capital = initialCapital;
   const openPositions = new Map(); // code -> position + investedWon
@@ -231,7 +234,7 @@ export function runBreakoutBacktest({
       if (idx < 0 || series.dates[idx] !== date) continue; // 오늘 거래 없음(휴장 등) — 유지
       const dayBar = { high: series.highs[idx], low: series.lows[idx], close: series.closes[idx] };
       if (dayBar.high == null || dayBar.low == null) continue; // 고가/저가 결측 — 판단 보류
-      const { position, exit, partialExit } = updatePositionForDay(pos, dayBar);
+      const { position, exit, partialExit } = updatePositionForDay(pos, dayBar, exitMethod);
       if (exit) {
         // 유닛 카운터 갱신(순변화만 누적, 클램프는 2단계 끝에서 한 번만 — 위 설명 참고)
         // — 3R 성공 크레딧을 이미 받은 포지션(partialSold=true, 청산 전 상태 기준)이

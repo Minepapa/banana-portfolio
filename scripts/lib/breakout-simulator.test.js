@@ -46,6 +46,22 @@ test('updatePositionForDay: 트레일링스탑은 래칫(고점 갱신 시에만
   assert.equal(position.stopPrice, 10000);
 });
 
+test("updatePositionForDay: exitMethod='bookPure'는 1R·2R 손절을 유지하고 3R 당일 부분익절과 함께 본전으로 올린다", () => {
+  const initial = { entryPrice: 10000, highSinceEntry: 10000, stopPrice: 9200, units: 1, pyramided: false, partialSold: false };
+  const bookAtOneR = updatePositionForDay(initial, { high: 10800, low: 10100, close: 10700 }, 'bookPure');
+  assert.equal(bookAtOneR.position.stopPrice, 9200);
+
+  const bookAtThreeR = updatePositionForDay(initial, { high: 12400, low: 12000, close: 12300 }, 'bookPure');
+  assert.notEqual(bookAtThreeR.partialExit, null);
+  assert.equal(bookAtThreeR.position.partialSold, true);
+  assert.equal(bookAtThreeR.position.stopPrice, 10000);
+
+  const defaultRatchet = updatePositionForDay(initial, { high: 10800, low: 10100, close: 10700 });
+  const namedRatchet = updatePositionForDay(initial, { high: 10800, low: 10100, close: 10700 }, 'ratchet');
+  assert.equal(defaultRatchet.position.stopPrice, 10000);
+  assert.deepEqual(namedRatchet, defaultRatchet);
+});
+
 test('updatePositionForDay: 하루 안에 고가가 래칫 조건을 만족하고 저가가 그 새 손절선을 건드려도, 청산은 어제까지의 손절선 기준(일중 순서 알 수 없음 — 실제 백테스트에서 발견된 회귀 버그)', () => {
   // 어제 손절선 9200(최초, 1R 미도달). 오늘 고가 10800(1R 도달 → 새 손절선 10000)인데
   // 오늘 저가도 10000 이하(9900) — 오늘 하루 안에 오른 뒤 다시 그만큼 빠졌다는 뜻인데,
