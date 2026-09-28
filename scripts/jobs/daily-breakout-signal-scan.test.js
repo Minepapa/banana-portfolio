@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldRunToday, ENTRY_SIGNAL_OPTS } from './daily-breakout-signal-scan.mjs';
+import { shouldRunToday, ENTRY_SIGNAL_OPTS, regimeBlocksEntry } from './daily-breakout-signal-scan.mjs';
+import { MARKET_REGIME_MA_DAYS } from '../lib/breakout-risk.mjs';
 import {
   computeBreakoutEntrySignal, RS_ANCHOR_SMOOTH_DAYS, MARKET_CAP_FLOOR_WON, MIN_RELATIVE_STRENGTH,
 } from '../lib/breakout-factor.mjs';
@@ -99,4 +100,34 @@ test('ENTRY_SIGNAL_OPTS: 실제로 앵커 스무딩 경로를 태움(단일시�
     Math.abs(viaEntrySignalOpts.relativeStrength) < Math.abs(viaSingleAnchorOnly.relativeStrength),
     '스무딩이 앵커일 스파이크로 인한 왜곡을 완화해야 함',
   );
+});
+
+// [핵심 안전장치] 2026-09-28 코드리뷰 MEDIUM 지적 재발방지 — 이 게이트가 main()
+// 안 인라인 if로만 있으면 삭제돼도 npm test가 전부 초록인 채 실전 전략만 조용히
+// 바뀐다(ENTRY_SIGNAL_OPTS와 동일 클래스 위험, 2026-09-15 지적 선례).
+test('regimeBlocksEntry: 약세장(오늘 종가<MA60)이면 blocked=true', () => {
+  const bearish = [...Array(MARKET_REGIME_MA_DAYS - 1).fill(1000), 900];
+  const result = regimeBlocksEntry(bearish);
+  assert.equal(result.blocked, true);
+  assert.equal(result.bullish, false);
+});
+
+test('regimeBlocksEntry: 강세장(오늘 종가>=MA60)이면 blocked=false', () => {
+  const bullish = [...Array(MARKET_REGIME_MA_DAYS - 1).fill(1000), 1100];
+  const result = regimeBlocksEntry(bullish);
+  assert.equal(result.blocked, false);
+  assert.equal(result.bullish, true);
+});
+
+test('regimeBlocksEntry: 데이터 부족(60개 미만, null)이면 blocked=false(추정 안 함 — 평소처럼 진행)', () => {
+  const insufficient = Array(MARKET_REGIME_MA_DAYS - 1).fill(1000);
+  const result = regimeBlocksEntry(insufficient);
+  assert.equal(result.blocked, false);
+  assert.equal(result.bullish, null);
+});
+
+test('regimeBlocksEntry: disabled=true(--no-regime-filter)면 약세장이어도 blocked=false', () => {
+  const bearish = [...Array(MARKET_REGIME_MA_DAYS - 1).fill(1000), 900];
+  const result = regimeBlocksEntry(bearish, { disabled: true });
+  assert.equal(result.blocked, false);
 });

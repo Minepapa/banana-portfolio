@@ -168,6 +168,17 @@ async function main() {
   if (minRelativeStrength == null) {
     console.error(`⚠️ 참고: 실전은 RS 절대문턱 ${MIN_RELATIVE_STRENGTH}를 씁니다 — 이 실행은 --minRs를 안 줘서 문턱 0으로 도는 중이라 실전과 다른 설정입니다. 실전과 맞추려면 --minRs=${MIN_RELATIVE_STRENGTH} 추가.`);
   }
+  // 2026-09-28 코드리뷰 MEDIUM 지적 — 마켓 레짐 필터가 실전(daily-breakout-signal-
+  // scan.mjs)엔 상시 ON으로 배선됐는데 이 백테스트 기본값은 여전히 false라, 위와
+  // 동일한 클래스의 조용한 괴리가 생길 수 있어 같은 패턴으로 경고를 추가한다.
+  if (!useMarketRegimeFilter) {
+    console.error('⚠️ 참고: 실전(daily-breakout-signal-scan.mjs)은 마켓 레짐 필터(코스피 MA60)를 켜고 돕니다 — 이 실행은 --useMarketRegimeFilter를 안 줘서 꺼진 채로 도는 중이라 실전과 다른 설정입니다. 실전과 맞추려면 --useMarketRegimeFilter=true 추가.');
+  }
+  // 실전은 ATR 가변손절도 상시 ON(2026-09-19 배선, --no-adaptive-stop으로만 끔) —
+  // 위와 같은 클래스인데 그동안 누락돼 있었다(2026-09-28 코드리뷰 지적, 겸사겸사 보강).
+  if (!useAdaptiveStop) {
+    console.error('⚠️ 참고: 실전(daily-breakout-signal-scan.mjs)은 ATR 가변손절(4%/8%)을 켜고 돕니다(--no-adaptive-stop으로만 끔) — 이 실행은 --useAdaptiveStop을 안 줘서 꺼진 채로 도는 중이라 실전과 다른 설정입니다. 실전과 맞추려면 --useAdaptiveStop=true 추가.');
+  }
 
   if (!DATE_RE.test(fromDate)) throw new Error(`--from 형식 오류(YYYY-MM-DD 필요): ${fromDate}`);
   if (!DATE_RE.test(toDate)) throw new Error(`--to 형식 오류(YYYY-MM-DD 필요): ${toDate}`);

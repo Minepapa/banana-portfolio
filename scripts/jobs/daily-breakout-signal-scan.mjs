@@ -8,10 +8,10 @@
 // 크다는 이유). **이 원칙은 카이로스(이 전략)에만 해당 — 자산분배 트랙(Athena)은
 // 여전히 텔레그램 승인을 거친다**, 혼동 금지.
 //
-// 실행 시각(15:32 KST 제안, 아직 launchd 미배선): KRX 정규장 마감(15:30)+약간의
-// 버퍼 뒤, 장후시간외(15:40) 시작 전. 265종목(2026-09-13 실측 — 시가총액1조원+
-// 유동성 필터 통과 수, 매일 변동)×STAGGER_MS(800ms, update-holdings-prices.mjs와
-// 동일한 2026-07 실측 확정값 재사용)≈3.5분 소요, 여유 있게 끝남.
+// 실행 시각(평일 15:32 KST, launchd 배선 완료 — com.banana2.daily-breakout-signal-scan):
+// KRX 정규장 마감(15:30)+약간의 버퍼 뒤, 장후시간외(15:40) 시작 전. 265종목(2026-09-13
+// 실측 — 시가총액1조원+유동성 필터 통과 수, 매일 변동)×STAGGER_MS(800ms, update-
+// holdings-prices.mjs와 동일한 2026-07 실측 확정값 재사용)≈3.5분 소요, 여유 있게 끝남.
 //
 // 데이터 소스 설계(핵심): 52주신고가·변동성수축 임계값은 전일까지의 캐시된 일별
 // 시세(loadPriceSeriesBatch)로 미리 계산 가능 — 그래서 시가총액+유동성 사전필터
@@ -29,7 +29,7 @@
 // 재실행 시 이중매수를 방지한다(--force로 무시 가능, 테스트용). --dry-run은 실주문이
 // 없어 이 잠금 대상이 아니다(반복 실행 자유).
 //
-// 사용법: node scripts/jobs/daily-breakout-signal-scan.mjs [--dry-run] [--force] [--max-entries=N] [--no-adaptive-stop]
+// 사용법: node scripts/jobs/daily-breakout-signal-scan.mjs [--dry-run] [--force] [--max-entries=N] [--no-adaptive-stop] [--no-regime-filter]
 import { existsSync, readdirSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,7 @@ import {
 } from '../lib/breakout-factor.mjs';
 import {
   computePositionSize, RISK_PER_TRADE_PCT, MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT, computeATR, selectAdaptiveStopLossPct,
+  isMarketRegimeBullish, MARKET_REGIME_MA_DAYS,
 } from '../lib/breakout-risk.mjs';
 import { parseBreakoutPosition, findOpenPositions } from '../lib/breakout-position-vault.mjs';
 import {
@@ -93,6 +94,31 @@ export const ENTRY_SIGNAL_OPTS = {
   marketCapFloor: MARKET_CAP_FLOOR_WON, rsAnchorSmoothDays: RS_ANCHOR_SMOOTH_DAYS, minRelativeStrength: MIN_RELATIVE_STRENGTH,
 };
 
+// 마켓 레짐 필터(2026-09-28, 깡토 유튜브 원문 — 코스피 MA60 아래=약세장은 신규
+// 진입 중단). 백테스트(breakout-simulator.mjs useMarketRegimeFilter)로 2014~2026
+// 실측 검증(연환산 9.46%→10.89%, 샤프 0.642→0.799, MDD 25.1%→19.6%, 전 지표 개선)
+// 후 오너 확정, 같은 순수함수(isMarketRegimeBullish)를 그대로 재사용해 백테스트-
+// 실전 파리티를 함수 재사용으로 보장한다(RS_ANCHOR_SMOOTH_DAYS·MIN_RELATIVE_STRENGTH가
+// 이미 겪은 두 차례 사고와 동일한 교훈, 위 ENTRY_SIGNAL_OPTS 주석 참고). main() 밖으로
+// 뽑아 export하는 것도 같은 이유(2026-09-15 코드리뷰 MEDIUM 지적 재발 방지 — main()
+// 안에만 있으면 이 배선이 삭제돼도 npm test가 못 잡는다).
+//
+// disabled(--no-regime-filter)면 이 게이트 자체를 끈다 — ATR 가변손절
+// (--no-adaptive-stop)과 동일하게, 코드 재배포 없이 즉시 되돌릴 수 있는 런타임
+// 스위치를 남겨둔다(2026-09-19 코드리뷰 LOW 지적과 같은 이유 — 레짐 필터는 신규
+// 진입 자체를 전부 막을 수 있어 ATR보다 영향이 크다). false(명확히 약세장)일
+// 때만 차단 — null(MA60 계산에 필요한 60개 데이터가 아직 부족, 이 코스피 캐시는
+// 2014-01-01부터라 사실상 항상 충분하지만 방어적으로 유지)이면 안전하게 "필터
+// 없음"으로 평소처럼 진행(추정 금지 원칙) — 다만 null은 그 자체로 지수 캐시
+// 이상 신호이므로 호출측(main())이 반드시 로그·경고를 남긴다. 기존 보유 포지션의
+// 손절·트레일링은 이 잡의 범위 밖(reconcile-breakout-protection.mjs)이라 이
+// 필터와 무관하게 그대로 진행된다 — "신규 매수 중단"일 뿐 "전량 매도"가 아니다.
+export function regimeBlocksEntry(benchmarkCloses, { disabled = false } = {}) {
+  if (disabled) return { blocked: false, bullish: null };
+  const bullish = isMarketRegimeBullish(benchmarkCloses);
+  return { blocked: bullish === false, bullish };
+}
+
 function loadOpenPositionCodes() {
   const dir = VAULT_PATHS.state.breakoutPositions;
   if (!existsSync(dir)) return new Set();
@@ -141,6 +167,8 @@ async function main() {
   // 것으로 실측됐다는 걸 고려하면 첫 몇 주는 되돌릴 필요가 생길 가능성이 낮지
   // 않다 — 코드 재배포 없이 즉시 되돌릴 수 있는 스위치를 남겨둔다.
   const noAdaptiveStop = process.argv.includes('--no-adaptive-stop');
+  // 마켓 레짐 필터 런타임 복귀 스위치(2026-09-28) — 위 regimeBlocksEntry 주석 참고.
+  const noRegimeFilter = process.argv.includes('--no-regime-filter');
 
   // 하루 1회 실행 보장(코드리뷰 HIGH 지적, 2026-09-13) — 실주문이 나갈 수 있는
   // 비-dry-run 경로에서만 잠근다. 무엇을 하기도 전에 가장 먼저 선점(claim)해야
@@ -256,7 +284,7 @@ async function main() {
   const { appkey: quoteAppkey, appsecret: quoteAppsecret } = loadKisCredentials();
   const quoteToken = await getKisToken({ appkey: quoteAppkey, appsecret: quoteAppsecret });
 
-  console.error(`[4/5] 라이브 종가 조회+신호 판정 중(${freeCandidates.length}종목, 약 ${(freeCandidates.length * STAGGER_MS / 1000).toFixed(0)}초 소요 예상)...`);
+  console.error('[4/5] 코스피 실시간지수 조회 중(마켓 레짐 필터 판정용)...');
   let benchmarkToday;
   try {
     ({ price: benchmarkToday } = await getKrIndexQuote({ token: quoteToken, appkey: quoteAppkey, appsecret: quoteAppsecret, iscd: '0001' }));
@@ -285,6 +313,44 @@ async function main() {
   const benchmarkClosesBase = benchmarkAlreadyHasToday ? benchmarkSeries.closes.slice(0, -1) : benchmarkSeries.closes;
   const benchmarkCloses = [...benchmarkClosesBase, benchmarkToday];
 
+  // 마켓 레짐 필터 판정(regimeBlocksEntry 정의부 주석 참고) — MA60도 직접 계산해
+  // 로그·텔레그램에 숫자로 남긴다(2026-09-28 코드리뷰 MEDIUM 지적 — 승인 없이
+  // 실주문이 나가거나 안 나가는 게이트라 판정 근거가 콘솔에만이라도 있어야 오너가
+  // 즉시 검증할 수 있다. 같은 파일 :381 "무신호와 전종목탈락을 겉보기로 구분 못
+  // 하면..."과 같은 요구).
+  const ma60 = benchmarkCloses.length >= MARKET_REGIME_MA_DAYS
+    ? benchmarkCloses.slice(-MARKET_REGIME_MA_DAYS).reduce((a, b) => a + b, 0) / MARKET_REGIME_MA_DAYS
+    : null;
+  const { blocked: regimeBlocked, bullish: regimeBullish } = regimeBlocksEntry(benchmarkCloses, { disabled: noRegimeFilter });
+  if (noRegimeFilter) {
+    console.error('⚠️ --no-regime-filter — 마켓 레짐 필터를 끄고 평소처럼 진행');
+  } else if (regimeBullish === null) {
+    // null은 "약세장 아님"이 아니라 "판단 불가"다 — 이 캐시는 2014-01-01부터라
+    // 사실상 항상 60개 이상이어야 정상이므로, 실전에서 null이 뜨면 그 자체가 지수
+    // 캐시 이상 신호다(조용한 폴백 금지 원칙 — MIN_CACHE_COVERAGE_RATIO 경고와
+    // 동일 취급).
+    console.error(`⚠️ 코스피 종가 ${benchmarkCloses.length}개 — MA60 계산 불가로 마켓 레짐 필터 미적용(지수 캐시 이상 의심)`);
+  } else if (regimeBlocked) {
+    console.log(`ℹ️ 코스피가 60일선 아래(약세장, 오늘 ${benchmarkToday} < MA60 ${ma60.toFixed(1)}) — 신규 진입 스캔 자체를 건너뜀(기존 보유 포지션은 무관, --no-regime-filter로 끌 수 있음)`);
+  } else {
+    console.error(`✅ 코스피 ${benchmarkToday} ≥ MA60 ${ma60.toFixed(1)} — 레짐 강세, 스캔 진행`);
+  }
+  if (regimeBlocked) {
+    // ⚠️ 이 return은 하루 1회 락(위 writeLastRunDay)을 이미 선점한 뒤라 그날은
+    // 재실행되지 않는다(킬스위치 스킵과 동일 원칙, 위 "하루 1회 실행 보장" 절
+    // 참고) — 15:32(정규장 마감 후) 실행 전제에선 이미 확정 종가라 무해하지만,
+    // 장중에 수동으로 비-dry-run 실행하면 그날 전체가 이 장중 스냅샷 판정으로
+    // 소비된다.
+    if (!dryRun) {
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL, tag: '완료',
+        body: `<b>돌파매매 일별 신호스캔 완료 — 마켓 레짐 필터로 신규 진입 중단</b>\n코스피 ${benchmarkToday}가 60일 이동평균선(${ma60.toFixed(1)}) 아래(약세장)로 확인돼 오늘은 신규 진입 탐색을 하지 않았습니다. 기존 보유 포지션의 손절·트레일링은 평소처럼 계속됩니다 — 단, 전날 장후시간외에 이미 확정된 신호가 있었다면 다음날 시가 폴백 체결(place-breakout-fallback-entry.mjs)은 이 필터와 무관하게 그대로 진행됩니다.`,
+      }));
+    }
+    return;
+  }
+
+  console.error(`[4/5] 라이브 종가 조회+신호 판정 중(${freeCandidates.length}종목, 약 ${(freeCandidates.length * STAGGER_MS / 1000).toFixed(0)}초 소요 예상)...`);
   const passed = [];
   for (const cand of freeCandidates) {
     const series = seriesByCode[cand.code];
