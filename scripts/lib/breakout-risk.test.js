@@ -5,6 +5,8 @@ import {
   reachedRMultiple,
   computeTrailingStop,
   computeBookTrailingStop,
+  isMarketRegimeBullish,
+  MARKET_REGIME_MA_DAYS,
   computePositionSize,
   shouldPyramid,
   shouldTakePartialProfit,
@@ -66,6 +68,16 @@ test('computeBookTrailingStop: 1R·2R에는 최초 손절을 유지하고, 3R부
   assert.equal(computeBookTrailingStop(entryPrice, 13200, true), 12400); // 4R: 3R가
   // 호출측 Math.max 래칫과 결합하면 고점이 낮아져도 손절선이 하향하지 않는다.
   assert.equal(Math.max(12400, computeBookTrailingStop(entryPrice, 12400, true)), 12400);
+});
+
+test('isMarketRegimeBullish: 데이터 부족(60개 미만)이면 null(판단 불가), 60개 이상이면 오늘 종가 vs MA60', () => {
+  assert.equal(isMarketRegimeBullish(Array(MARKET_REGIME_MA_DAYS - 1).fill(1000)), null);
+  const flat = Array(MARKET_REGIME_MA_DAYS).fill(1000);
+  assert.equal(isMarketRegimeBullish(flat), true); // 오늘 종가(=MA)가 MA 이상이면 강세장(경계값 포함)
+  const bearish = [...Array(MARKET_REGIME_MA_DAYS - 1).fill(1000), 900]; // MA=1000에 가까운데 오늘만 급락
+  assert.equal(isMarketRegimeBullish(bearish), false);
+  const bullish = [...Array(MARKET_REGIME_MA_DAYS - 1).fill(1000), 1100];
+  assert.equal(isMarketRegimeBullish(bullish), true);
 });
 
 test('computePositionSize: Max 2%룰 — 자본금 4천만원, 손절 8% → 1천만원', () => {

@@ -11,7 +11,7 @@ import { computeBreakoutEntrySignal, RS_LOOKBACK_DAYS } from './breakout-factor.
 import {
   computeTrailingStop, computeBookTrailingStop, computePositionSize, shouldPyramid,
   shouldTakePartialProfit, rMultiplePrice, PARTIAL_PROFIT_TRIGGER_R, PARTIAL_PROFIT_SELL_FRACTION,
-  MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT, computeATR, selectAdaptiveStopLossPct,
+  MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT, computeATR, selectAdaptiveStopLossPct, isMarketRegimeBullish,
 } from './breakout-risk.mjs';
 import {
   computeBettingUnitInvestment, MIN_BETTING_UNITS, TOTAL_BETTING_UNITS, BETTING_UNIT_SUCCESS_R,
@@ -169,6 +169,13 @@ export function runBreakoutBacktest({
   useAdaptiveStop = false,
   adaptiveStopThresholdPct, // 2026-09-19 재조정 백테스트용 — 지정 안 하면 selectAdaptiveStopLossPct 기본값(ATR_STOP_THRESHOLD_PCT=8.0, 2026-09-19 실전배선 확정값) 그대로(회귀 없음). useAdaptiveStop=false면 무의미.
   exitMethod = 'ratchet', // 'ratchet'(기존) | 'bookPure'(깡토 저자 기본법: 3R 전 손절 불변, 3R 본전, 4R+ 래칫)
+  // 2026-09-28 마켓 레짐 필터(깡토 유튜브 — 코스피 60일선 기준 강세/약세) — false(기본,
+  // 지정 안 하면 기존과 완전 동일 동작, 회귀 없음)면 매일 그대로 신규 진입 탐색.
+  // true면 코스피 종가가 자기 60일선 아래인 날엔 그날 신규 진입 탐색 자체를 건너뛴다
+  // (기존 보유 포지션의 트레일링스탑·3R부분익절·청산은 이 필터와 무관하게 평소처럼
+  // 그대로 처리 — "신규 매수 중단"이지 "전량 매도"가 아니다). MA60 계산에 필요한 데이터가
+  // 아직 부족한 초반 구간(isMarketRegimeBullish가 null)은 필터 없음으로 취급(추정 금지).
+  useMarketRegimeFilter = false,
 }) {
   let capital = initialCapital;
   const openPositions = new Map(); // code -> position + investedWon
@@ -294,7 +301,10 @@ export function runBreakoutBacktest({
     if (openPositions.size < maxConcurrentPositions) {
       const benchIdx = findIndexAtOrBefore(benchmarkSeries.dates, date);
       const benchmarkCloses = benchIdx >= 0 ? benchmarkSeries.closes.slice(0, benchIdx + 1) : [];
-      const candidates = computeDailyCandidates(pool, seriesByCode, date, { marketCapFloor });
+      // 마켓 레짐 필터 — isMarketRegimeBullish가 false(명확히 약세장)일 때만 신규
+      // 진입 탐색을 건너뛴다. null(데이터 부족)이나 true(강세장)면 평소처럼 진행.
+      const regimeBlocksEntry = useMarketRegimeFilter && isMarketRegimeBullish(benchmarkCloses) === false;
+      const candidates = regimeBlocksEntry ? [] : computeDailyCandidates(pool, seriesByCode, date, { marketCapFloor });
       const todaySignals = [];
       for (const cand of candidates) {
         if (openPositions.has(cand.code) || pendingEntries.some((p) => p.code === cand.code)) continue;

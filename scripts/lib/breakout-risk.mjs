@@ -96,6 +96,21 @@ export function computeBookTrailingStop(entryPrice, highSinceEntry, partialSold,
   return rMultiplePrice(entryPrice, r - 1, stopLossPct);
 }
 
+export const MARKET_REGIME_MA_DAYS = 60; // 깡토 유튜브 "진입시점·매수비중·손절기준 총정리" — 코스피 지수 60일선 기준 강세/약세 판정(종목 개별 MA60과는 무관한 시장 전체 레짐 판단, 혼동 주의)
+
+// 코스피(또는 다른 벤치마크) 종가 시계열이 "오늘" 강세장인지 판정 — 마지막 원소가
+// 오늘 종가라는 관례(이 파일의 다른 함수들과 동일, computeAvgVolume 등 참고).
+// MA60 계산에 필요한 60개 종가가 아직 없으면(백테스트 초반 구간) null(판단 불가) —
+// 호출측이 이걸 "필터 없음"(신규 진입 평소처럼 허용)으로 처리해야 한다(추정 금지
+// 원칙 — 데이터 부족을 임의로 강세/약세 어느 쪽으로도 단정하지 않음).
+export function isMarketRegimeBullish(benchmarkCloses, maDays = MARKET_REGIME_MA_DAYS) {
+  if (!Array.isArray(benchmarkCloses) || benchmarkCloses.length < maDays) return null;
+  const window = benchmarkCloses.slice(-maDays);
+  const ma = window.reduce((a, b) => a + b, 0) / maDays;
+  const todayClose = benchmarkCloses[benchmarkCloses.length - 1];
+  return todayClose >= ma;
+}
+
 // True Range(당일 변동폭의 실제 범위, ATR의 구성요소) — max(고가-저가, |고가-전일
 // 종가|, |저가-전일종가|). 전일 갭(전일종가 대비 오늘 시가가 크게 뛰거나 떨어진
 // 경우)까지 반영한다는 게 단순 고가-저가와의 차이 — 위아래 갭 둘 다 고려.

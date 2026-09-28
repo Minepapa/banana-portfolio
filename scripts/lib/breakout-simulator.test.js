@@ -617,6 +617,31 @@ test('runBreakoutBacktest: useAdaptiveStop=false(기본값)면 기존과 동일�
   assert.ok(Math.abs(stopPctImplied - 0.08) < 1e-3);
 });
 
+test('runBreakoutBacktest: useMarketRegimeFilter=true — 신호일에 코스피가 자기 MA60 아래(약세장)면 신규 진입이 차단됨', () => {
+  const fixture = buildSingleStockBreakoutFixture();
+  // 기본 픽스처는 benchmarkSeries.closes가 전부 100(평탄) — MA60도 100이라 "오늘=MA"로
+  // 경계값 강세장 판정을 받는다(isMarketRegimeBullish: todayClose>=ma). 신호가 뜨는
+  // 날(index 259, entryTiming 기본 nextDayOpen이라 실제 체결은 260)만 약세로 눌러
+  // MA60보다 확실히 낮게 만든다 — 그 앞뒤 흐름은 그대로 둬 "그날만 약세장"을 재현.
+  const bearishCloses = [...fixture.benchmarkSeries.closes];
+  bearishCloses[259] = 90;
+  const bearishBenchmark = { dates: fixture.dates, closes: bearishCloses };
+
+  const filtered = runBreakoutBacktest({
+    pool: fixture.pool, seriesByCode: fixture.seriesByCode, benchmarkSeries: bearishBenchmark, tradingDates: fixture.dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    useMarketRegimeFilter: true,
+  });
+  assert.equal(filtered.trades.length, 0, '신호일이 약세장이라 신규 진입 자체가 없어야 함');
+
+  const unfiltered = runBreakoutBacktest({
+    pool: fixture.pool, seriesByCode: fixture.seriesByCode, benchmarkSeries: bearishBenchmark, tradingDates: fixture.dates,
+    initialCapital: 40_000_000, marketCapFloor: 100_000_000_000, riskPerTradePct: 0.02,
+    // useMarketRegimeFilter 미지정(기본 false) — 같은 약세장 벤치마크라도 필터 없으면 기존처럼 진입
+  });
+  assert.ok(unfiltered.trades.length >= 1, '필터를 안 켜면 같은 데이터에서도 기존처럼 진입해야 함(회귀 없음)');
+});
+
 test('runBreakoutBacktest: useVolumeConfirmation=true — 돌파일 거래량이 평균의 1.5배 미만이면 진입 자체가 차단됨', () => {
   const weak = buildSingleStockBreakoutFixture({ breakoutDayVolumeMultiplier: 1.4 }); // 1.5배 미달
   const result = runBreakoutBacktest({
