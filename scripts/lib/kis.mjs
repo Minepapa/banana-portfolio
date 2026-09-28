@@ -627,12 +627,25 @@ export function parseBalanceResponse(json) {
 // tr_id(CTSC9215R)는 이 프로젝트 쓰임(주문 직후 당일 체결 확인)과 무관해 미구현 — 필요
 // 해지면 그때 추가(과설계 방지). ODNO로 특정 주문 하나만 좁혀 조회 가능해 페이지네이션
 // (CTX_AREA_FK100/NK100)은 항상 빈 값으로 첫 페이지만 쓴다(응답이 1건뿐이라 불필요).
-export async function checkOrderFill({ token, appkey, appsecret, cano, acntPrdtCd, odno, now = new Date(), fetchImpl, retries, retryDelayMs }) {
-  const ymd = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-  const today = ymd(now);
+// sinceDaysBack(2026-09-29 3차 코드리뷰 HIGH 지적으로 신설, 기본 0=기존 동작
+// 그대로 하루만 조회) — reconcile-breakout-protection.mjs처럼 "이 주문을 정확히
+// 언제 냈는지"를 별도로 추적하지 않는 호출측은, 시세캐시 지연이나 이 잡 자체의
+// 실행 공백(맥미니 슬립 등)이 겹치면 진짜 체결일과 어긋난 하루만 조회해 영원히
+// 그 주문을 못 찾을 수 있다(예: 2017년 추석 임시공휴일 포함 10거래일 연휴처럼
+// 며칠씩 벌어지는 경우). ODNO로 이미 주문 하나로 좁혀 조회하므로(위 주석) 창을
+// 넓혀도 응답은 여전히 그 주문 하나뿐 — 여러 날짜를 걸치게 해도 안전하다.
+export async function checkOrderFill({ token, appkey, appsecret, cano, acntPrdtCd, odno, now = new Date(), sinceDaysBack = 0, fetchImpl, retries, retryDelayMs }) {
+  // KST 기준으로 날짜를 뽑는다(getFullYear/getMonth/getDate 로컬시각 방식이 아님) —
+  // 이 API는 KRX 거래일 기준 조회라 서버가 KST 아닌 타임존에서 돌면 로컬시각
+  // 방식은 자정 근처에서 하루 밀릴 수 있다(2026-09-29 4차 코드리뷰 LOW 지적,
+  // reconcile-breakout-protection.mjs가 이미 같은 이유로 KST 정오 고정을 쓰는
+  // 것과 동일 원칙 — 이 Mac mini는 KST라 지금까지는 우연히 안전했을 뿐).
+  const ymd = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(d).replaceAll('-', '');
+  const end = ymd(now);
+  const start = sinceDaysBack > 0 ? ymd(new Date(now.getTime() - sinceDaysBack * 24 * 60 * 60 * 1000)) : end;
   const params = new URLSearchParams({
     CANO: cano, ACNT_PRDT_CD: acntPrdtCd,
-    INQR_STRT_DT: today, INQR_END_DT: today,
+    INQR_STRT_DT: start, INQR_END_DT: end,
     SLL_BUY_DVSN_CD: '00', CCLD_DVSN: '00', INQR_DVSN: '00', INQR_DVSN_1: '', INQR_DVSN_3: '00',
     ODNO: odno, EXCG_ID_DVSN_CD: 'KRX',
     CTX_AREA_FK100: '', CTX_AREA_NK100: '',
@@ -661,8 +674,14 @@ export function parseOrderFillResponse(json, odno) {
   // 문자열 그대로 비교하면 항상 실패해 실제로 체결된 주문도 null로 나온다(진짜 겪은
   // 버그). 숫자로 정규화해 비교해야 양쪽 표기가 달라도 안전하게 매칭된다.
   const targetNum = Number(odno);
-  const row = rows.find((r) => Number(r?.odno) === targetNum);
-  if (!row) return null;
+  const matches = rows.filter((r) => Number(r?.odno) === targetNum);
+  // checkOrderFill이 sinceDaysBack으로 여러 날짜를 걸쳐 조회할 수 있게 되면서
+  // (2026-09-29 3차 코드리뷰 HIGH 지적) 주문번호가 날짜별로 재사용되는지가
+  // 미확인 전제가 됐다 — KIS 문서에서 전역 유일성을 확인하지 못했다. 2건 이상
+  // 매칭되면 어느 쪽이 진짜인지 추정하지 않고 null(호출측이 "확인 불가"로 취급,
+  // proposal-vault.mjs의 "중복 매칭은 추정하지 않는다" 관례와 동일 원칙).
+  if (matches.length !== 1) return null;
+  const [row] = matches;
   const num = (v) => { const n = Number(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
   const orderQty = num(row.ord_qty);
   const filledQty = num(row.tot_ccld_qty);

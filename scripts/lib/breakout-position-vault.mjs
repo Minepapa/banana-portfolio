@@ -22,11 +22,12 @@ export const PROTECTION_STATUS = { PENDING: 'pending', PROTECTED: 'protected', F
 
 // stopLossPct(2026-09-19, ATR 가변손절 실전배선) — 이 포지션이 진입 신호 시점에
 // 확정받은 손절폭(4%/8%). 명시 저장하는 이유: stopPrice/entryPrice로 역산 가능해
-// 보여도 부동소수점 나눗셈에 기대는 대신, 트레일링스탑(computeTrailingStop)·3R
-// 재시도(ensurePositionProtected)가 원래 확정값을 그대로 다시 쓸 수 있어야 한다
-// (breakout-simulator.mjs 백테스트가 position.stopLossPct를 쓰는 것과 동일 패턴,
-// 라이브·백테스트 정합성 유지). 기본값 null — 과거(이 필드 신설 전) 레코드와
-// 하위호환, null이면 호출측이 STOP_LOSS_PCT(8%)로 폴백.
+// 보여도 부동소수점 나눗셈에 기대는 대신, 트레일링스탑(computeTrailingStop)·
+// 청산관리 재판정(breakout-exit-management.mjs decideExitManagement)이 원래
+// 확정값을 그대로 다시 쓸 수 있어야 한다(breakout-simulator.mjs 백테스트가
+// position.stopLossPct를 쓰는 것과 동일 패턴, 라이브·백테스트 정합성 유지).
+// 기본값 null — 과거(이 필드 신설 전) 레코드와 하위호환, null이면 호출측이
+// STOP_LOSS_PCT(8%)로 폴백.
 export function buildBreakoutPositionRecord({
   code, name = '', entryDate, entryPrice, units = 1, quantity, investedWon, stopPrice, stopLossPct = null,
   profitOrderApplicable = true, now = new Date(),
@@ -42,19 +43,30 @@ export function buildBreakoutPositionRecord({
     protectionStatus: PROTECTION_STATUS.PENDING,
     stopOrderNo: null,
     stopOrderOrgNo: null, // 정정(트레일링 재계산)에 필요한 계좌관리점코드(KRX_FWDG_ORD_ORGNO) — 주문번호만으론 정정 불가
+    // profitOrderNo/profitOrderOrgNo(2026-09-29부터 항상 null) — 손절+3R 동시예약
+    // 시절의 유물. 이제 3R 부분익절은 진입 시점에 주문을 걸지 않고
+    // reconcile-breakout-protection.mjs가 매일 능동 판단해서 실행하므로(취소→시장가
+    // 매도→재예약, breakout-exit-management.mjs), "미리 걸어둔 3R 주문번호"라는
+    // 개념 자체가 없다. 과거 레코드 하위호환을 위해 필드만 남겨둔다.
     profitOrderNo: null,
     profitOrderOrgNo: null,
-    // 수량이 적어(1주 등) 부분익절 수량이 0이 되면 그 주문 자체가 애초에 필요없다
-    // (breakout-protection.mjs computeProtectionOrders) — 이 경우 profitOrderNo가
-    // 계속 null이어도 "아직 못 걺"이 아니라 "해당없음"이라 재시도 대상에서 빼야
-    // 한다. 이 필드로 그 둘을 구분(호출측이 포지션 생성 시점에 이미 계산된 결과를
-    // 넘겨줌).
+    // 수량이 적어(1주 등) 부분익절 수량이 0이 되면 3R 이벤트 자체가 이 포지션엔
+    // 절대 적용되지 않는다(breakout-exit-management.mjs decideExitManagement가
+    // 이 필드를 보고 3R 판정 자체를 건너뜀) — 호출측이 포지션 생성 시점에 이미
+    // 계산해서 넘겨준다.
     profitOrderApplicable,
     status: '보유',
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
     exitDate: null,
     exitReason: null,
+    // 3R 부분익절 시장가 매도는 08:35 접수→09:00 시가단일가 체결이라 접수 시점엔
+    // 체결가를 모른다(breakout-exit-management.mjs decidePendingPartialExitConfirmation
+    // 참고). 이 세 필드가 채워져 있으면 "매도는 냈지만 아직 원장에 못 적음" 상태 —
+    // 다음 실행이 checkOrderFill로 확인해 원장 기록 후 다시 null로 되돌린다.
+    partialExitPendingOrderNo: null,
+    partialExitPendingOrgNo: null,
+    partialExitPendingQty: null,
   });
   return { id, filename, content };
 }

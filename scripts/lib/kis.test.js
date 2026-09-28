@@ -1382,6 +1382,10 @@ test('parseOrderFillResponse: rt_cd 실패면 throw', () => {
   assert.throws(() => parseOrderFillResponse({ rt_cd: '1', msg1: '조회 실패' }, '1'), /조회 실패/);
 });
 
+// now는 절대시각 리터럴(KST 정오)로 준다 — new Date(2026,7,12) 같은 로컬시각
+// 생성자는 테스트 실행 머신 타임존에 좌우돼, checkOrderFill의 ymd()가 KST 고정으로
+// 바뀐 뒤에도(2026-09-29 4차 코드리뷰 LOW 지적) 이 테스트 자체는 UTC+13 이상
+// 타임존에서 날짜가 하루 밀려 실패할 수 있었다(5차 코드리뷰 LOW 지적).
 test('[핵심] checkOrderFill: TTTC0081R tr_id + ODNO·당일 날짜로 요청', async () => {
   let capturedUrl = null, capturedHeaders = null;
   const fetchImpl = async (url, init) => {
@@ -1391,11 +1395,41 @@ test('[핵심] checkOrderFill: TTTC0081R tr_id + ODNO·당일 날짜로 요청',
   };
   const r = await checkOrderFill({
     token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
-    odno: '6693100', now: new Date(2026, 7, 12), fetchImpl,
+    odno: '6693100', now: new Date('2026-08-12T03:00:00Z'), fetchImpl,
   });
   assert.equal(capturedHeaders.tr_id, 'TTTC0081R');
   assert.match(capturedUrl, /ODNO=6693100/);
   assert.match(capturedUrl, /INQR_STRT_DT=20260812/);
   assert.match(capturedUrl, /INQR_END_DT=20260812/);
   assert.equal(r.fullyFilled, true);
+});
+
+// sinceDaysBack(2026-09-29 3차 코드리뷰 HIGH 지적으로 신설) — 기본값 0은 위
+// [핵심] 테스트로 이미 하위호환 확인됐으므로, 여기선 실제로 창이 넓어지는지만 확인.
+test('checkOrderFill: sinceDaysBack을 주면 INQR_STRT_DT가 그만큼 앞으로 넓어진다', async () => {
+  let capturedUrl = null;
+  const fetchImpl = async (url) => {
+    capturedUrl = url;
+    const body = { rt_cd: '0', output1: [] };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await checkOrderFill({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    odno: '6693100', now: new Date('2026-08-12T03:00:00Z'), sinceDaysBack: 14, fetchImpl,
+  });
+  assert.match(capturedUrl, /INQR_STRT_DT=20260729/);
+  assert.match(capturedUrl, /INQR_END_DT=20260812/);
+});
+
+// 2026-09-29 3차 코드리뷰 HIGH 지적 — 조회창이 넓어지면 같은 odno가 우연히
+// 두 행으로 잡힐 가능성을 배제 못 한다(전역 유일성 미확인). 추정하지 않고 null.
+test('parseOrderFillResponse: 같은 odno가 2건 이상 매칭되면 추정하지 않고 null', () => {
+  const json = {
+    rt_cd: '0',
+    output1: [
+      { odno: '6693100', ord_qty: '5', tot_ccld_qty: '5', rmn_qty: '0', avg_prvs: '87500', cncl_yn: 'N' },
+      { odno: '6693100', ord_qty: '3', tot_ccld_qty: '0', rmn_qty: '3', avg_prvs: '0', cncl_yn: 'N' },
+    ],
+  };
+  assert.equal(parseOrderFillResponse(json, '6693100'), null);
 });

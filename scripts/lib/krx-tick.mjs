@@ -1,5 +1,5 @@
 // KRX 국내주식 호가단위(tick size) — 2026-09-22, 실전 첫 손절주문 시도가 "주식주문
-// 호가단위 오류입니다"(KIS rt_cd 오류)로 거부되며 발견. computeProtectionOrders
+// 호가단위 오류입니다"(KIS rt_cd 오류)로 거부되며 발견. computeInitialStopOrder
 // (breakout-protection.mjs)가 entryPrice*(1-stopLossPct) 같은 퍼센트 계산으로
 // 손절/익절 가격을 만드는데, 이 값이 KRX 호가단위 배수가 아니면 KIS가 주문 자체를
 // 거부한다(예: SK텔레콤 87,400원 진입 × 0.92 = 80,408원 — 이 가격대 호가단위는

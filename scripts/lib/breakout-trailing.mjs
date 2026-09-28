@@ -30,7 +30,10 @@ import { roundToKrxTick } from './krx-tick.mjs';
 // breakout-entry-fill.mjs 참고)와의 비교도 보정된 값끼리 해야 사소한 소수점
 // 차이로 불필요한 정정이 나가지 않는다.
 export function computeTrailingRevision(position, latestHigh) {
-  const newHighSinceEntry = Math.max(position.highSinceEntry, latestHigh);
+  // ?? position.entryPrice — highSinceEntry가 비어있으면(이론상 항상 채워져
+  // 있어야 하지만) Math.max가 NaN을 주지 않도록 방어(breakout-exit-management.mjs
+  // decideExitManagement의 동일 가드와 통일, 2026-09-29 2차 코드리뷰 LOW 지적).
+  const newHighSinceEntry = Math.max(position.highSinceEntry ?? position.entryPrice, latestHigh);
   const rawStopPrice = computeTrailingStop(position.entryPrice, newHighSinceEntry, position.stopLossPct ?? STOP_LOSS_PCT);
   const newStopPrice = roundToKrxTick(rawStopPrice);
   if (!(newStopPrice > position.stopPrice)) return null;

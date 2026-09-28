@@ -334,23 +334,41 @@ Frank 승인/거부)는 실전과 동일하게 돌아가되, **마지막 브로�
   주문번호를 Frank에게 함께 안내한다(다음 정정·취소에 필요할 수 있음).
 - 지원 범위·계좌 제한은 직접주문 경로와 동일(`ALLOWED_NH_ACCOUNTS` = 위탁·금현물).
 
-### 카이로스 보호주문 수동 재시도 (2026-09-25 신설)
+### 카이로스 청산(손절·트레일링·3R 부분익절) 관리 (2026-09-25 신설, 2026-09-29 재설계)
 
-이미 체결된 카이로스 포지션의 손절·3R 보호주문이 실패했을 때는
-`scripts/tools/retry-breakout-protection.mjs`를 사용한다. `--code` 또는
-`--position-id`로 하나의 `State/BreakoutPositions/*.md` 보유 포지션을 지정하며,
-여러 건이 매칭되면 추정하지 않고 중단한다.
+2026-09-28 대한항공 실사고(전량 손절주문이 매도가능수량을 전부 예약해버려 그 위에
+3R 부분익절주문을 동시에 걸 수 없었던 KIS 구조적 제약, `ord_psbl_qty=0` 실측 확인)로
+"진입 시점 손절+3R 동시예약" 설계를 폐기했다. 새 설계(Log/Strategy/2026-09-28-
+대한항공보호주문실패-트레일링전환.md 참고, 므네모시네)는:
+- **진입 시점**: 전량 손절주문만 건다(`watch-breakout-entry-fill.mjs`,
+  `breakout-protection.mjs`의 `computeInitialStopOrder`/`ensureStopOrder`).
+- **매일 08:35(`reconcile-breakout-protection.mjs`)**: 이전 실행에서 3R 부분익절
+  매도를 냈지만 체결가를 아직 원장에 못 적었으면(시가단일가 체결이라 접수 시점엔
+  가격을 모름) 먼저 그 확인부터 하고, 확인되면 **같은 실행 안에서 이어서** 아래
+  단계로 진행한다(여기서 끊으면 잔여 수량이 하루 무보호가 된다 — 2026-09-29 2차
+  재설계로 수정). 그다음 포지션이 전량 종료(손절 체결)됐는지 KIS 잔고+
+  `checkOrderFill`로 확인 — 확인되면 원장(Facts/Ledger/Executions·Profits) 기록
+  후 포지션을 `청산` 처리하고 끝. 아직 보유 중이면 `breakout-exit-management.mjs`의
+  `decideExitManagement`가 트레일링 손절선 정정(`computeTrailingStop` 기반,
+  1R=본전·2R=1R가·3R 이상=직전 R가로 연속 래칫)을 판정하거나, 3R 최초 도달 시
+  부분익절을 판정한다. 부분익절은 상황에 따라 두 갈래다 — **이 종목에 살아있는
+  매도주문이 없을 때**(KIS 스톱지정가는 당일유효라 매일 소멸, 이게 실환경의
+  기본 경로다) 취소할 게 없으므로 곧장 50% 시장가 매도 후 잔여 손절을 건다
+  (`placeStopAndPartialExit`, 2단계). **기존 손절주문이 아직 살아있을 때**만
+  기존 손절 취소→50% 시장가 매도→잔여 손절 재예약(`partialExit`, 3단계)을 쓴다.
+  두 경로 모두 `executeExitManagement`가 실행한다.
 
-이 도구는 `reconcile-breakout-protection.mjs`와 같은 순서를 따른다. KIS 잔고·현재가·
-정정취소가능주문을 먼저 조회해 보유수량과 기존 보호주문을 대조하고, 이미 살아 있는
-다리는 `carryForwardProtectionOrders`로 넘겨 `ensurePositionProtected`가 누락된
-다리만 접수하게 한다. 같은 종목의 식별되지 않은 매도주문, 수량 불일치, 현재가가
-보호가격을 이미 통과한 경우에는 발주하지 않는다.
+수동 재시도(`scripts/tools/retry-breakout-protection.mjs`, `--code` 또는
+`--position-id`로 하나의 `State/BreakoutPositions/*.md` 보유 포지션 지정, 여러 건
+매칭 시 추정하지 않고 중단)는 손절 단일 다리(`ensureStopOrder`)만 다룬다. 파일에
+손절주문번호가 없어도 바로 새 주문을 내지 않고 먼저 KIS 정정취소가능주문을 조회해
+이미 같은 종목에 스톱지정가 매도주문이 떠 있는지 확인한다 — 있으면(파일이 낡았을
+가능성) 자동 진행하지 않고 사람에게 확인을 요청한다.
 
 실행 전 킬스위치와 체결모드를 다시 읽는다. 섀도우 모드 또는 `--dry-run`에서는 KIS
-주문 API를 호출하지 않는다. CLI는 텔레그램을 직접 보내지 않고 stdout으로 결과를
-반환하며, 매일 08:35 평일 launchd의 `reconcile-breakout-protection`이 모든 보유
-포지션을 자동으로 같은 방식으로 재확인한다.
+주문 API를 호출하지 않는다. 재시도(다음 실행)는 파일에 저장된 진행 상태를 신뢰하지
+않고 매번 KIS 실제 잔고·미체결주문을 다시 조회해 처음부터 재판정한다(idempotency는
+"저장된 진행 기록"이 아니라 "KIS 실제 상태 재확인"으로 보장).
 
 ## 신뢰경계 — 외부 콘텐츠 격리 원칙 (확정 — critic 리뷰 TIER 1 대응)
 

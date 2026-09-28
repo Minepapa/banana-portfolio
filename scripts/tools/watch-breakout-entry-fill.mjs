@@ -38,8 +38,8 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { QUANT_TRACK_LABEL } from '../lib/account-resolver.mjs';
 import { buildBreakoutPositionRecord, updateBreakoutPositionRecord } from '../lib/breakout-position-vault.mjs';
 import { buildPendingEntryRecord } from '../lib/breakout-pending-entry-vault.mjs';
-import { computeProtectionOrders, ensurePositionProtected } from '../lib/breakout-protection.mjs';
-import { STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
+import { ensureStopOrder } from '../lib/breakout-protection.mjs';
+import { STOP_LOSS_PCT, PARTIAL_PROFIT_SELL_FRACTION } from '../lib/breakout-risk.mjs';
 import { roundToKrxTick } from '../lib/krx-tick.mjs';
 
 const BROKER = '한국투자증권';
@@ -81,25 +81,31 @@ export function decideCanceledEntryOutcome({ deferProtection = false, filledQty 
   return { action: 'canceled' };
 }
 
+// 2026-09-29 재설계 — 진입 시점엔 손절 단일 다리만 건다(3R 부분익절은 더 이상 진입
+// 즉시 시도하지 않는다 — reconcile-breakout-protection.mjs가 매일 트레일링과 함께
+// 능동으로 판단·실행한다). 그래서 이 메시지엔 "부분익절" 관련 문구를 넣지 않는다 —
+// 옛 문구를 그대로 두면 오너가 "3R 부분익절이 진입 시점에 실패했다"고 오해할 수
+// 있다(실제로는 애초에 시도조차 안 하는 게 정상 동작).
 function buildProtectionMessage({ name, code, entryPrice, quantity, protection, stopLossPct = STOP_LOSS_PCT }) {
   const stopPct = (stopLossPct * 100).toFixed(0);
   if (protection.protectionStatus === 'protected') {
-    const lines = [`<b>매수 체결 + 보호주문 완료</b>`, `${name}(${code}) ${quantity}주 @${won(entryPrice)}`];
-    lines.push(`손절(-${stopPct}%) 주문번호 ${protection.stopOrderNo}`);
-    lines.push(protection.profitOrderNo ? `3R 부분익절 주문번호 ${protection.profitOrderNo}` : '부분익절: 수량 부족으로 해당없음');
-    return lines.join('\n');
+    return [
+      `<b>매수 체결 + 손절주문 완료</b>`,
+      `${name}(${code}) ${quantity}주 @${won(entryPrice)}`,
+      `손절(-${stopPct}%) 주문번호 ${protection.stopOrderNo}`,
+      `3R 부분익절·트레일링은 다음 KRX 프리장(08:35)부터 매일 능동 관리됩니다.`,
+    ].join('\n');
   }
   // 애매한 실패(confirmedNotSent 없음 — 실제로는 접수됐을 수 있음)는 "재시도 소진 후
   // 확실히 실패"와 다른 문구를 쓴다(코드리뷰 HIGH 지적 — 재시도를 멈춘 건 이중주문을
   // 막기 위해서지 실패가 확정돼서가 아니다. KIS 체결내역과 직접 대조해야 확실해짐).
-  const ambiguousNote = protection.stopAmbiguous || protection.profitAmbiguous
-    ? `\n응답 불명 상태로 재시도를 중단한 다리가 있습니다(손절=${protection.stopAmbiguous ? '불명' : '정상시도'}, 부분익절=${protection.profitAmbiguous ? '불명' : '정상시도'}) — 실제로는 이미 주문이 접수됐을 수 있으니, 한 번 더 걸기 전에 반드시 KIS 앱에서 먼저 확인하세요(중복주문 위험).`
+  const ambiguousNote = protection.stopAmbiguous
+    ? `\n응답 불명 상태로 재시도를 중단했습니다 — 실제로는 이미 주문이 접수됐을 수 있으니, 한 번 더 걸기 전에 반드시 KIS 앱에서 먼저 확인하세요(중복주문 위험).`
     : '';
   return [
-    `<b>보호주문 실패 — 즉시 확인 필요</b>`,
+    `<b>손절주문 실패 — 즉시 확인 필요</b>`,
     `${name}(${code}) ${quantity}주 @${won(entryPrice)}는 매수 체결됐지만,`,
-    `손절/부분익절 주문이 ${protection.attempts}회 시도 후에도 안 걸렸습니다.`,
-    `손절걸림=${protection.stopOrderNo ? 'O' : 'X'}, 부분익절걸림=${protection.profitOrderNo ? 'O' : (protection.profitOrderApplicable === false ? '해당없음' : 'X')}`,
+    `손절 주문이 ${protection.attempts}회 시도 후에도 안 걸렸습니다.`,
     `포지션이 무방비 상태일 수 있습니다 — KIS 앱에서 직접 확인·수동 손절 검토 바랍니다.${ambiguousNote}`,
   ].join('\n');
 }
@@ -157,12 +163,11 @@ async function main() {
   // 오너가 실거래 확인한 다음날 KRX 프리장 주문으로 이관한다.
   async function protectAfterFill(filledQty, avgFillPrice) {
     if (deferProtection) {
-      const { profitOrder } = computeProtectionOrders(avgFillPrice, filledQty, stopLossPct);
       const stopPrice = roundToKrxTick(avgFillPrice * (1 - stopLossPct));
       const { id, filename, content } = buildBreakoutPositionRecord({
         code, name, entryDate, entryPrice: avgFillPrice, quantity: filledQty,
         investedWon: avgFillPrice * filledQty, stopPrice, stopLossPct,
-        profitOrderApplicable: profitOrder != null,
+        profitOrderApplicable: Math.floor(filledQty * PARTIAL_PROFIT_SELL_FRACTION) > 0,
       });
       const deferredContent = updateBreakoutPositionRecord(content, {
         protectionDeferredUntil: 'nextKrxPreMarket', protectionDeferredAt: new Date().toISOString(),
@@ -172,26 +177,26 @@ async function main() {
       console.log(`[포지션 생성] ${id} — 다음 거래일 KRX 프리장 보호주문 대기`);
       await sendTelegram(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL, tag: '전환',
-        body: `<b>장후시간외 매수 체결분 — 다음 거래일 프리장 보호주문 예정</b>\n${name}(${code}) ${filledQty}주 @${won(avgFillPrice)}\n손절 ${won(stopPrice)} · 3R 부분익절 ${profitOrder ? won(profitOrder.price) : '수량 부족으로 없음'}\n대한항공 실거래 확인에 따라 장후 체결 직후 발주하지 않고 다음 거래일 08:35 KRX 시가단일가에 설정합니다.`,
+        body: `<b>장후시간외 매수 체결분 — 다음 거래일 프리장 손절주문 예정</b>\n${name}(${code}) ${filledQty}주 @${won(avgFillPrice)}\n손절 ${won(stopPrice)}\n대한항공 실거래 확인에 따라 장후 체결 직후 발주하지 않고 다음 거래일 08:35 KRX 시가단일가에 설정합니다.`,
       }));
       return;
     }
-    const { profitOrder } = computeProtectionOrders(avgFillPrice, filledQty, stopLossPct);
     // ⚠️ 호가단위 보정(2026-09-22, 실사고로 발견 — krx-tick.mjs 헤더 참고). 이
     // stopPrice는 포지션 레코드(State/BreakoutPositions)에 그대로 저장돼
-    // ensurePositionProtected(breakout-protection.mjs)가 재시도 때마다 이 값을
-    // 실제 주문가로 재사용한다 — 여기서 안 보정하면 매 재시도가 같은 사유로
-    // 계속 거부된다(실사고: 3회 재시도 전부 80,408원으로 실패).
+    // ensureStopOrder(breakout-protection.mjs)가 재시도 때마다 이 값을 실제
+    // 주문가로 재사용한다 — 여기서 안 보정하면 매 재시도가 같은 사유로 계속
+    // 거부된다(실사고: 3회 재시도 전부 80,408원으로 실패).
     const stopPrice = roundToKrxTick(avgFillPrice * (1 - stopLossPct));
     const { id, filename, content } = buildBreakoutPositionRecord({
       code, name, entryDate, entryPrice: avgFillPrice, quantity: filledQty,
-      investedWon: avgFillPrice * filledQty, stopPrice, stopLossPct, profitOrderApplicable: profitOrder != null,
+      investedWon: avgFillPrice * filledQty, stopPrice, stopLossPct,
+      profitOrderApplicable: Math.floor(filledQty * PARTIAL_PROFIT_SELL_FRACTION) > 0,
     });
     const filePath = join(VAULT_PATHS.state.breakoutPositions, filename);
     writeAtomic(filePath, content);
     console.log(`[포지션 생성] ${id}`);
 
-    const position = { entryPrice: avgFillPrice, quantity: filledQty, stopPrice, stopLossPct, stopOrderNo: null, stopOrderOrgNo: null, profitOrderNo: null, profitOrderOrgNo: null, profitOrderApplicable: profitOrder != null };
+    const position = { entryPrice: avgFillPrice, quantity: filledQty, stopPrice, stopLossPct, stopOrderNo: null, stopOrderOrgNo: null };
     // 재시도 사이 토큰이 만료될 수 있어(1일 유효지만 이 잡이 오래 걸릴 이유는 없음에도
     // 방어적으로) 매 시도마다 getKisToken을 다시 호출 — 캐시가 있어 실제 재발급은
     // 거의 안 일어남(kis.mjs getKisToken 헤더 주석 참고).
@@ -199,11 +204,11 @@ async function main() {
       token: await getKisToken({ appkey, appsecret }),
       appkey, appsecret, cano: quant.cano, acntPrdtCd: quant.acntPrdtCd, code, ...params,
     });
-    const protection = await ensurePositionProtected(position, { placeOrder });
+    const protection = await ensureStopOrder(position, { placeOrder });
 
     const updated = updateBreakoutPositionRecord(content, {
       stopOrderNo: protection.stopOrderNo, stopOrderOrgNo: protection.stopOrderOrgNo,
-      profitOrderNo: protection.profitOrderNo, profitOrderOrgNo: protection.profitOrderOrgNo,
+      profitOrderNo: null, profitOrderOrgNo: null,
       protectionStatus: protection.protectionStatus, updatedAt: new Date().toISOString(),
     });
     writeAtomic(filePath, updated);
@@ -212,7 +217,7 @@ async function main() {
     await sendTelegram(formatDepartmentMessage({
       departmentLabel: DEPARTMENT_LABEL,
       tag: protection.protectionStatus === 'protected' ? '완료' : '경고',
-      body: buildProtectionMessage({ name, code, entryPrice: avgFillPrice, quantity: filledQty, stopLossPct, protection: { ...protection, profitOrderApplicable: profitOrder != null } }),
+      body: buildProtectionMessage({ name, code, entryPrice: avgFillPrice, quantity: filledQty, stopLossPct, protection }),
     }));
   }
 

@@ -237,12 +237,20 @@ export function buildExchangeRecord(x) {
 // buyPrice·sellPrice는 감사·재현 가능성을 위해 원어(raw currency) 그대로 남겨둔다(
 // State/Holdings의 avgPrice·curPrice가 원어인 것과 같은 관례) — profit만 KRW다.
 export function buildProfitRecord(e, avgPrice, realizedProfit, usdKrwRate = 1) {
-  const dedupKey = `${e.tradeDate}|매도|${e.stockName}|${e.quantity}|profit`;
+  // 주문번호를 dedupKey·파일명에 포함(2026-09-29 2차 코드리뷰 MEDIUM 지적,
+  // buildExecutionRecord의 orderNo 포함 관례를 소급 적용) — 짝수 수량 포지션의
+  // 3R 부분익절(50%)은 부분익절분·잔여전량매도분의 수량이 항상 정확히 같다
+  // (예: 8주 보유 → 4주+4주). 같은 날 같은 종목·계좌·수량으로 매도가 두 번
+  // 체결되면 orderNo 없이는 파일명이 겹쳐 두 번째 실현손익 기록이 조용히
+  // 스킵된다(recordLedgerFileIfNew의 "이미 있으면 스킵" idempotency 판단 때문).
+  const orderNoPart = e.orderNo ? `|${sanitizeSegment(e.orderNo)}` : '';
+  const dedupKey = `${e.tradeDate}|매도|${e.stockName}|${e.quantity}|profit${orderNoPart}`;
   const datePart = e.tradeDate.slice(0, 10);
   const timePart = e.tradeDate.slice(11).replace(/:/g, '') || '000000';
   // 수량을 파일명에 포함(코드리뷰 지적, 2026-08-05) — 같은 종목·계좌를 같은 초에 분할
   // 매도(분할체결)하면 수량 없이는 파일명이 겹쳐 뒤 기록이 앞 기록을 조용히 덮어쓴다.
-  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.stockName)}-${sanitizeSegment(e.account)}-${sanitizeSegment(e.quantity)}.md`;
+  const orderNoSuffix = e.orderNo ? `-${sanitizeSegment(e.orderNo)}` : '';
+  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.stockName)}-${sanitizeSegment(e.account)}-${sanitizeSegment(e.quantity)}${orderNoSuffix}.md`;
   const content = buildFrontmatter({
     type: 'realized-profit',
     date: e.tradeDate,
