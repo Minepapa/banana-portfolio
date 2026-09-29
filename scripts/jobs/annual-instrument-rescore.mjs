@@ -57,20 +57,27 @@ const RESCORE_THRESHOLD = 10; // 1차 placeholder(100점 만점) — 오너가 �
 const STATE_DIR = join(VAULT_PATHS.root, 'State', 'InstrumentRescoring');
 const STATE_FILE = join(STATE_DIR, 'last-year.md');
 
+function kstCalendarParts(date) {
+  return Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short',
+  }).formatToParts(date).map((p) => [p.type, p.value]));
+}
+
 // 순수함수 — KST 기준 연도 라벨. 테스트 가능.
 export function getYearLabel(date) {
-  return String(date.getFullYear());
+  return kstCalendarParts(date).year;
 }
 
 // 순수함수 — 오늘 이 잡을 실제로 돌려야 하는지: 1월 1~3일 중 평일이고, 올해 아직
 // 실행 기록이 없을 때만(quarterly-allocation-review.mjs shouldRunToday와 동일 원리,
 // 분기시작월 집합 대신 1월 고정 + 연 단위 dedup).
 export function shouldRunThisYear(date, lastYearLabel) {
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  const dow = date.getDay();
+  const parts = kstCalendarParts(date);
+  const month = Number(parts.month);
+  const day = Number(parts.day);
+  const dow = parts.weekday;
   if (month !== 1 || day > 3) return false;
-  if (dow === 0 || dow === 6) return false;
+  if (dow === 'Sun' || dow === 'Sat') return false;
   return getYearLabel(date) !== lastYearLabel;
 }
 

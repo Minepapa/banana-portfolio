@@ -6,7 +6,10 @@ import { fetchIndexCloses } from './krx.mjs';
 
 // CLAUDE.md 데이터 기준: 1~3월=전년 사업(11011), 4~5월=1Q(11013), 6~8월=반기(11012), 9~12월=3Q(11014)
 export function reprtCodeForDate(d = new Date()) {
-  const y = d.getFullYear(), m = d.getMonth() + 1;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit',
+  }).formatToParts(d).map((p) => [p.type, p.value]));
+  const y = Number(parts.year), m = Number(parts.month);
   if (m <= 3) return { bsnsYear: String(y - 1), reprtCode: '11011' };
   if (m <= 5) return { bsnsYear: String(y), reprtCode: '11013' };
   if (m <= 8) return { bsnsYear: String(y), reprtCode: '11012' };

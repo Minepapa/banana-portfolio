@@ -20,6 +20,7 @@ import { cacheIndexPrices, indexPricesAt } from '../lib/index-price-cache.mjs';
 import { buildComparisonReport } from '../lib/benchmark-comparison.mjs';
 import { maxDrawdown, annualizedReturn } from '../lib/stats.mjs';
 import { findMaxDrawdownWindow, computeDrawdownContributions } from '../lib/drawdown-attribution.mjs';
+import { kstDateLabel } from '../lib/krx-trading-calendar.mjs';
 
 loadEnv();
 
@@ -47,7 +48,7 @@ function monthlyDates(startDate, endDate) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const fromDate = args.from || '2016-07-01';
-  const toDate = args.to || new Date().toISOString().slice(0, 10);
+  const toDate = args.to || kstDateLabel();
   const buyRank = args.buyRank != null ? Number(args.buyRank) : 10;
   const sellRank = args.sellRank != null ? Number(args.sellRank) : 20;
   const apiKey = process.env.DART_API_KEY;

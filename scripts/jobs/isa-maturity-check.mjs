@@ -60,7 +60,7 @@ const STATE_FILE = join(STATE_DIR, 'triggered.md');
 // 극단적 윤년 케이스도 JS Date가 알아서 3/1로 넘겨준다 — 이 앱 범위에서 별도 처리 불필요).
 export function computeMaturityDate(openDateStr, years = MATURITY_YEARS) {
   const d = new Date(`${openDateStr}T00:00:00+09:00`); // KST 자정 기준
-  d.setFullYear(d.getFullYear() + years);
+  d.setUTCFullYear(d.getUTCFullYear() + years);
   return d;
 }
 

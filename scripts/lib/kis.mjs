@@ -221,8 +221,12 @@ export function parseKrHolidayResponse(json, requestedDate) {
   const rows = Array.isArray(json?.output) ? json.output : json?.output ? [json.output] : [];
   const date = String(requestedDate ?? '').replace(/-/g, '');
   if (!/^\d{8}$/.test(date)) throw new Error('KIS 국내휴장일조회 요청일 형식 오류');
-  const row = rows.find((r) => String(r?.bass_dt ?? '').trim() === date);
-  if (!row) throw new Error('KIS 국내휴장일조회 응답에 요청일 행 없음');
+  const matches = rows.filter((r) => String(r?.bass_dt ?? '').trim() === date);
+  if (!matches.length) throw new Error('KIS 국내휴장일조회 응답에 요청일 행 없음');
+  // BASS_DT가 단일 날짜 입력이지만, KIS 문서에서 응답 내 같은 기준일 행의 유일성을
+  // 명시적으로 확인하지 못했다. 중복이면 개장 여부를 추정하지 않고 호출측이 안전하게 막는다.
+  if (matches.length !== 1) return null;
+  const [row] = matches;
   const open = String(row.opnd_yn ?? '').trim();
   if (open !== 'Y' && open !== 'N') throw new Error('KIS 국내휴장일조회 응답에 유효한 opnd_yn 없음');
   return { date: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6)}`, isOpen: open === 'Y' };
@@ -448,7 +452,7 @@ export function parseInvestorFlowResponse(json) {
 // code: 6자리 종목코드. 페이지네이션(tr_cont='M') 미구현 — dayWindow 기본값(90일)에서는
 // 관측된 데이터량(삼성전자 53건)이 KIS 1페이지 한도 내라 지금은 불필요(다른 KIS 래퍼도 동일 한계).
 export async function getKrInvestOpinion({ token, appkey, appsecret, code, dayWindow = 90, fetchImpl, retries, retryDelayMs, now = new Date() }) {
-  const ymd = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  const ymd = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(d).replaceAll('-', '');
   const from = new Date(now.getTime() - dayWindow * 86400000);
   const params = new URLSearchParams({
     FID_COND_MRKT_DIV_CODE: 'J',
@@ -666,6 +670,7 @@ export async function checkOrderFill({ token, appkey, appsecret, cano, acntPrdtC
 // 비어있거나 해당 odno가 안 보이면 null(추정 안 함 — 접수 직후엔 아직 조회에 안 잡히는
 // 지연이 있을 수 있어, 호출측이 "아직 모름"과 "0건 체결"을 구분해야 함). fullyFilled는
 // 주문수량과 총체결수량이 둘 다 확보됐고 체결수량이 주문수량 이상일 때만 true.
+let loggedKisFillFields = false;
 export function parseOrderFillResponse(json, odno) {
   if (json?.rt_cd !== '0') throw kisRtError('KIS 체결내역조회 오류', json);
   const rows = Array.isArray(json?.output1) ? json.output1 : [];
@@ -682,6 +687,10 @@ export function parseOrderFillResponse(json, odno) {
   // proposal-vault.mjs의 "중복 매칭은 추정하지 않는다" 관례와 동일 원칙).
   if (matches.length !== 1) return null;
   const [row] = matches;
+  if (process.env.DEBUG_KIS_FILL_FIELDS === '1' && !loggedKisFillFields) {
+    loggedKisFillFields = true;
+    console.error(`[KIS 체결조회 필드 진단] keys=${JSON.stringify(Object.keys(row))} row=${JSON.stringify(row)}`);
+  }
   const num = (v) => { const n = Number(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
   const orderQty = num(row.ord_qty);
   const filledQty = num(row.tot_ccld_qty);

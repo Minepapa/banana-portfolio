@@ -43,9 +43,10 @@ function withinLastYear(dateStr, now) {
   if (!dateStr) return false;
   const d = new Date(dateStr);
   if (!Number.isFinite(d.getTime())) return false;
-  const oneYearAgo = new Date(now);
-  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-  return d >= oneYearAgo;
+  const todayKst = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(now);
+  const oneYearAgo = new Date(`${todayKst}T00:00:00Z`);
+  oneYearAgo.setUTCFullYear(oneYearAgo.getUTCFullYear() - 1);
+  return dateStr >= oneYearAgo.toISOString().slice(0, 10);
 }
 
 export function buildHomeMirror({ holdings = [], accounts = [], pendingProposalCount = 0, usdRate = null, now = new Date() }) {
@@ -95,8 +96,11 @@ export function buildAllocationMirror({ accounts = [], now = new Date() }) {
 export function buildDividendsMirror({ dividendEvents = [], now = new Date(), registry = new Map() }) {
   const recent = dividendEvents.filter((d) => withinLastYear(d.date, now));
   const items = recent.map((d) => ({ date: d.date, ticker: d.ticker ?? '', name: resolveCanonicalStockName(d.stockName, registry), amount: d.afterTaxAmount }));
-  const ytdStart = `${now.getFullYear()}-01-01`;
-  const monthStart = now.toISOString().slice(0, 7);
+  const kstParts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit',
+  }).formatToParts(now).map((p) => [p.type, p.value]));
+  const ytdStart = `${kstParts.year}-01-01`;
+  const monthStart = `${kstParts.year}-${kstParts.month}`;
   const ytdTotal = items.filter((i) => i.date >= ytdStart).reduce((s, i) => s + i.amount, 0);
   const monthTotal = items.filter((i) => i.date.startsWith(monthStart)).reduce((s, i) => s + i.amount, 0);
   return { updatedAt: now.toISOString(), items, ytdTotal, monthTotal };

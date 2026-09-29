@@ -47,6 +47,26 @@ test('주문접수 Proposal은 API 전량체결 확인 뒤에만 체결로 바�
   }
 });
 
+test('KIS 주문번호의 0 패딩 차이는 같은 주문으로 정규화한다', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'proposal-fill-'));
+  try {
+    const proposal = buildProposalRecord({
+      track: '퀀트', assetKey: '017670', side: '매수', quantity: 10, proposedPrice: 71000, now,
+    });
+    const path = join(dir, proposal.filename);
+    writeFileSync(path, updateProposalRecord(proposal.content, {
+      status: '주문접수', brokerOrderId: '6693100',
+    }));
+
+    assert.equal(await recordProposalExecutionStatus({
+      proposalsDir: dir, proposalId: proposal.id, brokerOrderId: '0006693100', status: '체결', filledQty: 10, avgFillPrice: 71000, now,
+    }), true);
+    assert.equal(parseProposal(readFileSync(path, 'utf8')).status, '체결');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('주문접수 또는 부분체결 상태가 아닌 Proposal은 감시 결과로 덮지 않는다', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'proposal-fill-'));
   try {

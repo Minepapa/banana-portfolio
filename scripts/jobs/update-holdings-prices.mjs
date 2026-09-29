@@ -337,7 +337,9 @@ async function main() {
       let wroteOk = true;
       if (!DRY_RUN) {
         wroteOk = await patchFrontmatterFileSafely(f.filepath, {
-          ...valuation, bondCode: bondData.bondCode, updatedAt: new Date().toISOString(),
+          curPrice: valuation.curPrice, evalAmount: valuation.evalAmount,
+          profitAmount: valuation.profitAmount, profitPct: valuation.profitPct,
+          bondCode: bondData.bondCode, updatedAt: new Date().toISOString(),
         });
         if (!wroteOk) console.log(`   ⚠️ ${h.name}: 갱신 직전 파일이 사라짐(전량청산 등과 경합) — 스킵`);
       }
@@ -368,7 +370,11 @@ async function main() {
       const reason = !usOpen ? '장외' : '크리덴셜 없음';
       console.log(`   · ${h.name}(US, ${reason} — 환율만 재평가): $${h.curPrice} × ₩${usdKrwRate.toFixed(2)} → 평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원`);
       if (!DRY_RUN) {
-        const ok = await patchFrontmatterFileSafely(f.filepath, { ...valuation, updatedAt: new Date().toISOString() });
+        const ok = await patchFrontmatterFileSafely(f.filepath, {
+          curPrice: valuation.curPrice, evalAmount: valuation.evalAmount,
+          profitAmount: valuation.profitAmount, profitPct: valuation.profitPct,
+          updatedAt: new Date().toISOString(),
+        });
         if (!ok) { console.log(`   ⚠️ ${h.name}: 갱신 직전 파일이 사라짐(전량청산 등과 경합) — 스킵`); skipped++; continue; }
       }
       updated++;
@@ -413,7 +419,11 @@ async function main() {
     console.log(`   · ${h.name}(${cls.kind}${cls.source ? `/${cls.source}` : ''}): ${h.curPrice ?? '없음'} → ${curPrice} (평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원)`);
     let wroteOk = true;
     if (!DRY_RUN) {
-      wroteOk = await patchFrontmatterFileSafely(f.filepath, { ...valuation, updatedAt: new Date().toISOString() });
+      wroteOk = await patchFrontmatterFileSafely(f.filepath, {
+        curPrice: valuation.curPrice, evalAmount: valuation.evalAmount,
+        profitAmount: valuation.profitAmount, profitPct: valuation.profitPct,
+        updatedAt: new Date().toISOString(),
+      });
       if (!wroteOk) console.log(`   ⚠️ ${h.name}: 갱신 직전 파일이 사라짐(전량청산 등과 경합) — 스킵`);
     }
     if (wroteOk) updated++; else skipped++;
@@ -433,7 +443,12 @@ async function main() {
     console.log(`   · ${h.name}(FX현금): 환율 ${h.curPrice ?? '없음'} → ${usdKrwRate.toFixed(2)} (평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원, 손익 항상 0)`);
     let wroteOk = true;
     if (!DRY_RUN) {
-      wroteOk = await patchFrontmatterFileSafely(f.filepath, { ...valuation, updatedAt: new Date().toISOString() });
+      wroteOk = await patchFrontmatterFileSafely(f.filepath, {
+        curPrice: valuation.curPrice, avgPrice: valuation.avgPrice,
+        invest: valuation.invest, evalAmount: valuation.evalAmount,
+        profitAmount: valuation.profitAmount, profitPct: valuation.profitPct,
+        updatedAt: new Date().toISOString(),
+      });
       if (!wroteOk) console.log(`   ⚠️ ${h.name}: 갱신 직전 파일이 사라짐(전량청산 등과 경합) — 스킵`);
     }
     if (wroteOk) updated++; else skipped++;

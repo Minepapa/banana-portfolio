@@ -286,6 +286,9 @@ async function main() {
             const filledQty = pendingDecision.action === 'partialFill' ? pendingFill.filledQty : 0;
             const unfilledQty = position.partialExitPendingQty - filledQty;
             const restoredQuantity = position.quantity + unfilledQty;
+            if (!Number.isFinite(position.investedWon) || !(position.quantity > 0)) {
+              throw new Error('부분익절 수량 원복 계산에 필요한 investedWon 또는 quantity가 유효하지 않음');
+            }
             const restoredInvestedWon = Math.round(position.investedWon * (restoredQuantity / position.quantity));
             let ledgerNote = '';
             if (pendingDecision.action === 'partialFill' && !DRY_RUN) {

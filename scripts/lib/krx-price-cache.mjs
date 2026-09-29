@@ -64,8 +64,8 @@ export async function ensurePriceHistory(days, {
   let d = new Date(startDate);
   let scanned = 0;
   while (out.length < days && scanned < budget) {
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) {
+    const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', weekday: 'short' }).format(d);
+    if (weekday !== 'Sun' && weekday !== 'Sat') {
       const basDd = ymd(d);
       const { day, fromNetwork } = await ensureDay(basDd, { apiKey, fetchImpl });
       const hasData = (day.KOSPI?.length || 0) + (day.KOSDAQ?.length || 0) + (day.ETF?.length || 0) > 0;

@@ -139,6 +139,7 @@ test('[막아야 함] findProposalByTelegramMessageId: 같은 메시지ID가 둘
 test('findProposalByBrokerOrderId: 자산분배 트랙·주문번호·계좌가 일치하는 제안만 찾음', () => {
   const proposal = { id: 'p1', track: '자산분배', brokerOrderId: 847026, account: '위탁' };
   assert.equal(findProposalByBrokerOrderId([proposal], { brokerOrderId: '847026', account: '위탁' }), proposal);
+  assert.equal(findProposalByBrokerOrderId([proposal], { brokerOrderId: '000847026', account: '위탁' }), proposal);
   assert.equal(findProposalByBrokerOrderId([proposal], { brokerOrderId: '847026', account: '금현물' }), null);
   assert.equal(findProposalByBrokerOrderId([{ ...proposal, track: '퀀트' }], { brokerOrderId: '847026', account: '위탁' }), null);
   assert.equal(findProposalByBrokerOrderId([proposal, { ...proposal, id: 'p2', account: null }], { brokerOrderId: 847026, account: '위탁' }), null);

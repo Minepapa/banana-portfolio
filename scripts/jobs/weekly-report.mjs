@@ -73,8 +73,7 @@ const FORCE = args.includes('--force');
 // asof 기준 직전 7일(월~일 주간)을 커버하는 시작일.
 function weekStartOf(asofYmd) {
   const d = new Date(`${asofYmd}T00:00:00+09:00`);
-  d.setDate(d.getDate() - 6);
-  return new Date(d.getTime() + 9 * 3600_000).toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date(d.getTime() - 6 * 86400000));
 }
 
 function todayKST() {

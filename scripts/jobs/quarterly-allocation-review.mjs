@@ -49,22 +49,30 @@ const STATE_DIR = join(VAULT_PATHS.root, 'State', 'QuarterlyAllocationReview');
 const STATE_FILE = join(STATE_DIR, 'last-quarter.md');
 const QUARTER_START_MONTHS = new Set([1, 4, 7, 10]);
 
+function kstCalendarParts(date) {
+  return Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short',
+  }).formatToParts(date).map((p) => [p.type, p.value]));
+}
+
 // 순수함수 — KST 기준 "YYYY-Q{1-4}" 라벨. 테스트 가능.
 export function getQuarterLabel(date) {
-  const month = date.getMonth() + 1;
+  const parts = kstCalendarParts(date);
+  const month = Number(parts.month);
   const quarter = Math.ceil(month / 3);
-  return `${date.getFullYear()}-Q${quarter}`;
+  return `${parts.year}-Q${quarter}`;
 }
 
 // 순수함수 — 오늘 이 잡을 실제로 돌려야 하는지: 분기 시작월(1·4·7·10월)의 1~3일 중
 // 평일이고, 이번 분기엔 아직 실행 기록이 없을 때만. 주말이면 다음 날(2일·3일)로
 // 자연히 넘어간다 — 별도 "다음 평일 찾기" 계산 없이 dedup만으로 해결.
 export function shouldRunToday(date, lastQuarterLabel) {
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  const dow = date.getDay(); // 0=일, 6=토
+  const parts = kstCalendarParts(date);
+  const month = Number(parts.month);
+  const day = Number(parts.day);
+  const dow = parts.weekday;
   if (!QUARTER_START_MONTHS.has(month) || day > 3) return false;
-  if (dow === 0 || dow === 6) return false;
+  if (dow === 'Sun' || dow === 'Sat') return false;
   return getQuarterLabel(date) !== lastQuarterLabel;
 }
 

@@ -109,7 +109,8 @@ export function findProposalByBrokerOrderId(proposals, { brokerOrderId, account 
   if (brokerOrderId == null || brokerOrderId === '') return null;
   const matches = proposals.filter((proposal) =>
     proposal.track === '자산분배'
-    && String(proposal.brokerOrderId ?? '') === String(brokerOrderId)
+    && proposal.brokerOrderId != null && proposal.brokerOrderId !== ''
+    && Number(proposal.brokerOrderId) === Number(brokerOrderId)
     && (!proposal.account || proposal.account === account),
   );
   return matches.length === 1 ? matches[0] : null;

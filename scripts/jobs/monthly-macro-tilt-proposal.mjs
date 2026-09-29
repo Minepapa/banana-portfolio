@@ -59,9 +59,16 @@ const IN_SCOPE_ACCOUNTS = ['위탁', '연금저축'];
 const STATE_DIR = join(VAULT_PATHS.root, 'State', 'MacroTiltProposal');
 const STATE_FILE = join(STATE_DIR, 'last-month.md');
 
+function kstCalendarParts(date) {
+  return Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short',
+  }).formatToParts(date).map((p) => [p.type, p.value]));
+}
+
 // 순수함수 — KST 기준 "YYYY-MM" 라벨. 테스트 가능.
 export function getMonthLabel(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  const parts = kstCalendarParts(date);
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}`;
 }
 
 // 순수함수 — 오늘 이 잡을 실제로 돌려야 하는지: 그 달의 마지막 3일(달력일 기준) 중
@@ -69,10 +76,10 @@ export function getMonthLabel(date) {
 // shouldRunToday와 동일 원리 — 월말은 분기시작월처럼 고정 날짜가 아니라 28~31일로
 // 달마다 다르므로, "이번 달 마지막 날에서 2일을 뺀 날짜 이후"로 계산한다).
 export function shouldRunThisMonth(date, lastMonthLabel) {
-  const dow = date.getDay();
-  if (dow === 0 || dow === 6) return false;
-  const lastDayOfMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-  if (date.getDate() < lastDayOfMonth - 2) return false;
+  const parts = kstCalendarParts(date);
+  if (parts.weekday === 'Sun' || parts.weekday === 'Sat') return false;
+  const lastDayOfMonth = new Date(Date.UTC(Number(parts.year), Number(parts.month), 0)).getUTCDate();
+  if (Number(parts.day) < lastDayOfMonth - 2) return false;
   return getMonthLabel(date) !== lastMonthLabel;
 }
 

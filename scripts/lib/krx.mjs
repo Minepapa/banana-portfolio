@@ -53,7 +53,7 @@ export async function fetchKrx(category, apiId, params, { apiKey, fetchImpl = de
 
 // Date → "YYYYMMDD"(KRX basDd 파라미터 형식). 순수함수 — 테스트 가능.
 export function ymd(d) {
-  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(d).replaceAll('-', '');
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -82,8 +82,8 @@ export async function fetchTradingDaySeries(fetchOneDay, days, {
   let d = new Date(startDate);
   let scanned = 0;
   while (out.length < days && scanned < budget) {
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) {
+    const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', weekday: 'short' }).format(d);
+    if (weekday !== 'Sun' && weekday !== 'Sat') {
       const basDd = ymd(d);
       let rows = await fetchOneDay(basDd);
       if (!(rows && rows.length)) {
@@ -159,8 +159,8 @@ export async function fetchIndexCloseSeriesInRange(market, indexNm, startDate, e
   if (startDate > endDate) {
     throw new Error(`fetchIndexCloseSeriesInRange: startDate(${startDate})가 endDate(${endDate})보다 나중일 수 없음`);
   }
-  const start = new Date(`${startDate}T12:00:00`);
-  const end = new Date(`${endDate}T12:00:00`);
+  const start = new Date(`${startDate}T12:00:00+09:00`);
+  const end = new Date(`${endDate}T12:00:00+09:00`);
   const calendarDays = Math.max(1, Math.round((end - start) / 86400000)) + 1;
   const estTradingDays = Math.ceil((calendarDays * 5) / 7) + 15; // 공휴일 여유
   const raw = await fetchTradingDaySeries((basDd) => fetchIndexDaily(market, basDd, opts), estTradingDays, {

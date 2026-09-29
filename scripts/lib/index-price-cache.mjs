@@ -25,6 +25,7 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from '
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchIndexCloseSeriesInRange } from './krx.mjs';
+import { kstDateLabel } from './krx-trading-calendar.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = join(HERE, '..', '.cache', 'index-prices');
@@ -62,13 +63,13 @@ function coversRange(cached, startDate, endDate) {
 // 주석 참고 — KRX 지수 배치데이터가 당일엔 아직 미발행일 수 있어 endDate=오늘로
 // 요청하면 실패하는데, 그 두 잡은 애초에 "오늘" 값이 필요하지도 않았다).
 export function addDays(dateStr, n) {
-  const d = new Date(`${dateStr}T12:00:00`); // 정오 파싱(파일 상단 마이그레이션 노트와 동일 이유)
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
+  const d = new Date(`${dateStr}T12:00:00+09:00`); // 정오 파싱(파일 상단 마이그레이션 노트와 동일 이유)
+  d.setUTCDate(d.getUTCDate() + n);
+  return kstDateLabel(d);
 }
 
 function calendarDaysBetween(fromDate, toDate) {
-  return Math.round((new Date(`${toDate}T12:00:00`) - new Date(`${fromDate}T12:00:00`)) / 86400000);
+  return Math.round((new Date(`${toDate}T12:00:00+09:00`) - new Date(`${fromDate}T12:00:00+09:00`)) / 86400000);
 }
 
 // 연휴(설·추석 등)가 며칠씩 겹칠 수 있어 여유를 둔다 — 요청 경계와 실제 첫/마지막
@@ -121,7 +122,7 @@ function assertCoverage(series, reqStart, reqEnd, indexName) {
 // 호출 — 기존 FDR 버전은 spawnSync라 동기였음, 호출부 전부 await로 갱신 필요).
 export async function cacheIndexPrices(indexName, startDate, endDate, { fetchSeries = fetchIndexCloseSeriesInRange } = {}) {
   assertDateString(startDate);
-  const end = endDate || new Date().toISOString().slice(0, 10);
+  const end = endDate || kstDateLabel();
   assertDateString(end);
   if (startDate > end) throw new Error(`시작일(${startDate})이 종료일(${end})보다 나중일 수 없음`);
 

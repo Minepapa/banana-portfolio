@@ -28,7 +28,7 @@ const MAX_ROWS = 1000; // ECOS 요청 URL의 조회건수 범위(1~1000) — 아
 // 반복 방지). 이 파일엔 관련 코드를 남겨두지 않는다(실사용 없는 코드).
 
 function ymd(d) {
-  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(d).replaceAll('-', '');
 }
 
 // itemCode의 최근 daysBack일(달력일) 시계열 → { time: "YYYYMMDD", value: number }[]

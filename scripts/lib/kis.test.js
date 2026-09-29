@@ -60,6 +60,17 @@ test('parseKrHolidayResponse: 누락·불명 응답을 개장으로 추정하지
   assert.throws(() => parseKrHolidayResponse({ rt_cd: '1', msg1: '오류' }, '20260925'), /국내휴장일조회 오류/);
 });
 
+test('parseKrHolidayResponse: 같은 기준일 행이 여러 개면 개장 여부를 추정하지 않고 null', () => {
+  const json = {
+    rt_cd: '0',
+    output: [
+      { bass_dt: '20260925', opnd_yn: 'Y' },
+      { bass_dt: '20260925', opnd_yn: 'N' },
+    ],
+  };
+  assert.equal(parseKrHolidayResponse(json, '20260925'), null);
+});
+
 test('getKrHoliday: CTCA0903R로 요청일을 조회하고 파싱한다', async () => {
   let captured;
   const fetchImpl = async (url, init) => {
@@ -1432,4 +1443,24 @@ test('parseOrderFillResponse: 같은 odno가 2건 이상 매칭되면 추정하�
     ],
   };
   assert.equal(parseOrderFillResponse(json, '6693100'), null);
+});
+
+test('parseOrderFillResponse: DEBUG_KIS_FILL_FIELDS=1이면 매칭 행 필드를 한 번만 진단한다', () => {
+  const originalDebug = process.env.DEBUG_KIS_FILL_FIELDS;
+  const originalError = console.error;
+  const logs = [];
+  process.env.DEBUG_KIS_FILL_FIELDS = '1';
+  console.error = (message) => logs.push(message);
+  try {
+    const json = { rt_cd: '0', output1: [{ odno: '7700001', ord_qty: '1', tot_ccld_qty: '1', rmn_qty: '0', avg_prvs: '87500', ccld_dt: '20260929' }] };
+    parseOrderFillResponse(json, '7700001');
+    parseOrderFillResponse(json, '7700001');
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /keys=.*"ccld_dt"/);
+    assert.match(logs[0], /row=.*"odno":"7700001"/);
+  } finally {
+    console.error = originalError;
+    if (originalDebug == null) delete process.env.DEBUG_KIS_FILL_FIELDS;
+    else process.env.DEBUG_KIS_FILL_FIELDS = originalDebug;
+  }
 });

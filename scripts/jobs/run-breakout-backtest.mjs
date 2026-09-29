@@ -27,6 +27,7 @@ import { RISK_PER_TRADE_PCT } from '../lib/breakout-risk.mjs';
 import { buildComparisonReport } from '../lib/benchmark-comparison.mjs';
 import { cumulativeReturns } from '../lib/walk-forward-simulator.mjs';
 import { maxDrawdown, annualizedReturn } from '../lib/stats.mjs';
+import { kstDateLabel } from '../lib/krx-trading-calendar.mjs';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TRADING_DAYS_PER_YEAR = 252;
@@ -64,7 +65,7 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const fromDate = args.from || '2014-01-01';
-  const toDate = args.to || new Date().toISOString().slice(0, 10);
+  const toDate = args.to || kstDateLabel();
   const initialCapital = args.initialCapital != null ? Number(args.initialCapital) : 40_000_000;
   const marketCapFloor = args.marketCapFloor != null ? Number(args.marketCapFloor) : MARKET_CAP_FLOOR_WON;
   const consolidationMethod = args.consolidationMethod === 'range' ? 'range' : 'stddev'; // 2026-09-13 VCP 정의 비교용

@@ -36,8 +36,8 @@ test('shouldRunToday: 주말이면 false(다음 평일로 자연히 넘어감)',
   // 만들기 위해 1월 1일이 일요일인 해를 고른다(2027-01-01은 금요일이라 다른 예시 사용)
   // — 2023-01-01은 일요일(검증된 실제 달력)이므로 shouldRunToday 로직 자체(요일 계산)만
   // 테스트, 실제 연도는 무관.
-  const sunday = new Date('2023-01-01T09:00:00'); // 실제 일요일
-  assert.equal(sunday.getDay(), 0);
+  const sunday = new Date('2023-01-01T09:00:00+09:00'); // KST 실제 일요일
+  assert.equal(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', weekday: 'short' }).format(sunday), 'Sun');
   assert.equal(shouldRunToday(sunday, null), false);
 });
 

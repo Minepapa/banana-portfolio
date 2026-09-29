@@ -48,7 +48,7 @@ export async function recordProposalExecutionStatus({ proposalsDir, proposalId, 
       throw error;
     }
     const current = parseProposal(content);
-    if (!brokerOrderId || String(current.brokerOrderId ?? '') !== String(brokerOrderId)) return false;
+    if (!brokerOrderId || !current.brokerOrderId || Number(current.brokerOrderId) !== Number(brokerOrderId)) return false;
     if (!WATCHABLE_STATUSES.has(current.status)) return false;
     if (current.status === '부분체결' && status === '부분체결') {
       if (current.partialFilledQty === filledQty) return false;
