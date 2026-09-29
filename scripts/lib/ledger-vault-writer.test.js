@@ -2,7 +2,7 @@
 // YAML 형태인지 확인.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildExecutionRecord, buildDividendRecord, buildProfitRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from './ledger-vault-writer.mjs';
+import { buildExecutionRecord, buildKakaoExecutionRecord, buildKakaoExecutionRecordCandidates, buildDividendRecord, buildProfitRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from './ledger-vault-writer.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
 import { parseFrontmatter } from './vault-frontmatter.mjs';
 
@@ -68,6 +68,21 @@ test('buildExecutionRecord: 같은 이벤트는 항상 같은 파일명(멱등�
   const b = buildExecutionRecord(exec());
   assert.equal(a.filename, b.filename);
   assert.equal(a.dedupKey, b.dedupKey);
+});
+
+test('buildKakaoExecutionRecord: 일반 파서와 확인 큐는 같은 원문 ID로 같은 멱등 키를 쓴다', () => {
+  const parserPath = buildKakaoExecutionRecord(exec(), 'ISA', 'firestore/doc:1');
+  const confirmationPath = buildKakaoExecutionRecord(exec(), 'ISA', 'firestore/doc:1');
+  assert.equal(parserPath.filename, confirmationPath.filename);
+  assert.equal(parserPath.dedupKey, confirmationPath.dedupKey);
+  assert.match(parserPath.filename, /firestore_doc_1\.md$/);
+});
+
+test('buildKakaoExecutionRecordCandidates: 기존 Ledger 탐지용 파일과 신규 원문-ID Ledger를 함께 제공한다', () => {
+  const { canonical, legacy } = buildKakaoExecutionRecordCandidates(exec(), 'ISA', 'doc-1');
+  assert.match(canonical.filename, /-doc-1\.md$/);
+  assert.doesNotMatch(legacy.filename, /-doc-1\.md$/);
+  assert.notEqual(canonical.filename, legacy.filename);
 });
 
 test('buildExecutionRecord: 수량이 다르면 다른 dedupKey(분할체결 구분)', () => {

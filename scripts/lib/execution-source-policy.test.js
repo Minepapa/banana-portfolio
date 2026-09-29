@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyKakaoExecution, GB_EXECUTION_API_CUTOVER_KST_DATE } from './execution-source-policy.mjs';
+import { classifyConfirmedKakaoExecution, classifyKakaoExecution, GB_EXECUTION_API_CUTOVER_KST_DATE } from './execution-source-policy.mjs';
 import { buildApiCoveredExecutionArchive } from '../jobs/parse-notifications-to-vault.mjs';
 
 test('NH API가 조회하는 위탁 국내주식과 금현물은 카카오 체결을 장부에 기록하지 않는다', () => {
@@ -58,6 +58,42 @@ test('NH 해외주식 카카오 체결은 이벤트 날짜가 애매하면 수�
 test('NH 국내주식 계좌를 판별할 수 없으면 중복 기록도 원문 삭제도 하지 않도록 보류한다', () => {
   assert.deepEqual(classifyKakaoExecution({
     kind: 'stock', event: { broker: 'NH투자증권', acctNo: '' },
+  }), { action: 'unresolved', account: null, reason: 'ACCOUNT_UNKNOWN' });
+});
+
+test('오너 확인 뒤에도 API 정본 계좌는 카카오 Ledger를 만들지 않는다', () => {
+  assert.deepEqual(classifyConfirmedKakaoExecution({
+    event: { broker: 'NH투자증권' }, account: '위탁',
+  }), { action: 'exclude-api', account: '위탁', reason: 'NH_API' });
+  assert.deepEqual(classifyConfirmedKakaoExecution({
+    event: { broker: 'NH투자증권' }, account: 'ISA',
+  }), { action: 'record', account: 'ISA', reason: 'OWNER_CONFIRMED' });
+});
+
+test('NH 국내 체결에 계좌번호가 없더라도 ISA 단일 보유 종목이면 ISA로 기록한다', () => {
+  assert.deepEqual(classifyKakaoExecution({
+    kind: 'stock',
+    event: { broker: 'NH투자증권', acctNo: '', stockName: 'TIGER 리츠부동산인프라', stockCode: '329200' },
+    holdings: [{ account: 'ISA', name: 'TIGER 리츠부동산인프라', ticker: '329200' }],
+  }), { action: 'record', account: 'ISA', reason: 'API_UNAVAILABLE' });
+});
+
+test('NH 국내 체결에 등록되지 않은 계좌번호가 있으면 보유종목으로 추정하지 않는다', () => {
+  assert.deepEqual(classifyKakaoExecution({
+    kind: 'stock',
+    event: { broker: 'NH투자증권', acctNo: '999-99-99***9', stockName: 'TIGER 리츠부동산인프라', stockCode: '329200' },
+    holdings: [{ account: 'ISA', name: 'TIGER 리츠부동산인프라', ticker: '329200' }],
+  }), { action: 'unresolved', account: null, reason: 'ACCOUNT_UNKNOWN' });
+});
+
+test('NH 국내 체결이 ISA·위탁 양쪽 보유 종목이면 계좌번호 없이 추정하지 않는다', () => {
+  assert.deepEqual(classifyKakaoExecution({
+    kind: 'stock',
+    event: { broker: 'NH투자증권', acctNo: '', stockName: '공통 종목', stockCode: '000001' },
+    holdings: [
+      { account: 'ISA', name: '공통 종목', ticker: '000001' },
+      { account: '위탁', name: '공통 종목', ticker: '000001' },
+    ],
   }), { action: 'unresolved', account: null, reason: 'ACCOUNT_UNKNOWN' });
 });
 

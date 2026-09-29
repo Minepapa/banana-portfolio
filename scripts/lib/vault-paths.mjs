@@ -133,6 +133,9 @@ export const VAULT_PATHS = {
     // "오늘 이미 돌았다"만 기억). 코드리뷰 HIGH 지적(2026-09-13) 재발방지 — 재실행이
     // 같은 신호를 또 발주하는 이중매수를 막는다.
     breakoutScanRuns: join(VAULT_ROOT, 'State', 'BreakoutScanRuns', 'last-run.md'),
+    // 자동 체결기록이 계좌·원본 정합을 확정할 수 없을 때 오너 확인을 기다리는 대기열 —
+    // 대기 건 1개=파일 1개. 원문 Firestore 문서는 확인 완료 뒤에만 삭제한다.
+    executionConfirmations: join(VAULT_ROOT, 'State', 'ExecutionConfirmations'),
   },
   // Log/는 대부분 인터랙티브 세션이 Write 도구로 직접 쓰지만, 자동 리포트와
   // TelegramSession은 Node 잡도 기록하므로 해당 경로를 상수로 관리한다.

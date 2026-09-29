@@ -107,3 +107,33 @@ test('NH — ticker가 빈 문자열(마이그레이션 보유)이면 종목명�
   const holdings = [{ account: 'ISA', name: 'X', ticker: '' }];
   assert.equal(resolveExecutionAccount({ broker: 'NH투자증권', stockName: 'X', stockCode: '000001' }, holdings), 'ISA');
 });
+
+test('NH — 계좌 판별 불가 시 이미 보유한 후보 계좌만 확인 선택지로 반환', async () => {
+  const { findExecutionAccountCandidates } = await import('./account-resolver.mjs');
+  const holdings = [
+    { account: 'ISA', name: 'KODEX 배당' },
+    { account: '위탁', name: 'KODEX 배당' },
+  ];
+  assert.deepEqual(findExecutionAccountCandidates({ broker: 'NH투자증권', stockName: 'KODEX 배당' }, holdings), ['ISA', '위탁']);
+});
+
+test('NH — 신규 국내주식은 자동 귀속하지 않되 ISA·위탁 확인 선택지를 제시', async () => {
+  const { findExecutionAccountCandidates, resolveExecutionAccount } = await import('./account-resolver.mjs');
+  const event = { broker: 'NH투자증권', stockName: '신규 종목', stockCode: '000001' };
+  assert.equal(resolveExecutionAccount(event, []), null);
+  assert.deepEqual(findExecutionAccountCandidates(event, []), ['ISA', '위탁']);
+});
+
+test('NH — 등록되지 않은 마스킹 계좌번호도 자동 귀속하지 않고 확인 선택지를 제시', async () => {
+  const { findExecutionAccountCandidates, resolveExecutionAccount } = await import('./account-resolver.mjs');
+  const event = { broker: 'NH투자증권', stockName: '신규 종목', stockCode: '000001', acctNo: '999-99-99***9' };
+  assert.equal(resolveExecutionAccount(event, []), null);
+  assert.deepEqual(findExecutionAccountCandidates(event, []), ['ISA', '위탁']);
+});
+
+test('한국투자증권의 등록되지 않은 계좌번호도 IRP·퀀트 확인 선택지를 제시한다', async () => {
+  const { findExecutionAccountCandidates } = await import('./account-resolver.mjs');
+  assert.deepEqual(findExecutionAccountCandidates({
+    broker: '한국투자증권', stockName: '신규 종목', acctNo: '99****99-99',
+  }, []), ['IRP', '퀀트']);
+});

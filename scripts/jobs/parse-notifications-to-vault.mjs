@@ -60,18 +60,26 @@
  *   node scripts/jobs/parse-notifications-to-vault.mjs --dry-run  # 기록 대상만 출력(쓰기·삭제 없음)
  */
 
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getFirestoreAdmin } from '../lib/firestore-admin.mjs';
 import { readKakaoInbox, deleteKakaoInboxDocs } from '../lib/kakao-inbox.mjs';
 import { parseExecution, parseDividend, parseGoldBuy, parseCashAlarm, parseFundBuy, parseFundValuation, parseExchange } from '../lib/notification-parsers.mjs';
-import { buildExecutionRecord, buildDividendRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from '../lib/ledger-vault-writer.mjs';
-import { writeAtomic } from '../lib/state-writer.mjs';
+import { buildExecutionRecord, buildKakaoExecutionRecordCandidates, buildDividendRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from '../lib/ledger-vault-writer.mjs';
+import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
-import { FUND_PURCHASE_ACCOUNT, EXCHANGE_ACCOUNT } from '../lib/account-resolver.mjs';
+import { FUND_PURCHASE_ACCOUNT, EXCHANGE_ACCOUNT, findExecutionAccountCandidates } from '../lib/account-resolver.mjs';
 import { classifyKakaoExecution } from '../lib/execution-source-policy.mjs';
+import {
+  buildExecutionConfirmation, countPendingConfirmationsForFirestoreDoc, executionConfirmationLockKey, findExactExecutionConfirmation, findPendingConfirmation,
+  hasExecutionConfirmationForFirestoreDoc,
+  findPendingConfirmationByFirestoreDoc, parseExecutionConfirmation, refreshExecutionConfirmation,
+  serializeExecutionConfirmation,
+} from '../lib/execution-confirmation-queue.mjs';
+import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { escapeHtml, sendTelegram } from '../lib/telegram.mjs';
 
 // 금현물은 별도 Ledger 종류를 만들지 않고 체결(Executions)에 합류시킨다 — v1이 "금현물을
 // 별도 원장으로 뒀다가 버그나서 체결내역에 통합"한 전례를 반영(vault-paths.mjs 주석 참고).
@@ -98,6 +106,7 @@ function goldToExecutionEvent(g) {
 }
 
 const DRY_RUN = process.argv.includes('--dry-run');
+const DEPARTMENT_LABEL = '운영실 Hermes';
 
 // 카카오 예수금 알림을 인식은 하되 Facts/Ledger/CashEvents엔 안 쓰는 계좌
 // (2026-09-03, "위탁·CMA 먼저 진행" — 위 헤더 주석 참고). export(code-reviewer
@@ -119,6 +128,131 @@ export function buildApiCoveredExecutionArchive({ id, ts, body, event, account }
   return { filepath, content };
 }
 
+export function readHoldings(dir = VAULT_PATHS.state.holdings) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.endsWith('.md'))
+    .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
+}
+
+function readExecutionConfirmations(dir = VAULT_PATHS.state.executionConfirmations) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.endsWith('.md')).map((filename) => {
+    const content = readFileSync(join(dir, filename), 'utf8');
+    return { filename, content, ...parseExecutionConfirmation(content) };
+  });
+}
+
+function executionConfirmationLockPath(firestoreDocId) {
+  return join(VAULT_PATHS.state.executionConfirmations, executionConfirmationLockKey(firestoreDocId));
+}
+
+function confirmationTelegramBody(record) {
+  const accounts = record.allowedAccounts.map((account) => escapeHtml(account)).join(' / ');
+  const command = `체결확인 ${record.id} ${record.allowedAccounts[0]}`;
+  return [
+    '■ 체결',
+    `${escapeHtml(record.broker)} · ${escapeHtml(record.tradeType)} · ${escapeHtml(record.stockName)} ${escapeHtml(record.quantity)}주 @${escapeHtml(record.price)}원`,
+    '',
+    '■ 확인 필요 사유',
+    escapeHtml(record.reason),
+    '',
+    '■ 선택 가능한 계좌',
+    accounts,
+    '',
+    '■ 답장 형식',
+    command,
+  ].join('\n');
+}
+
+// 자동 계좌판별을 하지 못했지만 실제 보유현황으로 확인 선택지를 좁힐 수 있는 경우에만
+// 대기 건을 만든다. 후보가 없으면 "ISA일 것" 같은 새 추정을 만들지 않고 기존처럼
+// 원문을 보존한다.
+export function prepareExecutionConfirmation({
+  id, ts, body, event, holdings, confirmations = [], now = new Date(), random,
+}) {
+  const allowedAccounts = findExecutionAccountCandidates(event, holdings);
+  if (!allowedAccounts.length) {
+    return {
+      kind: null, confirmation: null, shouldSendTelegram: false, shouldDeleteFirestore: false,
+      shouldWriteConfirmation: false, telegramBody: null,
+    };
+  }
+  const terminalExisting = findExactExecutionConfirmation(confirmations, { firestoreDocId: id, event, sourceBody: body });
+  if (terminalExisting && terminalExisting.status !== '대기') {
+    const { filename, content, ...record } = terminalExisting;
+    return {
+      kind: 'existing', confirmation: { record, filename, content }, shouldSendTelegram: false, shouldDeleteFirestore: false,
+      shouldWriteConfirmation: false, telegramBody: null,
+    };
+  }
+  const exactExisting = findPendingConfirmation(confirmations, { firestoreDocId: id, event, sourceBody: body });
+  const pendingForSameDocument = countPendingConfirmationsForFirestoreDoc(confirmations, id);
+  if (!exactExisting && pendingForSameDocument > 1) {
+    return {
+      kind: null, confirmation: null, shouldSendTelegram: false, shouldDeleteFirestore: false,
+      shouldWriteConfirmation: false, telegramBody: null,
+    };
+  }
+  const existing = exactExisting ?? findPendingConfirmationByFirestoreDoc(confirmations, id);
+  const confirmation = existing
+    ? (() => {
+      const { filename, content, ...record } = existing;
+      if (exactExisting) return { record, filename, content };
+      const refreshed = refreshExecutionConfirmation({
+        record, event, sourceBody: body, allowedAccounts, reason: '카카오 체결 원문이 대기 건 생성 후 변경되어 재확인이 필요함', receivedAt: ts, now,
+      });
+      return { record: refreshed, filename, content: serializeExecutionConfirmation(refreshed) };
+    })()
+    : buildExecutionConfirmation({
+      firestoreDocId: id, event, sourceBody: body, allowedAccounts, reason: '카카오 체결 알림에 계좌번호가 없어 자동 귀속을 보류함', receivedAt: ts, now, random,
+    });
+  return {
+    kind: 'account-assignment',
+    confirmation,
+    shouldSendTelegram: !confirmation.record.notifiedAt,
+    shouldDeleteFirestore: false,
+    shouldWriteConfirmation: !exactExisting,
+    telegramBody: confirmationTelegramBody(confirmation.record),
+  };
+}
+
+async function writeOrNotifyExecutionConfirmation({ id, ts, body, event, holdings, now }) {
+  return withLock(executionConfirmationLockPath(id), async () => {
+    const initial = prepareExecutionConfirmation({
+      id, ts, body, event, holdings, confirmations: readExecutionConfirmations(), now,
+    });
+    if (!initial.confirmation) return initial;
+
+    const filepath = join(VAULT_PATHS.state.executionConfirmations, initial.confirmation.filename);
+    return withLock(filepath, async () => {
+      const prepared = prepareExecutionConfirmation({
+        id, ts, body, event, holdings, confirmations: readExecutionConfirmations(), now,
+      });
+      if (!prepared.confirmation) return prepared;
+
+      const { record, filename } = prepared.confirmation;
+      const confirmationPath = join(VAULT_PATHS.state.executionConfirmations, filename);
+      if (prepared.shouldWriteConfirmation || !existsSync(confirmationPath)) {
+        writeAtomic(confirmationPath, prepared.confirmation.content);
+      }
+      if (!prepared.shouldSendTelegram) return prepared;
+
+      try {
+        await sendTelegram(formatDepartmentMessage({
+          departmentLabel: DEPARTMENT_LABEL, tag: '확인', body: prepared.telegramBody,
+        }));
+        const notified = { ...record, notifiedAt: now.toISOString(), updatedAt: now.toISOString() };
+        writeAtomic(confirmationPath, serializeExecutionConfirmation(notified));
+        return { ...prepared, confirmation: { ...prepared.confirmation, record: notified } };
+      } catch (error) {
+        console.error(`  체결 확인 요청 발송 실패: ${error.message}`);
+        collectWarning(`카카오 체결 확인 요청 발송 실패: 문서 ${id} — 확인 대기 원문은 보존했고 다음 실행에 재시도`);
+        return prepared;
+      }
+    });
+  });
+}
+
 async function main() {
   if (!DRY_RUN) {
     mkdirSync(VAULT_PATHS.facts.ledger.executions, { recursive: true });
@@ -128,10 +262,13 @@ async function main() {
     mkdirSync(VAULT_PATHS.facts.ledger.fundValuations, { recursive: true });
     mkdirSync(VAULT_PATHS.facts.ledger.exchanges, { recursive: true });
     mkdirSync(API_COVERED_ARCHIVE_DIR, { recursive: true });
+    mkdirSync(VAULT_PATHS.state.executionConfirmations, { recursive: true });
   }
 
   const db = getFirestoreAdmin();
   const inboxDocs = await readKakaoInbox(db);
+  const holdings = readHoldings();
+  const confirmations = readExecutionConfirmations();
   console.log(`📨 카카오 수신함(Firestore kakaoInbox) ${inboxDocs.length}건 스캔`);
 
   let execNew = 0, divNew = 0, cashNew = 0, fundNew = 0, fundValNew = 0, exchNew = 0, skip = 0, unrecognized = 0, executionApiExcluded = 0, executionUnresolved = 0, cashApiExcluded = 0;
@@ -149,8 +286,31 @@ async function main() {
 
     const e = parseExecution(body, ts);
     if (e) {
-      const route = classifyKakaoExecution({ kind: 'stock', event: e, receivedAt: ts });
+      // 대기·기각·기록됨 모두 자동 파서의 근거가 아니다. 원문이 달라진 경우에는
+      // prepare가 새 확인을 만들고, 같은 원문이면 기존 상태를 그대로 보존한다.
+      if (hasExecutionConfirmationForFirestoreDoc(confirmations, id)) {
+        executionUnresolved++;
+        const confirmation = DRY_RUN
+          ? prepareExecutionConfirmation({ id, ts, body, event: e, holdings, confirmations })
+          : await writeOrNotifyExecutionConfirmation({ id, ts, body, event: e, holdings, now: new Date() });
+        if (confirmation.confirmation) {
+          const { record } = confirmation.confirmation;
+          console.log(`  [확인대기 유지] ${record.id} ${e.stockName} — 상태 ${record.status}`);
+          continue;
+        }
+        collectWarning(`카카오 체결 확인 이력 재검증 필요: 문서 ${id} — 원문 보존, 장부 반영 보류`);
+        continue;
+      }
+      const route = classifyKakaoExecution({ kind: 'stock', event: e, receivedAt: ts, holdings });
       if (route.action === 'exclude-api') {
+        const hasConfirmation = !DRY_RUN && await withLock(executionConfirmationLockPath(id), () => (
+          hasExecutionConfirmationForFirestoreDoc(readExecutionConfirmations(), id)
+        ));
+        if (hasConfirmation) {
+          executionUnresolved++;
+          console.log(`  [확인대기 유지] ${e.stockName} — 기존 체결 확인 응답 대기`);
+          continue;
+        }
         if (!DRY_RUN) {
           const archive = buildApiCoveredExecutionArchive({ id, ts, body, event: e, account: route.account });
           writeAtomic(archive.filepath, archive.content);
@@ -161,15 +321,59 @@ async function main() {
       // 쪽으로도 추정하지 않고 Firestore 원문을 남겨 다음 확인 때 재처리한다.
       if (route.action === 'unresolved') {
         executionUnresolved++;
+        const confirmation = DRY_RUN
+          ? prepareExecutionConfirmation({ id, ts, body, event: e, holdings, confirmations })
+          : await writeOrNotifyExecutionConfirmation({ id, ts, body, event: e, holdings, now: new Date() });
+        if (confirmation.confirmation) {
+          const { record } = confirmation.confirmation;
+          console.log(`  [확인대기] ${record.id} ${e.stockName} — 계좌 선택: ${record.allowedAccounts.join('/')}`);
+          continue;
+        }
         collectWarning(`카카오 체결 계좌 판별 불가: 문서 ${id}, 브로커 ${e.broker || '미상'}, 계좌 ${e.acctNo || '없음'} — 원문 보존, 장부 반영 보류`);
         continue;
       }
-      const { filename, content, dir } = buildExecutionRecord({ ...e, account: route.account });
-      const filepath = join(dir, filename);
-      if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
-      console.log(`  + [체결] ${e.tradeDate} ${e.tradeType} ${e.stockName} ${e.quantity}주 @${e.price} (${e.broker})`);
-      if (!DRY_RUN) writeAtomic(filepath, content);
-      execNew++;
+      let recorded = false;
+      let skippedForPendingConfirmation = false;
+      let conflictingLedger = false;
+      if (DRY_RUN) {
+        const records = buildKakaoExecutionRecordCandidates(e, route.account, id);
+        const canonicalPath = join(records.canonical.dir, records.canonical.filename);
+        const legacyPath = join(records.legacy.dir, records.legacy.filename);
+        recorded = !existsSync(canonicalPath) && !existsSync(legacyPath);
+        if (recorded) console.log(`  + [체결] ${e.tradeDate} ${e.tradeType} ${e.stockName} ${e.quantity}주 @${e.price} (${e.broker})`);
+      } else {
+        await withLock(executionConfirmationLockPath(id), () => {
+          if (hasExecutionConfirmationForFirestoreDoc(readExecutionConfirmations(), id)) {
+            skippedForPendingConfirmation = true;
+            return;
+          }
+          const records = buildKakaoExecutionRecordCandidates(e, route.account, id);
+          const canonicalPath = join(records.canonical.dir, records.canonical.filename);
+          const legacyPath = join(records.legacy.dir, records.legacy.filename);
+          const canonicalExists = existsSync(canonicalPath);
+          const legacyExists = existsSync(legacyPath);
+          if (canonicalExists && legacyExists) {
+            conflictingLedger = true;
+            return;
+          }
+          if (canonicalExists || legacyExists) return;
+          console.log(`  + [체결] ${e.tradeDate} ${e.tradeType} ${e.stockName} ${e.quantity}주 @${e.price} (${e.broker})`);
+          writeAtomic(canonicalPath, records.canonical.content);
+          recorded = true;
+        });
+      }
+      if (skippedForPendingConfirmation) {
+        executionUnresolved++;
+        console.log(`  [확인대기 유지] ${e.stockName} — 기존 체결 확인 응답 대기`);
+        continue;
+      }
+      if (conflictingLedger) {
+        executionUnresolved++;
+        collectWarning(`카카오 체결 Ledger 중복 상태: 문서 ${id} — 기존·신규 Ledger가 함께 있어 원문 보존, 자동 처리 중단`);
+        continue;
+      }
+      if (recorded) execNew++;
+      else skip++;
       processedIds.push(id);
       continue;
     }

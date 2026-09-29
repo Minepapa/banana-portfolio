@@ -97,6 +97,27 @@ export function buildExecutionRecord(e) {
   return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.executions };
 }
 
+// 카카오 체결 원문은 일반 파서와 오너 확인 큐가 같은 sourceEventId를 써야 한다. 그래야
+// 두 경로가 순서상 교차해도 파일명·dedupKey가 같아 중복 Ledger를 만들지 않는다.
+export function buildKakaoExecutionRecord(event, account, firestoreDocId) {
+  return buildExecutionRecord({
+    ...event,
+    account,
+    source: 'KAKAO',
+    sourceEventId: firestoreDocId,
+  });
+}
+
+// sourceEventId 도입 전 카카오 Ledger는 같은 이벤트를 sourceEventId 없이 저장했다.
+// Firestore 삭제 실패 후 재처리해도 기존 파일을 중복 생성하지 않도록 두 형태를 함께
+// 비교한다. 신규 기록은 canonical만 쓰고 legacy는 읽기 호환성에만 사용한다.
+export function buildKakaoExecutionRecordCandidates(event, account, firestoreDocId) {
+  return {
+    canonical: buildKakaoExecutionRecord(event, account, firestoreDocId),
+    legacy: buildExecutionRecord({ ...event, account }),
+  };
+}
+
 // d: parseDividend()의 반환값 { date, afterTaxAmount, stockName, acctRaw, broker, receivedTime, uniqueKey }
 export function buildDividendRecord(d) {
   const dedupKey = `${d.date}|${d.stockName}|${d.uniqueKey}`;

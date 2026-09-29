@@ -2,6 +2,7 @@
 // 정본이고, API 조회가 없는 범위만 카카오 알림을 원장에 기록한다.
 import {
   IRP_ACCOUNT_LABEL, IRP_ACCOUNT_NO, QUANT_ACCOUNT_NO, QUANT_TRACK_LABEL,
+  resolveExecutionAccount,
 } from './account-resolver.mjs';
 import { NH_ACCOUNT_MAP } from './nh-accounts.mjs';
 import { GB_EXECUTION_API_CUTOVER_KST_DATE, kstDateOrNull } from './gb-execution-cutover.mjs';
@@ -17,7 +18,7 @@ export function isGbKakaoExecutionAfterCutover({ event = {}, receivedAt } = {}) 
   return date != null && date >= GB_EXECUTION_API_CUTOVER_KST_DATE;
 }
 
-export function classifyKakaoExecution({ kind = 'stock', event = {}, receivedAt } = {}) {
+export function classifyKakaoExecution({ kind = 'stock', event = {}, receivedAt, holdings = [] } = {}) {
   if (kind === 'gold') {
     if (event.broker !== 'NH투자증권') {
       return { action: 'unresolved', account: null, reason: 'ACCOUNT_UNKNOWN' };
@@ -53,7 +54,10 @@ export function classifyKakaoExecution({ kind = 'stock', event = {}, receivedAt 
   }
 
   if (event.broker === 'NH투자증권') {
-    const account = NH_ACCOUNT_MAP[event.acctNo] ?? null;
+    const acctNo = String(event.acctNo ?? '').trim();
+    const account = acctNo
+      ? (NH_ACCOUNT_MAP[acctNo] ?? null)
+      : resolveExecutionAccount(event, holdings);
     if (!account) return { action: 'unresolved', account: null, reason: 'ACCOUNT_UNKNOWN' };
     if (account === '위탁') return { action: 'exclude-api', account, reason: 'NH_API' };
     if (account === 'ISA') return { action: 'record', account, reason: 'API_UNAVAILABLE' };
@@ -61,4 +65,21 @@ export function classifyKakaoExecution({ kind = 'stock', event = {}, receivedAt 
   }
 
   return { action: 'unresolved', account: null, reason: 'ACCOUNT_UNKNOWN' };
+}
+
+// 오너가 확인 대기 건에서 계좌를 명시한 뒤에는 종목 보유현황 추정 없이 그 계좌의
+// 소스 우선순위만 다시 적용한다. 위탁·금현물은 API가 정본이므로 카카오 원장은 만들지
+// 않고 원문 보관 후 정리한다. ISA·연금저축·IRP처럼 API 대사가 검증되지 않은 계좌만
+// 카카오 Ledger 기록 대상으로 남는다.
+export function classifyConfirmedKakaoExecution({ kind = 'stock', event = {}, account } = {}) {
+  if (kind === 'gold' || account === '금현물') {
+    return { action: 'exclude-api', account: '금현물', reason: 'NH_API' };
+  }
+  if (event.broker === 'NH투자증권' && account === '위탁') {
+    return { action: 'exclude-api', account, reason: 'NH_API' };
+  }
+  if (event.broker === '한국투자증권' && account === QUANT_TRACK_LABEL) {
+    return { action: 'exclude-api', account, reason: 'KIS_API' };
+  }
+  return { action: 'record', account, reason: 'OWNER_CONFIRMED' };
 }

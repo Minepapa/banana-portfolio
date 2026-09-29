@@ -16,19 +16,13 @@
 // 를 써서, 나중에 그 일일 잡이 같은 체결을 다시 봐도(15:55 정기 실행) 파일명이
 // 같아 조용히 스킵된다 — 두 경로가 서로 몰라도 자연히 dedup된다.
 //
-// ⚠️ 취소 감지는 안 한다 — 정정(2026-09-21 독립 코드리뷰 지적, MEDIUM) — 최초
-// 주석은 "NH 체결조회 API 응답에 취소상태 필드가 없다"고 썼는데 틀렸다. 실측
-// 확인 결과 응답엔 can_qty(취소수량)·ny_cns_qty(미체결수량)·orr_rjt_rsn_cd_nm
-// (주문거부사유명) 필드가 다 있다 — 다만 이 잡이 쓰는 ostCnsDit:'1'(체결만) 조회
-// 조건이 취소·미체결 행 자체를 애초에 안 돌려줄 뿐이다(원인은 "API 응답"이 아니라
-// "이 조회조건"). 지금은 취소 감지를 범위 밖으로 남겨둔다(ostCnsDit:'0'으로
-// 바꾸면 가능 — 다음에 필요해지면 이 주석부터 볼 것). 타임아웃까지 전량체결이
-// 안 잡히면 "체결 안 됨"으로 단정하지 않고 "미체결·부분체결로 남아있거나 취소됐을
-// 수 있음 — 이 조회조건으로는 구분 안 됨"으로 정직하게 말한다(watch-order-
-// fill.mjs·place-breakout-fallback-entry.mjs의 기존 "확실한 것과 불명확한 것을
-// 구분" 원칙과 동일 — 추정 금지). nhplug-krstock.mjs의 ostCnsDit 1·2 반전 주석이
-// 실사고를 낸 전례가 있어(그 파일 241행 근처), 이 파일의 주석도 근거를 실측과
-// 정확히 맞춰 적어둔다 — 나중 세션이 주석을 그대로 믿고 판단하는 구조이기 때문.
+// ⚠️ 타임아웃 상태 판정 — 평소 ostCnsDit:'1'(체결만) 폴링은 즉시 체결 확인을
+// 위한 것이고, 타임아웃 때만 ostCnsDit:'0'(전체)으로 한 번 더 조회한다. 전체
+// 응답의 can_qty(취소수량)·ny_cns_qty(미체결수량)·orr_rjt_rsn_cd_nm(주문거부사유명)을
+// 써 전량미체결·부분체결·취소·거부를 구분한다. 행이 없거나 수량 필드가 불완전하면
+// 추정하지 않고 판정 불가로 알린다. nhplug-krstock.mjs의 ostCnsDit 1·2 반전 주석이
+// 실사고를 낸 전례가 있어(그 파일 241행 근처), 이 파일도 각 코드값의 근거를
+// 응답 필드와 정확히 맞춰 둔다.
 //
 // ⚠️ mkt_orr_no(주문 접수 응답의 필드명) ≡ itg_orr_no(체결조회 응답의 필드명)라는
 // 전제 — NH API 문서에 명시적으로 확인된 등식이 아니라, krstock 현금매도 1건
@@ -85,6 +79,60 @@ function parseArgs(argv) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const won = (n) => (n == null ? '확인 필요' : Math.round(n).toLocaleString('ko-KR') + '원');
+
+function num(v) {
+  if (v == null || String(v).trim() === '') return null;
+  const n = Number(String(v).replaceAll(',', ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+// 타임아웃 때만 ostCnsDit:'0' 전체 조회 행을 판정한다. 평소 폴링은 체결 행만
+// 조회해 기존 즉시 체결 확인·Ledger 기록 경로를 그대로 유지한다.
+export function classifyNhTimeoutOrder(row) {
+  if (!row) return { kind: 'unknown' };
+  const filledQty = num(row.tot_cns_qty);
+  const unfilledQty = num(row.ny_cns_qty);
+  const canceledQty = num(row.can_qty);
+  const rejectionReason = String(row.orr_rjt_rsn_cd_nm ?? '').trim();
+
+  if (rejectionReason && rejectionReason !== '정상') {
+    return { kind: 'rejected', filledQty, unfilledQty, canceledQty, rejectionReason };
+  }
+  if (canceledQty != null && canceledQty > 0) {
+    return { kind: 'canceled', filledQty, unfilledQty, canceledQty };
+  }
+  if (filledQty != null && filledQty > 0) {
+    return { kind: 'partial', filledQty, unfilledQty, canceledQty };
+  }
+  if (unfilledQty != null && unfilledQty > 0) {
+    return { kind: 'unfilled', filledQty, unfilledQty, canceledQty };
+  }
+  return { kind: 'unknown', filledQty, unfilledQty, canceledQty };
+}
+
+export function formatNhTimeoutBody({ name, code, orderNo, account, timeoutMin, state }) {
+  const result = {
+    unfilled: '전량미체결',
+    partial: '부분체결',
+    canceled: '취소',
+    rejected: '거부',
+    unknown: '행 없음 또는 판정 불가',
+  }[state.kind];
+  const quantities = [];
+  if (state.filledQty != null) quantities.push(`체결 ${state.filledQty}주`);
+  if (state.unfilledQty != null) quantities.push(`미체결 ${state.unfilledQty}주`);
+  if (state.canceledQty != null && state.canceledQty > 0) quantities.push(`취소 ${state.canceledQty}주`);
+
+  const next = state.kind === 'unfilled' || state.kind === 'partial'
+    ? '정정 또는 취소가 필요하면 텔레그램에서 주문번호와 함께 요청해 주세요.'
+    : 'NH 앱에서 주문 상태를 함께 확인해 주세요.';
+  return `<b>체결 확인 시간 초과</b>\n\n` +
+    `■ 주문\n${name}(${code}) · 주문번호 ${orderNo} · ${account}\n\n` +
+    `■ API 최종 조회\n· ${timeoutMin}분 후 판정: ${result}` +
+    `${quantities.length ? `\n· ${quantities.join(' · ')}` : ''}` +
+    `${state.rejectionReason ? `\n· 거부 사유: ${state.rejectionReason}` : ''}` +
+    `\n\n■ 다음 조치\n${next}`;
+}
 
 // 이 잡은 execute-asset-allocation-proposal.mjs가 detached+stdio:'ignore'로 띄운다
 // (그래야 부모가 끝나도 감시가 계속됨) — 그 말은 console.error가 아무 데도 안
@@ -168,6 +216,23 @@ async function main() {
     }
     const rows = parseNhExecutionRows(body?.Output_0);
     return rows.find((r) => r.orderNo === String(orderNo)) ?? null;
+  }
+
+  // 체결 전용 폴링으로 끝까지 못 찾은 경우에만 전체 주문을 한 번 조회한다.
+  // 전체 행에는 수량 0인 미체결·취소·거부 주문도 들어오므로 parseNhExecutionRows를
+  // 거치지 않고 원본 행의 상태 필드를 그대로 판정한다.
+  async function findTimeoutOrder() {
+    let body;
+    try {
+      body = account === '금현물'
+        ? await getGoldExecution({ token, actNo, orrDt, ostCnsDit: '0' })
+        : await getKrDailyOrderExecution({ token, actNo, orrDt, ostCnsDit: '0' });
+    } catch (e) {
+      if (e.businessRejection === true && e.code === '11512') return null;
+      throw e;
+    }
+    const rows = Array.isArray(body?.Output_0) ? body.Output_0 : [];
+    return rows.find((row) => String(row?.itg_orr_no ?? '').trim() === String(orderNo)) ?? null;
   }
 
   async function checkAndReportIfDone() {
@@ -261,13 +326,18 @@ async function main() {
   // 타임아웃 직전 마지막 확인.
   if (await checkAndReportIfDone()) return;
 
-  console.log('[타임아웃] 확인 시간 내 전량체결 미확인 — 알림 발송');
+  let timeoutRow = null;
+  try {
+    timeoutRow = await findTimeoutOrder();
+  } catch (e) {
+    console.error(`[전체 주문조회 실패] ${e.message}`);
+  }
+  const timeoutState = classifyNhTimeoutOrder(timeoutRow);
+  console.log(`[타임아웃] 확인 시간 내 전량체결 미확인 — ${timeoutState.kind} 판정 알림 발송`);
   await sendTelegram(formatDepartmentMessage({
     departmentLabel: DEPARTMENT_LABEL,
     tag: '경고',
-    body: `<b>체결 확인 시간 초과</b>\n${name}(${code}) 주문번호 ${orderNo}(${account})\n` +
-      `${timeoutMin}분 동안 전량체결 확인 안 됨 — NH 앱에서 직접 확인해 주세요.\n` +
-      `(미체결·부분체결로 남아있거나 취소됐을 수 있음 — 이 조회조건으로는 구분 안 됨)`,
+    body: formatNhTimeoutBody({ name, code, orderNo, account, timeoutMin, state: timeoutState }),
   }));
 }
 

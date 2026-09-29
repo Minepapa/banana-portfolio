@@ -94,18 +94,9 @@ const AMBIGUOUS_BROKER_CANDIDATES = {
   'NH투자증권 해외': ['위탁'],
 };
 
-// holdings: State/Holdings에서 읽은 프론트매터 배열({ account, name, ticker, ... }).
-// stockCode: 체결의 종목코드(있으면). acctNo: 알림 원문에서 캡처된 계좌번호(있으면).
-// 반환: 계좌명(string) 또는 null(못 풀림 또는 의도적 제외 — 호출부가 건너뛰고 플래그).
-export function resolveExecutionAccount({ broker, stockName, stockCode, acctNo }, holdings = []) {
-  if (acctNo && Object.prototype.hasOwnProperty.call(KNOWN_ACCOUNT_NUMBERS, acctNo)) {
-    return KNOWN_ACCOUNT_NUMBERS[acctNo];
-  }
-  if (UNIQUE_BROKER_ACCOUNT[broker]) return UNIQUE_BROKER_ACCOUNT[broker];
-
+function matchingHoldingAccounts({ broker, stockName, stockCode }, holdings = []) {
   const candidates = AMBIGUOUS_BROKER_CANDIDATES[broker];
-  if (!candidates) return null; // 알 수 없는 증권사 — 안전하게 미해결 처리
-
+  if (!candidates) return [];
   const nameTrim = String(stockName ?? '').trim();
   const codeTrim = String(stockCode ?? '').trim();
   // 종목명만으로 판정하면 "ISA엔 이 이름의 종목이 있지만, 실은 위탁이 사려는 건 같은
@@ -124,6 +115,32 @@ export function resolveExecutionAccount({ broker, stockName, stockCode, acctNo }
       })
       .map((h) => h.account),
   );
-  if (holdingAccounts.size === 1) return [...holdingAccounts][0];
+  return candidates.filter((account) => holdingAccounts.has(account));
+}
+
+// 계좌 자동판별에 실패한 체결의 확인 선택지는 실제 보유 계좌로 먼저 좁힌다. 신규
+// 국내주식처럼 보유 근거가 없으면 ISA·위탁만 제시해 오너 확인을 받되, 자동 귀속은 하지
+// 않는다. 마스킹 계좌번호가 있으나 모르는 경우는 후보를 넓히지 않고 원문을 보존한다.
+export function findExecutionAccountCandidates({ broker, stockName, stockCode, acctNo }, holdings = []) {
+  if (broker === '한국투자증권') return [IRP_ACCOUNT_LABEL, QUANT_TRACK_LABEL];
+  const holdingAccounts = matchingHoldingAccounts({ broker, stockName, stockCode }, holdings);
+  if (holdingAccounts.length) return holdingAccounts;
+  // 신규 국내주식 첫 체결은 보유현황으로 후보를 좁힐 수 없다. 자동 귀속은 계속
+  // 금지하되, 오너가 명시 확인할 수 있도록 주식 보유가 가능한 NH 후보(ISA·위탁)만
+  // 제시한다. 금현물은 parseGoldBuy의 API 정본 경로라 일반 주식 체결 선택지에 넣지 않는다.
+  return (AMBIGUOUS_BROKER_CANDIDATES[broker] ?? []).filter((account) => account !== '금현물');
+}
+
+// holdings: State/Holdings에서 읽은 프론트매터 배열({ account, name, ticker, ... }).
+// stockCode: 체결의 종목코드(있으면). acctNo: 알림 원문에서 캡처된 계좌번호(있으면).
+// 반환: 계좌명(string) 또는 null(못 풀림 또는 의도적 제외 — 호출부가 건너뛰고 플래그).
+export function resolveExecutionAccount({ broker, stockName, stockCode, acctNo }, holdings = []) {
+  if (acctNo && Object.prototype.hasOwnProperty.call(KNOWN_ACCOUNT_NUMBERS, acctNo)) {
+    return KNOWN_ACCOUNT_NUMBERS[acctNo];
+  }
+  if (UNIQUE_BROKER_ACCOUNT[broker]) return UNIQUE_BROKER_ACCOUNT[broker];
+
+  const holdingAccounts = matchingHoldingAccounts({ broker, stockName, stockCode }, holdings);
+  if (holdingAccounts.length === 1) return holdingAccounts[0];
   return null; // 양쪽 다 있거나(겹치는 종목) 어느 쪽에도 없음(신규 종목) — 추정 금지
 }
