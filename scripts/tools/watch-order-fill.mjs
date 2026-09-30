@@ -19,6 +19,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadKisCredentials, loadQuantAccount, getKisToken, checkOrderFill } from '../lib/kis.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -32,6 +33,10 @@ const ACCOUNT_LABEL = QUANT_TRACK_LABEL; // account-resolver.mjs·update-holding
 // 순수 Node 알림이라 부서 판단이 없다 — execute-quant-proposal.mjs와 같은 이유(2026-08-23
 // 재배정)로 운영실 Hermes로 통일. 처음(2026-08-17)엔 트랙 소관이라는 이유로 Kairos였음.
 const DEPARTMENT_LABEL = '운영실 Hermes';
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'watch-order-fill', warningCode: 'KIS_FILL_WATCH_TIMEOUT',
+  subjectKey: 'order-watch', kind: 'trade-safety', severity: 'high',
+});
 
 function parseArgs(argv) {
   const out = {};
@@ -217,13 +222,13 @@ async function main() {
   if (await checkAndReportIfDone()) return;
 
   console.log('[타임아웃] 확인 시간 내 전량체결 미확인 — 알림 발송');
-  await sendTelegram(formatDepartmentMessage({
+  await sendWarning(formatDepartmentMessage({
     departmentLabel: DEPARTMENT_LABEL,
     tag: '경고',
     body: `<b>체결 확인 시간 초과</b>\n${name}(${code}) 주문번호 ${orderNo}\n` +
       `${timeoutMin}분 동안 전량체결 확인 안 됨 — KIS 앱에서 직접 확인해 주세요.\n` +
       `(미체결로 남아있거나 부분체결됐을 수 있음)`,
-  }));
+  }), { subjectKey: warningSubjectKey('order', orderNo) });
 }
 
 // import.meta.url 가드(2026-08-23, 독립 코드리뷰 지적 — execute-quant-proposal.mjs와

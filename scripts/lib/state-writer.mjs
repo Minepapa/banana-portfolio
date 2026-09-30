@@ -6,11 +6,12 @@
 //
 // 락 획득 실패 시 짧게 재시도 후 포기한다(무한 대기 금지) — 죽은 프로세스가 락을 들고
 // 있으면 그 자리에서 시스템 전체가 멈추면 안 되므로, 오래된 락(staleLockMs 초과)은
-// 죽은 프로세스의 잔재로 간주하고 정리한다.
+// 소유 프로세스가 죽은 경우에만 정리한다. 살아 있는 프로세스의 장시간 쓰기는 보존한다.
 
 import {
   writeFileSync, renameSync, unlinkSync, closeSync, openSync, statSync, readFileSync,
 } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { updateFrontmatter } from './vault-frontmatter.mjs';
 
 const DEFAULT_RETRIES = 10;
@@ -21,31 +22,55 @@ function lockPath(filePath) {
   return `${filePath}.lock`;
 }
 
-// O_EXCL(wx) 플래그로 락파일을 원자적으로 생성 — 이미 존재하면 EEXIST로 실패(다른
-// 프로세스가 쓰는 중). 오래된 락은 죽은 프로세스의 잔재로 보고 정리 후 다음 루프에서
-// 재시도(이 호출 자체는 실패로 반환 — 정리 직후 바로 뺏지 않고 한 박자 쉬어 경합 완화).
+function processIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== 'ESRCH'; // 권한이 없어 확인 못 해도 살아 있는 것으로 취급
+  }
+}
+
+// O_EXCL(wx)로 생성한 락에 소유자 토큰을 남긴다. 시간이 오래됐다는 이유만으로 살아
+// 있는 쓰기의 락을 회수하지 않는다(긴 fsync 중 두 쓰기가 겹치는 사고 방지).
 function tryAcquireLock(filePath, staleLockMs) {
   const lp = lockPath(filePath);
   try {
-    const fd = openSync(lp, 'wx');
-    writeFileSync(fd, String(process.pid));
-    closeSync(fd);
-    return true;
+    const fd = openSync(lp, 'wx', 0o600);
+    const owner = `${process.pid}:${randomUUID()}`;
+    try {
+      writeFileSync(fd, owner);
+    } catch (error) {
+      try { unlinkSync(lp); } catch { /* 다른 오류를 가리지 않음 */ }
+      throw error;
+    } finally {
+      closeSync(fd);
+    }
+    return owner;
   } catch (e) {
     if (e.code !== 'EEXIST') throw e;
     try {
       const stat = statSync(lp);
-      if (Date.now() - stat.mtimeMs > staleLockMs) unlinkSync(lp);
+      if (Date.now() - stat.mtimeMs > staleLockMs) {
+        const owner = readFileSync(lp, 'utf8');
+        const pid = Number(owner.split(':', 1)[0]);
+        if (!processIsAlive(pid)) {
+          const current = statSync(lp);
+          if (current.ino === stat.ino && readFileSync(lp, 'utf8') === owner) unlinkSync(lp);
+        }
+      }
     } catch {
       // 그 사이 다른 프로세스가 이미 정리·해제했으면 무시 — 다음 재시도에서 다시 판단
     }
-    return false;
+    return null;
   }
 }
 
-function releaseLock(filePath) {
+function releaseLock(filePath, owner) {
   try {
-    unlinkSync(lockPath(filePath));
+    const lp = lockPath(filePath);
+    if (readFileSync(lp, 'utf8') === owner) unlinkSync(lp);
   } catch {
     // 이미 없으면(예: 정리됨) 무시 — 해제는 best-effort
   }
@@ -60,11 +85,12 @@ export async function withLock(filePath, fn, {
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
 } = {}) {
   for (let attempt = 0; ; attempt++) {
-    if (tryAcquireLock(filePath, staleLockMs)) {
+    const owner = tryAcquireLock(filePath, staleLockMs);
+    if (owner) {
       try {
         return await fn();
       } finally {
-        releaseLock(filePath);
+        releaseLock(filePath, owner);
       }
     }
     if (attempt >= retries) {

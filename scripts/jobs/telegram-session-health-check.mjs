@@ -76,6 +76,7 @@ import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 import { isProcessAlive, isPollingStuck, isSessionLogStale, TELEGRAM_SESSION_PROCESS_PATTERN, TELEGRAM_MCP_SUBPROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
 import { findTelegramTranscripts, readTranscriptLines, findLatestUnansweredTelegramOwnerMessage } from './telegram-session-handoff.mjs';
@@ -88,6 +89,10 @@ const MCP_LOSS_LOG_HEADER = '# 텔레그램 MCP 소실 진단 로그\n\n' +
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEPARTMENT_LABEL = '운영실 Hermes';
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'telegram-session-health-check', warningCode: 'TELEGRAM_SESSION_UNHEALTHY',
+  subjectKey: 'telegram-session', kind: 'operational', severity: 'high',
+});
 const RESTART_SCRIPT = join(HERE, '..', 'launchd', 'restart-telegram-session.sh');
 const STATE_DIR = join(VAULT_PATHS.root, 'State', 'TelegramSessionHealth');
 const STATE_FILE = join(STATE_DIR, 'status.md');
@@ -343,7 +348,7 @@ async function main() {
     writeState(nextState);
     console.log(`🚨 연속 ${consecutiveRestarts}회 — 재시작 중단, 수동 개입 필요 알림만 발송`);
     try {
-      await sendTelegram(formatFactsMessage({
+      await sendWarning(formatFactsMessage({
         departmentLabel: DEPARTMENT_LABEL,
         tag: '경고',
         facts: [
@@ -369,7 +374,7 @@ async function main() {
   writeState(restartOk ? markRestartSucceeded(nextState, { nowMs: Date.now(), reasonKey }) : nextState);
 
   try {
-    await sendTelegram(formatFactsMessage({
+    await sendWarning(formatFactsMessage({
       departmentLabel: DEPARTMENT_LABEL,
       tag: '경고',
       facts: [

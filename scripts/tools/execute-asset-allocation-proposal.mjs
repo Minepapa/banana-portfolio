@@ -57,6 +57,7 @@ import { loadExecutedOrderIds, recordExecutedOrder, unrecordExecutedOrder } from
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { readOptionalStateFile } from '../lib/state-reader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { getCodeRegistry } from '../lib/stock-registry.mjs';
 import {
@@ -78,6 +79,9 @@ import { getBondBalance, getBondCurrentPrice, placeBondBuyOrder } from '../lib/n
 // 차단)은 전부 결정론적 Node 판정이지 부서(LLM) 판단이 아니라 무(無)부서 인프라
 // 알림으로 운영실 Hermes 라벨을 공유한다.
 const DEPARTMENT_LABEL = '운영실 Hermes';
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'execute-asset-allocation-proposal', kind: 'trade-safety', severity: 'high',
+});
 // 위탁·금현물만 — 연금저축은 오너 지시로 리마인더 전용 유지(자동체결 대상 아님).
 // ISA도 결과적으로 빠지지만 이유가 다르다 — NH PLUG API(/n2/acctinfo)가 ISA 계좌
 // 자체를 노출하지 않아(2026-09-03 라이브 확인, nh-accounts.mjs 헤더 주석 참고)
@@ -264,11 +268,13 @@ async function main() {
       const lines = duplicates.map(([key, ps]) => `· ${key}: ${ps.map((p) => p.id).join(', ')}`);
       for (const line of lines) console.error(`  ⛔ 같은 안건에 "승인"이 2건 이상 — 추정하지 않고 전부 건너뜀: ${line}`);
       try {
-        await sendTelegram(formatDepartmentMessage({
+        await sendWarning(formatDepartmentMessage({
           departmentLabel: DEPARTMENT_LABEL, tag: '경고',
           body: `<b>제안 정합성 이상(자산분배)</b>\n같은 안건에 "승인" 상태가 2건 이상 동시에 있어 자동체결을 보류했습니다.\n` +
             `수동으로 확인 후 하나만 남기고 나머지는 거부/대체 처리해 주세요.\n${lines.join('\n')}`,
-        }));
+        }), {
+          warningCode: 'DUPLICATE_APPROVED_PROPOSAL', subjectKey: 'allocation-approval-batch',
+        });
       } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
       const duplicateIds = new Set(duplicates.flatMap(([, ps]) => ps.map((p) => p.id)));
       targets = targets.filter((p) => !duplicateIds.has(p.id));
@@ -453,10 +459,12 @@ async function main() {
       console.log(`  ⛔ ${proposal.id} — 검문소 차단: ${newReason}`);
       if (newReason !== (proposal.gateBlockedReason || '')) {
         try {
-          await sendTelegram(formatDepartmentMessage({
+          await sendWarning(formatDepartmentMessage({
             departmentLabel: DEPARTMENT_LABEL, tag: '차단',
             body: `<b>검문소 차단(자산분배)</b>\n${proposal.side} ${proposal.assetKey} ${proposal.quantity}주 (제안 ${proposal.id})\n${newReason}`,
-          }));
+          }), {
+            warningCode: 'PROPOSAL_GATE_BLOCKED', subjectKey: warningSubjectKey('proposal', proposal.id),
+          });
         } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
       }
     } else {

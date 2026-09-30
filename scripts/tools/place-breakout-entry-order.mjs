@@ -24,9 +24,14 @@ import { STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 
 const DEPARTMENT_LABEL = '운영실 Hermes'; // watch-breakout-entry-fill.mjs와 동일 원칙 — 순수 API조회+발주 결과 전달, 부서 판단 없음
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'place-breakout-entry-order', warningCode: 'BREAKOUT_ENTRY_WARNING',
+  subjectKey: 'batch', kind: 'legacy-unstructured', severity: 'unclassified',
+});
 const won = (n) => (n == null ? '확인 필요' : Math.round(n).toLocaleString('ko-KR') + '원');
 
 // execute-quant-proposal.mjs·execute-asset-allocation-proposal.mjs의 readStateFileOrNull과
@@ -88,7 +93,7 @@ export function isWithinAfterHoursSubmitWindow(date) {
 async function alertAndExit(body, code = 1) {
   console.error(`❌ ${body.replace(/<[^>]+>/g, '')}`);
   try {
-    await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', body }));
+    await sendWarning(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', body }));
   } catch (e) { console.error(`  ⚠️ 텔레그램 발송 자체도 실패(무시): ${e.message}`); }
   process.exit(code);
 }
@@ -219,7 +224,7 @@ async function main() {
   // 스폰됐을 수 있어) 아무도 모르는 무방비 실거래 포지션이 생긴다 — 반드시 텔레그램.
   child.on('error', (e) => {
     console.error(`  ⚠️ 체결감시 기동 실패(주문 자체는 이미 접수됨): ${e.message}`);
-    sendTelegram(formatDepartmentMessage({
+    sendWarning(formatDepartmentMessage({
       departmentLabel: DEPARTMENT_LABEL, tag: '경고',
       body: `<b>체결감시 기동 실패 — 무방비 포지션 위험</b>\n${name}(${code}) ${quantity}주 장후시간외 매수 주문(번호 ${order.orderNo})은 이미 접수됐지만, 체결감시 프로세스를 못 띄워 체결확인·보호주문(손절/3R익절)이 걸리지 않습니다. 즉시 KIS 앱에서 체결 여부를 확인하고 필요하면 수동으로 보호주문을 걸어주세요.`,
     })).catch((telegramErr) => console.error(`  ⚠️ 텔레그램 발송도 실패: ${telegramErr.message}`));
@@ -234,7 +239,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     // stdio:'ignore'로 스폰됐을 수 있어 콘솔만으론 아무도 못 봄 — 예상 못 한 예외도
     // 반드시 텔레그램으로 표면화(위 alertAndExit이 못 잡는 경로들의 최종 안전망).
     try {
-      await sendTelegram(formatDepartmentMessage({
+      await sendWarning(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL, tag: '경고',
         body: '<b>돌파매매 진입 스크립트 예외 종료</b>\n예상 못 한 오류로 중단됐습니다. 주문이 실제로 나갔는지 KIS 앱에서 확인 바랍니다(상세 원인은 로그 참고).',
       }));

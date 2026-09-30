@@ -56,12 +56,20 @@ import { parseNhExecutionRows, isTerminalNhExecution } from '../jobs/reconcile-n
 import { recordNhTerminalExecution } from '../lib/nh-execution-ledger.mjs';
 import { recordProposalExecutionStatus } from '../lib/proposal-execution-status.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
 // 순수 API 조회 결과를 그대로 전달하는 통보라 부서 판단이 없다 — watch-order-
 // fill.mjs·execute-quant-proposal.mjs와 동일 이유로 운영실 Hermes로 통일.
 const DEPARTMENT_LABEL = '운영실 Hermes';
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'watch-nh-order-fill', subjectKey: 'order-watch',
+  kind: 'trade-safety', severity: 'high',
+});
+export function nhOrderWarningSubjectKey(account, orderNo) {
+  return warningSubjectKey('order', `${account}:${orderNo}`);
+}
 // execute-asset-allocation-proposal.mjs의 ALLOWED_NH_ACCOUNTS와 동일 집합(CMA·ISA
 // 제외 근거는 파일 헤더 주석 참고) — 이 파일이 독립 실행돼도 같은 계좌 판정을
 // 쓰도록 여기서도 명시(교차 임포트 대신 값만 복제 — execute-asset-allocation-
@@ -144,10 +152,10 @@ export function formatNhTimeoutBody({ name, code, orderNo, account, timeoutMin, 
 async function alertAndExit(message, exitCode = 2) {
   console.error(`❌ ${message}`);
   try {
-    await sendTelegram(formatDepartmentMessage({
+    await sendWarning(formatDepartmentMessage({
       departmentLabel: DEPARTMENT_LABEL, tag: '경고',
       body: `<b>NH 체결감시 시작 실패</b>\n${message}`,
-    }));
+    }), { warningCode: 'NH_FILL_WATCH_START_FAILED' });
   } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
   process.exit(exitCode);
 }
@@ -161,6 +169,9 @@ function kstTodayParts() {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const orderNo = args['order-no'];
+  const sendOrderWarning = (message, details) => sendWarning(message, {
+    ...details, subjectKey: nhOrderWarningSubjectKey(account, orderNo),
+  });
   const account = args.account;
   const code = args.code || '';
   const name = args.name || code;
@@ -295,11 +306,11 @@ async function main() {
     });
     if (!ledger.ok) {
       console.error(`[Ledger] 기록 보류: ${ledger.reason}`);
-      await sendTelegram(formatDepartmentMessage({
+      await sendOrderWarning(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL,
         tag: '경고',
         body: `<b>NH 체결은 확인됐지만 장부 기록을 완료하지 못했습니다.</b>\n${name}(${code}) 주문번호 ${orderNo}(${account})\nNH 응답과 기존 체결기록을 확인해 주세요.`,
-      }));
+      }), { warningCode: 'NH_FILL_LEDGER_WRITE_BLOCKED' });
       return true;
     }
     console.log(ledger.event
@@ -334,11 +345,11 @@ async function main() {
   }
   const timeoutState = classifyNhTimeoutOrder(timeoutRow);
   console.log(`[타임아웃] 확인 시간 내 전량체결 미확인 — ${timeoutState.kind} 판정 알림 발송`);
-  await sendTelegram(formatDepartmentMessage({
+  await sendOrderWarning(formatDepartmentMessage({
     departmentLabel: DEPARTMENT_LABEL,
     tag: '경고',
     body: formatNhTimeoutBody({ name, code, orderNo, account, timeoutMin, state: timeoutState }),
-  }));
+  }), { warningCode: 'NH_FILL_WATCH_TIMEOUT' });
 }
 
 // import.meta.url 가드(watch-order-fill.mjs·execute-quant-proposal.mjs와 동일 이유).

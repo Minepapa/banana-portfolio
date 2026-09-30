@@ -41,12 +41,17 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
 const DEPARTMENT_LABEL = '투자전략실 Athena';
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'annual-instrument-rescore', warningCode: 'INSTRUMENT_REPLACEMENT_PARTIAL_SEND',
+  kind: 'data-quality', severity: 'high',
+});
 const IN_SCOPE_ACCOUNTS = ['위탁', '연금저축'];
 // 2026-09-07 60→252(≈1년) 상향 — rankAssetClassUniverse의 기본값과 반드시 같아야
 // 한다(instrument-scoring.mjs 헤더 주석 참고: absoluteReturn·excessReturn 축이
@@ -261,6 +266,9 @@ async function main() {
             existingProposals,
             writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
             sendMessage: (text) => sendTelegram(text).then((r) => r?.result ?? r),
+            sendWarning: createDirectWarningSender(sendTelegram, {
+              jobName: 'annual-instrument-rescore', kind: 'trade-safety', severity: 'high',
+            }),
           });
           console.log(`  📤 [${account}/${assetClass}] 매도 ${inst.name}: ${sellResult.action}${sellResult.reason ? ` (${sellResult.reason})` : ''}`);
           // 코드리뷰 지적(2026-09-06, HIGH) — 성공한 제안을 existingProposals에 되먹이지
@@ -284,6 +292,9 @@ async function main() {
               existingProposals,
               writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
               sendMessage: (text) => sendTelegram(text).then((r) => r?.result ?? r),
+              sendWarning: createDirectWarningSender(sendTelegram, {
+                jobName: 'annual-instrument-rescore', kind: 'trade-safety', severity: 'high',
+              }),
             });
             console.log(`  📤 [${account}/${assetClass}] 매수 ${evaluation.bestAlternative.name}: ${buyResult.action}${buyResult.reason ? ` (${buyResult.reason})` : ''}`);
             if (isSent(buyResult)) {
@@ -306,7 +317,7 @@ async function main() {
           // 금지 규칙 위반)와 형식 없는 한 문단으로 발송되고 있었다. 다른 텔레그램
           // 메시지와 동일한 [사실] 구조로 통일.
           try {
-            await sendTelegram(formatFactsMessage({
+            await sendWarning(formatFactsMessage({
               departmentLabel: DEPARTMENT_LABEL,
               tag: '경고',
               facts: [
@@ -315,7 +326,7 @@ async function main() {
                 `매수: ${buyResult.action}${buyResult.reason ? `(${buyResult.reason})` : ''}`,
                 '수동 확인 필요',
               ],
-            }));
+            }), { subjectKey: warningSubjectKey('replacement', `${account}:${inst.name}`) });
           } catch (e2) { console.error(`  ❌ 반쪽 발송 경고 텔레그램 실패: ${e2.message}`); }
         }
       }

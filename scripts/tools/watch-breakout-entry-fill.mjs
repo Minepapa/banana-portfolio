@@ -31,6 +31,7 @@ import {
   loadQuantAccount, getKisToken, checkOrderFill, placeKrOrder,
 } from '../lib/kis.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -44,6 +45,10 @@ import { roundToKrxTick } from '../lib/krx-tick.mjs';
 
 const BROKER = '한국투자증권';
 const DEPARTMENT_LABEL = '운영실 Hermes'; // watch-order-fill.mjs와 동일 원칙 — 순수 API조회 결과 전달, 부서 판단 없음
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'watch-breakout-entry-fill', warningCode: 'BREAKOUT_ENTRY_FILL_WARNING',
+  subjectKey: 'order-watch', kind: 'trade-safety', severity: 'high',
+});
 
 function parseArgs(argv) {
   const out = {};
@@ -113,6 +118,9 @@ function buildProtectionMessage({ name, code, entryPrice, quantity, protection, 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const orderNo = args['order-no'];
+  const sendOrderWarning = (message, warningCode) => sendWarning(message, {
+    warningCode, subjectKey: warningSubjectKey('order', orderNo),
+  });
   const orgNo = args['org-no'] || null; // 취소시도용(2026-09-19) — 없으면(과거 호출부 등) 그냥 취소시도를 스킵
   const code = args.code || '';
   const name = args.name || code;
@@ -214,19 +222,25 @@ async function main() {
     writeAtomic(filePath, updated);
     console.log(`[보호주문] ${protection.protectionStatus}(시도 ${protection.attempts}회)`);
 
-    await sendTelegram(formatDepartmentMessage({
-      departmentLabel: DEPARTMENT_LABEL,
-      tag: protection.protectionStatus === 'protected' ? '완료' : '경고',
-      body: buildProtectionMessage({ name, code, entryPrice: avgFillPrice, quantity: filledQty, stopLossPct, protection }),
-    }));
+    if (protection.protectionStatus === 'protected') {
+      await sendTelegram(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL, tag: '완료',
+        body: buildProtectionMessage({ name, code, entryPrice: avgFillPrice, quantity: filledQty, stopLossPct, protection }),
+      }));
+    } else {
+      await sendOrderWarning(formatDepartmentMessage({
+        departmentLabel: DEPARTMENT_LABEL, tag: '경고',
+        body: buildProtectionMessage({ name, code, entryPrice: avgFillPrice, quantity: filledQty, stopLossPct, protection }),
+      }), 'BREAKOUT_STOP_ORDER_FAILED');
+    }
   }
 
   async function recordDeferredAfterHoursFill(filledQty, avgFillPrice, label) {
     if (!(filledQty > 0) || !(avgFillPrice > 0)) {
-      await sendTelegram(formatDepartmentMessage({
+      await sendOrderWarning(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL, tag: '경고',
         body: `<b>장후시간외 부분체결 — 평균가 확인 불가</b>\n${name}(${code}) 주문번호 ${orderNo} — ${label}, 체결분을 기록하고 보호주문으로 넘기지 못했습니다. KIS 앱에서 즉시 확인 바랍니다.`,
-      }));
+      }), 'BREAKOUT_PARTIAL_FILL_PRICE_UNKNOWN');
       return;
     }
     const { filename, content, dir } = buildExecutionRecord({
@@ -257,10 +271,10 @@ async function main() {
       }
       if (canceledOutcome.action === 'manualReview') {
         console.error('[취소 확인] 일부 체결된 주문 — 체결분 포지션·보호주문은 수동 확인 필요');
-        await sendTelegram(formatDepartmentMessage({
+        await sendOrderWarning(formatDepartmentMessage({
           departmentLabel: DEPARTMENT_LABEL, tag: '경고',
           body: `<b>돌파매매 부분체결 후 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — ${result.filledQty}주 체결 후 주문이 취소됐습니다. 체결분 포지션과 보호주문을 KIS 앱에서 확인 바랍니다.`,
-        }));
+        }), 'BREAKOUT_PARTIAL_CANCELED_REVIEW');
         return { done: true, result };
       }
       console.log('[취소 확인] 매수 주문이 취소됨 — 포지션 생성 안 함');
@@ -274,10 +288,10 @@ async function main() {
       console.log(`[체결 확인] 전량 체결 — 평균단가 ${result.avgFillPrice}원`);
       if (result.avgFillPrice == null) {
         console.error('[중단] avgFillPrice 없음 — 보호주문 계산 불가, 수동 확인 필요');
-        await sendTelegram(formatDepartmentMessage({
+        await sendOrderWarning(formatDepartmentMessage({
           departmentLabel: DEPARTMENT_LABEL, tag: '경고',
           body: `<b>돌파매매 매수 체결됐으나 평균단가 확인 불가</b>\n${name}(${code}) 주문번호 ${orderNo} — 보호주문을 자동으로 못 걸었습니다. 즉시 수동 확인 바랍니다.`,
-        }));
+        }), 'BREAKOUT_FILL_PRICE_UNKNOWN');
         return { done: true, result };
       }
       const { filename, content, dir } = buildExecutionRecord({
@@ -331,11 +345,11 @@ async function main() {
   }
 
   console.log(`[타임아웃] ${decision.reason} — 알림 발송`);
-  await sendTelegram(formatDepartmentMessage({
+  await sendOrderWarning(formatDepartmentMessage({
     departmentLabel: DEPARTMENT_LABEL, tag: '경고',
     body: `<b>돌파매매 매수 체결 확인 시간 초과</b>\n${name}(${code}) 주문번호 ${orderNo}\n` +
       `${decision.reason} — KIS 앱에서 직접 확인해 주세요.`,
-  }));
+  }), 'BREAKOUT_FILL_WATCH_TIMEOUT');
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

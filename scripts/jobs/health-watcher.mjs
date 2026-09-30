@@ -17,6 +17,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseFrontmatter, isStale } from '../lib/job-health.mjs';
 import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 import { describeJob, JOB_REMEDIATION } from '../lib/job-labels.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
@@ -36,6 +37,10 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // 2026-08-14 오너 지적 — 알림에 어느 잡을 감시하는 건지·어느 부서 소관인지 표기 안 돼
 // 있어 헷갈렸음, formatDepartmentMessage(기존 부서 메시지 포맷)로 통일.
 const DEPARTMENT_LABEL = '운영실 Hermes';
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'health-watcher', warningCode: 'JOB_HEALTH_ISSUES', subjectKey: 'batch',
+  kind: 'operational', severity: 'high',
+});
 
 // 잡별 기대 실행 주기 — 새 v2 잡이 생길 때마다 여기 추가한다(구현계획서 Phase 5+).
 // 값이 없는 잡은 기본값(EXPECTED_INTERVAL_DEFAULT_MS)을 쓴다.
@@ -145,6 +150,7 @@ export const EXPECTED_INTERVALS_MS = {
   // ⚠️ 이 잡은 장 마감 후·주말엔 실행돼도 즉시 조용히 종료하는 게 정상 동작(isKrMarketOpen
   // ||isUsMarketOpen 게이트) — run.sh가 종료코드 0으로 하트비트를 남기므로 stale 오탐 없음.
   'intraday-market-move-monitor': 10 * 60 * 1000,
+  'process-warning-actions': 10 * 60 * 1000,
   // health-watcher 자기 자신도 StartInterval=1800(30분마다)이라 등록 — 다만 여기 등록해도
   // 구조적 사각은 남는다: findStaleJobs는 health-watcher **자신이 실행될 때만** 호출된다.
   // health-watcher 프로세스 자체가(launchd unload·크래시 등으로) 아예 안 돌기 시작하면
@@ -310,7 +316,7 @@ async function main() {
     try {
       // 이 잡은 LLM을 아예 안 부르는 순수 운영 감시라 해석 문단 없이 사실(불릿)만
       // 나간다 — 오너 확정 표준 구조의 "변형" 허용 범위(2026-08-17).
-      await sendTelegram(formatFactsMessage({
+      await sendWarning(formatFactsMessage({
         departmentLabel: DEPARTMENT_LABEL,
         tag: '경고',
         facts: [`<b>장애감지 ${issues.length}건</b>`, ...issues],

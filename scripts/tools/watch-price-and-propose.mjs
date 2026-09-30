@@ -15,6 +15,7 @@ import { parseProposal } from '../lib/proposal-vault.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 import { hasKisCredentials, loadKisCredentials, getKisToken, getKrQuote, isKrMarketOpen } from '../lib/kis.mjs';
 
@@ -98,6 +99,9 @@ async function main() {
       const result = await createAndSendProposal({
         track: '퀀트', assetKey: code, name, side, quantity, proposedPrice: target, reason,
         departmentLabel: '퀀트전략실 Kairos', existingProposals, writeProposalFile, sendMessage, proposalsBlocked,
+        sendWarning: createDirectWarningSender(sendTelegram, {
+          jobName: 'watch-price-and-propose', kind: 'trade-safety', severity: 'high',
+        }),
       });
 
       if (result.action === 'blocked') {

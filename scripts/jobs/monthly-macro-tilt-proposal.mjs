@@ -50,6 +50,7 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -456,6 +457,9 @@ async function main() {
         existingProposals,
         writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
         sendMessage: (text) => sendTelegram(text).then((r) => r?.result ?? r),
+        sendWarning: createDirectWarningSender(sendTelegram, {
+          jobName: 'monthly-macro-tilt-proposal', kind: 'trade-safety', severity: 'high',
+        }),
       });
       console.log(`  📤 [${action.account}] ${action.side} ${action.instrumentName}(${action.assetClass}): ${result.action}${result.reason ? ` (${result.reason})` : ''}`);
       // 코드리뷰 지적(2026-09-06, HIGH) — 성공한 제안을 existingProposals에 되먹이지

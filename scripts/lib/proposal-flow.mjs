@@ -9,6 +9,7 @@
 import { resolveProposalIntake } from './order-gate.mjs';
 import { buildProposalRecord, updateProposalRecord } from './proposal-vault.mjs';
 import { formatFactsMessage } from './telegram-messages.mjs';
+import { warningSubjectKey } from './direct-warning-delivery.mjs';
 
 // track → 원본 발송 부서 라벨. proposal 레코드 자체는 departmentLabel을 저장하지 않는다
 // (createAndSendProposal 호출부가 매번 넘겨줄 뿐) — 승인/거부 후 원본 메시지를 편집할 때는
@@ -125,6 +126,7 @@ export async function createAndSendProposal({
   existingProposals,
   writeProposalFile,
   sendMessage,
+  sendWarning = sendMessage,
   amountWon = null,
   proposalsBlocked = false,
 }) {
@@ -154,7 +156,7 @@ export async function createAndSendProposal({
   } catch (error) {
     console.error(`[proposal-flow] 발송중 제안 저장 실패(${id}): ${error?.message ?? 'unknown error'}`);
     await markProposalFailed(writeProposalFile, filename, sendingContent, id);
-    await notifyProposalNotApprovable(sendMessage, id, 'Vault에 제안 레코드를 저장하지 못해 제안 메시지는 발송하지 않았습니다.');
+    await notifyProposalNotApprovable(sendWarning, id, 'Vault에 제안 레코드를 저장하지 못해 제안 메시지는 발송하지 않았습니다.');
     return { action: 'failed', id, filename, telegramMessageId: null, supersededId, reason: '제안 레코드 저장 실패' };
   }
 
@@ -169,14 +171,14 @@ export async function createAndSendProposal({
   } catch (error) {
     console.error(`[proposal-flow] Telegram 발송 실패(${id}): ${error?.message ?? 'unknown error'}`);
     await markProposalFailed(writeProposalFile, filename, sendingContent, id);
-    await notifyProposalNotApprovable(sendMessage, id, 'Telegram 발송 결과를 확인할 수 없습니다.');
+    await notifyProposalNotApprovable(sendWarning, id, 'Telegram 발송 결과를 확인할 수 없습니다.');
     return { action: 'failed', id, filename, telegramMessageId: null, supersededId, reason: 'Telegram 발송 실패' };
   }
   const telegramMessageId = sendResult?.message_id ?? null;
 
   if (telegramMessageId == null) {
     await markProposalFailed(writeProposalFile, filename, sendingContent, id);
-    await notifyProposalNotApprovable(sendMessage, id, 'Telegram 응답에 메시지 ID가 없습니다.');
+    await notifyProposalNotApprovable(sendWarning, id, 'Telegram 응답에 메시지 ID가 없습니다.');
     return { action: 'failed', id, filename, telegramMessageId: null, supersededId, reason: 'Telegram 메시지 ID 누락' };
   }
 
@@ -202,7 +204,7 @@ export async function createAndSendProposal({
       const detail = oldRestored
         ? '새 제안은 전송됐지만 기존 제안을 대체하지 못했습니다. 기존 제안 상태를 확인하세요.'
         : `새 제안은 전송됐고 기존 제안 ${supersededProposal.id}의 상태 복구도 실패했습니다. Vault에서 기존 제안 상태를 확인하세요.`;
-      await notifyProposalNotApprovable(sendMessage, id, detail);
+      await notifyProposalNotApprovable(sendWarning, id, detail);
       return { action: 'failed', id, filename, telegramMessageId: null, supersededId: null, reason: '기존 제안 대체 실패' };
     }
   }
@@ -226,7 +228,7 @@ export async function createAndSendProposal({
     const detail = oldRestored
       ? 'Telegram 메시지는 전송됐지만 Vault에 승인 연결정보를 저장하지 못했습니다.'
       : `Telegram 메시지는 전송됐고, 기존 제안 ${supersededProposal.id}의 상태 복구도 실패했습니다. Vault에서 기존 제안 상태를 확인하세요.`;
-    await notifyProposalNotApprovable(sendMessage, id, detail);
+    await notifyProposalNotApprovable(sendWarning, id, detail);
     return {
       action: 'failed', id, filename, telegramMessageId: null, supersededId,
       reason: 'Telegram 발송 후 승인 연결정보 저장 실패',
@@ -244,7 +246,7 @@ async function markProposalFailed(writeProposalFile, filename, sendingContent, i
   }
 }
 
-async function notifyProposalNotApprovable(sendMessage, id, detail) {
+async function notifyProposalNotApprovable(sendWarning, id, detail) {
   const warning = formatFactsMessage({
     departmentLabel: '운영실 Hermes',
     tag: '경고',
@@ -252,7 +254,9 @@ async function notifyProposalNotApprovable(sendMessage, id, detail) {
     context: `${detail} 새 제안은 승인하지 말고, 기존 안건 상태를 확인한 뒤 필요하면 다시 요청하세요.`,
   });
   try {
-    await sendMessage(warning);
+    await sendWarning(warning, {
+      warningCode: 'PROPOSAL_APPROVAL_LINK_BROKEN', subjectKey: warningSubjectKey('proposal', id),
+    });
   } catch (error) {
     console.error(`[proposal-flow] 승인 불가 경고 발송 실패(${id}): ${error?.message ?? 'unknown error'}`);
   }

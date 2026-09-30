@@ -80,6 +80,7 @@ import {
 } from '../lib/execution-confirmation-queue.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { escapeHtml, sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 
 // 금현물은 별도 Ledger 종류를 만들지 않고 체결(Executions)에 합류시킨다 — v1이 "금현물을
 // 별도 원장으로 뒀다가 버그나서 체결내역에 통합"한 전례를 반영(vault-paths.mjs 주석 참고).
@@ -107,6 +108,10 @@ function goldToExecutionEvent(g) {
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const DEPARTMENT_LABEL = '운영실 Hermes';
+const sendConfirmationWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'parse-notifications-to-vault', warningCode: 'EXECUTION_CONFIRMATION_NEEDED',
+  kind: 'owner-decision', severity: 'high',
+});
 
 // 카카오 예수금 알림을 인식은 하되 Facts/Ledger/CashEvents엔 안 쓰는 계좌
 // (2026-09-03, "위탁·CMA 먼저 진행" — 위 헤더 주석 참고). export(code-reviewer
@@ -238,9 +243,9 @@ async function writeOrNotifyExecutionConfirmation({ id, ts, body, event, holding
       if (!prepared.shouldSendTelegram) return prepared;
 
       try {
-        await sendTelegram(formatDepartmentMessage({
+        await sendConfirmationWarning(formatDepartmentMessage({
           departmentLabel: DEPARTMENT_LABEL, tag: '확인', body: prepared.telegramBody,
-        }));
+        }), { subjectKey: warningSubjectKey('confirmation', id) });
         const notified = { ...record, notifiedAt: now.toISOString(), updatedAt: now.toISOString() };
         writeAtomic(confirmationPath, serializeExecutionConfirmation(notified));
         return { ...prepared, confirmation: { ...prepared.confirmation, record: notified } };

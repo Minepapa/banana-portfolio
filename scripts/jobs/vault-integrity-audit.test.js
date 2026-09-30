@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import {
-  auditVault, extractWikiLinks, findExecutionDuplicates, findIdMismatches,
+  STATUS_RULES, auditVault, extractWikiLinks, findExecutionDuplicates, findIdMismatches,
   parseFlatFrontmatter, resolveWikiTarget, validateStatus,
 } from '../lib/vault-integrity-audit.mjs';
 
@@ -16,6 +16,14 @@ test('vault-integrity-audit: status는 지정 집합의 짧은 단일 값만 허
   assert.equal(validateStatus('완료 - 테스트 통과', allowed), false);
   assert.equal(validateStatus('완료\n추가 설명', allowed), false);
   assert.equal(validateStatus('x'.repeat(41), ['x'.repeat(41)]), false);
+});
+
+test('vault-integrity-audit: 제안 상태는 발송·주문접수·부분체결·취소·만료를 포함한다', () => {
+  const allowed = STATUS_RULES.find((rule) => rule.path === 'Decisions/Proposals').allowed;
+  for (const status of ['발송중', '발송오류', '주문접수', '부분체결', '취소', '만료']) {
+    assert.equal(validateStatus(status, allowed), true, status);
+  }
+  assert.equal(validateStatus('주문 접수 완료', allowed), false);
 });
 
 test('vault-integrity-audit: frontmatter flat fields and id/file mismatch', () => {

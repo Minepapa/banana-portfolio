@@ -53,11 +53,16 @@ import { todayKST } from '../lib/sheets-api.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 
 const DEPARTMENT_LABEL = '운영실 Hermes';
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'daily-breakout-signal-scan', subjectKey: 'breakout-scan',
+  kind: 'data-quality', severity: 'high',
+});
 // KIS 레이트리밋(EGW00201) 실측 기반 — update-holdings-prices.mjs·realtime-quotes.mjs와
 // 동일 수치(2026-07 재실측 확정값 그대로 재사용, 별도 튜닝 근거 없음).
 const STAGGER_MS = 800;
@@ -259,10 +264,10 @@ async function main() {
     const msg = `개별종목 시세 캐시 정합률 ${(cacheCoverageRatio * 100).toFixed(0)}%(기준일 ${cachedDate} 데이터 보유 ${haveCachedDate}/${liveCandidates.length}종목) — update-breakout-price-cache.mjs가 최근에 정상적으로 안 돈 것으로 의심됨. 신호 결과를 신뢰하지 말 것.`;
     console.error(`⚠️ ${msg}`);
     if (!dryRun) {
-      await sendTelegram(formatDepartmentMessage({
+      await sendWarning(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL, tag: '경고',
         body: `<b>돌파매매 일별 신호스캔 — 시세 캐시 정합률 이상</b>\n${msg}`,
-      }));
+      }), { warningCode: 'BREAKOUT_PRICE_CACHE_LOW_COVERAGE' });
     }
   }
 
@@ -291,10 +296,10 @@ async function main() {
   } catch (e) {
     console.error(`❌ 코스피 실시간지수 조회 실패 — 신호판정 불가, 중단: ${e.message}`);
     if (!dryRun) {
-      await sendTelegram(formatDepartmentMessage({
+      await sendWarning(formatDepartmentMessage({
         departmentLabel: DEPARTMENT_LABEL, tag: '경고',
         body: '<b>돌파매매 일별 신호스캔 중단 — 코스피 실시간지수 조회 실패</b>\n오늘은 신호판정 자체를 못 했습니다(발주 없음). 상세 원인은 로그를 확인해 주세요.',
-      }));
+      }), { warningCode: 'BREAKOUT_INDEX_QUERY_FAILED', kind: 'operational' });
     }
     return;
   }

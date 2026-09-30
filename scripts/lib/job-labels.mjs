@@ -37,6 +37,7 @@ export const JOB_LABELS = {
   'update-holdings-prices': '보유종목 실시간 시세 갱신(KRX·해외·환율)',
   'telegram-session-health-check': '상시 텔레그램 세션 MCP 연결 끊김 감지·자동복구',
   'intraday-market-move-monitor': '장중 시장 급변 실시간 감시(코스피·S&P500·VIX·DXY·USD/KRW·미국10Y, 리스크관리실 Themis 소관)',
+  'process-warning-actions': '운영 경고 원장에서 허용된 거시 조회 실패만 사건당 1회·30분 뒤 VIX 읽기 재조회(주문·장부·Telegram 변경 없음)',
   'weekly-vault-health-check': '므네모시네 주간 건강검진(구조 정합성·데이터 정합성·미완료 작업, 비서실 Apollo "관리 총괄" 소관, 2026-09-04 신설)',
   'pension-balance-reminder': '연금저축 잔고 확인 요청(매월 22일, 카카오 알림·API 둘 다 없는 계좌라 수동 확인만 가능, 2026-09-04 신설)',
   'annual-instrument-rescore': '보유 ETF 연 1회 재스코어링(1월 1~3일 첫 평일, 보수율·유동성·NAV괴리율·추적오차 재비교 후 격차 크면 Athena에게 유지/교체 판단 요청, 투자전략실 Athena, 2026-09-06 신설)',

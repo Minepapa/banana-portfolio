@@ -37,11 +37,16 @@ import { writeAtomic } from '../lib/state-writer.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 import { CANONICAL_PROGRESS_VALUES } from '../lib/vault-frontmatter.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const DEPARTMENT_LABEL = '비서실 Apollo';
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'weekly-vault-health-check', warningCode: 'VAULT_HEALTH_FINDINGS',
+  subjectKey: 'batch', kind: 'data-quality', severity: 'medium',
+});
 // 2026-09-04 므네모시네 대정리 완료일 — 이 날짜 이후 새로 생긴 legacy:true 파일은
 // "정리했는데 다시 쌓이기 시작함" 신호다(대정리 자체로 생긴 legacy 파일은 없음 —
 // 오히려 그 반대로 legacy를 지운 작업이었으므로 이 날짜를 기준으로 삼아도 안전).
@@ -422,7 +427,7 @@ async function main() {
   const { conclusion, context, decisions } = parseDepartmentResponse(judgment);
 
   try {
-    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '점검', facts, conclusion, context, decisions }));
+    await sendWarning(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '점검', facts, conclusion, context, decisions }));
   } catch (e) { console.error('텔레그램 알림 실패:', e.message); }
 }
 

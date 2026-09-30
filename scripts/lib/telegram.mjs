@@ -88,6 +88,13 @@ export function truncateForTelegram(text) {
   return t.slice(0, MAX_TELEGRAM_TEXT_LEN - TRUNCATE_MARKER.length) + TRUNCATE_MARKER;
 }
 
+function telegramSendError(message, status) {
+  const error = new Error(message);
+  // HTTP 4xx는 Bot API가 요청을 명시적으로 거부했다. 5xx·연결 단절은 수신 여부 불명.
+  if (status >= 400 && status < 500) error.telegramExplicitRejection = true;
+  return error;
+}
+
 export async function sendTelegram(text, chatId, { fetchImpl = fetch } = {}) {
   const cfg = loadTelegramConfig();
   const url = `https://api.telegram.org/bot${cfg.botToken}/sendMessage`;
@@ -106,10 +113,10 @@ export async function sendTelegram(text, chatId, { fetchImpl = fetch } = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, text: truncateForTelegram(`[서식 오류 — 원문 그대로 발송]\n${payload.text}`) }), // parse_mode 없음 = plain text
       });
-      if (!res.ok) throw new Error(`텔레그램 전송 실패(plain text 재시도도 실패): ${await res.text()}`);
+      if (!res.ok) throw telegramSendError(`텔레그램 전송 실패(plain text 재시도도 실패): ${await res.text()}`, res.status);
       return res.json();
     }
-    throw new Error(`텔레그램 전송 실패: ${bodyText}`);
+    throw telegramSendError(`텔레그램 전송 실패: ${bodyText}`, res.status);
   }
   return res.json();
 }

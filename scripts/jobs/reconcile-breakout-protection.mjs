@@ -33,9 +33,14 @@ import { patchFrontmatterFileSafely, withLock, writeAtomic } from '../lib/state-
 import { buildExecutionRecord, buildProfitRecord } from '../lib/ledger-vault-writer.mjs';
 import { QUANT_TRACK_LABEL } from '../lib/account-resolver.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 
 const DEPARTMENT_LABEL = '운영실 Hermes';
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'reconcile-breakout-protection', warningCode: 'BREAKOUT_PROTECTION_URGENT',
+  subjectKey: 'batch', kind: 'trade-safety', severity: 'critical',
+});
 const BROKER = '한국투자증권';
 const DRY_RUN = process.argv.includes('--dry-run');
 // retry-breakout-protection.mjs(수동 재시도 CLI)와 락 파일·유효기간을 공유한다 —
@@ -131,7 +136,8 @@ function readPositions() {
 async function notify(lines, tag = '보호') {
   if (!lines.length) return;
   if (DRY_RUN) { console.log(`[DRY RUN ${tag}] ${lines.join(' | ')}`); return; }
-  await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag, facts: lines }));
+  if (tag === '경고') await sendWarning(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag, facts: lines }));
+  else await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag, facts: lines }));
 }
 
 // 같은 체결을 재시도 때 두 번 기록하지 않도록(idempotency) 파일이 이미 있으면
@@ -165,7 +171,7 @@ async function main() {
     if (!openPositions.length) { await notify(fileErrors, '경고'); return; }
 
     const quant = loadQuantAccount();
-    if (!quant) { await notify(['KIS 퀀트계좌 설정을 읽지 못해 청산 관리를 보류했습니다.']); return; }
+    if (!quant) { await notify(['KIS 퀀트계좌 설정을 읽지 못해 청산 관리를 보류했습니다.'], '경고'); return; }
     const { appkey, appsecret } = quant;
     const token = await getKisToken({ appkey, appsecret });
     const [balance, cancelableOrders] = await Promise.all([

@@ -72,6 +72,7 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 loadEnv();
@@ -361,6 +362,9 @@ async function main() {
           existingProposals,
           writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
           sendMessage: (text) => sendTelegram(text).then((r) => r?.result ?? r),
+          sendWarning: createDirectWarningSender(sendTelegram, {
+            jobName: 'new-cash-allocation', kind: 'trade-safety', severity: 'high',
+          }),
         });
         if (result.action === 'blocked') {
           console.log(`  ⛔ ${alloc.instrumentName} 제안 차단: ${result.reason}`);

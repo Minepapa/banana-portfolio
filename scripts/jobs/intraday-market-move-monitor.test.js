@@ -4,6 +4,7 @@ import {
   classifyTier, buildMoveFacts, buildThemisPrompt, splitOffConsultation,
   parseConsultationRequest, buildConsultationPrompt, buildFinalSynthesisPrompt, shouldAlert,
   todayForSignal,
+  hasUsableMacroClose, hasAllMacroCloses,
 } from './intraday-market-move-monitor.mjs';
 import { parseDepartmentResponse } from '../lib/telegram-messages.mjs';
 
@@ -32,6 +33,16 @@ test('classifyTier: t3 없는 신호(DXY·10Y)는 t2에서 멈춤(정책, 버그
 test('classifyTier: 숫자가 아니면(NaN·undefined) null', () => {
   assert.equal(classifyTier(NaN, { t1: 1, t2: 2 }), null);
   assert.equal(classifyTier(undefined, { t1: 1, t2: 2 }), null);
+});
+
+test('yfinance가 예외를 빈 배열로 삼켜도 전부 결측이면 정상 무신호로 보지 않는다', () => {
+  const tickers = { VIX: '^VIX', TNX: '^TNX' };
+  assert.equal(hasUsableMacroClose({ '^VIX': [], '^TNX': [] }, tickers), false);
+  assert.equal(hasUsableMacroClose(null, tickers), false);
+  assert.equal(hasUsableMacroClose({ '^VIX': [null], '^TNX': [] }, tickers), false);
+  assert.equal(hasUsableMacroClose({ '^VIX': [25.1], '^TNX': [] }, tickers), true);
+  assert.equal(hasAllMacroCloses({ '^VIX': [25.1], '^TNX': [] }, tickers), false);
+  assert.equal(hasAllMacroCloses({ '^VIX': [25.1], '^TNX': [4.5] }, tickers), true);
 });
 
 test('buildMoveFacts: breach 배열을 "라벨 상세(단계)" 불릿 문자열로', () => {

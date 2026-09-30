@@ -44,6 +44,7 @@ import { todayKST } from '../lib/sheets-api.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import {
   parsePendingEntry, updatePendingEntryRecord, findUnprocessedPendingEntries, isPendingEntryStale, PENDING_ENTRY_STATUS,
@@ -52,6 +53,10 @@ import { parseBreakoutPosition, findOpenPositions } from '../lib/breakout-positi
 import { MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
 
 const DEPARTMENT_LABEL = '운영실 Hermes';
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'place-breakout-fallback-entry', warningCode: 'BREAKOUT_FALLBACK_WARNING',
+  subjectKey: 'batch', kind: 'legacy-unstructured', severity: 'unclassified',
+});
 const won = (n) => (n == null ? '확인 필요' : Math.round(n).toLocaleString('ko-KR') + '원');
 
 function loadPendingEntries(dir) {
@@ -64,7 +69,8 @@ function loadPendingEntries(dir) {
 
 async function notify(tag, body) {
   try {
-    await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag, body }));
+    if (tag === '경고') await sendWarning(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag, body }));
+    else await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag, body }));
   } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
 }
 

@@ -10,12 +10,13 @@
 //      — 매시간 잡이 같은 경고를 반복 푸시하는 스팸 방지. 상태: scripts/.cache/job-alerts.json
 // 텔레그램 실패는 console.error 후 무시(record-heartbeat와 동일 정책 — 알림이 잡을 죽이지 않음).
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { sendTelegram } from './telegram.mjs';
 import { formatFactsMessage } from './telegram-messages.mjs';
 import { describeJob } from './job-labels.mjs';
+import { deliverWarningBatch } from './warning-batch-delivery.mjs';
+export { shouldNotify } from './warning-batch-delivery.mjs';
 
 // 2026-08-23 — 이 알림엔 부서 라벨이 아예 없었다(오너 지시로 전체 텔레그램 메시지
 // 구조 재점검 중 발견) — 잡·인프라 배관은 운영실(Hermes) 소관 원칙(health-watcher.mjs
@@ -24,41 +25,38 @@ const DEPARTMENT_LABEL = '운영실 Hermes';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = join(HERE, '..', '.cache', 'job-alerts.json');
-const SUPPRESS_MS = 24 * 3600 * 1000;
 
 const warnings = [];
+const structuredWarnings = [];
 
-export function collectWarning(msg) {
+export function collectWarning(msg, details = null) {
   const m = String(msg ?? '').trim();
-  if (m) warnings.push(m);
+  if (m) {
+    warnings.push(m);
+    if (details) structuredWarnings.push(details);
+  }
 }
 
 export function warningCount() { return warnings.length; }
 
 // 테스트용 — 모듈 상태 초기화
-export function resetWarnings() { warnings.length = 0; }
-
-// 순수 판단 함수(테스트 가능): 이번 경고 세트를 발송해야 하나?
-export function shouldNotify(state, jobName, sig, now = Date.now()) {
-  const prev = state?.[jobName];
-  return !(prev && prev.sig === sig && now - prev.ts < SUPPRESS_MS);
-}
+export function resetWarnings() { warnings.length = 0; structuredWarnings.length = 0; }
 
 export function warningsSignature(list) {
   return createHash('sha1').update([...list].sort().join('\n')).digest('hex');
 }
 
-export async function flushWarnings(jobName, { dryRun = false } = {}) {
+export async function flushWarnings(jobName, {
+  dryRun = false, sendImpl = sendTelegram, stateFile = STATE_FILE, journalRoot,
+  now = Date.now, logger = console,
+} = {}) {
   if (!warnings.length) return;
   // 1) 잡상태 detail 노출 경로 — 반드시 로그 "마지막" 줄들에 위치해야 tail -3에 잡힌다.
   console.log(`⚠ 경고 ${warnings.length}건: ${warnings.join(' | ').slice(0, 180)}`);
-  if (dryRun) return;
+  if (dryRun) return { status: 'dry-run' };
 
   // 2) 텔레그램 (24h 동일 시그니처 억제)
   const sig = warningsSignature(warnings);
-  let state = {};
-  try { state = JSON.parse(readFileSync(STATE_FILE, 'utf8')); } catch { state = {}; }
-  if (!shouldNotify(state, jobName, sig)) return;
   try {
     // 2026-09-14 오너 지적 반영 — 이 알림이 다른 부서 보고(formatFactsMessage 쓰는
     // 것들)와 다른 임시 서식(굵은 제목+불릿 혼합)을 써서 "정리 안 된 채 던져지는"
@@ -72,15 +70,17 @@ export async function flushWarnings(jobName, { dryRun = false } = {}) {
       ...shown,
     ];
     if (warnings.length > shown.length) facts.push(`… 외 ${warnings.length - shown.length}건(로그 확인 필요)`);
-    await sendTelegram(formatFactsMessage({
+    const message = formatFactsMessage({
       departmentLabel: DEPARTMENT_LABEL,
       tag: '경고',
       facts,
-    }));
-    mkdirSync(dirname(STATE_FILE), { recursive: true });
-    state[jobName] = { sig, ts: Date.now() };
-    writeFileSync(STATE_FILE, JSON.stringify(state));
-  } catch (e) {
-    console.error('경고 텔레그램 발송 실패(무시):', e.message);
+    });
+    return await deliverWarningBatch({
+      jobName, sig, message, sendImpl, stateFile, journalRoot, clock: now, logger,
+      structuredWarnings,
+    });
+  } catch {
+    logger.error('경고 발송 경로 실패 — 운영 로그 확인 필요');
+    return { status: 'unavailable' };
   }
 }

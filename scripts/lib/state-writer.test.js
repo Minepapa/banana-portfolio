@@ -4,7 +4,7 @@
 // 이걸 실제로 막는지 race 시뮬레이션으로 검증한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withLock, writeAtomic, writeStateFile, patchFrontmatterFileSafely } from './state-writer.mjs';
@@ -99,7 +99,7 @@ test('withLock: 오래된(stale) 락은 죽은 프로세스의 잔재로 보고 
   const dir = makeTmpDir();
   const file = join(dir, 'state.json');
   const lockFile = `${file}.lock`;
-  writeFileSync(lockFile, '12345');
+  writeFileSync(lockFile, '99999999');
   const old = new Date(Date.now() - 60_000); // 60초 전 — staleLockMs(작게 설정)를 넘김
   utimesSync(lockFile, old, old);
 
@@ -113,6 +113,33 @@ test('withLock: 오래된(stale) 락은 죽은 프로세스의 잔재로 보고 
   );
   assert.equal(ran, true);
   assert.equal(existsSync(lockFile), false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('withLock: 살아 있는 프로세스의 오래된 락은 회수하지 않는다', async () => {
+  const dir = makeTmpDir();
+  const file = join(dir, 'state.json');
+  const lockFile = `${file}.lock`;
+  writeFileSync(lockFile, String(process.pid));
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lockFile, old, old);
+  await assert.rejects(
+    withLock(file, () => {}, { staleLockMs: 1000, retries: 1, retryDelayMs: 1 }),
+    /락 획득 실패\(포기\)/,
+  );
+  assert.equal(readFileSync(lockFile, 'utf8'), String(process.pid));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('withLock: 내 락이 다른 소유자의 락으로 바뀌면 해제하지 않는다', async () => {
+  const dir = makeTmpDir();
+  const file = join(dir, 'state.json');
+  const lockFile = `${file}.lock`;
+  await withLock(file, () => {
+    unlinkSync(lockFile);
+    writeFileSync(lockFile, '99999999:replacement');
+  });
+  assert.equal(readFileSync(lockFile, 'utf8'), '99999999:replacement');
   rmSync(dir, { recursive: true, force: true });
 });
 

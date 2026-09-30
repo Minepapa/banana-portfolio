@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyNhTimeoutOrder, formatNhTimeoutBody } from './watch-nh-order-fill.mjs';
+import { classifyNhTimeoutOrder, formatNhTimeoutBody, nhOrderWarningSubjectKey } from './watch-nh-order-fill.mjs';
+
+test('NH 체결 경고 대상 키는 계좌와 주문번호를 함께 구분하고 원문은 남기지 않는다', () => {
+  const brokerage = nhOrderWarningSubjectKey('위탁', '847026');
+  assert.notEqual(brokerage, nhOrderWarningSubjectKey('금현물', '847026'));
+  assert.equal(brokerage, nhOrderWarningSubjectKey('위탁', '847026'));
+  assert.doesNotMatch(brokerage, /847026|위탁/);
+});
 
 test('classifyNhTimeoutOrder: 행이 없으면 추정하지 않는다', () => {
   assert.deepEqual(classifyNhTimeoutOrder(null), { kind: 'unknown' });

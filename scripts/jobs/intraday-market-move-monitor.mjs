@@ -48,9 +48,11 @@ import {
 } from '../lib/kis.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
+import { markMacroWarningRecovered } from '../lib/warning-action-executor.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import {
   formatFactsMessage, parseDepartmentResponse,
   CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER,
@@ -58,6 +60,14 @@ import {
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const DEPARTMENT_LABEL = '리스크관리실 Themis';
+const MACRO_QUERY_WARNING = {
+  warningCode: 'MACRO_YFINANCE_QUERY_FAILED', subjectKey: 'macro:yfinance',
+  kind: 'operational', severity: 'medium',
+};
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'intraday-market-move-monitor', warningCode: 'MARKET_THRESHOLD_BREACHED',
+  subjectKey: 'market-batch', kind: 'market-signal', severity: 'high',
+});
 
 // telegram-messages.mjs가 아는 마커는 [결론]·[사실]·[맥락]·[의사결정] 셋뿐이다(그 파서를
 // 공용으로 쓰는 다른 8개 잡과 계약이 다르면 회귀 위험) — 이 잡만 쓰는 5번째 마커라 여기
@@ -326,21 +336,38 @@ async function fetchKospiBreach() {
 // S&P500·VIX·DXY·USD/KRW·미국10Y — yf-macro.py 한 번 호출로 5종 동시 조회(fundamentals.mjs
 // fetchMacroIndicators와 동일 spawnSync 패턴, MACRO_TICKERS는 안 건드리고 이 잡 전용
 // 티커 목록으로 별도 호출 — 회귀 위험 차단).
+export function hasUsableMacroClose(raw, tickers) {
+  return raw != null && Object.values(tickers).some((ticker) =>
+    Array.isArray(raw[ticker]) && raw[ticker].some(Number.isFinite));
+}
+
+export function hasAllMacroCloses(raw, tickers) {
+  return raw != null && Object.values(tickers).every((ticker) =>
+    Array.isArray(raw[ticker]) && raw[ticker].some(Number.isFinite));
+}
+
 function fetchMacroBreaches() {
-  if (!(isKrMarketOpen() || isUsMarketOpen())) return [];
+  if (!(isKrMarketOpen() || isUsMarketOpen())) return { breaches: [], macroHealthy: false };
   const py = new URL('../lib/yf-macro.py', import.meta.url).pathname;
   const tickers = { SP500: '^GSPC', VIX: '^VIX', DXY: 'DX-Y.NYB', USDKRW: 'KRW=X', TNX: '^TNX' };
   const r = spawnSync('python3', [py, ...Object.values(tickers)], { encoding: 'utf8', timeout: 120000 });
   if (r.status !== 0) {
-    collectWarning('yfinance 거시 조회 실패');
+    collectWarning('yfinance 거시 조회 실패', MACRO_QUERY_WARNING);
     console.error(`⚠️ yfinance 거시 조회 실패: ${(r.stderr || '').slice(-200)}`);
-    return [];
+    return { breaches: [], macroHealthy: false };
   }
   let raw;
   try { raw = JSON.parse(r.stdout); } catch (e) {
     collectWarning('yfinance 응답 파싱 실패');
     console.error(`⚠️ yfinance 응답 파싱 실패: ${e.message}`);
-    return [];
+    return { breaches: [], macroHealthy: false };
+  }
+  if (!hasUsableMacroClose(raw, tickers)) {
+    // yf-macro.py는 개별 티커 예외를 []로 바꾸고 0으로 종료할 수 있다. 전부 빈
+    // 응답이면 조회 실패를 정상 무신호로 오인하지 않고 같은 사건 코드로 보고한다.
+    collectWarning('yfinance 거시 응답에 유효한 종가 없음', MACRO_QUERY_WARNING);
+    console.error('⚠️ yfinance 거시 응답에 유효한 종가 없음');
+    return { breaches: [], macroHealthy: false };
   }
 
   const breaches = [];
@@ -380,7 +407,9 @@ function fetchMacroBreaches() {
     if (tier) breaches.push({ key: 'TNX', label: SIGNAL_LABELS.TNX, tier, detailText: `${bpDiff >= 0 ? '+' : ''}${bpDiff.toFixed(1)}bp` });
   }
 
-  return breaches;
+  return {
+    breaches, macroHealthy: hasAllMacroCloses(raw, tickers), observedAt: new Date(),
+  };
 }
 
 // 헤드리스 LLM 호출 1건당 타임아웃 — 이 잡은 최악의 경우 Call A→B→C 3연쇄라 기본값
@@ -397,10 +426,14 @@ async function main() {
   }
 
   const kospiBreach = await fetchKospiBreach();
-  const macroBreaches = fetchMacroBreaches();
+  const { breaches: macroBreaches, macroHealthy, observedAt } = fetchMacroBreaches();
   // 데이터 조회 실패는 breaches가 비어도(=조용히 "정상"으로 보여도) 놓치면 안 되는
   // 신호다 — 여기서 무조건 flush한다(2026-09-01 코드리뷰 지적, "조용한 실패" 방지).
   await flushWarnings('intraday-market-move-monitor');
+  if (macroHealthy && !DRY_RUN) {
+    try { await markMacroWarningRecovered({ observedAt }); }
+    catch { console.error('⚠️ 거시 경고 회복 상태 기록 실패 — 원장 확인 필요'); }
+  }
 
   const breaches = [kospiBreach, ...macroBreaches].filter(Boolean);
 
@@ -485,7 +518,7 @@ async function main() {
   // 주기에서 다시 시도(재발송)된다.
   let sent = false;
   try {
-    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', facts, conclusion, context, decisions }));
+    await sendWarning(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', facts, conclusion, context, decisions }));
     sent = true;
   } catch (e) {
     console.error('텔레그램 알림 실패:', e.message);

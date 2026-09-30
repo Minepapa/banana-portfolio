@@ -41,11 +41,16 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEPARTMENT_LABEL = '투자전략실 Athena';
+const sendWarning = createDirectWarningSender(sendTelegram, {
+  jobName: 'daily-asset-allocation-check', warningCode: 'MARKET_OVERLAY_SIGNAL',
+  subjectKey: 'macro-overlay', kind: 'market-signal', severity: 'info',
+});
 
 function runFacts(scriptName) {
   try {
@@ -154,7 +159,7 @@ async function main() {
   }
 
   try {
-    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', facts, conclusion, context, decisions }));
+    await sendWarning(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', facts, conclusion, context, decisions }));
   } catch (e) {
     console.error('텔레그램 알림 실패:', e.message);
   }

@@ -70,6 +70,17 @@ test('sendTelegram: HTML 파싱 실패가 아닌 다른 400 오류는 재시도 
   assert.equal(calls.length, 1, '파싱실패가 아닌 400은 재시도하면 안 됨(회귀 시 조용한 이중발송 위험 — 코드리뷰 지적)');
 });
 
+test('sendTelegram: 명시적 4xx 거부와 결과 불명 5xx를 구분한다', { skip: !CAN_RUN }, async () => {
+  for (const [status, rejected] of [[403, true], [429, true], [503, false]]) {
+    await assert.rejects(
+      () => sendTelegram('test', undefined, {
+        fetchImpl: async () => ({ ok: false, status, text: async () => 'failure' }),
+      }),
+      (error) => Boolean(error.telegramExplicitRejection) === rejected,
+    );
+  }
+});
+
 // ── truncateForTelegram(2026-09-20 독립 코드리뷰 MEDIUM 지적) — Telegram 메시지
 // 상한(4096자)을 넘기면 400 "message is too long"으로 발송이 통째로 거부되고,
 // job-alerts.mjs의 flushWarnings가 그 실패를 catch해 경고 배치 전체가 조용히

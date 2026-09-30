@@ -207,6 +207,22 @@ test('createAndSendProposal: 발송 응답에 message_id가 없으면 활성 대
   assert.match(writer.writes.at(-1).content, /status: "발송오류"/);
 });
 
+test('승인 불가 경고는 주입된 경고 발송 함수만 쓰고 정상 제안 발송과 분리한다', async () => {
+  const sender = mockSender({});
+  const warnings = [];
+  await createAndSendProposal({
+    track: '퀀트', assetKey: '005930', side: '매수', quantity: 10, proposedPrice: 70000,
+    departmentLabel: '퀀트전략실 Kairos', existingProposals: [],
+    writeProposalFile: mockWriter(), sendMessage: sender,
+    sendWarning: async (message, details) => { warnings.push({ message, details }); },
+  });
+  assert.equal(sender.calls.length, 1);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].message, /승인 연결정보가 없어 승인할 수 없습니다/);
+  assert.equal(warnings[0].details.warningCode, 'PROPOSAL_APPROVAL_LINK_BROKEN');
+  assert.match(warnings[0].details.subjectKey, /^proposal:[a-p]{20}$/);
+});
+
 test('[핵심 안전장치] createAndSendProposal: Telegram 성공 후 ID 저장 실패 시 비활성 발송오류로 격리하고 경고를 보낸다', async () => {
   const persisted = new Map();
   let writeCount = 0;
