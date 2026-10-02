@@ -2,8 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   classifyPriorOrderStatus, refineWithHoldings, needsHoldingsCrossCheck, confirmPriorOrderVoided, attemptCancelPriorOrder,
-  buildFallbackWatchArgs, buildPlacedPendingEntryUpdate,
+  buildFallbackWatchArgs, buildPlacedPendingEntryUpdate, processFallbackEntry,
 } from './place-breakout-fallback-entry.mjs';
+import { join } from 'node:path';
+import { buildPendingEntryRecord, parsePendingEntry } from '../lib/breakout-pending-entry-vault.mjs';
 
 // 완료된 Pending Entry는 출처 추적을 위해 제자리에 보존한다. 이 테스트가 없으면
 // placed 전환 시 실제 진입일이 아닌 신호일을 링크하거나 링크 자체를 빼도 감지 못 한다.
@@ -427,4 +429,197 @@ test('buildFallbackWatchArgs: stopLossPct 없음(과거 대기항목 레코드) 
     order: { orderNo: '9' }, code: '055550', name: '신한지주', entryDate: '2026-09-21', stopLossPct: undefined,
   });
   assert.ok(args.includes('--stop-loss-pct=0.08'), args.join(' '));
+});
+
+function makeFallbackEntry(overrides = {}) {
+  const signalDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const record = buildPendingEntryRecord({
+    code: '055550', name: '신한지주', signalDate, investedWon: 25_000,
+    afterHoursOrderNo: 'prior-1', afterHoursOrgNo: 'org-1', afterHoursOrderQty: 2,
+    stopLossPct: 0.04,
+  });
+  return { ...record, ...parsePendingEntry(record.content), ...overrides };
+}
+
+function makeFallbackHarness({ state = { remainingCash: 20_000, remainingSlots: 2 }, ctx = {}, deps = {} } = {}) {
+  const calls = [];
+  const child = {
+    on: (event, listener) => { calls.push(['on', event, listener]); return child; },
+    unref: () => { calls.push(['unref']); },
+  };
+  const defaultDeps = {
+    notify: async (tag, body) => { calls.push(['notify', tag, body]); },
+    writeAtomic: (path, content) => { calls.push(['write', path, parsePendingEntry(content)]); },
+    markUncertain: (dir, filename, content, reason) => { calls.push(['uncertain', dir, filename, content, reason]); },
+    getKrQuote: async (params) => { calls.push(['quote', params]); return { price: 10_000 }; },
+    readKillSwitch: () => { calls.push(['kill']); return { content: null, readFailed: false }; },
+    confirmPriorOrderVoided: async (params) => {
+      calls.push(['confirm', params]);
+      return { voided: true, kind: 'rejectedOrExpired', note: '자동실효 확인' };
+    },
+    placeKrOrder: async (params) => { calls.push(['place', params]); return { orderNo: 'new-1' }; },
+    todayKST: () => { calls.push(['today']); return '2026-10-02'; },
+    spawn: (command, args, options) => { calls.push(['spawn', command, args, options]); return child; },
+  };
+  return {
+    calls, state, ctx: { token: 'token', appkey: 'key', appsecret: 'secret', cano: 'cano', acntPrdtCd: '01', here: '/fake/jobs', ...ctx },
+    deps: { ...defaultDeps, ...deps },
+  };
+}
+
+async function runFallback(harness, entry = makeFallbackEntry()) {
+  return processFallbackEntry({ entry, state: harness.state, dir: '/not-a-real-dir', ctx: harness.ctx, deps: harness.deps });
+}
+
+function callNames(calls) {
+  return calls.map(([name]) => name);
+}
+
+test('processFallbackEntry: 정상 주문은 전날 주문 확인 → placing → 매수 → placed → 감시 순서이며 state를 차감한다', async () => {
+  const h = makeFallbackHarness();
+  const entry = makeFallbackEntry();
+  assert.equal(await runFallback(h, entry), undefined);
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref']);
+  assert.deepEqual(h.calls[0][1], { token: 'token', appkey: 'key', appsecret: 'secret', code: entry.code });
+  assert.deepEqual(h.calls[2][1], {
+    token: 'token', appkey: 'key', appsecret: 'secret', cano: 'cano', acntPrdtCd: '01',
+    code: entry.code, afterHoursOrderNo: 'prior-1', afterHoursOrgNo: 'org-1', afterHoursOrderQty: 2,
+    signalDate: entry.signalDate, allowCancel: true,
+  });
+  assert.equal(h.calls[3][1], join('/not-a-real-dir', entry.filename));
+  assert.equal(h.calls[3][2].status, 'placing');
+  assert.deepEqual(h.calls[4][1], {
+    token: 'token', appkey: 'key', appsecret: 'secret', cano: 'cano', acntPrdtCd: '01',
+    code: entry.code, side: '매수', quantity: 2, marketOrder: true,
+  });
+  assert.equal(h.calls[6][2].status, 'placed');
+  assert.equal(h.calls[6][2].expectedPositionId, '055550-2026-10-02');
+  assert.deepEqual(h.calls[7].slice(1), [
+    'node',
+    [join('/fake/jobs', '..', 'tools', 'watch-breakout-entry-fill.mjs'),
+      ...buildFallbackWatchArgs({ order: { orderNo: 'new-1' }, code: entry.code, name: entry.name, entryDate: '2026-10-02', stopLossPct: entry.stopLossPct })],
+    { detached: true, stdio: 'ignore' },
+  ]);
+  assert.deepEqual(h.state, { remainingCash: 0, remainingSlots: 1 });
+});
+
+test('processFallbackEntry: 전날 주문 생사 미확인은 uncertain만 기록하고 주문하지 않는다', async () => {
+  const h = makeFallbackHarness();
+  const { calls } = h;
+  h.deps.confirmPriorOrderVoided = async (params) => {
+    calls.push(['confirm', params]);
+    return { voided: false, kind: 'unfilled', note: '전날 주문 상태 미확인' };
+  };
+  const entry = makeFallbackEntry();
+  await runFallback(h, entry);
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'uncertain', 'notify']);
+  assert.deepEqual(h.calls[3].slice(1), ['/not-a-real-dir', entry.filename, entry.content, '전날 주문 상태 미확인']);
+  assert.equal(h.calls[4][1], '경고');
+  assert.match(h.calls[4][2], /수동확인 필요/);
+  assert.deepEqual(h.state, { remainingCash: 20_000, remainingSlots: 2 });
+});
+
+test('processFallbackEntry: 킬스위치 활성과 읽기 실패는 취소 확인 전에 멈춘다', async () => {
+  for (const [killState, expectedTag] of [
+    [{ content: '---\nactive: true\n---\n', readFailed: false }, '스킵'],
+    [{ content: null, readFailed: true, error: new Error('접근 실패') }, '경고'],
+  ]) {
+    const h = makeFallbackHarness();
+    const { calls } = h;
+    h.deps.readKillSwitch = () => { calls.push(['kill']); return killState; };
+    await runFallback(h);
+    assert.deepEqual(callNames(calls), ['quote', 'kill', 'notify']);
+    assert.equal(calls[2][1], expectedTag);
+    assert.deepEqual(h.state, { remainingCash: 20_000, remainingSlots: 2 });
+  }
+});
+
+test('processFallbackEntry: 현재가 실패·수량 0·슬롯 소진·신호일 만료는 전날 주문 확인 전에 멈춘다', async () => {
+  const cases = [
+    { label: '현재가 실패', harness: () => makeFallbackHarness(), quoteFailure: true, names: ['quote', 'notify'], tag: '경고', message: /현재가 조회 실패/ },
+    { label: '수량 0', harness: () => makeFallbackHarness({ state: { remainingCash: 5_000, remainingSlots: 2 } }), names: ['quote', 'write', 'notify'], tag: '스킵', message: /가용 예수금/, status: 'failed' },
+    { label: '슬롯 소진', harness: () => makeFallbackHarness({ state: { remainingCash: 20_000, remainingSlots: 0 } }), names: ['notify'], tag: '스킵', message: /슬롯 소진/ },
+    { label: '신호일 만료', harness: () => makeFallbackHarness(), entry: () => makeFallbackEntry({ signalDate: '2000-01-01' }), names: ['write', 'notify'], tag: '경고', message: /신호일 만료/, status: 'expired' },
+  ];
+  for (const c of cases) {
+    const h = c.harness();
+    if (c.quoteFailure) {
+      const { calls } = h;
+      h.deps.getKrQuote = async (params) => { calls.push(['quote', params]); throw new Error(`시세 실패 ${params.code}`); };
+    }
+    const before = { ...h.state };
+    await runFallback(h, c.entry?.() ?? makeFallbackEntry());
+    assert.deepEqual(callNames(h.calls), c.names, c.label);
+    const notifyCall = h.calls.find(([name]) => name === 'notify');
+    assert.equal(notifyCall[1], c.tag, c.label);
+    assert.match(notifyCall[2], c.message, c.label);
+    if (c.status) assert.equal(h.calls.find(([name]) => name === 'write')[2].status, c.status, c.label);
+    assert.deepEqual(h.state, before, c.label);
+  }
+});
+
+test('processFallbackEntry: 직접 취소한 전날 주문은 완료 알림 후 placing 사유에 기록하고 매수한다', async () => {
+  const h = makeFallbackHarness();
+  const { calls } = h;
+  h.deps.confirmPriorOrderVoided = async (params) => {
+    calls.push(['confirm', params]);
+    return { voided: true, kind: 'canceledByUs', note: '전날 주문 직접 취소' };
+  };
+  await runFallback(h);
+  assert.deepEqual(callNames(calls), ['quote', 'kill', 'confirm', 'notify', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref']);
+  assert.equal(calls[3][1], '완료');
+  assert.equal(calls[4][2].reason, '전날 주문 직접 취소');
+  assert.equal(calls[7][2].reason, '전날 주문 직접 취소');
+  assert.equal(calls[5][1].side, '매수');
+});
+
+test('processFallbackEntry: 주문 실패는 확실한 미접수만 failed, 응답 불명은 uncertain으로 기록한다', async () => {
+  for (const [confirmedNotSent, status] of [[true, 'failed'], [false, 'uncertain']]) {
+    const h = makeFallbackHarness();
+    const { calls } = h;
+    h.deps.placeKrOrder = async (params) => {
+      calls.push(['place', params]);
+      const error = new Error('주문 실패');
+      if (confirmedNotSent) error.confirmedNotSent = true;
+      throw error;
+    };
+    await runFallback(h);
+    assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'write', 'place', 'write', 'notify']);
+    assert.equal(h.calls[3][2].status, 'placing');
+    assert.equal(h.calls[5][2].status, status);
+    assert.equal(h.calls[6][1], '경고');
+    assert.deepEqual(h.state, { remainingCash: 20_000, remainingSlots: 2 });
+  }
+});
+
+test('processFallbackEntry: 동일 state의 현금 차감은 다음 건의 수량 0 판정에 반영된다', async () => {
+  const h = makeFallbackHarness();
+  await runFallback(h);
+  await runFallback(h, makeFallbackEntry({ id: 'second', filename: 'second.md' }));
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref', 'quote', 'write', 'notify']);
+  assert.equal(h.calls[11][2].status, 'failed');
+  assert.equal(h.calls[12][1], '스킵');
+  assert.deepEqual(h.state, { remainingCash: 0, remainingSlots: 1 });
+});
+
+test('processFallbackEntry: 동일 state의 슬롯 차감은 다음 건의 슬롯 게이트에 반영된다', async () => {
+  const h = makeFallbackHarness({ state: { remainingCash: 20_000, remainingSlots: 1 } });
+  await runFallback(h);
+  await runFallback(h, makeFallbackEntry({ id: 'second', filename: 'second.md' }));
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref', 'notify']);
+  assert.equal(h.calls[10][1], '스킵');
+  assert.deepEqual(h.state, { remainingCash: 0, remainingSlots: 0 });
+});
+
+test('processFallbackEntry: 의존성·state·ctx 배선 오류는 어떤 부작용보다 먼저 거부한다', async () => {
+  for (const invalid of [
+    (h) => { delete h.deps.placeKrOrder; },
+    (h) => { h.state.remainingCash = NaN; },
+    (h) => { h.ctx.here = 42; },
+  ]) {
+    const h = makeFallbackHarness();
+    invalid(h);
+    await assert.rejects(runFallback(h), /배선 오류로 주문 전에 중단/);
+    assert.deepEqual(h.calls, []);
+  }
 });

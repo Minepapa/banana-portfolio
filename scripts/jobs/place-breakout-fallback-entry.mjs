@@ -331,6 +331,183 @@ export async function confirmPriorOrderVoided({
   return refineWithHoldings(classification, code, holdings);
 }
 
+const REQUIRED_FALLBACK_DEPS = ['notify', 'writeAtomic', 'markUncertain', 'getKrQuote', 'readKillSwitch', 'confirmPriorOrderVoided', 'placeKrOrder', 'todayKST', 'spawn'];
+
+function assertFallbackEntryWiring(state, ctx, deps) {
+  for (const key of REQUIRED_FALLBACK_DEPS) {
+    if (typeof deps?.[key] !== 'function') throw new Error(`processFallbackEntry deps.${key}가 함수가 아님 — 배선 오류로 주문 전에 중단`);
+  }
+  if (!Number.isFinite(state?.remainingCash) || !Number.isFinite(state?.remainingSlots)) {
+    throw new Error('processFallbackEntry state.remainingCash/remainingSlots가 숫자가 아님 — 배선 오류로 주문 전에 중단');
+  }
+  if (typeof ctx?.here !== 'string') throw new Error('processFallbackEntry ctx.here가 문자열이 아님 — 배선 오류로 주문 전에 중단');
+}
+
+export async function processFallbackEntry({ entry, state, dir, ctx, deps }) {
+  assertFallbackEntryWiring(state, ctx, deps);
+  const { code, name, investedWon, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, stopLossPct: entryStopLossPct, signalDate, filename, content } = entry;
+  console.log(`[처리] ${entry.id} — ${name}(${code})`);
+
+  // 나이 게이트(2026-09-18 코드리뷰 HIGH) — 킬스위치가 여러 날 켜져 있다가 꺼지면
+  // 그 사이 쌓인 대기 항목이 신호일 가격·조건 재검증 없이 한꺼번에 시가 시장가로
+  // 나갈 위험이 있다. 정상 운영(주말 포함)에서는 절대 안 걸리는 문턱(5일)이라
+  // 이 체크가 발동한다는 것 자체가 이례적 상황임을 뜻한다 — 자동발주 대신
+  // 수동확인으로 넘긴다.
+  if (isPendingEntryStale(entry)) {
+    console.log(`  ⚠️ 신호일(${signalDate})이 너무 오래됨 — 자동폴백 거부(expired)`);
+    deps.writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
+      status: PENDING_ENTRY_STATUS.EXPIRED, reason: `신호일(${signalDate})로부터 시간이 많이 지나 조건 재검증 없이 자동발주하지 않음(킬스위치 장기 활성 등 이례적 상황 의심)`, updatedAt: new Date().toISOString(),
+    }));
+    await deps.notify('경고', `<b>돌파매매 다음날시가 폴백 거부 — 신호일 만료</b>\n${name}(${code}) 신호일(${signalDate})이 너무 오래돼 자동발주하지 않았습니다. 지금도 매수하고 싶으면 조건을 다시 확인하고 수동으로 진행해 주세요.`);
+    return;
+  }
+
+  // 슬롯 상한(2026-09-18 코드리뷰 MEDIUM) — 루프 진입 전 한 번만 확인하면 이번
+  // 실행에서 여러 건을 연달아 접수할 때 상한을 넘길 수 있어, 접수 성공마다
+  // 차감해 매 건 재확인한다.
+  if (state.remainingSlots <= 0) {
+    console.log(`  ℹ️ 슬롯 소진 — ${name}(${code}) 처리 보류(대기 유지, 다음 실행 재시도)`);
+    await deps.notify('스킵', `<b>돌파매매 다음날시가 폴백 보류 — 슬롯 소진</b>\n${name}(${code}) — 이번 실행에서 보유종목 상한(${MAX_CONCURRENT_POSITIONS})에 도달해 처리하지 못했습니다. 다음 실행에서 재시도됩니다.`);
+    return;
+  }
+
+  // ⚠️ 2026-09-19 코드리뷰 CRITICAL 지적으로 순서 재배치 — confirmPriorOrderVoided가
+  // "취소시도"(실제 KIS 주문취소, 되돌릴 수 없음)를 포함하게 되면서, 그 취소를
+  // 굳이 안 냈어도 됐을 이유(현재가 조회 실패·수량 0·킬스위치 활성)들을 전부 먼저
+  // 확인해야 한다 — 예전 순서(생사확인→현재가→수량→킬스위치)에선 킬스위치가 켜져
+  // 있어도 그 앞의 생사확인이 이미 실제 취소를 내버릴 수 있었다. 아래 네 게이트를
+  // 전부 통과한 뒤에만 취소를 허용(allowCancel:true)한다.
+  let currentPrice;
+  try {
+    ({ price: currentPrice } = await deps.getKrQuote({ token: ctx.token, appkey: ctx.appkey, appsecret: ctx.appsecret, code }));
+  } catch (e) {
+    console.log(`  ⚠️ 현재가 조회 실패(${e.message}) — 이번 실행은 건너뜀(다음 실행에서 재시도, 파일 그대로 pending 유지)`);
+    await deps.notify('경고', `<b>돌파매매 다음날시가 폴백 — 현재가 조회 실패</b>\n${name}(${code}) 현재가를 못 가져와 이번 실행은 건너뜁니다. 다음 실행에서 재시도됩니다.`);
+    return;
+  }
+
+  const budget = Math.min(investedWon, state.remainingCash);
+  const quantity = Math.floor(budget / currentPrice);
+  if (!(quantity > 0)) {
+    const reason = budget < investedWon
+      ? `가용 예수금(${won(state.remainingCash)}) 부족으로 예산이 축소됨`
+      : `투입예산(${won(investedWon)}) < 현재가(${won(currentPrice)})`;
+    console.log(`  ℹ️ 산정 수량 0(${reason}) — 처리완료로 표시하고 스킵`);
+    deps.writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
+      status: PENDING_ENTRY_STATUS.FAILED, reason, updatedAt: new Date().toISOString(),
+    }));
+    await deps.notify('스킵', `<b>돌파매매 다음날시가 폴백 스킵</b>\n${name}(${code}) — ${reason}, 매수 안 함.`);
+    return;
+  }
+
+  // 킬스위치 — place-breakout-entry-order.mjs와 동일 원칙·동일 State 파일(전역
+  // 공유, execute-quant-proposal.mjs 등과 동일). 오너 지시(2026-09-18) 대응. 여러
+  // 건을 순차 처리하는 루프라 매 건마다 새로 읽는다(execute-quant-proposal.mjs가
+  // 제안마다 다시 읽는 것과 동일 이유 — 처리 도중 오너가 스위치를 켤 수 있음).
+  // 'pending' 상태를 그대로 유지해(마킹 안 함) 스위치 해제 후 다음 실행에서 자동
+  // 재시도되게 한다 — 'uncertain'과 달리 사람 개입이 필요한 상황이 아니므로.
+  // 아래 confirmPriorOrderVoided의 취소시도까지 이 스위치가 반드시 막아야 하므로
+  // (코드리뷰 CRITICAL 지적) 이 체크가 그보다 먼저 와야 한다 — 순서를 옮기지 말 것.
+  const killSwitchState = deps.readKillSwitch();
+  if (killSwitchState.readFailed) {
+    console.log(`  ⚠️ 킬스위치 상태 확인 불가(${killSwitchState.error.message}) — 안전하게 발주 보류(대기 상태 유지)`);
+    await deps.notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 확인 불가</b>\n${name}(${code}) 킬스위치 파일을 읽을 수 없어 안전하게 발주를 보류했습니다. 볼트 접근 상태를 확인해 주세요.`);
+    return;
+  }
+  if (isKillSwitchActive(killSwitchState.content)) {
+    console.log(`  ℹ️ 킬스위치 활성 — ${name}(${code}) 발주 보류(대기 상태 유지, 자동 재시도됨)`);
+    await deps.notify('스킵', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 활성</b>\n${name}(${code}) 전날 미체결 확인됐지만 킬스위치가 켜져 있어 발주하지 않았습니다. "킬스위치 오프" 명령으로 해제하면 다음 실행에서 자동 재시도됩니다.`);
+    return;
+  }
+
+  const priorCheck = await deps.confirmPriorOrderVoided({
+    token: ctx.token, appkey: ctx.appkey, appsecret: ctx.appsecret, cano: ctx.cano, acntPrdtCd: ctx.acntPrdtCd, code, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, signalDate,
+    allowCancel: true,
+  });
+  if (!priorCheck.voided) {
+    console.log(`  ⚠️ 전날 주문 생사 미확인 — 자동폴백 보류: ${priorCheck.note}`);
+    deps.markUncertain(dir, filename, content, priorCheck.note);
+    await deps.notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 수동확인 필요</b>\n${name}(${code}) — ${escapeHtml(priorCheck.note)}\n중복매수 위험이 있어 자동 발주하지 않았습니다. KIS 앱에서 직접 확인해 주세요.`);
+    return;
+  }
+  // 이 잡이 방금 실제로 전날 주문을 취소한 경우 — 이 코드베이스에서 이 잡이 실주문을
+  // "취소"하는 첫 사례라 반드시 통보한다(코드리뷰 HIGH 지적, 예전엔 완전히 조용했음).
+  let cancelReason = null;
+  if (priorCheck.kind === 'canceledByUs') {
+    cancelReason = priorCheck.note;
+    console.log(`  ℹ️ ${cancelReason}`);
+    await deps.notify('완료', `<b>돌파매매 다음날시가 폴백 — 전날 주문 직접 취소</b>\n${name}(${code}) — ${escapeHtml(cancelReason)}\n이어서 오늘 시가 폴백 매수를 진행합니다.`);
+  }
+
+  // 접수 직전에 먼저 'placing'으로 기록 — 접수 성공 직후 크래시해도(코드리뷰 MEDIUM
+  // 지적) 재실행 시 findUnprocessedPendingEntries가 'pending'만 골라내므로 이 항목은
+  // 자동으로 다시 시도되지 않는다(안전 쪽으로 정지, 수동확인).
+  deps.writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
+    status: PENDING_ENTRY_STATUS.PLACING, ...(cancelReason ? { reason: cancelReason } : {}), updatedAt: new Date().toISOString(),
+  }));
+
+  let order;
+  try {
+    order = await deps.placeKrOrder({
+      token: ctx.token, appkey: ctx.appkey, appsecret: ctx.appsecret, cano: ctx.cano, acntPrdtCd: ctx.acntPrdtCd, code, side: '매수', quantity, marketOrder: true,
+    });
+  } catch (e) {
+    // confirmedNotSent=true(확실히 미접수)일 때만 failed로 확정 — 그 외(응답불명)는
+    // 실제로 접수됐을 수 있으니 uncertain으로 남겨 수동확인을 요구한다(위와 동일 원칙).
+    const status = e.confirmedNotSent === true ? PENDING_ENTRY_STATUS.FAILED : PENDING_ENTRY_STATUS.UNCERTAIN;
+    const orderFailReason = e.confirmedNotSent === true
+      ? `시장가 주문 거부 확인됨: ${e.message}`
+      : `시장가 주문 응답 불명(${e.message}) — 실제로는 접수됐을 수 있음`;
+    // 취소 사실을 여기서도 이어붙임(코드리뷰 검증패스 MEDIUM 지적) — 안 이어붙이면
+    // "전날 주문은 우리가 취소했는데 오늘 새 주문도 실패"라는 최악의 조합에서
+    // 볼트 레코드만으론 전날 주문이 왜 사라졌는지 설명이 안 남는다(볼트 레코드로
+    // 사후 복기하는 게 이 프로젝트의 주 경로라 e.message 원문은 여기 남긴다 —
+    // 오너에게 직접 나가는 텔레그램 알림에만 별도로 안전한 문구를 쓴다, 아래).
+    const reason = cancelReason ? `${cancelReason} / ${orderFailReason}` : orderFailReason;
+    const orderFailReasonSafe = e.confirmedNotSent === true
+      ? '시장가 주문 거부 확인됨'
+      : '시장가 주문 응답 불명(실제로는 접수됐을 수 있음)';
+    const reasonSafe = cancelReason ? `${cancelReason} / ${orderFailReasonSafe}` : orderFailReasonSafe;
+    console.log(`  ❌ 시장가 주문 실패(${reason})`);
+    deps.writeAtomic(join(dir, filename), updatePendingEntryRecord(content, { status, reason, updatedAt: new Date().toISOString() }));
+    await deps.notify('경고', `<b>돌파매매 다음날시가 폴백 실패</b>\n${name}(${code}) ${quantity}주 시장가 매수 — ${escapeHtml(reasonSafe)}. 수동 확인 바랍니다.`);
+    return;
+  }
+
+  state.remainingCash -= budget;
+  state.remainingSlots -= 1;
+  console.log(`  ✅ 시장가 매수 접수 — 주문번호 ${order.orderNo}`);
+  const entryDate = deps.todayKST();
+  deps.writeAtomic(join(dir, filename), updatePendingEntryRecord(content,
+    buildPlacedPendingEntryUpdate({ code, entryDate, cancelReason, updatedAt: new Date().toISOString() }),
+  ));
+
+  // entry-date는 신호일(signalDate)이 아니라 오늘(실제 체결 시도일) — 포지션의
+  // entryDate는 "실제로 진입한 날"이어야 트레일링스탑 기산일이 맞다.
+  // 이 다리는 더 이상의 폴백이 없다 — --fallback 없이 호출(미체결 시 통상 타임아웃 알림).
+  //
+  // ⚠️ entryStopLossPct 결측 경고(2026-09-19 코드리뷰 검증패스 MEDIUM 지적) —
+  // buildFallbackWatchArgs 자체는 null이면 조용히 STOP_LOSS_PCT(8%)로 폴백한다
+  // (과거 대기항목 레코드 하위호환용). 그런데 place-breakout-entry-order.mjs가
+  // 이제 자동호출 경로에서 이 필드를 항상 채우도록 강제하므로(alertAndExit 가드),
+  // 이 시점에 null이 실제로 온다는 건 배선 버그일 가능성이 높다(하위호환이
+  // 필요한 레거시 레코드가 실측상 존재하지 않음 — CRITICAL 사고 재발 경로를
+  // 조용히 통과시키면 안 된다는 지적, entry-order.mjs의 loud-failure 가드와
+  // 비대칭이었음).
+  if (entryStopLossPct == null) {
+    console.warn(`  ⚠️ ${name}(${code}) 대기항목에 stopLossPct 없음 — STOP_LOSS_PCT(8%)로 폴백함(배선 버그 의심, 레거시 레코드가 아니라면 확인 필요)`);
+  }
+  const child = deps.spawn('node', [
+    join(ctx.here, '..', 'tools', 'watch-breakout-entry-fill.mjs'),
+    ...buildFallbackWatchArgs({ order, code, name, entryDate, stopLossPct: entryStopLossPct }),
+  ], { detached: true, stdio: 'ignore' });
+  child.on('error', (e) => {
+    console.error(`  ⚠️ 체결감시 기동 실패(주문 자체는 이미 접수됨): ${e.message}`);
+    deps.notify('경고', `<b>체결감시 기동 실패 — 무방비 포지션 위험</b>\n${name}(${code}) ${quantity}주 시장가 매수(주문번호 ${order.orderNo})는 접수됐지만 체결감시를 못 띄웠습니다. 즉시 KIS 앱에서 확인해 주세요.`);
+  });
+  child.unref();
+}
+
 async function main() {
   const calendar = readKrxTradingDayStatus();
   if (calendar.isOpen !== true) {
@@ -374,168 +551,11 @@ async function main() {
   }
 
   const here = dirname(fileURLToPath(import.meta.url));
+  const state = { remainingCash, remainingSlots };
+  const deps = { notify, writeAtomic, markUncertain, getKrQuote, readKillSwitch: () => readKillSwitchState(VAULT_PATHS.state.killSwitch), confirmPriorOrderVoided, placeKrOrder, todayKST, spawn };
+  const ctx = { token, appkey, appsecret, cano, acntPrdtCd, here };
   for (const entry of targets) {
-    const { code, name, investedWon, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, stopLossPct: entryStopLossPct, signalDate, filename, content } = entry;
-    console.log(`[처리] ${entry.id} — ${name}(${code})`);
-
-    // 나이 게이트(2026-09-18 코드리뷰 HIGH) — 킬스위치가 여러 날 켜져 있다가 꺼지면
-    // 그 사이 쌓인 대기 항목이 신호일 가격·조건 재검증 없이 한꺼번에 시가 시장가로
-    // 나갈 위험이 있다. 정상 운영(주말 포함)에서는 절대 안 걸리는 문턱(5일)이라
-    // 이 체크가 발동한다는 것 자체가 이례적 상황임을 뜻한다 — 자동발주 대신
-    // 수동확인으로 넘긴다.
-    if (isPendingEntryStale(entry)) {
-      console.log(`  ⚠️ 신호일(${signalDate})이 너무 오래됨 — 자동폴백 거부(expired)`);
-      writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
-        status: PENDING_ENTRY_STATUS.EXPIRED, reason: `신호일(${signalDate})로부터 시간이 많이 지나 조건 재검증 없이 자동발주하지 않음(킬스위치 장기 활성 등 이례적 상황 의심)`, updatedAt: new Date().toISOString(),
-      }));
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 거부 — 신호일 만료</b>\n${name}(${code}) 신호일(${signalDate})이 너무 오래돼 자동발주하지 않았습니다. 지금도 매수하고 싶으면 조건을 다시 확인하고 수동으로 진행해 주세요.`);
-      continue;
-    }
-
-    // 슬롯 상한(2026-09-18 코드리뷰 MEDIUM) — 루프 진입 전 한 번만 확인하면 이번
-    // 실행에서 여러 건을 연달아 접수할 때 상한을 넘길 수 있어, 접수 성공마다
-    // 차감해 매 건 재확인한다.
-    if (remainingSlots <= 0) {
-      console.log(`  ℹ️ 슬롯 소진 — ${name}(${code}) 처리 보류(대기 유지, 다음 실행 재시도)`);
-      await notify('스킵', `<b>돌파매매 다음날시가 폴백 보류 — 슬롯 소진</b>\n${name}(${code}) — 이번 실행에서 보유종목 상한(${MAX_CONCURRENT_POSITIONS})에 도달해 처리하지 못했습니다. 다음 실행에서 재시도됩니다.`);
-      continue;
-    }
-
-    // ⚠️ 2026-09-19 코드리뷰 CRITICAL 지적으로 순서 재배치 — confirmPriorOrderVoided가
-    // "취소시도"(실제 KIS 주문취소, 되돌릴 수 없음)를 포함하게 되면서, 그 취소를
-    // 굳이 안 냈어도 됐을 이유(현재가 조회 실패·수량 0·킬스위치 활성)들을 전부 먼저
-    // 확인해야 한다 — 예전 순서(생사확인→현재가→수량→킬스위치)에선 킬스위치가 켜져
-    // 있어도 그 앞의 생사확인이 이미 실제 취소를 내버릴 수 있었다. 아래 네 게이트를
-    // 전부 통과한 뒤에만 취소를 허용(allowCancel:true)한다.
-    let currentPrice;
-    try {
-      ({ price: currentPrice } = await getKrQuote({ token, appkey, appsecret, code }));
-    } catch (e) {
-      console.log(`  ⚠️ 현재가 조회 실패(${e.message}) — 이번 실행은 건너뜀(다음 실행에서 재시도, 파일 그대로 pending 유지)`);
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 — 현재가 조회 실패</b>\n${name}(${code}) 현재가를 못 가져와 이번 실행은 건너뜁니다. 다음 실행에서 재시도됩니다.`);
-      continue;
-    }
-
-    const budget = Math.min(investedWon, remainingCash);
-    const quantity = Math.floor(budget / currentPrice);
-    if (!(quantity > 0)) {
-      const reason = budget < investedWon
-        ? `가용 예수금(${won(remainingCash)}) 부족으로 예산이 축소됨`
-        : `투입예산(${won(investedWon)}) < 현재가(${won(currentPrice)})`;
-      console.log(`  ℹ️ 산정 수량 0(${reason}) — 처리완료로 표시하고 스킵`);
-      writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
-        status: PENDING_ENTRY_STATUS.FAILED, reason, updatedAt: new Date().toISOString(),
-      }));
-      await notify('스킵', `<b>돌파매매 다음날시가 폴백 스킵</b>\n${name}(${code}) — ${reason}, 매수 안 함.`);
-      continue;
-    }
-
-    // 킬스위치 — place-breakout-entry-order.mjs와 동일 원칙·동일 State 파일(전역
-    // 공유, execute-quant-proposal.mjs 등과 동일). 오너 지시(2026-09-18) 대응. 여러
-    // 건을 순차 처리하는 루프라 매 건마다 새로 읽는다(execute-quant-proposal.mjs가
-    // 제안마다 다시 읽는 것과 동일 이유 — 처리 도중 오너가 스위치를 켤 수 있음).
-    // 'pending' 상태를 그대로 유지해(마킹 안 함) 스위치 해제 후 다음 실행에서 자동
-    // 재시도되게 한다 — 'uncertain'과 달리 사람 개입이 필요한 상황이 아니므로.
-    // 아래 confirmPriorOrderVoided의 취소시도까지 이 스위치가 반드시 막아야 하므로
-    // (코드리뷰 CRITICAL 지적) 이 체크가 그보다 먼저 와야 한다 — 순서를 옮기지 말 것.
-    const killSwitchState = readKillSwitchState(VAULT_PATHS.state.killSwitch);
-    if (killSwitchState.readFailed) {
-      console.log(`  ⚠️ 킬스위치 상태 확인 불가(${killSwitchState.error.message}) — 안전하게 발주 보류(대기 상태 유지)`);
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 확인 불가</b>\n${name}(${code}) 킬스위치 파일을 읽을 수 없어 안전하게 발주를 보류했습니다. 볼트 접근 상태를 확인해 주세요.`);
-      continue;
-    }
-    if (isKillSwitchActive(killSwitchState.content)) {
-      console.log(`  ℹ️ 킬스위치 활성 — ${name}(${code}) 발주 보류(대기 상태 유지, 자동 재시도됨)`);
-      await notify('스킵', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 활성</b>\n${name}(${code}) 전날 미체결 확인됐지만 킬스위치가 켜져 있어 발주하지 않았습니다. "킬스위치 오프" 명령으로 해제하면 다음 실행에서 자동 재시도됩니다.`);
-      continue;
-    }
-
-    const priorCheck = await confirmPriorOrderVoided({
-      token, appkey, appsecret, cano, acntPrdtCd, code, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, signalDate,
-      allowCancel: true,
-    });
-    if (!priorCheck.voided) {
-      console.log(`  ⚠️ 전날 주문 생사 미확인 — 자동폴백 보류: ${priorCheck.note}`);
-      markUncertain(dir, filename, content, priorCheck.note);
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 수동확인 필요</b>\n${name}(${code}) — ${escapeHtml(priorCheck.note)}\n중복매수 위험이 있어 자동 발주하지 않았습니다. KIS 앱에서 직접 확인해 주세요.`);
-      continue;
-    }
-    // 이 잡이 방금 실제로 전날 주문을 취소한 경우 — 이 코드베이스에서 이 잡이 실주문을
-    // "취소"하는 첫 사례라 반드시 통보한다(코드리뷰 HIGH 지적, 예전엔 완전히 조용했음).
-    let cancelReason = null;
-    if (priorCheck.kind === 'canceledByUs') {
-      cancelReason = priorCheck.note;
-      console.log(`  ℹ️ ${cancelReason}`);
-      await notify('완료', `<b>돌파매매 다음날시가 폴백 — 전날 주문 직접 취소</b>\n${name}(${code}) — ${escapeHtml(cancelReason)}\n이어서 오늘 시가 폴백 매수를 진행합니다.`);
-    }
-
-    // 접수 직전에 먼저 'placing'으로 기록 — 접수 성공 직후 크래시해도(코드리뷰 MEDIUM
-    // 지적) 재실행 시 findUnprocessedPendingEntries가 'pending'만 골라내므로 이 항목은
-    // 자동으로 다시 시도되지 않는다(안전 쪽으로 정지, 수동확인).
-    writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
-      status: PENDING_ENTRY_STATUS.PLACING, ...(cancelReason ? { reason: cancelReason } : {}), updatedAt: new Date().toISOString(),
-    }));
-
-    let order;
-    try {
-      order = await placeKrOrder({
-        token, appkey, appsecret, cano, acntPrdtCd, code, side: '매수', quantity, marketOrder: true,
-      });
-    } catch (e) {
-      // confirmedNotSent=true(확실히 미접수)일 때만 failed로 확정 — 그 외(응답불명)는
-      // 실제로 접수됐을 수 있으니 uncertain으로 남겨 수동확인을 요구한다(위와 동일 원칙).
-      const status = e.confirmedNotSent === true ? PENDING_ENTRY_STATUS.FAILED : PENDING_ENTRY_STATUS.UNCERTAIN;
-      const orderFailReason = e.confirmedNotSent === true
-        ? `시장가 주문 거부 확인됨: ${e.message}`
-        : `시장가 주문 응답 불명(${e.message}) — 실제로는 접수됐을 수 있음`;
-      // 취소 사실을 여기서도 이어붙임(코드리뷰 검증패스 MEDIUM 지적) — 안 이어붙이면
-      // "전날 주문은 우리가 취소했는데 오늘 새 주문도 실패"라는 최악의 조합에서
-      // 볼트 레코드만으론 전날 주문이 왜 사라졌는지 설명이 안 남는다(볼트 레코드로
-      // 사후 복기하는 게 이 프로젝트의 주 경로라 e.message 원문은 여기 남긴다 —
-      // 오너에게 직접 나가는 텔레그램 알림에만 별도로 안전한 문구를 쓴다, 아래).
-      const reason = cancelReason ? `${cancelReason} / ${orderFailReason}` : orderFailReason;
-      const orderFailReasonSafe = e.confirmedNotSent === true
-        ? '시장가 주문 거부 확인됨'
-        : '시장가 주문 응답 불명(실제로는 접수됐을 수 있음)';
-      const reasonSafe = cancelReason ? `${cancelReason} / ${orderFailReasonSafe}` : orderFailReasonSafe;
-      console.log(`  ❌ 시장가 주문 실패(${reason})`);
-      writeAtomic(join(dir, filename), updatePendingEntryRecord(content, { status, reason, updatedAt: new Date().toISOString() }));
-      await notify('경고', `<b>돌파매매 다음날시가 폴백 실패</b>\n${name}(${code}) ${quantity}주 시장가 매수 — ${escapeHtml(reasonSafe)}. 수동 확인 바랍니다.`);
-      continue;
-    }
-
-    remainingCash -= budget;
-    remainingSlots -= 1;
-    console.log(`  ✅ 시장가 매수 접수 — 주문번호 ${order.orderNo}`);
-    const entryDate = todayKST();
-    writeAtomic(join(dir, filename), updatePendingEntryRecord(content,
-      buildPlacedPendingEntryUpdate({ code, entryDate, cancelReason, updatedAt: new Date().toISOString() }),
-    ));
-
-    // entry-date는 신호일(signalDate)이 아니라 오늘(실제 체결 시도일) — 포지션의
-    // entryDate는 "실제로 진입한 날"이어야 트레일링스탑 기산일이 맞다.
-    // 이 다리는 더 이상의 폴백이 없다 — --fallback 없이 호출(미체결 시 통상 타임아웃 알림).
-    //
-    // ⚠️ entryStopLossPct 결측 경고(2026-09-19 코드리뷰 검증패스 MEDIUM 지적) —
-    // buildFallbackWatchArgs 자체는 null이면 조용히 STOP_LOSS_PCT(8%)로 폴백한다
-    // (과거 대기항목 레코드 하위호환용). 그런데 place-breakout-entry-order.mjs가
-    // 이제 자동호출 경로에서 이 필드를 항상 채우도록 강제하므로(alertAndExit 가드),
-    // 이 시점에 null이 실제로 온다는 건 배선 버그일 가능성이 높다(하위호환이
-    // 필요한 레거시 레코드가 실측상 존재하지 않음 — CRITICAL 사고 재발 경로를
-    // 조용히 통과시키면 안 된다는 지적, entry-order.mjs의 loud-failure 가드와
-    // 비대칭이었음).
-    if (entryStopLossPct == null) {
-      console.warn(`  ⚠️ ${name}(${code}) 대기항목에 stopLossPct 없음 — STOP_LOSS_PCT(8%)로 폴백함(배선 버그 의심, 레거시 레코드가 아니라면 확인 필요)`);
-    }
-    const child = spawn('node', [
-      join(here, '..', 'tools', 'watch-breakout-entry-fill.mjs'),
-      ...buildFallbackWatchArgs({ order, code, name, entryDate, stopLossPct: entryStopLossPct }),
-    ], { detached: true, stdio: 'ignore' });
-    child.on('error', (e) => {
-      console.error(`  ⚠️ 체결감시 기동 실패(주문 자체는 이미 접수됨): ${e.message}`);
-      notify('경고', `<b>체결감시 기동 실패 — 무방비 포지션 위험</b>\n${name}(${code}) ${quantity}주 시장가 매수(주문번호 ${order.orderNo})는 접수됐지만 체결감시를 못 띄웠습니다. 즉시 KIS 앱에서 확인해 주세요.`);
-    });
-    child.unref();
+    await processFallbackEntry({ entry, state, dir, ctx, deps });
   }
 }
 
