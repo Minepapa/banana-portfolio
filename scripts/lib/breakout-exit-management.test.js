@@ -167,6 +167,10 @@ test('부분익절 체결확인: 일부만 체결되고 남은 주문이 종결�
   });
   assert.equal(d.action, 'partialFill');
   assert.equal(d.fill.filledQty, 3);
+  assert.equal(typeof d.reason, 'string');
+  assert.ok(d.reason.length > 0);
+  assert.match(d.reason, /m1/);
+  assert.match(d.reason, /3\/5주/);
 });
 test('부분익절 체결확인: 일부만 체결됐지만 주문이 아직 살아있으면(remainingQty>0, 미취소) review — 나중 체결을 기다린다', () => {
   const pending = { ...position, partialExitPendingOrderNo: 'm1', partialExitPendingQty: 5 };

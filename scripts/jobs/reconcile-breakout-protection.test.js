@@ -207,6 +207,8 @@ test('processPosition: pending 매도 partialFill 후 체결 2주를 기록하�
   assert.equal(calls[4][1].marketOrder, undefined);
   assert.equal(result.urgent, true);
   assert.equal(result.reports.length, 2);
+  assert.doesNotMatch(result.reports[0], /undefined/);
+  assert.match(result.reports[0], /2\/5주만 체결/);
   assert.match(result.reports[0], /체결된 2주는 원장 기록 완료, 미체결 3주 수량 원복\(완료→8주\)/);
   assert.match(result.reports[1], /새 손절 등록 완료/);
 });

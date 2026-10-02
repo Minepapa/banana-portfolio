@@ -300,7 +300,11 @@ export function decidePendingPartialExitConfirmation({ position, fill }) {
   // 확인한 경우에만 확정한다.
   const terminal = fill != null && (fill.canceled === true || fill.remainingQty === 0);
   if (terminal && fill.filledQty > 0 && fill.filledQty < position.partialExitPendingQty && fill.avgFillPrice > 0) {
-    return { action: 'partialFill', fill };
+    return {
+      action: 'partialFill',
+      fill,
+      reason: `부분익절 매도(${position.partialExitPendingOrderNo})가 ${fill.filledQty}/${position.partialExitPendingQty}주만 체결되고 종결됨 — 체결분 원장 기록·미체결분 원복 후 재판정 필요`,
+    };
   }
   // filledQty===0으로 정확히 좁힌다(2026-09-29 5차 코드리뷰 LOW 지적) — tot_ccld_qty
   // 필드가 응답에 아예 없으면 num()이 Number('')===0으로 조용히 0을 만들어내는데,
