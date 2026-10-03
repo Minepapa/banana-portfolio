@@ -66,7 +66,7 @@ Header: AUTH_KEY: <키>
 | `FHKST01010900` | `inquire-investor` | 국내주식 투자자별 매매동향(외국인/기관 순매수, 최근 거래일) |
 | `FHKST663300C0` | `invest-opinion` | 국내주식 증권사별 투자의견 + 목표주가(최근 90일, 하향/상향 판정용) |
 | `TTTC8434R` | `inquire-balance` | **계좌 잔고**(보유종목 + 예수금) — IRP 포함, 연금 전용 API 별도 없음 |
-| `TTTC0081R` | `inquire-daily-ccld` | 당일 주문체결 조회 |
+| `TTTC0081R` | `inquire-daily-ccld` | 주문체결 조회(INQR_STRT_DT~END_DT 구간 조회 가능, ODNO 지정 시 1건). 2026-10-03 실측: 행마다 `ord_dt`(YYYYMMDD 주문일)·`ord_tmd`(HHMMSS)가 온다. 14일 구간 16행에서 `odno` 중복 없음(날짜 간 재사용 징후 없음). 당일유효 주문(스톱지정가·장후시간외)이 소멸하면 `rjct_qty`=주문수량·`tot_ccld_qty`=0·`rmn_qty`=0·`cncl_yn`=""로 표시된다 |
 | `TTTC0012U`/`TTTC0011U` | `order-cash` | **국내주식 매수/매도 주문**(지정가만, 실계좌 전용) |
 
 **비인증 부가 기능**(`scripts/lib/instruments.mjs`, 인증 불필요):

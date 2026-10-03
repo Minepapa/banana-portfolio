@@ -680,11 +680,10 @@ export function parseOrderFillResponse(json, odno) {
   // 버그). 숫자로 정규화해 비교해야 양쪽 표기가 달라도 안전하게 매칭된다.
   const targetNum = Number(odno);
   const matches = rows.filter((r) => Number(r?.odno) === targetNum);
-  // checkOrderFill이 sinceDaysBack으로 여러 날짜를 걸쳐 조회할 수 있게 되면서
-  // (2026-09-29 3차 코드리뷰 HIGH 지적) 주문번호가 날짜별로 재사용되는지가
-  // 미확인 전제가 됐다 — KIS 문서에서 전역 유일성을 확인하지 못했다. 2건 이상
-  // 매칭되면 어느 쪽이 진짜인지 추정하지 않고 null(호출측이 "확인 불가"로 취급,
-  // proposal-vault.mjs의 "중복 매칭은 추정하지 않는다" 관례와 동일 원칙).
+  // checkOrderFill은 sinceDaysBack으로 여러 날짜를 조회한다. 2026-10-03 실측
+  // (퀀트 계좌 14일 구간 16행)에서 odno 중복은 없고 각 행에 ord_dt(YYYYMMDD)가
+  // 왔지만, 전역 유일성의 증명은 아니다. 2건 이상 매칭되면 어느 주문인지
+  // 추정하지 않고 null을 반환한다(호출측은 "확인 불가"로 취급).
   if (matches.length !== 1) return null;
   const [row] = matches;
   if (process.env.DEBUG_KIS_FILL_FIELDS === '1' && !loggedKisFillFields) {
