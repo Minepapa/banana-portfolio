@@ -114,12 +114,6 @@ function readKillSwitchState(filepath) {
   }
 }
 
-function markUncertain(dir, filename, content, reason) {
-  writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
-    status: PENDING_ENTRY_STATUS.UNCERTAIN, reason, updatedAt: new Date().toISOString(),
-  }));
-}
-
 // daily-breakout-signal-scan.mjs의 loadOpenPositionCodes()와 동일 패턴 — 2026-09-18
 // 코드리뷰 MEDIUM 지적: 이 잡은 지금까지 슬롯(MAX_CONCURRENT_POSITIONS)을 전혀
 // 확인하지 않고 예수금만 보고 순차 발주했다. 신호스캔은 슬롯을 체크하는데 이 잡만
@@ -331,9 +325,9 @@ export async function confirmPriorOrderVoided({
   return refineWithHoldings(classification, code, holdings);
 }
 
-const REQUIRED_FALLBACK_DEPS = ['notify', 'writeAtomic', 'markUncertain', 'getKrQuote', 'readKillSwitch', 'confirmPriorOrderVoided', 'placeKrOrder', 'todayKST', 'spawn'];
+const REQUIRED_FALLBACK_DEPS = ['notify', 'writeAtomic', 'getKrQuote', 'readKillSwitch', 'confirmPriorOrderVoided', 'placeKrOrder', 'todayKST', 'spawn'];
 
-function assertFallbackEntryWiring(state, ctx, deps) {
+function assertFallbackEntryWiring(state, ctx, deps, dir) {
   for (const key of REQUIRED_FALLBACK_DEPS) {
     if (typeof deps?.[key] !== 'function') throw new Error(`processFallbackEntry deps.${key}가 함수가 아님 — 배선 오류로 주문 전에 중단`);
   }
@@ -341,10 +335,16 @@ function assertFallbackEntryWiring(state, ctx, deps) {
     throw new Error('processFallbackEntry state.remainingCash/remainingSlots가 숫자가 아님 — 배선 오류로 주문 전에 중단');
   }
   if (typeof ctx?.here !== 'string') throw new Error('processFallbackEntry ctx.here가 문자열이 아님 — 배선 오류로 주문 전에 중단');
+  if (typeof dir !== 'string') throw new Error('processFallbackEntry dir가 문자열이 아님 — 배선 오류로 주문 전에 중단');
+  for (const key of ['token', 'appkey', 'appsecret', 'cano', 'acntPrdtCd']) {
+    if (typeof ctx?.[key] !== 'string' || ctx[key].trim() === '') {
+      throw new Error(`processFallbackEntry ctx.${key}가 비어있지 않은 문자열이 아님 — 배선 오류로 주문 전에 중단`);
+    }
+  }
 }
 
 export async function processFallbackEntry({ entry, state, dir, ctx, deps }) {
-  assertFallbackEntryWiring(state, ctx, deps);
+  assertFallbackEntryWiring(state, ctx, deps, dir);
   const { code, name, investedWon, afterHoursOrderNo, afterHoursOrgNo, afterHoursOrderQty, stopLossPct: entryStopLossPct, signalDate, filename, content } = entry;
   console.log(`[처리] ${entry.id} — ${name}(${code})`);
 
@@ -426,7 +426,9 @@ export async function processFallbackEntry({ entry, state, dir, ctx, deps }) {
   });
   if (!priorCheck.voided) {
     console.log(`  ⚠️ 전날 주문 생사 미확인 — 자동폴백 보류: ${priorCheck.note}`);
-    deps.markUncertain(dir, filename, content, priorCheck.note);
+    deps.writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
+      status: PENDING_ENTRY_STATUS.UNCERTAIN, reason: priorCheck.note, updatedAt: new Date().toISOString(),
+    }));
     await deps.notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 수동확인 필요</b>\n${name}(${code}) — ${escapeHtml(priorCheck.note)}\n중복매수 위험이 있어 자동 발주하지 않았습니다. KIS 앱에서 직접 확인해 주세요.`);
     return;
   }
@@ -552,7 +554,7 @@ async function main() {
 
   const here = dirname(fileURLToPath(import.meta.url));
   const state = { remainingCash, remainingSlots };
-  const deps = { notify, writeAtomic, markUncertain, getKrQuote, readKillSwitch: () => readKillSwitchState(VAULT_PATHS.state.killSwitch), confirmPriorOrderVoided, placeKrOrder, todayKST, spawn };
+  const deps = { notify, writeAtomic, getKrQuote, readKillSwitch: () => readKillSwitchState(VAULT_PATHS.state.killSwitch), confirmPriorOrderVoided, placeKrOrder, todayKST, spawn };
   const ctx = { token, appkey, appsecret, cano, acntPrdtCd, here };
   for (const entry of targets) {
     await processFallbackEntry({ entry, state, dir, ctx, deps });

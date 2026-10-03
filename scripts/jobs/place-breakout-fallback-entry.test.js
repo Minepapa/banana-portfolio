@@ -441,7 +441,7 @@ function makeFallbackEntry(overrides = {}) {
   return { ...record, ...parsePendingEntry(record.content), ...overrides };
 }
 
-function makeFallbackHarness({ state = { remainingCash: 20_000, remainingSlots: 2 }, ctx = {}, deps = {} } = {}) {
+function makeFallbackHarness({ state = { remainingCash: 20_000, remainingSlots: 2 }, ctx = {}, deps = {}, dir = '/not-a-real-dir' } = {}) {
   const calls = [];
   const child = {
     on: (event, listener) => { calls.push(['on', event, listener]); return child; },
@@ -450,7 +450,6 @@ function makeFallbackHarness({ state = { remainingCash: 20_000, remainingSlots: 
   const defaultDeps = {
     notify: async (tag, body) => { calls.push(['notify', tag, body]); },
     writeAtomic: (path, content) => { calls.push(['write', path, parsePendingEntry(content)]); },
-    markUncertain: (dir, filename, content, reason) => { calls.push(['uncertain', dir, filename, content, reason]); },
     getKrQuote: async (params) => { calls.push(['quote', params]); return { price: 10_000 }; },
     readKillSwitch: () => { calls.push(['kill']); return { content: null, readFailed: false }; },
     confirmPriorOrderVoided: async (params) => {
@@ -462,13 +461,13 @@ function makeFallbackHarness({ state = { remainingCash: 20_000, remainingSlots: 
     spawn: (command, args, options) => { calls.push(['spawn', command, args, options]); return child; },
   };
   return {
-    calls, state, ctx: { token: 'token', appkey: 'key', appsecret: 'secret', cano: 'cano', acntPrdtCd: '01', here: '/fake/jobs', ...ctx },
+    calls, state, dir, ctx: { token: 'token', appkey: 'key', appsecret: 'secret', cano: 'cano', acntPrdtCd: '01', here: '/fake/jobs', ...ctx },
     deps: { ...defaultDeps, ...deps },
   };
 }
 
 async function runFallback(harness, entry = makeFallbackEntry()) {
-  return processFallbackEntry({ entry, state: harness.state, dir: '/not-a-real-dir', ctx: harness.ctx, deps: harness.deps });
+  return processFallbackEntry({ entry, state: harness.state, dir: harness.dir, ctx: harness.ctx, deps: harness.deps });
 }
 
 function callNames(calls) {
@@ -512,8 +511,10 @@ test('processFallbackEntry: 전날 주문 생사 미확인은 uncertain만 기�
   };
   const entry = makeFallbackEntry();
   await runFallback(h, entry);
-  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'uncertain', 'notify']);
-  assert.deepEqual(h.calls[3].slice(1), ['/not-a-real-dir', entry.filename, entry.content, '전날 주문 상태 미확인']);
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'write', 'notify']);
+  assert.equal(h.calls[3][1], join('/not-a-real-dir', entry.filename));
+  assert.equal(h.calls[3][2].status, 'uncertain');
+  assert.equal(h.calls[3][2].reason, '전날 주문 상태 미확인');
   assert.equal(h.calls[4][1], '경고');
   assert.match(h.calls[4][2], /수동확인 필요/);
   assert.deepEqual(h.state, { remainingCash: 20_000, remainingSlots: 2 });
@@ -556,6 +557,19 @@ test('processFallbackEntry: 현재가 실패·수량 0·슬롯 소진·신호일
     if (c.status) assert.equal(h.calls.find(([name]) => name === 'write')[2].status, c.status, c.label);
     assert.deepEqual(h.state, before, c.label);
   }
+});
+
+test('processFallbackEntry: 슬롯이 소진돼도 신호일 만료를 먼저 기록한다', async () => {
+  const h = makeFallbackHarness({ state: { remainingCash: 20_000, remainingSlots: 0 } });
+  const entry = makeFallbackEntry({ signalDate: '2000-01-01' });
+  const before = { ...h.state };
+  await runFallback(h, entry);
+  assert.deepEqual(callNames(h.calls), ['write', 'notify']);
+  assert.equal(h.calls[0][2].status, 'expired');
+  assert.equal(h.calls[1][1], '경고');
+  assert.match(h.calls[1][2], /신호일 만료/);
+  assert.doesNotMatch(h.calls[1][2], /슬롯 소진/);
+  assert.deepEqual(h.state, before);
 });
 
 test('processFallbackEntry: 직접 취소한 전날 주문은 완료 알림 후 placing 사유에 기록하고 매수한다', async () => {
@@ -616,6 +630,9 @@ test('processFallbackEntry: 의존성·state·ctx 배선 오류는 어떤 부작
     (h) => { delete h.deps.placeKrOrder; },
     (h) => { h.state.remainingCash = NaN; },
     (h) => { h.ctx.here = 42; },
+    (h) => { h.ctx.token = undefined; },
+    (h) => { h.ctx.cano = ''; },
+    (h) => { delete h.dir; },
   ]) {
     const h = makeFallbackHarness();
     invalid(h);
