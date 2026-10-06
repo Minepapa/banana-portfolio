@@ -200,6 +200,89 @@ test('원래 미로드였던 복사본은 실패 원복 후에도 미로드로 �
   assert.equal(fs.lstatSync(copyPath).isSymbolicLink(), false);
 });
 
+test('중간 실패 뒤 같은 명령을 재실행하면 완료 항목을 건너뛰고 이어서 적용한다', (t) => {
+  const dirs = fixture(t);
+  const labels = ['com.banana2.01', 'com.banana2.02', 'com.banana2.03'];
+  for (const label of labels) {
+    fs.writeFileSync(path.join(dirs.plistDirectory, `${label}.plist`), plist(label));
+    fs.writeFileSync(path.join(dirs.agentsDirectory, `${label}.plist`), plist(label));
+  }
+  const secondPath = path.join(dirs.agentsDirectory, `${labels[1]}.plist`);
+  const originalSecond = fs.readFileSync(secondPath);
+  let failSecond = true;
+  const bootstrapped = [];
+  const deps = createDependencies({ sleep: () => {}, launchctl: (args) => {
+    if (args[0] === 'print') throw new Error('not loaded');
+    if (args[0] === 'bootstrap') {
+      const label = path.basename(args[2], '.plist');
+      bootstrapped.push(label);
+      if (failSecond && label === labels[1]) throw new Error('busy');
+    }
+  } });
+  const command = ['--install', '--only', labels.join(','), '--apply'];
+  assert.throws(() => run(command, { ...dirs, deps, output: () => {} }), (error) => {
+    assert.match(error.message, /처리 완료: com\.banana2\.01; 실패: com\.banana2\.02 \(bootstrap 3회 실패\); 미처리: com\.banana2\.03/);
+    assert.match(error.message, /원인을 해결한 뒤 같은 명령을 다시 실행하면 완료 항목은 건너뛰고 이어서 처리합니다\./);
+    return true;
+  });
+  assert.equal(fs.readlinkSync(path.join(dirs.agentsDirectory, `${labels[0]}.plist`)),
+    path.join(dirs.plistDirectory, `${labels[0]}.plist`));
+  assert.equal(fs.lstatSync(secondPath).isSymbolicLink(), false);
+  assert.equal(fs.readFileSync(secondPath).equals(originalSecond), true);
+  assert.equal(fs.lstatSync(path.join(dirs.agentsDirectory, `${labels[2]}.plist`)).isSymbolicLink(), false);
+  assert.deepEqual(bootstrapped, [labels[0], labels[1], labels[1], labels[1]]);
+
+  const plan = run(['--install', '--only', labels.join(',')], { ...dirs, deps, output: () => {} });
+  assert.deepEqual(plan.map((item) => item.action), ['변경 없음', '설치', '설치']);
+  failSecond = false;
+  bootstrapped.length = 0;
+  run(command, { ...dirs, deps, output: () => {} });
+  assert.deepEqual(bootstrapped, [labels[1], labels[2]]);
+  assert.deepEqual(run(['--install', '--only', labels.join(',')],
+    { ...dirs, deps, output: () => {} }).map((item) => item.action),
+  ['변경 없음', '변경 없음', '변경 없음']);
+});
+
+test('옛 경로를 거치는 링크는 대상만 갱신하고 재로드하지 않는다', (t) => {
+  const dirs = fixture(t);
+  const oldDirectory = path.join(path.dirname(dirs.plistDirectory), 'old-launchd');
+  fs.symlinkSync(dirs.plistDirectory, oldDirectory);
+  const link = path.join(dirs.agentsDirectory, 'com.banana2.link.plist');
+  const oldTarget = path.join(oldDirectory, 'com.banana2.link.plist');
+  fs.unlinkSync(link);
+  fs.symlinkSync(oldTarget, link);
+  const calls = [];
+  const deps = createDependencies({ launchctl: (args) => calls.push(args) });
+  const plan = run(['--install', '--only', 'com.banana2.link'], { ...dirs, deps, output: () => {} });
+  assert.equal(plan[0].action, '링크 대상 갱신 필요');
+  run(['--install', '--only', 'com.banana2.link', '--apply'], { ...dirs, deps, output: () => {} });
+  assert.deepEqual(calls, []);
+  assert.equal(fs.readlinkSync(link), path.join(dirs.plistDirectory, 'com.banana2.link.plist'));
+  assert.equal(run(['--install', '--only', 'com.banana2.link'],
+    { ...dirs, deps, output: () => {} })[0].action, '변경 없음');
+
+  fs.unlinkSync(link);
+  fs.symlinkSync(oldTarget, link);
+  const reloadCalls = [];
+  const reloadDeps = createDependencies({ launchctl: (args) => {
+    reloadCalls.push(args[0]);
+    if (args[0] === 'print') throw new Error('not loaded');
+  } });
+  run(['--install', '--only', 'com.banana2.link', '--reload', '--apply'],
+    { ...dirs, deps: reloadDeps, output: () => {} });
+  assert.deepEqual(reloadCalls, ['print', 'bootout', 'print', 'bootstrap']);
+  assert.equal(fs.readlinkSync(link), path.join(dirs.plistDirectory, 'com.banana2.link.plist'));
+});
+
+test('순환 링크도 계획 단계에서 중단하지 않고 설치 대상으로 분류한다', (t) => {
+  const dirs = fixture(t);
+  const link = path.join(dirs.agentsDirectory, 'com.banana2.link.plist');
+  fs.unlinkSync(link);
+  fs.symlinkSync(link, link);
+  const plan = run(['--install', '--only', 'com.banana2.link'], { ...dirs, output: () => {} });
+  assert.equal(plan[0].action, '설치');
+});
+
 test('bootout 제한시간 실패는 링크를 바꾸지 않고 멈춘다', (t) => {
   const dirs = fixture(t);
   const copyPath = path.join(dirs.agentsDirectory, 'com.banana2.copy.plist');

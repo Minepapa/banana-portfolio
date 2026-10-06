@@ -2,6 +2,8 @@
 // 사용: node scripts/tools/relocate-launchd.mjs --check [--json]
 //       node scripts/tools/relocate-launchd.mjs --rewrite --to /new/repo [--from /old/repo] [--out /tmp/plists] [--apply]
 //       node scripts/tools/relocate-launchd.mjs --install [--only label1,label2] [--reload] [--force] [--apply]
+// 1단계: --check → --rewrite --to <새 루트> 계획 확인 → --rewrite --to <새 루트> --apply
+//       → --install 계획 확인 → --install --apply. 실패하면 원인 해결 후 같은 명령을 재실행한다.
 // --rewrite --apply는 LaunchAgents 링크를 통해 운영 plist를 바꾸는 행위다.
 // --out과 원본 모두 --apply가 있을 때만 쓴다.
 import * as nodeFs from 'node:fs';
@@ -84,7 +86,7 @@ export function inspectLaunchd({ plistDirectory, agentsDirectory, deps = createD
     const root = roots[0];
     const uses = tokens.filter((token) => pathHasRoot(token.value, root))
       .map((token) => ({ key: token.key, value: token.value }));
-    return { name, label, root, uses, source };
+    return { name, label, root, uses, source, realpath: fs.realpathSync(path.join(plistDirectory, name)) };
   });
   const roots = [...new Set(files.map((file) => file.root))];
   if (roots.length !== 1) throw new Error(`plist 간 저장소 루트가 일치하지 않습니다: ${roots.join(', ')}`);
@@ -101,7 +103,11 @@ export function inspectLaunchd({ plistDirectory, agentsDirectory, deps = createD
     }
     if (stat.isSymbolicLink()) {
       const target = fs.readlinkSync(installedPath);
-      return { label: file.label, status: '링크', target: path.resolve(agentsDirectory, target) };
+      let realpath = null;
+      try { realpath = fs.realpathSync(installedPath); } catch (error) {
+        if (!['ENOENT', 'ELOOP', 'ENOTDIR'].includes(error.code)) throw error;
+      }
+      return { label: file.label, status: '링크', target: path.resolve(agentsDirectory, target), realpath };
     }
     return { label: file.label, status: '복사본', same: withoutComments(fs.readFileSync(installedPath, 'utf8'))
       === withoutComments(file.source) };
@@ -123,21 +129,23 @@ export function planInstall(report, { plistDirectory, agentsDirectory, only, rel
     const previous = report.installations.find((item) => item.label === file.label);
     const action = previous.status === '링크' && previous.target === source
       ? (reload ? '재시작' : '변경 없음')
-      : previous.status === '복사본' && !previous.same && !force ? '거부' : '설치';
+      : previous.status === '링크' && previous.realpath === file.realpath
+        ? '링크 대상 갱신 필요'
+        : previous.status === '복사본' && !previous.same && !force ? '거부' : '설치';
     const warnings = [];
     if (action === '거부') warnings.push('복사본 내용 다름: --force 필요');
     if (/^com\.banana2\.(telegram-session|execute-)/.test(file.label)) {
       warnings.push('상시·장중 잡: 적용 시 중단 가능');
     }
     return { label: file.label, source, link: nodePath.join(agentsDirectory, file.name), previous,
-      action, warning: warnings.join('; ') || null };
+      action, reload, warning: warnings.join('; ') || null };
   });
 }
 
 export function applyInstall(plan, deps = createDependencies()) {
   const { fs, path, launchctl, uid, sleep, bootoutTimeoutSeconds } = deps;
   const completed = [];
-  const actionable = plan.filter((item) => item.action === '설치' || item.action === '재시작');
+  const actionable = plan.filter((item) => ['설치', '재시작', '링크 대상 갱신 필요'].includes(item.action));
   for (const [index, item] of actionable.entries()) {
     const previous = item.previous.status === '링크'
       ? { type: 'link', value: fs.readlinkSync(item.link) }
@@ -146,6 +154,13 @@ export function applyInstall(plan, deps = createDependencies()) {
     let installationChanged = false;
     let wasLoaded = false;
     try {
+      if (item.action === '링크 대상 갱신 필요' && !item.reload) {
+        installationChanged = true;
+        fs.unlinkSync(item.link);
+        fs.symlinkSync(item.source, item.link);
+        completed.push(item.label);
+        continue;
+      }
       try { launchctl(['print', `gui/${uid}/${item.label}`]); wasLoaded = true; } catch { /* 원래 미로드 */ }
       try { launchctl(['bootout', `gui/${uid}/${item.label}`]); } catch { /* 미로드 상태는 정상이다. */ }
       let stopped = false;
@@ -154,7 +169,7 @@ export function applyInstall(plan, deps = createDependencies()) {
         if (second < bootoutTimeoutSeconds) sleep(1000);
       }
       if (!stopped) throw new Error(`bootout 후 ${bootoutTimeoutSeconds}초 내 종료되지 않았습니다`);
-      if (item.action === '설치') {
+      if (item.action === '설치' || item.action === '링크 대상 갱신 필요') {
         fs.mkdirSync(path.dirname(item.link), { recursive: true });
         installationChanged = true;
         if (previous.type !== 'none') fs.unlinkSync(item.link);
@@ -185,7 +200,7 @@ export function applyInstall(plan, deps = createDependencies()) {
         }
       } catch (restoreError) { error.message += `; 원상복구 실패: ${restoreError.message}`; }
       const pending = actionable.slice(index + 1).map((entry) => entry.label);
-      throw new Error(`처리 완료: ${completed.join(', ') || '없음'}; 실패: ${item.label} (${error.message}); 미처리: ${pending.join(', ') || '없음'}`);
+      throw new Error(`처리 완료: ${completed.join(', ') || '없음'}; 실패: ${item.label} (${error.message}); 미처리: ${pending.join(', ') || '없음'}\n원인을 해결한 뒤 같은 명령을 다시 실행하면 완료 항목은 건너뛰고 이어서 처리합니다.`);
     }
   }
   return completed;
@@ -275,7 +290,11 @@ export function run(args, { deps = createDependencies(),
   }
   else {
     for (const item of plan) {
-      output(`${item.label}: ${item.action}${item.action === '설치' || item.action === '재시작' ? ` (${item.previous.status} → 링크 ${item.source} → bootout → bootstrap)` : ''}`);
+      const steps = item.action === '링크 대상 갱신 필요' && !item.reload
+        ? ` (${item.previous.target} → 링크 ${item.source})`
+        : ['설치', '재시작', '링크 대상 갱신 필요'].includes(item.action)
+          ? ` (${item.previous.status} → 링크 ${item.source} → bootout → bootstrap)` : '';
+      output(`${item.label}: ${item.action}${steps}`);
       if (item.warning) output(`  ⚠ ${item.label}: ${item.warning}`);
     }
     for (const item of report.outside) output(`${item.label}: 저장소 밖 설치본 유지`);
