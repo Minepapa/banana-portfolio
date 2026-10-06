@@ -34,7 +34,7 @@
 import { existsSync, readdirSync, readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { getCachedMacroIndicators } from '../lib/macro-cache.mjs';
@@ -364,7 +364,7 @@ export function writeObservations(asof, observations) {
     if (promote) promoted.push({
       observation: record.observation,
       vsProfile: record.vsProfile,
-      notePath: `Decisions/Profile/${filename.replace(/\.md$/, '')}`,
+      notePath: `${VAULT_REL.decisionsProfile}/${filename.replace(/\.md$/, '')}`,
     });
   });
   return { written: n, promoted };

@@ -33,7 +33,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
@@ -43,7 +43,7 @@ const DRY_RUN = process.argv.includes('--dry-run');
 const DEPARTMENT_LABEL = '운영실 Hermes';
 const THRESHOLD_DAYS = 3;
 const REPEAT_DAYS = 3;
-const STATE_DIR = join(VAULT_PATHS.root, 'State', 'RebalanceReminder');
+const STATE_DIR = vaultAbs(VAULT_REL.stateRebalanceReminder);
 
 // 무응답 제안 리마인더(2026-09-07 신설) — 승인/거부 자체를 안 해서 방치되는 경우.
 // 미체결 리마인더(승인 후 3일)보다 짧게 잡는다 — "체결을 깜빡함"보다 "제안 자체를
@@ -51,7 +51,7 @@ const STATE_DIR = join(VAULT_PATHS.root, 'State', 'RebalanceReminder');
 // 매매하는 것보다 훨씬 저마찰(그냥 텔레그램 답장)이라 매일 다시 물어봐도 안 naggy함.
 const THRESHOLD_DAYS_PENDING = 1;
 const REPEAT_DAYS_PENDING = 1;
-const PENDING_STATE_DIR = join(VAULT_PATHS.root, 'State', 'ProposalResponseReminder');
+const PENDING_STATE_DIR = vaultAbs(VAULT_REL.stateProposalResponseReminder);
 
 function readMdDir(dir) {
   if (!existsSync(dir)) return [];

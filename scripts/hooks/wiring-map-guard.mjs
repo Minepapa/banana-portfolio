@@ -26,12 +26,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readStdin } from './telegram-reply-guard.mjs';
-import { VAULT_ROOT } from '../lib/vault-paths.mjs';
+import { VAULT_ROOT, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { parseWiringMapClusters, findRelatedClusters } from '../lib/wiring-map-parser.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CODE_REPO_ROOT = join(HERE, '..', '..'); // scripts/hooks/ 기준 2단계 위
-const WIRING_MAP_PATH = join(VAULT_ROOT, 'Knowledge', 'Meta', '므네모시네-파일배선도.md');
+const WIRING_MAP_PATH = vaultAbs(VAULT_REL.wiringMapFile);
 const MAX_OTHERS_SHOWN = 8;
 
 function pass() {

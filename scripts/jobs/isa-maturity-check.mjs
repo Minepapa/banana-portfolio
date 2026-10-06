@@ -38,7 +38,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { summarizeIsaHoldings } from '../lib/isa-exposure.mjs';
@@ -53,7 +53,7 @@ const FORCE = process.argv.includes('--force');
 const DEPARTMENT_LABEL = '투자전략실 Athena';
 const ISA_OPEN_DATE = '2025-04-06'; // 오너 확정(2026-08-29) — 실물 계좌 개설일, 추정 아님
 const MATURITY_YEARS = 3;
-const STATE_DIR = join(VAULT_PATHS.root, 'State', 'IsaMaturity');
+const STATE_DIR = vaultAbs(VAULT_REL.stateIsaMaturity);
 const STATE_FILE = join(STATE_DIR, 'triggered.md');
 
 // 순수함수 — 개설일 + 3년 = 만기일. Date 생성자의 월 넘김 처리에 맡긴다(2/29 개설 같은

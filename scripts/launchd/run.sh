@@ -9,7 +9,17 @@
 # launchd plist들이 이 스크립트를 호출한다(예: run.sh backup-vault).
 set -euo pipefail
 
-REPO="/Users/huinique/Stockproject/banana-portfolio-v2"
+RUN_SOURCE="${BASH_SOURCE[0]}"
+LINK_DEPTH=0
+while [ -L "$RUN_SOURCE" ]; do
+  LINK_DEPTH=$((LINK_DEPTH + 1))
+  if [ "$LINK_DEPTH" -gt 40 ]; then echo "[run.sh] 심볼릭 링크 해석이 40회를 넘었습니다" >&2; exit 1; fi
+  RUN_DIR="$(cd -P "$(dirname "$RUN_SOURCE")" && pwd)"
+  RUN_SOURCE="$(readlink "$RUN_SOURCE")"
+  [[ "$RUN_SOURCE" = /* ]] || RUN_SOURCE="$RUN_DIR/$RUN_SOURCE"
+done
+REPO="$(cd -P "$(dirname "$RUN_SOURCE")/../.." && pwd)"
+[ -f "$REPO/scripts/launchd/run.sh" ] || { echo "[run.sh] 저장소 경로를 확인할 수 없습니다: $REPO" >&2; exit 1; }
 LOG_DIR="$HOME/Library/Logs/banana-portfolio-v2"
 
 mkdir -p "$LOG_DIR"

@@ -5,6 +5,11 @@
 // 생기거나 폐기될 때마다 여기도 같이 갱신할 것 — health-watcher.mjs의
 // EXPECTED_INTERVALS_MS와 등록 대상이 어긋나면(한쪽만 갱신) 새 잡이 라벨 없이
 // 뜨거나, 폐기된 잡 라벨이 죽지 않고 남는다.
+import { homedir } from 'node:os';
+import { VAULT_ROOT } from './vault-paths.mjs';
+
+const displayVaultRoot = VAULT_ROOT.startsWith(`${homedir()}/`)
+  ? `~${VAULT_ROOT.slice(homedir().length)}` : VAULT_ROOT;
 export const JOB_LABELS = {
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
   'health-watcher': '무인 잡 장애·텔레그램 세션 감시(이 알림을 보내는 잡 자신)',
@@ -96,5 +101,5 @@ export const JOB_REMEDIATION = {
   'parse-notifications-to-vault': '~/.config/banana-portfolio-v2/firebase-adminsdk-key.json(Firebase Admin 키) 확인',
   // backup-vault-snapshot.mjs — Vault 루트 경로가 없으면 즉시 에러. Google Drive
   // for desktop 마운트가 풀렸을 때 실제로 겪었던 실패 양상(ADR 0002 Drive 동기화 구조).
-  'backup-vault': 'Vault 경로(~/banana-vault) 존재 여부 — Google Drive for desktop 마운트 확인',
+  'backup-vault': `Vault 경로(${displayVaultRoot}) 존재 여부 — Google Drive for desktop 마운트 확인`,
 };

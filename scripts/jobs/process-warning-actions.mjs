@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 // 원장에 기록된 장중 거시 조회 실패만 30분 뒤 단일 읽기 재조회한다.
 // 기본 모드는 dry-run이다. 운영 플리스트가 --live를 넘겨야만 실제 GET이 가능하다.
-import { join } from 'node:path';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { rebuildWarningIncidents } from '../lib/warning-event-journal.mjs';
 import { hasMacroRetryClaimInCurrentEpisode, runMacroReadRetry } from '../lib/warning-action-executor.mjs';
 
-const JOURNAL_ROOT = join(VAULT_PATHS.root, 'Log', 'WarningEvents');
+const JOURNAL_ROOT = vaultAbs(VAULT_REL.logWarningEvents);
 const MAX_PER_RUN = 10;
 
 export function selectMacroRetryIncidents(rebuilt, maxPerRun = MAX_PER_RUN) {

@@ -30,7 +30,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { TARGET_ALLOCATION } from '../lib/rebalance-gap.mjs';
@@ -45,7 +45,7 @@ const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
 const DEPARTMENT_LABEL = '투자전략실 Athena';
 const LOOKBACK_MS = 95 * 24 * 3600_000; // 약 1분기
-const STATE_DIR = join(VAULT_PATHS.root, 'State', 'QuarterlyAllocationReview');
+const STATE_DIR = vaultAbs(VAULT_REL.stateQuarterlyAllocationReview);
 const STATE_FILE = join(STATE_DIR, 'last-quarter.md');
 const QUARTER_START_MONTHS = new Set([1, 4, 7, 10]);
 

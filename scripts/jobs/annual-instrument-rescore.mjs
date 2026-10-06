@@ -31,7 +31,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic, writeStateFile } from '../lib/state-writer.mjs';
 import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/cash-allocation-candidates.mjs';
@@ -59,7 +59,7 @@ const IN_SCOPE_ACCOUNTS = ['위탁', '연금저축'];
 // 재면 공정 비교가 깨진다).
 const SERIES_DAYS = 252;
 const RESCORE_THRESHOLD = 10; // 1차 placeholder(100점 만점) — 오너가 나중에 조정
-const STATE_DIR = join(VAULT_PATHS.root, 'State', 'InstrumentRescoring');
+const STATE_DIR = vaultAbs(VAULT_REL.stateInstrumentRescoring);
 const STATE_FILE = join(STATE_DIR, 'last-year.md');
 
 function kstCalendarParts(date) {

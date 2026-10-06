@@ -2,15 +2,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
-import { VAULT_PATHS } from './vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from './vault-paths.mjs';
 import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 import { patchFrontmatterFileSafely, withLock, writeAtomic } from './state-writer.mjs';
 import { escapeHtml, sendTelegram } from './telegram.mjs';
 import { formatDepartmentMessage, stripEmDash } from './telegram-messages.mjs';
 
-const QUEUE_DIR = join(VAULT_PATHS.root, 'State', 'WikiQuestions');
+const QUEUE_DIR = vaultAbs(VAULT_REL.stateWikiQuestions);
 const QUEUE_LOCK = join(QUEUE_DIR, '.queue');
-const INDEX_PATH = join(VAULT_PATHS.root, 'Knowledge', 'Index.md');
+const INDEX_PATH = vaultAbs(VAULT_REL.knowledgeIndexFile);
 const QUESTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const ACTIVE_STATUSES = new Set(['발송중', '발송결과불명', '재발송허용', '답변대기', '승인', '반영대기']);
 const ACTIONS = new Map([
@@ -94,7 +94,7 @@ function validateInput(input) {
   if (input.kind === 'keyword-registration') {
     if (!changePlan || changePlan.type !== 'register-keyword') throw new Error('keyword-registration은 register-keyword changePlan이 필요합니다.');
     const standardTerm = String(changePlan.standardTerm ?? '').trim();
-    const canonical = validateVaultNote(changePlan.canonicalNote, ['Knowledge']);
+    const canonical = validateVaultNote(changePlan.canonicalNote, [VAULT_REL.knowledge]);
     const section = String(changePlan.indexSection ?? '');
     if (!standardTerm || standardTerm.length > 80 || standardTerm.includes('|') || /[\r\n]/.test(standardTerm)) throw new Error('standardTerm은 표 구분자 없이 1~80자여야 합니다.');
     if (!['개인 원칙과 투자 결정', '시스템과 기술'].includes(section)) throw new Error('indexSection은 색인의 표준 키워드 표가 있는 허용된 절이어야 합니다.');
@@ -271,7 +271,7 @@ async function addKeywordIndexRow(plan) {
 }
 
 async function applyKeywordPlan(plan) {
-  const canonical = validateVaultNote(plan.canonicalNote, ['Knowledge']);
+  const canonical = validateVaultNote(plan.canonicalNote, [VAULT_REL.knowledge]);
   const canonicalContent = readFileSync(canonical.abs, 'utf8');
   const canonicalFields = parseFrontmatter(canonicalContent);
   const aliases = [...new Set([...(canonicalFields.aliases ?? []), ...plan.aliases])];
@@ -284,7 +284,7 @@ async function applyKeywordPlan(plan) {
   for (const target of targets) {
     await patchFrontmatterFileSafely(target.abs, { related: [`[[${plan.canonicalNote}]]`] });
   }
-  return { index: 'Knowledge/Index.md', canonical: plan.canonicalNote, backlinks: backlinkNotes };
+  return { index: VAULT_REL.knowledgeIndexFile, canonical: plan.canonicalNote, backlinks: backlinkNotes };
 }
 
 export async function applyWikiQuestion(questionId) {

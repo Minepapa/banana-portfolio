@@ -30,7 +30,7 @@ import { isAbsolute, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readStdin } from './telegram-reply-guard.mjs';
 import { parseFrontmatter, CANONICAL_PROGRESS_VALUES } from '../lib/vault-frontmatter.mjs';
-import { VAULT_ROOT } from '../lib/vault-paths.mjs';
+import { VAULT_ROOT, VAULT_REL } from '../lib/vault-paths.mjs';
 
 export { CANONICAL_PROGRESS_VALUES }; // 이 파일을 직접 import하던 기존 코드/테스트 호환용 재수출
 
@@ -58,7 +58,7 @@ function warn(message) {
 export function shouldCheck(relPath) {
   if (!relPath) return false;
   const normalized = relPath.replace(/\\/g, '/');
-  return normalized.startsWith('Log/Implementation/') && normalized.endsWith('.md');
+  return normalized.startsWith(`${VAULT_REL.logImplementation}/`) && normalized.endsWith('.md');
 }
 
 // status는 노트 종류별 집합을 쓰므로, progress 검사와 별도의 범위를 갖는다.
@@ -66,21 +66,21 @@ export function shouldCheckStatus(relPath) {
   if (!relPath) return false;
   const normalized = relPath.replace(/\\/g, '/');
   return (
-    normalized.startsWith('Log/Implementation/') ||
-    normalized.startsWith('Log/DevRequests/') ||
-    normalized.startsWith('Log/Strategy/') ||
-    normalized.startsWith('Decisions/Proposals/') ||
-    normalized.startsWith('Decisions/Profile/') ||
-    normalized.startsWith('Knowledge/')
+    normalized.startsWith(`${VAULT_REL.logImplementation}/`) ||
+    normalized.startsWith(`${VAULT_REL.logDevRequests}/`) ||
+    normalized.startsWith(`${VAULT_REL.logStrategy}/`) ||
+    normalized.startsWith(`${VAULT_REL.decisionsProposals}/`) ||
+    normalized.startsWith(`${VAULT_REL.decisionsProfile}/`) ||
+    normalized.startsWith(`${VAULT_REL.knowledge}/`)
   ) && normalized.endsWith('.md');
 }
 
 function statusScope(relPath) {
   const normalized = relPath.replace(/\\/g, '/');
-  if (normalized.startsWith('Log/Strategy/')) return 'strategy';
-  if (normalized.startsWith('Decisions/Proposals/')) return 'proposal';
-  if (normalized.startsWith('Decisions/Profile/')) return 'profile';
-  if (normalized.startsWith('Knowledge/')) return 'knowledge';
+  if (normalized.startsWith(`${VAULT_REL.logStrategy}/`)) return 'strategy';
+  if (normalized.startsWith(`${VAULT_REL.decisionsProposals}/`)) return 'proposal';
+  if (normalized.startsWith(`${VAULT_REL.decisionsProfile}/`)) return 'profile';
+  if (normalized.startsWith(`${VAULT_REL.knowledge}/`)) return 'knowledge';
   return 'lifecycle';
 }
 
@@ -100,7 +100,7 @@ export function checkStatusField(frontmatter, relPath) {
       `${CANONICAL_STATUS_VALUES[scope].join('/')} 밖의 자유서술입니다. ` +
       '긴 설명은 statusDetail에 적으세요.';
   }
-  if (scope === 'lifecycle' && relPath.replace(/\\/g, '/').startsWith('Log/Implementation/')) {
+  if (scope === 'lifecycle' && relPath.replace(/\\/g, '/').startsWith(`${VAULT_REL.logImplementation}/`)) {
     const progress = frontmatter?.progress;
     if (value != null && progress != null && value !== progress) {
       return `⚠️ 므네모시네 정합성 — ${relPath}의 status(${value})와 progress(${progress})가 다릅니다. ` +
@@ -116,7 +116,7 @@ export function checkProgressField(frontmatter, relPath) {
   const value = frontmatter?.progress;
   if (value == null || value === '') {
     return `⚠️ 므네모시네 정합성 — ${relPath}에 progress: 필드가 없습니다. ` +
-      `Knowledge/Meta/Index.md 규칙(완료 상태 추적)에 따라 ${CANONICAL_PROGRESS_VALUES.join('/')} 중 하나를 지금 추가하세요.`;
+      `${VAULT_REL.knowledgeMetaIndexFile} 규칙(완료 상태 추적)에 따라 ${CANONICAL_PROGRESS_VALUES.join('/')} 중 하나를 지금 추가하세요.`;
   }
   if (!CANONICAL_PROGRESS_VALUES.includes(value)) {
     return `⚠️ 므네모시네 정합성 — ${relPath}의 progress: "${value}"는 정해진 ${CANONICAL_PROGRESS_VALUES.length}종(${CANONICAL_PROGRESS_VALUES.join('/')}) 밖의 자유서술입니다. ` +

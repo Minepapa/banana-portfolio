@@ -1,18 +1,19 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, basename } from 'node:path';
+import { VAULT_REL } from './vault-paths.mjs';
 
 export const STATUS_RULES = [
-  { path: 'Log/Implementation', allowed: ['예정', '진행중', '차단됨', '완료', '보류', '폐기'] },
-  { path: 'Log/DevRequests', allowed: ['예정', '진행중', '차단됨', '완료', '보류', '폐기'] },
-  { path: 'Knowledge', allowed: ['활성', '비활성', '진행중', '탐색지도', '대체됨'] },
-  { path: 'Decisions/Proposals', allowed: [
+  { path: VAULT_REL.logImplementation, allowed: ['예정', '진행중', '차단됨', '완료', '보류', '폐기'] },
+  { path: VAULT_REL.logDevRequests, allowed: ['예정', '진행중', '차단됨', '완료', '보류', '폐기'] },
+  { path: VAULT_REL.knowledge, allowed: ['활성', '비활성', '진행중', '탐색지도', '대체됨'] },
+  { path: VAULT_REL.decisionsProposals, allowed: [
     '발송중', '발송오류', '대기', '승인', '거부', '대체됨', '만료',
     '주문접수', '부분체결', '체결', '취소', '섀도우체결',
   ] },
-  { path: 'Decisions/Profile', allowed: ['관찰', '승격후보', '확정', '기각'] },
-  { path: 'Log/Strategy', allowed: ['결정됨', '실행대기', '보류', '대체됨'] },
+  { path: VAULT_REL.decisionsProfile, allowed: ['관찰', '승격후보', '확정', '기각'] },
+  { path: VAULT_REL.logStrategy, allowed: ['결정됨', '실행대기', '보류', '대체됨'] },
 ];
-export const ID_RULE_PATHS = ['State/BreakoutPositions', 'State/BreakoutPendingEntries'];
+export const ID_RULE_PATHS = [VAULT_REL.stateBreakoutPositions, VAULT_REL.stateBreakoutPendingEntries];
 
 export function parseFlatFrontmatter(text) {
   const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
@@ -121,8 +122,8 @@ export function auditVault(root, repoRoot) {
     for (const link of malformed) errors.push(`${relative(root, file)}: malformed wiki link ${link}`);
     for (const link of links) if (!resolveWikiTarget(link, relFiles)) errors.push(`${relative(root, file)}: unresolved wiki link [[${link}]]`);
   }
-  const failed = walk(join(root, 'State/BreakoutPositions')).filter((file) => /protectionStatus:\s*["']?failed["']?/i.test(readFileSync(file, 'utf8')));
-  const executions = walk(join(root, 'Facts/Ledger/Executions')).map((path) => ({ path: relative(root, path), text: readFileSync(path, 'utf8') }));
+  const failed = walk(join(root, VAULT_REL.stateBreakoutPositions)).filter((file) => /protectionStatus:\s*["']?failed["']?/i.test(readFileSync(file, 'utf8')));
+  const executions = walk(join(root, VAULT_REL.factsLedgerExecutions)).map((path) => ({ path: relative(root, path), text: readFileSync(path, 'utf8') }));
   const duplicates = findExecutionDuplicates(executions);
   const policyFiles = ['scripts/lib/order-candidates.mjs', 'scripts/lib/behavior-signals.mjs'];
   for (const file of policyFiles) {

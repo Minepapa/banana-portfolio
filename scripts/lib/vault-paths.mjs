@@ -13,6 +13,42 @@ import { homedir } from 'node:os';
 
 export const VAULT_ROOT = process.env.VAULT_PATH || join(homedir(), 'banana-vault');
 
+export const VAULT_REL = {
+  logImplementation: 'Log/Implementation',
+  logDevRequests: 'Log/DevRequests',
+  logStrategy: 'Log/Strategy',
+  logSessions: 'Log/Sessions',
+  logWarningEvents: 'Log/WarningEvents',
+  decisionsProposals: 'Decisions/Proposals',
+  decisionsProfile: 'Decisions/Profile',
+  knowledge: 'Knowledge',
+  knowledgeTopics: 'Knowledge/Topics',
+  knowledgeMeta: 'Knowledge/Meta',
+  knowledgeInfra: 'Knowledge/Infra',
+  knowledgeApi: 'Knowledge/API',
+  knowledgeIndexFile: 'Knowledge/Index.md',
+  knowledgeMetaIndexFile: 'Knowledge/Meta/Index.md',
+  wiringMapFile: 'Knowledge/Meta/므네모시네-파일배선도.md',
+  stateBreakoutPositions: 'State/BreakoutPositions',
+  stateBreakoutPendingEntries: 'State/BreakoutPendingEntries',
+  stateTelegramSession: 'State/TelegramSession',
+  stateTelegramSessionHealth: 'State/TelegramSessionHealth',
+  stateWikiQuestions: 'State/WikiQuestions',
+  stateInstrumentRescoring: 'State/InstrumentRescoring',
+  stateQuarterlyAllocationReview: 'State/QuarterlyAllocationReview',
+  stateMorningBriefing: 'State/MorningBriefing',
+  stateIsaMaturity: 'State/IsaMaturity',
+  stateRebalanceProposal: 'State/RebalanceProposal',
+  stateRebalanceReminder: 'State/RebalanceReminder',
+  stateProposalResponseReminder: 'State/ProposalResponseReminder',
+  stateMacroTiltProposal: 'State/MacroTiltProposal',
+  factsLedgerExecutions: 'Facts/Ledger/Executions',
+  factsLedgerProfits: 'Facts/Ledger/Profits',
+  factsRawNotificationsApiCovered: 'Facts/RawNotifications/ExecutionApiCovered',
+};
+
+export function vaultAbs(rel) { return join(VAULT_ROOT, ...rel.split('/')); }
+
 export const VAULT_PATHS = {
   root: VAULT_ROOT,
   facts: {

@@ -67,7 +67,7 @@ import { readKakaoInbox, deleteKakaoInboxDocs } from '../lib/kakao-inbox.mjs';
 import { parseExecution, parseDividend, parseGoldBuy, parseCashAlarm, parseFundBuy, parseFundValuation, parseExchange } from '../lib/notification-parsers.mjs';
 import { buildExecutionRecord, buildKakaoExecutionRecordCandidates, buildDividendRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from '../lib/ledger-vault-writer.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { FUND_PURCHASE_ACCOUNT, EXCHANGE_ACCOUNT, findExecutionAccountCandidates } from '../lib/account-resolver.mjs';
@@ -120,7 +120,7 @@ const sendConfirmationWarning = createDirectWarningSender(sendTelegram, {
 // nh-accounts.test.js의 구조적 가드 테스트가 이 관계를 대조한다.
 export const CASH_ALARM_API_EXCLUDED = new Set(['위탁', 'CMA']);
 
-const API_COVERED_ARCHIVE_DIR = join(VAULT_PATHS.root, 'Facts', 'RawNotifications', 'ExecutionApiCovered');
+const API_COVERED_ARCHIVE_DIR = vaultAbs(VAULT_REL.factsRawNotificationsApiCovered);
 
 export function buildApiCoveredExecutionArchive({ id, ts, body, event, account }) {
   const safeId = String(id ?? '').replace(/[^\p{L}\p{N}_.-]+/gu, '_') || 'unknown';

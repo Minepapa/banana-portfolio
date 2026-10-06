@@ -39,7 +39,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { buildHomeMirror } from '../lib/firestore-mirror.mjs';
@@ -56,7 +56,7 @@ import { dedupIncrementalExecutionsForReport } from './daily-execution-report.mj
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEPARTMENT_LABEL = '운영실 Hermes';
-const STATE_DIR = join(VAULT_PATHS.root, 'State', 'MorningBriefing');
+const STATE_DIR = vaultAbs(VAULT_REL.stateMorningBriefing);
 const STATE_FILE = join(STATE_DIR, 'previous-total.md');
 
 function readVaultDir(dir) {

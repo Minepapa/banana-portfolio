@@ -22,7 +22,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 
@@ -58,7 +58,7 @@ function main() {
 
   const now = new Date().toISOString();
   try {
-    mkdirSync(join(VAULT_PATHS.root, 'State', 'TelegramSession'), { recursive: true });
+    mkdirSync(vaultAbs(VAULT_REL.stateTelegramSession), { recursive: true });
     writeAtomic(VAULT_PATHS.state.telegramSessionLastRead, buildLastReadMarker({ filename: latest, readAt: now }));
   } catch {
     // 마커 기록 실패해도 컨텍스트 주입 자체는 계속 — 부가 기능이 본 기능을 막으면 안 됨.

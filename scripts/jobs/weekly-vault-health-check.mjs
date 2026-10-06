@@ -31,7 +31,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
-import { VAULT_PATHS, VAULT_ROOT } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_ROOT, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
@@ -352,33 +352,33 @@ async function main() {
   const allFiles = readAllVaultFiles();
 
   const { broken, ambiguous } = findBrokenAndAmbiguousLinks(allFiles);
-  const orphaned = findOrphanedNotes(allFiles, ['Knowledge/Topics', 'Knowledge/Meta', 'Knowledge/Infra', 'Knowledge/API']);
+  const orphaned = findOrphanedNotes(allFiles, [VAULT_REL.knowledgeTopics, VAULT_REL.knowledgeMeta, VAULT_REL.knowledgeInfra, VAULT_REL.knowledgeApi]);
   const recentLegacy = findRecentLegacyFiles(allFiles);
 
   const profitRecords = allFiles
-    .filter((f) => f.relPath.startsWith('Facts/Ledger/Profits/'))
+    .filter((f) => f.relPath.startsWith(`${VAULT_REL.factsLedgerProfits}/`))
     .map((f) => ({ ...f.frontmatter, __relPath: f.relPath }));
   const fxAnomalies = findFxAnomalies(profitRecords);
   const missingCurrency = findMissingCurrencyField(profitRecords);
 
   const implRecords = allFiles
-    .filter((f) => f.relPath.startsWith('Log/Implementation/') || f.relPath.startsWith('Log/DevRequests/'))
+    .filter((f) => f.relPath.startsWith(`${VAULT_REL.logImplementation}/`) || f.relPath.startsWith(`${VAULT_REL.logDevRequests}/`))
     .map((f) => ({ ...f.frontmatter, __relPath: f.relPath }));
   const pendingWork = findPendingWork(implRecords);
   const remainingSections = findRemainingWorkSections(
-    allFiles.filter((f) => f.relPath.startsWith('Log/Implementation/') || f.relPath.startsWith('Log/DevRequests/') || f.relPath.startsWith('Log/Sessions/')),
+    allFiles.filter((f) => f.relPath.startsWith(`${VAULT_REL.logImplementation}/`) || f.relPath.startsWith(`${VAULT_REL.logDevRequests}/`) || f.relPath.startsWith(`${VAULT_REL.logSessions}/`)),
   );
   const staleAutoClaims = findStaleAutoClaims(
-    allFiles.filter((f) => f.relPath.startsWith('Knowledge/Meta/') || f.relPath.startsWith('Knowledge/Infra/') || f.relPath.startsWith('Knowledge/API/')),
+    allFiles.filter((f) => f.relPath.startsWith(`${VAULT_REL.knowledgeMeta}/`) || f.relPath.startsWith(`${VAULT_REL.knowledgeInfra}/`) || f.relPath.startsWith(`${VAULT_REL.knowledgeApi}/`)),
   );
 
   // C4·D — 2026-09-14 신설(구조적 재발방지 1단계). Log/DevRequests는 progress:
   // 필드 관례 자체가 다르므로(status: 자유서술) Log/Implementation/만 좁혀서 검사.
   const implOnlyRecords = allFiles
-    .filter((f) => f.relPath.startsWith('Log/Implementation/'))
+    .filter((f) => f.relPath.startsWith(`${VAULT_REL.logImplementation}/`))
     .map((f) => ({ ...f.frontmatter, __relPath: f.relPath }));
   const invalidProgress = findInvalidProgressFields(implOnlyRecords);
-  const indexMdFile = allFiles.find((f) => f.relPath === 'Knowledge/Meta/Index');
+  const indexMdFile = allFiles.find((f) => f.relPath === VAULT_REL.knowledgeMetaIndexFile.replace(/\.md$/, ''));
   const staleEmptyClaims = indexMdFile ? findStaleEmptyClaims(indexMdFile.content, allFiles) : [];
 
   // E — 개수 자동동기화(판단 불필요한 순수 산술이라 hasAnyIssue/Apollo 대상이
@@ -388,7 +388,7 @@ async function main() {
     const { updatedContent, changes } = syncIndexCounts(indexMdFile.content, allFiles);
     if (changes.length) {
       console.log(`🔧 Index.md 개수 자동동기화 ${changes.length}건: ${changes.map((c) => `${c.folder}(${c.oldCount}→${c.newCount})`).join(', ')}`);
-      if (!DRY_RUN) writeAtomic(join(VAULT_ROOT, 'Knowledge', 'Meta', 'Index.md'), updatedContent);
+      if (!DRY_RUN) writeAtomic(vaultAbs(VAULT_REL.knowledgeMetaIndexFile), updatedContent);
       else console.log('  (드라이런 — 실제 파일엔 안 씀)');
     }
   }

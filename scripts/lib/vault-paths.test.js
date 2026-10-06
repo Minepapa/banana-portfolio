@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { VAULT_ROOT, VAULT_PATHS } from './vault-paths.mjs';
+import { VAULT_ROOT, VAULT_PATHS, VAULT_REL, vaultAbs } from './vault-paths.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -61,6 +61,33 @@ test('Ledger 이벤트 종류별 하위폴더 9종이 전부 Facts/Ledger 밑에
   const subfolders = Object.values(VAULT_PATHS.facts.ledger);
   assert.equal(subfolders.length, 9);
   for (const p of subfolders) assert.ok(p.startsWith(VAULT_PATHS.facts.ledgerRoot));
+});
+
+test('VAULT_REL과 겹치는 기존 절대경로는 동일하다', () => {
+  const overlappingPaths = [
+    [VAULT_PATHS.facts.ledger.executions, VAULT_REL.factsLedgerExecutions],
+    [VAULT_PATHS.facts.ledger.profits, VAULT_REL.factsLedgerProfits],
+    [VAULT_PATHS.state.breakoutPositions, VAULT_REL.stateBreakoutPositions],
+    [VAULT_PATHS.state.breakoutPendingEntries, VAULT_REL.stateBreakoutPendingEntries],
+    [VAULT_PATHS.state.macroTiltProposal, VAULT_REL.stateMacroTiltProposal],
+    [VAULT_PATHS.log.implementation, VAULT_REL.logImplementation],
+    [VAULT_PATHS.log.devRequests, VAULT_REL.logDevRequests],
+    [VAULT_PATHS.decisions.proposals, VAULT_REL.decisionsProposals],
+    [VAULT_PATHS.decisions.profile, VAULT_REL.decisionsProfile],
+    [VAULT_PATHS.knowledge.topics, VAULT_REL.knowledgeTopics],
+    [VAULT_PATHS.knowledge.meta, VAULT_REL.knowledgeMeta],
+    [VAULT_PATHS.knowledge.infra, VAULT_REL.knowledgeInfra],
+  ];
+  for (const [absolute, relativePath] of overlappingPaths) {
+    assert.equal(absolute, vaultAbs(relativePath));
+  }
+});
+
+test('VAULT_REL 값은 슬래시로 구분한 상대경로이며 끝 슬래시가 없다', () => {
+  for (const [key, rel] of Object.entries(VAULT_REL)) {
+    assert.equal(typeof rel, 'string', key);
+    assert.ok(rel && !rel.startsWith('/') && !rel.endsWith('/') && !rel.includes('\\'), key);
+  }
 });
 
 test('VAULT_PATH 환경변수로 루트를 오버라이드할 수 있다(Drive 이전 시 코드 변경 없이 전환)', () => {

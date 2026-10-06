@@ -4,13 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { VAULT_PATHS } from './vault-paths.mjs';
+import { VAULT_REL, vaultAbs } from './vault-paths.mjs';
 import { withLock } from './state-writer.mjs';
 import { appendWarningEvent, readWarningEvents, rebuildWarningIncidents } from './warning-event-journal.mjs';
 import { planAutomaticMacroRetry } from './warning-action-plan.mjs';
 import { diagnoseWarningIncident } from './warning-runbook.mjs';
 
-const DEFAULT_ROOT = join(VAULT_PATHS.root, 'Log', 'WarningEvents');
+const DEFAULT_ROOT = vaultAbs(VAULT_REL.logWarningEvents);
 
 function currentDate(now) {
   const date = now();

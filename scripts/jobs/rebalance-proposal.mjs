@@ -62,7 +62,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { computeRebalanceGaps, normalizeAccount, isLegacyIndividualStock } from '../lib/rebalance-gap.mjs';
@@ -82,7 +82,7 @@ const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
 const DEPARTMENT_LABEL = '투자전략실 Athena';
 const IN_SCOPE_ACCOUNTS = ['위탁', '연금저축'];
-const STATE_DIR = join(VAULT_PATHS.root, 'State', 'RebalanceProposal');
+const STATE_DIR = vaultAbs(VAULT_REL.stateRebalanceProposal);
 const STATE_FILE = join(STATE_DIR, 'last-quarter.md');
 
 function readMdDir(dir) {

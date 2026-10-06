@@ -6,10 +6,10 @@ import {
   readSync, readdirSync, statSync, writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { VAULT_PATHS } from './vault-paths.mjs';
+import { VAULT_REL, vaultAbs } from './vault-paths.mjs';
 import { withLock } from './state-writer.mjs';
 
-export const WARNING_JOURNAL_ROOT = join(VAULT_PATHS.root, 'Log', 'WarningEvents');
+export const WARNING_JOURNAL_ROOT = vaultAbs(VAULT_REL.logWarningEvents);
 const DEFAULT_ROOT = WARNING_JOURNAL_ROOT;
 const SCHEMA_VERSION = 1;
 const EVENT_TYPES = new Set(['detected', 'delivery', 'status', 'action']);
