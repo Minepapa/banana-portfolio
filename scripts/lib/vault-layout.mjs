@@ -19,6 +19,7 @@ export const MOUSEION_TOP_FOLDERS = [
 
 // 첫 경로 경계 일치 규칙을 적용하므로 예외를 일반 접두 규칙보다 앞에 둔다.
 export const LEGACY_TO_MOUSEION_RULES = [
+  { from: '.gitignore', to: '.gitignore', note: '루트 설정 파일 유지' },
   { from: 'State/JobHealth', to: '95_Etna/Jobs/JobHealth', note: '잡 상태는 투자에서 분리' },
   { from: 'State/TelegramSession', to: '95_Etna/Jobs/TelegramSession' },
   { from: 'State/TelegramSessionHealth', to: '95_Etna/Jobs/TelegramSessionHealth' },
@@ -36,21 +37,31 @@ export const LEGACY_TO_MOUSEION_RULES = [
   { from: 'Log/Research', to: '50_Outputs/Reports', yearFolder: true },
   { from: 'Log/Sessions', to: '60_Logs/Zeus', yearFolder: true },
   { from: 'Log/TelegramSession', to: '60_Logs/Zeus/Telegram', yearFolder: true },
-  { from: 'Log/WarningEvents', to: '60_Logs/Jobs' },
+  { from: 'Log/WarningEvents', to: '95_Etna/Jobs/WarningEvents' },
   { from: 'Log/Implementation', to: '40_Projects/banana-portfolio/Implementation' },
   { from: 'Log/DevRequests', to: '40_Projects/banana-portfolio/Requests' },
-  { from: 'Knowledge/Index.md', to: '90_Delphi/index.md', note: '자동 생성 색인으로 통합' },
-  { from: 'Knowledge/Meta/Index.md', to: '90_Delphi/index.md', note: '같은 곳으로 통합' },
+  // 90_Delphi/index.md는 이관 대상이 아니라 새로 자동 생성한다.
+  { from: 'Knowledge/Index.md', to: '80_Archive/Knowledge/Index.md' },
+  { from: 'Knowledge/Meta/Index.md', to: '80_Archive/Knowledge/Meta/Index.md' },
   {
     from: 'Knowledge/Meta/므네모시네-파일배선도.md',
     to: '90_Delphi/Schema/경로 등록부.md',
     note: '경로 등록부로 대체',
   },
   { from: 'Knowledge/Meta', to: '90_Delphi' },
-  { from: 'Knowledge/Kangto', to: '20_Records/22_Literature', yearFolder: true },
+  { from: 'Knowledge/Kangto/README.md', to: '20_Records/22_Literature/README.md', yearFolder: true },
+  { from: 'Knowledge/Kangto/1_책/INDEX.md', to: '20_Records/22_Literature/INDEX.md', yearFolder: true },
+  {
+    from: 'Knowledge/Kangto/1_책/손실은짧게수익은길게_Ch4_전사.md',
+    to: '20_Records/22_Literature/손실은짧게수익은길게_Ch4_전사.md',
+    yearFolder: true,
+  },
+  { from: 'Knowledge/Kangto', action: 'delete', reason: '원문 코퍼스는 이관하지 않음' },
   { from: 'Knowledge/Topics', to: '30_Wiki/34_Topics' },
+  { from: 'Knowledge/Playbook/README.md', to: '30_Wiki/34_Topics/플레이북 개요.md' },
   { from: 'Knowledge/Playbook', to: '30_Wiki/34_Topics' },
   { from: 'Knowledge/Infra', to: '30_Wiki/34_Topics' },
+  { from: 'Knowledge/API/README.md', to: '30_Wiki/34_Topics/API 개요.md' },
   { from: 'Knowledge/API', to: '30_Wiki/34_Topics' },
   { from: 'Knowledge', to: '30_Wiki', note: '나머지 Knowledge' },
 ];
@@ -58,6 +69,10 @@ export const LEGACY_TO_MOUSEION_RULES = [
 export function mapLegacyPath(relPath) {
   for (const rule of LEGACY_TO_MOUSEION_RULES) {
     if (relPath !== rule.from && !relPath.startsWith(`${rule.from}/`)) continue;
+
+    if (rule.action === 'delete') {
+      return { to: null, action: 'delete', reason: rule.reason, rule };
+    }
 
     const suffix = relPath.slice(rule.from.length);
     return {
@@ -74,7 +89,9 @@ export function mapLegacyPath(relPath) {
 export function findDestinationCollisions(relPaths) {
   const destinations = new Map();
   for (const relPath of relPaths) {
-    const destination = mapLegacyPath(relPath)?.to;
+    const mapping = mapLegacyPath(relPath);
+    if (mapping?.action === 'delete') continue;
+    const destination = mapping?.to;
     if (!destination) continue;
     const key = destination.toLocaleLowerCase('en-US');
     const group = destinations.get(key) ?? { to: destination, sources: [] };
