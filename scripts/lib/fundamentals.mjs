@@ -810,7 +810,7 @@ export const MACRO_TICKERS = {
 // 반영한 값**임을 code-reviewer가 실측으로 발견(예: 토요일 최신 데이터가 목요일
 // 장을 반영, 금요일 장은 다음 월요일에야 반영됨) — 이 함수·아래 fetchMacroIndicators()
 // 둘 다 이 1영업일 지연을 감수할 이유가 없어 yfinance 유지로 확정(오너 확인).
-// 상세는 ~/banana-vault/Knowledge/API/ECOS.md 참고.
+// 상세는 볼트 Knowledge/API/ECOS.md 참고.
 export function fetchUsdKrwRate() {
   const py = new URL('./yf-macro.py', import.meta.url).pathname;
   const r = spawnSync('python3', [py, 'KRW=X'], { encoding: 'utf8', timeout: 60000 });
@@ -833,7 +833,7 @@ export async function fetchMacroIndicators() {
   // code-reviewer가 실측으로 발견(주말 최신 데이터가 목요일 장 반영, 금요일 장은
   // 다음 월요일에야 반영). 일요일에 도는 weekly-report·themis-risk-review가
   // 금요일 환율 급변을 구조적으로 놓칠 수 있어 오너 확인 후 yfinance 유지로
-  // 확정 — 상세는 ~/banana-vault/Knowledge/API/ECOS.md 참고.
+  // 확정 — 상세는 볼트 Knowledge/API/ECOS.md 참고.
   const yfTickers = Object.entries(MACRO_TICKERS).filter(([key]) => key !== 'KOSPI' && key !== 'KOSDAQ');
   const r = spawnSync('python3', [py, ...yfTickers.map(([, tk]) => tk)], { encoding: 'utf8', timeout: 120000 });
   if (r.status !== 0) throw new Error(`yfinance 거시 조회 실패: ${(r.stderr || '').slice(-200)}`);

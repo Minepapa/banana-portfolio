@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   expandBraces, parseWiringMapClusters, pathMatches, findRelatedClusters,
@@ -108,9 +108,9 @@ test('findRelatedClusters: 아무 클러스터에도 안 걸리면 빈 배열', 
 
 // 실제 파일배선도.md 문서에 대해 파서가 안 죽고 뭔가 뽑아내는지 스모크 테스트 —
 // 문서가 자유롭게 편집되므로 정확한 개수를 하드코딩하지 않고 "0개는 아니다"만 확인.
-test('[스모크] 실제 므네모시네 파일배선도.md를 파싱해도 에러 없고 클러스터가 나온다', () => {
-  const path = join(VAULT_ROOT, 'Knowledge', 'Meta', '므네모시네-파일배선도.md');
-  const content = readFileSync(path, 'utf8');
+const WIRING_MAP_PATH = join(VAULT_ROOT, 'Knowledge', 'Meta', '므네모시네-파일배선도.md');
+test('[스모크] 실제 므네모시네 파일배선도.md를 파싱해도 에러 없고 클러스터가 나온다', { skip: !existsSync(WIRING_MAP_PATH) }, () => {
+  const content = readFileSync(WIRING_MAP_PATH, 'utf8');
   const clusters = parseWiringMapClusters(content);
   assert.ok(clusters.length > 0, '클러스터가 최소 1개는 파싱돼야 함');
   const totalEntries = clusters.reduce((s, c) => s + c.entries.length, 0);

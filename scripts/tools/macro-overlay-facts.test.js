@@ -44,7 +44,7 @@ test('writeFaberState: 서로 다른 stateDir은 완전히 독립(한쪽 갱신�
 // check.mjs가 공유하는 경로)로 고정돼 있는지 확인(2026-09-06 코드리뷰 지적, LOW —
 // 이 프로퍼티가 무테스트면 다음 리팩터가 기본값을 조용히 바꿔도 그린으로 통과할 수
 // 있었다). 실제 VAULT_PATH를 임시 디렉터리로 오버라이드한 별도 프로세스에서 확인해
-// 진짜 ~/banana-vault를 건드리지 않는다(vault-paths.test.js와 동일 격리 기법).
+// 실제 볼트를 건드리지 않는다(vault-paths.test.js와 동일 격리 기법).
 test('writeFaberState/readPreviousFaberState: stateDir 생략하면 VAULT_PATHS.state.macroOverlay가 기본값(daily 잡과 공유하는 경로)', () => {
   withTmpDir((tmpVaultRoot) => {
     const script = join(HERE, 'macro-overlay-facts.mjs');

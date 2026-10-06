@@ -6,12 +6,21 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 import { VAULT_ROOT, VAULT_PATHS, VAULT_REL, vaultAbs } from './vault-paths.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-test('기본값: VAULT_PATH 미설정 시 홈 디렉토리 아래 banana-vault', () => {
-  assert.match(VAULT_ROOT, /banana-vault$/);
+test('기본값: VAULT_PATH 미설정 시 ~/Pantheon/Mouseion', () => {
+  const script = join(HERE, 'vault-paths.mjs');
+  const env = { ...process.env };
+  delete env.VAULT_PATH;
+  const out = execFileSync(
+    process.execPath,
+    ['--input-type=module', '-e', `import { VAULT_ROOT } from '${script.replace(/\\/g, '\\\\')}'; console.log(VAULT_ROOT);`],
+    { env },
+  ).toString().trim();
+  assert.equal(out, join(homedir(), 'Pantheon', 'Mouseion'));
 });
 
 // facts.ledger는 이벤트 종류별 하위폴더가 있는 중첩 객체라(2026-08-04 확정) 재귀로 편다.
@@ -90,7 +99,7 @@ test('VAULT_REL 값은 슬래시로 구분한 상대경로이며 끝 슬래시�
   }
 });
 
-test('VAULT_PATH 환경변수로 루트를 오버라이드할 수 있다(Drive 이전 시 코드 변경 없이 전환)', () => {
+test('VAULT_PATH 환경변수로 루트를 오버라이드할 수 있다', () => {
   const script = join(HERE, 'vault-paths.mjs');
   const out = execFileSync(
     process.execPath,

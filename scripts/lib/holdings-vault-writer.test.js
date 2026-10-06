@@ -77,6 +77,7 @@ test('buildCashHoldingRecord: appliedDedupKeys 없음(증분 반영 방어 불�
 // 직접 못 건드리는 다른 테스트들과 다른 점 — writeHoldingSafely만 이 방식이 필요).
 const TEST_ACCOUNT = '__단위테스트계좌__';
 const TEST_NAME = '__단위테스트종목__';
+const CAN_WRITE_VAULT = existsSync(VAULT_PATHS.state.holdings);
 function testHoldingPath() {
   return join(VAULT_PATHS.state.holdings, holdingFilename(TEST_ACCOUNT, TEST_NAME));
 }
@@ -85,7 +86,7 @@ function cleanupTestHolding() {
   try { rmSync(`${testHoldingPath()}.lock`, { force: true }); } catch { /* 무시 */ }
 }
 
-test('[코드리뷰 HIGH 지적/실사고 재현] writeHoldingSafely: 기존 파일이 있어도 identity 필드(ticker 등)를 실제로 갱신함', async () => {
+test('[코드리뷰 HIGH 지적/실사고 재현] writeHoldingSafely: 기존 파일이 있어도 identity 필드(ticker 등)를 실제로 갱신함', { skip: !CAN_WRITE_VAULT }, async () => {
   cleanupTestHolding();
   try {
     // 기존 파일 — ticker가 비어있던 상태를 재현(reconcile-irp.mjs의 ticker 백필
@@ -110,7 +111,7 @@ test('[코드리뷰 HIGH 지적/실사고 재현] writeHoldingSafely: 기존 파
   }
 });
 
-test('writeHoldingSafely: 파일이 없으면 새로 생성', async () => {
+test('writeHoldingSafely: 파일이 없으면 새로 생성', { skip: !CAN_WRITE_VAULT }, async () => {
   cleanupTestHolding();
   try {
     assert.equal(existsSync(testHoldingPath()), false);
@@ -128,7 +129,7 @@ test('writeHoldingSafely: 파일이 없으면 새로 생성', async () => {
   }
 });
 
-test('writeHoldingSafely: 쓰기 후 락파일이 남지 않음', async () => {
+test('writeHoldingSafely: 쓰기 후 락파일이 남지 않음', { skip: !CAN_WRITE_VAULT }, async () => {
   cleanupTestHolding();
   try {
     await writeHoldingSafely({ account: TEST_ACCOUNT, name: TEST_NAME, avgPrice: 1, qty: 1, invest: 1 });

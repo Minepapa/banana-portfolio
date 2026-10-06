@@ -1,5 +1,5 @@
 // 이관 2단계에서 사용할 legacy → mouseion 경로 매핑이다. 지금은 어디에도 연결하지 않는다.
-// 설계 정본: ~/banana-vault/Log/Strategy/2026-10-06-경로등록부-초안.md와 설계안 v4 13장.
+// 설계 정본: 볼트 Log/Strategy/2026-10-06-경로등록부-초안.md와 설계안 v4 13장.
 // 2단계 이관 전 반드시 findDestinationCollisions로 사전 검사한다. 충돌은 이관을 멈추고 해결한다.
 
 export const MOUSEION_TOP_FOLDERS = [

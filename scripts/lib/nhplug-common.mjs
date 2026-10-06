@@ -4,7 +4,7 @@
 // (scripts/tools/nhplug-new-apis-probe.mjs)로 실계좌 라이브 검증 완료 —
 // 위탁 배당/분배금 집계 가능·외화RP 조회 가능(기존 [[project-nh-fx-rp-not-queryable]]
 // 결론 뒤집힘)·ISA는 완전 차단(계좌 자체가 이 앱키 권한 밖) 확인. 상세는
-// ~/banana-vault의 Knowledge/API/NH-PLUG.md·Log/Implementation/2026-09-19-NH-API-
+// 볼트의 Knowledge/API/NH-PLUG.md·Log/Implementation/2026-09-19-NH-API-
 // 종합거래내역-입출금내역-발견.md 참고.
 //
 // 이 두 API는 다른 nhplug-*.mjs 도메인 파일과 달리 결과가 페이지네이션될 수 있어
