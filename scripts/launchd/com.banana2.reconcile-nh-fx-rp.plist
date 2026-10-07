@@ -7,7 +7,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>reconcile-nh-fx-rp</string>
   </array>
   <!-- 평일 16:09 KST(2026-09-19 신설, 오너 지시 — "예수금이나 금현물 시세와
@@ -31,7 +31,7 @@
   <key>ProcessType</key>
   <string>Background</string>
   <key>WorkingDirectory</key>
-  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
   <key>StandardOutPath</key>
   <string>/Users/huinique/Library/Logs/banana-portfolio-v2/reconcile-nh-fx-rp.log</string>
   <key>StandardErrorPath</key>

@@ -7,7 +7,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>isa-maturity-check</string>
   </array>
   <!-- ISA 3년 만기(2025-04-06 + 3년 = 2028-04-06)를 감시하는 잡 — athena.md 책임목록
@@ -27,7 +27,7 @@
   <key>ProcessType</key>
   <string>Background</string>
   <key>WorkingDirectory</key>
-  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
   <key>StandardOutPath</key>
   <string>/Users/huinique/Library/Logs/banana-portfolio-v2/isa-maturity-check.log</string>
   <key>StandardErrorPath</key>

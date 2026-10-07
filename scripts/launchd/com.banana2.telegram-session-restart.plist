@@ -22,14 +22,14 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/restart-telegram-session.sh</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/restart-telegram-session.sh</string>
   </array>
   <key>RunAtLoad</key>
   <false/>
   <key>ProcessType</key>
   <string>Background</string>
   <key>WorkingDirectory</key>
-  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
   <key>StandardOutPath</key>
   <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-session-restart.log</string>
   <key>StandardErrorPath</key>

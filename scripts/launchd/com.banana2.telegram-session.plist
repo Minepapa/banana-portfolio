@@ -92,7 +92,7 @@
   <key>ProcessType</key>
   <string>Background</string>
   <key>WorkingDirectory</key>
-  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
   <key>StandardOutPath</key>
   <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-session.log</string>
   <key>StandardErrorPath</key>

@@ -7,7 +7,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>update-fund-holdings-from-purchases</string>
   </array>
   <!-- 평일 16:11 KST(2026-09-04 신설) — intraday-portfolio-sync.mjs가 10분마다 이미
@@ -29,7 +29,7 @@
   <key>ProcessType</key>
   <string>Background</string>
   <key>WorkingDirectory</key>
-  <string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
   <key>StandardOutPath</key>
   <string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-fund-holdings-from-purchases.log</string>
   <key>StandardErrorPath</key>

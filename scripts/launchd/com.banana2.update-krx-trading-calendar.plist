@@ -7,7 +7,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/huinique/Stockproject/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>update-krx-trading-calendar</string>
   </array>
   <!-- 평일 08:15 KST — morning-briefing(08:00) 뒤, 08:35 보호주문·09:03 폴백 전에 캐시를 채운다.
@@ -23,7 +23,7 @@
   </array>
   <key>RunAtLoad</key><false/>
   <key>ProcessType</key><string>Background</string>
-  <key>WorkingDirectory</key><string>/Users/huinique/Stockproject/banana-portfolio-v2</string>
+  <key>WorkingDirectory</key><string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
   <key>StandardOutPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-krx-trading-calendar.log</string>
   <key>StandardErrorPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/update-krx-trading-calendar.log</string>
 </dict>
