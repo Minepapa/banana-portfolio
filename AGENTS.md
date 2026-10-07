@@ -1,7 +1,7 @@
 # AGENTS.md — banana-portfolio
 
 개인 투자 포트폴리오 **React PWA** + **Node 자동화 파이프라인**(launchd). 데이터 정본은
-Obsidian Vault(`~/banana-vault`, Facts/State/Decisions/Knowledge 4대 분류)다 — 2026-08-20
+Obsidian Vault(`~/Pantheon/Mouseion`, 무세이온 새 폴더 구조 — `90_Delphi/Schema/경로 등록부.md` 참고)다 — 2026-08-20
 Vault 네이티브 전환 완료(`scripts/tools/ledger-facts.mjs` 헤더 주석 참고). Google Sheets는
 일부 레거시 입력 경로(예: [종목투자노트] 탭, 매수논리 기록 — 아직 Vault 미이관, `scripts/
 jobs/weekly-report.mjs` 헤더의 "아직 Vault 네이티브 쓰기 주체가 없는 입력" 목록 참고)에만
@@ -72,11 +72,11 @@ jobs/weekly-report.mjs` 헤더의 "아직 Vault 네이티브 쓰기 주체가 �
   구멍이 덜 나게 하는 게 우선이다.
 
 ## 므네모시네 Knowledge Wiki
-- 투자 로직·기준·선호·시스템 지식을 다룰 때 `~/banana-vault/Knowledge/Index.md`와 `Knowledge/Meta/지식위키-운영규칙.md`를 먼저 읽고 정본을 근거로 답한다. 날짜별 Facts/Log/Decisions만으로 현재 기준을 추정하지 않는다.
-- 수정 중 반복해서 등장하는 미등록 지식 키워드를 발견하면 근거 노트, 정본 후보, 바뀔 색인·링크를 포함해 현재 진행 중인 텔레그램 대화에서 등록/보류/제외를 묻는다. 명시적 승인을 받기 전에는 등록하지 않는다. 승인된 키워드는 색인·별칭·관련 노트 링크를 갱신한다. 세션을 넘는 질문은 State/WikiQuestions 큐와 Telegram UserPromptSubmit 훅에서 ID 기반으로 처리한다.
-- Knowledge 정본 변경 시 운영 규칙에 따라 종속 노트와 과거 기록을 구분한다. Facts/Log 원문은 소급 수정하지 않고 메타데이터 또는 색인으로 연결한다.
+- 투자 로직·기준·선호·시스템 지식을 다룰 때 `~/Pantheon/Mouseion/90_Delphi/index.md`와 `90_Delphi/지식위키-운영규칙.md`를 먼저 읽고 정본을 근거로 답한다. 날짜별 95_Etna·60_Logs·50_Outputs 기록만으로 현재 기준을 추정하지 않는다.
+- 수정 중 반복해서 등장하는 미등록 지식 키워드를 발견하면 근거 노트, 정본 후보, 바뀔 색인·링크를 포함해 현재 진행 중인 텔레그램 대화에서 등록/보류/제외를 묻는다. 명시적 승인을 받기 전에는 등록하지 않는다. 승인된 키워드는 색인·별칭·관련 노트 링크를 갱신한다. 세션을 넘는 질문은 95_Etna/Questions 큐와 Telegram UserPromptSubmit 훅에서 ID 기반으로 처리한다.
+- Knowledge 정본 변경 시 운영 규칙에 따라 종속 노트와 과거 기록을 구분한다. 95_Etna·60_Logs 원문은 소급 수정하지 않고 메타데이터 또는 색인으로 연결한다.
 - 정본 변경 후 볼트 전체에서 정본·별칭을 검색해 `derived_from` 파생 노트와 Topic map의 현재형 설명을 점검한다. `related` 링크만으로 내용 동기화를 추정하지 않는다.
-- 오너 판단이 필요한 위키 질문은 `State/WikiQuestions/`에 고유 ID로 저장한다. 답변이 해당 질문과 명확히 연결되지 않으면 상태를 바꾸지 않으며, 투자 제안 승인 CLI와 혼용하지 않는다.
+- 오너 판단이 필요한 위키 질문은 `95_Etna/Questions/`에 고유 ID로 저장한다. 답변이 해당 질문과 명확히 연결되지 않으면 상태를 바꾸지 않으며, 투자 제안 승인 CLI와 혼용하지 않는다.
 
 ## 커밋 워크플로우
 - **비자명 변경**(다중 파일·로직·파이프라인·시트 쓰기)은 커밋 전 `code-reviewer` 패스를 거친다. 작성↔리뷰는 분리 컨텍스트(같은 패스에서 self-approve 금지). 사소 변경(문서·1줄·리네임)은 생략. 상세는 `CLAUDE.md` 커밋 워크플로우 절.
