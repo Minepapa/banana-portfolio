@@ -33,7 +33,7 @@ test('readLatestReport: 파일명(YYYY-MM-DD) 기준 가장 최신 리포트를 
   const dir = mkdtempSync(join(tmpdir(), 'mirror-report-'));
   mkdirSync(join(dir, '2026'), { recursive: true });
   writeFileSync(join(dir, '2026', '2026-08-09.md'), buildFrontmatter({ type: 'weekly-report', date: '2026-08-09', headline: '옛날 리포트', summary: '옛 요약' }) + '\n# 옛날 본문');
-  writeFileSync(join(dir, '2026', '2026-08-16.md'), buildFrontmatter({ type: 'weekly-report', date: '2026-08-16', headline: '최신 리포트', summary: '최신 요약' }) + '\n# 최신 본문\n## 섹션1\n내용');
+  writeFileSync(join(dir, '2026', '2026-08-16 주간 리포트.md'), buildFrontmatter({ type: 'weekly-report', date: '2026-08-16', headline: '최신 리포트', summary: '최신 요약' }) + '\n# 최신 본문\n## 섹션1\n내용');
   const report = readLatestReport(dir);
   assert.equal(report.date, '2026-08-16');
   assert.equal(report.headline, '최신 리포트');

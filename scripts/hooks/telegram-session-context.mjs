@@ -25,13 +25,13 @@ import { VAULT_PATHS, VAULT_REL, vaultAbs, vaultYearFiles } from '../lib/vault-p
 import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 
-// 순수함수(테스트 가능) — Log/TelegramSession/*.md 파일명(YYYY-MM-DD.md) 중 가장
-// 최신 날짜를 고른다. 파일명 자체가 날짜라 문자열 정렬이 곧 날짜순 정렬(mtime보다
-// 신뢰성 있음 — git 체크아웃·백업 복원 등으로 mtime이 뒤틀려도 파일명은 안 바뀜).
+// 순수함수(테스트 가능) — 날짜만 있는 옛 파일명과 주제가 붙은 새 파일명 중
+// 최신 날짜를 고른다. 같은 날짜라면 새 제목을 우선한다(mtime은 백업 복원 때 변함).
 export function findLatestHandoffFilename(filenames) {
-  const dated = filenames.filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f));
+  const dated = filenames.filter((f) => /^\d{4}-\d{2}-\d{2}(?: 텔레그램 세션 인수인계)?\.md$/.test(f));
   if (!dated.length) return null;
-  return dated.sort().at(-1);
+  return dated.sort((a, b) => a.slice(0, 10).localeCompare(b.slice(0, 10))
+    || Number(a.includes(' 텔레그램')) - Number(b.includes(' 텔레그램'))).at(-1);
 }
 
 // 순수함수 — last-read 마커 State 파일 내용.

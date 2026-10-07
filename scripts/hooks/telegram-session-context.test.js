@@ -3,11 +3,17 @@ import assert from 'node:assert/strict';
 import { findLatestHandoffFilename, buildLastReadMarker } from './telegram-session-context.mjs';
 
 test('findLatestHandoffFilename: 날짜 파일명 중 최신을 고름(문자열정렬=날짜정렬)', () => {
-  assert.equal(findLatestHandoffFilename(['2026-08-23.md', '2026-08-29.md', '2026-08-25.md']), '2026-08-29.md');
+  assert.equal(findLatestHandoffFilename(['2026-08-23.md', '2026-08-29 텔레그램 세션 인수인계.md', '2026-08-25.md']),
+    '2026-08-29 텔레그램 세션 인수인계.md');
 });
 
 test('findLatestHandoffFilename: 날짜형식 아닌 파일은 무시', () => {
   assert.equal(findLatestHandoffFilename(['README.md', '2026-08-23.md', 'notes.md']), '2026-08-23.md');
+});
+
+test('findLatestHandoffFilename: 같은 날짜의 새 제목을 우선한다', () => {
+  assert.equal(findLatestHandoffFilename(['2026-10-08.md', '2026-10-08 텔레그램 세션 인수인계.md']),
+    '2026-10-08 텔레그램 세션 인수인계.md');
 });
 
 test('findLatestHandoffFilename: 빈 목록·매칭 없으면 null', () => {

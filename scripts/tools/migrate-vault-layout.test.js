@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { mapLegacyPath } from '../lib/vault-layout.mjs';
 import { VAULT_PATHS, VAULT_ROOT } from '../lib/vault-paths.mjs';
 import {
-  brokenFullPathLinks, determineYear, migrateVault, planMigration, rewriteLinks,
+  brokenFullPathLinks, determineYear, migrateVault, normalizeDatedTitle, planMigration, planTitles, rewriteLinks,
 } from './migrate-vault-layout.mjs';
 
 const CLI = fileURLToPath(new URL('./migrate-vault-layout.mjs', import.meta.url));
@@ -16,6 +16,34 @@ const reportSource = 'Log/Reports/2026-10-01-report.md';
 const reportDestination = '50_Outputs/Reports/2026/2026-10-01-report.md';
 const noteSource = 'Knowledge/Topics/note.md';
 const noteDestination = mapLegacyPath(noteSource).to;
+
+test('날짜 제목은 고유명사 내부 하이픈만 보존하고 공백을 합친다', () => {
+  assert.equal(normalizeDatedTitle('2026-10-08-NH-PLUG-연동--health-watcher-점검.md'),
+    '2026-10-08 NH-PLUG 연동 health-watcher 점검.md');
+  assert.equal(normalizeDatedTitle('2026-10-08 KRX-Open-API 점검.md'),
+    '2026-10-08 KRX-Open-API 점검.md');
+  assert.equal(normalizeDatedTitle('2026-10-08.md', '주간 리포트'), '2026-10-08 주간 리포트.md');
+  assert.equal(normalizeDatedTitle('README.md'), 'README.md');
+  assert.throws(() => normalizeDatedTitle('2026-10-08---.md'), /제목이 비어/);
+  assert.throws(() => planTitles([{ path: '60_Logs/Zeus/2026/2026-10-08---.md' }]), /제목이 비어/);
+});
+
+test('제목 계획은 대상 폴더와 type을 확인하고 대소문자 충돌을 거부한다', () => {
+  const files = [
+    { path: '60_Logs/Zeus/Telegram/2026/2026-10-08.md', content: '---\ntype: telegram-session-handoff\n---' },
+    { path: '50_Outputs/Reports/2026/2026-10-08.md', content: '---\ntype: "weekly-report"\n---' },
+    { path: '95_Etna/2026-10-08-daily.md' },
+  ];
+  assert.deepEqual(planTitles(files).entries.map(({ to }) => to), [
+    '60_Logs/Zeus/Telegram/2026/2026-10-08 텔레그램 세션 인수인계.md',
+    '50_Outputs/Reports/2026/2026-10-08 주간 리포트.md',
+  ]);
+  assert.throws(() => planTitles([{ ...files[0], content: '---\ntype: other\n---' }]), /type/);
+  assert.throws(() => planTitles([
+    { path: '60_Logs/Zeus/2026/2026-10-08-Example.md' },
+    { path: '60_Logs/Zeus/2026/2026-10-08 example.md' },
+  ]), /충돌/);
+});
 
 function git(root, ...args) {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
@@ -190,6 +218,50 @@ test('이관은 표에서 이스케이프한 별칭 링크도 갱신한다', () 
   const result = rewriteLinks(source, [{ from: noteSource, to: noteDestination }]);
   assert.equal(result.content, String.raw`| [[30_Wiki/34_Topics/note\|별칭]] |`);
   assert.equal(result.changedLinks, 1);
+});
+
+test('줄바꿈으로 갈라진 경로와 Markdown 상대 링크를 제목 이동에 맞춰 갱신한다', () => {
+  const from = '40_Projects/banana-portfolio/Requests/2026-09-25-정책-재검토.md';
+  const to = '40_Projects/banana-portfolio/Requests/2026-09-25 정책 재검토.md';
+  const source = '40_Projects/banana-portfolio/Implementation/2026-09-26-기록.md';
+  const content = '[[40_Projects/banana-portfolio/Requests/2026-09-25-정책-\n재검토]]\n'
+    + '[요청](../DevRequests/2026-09-25-정책-재검토.md)\n'
+    + '`[코드](../DevRequests/2026-09-25-정책-재검토.md)`';
+  const result = rewriteLinks(content, [{ from, to }], [], [from, source], source);
+  assert.match(result.content, /\[\[40_Projects\/banana-portfolio\/Requests\/2026-09-25 정책 재검토\]\]/);
+  assert.match(result.content, /\[요청\]\(<\.\.\/Requests\/2026-09-25 정책 재검토\.md>\)/);
+  assert.match(result.content, /`\[코드\]\(\.\.\/DevRequests\/2026-09-25-정책-재검토\.md\)`/);
+  assert.deepEqual(brokenFullPathLinks(result.content, [to, source], source), []);
+});
+
+test('Markdown 링크의 경로 안 괄호를 이동과 파손 검사에서 모두 인식한다', () => {
+  const from = '40_Projects/banana-portfolio/Requests/2026-09-25-정책(재검토)-안.md';
+  const to = '40_Projects/banana-portfolio/Requests/2026-09-25 정책(재검토) 안.md';
+  const source = '40_Projects/banana-portfolio/Implementation/2026-09-26 기록.md';
+  const link = '[요청](../Requests/2026-09-25-정책(재검토)-안.md)';
+  const rewritten = rewriteLinks(link, [{ from, to }], [], [from, source], source);
+  assert.equal(rewritten.content, '[요청](<../Requests/2026-09-25 정책(재검토) 안.md>)');
+  assert.equal(rewritten.changedLinks, 1);
+  assert.deepEqual(brokenFullPathLinks(link, [source], source), ['../Requests/2026-09-25-정책(재검토)-안.md']);
+  assert.deepEqual(brokenFullPathLinks(rewritten.content, [to, source], source), []);
+  const escapedLink = '[요청](../Requests/2026-09-25-정책\\(재검토\\)-안.md)';
+  const escapedRewritten = rewriteLinks(escapedLink, [{ from, to }], [], [from, source], source);
+  assert.equal(escapedRewritten.content, rewritten.content);
+  assert.equal(escapedRewritten.changedLinks, 1);
+  assert.deepEqual(brokenFullPathLinks(escapedLink, [from, source], source), []);
+  assert.deepEqual(brokenFullPathLinks(escapedLink, [source], source), ['../Requests/2026-09-25-정책(재검토)-안.md']);
+});
+
+test('모호한 basename 링크가 남으면 --map 적용을 중단한다', () => {
+  const first = '60_Logs/Zeus/2026/2026-10-01.md';
+  const second = '50_Outputs/Reports/2026/2026-10-01.md';
+  const firstTo = '60_Logs/Zeus/2026/2026-10-01 세션.md';
+  withVault({ [first]: '세션', [second]: '리포트', '30_Wiki/link.md': '[[2026-10-01]]' }, (root) => {
+    const mapPath = join(root, 'map.json');
+    writeFileSync(mapPath, JSON.stringify([{ from: first, to: firstTo, mode: 'move' }]));
+    assert.throws(() => migrateVault(root, { apply: true, mapPath }), /모호한 basename 링크/);
+    assert.equal(existsSync(join(root, first)), true);
+  });
 });
 
 test('이름이 바뀐 유일한 노트의 basename 링크는 별칭·제목·임베드까지 갱신한다', () => {

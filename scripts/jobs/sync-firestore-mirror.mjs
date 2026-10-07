@@ -45,13 +45,15 @@ export function readVaultRecords(dir) {
     .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
 }
 
-// Log/Reports 중 가장 최신(파일명 YYYY-MM-DD.md) 리포트를 ReportTab.jsx가 기대하는
+// Log/Reports 중 가장 최신(옛 날짜 전용·새 주간 리포트 제목) 리포트를 ReportTab.jsx가 기대하는
 // {date, headline, summary, body} 형태로 반환. 2026-08-20 weekly-report.mjs v2 재작성
 // 전까진 이 디렉토리가 항상 비어있어 latestReport 미러가 늘 빈 값이었다(원래 알려진 공백,
 // sync-firestore-mirror.mjs 헤더 주석 참고) — 이제 실제 리포트가 쌓이므로 배선한다.
 export function readLatestReport(dir = VAULT_PATHS.log.reports) {
   if (!existsSync(dir)) return null;
-  const files = vaultYearFiles(dir).filter((file) => /\d{4}-\d{2}-\d{2}\.md$/.test(file)).sort().reverse();
+  const files = vaultYearFiles(dir).filter((file) => /\d{4}-\d{2}-\d{2}(?: 주간 리포트)?\.md$/.test(file))
+    .sort((a, b) => b.split('/').at(-1).slice(0, 10).localeCompare(a.split('/').at(-1).slice(0, 10))
+      || Number(b.includes(' 주간 리포트.md')) - Number(a.includes(' 주간 리포트.md')));
   if (!files.length) return null;
   const content = readFileSync(files[0], 'utf8');
   const fm = parseFrontmatter(content);

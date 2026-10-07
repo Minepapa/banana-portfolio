@@ -5,7 +5,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync,
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LEGACY_TO_MOUSEION_RULES, mapLegacyPath, MOUSEION_TOP_FOLDERS } from '../lib/vault-layout.mjs';
-import { VAULT_PATHS, VAULT_ROOT } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, VAULT_ROOT } from '../lib/vault-paths.mjs';
+import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 
 const EXCLUDED = new Set(['.git', '.obsidian', '.omc', '.trash']);
 
@@ -151,6 +152,62 @@ export function planExplicitMap(paths, entries) {
     yearSources: { filename: 0, frontmatter: 0, gitFirstCommit: 0 }, gitFirstCommitFiles: [] };
 }
 
+// 날짜 접두사는 보존하고, 제목의 하이픈은 양옆이 ASCII 영숫자인 경우에만 남긴다.
+export function normalizeDatedTitle(filename, dateOnlyTopic = '') {
+  const match = /^(\d{4}-\d{2}-\d{2})(.*)\.md$/.exec(filename);
+  if (!match) return filename;
+  const suffix = match[2];
+  if (!suffix && !dateOnlyTopic) return filename;
+  if (suffix && !/^[-\s]/.test(suffix)) return filename;
+  const title = (suffix || ` ${dateOnlyTopic}`).replace(/-/g, (hyphen, index, value) =>
+    /[A-Za-z0-9]/.test(value[index - 1] ?? '') && /[A-Za-z0-9]/.test(value[index + 1] ?? '')
+      ? hyphen : ' ').replace(/\s+/g, ' ').trim();
+  if (!title) throw new Error(`정규화 후 제목이 비어 있습니다: ${filename}`);
+  return `${match[1]} ${title}.md`;
+}
+
+function titleScope(path) {
+  const parts = path.split('/');
+  if ([VAULT_REL.decisionsProfile, VAULT_REL.logSessions].some((folder) =>
+    parts[0] === folder.split('/')[0])) return true;
+  if ([VAULT_REL.logStrategy, relative(VAULT_ROOT, VAULT_PATHS.log.reports)].some((folder) =>
+    path.startsWith(`${folder}/`))) return true;
+  return parts[0] === VAULT_REL.logImplementation.split('/')[0] && parts.length >= 4
+    && ['Implementation', 'Requests'].includes(parts[2]);
+}
+
+export function planTitles(files) {
+  const moves = [];
+  const telegramFolder = relative(VAULT_ROOT, VAULT_PATHS.log.telegramSession).split('\\').join('/');
+  const reportsFolder = relative(VAULT_ROOT, VAULT_PATHS.log.reports).split('\\').join('/');
+  for (const { path, content = '' } of files) {
+    if (!titleScope(path) || !path.endsWith('.md')) continue;
+    const name = basename(path);
+    const dateOnly = /^\d{4}-\d{2}-\d{2}\.md$/.test(name);
+    let topic = '';
+    if (dateOnly && path.startsWith(`${telegramFolder}/`)) {
+      topic = '텔레그램 세션 인수인계';
+      if (parseFrontmatter(content).type !== 'telegram-session-handoff') {
+        throw new Error(`날짜 전용 노트의 type이 인수인계가 아닙니다: ${path}`);
+      }
+    } else if (dateOnly && path.startsWith(`${reportsFolder}/`)) {
+      topic = '주간 리포트';
+      if (parseFrontmatter(content).type !== 'weekly-report') {
+        throw new Error(`날짜 전용 노트의 type이 주간 리포트가 아닙니다: ${path}`);
+      }
+    }
+    const nextName = normalizeDatedTitle(name, topic);
+    if (nextName === name) continue;
+    if (/[\x00-\x1f<>:"/\\|?*]/.test(nextName)) {
+      throw new Error(`금지 문자가 있는 제목: ${path} → ${nextName}`);
+    }
+    moves.push({ from: path, to: join(dirname(path), nextName).split('\\').join('/'), mode: 'move' });
+  }
+  const plan = planExplicitMap(files.map(({ path }) => path), moves);
+  if (plan.collisions.length) throw new Error(`제목 경로 충돌 ${JSON.stringify(plan.collisions)}`);
+  return { entries: moves, byDestination: plan.byDestination };
+}
+
 function linkParts(inner) {
   const separator = inner.search(/[|#^]/);
   return separator < 0 ? [inner, ''] : [inner.slice(0, separator), inner.slice(separator)];
@@ -194,6 +251,12 @@ function visitWikiLinks(content, visit) {
         const suffix = candidate < 0 ? '' : visible.slice(targetEnd, candidate);
         if (candidate >= 0 && !suffix.includes('[[') && !/\r?\n[ \t]*\r?\n/.test(suffix)
           && (!/\r?\n/.test(suffix) || suffix.includes('|'))) close = candidate;
+      } else if (target.includes('/') && /\r?\n/.test(visible[targetEnd] ?? '')) {
+        const candidate = visible.indexOf(']]', targetEnd);
+        const continuation = candidate < 0 ? '' : visible.slice(targetEnd, candidate);
+        if (candidate >= 0 && !continuation.includes('[[') && !/\r?\n[ \t]*\r?\n/.test(continuation)) {
+          close = candidate;
+        }
       }
       if (close < 0) { search = start + 2; continue; }
       const open = start > 0 && visible[start - 1] === '!' ? start - 1 : start;
@@ -225,6 +288,55 @@ function visitWikiLinks(content, visit) {
   return output;
 }
 
+function replaceMarkdownLinks(text, visit) {
+  let output = '';
+  let search = 0;
+  const openingPattern = /\[[^\]\n]+\]\(/g;
+  for (let match = openingPattern.exec(text); match; match = openingPattern.exec(text)) {
+    const targetStart = openingPattern.lastIndex;
+    const enclosed = text[targetStart] === '<';
+    let cursor = targetStart + Number(enclosed);
+    let depth = 0;
+    while (cursor < text.length) {
+      const char = text[cursor];
+      if (char === '\n') break;
+      if (char === '\\' && /[()]/.test(text[cursor + 1] ?? '')) {
+        cursor += 2;
+        continue;
+      }
+      if (enclosed && char === '>') break;
+      if (!enclosed && char === '(') depth += 1;
+      if (!enclosed && char === ')') {
+        if (depth === 0) break;
+        depth -= 1;
+      }
+      cursor += 1;
+    }
+    const target = text.slice(targetStart + Number(enclosed), cursor).replace(/\\([()])/g, '$1');
+    const closingIndex = enclosed ? cursor + 1 : cursor;
+    if (text[closingIndex] !== ')' || !/^\.\.?\/[^\n<>]+\.md$/.test(target)) continue;
+    const end = closingIndex + 1;
+    output += text.slice(search, match.index) + visit(text.slice(match.index, end), match[0], target, ')');
+    search = end;
+    openingPattern.lastIndex = end;
+  }
+  return output + text.slice(search);
+}
+
+function visitMarkdownLinks(content, visit) {
+  let fence = null;
+  return content.split(/(?<=\n)/).map((line) => {
+    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker && (!fence || (marker[0] === fence[0] && marker.length >= fence.length))) {
+      fence = fence ? null : marker;
+      return line;
+    }
+    if (fence) return line;
+    return inlineSegments(line).map((segment) => segment.code ? segment.text
+      : replaceMarkdownLinks(segment.text, visit)).join('');
+  }).join('');
+}
+
 export function rewriteLinks(content, moves, deletes = [], paths = moves.map(({ from }) => from), sourcePath = '') {
   const moved = new Map(moves.map(({ from, to }) => [from, to]));
   const deleted = new Set(deletes);
@@ -246,12 +358,15 @@ export function rewriteLinks(content, moves, deletes = [], paths = moves.map(({ 
   const renames = new Map(moves.filter(({ from, to }) => from.endsWith('.md') &&
     basename(from, '.md') !== basename(to, '.md'))
     .map(({ from, to }) => [basename(from, '.md'), { from, to }]));
-  const rewritten = visitWikiLinks(content, (full, inner) => {
+  const wikiRewritten = visitWikiLinks(content, (full, inner) => {
         const open = full.startsWith('!') ? '![[' : '[[';
         const close = ']]';
         const [rawTarget, suffix] = linkParts(inner);
-        const target = rawTarget.replace(/\\+$/, '');
-        const separator = rawTarget.slice(target.length) + suffix;
+        const trailing = /\\+$/.exec(rawTarget)?.[0] ?? '';
+        const target = rawTarget.slice(0, rawTarget.length - trailing.length)
+          .replace(/\r?\n\s*/g, '').replace(/\s*\/\s*/g, '/')
+          .replace(/\s+/g, ' ');
+        const separator = trailing + suffix;
         if (!target.includes('/')) {
           basenameLinks += 1;
           const hasMd = target.endsWith('.md');
@@ -279,18 +394,34 @@ export function rewriteLinks(content, moves, deletes = [], paths = moves.map(({ 
           deletedLinks.push(target);
           return full;
         }
-        const resolvedTarget = paths.includes(lookup) ? lookup : oldTarget;
+        const legacyTarget = !isRelative && !paths.includes(lookup) ? mapLegacyPath(lookup)?.to : null;
+        const resolvedTarget = paths.includes(lookup) ? lookup : legacyTarget ?? oldTarget;
         const destination = moved.get(resolvedTarget) ?? resolvedTarget;
         const newSource = moved.get(sourcePath) ?? sourcePath;
         const newTarget = isRelative
           ? relative(dirname(newSource), destination).split('\\').join('/') : destination;
-        if (!isRelative && !moved.has(lookup) && !moved.has(oldTarget)) return full;
+        if (!isRelative && !moved.has(lookup) && !moved.has(oldTarget) && !moved.has(resolvedTarget)) return full;
         const next = hasMd || !newTarget.endsWith('.md') ? newTarget : newTarget.slice(0, -3);
         const relativeNext = isRelative && !next.startsWith('.') ? `./${next}` : next;
         if (isRelative && relativeNext === target) return full;
         changedLinks += 1;
         return `${open}${relativeNext}${separator}${close}`;
   });
+  const rewritten = visitMarkdownLinks(wikiRewritten,
+    (full, opening, rawTarget, closing) => {
+      const oldTarget = normalize(join(dirname(sourcePath), rawTarget)).split('\\').join('/');
+      let destination = moved.get(oldTarget);
+      if (!destination && !paths.includes(oldTarget)) {
+        // 이전 구조를 가리키는 상대 링크도 basename이 유일하면 실제 이동 원본에 연결한다.
+        const candidates = moves.filter(({ from }) => basename(from) === basename(oldTarget));
+        if (candidates.length === 1) destination = candidates[0].to;
+      }
+      if (!destination) return full;
+      const newSource = moved.get(sourcePath) ?? sourcePath;
+      const next = relative(dirname(newSource), destination).split('\\').join('/');
+      changedLinks += 1;
+      return `${opening}<${next}>${closing}`;
+    });
   return { content: rewritten, changedLinks, basenameLinks, basenameChangedLinks,
     deferredBasenameLinks, deletedLinks };
 }
@@ -303,7 +434,8 @@ export function brokenFullPathLinks(content, existingPaths, sourcePath = '') {
   const legacyRoots = new Set(LEGACY_TO_MOUSEION_RULES.map((rule) => rule.from.split('/')[0]));
   visitWikiLinks(content, (_full, inner) => {
         const [rawTarget] = linkParts(inner);
-        const target = rawTarget.replace(/\\+$/, '');
+        const target = rawTarget.replace(/\r?\n\s*/g, '').replace(/\s*\/\s*/g, '/')
+          .replace(/\s+/g, ' ').replace(/\\+$/, '');
         if (!target) return _full;
         if (legacyRoots.has(target.split('/')[0])) { missing.add(target); return _full; }
         if (!target.includes('/')) {
@@ -318,6 +450,11 @@ export function brokenFullPathLinks(content, existingPaths, sourcePath = '') {
           && [...existing].some((path) => path.endsWith(`/${target}`) || path.endsWith(`/${target}.md`))) return _full;
         missing.add(target);
         return _full;
+  });
+  visitMarkdownLinks(content, (full, _opening, target) => {
+    const resolved = normalize(join(dirname(sourcePath), target)).split('\\').join('/');
+    if (!existing.has(resolved)) missing.add(target);
+    return full;
   });
   return [...missing];
 }
@@ -469,12 +606,20 @@ function verifyCompletedMapChanges(root, mapEntries) {
   }
 }
 
-export function migrateVault(vault, { apply = false, reportPath, afterMove, mapPath, fixLegacyLinks = false } = {}) {
+export function migrateVault(vault, { apply = false, reportPath, afterMove, mapPath, planTitlesPath, fixLegacyLinks = false } = {}) {
   const root = resolve(vault);
+  if (planTitlesPath && (apply || mapPath || fixLegacyLinks)) {
+    throw new Error('--plan-titles는 --apply, --map, --fix-legacy-links와 함께 쓸 수 없습니다');
+  }
   if (fixLegacyLinks && mapPath) throw new Error('--fix-legacy-links와 --map은 함께 쓸 수 없습니다');
   if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`볼트 디렉토리가 없습니다: ${root}`);
   const paths = listVaultFiles(root);
   const files = paths.map((path) => ({ path, content: path.endsWith('.md') ? readFileSync(join(root, path), 'utf8') : '' }));
+  if (planTitlesPath) {
+    const titles = planTitles(files);
+    writeFileSync(resolve(planTitlesPath), `${JSON.stringify(titles.entries, null, 2)}\n`);
+    return { moveCount: titles.entries.length, byDestination: titles.byDestination, collisions: [] };
+  }
   const mapEntries = mapPath ? JSON.parse(readFileSync(resolve(mapPath), 'utf8')) : null;
   const plan = mapPath
     ? planExplicitMap(paths, mapEntries)
@@ -524,8 +669,9 @@ export function migrateVault(vault, { apply = false, reportPath, afterMove, mapP
     throw new Error(`--vault는 git 작업 트리 루트여야 합니다: ${root}`);
   }
   if (plan.unmapped.length || plan.collisions.length || plan.unresolvedYears.length
+    || (mapPath && result.deferredBasenameLinks.length)
     || unexpectedBroken(plannedBrokenLinks).length) {
-    throw new Error(`이관 사전 검사 실패: 매핑 없음 ${plan.unmapped.length}, 충돌 ${plan.collisions.length}, 연도 미결정 ${plan.unresolvedYears.length}, 적용 후 깨진 링크 ${plannedBrokenLinks.length}`);
+    throw new Error(`이관 사전 검사 실패: 매핑 없음 ${plan.unmapped.length}, 충돌 ${plan.collisions.length}, 연도 미결정 ${plan.unresolvedYears.length}, 모호한 basename 링크 ${result.deferredBasenameLinks.length}, 적용 후 깨진 링크 ${plannedBrokenLinks.length}`);
   }
   if (fixLegacyLinks && git(root, 'status', '--porcelain').trim()) {
     throw new Error('볼트 git 작업 트리가 깨끗하지 않습니다');
@@ -629,6 +775,7 @@ function parseArgs(args) {
     else if (arg === '--vault' && args[index + 1]) options.vault = args[++index];
     else if (arg === '--report' && args[index + 1]) options.reportPath = args[++index];
     else if (arg === '--map' && args[index + 1]) options.mapPath = args[++index];
+    else if (arg === '--plan-titles' && args[index + 1]) options.planTitlesPath = args[++index];
     else if (arg === '--fix-legacy-links') options.fixLegacyLinks = true;
     else throw new Error(`알 수 없거나 값이 없는 인자: ${arg}`);
   }

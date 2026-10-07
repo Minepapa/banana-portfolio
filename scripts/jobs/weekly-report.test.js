@@ -48,7 +48,7 @@ test('writeObservations: 승격후보에 확장자 없는 Decisions/Profile note
 
     assert.equal(result.written, 1);
     assert.equal(result.promoted.length, 1);
-    assert.match(result.promoted[0].notePath, /^20_Records\/21_Notes\/2026\/2026-09-27-\d{8}T\d{6}-1$/);
+    assert.match(result.promoted[0].notePath, /^20_Records\/21_Notes\/2026\/2026-09-27 \d{8}T\d{6}-1$/);
     assert.ok(!result.promoted[0].notePath.endsWith('.md'));
     assert.equal(parseFrontmatter(readFileSync(join(root, `${result.promoted[0].notePath}.md`), 'utf8')).status, '승격후보');
   } finally {

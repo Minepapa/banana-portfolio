@@ -84,7 +84,7 @@ import { findTelegramTranscripts, readTranscriptLines, findLatestUnansweredTeleg
 const MCP_LOSS_LOG_FILE = join(vaultYearDir(VAULT_PATHS.log.telegramSession), 'mcp-loss-diagnostics.md');
 const MCP_LOSS_LOG_HEADER = '# 텔레그램 MCP 소실 진단 로그\n\n' +
   '감지될 때마다(재확인 후 회복된 경우 포함) 그 순간의 시스템 상태를 누적 기록 —\n' +
-  `근본원인 패턴 분석용(2026-09-04 신설, \`${VAULT_REL.logImplementation}/2026-09-04-텔레그램MCP소실-진단계측.md\` 참고).\n\n`;
+  `근본원인 패턴 분석용(2026-09-04 신설, \`${VAULT_REL.logImplementation}/2026-09-04 텔레그램MCP소실 진단계측.md\` 참고).\n\n`;
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));

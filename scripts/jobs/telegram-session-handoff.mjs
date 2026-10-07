@@ -54,7 +54,7 @@
  *
  * 사용법: node scripts/jobs/telegram-session-handoff.mjs [--dry-run]
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { vaultYearDir, VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -341,6 +341,20 @@ async function summarizeConversation(turns, targetDateStr) {
   return out.trim();
 }
 
+export function prepareHandoffFile(handoffDir, targetDateStr, preliminaryContent) {
+  const oldPath = join(handoffDir, `${targetDateStr}.md`);
+  const newPath = join(handoffDir, `${targetDateStr} 텔레그램 세션 인수인계.md`);
+  const oldExists = existsSync(oldPath);
+  const newExists = existsSync(newPath);
+  if (oldExists && newExists) throw new Error(`인수인계 파일명 충돌: ${oldPath}, ${newPath}`);
+  if (oldExists) renameSync(oldPath, newPath);
+  // 재실행 중 요약 생성이 실패해도 이전 실행의 완성된 요약은 남겨둔다.
+  const completed = existsSync(newPath)
+    && /^## 오늘 나눈 대화 요약\(LLM 생성\)$/m.test(readFileSync(newPath, 'utf8'));
+  if (!completed) writeAtomic(newPath, preliminaryContent);
+  return newPath;
+}
+
 function readProposals() {
   const dir = VAULT_PATHS.decisions.proposals;
   if (!existsSync(dir)) return [];
@@ -374,23 +388,23 @@ async function main() {
   };
 
   const handoffDir = vaultYearDir(VAULT_PATHS.log.telegramSession, `${targetDateStr}T00:00:00+09:00`);
-  const filepath = join(handoffDir, `${targetDateStr}.md`);
+  const filepath = join(handoffDir, `${targetDateStr} 텔레그램 세션 인수인계.md`);
 
   // ⚠️ 결정론 부분을 먼저 쓰고, 대화 요약은 성공하면 나중에 다시 써서 추가한다
   // (코드리뷰 지적, 2026-09-04) — try/catch는 "예외"만 잡지 SIGKILL·OOM·launchd
   // 타임아웃 같은 강제종료는 못 잡는다. LLM 호출(최대 3분)이 실행되는 동안 이
   // 잡 자체가 그렇게 죽으면, 한 번에 쓰려던 방식은 이미 완성돼 있던 제안·모드
   // 데이터까지 통째로 못 쓰고 날아간다 — 먼저 써두면 최악의 경우에도 결정론
-  // 부분만은 항상 남는다(대화 요약만 그날 못 남을 뿐).
+  // 부분만은 항상 남는다(대화 요약만 그날 못 남을 뿐). 이미 완성된 파일은
+  // 요약 재생성에 실패할 때 덮이지 않도록 임시 쓰기를 생략한다.
   const { body: bodyBeforeSummary, content: contentBeforeSummary } = buildContent(null);
   console.log(bodyBeforeSummary);
   if (!DRY_RUN) {
     mkdirSync(handoffDir, { recursive: true });
-    writeAtomic(filepath, contentBeforeSummary);
+    prepareHandoffFile(handoffDir, targetDateStr, contentBeforeSummary);
   }
 
-  // 대화 요약 — 실패해도 위에서 이미 쓴 결정론 데이터는 그대로 유지(파일 헤더
-  // 주석 참고).
+  // 대화 요약 — 실패해도 앞서 남긴 결정론 데이터나 기존 완성본을 유지한다.
   let conversationSummary = null;
   try {
     const transcriptPaths = findTelegramTranscripts();

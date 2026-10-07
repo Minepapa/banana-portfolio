@@ -1,11 +1,45 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   kstDateStr, kstYesterdayStr, filterProposalsByCreatedDate, filterProposalsByDecidedDate,
   buildModeChangeNotes, buildHandoffText, hasTelegramSessionMarker, pickTelegramTranscriptPaths,
   filterLinesByKstDate, earliestTimestampMs,
   extractConversationTurns, findLatestUnansweredTelegramOwnerMessage, truncateConversationText, buildConversationPrompt,
+  prepareHandoffFile,
 } from './telegram-session-handoff.mjs';
+
+test('옛 인수인계 파일만 있으면 새 이름으로 옮긴 뒤 갱신한다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'telegram-handoff-'));
+  const date = '2026-10-08';
+  const oldPath = join(dir, `${date}.md`);
+  try {
+    writeFileSync(oldPath, '기존 미완성본');
+    const newPath = prepareHandoffFile(dir, date, '새 결정론 내용');
+    assert.equal(existsSync(oldPath), false);
+    assert.equal(readFileSync(newPath, 'utf8'), '새 결정론 내용');
+    writeFileSync(oldPath, '중복');
+    assert.throws(() => prepareHandoffFile(dir, date, '다시 쓰기'), /파일명 충돌/);
+    assert.equal(readFileSync(newPath, 'utf8'), '새 결정론 내용');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('기존 완성본은 새 이름으로 옮겨도 요약 실패 전의 임시 쓰기로 덮지 않는다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'telegram-handoff-'));
+  const date = '2026-10-08';
+  const oldPath = join(dir, `${date}.md`);
+  const complete = '결정론 내용\n## 오늘 나눈 대화 요약(LLM 생성)\n완성된 요약';
+  try {
+    writeFileSync(oldPath, complete);
+    const newPath = prepareHandoffFile(dir, date, '요약 없는 임시 내용');
+    assert.equal(existsSync(oldPath), false);
+    assert.equal(readFileSync(newPath, 'utf8'), complete);
+    prepareHandoffFile(dir, date, '다시 생성한 임시 내용');
+    assert.equal(readFileSync(newPath, 'utf8'), complete);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('kstDateStr: UTC ISO를 KST 날짜로(자정 근처 날짜이월 확인)', () => {
   // 2026-08-23 15:30 UTC = 2026-08-24 00:30 KST(+9h) — 날짜가 넘어간다.

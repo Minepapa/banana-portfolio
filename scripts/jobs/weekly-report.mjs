@@ -122,13 +122,14 @@ function dividendsToRows(dividends, registry) {
   return dividends.map((d) => [d.date ?? '', String(d.afterTaxAmount ?? ''), resolveCanonicalStockName(d.stockName, registry) ?? '']);
 }
 
-// Log/Reports/{date}.md 중 asof 이전 가장 최신 리포트 요약 → 직전 맥락.
+// Log/Reports의 옛 날짜 전용·새 주간 리포트 제목 중 asof 이전 최신 요약 → 직전 맥락.
 function loadPrevReport(asof) {
   const files = vaultYearFiles(VAULT_PATHS.log.reports)
     .map((file) => ({ date: file.split('/').at(-1).slice(0, 10), file }))
     .filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(f.date))
     .filter((f) => f.date < asof)
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .sort((a, b) => b.date.localeCompare(a.date)
+      || Number(b.file.endsWith(' 주간 리포트.md')) - Number(a.file.endsWith(' 주간 리포트.md')));
   if (!files.length) return null;
   const parsed = parseFrontmatter(readFileSync(files[0].file, 'utf8'));
   return { date: files[0].date, summary: parsed.summary || '' };
@@ -361,7 +362,7 @@ export function writeObservations(asof, observations) {
       evidence: o.evidence || '', vsProfile: o.vsProfile || '신규', confidence: o.confidence || '보통',
       status: promote ? '승격후보' : '관찰', updatedAt: nowIso,
     };
-    const filename = `${asof}-${timeSlug}-${i + 1}.md`;
+    const filename = `${asof} ${timeSlug}-${i + 1}.md`;
     writeAtomic(join(dir, filename), buildFrontmatter(record) + '\n');
     n++;
     if (promote) promoted.push({
@@ -461,8 +462,12 @@ async function main() {
 
   // ④ Log/Reports 중복 체크(멱등 — 같은 날짜 있으면 건너뜀, --force면 덮어씀)
   const reportDir = vaultYearDir(VAULT_PATHS.log.reports, `${asof}T00:00:00+09:00`);
-  const reportPath = join(reportDir, `${asof}.md`);
-  if (existsSync(reportPath) && !FORCE) {
+  const reportPath = join(reportDir, `${asof} 주간 리포트.md`);
+  const oldReportPath = join(reportDir, `${asof}.md`);
+  if (existsSync(oldReportPath) && FORCE) {
+    throw new Error(`${oldReportPath} 옛 제목이 남아 있어 재발행할 수 없습니다. 제목 이관 후 다시 실행하세요.`);
+  }
+  if ((existsSync(reportPath) || existsSync(oldReportPath)) && !FORCE) {
     console.log(`   ℹ️ ${relative(VAULT_ROOT, reportPath)} 이미 존재 — 발행 건너뜀(재발행하려면 --force)`);
     await flushWarnings('weekly-report');
     return;
