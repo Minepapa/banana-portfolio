@@ -149,7 +149,7 @@ Zeus는 부서 산출물을 그대로 이어붙이는 중계자가 아니라 **�
     주간리포트)의 텔레그램 요약도 `.slice(0, 200)` 하드컷이 숫자 한가운데를 자르고
     마크다운 `**굵게**`가 HTML로 안 바뀌어 그대로 노출되던 버그를 발견·수정(이건 구조
     문제가 아니라 별개의 추출·렌더링 버그) — 상세 경위는 `40_Projects/banana-portfolio/Implementation/
-    2026-08-30-텔레그램메시지-구조표준화.md` 참고. ⚠️ `weekly-report.mjs`는 이 절의
+    2026-08-30 텔레그램메시지 구조표준화.md` 참고. ⚠️ `weekly-report.mjs`는 이 절의
     "새 잡" 체크리스트 대상이 아니다 — Node가 리포트 마크다운(이미 사람이 읽기 좋게
     구조화됨)에서 3줄 요약을 뽑아 `formatDepartmentMessage`로 보내는 구조라, LLM
     판정 원문을 그대로 body에 꽂는 문제 자체가 없다(facts/interpretation 분리가

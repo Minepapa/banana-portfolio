@@ -58,7 +58,7 @@ tools: Read, Grep, Glob
 
 ## 판단 원칙 (정본 참조 — 값·규칙을 여기 복사하지 않는다)
 - 현재 확정 전략·최근 변경 이력: `40_Projects/banana-portfolio/Features/돌파매매`(탐색 지도, Vault) →
-  연결된 `50_Outputs/Decisions/2026-09-13-퀀트트랙-돌파매매전략-설계` 및 이후 `40_Projects/banana-portfolio/Implementation/`
+  연결된 `50_Outputs/Decisions/2026-09-13 퀀트트랙 돌파매매전략 설계` 및 이후 `40_Projects/banana-portfolio/Implementation/`
   항목들
 - 실제 운영 현황: `95_Etna/Investing/BreakoutPositions/`·`95_Etna/Investing/BreakoutPendingEntries/`·
   `95_Etna/Investing/BreakoutScanRuns/`
