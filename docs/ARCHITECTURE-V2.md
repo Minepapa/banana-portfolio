@@ -91,7 +91,7 @@ v2는 **처음부터 "이 앱을 어떻게 쓸 것인가"**를 먼저 정하고 
 
 | 구성요소 | 역할 |
 |---|---|
-| **Obsidian Vault** (로컬) | 유일한 기록 원본(source of truth). 4대 그룹(Facts/State/Decisions/Knowledge)으로 분류 |
+| **Obsidian Vault** (로컬) | 유일한 기록 원본(source of truth). 무세이온 폴더 구조(2026-10 이관, `90_Delphi/Schema/경로 등록부` 참고)로 분류 |
 | **로컬 자동화** (Node, 지금 launchd 잡의 계승) | 카카오 알림 파싱 → Vault 직접 기록, 가격 폴링, 펀더멘털+추세추종 계산, Firestore 미러 갱신, 매수/매도 제안 생성 |
 | **Firestore** (클라우드) | 대시보드 전용 **파생 요약 미러** — 원본이 아니라 캐시. 언제든 Vault에서 재생성 가능 |
 | **대시보드 앱** (정적, GitHub Pages 유지) | 구글 로그인으로 Firestore 미러만 읽어 숫자 표시. 서술·판단 없음 |
@@ -106,7 +106,7 @@ v2는 **처음부터 "이 앱을 어떻게 쓸 것인가"**를 먼저 정하고 
         ▼
    로컬 자동화 (Node)
         │
-        ├─▶ Obsidian Vault (원본 기록 — Facts/State/Decisions/Knowledge)
+        ├─▶ Obsidian Vault (원본 기록 — 95_Etna·50_Outputs·30_Wiki 등 무세이온 구조)
         │
         ├─▶ Firestore 미러 (탭당 문서 1개, 매번 통째로 재생성)
         │         │
@@ -116,7 +116,7 @@ v2는 **처음부터 "이 앱을 어떻게 쓸 것인가"**를 먼저 정하고 
         └─▶ 텔레그램 (제안 상세사유 + 텍스트 승인/거부)
                   │
                   ▼ (승인 시, 결정론적 검문소 통과 후 — "안전장치 계층" 절 참고)
-             브로커 API 자동 체결 ─▶ Vault Facts/Ledger에 체결 기록
+             브로커 API 자동 체결 ─▶ Vault 95_Etna/Investing/Ledger에 체결 기록
 ```
 
 ## 판단 원칙 (기존 판테온 조직 원칙 유지)
@@ -141,8 +141,8 @@ v2는 **처음부터 "이 앱을 어떻게 쓸 것인가"**를 먼저 정하고 
 4. Frank의 "승인" 답장 확인 → **결정론적 검문소**(가격이탈·보유정합성·중복방지 등,
    "안전장치 계층" 절 참고) 통과 → 브로커 API(KIS 등)로 자동 주문 제출. 검문소를
    하나라도 통과 못하면 주문을 내지 않고 Frank에게 재확인 요청.
-5. 브로커 주문 접수 시 Decisions/Proposals 상태를 `주문접수`로 기록한다. API 감시가 실제
-   전량체결을 확인한 뒤에만 `체결`과 `executedAt`을 기록하며, Facts/Ledger와 Firestore
+5. 브로커 주문 접수 시 95_Etna/Investing/Orders 상태를 `주문접수`로 기록한다. API 감시가 실제
+   전량체결을 확인한 뒤에만 `체결`과 `executedAt`을 기록하며, 95_Etna/Investing/Ledger와 Firestore
    미러(체결내역 탭)에는 확인된 체결만 반영한다.
 
 ### 체결 기록 권위 소스 (확정 — critic 리뷰 TIER 1 대응)
@@ -176,7 +176,7 @@ State에 정확히 반영하므로, State는 항상 "진짜 보유량" 그대로
 Proposal 상태를 "부분체결(30/100)"로 명시해 왜 갭이 남았는지 나중에 되짚을 수 있게
 한다.
 
-거부 시에도 Decisions/Proposals에 사유와 함께 기록 남김(왜 거부했는지 나중에 되짚기 위함).
+거부 시에도 95_Etna/Investing/Orders에 사유와 함께 기록 남김(왜 거부했는지 나중에 되짚기 위함).
 
 ## 안전장치 계층 (확정 — critic 리뷰 TIER 1 대응)
 
@@ -231,7 +231,7 @@ propose) 전부 새 제안을 만들지 않는다(`createAndSendProposal`의 `pr
 **신설 배경**: 자산분배 트랙 자동 제안이 종목 선정 기준 없이 쌓여 승인 대기가 18건까지
 늘어났고, 그중 일부는 보유가 없는 자산군(예: 달러)에서 Athena가 매번 다른 브랜드의
 ETF를 새로 지어내 사실상 같은 안건이 다른 이름으로 중복 쌓이는 문제가 확인됐다(2026-
-08-29, `Log/Implementation/2026-08-29-제안모드+제안중복방지.md` 참고). 오너가 배당주·
+08-29, `40_Projects/banana-portfolio/Implementation/2026-08-29-제안모드+제안중복방지.md` 참고). 오너가 배당주·
 리츠·개별 국내외 종목 레거시 정리를 수동으로 진행하는 동안 새 자동 제안이 계속 쌓이지
 않도록 이 스위치를 신설했고, 18건은 전부 일괄 거부 처리했다. 재발 방지를 위해
 new-cash-allocation·rebalance-proposal 프롬프트에도 "보유 종목 우선 재사용", "신규
@@ -243,7 +243,7 @@ new-cash-allocation·rebalance-proposal 프롬프트에도 "보유 종목 우선
 **정의**: 파이프라인 전체(가격폴링→신호생성→투자실행협의체→Zeus 승인→텔레그램 제안·
 Frank 승인/거부)는 실전과 동일하게 돌아가되, **마지막 브로커 API 호출만 실제 발주
 대신 로그로 대체**한다("SHADOW: 실제였다면 삼성전자 10주 매수 체결"). Proposal 상태는
-"섀도우체결"로 남아 Decisions/Proposals에 기록되고, Facts/Ledger에는 실제 체결로
+"섀도우체결"로 남아 95_Etna/Investing/Orders에 기록되고, 95_Etna/Investing/Ledger에는 실제 체결로
 기록하지 않는다(가짜 체결이 실제 장부에 섞이면 안 되므로).
 
 - **기본값**: KIS 자동체결 경로는 **처음 배포 시 섀도우모드로 시작**한다.
@@ -278,11 +278,11 @@ Frank 승인/거부)는 실전과 동일하게 돌아가되, **마지막 브로�
   안에서 직렬화해 같은 ID로 동시에 호출되어도 하나만 생성된다.
   락은 시간만으로 탈취하지 않는다. 락 획득 실패 시 새 request ID로 재호출하지 말고
   직접주문 프로세스가 살아 있는지 확인한다. 프로세스가 없을 때만 남은
-  `Decisions/Proposals/.direct-order-request.lock`을 수동 정리한다.
+  `95_Etna/Investing/Orders/.direct-order-request.lock`을 수동 정리한다.
   이 CLI는 별도
   주문실행 경로가 아니라, 부서 제안 승인 경로가 이미 쓰는 `execute-asset-
   allocation-proposal.mjs` 파이프라인(order-gate 가격이탈·시장개장·킬스위치 검문소,
-  중복발주 가드)에 상태 "승인"·decidedAt=지금인 Decisions/Proposals 레코드 하나를
+  중복발주 가드)에 상태 "승인"·decidedAt=지금인 95_Etna/Investing/Orders 레코드 하나를
   만들어 즉시 태우는 방식이다 — 새 안전장치를 따로 만들지 않고 기존 것을 재사용한다.
   ⚠️ `telegramMessageId`도 `직접주문:<id>` 형태로 같이 채운다(2026-09-21 독립
   코드리뷰 CRITICAL 지적으로 추가) — `order-gate.checkApprovalMatch`가 "텔레그램
@@ -305,13 +305,13 @@ Frank 승인/거부)는 실전과 동일하게 돌아가되, **마지막 브로�
   통과해야 하므로, Frank가 현재가와 1% 넘게 떨어진 가격을 명시하면 대기 주문이 되는
   게 아니라 그 즉시 차단된다.
 - ⚠️ 카이로스(퀀트, KIS)와 완전히 분리 — 이 명령은 NH PLUG(위탁·금현물)만 다룬다.
-  킬스위치(State/KillSwitch)만 두 트랙이 전역 공유(기존 설계 그대로).
+  킬스위치(95_Etna/Investing/KillSwitch)만 두 트랙이 전역 공유(기존 설계 그대로).
 
 ### 오너 직접 정정/취소 지시 (NH 위탁·금현물 전용, 2026-09-21 신설)
 
 위 직접주문 경로로 나간(또는 부서 제안 승인으로 나간) 주문을 Frank가 정정·취소하는
 경로. 2026-09-21 오너가 위탁 매도 주문(847026)을 정정하려다 이 경로가 없어 MTS로
-수동 처리한 뒤 "정정, 취소주문도 가능하게 구현해줘"로 요청 — `Log/DevRequests/
+수동 처리한 뒤 "정정, 취소주문도 가능하게 구현해줘"로 요청 — `40_Projects/banana-portfolio/Requests/
 2026-09-21-NH-주문-정정취소-CLI.md`.
 
 - 위와 동일하게 자연어 판단 + **1회 재확인 후에만 실행**한다. 원주문번호는 Frank가
@@ -338,7 +338,7 @@ Frank 승인/거부)는 실전과 동일하게 돌아가되, **마지막 브로�
 
 체결 알림의 계좌·필드를 자동으로 확정할 근거가 부족하면
 `parse-notifications-to-vault.mjs`는 Ledger나 Holdings를 쓰지 않고 Firestore 원문을
-보존한다. 선택 가능한 계좌를 제시할 수 있으면 `State/ExecutionConfirmations/`에
+보존한다. 선택 가능한 계좌를 제시할 수 있으면 `95_Etna/Investing/ExecutionConfirmations/`에
 `EC-...` 대기 레코드를 만들고 운영실 Hermes가 텔레그램으로 확인을 요청한다.
 
 - Frank는 `체결확인 EC-... ISA`처럼 확인 ID와 계좌를 함께 답한다. 자유문으로 계좌나
@@ -358,7 +358,7 @@ Frank 승인/거부)는 실전과 동일하게 돌아가되, **마지막 브로�
 
 2026-09-28 대한항공 실사고(전량 손절주문이 매도가능수량을 전부 예약해버려 그 위에
 3R 부분익절주문을 동시에 걸 수 없었던 KIS 구조적 제약, `ord_psbl_qty=0` 실측 확인)로
-"진입 시점 손절+3R 동시예약" 설계를 폐기했다. 새 설계(Log/Strategy/2026-09-28-
+"진입 시점 손절+3R 동시예약" 설계를 폐기했다. 새 설계(50_Outputs/Decisions/2026-09-28-
 대한항공보호주문실패-트레일링전환.md 참고, 므네모시네)는:
 - **진입 시점**: 전량 손절주문만 건다(`watch-breakout-entry-fill.mjs`,
   `breakout-protection.mjs`의 `computeInitialStopOrder`/`ensureStopOrder`).
@@ -367,7 +367,7 @@ Frank 승인/거부)는 실전과 동일하게 돌아가되, **마지막 브로�
   가격을 모름) 먼저 그 확인부터 하고, 확인되면 **같은 실행 안에서 이어서** 아래
   단계로 진행한다(여기서 끊으면 잔여 수량이 하루 무보호가 된다 — 2026-09-29 2차
   재설계로 수정). 그다음 포지션이 전량 종료(손절 체결)됐는지 KIS 잔고+
-  `checkOrderFill`로 확인 — 확인되면 원장(Facts/Ledger/Executions·Profits) 기록
+  `checkOrderFill`로 확인 — 확인되면 원장(95_Etna/Investing/Ledger/Executions·Profits) 기록
   후 포지션을 `청산` 처리하고 끝. 아직 보유 중이면 `breakout-exit-management.mjs`의
   `decideExitManagement`가 트레일링 손절선 정정(`computeTrailingStop` 기반,
   1R=본전·2R=1R가·3R 이상=직전 R가로 연속 래칫)을 판정하거나, 3R 최초 도달 시
@@ -379,7 +379,7 @@ Frank 승인/거부)는 실전과 동일하게 돌아가되, **마지막 브로�
   두 경로 모두 `executeExitManagement`가 실행한다.
 
 수동 재시도(`scripts/tools/retry-breakout-protection.mjs`, `--code` 또는
-`--position-id`로 하나의 `State/BreakoutPositions/*.md` 보유 포지션 지정, 여러 건
+`--position-id`로 하나의 `95_Etna/Investing/BreakoutPositions/*.md` 보유 포지션 지정, 여러 건
 매칭 시 추정하지 않고 중단)는 손절 단일 다리(`ensureStopOrder`)만 다룬다. 파일에
 손절주문번호가 없어도 바로 새 주문을 내지 않고 먼저 KIS 정정취소가능주문을 조회해
 이미 같은 종목에 스톱지정가 매도주문이 떠 있는지 확인한다 — 있으면(파일이 낡았을
@@ -501,7 +501,7 @@ Vault가 폰과 동기화되는 이상, 그 폴더에 시크릿이 섞이면 개
 
 ### 파일 단위 규칙
 
-- **Facts/Ledger**(체결·배당·현금흐름): 이벤트 하나당 파일 하나. 프론트매터(YAML)로
+- **95_Etna/Investing/Ledger**(체결·배당·현금흐름): 이벤트 하나당 파일 하나. 프론트매터(YAML)로
   구조화해 Dataview로 조회하면 지금 시트 탭처럼 테이블로 볼 수 있음.
   **하위폴더로 이벤트 종류를 나눈다(확정, 2026-08-04, 오너 요청)** — `Executions/`
   (체결, **금현물도 여기 합류** — v1이 금현물을 별도 원장으로 뒀다가 버그가 나서
@@ -509,24 +509,24 @@ Vault가 폰과 동기화되는 이상, 그 폴더에 시크릿이 섞이면 개
   분배금·채권원리금) · `FundPurchases/`(펀드 적립매수, 좌수 회계가 체결과 달라 별도) ·
   `CashEvents/`(NH 입금·출금 안내 원문 — 이 이벤트로 계좌 잔고를 재계산하는 건 State의
   일이라 여기는 원문 사실만) · `Exchanges/`(환전). **계좌별 폴더는 만들지 않는다** —
-  계좌 귀속은 State/Holdings 설계(퀀트·자산분배 트랙 로직 절) 전까지 확정 안 되는
+  계좌 귀속은 95_Etna/Investing/Holdings 설계(퀀트·자산분배 트랙 로직 절) 전까지 확정 안 되는
   값이라, 폴더가 아니라 각 파일 frontmatter의 `account` 필드로 나중에 채우고 Dataview로
   재조회한다(이벤트 로그는 쓴 뒤 옮기지 않는다는 원칙과 정합).
-- ~~**Facts/MarketPolls**(가격폴링·추세신호 원자료): **롤링 보관(예: 90일) 후 자동
+- ~~**95_Etna/Investing/MarketPolls**(가격폴링·추세신호 원자료): **롤링 보관(예: 90일) 후 자동
   폐기**. 의미 있는 신호(제안으로 이어진 것)만 Decisions에 영구 기록되므로 손실 없음.~~
   → **2026-08-17 폴더 자체 삭제** — "정리된 항목과 그 이유" 표 참고(전제였던 추세추종
   폴링이 ADR-0012 추신에서 이미 기각됨, 코드로 한 번도 안 만들어짐).
-- **Decisions/PositionJournal**: **포지션(종목) 하나당 파일 하나**, 매수 시작부터 완전
+- **95_Etna/Investing/PositionJournal**: **포지션(종목) 하나당 파일 하나**, 매수 시작부터 완전
   매도까지 시간순으로 누적 기록. 한 파일에서 "이 포지션이 왜 시작되고 어떻게 가고 왜
   끝났는지"를 한눈에 볼 수 있게 함.
-- **Decisions/Proposals**: 제안 하나당 파일 하나, 상태(대기/승인/주문접수/부분체결/체결/취소/거부) 필드 보유,
+- **95_Etna/Investing/Orders**: 제안 하나당 파일 하나, 상태(대기/승인/주문접수/부분체결/체결/취소/거부) 필드 보유,
   평가노트·체결원장에 링크.
 - **State**: 소수 파일, 자동화 판독 최적화 우선(Obsidian 열람은 부차적).
 - **Knowledge**: 서술형, 자유롭게 링크·성장하는 문서.
 
 ### 폴더·연결 설계 원칙 (확정, 2026-08-04 — 앞으로 모든 Vault 구조에 적용)
 
-Facts/Ledger 세분화 논의에서 나온 원칙을 전체 Vault로 일반화한다. State/Decisions/
+95_Etna/Investing/Ledger 세분화 논의에서 나온 원칙을 전체 Vault로 일반화한다. State/Decisions/
 Knowledge의 구체적 하위구조는 아직 안 잡는다(코드가 그 폴더를 실제로 쓰기 시작하는
 해당 Phase — 퀀트/자산분배 트랙 로직·텔레그램 승인 흐름 등 — 에서 정한다) — 다만 그때도
 아래 두 원칙은 그대로 적용한다.
@@ -556,7 +556,7 @@ Knowledge로 완전히 이관**하고, 기존 Trading Agent 허브는 **은퇴**
 
 ## Firestore 미러
 
-- 원본이 아니라 **캐시**. Vault State/Ledger가 바뀔 때마다 로컬 자동화가 전체를 재생성해
+- 원본이 아니라 **캐시**. Vault 95_Etna/Investing/Ledger가 바뀔 때마다 로컬 자동화가 전체를 재생성해
   덮어씀(부분 병합 없음 — 부분쓰기 버그 방지).
 - 탭당 문서 1개: `mirror/home`, `mirror/holdings`, `mirror/allocation`, `mirror/dividends`,
   `mirror/profits`, `mirror/trades`, `mirror/latestReport`.
@@ -578,7 +578,7 @@ Knowledge로 완전히 이관**하고, 기존 Trading Agent 허브는 **은퇴**
 | `mirror/holdings` | `updatedAt`, `items: [{account, name, ticker, market, qty, avgPrice, curPrice, evalAmount, profitAmount, profitPct, weightPct}]` |
 | `mirror/allocation` | `updatedAt`, `accounts: [{label, assets: [{name, ratio, target, invest, eval}]}]` |
 
-**이력형(History) 문서 — 최근 1년만, 그 이전은 Vault Facts/Ledger에서 조회**:
+**이력형(History) 문서 — 최근 1년만, 그 이전은 Vault 95_Etna/Investing/Ledger에서 조회**:
 
 | 문서 | 필드 |
 |---|---|
@@ -603,10 +603,10 @@ Knowledge로 완전히 이관**하고, 기존 Trading Agent 허브는 **은퇴**
 
 **완전 제거(앱에서만 — Vault에는 영구 보관)**:
 - KPI 탭(TWR·Sharpe·MDD·행동추적) — 대시보드는 "숫자만" 원칙에 집중, 성과지표는
-  Log/Reports에서 월간/회고 시점에 확인.
+  50_Outputs/Reports에서 월간/회고 시점에 확인.
 - 노트 탭(평가 이력 서술형 카드) — 평가 사유는 텔레그램 제안 메시지가 상세히 전달하고,
-  전체 이력은 Decisions/Evaluations에 남음.
-- 리포트 과거분 — 앱엔 최신 1건만, 과거 리포트는 Vault Log/Reports에 전체 보관.
+  전체 이력은 95_Etna/Investing/Evaluations에 남음.
+- 리포트 과거분 — 앱엔 최신 1건만, 과거 리포트는 Vault 50_Outputs/Reports에 전체 보관.
 
 ### 대기중 제안 배지 (확정, 2026-07-28)
 
@@ -666,7 +666,7 @@ API로 이전 검토 중. 계좌가 KIS로 통합될수록 아래 "카카오 알
                   (NH·삼성·한국투자 브로커별 — 체결/배당/펀드적립/금현물/예수금/환전 6종)
                             │
                             ▼
-                  Vault Facts/Ledger에 이벤트당 파일로 기록 (멱등 dedup 키 유지)
+                  Vault 95_Etna/Investing/Ledger에 이벤트당 파일로 기록 (멱등 dedup 키 유지)
                             │
                             ▼
                   처리 완료된 "알람" 행은 시트에서 정리(삭제/처리됨 마킹)
@@ -680,7 +680,7 @@ API로 이전 검토 중. 계좌가 KIS로 통합될수록 아래 "카카오 알
 **파싱 로직 승계**: v1 `scripts/jobs/parse-notifications.mjs`의 증권사별 정규식 파서
 (NH투자증권·NH투자증권 해외·삼성증권·한국투자증권, 체결/배당/펀드적립/금현물/예수금앵커/
 환전 6가지 패턴)는 이미 실전 검증된 자산이라 그대로 이식한다. 바뀌는 것은 **쓰기 대상**뿐 —
-기존엔 체결내역/배당금 등 다른 시트 탭에 썼다면, 이제는 Vault Facts/Ledger에 이벤트당
+기존엔 체결내역/배당금 등 다른 시트 탭에 썼다면, 이제는 Vault 95_Etna/Investing/Ledger에 이벤트당
 파일로 쓴다.
 
 **멱등성 유지**: v1이 이미 여러 차례 사고를 겪으며 다듬어온 dedup 키 체계(체결=날짜|구분|
@@ -833,7 +833,7 @@ Zeus가 직접 알아보러 다니는 상황 자체가 설계 결함 — 그런 
   리포지토리(banana-portfolio-v2) 내부가 아니라, **완전히 새로운 독립 경로**에 Vault를
   새로 만든다. git과 무관 — 퍼블릭 리포에 개인 재무 데이터가 섞일 구조적 위험을 원천 차단.
 - **분류 체계**: 기존 profile/playbooks/learning/skills 내용은 참고만 하고, 앞서 정한
-  4대 그룹(Facts/State/Decisions/Knowledge)으로 새로 정리하는 것이 출발점.
+  4대 그룹(Facts/State/Decisions/Knowledge — 2026-10 무세이온 구조로 대체)으로 새로 정리하는 것이 출발점.
 - **기기 간 열람**: Mac(로컬 자동화가 쓰는 기기) + 갤럭시(안드로이드) 두 기기에서 모두 Vault를
   열람해야 함 — iCloud 계열 동기화는 해당 없음(애플 생태계 아님).
 - **동기화 방식**: **Google Drive 폴더 동기화**(무료, 이미 쓰는 구글 계정 재사용). Mac은
@@ -867,13 +867,13 @@ Zeus가 직접 알아보러 다니는 상황 자체가 설계 결함 — 그런 
 > morning-briefing.mjs`)** — 원안은 두 부서 LLM 판단을 전제했지만, 매일 자동으로 도는
 > 잡에서 LLM 서술을 매번 생성하면 비용·환각 위험이 매일 누적된다고 판단해 **LLM 호출을
 > 아예 안 쓰는 Node 전용 구현**으로 바꿨다. 세 섹션(자산현황·간밤 배당/체결 이벤트·거시
-> 5신호) 전부 이미 존재하는 순수 계산(`buildHomeMirror`·Facts/Ledger 읽기·
+> 5신호) 전부 이미 존재하는 순수 계산(`buildHomeMirror`·95_Etna/Investing/Ledger 읽기·
 > `macro-overlay-facts.mjs`)을 그대로 재조립할 뿐이라 판단이 필요한 지점이 없다 —
 > daily-asset-allocation-check.mjs(평일 16:30, 장 마감 후)와 같은 카테고리로 분류해
 > **운영실 Hermes** 단일 라벨로 발송한다("②오늘 주목사항"도 부서 해석이 아니라 거시
 > 5신호 중 [경고] 여부를 그대로 보여주는 방식). 평일 08:00 KST(장 시작 09:00 전, 미국장
 > 마감 05~06시 KST 이후라 최신 종가 확보 — 위 "미국주식 시차" 절 근거) launchd 등록
-> 완료. 총자산 전일 대비는 이 잡 전용 캐시(State/MorningBriefing/previous-total.md,
+> 완료. 총자산 전일 대비는 이 잡 전용 캐시(95_Etna/Investing/MorningBriefing/previous-total.md,
 > Faber "직전 상태" 패턴과 동일 원리)로 계산한다.
 
 ### 정리된 항목과 그 이유 (2026-08-01 감사, 2026-08-02 개별종목 관련 항목 추가 제거)
@@ -885,7 +885,7 @@ Zeus가 직접 알아보러 다니는 상황 자체가 설계 결함 — 그런 
 | **종목 발굴 — 검토 대상 제시** | 시총 상위 100 품질점수 계산 결과 중 관심종목에 없는 고득점 종목을 학습·검토용으로 알림 | 발굴 결과가 이어질 매수 파이프라인 자체가 자산분배 트랙엔 없다(신규 개별종목 매수 금지 확정) — 관심종목에 등록해도 갈 곳이 없어 지금은 목적이 없는 알림이다. 퀀트 트랙이 팩터 스크리닝 방식을 정하면 그쪽 전용으로 재설계 |
 | **논리훼손(B) 감지 경보** | 위탁 레거시 개별종목의 보유 논리가 깨졌다고 판단되는 즉시 경보 | ⚠️ **2026-08-02 제거(오너 확정)**: 개별종목 관련 분석·판단은 전부 오너가 직접 하기로 결정 — 시스템이 개별종목의 "논리 훼손"을 자동 판단하는 기능 자체를 만들지 않는다. 별도 구현이 불필요한 낭비라는 판단 |
 | **위탁 개별종목 F-Score 전환 알림** | 분기보고서 발행 시 F-Score 재계산 결과 유의미한 하락 확인 시 자동 알림 | ⚠️ **2026-08-02 제거(오너 확정)**: 같은 이유. 위탁 레거시 개별종목의 전환 시점·방향은 **오너가 직접, 본인 판단으로** 진행한다 — 아래 "위탁 레거시 개별종목 전환 — 시스템 관여 없음" 절 참고 |
-| **Facts/MarketPolls**(가격폴링·추세신호 원자료 롤링 보관) | 위 "Vault 물리 구조" 절에 정의된 폴더 — 보유종목 폴링마다 이동평균·RSI 등을 기계적으로 계산해 임계치 넘으면 Kairos(LLM)가 해석하는 2단 필터 구조(ADR-0012)의 1단계 산출물 저장소로 설계됨 | ⚠️ **2026-08-17 제거(독립 감사로 발견 — 설계 당시 전제가 이후 뒤집혔는데 이 폴더 자체는 정리 안 된 채 방치됨)**: ADR-0012 자체 추신(2026-07-31/08-04)이 "추세추종 자체가 증거 부족으로 기각됐고 Kairos는 이제 폴링이 아니라 월 1회 배치 리컨스티튜션 전담"이라고 명시. 이 폴더가 저장할 대상(폴링 추세신호)이 애초에 안 만들어져 코드 어디서도 쓰지 않음(`vault-paths.mjs`에 경로 상수만 있고 writer 없음, `~/banana-vault/Facts/MarketPolls/` 항상 0개 파일). 재사용 검토 없이 완전 삭제 — 필요해지면 그때 새로 설계 |
+| **95_Etna/Investing/MarketPolls**(가격폴링·추세신호 원자료 롤링 보관) | 위 "Vault 물리 구조" 절에 정의된 폴더 — 보유종목 폴링마다 이동평균·RSI 등을 기계적으로 계산해 임계치 넘으면 Kairos(LLM)가 해석하는 2단 필터 구조(ADR-0012)의 1단계 산출물 저장소로 설계됨 | ⚠️ **2026-08-17 제거(독립 감사로 발견 — 설계 당시 전제가 이후 뒤집혔는데 이 폴더 자체는 정리 안 된 채 방치됨)**: ADR-0012 자체 추신(2026-07-31/08-04)이 "추세추종 자체가 증거 부족으로 기각됐고 Kairos는 이제 폴링이 아니라 월 1회 배치 리컨스티튜션 전담"이라고 명시. 이 폴더가 저장할 대상(폴링 추세신호)이 애초에 안 만들어져 코드 어디서도 쓰지 않음(`vault-paths.mjs`에 경로 상수만 있고 writer 없음, `~/Pantheon/Mouseion/Facts/MarketPolls/` 항상 0개 파일). 재사용 검토 없이 완전 삭제 — 필요해지면 그때 새로 설계 |
 
 **남은 것들의 공통점**: 지금 표에 남은 5개는 전부 ①일반 운영성(아침브리핑·배당체결·주간리포트)
 이거나 ②자산분배 트랙에 실제로 존재하는 **비개별종목** 이벤트(거시오버레이·리밸런싱)에
@@ -959,7 +959,7 @@ Frank는 텔레그램에서 특정 부서를 직접 지목해 부를 수 있다(
   체계(예: 텔레그램 알림음 on/off, 메시지 상단 고정 등) 설계 시 구분 필요.
 - **Google Drive 동기화 충돌 위험**: 로컬 자동화가 State 파일(보유종목·잔고 등)을 매시
   덮어쓰는데, Drive 동기화가 이걸 다른 기기 변경과 충돌 처리할 수 있음(같은 파일이 양쪽에서
-  거의 동시에 바뀌면 "충돌 사본" 생성 위험). 완화안: ①Facts/MarketPolls(가장 쓰기가 잦은
+  거의 동시에 바뀌면 "충돌 사본" 생성 위험). 완화안: ①95_Etna/Investing/MarketPolls(가장 쓰기가 잦은
   롤링 원자료 폴더)는 애초에 안드로이드 동기화 앱 대상에서 제외(사람이 폰에서 볼 이유가 없는
   폴더이므로) ②State 파일은 자동화 전용으로 취급하고 사람은 폰에서 읽기만 하는 규칙을 지킴
   (폰에서 State 폴더를 직접 편집하지 않음).
@@ -975,7 +975,7 @@ Frank는 텔레그램에서 특정 부서를 직접 지목해 부를 수 있다(
 
 ## v1 → v2 마이그레이션 계획 (확정)
 
-**원칙**: Vault 분류체계(Facts/State/Decisions/Knowledge)는 "새 출발점"이지만, 이건
+**원칙**: Vault 분류체계(당시 Facts/State/Decisions/Knowledge, 2026-10 무세이온 구조로 대체)는 "새 출발점"이지만, 이건
 폴더 구조·명명에 대한 원칙이지 **실제 과거 데이터를 버린다는 뜻이 아니다**. 특히 지금
 보유 중인 종목의 매수 근거를 새로 시작하면 "매도평가 시 최초 매수 이유와 비교"라는
 기존 핵심 기능 자체가 무력화되므로, 전체 이력을 변환하기로 확정했다.
@@ -984,19 +984,19 @@ Frank는 텔레그램에서 특정 부서를 직접 지목해 부를 수 있다(
 
 | v1 시트 탭 | 새 Vault 위치 | 비고 |
 |---|---|---|
-| 체결내역 | Facts/Ledger | 행 하나당 파일 하나 |
-| 배당금 | Facts/Ledger | |
-| 수익금 | Facts/Ledger | 실현손익 |
-| 일별스냅샷 | Facts/Ledger | TWR·Sharpe·MDD 등 과거 성과 재계산에 필요 |
-| ISA·위탁·연금저축·IRP(보유종목) | State/Holdings | 현재값만(이력 아님) |
-| 자산분배 | State/Allocation | 현재 목표·현재 비중 |
-| 리스크기준선 | State/Baselines | 펀더멘털 기준선 |
-| 종목투자노트(평가노트) | Decisions/Evaluations | 종목평가 카드 |
-| 포지션저널 | Decisions/PositionJournal | v1이 이미 포지션 단위 구조라 매핑이 가장 자연스러움 |
-| 주문제안 | Decisions/Proposals | 과거 참고용, 새 Proposal 스키마와 필드가 다를 수 있어 변환 시 매핑표 별도 필요 |
+| 체결내역 | 95_Etna/Investing/Ledger | 행 하나당 파일 하나 |
+| 배당금 | 95_Etna/Investing/Ledger | |
+| 수익금 | 95_Etna/Investing/Ledger | 실현손익 |
+| 일별스냅샷 | 95_Etna/Investing/Ledger | TWR·Sharpe·MDD 등 과거 성과 재계산에 필요 |
+| ISA·위탁·연금저축·IRP(보유종목) | 95_Etna/Investing/Holdings | 현재값만(이력 아님) |
+| 자산분배 | 95_Etna/Investing/Allocation | 현재 목표·현재 비중 |
+| 리스크기준선 | 95_Etna/Investing/Baselines | 펀더멘털 기준선 |
+| 종목투자노트(평가노트) | 95_Etna/Investing/Evaluations | 종목평가 카드 |
+| 포지션저널 | 95_Etna/Investing/PositionJournal | v1이 이미 포지션 단위 구조라 매핑이 가장 자연스러움 |
+| 주문제안 | 95_Etna/Investing/Orders | 과거 참고용, 새 Proposal 스키마와 필드가 다를 수 있어 변환 시 매핑표 별도 필요 |
 | 리스크모니터 | Decisions | 과거 리스크 판정 이력 |
-| 주간리포트 | Log/Reports | |
-| 성향관찰 | Decisions/Profile | 투자성향 관찰 이력 |
+| 주간리포트 | 50_Outputs/Reports/{YYYY} | |
+| 성향관찰 | 20_Records/21_Notes/{YYYY} | 투자성향 관찰 이력 |
 | 실시간시세 | (변환 안 함) | 그 순간의 파생 데이터라 이관 의미 없음 — 새 시스템이 자체적으로 재생성 |
 
 ### 마이그레이션 실행
@@ -1256,7 +1256,7 @@ Frank는 텔레그램에서 특정 부서를 직접 지목해 부를 수 있다(
 > 위 표의 "위탁 = ... + KRX 금현물"은 **세금·자산배분 분류상** 위탁 소속으로 취급한다는
 > 뜻이다 — 그러나 **실제 매매·보유는 별도의 금현물 전용 계좌**를 통해 이뤄진다(위탁
 > 계좌번호와 다른 계좌). 지금은 관리 방식을 바꾸지 않는다(오너 확정 — 그대로 유지).
-> 다만 계좌 귀속을 실제로 다루게 될 단계(State/Holdings 설계, 카카오 알림 계좌번호
+> 다만 계좌 귀속을 실제로 다루게 될 단계(95_Etna/Investing/Holdings 설계, 카카오 알림 계좌번호
 > 매핑, KIS 실주문 API 연동)에서 "금현물 알림이 위탁(205-01) 계좌번호로 온다"고
 > 섣불리 가정하면 안 된다 — 실제로는 5번째 계좌(금현물 전용)에서 온다. 자산배분 계산
 > (목표비중 갱신)에는 위탁 소속으로 합산하되, 계좌 잔고·체결 조회는 그 별도 계좌를
@@ -1590,7 +1590,7 @@ risk-monitor의 ±2σ 이탈 판정을 그대로 재사용)가 감지될
 ```
 
 **승인 이후**: 개별종목과 동일한 결정론적 검문소(가격이탈·보유정합성 등 — ETF 매매이므로
-그대로 적용 가능) → 지정가 자동 발주 → 체결 시 Facts/Ledger 기록, Decisions/Proposals에
+그대로 적용 가능) → 지정가 자동 발주 → 체결 시 95_Etna/Investing/Ledger 기록, 95_Etna/Investing/Orders에
 "거시 오버레이 틸트"로 표시(개별종목 Proposal과 구분).
 
 **되돌림(unwind) 규칙**: 틸트의 근거가 된 신호가 반전되면(예: 국내주식 ETF가 다시
@@ -1651,11 +1651,11 @@ risk-monitor의 ±2σ 이탈 판정을 그대로 재사용)가 감지될
 | 미국 10Y 금리 | 장단기 금리차 | **yfinance** `^TNX` — 이미 있음 | ❌ 기존 그대로 |
 | 미국 3M 금리 | 장단기 금리차 | **yfinance** `^IRX`(13주 국채) | ⚠️ 티커 추가만 필요(신규 API 아님) |
 | WTI 유가(신규, 2026-08-01) | 국제정세·물가 대리지표 | **yfinance** 티커 `CL=F`(WTI 선물) | ❌ 같은 라이브러리, 티커 추가만 |
-| **한국 국고채 스프레드** | 장단기 금리차(국내) | yfinance엔 없음 → **한국은행 ECOS API** | ✅ 연동 완료(2026-09-12 — `scripts/lib/ecos.mjs`, Knowledge/API/ECOS.md 참고) |
+| **한국 국고채 스프레드** | 장단기 금리차(국내) | yfinance엔 없음 → **한국은행 ECOS API** | ✅ 연동 완료(2026-09-12 — `scripts/lib/ecos.mjs`, 30_Wiki/33_Objects/ECOS (한국은행 경제통계).md 참고) |
 | ~~GPR 지정학적 리스크 지수~~ | ~~국제정세~~ | ~~policyuncertainty.com~~ | ❌ **기각**(2026-08-01 — 너무 니치함. WTI 유가+VIX+DXY 조합으로 대체) |
 | ~~미국 하이일드 OAS(신용스프레드)~~ | ~~신용스프레드~~ | ~~FRED API~~ | ❌ **기각**(2026-08-02 — 5개 신호로 충분하다는 오너 판단. FRED 자체가 불필요해짐) |
 | 목표배분 MVO용 장기지수데이터 | 세부 비중 계산(구현 단계) | **yfinance**, 기간을 20~30년으로 확장(한국 ETF는 상장일 이전 구간을 KOSPI 지수 자체로 대체 검토) | ❌ 같은 라이브러리, 기간·보완 방식만 결정 필요 |
-| **연금저축·IRP 연 900만원 한도 소진 확인** | 추가 900만원 여력 배분 시점 판단 | 국세청·증권사 모두 공개 API 없음 → **자체 계산으로 대체**: Vault Facts/Ledger에 이미 쌓이는 연금저축·IRP 입금 기록(자동적립 카카오알림 파싱 + 추가납입 체결기록)을 Hermes가 연간 합산해 "올해 누적 납입액" 도출 | ❌ 새 API 불필요 — 기존 장부 데이터의 파생 계산 |
+| **연금저축·IRP 연 900만원 한도 소진 확인** | 추가 900만원 여력 배분 시점 판단 | 국세청·증권사 모두 공개 API 없음 → **자체 계산으로 대체**: Vault 95_Etna/Investing/Ledger에 이미 쌓이는 연금저축·IRP 입금 기록(자동적립 카카오알림 파싱 + 추가납입 체결기록)을 Hermes가 연간 합산해 "올해 누적 납입액" 도출 | ❌ 새 API 불필요 — 기존 장부 데이터의 파생 계산 |
 
 **결론**: 실제로 신규 외부 API 연동이 필요했던 항목은 **한국은행 ECOS 하나뿐**이었고
 2026-09-12 연동까지 완료됐다(GPR·신용스프레드 둘 다 기각되며 FRED 자체가 불필요해짐,
@@ -1670,7 +1670,7 @@ risk-monitor의 ±2σ 이탈 판정을 그대로 재사용)가 감지될
 > 전략의 설계 기록이다. 이 전략은 2026-09-13에 증거 부족으로 폐기됐고, 현재
 > 라이브 퀀트 트랙은 별도의 돌파매매·추세추종 경로를 사용한다. 현재 매수·매도
 > 조건과 실거래 배선은
-> `Log/Strategy/2026-09-29-돌파매매전략-현재기준-매수매도조건.md`와
+> `50_Outputs/Decisions/2026-09-29-돌파매매전략-현재기준-매수매도조건.md`와
 > `scripts/jobs/daily-breakout-signal-scan.mjs`,
 > `scripts/jobs/reconcile-breakout-protection.mjs`를 기준으로 확인한다.
 
@@ -2471,7 +2471,7 @@ RSI(14) · 52주 위치 · MACD(12,26,9) · 이동평균 정배열(5/20/60일) �
 실현변동성 룩백(문헌값 6개월) · 실적발표 후 제외 기간(PEAD 지속 기간) · 시장 대비 초과
 하락의 "크다" 기준
 - **관심종목 리스트** — 스캔 대상에 포함하기로 확정했으나 Vault 어디에 어떻게 관리할지
-  미정(State/Watchlist?). 종목 추가·제거를 텔레그램으로 할지도 미정
+  미정(95_Etna/Investing/Watchlist?). 종목 추가·제거를 텔레그램으로 할지도 미정
 - **고변동성 구간 처리 상세** — "기회는 받되 크기를 줄인다"로 방향은 확정. Nagel(2012)은
   단기 반전 수익이 고변동성 국면에 집중된다고 보고하는 반면 변동성 타게팅은 그때 노출을
   줄이라고 한다 — 두 로직이 반대로 당기므로 구체적 조율 규칙 필요

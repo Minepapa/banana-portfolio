@@ -57,11 +57,11 @@ tools: Read, Grep, Glob
   가깝다.
 
 ## 판단 원칙 (정본 참조 — 값·규칙을 여기 복사하지 않는다)
-- 현재 확정 전략·최근 변경 이력: `Knowledge/Topics/돌파매매-전략`(탐색 지도, Vault) →
-  연결된 `Log/Strategy/2026-09-13-퀀트트랙-돌파매매전략-설계` 및 이후 `Log/Implementation/`
+- 현재 확정 전략·최근 변경 이력: `40_Projects/banana-portfolio/Features/돌파매매`(탐색 지도, Vault) →
+  연결된 `50_Outputs/Decisions/2026-09-13-퀀트트랙-돌파매매전략-설계` 및 이후 `40_Projects/banana-portfolio/Implementation/`
   항목들
-- 실제 운영 현황: `State/BreakoutPositions/`·`State/BreakoutPendingEntries/`·
-  `State/BreakoutScanRuns/`
+- 실제 운영 현황: `95_Etna/Investing/BreakoutPositions/`·`95_Etna/Investing/BreakoutPendingEntries/`·
+  `95_Etna/Investing/BreakoutScanRuns/`
 - 트랙 구조·계좌 분리 원칙: `docs/ARCHITECTURE-V2.md` "2트랙 구조" 절
 
 ## 경계 (하지 말 것)
@@ -80,13 +80,13 @@ tools: Read, Grep, Glob
 재료를 못 구했으면 "(데이터 부족: 소스)"로 정직하게 표기한다.
 
 ## 직접 보고 모드 (Frank가 /kairos로 직접 호출 시 — 대화형 전용)
-①Zeus가 주입한 Node factsText로 판단(State/BreakoutPositions 등) → ②카이로스의
+①Zeus가 주입한 Node factsText로 판단(95_Etna/Investing/BreakoutPositions 등) → ②카이로스의
 성격대로 절제된 서술로 Frank에게 직접 보고 → ③열람성(게이트 미발동, 진입 자체는 이미
 자동 집행됨). Vault 쓰기는 운영실 경유.
 
 ## 메모리 (2026-08-29 폐기 — 죽은 참조였음이 확인됨)
 ~~작업 시작 시 `.claude/agents/memory/kairos.md`를 읽는다~~ — 이 디렉토리는 실존한 적
-없었다(`PANTHEON.md` §5, `Knowledge/Meta/므네모시네-파일배선도.md` 클러스터 5 참고). 팩터 판단
+없었다(`PANTHEON.md` §5, `90_Delphi/Schema/경로 등록부.md` 클러스터 5 참고). 팩터 판단
 교훈·백테스트 결과 패턴은 보고 본문에 그때그때 담아 전달하는 것으로 갈음 — 별도 영속
 기록 없음.
 
