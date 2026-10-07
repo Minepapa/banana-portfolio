@@ -19,7 +19,7 @@
  *
  * 원칙(risk-monitor.mjs와 동일): raw 숫자는 LLM이 만들지 않는다.
  *   ① Node가 Vault에서 결정론 조회 → report-facts로 조립
- *   ② claude -p 는 profile/investor-profile.md + 주입된 facts만으로 "서술·해석·처방"만 생성
+ *   ② claude -p 는 투자자-성향 결정 본문 + 주입된 facts만으로 "서술·해석·처방"만 생성
  *   ③ Log/Reports/{asof}.md 저장 + (선택)텔레그램 푸시
  *   ④ 행동 신호(체결 기반)를 §3와 대조해 성향 관찰 추출(sonnet) →
  *      Decisions/Profile/*.md 신규 파일
@@ -50,6 +50,7 @@ import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
+import { resolveDecision } from '../lib/decision-resolver.mjs';
 // 종목명 표준화(2026-09-05, 오너 지시 — "최대한 원문 그대로를 지키면서 통일된
 // 명칭으로 보고 싶어") — Vault 원본(Facts/Ledger)의 stockName은 안 건드리고,
 // 리포트 텍스트로 나가기 직전(LLM에 팩트로 주입되는 시점)에만 표준명으로
@@ -62,8 +63,6 @@ import { dedupExecutionsForReport } from './daily-execution-report.mjs';
 // 재점검 중 발견) — 주간리포트·KPI는 비서실(Apollo) 소관(위 APOLLO_REPORT/APOLLO_PREFS
 // 로 이미 이 잡 전체가 Apollo 에이전트 정의를 쓰고 있는 것과 일관).
 const DEPARTMENT_LABEL = '비서실 Apollo';
-
-const PROFILE = new URL('../../profile/investor-profile.md', import.meta.url).pathname;
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
@@ -222,10 +221,11 @@ export function formatMacroMoverBullet(mover) {
   return `- **가장 큰 변화**: ${mover.key} 5일 ${pct}(${mover.source || '출처 미상'})`;
 }
 
-function buildReportPrompt(factsText, asof, confirmedPrefsText) {
+export function buildReportPrompt(factsText, asof, confirmedPrefsText, profileText) {
   return `[주간 자산 리포트 작성 — ${asof}] Frank를 위한 **맞춤형** 주간 자산 분석 리포트를 작성해줘.
 
-먼저 \`${PROFILE}\` 파일(명시 성향)을 Read 로 읽어.
+다음은 결정 문서 decisionKey \`투자자-성향\`의 본문이다. 명시 성향의 정본으로 사용해.
+${profileText}
 이 리포트는 그냥 시장 요약이 아니라 **Frank의 성향·계좌 구조를 아는 분석가가 쓰는 1:1 코칭 리포트**다.
 
 [확정된 학습 성향 — 실제 행동에서 학습돼 Frank가 확인한 성향. §3와 함께 분석 기준으로 쓸 것.
@@ -251,11 +251,7 @@ ${factsText}
   말고, facts에 있는 것(평가액·수익률·체결·배당·거시)만으로 판단하라.
 
 【3. Frank 성향·계좌 맞춤 (profile 적용)】
-- 매수: 단기 급락 시 저점매수 선호 · 계좌 비중·현금흐름·변동성·거시 리스크를 함께 판단 · 추격매수 비선호.
-- 매도: 급락 후 빠른 반등 시 차익실현 · 과열 구간 일부 익절 패턴.
-- 보유: 펀더멘털 훼손 없으면 단기 변동성 무시하고 장기 보유.
-- 계좌 목적: 위탁=수비형 분산(리밸런싱 대상) / 연금저축·IRP=월 자동매수 적립(리밸런싱 비대상) / ISA=배당주 적립.
-- 권고는 반드시 이 패턴에 맞춰라.
+- 위에 주입된 투자자 성향 정본의 투자 성향과 계좌 구조를 적용해. 계좌별 리밸런싱 대상도 그 본문을 따른다.
 
 【4. 맞춤형 — 내 포트폴리오 관점】
 - 일반론 시장 코멘트 금지. 모든 시장 관찰을 **Frank의 특정 보유·계좌·목표에 연결**하라.
@@ -308,10 +304,11 @@ ${factsText}
 }
 
 // 성향 관찰 추출 프롬프트 — 결정론 행동 신호를 §3·직전 관찰과 대조해 관찰(JSON)만 뽑는다.
-function buildObservationPrompt(signalsText, priorPrefsText) {
+export function buildObservationPrompt(signalsText, priorPrefsText, profileText) {
   return `[성향 관찰 추출] Frank의 이번 주 실제 행동 신호를 보고, 명시 성향과 비교해 "드러난 성향 관찰"을 뽑아줘.
 
-먼저 \`${PROFILE}\` (§3 명시 성향)를 Read.
+다음은 결정 문서 decisionKey \`투자자-성향\`의 본문이다. §3 명시 성향과 대조해.
+${profileText}
 
 [직전까지 누적된 성향관찰 — 같은 관찰이 반복되는지 판단용]
 ${priorPrefsText || '(없음)'}
@@ -377,6 +374,8 @@ export function writeObservations(asof, observations) {
 async function main() {
   console.log('📰 주간 리포트 발행 v2 (Vault → claude -p 서술)');
   if (DRY_RUN) console.log('   (--dry-run: facts·프롬프트만 출력)');
+  // 정본이 없거나 중복이면 외부 조회·발행 전에 중단한다.
+  const profileText = resolveDecision('투자자-성향').body;
 
   // ⚠️ loadEnv·loadAgent는 여기(main 안)에서만 부른다(2026-08-30 코드리뷰 지적 —
   // themis-risk-review.mjs 헤더 주석과 동일한 이유: 최상위에서 부르면 이 파일의
@@ -450,7 +449,7 @@ async function main() {
   const confirmedPrefsText = renderPrefRows(prefRecords, { confirmedOnly: true });
   const priorPrefsText = renderPrefRows(prefRecords);
 
-  const prompt = buildReportPrompt(factsText, asof, confirmedPrefsText);
+  const prompt = buildReportPrompt(factsText, asof, confirmedPrefsText, profileText);
   if (DRY_RUN) {
     console.log('\n┌─── FACTS ───┐\n' + factsText + '\n└─────────────┘');
     console.log('\n┌─── 행동 신호(성향 학습) ───┐\n' + signalsText + '\n└─────────────┘');
@@ -473,7 +472,7 @@ async function main() {
     return;
   }
 
-  // ⑤ claude -p 서술 생성 (Read=프로필/직전리포트, WebSearch=정성 뉴스. Bash 제외 — 수치 재조회 차단)
+  // ⑤ claude -p 서술 생성 (성향 정본은 본문 주입, WebSearch=정성 뉴스. Bash 제외 — 수치 재조회 차단)
   console.log(`\n⏳ 리포트 작성 중 (claude -p ${MODEL}, 수 분)...`);
   let md;
   try {
@@ -497,7 +496,6 @@ async function main() {
   // — 리포트 전체엔 facts로 표현 안 되는 정성적 수치도 섞일 수 있어 전면 차단은
   // 과함, 근거: 위 4원칙 §2 "profile 적용" 문구 등). 다만 "가장 큰 변화" 불릿은
   // 실제로 사고가 난 지점이라 그 줄만은 위반 시 Node 검증값으로 강제 치환한다.
-  const profileText = readFileSync(PROFILE, 'utf8');
   const factPercentages = collectFactPercentages(facts, { profileText });
   const docViolations = numericClaimViolationsWithLocation(md, factPercentages);
   if (docViolations.length) {
@@ -551,7 +549,7 @@ async function main() {
   //    리포트 발행과 분리 — 실패해도 리포트 발행은 성공 처리.
   try {
     console.log(`\n⏳ 성향 관찰 추출 중 (claude -p ${APOLLO_PREFS.model})...`);
-    const obsRaw = parseJsonBlock(await runHeadlessClaude(buildObservationPrompt(signalsText, priorPrefsText), APOLLO_PREFS.model, 'Read', { appendSystemPrompt: APOLLO_PREFS.systemPrompt }));
+    const obsRaw = parseJsonBlock(await runHeadlessClaude(buildObservationPrompt(signalsText, priorPrefsText, profileText), APOLLO_PREFS.model, 'Read', { appendSystemPrompt: APOLLO_PREFS.systemPrompt }));
     const priorObsTexts = prefRecords.filter((r) => r.status !== '기각').map((r) => r.observation).filter(Boolean);
     const { kept, dropped } = filterObservations(Array.isArray(obsRaw) ? obsRaw : [], {
       universe, factsText: signalsText, claimAllowed: [], priorTexts: priorObsTexts, maxRows: 3,

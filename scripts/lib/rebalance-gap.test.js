@@ -1,6 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeCurrentAllocation, checkBand, computeRebalanceGaps, computeBandEdgeDistance, TARGET_ALLOCATION, LEGACY_INDIVIDUAL_STOCKS, isLegacyIndividualStock } from './rebalance-gap.mjs';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { resolveDecision } from './decision-resolver.mjs';
+import { VAULT_REL, VAULT_ROOT } from './vault-paths.mjs';
+
+test('TARGET_ALLOCATION: 결정 문서 머리말의 키·값과 일치한다', {
+  skip: !existsSync(join(VAULT_ROOT, VAULT_REL.decisionsCanonical)),
+}, () => {
+  const { frontmatter } = resolveDecision('자산배분-목표비중');
+  assert.deepEqual(TARGET_ALLOCATION, JSON.parse(frontmatter.targetAllocation));
+});
 
 test('TARGET_ALLOCATION: 5개 자산군 합이 정확히 100%(확정 정본, 2026-08-23 배당주·리츠→달러 재조정)', () => {
   const sum = Object.values(TARGET_ALLOCATION).reduce((s, v) => s + v, 0);

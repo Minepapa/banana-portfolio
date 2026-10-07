@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import {
-  STATUS_RULES, auditVault, extractWikiLinks, findExecutionDuplicates, findIdMismatches,
+  STATUS_RULES, auditVault, extractWikiLinks, findDecisionKeyErrors, findExecutionDuplicates, findIdMismatches,
   parseFlatFrontmatter, resolveWikiTarget, validateStatus,
 } from '../lib/vault-integrity-audit.mjs';
 
@@ -44,6 +44,27 @@ test('vault-integrity-audit: 코드 내부 링크는 무시하고 깨진 링크�
 test('vault-integrity-audit: executions 완전 일치 중복만 후보로 반환', () => {
   const make = (path, quantity = 2, tradeDate = '2026-09-25T10:00:00+09:00') => ({ path, text: `---\ntradeDate: ${tradeDate}\ntradeType: 매수\nstockName: 삼성전자\nquantity: ${quantity}\n---` });
   assert.deepEqual(findExecutionDuplicates([make('a.md'), make('b.md', 2, '2026-09-25T15:00:00+09:00'), make('c.md', 3)]), [['a.md', 'b.md']]);
+});
+
+test('vault-integrity-audit: decisionKey마다 결정됨 문서가 정확히 하나여야 한다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vault-audit-decision-'));
+  const decisionDir = join(root, VAULT_REL.decisionsCanonical);
+  mkdirSync(decisionDir, { recursive: true });
+  const writeDecision = (name, decisionKey, status) => writeFileSync(join(decisionDir, name),
+    `---\ntype: "decision"\ndecisionKey: "${decisionKey}"\nstatus: "${status}"\n---\n`);
+  try {
+    writeDecision('옛.md', '성향', '대체됨');
+    assert.match(auditVault(root, join(import.meta.dirname, '..', '..')).errors.join('\n'), /'성향'.*0개/);
+    writeDecision('현재.md', '성향', '결정됨');
+    assert.deepEqual(findDecisionKeyErrors([
+      { path: '옛.md', text: '---\ndecisionKey: 성향\nstatus: 대체됨\n---' },
+      { path: '현재.md', text: '---\ndecisionKey: 성향\nstatus: 결정됨\n---' },
+    ]), []);
+    writeDecision('중복.md', '성향', '결정됨');
+    assert.match(auditVault(root, join(import.meta.dirname, '..', '..')).errors.join('\n'), /'성향'.*2개/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('vault-integrity-audit: 연도 하위 파일에도 상태와 ID 규칙을 적용한다', () => {

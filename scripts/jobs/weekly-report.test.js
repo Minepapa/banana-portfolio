@@ -1,15 +1,37 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   extractSummary, extractSummaryBullets, safeTrim, markdownBoldToHtml,
-  biggestMacroMover, formatMacroMoverBullet,
+  biggestMacroMover, formatMacroMoverBullet, buildReportPrompt, buildObservationPrompt,
 } from './weekly-report.mjs';
 import * as weeklyReport from './weekly-report.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { resolveDecision } from '../lib/decision-resolver.mjs';
+
+test('주간 리포트 프롬프트는 결정 문서 본문만 주입하고 옛 프로필을 읽으라고 하지 않는다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'banana-weekly-profile-'));
+  const decisions = join(root, '50_Outputs', 'Decisions');
+  mkdirSync(decisions, { recursive: true });
+  try {
+    writeFileSync(join(decisions, '성향.md'), '---\ndecisionKey: "투자자-성향"\nstatus: "결정됨"\n---\n# 명시 성향 본문\n');
+    const profileText = resolveDecision('투자자-성향', { vaultRoot: root }).body;
+    for (const prompt of [
+      buildReportPrompt('facts', '2026-10-08', '', profileText),
+      buildObservationPrompt('signals', '', profileText),
+    ]) {
+      assert.match(prompt, /# 명시 성향 본문/);
+      assert.doesNotMatch(prompt, /decisionKey:|status: "결정됨"|profile\/investor-profile\.md/);
+    }
+    rmSync(join(decisions, '성향.md'));
+    assert.throws(() => resolveDecision('투자자-성향', { vaultRoot: root }), /0개/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 // 2026-08-30 오너 신고 — 텔레그램 주간 리포트 요약이 숫자 한가운데서("-2,504,0") 잘려
 // 발송됐다. 원인: 옛 extractSummary가 "> 요약:" 리터럴 라인을 정규식으로 찾다 실패하면

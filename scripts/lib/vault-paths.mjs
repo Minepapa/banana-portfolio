@@ -19,6 +19,7 @@ export const VAULT_REL = {
   logImplementation: '40_Projects/banana-portfolio/Implementation',
   logDevRequests: '40_Projects/banana-portfolio/Requests',
   logStrategy: '50_Outputs/Decisions',
+  decisionsCanonical: '50_Outputs/Decisions',
   logSessions: '60_Logs/Zeus',
   logWarningEvents: '95_Etna/Jobs/WarningEvents',
   decisionsProposals: '95_Etna/Investing/Orders',

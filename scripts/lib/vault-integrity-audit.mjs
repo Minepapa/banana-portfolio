@@ -87,6 +87,25 @@ export function findExecutionDuplicates(records) {
   return [...groups.values()].filter((paths) => paths.length > 1);
 }
 
+export function findDecisionKeyErrors(records) {
+  const groups = new Map();
+  const errors = [];
+  for (const record of records) {
+    const fields = parseFlatFrontmatter(record.text) ?? {};
+    // 과거 결정 문서에는 decisionKey가 없다. 키가 부여된 문서의 활성 개수만 감사한다.
+    if (!fields.decisionKey) continue;
+    const group = groups.get(fields.decisionKey) ?? [];
+    if (fields.status === '결정됨') group.push(record.path);
+    groups.set(fields.decisionKey, group);
+  }
+  for (const [decisionKey, activePaths] of groups) {
+    if (activePaths.length !== 1) {
+      errors.push(`decisionKey '${decisionKey}': 결정됨 문서 ${activePaths.length}개 (정확히 1개 필요)${activePaths.length ? `: ${activePaths.join(', ')}` : ''}`);
+    }
+  }
+  return errors;
+}
+
 function walk(dir) {
   if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return [];
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -111,6 +130,9 @@ export function auditVault(root, repoRoot) {
       if (fm?.status != null && !validateStatus(fm.status, allowed)) errors.push(`${relative(root, file)}: invalid status ${JSON.stringify(fm.status)}`);
     }
   }
+  const decisionRecords = walk(join(root, VAULT_REL.decisionsCanonical))
+    .map((file) => ({ path: relative(root, file), text: readFileSync(file, 'utf8') }));
+  errors.push(...findDecisionKeyErrors(decisionRecords));
   for (const folder of ID_RULE_PATHS) {
     for (const file of walk(join(root, folder))) {
       const fm = parseFlatFrontmatter(readFileSync(file, 'utf8'));
