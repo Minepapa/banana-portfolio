@@ -21,7 +21,7 @@ import { loadEnv } from '../lib/auth.mjs';
 import { buildEvalFacts } from '../lib/eval-facts.mjs';
 import { fetchKrFundamentals, fetchUsFundamentals, fetchKrMarketData, fetchMarketData } from '../lib/fundamentals.mjs';
 import { krCorpCode, krStockCode, usTicker } from '../lib/instruments.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 
 const MARKETS = ['KR', 'US'];
@@ -101,7 +101,7 @@ export function formatHoldings(list) {
 // 데이터 부족으로, 데이터는 있는데 그 종목만 없으면 정직한 미보유로 구분한다.
 export function resolveHoldingsText(holdings, name) {
   if (!holdings || holdings.length === 0) {
-    return { holdings: null, holdingsText: '(보유 데이터 부족: Vault State/Holdings가 비어있음 — 읽기 이상 의심, 추정 금지)' };
+    return { holdings: null, holdingsText: `(보유 데이터 부족: Vault ${VAULT_REL.stateHoldings}가 비어있음 — 읽기 이상 의심, 추정 금지)` };
   }
   const list = findHolding(holdings, name);
   return { holdings: list, holdingsText: formatHoldings(list) };
@@ -134,7 +134,7 @@ export function renderFacts(facts, { json = false } = {}) {
 // 데이터 부족 문구로 폴백.
 function loadHoldings(name) {
   const dir = VAULT_PATHS.state.holdings;
-  if (!existsSync(dir)) return { holdings: null, holdingsText: '(보유 데이터 부족: Vault State/Holdings 디렉토리 없음)' };
+  if (!existsSync(dir)) return { holdings: null, holdingsText: `(보유 데이터 부족: Vault ${VAULT_REL.stateHoldings} 디렉토리 없음)` };
   const holdings = readdirSync(dir).filter((f) => f.endsWith('.md'))
     .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
   return resolveHoldingsText(holdings, name);   // 전체 빈 응답 가드 포함(readHoldings 미러)

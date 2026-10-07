@@ -1,3 +1,5 @@
+import { VAULT_REL } from './vault-paths.mjs';
+
 // Vault 파일의 YAML frontmatter 빌더/파서 — 평평한(중첩 없는) key: value 형태 전용.
 // ledger-vault-writer.mjs·job-health.mjs·proposal-vault.mjs가 전부 이 모듈 하나를
 // 공유한다(2026-08-05 리팩터 — 3번째 사본이 생기기 전에 정리). 범용 YAML이 필요해지면
@@ -34,26 +36,26 @@ export function buildFrontmatter(fields) {
 // 자동 생성되는 Facts/State/Decisions의 확정 메타데이터만 안정적인 주제 지도에 연결한다.
 // 키워드 출현만으로 링크를 추정하지 않으며 미확정/미등록 값은 건드리지 않는다.
 const ACCOUNT_TOPIC = new Map([
-  ['퀀트', '[[Knowledge/Topics/돌파매매-전략]]'],
-  ...['위탁', 'CMA', 'ISA', '연금저축', 'IRP', '금현물'].map((account) => [account, '[[Knowledge/Topics/자산분배-트랙-운영]]']),
+  ['퀀트', `[[${VAULT_REL.knowledgeTopics}/돌파매매-전략]]`],
+  ...['위탁', 'CMA', 'ISA', '연금저축', 'IRP', '금현물'].map((account) => [account, `[[${VAULT_REL.knowledgeTopics}/자산분배-트랙-운영]]`]),
 ]);
 
 const ACCOUNT_EXTRA_TOPICS = new Map([
-  ['연금저축', ['[[Knowledge/Topics/연금저축-데이터보정]]']],
+  ['연금저축', [`[[${VAULT_REL.knowledgeTopics}/연금저축-데이터보정]]`]],
 ]);
 
 const TYPE_RELATED = new Map([
-  ['job-health', ['[[Knowledge/Meta/무인잡-카탈로그]]']],
+  ['job-health', [`[[${VAULT_REL.knowledgeMeta}/무인잡-카탈로그]]`]],
   ['daily-snapshot', [
-    '[[Knowledge/Playbook/PortfolioKPI/twr]]',
-    '[[Knowledge/Playbook/PortfolioKPI/sharpe]]',
-    '[[Knowledge/Playbook/PortfolioKPI/mdd]]',
+    `[[${VAULT_REL.knowledgeTopics}/PortfolioKPI/twr]]`,
+    `[[${VAULT_REL.knowledgeTopics}/PortfolioKPI/sharpe]]`,
+    `[[${VAULT_REL.knowledgeTopics}/PortfolioKPI/mdd]]`,
   ]],
-  ['market-move-monitor-state', ['[[Knowledge/Topics/거시지표-리스크-모니터링]]']],
-  ['macro-indicators-cache-state', ['[[Knowledge/Topics/거시지표-리스크-모니터링]]']],
-  ['macro-overlay-faber-state', ['[[Knowledge/Topics/거시지표-리스크-모니터링]]']],
-  ['breakout-position', ['[[Knowledge/Topics/돌파매매-전략]]']],
-  ['breakout-pending-entry', ['[[Knowledge/Topics/돌파매매-전략]]']],
+  ['market-move-monitor-state', [`[[${VAULT_REL.knowledgeTopics}/거시지표-리스크-모니터링]]`]],
+  ['macro-indicators-cache-state', [`[[${VAULT_REL.knowledgeTopics}/거시지표-리스크-모니터링]]`]],
+  ['macro-overlay-faber-state', [`[[${VAULT_REL.knowledgeTopics}/거시지표-리스크-모니터링]]`]],
+  ['breakout-position', [`[[${VAULT_REL.knowledgeTopics}/돌파매매-전략]]`]],
+  ['breakout-pending-entry', [`[[${VAULT_REL.knowledgeTopics}/돌파매매-전략]]`]],
 ]);
 
 function withGeneratedVaultRelations(fields) {
@@ -64,8 +66,8 @@ function withGeneratedVaultRelations(fields) {
     ...existingRelated,
     ...(ACCOUNT_TOPIC.has(fields.account) ? [ACCOUNT_TOPIC.get(fields.account)] : []),
     ...(ACCOUNT_EXTRA_TOPICS.get(fields.account) ?? []),
-    ...(fields.track === '퀀트' ? ['[[Knowledge/Topics/돌파매매-전략]]'] : []),
-    ...(fields.track === '자산분배' ? ['[[Knowledge/Topics/자산분배-트랙-운영]]'] : []),
+    ...(fields.track === '퀀트' ? [`[[${VAULT_REL.knowledgeTopics}/돌파매매-전략]]`] : []),
+    ...(fields.track === '자산분배' ? [`[[${VAULT_REL.knowledgeTopics}/자산분배-트랙-운영]]`] : []),
     ...(TYPE_RELATED.get(fields.type) ?? []),
   ];
   const related = [...new Set(relations)];

@@ -48,7 +48,7 @@ import { join } from 'node:path';
 import { hasNhplugCredentials, loadNhplugCredentials, getNhToken, listNhAccounts } from '../lib/nhplug.mjs';
 import { getTotalTransaction, reconstructForeignRpLots } from '../lib/nhplug-common.mjs';
 import { resolveNhAccountsByLabel } from '../lib/nh-accounts.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { holdingFilename } from '../lib/holdings-vault-writer.mjs';
 import { patchFrontmatterFileSafely } from '../lib/state-writer.mjs';
@@ -141,7 +141,7 @@ async function main() {
   const dir = VAULT_PATHS.state.holdings;
   const filepath = join(dir, holdingFilename('위탁', '외화 RP'));
   if (!existsSync(filepath)) {
-    console.log('ℹ️ State/Holdings에 기존 위탁-외화 RP 기록 없음 — 신규 생성은 이 잡의 범위 밖(수동으로 먼저 만들 것)');
+    console.log(`ℹ️ ${VAULT_REL.stateHoldings}에 기존 위탁-외화 RP 기록 없음 — 신규 생성은 이 잡의 범위 밖(수동으로 먼저 만들 것)`);
     await flushWarnings('reconcile-nh-fx-rp');
     return;
   }

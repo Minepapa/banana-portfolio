@@ -32,9 +32,9 @@
  *   node scripts/jobs/weekly-report.mjs --force         # 같은 날짜 리포트 있어도 덮어씀
  */
 import { existsSync, readdirSync, readFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
-import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, VAULT_ROOT, vaultYearDir, vaultYearFiles } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { getCachedMacroIndicators } from '../lib/macro-cache.mjs';
@@ -80,6 +80,11 @@ function todayKST() {
   return new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
 }
 
+function readVaultYearDir(dir) {
+  return vaultYearFiles(dir).map((filepath) =>
+    ({ filepath, ...parseFrontmatter(readFileSync(filepath, 'utf8')) }));
+}
+
 function readVaultDir(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) =>
@@ -119,15 +124,13 @@ function dividendsToRows(dividends, registry) {
 
 // Log/Reports/{date}.md 중 asof 이전 가장 최신 리포트 요약 → 직전 맥락.
 function loadPrevReport(asof) {
-  const dir = VAULT_PATHS.log.reports;
-  if (!existsSync(dir)) return null;
-  const files = readdirSync(dir)
-    .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
-    .map((f) => ({ date: f.slice(0, 10), file: f }))
+  const files = vaultYearFiles(VAULT_PATHS.log.reports)
+    .map((file) => ({ date: file.split('/').at(-1).slice(0, 10), file }))
+    .filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(f.date))
     .filter((f) => f.date < asof)
     .sort((a, b) => b.date.localeCompare(a.date));
   if (!files.length) return null;
-  const parsed = parseFrontmatter(readFileSync(join(dir, files[0].file), 'utf8'));
+  const parsed = parseFrontmatter(readFileSync(files[0].file, 'utf8'));
   return { date: files[0].date, summary: parsed.summary || '' };
 }
 
@@ -228,7 +231,7 @@ function buildReportPrompt(factsText, asof, confirmedPrefsText) {
  명시 성향(§3)과 학습 성향이 다르면 **드러난 행동(학습 성향)을 우선**.]
 ${confirmedPrefsText || '(아직 확정된 학습 성향 없음 — §3만 사용)'}
 
-[검증된 facts — 시스템이 Vault(State/Holdings·Facts/Ledger)·KRX·yfinance에서 직접 조회·
+[검증된 facts — 시스템이 Vault(${VAULT_REL.stateHoldings}·${VAULT_REL.factsLedger})·KRX·yfinance에서 직접 조회·
  계산한 값. 이 수치만 사용. 재조회·재계산·추정 금지. "데이터 부족"은 그대로 두고 지어내지 말 것.]
 ${factsText}
 
@@ -343,7 +346,7 @@ ${signalsText}
 // 열어 보기 전까지 승격 후보 존재를 알 수 없다"). 기존엔 4주 TTL 만료 때만(step ⑧-b)
 // 신호가 나갔고, 생성 시점엔 아무 알림이 없었다.
 export function writeObservations(asof, observations) {
-  const dir = VAULT_PATHS.decisions.profile;
+  const dir = vaultYearDir(VAULT_PATHS.decisions.profile, `${asof}T00:00:00+09:00`);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const now = new Date();
   const nowIso = now.toISOString();
@@ -364,7 +367,7 @@ export function writeObservations(asof, observations) {
     if (promote) promoted.push({
       observation: record.observation,
       vsProfile: record.vsProfile,
-      notePath: `${VAULT_REL.decisionsProfile}/${filename.replace(/\.md$/, '')}`,
+      notePath: `${VAULT_REL.decisionsProfile}/${asof.slice(0, 4)}/${filename.replace(/\.md$/, '')}`,
     });
   });
   return { written: n, promoted };
@@ -421,7 +424,7 @@ async function main() {
   // 미국배당다우존스)에서 항상 실패해 "손익 미확정"으로만 나갔다 — 이 원장을 우선
   // 조회하면 그 사각을 없앤다(report-facts.mjs profitByKey 참고).
   const profitRows = readVaultDir(VAULT_PATHS.facts.ledger.profits);
-  const prefRecords = readVaultDir(VAULT_PATHS.decisions.profile).filter(isLivePreferenceObservation);
+  const prefRecords = readVaultYearDir(VAULT_PATHS.decisions.profile).filter(isLivePreferenceObservation);
   const prevReport = loadPrevReport(asof);
   // 활성 돌파매매 포지션의 이미 기록된 보호주문 상태만 집계한다. 이 운영 사실은
   // LLM 프롬프트·facts·행동신호에 넣지 않고, 발행 리포트의 frontmatter에만 기록한다.
@@ -457,9 +460,10 @@ async function main() {
   }
 
   // ④ Log/Reports 중복 체크(멱등 — 같은 날짜 있으면 건너뜀, --force면 덮어씀)
-  const reportPath = join(VAULT_PATHS.log.reports, `${asof}.md`);
+  const reportDir = vaultYearDir(VAULT_PATHS.log.reports, `${asof}T00:00:00+09:00`);
+  const reportPath = join(reportDir, `${asof}.md`);
   if (existsSync(reportPath) && !FORCE) {
-    console.log(`   ℹ️ Log/Reports/${asof}.md 이미 존재 — 발행 건너뜀(재발행하려면 --force)`);
+    console.log(`   ℹ️ ${relative(VAULT_ROOT, reportPath)} 이미 존재 — 발행 건너뜀(재발행하려면 --force)`);
     await flushWarnings('weekly-report');
     return;
   }
@@ -521,9 +525,9 @@ async function main() {
     type: 'weekly-report', date: asof, headline, summary,
     riskFlag: breakoutProtectionRisk.riskFlag, riskNote: breakoutProtectionRisk.riskNote,
   }) + '\n' + md;
-  mkdirSync(VAULT_PATHS.log.reports, { recursive: true });
+  mkdirSync(reportDir, { recursive: true });
   writeAtomic(reportPath, record);
-  console.log(`   💾 저장: Log/Reports/${asof}.md`);
+  console.log(`   💾 저장: ${relative(VAULT_ROOT, reportPath)}`);
 
   // ⑦ 텔레그램 요약 푸시 — 여긴 불릿 줄바꿈을 그대로 살린 버전 사용(frontmatter와 달리
   // 텔레그램 메시지 body는 자유 문자열이라 개행이 안전하다).
@@ -549,7 +553,7 @@ async function main() {
     });
     dropped.forEach(d => collectWarning(`성향관찰 자동폐기: "${String(d.obs?.observation ?? '').slice(0, 60)}" — ${d.reason}`));
     const { written: n, promoted } = writeObservations(asof, kept);
-    console.log(n ? `   🧠 성향 관찰 ${n}건 기록 (Decisions/Profile)` : '   🧠 이번 주 뚜렷한 성향 관찰 없음');
+    console.log(n ? `   🧠 성향 관찰 ${n}건 기록 (${VAULT_REL.decisionsProfile})` : '   🧠 이번 주 뚜렷한 성향 관찰 없음');
     if (dropped.length) console.log(`   🛡 자동 검증 실패로 폐기 ${dropped.length}건(텔레그램 경고)`);
     // 승격후보는 생성 즉시 항목별 확인 질문을 보낸다. manual-change는 자동 문서 반영 없이
     // 답변을 기록하고, 승인 뒤 담당 세션이 질문 본문의 변경을 수행하는 범용 플로우다.
@@ -572,7 +576,7 @@ async function main() {
 
   // ⑧-b 승격후보 TTL(4주 무응답이면 자동으로 관찰 보류) — ⑧과 분리된 독립 단계.
   try {
-    const freshPrefRecords = readVaultDir(VAULT_PATHS.decisions.profile).filter(isLivePreferenceObservation);
+    const freshPrefRecords = readVaultYearDir(VAULT_PATHS.decisions.profile).filter(isLivePreferenceObservation);
     const expired = findExpiredPromotions(freshPrefRecords, { now: new Date() });
     if (expired.length) {
       for (const e of expired) {

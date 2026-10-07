@@ -58,7 +58,7 @@ import { recordProposalExecutionStatus } from '../lib/proposal-execution-status.
 import { sendTelegram } from '../lib/telegram.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 
 // 순수 API 조회 결과를 그대로 전달하는 통보라 부서 판단이 없다 — watch-order-
 // fill.mjs·execute-quant-proposal.mjs와 동일 이유로 운영실 Hermes로 통일.
@@ -314,7 +314,7 @@ async function main() {
       return true;
     }
     console.log(ledger.event
-      ? `[Ledger] Facts/Ledger 기록 — ${ledger.filepath} (${ledger.event.quantity}주)`
+      ? `[Ledger] ${VAULT_REL.factsLedger} 기록 — ${ledger.filepath} (${ledger.event.quantity}주)`
       : `[Ledger] 기존 카카오/API 기록에 이미 포함 — ${row.quantity}주`);
     await sendTelegram(formatDepartmentMessage({
       departmentLabel: DEPARTMENT_LABEL,

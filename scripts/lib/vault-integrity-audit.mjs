@@ -6,6 +6,7 @@ export const STATUS_RULES = [
   { path: VAULT_REL.logImplementation, allowed: ['예정', '진행중', '차단됨', '완료', '보류', '폐기'] },
   { path: VAULT_REL.logDevRequests, allowed: ['예정', '진행중', '차단됨', '완료', '보류', '폐기'] },
   { path: VAULT_REL.knowledge, allowed: ['활성', '비활성', '진행중', '탐색지도', '대체됨'] },
+  { path: VAULT_REL.knowledgeMeta, allowed: ['활성', '비활성', '진행중', '탐색지도', '대체됨'] },
   { path: VAULT_REL.decisionsProposals, allowed: [
     '발송중', '발송오류', '대기', '승인', '거부', '대체됨', '만료',
     '주문접수', '부분체결', '체결', '취소', '섀도우체결',

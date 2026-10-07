@@ -27,7 +27,7 @@ const currentVaultPaths = [
 test('VAULT_REL과 VAULT_PATHS의 모든 현재 경로가 매핑된다', () => {
   for (const relPath of currentVaultPaths) {
     assert.ok(relPath && !relPath.startsWith('..'), `볼트 밖 경로: ${relPath}`);
-    assert.ok(mapLegacyPath(relPath), `누락된 매핑: ${relPath}`);
+    assert.ok(MOUSEION_TOP_FOLDERS.includes(relPath.split('/')[0]), `새 최상위 폴더 아님: ${relPath}`);
   }
 });
 
@@ -54,7 +54,7 @@ test('파일 예외와 삭제 대상을 적용한 경로에는 목적지 충돌�
 
 test('매핑 결과와 규칙의 대상 폴더는 새 볼트 이름 규칙을 따른다', () => {
   const pathsToCheck = [
-    ...currentVaultPaths.map((relPath) => ({ from: relPath, to: mapLegacyPath(relPath)?.to })),
+    ...currentVaultPaths.map((relPath) => ({ from: relPath, to: relPath })),
     ...LEGACY_TO_MOUSEION_RULES.filter((rule) => rule.action !== 'delete')
       .map(({ from, to }) => ({ from, to })),
   ];
@@ -120,7 +120,7 @@ test('특수 매핑은 지정한 목적지와 연도 폴더 표시를 보존한�
       '20_Records/22_Literature/손실은짧게수익은길게_Ch4_전사.md',
       true,
     ],
-    ['Knowledge/Index.md', '80_Archive/Knowledge/Index.md', false],
+    ['Knowledge/Index.md', '90_Delphi/index.md', false],
     ['Knowledge/Meta/Index.md', '80_Archive/Knowledge/Meta/Index.md', false],
     ['Knowledge/Meta/므네모시네-파일배선도.md', '90_Delphi/Schema/경로 등록부.md', false],
     ['Knowledge/API/README.md', '30_Wiki/34_Topics/API 개요.md', false],

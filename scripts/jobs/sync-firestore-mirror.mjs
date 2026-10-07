@@ -24,7 +24,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, vaultYearFiles, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { buildAllMirrors } from '../lib/firestore-mirror.mjs';
 import { getFirestoreAdmin, FIREBASE_ADMIN_KEY_FILE } from '../lib/firestore-admin.mjs';
@@ -51,14 +51,14 @@ export function readVaultRecords(dir) {
 // sync-firestore-mirror.mjs 헤더 주석 참고) — 이제 실제 리포트가 쌓이므로 배선한다.
 export function readLatestReport(dir = VAULT_PATHS.log.reports) {
   if (!existsSync(dir)) return null;
-  const files = readdirSync(dir).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).sort().reverse();
+  const files = vaultYearFiles(dir).filter((file) => /\d{4}-\d{2}-\d{2}\.md$/.test(file)).sort().reverse();
   if (!files.length) return null;
-  const content = readFileSync(join(dir, files[0]), 'utf8');
+  const content = readFileSync(files[0], 'utf8');
   const fm = parseFrontmatter(content);
   const m = content.match(/^---\n[\s\S]*?\n---\n?/);
   const body = m ? content.slice(m[0].length).replace(/^\n+/, '') : content;
   return {
-    date: fm.date || files[0].slice(0, 10), headline: fm.headline || '', summary: fm.summary || '', body,
+    date: fm.date || files[0].split('/').at(-1).slice(0, 10), headline: fm.headline || '', summary: fm.summary || '', body,
     riskFlag: fm.riskFlag === true, riskNote: fm.riskNote || '',
   };
 }
@@ -96,7 +96,7 @@ async function main() {
     `pendingProposal ${mirrors.home.pendingProposalCount}건`,
   );
   if (mirrors.holdings.items.length === 0) {
-    console.log('  ⚠️ holdings·allocation·home 손익은 State/Holdings가 아직 없어 빈 값(Phase 8·9 이후 채워짐) — 정상.');
+    console.log(`  ⚠️ holdings·allocation·home 손익은 ${VAULT_REL.stateHoldings}가 아직 없어 빈 값(Phase 8·9 이후 채워짐) — 정상.`);
   }
 
   if (DRY_RUN) {

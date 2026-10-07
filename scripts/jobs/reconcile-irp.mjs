@@ -77,7 +77,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:f
 import { join } from 'node:path';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { hasKisCredentials, loadIrpAccount, getKisToken, getAccountBalance } from '../lib/kis.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { buildCashHoldingRecord, writeHoldingSafely, holdingFilename } from '../lib/holdings-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -233,9 +233,9 @@ async function main() {
       writeAtomic(join(dir, filename), content);
     }
   } else if (cash === 0) {
-    console.log('  ⚠️ IRP 예수금이 0으로 응답(이 계좌에서 간헐적으로 발생하는 걸로 실측됨) — 신뢰 불가로 기록 건너뜀(기존 State/Holdings 값 유지)');
+    console.log(`  ⚠️ IRP 예수금이 0으로 응답(이 계좌에서 간헐적으로 발생하는 걸로 실측됨) — 신뢰 불가로 기록 건너뜀(기존 ${VAULT_REL.stateHoldings} 값 유지)`);
   } else {
-    console.log('  ⚠️ IRP 예수금 조회 실패(null) — 기록 건너뜀(기존 State/Holdings 값 유지)');
+    console.log(`  ⚠️ IRP 예수금 조회 실패(null) — 기록 건너뜀(기존 ${VAULT_REL.stateHoldings} 값 유지)`);
   }
 
   // 예수금(현금성) 행은 수량 개념이 없어 종목 반영 대상이 아니다 — readIrpHoldings()가
@@ -249,7 +249,7 @@ async function main() {
   const { writes, closes, skipped, assetClassMissing, suspiciousEmpty, renames } = buildIrpHoldingsPlan(readIrpHoldings(), kisHoldings);
   if (suspiciousEmpty) {
     collectWarning('IRP 종목 KIS 잔고조회가 빈 응답 — 예수금과 같은 API 호출의 output1이 통째로 비었다(간헐적 결측 가능성, 파일 상단 주석 참고), 전량청산으로 추정하지 않고 이번 실행은 종목 반영을 건너뜀');
-    console.log('  ⚠️ IRP 종목 KIS 잔고조회 빈 응답 — 전량청산 추정 안 함, 기존 State/Holdings 그대로 유지');
+    console.log(`  ⚠️ IRP 종목 KIS 잔고조회 빈 응답 — 전량청산 추정 안 함, 기존 ${VAULT_REL.stateHoldings} 그대로 유지`);
   }
   for (const name of skipped) {
     collectWarning(`IRP ${name} — KIS 잔고조회에 평단가/원가 필드 결측, 갱신 건너뜀(기존 값 유지)`);

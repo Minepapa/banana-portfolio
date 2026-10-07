@@ -34,7 +34,7 @@ test('yamlValue·parseFrontmatter: 문자열 배열 왕복 보장(related 링크
   assert.equal(yamlValue(['[[A]]', '[[B]]']), '["[[A]]", "[[B]]"]');
   assert.equal(yamlValue([]), '[]');
 
-  const fields = { type: 'preference-observation', related: ['[[Knowledge/Topics/매수규모-분할매수-기준]]'] };
+  const fields = { type: 'preference-observation', related: ['[[30_Wiki/34_Topics/매수규모-분할매수-기준]]'] };
   assert.deepEqual(parseFrontmatter(buildFrontmatter(fields)), fields);
 
   // 여러 번 갱신돼도 계속 배열이어야 한다(이스케이프가 누적되지 않는다).

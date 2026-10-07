@@ -20,9 +20,8 @@
  * 사용법(Claude Code SessionStart 훅 계약): stdin으로 JSON 받음(안 씀), stdout에
  * JSON({hookSpecificOutput:{hookEventName,additionalContext}}) 방출. 항상 exit 0.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs, vaultYearFiles } from '../lib/vault-paths.mjs';
 import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 
@@ -43,12 +42,11 @@ export function buildLastReadMarker({ filename, readAt }) {
 function main() {
   if (!process.env.CLAUDE_TELEGRAM_SESSION) { process.exit(0); }
 
-  const dir = VAULT_PATHS.log.telegramSession;
-  const filenames = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.md')) : [];
-  const latest = findLatestHandoffFilename(filenames);
+  const files = vaultYearFiles(VAULT_PATHS.log.telegramSession);
+  const latest = findLatestHandoffFilename(files.map((file) => file.split('/').at(-1)));
   if (!latest) { process.exit(0); }
 
-  const filepath = join(dir, latest);
+  const filepath = files.find((file) => file.endsWith(`/${latest}`));
   let content;
   try {
     content = readFileSync(filepath, 'utf8');

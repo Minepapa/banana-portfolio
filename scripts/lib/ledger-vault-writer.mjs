@@ -16,7 +16,7 @@
 //
 // 어느 Ledger 하위폴더에 쓸지는 이 모듈이 결정해 `dir`로 반환한다(2026-08-04 확정,
 // 오너 요청 — 이벤트 종류별 하위폴더 분리) — 호출부가 매핑을 따로 알 필요가 없다.
-import { VAULT_PATHS } from './vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from './vault-paths.mjs';
 // frontmatter 빌드는 vault-frontmatter.mjs 공용 모듈 사용(2026-08-05 리팩터).
 import { buildFrontmatter } from './vault-frontmatter.mjs';
 // 그래프 뷰 다중축 클러스터링용 태그(2026-09-05, vault-tags.mjs 헤더 주석 참고).
@@ -26,7 +26,7 @@ function sanitizeSegment(s) {
   return String(s ?? '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '-');
 }
 
-const ACCOUNT_NOTE = 'Phase 8·9(State/Holdings) 이후 별도 배치로 채워짐 — Phase 2 범위 밖(2026-08-04 확정)';
+const ACCOUNT_NOTE = `Phase 8·9(${VAULT_REL.stateHoldings}) 이후 별도 배치로 채워짐 — Phase 2 범위 밖(2026-08-04 확정)`;
 
 // e: parseExecution()의 반환값 { tradeDate, tradeType, stockCode, stockName, quantity, price,
 // currency, broker, account? }. account는 선택 필드 — 카카오 파싱 경로(자산분배 트랙)는

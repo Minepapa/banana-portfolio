@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -31,8 +31,9 @@ test('readLatestReport: 디렉토리 없으면 null(리포트 아직 한 번도 
 
 test('readLatestReport: 파일명(YYYY-MM-DD) 기준 가장 최신 리포트를 고른다', () => {
   const dir = mkdtempSync(join(tmpdir(), 'mirror-report-'));
-  writeFileSync(join(dir, '2026-08-09.md'), buildFrontmatter({ type: 'weekly-report', date: '2026-08-09', headline: '옛날 리포트', summary: '옛 요약' }) + '\n# 옛날 본문');
-  writeFileSync(join(dir, '2026-08-16.md'), buildFrontmatter({ type: 'weekly-report', date: '2026-08-16', headline: '최신 리포트', summary: '최신 요약' }) + '\n# 최신 본문\n## 섹션1\n내용');
+  mkdirSync(join(dir, '2026'), { recursive: true });
+  writeFileSync(join(dir, '2026', '2026-08-09.md'), buildFrontmatter({ type: 'weekly-report', date: '2026-08-09', headline: '옛날 리포트', summary: '옛 요약' }) + '\n# 옛날 본문');
+  writeFileSync(join(dir, '2026', '2026-08-16.md'), buildFrontmatter({ type: 'weekly-report', date: '2026-08-16', headline: '최신 리포트', summary: '최신 요약' }) + '\n# 최신 본문\n## 섹션1\n내용');
   const report = readLatestReport(dir);
   assert.equal(report.date, '2026-08-16');
   assert.equal(report.headline, '최신 리포트');
@@ -44,7 +45,8 @@ test('readLatestReport: 파일명(YYYY-MM-DD) 기준 가장 최신 리포트를 
 
 test('readLatestReport: body는 frontmatter 블록을 제외한 마크다운 본문 그대로', () => {
   const dir = mkdtempSync(join(tmpdir(), 'mirror-report-'));
-  writeFileSync(join(dir, '2026-08-20.md'), buildFrontmatter({ type: 'weekly-report', date: '2026-08-20', headline: 'h', summary: 's' }) + '\n# 주간 자산 종합 점검 — 2026-08-20\n\n> 요약: 테스트');
+  mkdirSync(join(dir, '2026'), { recursive: true });
+  writeFileSync(join(dir, '2026', '2026-08-20.md'), buildFrontmatter({ type: 'weekly-report', date: '2026-08-20', headline: 'h', summary: 's' }) + '\n# 주간 자산 종합 점검 — 2026-08-20\n\n> 요약: 테스트');
   const report = readLatestReport(dir);
   assert.doesNotMatch(report.body, /^---/);
   assert.match(report.body, /^# 주간 자산 종합 점검/);

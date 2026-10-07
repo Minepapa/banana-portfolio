@@ -56,7 +56,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { vaultYearDir, VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
@@ -373,7 +373,8 @@ async function main() {
     return { body, content: buildFrontmatter({ type: 'telegram-session-handoff', date: targetDateStr, generatedAt: now.toISOString() }) + '\n' + body };
   };
 
-  const filepath = join(VAULT_PATHS.log.telegramSession, `${targetDateStr}.md`);
+  const handoffDir = vaultYearDir(VAULT_PATHS.log.telegramSession, `${targetDateStr}T00:00:00+09:00`);
+  const filepath = join(handoffDir, `${targetDateStr}.md`);
 
   // ⚠️ 결정론 부분을 먼저 쓰고, 대화 요약은 성공하면 나중에 다시 써서 추가한다
   // (코드리뷰 지적, 2026-09-04) — try/catch는 "예외"만 잡지 SIGKILL·OOM·launchd
@@ -384,7 +385,7 @@ async function main() {
   const { body: bodyBeforeSummary, content: contentBeforeSummary } = buildContent(null);
   console.log(bodyBeforeSummary);
   if (!DRY_RUN) {
-    mkdirSync(VAULT_PATHS.log.telegramSession, { recursive: true });
+    mkdirSync(handoffDir, { recursive: true });
     writeAtomic(filepath, contentBeforeSummary);
   }
 

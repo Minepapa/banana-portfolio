@@ -24,7 +24,7 @@ import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { recordProposalExecutionStatus } from '../lib/proposal-execution-status.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { QUANT_TRACK_LABEL } from '../lib/account-resolver.mjs';
 
 const BROKER = '한국투자증권';
@@ -123,7 +123,7 @@ async function main() {
         if (existsSync(filepath)) console.log(`[Ledger] 이미 기록됨(중복 아님) — ${filepath}`);
         else {
           writeAtomic(filepath, content);
-          console.log(`[Ledger] 취소 전 부분체결을 Facts/Ledger에 기록 — ${filepath}`);
+          console.log(`[Ledger] 취소 전 부분체결을 ${VAULT_REL.factsLedger}에 기록 — ${filepath}`);
         }
       } else if (filledQty > 0) {
         console.error('[Ledger] 부분체결됐지만 평균 체결가가 없어 자동 기록 스킵, 수동 확인 필요');
@@ -184,7 +184,7 @@ async function main() {
           console.log(`[Ledger] 이미 기록됨(중복 아님) — ${filepath}`);
         } else {
           writeAtomic(filepath, content);
-          console.log(`[Ledger] Facts/Ledger 기록 — ${filepath}`);
+          console.log(`[Ledger] ${VAULT_REL.factsLedger} 기록 — ${filepath}`);
         }
       } else {
         console.error('[Ledger] avgFillPrice 없음 — 자동 기록 스킵, 수동 확인 필요');

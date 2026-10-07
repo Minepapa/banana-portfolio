@@ -5,13 +5,15 @@ import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Parser } from 'acorn';
 import jsx from 'acorn-jsx';
+import { MOUSEION_TOP_FOLDERS } from './vault-layout.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const ALLOWED = [];
 const FORBIDDEN = [
   /banana-vault/g,
   /Stockproject\//gi,
-  /(?:['"`]|\/|\+)(?:Facts|State|Log|Knowledge|Decisions)(?:\/|['"`])/g,
+  /(?:^|[^\w])(?:Facts|State|Log|Knowledge|Decisions)(?:\/|['"`])/g,
+  new RegExp(`(?:^|[^\\w])(?:${MOUSEION_TOP_FOLDERS.join('|')})(?:\\/|['"\\x60])`, 'g'),
 ];
 
 function stripJsComments(source) {
@@ -106,6 +108,9 @@ function* sourceFiles(directory) {
 test('주석 제거기는 경로를 담은 주석을 무시하고 코드와 URL 문자열은 보존한다', () => {
   assert.deepEqual(violations('// Log/Strategy\n/* banana-vault */\nconst url = \'https://x\';', '.js'), []);
   assert.deepEqual(violations("const path = 'Log/Strategy';", '.js'), [{ line: 1, value: "'Log/" }]);
+  assert.deepEqual(violations("const path = '95_Etna/Jobs';", '.js'), [{ line: 1, value: "'95_Etna/" }]);
+  assert.deepEqual(violations("const text = 'see [[State/Holdings]]';", '.js'), [{ line: 1, value: '[State/' }]);
+  assert.deepEqual(violations("const text = 'see 95_Etna/Investing';", '.js'), [{ line: 1, value: ' 95_Etna/' }]);
   assert.deepEqual(violations("const url = 'https://x'; const path = 'State';", '.js'), [{ line: 1, value: "'State'" }]);
   assert.deepEqual(violations("join(root, 'State', 'X')", '.js'), [{ line: 1, value: "'State'" }]);
   assert.deepEqual(violations('const root = "banana-vault";', '.js'), [{ line: 1, value: 'banana-vault' }]);

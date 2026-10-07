@@ -214,7 +214,7 @@ function fetchMacroText() {
 
 async function main() {
   const holdings = readVaultDir(VAULT_PATHS.state.holdings);
-  if (!holdings.length) { console.log('ℹ️ State/Holdings 비어있음 — 아침 브리핑 건너뜀(추정 안 함)'); return; }
+  if (!holdings.length) { console.log(`ℹ️ ${VAULT_REL.stateHoldings} 비어있음 — 아침 브리핑 건너뜀(추정 안 함)`); return; }
 
   const previous = readPreviousState();
   const asset = buildAssetSection(holdings, previous.total);

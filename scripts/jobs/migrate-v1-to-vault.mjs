@@ -25,7 +25,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getToken, getRange } from '../lib/sheets-common.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { DEFAULT_ACCOUNTS } from '../../src/lib/constants.js';
 import { parseNum } from '../../src/lib/textFormat.js';
 import {
@@ -68,14 +68,14 @@ async function main() {
   token = await getToken(token);
 
   // ── Facts/Ledger 4종 ──────────────────────────────────────────────────────
-  console.log('\n[Facts/Ledger]');
+  console.log(`\n[${VAULT_REL.factsLedger}]`);
   writeEventLog(await getRange(token, '체결내역!A2:M'), buildMigratedExecutionRecord, '체결내역');
   writeEventLog(await getRange(token, '배당금!A2:C'), buildMigratedDividendRecord, '배당금');
   writeEventLog(await getRange(token, '수익금!A2:F'), buildMigratedProfitRecord, '수익금');
   writeEventLog(await getRange(token, '일별스냅샷!A2:E'), buildMigratedDailySnapshotRecord, '일별스냅샷');
 
   // ── State/Holdings — 계좌별 보유종목(현재값, ISA/위탁/연금저축/IRP!A2:I) ────
-  console.log('\n[State/Holdings]');
+  console.log(`\n[${VAULT_REL.stateHoldings}]`);
   let holdingsWritten = 0;
   for (const acctKey of ACCOUNT_KEYS) {
     const rows = await getRange(token, `${acctKey}!A2:I`);
@@ -105,7 +105,7 @@ async function main() {
   bump('보유종목', holdingsWritten);
 
   // ── State/Allocation — 계좌별 자산군 목표·현재비중(자산분배 시트, 계좌 리밸 범위) ──
-  console.log('\n[State/Allocation]');
+  console.log(`\n[${VAULT_REL.stateAllocation}]`);
   let allocWritten = 0;
   for (const [acctKey, range] of Object.entries(REBAL_RANGES)) {
     const rows = await getRange(token, range);
@@ -124,7 +124,7 @@ async function main() {
   bump('자산분배', allocWritten);
 
   // ── State/Baselines — 실제 11열(K열까지, PBR 포함) — SHEET_RANGES의 10열(J까지)이 아님 ──
-  console.log('\n[State/Baselines]');
+  console.log(`\n[${VAULT_REL.stateBaselines}]`);
   const baselineRows = await getRange(token, '리스크기준선!A2:K');
   let baselineWritten = 0;
   for (const r of baselineRows) {

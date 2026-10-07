@@ -1,3 +1,4 @@
+import { VAULT_REL } from './vault-paths.mjs';
 // 행동 신호 조립기 — 순수 함수(네트워크 없음). 체결·평가·포지션저널 raw rows에서
 // Frank의 "드러난 성향"을 결정론으로 산출한다. LLM은 이 사실을 §3과 대조해 해석만 할 뿐,
 // 신호 자체는 LLM이 만들지 않는다(코드베이스 철학: raw 숫자는 LLM이 만들지 않는다).
@@ -176,7 +177,7 @@ function renderSignalsText(g) {
     L.push(`  - ${b.date} ${b.name} ${b.qty ?? '?'}주 @${b.price ?? '?'} = ${b.amount != null ? b.amount.toLocaleString('en-US') : '?'}원 (${b.account})`);
   else L.push('  - (없음)');
 
-  L.push('\n■ 이번 주 매도 (실현수익률 = 체결가 vs 체결이력 매입평균, "정본 원장" 표시는 Facts/Ledger/Profits 정확값)');
+  L.push(`\n■ 이번 주 매도 (실현수익률 = 체결가 vs 체결이력 매입평균, "정본 원장" 표시는 ${VAULT_REL.factsLedgerProfits} 정확값)`);
   if (g.week.sells.length) for (const x of g.week.sells)
     L.push(`  - ${x.date} ${x.name} ${x.qty ?? '?'}주 @${x.price ?? '?'}`
       + (x.ledgerMatched && Number.isFinite(x.realizedWon)

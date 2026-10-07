@@ -4,10 +4,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { VAULT_ROOT, VAULT_PATHS, VAULT_REL, vaultAbs } from './vault-paths.mjs';
+import { VAULT_ROOT, VAULT_PATHS, VAULT_REL, vaultAbs, vaultYearDir, vaultYearFiles } from './vault-paths.mjs';
+import { mapLegacyPath } from './vault-layout.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -107,4 +110,112 @@ test('VAULT_PATH 환경변수로 루트를 오버라이드할 수 있다', () =>
     { env: { ...process.env, VAULT_PATH: '/tmp/custom-vault' } },
   ).toString().trim();
   assert.equal(out, '/tmp/custom-vault');
+});
+
+const LEGACY_REL = {
+  logImplementation: 'Log/Implementation',
+  logDevRequests: 'Log/DevRequests',
+  logStrategy: 'Log/Strategy',
+  logSessions: 'Log/Sessions',
+  logWarningEvents: 'Log/WarningEvents',
+  decisionsProposals: 'Decisions/Proposals',
+  decisionsProfile: 'Decisions/Profile',
+  knowledge: 'Knowledge',
+  knowledgeTopics: 'Knowledge/Topics',
+  knowledgeMeta: 'Knowledge/Meta',
+  knowledgeInfra: 'Knowledge/Infra',
+  knowledgeApi: 'Knowledge/API',
+  knowledgeIndexFile: 'Knowledge/Index.md',
+  knowledgeMetaIndexFile: 'Knowledge/Meta/Index.md',
+  wiringMapFile: 'Knowledge/Meta/므네모시네-파일배선도.md',
+  stateBreakoutPositions: 'State/BreakoutPositions',
+  stateBreakoutPendingEntries: 'State/BreakoutPendingEntries',
+  stateTelegramSession: 'State/TelegramSession',
+  stateTelegramSessionHealth: 'State/TelegramSessionHealth',
+  stateWikiQuestions: 'State/WikiQuestions',
+  stateInstrumentRescoring: 'State/InstrumentRescoring',
+  stateQuarterlyAllocationReview: 'State/QuarterlyAllocationReview',
+  stateMorningBriefing: 'State/MorningBriefing',
+  stateIsaMaturity: 'State/IsaMaturity',
+  stateRebalanceProposal: 'State/RebalanceProposal',
+  stateRebalanceReminder: 'State/RebalanceReminder',
+  stateProposalResponseReminder: 'State/ProposalResponseReminder',
+  stateMacroTiltProposal: 'State/MacroTiltProposal',
+  factsLedgerExecutions: 'Facts/Ledger/Executions',
+  factsLedgerProfits: 'Facts/Ledger/Profits',
+  factsRawNotificationsApiCovered: 'Facts/RawNotifications/ExecutionApiCovered',
+};
+
+const LEGACY_ABSOLUTE = [
+  'Facts/Ledger',
+  'Facts/Ledger/Executions',
+  'Facts/Ledger/Dividends',
+  'Facts/Ledger/FundPurchases',
+  'Facts/Ledger/FundValuations',
+  'Facts/Ledger/CashEvents',
+  'Facts/Ledger/Exchanges',
+  'Facts/Ledger/Profits',
+  'Facts/Ledger/DailySnapshots',
+  'Facts/Ledger/MonthlyBalances',
+  'State/Holdings',
+  'State/Allocation',
+  'State/Baselines',
+  'State/JobHealth',
+  'State/MarketMoveMonitor',
+  'State/MacroOverlay',
+  'State/CashAccumulator',
+  'State/KillSwitch/KillSwitch.md',
+  'State/ExecutionMode/ExecutionMode.md',
+  'State/ProposalMode/ProposalMode.md',
+  'State/ExecutedOrders/ExecutedOrders.md',
+  'State/TelegramSession/last-read.md',
+  'State/MacroIndicators/MacroIndicators.md',
+  'State/MacroTiltProposal',
+  'State/BreakoutPositions',
+  'State/BreakoutPendingEntries',
+  'State/BreakoutScanRuns/last-run.md',
+  'State/ExecutionConfirmations',
+  'Log/TelegramSession',
+  'Log/Reports',
+  'Log/Implementation',
+  'Log/DevRequests',
+  'Decisions/Evaluations',
+  'Decisions/PositionJournal',
+  'Decisions/Proposals',
+  'Decisions/Profile',
+  'Decisions/RiskMonitor',
+  'Knowledge/Playbook',
+  'Knowledge/Topics',
+  'Knowledge/Meta',
+  'Knowledge/Infra',
+];
+
+test('경로 상수는 고정된 옛 값의 매핑 결과와 같다', () => {
+  for (const [key, old] of Object.entries(LEGACY_REL)) {
+    assert.equal(VAULT_REL[key], mapLegacyPath(old).to, key);
+  }
+  const current = Object.entries(VAULT_PATHS).filter(([key]) => key !== 'root')
+    .flatMap(([, value]) => flattenPaths(value));
+  assert.equal(current.length, LEGACY_ABSOLUTE.length);
+  for (const [index, old] of LEGACY_ABSOLUTE.entries()) {
+    assert.equal(current[index], vaultAbs(mapLegacyPath(old).to), old);
+  }
+});
+
+test('연도 폴더는 KST 연도를 쓰고 연도 하위 마크다운을 읽는다', () => {
+  assert.equal(vaultYearDir('/vault/reports', new Date('2025-12-31T15:00:00Z')), '/vault/reports/2026');
+  assert.deepEqual(vaultYearFiles('/path/that/does/not/exist'), []);
+  const root = mkdtempSync(join(tmpdir(), 'vault-year-files-'));
+  try {
+    for (const year of ['2025', '2026']) {
+      mkdirSync(join(root, year));
+      writeFileSync(join(root, year, `${year}-report.md`), 'report');
+    }
+    writeFileSync(join(root, 'ignored.md'), 'direct child');
+    assert.deepEqual(vaultYearFiles(root).map((file) => file.slice(root.length + 1)).sort(), [
+      '2025/2025-report.md', '2026/2026-report.md',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

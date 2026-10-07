@@ -31,21 +31,21 @@ function keywordInput() {
   return {
     kind: 'keyword-registration',
     question: "'예시 키워드'를 정본으로 등록할까요? 색인, 별칭, 근거 노트 링크를 추가합니다.",
-    evidenceNotes: ['Knowledge/Meta/evidence'],
+    evidenceNotes: ['90_Delphi/evidence'],
     changePlan: {
       type: 'register-keyword',
       standardTerm: '예시 키워드',
       aliases: ['예시어'],
-      canonicalNote: 'Knowledge/Topics/예시-키워드',
+      canonicalNote: '30_Wiki/34_Topics/예시-키워드',
       indexSection: '시스템과 기술',
       answerGuidance: '질문은 정본을 우선 확인합니다.',
-      backlinkNotes: ['Knowledge/Meta/evidence'],
+      backlinkNotes: ['90_Delphi/evidence'],
     },
   };
 }
 
 function createIndex() {
-  putVaultNote('Knowledge/Index', [
+  putVaultNote('90_Delphi/index', [
     '# Index',
     '',
     '## 시스템과 기술',
@@ -56,7 +56,7 @@ function createIndex() {
 }
 
 function backdateQuestion(questionId) {
-  const filepath = join(vaultRoot, 'State', 'WikiQuestions', `${questionId}.md`);
+  const filepath = join(vaultRoot, '95_Etna', 'Questions', `${questionId}.md`);
   const content = readFileSync(filepath, 'utf8').replace(/expiresAt: "[^"]+"/, 'expiresAt: "2000-01-01T00:00:00.000Z"');
   writeFileSync(filepath, content);
   return filepath;
@@ -64,9 +64,9 @@ function backdateQuestion(questionId) {
 
 test('질문 생성은 발송 전에 영속화하고 중복 질문은 재발송하지 않으며 ID 답변을 회수한다', async () => {
   try {
-    putVaultNote('Knowledge/Meta/evidence');
+    putVaultNote('90_Delphi/evidence');
     createIndex();
-    putVaultNote('Knowledge/Topics/예시-키워드');
+    putVaultNote('30_Wiki/34_Topics/예시-키워드');
     let sendCount = 0;
     let sentText = '';
     const sender = async (text) => { sentText = text; return { result: { message_id: ++sendCount } }; };
@@ -78,9 +78,9 @@ test('질문 생성은 발송 전에 영속화하고 중복 질문은 재발송�
     assert.equal(first.sent, true);
     assert.equal(duplicate.duplicate, true);
     assert.equal(sendCount, 1);
-    assert.match(sentText, /Knowledge\/Topics\/예시-키워드/);
-    assert.match(sentText, /Knowledge\/Meta\/evidence/);
-    assert.ok(readFileSync(join(vaultRoot, 'State', 'WikiQuestions', `${first.questionId}.md`), 'utf8').includes('예시 키워드'));
+    assert.match(sentText, /30_Wiki\/34_Topics\/예시-키워드/);
+    assert.match(sentText, /90_Delphi\/evidence/);
+    assert.ok(readFileSync(join(vaultRoot, '95_Etna', 'Questions', `${first.questionId}.md`), 'utf8').includes('예시 키워드'));
 
     const cli = fileURLToPath(new URL('../tools/wiki-question-cli.mjs', import.meta.url));
     const restartedPending = execFileSync(process.execPath, [cli, 'pending'], {
@@ -95,7 +95,7 @@ test('질문 생성은 발송 전에 영속화하고 중복 질문은 재발송�
     assert.match(ambiguousContext, new RegExp(first.questionId));
     assert.match(ambiguousContext, /정확한 ID|정확한 질문 ID/);
     assert.equal((await resolveWikiQuestion(first.questionId, '그렇게 해주세요')).action, 'clarify', '자유응답은 승인으로 추정하지 않아야 함');
-    assert.match(readFileSync(join(vaultRoot, 'State', 'WikiQuestions', `${first.questionId}.md`), 'utf8'), /clarifications: \[.*그렇게 해주세요/);
+    assert.match(readFileSync(join(vaultRoot, '95_Etna', 'Questions', `${first.questionId}.md`), 'utf8'), /clarifications: \[.*그렇게 해주세요/);
     assert.equal((await listPendingWikiQuestions()).some((q) => q.questionId === first.questionId), true, '모호한 답은 대기 상태를 유지해야 함');
 
     const explicitClarification = `${first.questionId} 이번엔 보류할게요, 자료를 더 보고 싶어요`;
@@ -107,7 +107,7 @@ test('질문 생성은 발송 전에 영속화하고 중복 질문은 재발송�
       env: { ...process.env, VAULT_PATH: vaultRoot, CLAUDE_TELEGRAM_SESSION: '1' },
     });
     assert.match(clarificationContext, /답변 선택이 명확하지 않아 상태를 바꾸지 않았다/);
-    const clarifiedRecord = readFileSync(join(vaultRoot, 'State', 'WikiQuestions', `${first.questionId}.md`), 'utf8');
+    const clarifiedRecord = readFileSync(join(vaultRoot, '95_Etna', 'Questions', `${first.questionId}.md`), 'utf8');
     assert.match(clarifiedRecord, /clarifications: \[.*자료를 더 보고 싶어요/);
     assert.match(clarifiedRecord, /status: "답변대기"/);
 
@@ -117,12 +117,29 @@ test('질문 생성은 발송 전에 영속화하고 중복 질문은 재발송�
     });
     const resolved = await resolveWikiQuestion(first.questionId, '등록', { rawText: explicitText });
     assert.equal(resolved.status, '승인');
-    assert.equal(readFileSync(join(vaultRoot, 'State', 'WikiQuestions', `${first.questionId}.md`), 'utf8').includes(`answerRaw: "${explicitText}"`), true);
+    assert.equal(readFileSync(join(vaultRoot, '95_Etna', 'Questions', `${first.questionId}.md`), 'utf8').includes(`answerRaw: "${explicitText}"`), true);
     const applied = await applyWikiQuestion(first.questionId);
     assert.equal(applied.status, '처리완료');
-    assert.match(readFileSync(join(vaultRoot, 'Knowledge', 'Index.md'), 'utf8'), /예시 키워드 \| 예시어 \| \[\[Knowledge\/Topics\/예시-키워드\]\]/);
-    assert.match(readFileSync(join(vaultRoot, 'Knowledge', 'Topics', '예시-키워드.md'), 'utf8'), /aliases: \["예시어"\]/);
-    assert.match(readFileSync(join(vaultRoot, 'Knowledge', 'Meta', 'evidence.md'), 'utf8'), /\[\[Knowledge\/Topics\/예시-키워드\]\]/);
+    assert.match(readFileSync(join(vaultRoot, '90_Delphi', 'index.md'), 'utf8'), /예시 키워드 \| 예시어 \| \[\[30_Wiki\/34_Topics\/예시-키워드\]\]/);
+    assert.match(readFileSync(join(vaultRoot, '30_Wiki', '34_Topics', '예시-키워드.md'), 'utf8'), /aliases: \["예시어"\]/);
+    assert.match(readFileSync(join(vaultRoot, '90_Delphi', 'evidence.md'), 'utf8'), /\[\[30_Wiki\/34_Topics\/예시-키워드\]\]/);
+  } finally {
+    rmSync(vaultRoot, { recursive: true, force: true });
+  }
+});
+
+test('라이브 색인이 없으면 승인 적용을 멈추고 보관용 Meta 색인을 수정하지 않는다', async () => {
+  mkdirSync(vaultRoot, { recursive: true });
+  try {
+    putVaultNote('90_Delphi/evidence');
+    putVaultNote('30_Wiki/34_Topics/예시-키워드');
+    const archived = putVaultNote('80_Archive/Knowledge/Meta/Index', '보관용 색인');
+    const question = await createWikiQuestion(keywordInput(), {
+      sender: async () => ({ result: { message_id: 1 } }),
+    });
+    await resolveWikiQuestion(question.questionId, '등록');
+    await assert.rejects(applyWikiQuestion(question.questionId), /현재 지식 색인이 없어/);
+    assert.equal(readFileSync(archived, 'utf8'), '보관용 색인');
   } finally {
     rmSync(vaultRoot, { recursive: true, force: true });
   }
@@ -131,9 +148,9 @@ test('질문 생성은 발송 전에 영속화하고 중복 질문은 재발송�
 test('발송 실패는 결과 불명으로 보존하고 자동 중복 발송하지 않는다', async () => {
   mkdirSync(vaultRoot, { recursive: true });
   try {
-    putVaultNote('Knowledge/Meta/evidence');
+    putVaultNote('90_Delphi/evidence');
     const input = {
-      kind: 'manual-change', question: '이 수정안을 반영할까요?', evidenceNotes: ['Knowledge/Meta/evidence'],
+      kind: 'manual-change', question: '이 수정안을 반영할까요?', evidenceNotes: ['90_Delphi/evidence'],
     };
     let sendCount = 0;
     const sender = async () => { sendCount += 1; throw new Error('network timeout'); };
@@ -162,16 +179,16 @@ test('만료된 승인 질문은 반영되지 않고 manual-change 완료도 거
   // Each node:test case uses the same isolated Vault; reconstruct it after the preceding cleanup.
   mkdirSync(vaultRoot, { recursive: true });
   try {
-    putVaultNote('Knowledge/Meta/evidence');
+    putVaultNote('90_Delphi/evidence');
     createIndex();
-    putVaultNote('Knowledge/Topics/예시-키워드');
+    putVaultNote('30_Wiki/34_Topics/예시-키워드');
     const sent = async () => ({ result: { message_id: 72 } });
     const keyword = await createWikiQuestion(keywordInput(), { sender: sent });
-    putVaultNote('Knowledge/Topics/두번째-키워드');
+    putVaultNote('30_Wiki/34_Topics/두번째-키워드');
     const secondKeyword = await createWikiQuestion({
       ...keywordInput(),
       question: "'두번째 키워드'를 정본으로 등록할까요?",
-      changePlan: { ...keywordInput().changePlan, standardTerm: '두번째 키워드', canonicalNote: 'Knowledge/Topics/두번째-키워드' },
+      changePlan: { ...keywordInput().changePlan, standardTerm: '두번째 키워드', canonicalNote: '30_Wiki/34_Topics/두번째-키워드' },
     }, { sender: sent });
     const hook = fileURLToPath(new URL('../hooks/wiki-question-intake.mjs', import.meta.url));
     const context = execFileSync(process.execPath, [hook], {
@@ -188,10 +205,10 @@ test('만료된 승인 질문은 반영되지 않고 manual-change 완료도 거
     backdateQuestion(keyword.questionId);
     await assert.rejects(applyWikiQuestion(keyword.questionId), /질문이 만료됐습니다/);
     assert.equal((await listPendingWikiQuestions()).some((q) => q.questionId === keyword.questionId), false);
-    assert.equal(readFileSync(join(vaultRoot, 'Knowledge', 'Index.md'), 'utf8').includes('예시 키워드'), false);
+    assert.equal(readFileSync(join(vaultRoot, '90_Delphi', 'index.md'), 'utf8').includes('예시 키워드'), false);
 
     const manual = await createWikiQuestion({
-      kind: 'manual-change', question: '이 문서 변경을 반영할까요?', evidenceNotes: ['Knowledge/Meta/evidence'],
+      kind: 'manual-change', question: '이 문서 변경을 반영할까요?', evidenceNotes: ['90_Delphi/evidence'],
     }, { sender: sent });
     await resolveWikiQuestion(manual.questionId, '등록');
     backdateQuestion(manual.questionId);

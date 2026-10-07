@@ -71,7 +71,8 @@ export function shouldCheckStatus(relPath) {
     normalized.startsWith(`${VAULT_REL.logStrategy}/`) ||
     normalized.startsWith(`${VAULT_REL.decisionsProposals}/`) ||
     normalized.startsWith(`${VAULT_REL.decisionsProfile}/`) ||
-    normalized.startsWith(`${VAULT_REL.knowledge}/`)
+    normalized.startsWith(`${VAULT_REL.knowledge}/`) ||
+    normalized.startsWith(`${VAULT_REL.knowledgeMeta}/`)
   ) && normalized.endsWith('.md');
 }
 
@@ -80,7 +81,7 @@ function statusScope(relPath) {
   if (normalized.startsWith(`${VAULT_REL.logStrategy}/`)) return 'strategy';
   if (normalized.startsWith(`${VAULT_REL.decisionsProposals}/`)) return 'proposal';
   if (normalized.startsWith(`${VAULT_REL.decisionsProfile}/`)) return 'profile';
-  if (normalized.startsWith(`${VAULT_REL.knowledge}/`)) return 'knowledge';
+  if (normalized.startsWith(`${VAULT_REL.knowledge}/`) || normalized.startsWith(`${VAULT_REL.knowledgeMeta}/`)) return 'knowledge';
   return 'lifecycle';
 }
 

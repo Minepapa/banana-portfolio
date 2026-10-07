@@ -74,14 +74,14 @@ import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
-import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs, vaultYearDir } from '../lib/vault-paths.mjs';
 import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 import { isProcessAlive, isPollingStuck, isSessionLogStale, TELEGRAM_SESSION_PROCESS_PATTERN, TELEGRAM_MCP_SUBPROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
 import { findTelegramTranscripts, readTranscriptLines, findLatestUnansweredTelegramOwnerMessage } from './telegram-session-handoff.mjs';
 
-const MCP_LOSS_LOG_FILE = join(VAULT_PATHS.log.telegramSession, 'mcp-loss-diagnostics.md');
+const MCP_LOSS_LOG_FILE = join(vaultYearDir(VAULT_PATHS.log.telegramSession), 'mcp-loss-diagnostics.md');
 const MCP_LOSS_LOG_HEADER = '# 텔레그램 MCP 소실 진단 로그\n\n' +
   '감지될 때마다(재확인 후 회복된 경우 포함) 그 순간의 시스템 상태를 누적 기록 —\n' +
   `근본원인 패턴 분석용(2026-09-04 신설, \`${VAULT_REL.logImplementation}/2026-09-04-텔레그램MCP소실-진단계측.md\` 참고).\n\n`;
@@ -167,7 +167,7 @@ function captureSystemSnapshot() {
 }
 
 function appendMcpLossLine(line) {
-  mkdirSync(VAULT_PATHS.log.telegramSession, { recursive: true });
+  mkdirSync(vaultYearDir(VAULT_PATHS.log.telegramSession), { recursive: true });
   const existing = existsSync(MCP_LOSS_LOG_FILE) ? readFileSync(MCP_LOSS_LOG_FILE, 'utf8') : MCP_LOSS_LOG_HEADER;
   writeAtomic(MCP_LOSS_LOG_FILE, existing.trimEnd() + '\n' + line + '\n');
 }

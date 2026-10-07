@@ -59,7 +59,7 @@ test('writeFaberState/readPreviousFaberState: stateDir 생략하면 VAULT_PATHS.
       { env: { ...process.env, VAULT_PATH: tmpVaultRoot } },
     ).toString().trim();
     assert.deepEqual(JSON.parse(out), { domestic: true, foreign: false });
-    assert.ok(existsSync(join(tmpVaultRoot, 'State', 'MacroOverlay', 'faber-state.md')));
+    assert.ok(existsSync(join(tmpVaultRoot, '95_Etna', 'Investing', 'MacroOverlay', 'faber-state.md')));
   });
 });
 

@@ -42,7 +42,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { buildHomeMirror } from '../lib/firestore-mirror.mjs';
@@ -87,7 +87,7 @@ export function computeDailySnapshot(holdings, todayStr) {
 
 function main() {
   const holdings = readHoldings();
-  if (!holdings.length) { console.log('⚠️ State/Holdings가 비어있음 — 스냅샷 건너뜀(추정 안 함)'); return; }
+  if (!holdings.length) { console.log(`⚠️ ${VAULT_REL.stateHoldings}가 비어있음 — 스냅샷 건너뜀(추정 안 함)`); return; }
   const today = todayKST();
 
   const monthly = computeMonthlyBalanceSnapshot(holdings, today);

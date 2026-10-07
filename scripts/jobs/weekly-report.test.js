@@ -40,7 +40,7 @@ const REAL_REPORT_BODY = `# 주간 자산 종합 점검 — 2026-08-30
 test('writeObservations: 승격후보에 확장자 없는 Decisions/Profile notePath를 반환한다', () => {
   const root = mkdtempSync(join(tmpdir(), 'banana-weekly-report-'));
   const previousProfileDir = VAULT_PATHS.decisions.profile;
-  VAULT_PATHS.decisions.profile = join(root, 'Decisions', 'Profile');
+  VAULT_PATHS.decisions.profile = join(root, '20_Records', '21_Notes');
   try {
     const result = weeklyReport.writeObservations('2026-09-27', [{
       type: '검증', observation: '프로필과 상충하는 관찰', vsProfile: '상충', promote: false,
@@ -48,7 +48,7 @@ test('writeObservations: 승격후보에 확장자 없는 Decisions/Profile note
 
     assert.equal(result.written, 1);
     assert.equal(result.promoted.length, 1);
-    assert.match(result.promoted[0].notePath, /^Decisions\/Profile\/2026-09-27-\d{8}T\d{6}-1$/);
+    assert.match(result.promoted[0].notePath, /^20_Records\/21_Notes\/2026\/2026-09-27-\d{8}T\d{6}-1$/);
     assert.ok(!result.promoted[0].notePath.endsWith('.md'));
     assert.equal(parseFrontmatter(readFileSync(join(root, `${result.promoted[0].notePath}.md`), 'utf8')).status, '승격후보');
   } finally {

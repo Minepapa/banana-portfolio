@@ -6,7 +6,7 @@
 // EXPECTED_INTERVALS_MS와 등록 대상이 어긋나면(한쪽만 갱신) 새 잡이 라벨 없이
 // 뜨거나, 폐기된 잡 라벨이 죽지 않고 남는다.
 import { homedir } from 'node:os';
-import { VAULT_ROOT } from './vault-paths.mjs';
+import { VAULT_ROOT, VAULT_REL } from './vault-paths.mjs';
 
 const displayVaultRoot = VAULT_ROOT.startsWith(`${homedir()}/`)
   ? `~${VAULT_ROOT.slice(homedir().length)}` : VAULT_ROOT;
@@ -23,13 +23,13 @@ export const JOB_LABELS = {
   // 예수금을 CashEvent로 기록해 update-cash-from-ledger가 재구성했지만, 이제
   // State/Holdings를 직접 덮어쓴다(CashEvent 미경유). update-cash-from-ledger는
   // API 없는 ISA·연금저축 2계좌만 처리(6계좌→2계좌로 범위 축소).
-  'reconcile-irp': 'IRP 계좌 KIS API 종목 대사 + 예수금 State/Holdings 직접기록',
-  'reconcile-nh-cash': '위탁·CMA·금현물 예수금 NH PLUG API 직접조회(State/Holdings 직접기록, 2026-09-03 신설)',
-  'reconcile-nh-fx-rp': '위탁 계좌 외화RP 보유수량을 NH PLUG API 거래이력(FIFO 로트재구성)으로 유도해 State/Holdings qty 직접기록(2026-09-19 신설, 평가금액은 update-holdings-prices.mjs가 별도 갱신)',
-  'reconcile-irp-executions': 'IRP 체결을 KIS 퇴직연금 체결조회 API로 직접 폴링해 Facts/Ledger/Executions 기록(2026-09-03 신설)',
-  'reconcile-nh-executions': '위탁·금현물 체결을 NH REST 체결조회 API로 직접 폴링해 Facts/Ledger/Executions 기록(2026-09-03 신설)',
+  'reconcile-irp': `IRP 계좌 KIS API 종목 대사 + 예수금 ${VAULT_REL.stateHoldings} 직접기록`,
+  'reconcile-nh-cash': `위탁·CMA·금현물 예수금 NH PLUG API 직접조회(${VAULT_REL.stateHoldings} 직접기록, 2026-09-03 신설)`,
+  'reconcile-nh-fx-rp': `위탁 계좌 외화RP 보유수량을 NH PLUG API 거래이력(FIFO 로트재구성)으로 유도해 ${VAULT_REL.stateHoldings} qty 직접기록(2026-09-19 신설, 평가금액은 update-holdings-prices.mjs가 별도 갱신)`,
+  'reconcile-irp-executions': `IRP 체결을 KIS 퇴직연금 체결조회 API로 직접 폴링해 ${VAULT_REL.factsLedgerExecutions} 기록(2026-09-03 신설)`,
+  'reconcile-nh-executions': `위탁·금현물 체결을 NH REST 체결조회 API로 직접 폴링해 ${VAULT_REL.factsLedgerExecutions} 기록(2026-09-03 신설)`,
   'intraday-portfolio-sync': '체결·예수금·펀드적립 감지→반영 7단계(reconcile-nh-executions 등 + update-cash-from-ledger + update-fund-holdings-from-purchases)를 10분마다 순서대로 실행해 장마감까지 안 기다리고 빠르게 반영(2026-09-03 신설, 2026-09-04 7단계로 확장, 고정시각 잡은 안전망으로 그대로 유지)',
-  'update-fund-holdings-from-purchases': '연금저축 VIP펀드 정기적립 매수를 State/Holdings 보유수량·원금에 누적 반영(2026-09-04 신설 — 카카오 펀드적립 알림은 정확히 기록되고 있었는데 반영하는 잡 자체가 없었던 갭 해소)',
+  'update-fund-holdings-from-purchases': `연금저축 VIP펀드 정기적립 매수를 ${VAULT_REL.stateHoldings} 보유수량·원금에 누적 반영(2026-09-04 신설 — 카카오 펀드적립 알림은 정확히 기록되고 있었는데 반영하는 잡 자체가 없었던 갭 해소)`,
   'update-cash-from-ledger': '계좌별(ISA·연금저축, API 없는 2계좌만) 예수금 실잔고 계산',
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
   'update-monthly-balance-snapshot': '월별 잔고 스냅샷(대시보드 막대그래프용) + 일별 불변 스냅샷(TWR·Sharpe·MDD 재계산용, 2026-09-04 신설) 매일 자동 기록',

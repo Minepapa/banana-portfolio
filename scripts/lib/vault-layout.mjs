@@ -40,8 +40,8 @@ export const LEGACY_TO_MOUSEION_RULES = [
   { from: 'Log/WarningEvents', to: '95_Etna/Jobs/WarningEvents' },
   { from: 'Log/Implementation', to: '40_Projects/banana-portfolio/Implementation' },
   { from: 'Log/DevRequests', to: '40_Projects/banana-portfolio/Requests' },
-  // 90_Delphi/index.md는 이관 대상이 아니라 새로 자동 생성한다.
-  { from: 'Knowledge/Index.md', to: '80_Archive/Knowledge/Index.md' },
+  // 키워드 색인은 Delphi의 라이브 색인으로 계속 사용한다.
+  { from: 'Knowledge/Index.md', to: '90_Delphi/index.md' },
   { from: 'Knowledge/Meta/Index.md', to: '80_Archive/Knowledge/Meta/Index.md' },
   {
     from: 'Knowledge/Meta/므네모시네-파일배선도.md',

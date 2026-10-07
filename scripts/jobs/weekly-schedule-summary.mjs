@@ -34,7 +34,7 @@ import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { isKillSwitchActive } from '../lib/kill-switch.mjs';
 import { getExecutionMode, MODE_LIVE } from '../lib/shadow-mode.mjs';
 import { getProposalMode, MODE_BLOCKED } from '../lib/proposal-mode.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const DEPARTMENT_LABEL = '운영실 Hermes';
@@ -119,7 +119,7 @@ export function buildWeeklyScheduleText(schedule = SCHEDULE, switchStatus = null
   }
   lines.push(
     '이 외 나머지는 전부 이벤트 발생 시에만 오는 보고입니다(가격워치·신규현금배분·',
-    '퀀트제안·잡경고 등) — 전체 목록은 Knowledge/Meta/부서별-텔레그램-보고.md 참고.',
+    `퀀트제안·잡경고 등) — 전체 목록은 ${VAULT_REL.knowledgeMeta}/부서별-텔레그램-보고.md 참고.`,
   );
   return lines.join('\n');
 }

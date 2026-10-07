@@ -38,7 +38,7 @@ import { join } from 'node:path';
 import { hasNhplugCredentials, loadNhplugCredentials, getNhToken, listNhAccounts } from '../lib/nhplug.mjs';
 import { getTotalTransaction, filterDividendRows } from '../lib/nhplug-common.mjs';
 import { resolveNhAccountsByLabel, NH_CASH_ACCOUNTS } from '../lib/nh-accounts.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { resolveCanonicalStockName } from '../lib/stock-registry.mjs';
@@ -169,13 +169,13 @@ async function main() {
       } else {
         unmatchedCount++;
         console.log(`  ⚠️  ${dateLabel} ${row.iem_nm} ${row.trd_amt} ${currencyLabel} — Vault(카카오 파싱)에서 못 찾음`);
-        collectWarning(`NH 배당대조(${label}): ${dateLabel} ${row.iem_nm} ${row.trd_amt} ${currencyLabel}이 NH API엔 있는데 카카오 파싱 기록(Facts/Ledger/Dividends)엔 없음 — 알림 유실 가능성, 수동 확인 필요`);
+        collectWarning(`NH 배당대조(${label}): ${dateLabel} ${row.iem_nm} ${row.trd_amt} ${currencyLabel}이 NH API엔 있는데 카카오 파싱 기록(${VAULT_REL.factsLedgerDividends})엔 없음 — 알림 유실 가능성, 수동 확인 필요`);
       }
     }
   }
 
   console.log(`\n${unmatchedCount === 0 && unresolvedCount === 0 ? '✅' : '⚠️'} 총 NH 배당 ${totalNhDividends}건 중 Vault 미매칭 ${unmatchedCount}건, 판정불가 ${unresolvedCount}건`);
-  console.log('(이 잡은 Vault/시트에 쓰지 않습니다 — 불일치는 오너 확인용 보고일 뿐, Facts/Ledger/Dividends는 그대로입니다. 단 위 경고는 텔레그램으로 발송됩니다.)');
+  console.log(`(이 잡은 Vault/시트에 쓰지 않습니다 — 불일치는 오너 확인용 보고일 뿐, ${VAULT_REL.factsLedgerDividends}는 그대로입니다. 단 위 경고는 텔레그램으로 발송됩니다.)`);
   await flushWarnings('reconcile-nh-dividends');
 }
 

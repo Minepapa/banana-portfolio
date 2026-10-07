@@ -31,9 +31,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
-import { VAULT_PATHS, VAULT_ROOT, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_ROOT, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { writeAtomic } from '../lib/state-writer.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
@@ -378,20 +377,9 @@ async function main() {
     .filter((f) => f.relPath.startsWith(`${VAULT_REL.logImplementation}/`))
     .map((f) => ({ ...f.frontmatter, __relPath: f.relPath }));
   const invalidProgress = findInvalidProgressFields(implOnlyRecords);
-  const indexMdFile = allFiles.find((f) => f.relPath === VAULT_REL.knowledgeMetaIndexFile.replace(/\.md$/, ''));
-  const staleEmptyClaims = indexMdFile ? findStaleEmptyClaims(indexMdFile.content, allFiles) : [];
-
-  // E — 개수 자동동기화(판단 불필요한 순수 산술이라 hasAnyIssue/Apollo 대상이
-  // 아님 — 조용히 고치고 콘솔에만 남긴다, 오너를 호출할 일이 아님). --dry-run은
-  // 계산만 하고 실제 파일에는 안 씀(이 프로젝트 --dry-run 관례와 동일).
-  if (indexMdFile) {
-    const { updatedContent, changes } = syncIndexCounts(indexMdFile.content, allFiles);
-    if (changes.length) {
-      console.log(`🔧 Index.md 개수 자동동기화 ${changes.length}건: ${changes.map((c) => `${c.folder}(${c.oldCount}→${c.newCount})`).join(', ')}`);
-      if (!DRY_RUN) writeAtomic(vaultAbs(VAULT_REL.knowledgeMetaIndexFile), updatedContent);
-      else console.log('  (드라이런 — 실제 파일엔 안 씀)');
-    }
-  }
+  // D·E의 옛 구조 건수와 빈 폴더 주장은 보관된 Meta/Index.md를 갱신·검사하지 않는다.
+  console.log('ℹ weekly-vault-health-check: Meta/Index.md 건수 동기화 D·E 생략');
+  const staleEmptyClaims = [];
 
   const results = {
     broken, ambiguous, orphaned, recentLegacy, fxAnomalies, missingCurrency,

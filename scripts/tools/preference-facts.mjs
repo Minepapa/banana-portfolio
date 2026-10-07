@@ -16,9 +16,8 @@
 // 배제한다 — Apollo의 감사형 보고(전체 상태 노출·대기건 카운트·거부 이력 추적)엔 안 맞아
 // 별도 조립기를 둔다(중복이 아니라 다른 소비자).
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { readFileSync } from 'node:fs';
+import { VAULT_PATHS, vaultYearFiles } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { isLivePreferenceObservation } from '../lib/preferences.mjs';
 
@@ -71,7 +70,7 @@ export function renderPreferenceFacts({ rows, counts, text }, { json = false } =
     '',
     text,
     '',
-    '⚠️ 위 숫자만 사용하라. KPI·주간리포트는 로컬 파일(profile/kpi_baseline.md, Log/Reports/*.md)을 Read로 직접 읽어라 — 이미 결정론이다.',
+    `⚠️ 위 숫자만 사용하라. KPI·주간리포트는 로컬 파일(profile/kpi_baseline.md, ${VAULT_PATHS.log.reports}/*/*.md)을 Read로 직접 읽어라 — 이미 결정론이다.`,
   ];
   return lines.join('\n');
 }
@@ -84,12 +83,9 @@ function main() {
     console.error(e.message);
     process.exit(2);
   }
-  const dir = VAULT_PATHS.decisions.profile;
-  const records = existsSync(dir)
-    ? readdirSync(dir).filter((f) => f.endsWith('.md'))
-      .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')))
-      .filter(isLivePreferenceObservation)
-    : [];
+  const records = vaultYearFiles(VAULT_PATHS.decisions.profile)
+    .map((file) => parseFrontmatter(readFileSync(file, 'utf8')))
+    .filter(isLivePreferenceObservation);
   const facts = assemblePreferences(records, { status: opts.status });
   process.stdout.write(renderPreferenceFacts(facts, { json: opts.json }) + '\n');
 }

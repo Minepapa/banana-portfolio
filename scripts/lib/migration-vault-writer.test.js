@@ -8,7 +8,7 @@ import {
   buildMigratedPreferenceRecord, buildMigratedMonthlyBalanceRecord,
 } from './migration-vault-writer.mjs';
 import { parseFrontmatter } from './vault-frontmatter.mjs';
-import { VAULT_PATHS } from './vault-paths.mjs';
+import { VAULT_PATHS, vaultYearDir } from './vault-paths.mjs';
 
 // 모든 빌더가 { filename, content, dir } 형태 + legacy:true + legacySourceRow(있으면 rowNum
 // 그대로) + 같은 rowNum 재호출 시 같은 파일명(idempotent)을 지키는지 공통 검증.
@@ -226,7 +226,7 @@ test('buildMigratedReportRecord: 주간리포트 3열', () => {
   assertLegacyShape(r, 1);
   const fm = parseFrontmatter(r.content);
   assert.equal(fm.summary, '요약텍스트');
-  assert.equal(r.dir, VAULT_PATHS.log.reports);
+  assert.equal(r.dir, vaultYearDir(VAULT_PATHS.log.reports, '2025-01-05T00:00:00+09:00'));
 });
 
 test('buildMigratedPreferenceRecord: 성향관찰 8열, 상태 없으면 "관찰" 기본값', () => {
@@ -234,5 +234,5 @@ test('buildMigratedPreferenceRecord: 성향관찰 8열, 상태 없으면 "관찰
   assertLegacyShape(r, 6);
   const fm = parseFrontmatter(r.content);
   assert.equal(fm.status, '관찰');
-  assert.equal(r.dir, VAULT_PATHS.decisions.profile);
+  assert.equal(r.dir, vaultYearDir(VAULT_PATHS.decisions.profile, '2025-01-05T00:00:00+09:00'));
 });

@@ -72,7 +72,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { resolveExecutionAccount, QUANT_TRACK_LABEL, IRP_ACCOUNT_LABEL } from '../lib/account-resolver.mjs';
@@ -352,7 +352,7 @@ async function main() {
     // 정본이라(Phase 9 확정) 여기서 명시적으로 건너뛴다 — holdingsApplied만 찍어
     // 재처리 대상에서 빠지게 한다(Holdings에는 안 씀).
     if (account === QUANT_TRACK_LABEL) {
-      console.log(`  ↪️  퀀트 트랙 체결 — State/Holdings 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
+      console.log(`  ↪️  퀀트 트랙 체결 — ${VAULT_REL.stateHoldings} 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
       if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, tags: buildVaultTags({ account, stockName: exec.stockName }), holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       knownExecutions.push({ ...exec, account });
       continue;
@@ -391,7 +391,7 @@ async function main() {
           sells++;
         }
       } else {
-        console.log(`  ↪️  IRP 매수 체결 — State/Holdings 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
+        console.log(`  ↪️  IRP 매수 체결 — ${VAULT_REL.stateHoldings} 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
       }
       if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, tags: buildVaultTags({ account, stockName: exec.stockName }), holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       knownExecutions.push({ ...exec, account });

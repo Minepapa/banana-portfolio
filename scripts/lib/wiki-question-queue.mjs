@@ -242,6 +242,7 @@ export async function resolveWikiQuestion(questionId, answerText, { rawText = an
 
 function splitTableCell(value) { return String(value ?? '').replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ').trim(); }
 async function addKeywordIndexRow(plan) {
+  if (!existsSync(INDEX_PATH)) throw new Error('현재 지식 색인이 없어 키워드를 등록할 수 없습니다.');
   await withLock(INDEX_PATH, async () => {
     const content = readFileSync(INDEX_PATH, 'utf8');
     const link = `[[${plan.canonicalNote}]]`;

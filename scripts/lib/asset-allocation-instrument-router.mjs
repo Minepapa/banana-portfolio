@@ -46,7 +46,7 @@
 // 재검토할 것).
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { VAULT_PATHS } from './vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from './vault-paths.mjs';
 import { parseFrontmatter } from './vault-frontmatter.mjs';
 import { canonName } from '../../src/lib/stockIdentity.js';
 import { resolveCanonicalStockName, getCodeRegistry } from './stock-registry.mjs';
@@ -213,6 +213,6 @@ export function classifyAssetAllocationInstrument({
   if (usCode) return { type: INSTRUMENT_TYPE.OVERSEAS_STOCK, iemCd: usCode, nhAccountLabel: '위탁', resolvedName: canonicalName };
   return {
     type: INSTRUMENT_TYPE.UNSUPPORTED,
-    reason: `미보유 신규종목이라 State/Holdings 힌트 없음 + code/name 자동해석 실패(추측 금지): ${trimmedKey}`,
+    reason: `미보유 신규종목이라 ${VAULT_REL.stateHoldings} 힌트 없음 + code/name 자동해석 실패(추측 금지): ${trimmedKey}`,
   };
 }

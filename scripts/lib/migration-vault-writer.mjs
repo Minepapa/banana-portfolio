@@ -20,7 +20,7 @@
 // ledger-vault-writer.mjs와 동일 원칙). 현재값류(보유종목·자산분배·기준선)는
 // `계좌-이름.md`로 매번 덮어쓴다(State 원칙과 동일 — "지금 상태"만 정확하면 됨).
 import { buildFrontmatter } from './vault-frontmatter.mjs';
-import { VAULT_PATHS } from './vault-paths.mjs';
+import { VAULT_PATHS, vaultYearDir } from './vault-paths.mjs';
 // v1 시트 숫자 셀은 "2,018,000"·"391.1%"처럼 콤마·퍼센트가 섞인 문자열로 온다.
 // Number("2,018,000")은 NaN이 되고 `NaN || 0`이 조용히 0으로 뭉개버린다(2026-08-05
 // 실사고 — 위탁 삼성전자 매입단가·투자금액·평가액이 전부 0으로 마이그레이션됐던 걸
@@ -260,7 +260,7 @@ export function buildMigratedReportRecord(row, rowNum) {
     recordedAt: new Date().toISOString(),
   });
   const filename = `${sanitizeSegment(date)}-r${rowNum}.md`;
-  return { filename, content, dir: VAULT_PATHS.log.reports };
+  return { filename, content, dir: vaultYearDir(VAULT_PATHS.log.reports, date ? `${date}T00:00:00+09:00` : undefined) };
 }
 
 // ── Decisions/Profile (성향관찰 A~H) ─────────────────────────────────────────
@@ -281,5 +281,5 @@ export function buildMigratedPreferenceRecord(row, rowNum) {
   // 읽는 쪽이 preferences.mjs의 isLivePreferenceObservation으로 legacy:true를 걸러내므로
   // 프롬프트에 섞이진 않지만(그 술어가 이 방어의 본체다), 파일 자체는 되살아나니
   // 재실행 전엔 정말 필요한지 확인할 것.
-  return { filename, content, dir: VAULT_PATHS.decisions.profile };
+  return { filename, content, dir: vaultYearDir(VAULT_PATHS.decisions.profile, date ? `${date}T00:00:00+09:00` : undefined) };
 }
