@@ -25,6 +25,8 @@ export const VAULT_REL = {
   decisionsProfile: '20_Records/21_Notes',
   knowledge: '30_Wiki',
   knowledgeTopics: '30_Wiki/34_Topics',
+  wikiObjects: '30_Wiki/33_Objects',
+  projectFeatures: '40_Projects/banana-portfolio/Features',
   knowledgeMeta: '90_Delphi',
   knowledgeInfra: '30_Wiki/34_Topics',
   knowledgeApi: '30_Wiki/34_Topics',

@@ -387,3 +387,199 @@ test('CLI --apply도 가짜 git 볼트에서 이동하고 재실행 시 무작�
     assert.equal(JSON.parse(second.stdout).moveCount, 0);
   });
 });
+
+test('--map은 이동과 사전 병합된 redirect 링크를 치환하고 재실행은 무작업이다', () => {
+  const from = '30_Wiki/34_Topics/옛 기능.md';
+  const redirectFrom = '30_Wiki/34_Topics/병합 기능.md';
+  const to = '40_Projects/banana-portfolio/Features/새 기능.md';
+  const mapPath = join(tmpdir(), `vault-map-${process.pid}.json`);
+  withVault({
+    [from]: '본문', [redirectFrom]: '병합 전 본문',
+    '90_Delphi/index.md': `[[${from.slice(0, -3)}|별칭]] [[병합 기능#제목]] [[../30_Wiki/34_Topics/옛 기능]]\n\`[[병합 기능]]\`\n\`\`\`md\n[[병합 기능]]\n\`\`\``,
+  }, (root) => {
+    try {
+      writeFileSync(mapPath, JSON.stringify([
+        { from, to, mode: 'move' }, { from: redirectFrom, to, mode: 'redirect' },
+      ]));
+      rmSync(join(root, redirectFrom));
+      const applied = migrateVault(root, { apply: true, mapPath });
+      assert.equal(applied.moveCount, 1);
+      assert.equal(applied.linkCount, 3);
+      assert.deepEqual(applied.brokenLinks, []);
+      assert.equal(existsSync(join(root, to)), true);
+      const index = readFileSync(join(root, '90_Delphi/index.md'), 'utf8');
+      assert.ok(index.includes(`[[${to.slice(0, -3)}|별칭]]`));
+      assert.ok(index.includes('[[새 기능#제목]]'));
+      assert.ok(index.includes('`[[병합 기능]]`'));
+      assert.equal(migrateVault(root, { apply: true, mapPath }).moveCount, 0);
+      writeFileSync(join(root, '90_Delphi/index.md'), `${index}\n다른 수정`);
+      assert.throws(() => migrateVault(root, { apply: true, mapPath }), /예상한 이관 내용과 다릅니다/);
+      writeFileSync(join(root, '90_Delphi/index.md'), index);
+      writeFileSync(join(root, 'unrelated.md'), '미추적');
+      assert.throws(() => migrateVault(root, { apply: true, mapPath }), /깨끗하지/);
+    } finally { rmSync(mapPath, { force: true }); }
+  });
+});
+
+test('--map은 redirect 원본 D와 목적지 M만 허용하며 실패 복구에도 보존한다', () => {
+  const from = '30_Wiki/34_Topics/기능.md';
+  const redirectFrom = '30_Wiki/34_Topics/병합.md';
+  const to = '40_Projects/banana-portfolio/Features/기능.md';
+  const redirectTo = '40_Projects/banana-portfolio/Features/기존 기능.md';
+  const mapPath = join(tmpdir(), `vault-map-status-${process.pid}.json`);
+  withVault({ [from]: '원본', [redirectFrom]: '병합 전', [redirectTo]: '병합 대상',
+    '90_Delphi/index.md': '[[병합]]' }, (root) => {
+    try {
+      writeFileSync(mapPath, JSON.stringify([
+        { from, to, mode: 'move' }, { from: redirectFrom, to: redirectTo, mode: 'redirect' },
+      ]));
+      rmSync(join(root, redirectFrom));
+      writeFileSync(join(root, redirectTo), '사람이 병합한 본문');
+      assert.throws(() => migrateVault(root, { apply: true, mapPath,
+        afterMove: () => { throw new Error('강제 예외'); } }), /강제 예외; 복구: success/);
+      assert.equal(existsSync(join(root, redirectFrom)), false);
+      assert.equal(readFileSync(join(root, redirectTo), 'utf8'), '사람이 병합한 본문');
+      assert.equal(existsSync(join(root, from)), true);
+      assert.equal(existsSync(join(root, to)), false);
+      writeFileSync(join(root, '90_Delphi/index.md'), '다른 변경');
+      assert.throws(() => migrateVault(root, { apply: true, mapPath }), /깨끗하지/);
+    } finally { rmSync(mapPath, { force: true }); }
+  });
+});
+
+test('--map은 없는 redirect 목적지와 적용 후 깨진 링크를 거부한다', () => {
+  const from = '30_Wiki/34_Topics/기능.md';
+  const to = '40_Projects/banana-portfolio/Features/기능.md';
+  const mapPath = join(tmpdir(), `vault-map-broken-${process.pid}.json`);
+  withVault({ [from]: '[[없는노트]]' }, (root) => {
+    try {
+      writeFileSync(mapPath, JSON.stringify([{ from, to, mode: 'move' }]));
+      assert.throws(() => migrateVault(root, { apply: true, mapPath }), /적용 후 깨진 링크/);
+      assert.equal(existsSync(join(root, from)), true);
+      writeFileSync(mapPath, JSON.stringify([{ from: '30_Wiki/34_Topics/병합.md', to: '없는목적지.md', mode: 'redirect' }]));
+      assert.throws(() => migrateVault(root, { apply: true, mapPath }), /redirect 목적지가 없습니다/);
+    } finally { rmSync(mapPath, { force: true }); }
+  });
+});
+
+test('CLI --map은 legacy 규칙을 적용하지 않는다', () => {
+  const from = '30_Wiki/34_Topics/기능.md';
+  const to = '40_Projects/banana-portfolio/Features/기능.md';
+  const mapPath = join(tmpdir(), `vault-map-cli-${process.pid}.json`);
+  withVault({ [from]: '본문' }, (root) => {
+    try {
+      writeFileSync(mapPath, JSON.stringify([{ from, to, mode: 'move' }]));
+      const result = spawnSync(process.execPath,
+        [CLI, '--vault', root, '--map', mapPath, '--apply'], { encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).moveCount, 1);
+      assert.equal(existsSync(join(root, to)), true);
+    } finally { rmSync(mapPath, { force: true }); }
+  });
+});
+
+test('--map 재실행은 원본만 지우고 기존 목적지를 남긴 상태를 완료로 오인하지 않는다', () => {
+  const from = '30_Wiki/34_Topics/기능.md';
+  const to = '40_Projects/banana-portfolio/Features/기능.md';
+  const mapPath = join(tmpdir(), `vault-map-false-complete-${process.pid}.json`);
+  withVault({ [from]: '원본 내용', [to]: '관련 없는 기존 내용' }, (root) => {
+    try {
+      writeFileSync(mapPath, JSON.stringify([{ from, to, mode: 'move' }]));
+      rmSync(join(root, from));
+      assert.throws(() => migrateVault(root, { apply: true, mapPath }), /이동 목적지가 원본과 다릅니다/);
+      assert.equal(readFileSync(join(root, to), 'utf8'), '관련 없는 기존 내용');
+      assert.equal(existsSync(join(root, from)), false);
+    } finally { rmSync(mapPath, { force: true }); }
+  });
+});
+
+test('줄바꿈과 대괄호 별칭은 원문을 보존하고 빈 줄과 코드 안 예시는 제외한다', () => {
+  const target = reportSource.slice(0, -3);
+  const destination = reportDestination.slice(0, -3);
+  const content = `[[${target}|첫 줄\n[제우스] 둘째 줄]]\n[[${target}|빈 줄\n\n다음 문단]]\n`
+    + `\`[[${target}|코드\n별칭]]\`\n\`\`\`md\n[[${target}|펜스\n별칭]]\n\`\`\``;
+  const result = rewriteLinks(content, [{ from: reportSource, to: reportDestination }]);
+  assert.equal(result.changedLinks, 1);
+  assert.ok(result.content.includes(`[[${destination}|첫 줄\n[제우스] 둘째 줄]]`));
+  assert.ok(result.content.includes(`[[${target}|빈 줄\n\n다음 문단]]`));
+  assert.ok(result.content.includes(`\`[[${target}|코드\n별칭]]\``));
+  assert.deepEqual(brokenFullPathLinks(`[[${target}|첫 줄\n[제우스] 둘째 줄]]`, [reportDestination]), [target]);
+});
+
+test('--fix-legacy-links는 파일 이동 없이 연도 폴더 경로를 찾아 링크만 고친다', () => {
+  const index = '90_Delphi/index.md';
+  const body = `[[${reportSource.slice(0, -3)}|첫 줄\n[제우스] 둘째 줄]] \`[[${reportSource.slice(0, -3)}]]\``;
+  withVault({ [reportDestination]: '보고서', [index]: body }, (root) => {
+    const planned = migrateVault(root, { fixLegacyLinks: true });
+    assert.equal(planned.moveCount, 0);
+    assert.equal(planned.linkCount, 1);
+    assert.deepEqual(planned.unresolvedLegacyLinks, []);
+    assert.deepEqual(planned.plannedBrokenLinks, []);
+    assert.equal(git(root, 'status', '--porcelain'), '');
+    const applied = migrateVault(root, { fixLegacyLinks: true, apply: true });
+    assert.equal(applied.linkCount, 1);
+    assert.deepEqual(applied.brokenLinks, []);
+    assert.equal(readFileSync(join(root, index), 'utf8'),
+      `[[${reportDestination.slice(0, -3)}|첫 줄\n[제우스] 둘째 줄]] \`[[${reportSource.slice(0, -3)}]]\``);
+    assert.equal(existsSync(join(root, reportDestination)), true);
+  });
+});
+
+test('--fix-legacy-links는 목적지 연도가 모호하면 링크를 보류하고 보고한다', () => {
+  const other = reportDestination.replace('/2026/', '/2025/');
+  withVault({ [reportDestination]: '2026', [other]: '2025', '90_Delphi/index.md': `[[${reportSource.slice(0, -3)}]]` }, (root) => {
+    const planned = migrateVault(root, { fixLegacyLinks: true });
+    assert.equal(planned.linkCount, 0);
+    assert.equal(planned.unresolvedLegacyLinks.length, 1);
+    assert.equal(planned.unresolvedLegacyLinks[0].candidates.length, 2);
+    assert.equal(git(root, 'status', '--porcelain'), '');
+  });
+});
+
+test('--fix-legacy-links는 미해결 링크를 보고하면서 해석 가능한 링크를 적용한다', () => {
+  const other = reportDestination.replace('/2026/', '/2025/');
+  const directFrom = noteSource.slice(0, -3);
+  const index = '90_Delphi/index.md';
+  withVault({ [reportDestination]: '2026', [other]: '2025', [noteDestination]: '노트',
+    [index]: `[[${reportSource.slice(0, -3)}]] [[${directFrom}]]` }, (root) => {
+    const result = migrateVault(root, { fixLegacyLinks: true, apply: true });
+    assert.equal(result.linkCount, 1);
+    assert.deepEqual(result.unresolvedLegacyLinks.map(({ target }) => target), [reportSource.slice(0, -3)]);
+    assert.deepEqual(result.brokenLinks, [{ file: index, target: reportSource.slice(0, -3) }]);
+    assert.equal(readFileSync(join(root, index), 'utf8'),
+      `[[${reportSource.slice(0, -3)}]] [[${noteDestination.slice(0, -3)}]]`);
+  });
+});
+
+test('--fix-legacy-links 직후 --map은 검증된 선행 수정만 허용하고 보존한다', () => {
+  const from = noteDestination;
+  const to = '40_Projects/banana-portfolio/Features/note.md';
+  const index = '90_Delphi/index.md';
+  const mapPath = join(tmpdir(), `vault-map-after-fix-${process.pid}.json`);
+  withVault({ [from]: '본문', [index]: `[[${noteSource.slice(0, -3)}]]` }, (root) => {
+    try {
+      writeFileSync(mapPath, JSON.stringify([{ from, to, mode: 'move' }]));
+      migrateVault(root, { fixLegacyLinks: true, apply: true });
+      const fixed = readFileSync(join(root, index), 'utf8');
+      assert.equal(fixed, `[[${from.slice(0, -3)}]]`);
+      const mapped = migrateVault(root, { mapPath, apply: true });
+      assert.equal(mapped.moveCount, 1);
+      assert.equal(readFileSync(join(root, index), 'utf8'), `[[${to.slice(0, -3)}]]`);
+      assert.equal(migrateVault(root, { mapPath, apply: true }).moveCount, 0);
+      writeFileSync(join(root, index), '사람의 임의 수정');
+      assert.throws(() => migrateVault(root, { mapPath, apply: true }), /예상한 이관 내용과 다릅니다/);
+    } finally { rmSync(mapPath, { force: true }); }
+  });
+});
+
+test('--fix-legacy-links는 링크 쓰기 후 오류가 나면 원본과 깨끗한 작업 트리를 복구한다', () => {
+  const index = '90_Delphi/index.md';
+  const original = `[[${noteSource.slice(0, -3)}]]`;
+  withVault({ [noteDestination]: '노트', [index]: original }, (root) => {
+    const reportPath = join(root, '없는-부모', 'report.json');
+    assert.throws(() => migrateVault(root, { fixLegacyLinks: true, apply: true, reportPath }), /ENOENT/);
+    assert.equal(readFileSync(join(root, index), 'utf8'), original);
+    assert.equal(git(root, 'status', '--porcelain'), '');
+    assert.equal(existsSync(reportPath), false);
+  });
+});

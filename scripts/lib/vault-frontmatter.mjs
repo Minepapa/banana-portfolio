@@ -36,12 +36,12 @@ export function buildFrontmatter(fields) {
 // 자동 생성되는 Facts/State/Decisions의 확정 메타데이터만 안정적인 주제 지도에 연결한다.
 // 키워드 출현만으로 링크를 추정하지 않으며 미확정/미등록 값은 건드리지 않는다.
 const ACCOUNT_TOPIC = new Map([
-  ['퀀트', `[[${VAULT_REL.knowledgeTopics}/돌파매매-전략]]`],
-  ...['위탁', 'CMA', 'ISA', '연금저축', 'IRP', '금현물'].map((account) => [account, `[[${VAULT_REL.knowledgeTopics}/자산분배-트랙-운영]]`]),
+  ['퀀트', `[[${VAULT_REL.projectFeatures}/돌파매매]]`],
+  ...['위탁', 'CMA', 'ISA', '연금저축', 'IRP', '금현물'].map((account) => [account, `[[${VAULT_REL.projectFeatures}/자산분배]]`]),
 ]);
 
 const ACCOUNT_EXTRA_TOPICS = new Map([
-  ['연금저축', [`[[${VAULT_REL.knowledgeTopics}/연금저축-데이터보정]]`]],
+  ['연금저축', [`[[${VAULT_REL.projectFeatures}/연금저축 데이터]]`]],
 ]);
 
 const TYPE_RELATED = new Map([
@@ -51,11 +51,11 @@ const TYPE_RELATED = new Map([
     `[[${VAULT_REL.knowledgeTopics}/PortfolioKPI/sharpe]]`,
     `[[${VAULT_REL.knowledgeTopics}/PortfolioKPI/mdd]]`,
   ]],
-  ['market-move-monitor-state', [`[[${VAULT_REL.knowledgeTopics}/거시지표-리스크-모니터링]]`]],
-  ['macro-indicators-cache-state', [`[[${VAULT_REL.knowledgeTopics}/거시지표-리스크-모니터링]]`]],
-  ['macro-overlay-faber-state', [`[[${VAULT_REL.knowledgeTopics}/거시지표-리스크-모니터링]]`]],
-  ['breakout-position', [`[[${VAULT_REL.knowledgeTopics}/돌파매매-전략]]`]],
-  ['breakout-pending-entry', [`[[${VAULT_REL.knowledgeTopics}/돌파매매-전략]]`]],
+  ['market-move-monitor-state', [`[[${VAULT_REL.projectFeatures}/거시 모니터링]]`]],
+  ['macro-indicators-cache-state', [`[[${VAULT_REL.projectFeatures}/거시 모니터링]]`]],
+  ['macro-overlay-faber-state', [`[[${VAULT_REL.projectFeatures}/거시 모니터링]]`]],
+  ['breakout-position', [`[[${VAULT_REL.projectFeatures}/돌파매매]]`]],
+  ['breakout-pending-entry', [`[[${VAULT_REL.projectFeatures}/돌파매매]]`]],
 ]);
 
 function withGeneratedVaultRelations(fields) {
@@ -66,8 +66,8 @@ function withGeneratedVaultRelations(fields) {
     ...existingRelated,
     ...(ACCOUNT_TOPIC.has(fields.account) ? [ACCOUNT_TOPIC.get(fields.account)] : []),
     ...(ACCOUNT_EXTRA_TOPICS.get(fields.account) ?? []),
-    ...(fields.track === '퀀트' ? [`[[${VAULT_REL.knowledgeTopics}/돌파매매-전략]]`] : []),
-    ...(fields.track === '자산분배' ? [`[[${VAULT_REL.knowledgeTopics}/자산분배-트랙-운영]]`] : []),
+    ...(fields.track === '퀀트' ? [`[[${VAULT_REL.projectFeatures}/돌파매매]]`] : []),
+    ...(fields.track === '자산분배' ? [`[[${VAULT_REL.projectFeatures}/자산분배]]`] : []),
     ...(TYPE_RELATED.get(fields.type) ?? []),
   ];
   const related = [...new Set(relations)];

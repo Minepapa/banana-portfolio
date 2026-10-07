@@ -1,0 +1,92 @@
+[
+  {
+    "from": "30_Wiki/34_Topics/돌파매매-전략.md",
+    "to": "40_Projects/banana-portfolio/Features/돌파매매.md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/거시지표-리스크-모니터링.md",
+    "to": "40_Projects/banana-portfolio/Features/거시 모니터링.md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/자산분배-트랙-운영.md",
+    "to": "40_Projects/banana-portfolio/Features/자산분배.md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/텔레그램-세션-안정성.md",
+    "to": "40_Projects/banana-portfolio/Features/텔레그램.md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/NH-PLUG-마이그레이션.md",
+    "to": "40_Projects/banana-portfolio/Features/데이터 연동.md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/연금저축-데이터보정.md",
+    "to": "40_Projects/banana-portfolio/Features/연금저축 데이터.md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/므네모시네-동기화-인프라.md",
+    "to": "40_Projects/banana-portfolio/Features/볼트 동기화.md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/KIS.md",
+    "to": "30_Wiki/33_Objects/KIS (한국투자증권 API).md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/NH-PLUG.md",
+    "to": "30_Wiki/33_Objects/NH-PLUG (NH투자증권 API).md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/KRX.md",
+    "to": "30_Wiki/33_Objects/KRX (한국거래소).md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/ECOS.md",
+    "to": "30_Wiki/33_Objects/ECOS (한국은행 경제통계).md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/OpenDart.md",
+    "to": "30_Wiki/33_Objects/OpenDART (금융감독원 공시).md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/리밸런싱-주기-전환.md",
+    "to": "40_Projects/banana-portfolio/Features/자산분배.md",
+    "mode": "redirect"
+  },
+  {
+    "from": "30_Wiki/34_Topics/텔레그램-메시지-포맷-진화.md",
+    "to": "40_Projects/banana-portfolio/Features/텔레그램.md",
+    "mode": "redirect"
+  },
+  {
+    "from": "30_Wiki/34_Topics/KRX-API-연동.md",
+    "to": "40_Projects/banana-portfolio/Features/데이터 연동.md",
+    "mode": "redirect"
+  },
+  {
+    "from": "30_Wiki/34_Topics/API 개요.md",
+    "to": "40_Projects/banana-portfolio/Features/데이터 연동.md",
+    "mode": "redirect"
+  },
+  {
+    "from": "30_Wiki/34_Topics/투자자-성향-정본.md",
+    "to": "50_Outputs/Decisions/2026-09-25 투자자 성향.md",
+    "mode": "move"
+  },
+  {
+    "from": "30_Wiki/34_Topics/매수규모-분할매수-기준.md",
+    "to": "50_Outputs/Decisions/2026-09-25 매수 규모와 분할매수 기준.md",
+    "mode": "move"
+  }
+]

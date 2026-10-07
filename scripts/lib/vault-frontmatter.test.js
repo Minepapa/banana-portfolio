@@ -1,6 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildFrontmatter, parseFrontmatter, updateFrontmatter, yamlValue } from './vault-frontmatter.mjs';
+import { VAULT_REL } from './vault-paths.mjs';
+
+test('자동 related는 기능 허브로 연결하고 KPI 개념은 Topics에 둔다', () => {
+  const related = (fields) => parseFrontmatter(buildFrontmatter(fields)).related;
+  assert.deepEqual(related({ account: '연금저축' }), [
+    `[[${VAULT_REL.projectFeatures}/자산분배]]`,
+    `[[${VAULT_REL.projectFeatures}/연금저축 데이터]]`,
+  ]);
+  assert.deepEqual(related({ type: 'breakout-position', track: '퀀트' }),
+    [`[[${VAULT_REL.projectFeatures}/돌파매매]]`]);
+  assert.deepEqual(related({ type: 'macro-indicators-cache-state' }),
+    [`[[${VAULT_REL.projectFeatures}/거시 모니터링]]`]);
+  assert.deepEqual(related({ type: 'daily-snapshot' }), ['twr', 'sharpe', 'mdd']
+    .map((name) => `[[${VAULT_REL.knowledgeTopics}/PortfolioKPI/${name}]]`));
+});
 
 test('yamlValue: null/undefined → "null"', () => {
   assert.equal(yamlValue(null), 'null');

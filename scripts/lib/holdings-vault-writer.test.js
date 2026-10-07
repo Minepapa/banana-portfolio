@@ -152,8 +152,8 @@ test('Holdings frontmatter: 알려진 계좌를 운영 Topic에 연결하고 연
     account: '연금저축', assetClass: '해외주식', name: '테스트', avgPrice: 1, qty: 1, invest: 1,
   }).content);
   assert.deepEqual(pension.related, [
-    '[[30_Wiki/34_Topics/자산분배-트랙-운영]]',
-    '[[30_Wiki/34_Topics/연금저축-데이터보정]]',
+    '[[40_Projects/banana-portfolio/Features/자산분배]]',
+    '[[40_Projects/banana-portfolio/Features/연금저축 데이터]]',
   ]);
 
   const unknown = parseFrontmatter(buildLiveHoldingRecord({

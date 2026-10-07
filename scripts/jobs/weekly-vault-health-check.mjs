@@ -351,7 +351,8 @@ async function main() {
   const allFiles = readAllVaultFiles();
 
   const { broken, ambiguous } = findBrokenAndAmbiguousLinks(allFiles);
-  const orphaned = findOrphanedNotes(allFiles, [VAULT_REL.knowledgeTopics, VAULT_REL.knowledgeMeta, VAULT_REL.knowledgeInfra, VAULT_REL.knowledgeApi]);
+  const orphaned = findOrphanedNotes(allFiles, [VAULT_REL.knowledgeTopics, VAULT_REL.wikiObjects,
+    VAULT_REL.projectFeatures, VAULT_REL.knowledgeMeta]);
   const recentLegacy = findRecentLegacyFiles(allFiles);
 
   const profitRecords = allFiles
@@ -368,7 +369,8 @@ async function main() {
     allFiles.filter((f) => f.relPath.startsWith(`${VAULT_REL.logImplementation}/`) || f.relPath.startsWith(`${VAULT_REL.logDevRequests}/`) || f.relPath.startsWith(`${VAULT_REL.logSessions}/`)),
   );
   const staleAutoClaims = findStaleAutoClaims(
-    allFiles.filter((f) => f.relPath.startsWith(`${VAULT_REL.knowledgeMeta}/`) || f.relPath.startsWith(`${VAULT_REL.knowledgeInfra}/`) || f.relPath.startsWith(`${VAULT_REL.knowledgeApi}/`)),
+    allFiles.filter((f) => f.relPath.startsWith(`${VAULT_REL.knowledgeMeta}/`) || f.relPath.startsWith(`${VAULT_REL.knowledgeTopics}/`)
+      || f.relPath.startsWith(`${VAULT_REL.projectFeatures}/`) || f.relPath.startsWith(`${VAULT_REL.wikiObjects}/`)),
   );
 
   // C4·D — 2026-09-14 신설(구조적 재발방지 1단계). Log/DevRequests는 progress:

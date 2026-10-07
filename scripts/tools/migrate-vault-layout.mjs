@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // 볼트 2단계 이관을 계획하고, 명시적인 --apply에서만 git 작업 트리를 바꾼다.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, extname, join, normalize, relative, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LEGACY_TO_MOUSEION_RULES, mapLegacyPath, MOUSEION_TOP_FOLDERS } from '../lib/vault-layout.mjs';
 import { VAULT_PATHS, VAULT_ROOT } from '../lib/vault-paths.mjs';
@@ -109,6 +109,48 @@ export function planMigration(files, gitFirstCommitYear = () => null) {
   return { moves, deletes, byDestination, yearSources, gitFirstCommitFiles, unresolvedYears, unmapped, collisions };
 }
 
+export function planExplicitMap(paths, entries) {
+  if (!Array.isArray(entries)) throw new Error('--map은 JSON 배열이어야 합니다');
+  const available = new Set(paths);
+  const sources = new Set();
+  const moves = [];
+  const redirects = [];
+  for (const entry of entries) {
+    const { from, to, mode } = entry ?? {};
+    for (const path of [from, to]) {
+      if (typeof path !== 'string' || !path.endsWith('.md') || isAbsolute(path) || path.includes('\\')
+        || normalize(path) !== path || path.split('/').some((part) => !part || part === '..' || part === '.')) {
+        throw new Error(`--map 경로는 볼트 상대 .md 파일이어야 합니다: ${path}`);
+      }
+    }
+    if (from === to || sources.has(from) || !['move', 'redirect'].includes(mode)) {
+      throw new Error(`--map 항목이 중복되거나 잘못됐습니다: ${from}`);
+    }
+    sources.add(from);
+    if (mode === 'move') {
+      if (available.has(from)) moves.push({ from, to });
+      else if (!available.has(to)) throw new Error(`이동 원본이 없습니다: ${from}`);
+    } else {
+      if (available.has(from)) throw new Error(`redirect 원본이 아직 존재합니다: ${from}`);
+      redirects.push({ from, to });
+    }
+  }
+  const destinations = new Set([...available].filter((path) => !moves.some((move) => move.from === path)));
+  const collisions = [];
+  for (const { from, to } of moves) {
+    const existing = [...destinations].find((path) => path.toLocaleLowerCase('en-US') === to.toLocaleLowerCase('en-US'));
+    if (existing) collisions.push({ to, sources: [from, existing] });
+    destinations.add(to);
+  }
+  for (const { from, to } of redirects) {
+    if (!destinations.has(to)) throw new Error(`redirect 목적지가 없습니다: ${from} → ${to}`);
+  }
+  const byDestination = {};
+  for (const { to } of moves) byDestination[dirname(to)] = (byDestination[dirname(to)] ?? 0) + 1;
+  return { moves, redirects, deletes: [], byDestination, collisions, unresolvedYears: [], unmapped: [],
+    yearSources: { filename: 0, frontmatter: 0, gitFirstCommit: 0 }, gitFirstCommitFiles: [] };
+}
+
 function linkParts(inner) {
   const separator = inner.search(/[|#^]/);
   return separator < 0 ? [inner, ''] : [inner.slice(0, separator), inner.slice(separator)];
@@ -133,6 +175,56 @@ function inlineSegments(line) {
   return segments;
 }
 
+function visitWikiLinks(content, visit) {
+  let fence = null;
+  let visible = '';
+  let nonFence = '';
+  let output = '';
+  function flush() {
+    let cursor = 0;
+    let search = 0;
+    for (let start = visible.indexOf('[[', search); start >= 0; start = visible.indexOf('[[', search)) {
+      let targetEnd = start + 2;
+      while (targetEnd < visible.length && !/[|#^\]\r\n]/.test(visible[targetEnd])) targetEnd += 1;
+      const target = visible.slice(start + 2, targetEnd);
+      let close = -1;
+      if (target && visible.startsWith(']]', targetEnd)) close = targetEnd;
+      else if (target && /[|#^]/.test(visible[targetEnd] ?? '')) {
+        const candidate = visible.indexOf(']]', targetEnd);
+        const suffix = candidate < 0 ? '' : visible.slice(targetEnd, candidate);
+        if (candidate >= 0 && !suffix.includes('[[') && !/\r?\n[ \t]*\r?\n/.test(suffix)
+          && (!/\r?\n/.test(suffix) || suffix.includes('|'))) close = candidate;
+      }
+      if (close < 0) { search = start + 2; continue; }
+      const open = start > 0 && visible[start - 1] === '!' ? start - 1 : start;
+      const full = visible.slice(open, close + 2);
+      output += visible.slice(cursor, open) + visit(full, visible.slice(start + 2, close));
+      cursor = close + 2;
+      search = cursor;
+    }
+    output += visible.slice(cursor);
+    visible = '';
+  }
+  function flushText() {
+    for (const segment of inlineSegments(nonFence)) {
+      if (segment.code) { flush(); output += segment.text; }
+      else visible += segment.text;
+    }
+    nonFence = '';
+  }
+  for (const line of content.split(/(?<=\n)/)) {
+    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker && (!fence || (marker[0] === fence[0] && marker.length >= fence.length))) {
+      flushText(); flush(); fence = fence ? null : marker; output += line; continue;
+    }
+    if (fence) { output += line; continue; }
+    nonFence += line;
+  }
+  flushText();
+  flush();
+  return output;
+}
+
 export function rewriteLinks(content, moves, deletes = [], paths = moves.map(({ from }) => from), sourcePath = '') {
   const moved = new Map(moves.map(({ from, to }) => [from, to]));
   const deleted = new Set(deletes);
@@ -149,23 +241,14 @@ export function rewriteLinks(content, moves, deletes = [], paths = moves.map(({ 
     if (deleted.has(path)) continue;
     const destination = moved.get(path) ?? path;
     const nextName = basename(destination, '.md');
-    destinationByBasename.set(nextName, [...(destinationByBasename.get(nextName) ?? []), destination]);
+    destinationByBasename.set(nextName, [...new Set([...(destinationByBasename.get(nextName) ?? []), destination])]);
   }
   const renames = new Map(moves.filter(({ from, to }) => from.endsWith('.md') &&
     basename(from, '.md') !== basename(to, '.md'))
     .map(({ from, to }) => [basename(from, '.md'), { from, to }]));
-  let fence = null;
-  const rewritten = content.split(/(\r?\n)/).map((line) => {
-    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
-    if (marker && (!fence || (marker[0] === fence[0] && marker.length >= fence.length))) {
-      fence = fence ? null : marker;
-      return line;
-    }
-    if (fence || /^\r?\n$/.test(line)) return line;
-    // 인라인 코드 조각을 그대로 통과시킨 뒤 나머지 부분의 위키링크만 찾는다.
-    return inlineSegments(line).map(({ text: part, code }) => {
-      if (code) return part;
-      return part.replace(/(!?\[\[)([^\]\r\n]+)(\]\])/g, (full, open, inner, close) => {
+  const rewritten = visitWikiLinks(content, (full, inner) => {
+        const open = full.startsWith('!') ? '![[' : '[[';
+        const close = ']]';
         const [rawTarget, suffix] = linkParts(inner);
         const target = rawTarget.replace(/\\+$/, '');
         const separator = rawTarget.slice(target.length) + suffix;
@@ -207,9 +290,7 @@ export function rewriteLinks(content, moves, deletes = [], paths = moves.map(({ 
         if (isRelative && relativeNext === target) return full;
         changedLinks += 1;
         return `${open}${relativeNext}${separator}${close}`;
-      });
-    }).join('');
-  }).join('');
+  });
   return { content: rewritten, changedLinks, basenameLinks, basenameChangedLinks,
     deferredBasenameLinks, deletedLinks };
 }
@@ -219,36 +300,25 @@ export function brokenFullPathLinks(content, existingPaths, sourcePath = '') {
   const existingBasenames = new Set(existingPaths.filter((path) => path.endsWith('.md'))
     .map((path) => basename(path, '.md')));
   const missing = new Set();
-  const visible = rewriteLinks(content, [], []);
-  // 같은 코드 제외 규칙을 쓰기 위해 대상 추출을 치환 함수에 추가하지 않고 구간을 순회한다.
-  let fence = null;
-  for (const line of visible.content.split(/\r?\n/)) {
-    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
-    if (marker && (!fence || (marker[0] === fence[0] && marker.length >= fence.length))) {
-      fence = fence ? null : marker;
-      continue;
-    }
-    if (fence) continue;
-    for (const { text: part, code } of inlineSegments(line)) {
-      if (code) continue;
-      for (const match of part.matchAll(/!?\[\[([^\]\r\n]+)\]\]/g)) {
-        const [rawTarget] = linkParts(match[1]);
+  const legacyRoots = new Set(LEGACY_TO_MOUSEION_RULES.map((rule) => rule.from.split('/')[0]));
+  visitWikiLinks(content, (_full, inner) => {
+        const [rawTarget] = linkParts(inner);
         const target = rawTarget.replace(/\\+$/, '');
-        if (!target) continue;
+        if (!target) return _full;
+        if (legacyRoots.has(target.split('/')[0])) { missing.add(target); return _full; }
         if (!target.includes('/')) {
           const name = target.endsWith('.md') ? target.slice(0, -3) : target;
           if (!existingBasenames.has(name)) missing.add(target);
-          continue;
+          return _full;
         }
         const resolved = target.startsWith('../') || target.startsWith('./')
           ? normalize(join(dirname(sourcePath), target)).split('\\').join('/') : target;
-        if (existing.has(resolved) || existing.has(`${resolved}.md`)) continue;
+        if (existing.has(resolved) || existing.has(`${resolved}.md`)) return _full;
         if (!target.startsWith('../') && !target.startsWith('./')
-          && [...existing].some((path) => path.endsWith(`/${target}`) || path.endsWith(`/${target}.md`))) continue;
+          && [...existing].some((path) => path.endsWith(`/${target}`) || path.endsWith(`/${target}.md`))) return _full;
         missing.add(target);
-      }
-    }
-  }
+        return _full;
+  });
   return [...missing];
 }
 
@@ -294,17 +364,132 @@ function cleanLegacyFolders(root) {
   return listVaultFiles(root).filter((path) => legacyRoots.includes(path.split('/')[0]));
 }
 
-export function migrateVault(vault, { apply = false, reportPath, afterMove } = {}) {
+function planLegacyLinkFix(files, paths) {
+  const legacyRoots = new Set(LEGACY_TO_MOUSEION_RULES.map((rule) => rule.from.split('/')[0]));
+  const mappings = new Map();
+  const unresolvedLegacyLinks = [];
+  for (const file of files.filter(({ path }) => path.endsWith('.md'))) {
+    visitWikiLinks(file.content, (_full, inner) => {
+      const [rawTarget] = linkParts(inner);
+      const target = rawTarget.replace(/\\+$/, '');
+      if (!legacyRoots.has(target.split('/')[0])) return _full;
+      const from = target.endsWith('.md') ? target : `${target}.md`;
+      const mapping = mapLegacyPath(from);
+      let candidates = [];
+      if (mapping?.to && mapping.yearFolder) {
+        const exactFile = from === mapping.rule.from && extname(mapping.rule.from);
+        const base = exactFile ? dirname(mapping.to) : mapping.rule.to;
+        const suffix = exactFile ? `/${basename(mapping.to)}` : mapping.to.slice(base.length);
+        candidates = paths.filter((path) => {
+          const prefix = `${base}/`;
+          if (!path.startsWith(prefix)) return false;
+          const year = path.slice(prefix.length, prefix.length + 4);
+          return /^\d{4}$/.test(year) && path === `${prefix}${year}${suffix}`;
+        });
+      } else if (mapping?.to && paths.includes(mapping.to)) candidates = [mapping.to];
+      if (candidates.length === 1) mappings.set(from, candidates[0]);
+      else unresolvedLegacyLinks.push({ file: file.path, target, candidates });
+      return _full;
+    });
+  }
+  return { mappings: [...mappings].map(([from, to]) => ({ from, to })), unresolvedLegacyLinks };
+}
+
+function expectedLegacyFixedContent(root, path, paths) {
+  const original = git(root, 'show', `HEAD:${path}`);
+  const { mappings } = planLegacyLinkFix([{ path, content: original }], paths);
+  return rewriteLinks(original, mappings, [], [...paths, ...mappings.map(({ from }) => from)], path).content;
+}
+
+function allowedMapChanges(root, redirects, paths) {
+  const deleted = new Set(redirects.map(({ from }) => from));
+  const modified = new Set(redirects.map(({ to }) => to));
+  const preserved = new Map();
+  const status = git(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all').split('\0').filter(Boolean);
+  for (let index = 0; index < status.length; index += 1) {
+    const entry = status[index];
+    const code = entry.slice(0, 2);
+    const path = entry.slice(3);
+    if (code.includes('R') || code.includes('C')) index += 1;
+    if (code === ' D' && deleted.has(path)) {
+      preserved.set(path, null);
+    } else if (code === ' M' && modified.has(path)) {
+      preserved.set(path, readFileSync(join(root, path)));
+    } else if (code === ' M' && path.endsWith('.md')
+      && readFileSync(join(root, path), 'utf8') === expectedLegacyFixedContent(root, path, paths)) {
+      preserved.set(path, readFileSync(join(root, path)));
+    } else {
+      throw new Error(`볼트 git 작업 트리가 깨끗하지 않습니다: ${path}`);
+    }
+  }
+  return preserved;
+}
+
+function verifyCompletedMapChanges(root, mapEntries) {
+  const moves = new Map(mapEntries.filter(({ mode }) => mode === 'move').map(({ from, to }) => [from, to]));
+  const movedFromByTo = new Map([...moves].map(([from, to]) => [to, from]));
+  const redirectFrom = new Set(mapEntries.filter(({ mode }) => mode === 'redirect').map(({ from }) => from));
+  const redirectTo = new Set(mapEntries.filter(({ mode }) => mode === 'redirect').map(({ to }) => to));
+  const headPaths = git(root, 'ls-tree', '-r', '--name-only', '-z', 'HEAD').split('\0').filter(Boolean);
+  const rewrites = mapEntries.map(({ from, to }) => ({ from, to }));
+  const linkSourcePaths = [...new Set([...headPaths, ...redirectFrom])];
+  const status = git(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all').split('\0').filter(Boolean);
+  for (let index = 0; index < status.length; index += 1) {
+    const entry = status[index];
+    const code = entry.slice(0, 2);
+    const path = entry.slice(3);
+    const renamedFrom = code.includes('R') || code.includes('C') ? status[++index] : null;
+    const original = movedFromByTo.get(path) ?? path;
+    const validMove = movedFromByTo.has(path);
+    const validDeletion = moves.has(path) || redirectFrom.has(path);
+    const validRename = validMove && renamedFrom === original && code[0] === 'R';
+    const validAddition = validMove && code === 'A ';
+    const validModification = (code === ' M' || code === 'RM') && path.endsWith('.md');
+    if (code === ' D' && validDeletion) continue;
+    if (code === ' M' && redirectTo.has(path)) continue;
+    if (!validRename && !validAddition && !validModification) {
+      throw new Error(`볼트 git 작업 트리가 깨끗하지 않습니다: ${path}`);
+    }
+    if (!headPaths.includes(original)) throw new Error(`HEAD에 없는 이관 변경: ${path}`);
+    const prior = expectedLegacyFixedContent(root, original, headPaths);
+    const expected = rewriteLinks(prior, rewrites, [], linkSourcePaths, original).content;
+    if (readFileSync(join(root, path), 'utf8') !== expected) {
+      throw new Error(`예상한 이관 내용과 다릅니다: ${path}`);
+    }
+  }
+  // 원본만 수동 삭제하고 우연히 있던 목적지를 완료로 오인하지 않도록 이동마다 대조한다.
+  // 이미 이관을 커밋했다면 HEAD에 원본이 없으므로 이 검사는 건너뛴다.
+  for (const [from, to] of moves) {
+    if (!headPaths.includes(from)) continue;
+    const prior = expectedLegacyFixedContent(root, from, headPaths);
+    const expected = rewriteLinks(prior, rewrites, [], linkSourcePaths, from).content;
+    if (!existsSync(join(root, to)) || readFileSync(join(root, to), 'utf8') !== expected) {
+      throw new Error(`이동 목적지가 원본과 다릅니다: ${from} → ${to}`);
+    }
+  }
+}
+
+export function migrateVault(vault, { apply = false, reportPath, afterMove, mapPath, fixLegacyLinks = false } = {}) {
   const root = resolve(vault);
+  if (fixLegacyLinks && mapPath) throw new Error('--fix-legacy-links와 --map은 함께 쓸 수 없습니다');
   if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`볼트 디렉토리가 없습니다: ${root}`);
   const paths = listVaultFiles(root);
   const files = paths.map((path) => ({ path, content: path.endsWith('.md') ? readFileSync(join(root, path), 'utf8') : '' }));
-  const plan = planMigration(files, (path) => gitFirstCommitYear(root, path));
+  const mapEntries = mapPath ? JSON.parse(readFileSync(resolve(mapPath), 'utf8')) : null;
+  const plan = mapPath
+    ? planExplicitMap(paths, mapEntries)
+    : fixLegacyLinks ? { moves: [], deletes: [], byDestination: {}, yearSources: {}, gitFirstCommitFiles: [],
+      unresolvedYears: [], unmapped: [], collisions: [] }
+      : planMigration(files, (path) => gitFirstCommitYear(root, path));
+  const legacyFix = fixLegacyLinks ? planLegacyLinkFix(files, paths) : { mappings: [], unresolvedLegacyLinks: [] };
+  const rewritesFor = [...plan.moves, ...(plan.redirects ?? []), ...legacyFix.mappings];
+  const linkSourcePaths = [...paths, ...(plan.redirects ?? []).map(({ from }) => from),
+    ...legacyFix.mappings.map(({ from }) => from)];
   const rewrites = files.filter(({ path }) => path.endsWith('.md') && !plan.deletes.includes(path))
-    .map((file) => ({ from: file.path, ...rewriteLinks(file.content, plan.moves, plan.deletes, paths, file.path) }));
+    .map((file) => ({ from: file.path, ...rewriteLinks(file.content, rewritesFor, plan.deletes, linkSourcePaths, file.path) }));
   const linkFiles = rewrites.filter((entry) => entry.changedLinks > 0).length;
   const linkCount = rewrites.reduce((count, entry) => count + entry.changedLinks, 0);
-  const moved = new Map(plan.moves.map(({ from, to }) => [from, to]));
+  const moved = new Map([...plan.moves, ...(plan.redirects ?? [])].map(({ from, to }) => [from, to]));
   const remainingPlanned = paths.filter((path) => !plan.deletes.includes(path))
     .map((path) => moved.get(path) ?? path);
   const plannedBrokenLinks = rewrites.flatMap((entry) => {
@@ -312,10 +497,13 @@ export function migrateVault(vault, { apply = false, reportPath, afterMove } = {
     return brokenFullPathLinks(entry.content, remainingPlanned, destination)
       .map((target) => ({ file: destination, target }));
   });
+  const unresolvedKeys = new Set(legacyFix.unresolvedLegacyLinks
+    .map(({ file, target }) => `${file}\0${target}`));
+  const unexpectedBroken = (links) => links.filter(({ file, target }) => !unresolvedKeys.has(`${file}\0${target}`));
   const safetyPaths = [VAULT_PATHS.state.killSwitch, VAULT_PATHS.state.executionMode,
     VAULT_PATHS.state.proposalMode].map((absolute) => relative(VAULT_ROOT, absolute).split('\\').join('/'));
   const safetyFiles = safetyPaths.flatMap((to) => paths
-    .filter((from) => from === to || mapLegacyPath(from)?.to === to)
+    .filter((from) => from === to || (!mapPath && mapLegacyPath(from)?.to === to))
     .map((from) => ({ from, to, tracked: null, byteIdentical: null })));
   const safetyContents = new Map(safetyFiles.map(({ from }) => [from, readFileSync(join(root, from))]));
   const result = {
@@ -328,18 +516,23 @@ export function migrateVault(vault, { apply = false, reportPath, afterMove } = {
     basenameChangedLinks: rewrites.reduce((count, entry) => count + entry.basenameChangedLinks, 0),
     deferredBasenameLinks: rewrites.flatMap((entry) => entry.deferredBasenameLinks),
     deletedLinks: rewrites.flatMap((entry) => entry.deletedLinks.map((target) => ({ file: entry.from, target }))),
-    moves: plan.moves, deletes: plan.deletes,
-    plannedBrokenLinks, safetyFiles,
+    moves: plan.moves, redirects: plan.redirects ?? [], deletes: plan.deletes,
+    plannedBrokenLinks, unresolvedLegacyLinks: legacyFix.unresolvedLegacyLinks, safetyFiles,
   };
   if (!apply) return result;
   if (realpathSync(git(root, 'rev-parse', '--show-toplevel').trim()) !== realpathSync(root)) {
     throw new Error(`--vault는 git 작업 트리 루트여야 합니다: ${root}`);
   }
-  if (plan.unmapped.length || plan.collisions.length || plan.unresolvedYears.length || plannedBrokenLinks.length) {
+  if (plan.unmapped.length || plan.collisions.length || plan.unresolvedYears.length
+    || unexpectedBroken(plannedBrokenLinks).length) {
     throw new Error(`이관 사전 검사 실패: 매핑 없음 ${plan.unmapped.length}, 충돌 ${plan.collisions.length}, 연도 미결정 ${plan.unresolvedYears.length}, 적용 후 깨진 링크 ${plannedBrokenLinks.length}`);
+  }
+  if (fixLegacyLinks && git(root, 'status', '--porcelain').trim()) {
+    throw new Error('볼트 git 작업 트리가 깨끗하지 않습니다');
   }
   // 작업이 끝난 볼트는 첫 실행의 미커밋 이동이 남아 있어도 재실행이 무작업이어야 한다.
   if (!plan.moves.length && !plan.deletes.length && !linkCount) {
+    if (mapPath) verifyCompletedMapChanges(root, mapEntries);
     const tracked = new Set(git(root, 'ls-files', '-z').split('\0').filter(Boolean));
     for (const file of safetyFiles) {
       file.tracked = tracked.has(file.from);
@@ -349,12 +542,15 @@ export function migrateVault(vault, { apply = false, reportPath, afterMove } = {
     if (safetyFiles.some((file) => !file.tracked || !file.byteIdentical)) {
       throw new Error('안전 상태 파일 대조 실패');
     }
-    const remainingLegacyFiles = cleanLegacyFolders(root);
-    const completed = { ...result, brokenLinks: collectBrokenLinks(root, paths), remainingLegacyFiles };
+    const remainingLegacyFiles = mapPath || fixLegacyLinks ? [] : cleanLegacyFolders(root);
+    const brokenLinks = collectBrokenLinks(root, paths);
+    if (unexpectedBroken(brokenLinks).length) throw new Error(`적용 후 깨진 링크 ${brokenLinks.length}`);
+    const completed = { ...result, brokenLinks, remainingLegacyFiles };
     if (reportPath) writeFileSync(resolve(reportPath), `${JSON.stringify(completed, null, 2)}\n`);
     return completed;
   }
-  if (git(root, 'status', '--porcelain').trim()) throw new Error('볼트 git 작업 트리가 깨끗하지 않습니다');
+  const preserved = mapPath ? allowedMapChanges(root, plan.redirects, paths) : new Map();
+  if (!mapPath && git(root, 'status', '--porcelain').trim()) throw new Error('볼트 git 작업 트리가 깨끗하지 않습니다');
   const tracked = new Set(git(root, 'ls-files', '-z').split('\0').filter(Boolean));
   const untrackedSources = [...plan.moves.map((move) => move.from), ...plan.deletes,
     ...safetyFiles.map((file) => file.from)]
@@ -388,7 +584,7 @@ export function migrateVault(vault, { apply = false, reportPath, afterMove } = {
       const destination = moved.get(rewrite.from) ?? rewrite.from;
       writeFileSync(join(root, destination), rewrite.content);
     }
-    const remainingLegacyFiles = cleanLegacyFolders(root);
+    const remainingLegacyFiles = mapPath || fixLegacyLinks ? [] : cleanLegacyFolders(root);
     for (const file of safetyFiles) {
       file.byteIdentical = existsSync(join(root, file.to))
         && safetyContents.get(file.from).equals(readFileSync(join(root, file.to)));
@@ -397,6 +593,7 @@ export function migrateVault(vault, { apply = false, reportPath, afterMove } = {
     if (safetyFiles.some((file) => !file.byteIdentical)) throw new Error('안전 상태 파일 대조 실패');
     const remaining = listVaultFiles(root);
     const brokenLinks = collectBrokenLinks(root, remaining);
+    if (unexpectedBroken(brokenLinks).length) throw new Error(`적용 후 깨진 링크 ${brokenLinks.length}`);
     const applied = { ...result, brokenLinks, remainingLegacyFiles };
     if (reportPath) writeFileSync(resolve(reportPath), `${JSON.stringify(applied, null, 2)}\n`);
     return applied;
@@ -404,7 +601,19 @@ export function migrateVault(vault, { apply = false, reportPath, afterMove } = {
     let recovery = 'success';
     try {
       git(root, 'reset', '-q', '--hard', startHead);
-      git(root, 'clean', '-fdq', '--', ...MOUSEION_TOP_FOLDERS);
+      if (mapPath || fixLegacyLinks) {
+        for (const [path, content] of preserved) {
+          if (content === null) rmSync(join(root, path), { force: true });
+          else writeFileSync(join(root, path), content);
+        }
+        for (const { to } of plan.moves) {
+          let folder = dirname(to);
+          while (folder !== '.' && existsSync(join(root, folder)) && readdirSync(join(root, folder)).length === 0) {
+            rmdirSync(join(root, folder));
+            folder = dirname(folder);
+          }
+        }
+      } else git(root, 'clean', '-fdq', '--', ...MOUSEION_TOP_FOLDERS);
     } catch (recoveryError) { recovery = `failed: ${recoveryError.message}`; }
     const failed = { ...result, recovery, error: error.message };
     if (reportPath) writeFileSync(resolve(reportPath), `${JSON.stringify(failed, null, 2)}\n`);
@@ -419,6 +628,8 @@ function parseArgs(args) {
     if (arg === '--apply') options.apply = true;
     else if (arg === '--vault' && args[index + 1]) options.vault = args[++index];
     else if (arg === '--report' && args[index + 1]) options.reportPath = args[++index];
+    else if (arg === '--map' && args[index + 1]) options.mapPath = args[++index];
+    else if (arg === '--fix-legacy-links') options.fixLegacyLinks = true;
     else throw new Error(`알 수 없거나 값이 없는 인자: ${arg}`);
   }
   if (!options.vault) throw new Error('--vault 경로가 필요합니다');

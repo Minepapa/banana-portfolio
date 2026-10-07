@@ -16,6 +16,8 @@ function collectStringValues(value) {
 }
 
 const relativePaths = Object.values(VAULT_REL);
+// 3-0 재분류 경로는 legacy 2단계 매핑 목적지가 아니며 --map에서만 사용한다.
+const mapOnlyPaths = new Set([VAULT_REL.projectFeatures, VAULT_REL.wikiObjects]);
 const absolutePaths = collectStringValues(
   Object.fromEntries(Object.entries(VAULT_PATHS).filter(([key]) => key !== 'root')),
 );
@@ -54,7 +56,8 @@ test('파일 예외와 삭제 대상을 적용한 경로에는 목적지 충돌�
 
 test('매핑 결과와 규칙의 대상 폴더는 새 볼트 이름 규칙을 따른다', () => {
   const pathsToCheck = [
-    ...currentVaultPaths.map((relPath) => ({ from: relPath, to: relPath })),
+  ...currentVaultPaths.filter((relPath) => !mapOnlyPaths.has(relPath))
+    .map((relPath) => ({ from: relPath, to: relPath })),
     ...LEGACY_TO_MOUSEION_RULES.filter((rule) => rule.action !== 'delete')
       .map(({ from, to }) => ({ from, to })),
   ];

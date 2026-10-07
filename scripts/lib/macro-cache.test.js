@@ -29,10 +29,10 @@ test('macro 상태 레코드 frontmatter: 캐시와 Faber 상태가 거시 Topic
     now: new Date('2026-09-06T08:03:00+09:00'),
     fetchFn: async () => ({ KOSPI: { value: 1, change5d: 0 } }), filepath,
   });
-  assert.match(readFileSync(filepath, 'utf8'), /related: \["\[\[30_Wiki\/34_Topics\/거시지표-리스크-모니터링\]\]"\]/);
+  assert.match(readFileSync(filepath, 'utf8'), /related: \["\[\[40_Projects\/banana-portfolio\/Features\/거시 모니터링\]\]"\]/);
 
   const faber = parseFrontmatter(buildFrontmatter({ type: 'macro-overlay-faber-state' }));
-  assert.deepEqual(faber.related, ['[[30_Wiki/34_Topics/거시지표-리스크-모니터링]]']);
+  assert.deepEqual(faber.related, ['[[40_Projects/banana-portfolio/Features/거시 모니터링]]']);
 });
 
 test('parseMacroCache: macroJson이 깨진 JSON이면 null(추정 안 함)', () => {
