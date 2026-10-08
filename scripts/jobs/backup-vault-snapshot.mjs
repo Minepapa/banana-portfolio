@@ -12,9 +12,31 @@
  * 사용법: node scripts/jobs/backup-vault-snapshot.mjs
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { buildVaultIndex } from '../lib/vault-index-builder.mjs';
+
+// 루트 파일 사본(이관 4-7): ~/Pantheon의 CLAUDE.md·.claude/settings.json은 어떤 git에도 속하지 않는다.
+// 볼트 안으로 복사해 볼트 git 이력과 암호화 외부 백업에 함께 태운다. 확장자를 .txt로 바꿔
+// 볼트 안에 CLAUDE.md라는 이름이 생기지 않게 한다(그 폴더를 다루는 세션이 지침으로 읽는 것 방지).
+export const ROOT_FILES = [['CLAUDE.md', 'CLAUDE.md.txt'], [join('.claude', 'settings.json'), 'claude-settings.json.txt']];
+
+export function copyRootFiles(rootDir, destDir) {
+  const copied = [];
+  for (const [src, dest] of ROOT_FILES) {
+    const from = join(rootDir, src);
+    if (!existsSync(from)) continue;
+    const content = readFileSync(from, 'utf8');
+    const to = join(destDir, dest);
+    if (existsSync(to) && readFileSync(to, 'utf8') === content) continue;
+    mkdirSync(destDir, { recursive: true });
+    writeFileSync(to, content);
+    copied.push(dest);
+  }
+  return copied;
+}
 
 function git(args) {
   return execFileSync('git', args, { cwd: VAULT_PATHS.root, encoding: 'utf8' });
@@ -28,6 +50,13 @@ function main() {
   if (!existsSync(`${VAULT_PATHS.root}/.git`)) {
     console.error(`❌ ${VAULT_PATHS.root}가 아직 git 리포지토리가 아닙니다 — 먼저 초기화 필요(1회성, "git init" 참고)`);
     process.exit(1);
+  }
+
+  try {
+    const copied = copyRootFiles(dirname(VAULT_PATHS.root), vaultAbs(VAULT_REL.rootFilesBackup));
+    if (copied.length) console.log(`📄 루트 파일 사본 갱신: ${copied.join(', ')}`);
+  } catch (e) {
+    console.error(`⚠️ 루트 파일 사본 실패(백업은 계속): ${e.message}`);
   }
 
   // 색인 자동 생성(이관 3-5) — 커밋 직전에 갱신해 같은 스냅샷에 담는다. 색인 실패가 백업을 막으면
@@ -51,4 +80,4 @@ function main() {
   console.log(`✅ 스냅샷 커밋 완료 — snapshot ${dateStr} (변경 ${changedLines}건)`);
 }
 
-main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();
