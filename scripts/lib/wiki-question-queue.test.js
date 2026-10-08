@@ -218,3 +218,24 @@ test('만료된 승인 질문은 반영되지 않고 manual-change 완료도 거
     rmSync(vaultRoot, { recursive: true, force: true });
   }
 });
+
+// 이관 4-5: 질문 큐 일반화 — 어느 담당이든 자기 이름으로 묻고, 키워드 등록은 클리오만.
+test('질문은 asker 담당 이름으로 나가고, 미등록 담당·클리오 외 키워드 등록은 거부한다', async () => {
+  const sent = [];
+  const sender = async (message) => { sent.push(message); return { result: { message_id: 900 + sent.length } }; };
+  const manual = (extra = {}) => ({ kind: 'manual-change', question: `분기 리밸런싱 밴드를 바꿀까요? ${Math.random()}`, ...extra });
+  const plutus = await createWikiQuestion(manual({ asker: 'plutus', urgent: false }), { sender });
+  assert.equal(plutus.sent, true);
+  assert.equal(sent.at(-1).agent, 'plutus');
+  assert.match(renderAgentMessage(sent.at(-1)), new RegExp(`^\\[플루토스 Plutus\\] 질문 ${plutus.questionId}`));
+  const note = readFileSync(join(vaultRoot, '95_Etna', 'Questions', `${plutus.questionId}.md`), 'utf8');
+  assert.match(note, /asker: "plutus"/);
+  assert.match(note, /urgent: false/);
+  await createWikiQuestion(manual(), { sender });
+  assert.equal(sent.at(-1).agent, 'clio');
+  await assert.rejects(createWikiQuestion(manual({ asker: 'apollo' }), { sender }), /등록된 담당/);
+  putVaultNote('90_Delphi/evidence');
+  putVaultNote('30_Wiki/34_Topics/예시-키워드');
+  await assert.rejects(createWikiQuestion({ ...keywordInput(), asker: 'plutus' }, { sender }), /클리오만/);
+  await assert.rejects(createWikiQuestion(manual({ urgent: 'yes' }), { sender }), /urgent/);
+});

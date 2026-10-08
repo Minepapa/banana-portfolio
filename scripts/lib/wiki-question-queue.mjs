@@ -7,7 +7,7 @@ import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 import { patchFrontmatterFileSafely, withLock, writeAtomic } from './state-writer.mjs';
 import { escapeHtml } from './telegram.mjs';
 import { stripEmDash } from './telegram-messages.mjs';
-import { sendAgentMessage } from './pantheon-send.mjs';
+import { AGENT_HEADERS, sendAgentMessage } from './pantheon-send.mjs';
 
 const QUEUE_DIR = vaultAbs(VAULT_REL.stateWikiQuestions);
 const QUEUE_LOCK = join(QUEUE_DIR, '.queue');
@@ -115,7 +115,15 @@ function validateInput(input) {
   } else if (changePlan !== null) {
     throw new Error('manual-change의 changePlan 자동 반영은 지원되지 않습니다. 승인 뒤 담당 세션이 변경하고 complete로 마감하세요.');
   }
-  return { ...input, question, evidenceNotes, changePlan };
+  // 질문 큐 일반화(이관 4-5, D68): 어느 담당이든 자기 이름으로 오너에게 묻는다. 기본은 클리오.
+  // 키워드 등록은 위키 변경이라 클리오만 할 수 있다(공통 헌장: Wiki는 클리오만 쓴다).
+  const asker = input.asker === undefined ? 'clio' : String(input.asker);
+  if (!Object.hasOwn(AGENT_HEADERS, asker)) throw new Error(`asker는 등록된 담당이어야 합니다: ${asker}`);
+  if (input.kind === 'keyword-registration' && asker !== 'clio') throw new Error('keyword-registration은 클리오만 질문할 수 있습니다.');
+  // urgent는 지금은 기록만 한다. 비긴급 질문을 하루 두 번 모아 보내는 정기 잡은 후속 개발 요청(지금은 모두 즉시 발송).
+  if (input.urgent !== undefined && typeof input.urgent !== 'boolean') throw new Error('urgent는 true/false여야 합니다.');
+  const urgent = input.urgent ?? true;
+  return { ...input, question, evidenceNotes, changePlan, asker, urgent };
 }
 function questionMessage(fields, questionText = '') {
   const id = fields.questionId;
@@ -133,7 +141,8 @@ function questionMessage(fields, questionText = '') {
   }
   const choices = `\n\n답변 방법: 아래 중 한 줄로 답해주세요.\n<code>${id} 등록</code>\n<code>${id} 보류</code>\n<code>${id} 제외</code>`;
   const body = `<b>질문 ID: ${id}</b>\n\n${stripEmDash(escapeHtml(questionText))}${evidence}${plan}${choices}`;
-  return { agent: 'clio', kind: '정보', topic: '확인요청', body };
+  const asker = fields.asker ?? 'clio';
+  return { agent: asker, kind: '정보', topic: asker === 'clio' ? '확인요청' : `질문 ${id}`, body };
 }
 function normalizeAnswer(text) {
   const normalized = String(text ?? '').trim().replace(/[.!。！?？]+$/u, '').trim();
@@ -162,7 +171,7 @@ export async function createWikiQuestion(rawInput, { sender = sendAgentMessage }
       type: 'wiki-question', questionId, kind: input.kind, status: '발송중',
       createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + QUESTION_TTL_MS).toISOString(),
       updatedAt: now.toISOString(), dedupeKey,
-      evidenceNotes: input.evidenceNotes,
+      evidenceNotes: input.evidenceNotes, asker: input.asker, urgent: input.urgent,
       changePlan: input.changePlan ? JSON.stringify(input.changePlan) : null,
     };
     const path = recordPath(questionId);
