@@ -5,7 +5,8 @@ import { VAULT_REL } from './vault-paths.mjs';
 export const STATUS_RULES = [
   { path: VAULT_REL.logImplementation, allowed: ['예정', '진행중', '차단됨', '완료', '보류', '폐기'] },
   { path: VAULT_REL.logDevRequests, allowed: ['예정', '진행중', '차단됨', '완료', '보류', '폐기'] },
-  { path: VAULT_REL.knowledge, allowed: ['활성', '비활성', '진행중', '탐색지도', '대체됨'] },
+  // 초안·정본·폐기: 경로 등록부의 Wiki 상태값(이관 3-4, 2026-10-08). 앞의 값들은 옛 Knowledge 노트용으로 남긴다.
+  { path: VAULT_REL.knowledge, allowed: ['활성', '비활성', '진행중', '탐색지도', '대체됨', '초안', '정본', '폐기'] },
   { path: VAULT_REL.knowledgeMeta, allowed: ['활성', '비활성', '진행중', '탐색지도', '대체됨'] },
   { path: VAULT_REL.decisionsProposals, allowed: [
     '발송중', '발송오류', '대기', '승인', '거부', '대체됨', '만료',
