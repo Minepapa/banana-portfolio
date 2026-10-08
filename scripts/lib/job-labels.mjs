@@ -12,6 +12,7 @@ const displayVaultRoot = VAULT_ROOT.startsWith(`${homedir()}/`)
   ? `~${VAULT_ROOT.slice(homedir().length)}` : VAULT_ROOT;
 export const JOB_LABELS = {
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
+  'question-digest': '비긴급 질문 하루 두 번(09:00·19:00) 담당별 묶음 발송',
   'health-watcher': '무인 잡 장애·텔레그램 세션 감시(이 알림을 보내는 잡 자신)',
   'execute-quant': '퀀트 트랙 승인된 제안 KIS 실주문 집행',
   'execute-asset-allocation': '자산분배 트랙(위탁·금현물) 승인된 제안 NH PLUG 실주문 집행(연금저축은 리마인더 전용 유지, 2026-09-05 신설)',

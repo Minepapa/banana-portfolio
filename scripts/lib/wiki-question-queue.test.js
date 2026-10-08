@@ -19,6 +19,8 @@ const {
   reconcileWikiQuestion,
   resolveWikiQuestion,
   resendWikiQuestion,
+  sendQuestionDigest,
+  planQuestionDigest,
 } = await import('./wiki-question-queue.mjs');
 
 function putVaultNote(relativePath, content = '---\ntype: "knowledge"\naliases: []\nrelated: []\n---\n\n# Note\n') {
@@ -224,13 +226,13 @@ test('질문은 asker 담당 이름으로 나가고, 미등록 담당·클리오
   const sent = [];
   const sender = async (message) => { sent.push(message); return { result: { message_id: 900 + sent.length } }; };
   const manual = (extra = {}) => ({ kind: 'manual-change', question: `분기 리밸런싱 밴드를 바꿀까요? ${Math.random()}`, ...extra });
-  const plutus = await createWikiQuestion(manual({ asker: 'plutus', urgent: false }), { sender });
+  const plutus = await createWikiQuestion(manual({ asker: 'plutus', urgent: true }), { sender }); // urgent:false는 묶음 발송(아래 테스트)
   assert.equal(plutus.sent, true);
   assert.equal(sent.at(-1).agent, 'plutus');
   assert.match(renderAgentMessage(sent.at(-1)), new RegExp(`^\\[플루토스 Plutus\\] 질문 ${plutus.questionId}`));
   const note = readFileSync(join(vaultRoot, '95_Etna', 'Questions', `${plutus.questionId}.md`), 'utf8');
   assert.match(note, /asker: "plutus"/);
-  assert.match(note, /urgent: false/);
+  assert.match(note, /urgent: true/);
   await createWikiQuestion(manual(), { sender });
   assert.equal(sent.at(-1).agent, 'clio');
   await assert.rejects(createWikiQuestion(manual({ asker: 'apollo' }), { sender }), /등록된 담당/);
@@ -238,4 +240,77 @@ test('질문은 asker 담당 이름으로 나가고, 미등록 담당·클리오
   putVaultNote('30_Wiki/34_Topics/예시-키워드');
   await assert.rejects(createWikiQuestion({ ...keywordInput(), asker: 'plutus' }, { sender }), /클리오만/);
   await assert.rejects(createWikiQuestion(manual({ urgent: 'yes' }), { sender }), /urgent/);
+});
+
+// 비긴급 질문 묶음 발송(2026-10-09, D68)
+test('urgent:false 질문은 즉시 보내지 않고 묶음대기, 묶음 발송은 담당별 한 메시지로 보내고 답변대기로 바꾼다', async () => {
+  const neverSend = async () => { throw new Error('즉시 발송되면 안 됨'); };
+  const a = await createWikiQuestion({ kind: 'manual-change', question: '묶음 질문 A', asker: 'plutus', urgent: false }, { sender: neverSend });
+  await new Promise((r) => setTimeout(r, 5)); // 만든 순서 단언을 위해 createdAt을 다르게
+  const b = await createWikiQuestion({ kind: 'manual-change', question: '묶음 질문 B', asker: 'plutus', urgent: false }, { sender: neverSend });
+  const c = await createWikiQuestion({ kind: 'manual-change', question: '묶음 질문 C', asker: 'clio', urgent: false }, { sender: neverSend });
+  assert.deepEqual([a.status, a.sent, a.queued], ['묶음대기', false, true]);
+  const sent = [];
+  const sender = async (message) => { sent.push(message); return { result: { message_id: 100 + sent.length } }; };
+  const result = await sendQuestionDigest({ sender });
+  assert.equal(result.sent, 2);
+  const plutusMsg = sent.find((m) => m.agent === 'plutus');
+  assert.match(plutusMsg.body, /질문 2개/);
+  assert.match(plutusMsg.body, new RegExp(`${a.questionId}[\\s\\S]*${b.questionId}`), '만든 순서대로');
+  assert.match(plutusMsg.body, new RegExp(`${a.questionId} 등록`));
+  assert.equal(sent.find((m) => m.agent === 'clio').topic, '질문 묶음');
+  const pending = await listPendingWikiQuestions();
+  for (const id of [a.questionId, b.questionId, c.questionId]) assert.equal(pending.find((q) => q.questionId === id).status, '답변대기');
+  assert.equal((await sendQuestionDigest({ sender })).chunks, 0, '두 번째 실행은 보낼 것 없음');
+  for (const q of [a, b, c]) await resolveWikiQuestion(q.questionId, '제외');
+});
+
+test('묶음 발송 실패는 발송결과불명으로 남기고 다시 묶음에 넣지 않는다, 만료된 묶음대기는 보내지 않는다', async () => {
+  const neverSend = async () => { throw new Error('x'); };
+  const d = await createWikiQuestion({ kind: 'manual-change', question: '실패할 묶음 질문 D', asker: 'clio', urgent: false }, { sender: neverSend });
+  const e = await createWikiQuestion({ kind: 'manual-change', question: '만료될 묶음 질문 E', asker: 'clio', urgent: false }, { sender: neverSend });
+  backdateQuestion(e.questionId);
+  const failing = async () => { throw new Error('network down'); };
+  const result = await sendQuestionDigest({ sender: failing });
+  assert.equal(result.failed, 1);
+  assert.deepEqual(result.results[0].questionIds, [d.questionId]);
+  const text = readFileSync(join(vaultRoot, '95_Etna', 'Questions', `${d.questionId}.md`), 'utf8');
+  assert.match(text, /status: "발송결과불명"/);
+  assert.match(readFileSync(join(vaultRoot, '95_Etna', 'Questions', `${e.questionId}.md`), 'utf8'), /status: "만료"/);
+  assert.equal((await sendQuestionDigest({ sender: async () => ({ result: { message_id: 1 } }) })).chunks, 0, '불명은 자동 재발송 안 함');
+  await reconcileWikiQuestion(d.questionId, { delivered: false });
+});
+
+test('planQuestionDigest: 길이 한도를 넘으면 같은 담당도 여러 메시지로 나눈다', () => {
+  const rec = (n) => ({ fields: { questionId: `WQ-20261009-0000000${n}`, asker: 'clio', createdAt: `2026-10-09T0${n}:00:00Z`, evidenceNotes: [] }, body: `# 위키 확인 질문 x\n\n${'긴 질문 '.repeat(60)}${n}\n` });
+  const chunks = planQuestionDigest([rec(1), rec(2), rec(3)], { maxChars: 700 });
+  assert.ok(chunks.length >= 2);
+  assert.deepEqual(chunks.flatMap((c) => c.questionIds), ['WQ-20261009-00000001', 'WQ-20261009-00000002', 'WQ-20261009-00000003']);
+});
+
+test('리뷰 반영: 여러 답 파싱, 묶음대기에 대한 답 인정, 너무 긴 질문 거부, 확실한 미발송은 재발송허용, 중단된 발송중 정리', async () => {
+  const { parseExplicitWikiAnswers } = await import('./wiki-question-queue.mjs');
+  const multi = parseExplicitWikiAnswers('WQ-20261009-0000000A 등록\nWQ-20261009-0000000B 보류.</channel>');
+  assert.deepEqual(multi.map((x) => [x.questionId, x.answer]), [['WQ-20261009-0000000A', '등록'], ['WQ-20261009-0000000B', '보류']]);
+  assert.equal(parseExplicitWikiAnswers('WQ-20261009-0000000A 등록').length, 1);
+  assert.equal(parseExplicitWikiAnswers('안녕').length, 0);
+
+  const neverSend = async () => { throw new Error('즉시 발송 금지'); };
+  const q = await createWikiQuestion({ kind: 'manual-change', question: '먼저 답한 묶음 질문', asker: 'clio', urgent: false }, { sender: neverSend });
+  assert.equal((await resolveWikiQuestion(q.questionId, '보류')).action, 'hold', '묶음대기에 대한 답도 인정');
+  await assert.rejects(createWikiQuestion({ kind: 'manual-change', question: `${'&'.repeat(1000)}`, urgent: false }, { sender: neverSend }), /너무 깁니다/);
+
+  const r = await createWikiQuestion({ kind: 'manual-change', question: '렌더 실패할 묶음 질문', asker: 'clio', urgent: false }, { sender: neverSend });
+  const res = await sendQuestionDigest({ sender: async () => { const e = new Error('render'); e.confirmedNotSent = true; throw e; } });
+  assert.equal(res.failed, 1);
+  assert.match(readFileSync(join(vaultRoot, '95_Etna', 'Questions', `${r.questionId}.md`), 'utf8'), /status: "재발송허용"/);
+
+  const o = await createWikiQuestion({ kind: 'manual-change', question: '중단될 묶음 질문', asker: 'clio', urgent: false }, { sender: neverSend });
+  const path = join(vaultRoot, '95_Etna', 'Questions', `${o.questionId}.md`);
+  writeFileSync(path, readFileSync(path, 'utf8').replace('status: "묶음대기"', 'status: "발송중"\ndigestStartedAt: "2000-01-01T00:00:00.000Z"'));
+  const orphanRun = await sendQuestionDigest({ sender: async () => ({ result: { message_id: 1 } }) });
+  assert.deepEqual(orphanRun.orphans, [o.questionId]);
+  assert.equal(orphanRun.failed, 1);
+  assert.match(readFileSync(path, 'utf8'), /status: "발송결과불명"/);
+  await reconcileWikiQuestion(o.questionId, { delivered: false });
 });

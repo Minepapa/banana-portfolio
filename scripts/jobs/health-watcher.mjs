@@ -66,6 +66,8 @@ export const EXPECTED_INTERVALS_MS = {
   // 없는 매일 실행이라 위 평일전용 잡들과 달리 24h를 그대로 유지 — 주말 간격 문제
   // 없음.)
   'backup-vault': 24 * 60 * 60 * 1000,
+  // question-digest(2026-10-09 신설) — 매일 09:00·19:00 비긴급 질문 묶음 발송. 최대 간격 14시간, 여유 포함 24시간.
+  'question-digest': 24 * 60 * 60 * 1000,
   // telegram-session-handoff(2026-08-29 신설) — 매일 03:55 KST 하루 1회, 요일 제한
   // 없음(텔레그램 세션 자체가 주말에도 응답하므로 restart와 동일 원칙) — backup-vault와
   // 같은 클래스.
