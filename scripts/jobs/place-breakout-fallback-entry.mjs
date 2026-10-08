@@ -36,7 +36,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import {
-  loadQuantAccount, getKisToken, getKrQuote, getAccountBalance, checkOrderFill, placeKrOrder, reviseKrOrder,
+  loadQuantAccount, getKisToken, getKrQuote, getAccountBalance, getCancelableOrders, checkOrderFill, placeKrOrder, reviseKrOrder,
 } from '../lib/kis.mjs';
 import { isKillSwitchActive } from '../lib/kill-switch.mjs';
 import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
@@ -52,6 +52,8 @@ import {
 } from '../lib/breakout-pending-entry-vault.mjs';
 import { parseBreakoutPosition, findOpenPositions } from '../lib/breakout-position-vault.mjs';
 import { MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
+import { checkBreakoutEntryPrecheck, conservativeCash } from '../lib/order-gate.mjs';
+import { buildHeldCodeSet, readBreakoutRecordFiles } from '../lib/breakout-held-codes.mjs';
 
 const SENDER_AGENT = 'plutus';
 const sendWarning = createDirectWarningSender(sendAgentMessage, {
@@ -326,7 +328,7 @@ export async function confirmPriorOrderVoided({
   return refineWithHoldings(classification, code, holdings);
 }
 
-const REQUIRED_FALLBACK_DEPS = ['notify', 'writeAtomic', 'getKrQuote', 'readKillSwitch', 'confirmPriorOrderVoided', 'placeKrOrder', 'todayKST', 'spawn'];
+const REQUIRED_FALLBACK_DEPS = ['notify', 'writeAtomic', 'getKrQuote', 'readKillSwitch', 'collectHeldCodes', 'confirmPriorOrderVoided', 'placeKrOrder', 'todayKST', 'spawn'];
 
 function assertFallbackEntryWiring(state, ctx, deps, dir) {
   for (const key of REQUIRED_FALLBACK_DEPS) {
@@ -418,6 +420,50 @@ export async function processFallbackEntry({ entry, state, dir, ctx, deps }) {
   if (isKillSwitchActive(killSwitchState.content)) {
     console.log(`  ℹ️ 킬스위치 활성 — ${name}(${code}) 발주 보류(대기 상태 유지, 자동 재시도됨)`);
     await deps.notify('스킵', `<b>돌파매매 다음날시가 폴백 보류 — 킬스위치 활성</b>\n${name}(${code}) 전날 미체결 확인됐지만 킬스위치가 켜져 있어 발주하지 않았습니다. "킬스위치 오프" 명령으로 해제하면 다음 실행에서 자동 재시도됩니다.`);
+    return;
+  }
+
+  // 기계적 사전검사(이관 4-6, 테미스 기준 Criteria/투자-주문) — 장후시간외 진입과 같은 검사.
+  // 킬스위치 다음, 전날 주문 확인·취소(되돌릴 수 없음) 전에 둔다(위 순서 원칙과 같은 이유).
+  // 전날 장후시간외 주문은 당일 미체결 조회에 나오지 않고, 자기 대기 파일은 collectHeldCodes가 뺀다.
+  // 조회 실패는 대기 상태를 유지해 다음 실행에서 재시도하고, 검사 불통과는 failed로 닫아 수동 판단에 넘긴다.
+  let heldCodes;
+  try {
+    heldCodes = await deps.collectHeldCodes({ excludePendingFile: filename });
+  } catch (e) {
+    console.log(`  ⚠️ 사전검사 조회 실패(${e.message}) — 이번 실행은 건너뜀(대기 상태 유지)`);
+    await deps.notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 사전검사 조회 실패</b>\n${name}(${code}) 보유 포지션·잔고·미체결 주문을 확인하지 못해 발주하지 않았습니다. 다음 실행에서 재시도됩니다.`);
+    return;
+  }
+  const precheck = checkBreakoutEntryPrecheck({
+    code, openPositionCodes: heldCodes, maxConcurrent: MAX_CONCURRENT_POSITIONS, quantity, orderCost: quantity * currentPrice, availableCash: state.remainingCash,
+  });
+  // 불통과 처리 3갈래(코드리뷰 MEDIUM 2건):
+  // - 자기 종목이 이미 보유 집합에 있음 → 전날 주문이 실제로 체결돼 포지션 기록 없이(=손절 감시 없이) 보유 중일 수
+  //   있다. 스킵이 아니라 uncertain + 경고로 수동 확인에 넘긴다(confirmPriorOrderVoided가 체결을 보류할 때와 같은 처리).
+  // - 동시보유 상한에만 걸림 → 기존 슬롯 소진 게이트처럼 대기 유지(다음 실행 재시도, 오래되면 나이 게이트가 만료 처리).
+  // - 그 밖(예수금 등) → failed로 닫고 수동 판단.
+  if (!precheck.pass && heldCodes.has(String(code).padStart(6, '0'))) {
+    const reason = `사전검사: 이 종목이 이미 잔고·미체결·포지션·다른 대기에 있음(${precheck.reasons.join(' / ')})`;
+    console.log(`  ⚠️ ${reason} — uncertain으로 표시하고 수동확인 요청`);
+    deps.writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
+      status: PENDING_ENTRY_STATUS.UNCERTAIN, reason, updatedAt: new Date().toISOString(),
+    }));
+    await deps.notify('경고', `<b>돌파매매 다음날시가 폴백 보류 — 수동확인 필요</b>\n${name}(${code}) 이 종목이 이미 계좌 잔고·미체결 주문·포지션 기록·다른 대기 항목 중 하나에 있어 자동 발주하지 않았습니다.\n전날 주문이 실제로 체결됐다면 손절 보호주문 없이 보유 중일 수 있습니다. KIS 앱에서 직접 확인해 주세요.`);
+    return;
+  }
+  if (!precheck.pass && precheck.reasons.every((x) => x.startsWith('동시보유 상한 도달'))) {
+    console.log(`  ℹ️ ${precheck.reasons[0]} — 대기 상태 유지(다음 실행에서 재시도)`);
+    await deps.notify('스킵', `<b>돌파매매 다음날시가 폴백 보류 — 슬롯 소진</b>\n${name}(${code}) — ${escapeHtml(precheck.reasons[0])}. 대기 상태로 두고 다음 실행에서 재시도합니다.`);
+    return;
+  }
+  if (!precheck.pass) {
+    const reason = `사전검사 불통과: ${precheck.reasons.join(' / ')}`;
+    console.log(`  ℹ️ ${reason} — 처리완료(failed)로 표시하고 스킵`);
+    deps.writeAtomic(join(dir, filename), updatePendingEntryRecord(content, {
+      status: PENDING_ENTRY_STATUS.FAILED, reason, updatedAt: new Date().toISOString(),
+    }));
+    await deps.notify('스킵', `<b>돌파매매 다음날시가 폴백 보류 — 사전검사 불통과</b>\n${name}(${code}) ${quantity}주(약 ${won(quantity * currentPrice)})\n${precheck.reasons.map((x) => `· ${escapeHtml(x)}`).join('\n')}`);
     return;
   }
 
@@ -541,21 +587,31 @@ async function main() {
   // 사이징용 예수금 재확인(코드리뷰 MEDIUM 지적) — 큐잉 시점(전날)의 예수금을 그대로
   // 믿지 않고 오늘 실제 잔고를 다시 조회, daily-breakout-signal-scan.mjs와 동일하게
   // 여러 건을 처리할 때 순차 차감한다.
+  // 예수금 = min(D+0, D+2) — 신호스캔·장후시간외 진입 사전검사와 같은 기준(이관 4-6).
   let remainingCash;
   try {
-    ({ cash: remainingCash } = await getAccountBalance({ token, appkey, appsecret, cano, acntPrdtCd }));
+    remainingCash = conservativeCash(await getAccountBalance({ token, appkey, appsecret, cano, acntPrdtCd }));
   } catch (e) {
     await notify('경고', '<b>돌파매매 다음날시가 폴백 중단 — 예수금 조회 실패</b>\n예수금을 확인할 수 없어 이번 실행에서 모든 대기 항목 처리를 보류합니다. 다음 실행에서 재시도됩니다.');
     return;
   }
   if (remainingCash == null) {
-    await notify('경고', '<b>돌파매매 다음날시가 폴백 중단 — 예수금 확인 불가</b>\n예수금이 0으로 추정되지 않아(조회 자체가 이상값) 이번 실행을 보류합니다.');
+    await notify('경고', '<b>돌파매매 다음날시가 폴백 중단 — 예수금 확인 불가</b>\nD+0 또는 D+2 예수금 값이 응답에 없거나 이상해(0으로 추정하지 않음) 이번 실행을 보류합니다.');
     return;
   }
 
   const here = dirname(fileURLToPath(import.meta.url));
   const state = { remainingCash, remainingSlots };
-  const deps = { notify, writeAtomic, getKrQuote, readKillSwitch: () => readKillSwitchState(VAULT_PATHS.state.killSwitch), confirmPriorOrderVoided, placeKrOrder, todayKST, spawn };
+  const collectHeldCodes = async ({ excludePendingFile }) => {
+    const balance = await getAccountBalance({ token, appkey, appsecret, cano, acntPrdtCd });
+    return buildHeldCodeSet({
+      positionFiles: readBreakoutRecordFiles(VAULT_PATHS.state.breakoutPositions),
+      pendingFiles: readBreakoutRecordFiles(dir).filter((f) => f.name !== excludePendingFile),
+      balanceHoldings: balance.holdings,
+      openOrders: await getCancelableOrders({ token, appkey, appsecret, cano, acntPrdtCd }),
+    });
+  };
+  const deps = { notify, writeAtomic, getKrQuote, readKillSwitch: () => readKillSwitchState(VAULT_PATHS.state.killSwitch), collectHeldCodes, confirmPriorOrderVoided, placeKrOrder, todayKST, spawn };
   const ctx = { token, appkey, appsecret, cano, acntPrdtCd, here };
   for (const entry of targets) {
     await processFallbackEntry({ entry, state, dir, ctx, deps });

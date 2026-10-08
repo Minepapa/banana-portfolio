@@ -452,6 +452,7 @@ function makeFallbackHarness({ state = { remainingCash: 20_000, remainingSlots: 
     writeAtomic: (path, content) => { calls.push(['write', path, parsePendingEntry(content)]); },
     getKrQuote: async (params) => { calls.push(['quote', params]); return { price: 10_000 }; },
     readKillSwitch: () => { calls.push(['kill']); return { content: null, readFailed: false }; },
+    collectHeldCodes: async (params) => { calls.push(['held', params]); return new Set(); },
     confirmPriorOrderVoided: async (params) => {
       calls.push(['confirm', params]);
       return { voided: true, kind: 'rejectedOrExpired', note: '자동실효 확인' };
@@ -478,22 +479,22 @@ test('processFallbackEntry: 정상 주문은 전날 주문 확인 → placing �
   const h = makeFallbackHarness();
   const entry = makeFallbackEntry();
   assert.equal(await runFallback(h, entry), undefined);
-  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref']);
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'held', 'confirm', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref']);
   assert.deepEqual(h.calls[0][1], { token: 'token', appkey: 'key', appsecret: 'secret', code: entry.code });
-  assert.deepEqual(h.calls[2][1], {
+  assert.deepEqual(h.calls[3][1], {
     token: 'token', appkey: 'key', appsecret: 'secret', cano: 'cano', acntPrdtCd: '01',
     code: entry.code, afterHoursOrderNo: 'prior-1', afterHoursOrgNo: 'org-1', afterHoursOrderQty: 2,
     signalDate: entry.signalDate, allowCancel: true,
   });
-  assert.equal(h.calls[3][1], join('/not-a-real-dir', entry.filename));
-  assert.equal(h.calls[3][2].status, 'placing');
-  assert.deepEqual(h.calls[4][1], {
+  assert.equal(h.calls[4][1], join('/not-a-real-dir', entry.filename));
+  assert.equal(h.calls[4][2].status, 'placing');
+  assert.deepEqual(h.calls[5][1], {
     token: 'token', appkey: 'key', appsecret: 'secret', cano: 'cano', acntPrdtCd: '01',
     code: entry.code, side: '매수', quantity: 2, marketOrder: true,
   });
-  assert.equal(h.calls[6][2].status, 'placed');
-  assert.equal(h.calls[6][2].expectedPositionId, '055550-2026-10-02');
-  assert.deepEqual(h.calls[7].slice(1), [
+  assert.equal(h.calls[7][2].status, 'placed');
+  assert.equal(h.calls[7][2].expectedPositionId, '055550-2026-10-02');
+  assert.deepEqual(h.calls[8].slice(1), [
     'node',
     [join('/fake/jobs', '..', 'tools', 'watch-breakout-entry-fill.mjs'),
       ...buildFallbackWatchArgs({ order: { orderNo: 'new-1' }, code: entry.code, name: entry.name, entryDate: '2026-10-02', stopLossPct: entry.stopLossPct })],
@@ -511,12 +512,12 @@ test('processFallbackEntry: 전날 주문 생사 미확인은 uncertain만 기�
   };
   const entry = makeFallbackEntry();
   await runFallback(h, entry);
-  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'write', 'notify']);
-  assert.equal(h.calls[3][1], join('/not-a-real-dir', entry.filename));
-  assert.equal(h.calls[3][2].status, 'uncertain');
-  assert.equal(h.calls[3][2].reason, '전날 주문 상태 미확인');
-  assert.equal(h.calls[4][1], '경고');
-  assert.match(h.calls[4][2], /수동확인 필요/);
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'held', 'confirm', 'write', 'notify']);
+  assert.equal(h.calls[4][1], join('/not-a-real-dir', entry.filename));
+  assert.equal(h.calls[4][2].status, 'uncertain');
+  assert.equal(h.calls[4][2].reason, '전날 주문 상태 미확인');
+  assert.equal(h.calls[5][1], '경고');
+  assert.match(h.calls[5][2], /수동확인 필요/);
   assert.deepEqual(h.state, { remainingCash: 20_000, remainingSlots: 2 });
 });
 
@@ -580,11 +581,11 @@ test('processFallbackEntry: 직접 취소한 전날 주문은 완료 알림 후 
     return { voided: true, kind: 'canceledByUs', note: '전날 주문 직접 취소' };
   };
   await runFallback(h);
-  assert.deepEqual(callNames(calls), ['quote', 'kill', 'confirm', 'notify', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref']);
-  assert.equal(calls[3][1], '완료');
-  assert.equal(calls[4][2].reason, '전날 주문 직접 취소');
-  assert.equal(calls[7][2].reason, '전날 주문 직접 취소');
-  assert.equal(calls[5][1].side, '매수');
+  assert.deepEqual(callNames(calls), ['quote', 'kill', 'held', 'confirm', 'notify', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref']);
+  assert.equal(calls[4][1], '완료');
+  assert.equal(calls[5][2].reason, '전날 주문 직접 취소');
+  assert.equal(calls[8][2].reason, '전날 주문 직접 취소');
+  assert.equal(calls[6][1].side, '매수');
 });
 
 test('processFallbackEntry: 주문 실패는 확실한 미접수만 failed, 응답 불명은 uncertain으로 기록한다', async () => {
@@ -598,10 +599,10 @@ test('processFallbackEntry: 주문 실패는 확실한 미접수만 failed, 응�
       throw error;
     };
     await runFallback(h);
-    assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'write', 'place', 'write', 'notify']);
-    assert.equal(h.calls[3][2].status, 'placing');
-    assert.equal(h.calls[5][2].status, status);
-    assert.equal(h.calls[6][1], '경고');
+    assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'held', 'confirm', 'write', 'place', 'write', 'notify']);
+    assert.equal(h.calls[4][2].status, 'placing');
+    assert.equal(h.calls[6][2].status, status);
+    assert.equal(h.calls[7][1], '경고');
     assert.deepEqual(h.state, { remainingCash: 20_000, remainingSlots: 2 });
   }
 });
@@ -610,9 +611,9 @@ test('processFallbackEntry: 동일 state의 현금 차감은 다음 건의 수�
   const h = makeFallbackHarness();
   await runFallback(h);
   await runFallback(h, makeFallbackEntry({ id: 'second', filename: 'second.md' }));
-  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref', 'quote', 'write', 'notify']);
-  assert.equal(h.calls[11][2].status, 'failed');
-  assert.equal(h.calls[12][1], '스킵');
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'held', 'confirm', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref', 'quote', 'write', 'notify']);
+  assert.equal(h.calls[12][2].status, 'failed');
+  assert.equal(h.calls[13][1], '스킵');
   assert.deepEqual(h.state, { remainingCash: 0, remainingSlots: 1 });
 });
 
@@ -620,8 +621,8 @@ test('processFallbackEntry: 동일 state의 슬롯 차감은 다음 건의 슬�
   const h = makeFallbackHarness({ state: { remainingCash: 20_000, remainingSlots: 1 } });
   await runFallback(h);
   await runFallback(h, makeFallbackEntry({ id: 'second', filename: 'second.md' }));
-  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'confirm', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref', 'notify']);
-  assert.equal(h.calls[10][1], '스킵');
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'held', 'confirm', 'write', 'place', 'today', 'write', 'spawn', 'on', 'unref', 'notify']);
+  assert.equal(h.calls[11][1], '스킵');
   assert.deepEqual(h.state, { remainingCash: 0, remainingSlots: 0 });
 });
 
@@ -639,4 +640,44 @@ test('processFallbackEntry: 의존성·state·ctx 배선 오류는 어떤 부작
     await assert.rejects(runFallback(h), /배선 오류로 주문 전에 중단/);
     assert.deepEqual(h.calls, []);
   }
+});
+
+// 이관 4-6: 시가 폴백에도 진입 사전검사 — 킬스위치 다음, 전날 주문 확인·취소 전.
+test('processFallbackEntry: 자기 종목이 이미 보유 집합에 있으면 전날 주문 확인·취소와 발주 없이 uncertain+경고', async () => {
+  const h = makeFallbackHarness();
+  const entry = makeFallbackEntry();
+  h.deps.collectHeldCodes = async (params) => { h.calls.push(['held', params]); return new Set([entry.code]); };
+  await runFallback(h, entry);
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'held', 'write', 'notify']);
+  assert.equal(h.calls[2][1].excludePendingFile, entry.filename, '자기 대기 파일은 보유 집합에서 뺀다');
+  assert.equal(h.calls[3][2].status, 'uncertain', '전날 주문이 체결됐을 수 있어 수동확인');
+  assert.match(h.calls[3][2].reason, /이미 보유/);
+  assert.equal(h.calls[4][1], '경고');
+  assert.match(h.calls[4][2], /손절 보호주문 없이/);
+});
+
+test('processFallbackEntry: 사전검사 조회 실패면 상태를 바꾸지 않고(대기 유지) 경고만 보낸다', async () => {
+  const h = makeFallbackHarness();
+  h.deps.collectHeldCodes = async () => { h.calls.push(['held']); throw new Error('잔고 조회 실패'); };
+  await runFallback(h);
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'held', 'notify']);
+  assert.equal(h.calls[3][1], '경고');
+});
+
+test('processFallbackEntry: 킬스위치가 켜져 있으면 사전검사 조회도 하지 않는다', async () => {
+  const h = makeFallbackHarness();
+  h.deps.readKillSwitch = () => { h.calls.push(['kill']); return { content: '---\nactive: true\n---\n', readFailed: false }; };
+  await runFallback(h);
+  assert.ok(!callNames(h.calls).includes('held'));
+});
+
+test('processFallbackEntry: 동시보유 상한에만 걸리면 기록을 바꾸지 않고(대기 유지) 스킵 알림', async () => {
+  const h = makeFallbackHarness();
+  const full = new Set(Array.from({ length: 10 }, (_, i) => String(900000 + i)));
+  h.deps.collectHeldCodes = async () => { h.calls.push(['held']); return full; };
+  await runFallback(h);
+  assert.deepEqual(callNames(h.calls), ['quote', 'kill', 'held', 'notify']);
+  assert.equal(h.calls[3][1], '스킵');
+  assert.match(h.calls[3][2], /슬롯 소진/);
+  assert.deepEqual(h.state, { remainingCash: 20_000, remainingSlots: 2 });
 });
