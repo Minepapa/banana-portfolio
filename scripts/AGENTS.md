@@ -29,6 +29,11 @@ launchd로 도는 Node 자동화. plist는 `scripts/launchd/`(설치본 `~/Libra
 ## 데이터 소스
 - 가격·시세·RSI·52주: pykrx(KR)·yfinance(US). 재무·공시: OpenDart REST(curl, `$DART_API_KEY`)·UsStockInfo. 요청일 기준 직전 분기 우선(CLAUDE.md 데이터 기준).
 
+## 종목 평가 결과 규칙 (2026-10-08 Claude 메모리에서 이관)
+- 평가 axisItems의 `metric`은 `src/lib/constants.js` `LEARNING_MODULES` 키와 정확히 같아야 한다. 틀리면 📘 칩이 엉뚱한 설명을 띄운다(예: Trailing PER에 `fwd_per`를 쓴 2026-05-25 오류).
+  - 짝이 없는 지표(부채비율·ROE·Gross Margin·애널리스트·목표주가 등)는 `metric`을 생략한다.
+- 종목명은 보유종목의 한글명과 똑같이 쓴다(노트 탭이 정확 일치로 매칭한다). 예: NVDA → 엔비디아, GOOGL → 알파벳 Class A.
+
 ## 테스트·검증
 - 순수 로직(parser·계산·신호)은 `*.test.js`로 `node --test`. 선례: `behavior-signals`·`quota-cooldown`·`report-facts`·`eval-facts`.
 - `.mjs`는 eslint 대상이 아니므로 변경 후 `node --check <file>`로 구문 확인. 실동작은 `--dry-run` 또는 SA 토큰으로 1회 실행 검증.
