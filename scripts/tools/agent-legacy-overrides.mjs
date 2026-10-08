@@ -1,8 +1,11 @@
+import { VAULT_REL } from '../lib/vault-paths.mjs';
 // 보관본은 읽기 전용이다. 이 표는 현재 역할과 충돌하는 구 지침의 구절만 고친다.
 // 앞쪽의 긴 구절을 먼저 적용해 문맥별 책임을 보존한다.
 export const LEGACY_OVERRIDES = [
   // 이관 4-4: 제우스 헤더를 D64 형식으로(텔레그램 라벨 가드가 [제우스 Zeus]를 요구)
   ['[Zeus]', '[제우스 Zeus]'],
+  // 2026-10-08 등록부 정리로 사용안내는 보관됨 — 카테고리 설명의 현행 위치는 01_Home 카테고리 노트와 경로 등록부.
+  [`\`${VAULT_REL.knowledgeMeta}/므네모시네-사용안내.md\`의 카테고리 설명`, `\`${VAULT_REL.homeDir}\` 카테고리 노트·\`${VAULT_REL.registryFile.replace(/\.md$/, '')}\`의 카테고리 설명`],
   ['| 투자전략실 Athena |', '| 플루토스 Plutus |'],
   ['| 퀀트전략실 Kairos |', '| 플루토스 Plutus |'],
   ['| 운영실 Hermes |', '| 플루토스 Plutus |'],

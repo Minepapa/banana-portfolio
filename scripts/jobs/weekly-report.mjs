@@ -34,7 +34,7 @@
 import { existsSync, readdirSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
-import { VAULT_PATHS, VAULT_REL, VAULT_ROOT, vaultYearDir, vaultYearFiles } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, VAULT_ROOT, vaultYearDir, vaultYearFiles, categoryLink } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { getCachedMacroIndicators } from '../lib/macro-cache.mjs';
@@ -355,7 +355,10 @@ export function writeObservations(asof, observations) {
   observations.forEach((o, i) => {
     const promote = o.promote || /상충/.test(o.vsProfile || '');
     const record = {
-      type: 'preference-observation',
+      // 경로 등록부 note 규칙(C 묶음 + occurred·origin). 성향 관찰 여부는 noteKind로 구분한다(preferences.mjs).
+      type: 'note', noteKind: 'preference-observation', category: [categoryLink('700 자산'), categoryLink('100 나')],
+      description: String(o.observation || '성향 관찰').replace(/\s+/g, ' ').slice(0, 120), sensitivity: '일반',
+      created: asof, modified: asof, occurred: asof, origin: 'weekly-report',
       date: asof, signalType: o.type || '기타', observation: o.observation || '',
       evidence: o.evidence || '', vsProfile: o.vsProfile || '신규', confidence: o.confidence || '보통',
       status: promote ? '승격후보' : '관찰', updatedAt: nowIso,
@@ -526,7 +529,9 @@ async function main() {
   const summary = summaryBullets.join(' · ');
   const headline = md.match(/^# (.+)$/m)?.[1] ?? `주간 자산 종합 점검 — ${asof}`;
   const record = buildFrontmatter({
-    type: 'weekly-report', date: asof, headline, summary,
+    // 경로 등록부 report 규칙(C 묶음 + author·model). 옛 type 'weekly-report'는 reportKind로 남긴다.
+    type: 'report', reportKind: 'weekly-report', category: [categoryLink('700 자산')], description: headline, sensitivity: '일반',
+    created: asof, modified: asof, author: 'plutus', model: MODEL, date: asof, headline, summary,
     riskFlag: breakoutProtectionRisk.riskFlag, riskNote: breakoutProtectionRisk.riskNote,
   }) + '\n' + md;
   mkdirSync(reportDir, { recursive: true });

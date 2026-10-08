@@ -53,6 +53,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/hooks/vault-write-gate.mjs\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [

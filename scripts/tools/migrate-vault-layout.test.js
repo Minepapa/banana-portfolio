@@ -144,7 +144,7 @@ test('파일 단위 연도 규칙은 파일명 앞에 연도 폴더를 삽입한
   const plan = planMigration([{ path: source, content: '---\ndate: 2026-01-01\n---\n' }]);
   assert.deepEqual(plan.moves, [{
     from: source,
-    to: '20_Records/22_Literature/2026/README.md',
+    to: '20_Records/22_Literature/2026/2026-09-28 깡토 코퍼스 안내.md',
   }]);
 });
 

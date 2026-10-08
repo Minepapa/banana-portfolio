@@ -45,11 +45,12 @@ const ACCOUNT_EXTRA_TOPICS = new Map([
 ]);
 
 const TYPE_RELATED = new Map([
-  ['job-health', [`[[${VAULT_REL.knowledgeMeta}/무인잡-카탈로그]]`]],
+  ['job-health', [`[[${VAULT_REL.jobCatalogFile.replace(/\.md$/, '')}]]`]],
   ['daily-snapshot', [
-    `[[${VAULT_REL.knowledgeTopics}/PortfolioKPI/twr]]`,
-    `[[${VAULT_REL.knowledgeTopics}/PortfolioKPI/sharpe]]`,
-    `[[${VAULT_REL.knowledgeTopics}/PortfolioKPI/mdd]]`,
+    // 2026-10-08 지표 노트 한글 제목 전환(오너 지시) — 옛 PortfolioKPI/twr 등은 없다.
+    `[[${VAULT_REL.portfolioKpiTopics}/시간가중수익률 (TWR)]]`,
+    `[[${VAULT_REL.portfolioKpiTopics}/샤프 비율 (Sharpe Ratio)]]`,
+    `[[${VAULT_REL.portfolioKpiTopics}/최대낙폭 (MDD)]]`,
   ]],
   ['market-move-monitor-state', [`[[${VAULT_REL.projectFeatures}/거시 모니터링]]`]],
   ['macro-indicators-cache-state', [`[[${VAULT_REL.projectFeatures}/거시 모니터링]]`]],

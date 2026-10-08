@@ -45,8 +45,8 @@ const LAUNCHD_DIR = join(__dirname, '..', 'launchd');
 // 명칭이라 무슨 노트인지 알기 어렵다는 오너 지적). 2026-09-04: Knowledge/Jobs/ →
 // Knowledge/Meta/로 이동(므네모시네 대정리 — "볼트 전체가 바뀔 때 일괄 갱신해야
 // 하는 문서"를 Index.md·사용안내·파일배선도와 한 폴더로 통합, 오너 지시).
-const JOB_CATALOG_PATH = vaultAbs(`${VAULT_REL.knowledgeMeta}/무인잡-카탈로그.md`);
-const DEPT_DOC_PATH = vaultAbs(`${VAULT_REL.knowledgeMeta}/부서별-텔레그램-보고.md`);
+const JOB_CATALOG_PATH = vaultAbs(VAULT_REL.jobCatalogFile);
+const DEPT_DOC_PATH = vaultAbs(VAULT_REL.departmentReportFile);
 
 const PLUTIL_AVAILABLE = (() => {
   try { execFileSync('plutil', ['-help'], { stdio: 'ignore' }); return true; } catch { return false; }
@@ -124,7 +124,7 @@ test('vault-job-catalog-audit: launchd로 도는 잡은 전부 무인잡-카탈�
   const jobs = listDispatchedJobs();
   assert.ok(jobs.length > 10, 'run.sh case문 파싱이 깨졌을 가능성 — 잡 이름이 거의 안 뽑힘');
   const missing = jobs.filter(({ job }) => !catalogRowForJob(catalog, job)).map(({ job }) => job);
-  assert.deepEqual(missing, [], `무인잡-카탈로그.md에 이름이 없는 잡: ${missing.join(', ')} — 90_Delphi/무인잡-카탈로그.md 스케줄 표에 행을 추가할 것`);
+  assert.deepEqual(missing, [], `무인잡-카탈로그.md에 이름이 없는 잡: ${missing.join(', ')} — 90_Delphi/Schema/무인잡-카탈로그.md 스케줄 표에 행을 추가할 것`);
 });
 
 test('vault-job-catalog-audit: StartInterval(분 단위) 잡은 무인잡-카탈로그.md 표기 분이 실제 plist 값과 일치해야 함(스케줄 변경 후 문서 미갱신 방지)', { skip: !CAN_RUN }, () => {

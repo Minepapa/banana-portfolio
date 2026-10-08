@@ -393,7 +393,7 @@ async function main() {
 
   const buildContent = (conversationSummary) => {
     const body = buildHandoffText({ targetDateStr, createdToday, decidedToday, pendingCount, modeNotes, conversationSummary });
-    return { body, content: buildFrontmatter({ type: 'telegram-session-handoff', date: targetDateStr, generatedAt: now.toISOString() }) + '\n' + body };
+    return { body, content: buildFrontmatter({ type: 'telegram-log', description: `${targetDateStr} 텔레그램 세션 인수인계(자동 생성)`, created: targetDateStr, modified: targetDateStr, date: targetDateStr, generatedAt: now.toISOString() }) + '\n' + body };
   };
 
   const handoffDir = vaultYearDir(VAULT_PATHS.log.telegramSession, `${targetDateStr}T00:00:00+09:00`);

@@ -31,7 +31,9 @@ export function isLivePreferenceObservation(rec) {
   // type이 아예 없는 옛 레코드는 통과시킨다(v2 관찰은 처음부터 type을 달고 저장되지만,
   // 손으로 적어둔 관찰까지 조용히 버리면 오히려 기록 누락이 된다) — 배제하는 건
   // "명백히 다른 종류"임이 type으로 확인되는 경우뿐.
-  return rec.type === undefined || rec.type === 'preference-observation';
+  // 2026-10-08 경로 등록부 정리로 type은 'note', 종류는 noteKind(새 기록)·legacyType(옛 기록)으로 옮겼다.
+  return rec.type === undefined || rec.type === 'preference-observation'
+    || (rec.type === 'note' && (rec.noteKind === 'preference-observation' || rec.legacyType === 'preference-observation'));
 }
 
 // records → 프롬프트용 압축 텍스트. signalType·observation·vsProfile·status만. 기각은 제외.

@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import {
   STATUS_RULES, auditVault, extractWikiLinks, findDecisionKeyErrors, findExecutionDuplicates, findIdMismatches,
   parseFlatFrontmatter, resolveWikiTarget, validateStatus,
 } from '../lib/vault-integrity-audit.mjs';
 
-const CAN_RUN = process.platform === 'darwin' && existsSync(join(VAULT_PATHS.knowledge.meta, '상태표준.md'));
+const CAN_RUN = process.platform === 'darwin' && existsSync(vaultAbs(VAULT_REL.statusStandardFile));
 
 test('vault-integrity-audit: status는 지정 집합의 짧은 단일 값만 허용', () => {
   const allowed = ['완료', '진행중'];

@@ -39,6 +39,19 @@ export const VAULT_REL = {
   knowledgeIndexFile: '90_Delphi/index.md',
   knowledgeMetaIndexFile: '80_Archive/Knowledge/Meta/Index.md',
   wiringMapFile: '90_Delphi/Schema/파일 배선도.md', // 4-7: 경로 등록부(정본)와 분리
+  // 2026-10-08 등록부 정리: 90_Delphi 바로 아래 운영 문서를 등록부가 정한 하위 폴더로 옮겼다.
+  registryFile: '90_Delphi/Schema/경로 등록부.md',
+  homeDir: '01_Home', // 카테고리 노트 폴더(category 링크 대상)
+  portfolioKpiTopics: '30_Wiki/34_Topics/PortfolioKPI', // 폴더는 영문 유지, 노트 제목만 한글(2026-10-08)
+  inboxRoot: '00_Inbox',
+  // 등록부 lint 범위 밖 최상위 폴더: 보관본(원래 type 유지)·코드가 쓰는 기계 데이터·금고(내용을 읽지 않음)
+  archiveRoot: '80_Archive',
+  etnaRoot: '95_Etna',
+  adytonRoot: '99_Adyton',
+  statusStandardFile: '90_Delphi/Schema/상태표준.md',
+  jobCatalogFile: '90_Delphi/Schema/무인잡-카탈로그.md',
+  departmentReportFile: '90_Delphi/Channels/부서별-텔레그램-보고.md',
+  mcpLossLogFile: '95_Etna/Jobs/mcp-loss-diagnostics.md',
   stateBreakoutPositions: '95_Etna/Investing/BreakoutPositions',
   stateBreakoutPendingEntries: '95_Etna/Investing/BreakoutPendingEntries',
   stateTelegramSession: '95_Etna/Jobs/TelegramSession',
@@ -228,3 +241,8 @@ export const VAULT_PATHS = {
     infra: join(VAULT_ROOT, '30_Wiki', '34_Topics'),
   },
 };
+
+// 카테고리 노트 위키링크(예: categoryLink('700 자산') → '[[01_Home/700 자산]]').
+export function categoryLink(name) {
+  return `[[${VAULT_REL.homeDir}/${name}]]`;
+}

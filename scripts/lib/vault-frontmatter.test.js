@@ -13,8 +13,8 @@ test('자동 related는 기능 허브로 연결하고 KPI 개념은 Topics에 �
     [`[[${VAULT_REL.projectFeatures}/돌파매매]]`]);
   assert.deepEqual(related({ type: 'macro-indicators-cache-state' }),
     [`[[${VAULT_REL.projectFeatures}/거시 모니터링]]`]);
-  assert.deepEqual(related({ type: 'daily-snapshot' }), ['twr', 'sharpe', 'mdd']
-    .map((name) => `[[${VAULT_REL.knowledgeTopics}/PortfolioKPI/${name}]]`));
+  assert.deepEqual(related({ type: 'daily-snapshot' }), ['시간가중수익률 (TWR)', '샤프 비율 (Sharpe Ratio)', '최대낙폭 (MDD)']
+    .map((name) => `[[${VAULT_REL.portfolioKpiTopics}/${name}]]`));
 });
 
 test('yamlValue: null/undefined → "null"', () => {
