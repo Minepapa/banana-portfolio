@@ -15,7 +15,7 @@
  * 종목의 매수/매도(assetKey·side·quantity)를 전제로 order-gate 검문소·체결리마인더
  * 매칭까지 이어지는 파이프라인인데, "ISA→연금계좌 일괄이전"은 브로커 서류상 계좌이전
  * 절차(오너가 증권사에서 직접 신청)라 이 스키마에 맞지 않는다. quarterly-allocation-
- * review.mjs와 같은 패턴(Node 사실계산 → Athena 헤드리스 판단 → sendTelegram 안내)을
+ * review.mjs와 같은 패턴(Node 사실계산 → Athena 헤드리스 판단 → sendAgentMessage 안내)을
  * 쓰되, tag는 "제안"(athena.md 원문 표현 그대로) — 실행할 주문이 아니라 오너가 판단할
  * 권고이기 때문.
  *
@@ -44,13 +44,13 @@ import { writeAtomic } from '../lib/state-writer.mjs';
 import { summarizeIsaHoldings } from '../lib/isa-exposure.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
-const DEPARTMENT_LABEL = '플루토스 Plutus';
+const SENDER_AGENT = 'plutus';
 const ISA_OPEN_DATE = '2025-04-06'; // 오너 확정(2026-08-29) — 실물 계좌 개설일, 추정 아님
 const MATURITY_YEARS = 3;
 const STATE_DIR = vaultAbs(VAULT_REL.stateIsaMaturity);
@@ -199,7 +199,7 @@ async function main() {
   const { conclusion, context, decisions } = parseDepartmentResponse(judgment);
 
   try {
-    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '제안', facts, conclusion, context, decisions }));
+    await sendAgentMessage({ agent: SENDER_AGENT, kind: '판단', topic: '제안', facts, conclusion, context, decisions });
     // hasReachedMaturity를 여기서 다시 확인 — --force로 만기 전에 강제 발송한 경우까지
     // 마커를 영구 기록하면 진짜 만기(2028-04-06)가 와도 이 잡이 평생 스킵된다(코드리뷰
     // 지적). force 테스트는 위에서 이미 --dry-run과만 조합하도록 안내했지만, 혹시라도

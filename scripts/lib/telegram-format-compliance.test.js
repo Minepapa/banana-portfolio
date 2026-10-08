@@ -39,10 +39,11 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AGENT_HEADERS, renderAgentMessage } from './pantheon-send.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SCAN_DIRS = [join(HERE, '..', 'jobs'), join(HERE, '..', 'tools'), HERE];
-const EXCLUDED_FILENAMES = new Set(['telegram.mjs']); // sendTelegram "정의부" — 호출이 아님
+const SCAN_DIRS = [join(HERE, '..', 'jobs'), join(HERE, '..', 'tools'), join(HERE, '..', 'hooks'), HERE];
+const EXCLUDED_FILENAMES = new Set(['telegram.mjs', 'pantheon-send.mjs']); // 발송 관문과 transport
 const SAFE_WRAPPERS = ['formatFactsMessage(', 'formatDepartmentMessage('];
 // 매치 직전 텍스트가 이 패턴으로 끝나야만("줄 단위" 근접 확인) 콜백 정의 자체로 인정 —
 // 파일 전체 존재 여부로 판단하지 않는다(위 코드리뷰 지적).
@@ -105,7 +106,7 @@ function scanSinkWindows(rawContent) {
     // 처럼 "텔레그램 발송 자체가 실패했을 때의 로컬 콘솔 폴백"(오너에게 안 나감)까지
     // 같은 문장으로 묶여 오탐이 난다(2026-09-20 실측 — place-breakout-entry-order.mjs).
     const stmtEndSemi = raw.search(/;\s*\n/);
-    const stmtEndClose = raw.search(/\}\)\)/);
+    const stmtEndClose = raw.search(/\}\)/);
     // facts: [ ... ] 배열 리터럴은 `]`에서 끝난다(2026-09-20 MEDIUM 지적으로 facts:
     // sink 추가하며 같이 필요해짐) — facts sink에만 적용한다. 다른 sink(collectWarning
     // 등)의 메시지 문자열엔 "[경고]" 같은 대괄호 태그가 흔해서, 전체에 적용하면 그
@@ -207,6 +208,38 @@ test('scripts/jobs·scripts/tools·scripts/lib 전수 — sendTelegram() 호출�
   assert.deepEqual(offenders, [], `표준 포맷터(formatFactsMessage/formatDepartmentMessage)를 안 거치는 sendTelegram() 호출 발견:\n${offenders.join('\n')}`);
 });
 
+test('발송 관문 밖에서 Telegram transport import·호출 또는 Bot API 텍스트 직접 호출 금지', () => {
+  const offenders = [];
+  for (const filePath of listScriptFiles()) {
+    if (findTransportBypass(readFileSync(filePath, 'utf8'))) offenders.push(filePath);
+  }
+  assert.deepEqual(offenders, []);
+});
+
+export function findTransportBypass(rawContent) {
+  const source = stripComments(rawContent);
+  return /\b(?:sendTelegram|editTelegramMessage)\b/.test(source)
+    || /export\s*\*\s*from\s*['"][^'"]*telegram\.mjs['"]/.test(source)
+    || /\bfetch\s*\([\s\S]{0,300}\/\s*(?:sendMessage|editMessageText|sendPhoto|sendDocument|copyMessage|forwardMessage|sendMediaGroup)\b/.test(source)
+    || /(?:api\.telegram\.org|\/bot\$\{)[\s\S]{0,300}\/(?!setMessageReaction\b|getWebhookInfo\b|getUpdates\b|getMe\b)(?:send|edit|copy|forward)[A-Z]\w*/.test(source);
+}
+
+test('우회 가드는 직접 transport import·호출과 Bot API fetch를 탐지하고 reaction은 허용', () => {
+  assert.equal(findTransportBypass("import { sendTelegram } from './telegram.mjs'"), true);
+  assert.equal(findTransportBypass('await editTelegramMessage(1, text)'), true);
+  assert.equal(findTransportBypass('export * from "./telegram.mjs"'), true);
+  assert.equal(findTransportBypass('await fetch(`${botUrl}/sendMessage`, options)'), true);
+  assert.equal(findTransportBypass('await fetch(`${botUrl}/editMessageText`, options)'), true);
+  assert.equal(findTransportBypass('await fetch(`${botUrl}/setMessageReaction`, options)'), false);
+});
+
+test('모든 담당의 첫 줄은 [한글 English] 주제 형식', () => {
+  for (const agent of Object.keys(AGENT_HEADERS)) {
+    const firstLine = renderAgentMessage({ agent, kind: '정보', topic: '안내', body: '본문' }).split('\n')[0];
+    assert.match(firstLine, /^\[[가-힣]+ [A-Za-z]+\] [^\n]+$/);
+  }
+});
+
 test('findRawErrorLeaks: collectWarning() 근처에 e.message를 보간하면 잡힘', () => {
   const content = "collectWarning(`조회 실패: ${e.message}`);";
   const violations = findRawErrorLeaks(content);
@@ -251,4 +284,17 @@ test('scripts/jobs·scripts/tools·scripts/lib 전수 — collectWarning/notify/
   }
   assert.deepEqual(errorOffenders, [], `오류 원문(e.message/.stack)이 오너 발신 문자열에 직접 보간됨:\n${errorOffenders.join('\n')}`);
   assert.deepEqual(emojiOffenders, [], `이모지가 오너 발신 문자열에 하드코딩됨:\n${emojiOffenders.join('\n')}`);
+});
+
+// 이관 4-4 리뷰 HIGH 재발 방지: 투자 코드가 athena(딸 미네)·hermes(오너 개인 일정) 명의로 발송하면 실패.
+test('투자 발송 코드는 athena·hermes를 발신자로 쓰지 않는다', () => {
+  const offenders = [];
+  for (const dir of SCAN_DIRS) {
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.mjs') || EXCLUDED_FILENAMES.has(name)) continue;
+      const src = stripComments(readFileSync(join(dir, name), 'utf8'));
+      if (/SENDER_AGENT\s*=\s*['"](?:athena|hermes)['"]|\b(?:agent|senderAgent)\s*:\s*['"](?:athena|hermes)['"]|TRACK_AGENT\s*=\s*\{[^}]*['"](?:athena|hermes)['"]/.test(src)) offenders.push(name);
+    }
+  }
+  assert.deepEqual(offenders, []);
 });

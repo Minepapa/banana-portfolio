@@ -35,14 +35,14 @@ import { VAULT_PATHS, VAULT_ROOT, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
-import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
+import { parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 import { CANONICAL_PROGRESS_VALUES } from '../lib/vault-frontmatter.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '클리오 Clio';
-const sendWarning = createDirectWarningSender(sendTelegram, {
+const SENDER_AGENT = 'clio';
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'weekly-vault-health-check', warningCode: 'VAULT_HEALTH_FINDINGS',
   subjectKey: 'batch', kind: 'data-quality', severity: 'medium',
 });
@@ -417,7 +417,7 @@ async function main() {
   const { conclusion, context, decisions } = parseDepartmentResponse(judgment);
 
   try {
-    await sendWarning(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '점검', facts, conclusion, context, decisions }));
+    await sendWarning({ agent: SENDER_AGENT, kind: '판단', topic: '점검', facts, conclusion, context, decisions });
   } catch (e) { console.error('텔레그램 알림 실패:', e.message); }
 }
 

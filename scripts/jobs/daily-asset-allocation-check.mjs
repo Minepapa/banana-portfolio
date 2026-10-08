@@ -40,14 +40,14 @@ import { loadEnv } from '../lib/auth.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
-import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
+import { parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DEPARTMENT_LABEL = '플루토스 Plutus';
-const sendWarning = createDirectWarningSender(sendTelegram, {
+const SENDER_AGENT = 'plutus';
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'daily-asset-allocation-check', warningCode: 'MARKET_OVERLAY_SIGNAL',
   subjectKey: 'macro-overlay', kind: 'market-signal', severity: 'info',
 });
@@ -159,7 +159,7 @@ async function main() {
   }
 
   try {
-    await sendWarning(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', facts, conclusion, context, decisions }));
+    await sendWarning({ agent: SENDER_AGENT, kind: '판단', topic: '경고', facts, conclusion, context, decisions });
   } catch (e) {
     console.error('텔레그램 알림 실패:', e.message);
   }

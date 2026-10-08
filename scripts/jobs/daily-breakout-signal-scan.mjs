@@ -52,14 +52,14 @@ import {
 import { todayKST } from '../lib/sheets-api.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 
-const DEPARTMENT_LABEL = '플루토스 Plutus';
-const sendWarning = createDirectWarningSender(sendTelegram, {
+const SENDER_AGENT = 'plutus';
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'daily-breakout-signal-scan', subjectKey: 'breakout-scan',
   kind: 'data-quality', severity: 'high',
 });
@@ -264,10 +264,8 @@ async function main() {
     const msg = `개별종목 시세 캐시 정합률 ${(cacheCoverageRatio * 100).toFixed(0)}%(기준일 ${cachedDate} 데이터 보유 ${haveCachedDate}/${liveCandidates.length}종목) — update-breakout-price-cache.mjs가 최근에 정상적으로 안 돈 것으로 의심됨. 신호 결과를 신뢰하지 말 것.`;
     console.error(`⚠️ ${msg}`);
     if (!dryRun) {
-      await sendWarning(formatDepartmentMessage({
-        departmentLabel: DEPARTMENT_LABEL, tag: '경고',
-        body: `<b>돌파매매 일별 신호스캔 — 시세 캐시 정합률 이상</b>\n${msg}`,
-      }), { warningCode: 'BREAKOUT_PRICE_CACHE_LOW_COVERAGE' });
+      await sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: '경고',
+        body: `<b>돌파매매 일별 신호스캔 — 시세 캐시 정합률 이상</b>\n${msg}`, }, { warningCode: 'BREAKOUT_PRICE_CACHE_LOW_COVERAGE' });
     }
   }
 
@@ -296,10 +294,8 @@ async function main() {
   } catch (e) {
     console.error(`❌ 코스피 실시간지수 조회 실패 — 신호판정 불가, 중단: ${e.message}`);
     if (!dryRun) {
-      await sendWarning(formatDepartmentMessage({
-        departmentLabel: DEPARTMENT_LABEL, tag: '경고',
-        body: '<b>돌파매매 일별 신호스캔 중단 — 코스피 실시간지수 조회 실패</b>\n오늘은 신호판정 자체를 못 했습니다(발주 없음). 상세 원인은 로그를 확인해 주세요.',
-      }), { warningCode: 'BREAKOUT_INDEX_QUERY_FAILED', kind: 'operational' });
+      await sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: '경고',
+        body: '<b>돌파매매 일별 신호스캔 중단 — 코스피 실시간지수 조회 실패</b>\n오늘은 신호판정 자체를 못 했습니다(발주 없음). 상세 원인은 로그를 확인해 주세요.', }, { warningCode: 'BREAKOUT_INDEX_QUERY_FAILED', kind: 'operational' });
     }
     return;
   }
@@ -347,10 +343,8 @@ async function main() {
     // 장중에 수동으로 비-dry-run 실행하면 그날 전체가 이 장중 스냅샷 판정으로
     // 소비된다.
     if (!dryRun) {
-      await sendTelegram(formatDepartmentMessage({
-        departmentLabel: DEPARTMENT_LABEL, tag: '완료',
-        body: `<b>돌파매매 일별 신호스캔 완료 — 마켓 레짐 필터로 신규 진입 중단</b>\n코스피 ${benchmarkToday}가 60일 이동평균선(${ma60.toFixed(1)}) 아래(약세장)로 확인돼 오늘은 신규 진입 탐색을 하지 않았습니다. 기존 보유 포지션의 손절·트레일링은 평소처럼 계속됩니다 — 단, 전날 장후시간외에 이미 확정된 신호가 있었다면 다음날 시가 폴백 체결(place-breakout-fallback-entry.mjs)은 이 필터와 무관하게 그대로 진행됩니다.`,
-      }));
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '완료',
+        body: `<b>돌파매매 일별 신호스캔 완료 — 마켓 레짐 필터로 신규 진입 중단</b>\n코스피 ${benchmarkToday}가 60일 이동평균선(${ma60.toFixed(1)}) 아래(약세장)로 확인돼 오늘은 신규 진입 탐색을 하지 않았습니다. 기존 보유 포지션의 손절·트레일링은 평소처럼 계속됩니다 — 단, 전날 장후시간외에 이미 확정된 신호가 있었다면 다음날 시가 폴백 체결(place-breakout-fallback-entry.mjs)은 이 필터와 무관하게 그대로 진행됩니다.`, });
     }
     return;
   }
@@ -430,10 +424,8 @@ async function main() {
     // 탈락"을 겉보기로 구분 못 하면 매일 조용히 아무 일도 안 하는 상태가 정상인지
     // 버그인지 알 길이 없다. 최소한 실행됐다는 사실+후보수는 남긴다.
     if (!dryRun) {
-      await sendTelegram(formatDepartmentMessage({
-        departmentLabel: DEPARTMENT_LABEL, tag: '완료',
-        body: `<b>돌파매매 일별 신호스캔 완료 — 신호 없음</b>\n사전필터 통과 ${candidates.length}종목(기준일 ${cachedDate}) 중 오늘 신호 통과 0건 — 매수 없음.`,
-      }));
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '완료',
+        body: `<b>돌파매매 일별 신호스캔 완료 — 신호 없음</b>\n사전필터 통과 ${candidates.length}종목(기준일 ${cachedDate}) 중 오늘 신호 통과 0건 — 매수 없음.`, });
     }
     return;
   }

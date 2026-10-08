@@ -51,20 +51,17 @@ import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { markMacroWarningRecovered } from '../lib/warning-action-executor.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
-import {
-  formatFactsMessage, parseDepartmentResponse,
-  CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER,
-} from '../lib/telegram-messages.mjs';
+import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '플루토스 Plutus';
+const SENDER_AGENT = 'plutus';
 const MACRO_QUERY_WARNING = {
   warningCode: 'MACRO_YFINANCE_QUERY_FAILED', subjectKey: 'macro:yfinance',
   kind: 'operational', severity: 'medium',
 };
-const sendWarning = createDirectWarningSender(sendTelegram, {
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'intraday-market-move-monitor', warningCode: 'MARKET_THRESHOLD_BREACHED',
   subjectKey: 'market-batch', kind: 'market-signal', severity: 'high',
 });
@@ -519,7 +516,7 @@ async function main() {
   // 주기에서 다시 시도(재발송)된다.
   let sent = false;
   try {
-    await sendWarning(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', facts, conclusion, context, decisions }));
+    await sendWarning({ agent: SENDER_AGENT, kind: '판단', topic: '경고', facts, conclusion, context, decisions });
     sent = true;
   } catch (e) {
     console.error('텔레그램 알림 실패:', e.message);

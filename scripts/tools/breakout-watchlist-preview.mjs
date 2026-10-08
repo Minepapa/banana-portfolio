@@ -25,10 +25,9 @@ import { cacheIndexPrices, loadIndexSeries, addDays } from '../lib/index-price-c
 import { computeDailyCandidates } from '../lib/breakout-simulator.mjs';
 import { is52WeekHighBreakout, computeRelativeStrengthSmoothedAnchor, computeVcpReadiness, RS_LOOKBACK_DAYS, RS_ANCHOR_SMOOTH_DAYS, MARKET_CAP_FLOOR_WON } from '../lib/breakout-factor.mjs';
 import { todayKST } from '../lib/sheets-api.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
-import { formatFactsMessage } from '../lib/telegram-messages.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 
-const DEPARTMENT_LABEL = '플루토스 Plutus';
+const SENDER_AGENT = 'plutus';
 const HIGH_LOOKBACK_DAYS = 252;
 const DEFAULT_TOP = 15;
 
@@ -137,16 +136,13 @@ async function main() {
   facts.forEach((f) => console.log(`  ${f}`));
 
   if (!dryRun) {
-    await sendTelegram(formatFactsMessage({
-      departmentLabel: DEPARTMENT_LABEL,
-      tag: '안내',
+    await sendAgentMessage({ agent: SENDER_AGENT, kind: '판단', topic: '안내',
       facts: [
         `아침 워치리스트(참고용) — 기준일 ${cachedDate} 종가 기준 52주 고점에 가장 근접한 상위 ${ranked.length}종목`,
         'VCP는 절반만 확인 가능(변동성수축 여부) — 나머지 절반(당일 상승률 3%↑)은 오늘 장중 가격에 달려있어 이 메시지로는 알 수 없음. "수축완료"가 곧 매수신호 확정이 아님',
         ...facts,
         '실제 돌파 여부(당일 상승률·오늘 종가)는 오늘 장중 가격에 달려있어 예측 불가 — 실제 신호는 장마감 직후 별도 확인',
-      ],
-    }));
+      ], });
   }
 }
 

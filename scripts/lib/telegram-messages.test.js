@@ -12,8 +12,8 @@ test('formatDepartmentMessage: 부서보고+Zeus코멘트를 한 메시지로 �
   assert.equal(msg, `[플루토스 Plutus]\n${SEP}\n리밸런싱 제안입니다.\n\n${ZEUS_MARKER} 승인합니다.`);
 });
 
-test('ZEUS_MARKER: "[Zeus]"(영문) — 2026-09-19 오너 지시로 환원(부서 라벨이 전부 "부서명+영문이름" 형식인데 제우스는 부서가 없어 영문이름만 표기)', () => {
-  assert.equal(ZEUS_MARKER, '[Zeus]');
+test('ZEUS_MARKER: "[제우스 Zeus]" — 이관 4-4(D64)에서 헤더와 같은 [한글 English] 표기로 통일', () => {
+  assert.equal(ZEUS_MARKER, '[제우스 Zeus]');
 });
 
 test('formatDepartmentMessage: zeusComment 없으면 부서보고만', () => {
@@ -22,9 +22,9 @@ test('formatDepartmentMessage: zeusComment 없으면 부서보고만', () => {
 });
 
 // 2026-08-23 — 대괄호 태그(상태 표시, 이모지 대체) 추가.
-test('[막아야 함] formatDepartmentMessage: tag를 넘기면 부서 헤더 앞에 대괄호로 붙는다', () => {
+test('[막아야 함] formatDepartmentMessage: tag를 넘기면 부서 헤더 뒤에 주제로 붙는다', () => {
   const msg = formatDepartmentMessage({ departmentLabel: '플루토스 Plutus', body: '체결 취소됨.', tag: '취소' });
-  assert.equal(msg, `[취소] [플루토스 Plutus]\n${SEP}\n체결 취소됨.`);
+  assert.equal(msg, `[플루토스 Plutus] 취소\n${SEP}\n체결 취소됨.`);
 });
 
 test('formatDepartmentMessage: tag 안 넘기면(기본값) 태그 없이 부서 헤더만', () => {
@@ -73,9 +73,9 @@ test('formatFactsMessage: facts 없어도(빈 배열) 헤더+[사실] 빈 줄만
   assert.equal(msg, `[플루토스 Plutus]\n\n[사실]\n`);
 });
 
-test('[막아야 함] formatFactsMessage: tag를 넘기면 부서 헤더 앞에 대괄호로 붙는다', () => {
+test('[막아야 함] formatFactsMessage: tag를 넘기면 부서 헤더 뒤에 주제로 붙는다', () => {
   const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['사실1'], tag: '제안' });
-  assert.equal(msg, `[제안] [플루토스 Plutus]\n\n[사실]\n· 사실1`);
+  assert.equal(msg, `[플루토스 Plutus] 제안\n\n[사실]\n· 사실1`);
 });
 
 // parseDepartmentResponse — LLM 응답을 formatFactsMessage의 conclusion·context·decisions

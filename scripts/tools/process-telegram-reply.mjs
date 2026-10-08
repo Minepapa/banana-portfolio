@@ -30,11 +30,11 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveReplyAction, inferReplyTargetFromPendingProposals } from '../lib/telegram-reply-handler.mjs';
 import { parseProposal, updateProposalRecord } from '../lib/proposal-vault.mjs';
-import { buildProposalStatusEditText } from '../lib/proposal-flow.mjs';
+import { buildProposalStatusEditMessage } from '../lib/proposal-flow.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { editTelegramMessage, sendTelegram } from '../lib/telegram.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { editAgentMessage, sendAgentMessage } from '../lib/pantheon-send.mjs';
+
 import { detectRejectionStreak, shouldNudgeRejectionStreak, buildRejectionStreakNudge } from '../lib/rejection-pattern.mjs';
 
 function parseArgs(argv) {
@@ -102,7 +102,7 @@ async function main() {
       const streak = detectRejectionStreak(updatedProposals, { track: '자산분배' });
       if (shouldNudgeRejectionStreak(streak)) {
         try {
-          await sendTelegram(formatDepartmentMessage({ departmentLabel: '클리오 Clio', tag: '안내', body: buildRejectionStreakNudge(streak) }));
+          await sendAgentMessage({ agent: 'clio', kind: '정보', topic: '안내', body: buildRejectionStreakNudge(streak) });
           console.log(`  📣 연속 거부 ${streak}회 — 원칙 재확인 안내 발송`);
         } catch (e) { console.error('연속 거부 안내 발송 실패(무시, 거부 처리 자체는 완료됨):', e.message); }
       }
@@ -117,13 +117,13 @@ async function main() {
   // 어떻게 됐는지 스크롤해서 찾아야 했다. 부가 기능이라 실패해도(예: 원본 메시지가
   // 48시간 지나 Bot API 편집 제한에 걸림) 승인/거부 자체(위에서 이미 완료)를 막지 않는다.
   if (result.proposal.telegramMessageId != null) {
-    const editText = buildProposalStatusEditText({
+    const editMessage = buildProposalStatusEditMessage({
       proposal: { ...result.proposal, ...result.updates },
       action: result.action,
       decidedAt: result.updates.decidedAt,
     });
     try {
-      await editTelegramMessage(result.proposal.telegramMessageId, editText);
+      await editAgentMessage(result.proposal.telegramMessageId, editMessage);
     } catch (e) { console.error('원본 메시지 갱신 실패(무시):', e.message); }
   }
 }

@@ -52,7 +52,7 @@
  *
  * 조치: 실패 감지 시 기존 `restart-telegram-session.sh`(예방적 일일 04:00 재시작과
  * 동일 스크립트)를 그대로 재사용 — 재시작 로직을 여기서 새로 만들지 않는다. 알림은
- * sendTelegram()으로 발송(MCP를 안 거치고 Bot API를 직접 호출해서 세션 MCP가
+ * sendAgentMessage()으로 발송(MCP를 안 거치고 Bot API를 직접 호출해서 세션 MCP가
  * 죽어있어도 정상 작동함).
  *
  * ⚠️ 근본원인 진단 계측(2026-09-04, 오너 재요청 — "근본 원인을 다시 파악해보자") —
@@ -75,9 +75,10 @@ import os from 'node:os';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS, VAULT_REL, vaultAbs, vaultYearDir } from '../lib/vault-paths.mjs';
-import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
+import { getTelegramWebhookInfo } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
-import { formatFactsMessage } from '../lib/telegram-messages.mjs';
+
 import { isProcessAlive, isPollingStuck, isSessionLogStale, TELEGRAM_SESSION_PROCESS_PATTERN, TELEGRAM_MCP_SUBPROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
 import { findTelegramTranscripts, readTranscriptLines, findLatestUnansweredTelegramOwnerMessage } from './telegram-session-handoff.mjs';
 
@@ -88,8 +89,8 @@ const MCP_LOSS_LOG_HEADER = '# 텔레그램 MCP 소실 진단 로그\n\n' +
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DEPARTMENT_LABEL = '클리오 Clio';
-const sendWarning = createDirectWarningSender(sendTelegram, {
+const SENDER_AGENT = 'zeus';
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'telegram-session-health-check', warningCode: 'TELEGRAM_SESSION_UNHEALTHY',
   subjectKey: 'telegram-session', kind: 'operational', severity: 'high',
 });
@@ -348,15 +349,12 @@ async function main() {
     writeState(nextState);
     console.log(`🚨 연속 ${consecutiveRestarts}회 — 재시작 중단, 수동 개입 필요 알림만 발송`);
     try {
-      await sendWarning(formatFactsMessage({
-        departmentLabel: DEPARTMENT_LABEL,
-        tag: '경고',
+      await sendWarning({ agent: SENDER_AGENT, kind: '판단', topic: '경고',
         facts: [
           `<b>감지</b>: ${reason}`,
           `<b>연속 ${consecutiveRestarts}회째 감지</b> — 자동 재시작을 ${MAX_CONSECUTIVE_RESTARTS}회 넘어 중단함(반복 재시작이 오히려 방해가 될 수 있음)`,
           '<b>수동 확인 필요</b>: launchd 상태·MCP 플러그인 로그 직접 점검',
-        ],
-      }));
+        ], });
     } catch (e) {
       console.error('텔레그램 알림 실패:', e.message);
     }
@@ -374,14 +372,11 @@ async function main() {
   writeState(restartOk ? markRestartSucceeded(nextState, { nowMs: Date.now(), reasonKey }) : nextState);
 
   try {
-    await sendWarning(formatFactsMessage({
-      departmentLabel: DEPARTMENT_LABEL,
-      tag: '경고',
+    await sendWarning({ agent: SENDER_AGENT, kind: '판단', topic: '경고',
       facts: [
         `<b>감지</b>: ${reason}`,
         `<b>조치</b>: com.banana2.telegram-session 자동 재시작 ${restartOk ? '완료' : '실패(수동 확인 필요)'}(연속 ${consecutiveRestarts}회째)`,
-      ],
-    }));
+      ], });
   } catch (e) {
     console.error('텔레그램 알림 실패:', e.message);
   }

@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { renderAgentMessage } from './pantheon-send.mjs';
 import assert from 'node:assert/strict';
 import { createAndSendProposal, buildProposalMessageBody, buildProposalFacts, buildProposalStatusEditText } from './proposal-flow.mjs';
 import { buildProposalRecord, findActiveProposal, parseProposal } from './proposal-vault.mjs';
@@ -87,8 +88,8 @@ test('createAndSendProposal: 신규 생성 — 파일 쓰고 텔레그램 발송
   assert.match(last.content, /status: "대기"/);
   assert.match(last.content, /telegramMessageId: 12345/);
   // 발송 메시지에 부서라벨+본문 포함
-  assert.match(sender.calls[0], /\[카이로스\]/);
-  assert.match(sender.calls[0], /매수 삼성전자\(005930\)/);
+  assert.match(renderAgentMessage(sender.calls[0]), /\[플루토스 Plutus\]/);
+  assert.match(renderAgentMessage(sender.calls[0]), /매수 삼성전자\(005930\)/);
 });
 
 // 전체 텍스트 스냅샷(2026-09-01 코드리뷰 지적, MEDIUM) — reason(부서 LLM 판단)이
@@ -103,8 +104,8 @@ test('[막아야 함] createAndSendProposal: 발송 메시지 전체 텍스트 �
     existingProposals: [], writeProposalFile: writer, sendMessage: sender,
   });
   assert.equal(
-    sender.calls[0],
-    '[제안] [플루토스 Plutus]\n\n[사실]\n· 매수 삼성전자(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n[맥락]\nOCF/P 1위',
+    renderAgentMessage(sender.calls[0]),
+    '[플루토스 Plutus] 제안\n\n[사실]\n· 매수 삼성전자(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n[맥락]\nOCF/P 1위',
   );
 });
 
@@ -218,7 +219,7 @@ test('승인 불가 경고는 주입된 경고 발송 함수만 쓰고 정상 �
   });
   assert.equal(sender.calls.length, 1);
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0].message, /승인 연결정보가 없어 승인할 수 없습니다/);
+  assert.match(renderAgentMessage(warnings[0].message), /승인 연결정보가 없어 승인할 수 없습니다/);
   assert.equal(warnings[0].details.warningCode, 'PROPOSAL_APPROVAL_LINK_BROKEN');
   assert.match(warnings[0].details.subjectKey, /^proposal:[a-p]{20}$/);
 });
@@ -244,7 +245,7 @@ test('[핵심 안전장치] createAndSendProposal: Telegram 성공 후 ID 저장
   assert.equal(storedProposal.telegramMessageId, null);
   assert.equal(findActiveProposal([storedProposal], { track: '자산분배', assetKey: 'TIGER 200', side: '매수' }), null);
   assert.equal(sender.calls.length, 2);
-  assert.match(sender.calls[1], /전송됐지만.*승인 연결정보/);
+  assert.match(renderAgentMessage(sender.calls[1]), /전송됐지만.*승인 연결정보/);
 });
 
 test('[핵심 안전장치] createAndSendProposal: 재제안 발송이 실패하면 기존 대기 제안은 계속 활성', async () => {
@@ -291,7 +292,7 @@ test('[핵심 안전장치] createAndSendProposal: 새 제안 ID 저장이 실�
   assert.equal(restored.status, '대기');
   assert.equal(findActiveProposal([restored], { track: '퀀트', assetKey: '005930', side: '매수' }).id, previous.id);
   assert.equal(parseProposal(persisted.get(result.filename)).status, '발송오류');
-  assert.match(sender.calls[1], /저장하지 못했습니다/);
+  assert.match(renderAgentMessage(sender.calls[1]), /저장하지 못했습니다/);
 });
 
 test('[핵심 안전장치] createAndSendProposal: 최초 발송중 파일 저장 실패는 Telegram을 발송하지 않고 경고', async () => {
@@ -311,7 +312,7 @@ test('[핵심 안전장치] createAndSendProposal: 최초 발송중 파일 저�
 
   assert.equal(result.action, 'failed');
   assert.equal(sender.calls.length, 1); // 제안 본문이 아니라 경고만 발송
-  assert.match(sender.calls[0], /제안 메시지는 발송하지 않았습니다/);
+  assert.match(renderAgentMessage(sender.calls[0]), /제안 메시지는 발송하지 않았습니다/);
   assert.equal(parseProposal(persisted.get(result.filename)).status, '발송오류');
 });
 
@@ -333,8 +334,8 @@ test('[핵심 안전장치] createAndSendProposal: 기존 제안 복구도 실�
 
   assert.equal(result.action, 'failed');
   assert.equal(parseProposal(persisted.get(previous.filename)).status, '대체됨');
-  assert.match(sender.calls[1], /상태 복구도 실패했습니다/);
-  assert.match(sender.calls[1], new RegExp(previous.id));
+  assert.match(renderAgentMessage(sender.calls[1]), /상태 복구도 실패했습니다/);
+  assert.match(renderAgentMessage(sender.calls[1]), new RegExp(previous.id));
   assert.equal(parseProposal(persisted.get(result.filename)).status, '발송오류');
 });
 
@@ -345,7 +346,7 @@ test('buildProposalStatusEditText: 승인 — 트랙에서 부서 라벨을 되�
     action: 'approve',
     decidedAt: '2026-08-23T01:30:00.000Z',
   });
-  assert.match(text, /^\[승인\] \[플루토스 Plutus\]/);
+  assert.match(text, /^\[플루토스 Plutus\] 승인/);
   assert.match(text, /매수 005930\(005930\)/);
   assert.match(text, /승인됨 \(2026-08-23 10:30 KST\)/); // UTC+9
   assert.match(text, /기존안건/); // 원래 사유(reason) 보존
@@ -366,7 +367,7 @@ test('[막아야 함] buildProposalStatusEditText: 전체 텍스트 스냅샷 �
   });
   assert.equal(
     text,
-    '[승인] [플루토스 Plutus]\n\n[사실]\n· 매수 005930(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n· 승인됨 (2026-08-23 10:30 KST)\n\n[맥락]\n기존안건',
+    '[플루토스 Plutus] 승인\n\n[사실]\n· 매수 005930(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n· 승인됨 (2026-08-23 10:30 KST)\n\n[맥락]\n기존안건',
   );
 });
 
@@ -377,19 +378,18 @@ test('buildProposalStatusEditText: 거부 — [거부] 태그 + 거부사유가 
     action: 'reject',
     decidedAt: '2026-08-23T01:30:00.000Z',
   });
-  assert.match(text, /^\[거부\] \[플루토스 Plutus\]/);
+  assert.match(text, /^\[플루토스 Plutus\] 거부/);
   assert.match(text, /거부됨 \(2026-08-23 10:30 KST\)/);
   assert.match(text, /거부 사유: 지금은 필요 없음/);
 });
 
-test('buildProposalStatusEditText: 매핑에 없는 track이면 raw 문자열로 폴백(throw 없이 계속 진행)', () => {
+test('buildProposalStatusEditText: 매핑에 없는 track은 미등록 담당으로 발송 차단', () => {
   const proposal = fixture({ track: '신규트랙' });
-  const text = buildProposalStatusEditText({
+  assert.throws(() => buildProposalStatusEditText({
     proposal: { ...proposal, status: '승인', decidedAt: '2026-08-23T01:30:00.000Z' },
     action: 'approve',
     decidedAt: '2026-08-23T01:30:00.000Z',
-  });
-  assert.match(text, /^\[승인\] \[신규트랙\]/);
+  }), /미등록 발신자/);
 });
 
 test('buildProposalStatusEditText: decidedAt이 없거나 파싱 불가여도 throw하지 않고 안전 문구로 폴백', () => {

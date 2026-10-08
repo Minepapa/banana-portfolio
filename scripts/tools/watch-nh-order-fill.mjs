@@ -55,15 +55,15 @@ import { resolveNhAccountsByLabel, maskNhActNo } from '../lib/nh-accounts.mjs';
 import { parseNhExecutionRows, isTerminalNhExecution } from '../jobs/reconcile-nh-executions.mjs';
 import { recordNhTerminalExecution } from '../lib/nh-execution-ledger.mjs';
 import { recordProposalExecutionStatus } from '../lib/proposal-execution-status.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 
 // 순수 API 조회 결과를 그대로 전달하는 통보라 부서 판단이 없다 — watch-order-
-// fill.mjs·execute-quant-proposal.mjs와 동일 이유로 운영실 Hermes로 통일.
-const DEPARTMENT_LABEL = '플루토스 Plutus';
-const sendWarning = createDirectWarningSender(sendTelegram, {
+// fill.mjs·execute-quant-proposal.mjs와 동일 이유로 플루토스(투자 체결·운영 통보)로 통일(구 운영실 Hermes, 이관 4-3).
+const SENDER_AGENT = 'plutus';
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'watch-nh-order-fill', subjectKey: 'order-watch',
   kind: 'trade-safety', severity: 'high',
 });
@@ -152,10 +152,8 @@ export function formatNhTimeoutBody({ name, code, orderNo, account, timeoutMin, 
 async function alertAndExit(message, exitCode = 2) {
   console.error(`❌ ${message}`);
   try {
-    await sendWarning(formatDepartmentMessage({
-      departmentLabel: DEPARTMENT_LABEL, tag: '경고',
-      body: `<b>NH 체결감시 시작 실패</b>\n${message}`,
-    }), { warningCode: 'NH_FILL_WATCH_START_FAILED' });
+    await sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: '경고',
+      body: `<b>NH 체결감시 시작 실패</b>\n${message}`, }, { warningCode: 'NH_FILL_WATCH_START_FAILED' });
   } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
   process.exit(exitCode);
 }
@@ -306,23 +304,17 @@ async function main() {
     });
     if (!ledger.ok) {
       console.error(`[Ledger] 기록 보류: ${ledger.reason}`);
-      await sendOrderWarning(formatDepartmentMessage({
-        departmentLabel: DEPARTMENT_LABEL,
-        tag: '경고',
-        body: `<b>NH 체결은 확인됐지만 장부 기록을 완료하지 못했습니다.</b>\n${name}(${code}) 주문번호 ${orderNo}(${account})\nNH 응답과 기존 체결기록을 확인해 주세요.`,
-      }), { warningCode: 'NH_FILL_LEDGER_WRITE_BLOCKED' });
+      await sendOrderWarning({ agent: SENDER_AGENT, kind: '정보', topic: '경고',
+        body: `<b>NH 체결은 확인됐지만 장부 기록을 완료하지 못했습니다.</b>\n${name}(${code}) 주문번호 ${orderNo}(${account})\nNH 응답과 기존 체결기록을 확인해 주세요.`, }, { warningCode: 'NH_FILL_LEDGER_WRITE_BLOCKED' });
       return true;
     }
     console.log(ledger.event
       ? `[Ledger] ${VAULT_REL.factsLedger} 기록 — ${ledger.filepath} (${ledger.event.quantity}주)`
       : `[Ledger] 기존 카카오/API 기록에 이미 포함 — ${row.quantity}주`);
-    await sendTelegram(formatDepartmentMessage({
-      departmentLabel: DEPARTMENT_LABEL,
-      tag: terminalPartial ? '안내' : '완료',
+    await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: terminalPartial ? '안내' : '완료',
       body: terminalPartial
         ? `<b>부분체결 종료 확인</b>\n${name}(${code}) 주문번호 ${orderNo}(${account})\n${row.quantity}/${row.orderQty}주 체결 @${won(row.price)} · 현재 미체결 잔량 0주. 체결분은 장부에 반영했습니다.`
-        : `<b>체결 확인</b>\n${name}(${code}) 주문번호 ${orderNo}(${account})\n${row.quantity}주 전량 체결 @${won(row.price)} ≈ ${won(row.quantity * row.price)}`,
-    }));
+        : `<b>체결 확인</b>\n${name}(${code}) 주문번호 ${orderNo}(${account})\n${row.quantity}주 전량 체결 @${won(row.price)} ≈ ${won(row.quantity * row.price)}`, });
     return true;
   }
 
@@ -345,11 +337,8 @@ async function main() {
   }
   const timeoutState = classifyNhTimeoutOrder(timeoutRow);
   console.log(`[타임아웃] 확인 시간 내 전량체결 미확인 — ${timeoutState.kind} 판정 알림 발송`);
-  await sendOrderWarning(formatDepartmentMessage({
-    departmentLabel: DEPARTMENT_LABEL,
-    tag: '경고',
-    body: formatNhTimeoutBody({ name, code, orderNo, account, timeoutMin, state: timeoutState }),
-  }), { warningCode: 'NH_FILL_WATCH_TIMEOUT' });
+  await sendOrderWarning({ agent: SENDER_AGENT, kind: '정보', topic: '경고',
+    body: formatNhTimeoutBody({ name, code, orderNo, account, timeoutMin, state: timeoutState }), }, { warningCode: 'NH_FILL_WATCH_TIMEOUT' });
 }
 
 // import.meta.url 가드(watch-order-fill.mjs·execute-quant-proposal.mjs와 동일 이유).

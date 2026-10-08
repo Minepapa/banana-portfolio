@@ -78,8 +78,9 @@ import {
   findPendingConfirmationByFirestoreDoc, parseExecutionConfirmation, refreshExecutionConfirmation,
   serializeExecutionConfirmation,
 } from '../lib/execution-confirmation-queue.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
-import { escapeHtml, sendTelegram } from '../lib/telegram.mjs';
+
+import { escapeHtml } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 
 // 금현물은 별도 Ledger 종류를 만들지 않고 체결(Executions)에 합류시킨다 — v1이 "금현물을
@@ -107,8 +108,8 @@ function goldToExecutionEvent(g) {
 }
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '클리오 Clio';
-const sendConfirmationWarning = createDirectWarningSender(sendTelegram, {
+const SENDER_AGENT = 'plutus';
+const sendConfirmationWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'parse-notifications-to-vault', warningCode: 'EXECUTION_CONFIRMATION_NEEDED',
   kind: 'owner-decision', severity: 'high',
 });
@@ -243,9 +244,7 @@ async function writeOrNotifyExecutionConfirmation({ id, ts, body, event, holding
       if (!prepared.shouldSendTelegram) return prepared;
 
       try {
-        await sendConfirmationWarning(formatDepartmentMessage({
-          departmentLabel: DEPARTMENT_LABEL, tag: '확인', body: prepared.telegramBody,
-        }), { subjectKey: warningSubjectKey('confirmation', id) });
+        await sendConfirmationWarning({ agent: SENDER_AGENT, kind: '정보', topic: '확인', body: prepared.telegramBody, }, { subjectKey: warningSubjectKey('confirmation', id) });
         const notified = { ...record, notifiedAt: now.toISOString(), updatedAt: now.toISOString() };
         writeAtomic(confirmationPath, serializeExecutionConfirmation(notified));
         return { ...prepared, confirmation: { ...prepared.confirmation, record: notified } };

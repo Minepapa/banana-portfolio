@@ -12,8 +12,7 @@
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { sendTelegram } from './telegram.mjs';
-import { formatFactsMessage } from './telegram-messages.mjs';
+import { sendAgentMessage } from './pantheon-send.mjs';
 import { describeJob } from './job-labels.mjs';
 import { deliverWarningBatch } from './warning-batch-delivery.mjs';
 export { shouldNotify } from './warning-batch-delivery.mjs';
@@ -21,7 +20,7 @@ export { shouldNotify } from './warning-batch-delivery.mjs';
 // 2026-08-23 — 이 알림엔 부서 라벨이 아예 없었다(오너 지시로 전체 텔레그램 메시지
 // 구조 재점검 중 발견) — 잡·인프라 배관은 운영실(Hermes) 소관 원칙(health-watcher.mjs
 // DEPARTMENT_LABEL과 동일)을 그대로 따른다.
-const DEPARTMENT_LABEL = '플루토스 Plutus';
+const SENDER_AGENT = 'plutus';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = join(HERE, '..', '.cache', 'job-alerts.json');
@@ -47,7 +46,7 @@ export function warningsSignature(list) {
 }
 
 export async function flushWarnings(jobName, {
-  dryRun = false, sendImpl = sendTelegram, stateFile = STATE_FILE, journalRoot,
+  dryRun = false, sendImpl = sendAgentMessage, stateFile = STATE_FILE, journalRoot,
   now = Date.now, logger = console,
 } = {}) {
   if (!warnings.length) return;
@@ -70,11 +69,10 @@ export async function flushWarnings(jobName, {
       ...shown,
     ];
     if (warnings.length > shown.length) facts.push(`… 외 ${warnings.length - shown.length}건(로그 확인 필요)`);
-    const message = formatFactsMessage({
-      departmentLabel: DEPARTMENT_LABEL,
-      tag: '경고',
+    const message = {
+      agent: SENDER_AGENT, kind: '판단', topic: '경고',
       facts,
-    });
+    };
     return await deliverWarningBatch({
       jobName, sig, message, sendImpl, stateFile, journalRoot, clock: now, logger,
       structuredWarnings,

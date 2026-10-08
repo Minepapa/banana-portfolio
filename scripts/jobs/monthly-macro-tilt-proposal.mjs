@@ -49,13 +49,13 @@ import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
-const DEPARTMENT_LABEL = '플루토스 Plutus';
+const SENDER_AGENT = 'plutus';
 const IN_SCOPE_ACCOUNTS = ['위탁', '연금저축'];
 const STATE_DIR = vaultAbs(VAULT_REL.stateMacroTiltProposal);
 const STATE_FILE = join(STATE_DIR, 'last-month.md');
@@ -453,11 +453,11 @@ async function main() {
         track: '자산분배', account: action.account, assetKey: pricing.assetKey, name: action.instrumentName,
         side: action.side, quantity: pricing.quantity, proposedPrice: pricing.proposedPrice,
         amountWon: action.amountWon,
-        reason, departmentLabel: DEPARTMENT_LABEL,
+        reason, senderAgent: SENDER_AGENT,
         existingProposals,
         writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
-        sendMessage: (text) => sendTelegram(text).then((r) => r?.result ?? r),
-        sendWarning: createDirectWarningSender(sendTelegram, {
+        sendMessage: (message) => sendAgentMessage(message).then((r) => r?.result ?? r),
+        sendWarning: createDirectWarningSender(sendAgentMessage, {
           jobName: 'monthly-macro-tilt-proposal', kind: 'trade-safety', severity: 'high',
         }),
       });

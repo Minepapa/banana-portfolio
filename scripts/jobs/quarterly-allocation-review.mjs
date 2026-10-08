@@ -38,12 +38,12 @@ import { getCachedMacroIndicators } from '../lib/macro-cache.mjs';
 import { assembleMacro } from '../tools/risk-facts.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
-const DEPARTMENT_LABEL = '플루토스 Plutus';
+const SENDER_AGENT = 'plutus';
 const LOOKBACK_MS = 95 * 24 * 3600_000; // 약 1분기
 const STATE_DIR = vaultAbs(VAULT_REL.stateQuarterlyAllocationReview);
 const STATE_FILE = join(STATE_DIR, 'last-quarter.md');
@@ -213,7 +213,7 @@ async function main() {
   const { conclusion, context, decisions } = parseDepartmentResponse(judgment);
 
   try {
-    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', facts, conclusion, context, decisions }));
+    await sendAgentMessage({ agent: SENDER_AGENT, kind: '판단', topic: '안내', facts, conclusion, context, decisions });
     writeLastQuarter(getQuarterLabel(now));
   } catch (e) {
     // 발송 실패 시 분기 마커를 안 갱신 — 다음 날(2일·3일)에 재시도되게 한다

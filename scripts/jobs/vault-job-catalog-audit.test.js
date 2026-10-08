@@ -36,7 +36,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, basename, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { SCHEDULE } from './weekly-schedule-summary.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -45,8 +45,8 @@ const LAUNCHD_DIR = join(__dirname, '..', 'launchd');
 // 명칭이라 무슨 노트인지 알기 어렵다는 오너 지적). 2026-09-04: Knowledge/Jobs/ →
 // Knowledge/Meta/로 이동(므네모시네 대정리 — "볼트 전체가 바뀔 때 일괄 갱신해야
 // 하는 문서"를 Index.md·사용안내·파일배선도와 한 폴더로 통합, 오너 지시).
-const JOB_CATALOG_PATH = join(VAULT_PATHS.knowledge.meta, '무인잡-카탈로그.md');
-const DEPT_DOC_PATH = join(VAULT_PATHS.knowledge.meta, '부서별-텔레그램-보고.md');
+const JOB_CATALOG_PATH = vaultAbs(`${VAULT_REL.knowledgeMeta}/무인잡-카탈로그.md`);
+const DEPT_DOC_PATH = vaultAbs(`${VAULT_REL.knowledgeMeta}/부서별-텔레그램-보고.md`);
 
 const PLUTIL_AVAILABLE = (() => {
   try { execFileSync('plutil', ['-help'], { stdio: 'ignore' }); return true; } catch { return false; }
@@ -71,7 +71,24 @@ function readPlistSchedule(job) {
 function isDepartmentFacing(scriptPath) {
   const abs = join(__dirname, '..', '..', scriptPath);
   if (!existsSync(abs)) return false;
-  return readFileSync(abs, 'utf8').includes('DEPARTMENT_LABEL');
+  return readFileSync(abs, 'utf8').includes('SENDER_AGENT');
+}
+
+function senderAgentFor(scriptPath) {
+  const source = readFileSync(join(__dirname, '..', '..', scriptPath), 'utf8');
+  return source.match(/const SENDER_AGENT = '([a-z]+)'/)?.[1] ?? null;
+}
+
+function documentedAgentFor(deptDoc, filename) {
+  let section = '';
+  for (const line of deptDoc.split('\n')) {
+    if (line.startsWith('## ')) section = line;
+    if (line.startsWith('|') && line.includes(`\`${filename}\``)) {
+      const englishName = section.match(/(Athena|Kairos|Themis|Hermes|Apollo|Plutus|Clio|Zeus)$/)?.[1];
+      return englishName?.toLowerCase() ?? '(부서 표기 불명)';
+    }
+  }
+  return null;
 }
 
 function catalogRowForJob(catalog, job) {
@@ -127,7 +144,7 @@ test('vault-job-catalog-audit: StartInterval(분 단위) 잡은 무인잡-카탈
   assert.deepEqual(mismatched, [], `무인잡-카탈로그.md 분 표기가 plist와 다른 잡: ${mismatched.join('; ')}`);
 });
 
-test('vault-job-catalog-audit: DEPARTMENT_LABEL을 정의하는 잡은 전부 부서별-텔레그램-보고.md에 파일명이 있어야 함(신규 발신처 누락 방지)', { skip: !CAN_RUN }, () => {
+test('vault-job-catalog-audit: SENDER_AGENT를 정의하는 잡은 전부 부서별-텔레그램-보고.md에 파일명이 있어야 함(신규 발신처 누락 방지)', { skip: !CAN_RUN }, () => {
   const deptDoc = readFileSync(DEPT_DOC_PATH, 'utf8');
   const jobs = listDispatchedJobs();
   const missing = jobs
@@ -135,6 +152,18 @@ test('vault-job-catalog-audit: DEPARTMENT_LABEL을 정의하는 잡은 전부 �
     .map(({ scriptPath }) => basename(scriptPath))
     .filter((filename) => !deptDoc.includes(filename));
   assert.deepEqual(missing, [], `부서별-텔레그램-보고.md에 없는 발신처: ${missing.join(', ')} — 해당 부서 표에 행을 추가할 것`);
+});
+
+test('vault-job-catalog-audit: 발신 잡의 SENDER_AGENT와 볼트 보고 카탈로그 부서가 일치', { skip: !CAN_RUN }, () => {
+  const deptDoc = readFileSync(DEPT_DOC_PATH, 'utf8');
+  const mismatches = listDispatchedJobs().flatMap(({ scriptPath }) => {
+    const agent = senderAgentFor(scriptPath);
+    if (!agent) return [];
+    const filename = basename(scriptPath);
+    const documented = documentedAgentFor(deptDoc, filename);
+    return documented && documented !== agent ? [`${filename}: 코드=${agent}, 볼트=${documented}`] : [];
+  });
+  assert.deepEqual(mismatches, [], `부서별-텔레그램-보고.md 표기 불일치(문서는 사람이 수정):\n${mismatches.join('\n')}`);
 });
 
 test('vault-job-catalog-audit: 부서별-텔레그램-보고.md의 "매주" 주기적 발신처는 전부 weekly-schedule-summary.mjs SCHEDULE 배열에도 있어야 함(daily-execution-report 누락 재발 방지)', { skip: !CAN_RUN }, () => {

@@ -8,10 +8,11 @@
 //                       setValues·clearValues·getSheetIdByTitle·clearColumnABackground
 //                       ensureSheet·readHoldings·nowKST·todayKST
 //   headless-claude.mjs HEADLESS_NOTE·runHeadlessClaude·parseJsonBlock
-//   telegram.mjs        loadTelegramConfig·sendTelegram
+//   telegram.mjs        loadTelegramConfig·escapeHtml·getTelegramWebhookInfo
 export * from './auth.mjs';
 export * from './fetch-retry.mjs';
 export * from './quota-cooldown.mjs';
 export * from './sheets-api.mjs';
 export * from './headless-claude.mjs';
-export * from './telegram.mjs';
+export { escapeHtml, loadTelegramConfig, isHtmlParseFailure, truncateForTelegram,
+  getTelegramWebhookInfo } from './telegram.mjs';

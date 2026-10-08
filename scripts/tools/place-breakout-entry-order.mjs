@@ -23,12 +23,11 @@ import { isKillSwitchActive } from '../lib/kill-switch.mjs';
 import { STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 
-const DEPARTMENT_LABEL = '플루토스 Plutus'; // watch-breakout-entry-fill.mjs와 동일 원칙 — 순수 API조회+발주 결과 전달, 부서 판단 없음
-const sendWarning = createDirectWarningSender(sendTelegram, {
+const SENDER_AGENT = 'plutus'; // watch-breakout-entry-fill.mjs와 동일 원칙 — 순수 API조회+발주 결과 전달, 부서 판단 없음
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'place-breakout-entry-order', warningCode: 'BREAKOUT_ENTRY_WARNING',
   subjectKey: 'batch', kind: 'legacy-unstructured', severity: 'unclassified',
 });
@@ -93,7 +92,7 @@ export function isWithinAfterHoursSubmitWindow(date) {
 async function alertAndExit(body, code = 1) {
   console.error(`❌ ${body.replace(/<[^>]+>/g, '')}`);
   try {
-    await sendWarning(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '경고', body }));
+    await sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: '경고', body });
   } catch (e) { console.error(`  ⚠️ 텔레그램 발송 자체도 실패(무시): ${e.message}`); }
   process.exit(code);
 }
@@ -162,10 +161,8 @@ async function main() {
     // 건너뛰었다"는 사실 자체는 텔레그램으로 알려야 나중에 "왜 그날 신호가 있었는데
     // 안 샀지"라는 혼란을 막는다.
     console.log(`ℹ️ 산정 수량이 0(투입예산 ${won(investedWon)} < 현재가 ${won(currentPrice)}) — 발주 스킵`);
-    await sendTelegram(formatDepartmentMessage({
-      departmentLabel: DEPARTMENT_LABEL, tag: '스킵',
-      body: `<b>돌파매매 신호 확인, 예산부족으로 매수 건너뜀</b>\n${name}(${code}) 현재가 ${won(currentPrice)} — 투입예산 ${won(investedWon)}으로는 1주도 못 삽니다.`,
-    }));
+    await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '스킵',
+      body: `<b>돌파매매 신호 확인, 예산부족으로 매수 건너뜀</b>\n${name}(${code}) 현재가 ${won(currentPrice)} — 투입예산 ${won(investedWon)}으로는 1주도 못 삽니다.`, });
     return;
   }
   const budgetForFallback = investedWon ?? currentPrice * quantity; // --quantity로 직접 지정된 경우 폴백용 예산은 현재가 기준으로 역산
@@ -187,10 +184,8 @@ async function main() {
   }
   if (isKillSwitchActive(killSwitchState.content)) {
     console.log(`ℹ️ 킬스위치 활성 — ${name}(${code}) ${quantity}주 매수 발주 안 함(신호는 정상 통과했음)`);
-    await sendTelegram(formatDepartmentMessage({
-      departmentLabel: DEPARTMENT_LABEL, tag: '스킵',
-      body: `<b>돌파매매 진입 보류 — 킬스위치 활성</b>\n${name}(${code}) 신호 통과(${quantity}주, 예산 ${won(investedWon)})했지만 킬스위치가 켜져 있어 발주하지 않았습니다. "킬스위치 오프" 명령으로 해제해야 다음 신호부터 다시 발주됩니다.`,
-    }));
+    await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '스킵',
+      body: `<b>돌파매매 진입 보류 — 킬스위치 활성</b>\n${name}(${code}) 신호 통과(${quantity}주, 예산 ${won(investedWon)})했지만 킬스위치가 켜져 있어 발주하지 않았습니다. "킬스위치 오프" 명령으로 해제해야 다음 신호부터 다시 발주됩니다.`, });
     return;
   }
 
@@ -205,10 +200,8 @@ async function main() {
   }
 
   console.log(`[발주 완료] 장후시간외 매수 ${name}(${code}) ${quantity}주 — 주문번호 ${order.orderNo}`);
-  await sendTelegram(formatDepartmentMessage({
-    departmentLabel: DEPARTMENT_LABEL, tag: '접수',
-    body: `<b>돌파매매 진입 — 장후시간외 매수 접수</b>\n${name}(${code}) ${quantity}주 @약${won(currentPrice)} (주문번호 ${order.orderNo})\n체결 확인 후 자동으로 보호주문(손절 -${(stopLossPct * 100).toFixed(0)}%/3R부분익절)을 겁니다. 세션 안에 미체결이면 다음날 시가로 자동 전환됩니다.`,
-  }));
+  await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '접수',
+    body: `<b>돌파매매 진입 — 장후시간외 매수 접수</b>\n${name}(${code}) ${quantity}주 @약${won(currentPrice)} (주문번호 ${order.orderNo})\n체결 확인 후 자동으로 보호주문(손절 -${(stopLossPct * 100).toFixed(0)}%/3R부분익절)을 겁니다. 세션 안에 미체결이면 다음날 시가로 자동 전환됩니다.`, });
 
   // 체결감시+보호주문(전량체결 시)·폴백큐잉(미체결 시)은 watch-breakout-entry-fill.mjs가
   // 이어서 담당 — execute-quant-proposal.mjs가 watch-order-fill.mjs를 분리 프로세스로
@@ -224,10 +217,8 @@ async function main() {
   // 스폰됐을 수 있어) 아무도 모르는 무방비 실거래 포지션이 생긴다 — 반드시 텔레그램.
   child.on('error', (e) => {
     console.error(`  ⚠️ 체결감시 기동 실패(주문 자체는 이미 접수됨): ${e.message}`);
-    sendWarning(formatDepartmentMessage({
-      departmentLabel: DEPARTMENT_LABEL, tag: '경고',
-      body: `<b>체결감시 기동 실패 — 무방비 포지션 위험</b>\n${name}(${code}) ${quantity}주 장후시간외 매수 주문(번호 ${order.orderNo})은 이미 접수됐지만, 체결감시 프로세스를 못 띄워 체결확인·보호주문(손절/3R익절)이 걸리지 않습니다. 즉시 KIS 앱에서 체결 여부를 확인하고 필요하면 수동으로 보호주문을 걸어주세요.`,
-    })).catch((telegramErr) => console.error(`  ⚠️ 텔레그램 발송도 실패: ${telegramErr.message}`));
+    sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: '경고',
+      body: `<b>체결감시 기동 실패 — 무방비 포지션 위험</b>\n${name}(${code}) ${quantity}주 장후시간외 매수 주문(번호 ${order.orderNo})은 이미 접수됐지만, 체결감시 프로세스를 못 띄워 체결확인·보호주문(손절/3R익절)이 걸리지 않습니다. 즉시 KIS 앱에서 체결 여부를 확인하고 필요하면 수동으로 보호주문을 걸어주세요.`, }).catch((telegramErr) => console.error(`  ⚠️ 텔레그램 발송도 실패: ${telegramErr.message}`));
   });
   child.unref();
   console.log('  👁️ 체결감시 시작(백그라운드)');
@@ -239,10 +230,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     // stdio:'ignore'로 스폰됐을 수 있어 콘솔만으론 아무도 못 봄 — 예상 못 한 예외도
     // 반드시 텔레그램으로 표면화(위 alertAndExit이 못 잡는 경로들의 최종 안전망).
     try {
-      await sendWarning(formatDepartmentMessage({
-        departmentLabel: DEPARTMENT_LABEL, tag: '경고',
-        body: '<b>돌파매매 진입 스크립트 예외 종료</b>\n예상 못 한 오류로 중단됐습니다. 주문이 실제로 나갔는지 KIS 앱에서 확인 바랍니다(상세 원인은 로그 참고).',
-      }));
+      await sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: '경고',
+        body: '<b>돌파매매 진입 스크립트 예외 종료</b>\n예상 못 한 오류로 중단됐습니다. 주문이 실제로 나갔는지 KIS 앱에서 확인 바랍니다(상세 원인은 로그 참고).', });
     } catch (telegramErr) { console.error(`  ⚠️ 텔레그램 발송도 실패: ${telegramErr.message}`); }
     process.exit(1);
   });

@@ -43,17 +43,18 @@ import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 import { todayKST } from '../lib/sheets-api.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
+import { escapeHtml } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+
 import {
   parsePendingEntry, updatePendingEntryRecord, findUnprocessedPendingEntries, isPendingEntryStale, PENDING_ENTRY_STATUS,
 } from '../lib/breakout-pending-entry-vault.mjs';
 import { parseBreakoutPosition, findOpenPositions } from '../lib/breakout-position-vault.mjs';
 import { MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
 
-const DEPARTMENT_LABEL = '플루토스 Plutus';
-const sendWarning = createDirectWarningSender(sendTelegram, {
+const SENDER_AGENT = 'plutus';
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'place-breakout-fallback-entry', warningCode: 'BREAKOUT_FALLBACK_WARNING',
   subjectKey: 'batch', kind: 'legacy-unstructured', severity: 'unclassified',
 });
@@ -69,8 +70,8 @@ function loadPendingEntries(dir) {
 
 async function notify(tag, body) {
   try {
-    if (tag === '경고') await sendWarning(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag, body }));
-    else await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag, body }));
+    if (tag === '경고') await sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: tag, body });
+    else await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: tag, body });
   } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
 }
 

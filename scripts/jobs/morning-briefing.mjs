@@ -48,14 +48,14 @@ import { loadEnv } from '../lib/auth.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 import { renderSignalsReport } from '../tools/macro-overlay-facts.mjs';
 import { dedupIncrementalExecutionsForReport } from './daily-execution-report.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DEPARTMENT_LABEL = '플루토스 Plutus';
+const SENDER_AGENT = 'plutus';
 const STATE_DIR = vaultAbs(VAULT_REL.stateMorningBriefing);
 const STATE_FILE = join(STATE_DIR, 'previous-total.md');
 
@@ -276,7 +276,7 @@ async function main() {
     // 먼저 갱신하고 발송을 try/catch로 무시하면, 발송 실패 시 이번에 보고하려던 이벤트가
     // 다음 실행에서도 "이미 지난 워터마크"가 돼 영원히 안 나간다.
     try {
-      await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', facts, conclusion, context, decisions }));
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '판단', topic: '안내', facts, conclusion, context, decisions });
       writePreviousState(asset.total, new Date().toISOString());
     } catch (e) { console.error('텔레그램 알림 실패(워터마크 미전진, 다음 실행에서 재시도):', e.message); }
   }

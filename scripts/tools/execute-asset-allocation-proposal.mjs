@@ -56,9 +56,9 @@ import { writeStateFile } from '../lib/state-writer.mjs';
 import { loadExecutedOrderIds, recordExecutedOrder, unrecordExecutedOrder } from '../lib/executed-orders.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { readOptionalStateFile } from '../lib/state-reader.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+
 import { getCodeRegistry } from '../lib/stock-registry.mjs';
 import {
   INSTRUMENT_TYPE, buildHoldingsIndex, classifyAssetAllocationInstrument,
@@ -78,8 +78,8 @@ import { getBondBalance, getBondCurrentPrice, placeBondBuyOrder } from '../lib/n
 // execute-quant-proposal.mjs와 동일 원칙 — 이 잡의 알림 3종(만료·정합성 경고·검문소
 // 차단)은 전부 결정론적 Node 판정이지 부서(LLM) 판단이 아니라 무(無)부서 인프라
 // 알림으로 운영실 Hermes 라벨을 공유한다.
-const DEPARTMENT_LABEL = '플루토스 Plutus';
-const sendWarning = createDirectWarningSender(sendTelegram, {
+const SENDER_AGENT = 'plutus';
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'execute-asset-allocation-proposal', kind: 'trade-safety', severity: 'high',
 });
 // 위탁·금현물만 — 연금저축은 오너 지시로 리마인더 전용 유지(자동체결 대상 아님).
@@ -242,11 +242,9 @@ async function main() {
     await writeStateFile(join(proposalsDir, p.filename), updated);
     console.log(`  ⏳ ${p.id} — 당일 미체결로 자동 만료 처리(재승인 필요)`);
     try {
-      await sendTelegram(formatDepartmentMessage({
-        departmentLabel: DEPARTMENT_LABEL, tag: '만료',
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '만료',
         body: `<b>승인 만료(자산분배)</b>\n${p.side} ${p.assetKey} ${p.quantity ?? '(수량미정)'}주 (제안 ${p.id})\n` +
-          `승인 당일 안에 체결되지 않아 자동 만료되었습니다.\n계속 진행하려면 다시 제안해 주세요.`,
-      }));
+          `승인 당일 안에 체결되지 않아 자동 만료되었습니다.\n계속 진행하려면 다시 제안해 주세요.`, });
     } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
   }
   targets = stillFresh;
@@ -268,11 +266,9 @@ async function main() {
       const lines = duplicates.map(([key, ps]) => `· ${key}: ${ps.map((p) => p.id).join(', ')}`);
       for (const line of lines) console.error(`  ⛔ 같은 안건에 "승인"이 2건 이상 — 추정하지 않고 전부 건너뜀: ${line}`);
       try {
-        await sendWarning(formatDepartmentMessage({
-          departmentLabel: DEPARTMENT_LABEL, tag: '경고',
+        await sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: '경고',
           body: `<b>제안 정합성 이상(자산분배)</b>\n같은 안건에 "승인" 상태가 2건 이상 동시에 있어 자동체결을 보류했습니다.\n` +
-            `수동으로 확인 후 하나만 남기고 나머지는 거부/대체 처리해 주세요.\n${lines.join('\n')}`,
-        }), {
+            `수동으로 확인 후 하나만 남기고 나머지는 거부/대체 처리해 주세요.\n${lines.join('\n')}`, }, {
           warningCode: 'DUPLICATE_APPROVED_PROPOSAL', subjectKey: 'allocation-approval-batch',
         });
       } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }
@@ -459,10 +455,8 @@ async function main() {
       console.log(`  ⛔ ${proposal.id} — 검문소 차단: ${newReason}`);
       if (newReason !== (proposal.gateBlockedReason || '')) {
         try {
-          await sendWarning(formatDepartmentMessage({
-            departmentLabel: DEPARTMENT_LABEL, tag: '차단',
-            body: `<b>검문소 차단(자산분배)</b>\n${proposal.side} ${proposal.assetKey} ${proposal.quantity}주 (제안 ${proposal.id})\n${newReason}`,
-          }), {
+          await sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: '차단',
+            body: `<b>검문소 차단(자산분배)</b>\n${proposal.side} ${proposal.assetKey} ${proposal.quantity}주 (제안 ${proposal.id})\n${newReason}`, }, {
             warningCode: 'PROPOSAL_GATE_BLOCKED', subjectKey: warningSubjectKey('proposal', proposal.id),
           });
         } catch (e) { console.error('텔레그램 알림 실패(무시):', e.message); }

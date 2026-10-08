@@ -12,7 +12,7 @@ const SEPARATOR = '─'.repeat(16);
 // tag: 이 메시지의 상태를 나타내는 대괄호 단어(예: '제안'·'완료'·'경고') — 없으면
 // (기본값) 태그 없이 부서 헤더만. 아래 두 포맷 함수가 공유하는 헤더 규칙.
 function buildHeader(departmentLabel, tag) {
-  return tag ? `[${tag}] [${departmentLabel}]` : `[${departmentLabel}]`;
+  return tag ? `[${departmentLabel}] ${tag}` : `[${departmentLabel}]`;
 }
 
 // Zeus가 텔레그램에서 직접(부서를 안 거치고) 말할 때·부서 보고에 판단 코멘트를 얹을
@@ -22,7 +22,8 @@ function buildHeader(departmentLabel, tag) {
 // 형식(운영실 Hermes 등)인데 제우스는 부서가 없어 이름만 영문으로 표기하는 게
 // 형식에 맞다는 판단(DevRequest 2026-09-19-제우스-라벨-영문표기-Zeus.md). 구 표기
 // "[제우스]"는 전환 기간에만 허용했고, 현재는 발신자 라벨 가드가 차단한다.
-export const ZEUS_MARKER = '[Zeus]';
+// 이관 4-4(D64): 헤더와 같은 "[한글 English]" 표기로 통일.
+export const ZEUS_MARKER = '[제우스 Zeus]';
 
 // 부서 보고와 Zeus 판단 코멘트를 한 메시지에 합친다(2026-08-05 오너 확정 — 텔레그램
 // 알림 개수를 늘리지 않기 위함). zeusComment가 없으면(아직 Zeus 판단 전 등) 부서

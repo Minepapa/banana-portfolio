@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
  * PreToolUse 훅 — 텔레그램 상시세션(Zeus)이 reply/edit_message로 오너에게 직접
- * 보내는 메시지에 발신자 라벨(`[Zeus]` 또는 부서 라벨)이 없으면 도구 호출 자체를
+ * 보내는 메시지에 발신자 라벨(`[제우스 Zeus]` 또는 부서 라벨)이 없으면 도구 호출 자체를
  * 막는다(2026-09-19, DevRequest — "대화 주체 없이 메시지가 발송된 게 여러 번
  * 있다, 이거 해결한 거 아니냐"는 오너 재지적).
  *
  * ⚠️ 왜 프로즈 규칙이 아니라 구조적 가드인가 — zeus.md(2026-09-14 재지적으로
  * 규칙 강화, "Zeus가 텔레그램에서 직접 답할 때도 예외 없이 매 메시지 첫 줄에
- * `[제우스]`를 붙인다")가 이미 명문화돼 있었는데도 2026-09-19 세션에서 라벨
+ * `[제우스 Zeus]`를 붙인다")가 이미 명문화돼 있었는데도 2026-09-19 세션에서 라벨
  * 없는 reply가 실제로 2건 발송됐다. `telegram-format-compliance.test.js`(2026-
  * 09-14)는 Node 코드(sendTelegram 호출부)의 4단구조만 검증하고, 이 상시세션이
  * reply 도구로 "직접" 보내는 텍스트는 검사 범위 밖이었다 — 그 경로에 처음
@@ -19,7 +19,7 @@
  * react는 텍스트가 없어(이모지 리액션만) 대상 아님.
  *
  * 예외(둘 다 zeus.md 원문 그대로): ① 부서 직접호출("카이로스, ~")을 중계할 때는
- * 그 부서 자신의 라벨([퀀트전략실 Kairos] 등, 각 에이전트 정의 파일이 스스로
+ * 그 부서 자신의 라벨([플루토스 Plutus] 등, 각 에이전트 정의 파일이 스스로
  * 붙임)이 이미 있으니 당연히 통과 ② "안녕" 생존확인처럼 텍스트 자체가 없는
  * 경우는 이 훅의 검사 대상(reply/edit_message에 text가 있는 경우)에 애초에 안
  * 걸림.
@@ -36,7 +36,7 @@
 import { pathToFileURL } from 'node:url';
 
 export const VALID_SENDER_LABELS = [
-  '[Zeus]',
+  '[제우스 Zeus]',
   '[클리오 Clio]', '[테미스 Themis]', '[헤르메스 Hermes]', '[아테나 Athena]', '[플루토스 Plutus]',
 ];
 
@@ -44,7 +44,7 @@ export const VALID_SENDER_LABELS = [
 // 중간·끝에 라벨 비슷한 문구가 있어도 인정 안 함(zeus.md 규칙이 "첫 줄"을 명시).
 export function hasSenderLabel(text) {
   const t = String(text ?? '').trimStart();
-  return VALID_SENDER_LABELS.some((label) => t.startsWith(label));
+  return VALID_SENDER_LABELS.some((label) => t === label || (t.startsWith(label) && /\s/.test(t[label.length])));
 }
 
 const TEXT_TOOL_NAMES = new Set([
@@ -94,7 +94,7 @@ async function main() {
 
     deny(
       `텔레그램으로 나가는 메시지 첫 줄에 발신자 라벨이 없습니다(zeus.md "발신자 라벨" 절). ` +
-      `직접 답할 때는 "[Zeus] "로 시작하고, 부서를 중계할 때는 그 부서 자신의 라벨을 그대로 두세요. ` +
+      `직접 답할 때는 "[제우스 Zeus] "로 시작하고, 부서를 중계할 때는 그 부서 자신의 라벨을 그대로 두세요. ` +
       `같은 텍스트 앞에 라벨만 추가해 ${toolName}을 다시 호출하세요.`,
     );
   } catch (e) {

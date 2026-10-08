@@ -32,12 +32,11 @@ import { loadPriceSeries } from '../lib/breakout-price-series.mjs';
 import { patchFrontmatterFileSafely, withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { buildExecutionRecord, buildProfitRecord } from '../lib/ledger-vault-writer.mjs';
 import { QUANT_TRACK_LABEL } from '../lib/account-resolver.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
-import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 
-const DEPARTMENT_LABEL = '플루토스 Plutus';
-const sendWarning = createDirectWarningSender(sendTelegram, {
+const SENDER_AGENT = 'plutus';
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'reconcile-breakout-protection', warningCode: 'BREAKOUT_PROTECTION_URGENT',
   subjectKey: 'batch', kind: 'trade-safety', severity: 'critical',
 });
@@ -148,8 +147,8 @@ function readPositions() {
 async function notify(lines, tag = '보호') {
   if (!lines.length) return;
   if (DRY_RUN) { console.log(`[DRY RUN ${tag}] ${lines.join(' | ')}`); return; }
-  if (tag === '경고') await sendWarning(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag, facts: lines }));
-  else await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag, facts: lines }));
+  if (tag === '경고') await sendWarning({ agent: SENDER_AGENT, kind: '판단', topic: tag, facts: lines });
+  else await sendAgentMessage({ agent: SENDER_AGENT, kind: '판단', topic: tag, facts: lines });
 }
 
 // 같은 체결을 재시도 때 두 번 기록하지 않도록(idempotency) 파일이 이미 있으면

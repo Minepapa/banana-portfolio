@@ -8,14 +8,15 @@
 // kis.mjs의 fetchImpl 주입과 같은 관례).
 import { resolveProposalIntake } from './order-gate.mjs';
 import { buildProposalRecord, updateProposalRecord } from './proposal-vault.mjs';
-import { formatFactsMessage } from './telegram-messages.mjs';
+import { renderAgentMessage } from './pantheon-send.mjs';
 import { warningSubjectKey } from './direct-warning-delivery.mjs';
 
 // track → 원본 발송 부서 라벨. proposal 레코드 자체는 departmentLabel을 저장하지 않는다
 // (createAndSendProposal 호출부가 매번 넘겨줄 뿐) — 승인/거부 후 원본 메시지를 편집할 때는
 // 그 호출부 컨텍스트가 이미 사라진 뒤(process-telegram-reply.mjs가 나중에 별도 실행)라
 // track에서 결정론적으로 되짚는다. 트랙이 늘어나면(예: 새 트랙) 이 매핑도 같이 늘려야 함.
-const TRACK_DEPARTMENT_LABEL = { 퀀트: '플루토스 Plutus', 자산분배: '플루토스 Plutus' };
+// 두 트랙 모두 플루토스(투자 전반). athena는 딸 미네 담당이라 투자 메시지에 절대 쓰지 않는다(이관 4-4 리뷰 HIGH).
+const TRACK_AGENT = { 퀀트: 'plutus', 자산분배: 'plutus' };
 
 const won = (n) => Math.round(n).toLocaleString('ko-KR');
 // decidedAt(UTC ISO)을 KST 표기로 — sheets-api.mjs nowKST()와 같은 +9h 오프셋 방식이지만
@@ -70,14 +71,18 @@ export function buildProposalFacts({ side, name, assetKey, quantity, proposedPri
 // 읽은 것(parseProposal 결과)이라 name(표시용 종목명)이 없다 — assetKey로 대체(발송 시
 // buildProposalFacts와 같은 name??assetKey 폴백 원칙).
 export function buildProposalStatusEditText({ proposal, action, decidedAt }) {
+  return renderAgentMessage(buildProposalStatusEditMessage({ proposal, action, decidedAt }));
+}
+
+export function buildProposalStatusEditMessage({ proposal, action, decidedAt }) {
   const tag = action === 'reject' ? '거부' : '승인';
   // 매핑에 없는 track이면(새 트랙 추가 후 이 표 갱신을 깜빡한 경우) 조용히 raw track
   // 문자열로 넘어가지 않고 경고를 남긴다(조용한 폴백 금지 원칙) — 편집 자체는 계속
   // 진행한다(승인/거부 상태 전이를 막을 정도의 문제는 아님, 표시만 어색해질 뿐).
-  if (!(proposal.track in TRACK_DEPARTMENT_LABEL)) {
-    console.error(`⚠️ TRACK_DEPARTMENT_LABEL에 없는 track — 부서 라벨 대신 원본 표기: ${proposal.track}`);
+  if (!(proposal.track in TRACK_AGENT)) {
+    console.error(`⚠️ TRACK_AGENT에 없는 track — 발신자 등록 필요: ${proposal.track}`);
   }
-  const departmentLabel = TRACK_DEPARTMENT_LABEL[proposal.track] ?? proposal.track;
+  const agent = TRACK_AGENT[proposal.track] ?? proposal.track;
   const decidedLine = `${tag}됨 (${formatKstDateTime(decidedAt)} KST)`;
   // ⚠️ 코드리뷰 지적(2026-09-01, MEDIUM) — decidedLine(Node가 계산한 결정 시각)을
   // 예전엔 context에 넣어 [맥락](LLM 근거 서술 전용 섹션, 2026-09-01 4단 구조 확정)
@@ -94,13 +99,13 @@ export function buildProposalStatusEditText({ proposal, action, decidedAt }) {
   const context = contextParts.filter(Boolean).join('\n\n') || null;
   // 이미 결정이 끝난 제안의 상태 편집 텍스트라 [의사결정] 섹션은 해당 없음(decisions
   // 없이 context만 — formatFactsMessage는 부분 구조도 그대로 허용).
-  return formatFactsMessage({ departmentLabel, facts, context, tag });
+  return { agent, kind: '판단', facts, context, topic: tag };
 }
 
 // existingProposals: [{filename, content, ...parseProposal() 결과}] — 호출부가 Decisions/
 // Proposals 디렉토리를 이미 다 읽어서 넘긴다.
 // writeProposalFile(filename, content): 파일 하나 쓰기(state-writer.writeStateFile 등 주입).
-// sendMessage(text): 텔레그램 발송, { message_id } 반환 형태를 기대(telegram.mjs sendTelegram
+// sendMessage(message): 구조화된 텔레그램 발송, { message_id } 반환 형태를 기대(telegram.mjs sendTelegram
 // 의 원본 응답에서 result.message_id로 뽑아 호출부가 넘겨줘도 되고, 이 함수 안에서 처리해도
 // 됨 — 아래 CLI는 후자를 택함).
 //
@@ -120,7 +125,7 @@ export function buildProposalStatusEditText({ proposal, action, decidedAt }) {
 // 무관하게 항상 최종 방어선으로 남는다.
 export async function createAndSendProposal({
   track, account = null, assetKey, name, side, quantity, proposedPrice, reason = '',
-  departmentLabel, zeusComment = null,
+  senderAgent = 'plutus', zeusComment = null,
   conditionsChanged = false,
   now = new Date(),
   existingProposals,
@@ -164,10 +169,11 @@ export async function createAndSendProposal({
   // 서술(reason)은 그 뒤에 문단으로 — buildProposalMessageBody(한 줄 요약형)는 이제
   // DRY-RUN 미리보기 전용, 실제 발송은 여기서 조립한다.
   const facts = buildProposalFacts({ side, name: name ?? assetKey, assetKey, quantity, proposedPrice, amountWon });
-  const messageText = formatFactsMessage({ departmentLabel, facts, context: reason || null, zeusComment, tag: '제안' });
+  const message = { agent: senderAgent, kind: '판단', facts,
+    context: reason || null, zeusComment, topic: '제안' };
   let sendResult;
   try {
-    sendResult = await sendMessage(messageText);
+    sendResult = await sendMessage(message);
   } catch (error) {
     console.error(`[proposal-flow] Telegram 발송 실패(${id}): ${error?.message ?? 'unknown error'}`);
     await markProposalFailed(writeProposalFile, filename, sendingContent, id);
@@ -247,12 +253,11 @@ async function markProposalFailed(writeProposalFile, filename, sendingContent, i
 }
 
 async function notifyProposalNotApprovable(sendWarning, id, detail) {
-  const warning = formatFactsMessage({
-    departmentLabel: '플루토스 Plutus',
-    tag: '경고',
+  const warning = {
+    agent: 'plutus', kind: '판단', topic: '경고',
     facts: [`제안 ${id}는 승인 연결정보가 없어 승인할 수 없습니다.`],
     context: `${detail} 새 제안은 승인하지 말고, 기존 안건 상태를 확인한 뒤 필요하면 다시 요청하세요.`,
-  });
+  };
   try {
     await sendWarning(warning, {
       warningCode: 'PROPOSAL_APPROVAL_LINK_BROKEN', subjectKey: warningSubjectKey('proposal', id),

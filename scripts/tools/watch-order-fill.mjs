@@ -18,9 +18,9 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadKisCredentials, loadQuantAccount, getKisToken, checkOrderFill } from '../lib/kis.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+
 import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { recordProposalExecutionStatus } from '../lib/proposal-execution-status.mjs';
@@ -31,9 +31,9 @@ const BROKER = '한국투자증권';
 const ACCOUNT_LABEL = QUANT_TRACK_LABEL; // account-resolver.mjs·update-holdings-from-executions.mjs와 동일 라벨(단일 진실 소스)
 // 이 잡의 체결확인 알림(체결/취소/타임아웃)도 전부 KIS API 조회 결과를 그대로 전달하는
 // 순수 Node 알림이라 부서 판단이 없다 — execute-quant-proposal.mjs와 같은 이유(2026-08-23
-// 재배정)로 운영실 Hermes로 통일. 처음(2026-08-17)엔 트랙 소관이라는 이유로 Kairos였음.
-const DEPARTMENT_LABEL = '플루토스 Plutus';
-const sendWarning = createDirectWarningSender(sendTelegram, {
+// 재배정)로 플루토스(투자 체결·운영 통보)로 통일(구 운영실 Hermes, 이관 4-3). 처음(2026-08-17)엔 트랙 소관이라는 이유로 Kairos였음.
+const SENDER_AGENT = 'plutus';
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'watch-order-fill', warningCode: 'KIS_FILL_WATCH_TIMEOUT',
   subjectKey: 'order-watch', kind: 'trade-safety', severity: 'high',
 });
@@ -136,13 +136,10 @@ async function main() {
           });
         } catch (error) { console.error(`[Proposal] ${proposalId} 취소 상태 기록 실패: ${error.message}`); }
       }
-      await sendTelegram(formatDepartmentMessage({
-        departmentLabel: DEPARTMENT_LABEL,
-        tag: '취소',
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '취소',
         body: filledQty > 0
           ? `<b>부분체결 후 잔량 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — ${filledQty}/${result.orderQty}주 체결 후 잔량이 취소되었습니다.${avgFillPrice == null ? '\n평균 체결가가 없어 Ledger 수동 확인이 필요합니다.' : ` 평균체결가 ${avgFillPrice.toLocaleString()}원.`}`
-          : `<b>주문 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — 취소되었습니다.`,
-      }));
+          : `<b>주문 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — 취소되었습니다.`, });
       return true;
     }
     if (result?.fullyFilled) {
@@ -159,11 +156,8 @@ async function main() {
           });
         } catch (error) { console.error(`[Proposal] ${proposalId} 체결 상태 기록 실패: ${error.message}`); }
       }
-      await sendTelegram(formatDepartmentMessage({
-        departmentLabel: DEPARTMENT_LABEL,
-        tag: '완료',
-        body: buildFilledMessage({ name, code, orderNo, filledQty: result.filledQty, avgFillPrice: result.avgFillPrice }),
-      }));
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '완료',
+        body: buildFilledMessage({ name, code, orderNo, filledQty: result.filledQty, avgFillPrice: result.avgFillPrice }), });
       // avgFillPrice가 없으면(알려진 한계, 위 buildFilledMessage 주석 참고) Ledger에 가격
       // 없는 체결을 기록하지 않는다 — 알림은 이미 나갔으니 "확인 필요" 상태가 조용히
       // 묻히지 않고, 오너가 KIS와 대조해 수동 기록해야 함이 로그에 남는다.
@@ -222,13 +216,10 @@ async function main() {
   if (await checkAndReportIfDone()) return;
 
   console.log('[타임아웃] 확인 시간 내 전량체결 미확인 — 알림 발송');
-  await sendWarning(formatDepartmentMessage({
-    departmentLabel: DEPARTMENT_LABEL,
-    tag: '경고',
+  await sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: '경고',
     body: `<b>체결 확인 시간 초과</b>\n${name}(${code}) 주문번호 ${orderNo}\n` +
       `${timeoutMin}분 동안 전량체결 확인 안 됨 — KIS 앱에서 직접 확인해 주세요.\n` +
-      `(미체결로 남아있거나 부분체결됐을 수 있음)`,
-  }), { subjectKey: warningSubjectKey('order', orderNo) });
+      `(미체결로 남아있거나 부분체결됐을 수 있음)`, }, { subjectKey: warningSubjectKey('order', orderNo) });
 }
 
 // import.meta.url 가드(2026-08-23, 독립 코드리뷰 지적 — execute-quant-proposal.mjs와

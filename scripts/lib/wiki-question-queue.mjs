@@ -5,8 +5,9 @@ import { join, resolve, sep } from 'node:path';
 import { VAULT_PATHS, VAULT_REL, vaultAbs } from './vault-paths.mjs';
 import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 import { patchFrontmatterFileSafely, withLock, writeAtomic } from './state-writer.mjs';
-import { escapeHtml, sendTelegram } from './telegram.mjs';
-import { formatDepartmentMessage, stripEmDash } from './telegram-messages.mjs';
+import { escapeHtml } from './telegram.mjs';
+import { stripEmDash } from './telegram-messages.mjs';
+import { sendAgentMessage } from './pantheon-send.mjs';
 
 const QUEUE_DIR = vaultAbs(VAULT_REL.stateWikiQuestions);
 const QUEUE_LOCK = join(QUEUE_DIR, '.queue');
@@ -116,7 +117,7 @@ function validateInput(input) {
   }
   return { ...input, question, evidenceNotes, changePlan };
 }
-function formatQuestion(fields, questionText = '') {
+function questionMessage(fields, questionText = '') {
   const id = fields.questionId;
   const evidence = fields.evidenceNotes.length
     ? `\n\n근거 노트: ${fields.evidenceNotes.map((x) => `\`${escapeHtml(x)}\``).join(', ')}`
@@ -132,7 +133,7 @@ function formatQuestion(fields, questionText = '') {
   }
   const choices = `\n\n답변 방법: 아래 중 한 줄로 답해주세요.\n<code>${id} 등록</code>\n<code>${id} 보류</code>\n<code>${id} 제외</code>`;
   const body = `<b>질문 ID: ${id}</b>\n\n${stripEmDash(escapeHtml(questionText))}${evidence}${plan}${choices}`;
-  return formatDepartmentMessage({ departmentLabel: '클리오 Clio', tag: '확인요청', body });
+  return { agent: 'clio', kind: '정보', topic: '확인요청', body };
 }
 function normalizeAnswer(text) {
   const normalized = String(text ?? '').trim().replace(/[.!。！?？]+$/u, '').trim();
@@ -147,7 +148,7 @@ export function parseExplicitWikiAnswer(prompt) {
   return answer ? { questionId: match[1].toUpperCase(), answer, rawText } : null;
 }
 
-export async function createWikiQuestion(rawInput, { sender = sendTelegram } = {}) {
+export async function createWikiQuestion(rawInput, { sender = sendAgentMessage } = {}) {
   const input = validateInput(rawInput);
   ensureQueue();
   const dedupeKey = hashQuestion(input);
@@ -172,7 +173,7 @@ export async function createWikiQuestion(rawInput, { sender = sendTelegram } = {
   if (created.duplicate) return { questionId: created.record.fields.questionId, status: created.record.fields.status, duplicate: true, sent: false };
 
   try {
-    const response = await sender(formatQuestion(created.record.fields, input.question));
+    const response = await sender(questionMessage(created.record.fields, input.question));
     const messageId = response?.result?.message_id ?? response?.message_id ?? null;
     if (!Number.isSafeInteger(Number(messageId)) || Number(messageId) <= 0) throw new Error('Telegram 성공 응답에 message_id가 없습니다.');
     await withLock(QUEUE_LOCK, async () => {
@@ -337,7 +338,7 @@ export async function reconcileWikiQuestion(questionId, { delivered, messageId =
   });
 }
 
-export async function resendWikiQuestion(questionId, { sender = sendTelegram } = {}) {
+export async function resendWikiQuestion(questionId, { sender = sendAgentMessage } = {}) {
   ensureQueue();
   const record = await withLock(QUEUE_LOCK, async () => {
     const current = readRecord(questionId);
@@ -350,7 +351,7 @@ export async function resendWikiQuestion(questionId, { sender = sendTelegram } =
   });
   const latest = { ...record.fields };
   try {
-    const response = await sender(formatQuestion(latest, record.body.replace(/^# 위키 확인 질문 [^\n]+\n\n/, '').trim()));
+    const response = await sender(questionMessage(latest, record.body.replace(/^# 위키 확인 질문 [^\n]+\n\n/, '').trim()));
     const messageId = response?.result?.message_id ?? response?.message_id ?? null;
     if (!Number.isSafeInteger(Number(messageId)) || Number(messageId) <= 0) throw new Error('Telegram 성공 응답에 message_id가 없습니다.');
     return await withLock(QUEUE_LOCK, async () => {

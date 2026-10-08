@@ -33,12 +33,12 @@ import { join } from 'node:path';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { todayKST } from '../lib/sheets-api.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+
 import { matchesKnownExecution } from './update-holdings-from-executions.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '플루토스 Plutus';
+const SENDER_AGENT = 'plutus';
 
 function readVaultDir(dir) {
   if (!existsSync(dir)) return [];
@@ -167,7 +167,7 @@ async function main() {
 
   if (!DRY_RUN) {
     try {
-      await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '보고', body }));
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '보고', body });
     } catch (e) {
       console.error('텔레그램 알림 실패:', e.message);
     }

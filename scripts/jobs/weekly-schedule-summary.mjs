@@ -29,15 +29,15 @@
  * 사용법: node scripts/jobs/weekly-schedule-summary.mjs [--dry-run]
  */
 import { readFileSync } from 'node:fs';
-import { sendTelegram } from '../lib/telegram.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+
 import { isKillSwitchActive } from '../lib/kill-switch.mjs';
 import { getExecutionMode, MODE_LIVE } from '../lib/shadow-mode.mjs';
 import { getProposalMode, MODE_BLOCKED } from '../lib/proposal-mode.mjs';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = 'Zeus'; // 시스템 잡 일정 공지 — 헤르메스(오너 개인 일정)와 구분(이관 4-3)
+const SENDER_AGENT = 'zeus'; // 시스템 잡 일정 공지 — 헤르메스(오너 개인 일정)와 구분(이관 4-3)
 
 // place-breakout-entry-order.mjs 등과 동일 패턴(ENOENT=파일 없음=각 모듈의 안전
 // 기본값, 그 외 읽기 오류도 여기선 보고용이라 동일하게 기본값으로 떨어뜨림 —
@@ -134,7 +134,7 @@ async function main() {
   console.log(body);
   if (!DRY_RUN) {
     try {
-      await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', body }));
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '안내', body });
     } catch (e) { console.error('텔레그램 알림 실패:', e.message); }
   }
 }

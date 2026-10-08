@@ -8,7 +8,7 @@
  *   2) 상시 텔레그램 세션(claude --channels ...) 프로세스가 살아있는지 — Phase 5에서
  *      그 세션이 실제로 생기기 전까지는 WATCH_TELEGRAM_SESSION=1 환경변수가 없으면
  *      건너뛴다(아직 없는 프로세스를 "죽었다"고 오탐하지 않기 위함)
- * 이상 감지 시 텔레그램으로 직접 알림을 보낸다(sendTelegram — 상시 세션과 무관하게
+ * 이상 감지 시 텔레그램으로 직접 알림을 보낸다(sendAgentMessage — 상시 세션과 무관하게
  * 독립 동작 가능, telegram.mjs 참고).
  *
  * 사용법: node scripts/jobs/health-watcher.mjs [--dry-run]
@@ -16,9 +16,10 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseFrontmatter, isStale } from '../lib/job-health.mjs';
-import { sendTelegram, getTelegramWebhookInfo } from '../lib/telegram.mjs';
+import { getTelegramWebhookInfo } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
-import { formatFactsMessage } from '../lib/telegram-messages.mjs';
+
 import { describeJob, JOB_REMEDIATION } from '../lib/job-labels.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { isProcessAlive, isPollingStuck, TELEGRAM_SESSION_PROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
@@ -36,8 +37,8 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // 'backup'·'parse-notifications'·'realtime-quotes' 등이 전부 hermes였던 것과 동일 원칙).
 // 2026-08-14 오너 지적 — 알림에 어느 잡을 감시하는 건지·어느 부서 소관인지 표기 안 돼
 // 있어 헷갈렸음, formatDepartmentMessage(기존 부서 메시지 포맷)로 통일.
-const DEPARTMENT_LABEL = '플루토스 Plutus';
-const sendWarning = createDirectWarningSender(sendTelegram, {
+const SENDER_AGENT = 'plutus';
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'health-watcher', warningCode: 'JOB_HEALTH_ISSUES', subjectKey: 'batch',
   kind: 'operational', severity: 'high',
 });
@@ -316,11 +317,8 @@ async function main() {
     try {
       // 이 잡은 LLM을 아예 안 부르는 순수 운영 감시라 해석 문단 없이 사실(불릿)만
       // 나간다 — 오너 확정 표준 구조의 "변형" 허용 범위(2026-08-17).
-      await sendWarning(formatFactsMessage({
-        departmentLabel: DEPARTMENT_LABEL,
-        tag: '경고',
-        facts: [`<b>장애감지 ${issues.length}건</b>`, ...issues],
-      }));
+      await sendWarning({ agent: SENDER_AGENT, kind: '판단', topic: '경고',
+        facts: [`<b>장애감지 ${issues.length}건</b>`, ...issues], });
     } catch (e) {
       console.error('텔레그램 알림 실패:', e.message);
     }

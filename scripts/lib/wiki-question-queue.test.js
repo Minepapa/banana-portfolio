@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { renderAgentMessage } from './pantheon-send.mjs';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -78,8 +79,8 @@ test('질문 생성은 발송 전에 영속화하고 중복 질문은 재발송�
     assert.equal(first.sent, true);
     assert.equal(duplicate.duplicate, true);
     assert.equal(sendCount, 1);
-    assert.match(sentText, /30_Wiki\/34_Topics\/예시-키워드/);
-    assert.match(sentText, /90_Delphi\/evidence/);
+    assert.match(renderAgentMessage(sentText), /30_Wiki\/34_Topics\/예시-키워드/);
+    assert.match(renderAgentMessage(sentText), /90_Delphi\/evidence/);
     assert.ok(readFileSync(join(vaultRoot, '95_Etna', 'Questions', `${first.questionId}.md`), 'utf8').includes('예시 키워드'));
 
     const cli = fileURLToPath(new URL('../tools/wiki-question-cli.mjs', import.meta.url));

@@ -40,15 +40,15 @@ import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
-import { formatFactsMessage } from '../lib/telegram-messages.mjs';
+
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
-const DEPARTMENT_LABEL = '플루토스 Plutus';
-const sendWarning = createDirectWarningSender(sendTelegram, {
+const SENDER_AGENT = 'plutus';
+const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'annual-instrument-rescore', warningCode: 'INSTRUMENT_REPLACEMENT_PARTIAL_SEND',
   kind: 'data-quality', severity: 'high',
 });
@@ -262,11 +262,11 @@ async function main() {
           sellResult = await createAndSendProposal({
             track: '자산분배', account, assetKey: inst.ticker || inst.name, name: inst.name,
             side: '매도', quantity: inst.qty, proposedPrice: inst.curPrice,
-            reason, departmentLabel: DEPARTMENT_LABEL,
+            reason, senderAgent: SENDER_AGENT,
             existingProposals,
             writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
-            sendMessage: (text) => sendTelegram(text).then((r) => r?.result ?? r),
-            sendWarning: createDirectWarningSender(sendTelegram, {
+            sendMessage: (message) => sendAgentMessage(message).then((r) => r?.result ?? r),
+            sendWarning: createDirectWarningSender(sendAgentMessage, {
               jobName: 'annual-instrument-rescore', kind: 'trade-safety', severity: 'high',
             }),
           });
@@ -288,11 +288,11 @@ async function main() {
               track: '자산분배', account, assetKey: evaluation.bestAlternative.name, name: evaluation.bestAlternative.name,
               side: '매수', quantity: buyQuantity > 0 ? buyQuantity : null, proposedPrice: altLatest.close,
               amountWon: inst.evalAmount,
-              reason, departmentLabel: DEPARTMENT_LABEL,
+              reason, senderAgent: SENDER_AGENT,
               existingProposals,
               writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
-              sendMessage: (text) => sendTelegram(text).then((r) => r?.result ?? r),
-              sendWarning: createDirectWarningSender(sendTelegram, {
+              sendMessage: (message) => sendAgentMessage(message).then((r) => r?.result ?? r),
+              sendWarning: createDirectWarningSender(sendAgentMessage, {
                 jobName: 'annual-instrument-rescore', kind: 'trade-safety', severity: 'high',
               }),
             });
@@ -317,16 +317,13 @@ async function main() {
           // 금지 규칙 위반)와 형식 없는 한 문단으로 발송되고 있었다. 다른 텔레그램
           // 메시지와 동일한 [사실] 구조로 통일.
           try {
-            await sendWarning(formatFactsMessage({
-              departmentLabel: DEPARTMENT_LABEL,
-              tag: '경고',
+            await sendWarning({ agent: SENDER_AGENT, kind: '판단', topic: '경고',
               facts: [
                 `[${account}] ${inst.name} → ${evaluation.bestAlternative.name} 교체 제안이 반쪽만 발송됨`,
                 `매도: ${sellResult.action}${sellResult.reason ? `(${sellResult.reason})` : ''}`,
                 `매수: ${buyResult.action}${buyResult.reason ? `(${buyResult.reason})` : ''}`,
                 '수동 확인 필요',
-              ],
-            }), { subjectKey: warningSubjectKey('replacement', `${account}:${inst.name}`) });
+              ], }, { subjectKey: warningSubjectKey('replacement', `${account}:${inst.name}`) });
           } catch (e2) { console.error(`  ❌ 반쪽 발송 경고 텔레그램 실패: ${e2.message}`); }
         }
       }

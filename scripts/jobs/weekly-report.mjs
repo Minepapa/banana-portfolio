@@ -47,8 +47,9 @@ import {
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
-import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { escapeHtml } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+
 import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
 import { resolveDecision } from '../lib/decision-resolver.mjs';
 // 종목명 표준화(2026-09-05, 오너 지시 — "최대한 원문 그대로를 지키면서 통일된
@@ -62,7 +63,7 @@ import { dedupExecutionsForReport } from './daily-execution-report.mjs';
 // 2026-08-23 — 이 발송도 부서 라벨이 없었다(오너 지시로 전체 텔레그램 메시지 구조
 // 재점검 중 발견) — 주간리포트·KPI는 비서실(Apollo) 소관(위 PLUTUS_REPORT/CLIO_PREFS
 // 로 이미 이 잡 전체가 Apollo 에이전트 정의를 쓰고 있는 것과 일관).
-const DEPARTMENT_LABEL = '플루토스 Plutus';
+const SENDER_AGENT = 'plutus';
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
@@ -184,7 +185,7 @@ export function extractSummary(md) {
 // escapeHtml은 telegram.mjs로 승격(2026-09-18, 코드리뷰 지적 — record-heartbeat-
 // vault.mjs 등 다른 호출부도 같은 함수가 필요해 공유 위치로 이동, 동작은 동일).
 //
-// 마크다운 굵게(**text**) → 텔레그램 HTML(<b>text</b>) — sendTelegram이 parse_mode:'HTML'을
+// 마크다운 굵게(**text**) → 텔레그램 HTML(<b>text</b>) — telegram.mjs transport가 parse_mode:'HTML'을
 // 쓰는데 리포트 본문은 마크다운이라, 변환 없이 그대로 보내면 별표(**)가 문자 그대로
 // 찍혀서 나간다(2026-08-30 오너 신고 스크린샷에서 확인 — "- **가장 큰 변화**:"가
 // 굵게 안 되고 별표 그대로 노출됨). escapeHtml을 먼저 해야 **변환으로 만든 <b> 태그
@@ -502,7 +503,7 @@ async function main() {
     // 위치(헤딩+줄+원문 스니펫)를 같이 알려줘 오너가 리포트 전체를 다시 훑지 않아도
     // 되게 한다(2026-09-20 오너 DevRequest). 위반이 많으면 최대 8건만 보여준다
     // (job-alerts.mjs의 기존 관례와 동일 상한) — 스니펫까지 붙어 항목당 최대 130자
-    // 안팎이라 무제한이면 Telegram 4096자 상한(sendTelegram의 truncateForTelegram이
+    // 안팎이라 무제한이면 Telegram 4096자 상한(telegram.mjs의 truncateForTelegram이
     // 최종 안전망이긴 하나)에 걸려 메시지가 중간에 잘리기 쉽다(2026-09-20 독립
     // 코드리뷰 MEDIUM 지적).
     const shown = docViolations.slice(0, 8);
@@ -536,11 +537,8 @@ async function main() {
   // 텔레그램 메시지 body는 자유 문자열이라 개행이 안전하다).
   if (!NO_PUSH) {
     try {
-      await sendTelegram(formatDepartmentMessage({
-        departmentLabel: DEPARTMENT_LABEL,
-        tag: '안내',
-        body: `<b>주간 리포트</b> · ${asof}\n\n${markdownBoldToHtml(summaryBullets.join('\n'))}\n\n<i>앱 리포트 탭에서 전문 확인</i>`,
-      }));
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '안내',
+        body: `<b>주간 리포트</b> · ${asof}\n\n${markdownBoldToHtml(summaryBullets.join('\n'))}\n\n<i>앱 리포트 탭에서 전문 확인</i>`, });
       console.log('   📲 텔레그램 요약 푸시');
     } catch (e) { console.error(`   ⚠️ 텔레그램 실패: ${e.message}`); }
   }

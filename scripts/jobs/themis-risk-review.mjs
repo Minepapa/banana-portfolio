@@ -35,7 +35,8 @@ import { assembleJobs } from '../tools/ledger-facts.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { sendTelegram, escapeHtml } from '../lib/telegram.mjs';
+import { escapeHtml } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 
 // loadEnv()·loadAgent()는 main() 안에서만 부른다(2026-08-23, 독립 코드리뷰 MEDIUM 지적) —
@@ -44,7 +45,7 @@ import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT
 // 환경, 예: CI에서는 여기서 그냥 죽는다) — morning-briefing.mjs 사고와 같은 클래스의
 // "import 자체가 부작용을 낸다" 문제라 실행 여부와 무관하게 미리 방지.
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '플루토스 Plutus';
+const SENDER_AGENT = 'plutus';
 const RISK_JOBS = ['daily-asset-allocation-check', 'health-watcher'];
 const LOOKBACK_MS = 7 * 24 * 3600_000;
 
@@ -82,7 +83,7 @@ export function buildRecentProposalsSummary(proposals, now = new Date()) {
 // formatFactsMessage)는 애초에 이 구조를 안 벗어났었다).
 // 순수함수 — 지표·값·5일변동·출처처럼 형식이 동일하게 반복되는 거시지표를 표로
 // 정리한다(2026-09-20 오너 DevRequest — "형식이 비슷한 항목은 표 형태로 정리해 본문에
-// 삽입"). sendTelegram이 이미 parse_mode:'HTML'로 나가므로(telegram.mjs) <pre>로 감싸
+// 삽입"). sendAgentMessage이 이미 parse_mode:'HTML'로 나가므로(telegram.mjs) <pre>로 감싸
 // 모바일에서도 열이 안 흐트러지게 고정폭 정렬한다. macroData가 없으면(조회 실패) null —
 // 호출부가 facts에서 통째로 생략한다.
 // 표시폭 계산 — 한글(완성형 음절)·전각 문자는 모노스페이스 폰트에서 라틴 문자 2개
@@ -240,7 +241,7 @@ async function main() {
   const { conclusion, context, decisions } = parseDepartmentResponse(judgment);
 
   try {
-    await sendTelegram(formatFactsMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '안내', facts, conclusion, context, decisions }));
+    await sendAgentMessage({ agent: SENDER_AGENT, kind: '판단', topic: '안내', facts, conclusion, context, decisions });
   } catch (e) { console.error('텔레그램 알림 실패:', e.message); }
 }
 

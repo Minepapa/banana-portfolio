@@ -36,11 +36,10 @@ import { join } from 'node:path';
 import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
-import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '플루토스 Plutus';
+const SENDER_AGENT = 'plutus';
 const THRESHOLD_DAYS = 3;
 const REPEAT_DAYS = 3;
 const STATE_DIR = vaultAbs(VAULT_REL.stateRebalanceReminder);
@@ -223,7 +222,7 @@ async function main() {
     if (DRY_RUN) { sentCount++; continue; }
 
     try {
-      await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '리마인더', body }));
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '리마인더', body });
       await writeLastRemindedAt(proposal.id, now);
       sentCount++;
     } catch (e) {
@@ -249,7 +248,7 @@ async function main() {
     if (DRY_RUN) { sentCount++; continue; }
 
     try {
-      await sendTelegram(formatDepartmentMessage({ departmentLabel: DEPARTMENT_LABEL, tag: '리마인더', body }));
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '리마인더', body });
       await writeLastPendingRemindedAt(proposal.id, now);
       sentCount++;
     } catch (e) {

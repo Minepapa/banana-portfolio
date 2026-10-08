@@ -14,7 +14,7 @@ import { createAndSendProposal, buildProposalMessageBody } from '../lib/proposal
 import { parseProposal } from '../lib/proposal-vault.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { sendTelegram } from '../lib/telegram.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 import { hasKisCredentials, loadKisCredentials, getKisToken, getKrQuote, isKrMarketOpen } from '../lib/kis.mjs';
@@ -93,13 +93,13 @@ async function main() {
       mkdirSync(proposalsDir, { recursive: true });
       const existingProposals = loadExistingProposals(proposalsDir);
       const writeProposalFile = (filename, content) => writeStateFile(join(proposalsDir, filename), content);
-      const sendMessage = async (text) => sendTelegram(text).then((r) => r?.result ?? r);
+      const sendMessage = async (message) => sendAgentMessage(message).then((r) => r?.result ?? r);
 
       const proposalsBlocked = isProposalBlocked(existsSync(VAULT_PATHS.state.proposalMode) ? readFileSync(VAULT_PATHS.state.proposalMode, 'utf8') : null);
       const result = await createAndSendProposal({
         track: '퀀트', assetKey: code, name, side, quantity, proposedPrice: target, reason,
-        departmentLabel: '플루토스 Plutus', existingProposals, writeProposalFile, sendMessage, proposalsBlocked,
-        sendWarning: createDirectWarningSender(sendTelegram, {
+        senderAgent: 'plutus', existingProposals, writeProposalFile, sendMessage, proposalsBlocked,
+        sendWarning: createDirectWarningSender(sendAgentMessage, {
           jobName: 'watch-price-and-propose', kind: 'trade-safety', severity: 'high',
         }),
       });
