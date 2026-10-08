@@ -90,3 +90,10 @@ test('vault-integrity-audit: 로컬 Vault 전체 정합성', { skip: !CAN_RUN },
   for (const group of result.executionDuplicates) console.warn(`[Vault 무결성 경고] 잠재적 크로스소스 체결 중복 — ${group.join(', ')}`);
   assert.deepEqual(result.errors, [], result.errors.join('\n'));
 });
+
+test('vault-integrity-audit: 실행대기·보류만 있는 decisionKey(승인 전 제안)는 허용, 대체됨만 남은 키는 오류', () => {
+  const doc = (key, status) => ({ path: `${key}-${status}.md`, text: `---\ndecisionKey: "${key}"\nstatus: "${status}"\n---\n` });
+  assert.deepEqual(findDecisionKeyErrors([doc('제안', '실행대기'), doc('보류안', '보류')]), []);
+  assert.equal(findDecisionKeyErrors([doc('끊김', '대체됨')]).length, 1);
+  assert.equal(findDecisionKeyErrors([doc('둘', '결정됨'), { ...doc('둘', '결정됨'), path: 'x.md' }]).length, 1);
+});

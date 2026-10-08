@@ -95,11 +95,16 @@ export function findDecisionKeyErrors(records) {
     const fields = parseFlatFrontmatter(record.text) ?? {};
     // 과거 결정 문서에는 decisionKey가 없다. 키가 부여된 문서의 활성 개수만 감사한다.
     if (!fields.decisionKey) continue;
-    const group = groups.get(fields.decisionKey) ?? [];
-    if (fields.status === '결정됨') group.push(record.path);
+    const group = groups.get(fields.decisionKey) ?? { active: [], statuses: new Set() };
+    if (fields.status === '결정됨') group.active.push(record.path);
+    group.statuses.add(fields.status);
     groups.set(fields.decisionKey, group);
   }
-  for (const [decisionKey, activePaths] of groups) {
+  // 오너 승인 전 제안(실행대기·보류만 있는 키)은 아직 결정됨이 없어도 정상이다(2026-10-08).
+  // 결정됨이 둘 이상이거나, 대체됨만 남고 현행 결정이 없는 키는 오류다.
+  const PENDING_ONLY = new Set(['실행대기', '보류']);
+  for (const [decisionKey, { active: activePaths, statuses }] of groups) {
+    if (!activePaths.length && [...statuses].every((st) => PENDING_ONLY.has(st))) continue;
     if (activePaths.length !== 1) {
       errors.push(`decisionKey '${decisionKey}': 결정됨 문서 ${activePaths.length}개 (정확히 1개 필요)${activePaths.length ? `: ${activePaths.join(', ')}` : ''}`);
     }
