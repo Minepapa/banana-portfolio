@@ -125,7 +125,7 @@ test('특수 매핑은 지정한 목적지와 연도 폴더 표시를 보존한�
     ],
     ['Knowledge/Index.md', '90_Delphi/index.md', false],
     ['Knowledge/Meta/Index.md', '80_Archive/Knowledge/Meta/Index.md', false],
-    ['Knowledge/Meta/므네모시네-파일배선도.md', '90_Delphi/Schema/경로 등록부.md', false],
+    ['Knowledge/Meta/므네모시네-파일배선도.md', '90_Delphi/Schema/파일 배선도.md', false],
     ['Knowledge/API/README.md', '30_Wiki/34_Topics/API 개요.md', false],
     ['Knowledge/Playbook/README.md', '30_Wiki/34_Topics/플레이북 개요.md', false],
   ];

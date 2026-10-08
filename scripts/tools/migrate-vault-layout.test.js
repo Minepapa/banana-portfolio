@@ -305,7 +305,7 @@ test('이관 계획과 보고에 basename 치환 수와 보류 목록을 담는�
     const applied = migrateVault(root, { apply: true });
     assert.equal(applied.basenameChangedLinks, 1);
     assert.deepEqual(applied.brokenLinks, []);
-    assert.equal(readFileSync(join(root, '90_Delphi/index.md'), 'utf8'), '[[경로 등록부]]');
+    assert.equal(readFileSync(join(root, '90_Delphi/index.md'), 'utf8'), '[[파일 배선도]]');
   });
 });
 

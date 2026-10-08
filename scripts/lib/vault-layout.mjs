@@ -45,8 +45,8 @@ export const LEGACY_TO_MOUSEION_RULES = [
   { from: 'Knowledge/Meta/Index.md', to: '80_Archive/Knowledge/Meta/Index.md' },
   {
     from: 'Knowledge/Meta/므네모시네-파일배선도.md',
-    to: '90_Delphi/Schema/경로 등록부.md',
-    note: '경로 등록부로 대체',
+    to: '90_Delphi/Schema/파일 배선도.md',
+    note: '파일 배선도(4-7에서 경로 등록부와 분리)',
   },
   { from: 'Knowledge/Meta', to: '90_Delphi' },
   { from: 'Knowledge/Kangto/README.md', to: '20_Records/22_Literature/README.md', yearFolder: true },

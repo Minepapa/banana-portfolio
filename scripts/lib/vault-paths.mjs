@@ -36,7 +36,7 @@ export const VAULT_REL = {
   knowledgeApi: '30_Wiki/34_Topics',
   knowledgeIndexFile: '90_Delphi/index.md',
   knowledgeMetaIndexFile: '80_Archive/Knowledge/Meta/Index.md',
-  wiringMapFile: '90_Delphi/Schema/경로 등록부.md',
+  wiringMapFile: '90_Delphi/Schema/파일 배선도.md', // 4-7: 경로 등록부(정본)와 분리
   stateBreakoutPositions: '95_Etna/Investing/BreakoutPositions',
   stateBreakoutPendingEntries: '95_Etna/Investing/BreakoutPendingEntries',
   stateTelegramSession: '95_Etna/Jobs/TelegramSession',
