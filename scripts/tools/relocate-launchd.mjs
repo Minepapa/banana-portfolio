@@ -69,6 +69,7 @@ export function createDependencies(overrides = {}) {
     sleep: (milliseconds) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds),
     bootoutTimeoutSeconds: 10,
     uid: process.getuid(),
+    pantheonRoot: nodePath.join(nodeOs.homedir(), 'Pantheon'),
     ...overrides,
   };
 }
@@ -81,15 +82,30 @@ export function inspectLaunchd({ plistDirectory, agentsDirectory, deps = createD
     const tokens = plistTokens(source);
     const label = tokens.find((token) => token.key === 'Label')?.value;
     if (!label) throw new Error(`${name}: Label이 없습니다`);
-    const roots = [...new Set(tokens.map(rootFromToken).filter(Boolean))];
-    if (roots.length !== 1) throw new Error(`${name}: 저장소 루트가 일치하지 않습니다: ${roots.join(', ')}`);
-    const root = roots[0];
-    const uses = tokens.filter((token) => pathHasRoot(token.value, root))
+    // 텔레그램 대화 세션만 Pantheon 루트에서 실행하고 저장소 경로도 쓰지 않는다.
+    // 이 항목의 저장소 루트는 아래에서 다른 plist들의 공통 루트로 채운다.
+    const rootTokens = label === 'com.banana2.telegram-session'
+      ? tokens.filter((token) => token.key !== 'WorkingDirectory') : tokens;
+    const roots = [...new Set(rootTokens.map(rootFromToken).filter(Boolean))];
+    if (roots.length !== 1 && !(label === 'com.banana2.telegram-session' && roots.length === 0)) {
+      throw new Error(`${name}: 저장소 루트가 일치하지 않습니다: ${roots.join(', ')}`);
+    }
+    const root = roots[0] ?? null;
+    const uses = tokens.filter((token) => root && pathHasRoot(token.value, root))
       .map((token) => ({ key: token.key, value: token.value }));
     return { name, label, root, uses, source, realpath: fs.realpathSync(path.join(plistDirectory, name)) };
   });
-  const roots = [...new Set(files.map((file) => file.root))];
+  const roots = [...new Set(files.map((file) => file.root).filter(Boolean))];
   if (roots.length !== 1) throw new Error(`plist 간 저장소 루트가 일치하지 않습니다: ${roots.join(', ')}`);
+  for (const file of files) {
+    if (file.label === 'com.banana2.telegram-session') {
+      const workingDirectories = plistTokens(file.source).filter((token) => token.key === 'WorkingDirectory');
+      if (workingDirectories.length !== 1 || workingDirectories[0].value !== deps.pantheonRoot) {
+        throw new Error(`${file.name}: WorkingDirectory는 ${deps.pantheonRoot}여야 합니다`);
+      }
+    }
+    if (!file.root) file.root = roots[0];
+  }
   const installedNames = fs.existsSync(agentsDirectory)
     ? fs.readdirSync(agentsDirectory).filter((name) => name.endsWith('.plist')) : [];
   const sourceNames = new Set(plistNames);

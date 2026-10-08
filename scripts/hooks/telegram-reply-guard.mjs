@@ -30,9 +30,9 @@
  * {continue:true, suppressOutput:true}). 항상 exit 0(훅 자체 실패로 세션을 막으면
  * 안 됨 — OMC의 context-guard-stop.mjs와 동일 안전원칙).
  *
- * ⚠️ CLAUDE_TELEGRAM_SESSION 가드 — `.claude/settings.json`에 등록되면 이 프로젝트
- * cwd의 모든 세션(오너 터미널 세션 포함)에서 Stop마다 실행된다. 텔레그램 세션
- * 전용 env var로 그 외 세션에서는 즉시 통과(telegram-session-context.mjs와 동일
+ * ⚠️ CLAUDE_TELEGRAM_SESSION 가드 — 저장소와 Pantheon 루트의
+ * `.claude/settings.json`에 등록되면 각 작업 폴더의 모든 세션에서 Stop마다 실행된다.
+ * 텔레그램 세션 전용 env var로 그 외 세션에서는 즉시 통과(telegram-session-context.mjs와 동일
  * 패턴).
  *
  * 무한루프 방지: (session_id, message_id) 쌍별로 재시도 횟수를 scripts/.cache/에

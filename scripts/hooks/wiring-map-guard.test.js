@@ -1,6 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import { candidateRelPaths, buildReminderMessage } from './wiring-map-guard.mjs';
+
+test('Pantheon 세션 cwd의 상대경로도 Vault와 저장소 경로로 분류한다', () => {
+  const pantheonRoot = '/Users/test/Pantheon';
+  const vaultRoot = join(pantheonRoot, 'Mouseion');
+  const codeRepoRoot = join(pantheonRoot, 'Repos/banana-portfolio-v2');
+  assert.deepEqual(candidateRelPaths(join(pantheonRoot, 'Mouseion/Knowledge/Meta/Index.md'), vaultRoot, codeRepoRoot),
+    ['Knowledge/Meta/Index.md']);
+  assert.deepEqual(candidateRelPaths(join(pantheonRoot, 'Repos/banana-portfolio-v2/scripts/lib/x.mjs'), vaultRoot, codeRepoRoot),
+    ['scripts/lib/x.mjs']);
+});
 
 test('candidateRelPaths: 파일이 vaultRoot 안에 있으면 vault 상대경로만 반환', () => {
   const result = candidateRelPaths('/vault/Knowledge/Meta/Index.md', '/vault', '/code');

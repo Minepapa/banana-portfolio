@@ -5,9 +5,9 @@
  * 오너 지시 "가상세션 기록은 므네모시네로 흡수하자... 재시작 시 이전 어떤 기록을
  * 읽어왔다고 메모 남겨줘").
  *
- * ⚠️ CLAUDE_TELEGRAM_SESSION 가드 — 이 훅은 `.claude/settings.json`에 등록돼 이
- * 프로젝트 cwd로 뜨는 **모든** Claude Code 세션(오너의 인터랙티브 터미널 세션 포함)
- * 에서 실행된다. `com.banana2.telegram-session.plist`가 이 env var를 세팅해서
+ * ⚠️ CLAUDE_TELEGRAM_SESSION 가드 — 이 훅은 저장소와 Pantheon 루트의
+ * `.claude/settings.json`에 등록돼 각 작업 폴더의 **모든** Claude Code 세션에서
+ * 실행된다. `com.banana2.telegram-session.plist`가 이 env var를 세팅해서
  * 띄우는 세션에서만 실제 동작하고, 그 외(내 터미널 세션 등)에서는 조용히 스킵한다
  * — handoff-load 훅을 텔레그램 세션에서 스킵시켰던 것과 정반대 방향의 같은 패턴.
  *

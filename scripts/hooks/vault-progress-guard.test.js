@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { join, relative } from 'node:path';
 import { shouldCheck, shouldCheckStatus, checkProgressField, checkStatusField, CANONICAL_PROGRESS_VALUES, CANONICAL_STATUS_VALUES } from './vault-progress-guard.mjs';
+
+test('Pantheon 세션의 상대경로는 세션 cwd를 기준으로 Vault 범위에 들어간다', () => {
+  const pantheonRoot = '/Users/test/Pantheon';
+  const vaultRoot = join(pantheonRoot, 'Mouseion');
+  const filePath = join(pantheonRoot, 'Mouseion/40_Projects/banana-portfolio/Implementation/x.md');
+  assert.equal(shouldCheck(relative(vaultRoot, filePath)), true);
+});
 
 test('shouldCheck: 40_Projects/banana-portfolio/Implementation/*.md만 대상 — 다른 Log 폴더·다른 확장자는 제외', () => {
   assert.equal(shouldCheck('40_Projects/banana-portfolio/Implementation/2026-09-14-예시.md'), true);

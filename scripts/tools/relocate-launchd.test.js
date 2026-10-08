@@ -60,6 +60,25 @@ test('검사는 링크·주석만 다른 복사본·미설치·저장소 밖 설
   assert.equal(report.files.every((file) => file.uses.length === 2), true);
 });
 
+test('텔레그램 세션은 Pantheon WorkingDirectory여도 저장소 루트를 식별한다', (t) => {
+  const dirs = fixture(t);
+  const deps = createDependencies({ pantheonRoot: '/' });
+  const telegramPlist = path.join(dirs.plistDirectory, 'com.banana2.telegram-session.plist');
+  fs.writeFileSync(telegramPlist,
+    plist('com.banana2.telegram-session').replace(
+      `<key>WorkingDirectory</key><string>${oldRoot}</string>`,
+      '<key>WorkingDirectory</key><string>/</string>',
+    ));
+  const report = inspectLaunchd({ ...dirs, deps });
+  assert.equal(report.root, oldRoot);
+  assert.equal(report.files.find((file) => file.label === 'com.banana2.telegram-session').root, oldRoot);
+  fs.writeFileSync(telegramPlist, fs.readFileSync(telegramPlist, 'utf8').replace(
+    '<key>WorkingDirectory</key><string>/</string>',
+    '<key>WorkingDirectory</key><string>/a</string>',
+  ));
+  assert.throws(() => inspectLaunchd({ ...dirs, deps }), /WorkingDirectory는 \/여야 합니다/);
+});
+
 test('install 계획과 only 필터는 실제 시스템 호출 없이 동작한다', (t) => {
   const dirs = fixture(t);
   let writes = 0;

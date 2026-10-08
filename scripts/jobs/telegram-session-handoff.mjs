@@ -21,8 +21,9 @@
  *
  * 대화 원문 출처 — 텔레그램 세션도 결국 `claude --channels ...`로 뜨는 일반 Claude
  * Code 세션이라 대화가 `~/.claude/projects/{encode(cwd)}/*.jsonl`에 다른 세션들과
- * 섞여 남는다(실측: 이 프로젝트 cwd 하나에 79개+ 파일, 대부분은 오너의 인터랙티브
- * 세션·다른 작업 세션). `--name "판테온 텔레그램 가상세션"` 플래그가 각 transcript
+ * 섞여 남는다. Pantheon 루트 이전 중에는 새 루트 키와 옛 저장소 키를 함께 읽는다.
+ * 옛 저장소 cwd엔 실측 79개+ 파일이 있어 대부분은 오너의 인터랙티브 세션·다른
+ * 작업 세션이다. `--name "판테온 텔레그램 가상세션"` 플래그가 각 transcript
  * 파일 앞부분에 `agent-name` 레코드로 찍혀 있어(2026-09-04 실측 확인) 이걸로 텔레그램
  * 세션 파일만 골라낸다.
  *
@@ -55,7 +56,9 @@
  * 사용법: node scripts/jobs/telegram-session-handoff.mjs [--dry-run]
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, openSync, readSync, closeSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 import { vaultYearDir, VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -302,19 +305,25 @@ function readFileHead(path, maxBytes = 4096) {
 // 파일당 head 4KB만 읽어 마커를 확인하므로(agent-name 레코드는 파일 앞부분에 찍힘,
 // 2026-09-04 실측) 가벼움 — 실측 파일 크기는 최대 362KB(텔레그램 세션 자신은
 // 대화량이 적어 이 프로젝트의 다른 인터랙티브 세션 transcript보다 훨씬 작음).
-export function findTelegramTranscripts(cwd = process.cwd()) {
-  const dir = join(claudeProjectsDir(), encodeProjectPath(cwd));
-  if (!existsSync(dir)) return [];
+export function findTelegramTranscripts(
+  pantheonRoot = join(homedir(), 'Pantheon'),
+  codeRepoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..'),
+  projectsDir = claudeProjectsDir(),
+) {
   const entries = [];
-  for (const f of readdirSync(dir)) {
-    if (!f.endsWith('.jsonl')) continue;
-    const fp = join(dir, f);
-    let st;
-    try { st = statSync(fp); } catch { continue; }
-    if (!st.isFile() || st.size === 0) continue;
-    let head = '';
-    try { head = readFileHead(fp); } catch { continue; }
-    entries.push({ path: fp, isTelegramSession: hasTelegramSessionMarker(head) });
+  for (const projectPath of new Set([pantheonRoot, codeRepoRoot])) {
+    const dir = join(projectsDir, encodeProjectPath(projectPath));
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith('.jsonl')) continue;
+      const fp = join(dir, f);
+      let st;
+      try { st = statSync(fp); } catch { continue; }
+      if (!st.isFile() || st.size === 0) continue;
+      let head = '';
+      try { head = readFileHead(fp); } catch { continue; }
+      entries.push({ path: fp, isTelegramSession: hasTelegramSessionMarker(head) });
+    }
   }
   return pickTelegramTranscriptPaths(entries);
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,7 +9,26 @@ import {
   filterLinesByKstDate, earliestTimestampMs,
   extractConversationTurns, findLatestUnansweredTelegramOwnerMessage, truncateConversationText, buildConversationPrompt,
   prepareHandoffFile,
+  findTelegramTranscripts,
 } from './telegram-session-handoff.mjs';
+
+test('findTelegramTranscripts: Pantheon 루트와 예전 저장소 세션 기록을 함께 찾는다', (t) => {
+  const projectsDir = mkdtempSync(join(tmpdir(), 'claude-projects-'));
+  t.after(() => rmSync(projectsDir, { recursive: true, force: true }));
+  const root = '/Users/test/Pantheon';
+  const repo = `${root}/Repos/banana-portfolio-v2`;
+  const marker = '{"type":"agent-name","agentName":"판테온 텔레그램 가상세션"}\n';
+  const rootDir = join(projectsDir, '-Users-test-Pantheon');
+  const repoDir = join(projectsDir, '-Users-test-Pantheon-Repos-banana-portfolio-v2');
+  mkdirSync(rootDir);
+  mkdirSync(repoDir);
+  writeFileSync(join(rootDir, 'new.jsonl'), marker);
+  writeFileSync(join(repoDir, 'old.jsonl'), marker);
+  writeFileSync(join(rootDir, 'other.jsonl'), '{"type":"user"}\n');
+  assert.deepEqual(findTelegramTranscripts(root, repo, projectsDir), [
+    join(rootDir, 'new.jsonl'), join(repoDir, 'old.jsonl'),
+  ]);
+});
 
 test('옛 인수인계 파일만 있으면 새 이름으로 옮긴 뒤 갱신한다', () => {
   const dir = mkdtempSync(join(tmpdir(), 'telegram-handoff-'));
