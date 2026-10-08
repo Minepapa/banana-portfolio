@@ -20,7 +20,8 @@ import { describeJob } from '../lib/job-labels.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
 // 2026-08-23 — 이 알림도 job-alerts.mjs와 같은 이유로 라벨이 없었다 — 운영실(Hermes) 소관.
-const SENDER_AGENT = 'plutus';
+// 시스템 운영 경보는 제우스 명의(D83, 2026-10-08 오너 결정 — 잡·인프라는 영역 담당이 아니라 시스템 운영 소관, 다른 영역 잡이 늘어도 같은 창구).
+const SENDER_AGENT = 'zeus';
 const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'record-heartbeat-vault', warningCode: 'JOB_HEARTBEAT_FAILED',
   kind: 'operational', severity: 'high',

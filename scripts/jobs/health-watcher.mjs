@@ -37,7 +37,8 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // 'backup'·'parse-notifications'·'realtime-quotes' 등이 전부 hermes였던 것과 동일 원칙).
 // 2026-08-14 오너 지적 — 알림에 어느 잡을 감시하는 건지·어느 부서 소관인지 표기 안 돼
 // 있어 헷갈렸음, formatDepartmentMessage(기존 부서 메시지 포맷)로 통일.
-const SENDER_AGENT = 'plutus';
+// 시스템 운영 경보는 제우스 명의(D83, 2026-10-08 오너 결정 — 잡·인프라는 영역 담당이 아니라 시스템 운영 소관, 다른 영역 잡이 늘어도 같은 창구).
+const SENDER_AGENT = 'zeus';
 const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'health-watcher', warningCode: 'JOB_HEALTH_ISSUES', subjectKey: 'batch',
   kind: 'operational', severity: 'high',
