@@ -11,6 +11,20 @@ const OLD_FILES = ['kairos.md', 'apollo.md', 'PANTHEON.md'];
 export { LEGACY_OVERRIDES, AGENT_SPECIFIC_OVERRIDES };
 const OLD_NAMES = ['Athena', 'Kairos', 'Hermes', 'Apollo', '투자전략실', '퀀트전략실', '운영실', '비서실', '리스크관리실'];
 const DEFAULT_OUT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.claude', 'agents');
+// 라우팅 키워드 표(이관 4-5, D60): 헌장 머리말 routingKeywords에서 생성한다. route-keywords.mjs가 읽는다.
+export const DEFAULT_ROUTE_OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'route-keywords.generated.json');
+
+export function buildRouteKeywords({ charterDir = vaultAbs(VAULT_REL.agentCharters) } = {}) {
+  const table = {};
+  for (const name of AGENT_NAMES) {
+    const { fields } = parseVaultNote(readFileSync(join(charterDir, `${name}.md`), 'utf8'));
+    if (!Array.isArray(fields.routingKeywords) || fields.routingKeywords.some((k) => typeof k !== 'string' || !k.trim())) {
+      throw new Error(`routingKeywords 누락·형식 오류: ${name}`);
+    }
+    if (fields.routingKeywords.length) table[name] = fields.routingKeywords;
+  }
+  return table;
+}
 
 function parseVaultNote(text) {
   const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
@@ -72,9 +86,14 @@ export function renderAgent(name, { charterDir = vaultAbs(VAULT_REL.agentCharter
   return `${frontmatter}\n\n${sections.join('\n\n')}\n`;
 }
 
-export function buildAgentDefs({ check = false, outDir = DEFAULT_OUT, charterDir, archiveDir } = {}) {
+export function buildAgentDefs({ check = false, outDir = DEFAULT_OUT, routeOut = DEFAULT_ROUTE_OUT, charterDir, archiveDir } = {}) {
   const outputs = AGENT_NAMES.map((name) => ({ name, text: renderAgent(name, { charterDir, archiveDir }) }));
   const differences = [];
+  const routeText = `${JSON.stringify(buildRouteKeywords(charterDir ? { charterDir } : {}), null, 2)}\n`;
+  if (!existsSync(routeOut) || readFileSync(routeOut, 'utf8') !== routeText) {
+    differences.push('route-keywords.generated.json');
+    if (!check) writeFileSync(routeOut, routeText);
+  }
   for (const { name, text } of outputs) {
     const path = join(outDir, `${name}.md`);
     if (!existsSync(path) || readFileSync(path, 'utf8') !== text) {

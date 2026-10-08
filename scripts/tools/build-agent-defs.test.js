@@ -19,10 +19,10 @@ function fixture() {
     const legacyAppendix = name === 'zeus' ? '["[[80_Archive/agents-2026-10-08/zeus]]"]' : '[]';
     const sections = ['신화적 원형', '사명', '성격', '말투', '책임', '경계', '작업 유형별 절차', '협업', '개별 금지']
       .map((heading, index) => `## ${index + 1}. ${heading}\n\n개별 판단 기준.`).join('\n\n');
-    writeFileSync(join(charterDir, `${name}.md`), `---\nname: "${name}"\ntitle: "제목"\ndescription: "업무 설명"\nroutingHint: "요청 내용"\nruntimeModel: "sonnet"\ntools: "Read, Grep"\nlegacyAppendix: ${legacyAppendix}\n---\n# ${name}\n\n${sections}\n\n## 변경 이력\n\n- 생성.\n`);
+    writeFileSync(join(charterDir, `${name}.md`), `---\nname: "${name}"\ntitle: "제목"\ndescription: "업무 설명"\nroutingHint: "요청 내용"\nroutingKeywords: ["키워드"]\nruntimeModel: "sonnet"\ntools: "Read, Grep"\nlegacyAppendix: ${legacyAppendix}\n---\n# ${name}\n\n${sections}\n\n## 변경 이력\n\n- 생성.\n`);
   }
   writeFileSync(join(archiveDir, 'zeus.md'), '---\nname: zeus\n---\n# 옛 Zeus\n\n비서실이 텔레그램 즉시 1줄 + 주간리포트.\n\n## 텔레그램 상시세션 프로토콜\n제거할 규칙.\n\n## 운영 규칙\n보존할 규칙.\n');
-  return { root, charterDir, archiveDir, outDir };
+  return { routeOut: join(root, 'route-keywords.generated.json'), root, charterDir, archiveDir, outDir };
 }
 
 test('헌장 머리말·공통 본문·옛 지침을 생성하고 텔레그램 절만 대체한다', () => {
@@ -61,7 +61,7 @@ test('본문 9섹션이나 부록 경계가 손상되면 생성 전에 멈추고
 test('--check는 불일치를 보고하고 파일을 고치지 않는다', () => {
   const dirs = fixture();
   try {
-    assert.equal(buildAgentDefs(dirs).differences.length, 6);
+    assert.equal(buildAgentDefs(dirs).differences.length, 7); // 정의 6개 + 라우팅 키워드 파일(이관 4-5)
     assert.deepEqual(buildAgentDefs({ ...dirs, check: true }).differences, []);
     const path = join(dirs.outDir, 'plutus.md');
     writeFileSync(path, 'stale');

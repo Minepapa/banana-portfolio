@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 // 부서 위임 라우팅 키워드 매처 — 순수함수(테스트: route-keywords.test.js).
 // UserPromptSubmit 훅(route-guard.mjs)이 소비: "이 프롬프트가 투자 업무 위임 대상인가"를
 // 결정론으로 판정한다. 완벽한 부서 선택이 목표가 아니라 "위임 여부 + 1차 추정 부서"만 책임진다 —
@@ -11,13 +12,9 @@
 // - 오발은 무해하다(차단 아닌 리마인드) — 애매하면 위임 쪽으로, 단 위 가드로 메타 오발만 막는다.
 
 // 부서별 도메인 키워드. 부분일치(includes) — 한국어는 어절 경계가 모호해 표준 방식.
-const DEPT_KEYWORDS = {
-  plutus: ['투자', '자산', '돌파', '퀀트', '평가', '매수', '매도', '살까', '팔까', '익절', '손절', '리밸런싱', '리밸런스', '큐 비워', '평가 큐', '큐 드레인', '주문', '보유현황', '포트폴리오', '비중 조정', '종목 분석', '위험', '리스크', '환율', '금리', 'vix', '변동성', '거시', '예수금', '체결', '잔고', '배당', '장부', '시세 가져와', '리포트', 'kpi', '이번 주', '주간', '브리핑'],
-  themis: ['검증', '논리 훼손', '논리 유효', '유효해', '차단해제'],
-  athena: ['미네', '딸', '육아'],
-  hermes: ['일정', '할 일', '리마인더', '동선', '소비'],
-  clio: ['기록', '볼트', '성향', '정합', '잡 상태', '잡상태', '파이프라인', '데이터 가져와'],
-};
+// 키워드 표는 헌장(볼트 90_Delphi/Agents 머리말 routingKeywords)에서 생성한 파일을 읽는다(이관 4-5, D60).
+// 바꾸려면 헌장을 고치고 `node scripts/tools/build-agent-defs.mjs`를 다시 돌린다. 손으로 고치지 않는다.
+const DEPT_KEYWORDS = JSON.parse(readFileSync(new URL('./route-keywords.generated.json', import.meta.url), 'utf8'));
 
 // 동수(argmax tie) 시 우선순위 — 투자 판단 우선(zeus.md "부서 불명확 → 기본 Athena").
 const PRIORITY = ['plutus', 'themis', 'athena', 'hermes', 'clio'];
