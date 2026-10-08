@@ -107,7 +107,7 @@ function goldToExecutionEvent(g) {
 }
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '클리오 Clio';
 const sendConfirmationWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'parse-notifications-to-vault', warningCode: 'EXECUTION_CONFIRMATION_NEEDED',
   kind: 'owner-decision', severity: 'high',

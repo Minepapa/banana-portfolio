@@ -21,7 +21,7 @@ export { shouldNotify } from './warning-batch-delivery.mjs';
 // 2026-08-23 — 이 알림엔 부서 라벨이 아예 없었다(오너 지시로 전체 텔레그램 메시지
 // 구조 재점검 중 발견) — 잡·인프라 배관은 운영실(Hermes) 소관 원칙(health-watcher.mjs
 // DEPARTMENT_LABEL과 동일)을 그대로 따른다.
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = join(HERE, '..', '.cache', 'job-alerts.json');

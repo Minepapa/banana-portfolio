@@ -32,24 +32,22 @@ export const REBAL_TARGET_START = { ISA: 21, 위탁: 3, 연금저축: 12, IRP: 2
 // 실패 감지는 연속 2회 실패 시 텔레그램 알림(record-heartbeat)으로 대체.
 export const JOB_CADENCE = { drain: 6, 'risk-d': 80, 'risk-b': 200 };
 
-// 잡→판테온 부서 매핑 — 판테온탭 Hermes 카드·KpiTab 부서 배지(후속)가 소비.
-// risk-b/risk-d/baseline(리스크 판정 근거)=Themis, drain/order-*(전략실 산출물)=Athena,
-// weekly-report(비서실 보고)=Apollo, 나머지 장부 ETL류=Hermes.
+// 잡→현행 담당 매핑 — 투자 판단·장부·보고는 Plutus, 볼트 백업은 Clio.
 export const JOB_DEPARTMENT = {
-  'parse-notifications': 'hermes',
-  'drain': 'athena',
-  'journal-sync': 'hermes',
-  'daily-snapshot': 'hermes',
-  'risk-d': 'themis',
-  'order-crash': 'athena',
-  'risk-b': 'themis',
-  'weekly-report': 'apollo',
-  'order-weekly': 'athena',
-  'report-sync': 'hermes',
-  'backup': 'hermes',
-  'baseline': 'themis',
-  'realtime-quotes': 'hermes',
-  'reconcile-irp': 'hermes',
+  'parse-notifications': 'plutus',
+  'drain': 'plutus',
+  'journal-sync': 'plutus',
+  'daily-snapshot': 'plutus',
+  'risk-d': 'plutus',
+  'order-crash': 'plutus',
+  'risk-b': 'plutus',
+  'weekly-report': 'plutus',
+  'order-weekly': 'plutus',
+  'report-sync': 'plutus',
+  'backup': 'clio',
+  'baseline': 'plutus',
+  'realtime-quotes': 'plutus',
+  'reconcile-irp': 'plutus',
 };
 
 // 체결내역 A~M 컬럼 레이블

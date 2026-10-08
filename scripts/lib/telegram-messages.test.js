@@ -2,14 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   formatDepartmentMessage, formatFactsMessage, parseDepartmentResponse, stripEmDash, stripEmoji, parseReplyDecision, parseKillSwitchCommand,
-  parseDepartmentCall, parseExecutionModeCommand, parseProposalModeCommand, ZEUS_MARKER,
+  parseDepartmentCall, renamedRoleHint, parseExecutionModeCommand, parseProposalModeCommand, ZEUS_MARKER,
 } from './telegram-messages.mjs';
 
 const SEP = '─'.repeat(16);
 
 test('formatDepartmentMessage: 부서보고+Zeus코멘트를 한 메시지로 합침(오너 확정 형식)', () => {
-  const msg = formatDepartmentMessage({ departmentLabel: '투자전략실 Athena', body: '리밸런싱 제안입니다.', zeusComment: '승인합니다.' });
-  assert.equal(msg, `[투자전략실 Athena]\n${SEP}\n리밸런싱 제안입니다.\n\n${ZEUS_MARKER} 승인합니다.`);
+  const msg = formatDepartmentMessage({ departmentLabel: '플루토스 Plutus', body: '리밸런싱 제안입니다.', zeusComment: '승인합니다.' });
+  assert.equal(msg, `[플루토스 Plutus]\n${SEP}\n리밸런싱 제안입니다.\n\n${ZEUS_MARKER} 승인합니다.`);
 });
 
 test('ZEUS_MARKER: "[Zeus]"(영문) — 2026-09-19 오너 지시로 환원(부서 라벨이 전부 "부서명+영문이름" 형식인데 제우스는 부서가 없어 영문이름만 표기)', () => {
@@ -17,24 +17,24 @@ test('ZEUS_MARKER: "[Zeus]"(영문) — 2026-09-19 오너 지시로 환원(부�
 });
 
 test('formatDepartmentMessage: zeusComment 없으면 부서보고만', () => {
-  const msg = formatDepartmentMessage({ departmentLabel: '운영실 Hermes', body: '예수금 확인 결과입니다.' });
-  assert.equal(msg, `[운영실 Hermes]\n${SEP}\n예수금 확인 결과입니다.`);
+  const msg = formatDepartmentMessage({ departmentLabel: '플루토스 Plutus', body: '예수금 확인 결과입니다.' });
+  assert.equal(msg, `[플루토스 Plutus]\n${SEP}\n예수금 확인 결과입니다.`);
 });
 
 // 2026-08-23 — 대괄호 태그(상태 표시, 이모지 대체) 추가.
 test('[막아야 함] formatDepartmentMessage: tag를 넘기면 부서 헤더 앞에 대괄호로 붙는다', () => {
-  const msg = formatDepartmentMessage({ departmentLabel: '퀀트전략실 Kairos', body: '체결 취소됨.', tag: '취소' });
-  assert.equal(msg, `[취소] [퀀트전략실 Kairos]\n${SEP}\n체결 취소됨.`);
+  const msg = formatDepartmentMessage({ departmentLabel: '플루토스 Plutus', body: '체결 취소됨.', tag: '취소' });
+  assert.equal(msg, `[취소] [플루토스 Plutus]\n${SEP}\n체결 취소됨.`);
 });
 
 test('formatDepartmentMessage: tag 안 넘기면(기본값) 태그 없이 부서 헤더만', () => {
-  const msg = formatDepartmentMessage({ departmentLabel: '운영실 Hermes', body: '내용' });
+  const msg = formatDepartmentMessage({ departmentLabel: '플루토스 Plutus', body: '내용' });
   assert.doesNotMatch(msg, /^\[[가-힣]+\] \[운영실/);
 });
 
 test('formatFactsMessage: 결론→사실→맥락→의사결정 4단 구조(2026-09-01 오너가 직접 예시 메시지를 손으로 고쳐 확정)', () => {
   const msg = formatFactsMessage({
-    departmentLabel: '투자전략실 Athena',
+    departmentLabel: '플루토스 Plutus',
     facts: ['리츠 갭 -1.98%p(밴드 이탈)', '연금저축 누적현금 962,000원'],
     conclusion: '지금 배분할 필요는 없습니다.',
     context: '리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.',
@@ -42,40 +42,40 @@ test('formatFactsMessage: 결론→사실→맥락→의사결정 4단 구조(20
   });
   assert.equal(
     msg,
-    `[투자전략실 Athena]\n\n[결론]\n지금 배분할 필요는 없습니다.\n\n[사실]\n· 리츠 갭 -1.98%p(밴드 이탈)\n\n· 연금저축 누적현금 962,000원\n\n[맥락]\n리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.\n\n[의사결정]\n· 지금 배분할지, 다음 현금 유입까지 기다릴지\n\n· 리츠 대신 국내주식 갭부터 메울지`,
+    `[플루토스 Plutus]\n\n[결론]\n지금 배분할 필요는 없습니다.\n\n[사실]\n· 리츠 갭 -1.98%p(밴드 이탈)\n\n· 연금저축 누적현금 962,000원\n\n[맥락]\n리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.\n\n[의사결정]\n· 지금 배분할지, 다음 현금 유입까지 기다릴지\n\n· 리츠 대신 국내주식 갭부터 메울지`,
   );
 });
 
 test('formatFactsMessage: conclusion·context·decisions 전부 없으면 [사실]만(LLM 없는 순수 운영 알림, 또는 조용한 날 LLM 생략)', () => {
-  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['잡 A가 조용함', '잡 B가 조용함'] });
-  assert.equal(msg, `[운영실 Hermes]\n\n[사실]\n· 잡 A가 조용함\n\n· 잡 B가 조용함`);
+  const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['잡 A가 조용함', '잡 B가 조용함'] });
+  assert.equal(msg, `[플루토스 Plutus]\n\n[사실]\n· 잡 A가 조용함\n\n· 잡 B가 조용함`);
 });
 
 test('formatFactsMessage: decisions 없이 context만 있어도 됨(부분 구조 허용)', () => {
-  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['사실1'], context: '맥락문단' });
-  assert.equal(msg, `[운영실 Hermes]\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단`);
+  const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['사실1'], context: '맥락문단' });
+  assert.equal(msg, `[플루토스 Plutus]\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단`);
 });
 
 test('formatFactsMessage: decisions가 빈 배열이면(마커는 있었지만 항목 없음) [의사결정] 섹션 자체를 안 붙임', () => {
-  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['사실1'], context: '맥락문단', decisions: [] });
-  assert.equal(msg, `[운영실 Hermes]\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단`);
+  const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['사실1'], context: '맥락문단', decisions: [] });
+  assert.equal(msg, `[플루토스 Plutus]\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단`);
 });
 
 test('formatFactsMessage: zeusComment까지 있으면 맨 뒤에 붙음', () => {
   const msg = formatFactsMessage({
-    departmentLabel: '투자전략실 Athena', facts: ['사실1'], conclusion: '결론문장', context: '맥락문단', decisions: ['고민점1'], zeusComment: '승인',
+    departmentLabel: '플루토스 Plutus', facts: ['사실1'], conclusion: '결론문장', context: '맥락문단', decisions: ['고민점1'], zeusComment: '승인',
   });
-  assert.equal(msg, `[투자전략실 Athena]\n\n[결론]\n결론문장\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단\n\n[의사결정]\n· 고민점1\n\n${ZEUS_MARKER} 승인`);
+  assert.equal(msg, `[플루토스 Plutus]\n\n[결론]\n결론문장\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단\n\n[의사결정]\n· 고민점1\n\n${ZEUS_MARKER} 승인`);
 });
 
 test('formatFactsMessage: facts 없어도(빈 배열) 헤더+[사실] 빈 줄만 남고 안 터짐', () => {
-  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: [] });
-  assert.equal(msg, `[운영실 Hermes]\n\n[사실]\n`);
+  const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: [] });
+  assert.equal(msg, `[플루토스 Plutus]\n\n[사실]\n`);
 });
 
 test('[막아야 함] formatFactsMessage: tag를 넘기면 부서 헤더 앞에 대괄호로 붙는다', () => {
-  const msg = formatFactsMessage({ departmentLabel: '투자전략실 Athena', facts: ['사실1'], tag: '제안' });
-  assert.equal(msg, `[제안] [투자전략실 Athena]\n\n[사실]\n· 사실1`);
+  const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['사실1'], tag: '제안' });
+  assert.equal(msg, `[제안] [플루토스 Plutus]\n\n[사실]\n· 사실1`);
 });
 
 // parseDepartmentResponse — LLM 응답을 formatFactsMessage의 conclusion·context·decisions
@@ -235,7 +235,7 @@ test('stripEmoji: 빈 값이면 빈 문자열(안 터짐)', () => {
 
 test('formatFactsMessage: facts·conclusion·context·decisions·zeusComment 전부에서 이모지가 제거됨', () => {
   const msg = formatFactsMessage({
-    departmentLabel: '리스크관리실 Themis',
+    departmentLabel: '테미스 Themis',
     facts: ['VIX 14.51 🟢'],
     conclusion: '위험 수준은 🟢 정상이다.',
     context: '지표가 🟢 안정적이다.',
@@ -246,17 +246,17 @@ test('formatFactsMessage: facts·conclusion·context·decisions·zeusComment 전
 });
 
 test('formatFactsMessage: facts 안의 화살표(→)는 이모지 제거를 거쳐도 보존됨(회귀 테스트)', () => {
-  const msg = formatFactsMessage({ departmentLabel: '운영실 Hermes', facts: ['외화RP qty 100 → 250 자동 갱신'] });
+  const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['외화RP qty 100 → 250 자동 갱신'] });
   assert.match(msg, /qty 100 → 250/);
 });
 
 test('formatFactsMessage: <pre>로 시작하는 fact(고정폭 표)는 "· " 불릿을 안 붙임(2026-09-20 코드리뷰 LOW 지적, 코스메틱)', () => {
-  const msg = formatFactsMessage({ departmentLabel: '리스크관리실 Themis', facts: ['<pre>VIX  14.51</pre>', '잡 상태 정상'] });
+  const msg = formatFactsMessage({ departmentLabel: '테미스 Themis', facts: ['<pre>VIX  14.51</pre>', '잡 상태 정상'] });
   assert.match(msg, /\[사실\]\n<pre>VIX {2}14\.51<\/pre>\n\n· 잡 상태 정상/);
 });
 
 test('formatDepartmentMessage: body의 이모지는 제거되고 화살표는 보존됨', () => {
-  const msg = formatDepartmentMessage({ departmentLabel: '운영실 Hermes', body: '체결 완료 ✅ 100 → 250주로 갱신' });
+  const msg = formatDepartmentMessage({ departmentLabel: '플루토스 Plutus', body: '체결 완료 ✅ 100 → 250주로 갱신' });
   assert.doesNotMatch(msg, /✅/);
   assert.match(msg, /100 → 250/);
 });
@@ -267,7 +267,7 @@ test('formatDepartmentMessage: body의 이모지는 제거되고 화살표는 �
 // 적용해 모든 소비자를 커버한다).
 test('[막아야 함] formatFactsMessage: parseDepartmentResponse를 안 거치고 직접 넘긴 context·conclusion·decisions에도 긴 하이픈이 제거됨', () => {
   const msg = formatFactsMessage({
-    departmentLabel: '투자전략실 Athena',
+    departmentLabel: '플루토스 Plutus',
     facts: ['사실1'],
     conclusion: '승인됨 — 검토 완료.',
     context: '리츠 비중이 부족합니다 — 배분을 제안합니다.',
@@ -344,14 +344,18 @@ test('[막아야 함] parseProposalModeCommand: 캐주얼한 문장 속 언급·
   assert.equal(parseProposalModeCommand(''), null);
 });
 
-test('parseDepartmentCall: "카이로스, ~" 형식 파싱', () => {
-  const r = parseDepartmentCall('카이로스, 이번 달 리컨스티튜션 어때');
-  assert.deepEqual(r, { department: '카이로스', message: '이번 달 리컨스티튜션 어때' });
+test('parseDepartmentCall: 현행 이름만 직접 호출한다', () => {
+  assert.deepEqual(parseDepartmentCall('플루토스 돌파매매 현황'), { department: '플루토스', message: '돌파매매 현황' });
+  assert.equal(parseDepartmentCall('카이로스 포지션'), null);
+  assert.equal(parseDepartmentCall('아폴로 기록'), null);
 });
 
-test('parseDepartmentCall: 쉼표 없이 공백만 있어도 파싱', () => {
-  const r = parseDepartmentCall('아테나 리밸런싱안 줘');
-  assert.deepEqual(r, { department: '아테나', message: '리밸런싱안 줘' });
+test('parseDepartmentCall: 이름 충돌 투자 질문은 일반 라우팅과 안내로 넘긴다', () => {
+  assert.equal(parseDepartmentCall('아테나 리밸런싱안 줘'), null);
+  assert.equal(renamedRoleHint('아테나 리밸런싱안 줘'), '이름이 바뀌었다(투자는 플루토스)');
+  assert.equal(parseDepartmentCall('헤르메스 예수금 확인'), null);
+  assert.deepEqual(parseDepartmentCall('아테나 미네 사진'), { department: '아테나', message: '미네 사진' });
+  assert.equal(renamedRoleHint('아테나 미네 사진'), null);
 });
 
 test('parseDepartmentCall: 부서명으로 시작 안 하면 null', () => {

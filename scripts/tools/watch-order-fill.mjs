@@ -32,7 +32,7 @@ const ACCOUNT_LABEL = QUANT_TRACK_LABEL; // account-resolver.mjs·update-holding
 // 이 잡의 체결확인 알림(체결/취소/타임아웃)도 전부 KIS API 조회 결과를 그대로 전달하는
 // 순수 Node 알림이라 부서 판단이 없다 — execute-quant-proposal.mjs와 같은 이유(2026-08-23
 // 재배정)로 운영실 Hermes로 통일. 처음(2026-08-17)엔 트랙 소관이라는 이유로 Kairos였음.
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'watch-order-fill', warningCode: 'KIS_FILL_WATCH_TIMEOUT',
   subjectKey: 'order-watch', kind: 'trade-safety', severity: 'high',

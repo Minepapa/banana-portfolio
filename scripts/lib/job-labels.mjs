@@ -41,12 +41,12 @@ export const JOB_LABELS = {
   'update-allocation-from-holdings': '보유종목 기준 자산분배 탭 목표·현재비중 재계산',
   'update-holdings-prices': '보유종목 실시간 시세 갱신(KRX·해외·환율)',
   'telegram-session-health-check': '상시 텔레그램 세션 MCP 연결 끊김 감지·자동복구',
-  'intraday-market-move-monitor': '장중 시장 급변 실시간 감시(코스피·S&P500·VIX·DXY·USD/KRW·미국10Y, 리스크관리실 Themis 소관)',
+  'intraday-market-move-monitor': '장중 시장 급변 실시간 감시(코스피·S&P500·VIX·DXY·USD/KRW·미국10Y, 플루토스 Plutus 소관)',
   'process-warning-actions': '운영 경고 원장에서 허용된 거시 조회 실패만 사건당 1회·30분 뒤 VIX 읽기 재조회(주문·장부·Telegram 변경 없음)',
-  'weekly-vault-health-check': '므네모시네 주간 건강검진(구조 정합성·데이터 정합성·미완료 작업, 비서실 Apollo "관리 총괄" 소관, 2026-09-04 신설)',
+  'weekly-vault-health-check': '므네모시네 주간 건강검진(구조 정합성·데이터 정합성·미완료 작업, 클리오 Clio 소관, 2026-09-04 신설)',
   'pension-balance-reminder': '연금저축 잔고 확인 요청(매월 22일, 카카오 알림·API 둘 다 없는 계좌라 수동 확인만 가능, 2026-09-04 신설)',
-  'annual-instrument-rescore': '보유 ETF 연 1회 재스코어링(1월 1~3일 첫 평일, 보수율·유동성·NAV괴리율·추적오차 재비교 후 격차 크면 Athena에게 유지/교체 판단 요청, 투자전략실 Athena, 2026-09-06 신설)',
-  'monthly-macro-tilt-proposal': '월간 거시틸트 제안(매월 마지막 3일 중 첫 평일, 거시 전술 오버레이 신호 변화 시 5/25 밴드 안 여유폭 내에서 선제 조정 제안 + 리스크관리실 Themis 2차검증, 투자전략실 Athena, 2026-09-06 신설)',
+  'annual-instrument-rescore': '보유 ETF 연 1회 재스코어링(1월 1~3일 첫 평일, 보수율·유동성·NAV괴리율·추적오차 재비교 후 격차 크면 Plutus에게 유지/교체 판단 요청, 플루토스 Plutus, 2026-09-06 신설)',
+  'monthly-macro-tilt-proposal': '월간 거시틸트 제안(매월 마지막 3일 중 첫 평일, 거시 전술 오버레이 신호 변화 시 5/25 밴드 안 여유폭 내에서 선제 조정 제안 + 테미스 Themis 2차검증, 플루토스 Plutus, 2026-09-06 신설)',
   // 돌파매매(카이로스) 전략 3종(2026-09-18 코드리뷰 LOW 지적으로 뒤늦게 등록 —
   // 지금까지 라벨이 없어 이 세 잡이 stale 경보를 내면 영어 파일명만 뜨고 있었다.
   // daily-breakout-signal-scan·place-breakout-fallback-entry는 승인 없이 자동
@@ -62,15 +62,15 @@ export const JOB_LABELS = {
   // catalog-audit.test.js가 이미 잡는 "무인잡-카탈로그.md 누락"과는 별개 축(그 문서엔
   // 다 있었음)으로, JOB_LABELS 자체는 지금까지 신규 잡 추가 시 갱신을 강제하는 테스트가
   // 없어 조용히 뒤처졌다.
-  'daily-execution-report': '그날 실제 체결된 거래(자산분배·퀀트 트랙 구분 없이 전부)를 계좌별로 묶어 운영실 Hermes 라벨로 텔레그램 보고(체결 있을 때만 발송, 2026-08-24 신설)',
-  'morning-briefing': '자산현황+간밤 배당·체결 이벤트+자산배분 밴드 상태+거시 5신호를 아침 브리핑으로 발송(운영실 Hermes, 평일 08:00)',
-  'themis-risk-review': '리스크관리실 Themis가 거시지표+최근 7일 생성 제안을 헤드리스 LLM으로 재검토, 서술형 위험판단 발송(일요일 07:00)',
-  'weekly-schedule-summary': '이번 주 "이벤트 무관 주기적" 보고 6건을 요약해 운영실 Hermes 이름으로 미리 안내(월요일 07:00, Node 전용)',
-  'quarterly-allocation-review': '투자전략실 Athena가 목표비중(20/10/10/30/30) 자체가 여전히 적절한지 재검토, 순수 의견 보고(비중을 직접 바꾸지 않음, 분기 시작월 첫 평일)',
-  'rebalance-proposal': '5/25 밴드 이탈을 분기 1회 점검해 투자전략실 Athena가 구체적 매수/매도 제안 발송(분할매수 하드캡 50%, 분기 시작월 첫 평일)',
-  'proposal-execution-reminder': '자산분배 트랙 승인 제안의 미체결·무응답을 운영실 Hermes가 리마인드(3일 이상 미체결 또는 1일 이상 승인/거부 자체 방치, 2026-08-23 신설)',
+  'daily-execution-report': '그날 실제 체결된 거래(자산분배·퀀트 트랙 구분 없이 전부)를 계좌별로 묶어 플루토스 Plutus 라벨로 텔레그램 보고(체결 있을 때만 발송, 2026-08-24 신설)',
+  'morning-briefing': '자산현황+간밤 배당·체결 이벤트+자산배분 밴드 상태+거시 5신호를 아침 브리핑으로 발송(플루토스 Plutus, 평일 08:00)',
+  'themis-risk-review': '플루토스 Plutus가 거시지표+최근 7일 생성 제안을 헤드리스 LLM으로 재검토, 서술형 위험판단 발송(일요일 07:00)',
+  'weekly-schedule-summary': '이번 주 "이벤트 무관 주기적" 보고 6건을 요약해 헤르메스 Hermes 이름으로 미리 안내(월요일 07:00, Node 전용)',
+  'quarterly-allocation-review': '플루토스 Plutus가 목표비중(20/10/10/30/30) 자체가 여전히 적절한지 재검토, 순수 의견 보고(비중을 직접 바꾸지 않음, 분기 시작월 첫 평일)',
+  'rebalance-proposal': '5/25 밴드 이탈을 분기 1회 점검해 플루토스 Plutus가 구체적 매수/매도 제안 발송(분할매수 하드캡 50%, 분기 시작월 첫 평일)',
+  'proposal-execution-reminder': '자산분배 트랙 승인 제안의 미체결·무응답을 플루토스 Plutus가 리마인드(3일 이상 미체결 또는 1일 이상 승인/거부 자체 방치, 2026-08-23 신설)',
   'telegram-session-handoff': '텔레그램 세션 재시작 5분 전, 그날 므네모시네 활동과 오너-세션 대화 요약을 기록(재시작 후 새 세션이 SessionStart 훅으로 읽어옴, 매일 03:55)',
-  'isa-maturity-check': 'ISA 3년 만기(2028-04-06) 도달 여부를 매주 점검, 도달 시 투자전략실 Athena가 연금계좌 일괄이전 제안(만기 전엔 조용히 스킵, 2026-08-29 신설)',
+  'isa-maturity-check': 'ISA 3년 만기(2028-04-06) 도달 여부를 매주 점검, 도달 시 플루토스 Plutus가 연금계좌 일괄이전 제안(만기 전엔 조용히 스킵, 2026-08-29 신설)',
 };
 
 // 라벨 있으면 "잡이름(한글설명)", 없으면(등록 안 된 새 잡) 이름만 — 조용히 빈 문자열로

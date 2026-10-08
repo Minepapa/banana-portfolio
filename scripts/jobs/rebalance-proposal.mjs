@@ -80,7 +80,7 @@ import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
-const DEPARTMENT_LABEL = '투자전략실 Athena';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const IN_SCOPE_ACCOUNTS = ['위탁', '연금저축'];
 const STATE_DIR = vaultAbs(VAULT_REL.stateRebalanceProposal);
 const STATE_FILE = join(STATE_DIR, 'last-quarter.md');
@@ -301,7 +301,7 @@ async function main() {
   }
 
   loadEnv();
-  const AGENT = loadAgent('athena', { fallbackModel: 'sonnet' });
+  const AGENT = loadAgent('plutus', { fallbackModel: 'sonnet', appendix: ['athena'] });
   if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
   const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
 

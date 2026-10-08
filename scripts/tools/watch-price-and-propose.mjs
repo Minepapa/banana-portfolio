@@ -98,7 +98,7 @@ async function main() {
       const proposalsBlocked = isProposalBlocked(existsSync(VAULT_PATHS.state.proposalMode) ? readFileSync(VAULT_PATHS.state.proposalMode, 'utf8') : null);
       const result = await createAndSendProposal({
         track: '퀀트', assetKey: code, name, side, quantity, proposedPrice: target, reason,
-        departmentLabel: '퀀트전략실 Kairos', existingProposals, writeProposalFile, sendMessage, proposalsBlocked,
+        departmentLabel: '플루토스 Plutus', existingProposals, writeProposalFile, sendMessage, proposalsBlocked,
         sendWarning: createDirectWarningSender(sendTelegram, {
           jobName: 'watch-price-and-propose', kind: 'trade-safety', severity: 'high',
         }),

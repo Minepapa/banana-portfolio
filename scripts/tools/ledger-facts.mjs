@@ -115,7 +115,7 @@ export function renderLedgerFacts({ cash, trades, jobs }, { json = false } = {})
       jobs: { failing: jobs?.failing ?? [], text: jobs?.text ?? '' },
     });
   }
-  const lines = ['[Node 검증 숫자 — 운영실] (Vault 결정론 조회 — 재조회·수정 금지)'];
+  const lines = ['[Node 검증 숫자 — 플루토스] (Vault 결정론 조회 — 재조회·수정 금지)'];
   if (cash) lines.push('', '[예수금 — 계좌별]', cash.text);
   if (trades) lines.push('', '[체결내역]', trades.text);
   if (jobs) {

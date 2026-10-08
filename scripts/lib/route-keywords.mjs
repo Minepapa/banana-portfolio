@@ -12,14 +12,22 @@
 
 // 부서별 도메인 키워드. 부분일치(includes) — 한국어는 어절 경계가 모호해 표준 방식.
 const DEPT_KEYWORDS = {
-  athena: ['평가', '매수', '매도', '살까', '팔까', '익절', '손절', '리밸런싱', '리밸런스', '큐 비워', '평가 큐', '큐 드레인', '주문', '보유현황', '포트폴리오', '비중 조정', '종목 분석'],
-  themis: ['위험', '리스크', '논리 훼손', '논리 유효', '유효해', '검증', '환율', '금리', 'vix', '변동성', '차단해제', '거시'],
-  hermes: ['예수금', '체결', '잔고', '정합', '배당', '잡 상태', '잡상태', '파이프라인', '장부', '데이터 가져와', '시세 가져와'],
-  apollo: ['리포트', 'kpi', '성향', '이번 주', '주간', '브리핑'],
+  plutus: ['투자', '자산', '돌파', '퀀트', '평가', '매수', '매도', '살까', '팔까', '익절', '손절', '리밸런싱', '리밸런스', '큐 비워', '평가 큐', '큐 드레인', '주문', '보유현황', '포트폴리오', '비중 조정', '종목 분석', '위험', '리스크', '환율', '금리', 'vix', '변동성', '거시', '예수금', '체결', '잔고', '배당', '장부', '시세 가져와', '리포트', 'kpi', '이번 주', '주간', '브리핑'],
+  themis: ['검증', '논리 훼손', '논리 유효', '유효해', '차단해제'],
+  athena: ['미네', '딸', '육아'],
+  hermes: ['일정', '할 일', '리마인더', '동선', '소비'],
+  clio: ['기록', '볼트', '성향', '정합', '잡 상태', '잡상태', '파이프라인', '데이터 가져와'],
 };
 
 // 동수(argmax tie) 시 우선순위 — 투자 판단 우선(zeus.md "부서 불명확 → 기본 Athena").
-const PRIORITY = ['athena', 'themis', 'hermes', 'apollo'];
+const PRIORITY = ['plutus', 'themis', 'athena', 'hermes', 'clio'];
+
+// 직접 호출 파서도 같은 어휘를 사용해 옛 투자 역할의 이름 충돌을 감지한다.
+export function hasInvestmentKeyword(text) {
+  if (typeof text !== 'string') return false;
+  const lower = text.toLowerCase();
+  return DEPT_KEYWORDS.plutus.some((keyword) => lower.includes(keyword.toLowerCase()));
+}
 
 const EMPTY = Object.freeze({ delegate: false, dept: null, matched: Object.freeze([]) });
 
@@ -56,6 +64,9 @@ export function classifyRequest(prompt) {
       dept = d;
     }
   }
+
+  // 미네·생활 키워드가 여러 개여도 투자 판단이 섞이면 자산 담당에게 먼저 보낸다.
+  if (hitsByDept.plutus > 0 && ['athena', 'hermes'].includes(dept)) dept = 'plutus';
 
   return { delegate: true, dept, matched };
 }

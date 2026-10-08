@@ -67,7 +67,7 @@ import {
 // 우회 못한다"고 명시한 무(無)부서 인프라이고, 나머지 두 알림도 같은 성격이라 세 곳
 // 전부 job-alerts.mjs·health-watcher.mjs와 같은 카테고리(운영실 Hermes)로 재배정.
 // 어느 트랙 주문인지는 본문(track/assetKey)에 그대로 남아 추적성은 안 잃는다.
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'execute-quant-proposal', kind: 'trade-safety', severity: 'high',
 });

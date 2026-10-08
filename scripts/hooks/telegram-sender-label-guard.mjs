@@ -37,7 +37,7 @@ import { pathToFileURL } from 'node:url';
 
 export const VALID_SENDER_LABELS = [
   '[Zeus]',
-  '[투자전략실 Athena]', '[퀀트전략실 Kairos]', '[리스크관리실 Themis]', '[운영실 Hermes]', '[비서실 Apollo]',
+  '[클리오 Clio]', '[테미스 Themis]', '[헤르메스 Hermes]', '[아테나 Athena]', '[플루토스 Plutus]',
 ];
 
 // 순수함수 — 텍스트 맨 앞(공백 제거 후)이 알려진 라벨로 시작하는지만 본다. 문장

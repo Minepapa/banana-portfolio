@@ -47,7 +47,7 @@ import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
-const DEPARTMENT_LABEL = '투자전략실 Athena';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'annual-instrument-rescore', warningCode: 'INSTRUMENT_REPLACEMENT_PARTIAL_SEND',
   kind: 'data-quality', severity: 'high',
@@ -168,7 +168,7 @@ async function main() {
   }
 
   loadEnv();
-  const AGENT = loadAgent('athena', { fallbackModel: 'sonnet' });
+  const AGENT = loadAgent('plutus', { fallbackModel: 'sonnet', appendix: ['athena'] });
   if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
   const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
 

@@ -59,7 +59,7 @@ import {
 } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '리스크관리실 Themis';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const MACRO_QUERY_WARNING = {
   warningCode: 'MACRO_YFINANCE_QUERY_FAILED', subjectKey: 'macro:yfinance',
   kind: 'operational', severity: 'medium',
@@ -76,7 +76,7 @@ const CONSULTATION_MARKER = '[자문요청]';
 
 // LLM 응답의 한글 부서명(정확일치) → agent-loader.mjs 파일명. 오타·모호한 표현은
 // parseConsultationRequest가 안전하게 자문 없음(null)으로 폴백한다.
-const CONSULT_AGENTS = { 아테나: 'athena', 카이로스: 'kairos', 헤르메스: 'hermes', 아폴로: 'apollo' };
+const CONSULT_AGENTS = { 자산분배: 'plutus', 퀀트: 'plutus', 장부: 'plutus', 기록: 'clio' };
 
 const SIGNAL_LABELS = {
   KOSPI: '코스피', SP500: 'S&P500', VIX: 'VIX', DXY: 'DXY', USDKRW: 'USD/KRW', TNX: '미국 10Y수익률',
@@ -128,17 +128,17 @@ export function buildThemisPrompt(breaches) {
   return `[장중 시장 급변 감시] 아래 신호가 방금 임계값을 넘었다(재조회·추정 금지, 이
 숫자만 사용). 이 숫자는 텔레그램 메시지에 이미 불릿으로 따로 나간다 — 아래 출력에서
 다시 나열하지 마라. 이 감시는 자산분배 전용이 아니라 오너가 필요시 대응할 수 있도록
-시장 상황 전반을 점검하는 차원이라 리스크관리실(너) 소관이다.
+시장 상황 전반을 점검하는 차원이라 플루토스(너) 소관이다.
 
 [임계 돌파 신호]
 ${factsText}
 
 판단 요청:
 1. 지금 이 움직임이 오너가 실제로 신경 써야 할 수준인지, 흔한 변동성 범위인지 네
-   (테미스) 성격대로 판정해라 — 과잉반응하지 마라, 노이즈일 가능성도 솔직히 인정해라.
-2. 이 신호가 투자전략실(아테나)·퀀트전략실(카이로스)·운영실(헤르메스)·비서실(아폴로)
-   중 한 곳의 추가 의견이 필요할 정도로 그 부서 소관과 직접 관련돼 있으면(예: 코스피
-   급락이 리밸런싱 판단에 영향, 특정 계좌·전략에 관련된 움직임 등) 그 부서 이름을
+   (플루토스) 성격대로 판정해라 — 과잉반응하지 마라, 노이즈일 가능성도 솔직히 인정해라.
+2. 이 신호가 자산분배·퀀트·장부·기록 중 한 관점의 추가 의견이 필요할 정도로 직접
+   관련돼 있으면(예: 코스피 급락이 리밸런싱 판단에 영향, 특정 계좌·전략에 관련된
+   움직임 등) 그 관점 이름을
    ${CONSULTATION_MARKER}에 정확히 적어라. 필요 없으면 그냥 "없음"이라고만 적어라 —
    항상 자문을 구할 필요는 없다, 대부분은 자문 없이 끝나는 게 정상이다.
 
@@ -155,7 +155,7 @@ ${DECISIONS_MARKER}
 빈 채로 둬라(억지로 만들지 마라).
 
 ${CONSULTATION_MARKER}
-"아테나"·"카이로스"·"헤르메스"·"아폴로" 중 정확히 하나, 또는 "없음"(둘 중 하나만 첫
+"자산분배"·"퀀트"·"장부"·"기록" 중 정확히 하나, 또는 "없음"(둘 중 하나만 첫
 줄에). 자문이 필요하다고 판단한 경우에만 다음 줄에 이유를 한 문장 적어라.`;
 }
 
@@ -215,13 +215,13 @@ export function parseConsultationRequest(consultationText) {
 // 관점의 의견 하나면 충분, 재종합은 Call C의 Themis 몫).
 export function buildConsultationPrompt(breaches, reason) {
   const factsText = factsBlock(breaches);
-  return `[리스크관리실 테미스의 자문 요청] 지금 아래 시장 신호가 임계값을 넘어 테미스가
+  return `[플루토스의 자문 요청] 지금 아래 시장 신호가 임계값을 넘어 플루토스가
 너의 의견이 필요하다고 판단했다(재조회·추정 금지, 이 숫자만 사용).
 
 [임계 돌파 신호]
 ${factsText}
 
-[테미스가 자문을 요청한 이유]
+[플루토스가 자문을 요청한 이유]
 ${reason || '(사유 미기재)'}
 
 네 소관 관점에서 자유롭게 의견을 서술해라(마커·형식 없이 순수 텍스트, 이모지·
@@ -463,7 +463,7 @@ async function main() {
     return;
   }
 
-  const AGENT = loadAgent('themis', { fallbackModel: 'sonnet' });
+  const AGENT = loadAgent('plutus', { fallbackModel: 'sonnet', appendix: ['themis'] });
   if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
   const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
 
@@ -485,7 +485,8 @@ async function main() {
       const { agentKey, department, reason, rawFirst } = parseConsultationRequest(consultationText);
       if (agentKey) {
         console.log(`→ 자문 요청: ${department} (${reason || '사유 미기재'})`);
-        const consultAgent = loadAgent(agentKey, { fallbackModel: 'sonnet' });
+        const consultationAppendix = { 자산분배: 'athena', 퀀트: 'kairos', 장부: 'hermes', 기록: 'apollo' }[department];
+        const consultAgent = loadAgent(agentKey, { fallbackModel: 'sonnet', appendix: [consultationAppendix] });
         if (consultAgent.warning) console.log(`⚠ ${consultAgent.warning}`);
         const consultRaw = (await runHeadlessClaude(
           buildConsultationPrompt(breaches, reason), consultAgent.model, 'Read', { appendSystemPrompt: consultAgent.systemPrompt, timeoutMs: LLM_CALL_TIMEOUT_MS },
@@ -508,7 +509,7 @@ async function main() {
         console.log(`⚠ 자문요청 파싱 실패(자문 생략): ${rawFirst}`);
       }
     } catch (e) {
-      console.error(`⚠ Themis 헤드리스 판단 실패(사실만 발송): ${e.message}`);
+      console.error(`⚠ Plutus 헤드리스 판단 실패(사실만 발송): ${e.message}`);
     }
   }
 

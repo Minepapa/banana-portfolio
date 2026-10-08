@@ -60,9 +60,9 @@ import { getCodeRegistry, resolveCanonicalStockName } from '../lib/stock-registr
 import { dedupExecutionsForReport } from './daily-execution-report.mjs';
 
 // 2026-08-23 — 이 발송도 부서 라벨이 없었다(오너 지시로 전체 텔레그램 메시지 구조
-// 재점검 중 발견) — 주간리포트·KPI는 비서실(Apollo) 소관(위 APOLLO_REPORT/APOLLO_PREFS
+// 재점검 중 발견) — 주간리포트·KPI는 비서실(Apollo) 소관(위 PLUTUS_REPORT/CLIO_PREFS
 // 로 이미 이 잡 전체가 Apollo 에이전트 정의를 쓰고 있는 것과 일관).
-const DEPARTMENT_LABEL = '비서실 Apollo';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
@@ -384,12 +384,12 @@ async function main() {
   // report.test.js를 처음 작성하며 재현(import만 해도 거시지표 네트워크 조회가
   // 실행됨), import.meta.url 가드는 그때 같이 고쳤고 이 이동으로 마무리한다).
   loadEnv(); // KRX_API_KEY(거시지표) — 다른 v2 잡과 동일 관례
-  // 리포트 서사·성향 추출 모두 비서실(Apollo) 소관 — 에이전트 정의가 모델·원칙의 단일 진실 소스.
-  const APOLLO_REPORT = loadAgent('apollo', { fallbackModel: 'opus' });
-  const APOLLO_PREFS = loadAgent('apollo', { fallbackModel: 'sonnet' });
-  if (APOLLO_REPORT.warning) collectWarning(APOLLO_REPORT.warning);
+  // 투자 리포트 서사는 Plutus, 성향 관찰 추출은 Clio의 헌장을 쓴다.
+  const PLUTUS_REPORT = loadAgent('plutus', { fallbackModel: 'opus', appendix: ['apollo'] });
+  const CLIO_PREFS = loadAgent('clio', { fallbackModel: 'sonnet', appendix: ['apollo'] });
+  if (PLUTUS_REPORT.warning) collectWarning(PLUTUS_REPORT.warning);
   const modelArg = args.find(a => a.startsWith('--model='));
-  const MODEL = modelArg ? modelArg.split('=')[1] : APOLLO_REPORT.model;
+  const MODEL = modelArg ? modelArg.split('=')[1] : PLUTUS_REPORT.model;
 
   const asof = todayKST();
   const weekStart = weekStartOf(asof);
@@ -476,7 +476,7 @@ async function main() {
   console.log(`\n⏳ 리포트 작성 중 (claude -p ${MODEL}, 수 분)...`);
   let md;
   try {
-    md = (await runHeadlessClaude(prompt, MODEL, 'Read,WebSearch', { appendSystemPrompt: APOLLO_REPORT.systemPrompt })).trim();
+    md = (await runHeadlessClaude(prompt, MODEL, 'Read,WebSearch', { appendSystemPrompt: PLUTUS_REPORT.systemPrompt })).trim();
   } catch (e) {
     if (e.isLimit) { console.log(`   ⏳ 사용량 한도 → 이번 리포트 발행 보류. 한도 해제 후 재실행하세요.`); return; }
     throw e;
@@ -548,8 +548,8 @@ async function main() {
   // ⑧ 성향 학습 — 행동 신호를 §3·직전 관찰과 대조해 관찰 추출(sonnet) → Vault 신규 파일.
   //    리포트 발행과 분리 — 실패해도 리포트 발행은 성공 처리.
   try {
-    console.log(`\n⏳ 성향 관찰 추출 중 (claude -p ${APOLLO_PREFS.model})...`);
-    const obsRaw = parseJsonBlock(await runHeadlessClaude(buildObservationPrompt(signalsText, priorPrefsText, profileText), APOLLO_PREFS.model, 'Read', { appendSystemPrompt: APOLLO_PREFS.systemPrompt }));
+    console.log(`\n⏳ 성향 관찰 추출 중 (claude -p ${CLIO_PREFS.model})...`);
+    const obsRaw = parseJsonBlock(await runHeadlessClaude(buildObservationPrompt(signalsText, priorPrefsText, profileText), CLIO_PREFS.model, 'Read', { appendSystemPrompt: CLIO_PREFS.systemPrompt }));
     const priorObsTexts = prefRecords.filter((r) => r.status !== '기각').map((r) => r.observation).filter(Boolean);
     const { kept, dropped } = filterObservations(Array.isArray(obsRaw) ? obsRaw : [], {
       universe, factsText: signalsText, claimAllowed: [], priorTexts: priorObsTexts, maxRows: 3,

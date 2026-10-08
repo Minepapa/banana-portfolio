@@ -36,7 +36,7 @@ import { sendTelegram } from '../lib/telegram.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'reconcile-breakout-protection', warningCode: 'BREAKOUT_PROTECTION_URGENT',
   subjectKey: 'batch', kind: 'trade-safety', severity: 'critical',

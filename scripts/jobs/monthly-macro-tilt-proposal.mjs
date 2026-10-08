@@ -55,7 +55,7 @@ import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
-const DEPARTMENT_LABEL = '투자전략실 Athena';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const IN_SCOPE_ACCOUNTS = ['위탁', '연금저축'];
 const STATE_DIR = vaultAbs(VAULT_REL.stateMacroTiltProposal);
 const STATE_FILE = join(STATE_DIR, 'last-month.md');
@@ -249,7 +249,7 @@ export function validateMacroTiltActions(actions, { capBudgetByClass, holdings, 
 // 판정 요청만 한다.
 export function buildThemisTiltReviewPrompt({ signalsReport, actions }) {
   const actionLines = actions.map((a) => `  - [${a.account}] ${a.side} ${a.instrumentName}(${a.assetClass}) 약 ${Math.round(a.amountWon).toLocaleString('ko-KR')}원 — ${a.reasoning}`).join('\n');
-  return `[월간 거시틸트 2차 검증] 투자전략실 Athena가 아래 거시 신호를 근거로 제안한 틸트
+  return `[월간 거시틸트 2차 검증] 플루토스 Plutus가 아래 거시 신호를 근거로 제안한 틸트
 액션을 검증해라(숫자 재도출 금지, 신호강도 대비 틸트 크기가 타당한지만 판단).
 
 [거시 신호]
@@ -282,7 +282,7 @@ export function buildTiltReason(action, themisVerdict) {
   const verdict = String(themisVerdict?.verdict ?? '판정불명').trim();
   const caveat = String(themisVerdict?.caveat ?? '').trim();
   if (!caveat) return action.reasoning;
-  return `${action.reasoning}\n\n[리스크관리실 Themis · ${verdict}] ${caveat}`;
+  return `${action.reasoning}\n\n[테미스 Themis · ${verdict}] ${caveat}`;
 }
 
 // 매도/매수 제안 발송 결과가 전부 'created'여야 월 마커를 전진시킨다(rebalance-
@@ -403,9 +403,9 @@ async function main() {
   if (wtCash != null) cashByAccount['위탁'] = resolveDesignatedCashBalance({ wtCash, goldCash: goldCash ?? 0 });
   if (pensionCash != null) cashByAccount['연금저축'] = pensionCash;
 
-  const ATHENA = loadAgent('athena', { fallbackModel: 'sonnet' });
-  if (ATHENA.warning) console.log(`⚠ ${ATHENA.warning}`);
-  const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || ATHENA.model;
+  const PLUTUS = loadAgent('plutus', { fallbackModel: 'sonnet', appendix: ['athena'] });
+  if (PLUTUS.warning) console.log(`⚠ ${PLUTUS.warning}`);
+  const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || PLUTUS.model;
 
   const prompt = buildMacroTiltPrompt({ signalsReport, roomFacts, rankedUniverseByClass, cashByAccount });
   if (DRY_RUN) { console.log(`\n┌─── 프롬프트(Athena) ───┐\n${prompt}\n└──────────────────┘`); return; }
@@ -413,7 +413,7 @@ async function main() {
   const capBudgetByClass = Object.fromEntries(roomFacts.map((f) => [f.assetClass, f.capBudgetWon]));
   let actions;
   try {
-    const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: ATHENA.systemPrompt }));
+    const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: PLUTUS.systemPrompt }));
     const { kept, dropped } = validateMacroTiltActions(r.actions, { capBudgetByClass, holdings, rankedUniverseByClass });
     dropped.forEach((d) => console.log(`  ⚠️ 액션 드롭: ${d.reason}`));
     actions = kept;
@@ -428,7 +428,7 @@ async function main() {
     return;
   }
 
-  const THEMIS = loadAgent('themis', { fallbackModel: 'sonnet' });
+  const THEMIS = loadAgent('themis', { fallbackModel: 'sonnet', appendix: ['themis'] });
   if (THEMIS.warning) console.log(`⚠ ${THEMIS.warning}`);
   let themisVerdict = { verdict: '통과', caveat: '' };
   try {

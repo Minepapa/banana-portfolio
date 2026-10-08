@@ -52,7 +52,7 @@ import {
 import { parseBreakoutPosition, findOpenPositions } from '../lib/breakout-position-vault.mjs';
 import { MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
 
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'place-breakout-fallback-entry', warningCode: 'BREAKOUT_FALLBACK_WARNING',
   subjectKey: 'batch', kind: 'legacy-unstructured', severity: 'unclassified',

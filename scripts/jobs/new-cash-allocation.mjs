@@ -78,10 +78,10 @@ import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 loadEnv();
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const AGENT = loadAgent('athena', { fallbackModel: 'sonnet' });
+const AGENT = loadAgent('plutus', { fallbackModel: 'sonnet', appendix: ['athena'] });
 if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
 const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
-const DEPARTMENT_LABEL = '투자전략실 Athena';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 
 function readMdDir(dir) {
   if (!existsSync(dir)) return [];

@@ -34,7 +34,7 @@ test('buildThemisPrompt: 주입된 사실 3종을 모두 포함하고 재조회 
   assert.match(prompt, /VIX: 15\.13/);
   assert.match(prompt, /daily-asset-allocation-check: OK/);
   assert.match(prompt, /재조회·추정 금지/);
-  assert.match(prompt, /테미스/);
+  assert.match(prompt, /플루토스/);
 });
 
 // ── buildThemisFacts(2026-08-30 신설) — 오너 지적: Themis 메시지만 다른 부서와 달리

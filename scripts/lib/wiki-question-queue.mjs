@@ -132,7 +132,7 @@ function formatQuestion(fields, questionText = '') {
   }
   const choices = `\n\n답변 방법: 아래 중 한 줄로 답해주세요.\n<code>${id} 등록</code>\n<code>${id} 보류</code>\n<code>${id} 제외</code>`;
   const body = `<b>질문 ID: ${id}</b>\n\n${stripEmDash(escapeHtml(questionText))}${evidence}${plan}${choices}`;
-  return formatDepartmentMessage({ departmentLabel: '비서실 Apollo', tag: '확인요청', body });
+  return formatDepartmentMessage({ departmentLabel: '클리오 Clio', tag: '확인요청', body });
 }
 function normalizeAnswer(text) {
   const normalized = String(text ?? '').trim().replace(/[.!。！?？]+$/u, '').trim();

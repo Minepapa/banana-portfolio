@@ -241,20 +241,20 @@ test('buildTiltReason: verdict가 "통과"라도 caveat가 있으면 이어붙�
   const action = { reasoning: '신호가 강해서' };
   const reason = buildTiltReason(action, { verdict: '통과', caveat: 'DXY 쪽은 주시 필요' });
   assert.match(reason, /신호가 강해서/);
-  assert.match(reason, /\[리스크관리실 Themis · 통과\] DXY 쪽은 주시 필요/);
+  assert.match(reason, /\[테미스 Themis · 통과\] DXY 쪽은 주시 필요/);
 });
 
 test('buildTiltReason: verdict가 "보류"면 caveat를 이어붙인다', () => {
   const action = { reasoning: '신호가 강해서' };
   const reason = buildTiltReason(action, { verdict: '보류', caveat: '틸트 규모가 과도해 보임' });
-  assert.match(reason, /\[리스크관리실 Themis · 보류\] 틸트 규모가 과도해 보임/);
+  assert.match(reason, /\[테미스 Themis · 보류\] 틸트 규모가 과도해 보임/);
 });
 
 test('buildTiltReason: verdict 필드 자체가 없는 malformed 응답도 안전하게 처리(undefined 문자열 노출 방지)', () => {
   const action = { reasoning: '신호가 강해서' };
   const reason = buildTiltReason(action, { caveat: '뭔가 이상함' });
   assert.doesNotMatch(reason, /undefined/);
-  assert.match(reason, /\[리스크관리실 Themis · 판정불명\] 뭔가 이상함/);
+  assert.match(reason, /\[테미스 Themis · 판정불명\] 뭔가 이상함/);
 });
 
 test('buildTiltReason: themisVerdict 자체가 없어도(예: 호출 자체가 스킵) 크래시 없이 reasoning 그대로', () => {

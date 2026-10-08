@@ -24,7 +24,7 @@ import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 
 // 순수함수 — 매번 같은 안내문. 데이터 조회가 없어 순수 상수에 가깝지만, 문구를 한
 // 곳에서만 관리하고 테스트하기 위해 함수로 뺀다(daily-execution-report.mjs 등과

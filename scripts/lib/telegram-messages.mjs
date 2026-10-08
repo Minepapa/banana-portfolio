@@ -279,12 +279,22 @@ export function parseProposalModeCommand(text) {
 // "카이로스, ~" 같은 부서 직접호출 — 메시지 시작 부분의 부서명 키워드만 본다(구현
 // 메모: "메시지 시작 부분의 부서명 키워드 매칭으로 우선 단순 구현 가능"). 구분자는
 // 쉼표·공백 어느 쪽이든 허용.
-const DEPARTMENTS = ['제우스', '아테나', '카이로스', '테미스', '헤르메스', '아폴로'];
+import { hasInvestmentKeyword } from './route-keywords.mjs';
+
+const DEPARTMENTS = ['제우스', '클리오', '테미스', '헤르메스', '아테나', '플루토스'];
+
+export function renamedRoleHint(text) {
+  const call = String(text ?? '').trim().match(/^(아테나|헤르메스)(?=[,\s]|$)/);
+  return call && hasInvestmentKeyword(String(text).slice(call[0].length))
+    ? '이름이 바뀌었다(투자는 플루토스)'
+    : null;
+}
 
 export function parseDepartmentCall(text) {
   const t = String(text ?? '').trim();
+  if (renamedRoleHint(t)) return null;
   for (const name of DEPARTMENTS) {
-    if (t.startsWith(name)) {
+    if (t.startsWith(name) && /^[,\s]|^$/.test(t.slice(name.length))) {
       const rest = t.slice(name.length).replace(/^[,\s]+/, '');
       return { department: name, message: rest };
     }

@@ -38,7 +38,7 @@ import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 import { matchesKnownExecution } from './update-holdings-from-executions.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 
 function readVaultDir(dir) {
   if (!existsSync(dir)) return [];

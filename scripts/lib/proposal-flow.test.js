@@ -99,12 +99,12 @@ test('[막아야 함] createAndSendProposal: 발송 메시지 전체 텍스트 �
   const sender = mockSender({ message_id: 12345 });
   await createAndSendProposal({
     track: '퀀트', assetKey: '005930', name: '삼성전자', side: '매수', quantity: 10, proposedPrice: 70000,
-    reason: 'OCF/P 1위', departmentLabel: '퀀트전략실 Kairos',
+    reason: 'OCF/P 1위', departmentLabel: '플루토스 Plutus',
     existingProposals: [], writeProposalFile: writer, sendMessage: sender,
   });
   assert.equal(
     sender.calls[0],
-    '[제안] [퀀트전략실 Kairos]\n\n[사실]\n· 매수 삼성전자(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n[맥락]\nOCF/P 1위',
+    '[제안] [플루토스 Plutus]\n\n[사실]\n· 매수 삼성전자(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n[맥락]\nOCF/P 1위',
   );
 });
 
@@ -158,13 +158,13 @@ test('createAndSendProposal: 성공 결과의 원문 content를 재사용해 같
   const writer = mockWriter();
   const first = await createAndSendProposal({
     track: '자산분배', assetKey: 'TIGER 200', side: '매수', quantity: 1, proposedPrice: 40000,
-    departmentLabel: '투자전략실 Athena', now: new Date('2026-09-24T00:00:00.000Z'), existingProposals: [], writeProposalFile: writer,
+    departmentLabel: '플루토스 Plutus', now: new Date('2026-09-24T00:00:00.000Z'), existingProposals: [], writeProposalFile: writer,
     sendMessage: mockSender({ message_id: 10 }),
   });
   const inMemoryProposal = { filename: first.filename, content: first.content, ...parseProposal(first.content) };
   const second = await createAndSendProposal({
     track: '자산분배', assetKey: 'TIGER 200', side: '매수', quantity: 2, proposedPrice: 41000,
-    departmentLabel: '투자전략실 Athena', now: new Date('2026-09-24T00:00:01.000Z'), existingProposals: [inMemoryProposal], writeProposalFile: writer,
+    departmentLabel: '플루토스 Plutus', now: new Date('2026-09-24T00:00:01.000Z'), existingProposals: [inMemoryProposal], writeProposalFile: writer,
     sendMessage: mockSender({ message_id: 11 }),
   });
 
@@ -212,7 +212,7 @@ test('승인 불가 경고는 주입된 경고 발송 함수만 쓰고 정상 �
   const warnings = [];
   await createAndSendProposal({
     track: '퀀트', assetKey: '005930', side: '매수', quantity: 10, proposedPrice: 70000,
-    departmentLabel: '퀀트전략실 Kairos', existingProposals: [],
+    departmentLabel: '플루토스 Plutus', existingProposals: [],
     writeProposalFile: mockWriter(), sendMessage: sender,
     sendWarning: async (message, details) => { warnings.push({ message, details }); },
   });
@@ -235,7 +235,7 @@ test('[핵심 안전장치] createAndSendProposal: Telegram 성공 후 ID 저장
 
   const result = await createAndSendProposal({
     track: '자산분배', assetKey: 'TIGER 200', name: 'TIGER 200', side: '매수', quantity: 1, proposedPrice: 40000,
-    departmentLabel: '투자전략실 Athena', existingProposals: [], writeProposalFile: writer, sendMessage: sender,
+    departmentLabel: '플루토스 Plutus', existingProposals: [], writeProposalFile: writer, sendMessage: sender,
   });
 
   const storedProposal = parseProposal(persisted.get(result.filename));
@@ -260,7 +260,7 @@ test('[핵심 안전장치] createAndSendProposal: 재제안 발송이 실패하
 
   const result = await createAndSendProposal({
     track: '퀀트', assetKey: '005930', side: '매수', quantity: 20, proposedPrice: 71000,
-    departmentLabel: '퀀트전략실 Kairos', existingProposals: [previous], writeProposalFile: writer, sendMessage: sender,
+    departmentLabel: '플루토스 Plutus', existingProposals: [previous], writeProposalFile: writer, sendMessage: sender,
   });
 
   assert.equal(result.action, 'failed');
@@ -283,7 +283,7 @@ test('[핵심 안전장치] createAndSendProposal: 새 제안 ID 저장이 실�
 
   const result = await createAndSendProposal({
     track: '퀀트', assetKey: '005930', side: '매수', quantity: 20, proposedPrice: 71000,
-    departmentLabel: '퀀트전략실 Kairos', existingProposals: [previous], writeProposalFile: writer, sendMessage: sender,
+    departmentLabel: '플루토스 Plutus', existingProposals: [previous], writeProposalFile: writer, sendMessage: sender,
   });
 
   const restored = parseProposal(persisted.get(previous.filename));
@@ -306,7 +306,7 @@ test('[핵심 안전장치] createAndSendProposal: 최초 발송중 파일 저�
 
   const result = await createAndSendProposal({
     track: '자산분배', assetKey: 'TIGER 200', side: '매수', quantity: 1, proposedPrice: 40000,
-    departmentLabel: '투자전략실 Athena', existingProposals: [], writeProposalFile: writer, sendMessage: sender,
+    departmentLabel: '플루토스 Plutus', existingProposals: [], writeProposalFile: writer, sendMessage: sender,
   });
 
   assert.equal(result.action, 'failed');
@@ -328,7 +328,7 @@ test('[핵심 안전장치] createAndSendProposal: 기존 제안 복구도 실�
 
   const result = await createAndSendProposal({
     track: '퀀트', assetKey: '005930', side: '매수', quantity: 20, proposedPrice: 71000,
-    departmentLabel: '퀀트전략실 Kairos', existingProposals: [previous], writeProposalFile: writer, sendMessage: sender,
+    departmentLabel: '플루토스 Plutus', existingProposals: [previous], writeProposalFile: writer, sendMessage: sender,
   });
 
   assert.equal(result.action, 'failed');
@@ -345,7 +345,7 @@ test('buildProposalStatusEditText: 승인 — 트랙에서 부서 라벨을 되�
     action: 'approve',
     decidedAt: '2026-08-23T01:30:00.000Z',
   });
-  assert.match(text, /^\[승인\] \[퀀트전략실 Kairos\]/);
+  assert.match(text, /^\[승인\] \[플루토스 Plutus\]/);
   assert.match(text, /매수 005930\(005930\)/);
   assert.match(text, /승인됨 \(2026-08-23 10:30 KST\)/); // UTC+9
   assert.match(text, /기존안건/); // 원래 사유(reason) 보존
@@ -366,7 +366,7 @@ test('[막아야 함] buildProposalStatusEditText: 전체 텍스트 스냅샷 �
   });
   assert.equal(
     text,
-    '[승인] [퀀트전략실 Kairos]\n\n[사실]\n· 매수 005930(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n· 승인됨 (2026-08-23 10:30 KST)\n\n[맥락]\n기존안건',
+    '[승인] [플루토스 Plutus]\n\n[사실]\n· 매수 005930(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n· 승인됨 (2026-08-23 10:30 KST)\n\n[맥락]\n기존안건',
   );
 });
 
@@ -377,7 +377,7 @@ test('buildProposalStatusEditText: 거부 — [거부] 태그 + 거부사유가 
     action: 'reject',
     decidedAt: '2026-08-23T01:30:00.000Z',
   });
-  assert.match(text, /^\[거부\] \[투자전략실 Athena\]/);
+  assert.match(text, /^\[거부\] \[플루토스 Plutus\]/);
   assert.match(text, /거부됨 \(2026-08-23 10:30 KST\)/);
   assert.match(text, /거부 사유: 지금은 필요 없음/);
 });

@@ -40,7 +40,7 @@ import { sendTelegram } from '../lib/telegram.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const THRESHOLD_DAYS = 3;
 const REPEAT_DAYS = 3;
 const STATE_DIR = vaultAbs(VAULT_REL.stateRebalanceReminder);

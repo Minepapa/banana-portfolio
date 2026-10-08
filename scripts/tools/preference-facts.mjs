@@ -64,7 +64,7 @@ export function assemblePreferences(records, { status = null } = {}) {
 export function renderPreferenceFacts({ rows, counts, text }, { json = false } = {}) {
   if (json) return JSON.stringify({ rows: rows ?? [], counts, text: text ?? '' });
   const lines = [
-    '[Node 검증 숫자 — 비서실] (Vault 결정론 조회 — 재조회·수정 금지)',
+    '[Node 검증 숫자 — 클리오] (Vault 결정론 조회 — 재조회·수정 금지)',
     '',
     `[성향관찰 현황] 확정 ${counts.확정} · 관찰 ${counts.관찰} · 승격후보 ${counts.승격후보} · 기각 ${counts.기각} (총 ${counts.total}건)`,
     '',

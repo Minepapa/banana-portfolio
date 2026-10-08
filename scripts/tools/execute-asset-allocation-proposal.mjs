@@ -78,7 +78,7 @@ import { getBondBalance, getBondCurrentPrice, placeBondBuyOrder } from '../lib/n
 // execute-quant-proposal.mjs와 동일 원칙 — 이 잡의 알림 3종(만료·정합성 경고·검문소
 // 차단)은 전부 결정론적 Node 판정이지 부서(LLM) 판단이 아니라 무(無)부서 인프라
 // 알림으로 운영실 Hermes 라벨을 공유한다.
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'execute-asset-allocation-proposal', kind: 'trade-safety', severity: 'high',
 });

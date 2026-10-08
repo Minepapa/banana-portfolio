@@ -88,7 +88,7 @@ const MCP_LOSS_LOG_HEADER = '# 텔레그램 MCP 소실 진단 로그\n\n' +
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '클리오 Clio';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'telegram-session-health-check', warningCode: 'TELEGRAM_SESSION_UNHEALTHY',
   subjectKey: 'telegram-session', kind: 'operational', severity: 'high',

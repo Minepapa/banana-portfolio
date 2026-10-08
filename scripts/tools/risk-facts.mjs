@@ -79,7 +79,7 @@ export function renderRiskFacts({ macro, jobs }, { json = false } = {}) {
   if (json) {
     return JSON.stringify({ macro: macro ?? '', jobs: { failing: jobs?.failing ?? [], text: jobs?.text ?? '' } });
   }
-  const lines = ['[Node 검증 숫자 — 리스크관리실] (Vault·KRX·yfinance 결정론 조회 — 재조회·수정 금지)'];
+  const lines = ['[Node 검증 숫자 — 플루토스] (Vault·KRX·yfinance 결정론 조회 — 재조회·수정 금지)'];
   if (macro) lines.push('', '[거시지표]', macro);
   if (jobs) lines.push('', '[감시 잡 상태 — daily-asset-allocation-check·health-watcher]', jobs.text);
   lines.push('', '⚠️ 위 숫자만 사용하라. 어떤 수치도 직접 fetch·추정하지 말 것.');

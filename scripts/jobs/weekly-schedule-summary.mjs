@@ -37,7 +37,7 @@ import { getProposalMode, MODE_BLOCKED } from '../lib/proposal-mode.mjs';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = 'Zeus'; // 시스템 잡 일정 공지 — 헤르메스(오너 개인 일정)와 구분(이관 4-3)
 
 // place-breakout-entry-order.mjs 등과 동일 패턴(ENOENT=파일 없음=각 모듈의 안전
 // 기본값, 그 외 읽기 오류도 여기선 보고용이라 동일하게 기본값으로 떨어뜨림 —
@@ -76,18 +76,18 @@ export function describeSwitchStatus({ killSwitchContent, executionModeContent, 
 // buildWeeklyScheduleText에서 별도 [조건부] 그룹으로 묶이고, 값은 발송 조건을
 // 짧게 설명하는 문구(사람이 읽는 텍스트에 그대로 붙음).
 export const SCHEDULE = [
-  { day: '평일', time: '08:00', dept: '운영실 Hermes', what: '아침 브리핑 — 자산현황+간밤 이벤트+거시 5신호', script: 'morning-briefing.mjs' },
-  { day: '평일', time: '08:35', dept: '운영실 Hermes', what: '카이로스 보유종목 청산 관리(당일유효 손절 재등록·트레일링 정정·3R 부분익절·전량종료 원장기록)', conditional: '이상/조정 대상이 있을 때만', script: 'reconcile-breakout-protection.mjs' },
+  { day: '평일', time: '08:00', dept: '플루토스 Plutus', what: '아침 브리핑 — 자산현황+간밤 이벤트+거시 5신호', script: 'morning-briefing.mjs' },
+  { day: '평일', time: '08:35', dept: '플루토스 Plutus', what: '돌파매매 보유종목 청산 관리(당일유효 손절 재등록·트레일링 정정·3R 부분익절·전량종료 원장기록)', conditional: '이상/조정 대상이 있을 때만', script: 'reconcile-breakout-protection.mjs' },
   // 2026-09-18 코드리뷰 MEDIUM 지적으로 추가 — daily-breakout-signal-scan.mjs가
   // 신설(2026-09-13) 당시 부서별-텔레그램-보고.md에 "이벤트기반"으로 잘못 분류돼
   // 있어 이 배열에도 빠져 있었다(daily-execution-report와 동일 클래스의 누락).
-  { day: '평일', time: '15:32', dept: '운영실 Hermes', what: '돌파매매(카이로스) 일별 신호판정 결과 — 신호 없어도 항상 발송', script: 'daily-breakout-signal-scan.mjs' },
-  { day: '평일', time: '16:15', dept: '운영실 Hermes', what: '당일 체결 내역 보고', conditional: '체결 있을 때만', script: 'daily-execution-report.mjs' },
-  { day: '평일', time: '16:30', dept: '투자전략실 Athena', what: '리밸런싱·거시 점검', conditional: '이상 있을 때만', script: 'daily-asset-allocation-check.mjs' },
-  { day: '일요일', time: '07:00', dept: '리스크관리실 Themis', what: '주간 위험 재검토', script: 'themis-risk-review.mjs' },
-  { day: '일요일', time: '07:30', dept: '비서실 Apollo', what: '므네모시네 주간 건강검진 — 구조·데이터 정합성·미완료 작업', conditional: '이상 있을 때만', script: 'weekly-vault-health-check.mjs' },
-  { day: '일요일', time: '08:00', dept: '비서실 Apollo', what: '주간 리포트', script: 'weekly-report.mjs' },
-  { day: '월요일', time: '07:10', dept: '투자전략실 Athena', what: 'ISA 3년 만기 감시', conditional: '만기 도달 임박 시에만', script: 'isa-maturity-check.mjs' },
+  { day: '평일', time: '15:32', dept: '플루토스 Plutus', what: '돌파매매 일별 신호판정 결과 — 신호 없어도 항상 발송', script: 'daily-breakout-signal-scan.mjs' },
+  { day: '평일', time: '16:15', dept: '플루토스 Plutus', what: '당일 체결 내역 보고', conditional: '체결 있을 때만', script: 'daily-execution-report.mjs' },
+  { day: '평일', time: '16:30', dept: '플루토스 Plutus', what: '리밸런싱·거시 점검', conditional: '이상 있을 때만', script: 'daily-asset-allocation-check.mjs' },
+  { day: '일요일', time: '07:00', dept: '플루토스 Plutus', what: '주간 위험 재검토', script: 'themis-risk-review.mjs' },
+  { day: '일요일', time: '07:30', dept: '클리오 Clio', what: '므네모시네 주간 건강검진 — 구조·데이터 정합성·미완료 작업', conditional: '이상 있을 때만', script: 'weekly-vault-health-check.mjs' },
+  { day: '일요일', time: '08:00', dept: '플루토스 Plutus', what: '주간 리포트', script: 'weekly-report.mjs' },
+  { day: '월요일', time: '07:10', dept: '플루토스 Plutus', what: 'ISA 3년 만기 감시', conditional: '만기 도달 임박 시에만', script: 'isa-maturity-check.mjs' },
 ];
 
 // 순수함수 — SCHEDULE을 텔레그램 본문 텍스트로. 테스트 가능.

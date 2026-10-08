@@ -41,7 +41,7 @@ import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT
 import { CANONICAL_PROGRESS_VALUES } from '../lib/vault-frontmatter.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '비서실 Apollo';
+const DEPARTMENT_LABEL = '클리오 Clio';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'weekly-vault-health-check', warningCode: 'VAULT_HEALTH_FINDINGS',
   subjectKey: 'batch', kind: 'data-quality', severity: 'medium',
@@ -344,7 +344,7 @@ ${DECISIONS_MARKER}
 
 async function main() {
   loadEnv();
-  const AGENT = loadAgent('apollo', { fallbackModel: 'sonnet' });
+  const AGENT = loadAgent('clio', { fallbackModel: 'sonnet', appendix: ['apollo'] });
   if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
   const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
 

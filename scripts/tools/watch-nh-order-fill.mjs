@@ -62,7 +62,7 @@ import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 
 // 순수 API 조회 결과를 그대로 전달하는 통보라 부서 판단이 없다 — watch-order-
 // fill.mjs·execute-quant-proposal.mjs와 동일 이유로 운영실 Hermes로 통일.
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'watch-nh-order-fill', subjectKey: 'order-watch',
   kind: 'trade-safety', severity: 'high',

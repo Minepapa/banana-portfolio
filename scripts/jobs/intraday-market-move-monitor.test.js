@@ -65,15 +65,15 @@ test('buildThemisPrompt: 사실 불릿 포함 + 4마커([결론]·[맥락]·[의
   assert.match(prompt, /\[맥락\]/);
   assert.match(prompt, /\[의사결정\]/);
   assert.match(prompt, /\[자문요청\]/);
-  assert.match(prompt, /아테나.*카이로스.*헤르메스.*아폴로/);
+  assert.match(prompt, /자산분배.*퀀트.*장부.*기록/);
 });
 
 test('splitOffConsultation: [자문요청] 마커 이후를 별도 섹션으로 분리하고 본문은 그 앞까지만', () => {
-  const text = '[결론]\n지켜볼 단계.\n\n[맥락]\n근거.\n\n[의사결정]\n\n[자문요청]\n아테나\n이유: 리밸런싱 영향';
+  const text = '[결론]\n지켜볼 단계.\n\n[맥락]\n근거.\n\n[의사결정]\n\n[자문요청]\n자산분배\n이유: 리밸런싱 영향';
   const { mainText, consultationText } = splitOffConsultation(text);
   assert.doesNotMatch(mainText, /자문요청/);
   assert.match(mainText, /\[의사결정\]/);
-  assert.equal(consultationText, '아테나\n이유: 리밸런싱 영향');
+  assert.equal(consultationText, '자산분배\n이유: 리밸런싱 영향');
 });
 
 test('splitOffConsultation: 마커가 프리앰블 문장 중에만 언급되면(줄 맨 앞 아님) 오인하지 않음', () => {
@@ -91,9 +91,9 @@ test('splitOffConsultation: 마커 자체가 없으면 mainText=원문 그대로
 });
 
 test('parseConsultationRequest: 정확일치 부서명이면 agentKey·department·reason 추출', () => {
-  const r = parseConsultationRequest('아테나\n이유: 리밸런싱 판단에 영향');
-  assert.equal(r.department, '아테나');
-  assert.equal(r.agentKey, 'athena');
+  const r = parseConsultationRequest('자산분배\n이유: 리밸런싱 판단에 영향');
+  assert.equal(r.department, '자산분배');
+  assert.equal(r.agentKey, 'plutus');
   assert.equal(r.reason, '이유: 리밸런싱 판단에 영향');
 });
 
@@ -104,7 +104,7 @@ test('parseConsultationRequest: "없음"이면 자문 없음(agentKey null)', ()
 });
 
 test('parseConsultationRequest: 오타·모호한 표현은 안전하게 자문 없음으로 폴백', () => {
-  assert.equal(parseConsultationRequest('아테나일 수도').agentKey, null);
+  assert.equal(parseConsultationRequest('자산분배일 수도').agentKey, null);
   assert.equal(parseConsultationRequest('Athena').agentKey, null);
   assert.equal(parseConsultationRequest('').agentKey, null);
   assert.equal(parseConsultationRequest(undefined).agentKey, null);
@@ -114,25 +114,24 @@ test('parseConsultationRequest: 오타·모호한 표현은 안전하게 자문 
 // 설명)만 붙어도 전부 자문 누락으로 떨어지던 걸 실측 재현했다. normalizeDeptToken이
 // 이 장식들을 벗겨내되, 진짜 오타·모호한 표현(위 테스트)은 여전히 안 걸러야 한다.
 test('parseConsultationRequest: 흔한 LLM 장식(불릿·볼드·마침표·콜론·괄호설명)은 정규화 후 매칭', () => {
-  assert.equal(parseConsultationRequest('아테나.').agentKey, 'athena');
-  assert.equal(parseConsultationRequest('**아테나**').agentKey, 'athena');
-  assert.equal(parseConsultationRequest('아테나 (리밸런싱 영향)').agentKey, 'athena');
-  assert.equal(parseConsultationRequest('아테나:').agentKey, 'athena');
-  assert.equal(parseConsultationRequest('- 아테나').agentKey, 'athena');
-  assert.equal(parseConsultationRequest(' 아테나 ').agentKey, 'athena');
+  assert.equal(parseConsultationRequest('자산분배.').agentKey, 'plutus');
+  assert.equal(parseConsultationRequest('**자산분배**').agentKey, 'plutus');
+  assert.equal(parseConsultationRequest('자산분배 (리밸런싱 영향)').agentKey, 'plutus');
+  assert.equal(parseConsultationRequest('자산분배:').agentKey, 'plutus');
+  assert.equal(parseConsultationRequest('- 자산분배').agentKey, 'plutus');
+  assert.equal(parseConsultationRequest(' 자산분배 ').agentKey, 'plutus');
 });
 
 test('parseConsultationRequest: rawFirst는 매칭 성공/실패 무관하게 원본 첫 줄을 그대로 반환(관찰가능성)', () => {
-  assert.equal(parseConsultationRequest('아테나').rawFirst, '아테나');
+  assert.equal(parseConsultationRequest('자산분배').rawFirst, '자산분배');
   assert.equal(parseConsultationRequest('없음').rawFirst, '없음');
-  assert.equal(parseConsultationRequest('아테나일 수도').rawFirst, '아테나일 수도');
+  assert.equal(parseConsultationRequest('자산분배일 수도').rawFirst, '자산분배일 수도');
   assert.equal(parseConsultationRequest('').rawFirst, null);
 });
 
-test('parseConsultationRequest: 4개 부서명 전부 매핑 확인(카이로스·헤르메스·아폴로)', () => {
-  assert.equal(parseConsultationRequest('카이로스').agentKey, 'kairos');
-  assert.equal(parseConsultationRequest('헤르메스').agentKey, 'hermes');
-  assert.equal(parseConsultationRequest('아폴로').agentKey, 'apollo');
+test('parseConsultationRequest: 네 관점을 새 담당으로 매핑', () => {
+  for (const view of ['자산분배', '퀀트', '장부']) assert.equal(parseConsultationRequest(view).agentKey, 'plutus');
+  assert.equal(parseConsultationRequest('기록').agentKey, 'clio');
 });
 
 test('buildConsultationPrompt: 사실·자문 사유를 포함하고 마커 형식 강제하지 않음(자유 서술)', () => {
@@ -149,10 +148,10 @@ test('buildConsultationPrompt: 사유 없으면(reason null) 안내 문구로 �
 
 test('buildFinalSynthesisPrompt: 부서 답변·사실을 포함하고 3마커([결론]·[맥락]·[의사결정]) 지시', () => {
   const prompt = buildFinalSynthesisPrompt(
-    [{ label: '코스피', detailText: '-5.20%', tier: '경계' }], '아테나', '리밸런싱 앞당길 필요는 없어 보임',
+    [{ label: '코스피', detailText: '-5.20%', tier: '경계' }], '테미스', '리밸런싱 앞당길 필요는 없어 보임',
   );
   assert.match(prompt, /코스피 -5\.20%\(경계\)/);
-  assert.match(prompt, /아테나의 답변/);
+  assert.match(prompt, /테미스의 답변/);
   assert.match(prompt, /리밸런싱 앞당길 필요는 없어 보임/);
   assert.match(prompt, /\[결론\]/);
   assert.match(prompt, /\[맥락\]/);

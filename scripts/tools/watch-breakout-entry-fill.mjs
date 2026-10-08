@@ -44,7 +44,7 @@ import { STOP_LOSS_PCT, PARTIAL_PROFIT_SELL_FRACTION } from '../lib/breakout-ris
 import { roundToKrxTick } from '../lib/krx-tick.mjs';
 
 const BROKER = '한국투자증권';
-const DEPARTMENT_LABEL = '운영실 Hermes'; // watch-order-fill.mjs와 동일 원칙 — 순수 API조회 결과 전달, 부서 판단 없음
+const DEPARTMENT_LABEL = '플루토스 Plutus'; // watch-order-fill.mjs와 동일 원칙 — 순수 API조회 결과 전달, 부서 판단 없음
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'watch-breakout-entry-fill', warningCode: 'BREAKOUT_ENTRY_FILL_WARNING',
   subjectKey: 'order-watch', kind: 'trade-safety', severity: 'high',

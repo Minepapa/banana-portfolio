@@ -36,7 +36,7 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // 'backup'·'parse-notifications'·'realtime-quotes' 등이 전부 hermes였던 것과 동일 원칙).
 // 2026-08-14 오너 지적 — 알림에 어느 잡을 감시하는 건지·어느 부서 소관인지 표기 안 돼
 // 있어 헷갈렸음, formatDepartmentMessage(기존 부서 메시지 포맷)로 통일.
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'health-watcher', warningCode: 'JOB_HEALTH_ISSUES', subjectKey: 'batch',
   kind: 'operational', severity: 'high',

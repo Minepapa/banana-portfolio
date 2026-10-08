@@ -10,28 +10,48 @@ import { join } from 'node:path';
 import { parseAgentMd, loadAgent } from './agent-loader.mjs';
 
 const VALID = `---
-name: athena
-description: 투자전략실 — 평가·주문서 초안
+name: plutus
+description: 플루토스 — 평가·주문서 초안
 model: sonnet
 ---
 
-# Athena — 투자전략실
+# Plutus — 자산
 
 책임: 5축 평가. 경계: 제안까지만.
 `;
 
+const WITH_APPENDICES = `${VALID.trimEnd()}
+
+## 부록 — 구 부서 정의에서 이관한 상세 지침
+
+### 구 athena 지침
+
+자산분배만 담당.
+
+## 내부 소제목
+자산분배 상세.
+
+### 구 kairos 지침
+
+퀀트만 담당.
+
+### 구 themis 지침
+
+위험만 담당.
+`;
+
 test('parseAgentMd: 정상 파일 — 필드·본문 추출', () => {
   const r = parseAgentMd(VALID);
-  assert.equal(r.name, 'athena');
+  assert.equal(r.name, 'plutus');
   assert.equal(r.model, 'sonnet');
-  assert.ok(r.systemPrompt.startsWith('# Athena'));
+  assert.ok(r.systemPrompt.startsWith('# Plutus'));
   assert.ok(r.systemPrompt.includes('경계: 제안까지만.'));
 });
 
 test('parseAgentMd: CRLF 줄바꿈 허용', () => {
   const r = parseAgentMd(VALID.replace(/\n/g, '\r\n'));
   assert.equal(r.model, 'sonnet');
-  assert.ok(r.systemPrompt.includes('Athena'));
+  assert.ok(r.systemPrompt.includes('Plutus'));
 });
 
 test('parseAgentMd: 값의 따옴표 제거, 본문 안 콜론·--- 은 안전', () => {
@@ -61,11 +81,47 @@ test('parseAgentMd: 중첩 YAML(콜론 없는 리스트 줄) → 손상으로 th
 test('loadAgent: 정상 파일 → model·systemPrompt, warning=null', () => {
   const dir = mkdtempSync(join(tmpdir(), 'agents-'));
   try {
-    writeFileSync(join(dir, 'athena.md'), VALID);
-    const r = loadAgent('athena', { fallbackModel: 'sonnet', dir });
+    writeFileSync(join(dir, 'plutus.md'), VALID);
+    const r = loadAgent('plutus', { fallbackModel: 'sonnet', dir });
     assert.equal(r.model, 'sonnet');
-    assert.ok(r.systemPrompt.includes('투자전략실'));
+    assert.ok(r.systemPrompt.includes('자산'));
     assert.equal(r.warning, null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('loadAgent: appendix 생략은 전체 부록을 유지한다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agents-'));
+  try {
+    writeFileSync(join(dir, 'plutus.md'), WITH_APPENDICES);
+    const result = loadAgent('plutus', { fallbackModel: 'sonnet', dir });
+    for (const name of ['athena', 'kairos', 'themis']) assert.match(result.systemPrompt, new RegExp(`### 구 ${name} 지침`));
+    assert.equal(result.warning, null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('loadAgent: 지정한 부록 하나 또는 여러 개만 남긴다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agents-'));
+  try {
+    writeFileSync(join(dir, 'plutus.md'), WITH_APPENDICES);
+    const single = loadAgent('plutus', { fallbackModel: 'sonnet', dir, appendix: ['athena'] });
+    assert.match(single.systemPrompt, /자산분배 상세/);
+    assert.doesNotMatch(single.systemPrompt, /퀀트만|위험만/);
+    const multiple = loadAgent('plutus', { fallbackModel: 'sonnet', dir, appendix: ['athena', 'themis'] });
+    assert.match(multiple.systemPrompt, /자산분배 상세/);
+    assert.match(multiple.systemPrompt, /위험만 담당/);
+    assert.doesNotMatch(multiple.systemPrompt, /퀀트만 담당/);
+    assert.equal(multiple.warning, null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('loadAgent: 지정한 부록이 없으면 경고와 기존 기본값으로 폴백한다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agents-'));
+  try {
+    writeFileSync(join(dir, 'plutus.md'), WITH_APPENDICES);
+    const result = loadAgent('plutus', { fallbackModel: 'sonnet', dir, appendix: ['apollo'] });
+    assert.equal(result.model, 'sonnet');
+    assert.equal(result.systemPrompt, '');
+    assert.match(result.warning, /손상\/누락: plutus/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -93,7 +149,7 @@ test('[핵심 계약] loadAgent: frontmatter 손상 → throw 없이 폴백+warn
 
 test('실제 리포지토리 판테온 5개 파일이 모두 파싱되고 모델이 설계와 일치', () => {
   // 설계 정본: zeus=opus, athena/themis/apollo=sonnet, hermes=sonnet(2026-07-18 haiku→sonnet 승격, 서술 품질).
-  const expected = { zeus: 'opus', athena: 'sonnet', themis: 'sonnet', hermes: 'sonnet', apollo: 'sonnet' };
+  const expected = { zeus: 'opus', clio: 'sonnet', themis: 'sonnet', hermes: 'sonnet', athena: 'sonnet', plutus: 'sonnet' };
   for (const [name, model] of Object.entries(expected)) {
     const r = loadAgent(name, { fallbackModel: 'FALLBACK-SHOULD-NOT-BE-USED' });
     assert.equal(r.warning, null, `${name}: ${r.warning}`);

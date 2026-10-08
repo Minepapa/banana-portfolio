@@ -50,7 +50,7 @@ import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
-const DEPARTMENT_LABEL = '투자전략실 Athena';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const ISA_OPEN_DATE = '2025-04-06'; // 오너 확정(2026-08-29) — 실물 계좌 개설일, 추정 아님
 const MATURITY_YEARS = 3;
 const STATE_DIR = vaultAbs(VAULT_REL.stateIsaMaturity);
@@ -172,7 +172,7 @@ async function main() {
   }
 
   loadEnv();
-  const AGENT = loadAgent('athena', { fallbackModel: 'sonnet' });
+  const AGENT = loadAgent('plutus', { fallbackModel: 'sonnet', appendix: ['athena'] });
   if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
   const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
 

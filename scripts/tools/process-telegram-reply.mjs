@@ -102,7 +102,7 @@ async function main() {
       const streak = detectRejectionStreak(updatedProposals, { track: '자산분배' });
       if (shouldNudgeRejectionStreak(streak)) {
         try {
-          await sendTelegram(formatDepartmentMessage({ departmentLabel: '비서실 Apollo', tag: '안내', body: buildRejectionStreakNudge(streak) }));
+          await sendTelegram(formatDepartmentMessage({ departmentLabel: '클리오 Clio', tag: '안내', body: buildRejectionStreakNudge(streak) }));
           console.log(`  📣 연속 거부 ${streak}회 — 원칙 재확인 안내 발송`);
         } catch (e) { console.error('연속 거부 안내 발송 실패(무시, 거부 처리 자체는 완료됨):', e.message); }
       }

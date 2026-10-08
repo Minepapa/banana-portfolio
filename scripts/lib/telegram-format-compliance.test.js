@@ -54,6 +54,20 @@ function stripComments(content) {
     .replace(/^\s*\/\/.*$/gm, '');
 }
 
+test('발신 코드에 구 부서 라벨을 다시 쓰지 않는다', () => {
+  const oldLabels = /투자전략실 Athena|퀀트전략실 Kairos|운영실 Hermes|비서실 Apollo|리스크관리실 Themis/g;
+  const offenders = [];
+  for (const dir of SCAN_DIRS) {
+    // 생성기 보정표는 구 라벨을 문자열 데이터로 보관하며 발신 코드는 아니다.
+    for (const name of readdirSync(dir).filter((file) => file.endsWith('.mjs') && !['build-agent-defs.mjs', 'agent-legacy-overrides.mjs'].includes(file))) {
+      const source = stripComments(readFileSync(join(dir, name), 'utf8'));
+      if (oldLabels.test(source)) offenders.push(name);
+      oldLabels.lastIndex = 0;
+    }
+  }
+  assert.deepEqual(offenders, []);
+});
+
 // ── 공통 규칙 0 확장(2026-09-20 오너 DevRequest) — 이모티콘·오류 원문이 formatFactsMessage/
 // formatDepartmentMessage를 안 거치고 오너에게 직접 나가는 지점(collectWarning·notify·
 // alertAndExit·body:·facts: 리터럴)을 소스 스캔으로 잡는다. LLM이 런타임에 생성하는

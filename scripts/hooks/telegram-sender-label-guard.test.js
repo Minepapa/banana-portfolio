@@ -16,7 +16,7 @@ test('[핵심 안전장치] hasSenderLabel: 레거시 "[제우스]"는 더 이�
 });
 
 test('hasSenderLabel: 5개 부서 라벨 전부 인정', () => {
-  for (const label of ['[투자전략실 Athena]', '[퀀트전략실 Kairos]', '[리스크관리실 Themis]', '[운영실 Hermes]', '[비서실 Apollo]']) {
+  for (const label of ['[클리오 Clio]', '[테미스 Themis]', '[헤르메스 Hermes]', '[아테나 Athena]', '[플루토스 Plutus]']) {
     assert.equal(hasSenderLabel(`${label} 결과 보고입니다.`), true, label);
   }
 });
@@ -44,11 +44,9 @@ test('[핵심 안전장치] VALID_SENDER_LABELS의 정식 Zeus 라벨은 ZEUS_MA
 // zeus.md·PANTHEON.md가 실제로 현재 ZEUS_MARKER를 지시하는지 대조 — 문서가 옛
 // 라벨을 지시문으로 계속 들고 있으면(레거시 언급이 아니라 "이렇게 붙여라"는
 // 지시) 에이전트가 그 문서를 다시 읽을 때마다 구 라벨로 되돌아갈 수 있다.
-test('[핵심 안전장치] zeus.md·PANTHEON.md가 현재 ZEUS_MARKER(`[Zeus]`)를 지시한다', () => {
-  for (const rel of ['../../.claude/agents/zeus.md', '../../.claude/agents/PANTHEON.md']) {
-    const content = readFileSync(new URL(rel, import.meta.url), 'utf8');
-    assert.ok(content.includes(`\`${ZEUS_MARKER}\``), `${rel}에 ${ZEUS_MARKER} 지시문이 없음`);
-  }
+test('[핵심 안전장치] 생성된 zeus.md가 현재 ZEUS_MARKER를 지시한다', () => {
+  const content = readFileSync(new URL('../../.claude/agents/zeus.md', import.meta.url), 'utf8');
+  assert.ok(content.includes(`\`${ZEUS_MARKER}\``));
 });
 
 // [재발방지] 2026-09-19 실사고 재현 — 실제로 발송됐던 라벨 없는 메시지 2건.

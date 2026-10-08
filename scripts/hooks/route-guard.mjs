@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// UserPromptSubmit 훅 — 투자 업무 요청을 감지해 "부서 위임" 리마인드를 메인 세션(Zeus) 컨텍스트에
+// UserPromptSubmit 훅 — 담당 업무 요청을 감지해 "부서 위임" 리마인드를 메인 세션(Zeus) 컨텍스트에
 // 결정론으로 주입한다. 헌장 §3 라우팅 신뢰성의 1차 강제 레버(지침 자가체크는 2차 안전망).
 //
 // I/O 계약(Claude Code UserPromptSubmit):
@@ -12,10 +12,11 @@
 import { classifyRequest } from '../lib/route-keywords.mjs';
 
 const DEPT_LABEL = {
-  athena: '투자전략실 Athena',
-  themis: '리스크관리실 Themis',
-  hermes: '운영실 Hermes',
-  apollo: '비서실 Apollo',
+  athena: '아테나 Athena',
+  themis: '테미스 Themis',
+  plutus: '플루토스 Plutus',
+  hermes: '헤르메스 Hermes',
+  clio: '클리오 Clio',
 };
 
 function readStdin() {
@@ -48,14 +49,14 @@ async function main() {
   if (!delegate) process.exit(0);
 
   const label = DEPT_LABEL[dept] ?? '해당 부서';
-  // system-reminder 톤(하네스가 컨텍스트로 주입). 차단 아님 — 투자 업무일 때만 위임하도록 유도.
+  // system-reminder 톤(하네스가 컨텍스트로 주입). 차단 아님.
   process.stdout.write(
     `<system-reminder>` +
-      `[판테온 라우팅] 이 요청이 투자 업무라면 직접 처리하지 말고 부서에 위임하라(헌장 §1·§3). ` +
+      `[판테온 라우팅] 이 요청이 담당 업무라면 해당 에이전트에 위임하라(헌장 §1·§3). ` +
       `1차 추정 부서: ${label}. Agent tool로 이름 없이 동기 스폰(run_in_background:false)하고, ` +
       `무거운 조회·평가는 부서 컨텍스트에 격리한 채 필수입력 블록만 회수해 종합하라. ` +
       `게이트 결정(성향 갱신·확정/기각·차단해제·주문/리밸런싱 제안)이면 부서 필수입력을 모아 복합 종합(§2). ` +
-      `요청이 투자 업무가 아니거나(코드 수정 등) 이미 위임 경로면 이 리마인드는 무시하라.` +
+      `코드 수정 등 담당 업무가 아니거나 이미 위임 경로면 이 리마인드는 무시하라.` +
       `</system-reminder>\n`,
   );
   process.exit(0);

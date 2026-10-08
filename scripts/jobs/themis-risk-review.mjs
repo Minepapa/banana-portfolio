@@ -44,7 +44,7 @@ import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT
 // 환경, 예: CI에서는 여기서 그냥 죽는다) — morning-briefing.mjs 사고와 같은 클래스의
 // "import 자체가 부작용을 낸다" 문제라 실행 여부와 무관하게 미리 방지.
 const DRY_RUN = process.argv.includes('--dry-run');
-const DEPARTMENT_LABEL = '리스크관리실 Themis';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const RISK_JOBS = ['daily-asset-allocation-check', 'health-watcher'];
 const LOOKBACK_MS = 7 * 24 * 3600_000;
 
@@ -161,11 +161,11 @@ ${macro}
 [감시 잡 상태 — daily-asset-allocation-check·health-watcher]
 ${jobsText}
 
-[최근 7일 생성된 제안 — Athena/Kairos가 발송, 오너 승인/거부 대기 또는 이미 처리됨]
+[최근 7일 생성된 제안 — 플루토스가 발송, 오너 승인/거부 대기 또는 이미 처리됨]
 ${recentProposalsText}
 
 판단 요청:
-1. 지금 거시 위험 수준을 네(테미스) 성격대로 판정해라 — 근거 없는 낙관·비관 없이, 걸린
+1. 지금 거시 위험 수준을 네(플루토스) 성격대로 판정해라 — 근거 없는 낙관·비관 없이, 걸린
    규칙과 실제 데이터를 저울에 올려라. 조용하면(이상 없으면) 조용하다고 명확히 말해라.
 2. 위 "최근 7일 생성된 제안" 중 우려되는 게 있으면(예: 거시 위험 신호와 동시에 나간 제안,
    같은 방향으로 반복되는 제안 등) 구체적으로 짚어라(어떤 제안인지 인용 포함). 없으면
@@ -194,7 +194,7 @@ ${DECISIONS_MARKER}
 
 async function main() {
   loadEnv();
-  const AGENT = loadAgent('themis', { fallbackModel: 'sonnet' });
+  const AGENT = loadAgent('plutus', { fallbackModel: 'sonnet', appendix: ['themis'] });
   if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
   const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
 
@@ -232,7 +232,7 @@ async function main() {
   try {
     judgment = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
   } catch (e) {
-    console.error(`❌ Themis 헤드리스 판단 실패: ${e.message}`);
+    console.error(`❌ Plutus 헤드리스 판단 실패: ${e.message}`);
     process.exit(1);
   }
 

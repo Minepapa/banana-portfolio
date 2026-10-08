@@ -32,10 +32,25 @@ export function parseAgentMd(text) {
 // 절대 throw 하지 않는다 — 무인 잡이 에이전트 파일 손상으로 죽으면 안 되고, 조용히 잘못돼도
 // 안 된다. 손상/누락 시 현행 하드코딩 기본값(fallbackModel)으로 기존 동작을 보존하고 warning
 // 을 반환한다 — 호출부가 collectWarning(job-alerts) 또는 로그로 표면화할 책임.
-export function loadAgent(agentName, { fallbackModel, dir = DEFAULT_DIR } = {}) {
+export function loadAgent(agentName, { fallbackModel, dir = DEFAULT_DIR, appendix } = {}) {
   try {
     const parsed = parseAgentMd(readFileSync(join(dir, `${agentName}.md`), 'utf8'));
-    return { model: parsed.model, systemPrompt: parsed.systemPrompt, warning: null };
+    let systemPrompt = parsed.systemPrompt;
+    if (Array.isArray(appendix)) {
+      const appendixStart = /^## 부록 —[^\r\n]*$/m.exec(systemPrompt);
+      if (!appendixStart) throw new Error('부록 없음');
+      const prefix = systemPrompt.slice(0, appendixStart.index).trimEnd();
+      const appendixText = systemPrompt.slice(appendixStart.index);
+      const sections = [...appendixText.matchAll(/^### 구 ([a-z]+) 지침[ \t]*$/gm)];
+      const available = new Set(sections.map((section) => section[1]));
+      const missing = appendix.filter((name) => !available.has(name));
+      if (missing.length) throw new Error(`부록 지침 없음: ${missing.join(', ')}`);
+      const selected = sections.flatMap((section, index) => appendix.includes(section[1])
+        ? [appendixText.slice(section.index, sections[index + 1]?.index).trim()]
+        : []);
+      systemPrompt = [prefix, ...selected].join('\n\n');
+    }
+    return { model: parsed.model, systemPrompt, warning: null };
   } catch (e) {
     // warning 필드는 weekly-report.mjs처럼 collectWarning()을 거쳐 텔레그램으로 그대로
     // 나가는 호출부가 있어(2026-09-20 오너 DevRequest 확인) e.message 원문을 담지 않는다

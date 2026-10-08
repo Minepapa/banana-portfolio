@@ -1,0 +1,33 @@
+.claude/agents/zeus.md:140:결정으로 국문 `[제우스]`였으나, "다른 모든 부서는 영문 이름(Athena·Kairos 등)인데
+.claude/agents/clio.md:85:- 오너 성향 관찰 정리(`20_Records/21_Notes` → `30_Wiki/31_People/정영호`) — 구 아폴로의 성향 학습 업무
+.claude/agents/clio.md:86:- 볼트 구조·문서 정합성 관리 — 구 아폴로의 므네모시네 관리 업무
+.claude/agents/clio.md:115:# Apollo — 비서실
+.claude/agents/clio.md:117:비서실장. 오너에게 보고하는 일과 오너를 이해하는 일 — 둘은 한 사람의 일이다.
+.claude/agents/themis.md:90:상시 거시 위험 감시는 플루토스 소관이다(구 리스크관리실의 감시 업무는 플루토스로 이관, 2차 검증만 테미스에 남음).
+.claude/agents/themis.md:114:# Themis — 리스크관리실
+.claude/agents/themis.md:116:리스크관리실장. 위험을 미리 알리는 일 — 감시와 검증은 같은 일이다.
+.claude/agents/themis.md:135:메모리) 이 전제가 더 이상 안 맞아 폐지했다: Athena(자산분배)는 신규 매수가 ETF뿐이라
+.claude/agents/themis.md:136:"재량적 개별종목 매수논리"가 애초에 안 생기고, Kairos(퀀트)는 팩터스코어 기계선정이라
+.claude/agents/hermes.md:3:description: "헤르메스(Hermes) — 100 나 담당 — 일정·동선·소비·할 일·리마인더. 이럴 때 사용: 오너 본인의 일정·할 일·리마인더·동선·소비(\"오늘 뭐 챙겨야 해\", \"내가 어디 갔었지\")"
+.claude/agents/hermes.md:67:# 헤르메스 Hermes — 100 나 (domain)
+.claude/agents/hermes.md:71:> 이름 주의: 2026-10-08 이전의 "운영실 Hermes"(장부·데이터)는 플루토스로 통합됐다. 지금의 헤르메스는 오너 본인 담당이다.
+.claude/agents/athena.md:3:description: "아테나(Athena) — 201 미네 담당 — 미네 기록 수집과 기억 구슬(감정·핵심 기억) 제안. 이럴 때 사용: 딸 미네에 관한 것(\"미네 그때 사진\", \"미네 핵심 기억\", 미네 일정·성장 기록)"
+.claude/agents/athena.md:67:# 아테나 Athena — 201 미네 (domain)
+.claude/agents/athena.md:71:> 이름 주의: 2026-10-08 이전의 "투자전략실 Athena"(자산분배)는 플루토스로 통합됐다. 지금의 아테나는 딸 미네 담당이다.
+.claude/agents/plutus.md:71:> 통합 원천(2026-10-08 이전 부서): 투자전략실 Athena(자산분배) · 퀀트전략실 Kairos(돌파매매) · 리스크관리실 Themis 중 상시 위험 감시 ·
+.claude/agents/plutus.md:72:> 운영실 Hermes 중 장부 품질·파이프라인 · 비서실 Apollo 중 주간 투자 리포트·KPI. 테미스의 2차 검증은 새 테미스에, 아폴로의 성향·볼트 관리는 클리오에 남았다.
+.claude/agents/plutus.md:126:# Athena — 투자전략실
+.claude/agents/plutus.md:128:투자전략실장. 자산분배 트랙(80%, 위탁·연금저축·ISA)의 "얼마를 어느 계좌·자산군에
+.claude/agents/plutus.md:132:> Athena의 핵심 업무였다. v2 2트랙 구조 확정 이후 **자산분배 트랙은 개별종목 신규
+.claude/agents/plutus.md:196:# Kairos — 퀀트전략실
+.claude/agents/plutus.md:198:퀀트전략실장. 퀀트 트랙(20%, 별도 KIS 계좌)의 개별종목 돌파매매(추세추종) 현황을
+.claude/agents/plutus.md:214:## 성격 — 카이로스, 기회의 신
+.claude/agents/plutus.md:216:크로노스(Chronos)가 끊임없이 흐르는 연속적 시간이라면, 카이로스는 **결정적으로 옳은
+.claude/agents/plutus.md:222:기준) 즉시 잡아채는 게 카이로스의 일이다. 다만 그 판단 자체는 이미 자동화돼 승인 없이
+.claude/agents/plutus.md:283:# Hermes — 운영실
+.claude/agents/plutus.md:332:# Apollo — 비서실
+.claude/agents/plutus.md:334:비서실장. 오너에게 보고하는 일과 오너를 이해하는 일 — 둘은 한 사람의 일이다.
+.claude/agents/plutus.md:424:# Themis — 리스크관리실
+.claude/agents/plutus.md:426:리스크관리실장. 위험을 미리 알리는 일 — 감시와 검증은 같은 일이다.
+.claude/agents/plutus.md:445:메모리) 이 전제가 더 이상 안 맞아 폐지했다: Athena(자산분배)는 신규 매수가 ETF뿐이라
+.claude/agents/plutus.md:446:"재량적 개별종목 매수논리"가 애초에 안 생기고, Kairos(퀀트)는 팩터스코어 기계선정이라

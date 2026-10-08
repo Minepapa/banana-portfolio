@@ -9,6 +9,9 @@ import { homedir } from 'node:os';
 export const VAULT_ROOT = process.env.VAULT_PATH || join(homedir(), 'Pantheon', 'Mouseion');
 
 export const VAULT_REL = {
+  agentCharters: '90_Delphi/Agents',
+  telegramChannelFile: '90_Delphi/Channels/텔레그램.md',
+  archivedAgentDefs: '80_Archive/agents-2026-10-08',
   stateHoldings: '95_Etna/Investing/Holdings',
   stateAllocation: '95_Etna/Investing/Allocation',
   stateBaselines: '95_Etna/Investing/Baselines',

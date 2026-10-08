@@ -13,21 +13,21 @@ test('SCHEDULE: 주기적 보고와 정기 보호주문 대조가 포함되고 �
 test('buildWeeklyScheduleText: 제목과 주기 일정 부서·시각이 본문에 포함된다', () => {
   const text = buildWeeklyScheduleText();
   assert.match(text, /<b>주간 보고 스케쥴<\/b>/);
-  assert.match(text, /평일 08:00 \[운영실 Hermes\]/);
-  assert.match(text, /평일 08:35 \[운영실 Hermes\]/);
-  assert.match(text, /평일 15:32 \[운영실 Hermes\]/);
-  assert.match(text, /평일 16:15 \[운영실 Hermes\]/);
-  assert.match(text, /평일 16:30 \[투자전략실 Athena\]/);
-  assert.match(text, /일요일 07:00 \[리스크관리실 Themis\]/);
-  assert.match(text, /일요일 07:30 \[비서실 Apollo\]/);
-  assert.match(text, /일요일 08:00 \[비서실 Apollo\]/);
-  assert.match(text, /월요일 07:10 \[투자전략실 Athena\]/);
+  assert.match(text, /평일 08:00 \[플루토스 Plutus\]/);
+  assert.match(text, /평일 08:35 \[플루토스 Plutus\]/);
+  assert.match(text, /평일 15:32 \[플루토스 Plutus\]/);
+  assert.match(text, /평일 16:15 \[플루토스 Plutus\]/);
+  assert.match(text, /평일 16:30 \[플루토스 Plutus\]/);
+  assert.match(text, /일요일 07:00 \[플루토스 Plutus\]/);
+  assert.match(text, /일요일 07:30 \[클리오 Clio\]/);
+  assert.match(text, /일요일 08:00 \[플루토스 Plutus\]/);
+  assert.match(text, /월요일 07:10 \[플루토스 Plutus\]/);
 });
 
 test('buildWeeklyScheduleText: 커스텀 schedule 배열을 받으면 그것만 반영(순수함수)', () => {
   const text = buildWeeklyScheduleText([{ day: '화요일', time: '09:00', dept: '테스트부서', what: '테스트 보고' }]);
   assert.match(text, /화요일 09:00 \[테스트부서\] 테스트 보고/);
-  assert.doesNotMatch(text, /운영실 Hermes/);
+  assert.doesNotMatch(text, /헤르메스 Hermes/);
 });
 
 test('buildWeeklyScheduleText: conditional 항목은 [조건부] 그룹으로 분리되고 발송조건이 괄호로 붙는다(2026-09-14, 오너 지적 반영)', () => {

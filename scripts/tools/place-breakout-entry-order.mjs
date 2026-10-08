@@ -27,7 +27,7 @@ import { sendTelegram } from '../lib/telegram.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { formatDepartmentMessage } from '../lib/telegram-messages.mjs';
 
-const DEPARTMENT_LABEL = '운영실 Hermes'; // watch-breakout-entry-fill.mjs와 동일 원칙 — 순수 API조회+발주 결과 전달, 부서 판단 없음
+const DEPARTMENT_LABEL = '플루토스 Plutus'; // watch-breakout-entry-fill.mjs와 동일 원칙 — 순수 API조회+발주 결과 전달, 부서 판단 없음
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'place-breakout-entry-order', warningCode: 'BREAKOUT_ENTRY_WARNING',
   subjectKey: 'batch', kind: 'legacy-unstructured', severity: 'unclassified',

@@ -28,7 +28,7 @@ import { todayKST } from '../lib/sheets-api.mjs';
 import { sendTelegram } from '../lib/telegram.mjs';
 import { formatFactsMessage } from '../lib/telegram-messages.mjs';
 
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const HIGH_LOOKBACK_DAYS = 252;
 const DEFAULT_TOP = 15;
 

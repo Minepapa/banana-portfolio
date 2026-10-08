@@ -15,7 +15,7 @@ import { warningSubjectKey } from './direct-warning-delivery.mjs';
 // (createAndSendProposal 호출부가 매번 넘겨줄 뿐) — 승인/거부 후 원본 메시지를 편집할 때는
 // 그 호출부 컨텍스트가 이미 사라진 뒤(process-telegram-reply.mjs가 나중에 별도 실행)라
 // track에서 결정론적으로 되짚는다. 트랙이 늘어나면(예: 새 트랙) 이 매핑도 같이 늘려야 함.
-const TRACK_DEPARTMENT_LABEL = { 퀀트: '퀀트전략실 Kairos', 자산분배: '투자전략실 Athena' };
+const TRACK_DEPARTMENT_LABEL = { 퀀트: '플루토스 Plutus', 자산분배: '플루토스 Plutus' };
 
 const won = (n) => Math.round(n).toLocaleString('ko-KR');
 // decidedAt(UTC ISO)을 KST 표기로 — sheets-api.mjs nowKST()와 같은 +9h 오프셋 방식이지만
@@ -248,7 +248,7 @@ async function markProposalFailed(writeProposalFile, filename, sendingContent, i
 
 async function notifyProposalNotApprovable(sendWarning, id, detail) {
   const warning = formatFactsMessage({
-    departmentLabel: '운영실 Hermes',
+    departmentLabel: '플루토스 Plutus',
     tag: '경고',
     facts: [`제안 ${id}는 승인 연결정보가 없어 승인할 수 없습니다.`],
     context: `${detail} 새 제안은 승인하지 말고, 기존 안건 상태를 확인한 뒤 필요하면 다시 요청하세요.`,

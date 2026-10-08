@@ -46,7 +46,7 @@ import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DEPARTMENT_LABEL = '투자전략실 Athena';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'daily-asset-allocation-check', warningCode: 'MARKET_OVERLAY_SIGNAL',
   subjectKey: 'macro-overlay', kind: 'market-signal', severity: 'info',
@@ -130,7 +130,7 @@ async function main() {
   }
 
   loadEnv();
-  const AGENT = loadAgent('athena', { fallbackModel: 'sonnet' });
+  const AGENT = loadAgent('plutus', { fallbackModel: 'sonnet', appendix: ['athena'] });
   if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
   const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
 

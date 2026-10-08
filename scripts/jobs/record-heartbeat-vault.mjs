@@ -19,7 +19,7 @@ import { describeJob } from '../lib/job-labels.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
 // 2026-08-23 — 이 알림도 job-alerts.mjs와 같은 이유로 라벨이 없었다 — 운영실(Hermes) 소관.
-const DEPARTMENT_LABEL = '운영실 Hermes';
+const DEPARTMENT_LABEL = '플루토스 Plutus';
 const sendWarning = createDirectWarningSender(sendTelegram, {
   jobName: 'record-heartbeat-vault', warningCode: 'JOB_HEARTBEAT_FAILED',
   kind: 'operational', severity: 'high',

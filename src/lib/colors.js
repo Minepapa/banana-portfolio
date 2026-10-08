@@ -49,12 +49,12 @@ export const COLORS = {
 
 // ── 판테온 부서 색상·아이콘 — 앱 UX에 조직 정체성을 입히는 배지(DeptBadge)가 소비 ──────
 // Zeus는 신규 hex 대신 기존 ACCENT 재사용(CHART_BAR_COLOR도 이미 이렇게 씀 — 기존 관례).
-// 나머지 4색은 위 COLORS·SIGNAL_*·PROFIT_*와 전수 대조해 구별되게 골랐음. 단 Apollo 골드
-// 계열(#D9A441)은 금(#F5C842)·SIGNAL_AMBER(#E0A000)와 계열이 가까워 육안 재확인 대상.
+// 담당별 색상은 기존 팔레트를 재사용하고 Plutus와 Athena를 구별한다.
 export const DEPARTMENTS = {
   zeus:   { name: 'Zeus',   label: '대표',         color: ACCENT,    icon: '⚡' },
-  athena: { name: 'Athena', label: '투자전략실',   color: '#5B7B4F', icon: '🛡️' },
-  themis: { name: 'Themis', label: '리스크관리실', color: '#3D4A7A', icon: '⚖️' },
-  hermes: { name: 'Hermes', label: '운영실',       color: '#B5722E', icon: '🪽' },
-  apollo: { name: 'Apollo', label: '비서실',       color: '#B8862F', icon: '☀️' }, // 육안 확인 후 짙게 조정(대비 확보)
+  clio:   { name: 'Clio',   label: '기록',         color: '#B8862F', icon: '📚' },
+  themis: { name: 'Themis', label: '검증',         color: '#3D4A7A', icon: '⚖️' },
+  hermes: { name: 'Hermes', label: '100 나',      color: '#B5722E', icon: '🪽' },
+  athena: { name: 'Athena', label: '201 미네',    color: '#765B8F', icon: '🛡️' },
+  plutus: { name: 'Plutus', label: '700 자산',    color: '#5B7B4F', icon: '💰' },
 };
