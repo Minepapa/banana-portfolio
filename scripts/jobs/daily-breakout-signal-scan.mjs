@@ -55,6 +55,7 @@ import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 
+import { conservativeCash } from '../lib/order-gate.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 
@@ -441,10 +442,11 @@ async function main() {
   const quant = loadQuantAccount();
   if (!quant) { console.error('❌ 퀀트 계좌정보(quantAccount) 미설정 — 발주 불가'); return; }
   const balanceToken = await getKisToken({ appkey: quant.appkey, appsecret: quant.appsecret });
-  const { cash } = await getAccountBalance({
+  // 예산 기준은 진입 사전검사와 같은 min(D+0, D+2) 예수금(이관 4-6) — 기준이 다르면 스캔이 띄운 주문이 사전검사에서 탈락한다.
+  const cash = conservativeCash(await getAccountBalance({
     token: balanceToken, appkey: quant.appkey, appsecret: quant.appsecret, cano: quant.cano, acntPrdtCd: quant.acntPrdtCd,
-  });
-  if (cash == null) { console.error('❌ 예수금 조회 실패(0으로 추정하지 않음) — 발주 불가'); return; }
+  }));
+  if (cash == null) { console.error('❌ 예수금 조회 실패(D+0·D+2 중 확인 불가, 0으로 추정하지 않음) — 발주 불가'); return; }
 
   let remainingCash = cash;
   const entryDate = todayKST();

@@ -1464,3 +1464,10 @@ test('parseOrderFillResponse: DEBUG_KIS_FILL_FIELDS=1이면 매칭 행 필드를
     else process.env.DEBUG_KIS_FILL_FIELDS = originalDebug;
   }
 });
+
+test('parseBalanceResponse: settledCash는 D+2 예수금(prvs_rcdl_excc_amt), 없으면 null', () => {
+  const ok = parseBalanceResponse({ rt_cd: '0', output1: [], output2: [{ dnca_tot_amt: '500000', prvs_rcdl_excc_amt: '300,000' }] });
+  assert.equal(ok.cash, 500000);
+  assert.equal(ok.settledCash, 300000);
+  assert.equal(parseBalanceResponse({ rt_cd: '0', output1: [], output2: [{ dnca_tot_amt: '1' }] }).settledCash, null);
+});

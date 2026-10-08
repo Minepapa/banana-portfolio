@@ -64,3 +64,52 @@ test('isWithinAfterHoursSubmitWindow: KST 오전(예: 10:00)은 false', () => {
 test('isWithinAfterHoursSubmitWindow: KST 14:59는 false(15:00 직전)', () => {
   assert.equal(isWithinAfterHoursSubmitWindow(new Date('2026-09-14T05:59:00Z')), false);
 });
+
+// 이관 4-6: 돈이 나가는 순서 불변식 — 킬스위치 확인 → 기계적 사전검사 → 브로커 발주.
+// main()은 실브로커를 부르므로 단위 실행 대신 소스 순서를 고정한다.
+test('발주 직전 순서: 킬스위치 → 사전검사(불통과·조회 실패 시 반환) → placeKrOrder', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('./place-breakout-entry-order.mjs', import.meta.url), 'utf8');
+  const main = src.slice(src.indexOf('async function main('));
+  const kill = main.indexOf('isKillSwitchActive(killSwitchState.content)');
+  const pre = main.indexOf('checkBreakoutEntryPrecheck(');
+  const preReturn = main.indexOf('if (!precheck.pass)');
+  const order = main.indexOf('await placeKrOrder(');
+  assert.ok(kill > 0 && pre > kill && preReturn > pre && order > preReturn, `순서 위반: kill=${kill} pre=${pre} return=${preReturn} order=${order}`);
+  assert.match(main.slice(preReturn, order), /^if \(!precheck\.pass\) \{[\s\S]*?\n {4}return;\n {2}\}/, '사전검사 불통과 블록 안에서 발주 전에 반환해야 한다');
+  assert.match(main.slice(main.indexOf('사전검사 조회 실패'), pre), /alertAndExit/, '조회 실패는 발주하지 않고 종료');
+});
+
+test('buildHeldCodeSet: 볼트 보유·진행 중 대기열·KIS 실잔고·미체결 매수를 합치고, 해석 불가 기록은 throw', async () => {
+  const { buildHeldCodeSet } = await import('./place-breakout-entry-order.mjs');
+  const fm = (o) => `---\n${Object.entries(o).map(([k, v]) => `${k}: "${v}"`).join('\n')}\n---\n`;
+  const base = {
+    positionFiles: [{ name: 'a.md', content: fm({ code: '000001', status: '보유' }) }, { name: 'b.md', content: fm({ code: '000002', status: '청산' }) }],
+    pendingFiles: [
+      { name: 'c.md', content: fm({ code: '000003', status: 'pending' }) },
+      { name: 'd.md', content: fm({ code: '000004', status: 'placed' }) },
+      { name: 'e.md', content: fm({ code: '000005', status: 'uncertain' }) },
+    ],
+    balanceHoldings: [{ code: '000006', qty: 1 }],
+    openOrders: [{ code: '000007', side: '매수', cancelableQty: 3 }, { code: '000008', side: '매도', cancelableQty: 1 }],
+  };
+  assert.deepEqual([...buildHeldCodeSet(base)].sort(), ['000001', '000003', '000005', '000006', '000007']);
+  assert.throws(() => buildHeldCodeSet({ ...base, positionFiles: [{ name: 'x.md', content: 'frontmatter 없음' }] }), /x\.md/);
+  assert.throws(() => buildHeldCodeSet({ ...base, pendingFiles: [{ name: 'y.md', content: fm({ code: '000009' }) }] }), /y\.md/);
+  assert.throws(() => buildHeldCodeSet({ ...base, openOrders: undefined }), /미체결/);
+  assert.throws(() => buildHeldCodeSet({ ...base, balanceHoldings: null }), /잔고/);
+});
+
+test('conservativeCash: D+0·D+2 중 작은 값, 하나라도 없으면 null', async () => {
+  const { conservativeCash } = await import('./place-breakout-entry-order.mjs');
+  assert.equal(conservativeCash({ cash: 500, settledCash: 300 }), 300);
+  assert.equal(conservativeCash({ cash: 200, settledCash: 300 }), 200);
+  assert.equal(conservativeCash({ cash: 500, settledCash: null }), null);
+  assert.equal(conservativeCash({ cash: null, settledCash: 300 }), null);
+});
+
+test('신호스캔 예산도 진입 사전검사와 같은 conservativeCash 기준을 쓴다', async () => {
+  const { readFileSync } = await import('node:fs');
+  const scan = readFileSync(new URL('../jobs/daily-breakout-signal-scan.mjs', import.meta.url), 'utf8');
+  assert.match(scan, /const cash = conservativeCash\(await getAccountBalance\(/);
+});

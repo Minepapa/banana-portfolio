@@ -621,7 +621,10 @@ export function parseBalanceResponse(json) {
   const cash = cashRaw !== undefined && String(cashRaw).trim() !== ''
     ? Number(String(cashRaw).replace(/,/g, ''))
     : NaN;
-  return { holdings, cash: Number.isFinite(cash) ? cash : null };
+  // settledCash: D+2 예수금(prvs_rcdl_excc_amt) — 결제 대기 중인 매수·매도 대금을 반영한 값.
+  // 돌파매매 진입 사전검사가 min(cash, settledCash)로 쓴다(이관 4-6, 2026-10-08 퀀트 계좌 응답에 필드 존재 실측).
+  const settledRaw = Array.isArray(json?.output2) ? json.output2[0]?.prvs_rcdl_excc_amt : undefined;
+  return { holdings, cash: Number.isFinite(cash) ? cash : null, settledCash: num(settledRaw) };
 }
 
 // ── 주식일별주문체결조회 — Phase 11 후속(2026-08-12, 실주문 체결 확인 갭 발견) ──────

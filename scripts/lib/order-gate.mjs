@@ -172,3 +172,34 @@ export function runExecutionGateChecks(input) {
 }
 
 export { proposalMatchKey };
+
+// 매수 가능 금액 = min(D+0 예수금, D+2 예수금). 결제 대기 매수(D+2가 작음)와 결제 대기 매도(D+0이 작음) 모두를
+// 보수적으로 반영한다. 어느 하나라도 없으면 null(확인 불가). 신호스캔 예산과 진입 사전검사가 같은 기준을 쓴다(이관 4-6).
+export function conservativeCash({ cash, settledCash }) {
+  return Number.isFinite(cash) && Number.isFinite(settledCash) ? Math.min(cash, settledCash) : null;
+}
+
+// 돌파매매 진입 주문 직전 기계적 사전검사(이관 4-6, 테미스 기준 `90_Delphi/Criteria/투자-주문` 기계 항목).
+// 신호스캔(daily-breakout-signal-scan)이 스캔 시점에 슬롯·보유를 이미 걸렀지만, 실제 발주는 별도 프로세스라
+// 그 사이 상태가 바뀔 수 있다(재실행·수동 진입 등). 돈이 나가기 직전에 같은 규칙을 다시 확인한다.
+// 순수함수 — 판정만 하고 조회·발주·알림은 호출측이 한다. 하나라도 걸리면 발주하지 않는다.
+// openPositionCodes는 호출측이 볼트 보유 + KIS 실잔고 + 시가 진입 대기열 + 당일 미체결 매수를 합쳐 넘긴다.
+// 한계: 신호스캔이 같은 날 여러 종목을 동시에 띄우면 각 프로세스는 자기 주문만 예수금과 비교한다.
+// 여러 종목 합계·슬롯 배분은 신호스캔(remainingCash·remainingSlots)이 책임진다.
+export function checkBreakoutEntryPrecheck({ code, openPositionCodes, maxConcurrent, quantity, orderCost, availableCash }) {
+  const reasons = [];
+  const normalize = (c) => String(c ?? '').trim().padStart(6, '0');
+  const held = new Set([...(openPositionCodes ?? [])].map(normalize));
+  if (!code) reasons.push('종목코드 없음');
+  if (!Number.isInteger(quantity) || quantity <= 0) reasons.push('매수수량 이상');
+  if (!Number.isFinite(orderCost) || orderCost <= 0) reasons.push('매수금액 이상');
+  if (code && held.has(normalize(code))) reasons.push(`이미 보유 중인 종목(${code}) — 중복 진입 차단`);
+  if (!Number.isInteger(maxConcurrent) || maxConcurrent <= 0) reasons.push('동시보유 상한 값 이상');
+  else if (held.size >= maxConcurrent) reasons.push(`동시보유 상한 도달(${held.size}/${maxConcurrent}종목)`);
+  if (!Number.isFinite(availableCash)) reasons.push('예수금 확인 불가');
+  else if (Number.isFinite(orderCost) && orderCost > 0) {
+    const cash = checkHoldingsConsistency({ side: '매수', quantity, availableCash, orderCost });
+    if (!cash.pass) reasons.push(cash.reason);
+  }
+  return { pass: reasons.length === 0, reasons };
+}

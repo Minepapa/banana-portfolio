@@ -12,15 +12,18 @@
 // 사용법(15:40~16:00 KRX 장후시간외 세션 안에 실행돼야 함):
 //   node scripts/tools/place-breakout-entry-order.mjs --code=005930 --name=삼성전자 --entry-date=2026-09-13 --invested-won=10000000
 //   node scripts/tools/place-breakout-entry-order.mjs --code=005930 --entry-date=2026-09-13 --quantity=140  # 수량 직접 지정(테스트용)
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  loadQuantAccount, getKisToken, getKrQuote, placeKrOrder,
+  loadQuantAccount, getKisToken, getKrQuote, placeKrOrder, getAccountBalance, getCancelableOrders,
 } from '../lib/kis.mjs';
 import { isKillSwitchActive } from '../lib/kill-switch.mjs';
-import { STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
+import { MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
+import { findOpenPositions, parseBreakoutPosition } from '../lib/breakout-position-vault.mjs';
+import { parsePendingEntry, PENDING_ENTRY_STATUS } from '../lib/breakout-pending-entry-vault.mjs';
+import { checkBreakoutEntryPrecheck, conservativeCash } from '../lib/order-gate.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
@@ -89,6 +92,39 @@ export function isWithinAfterHoursSubmitWindow(date) {
 // 실주문이 이미 나간 뒤의 실패(특히 체결감시 스폰 실패)라면 텔레그램 없이는 아무도
 // 모르는 무방비 포지션이 생긴다. 그래서 이 파일의 모든 조기종료 경로는 반드시
 // 텔레그램도 함께 보낸다(콘솔 로그만 남기고 끝나는 경로를 만들지 않는다).
+// 사전검사 입력 합치기(이관 4-6) — 순수함수. 해석할 수 없는 기록은 통과로 보지 않고 throw한다.
+// 보유로 보는 것: 볼트 보유 포지션 · KIS 실잔고(수동 매수 포함) · 시가 진입 대기열의 진행 중 항목
+// (pending·placing·uncertain — placed는 체결되면 포지션, 미체결이면 미체결 주문으로 잡힌다) · 당일 미체결 매수 주문.
+const IN_FLIGHT_PENDING = new Set([PENDING_ENTRY_STATUS.PENDING, PENDING_ENTRY_STATUS.PLACING, PENDING_ENTRY_STATUS.UNCERTAIN]);
+export function buildHeldCodeSet({ positionFiles, pendingFiles, balanceHoldings, openOrders }) {
+  const held = new Set();
+  for (const { name, content } of positionFiles) {
+    const p = parseBreakoutPosition(content);
+    if (!p.code || !p.status) throw new Error(`포지션 기록 해석 불가: ${name}`);
+    if (findOpenPositions([p]).length) held.add(String(p.code));
+  }
+  for (const { name, content } of pendingFiles) {
+    const e = parsePendingEntry(content);
+    if (!e.code || !e.status) throw new Error(`진입 대기 기록 해석 불가: ${name}`);
+    if (IN_FLIGHT_PENDING.has(e.status)) held.add(String(e.code));
+  }
+  if (!Array.isArray(balanceHoldings)) throw new Error('KIS 잔고 보유목록 없음');
+  for (const h of balanceHoldings) held.add(h.code);
+  if (!Array.isArray(openOrders)) throw new Error('KIS 미체결 주문 목록 없음');
+  for (const o of openOrders) if (o.side === '매수' && o.cancelableQty > 0) held.add(o.code);
+  return held;
+}
+
+export { conservativeCash };
+
+// 포지션·대기열 폴더는 첫 기록이 생길 때 만들어지므로 "폴더 없음 = 기록 0건"이 정상이다.
+// 볼트 자체가 안 보이는 경우(미마운트·경로 이관 실수)만 상위 폴더로 가려내 throw한다.
+function readMdFiles(dir) {
+  if (!existsSync(dirname(dir))) throw new Error(`볼트 폴더 없음: ${dirname(dir).replace(process.env.HOME ?? '', '~')}`);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => ({ name: f, content: readFileSync(join(dir, f), 'utf8') }));
+}
+
 async function alertAndExit(body, code = 1) {
   console.error(`❌ ${body.replace(/<[^>]+>/g, '')}`);
   try {
@@ -186,6 +222,36 @@ async function main() {
     console.log(`ℹ️ 킬스위치 활성 — ${name}(${code}) ${quantity}주 매수 발주 안 함(신호는 정상 통과했음)`);
     await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '스킵',
       body: `<b>돌파매매 진입 보류 — 킬스위치 활성</b>\n${name}(${code}) 신호 통과(${quantity}주, 예산 ${won(investedWon)})했지만 킬스위치가 켜져 있어 발주하지 않았습니다. "킬스위치 오프" 명령으로 해제해야 다음 신호부터 다시 발주됩니다.`, });
+    return;
+  }
+
+  // 기계적 사전검사(이관 4-6, 테미스 기준 Criteria/투자-주문) — 킬스위치 다음, 브로커 호출 직전.
+  // 스캔 시점과 발주 시점 사이 상태 변화(재실행·수동 진입)를 막는다. 조회 실패는 통과로 보지 않는다.
+  let openPositionCodes;
+  let availableCash;
+  try {
+    const balance = await getAccountBalance({ token, appkey, appsecret, cano, acntPrdtCd });
+    openPositionCodes = buildHeldCodeSet({
+      positionFiles: readMdFiles(VAULT_PATHS.state.breakoutPositions),
+      pendingFiles: readMdFiles(VAULT_PATHS.state.breakoutPendingEntries),
+      balanceHoldings: balance.holdings,
+      openOrders: await getCancelableOrders({ token, appkey, appsecret, cano, acntPrdtCd }),
+    });
+    availableCash = conservativeCash(balance);
+  } catch (e) {
+    console.error('사전검사 조회 실패 —', e.message);
+    return alertAndExit(`<b>돌파매매 진입 보류 — 사전검사 조회 실패</b>\n${name}(${code}) 보유 포지션 또는 예수금을 확인하지 못해 발주하지 않았습니다(${e.message}).`);
+  }
+  const precheck = checkBreakoutEntryPrecheck({
+    code, openPositionCodes, maxConcurrent: MAX_CONCURRENT_POSITIONS, quantity, orderCost: quantity * currentPrice, availableCash,
+  });
+  if (!precheck.pass) {
+    console.log(`ℹ️ 사전검사 불통과 — ${name}(${code}) 발주 안 함: ${precheck.reasons.join(' / ')}`);
+    // 알림 실패가 최상위 catch의 "주문이 나갔는지 확인" 경고로 번지지 않게 여기서 잡는다(주문은 안 나갔다).
+    try {
+      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '스킵',
+        body: `<b>돌파매매 진입 보류 — 사전검사 불통과</b>\n${name}(${code}) ${quantity}주(약 ${won(quantity * currentPrice)})\n${precheck.reasons.map((x) => `· ${x}`).join('\n')}`, });
+    } catch (e) { console.error(`  ⚠️ 텔레그램 발송 실패(주문은 나가지 않음): ${e.message}`); }
     return;
   }
 

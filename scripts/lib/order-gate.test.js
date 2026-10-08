@@ -254,3 +254,22 @@ test('[통합, 막아야 함] runExecutionGateChecks: 킬스위치 하나만 켜
   assert.equal(r.pass, false);
   assert.ok(r.failures.some((f) => f.check === 'killSwitch'));
 });
+
+test('checkBreakoutEntryPrecheck: 중복 보유·동시보유 상한·예수금 초과·확인 불가는 막고, 정상은 통과', async () => {
+  const { checkBreakoutEntryPrecheck } = await import('./order-gate.mjs');
+  const ok = { code: '005930', openPositionCodes: new Set(['000660']), maxConcurrent: 10, quantity: 2, orderCost: 140000, availableCash: 500000 };
+  assert.deepEqual(checkBreakoutEntryPrecheck(ok), { pass: true, reasons: [] });
+  assert.match(checkBreakoutEntryPrecheck({ ...ok, openPositionCodes: ['005930'] }).reasons.join(), /이미 보유/);
+  const full = new Set(Array.from({ length: 10 }, (_, i) => String(i).padStart(6, '0')));
+  assert.match(checkBreakoutEntryPrecheck({ ...ok, openPositionCodes: full }).reasons.join(), /동시보유 상한 도달\(10\/10/);
+  assert.match(checkBreakoutEntryPrecheck({ ...ok, orderCost: 600000 }).reasons.join(), /가용예수금/);
+  assert.equal(checkBreakoutEntryPrecheck({ ...ok, availableCash: NaN }).pass, false);
+  assert.equal(checkBreakoutEntryPrecheck({ ...ok, availableCash: null }).pass, false);
+  assert.equal(checkBreakoutEntryPrecheck({ ...ok, availableCash: undefined }).pass, false);
+  assert.match(checkBreakoutEntryPrecheck({ ...ok, orderCost: NaN }).reasons.join(), /매수금액 이상/);
+  assert.match(checkBreakoutEntryPrecheck({ ...ok, orderCost: undefined }).reasons.join(), /매수금액 이상/);
+  assert.match(checkBreakoutEntryPrecheck({ ...ok, quantity: 0 }).reasons.join(), /매수수량 이상/);
+  assert.match(checkBreakoutEntryPrecheck({ ...ok, openPositionCodes: [5930] }).reasons.join(), /이미 보유/, '앞자리 0이 빠진 코드도 같은 종목');
+  assert.equal(checkBreakoutEntryPrecheck({ ...ok, maxConcurrent: 0 }).pass, false);
+  assert.equal(checkBreakoutEntryPrecheck({ ...ok, code: '' }).pass, false);
+});
