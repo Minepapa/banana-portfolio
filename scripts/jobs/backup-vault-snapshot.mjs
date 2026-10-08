@@ -14,6 +14,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { buildVaultIndex } from '../lib/vault-index-builder.mjs';
 
 function git(args) {
   return execFileSync('git', args, { cwd: VAULT_PATHS.root, encoding: 'utf8' });
@@ -27,6 +28,15 @@ function main() {
   if (!existsSync(`${VAULT_PATHS.root}/.git`)) {
     console.error(`❌ ${VAULT_PATHS.root}가 아직 git 리포지토리가 아닙니다 — 먼저 초기화 필요(1회성, "git init" 참고)`);
     process.exit(1);
+  }
+
+  // 색인 자동 생성(이관 3-5) — 커밋 직전에 갱신해 같은 스냅샷에 담는다. 색인 실패가 백업을 막으면
+  // 안 되므로 오류는 알리고 백업은 계속한다(백업이 색인보다 중요).
+  try {
+    const changed = buildVaultIndex(VAULT_PATHS.root);
+    console.log(changed.length ? `🗂 색인 갱신 ${changed.length}개` : '🗂 색인 변경 없음');
+  } catch (e) {
+    console.error(`⚠️ 색인 자동 생성 실패(백업은 계속): ${e.message}`);
   }
 
   git(['add', '-A']);
