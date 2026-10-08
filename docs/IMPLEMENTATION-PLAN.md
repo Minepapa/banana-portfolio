@@ -1,5 +1,14 @@
 # banana-portfolio v2 — 구현 계획서
 
+> **2026-10-08 판테온 이관 안내**: 이 문서의 부서명·경로는 이관 전 기준일 수 있다. 현행 대응:
+> - 조직: 투자전략실 Athena·퀀트전략실 Kairos·운영실 Hermes·비서실 Apollo(투자 보고)·리스크관리실 Themis(위험 감시) → **플루토스 Plutus**,
+>   제안 2차 검증 → **테미스 Themis**, 성향·볼트 관리 → **클리오 Clio**, 시스템 경보 → **제우스 Zeus**.
+>   새 아테나는 딸 미네, 새 헤르메스는 오너 개인 일정 담당이다. 헌장 정본: 볼트 `90_Delphi/Agents/`.
+> - 볼트: `~/banana-vault`(Log·Knowledge·Facts·State·Decisions) → `~/Pantheon/Mouseion`(새 폴더 구조, `90_Delphi/Schema/경로 등록부`).
+> - 메시지 헤더: `[담당] 주제`(예 `[플루토스 Plutus] 경고`), 발송은 `scripts/lib/pantheon-send.mjs`만.
+> - 투자자 성향·목표비중 정본: 볼트 결정 문서(decisionKey `투자자-성향`·`자산배분-목표비중`).
+
+
 > 이 문서는 `docs/ARCHITECTURE-V2.md`(설계 정본)의 실행 순서를 정리한 것이다. 설계
 > 내용 자체는 재정의하지 않는다 — "무엇을 만들지"는 이미 확정됐고, 여기서는 "어떤
 > 순서로, 무엇을 재사용해서, 어떤 스킬로" 만들지만 다룬다.
