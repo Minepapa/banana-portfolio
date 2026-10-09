@@ -22,9 +22,11 @@ import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+import { isConfigured, getAccessToken } from '../lib/google-oauth.mjs';
+import { listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import {
-  DAILY_SKIP_TOP, buildDailyTelegramBody, buildSummaryPrompt, inspectExisting, recordHashOf, renderDailyNote, sameIgnoringModified,
+  DAILY_SKIP_TOP, buildDailyTelegramBody, buildSummaryPrompt, hasNormalSchedule, inspectExisting, recordHashOf, renderDailyNote, sameIgnoringModified,
   sanitizeSummary, toDayRecord,
 } from '../lib/daily-note.mjs';
 
@@ -42,7 +44,7 @@ export function planActions({ mode, date, now = new Date(), noteStatus = () => n
     const m = mode ?? 'draft';
     if (!['draft', 'finalize'].includes(m)) throw new Error(`--mode는 draft 또는 finalize: ${m}`);
     const d = date ?? (m === 'draft' ? kstDate(now) : kstDate(new Date(now.getTime() - 24 * 3600_000)));
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error(`--date 형식 오류: ${d}`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !Number.isFinite(Date.parse(`${d}T00:00:00Z`)) || new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) !== d) throw new Error(`--date 형식 오류: ${d}`);
     return [{ mode: m, date: d }];
   }
   const today = kstDate(now);
@@ -98,7 +100,10 @@ async function summarize(date, records, prevFields, recordHash, dryRun) {
 }
 
 export async function processDay({ mode, date, dryRun, noSend, rules, today, deps: injected = {} }) {
-  const deps = { send: sendAgentMessage, summarize, write: writeAtomic, ...injected };
+  const deps = { send: sendAgentMessage, summarize, write: writeAtomic, fetchEvents: async (day) => {
+    if (!isConfigured()) return null;
+    return listEventsForKstDay(day, { token: await getAccessToken() });
+  }, ...injected };
   const path = notePath(date);
   const first = readOrNull(path);
   const inspected = inspectExisting(first);
@@ -111,14 +116,17 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   const summary = s.reuse ? (inspected.prev.sections.find((x) => x.title === 'AI 하루 요약')?.content ?? '') : s.summary;
   const summaryStatus = s.reuse ? prevFields.summaryStatus : s.summaryStatus;
   const model = s.reuse ? prevFields.model : s.model;
-  const status = mode === 'finalize' ? '확정' : '초안';
-  const render = (prev) => renderDailyNote({ date, records, summary, status, model, summaryStatus, recordHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev });
+  let events;
+  try { events = await deps.fetchEvents(date); }
+  catch (error) { events = 'failed'; console.error('  ❌ 캘린더 조회 실패:', error.message); }
+  const statusOf = (prev) => mode === 'finalize' && (events !== 'failed' || hasNormalSchedule(prev)) ? '확정' : '초안';
+  const render = (prev) => renderDailyNote({ date, records, summary, status: statusOf(prev), model, summaryStatus, recordHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev, events });
 
   let note = render(inspected.prev);
   const rel = relative(VAULT_PATHS.root, path);
   const problems = checkNote(rel, note, rules);
   if (problems.length) { console.error(`  ⛔ 등록부 위반으로 쓰지 않음: ${problems.join(' / ')}`); return { failed: true }; }
-  if (dryRun) { console.log(note); return { failed: !!s.failed }; }
+  if (dryRun) { console.log(note); return { failed: !!s.failed || events === 'failed' }; }
 
   // 쓰기 직전 다시 읽기 — LLM 호출 중 오너가 고쳤으면 최신 내용 기준으로 다시 만든다(리뷰 HIGH-3).
   const latest = readOrNull(path);
@@ -130,12 +138,12 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
     if (again2.length) { console.error(`  ⛔ 등록부 위반으로 쓰지 않음: ${again2.join(' / ')}`); return { failed: true }; }
   }
   if (latest != null && sameIgnoringModified(latest, note)) console.log('  변경 없음 — 쓰지 않음');
-  else { mkdirSync(dirname(path), { recursive: true }); deps.write(path, note); console.log(`  💾 ${rel} (${status})`); }
+  else { mkdirSync(dirname(path), { recursive: true }); deps.write(path, note); console.log(`  💾 ${rel} (${statusOf(inspectExisting(note).prev)})`); }
 
   const sentAt = inspectExisting(readOrNull(path)).prev?.fields?.telegramSentAt;
-  if (sentAt || noSend) return { failed: !!s.failed };
+  if (sentAt || noSend) return { failed: !!s.failed || events === 'failed' };
   try {
-    await deps.send({ agent: SENDER_AGENT, kind: '정보', topic: '데일리', body: buildDailyTelegramBody(date, records, summary, status) });
+    await deps.send({ agent: SENDER_AGENT, kind: '정보', topic: '데일리', body: buildDailyTelegramBody(date, records, summary, statusOf(inspectExisting(note).prev)) });
     console.log('  📨 클리오 데일리 요약 발송');
   } catch (e) {
     console.error('  ❌ 텔레그램 발송 실패:', e.message);
@@ -147,7 +155,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   if (!current || fmEnd < 0) { console.error('  ⚠️ 발송 기록을 남길 노트를 찾지 못함(다음 실행에서 다시 보낼 수 있음)'); return { failed: true }; }
   const head = current.slice(0, fmEnd).replace(/^(dailyStatus: .*)$/m, `$1\ntelegramSentAt: "${new Date().toISOString()}"`);
   deps.write(path, head + current.slice(fmEnd));
-  return { failed: !!s.failed };
+  return { failed: !!s.failed || events === 'failed' };
 }
 
 async function main() {

@@ -100,3 +100,42 @@ test('리뷰 MEDIUM: AI 칸과 같은 이름 칸이 앞에 있으면 정확한 �
   assert.match(again, /tags:\n- 가족\n---/);
   assert.doesNotMatch(again, /\n- "\[\[01_Home\/700 자산\]\]"\n/, '정해진 키의 목록 줄은 키와 함께 교체');
 });
+
+test('renderDailyNote: 일정 null/없음/있음/조회 실패와 오너 글 보존', () => {
+  const args = { date: '2026-10-10', records: [], summary: '- 기록 요약', status: '초안', model: '없음', summaryStatus: 'empty', recordHash: 'hash', today: '2026-10-10' };
+  const base = renderDailyNote({ ...args, events: null });
+  assert.match(base, /캘린더 미연결 — google-oauth-setup 필요/);
+  const empty = renderDailyNote({ ...args, events: [] });
+  assert.match(empty, /## 일정\n\(일정 없음\)/);
+  const prev = inspectExisting(empty).prev;
+  prev.sections.push({ title: '오너 추가', content: '내 글' });
+  const filled = renderDailyNote({ ...args, prev, events: [{ calendar: '개인', title: '치과', start: '2026-10-10T10:00:00+09:00', end: '2026-10-10T11:00:00+09:00', allDay: false, location: null }] });
+  assert.match(filled, /10:00–11:00 치과 · 개인/);
+  assert.match(filled, /sensitivity: "개인"/);
+  assert.match(filled, /## 오너 추가\n내 글/);
+  assert.match(renderDailyNote({ ...args, events: 'failed' }), /캘린더 조회 실패 — 다음 실행에서 다시 시도/);
+});
+
+test('캘린더 실패·미연결 때 이전 정상 일정과 aiHash를 유지한다', () => {
+  const args = { ...base, records: [], events: [{ calendar: '개인', title: '치과', start: '2026-10-09T10:00:00+09:00', end: '2026-10-09T11:00:00+09:00', allDay: false }] };
+  const original = renderDailyNote(args);
+  for (const events of [null, 'failed']) {
+    const rendered = renderDailyNote({ ...args, events, status: '확정', prev: inspectExisting(original).prev });
+    assert.match(rendered, /## 일정\n- 10:00–11:00 치과 · 개인/);
+    assert.match(rendered, /sensitivity: "개인"/);
+    assert.equal(inspectExisting(rendered).ok, true);
+  }
+});
+
+ test('멀티라인 일정 제목·장소가 노트 구획과 aiHash를 깨지 않는다', () => {
+  const rendered = renderDailyNote({
+    date: '2026-10-10', records: [], summary: '- 요약', status: '초안', model: '없음',
+    summaryStatus: 'empty', recordHash: 'hash', today: '2026-10-10',
+    events: [{ calendar: '개인\n## 조작', title: '치과\n## 오너 메모\n```',
+      start: '2026-10-10T10:00:00+09:00', end: '2026-10-10T11:00:00+09:00',
+      allDay: false, location: '서울\r\n## AI 하루 요약\u2028```' }],
+  });
+  assert.match(rendered, /치과 ## 오너 메모 ``` \(서울 ## AI 하루 요약 ```\) · 개인 ## 조작/);
+  assert.equal(inspectExisting(rendered).ok, true);
+  assert.equal(inspectExisting(rendered).prev.sections.filter((section) => section.title === '오너 메모').length, 1);
+});

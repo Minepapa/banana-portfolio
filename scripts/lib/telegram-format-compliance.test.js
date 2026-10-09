@@ -44,6 +44,8 @@ import { AGENT_HEADERS, renderAgentMessage } from './pantheon-send.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCAN_DIRS = [join(HERE, '..', 'jobs'), join(HERE, '..', 'tools'), join(HERE, '..', 'hooks'), HERE];
 const EXCLUDED_FILENAMES = new Set(['telegram.mjs', 'pantheon-send.mjs']); // 발송 관문과 transport
+const PERSONAL_SENDER_FILES = new Set(['hermes-briefing.mjs']); // 오너 개인 일정 전용
+const INVESTMENT_IMPORT_RE = /(?:\b(?:import|from)\s+(?:[^;]*?\sfrom\s+)?|\bimport\s*\(\s*)['"][^'"]*(?:kis|nhplug|holdings|proposal|order)[^'"]*['"]/i;
 const SAFE_WRAPPERS = ['formatFactsMessage(', 'formatDepartmentMessage('];
 // 매치 직전 텍스트가 이 패턴으로 끝나야만("줄 단위" 근접 확인) 콜백 정의 자체로 인정 —
 // 파일 전체 존재 여부로 판단하지 않는다(위 코드리뷰 지적).
@@ -291,10 +293,18 @@ test('투자 발송 코드는 athena·hermes를 발신자로 쓰지 않는다', 
   const offenders = [];
   for (const dir of SCAN_DIRS) {
     for (const name of readdirSync(dir)) {
-      if (!name.endsWith('.mjs') || EXCLUDED_FILENAMES.has(name)) continue;
+      if (!name.endsWith('.mjs') || EXCLUDED_FILENAMES.has(name) || PERSONAL_SENDER_FILES.has(name)) continue;
       const src = stripComments(readFileSync(join(dir, name), 'utf8'));
       if (/SENDER_AGENT\s*=\s*['"](?:athena|hermes)['"]|\b(?:agent|senderAgent)\s*:\s*['"](?:athena|hermes)['"]|TRACK_AGENT\s*=\s*\{[^}]*['"](?:athena|hermes)['"]/.test(src)) offenders.push(name);
     }
   }
   assert.deepEqual(offenders, []);
+});
+
+test('개인 일정 발신처는 투자 모듈을 import하지 않는다', () => {
+  assert.match("import('../lib/kis-client.mjs')", INVESTMENT_IMPORT_RE, '동적 import도 검사');
+  for (const name of PERSONAL_SENDER_FILES) {
+    const source = stripComments(readFileSync(join(HERE, '..', 'jobs', name), 'utf8'));
+    assert.doesNotMatch(source, INVESTMENT_IMPORT_RE, name);
+  }
 });

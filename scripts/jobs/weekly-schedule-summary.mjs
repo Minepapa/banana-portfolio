@@ -76,6 +76,8 @@ export function describeSwitchStatus({ killSwitchContent, executionModeContent, 
 // buildWeeklyScheduleText에서 별도 [조건부] 그룹으로 묶이고, 값은 발송 조건을
 // 짧게 설명하는 문구(사람이 읽는 텍스트에 그대로 붙음).
 export const SCHEDULE = [
+  { day: '매일', time: '07:30', dept: '헤르메스 Hermes', what: '아침 브리핑 — 오늘 일정과 생일', script: 'hermes-briefing.mjs' },
+  { day: '매일', time: '21:00', dept: '헤르메스 Hermes', what: '내일 일정', conditional: '내일 일정이 있을 때만', script: 'hermes-briefing.mjs' },
   { day: '매일', time: '23:30', dept: '클리오 Clio', what: '데일리 초안 요약 — 그날 들어온 기록 수와 AI 하루 요약(2026-10-09 신설, 리포트만 하는 기간)', script: 'daily-note.mjs' },
   { day: '평일', time: '08:00', dept: '플루토스 Plutus', what: '아침 브리핑 — 자산현황+간밤 이벤트+거시 5신호', script: 'morning-briefing.mjs' },
   { day: '평일', time: '08:35', dept: '플루토스 Plutus', what: '돌파매매 보유종목 청산 관리(당일유효 손절 재등록·트레일링 정정·3R 부분익절·전량종료 원장기록)', conditional: '이상/조정 대상이 있을 때만', script: 'reconcile-breakout-protection.mjs' },

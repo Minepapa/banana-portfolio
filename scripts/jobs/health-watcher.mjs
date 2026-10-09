@@ -70,6 +70,8 @@ export const EXPECTED_INTERVALS_MS = {
   'question-digest': 24 * 60 * 60 * 1000,
   // daily-note(2026-10-09 신설) — 23:30 초안·05:00 확정, 최대 간격 18.5시간, 여유 포함 24시간.
   'daily-note': 24 * 60 * 60 * 1000,
+  // hermes-briefing(D86) — 07:30·21:00 매일 두 번, 여유 포함 24시간.
+  'hermes-briefing': 24 * 60 * 60 * 1000,
   // telegram-session-handoff(2026-08-29 신설) — 매일 03:55 KST 하루 1회, 요일 제한
   // 없음(텔레그램 세션 자체가 주말에도 응답하므로 restart와 동일 원칙) — backup-vault와
   // 같은 클래스.

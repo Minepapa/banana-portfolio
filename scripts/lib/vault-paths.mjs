@@ -45,6 +45,7 @@ export const VAULT_REL = {
   portfolioKpiTopics: '30_Wiki/34_Topics/PortfolioKPI', // 폴더는 영문 유지, 노트 제목만 한글(2026-10-08)
   inboxRoot: '00_Inbox',
   periodicRoot: '10_Periodic',
+  people: '30_Wiki/31_People', // 헤르메스 생일 브리핑 대상
   dailyNotes: '10_Periodic/Daily', // 데일리 노트(D85) — {YYYY}/YYYY-MM-DD.md
   // 등록부 lint 범위 밖 최상위 폴더: 보관본(원래 type 유지)·코드가 쓰는 기계 데이터·금고(내용을 읽지 않음)
   archiveRoot: '80_Archive',

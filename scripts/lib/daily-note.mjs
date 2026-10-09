@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 import { VAULT_REL } from './vault-paths.mjs';
 import { escapeHtml } from './telegram.mjs';
+import { formatEventLine } from './google-calendar.mjs';
 
 export const OWNER_SECTIONS = ['오늘 한 줄', '오너 메모'];
 export const AI_SECTIONS = ['일정', '동선', '오늘 들어온 기록', '오늘 생긴 할 일', 'AI 하루 요약'];
@@ -68,6 +69,7 @@ export function parseSections(body) {
 }
 
 const aiHashOf = (sections) => sha(AI_SECTIONS.map((t) => `${t}\n${(sections.find((s) => s.title === t)?.content ?? '').replace(/\s+$/, '')}`).join('\n\n'));
+export const hasNormalSchedule = (prev) => /^- (?:종일|\d{2}:\d{2})/m.test(prev?.sections.find((s) => s.title === '일정')?.content ?? '');
 
 // 기존 파일을 다시 써도 되는지 판정한다(오너 글 보존 관문). 쓸 수 없으면 reason과 함께 ok:false.
 export function inspectExisting(existing) {
@@ -133,12 +135,14 @@ export function groupByCategory(records) {
   return [...groups].sort((a, b) => categoryOrder(a[0]) - categoryOrder(b[0]) || a[0].localeCompare(b[0]));
 }
 
-function aiSectionContents(records, summary) {
+function aiSectionContents(records, summary, events) {
   const recordLines = records.length
     ? groupByCategory(records).flatMap(([cat, items]) => [`### ${cat}`, ...items.map((r) => `- [[${r.link}|${r.title}]]${r.description ? ` — ${r.description}` : ''}`), ''])
     : ['(오늘 들어온 기록 없음)'];
   return {
-    일정: '(캘린더 연동 전 — 5단계 2번에서 채운다)',
+    일정: events === null ? '(캘린더 미연결 — google-oauth-setup 필요)'
+      : events === 'failed' ? '(캘린더 조회 실패 — 다음 실행에서 다시 시도)'
+        : events.length ? events.map(formatEventLine).join('\n') : '(일정 없음)',
     동선: '(위치 연동 전 — 5단계 3번에서 채운다)',
     '오늘 들어온 기록': recordLines.join('\n').replace(/\s+$/, ''),
     '오늘 생긴 할 일': '(캘린더·Tasks 연동 전 — 5단계 2번에서 채운다)',
@@ -147,10 +151,12 @@ function aiSectionContents(records, summary) {
 }
 
 // 데일리 노트를 만든다. prev(inspectExisting 결과)가 있으면 AI 칸만 바꾸고 나머지는 원문 그대로 둔다.
-export function renderDailyNote({ date, records, summary, status, model, summaryStatus, recordHash, today, telegramSentAt = null, prev = null }) {
-  const ai = aiSectionContents(records, summary);
+export function renderDailyNote({ date, records, summary, status, model, summaryStatus, recordHash, today, telegramSentAt = null, prev = null, events = null }) {
+  const ai = aiSectionContents(records, summary, events);
   const prevSections = prev?.sections ?? [];
   const keep = (title) => prevSections.find((s) => s.title === title)?.content;
+  // 조회 실패·미연결 시 이전에 확인한 일정은 보존한다. 빈 일정이나 오류 문구는 정상 일정이 아니다.
+  if ((events === null || events === 'failed') && hasNormalSchedule(prev)) ai.일정 = keep('일정');
   const known = new Set(SECTION_ORDER);
   // 정해진 칸 이름은 처음 나온 칸만 그 칸으로 쓰고, 같은 이름이 또 나오면 오너가 추가한 칸으로 보존한다(리뷰 HIGH).
   const extras = prevSections.filter((s, i) => !known.has(s.title) || prevSections.findIndex((x) => x.title === s.title) !== i);
@@ -163,7 +169,7 @@ export function renderDailyNote({ date, records, summary, status, model, summary
     type: 'daily',
     category: categories.map((c) => `[[${VAULT_REL.homeDir}/${c}]]`),
     description: `${date} 데일리 — 들어온 기록 ${records.length}개`,
-    sensitivity: records.some((r) => r.sensitivity === '개인') ? '개인' : '일반',
+    sensitivity: records.some((r) => r.sensitivity === '개인') || /^- (?:종일|\d{2}:\d{2})/m.test(ai.일정) ? '개인' : '일반',
     created: prev?.fields?.created ?? date,
     modified: today,
     dailyStatus: status,

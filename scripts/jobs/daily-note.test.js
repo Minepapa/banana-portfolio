@@ -30,6 +30,7 @@ test('planActions: 명시 값 우선, 잘못된 값 거부', () => {
   assert.deepEqual(planActions({ mode: 'draft', date: '2026-10-01' }), [{ mode: 'draft', date: '2026-10-01' }]);
   assert.throws(() => planActions({ mode: 'x' }), /draft 또는 finalize/);
   assert.throws(() => planActions({ mode: 'draft', date: '10/01' }), /형식 오류/);
+  assert.throws(() => planActions({ mode: 'draft', date: '2026-02-30' }), /형식 오류/);
 });
 
 test('processDay: 노트당 텔레그램 1회, --no-send, 오너가 AI 칸을 고친 파일은 쓰지 않음', { skip: !existsSync(REG) }, async () => {
@@ -40,7 +41,7 @@ test('processDay: 노트당 텔레그램 1회, --no-send, 오너가 AI 칸을 �
     writeFileSync(join(vault, '20_Records/21_Notes/2026/2026-10-10 메모.md'), '---\ntype: "note"\ncategory: ["[[01_Home/700 자산]]"]\ndescription: "d"\nsensitivity: "일반"\ncreated: "2026-10-10"\nmodified: "2026-10-10"\noccurred: "x"\norigin: "y"\n---\n본문');
     const rules = parseRegistry(readFileSync(REG, 'utf8'));
     const sent = [];
-    const deps = { send: async (m) => { sent.push(m); }, summarize: async () => ({ summary: '- 요약', summaryStatus: 'ok', model: 'sonnet' }) };
+    const deps = { send: async (m) => { sent.push(m); }, fetchEvents: async () => null, summarize: async () => ({ summary: '- 요약', summaryStatus: 'ok', model: 'sonnet' }) };
     const run = (extra = {}) => processDay({ mode: 'draft', date: '2026-10-10', dryRun: false, noSend: false, rules, today: '2026-10-10', deps, ...extra });
     const path = join(vault, '10_Periodic/Daily/2026/2026-10-10.md');
 
@@ -53,6 +54,18 @@ test('processDay: 노트당 텔레그램 1회, --no-send, 오너가 AI 칸을 �
     await run({ mode: 'finalize' });
     assert.equal(sent.length, 1, '이미 보낸 노트는 확정 때 다시 보내지 않음');
     assert.match(readFileSync(path, 'utf8'), /dailyStatus: "확정"/);
+
+    deps.fetchEvents = async () => [{ calendar: '개인', title: '치과', start: '2026-10-10T10:00:00+09:00', end: '2026-10-10T11:00:00+09:00', allDay: false }];
+    await run({ mode: 'draft', noSend: true });
+    deps.fetchEvents = async () => { throw new Error('calendar offline'); };
+    assert.equal((await run({ mode: 'finalize', noSend: true })).failed, true);
+    assert.match(readFileSync(path, 'utf8'), /## 일정\n- 10:00–11:00 치과 · 개인/);
+    assert.match(readFileSync(path, 'utf8'), /dailyStatus: "확정"/);
+    assert.equal((await run({ mode: 'finalize', noSend: true, date: '2026-10-11' })).failed, true);
+    const retryPath = join(vault, '10_Periodic/Daily/2026/2026-10-11.md');
+    assert.match(readFileSync(retryPath, 'utf8'), /dailyStatus: "초안"/);
+    assert.match(readFileSync(retryPath, 'utf8'), /캘린더 조회 실패/);
+    assert.equal((await run({ mode: 'finalize', noSend: true, date: '2026-10-11', dryRun: true })).failed, true);
 
     writeFileSync(path, readFileSync(path, 'utf8').replace('- 요약', '- 오너가 고친 요약'));
     const before = readFileSync(path, 'utf8');
