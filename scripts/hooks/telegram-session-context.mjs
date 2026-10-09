@@ -20,7 +20,8 @@
  * 사용법(Claude Code SessionStart 훅 계약): stdin으로 JSON 받음(안 씀), stdout에
  * JSON({hookSpecificOutput:{hookEventName,additionalContext}}) 방출. 항상 exit 0.
  */
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL, vaultAbs, vaultYearFiles } from '../lib/vault-paths.mjs';
 import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -34,6 +35,24 @@ export function findLatestHandoffFilename(filenames) {
     || Number(a.includes(' 텔레그램')) - Number(b.includes(' 텔레그램'))).at(-1);
 }
 
+// 순수함수 — 세션에 주입할 컨텍스트. 입력 규칙 표(텔레그램 입력 형식 정본)는 인수인계 유무와 무관하게 항상 넣는다
+// (2026-10-10 오너 지시: 텔레그램 입력 규칙이 흩어져 누락되지 않게 — 채널 문서를 "읽으라"는 지시만으로는 보장되지 않는다).
+export function buildSessionContext({ inputRules = null, handoff = null, handoffName = null }) {
+  const parts = [];
+  if (inputRules) {
+    const rulesDoc = VAULT_REL.telegramInputRulesFile.replace(/\.md$/, '');
+    const detailDoc = rulesDoc.replace(/ 입력 규칙$/, '');
+    parts.push(`[텔레그램 입력 규칙] 오너 메시지는 아래 표(${rulesDoc})의 처리 순서대로 대조해 처리한다. `
+      + `세부 절차는 ${detailDoc}을 읽는다.\n\n` + inputRules.replace(/^---\n[\s\S]*?\n---\n/, '').trim());
+  }
+  if (handoff) {
+    parts.push(`[므네모시네 인수인계] 전날 텔레그램 세션 요약(${handoffName})을 자동으로 읽었다 — `
+      + '아래 내용을 참고해 오늘 대화를 이어가되, 오너가 먼저 묻지 않는 한 이 내용을 그대로 텔레그램에 '
+      + `요약해서 보내지는 마라(불필요한 알림 방지).\n\n${handoff}`);
+  }
+  return parts.join('\n\n---\n\n');
+}
+
 // 순수함수 — last-read 마커 State 파일 내용.
 export function buildLastReadMarker({ filename, readAt }) {
   return buildFrontmatter({ type: 'telegram-session-last-read', filename, readAt });
@@ -42,29 +61,27 @@ export function buildLastReadMarker({ filename, readAt }) {
 function main() {
   if (!process.env.CLAUDE_TELEGRAM_SESSION) { process.exit(0); }
 
+  let inputRules = null;
+  try { inputRules = readFileSync(vaultAbs(VAULT_REL.telegramInputRulesFile), 'utf8'); } catch { /* 없으면 인수인계만 */ }
+
   const files = vaultYearFiles(VAULT_PATHS.log.telegramSession);
   const latest = findLatestHandoffFilename(files.map((file) => file.split('/').at(-1)));
-  if (!latest) { process.exit(0); }
+  let content = null;
+  if (latest) {
+    try { content = readFileSync(files.find((file) => file.endsWith(`/${latest}`)), 'utf8'); } catch { content = null; }
+  }
+  if (!inputRules && !content) { process.exit(0); }
 
-  const filepath = files.find((file) => file.endsWith(`/${latest}`));
-  let content;
-  try {
-    content = readFileSync(filepath, 'utf8');
-  } catch {
-    process.exit(0);
+  if (content) {
+    try {
+      mkdirSync(vaultAbs(VAULT_REL.stateTelegramSession), { recursive: true });
+      writeAtomic(VAULT_PATHS.state.telegramSessionLastRead, buildLastReadMarker({ filename: latest, readAt: new Date().toISOString() }));
+    } catch {
+      // 마커 기록 실패해도 컨텍스트 주입 자체는 계속 — 부가 기능이 본 기능을 막으면 안 됨.
+    }
   }
 
-  const now = new Date().toISOString();
-  try {
-    mkdirSync(vaultAbs(VAULT_REL.stateTelegramSession), { recursive: true });
-    writeAtomic(VAULT_PATHS.state.telegramSessionLastRead, buildLastReadMarker({ filename: latest, readAt: now }));
-  } catch {
-    // 마커 기록 실패해도 컨텍스트 주입 자체는 계속 — 부가 기능이 본 기능을 막으면 안 됨.
-  }
-
-  const additionalContext = `[므네모시네 인수인계] 전날 텔레그램 세션 요약(${latest})을 자동으로 읽었다 — ` +
-    `아래 내용을 참고해 오늘 대화를 이어가되, 오너가 먼저 묻지 않는 한 이 내용을 그대로 텔레그램에 ` +
-    `요약해서 보내지는 마라(불필요한 알림 방지).\n\n${content}`;
+  const additionalContext = buildSessionContext({ inputRules, handoff: content, handoffName: latest });
 
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext },
@@ -72,4 +89,8 @@ function main() {
   process.exit(0);
 }
 
-main();
+// 직접 실행될 때만 main() — import(테스트)될 때 process.exit로 테스트 프로세스를 끝내지 않게(2026-10-10 발견:
+// 이전엔 import 즉시 exit(0)해서 이 파일의 테스트가 한 번도 실행되지 않았다). 훅 명령 경로가 임시 바로가기
+// (~/Stockproject/…)를 거칠 수 있어 realpath로 비교한다.
+const invokedPath = (() => { try { return realpathSync(process.argv[1] ?? ''); } catch { return null; } })();
+if (invokedPath && invokedPath === fileURLToPath(import.meta.url)) main();

@@ -14,6 +14,7 @@ export const VAULT_REL = {
   rootFilesBackup: '95_Etna/Jobs/RootFiles',
   telegramChannelFile: '90_Delphi/Channels/텔레그램.md',
   calendarOwnersFile: '90_Delphi/Config/캘린더 소유자.md',
+  telegramInputRulesFile: '90_Delphi/Channels/텔레그램 입력 규칙.md', // 텔레그램 입력 형식 정본 — 세션 시작 때 주입(2026-10-10)
   archivedAgentDefs: '80_Archive/agents-2026-10-08',
   stateHoldings: '95_Etna/Investing/Holdings',
   stateAllocation: '95_Etna/Investing/Allocation',

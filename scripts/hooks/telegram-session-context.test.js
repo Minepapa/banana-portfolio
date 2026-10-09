@@ -26,3 +26,16 @@ test('buildLastReadMarker: 파일명·읽은 시각이 frontmatter에 남음', (
   assert.match(content, /filename: "2026-08-28\.md"/);
   assert.match(content, /readAt: "2026-08-29T04:00:03\.000Z"/);
 });
+
+test('buildSessionContext: 입력 규칙 표는 인수인계 유무와 무관하게 들어가고 머리말은 뺀다', async () => {
+  const { buildSessionContext } = await import('./telegram-session-context.mjs');
+  const rules = '---\ntype: "channel-rule"\n---\n# 입력 규칙\n| 📜 | 메모 |';
+  const onlyRules = buildSessionContext({ inputRules: rules });
+  assert.match(onlyRules, /^\[텔레그램 입력 규칙\]/);
+  assert.match(onlyRules, /\| 📜 \| 메모 \|/);
+  assert.doesNotMatch(onlyRules, /channel-rule/);
+  const both = buildSessionContext({ inputRules: rules, handoff: '어제 요약', handoffName: '2026-10-09.md' });
+  assert.ok(both.indexOf('[텔레그램 입력 규칙]') < both.indexOf('[므네모시네 인수인계]'));
+  assert.match(both, /어제 요약/);
+  assert.equal(buildSessionContext({}), '');
+});
