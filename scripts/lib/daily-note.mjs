@@ -135,14 +135,18 @@ export function groupByCategory(records) {
   return [...groups].sort((a, b) => categoryOrder(a[0]) - categoryOrder(b[0]) || a[0].localeCompare(b[0]));
 }
 
-function aiSectionContents(records, summary, events) {
+function aiSectionContents(records, summary, events, eventGroups) {
   const recordLines = records.length
     ? groupByCategory(records).flatMap(([cat, items]) => [`### ${cat}`, ...items.map((r) => `- [[${r.link}|${r.title}]]${r.description ? ` — ${r.description}` : ''}`), ''])
     : ['(오늘 들어온 기록 없음)'];
   return {
     일정: events === null ? '(캘린더 미연결 — google-oauth-setup 필요)'
       : events === 'failed' ? '(캘린더 조회 실패 — 다음 실행에서 다시 시도)'
-        : events.length ? events.map(formatEventLine).join('\n') : '(일정 없음)',
+        : events.length ? (eventGroups
+          ? eventGroups.map(({ owner, events: ownerEvents }) => [
+            `**${owner}**`, ...ownerEvents.map((event) => formatEventLine(event, { owner, showCalendar: owner === '기타' })),
+          ].join('\n')).join('\n')
+          : events.map(formatEventLine).join('\n')) : '(일정 없음)',
     동선: '(위치 연동 전 — 5단계 3번에서 채운다)',
     '오늘 들어온 기록': recordLines.join('\n').replace(/\s+$/, ''),
     '오늘 생긴 할 일': '(캘린더·Tasks 연동 전 — 5단계 2번에서 채운다)',
@@ -151,8 +155,8 @@ function aiSectionContents(records, summary, events) {
 }
 
 // 데일리 노트를 만든다. prev(inspectExisting 결과)가 있으면 AI 칸만 바꾸고 나머지는 원문 그대로 둔다.
-export function renderDailyNote({ date, records, summary, status, model, summaryStatus, recordHash, today, telegramSentAt = null, prev = null, events = null }) {
-  const ai = aiSectionContents(records, summary, events);
+export function renderDailyNote({ date, records, summary, status, model, summaryStatus, recordHash, today, telegramSentAt = null, prev = null, events = null, eventGroups = null }) {
+  const ai = aiSectionContents(records, summary, events, eventGroups);
   const prevSections = prev?.sections ?? [];
   const keep = (title) => prevSections.find((s) => s.title === title)?.content;
   // 조회 실패·미연결 시 이전에 확인한 일정은 보존한다. 빈 일정이나 오류 문구는 정상 일정이 아니다.

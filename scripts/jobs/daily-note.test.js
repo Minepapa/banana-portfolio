@@ -55,7 +55,11 @@ test('processDay: 노트당 텔레그램 1회, --no-send, 오너가 AI 칸을 �
     assert.equal(sent.length, 1, '이미 보낸 노트는 확정 때 다시 보내지 않음');
     assert.match(readFileSync(path, 'utf8'), /dailyStatus: "확정"/);
 
-    deps.fetchEvents = async () => [{ calendar: '개인', title: '치과', start: '2026-10-10T10:00:00+09:00', end: '2026-10-10T11:00:00+09:00', allDay: false }];
+    deps.fetchEvents = async () => [{ calendarId: 'a@example.com', calendar: '개인', title: '치과', start: '2026-10-10T10:00:00+09:00', end: '2026-10-10T11:00:00+09:00', allDay: false }];
+    deps.readOwners = async () => [{ calendarId: 'a@example.com', owner: '나' }];
+    await run({ mode: 'draft', noSend: true });
+    assert.match(readFileSync(path, 'utf8'), /## 일정\n\*\*나\*\*\n- 10:00–11:00 치과/);
+    deps.readOwners = async () => { throw new Error('owners offline'); };
     await run({ mode: 'draft', noSend: true });
     deps.fetchEvents = async () => { throw new Error('calendar offline'); };
     assert.equal((await run({ mode: 'finalize', noSend: true })).failed, true);

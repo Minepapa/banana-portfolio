@@ -24,6 +24,7 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { isConfigured, getAccessToken } from '../lib/google-oauth.mjs';
 import { listEventsForKstDay } from '../lib/google-calendar.mjs';
+import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import {
   DAILY_SKIP_TOP, buildDailyTelegramBody, buildSummaryPrompt, hasNormalSchedule, inspectExisting, recordHashOf, renderDailyNote, sameIgnoringModified,
@@ -103,7 +104,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   const deps = { send: sendAgentMessage, summarize, write: writeAtomic, fetchEvents: async (day) => {
     if (!isConfigured()) return null;
     return listEventsForKstDay(day, { token: await getAccessToken() });
-  }, ...injected };
+  }, readOwners: () => parseCalendarOwners(readFileSync(vaultAbs(VAULT_REL.calendarOwnersFile), 'utf8')), ...injected };
   const path = notePath(date);
   const first = readOrNull(path);
   const inspected = inspectExisting(first);
@@ -119,8 +120,13 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   let events;
   try { events = await deps.fetchEvents(date); }
   catch (error) { events = 'failed'; console.error('  ❌ 캘린더 조회 실패:', error.message); }
+  let eventGroups = null;
+  if (Array.isArray(events) && events.length) {
+    try { eventGroups = groupEventsByOwner(events, await deps.readOwners()); }
+    catch (error) { console.warn('  ⚠️ 캘린더 소유자 대응표 읽기 실패:', error.message); }
+  }
   const statusOf = (prev) => mode === 'finalize' && (events !== 'failed' || hasNormalSchedule(prev)) ? '확정' : '초안';
-  const render = (prev) => renderDailyNote({ date, records, summary, status: statusOf(prev), model, summaryStatus, recordHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev, events });
+  const render = (prev) => renderDailyNote({ date, records, summary, status: statusOf(prev), model, summaryStatus, recordHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev, events, eventGroups });
 
   let note = render(inspected.prev);
   const rel = relative(VAULT_PATHS.root, path);

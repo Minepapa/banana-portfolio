@@ -6,7 +6,7 @@ const ev = { calendar: '개인', title: '<치과>', start: '2026-10-10T10:00:00+
 
 test('아침 일정과 생일, 저녁 내일 일정, 일정 없는 저녁 미발송', async () => {
   const sent = [];
-  const deps = { fetchEvents: async () => [ev], readPeople: async () => [{ name: '<민>', birthday: '1990-10-10' }, { name: '동생', birthday: '2000-10-14' }], send: async (message) => sent.push(message), now: () => new Date('2026-10-10T01:00:00Z') };
+  const deps = { fetchEvents: async () => [ev], readOwners: async () => { throw new Error('unavailable'); }, readPeople: async () => [{ name: '<민>', birthday: '1990-10-10' }, { name: '동생', birthday: '2000-10-14' }], send: async (message) => sent.push(message), now: () => new Date('2026-10-10T01:00:00Z') };
   const morning = await runBriefing({ deps });
   assert.equal(sent[0].agent, 'hermes');
   assert.equal(sent[0].topic, '아침 브리핑');
@@ -31,7 +31,7 @@ test('OAuth 미설정이면 조회와 발송 없이 종료', async () => {
 test('생일 파일 읽기 실패를 표시해 일정 브리핑은 발송한다', async () => {
   const sent = [];
   const result = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: {
-    fetchEvents: async () => [ev], readPeople: async () => { throw new Error('vault unavailable'); }, send: async (message) => sent.push(message),
+    fetchEvents: async () => [ev], readOwners: async () => { throw new Error('unavailable'); }, readPeople: async () => { throw new Error('vault unavailable'); }, send: async (message) => sent.push(message),
   } });
   assert.equal(result.sent, true);
   assert.equal(sent.length, 1);
@@ -54,4 +54,33 @@ test('자동 모드는 05~11시·18~23시만 실행한다', async () => {
   await runBriefing({ deps: { ...deps, now: () => new Date('2026-10-09T20:00:00Z') } }); // 05 KST
   await runBriefing({ deps: { ...deps, now: () => new Date('2026-10-10T09:00:00Z') } }); // 18 KST
   assert.equal(sent.length, 2);
+});
+
+test('소유자별 아침·저녁 일정, 빈 아침과 대응표 실패 폴백', async () => {
+  const sent = [];
+  const deps = {
+    fetchEvents: async () => [
+      { ...ev, calendarId: 'b@example.com', iCalUID: 'shared' },
+      { ...ev, calendarId: 'a@example.com', iCalUID: 'shared' },
+      { ...ev, calendarId: 'c@example.com', iCalUID: 'mine', title: '미네 일정' },
+    ],
+    readOwners: async () => [
+      { calendarId: 'a@example.com', owner: '나' },
+      { calendarId: 'b@example.com', owner: '휘영' },
+      { calendarId: 'c@example.com', owner: '미네' },
+    ],
+    readPeople: async () => [],
+    send: async (message) => sent.push(message),
+  };
+  const morning = await runBriefing({ mode: 'morning', date: '2026-10-10', deps });
+  assert.match(morning.body, /■ 나 — 오늘 일정\n- 10:00–11:00 &lt;치과&gt; \(A&amp;B\) \(나·휘영 함께\)/);
+  assert.doesNotMatch(morning.body, /■ 휘영 — 오늘 일정/);
+  assert.match(morning.body, /■ 미네 — 오늘 일정/);
+  const evening = await runBriefing({ mode: 'evening', date: '2026-10-11', deps });
+  assert.match(evening.body, /■ 나 — 내일 일정/);
+  const empty = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: { ...deps, fetchEvents: async () => [] } });
+  assert.match(empty.body, /■ 오늘 일정\n- 일정 없음/);
+  const fallback = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: { ...deps, readOwners: async () => { throw new Error('unavailable'); } } });
+  assert.match(fallback.body, /■ 오늘 일정\n- 10:00–11:00/);
+  assert.equal(sent.length, 4);
 });

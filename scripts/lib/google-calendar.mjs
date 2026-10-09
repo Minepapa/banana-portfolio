@@ -27,10 +27,12 @@ export async function listSelectedCalendars({ token, fetchImpl = fetch }) {
   return items.filter((item) => item.selected === true).map(({ id, summary, primary }) => ({ id, summary, primary: primary === true }));
 }
 
-export function normalizeEvent(raw, calendarSummary) {
+export function normalizeEvent(raw, calendarSummary, calendarId = null) {
   const allDay = !!raw.start?.date;
   return {
     calendar: calendarSummary,
+    calendarId,
+    iCalUID: raw.iCalUID ?? null,
     title: raw.summary || '(제목 없음)',
     start: raw.start?.dateTime ?? raw.start?.date ?? null,
     end: raw.end?.dateTime ?? raw.end?.date ?? null,
@@ -42,12 +44,15 @@ export function normalizeEvent(raw, calendarSummary) {
 const kstTime = (value) => new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(value));
 const oneLine = (value) => String(value).replace(/[\r\n\u2028\u2029]+/g, ' ');
 
-export function formatEventLine(ev) {
+export function formatEventLine(ev, { showCalendar = true, owner = null } = {}) {
   const startDay = new Date(Date.parse(ev.start) + 9 * 3_600_000).toISOString().slice(0, 10);
   const endDay = ev.end ? new Date(Date.parse(ev.end) + 9 * 3_600_000).toISOString().slice(0, 10) : startDay;
   const endLabel = endDay > startDay ? `(다음날) ${kstTime(ev.end)}` : kstTime(ev.end);
   const when = ev.allDay ? '종일' : `${kstTime(ev.start)}–${endLabel}`;
-  return `- ${when} ${oneLine(ev.title || '(제목 없음)')}${ev.location ? ` (${oneLine(ev.location)})` : ''} · ${oneLine(ev.calendar)}`;
+  const calendar = showCalendar && ev.calendar ? ` · ${oneLine(ev.calendar)}` : '';
+  const sharedOwner = owner ?? ev.owner;
+  const shared = sharedOwner && ev.sharedWith?.length ? ` (${[sharedOwner, ...ev.sharedWith].map(oneLine).join('·')} 함께)` : '';
+  return `- ${when} ${oneLine(ev.title || '(제목 없음)')}${ev.location ? ` (${oneLine(ev.location)})` : ''}${calendar}${shared}`;
 }
 
 export async function listEventsForKstDay(date, { token, fetchImpl = fetch, calendars } = {}) {
@@ -61,7 +66,7 @@ export async function listEventsForKstDay(date, { token, fetchImpl = fetch, cale
       token, fetchImpl,
       params: { timeMin: `${date}T00:00:00+09:00`, timeMax: `${nextKst}T00:00:00+09:00`, singleEvents: 'true', orderBy: 'startTime' },
     });
-    events.push(...items.filter((item) => item.status !== 'cancelled').map((item) => normalizeEvent(item, calendar.summary)));
+    events.push(...items.filter((item) => item.status !== 'cancelled').map((item) => normalizeEvent(item, calendar.summary, calendar.id)));
   }
   return events.sort((a, b) => Number(b.allDay) - Number(a.allDay) || Date.parse(a.start) - Date.parse(b.start) || String(a.start).localeCompare(String(b.start)));
 }

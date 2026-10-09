@@ -116,6 +116,16 @@ test('renderDailyNote: 일정 null/없음/있음/조회 실패와 오너 글 보
   assert.match(renderDailyNote({ ...args, events: 'failed' }), /캘린더 조회 실패 — 다음 실행에서 다시 시도/);
 });
 
+test('renderDailyNote: 소유자별 일정에는 굵은 소제목과 기타 캘린더명이 표시된다', () => {
+  const own = { calendar: '개인', title: '치과', start: '2026-10-10T10:00:00+09:00', end: '2026-10-10T11:00:00+09:00', allDay: false };
+  const other = { ...own, calendar: '기타 캘린더', title: '기타 일정' };
+  const note = renderDailyNote({ ...base, events: [own, other], eventGroups: [
+    { owner: '나', events: [own] }, { owner: '기타', events: [other] },
+  ] });
+  assert.match(note, /## 일정\n\*\*나\*\*\n- 10:00–11:00 치과\n\*\*기타\*\*\n- 10:00–11:00 기타 일정 · 기타 캘린더/);
+  assert.doesNotMatch(note, /### 나/);
+});
+
 test('캘린더 실패·미연결 때 이전 정상 일정과 aiHash를 유지한다', () => {
   const args = { ...base, records: [], events: [{ calendar: '개인', title: '치과', start: '2026-10-09T10:00:00+09:00', end: '2026-10-09T11:00:00+09:00', allDay: false }] };
   const original = renderDailyNote(args);

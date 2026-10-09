@@ -13,6 +13,7 @@ export const VAULT_REL = {
   // 루트(~/Pantheon) 파일 사본 — 어떤 git에도 속하지 않는 루트 파일을 볼트 git·암호화 백업에 태운다(이관 4-7).
   rootFilesBackup: '95_Etna/Jobs/RootFiles',
   telegramChannelFile: '90_Delphi/Channels/텔레그램.md',
+  calendarOwnersFile: '90_Delphi/Config/캘린더 소유자.md',
   archivedAgentDefs: '80_Archive/agents-2026-10-08',
   stateHoldings: '95_Etna/Investing/Holdings',
   stateAllocation: '95_Etna/Investing/Allocation',

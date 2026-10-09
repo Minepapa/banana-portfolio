@@ -52,3 +52,11 @@ test('다른 UTC offset으로 표현된 일정도 실제 시작 시각 순서로
   const events = await listEventsForKstDay('2026-10-10', { token: 'test', fetchImpl, calendars });
   assert.deepEqual(events.map((event) => event.title), ['먼저', '나중']);
 });
+
+test('정규화한 캘린더 ID와 UID, 공유 일정 표시', () => {
+  const event = normalizeEvent({ iCalUID: 'uid', summary: '가족 모임', start: { date: '2026-10-10' } }, '가족', 'a@example.com');
+  assert.equal(event.calendarId, 'a@example.com');
+  assert.equal(event.iCalUID, 'uid');
+  assert.equal(formatEventLine({ ...event, sharedWith: ['휘영'] }, { owner: '나', showCalendar: false }), '- 종일 가족 모임 (나·휘영 함께)');
+  assert.equal(formatEventLine({ ...event, owner: '나', sharedWith: ['휘영'] }, { showCalendar: false }), '- 종일 가족 모임 (나·휘영 함께)');
+});

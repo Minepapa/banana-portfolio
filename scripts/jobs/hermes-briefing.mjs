@@ -9,6 +9,7 @@ import { escapeHtml } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { isConfigured, getAccessToken } from '../lib/google-oauth.mjs';
 import { formatEventLine, listEventsForKstDay } from '../lib/google-calendar.mjs';
+import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
 
 const SENDER_AGENT = 'hermes';
 const kstParts = (now) => new Date(now.getTime() + 9 * 3_600_000).toISOString();
@@ -23,6 +24,10 @@ export function readPeople() {
     const fields = parseFrontmatter(readFileSync(join(root, name), 'utf8'));
     return { name: fields.name || fields.title || basename(name, '.md'), birthday: fields.birthday };
   });
+}
+
+export function readOwners() {
+  return parseCalendarOwners(readFileSync(vaultAbs(VAULT_REL.calendarOwnersFile), 'utf8'));
 }
 
 export function birthdayLines(date, people) {
@@ -56,8 +61,15 @@ export async function runBriefing({ mode, date, deps = {} } = {}) {
   const fetchEvents = deps.fetchEvents ?? (async (day) => listEventsForKstDay(day, { token: await getAccessToken() }));
   const events = await fetchEvents(targetDate);
   if (selectedMode === 'evening' && !events.length) return { skipped: true, reason: 'no-events' };
-  const lines = events.length ? events.map((event) => escapeHtml(formatEventLine(event))) : ['- 일정 없음'];
-  const sections = [`■ ${selectedMode === 'morning' ? '오늘 일정' : '내일 일정'}\n${lines.join('\n')}`];
+  const period = selectedMode === 'morning' ? '오늘 일정' : '내일 일정';
+  let groups = null;
+  if (events.length) {
+    try { groups = groupEventsByOwner(events, await (deps.readOwners ?? readOwners)()); }
+    catch (error) { console.warn('캘린더 소유자 대응표 읽기 실패:', error.message); }
+  }
+  const sections = groups
+    ? groups.map(({ owner, events: ownerEvents }) => `■ ${escapeHtml(owner)} — ${period}\n${ownerEvents.map((event) => escapeHtml(formatEventLine(event, { owner, showCalendar: owner === '기타' }))).join('\n')}`)
+    : [`■ ${period}\n${(events.length ? events.map((event) => escapeHtml(formatEventLine(event))) : ['- 일정 없음']).join('\n')}`];
   if (selectedMode === 'morning') {
     let birthday;
     try { birthday = birthdayLines(targetDate, await (deps.readPeople ?? readPeople)()); }
