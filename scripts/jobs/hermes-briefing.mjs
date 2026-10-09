@@ -3,7 +3,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
+import { VAULT_REL, VAULT_PATHS, vaultAbs } from '../lib/vault-paths.mjs';
+import { readCandidates, saveCandidates, readyCandidate, candidateVisitCount } from '../lib/place-candidates.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { escapeHtml } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
@@ -17,6 +18,7 @@ const nextDay = (date) => new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000)
 const validDate = (date) => /^\d{4}-\d{2}-\d{2}$/.test(date)
   && Number.isFinite(Date.parse(`${date}T00:00:00Z`))
   && new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) === date;
+const oneLineHtml = (value) => escapeHtml(String(value ?? '').replace(/[\r\n\u0085\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim());
 
 export function readPeople() {
   const root = vaultAbs(VAULT_REL.people);
@@ -45,7 +47,7 @@ export function birthdayLines(date, people) {
   });
 }
 
-export async function runBriefing({ mode, date, deps = {} } = {}) {
+export async function runBriefing({ mode, date, preview = false, deps = {} } = {}) {
   const now = deps.now?.() ?? new Date();
   const current = kstParts(now);
   const hour = Number(current.slice(11, 13));
@@ -66,7 +68,14 @@ export async function runBriefing({ mode, date, deps = {} } = {}) {
     events = [];
     calendarError = true;
   }
-  if (selectedMode === 'evening' && !events.length && !calendarError) return { skipped: true, reason: 'no-events' };
+  const today = current.slice(0, 10);
+  let candidates = [];
+  if (selectedMode === 'evening') {
+    try { candidates = await (deps.readCandidates ?? readCandidates)(VAULT_PATHS.root); }
+    catch (error) { console.warn('장소 후보 읽기 실패:', error.message); }
+  }
+  const requests = candidates.filter((candidate) => candidate.status === '관찰' && readyCandidate(candidate, today)).slice(0, 3);
+  if (selectedMode === 'evening' && !events.length && !calendarError && !requests.length) return { skipped: true, reason: 'no-events' };
   const period = selectedMode === 'morning' ? '오늘 일정' : '내일 일정';
   let groups = null;
   if (events.length) {
@@ -82,15 +91,24 @@ export async function runBriefing({ mode, date, deps = {} } = {}) {
     catch (error) { console.error('생일 정보 조회 실패:', error.message); birthday = ['- 생일 정보 조회 실패']; }
     if (birthday.length) sections.push(`■ 생일\n${birthday.join('\n')}`);
   }
+  if (requests.length) {
+    const lines = requests.map((candidate) => `- ${oneLineHtml(candidate.id)} · ${oneLineHtml(candidate.address || '미등록 장소')} 근처 · 최근 30일 ${candidateVisitCount(candidate, today)}회 방문${candidate.eventTitles.length ? ` · 일정: ${oneLineHtml(candidate.eventTitles.join(', '))}` : ''}`);
+    const exampleId = oneLineHtml(requests[0].id);
+    sections.push(`■ 장소 등록 요청\n${lines.join('\n')}\n<code>장소 ${exampleId} 이름</code>으로 답하면 등록, <code>장소 ${exampleId} 제외</code>`);
+  }
   const body = [`${selectedMode === 'morning' ? '아침 브리핑' : '내일 일정'} (${targetDate})`, ...sections].join('\n\n');
-  await (deps.send ?? sendAgentMessage)({ agent: SENDER_AGENT, kind: '정보', topic: selectedMode === 'morning' ? '아침 브리핑' : '내일 일정', body });
-  return { body, sent: true, alert: calendarError };
+  if (!preview) await (deps.send ?? sendAgentMessage)({ agent: SENDER_AGENT, kind: '정보', topic: selectedMode === 'morning' ? '아침 브리핑' : '내일 일정', body });
+  if (!preview && requests.length) {
+    for (const candidate of requests) { candidate.status = '물음'; candidate.askedAt = now.toISOString(); }
+    await (deps.saveCandidates ?? saveCandidates)(VAULT_PATHS.root, candidates);
+  }
+  return { body, sent: !preview, alert: calendarError };
 }
 
 export async function main(argv = process.argv.slice(2), deps = {}) {
   const args = Object.fromEntries(argv.map((value) => value.replace(/^--/, '').split('=')).map(([key, value]) => [key, value ?? true]));
   const noSend = args['dry-run'] === true || args['no-send'] === true;
-  const result = await runBriefing({ mode: args.mode, date: args.date, deps: noSend ? { ...deps, send: async () => {} } : deps });
+  const result = await runBriefing({ mode: args.mode, date: args.date, preview: noSend, deps });
   if (args['dry-run'] && result.body) console.log(result.body);
   if (result.alert) process.exitCode = 1;
 }

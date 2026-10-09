@@ -194,9 +194,11 @@ test('경로 상수는 고정된 옛 값의 매핑 결과와 같다', () => {
   for (const [key, old] of Object.entries(LEGACY_REL)) {
     assert.equal(VAULT_REL[key], mapLegacyPath(old).to, key);
   }
-  const current = Object.entries(VAULT_PATHS).filter(([key]) => key !== 'root')
+  const current = Object.entries(VAULT_PATHS).filter(([key]) => key !== 'root' && key !== 'location')
     .flatMap(([, value]) => flattenPaths(value));
   assert.equal(current.length, LEGACY_ABSOLUTE.length);
+  assert.equal(VAULT_PATHS.location.root, vaultAbs(VAULT_REL.location));
+  assert.equal(VAULT_PATHS.location.candidates, vaultAbs(VAULT_REL.locationCandidates));
   for (const [index, old] of LEGACY_ABSOLUTE.entries()) {
     assert.equal(current[index], vaultAbs(mapLegacyPath(old).to), old);
   }

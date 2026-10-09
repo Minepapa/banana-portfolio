@@ -47,6 +47,11 @@ export const VAULT_REL = {
   inboxRoot: '00_Inbox',
   periodicRoot: '10_Periodic',
   people: '30_Wiki/31_People', // 헤르메스 생일 브리핑 대상
+  places: '30_Wiki/32_Places',
+  location: '95_Etna/Location',
+  locationCandidates: '95_Etna/Location/place-candidates.json',
+  locationGeocodeCache: '95_Etna/Location/geocode-cache.json',
+  jobHealth: '95_Etna/Jobs/JobHealth',
   dailyNotes: '10_Periodic/Daily', // 데일리 노트(D85) — {YYYY}/YYYY-MM-DD.md
   // 등록부 lint 범위 밖 최상위 폴더: 보관본(원래 type 유지)·코드가 쓰는 기계 데이터·금고(내용을 읽지 않음)
   archiveRoot: '80_Archive',
@@ -93,6 +98,12 @@ export function vaultYearFiles(baseAbsDir) {
 
 export const VAULT_PATHS = {
   root: VAULT_ROOT,
+  location: {
+    root: vaultAbs(VAULT_REL.location),
+    candidates: vaultAbs(VAULT_REL.locationCandidates),
+    geocodeCache: vaultAbs(VAULT_REL.locationGeocodeCache),
+    places: vaultAbs(VAULT_REL.places),
+  },
   facts: {
     // Ledger는 이벤트 종류별로 하위폴더를 나눈다(2026-08-04 확정, 오너 요청) — 카카오
     // 알림이 파싱하는 6종(체결·배당·펀드매수·예수금앵커·환전 + 금현물)이 전부 같은

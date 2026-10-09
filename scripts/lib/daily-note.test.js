@@ -12,6 +12,29 @@ const recs = [
 ];
 const base = { date: '2026-10-09', records: recs, summary: '- 요약', status: '초안', model: 'sonnet', summaryStatus: 'ok', recordHash: 'h1', today: '2026-10-09' };
 
+test('동선 null·빈 배열·체류·실패 문구와 기존 오너 칸 보존', () => {
+  const original = renderDailyNote(base).replace('## 오늘 한 줄\n<!-- 오너가 쓰는 칸. AI는 이 칸을 고치지 않는다. -->', '## 오늘 한 줄\n내 기록');
+  const prev = inspectExisting(original).prev;
+  assert.match(renderDailyNote({ ...base, route: null }), /위치 연동 전/);
+  assert.match(renderDailyNote({ ...base, route: [] }), /위치 기록 없음/);
+  const routed = renderDailyNote({ ...base, route: [{ start: '08:10', end: '17:50', label: '회사' }], prev });
+  assert.match(routed, /- 08:10–17:50 회사/);
+  assert.match(routed, /sensitivity: "개인"/);
+  assert.match(routed, /## 오늘 한 줄\n내 기록/);
+  assert.equal(inspectExisting(routed).ok, true);
+  assert.match(renderDailyNote({ ...base, route: 'failed' }), /동선 계산 실패/);
+  assert.doesNotMatch(buildSummaryPrompt(base.date, recs), /회사/);
+  assert.doesNotMatch(buildDailyTelegramBody(base.date, recs, '- 요약'), /회사/);
+});
+
+test('외부 장소 라벨의 줄바꿈과 Markdown 기호가 데일리 칸을 나누지 못한다', () => {
+  const route = [{ start: '08:10', end: '09:00', label: '건물\r\n## 오늘 한 줄\u2028악성 <b>**값**</b>' }];
+  const rendered = renderDailyNote({ ...base, route });
+  assert.equal(inspectExisting(rendered).ok, true);
+  assert.match(rendered, /- 08:10–09:00 건물 \\#\\# 오늘 한 줄 악성 &lt;b&gt;\\\*\\\*값\\\*\\\*&lt;\/b&gt;/);
+  assert.equal((rendered.match(/^## 오늘 한 줄$/gm) || []).length, 1);
+});
+
 test('toDayRecord: created가 그날인 노트만, CRLF·BOM도 읽고, 카테고리 두 형식 모두', () => {
   const a = toDayRecord('20_Records/21_Notes/2026/2026-10-09 메모.md', note('type: "note"\ncategory: ["[[01_Home/201 미네]]"]\ndescription: "태권도"\nsensitivity: "개인"\ncreated: "2026-10-09"').replace(/\n/g, '\r\n'), '2026-10-09');
   assert.deepEqual([a.link, a.sensitivity, a.categories], ['20_Records/21_Notes/2026/2026-10-09 메모', '개인', ['201 미네']]);

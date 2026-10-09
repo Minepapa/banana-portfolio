@@ -36,6 +36,7 @@ export const JOB_LABELS = {
   'update-fund-holdings-from-purchases': `연금저축 VIP펀드 정기적립 매수를 ${VAULT_REL.stateHoldings} 보유수량·원금에 누적 반영(2026-09-04 신설 — 카카오 펀드적립 알림은 정확히 기록되고 있었는데 반영하는 잡 자체가 없었던 갭 해소)`,
   'update-cash-from-ledger': '계좌별(ISA·연금저축, API 없는 2계좌만) 예수금 실잔고 계산',
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
+  'owntracks-receiver': 'OwnTracks 위치 수신 서버(상시 프로세스)',
   'update-monthly-balance-snapshot': '월별 잔고 스냅샷(대시보드 막대그래프용) + 일별 불변 스냅샷(TWR·Sharpe·MDD 재계산용, 2026-09-04 신설) 매일 자동 기록',
   'weekly-report': '주간 리포트 자동 생성·발행(성향학습 파이프라인 동반)',
   // 2026-08-23 전수 재점검(오너 지시)에서 발견 — 아래 셋은 실제 launchd에 등록돼

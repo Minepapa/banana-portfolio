@@ -25,6 +25,9 @@ import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
 import { listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
+import { readDayPoints, detectStays, loadPlaces, describeStays } from '../lib/location-stays.mjs';
+import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
+import { updateCandidates } from '../lib/place-candidates.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import {
   DAILY_SKIP_TOP, buildDailyTelegramBody, buildSummaryPrompt, hasNormalSchedule, inspectExisting, recordHashOf, renderDailyNote, sameIgnoringModified,
@@ -81,6 +84,23 @@ export function collectRecords(root, date) {
 
 const notePath = (date) => join(vaultAbs(VAULT_REL.dailyNotes), date.slice(0, 4), `${date}.md`);
 const readOrNull = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null);
+const routeTime = (value, date) => Date.parse(value) === Date.parse(`${date}T00:00:00+09:00`) + 86_400_000
+  ? '24:00' : new Date(Date.parse(value) + 9 * 3_600_000).toISOString().slice(11, 16);
+export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = createCachedGeocoder({ root }), dryRun = false } = {}) {
+  // 자정 양쪽의 점을 함께 읽어 당일 첫/마지막 체류를 올바르게 자른다.
+  const dateMs = Date.parse(`${date}T00:00:00Z`);
+  const adjacentDates = [-1, 0, 1].map((offset) => new Date(dateMs + offset * 86_400_000).toISOString().slice(0, 10));
+  const dayReads = adjacentDates.map((day) => readDayPoints(day, { root }));
+  const points = dayReads.flatMap((result) => result.points);
+  const brokenLines = dayReads.reduce((sum, result) => sum + result.brokenLines, 0);
+  if (brokenLines) console.warn(`[daily-note] 위치 기록 손상 ${brokenLines}줄`);
+  let stays;
+  try { stays = await describeStays(detectStays(points, { date }), { places: loadPlaces(root), geocode: dryRun ? async () => ({ reason: 'dry-run' }) : geocode }); }
+  finally { if (!dryRun) await geocode.flush?.(); }
+  if (!dryRun && geocode.failureCount?.() > 0) console.warn(`[daily-note] 지오코딩 실패 ${geocode.failureCount()}건`);
+  return stays.map((stay) => ({ ...stay, start: routeTime(stay.start, date), end: routeTime(stay.end, date),
+    startAt: stay.start, endAt: stay.end }));
+}
 
 async function summarize(date, records, prevFields, recordHash, dryRun) {
   if (prevFields?.summaryStatus === 'ok' && prevFields?.recordHash === recordHash) return { reuse: true };
@@ -101,7 +121,7 @@ async function summarize(date, records, prevFields, recordHash, dryRun) {
 }
 
 export async function processDay({ mode, date, dryRun, noSend, rules, today, deps: injected = {} }) {
-  const deps = { send: sendAgentMessage, summarize, write: writeAtomic, fetchEvents: async (day) => {
+  const deps = { send: sendAgentMessage, summarize, write: writeAtomic, computeRoute, updateCandidates, fetchEvents: async (day) => {
     if (!isConfigured()) return null;
     return listEventsForKstDay(day, { token: await getAccessToken({ requiredScopes: CALENDAR_READ_SCOPES }) });
   }, readOwners: () => parseCalendarOwners(readFileSync(vaultAbs(VAULT_REL.calendarOwnersFile), 'utf8')), ...injected };
@@ -125,8 +145,13 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
     try { eventGroups = groupEventsByOwner(events, await deps.readOwners()); }
     catch (error) { console.warn('  ⚠️ 캘린더 소유자 대응표 읽기 실패:', error.message); }
   }
+  let route = null;
+  if (existsSync(VAULT_PATHS.location.root)) {
+    try { route = await deps.computeRoute(date, { dryRun }); }
+    catch (error) { route = 'failed'; console.error('  ❌ 동선 계산 실패:', String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
+  }
   const statusOf = (prev) => mode === 'finalize' && (events !== 'failed' || hasNormalSchedule(prev)) ? '확정' : '초안';
-  const render = (prev) => renderDailyNote({ date, records, summary, status: statusOf(prev), model, summaryStatus, recordHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev, events, eventGroups });
+  const render = (prev) => renderDailyNote({ date, records, summary, status: statusOf(prev), model, summaryStatus, recordHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev, events, eventGroups, route });
 
   let note = render(inspected.prev);
   const rel = relative(VAULT_PATHS.root, path);
@@ -143,25 +168,31 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
     const again2 = checkNote(rel, note, rules);
     if (again2.length) { console.error(`  ⛔ 등록부 위반으로 쓰지 않음: ${again2.join(' / ')}`); return { failed: true }; }
   }
+  let candidatesFailed = false;
+  if (mode === 'finalize' && statusOf(inspectExisting(note).prev) === '확정' && Array.isArray(route)) {
+    try { deps.updateCandidates({ date, stays: route.map((stay) => ({ ...stay, start: stay.startAt, end: stay.endAt })),
+      events: Array.isArray(events) ? events : [], root: VAULT_PATHS.root }); }
+    catch (error) { candidatesFailed = true; console.error('  ❌ 장소 후보 갱신 실패:', String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
+  }
   if (latest != null && sameIgnoringModified(latest, note)) console.log('  변경 없음 — 쓰지 않음');
   else { mkdirSync(dirname(path), { recursive: true }); deps.write(path, note); console.log(`  💾 ${rel} (${statusOf(inspectExisting(note).prev)})`); }
 
   const sentAt = inspectExisting(readOrNull(path)).prev?.fields?.telegramSentAt;
-  if (sentAt || noSend) return { failed: !!s.failed || events === 'failed' };
+  if (sentAt || noSend) return { failed: !!s.failed || events === 'failed', candidatesFailed };
   try {
     await deps.send({ agent: SENDER_AGENT, kind: '정보', topic: '데일리', body: buildDailyTelegramBody(date, records, summary, statusOf(inspectExisting(note).prev)) });
     console.log('  📨 클리오 데일리 요약 발송');
   } catch (e) {
     console.error('  ❌ 텔레그램 발송 실패:', e.message);
-    return { failed: true };
+    return { failed: true, candidatesFailed };
   }
   // 발송 기록 — AI 칸 지문은 머리말과 무관해 그대로 유효하다. 다시 읽어 그 사이 변경을 보존한다.
   const current = readOrNull(path);
   const fmEnd = current?.indexOf('\n---', 4) ?? -1;
-  if (!current || fmEnd < 0) { console.error('  ⚠️ 발송 기록을 남길 노트를 찾지 못함(다음 실행에서 다시 보낼 수 있음)'); return { failed: true }; }
+  if (!current || fmEnd < 0) { console.error('  ⚠️ 발송 기록을 남길 노트를 찾지 못함(다음 실행에서 다시 보낼 수 있음)'); return { failed: true, candidatesFailed }; }
   const head = current.slice(0, fmEnd).replace(/^(dailyStatus: .*)$/m, `$1\ntelegramSentAt: "${new Date().toISOString()}"`);
   deps.write(path, head + current.slice(fmEnd));
-  return { failed: !!s.failed || events === 'failed' };
+  return { failed: !!s.failed || events === 'failed', candidatesFailed };
 }
 
 async function main() {
