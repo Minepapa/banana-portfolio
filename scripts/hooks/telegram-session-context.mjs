@@ -41,9 +41,9 @@ export function buildSessionContext({ inputRules = null, handoff = null, handoff
   const parts = [];
   if (inputRules) {
     const rulesDoc = VAULT_REL.telegramInputRulesFile.replace(/\.md$/, '');
-    const detailDoc = rulesDoc.replace(/ 입력 규칙$/, '');
-    parts.push(`[텔레그램 입력 규칙] 오너 메시지는 아래 표(${rulesDoc})의 처리 순서대로 대조해 처리한다. `
-      + `세부 절차는 ${detailDoc}을 읽는다.\n\n` + inputRules.replace(/^---\n[\s\S]*?\n---\n/, '').trim());
+    const sessionDoc = VAULT_REL.telegramChannelFile.replace(/\.md$/, '');
+    parts.push(`[텔레그램 입력 규칙] 오너 메시지는 아래 문서(${rulesDoc})의 1절 처리 순서대로 대조하고 4절 세부 절차대로 처리한다. `
+      + `세션 자체의 규칙(구현 금지·재시작·답장 형식)은 ${sessionDoc}에 있다.\n\n` + inputRules.replace(/^---\n[\s\S]*?\n---\n/, '').trim());
   }
   if (handoff) {
     parts.push(`[므네모시네 인수인계] 전날 텔레그램 세션 요약(${handoffName})을 자동으로 읽었다 — `

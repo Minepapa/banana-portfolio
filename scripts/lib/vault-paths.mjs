@@ -12,7 +12,7 @@ export const VAULT_REL = {
   agentCharters: '90_Delphi/Agents',
   // 루트(~/Pantheon) 파일 사본 — 어떤 git에도 속하지 않는 루트 파일을 볼트 git·암호화 백업에 태운다(이관 4-7).
   rootFilesBackup: '95_Etna/Jobs/RootFiles',
-  telegramChannelFile: '90_Delphi/Channels/텔레그램.md',
+  telegramChannelFile: '90_Delphi/Channels/텔레그램 세션 운영 규칙.md', // 2026-10-10 '텔레그램'에서 개명
   calendarOwnersFile: '90_Delphi/Config/캘린더 소유자.md',
   telegramInputRulesFile: '90_Delphi/Channels/텔레그램 입력 규칙.md', // 텔레그램 입력 형식 정본 — 세션 시작 때 주입(2026-10-10)
   archivedAgentDefs: '80_Archive/agents-2026-10-08',
@@ -60,7 +60,7 @@ export const VAULT_REL = {
   adytonRoot: '99_Adyton',
   statusStandardFile: '90_Delphi/Schema/상태표준.md',
   jobCatalogFile: '90_Delphi/Schema/무인잡-카탈로그.md',
-  departmentReportFile: '90_Delphi/Channels/부서별-텔레그램-보고.md',
+  departmentReportFile: '90_Delphi/Channels/텔레그램 발신 카탈로그.md', // 2026-10-10 '부서별-텔레그램-보고'에서 개명
   mcpLossLogFile: '95_Etna/Jobs/mcp-loss-diagnostics.md',
   stateBreakoutPositions: '95_Etna/Investing/BreakoutPositions',
   stateBreakoutPendingEntries: '95_Etna/Investing/BreakoutPendingEntries',

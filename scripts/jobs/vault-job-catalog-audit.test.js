@@ -5,9 +5,9 @@
 //   1. sync-firestore-mirror·update-holdings-prices·update-allocation-from-holdings가
 //      2026-08-25에 30분→10분으로 단축됐는데 README.md엔 3주 가까이 "30분마다"로 잔존.
 //   2. daily-execution-report(2026-08-24 신설)가 weekly-schedule-summary.mjs의
-//      SCHEDULE 배열·부서별-텔레그램-보고.md 둘 다에서 누락.
+//      SCHEDULE 배열·텔레그램 발신 카탈로그 둘 다에서 누락.
 //   3~5. rebalance-proposal·quarterly-allocation-review·proposal-execution-reminder가
-//      신설 당시부터 부서별-텔레그램-보고.md에 한 번도 등록된 적 없음.
+//      신설 당시부터 텔레그램 발신 카탈로그에 한 번도 등록된 적 없음.
 // 5건 다 "코드는 맞게 배선했는데 Vault 문서 갱신을 빠뜨림" — health-watcher.test.js가
 // EXPECTED_INTERVALS_MS 누락을 막는 것과 정확히 같은 클래스의 실수다. 그 파일이 이미
 // 증명한 원칙("기억해서 채워넣기는 구조적으로 안 지켜진다, 테스트로 강제해야 한다")을
@@ -18,7 +18,7 @@
 //   ② StartInterval(분 단위) 스케줄인데 그 문서의 잡 행에 적힌 분 표기가
 //      실제 plist 값과 다른 경우(스케줄 변경 후 문서 미갱신)
 //   ③ 소스가 DEPARTMENT_LABEL을 정의(오너에게 부서 라벨로 텔레그램을 보낼 수 있다는 뜻)
-//      하는데 부서별-텔레그램-보고.md에 그 스크립트 파일명이 전혀 안 보이는 경우
+//      하는데 텔레그램 발신 카탈로그에 그 스크립트 파일명이 전혀 안 보이는 경우
 // 안 잡는 것(의도적 범위 밖): launchd로 안 도는 이벤트 스크립트(process-telegram-
 // reply.mjs 등, run.sh 디스패치 밖), StartCalendarInterval 스케줄의 숫자 검증(요일·
 // 날짜 조합이 자유서술 문장과 1:1 대응이 안 돼 신뢰성 있게 파싱 불가 — 대신 ①로
@@ -83,6 +83,7 @@ function documentedAgentFor(deptDoc, filename) {
   let section = '';
   for (const line of deptDoc.split('\n')) {
     if (line.startsWith('## ')) section = line;
+    if (section.startsWith('## 주기적 발신 한눈에 보기')) continue; // 요약표(담당 절 아님)는 대조하지 않는다
     if (line.startsWith('|') && line.includes(`\`${filename}\``)) {
       const englishName = section.match(/(Athena|Kairos|Themis|Hermes|Apollo|Plutus|Clio|Zeus)$/)?.[1];
       return englishName?.toLowerCase() ?? '(부서 표기 불명)';
@@ -99,7 +100,7 @@ function catalogRowForJob(catalog, job) {
   ));
 }
 
-// 부서별-텔레그램-보고.md 표에서 "**주기적**"이면서 보고시점에 "분기"·"매월"·"매년"이
+// 텔레그램 발신 카탈로그 표에서 "**주기적**"이면서 보고시점에 "분기"·"매월"·"매년"이
 // 없는(=매주 반복되는) 행의 스크립트 파일명만 뽑는다. 분기 단위 잡(rebalance-proposal·
 // quarterly-allocation-review)·월 단위 잡(pension-balance-reminder, 2026-09-04
 // 신설, monthly-macro-tilt-proposal, 2026-09-06 신설)·연 단위 잡(annual-instrument-
@@ -144,14 +145,14 @@ test('vault-job-catalog-audit: StartInterval(분 단위) 잡은 무인잡-카탈
   assert.deepEqual(mismatched, [], `무인잡-카탈로그.md 분 표기가 plist와 다른 잡: ${mismatched.join('; ')}`);
 });
 
-test('vault-job-catalog-audit: SENDER_AGENT를 정의하는 잡은 전부 부서별-텔레그램-보고.md에 파일명이 있어야 함(신규 발신처 누락 방지)', { skip: !CAN_RUN }, () => {
+test('vault-job-catalog-audit: SENDER_AGENT를 정의하는 잡은 전부 텔레그램 발신 카탈로그에 파일명이 있어야 함(신규 발신처 누락 방지)', { skip: !CAN_RUN }, () => {
   const deptDoc = readFileSync(DEPT_DOC_PATH, 'utf8');
   const jobs = listDispatchedJobs();
   const missing = jobs
     .filter(({ scriptPath }) => isDepartmentFacing(scriptPath))
     .map(({ scriptPath }) => basename(scriptPath))
     .filter((filename) => !deptDoc.includes(filename));
-  assert.deepEqual(missing, [], `부서별-텔레그램-보고.md에 없는 발신처: ${missing.join(', ')} — 해당 부서 표에 행을 추가할 것`);
+  assert.deepEqual(missing, [], `텔레그램 발신 카탈로그에 없는 발신처: ${missing.join(', ')} — 해당 부서 표에 행을 추가할 것`);
 });
 
 test('vault-job-catalog-audit: 발신 잡의 SENDER_AGENT와 볼트 보고 카탈로그 부서가 일치', { skip: !CAN_RUN }, () => {
@@ -163,14 +164,33 @@ test('vault-job-catalog-audit: 발신 잡의 SENDER_AGENT와 볼트 보고 카�
     const documented = documentedAgentFor(deptDoc, filename);
     return documented && documented !== agent ? [`${filename}: 코드=${agent}, 볼트=${documented}`] : [];
   });
-  assert.deepEqual(mismatches, [], `부서별-텔레그램-보고.md 표기 불일치(문서는 사람이 수정):\n${mismatches.join('\n')}`);
+  assert.deepEqual(mismatches, [], `텔레그램 발신 카탈로그 표기 불일치(문서는 사람이 수정):\n${mismatches.join('\n')}`);
 });
 
-test('vault-job-catalog-audit: 부서별-텔레그램-보고.md의 "매주" 주기적 발신처는 전부 weekly-schedule-summary.mjs SCHEDULE 배열에도 있어야 함(daily-execution-report 누락 재발 방지)', { skip: !CAN_RUN }, () => {
+test('vault-job-catalog-audit: 텔레그램 발신 카탈로그의 "매주" 주기적 발신처는 전부 weekly-schedule-summary.mjs SCHEDULE 배열에도 있어야 함(daily-execution-report 누락 재발 방지)', { skip: !CAN_RUN }, () => {
   const deptDoc = readFileSync(DEPT_DOC_PATH, 'utf8');
   const weeklyPeriodic = listWeeklyPeriodicSenders(deptDoc);
-  assert.ok(weeklyPeriodic.length > 0, '부서별-텔레그램-보고.md 파싱이 깨졌을 가능성 — 매주 주기적 발신처가 하나도 안 뽑힘');
+  assert.ok(weeklyPeriodic.length > 0, '텔레그램 발신 카탈로그 파싱이 깨졌을 가능성 — 매주 주기적 발신처가 하나도 안 뽑힘');
   const scheduledScripts = new Set(SCHEDULE.map((s) => s.script));
   const missing = weeklyPeriodic.filter((script) => !scheduledScripts.has(script));
   assert.deepEqual(missing, [], `weekly-schedule-summary.mjs SCHEDULE 배열에 없는 주기적 발신처: ${missing.join(', ')} — SCHEDULE 배열에 항목을 추가할 것(분기 단위 잡은 의도적으로 제외 대상)`);
+});
+
+// 2026-10-10: 발신 카탈로그의 "주기적 발신 한눈에 보기" 표(사람이 읽는 사본)가 SCHEDULE 정본과 어긋나지 않게 한다.
+// 이 표는 예전 6건 그대로 옛 부서명(운영실·투자전략실 등)이 남은 채 방치됐었다(오너 지적).
+function readWeeklySummaryTable(deptDoc) {
+  const start = deptDoc.indexOf('## 주기적 발신 한눈에 보기');
+  if (start < 0) return null;
+  const end = deptDoc.indexOf('\n## ', start + 1);
+  return deptDoc.slice(start, end < 0 ? undefined : end).split('\n')
+    .filter((line) => /^\|\s*(매일|평일|주말|일요일|월요일|화요일|수요일|목요일|금요일|토요일)\s*\|/.test(line))
+    .map((line) => line.split('|').map((cell) => cell.trim()))
+    .map((cells) => `${cells[1]} ${cells[2]} ${cells[5].match(/`([a-zA-Z0-9_-]+\.mjs)`/)?.[1] ?? '?'}`);
+}
+
+test('vault-job-catalog-audit: 발신 카탈로그 "주기적 발신 한눈에 보기" 표는 SCHEDULE(요일·시각·발신처)과 정확히 같아야 함', { skip: !CAN_RUN }, () => {
+  const rows = readWeeklySummaryTable(readFileSync(DEPT_DOC_PATH, 'utf8'));
+  assert.ok(rows, '"## 주기적 발신 한눈에 보기" 절이 없음');
+  const expected = SCHEDULE.map((s) => `${s.day} ${s.time} ${s.script}`).sort();
+  assert.deepEqual([...rows].sort(), expected, '발신 카탈로그 요약표를 weekly-schedule-summary.mjs SCHEDULE과 맞출 것(요일·시각·발신처)');
 });
