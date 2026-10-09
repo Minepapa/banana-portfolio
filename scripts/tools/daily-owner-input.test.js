@@ -54,13 +54,13 @@ test('addOwnerInput: 노트가 없으면 미리 만들고 쓰며, dry-run은 아
   let prepared = 0;
   const prepare = async (date) => { prepared += 1; files.set(io.pathOf(date), base.replaceAll('2026-10-10', date)); return { failed: false }; };
   const now = at('2026-10-10T22:40:00Z'); // KST 10-11 07:40
-  assert.match(await addOwnerInput({ kind: '메모', text: 'x' }, { ...io, prepare, now, dryRun: true }), /dry-run/);
+  assert.match(await addOwnerInput({ kind: '한줄', text: 'x' }, { ...io, prepare, now, dryRun: true }), /dry-run/);
   assert.equal(files.size, 0);
   assert.equal(prepared, 0);
-  assert.equal(await addOwnerInput({ kind: '메모', text: '아침 메모' }, { ...io, prepare, now }), '메모 추가(2026-10-11 07:40)');
-  assert.equal(prepared, 1);
-  assert.match(files.get(io.pathOf('2026-10-11')), /- 07:40 아침 메모/);
   assert.equal(await addOwnerInput({ kind: '한줄', text: '좋은 날' }, { ...io, prepare, now }), '오늘 한 줄 저장(2026-10-11)');
+  assert.equal(prepared, 1);
+  assert.match(files.get(io.pathOf('2026-10-11')), /## 오늘 한 줄\n좋은 날\n/);
+  await assert.rejects(addOwnerInput({ kind: '메모', text: 'x' }, { ...io, prepare, now }), /📜/, '메모는 📜 → Inbox 경로');
   assert.match(await addOwnerInput({ kind: '한줄', text: '더 좋은 날' }, { ...io, prepare, now }), /이전 한 줄을 바꿈/);
   await assert.rejects(addOwnerInput({ kind: '기타', text: 'x' }, { ...io, prepare, now }), /kind/);
 });

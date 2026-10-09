@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// 데일리 노트 오너 칸 입력(2026-10-10) — 텔레그램 세션이 "한 줄: …"·"메모: …"를 받으면 표준입력 JSON으로 부른다.
-//   echo '{"kind":"한줄","text":"오늘은 …"}' | node scripts/tools/daily-owner-input.mjs --json=-
-//   echo '{"kind":"메모","text":"…"}'       | node scripts/tools/daily-owner-input.mjs --json=- [--dry-run]
+// 데일리 노트 "오늘 한 줄" 입력(2026-10-10) — 텔레그램 세션이 "🪶 …" 메시지를 받으면 표준입력 JSON으로 부른다.
+//   echo '{"kind":"한줄","text":"오늘은 …"}' | node scripts/tools/daily-owner-input.mjs --json=- [--dry-run]
+// 메모는 이 도구가 아니라 📜 → 00_Inbox(inbox-memo.mjs, D40)다. "오너 메모" 칸은 Obsidian에서 직접 쓰는 칸으로만 둔다
+// (같은 메모가 두 길로 흩어지지 않게, 2026-10-10 오너 결정).
 // - 날짜: KST 지금 기준. 05시 전이면 전날 노트(아직 하루를 마감하기 전 회고로 본다). {"date":"YYYY-MM-DD"}로 지정 가능.
 // - 노트가 없으면 데일리 잡의 미리 만들기(prepare)로 먼저 만든다.
 // - 오너 칸 줄만 바꾸고 AI 칸 지문(aiHash)이 그대로인지 확인한 뒤 쓴다(데일리 잡이 다음 실행에서 계속 갱신할 수 있게).
@@ -14,7 +15,7 @@ import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 
-const KINDS = { 한줄: '오늘 한 줄', 메모: '오너 메모' };
+const KINDS = { 한줄: '오늘 한 줄' };
 const kstClock = (now) => new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(11, 16);
 
 export function targetDate(now, explicit) {
@@ -32,7 +33,7 @@ export async function addOwnerInput(input, {
   rules = parseRegistry(readFileSync(vaultAbs(VAULT_REL.registryFile), 'utf8')), pathOf = notePath,
 } = {}) {
   const section = KINDS[input?.kind];
-  if (!section) throw new Error('kind는 "한줄" 또는 "메모"');
+  if (!section) throw new Error('kind는 "한줄"만 지원(메모는 📜 → inbox-memo.mjs)');
   const date = targetDate(now, input.date);
   const path = pathOf(date);
   let before = read(path);
