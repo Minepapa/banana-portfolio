@@ -12,6 +12,7 @@ const displayVaultRoot = VAULT_ROOT.startsWith(`${homedir()}/`)
   ? `~${VAULT_ROOT.slice(homedir().length)}` : VAULT_ROOT;
 export const JOB_LABELS = {
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
+  'vault-offsite-backup': '매일 00:20 Vault 암호화 외부 백업',
   'question-digest': '비긴급 질문 하루 두 번(09:00·19:00) 담당별 묶음 발송',
   'daily-note': '데일리 노트 23:30 초안(클리오 요약 발송)·05:00 확정',
   'hermes-briefing': '헤르메스 개인 일정 브리핑 07:30 오늘·21:00 내일(내일 일정 있을 때만)',

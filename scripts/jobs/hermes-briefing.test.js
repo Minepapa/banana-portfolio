@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { birthdayLines, runBriefing } from './hermes-briefing.mjs';
+import { birthdayLines, main, runBriefing } from './hermes-briefing.mjs';
 
 const ev = { calendar: '개인', title: '<치과>', start: '2026-10-10T10:00:00+09:00', end: '2026-10-10T11:00:00+09:00', allDay: false, location: 'A&B' };
 
@@ -22,10 +22,30 @@ test('아침 일정과 생일, 저녁 내일 일정, 일정 없는 저녁 미발
   assert.equal(sent.length, 2);
 });
 
-test('OAuth 미설정이면 조회와 발송 없이 종료', async () => {
-  const result = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: { isConfigured: () => false, send: () => { throw new Error('sent'); } } });
-  assert.equal(result.reason, 'unconfigured');
+test('OAuth 미설정이어도 생일과 일정 연결 경고를 발송한다', async () => {
+  const sent = [];
+  const result = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: { isConfigured: () => false, readPeople: async () => [{ name: '민', birthday: '1990-10-10' }], send: async (message) => sent.push(message) } });
+  assert.equal(result.alert, true);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].body, /- 캘린더 연결 확인 필요\(google-oauth-setup\)/);
+  assert.match(sent[0].body, /오늘: 민\(36살\)/);
   assert.deepEqual(birthdayLines('2026-10-10', [{ name: '빈값', birthday: '' }]), []);
+});
+
+test('일정 조회 권한 실패여도 저녁 연결 경고를 발송한다', async () => {
+  const sent = [];
+  const result = await runBriefing({ mode: 'evening', date: '2026-10-11', deps: { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, send: async (message) => sent.push(message) } });
+  assert.equal(result.alert, true);
+  assert.match(sent[0].body, /- 캘린더 연결 확인 필요\(google-oauth-setup\)/);
+});
+
+test('브리핑 CLI는 일정 권한 실패 경보를 종료 코드 1로 표시한다', async () => {
+  const original = process.exitCode;
+  try {
+    process.exitCode = 0;
+    await main(['--mode=morning', '--date=2026-10-10'], { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, readPeople: async () => [], send: async () => {} });
+    assert.equal(process.exitCode, 1);
+  } finally { process.exitCode = original; }
 });
 
 test('생일 파일 읽기 실패를 표시해 일정 브리핑은 발송한다', async () => {

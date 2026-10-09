@@ -7,7 +7,7 @@ import { VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { escapeHtml } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
-import { isConfigured, getAccessToken } from '../lib/google-oauth.mjs';
+import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
 import { formatEventLine, listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
 
@@ -54,13 +54,19 @@ export async function runBriefing({ mode, date, deps = {} } = {}) {
   if (!['morning', 'evening'].includes(selectedMode)) throw new Error(`--mode는 morning 또는 evening: ${selectedMode}`);
   const targetDate = date ?? (selectedMode === 'morning' ? current.slice(0, 10) : nextDay(current.slice(0, 10)));
   if (!validDate(targetDate)) throw new Error(`--date 형식 오류: ${targetDate}`);
-  if (!(deps.isConfigured ?? isConfigured)() && !deps.fetchEvents) {
-    console.log('캘린더 미연결 — google-oauth-setup 필요');
-    return { skipped: true, reason: 'unconfigured' };
+  const fetchEvents = deps.fetchEvents ?? (async (day) => {
+    if (!(deps.isConfigured ?? isConfigured)()) throw new Error('캘린더 미연결 — google-oauth-setup 필요');
+    return listEventsForKstDay(day, { token: await getAccessToken({ requiredScopes: CALENDAR_READ_SCOPES }) });
+  });
+  let events;
+  let calendarError = false;
+  try { events = await fetchEvents(targetDate); }
+  catch (error) {
+    console.error('캘린더 조회 실패:', error.message);
+    events = [];
+    calendarError = true;
   }
-  const fetchEvents = deps.fetchEvents ?? (async (day) => listEventsForKstDay(day, { token: await getAccessToken() }));
-  const events = await fetchEvents(targetDate);
-  if (selectedMode === 'evening' && !events.length) return { skipped: true, reason: 'no-events' };
+  if (selectedMode === 'evening' && !events.length && !calendarError) return { skipped: true, reason: 'no-events' };
   const period = selectedMode === 'morning' ? '오늘 일정' : '내일 일정';
   let groups = null;
   if (events.length) {
@@ -69,7 +75,7 @@ export async function runBriefing({ mode, date, deps = {} } = {}) {
   }
   const sections = groups
     ? groups.map(({ owner, events: ownerEvents }) => `■ ${escapeHtml(owner)} — ${period}\n${ownerEvents.map((event) => escapeHtml(formatEventLine(event, { owner, showCalendar: owner === '기타' }))).join('\n')}`)
-    : [`■ ${period}\n${(events.length ? events.map((event) => escapeHtml(formatEventLine(event))) : ['- 일정 없음']).join('\n')}`];
+    : [`■ ${period}\n${calendarError ? '- 캘린더 연결 확인 필요(google-oauth-setup)' : (events.length ? events.map((event) => escapeHtml(formatEventLine(event))) : ['- 일정 없음']).join('\n')}`];
   if (selectedMode === 'morning') {
     let birthday;
     try { birthday = birthdayLines(targetDate, await (deps.readPeople ?? readPeople)()); }
@@ -78,14 +84,15 @@ export async function runBriefing({ mode, date, deps = {} } = {}) {
   }
   const body = [`${selectedMode === 'morning' ? '아침 브리핑' : '내일 일정'} (${targetDate})`, ...sections].join('\n\n');
   await (deps.send ?? sendAgentMessage)({ agent: SENDER_AGENT, kind: '정보', topic: selectedMode === 'morning' ? '아침 브리핑' : '내일 일정', body });
-  return { body, sent: true };
+  return { body, sent: true, alert: calendarError };
 }
 
-async function main() {
-  const args = Object.fromEntries(process.argv.slice(2).map((value) => value.replace(/^--/, '').split('=')).map(([key, value]) => [key, value ?? true]));
+export async function main(argv = process.argv.slice(2), deps = {}) {
+  const args = Object.fromEntries(argv.map((value) => value.replace(/^--/, '').split('=')).map(([key, value]) => [key, value ?? true]));
   const noSend = args['dry-run'] === true || args['no-send'] === true;
-  const result = await runBriefing({ mode: args.mode, date: args.date, deps: noSend ? { send: async () => {} } : {} });
+  const result = await runBriefing({ mode: args.mode, date: args.date, deps: noSend ? { ...deps, send: async () => {} } : deps });
   if (args['dry-run'] && result.body) console.log(result.body);
+  if (result.alert) process.exitCode = 1;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main().catch((error) => { console.error('헤르메스 브리핑 실패:', error.message); process.exitCode = 1; });

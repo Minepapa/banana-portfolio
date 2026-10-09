@@ -1,5 +1,29 @@
 const API = 'https://www.googleapis.com/calendar/v3';
 
+export const pantheonEventBody = (event) => ({ ...event, extendedProperties: { private: { pantheon: '1', source: 'telegram' } } });
+
+export async function insertEvent(event, { token, fetchImpl = fetch } = {}) {
+  const response = await fetchImpl(`${API}/calendars/primary/events`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(pantheonEventBody(event)),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new Error(`Google Calendar 등록 실패 (HTTP ${response.status})`);
+  return response.json();
+}
+
+export async function deleteOwnEvent(id, { token, fetchImpl = fetch } = {}) {
+  if (!id || typeof id !== 'string') throw new Error('일정 ID 필요');
+  const url = `${API}/calendars/primary/events/${encodeURIComponent(id)}`;
+  const headers = { Authorization: `Bearer ${token}` };
+  const current = await fetchImpl(url, { headers, signal: AbortSignal.timeout(15000) });
+  if (!current.ok) throw new Error(`Google Calendar 조회 실패 (HTTP ${current.status})`);
+  const event = await current.json();
+  if (event.extendedProperties?.private?.pantheon !== '1') throw new Error('판테온이 등록한 일정만 삭제 가능');
+  const response = await fetchImpl(url, { method: 'DELETE', headers, signal: AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error(`Google Calendar 삭제 실패 (HTTP ${response.status})`);
+}
+
 async function getPages(path, { token, fetchImpl = fetch, params = {} }) {
   const items = [];
   let pageToken;

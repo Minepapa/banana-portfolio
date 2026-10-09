@@ -22,7 +22,7 @@ import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
-import { isConfigured, getAccessToken } from '../lib/google-oauth.mjs';
+import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
 import { listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
@@ -103,7 +103,7 @@ async function summarize(date, records, prevFields, recordHash, dryRun) {
 export async function processDay({ mode, date, dryRun, noSend, rules, today, deps: injected = {} }) {
   const deps = { send: sendAgentMessage, summarize, write: writeAtomic, fetchEvents: async (day) => {
     if (!isConfigured()) return null;
-    return listEventsForKstDay(day, { token: await getAccessToken() });
+    return listEventsForKstDay(day, { token: await getAccessToken({ requiredScopes: CALENDAR_READ_SCOPES }) });
   }, readOwners: () => parseCalendarOwners(readFileSync(vaultAbs(VAULT_REL.calendarOwnersFile), 'utf8')), ...injected };
   const path = notePath(date);
   const first = readOrNull(path);

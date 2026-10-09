@@ -5,7 +5,7 @@ import { chmodSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'nod
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { clientPath, loadClient, OAUTH_SCOPES, tokenPath } from '../lib/google-oauth.mjs';
+import { clientPath, hasRequiredScopes, loadClient, OAUTH_SCOPES, tokenPath } from '../lib/google-oauth.mjs';
 
 export function authorizationUrl({ clientId, redirectUri, state, challenge }) {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -13,13 +13,14 @@ export function authorizationUrl({ clientId, redirectUri, state, challenge }) {
   return url;
 }
 
-export function saveRefreshToken(refreshToken, path = tokenPath()) {
+export function saveRefreshToken(refreshToken, scope, path = tokenPath()) {
+  if (!hasRequiredScopes(scope)) throw new Error('권한 범위 부족 — google-oauth-setup 다시 실행');
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
   const temporary = join(dir, `.google-oauth-token-${randomBytes(8).toString('hex')}.tmp`);
   try {
-    writeFileSync(temporary, JSON.stringify({ refresh_token: refreshToken }) + '\n', { mode: 0o600, flag: 'wx' });
+    writeFileSync(temporary, JSON.stringify({ refresh_token: refreshToken, scope }) + '\n', { mode: 0o600, flag: 'wx' });
     renameSync(temporary, path);
   } catch (error) {
     try { unlinkSync(temporary); } catch { /* rename 성공 전후 모두 원래 오류를 유지한다. */ }
@@ -67,7 +68,7 @@ export async function setup({ fetchImpl = fetch, openBrowser = (url) => spawn('o
     });
     const token = await response.json();
     if (!response.ok || !token.refresh_token) throw new Error(`OAuth 토큰 교환 실패 (${String(token.error || response.status).replace(/[^a-zA-Z0-9_-]/g, '')})`);
-    const path = saveRefreshToken(token.refresh_token);
+    const path = saveRefreshToken(token.refresh_token, token.scope);
     console.log(`연결 완료(이메일 범위 없음, 저장 위치: ${path})`);
   } finally { server.close(); }
 }
