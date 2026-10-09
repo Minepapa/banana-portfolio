@@ -75,6 +75,7 @@ function requiredFields(requiredCell) {
 }
 
 export const EXTRA_FIELDS_FROM = '2026-10-08';
+export const FOLDER_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 export function parseRegistry(markdown) {
   const section = markdown.split(/^## 3\. /m)[0];
@@ -126,6 +127,9 @@ function hasField(content, field) {
 // 반환: 위반 목록(빈 배열이면 통과). 검사 범위는 등록부 3절의 1~4번 중 구조 항목(type·경로·제목·필수 필드 존재).
 // 허용값 검사는 기존 vault-integrity-audit(상태표준)가 맡는다.
 export function checkNote(relPath, content, rules) {
+  // 폴더 이름은 영문·숫자·밑줄·하이픈만(D35 — 코드 경로·유니코드 정규화 사고 방지). 노트 제목은 한글 가능.
+  const badFolder = relPath.split('/').slice(0, -1).find((seg) => !FOLDER_NAME_RE.test(seg));
+  if (badFolder) return [`폴더 이름 규칙 위반(D35: 영문·숫자·밑줄·하이픈만): "${badFolder}"`];
   if (relPath.startsWith(`${VAULT_REL.inboxRoot}/`)) return []; // 사람(폰·옵시디언) 입력 — 클리오 ingest가 머리말을 채운다(등록부 3절)
   const fm = parseFlatFrontmatter(content.replace(/^\uFEFF/, '')) ?? {};
   const name = relPath.split('/').pop().replace(/\.md$/, '');

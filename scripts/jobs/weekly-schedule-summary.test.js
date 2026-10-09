@@ -6,7 +6,7 @@ import { buildExecutionModeState, MODE_LIVE, MODE_SHADOW } from '../lib/shadow-m
 import { buildProposalModeState, MODE_ALLOWED, MODE_BLOCKED } from '../lib/proposal-mode.mjs';
 
 test('SCHEDULE: 주기적 보고와 정기 보호주문 대조가 포함되고 이벤트기반은 제외된다', () => {
-  assert.equal(SCHEDULE.length, 9);
+  assert.equal(SCHEDULE.length, 10); // 2026-10-09 daily-note(매일 23:30 클리오) 추가
   assert.ok(SCHEDULE.some((s) => s.script === 'reconcile-breakout-protection.mjs'));
 });
 

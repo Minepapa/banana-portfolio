@@ -20,3 +20,9 @@ test('buildArgs: appendSystemPrompt 있으면 --append-system-prompt 추가', ()
 test('buildArgs: appendSystemPrompt 빈 문자열이면 추가 안 함(폴백 시 systemPrompt="")', () => {
   assert.deepEqual(buildArgs('P', 'sonnet', 'Read', { appendSystemPrompt: '' }), BASE);
 });
+
+test('buildArgs: tools 옵션은 --tools로 넘기고(빈 문자열 = 도구 전부 끔), 생략하면 붙이지 않는다', () => {
+  const off = buildArgs('p', 'sonnet', 'Read', { tools: '' });
+  assert.deepEqual(off.slice(-2), ['--tools', '']);
+  assert.ok(!buildArgs('p', 'sonnet', 'Read').includes('--tools'));
+});

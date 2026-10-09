@@ -18,7 +18,9 @@ export const HEADLESS_NOTE = `
 // (agent-loader.mjs)의 본문을 시스템 프롬프트에 '추가'한다 — --system-prompt(전체 교체)가
 // 아니라 --append-system-prompt 를 쓰는 이유: 기본 시스템 프롬프트의 동작을 보존하고
 // 도메인 페르소나만 보태기 위함. 잡의 -p 태스크 프롬프트(결정론 사실·출력 계약)는 불변.
-export function buildArgs(prompt, model, allowedTools, { appendSystemPrompt } = {}) {
+// tools(선택): 사용 가능한 내장 도구 목록 자체를 정한다. ''이면 도구를 모두 끈다(요약처럼 도구가 필요 없는 호출용 —
+// bypassPermissions에서는 allowedTools가 제한 효과가 없을 수 있어, 읽기·실행을 확실히 막으려면 이걸 쓴다).
+export function buildArgs(prompt, model, allowedTools, { appendSystemPrompt, tools } = {}) {
   const args = [
     '-p', prompt,
     '--permission-mode', 'bypassPermissions',
@@ -27,6 +29,7 @@ export function buildArgs(prompt, model, allowedTools, { appendSystemPrompt } = 
     '--output-format', 'text',
   ];
   if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt);
+  if (tools !== undefined) args.push('--tools', tools);
   return args;
 }
 

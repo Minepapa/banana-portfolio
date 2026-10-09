@@ -73,3 +73,11 @@ test('checkNote: 00_Inbox는 검사하지 않고, BOM이 있어도 머리말을 
   const ok = `\uFEFF${fm({ type: 'note', ...C, created: '"2026-10-09"', occurred: '"x"', origin: '"y"' })}`;
   assert.deepEqual(checkNote('20_Records/21_Notes/2026/2026-10-09 메모.md', ok, rules), []);
 });
+
+test('checkNote: 한글·공백이 든 폴더는 D35 위반(제목은 한글 가능)', () => {
+  const rules = parseRegistry(REGISTRY);
+  const ok = fm({ type: 'note', ...C, created: '"2026-10-09"', occurred: '"x"', origin: '"y"' });
+  assert.match(checkNote('40_Projects/데일리 노트/x.md', ok, rules).join(), /폴더 이름 규칙 위반.*데일리 노트/);
+  assert.match(checkNote('00_Inbox/폰 메모/x.md', '본문', rules).join(), /폴더 이름 규칙 위반/);
+  assert.deepEqual(checkNote('20_Records/21_Notes/2026/2026-10-09 한글 제목.md', ok, rules), []);
+});
