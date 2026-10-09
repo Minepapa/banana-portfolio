@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
@@ -53,4 +53,76 @@ test('등록중 상태의 같은 좌표 노트는 재시도에서 등록으로 �
   assert.throws(() => registerPlace({ candidate: 'C3', exclude: true }, { root, rules }), /진행 중/);
   assert.match(registerPlace({ candidate: 'C3', name: '운동장' }, { root, rules }), /등록/);
   assert.equal(readCandidates(root)[0].status, '등록');
+});
+
+const hereNow = new Date('2026-10-08T15:10:00Z'); // KST 2026-10-09 00:10
+const hereOptions = (root, extra = {}) => ({ root, rules, now: hereNow, geocode: async () => ({ address: '테스트 주소' }), ...extra });
+function writePoints(root, date, agesMinutes = [2, 4, 6], offsets = [0, 0.00001, -0.00001]) {
+  const directory = join(root, VAULT_REL.location, date.slice(0, 4));
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, `${date}.jsonl`), agesMinutes.map((age, index) => JSON.stringify({
+    lat: 12 + offsets[index], lon: 34, tst: Math.floor(hereNow.getTime() / 1000) - age * 60, acc: 20,
+  })).join('\n') + '\n');
+}
+
+test('현재 위치 등록은 어제 점도 읽고 KST 날짜를 기록하며 근처 후보를 정리한다', async (t) => {
+  const root = fixture(t);
+  const candidates = readCandidates(root);
+  candidates.push({ ...candidates[0], id: 'C4', status: '관찰' });
+  saveCandidates(root, candidates);
+  writePoints(root, '2026-10-08');
+  let lookups = 0;
+  const output = await registerPlace({ here: true, name: '회사' }, hereOptions(root, {
+    geocode: async () => { lookups += 1; return { address: '테스트 주소' }; },
+  }));
+  assert.equal(output, '회사 등록(현재 위치, 주소: 테스트 주소)');
+  assert.equal(lookups, 1);
+  const note = readFileSync(join(root, VAULT_REL.places, '회사.md'), 'utf8');
+  assert.match(note, /created: "2026-10-09"/);
+  assert.match(note, /# 회사\n\n테스트 주소 · 등록 2026-10-09\(현재 위치\)/);
+  assert.deepEqual(readCandidates(root).map((candidate) => candidate.status), ['등록', '등록']);
+});
+
+test('현재 위치는 부족하거나 오래된 점과 이동 중인 점을 거부한다', async (t) => {
+  const root = fixture(t);
+  writePoints(root, '2026-10-09', [2, 4]);
+  await assert.rejects(registerPlace({ here: true, name: '회사' }, hereOptions(root)), /최근 위치가 부족함/);
+  writePoints(root, '2026-10-09', [31, 32, 33]);
+  await assert.rejects(registerPlace({ here: true, name: '회사' }, hereOptions(root)), /최근 위치가 부족함/);
+  writePoints(root, '2026-10-09', [2, 4, 6], [0, 0.005, -0.005]);
+  await assert.rejects(registerPlace({ here: true, name: '회사' }, hereOptions(root)), /이동 중/);
+  assert.equal(existsSync(join(root, VAULT_REL.places)), false);
+});
+
+test('현재 위치 이름과 입력 조합을 검증하고 등록 장소 근처를 거부한다', async (t) => {
+  const root = fixture(t);
+  writePoints(root, '2026-10-09');
+  await assert.rejects(registerPlace({ here: true, name: 'bad/name' }, hereOptions(root)), /이름 형식/);
+  assert.throws(() => registerPlace({ candidate: 'C3', here: true, name: '회사' }, hereOptions(root)), /함께/);
+  registerPlace({ candidate: 'C3', name: '기존 장소' }, { root, rules });
+  await assert.rejects(registerPlace({ here: true, name: '회사' }, hereOptions(root)), /이미 등록된 장소 근처: 기존 장소/);
+});
+
+test('현재 위치 dry-run은 지오코딩과 파일 쓰기를 생략한다', async (t) => {
+  const root = fixture(t);
+  writePoints(root, '2026-10-09');
+  const before = readCandidates(root);
+  const output = await registerPlace({ here: true, name: '회사' }, hereOptions(root, {
+    dryRun: true, geocode: () => { throw new Error('called'); },
+  }));
+  assert.match(output, /주소: 주소 미조회.*dry-run/);
+  assert.equal(existsSync(join(root, VAULT_REL.places)), false);
+  assert.deepEqual(readCandidates(root), before);
+});
+
+test('지오코딩 실패에도 주소 미조회로 등록하고 checkNote 실패 시 후보를 유지한다', async (t) => {
+  const root = fixture(t);
+  writePoints(root, '2026-10-09');
+  await assert.rejects(registerPlace({ here: true, name: '회사' }, hereOptions(root, { rules: [] })), /등록부 위반/);
+  assert.equal(readCandidates(root)[0].status, '물음');
+  const output = await registerPlace({ here: true, name: '회사' }, hereOptions(root, {
+    geocode: async () => { throw new Error('offline'); },
+  }));
+  assert.match(output, /주소: 주소 미조회/);
+  assert.match(readFileSync(join(root, VAULT_REL.places, '회사.md'), 'utf8'), /주소 미조회 · 등록/);
 });
