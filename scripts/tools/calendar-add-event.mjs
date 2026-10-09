@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { fileURLToPath } from 'node:url';
-import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { getAccessToken, CALENDAR_WRITE_SCOPES } from '../lib/google-oauth.mjs';
 import { insertEvent, pantheonEventBody } from '../lib/google-calendar.mjs';
 
@@ -71,7 +71,8 @@ export function buildEvent(argv, jsonInput) {
   return { event, dryRun: args.dryRun };
 }
 
-export async function main(argv = process.argv.slice(2), { readStdin = () => readFile(0, 'utf8'), getToken = getAccessToken, createEvent = insertEvent } = {}) {
+// 표준입력은 동기 readFileSync(0)로 읽는다 — fs/promises.readFile은 fd 번호를 받지 않는다(2026-10-09 실측).
+export async function main(argv = process.argv.slice(2), { readStdin = async () => readFileSync(0, 'utf8'), getToken = getAccessToken, createEvent = insertEvent } = {}) {
   const jsonInput = argv.includes('--json=-') ? await readStdin() : undefined;
   const { event, dryRun } = buildEvent(argv, jsonInput);
   if (dryRun) { console.log(JSON.stringify(pantheonEventBody(event), null, 2)); return; }

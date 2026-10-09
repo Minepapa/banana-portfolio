@@ -55,3 +55,13 @@ test('캘린더 등록은 소유 표시를 쓰고 표시 없는 일정은 삭제
   assert.equal(calls.filter((call) => call.options.method === 'DELETE').length, 0);
   await deleteOwnEvent('event', { token: 'fake', fetchImpl: async () => ({ ok: true, json: async () => ({ extendedProperties: { private: { pantheon: '1' } } }) }) });
 });
+
+test('실제 프로세스: --json=- 표준입력을 읽어 --dry-run 본문을 만든다(주입 없는 기본 경로)', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const tool = new URL('./calendar-add-event.mjs', import.meta.url).pathname;
+  const r = spawnSync('node', [tool, '--json=-', '--dry-run'], {
+    input: JSON.stringify({ title: '시험 "따옴표" $(echo x)', start: '2026-10-20T10:00' }), encoding: 'utf8',
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /시험 \\"따옴표\\" \$\(echo x\)/);
+});
