@@ -17,6 +17,8 @@ const SECTION_ORDER = ['오늘 한 줄', ...AI_SECTIONS, '오너 메모'];
 const MANAGED_KEYS = new Set(['type', 'category', 'description', 'sensitivity', 'created', 'modified', 'dailyStatus', 'model',
   'recordCount', 'recordHash', 'aiHash', 'summaryStatus', 'telegramSentAt']);
 const OWNER_HINT = '<!-- 오너가 쓰는 칸. AI는 이 칸을 고치지 않는다. -->';
+// 05:00에 미리 만든 노트(prepare)의 아직 채우지 않은 AI 칸 문구 — 23:30 초안이 채운다.
+export const PENDING_TEXT = '(저녁 23:30에 채움)';
 export const PROMPT_VERSION = 'v1';
 
 // 기록 수집에서 빼는 최상위 폴더: 데일리 자신·보관본·기계 데이터·금고·규칙(델포이)·홈(분류 노트)
@@ -154,6 +156,7 @@ function aiSectionContents(records, summary, events, eventGroups, route) {
           ].join('\n')).join('\n')
           : events.map(formatEventLine).join('\n')) : '(일정 없음)',
     동선: route === null ? '(위치 연동 전 — 5단계 3번에서 채운다)'
+      : route === 'pending' ? PENDING_TEXT
       : route === 'failed' ? '(동선 계산 실패 — 다음 실행에서 다시 시도)'
         : route.length ? route.map((stay) => `- ${stay.start}–${stay.end} ${safeRouteLabel(stay.label)}`).join('\n') : '(위치 기록 없음)',
     '오늘 들어온 기록': recordLines.join('\n').replace(/\s+$/, ''),
@@ -182,7 +185,7 @@ export function renderDailyNote({ date, records, summary, status, model, summary
     category: categories.map((c) => `[[${VAULT_REL.homeDir}/${c}]]`),
     description: `${date} 데일리 — 들어온 기록 ${records.length}개`,
     sensitivity: records.some((r) => r.sensitivity === '개인') || /^- (?:종일|\d{2}:\d{2})/m.test(ai.일정)
-      || /^- /m.test(ai.동선) ? '개인' : '일반',
+      || /^- /m.test(ai.동선) || hasOwnerText(ordered) ? '개인' : '일반',
     created: prev?.fields?.created ?? date,
     modified: today,
     dailyStatus: status,
@@ -199,6 +202,56 @@ export function renderDailyNote({ date, records, summary, status, model, summary
   const preamble = prev ? prev.preamble.replace(/^\s*\n/, '').replace(/\s+$/, '') : `# ${date}`; // 앞뒤 빈 줄 정리(실행마다 늘지 않게)
   const body = [preamble, '', ...ordered.flatMap((s) => [`## ${s.title}`, s.content, ''])].join('\n');
   return `${fmText}\n${body}`;
+}
+
+// 오너 칸(오늘 한 줄·오너 메모)에 안내 문구 말고 실제 글이 있는가 — 있으면 노트를 개인 등급으로 둔다.
+export function hasOwnerText(sections) {
+  return OWNER_SECTIONS.some((title) => {
+    const content = sections.find((s) => s.title === title)?.content ?? '';
+    return content.replace(OWNER_HINT, '').trim() !== '';
+  });
+}
+
+// 텔레그램 등으로 받은 오너 글을 오너 칸 하나에만 넣는다(순수). 그 칸의 줄만 바꾸고 나머지 바이트는 그대로 둔다.
+// - section '오늘 한 줄': 칸 내용을 text 한 줄로 바꾼다(이전 글은 previous로 돌려줘 호출측이 알리게 한다).
+// - section '오너 메모': `- HH:MM text` 한 줄을 칸 끝에 더한다(안내 문구는 지운다).
+// 줄바꿈은 공백으로 접고, 줄 머리의 `#`·코드 울타리는 이스케이프해 칸 경계를 깨지 못하게 한다.
+export function setOwnerSection(content, { section, text, time = null }) {
+  if (!OWNER_SECTIONS.includes(section)) throw new Error(`오너 칸이 아님: ${section}`);
+  const clean = String(text ?? '').replace(/[\r\n\u0085\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!clean) throw new Error('빈 내용');
+  if (clean.length > 1000) throw new Error('내용이 너무 김(1000자 이하)');
+  const safe = clean.replace(/^(#|```|~~~)/, '\\$1');
+  const source = lf(content);
+  const { fmRaw } = splitNote(source);
+  const fields = fmRaw != null ? parseFrontmatter(`---\n${fmRaw}\n---\n`) ?? {} : {};
+  if (fields.type !== 'daily') throw new Error('데일리 노트가 아님');
+  const lines = source.split('\n');
+  // 머리말 다음부터 칸 제목 줄을 찾는다(코드 블록 안 제외, 같은 이름은 첫 칸만 — parseSections와 같은 규칙).
+  const bodyStart = source.startsWith('---\n') ? lines.indexOf('---', 1) + 1 : 0;
+  let fence = null;
+  let start = -1;
+  let end = lines.length;
+  for (let i = bodyStart; i < lines.length; i += 1) {
+    const f = lines[i].match(/^\s*(```|~~~)/)?.[1];
+    if (f) fence = fence === f ? null : (fence ?? f);
+    const heading = !fence && !f ? lines[i].match(/^## (.+?)\s*$/)?.[1] : null;
+    if (heading == null) continue;
+    if (start < 0 && heading === section) start = i;
+    else if (start >= 0) { end = i; break; }
+  }
+  if (start < 0) throw new Error(`"${section}" 칸을 찾지 못함`);
+  const old = lines.slice(start + 1, end);
+  while (old.length && old.at(-1).trim() === '') old.pop();
+  const oldText = old.filter((line) => line.trim() !== OWNER_HINT).join('\n').trim();
+  let next;
+  if (section === '오늘 한 줄') next = [safe];
+  else next = [...old.filter((line) => line.trim() !== OWNER_HINT), `- ${time ? `${time} ` : ''}${safe}`];
+  const rebuilt = [...lines.slice(0, start + 1), ...next, ...(end < lines.length ? [''] : []), ...lines.slice(end)];
+  let out = rebuilt.join('\n');
+  if (end === lines.length && !out.endsWith('\n')) out += '\n';
+  out = out.replace(/^sensitivity: .*$/m, 'sensitivity: "개인"');
+  return { content: out, previous: section === '오늘 한 줄' && oldText ? oldText : null };
 }
 
 // 내용 비교용 — modified 줄만 다른 경우는 같은 노트로 본다(불필요한 쓰기·LiveSync 충돌 줄이기).

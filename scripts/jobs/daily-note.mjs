@@ -31,7 +31,7 @@ import { updateCandidates } from '../lib/place-candidates.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import {
   DAILY_SKIP_TOP, buildDailyTelegramBody, buildSummaryPrompt, hasNormalSchedule, inspectExisting, recordHashOf, renderDailyNote, sameIgnoringModified,
-  sanitizeSummary, toDayRecord,
+  PENDING_TEXT, sanitizeSummary, toDayRecord,
 } from '../lib/daily-note.mjs';
 
 const SENDER_AGENT = 'clio'; // 데일리 요약(D85) — 기록 담당
@@ -43,10 +43,11 @@ export const kstDate = (d) => new Date(d.getTime() + 9 * 3600_000).toISOString()
 const kstHour = (d) => Number(new Date(d.getTime() + 9 * 3600_000).toISOString().slice(11, 13));
 
 // 실행할 일 목록(순수). 명시 --mode/--date가 있으면 그것 하나만.
-export function planActions({ mode, date, now = new Date(), noteStatus = () => null }) {
+// prepare(2026-10-10): 오너가 밤에 잠들기 전에도 "오늘 한 줄"을 쓸 수 있게, 18시 전 실행(05:00)에서 그날 노트가 없으면 미리 만든다.
+export function planActions({ mode, date, now = new Date(), noteStatus = () => null, noteExists = () => false }) {
   if (mode || date) {
     const m = mode ?? 'draft';
-    if (!['draft', 'finalize'].includes(m)) throw new Error(`--mode는 draft 또는 finalize: ${m}`);
+    if (!['draft', 'finalize', 'prepare'].includes(m)) throw new Error(`--mode는 draft·finalize·prepare 중 하나: ${m}`);
     const d = date ?? (m === 'draft' ? kstDate(now) : kstDate(new Date(now.getTime() - 24 * 3600_000)));
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !Number.isFinite(Date.parse(`${d}T00:00:00Z`)) || new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) !== d) throw new Error(`--date 형식 오류: ${d}`);
     return [{ mode: m, date: d }];
@@ -56,6 +57,7 @@ export function planActions({ mode, date, now = new Date(), noteStatus = () => n
   const actions = [];
   if (yesterday >= DAILY_START && noteStatus(yesterday) !== '확정') actions.push({ mode: 'finalize', date: yesterday });
   if (kstHour(now) >= 18) actions.push({ mode: 'draft', date: today });
+  else if (today >= DAILY_START && !noteExists(today)) actions.push({ mode: 'prepare', date: today });
   return actions;
 }
 
@@ -82,7 +84,7 @@ export function collectRecords(root, date) {
   return records.sort((a, b) => a.link.localeCompare(b.link));
 }
 
-const notePath = (date) => join(vaultAbs(VAULT_REL.dailyNotes), date.slice(0, 4), `${date}.md`);
+export const notePath = (date) => join(vaultAbs(VAULT_REL.dailyNotes), date.slice(0, 4), `${date}.md`);
 const readOrNull = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null);
 const routeTime = (value, date) => Date.parse(value) === Date.parse(`${date}T00:00:00+09:00`) + 86_400_000
   ? '24:00' : new Date(Date.parse(value) + 9 * 3_600_000).toISOString().slice(11, 16);
@@ -127,13 +129,16 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   }, readOwners: () => parseCalendarOwners(readFileSync(vaultAbs(VAULT_REL.calendarOwnersFile), 'utf8')), ...injected };
   const path = notePath(date);
   const first = readOrNull(path);
+  if (mode === 'prepare' && first != null) { console.log(`  ℹ️ ${date}: 노트가 이미 있음 — 미리 만들기 건너뜀`); return { failed: false }; }
   const inspected = inspectExisting(first);
   if (!inspected.ok) { console.error(`  ⛔ ${date}: ${inspected.reason} — 쓰지 않음`); return { failed: true }; }
   const records = collectRecords(VAULT_PATHS.root, date);
   const recordHash = recordHashOf(records);
   console.log(`[daily-note] ${mode} ${date} — 기록 ${records.length}개${dryRun ? ' (dry-run)' : ''}`);
   const prevFields = inspected.prev?.fields;
-  const s = await deps.summarize(date, records, prevFields, recordHash, dryRun);
+  // 미리 만들기는 LLM 요약을 부르지 않는다(23:30 초안이 채운다).
+  const s = mode === 'prepare' ? { summary: PENDING_TEXT, summaryStatus: 'pending', model: '없음' }
+    : await deps.summarize(date, records, prevFields, recordHash, dryRun);
   const summary = s.reuse ? (inspected.prev.sections.find((x) => x.title === 'AI 하루 요약')?.content ?? '') : s.summary;
   const summaryStatus = s.reuse ? prevFields.summaryStatus : s.summaryStatus;
   const model = s.reuse ? prevFields.model : s.model;
@@ -146,7 +151,8 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
     catch (error) { console.warn('  ⚠️ 캘린더 소유자 대응표 읽기 실패:', error.message); }
   }
   let route = null;
-  if (existsSync(VAULT_PATHS.location.root)) {
+  if (mode === 'prepare') route = 'pending';
+  else if (existsSync(VAULT_PATHS.location.root)) {
     try { route = await deps.computeRoute(date, { dryRun }); }
     catch (error) { route = 'failed'; console.error('  ❌ 동선 계산 실패:', String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
   }
@@ -178,7 +184,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   else { mkdirSync(dirname(path), { recursive: true }); deps.write(path, note); console.log(`  💾 ${rel} (${statusOf(inspectExisting(note).prev)})`); }
 
   const sentAt = inspectExisting(readOrNull(path)).prev?.fields?.telegramSentAt;
-  if (sentAt || noSend) return { failed: !!s.failed || events === 'failed', candidatesFailed };
+  if (sentAt || noSend || mode === 'prepare') return { failed: !!s.failed || events === 'failed', candidatesFailed };
   try {
     await deps.send({ agent: SENDER_AGENT, kind: '정보', topic: '데일리', body: buildDailyTelegramBody(date, records, summary, statusOf(inspectExisting(note).prev)) });
     console.log('  📨 클리오 데일리 요약 발송');
@@ -200,7 +206,7 @@ async function main() {
   const dryRun = args['dry-run'] === true;
   const now = new Date();
   const noteStatus = (date) => inspectExisting(readOrNull(notePath(date))).prev?.fields?.dailyStatus ?? null;
-  const actions = planActions({ mode: args.mode, date: args.date, now, noteStatus });
+  const actions = planActions({ mode: args.mode, date: args.date, now, noteStatus, noteExists: (date) => existsSync(notePath(date)) });
   if (!actions.length) { console.log('ℹ️ 할 일 없음(어제 확정 완료, 초안 시각 아님)'); return; }
   const rules = parseRegistry(readFileSync(vaultAbs(VAULT_REL.registryFile), 'utf8'));
   let failed = false;
