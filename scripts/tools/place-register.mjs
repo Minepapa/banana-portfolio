@@ -6,7 +6,7 @@ import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { readCandidates, saveCandidates } from '../lib/place-candidates.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
-import { readDayPoints, haversineM, loadPlaces, matchPlace } from '../lib/location-stays.mjs';
+import { readDayPoints, haversineM, loadPlaces, matchPlace, STAY_RADIUS_M } from '../lib/location-stays.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -30,7 +30,7 @@ function prepareNote({ name, lat, lon, address, body, root, rules, today, allowS
   const description = address ? `${address} 근처 장소` : `${name} 장소`;
   const content = buildFrontmatter({ type: 'place', category: `[[${VAULT_REL.homeDir}/100 나]]`, description,
     sensitivity: '개인', sources: [], status: '초안', model: 'place-register', created: today, modified: today,
-    lat: Number(lat.toFixed(5)), lon: Number(lon.toFixed(5)), radius: 150 }) + `# ${name}\n\n${body}\n`;
+    lat: Number(lat.toFixed(5)), lon: Number(lon.toFixed(5)), radius: STAY_RADIUS_M }) + `# ${name}\n\n${body}\n`;
   const problems = checkNote(`${VAULT_REL.places}/${name}.md`, content, rules);
   if (problems.length) throw new Error(`등록부 위반: ${problems.join(' / ')}`);
   return { path, content };
@@ -45,7 +45,7 @@ async function registerHere(name, { root, dryRun, rules, today, now, geocode }) 
   }
   const center = { lat: points.reduce((sum, point) => sum + point.lat, 0) / points.length,
     lon: points.reduce((sum, point) => sum + point.lon, 0) / points.length };
-  if (points.some((point) => haversineM(point, center) > 150)) throw new Error('이동 중이라 현재 위치를 등록할 수 없습니다');
+  if (points.some((point) => haversineM(point, center) > STAY_RADIUS_M)) throw new Error('이동 중이라 현재 위치를 등록할 수 없습니다');
   const registered = matchPlace(center, loadPlaces(root));
   if (registered) throw new Error(`이미 등록된 장소 근처: ${registered.name}`);
 
@@ -66,7 +66,7 @@ async function registerHere(name, { root, dryRun, rules, today, now, geocode }) 
     const candidates = readCandidates(root);
     let changed = false;
     for (const candidate of candidates) {
-      if (['관찰', '물음'].includes(candidate.status) && haversineM(candidate, center) <= 150) {
+      if (['관찰', '물음'].includes(candidate.status) && haversineM(candidate, center) <= STAY_RADIUS_M) {
         candidate.status = '등록';
         changed = true;
       }

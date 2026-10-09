@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { haversineM } from './location-stays.mjs';
+import { haversineM, STAY_RADIUS_M } from './location-stays.mjs';
 import { writeAtomic } from './state-writer.mjs';
 import { VAULT_REL } from './vault-paths.mjs';
 
@@ -27,7 +27,7 @@ export function readyCandidate(candidate, date) {
 export function updateCandidates({ date, stays, events = [], root, dryRun = false }) {
   const candidates = readCandidates(root);
   for (const stay of stays.filter((item) => !item.registered)) {
-    let candidate = candidates.find((item) => haversineM(item, stay) <= 150);
+    let candidate = candidates.find((item) => haversineM(item, stay) <= STAY_RADIUS_M);
     if (!candidate) {
       const next = Math.max(0, ...candidates.map((item) => Number(item.id.slice(1)) || 0)) + 1;
       candidate = { id: `C${next}`, lat: stay.lat, lon: stay.lon, address: stay.address || '', visits: [], eventTitles: [], status: '관찰', askedAt: null };
