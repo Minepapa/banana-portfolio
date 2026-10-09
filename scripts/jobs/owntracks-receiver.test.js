@@ -113,3 +113,24 @@ test('스트림 초과 응답을 끝낸 뒤 연결을 닫고 Content-Length 초�
   assert.deepEqual(await send(oversizedStream), ['response 413', 'close']);
   assert.deepEqual(await send(Readable.from([Buffer.alloc(65 * 1024)]), 'close'), ['response 413', 'close']);
 });
+
+test('인증 실패 로그는 이유 분류만 남기고 비밀번호를 남기지 않는다', async () => {
+  const config = { host: '127.0.0.1', port: 0, username: 'u', password: 'secret-pw' };
+  const server = createReceiver({ config, allowLoopback: true, store: () => true, health: async () => {} });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}/pub`;
+  const logs = [];
+  const original = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  try {
+    const bad = (cred) => fetch(url, { method: 'POST', headers: cred ? { authorization: `Basic ${Buffer.from(cred).toString('base64')}` } : {}, body: '{}' });
+    await bad('u:wrong-guess');
+    await bad('x:secret-pw');
+    await bad(null);
+  } finally { console.log = original; server.close(); }
+  const joined = logs.join('\n');
+  assert.match(joined, /인증 실패: 비밀번호 불일치/);
+  assert.match(joined, /인증 실패: 사용자 이름 불일치/);
+  assert.match(joined, /인증 실패: 인증 헤더 없음/);
+  assert.doesNotMatch(joined, /wrong-guess|secret-pw/);
+});

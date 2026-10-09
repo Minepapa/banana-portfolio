@@ -69,10 +69,25 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
   if (!validHost(config?.host, { allowLoopback })) throw new Error('OwnTracks host는 Tailscale 주소여야 합니다');
   let lastHealth = 0;
   const server = createServer(async (request, response) => {
-    const send = (code, body) => { response.writeHead(code, { 'Content-Type': 'application/json' }); response.end(body); };
+    const send = (code, body) => {
+      // 200이 아닌 응답은 상태 코드만 남긴다(좌표·인증 정보 금지). 2026-10-09 폰 연결 실패(비밀번호 오타)를 이 로그로 찾았다.
+      if (code !== 200) console.log(`[owntracks] 응답 ${code}`);
+      response.writeHead(code, { 'Content-Type': 'application/json' }); response.end(body);
+    };
     if (request.method !== 'POST' || request.url !== '/pub') { send(404, '[]'); return; }
     const expected = `Basic ${Buffer.from(`${config.username}:${config.password}`).toString('base64')}`;
-    if (!credentialsEqual(request.headers.authorization || '', expected)) { send(401, '[]'); return; }
+    if (!credentialsEqual(request.headers.authorization || '', expected)) {
+      // 실패 이유 분류만 남긴다(비밀번호 값·길이 금지).
+      const header = request.headers.authorization || '';
+      let reason = '인증 헤더 없음';
+      if (header.startsWith('Basic ')) {
+        const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
+        const user = decoded.split(':')[0];
+        reason = user === config.username ? '비밀번호 불일치' : '사용자 이름 불일치';
+      } else if (header) reason = 'Basic 방식 아님';
+      console.log(`[owntracks] 인증 실패: ${reason}`);
+      send(401, '[]'); return;
+    }
     const contentLength = request.headers['content-length'];
     const tooLarge = async () => {
       const finished = response.once ? new Promise((resolve) => {
@@ -116,6 +131,11 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
       console.error('[owntracks] 수신 실패');
       if (!response.headersSent) send(error instanceof SyntaxError ? 400 : 500, '[]');
     }
+  });
+  // 처리 함수에 닿기 전에 끊기는 연결(HTTP 파싱 오류 등)도 오류 코드만 남긴다.
+  server.on('clientError', (error, socket) => {
+    console.error(`[owntracks] 연결 오류 ${error.code || 'unknown'}`);
+    if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
   });
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
