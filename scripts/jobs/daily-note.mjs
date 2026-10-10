@@ -14,6 +14,7 @@
  *   --no-send: 노트는 쓰되 텔레그램을 보내지 않는다(수동 재실행·시험용). 텔레그램 발송 함수에는 시험 모드가 없으니 시험은 이걸로 한다.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
@@ -31,7 +32,7 @@ import { updateCandidates } from '../lib/place-candidates.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import {
   DAILY_SKIP_TOP, buildDailyTelegramBody, buildSummaryPrompt, hasNormalSchedule, inspectExisting, recordHashOf, renderDailyNote, sameIgnoringModified,
-  PENDING_TEXT, sanitizeSummary, toDayRecord,
+  PENDING_TEXT, replaceDailyRoute, sanitizeSummary, toDayRecord,
 } from '../lib/daily-note.mjs';
 
 const SENDER_AGENT = 'clio'; // 데일리 요약(D85) — 기록 담당
@@ -85,10 +86,11 @@ export function collectRecords(root, date) {
 }
 
 export const notePath = (date) => join(vaultAbs(VAULT_REL.dailyNotes), date.slice(0, 4), `${date}.md`);
+const notePathAt = (root, date) => join(root, VAULT_REL.dailyNotes, date.slice(0, 4), `${date}.md`);
 const readOrNull = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null);
 const routeTime = (value, date) => Date.parse(value) === Date.parse(`${date}T00:00:00+09:00`) + 86_400_000
   ? '24:00' : new Date(Date.parse(value) + 9 * 3_600_000).toISOString().slice(11, 16);
-export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = createCachedGeocoder({ root }), dryRun = false } = {}) {
+export function readRoutePoints(date, root = VAULT_PATHS.root) {
   // 자정 양쪽의 점을 함께 읽어 당일 첫/마지막 체류를 올바르게 자른다.
   const dateMs = Date.parse(`${date}T00:00:00Z`);
   const adjacentDates = [-1, 0, 1].map((offset) => new Date(dateMs + offset * 86_400_000).toISOString().slice(0, 10));
@@ -96,6 +98,16 @@ export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = cr
   const points = dayReads.flatMap((result) => result.points);
   const brokenLines = dayReads.reduce((sum, result) => sum + result.brokenLines, 0);
   if (brokenLines) console.warn(`[daily-note] 위치 기록 손상 ${brokenLines}줄`);
+  return points;
+}
+
+export function routeHashOf(points) {
+  const triples = points.map(({ tst, lat, lon }) => [tst, lat, lon])
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+  return createHash('sha256').update(JSON.stringify(triples)).digest('hex').slice(0, 16);
+}
+
+export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = createCachedGeocoder({ root }), dryRun = false, points = readRoutePoints(date, root) } = {}) {
   let stays;
   try { stays = await describeStays(detectStays(points, { date }), { places: loadPlaces(root), geocode: dryRun ? async () => ({ reason: 'dry-run' }) : geocode }); }
   finally { if (!dryRun) await geocode.flush?.(); }
@@ -151,13 +163,18 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
     catch (error) { console.warn('  ⚠️ 캘린더 소유자 대응표 읽기 실패:', error.message); }
   }
   let route = null;
+  let routeHash = prevFields?.routeHash ?? null;
   if (mode === 'prepare') route = 'pending';
   else if (existsSync(VAULT_PATHS.location.root)) {
-    try { route = await deps.computeRoute(date, { dryRun }); }
-    catch (error) { route = 'failed'; console.error('  ❌ 동선 계산 실패:', String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
+    try {
+      const routePoints = readRoutePoints(date);
+      routeHash = routeHashOf(routePoints);
+      route = await deps.computeRoute(date, { dryRun, points: routePoints });
+    }
+    catch (error) { route = 'failed'; routeHash = prevFields?.routeHash ?? null; console.error('  ❌ 동선 계산 실패:', String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
   }
   const statusOf = (prev) => mode === 'finalize' && (events !== 'failed' || hasNormalSchedule(prev)) ? '확정' : '초안';
-  const render = (prev) => renderDailyNote({ date, records, summary, status: statusOf(prev), model, summaryStatus, recordHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev, events, eventGroups, route });
+  const render = (prev) => renderDailyNote({ date, records, summary, status: statusOf(prev), model, summaryStatus, recordHash, routeHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev, events, eventGroups, route });
 
   let note = render(inspected.prev);
   const rel = relative(VAULT_PATHS.root, path);
@@ -201,20 +218,64 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   return { failed: !!s.failed || events === 'failed', candidatesFailed };
 }
 
+export async function recomputeDailyRoute({ date, root = VAULT_PATHS.root, rules, dryRun = false, force = false,
+  deps: injected = {} }) {
+  const deps = { computeRoute, write: writeAtomic, ...injected };
+  const path = notePathAt(root, date);
+  const first = readOrNull(path);
+  if (first == null) return { updated: false, skipped: '노트 없음' };
+  const inspected = inspectExisting(first);
+  if (!inspected.ok) return { updated: false, skipped: inspected.reason };
+  if (inspected.prev.fields.summaryStatus === 'pending') return { updated: false, skipped: '미리 만든 노트' };
+  if (!existsSync(join(root, VAULT_REL.location))) return { updated: false, skipped: '위치 폴더 없음' };
+  const points = readRoutePoints(date, root);
+  const routeHash = routeHashOf(points);
+  if (!force && inspected.prev.fields.routeHash === routeHash) return { updated: false, skipped: '지문 동일' };
+  const route = await deps.computeRoute(date, { root, dryRun, points });
+  // 지오코딩 중 오너가 파일을 수정했으면 다시 검사해 그 변경을 보존한다.
+  const latest = readOrNull(path);
+  if (latest == null) return { updated: false, skipped: '노트 없음' };
+  const again = inspectExisting(latest);
+  if (!again.ok) return { updated: false, skipped: again.reason };
+  if (!force && again.prev.fields.routeHash === routeHash) return { updated: false, skipped: '지문 동일' };
+  const note = replaceDailyRoute(latest, route, routeHash);
+  const problems = rules ? checkNote(relative(root, path), note, rules) : [];
+  if (problems.length) throw new Error(`등록부 위반: ${problems.join(' / ')}`);
+  if (sameIgnoringModified(latest, note)) return { updated: false, skipped: '변경 없음' };
+  if (dryRun) console.log(`  ℹ️ ${date} 동선 갱신 예정: ${force ? '강제 재계산' : '위치 지문 변경'}`);
+  else deps.write(path, note);
+  return { updated: !dryRun, dryRun };
+}
+
+export async function recomputeRecentRoutes({ now = new Date(), root = VAULT_PATHS.root, rules, dryRun = false,
+  deps = {} } = {}) {
+  const today = kstDate(now);
+  const results = [];
+  for (let offset = 0; offset < 7; offset += 1) {
+    const date = new Date(Date.parse(`${today}T00:00:00Z`) - offset * 86_400_000).toISOString().slice(0, 10);
+    try { results.push({ date, ...await recomputeDailyRoute({ date, root, rules, dryRun, deps }) }); }
+    catch (error) { console.warn(`  ⚠️ ${date} 동선 재계산 실패:`, String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); results.push({ date, failed: true }); }
+  }
+  return results;
+}
+
+export const dailyWorkFailed = (results) => results.some((result) => result.failed);
+
 async function main() {
   const args = Object.fromEntries(process.argv.slice(2).map((a) => a.replace(/^--/, '').split('=')).map(([k, v]) => [k, v ?? true]));
   const dryRun = args['dry-run'] === true;
   const now = new Date();
   const noteStatus = (date) => inspectExisting(readOrNull(notePath(date))).prev?.fields?.dailyStatus ?? null;
   const actions = planActions({ mode: args.mode, date: args.date, now, noteStatus, noteExists: (date) => existsSync(notePath(date)) });
-  if (!actions.length) { console.log('ℹ️ 할 일 없음(어제 확정 완료, 초안 시각 아님)'); return; }
+  if (!actions.length) console.log('ℹ️ 새 노트 작업 없음');
   const rules = parseRegistry(readFileSync(vaultAbs(VAULT_REL.registryFile), 'utf8'));
-  let failed = false;
+  const dayResults = [];
   for (const action of actions) {
     const r = await processDay({ ...action, dryRun, noSend: args['no-send'] === true, rules, today: kstDate(now) });
-    failed ||= r.failed;
+    dayResults.push(r);
   }
-  if (failed) process.exitCode = 1;
+  await recomputeRecentRoutes({ now, rules, dryRun });
+  if (dailyWorkFailed(dayResults)) process.exitCode = 1;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

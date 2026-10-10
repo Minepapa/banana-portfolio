@@ -126,3 +126,72 @@ test('지오코딩 실패에도 주소 미조회로 등록하고 checkNote 실�
   assert.match(output, /주소: 주소 미조회/);
   assert.match(readFileSync(join(root, VAULT_REL.places, '회사.md'), 'utf8'), /주소 미조회 · 등록/);
 });
+
+function writeCorrectionPoints(root) {
+  const date = '2026-10-09';
+  const directory = join(root, VAULT_REL.location, '2026');
+  mkdirSync(directory, { recursive: true });
+  const start = Date.parse(`${date}T12:00:00+09:00`) / 1000;
+  writeFileSync(join(directory, `${date}.jsonl`), [0, 15, 30].map((minutes) => JSON.stringify({
+    tst: start + minutes * 60, lat: 12, lon: 34, acc: 10,
+  })).join('\n') + '\n');
+}
+
+test('과거 체류 정정은 dry-run 뒤 등록하며 후보와 그날 동선을 갱신한다', async (t) => {
+  const root = fixture(t);
+  writeCorrectionPoints(root);
+  let recomputed = 0;
+  const options = hereOptions(root, { recompute: async ({ date, force }) => {
+    assert.equal(date, '2026-10-09'); assert.equal(force, true); recomputed += 1;
+  } });
+  const input = { correct: { date: '2026-10-09', time: '12:15' }, name: '시험 장소' };
+  const dry = await registerPlace(input, { ...options, dryRun: true, geocode: () => { throw new Error('network called'); } });
+  assert.match(dry, /dry-run/);
+  assert.equal(existsSync(join(root, VAULT_REL.places, '시험 장소.md')), false);
+  assert.equal(readCandidates(root)[0].status, '물음');
+  const output = await registerPlace(input, options);
+  assert.match(output, /시험 장소 등록/);
+  assert.doesNotMatch(output, /12[,.:]0|34[,.:]0/);
+  assert.match(readFileSync(join(root, VAULT_REL.places, '시험 장소.md'), 'utf8'), /created: "2026-10-09"/);
+  assert.equal(readCandidates(root)[0].status, '등록');
+  assert.equal(recomputed, 1);
+  await assert.rejects(registerPlace(input, options), /같은 이름/);
+  await assert.rejects(registerPlace({ ...input, name: '다른 장소' }, options), /이미 '시험 장소'으로 표시되는 곳/);
+});
+
+test('과거 체류가 없거나 기존 장소인 경우 거부하고 재계산 실패는 등록만 유지한다', async (t) => {
+  const root = fixture(t);
+  const options = hereOptions(root);
+  const input = { correct: { date: '2026-10-09', time: '12:15' }, name: '새 장소' };
+  await assert.rejects(registerPlace(input, options), /그 시각에 머문 곳이 없음/);
+  writeCorrectionPoints(root);
+  await assert.rejects(registerPlace({ ...input, correct: { date: '2026-10-09', time: '11:00' } }, options), /그 시각에 머문 곳이 없음/);
+  const output = await registerPlace(input, { ...options, recompute: async () => { throw new Error('recompute failed'); } });
+  assert.match(output, /동선 재계산 경고/);
+  assert.equal(existsSync(join(root, VAULT_REL.places, '새 장소.md')), true);
+  await assert.rejects(registerPlace({ ...input, name: '다른 장소' }, options), /그 장소 노트를 고치세요/);
+  await assert.rejects(registerPlace({ ...input, name: 'bad/name' }, options), /이름 형식/);
+  assert.throws(() => registerPlace({ ...input, here: true }, options), /함께/);
+});
+
+test('장소 등록 뒤 오너 수정으로 동선 재계산을 건너뛰면 경고한다', async (t) => {
+  const root = fixture(t);
+  writeCorrectionPoints(root);
+  const output = await registerPlace({ correct: { date: '2026-10-09', time: '12:15' }, name: '시험 장소' },
+    hereOptions(root, { recompute: async () => ({ updated: false, skipped: 'AI 칸을 오너가 수정함' }) }));
+  assert.match(output, /등록.*동선 재계산 경고: AI 칸을 오너가 수정함/);
+  assert.equal(existsSync(join(root, VAULT_REL.places, '시험 장소.md')), true);
+});
+
+test('과거 체류 정정은 주소 조회가 실패해도 캐시를 flush한다', async (t) => {
+  const root = fixture(t);
+  writeCorrectionPoints(root);
+  let flushes = 0;
+  const geocode = async () => { throw new Error('offline'); };
+  geocode.flush = async () => { flushes += 1; };
+  const output = await registerPlace({ correct: { date: '2026-10-09', time: '12:15' }, name: '시험 장소' },
+    hereOptions(root, { geocode, recompute: async () => ({ updated: true }) }));
+  assert.match(output, /시험 장소 등록/);
+  assert.equal(flushes, 1);
+  assert.match(readFileSync(join(root, VAULT_REL.places, '시험 장소.md'), 'utf8'), /주소 미조회/);
+});

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildDailyTelegramBody, buildSummaryPrompt, groupByCategory, inspectExisting, parseSections, readCategories, recordHashOf,
-  renderDailyNote, sameIgnoringModified, sanitizeSummary, toDayRecord,
+  renderDailyNote, replaceDailyRoute, sameIgnoringModified, sanitizeSummary, toDayRecord,
 } from './daily-note.mjs';
 
 const note = (fm, body = '본문') => `---\n${fm}\n---\n${body}`;
@@ -25,6 +25,30 @@ test('동선 null·빈 배열·체류·실패 문구와 기존 오너 칸 보존
   assert.match(renderDailyNote({ ...base, route: 'failed' }), /동선 계산 실패/);
   assert.doesNotMatch(buildSummaryPrompt(base.date, recs), /회사/);
   assert.doesNotMatch(buildDailyTelegramBody(base.date, recs, '- 요약'), /회사/);
+});
+
+test('동선 재계산은 위치 지문이 머리말에서 이동해도 중복 키를 만들지 않는다', () => {
+  const initial = renderDailyNote({ ...base, routeHash: 'old', route: [] });
+  const moved = initial.replace(/^routeHash: "old"\n/m, '').replace(/^model: /m, 'routeHash: "old"\nmodel: ');
+  const updated = replaceDailyRoute(moved, [{ start: '12:00', end: '12:30', label: '시험 장소' }], 'new');
+  assert.equal((updated.match(/^routeHash:/gm) ?? []).length, 1);
+  assert.match(updated, /^routeHash: "new"$/m);
+  assert.equal(inspectExisting(updated).ok, true);
+});
+
+test('동선 재계산에서 체류가 생기면 개인으로 올리고 수정일을 KST 오늘로 바꾸며 내리지 않는다', () => {
+  const args = { ...base, records: [], date: '2026-10-09', today: '2026-10-09', route: [] };
+  const original = renderDailyNote(args);
+  assert.match(original, /^sensitivity: "일반"$/m);
+  assert.match(original, /## 동선\n\(위치 기록 없음\)/);
+  const stayed = replaceDailyRoute(original, [{ start: '12:00', end: '12:30', label: '시험 장소' }], 'new', '2026-10-10');
+  assert.match(stayed, /^sensitivity: "개인"$/m);
+  assert.match(stayed, /^modified: "2026-10-10"$/m);
+  assert.equal(inspectExisting(stayed).ok, true);
+  const empty = replaceDailyRoute(stayed, [], 'empty', '2026-10-11');
+  assert.match(empty, /^sensitivity: "개인"$/m);
+  assert.match(empty, /^modified: "2026-10-11"$/m);
+  assert.equal(inspectExisting(empty).ok, true);
 });
 
 test('외부 장소 라벨의 줄바꿈과 Markdown 기호가 데일리 칸을 나누지 못한다', () => {

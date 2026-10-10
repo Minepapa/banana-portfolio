@@ -17,6 +17,18 @@ export const STATUS_RULES = [
 ];
 export const ID_RULE_PATHS = [VAULT_REL.stateBreakoutPositions, VAULT_REL.stateBreakoutPendingEntries];
 
+function implementationStatuses(root) {
+  const path = join(root, VAULT_REL.statusStandardFile);
+  if (!statSync(path, { throwIfNoEntry: false })?.isFile()) return null;
+  try {
+    const section = readFileSync(path, 'utf8').split(/^## 구현 기록과 개발 요청\s*$/m)[1]?.split(/^## /m)[0] ?? '';
+    const values = [...section.matchAll(/^\|\s*`([^`]+)`\s*\|/gm)].map((match) => match[1]);
+    return values.length ? values : null;
+  } catch {
+    return null;
+  }
+}
+
 export function parseFlatFrontmatter(text) {
   const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) return null;
@@ -122,6 +134,8 @@ function walk(dir) {
 
 export function auditVault(root, repoRoot) {
   const errors = [];
+  const implementationAllowed = implementationStatuses(root);
+  if (!implementationAllowed) errors.push(`${VAULT_REL.statusStandardFile}: 구현 기록과 개발 요청 상태값 파싱 실패`);
   const allFiles = walk(root);
   const relFiles = allFiles.map((file) => {
     const text = readFileSync(file, 'utf8');
@@ -130,10 +144,15 @@ export function auditVault(root, repoRoot) {
     const aliases = aliasesMatch ? [...aliasesMatch[1].matchAll(/(?:^|,)\s*["']?([^,"']+)["']?\s*(?=,|$)/g)].map((m) => m[1].trim()) : [];
     return { path: relative(root, file), aliases: [...aliases, ...(fm?.aliases ? [fm.aliases] : [])] };
   });
-  for (const { path, allowed } of STATUS_RULES) {
+  for (const { path, allowed: listedAllowed } of STATUS_RULES) {
+    const sharedStatus = path === VAULT_REL.logImplementation || path === VAULT_REL.logDevRequests;
+    const allowed = sharedStatus ? implementationAllowed : listedAllowed;
     for (const file of walk(join(root, path))) {
       const fm = parseFlatFrontmatter(readFileSync(file, 'utf8'));
-      if (fm?.status != null && !validateStatus(fm.status, allowed)) errors.push(`${relative(root, file)}: invalid status ${JSON.stringify(fm.status)}`);
+      if (allowed && fm?.status != null && !validateStatus(fm.status, allowed)) errors.push(`${relative(root, file)}: invalid status ${JSON.stringify(fm.status)}`);
+      if (allowed && path === VAULT_REL.logImplementation && fm?.progress != null && !validateStatus(fm.progress, allowed)) {
+        errors.push(`${relative(root, file)}: invalid progress ${JSON.stringify(fm.progress)}`);
+      }
     }
   }
   const decisionRecords = walk(join(root, VAULT_REL.decisionsCanonical))

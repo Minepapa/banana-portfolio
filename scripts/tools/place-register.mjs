@@ -6,8 +6,9 @@ import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { readCandidates, saveCandidates } from '../lib/place-candidates.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
-import { readDayPoints, haversineM, loadPlaces, matchPlace, STAY_RADIUS_M } from '../lib/location-stays.mjs';
+import { readDayPoints, detectStays, haversineM, loadPlaces, matchPlace, STAY_RADIUS_M } from '../lib/location-stays.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
+import { readRoutePoints, recomputeDailyRoute } from '../jobs/daily-note.mjs';
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const dayInKst = (date) => new Date(date.getTime() + KST_OFFSET_MS).toISOString().slice(0, 10);
@@ -34,6 +35,18 @@ function prepareNote({ name, lat, lon, address, body, root, rules, today, allowS
   const problems = checkNote(`${VAULT_REL.places}/${name}.md`, content, rules);
   if (problems.length) throw new Error(`등록부 위반: ${problems.join(' / ')}`);
   return { path, content };
+}
+
+function registerNearbyCandidates(root, center) {
+  const candidates = readCandidates(root);
+  let changed = false;
+  for (const candidate of candidates) {
+    if (['관찰', '물음'].includes(candidate.status) && haversineM(candidate, center) <= STAY_RADIUS_M) {
+      candidate.status = '등록';
+      changed = true;
+    }
+  }
+  if (changed) saveCandidates(root, candidates);
 }
 
 async function registerHere(name, { root, dryRun, rules, today, now, geocode }) {
@@ -63,22 +76,61 @@ async function registerHere(name, { root, dryRun, rules, today, now, geocode }) 
   if (!dryRun) {
     mkdirSync(join(root, VAULT_REL.places), { recursive: true });
     writeFileSync(path, content, { flag: 'wx' });
-    const candidates = readCandidates(root);
-    let changed = false;
-    for (const candidate of candidates) {
-      if (['관찰', '물음'].includes(candidate.status) && haversineM(candidate, center) <= STAY_RADIUS_M) {
-        candidate.status = '등록';
-        changed = true;
-      }
-    }
-    if (changed) saveCandidates(root, candidates);
+    registerNearbyCandidates(root, center);
   }
   return `${name} 등록(현재 위치, 주소: ${address})${dryRun ? ' (dry-run)' : ''}`;
 }
 
-export function registerPlace({ candidate: id, here = false, name, exclude = false }, { root = VAULT_PATHS.root, dryRun = false,
+async function registerCorrection(correct, name, { root, dryRun, rules, today, geocode, recompute }) {
+  if (!validPlaceName(name)) throw new Error('장소 이름 형식 오류');
+  if (existsSync(join(root, VAULT_REL.places, `${name}.md`))) throw new Error('같은 이름의 장소가 이미 있습니다');
+  const date = correct?.date;
+  const time = correct?.time;
+  const validDate = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)
+    && Number.isFinite(Date.parse(`${date}T00:00:00Z`))
+    && new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) === date;
+  if (!validDate || typeof time !== 'string'
+    || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error('correct 날짜·시각 형식 오류');
+  const target = Date.parse(`${date}T${time}:00+09:00`);
+  const stay = detectStays(readRoutePoints(date, root), { date })
+    .find((item) => Date.parse(item.start) <= target && target <= Date.parse(item.end));
+  if (!stay) throw new Error('그 시각에 머문 곳이 없음');
+  const registered = matchPlace(stay, loadPlaces(root));
+  if (registered) throw new Error(`이미 '${registered.name}'으로 표시되는 곳 — 그 장소 노트를 고치세요`);
+  let address = '주소 미조회';
+  if (!dryRun) {
+    const lookup = geocode ?? createCachedGeocoder({ root });
+    try {
+      const result = await lookup(stay.lat, stay.lon);
+      address = (typeof result === 'string' ? result : result?.address) || address;
+    } catch { /* 주소 조회 실패는 장소 등록을 막지 않는다. */ }
+    finally {
+      try { await lookup.flush?.(); }
+      catch { /* 캐시 저장 실패도 장소 등록을 막지 않는다. */ }
+    }
+  }
+  const { path, content } = prepareNote({ name, lat: stay.lat, lon: stay.lon,
+    address: address === '주소 미조회' ? '' : address, body: `${address} · ${date} ${time} 체류 정정`,
+    root, rules, today });
+  if (dryRun) return `${name} 등록(${date} ${time} 체류) (dry-run)`;
+  mkdirSync(join(root, VAULT_REL.places), { recursive: true });
+  writeFileSync(path, content, { flag: 'wx' });
+  registerNearbyCandidates(root, stay);
+  try {
+    const result = await (recompute ?? recomputeDailyRoute)({ date, root, rules, force: true });
+    if (result?.skipped) return `${name} 등록(${date} ${time} 체류) — 동선 재계산 경고: ${result.skipped}`;
+  }
+  catch (error) { return `${name} 등록(${date} ${time} 체류) — 동선 재계산 경고: ${String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')}`; }
+  return `${name} 등록(${date} ${time} 체류)`;
+}
+
+export function registerPlace({ candidate: id, here = false, correct, name, exclude = false }, { root = VAULT_PATHS.root, dryRun = false,
   rules = parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8')), now = new Date(),
-  today = dayInKst(now), geocode } = {}) {
+  today = dayInKst(now), geocode, recompute } = {}) {
+  if (correct !== undefined) {
+    if (id !== undefined || here || exclude) throw new Error('correct는 candidate·here·exclude와 함께 사용할 수 없습니다');
+    return registerCorrection(correct, name, { root, dryRun, rules, today, geocode, recompute });
+  }
   if (here) {
     if (id !== undefined) throw new Error('candidate와 here를 함께 사용할 수 없습니다');
     if (exclude) throw new Error('현재 위치는 제외할 수 없습니다');

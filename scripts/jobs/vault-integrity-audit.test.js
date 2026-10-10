@@ -9,7 +9,15 @@ import {
   parseFlatFrontmatter, resolveWikiTarget, validateStatus,
 } from '../lib/vault-integrity-audit.mjs';
 
-const CAN_RUN = process.platform === 'darwin' && existsSync(vaultAbs(VAULT_REL.statusStandardFile));
+const CAN_RUN = process.env.TEST_REAL_VAULT === '1' && process.platform === 'darwin' && existsSync(vaultAbs(VAULT_REL.statusStandardFile));
+const repoRoot = join(import.meta.dirname, '..', '..');
+
+function writeStatusStandard(root, values = ['예정', '진행중', '차단됨', '완료', '보류', '폐기']) {
+  const path = join(root, VAULT_REL.statusStandardFile);
+  mkdirSync(join(root, '90_Delphi/Schema'), { recursive: true });
+  writeFileSync(path, `## 구현 기록과 개발 요청\n\n| 값 | 의미 |\n|---|---|\n${values.map((value) => `| \`${value}\` | 상태 |`).join('\n')}\n\n## 다음 절\n`);
+  return path;
+}
 
 test('vault-integrity-audit: status는 지정 집합의 짧은 단일 값만 허용', () => {
   const allowed = ['완료', '진행중'];
@@ -48,6 +56,7 @@ test('vault-integrity-audit: executions 완전 일치 중복만 후보로 반환
 
 test('vault-integrity-audit: decisionKey마다 결정됨 문서가 정확히 하나여야 한다', () => {
   const root = mkdtempSync(join(tmpdir(), 'vault-audit-decision-'));
+  writeStatusStandard(root);
   const decisionDir = join(root, VAULT_REL.decisionsCanonical);
   mkdirSync(decisionDir, { recursive: true });
   const writeDecision = (name, decisionKey, status) => writeFileSync(join(decisionDir, name),
@@ -69,6 +78,7 @@ test('vault-integrity-audit: decisionKey마다 결정됨 문서가 정확히 하
 
 test('vault-integrity-audit: 연도 하위 파일에도 상태와 ID 규칙을 적용한다', () => {
   const root = mkdtempSync(join(tmpdir(), 'vault-audit-year-'));
+  writeStatusStandard(root);
   try {
     const profile = join(root, VAULT_REL.decisionsProfile, '2026');
     const positions = join(root, VAULT_REL.stateBreakoutPositions, '2026');
@@ -82,6 +92,39 @@ test('vault-integrity-audit: 연도 하위 파일에도 상태와 ID 규칙을 �
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('vault-integrity-audit: Implementation progress는 status와 같은 허용값만 받는다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vault-audit-progress-'));
+  try {
+    writeStatusStandard(root);
+    const directory = join(root, VAULT_REL.logImplementation, '2026');
+    mkdirSync(directory, { recursive: true });
+    const path = join(directory, 'sample.md');
+    writeFileSync(path, '---\nstatus: 완료\nprogress: 진행중\n---\n');
+    assert.deepEqual(auditVault(root, repoRoot).errors, []);
+    writeFileSync(path, '---\nstatus: 완료\nprogress: 거의완료\n---\n');
+    assert.match(auditVault(root, repoRoot).errors.join('\n'), /sample\.md: invalid progress "거의완료"/);
+    writeStatusStandard(root, ['예정', '완료']);
+    writeFileSync(path, '---\nstatus: 진행중\nprogress: 예정\n---\n');
+    assert.match(auditVault(root, repoRoot).errors.join('\n'), /sample\.md: invalid status "진행중"/);
+    writeFileSync(path, '---\nstatus: 완료\nprogress: 진행중\n---\n');
+    assert.match(auditVault(root, repoRoot).errors.join('\n'), /sample\.md: invalid progress "진행중"/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('vault-integrity-audit: 상태표준 파싱 오류를 드러내고 Requests에도 같은 허용값을 적용한다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vault-audit-schema-'));
+  try {
+    const requests = join(root, VAULT_REL.logDevRequests);
+    mkdirSync(requests, { recursive: true });
+    writeFileSync(join(requests, 'request.md'), '---\nstatus: 진행중\n---\n');
+    assert.match(auditVault(root, repoRoot).errors.join('\n'), /상태표준.*파싱 실패/);
+    const schema = writeStatusStandard(root, ['예정', '완료']);
+    assert.match(auditVault(root, repoRoot).errors.join('\n'), /request\.md: invalid status "진행중"/);
+    writeFileSync(schema, '## 잘못된 제목\n\n| `진행중` | 상태 |\n');
+    assert.match(auditVault(root, repoRoot).errors.join('\n'), /상태표준.*파싱 실패/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('vault-integrity-audit: 로컬 Vault 전체 정합성', { skip: !CAN_RUN }, () => {

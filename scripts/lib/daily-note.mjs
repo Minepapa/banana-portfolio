@@ -15,7 +15,7 @@ export const OWNER_SECTIONS = ['오늘 한 줄', '오너 메모'];
 export const AI_SECTIONS = ['일정', '동선', '오늘 들어온 기록', '오늘 생긴 할 일', 'AI 하루 요약'];
 const SECTION_ORDER = ['오늘 한 줄', ...AI_SECTIONS, '오너 메모'];
 const MANAGED_KEYS = new Set(['type', 'category', 'description', 'sensitivity', 'created', 'modified', 'dailyStatus', 'model',
-  'recordCount', 'recordHash', 'aiHash', 'summaryStatus', 'telegramSentAt']);
+  'recordCount', 'recordHash', 'routeHash', 'aiHash', 'summaryStatus', 'telegramSentAt']);
 const OWNER_HINT = '<!-- 오너가 쓰는 칸. AI는 이 칸을 고치지 않는다. -->';
 // 05:00에 미리 만든 노트(prepare)의 아직 채우지 않은 AI 칸 문구 — 23:30 초안이 채운다.
 export const PENDING_TEXT = '(저녁 23:30에 채움)';
@@ -70,7 +70,7 @@ export function parseSections(body) {
   return { preamble: preamble.join('\n'), sections: sections.map((s) => ({ title: s.title, content: s.lines.join('\n').replace(/\s+$/, '') })) };
 }
 
-const aiHashOf = (sections) => sha(AI_SECTIONS.map((t) => `${t}\n${(sections.find((s) => s.title === t)?.content ?? '').replace(/\s+$/, '')}`).join('\n\n'));
+export const aiHashOf = (sections) => sha(AI_SECTIONS.map((t) => `${t}\n${(sections.find((s) => s.title === t)?.content ?? '').replace(/\s+$/, '')}`).join('\n\n'));
 export const hasNormalSchedule = (prev) => /^- (?:종일|\d{2}:\d{2})/m.test(prev?.sections.find((s) => s.title === '일정')?.content ?? '');
 
 // 기존 파일을 다시 써도 되는지 판정한다(오너 글 보존 관문). 쓸 수 없으면 reason과 함께 ok:false.
@@ -166,7 +166,7 @@ function aiSectionContents(records, summary, events, eventGroups, route) {
 }
 
 // 데일리 노트를 만든다. prev(inspectExisting 결과)가 있으면 AI 칸만 바꾸고 나머지는 원문 그대로 둔다.
-export function renderDailyNote({ date, records, summary, status, model, summaryStatus, recordHash, today, telegramSentAt = null, prev = null, events = null, eventGroups = null, route = null }) {
+export function renderDailyNote({ date, records, summary, status, model, summaryStatus, recordHash, routeHash = null, today, telegramSentAt = null, prev = null, events = null, eventGroups = null, route = null }) {
   const ai = aiSectionContents(records, summary, events, eventGroups, route);
   const prevSections = prev?.sections ?? [];
   const keep = (title) => prevSections.find((s) => s.title === title)?.content;
@@ -193,6 +193,7 @@ export function renderDailyNote({ date, records, summary, status, model, summary
     summaryStatus,
     recordCount: records.length,
     recordHash,
+    ...(routeHash ? { routeHash } : {}),
     aiHash: aiHashOf(ordered),
     ...(telegramSentAt ? { telegramSentAt } : {}),
   };
@@ -202,6 +203,36 @@ export function renderDailyNote({ date, records, summary, status, model, summary
   const preamble = prev ? prev.preamble.replace(/^\s*\n/, '').replace(/\s+$/, '') : `# ${date}`; // 앞뒤 빈 줄 정리(실행마다 늘지 않게)
   const body = [preamble, '', ...ordered.flatMap((s) => [`## ${s.title}`, s.content, ''])].join('\n');
   return `${fmText}\n${body}`;
+}
+
+// 지난 노트 재계산에서는 다른 AI 칸과 오너 글의 원문을 그대로 둔다.
+export function replaceDailyRoute(content, route, routeHash, today = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10)) {
+  const inspected = inspectExisting(content);
+  if (!inspected.ok) throw new Error(inspected.reason);
+  const routeText = aiSectionContents([], '', [], null, route).동선;
+  const lines = lf(content).split('\n');
+  const bodyStart = lines.indexOf('---', 1) + 1;
+  let fence = null;
+  let start = -1;
+  let end = lines.length;
+  for (let index = bodyStart; index < lines.length; index += 1) {
+    const marker = lines[index].match(/^\s*(```|~~~)/)?.[1];
+    if (marker) fence = fence === marker ? null : (fence ?? marker);
+    const heading = !fence && !marker ? lines[index].match(/^## (.+?)\s*$/)?.[1] : null;
+    if (heading === '동선' && start < 0) start = index;
+    else if (heading != null && start >= 0) { end = index; break; }
+  }
+  if (start < 0) throw new Error('동선 칸 없음');
+  const suffix = end < lines.length ? [''] : [];
+  const next = [...lines.slice(0, start + 1), routeText, ...suffix, ...lines.slice(end)].join('\n');
+  const sections = parseSections(splitNote(next).body).sections;
+  const fmEnd = next.indexOf('\n---', 4);
+  let head = next.slice(0, fmEnd).replace(/^aiHash: .*$/m, `aiHash: "${aiHashOf(sections)}"`);
+  if (/^routeHash: /m.test(head)) head = head.replace(/^routeHash: .*$/m, `routeHash: "${routeHash}"`);
+  else head = head.replace(/^aiHash: /m, `routeHash: "${routeHash}"\naiHash: `);
+  if (/^- /m.test(routeText)) head = head.replace(/^sensitivity: .*$/m, 'sensitivity: "개인"');
+  head = head.replace(/^modified: .*$/m, `modified: "${today}"`);
+  return head + next.slice(fmEnd);
 }
 
 // 오너 칸(오늘 한 줄·오너 메모)에 안내 문구 말고 실제 글이 있는가 — 있으면 노트를 개인 등급으로 둔다.
