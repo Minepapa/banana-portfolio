@@ -34,6 +34,11 @@ export function inferReplyTargetFromPendingProposals(proposals) {
 
 // proposals: proposal-vault.parseProposal()로 이미 파싱된 배열(호출부가 Decisions/
 // Proposals 디렉토리를 읽어 넘긴다 — 이 모듈은 fs를 만지지 않는다).
+// "거부 결함"으로 시작하는 답장만 결함 거부로 본다(리뷰 MEDIUM: "결함은 아니고 비싸서 거부" 같은 일반 거부를 잘못 태그하지 않게).
+export function isDefectRejection(text) {
+  return /^\s*거부\s*[:,·\-]?\s*결함/.test(String(text ?? '')) && !/결함\s*(?:은|는|이)?\s*(?:아니|없)/.test(String(text ?? ''));
+}
+
 export function resolveReplyAction({ replyTo, replyText, proposals, now = new Date() }) {
   const decision = parseReplyDecision(replyText);
   if (!decision) {
@@ -53,7 +58,9 @@ export function resolveReplyAction({ replyTo, replyText, proposals, now = new Da
     return {
       action: 'reject',
       proposal,
-      updates: { status: '거부', decidedAt: now.toISOString(), rejectReason: replyText },
+      // "거부 결함"(2026-10-10 오너 결정): 시스템 결함 때문에 거부한 것 — 연속 거부 집계·재상정 쿨다운에서 뺀다.
+      updates: { status: '거부', decidedAt: now.toISOString(), rejectReason: replyText,
+        ...(isDefectRejection(replyText) ? { rejectTag: '결함' } : {}) },
     };
   }
 

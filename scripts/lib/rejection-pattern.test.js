@@ -67,3 +67,18 @@ test('buildRejectionStreakNudge: 거부 횟수·원칙 재확인·재검토 옵�
   assert.match(text, /하락한 자산군을 매수해 목표비중을 지킨다/);
   assert.match(text, /전략 재검토/);
 });
+
+test('결함 거부(rejectTag 결함)는 연속 거부에 세지 않고 연속을 끊지도 않으며, 재상정 쿨다운에서도 빠진다(2026-10-10)', async () => {
+  const { detectRejectionStreak } = await import('./rejection-pattern.mjs');
+  const { findRecentRejection } = await import('./proposal-vault.mjs');
+  const p = (status, decidedAt, extra = {}) => ({ track: '자산분배', assetKey: '금', side: '매수', status, decidedAt, ...extra });
+  const proposals = [
+    p('거부', '2026-10-01T08:00:00Z', { rejectTag: '결함' }),
+    p('거부', '2026-10-01T07:59:00Z', { rejectTag: '결함' }),
+    p('거부', '2026-09-30T08:00:00Z'),
+    p('승인', '2026-09-29T08:00:00Z'),
+  ];
+  assert.equal(detectRejectionStreak(proposals), 1);
+  const now = new Date('2026-10-01T09:00:00Z');
+  assert.equal(findRecentRejection(proposals.slice(0, 2), { track: '자산분배', assetKey: '금', side: '매수', withinMs: 86400000, now }), null);
+});

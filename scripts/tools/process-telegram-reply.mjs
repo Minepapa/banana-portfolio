@@ -100,7 +100,8 @@ async function main() {
     if (result.proposal.track === '자산분배') {
       const updatedProposals = proposals.map((p) => (p.filename === result.proposal.filename ? { ...p, ...result.updates } : p));
       const streak = detectRejectionStreak(updatedProposals, { track: '자산분배' });
-      if (shouldNudgeRejectionStreak(streak)) {
+      // 결함 거부는 원칙 이탈이 아니라 시스템 결함 대응이라 안내 자체를 보내지 않는다(리뷰 HIGH: 직전 연속 3회면 결함 거부에도 또 안내가 나가던 문제).
+      if (result.updates.rejectTag !== '결함' && shouldNudgeRejectionStreak(streak)) {
         try {
           await sendAgentMessage({ agent: 'clio', kind: '정보', topic: '안내', body: buildRejectionStreakNudge(streak) });
           console.log(`  📣 연속 거부 ${streak}회 — 원칙 재확인 안내 발송`);

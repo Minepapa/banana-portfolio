@@ -32,7 +32,7 @@ export function proposalMatchKey({ track, assetKey, side }) {
   return `${track}|${assetKey}|${side}`;
 }
 
-export function buildProposalRecord({ track, account = null, assetKey, side, quantity, proposedPrice, reason = '', now = new Date() }) {
+export function buildProposalRecord({ track, account = null, assetKey, side, quantity, proposedPrice, reason = '', now = new Date(), assetClass = null }) {
   const iso = now.toISOString();
   const date = iso.slice(0, 10);
   const time = iso.slice(11, 19).replaceAll(':', '') + 'Z';
@@ -41,6 +41,8 @@ export function buildProposalRecord({ track, account = null, assetKey, side, qua
   const filename = `${id}.md`;
   const content = buildFrontmatter({
     id, track, account, assetKey, side, quantity, proposedPrice, reason,
+    // 자동 제안(신규현금·리밸런싱)의 자산군 — 같은 날 같은 자산군 1건 관문용(2026-10-10). 오너 직접 주문은 null.
+    ...(assetClass ? { assetClass } : {}),
     status: '대기',
     createdAt: now.toISOString(),
     decidedAt: null,
@@ -123,7 +125,8 @@ export function findRecentRejection(proposals, { track, assetKey, side, withinMs
   const key = proposalMatchKey({ track, assetKey, side });
   const cutoff = now.getTime() - withinMs;
   const candidates = proposals.filter(
-    (p) => p.status === '거부' && proposalMatchKey(p) === key && p.decidedAt && new Date(p.decidedAt).getTime() >= cutoff,
+    // rejectTag '결함'(오너가 "거부 결함"으로 답함)은 시스템 결함 때문의 거부라 쿨다운 대상이 아니다(2026-10-10).
+    (p) => p.status === '거부' && p.rejectTag !== '결함' && proposalMatchKey(p) === key && p.decidedAt && new Date(p.decidedAt).getTime() >= cutoff,
   );
   if (!candidates.length) return null;
   return candidates.reduce((latest, p) => (!latest || p.decidedAt > latest.decidedAt ? p : latest), null);

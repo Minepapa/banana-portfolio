@@ -123,6 +123,22 @@ export function buildProposalStatusEditMessage({ proposal, action, decidedAt }) 
 // LLM 판단 자체를 아끼고 싶으면 자기 main() 시작부에서 별도로 먼저 체크해도 되지만
 // (new-cash-allocation.mjs·rebalance-proposal.mjs가 그렇게 함), 여기 체크는 그것과
 // 무관하게 항상 최종 방어선으로 남는다.
+export const DAILY_ALLOCATION_PROPOSAL_LIMIT = 2;
+const kstDay = (iso) => new Date(new Date(iso).getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
+
+// 순수함수 — 오늘(KST) 만든 자산분배 자동 제안 중 같은 자산군이 있거나 하루 상한에 이르면 차단 사유, 아니면 null.
+// 제안 레코드 저장 실패 등으로 상태가 '실패'인 건은 세지 않는다.
+export function checkDailyAllocationGate({ existingProposals, assetClass, now = new Date(), limit = DAILY_ALLOCATION_PROPOSAL_LIMIT }) {
+  const today = kstDay(now.toISOString());
+  // 세지 않는 것: 오너에게 가지 않은 발송오류·발송중 잔재, 결함 거부(시스템 결함 때문이라 같은 날 고쳐서 다시 낼 수 있게), 날짜가 깨진 레코드.
+  const todays = (existingProposals || []).filter((p) => p.track === '자산분배' && p.assetClass && p.createdAt
+    && !['발송오류', '발송중'].includes(p.status) && p.rejectTag !== '결함'
+    && Number.isFinite(Date.parse(p.createdAt)) && kstDay(p.createdAt) === today);
+  if (todays.some((p) => p.assetClass === assetClass)) return `오늘 이미 ${assetClass} 제안이 있음 — 같은 날 같은 자산군은 1건(다음 실행에서 다시 판단)`;
+  if (todays.length >= limit) return `오늘 자산분배 제안 ${limit}건 상한 도달 — 나머지는 다음 실행에서 다시 판단`;
+  return null;
+}
+
 export async function createAndSendProposal({
   track, account = null, assetKey, name, side, quantity, proposedPrice, reason = '',
   senderAgent = 'plutus', zeusComment = null,
@@ -134,16 +150,36 @@ export async function createAndSendProposal({
   sendWarning = sendMessage,
   amountWon = null,
   proposalsBlocked = false,
+  assetClass = null,
+  timing = null,
+  keepPending = false,
 }) {
   if (proposalsBlocked) {
     return { action: 'blocked', reason: '제안금지 모드 — 오너가 "제안모드 온"으로 해제할 때까지 새 제안 생성 안 함' };
   }
+  if (timing) reason = `진입 시점: ${timing}\n${reason}`;
   const intake = resolveProposalIntake({ track, assetKey, side, existingProposals, conditionsChanged, now });
   if (intake.action === 'blocked') {
-    return { action: 'blocked', reason: intake.reason };
+    return { action: 'blocked', blockedBy: intake.blockedBy ?? null, reason: intake.reason };
+  }
+  // keepPending(자동 제안 잡): 같은 안건이 이미 대기·승인 중이면 대체(supersede)로 새 메시지를 또 보내지 않는다.
+  // 리뷰(2026-10-10 HIGH): 미룬 건 때문에 다음 날 재실행될 때 어제 보낸 제안이 대체 발송으로 매일 다시 나가던 경로를 막는다.
+  if (keepPending && intake.action === 'supersede') {
+    const active = (existingProposals || []).find((p) => p.id === intake.supersedeId);
+    if (active && ['대기', '승인'].includes(active.status)) {
+      return { action: 'pending', id: active.id, reason: `같은 안건이 이미 ${active.status} 상태 — 다시 보내지 않음` };
+    }
+  }
+  // (대기 중 판정 뒤에 둔다 — 원래 pending으로 끝날 줄이 관문 때문에 deferred로 밀리지 않게, 재검증 LOW)
+  // 자산분배 자동 제안 발송 규칙(2026-10-10 결정 '자산분배-제안-발송-규칙'): 같은 날 같은 자산군은 1건, 하루 최대 2건.
+  // assetClass를 넘기는 자동 제안(신규현금·리밸런싱)에만 적용 — 오너 직접 주문은 자산군을 넘기지 않아 영향 없음.
+  if (track === '자산분배' && assetClass) {
+    const gate = checkDailyAllocationGate({ existingProposals, assetClass, now });
+    // 'deferred' = 오늘은 미룸(다음 실행에서 이어서). 'blocked'(쿨다운·주문 진행 중)와 구분해 잡이 재시도 여부를 정한다.
+    if (gate) return { action: 'deferred', reason: gate };
   }
 
-  const { id, filename, content } = buildProposalRecord({ track, account, assetKey, side, quantity, proposedPrice, reason, now });
+  const { id, filename, content } = buildProposalRecord({ track, account, assetKey, side, quantity, proposedPrice, reason, now, assetClass });
 
   let supersededId = null;
   const supersededProposal = intake.action === 'supersede'

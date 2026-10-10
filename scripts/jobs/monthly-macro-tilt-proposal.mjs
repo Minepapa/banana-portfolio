@@ -288,8 +288,10 @@ export function buildTiltReason(action, themisVerdict) {
 // 매도/매수 제안 발송 결과가 전부 'created'여야 월 마커를 전진시킨다(rebalance-
 // proposal.mjs allActionsSent와 동일 원칙 — 일부만 발송됐는데 마커를 전진시키면
 // 나머지 액션은 다음 실행(다음 달)까지 영원히 유실된다).
+// 2026-10-10: 이미 대기 중(pending)·거부 쿨다운(blocked/cooldown)도 처리됨. 미룸(deferred)·실패·그 밖의 차단은 재시도.
 export function allActionsSent(sendResults) {
-  return sendResults.length > 0 && sendResults.every((r) => r.action === 'created');
+  // 거부 쿨다운으로 막힌 건은 오너 판단을 존중해 처리됨으로 본다. 주문 진행 중·제안모드 꺼짐은 풀리면 다시 내야 하므로 재시도.
+  return sendResults.length > 0 && sendResults.every((r) => r.action === 'created' || r.action === 'pending' || (r.action === 'blocked' && r.blockedBy === 'cooldown'));
 }
 
 function readMdDir(dir) {
@@ -454,6 +456,7 @@ async function main() {
         side: action.side, quantity: pricing.quantity, proposedPrice: pricing.proposedPrice,
         amountWon: action.amountWon,
         reason, senderAgent: SENDER_AGENT,
+        assetClass: action.assetClass, keepPending: true, // 자산분배 제안 발송 규칙(2026-10-10): 같은 날 같은 자산군 1건·하루 2건에 함께 센다
         existingProposals,
         writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
         sendMessage: (message) => sendAgentMessage(message).then((r) => r?.result ?? r),

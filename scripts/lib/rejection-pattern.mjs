@@ -21,6 +21,8 @@ export function detectRejectionStreak(proposals, { track = '자산분배' } = {}
 
   let streak = 0;
   for (const p of decided) {
+    // 결함 거부(2026-10-10)는 오너의 원칙 이탈이 아니라 시스템 결함 대응이라 집계하지 않고 건너뛴다(연속을 끊지도 않음).
+    if (p.status === '거부' && p.rejectTag === '결함') continue;
     if (p.status !== '거부') break;
     streak++;
   }

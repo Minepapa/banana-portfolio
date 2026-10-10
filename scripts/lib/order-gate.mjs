@@ -23,7 +23,7 @@ const REJECTION_COOLDOWN_MS_DEFAULT = 24 * 60 * 60 * 1000; // 24시간 — 오�
 export function resolveProposalIntake({ track, assetKey, side, existingProposals, conditionsChanged = false, rejectionCooldownMs = REJECTION_COOLDOWN_MS_DEFAULT, now = new Date() }) {
   const recentRejection = findRecentRejection(existingProposals, { track, assetKey, side, withinMs: rejectionCooldownMs, now });
   if (recentRejection && !conditionsChanged) {
-    return { action: 'blocked', reason: `거부 재상정 쿨다운 — ${recentRejection.decidedAt}에 거부된 안건, 조건 변화 없이는 재상정 불가` };
+    return { action: 'blocked', blockedBy: 'cooldown', reason: `거부 재상정 쿨다운 — ${recentRejection.decidedAt}에 거부된 안건, 조건 변화 없이는 재상정 불가` };
   }
 
   const matchKey = proposalMatchKey({ track, assetKey, side });
@@ -33,6 +33,7 @@ export function resolveProposalIntake({ track, assetKey, side, existingProposals
   if (openOrder) {
     return {
       action: 'blocked',
+      blockedBy: 'open-order',
       reason: `기존 브로커 주문(${openOrder.brokerOrderId || '주문번호 확인 필요'})이 ${openOrder.status} 상태 — 실제 체결/취소 확인 전 새 제안 보류`,
     };
   }

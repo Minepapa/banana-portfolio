@@ -162,6 +162,10 @@ ${candLines}
   설명할 것. "갭이 커서"처럼 사실을 그대로 반복하는 기계적 문장 대신, 그 갭이 왜
   지금 채울 만한지에 대한 네 판단을 담아라. 이 reasoning은 Frank에게 텔레그램으로
   그대로 전달된다.
+- reasoning에는 반드시 다음 두 가지를 담아라(2026-10-10 오너 결정 — "진입시점이 왜 오늘인지 설명과 이해가 있어야 한다"):
+  ① 왜 오늘 실행하는지(트리거와 지금 시장 상황을 연결해서)
+  ② 지금 사지 않고 기다릴 때의 비용·위험
+  트리거 종류와 분할 원칙(갭의 50%)은 Node가 "진입 시점" 줄로 따로 붙이니 반복하지 마라.
 
 출력: 설명 없이 \`\`\`json 블록 하나만.
 \`\`\`json
@@ -222,8 +226,10 @@ export function resolveInstrumentPricing(allocation, candidates) {
 
 // 배분 라인 발송 결과가 전부 'created'(실제 발송 성공)여야 트리거 상태를 갱신한다 —
 // 'blocked'(거부 재상정 쿨다운 등)도 미발송이므로 갱신 대상이 아니다.
+// 처리됨 = 새로 보냄(created)·이미 대기 중(pending)·거부 쿨다운(blocked/cooldown). 미룸(deferred)·실패·그 밖의 차단은 다음 실행에서 다시 시도(2026-10-10).
 export function allAllocationsSent(sendResults) {
-  return sendResults.length > 0 && sendResults.every((r) => r.action === 'created');
+  // 거부 쿨다운으로 막힌 건은 오너 판단을 존중해 처리됨으로 본다. 주문 진행 중·제안모드 꺼짐은 풀리면 다시 내야 하므로 재시도.
+  return sendResults.length > 0 && sendResults.every((r) => r.action === 'created' || r.action === 'pending' || (r.action === 'blocked' && r.blockedBy === 'cooldown'));
 }
 
 function loadExistingProposals(dir) {
@@ -359,6 +365,8 @@ async function main() {
           side: '매수', quantity: pricing.quantity, proposedPrice: pricing.proposedPrice,
           amountWon: alloc.amountWon,
           reason: alloc.reasoning, senderAgent: SENDER_AGENT,
+          assetClass: alloc.assetClass, keepPending: true,
+          timing: `${account} 예수금이 ${NEW_CASH_THRESHOLD_WON.toLocaleString('ko-KR')}원 문턱을 넘음(현재 ${availableCash.toLocaleString('ko-KR')}원) · 분할 원칙: 갭의 50%만`,
           existingProposals,
           writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
           sendMessage: (message) => sendAgentMessage(message).then((r) => r?.result ?? r),
@@ -366,8 +374,9 @@ async function main() {
             jobName: 'new-cash-allocation', kind: 'trade-safety', severity: 'high',
           }),
         });
-        if (result.action === 'blocked') {
-          console.log(`  ⛔ ${alloc.instrumentName} 제안 차단: ${result.reason}`);
+        if (['blocked', 'deferred', 'pending'].includes(result.action)) {
+          const icon = { blocked: '⛔ 제안 차단', deferred: '⏸ 오늘은 미룸', pending: '⏳ 이미 대기 중' }[result.action];
+          console.log(`  ${icon}: ${alloc.instrumentName} — ${result.reason}`);
           sendResults.push(result);
           continue;
         }
@@ -388,7 +397,7 @@ async function main() {
       await writeTriggerState(account, availableCash);
       console.log(`  🔄 ${account} 트리거 상태 갱신(잔고 ${availableCash.toLocaleString('ko-KR')}원) — 이 잔고로는 재트리거 안 함`);
     } else {
-      console.log(`  ⚠️ 일부 미발송(차단·실패) — 트리거 상태 유지(다음 실행 재시도, 이미 보낸 제안은 단일활성제안 원칙으로 중복 방지됨)`);
+      console.log(`  ⚠️ 일부 미룸·실패 — 트리거 상태 유지(다음 실행에서 이어서, 이미 보낸 제안은 keepPending으로 다시 보내지 않음)`);
     }
   }
 

@@ -74,3 +74,22 @@ test('[막아야 함] inferReplyTargetFromPendingProposals: 대기 제안이 2�
   assert.equal(r.telegramMessageId, null);
   assert.match(r.reason, /2건/);
 });
+
+test('"거부 결함" 답장은 rejectTag 결함을 남기고, 보통 거부는 남기지 않는다(2026-10-10)', () => {
+  const rec = buildProposalRecord({ track: '자산분배', account: '위탁', assetKey: '금', side: '매수', quantity: 1, proposedPrice: 100, now: new Date('2026-10-01T07:00:00Z') });
+  const proposal = { ...parseProposal(rec.content), filename: rec.filename, status: '대기', telegramMessageId: 77 };
+  const defect = resolveReplyAction({ replyTo: 77, replyText: '거부 결함', proposals: [proposal] });
+  assert.equal(defect.action, 'reject');
+  assert.equal(defect.updates.rejectTag, '결함');
+  const plain = resolveReplyAction({ replyTo: 77, replyText: '거부', proposals: [proposal] });
+  assert.equal(plain.updates.rejectTag, undefined);
+});
+
+test('isDefectRejection: "거부 결함"으로 시작할 때만, 부정 표현은 제외', async () => {
+  const { isDefectRejection } = await import('./telegram-reply-handler.mjs');
+  assert.equal(isDefectRejection('거부 결함'), true);
+  assert.equal(isDefectRejection('거부: 결함 — 예수금 초과'), true);
+  assert.equal(isDefectRejection('거부, 결함은 아니고 비싸서'), false);
+  assert.equal(isDefectRejection('결함 없음 그냥 거부'), false);
+  assert.equal(isDefectRejection('거부'), false);
+});

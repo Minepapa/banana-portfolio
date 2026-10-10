@@ -221,3 +221,10 @@ test('allAllocationsSent: 하나라도 failed면 false', () => {
 test('allAllocationsSent: 빈 배열이면 false(아무것도 안 보냈으니 갱신 대상 아님)', () => {
   assert.equal(allAllocationsSent([]), false);
 });
+
+test('allAllocationsSent(2026-10-10): 이미 대기 중·거부 쿨다운은 처리됨, 미룸·주문 진행 중·실패는 재시도', () => {
+  assert.equal(allAllocationsSent([{ action: 'created' }, { action: 'pending' }, { action: 'blocked', blockedBy: 'cooldown' }]), true);
+  assert.equal(allAllocationsSent([{ action: 'created' }, { action: 'deferred' }]), false);
+  assert.equal(allAllocationsSent([{ action: 'blocked', blockedBy: 'open-order' }]), false);
+  assert.equal(allAllocationsSent([{ action: 'pending' }, { action: 'failed' }]), false);
+});

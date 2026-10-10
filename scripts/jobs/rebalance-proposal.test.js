@@ -313,3 +313,43 @@ test('allActionsSent: 전부 created여야 true', () => {
   assert.equal(allActionsSent([{ action: 'created' }, { action: 'failed' }]), false);
   assert.equal(allActionsSent([]), false);
 });
+
+test('applyCashCap·pendingBuyWonByAccount: 검증·상한 뒤 예수금 안으로 자르고, 대기 매수는 예수금에서 뺀다(2026-10-10)', async () => {
+  const { applyCashCap, pendingBuyWonByAccount, buildRebalanceProposalPrompt, MIN_BUY_WON } = await import('./rebalance-proposal.mjs');
+  const buy = (account, amountWon) => ({ assetClass: '금', side: '매수', account, instrumentName: 'TIGER KRX금현물', amountWon });
+  const capped = applyCashCap([buy('연금저축', 2_842_464), buy('연금저축', 300_000)], { 연금저축: 1_000_000 });
+  assert.deepEqual(capped.kept.map((k) => k.amountWon), [1_000_000], '첫 매수가 예수금을 다 쓰면 다음 매수는 버림');
+  assert.equal(capped.dropped.length, 1);
+  assert.equal(applyCashCap([buy('연금저축', 500_000)], { 연금저축: MIN_BUY_WON - 1 }).kept.length, 0);
+  assert.equal(applyCashCap([buy('위탁', 500_000)], { 위탁: null }).kept.length, 0, '예수금 미확인은 0으로 추정하지 않고 버림');
+  const sell = { assetClass: '채권', side: '매도', account: '위탁', instrumentName: 'X', amountWon: 999_999 };
+  assert.equal(applyCashCap([sell], { 위탁: 0 }).kept.length, 1, '매도는 예수금과 무관');
+  const pending = pendingBuyWonByAccount([
+    { track: '자산분배', side: '매수', status: '대기', account: '위탁', quantity: 10, proposedPrice: 10000 },
+    { track: '자산분배', side: '매수', status: '거부', account: '위탁', quantity: 99, proposedPrice: 10000 },
+    { track: '퀀트', side: '매수', status: '대기', account: '위탁', quantity: 5, proposedPrice: 10000 },
+  ]);
+  assert.deepEqual(pending, { 위탁: 100_000 });
+  const breachFacts = [{ assetClass: '금', direction: '부족', targetPct: 10, currentPct: 5, gapWon: -10_000_000, buyCandidatesByAccount: {} }];
+  assert.match(buildRebalanceProposalPrompt(breachFacts, {}, { 연금저축: 1_000_000, 위탁: null }), /계좌별 예수금[\s\S]*연금저축: 1,000,000원[\s\S]*위탁: 미확인/);
+});
+
+test('allActionsSent(2026-10-10): 이미 대기 중·거부 쿨다운은 처리됨, 미룸·주문 진행 중·실패는 재시도', () => {
+  assert.equal(allActionsSent([{ action: 'created' }, { action: 'pending' }, { action: 'blocked', blockedBy: 'cooldown' }]), true);
+  assert.equal(allActionsSent([{ action: 'created' }, { action: 'deferred' }]), false);
+  assert.equal(allActionsSent([{ action: 'blocked', blockedBy: 'open-order' }]), false);
+  assert.equal(allActionsSent([{ action: 'pending' }, { action: 'failed' }]), false);
+});
+
+test('이중 차감 방지(재검증 HIGH): 2일차에 대기 중인 금·채권은 차감 없이 통과하고 미룬 달러가 예수금 안에서 나온다', async () => {
+  const { applyCashCap, pendingBuyKeys, pendingBuyWonByAccount } = await import('./rebalance-proposal.mjs');
+  const yesterday = [
+    { track: '자산분배', side: '매수', status: '대기', account: '위탁', assetClass: '금', quantity: 300, proposedPrice: 10000 },
+    { track: '자산분배', side: '매수', status: '대기', account: '위탁', assetClass: '채권', quantity: 300, proposedPrice: 10000 },
+  ];
+  const cash = { 위탁: 10_000_000 - pendingBuyWonByAccount(yesterday).위탁 }; // 400만
+  const buy = (assetClass, amountWon) => ({ assetClass, side: '매수', account: '위탁', instrumentName: assetClass, amountWon });
+  const { kept, dropped } = applyCashCap([buy('금', 3_000_000), buy('채권', 3_000_000), buy('달러', 3_000_000)], cash, { pendingKeys: pendingBuyKeys(yesterday) });
+  assert.deepEqual(kept.map((k) => [k.assetClass, k.amountWon]), [['금', 3_000_000], ['채권', 3_000_000], ['달러', 3_000_000]]);
+  assert.equal(dropped.length, 0);
+});

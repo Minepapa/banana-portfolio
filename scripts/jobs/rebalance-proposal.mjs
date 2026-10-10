@@ -76,6 +76,7 @@ import { parseProposal } from '../lib/proposal-vault.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { getQuarterLabel, shouldRunToday } from './quarterly-allocation-review.mjs';
+import { resolveDesignatedCashBalance, findCashBalance } from '../lib/cash-ledger.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -141,7 +142,12 @@ function formatRankedUniverse(ranked, topN = 3) {
 // rankedUniverseByClass: { [assetClass]: rankInstruments 반환 배열 } — 그 자산군에
 // "보유 후보가 전혀 없는 계좌"가 있을 때만 채워짐(§2, 2026-09-06 신설). 신규 종목을
 // Athena가 자유롭게 지어내지 못하게, 이 목록이 있으면 그 안에서만 고르도록 지시한다.
-export function buildRebalanceProposalPrompt(breachFacts, rankedUniverseByClass = {}) {
+function formatCashByAccount(cashByAccount) {
+  if (!cashByAccount) return '';
+  const lines = Object.entries(cashByAccount).map(([acct, won]) => `  - ${acct}: ${Number.isFinite(won) ? `${Math.round(won).toLocaleString('ko-KR')}원` : '미확인(매수 제안 불가)'}`);
+  return `\n[계좌별 예수금 — 매수 제안은 이 금액 안에서만]\n${lines.join('\n')}\n`;
+}
+export function buildRebalanceProposalPrompt(breachFacts, rankedUniverseByClass = {}, cashByAccount = null) {
   const sections = breachFacts.map((b) => {
     const header = `[${b.assetClass}] 목표 ${b.targetPct}% / 현재 ${b.currentPct.toFixed(2)}% — ${b.direction}(갭 약 ${Math.abs(b.gapWon).toLocaleString('ko-KR')}원)`;
     if (b.direction === '초과') {
@@ -167,7 +173,7 @@ export function buildRebalanceProposalPrompt(breachFacts, rankedUniverseByClass 
 
   return `[자동 리밸런싱 제안] 아래 자산군들이 5/25 밴드를 이탈했다(재조회·추정 금지, 이 숫자만 사용).
 
-${sections}
+${sections}${formatCashByAccount(cashByAccount)}
 
 판단 규칙:
 - 개별 회사 주식(삼성전자·SK하이닉스 등)은 매수·매도 후보 목록에 섞여 나올 수 있지만
@@ -192,8 +198,13 @@ ${sections}
   단, "달러" 자산군처럼 원래 여러 상품에 나눠 담으라는 지시가 있으면 그 지시가
   우선한다(위 문단 참고).
 - side는 그 자산군의 방향과 정확히 일치해야 한다("초과"면 "매도"만, "부족"이면 "매수"만).
-- reasoning은 네(아테나) 성격대로 — 왜 이 계좌·종목·타이밍인지 1~2문장, Frank에게
+- reasoning은 네(아테나) 성격대로 — 왜 이 계좌·종목·타이밍인지 1~3문장, Frank에게
   텔레그램으로 그대로 전달된다.
+- reasoning에는 반드시 다음 두 가지를 담아라(2026-10-10 오너 결정 — "진입시점이 왜 오늘인지 설명과 이해가 있어야 한다"):
+  ① 왜 오늘 실행하는지(트리거와 지금 시장 상황을 연결해서)
+  ② 지금 사지 않고 기다릴 때의 비용·위험
+  트리거 종류와 분할 원칙(갭의 50%)은 Node가 "진입 시점" 줄로 따로 붙이니 반복하지 마라.
+- 매수 금액은 그 계좌의 예수금 안이어야 한다(아래 [계좌별 예수금]). Node가 넘는 금액은 줄이거나 버린다.
 
 출력: 설명 없이 \`\`\`json 블록 하나만.
 \`\`\`json
@@ -212,6 +223,47 @@ ${sections}
 // instrumentName은 계좌의 정확한 기존 후보 또는 순위 목록에 있어야 한다. 같은 자산군에
 // 다른 보유 후보가 있다는 이유만으로 임의 신규 종목을 통과시키지 않는다. 순위 목록이
 // 없으면 기존 하위호환 동작대로 자유 이름을 허용한다.
+// 매수 금액이 이보다 작아지면(예수금 부족으로 줄어든 결과) 제안하지 않는다.
+export const MIN_BUY_WON = 50_000;
+// 매수 금액을 계좌 예수금 안으로 자른다(2026-10-10 결정). 모든 검증·갭 50% 상한 뒤에 적용한다 —
+// 리뷰(MEDIUM): 검증 전에 차감하면 드롭될 매수가 예수금을 써버리고, 상한 전에 차감하면 실제보다 많이 차감된다.
+// 예수금 미확인 계좌는 0으로 추정하지 않고 매수를 버린다. 잘린 금액이 MIN_BUY_WON 미만이면 버린다.
+export function applyCashCap(kept, cashByAccount, { pendingKeys = new Set() } = {}) {
+  const remaining = { ...cashByAccount };
+  const out = [];
+  const dropped = [];
+  for (const item of kept) {
+    if (item.side !== '매수') { out.push(item); continue; }
+    // 이미 대기·승인 중인 같은 계좌·자산군 매수는 어차피 'pending'(재발송 없음)으로 끝나 새 돈을 쓰지 않는다.
+    // 그 금액은 cashByAccount에서 이미 빠졌으니 여기서 또 빼지 않는다(재검증 HIGH: 예수금 이중 차감으로 미룬 매수가 버려지던 문제).
+    if (pendingKeys.has(`${item.account}|${item.assetClass}`)) { out.push(item); continue; }
+    const cash = remaining[item.account];
+    if (!Number.isFinite(cash)) { dropped.push({ item, reason: `${item.account} 예수금 미확인 — 매수 제안 안 함(0으로 추정하지 않음)` }); continue; }
+    const amountWon = Math.min(item.amountWon, cash);
+    if (amountWon < MIN_BUY_WON) { dropped.push({ item, reason: `${item.account} 예수금 부족(${Math.max(0, Math.round(cash)).toLocaleString('ko-KR')}원) — 매수 제안 안 함` }); continue; }
+    remaining[item.account] = cash - amountWon;
+    out.push({ ...item, amountWon });
+  }
+  return { kept: out, dropped };
+}
+
+// 대기·승인·주문 진행 중인 자산분배 매수 제안 금액을 계좌별로 합친다 — 그만큼은 이미 쓰기로 한 예수금이다(리뷰 MEDIUM: 다른 잡 제안과 합쳐 예수금 초과 방지).
+// 대기·승인 중인 자산분배 자동 매수 제안의 (계좌|자산군) 키 — applyCashCap이 이중 차감을 피하는 데 쓴다.
+export function pendingBuyKeys(proposals) {
+  return new Set((proposals || []).filter((p) => p.track === '자산분배' && p.side === '매수' && p.assetClass && p.account
+    && ['대기', '승인'].includes(p.status)).map((p) => `${p.account}|${p.assetClass}`));
+}
+
+export function pendingBuyWonByAccount(proposals) {
+  const out = {};
+  for (const p of proposals || []) {
+    if (p.track !== '자산분배' || p.side !== '매수' || !['대기', '승인', '주문접수', '부분체결'].includes(p.status)) continue;
+    const won = Number(p.quantity) * Number(p.proposedPrice);
+    if (p.account && Number.isFinite(won) && won > 0) out[p.account] = (out[p.account] || 0) + won;
+  }
+  return out;
+}
+
 export function validateRebalanceActions(actions, { breachFacts, holdings, rankedUniverseByClass = {} }) {
   const breachByClass = Object.fromEntries(breachFacts.map((b) => [b.assetClass, b]));
   const capBudget = Object.fromEntries(breachFacts.map((b) => [b.assetClass, Math.abs(b.gapWon) * CAP_FRACTION]));
@@ -288,8 +340,10 @@ function loadExistingProposals(dir) {
 
 // 발송 라인이 전부 성공(created)이어야 지문을 갱신한다 — new-cash-allocation.mjs
 // allAllocationsSent와 동일 원칙(부분 실패는 다음 실행 재시도).
+// 처리됨 = 새로 보냄(created)·이미 대기 중(pending)·거부 쿨다운(blocked/cooldown). 미룸(deferred)·실패·그 밖의 차단은 다음 실행에서 다시 시도(2026-10-10).
 export function allActionsSent(sendResults) {
-  return sendResults.length > 0 && sendResults.every((r) => r.action === 'created');
+  // 거부 쿨다운으로 막힌 건은 오너 판단을 존중해 처리됨으로 본다. 주문 진행 중·제안모드 꺼짐은 풀리면 다시 내야 하므로 재시도.
+  return sendResults.length > 0 && sendResults.every((r) => r.action === 'created' || r.action === 'pending' || (r.action === 'blocked' && r.blockedBy === 'cooldown'));
 }
 
 async function main() {
@@ -339,15 +393,33 @@ async function main() {
     if (ranked.length) rankedUniverseByClass[b.assetClass] = ranked;
   }
 
-  const prompt = buildRebalanceProposalPrompt(breachFacts, rankedUniverseByClass);
+  const wtCash = findCashBalance(holdings, '위탁');
+  const proposalsNow = loadExistingProposals(VAULT_PATHS.decisions.proposals);
+  const pendingBuys = pendingBuyWonByAccount(proposalsNow);
+  const pendingKeys = pendingBuyKeys(proposalsNow);
+  const minusPending = (acct, cash) => (cash == null ? null : Math.max(0, cash - (pendingBuys[acct] || 0)));
+  const cashByAccount = {
+    위탁: minusPending('위탁', wtCash != null ? resolveDesignatedCashBalance({ wtCash, goldCash: findCashBalance(holdings, '금현물') ?? 0 }) : null),
+    연금저축: minusPending('연금저축', findCashBalance(holdings, '연금저축')),
+  };
+  const prompt = buildRebalanceProposalPrompt(breachFacts, rankedUniverseByClass, cashByAccount);
   if (DRY_RUN) { console.log(`\n┌─── 프롬프트 ───┐\n${prompt}\n└──────────────────┘`); return; }
 
   let actions;
   try {
     const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt }));
-    const { kept, dropped } = validateRebalanceActions(r.actions, { breachFacts, holdings, rankedUniverseByClass });
+    const validated = validateRebalanceActions(r.actions, { breachFacts, holdings, rankedUniverseByClass });
+    const capped = applyCashCap(validated.kept, cashByAccount, { pendingKeys });
+    const dropped = [...validated.dropped, ...capped.dropped];
     dropped.forEach((d) => console.log(`  ⚠️ 액션 드롭: ${d.reason}`));
-    actions = kept;
+    actions = capped.kept;
+    // 남은 액션이 없고 버린 이유가 전부 예수금 부족·미확인이면 이번 분기 점검은 끝난 것으로 본다(3일 동안 LLM만 반복 호출 방지, 리뷰 LOW).
+    // 매수는 매도 체결로 예수금이 생기면 신규 현금 배분 잡이 이어받는다.
+    if (!actions.length && capped.dropped.length && !validated.dropped.length) {
+      await writeLastQuarter(getQuarterLabel(now));
+      console.log('  ℹ️ 매수 액션이 전부 예수금 부족·미확인으로 빠짐 — 이번 분기 점검 완료로 기록(예수금이 생기면 신규 현금 배분 잡이 이어받음)');
+      return;
+    }
   } catch (e) {
     if (e.isLimit) { console.log('  ⏳ 사용량 한도 → 판단 보류(다음 실행 재시도).'); return; }
     console.error(`  ❌ 리밸런싱 판단 실패: ${e.message} — 다음 실행 재시도`);
@@ -365,6 +437,8 @@ async function main() {
         side: action.side, quantity: pricing.quantity, proposedPrice: pricing.proposedPrice,
         amountWon: action.amountWon,
         reason: action.reasoning, senderAgent: SENDER_AGENT,
+        assetClass: action.assetClass, keepPending: true,
+        timing: `분기 정기 점검(${getQuarterLabel(new Date())} 첫 영업일, 5/25 밴드 이탈) · 분할 원칙: 이번엔 갭의 50%만 채우고 나머지는 다음 점검 때 판단`,
         existingProposals,
         writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
         sendMessage: (message) => sendAgentMessage(message).then((r) => r?.result ?? r),
@@ -372,8 +446,9 @@ async function main() {
           jobName: 'rebalance-proposal', kind: 'trade-safety', severity: 'high',
         }),
       });
-      if (result.action === 'blocked') {
-        console.log(`  ⛔ ${action.instrumentName} 제안 차단: ${result.reason}`);
+      if (['blocked', 'deferred', 'pending'].includes(result.action)) {
+        const icon = { blocked: '⛔ 제안 차단', deferred: '⏸ 오늘은 미룸', pending: '⏳ 이미 대기 중' }[result.action];
+        console.log(`  ${icon}: ${action.instrumentName} — ${result.reason}`);
         sendResults.push(result);
         continue;
       }
