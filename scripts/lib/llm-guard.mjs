@@ -143,6 +143,12 @@ export function collectFactPercentages(facts, { profileText } = {}) {
   for (const a of facts?.assetClasses || []) if (a.weightPct != null) nums.push(a.weightPct);
   for (const t of facts?.weekTrades || []) if (t.realizedPct != null) nums.push(t.realizedPct);
   for (const a of facts?.accounts || []) if (a.returnPct != null) nums.push(a.returnPct);
+  // 파생값(2026-10-10): 전체 합산 수익률·자산군 수익률·종목의 전체 대비 비중
+  if (facts?.portfolio?.returnPct != null) nums.push(facts.portfolio.returnPct);
+  for (const a of facts?.assetClasses || []) if (a.returnPct != null) nums.push(a.returnPct);
+  if (Number.isFinite(facts?.totalEval) && facts.totalEval > 0) {
+    for (const h of facts?.holdings || []) if (Number.isFinite(h.evalValue)) nums.push(h.evalValue / facts.totalEval * 100);
+  }
   for (const h of facts?.holdings || []) {
     if (!Number.isFinite(h.evalValue)) continue;
     const assetClass = (facts?.assetClasses || []).find((a) => a?.type === h.type);
@@ -190,6 +196,70 @@ export function numericClaimViolationsWithLocation(text, factPercentages, tolera
     }
   });
   return violations;
+}
+
+// 허용 목록에 없는 수치를 "확실한 불일치"와 "확신 낮음"으로 나눈다(2026-10-10, 오너 원칙 "잘못된 경고 알람이 오면 차라리 없는 게 낫다").
+// 확실한 불일치 = 그 줄에 거시지표 이름이 정확히 하나 있고, 그 지표의 5일 변화와 오차범위 밖으로 다를 때뿐이다.
+// 나머지(대상이 불분명한 수치)는 확신 낮음 → 텔레그램 경고 대신 기록만 한다.
+// 리뷰(2026-10-10)로 확인한 오탐 원인을 피하려고 별칭은 혼동이 적은 것만 둔다
+// ('유가'는 유가증권, '국제 금'은 국제 금리, '10년물'은 국고채와 겹쳐 뺐다). 보유 종목명(예: TIGER 미국S&P500)은 지우고 찾는다.
+const MACRO_ALIASES = {
+  USDKRW: ['원/달러', '달러/원', '원·달러', 'USD/KRW', 'USDKRW'],
+  TNX: ['미국 10년', '미 10년', '미국채 10년', 'TNX'],
+  VIX: ['VIX'],
+  KOSPI: ['코스피', 'KOSPI'],
+  SP500: ['S&P500 지수', 'S&P 500', 'S&P500', 'SP500'],
+  KOSDAQ: ['코스닥', 'KOSDAQ'],
+  NASDAQ: ['나스닥', 'NASDAQ'],
+  GOLD: ['국제 금값', '금 가격', '금값', '금 선물'],
+  WTI: ['WTI', '국제유가', '국제 유가'],
+};
+const WEEK_CUE = /5일|5거래일|주간|이번 ?주|한 ?주|일주일|지난주/;
+const ALIAS_WINDOW = 15; // 별칭 바로 뒤 이 글자 수 안의 첫 퍼센트만 그 지표 값으로 본다
+
+function stripHoldingNames(line, facts) {
+  let out = s(line);
+  for (const h of facts?.holdings || []) if (h?.name && String(h.name).length >= 2) out = out.split(String(h.name)).join(' ');
+  return out;
+}
+export function macroKeysInLine(line, facts = null) {
+  const text = stripHoldingNames(line, facts);
+  return Object.entries(MACRO_ALIASES).filter(([, aliases]) => aliases.some((a) => text.includes(a))).map(([key]) => key);
+}
+// 별칭 바로 뒤(ALIAS_WINDOW 글자 안)의 첫 퍼센트 값. 없으면 null.
+function percentNearAlias(line, key) {
+  for (const alias of MACRO_ALIASES[key]) {
+    let from = 0;
+    for (let at = line.indexOf(alias, from); at >= 0; at = line.indexOf(alias, from)) {
+      const tail = line.slice(at + alias.length, at + alias.length + ALIAS_WINDOW);
+      const m = tail.match(/[+-]?\d+(?:\.\d+)?%/);
+      if (m) return Number(m[0].replace('%', ''));
+      from = at + alias.length;
+    }
+  }
+  return null;
+}
+// 확실한 불일치만 고른다(오너 원칙 "잘못된 경고 알람이 오면 차라리 없는 게 낫다"):
+// 지표 이름이 정확히 하나 + 그 바로 뒤 숫자가 이 위반 숫자 + 줄에 주간 표현 + 부호를 뺀 크기가
+// 그 지표의 5일 변화(금리는 수준값도)와 오차범위 밖일 때만. 나머지는 확신 낮음(경고 없음).
+export function classifyNumericViolations(violations, facts, text, tolerance = 0.5) {
+  const lines = s(text).split('\n');
+  const confirmed = [];
+  const lowConfidence = [];
+  for (const v of violations || []) {
+    const raw = lines[v.line - 1] ?? v.snippet;
+    const line = stripHoldingNames(raw, facts);
+    const keys = macroKeysInLine(raw, facts);
+    const key = keys.length === 1 ? keys[0] : null;
+    const near = key ? percentNearAlias(line, key) : null;
+    const macro = key ? facts?.macro?.[key] : null;
+    const candidates = [macro?.change5d, key === 'TNX' ? macro?.value : null].filter(Number.isFinite);
+    const sameNumber = near != null && Math.abs(Math.abs(near) - Math.abs(v.value)) < 1e-9;
+    const mismatch = candidates.length && candidates.every((c) => Math.abs(Math.abs(c) - Math.abs(v.value)) > tolerance);
+    if (key && sameNumber && WEEK_CUE.test(line) && mismatch) confirmed.push({ ...v, key, expected: macro.change5d });
+    else lowConfidence.push(v);
+  }
+  return { confirmed, lowConfidence };
 }
 
 // ── 성향관찰(weekly-report site 2) 검증 — 사고 지점 전용, 테스트 가능하게 분리 ──

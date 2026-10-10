@@ -390,3 +390,17 @@ test('buildReportFacts: 보유 전부 evalValue=0(null 아님)이면 totalEval�
   assert.equal(facts.totalEval, 0);
   assert.match(factsText, /총 평가액: 0원/);
 });
+
+test('파생값(2026-10-10): 전체 합산 수익률·자산군 수익률을 계산하고 facts 텍스트에 넣는다', async () => {
+  const { buildReportFacts } = await import('./report-facts.mjs');
+  const { facts, factsText } = buildReportFacts({
+    asof: '2026-10-04', weekStart: '2026-09-28',
+    holdings: [
+      { name: '가', assetClass: '국내주식', account: '위탁', qty: 1, invest: 128483120, evalAmount: 140000000 },
+      { name: '나', assetClass: '채권', account: '위탁', qty: 1, invest: 100000000, evalAmount: 115851225 },
+    ],
+  });
+  assert.equal(facts.portfolio.returnPct, 12.0);
+  assert.equal(facts.assetClasses.find((a) => a.type === '채권').returnPct, 15.9);
+  assert.match(factsText, /총수익률 12% \(합산 수익률은 이 값만 쓸 것\)/);
+});

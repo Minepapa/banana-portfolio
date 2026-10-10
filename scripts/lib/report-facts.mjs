@@ -105,15 +105,17 @@ export function buildReportFacts(input) {
     if (!name) continue;
     const cur = byName.get(name) || {
       name, market: String(h.assetClass ?? '').includes('해외') ? 'US' : 'KR',
-      type: h.assetClass || '기타', qty: 0, invest: 0, evalValue: 0, hasEval: false, isCashLike: !!h.isCashLike,
+      type: h.assetClass || '기타', qty: 0, invest: 0, investWithEval: 0, evalValue: 0, hasEval: false, isCashLike: !!h.isCashLike,
     };
     cur.qty += Number(h.qty) || 0;
     cur.invest += Number(h.invest) || 0;
+    // 평가액이 있는 계좌 몫의 원금만 따로(합산·자산군 수익률 분모 — 같은 종목이 여러 계좌에 있고 일부만 평가액이 있을 때 수익률 과소 방지)
+    if (Number.isFinite(h.evalAmount)) cur.investWithEval += Number(h.invest) || 0;
     if (Number.isFinite(h.evalAmount)) { cur.evalValue += h.evalAmount; cur.hasEval = true; }
     byName.set(name, cur);
   }
   const hList = [...byName.values()].map((h) => ({
-    name: h.name, market: h.market, type: h.type, qty: h.qty, invest: h.invest,
+    name: h.name, market: h.market, type: h.type, qty: h.qty, invest: h.invest, investWithEval: h.investWithEval,
     evalValue: h.hasEval ? Math.round(h.evalValue) : null,
     totalReturnPct: (h.hasEval && h.invest > 0) ? Math.round((h.evalValue - h.invest) / h.invest * 1000) / 10 : null,
   }));
@@ -128,9 +130,21 @@ export function buildReportFacts(input) {
   const totalEval = rawTotalEval || 1; // weightPct 분모 전용 — facts.totalEval엔 쓰지 않음
   const byType = {};
   for (const h of hList) byType[h.type || '기타'] = (byType[h.type || '기타'] || 0) + (h.evalValue || 0);
+  // 자산군별 원금(평가액이 있는 종목만) — 자산군 수익률 파생값용(2026-10-10, 수치검증 오탐 수정)
+  const investByType = {};
+  for (const h of hList) if (h.evalValue != null) investByType[h.type || '기타'] = (investByType[h.type || '기타'] || 0) + (h.investWithEval || 0);
   const assetClasses = Object.entries(byType)
-    .map(([type, evalValue]) => ({ type, evalValue, weightPct: Math.round(evalValue / totalEval * 1000) / 10 }))
+    .map(([type, evalValue]) => ({ type, evalValue, weightPct: Math.round(evalValue / totalEval * 1000) / 10,
+      returnPct: investByType[type] > 0 ? Math.round((evalValue - investByType[type]) / investByType[type] * 1000) / 10 : null }))
     .sort((a, b) => b.evalValue - a.evalValue);
+  // 전체 합계(평가액이 있는 종목 기준) — 리포트가 자주 쓰는 "합산 수익률"을 Node가 미리 계산해 둔다.
+  // 2026-10-04 리포트의 정확한 +12.0%(총 수익 ÷ 원금)가 허용 목록에 없어 오탐 경고가 난 일의 재발 방지.
+  const withEval = hList.filter((h) => h.evalValue != null);
+  const portfolioInvest = withEval.reduce((s, h) => s + (h.investWithEval || 0), 0);
+  const portfolio = withEval.length ? {
+    invest: portfolioInvest, evalValue: rawTotalEval,
+    returnPct: portfolioInvest > 0 ? Math.round((rawTotalEval - portfolioInvest) / portfolioInvest * 1000) / 10 : null,
+  } : null;
 
   // ── 계좌별 합계(원본 Vault holding 그대로 — 계좌당 파일 하나라 배분 계산 자체가 불필요,
   // v1은 종목 하나를 여러 계좌 시트에서 각각 봐야 했지만 Vault는 이미 계좌 단위 원자 레코드) ──
@@ -156,7 +170,7 @@ export function buildReportFacts(input) {
   const weekDividends = dividendRows.map(parseDividend).filter(d => d.name && inWeek(d.date));
 
   const facts = {
-    asof, weekStart, totalEval: hList.some(h => h.evalValue != null) ? rawTotalEval : null,
+    asof, weekStart, totalEval: hList.some(h => h.evalValue != null) ? rawTotalEval : null, portfolio,
     macro, holdings: hList, assetClasses, accounts, weekTrades, weekDividends, prevReport,
   };
 
@@ -184,8 +198,9 @@ function renderFactsText(f, holdings = []) {
   }
 
   L.push('\n■ 자산군 비중 (평가액 기준)');
-  for (const a of f.assetClasses) L.push(`  - ${a.type}: ${a.weightPct}% (${won(a.evalValue)}원)`);
+  for (const a of f.assetClasses) L.push(`  - ${a.type}: ${a.weightPct}% (${won(a.evalValue)}원)${a.returnPct != null ? ` · 수익률 ${a.returnPct}%` : ''}`);
   L.push(`  - 총 평가액: ${f.totalEval != null ? won(f.totalEval) + '원' : '데이터 부족'}`);
+  if (f.portfolio?.returnPct != null) L.push(`  - 전체 합계: 원금 ${won(f.portfolio.invest)}원 · 평가액 ${won(f.portfolio.evalValue)}원 · 총수익률 ${f.portfolio.returnPct}% (합산 수익률은 이 값만 쓸 것)`);
 
   L.push('\n■ 계좌별 합계');
   for (const a of f.accounts) L.push(`  - ${a.acct}: 원금 ${won(a.invest)}원 · 평가액 ${won(a.evalValue)}원`

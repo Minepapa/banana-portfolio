@@ -325,3 +325,50 @@ test('numericClaimViolationsWithLocation: 헤딩 줄 자체에 있는 위반 수
   assert.equal(located[0].heading, '리츠 16% 비중 점검');
   assert.equal(located[0].line, 1);
 });
+
+test('수치검증 재설계(2026-10-10): 합산 수익률 파생값은 허용, 거시지표 이름이 붙은 불일치만 확실한 위반', async () => {
+  const { collectFactPercentages, numericClaimViolationsWithLocation, classifyNumericViolations } = await import('./llm-guard.mjs');
+  const facts = {
+    macro: { KOSPI: { change5d: -5.66 }, VIX: { change5d: 12.3 } },
+    holdings: [{ name: 'A', type: '국내주식', evalValue: 255851225, totalReturnPct: 3 }],
+    assetClasses: [{ type: '국내주식', evalValue: 255851225, weightPct: 100, returnPct: 12.0 }],
+    accounts: [], weekTrades: [], totalEval: 255851225,
+    portfolio: { invest: 228483120, evalValue: 255851225, returnPct: 12.0 },
+  };
+  const allowed = collectFactPercentages(facts);
+  const md = ['## 요약', '- 전체 합산 수익률 +12.0%로 견조하다.', '- 이번 주 KOSPI는 5일간 -3.0% 밀렸다.', '- 일부 테마는 +27.5% 급등했다는 보도.'].join('\n');
+  const violations = numericClaimViolationsWithLocation(md, allowed);
+  assert.deepEqual(violations.map((v) => v.value), [-3, 27.5], '+12.0%(합산 수익률)는 더 이상 위반이 아니다');
+  const { confirmed, lowConfidence } = classifyNumericViolations(violations, facts, md);
+  assert.deepEqual(confirmed.map((v) => [v.value, v.key, v.expected]), [[-3, 'KOSPI', -5.66]]);
+  assert.deepEqual(lowConfidence.map((v) => v.value), [27.5], '대상이 불분명한 수치는 확신 낮음(경고 안 함)');
+  const both = classifyNumericViolations([{ value: 1, line: 1, snippet: '' }], facts, 'KOSPI와 VIX가 1% 움직였다');
+  assert.equal(both.confirmed.length, 0, '지표 이름이 둘 이상이면 대상이 모호해 확신 낮음');
+});
+
+test('수치검증 확실한 위반 판정은 오탐을 내지 않는다(리뷰 재현 문장 — 기대 확실 위반 0건)', async () => {
+  const { classifyNumericViolations } = await import('./llm-guard.mjs');
+  const facts = {
+    macro: { TNX: { value: 4.25, change5d: 1.2 }, SP500: { change5d: 0.8 }, WTI: { change5d: 2 }, GOLD: { change5d: 1 },
+      USDKRW: { change5d: 0.3 }, KOSPI: { change5d: -1.2 } },
+    holdings: [{ name: 'TIGER 미국S&P500' }, { name: 'KODEX 코스피200' }],
+  };
+  const lines = [
+    '- 미국 10년물 금리 4.25%로 이번 주 높은 수준을 유지했다.',
+    '- TIGER 미국S&P500 이번 주 목표 대비 +3.4%p 높다.',
+    '- 유가증권시장 이번 주 거래대금 +7.5% 늘었다.',
+    '- 국제 금리 상승 속 이번 주 채권 -2.6%.',
+    '- 이번 주 해외주식 +18.7%는 원/달러 환율 효과 포함.',
+    '- 코스피는 5일간 1.2% 하락했다.',
+    '- 이번 주 코스피 +1.2% 오르는 동안 보유 ETF는 +7.3%.',
+  ];
+  const text = lines.join('\n');
+  const violations = [
+    { value: 4.25, line: 1 }, { value: 3.4, line: 2 }, { value: 7.5, line: 3 }, { value: -2.6, line: 4 },
+    { value: 18.7, line: 5 }, { value: 1.2, line: 6 }, { value: 7.3, line: 7 },
+  ];
+  const { confirmed } = classifyNumericViolations(violations, facts, text);
+  assert.deepEqual(confirmed, []);
+  const real = classifyNumericViolations([{ value: 9.1, line: 1 }], facts, '- 이번 주 WTI +9.1% 급등');
+  assert.equal(real.confirmed.length, 1, '지표 바로 뒤 숫자 + 주간 표현 + 크기 불일치면 여전히 잡는다');
+});

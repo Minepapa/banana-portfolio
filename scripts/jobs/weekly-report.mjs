@@ -42,7 +42,7 @@ import { buildReportFacts } from '../lib/report-facts.mjs';
 import { buildBehaviorSignals } from '../lib/behavior-signals.mjs';
 import { renderPrefRows, findExpiredPromotions, isLivePreferenceObservation } from '../lib/preferences.mjs';
 import {
-  filterObservations, claimViolationsInDoc, collectFactPercentages, numericClaimViolations, numericClaimViolationsWithLocation,
+  filterObservations, claimViolationsInDoc, collectFactPercentages, numericClaimViolations, numericClaimViolationsWithLocation, classifyNumericViolations,
 } from '../lib/llm-guard.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
@@ -501,21 +501,7 @@ async function main() {
   // 과함, 근거: 위 4원칙 §2 "profile 적용" 문구 등). 다만 "가장 큰 변화" 불릿은
   // 실제로 사고가 난 지점이라 그 줄만은 위반 시 Node 검증값으로 강제 치환한다.
   const factPercentages = collectFactPercentages(facts, { profileText });
-  const docViolations = numericClaimViolationsWithLocation(md, factPercentages);
-  if (docViolations.length) {
-    // 위치(헤딩+줄+원문 스니펫)를 같이 알려줘 오너가 리포트 전체를 다시 훑지 않아도
-    // 되게 한다(2026-09-20 오너 DevRequest). 위반이 많으면 최대 8건만 보여준다
-    // (job-alerts.mjs의 기존 관례와 동일 상한) — 스니펫까지 붙어 항목당 최대 130자
-    // 안팎이라 무제한이면 Telegram 4096자 상한(telegram.mjs의 truncateForTelegram이
-    // 최종 안전망이긴 하나)에 걸려 메시지가 중간에 잘리기 쉽다(2026-09-20 독립
-    // 코드리뷰 MEDIUM 지적).
-    const shown = docViolations.slice(0, 8);
-    const detail = shown
-      .map((v) => `${v.value}%(${v.heading ?? '헤딩 없음'} ${v.line}행 — "${v.snippet}")`)
-      .join(' | ');
-    const more = docViolations.length > shown.length ? ` 외 ${docViolations.length - shown.length}건` : '';
-    collectWarning(`주간리포트 자동검증: facts에 없는 수치 언급(오차범위 밖) — ${detail}${more}`);
-  }
+  // "가장 큰 변화" 불릿 강제 교체를 먼저 해서, 교체된 본문으로 검사한다(같은 문제로 경고 두 번·낡은 메모 방지, 리뷰 2026-10-10).
   const bulletMatch = md.match(/^([-*·]\s*\*\*가장\s*큰\s*변화\*\*.*)$/m);
   if (bulletMatch && numericClaimViolations(bulletMatch[1], factPercentages).length) {
     const corrected = formatMacroMoverBullet(biggestMacroMover(facts.macro));
@@ -523,6 +509,22 @@ async function main() {
     collectWarning(`주간리포트 "가장 큰 변화" 불릿이 facts와 불일치해 Node 검증값으로 강제 교체함 — 원문: "${bulletMatch[1]}" → 교체: "${corrected}"`);
     console.log(`   🛡 "가장 큰 변화" 불릿 수치 불일치 감지 — Node 검증값으로 강제 교체: ${corrected}`);
   }
+  // 2026-10-10 재설계(오너 원칙 "잘못된 경고 알람이 오면 차라리 없는 게 낫다"):
+  // - 확실한 불일치(거시지표 이름이 붙은 수치가 그 지표 값과 다름)만 텔레그램 경고로 보낸다. 항목마다 한 줄(가독성 규칙).
+  // - 대상이 불분명한 수치는 리포트 끝 "자동검증 메모"에만 남긴다(경고 없음).
+  const docViolations = numericClaimViolationsWithLocation(md, factPercentages);
+  const { confirmed: numericConfirmed, lowConfidence: numericLow } = classifyNumericViolations(docViolations, facts, md);
+  for (const v of numericConfirmed.slice(0, 8)) {
+    collectWarning(`주간리포트 수치 불일치: ${v.key} 5일 변화를 ${v.value}%로 썼으나 실제 ${v.expected}% (${v.heading ?? '헤딩 없음'} ${v.line}행)`);
+  }
+  if (numericConfirmed.length > 8) collectWarning(`주간리포트 수치 불일치 외 ${numericConfirmed.length - 8}건(실행 로그 확인)`);
+  if (numericLow.length) {
+    md += `\n\n## 자동검증 메모\n\n확신이 낮아 경고를 보내지 않은 수치입니다(facts·파생값과 바로 대조되지 않음).\n`
+      + numericLow.slice(0, 20).map((v) => `- ${v.value}% — ${v.heading ?? '헤딩 없음'} ${v.line}행: ${v.snippet}`).join('\n')
+      + (numericLow.length > 20 ? `\n- 외 ${numericLow.length - 20}건` : '') + '\n';
+    console.log(`   ℹ️ 확신 낮은 수치 ${numericLow.length}건 — 경고 없이 리포트 메모에만 기록`);
+  }
+
 
   // ⑥ Vault 저장 — frontmatter는 반드시 한 줄(위 extractSummary 주석 참고).
   const summaryBullets = extractSummaryBullets(md);
