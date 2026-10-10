@@ -31,6 +31,20 @@ test('전송 함수는 반드시 주입해야 하며 누락 시 실제 채널을
   assert.deepEqual(readWarningEvents({ rootDir: input.journalRoot }).events, []);
 });
 
+test('잡 경보 원장은 대상 잡과 민감정보를 가린 200자 상세를 기록한다', async (t) => {
+  const input = setup(t);
+  await sendDirectWarning({ ...input, targetJob: 'intraday-portfolio-sync',
+    detail: `Bearer secret-token appkey=KEY123 계좌 12345678901 ${'x'.repeat(300)}`,
+    message: '시험', send: async () => ({ ok: true, result: { message_id: 1 } }) });
+  const events = readWarningEvents({ rootDir: input.journalRoot }).events;
+  assert.equal(events.length, 3);
+  for (const event of events) {
+    assert.equal(event.targetJob, 'intraday-portfolio-sync');
+    assert.ok(event.detail.length <= 200);
+    assert.doesNotMatch(event.detail, /secret-token|KEY123|12345678901/);
+  }
+});
+
 test('Bot API 수락 응답이면 원문 변경 없이 1회 전송하고 message_id를 기록한다', async (t) => {
   const input = setup(t);
   let sends = 0;

@@ -2,7 +2,7 @@
 // 자체 재시도/중복 억제는 건드리지 않는다. send는 필수 주입: 테스트에서 실채널로
 // 빠지는 기본 경로를 두지 않는다. 일반 제안·정상 보고는 이 함수를 호출하지 않는다.
 import { createHash, randomUUID } from 'node:crypto';
-import { appendWarningEvent } from './warning-event-journal.mjs';
+import { appendWarningEvent, sanitizeWarningDetail } from './warning-event-journal.mjs';
 
 export function warningSubjectKey(prefix, value) {
   const hash = createHash('sha256').update(String(value)).digest('hex').slice(0, 20)
@@ -17,13 +17,14 @@ export function createDirectWarningSender(send, defaults) {
 
 export async function sendDirectWarning({
   message, send, jobName, warningCode, subjectKey, kind, severity,
-  journalRoot, clock = Date.now, logger = console,
+  journalRoot, clock = Date.now, logger = console, targetJob, detail,
 }) {
   if (typeof send !== 'function') throw new Error('직접 경고 전송 함수 필요');
   const attemptId = randomUUID();
   const incidentId = `direct-${createHash('sha256')
     .update(`${jobName}\0${warningCode}\0${subjectKey}`).digest('hex').slice(0, 32)}`;
-  const base = { incidentId, jobName, warningCode, subjectKey, kind, severity };
+  const base = { incidentId, jobName, warningCode, subjectKey, kind, severity,
+    ...(targetJob ? { targetJob } : {}), ...(detail ? { detail: sanitizeWarningDetail(detail) } : {}) };
   const record = async (event) => {
     try {
       await appendWarningEvent({

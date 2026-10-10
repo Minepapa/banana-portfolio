@@ -28,12 +28,24 @@ const INPUT_FIELDS = new Set([
   'deliveryStatus', 'incidentStatus', 'actionStatus', 'legacyFingerprint',
   'deliveryAttemptId', 'telegramMessageId', 'suppressedBy',
   'actionId', 'actionOutcome',
+  'targetJob', 'detail',
 ]);
 const SAFE_KEY = /^[\p{L}\p{N}:_.-]{1,128}$/u;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function validKey(value) {
   return typeof value === 'string' && SAFE_KEY.test(value);
+}
+
+export function sanitizeWarningDetail(value) {
+  return String(value ?? '')
+    .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
+    .replace(/["']?(?:app[_-]?key|app[_-]?secret(?:key)?|access[_-]?token|token)["']?\s*[:=]\s*["']?[^"'\s,;}]+["']?/gi, '[REDACTED]')
+    .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[REDACTED]')
+    .replace(/\d[\d-]{7,}\d|\b\d{8,}\b/g, '[REDACTED]')
+    .replace(/\b[A-Za-z0-9]{32,}\b/g, '[REDACTED]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .slice(0, 200);
 }
 
 function validateInput(input) {
@@ -51,6 +63,9 @@ function validateInput(input) {
     || (input.subjectKey.match(/\d/g) ?? []).length >= 7) {
     throw new Error('경고 이벤트 식별자 형식 오류');
   }
+  if ('targetJob' in input && !validKey(input.targetJob)) throw new Error('대상 잡 이름 형식 오류');
+  if ('detail' in input && (typeof input.detail !== 'string' || input.detail.length > 200
+    || input.detail !== sanitizeWarningDetail(input.detail))) throw new Error('경고 상세 형식 오류');
   if (typeof input.warningCode !== 'string' || !/^[A-Z][A-Z0-9_]{2,79}$/.test(input.warningCode)) {
     throw new Error('warningCode 형식 오류');
   }
@@ -132,7 +147,7 @@ export async function appendWarningEvent(input, { rootDir = DEFAULT_ROOT, lockOp
   };
   const statusField = { delivery: 'deliveryStatus', status: 'incidentStatus', action: 'actionStatus' }[input.eventType];
   if (statusField) event[statusField] = input[statusField];
-  for (const field of ['legacyFingerprint', 'deliveryAttemptId', 'telegramMessageId', 'suppressedBy', 'actionId', 'actionOutcome']) {
+  for (const field of ['legacyFingerprint', 'deliveryAttemptId', 'telegramMessageId', 'suppressedBy', 'actionId', 'actionOutcome', 'targetJob', 'detail']) {
     if (field in input) event[field] = input[field];
   }
 

@@ -11,10 +11,12 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildJobHealthRecord, parseFrontmatter } from '../lib/job-health.mjs';
+import { updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { escapeHtml } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
+import { sanitizeWarningDetail } from '../lib/warning-event-journal.mjs';
 
 import { describeJob } from '../lib/job-labels.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
@@ -32,6 +34,10 @@ const status = process.argv[3] || 'OK';
 const durationSec = process.argv[4] || null;
 const detail = process.env.HB_DETAIL || '';
 
+export function buildFailureAlertBody({ job, failStreak, detail }) {
+  return `<b>잡 실패</b> (연속 ${failStreak}회)\n잡: <code>${describeJob(job)}</code>\n${detail ? escapeHtml(sanitizeWarningDetail(detail)) : '(detail 없음)'}`;
+}
+
 async function main() {
   if (!job) { console.error('usage: record-heartbeat-vault <job> <status> <durationSec>'); process.exit(2); }
 
@@ -39,7 +45,8 @@ async function main() {
   const filepath = join(VAULT_PATHS.state.jobHealth, `${job}.md`);
   const prior = existsSync(filepath) ? parseFrontmatter(readFileSync(filepath, 'utf8')) : null;
 
-  const { content, failStreak, shouldAlert } = buildJobHealthRecord({ job, status, detail, durationSec }, prior);
+  const { content, failStreak, shouldAlert, shouldRecover, recoveredStreak, failureDurationSec } =
+    buildJobHealthRecord({ job, status, detail, durationSec }, prior);
   await writeStateFile(filepath, content);
   console.log(`🫀 ${job} ${status} ${durationSec ?? '?'}s${status !== 'OK' ? ` (연속실패 ${failStreak}회)` : ''}`);
 
@@ -50,9 +57,21 @@ async function main() {
       // 구분 안 돼 텔레그램이 발송 자체를 거부했었음) — 반드시 이스케이프 후 삽입.
       // describeJob(job)은 job-labels.mjs의 우리 자신이 쓴 정적 상수라 안전.
       await sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: '오류',
-        body: `<b>잡 실패</b> (연속 ${failStreak}회)\n잡: <code>${describeJob(job)}</code>\n${detail ? escapeHtml(detail) : '(detail 없음)'}`, }, { subjectKey: warningSubjectKey('job', job) });
+        body: buildFailureAlertBody({ job, failStreak, detail }), },
+      { subjectKey: warningSubjectKey('job', job), targetJob: job, detail });
+      await writeStateFile(filepath, updateFrontmatter(content, { failureAlertSent: true }));
     } catch (e) {
       console.error('텔레그램 알림 실패(무시):', e.message);
+    }
+  }
+  if (shouldRecover) {
+    try {
+      await sendWarning({ agent: SENDER_AGENT, kind: '정보', topic: '복구',
+        body: `<b>잡 복구됨</b>\n잡: <code>${describeJob(job)}</code>\n연속 실패: ${recoveredStreak}회\n소요: ${failureDurationSec}초`, },
+      { subjectKey: warningSubjectKey('job', job), warningCode: 'JOB_HEARTBEAT_RECOVERED',
+        targetJob: job, detail: `연속 실패 ${recoveredStreak}회, ${failureDurationSec}초 후 복구됨` });
+    } catch (e) {
+      console.error('텔레그램 복구 알림 실패(무시):', e.message);
     }
   }
 }

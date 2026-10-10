@@ -12,24 +12,36 @@
 // 토큰(POST /oauth2/tokenP) 유효기간 1일, 공식 예제(kis_auth.py) 주석: "6시간 이내 발급시
 // 기존 token값 유지" — 그래도 30초 주기 폴링마다 재발급하면 낭비이므로 파일 캐시로 만료
 // 임박 전까지 재사용한다(job-alerts.mjs STATE_FILE과 동일 위치 관례: scripts/.cache/, gitignore됨).
-import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { updateBrokerTokenCache } from './broker-token-cache.mjs';
 import { readKrxTradingDayStatus } from './krx-trading-calendar.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 export const KIS_KEY_FILE = process.env.KIS_KEY_FILE
   || `${process.env.HOME}/.config/banana-portfolio/kis-key.json`;
-const TOKEN_CACHE_FILE = join(HERE, '..', '.cache', 'kis-token.json');
+const TOKEN_CACHE_FILE = process.env.KIS_TOKEN_CACHE_FILE
+  || join(process.env.HOME, '.config', 'banana-portfolio-v2', 'kis-token.json');
+const LEGACY_TOKEN_CACHE_FILE = process.env.KIS_LEGACY_TOKEN_CACHE_FILE
+  || join(HERE, '..', '.cache', 'kis-token.json');
 const BASE_URL = 'https://openapi.koreainvestment.com:9443';
 const TOKEN_MARGIN_MS = 30 * 60 * 1000; // 만료 30분 전까지만 캐시 재사용
 
 export function hasKisCredentials() {
+  guardKisKeyFile(KIS_KEY_FILE);
   try { readFileSync(KIS_KEY_FILE); return true; } catch { return false; }
 }
 
+function guardKisKeyFile(keyFile) {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.KIS_KEY_FILE && keyFile === KIS_KEY_FILE) {
+    throw new Error('테스트에서 KIS_KEY_FILE 임시 경로 필요');
+  }
+}
+
 export function loadKisCredentials(keyFile = KIS_KEY_FILE) {
+  guardKisKeyFile(keyFile);
   const { appkey, appsecret } = JSON.parse(readFileSync(keyFile, 'utf8'));
   if (!appkey || !appsecret) throw new Error(`${keyFile}에 appkey/appsecret 없음`);
   return { appkey, appsecret };
@@ -39,6 +51,7 @@ export function loadKisCredentials(keyFile = KIS_KEY_FILE) {
 // loadQuantAccount가 필드명만 다르고 동일 로직(계좌 단위 앱키 등록, 넷 중 하나라도
 // 없으면 null)을 쓰므로 하나로 합침(2026-08-07, 퀀트 계좌 추가 시 중복 방지).
 function loadNamedAccount(keyFile, fieldName) {
+  guardKisKeyFile(keyFile);
   try {
     const acc = JSON.parse(readFileSync(keyFile, 'utf8'))[fieldName];
     if (!acc?.cano || !acc?.acntPrdtCd || !acc?.appkey || !acc?.appsecret) return null;
@@ -80,37 +93,32 @@ export function parseKisExpiry(expiredStr) {
 // 최상위(시세용)·irpAccount(계좌 전용) 최소 2개라, 단일 슬롯 캐시였다면 한쪽 앱의 토큰을
 // 다른 앱의 appkey/appsecret 헤더와 섞어 보내는 사고가 난다(앱키 등록 단위와 불일치 → 인증
 // 실패, 심하면 계좌A 자격증명으로 계좌B를 조회하려는 요청처럼 보일 위험).
-function readTokenCache() {
-  try { return JSON.parse(readFileSync(TOKEN_CACHE_FILE, 'utf8')); } catch { return {}; }
-}
-// mode: 0o600 — access_token이 그대로 든 파일이라 소유자 외 읽기를 막는다(Phase 11
-// "남은 작업" 항목, 2026-08-13 정리). writeFileSync의 mode는 파일을 새로 생성할 때만
-// 적용되고(Node 동작 — 기존 파일이면 무시) 기존에 world-readable로 이미 만들어진
-// 캐시파일까지는 안 고쳐주므로, 매번 명시적으로 chmodSync도 같이 호출해 이미 존재하는
-// 파일의 권한도 실제로 좁힌다.
-function writeTokenCache(map) {
-  mkdirSync(dirname(TOKEN_CACHE_FILE), { recursive: true });
-  writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(map), { mode: 0o600 });
-  chmodSync(TOKEN_CACHE_FILE, 0o600);
-}
+export async function getKisToken({ appkey, appsecret, fetchImpl = fetch, invalidToken }) {
+  return updateBrokerTokenCache(TOKEN_CACHE_FILE, LEGACY_TOKEN_CACHE_FILE, async (cache) => {
+    const cached = cache[appkey];
+    if (cached && cached.expiresAt - Date.now() > TOKEN_MARGIN_MS
+      && (invalidToken === undefined || cached.token !== invalidToken)) {
+      return { result: cached.token, changed: false };
+    }
 
-export async function getKisToken({ appkey, appsecret, fetchImpl = fetch }) {
-  const cache = readTokenCache();
-  const cached = cache[appkey];
-  if (cached && cached.expiresAt - Date.now() > TOKEN_MARGIN_MS) return cached.token;
-
-  const res = await fetchImpl(`${BASE_URL}/oauth2/tokenP`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ grant_type: 'client_credentials', appkey, appsecret }),
+    const res = await fetchImpl(`${BASE_URL}/oauth2/tokenP`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(15_000),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'client_credentials', appkey, appsecret }),
+    });
+    if (!res.ok) {
+      const error = new Error(`KIS 토큰 발급 실패(HTTP ${res.status}): ${await res.text()}`);
+      error.status = res.status;
+      if (res.status === 429) error.code = 'RATE_LIMIT';
+      throw error;
+    }
+    const body = await res.json();
+    if (!body.access_token) throw new Error('KIS 토큰 응답에 access_token 없음');
+    const expiresAt = parseKisExpiry(body.access_token_token_expired);
+    cache[appkey] = { token: body.access_token, expiresAt };
+    return { result: body.access_token, changed: true };
   });
-  if (!res.ok) throw new Error(`KIS 토큰 발급 실패: ${await res.text()}`);
-  const body = await res.json();
-  if (!body.access_token) throw new Error('KIS 토큰 응답에 access_token 없음');
-  const expiresAt = parseKisExpiry(body.access_token_token_expired);
-  cache[appkey] = { token: body.access_token, expiresAt };
-  writeTokenCache(cache);
-  return body.access_token;
 }
 
 // rt_cd!=='0'(KIS 실패) 응답 → Error, msg_cd(안정적 코드값, 예: "EGW00201" 레이트리밋)를
@@ -265,6 +273,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // 주문 API(POST) 추가 시 확장(Phase 11, 2026-08-09) — 기존 GET 호출측은 인자를 안 바꿔도
 // method 기본값(GET)·body 미설정으로 그대로 동작한다.
 async function fetchKis(url, headers, label, { fetchImpl = fetch, retries = 2, retryDelayMs = 700, method = 'GET', body, onResponse } = {}) {
+  let authRetried = false;
+  let originalAuthError;
   for (let attempt = 0; ; attempt++) {
     const init = { method, headers };
     if (body !== undefined) init.body = JSON.stringify(body);
@@ -273,6 +283,40 @@ async function fetchKis(url, headers, label, { fetchImpl = fetch, retries = 2, r
     const text = await res.text();
     let json = null;
     try { json = JSON.parse(text); } catch { /* 아래에서 처리 — 몸통이 JSON이 아닌 진짜 알 수 없는 실패 */ }
+    if (authRetried && res.status === 429) {
+      const error = new Error(`KIS 조회 실패(${label}): HTTP 429 ${text.slice(0, 200)}`);
+      error.code = 'RATE_LIMIT';
+      error.status = 429;
+      throw error;
+    }
+    const invalidToken = ['EGW00121', 'EGW00123'].includes(json?.msg_cd)
+      || /invalid[_ ]token|expired[_ ]token|유효하지 않은\s*token/i
+      .test(`${json?.msg_cd ?? ''} ${json?.msg1 ?? ''} ${json?.error ?? ''}`)
+      || res.status === 401;
+    if (method === 'GET' && invalidToken) {
+      const error = kisRtError(`KIS 조회 실패(${label})`, json);
+      if (authRetried) {
+        if (json?.msg_cd === KIS_RATE_LIMIT_CODE || res.status === 429) throw error;
+        originalAuthError.cause = error;
+        throw originalAuthError;
+      }
+      authRetried = true;
+      originalAuthError = error;
+      const appkey = headers.appkey;
+      const bearer = String(headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+      if (!appkey || !headers.appsecret) throw error;
+      try {
+        headers.authorization = `Bearer ${await getKisToken({
+          appkey, appsecret: headers.appsecret, fetchImpl, invalidToken: bearer,
+        })}`;
+      } catch (retryError) {
+        if (retryError?.code === 'RATE_LIMIT' || retryError?.status === 429
+          || /HTTP 429\b/.test(retryError?.message ?? '')) throw retryError;
+        error.cause = retryError;
+        throw error;
+      }
+      continue;
+    }
     if (json?.msg_cd === KIS_RATE_LIMIT_CODE && attempt < retries) {
       await sleep(retryDelayMs * (attempt + 1));
       continue;

@@ -6,7 +6,19 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { appendWarningEvent, readWarningEvents, rebuildWarningIncidents } from './warning-event-journal.mjs';
+import { appendWarningEvent, readWarningEvents, rebuildWarningIncidents, sanitizeWarningDetail } from './warning-event-journal.mjs';
+
+test('detail은 계좌번호·긴 숫자·JWT·긴 토큰을 가리고 200자 절단 뒤에도 유효하다', async () => {
+  const secrets = ['205-0159-6019', '12345678901234567',
+    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig', 'A'.repeat(32)];
+  const rootDir = mkdtempSync(join(tmpdir(), 'warning-detail-test-'));
+  for (const secret of secrets) {
+    const detail = sanitizeWarningDetail(`${'x '.repeat(95)}${secret} tail`);
+    assert.equal(detail, sanitizeWarningDetail(detail));
+    assert.ok(!detail.includes(secret));
+    await appendWarningEvent(detected({ detail }), { rootDir });
+  }
+});
 
 function tempRoot(t) {
   const rootDir = mkdtempSync(join(tmpdir(), 'warning-journal-test-'));

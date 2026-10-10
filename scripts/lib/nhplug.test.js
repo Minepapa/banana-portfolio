@@ -1,9 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const tokenTestDir = mkdtempSync(join(tmpdir(), 'nhplug-token-test-'));
+process.env.NHPLUG_TOKEN_CACHE_FILE = join(tokenTestDir, 'nhplug-token.json');
+process.env.NHPLUG_LEGACY_TOKEN_CACHE_FILE = join(tokenTestDir, 'legacy-token.json');
+process.env.NHPLUG_KEY_FILE = join(tokenTestDir, 'nhplug-key.json');
+const {
   isNhSuccess, classifyAcctType, callNh, listNhAccounts, setNhRateLimitForTests, getNhToken,
   callNhForPaging, CONTINUATION_RSP_CD,
-} from './nhplug.mjs';
+} = await import('./nhplug.mjs');
 
 // 실제 속도제한(초당 4회 슬라이딩 윈도우)을 끄지 않으면 이 파일이 callNh를 여러 번
 // 부르는 테스트마다 최대 1초씩 실제로 기다린다(2026-09-01 실측) — 테스트는 무제한으로.
@@ -181,6 +189,15 @@ test('getNhToken: 정상 응답이면 access_token 반환 + 캐시에 기록돼 
   assert.equal(token2, 'abc123');
 });
 
+test('getNhToken: 주입 fetch에도 15초 발급 타임아웃 signal 전달', async () => {
+  const appkey = uniqueAppkey('timeout');
+  await getNhToken({ appkey, appsecret: 's', fetchImpl: async (_url, options) => {
+    assert.equal(options.signal.aborted, false);
+    assert.ok(options.signal instanceof AbortSignal);
+    return { ok: true, status: 200, text: async () => JSON.stringify({ access_token: 'timed', expires_in: 86400 }) };
+  } });
+});
+
 test('getNhToken: 응답 실패(!res.ok)면 throw', async () => {
   const appkey = uniqueAppkey('http-fail');
   const fetchImpl = async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ error: 'invalid_client' }) });
@@ -282,3 +299,94 @@ test('callNhForPaging: HTTP 429는 기존과 동일하게 즉시 throw(RATE_LIMI
     assert.equal(e.code, 'RATE_LIMIT');
   }
 });
+
+test('NH 조회는 무효 토큰을 한 번만 재발급하고 원 요청을 재시도한다', async () => {
+  const appkey = uniqueAppkey('retry');
+  writeFileSync(process.env.NHPLUG_KEY_FILE, JSON.stringify({ appkey, appsecret: 'secret' }));
+  const oldToken = 'expired-token';
+  await getNhToken({ appkey, appsecret: 'secret', fetchImpl: async () => ({
+    ok: true, text: async () => JSON.stringify({ access_token: oldToken, expires_in: 86400 }),
+  }) });
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, authorization: options.headers.Authorization });
+    if (url.endsWith('/oauth2/token')) return {
+      ok: true, text: async () => JSON.stringify({ access_token: 'new-token', expires_in: 86400 }),
+    };
+    return { ok: options.headers.Authorization === 'Bearer new-token', status: 400,
+      text: async () => JSON.stringify(options.headers.Authorization === 'Bearer new-token'
+        ? { rsp_cd: '00000' } : { rsp_msg: '유효하지 않은 token 입니다.' }) };
+  };
+  await callNh({ token: oldToken, uri: '/n2/acctinfo', fetchImpl });
+  assert.equal(calls.length, 3);
+  assert.equal(JSON.parse(readFileSync(process.env.NHPLUG_TOKEN_CACHE_FILE))[appkey]?.token, 'new-token');
+});
+
+test('NH 재시도도 실패하면 첫 오류를 던지고, 주문은 토큰을 재발급하지 않는다', async () => {
+  const appkey = uniqueAppkey('retry-failure');
+  writeFileSync(process.env.NHPLUG_KEY_FILE, JSON.stringify({ appkey, appsecret: 'secret' }));
+  await getNhToken({ appkey, appsecret: 'secret', fetchImpl: async () => ({
+    ok: true, text: async () => JSON.stringify({ access_token: 'old', expires_in: 86400 }),
+  }) });
+  let calls = 0;
+  const fetchImpl = async (url) => {
+    calls++;
+    return url.endsWith('/oauth2/token')
+      ? { ok: true, text: async () => JSON.stringify({ access_token: 'new', expires_in: 86400 }) }
+      : { ok: false, status: 400, text: async () => JSON.stringify({ rsp_msg: '유효하지 않은 token 입니다.' }) };
+  };
+  await assert.rejects(() => callNh({ token: 'old', uri: '/n2/acctinfo', fetchImpl }),
+    (error) => error.message.includes('유효하지 않은 token'));
+  assert.equal(calls, 3);
+  calls = 0;
+  await assert.rejects(() => callNh({ token: 'new', uri: '/krstock/order/v1/cashBuy', fetchImpl }));
+  assert.equal(calls, 1);
+});
+
+test('NH 캐시가 다른 프로세스에서 교체됐으면 새 토큰을 재사용한다', async () => {
+  const appkey = uniqueAppkey('concurrent');
+  writeFileSync(process.env.NHPLUG_KEY_FILE, JSON.stringify({ appkey, appsecret: 'secret' }));
+  writeFileSync(process.env.NHPLUG_TOKEN_CACHE_FILE, JSON.stringify({
+    [appkey]: { token: 'already-new', expiresAt: Date.now() + 86_400_000 },
+  }));
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push(url);
+    assert.equal(url.endsWith('/oauth2/token'), false);
+    return { ok: options.headers.Authorization === 'Bearer already-new', status: 400,
+      text: async () => JSON.stringify(options.headers.Authorization === 'Bearer already-new'
+        ? { rsp_cd: '00000' } : { rsp_msg: '유효하지 않은 token 입니다.' }) };
+  };
+  await callNh({ token: 'superseded', uri: '/n2/acctinfo', fetchImpl });
+  assert.equal(calls.length, 2);
+});
+
+for (const paging of [false, true]) {
+  test(`NH ${paging ? '페이지' : '일반'} 조회 재시도 오류는 cause로 보존하고 429는 그대로 전파`, async () => {
+    writeFileSync(process.env.NHPLUG_KEY_FILE, JSON.stringify({ appkey: uniqueAppkey('cause'), appsecret: 's' }));
+    const uri = paging ? '/common/inquiry/v1/totalTransaction' : '/n2/acctinfo';
+    const invoke = (fetchImpl) => paging
+      ? callNhForPaging({ token: 'old', uri, fetchImpl })
+      : callNh({ token: 'old', uri, fetchImpl });
+    for (const retryStatus of [502, 429]) {
+      const fetchImpl = async (url, options) => {
+        if (url.endsWith('/oauth2/token')) return {
+          ok: true, status: 200, text: async () => JSON.stringify({ access_token: 'new', expires_in: 86400 }),
+        };
+        const first = options.headers.Authorization === 'Bearer old';
+        return { ok: false, status: first ? 401 : retryStatus,
+          text: async () => first ? JSON.stringify({ error: 'invalid_token' })
+            : retryStatus === 429 ? 'retry failed' : JSON.stringify({ rsp_msg: 'retry failed' }),
+          headers: { get: () => null } };
+      };
+      await assert.rejects(() => invoke(fetchImpl), (error) => {
+        if (retryStatus === 429) assert.equal(error.code, 'RATE_LIMIT');
+        else {
+          assert.match(error.message, /HTTP 401/);
+          assert.match(error.cause.message, /HTTP 502/);
+        }
+        return true;
+      });
+    }
+  });
+}

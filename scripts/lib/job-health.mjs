@@ -20,13 +20,29 @@ export function buildJobHealthRecord({ job, status, detail = '', durationSec = n
   const priorStreak = Number.isFinite(prior?.failStreak) ? prior.failStreak : 0;
   const failStreak = status === 'OK' ? 0 : priorStreak + 1;
   const lastRun = now.toISOString();
+  const alertDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now);
+  const priorAlertCount = prior?.alertDate === alertDate ? Number(prior?.alertCount) || 0 : 0;
+  const scheduled = failStreak === 2 || (failStreak >= 6
+    && Number.isInteger(Math.log2(failStreak / 6)));
+  const shouldAlert = status !== 'OK' && scheduled && priorAlertCount < 5;
+  const shouldRecover = status === 'OK' && priorStreak > 0 && prior?.failureAlertSent === true;
+  const firstFailureAt = status === 'OK' ? null
+    : (priorStreak > 0 && prior?.firstFailureAt ? prior.firstFailureAt : lastRun);
+  const failureDurationSec = shouldRecover
+    ? Math.max(0, Math.round((now.getTime() - new Date(prior.firstFailureAt || prior.lastRun).getTime()) / 1000))
+    : 0;
   const filename = `${job}.md`;
   const content = buildFrontmatter({
     type: 'job-health', job, lastRun, status, detail: String(detail ?? '').slice(0, 200),
     durationSec: durationSec === null ? null : Number(durationSec),
     failStreak,
+    firstFailureAt, alertDate, alertCount: priorAlertCount + Number(shouldAlert),
+    failureAlertSent: status !== 'OK' && prior?.failureAlertSent === true,
   });
-  return { filename, content, failStreak, shouldAlert: status !== 'OK' && failStreak >= 2 };
+  return { filename, content, failStreak, shouldAlert, shouldRecover,
+    recoveredStreak: priorStreak, failureDurationSec };
 }
 
 // lastRun(ISO 문자열) 기준으로 expectedIntervalMs의 2배를 넘겼으면 stale(조용해짐)로 판정.

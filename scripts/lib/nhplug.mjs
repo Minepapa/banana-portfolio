@@ -33,68 +33,78 @@
 // 슬라이딩 윈도우 + 429는 자동재시도 안 함(nhplug-sdk client.py 실측, 캐릭터가
 // 다름) — 이 모듈은 호출 전 슬라이딩 윈도우로 스스로 속도를 늦추고, 429가 실제로
 // 오면 즉시 throw(호출측이 백오프 여부 결정, KIS처럼 자동 재시도하지 않음).
-import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { updateBrokerTokenCache } from './broker-token-cache.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 export const NHPLUG_KEY_FILE = process.env.NHPLUG_KEY_FILE
   || `${process.env.HOME}/.config/banana-portfolio/nhplug-key.json`;
-const TOKEN_CACHE_FILE = join(HERE, '..', '.cache', 'nhplug-token.json');
+const TOKEN_CACHE_FILE = process.env.NHPLUG_TOKEN_CACHE_FILE
+  || join(process.env.HOME, '.config', 'banana-portfolio-v2', 'nhplug-token.json');
+const LEGACY_TOKEN_CACHE_FILE = process.env.NHPLUG_LEGACY_TOKEN_CACHE_FILE
+  || join(HERE, '..', '.cache', 'nhplug-token.json');
 export const NHPLUG_BASE_URL = 'https://api.nhplug.com:8443';
 const TOKEN_MARGIN_MS = 30 * 60 * 1000; // 만료 30분 전까지만 캐시 재사용(kis.mjs와 동일 관례)
 
 export function hasNhplugCredentials() {
+  guardNhKeyFile(NHPLUG_KEY_FILE);
   try { readFileSync(NHPLUG_KEY_FILE); return true; } catch { return false; }
 }
 
+function guardNhKeyFile(keyFile) {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.NHPLUG_KEY_FILE && keyFile === NHPLUG_KEY_FILE) {
+    throw new Error('테스트에서 NHPLUG_KEY_FILE 임시 경로 필요');
+  }
+}
+
 export function loadNhplugCredentials(keyFile = NHPLUG_KEY_FILE) {
+  guardNhKeyFile(keyFile);
   const { appkey, appsecret } = JSON.parse(readFileSync(keyFile, 'utf8'));
   if (!appkey || !appsecret) throw new Error(`${keyFile}에 appkey/appsecret 없음`);
   return { appkey, appsecret };
 }
 
-// 코드리뷰 LOW 지적(2026-09-01) — 캐시파일이 "null"(유효한 JSON이지만 객체가 아님)
-// 이면 JSON.parse는 성공하고 아래 cache[appkey] 접근에서 매번 TypeError가 나
-// 사실상 캐시가 영구히 깨진다. 객체가 아니면 빈 맵으로 안전 폴백.
-function readTokenCache() {
-  try {
-    const parsed = JSON.parse(readFileSync(TOKEN_CACHE_FILE, 'utf8'));
-    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
-  } catch { return {}; }
-}
+// appkey별 캐시 조회와 갱신은 공용 파일 락 아래에서 이뤄진다.
+export async function getNhToken({ appkey, appsecret, fetchImpl = fetch, invalidToken }) {
+  return updateBrokerTokenCache(TOKEN_CACHE_FILE, LEGACY_TOKEN_CACHE_FILE, async (cache) => {
+    const cached = cache[appkey];
+    if (cached && cached.expiresAt - Date.now() > TOKEN_MARGIN_MS
+      && (invalidToken === undefined || cached.token !== invalidToken)) {
+      return { result: cached.token, changed: false };
+    }
 
-// mode 0o600 — access_token 원문이 든 파일, kis.mjs 토큰캐시와 동일 이유로 소유자 외
-// 읽기 차단(기존 파일엔 writeFileSync의 mode가 안 먹으므로 매번 chmodSync도 같이 호출).
-function writeTokenCache(map) {
-  mkdirSync(dirname(TOKEN_CACHE_FILE), { recursive: true });
-  writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(map), { mode: 0o600 });
-  chmodSync(TOKEN_CACHE_FILE, 0o600);
-}
+    const params = new URLSearchParams({
+      appkey, appsecretkey: appsecret, grant_type: 'client_credentials', scope: 'oob',
+    });
+    const res = await fetchImpl(`${NHPLUG_BASE_URL}/oauth2/token`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(15_000),
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    });
+    const text = await res.text();
+    if (res.status === 429) {
+      const error = new Error(`NH PLUG 토큰 발급 실패(HTTP 429): ${text.slice(0, 300)}`);
+      error.status = 429;
+      error.code = 'RATE_LIMIT';
+      throw error;
+    }
+    let body;
+    try { body = JSON.parse(text); } catch { throw new Error(`NH PLUG 토큰 발급 실패(JSON 아님): ${text.slice(0, 200)}`); }
+    if (!res.ok || !body.access_token) {
+      const error = new Error(`NH PLUG 토큰 발급 실패: ${text.slice(0, 300)}`);
+      error.status = res.status;
+      if (res.status === 429) error.code = 'RATE_LIMIT';
+      throw error;
+    }
 
-export async function getNhToken({ appkey, appsecret, fetchImpl = fetch }) {
-  const cache = readTokenCache();
-  const cached = cache[appkey];
-  if (cached && cached.expiresAt - Date.now() > TOKEN_MARGIN_MS) return cached.token;
-
-  const params = new URLSearchParams({
-    appkey, appsecretkey: appsecret, grant_type: 'client_credentials', scope: 'oob',
+    const expiresAt = Date.now() + (Number(body.expires_in) || 86400) * 1000;
+    cache[appkey] = { token: body.access_token, expiresAt };
+    return { result: body.access_token, changed: true };
   });
-  const res = await fetchImpl(`${NHPLUG_BASE_URL}/oauth2/token`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: params.toString(),
-  });
-  const text = await res.text();
-  let body;
-  try { body = JSON.parse(text); } catch { throw new Error(`NH PLUG 토큰 발급 실패(JSON 아님): ${text.slice(0, 200)}`); }
-  if (!res.ok || !body.access_token) throw new Error(`NH PLUG 토큰 발급 실패: ${text.slice(0, 300)}`);
-
-  const expiresAt = Date.now() + (Number(body.expires_in) || 86400) * 1000;
-  cache[appkey] = { token: body.access_token, expiresAt };
-  writeTokenCache(cache);
-  return body.access_token;
 }
 
 // NH 응답의 성공/실패 판정 — rsp_cd 단일값 비교 금지(API마다 성공코드가 다름).
@@ -165,7 +175,7 @@ async function throttle() {
 // 추출하지 않고 남겨둔 의도적 부채, 당장은 리스크보다 두 함수의 계약을 각각 명시하는
 // 쪽을 택함). **이 에러 분류 로직을 고치면 callNhForPaging도 반드시 대조해서 같이
 // 고칠 것** — 특히 businessRejection 판정은 주문 confirmedNotSent 승격에 직결된다.
-export async function callNh({ token, uri, input0 = {}, fetchImpl = fetch }) {
+async function callNhOnce({ token, uri, input0 = {}, fetchImpl = fetch }) {
   await throttle();
   const res = await fetchImpl(`${NHPLUG_BASE_URL}${uri}`, {
     method: 'POST',
@@ -205,6 +215,39 @@ export async function callNh({ token, uri, input0 = {}, fetchImpl = fetch }) {
   return body;
 }
 
+function isInvalidNhToken(error) {
+  return /유효하지 않은\s*token|invalid[_ ]token|expired[_ ]token/i.test(error.message)
+    || /HTTP 401\(/.test(error.message);
+}
+
+function isNhInquiry(uri) {
+  return /^\/(?:n2\/acctinfo$|(?:common|gbstock|krstock|krgold|krbond)\/(?:inquiry|quote)\/)/.test(uri);
+}
+
+async function refreshedNhToken(token, fetchImpl) {
+  const credentials = loadNhplugCredentials();
+  return getNhToken({ ...credentials, fetchImpl, invalidToken: token });
+}
+
+export async function callNh(options) {
+  try { return await callNhOnce(options); } catch (originalError) {
+    if (!isNhInquiry(options.uri) || !isInvalidNhToken(originalError)) throw originalError;
+    let token;
+    try { token = await refreshedNhToken(options.token, options.fetchImpl ?? fetch); }
+    catch (retryError) { throwRetryError(originalError, retryError); }
+    if (!token) throw originalError;
+    try { return await callNhOnce({ ...options, token }); }
+    catch (retryError) { throwRetryError(originalError, retryError); }
+  }
+}
+
+function throwRetryError(originalError, retryError) {
+  if (retryError?.code === 'RATE_LIMIT' || retryError?.status === 429
+    || /HTTP 429\b/.test(retryError?.message ?? '')) throw retryError;
+  originalError.cause = retryError;
+  throw originalError;
+}
+
 // 연속조회(페이지네이션) 안내 코드 — 2026-09-19 신설 공통_계좌_조회 API(종합거래내역·
 // 입출금내역)에서 실측 확인. rsp_cd='00218'/rsp_msg="계속 조회시 다음(연속조회) 버튼을
 // 누르시기 바랍니다"는 오류가 아니라 "이 페이지엔 데이터가 있고, 더 있으니 cts로 이어
@@ -223,7 +266,7 @@ export const CONTINUATION_RSP_CD = '00218';
 //
 // ⚠️ 아래 429·JSON파싱·HTTP우회판정·businessRejection 로직은 위 callNh의 복제다 —
 // callNh 쪽 주석 참고, 한쪽을 고치면 반드시 반대쪽도 대조해서 고칠 것.
-export async function callNhForPaging({ token, uri, input0 = {}, cts, ctsFlag, fetchImpl = fetch }) {
+async function callNhForPagingOnce({ token, uri, input0 = {}, cts, ctsFlag, fetchImpl = fetch }) {
   await throttle();
   const headers = { 'content-type': 'application/json', Authorization: `Bearer ${token}` };
   if (cts) headers.cts = cts;
@@ -263,6 +306,18 @@ export async function callNhForPaging({ token, uri, input0 = {}, cts, ctsFlag, f
     ctsFlag: res.headers.get('cts_flag') || null,
     hasMore: isContinuation,
   };
+}
+
+export async function callNhForPaging(options) {
+  try { return await callNhForPagingOnce(options); } catch (originalError) {
+    if (!isNhInquiry(options.uri) || !isInvalidNhToken(originalError)) throw originalError;
+    let token;
+    try { token = await refreshedNhToken(options.token, options.fetchImpl ?? fetch); }
+    catch (retryError) { throwRetryError(originalError, retryError); }
+    if (!token) throw originalError;
+    try { return await callNhForPagingOnce({ ...options, token }); }
+    catch (retryError) { throwRetryError(originalError, retryError); }
+  }
 }
 
 // 계좌목록 조회(POST /n2/acctinfo) — 모든 호출의 선행 단계. acct_type 01(운영 일반)·

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildJobHealthRecord, parseFrontmatter, isStale } from './job-health.mjs';
+import { updateFrontmatter } from './vault-frontmatter.mjs';
 
 test('buildJobHealthRecord: OK 상태 — failStreak 0, 알림 없음', () => {
   const r = buildJobHealthRecord({ job: 'parse-notifications-to-vault', status: 'OK', durationSec: 4.2 });
@@ -37,6 +38,27 @@ test('buildJobHealthRecord: detail은 200자로 잘림', () => {
   const r = buildJobHealthRecord({ job: 'x', status: 'FAIL', detail: 'A'.repeat(300) });
   const parsed = parseFrontmatter(r.content);
   assert.equal(parsed.detail.length, 200);
+});
+
+test('연속 실패 경보는 2·6·12·24회이며 하루 최대 5건, 회복은 한 번 알린다', () => {
+  let prior = null;
+  const alerts = [];
+  const start = new Date('2026-10-10T00:00:00.000Z');
+  for (let count = 1; count <= 200; count++) {
+    const now = new Date(start.getTime() + count * 60_000);
+    const result = buildJobHealthRecord({ job: 'failing-job', status: 'FAIL', now }, prior);
+    if (result.shouldAlert) alerts.push(count);
+    prior = parseFrontmatter(result.shouldAlert
+      ? updateFrontmatter(result.content, { failureAlertSent: true }) : result.content);
+  }
+  assert.deepEqual(alerts, [2, 6, 12, 24, 48]);
+  const recovery = buildJobHealthRecord({ job: 'failing-job', status: 'OK',
+    now: new Date(start.getTime() + 201 * 60_000) }, prior);
+  assert.equal(recovery.shouldRecover, true);
+  assert.equal(recovery.recoveredStreak, 200);
+  assert.equal(recovery.failureDurationSec, 200 * 60);
+  assert.equal(buildJobHealthRecord({ job: 'failing-job', status: 'OK' },
+    parseFrontmatter(recovery.content)).shouldRecover, false);
 });
 
 test('parseFrontmatter: buildJobHealthRecord 출력을 그대로 되읽으면 원래 필드가 복원된다(왕복)', () => {
