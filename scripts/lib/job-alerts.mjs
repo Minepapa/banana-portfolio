@@ -33,7 +33,7 @@ export function collectWarning(msg, details = null) {
   const m = String(msg ?? '').trim();
   if (m) {
     warnings.push(m);
-    if (details) structuredWarnings.push(details);
+    if (details) structuredWarnings.push({ ...details, detail: m });
   }
 }
 

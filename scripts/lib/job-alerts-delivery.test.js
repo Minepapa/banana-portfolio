@@ -17,7 +17,7 @@ function paths(t) {
 test('성공 응답만 sent로 기록하고 기존 배치 서명의 24시간 억제를 유지한다', async (t) => {
   const config = paths(t);
   resetWarnings();
-  collectWarning('시험 경고 원문 — 원장에 저장하지 않음');
+  collectWarning('시험 경고 원문 — 원장에 요약 저장');
   let sends = 0;
   const options = {
     ...config, now: () => Date.parse('2026-09-30T01:00:00.000Z'),
@@ -31,9 +31,9 @@ test('성공 응답만 sent로 기록하고 기존 배치 서명의 24시간 억
     'reserved', 'sending', 'sent', 'suppressed',
   ]);
   assert.equal(events.find((event) => event.deliveryStatus === 'sent').telegramMessageId, 1234);
-  assert.equal(JSON.stringify(events).includes('시험 경고 원문'), false);
+  assert.equal(events.every((event) => event.detail === '시험 경고 원문 — 원장에 요약 저장'), true);
   assert.deepEqual(JSON.parse(readFileSync(config.stateFile, 'utf8'))['test-job'], {
-    sig: warningsSignature(['시험 경고 원문 — 원장에 저장하지 않음']),
+    sig: warningsSignature(['시험 경고 원문 — 원장에 요약 저장']),
     ts: options.now(),
   });
 });
@@ -70,11 +70,29 @@ test('구조화 경고는 기존 텔레그램 배치 1건과 별도 사건으로
   assert.deepEqual(sentEvents.map((event) => event.warningCode), [
     'MACRO_YFINANCE_QUERY_FAILED', 'MACRO_YFINANCE_RESPONSE_INVALID', 'LEGACY_WARNING_BATCH',
   ]);
-  assert.equal(JSON.stringify(events).includes('yfinance 거시 조회 실패'), false);
+  assert.equal(events.find((event) => event.warningCode === 'MACRO_YFINANCE_QUERY_FAILED').detail,
+    'yfinance 거시 조회 실패');
+  assert.match(events.find((event) => event.warningCode === 'LEGACY_WARNING_BATCH').detail,
+    /yfinance 거시 조회 실패.*다른 거시 조회 오류/);
   assert.equal((await flushWarnings('intraday-market-move-monitor', options)).status, 'suppressed');
   const after = readWarningEvents({ rootDir: config.journalRoot }).events;
   assert.equal(after.filter((event) => event.warningCode === 'MACRO_YFINANCE_QUERY_FAILED'
     && event.deliveryStatus === 'suppressed').length, 1);
+});
+
+test('배치 상세는 묶인 경고를 요약하고 비밀값을 가려 200자로 제한한다', async (t) => {
+  const config = paths(t);
+  resetWarnings();
+  collectWarning('NH 예수금조회 실패 Bearer private-token 계좌 12345678901');
+  collectWarning(`KIS 응답 누락 token=private ${'x'.repeat(250)}`);
+  await flushWarnings('reconcile-nh-cash', {
+    ...config, sendImpl: async () => ({ ok: true, result: { message_id: 8 } }),
+  });
+  const events = readWarningEvents({ rootDir: config.journalRoot }).events;
+  assert.equal(events.every((event) => event.detail.length <= 200), true);
+  assert.match(events[0].detail, /NH 예수금조회 실패/);
+  assert.match(events[0].detail, /KIS 응답 누락/);
+  assert.doesNotMatch(events[0].detail, /private-token|12345678901|token=private/);
 });
 
 test('원인별 terminal 기록이 실패하면 배치 terminal을 완료로 남기지 않는다', async (t) => {

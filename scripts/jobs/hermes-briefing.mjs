@@ -8,6 +8,7 @@ import { readCandidates, saveCandidates, readyCandidate, candidateVisitCount } f
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { escapeHtml } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
 import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
 import { formatEventLine, listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
@@ -85,10 +86,11 @@ export async function runBriefing({ mode, date, preview = false, deps = {} } = {
   const sections = groups
     ? groups.map(({ owner, events: ownerEvents }) => `■ ${escapeHtml(owner)} — ${period}\n${ownerEvents.map((event) => escapeHtml(formatEventLine(event, { owner, showCalendar: owner === '기타' }))).join('\n')}`)
     : [`■ ${period}\n${calendarError ? '- 캘린더 연결 확인 필요(google-oauth-setup)' : (events.length ? events.map((event) => escapeHtml(formatEventLine(event))) : ['- 일정 없음']).join('\n')}`];
+  let birthdayError = false;
   if (selectedMode === 'morning') {
     let birthday;
     try { birthday = birthdayLines(targetDate, await (deps.readPeople ?? readPeople)()); }
-    catch (error) { console.error('생일 정보 조회 실패:', error.message); birthday = ['- 생일 정보 조회 실패']; }
+    catch (error) { console.error('생일 정보 조회 실패:', error.message); birthday = ['- 생일 정보 조회 실패']; birthdayError = true; }
     if (birthday.length) sections.push(`■ 생일\n${birthday.join('\n')}`);
   }
   if (requests.length) {
@@ -97,7 +99,17 @@ export async function runBriefing({ mode, date, preview = false, deps = {} } = {
     sections.push(`■ 장소 등록 요청\n${lines.join('\n')}\n<code>장소 ${exampleId} 이름</code>으로 답하면 등록, <code>장소 ${exampleId} 제외</code>`);
   }
   const body = [`${selectedMode === 'morning' ? '아침 브리핑' : '내일 일정'} (${targetDate})`, ...sections].join('\n\n');
-  if (!preview) await (deps.send ?? sendAgentMessage)({ agent: SENDER_AGENT, kind: '정보', topic: selectedMode === 'morning' ? '아침 브리핑' : '내일 일정', body });
+  if (!preview) {
+    const message = { agent: SENDER_AGENT, kind: '정보', topic: selectedMode === 'morning' ? '아침 브리핑' : '내일 일정', body };
+    const send = deps.send ?? sendAgentMessage;
+    if (calendarError || birthdayError) {
+      await sendDirectWarning({
+        message, send, jobName: 'hermes-briefing', warningCode: 'PERSONAL_BRIEFING_SOURCE_FAILED',
+        subjectKey: 'source', kind: 'operational', severity: 'medium', journalRoot: deps.journalRoot,
+        detail: [calendarError && '캘린더 연결 확인 필요', birthdayError && '생일 정보 조회 실패'].filter(Boolean).join(' | '),
+      });
+    } else await send(message);
+  }
   if (!preview && requests.length) {
     for (const candidate of requests) { candidate.status = '물음'; candidate.askedAt = now.toISOString(); }
     await (deps.saveCandidates ?? saveCandidates)(VAULT_PATHS.root, candidates);

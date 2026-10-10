@@ -20,6 +20,17 @@ test('detail은 계좌번호·긴 숫자·JWT·긴 토큰을 가리고 200자 �
   }
 });
 
+test('detail의 200자 경계가 가림 표식 안에 있어도 원장 검증을 통과한다', async (t) => {
+  const rootDir = tempRoot(t);
+  const detail = sanitizeWarningDetail(`${'x '.repeat(95)}Bearer secret-token`);
+  assert.equal(detail, sanitizeWarningDetail(detail));
+  assert.equal(detail, 'x '.repeat(95) + 'Bearer ');
+  assert.ok(detail.length <= 200);
+  assert.ok(!detail.includes('secret-token'));
+  const saved = await appendWarningEvent(detected({ detail }), { rootDir });
+  assert.equal(readWarningEvents({ rootDir }).events[0].detail, saved.detail);
+});
+
 function tempRoot(t) {
   const rootDir = mkdtempSync(join(tmpdir(), 'warning-journal-test-'));
   t.after(() => rmSync(rootDir, { recursive: true, force: true }));

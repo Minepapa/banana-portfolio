@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildAssetSection, buildEventsSection, buildAllocationSection,
-  isFullyQuiet, buildMorningBriefingFacts, buildMorningBriefingPrompt,
+  isFullyQuiet, buildMorningBriefingFacts, buildMorningBriefingPrompt, buildMorningWarningDetail,
 } from './morning-briefing.mjs';
 
 const QUIET_SECTIONS = {
@@ -143,4 +143,10 @@ test('buildMorningBriefingPrompt: 네 섹션 전부 포함하고 [결론]·[맥�
   assert.match(prompt, /\[결론\]/);
   assert.match(prompt, /\[맥락\]/);
   assert.match(prompt, /\[의사결정\]/);
+});
+
+test('아침 브리핑 경고 상세에는 실패한 지표 이름만 남고 금액 사실은 포함되지 않는다', () => {
+  const detail = buildMorningWarningDetail({ macroFailed: true, judgmentFailed: true });
+  assert.equal(detail, '아침 브리핑 일부 지표 실패: 거시신호 조회, Plutus 판단');
+  assert.doesNotMatch(detail, /\d{1,3}(?:,\d{3})+|총자산|배당/);
 });

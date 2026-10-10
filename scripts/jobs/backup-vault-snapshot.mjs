@@ -19,8 +19,13 @@ import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { buildVaultIndex } from '../lib/vault-index-builder.mjs';
 import { lintVault } from '../lib/vault-registry.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 
 const SENDER_AGENT = 'clio'; // 볼트 등록부 위반 알림(D48 ③) — 볼트·성향 담당
+const sendRegistryWarning = createDirectWarningSender(sendAgentMessage, {
+  jobName: 'backup-vault-snapshot', warningCode: 'VAULT_REGISTRY_VIOLATION',
+  subjectKey: 'registry', kind: 'data-quality', severity: 'medium',
+});
 
 // 루트 파일 사본(이관 4-7): ~/Pantheon의 CLAUDE.md·.claude/settings.json은 어떤 git에도 속하지 않는다.
 // 볼트 안으로 복사해 볼트 git 이력과 암호화 외부 백업에 함께 태운다. 확장자를 .txt로 바꿔
@@ -101,7 +106,7 @@ async function notifyRegistryLint() {
   try {
     const notice = buildLintNotice(lintVault(VAULT_PATHS.root));
     console.log(notice ? `🔎 등록부 위반 있음 — 클리오 알림` : '🔎 등록부 위반 없음');
-    if (notice) await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '점검', body: notice });
+    if (notice) await sendRegistryWarning({ agent: SENDER_AGENT, kind: '정보', topic: '점검', body: notice });
   } catch (e) {
     console.error('⚠️ 등록부 lint 실패(백업은 이미 끝남):', e);
   }

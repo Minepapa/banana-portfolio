@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { withLock, writeAtomic } from './state-writer.mjs';
-import { appendWarningEvent, readWarningEvents, WARNING_JOURNAL_ROOT } from './warning-event-journal.mjs';
+import { appendWarningEvent, readWarningEvents, sanitizeWarningDetail, WARNING_JOURNAL_ROOT } from './warning-event-journal.mjs';
 
 const SUPPRESS_MS = 24 * 3600 * 1000;
 const RESERVATION_MAX_AGE_MS = 5 * 60 * 1000;
@@ -48,12 +48,13 @@ function reservationIsActive(reservation, now) {
     && processAlive(reservation.pid);
 }
 
-function eventBase(jobName, sig, clock) {
+function eventBase(jobName, sig, clock, detail) {
   return {
     eventId: randomUUID(), occurredAt: new Date(clock()).toISOString(),
     incidentId: `legacy-${createHash('sha256').update(`${jobName}\0${sig}`).digest('hex').slice(0, 32)}`,
     jobName, warningCode: 'LEGACY_WARNING_BATCH', subjectKey: 'batch',
     kind: 'legacy-unstructured', severity: 'unclassified', legacyFingerprint: sig,
+    detail: sanitizeWarningDetail(detail),
   };
 }
 
@@ -64,10 +65,11 @@ function structuredEventBase(jobName, warning, clock) {
     incidentId: `coded-${createHash('sha256')
       .update(`${jobName}\0${warningCode}\0${subjectKey}`).digest('hex').slice(0, 32)}`,
     jobName, warningCode, subjectKey, kind, severity,
+    detail: sanitizeWarningDetail(warning.detail),
   };
 }
 
-async function recordEvent(jobName, sig, event, { journalRoot, clock, logger, structuredWarnings }) {
+async function recordEvent(jobName, sig, event, { journalRoot, clock, logger, structuredWarnings, detail }) {
   const options = journalRoot ? { rootDir: journalRoot } : undefined;
   const uniqueWarnings = [...new Map((structuredWarnings ?? []).map((warning) => [
     `${warning.warningCode}|${warning.subjectKey}`, warning,
@@ -76,8 +78,8 @@ async function recordEvent(jobName, sig, event, { journalRoot, clock, logger, st
   // 실제 전송 결과를 복구 기준인 레거시 배치 사건에 마지막으로 쓴다. 중단 뒤 레거시
   // sent가 보이면 같은 시도의 원인별 사건들도 이미 sent 기록을 마친 상태여야 한다.
   const bases = ['sent', 'rejected', 'unknown'].includes(event.deliveryStatus)
-    ? [...structuredBases, eventBase(jobName, sig, clock)]
-    : [eventBase(jobName, sig, clock), ...structuredBases];
+    ? [...structuredBases, eventBase(jobName, sig, clock, detail)]
+    : [eventBase(jobName, sig, clock, detail), ...structuredBases];
   let recorded = true;
   for (const base of bases) {
     if (['sent', 'rejected', 'unknown'].includes(event.deliveryStatus)
@@ -133,7 +135,8 @@ export async function deliverWarningBatch({
   clock = Date.now, logger = console,
 }) {
   const lockOptions = { retries: 20, retryDelayMs: 25 };
-  const recordContext = { journalRoot, clock, logger, structuredWarnings };
+  const detail = Array.isArray(message?.facts) ? message.facts.slice(1).join(' | ') : message?.body;
+  const recordContext = { journalRoot, clock, logger, structuredWarnings, detail };
   let reservation;
   try {
     mkdirSync(dirname(stateFile), { recursive: true });

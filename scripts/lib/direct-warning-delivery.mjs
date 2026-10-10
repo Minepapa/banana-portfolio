@@ -15,6 +15,13 @@ export function createDirectWarningSender(send, defaults) {
   return (message, details = {}) => sendDirectWarning({ ...defaults, ...details, message, send });
 }
 
+function messageDetail(message) {
+  if (typeof message === 'string') return message;
+  if (typeof message?.body === 'string') return message.body;
+  if (Array.isArray(message?.facts)) return message.facts.join(' | ');
+  return message?.topic ?? '경고 내용 확인 필요';
+}
+
 export async function sendDirectWarning({
   message, send, jobName, warningCode, subjectKey, kind, severity,
   journalRoot, clock = Date.now, logger = console, targetJob, detail,
@@ -23,8 +30,9 @@ export async function sendDirectWarning({
   const attemptId = randomUUID();
   const incidentId = `direct-${createHash('sha256')
     .update(`${jobName}\0${warningCode}\0${subjectKey}`).digest('hex').slice(0, 32)}`;
+  const safeDetail = sanitizeWarningDetail(detail ?? messageDetail(message));
   const base = { incidentId, jobName, warningCode, subjectKey, kind, severity,
-    ...(targetJob ? { targetJob } : {}), ...(detail ? { detail: sanitizeWarningDetail(detail) } : {}) };
+    ...(targetJob ? { targetJob } : {}), detail: safeDetail };
   const record = async (event) => {
     try {
       await appendWarningEvent({

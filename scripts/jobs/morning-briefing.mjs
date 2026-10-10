@@ -49,6 +49,7 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 import { renderSignalsReport } from '../tools/macro-overlay-facts.mjs';
 import { dedupIncrementalExecutionsForReport } from './daily-execution-report.mjs';
@@ -212,6 +213,14 @@ function fetchMacroText() {
   }
 }
 
+export function buildMorningWarningDetail({ macroFailed, judgmentFailed }) {
+  const failedMetrics = [
+    macroFailed && '거시신호 조회',
+    judgmentFailed && 'Plutus 판단',
+  ].filter(Boolean);
+  return `아침 브리핑 일부 지표 실패: ${failedMetrics.join(', ')}`;
+}
+
 async function main() {
   const holdings = readVaultDir(VAULT_PATHS.state.holdings);
   if (!holdings.length) { console.log(`ℹ️ ${VAULT_REL.stateHoldings} 비어있음 — 아침 브리핑 건너뜀(추정 안 함)`); return; }
@@ -244,6 +253,7 @@ async function main() {
   let conclusion = null;
   let context = null;
   let decisions = null;
+  let judgmentFailed = false;
 
   if (quiet) {
     console.log('ℹ️ morning-briefing: 완전히 조용한 날 — LLM 해석 생략, 사실만 발송');
@@ -268,6 +278,7 @@ async function main() {
       // Hermes 판단 실패해도 브리핑 자체(사실)는 여전히 유용하니 잡을 죽이지 않는다 —
       // 사실만이라도 발송(conclusion·context·decisions는 null로 남음).
       console.error(`⚠ Plutus 헤드리스 판단 실패(사실만 발송): ${e.message}`);
+      judgmentFailed = true;
     }
   }
 
@@ -276,7 +287,15 @@ async function main() {
     // 먼저 갱신하고 발송을 try/catch로 무시하면, 발송 실패 시 이번에 보고하려던 이벤트가
     // 다음 실행에서도 "이미 지난 워터마크"가 돼 영원히 안 나간다.
     try {
-      await sendAgentMessage({ agent: SENDER_AGENT, kind: '판단', topic: '안내', facts, conclusion, context, decisions });
+      const message = { agent: SENDER_AGENT, kind: '판단', topic: '안내', facts, conclusion, context, decisions };
+      if (macroResult.error || judgmentFailed) {
+        await sendDirectWarning({
+          message, send: sendAgentMessage, jobName: 'morning-briefing',
+          warningCode: macroResult.error ? 'MORNING_MACRO_SOURCE_FAILED' : 'MORNING_JUDGMENT_FAILED',
+          subjectKey: 'briefing', kind: 'operational', severity: 'medium',
+          detail: buildMorningWarningDetail({ macroFailed: !!macroResult.error, judgmentFailed }),
+        });
+      } else await sendAgentMessage(message);
       writePreviousState(asset.total, new Date().toISOString());
     } catch (e) { console.error('텔레그램 알림 실패(워터마크 미전진, 다음 실행에서 재시도):', e.message); }
   }

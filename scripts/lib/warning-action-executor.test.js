@@ -64,6 +64,9 @@ test('live는 고정 VIX 한 번만 읽고 running·succeeded를 남기되 사�
   assert.deepEqual(readWarningEvents({ rootDir }).events
     .filter((event) => event.eventType === 'action').map((event) => event.actionStatus),
   ['running', 'succeeded']);
+  assert.deepEqual(readWarningEvents({ rootDir }).events
+    .filter((event) => event.eventType === 'action').map((event) => event.detail),
+  ['^VIX 단일 재조회 시작', '^VIX 단일 재조회: source-available-now']);
   assert.equal((await runMacroReadRetry(incidentId, options)).executed, false);
   assert.equal(calls.length, 1);
 });

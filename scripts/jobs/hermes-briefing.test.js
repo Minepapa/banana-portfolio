@@ -1,6 +1,17 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { birthdayLines, main, runBriefing } from './hermes-briefing.mjs';
+import { readWarningEvents } from '../lib/warning-event-journal.mjs';
+
+const journalRoot = mkdtempSync(join(tmpdir(), 'hermes-warning-'));
+after(() => rmSync(journalRoot, { recursive: true, force: true }));
+const capture = (sent) => async (message) => {
+  sent.push(message);
+  return { ok: true, result: { message_id: sent.length } };
+};
 
 const ev = { calendar: '개인', title: '<치과>', start: '2026-10-10T10:00:00+09:00', end: '2026-10-10T11:00:00+09:00', allDay: false, location: 'A&B' };
 
@@ -24,17 +35,18 @@ test('아침 일정과 생일, 저녁 내일 일정, 일정 없는 저녁 미발
 
 test('OAuth 미설정이어도 생일과 일정 연결 경고를 발송한다', async () => {
   const sent = [];
-  const result = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: { isConfigured: () => false, readPeople: async () => [{ name: '민', birthday: '1990-10-10' }], send: async (message) => sent.push(message) } });
+  const result = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: { isConfigured: () => false, readPeople: async () => [{ name: '민', birthday: '1990-10-10' }], send: capture(sent), journalRoot } });
   assert.equal(result.alert, true);
   assert.equal(sent.length, 1);
   assert.match(sent[0].body, /- 캘린더 연결 확인 필요\(google-oauth-setup\)/);
   assert.match(sent[0].body, /오늘: 민\(36살\)/);
+  assert.match(readWarningEvents({ rootDir: journalRoot }).events.at(-1).detail, /캘린더 연결 확인 필요/);
   assert.deepEqual(birthdayLines('2026-10-10', [{ name: '빈값', birthday: '' }]), []);
 });
 
 test('일정 조회 권한 실패여도 저녁 연결 경고를 발송한다', async () => {
   const sent = [];
-  const result = await runBriefing({ mode: 'evening', date: '2026-10-11', deps: { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, send: async (message) => sent.push(message) } });
+  const result = await runBriefing({ mode: 'evening', date: '2026-10-11', deps: { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, send: capture(sent), journalRoot } });
   assert.equal(result.alert, true);
   assert.match(sent[0].body, /- 캘린더 연결 확인 필요\(google-oauth-setup\)/);
 });
@@ -43,7 +55,7 @@ test('브리핑 CLI는 일정 권한 실패 경보를 종료 코드 1로 표시�
   const original = process.exitCode;
   try {
     process.exitCode = 0;
-    await main(['--mode=morning', '--date=2026-10-10'], { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, readPeople: async () => [], send: async () => {} });
+    await main(['--mode=morning', '--date=2026-10-10'], { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, readPeople: async () => [], send: async () => ({ ok: true, result: { message_id: 10 } }), journalRoot });
     assert.equal(process.exitCode, 1);
   } finally { process.exitCode = original; }
 });
@@ -51,7 +63,7 @@ test('브리핑 CLI는 일정 권한 실패 경보를 종료 코드 1로 표시�
 test('생일 파일 읽기 실패를 표시해 일정 브리핑은 발송한다', async () => {
   const sent = [];
   const result = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: {
-    fetchEvents: async () => [ev], readOwners: async () => { throw new Error('unavailable'); }, readPeople: async () => { throw new Error('vault unavailable'); }, send: async (message) => sent.push(message),
+    fetchEvents: async () => [ev], readOwners: async () => { throw new Error('unavailable'); }, readPeople: async () => { throw new Error('vault unavailable'); }, send: capture(sent), journalRoot,
   } });
   assert.equal(result.sent, true);
   assert.equal(sent.length, 1);

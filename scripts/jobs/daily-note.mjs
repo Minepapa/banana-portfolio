@@ -24,6 +24,7 @@ import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
 import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
 import { listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
@@ -210,7 +211,14 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   const sentAt = inspectExisting(readOrNull(path)).prev?.fields?.telegramSentAt;
   if (sentAt || noSend || mode === 'prepare') return { failed: !!s.failed || events === 'failed', candidatesFailed };
   try {
-    await deps.send({ agent: SENDER_AGENT, kind: '정보', topic: '데일리', body: buildDailyTelegramBody(date, records, summary, statusOf(inspectExisting(note).prev)) });
+    const message = { agent: SENDER_AGENT, kind: '정보', topic: '데일리', body: buildDailyTelegramBody(date, records, summary, statusOf(inspectExisting(note).prev)) };
+    if (summaryStatus === 'failed') {
+      await sendDirectWarning({
+        message, send: deps.send, jobName: 'daily-note', warningCode: 'DAILY_SUMMARY_FAILED',
+        subjectKey: 'summary', kind: 'operational', severity: 'medium', journalRoot: deps.journalRoot,
+        detail: `AI 요약 실패 — 다음 실행에서 다시 시도 (${date})`,
+      });
+    } else await deps.send(message);
     console.log('  📨 클리오 데일리 요약 발송');
   } catch (e) {
     console.error('  ❌ 텔레그램 발송 실패:', e.message);

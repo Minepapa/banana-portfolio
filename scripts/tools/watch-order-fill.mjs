@@ -136,10 +136,13 @@ async function main() {
           });
         } catch (error) { console.error(`[Proposal] ${proposalId} 취소 상태 기록 실패: ${error.message}`); }
       }
-      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '취소',
+      const cancellationMessage = { agent: SENDER_AGENT, kind: '정보', topic: '취소',
         body: filledQty > 0
           ? `<b>부분체결 후 잔량 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — ${filledQty}/${result.orderQty}주 체결 후 잔량이 취소되었습니다.${avgFillPrice == null ? '\n평균 체결가가 없어 Ledger 수동 확인이 필요합니다.' : ` 평균체결가 ${avgFillPrice.toLocaleString()}원.`}`
-          : `<b>주문 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — 취소되었습니다.`, });
+          : `<b>주문 취소 확인</b>\n${name}(${code}) 주문번호 ${orderNo} — 취소되었습니다.` };
+      if (filledQty > 0 && avgFillPrice == null) {
+        await sendWarning(cancellationMessage, { warningCode: 'KIS_FILL_PRICE_MISSING', subjectKey: warningSubjectKey('order', orderNo) });
+      } else await sendAgentMessage(cancellationMessage);
       return true;
     }
     if (result?.fullyFilled) {
@@ -156,8 +159,11 @@ async function main() {
           });
         } catch (error) { console.error(`[Proposal] ${proposalId} 체결 상태 기록 실패: ${error.message}`); }
       }
-      await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '완료',
-        body: buildFilledMessage({ name, code, orderNo, filledQty: result.filledQty, avgFillPrice: result.avgFillPrice }), });
+      const fillMessage = { agent: SENDER_AGENT, kind: '정보', topic: '완료',
+        body: buildFilledMessage({ name, code, orderNo, filledQty: result.filledQty, avgFillPrice: result.avgFillPrice }) };
+      if (result.avgFillPrice == null) {
+        await sendWarning(fillMessage, { warningCode: 'KIS_FILL_PRICE_MISSING', subjectKey: warningSubjectKey('order', orderNo) });
+      } else await sendAgentMessage(fillMessage);
       // avgFillPrice가 없으면(알려진 한계, 위 buildFilledMessage 주석 참고) Ledger에 가격
       // 없는 체결을 기록하지 않는다 — 알림은 이미 나갔으니 "확인 필요" 상태가 조용히
       // 묻히지 않고, 오너가 KIS와 대조해 수동 기록해야 함이 로그에 남는다.

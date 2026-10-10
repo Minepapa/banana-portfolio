@@ -15,6 +15,7 @@ import { classifyNhTimeoutOrder } from '../tools/watch-nh-order-fill.mjs';
 import { parseNhExecutionRows, isTerminalNhExecution } from './reconcile-nh-executions.mjs';
 import { recordProposalExecutionStatus } from '../lib/proposal-execution-status.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
 import { escapeHtml } from '../lib/telegram.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
@@ -117,7 +118,7 @@ export function formatExpiryMessage(items) {
 }
 
 export async function runExpiry({ proposalsDir = VAULT_PATHS.decisions.proposals, now = new Date(),
-  dryRun = false, noSend = false, classify, query, accounts, send = sendAgentMessage, log = console.warn,
+  dryRun = false, noSend = false, classify, query, accounts, send = sendAgentMessage, log = console.warn, journalRoot,
   beforeWrite = async () => {},
 } = {}) {
   const summary = { eligible: 0, expired: 0, filled: 0, partialClosed: 0, unknown: 0, raced: 0, items: [], sendFailed: false };
@@ -185,7 +186,14 @@ export async function runExpiry({ proposalsDir = VAULT_PATHS.decisions.proposals
   }
   if (!dryRun && !noSend && summary.items.length) {
     try {
-      await send({ agent: SENDER_AGENT, kind: '정보', topic: '자산분배', body: formatExpiryMessage(summary.items) });
+      const message = { agent: SENDER_AGENT, kind: '정보', topic: '자산분배', body: formatExpiryMessage(summary.items) };
+      if (summary.items.some((item) => item.result === '확인 필요')) {
+        await sendDirectWarning({
+          message, send, jobName: 'expire-stale-nh-orders', warningCode: 'NH_ORDER_EXPIRY_UNCERTAIN',
+          subjectKey: 'pending', kind: 'trade-safety', severity: 'high', journalRoot,
+          detail: `주문 상태 확인 필요: ${summary.items.filter((item) => item.result === '확인 필요').map((item) => `${item.proposal.assetKey} ${item.reason || '조회 행·수량·자산군 확인 필요'}`).join(' | ')}`,
+        });
+      } else await send(message);
     } catch (error) {
       // 상태는 이미 바뀌어 다음 실행에서 다시 알릴 수 없다 — 정리한 건을 로그로 남기고 실패를 드러낸다(리뷰 MEDIUM).
       summary.sendFailed = true;

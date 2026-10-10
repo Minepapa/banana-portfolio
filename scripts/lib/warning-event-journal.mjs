@@ -38,14 +38,18 @@ function validKey(value) {
 }
 
 export function sanitizeWarningDetail(value) {
-  return String(value ?? '')
+  const redacted = String(value ?? '')
     .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
     .replace(/["']?(?:app[_-]?key|app[_-]?secret(?:key)?|access[_-]?token|token)["']?\s*[:=]\s*["']?[^"'\s,;}]+["']?/gi, '[REDACTED]')
     .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[REDACTED]')
     .replace(/\d[\d-]{7,}\d|\b\d{8,}\b/g, '[REDACTED]')
     .replace(/\b[A-Za-z0-9]{32,}\b/g, '[REDACTED]')
-    .replace(/[\r\n\t]+/g, ' ')
-    .slice(0, 200);
+    .replace(/[\r\n\t]+/g, ' ');
+  const detail = redacted.slice(0, 200);
+  const lastMarker = redacted.lastIndexOf('[REDACTED]', 199);
+  // 가림 표식의 중간을 자르면 재검증 시 표식이 다시 늘어나 원장 기록이 거부된다.
+  return lastMarker >= 0 && lastMarker + '[REDACTED]'.length > 200
+    ? detail.slice(0, lastMarker) : detail;
 }
 
 function validateInput(input) {

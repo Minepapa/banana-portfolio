@@ -46,6 +46,7 @@ function actionEvent(incident, actionStatus, occurredAt, actionOutcome) {
     subjectKey: incident.subjectKey, kind: incident.kind,
     severity: incident.severity, eventType: 'action',
     actionId: 'MACRO_SINGLE_READ_RETRY', actionStatus,
+    detail: actionOutcome ? `^VIX 단일 재조회: ${actionOutcome}` : '^VIX 단일 재조회 시작',
     ...(actionOutcome ? { actionOutcome } : {}),
   };
 }
@@ -93,7 +94,7 @@ export async function markMacroWarningRecovered({
       incidentId: incident.incidentId, jobName: incident.jobName,
       warningCode: incident.warningCode, subjectKey: incident.subjectKey,
       kind: incident.kind, severity: incident.severity,
-      eventType: 'status', incidentStatus: 'resolved',
+      eventType: 'status', incidentStatus: 'resolved', detail: '거시 5지표 정상 조회로 회복 확인',
     }, { rootDir });
     return true;
   });

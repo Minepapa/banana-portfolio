@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { buildProposalRecord, parseProposal, updateProposalRecord } from '../lib/proposal-vault.mjs';
 import { INSTRUMENT_TYPE } from '../lib/asset-allocation-instrument-router.mjs';
 import { eligibleOrderDate, classifyExpiryRow, runExpiry, formatExpiryMessage } from './expire-stale-nh-orders.mjs';
+import { readWarningEvents } from '../lib/warning-event-journal.mjs';
+
+const journalRoot = mkdtempSync(join(tmpdir(), 'nh-expiry-warning-'));
+after(() => rmSync(journalRoot, { recursive: true, force: true }));
 
 const NOW = new Date('2026-10-10T07:00:00Z'); // 16:00 KST
 const ORDER_TIME = new Date('2026-10-10T05:00:00Z').toISOString();
@@ -36,7 +40,8 @@ function dependencies(apiRow, overrides = {}) {
     classify: async () => ({ type: INSTRUMENT_TYPE.KR_STOCK, nhAccountLabel: '위탁', iemCd: CODE }),
     accounts: new Map([['위탁', 'test-account'], ['금현물', 'test-gold']]),
     query: { [INSTRUMENT_TYPE.KR_STOCK]: async () => { calls.queries++; return { Output_0: apiRow == null ? [] : [apiRow] }; } },
-    send: async (message) => { calls.sent.push(message); },
+    send: async (message) => { calls.sent.push(message); return { ok: true, result: { message_id: calls.sent.length } }; },
+    journalRoot,
     log: () => {}, ...overrides,
   } };
 }
@@ -174,6 +179,9 @@ test('하루 넘은 확인 필요 건은 단독으로도 알리고, 쓰기 실�
     assert.equal(summary.unknown, 1);
     assert.equal(calls.sent.length, 1);
     assert.match(calls.sent[0].body, /■ 확인 필요/);
+    const warning = readWarningEvents({ rootDir: journalRoot }).events.find((event) => event.eventType === 'detected');
+    assert.equal(warning.warningCode, 'NH_ORDER_EXPIRY_UNCERTAIN');
+    assert.match(warning.detail, /확인 필요/);
     assert.doesNotMatch(calls.sent[0].body, /다시 제안·주문해 주세요/, '정리된 건이 없으면 재주문 안내 없음');
   } finally { rmSync(first.dir, { recursive: true, force: true }); }
   const second = fixture('주문접수');

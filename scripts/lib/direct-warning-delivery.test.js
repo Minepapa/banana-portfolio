@@ -62,7 +62,7 @@ test('Bot API 수락 응답이면 원문 변경 없이 1회 전송하고 message
   const events = readWarningEvents({ rootDir: input.journalRoot }).events;
   assert.deepEqual(events.map((event) => event.deliveryStatus).filter(Boolean), ['sending', 'sent']);
   assert.equal(events.find((event) => event.deliveryStatus === 'sent').telegramMessageId, 53);
-  assert.equal(JSON.stringify(events).includes(message), false);
+  assert.equal(events.every((event) => event.detail === message), true);
 });
 
 test('명시적 거부와 응답 불명은 구분해 기록하고 기존 호출부에 실패를 돌려준다', async (t) => {
@@ -105,5 +105,19 @@ test('문구만 바뀐 같은 코드·대상은 같은 사건으로 묶고, 레�
   assert.equal(events.filter((event) => event.eventType === 'detected').length, 2);
   assert.equal(events.filter((event) => event.deliveryStatus === 'sent').length, 2);
   assert.notEqual(warningsSignature(['조회 실패: 재시도 1회']), warningsSignature(['조회 실패: 재시도 2회']));
-  assert.doesNotMatch(JSON.stringify(events), /재시도/);
+  assert.deepEqual(events.filter((event) => event.eventType === 'detected').map((event) => event.detail),
+    ['조회 실패: 재시도 1회', '조회 실패: 재시도 2회']);
+});
+
+test('메시지 본문과 사실 목록에서 상세를 공통 추출하고 민감정보를 가린다', async (t) => {
+  const input = setup(t);
+  const send = async () => ({ ok: true, result: { message_id: 4 } });
+  await sendDirectWarning({ ...input, message: { body: 'NH 실패 Bearer hidden 12345678901' }, send });
+  await sendDirectWarning({ ...input, message: { facts: ['조회 실패', 'token=hidden'] }, send });
+  const details = readWarningEvents({ rootDir: input.journalRoot }).events
+    .filter((event) => event.eventType === 'detected').map((event) => event.detail);
+  assert.match(details[0], /NH 실패/);
+  assert.match(details[1], /조회 실패/);
+  assert.equal(details.every((detail) => detail.length <= 200), true);
+  assert.doesNotMatch(details.join(' '), /hidden|12345678901/);
 });
