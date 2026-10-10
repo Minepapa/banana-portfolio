@@ -65,3 +65,30 @@ test('Drive 폴더·목록·업로드·다운로드·휴지통 요청은 앱 소
   assert.deepEqual(JSON.parse(trashed[0].options.body), { trashed: true });
   assert.equal(calls.filter((call) => call.options.method === 'DELETE').length, 0);
 });
+
+test('Android 앱 폴더·파일은 별도 속성과 APK MIME을 사용한다', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url: String(url), options });
+    if (options.method === 'POST') return { ok: true, json: async () => ({ id: 'created', size: 4 }) };
+    if (options.method === 'PATCH') return { ok: true };
+    return { ok: true, json: async () => ({ files: [] }) };
+  };
+  const appProperties = { pantheon: 'android-apps' };
+  const namePattern = /^kakao-notification-\d{8}-\d{4}-[0-9a-f]+\.apk$/;
+  const params = { token: 'fake', fetchImpl, appProperties };
+  await findOrCreateFolder({ ...params, folderName: 'Pantheon 앱' });
+  const folderQuery = new URL(calls[0].url).searchParams.get('q');
+  assert.match(folderQuery, /value='android-apps'/);
+  assert.equal(JSON.parse(calls[1].options.body).name, 'Pantheon 앱');
+  const name = 'kakao-notification-20261010-0034-abc123.apk';
+  await uploadBackup({ ...params, folderId: 'created', name, blob: Buffer.alloc(4),
+    mimeType: 'application/vnd.android.package-archive', namePattern });
+  assert.match(calls[2].options.body.toString(), /Content-Type: application\/vnd\.android\.package-archive/);
+  assert.match(calls[2].options.body.toString(), /"pantheon":"android-apps"/);
+  await assert.rejects(() => deleteBackup({ ...params, folderId: 'created', namePattern,
+    file: { id: 'foreign', name, parents: ['created'], appProperties: { pantheon: 'vault-backup' } } }), /앱 백업 파일만/);
+  await deleteBackup({ ...params, folderId: 'created', namePattern,
+    file: { id: 'owned', name, parents: ['created'], appProperties } });
+  assert.equal(calls.at(-1).options.method, 'PATCH');
+});

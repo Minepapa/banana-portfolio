@@ -5,6 +5,8 @@ const PREFIX_LENGTH = 4 + 12 + 16;
 const DRIVE = 'https://www.googleapis.com/drive/v3/files';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
 const APP_PROPERTY = { pantheon: 'vault-backup' };
+const FOLDER_NAME = 'Pantheon Vault Backups';
+const FILE_MIME = 'application/octet-stream';
 const NAME = /^pantheon-vault-(\d{4}-\d{2}-\d{2})\.bundle\.enc$/;
 
 function validDate(value) {
@@ -69,13 +71,16 @@ async function request(url, { token, fetchImpl = fetch, method = 'GET', headers 
   if (!response.ok) throw new Error(`Google Drive 요청 실패 (HTTP ${response.status})`);
   return response;
 }
-export async function listFiles({ token, fetchImpl = fetch, folderId } = {}) {
+export async function listFiles({ token, fetchImpl = fetch, folderId, appProperties = APP_PROPERTY } = {}) {
   const files = [];
   let pageToken;
   const seen = new Set();
   do {
     const url = new URL(DRIVE);
-    url.searchParams.set('q', folderId ? `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false` : "appProperties has { key='pantheon' and value='vault-backup' } and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
+    const property = appProperties.pantheon;
+    if (!property || typeof property !== 'string') throw new Error('Drive 앱 속성 오류');
+    const escapedProperty = property.replaceAll("'", "\\'");
+    url.searchParams.set('q', folderId ? `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false` : `appProperties has { key='pantheon' and value='${escapedProperty}' } and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
     url.searchParams.set('fields', 'nextPageToken,files(id,name,size,parents,appProperties,mimeType)');
     url.searchParams.set('pageSize', '1000');
     if (pageToken) url.searchParams.set('pageToken', pageToken);
@@ -88,22 +93,22 @@ export async function listFiles({ token, fetchImpl = fetch, folderId } = {}) {
   } while (pageToken);
   return files;
 }
-export async function findOrCreateFolder({ token, fetchImpl = fetch } = {}) {
-  const folders = await listFiles({ token, fetchImpl });
-  const existing = folders.find((file) => file.appProperties?.pantheon === 'vault-backup' && file.mimeType === 'application/vnd.google-apps.folder');
+export async function findOrCreateFolder({ token, fetchImpl = fetch, appProperties = APP_PROPERTY, folderName = FOLDER_NAME } = {}) {
+  const folders = await listFiles({ token, fetchImpl, appProperties });
+  const existing = folders.find((file) => file.appProperties?.pantheon === appProperties.pantheon && file.mimeType === 'application/vnd.google-apps.folder');
   if (existing) return existing;
   const response = await request(`${DRIVE}?fields=id,name,appProperties,mimeType`, {
     token, fetchImpl, method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Pantheon Vault Backups', mimeType: 'application/vnd.google-apps.folder', appProperties: APP_PROPERTY }),
+    body: JSON.stringify({ name: folderName, mimeType: 'application/vnd.google-apps.folder', appProperties }),
   });
   return response.json();
 }
-export async function uploadBackup({ token, fetchImpl = fetch, folderId, name, blob } = {}) {
-  if (!folderId || !NAME.test(name) || !Buffer.isBuffer(blob)) throw new Error('업로드 인자 오류');
+export async function uploadBackup({ token, fetchImpl = fetch, folderId, name, blob, appProperties = APP_PROPERTY, mimeType = FILE_MIME, namePattern = NAME } = {}) {
+  if (!folderId || !namePattern.test(name) || !Buffer.isBuffer(blob)) throw new Error('업로드 인자 오류');
   const boundary = `vault-${randomBytes(12).toString('hex')}`;
-  const metadata = { name, parents: [folderId], appProperties: APP_PROPERTY };
+  const metadata = { name, parents: [folderId], appProperties };
   const body = Buffer.concat([
-    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`),
+    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`),
     blob, Buffer.from(`\r\n--${boundary}--\r\n`),
   ]);
   const response = await request(`${UPLOAD}&fields=id,name,size,parents,appProperties`, {
@@ -115,8 +120,8 @@ export async function downloadBackup({ token, fetchImpl = fetch, id } = {}) {
   const response = await request(`${DRIVE}/${encodeURIComponent(id)}?alt=media`, { token, fetchImpl, timeout: 300000 });
   return Buffer.from(await response.arrayBuffer());
 }
-export async function deleteBackup({ token, fetchImpl = fetch, folderId, file } = {}) {
-  if (!folderId || !file?.id || !file.parents?.includes(folderId) || file.appProperties?.pantheon !== 'vault-backup' || !NAME.test(file.name)) throw new Error('앱 백업 파일만 삭제 가능');
+export async function deleteBackup({ token, fetchImpl = fetch, folderId, file, appProperties = APP_PROPERTY, namePattern = NAME } = {}) {
+  if (!folderId || !file?.id || !file.parents?.includes(folderId) || file.appProperties?.pantheon !== appProperties.pantheon || !namePattern.test(file.name)) throw new Error('앱 백업 파일만 삭제 가능');
   await request(`${DRIVE}/${encodeURIComponent(file.id)}`, {
     token, fetchImpl, method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ trashed: true }),
