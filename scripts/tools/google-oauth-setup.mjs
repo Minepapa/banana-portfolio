@@ -29,7 +29,8 @@ export function saveRefreshToken(refreshToken, scope, path = tokenPath()) {
   return path;
 }
 
-export async function setup({ fetchImpl = fetch, openBrowser = (url) => spawn('open', [url], { stdio: 'ignore' }), createServerImpl = createServer } = {}) {
+export async function setup({ fetchImpl = fetch, openBrowser = (url) => spawn('open', [url], { stdio: 'ignore' }), createServerImpl = createServer,
+  log = console.log } = {}) {
   const client = loadClient(clientPath());
   const state = randomBytes(32).toString('base64url');
   const verifier = randomBytes(32).toString('base64url');
@@ -56,7 +57,7 @@ export async function setup({ fetchImpl = fetch, openBrowser = (url) => spawn('o
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
     const redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
     const authUrl = authorizationUrl({ clientId: client.client_id, redirectUri, state, challenge });
-    console.log(`동의 URL: ${authUrl}`);
+    log(`동의 URL: ${authUrl}`);
     openBrowser(String(authUrl));
     const timer = setTimeout(() => settle.reject(new Error('OAuth 동의 제한 시간 5분 초과')), 5 * 60_000);
     let authorizationCode;
@@ -69,8 +70,8 @@ export async function setup({ fetchImpl = fetch, openBrowser = (url) => spawn('o
     const token = await response.json();
     if (!response.ok || !token.refresh_token) throw new Error(`OAuth 토큰 교환 실패 (${String(token.error || response.status).replace(/[^a-zA-Z0-9_-]/g, '')})`);
     const path = saveRefreshToken(token.refresh_token, token.scope);
-    console.log(`연결 완료(이메일 범위 없음, 저장 위치: ${path})`);
-  } finally { server.close(); }
+    log(`연결 완료(이메일 범위 없음, 저장 위치: ${path})`);
+  } finally { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) setup().catch((error) => { console.error(error.message); process.exitCode = 1; });

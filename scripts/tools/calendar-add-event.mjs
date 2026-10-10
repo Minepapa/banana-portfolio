@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { getAccessToken, CALENDAR_WRITE_SCOPES } from '../lib/google-oauth.mjs';
 import { insertEvent, pantheonEventBody } from '../lib/google-calendar.mjs';
+import { appendTodo } from '../lib/todo-log.mjs';
 
 function argumentsMap(argv) {
   const result = {};
@@ -72,16 +73,19 @@ export function buildEvent(argv, jsonInput) {
 }
 
 // 표준입력은 동기 readFileSync(0)로 읽는다 — fs/promises.readFile은 fd 번호를 받지 않는다(2026-10-09 실측).
-export async function main(argv = process.argv.slice(2), { readStdin = async () => readFileSync(0, 'utf8'), getToken = getAccessToken, createEvent = insertEvent } = {}) {
+export async function main(argv = process.argv.slice(2), { readStdin = async () => readFileSync(0, 'utf8'), getToken = getAccessToken, createEvent = insertEvent,
+  recordTodo = appendTodo, log = console.log, warn = console.warn } = {}) {
   const jsonInput = argv.includes('--json=-') ? await readStdin() : undefined;
   const { event, dryRun } = buildEvent(argv, jsonInput);
-  if (dryRun) { console.log(JSON.stringify(pantheonEventBody(event), null, 2)); return; }
+  if (dryRun) { log(JSON.stringify(pantheonEventBody(event), null, 2)); return; }
   const created = await createEvent(event, { token: await getToken({ requiredScopes: CALENDAR_WRITE_SCOPES }) });
   if (!created.id) throw new Error('Google Calendar 응답에 일정 ID 없음');
+  try { await recordTodo({ kind: 'event', id: created.id, title: event.summary, when: event.start.dateTime ?? event.start.date, link: created.htmlLink ?? null }); }
+  catch (error) { warn(`⚠️ Todo 등록 기록 실패: ${error.message}`); }
   const startMs = Date.parse(event.start.date ? `${event.start.date}T00:00:00+09:00` : event.start.dateTime);
   const day = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', weekday: 'short' }).format(new Date(startMs));
   const dayLabel = `${event.start.date ?? event.start.dateTime.slice(0, 10)}`.slice(5).replace('-', '/');
   const time = event.start.date ? '종일' : `${event.start.dateTime.slice(11, 16)}–${event.end.dateTime.slice(11, 16)}`;
-  console.log(`등록함: ${dayLabel}(${day}) ${time} ${event.summary}${event.location ? ` @${event.location}` : ''} · 취소: node scripts/tools/calendar-delete-event.mjs --id=${created.id}`);
+  log(`등록함: ${dayLabel}(${day}) ${time} ${event.summary}${event.location ? ` @${event.location}` : ''} · 취소: node scripts/tools/calendar-delete-event.mjs --id=${created.id}`);
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main().catch((error) => { console.error(error.message); process.exitCode = 1; });

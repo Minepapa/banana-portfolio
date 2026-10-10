@@ -19,7 +19,7 @@ test('표준입력 JSON과 CLI 인자는 같은 검증과 등록 본문을 쓴�
   await main(['--json=-'], { readStdin: async () => json, getToken: async ({ requiredScopes }) => {
     assert.deepEqual(requiredScopes, ['https://www.googleapis.com/auth/calendar.events']);
     return 'fake';
-  }, createEvent: async (event) => { created = pantheonEventBody(event); return { id: 'event' }; } });
+  }, createEvent: async (event) => { created = pantheonEventBody(event); return { id: 'event' }; }, recordTodo: async () => {} });
   assert.deepEqual(created, pantheonEventBody(fromArgs));
   const lines = [];
   const originalLog = console.log;
@@ -64,4 +64,16 @@ test('실제 프로세스: --json=- 표준입력을 읽어 --dry-run 본문을 �
   });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /시험 \\"따옴표\\" \$\(echo x\)/);
+});
+
+test('캘린더 등록은 Todo 기록을 남기고 기록 실패는 경고만 낸다', async () => {
+  const recorded = [];
+  const output = [];
+  const options = { getToken: async () => 'fake', createEvent: async () => ({ id: 'event-1', htmlLink: 'https://example.test/event' }),
+    recordTodo: async (entry) => recorded.push(entry), log: (line) => output.push(line), warn: (line) => output.push(line) };
+  await main(['--title=회의', '--start=2026-10-14T15:00'], options);
+  assert.deepEqual(recorded[0], { kind: 'event', id: 'event-1', title: '회의', when: '2026-10-14T15:00:00+09:00', link: 'https://example.test/event' });
+  await main(['--title=회의', '--date=2026-10-14'], { ...options, recordTodo: async () => { throw new Error('disk offline'); } });
+  assert.match(output.at(-2), /Todo 등록 기록 실패/);
+  assert.match(output.at(-1), /등록함/);
 });

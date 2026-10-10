@@ -40,7 +40,7 @@ test('잘못된 OAuth state 뒤 올바른 callback을 기다리고, 교환 요�
   let handler;
   const createServerImpl = (callback) => {
     handler = callback;
-    return { once() {}, listen(_port, _host, done) { done(); }, address() { return { port: 12345 }; }, close() {} };
+    return { once() {}, listen(_port, _host, done) { done(); }, address() { return { port: 12345 }; }, close(done) { done(); } };
   };
   const callback = (url) => {
     let status;
@@ -49,7 +49,7 @@ test('잘못된 OAuth state 뒤 올바른 callback을 기다리고, 교환 요�
   };
   try {
     let opened;
-    const running = setup({ createServerImpl, openBrowser: (url) => { opened = new URL(url); }, fetchImpl: async (_url, options) => {
+    const running = setup({ createServerImpl, log: () => {}, openBrowser: (url) => { opened = new URL(url); }, fetchImpl: async (_url, options) => {
       assert.ok(options.signal instanceof AbortSignal);
       return { ok: true, json: async () => ({ refresh_token: 'new-refresh', scope: OAUTH_SCOPES.join(' ') }) };
     } });

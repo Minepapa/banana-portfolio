@@ -107,6 +107,7 @@ test('processDay prepare: 노트가 없을 때만 만들고, 요약 LLM·발송 
   assert.match(prepared, /## 동선\n\(저녁 23:30에 채움\)/);
   assert.match(prepared, /## AI 하루 요약\n\(저녁 23:30에 채움\)/);
   assert.match(prepared, /## 일정\n\(일정 없음\)/);
+  assert.match(prepared, /## 오늘 생긴 할 일\n\(저녁 23:30에 채움\)/);
   // 오너가 아침에 한 줄을 쓴 뒤 다시 prepare가 돌아도 건드리지 않는다.
   writeFileSync(path, prepared.replace(/## 오늘 한 줄\n[^\n]*/, '## 오늘 한 줄\n아침에 쓴 한 줄'));
   await run('prepare');
@@ -118,7 +119,30 @@ test('processDay prepare: 노트가 없을 때만 만들고, 요약 LLM·발송 
   assert.equal(sent.length, 1);
   assert.match(drafted, /## 오늘 한 줄\n아침에 쓴 한 줄/);
   assert.match(drafted, /## AI 하루 요약\n- 저녁 요약/);
+  assert.match(drafted, /## 오늘 생긴 할 일\n\(오늘 생긴 할 일 없음\)/);
   assert.match(drafted, /sensitivity: "개인"/, '오너 글이 있으면 개인 등급');
+});
+
+test('오늘 등록 기록은 데일리 AI 칸만 채우고 개인 등급을 만든다; 읽기 실패에도 계속한다', async (t) => {
+  mkdirSync(vault, { recursive: true });
+  t.after(() => rmSync(vault, { recursive: true, force: true }));
+  const date = '2026-10-16';
+  const path = join(vault, '10_Periodic/Daily/2026', `${date}.md`);
+  const records = [
+    { kind: 'task', id: 'a', title: '제목 ## 보존', when: '2026-10-14' },
+    { kind: 'event', id: 'b', title: '진료', when: '2026-10-14T15:00:00+09:00' },
+  ];
+  const deps = { summarize: async (_date, promptRecords) => { assert.deepEqual(promptRecords, []); return { summary: '- 요약', summaryStatus: 'ok', model: '없음' }; },
+    fetchEvents: async () => [], readTodos: async () => records, send: async () => {} };
+  const run = () => processDay({ mode: 'draft', date, dryRun: false, noSend: true, rules, today: date, deps });
+  assert.equal((await run()).failed, false);
+  const first = readFileSync(path, 'utf8');
+  assert.match(first, /## 오늘 생긴 할 일\n- \[할 일\] 제목 \\#\\# 보존 \(기한 10\/14\)\n- \[일정\] 10\/14\(수\) 15:00 진료/);
+  assert.match(first, /sensitivity: "개인"/);
+  assert.equal(inspectExisting(first).ok, true);
+  deps.readTodos = async () => { throw new Error('offline'); };
+  assert.equal((await run()).failed, false);
+  assert.match(readFileSync(path, 'utf8'), /## 오늘 생긴 할 일\n\(할 일 기록 읽기 실패/);
 });
 
 test('routeHash는 점 순서와 부가 속성에 영향받지 않고 좌표 변화는 감지한다', () => {

@@ -55,6 +55,7 @@ export const VAULT_REL = {
   jobHealth: '95_Etna/Jobs/JobHealth',
   spending: '95_Etna/Spending',
   dailyNotes: '10_Periodic/Daily', // 데일리 노트(D85) — {YYYY}/YYYY-MM-DD.md
+  todoLog: '95_Etna/Todo', // 캘린더·Tasks 등록 기록 — {YYYY}/YYYY-MM-DD.jsonl
   // 등록부 lint 범위 밖 최상위 폴더: 보관본(원래 type 유지)·코드가 쓰는 기계 데이터·금고(내용을 읽지 않음)
   archiveRoot: '80_Archive',
   etnaRoot: '95_Etna',
@@ -100,6 +101,7 @@ export function vaultYearFiles(baseAbsDir) {
 
 export const VAULT_PATHS = {
   root: VAULT_ROOT,
+  todoLog: vaultAbs(VAULT_REL.todoLog),
   spending: vaultAbs(VAULT_REL.spending),
   location: {
     root: vaultAbs(VAULT_REL.location),

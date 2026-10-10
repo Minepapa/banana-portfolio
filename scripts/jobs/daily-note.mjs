@@ -19,6 +19,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
+import { readTodos } from '../lib/todo-log.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
@@ -138,7 +139,8 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   const deps = { send: sendAgentMessage, summarize, write: writeAtomic, computeRoute, updateCandidates, fetchEvents: async (day) => {
     if (!isConfigured()) return null;
     return listEventsForKstDay(day, { token: await getAccessToken({ requiredScopes: CALENDAR_READ_SCOPES }) });
-  }, readOwners: () => parseCalendarOwners(readFileSync(vaultAbs(VAULT_REL.calendarOwnersFile), 'utf8')), ...injected };
+  }, readOwners: () => parseCalendarOwners(readFileSync(vaultAbs(VAULT_REL.calendarOwnersFile), 'utf8')),
+  readTodos, ...injected };
   const path = notePath(date);
   const first = readOrNull(path);
   if (mode === 'prepare' && first != null) { console.log(`  ℹ️ ${date}: 노트가 이미 있음 — 미리 만들기 건너뜀`); return { failed: false }; }
@@ -162,6 +164,11 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
     try { eventGroups = groupEventsByOwner(events, await deps.readOwners()); }
     catch (error) { console.warn('  ⚠️ 캘린더 소유자 대응표 읽기 실패:', error.message); }
   }
+  let todos = 'pending';
+  if (mode !== 'prepare') {
+    try { todos = await deps.readTodos(date); }
+    catch (error) { todos = 'failed'; console.error('  ❌ 할 일 기록 읽기 실패:', error.message); }
+  }
   let route = null;
   let routeHash = prevFields?.routeHash ?? null;
   if (mode === 'prepare') route = 'pending';
@@ -174,7 +181,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
     catch (error) { route = 'failed'; routeHash = prevFields?.routeHash ?? null; console.error('  ❌ 동선 계산 실패:', String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
   }
   const statusOf = (prev) => mode === 'finalize' && (events !== 'failed' || hasNormalSchedule(prev)) ? '확정' : '초안';
-  const render = (prev) => renderDailyNote({ date, records, summary, status: statusOf(prev), model, summaryStatus, recordHash, routeHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev, events, eventGroups, route });
+  const render = (prev) => renderDailyNote({ date, records, summary, status: statusOf(prev), model, summaryStatus, recordHash, routeHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev, events, eventGroups, route, todos });
 
   let note = render(inspected.prev);
   const rel = relative(VAULT_PATHS.root, path);

@@ -143,7 +143,18 @@ function safeRouteLabel(label) {
     .replace(/[\\`*_[\]#]/g, '\\$&');
 }
 
-function aiSectionContents(records, summary, events, eventGroups, route) {
+function todoText(todo) {
+  const title = safeRouteLabel(todo.title);
+  if (todo.kind === 'task') return `- [할 일] ${title}${todo.when ? ` (기한 ${todo.when.slice(5).replace('-', '/')})` : ''}`;
+  const when = todo.when ?? '';
+  const day = when.slice(0, 10);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(day) ? new Date(`${day}T00:00:00+09:00`) : null;
+  const weekday = date && !Number.isNaN(date.getTime()) ? `(${new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', weekday: 'short' }).format(date)})` : '';
+  const time = when.includes('T') ? ` ${when.slice(11, 16)}` : '';
+  return `- [일정] ${day.slice(5).replace('-', '/')}${weekday}${time} ${title}`;
+}
+
+function aiSectionContents(records, summary, events, eventGroups, route, todos) {
   const recordLines = records.length
     ? groupByCategory(records).flatMap(([cat, items]) => [`### ${cat}`, ...items.map((r) => `- [[${r.link}|${r.title}]]${r.description ? ` — ${r.description}` : ''}`), ''])
     : ['(오늘 들어온 기록 없음)'];
@@ -160,14 +171,15 @@ function aiSectionContents(records, summary, events, eventGroups, route) {
       : route === 'failed' ? '(동선 계산 실패 — 다음 실행에서 다시 시도)'
         : route.length ? route.map((stay) => `- ${stay.start}–${stay.end} ${safeRouteLabel(stay.label)}`).join('\n') : '(위치 기록 없음)',
     '오늘 들어온 기록': recordLines.join('\n').replace(/\s+$/, ''),
-    '오늘 생긴 할 일': '(캘린더·Tasks 연동 전 — 5단계 2번에서 채운다)',
+    '오늘 생긴 할 일': todos === 'pending' ? PENDING_TEXT : todos === 'failed' ? '(할 일 기록 읽기 실패 — 다음 실행에서 다시 시도)'
+      : todos?.length ? todos.map(todoText).join('\n') : '(오늘 생긴 할 일 없음)',
     'AI 하루 요약': summary && summary.trim() ? summary.trim() : '(요약 없음)',
   };
 }
 
 // 데일리 노트를 만든다. prev(inspectExisting 결과)가 있으면 AI 칸만 바꾸고 나머지는 원문 그대로 둔다.
-export function renderDailyNote({ date, records, summary, status, model, summaryStatus, recordHash, routeHash = null, today, telegramSentAt = null, prev = null, events = null, eventGroups = null, route = null }) {
-  const ai = aiSectionContents(records, summary, events, eventGroups, route);
+export function renderDailyNote({ date, records, summary, status, model, summaryStatus, recordHash, routeHash = null, today, telegramSentAt = null, prev = null, events = null, eventGroups = null, route = null, todos = [] }) {
+  const ai = aiSectionContents(records, summary, events, eventGroups, route, todos);
   const prevSections = prev?.sections ?? [];
   const keep = (title) => prevSections.find((s) => s.title === title)?.content;
   // 조회 실패·미연결 시 이전에 확인한 일정은 보존한다. 빈 일정이나 오류 문구는 정상 일정이 아니다.
@@ -185,7 +197,7 @@ export function renderDailyNote({ date, records, summary, status, model, summary
     category: categories.map((c) => `[[${VAULT_REL.homeDir}/${c}]]`),
     description: `${date} 데일리 — 들어온 기록 ${records.length}개`,
     sensitivity: records.some((r) => r.sensitivity === '개인') || /^- (?:종일|\d{2}:\d{2})/m.test(ai.일정)
-      || /^- /m.test(ai.동선) || hasOwnerText(ordered) ? '개인' : '일반',
+      || /^- /m.test(ai.동선) || /^- /m.test(ai['오늘 생긴 할 일']) || hasOwnerText(ordered) ? '개인' : '일반',
     created: prev?.fields?.created ?? date,
     modified: today,
     dailyStatus: status,

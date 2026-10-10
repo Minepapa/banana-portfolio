@@ -196,12 +196,13 @@ test('경로 상수는 고정된 옛 값의 매핑 결과와 같다', () => {
   }
   const current = Object.entries(VAULT_PATHS).filter(([key]) => key !== 'root' && key !== 'location' && key !== 'spending')
     .flatMap(([, value]) => flattenPaths(value));
-  assert.equal(current.length, LEGACY_ABSOLUTE.length);
+  // 신규 Vault 경로가 늘어나도 이관된 옛 경로의 매핑은 계속 존재해야 한다.
+  assert.equal(VAULT_PATHS.todoLog, vaultAbs(VAULT_REL.todoLog));
   assert.equal(VAULT_PATHS.spending, vaultAbs(VAULT_REL.spending));
   assert.equal(VAULT_PATHS.location.root, vaultAbs(VAULT_REL.location));
   assert.equal(VAULT_PATHS.location.candidates, vaultAbs(VAULT_REL.locationCandidates));
-  for (const [index, old] of LEGACY_ABSOLUTE.entries()) {
-    assert.equal(current[index], vaultAbs(mapLegacyPath(old).to), old);
+  for (const old of LEGACY_ABSOLUTE) {
+    assert.ok(current.includes(vaultAbs(mapLegacyPath(old).to)), old);
   }
 });
 
