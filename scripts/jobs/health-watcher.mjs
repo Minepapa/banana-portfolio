@@ -113,6 +113,7 @@ export const EXPECTED_INTERVALS_MS = {
   // 보다 먼저 돌아 그날 체결을 그날 안에 반영. 같은 배치그룹 관례로 48h.
   'reconcile-irp-executions': 48 * 60 * 60 * 1000,
   'reconcile-nh-executions': 48 * 60 * 60 * 1000,
+  'expire-stale-nh-orders': 48 * 60 * 60 * 1000,
   // update-fund-holdings-from-purchases(평일 16:11, 2026-09-04 신설) — 위 배치그룹
   // 안전망들과 동일 원칙(intraday-portfolio-sync 10분마다 + 고정시각 안전망 1개),
   // 동일 48h 간격.

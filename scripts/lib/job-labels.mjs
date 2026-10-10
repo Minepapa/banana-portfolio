@@ -33,6 +33,7 @@ export const JOB_LABELS = {
   'reconcile-nh-fx-rp': `위탁 계좌 외화RP 보유수량을 NH PLUG API 거래이력(FIFO 로트재구성)으로 유도해 ${VAULT_REL.stateHoldings} qty 직접기록(2026-09-19 신설, 평가금액은 update-holdings-prices.mjs가 별도 갱신)`,
   'reconcile-irp-executions': `IRP 체결을 KIS 퇴직연금 체결조회 API로 직접 폴링해 ${VAULT_REL.factsLedgerExecutions} 기록(2026-09-03 신설)`,
   'reconcile-nh-executions': `위탁·금현물 체결을 NH REST 체결조회 API로 직접 폴링해 ${VAULT_REL.factsLedgerExecutions} 기록(2026-09-03 신설)`,
+  'expire-stale-nh-orders': '평일 장 마감 후 NH 당일유효 주문의 미체결 제안을 만료·종결 처리(주문·취소·장부 기록 없음)',
   'intraday-portfolio-sync': '체결·예수금·펀드적립 감지→반영 7단계(reconcile-nh-executions 등 + update-cash-from-ledger + update-fund-holdings-from-purchases)를 10분마다 순서대로 실행해 장마감까지 안 기다리고 빠르게 반영(2026-09-03 신설, 2026-09-04 7단계로 확장, 고정시각 잡은 안전망으로 그대로 유지)',
   'update-fund-holdings-from-purchases': `연금저축 VIP펀드 정기적립 매수를 ${VAULT_REL.stateHoldings} 보유수량·원금에 누적 반영(2026-09-04 신설 — 카카오 펀드적립 알림은 정확히 기록되고 있었는데 반영하는 잡 자체가 없었던 갭 해소)`,
   'update-cash-from-ledger': '계좌별(ISA·연금저축, API 없는 2계좌만) 예수금 실잔고 계산',
