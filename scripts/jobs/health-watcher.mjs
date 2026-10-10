@@ -59,6 +59,7 @@ export const EXPECTED_INTERVALS_MS = {
   // 상시 10분 간격(StartInterval=600)으로 변경. 아래 sync-firestore-mirror 등과 동일
   // 이유로 등록값도 실제 주기와 같이 움직여야 한다.
   'parse-notifications-to-vault': 10 * 60 * 1000,
+  'ingest-spending-inbox': 10 * 60 * 1000,
   // ⚠️ 버그 수정(2026-08-14, 오너 신고 — 30분마다 알람 반복) — backup-vault는 밤 23:50
   // 하루 1회만 도는 잡인데(scripts/launchd/com.banana2.backup-vault.plist,
   // StartCalendarInterval) 여기 항목이 없어 기본값(1시간)이 적용됐다. 그 결과 정상

@@ -21,6 +21,7 @@ export const JOB_LABELS = {
   'execute-asset-allocation': '자산분배 트랙(위탁·금현물) 승인된 제안 NH PLUG 실주문 집행(연금저축은 리마인더 전용 유지, 2026-09-05 신설)',
   'daily-asset-allocation-check': '자산분배 트랙 일일 리밸런싱·거시오버레이 점검',
   'parse-notifications-to-vault': '카카오 체결·배당 알림 → Vault 기록',
+  'ingest-spending-inbox': '소비 알림 원문 → Vault 날짜별 JSONL 수집',
   'update-holdings-from-executions': '체결 반영 → 보유종목 잔고 갱신',
   'new-cash-allocation': '신규 현금 배분 판단(2026-08-18 실잔고 기반 재작성 후 재활성화)',
   // ⚠️ 개명(2026-09-03, 마이그레이션 3단계 "통일 루프 깸") — reconcile-irp는 원래
@@ -104,6 +105,7 @@ export const JOB_REMEDIATION = {
   // 전환 이후) 둘 다 이 서비스계정 키가 없으면 즉시 throw로 죽는다.
   'sync-firestore-mirror': '~/.config/banana-portfolio-v2/firebase-adminsdk-key.json(Firebase Admin 키) 확인',
   'parse-notifications-to-vault': '~/.config/banana-portfolio-v2/firebase-adminsdk-key.json(Firebase Admin 키) 확인',
+  'ingest-spending-inbox': '~/.config/banana-portfolio-v2/firebase-adminsdk-key.json(Firebase Admin 키) 확인',
   // backup-vault-snapshot.mjs — Vault 루트 경로가 없으면 즉시 에러. Google Drive
   // for desktop 마운트가 풀렸을 때 실제로 겪었던 실패 양상(ADR 0002 Drive 동기화 구조).
   'backup-vault': `Vault 경로(${displayVaultRoot}) 존재 여부 — Google Drive for desktop 마운트 확인`,
