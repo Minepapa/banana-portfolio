@@ -143,9 +143,12 @@ ${macro}
 1. 위 목표비중이 지금도 적절해 보이는지 네(아테나) 성격대로 판단해라 — 특정 자산군이
    분기 내내 계속 이탈·재이탈을 반복했다면 목표 자체가 현실과 안 맞을 수 있다는 신호다.
    거시환경 변화(금리·환율·주식시장 국면)도 참고해라.
-2. 만약 재검토가 필요하다고 판단되면 어느 자산군을 어느 방향으로 조정해볼 만한지
-   방향성만 제시해라(구체적 %는 오너와 개발 세션에서 정할 문제이지 여기서 확정하지
-   마라) — 이 잡은 목표비중을 직접 바꾸지 않는다.
+2. 만약 재검토가 필요하다고 판단되면 어느 자산군을 어느 방향으로 얼마나 조정할지
+   네 권고안을 제시해라(권고 비중 %, 조정 순서, 근거, 반대 리스크). 확정은 오너 승인 뒤
+   결정 문서로 하므로 이 잡은 목표비중을 직접 바꾸지 않는다.
+4. **오너에게 되묻지 마라.** "유지할지 조정할지", "고민해 보세요"처럼 판단을 오너에게
+   넘기는 질문형은 금지다. 정본 규칙(5/25 밴드, 목표비중 결정 문서)으로 이미 정해지는
+   사안은 그 규칙대로 결론을 말해라.
 3. 특별한 문제가 없으면 "지금 비중이 여전히 적절하다"고 명확히 말해라 — 억지로 지적
    하지 마라.
 
@@ -160,9 +163,35 @@ ${CONTEXT_MARKER}
 문단에 몰아쓰지 마라.
 
 ${DECISIONS_MARKER}
-재검토가 필요하다고 판단했다면(2번) 오너가 결정할 선택지를 "- "로 시작하는 줄로
-1~3개(예: "이번 분기부터 조정할지 다음 분기까지 관찰할지", "어느 자산군부터 조정
-검토할지"). 지금 비중이 적절하다면 이 섹션은 빈 채로 둬라(억지로 만들지 마라).`;
+재검토가 필요하다고 판단했다면(2번) 네 확정 권고안을 "- "로 시작하는 평서문 줄로
+1~3개(예: "- 권고: 국내주식 목표를 30%에서 25%로 낮추고 줄인 5%를 채권으로 옮긴다.
+근거는 ○○, 반대 리스크는 ○○."). 질문형·선택지 나열은 쓰지 마라. 지금 비중이
+적절하다면 이 섹션은 빈 채로 둬라(억지로 만들지 마라).`;
+}
+
+// 2026-10-01 오너 지적("나보고 고민해 보라고 하면 어떡하니") — [의사결정]에 질문형이 섞이면 한 번 다시 생성한다.
+// 판단 내용이 아니라 형식(오너에게 되묻는 문장)만 본다.
+const QUESTION_PATTERN = /[?？]|할지|할까|일지|말지|고민해|검토해 ?보세요|정해 ?주세요|선택해 ?주세요/;
+export function questionLikeDecisions(decisions) {
+  return (Array.isArray(decisions) ? decisions : String(decisions ?? '').split('\n'))
+    .map((line) => String(line).trim()).filter((line) => line && QUESTION_PATTERN.test(line));
+}
+
+// 질문형이면 교정 지시를 붙여 한 번 다시 생성한다. 그래도 남으면 질문형 줄만 빼고 쓴다(오너에게 질문을 보내지 않음).
+export async function ensureNoQuestionDecisions({ judgment, parse, regenerate, log = console.warn }) {
+  let parsed = parse(judgment);
+  if (!questionLikeDecisions(parsed.decisions).length) return { judgment, parsed, retried: false };
+  log('⚠️ [의사결정]에 질문형 문장 — 권고형으로 다시 생성');
+  const retried = await regenerate();
+  parsed = parse(retried);
+  const remaining = questionLikeDecisions(parsed.decisions);
+  if (remaining.length) {
+    log(`⚠️ 재생성 뒤에도 질문형 ${remaining.length}줄 — 그 줄은 빼고 발송`);
+    const keep = (line) => !remaining.includes(String(line).trim());
+    parsed = { ...parsed, decisions: Array.isArray(parsed.decisions)
+      ? parsed.decisions.filter(keep) : String(parsed.decisions ?? '').split('\n').filter(keep).join('\n') };
+  }
+  return { judgment: retried, parsed, retried: true };
 }
 
 async function main() {
@@ -209,8 +238,14 @@ async function main() {
     process.exit(1);
   }
 
+  const checked = await ensureNoQuestionDecisions({
+    judgment, parse: parseDepartmentResponse,
+    regenerate: async () => (await runHeadlessClaude(`${prompt}\n\n[교정] 직전 응답의 ${DECISIONS_MARKER}에 오너에게 되묻는 질문형이 있었다. 질문 없이 확정 권고안(평서문)으로만 다시 써라.`,
+      MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim(),
+  });
+  judgment = checked.judgment;
   console.log(judgment);
-  const { conclusion, context, decisions } = parseDepartmentResponse(judgment);
+  const { conclusion, context, decisions } = checked.parsed;
 
   try {
     await sendAgentMessage({ agent: SENDER_AGENT, kind: '판단', topic: '안내', facts, conclusion, context, decisions });

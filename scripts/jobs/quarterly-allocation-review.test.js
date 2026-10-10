@@ -87,3 +87,27 @@ test('buildQuarterlyReviewFacts: 최근 제안 건수가 마지막 불릿', () =
   const facts = buildQuarterlyReviewFacts({ targetAllocation: { 채권: 20 }, recentProposalsCount: 4 });
   assert.equal(facts.at(-1), '최근 1분기 생성된 자산분배 트랙 제안: 4건');
 });
+
+test('분기점검 프롬프트: 질문형 예시를 없애고 확정 권고·되묻기 금지 계약을 담는다(2026-10-01 오너 지적)', async () => {
+  const { buildQuarterlyReviewPrompt } = await import('./quarterly-allocation-review.mjs');
+  const prompt = buildQuarterlyReviewPrompt({ targetAllocation: { 채권: 20 }, recentProposalsText: '(없음)', macro: '(없음)' });
+  assert.doesNotMatch(prompt, /조정할지 다음 분기까지 관찰할지/);
+  assert.match(prompt, /오너에게 되묻지 마라/);
+  assert.match(prompt, /확정 권고안/);
+});
+
+test('questionLikeDecisions·ensureNoQuestionDecisions: 질문형이면 한 번 재생성, 남으면 그 줄만 뺀다', async () => {
+  const { questionLikeDecisions, ensureNoQuestionDecisions } = await import('./quarterly-allocation-review.mjs');
+  assert.deepEqual(questionLikeDecisions(['- 채권 20%를 유지할지 조정할지', '- 권고: 유지한다.']), ['- 채권 20%를 유지할지 조정할지']);
+  assert.deepEqual(questionLikeDecisions(['- 권고: 국내주식을 25%로 낮춘다. 반대 리스크는 반등 놓침.']), []);
+  const parse = (text) => ({ conclusion: 'c', context: 'x', decisions: text.split('\n') });
+  let calls = 0;
+  const ok = await ensureNoQuestionDecisions({ judgment: '- 권고: 유지한다.', parse, regenerate: async () => { calls += 1; return ''; }, log: () => {} });
+  assert.equal(ok.retried, false);
+  assert.equal(calls, 0);
+  const fixed = await ensureNoQuestionDecisions({ judgment: '- 유지할지 조정할지', parse, regenerate: async () => '- 권고: 유지한다.', log: () => {} });
+  assert.equal(fixed.retried, true);
+  assert.deepEqual(fixed.parsed.decisions, ['- 권고: 유지한다.']);
+  const stubborn = await ensureNoQuestionDecisions({ judgment: '- 고민해 보세요', parse, regenerate: async () => '- 권고: 유지한다.\n- 어느 쪽을 택할지?', log: () => {} });
+  assert.deepEqual(stubborn.parsed.decisions, ['- 권고: 유지한다.']);
+});
