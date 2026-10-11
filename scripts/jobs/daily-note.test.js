@@ -191,7 +191,7 @@ test('지문이 다를 때 동선만 재계산하고 확정·발송·오너 글�
   writeFileSync(path, initial);
   let computed = 0;
   let writes = 0;
-  const deps = { computeRoute: async () => { computed += 1; return [{ start: '12:00', end: '12:30', label: '시험 장소' }]; },
+  const deps = { fetchEvents: async () => [], computeRoute: async () => { computed += 1; return [{ start: '12:00', end: '12:30', label: '시험 장소' }]; },
     write: (file, note) => { writes += 1; writeFileSync(file, note); } };
   const changed = await recomputeDailyRoute({ date, root, deps });
   assert.equal(changed.updated, true);
@@ -226,7 +226,7 @@ test('최근 7일에 이미 있는 노트만 재계산한다', async (t) => {
   }
   const computed = [];
   await recomputeRecentRoutes({ now: at('2026-10-10T03:00:00Z'), root,
-    deps: { computeRoute: async (date) => { computed.push(date); return []; }, write: (path, note) => writeFileSync(path, note) } });
+    deps: { fetchEvents: async () => [], computeRoute: async (date) => { computed.push(date); return []; }, write: (path, note) => writeFileSync(path, note) } });
   assert.deepEqual(computed, ['2026-10-04']);
   assert.match(readFileSync(join(root, '10_Periodic/Daily/2026/2026-10-03.md'), 'utf8'), /routeHash: "old"/);
 });
@@ -240,9 +240,9 @@ test('재계산은 위치 폴더 없음과 쓰기 전 삭제를 skip하고 dry-r
   const original = renderDailyNote({ date, records: [], summary: '- 요약', status: '확정', model: '없음',
     summaryStatus: 'ok', recordHash: 'record', routeHash: 'old', today: date, route: [] });
   writeFileSync(path, original);
-  assert.deepEqual(await recomputeDailyRoute({ date, root }), { updated: false, skipped: '위치 폴더 없음' });
+  assert.deepEqual(await recomputeDailyRoute({ date, root, deps: { fetchEvents: async () => [] } }), { updated: false, skipped: '위치 폴더 없음' });
   mkdirSync(join(root, VAULT_REL.location), { recursive: true });
-  const deleted = await recomputeDailyRoute({ date, root, deps: { computeRoute: async () => { rmSync(path); return []; } } });
+  const deleted = await recomputeDailyRoute({ date, root, deps: { fetchEvents: async () => [], computeRoute: async () => { rmSync(path); return []; } } });
   assert.deepEqual(deleted, { updated: false, skipped: '노트 없음' });
   writeFileSync(path, original);
   const logs = [];
@@ -250,7 +250,7 @@ test('재계산은 위치 폴더 없음과 쓰기 전 삭제를 skip하고 dry-r
   console.log = (...parts) => logs.push(parts.join(' '));
   try {
     const dry = await recomputeDailyRoute({ date, root, dryRun: true,
-      deps: { computeRoute: async () => [{ start: '12:00', end: '12:30', label: '장소' }],
+      deps: { fetchEvents: async () => [], computeRoute: async () => [{ start: '12:00', end: '12:30', label: '장소' }],
         write: () => assert.fail('dry-run은 쓰지 않음') } });
     assert.deepEqual(dry, { updated: false, dryRun: true });
   } finally { console.log = originalLog; }
@@ -273,7 +273,7 @@ test('최근 7일 재계산 실패는 경고만 남기고 이후 날짜도 처�
   console.warn = (...parts) => warnings.push(parts.join(' '));
   try {
     const results = await recomputeRecentRoutes({ now: at('2026-10-10T03:00:00Z'), root,
-      deps: { computeRoute: async (date) => { if (date === '2026-10-10') throw new Error('address offline'); return []; },
+      deps: { fetchEvents: async () => [], computeRoute: async (date) => { if (date === '2026-10-10') throw new Error('address offline'); return []; },
         write: (path, note) => writeFileSync(path, note) } });
     assert.equal(results[0].failed, true);
     assert.equal(results[1].updated, true);
@@ -281,4 +281,47 @@ test('최근 7일 재계산 실패는 경고만 남기고 이후 날짜도 처�
     assert.equal(dailyWorkFailed([{ failed: true }]), true, '본 작업 실패는 종료 코드에 반영');
   } finally { console.warn = originalWarn; }
   assert.match(warnings.join('\n'), /동선 재계산 실패.*address offline/);
+});
+
+test('동선 지문은 결제가 바뀌면 달라지고, 재계산은 일정을 넘기며 일정 조회 실패면 건너뛴다', async (t) => {
+  const points = [{ tst: 1, lat: 1, lon: 1 }];
+  assert.notEqual(routeHashOf(points), routeHashOf(points, [{ at: '2026-10-10T10:00:00.000Z', amount: 1000, merchant: '가상식당' }]));
+  assert.equal(routeHashOf(points), routeHashOf(points, []), '결제가 없으면 기존 지문과 같다');
+  const root = mkdtempSync(join(tmpdir(), 'daily-route-events-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const date = '2026-10-10';
+  const path = join(root, '10_Periodic', 'Daily', '2026', `${date}.md`);
+  mkdirSync(join(root, '10_Periodic', 'Daily', '2026'), { recursive: true });
+  mkdirSync(join(root, VAULT_REL.location), { recursive: true });
+  writeFileSync(path, renderDailyNote({ date, records: [], summary: '- 요약', status: '확정', model: '없음',
+    summaryStatus: 'ok', recordHash: 'record', routeHash: 'old', today: date, route: [] }));
+  let seenEvents = null;
+  const events = [{ title: '가상 공연', start: '2026-10-10T07:00:00Z', end: '2026-10-10T09:00:00Z' }];
+  const changed = await recomputeDailyRoute({ date, root, deps: { fetchEvents: async () => events,
+    computeRoute: async (_d, options) => { seenEvents = options.events; return []; }, write: (file, note) => writeFileSync(file, note) } });
+  assert.equal(changed.updated, true);
+  assert.deepEqual(seenEvents, events);
+  writeFileSync(path, readFileSync(path, 'utf8').replace(/routeHash: "[^"]*"/, 'routeHash: "stale"'));
+  const skipped = await recomputeDailyRoute({ date, root, deps: { fetchEvents: async () => { throw new Error('offline'); },
+    computeRoute: async () => { throw new Error('호출되면 안 됨'); } } });
+  assert.deepEqual(skipped, { updated: false, skipped: '캘린더 조회 실패' });
+});
+
+test('카카오 조회가 실패한(degraded) 재계산은 동선은 쓰되 지문은 옛 값을 유지한다', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'daily-route-degraded-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const date = '2026-10-10';
+  const path = join(root, '10_Periodic', 'Daily', '2026', `${date}.md`);
+  mkdirSync(join(root, '10_Periodic', 'Daily', '2026'), { recursive: true });
+  mkdirSync(join(root, VAULT_REL.location), { recursive: true });
+  writeFileSync(path, renderDailyNote({ date, records: [], summary: '- 요약', status: '확정', model: '없음',
+    summaryStatus: 'ok', recordHash: 'record', routeHash: 'old', today: date, route: [] }));
+  const degraded = [{ start: '12:00', end: '12:30', label: '미등록: 가상 주소' }];
+  Object.defineProperty(degraded, 'degraded', { value: true });
+  const result = await recomputeDailyRoute({ date, root, deps: { fetchEvents: async () => [], computeRoute: async () => degraded,
+    write: (file, note) => writeFileSync(file, note) } });
+  assert.equal(result.updated, true);
+  const note = readFileSync(path, 'utf8');
+  assert.match(note, /routeHash: "old"/);
+  assert.match(note, /- 12:00–12:30 미등록: 가상 주소/);
 });

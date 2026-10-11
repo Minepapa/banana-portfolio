@@ -30,6 +30,8 @@ import { listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
 import { readDayPoints, detectStays, loadPlaces, describeStays, haversineM, STAY_RADIUS_M } from '../lib/location-stays.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
+import { parseSpendingRecords } from '../lib/spending-parse.mjs';
+import { attachRouteActivities } from '../lib/route-activities.mjs';
 import { updateCandidates } from '../lib/place-candidates.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import {
@@ -103,30 +105,55 @@ export function readRoutePoints(date, root = VAULT_PATHS.root) {
   return points;
 }
 
-export function routeHashOf(points) {
+// 동선 지문: 위치 점 + 결제(가맹점·시각·금액). 결제 알림이 늦게 들어와도 활동(식사 등)이 다시 계산되게 한다.
+export function routeHashOf(points, payments = []) {
   const triples = points.map(({ tst, lat, lon }) => [tst, lat, lon])
     .sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
-  return createHash('sha256').update(JSON.stringify(triples)).digest('hex').slice(0, 16);
+  const paid = payments.map(({ at, amount, merchant }) => [at, amount, merchant ?? null])
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])) || a[1] - b[1]);
+  return createHash('sha256').update(JSON.stringify(paid.length ? [triples, paid] : triples)).digest('hex').slice(0, 16);
 }
 
-export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = createCachedGeocoder({ root }), dryRun = false, points = readRoutePoints(date, root), now = new Date() } = {}) {
+export function readRoutePayments(date, root = VAULT_PATHS.root) {
+  const path = join(root, VAULT_REL.spending, date.slice(0, 4), `${date}.jsonl`);
+  if (!existsSync(path)) return [];
+  const records = [];
+  for (const line of readFileSync(path, 'utf8').split('\n').filter(Boolean)) {
+    try { records.push(JSON.parse(line)); }
+    catch { /* 손상된 알림 한 줄은 동선 전체를 막지 않는다. */ }
+  }
+  return parseSpendingRecords(records);
+}
+
+export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = createCachedGeocoder({ root }), dryRun = false,
+  points = readRoutePoints(date, root), payments = readRoutePayments(date, root), events = [], now = new Date() } = {}) {
   let stays;
-  try { stays = await describeStays(detectStays(points, { date }), { places: loadPlaces(root), geocode: dryRun ? async () => ({ reason: 'dry-run' }) : geocode }); }
+  try {
+    stays = await describeStays(detectStays(points, { date }), { places: loadPlaces(root),
+      geocode: dryRun ? async () => ({ reason: 'dry-run' }) : geocode,
+      region: dryRun ? async () => null : geocode.region?.bind(geocode) });
+    stays = await attachRouteActivities(stays, { payments, events,
+      keyword: dryRun ? async () => null : geocode.keyword?.bind(geocode) });
+  }
   finally { if (!dryRun) await geocode.flush?.(); }
-  if (!dryRun && geocode.failureCount?.() > 0) console.warn(`[daily-note] 지오코딩 실패 ${geocode.failureCount()}건`);
+  const degraded = !dryRun && geocode.failureCount?.() > 0;
+  if (degraded) console.warn(`[daily-note] 지오코딩 실패 ${geocode.failureCount()}건`);
   const nextDate = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
   const nextStart = Date.parse(`${nextDate}T00:00:00+09:00`) / 1000;
   const firstNextDayPoint = points.filter((point) => point.tst >= nextStart && point.tst < nextStart + 86_400)
     .sort((first, second) => first.tst - second.tst)[0];
   const isToday = date === new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
   const lastStay = stays.at(-1);
-  return stays.map((stay) => {
+  const route = stays.map((stay) => {
     const isLast = stay === lastStay;
     const nextDayConfirmsPlace = firstNextDayPoint && haversineM(stay, firstNextDayPoint) <= STAY_RADIUS_M;
     const end = isLast && isToday ? '' : isLast && (!firstNextDayPoint || nextDayConfirmsPlace) ? '24:00' : routeTime(stay.end, date);
     return { ...stay, current: isLast && isToday, start: routeTime(stay.start, date), end,
       startAt: stay.start, endAt: stay.end };
   });
+  // 카카오 조회가 실패한 결과는 지문을 갱신하지 않게 표시한다(다음 실행에서 다시 계산).
+  if (degraded) Object.defineProperty(route, 'degraded', { value: true });
+  return route;
 }
 
 async function summarize(date, records, prevFields, recordHash, dryRun) {
@@ -187,8 +214,12 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   else if (existsSync(VAULT_PATHS.location.root)) {
     try {
       const routePoints = readRoutePoints(date);
-      routeHash = routeHashOf(routePoints);
-      route = await deps.computeRoute(date, { dryRun, points: routePoints });
+      const routePayments = readRoutePayments(date);
+      routeHash = routeHashOf(routePoints, routePayments);
+      route = await deps.computeRoute(date, { dryRun, points: routePoints, payments: routePayments,
+        events: Array.isArray(events) ? events : [] });
+      // 일정·카카오 조회가 실패한 결과로는 지문을 갱신하지 않는다. 그래야 7일 재계산이 다시 돌아 활동을 채운다.
+      if (events === 'failed' || route?.degraded) routeHash = prevFields?.routeHash ?? null;
     }
     catch (error) { route = 'failed'; routeHash = prevFields?.routeHash ?? null; console.error('  ❌ 동선 계산 실패:', String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
   }
@@ -212,7 +243,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   }
   let candidatesFailed = false;
   if (mode === 'finalize' && statusOf(inspectExisting(note).prev) === '확정' && Array.isArray(route)) {
-    try { deps.updateCandidates({ date, stays: route.map((stay) => ({ ...stay, start: stay.startAt, end: stay.endAt })),
+    try { deps.updateCandidates({ date, stays: route.filter((stay) => stay.kind !== 'roam').map((stay) => ({ ...stay, start: stay.startAt, end: stay.endAt })),
       events: Array.isArray(events) ? events : [], root: VAULT_PATHS.root }); }
     catch (error) { candidatesFailed = true; console.error('  ❌ 장소 후보 갱신 실패:', String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
   }
@@ -246,7 +277,10 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
 
 export async function recomputeDailyRoute({ date, root = VAULT_PATHS.root, rules, dryRun = false, force = false,
   deps: injected = {} }) {
-  const deps = { computeRoute, write: writeAtomic, ...injected };
+  const deps = { computeRoute, write: writeAtomic, fetchEvents: async (day) => {
+    if (!isConfigured()) return [];
+    return listEventsForKstDay(day, { token: await getAccessToken({ requiredScopes: CALENDAR_READ_SCOPES }) });
+  }, ...injected };
   const path = notePathAt(root, date);
   const first = readOrNull(path);
   if (first == null) return { updated: false, skipped: '노트 없음' };
@@ -255,16 +289,21 @@ export async function recomputeDailyRoute({ date, root = VAULT_PATHS.root, rules
   if (inspected.prev.fields.summaryStatus === 'pending') return { updated: false, skipped: '미리 만든 노트' };
   if (!existsSync(join(root, VAULT_REL.location))) return { updated: false, skipped: '위치 폴더 없음' };
   const points = readRoutePoints(date, root);
-  const routeHash = routeHashOf(points);
+  const payments = readRoutePayments(date, root);
+  const routeHash = routeHashOf(points, payments);
   if (!force && inspected.prev.fields.routeHash === routeHash) return { updated: false, skipped: '지문 동일' };
-  const route = await deps.computeRoute(date, { root, dryRun, points });
+  // 재계산에도 일정을 넘긴다. 못 읽으면 일정 활동(공연 등)이 사라지므로 이번엔 건너뛰고 다음 실행에서 다시 한다.
+  let events;
+  try { events = await deps.fetchEvents(date); }
+  catch { return { updated: false, skipped: '캘린더 조회 실패' }; }
+  const route = await deps.computeRoute(date, { root, dryRun, points, payments, events: Array.isArray(events) ? events : [] });
   // 지오코딩 중 오너가 파일을 수정했으면 다시 검사해 그 변경을 보존한다.
   const latest = readOrNull(path);
   if (latest == null) return { updated: false, skipped: '노트 없음' };
   const again = inspectExisting(latest);
   if (!again.ok) return { updated: false, skipped: again.reason };
   if (!force && again.prev.fields.routeHash === routeHash) return { updated: false, skipped: '지문 동일' };
-  const note = replaceDailyRoute(latest, route, routeHash);
+  const note = replaceDailyRoute(latest, route, route?.degraded ? (again.prev.fields.routeHash ?? null) : routeHash);
   const problems = rules ? checkNote(relative(root, path), note, rules) : [];
   if (problems.length) throw new Error(`등록부 위반: ${problems.join(' / ')}`);
   if (sameIgnoringModified(latest, note)) return { updated: false, skipped: '변경 없음' };

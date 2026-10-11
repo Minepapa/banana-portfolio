@@ -26,6 +26,30 @@ export async function reverseGeocode(lat, lon, { key, fetchImpl = fetch } = {}) 
   const address = document?.road_address?.address_name || document?.address?.address_name || null;
   return buildingName || address ? { buildingName, address } : null;
 }
+export async function regionAt(lat, lon, { key, fetchImpl = fetch } = {}) {
+  if (!key) return null;
+  const url = new URL('https://dapi.kakao.com/v2/local/geo/coord2regioncode.json');
+  url.searchParams.set('x', String(lon));
+  url.searchParams.set('y', String(lat));
+  const response = await fetchImpl(url, { headers: { Authorization: `KakaoAK ${key}` }, signal: AbortSignal.timeout(10_000) });
+  if (!response.ok) throw new Error(`카카오 HTTP ${response.status}`);
+  const result = await response.json();
+  return result.documents?.find((document) => document.region_type === 'H')?.region_3depth_name || null;
+}
+
+export async function searchMerchant(merchant, lat, lon, { key, fetchImpl = fetch } = {}) {
+  if (!key) return null;
+  const url = new URL('https://dapi.kakao.com/v2/local/search/keyword.json');
+  url.searchParams.set('query', merchant);
+  url.searchParams.set('x', String(lon));
+  url.searchParams.set('y', String(lat));
+  url.searchParams.set('radius', '500');
+  const response = await fetchImpl(url, { headers: { Authorization: `KakaoAK ${key}` }, signal: AbortSignal.timeout(10_000) });
+  if (!response.ok) throw new Error(`카카오 HTTP ${response.status}`);
+  const result = await response.json();
+  const place = result.documents?.[0];
+  return place ? { name: place.place_name, category: place.category_group_code } : null;
+}
 export function createCachedGeocoder({ root, keyPath = KAKAO_KEY_PATH, fetchImpl = fetch } = {}) {
   const path = join(root, VAULT_REL.locationGeocodeCache);
   let failures = 0;
@@ -69,6 +93,28 @@ export function createCachedGeocoder({ root, keyPath = KAKAO_KEY_PATH, fetchImpl
     pending = operation.then(() => {}, () => {});
     return operation;
   };
+  const lookup = (cacheKey, find) => {
+    const operation = pending.then(async () => {
+      loadCache();
+      if (Object.hasOwn(cache, cacheKey)) return cache[cacheKey];
+      let key;
+      try { key = readKakaoKey(keyPath); }
+      catch { failures += 1; return null; }
+      if (!key) { failures += 1; return null; }
+      try {
+        const result = await find(key);
+        cache[cacheKey] = result;
+        dirty = true;
+        return result;
+      } catch { failures += 1; return null; }
+    });
+    pending = operation.then(() => {}, () => {});
+    return operation;
+  };
+  geocode.region = (lat, lon) => lookup(`region:${lat.toFixed(4)},${lon.toFixed(4)}`,
+    (key) => regionAt(lat, lon, { key, fetchImpl }));
+  geocode.keyword = (merchant, lat, lon) => lookup(`keyword:${merchant}:${lat.toFixed(4)},${lon.toFixed(4)}`,
+    (key) => searchMerchant(merchant, lat, lon, { key, fetchImpl }));
   geocode.flush = async () => {
     await pending;
     if (dirty) {

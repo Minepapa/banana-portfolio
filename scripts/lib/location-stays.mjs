@@ -5,6 +5,12 @@ import { VAULT_REL } from './vault-paths.mjs';
 
 export const STAY_RADIUS_M = 150;
 export const STAY_MIN_MINUTES = 15;
+export const ANCHOR_GAP_MINUTES = 30;
+export const ROAM_MIN_POINTS = 4;
+export const ROAM_MIN_DISTANCE_M = 200;
+export const ROAM_MAX_GAP_MINUTES = 30;
+// 누적거리만 보면 실내에서 GPS가 20~30m씩 튀는 것도 산책이 된다. 점들이 실제로 퍼진 범위(가장 먼 두 점)를 함께 본다.
+export const ROAM_MIN_EXTENT_M = 100;
 const DAY_MS = 86_400_000;
 const dayBounds = (date) => [Date.parse(`${date}T00:00:00+09:00`), Date.parse(`${date}T00:00:00+09:00`) + DAY_MS];
 const validCoordinate = (lat, lon) => Number.isFinite(lat) && Math.abs(lat) <= 90 && Number.isFinite(lon) && Math.abs(lon) <= 180;
@@ -114,10 +120,13 @@ export function detectStays(points, { radiusM = STAY_RADIUS_M, minMinutes = STAY
     for (let index = 0; index < stay.items.length - 1; index += 1) {
       const anchor = stay.items[index];
       const next = stay.items[index + 1];
-      if (next.tst - anchor.tst < 60 * 60) continue;
+      if (next.tst - anchor.tst < ANCHOR_GAP_MINUTES * 60) continue;
       const nextStart = Math.max(next.tst * 1000, bounds?.[0] ?? -Infinity);
       const stayEnd = Math.min(stay.rawEnd, bounds?.[1] ?? Infinity);
-      if (stayEnd - nextStart < minMinutes * 60_000) continue;
+      // 마지막 관측점이 공백의 끝이면 앞 점 자체가 긴 정지의 앵커다.
+      if (stayEnd - nextStart < minMinutes * 60_000
+        && !(next === stay.items.at(-1) && next.tst * 1000 < (bounds?.[1] ?? Infinity)
+          && next.tst - anchor.tst >= minMinutes * 60)) continue;
       const segmentIndex = segments.findIndex(({ items }) => items.includes(anchor) && items.includes(next));
       if (segmentIndex < 0) continue;
       const segment = segments[segmentIndex];
@@ -148,7 +157,14 @@ export function detectStays(points, { radiusM = STAY_RADIUS_M, minMinutes = STAY
       if (part) split.push(part);
     }
   }
-  return split.map(({ decisionCenter, items, rawEnd, ...stay }) => stay);
+  return split.map(({ decisionCenter, items, rawEnd, ...stay }) => {
+    const distance = items.slice(1).reduce((sum, point, index) => sum + haversineM(items[index], point), 0);
+    const longestGap = items.slice(1).reduce((max, point, index) => Math.max(max, point.tst - items[index].tst), 0);
+    const extent = items.reduce((max, point, index) => Math.max(max,
+      ...items.slice(index + 1).map((other) => haversineM(point, other))), 0);
+    return { ...stay, kind: items.length >= ROAM_MIN_POINTS && distance >= ROAM_MIN_DISTANCE_M && extent >= ROAM_MIN_EXTENT_M
+      && longestGap < ROAM_MAX_GAP_MINUTES * 60 ? 'roam' : 'stay' };
+  });
 }
 
 export function matchPlace(stay, places) {
@@ -169,7 +185,7 @@ export function loadPlaces(root) {
   });
 }
 
-export async function describeStays(stays, { places, geocode }) {
+export async function describeStays(stays, { places, geocode, region = async () => null }) {
   const described = [];
   let previousPlace = null;
   for (const stay of stays) {
@@ -185,7 +201,24 @@ export async function describeStays(stays, { places, geocode }) {
       previous.dwellMs = dwellMs;
       continue;
     }
-    if (place) { described.push({ ...publicStay, label: place.name, registered: true, placeName: place.name }); previousPlace = place; continue; }
+    // 30분 앵커 분리로 같은 미등록 장소가 두 줄로 갈라지면 지오코딩 전에 다시 합친다(앞뒤 모두 정지·반경 안).
+    if (splitBoundary && !place && previous && !previous.registered && previous.kind !== 'roam' && stay.kind !== 'roam'
+      && previous.end === stay.start && haversineM(previous, stay) <= STAY_RADIUS_M) {
+      const dwellMs = previous.dwellMs + stay.dwellMs;
+      previous.lat = (previous.lat * previous.dwellMs + stay.lat * stay.dwellMs) / dwellMs;
+      previous.lon = (previous.lon * previous.dwellMs + stay.lon * stay.dwellMs) / dwellMs;
+      previous.end = stay.end;
+      previous.pointCount += stay.pointCount;
+      previous.dwellMs = dwellMs;
+      continue;
+    }
+    if (place) { described.push({ ...publicStay, kind: 'stay', label: place.name, registered: true, placeName: place.name }); previousPlace = place; continue; }
+    if (stay.kind === 'roam') {
+      const district = await region(stay.lat, stay.lon);
+      described.push({ ...publicStay, label: district ? `${district} 일대 산책` : '일대 산책', registered: false });
+      previousPlace = null;
+      continue;
+    }
     const result = await geocode(stay.lat, stay.lon);
     const address = result?.address ?? (typeof result === 'string' ? result : null);
     const buildingName = result?.buildingName ?? null;

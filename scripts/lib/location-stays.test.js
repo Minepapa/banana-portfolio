@@ -67,9 +67,14 @@ test('실측 픽스처: 2점 군집의 긴 머묾(공연장)을 병합 뒤에도
   assert.ok(anchor);
   assert.equal(anchor.end, '2026-10-10T09:27:27.000Z');
   assert.ok(haversineM(anchor, { lat: 37.42583, lon: 129.12968 }) < 30);
+  assert.equal(anchor.kind, 'stay');
   const walking = stays.filter((stay) => stay.start === anchor.end);
   assert.equal(walking.length, 1);
-  assert.equal(walking[0].end, '2026-10-10T10:57:02.000Z');
+  assert.equal(walking[0].end, '2026-10-10T09:58:18.000Z');
+  assert.equal(walking[0].kind, 'roam');
+  const restaurant = stays.find((stay) => stay.start === walking[0].end);
+  assert.equal(restaurant.end, '2026-10-10T10:57:02.000Z');
+  assert.equal(restaurant.kind, 'stay');
   assert.equal('decisionCenter' in walking[0], false);
   const described = await describeStays(stays, { places: [], geocode: async () => '주입 주소' });
   assert.equal(described.find((stay) => stay.start === anchor.start).label, '미등록: 주입 주소');
@@ -89,9 +94,9 @@ test('같은 등록 장소의 긴 공백 분리는 설명 단계에서 다시 �
 test('군집 좌표와 인접 체류 병합은 점 수가 아닌 시간으로 가중한다', () => {
   const stays = detectStays([point(0, 0, 0), point(40, 0, 0.001), point(45, 0, 0.001),
     point(60, 0, 0.01), point(70, 0, 0.0005), point(90, 0, 0.0005)]);
-  assert.equal(stays.length, 1);
-  assert.ok(stays[0].lon < 0.0006);
-  assert.ok(stays[0].dwellMs > 0);
+  assert.equal(stays.length, 2, '30분 넘는 첫 앵커는 분리한다');
+  assert.ok(stays[1].lon > 0.0006, '뒤 구간 중심은 점 수보다 체류 시간으로 가중한다');
+  assert.ok(stays[1].dwellMs > 0);
 });
 
 test('군집 밖 먼 다음 점과의 긴 공백은 마지막 점의 체류로 늘리지 않는다', () => {
@@ -118,8 +123,8 @@ test('자정으로 잘린 뒤 구간이 15분 미만이면 긴 공백을 분리�
 
   const withinCluster = detectStays([kstPoint('22:00:00', 0, 0), kstPoint('22:30:00', 0, 0),
     kstPoint('23:50:00', 0, 0), nextDayPoint('00:05:00', 0)], { date });
-  assert.equal(withinCluster.length, 1);
-  assert.equal(withinCluster[0].end, '2026-10-10T15:00:00.000Z');
+  assert.equal(withinCluster.length, 2, '앞의 30분 앵커는 분리한다');
+  assert.equal(withinCluster.at(-1).end, '2026-10-10T15:00:00.000Z');
 });
 
 test('데일리 계산은 자정 양쪽 날짜 기록을 이어 읽는다', async (t) => {
@@ -319,4 +324,22 @@ test('일정은 30분 이상 또는 일정 길이의 절반 이상 겹칠 때만
   const shortEvent = { title: '짧은 일정', start: '2026-10-09T06:30:00Z', end: '2026-10-09T06:50:00Z' };
   updateCandidates({ date: '2026-10-09', stays: [shortStay], events: [shortEvent], root: shortRoot });
   assert.deepEqual(readCandidates(shortRoot)[0].eventTitles, ['짧은 일정']);
+});
+
+test('실내 GPS 튐(점 촘촘·누적거리만 큼)은 산책이 아니고, 갈라진 같은 미등록 장소는 지오코딩 전에 다시 합친다', async () => {
+  const at = (minute, lat, lon) => ({ tst: Date.parse('2026-10-10T10:00:00+09:00') / 1000 + minute * 60, lat, lon, acc: 10 });
+  // 2시간 동안 5분 간격, 반경 약 25m 안에서 이리저리 튐 → 누적은 200m를 넘지만 퍼진 범위는 작다.
+  const jitter = Array.from({ length: 25 }, (_, index) => at(index * 5, 10 + (index % 2) * 0.0002, 20 + (index % 3) * 0.0002));
+  const stays = detectStays(jitter, { date: '2026-10-10' });
+  assert.equal(stays.length, 1);
+  assert.equal(stays[0].kind, 'stay');
+  let geocodes = 0;
+  const split = [
+    { start: '2026-10-10T01:00:00.000Z', end: '2026-10-10T02:00:00.000Z', lat: 10, lon: 20, kind: 'stay', dwellMs: 3_600_000, pointCount: 2 },
+    { start: '2026-10-10T02:00:00.000Z', end: '2026-10-10T02:40:00.000Z', lat: 10.0003, lon: 20, kind: 'stay', dwellMs: 2_400_000, pointCount: 3, splitBoundary: true },
+  ];
+  const described = await describeStays(split, { places: [], geocode: async () => { geocodes += 1; return { address: '가상 주소' }; } });
+  assert.equal(described.length, 1);
+  assert.equal(described[0].end, '2026-10-10T02:40:00.000Z');
+  assert.equal(geocodes, 1, '합친 뒤 한 번만 조회');
 });
