@@ -30,6 +30,7 @@ export const VAULT_REL = {
   decisionsCanonical: '50_Outputs/Decisions',
   logSessions: '60_Logs/Zeus',
   logWarningEvents: '95_Etna/Jobs/WarningEvents',
+  stateDeferredWarnings: '95_Etna/Jobs/DeferredWarnings.json',
   decisionsProposals: '95_Etna/Investing/Orders',
   decisionsProfile: '50_Outputs/Preferences', // D94: 성향 관찰 위치
   knowledge: '30_Wiki',

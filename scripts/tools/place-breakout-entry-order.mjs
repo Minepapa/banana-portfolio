@@ -31,7 +31,7 @@ import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 const SENDER_AGENT = 'plutus'; // watch-breakout-entry-fill.mjs와 동일 원칙 — 순수 API조회+발주 결과 전달, 부서 판단 없음
 const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'place-breakout-entry-order', warningCode: 'BREAKOUT_ENTRY_WARNING',
-  subjectKey: 'batch', kind: 'legacy-unstructured', severity: 'unclassified',
+  subjectKey: 'batch', kind: 'trade-safety', severity: 'high',
 });
 const won = (n) => (n == null ? '확인 필요' : Math.round(n).toLocaleString('ko-KR') + '원');
 

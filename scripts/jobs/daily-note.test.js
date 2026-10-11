@@ -122,6 +122,27 @@ test('processDay: 노트당 텔레그램 1회, --no-send, 오너가 AI 칸을 �
   } finally { rmSync(vault, { recursive: true, force: true }); }
 });
 
+test('야간 요약 실패 경고는 원문 사실을 나눠 보류하고 telegramSentAt을 남기지 않는다', async (t) => {
+  mkdirSync(vault, { recursive: true });
+  const date = '2026-10-20';
+  const path = join(vault, '10_Periodic/Daily/2026', `${date}.md`);
+  const queueFile = join(vault, 'test-deferred.json');
+  t.after(() => rmSync(vault, { recursive: true, force: true }));
+  let sends = 0;
+  const deps = { fetchEvents: async () => [], summarize: async () => ({ summary: '- 요약 실패\n- 조치: 원장 확인',
+    summaryStatus: 'failed', model: '없음' }),
+    send: async () => { sends++; return { ok: true, result: { message_id: sends } }; },
+    queueFile, journalRoot: join(vault, 'journal'),
+    clock: () => Date.parse('2026-10-20T15:00:00Z') };
+  await processDay({ mode: 'draft', date, dryRun: false, noSend: false, rules, today: date, deps });
+  assert.equal(sends, 0);
+  assert.doesNotMatch(readFileSync(path, 'utf8'), /telegramSentAt/);
+  const pending = JSON.parse(readFileSync(queueFile, 'utf8')).pending;
+  assert.equal(pending.length, 1);
+  assert.ok(pending[0].facts.length > 1);
+  assert.match(pending[0].facts.join(' '), /조치: 원장 확인/);
+});
+
 test('processDay prepare: 노트가 없을 때만 만들고, 요약 LLM·발송 없이 일정만 채우며 23:30 초안이 이어서 채운다', async (t) => {
   mkdirSync(vault, { recursive: true });
   t.after(() => rmSync(vault, { recursive: true, force: true }));

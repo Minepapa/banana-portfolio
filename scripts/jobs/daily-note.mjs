@@ -268,11 +268,13 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   try {
     const message = { agent: SENDER_AGENT, kind: '정보', topic: '데일리', body: buildDailyTelegramBody(date, records, summary, statusOf(inspectExisting(note).prev)) };
     if (summaryStatus === 'failed') {
-      await sendDirectWarning({
+      const result = await sendDirectWarning({
         message, send: deps.send, jobName: 'daily-note', warningCode: 'DAILY_SUMMARY_FAILED',
         subjectKey: 'summary', kind: 'operational', severity: 'medium', journalRoot: deps.journalRoot,
+        queueFile: deps.queueFile, clock: deps.clock ?? Date.now,
         detail: `AI 요약 실패 — 다음 실행에서 다시 시도 (${date})`,
       });
+      if (result?.deferred) return { failed: !!s.failed || events === 'failed', candidatesFailed };
     } else await deps.send(message);
     console.log('  📨 클리오 데일리 요약 발송');
   } catch (e) {

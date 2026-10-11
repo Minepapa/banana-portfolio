@@ -1,11 +1,213 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildJobHealthRecord } from '../lib/job-health.mjs';
-import { findStaleJobs, isPollingStuck, formatStaleJobIssue, EXPECTED_INTERVALS_MS } from './health-watcher.mjs';
+import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
+import { deferWarning, drainDeferredWarnings } from '../lib/deferred-warnings.mjs';
+import { findStaleJobs, isPollingStuck, formatStaleJobIssue, EXPECTED_INTERVALS_MS, processHealthIssues } from './health-watcher.mjs';
+
+test('같은 이슈는 최초·6시간·24시간에만 보내고 복구는 한 번만 알린다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  const messages = [];
+  const send = async (message) => { messages.push(message); return { ok: true, result: { message_id: messages.length } }; };
+  const issue = [{ key: 'job:media-archive:silent', job: 'media-archive', text: '잡 media-archive가 조용합니다' }];
+  const first = Date.parse('2026-10-11T03:00:00.000Z');
+  for (const hours of [0, 0.5, 5.5, 6, 7, 23.5, 24, 25]) {
+    await processHealthIssues(issue, { stateFile, queueFile, send, now: first + hours * 3600_000 });
+  }
+  assert.equal(messages.length, 3);
+  assert.match(messages[0].facts[0], /새 이슈/);
+  assert.match(messages[1].facts[0], /여전히 조용함/);
+  assert.equal(JSON.parse(readFileSync(stateFile, 'utf8'))[issue[0].key].sentCount, 3);
+  await processHealthIssues([], { stateFile, queueFile, send, now: first + 25.5 * 3600_000 });
+  await processHealthIssues([], { stateFile, queueFile, send, now: first + 26 * 3600_000 });
+  assert.equal(messages.length, 4);
+  assert.match(messages[3].facts[0], /복구됨/);
+});
+
+test('워처가 오래 멈췄다가 재개돼도 지난 리마인더를 연속 발송하지 않는다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  const sent = [];
+  const send = async (message) => { sent.push(message); return { ok: true, result: { message_id: sent.length } }; };
+  const issue = [{ key: 'job:media-archive:silent', job: 'media-archive', text: '조용함' }];
+  const first = Date.parse('2026-10-11T03:00:00.000Z');
+  for (const hours of [0, 25, 25.5, 26, 48]) {
+    await processHealthIssues(issue, { stateFile, queueFile, send, now: first + hours * 3600_000 });
+  }
+  assert.equal(sent.length, 3);
+});
+
+test('손상된 watcher 상태를 격리하고 critical 경보 뒤 감시를 계속한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  writeFileSync(stateFile, '{bad');
+  const messages = [];
+  await processHealthIssues([{ key: 'job:one:silent', job: 'one', text: '조용함' }], {
+    stateFile, queueFile: join(dir, 'queue.json'), now: Date.parse('2026-10-11T03:00:00Z'),
+    send: async (message, details) => { messages.push({ message, details }); return { ok: true, result: { message_id: messages.length } }; },
+  });
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].details.severity, 'critical');
+  assert.ok(readdirSync(dir).some((name) => name.startsWith('watcher.json.corrupt-')));
+  assert.equal(JSON.parse(readFileSync(stateFile, 'utf8'))['job:one:silent'].sentCount, 1);
+});
+
+test('JSON 파싱은 되지만 null 이슈인 watcher 상태도 격리한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  writeFileSync(stateFile, JSON.stringify({ broken: null }));
+  const messages = [];
+  await processHealthIssues([], { stateFile, queueFile: join(dir, 'queue.json'),
+    send: async (message, details) => { messages.push({ message, details });
+      return { ok: true, result: { message_id: 1 } }; } });
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].details.severity, 'critical');
+  assert.ok(readdirSync(dir).some((name) => name.startsWith('watcher.json.corrupt-')));
+});
+
+test('watcher 상태 잠금 안에서는 아침 drain을 재진입시키지 않는다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'queue.json');
+  const journalRoot = join(dir, 'journal');
+  const night = Date.parse('2026-10-11T15:00:00Z');
+  const morning = Date.parse('2026-10-11T22:00:00Z');
+  const send = (message, details) => sendDirectWarning({ message, ...details,
+    jobName: 'health-watcher', warningCode: 'JOB_HEALTH_ISSUES', kind: 'operational', severity: 'high',
+    journalRoot, queueFile, clock: () => current,
+    send: async () => ({ ok: true, result: { message_id: 1 } }) });
+  let current = night;
+  await processHealthIssues([{ key: 'old', text: 'old' }], { stateFile, queueFile, send, now: current });
+  current = morning;
+  await processHealthIssues([{ key: 'old', text: 'old' }, { key: 'new', text: 'new' }],
+    { stateFile, queueFile, send, now: current });
+  assert.equal(JSON.parse(readFileSync(queueFile, 'utf8')).pending.length, 1);
+  await drainDeferredWarnings({ queueFile, journalRoot, now: morning,
+    send: async () => ({ ok: true, result: { message_id: 2 } }) });
+  assert.equal(JSON.parse(readFileSync(stateFile, 'utf8')).old.sentCount, 1);
+});
+
+test('잠금 안의 큐 손상 경보도 다른 확인 대기 큐의 drain을 재진입시키지 않는다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const corruptQueue = join(dir, 'corrupt-queue.json');
+  const inFlightQueue = join(dir, 'other-queue.json');
+  const journalRoot = join(dir, 'journal');
+  const night = Date.parse('2026-10-11T15:00:00Z');
+  const morning = Date.parse('2026-10-11T22:00:00Z');
+  writeFileSync(corruptQueue, '{broken');
+  await deferWarning({ queueFile: inFlightQueue, agent: 'zeus', detail: '기존 경고', at: night,
+    source: { watcherStateFile: stateFile, watcherIssueKey: 'old' } });
+  let corruptionAlerts = 0;
+  const send = (message, details = {}) => {
+    if (details.warningCode === 'DEFERRED_QUEUE_CORRUPT') {
+      corruptionAlerts++;
+      assert.equal(details.drainBeforeSend, false);
+    }
+    return sendDirectWarning({ message, ...details, jobName: 'health-watcher',
+      warningCode: details.warningCode ?? 'JOB_HEALTH_ISSUES',
+      subjectKey: details.subjectKey ?? 'batch', kind: 'operational',
+      severity: details.severity ?? 'high', journalRoot,
+      queueFile: details.queueFile ?? inFlightQueue, clock: () => morning,
+      send: async () => ({ ok: true, result: { message_id: 1 } }) });
+  };
+  await processHealthIssues([{ key: 'old', text: '조용함' }],
+    { stateFile, queueFile: corruptQueue, now: morning, send });
+  assert.equal(corruptionAlerts, 1);
+  assert.equal(JSON.parse(readFileSync(inFlightQueue, 'utf8')).pending.length, 1);
+  await drainDeferredWarnings({ queueFile: inFlightQueue, now: morning,
+    send: async () => ({ ok: true, result: { message_id: 2 } }) });
+  assert.equal(JSON.parse(readFileSync(stateFile, 'utf8')).old.sentCount, 2);
+});
+
+test('테스트에서는 기본 감시 상태 경로를 거부한다', async () => {
+  assert.ok(process.env.NODE_TEST_CONTEXT);
+  await assert.rejects(() => processHealthIssues([], { send: async () => ({ ok: true, result: { message_id: 1 } }) }),
+    /실 감시 상태 경로/);
+});
+
+test('한 이슈 전송 실패가 다음 이슈와 복구를 막지 않는다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'queue.json');
+  const first = Date.parse('2026-10-11T03:00:00Z');
+  const send = async (message, details) => {
+    if (details.subjectKey && message.facts?.[1] === '실패') throw new Error('send failed');
+    return { ok: true, result: { message_id: 1 } };
+  };
+  await processHealthIssues([{ key: 'bad', text: '실패' }, { key: 'good', text: '성공' }],
+    { stateFile, queueFile, now: first, send });
+  const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+  assert.equal(state.bad.sentCount, 0);
+  assert.equal(state.good.sentCount, 1);
+});
+
+test('07시 첫 실행은 밤새 보류된 이슈를 요약하고 별도 리마인더를 중복 발송하지 않는다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  const journalRoot = join(dir, 'journal');
+  const direct = [];
+  const send = (message, details) => sendDirectWarning({
+    message, ...details, journalRoot, queueFile, jobName: 'health-watcher',
+    warningCode: 'JOB_HEALTH_ISSUES', kind: 'operational', severity: 'high',
+    clock: () => current,
+    send: async (item) => { direct.push(item); return { ok: true, result: { message_id: direct.length } }; },
+  });
+  const issue = [{ key: 'job:media-archive:silent', job: 'media-archive', text: '조용함' }];
+  let current = Date.parse('2026-10-11T14:30:00.000Z');
+  await processHealthIssues(issue, { stateFile, queueFile, send, now: current });
+  current = Date.parse('2026-10-11T22:00:00.000Z');
+  await processHealthIssues(issue, { stateFile, queueFile, send, now: current });
+  assert.equal(direct.length, 0);
+  const digest = [];
+  await drainDeferredWarnings({ queueFile, now: current,
+    send: async (message) => { digest.push(message); return { ok: true, result: { message_id: 1 } }; } });
+  assert.equal(direct.length, 0);
+  assert.equal(digest.length, 1);
+});
+
+test('밤사이 복구된 이슈는 07시 요약에 복구됨으로 한 번만 표시한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  const journalRoot = join(dir, 'journal');
+  const direct = [];
+  let current = Date.parse('2026-10-11T14:30:00.000Z');
+  const send = (message, details) => sendDirectWarning({
+    message, ...details, journalRoot, queueFile, jobName: 'health-watcher',
+    warningCode: details.warningCode ?? 'JOB_HEALTH_ISSUES', kind: 'operational', severity: 'high',
+    clock: () => current,
+    send: async (item) => { direct.push(item); return { ok: true, result: { message_id: direct.length } }; },
+  });
+  const issue = [{ key: 'job:media-archive:silent', job: 'media-archive', text: '조용함' }];
+  await processHealthIssues(issue, { stateFile, queueFile, send, now: current });
+  current = Date.parse('2026-10-11T16:00:00.000Z');
+  await processHealthIssues([], { stateFile, queueFile, send, now: current });
+  current = Date.parse('2026-10-11T22:00:00.000Z');
+  const digest = [];
+  await drainDeferredWarnings({ queueFile, now: current,
+    send: async (message) => { digest.push(message); return { ok: true, result: { message_id: 1 } }; } });
+  assert.equal(direct.length, 0);
+  assert.equal(digest.length, 1);
+  assert.match(digest[0].facts[1], /복구됨/);
+});
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { birthdayLines, main, runBriefing } from './hermes-briefing.mjs';
 import { readWarningEvents } from '../lib/warning-event-journal.mjs';
+import { deferWarning } from '../lib/deferred-warnings.mjs';
 
 const journalRoot = mkdtempSync(join(tmpdir(), 'hermes-warning-'));
+const warningNow = () => new Date('2026-10-10T03:00:00.000Z');
 after(() => rmSync(journalRoot, { recursive: true, force: true }));
 const capture = (sent) => async (message) => {
   sent.push(message);
@@ -35,7 +37,7 @@ test('아침 일정과 생일, 저녁 내일 일정, 일정 없는 저녁 미발
 
 test('OAuth 미설정이어도 생일과 일정 연결 경고를 발송한다', async () => {
   const sent = [];
-  const result = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: { isConfigured: () => false, readPeople: async () => [{ name: '민', birthday: '1990-10-10' }], send: capture(sent), journalRoot } });
+  const result = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: { isConfigured: () => false, readPeople: async () => [{ name: '민', birthday: '1990-10-10' }], send: capture(sent), journalRoot, now: warningNow } });
   assert.equal(result.alert, true);
   assert.equal(sent.length, 1);
   assert.match(sent[0].body, /- 캘린더 연결 확인 필요\(google-oauth-setup\)/);
@@ -44,9 +46,25 @@ test('OAuth 미설정이어도 생일과 일정 연결 경고를 발송한다', 
   assert.deepEqual(birthdayLines('2026-10-10', [{ name: '빈값', birthday: '' }]), []);
 });
 
+test('07:30 아침 브리핑은 일정 조회 실패와 별개로 보류 경고를 먼저 정리한다', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hermes-drain-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const queueFile = join(dir, 'queue.json');
+  await deferWarning({ queueFile, agent: 'zeus', detail: '전날 경고',
+    at: Date.parse('2026-10-11T15:00:00Z') });
+  const sent = [];
+  await runBriefing({ mode: 'morning', date: '2026-10-12', deps: {
+    queueFile, journalRoot: join(dir, 'journal'), now: () => new Date('2026-10-11T22:30:00Z'),
+    fetchEvents: async () => { throw new Error('calendar failed'); }, readPeople: async () => [],
+    send: capture(sent),
+  } });
+  assert.equal(sent[0].topic, '경고');
+  assert.equal(sent[1].topic, '아침 브리핑');
+});
+
 test('일정 조회 권한 실패여도 저녁 연결 경고를 발송한다', async () => {
   const sent = [];
-  const result = await runBriefing({ mode: 'evening', date: '2026-10-11', deps: { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, send: capture(sent), journalRoot } });
+  const result = await runBriefing({ mode: 'evening', date: '2026-10-11', deps: { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, send: capture(sent), journalRoot, now: warningNow } });
   assert.equal(result.alert, true);
   assert.match(sent[0].body, /- 캘린더 연결 확인 필요\(google-oauth-setup\)/);
 });
@@ -55,7 +73,7 @@ test('브리핑 CLI는 일정 권한 실패 경보를 종료 코드 1로 표시�
   const original = process.exitCode;
   try {
     process.exitCode = 0;
-    await main(['--mode=morning', '--date=2026-10-10'], { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, readPeople: async () => [], send: async () => ({ ok: true, result: { message_id: 10 } }), journalRoot });
+    await main(['--mode=morning', '--date=2026-10-10'], { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, readPeople: async () => [], send: async () => ({ ok: true, result: { message_id: 10 } }), journalRoot, now: warningNow });
     assert.equal(process.exitCode, 1);
   } finally { process.exitCode = original; }
 });
@@ -63,7 +81,7 @@ test('브리핑 CLI는 일정 권한 실패 경보를 종료 코드 1로 표시�
 test('생일 파일 읽기 실패를 표시해 일정 브리핑은 발송한다', async () => {
   const sent = [];
   const result = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: {
-    fetchEvents: async () => [ev], readOwners: async () => { throw new Error('unavailable'); }, readPeople: async () => { throw new Error('vault unavailable'); }, send: capture(sent), journalRoot,
+    fetchEvents: async () => [ev], readOwners: async () => { throw new Error('unavailable'); }, readPeople: async () => { throw new Error('vault unavailable'); }, send: capture(sent), journalRoot, now: warningNow,
   } });
   assert.equal(result.sent, true);
   assert.equal(sent.length, 1);

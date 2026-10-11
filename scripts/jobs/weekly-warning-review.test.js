@@ -183,7 +183,41 @@ test('같은 전달 시도의 확정 결과는 원장 입력 순서가 뒤집혀
     event('2026-03-29T01:01:00.000Z', 'one', 'delivery', { deliveryStatus: 'sending', deliveryAttemptId: 'attempt' }),
   ];
   const result = summarizeWeek(rows);
-  assert.deepEqual(result.items[0].delivery, { sent: 1, suppressed: 0, failed: 0, unknown: 0 });
+  assert.deepEqual(result.items[0].delivery, { sent: 1, suppressed: 0, failed: 0, unknown: 0, deferred: 0 });
+});
+
+test('보류된 전달은 정리 발송 확정 전까지 불명으로 센다', () => {
+  const rows = [
+    event('2026-03-29T01:00:00.000Z', 'night'),
+    event('2026-03-29T01:01:00.000Z', 'night', 'delivery', { deliveryStatus: 'deferred', deliveryAttemptId: 'attempt' }),
+  ];
+  const delivery = summarizeWeek(rows).items[0].delivery;
+  assert.equal(delivery.deferred, 1);
+  assert.equal(delivery.unknown, 1);
+});
+
+test('아침 정리 발송 확정 결과가 같은 시도에 기록되면 보류를 sent로 집계한다', () => {
+  const rows = [
+    event('2026-03-29T01:00:00.000Z', 'night'),
+    event('2026-03-29T01:01:00.000Z', 'night', 'delivery', { deliveryStatus: 'deferred', deliveryAttemptId: 'attempt' }),
+    event('2026-03-29T22:01:00.000Z', 'night', 'delivery', { deliveryStatus: 'sent', deliveryAttemptId: 'attempt' }),
+  ];
+  const delivery = summarizeWeek(rows).items[0].delivery;
+  assert.equal(delivery.sent, 1);
+  assert.equal(delivery.unknown, 0);
+});
+
+test('일요일 밤 보류를 다음 주 월요일 아침에 확정해도 지난 주 sent로 집계한다', () => {
+  const rows = [
+    event('2026-03-29T14:30:00.000Z', 'sunday'),
+    event('2026-03-29T14:31:00.000Z', 'sunday', 'delivery',
+      { deliveryStatus: 'deferred', deliveryAttemptId: 'cross-week' }),
+  ];
+  const laterEvents = [event('2026-03-29T22:01:00.000Z', 'sunday', 'delivery',
+    { deliveryStatus: 'sent', deliveryAttemptId: 'cross-week' })];
+  const delivery = summarizeWeek(rows, { laterEvents }).items[0].delivery;
+  assert.equal(delivery.sent, 1);
+  assert.equal(delivery.unknown, 0);
 });
 
 test('0건 주도 노트를 쓰고 미발송하며, 재생성해도 오너 메모가 남는다', async (t) => {

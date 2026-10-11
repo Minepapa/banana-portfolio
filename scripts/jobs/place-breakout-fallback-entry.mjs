@@ -58,7 +58,7 @@ import { buildHeldCodeSet, readBreakoutRecordFiles } from '../lib/breakout-held-
 const SENDER_AGENT = 'plutus';
 const sendWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'place-breakout-fallback-entry', warningCode: 'BREAKOUT_FALLBACK_WARNING',
-  subjectKey: 'batch', kind: 'legacy-unstructured', severity: 'unclassified',
+  subjectKey: 'batch', kind: 'trade-safety', severity: 'high',
 });
 const won = (n) => (n == null ? '확인 필요' : Math.round(n).toLocaleString('ko-KR') + '원');
 

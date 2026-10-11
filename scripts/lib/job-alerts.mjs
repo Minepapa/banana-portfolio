@@ -47,7 +47,7 @@ export function warningsSignature(list) {
 }
 
 export async function flushWarnings(jobName, {
-  dryRun = false, sendImpl = sendAgentMessage, stateFile = STATE_FILE, journalRoot,
+  dryRun = false, sendImpl = sendAgentMessage, stateFile = STATE_FILE, journalRoot, queueFile,
   now = Date.now, logger = console,
 } = {}) {
   if (!warnings.length) return;
@@ -75,7 +75,7 @@ export async function flushWarnings(jobName, {
       facts,
     };
     return await deliverWarningBatch({
-      jobName, sig, message, sendImpl, stateFile, journalRoot, clock: now, logger,
+      jobName, sig, message, sendImpl, stateFile, journalRoot, queueFile, clock: now, logger,
       structuredWarnings,
     });
   } catch {

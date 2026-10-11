@@ -9,6 +9,7 @@ import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { escapeHtml } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
+import { drainDeferredWarnings } from '../lib/deferred-warnings.mjs';
 import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
 import { formatEventLine, listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
@@ -57,6 +58,11 @@ export async function runBriefing({ mode, date, preview = false, deps = {} } = {
   if (!['morning', 'evening'].includes(selectedMode)) throw new Error(`--mode는 morning 또는 evening: ${selectedMode}`);
   const targetDate = date ?? (selectedMode === 'morning' ? current.slice(0, 10) : nextDay(current.slice(0, 10)));
   if (!validDate(targetDate)) throw new Error(`--date 형식 오류: ${targetDate}`);
+  if (selectedMode === 'morning' && !preview && (deps.queueFile || !process.env.NODE_TEST_CONTEXT)) {
+    try { await drainDeferredWarnings({ send: deps.send ?? sendAgentMessage,
+      queueFile: deps.queueFile, now: now.getTime(), journalRoot: deps.journalRoot }); }
+    catch (error) { console.error('아침 보류 경고 정리 실패:', error.message); }
+  }
   const fetchEvents = deps.fetchEvents ?? (async (day) => {
     if (!(deps.isConfigured ?? isConfigured)()) throw new Error('캘린더 미연결 — google-oauth-setup 필요');
     return listEventsForKstDay(day, { token: await getAccessToken({ requiredScopes: CALENDAR_READ_SCOPES }) });
@@ -106,6 +112,7 @@ export async function runBriefing({ mode, date, preview = false, deps = {} } = {
       await sendDirectWarning({
         message, send, jobName: 'hermes-briefing', warningCode: 'PERSONAL_BRIEFING_SOURCE_FAILED',
         subjectKey: 'source', kind: 'operational', severity: 'medium', journalRoot: deps.journalRoot,
+        queueFile: deps.queueFile, clock: () => now.getTime(),
         detail: [calendarError && '캘린더 연결 확인 필요', birthdayError && '생일 정보 조회 실패'].filter(Boolean).join(' | '),
       });
     } else await send(message);

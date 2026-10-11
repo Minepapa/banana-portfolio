@@ -3,6 +3,7 @@
 // 빠지는 기본 경로를 두지 않는다. 일반 제안·정상 보고는 이 함수를 호출하지 않는다.
 import { createHash, randomUUID } from 'node:crypto';
 import { appendWarningEvent, sanitizeWarningDetail } from './warning-event-journal.mjs';
+import { DEFERRED_WARNINGS_FILE, deferWarning, drainDeferredWarnings, shouldDeferWarning } from './deferred-warnings.mjs';
 
 export function warningSubjectKey(prefix, value) {
   const hash = createHash('sha256').update(String(value)).digest('hex').slice(0, 20)
@@ -24,7 +25,8 @@ function messageDetail(message) {
 
 export async function sendDirectWarning({
   message, send, jobName, warningCode, subjectKey, kind, severity,
-  journalRoot, clock = Date.now, logger = console, targetJob, detail,
+  journalRoot, clock = Date.now, logger = console, targetJob, detail, queueFile,
+  watcherStateFile, watcherIssueKey, drainBeforeSend = true,
 }) {
   if (typeof send !== 'function') throw new Error('직접 경고 전송 함수 필요');
   const attemptId = randomUUID();
@@ -45,6 +47,29 @@ export async function sendDirectWarning({
   };
 
   await record({ eventType: 'detected' });
+  if (drainBeforeSend && !shouldDeferWarning({ kind, severity }, clock())
+    && (queueFile || !process.env.NODE_TEST_CONTEXT)) {
+    try { await drainDeferredWarnings({ send, queueFile: queueFile ?? DEFERRED_WARNINGS_FILE,
+      now: clock(), journalRoot, logger }); }
+    catch (error) { logger.error(`아침 보류 경고 정리 실패: ${error.message}`); }
+  }
+  if (shouldDeferWarning({ kind, severity }, clock())) {
+    try {
+      await deferWarning({ agent: message?.agent, detail: safeDetail,
+        facts: message?.facts ?? (typeof message?.body === 'string'
+          ? message.body.split('\n').filter((line) => line.trim()) : undefined),
+        source: { jobName, warningCode, subjectKey, kind, severity, attemptId, incidentId,
+          ...(journalRoot ? { journalRoot } : {}),
+          ...(watcherStateFile ? { watcherStateFile, watcherIssueKey } : {}) },
+        issueKey: `${jobName}|${warningCode}|${subjectKey}`, at: clock(), queueFile,
+        sendCritical: (warning) => send(warning), logger });
+      await record({ eventType: 'delivery', deliveryStatus: 'deferred', deliveryAttemptId: attemptId });
+      return { deferred: true };
+    } catch (error) {
+      if (error.code === 'TEST_DEFAULT_PATH') throw error;
+      logger.error(`보류 큐 쓰기 실패 — 즉시 발송: ${error.message}`);
+    }
+  }
   await record({ eventType: 'delivery', deliveryStatus: 'sending', deliveryAttemptId: attemptId });
   let response;
   try {

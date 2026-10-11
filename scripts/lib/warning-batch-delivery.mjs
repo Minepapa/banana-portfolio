@@ -5,6 +5,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync } f
 import { dirname, join } from 'node:path';
 import { withLock, writeAtomic } from './state-writer.mjs';
 import { appendWarningEvent, readWarningEvents, sanitizeWarningDetail, WARNING_JOURNAL_ROOT } from './warning-event-journal.mjs';
+import { deferWarning, hasDeferredIssue, shouldDeferWarning } from './deferred-warnings.mjs';
 
 const SUPPRESS_MS = 24 * 3600 * 1000;
 const RESERVATION_MAX_AGE_MS = 5 * 60 * 1000;
@@ -130,7 +131,7 @@ function removeReservation(state, jobName, sig) {
 
 // 반환 상태는 발송·억제·응답불명을 구분한다. 실채널 대신 sendImpl을 주입해 검증 가능.
 export async function deliverWarningBatch({
-  jobName, sig, message, sendImpl, stateFile, journalRoot,
+  jobName, sig, message, sendImpl, stateFile, journalRoot, queueFile,
   structuredWarnings = [],
   clock = Date.now, logger = console,
 }) {
@@ -183,6 +184,10 @@ export async function deliverWarningBatch({
         }, recordContext);
         return { send: false, status: 'suppressed', reason: 'recent-send' };
       }
+      if (shouldDeferWarning({ kind: 'legacy-unstructured', severity: 'unclassified' }, clock())
+        && await hasDeferredIssue(`${jobName}|${sig}`, queueFile, (message) => sendImpl(message))) {
+        return { send: false, status: 'suppressed', reason: 'queued' };
+      }
 
       const attemptId = randomUUID();
       const current = state[jobName] ?? {};
@@ -203,6 +208,44 @@ export async function deliverWarningBatch({
     return { status: 'unavailable' };
   }
   if (!reservation.send) return { status: reservation.status, reason: reservation.reason };
+
+  const TRADE_WARNING_JOBS = new Set([
+    'reconcile-nh-executions', 'reconcile-irp-executions', 'reconcile-nh-cash',
+    'reconcile-irp', 'reconcile-nh-fx-rp', 'update-breakout-price-cache',
+    'daily-breakout-signal-scan', 'place-breakout-fallback-entry',
+    'reconcile-breakout-protection', 'place-breakout-entry-order',
+  ]);
+  const urgent = TRADE_WARNING_JOBS.has(jobName) || structuredWarnings.some((warning) => warning.kind === 'trade-safety'
+    || warning.severity === 'critical');
+  if (!urgent && shouldDeferWarning({ kind: 'legacy-unstructured', severity: 'unclassified' }, clock())) {
+    try {
+      await deferWarning({ agent: message?.agent, detail, facts: message?.facts?.slice(1),
+        at: clock(), queueFile, sendCritical: (warning) => sendImpl(warning), logger,
+        issueKey: `${jobName}|${sig}`,
+        source: { batchStateFile: stateFile, batchJobName: jobName, batchSig: sig },
+        sources: [...structuredWarnings.map(({ warningCode, subjectKey, kind, severity }) => ({
+          jobName, warningCode, subjectKey, kind, severity,
+          incidentId: structuredEventBase(jobName, { warningCode, subjectKey, kind, severity }, clock).incidentId,
+          attemptId: reservation.attemptId, journalRoot,
+        })), { jobName, warningCode: 'LEGACY_WARNING_BATCH', subjectKey: 'batch',
+          kind: 'legacy-unstructured', severity: 'unclassified',
+          incidentId: eventBase(jobName, sig, clock, detail).incidentId,
+          attemptId: reservation.attemptId, journalRoot }],
+      });
+      await withLock(stateFile, async () => {
+        await recordEvent(jobName, sig, {
+          eventType: 'delivery', deliveryStatus: 'deferred', deliveryAttemptId: reservation.attemptId,
+        }, recordContext);
+        const state = readState(stateFile);
+        removeReservation(state, jobName, sig);
+        persistState(stateFile, state);
+      }, lockOptions);
+      return { status: 'deferred' };
+    } catch (error) {
+      if (error.code === 'TEST_DEFAULT_PATH') throw error;
+      logger.error('야간 경고 보류 실패 — 즉시 발송');
+    }
+  }
 
   try {
     await withLock(stateFile, async () => {

@@ -116,7 +116,8 @@ function operationalStatus(item, root, events, laterEvents) {
 export function summarizeWeek(events, { root = null, laterEvents = [] } = {}) {
   const groups = new Map();
   for (const event of events) {
-    if (event.warningCode === 'JOB_HEARTBEAT_RECOVERED' && event.eventType === 'detected') {
+    if (['JOB_HEARTBEAT_RECOVERED', 'JOB_HEALTH_RECOVERED'].includes(event.warningCode)
+      && event.eventType === 'detected') {
       continue;
     }
     const job = targetJob(event);
@@ -124,7 +125,7 @@ export function summarizeWeek(events, { root = null, laterEvents = [] } = {}) {
     const key = JSON.stringify([job, code]);
     if (!groups.has(key)) groups.set(key, { job, code, incidents: new Set(), kind: event.kind, severity: event.severity,
       detected: 0, first: null, latest: null,
-      delivery: { sent: 0, suppressed: 0, failed: 0, unknown: 0 }, detail: '', events: [],
+      delivery: { sent: 0, suppressed: 0, failed: 0, unknown: 0, deferred: 0 }, detail: '', events: [],
       status: '—', unclassified: false, reasons: [] });
     const group = groups.get(key);
     group.events.push(event);
@@ -141,6 +142,13 @@ export function summarizeWeek(events, { root = null, laterEvents = [] } = {}) {
   }
   const items = [...groups.values()].filter((group) => group.detected > 0);
   for (const item of items) {
+    const attemptIds = new Set(item.events.filter((event) => event.eventType === 'delivery')
+      .map((event) => event.deliveryAttemptId).filter(Boolean));
+    item.events.push(...laterEvents.filter((event) => event.eventType === 'delivery'
+      && attemptIds.has(event.deliveryAttemptId)
+      && targetJob(event) === item.job && event.warningCode === item.code));
+  }
+  for (const item of items) {
     item.incidentCount = item.incidents.size;
     delete item.incidents;
     // 한 시도의 reserved/sending 중간 이벤트는 최종 결과가 있으면 중복 집계하지 않는다.
@@ -149,7 +157,7 @@ export function summarizeWeek(events, { root = null, laterEvents = [] } = {}) {
       if (event.deliveryStatus === 'suppressed') { item.delivery.suppressed++; continue; }
       const id = event.deliveryAttemptId ?? event.eventId;
       const prior = attempts.get(id);
-      const terminal = (status) => ['sent', 'rejected', 'unknown'].includes(status);
+      const terminal = (status) => ['sent', 'rejected', 'unknown', 'deferred'].includes(status);
       // 입력 행 순서보다 시도별 최종 결과를 우선한다. 같은 시도의 늦은
       // sending 행이 이미 확정된 발송 결과를 불명으로 되돌리면 안 된다.
       if (!prior || (terminal(event.deliveryStatus) && !terminal(prior.deliveryStatus))
@@ -159,6 +167,7 @@ export function summarizeWeek(events, { root = null, laterEvents = [] } = {}) {
     for (const { deliveryStatus: status } of attempts.values()) {
       if (status === 'sent') item.delivery.sent++;
       else if (status === 'rejected') item.delivery.failed++;
+      else if (status === 'deferred') { item.delivery.deferred++; item.delivery.unknown++; }
       else item.delivery.unknown++;
     }
     if (!attempts.size && !item.delivery.suppressed) item.delivery.unknown++;
@@ -184,7 +193,7 @@ export function summarizeWeek(events, { root = null, laterEvents = [] } = {}) {
 
 function table(items) {
   if (!items.length) return '없음';
-  return '| 잡 | 경고코드 | 사건 수 | 발생 | 최초 KST | 최근 KST | 발송/억제/실패/불명 | 현재 상태 | 이상 사유 | 기록된 요약 |\n'
+  return '| 잡 | 경고코드 | 사건 수 | 발생 | 최초 KST | 최근 KST | 발송/억제/실패/불명/보류 | 현재 상태 | 이상 사유 | 기록된 요약 |\n'
     + '| --- | --- | --- | ---: | --- | --- | --- | --- | --- | --- |\n'
     + items.map((item) => `| ${safeCell(item.job)} | ${safeCell(item.code)} | ${item.incidentCount} | ${item.detected} | ${kstStamp(item.first)} | ${kstStamp(item.latest)} | ${Object.values(item.delivery).join('/')} | ${item.status} | ${item.reasons.join('·') || '—'} | ${safeCell(item.detail)} |`).join('\n');
 }
@@ -225,8 +234,8 @@ export async function run({ root = VAULT_ROOT, week = previousWeekSunday(), dryR
   validateWeek(week);
   const weekEvents = readWeekEvents({ root, week });
   const weekEnd = startMs(week) + 7 * DAY_MS;
-  const laterEvents = weekEvents.some((event) => event.jobName === 'health-watcher'
-    && event.warningCode === 'JOB_HEALTH_ISSUES')
+  const laterEvents = weekEvents.some((event) => event.deliveryStatus === 'deferred'
+    || (event.jobName === 'health-watcher' && event.warningCode === 'JOB_HEALTH_ISSUES'))
     ? readJournalRange(root, weekEnd, Date.now()) : [];
   const summary = summarizeWeek(weekEvents, { root, laterEvents });
   const reportRel = `${VAULT_REL.logReports}/${week.slice(0, 4)}/${week} 경고 주간 검토.md`;

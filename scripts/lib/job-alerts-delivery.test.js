@@ -7,11 +7,13 @@ import { join } from 'node:path';
 import { collectWarning, flushWarnings, resetWarnings, warningsSignature } from './job-alerts.mjs';
 import { appendWarningEvent, readWarningEvents } from './warning-event-journal.mjs';
 import { queryWarningIncidents } from './warning-incident-query.mjs';
+import { drainDeferredWarnings } from './deferred-warnings.mjs';
 
 function paths(t) {
   const dir = mkdtempSync(join(tmpdir(), 'job-alerts-delivery-'));
   t.after(() => { resetWarnings(); rmSync(dir, { recursive: true, force: true }); });
-  return { stateFile: join(dir, 'job-alerts.json'), journalRoot: join(dir, 'warning-events') };
+  return { stateFile: join(dir, 'job-alerts.json'), journalRoot: join(dir, 'warning-events'),
+    queueFile: join(dir, 'deferred.json'), now: () => Date.parse('2026-09-30T03:00:00.000Z') };
 }
 
 test('성공 응답만 sent로 기록하고 기존 배치 서명의 24시간 억제를 유지한다', async (t) => {
@@ -36,6 +38,79 @@ test('성공 응답만 sent로 기록하고 기존 배치 서명의 24시간 억
     sig: warningsSignature(['시험 경고 원문 — 원장에 요약 저장']),
     ts: options.now(),
   });
+});
+
+test('job-alerts 배치도 밤에는 큐로 보류된다', async (t) => {
+  const config = paths(t);
+  resetWarnings();
+  collectWarning('야간 배치 경고');
+  let sends = 0;
+  const result = await flushWarnings('test-job', { ...config,
+    now: () => Date.parse('2026-10-11T15:00:00.000Z'),
+    sendImpl: async () => { sends++; return { ok: true, result: { message_id: 1 } }; } });
+  assert.equal(result.status, 'deferred');
+  assert.equal(sends, 0);
+  assert.equal(JSON.parse(readFileSync(config.queueFile, 'utf8')).pending.length, 1);
+});
+
+test('배치는 정리 발송 확정 뒤에만 24시간 억제를 시작하고 원장에 sent를 남긴다', async (t) => {
+  const config = paths(t);
+  resetWarnings();
+  collectWarning('야간 배치');
+  const night = Date.parse('2026-10-11T15:00:00Z');
+  const morning = Date.parse('2026-10-11T22:00:00Z');
+  let sends = 0;
+  const options = { ...config, now: () => night,
+    sendImpl: async () => ({ ok: true, result: { message_id: ++sends } }) };
+  assert.equal((await flushWarnings('test-job', options)).status, 'deferred');
+  assert.equal(JSON.parse(readFileSync(config.stateFile, 'utf8'))['test-job']?.sig, undefined);
+  assert.equal((await flushWarnings('test-job', options)).status, 'suppressed');
+  await drainDeferredWarnings({ queueFile: config.queueFile, journalRoot: config.journalRoot,
+    now: morning, send: options.sendImpl });
+  assert.equal(sends, 1);
+  assert.equal(JSON.parse(readFileSync(config.stateFile, 'utf8'))['test-job'].sig,
+    warningsSignature(['야간 배치']));
+  assert.equal((await flushWarnings('test-job', { ...options, now: () => morning })).status, 'suppressed');
+  assert.equal(readWarningEvents({ rootDir: config.journalRoot }).events.at(-1).deliveryStatus, 'suppressed');
+});
+
+test('레거시 거래 잡은 구조화 경고가 없어도 야간에 즉시 보낸다', async (t) => {
+  const config = paths(t);
+  resetWarnings();
+  collectWarning('NH 체결 대사 실패');
+  let sends = 0;
+  const result = await flushWarnings('reconcile-nh-executions', { ...config,
+    now: () => Date.parse('2026-10-11T15:00:00Z'),
+    sendImpl: async () => ({ ok: true, result: { message_id: ++sends } }) });
+  assert.equal(result.status, 'sent');
+  assert.equal(sends, 1);
+});
+
+test('배치 보류 큐 쓰기 실패 시 경고를 즉시 보낸다', async (t) => {
+  const config = paths(t);
+  resetWarnings();
+  collectWarning('보존할 배치 경고');
+  const blocked = join(config.queueFile, '..', 'blocked');
+  writeFileSync(blocked, 'file occupies parent path');
+  let sends = 0;
+  const result = await flushWarnings('test-job', { ...config, queueFile: join(blocked, 'queue.json'),
+    now: () => Date.parse('2026-10-11T15:00:00Z'),
+    sendImpl: async () => ({ ok: true, result: { message_id: ++sends } }) });
+  assert.equal(result.status, 'sent');
+  assert.equal(sends, 1);
+});
+
+test('job-alerts의 실거래 안전 경고는 밤에도 즉시 발송한다', async (t) => {
+  const config = paths(t);
+  resetWarnings();
+  collectWarning('주문 보호 실패', { warningCode: 'ORDER_PROTECTION_FAILED',
+    subjectKey: 'order', kind: 'trade-safety', severity: 'high' });
+  let sends = 0;
+  const result = await flushWarnings('test-job', { ...config,
+    now: () => Date.parse('2026-10-11T15:00:00.000Z'),
+    sendImpl: async () => ({ ok: true, result: { message_id: ++sends } }) });
+  assert.equal(result.status, 'sent');
+  assert.equal(sends, 1);
 });
 
 test('구조화 경고는 기존 텔레그램 배치 1건과 별도 사건으로 연결되고 전달 상태도 공유한다', async (t) => {
