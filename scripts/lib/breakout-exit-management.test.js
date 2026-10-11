@@ -29,6 +29,21 @@ test('판정: 최신 상태면 none, R 단계 상승이면 revise', () => {
   const d = decideExitManagement({ position, holding, sellOrders: [stop], latestHigh: 10800, latestClose: 10500 });
   assert.equal(d.action, 'revise'); assert.equal(d.newStopPrice, 10000);
 });
+test('판정: 손상된 기록 고점은 entryPrice로 대체하고 잘못된 최신 고가는 review한다', () => {
+  for (const previousHigh of [undefined, NaN]) {
+    const decision = decideExitManagement({
+      position: { ...position, highSinceEntry: previousHigh }, holding, sellOrders: [],
+      latestHigh: 10800, latestClose: 10500,
+    });
+    assert.equal(decision.action, 'placeStop');
+    assert.equal(decision.highSinceEntry, 10800);
+    assert.equal(decision.newStopPrice, 10000);
+  }
+  for (const latestHigh of [undefined, NaN]) {
+    const decision = decideExitManagement({ position, holding, sellOrders: [], latestHigh, latestClose: 10500 });
+    assert.equal(decision.action, 'review');
+  }
+});
 test('판정: 3R 정확 도달은(기존 손절주문 있음) partialExit, 미도달은 revise/none', () => {
   assert.equal(decideExitManagement({ position, holding, sellOrders: [stop], latestHigh: 12399, latestClose: 12000 }).action, 'revise');
   const d = decideExitManagement({ position, holding, sellOrders: [stop], latestHigh: 12400, latestClose: 12000 });

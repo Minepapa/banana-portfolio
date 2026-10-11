@@ -115,14 +115,15 @@ export function isPriceSeriesStale(latestTradingDate, now) {
 export function latestConfirmedHigh(position, priceSeries) {
   if (!priceSeries) return null;
   const highsSinceEntry = priceSeries.highs.filter(
-    (h, i) => priceSeries.dates[i] >= position.entryDate && h > 0,
+    (h, i) => priceSeries.dates[i] >= position.entryDate && Number.isFinite(h) && h > 0,
   );
   if (!highsSinceEntry.length) return null;
-  return Math.max(position.highSinceEntry ?? position.entryPrice, ...highsSinceEntry);
+  const previousHigh = Number.isFinite(position.highSinceEntry) && position.highSinceEntry > 0
+    ? position.highSinceEntry : position.entryPrice;
+  return Math.max(previousHigh, ...highsSinceEntry);
 }
 
-function readPositions() {
-  const dir = VAULT_PATHS.state.breakoutPositions;
+export function readPositions(dir = VAULT_PATHS.state.breakoutPositions) {
   if (!existsSync(dir)) return { entries: [], errors: [] };
   const entries = [];
   const errors = [];
@@ -353,9 +354,14 @@ export async function processPosition({ filepath, position, holding, cancelableO
       // 조정 자체는 불필요해도 highSinceEntry 추적값은 최신으로 갱신해둔다
       // (다음날 판정이 낡은 고가로 잘못 계산되지 않도록).
       if (decision.highSinceEntry != null && decision.highSinceEntry > position.highSinceEntry) {
-        await deps.patchFrontmatterFileSafely(filepath, {
-          highSinceEntry: decision.highSinceEntry, updatedAt: now.toISOString(),
-        });
+        try {
+          const wrote = await deps.patchFrontmatterFileSafely(filepath, {
+            highSinceEntry: decision.highSinceEntry, updatedAt: now.toISOString(),
+          });
+          if (!wrote) console.warn(`[청산관리 경고] ${position.code}: highSinceEntry 추적값 저장 실패 — 다음 실행에서 재시도`);
+        } catch (error) {
+          console.warn(`[청산관리 경고] ${position.code}: highSinceEntry 추적값 저장 실패(${error.message}) — 다음 실행에서 재시도`);
+        }
       }
       return { reports, urgent: urgentDetected };
     }
@@ -468,6 +474,25 @@ export async function processPosition({ filepath, position, holding, cancelableO
   return { reports, urgent: urgentDetected };
 }
 
+export async function processOpenPositions({ openPositions, balanceByCode, cancelableOrders, now, token, quant, deps, readState, gatesAllowOrder, dryRun = DRY_RUN }) {
+  const ctx = {
+    token, appkey: quant.appkey, appsecret: quant.appsecret,
+    cano: quant.cano, acntPrdtCd: quant.acntPrdtCd, dryRun,
+    gatesAllowOrder,
+    isKillSwitchHalted: () => isKillSwitchActive(readState(VAULT_PATHS.state.killSwitch)),
+  };
+  const reports = [];
+  let urgentDetected = false;
+  for (const { filepath, position } of openPositions) {
+    const result = await processPosition({
+      filepath, position, holding: balanceByCode.get(position.code) ?? null, cancelableOrders, now, deps, ctx,
+    });
+    reports.push(...result.reports);
+    if (result.urgent) urgentDetected = true;
+  }
+  return { reports, urgent: urgentDetected };
+}
+
 async function main() {
   const now = new Date();
   if (!DRY_RUN) {
@@ -522,19 +547,12 @@ async function main() {
       checkOrderFill, reviseKrOrder, placeKrOrder, patchFrontmatterFileSafely, loadPriceSeries,
       recordLedgerFileIfNew, buildExecutionRecord, buildProfitRecord,
     };
-    const ctx = {
-      token, appkey, appsecret, cano: quant.cano, acntPrdtCd: quant.acntPrdtCd, dryRun: DRY_RUN,
-      gatesAllowOrder,
-      isKillSwitchHalted: () => isKillSwitchActive(readState(VAULT_PATHS.state.killSwitch)),
-    };
-
-    for (const { filepath, position } of openPositions) {
-      const result = await processPosition({
-        filepath, position, holding: balanceByCode.get(position.code) ?? null, cancelableOrders, now, deps, ctx,
-      });
-      reports.push(...result.reports);
-      if (result.urgent) urgentDetected = true;
-    }
+    const positionResults = await processOpenPositions({
+      openPositions, balanceByCode, cancelableOrders, now, token, quant, deps,
+      readState, gatesAllowOrder,
+    });
+    reports.push(...positionResults.reports);
+    if (positionResults.urgent) urgentDetected = true;
 
     // 경고 여부는 메시지 문구 정규식 추측이 아니라 위에서 각 분기가 직접 표시한
     // urgentDetected 플래그로 판단한다(2026-09-29 코드리뷰 HIGH 지적 — 옛 정규식은

@@ -9,6 +9,13 @@ test('computeTrailingRevision: 1R(+8%) 신규 도달 시 손절선을 본전으�
   assert.equal(revision.newHighSinceEntry, 10800);
   assert.equal(revision.newStopPrice, 10000);
 });
+test('computeTrailingRevision: 고점 둘 다 무효면 entryPrice로 계산한다', () => {
+  const position = { entryPrice: 10000, highSinceEntry: NaN, stopPrice: 9000 };
+  const revision = computeTrailingRevision(position, undefined);
+  assert.equal(revision.newHighSinceEntry, 10000);
+  assert.equal(revision.newStopPrice, 9200);
+  assert.equal(computeTrailingRevision({ ...position, highSinceEntry: undefined }, NaN).newHighSinceEntry, 10000);
+});
 
 test('computeTrailingRevision: 이미 반영된 고점 이하로만 움직이면 갱신 불필요(null)', () => {
   const position = { entryPrice: 10000, highSinceEntry: 10800, stopPrice: 10000 };

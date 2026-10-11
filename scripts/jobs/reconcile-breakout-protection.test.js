@@ -1,8 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
-  isKrxPreMarketWindow, isPriceSeriesStale, tradingDayFillCheckWindow, latestConfirmedHigh, processPosition,
+  isKrxPreMarketWindow, isPriceSeriesStale, tradingDayFillCheckWindow, latestConfirmedHigh, processPosition, processOpenPositions, readPositions,
 } from './reconcile-breakout-protection.mjs';
+import { buildBreakoutPositionRecord } from '../lib/breakout-position-vault.mjs';
 
 test('isKrxPreMarketWindow: 평일 08:35 KST KRX 시가단일가 안', () => {
   assert.equal(isKrxPreMarketWindow(new Date('2026-09-24T23:35:00Z')), true); // 9/25 금 08:35 KST
@@ -54,6 +58,41 @@ test('latestConfirmedHigh: entryDate 이후 구간의 최댓값(기존 highSince
 });
 test('latestConfirmedHigh: 시세 캐시가 없으면 null(추정 안 함)', () => {
   assert.equal(latestConfirmedHigh({ entryDate: '2026-09-21', highSinceEntry: 10000 }, null), null);
+});
+test('latestConfirmedHigh: 손상된 고점은 제외하고 유효한 시세만 쓴다', () => {
+  const position = { entryDate: '2026-09-21', entryPrice: 10000, highSinceEntry: NaN };
+  assert.equal(latestConfirmedHigh(position, { dates: ['2026-09-21', '2026-09-22'], highs: [NaN, 10500] }), 10500);
+  assert.equal(latestConfirmedHigh({ ...position, highSinceEntry: undefined }, { dates: ['2026-09-21'], highs: [9000] }), 10000);
+});
+
+test('잡 진입부: 주입한 토큰·포지션 경로가 실제 주문·patch까지 전달된다', async () => {
+  const harness = makeHarness({ deps: { loadPriceSeries: () => ({ dates: ['2026-09-29'], highs: [10000], closes: [10000] }) } });
+  const dir = mkdtempSync(join(tmpdir(), 'breakout-position-wiring-'));
+  try {
+    const record = buildBreakoutPositionRecord({
+      code: '000001', name: '테스트종목', entryDate: '2026-09-20', entryPrice: 10000,
+      quantity: 10, investedWon: 100000, stopPrice: 9200, profitOrderApplicable: false, now,
+    });
+    writeFileSync(join(dir, record.filename), record.content);
+    const { entries, errors } = readPositions(dir);
+    assert.deepEqual(errors, []);
+    assert.equal(entries[0].filepath, join(dir, record.filename));
+    const result = await processOpenPositions({
+      openPositions: entries, balanceByCode: new Map([['000001', { code: '000001', qty: 10 }]]),
+      cancelableOrders: [], now, token: 'entry-token',
+      quant: { appkey: 'entry-key', appsecret: 'entry-secret', cano: 'entry-cano', acntPrdtCd: '02' },
+      deps: harness.deps, readState: () => null, gatesAllowOrder: () => true,
+    });
+    assert.equal(result.urgent, false);
+    assert.deepEqual(harness.calls.map(([kind]) => kind), ['place', 'patch']);
+    assert.deepEqual(harness.calls[0][1], {
+      token: 'entry-token', appkey: 'entry-key', appsecret: 'entry-secret', cano: 'entry-cano', acntPrdtCd: '02',
+      code: '000001', side: '매도', quantity: 10, price: 9200, conditionPrice: 9200,
+    });
+    assert.equal(harness.calls[1][1], join(dir, record.filename));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 const now = new Date('2026-09-29T23:35:00Z');
@@ -230,6 +269,37 @@ test('processPosition: 기록과 KIS 보유수량이 다르면 review로 중단�
   assert.deepEqual(calls, []);
   assert.equal(result.urgent, true);
   assert.deepEqual(result.reports, ['테스트종목: 보유수량 불일치(기록 10, KIS 9) — 확인 필요']);
+});
+
+test('processPosition: none 추적값 저장 실패는 경고만 내고 정상 종료한다', async () => {
+  const sellOrders = [{
+    code: '000001', side: '매도', orderNo: '1001', branchNo: 'org', orderTypeCode: '22', quantity: 10,
+    filledQty: 0, cancelableQty: 10, conditionPrice: 9200, orderPrice: 9200,
+  }];
+  const series = { dates: ['2026-09-29'], highs: [10300], closes: [10100] };
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (message) => warnings.push(message);
+  try {
+    for (const failure of [true, false, new Error('쓰기 실패')]) {
+      const harness = makeHarness({ deps: (calls) => ({
+        loadPriceSeries: () => series,
+        patchFrontmatterFileSafely: async (filepath, patch) => {
+          calls.push(['patch', filepath, patch]);
+          if (failure instanceof Error) throw failure;
+          return failure;
+        },
+      }) });
+      const { calls, result } = await runPosition({ cancelableOrders: sellOrders, harness });
+      assert.deepEqual(calls.map(([kind]) => kind), ['patch']);
+      assert.equal(calls[0][2].highSinceEntry, 10300);
+      assert.deepEqual(result, { reports: [], urgent: false });
+    }
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 2);
+  assert.ok(warnings.every((message) => message.includes('highSinceEntry 추적값 저장 실패')));
 });
 
 test('processPosition: 시장가 매도 접수 후 손절 등록 실패를 pending과 failed로 기록한다', async () => {

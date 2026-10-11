@@ -87,10 +87,12 @@ export function decideExitManagement({
   if (holding.qty !== position.quantity) {
     return { action: 'review', urgent: true, reason: `보유수량 불일치(기록 ${position.quantity}, KIS ${holding.qty}) — 자동 복구 불가, 파일 수동 정정 필요` };
   }
-  if (!(latestHigh > 0)) {
+  if (!Number.isFinite(latestHigh) || !(latestHigh > 0)) {
     return { action: 'review', urgent: true, reason: '확정 고가를 확인하지 못함(시세 캐시 이상 의심)' };
   }
-  const highSinceEntry = Math.max(position.highSinceEntry ?? position.entryPrice, latestHigh);
+  const previousHigh = Number.isFinite(position.highSinceEntry) && position.highSinceEntry > 0
+    ? position.highSinceEntry : position.entryPrice;
+  const highSinceEntry = Math.max(previousHigh, latestHigh);
   const stopLossPct = position.stopLossPct ?? STOP_LOSS_PCT;
   const reachedPartialProfit = position.profitOrderApplicable !== false
     && shouldTakePartialProfit(position.entryPrice, highSinceEntry, position.partialSold === true, stopLossPct);
