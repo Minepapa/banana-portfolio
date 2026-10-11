@@ -2,12 +2,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL, vaultAbs } from './vault-paths.mjs';
 import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 import { patchFrontmatterFileSafely, withLock, writeAtomic } from './state-writer.mjs';
 import { escapeHtml } from './telegram.mjs';
 import { stripEmDash } from './telegram-messages.mjs';
 import { AGENT_HEADERS, sendAgentMessage } from './pantheon-send.mjs';
+import { evaluateDoneWhen, isWorkDoc, parseDoneWhen, stringArray, workStatus } from './work-doc-freshness.mjs';
+import { checkNote, parseRegistry } from './vault-registry.mjs';
 
 const QUEUE_DIR = vaultAbs(VAULT_REL.stateWikiQuestions);
 const QUEUE_LOCK = join(QUEUE_DIR, '.queue');
@@ -83,7 +86,7 @@ function validateVaultNote(notePath, allowedRoots = null) {
 }
 function validateInput(input) {
   if (!input || typeof input !== 'object') throw new Error('JSON 객체 입력이 필요합니다.');
-  if (!['keyword-registration', 'manual-change'].includes(input.kind)) throw new Error('kind는 keyword-registration 또는 manual-change여야 합니다.');
+  if (!['keyword-registration', 'manual-change', 'close-work-doc'].includes(input.kind)) throw new Error('지원하지 않는 질문 kind입니다.');
   const question = String(input.question ?? '').trim();
   if (!question || question.length > 1800) throw new Error('question은 1~1800자여야 합니다.');
   const rawEvidence = input.evidenceNotes ?? [];
@@ -114,6 +117,16 @@ function validateInput(input) {
       aliases, indexSection: section, answerGuidance: String(changePlan.answerGuidance ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, 300),
       backlinkNotes: backlinks,
     };
+  } else if (input.kind === 'close-work-doc') {
+    if (changePlan?.type !== 'close-work-doc' || !isWorkDoc(`${changePlan.notePath}.md`)
+      || typeof changePlan.contentHash !== 'string' || !/^[0-9a-f]{64}$/.test(changePlan.contentHash)
+      || !Array.isArray(changePlan.evidence) || !changePlan.evidence.length
+      || changePlan.evidence.some((item) => typeof item !== 'string' || item.length > 300)) {
+      throw new Error('close-work-doc 변경 계획이 올바르지 않습니다.');
+    }
+    const note = validateVaultNote(changePlan.notePath);
+    changePlan = { type: 'close-work-doc', notePath: note.normalized,
+      contentHash: changePlan.contentHash, evidence: changePlan.evidence };
   } else if (changePlan !== null) {
     throw new Error('manual-change의 changePlan 자동 반영은 지원되지 않습니다. 승인 뒤 담당 세션이 변경하고 complete로 마감하세요.');
   }
@@ -121,7 +134,7 @@ function validateInput(input) {
   // 키워드 등록은 위키 변경이라 클리오만 할 수 있다(공통 헌장: Wiki는 클리오만 쓴다).
   const asker = input.asker === undefined ? 'clio' : String(input.asker);
   if (!Object.hasOwn(AGENT_HEADERS, asker)) throw new Error(`asker는 등록된 담당이어야 합니다: ${asker}`);
-  if (input.kind === 'keyword-registration' && asker !== 'clio') throw new Error('keyword-registration은 클리오만 질문할 수 있습니다.');
+  if (['keyword-registration', 'close-work-doc'].includes(input.kind) && asker !== 'clio') throw new Error('볼트 자동 반영 질문은 클리오만 할 수 있습니다.');
   // urgent:false는 즉시 보내지 않고 묶음대기로 두었다가 question-digest 잡이 하루 두 번 담당별로 묶어 보낸다(D68). 기본은 즉시.
   if (input.urgent !== undefined && typeof input.urgent !== 'boolean') throw new Error('urgent는 true/false여야 합니다.');
   const urgent = input.urgent ?? true;
@@ -137,9 +150,12 @@ function questionItemText(fields, questionText = '') {
   if (fields.changePlan) {
     try {
       const parsed = typeof fields.changePlan === 'string' ? JSON.parse(fields.changePlan) : fields.changePlan;
-      plan = `\n\n반영 예정: 표준어 <code>${escapeHtml(parsed.standardTerm)}</code> · 정본 <code>${escapeHtml(parsed.canonicalNote)}</code> · 색인 <code>${escapeHtml(parsed.indexSection)}</code>`;
-      if (parsed.aliases?.length) plan += ` · 별칭 <code>${parsed.aliases.map(escapeHtml).join(', ')}</code>`;
-      if (parsed.backlinkNotes?.length) plan += `\n역링크 추가: ${parsed.backlinkNotes.map((x) => `<code>${escapeHtml(x)}</code>`).join(', ')}`;
+      if (parsed.type === 'close-work-doc') plan = `\n\n반영 예정: <code>${escapeHtml(parsed.notePath)}</code> 완료 처리`;
+      else {
+        plan = `\n\n반영 예정: 표준어 <code>${escapeHtml(parsed.standardTerm)}</code> · 정본 <code>${escapeHtml(parsed.canonicalNote)}</code> · 색인 <code>${escapeHtml(parsed.indexSection)}</code>`;
+        if (parsed.aliases?.length) plan += ` · 별칭 <code>${parsed.aliases.map(escapeHtml).join(', ')}</code>`;
+        if (parsed.backlinkNotes?.length) plan += `\n역링크 추가: ${parsed.backlinkNotes.map((x) => `<code>${escapeHtml(x)}</code>`).join(', ')}`;
+      }
     } catch { plan = '\n\n반영 예정안을 읽을 수 없습니다. 질문 노트를 확인해주세요.'; }
   }
   const choices = `\n\n답변 방법: 아래 중 한 줄로 답해주세요.\n<code>${id} 등록</code>\n<code>${id} 보류</code>\n<code>${id} 제외</code>`;
@@ -191,7 +207,14 @@ export async function createWikiQuestion(rawInput, { sender = sendAgentMessage }
   ensureQueue();
   const dedupeKey = hashQuestion(input);
   const created = await withLock(QUEUE_LOCK, async () => {
-    const existing = listRecords().find((r) => r.fields.dedupeKey === dedupeKey && r.fields.status !== '만료');
+    const existing = listRecords().find((r) => {
+      if (input.kind === 'close-work-doc') {
+        if (r.fields.kind !== 'close-work-doc'
+          || !(ACTIVE_STATUSES.has(r.fields.status) || ['보류', '제외'].includes(r.fields.status))) return false;
+        try { return JSON.parse(r.fields.changePlan).notePath === input.changePlan.notePath; } catch { return false; }
+      }
+      return r.fields.dedupeKey === dedupeKey && r.fields.status !== '만료';
+    });
     if (existing) return { record: existing, duplicate: true };
     const now = new Date();
     let questionId;
@@ -270,7 +293,7 @@ export async function resolveWikiQuestion(questionId, answerText, { rawText = an
       writeRecord(record, { clarifications });
       return { action: 'clarify', questionId, reason: '등록/승인, 보류, 제외/거절 중 하나로 답변을 확인할 수 없습니다.' };
     }
-    const status = action === 'approve' ? (fields.kind === 'keyword-registration' ? '승인' : '반영대기')
+    const status = action === 'approve' ? (['keyword-registration', 'close-work-doc'].includes(fields.kind) ? '승인' : '반영대기')
       : action === 'hold' ? '보류' : '제외';
     writeRecord(record, {
       status, answer: action === 'approve' ? '등록' : action === 'hold' ? '보류' : '제외', decision: action,
@@ -282,6 +305,51 @@ export async function resolveWikiQuestion(questionId, answerText, { rawText = an
 }
 
 function splitTableCell(value) { return String(value ?? '').replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ').trim(); }
+function replaceScalarFrontmatter(content, key, value) {
+  const frontmatterEnd = content.indexOf('\n---', 4);
+  if (!content.startsWith('---\n') || frontmatterEnd < 0) throw new Error('작업 문서 frontmatter가 없습니다.');
+  const head = content.slice(0, frontmatterEnd);
+  const line = `${key}: "${value}"`;
+  const regex = new RegExp(`^${key}:.*$`, 'm');
+  return `${regex.test(head) ? head.replace(regex, line) : `${head}\n${line}`}${content.slice(frontmatterEnd)}`;
+}
+
+async function applyCloseWorkDoc(plan, questionId) {
+  let note;
+  try { note = validateVaultNote(plan.notePath); }
+  catch (error) {
+    if (error.message.startsWith('볼트 노트를 찾을 수 없습니다:')) {
+      return { applied: false, reason: '질문 뒤 작업 문서가 없어짐', notePath: plan.notePath };
+    }
+    throw error;
+  }
+  return withLock(note.abs, () => {
+    const fresh = readFileSync(note.abs, 'utf8');
+    const hash = createHash('sha256').update(fresh).digest('hex');
+    const fields = parseFrontmatter(fresh);
+    const conditions = parseDoneWhen(stringArray(fresh, 'doneWhen'));
+    const evidence = conditions?.map((item) => item.raw);
+    const evaluation = evaluateDoneWhen(conditions, { vaultRoot: VAULT_PATHS.root,
+      repoPath: fileURLToPath(new URL('../../', import.meta.url)) });
+    if (hash !== plan.contentHash || workStatus(fields) !== '진행중'
+      || (fields.progress !== undefined && fields.progress !== '진행중')
+      || JSON.stringify(evidence) !== JSON.stringify(plan.evidence)
+      || !evaluation.satisfied) {
+      return { applied: false, reason: '질문 뒤 작업 문서가 변경되었거나 이미 종결됨', notePath: plan.notePath };
+    }
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    let updated = fresh;
+    for (const key of ['status', 'progress', 'modified']) updated = replaceScalarFrontmatter(updated, key, key === 'modified' ? today : '완료');
+    updated = `${updated.trimEnd()}\n\n## 완료 처리 (${today}, 질문 ${questionId} 승인)\n\n${evaluation.evidence.map((item) => `- ${item.raw} — ${item.detail}`).join('\n')}\n`;
+    const rules = parseRegistry(readFileSync(vaultAbs(VAULT_REL.registryFile), 'utf8'));
+    const problems = checkNote(`${plan.notePath}.md`, updated, rules);
+    if (problems.length) throw new Error(`경로 등록부 쓰기 관문 위반: ${problems.join('; ')}`);
+    writeAtomic(note.abs, updated);
+    return { applied: true, notePath: plan.notePath };
+  });
+}
 async function addKeywordIndexRow(plan) {
   if (!existsSync(INDEX_PATH)) throw new Error('현재 지식 색인이 없어 키워드를 등록할 수 없습니다.');
   await withLock(INDEX_PATH, async () => {
@@ -338,13 +406,15 @@ export async function applyWikiQuestion(questionId) {
       throw new Error('질문이 만료됐습니다. 새 질문으로 다시 확인해야 합니다.');
     }
     if (record.fields.status !== '승인') throw new Error(`승인 상태인 질문만 반영할 수 있습니다(현재: ${record.fields.status}).`);
-    if (record.fields.kind !== 'keyword-registration') throw new Error('자동 반영은 keyword-registration 질문만 지원합니다.');
+    if (!['keyword-registration', 'close-work-doc'].includes(record.fields.kind)) throw new Error('자동 반영을 지원하지 않는 질문입니다.');
     let plan;
     try { plan = JSON.parse(record.fields.changePlan); } catch { throw new Error('승인된 질문에 유효한 변경 계획이 없습니다.'); }
-    const applied = await applyKeywordPlan(plan);
+    const applied = record.fields.kind === 'close-work-doc'
+      ? await applyCloseWorkDoc(plan, questionId) : await applyKeywordPlan(plan);
     const current = readRecord(questionId);
-    writeRecord(current, { status: '처리완료', appliedAt: new Date().toISOString(), appliedSummary: JSON.stringify(applied) });
-    return { questionId, status: '처리완료', applied };
+    writeRecord(current, { status: applied.applied === false ? '미적용' : '처리완료',
+      appliedAt: new Date().toISOString(), appliedSummary: JSON.stringify(applied) });
+    return { questionId, status: applied.applied === false ? '미적용' : '처리완료', applied };
   });
 }
 

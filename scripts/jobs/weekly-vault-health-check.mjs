@@ -14,9 +14,9 @@
  *      대정리 이후 새로 쌓이는 레거시(legacy:true) 파일.
  *   B. 데이터 정합성 — Facts/Ledger/Profits의 통화 필드 누락·환율 계산 불일치
  *      (2026-09-03 엔비디아 환율 미반영 실사고와 같은 클래스 재발 감시).
- *   C. 미완료 작업 + 최신성 — Log/Implementation·Log/DevRequests의
- *      progress:"진행중"/"보류" 문서, "## 남은 것" 섹션이 있는 문서, "자동
- *      갱신"이라고 스스로 주장하는데 오래 안 바뀐 Meta/Infra/API 문서(2026-09-04
+ *   C. 작업 확인일 + 최신성 — 열린 Implementation·Requests 중 nextCheck가
+ *      지났거나 waitingOn·nextCheck가 빠진 문서. 확인일이 남은 문서는 개수만 센다.
+ *      "자동 갱신"이라고 스스로 주장하는데 오래 안 바뀐 Meta/Infra/API 문서(2026-09-04
  *      삭제한 State/Baselines가 정확히 이 패턴이었음 — "분기마다 자동 갱신"이라고
  *      적혀 있었지만 그 잡이 애초에 없었다).
  *
@@ -30,6 +30,8 @@
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS, VAULT_ROOT, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -39,6 +41,8 @@ import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
 import { CANONICAL_PROGRESS_VALUES } from '../lib/vault-frontmatter.mjs';
+import { evaluateDoneWhen, isWorkDoc, parseDoneWhen, stringArray, validDate, workStatus } from '../lib/work-doc-freshness.mjs';
+import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const SENDER_AGENT = 'clio';
@@ -170,34 +174,28 @@ export function findMissingCurrencyField(profitRecords, sinceDateStr = LEGACY_WA
     .map((r) => r.__relPath);
 }
 
-// ── C1. 미완료 작업(progress) ─────────────────────────────────────────
-export function findPendingWork(records) {
-  return records
-    .filter((r) => r.progress === '진행중' || r.progress === '보류')
-    .map((r) => ({ file: r.__relPath, progress: r.progress, status: r.status ?? null }));
-}
-
-// ── C2. "## 남은 것" 섹션 ─────────────────────────────────────────────
-// progress:"완료"/"폐기"로 닫힌 문서는 건너뛴다(2026-09-20 오너 DevRequest — "사실
-// 내용 중 실제로 해결이 필요한 것만 정리하고, 이미 완료된 것은 완료 처리해 목록에서
-// 뺀다"). 실측(Apollo 로그) — 완료된 NH 마이그레이션 구현 로그들이 몇 주째 "남은 것
-// 섹션 있는 문서 N건" 카운트에 매주 그대로 다시 잡혀 배경소음이 돼 있었다. progress
-// 필드가 없는 문서(Log/Sessions — append 전용, Log/DevRequests — status: 자유서술
-// 관례라 이 필드 자체를 안 씀)는 판단 근거가 없으니 그대로 포함한다(누락 방지 우선).
-export function findRemainingWorkSections(files) {
-  const results = [];
-  for (const f of files) {
-    if (f.frontmatter?.progress === '완료' || f.frontmatter?.progress === '폐기') continue;
-    const m = f.content.match(/## 남은 것\n([\s\S]*?)(?=\n## |\n---|\n?$)/);
-    if (m && m[1].trim()) {
-      const firstLine = m[1].trim().split('\n')[0].replace(/^[-*]\s*/, '');
-      results.push({ file: f.relPath, preview: firstLine.slice(0, 80) });
+// ── C1. 작업 문서 확인일 — Log의 "남은 것"은 작업 문서 링크 lint 소관 ──
+export function classifyWorkDocChecks(files, today) {
+  const overdue = [];
+  const missing = [];
+  let scheduledCount = 0;
+  for (const file of files) {
+    if (!isWorkDoc(`${file.relPath}.md`)) continue;
+    const status = workStatus(file.frontmatter);
+    if (!['예정', '진행중', '차단됨', '보류'].includes(status)) continue;
+    const { waitingOn, nextCheck } = file.frontmatter;
+    if (!waitingOn || !validDate(nextCheck)) {
+      missing.push({ file: file.relPath, waitingOn: waitingOn ?? null, nextCheck: nextCheck ?? null });
+    } else if (nextCheck < today) {
+      overdue.push({ file: file.relPath, nextCheck });
+    } else {
+      scheduledCount++;
     }
   }
-  return results;
+  return { overdue, missing, scheduledCount };
 }
 
-// ── C3. "자동 갱신" 주장 대비 최신성 ──────────────────────────────────
+// ── C2. "자동 갱신" 주장 대비 최신성 ──────────────────────────────────
 // 확정 판정이 아니다(키워드 매칭) — "재확인 후보"로만 취급.
 export function findStaleAutoClaims(files, now = new Date(), staleDays = STALE_AUTO_CLAIM_DAYS) {
   const cadenceRe = /자동\s*(갱신|기록|발행)/;
@@ -214,17 +212,48 @@ export function findStaleAutoClaims(files, now = new Date(), staleDays = STALE_A
   return results;
 }
 
-// ── C4. progress 필드 캐노니컬 값 컴플라이언스(백스톱, 2026-09-14 신설) ──
+// ── C3. progress 필드 캐노니컬 값 컴플라이언스(백스톱, 2026-09-14 신설) ──
 // scripts/hooks/vault-progress-guard.mjs가 "쓰는 순간" 이미 잡지만, 그 훅이
 // 배선되기 전에 쓰인 과거 문서나 훅을 우회한 직접 편집까지 커버하려면 이
 // 주간스윕이 전수를 다시 훑어야 한다 — 2026-09-13 실측에서 92개 중 9개가 결측/
-// 자유서술이었던 것과 같은 재발을 이 함수가 그물처럼 다시 잡는다. Log/DevRequests
-// 는 애초에 이 필드를 쓰지 않는 별개 관례(status: 자유서술)라 대상에서 제외
-// (records를 Log/Implementation/만으로 좁혀서 넘기는 건 호출측 책임).
+// 자유서술이었던 것과 같은 재발을 이 함수가 그물처럼 다시 잡는다. Requests는
+// status를 쓰므로 대상에서 제외한다(Implementation으로 좁혀서 넘기는 건 호출측 책임).
 export function findInvalidProgressFields(records) {
   return records
     .filter((r) => r.progress == null || r.progress === '' || !CANONICAL_PROGRESS_VALUES.includes(r.progress))
     .map((r) => ({ file: r.__relPath, progress: r.progress ?? null }));
+}
+
+export function findCompletableWorkDocs(files, options) {
+  return files.filter((file) => isWorkDoc(`${file.relPath}.md`) && workStatus(file.frontmatter) === '진행중'
+      && (file.frontmatter.progress === undefined || file.frontmatter.progress === '진행중'))
+    .flatMap((file) => {
+      const conditions = parseDoneWhen(stringArray(file.content, 'doneWhen'));
+      const result = evaluateDoneWhen(conditions, options);
+      return result.satisfied ? [{ file, evidence: result.evidence.map((item) => item.raw) }] : [];
+    });
+}
+
+export async function createCompletableQuestions(completable, createQuestion = createWikiQuestion) {
+  const failures = [];
+  for (const { file, evidence } of completable) {
+    try {
+      await createQuestion({
+        kind: 'close-work-doc', asker: 'clio', urgent: false,
+        question: `[[${file.relPath}]]의 완료 조건이 모두 충족됐습니다. 완료 처리할까요?`,
+        evidenceNotes: file.relPath.length <= 120 ? [file.relPath] : [],
+        changePlan: { type: 'close-work-doc', notePath: file.relPath,
+          contentHash: createHash('sha256').update(file.content).digest('hex'), evidence },
+      });
+    } catch (error) {
+      failures.push({ file: file.relPath, error: String(error?.message ?? error).split('\n')[0].slice(0, 160) });
+    }
+  }
+  return failures;
+}
+
+export function loadHealthCheckAgent(loader = loadAgent) {
+  return loader('clio', { fallbackModel: 'sonnet' });
 }
 
 // ── D. Index.md "비어있음/폴더 자체가 없음" 표기 vs 실측(2026-09-14 신설) ──
@@ -297,8 +326,10 @@ export function buildHealthCheckFacts(r) {
   if (r.recentLegacy.length) lines.push(`대정리(${LEGACY_WATCH_SINCE}) 이후 새로 쌓인 legacy 파일 ${r.recentLegacy.length}건: ${r.recentLegacy.join(', ')}`);
   if (r.fxAnomalies.length) lines.push(`Profits 환율 이상치 ${r.fxAnomalies.length}건: ${r.fxAnomalies.map((a) => `${a.stockName}(배율 ${a.impliedRate.toFixed(2)})`).join(', ')}`);
   if (r.missingCurrency.length) lines.push(`Profits 통화 필드 누락(${LEGACY_WATCH_SINCE} 이후) ${r.missingCurrency.length}건: ${r.missingCurrency.join(', ')}`);
-  if (r.pendingWork.length) lines.push(`미완료 작업(진행중/보류) ${r.pendingWork.length}건: ${r.pendingWork.slice(0, 8).map((p) => `${p.file}(${p.progress})`).join(', ')}${r.pendingWork.length > 8 ? ' 외' : ''}`);
-  if (r.remainingSections.length) lines.push(`"남은 것" 섹션 있는 문서 ${r.remainingSections.length}건: ${r.remainingSections.slice(0, 8).map((s) => s.file).join(', ')}${r.remainingSections.length > 8 ? ' 외' : ''}`);
+  if (r.workChecks.overdue.length) lines.push(`확인일 지난 작업 문서 ${r.workChecks.overdue.length}건: ${r.workChecks.overdue.slice(0, 8).map((p) => `${p.file}(${p.nextCheck})`).join(', ')}${r.workChecks.overdue.length > 8 ? ' 외' : ''}`);
+  if (r.workChecks.missing.length) lines.push(`waitingOn·nextCheck 누락 작업 문서 ${r.workChecks.missing.length}건: ${r.workChecks.missing.slice(0, 8).map((p) => p.file).join(', ')}${r.workChecks.missing.length > 8 ? ' 외' : ''}`);
+  if (r.workChecks.scheduledCount) lines.push(`확인일이 남은 작업 문서 ${r.workChecks.scheduledCount}건`);
+  if (r.questionFailures?.length) lines.push(`완료 질문 생성 실패 ${r.questionFailures.length}건: ${r.questionFailures.map((failure) => `${failure.file}(${failure.error})`).join(', ')}`);
   if (r.staleAutoClaims.length) lines.push(`"자동 갱신" 주장 대비 ${STALE_AUTO_CLAIM_DAYS}일 이상 정체(재확인 후보) ${r.staleAutoClaims.length}건: ${r.staleAutoClaims.map((s) => `${s.file}(${s.ageDays}일)`).join(', ')}`);
   if (r.invalidProgress.length) lines.push(`progress 필드 결측/자유서술(캐노니컬 값 밖) ${r.invalidProgress.length}건: ${r.invalidProgress.slice(0, 8).map((p) => `${p.file}(${p.progress ?? '결측'})`).join(', ')}${r.invalidProgress.length > 8 ? ' 외' : ''}`);
   if (r.staleEmptyClaims.length) lines.push(`Index.md가 "비어있음"이라는데 실제로 채워진 폴더 ${r.staleEmptyClaims.length}건: ${r.staleEmptyClaims.map((s) => `${s.folder}(실제 ${s.actualCount}건)`).join(', ')}`);
@@ -309,7 +340,7 @@ export function hasAnyIssue(r) {
   return Boolean(
     r.broken.length || r.ambiguous.length || r.orphaned.length || r.recentLegacy.length
     || r.fxAnomalies.length || r.missingCurrency.length
-    || r.pendingWork.length || r.remainingSections.length || r.staleAutoClaims.length
+    || r.workChecks.overdue.length || r.workChecks.missing.length || r.questionFailures?.length || r.staleAutoClaims.length
     || r.invalidProgress.length || r.staleEmptyClaims.length,
   );
 }
@@ -324,7 +355,7 @@ ${facts.join('\n')}
 
 판단 요청:
 1. 위 발견 사항 중 오너가 이번 주 안에 확인해야 할 만큼 급한 게 있는지 네(아폴론)
-   성격대로 판정해라 — 전부 사소하면(예: "남은 것" 섹션 몇 개뿐) 그렇다고 명확히
+   성격대로 판정해라 — 전부 사소하면 그렇다고 명확히
    말해라, 과잉경고 하지 마라.
 2. 급한 것부터 우선순위를 매겨 오너가 뭘 먼저 볼지 짚어라.
 
@@ -344,11 +375,19 @@ ${DECISIONS_MARKER}
 
 async function main() {
   loadEnv();
-  const AGENT = loadAgent('clio', { fallbackModel: 'sonnet', appendix: ['apollo'] });
+  const AGENT = loadHealthCheckAgent();
   if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
   const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
 
   const allFiles = readAllVaultFiles();
+  const workFiles = allFiles.filter((file) => isWorkDoc(`${file.relPath}.md`));
+  const workChecks = classifyWorkDocChecks(workFiles, new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date()));
+  const completable = findCompletableWorkDocs(workFiles, {
+    vaultRoot: VAULT_ROOT, repoPath: fileURLToPath(new URL('../../', import.meta.url)),
+  });
+  const questionFailures = DRY_RUN ? [] : await createCompletableQuestions(completable);
 
   const { broken, ambiguous } = findBrokenAndAmbiguousLinks(allFiles);
   const orphaned = findOrphanedNotes(allFiles, [VAULT_REL.knowledgeTopics, VAULT_REL.wikiObjects,
@@ -361,22 +400,15 @@ async function main() {
   const fxAnomalies = findFxAnomalies(profitRecords);
   const missingCurrency = findMissingCurrencyField(profitRecords);
 
-  const implRecords = allFiles
-    .filter((f) => f.relPath.startsWith(`${VAULT_REL.logImplementation}/`) || f.relPath.startsWith(`${VAULT_REL.logDevRequests}/`))
-    .map((f) => ({ ...f.frontmatter, __relPath: f.relPath }));
-  const pendingWork = findPendingWork(implRecords);
-  const remainingSections = findRemainingWorkSections(
-    allFiles.filter((f) => f.relPath.startsWith(`${VAULT_REL.logImplementation}/`) || f.relPath.startsWith(`${VAULT_REL.logDevRequests}/`) || f.relPath.startsWith(`${VAULT_REL.logSessions}/`)),
-  );
   const staleAutoClaims = findStaleAutoClaims(
     allFiles.filter((f) => f.relPath.startsWith(`${VAULT_REL.knowledgeMeta}/`) || f.relPath.startsWith(`${VAULT_REL.knowledgeTopics}/`)
       || f.relPath.startsWith(`${VAULT_REL.projectFeatures}/`) || f.relPath.startsWith(`${VAULT_REL.wikiObjects}/`)),
   );
 
-  // C4·D — 2026-09-14 신설(구조적 재발방지 1단계). Log/DevRequests는 progress:
-  // 필드 관례 자체가 다르므로(status: 자유서술) Log/Implementation/만 좁혀서 검사.
-  const implOnlyRecords = allFiles
-    .filter((f) => f.relPath.startsWith(`${VAULT_REL.logImplementation}/`))
+  // C3·D — 2026-09-14 신설(구조적 재발방지 1단계). Requests는 status를 쓰므로
+  // Implementation만 좁혀서 progress를 검사.
+  const implOnlyRecords = workFiles
+    .filter((f) => f.relPath.includes('/Implementation/'))
     .map((f) => ({ ...f.frontmatter, __relPath: f.relPath }));
   const invalidProgress = findInvalidProgressFields(implOnlyRecords);
   // D·E의 옛 구조 건수와 빈 폴더 주장은 보관된 Meta/Index.md를 갱신·검사하지 않는다.
@@ -385,7 +417,7 @@ async function main() {
 
   const results = {
     broken, ambiguous, orphaned, recentLegacy, fxAnomalies, missingCurrency,
-    pendingWork, remainingSections, staleAutoClaims, invalidProgress, staleEmptyClaims,
+    workChecks, questionFailures, staleAutoClaims, invalidProgress, staleEmptyClaims,
   };
 
   if (!hasAnyIssue(results)) {

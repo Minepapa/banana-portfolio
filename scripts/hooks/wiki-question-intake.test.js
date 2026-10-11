@@ -23,9 +23,9 @@ test('manual-change: approve만 complete 호출을 안내하고, hold·reject는
   }
 });
 
-test('keyword-registration 자동 반영과 clarify 안내 경로를 유지한다', () => {
+test('keyword-registration·close-work-doc 자동 반영과 clarify 안내 경로를 유지한다', () => {
   const source = readFileSync(new URL('./wiki-question-intake.mjs', import.meta.url), 'utf8');
-  assert.match(source, /result\.action === 'approve' && result\.kind === 'keyword-registration'/);
+  assert.match(source, /result\.action === 'approve' && \['keyword-registration', 'close-work-doc'\]\.includes\(result\.kind\)/);
   assert.match(source, /await applyWikiQuestion\(explicit\.questionId\)/);
   assert.match(source, /result\.action === 'clarify'/);
 });

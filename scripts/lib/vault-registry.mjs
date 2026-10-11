@@ -5,6 +5,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { parseFlatFrontmatter } from './vault-integrity-audit.mjs';
 import { VAULT_REL } from './vault-paths.mjs';
+import { lintWorkDoc } from './work-doc-freshness.mjs';
 
 const BUNDLES = {
   C: ['type', 'category', 'description', 'sensitivity', 'created', 'modified'],
@@ -171,9 +172,12 @@ export function lintVault(root) {
   const results = [];
   const files = walk(root, root);
   for (const rel of files) {
-    const problems = checkNote(rel, readFileSync(join(root, rel), 'utf8'), rules);
+    const content = readFileSync(join(root, rel), 'utf8');
+    const problems = [
+      ...checkNote(rel, content, rules),
+      ...lintWorkDoc(root, rel, content),
+    ];
     if (problems.length) results.push({ rel, problems });
   }
   return { checked: files.length, results };
 }
-

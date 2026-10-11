@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const vaultRoot = mkdtempSync(join(tmpdir(), 'wiki-question-vault-'));
 process.env.VAULT_PATH = vaultRoot;
@@ -313,4 +314,55 @@ test('리뷰 반영: 여러 답 파싱, 묶음대기에 대한 답 인정, 너�
   assert.equal(orphanRun.failed, 1);
   assert.match(readFileSync(path, 'utf8'), /status: "발송결과불명"/);
   await reconcileWikiQuestion(o.questionId, { delivered: false });
+});
+
+test('close-work-doc: 중복 방지, 승인 종결, 바뀐 문서 미적용, 보류 재질문 차단', async () => {
+  const registry = '| type | 경로 | 제목 | 필수 | 쓰는 주체 |\n|---|---|---|---|---|\n'
+    + '| `request` | `40_Projects/{project}/Requests/` | 자유 | S | 클리오 |\n'
+    + Array.from({ length: 20 }, (_, i) => `| \`dummy${i}\` | \`Dummy${i}/\` | 자유 | S | 클리오 |`).join('\n') + '\n\n## 3. 검사\n';
+  putVaultNote('90_Delphi/Schema/경로 등록부', registry);
+  putVaultNote('40_Projects/alpha/Requests/evidence', '---\ntype: "request"\nstatus: "완료"\n---\n');
+  const content = '---\ntype: "request"\ndescription: "작업"\ncreated: "2026-10-11"\nmodified: "2026-10-11"\nstatus: "진행중"\nprogress: "진행중"\nwaitingOn: "외부"\nnextCheck: "2026-10-12"\ndoneWhen: ["file:40_Projects/alpha/Requests/evidence.md"]\n---\n\n본문\n';
+  function input(path, text = content) {
+    return { kind: 'close-work-doc', asker: 'clio', urgent: false, question: '완료 처리할까요?', evidenceNotes: [path],
+      changePlan: { type: 'close-work-doc', notePath: path,
+        contentHash: createHash('sha256').update(text).digest('hex'), evidence: ['file:40_Projects/alpha/Requests/evidence.md'] } };
+  }
+  const firstPath = '40_Projects/alpha/Requests/ready';
+  const firstFile = putVaultNote(firstPath, content);
+  const first = await createWikiQuestion(input(firstPath));
+  assert.equal((await createWikiQuestion({ ...input(firstPath), question: '표현이 다른 같은 문서 질문' })).duplicate, true);
+  await resolveWikiQuestion(first.questionId, '승인');
+  assert.equal((await applyWikiQuestion(first.questionId)).status, '처리완료');
+  const closed = readFileSync(firstFile, 'utf8');
+  assert.match(closed, /status: "완료"/);
+  assert.match(closed, /progress: "완료"/);
+  assert.match(closed, new RegExp(`## 완료 처리 .*질문 ${first.questionId} 승인`));
+  assert.match(closed, /file:40_Projects\/alpha\/Requests\/evidence.md/);
+  assert.match(closed, /볼트 파일 .*존재 확인/);
+
+  const changedPath = '40_Projects/alpha/Requests/changed';
+  const changedFile = putVaultNote(changedPath, content);
+  const changed = await createWikiQuestion(input(changedPath));
+  await resolveWikiQuestion(changed.questionId, '승인');
+  writeFileSync(changedFile, `${content}\n새 정보\n`);
+  assert.equal((await applyWikiQuestion(changed.questionId)).status, '미적용');
+  assert.match(readFileSync(changedFile, 'utf8'), /status: "진행중"/);
+  assert.equal((await createWikiQuestion(input(changedPath, `${content}\n새 정보\n`))).duplicate, false);
+
+  const heldPath = '40_Projects/alpha/Requests/held';
+  putVaultNote(heldPath, content);
+  const held = await createWikiQuestion(input(heldPath));
+  await resolveWikiQuestion(held.questionId, '보류');
+  assert.equal((await createWikiQuestion(input(heldPath))).duplicate, true);
+
+  const flakyPath = '40_Projects/alpha/Requests/flaky';
+  putVaultNote(flakyPath, content);
+  const flaky = await createWikiQuestion(input(flakyPath));
+  await resolveWikiQuestion(flaky.questionId, '승인');
+  const evidenceFile = join(vaultRoot, '40_Projects/alpha/Requests/evidence.md');
+  rmSync(evidenceFile);
+  assert.equal((await applyWikiQuestion(flaky.questionId)).status, '미적용');
+  putVaultNote('40_Projects/alpha/Requests/evidence', '---\ntype: "request"\nstatus: "완료"\n---\n');
+  assert.equal((await createWikiQuestion(input(flakyPath))).duplicate, false, '외부 조건 회복 뒤 같은 문서 내용으로 재질문');
 });

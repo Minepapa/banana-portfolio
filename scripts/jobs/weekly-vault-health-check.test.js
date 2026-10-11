@@ -7,10 +7,12 @@ import {
   findRecentLegacyFiles,
   findFxAnomalies,
   findMissingCurrencyField,
-  findPendingWork,
-  findRemainingWorkSections,
+  classifyWorkDocChecks,
   findStaleAutoClaims,
   findInvalidProgressFields,
+  findCompletableWorkDocs,
+  createCompletableQuestions,
+  loadHealthCheckAgent,
   findStaleEmptyClaims,
   syncIndexCounts,
   buildHealthCheckFacts,
@@ -19,6 +21,75 @@ import {
 } from './weekly-vault-health-check.mjs';
 
 const mkFile = (relPath, content, frontmatter = {}) => ({ relPath, absPath: `/vault/${relPath}.md`, content, frontmatter });
+
+test('C1: 열린 작업의 경과·누락만 보고하고 확인일이 남은 문서는 개수만 센다', () => {
+  const files = [
+    mkFile('40_Projects/a/Requests/old', '## 남은 것\n- 일', { status: '보류', waitingOn: '외부', nextCheck: '2026-10-10' }),
+    mkFile('40_Projects/b/Implementation/today', '## 남은 것\n- 일', { progress: '진행중', waitingOn: '착수 대기', nextCheck: '2026-10-11' }),
+    mkFile('40_Projects/c/Requests/later', '', { status: '차단됨', waitingOn: '오너 판단', nextCheck: '2026-10-12' }),
+    mkFile('40_Projects/d/Requests/missing', '', { status: '진행중' }),
+    mkFile('40_Projects/e/Implementation/no-date', '', { progress: '진행중', waitingOn: '외부' }),
+    mkFile('40_Projects/f/Requests/done', '## 남은 것\n- 잔재', { status: '완료', nextCheck: '2026-10-09' }),
+    mkFile('40_Projects/g/Implementation/discarded', '', { progress: '폐기' }),
+    mkFile('60_Logs/2026-10-10-old', '## 남은 것\n- 잔재'),
+    mkFile('60_Logs/2026-10-11-new', '## 남은 것\n- [[40_Projects/a/Requests/old]]'),
+  ];
+  const workChecks = classifyWorkDocChecks(files, '2026-10-11');
+  assert.deepEqual(workChecks.overdue, [{ file: files[0].relPath, nextCheck: '2026-10-10' }]);
+  assert.deepEqual(workChecks.missing.map((entry) => entry.file), [files[3].relPath, files[4].relPath]);
+  assert.equal(workChecks.scheduledCount, 2);
+  const results = { broken: [], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [],
+    workChecks, staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
+  assert.equal(hasAnyIssue(results), true);
+  const facts = buildHealthCheckFacts(results);
+  assert.equal(facts.length, 3);
+  assert.match(facts[0], /확인일 지난 작업 문서 1건/);
+  assert.match(facts[1], /waitingOn·nextCheck 누락 작업 문서 2건/);
+  assert.equal(facts[2], '확인일이 남은 작업 문서 2건');
+  assert.ok(facts.every((line) => !line.includes('60_Logs') && !line.includes('남은 것')));
+});
+
+test('C1: 확인일이 남은 문서만 있으면 알림은 생략한다', () => {
+  const workChecks = classifyWorkDocChecks([mkFile('40_Projects/a/Requests/later', '',
+    { status: '진행중', waitingOn: '외부', nextCheck: '2026-10-12' })], '2026-10-11');
+  const results = { broken: [], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [],
+    workChecks, staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
+  assert.equal(hasAnyIssue(results), false);
+});
+
+test('doneWhen 전부 충족한 진행중 문서만 완료 질문 후보다', () => {
+  const files = [mkFile('40_Projects/b/Requests/ready', '---\ndoneWhen: ["launchd:local.ready"]\n---\n', { status: '진행중' }),
+    mkFile('40_Projects/c/Requests/closed', '---\ndoneWhen: ["launchd:local.ready"]\n---\n', { status: '완료' }),
+    mkFile('40_Projects/d/Implementation/mismatch', '---\ndoneWhen: ["launchd:local.ready"]\n---\n', { status: '진행중', progress: '완료' })];
+  assert.deepEqual(findCompletableWorkDocs(files, { vaultRoot: '/tmp/vault', repoPath: '/tmp/repo', launchctlList: () => '- 0 local.ready' })
+    .map((entry) => entry.file.relPath), [files[0].relPath]);
+});
+
+test('완료 질문 생성 실패는 문서별로 격리하고 facts에 경로와 오류를 남긴다', async () => {
+  const files = [mkFile('40_Projects/a/Requests/fail', '첫 문서'), mkFile('40_Projects/b/Requests/ok', '둘째 문서')];
+  const attempted = [];
+  const failures = await createCompletableQuestions(files.map((file) => ({ file, evidence: ['조건'] })), async (question) => {
+    attempted.push(question.changePlan.notePath);
+    if (question.changePlan.notePath === files[0].relPath) throw new Error('쓰기 실패\n상세 정보');
+  });
+  assert.deepEqual(attempted, files.map((file) => file.relPath), '첫 실패 후에도 다음 문서를 처리한다');
+  assert.deepEqual(failures, [{ file: files[0].relPath, error: '쓰기 실패' }]);
+  const results = { broken: [], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [],
+    workChecks: { overdue: [], missing: [], scheduledCount: 0 }, questionFailures: failures,
+    staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
+  assert.equal(hasAnyIssue(results), true);
+  assert.match(buildHealthCheckFacts(results)[0], /완료 질문 생성 실패 1건: 40_Projects\/a\/Requests\/fail\(쓰기 실패\)/);
+});
+
+test('주간 점검은 클리오 정의를 존재하지 않는 부록 없이 읽는다', () => {
+  const expected = { model: 'sonnet' };
+  const loaded = loadHealthCheckAgent((name, options) => {
+    assert.equal(name, 'clio');
+    assert.deepEqual(options, { fallbackModel: 'sonnet' });
+    return expected;
+  });
+  assert.equal(loaded, expected);
+});
 
 test('findBrokenAndAmbiguousLinks: 존재하는 전체경로 링크는 정상', () => {
   const files = [
@@ -132,44 +203,6 @@ test('findMissingCurrencyField: 2026-09-04 이후 레코드인데 currency 필�
     { __relPath: 'C', date: '2026-09-05 10:00:00', currency: 'KRW' },
   ];
   assert.deepEqual(findMissingCurrencyField(records, '2026-09-04'), ['A']);
-});
-
-test('findPendingWork: progress가 진행중·보류인 것만, 완료·폐기는 제외', () => {
-  const records = [
-    { __relPath: 'A', progress: '진행중' },
-    { __relPath: 'B', progress: '보류' },
-    { __relPath: 'C', progress: '완료' },
-    { __relPath: 'D', progress: '폐기' },
-  ];
-  const result = findPendingWork(records);
-  assert.deepEqual(result.map((r) => r.file), ['A', 'B']);
-});
-
-test('findRemainingWorkSections: "## 남은 것" 섹션이 있으면 첫 줄을 미리보기로 추출', () => {
-  const files = [mkFile('A', '# 제목\n\n## 남은 것\n\n- 첫 번째 남은 일\n- 두 번째\n')];
-  const result = findRemainingWorkSections(files);
-  assert.equal(result.length, 1);
-  assert.equal(result[0].preview, '첫 번째 남은 일');
-});
-
-test('findRemainingWorkSections: 섹션 없으면 빈 배열', () => {
-  assert.deepEqual(findRemainingWorkSections([mkFile('A', '# 제목\n\n내용만 있음')]), []);
-});
-
-test('findRemainingWorkSections: progress:"완료"/"폐기"로 닫힌 문서는 제외(2026-09-20 오너 DevRequest — 이미 완료된 건 목록에서 뺀다)', () => {
-  const files = [
-    mkFile('A-완료', '## 남은 것\n\n- 완료됐는데 안 지운 잔재', { progress: '완료' }),
-    mkFile('B-폐기', '## 남은 것\n\n- 폐기됐는데 안 지운 잔재', { progress: '폐기' }),
-    mkFile('C-진행중', '## 남은 것\n\n- 실제로 해결 필요', { progress: '진행중' }),
-  ];
-  const result = findRemainingWorkSections(files);
-  assert.equal(result.length, 1);
-  assert.equal(result[0].file, 'C-진행중');
-});
-
-test('findRemainingWorkSections: progress 필드 자체가 없는 문서(Sessions·DevRequests 관례)는 계속 포함(누락 방지 우선)', () => {
-  const files = [mkFile('Log/Sessions/A', '## 남은 것\n\n- 세션 로그 잔여')];
-  assert.equal(findRemainingWorkSections(files).length, 1);
 });
 
 test('findStaleAutoClaims: "자동 갱신" 문구 있는데 오래 안 바뀌면 재확인 후보', () => {
@@ -295,17 +328,17 @@ test('syncIndexCounts: "비어있음"류(형식이 다른 행)는 대상 아님 
 });
 
 test('hasAnyIssue: 전부 빈 배열이면 false(조용함)', () => {
-  const empty = { broken: [], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], pendingWork: [], remainingSections: [], staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
+  const empty = { broken: [], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], workChecks: { overdue: [], missing: [], scheduledCount: 0 }, staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
   assert.equal(hasAnyIssue(empty), false);
 });
 
 test('hasAnyIssue: 하나라도 있으면 true', () => {
-  const oneIssue = { broken: [{ file: 'A', target: 'B' }], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], pendingWork: [], remainingSections: [], staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
+  const oneIssue = { broken: [{ file: 'A', target: 'B' }], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], workChecks: { overdue: [], missing: [], scheduledCount: 0 }, staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
   assert.equal(hasAnyIssue(oneIssue), true);
 });
 
 test('buildHealthCheckFacts: 발견된 것만 줄로 나열, 빈 항목은 줄 자체가 안 생김', () => {
-  const r = { broken: [{ file: 'A', target: 'B' }], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], pendingWork: [], remainingSections: [], staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
+  const r = { broken: [{ file: 'A', target: 'B' }], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [], workChecks: { overdue: [], missing: [], scheduledCount: 0 }, staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [] };
   const facts = buildHealthCheckFacts(r);
   assert.equal(facts.length, 1);
   assert.match(facts[0], /깨진 링크 1건/);

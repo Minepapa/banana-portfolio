@@ -30,10 +30,10 @@ export function buildManualChangeResultMessage({ questionId, action, status }) {
 
 async function handleExplicitAnswer(explicit) {
   const result = await resolveWikiQuestion(explicit.questionId, explicit.answer, { rawText: explicit.rawText });
-  if (result.action === 'approve' && result.kind === 'keyword-registration') {
+  if (result.action === 'approve' && ['keyword-registration', 'close-work-doc'].includes(result.kind)) {
     try {
       const applied = await applyWikiQuestion(explicit.questionId);
-      return (`[므네모시네 질문 ${explicit.questionId}] 오너가 등록을 승인했고, 미리 제시한 색인·정본 aliases·역링크 변경을 반영 완료했다. 처리 결과: ${JSON.stringify(applied.applied)}. 이것은 위키 변경 승인일 뿐 투자 제안·주문 승인이 아니다. 결과를 간단히 회신하라.`);
+      return (`[므네모시네 질문 ${explicit.questionId}] 오너 승인을 기록하고 허용된 변경을 처리했다. 상태: ${applied.status}. 결과: ${JSON.stringify(applied.applied)}. 투자 제안·주문 승인이 아니다. 결과를 간단히 회신하라.`);
     } catch (error) {
       return (`[므네모시네 질문 ${explicit.questionId}] 등록 승인은 기록했으나 자동 반영이 실패했다: ${error.message}. 변경 내용을 임의로 넓히지 말고 원인을 점검한 뒤 안전하게 반영하거나 오너에게 재확인하라.`);
     }
@@ -76,7 +76,7 @@ export async function main() {
     // 묶음대기는 아직 오너에게 보내지 않은 질문이다 — 세션이 먼저 꺼내 묻지 않게 표시한다(리뷰 M4).
     const compact = pending.map((item) => `${item.questionId} [${item.status === '묶음대기' ? '묶음대기 — 아직 안 보냄, 먼저 묻지 말 것' : item.status}] ${item.question}`).join('\n');
     emit(`[므네모시네 질문 대기열]\n${compact}\n메시지에 정확한 질문 ID와 등록/보류/제외 선택이 있으면 이미 자동 처리됐다. ID가 없으면 현재 대화에서 어떤 질문에 대한 답인지 명백할 때만 ` +
-      `node scripts/tools/wiki-question-cli.mjs resolve --id=<정확한 ID> --text="등록|보류|제외"로 기록하라. 재시작 뒤 대화 맥락이 없거나 복수 후보면 ID를 되물어라. 승인 처리 후 keyword-registration은 apply 명령으로 반영하고, manual-change는 승인받은 변경만 수행한 뒤 complete로 마감하라. 이 승인은 투자 제안·주문과 분리된다.`);
+      `node scripts/tools/wiki-question-cli.mjs resolve --id=<정확한 ID> --text="등록|보류|제외"로 기록하라. 재시작 뒤 대화 맥락이 없거나 복수 후보면 ID를 되물어라. 승인 처리 후 keyword-registration과 close-work-doc은 apply 명령으로 반영하고, manual-change는 승인받은 변경만 수행한 뒤 complete로 마감하라. 이 승인은 투자 제안·주문과 분리된다.`);
   }
 }
 
