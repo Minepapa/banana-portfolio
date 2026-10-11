@@ -22,7 +22,7 @@
  *   ② claude -p 는 투자자-성향 결정 본문 + 주입된 facts만으로 "서술·해석·처방"만 생성
  *   ③ Log/Reports/{asof}.md 저장 + (선택)텔레그램 푸시
  *   ④ 행동 신호(체결 기반)를 §3와 대조해 성향 관찰 추출(sonnet) →
- *      Decisions/Profile/*.md 신규 파일
+ *      50_Outputs/Preferences/{YYYY}/*.md 신규 파일
  *
  * 사용법:
  *   node scripts/jobs/weekly-report.mjs                 # 발행
@@ -31,7 +31,8 @@
  *   node scripts/jobs/weekly-report.mjs --no-push       # 텔레그램 요약 푸시 끔
  *   node scripts/jobs/weekly-report.mjs --force         # 같은 날짜 리포트 있어도 덮어씀
  */
-import { existsSync, readdirSync, readFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, mkdirSync, openSync, closeSync, writeFileSync, linkSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join, relative } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS, VAULT_REL, VAULT_ROOT, vaultYearDir, vaultYearFiles, categoryLink } from '../lib/vault-paths.mjs';
@@ -328,6 +329,7 @@ ${signalsText}
 규칙:
 - **증거가 있는 관찰만**. 신호에 없는 내용은 만들지 말 것. 뚜렷한 게 없으면 빈 배열.
 - 각 관찰은 명시 성향(§3)과 대조: "일치(보강)" / "신규" / "상충".
+- title은 파일명에 쓸 짧은 관찰 요약(예: "복수계좌 자산 편입")으로 적을 것.
 - 직전 관찰에 같은 내용이 이미 있으면 promote=true(§3 승격 후보).
 - 최대 3개. 사소한 건 버리고 의미 있는 것만.
 
@@ -339,12 +341,12 @@ ${signalsText}
 출력: 설명 없이 \`\`\`json 배열 하나만.
 \`\`\`json
 [
-  {"type":"매도 타이밍","observation":"과열 구간 부분 익절 실행","evidence":"체결 2026-06-12 SK하이닉스 5주 @2,280,000 +14%","vsProfile":"일치(보강)","confidence":"높음","promote":false}
+  {"type":"매도 타이밍","title":"과열 구간 부분 익절","observation":"과열 구간 부분 익절 실행","evidence":"체결 2026-06-12 SK하이닉스 5주 @2,280,000 +14%","vsProfile":"일치(보강)","confidence":"높음","promote":false}
 ]
 \`\`\``;
 }
 
-// 관찰 JSON → Decisions/Profile/*.md 신규 파일. 상충/promote면
+// 관찰 JSON → Preferences/{YYYY}/*.md 신규 파일. 상충/promote면
 // 상태=승격후보, 아니면 관찰. 한 관찰당 파일 하나(다른 Vault 레코드와 동일 관례).
 // 반환값에 promoted(신규 승격후보 목록)를 같이 담는다(2026-09-20 오너 DevRequest —
 // "성향관찰 승격 후보가 생기면 텔레그램 메시지로 확인을 요청한다. 오너는 므네모시네를
@@ -355,22 +357,41 @@ export function writeObservations(asof, observations) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const now = new Date();
   const nowIso = now.toISOString();
-  const timeSlug = nowIso.replace(/[-:]/g, '').replace(/\..+/, '');
   let n = 0;
   const promoted = [];
-  observations.forEach((o, i) => {
+  observations.forEach((o) => {
     const promote = o.promote || /상충/.test(o.vsProfile || '');
     const record = {
-      // 경로 등록부 note 규칙(C 묶음 + occurred·origin). 성향 관찰 여부는 noteKind로 구분한다(preferences.mjs).
-      type: 'note', noteKind: 'preference-observation', category: [categoryLink('700 자산'), categoryLink('100 나')],
+      // D94 등록부 유형. 기존 note+noteKind/legacyType은 읽기에서만 호환한다.
+      type: 'preference-observation', category: [categoryLink('700 자산'), categoryLink('100 나')],
       description: String(o.observation || '성향 관찰').replace(/\s+/g, ' ').slice(0, 120), sensitivity: '일반',
       created: asof, modified: asof, occurred: asof, origin: 'weekly-report',
       date: asof, signalType: o.type || '기타', observation: o.observation || '',
       evidence: o.evidence || '', vsProfile: o.vsProfile || '신규', confidence: o.confidence || '보통',
       status: promote ? '승격후보' : '관찰', updatedAt: nowIso,
     };
-    const filename = `${asof} ${timeSlug}-${i + 1}.md`;
-    writeAtomic(join(dir, filename), buildFrontmatter(record) + '\n');
+    const rawTitle = String(o.title || o.observation || '').slice(0, 30);
+    const title = rawTitle.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() || '성향';
+    const stem = `${asof} ${title.endsWith('관찰') ? title : `${title} 관찰`}`;
+    let filename = `${stem}.md`;
+    // 완성된 임시 파일을 배타적으로 연결한다. 다른 잡이 같은 제목을 먼저 쓰면 다음 번호를 시도한다.
+    const tempPath = join(dir, `.${randomUUID()}.tmp`);
+    const tempFd = openSync(tempPath, 'wx');
+    try {
+      writeFileSync(tempFd, buildFrontmatter(record) + '\n');
+      for (let suffix = 2; ; suffix++) {
+        try {
+          linkSync(tempPath, join(dir, filename));
+          break;
+        } catch (error) {
+          if (error.code !== 'EEXIST') throw error;
+          filename = `${stem} ${suffix}.md`;
+        }
+      }
+    } finally {
+      closeSync(tempFd);
+      unlinkSync(tempPath);
+    }
     n++;
     if (promote) promoted.push({
       observation: record.observation,

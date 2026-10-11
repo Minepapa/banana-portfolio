@@ -76,6 +76,7 @@ test('Ledger 이벤트 종류별 하위폴더 9종이 전부 Facts/Ledger 밑에
 });
 
 test('VAULT_REL과 겹치는 기존 절대경로는 동일하다', () => {
+  assert.equal(VAULT_REL.decisionsProfile, '50_Outputs/Preferences');
   const overlappingPaths = [
     [VAULT_PATHS.facts.ledger.executions, VAULT_REL.factsLedgerExecutions],
     [VAULT_PATHS.facts.ledger.profits, VAULT_REL.factsLedgerProfits],
@@ -192,6 +193,8 @@ const LEGACY_ABSOLUTE = [
 
 test('경로 상수는 고정된 옛 값의 매핑 결과와 같다', () => {
   for (const [key, old] of Object.entries(LEGACY_REL)) {
+    // D94는 과거 이관 매핑 이후의 위치 변경이다. 이관 기록은 그대로 둔다.
+    if (key === 'decisionsProfile') continue;
     assert.equal(VAULT_REL[key], mapLegacyPath(old).to, key);
   }
   const current = Object.entries(VAULT_PATHS).filter(([key]) => key !== 'root' && key !== 'location' && key !== 'spending')
@@ -202,6 +205,7 @@ test('경로 상수는 고정된 옛 값의 매핑 결과와 같다', () => {
   assert.equal(VAULT_PATHS.location.root, vaultAbs(VAULT_REL.location));
   assert.equal(VAULT_PATHS.location.candidates, vaultAbs(VAULT_REL.locationCandidates));
   for (const old of LEGACY_ABSOLUTE) {
+    if (old === 'Decisions/Profile') continue; // D94 이후 경로는 위 상수 정합성 테스트에서 확인
     assert.ok(current.includes(vaultAbs(mapLegacyPath(old).to)), old);
   }
 });

@@ -9,14 +9,14 @@
 // 파일에서 실제로 쓰이진 않음 — 애초에 v1 시트 파이프라인 중단으로 이미 죽은 경로).
 export const PREF_SHEET = '성향관찰';
 //
-// 레코드 스키마(Decisions/Profile/*.md frontmatter):
+// 레코드 스키마(Preferences/{YYYY}/*.md frontmatter):
 //   { date, signalType, observation, evidence, vsProfile, confidence, status, updatedAt }
 // (구 구글시트 "성향관찰" A~H와 1:1 대응 — 필드명만 named로 바뀜. "type"이 아니라
 // "signalType"인 이유: 이 프로젝트의 Vault 레코드 관례상 "type" 필드는 레코드 종류
 // 자체를 뜻한다(holding/execution/preference-observation 등) — 관찰의 신호유형까지
 // "type"으로 쓰면 그 레코드종류 필드와 충돌한다.)
 
-// Decisions/Profile/ 폴더에서 읽은 레코드 중 "살아있는 v2 성향관찰"만 통과시키는 술어.
+// Preferences/ 폴더에서 읽은 레코드 중 "살아있는 v2 성향관찰"만 통과시키는 술어.
 //
 // 왜 필요한가(2026-09-04 므네모시네 대정리): 원래 v1 이관분은 Knowledge/Profile/ 최상위,
 // v2 관찰은 Knowledge/Profile/PreferenceObservations/ 하위폴더로 **폴더가 곧 필터**였다.
@@ -31,7 +31,7 @@ export function isLivePreferenceObservation(rec) {
   // type이 아예 없는 옛 레코드는 통과시킨다(v2 관찰은 처음부터 type을 달고 저장되지만,
   // 손으로 적어둔 관찰까지 조용히 버리면 오히려 기록 누락이 된다) — 배제하는 건
   // "명백히 다른 종류"임이 type으로 확인되는 경우뿐.
-  // 2026-10-08 경로 등록부 정리로 type은 'note', 종류는 noteKind(새 기록)·legacyType(옛 기록)으로 옮겼다.
+  // D94 새 기록은 preference-observation. 옮겨온 note+noteKind/legacyType도 읽는다.
   return rec.type === undefined || rec.type === 'preference-observation'
     || (rec.type === 'note' && (rec.noteKind === 'preference-observation' || rec.legacyType === 'preference-observation'));
 }

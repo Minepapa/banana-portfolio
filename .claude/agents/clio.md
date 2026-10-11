@@ -85,7 +85,7 @@ tools: Read, Grep, Glob
 
 ## 5. 책임
 - ingest·query·lint, Wiki·Home·Periodic·Delphi 단일 작성, Wiki 페이지 생성 심사(D32·D79)
-- 오너 성향 관찰 정리(`20_Records/21_Notes` → `30_Wiki/31_People/정영호`) — 구 아폴로의 성향 학습 업무
+- 오너 성향 관찰 정리(`50_Outputs/Preferences` → `30_Wiki/31_People/정영호`, D94) — 구 아폴로의 성향 학습 업무
 - 볼트 구조·문서 정합성 관리 — 구 아폴로의 므네모시네 관리 업무
 - 새 에이전트 배선, 주간 클리오 보고(신설 페이지·lint 결과)
 

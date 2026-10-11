@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -32,6 +32,7 @@ test('주간 리포트 프롬프트는 결정 문서 본문만 주입하고 옛 
       assert.match(prompt, /# 명시 성향 본문/);
       assert.doesNotMatch(prompt, /decisionKey:|status: "결정됨"|profile\/investor-profile\.md/);
     }
+    assert.match(buildObservationPrompt('signals', '', profileText), /title.*짧은 관찰 요약/);
     rmSync(join(decisions, '성향.md'));
     assert.throws(() => resolveDecision('투자자-성향', { vaultRoot: root }), /0개/);
   } finally {
@@ -65,23 +66,72 @@ const REAL_REPORT_BODY = `# 주간 자산 종합 점검 — 2026-08-30
 | 위탁 | 103,771,880원 | 120,701,650원 |
 `;
 
-test('writeObservations: 승격후보에 확장자 없는 Decisions/Profile notePath를 반환한다', () => {
+test('writeObservations: 새 경로에 제목 파일을 쓰고 승격후보 notePath를 반환한다', () => {
   const root = mkdtempSync(join(tmpdir(), 'banana-weekly-report-'));
   const previousProfileDir = VAULT_PATHS.decisions.profile;
-  VAULT_PATHS.decisions.profile = join(root, '20_Records', '21_Notes');
+  VAULT_PATHS.decisions.profile = join(root, '50_Outputs', 'Preferences');
   try {
     const result = weeklyReport.writeObservations('2026-09-27', [{
-      type: '검증', observation: '프로필과 상충하는 관찰', vsProfile: '상충', promote: false,
+      type: '검증', title: '가상 자산 검토', observation: '가상 자산 검토 시점 변경', vsProfile: '상충', promote: false,
     }]);
 
     assert.equal(result.written, 1);
     assert.equal(result.promoted.length, 1);
-    assert.match(result.promoted[0].notePath, /^20_Records\/21_Notes\/2026\/2026-09-27 \d{8}T\d{6}-1$/);
+    assert.equal(result.promoted[0].notePath, '50_Outputs/Preferences/2026/2026-09-27 가상 자산 검토 관찰');
     assert.ok(!result.promoted[0].notePath.endsWith('.md'));
-    assert.equal(parseFrontmatter(readFileSync(join(root, `${result.promoted[0].notePath}.md`), 'utf8')).status, '승격후보');
+    const record = parseFrontmatter(readFileSync(join(root, `${result.promoted[0].notePath}.md`), 'utf8'));
+    assert.equal(record.status, '승격후보');
+    assert.equal(record.type, 'preference-observation');
   } finally {
     VAULT_PATHS.decisions.profile = previousProfileDir;
     if (existsSync(root)) rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('writeObservations: 제목 생략·금지문자·같은 배치/기존 파일 중복을 안전하게 처리한다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'banana-weekly-titles-'));
+  const previousProfileDir = VAULT_PATHS.decisions.profile;
+  const dir = join(root, '50_Outputs', 'Preferences', '2026');
+  VAULT_PATHS.decisions.profile = join(root, '50_Outputs', 'Preferences');
+  mkdirSync(dir, { recursive: true });
+  const existing = join(dir, '2026-10-11 가상 판단 관찰.md');
+  writeFileSync(existing, '기존 기록');
+  try {
+    const result = weeklyReport.writeObservations('2026-10-11', [
+      { title: '가상/판단', observation: '첫 관찰', promote: true },
+      { title: '가상:판단', observation: '둘째 관찰', promote: true },
+      { observation: '제목 없는 가상 관찰 내용', promote: true },
+      { title: '가상\\:*?"<>| 기록 관찰', observation: '넷째 관찰', promote: true },
+    ]);
+    assert.equal(result.written, 4);
+    assert.equal(readFileSync(existing, 'utf8'), '기존 기록');
+    assert.deepEqual(result.promoted.map(({ notePath }) => notePath), [
+      '50_Outputs/Preferences/2026/2026-10-11 가상 판단 관찰 2',
+      '50_Outputs/Preferences/2026/2026-10-11 가상 판단 관찰 3',
+      '50_Outputs/Preferences/2026/2026-10-11 제목 없는 가상 관찰 내용 관찰',
+      '50_Outputs/Preferences/2026/2026-10-11 가상 기록 관찰',
+    ]);
+    for (const { notePath } of result.promoted) {
+      assert.ok(existsSync(join(root, `${notePath}.md`)));
+    }
+    assert.ok(readdirSync(dir).every((filename) => filename.endsWith('.md')));
+  } finally {
+    VAULT_PATHS.decisions.profile = previousProfileDir;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('writeObservations: 제목이 없으면 관찰 본문을 30자 이내로 잘라 쓴다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'banana-weekly-fallback-'));
+  const previousProfileDir = VAULT_PATHS.decisions.profile;
+  VAULT_PATHS.decisions.profile = join(root, '50_Outputs', 'Preferences');
+  try {
+    const observation = '가'.repeat(35);
+    const result = weeklyReport.writeObservations('2026-10-11', [{ observation, promote: true }]);
+    assert.equal(result.promoted[0].notePath, `50_Outputs/Preferences/2026/2026-10-11 ${'가'.repeat(30)} 관찰`);
+  } finally {
+    VAULT_PATHS.decisions.profile = previousProfileDir;
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

@@ -28,7 +28,8 @@ test('shouldCheckStatus: 상태 표준 대상 경로만 검사', () => {
   assert.equal(shouldCheckStatus('40_Projects/banana-portfolio/Requests/x.md'), true);
   assert.equal(shouldCheckStatus('50_Outputs/Decisions/x.md'), true);
   assert.equal(shouldCheckStatus('95_Etna/Investing/Orders/x.md'), true);
-  assert.equal(shouldCheckStatus('20_Records/21_Notes/2026/x.md'), true);
+  assert.equal(shouldCheckStatus('50_Outputs/Preferences/2026/x.md'), true);
+  assert.equal(shouldCheckStatus('20_Records/21_Notes/2026/x.md'), false);
   assert.equal(shouldCheckStatus('30_Wiki/34_Topics/x.md'), true);
   assert.equal(shouldCheckStatus('90_Delphi/x.md'), true);
   assert.equal(shouldCheckStatus('60_Logs/Zeus/2026/x.md'), false);
@@ -83,7 +84,8 @@ test('checkStatusField: DevRequest와 Strategy는 각 집합 밖의 값을 경�
 
 test('checkStatusField: 제안·성향 Decision은 도메인 집합만 허용', () => {
   assert.equal(checkStatusField({ status: '체결' }, '95_Etna/Investing/Orders/x.md'), null);
-  assert.equal(checkStatusField({ status: '확정' }, '20_Records/21_Notes/2026/x.md'), null);
+  assert.equal(checkStatusField({ status: '확정' }, '50_Outputs/Preferences/2026/x.md'), null);
+  assert.match(checkStatusField({ status: '완료' }, '50_Outputs/Preferences/2026/x.md'), /자유서술/);
   assert.match(checkStatusField({ status: '완료' }, '95_Etna/Investing/Orders/x.md'), /자유서술/);
 });
 

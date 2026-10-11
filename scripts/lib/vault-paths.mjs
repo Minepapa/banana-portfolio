@@ -30,7 +30,7 @@ export const VAULT_REL = {
   logSessions: '60_Logs/Zeus',
   logWarningEvents: '95_Etna/Jobs/WarningEvents',
   decisionsProposals: '95_Etna/Investing/Orders',
-  decisionsProfile: '20_Records/21_Notes',
+  decisionsProfile: '50_Outputs/Preferences', // D94: 성향 관찰 위치
   knowledge: '30_Wiki',
   knowledgeTopics: '30_Wiki/34_Topics',
   wikiObjects: '30_Wiki/33_Objects',
@@ -250,8 +250,8 @@ export const VAULT_PATHS = {
     evaluations: join(VAULT_ROOT, '95_Etna', 'Investing', 'Evaluations'),
     positionJournal: join(VAULT_ROOT, '95_Etna', 'Investing', 'PositionJournal'),
     proposals: join(VAULT_ROOT, '95_Etna', 'Investing', 'Orders'),
-    // 주간 리포트에서 자동 추출한 투자성향 관찰과 승격 상태 기록.
-    profile: join(VAULT_ROOT, '20_Records', '21_Notes'),
+    // D94: 주간 리포트에서 자동 추출한 투자성향 관찰과 승격 상태 기록.
+    profile: vaultAbs(VAULT_REL.decisionsProfile),
     // 2026-08-05 Phase 7 추가 — v1 "리스크모니터" 탭(과거 리스크 판정 이력) 이관 대상.
     // Themis의 판정 결과이지 아직 미확정 안건이 아니므로 Decisions 대분류가 맞다.
     riskMonitor: join(VAULT_ROOT, '95_Etna', 'Investing', 'RiskMonitor'),

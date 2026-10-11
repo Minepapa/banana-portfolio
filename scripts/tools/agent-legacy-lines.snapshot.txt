@@ -1,5 +1,5 @@
 .claude/agents/zeus.md:144:결정으로 국문 `[제우스]`였으나, "다른 모든 부서는 영문 이름(Athena·Kairos 등)인데
-.claude/agents/clio.md:88:- 오너 성향 관찰 정리(`20_Records/21_Notes` → `30_Wiki/31_People/정영호`) — 구 아폴로의 성향 학습 업무
+.claude/agents/clio.md:88:- 오너 성향 관찰 정리(`50_Outputs/Preferences` → `30_Wiki/31_People/정영호`, D94) — 구 아폴로의 성향 학습 업무
 .claude/agents/clio.md:89:- 볼트 구조·문서 정합성 관리 — 구 아폴로의 므네모시네 관리 업무
 .claude/agents/clio.md:118:# Apollo — 비서실
 .claude/agents/clio.md:120:비서실장. 오너에게 보고하는 일과 오너를 이해하는 일 — 둘은 한 사람의 일이다.

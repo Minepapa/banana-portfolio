@@ -157,7 +157,8 @@ test('findExpiredPromotions: now를 Date 객체로 넘겨도 동작(문자열 �
   assert.equal(expired.length, 1);
 });
 
-test('isLivePreferenceObservation: 등록부 정리 후 note+noteKind·legacyType도 성향 관찰, 다른 note는 아님', () => {
+test('isLivePreferenceObservation: 새 type과 기존 note+noteKind·legacyType을 모두 읽는다', () => {
+  assert.equal(isLivePreferenceObservation({ type: 'preference-observation' }), true);
   assert.equal(isLivePreferenceObservation({ type: 'note', noteKind: 'preference-observation' }), true);
   assert.equal(isLivePreferenceObservation({ type: 'note', legacyType: 'preference-observation' }), true);
   assert.equal(isLivePreferenceObservation({ type: 'note' }), false);

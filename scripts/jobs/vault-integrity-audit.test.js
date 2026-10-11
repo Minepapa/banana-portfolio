@@ -77,6 +77,7 @@ test('vault-integrity-audit: decisionKey마다 결정됨 문서가 정확히 하
 });
 
 test('vault-integrity-audit: 연도 하위 파일에도 상태와 ID 규칙을 적용한다', () => {
+  assert.equal(VAULT_REL.decisionsProfile, '50_Outputs/Preferences');
   const root = mkdtempSync(join(tmpdir(), 'vault-audit-year-'));
   writeStatusStandard(root);
   try {
