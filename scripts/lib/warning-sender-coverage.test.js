@@ -25,6 +25,7 @@ const ALLOWED_RAW_SENDS = Object.freeze({
   'jobs/reconcile-breakout-protection.mjs': { count: 1, reason: '경고 외 보호주문 상태 안내' },
   'jobs/themis-risk-review.mjs': { count: 1, reason: '정기 위험 검토 보고' },
   'jobs/weekly-report.mjs': { count: 1, reason: '주간 리포트 요약' },
+  'jobs/weekly-warning-review.mjs': { count: 1, reason: '경고 주간 검토의 이상 항목 정보성 정기 보고' },
   'jobs/weekly-schedule-summary.mjs': { count: 1, reason: '주간 일정 안내' },
   'tools/breakout-watchlist-preview.mjs': { count: 1, reason: '워치리스트 미리보기' },
   'tools/create-quant-proposal.mjs': { count: 1, reason: '퀀트 제안 발송' },

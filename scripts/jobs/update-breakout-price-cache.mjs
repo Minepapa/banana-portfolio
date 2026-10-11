@@ -89,47 +89,76 @@ export function summarizeUpdateResult(result) {
 }
 
 async function main() {
-  console.error('[1/3] 후보풀 조회 중...');
-  const pool = buildCandidatePool();
-  const codes = selectCodesToUpdate(pool);
-  console.error(`  전체 ${pool.length}종목 중 상장폐지 제외 ${codes.length}종목 갱신 대상`);
+  let stage = 'CANDIDATE_POOL';
+  try {
+    console.error('[1/3] 후보풀 조회 중...');
+    const pool = buildCandidatePool();
+    const codes = selectCodesToUpdate(pool);
+    console.error(`  전체 ${pool.length}종목 중 상장폐지 제외 ${codes.length}종목 갱신 대상`);
 
-  console.error('[2/3] 증분 시세 갱신 중(이미 최신인 종목은 네트워크 호출 없이 스킵)...');
-  const result = updatePrices(codes);
-  const { summary, errors, noCacheFileCodes, total } = summarizeUpdateResult(result);
+    console.error('[2/3] 증분 시세 갱신 중(이미 최신인 종목은 네트워크 호출 없이 스킵)...');
+    stage = 'PRICE_QUERY';
+    const result = updatePrices(codes);
+    const { summary, errors, noCacheFileCodes, total } = summarizeUpdateResult(result);
 
-  console.log(
-    `✅ 시세 캐시 증분갱신 완료 — 대상 ${total}건: `
-    + `갱신 ${summary.updated} · 이미최신 ${summary['already-current']} · `
-    + `액면조정감지 ${summary['corporate-action-refetched']} · 신규변동없음 ${summary['no-new-rows']} · `
-    + `빈결과확정 ${summary['empty-confirmed']} · 최초백필필요 ${summary['no-cache-file']} · 오류 ${summary.error}`,
-  );
-  for (const e of errors.slice(0, 20)) collectWarning(`시세 캐시 갱신 실패: ${e}`);
-  if (errors.length > 20) collectWarning(`… 외 오류 ${errors.length - 20}건(로그 확인 필요)`);
-
-  if (noCacheFileCodes.length) {
-    console.error(`[3/3] 최초 백필이 안 된 종목 ${noCacheFileCodes.length}건 발견 — cachePrices()로 자동 백필 시도...`);
-    try {
-      const backfillResult = cachePrices(noCacheFileCodes, BACKFILL_START_DATE);
-      console.log(`  백필 결과: ${JSON.stringify(backfillResult.summary ?? backfillResult)}`);
-      if (backfillResult.summary?.error) {
-        collectWarning(`시세 캐시 최초 백필 ${noCacheFileCodes.length}건 중 오류 ${backfillResult.summary.error}건 발생`);
-      }
-    } catch (e) {
-      console.error(`시세 캐시 최초 백필 실패(${noCacheFileCodes.length}종목) —`, e.message);
-      collectWarning(`시세 캐시 최초 백필 실패(${noCacheFileCodes.length}종목)`);
+    console.log(
+      `✅ 시세 캐시 증분갱신 완료 — 대상 ${total}건: `
+      + `갱신 ${summary.updated} · 이미최신 ${summary['already-current']} · `
+      + `액면조정감지 ${summary['corporate-action-refetched']} · 신규변동없음 ${summary['no-new-rows']} · `
+      + `빈결과확정 ${summary['empty-confirmed']} · 최초백필필요 ${summary['no-cache-file']} · 오류 ${summary.error}`,
+    );
+    for (const error of errors.slice(0, 20)) {
+      const code = error.split(':', 1)[0];
+      collectWarning(`시세 캐시 갱신 실패: ${code}`, {
+        warningCode: 'BREAKOUT_PRICE_QUERY_FAILED', subjectKey: `ticker:${code}`,
+        kind: 'data-quality', severity: 'medium',
+      });
     }
-  } else {
-    console.error('[3/3] 최초 백필 필요 종목 없음 — 스킵');
-  }
+    if (errors.length > 20) collectWarning(`… 외 오류 ${errors.length - 20}건(로그 확인 필요)`, {
+      warningCode: 'BREAKOUT_PRICE_QUERY_FAILED', subjectKey: 'ticker:overflow',
+      kind: 'data-quality', severity: 'medium',
+    });
 
-  await flushWarnings(JOB_NAME);
+    if (noCacheFileCodes.length) {
+      stage = 'CACHE_BACKFILL';
+      console.error(`[3/3] 최초 백필이 안 된 종목 ${noCacheFileCodes.length}건 발견 — cachePrices()로 자동 백필 시도...`);
+      try {
+        const backfillResult = cachePrices(noCacheFileCodes, BACKFILL_START_DATE);
+        console.log(`  백필 결과: ${JSON.stringify(backfillResult.summary ?? backfillResult)}`);
+        if (backfillResult.summary?.error) {
+          collectWarning(`시세 캐시 최초 백필 ${noCacheFileCodes.length}건 중 오류 ${backfillResult.summary.error}건 발생`, {
+            warningCode: 'BREAKOUT_CACHE_WRITE_FAILED', subjectKey: 'backfill',
+            kind: 'data-quality', severity: 'medium',
+          });
+        }
+      } catch (e) {
+        console.error(`시세 캐시 최초 백필 실패(${noCacheFileCodes.length}종목) —`, e.message);
+        collectWarning(`시세 캐시 최초 백필 실패(${noCacheFileCodes.length}종목)`, {
+          warningCode: 'BREAKOUT_CACHE_WRITE_FAILED', subjectKey: 'backfill',
+          kind: 'data-quality', severity: 'medium',
+        });
+      }
+    } else {
+      console.error('[3/3] 최초 백필 필요 종목 없음 — 스킵');
+    }
+
+    await flushWarnings(JOB_NAME);
+  } catch (error) {
+    error.warningStage = stage;
+    throw error;
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(async (e) => {
     console.error('\n❌ update-breakout-price-cache 오류:', e.message);
-    collectWarning('잡 실행 중단');
+    const code = {
+      CANDIDATE_POOL: 'BREAKOUT_CANDIDATE_POOL_FAILED',
+      PRICE_QUERY: 'BREAKOUT_PRICE_QUERY_FAILED',
+      CACHE_BACKFILL: 'BREAKOUT_CACHE_WRITE_FAILED',
+    }[e.warningStage] ?? 'BREAKOUT_CACHE_JOB_FAILED';
+    collectWarning('잡 실행 중단', { warningCode: code, subjectKey: 'job',
+      kind: 'operational', severity: 'high' });
     await flushWarnings(JOB_NAME).catch(() => {});
     process.exit(1);
   });

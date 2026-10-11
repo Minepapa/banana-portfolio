@@ -89,6 +89,7 @@ export const SCHEDULE = [
   { day: '평일', time: '16:15', dept: '플루토스 Plutus', what: '당일 체결 내역 보고', conditional: '체결 있을 때만', script: 'daily-execution-report.mjs' },
   { day: '평일', time: '16:30', dept: '플루토스 Plutus', what: '리밸런싱·거시 점검', conditional: '이상 있을 때만', script: 'daily-asset-allocation-check.mjs' },
   { day: '일요일', time: '07:00', dept: '플루토스 Plutus', what: '주간 위험 재검토', script: 'themis-risk-review.mjs' },
+  { day: '일요일', time: '07:20', dept: '제우스 Zeus', what: '경고 주간 검토(이상 있을 때만)', conditional: '이상 있을 때만', script: 'weekly-warning-review.mjs' },
   { day: '일요일', time: '07:30', dept: '클리오 Clio', what: '므네모시네 주간 건강검진 — 구조·데이터 정합성·미완료 작업', conditional: '이상 있을 때만', script: 'weekly-vault-health-check.mjs' },
   { day: '일요일', time: '08:00', dept: '플루토스 Plutus', what: '주간 리포트', script: 'weekly-report.mjs' },
   { day: '월요일', time: '07:10', dept: '플루토스 Plutus', what: 'ISA 3년 만기 감시', conditional: '만기 도달 임박 시에만', script: 'isa-maturity-check.mjs' },

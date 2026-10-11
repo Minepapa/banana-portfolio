@@ -6,8 +6,9 @@ import { buildExecutionModeState, MODE_LIVE, MODE_SHADOW } from '../lib/shadow-m
 import { buildProposalModeState, MODE_ALLOWED, MODE_BLOCKED } from '../lib/proposal-mode.mjs';
 
 test('SCHEDULE: 주기적 보고와 정기 보호주문 대조가 포함되고 이벤트기반은 제외된다', () => {
-  assert.equal(SCHEDULE.length, 13); // 클리오 Inbox 계획(매일 04:30) 추가
+  assert.equal(SCHEDULE.length, 14); // 경고 주간 검토(일요일 07:20) 추가
   assert.ok(SCHEDULE.some((s) => s.script === 'reconcile-breakout-protection.mjs'));
+  assert.ok(SCHEDULE.some((s) => s.script === 'weekly-warning-review.mjs' && s.time === '07:20'));
 });
 
 test('buildWeeklyScheduleText: 제목과 주기 일정 부서·시각이 본문에 포함된다', () => {
@@ -19,6 +20,7 @@ test('buildWeeklyScheduleText: 제목과 주기 일정 부서·시각이 본문�
   assert.match(text, /평일 16:15 \[플루토스 Plutus\]/);
   assert.match(text, /평일 16:30 \[플루토스 Plutus\]/);
   assert.match(text, /일요일 07:00 \[플루토스 Plutus\]/);
+  assert.match(text, /일요일 07:20 \[제우스 Zeus\]/);
   assert.match(text, /일요일 07:30 \[클리오 Clio\]/);
   assert.match(text, /일요일 08:00 \[플루토스 Plutus\]/);
   assert.match(text, /월요일 07:10 \[플루토스 Plutus\]/);
