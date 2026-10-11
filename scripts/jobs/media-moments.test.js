@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { groupMoments, describeMoment, runMediaMoments } from './media-moments.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
+import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 
 const gps = { lat: 0, lon: 0 };
@@ -51,7 +52,7 @@ test('동선이 GPS와 결제보다 우선하고 등록 장소가 지오코더�
     routeForDay: async () => [{ kind: 'stay', startAt: time('09:00'), endAt: time('11:00'),
       label: '미등록 장소(dry-run)' }], places: [] });
   assert.equal(unknown.place, null);
-  assert.equal(unknown.summary, '미등록 장소(dry-run)');
+  assert.equal(unknown.summary, '아침');
   const registered = await describeMoment(records, { root: '/unused', dryRun: false,
     routePoints: () => [], paymentsForDay: () => [{ at: time('10:00'), merchant: '가상 상점' }],
     places: [{ name: '등록 장소', lat: 0, lon: 0 }], geocode: async () => { throw new Error('지오코더 호출'); } });
@@ -60,6 +61,127 @@ test('동선이 GPS와 결제보다 우선하고 등록 장소가 지오코더�
   const payment = await describeMoment([{ ...records[0], gps: undefined }], { root: '/unused', dryRun: true,
     routePoints: () => [], paymentsForDay: () => [{ at: time('10:00'), merchant: '가상 상점' }], places: [] });
   assert.equal(payment.source, 'payment');
+});
+
+test('미등록 주소는 짧은 제목으로 쓰고 전체 주소를 분리한다', async (t) => {
+  const { root, options } = fixture(t, [item('a', time('10:00'))]);
+  const address = '서울특별시 강서구 공항대로 165';
+  await runMediaMoments({ ...options, routePoints: () => [{ tst: 1 }],
+    routeForDay: async () => [{ kind: 'stay', startAt: time('09:00'), endAt: time('11:00'),
+      label: `미등록: ${address}`, address }] });
+  const state = JSON.parse(readFileSync(join(root, VAULT_REL.mediaMomentsState), 'utf8'));
+  const note = readFileSync(join(root, state.a.notePath), 'utf8');
+  assert.match(state.a.notePath, /강서구 공항대로 일대 순간\.md$/);
+  assert.doesNotMatch(note, /미등록/);
+  assert.match(note, /place: "서울특별시 강서구 공항대로 165"/);
+  assert.match(note, /address: "서울특별시 강서구 공항대로 165"/);
+  assert.match(note, /- 장소·활동: 강서구 공항대로 일대\n- 주소: 서울특별시 강서구 공항대로 165/);
+});
+
+test('동선 장소·활동과 GPS 주소를 본문과 머리말에 나누어 쓴다', async (t) => {
+  const { root, options } = fixture(t, [item('a', time('10:00'))]);
+  await runMediaMoments({ ...options, routePoints: () => [{ tst: 1 }],
+    routeForDay: async () => [{ kind: 'stay', startAt: time('09:00'), endAt: time('11:00'),
+      label: '이집트경양식 본점', placeName: '이집트경양식 본점', activity: '식사',
+      address: '가상시 가상구 가상로 1' }] });
+  const state = JSON.parse(readFileSync(join(root, VAULT_REL.mediaMomentsState), 'utf8'));
+  const note = readFileSync(join(root, state.a.notePath), 'utf8');
+  assert.match(note, /place: "이집트경양식 본점"/);
+  assert.match(note, /address: "가상시 가상구 가상로 1"/);
+  assert.match(note, /- 장소·활동: 이집트경양식 본점 · 식사\n- 주소: 가상시 가상구 가상로 1/);
+  assert.match(note, /created: "2030-01-03"\nmodified: "2030-01-03"/);
+  assert.match(note, /startAt: "2030-01-02T10:00:00\+09:00"/);
+});
+
+test('GPS 지오코더 건물명과 주소를 분리한다', async (t) => {
+  const { root, options } = fixture(t, [item('a', time('10:00'))]);
+  await runMediaMoments({ ...options, geocode: Object.assign(async () => ({ buildingName: '가상 식당',
+    address: '가상시 가상구 가상로 1' }), { flush: async () => {} }) });
+  const state = JSON.parse(readFileSync(join(root, VAULT_REL.mediaMomentsState), 'utf8'));
+  const note = readFileSync(join(root, state.a.notePath), 'utf8');
+  assert.match(note, /place: "가상 식당"/);
+  assert.match(note, /address: "가상시 가상구 가상로 1"/);
+  assert.match(note, /- 장소·활동: 가상 식당\n- 주소: 가상시 가상구 가상로 1/);
+});
+
+test('시각만 있는 순간은 여섯 시간대 이름을 제목에 쓴다', async () => {
+  for (const [hour, period] of [[0, '새벽'], [6, '아침'], [11, '낮'], [14, '오후'],
+    [18, '저녁'], [22, '밤']]) {
+    const record = item(String(hour), time(`${String(hour).padStart(2, '0')}:00`));
+    const result = await describeMoment([record], { root: '/unused', dryRun: true,
+      routePoints: () => [], paymentsForDay: () => [], places: [] });
+    assert.equal(result.summary, period);
+    assert.equal(result.source, 'time');
+  }
+});
+
+test('기존 노트 제목이 바뀌면 메모와 이전 경로를 보존하며 상태 경로를 갱신한다', async (t) => {
+  const { root, options } = fixture(t, [item('a', time('10:00'))]);
+  await runMediaMoments(options);
+  const statePath = join(root, VAULT_REL.mediaMomentsState);
+  const oldRel = JSON.parse(readFileSync(statePath, 'utf8')).a.notePath;
+  writeFileSync(join(root, oldRel), `${readFileSync(join(root, oldRel), 'utf8')}오너 메모\n`);
+  const named = { ...options, now: '2030-01-04T00:00:00.000Z', routePoints: () => [{ tst: 1 }],
+    routeForDay: async () => [{ kind: 'stay', startAt: time('09:00'), endAt: time('11:00'),
+      label: '가상 식당', placeName: '가상 식당', activity: '식사' }] };
+  assert.equal((await runMediaMoments(named)).updated, 1);
+  const newRel = JSON.parse(readFileSync(statePath, 'utf8')).a.notePath;
+  assert.notEqual(newRel, oldRel);
+  assert.equal(existsSync(join(root, oldRel)), false);
+  const note = readFileSync(join(root, newRel), 'utf8');
+  assert.match(note, /오너 메모/);
+  assert.match(note, /created: "2030-01-03"\nmodified: "2030-01-04"/);
+  assert.deepEqual(parseFrontmatter(note).movedFrom, [oldRel]);
+  assert.equal((await runMediaMoments(named)).skipped, 1);
+});
+
+test('노트 이동 뒤 상태 쓰기가 중단돼도 다음 실행에서 새 경로를 찾는다', async (t) => {
+  const { root, options } = fixture(t, [item('a', time('10:00'))]);
+  await runMediaMoments(options);
+  const statePath = join(root, VAULT_REL.mediaMomentsState);
+  const oldRel = JSON.parse(readFileSync(statePath, 'utf8')).a.notePath;
+  const named = { ...options, routePoints: () => [{ tst: 1 }],
+    routeForDay: async () => [{ kind: 'stay', startAt: time('09:00'), endAt: time('11:00'),
+      label: '가상 식당', placeName: '가상 식당' }] };
+  await assert.rejects(runMediaMoments({ ...named, write: (path, content) => {
+    if (path === statePath) throw new Error('상태 쓰기 중단');
+    writeAtomic(path, content);
+  } }), /상태 쓰기 중단/);
+  assert.equal(existsSync(join(root, oldRel)), false);
+  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).a.notePath, oldRel);
+  assert.equal((await runMediaMoments(named)).skipped, 1);
+  const newRel = JSON.parse(readFileSync(statePath, 'utf8')).a.notePath;
+  assert.notEqual(newRel, oldRel);
+  assert.deepEqual(parseFrontmatter(readFileSync(join(root, newRel), 'utf8')).movedFrom, [oldRel]);
+});
+
+test('파일명 이동 직후 노트 쓰기가 중단돼도 이전 경로를 복구한다', async (t) => {
+  const { root, options } = fixture(t, [item('a', time('10:00'))]);
+  await runMediaMoments(options);
+  const statePath = join(root, VAULT_REL.mediaMomentsState);
+  const oldRel = JSON.parse(readFileSync(statePath, 'utf8')).a.notePath;
+  const named = { ...options, routePoints: () => [{ tst: 1 }],
+    routeForDay: async () => [{ kind: 'stay', startAt: time('09:00'), endAt: time('11:00'),
+      label: '가상 식당', placeName: '가상 식당' }] };
+  await assert.rejects(runMediaMoments({ ...named, write: (path, content) => {
+    if (path !== statePath) throw new Error('노트 쓰기 중단');
+    writeAtomic(path, content);
+  } }), /노트 쓰기 중단/);
+  assert.equal(existsSync(join(root, oldRel)), false);
+  assert.equal((await runMediaMoments(named)).updated, 1);
+  const newRel = JSON.parse(readFileSync(statePath, 'utf8')).a.notePath;
+  assert.deepEqual(parseFrontmatter(readFileSync(join(root, newRel), 'utf8')).movedFrom, [oldRel]);
+});
+
+test('기존 ISO 생성일을 날짜로 보정한다', async (t) => {
+  const { root, options } = fixture(t, [item('a', time('10:00'))]);
+  await runMediaMoments(options);
+  const state = JSON.parse(readFileSync(join(root, VAULT_REL.mediaMomentsState), 'utf8'));
+  const path = join(root, state.a.notePath);
+  writeFileSync(path, readFileSync(path, 'utf8').replace('created: "2030-01-03"',
+    'created: "2030-01-03T00:00:00.000Z"'));
+  assert.equal((await runMediaMoments(options)).updated, 1);
+  assert.equal(parseFrontmatter(readFileSync(path, 'utf8')).created, '2030-01-03');
 });
 
 test('제목 충돌, 메모 보존, 이어 붙기, 멱등을 확인한다', async (t) => {

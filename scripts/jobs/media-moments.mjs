@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Archive 색인에서 Camera 순간 노트를 만든다. 실행당 각 노트는 한 번만 원자적으로 쓴다.
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
@@ -22,6 +22,22 @@ const day = (time) => kst(time).slice(0, 10);
 const clock = (time) => kst(time).slice(11, 16);
 const coordinate = (gps) => gps && Number.isFinite(gps.lat) && Number.isFinite(gps.lon) ? gps : null;
 const clean = (text) => String(text || '').replace(/[\\/:*?"<>|\r\n#^\[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 70);
+const timePeriod = (time) => {
+  const hour = Number(clock(time).slice(0, 2));
+  return ['새벽', '아침', '낮', '오후', '저녁', '밤'][
+    hour < 6 ? 0 : hour < 11 ? 1 : hour < 14 ? 2 : hour < 18 ? 3 : hour < 22 ? 4 : 5];
+};
+const addressLabel = (address) => {
+  const parts = clean(address).split(' ');
+  const district = parts.findIndex((part) => /[시군구]$/.test(part) && !/^(?:서울|부산|대구|인천|광주|대전|울산|세종)(?:특별시|광역시|특별자치시)?$/.test(part));
+  const area = parts.slice(district + 1).find((part) => /(?:동|읍|면|로|길)$/.test(part));
+  return clean([district >= 0 ? parts[district] : null, area].filter(Boolean).join(' ')) || clean(address);
+};
+const titlePlace = (place, address) => address && place === address ? `${addressLabel(address)} 일대` : place;
+const cleanRouteLabel = (label) => {
+  const value = String(label || '').replace(/^미등록:\s*/, '');
+  return value.startsWith('미등록 장소') ? '' : value;
+};
 
 export function groupMoments(records) {
   const sorted = records.filter((record) => record.kind === 'Camera' && typeof record.id === 'string'
@@ -82,11 +98,17 @@ export async function describeMoment(records, { root, dryRun, geocode, routeForD
     const route = await routeForDay(date, { root, dryRun, geocode, points: routePoints(date, root),
       payments: paymentsForDay(date, root) });
     const stay = overlapping(route, first, last);
-    if (stay) return { place: stay.placeName || (stay.autoNamed ? stay.label : stay.address) || null,
-      summary: clean([stay.label, stay.activity].filter(Boolean).join(' · ')), source: 'route' };
+    if (stay) {
+      const address = stay.address || null;
+      const place = stay.placeName || (stay.autoNamed ? cleanRouteLabel(stay.label) : null) || address;
+      const label = titlePlace(cleanRouteLabel(stay.label) || place, address);
+      return { place: place || null, address,
+        summary: clean([label, stay.activity].filter(Boolean).join(' · ')) || timePeriod(first), source: 'route' };
+    }
   }
   const gps = records.map((record) => coordinate(record.gps)).find(Boolean);
   let place = null;
+  let address = null;
   let source = null;
   if (gps) {
     const registered = places.filter((entry) => haversineM(entry, gps) <= (entry.radius ?? 150))
@@ -94,17 +116,19 @@ export async function describeMoment(records, { root, dryRun, geocode, routeForD
     if (registered) { place = registered.name; source = 'gps'; }
     else if (!dryRun) {
       const result = await geocode(gps.lat, gps.lon);
-      place = result?.buildingName || result?.address || null;
+      address = result?.address || null;
+      place = result?.buildingName || address;
       if (place) source = 'gps';
     }
   }
   const payments = dates.flatMap((date) => paymentsForDay(date, root));
   const payment = payments.find((entry) => Date.parse(entry.at) >= first && Date.parse(entry.at) <= last);
   const activity = clean(payment?.merchant);
-  return { place, summary: clean([place, activity].filter(Boolean).join(' · ')) || `${clock(first).replace(':', '')}`, source: source || (activity ? 'payment' : 'time') };
+  return { place, address, summary: clean([titlePlace(place, address), activity].filter(Boolean).join(' · '))
+    || timePeriod(first), source: source || (activity ? 'payment' : 'time') };
 }
 
-function render(records, description, existing, now) {
+function render(records, description, existing, now, movedFrom = null) {
   const first = at(records[0]);
   const last = at(records.at(-1));
   const prior = existing?.match(new RegExp(`${START}([\\s\\S]*?)${END}`));
@@ -116,11 +140,11 @@ function render(records, description, existing, now) {
   if (existing && (frontmatterEnd == null || frontmatterEnd > existing.indexOf(START))) throw new Error('기존 노트 머리말 오류');
   const before = existing ? existing.slice(frontmatterEnd, existing.indexOf(START)) : '';
   const owner = existing ? existing.slice(existing.indexOf(END) + END.length) : '\n\n## 오너 메모\n\n';
-  const created = previousFields.created || now;
+  const created = String(previousFields.created || now).slice(0, 10);
   const fields = {
     ...previousFields,
     type: 'media', category: `[[${VAULT_REL.homeDir}/100 나]]`, description: `${day(first)} ${description.summary} 순간`,
-    sensitivity: '개인', created, modified: now, occurred: records[0].capturedAt,
+    sensitivity: '개인', created, modified: now.slice(0, 10), occurred: records[0].capturedAt,
     origin: `media:${records[0].archivePath}`, mediaCount: records.length,
     momentId: records[0].id,
     mediaIds: records.map((record) => record.id), startAt: records[0].capturedAt,
@@ -128,9 +152,14 @@ function render(records, description, existing, now) {
   };
   if (description.place) fields.place = description.place;
   else delete fields.place;
+  if (description.address) fields.address = description.address;
+  else delete fields.address;
+  if (movedFrom) fields.movedFrom = [...new Set([
+    ...(Array.isArray(previousFields.movedFrom) ? previousFields.movedFrom
+      : previousFields.movedFrom ? [previousFields.movedFrom] : []), movedFrom])];
   const frontmatter = buildFrontmatter(fields);
   const lines = records.map((record) => `- ${VIDEO.has(extname(record.archivePath).toLowerCase()) ? '영상' : '사진'}: ${record.archivePath}`);
-  const generated = `${START}\n# ${day(first)} ${description.summary} 순간\n\n- 시간: ${clock(first)}–${clock(last)}\n- 장소·활동: ${description.place || description.summary}\n- 정보 출처: ${description.source}\n\n## 원본\n\n${lines.join('\n')}\n${END}`;
+  const generated = `${START}\n# ${day(first)} ${description.summary} 순간\n\n- 시간: ${clock(first)}–${clock(last)}\n- 장소·활동: ${description.summary}${description.address ? `\n- 주소: ${description.address}` : ''}\n- 정보 출처: ${description.source}\n\n## 원본\n\n${lines.join('\n')}\n${END}`;
   return `${frontmatter}${before}${generated}${owner}`;
 }
 
@@ -170,29 +199,42 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
     const description = await describeMoment(records, { root, dryRun, geocode, routeForDay: cachedRouteForDay, routePoints,
       paymentsForDay, places: places ?? loadPlaces(root) });
     const date = day(at(records[0]));
-    const base = `${date} ${clean(description.summary) || clock(at(records[0])).replace(':', '')} 순간`;
+    const base = `${date} ${clean(description.summary)} 순간`;
     const directory = `${VAULT_REL.mediaMoments}/${date.slice(0, 4)}`;
-    let rel = state[id]?.notePath;
-    if (!rel) {
+    let oldRel = state[id]?.notePath;
+    let interruptedMoveFrom = null;
+    // 노트 이동 뒤 상태 파일 쓰기가 중단됐으면 momentId로 새 경로를 복구한다.
+    if (oldRel && !existsSync(join(root, oldRel))) {
+      interruptedMoveFrom = oldRel;
+      names.delete(oldRel);
+      oldRel = null;
+    }
+    if (!oldRel) {
       if (!discovered.has(date.slice(0, 4))) discovered.set(date.slice(0, 4), existingNotes(root, date.slice(0, 4)));
-      rel = discovered.get(date.slice(0, 4)).get(id);
+      oldRel = discovered.get(date.slice(0, 4)).get(id);
     }
-    if (!rel) {
-      rel = `${directory}/${base}.md`;
-      if (names.has(rel) || existsSync(join(root, rel))) rel = `${directory}/${base} ${clock(at(records[0])).replace(':', '')}.md`;
-      if (names.has(rel) || existsSync(join(root, rel))) rel = `${directory}/${base} ${id.slice(0, 8)}.md`;
-    }
-    if (!rel.startsWith(`${directory}/`) || rel.includes('..')) throw new Error(`순간 상태 경로 오류: ${id}`);
+    if (oldRel && (!oldRel.startsWith(`${directory}/`) || oldRel.includes('..'))) throw new Error(`순간 상태 경로 오류: ${id}`);
+    const available = (candidate) => candidate === oldRel || (!names.has(candidate)
+      && !visitedPaths.has(candidate) && !existsSync(join(root, candidate)));
+    const candidates = [`${directory}/${base}.md`,
+      `${directory}/${base} ${clock(at(records[0])).replace(':', '')}.md`,
+      `${directory}/${base} ${id.slice(0, 8)}.md`];
+    const rel = candidates.find(available);
+    if (!rel) throw new Error(`순간 노트 파일명 충돌: ${id}`);
     if (visitedPaths.has(rel)) throw new Error(`중복 순간 노트 경로: ${rel}`);
     visitedPaths.add(rel);
     names.add(rel);
     const path = join(root, rel);
-    const existing = existsSync(path) ? readFileSync(path, 'utf8') : null;
-    if (state[id] && existing == null) throw new Error(`기존 순간 노트가 없음: ${rel}`);
-    const next = render(records, description, existing, now);
-    const stable = existing && next.replace(/^modified:.*$/m, '') === existing.replace(/^modified:.*$/m, '');
+    const oldPath = join(root, oldRel || rel);
+    const existing = existsSync(oldPath) ? readFileSync(oldPath, 'utf8') : null;
+    if (state[id] && existing == null) throw new Error(`기존 순간 노트가 없음: ${state[id].notePath}`);
+    const next = render(records, description, existing, now,
+      oldRel && oldRel !== rel ? oldRel : interruptedMoveFrom);
+    const stable = oldRel === rel && existing
+      && next.replace(/^modified:.*$/m, '') === existing.replace(/^modified:.*$/m, '');
     if (stable) {
-      if (!dryRun && (!state[id] || JSON.stringify(state[id].mediaIds) !== JSON.stringify(records.map((record) => record.id)))) {
+      if (!dryRun && (state[id]?.notePath !== rel
+        || JSON.stringify(state[id].mediaIds) !== JSON.stringify(records.map((record) => record.id)))) {
         state[id] = { notePath: rel, mediaIds: records.map((record) => record.id) };
         stateDirty = true;
       }
@@ -202,9 +244,11 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
     if (problems.length) throw new Error(`순간 노트 쓰기 관문: ${problems.join('; ')}`);
     if (!dryRun) {
       mkdirSync(dirname(path), { recursive: true });
-      await withLock(path, () => {
-        const latest = existsSync(path) ? readFileSync(path, 'utf8') : null;
-        if (latest !== existing) throw new Error(`쓰기 전 노트 변경: ${rel}`);
+      await withLock(oldPath, () => {
+        const latest = existsSync(oldPath) ? readFileSync(oldPath, 'utf8') : null;
+        if (latest !== existing) throw new Error(`쓰기 전 노트 변경: ${oldRel || rel}`);
+        if (oldRel && oldRel !== rel && existsSync(path)) throw new Error(`이동 대상 노트가 이미 있음: ${rel}`);
+        if (oldRel && oldRel !== rel) renameSync(oldPath, path);
         write(path, next);
       });
       state[id] = { notePath: rel, mediaIds: records.map((record) => record.id) };
