@@ -5,13 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { VAULT_REL } from './vault-paths.mjs';
-import { readDayPoints, detectStays, matchPlace, loadPlaces, describeStays } from './location-stays.mjs';
+import { readDayPoints, detectStays, haversineM, matchPlace, loadPlaces, describeStays } from './location-stays.mjs';
 import { reverseGeocode, createCachedGeocoder, readKakaoKey } from './kakao-geocode.mjs';
 import { updateCandidates, readCandidates } from './place-candidates.mjs';
 import { computeRoute } from '../jobs/daily-note.mjs';
 
 const fixture = (t) => { const root = mkdtempSync(join(tmpdir(), 'd89-')); t.after(() => rmSync(root, { recursive: true, force: true })); return root; };
 const point = (minutes, lat = 12, lon = 34, acc = 5) => ({ tst: 1_780_000_000 + minutes * 60, lat, lon, acc });
+const kstPoint = (time, lat, lon, acc = 5) => ({ tst: Date.parse(`2026-10-10T${time}+09:00`) / 1000, lat, lon, acc });
 
 test('손상 줄과 낮은 정확도는 제외하고 15분 경계와 긴 공백을 체류로 본다', (t) => {
   const root = fixture(t);
@@ -47,6 +48,71 @@ test('자정 걸친 체류는 요청한 KST 날짜 범위로 자른다', () => {
   const stays = detectStays([{ tst: first, lat: 12, lon: 34 }, { tst: first + 30 * 60, lat: 12, lon: 34 }], { date: '2026-10-09' });
   assert.equal(stays[0].start, '2026-10-08T15:00:00.000Z');
   assert.equal(stays[0].end, '2026-10-08T15:20:00.000Z');
+});
+
+test('실측 픽스처: 2점 군집의 긴 머묾(공연장)을 병합 뒤에도 분리한다', async () => {
+  // 2026-10-10 15:20–20:10 실제 점을 위도 −0.05°·경도 +2.5° 옮긴 익명화 데이터(공개 저장소, 집 구간 제외).
+  // 작은 이동이라 반경 150m 판정은 원본과 같다. 군집이 [15:54,18:27] 2점 → 산책 3점 → 3점으로 쪼개져
+  // 병합 전 분리로는 못 잡던 사례(머문 시간 가중 도입 시 실데이터에서 발견).
+  const points = JSON.parse(readFileSync(new URL('./location-stays.fixture-2026-10-10.json', import.meta.url), 'utf8'));
+  const stays = detectStays(points, { date: '2026-10-10' });
+  const anchor = stays.find((stay) => stay.start === '2026-10-10T06:54:01.000Z');
+  assert.ok(anchor);
+  assert.equal(anchor.end, '2026-10-10T09:27:27.000Z');
+  assert.ok(haversineM(anchor, { lat: 37.42583, lon: 129.12968 }) < 30);
+  const walking = stays.filter((stay) => stay.start === anchor.end);
+  assert.equal(walking.length, 1);
+  assert.equal(walking[0].end, '2026-10-10T10:57:02.000Z');
+  assert.equal('decisionCenter' in walking[0], false);
+  const described = await describeStays(stays, { places: [], geocode: async () => '주입 주소' });
+  assert.equal(described.find((stay) => stay.start === anchor.start).label, '미등록: 주입 주소');
+});
+
+test('같은 등록 장소의 긴 공백 분리는 설명 단계에서 다시 합친다', async () => {
+  const stays = detectStays([point(0), point(120), point(140)], { date: undefined });
+  assert.equal(stays.length, 2);
+  const described = await describeStays(stays, { places: [{ name: '집', lat: 12, lon: 34 }],
+    geocode: async () => { throw new Error('등록 장소 지오코딩 호출'); } });
+  assert.equal(described.length, 1);
+  assert.equal(described[0].pointCount, 3);
+  assert.equal(described[0].dwellMs, stays[0].dwellMs + stays[1].dwellMs);
+  assert.equal('splitBoundary' in described[0], false);
+});
+
+test('군집 좌표와 인접 체류 병합은 점 수가 아닌 시간으로 가중한다', () => {
+  const stays = detectStays([point(0, 0, 0), point(40, 0, 0.001), point(45, 0, 0.001),
+    point(60, 0, 0.01), point(70, 0, 0.0005), point(90, 0, 0.0005)]);
+  assert.equal(stays.length, 1);
+  assert.ok(stays[0].lon < 0.0006);
+  assert.ok(stays[0].dwellMs > 0);
+});
+
+test('군집 밖 먼 다음 점과의 긴 공백은 마지막 점의 체류로 늘리지 않는다', () => {
+  const stays = detectStays([point(0), point(20), point(120, 13, 35)]);
+  assert.equal(stays.length, 1);
+  assert.deepEqual([stays[0].start, stays[0].end],
+    [new Date(point(0).tst * 1000).toISOString(), new Date(point(20).tst * 1000).toISOString()]);
+});
+
+test('가까운 다음 군집이 15분 미만이면 긴 공백의 앵커를 분리하지 않는다', () => {
+  const stays = detectStays([point(0, 0, 0), point(20, 0, 0.001),
+    point(120, 0, 0.002), point(125, 0, 0.002)]);
+  assert.equal(stays.length, 1);
+  assert.equal(stays[0].end, new Date(point(20).tst * 1000).toISOString());
+});
+
+test('자정으로 잘린 뒤 구간이 15분 미만이면 긴 공백을 분리하지 않는다', () => {
+  const date = '2026-10-10';
+  const nextDayPoint = (time, lon) => ({ tst: Date.parse(`2026-10-11T${time}+09:00`) / 1000, lat: 0, lon });
+  const terminal = detectStays([kstPoint('22:00:00', 0, 0), kstPoint('22:20:00', 0, 0.001),
+    kstPoint('23:50:00', 0, 0.002), nextDayPoint('00:10:00', 0.002)], { date });
+  assert.equal(terminal[0].end, '2026-10-10T13:20:00.000Z');
+  assert.equal(terminal.some((stay) => stay.start === '2026-10-10T13:20:00.000Z'), false);
+
+  const withinCluster = detectStays([kstPoint('22:00:00', 0, 0), kstPoint('22:30:00', 0, 0),
+    kstPoint('23:50:00', 0, 0), nextDayPoint('00:05:00', 0)], { date });
+  assert.equal(withinCluster.length, 1);
+  assert.equal(withinCluster[0].end, '2026-10-10T15:00:00.000Z');
 });
 
 test('데일리 계산은 자정 양쪽 날짜 기록을 이어 읽는다', async (t) => {
