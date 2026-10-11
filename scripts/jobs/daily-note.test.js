@@ -7,7 +7,7 @@ import { join } from 'node:path';
 // 임시 볼트에서 돌린다 — 텔레그램은 가짜 발송 함수로만(실제 발송 금지).
 const vault = mkdtempSync(join(tmpdir(), 'daily-note-'));
 process.env.VAULT_PATH = vault;
-const { planActions, processDay, recomputeDailyRoute, recomputeRecentRoutes, routeHashOf, dailyWorkFailed } = await import('./daily-note.mjs');
+const { planActions, processDay, recomputeDailyRoute, recomputeRecentRoutes, routeHashOf, dailyWorkFailed, computeRoute } = await import('./daily-note.mjs');
 const { renderDailyNote, inspectExisting } = await import('../lib/daily-note.mjs');
 const { VAULT_REL } = await import('../lib/vault-paths.mjs');
 const rules = [{ type: 'daily', path: '10_Periodic/Daily/{YYYY}/YYYY-MM-DD.md',
@@ -16,6 +16,37 @@ const rules = [{ type: 'daily', path: '10_Periodic/Daily/{YYYY}/YYYY-MM-DD.md',
   required: { bundle: ['type', 'category', 'description', 'sensitivity', 'created', 'modified'], extra: [] } }];
 
 const at = (iso) => new Date(iso);
+
+test('익명화 픽스처의 마지막 체류 뒤 이동을 시각순으로 렌더하고 dry-run 조회를 막는다', async () => {
+  const points = JSON.parse(readFileSync(new URL('../lib/location-stays.fixture-2026-10-10.json', import.meta.url)));
+  const geocode = new Proxy({}, { get: () => { throw new Error('외부 조회 금지'); } });
+  const route = await computeRoute('2026-10-10', { root: vault, points, payments: [], geocode, dryRun: true,
+    now: new Date('2026-10-11T12:00:00.000Z') });
+  assert.deepEqual(route.map(({ start, end, kind }) => [start, end, kind]), [
+    ['15:54', '18:27', 'stay'], ['18:27', '18:58', 'roam'], ['18:58', '19:57', 'stay'], ['19:57', '20:10', 'move'],
+  ]);
+  assert.match(route.at(-1).label, /^이동 · 차량 약 \d+km$/);
+  const todayRoute = await computeRoute('2026-10-10', { root: vault, points, payments: [], geocode, dryRun: true,
+    now: new Date('2026-10-10T12:00:00.000Z') });
+  assert.equal(todayRoute.at(-1).end, '');
+  assert.equal(todayRoute.at(-1).current, true);
+  assert.equal(todayRoute.at(-2).end, '19:57');
+});
+
+test('이동 중 결제의 가맹점 검색에는 결제 시각 근처 가상 위치 점을 전달한다', async () => {
+  const iso = (minute) => `2026-10-10T01:${minute}:00.000Z`;
+  const point = (minute, lon) => ({ tst: Date.parse(iso(minute)) / 1000, lat: 0, lon, acc: 5 });
+  const points = [point('00', 0), point('20', 0), point('25', 0.03), point('30', 0.06),
+    point('35', 0.09), point('40', 0.12)];
+  points.push({ ...point('00', 0.12), tst: Date.parse('2026-10-10T02:00:00.000Z') / 1000 });
+  const calls = [];
+  const geocode = async () => null;
+  geocode.keyword = async (merchant, lat, lon) => { calls.push({ merchant, lat, lon }); return { category: 'OL7' }; };
+  const route = await computeRoute('2026-10-10', { root: vault, points,
+    payments: [{ at: iso('31'), merchant: '가상주유소' }], geocode, now: new Date('2026-10-11T12:00:00.000Z') });
+  assert.deepEqual(calls, [{ merchant: '가상주유소', lat: 0, lon: 0.06 }]);
+  assert.match(route.find((entry) => entry.kind === 'move').label, /주유: 가상주유소/);
+});
 
 test('planActions: 23:30은 (어제 확정 안 됐으면 확정) + 오늘 초안, 05:00은 어제 확정, 늦은 실행도 꼬이지 않음', () => {
   const none = () => null;

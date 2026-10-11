@@ -11,6 +11,17 @@ export const ROAM_MIN_DISTANCE_M = 200;
 export const ROAM_MAX_GAP_MINUTES = 30;
 // 누적거리만 보면 실내에서 GPS가 20~30m씩 튀는 것도 산책이 된다. 점들이 실제로 퍼진 범위(가장 먼 두 점)를 함께 본다.
 export const ROAM_MIN_EXTENT_M = 100;
+export const MOVE_MAX_ACCURACY_M = 200;
+export const MOVE_SHORT_STRAIGHT_M = 300;
+export const MOVE_SHORT_PATH_M = 500;
+export const MOVE_WALK_MAX_KMH = 7;
+export const MOVE_VEHICLE_MIN_KMH = 20;
+// 실측 차량 지속 속도는 27.4·55.7km/h, 도보는 3.5km/h였다. 정차가 섞인 평균은 차량도 11.5km/h까지 낮아진다.
+export const MOVE_SUSTAINED_VEHICLE_MIN_KMH = 25;
+export const MOVE_WINDOW_MIN_MINUTES = 3;
+export const MOVE_WINDOW_MAX_MINUTES = 10;
+// 실측 GPS 튐은 315km/h까지 나왔다. 직전 채택 점 기준으로 제거해야 거리와 최고 속도 모두 오염되지 않는다.
+export const MOVE_OUTLIER_MAX_KMH = 150;
 const DAY_MS = 86_400_000;
 const dayBounds = (date) => [Date.parse(`${date}T00:00:00+09:00`), Date.parse(`${date}T00:00:00+09:00`) + DAY_MS];
 const validCoordinate = (lat, lon) => Number.isFinite(lat) && Math.abs(lat) <= 90 && Number.isFinite(lon) && Math.abs(lon) <= 180;
@@ -40,8 +51,110 @@ export function haversineM(first, second) {
   return 6_371_000 * 2 * Math.atan2(Math.sqrt(arc), Math.sqrt(1 - arc));
 }
 
+function acceptedMovePoints(points) {
+  const accepted = [];
+  for (const point of points) {
+    const previous = accepted.at(-1);
+    if (previous) {
+      const elapsedHours = (point.tst - previous.tst) / 3600;
+      if (elapsedHours <= 0 || haversineM(previous, point) / 1000 / elapsedHours > MOVE_OUTLIER_MAX_KMH) continue;
+    }
+    accepted.push(point);
+  }
+  return accepted;
+}
+
+function sustainedSpeedKmh(points) {
+  let fastest = null;
+  for (let start = 0; start < points.length; start += 1) {
+    for (let end = start + 1; end < points.length; end += 1) {
+      const minutes = (points[end].tst - points[start].tst) / 60;
+      if (minutes > MOVE_WINDOW_MAX_MINUTES) break;
+      if (minutes < MOVE_WINDOW_MIN_MINUTES) continue;
+      const speed = haversineM(points[start], points[end]) / 1000 / (minutes / 60);
+      fastest = Math.max(fastest ?? 0, speed);
+    }
+  }
+  return fastest;
+}
+
+export function movePaymentCoordinate(move, stays, points, at) {
+  const start = Date.parse(move.start);
+  const end = Date.parse(move.end);
+  const validPoints = [...points].filter((point) => validCoordinate(point.lat, point.lon)
+    && Number.isInteger(point.tst) && (point.acc == null || point.acc <= MOVE_MAX_ACCURACY_M))
+    .sort((first, second) => first.tst - second.tst);
+  const previousStay = stays.filter((stay) => Date.parse(stay.end) <= start).at(-1);
+  const observedOrigin = previousStay && validPoints.filter((point) => point.tst * 1000 >= Date.parse(previousStay.start)
+    && point.tst * 1000 <= start && haversineM(point, previousStay) <= STAY_RADIUS_M).at(-1);
+  // 이전 체류에 원시 점이 없어도 체류 좌표를 기준점으로 삼아 첫 이동 점의 GPS 튐을 거른다.
+  const origin = observedOrigin ?? (previousStay && validCoordinate(previousStay.lat, previousStay.lon)
+    ? { lat: previousStay.lat, lon: previousStay.lon, tst: start / 1000 } : null);
+  const candidates = validPoints.filter((point) => point.tst * 1000 > start && point.tst * 1000 <= end);
+  const nearest = (origin ? acceptedMovePoints([origin, ...candidates]) : [])
+    .filter((point) => point.tst * 1000 > start)
+    .reduce((best, point) => !best || Math.abs(point.tst * 1000 - at) < Math.abs(best.tst * 1000 - at) ? point : best, null);
+  if (nearest) return { lat: nearest.lat, lon: nearest.lon };
+  const surrounding = stays.filter((stay) => Date.parse(stay.end) <= start || Date.parse(stay.start) >= end)
+    .sort((first, second) => Math.min(Math.abs(Date.parse(first.start) - at), Math.abs(Date.parse(first.end) - at))
+      - Math.min(Math.abs(Date.parse(second.start) - at), Math.abs(Date.parse(second.end) - at)))[0];
+  return surrounding ? { lat: surrounding.lat, lon: surrounding.lon } : { lat: move.lat, lon: move.lon };
+}
+
+export function buildMoveSegments(stays, points, { date } = {}) {
+  if (!stays.length) return [];
+  const bounds = date ? dayBounds(date) : [-Infinity, Infinity];
+  const validPoints = [...points].filter((point) => validCoordinate(point.lat, point.lon)
+    && Number.isInteger(point.tst) && (point.acc == null || point.acc <= MOVE_MAX_ACCURACY_M))
+    .sort((first, second) => first.tst - second.tst);
+  const pointAtStay = (stay, last) => {
+    const inside = validPoints.filter((point) => point.tst * 1000 >= Date.parse(stay.start)
+      && point.tst * 1000 <= Date.parse(stay.end) && haversineM(point, stay) <= STAY_RADIUS_M);
+    return last ? inside.at(-1) : inside[0];
+  };
+  const moves = [];
+  for (let index = 0; index < stays.length; index += 1) {
+    const previous = stays[index];
+    const next = stays[index + 1];
+    const start = Math.max(Date.parse(previous.end), bounds[0]);
+    const origin = pointAtStay(previous, true);
+    const nextInsideDay = next && Date.parse(next.start) <= bounds[1];
+    const trailingPoints = nextInsideDay ? [] : validPoints.filter((point) => point.tst * 1000 > start && point.tst * 1000 <= bounds[1]);
+    const acceptedTrailing = !origin ? [] : acceptedMovePoints([origin, ...trailingPoints]).slice(1);
+    const end = Math.min(next ? Date.parse(next.start) : (acceptedTrailing.at(-1)?.tst ?? 0) * 1000, bounds[1]);
+    if (!(end > start)) continue;
+    const between = validPoints.filter((point) => point.tst * 1000 > start && point.tst * 1000 < end);
+    if (!nextInsideDay && !acceptedTrailing.length) continue;
+    if (next && !between.length && previous.registered && next.registered
+      && previous.placeName === next.placeName) continue;
+    // 다음 체류가 내일 시작하면 내일 첫 점을 오늘 이동 거리로 더하지 않는다.
+    const destination = nextInsideDay ? pointAtStay(next, false) : acceptedTrailing.at(-1);
+    const straightM = nextInsideDay ? haversineM(previous, next) : destination ? haversineM(previous, destination) : Infinity;
+    const path = acceptedMovePoints([origin, ...between, destination].filter(Boolean));
+    // 체류 사이 관측점이 없으면 양 끝 좌표만으로 이동 거리·수단을 추정하지 않는다.
+    const hasRoute = next ? path.some((point) => point.tst * 1000 > start && point.tst * 1000 < end)
+      : acceptedTrailing.length > 0;
+    const distanceM = hasRoute && origin && destination && path.length > 1
+      ? path.slice(1).reduce((sum, point, pathIndex) => sum + haversineM(path[pathIndex], point), 0) : null;
+    if (straightM < MOVE_SHORT_STRAIGHT_M && (distanceM == null || distanceM < MOVE_SHORT_PATH_M)) continue;
+    if (!next && distanceM == null) continue;
+    const averageSpeedKmh = distanceM == null ? null : distanceM / 1000 / ((end - start) / 3_600_000);
+    const sustainedSpeed = distanceM == null ? null : sustainedSpeedKmh(path);
+    const speedKmh = sustainedSpeed ?? averageSpeedKmh;
+    const vehicleThreshold = sustainedSpeed == null ? MOVE_VEHICLE_MIN_KMH : MOVE_SUSTAINED_VEHICLE_MIN_KMH;
+    const mode = speedKmh == null ? null : speedKmh < MOVE_WALK_MAX_KMH ? '도보'
+      : speedKmh >= vehicleThreshold ? '차량' : null;
+    const distanceKm = distanceM == null ? null : distanceM / 1000;
+    const distanceText = distanceKm == null ? '' : ` · ${mode ? `${mode} ` : ''}약 ${distanceKm < 1 ? distanceKm.toFixed(1) : Math.round(distanceKm)}km`;
+    moves.push({ kind: 'move', start: new Date(start).toISOString(), end: new Date(end).toISOString(),
+      label: `이동${distanceText}`, lat: origin?.lat ?? previous.lat, lon: origin?.lon ?? previous.lon });
+  }
+  return moves;
+}
+
 export function detectStays(points, { radiusM = STAY_RADIUS_M, minMinutes = STAY_MIN_MINUTES, date } = {}) {
-  const sorted = [...points].filter((point) => validCoordinate(point.lat, point.lon) && Number.isInteger(point.tst))
+  const sorted = [...points].filter((point) => validCoordinate(point.lat, point.lon) && Number.isInteger(point.tst)
+    && (point.acc == null || point.acc <= MOVE_MAX_ACCURACY_M))
     .sort((first, second) => first.tst - second.tst);
   const timedPoints = sorted.map((point, index) => ({ ...point, nextTst: sorted[index + 1]?.tst }));
   const bounds = date ? dayBounds(date) : null;

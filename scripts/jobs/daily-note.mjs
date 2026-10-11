@@ -28,10 +28,10 @@ import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
 import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
 import { listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
-import { readDayPoints, detectStays, loadPlaces, describeStays, haversineM, STAY_RADIUS_M } from '../lib/location-stays.mjs';
+import { readDayPoints, detectStays, loadPlaces, describeStays, buildMoveSegments, movePaymentCoordinate, haversineM, STAY_RADIUS_M } from '../lib/location-stays.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
 import { parseSpendingRecords } from '../lib/spending-parse.mjs';
-import { attachRouteActivities } from '../lib/route-activities.mjs';
+import { attachRouteActivities, moveStopovers } from '../lib/route-activities.mjs';
 import { updateCandidates } from '../lib/place-candidates.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import {
@@ -128,12 +128,22 @@ export function readRoutePayments(date, root = VAULT_PATHS.root) {
 export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = createCachedGeocoder({ root }), dryRun = false,
   points = readRoutePoints(date, root), payments = readRoutePayments(date, root), events = [], now = new Date() } = {}) {
   let stays;
+  let moves;
   try {
     stays = await describeStays(detectStays(points, { date }), { places: loadPlaces(root),
       geocode: dryRun ? async () => ({ reason: 'dry-run' }) : geocode,
       region: dryRun ? async () => null : geocode.region?.bind(geocode) });
-    stays = await attachRouteActivities(stays, { payments, events,
+    moves = buildMoveSegments(stays, points, { date });
+    const attachedPayments = new Set();
+    stays = await attachRouteActivities(stays, { payments, events, moves, attachedPayments,
       keyword: dryRun ? async () => null : geocode.keyword?.bind(geocode) });
+    for (const move of moves) {
+      move.label += await moveStopovers(Date.parse(move.start), Date.parse(move.end), payments,
+        dryRun ? async () => null : async (merchant, payment) => {
+          const coordinate = movePaymentCoordinate(move, stays, points, Date.parse(payment.at));
+          return geocode.keyword?.call(geocode, merchant, coordinate.lat, coordinate.lon);
+        }, attachedPayments);
+    }
   }
   finally { if (!dryRun) await geocode.flush?.(); }
   const degraded = !dryRun && geocode.failureCount?.() > 0;
@@ -144,12 +154,15 @@ export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = cr
     .sort((first, second) => first.tst - second.tst)[0];
   const isToday = date === new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
   const lastStay = stays.at(-1);
-  const route = stays.map((stay) => {
-    const isLast = stay === lastStay;
-    const nextDayConfirmsPlace = firstNextDayPoint && haversineM(stay, firstNextDayPoint) <= STAY_RADIUS_M;
-    const end = isLast && isToday ? '' : isLast && (!firstNextDayPoint || nextDayConfirmsPlace) ? '24:00' : routeTime(stay.end, date);
-    return { ...stay, current: isLast && isToday, start: routeTime(stay.start, date), end,
-      startAt: stay.start, endAt: stay.end };
+  const ordered = [...stays, ...moves].sort((first, second) => Date.parse(first.start) - Date.parse(second.start)
+    || (first.kind === 'move' ? 1 : -1));
+  const route = ordered.map((entry) => {
+    const isLast = entry === ordered.at(-1);
+    const nextDayConfirmsPlace = entry === lastStay && firstNextDayPoint && haversineM(entry, firstNextDayPoint) <= STAY_RADIUS_M;
+    const end = isLast && isToday ? '' : isLast && entry === lastStay && (!firstNextDayPoint || nextDayConfirmsPlace)
+      ? '24:00' : routeTime(entry.end, date);
+    return { ...entry, current: isLast && isToday, start: routeTime(entry.start, date), end,
+      startAt: entry.start, endAt: entry.end };
   });
   // 카카오 조회가 실패한 결과는 지문을 갱신하지 않게 표시한다(다음 실행에서 다시 계산).
   if (degraded) Object.defineProperty(route, 'degraded', { value: true });
@@ -243,7 +256,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   }
   let candidatesFailed = false;
   if (mode === 'finalize' && statusOf(inspectExisting(note).prev) === '확정' && Array.isArray(route)) {
-    try { deps.updateCandidates({ date, stays: route.filter((stay) => stay.kind !== 'roam').map((stay) => ({ ...stay, start: stay.startAt, end: stay.endAt })),
+    try { deps.updateCandidates({ date, stays: route.filter((stay) => stay.kind !== 'roam' && stay.kind !== 'move').map((stay) => ({ ...stay, start: stay.startAt, end: stay.endAt })),
       events: Array.isArray(events) ? events : [], root: VAULT_PATHS.root }); }
     catch (error) { candidatesFailed = true; console.error('  ❌ 장소 후보 갱신 실패:', String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
   }

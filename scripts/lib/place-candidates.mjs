@@ -29,7 +29,7 @@ export function readyCandidate(candidate, date) {
 }
 export function updateCandidates({ date, stays, events = [], root, dryRun = false }) {
   const candidates = readCandidates(root);
-  for (const stay of stays.filter((item) => !item.registered && !item.autoNamed)) {
+  for (const stay of stays.filter((item) => item.kind !== 'move' && !item.registered && !item.autoNamed)) {
     let candidate = candidates.find((item) => haversineM(item, stay) <= STAY_RADIUS_M);
     if (candidate && candidate.status !== '관찰') continue;
     if (!candidate) {
