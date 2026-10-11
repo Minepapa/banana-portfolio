@@ -676,15 +676,16 @@ export function parseBalanceResponse(json) {
 // examples_llm/domestic_stock/inquire_daily_ccld/inquire_daily_ccld.py — 실전+3개월
 // 이내 조회 tr_id=TTTC0081R(document-specialist 조사, 2026-08-12). 3개월 이전 조회용
 // tr_id(CTSC9215R)는 이 프로젝트 쓰임(주문 직후 당일 체결 확인)과 무관해 미구현 — 필요
-// 해지면 그때 추가(과설계 방지). ODNO로 특정 주문 하나만 좁혀 조회 가능해 페이지네이션
-// (CTX_AREA_FK100/NK100)은 항상 빈 값으로 첫 페이지만 쓴다(응답이 1건뿐이라 불필요).
+// 해지면 그때 추가(과설계 방지). ODNO로 조회 범위를 좁히고 페이지네이션
+// (CTX_AREA_FK100/NK100)은 빈 값으로 첫 페이지만 쓴다. ALL 조회에서 SOR 분할
+// 체결 등으로 같은 주문번호가 여러 행이면 파서는 추정하지 않고 null을 반환한다.
 // sinceDaysBack(2026-09-29 3차 코드리뷰 HIGH 지적으로 신설, 기본 0=기존 동작
 // 그대로 하루만 조회) — reconcile-breakout-protection.mjs처럼 "이 주문을 정확히
 // 언제 냈는지"를 별도로 추적하지 않는 호출측은, 시세캐시 지연이나 이 잡 자체의
 // 실행 공백(맥미니 슬립 등)이 겹치면 진짜 체결일과 어긋난 하루만 조회해 영원히
 // 그 주문을 못 찾을 수 있다(예: 2017년 추석 임시공휴일 포함 10거래일 연휴처럼
-// 며칠씩 벌어지는 경우). ODNO로 이미 주문 하나로 좁혀 조회하므로(위 주석) 창을
-// 넓혀도 응답은 여전히 그 주문 하나뿐 — 여러 날짜를 걸치게 해도 안전하다.
+// 며칠씩 벌어지는 경우). ODNO로 조회를 좁히되, 조회창을 넓혀 같은 주문번호가
+// 여러 행으로 나오면 체결 상태를 추정하지 않고 null을 반환한다.
 export async function checkOrderFill({ token, appkey, appsecret, cano, acntPrdtCd, odno, now = new Date(), sinceDaysBack = 0, fetchImpl, retries, retryDelayMs }) {
   // KST 기준으로 날짜를 뽑는다(getFullYear/getMonth/getDate 로컬시각 방식이 아님) —
   // 이 API는 KRX 거래일 기준 조회라 서버가 KST 아닌 타임존에서 돌면 로컬시각
@@ -698,7 +699,7 @@ export async function checkOrderFill({ token, appkey, appsecret, cano, acntPrdtC
     CANO: cano, ACNT_PRDT_CD: acntPrdtCd,
     INQR_STRT_DT: start, INQR_END_DT: end,
     SLL_BUY_DVSN_CD: '00', CCLD_DVSN: '00', INQR_DVSN: '00', INQR_DVSN_1: '', INQR_DVSN_3: '00',
-    ODNO: odno, EXCG_ID_DVSN_CD: 'KRX',
+    ODNO: odno, EXCG_ID_DVSN_CD: 'ALL',
     CTX_AREA_FK100: '', CTX_AREA_NK100: '',
   });
   const url = `${BASE_URL}/uapi/domestic-stock/v1/trading/inquire-daily-ccld?${params}`;
@@ -731,6 +732,7 @@ export function parseOrderFillResponse(json, odno) {
   // (퀀트 계좌 14일 구간 16행)에서 odno 중복은 없고 각 행에 ord_dt(YYYYMMDD)가
   // 왔지만, 전역 유일성의 증명은 아니다. 2건 이상 매칭되면 어느 주문인지
   // 추정하지 않고 null을 반환한다(호출측은 "확인 불가"로 취급).
+  if (matches.length > 1) console.error(`[KIS 체결조회] 동일 주문번호 복수 행(${matches.length}건): 체결 상태 확인 불가`);
   if (matches.length !== 1) return null;
   const [row] = matches;
   if (process.env.DEBUG_KIS_FILL_FIELDS === '1' && !loggedKisFillFields) {
@@ -742,6 +744,7 @@ export function parseOrderFillResponse(json, odno) {
   const filledQty = num(row.tot_ccld_qty);
   return {
     orderNo: String(row.odno ?? '').trim(),
+    exchange: String(row.excg_id_dvsn_cd ?? '').trim() || null,
     orderQty,
     filledQty,
     remainingQty: num(row.rmn_qty),

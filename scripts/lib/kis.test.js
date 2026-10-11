@@ -873,6 +873,7 @@ test('[핵심] placeKrOrder: 매수는 TTTC0012U tr_id + ORD_DVSN=00(지정가)�
   assert.equal(capturedBody.ORD_QTY, '10');
   assert.equal(capturedBody.ORD_UNPR, '71000');
   assert.equal(capturedBody.PDNO, '005930');
+  assert.equal(capturedBody.EXCG_ID_DVSN_CD, 'KRX');
   assert.equal(capturedBody.SLL_TYPE, undefined); // 매수엔 SLL_TYPE 없음
 });
 
@@ -905,6 +906,7 @@ test('[핵심] placeKrOrder: conditionPrice 전달 시 ORD_DVSN=22(스톱지정�
     code: '005930', side: '매도', quantity: 10, price: 65000, conditionPrice: 65000, fetchImpl,
   });
   assert.equal(capturedBody.ORD_DVSN, '22');
+  assert.equal(capturedBody.EXCG_ID_DVSN_CD, 'KRX');
   assert.equal(capturedBody.CNDT_PRIC, '65000');
   assert.equal(capturedBody.ORD_UNPR, '65000');
 });
@@ -1019,6 +1021,7 @@ test('[핵심] reviseKrOrder: 정정 시 TTTC0013U tr_id + RVSE_CNCL_DVSN_CD=01 
   assert.equal(capturedBody.CNDT_PRIC, '68000');
   assert.equal(capturedBody.QTY_ALL_ORD_YN, 'Y');
   assert.equal(capturedBody.ORD_DVSN, '22');
+  assert.equal(capturedBody.EXCG_ID_DVSN_CD, 'KRX');
 });
 
 test('reviseKrOrder: 취소 시 RVSE_CNCL_DVSN_CD=02', async () => {
@@ -1033,6 +1036,7 @@ test('reviseKrOrder: 취소 시 RVSE_CNCL_DVSN_CD=02', async () => {
     orgNo: '06010', orderNo: '1234', action: '취소', quantity: 10, price: 68000, fetchImpl,
   });
   assert.equal(capturedBody.RVSE_CNCL_DVSN_CD, '02');
+  assert.equal(capturedBody.EXCG_ID_DVSN_CD, 'KRX');
 });
 
 // [핵심] 2026-09-19 — 장후시간외/시장가 취소시도(place-breakout-fallback-entry.mjs)
@@ -1236,6 +1240,18 @@ test('placeKrOrder: 레이트리밋(EGW00201)이면 재시도 후 성공(GET 조
 });
 
 // ── 주식일별주문체결조회 — 체결확인 갭 대응(2026-08-12) ────────────────────
+test('parseOrderFillResponse: SOR·KRX 행의 거래소 구분을 결과에 보존', () => {
+  for (const exchange of ['SOR', 'KRX']) {
+    const json = { rt_cd: '0', output1: [{
+      odno: '424242', excg_id_dvsn_cd: exchange,
+      ord_qty: '1', tot_ccld_qty: '1', rmn_qty: '0', avg_prvs: '1000', cncl_yn: 'N',
+    }] };
+    const result = parseOrderFillResponse(json, '424242');
+    assert.equal(result.exchange, exchange);
+    assert.equal(result.fullyFilled, true);
+  }
+});
+
 test('parseOrderFillResponse: 완전체결(주문수량=체결수량)이면 fullyFilled=true', () => {
   const json = { rt_cd: '0', output1: [{ odno: '6693100', ord_qty: '1', tot_ccld_qty: '1', rmn_qty: '0', avg_prvs: '87500', cncl_yn: 'N' }] };
   const r = parseOrderFillResponse(json, '6693100');
@@ -1412,6 +1428,7 @@ test('[핵심] checkOrderFill: TTTC0081R tr_id + ODNO·당일 날짜로 요청',
   assert.match(capturedUrl, /ODNO=6693100/);
   assert.match(capturedUrl, /INQR_STRT_DT=20260812/);
   assert.match(capturedUrl, /INQR_END_DT=20260812/);
+  assert.equal(new URL(capturedUrl).searchParams.get('EXCG_ID_DVSN_CD'), 'ALL');
   assert.equal(r.fullyFilled, true);
 });
 
@@ -1438,11 +1455,21 @@ test('parseOrderFillResponse: 같은 odno가 2건 이상 매칭되면 추정하�
   const json = {
     rt_cd: '0',
     output1: [
-      { odno: '6693100', ord_qty: '5', tot_ccld_qty: '5', rmn_qty: '0', avg_prvs: '87500', cncl_yn: 'N' },
-      { odno: '6693100', ord_qty: '3', tot_ccld_qty: '0', rmn_qty: '3', avg_prvs: '0', cncl_yn: 'N' },
+      { odno: '424242', excg_id_dvsn_cd: 'SOR', ord_qty: '5', tot_ccld_qty: '5', rmn_qty: '0', avg_prvs: '1000', cncl_yn: 'N' },
+      { odno: '424242', excg_id_dvsn_cd: 'KRX', ord_qty: '3', tot_ccld_qty: '0', rmn_qty: '3', avg_prvs: '0', cncl_yn: 'N' },
     ],
   };
-  assert.equal(parseOrderFillResponse(json, '6693100'), null);
+  const originalError = console.error;
+  const logs = [];
+  console.error = (message) => logs.push(message);
+  try {
+    assert.equal(parseOrderFillResponse(json, '424242'), null);
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /복수 행\(2건\)/);
+    assert.doesNotMatch(logs[0], /424242/);
+  } finally {
+    console.error = originalError;
+  }
 });
 
 test('parseOrderFillResponse: DEBUG_KIS_FILL_FIELDS=1이면 매칭 행 필드를 한 번만 진단한다', () => {
