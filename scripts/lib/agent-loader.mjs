@@ -36,21 +36,21 @@ export function loadAgent(agentName, { fallbackModel, dir = DEFAULT_DIR, appendi
   try {
     const parsed = parseAgentMd(readFileSync(join(dir, `${agentName}.md`), 'utf8'));
     let systemPrompt = parsed.systemPrompt;
+    let warning = null;
     if (Array.isArray(appendix)) {
       const appendixStart = /^## 부록 —[^\r\n]*$/m.exec(systemPrompt);
-      if (!appendixStart) throw new Error('부록 없음');
-      const prefix = systemPrompt.slice(0, appendixStart.index).trimEnd();
-      const appendixText = systemPrompt.slice(appendixStart.index);
-      const sections = [...appendixText.matchAll(/^### 구 ([a-z]+) 지침[ \t]*$/gm)];
+      const prefix = appendixStart ? systemPrompt.slice(0, appendixStart.index).trimEnd() : systemPrompt;
+      const appendixText = appendixStart ? systemPrompt.slice(appendixStart.index) : '';
+      const sections = [...appendixText.matchAll(/^### (?:\d{4}-\d{2}-\d{2} 이전 )?구 ([a-z]+) 지침(?:[ \t]*\([^\r\n]*\))?[ \t]*$/gm)];
       const available = new Set(sections.map((section) => section[1]));
       const missing = appendix.filter((name) => !available.has(name));
-      if (missing.length) throw new Error(`부록 지침 없음: ${missing.join(', ')}`);
+      if (missing.length) warning = `에이전트 부록 지침 없음: ${agentName} — ${missing.join(', ')}`;
       const selected = sections.flatMap((section, index) => appendix.includes(section[1])
         ? [appendixText.slice(section.index, sections[index + 1]?.index).trim()]
         : []);
       systemPrompt = [prefix, ...selected].join('\n\n');
     }
-    return { model: parsed.model, systemPrompt, warning: null };
+    return { model: parsed.model, systemPrompt, warning };
   } catch (e) {
     // warning 필드는 weekly-report.mjs처럼 collectWarning()을 거쳐 텔레그램으로 그대로
     // 나가는 호출부가 있어(2026-09-20 오너 DevRequest 확인) e.message 원문을 담지 않는다
