@@ -107,6 +107,12 @@ export function computeBreakoutProtectionRiskFlag(breakoutPositions) {
   };
 }
 
+export function selectReportModel(args) {
+  const modelArg = args.find(a => a.startsWith('--model='));
+  // 오너 결정(2026-10-11): 주간 리포트 서술은 헌장 모델과 무관하게 Opus를 유지한다.
+  return modelArg ? modelArg.split('=')[1] : 'opus';
+}
+
 // Facts/Ledger/Executions 객체 → EXEC_COL 인덱스 row-array. behavior-signals.mjs·
 // report-facts.mjs의 매입평균 기반 실현손익 로직(2026-07 현대차·삼성바이오로직스
 // 회귀방지)을 안 건드리고 그대로 재사용하기 위한 어댑터.
@@ -392,8 +398,7 @@ async function main() {
   const PLUTUS_REPORT = loadAgent('plutus', { fallbackModel: 'opus', appendix: ['apollo'] });
   const CLIO_PREFS = loadAgent('clio', { fallbackModel: 'sonnet', appendix: ['apollo'] });
   if (PLUTUS_REPORT.warning) collectWarning(PLUTUS_REPORT.warning);
-  const modelArg = args.find(a => a.startsWith('--model='));
-  const MODEL = modelArg ? modelArg.split('=')[1] : PLUTUS_REPORT.model;
+  const MODEL = selectReportModel(args);
 
   const asof = todayKST();
   const weekStart = weekStartOf(asof);

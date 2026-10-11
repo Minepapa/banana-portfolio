@@ -6,11 +6,17 @@ import { join } from 'node:path';
 import {
   extractSummary, extractSummaryBullets, safeTrim, markdownBoldToHtml,
   biggestMacroMover, formatMacroMoverBullet, buildReportPrompt, buildObservationPrompt,
+  selectReportModel,
 } from './weekly-report.mjs';
 import * as weeklyReport from './weekly-report.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { resolveDecision } from '../lib/decision-resolver.mjs';
+
+test('주간 리포트 모델은 기본 Opus이며 --model 인자로 재정의할 수 있다', () => {
+  assert.equal(selectReportModel([]), 'opus');
+  assert.equal(selectReportModel(['--dry-run', '--model=sonnet']), 'sonnet');
+});
 
 test('주간 리포트 프롬프트는 결정 문서 본문만 주입하고 옛 프로필을 읽으라고 하지 않는다', () => {
   const root = mkdtempSync(join(tmpdir(), 'banana-weekly-profile-'));
