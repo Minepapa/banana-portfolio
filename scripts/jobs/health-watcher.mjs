@@ -53,6 +53,7 @@ const sendWarning = createDirectWarningSender(sendAgentMessage, {
 // "새 잡 추가 시 누락"뿐 아니라 "평일 전용 잡의 주말 간격"도 놓치고 있었다 —
 // 둘 다 여기서 함께 고친다.
 export const EXPECTED_INTERVALS_MS = {
+  'media-archive': 60 * 60 * 1000,
   // 위치 수신이 12시간 없으면 폰 앱·Tailscale 점검.
   'owntracks-receiver': 12 * 60 * 60 * 1000,
   // ⚠️ 재수정(2026-08-28, 오너 지시) — 평일 16:00 하루 1회(StartCalendarInterval)에서

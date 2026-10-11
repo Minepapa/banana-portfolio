@@ -57,6 +57,7 @@ export const VAULT_REL = {
   location: '95_Etna/Location',
   locationCandidates: '95_Etna/Location/place-candidates.json',
   locationGeocodeCache: '95_Etna/Location/geocode-cache.json',
+  mediaArchiveIndex: '95_Etna/Media/archive-index.jsonl',
   jobHealth: '95_Etna/Jobs/JobHealth',
   spending: '95_Etna/Spending',
   dailyNotes: '10_Periodic/Daily', // 데일리 노트(D85) — {YYYY}/YYYY-MM-DD.md
@@ -106,6 +107,7 @@ export function vaultYearFiles(baseAbsDir) {
 
 export const VAULT_PATHS = {
   root: VAULT_ROOT,
+  mediaArchiveIndex: vaultAbs(VAULT_REL.mediaArchiveIndex),
   todoLog: vaultAbs(VAULT_REL.todoLog),
   spending: vaultAbs(VAULT_REL.spending),
   location: {

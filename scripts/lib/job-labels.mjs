@@ -11,6 +11,7 @@ import { VAULT_ROOT, VAULT_REL } from './vault-paths.mjs';
 const displayVaultRoot = VAULT_ROOT.startsWith(`${homedir()}/`)
   ? `~${VAULT_ROOT.slice(homedir().length)}` : VAULT_ROOT;
 export const JOB_LABELS = {
+  'media-archive': 'Syncthing Media Inbox 안정 파일을 Archive에 하드링크 보관·색인(매시간)',
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
   'vault-offsite-backup': '매일 00:20 Vault 암호화 외부 백업',
   'question-digest': '비긴급 질문 하루 두 번(09:00·19:00) 담당별 묶음 발송',
