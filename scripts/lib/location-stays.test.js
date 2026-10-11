@@ -59,7 +59,7 @@ test('데일리 계산은 자정 양쪽 날짜 기록을 이어 읽는다', asyn
     writeFileSync(join(directory, `${date}.jsonl`), `${JSON.stringify({ tst, lat: 12, lon: 34, acc: 5 })}\n`);
   }
   const route = await computeRoute('2026-10-09', { root, geocode: async () => '건물' });
-  assert.deepEqual([route[0].start, route[0].end], ['00:00', '00:20']);
+  assert.deepEqual([route[0].start, route[0].end], ['00:00', '24:00']);
 });
 
 test('자정에 끝난 체류는 24:00으로 표시하고 dry-run에서는 지오코딩을 부르지 않는다', async (t) => {
@@ -73,6 +73,28 @@ test('자정에 끝난 체류는 24:00으로 표시하고 dry-run에서는 지�
   const route = await computeRoute(date, { root, dryRun: true, geocode: async () => { throw new Error('지오코딩 호출'); } });
   assert.deepEqual([route[0].start, route[0].end, route[0].label], ['23:40', '24:00', '미등록 장소(dry-run)']);
   assert.equal(readdirSync(directory).length, 2);
+});
+
+test('지난 날 마지막 체류는 다음 날 같은 장소 또는 데이터 부재면 24:00, 다른 장소면 마지막 점에서 끝난다', async (t) => {
+  const root = fixture(t);
+  const start = Date.parse('2026-10-10T20:22:00+09:00') / 1000;
+  const samePlace = [
+    { tst: start, lat: 12, lon: 34 }, { tst: start + 16 * 60, lat: 12, lon: 34 },
+    { tst: Date.parse('2026-10-11T08:51:00+09:00') / 1000, lat: 12, lon: 34 },
+  ];
+  const base = { root, dryRun: true, now: new Date('2026-10-12T00:00:00+09:00') };
+  assert.equal((await computeRoute('2026-10-10', { ...base, points: samePlace }))[0].end, '24:00');
+  assert.equal((await computeRoute('2026-10-10', { ...base, points: samePlace.slice(0, 2) }))[0].end, '24:00');
+  const otherPlace = [...samePlace.slice(0, 2), { ...samePlace[2], lat: 13 }];
+  assert.equal((await computeRoute('2026-10-10', { ...base, points: otherPlace }))[0].end, '20:38');
+});
+
+test('오늘 마지막 체류는 진행 중으로 표시한다', async (t) => {
+  const root = fixture(t);
+  const start = Date.parse('2026-10-11T20:22:00+09:00') / 1000;
+  const route = await computeRoute('2026-10-11', { root, dryRun: true, now: new Date('2026-10-11T21:00:00+09:00'),
+    points: [{ tst: start, lat: 12, lon: 34 }, { tst: start + 16 * 60, lat: 12, lon: 34 }] });
+  assert.deepEqual([route[0].start, route[0].end, route[0].current], ['20:22', '', true]);
 });
 
 test('가장 가까운 등록 장소를 고르고 좌표 없는 장소는 건너뛴다', async (t) => {
@@ -159,13 +181,36 @@ test('손상된 후보 JSON은 예외로 알리고 보존한다', (t) => {
   assert.throws(() => readCandidates(root), /형식 오류/);
 });
 
-test('후보는 날짜별 방문을 중복하지 않고 3일 또는 일정 겹침에서 ready', (t) => {
+test('후보는 날짜별 방문을 중복하지 않고 체류와 겹치는 일정만 ready에 반영', (t) => {
   const root = fixture(t);
   const stay = { lat: 12, lon: 34, address: '건물', registered: false, start: '2026-10-09T01:00:00Z', end: '2026-10-09T02:00:00Z' };
   for (const date of ['2026-10-07', '2026-10-08', '2026-10-09']) updateCandidates({ date, stays: [stay, stay], root });
   assert.equal(readCandidates(root)[0].visits.length, 3);
   assert.equal(updateCandidates({ date: '2026-10-09', stays: [], root }).ready.length, 1);
   const secondRoot = fixture(t);
-  const event = { title: '운동', start: '2026-10-09T01:30:00Z', end: '2026-10-09T02:30:00Z', allDay: false };
-  assert.equal(updateCandidates({ date: '2026-10-09', stays: [stay], events: [event], root: secondRoot }).ready.length, 1);
+  const events = [
+    { title: '겹치는 일정', start: '2026-10-09T01:30:00Z', end: '2026-10-09T02:30:00Z', allDay: false },
+    { title: '같은 날 다른 시간', start: '2026-10-09T03:00:00Z', end: '2026-10-09T04:00:00Z', allDay: false },
+    { title: '종일 일정', start: '2026-10-09T00:00:00Z', end: '2026-10-10T00:00:00Z', allDay: true },
+    { title: '잘못된 시각', start: '오전', end: '오후', allDay: false },
+  ];
+  assert.equal(updateCandidates({ date: '2026-10-09', stays: [stay], events, root: secondRoot }).ready.length, 1);
+  assert.deepEqual(readCandidates(secondRoot)[0].eventTitles, ['겹치는 일정']);
+});
+
+test('일정은 30분 이상 또는 일정 길이의 절반 이상 겹칠 때만 후보에 연결한다', (t) => {
+  const root = fixture(t);
+  const stay = { lat: 12, lon: 34, registered: false, start: '2026-10-09T06:54:00Z', end: '2026-10-09T10:57:00Z' };
+  const events = [
+    { title: '송도 센트럴파크 벼룩시장', start: '2026-10-09T02:00:00Z', end: '2026-10-09T07:00:00Z' },
+    { title: '체류 안 공연', start: '2026-10-09T08:00:00Z', end: '2026-10-09T09:00:00Z' },
+  ];
+  updateCandidates({ date: '2026-10-09', stays: [stay], events, root });
+  assert.deepEqual(readCandidates(root)[0].eventTitles, ['체류 안 공연']);
+
+  const shortRoot = fixture(t);
+  const shortStay = { ...stay, start: '2026-10-09T06:35:00Z', end: '2026-10-09T07:00:00Z' };
+  const shortEvent = { title: '짧은 일정', start: '2026-10-09T06:30:00Z', end: '2026-10-09T06:50:00Z' };
+  updateCandidates({ date: '2026-10-09', stays: [shortStay], events: [shortEvent], root: shortRoot });
+  assert.deepEqual(readCandidates(shortRoot)[0].eventTitles, ['짧은 일정']);
 });

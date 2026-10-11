@@ -28,7 +28,7 @@ import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
 import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
 import { listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
-import { readDayPoints, detectStays, loadPlaces, describeStays } from '../lib/location-stays.mjs';
+import { readDayPoints, detectStays, loadPlaces, describeStays, haversineM, STAY_RADIUS_M } from '../lib/location-stays.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
 import { updateCandidates } from '../lib/place-candidates.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
@@ -109,13 +109,24 @@ export function routeHashOf(points) {
   return createHash('sha256').update(JSON.stringify(triples)).digest('hex').slice(0, 16);
 }
 
-export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = createCachedGeocoder({ root }), dryRun = false, points = readRoutePoints(date, root) } = {}) {
+export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = createCachedGeocoder({ root }), dryRun = false, points = readRoutePoints(date, root), now = new Date() } = {}) {
   let stays;
   try { stays = await describeStays(detectStays(points, { date }), { places: loadPlaces(root), geocode: dryRun ? async () => ({ reason: 'dry-run' }) : geocode }); }
   finally { if (!dryRun) await geocode.flush?.(); }
   if (!dryRun && geocode.failureCount?.() > 0) console.warn(`[daily-note] 지오코딩 실패 ${geocode.failureCount()}건`);
-  return stays.map((stay) => ({ ...stay, start: routeTime(stay.start, date), end: routeTime(stay.end, date),
-    startAt: stay.start, endAt: stay.end }));
+  const nextDate = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  const nextStart = Date.parse(`${nextDate}T00:00:00+09:00`) / 1000;
+  const firstNextDayPoint = points.filter((point) => point.tst >= nextStart && point.tst < nextStart + 86_400)
+    .sort((first, second) => first.tst - second.tst)[0];
+  const isToday = date === new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
+  const lastStay = stays.at(-1);
+  return stays.map((stay) => {
+    const isLast = stay === lastStay;
+    const nextDayConfirmsPlace = firstNextDayPoint && haversineM(stay, firstNextDayPoint) <= STAY_RADIUS_M;
+    const end = isLast && isToday ? '' : isLast && (!firstNextDayPoint || nextDayConfirmsPlace) ? '24:00' : routeTime(stay.end, date);
+    return { ...stay, current: isLast && isToday, start: routeTime(stay.start, date), end,
+      startAt: stay.start, endAt: stay.end };
+  });
 }
 
 async function summarize(date, records, prevFields, recordHash, dryRun) {

@@ -4,6 +4,9 @@ import { haversineM, STAY_RADIUS_M } from './location-stays.mjs';
 import { writeAtomic } from './state-writer.mjs';
 import { VAULT_REL } from './vault-paths.mjs';
 
+const MIN_EVENT_OVERLAP_MS = 30 * 60_000;
+const MIN_EVENT_OVERLAP_RATIO = 0.5;
+
 export function readCandidates(root) {
   const path = join(root, VAULT_REL.locationCandidates);
   if (!existsSync(path)) return [];
@@ -38,7 +41,14 @@ export function updateCandidates({ date, stays, events = [], root, dryRun = fals
     const start = Date.parse(stay.start);
     const end = Date.parse(stay.end);
     for (const event of events) {
-      if (event.allDay || !event.start || !event.end || Date.parse(event.start) >= end || Date.parse(event.end) <= start) continue;
+      const eventStart = Date.parse(event.start);
+      const eventEnd = Date.parse(event.end);
+      if (event.allDay || !Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(eventStart) || !Number.isFinite(eventEnd)
+        || eventStart >= end || eventEnd <= start) continue;
+      const overlapMs = Math.min(end, eventEnd) - Math.max(start, eventStart);
+      const eventDurationMs = eventEnd - eventStart;
+      // 송도 센트럴파크 벼룩시장(11:00–16:00)과 인현동 체류(15:54–19:57)는 6분만 겹쳐 제외한다.
+      if (overlapMs < MIN_EVENT_OVERLAP_MS && overlapMs < eventDurationMs * MIN_EVENT_OVERLAP_RATIO) continue;
       const title = String(event.title || '(제목 없음)').replace(/[\r\n]/g, ' ');
       if (!candidate.eventTitles.includes(title)) candidate.eventTitles.push(title);
     }

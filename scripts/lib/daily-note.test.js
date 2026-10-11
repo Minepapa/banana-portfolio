@@ -22,6 +22,7 @@ test('동선 null·빈 배열·체류·실패 문구와 기존 오너 칸 보존
   assert.match(routed, /sensitivity: "개인"/);
   assert.match(routed, /## 오늘 한 줄\n내 기록/);
   assert.equal(inspectExisting(routed).ok, true);
+  assert.match(renderDailyNote({ ...base, route: [{ start: '20:22', end: '', label: '집', current: true }] }), /- 20:22– 집\(현재\)/);
   assert.match(renderDailyNote({ ...base, route: 'failed' }), /동선 계산 실패/);
   assert.doesNotMatch(buildSummaryPrompt(base.date, recs), /회사/);
   assert.doesNotMatch(buildDailyTelegramBody(base.date, recs, '- 요약'), /회사/);

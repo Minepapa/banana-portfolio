@@ -169,7 +169,7 @@ function aiSectionContents(records, summary, events, eventGroups, route, todos) 
     동선: route === null ? '(위치 연동 전 — 5단계 3번에서 채운다)'
       : route === 'pending' ? PENDING_TEXT
       : route === 'failed' ? '(동선 계산 실패 — 다음 실행에서 다시 시도)'
-        : route.length ? route.map((stay) => `- ${stay.start}–${stay.end} ${safeRouteLabel(stay.label)}`).join('\n') : '(위치 기록 없음)',
+        : route.length ? route.map((stay) => `- ${stay.start}–${stay.end} ${safeRouteLabel(stay.label)}${stay.current ? '(현재)' : ''}`).join('\n') : '(위치 기록 없음)',
     '오늘 들어온 기록': recordLines.join('\n').replace(/\s+$/, ''),
     '오늘 생긴 할 일': todos === 'pending' ? PENDING_TEXT : todos === 'failed' ? '(할 일 기록 읽기 실패 — 다음 실행에서 다시 시도)'
       : todos?.length ? todos.map(todoText).join('\n') : '(오늘 생긴 할 일 없음)',
