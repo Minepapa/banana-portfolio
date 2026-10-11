@@ -89,9 +89,11 @@ export function readWikiIndex(root) {
         const header = readWikiHeader(join(root, rel));
         const names = wikiAliases(header);
         const isPerson = current === VAULT_REL.people || current.startsWith(`${VAULT_REL.people}/`);
-        const relation = isPerson ? parseFrontmatter(header).relation : null;
+        const personFields = isPerson ? parseFrontmatter(header) : null;
+        const relation = personFields?.relation;
+        const description = personFields?.description;
         const line = isPerson
-          ? `${current} · ${title}${relation ? ` · 관계: ${relation}` : ''} · 별칭: ${names.join(', ') || '없음'}`
+          ? `${current} · ${title}${relation ? ` · 관계: ${relation}` : ''} · 별칭: ${names.join(', ') || '없음'}${description ? ` · 설명: ${description}` : ''}`
           : `${current} · ${title} · ${names.join(', ') || '없음'}`;
         if (chars + line.length + 1 > MAX_WIKI_INDEX_CHARS) break;
         lines.push(line);
@@ -333,14 +335,26 @@ export function telegramMessage(items, remaining) {
   if (!items.length) return null;
   const failed = items.filter((item) => item.status === '판단 실패').length;
   const unclassifiable = items.filter((item) => item.status === '분류 불가').length;
+  const oneLine = (value) => String(value).replace(/\s+/g, ' ').trim();
+  // 제목 상한은 Telegram에서 한 항목을 훑어보기 위한 가독성 제한이다(D96).
+  const titleLine = (value) => Array.from(oneLine(value)).slice(0, MAX_TITLE_CHARS).join('');
   const body = [`계획 ${planned.length}건 · 판단 실패 ${failed}건 · 분류 불가 ${unclassifiable}건 · 남은 ${remaining}건`,
-    ...items.map((item, index) => {
-      if (item.status !== '계획함') return `• 메모 ${index + 1}(${item.status === '분류 불가' ? '분류 불가' : '판단 실패'})`;
-      const { target, wiki } = item.judgment;
-      const count = (action) => wiki.filter((entry) => entry.action === action).length;
+    ...items.flatMap((item) => {
+      if (item.status !== '계획함') {
+        const originalTitle = basename(item.source ?? '제목 없음', '.md');
+        return [`■ ${titleLine(originalTitle)} (${item.status})`];
+      }
+      const { target, wiki, extracted } = item.judgment;
       const folder = basename(target.folder);
       const label = /^\d{4}$/.test(folder) ? basename(dirname(target.folder)) : folder;
-      return `• ${Array.from(target.title.replace(/\s+/g, ' ')).slice(0, MAX_TITLE_CHARS).join('')} → ${label}(Wiki 보강 ${count('append-source')}·후보 ${count('candidate')}·질문 ${count('question')})`;
+      const actionLabel = { 'append-source': '보강', candidate: '후보', question: '질문' };
+      return [
+        `■ ${titleLine(target.title)}`,
+        `• 폴더: ${label}`,
+        ...wiki.map((entry) => `• Wiki ${actionLabel[entry.action] ?? entry.action}: ${oneLine(entry.page)}${entry.reason ? ` — ${oneLine(entry.reason)}` : ''}`),
+        `• 인물: ${extracted?.people?.map(oneLine).join(', ') || '없음'}`,
+        `• 장소: ${extracted?.places?.map(oneLine).join(', ') || '없음'}`,
+      ];
     }), '리포트만 — 실제 이동 없음'].join('\n');
   return { agent: 'clio', kind: '정보', topic: 'Inbox 정리 계획', body };
 }
@@ -414,7 +428,7 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
   const wikiIndex = selected.length ? readWikiIndex(root) : { paths: new Set(), prompt: '' };
   const agent = selected.length ? (charter ?? loadAgent('clio', { fallbackModel: 'sonnet' })) : null;
   if (agent?.warning) console.warn(agent.warning);
-  const systemPrompt = `${agent?.systemPrompt ?? ''}\n\n경로 등록부 요약:\n${registrySummary}\n\n기존 Wiki 색인 (인물: 폴더 · 제목 · 관계 · 별칭):\n${wikiIndex.prompt || '없음'}`;
+  const systemPrompt = `${agent?.systemPrompt ?? ''}\n\n경로 등록부 요약:\n${registrySummary}\n\n기존 Wiki 색인 (인물: 폴더 · 제목 · 관계 · 별칭 · 설명):\n${wikiIndex.prompt || '없음'}`;
   const decide = judge ?? ((prompt) => runHeadlessClaude(prompt, agent.model, '', {
     appendSystemPrompt: systemPrompt, tools: '', timeoutMs: Math.max(1, Math.min(5 * 60_000, MAX_JOB_MS - (clock() - startedAt))),
   }));

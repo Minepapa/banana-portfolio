@@ -4,7 +4,7 @@
 //   선택: {"attachment":"사진"} — 첨부가 있었다는 표시만 남긴다(D40: 텔레그램 사진·영상은 새 파일로 저장하지 않고
 //   미디어 단계에서 드라이브 원본과 연결한다).
 // - 메모 1건 = 노트 1개. 해석·요약·분류는 하지 않는다(클리오 ingest가 나중에 21_Notes로 옮기며 채운다).
-// - 개인 메모일 수 있으니 sensitivity는 "개인"으로 둔다(데일리 요약 프롬프트에는 개수만 들어간다, D84).
+// - 개인 메모일 수 있으니 sensitivity는 "개인"으로 둔다(데일리 요약에는 일반과 같이 제목·설명이 들어간다, D96).
 // - created는 KST 날짜 — 데일리 노트 "오늘 들어온 기록"에 그날 기록으로 잡힌다.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

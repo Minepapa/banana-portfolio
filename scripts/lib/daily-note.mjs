@@ -19,7 +19,7 @@ const MANAGED_KEYS = new Set(['type', 'category', 'description', 'sensitivity', 
 const OWNER_HINT = '<!-- 오너가 쓰는 칸. AI는 이 칸을 고치지 않는다. -->';
 // 05:00에 미리 만든 노트(prepare)의 아직 채우지 않은 AI 칸 문구 — 23:30 초안이 채운다.
 export const PENDING_TEXT = '(저녁 23:30에 채움)';
-export const PROMPT_VERSION = 'v1';
+export const PROMPT_VERSION = 'v2';
 
 // 기록 수집에서 빼는 최상위 폴더: 데일리 자신·보관본·기계 데이터·금고·규칙(델포이)·홈(분류 노트)
 export const DAILY_SKIP_TOP = new Set([
@@ -300,17 +300,12 @@ export function setOwnerSection(content, { section, text, time = null }) {
 // 내용 비교용 — modified 줄만 다른 경우는 같은 노트로 본다(불필요한 쓰기·LiveSync 충돌 줄이기).
 export const sameIgnoringModified = (a, b) => lf(a).replace(/^modified: .*$/m, '') === lf(b).replace(/^modified: .*$/m, '');
 
-// AI 하루 요약 프롬프트 — 숫자·사실을 지어내지 않게 목록만 준다. 개인 등급은 제목·설명 없이 카테고리별 개수만 준다(D84, 리뷰 M-3).
+// AI 하루 요약 프롬프트 — D96: 개인 등급도 일반과 같은 제목·설명 목록을 준다. 숫자·사실은 목록 밖에서 지어내지 못하게 한다.
 export function buildSummaryPrompt(date, records) {
-  const general = records.filter((r) => r.sensitivity !== '개인');
-  const personal = groupByCategory(records.filter((r) => r.sensitivity === '개인'));
-  const list = [
-    ...general.map((r) => `- [${r.categories[0] ?? '분류 없음'}] ${r.title}${r.description ? `: ${r.description}` : ''}`),
-    ...personal.map(([cat, items]) => `- [${cat}] 개인 기록 ${items.length}건(내용 비공개)`),
-  ].join('\n');
+  const list = records.map((r) => `- [${r.categories[0] ?? '분류 없음'}] ${r.title}${r.description ? `: ${r.description}` : ''}`).join('\n');
   return [
     `${date} 하루 동안 오너(Frank)의 볼트에 들어온 기록 목록이다. 이 목록만 근거로 오늘 하루를 한국어 3~5줄로 요약하라.`,
-    '- 줄마다 한 가지만. 목록에 없는 사실·숫자는 만들지 마라. 개인 기록은 "가족 기록 2건"처럼 개수로만 언급하라.',
+    '- 줄마다 한 가지만. 목록에 없는 사실·숫자는 만들지 마라.',
     '- 머리말·제목 없이 요약 줄만 출력하라. 각 줄은 "- "로 시작한다.',
     '',
     list || '(기록 없음)',
@@ -322,13 +317,19 @@ export function sanitizeSummary(text) {
   return lf(text).split('\n').map((l) => l.trim()).filter((l) => /^- \S/.test(l) && !/^- #/.test(l)).slice(0, 7).join('\n');
 }
 
-// 클리오 텔레그램 본문(정보성: 헤더 + 항목형). 기록은 카테고리별 개수만, 요약은 HTML 이스케이프.
+// 클리오 텔레그램 본문 — D96: 일반·개인 기록의 제목과 설명을 같은 형식으로 보낸다.
 export function buildDailyTelegramBody(date, records, summary, status = '초안') {
-  const counts = groupByCategory(records).map(([cat, items]) => `- ${escapeHtml(cat)}: ${items.length}개`);
+  const oneLine = (value) => String(value).replace(/\s+/g, ' ').trim();
+  const recordLines = records.map((record) => {
+    const category = escapeHtml(oneLine(record.categories[0] ?? '분류 없음'));
+    const title = escapeHtml(oneLine(record.title));
+    const description = record.description ? `: ${escapeHtml(oneLine(record.description))}` : '';
+    return `- [${category}] ${title}${description}`;
+  });
   const confirm = status === '초안'
     ? `- 볼트 ${VAULT_REL.dailyNotes}에서 "오늘 한 줄"을 채워 주세요. 다음날 05:00에 확정합니다.`
     : `- 볼트 ${VAULT_REL.dailyNotes}에서 확인할 수 있습니다.`;
-  return [`<b>${date} 데일리 ${status}</b> — 들어온 기록 ${records.length}개`, '', '■ 기록', ...(counts.length ? counts : ['- 없음']),
+  return [`<b>${date} 데일리 ${status}</b> — 들어온 기록 ${records.length}개`, '', '■ 기록', ...(recordLines.length ? recordLines : ['- 없음']),
     '', '■ 하루 요약', summary && summary.trim() ? escapeHtml(summary.trim()) : '- (요약 없음)', '', '■ 확인', confirm].join('\n');
 }
 

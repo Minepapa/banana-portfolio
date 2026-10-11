@@ -218,29 +218,27 @@ test('JSON response accepts fences and the first balanced object inside extra te
   assert.throws(() => validateJudgment('응답: {"target": } 끝', { root, rules, date: '2026-10-11' }), SyntaxError);
 });
 
-test('Wiki index includes people relation and aliases without description, honors caps, and gates append-source', async (t) => {
+test('Wiki index includes people relation, aliases and description, honors caps, and gates append-source', async (t) => {
   const { root, put } = fixture(t);
-  put('30_Wiki/31_People/휘영.md', '---\nrelation: "배우자(아내)"\naliases: ["휘영"]\ndescription: "비밀 설명"\nsensitivity: "개인"\n---\n비밀 본문');
-  put('30_Wiki/31_People/가족/가상 인물.md', '---\nrelation: "엄마"\naliases: ["어머니"]\ndescription: "하위 폴더 비밀"\n---\n비밀 본문');
+  put('30_Wiki/31_People/가상 인물 A.md', '---\nrelation: "배우자(아내)"\naliases: ["가상 별칭 A"]\ndescription: "가상 관계 설명 A"\nsensitivity: "개인"\n---\n가상 본문 A');
+  put('30_Wiki/31_People/가족/가상 인물 B.md', '---\nrelation: "엄마"\naliases: ["가상 별칭 B"]\ndescription: "가상 관계 설명 B"\n---\n가상 본문 B');
   put('30_Wiki/32_Places/센트럴파크.md', '---\naliases: ["뉴욕 센트럴파크"]\n---\n장소 본문');
   put('30_Wiki/33_Objects/선물.md', '---\naliases:\n  - 결혼기념 선물\n  - "기념품"\n---\n물건 본문');
   put('30_Wiki/34_Topics/Sub/주제.md', '---\naliases: ["주제 별칭"]\n---\n주제 본문');
   put('99_Adyton/비밀.md', '---\naliases: ["금고 별칭"]\n---\n비밀 본문');
   const index = readWikiIndex(root);
-  assert.match(index.prompt, /30_Wiki\/31_People · 휘영 · 관계: 배우자\(아내\) · 별칭: 휘영/);
-  assert.match(index.prompt, /30_Wiki\/31_People\/가족 · 가상 인물 · 관계: 엄마 · 별칭: 어머니/);
+  assert.match(index.prompt, /30_Wiki\/31_People · 가상 인물 A · 관계: 배우자\(아내\) · 별칭: 가상 별칭 A · 설명: 가상 관계 설명 A/);
+  assert.match(index.prompt, /30_Wiki\/31_People\/가족 · 가상 인물 B · 관계: 엄마 · 별칭: 가상 별칭 B · 설명: 가상 관계 설명 B/);
   assert.match(index.prompt, /30_Wiki\/34_Topics\/Sub · 주제 · 주제 별칭/);
   assert.match(index.prompt, /30_Wiki\/33_Objects · 선물 · 결혼기념 선물, 기념품/);
-  assert.equal(index.prompt.includes('비밀 본문'), false);
-  assert.equal(index.prompt.includes('비밀 설명'), false);
-  assert.equal(index.prompt.includes('하위 폴더 비밀'), false);
+  assert.equal(index.prompt.includes('가상 본문 A'), false);
   assert.equal(index.prompt.includes('금고 별칭'), false);
   assert.ok(index.prompt.length <= MAX_WIKI_INDEX_CHARS);
   for (let i = 0; i < MAX_WIKI_TITLES_PER_FOLDER + 1; i += 1) put(`30_Wiki/33_Objects/${String(i).padStart(3, '0')}.md`, '---\naliases: []\n---\n');
   assert.equal([...readWikiIndex(root).paths].filter((path) => path.startsWith('30_Wiki/33_Objects/')).length, MAX_WIKI_TITLES_PER_FOLDER);
   const valid = judgment();
   valid.wiki = [
-    { action: 'append-source', page: '30_Wiki/31_People/휘영', reason: '기존 인물' },
+    { action: 'append-source', page: '30_Wiki/31_People/가상 인물 A', reason: '기존 인물' },
     { action: 'append-source', page: '30_Wiki/33_Objects/100', reason: '색인 밖' },
     { action: 'append-source', page: '30_Wiki/34_Topics/없는 페이지', reason: '없음' },
   ];
@@ -252,10 +250,9 @@ test('Wiki index includes people relation and aliases without description, honor
   await run({ root, rules, now: date, dryRun: true, judge: async (prompt, _item, system) => { userPrompt = prompt; systemPrompt = system; return judgment(); },
     charter: { model: 'test', systemPrompt: '클리오' }, cooldown: () => false });
   assert.match(systemPrompt, /기존 Wiki 색인/);
-  assert.match(systemPrompt, /휘영 · 관계: 배우자\(아내\) · 별칭: 휘영/);
+  assert.match(systemPrompt, /가상 인물 A · 관계: 배우자\(아내\) · 별칭: 가상 별칭 A · 설명: 가상 관계 설명 A/);
   assert.match(userPrompt, /배우자·아내·와이프·엄마·아빠 같은 관계어는 relation으로 기존 인물에 매칭하라/);
-  assert.equal(systemPrompt.includes('비밀 설명'), false);
-  assert.equal(systemPrompt.includes('비밀 본문'), false);
+  assert.equal(systemPrompt.includes('가상 본문 A'), false);
 });
 
 test('dailyLink extracts a date or becomes null without failing judgment', (t) => {
@@ -317,35 +314,43 @@ test('invalid report registry blocks both writes and sends', async (t) => {
   assert.equal(existsSync(join(root, VAULT_REL.inboxIngestPlans)), false);
 });
 
-test('Telegram uses planned title, skips year folder, and shows action counts without source text', () => {
+test('Telegram shows planned title, folder, Wiki targets and extracted people and places', () => {
   const value = judgment();
   value.frontmatter.sensitivity = '개인';
-  value.wiki = [{ action: 'append-source' }, { action: 'candidate' }, { action: 'candidate' }, { action: 'question' }];
-  const message = telegramMessage([{ source: '00_Inbox/원본 비밀 제목.md', status: '계획함', judgment: value }], 0);
-  assert.match(message.body, /2026-10-11 가상 메모 → 21_Notes\(Wiki 보강 1·후보 2·질문 1\)/);
-  assert.equal(message.body.includes('원본 비밀 제목'), false);
+  value.extracted.people = ['가상 인물 A'];
+  value.extracted.places = ['가상 장소 B'];
+  value.wiki = [
+    { action: 'append-source', page: '30_Wiki/31_People/가상 인물 A', reason: '기존 페이지 보강' },
+    { action: 'candidate', page: '30_Wiki/32_Places/가상 장소 B', reason: '새 페이지 후보' },
+    { action: 'question', page: '30_Wiki/34_Topics/가상 질문', reason: '관계 확인이 필요한가?' },
+  ];
+  const message = telegramMessage([{ source: '00_Inbox/가상 원본 제목.md', status: '계획함', judgment: value }], 0);
+  assert.match(message.body, /■ 2026-10-11 가상 메모\n• 폴더: 21_Notes/);
+  assert.match(message.body, /• Wiki 보강: 30_Wiki\/31_People\/가상 인물 A — 기존 페이지 보강/);
+  assert.match(message.body, /• Wiki 후보: 30_Wiki\/32_Places\/가상 장소 B — 새 페이지 후보/);
+  assert.match(message.body, /• Wiki 질문: 30_Wiki\/34_Topics\/가상 질문 — 관계 확인이 필요한가\?/);
+  assert.match(message.body, /• 인물: 가상 인물 A\n• 장소: 가상 장소 B/);
   assert.match(message.body, /리포트만 — 실제 이동 없음/);
   assert.equal(telegramMessage([], 0), null);
 });
 
-test('Telegram failure and unclassifiable labels never expose original filenames', () => {
+test('Telegram failure and unclassifiable labels show original memo titles', () => {
   const message = telegramMessage([
-    { source: '00_Inbox/비밀 파일 0.md', status: '계획함', judgment: judgment() },
-    { source: '00_Inbox/비밀 파일 1.md', status: '판단 실패' },
-    { source: '00_Inbox/비밀 파일 2.md', status: '분류 불가' },
+    { source: '00_Inbox/가상 파일 0.md', status: '계획함', judgment: judgment() },
+    { source: '00_Inbox/가상 파일 1.md', status: '판단 실패' },
+    { source: '00_Inbox/가상 파일 2.md', status: '분류 불가' },
   ], 0);
-  assert.match(message.body, /2026-10-11 가상 메모 → 21_Notes/);
-  assert.match(message.body, /메모 2\(판단 실패\)/);
-  assert.match(message.body, /메모 3\(분류 불가\)/);
-  assert.equal(message.body.includes('비밀 파일'), false);
+  assert.match(message.body, /■ 2026-10-11 가상 메모/);
+  assert.match(message.body, /■ 가상 파일 1 \(판단 실패\)/);
+  assert.match(message.body, /■ 가상 파일 2 \(분류 불가\)/);
 });
 
 test('Telegram truncates an unchecked title to 60 characters', () => {
   const value = judgment();
-  value.target.title = `2026-10-11 ${'비밀'.repeat(100)}`;
+  value.target.title = `2026-10-11 ${'가상'.repeat(100)}`;
   const body = telegramMessage([{ status: '계획함', judgment: value }], 0).body;
   assert.equal(body.includes(value.target.title), false);
-  assert.equal(body.match(/^• (.*?) →/m)[1].length, 60);
+  assert.equal(body.match(/^■ (.*?)$/m)[1].length, 60);
 });
 
 test('terminal outcomes skip unchanged hashes and free priority slots; changed content retries', async (t) => {
@@ -363,7 +368,7 @@ test('terminal outcomes skip unchanged hashes and free priority slots; changed c
   assert.equal(calls, 2);
   await run(deps);
   assert.equal(messages.length, 2);
-  assert.match(messages[0].body, /메모 1\(분류 불가\)/);
+  assert.match(messages[0].body, /■ first \(분류 불가\)/);
   put('00_Inbox/first.md', memo('미네', '수정된 기록'));
   assert.equal(collectInbox(root, { maxItems: 1 }).selected[0].source, '00_Inbox/first.md');
 });

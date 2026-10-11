@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   buildDailyTelegramBody, buildSummaryPrompt, groupByCategory, inspectExisting, parseSections, readCategories, recordHashOf,
   renderDailyNote, replaceDailyRoute, sameIgnoringModified, sanitizeSummary, toDayRecord,
@@ -8,7 +9,7 @@ import {
 const note = (fm, body = '본문') => `---\n${fm}\n---\n${body}`;
 const recs = [
   { link: 'a/b', title: 'B', description: '', sensitivity: '일반', categories: ['700 자산'] },
-  { link: 'a/c', title: 'C', description: '딸 2016년생', sensitivity: '개인', categories: ['201 미네'] },
+  { link: 'a/c', title: 'C', description: '가상 가족 일정', sensitivity: '개인', categories: ['201 미네'] },
 ];
 const base = { date: '2026-10-09', records: recs, summary: '- 요약', status: '초안', model: 'sonnet', summaryStatus: 'ok', recordHash: 'h1', today: '2026-10-09' };
 
@@ -104,18 +105,24 @@ test('inspectExisting: AI 칸을 오너가 고쳤거나, 데일리 형식이 아
   assert.equal(inspectExisting(null).ok, true);
 });
 
-test('요약 안전: 개인 기록은 개수만 프롬프트에, LLM 출력은 "- " 줄만, 텔레그램은 개수와 이스케이프된 요약만', () => {
+test('요약 안전: 개인 기록 제목·설명도 프롬프트와 텔레그램에, LLM 출력은 "- " 줄만', () => {
   const prompt = buildSummaryPrompt('2026-10-09', recs);
-  assert.doesNotMatch(prompt, /딸 2016년생/);
-  assert.match(prompt, /\[201 미네\] 개인 기록 1건\(내용 비공개\)/);
+  assert.match(prompt, /\[201 미네\] C: 가상 가족 일정/);
+  assert.doesNotMatch(prompt, /개수로만 언급|내용 비공개/);
   assert.equal(sanitizeSummary('---\n## 오너 메모\n- 하나\n텍스트\n- # 제목\n-   둘'), '- 하나');
   const body = buildDailyTelegramBody('2026-10-09', recs, '- a<b');
-  assert.doesNotMatch(body, /딸 2016년생/);
+  assert.match(body, /- \[700 자산\] B/);
+  assert.match(body, /- \[201 미네\] C: 가상 가족 일정/);
   assert.match(body, /a&lt;b/);
+  const escaped = buildDailyTelegramBody('2026-10-09', [{ ...recs[1], title: '<가상 인물>', description: 'A&B\n가상 장소' }], '- 요약');
+  assert.match(escaped, /- \[201 미네\] &lt;가상 인물&gt;: A&amp;B 가상 장소/);
   assert.equal(groupByCategory(recs)[0][0], '201 미네');
 });
 
 test('recordHashOf는 민감도·카테고리 변화에도 바뀌고, sameIgnoringModified는 modified만 다른 경우 같다', () => {
+  const previousHash = createHash('sha256').update(['v1', ...recs.map((record) =>
+    [record.link, record.title, record.description, record.sensitivity, record.categories.join(',')].join('|'))].join('\n')).digest('hex');
+  assert.notEqual(recordHashOf(recs), previousHash, 'D96 프롬프트는 이전 요약을 재사용하지 않는다');
   assert.notEqual(recordHashOf(recs), recordHashOf([{ ...recs[0], sensitivity: '개인' }, recs[1]]));
   const a = renderDailyNote(base);
   assert.ok(sameIgnoringModified(a, a.replace('modified: "2026-10-09"', 'modified: "2026-10-10"')));

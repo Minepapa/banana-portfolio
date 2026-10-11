@@ -87,7 +87,7 @@ test('부록 보정표는 문장별이고 현행 역할 지시·라벨을 보존
   assert.match(zeus, /플루토스\(투자 판단·장부 신뢰도·기준일\), 테미스\(제안 2차 검증/);
   assert.match(zeus, /성향 관찰은 클리오가 정리·승격 제안하고 오너가 확정한다/);
   assert.doesNotMatch(zeus, /Zeus 결정·즉시 실행.*성향 갱신/);
-  assert.match(zeus, /텔레그램 세션.*"개인" 등급 노트를 읽거나 원문 중계하지 않고/);
+  assert.match(zeus, /텔레그램 세션.*"개인" 등급 노트를 읽고 담당 보고 원문을 전달/);
   assert.doesNotMatch(zeus, /\| (투자전략실 Athena|퀀트전략실 Kairos|운영실 Hermes|비서실 Apollo) \|/);
   assert.match(clio, /\[클리오 Clio\] 라벨만 유지한다/);
   assert.doesNotMatch(clio, /\[플루토스 Plutus\] 라벨만 유지한다/);
@@ -97,8 +97,9 @@ test('부록 보정표는 문장별이고 현행 역할 지시·라벨을 보존
   assert.doesNotMatch(themis, /플루토스의 상시 감시 결과를 2차 검증/);
   assert.ok(COMMON_OVERRIDES.length > 0);
   assert.ok(APPENDIX_OVERRIDES['plutus:themis'].length > 0);
-  for (const agent of [zeus, clio, plutus, themis, renderAgent('athena')]) {
-    assert.match(agent, /텔레그램 세션.*"개인" 등급 노트를 읽거나 원문 중계하지 않는다/);
+  for (const agent of [zeus, clio, plutus, themis, renderAgent('athena'), renderAgent('hermes')]) {
+    assert.match(agent, /텔레그램 세션.*"개인" 등급 노트를 읽고 담당 보고 원문을 전달/);
+    assert.doesNotMatch(agent, /텔레그램 세션.*"개인" 등급 노트를 읽거나 원문 중계하지 않는다|허용된 비민감 정보만 요약/);
     assert.doesNotMatch(agent, /중계만\*\* 한다\(원문 그대로/);
   }
   assert.doesNotMatch(clio, /profile\/kpi_baseline|reports\/|로컬 파일\(KPI·주간리포트\)|Zeus 결정 사후 보고를 조립·발송한다/);
