@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { VAULT_REL } from './vault-paths.mjs';
-import { readDayPoints, detectStays, haversineM, matchPlace, loadPlaces, describeStays } from './location-stays.mjs';
+import { readDayPoints, detectStays, matchPlace, loadPlaces, describeStays, haversineM } from './location-stays.mjs';
 import { reverseGeocode, createCachedGeocoder, readKakaoKey } from './kakao-geocode.mjs';
 import { updateCandidates, readCandidates } from './place-candidates.mjs';
 import { computeRoute } from '../jobs/daily-note.mjs';
@@ -48,6 +48,13 @@ test('자정 걸친 체류는 요청한 KST 날짜 범위로 자른다', () => {
   const stays = detectStays([{ tst: first, lat: 12, lon: 34 }, { tst: first + 30 * 60, lat: 12, lon: 34 }], { date: '2026-10-09' });
   assert.equal(stays[0].start, '2026-10-08T15:00:00.000Z');
   assert.equal(stays[0].end, '2026-10-08T15:20:00.000Z');
+});
+
+test('가상 좌표 체류를 설명하고 주소 라벨을 유지한다', async () => {
+  const points = [point(0, 1, 2), point(20, 1, 2), point(40, 1, 2)];
+  const stays = detectStays(points);
+  const described = await describeStays(stays, { places: [], geocode: async () => ({ address: '가상 도로 1', buildingName: null }) });
+  assert.equal(described[0].label, '미등록: 가상 도로 1');
 });
 
 test('실측 픽스처: 2점 군집의 긴 머묾(공연장)을 병합 뒤에도 분리한다', async () => {
@@ -124,7 +131,7 @@ test('데일리 계산은 자정 양쪽 날짜 기록을 이어 읽는다', asyn
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, `${date}.jsonl`), `${JSON.stringify({ tst, lat: 12, lon: 34, acc: 5 })}\n`);
   }
-  const route = await computeRoute('2026-10-09', { root, geocode: async () => '건물' });
+  const route = await computeRoute('2026-10-09', { root, geocode: async () => ({ buildingName: '가상 건물', address: '가상 도로 1' }) });
   assert.deepEqual([route[0].start, route[0].end], ['00:00', '24:00']);
 });
 
@@ -181,15 +188,15 @@ test('카카오 역지오코딩 우선순위, 캐시, 키 없음, 실패', async
   const key = randomBytes(16).toString('base64url');
   let calls = 0;
   const fetchImpl = async (url, options) => { calls += 1; assert.match(String(url), /x=34/); assert.equal(options.headers.Authorization, `KakaoAK ${key}`); return { ok: true, json: async () => ({ documents: [{ road_address: { building_name: '건물', address_name: '도로' }, address: { address_name: '지번' } }] }) }; };
-  assert.equal(await reverseGeocode(12, 34, { key, fetchImpl }), '건물');
+  assert.deepEqual(await reverseGeocode(12, 34, { key, fetchImpl }), { buildingName: '건물', address: '도로' });
   const missing = createCachedGeocoder({ root, keyPath, fetchImpl });
   assert.match((await missing(12, 34)).reason, /키 없음/);
   writeFileSync(keyPath, `${key}\n`, { mode: 0o600 });
   symlinkSync(keyPath, join(root, 'key-link'));
   assert.throws(() => readKakaoKey(join(root, 'key-link')), /링크/);
   const geocode = createCachedGeocoder({ root, keyPath, fetchImpl });
-  assert.equal((await geocode(12, 34)).address, '건물');
-  assert.equal((await geocode(12, 34)).address, '건물');
+  assert.deepEqual(await geocode(12, 34), { buildingName: '건물', address: '도로' });
+  assert.deepEqual(await geocode(12, 34), { buildingName: '건물', address: '도로' });
   await geocode.flush();
   assert.equal(calls, 2);
   const failed = createCachedGeocoder({ root, keyPath, fetchImpl: async () => { throw new Error('offline'); } });
@@ -216,6 +223,39 @@ test('지오코딩 캐시는 실행 중 순차 조회하고 한 번에 저장하
   assert.equal(readdirSync(join(cachePath, '..')).some((name) => name.startsWith('geocode-cache.json.corrupt-')), true);
   await geocode.flush();
   assert.equal(Object.keys(JSON.parse(readFileSync(cachePath, 'utf8'))).length, 2);
+});
+
+test('건물명은 자동 라벨로 표시하고 후보에서 제외하며 주소는 2회 방문 뒤 질문 대상이다', async (t) => {
+  const buildingStay = { start: '2026-10-09T01:00:00Z', end: '2026-10-09T02:00:00Z', lat: 0, lon: 0 };
+  const building = await describeStays([buildingStay], { places: [], geocode: async () => ({ buildingName: '가상 건물', address: '가상 도로 1' }) });
+  assert.equal(building[0].label, '가상 건물');
+  assert.equal(building[0].autoNamed, true);
+  const root = fixture(t);
+  assert.equal(updateCandidates({ date: '2026-10-09', stays: building, root }).candidates.length, 0);
+  const address = await describeStays([buildingStay], { places: [], geocode: async () => ({ buildingName: null, address: '가상 도로 1' }) });
+  assert.equal(address[0].label, '미등록: 가상 도로 1');
+  updateCandidates({ date: '2026-10-09', stays: address, root });
+  assert.equal(updateCandidates({ date: '2026-10-10', stays: [], root }).ready.length, 0);
+  updateCandidates({ date: '2026-10-10', stays: address, root });
+  assert.equal(updateCandidates({ date: '2026-10-10', stays: [], root }).ready.length, 1);
+});
+
+test('옛 문자열 지오코딩 캐시는 무효화하고 새 객체로 다시 조회한다', async (t) => {
+  const root = fixture(t);
+  const keyPath = join(root, 'key');
+  writeFileSync(keyPath, 'secret', { mode: 0o600 });
+  const cachePath = join(root, VAULT_REL.locationGeocodeCache);
+  mkdirSync(join(cachePath, '..'), { recursive: true });
+  writeFileSync(cachePath, JSON.stringify({ '12.0000,34.0000': '옛 주소' }));
+  let calls = 0;
+  const geocode = createCachedGeocoder({ root, keyPath, fetchImpl: async () => {
+    calls += 1;
+    return { ok: true, json: async () => ({ documents: [{ road_address: { building_name: '새 건물', address_name: '가상 도로 2' } }] }) };
+  } });
+  assert.deepEqual(await geocode(12, 34), { buildingName: '새 건물', address: '가상 도로 2' });
+  await geocode.flush();
+  assert.equal(calls, 1);
+  assert.deepEqual(JSON.parse(readFileSync(cachePath, 'utf8'))['12.0000,34.0000'], { buildingName: '새 건물', address: '가상 도로 2' });
 });
 
 test('데일리 동선은 지오코딩 실패 건수를 로그로 남긴다', async (t) => {
@@ -249,7 +289,7 @@ test('손상된 후보 JSON은 예외로 알리고 보존한다', (t) => {
 
 test('후보는 날짜별 방문을 중복하지 않고 체류와 겹치는 일정만 ready에 반영', (t) => {
   const root = fixture(t);
-  const stay = { lat: 12, lon: 34, address: '건물', registered: false, start: '2026-10-09T01:00:00Z', end: '2026-10-09T02:00:00Z' };
+  const stay = { lat: 12, lon: 34, address: '가상 도로 1', registered: false, start: '2026-10-09T01:00:00Z', end: '2026-10-09T02:00:00Z' };
   for (const date of ['2026-10-07', '2026-10-08', '2026-10-09']) updateCandidates({ date, stays: [stay, stay], root });
   assert.equal(readCandidates(root)[0].visits.length, 3);
   assert.equal(updateCandidates({ date: '2026-10-09', stays: [], root }).ready.length, 1);
@@ -260,7 +300,7 @@ test('후보는 날짜별 방문을 중복하지 않고 체류와 겹치는 일�
     { title: '종일 일정', start: '2026-10-09T00:00:00Z', end: '2026-10-10T00:00:00Z', allDay: true },
     { title: '잘못된 시각', start: '오전', end: '오후', allDay: false },
   ];
-  assert.equal(updateCandidates({ date: '2026-10-09', stays: [stay], events, root: secondRoot }).ready.length, 1);
+  assert.equal(updateCandidates({ date: '2026-10-09', stays: [stay], events, root: secondRoot }).ready.length, 0);
   assert.deepEqual(readCandidates(secondRoot)[0].eventTitles, ['겹치는 일정']);
 });
 

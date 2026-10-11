@@ -187,9 +187,11 @@ export async function describeStays(stays, { places, geocode }) {
     }
     if (place) { described.push({ ...publicStay, label: place.name, registered: true, placeName: place.name }); previousPlace = place; continue; }
     const result = await geocode(stay.lat, stay.lon);
-    const address = typeof result === 'string' ? result : result?.address;
-    described.push({ ...publicStay, label: address ? `미등록: ${address}` : (result?.reason === 'dry-run' ? '미등록 장소(dry-run)' : `미등록 장소 (${result?.reason || '주소 미조회'})`),
-      registered: false, address: address ?? null });
+    const address = result?.address ?? (typeof result === 'string' ? result : null);
+    const buildingName = result?.buildingName ?? null;
+    const label = buildingName || (address ? `미등록: ${address}`
+      : (result?.reason === 'dry-run' ? '미등록 장소(dry-run)' : `미등록 장소 (${result?.reason || '주소 미조회'})`));
+    described.push({ ...publicStay, label, registered: false, autoNamed: Boolean(buildingName), address: address ?? null });
     previousPlace = null;
   }
   return described;

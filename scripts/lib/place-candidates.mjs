@@ -25,12 +25,13 @@ export function saveCandidates(root, candidates) {
 }
 const visitCount = (candidate, date) => candidate.visits.filter((visit) => visit >= new Date(Date.parse(`${date}T00:00:00Z`) - 29 * 86_400_000).toISOString().slice(0, 10) && visit <= date).length;
 export function readyCandidate(candidate, date) {
-  return visitCount(candidate, date) >= 3 || candidate.eventTitles.length > 0;
+  return visitCount(candidate, date) >= 2;
 }
 export function updateCandidates({ date, stays, events = [], root, dryRun = false }) {
   const candidates = readCandidates(root);
-  for (const stay of stays.filter((item) => !item.registered)) {
+  for (const stay of stays.filter((item) => !item.registered && !item.autoNamed)) {
     let candidate = candidates.find((item) => haversineM(item, stay) <= STAY_RADIUS_M);
+    if (candidate && candidate.status !== '관찰') continue;
     if (!candidate) {
       const next = Math.max(0, ...candidates.map((item) => Number(item.id.slice(1)) || 0)) + 1;
       candidate = { id: `C${next}`, lat: stay.lat, lon: stay.lon, address: stay.address || '', visits: [], eventTitles: [], status: '관찰', askedAt: null };

@@ -22,7 +22,9 @@ export async function reverseGeocode(lat, lon, { key, fetchImpl = fetch } = {}) 
   if (!response.ok) throw new Error(`카카오 HTTP ${response.status}`);
   const result = await response.json();
   const document = result.documents?.[0];
-  return document?.road_address?.building_name || document?.road_address?.address_name || document?.address?.address_name || null;
+  const buildingName = document?.road_address?.building_name || null;
+  const address = document?.road_address?.address_name || document?.address?.address_name || null;
+  return buildingName || address ? { buildingName, address } : null;
 }
 export function createCachedGeocoder({ root, keyPath = KAKAO_KEY_PATH, fetchImpl = fetch } = {}) {
   const path = join(root, VAULT_REL.locationGeocodeCache);
@@ -48,17 +50,20 @@ export function createCachedGeocoder({ root, keyPath = KAKAO_KEY_PATH, fetchImpl
     const operation = pending.then(async () => {
       loadCache();
       const coordinateKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
-      if (cache[coordinateKey]) return { address: cache[coordinateKey] };
+      const cached = cache[coordinateKey];
+      if (cached && typeof cached === 'object' && !Array.isArray(cached)
+        && (cached.buildingName == null || typeof cached.buildingName === 'string')
+        && (cached.address == null || typeof cached.address === 'string')) return cached;
       let key;
       try { key = readKakaoKey(keyPath); }
       catch { failures += 1; return { reason: '주소 미조회: 카카오 키 권한 오류' }; }
       if (!key) { failures += 1; return { reason: '주소 미조회: 카카오 키 없음' }; }
       try {
-        const address = await reverseGeocode(lat, lon, { key, fetchImpl });
-        if (!address) throw new Error('주소 없음');
-        cache[coordinateKey] = address;
+        const result = await reverseGeocode(lat, lon, { key, fetchImpl });
+        if (!result) throw new Error('주소 없음');
+        cache[coordinateKey] = result;
         dirty = true;
-        return { address };
+        return result;
       } catch { failures += 1; return { reason: '주소 미조회: 카카오 조회 실패' }; }
     });
     pending = operation.then(() => {}, () => {});
