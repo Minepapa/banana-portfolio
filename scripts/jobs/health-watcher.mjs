@@ -54,6 +54,7 @@ const sendWarning = createDirectWarningSender(sendAgentMessage, {
 // 둘 다 여기서 함께 고친다.
 export const EXPECTED_INTERVALS_MS = {
   'media-archive': 60 * 60 * 1000,
+  'media-moments': 60 * 60 * 1000,
   // 위치 수신이 12시간 없으면 폰 앱·Tailscale 점검.
   'owntracks-receiver': 12 * 60 * 60 * 1000,
   // ⚠️ 재수정(2026-08-28, 오너 지시) — 평일 16:00 하루 1회(StartCalendarInterval)에서

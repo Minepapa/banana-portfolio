@@ -58,6 +58,8 @@ export const VAULT_REL = {
   locationCandidates: '95_Etna/Location/place-candidates.json',
   locationGeocodeCache: '95_Etna/Location/geocode-cache.json',
   mediaArchiveIndex: '95_Etna/Media/archive-index.jsonl',
+  mediaMoments: '20_Records/24_Media',
+  mediaMomentsState: '95_Etna/Media/moments.json',
   jobHealth: '95_Etna/Jobs/JobHealth',
   spending: '95_Etna/Spending',
   dailyNotes: '10_Periodic/Daily', // 데일리 노트(D85) — {YYYY}/YYYY-MM-DD.md

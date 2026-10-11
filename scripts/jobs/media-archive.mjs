@@ -8,6 +8,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { withLock } from '../lib/state-writer.mjs';
 
 const execFileAsync = promisify(execFile);
 const KINDS = ['Camera', 'Recordings', 'Calls', 'Screenshots'];
@@ -301,7 +302,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     console.error('usage: node scripts/jobs/media-archive.mjs [--dry-run]');
     process.exitCode = 2;
   } else {
-    runMediaArchive({ dryRun: args.includes('--dry-run') })
+    (async () => {
+      const dryRun = args.includes('--dry-run');
+      if (dryRun) return runMediaArchive({ dryRun });
+      await fs.mkdir(dirname(VAULT_PATHS.mediaArchiveIndex), { recursive: true });
+      return withLock(VAULT_PATHS.mediaArchiveIndex, () => runMediaArchive(),
+        { retries: 1200, retryDelayMs: 100 });
+    })()
       .then((summary) => { if (summary.failed) process.exitCode = 1; })
       .catch((error) => { console.error(`[media-archive] ${error.stack}`); process.exitCode = 1; });
   }
