@@ -46,6 +46,10 @@ export const VAULT_REL = {
   homeDir: '01_Home', // 카테고리 노트 폴더(category 링크 대상)
   portfolioKpiTopics: '30_Wiki/34_Topics/PortfolioKPI', // 폴더는 영문 유지, 노트 제목만 한글(2026-10-08)
   inboxRoot: '00_Inbox',
+  recordsRoot: '20_Records',
+  inboxIngestProcessed: '95_Etna/Ingest/processed.json',
+  inboxIngestPlans: '95_Etna/Ingest/plans',
+  clioLog: '60_Logs/Clio',
   periodicRoot: '10_Periodic',
   people: '30_Wiki/31_People', // 헤르메스 생일 브리핑 대상
   places: '30_Wiki/32_Places',

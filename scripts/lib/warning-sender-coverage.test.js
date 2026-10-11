@@ -9,6 +9,7 @@ import { parse } from 'acorn';
 const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ROOTS = ['jobs', 'tools', 'lib', 'hooks'];
 const ALLOWED_RAW_SENDS = Object.freeze({
+  'jobs/clio-inbox-ingest.mjs': { count: 1, reason: 'Inbox 정리 계획 정보성 정기 보고' },
   'jobs/annual-instrument-rescore.mjs': { count: 2, reason: '재평가 제안 발송 두 경로' },
   'jobs/daily-breakout-signal-scan.mjs': { count: 2, reason: '약세장 중단·신호 없음 완료 안내' },
   'jobs/daily-execution-report.mjs': { count: 1, reason: '체결 내역 정기 보고' },

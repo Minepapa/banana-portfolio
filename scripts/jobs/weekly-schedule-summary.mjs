@@ -76,6 +76,7 @@ export function describeSwitchStatus({ killSwitchContent, executionModeContent, 
 // buildWeeklyScheduleText에서 별도 [조건부] 그룹으로 묶이고, 값은 발송 조건을
 // 짧게 설명하는 문구(사람이 읽는 텍스트에 그대로 붙음).
 export const SCHEDULE = [
+  { day: '매일', time: '04:30', dept: '클리오 Clio', what: 'Inbox 정리 계획 — 리포트만, 대상이 있을 때', conditional: '계획할 메모가 있을 때만', script: 'clio-inbox-ingest.mjs' },
   { day: '매일', time: '07:30', dept: '헤르메스 Hermes', what: '아침 브리핑 — 오늘 일정과 생일', script: 'hermes-briefing.mjs' },
   { day: '매일', time: '21:00', dept: '헤르메스 Hermes', what: '내일 일정', conditional: '내일 일정이 있을 때만', script: 'hermes-briefing.mjs' },
   { day: '매일', time: '23:30', dept: '클리오 Clio', what: '데일리 초안 요약 — 그날 들어온 기록 수와 AI 하루 요약(2026-10-09 신설, 리포트만 하는 기간)', script: 'daily-note.mjs' },
