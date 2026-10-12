@@ -124,8 +124,8 @@ JS 렌더링 SPA — 정적 WebFetch로는 페이지 뼈대만 보여 Playwright
 아니라 별도로 남기지 않음 — 스펙 재확인이 필요하면 위 openapi.json URL을 다시 curl로
 조회할 것(NH가 API를 변경하면 이 문서의 필드 설명도 같이 갱신 필요).
 
-상세 API 커버리지(자산군×카테고리별 구현 현황)는 므네모시네
-`Knowledge/NH-PLUG-API-가이드.md` 참고 — 이 문서(DATA-SOURCES.md)는 출처 재현성만
+상세 API 커버리지(자산군×카테고리별 구현 현황)는 무세이온
+`30_Wiki/33_Objects/NH-PLUG (NH투자증권 API).md` 참고 — 이 문서(DATA-SOURCES.md)는 출처 재현성만
 다룬다.
 
 ## 7. ECOS(한국은행 경제통계시스템) API
@@ -151,8 +151,8 @@ JS 렌더링 SPA — 정적 WebFetch로는 페이지 뼈대만 보여 Playwright
 일단위로 있지만 **전영업일 지연**(오늘 발행값이 어제 시장 반영)이 있어 risk-
 monitor 거시신호·실시간 포지션평가 둘 다에 부적합 — 실제 교체를 구현까지
 했다가 code-reviewer 실측으로 지연을 발견해 yfinance로 되돌림(상세는
-`Knowledge/API/ECOS.md` 참고). 국고채 스프레드(위)만 유일하게 일단위+무지연
+`30_Wiki/33_Objects/ECOS (한국은행 경제통계).md` 참고). 국고채 스프레드(위)만 유일하게 일단위+무지연
 조건을 만족해 실제 대체됨.
 
-상세 근거·검증 과정은 므네모시네 `Knowledge/API/ECOS.md` 참고 — 이 문서
+상세 근거·검증 과정은 무세이온 `30_Wiki/33_Objects/ECOS (한국은행 경제통계).md` 참고 — 이 문서
 (DATA-SOURCES.md)는 출처 재현성만 다룬다.

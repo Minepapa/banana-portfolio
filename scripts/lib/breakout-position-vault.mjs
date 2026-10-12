@@ -7,7 +7,7 @@
 // 걸렸는지(protectionStatus) ②트레일링스탑은 KIS가 자동으로 안 올려주므로(스톱
 // 지정가는 고정된 조건가 1개일 뿐, 진짜 트레일링은 우리 시스템이 주가가 오를 때마다
 // 기존 손절주문을 "정정"(취소+재발주 아님 — reviseKrOrder, KIS주문정정취소API)해
-// 조건가만 올려야 구현됨 — Knowledge/API/KIS.md 참고) 지금 손절선이 얼마인지 ③3R
+// 조건가만 올려야 구현됨 — 30_Wiki/33_Objects/KIS (한국투자증권 API).md 참고) 지금 손절선이 얼마인지 ③3R
 // 부분익절을 이미 했는지를 하루하루, 프로세스 재시작을 넘어 이어서 추적해야 한다.
 // 실제 파일 I/O는 호출부(state-writer.mjs)가 한다.
 import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';

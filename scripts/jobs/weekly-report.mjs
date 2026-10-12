@@ -20,7 +20,7 @@
  * 원칙(risk-monitor.mjs와 동일): raw 숫자는 LLM이 만들지 않는다.
  *   ① Node가 Vault에서 결정론 조회 → report-facts로 조립
  *   ② claude -p 는 투자자-성향 결정 본문 + 주입된 facts만으로 "서술·해석·처방"만 생성
- *   ③ Log/Reports/{asof}.md 저장 + (선택)텔레그램 푸시
+ *   ③ 50_Outputs/Reports/{연}/{asof} 주간 리포트.md 저장 + (선택)텔레그램 푸시
  *   ④ 행동 신호(체결 기반)를 §3와 대조해 성향 관찰 추출(sonnet) →
  *      50_Outputs/Preferences/{YYYY}/*.md 신규 파일
  *
@@ -602,7 +602,7 @@ async function main() {
           console.log(`   📨 성향관찰 승격후보 질문 발송: ${result.questionId} (${result.status}${result.duplicate ? ', 중복' : ''})`);
         } catch (e) {
           console.error(`   ⚠️ 성향관찰 승격후보 질문 발송 실패(관찰 기록 자체는 정상 저장됨) — FYI 경고로 대체: ${e.message}`);
-          collectWarning(`성향관찰 승격후보 신규 생성(질문 발송 실패, 므네모시네에서 직접 확인 필요): "${p.observation.slice(0, 60)}"(${p.vsProfile})`);
+          collectWarning(`성향관찰 승격후보 신규 생성(질문 발송 실패, 무세이온에서 직접 확인 필요): "${p.observation.slice(0, 60)}"(${p.vsProfile})`);
         }
       }
     }

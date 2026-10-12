@@ -35,7 +35,7 @@ test('buildSessionContext: 입력 규칙 표는 인수인계 유무와 무관하
   assert.match(onlyRules, /\| 📜 \| 메모 \|/);
   assert.doesNotMatch(onlyRules, /channel-rule/);
   const both = buildSessionContext({ inputRules: rules, handoff: '어제 요약', handoffName: '2026-10-09.md' });
-  assert.ok(both.indexOf('[텔레그램 입력 규칙]') < both.indexOf('[므네모시네 인수인계]'));
+  assert.ok(both.indexOf('[텔레그램 입력 규칙]') < both.indexOf('[무세이온 인수인계]'));
   assert.match(both, /어제 요약/);
   assert.equal(buildSessionContext({}), '');
 });

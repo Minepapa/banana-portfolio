@@ -54,7 +54,7 @@ export const JOB_LABELS = {
   'telegram-session-health-check': '상시 텔레그램 세션 MCP 연결 끊김 감지·자동복구',
   'intraday-market-move-monitor': '장중 시장 급변 실시간 감시(코스피·S&P500·VIX·DXY·USD/KRW·미국10Y, 플루토스 Plutus 소관)',
   'process-warning-actions': '운영 경고 원장에서 허용된 거시 조회 실패만 사건당 1회·30분 뒤 VIX 읽기 재조회(주문·장부·Telegram 변경 없음)',
-  'weekly-vault-health-check': '므네모시네 주간 건강검진(구조 정합성·데이터 정합성·미완료 작업, 클리오 Clio 소관, 2026-09-04 신설)',
+  'weekly-vault-health-check': '무세이온 주간 건강검진(구조 정합성·데이터 정합성·미완료 작업, 클리오 Clio 소관, 2026-09-04 신설)',
   'weekly-warning-review': '경고 주간 검토(제우스 Zeus 소관, 이상 있을 때만 발송)',
   'pension-balance-reminder': '연금저축 잔고 확인 요청(매월 22일, 카카오 알림·API 둘 다 없는 계좌라 수동 확인만 가능, 2026-09-04 신설)',
   'annual-instrument-rescore': '보유 ETF 연 1회 재스코어링(1월 1~3일 첫 평일, 보수율·유동성·NAV괴리율·추적오차 재비교 후 격차 크면 Plutus에게 유지/교체 판단 요청, 플루토스 Plutus, 2026-09-06 신설)',
@@ -81,7 +81,7 @@ export const JOB_LABELS = {
   'quarterly-allocation-review': '플루토스 Plutus가 목표비중(20/10/10/30/30) 자체가 여전히 적절한지 재검토, 순수 의견 보고(비중을 직접 바꾸지 않음, 분기 시작월 첫 평일)',
   'rebalance-proposal': '5/25 밴드 이탈을 분기 1회 점검해 플루토스 Plutus가 구체적 매수/매도 제안 발송(분할매수 하드캡 50%, 분기 시작월 첫 평일)',
   'proposal-execution-reminder': '자산분배 트랙 승인 제안의 미체결·무응답을 플루토스 Plutus가 리마인드(3일 이상 미체결 또는 1일 이상 승인/거부 자체 방치, 2026-08-23 신설)',
-  'telegram-session-handoff': '텔레그램 세션 재시작 5분 전, 그날 므네모시네 활동과 오너-세션 대화 요약을 기록(재시작 후 새 세션이 SessionStart 훅으로 읽어옴, 매일 03:55)',
+  'telegram-session-handoff': '텔레그램 세션 재시작 5분 전, 그날 무세이온 활동과 오너-세션 대화 요약을 기록(재시작 후 새 세션이 SessionStart 훅으로 읽어옴, 매일 03:55)',
   'isa-maturity-check': 'ISA 3년 만기(2028-04-06) 도달 여부를 매주 점검, 도달 시 플루토스 Plutus가 연금계좌 일괄이전 제안(만기 전엔 조용히 스킵, 2026-08-29 신설)',
 };
 

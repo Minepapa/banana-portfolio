@@ -312,7 +312,7 @@ async function main() {
     // 장후시간외 세션(15:40~16:00 KRX) 안에 전혀 체결이 안 된 것으로 "확인된"(모름이
     // 아님) 경우 — KRX 당일유효 세션 주문은 세션 종료 시 자동 실효된다고 가정
     // (2026-09-13 기준 미검증, 실전 첫 실행 때 KIS 체결내역으로 실제로 사라지는지
-    // 확인 필요 — Knowledge/API/KIS.md 참고). 별도 취소 호출 없이 다음날 시가
+    // 확인 필요 — 30_Wiki/33_Objects/KIS (한국투자증권 API).md 참고). 별도 취소 호출 없이 다음날 시가
     // 폴백을 큐잉만 한다.
     console.log('[장후시간외 미체결] 다음날 시가 폴백 큐잉');
     const { id, filename, content } = buildPendingEntryRecord({

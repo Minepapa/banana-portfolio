@@ -1,4 +1,4 @@
-// 므네모시네 위키 승인 질문의 영속 큐. getUpdates 수신은 하지 않는다.
+// 무세이온 위키 승인 질문의 영속 큐. getUpdates 수신은 하지 않는다.
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';

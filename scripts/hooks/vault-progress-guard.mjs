@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PostToolUse 훅 — 므네모시네 `Log/Implementation/*.md` 파일을 쓰거나 고칠 때마다
+ * PostToolUse 훅 — 무세이온 `40_Projects/banana-portfolio/Implementation/*.md` 파일을 쓰거나 고칠 때마다
  * `progress:` frontmatter 필드가 정해진 6종 값(예정/진행중/차단됨/완료/보류/폐기) 중 하나인지
  * 그 자리에서 검사한다(2026-09-14, 오너 지시 — "구조적으로 기록 누락을 막자").
  *
@@ -22,7 +22,7 @@
  * post-tool-rules-injector.mjs와 동일 계약(이 런타임에 실제로 설치돼 검증된
  * 형태) — 훅 자체가 실패해도 세션을 절대 막지 않는다(항상 continue:true).
  *
- * 이 훅은 파일 경로가 므네모시네(Vault) `Log/Implementation/` 밑의 `.md`일 때만
+ * 이 훅은 파일 경로가 무세이온(Vault) `40_Projects/banana-portfolio/Implementation/` 밑의 `.md`일 때만
  * 개입한다 — 그 외 모든 Write/Edit(이 프로젝트 코드 포함)는 그냥 통과.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -54,7 +54,7 @@ function warn(message) {
   }));
 }
 
-// 순수함수 — 테스트 가능. relPath: VAULT_ROOT 기준 상대경로("Log/Implementation/x.md" 형태).
+// 순수함수 — 테스트 가능. relPath: VAULT_ROOT 기준 상대경로("40_Projects/banana-portfolio/Implementation/x.md" 형태).
 export function shouldCheck(relPath) {
   if (!relPath) return false;
   const normalized = relPath.replace(/\\/g, '/');
@@ -93,18 +93,18 @@ export function checkStatusField(frontmatter, relPath) {
   const value = frontmatter?.status;
   const hasStatus = Object.prototype.hasOwnProperty.call(frontmatter ?? {}, 'status');
   if ((scope !== 'knowledge' || hasStatus) && (value == null || value === '')) {
-    return `⚠️ 므네모시네 정합성 — ${relPath}에 status: 필드가 없습니다. ` +
+    return `⚠️ 무세이온 정합성 — ${relPath}에 status: 필드가 없습니다. ` +
       `${CANONICAL_STATUS_VALUES[scope].join('/')} 중 하나를 선택하세요.`;
   }
   if (value != null && value !== '' && !CANONICAL_STATUS_VALUES[scope].includes(value)) {
-    return `⚠️ 므네모시네 정합성 — ${relPath}의 status: "${value}"는 ` +
+    return `⚠️ 무세이온 정합성 — ${relPath}의 status: "${value}"는 ` +
       `${CANONICAL_STATUS_VALUES[scope].join('/')} 밖의 자유서술입니다. ` +
       '긴 설명은 statusDetail에 적으세요.';
   }
   if (scope === 'lifecycle' && relPath.replace(/\\/g, '/').startsWith(`${VAULT_REL.logImplementation}/`)) {
     const progress = frontmatter?.progress;
     if (value != null && progress != null && value !== progress) {
-      return `⚠️ 므네모시네 정합성 — ${relPath}의 status(${value})와 progress(${progress})가 다릅니다. ` +
+      return `⚠️ 무세이온 정합성 — ${relPath}의 status(${value})와 progress(${progress})가 다릅니다. ` +
         '둘을 같은 생명주기 값으로 맞추세요.';
     }
   }
@@ -116,11 +116,11 @@ export function checkStatusField(frontmatter, relPath) {
 export function checkProgressField(frontmatter, relPath) {
   const value = frontmatter?.progress;
   if (value == null || value === '') {
-    return `⚠️ 므네모시네 정합성 — ${relPath}에 progress: 필드가 없습니다. ` +
+    return `⚠️ 무세이온 정합성 — ${relPath}에 progress: 필드가 없습니다. ` +
       `${VAULT_REL.knowledgeMetaIndexFile} 규칙(완료 상태 추적)에 따라 ${CANONICAL_PROGRESS_VALUES.join('/')} 중 하나를 지금 추가하세요.`;
   }
   if (!CANONICAL_PROGRESS_VALUES.includes(value)) {
-    return `⚠️ 므네모시네 정합성 — ${relPath}의 progress: "${value}"는 정해진 ${CANONICAL_PROGRESS_VALUES.length}종(${CANONICAL_PROGRESS_VALUES.join('/')}) 밖의 자유서술입니다. ` +
+    return `⚠️ 무세이온 정합성 — ${relPath}의 progress: "${value}"는 정해진 ${CANONICAL_PROGRESS_VALUES.length}종(${CANONICAL_PROGRESS_VALUES.join('/')}) 밖의 자유서술입니다. ` +
       `세부 사정은 statusDetail: 필드에 적고, progress: 자체는 ${CANONICAL_PROGRESS_VALUES.length}종 중 하나로 정규화하세요(예: 일부만 끝났으면 "진행중").`;
   }
   return null;

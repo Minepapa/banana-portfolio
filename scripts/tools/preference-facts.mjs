@@ -2,7 +2,7 @@
 // preference-facts.mjs — 비서실 Apollo 대화형 보고용 Node 결정론 사실 조립기(성향관찰만).
 //
 // Apollo는 다른 부서와 무결성 구멍의 성격이 다르다: KPI(profile/kpi_baseline.md)·주간리포트
-// (Log/Reports/*.md)는 이미 로컬 파일이라 Read 도구가 리터럴 원문을 그대로 보여준다 —
+// (50_Outputs/Reports/{연}/*.md)는 이미 로컬 파일이라 Read 도구가 리터럴 원문을 그대로 보여준다 —
 // fetch가 아니므로 지어낼 수가 없고 그 자체로 하드 보장이다. 성향관찰만 여러 파일에 흩어진
 // 실시간 상태(신뢰도·상태 등)를 집계해야 해서 이 CLI가 그것만 담당한다.
 //

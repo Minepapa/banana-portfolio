@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PostToolUse 훅 — Write/Edit로 건드린 파일이 Knowledge/Meta/므네모시네-파일배선도.md
+ * PostToolUse 훅 — Write/Edit로 건드린 파일이 90_Delphi/Schema/파일 배선도.md
  * 의 어느 클러스터에 속하면, 그 자리에서 "같이 확인할 나머지 파일" 목록을
  * 알려준다(2026-09-14, 오너 지시 — "파일배선도를 만든 이유가 하나 고칠 때 연관된
  * 걸 알려주려는 거였는데, 그걸 실제로 활용해서 전체를 다 안 훑어도 되게 하자").
@@ -70,7 +70,7 @@ export function buildReminderMessage(relPath, relatedClusters) {
     if (rest.length) parts.push(`그 외: ${rest.slice(0, MAX_OTHERS_SHOWN).map((o) => o.path).join(', ')}`);
     lines.push(`- ${c.name}${c.isSource ? '(정본)' : ''} — ${parts.join(' / ')}`);
   }
-  lines.push('므네모시네-파일배선도.md 참고, 필요하면 같이 갱신할 것.');
+  lines.push(`${VAULT_REL.wiringMapFile.replace(/\.md$/, '')} 참고, 필요하면 같이 갱신할 것.`);
   return lines.join('\n');
 }
 

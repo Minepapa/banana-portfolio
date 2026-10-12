@@ -14,7 +14,7 @@
  * ⚠️ systemMessage를 의도적으로 안 씀 — handoff-load 훅이 systemMessage로 텔레그램에
  * 배너를 누출시켰던 사고(2026-08-29 발견·수정)를 여기서 재현하지 않기 위해서다. 이
  * 훅은 additionalContext(모델 컨텍스트에만 조용히 주입)만 쓰고, "무엇을 읽었다"는
- * 기록은 오너에게 텔레그램으로 말 거는 대신 State/TelegramSession/last-read.md에
+ * 기록은 오너에게 텔레그램으로 말 거는 대신 95_Etna/Jobs/TelegramSession/last-read.md에
  * 메모로만 남긴다(오너가 원하는 시점에 직접 확인 가능, 매일 아침 알림 스팸 아님).
  *
  * 사용법(Claude Code SessionStart 훅 계약): stdin으로 JSON 받음(안 씀), stdout에
@@ -46,7 +46,7 @@ export function buildSessionContext({ inputRules = null, handoff = null, handoff
       + `세션 자체의 규칙(구현 금지·재시작·답장 형식)은 ${sessionDoc}에 있다.\n\n` + inputRules.replace(/^---\n[\s\S]*?\n---\n/, '').trim());
   }
   if (handoff) {
-    parts.push(`[므네모시네 인수인계] 전날 텔레그램 세션 요약(${handoffName})을 자동으로 읽었다 — `
+    parts.push(`[무세이온 인수인계] 전날 텔레그램 세션 요약(${handoffName})을 자동으로 읽었다 — `
       + '아래 내용을 참고해 오늘 대화를 이어가되, 오너가 먼저 묻지 않는 한 이 내용을 그대로 텔레그램에 '
       + `요약해서 보내지는 마라(불필요한 알림 방지).\n\n${handoff}`);
   }

@@ -47,7 +47,7 @@
  * 읽어오는 쪽(재시작 후 새 세션이 이 파일을 참고하는 것)은 별개 메커니즘 —
  * `scripts/hooks/telegram-session-context.mjs`(SessionStart 훅, `.claude/
  * settings.json`에 등록)가 이 잡이 쓴 최신 파일을 additionalContext로 주입하고
- * `State/TelegramSession/last-read.md`에 "무엇을 읽었다"는 마커를 남긴다.
+ * `95_Etna/Jobs/TelegramSession/last-read.md`에 "무엇을 읽었다"는 마커를 남긴다.
  *
  * 날짜 기준 — 03:55에 도는 잡이라 "오늘"(그 시각 기준 KST 날짜)은 방금 시작된 지
  * 4시간이 채 안 돼 사실상 비어있다. 이 잡이 요약해야 할 건 "이제 막 끝나가는

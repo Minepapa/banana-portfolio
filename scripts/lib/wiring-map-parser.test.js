@@ -108,7 +108,7 @@ test('findRelatedClusters: 아무 클러스터에도 안 걸리면 빈 배열', 
 // 실제 파일배선도.md 문서에 대해 파서가 안 죽고 뭔가 뽑아내는지 스모크 테스트 —
 // 문서가 자유롭게 편집되므로 정확한 개수를 하드코딩하지 않고 "0개는 아니다"만 확인.
 const WIRING_MAP_PATH = vaultAbs(VAULT_REL.wiringMapFile); // 이관 후 실제 위치(4-7)
-test('[스모크] 실제 므네모시네 파일배선도.md를 파싱해도 에러 없고 클러스터가 나온다', { skip: !existsSync(WIRING_MAP_PATH) }, () => {
+test('[스모크] 실제 무세이온 파일 배선도.md를 파싱해도 에러 없고 클러스터가 나온다', { skip: !existsSync(WIRING_MAP_PATH) }, () => {
   const content = readFileSync(WIRING_MAP_PATH, 'utf8');
   const clusters = parseWiringMapClusters(content);
   assert.ok(clusters.length > 0, '클러스터가 최소 1개는 파싱돼야 함');

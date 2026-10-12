@@ -37,7 +37,8 @@ test('buildReminderMessage: others가 있으면 수동/그 외 나눠 메시지 
     ],
   }];
   const msg = buildReminderMessage('run.sh', related);
-  assert.match(msg, /파일배선도/);
+  assert.match(msg, /파일 배선도/);
+  assert.match(msg, /90_Delphi\/Schema\/파일 배선도 참고/);
   assert.match(msg, /수동가드.*a\.mjs/);
   assert.match(msg, /그 외.*b\.mjs/);
 });

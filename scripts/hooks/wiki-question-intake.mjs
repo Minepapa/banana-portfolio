@@ -25,7 +25,7 @@ export function buildManualChangeResultMessage({ questionId, action, status }) {
   const instruction = action === 'approve'
     ? `질문 본문에 이 결과에 대한 문서 변경 지시가 있으면 정확히 그대로 수행하고, 없으면 아무 것도 바꾸지 마라. 처리 후(바꿀 게 없었어도) node scripts/tools/wiki-question-cli.mjs complete --id=${questionId} --summary="<수행한 내용 또는 '해당 없음'>"을 호출해 마감하라.`
     : `질문 본문에 이 결과(${actionLabel})에 대한 문서 변경 지시가 있으면 정확히 그대로 수행하고, 없으면 아무 것도 바꾸지 마라. 이 상태는 이미 종결로 기록됐으니 별도 complete 호출은 필요 없다.`;
-  return `[므네모시네 질문 ${questionId}] 오너가 ${actionLabel}을(를) 선택했다(${status} 상태로 기록). ${instruction} 이 답변은 투자 제안·주문 승인과 무관하다.`;
+  return `[무세이온 질문 ${questionId}] 오너가 ${actionLabel}을(를) 선택했다(${status} 상태로 기록). ${instruction} 이 답변은 투자 제안·주문 승인과 무관하다.`;
 }
 
 async function handleExplicitAnswer(explicit) {
@@ -33,13 +33,13 @@ async function handleExplicitAnswer(explicit) {
   if (result.action === 'approve' && ['keyword-registration', 'close-work-doc'].includes(result.kind)) {
     try {
       const applied = await applyWikiQuestion(explicit.questionId);
-      return (`[므네모시네 질문 ${explicit.questionId}] 오너 승인을 기록하고 허용된 변경을 처리했다. 상태: ${applied.status}. 결과: ${JSON.stringify(applied.applied)}. 투자 제안·주문 승인이 아니다. 결과를 간단히 회신하라.`);
+      return (`[무세이온 질문 ${explicit.questionId}] 오너 승인을 기록하고 허용된 변경을 처리했다. 상태: ${applied.status}. 결과: ${JSON.stringify(applied.applied)}. 투자 제안·주문 승인이 아니다. 결과를 간단히 회신하라.`);
     } catch (error) {
-      return (`[므네모시네 질문 ${explicit.questionId}] 등록 승인은 기록했으나 자동 반영이 실패했다: ${error.message}. 변경 내용을 임의로 넓히지 말고 원인을 점검한 뒤 안전하게 반영하거나 오너에게 재확인하라.`);
+      return (`[무세이온 질문 ${explicit.questionId}] 등록 승인은 기록했으나 자동 반영이 실패했다: ${error.message}. 변경 내용을 임의로 넓히지 말고 원인을 점검한 뒤 안전하게 반영하거나 오너에게 재확인하라.`);
     }
   }
   if (result.action === 'clarify') {
-    return (`[므네모시네 질문 ${explicit.questionId}] 답변 선택이 명확하지 않아 상태를 바꾸지 않았다. 질문의 등록/승인, 보류, 제외/거절 중 하나로 재확인하라.`);
+    return (`[무세이온 질문 ${explicit.questionId}] 답변 선택이 명확하지 않아 상태를 바꾸지 않았다. 질문의 등록/승인, 보류, 제외/거절 중 하나로 재확인하라.`);
   }
   if (result.kind === 'manual-change' && ['approve', 'hold', 'reject'].includes(result.action)) {
     return (buildManualChangeResultMessage({
@@ -50,9 +50,9 @@ async function handleExplicitAnswer(explicit) {
   }
   // 이미 처리됐거나 만료된 질문은 아무것도 기록하지 않았다 — 기록했다고 말하지 않는다(리뷰 M4).
   if (result.action === 'already-processed' || result.action === 'expired') {
-    return `[므네모시네 질문 ${explicit.questionId}] 이 답변은 기록되지 않았다(질문 상태: ${result.status ?? result.action}). 오너에게 이미 처리됐거나 만료된 질문이라고 알려라.`;
+    return `[무세이온 질문 ${explicit.questionId}] 이 답변은 기록되지 않았다(질문 상태: ${result.status ?? result.action}). 오너에게 이미 처리됐거나 만료된 질문이라고 알려라.`;
   }
-  return `[므네모시네 질문 ${explicit.questionId}] 답변을 ${result.status ?? result.action} 상태로 기록했다. 투자 제안·주문 승인과 무관하다. 결과를 회신하라.`;
+  return `[무세이온 질문 ${explicit.questionId}] 답변을 ${result.status ?? result.action} 상태로 기록했다. 투자 제안·주문 승인과 무관하다. 결과를 회신하라.`;
 }
 
 export async function main() {
@@ -75,7 +75,7 @@ export async function main() {
   if (pending.length) {
     // 묶음대기는 아직 오너에게 보내지 않은 질문이다 — 세션이 먼저 꺼내 묻지 않게 표시한다(리뷰 M4).
     const compact = pending.map((item) => `${item.questionId} [${item.status === '묶음대기' ? '묶음대기 — 아직 안 보냄, 먼저 묻지 말 것' : item.status}] ${item.question}`).join('\n');
-    emit(`[므네모시네 질문 대기열]\n${compact}\n메시지에 정확한 질문 ID와 등록/보류/제외 선택이 있으면 이미 자동 처리됐다. ID가 없으면 현재 대화에서 어떤 질문에 대한 답인지 명백할 때만 ` +
+    emit(`[무세이온 질문 대기열]\n${compact}\n메시지에 정확한 질문 ID와 등록/보류/제외 선택이 있으면 이미 자동 처리됐다. ID가 없으면 현재 대화에서 어떤 질문에 대한 답인지 명백할 때만 ` +
       `node scripts/tools/wiki-question-cli.mjs resolve --id=<정확한 ID> --text="등록|보류|제외"로 기록하라. 재시작 뒤 대화 맥락이 없거나 복수 후보면 ID를 되물어라. 승인 처리 후 keyword-registration과 close-work-doc은 apply 명령으로 반영하고, manual-change는 승인받은 변경만 수행한 뒤 complete로 마감하라. 이 승인은 투자 제안·주문과 분리된다.`);
   }
 }
@@ -83,6 +83,6 @@ export async function main() {
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((error) => {
     // 훅 실패가 Telegram 메시지 처리를 막지 않게, 모델 쪽에서 안전한 재확인이 가능하도록 오류를 컨텍스트로 돌린다.
-    emit(`[므네모시네 질문 큐 점검 실패] ${error.message}. 답변을 임의로 승인·처리하지 말고 질문 ID를 다시 확인하라.`);
+    emit(`[무세이온 질문 큐 점검 실패] ${error.message}. 답변을 임의로 승인·처리하지 말고 질문 ID를 다시 확인하라.`);
   });
 }

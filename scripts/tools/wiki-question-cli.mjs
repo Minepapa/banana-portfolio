@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 므네모시네 Wiki 질문 큐 관리 CLI. 질문 발신·답변 기록은 Claude Telegram 세션이 호출한다.
+// 무세이온 Wiki 질문 큐 관리 CLI. 질문 발신·답변 기록은 Claude Telegram 세션이 호출한다.
 import { readFileSync } from 'node:fs';
 import {
   applyWikiQuestion, completeManualWikiQuestion, createWikiQuestion,
