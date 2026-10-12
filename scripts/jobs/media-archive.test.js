@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { promises as fs } from 'node:fs';
+import { promises as fs, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runMediaArchive, repairMediaArchiveTimes } from './media-archive.mjs';
+import { VAULT_REL } from '../lib/vault-paths.mjs';
+import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { writeAtomic } from '../lib/state-writer.mjs';
 
 const NOW = new Date('2026-10-11T06:00:00Z');
 const QUIET = { log() {}, error() {} };
@@ -12,6 +15,7 @@ async function fixture() {
   const root = await fs.mkdtemp(join(tmpdir(), 'media-archive-test-'));
   const mediaRoot = join(root, 'Media');
   const indexPath = join(root, 'Vault', 'archive-index.jsonl');
+  const vaultRoot = join(root, 'Vault');
   const exiftoolPath = join(root, 'fake-exiftool');
   // 테스트 전용 외부 명령. 입력 경로를 JSON으로 되돌리고 합성 메타데이터만 붙인다.
   await fs.writeFile(exiftoolPath, `#!/usr/bin/env node
@@ -42,16 +46,354 @@ if (args.some((file) => path.basename(file) === 'badmeta_20240607_080910.bin')) 
     await fs.utimes(path, time, time);
     return path;
   }
+  async function person(contacts = ['가상연결']) {
+    const directory = join(vaultRoot, VAULT_REL.people);
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(join(directory, '가상인물.md'), `${buildFrontmatter({ phoneContacts: contacts })}# 가상인물\n`);
+  }
   return {
-    root, mediaRoot, indexPath, exiftoolPath, put,
-    options: { mediaRoot, indexPath, exiftoolPath, now: NOW, output: QUIET },
+    root, mediaRoot, indexPath, vaultRoot, exiftoolPath, put, person,
+    options: { mediaRoot, indexPath, vaultRoot, exiftoolPath, now: NOW, output: QUIET },
     cleanup: () => fs.rm(root, { recursive: true, force: true }),
   };
 }
 
 async function rows(indexPath) {
-  return (await fs.readFile(indexPath, 'utf8')).trim().split('\n').map(JSON.parse);
+  const content = (await fs.readFile(indexPath, 'utf8')).trim();
+  return content ? content.split('\n').map(JSON.parse) : [];
 }
+
+test('미연결 새 통화만 휴지통으로 옮기고 연결·형식 오류 통화는 보관한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'unlinked');
+  await f.put('Calls', '통화 녹음 가상연결_261011_100000.m4a', 'linked');
+  await f.put('Calls', '형식오류.m4a', 'unknown');
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.trashedNew, 1);
+  assert.equal(result.archived, 2);
+  assert.equal((await rows(f.indexPath)).length, 2);
+  assert.deepEqual(await fs.readdir(join(f.mediaRoot, 'Trash', '2026-10-11', 'Calls')),
+    ['통화 녹음 가상미연결_261011_090000.m4a']);
+  assert.deepEqual(result.trashedByContact, { 가상미연결: 1 });
+});
+
+test('다른 종류의 색인도 inboxPath로 가리키는 통화는 새 휴지통에서 제외한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Camera', '가상사진.bin', 'camera');
+  await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  const call = await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'call');
+  const suffixedArchive = record.archivePath.replace('/가상사진.bin', '/가상사진 (2).bin');
+  await fs.rename(join(f.mediaRoot, record.archivePath), join(f.mediaRoot, suffixedArchive));
+  record.archivePath = suffixedArchive;
+  record.inboxPath = 'Inbox/Calls/통화 녹음 가상미연결_261011_090000.m4a';
+  await fs.writeFile(f.indexPath, `${JSON.stringify(record)}\n`);
+  await f.person();
+  const result = await runMediaArchive({ ...f.options, dryRun: true });
+  assert.equal(result.trashedNew, 0);
+  assert.ok((await fs.stat(call)).isFile());
+});
+
+test('인물 연락처가 비면 통화와 이전 휴지통을 삭제하지 않는다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person([]);
+  await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'unlinked');
+  await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-08-01'), { recursive: true });
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.archived, 1);
+  assert.equal(result.trashedNew, 0);
+  assert.equal(result.cleanedTrash, 0);
+  assert.ok((await fs.stat(join(f.mediaRoot, 'Trash', '2026-08-01'))).isDirectory());
+});
+
+test('인물 노트 머리말이 손상되면 다른 연락처가 있어도 삭제를 건너뛴다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  await fs.writeFile(join(f.vaultRoot, VAULT_REL.people, '가상손상.md'), '---\nphoneContacts: [broken\n');
+  await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'unlinked');
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.trashedNew, 0);
+  assert.equal(result.archived, 1);
+});
+
+test('엄격 모드에서 휴지통을 건너뛰면 요약에 이유를 표시한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person([]);
+  await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'unlinked');
+  const logs = [];
+  const result = await runMediaArchive({ ...f.options, output: { log: (line) => logs.push(line), error() {} } });
+  assert.equal(result.archived, 1);
+  assert.ok(logs.some((line) => line.includes('엄격 모드 건너뜀')));
+});
+
+test('기존 미연결 통화는 보관본·전사를 휴지통에 보존하고 동일 inode Inbox만 지운다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'original');
+  await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  const transcript = join(f.vaultRoot, VAULT_REL.mediaTranscripts, '2026', `${record.id}.json`);
+  await fs.mkdir(join(transcript, '..'), { recursive: true });
+  await fs.writeFile(transcript, '{}');
+  await f.person();
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.trashedNew, 0);
+  assert.equal(result.trashedExisting, 1);
+  assert.deepEqual(await rows(f.indexPath), []);
+  await assert.rejects(fs.stat(join(f.mediaRoot, record.inboxPath)), { code: 'ENOENT' });
+  await assert.rejects(fs.stat(transcript), { code: 'ENOENT' });
+  assert.equal(await fs.readFile(join(f.mediaRoot, 'Trash', '2026-10-11', 'Transcripts', `${record.id}.json`), 'utf8'), '{}');
+  const manifest = await fs.readFile(join(f.mediaRoot, 'Trash', '2026-10-11', 'manifest.jsonl'), 'utf8');
+  assert.equal(JSON.parse(manifest.trim()).record.id, record.id);
+  await assert.rejects(fs.stat(join(f.mediaRoot, record.archivePath)), { code: 'ENOENT' });
+  assert.deepEqual(await fs.readdir(join(f.mediaRoot, 'Trash', '2026-10-11', 'Calls')),
+    ['통화 녹음 가상미연결_261011_090000.m4a']);
+  const separate = await f.put('Calls', '통화 녹음 가상미연결_261011_100000.m4a', 'before');
+  await fs.rm(join(f.vaultRoot, VAULT_REL.people, '가상인물.md'));
+  await runMediaArchive(f.options);
+  const [second] = await rows(f.indexPath);
+  await f.person();
+  await fs.unlink(separate);
+  await fs.writeFile(separate, 'different inode');
+  await runMediaArchive(f.options);
+  assert.equal(await fs.readFile(separate, 'utf8'), 'different inode');
+  assert.deepEqual(await rows(f.indexPath), []);
+  assert.ok((await fs.readdir(join(f.mediaRoot, 'Trash', '2026-10-11', 'Calls'))).length >= 2);
+  assert.ok(second);
+});
+
+test('색인된 통화의 종류 경로가 틀리면 이동 전에 중단한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'original');
+  await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  record.archivePath = record.archivePath.replace('/Calls/', '/Camera/');
+  await fs.writeFile(f.indexPath, `${JSON.stringify(record)}\n`);
+  await f.person();
+  const invalid = await runMediaArchive(f.options);
+  assert.ok(invalid.failed >= 1);
+  await assert.rejects(fs.stat(join(f.mediaRoot, 'Trash')), { code: 'ENOENT' });
+  assert.equal((await rows(f.indexPath))[0].archivePath, record.archivePath);
+});
+
+test('대량 차단은 아무것도 휴지통에 넣지 않고 붙잡힌 새 통화는 보관하며, 명시 플래그만 허용한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  for (let index = 0; index < 21; index += 1) {
+    await f.put('Calls', `통화 녹음 가상미연결_261011_${String(index).padStart(2, '0')}0000.m4a`, String(index));
+  }
+  const blocked = await runMediaArchive(f.options);
+  assert.equal(blocked.failed, 1);
+  assert.equal(blocked.trashedNew, 0);
+  assert.equal(blocked.archived, 21);
+  await assert.rejects(fs.stat(join(f.mediaRoot, 'Trash')), { code: 'ENOENT' });
+  assert.equal((await rows(f.indexPath)).length, 21);
+  const allowed = await runMediaArchive({ ...f.options, allowBulkTrash: true });
+  assert.equal(allowed.trashedExisting, 21);
+  assert.equal((await rows(f.indexPath)).length, 0);
+});
+
+test('대량 차단이어도 붙잡힌 새 통화를 보관하며 손상된 색인 꼬리를 정리한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  await fs.mkdir(join(f.indexPath, '..'), { recursive: true });
+  const partial = '{"id":"incomplete"';
+  await fs.writeFile(f.indexPath, partial);
+  for (let index = 0; index < 21; index += 1) {
+    await f.put('Calls', `통화 녹음 가상미연결_261011_${String(index).padStart(2, '0')}0000.m4a`, String(index));
+  }
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.failed, 1);
+  assert.equal((await rows(f.indexPath)).length, 21);
+  assert.ok(!(await fs.readFile(f.indexPath, 'utf8')).includes(partial));
+  await assert.rejects(fs.stat(join(f.mediaRoot, 'Trash')), { code: 'ENOENT' });
+});
+
+test('30일 지난 날짜 폴더만 정리하고 dry-run은 모든 경로를 보존한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const old = join(f.mediaRoot, 'Trash', '2026-08-01');
+  const unknown = join(f.mediaRoot, 'Trash', 'keep-me');
+  await fs.mkdir(old, { recursive: true });
+  await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-10'), { recursive: true }); // 최근 기록(시계 앞튐 보호 기준)
+  await fs.mkdir(unknown, { recursive: true });
+  await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'unlinked');
+  const dry = await runMediaArchive({ ...f.options, dryRun: true });
+  assert.equal(dry.trashedNew, 1);
+  assert.equal(dry.cleanedTrash, 1);
+  assert.ok((await fs.stat(old)).isDirectory());
+  await assert.rejects(fs.stat(f.indexPath), { code: 'ENOENT' });
+  const applied = await runMediaArchive(f.options);
+  assert.equal(applied.cleanedTrash, 1);
+  await assert.rejects(fs.stat(old), { code: 'ENOENT' });
+  assert.ok((await fs.stat(unknown)).isDirectory());
+});
+
+test('휴지통 날짜가 미래이면 정리하지 않고, 과거 폴더도 실행당 세 개만 정리한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  for (const day of ['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-04']) {
+    await fs.mkdir(join(f.mediaRoot, 'Trash', day), { recursive: true });
+  }
+  await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-10'), { recursive: true });
+  const future = join(f.mediaRoot, 'Trash', '2026-10-12');
+  await fs.mkdir(future, { recursive: true });
+  const guarded = await runMediaArchive(f.options);
+  assert.equal(guarded.cleanedTrash, 0);
+  await fs.rm(future, { recursive: true });
+  const limited = await runMediaArchive(f.options);
+  assert.equal(limited.cleanedTrash, 3);
+  assert.ok((await fs.stat(join(f.mediaRoot, 'Trash', '2026-07-04'))).isDirectory());
+});
+
+test('시계가 최근 기록보다 2일 넘게 앞서면 휴지통을 정리하지 않는다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const old = join(f.mediaRoot, 'Trash', '2026-08-01');
+  await fs.mkdir(old, { recursive: true });
+  const jumped = await runMediaArchive(f.options);
+  assert.equal(jumped.cleanedTrash, 0);
+  assert.ok((await fs.stat(old)).isDirectory());
+  await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-09'), { recursive: true });
+  const normal = await runMediaArchive(f.options);
+  assert.equal(normal.cleanedTrash, 1);
+});
+
+test('기존 같은 연락처 네 건은 급변 보호하고 보관 작업은 완료한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  for (let index = 0; index < 4; index += 1) {
+    await f.put('Calls', `통화 녹음 가상미연결_261011_0${index}0000.m4a`, `call-${index}`);
+  }
+  await runMediaArchive(f.options);
+  await f.person();
+  const protectedNew = await f.put('Calls', '통화 녹음 가상미연결_261011_050000.m4a', 'new');
+  await f.put('Camera', '추가사진.jpg', 'photo');
+  const guarded = await runMediaArchive(f.options);
+  // 보호된 연락처의 새 통화는 지우지 않고 사진과 함께 보관한다.
+  assert.equal(guarded.archived, 2);
+  assert.equal(guarded.trashedExisting, 0);
+  assert.equal(guarded.trashedNew, 0);
+  assert.ok((await fs.stat(protectedNew)).isFile());
+  assert.equal(guarded.failed, 1); // 연락처당 한 번만 센다
+  assert.equal((await rows(f.indexPath)).length, 6);
+  const allowed = await runMediaArchive({ ...f.options, allowBulkTrash: true });
+  assert.equal(allowed.trashedExisting, 5);
+  assert.equal(allowed.trashedNew, 0);
+});
+
+test('기존 대상 여러 건과 새 보관 건을 색인에 한 번만 원자적으로 쓴다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'first');
+  await f.put('Calls', '통화 녹음 가상미연결_261011_100000.m4a', 'second');
+  await runMediaArchive(f.options);
+  await f.person();
+  await f.put('Camera', 'photo.jpg', 'photo');
+  let writes = 0;
+  const result = await runMediaArchive({ ...f.options, atomicWrite(path, content) {
+    writes += 1;
+    writeAtomic(path, content);
+  } });
+  assert.equal(writes, 1);
+  assert.equal(result.archived, 1);
+  assert.equal(result.trashedExisting, 2);
+  assert.equal((await rows(f.indexPath)).length, 1);
+});
+
+test('색인 쓰기 실패 후에는 보관 통화를 이동하지 않는다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'first');
+  await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  await f.person();
+  const result = await runMediaArchive({ ...f.options, atomicWrite() { throw new Error('가상 쓰기 실패'); } });
+  assert.ok(result.failed > 0);
+  assert.equal(result.trashedExisting, 0);
+  assert.ok((await fs.stat(join(f.mediaRoot, record.archivePath))).isFile());
+  assert.equal((await rows(f.indexPath)).length, 1);
+});
+
+test('매니페스트 심볼릭 링크에는 쓰지 않고 보관 통화도 이동하지 않는다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'first');
+  await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  await f.person();
+  const outside = join(f.root, 'outside.txt');
+  await fs.writeFile(outside, 'untouched');
+  const dated = join(f.mediaRoot, 'Trash', '2026-10-11');
+  await fs.mkdir(dated, { recursive: true });
+  await fs.symlink(outside, join(dated, 'manifest.jsonl'));
+  const result = await runMediaArchive(f.options);
+  assert.ok(result.failed > 0);
+  assert.equal(result.trashedExisting, 0);
+  assert.equal(await fs.readFile(outside, 'utf8'), 'untouched');
+  assert.ok((await fs.stat(join(f.mediaRoot, record.archivePath))).isFile());
+});
+
+test('색인이 가리키는 보관 통화가 없어도 다른 보관 작업은 완료한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'first');
+  await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  await fs.unlink(join(f.mediaRoot, record.archivePath));
+  await f.person();
+  await f.put('Camera', 'photo.jpg', 'photo');
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.archived, 1);
+  assert.ok(result.failed > 0);
+  assert.equal(result.trashedExisting, 0);
+});
+
+test('휴지통 직전 Inbox 통화가 바뀌면 그 파일만 건너뛰고 보관 결과를 남긴다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const call = await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'first');
+  await f.put('Camera', 'photo.jpg', 'photo');
+  const result = await runMediaArchive({ ...f.options, atomicWrite(path, content) {
+    writeAtomic(path, content);
+    appendFileSync(call, 'changed');
+  } });
+  assert.equal(result.archived, 1);
+  assert.equal(result.trashedNew, 0);
+  assert.ok(result.failed > 0);
+  assert.ok((await fs.stat(call)).isFile());
+});
+
+test('exiftool 실패는 보관 파일만 실패시키고 휴지통 단계는 계속한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const call = await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'unlinked');
+  await f.put('Camera', 'sample.bin', 'camera');
+  const old = join(f.mediaRoot, 'Trash', '2026-08-01');
+  await fs.mkdir(old, { recursive: true });
+  await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-10'), { recursive: true });
+  const result = await runMediaArchive({ ...f.options, exiftoolPath: join(f.root, 'missing-exiftool') });
+  assert.equal(result.failed, 1);
+  assert.equal(result.trashedNew, 1);
+  assert.equal(result.cleanedTrash, 1);
+  await assert.rejects(fs.stat(call), { code: 'ENOENT' });
+  await assert.rejects(fs.stat(old), { code: 'ENOENT' });
+  await assert.rejects(fs.stat(f.indexPath), { code: 'ENOENT' });
+});
 
 test('날짜 우선순위, KST 영상, 파일명 형식, mtime, 하드링크와 재실행 멱등성', async (t) => {
   const f = await fixture();

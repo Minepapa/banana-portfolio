@@ -1,4 +1,4 @@
-// Syncthing Inbox의 안정된 파일을 하드링크로 보존한다. Inbox 링크는 건드리지 않는다.
+// Syncthing Inbox의 안정된 파일을 하드링크로 보존하고 미연결 통화만 휴지통으로 옮긴다.
 // 직접 실행하면 실제 Media/Vault에 기록하므로 검증은 runMediaArchive의 임시 경로 주입으로만 한다.
 import { promises as fs, createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -7,14 +7,79 @@ import { promisify } from 'node:util';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
+import { parseCallFilename, loadPeople, isLinkedCall, contactKey } from '../lib/media-people.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
+import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 
 const execFileAsync = promisify(execFile);
 const KINDS = ['Camera', 'Recordings', 'Calls', 'Screenshots'];
 const STABLE_AGE_MS = 2 * 60 * 1000;
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.3gp', '.avi', '.mkv', '.webm']);
 const QUICKTIME_EXTENSIONS = new Set(['.m4a', '.m4b', '.m4p', '.m4r', '.mp4', '.mov', '.m4v', '.3gp', '.3g2', '.3ga', '.qt']);
+const MAX_TRASH_PER_RUN = 20;
+
+function insidePath(root, candidate) {
+  const inside = relative(resolve(root), resolve(candidate));
+  return inside && !isAbsolute(inside) && inside !== '..' && !inside.startsWith(`..${sep}`);
+}
+
+async function noSymlinks(root, candidate) {
+  if (!insidePath(root, candidate)) throw new Error(`허용된 폴더 밖 경로: ${candidate}`);
+  let current = resolve(root);
+  try {
+    if ((await fs.lstat(current)).isSymbolicLink()) throw new Error(`심볼릭 링크 경로: ${current}`);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  for (const part of relative(current, resolve(candidate)).split(sep)) {
+    current = join(current, part);
+    try {
+      if ((await fs.lstat(current)).isSymbolicLink()) throw new Error(`심볼릭 링크 경로: ${current}`);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+}
+
+async function uniqueTrashPath(directory, filename) {
+  const extension = extname(filename);
+  const stem = basename(filename, extension);
+  for (let number = 1; ; number += 1) {
+    const target = join(directory, number === 1 ? filename : `${stem} (${number})${extension}`);
+    try { await fs.lstat(target); }
+    catch (error) {
+      if (error.code === 'ENOENT') return target;
+      throw error;
+    }
+  }
+}
+
+async function expiredTrashFolders(mediaRoot, now, { latestArchivedAt = null } = {}) {
+  const trashRoot = join(mediaRoot, 'Trash');
+  let entries;
+  try {
+    if (!(await fs.lstat(trashRoot)).isDirectory()) throw new Error('휴지통 경로가 디렉터리가 아닙니다');
+    entries = await fs.readdir(trashRoot, { withFileTypes: true });
+  }
+  catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+  const today = kstIso(now).slice(0, 10);
+  const cutoff = Date.parse(`${today}T00:00:00+09:00`) - 30 * 24 * 60 * 60_000;
+  const dated = entries.filter((entry) => {
+    if (!entry.isDirectory() || !/^\d{4}-\d{2}-\d{2}$/.test(entry.name)) return false;
+    const timestamp = Date.parse(`${entry.name}T00:00:00+09:00`);
+    return Number.isFinite(timestamp) && kstIso(new Date(timestamp)).slice(0, 10) === entry.name;
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  if (dated.length && dated.at(-1).name > today) return [];
+  // 시계가 앞으로 튀면 정리하지 않는다: 오늘이 가장 최근 기록(보관 시각·휴지통 날짜)보다 2일 넘게 앞서면 멈춘다.
+  const latest = [latestArchivedAt, dated.at(-1)?.name].filter(Boolean).sort().at(-1);
+  if (latest && Date.parse(`${today}T00:00:00+09:00`) - Date.parse(`${latest}T00:00:00+09:00`) > 2 * 24 * 60 * 60_000) return [];
+  return dated.filter((entry) => Date.parse(`${entry.name}T00:00:00+09:00`) < cutoff)
+    .slice(0, 3).map((entry) => join(trashRoot, entry.name));
+}
 
 function excluded(name) {
   return name.startsWith('.') || name.startsWith('~syncthing~') || name.endsWith('.tmp');
@@ -153,7 +218,7 @@ function gpsFrom(metadata) {
     && lon >= -180 && lon <= 180 ? { lat, lon } : undefined;
 }
 
-async function readIndexRecords(indexPath, { dryRun }) {
+async function readIndexRecords(indexPath, { dryRun, allowIncomplete = false }) {
   let content;
   try { content = await fs.readFile(indexPath, 'utf8'); }
   catch (error) {
@@ -172,6 +237,7 @@ async function readIndexRecords(indexPath, { dryRun }) {
       records.set(record.id, record);
     } catch (error) {
       if (hasTrailingLine && index === lines.length - 1) {
+        if (allowIncomplete) return records;
         if (dryRun) throw new Error(`색인 마지막 줄 손상(읽기 전용 dry-run): ${error.message}`);
         // append 도중 끊긴 마지막 조각만 버린다. 개행으로 끝난 완성 레코드는 보존한다.
         await fs.truncate(indexPath, Buffer.byteLength(content.slice(0, content.lastIndexOf('\n') + 1)));
@@ -365,24 +431,78 @@ export async function repairMediaArchiveTimes({
 export async function runMediaArchive({
   mediaRoot = join(homedir(), 'Pantheon', 'Media'),
   indexPath = VAULT_PATHS.mediaArchiveIndex,
+  vaultRoot = VAULT_PATHS.root,
   exiftoolPath = '/opt/homebrew/bin/exiftool',
   now = new Date(),
   dryRun = false,
+  allowBulkTrash = false,
   link = fs.link,
+  atomicWrite = writeAtomic,
   output = console,
 } = {}) {
-  const summary = { archived: 0, skipped: 0, failed: 0, capturedFrom: { exif: 0, filename: 0, mtime: 0 } };
+  const summary = { archived: 0, skipped: 0, failed: 0, trashedNew: 0,
+    trashedExisting: 0, cleanedTrash: 0, trashedByContact: {},
+    capturedFrom: { exif: 0, filename: 0, mtime: 0 } };
   await fs.stat(mediaRoot); // 마운트가 빠졌다면 빈 Inbox로 오인하지 않고 잡 실패를 알린다.
   const files = await collectFiles(mediaRoot, now);
-  const records = await readIndexRecords(indexPath, { dryRun });
+  // 대량 차단 판단 전에는 색인 복구도 쓰기이므로 읽기 전용으로 파싱한다.
+  const records = await readIndexRecords(indexPath, { dryRun: true, allowIncomplete: !dryRun });
+  let people = null;
+  const trashSkipped = [];
+  try {
+    const peopleDirectory = join(vaultRoot, VAULT_REL.people);
+    if (!(await fs.lstat(peopleDirectory)).isDirectory()) throw new Error('인물 폴더가 일반 디렉터리가 아닙니다');
+    people = loadPeople(vaultRoot, { strict: true });
+    if (!people.some((person) => person.contacts.length)) throw new Error('연결된 phoneContacts가 비었습니다');
+  } catch (error) {
+    people = null;
+    trashSkipped.push(`엄격 모드 건너뜀: ${error.message}`);
+    output.error(`[media-archive] 통화 휴지통 ${trashSkipped.at(-1)}`);
+  }
+  const indexedInbox = new Set([...records.values()].map((record) => record.inboxPath));
+  const newTrash = people ? files.filter((file) => file.kind === 'Calls'
+    && parseCallFilename(basename(file.path))
+    && !isLinkedCall(parseCallFilename(basename(file.path)).contact, people)
+    && !indexedInbox.has(relative(mediaRoot, file.path).split('\\').join('/'))) : [];
+  // 연락처별 급변 보호와 대량 차단은 보관 루프 전에 정한다. 붙잡힌 새 통화는 지우지 않고 보관한다
+  // (인물 노트를 실수로 고친 동안 들어온 가족 통화가 Inbox 링크로만 남지 않게).
+  const countByContact = new Map();
+  const protectedContacts = new Set();
+  let bulkBlocked = false;
+  if (people) {
+    for (const record of records.values()) {
+      if (record.kind !== 'Calls') continue;
+      const parsed = parseCallFilename(basename(record.archivePath));
+      if (!parsed || isLinkedCall(parsed.contact, people)) continue;
+      const key = contactKey(parsed.contact);
+      countByContact.set(key, (countByContact.get(key) || 0) + 1);
+    }
+    if (!allowBulkTrash) {
+      for (const [key, count] of countByContact) if (count > 3) protectedContacts.add(key);
+    }
+    for (let index = newTrash.length - 1; index >= 0; index -= 1) {
+      const parsed = parseCallFilename(basename(newTrash[index].path));
+      if (protectedContacts.has(contactKey(parsed.contact))) newTrash.splice(index, 1);
+    }
+    const existingPlanned = [...countByContact].filter(([key]) => !protectedContacts.has(key))
+      .reduce((sum, [, count]) => sum + count, 0);
+    if (!allowBulkTrash && newTrash.length + existingPlanned > MAX_TRASH_PER_RUN) {
+      bulkBlocked = true;
+      trashSkipped.push(`대량 이동 차단: ${newTrash.length + existingPlanned}건 (한도 ${MAX_TRASH_PER_RUN})`);
+      summary.failed += 1;
+      output.error(`[media-archive] 휴지통 ${trashSkipped.at(-1)}`);
+      newTrash.length = 0;
+    }
+  }
+  const activeFiles = files.filter((file) => !newTrash.includes(file));
   let metadataByPath = new Map();
-  if (files.length) {
+  if (activeFiles.length) {
     try {
       let stdout;
       try {
         ({ stdout } = await execFileAsync(exiftoolPath, [
         '-json', '-n', '-DateTimeOriginal', '-CreateDate', '-MediaCreateDate',
-        '-GPSLatitude', '-GPSLongitude', ...files.map((file) => file.path),
+        '-GPSLatitude', '-GPSLongitude', ...activeFiles.map((file) => file.path),
         ], { maxBuffer: 32 * 1024 * 1024 }));
       } catch (error) {
         // exiftool은 한 파일의 형식 오류에도 나머지 파일 JSON을 출력하며 비정상 종료할 수 있다.
@@ -394,14 +514,14 @@ export async function runMediaArchive({
       if (!Array.isArray(metadata)) throw new Error('exiftool JSON 배열이 아닙니다');
       metadataByPath = new Map(metadata.map((item) => [item.SourceFile, item]));
     } catch (error) {
-      summary.failed = files.length;
+      summary.failed += activeFiles.length;
       output.error(`[media-archive] exiftool 실패: ${error.message}`);
-      output.log(`[media-archive] 새로 보관 0, 건너뜀 0, 실패 ${summary.failed}; 근거 exif 0, filename 0, mtime 0`);
-      return summary;
+      activeFiles.length = 0;
     }
   }
 
-  for (const file of files) {
+  let indexDirty = false;
+  for (const file of activeFiles) {
     try {
       const captured = capturedTime(file, metadataByPath.get(file.path));
       const hash = await sha256(file.path);
@@ -446,9 +566,8 @@ export async function runMediaArchive({
           ...(gps ? { gps } : {}),
           archivedAt: kstIso(now),
         };
-        await fs.mkdir(dirname(indexPath), { recursive: true });
-        await fs.appendFile(indexPath, `${JSON.stringify(record)}\n`);
         records.set(id, record);
+        indexDirty = true;
         if (created) summary.archived += 1;
         else summary.skipped += 1;
       }
@@ -458,25 +577,201 @@ export async function runMediaArchive({
       output.error(`[media-archive] 실패: ${file.path}: ${error.message}`);
     }
   }
-  output.log(`[media-archive] ${dryRun ? 'dry-run ' : ''}새로 보관 ${summary.archived}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}; 근거 exif ${summary.capturedFrom.exif}, filename ${summary.capturedFrom.filename}, mtime ${summary.capturedFrom.mtime}`);
+  // 보관 루프를 마친 뒤 휴지통만 별도로 처리한다. 보관 결과는 휴지통 실패와 무관하다.
+  const trashDate = kstIso(now).slice(0, 10);
+  const trashRoot = join(mediaRoot, 'Trash', trashDate);
+  const trashCalls = join(trashRoot, 'Calls');
+  const trashTranscripts = join(trashRoot, 'Transcripts');
+  const manifestPath = join(trashRoot, 'manifest.jsonl');
+  const candidates = [];
+  const movedByContact = new Map();
+  const reportedProtected = new Set();
+  if (people && !bulkBlocked) {
+    for (const record of records.values()) {
+      if (record.kind !== 'Calls') continue;
+      const parsed = parseCallFilename(basename(record.archivePath));
+      if (!parsed || isLinkedCall(parsed.contact, people)) continue;
+      const key = contactKey(parsed.contact);
+      if (protectedContacts.has(key)) {
+        // 연락처당 한 번만 사유·실패로 센다.
+        if (!reportedProtected.has(key)) {
+          reportedProtected.add(key);
+          trashSkipped.push(`연락처별 기존 보관 통화 급변 보호: ${parsed.contact} ${countByContact.get(key)}건`);
+          summary.failed += 1;
+        }
+        continue;
+      }
+      try {
+        if (!/^Archive\/\d{4}\/\d{2}\/Calls\/[^/]+$/.test(record.archivePath)
+          || !/^Inbox\/Calls\/(?:[^/]+\/)*[^/]+$/.test(record.inboxPath)
+          || [...record.archivePath.split('/'), ...record.inboxPath.split('/')]
+            .some((part) => part === '.' || part === '..')) throw new Error('통화 색인 경로 형식 오류');
+        const archive = resolve(mediaRoot, record.archivePath);
+        const inbox = resolve(mediaRoot, record.inboxPath);
+        await noSymlinks(join(mediaRoot, 'Archive'), archive);
+        await noSymlinks(join(mediaRoot, 'Inbox'), inbox);
+        let source;
+        try { source = await fs.lstat(archive); }
+        catch (error) {
+          if (error.code === 'ENOENT') {
+            output.error(`[media-archive] 색인 보관 파일 없음, 이번 휴지통 이동 건너뜀: ${record.archivePath}`);
+            summary.failed += 1;
+            continue;
+          }
+          throw error;
+        }
+        if (!source.isFile() || !/^[a-f0-9]{16}$/i.test(record.id)
+          || (await sha256(archive)).slice(0, 16) !== record.id) throw new Error('sha256/id 검증 실패');
+        const transcriptRoot = join(vaultRoot, VAULT_REL.mediaTranscripts);
+        let transcriptPaths = [];
+        try {
+          const years = await fs.readdir(transcriptRoot, { withFileTypes: true });
+          transcriptPaths = years.filter((entry) => entry.isDirectory() && /^\d{4}$/.test(entry.name))
+            .map((entry) => join(transcriptRoot, entry.name, `${record.id}.json`));
+          for (const path of transcriptPaths) await noSymlinks(transcriptRoot, path);
+        } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        candidates.push({ record, archive, inbox, source, transcriptPaths, contact: parsed.contact });
+      } catch (error) {
+        summary.failed += 1;
+        output.error(`[media-archive] 기존 통화 휴지통 검증 실패: ${record.id}: ${error.message}`);
+      }
+    }
+  }
+  let cleanup = [];
+  if (people) {
+    const latestArchivedAt = [...records.values()].map((record) => String(record.archivedAt || '').slice(0, 10))
+      .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort().at(-1) || null;
+    try { cleanup = await expiredTrashFolders(mediaRoot, now, { latestArchivedAt }); }
+    catch (error) {
+      summary.failed += 1;
+      output.error(`[media-archive] 휴지통 정리 준비 실패: ${error.message}`);
+    }
+  }
+  if (dryRun) {
+    summary.trashedNew = newTrash.length;
+    summary.trashedExisting = candidates.length;
+    summary.cleanedTrash = cleanup.length;
+    for (const file of newTrash) output.log(`[media-archive] dry-run 휴지통 새 통화: ${file.path}`);
+    for (const item of candidates) output.log(`[media-archive] dry-run 휴지통 기존 통화: ${item.record.archivePath}`);
+  } else {
+    // 기존 보관 파일의 검증을 모두 마친 뒤 색인을 단 한 번 원자적으로 교체한다.
+    for (const item of candidates) records.delete(item.record.id);
+    let indexWriteOk = true;
+    if (indexDirty || candidates.length) {
+      try {
+        await fs.mkdir(dirname(indexPath), { recursive: true });
+        const lines = [...records.values()].map((record) => JSON.stringify(record));
+        atomicWrite(indexPath, lines.length ? `${lines.join('\n')}\n` : '');
+      } catch (error) {
+        indexWriteOk = false;
+        summary.failed += 1;
+        output.error(`[media-archive] 색인 원자 쓰기 실패, 휴지통 단계 건너뜀: ${error.message}`);
+      }
+    }
+    if (indexWriteOk) {
+      for (const file of newTrash) {
+        try {
+          await noSymlinks(join(mediaRoot, 'Inbox'), file.path);
+          const current = await fs.lstat(file.path);
+          if (!current.isFile() || current.dev !== file.stat.dev || current.ino !== file.stat.ino
+            || current.size !== file.stat.size || current.mtimeMs !== file.stat.mtimeMs) throw new Error('Inbox 파일 변경');
+          await noSymlinks(join(mediaRoot, 'Trash'), trashCalls);
+          await fs.mkdir(trashCalls, { recursive: true });
+          await fs.rename(file.path, await uniqueTrashPath(trashCalls, basename(file.path)));
+          summary.trashedNew += 1;
+          const contact = parseCallFilename(basename(file.path)).contact;
+          movedByContact.set(contact, (movedByContact.get(contact) || 0) + 1);
+        } catch (error) {
+          summary.failed += 1;
+          output.error(`[media-archive] 새 통화 휴지통 실패: ${file.path}: ${error.message}`);
+        }
+      }
+      for (const item of candidates) {
+        const { record, archive, inbox, source, transcriptPaths } = item;
+        try {
+          const current = await fs.lstat(archive);
+          if (!current.isFile() || current.dev !== source.dev || current.ino !== source.ino
+            || current.size !== source.size || current.mtimeMs !== source.mtimeMs) throw new Error('보관 파일 변경');
+          await noSymlinks(join(mediaRoot, 'Trash'), trashCalls);
+          await fs.mkdir(trashCalls, { recursive: true });
+          const destination = await uniqueTrashPath(trashCalls, basename(archive));
+          const transcriptMoves = [];
+          for (const path of transcriptPaths) {
+            try {
+              const transcriptStat = await fs.lstat(path);
+              if (!transcriptStat.isFile()) throw new Error('전사 원본이 일반 파일이 아닙니다');
+              await noSymlinks(join(mediaRoot, 'Trash'), trashTranscripts);
+              await fs.mkdir(trashTranscripts, { recursive: true });
+              const target = await uniqueTrashPath(trashTranscripts, basename(path));
+              transcriptMoves.push({ path, target });
+            } catch (error) { if (error.code !== 'ENOENT') throw error; }
+          }
+          // 이동 전에 복구 경로를 기록한다. 중단되면 예정 경로를 따라 수동 복구할 수 있다.
+          await noSymlinks(join(mediaRoot, 'Trash'), manifestPath);
+          await fs.appendFile(manifestPath, `${JSON.stringify({ record,
+            trashPath: relative(mediaRoot, destination).split('\\').join('/'),
+            transcripts: transcriptMoves.map(({ target }) => relative(mediaRoot, target).split('\\').join('/')) })}\n`);
+          await fs.rename(archive, destination);
+          summary.trashedExisting += 1;
+          movedByContact.set(item.contact, (movedByContact.get(item.contact) || 0) + 1);
+          for (const { path, target } of transcriptMoves) await fs.rename(path, target);
+          // 동일한 하드링크인 Inbox만 제거한다. 다른 inode로 교체된 파일은 보존한다.
+          try {
+            const inboxStat = await fs.lstat(inbox);
+            if (inboxStat.isFile() && inboxStat.dev === source.dev && inboxStat.ino === source.ino) await fs.unlink(inbox);
+          } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        } catch (error) {
+          summary.failed += 1;
+          output.error(`[media-archive] 기존 통화 휴지통 실패: ${record.id}: ${error.message}`);
+        }
+      }
+      for (const directory of cleanup) {
+        try {
+          await noSymlinks(join(mediaRoot, 'Trash'), directory);
+          await fs.rm(directory, { recursive: true });
+          summary.cleanedTrash += 1;
+        } catch (error) {
+          summary.failed += 1;
+          output.error(`[media-archive] 휴지통 정리 실패: ${directory}: ${error.message}`);
+        }
+      }
+      summary.trashedByContact = Object.fromEntries(movedByContact);
+    }
+  }
+  if (trashSkipped.length) output.log(`[media-archive] 통화 휴지통 ${trashSkipped.join(' / ')}`);
+  output.log(`[media-archive] ${dryRun ? 'dry-run ' : ''}새로 보관 ${summary.archived}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}; 근거 exif ${summary.capturedFrom.exif}, filename ${summary.capturedFrom.filename}, mtime ${summary.capturedFrom.mtime}; 휴지통 ${summary.trashedNew + summary.trashedExisting}(새 ${summary.trashedNew}·기존 ${summary.trashedExisting}), 휴지통 정리 ${summary.cleanedTrash}폴더`);
   return summary;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
-  if (args.some((arg) => !['--dry-run', '--repair-times', '--apply'].includes(arg))
+  if (args.some((arg) => !['--dry-run', '--repair-times', '--apply', '--allow-bulk-trash'].includes(arg))
     || (args.includes('--apply') && !args.includes('--repair-times'))
-    || (args.includes('--dry-run') && args.includes('--apply'))) {
-    console.error('usage: node scripts/jobs/media-archive.mjs [--dry-run | --repair-times [--apply]]');
+    || (args.includes('--dry-run') && args.includes('--apply'))
+    || (args.includes('--repair-times') && args.includes('--allow-bulk-trash'))) {
+    console.error('usage: node scripts/jobs/media-archive.mjs [--dry-run] [--allow-bulk-trash] | [--repair-times [--apply]]');
     process.exitCode = 2;
   } else {
     (async () => {
       if (args.includes('--repair-times')) return repairMediaArchiveTimes({ apply: args.includes('--apply') });
       const dryRun = args.includes('--dry-run');
-      if (dryRun) return runMediaArchive({ dryRun });
+      const allowBulkTrash = args.includes('--allow-bulk-trash');
+      if (dryRun) return runMediaArchive({ dryRun, allowBulkTrash });
       await fs.mkdir(dirname(VAULT_PATHS.mediaArchiveIndex), { recursive: true });
-      return withLock(VAULT_PATHS.mediaArchiveIndex, () => runMediaArchive(),
-        { retries: 1200, retryDelayMs: 100 });
+      const summary = await withLock(VAULT_PATHS.mediaArchiveIndex,
+        () => runMediaArchive({ allowBulkTrash }), { retries: 1200, retryDelayMs: 100 });
+      for (const [contact, count] of Object.entries(summary.trashedByContact)) {
+        collectWarning(`통화 휴지통 이동: ${contact} ${count}건`, {
+          jobName: 'media-archive', warningCode: 'CALL_TRASH_MOVED',
+          subjectKey: `contact:${createHash('sha256').update(contact).digest('hex').slice(0, 20)
+            .replace(/[0-9a-f]/g, (digit) => 'abcdefghijklmnop'[parseInt(digit, 16)])}`,
+          kind: 'operational', severity: 'medium',
+        });
+      }
+      // 경보 발송 실패는 이미 끝난 보관·휴지통 결과를 실패로 바꾸지 않는다.
+      try { await flushWarnings('media-archive'); }
+      catch (error) { console.error(`[media-archive] 경보 발송 실패: ${error.message}`); }
+      return summary;
     })()
       .then((summary) => { if (summary.failed) process.exitCode = 1; })
       .catch((error) => { console.error(`[media-archive] ${error.stack}`); process.exitCode = 1; });

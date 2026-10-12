@@ -7,6 +7,7 @@ import { parseCallFilename, orderPending, runMediaTranscribe } from './media-tra
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
+import { contactKey, isLinkedCall } from '../lib/media-people.mjs';
 
 const QUIET = { log() {}, error() {} };
 const RULES = [{ type: 'conversation', path: `${VAULT_REL.mediaConversations}/{YYYY}/`,
@@ -74,6 +75,23 @@ test('통화 파일명은 쉼표·이모지·#이 포함된 연락처와 KST 시
     { contact: '가상,⭐#1', occurred: '2030-01-01T12:34:56+09:00' });
 });
 
+test('통화 연결은 정규화한 phoneContacts만 사용한다', () => {
+  const people = [{ title: '가상별', aliases: ['가상별칭'], contacts: [' 가상\u200D별\uFE0F '.normalize('NFD')] }];
+  assert.equal(contactKey(' 가상\u200B별\uFEFF '), '가상별');
+  assert.equal(isLinkedCall('가상별', people), true);
+  assert.equal(isLinkedCall('가상별칭', people), false);
+});
+
+test('제목과 별칭만 같은 통화는 전사 대상에서 제외한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상별', { aliases: ['가상별칭'], phoneContacts: ['가상연락처'] });
+  f.put(1, 'Calls', '통화 가상별_300101_090000.m4a');
+  f.put(2, 'Calls', '통화 가상별칭_300101_100000.m4a');
+  const summary = await runMediaTranscribe({ ...f.options, dryRun: true });
+  assert.equal(summary.excludedCalls, 2);
+  assert.equal(summary.remaining, 0);
+});
+
 test('분해형 한글 파일명과 연락처·별칭을 정규화해 인물과 연결한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
   f.person('가상별'.normalize('NFD'), {
@@ -102,7 +120,7 @@ test('연결된 최근 자료, 미연결 최근 자료, 오래된 자료 순으�
 
 test('통화 description 조사는 받침과 영문 이름에 맞춘다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
-  for (const title of ['가상봄', '가상나', 'MockAlex']) f.person(title, {});
+  for (const title of ['가상봄', '가상나', 'MockAlex']) f.person(title, { phoneContacts: [title] });
   f.put(1, 'Calls', '통화 가상봄_300101_090000.m4a');
   f.put(2, 'Calls', '통화 가상나_300101_100000.m4a');
   f.put(3, 'Calls', '통화 MockAlex_300101_110000.m4a');
@@ -138,7 +156,7 @@ test('phoneContacts·aliases 연결, 하루 통화 묶음, 시각순, 멱등, �
 
 test('기존 오너 영역과 미관리 머리말을 보존하고 새 통화만 합친다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
-  f.person('가상A', {});
+  f.person('가상A', { phoneContacts: ['가상A'] });
   f.put(1, 'Calls', '통화 가상A_300101_090000.m4a');
   await runMediaTranscribe(f.options);
   const path = join(f.root, VAULT_REL.mediaConversations, '2030', '2030-01-01 가상A 통화.md');
@@ -166,7 +184,7 @@ test('무음 문구는 speech:false로 저장하고 노트에 음성 없음으�
 
 test('dry-run은 전사·상태·노트·잠금 파일을 쓰지 않고 예상 시간을 보고한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
-  f.person('가상A', {});
+  f.person('가상A', { phoneContacts: ['가상A'] });
   f.put(1, 'Calls', '통화 가상A_300101_090000.m4a');
   const logs = [];
   const summary = await runMediaTranscribe({ ...f.options, dryRun: true, output: { log: (line) => logs.push(line), error() {} } });
@@ -182,7 +200,7 @@ test('dry-run은 전사·상태·노트·잠금 파일을 쓰지 않고 예상 �
 
 test('미연결 통화는 전사와 노트 복구에서 제외하고 미연결 녹음은 유지한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
-  f.person('가상연결', {});
+  f.person('가상연결', { phoneContacts: ['가상연결'] });
   f.put(1, 'Calls', '통화 가상연결_300101_090000.m4a');
   f.put(2, 'Calls', '통화 가상미연결_300101_100000.m4a');
   f.put(3, 'Calls', '통화 가상과거_300101_110000.m4a');
@@ -217,7 +235,7 @@ test('미연결 통화는 전사와 노트 복구에서 제외하고 미연결 �
 
 test('실패를 기록하고 세 번 실패한 항목은 건너뛴다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
-  f.person('가상A', {});
+  f.person('가상A', { phoneContacts: ['가상A'] });
   f.put(1, 'Calls', '통화 가상A_300101_090000.m4a');
   const bad = join(f.base, 'bad');
   writeFileSync(bad, '#!/bin/sh\nexit 1\n'); chmodSync(bad, 0o755);
@@ -234,7 +252,7 @@ test('실패를 기록하고 세 번 실패한 항목은 건너뛴다', async (t
 
 test('전사 JSON 기록 후 중단되어 노트가 없으면 다음 실행에서 복구한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
-  f.person('가상A', {});
+  f.person('가상A', { phoneContacts: ['가상A'] });
   f.put(1, 'Calls', '통화 가상A_300101_090000.m4a');
   await runMediaTranscribe(f.options);
   const path = join(f.root, VAULT_REL.mediaConversations, '2030', '2030-01-01 가상A 통화.md');
@@ -247,7 +265,7 @@ test('전사 JSON 기록 후 중단되어 노트가 없으면 다음 실행에�
 
 test('기존 노트 갱신 실패도 저장된 전사에서 다음 실행에 복구한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
-  f.person('가상A', {});
+  f.person('가상A', { phoneContacts: ['가상A'] });
   f.put(1, 'Calls', '통화 가상A_300101_090000.m4a');
   await runMediaTranscribe(f.options);
   f.put(2, 'Calls', '통화 가상A_300101_100000.m4a');
@@ -297,8 +315,8 @@ test('녹음 제목 충돌은 색인 순서가 바뀌거나 새 항목이 생겨
 
 test('서로 다른 통화 연락처가 같은 정리 제목으로 충돌하면 쓰기 전에 멈춘다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
-  f.person('가상#A', {});
-  f.person('가상 A', {});
+  f.person('가상#A', { phoneContacts: ['가상#A'] });
+  f.person('가상 A', { phoneContacts: ['가상 A'] });
   f.put(1, 'Calls', '통화 가상#A_300101_090000.m4a');
   f.put(2, 'Calls', '통화 가상 A_300101_100000.m4a');
   await assert.rejects(runMediaTranscribe(f.options), /통화 상대의 노트 제목 충돌/);

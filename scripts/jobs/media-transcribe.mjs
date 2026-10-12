@@ -9,6 +9,8 @@ import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
+import { parseCallFilename, contactFromFilename, loadPeople, matchPeople } from '../lib/media-people.mjs';
+export { parseCallFilename } from '../lib/media-people.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic, withLock } from '../lib/state-writer.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
@@ -27,30 +29,6 @@ function kstParts(value) {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) throw new Error('시각 형식 오류');
   return new Date(timestamp + KST_OFFSET_MS).toISOString().slice(0, 19);
-}
-
-function validLocal(year, month, day, hour, minute, second) {
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  return date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month
-    && date.getUTCDate() === day && date.getUTCHours() === hour
-    && date.getUTCMinutes() === minute && date.getUTCSeconds() === second;
-}
-
-export function parseCallFilename(filename) {
-  const stem = basename(filename, extname(filename)).normalize('NFC');
-  const match = stem.match(/^통화(?: 녹음)? (.+)_(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/u);
-  if (!match) return null;
-  const [, contact, yy, month, day, hour, minute, second] = match;
-  const year = 2000 + Number(yy);
-  if (!contact.trim() || !validLocal(year, Number(month), Number(day), Number(hour), Number(minute), Number(second))) return null;
-  const occurred = `20${yy}-${month}-${day}T${hour}:${minute}:${second}+09:00`;
-  return { contact, occurred };
-}
-
-function contactFromFilename(filename) {
-  const stem = basename(filename, extname(filename)).normalize('NFC');
-  return stem.replace(/^통화(?: 녹음)? /u, '')
-    .replace(/_\d{6}_\d{6}$/u, '').trim() || stem;
 }
 
 function cleanTitle(value) {
@@ -81,35 +59,6 @@ function readIndex(indexPath) {
     try { return JSON.parse(line); }
     catch { throw new Error(`미디어 색인 ${index + 1}줄 JSON 오류`); }
   });
-}
-
-function loadPeople(root) {
-  const directory = join(root, VAULT_REL.people);
-  if (!existsSync(directory)) return [];
-  return readdirSync(directory).filter((name) => name.endsWith('.md')).map((filename) => {
-    const title = basename(filename, '.md').normalize('NFC');
-    const fields = parseFrontmatter(readFileSync(join(directory, filename), 'utf8'));
-    return {
-      title, contacts: Array.isArray(fields.phoneContacts)
-        ? fields.phoneContacts.map((name) => String(name).normalize('NFC')) : [],
-      aliases: Array.isArray(fields.aliases)
-        ? fields.aliases.map((name) => String(name).normalize('NFC')) : [],
-      family: (Array.isArray(fields.category) ? fields.category : [fields.category])
-        .some((category) => typeof category === 'string' && /\[\[01_Home\/20\d\s/.test(category)),
-    };
-  });
-}
-
-function matchPeople(kind, filename, contact, people) {
-  if (kind === 'Calls') {
-    const matches = people.filter((person) => person.contacts.includes(contact)
-      || person.title === contact || person.aliases.includes(contact));
-    if (matches.length > 1) throw new Error('연락처가 여러 인물 노트에 연결됨');
-    return matches;
-  }
-  const stem = basename(filename, extname(filename)).normalize('NFC');
-  return people.filter((person) => [person.title, ...person.aliases]
-    .some((name) => name && stem.includes(name)));
 }
 
 function transcriptPath(root, record) {
