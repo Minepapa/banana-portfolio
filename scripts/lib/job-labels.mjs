@@ -12,7 +12,7 @@ const displayVaultRoot = VAULT_ROOT.startsWith(`${homedir()}/`)
   ? `~${VAULT_ROOT.slice(homedir().length)}` : VAULT_ROOT;
 export const JOB_LABELS = {
   'media-archive': 'Syncthing Media Inbox 안정 파일을 Archive에 하드링크 보관·색인(매시간)',
-  'media-moments': '미디어 색인에서 Camera 사진을 순간별 Vault 노트로 묶음(매시간)',
+  'media-moments': 'Camera 사진과 촬영 시각이 있는 KakaoTalk 사진을 순간별 Vault 노트로 묶음(매시간)',
   'media-transcribe': '통화·녹음 로컬 Whisper 전사 → 대화 노트(매일 01~05시 매시)',
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
   'vault-offsite-backup': '매일 00:20 Vault 암호화 외부 백업',

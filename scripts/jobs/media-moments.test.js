@@ -38,6 +38,21 @@ test('90분과 1.5km 경계에서 순간을 나눈다', () => {
   assert.deepEqual(groupMoments(records).map((moment) => moment.map((record) => record.id)), [['a', 'b'], ['c'], ['d']]);
 });
 
+test('Camera와 EXIF 촬영 시각이 확인된 KakaoTalk 사진만 순간으로 묶는다', () => {
+  const camera = item('camera', time('10:00'));
+  const kakao = (id, capturedFrom, capturedConfidence) => ({ ...item(id, time('10:10')),
+    kind: 'KakaoTalk', archivePath: `Archive/2030/01/KakaoTalk/item-${id}.jpg`,
+    capturedFrom, capturedConfidence });
+  const records = [camera, { ...camera, id: 'camera-estimated', capturedConfidence: 'estimated' },
+    kakao('confirmed', 'exif', 'confirmed'), kakao('single', 'exif', 'single'),
+    kakao('estimated', 'exif', 'estimated'), kakao('review', 'exif', 'review'),
+    kakao('missing-confidence', 'exif'), kakao('missing-source', undefined, 'confirmed'),
+    kakao('non-exif', 'filename', 'confirmed'),
+    { ...item('call', time('10:20')), kind: 'Calls', capturedFrom: 'exif', capturedConfidence: 'confirmed' }];
+  assert.deepEqual(groupMoments(records).map((moment) => moment.map((record) => record.id)),
+    [['camera', 'camera-estimated', 'confirmed', 'single']]);
+});
+
 test('동선이 GPS와 결제보다 우선하고 등록 장소가 지오코더보다 우선한다', async () => {
   const records = [item('a', time('10:00'))];
   const route = await describeMoment(records, { root: '/unused', dryRun: false,

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Archive 색인에서 Camera 순간 노트를 만든다. 실행당 각 노트는 한 번만 원자적으로 쓴다.
+// Archive 색인에서 Camera와 촬영 시각이 확인된 KakaoTalk 사진의 순간 노트를 만든다. 각 노트는 실행당 한 번만 원자적으로 쓴다.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,7 +40,10 @@ const cleanRouteLabel = (label) => {
 };
 
 export function groupMoments(records) {
-  const sorted = records.filter((record) => record.kind === 'Camera' && typeof record.id === 'string'
+  const sorted = records.filter((record) => (record.kind === 'Camera'
+    || (record.kind === 'KakaoTalk' && record.capturedFrom === 'exif'
+      && ['confirmed', 'single'].includes(record.capturedConfidence)))
+    && typeof record.id === 'string'
     && Number.isFinite(at(record)) && typeof record.archivePath === 'string')
     .sort((a, b) => at(a) - at(b) || a.id.localeCompare(b.id));
   const moments = [];

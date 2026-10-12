@@ -13,7 +13,7 @@ import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 
 const execFileAsync = promisify(execFile);
-const KINDS = ['Camera', 'Recordings', 'Calls', 'Screenshots'];
+const KINDS = ['Camera', 'Recordings', 'Calls', 'Screenshots', 'KakaoTalk'];
 const STABLE_AGE_MS = 2 * 60 * 1000;
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.3gp', '.avi', '.mkv', '.webm']);
 const QUICKTIME_EXTENSIONS = new Set(['.m4a', '.m4b', '.m4p', '.m4r', '.mp4', '.mov', '.m4v', '.3gp', '.3g2', '.3ga', '.qt']);
@@ -201,37 +201,78 @@ function parseTimestamp(value, { utc = false } = {}) {
 }
 
 function dateFromFilename(name) {
+  const bandPhoto = name.match(/BandPhoto_(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})(?=\D|$)/i);
+  if (bandPhoto) {
+    const date = parseTimestamp(`${bandPhoto[1]}:${bandPhoto[2]}:${bandPhoto[3]} ${bandPhoto[4]}:${bandPhoto[5]}:${bandPhoto[6]}`);
+    if (date) return { date, kind: 'saved' };
+  }
   const full = name.match(/(?:^|\D)(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})(?=\D|$)/);
   if (full) {
     const date = parseTimestamp(`${full[1]}:${full[2]}:${full[3]} ${full[4]}:${full[5]}:${full[6]}`);
-    if (date) return date;
+    if (date) return { date, kind: 'camera' };
   }
   const epoch = name.match(/(?:^|\D)(1\d{12})(?=\D|$)/);
   if (epoch) {
     const date = new Date(Number(epoch[1]));
-    if (!Number.isNaN(date.getTime())) return date;
+    if (!Number.isNaN(date.getTime())) return { date, kind: 'saved' };
   }
   const shortWithSeconds = name.match(/(?:^|\D)(\d{2})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})(?=\D|$)/);
   if (shortWithSeconds) {
     const date = parseTimestamp(`20${shortWithSeconds[1]}:${shortWithSeconds[2]}:${shortWithSeconds[3]} ${shortWithSeconds[4]}:${shortWithSeconds[5]}:${shortWithSeconds[6]}`);
-    if (date) return date;
+    if (date) return { date, kind: 'camera' };
   }
   const short = name.match(/(?:^|\D)(\d{2})(\d{2})(\d{2})[_-](\d{2})(\d{2})(?=\D|$)/);
-  if (short) return parseTimestamp(`20${short[1]}:${short[2]}:${short[3]} ${short[4]}:${short[5]}:00`);
+  if (short) {
+    const date = parseTimestamp(`20${short[1]}:${short[2]}:${short[3]} ${short[4]}:${short[5]}:00`);
+    if (date) return { date, kind: 'camera' };
+  }
   return null;
+}
+
+function differenceReason(first, second) {
+  const minutes = Math.ceil(Math.abs(first.getTime() - second.getTime()) / 60_000);
+  if (minutes >= 24 * 60) return `EXIF·파일명 ${Math.ceil(minutes / (24 * 60))}일 차이`;
+  if (minutes >= 60) return `EXIF·파일명 ${Math.ceil(minutes / 60)}시간 차이`;
+  return `EXIF·파일명 ${minutes}분 차이`;
 }
 
 function capturedTime(file, metadata) {
   const video = VIDEO_EXTENSIONS.has(extname(file.path).toLowerCase());
   const quickTime = QUICKTIME_EXTENSIONS.has(extname(file.path).toLowerCase());
-  const exif = parseTimestamp(metadata?.DateTimeOriginal)
-    || (video ? parseTimestamp(metadata?.MediaCreateDate, { utc: true }) : null)
-    || parseTimestamp(metadata?.CreateDate, { utc: quickTime })
-    || parseTimestamp(metadata?.MediaCreateDate, { utc: true });
-  if (exif) return { date: exif, from: 'exif' };
+  const exifFields = [
+    { value: metadata?.DateTimeOriginal },
+    ...(video ? [{ value: metadata?.MediaCreateDate, utc: true }] : []),
+    { value: metadata?.CreateDate, utc: quickTime },
+    { value: metadata?.MediaCreateDate, utc: true },
+  ];
+  const selectedExif = exifFields.map(({ value, utc }) => ({
+    date: parseTimestamp(value, { utc }), year: typeof value === 'string' ? Number(value.slice(0, 4)) : NaN,
+  })).find(({ date }) => date);
+  const rawExif = selectedExif?.date;
+  const invalidExif = rawExif && selectedExif.year < 2005;
+  const exif = invalidExif ? null : rawExif;
   const filename = dateFromFilename(basename(file.path));
-  if (filename) return { date: filename, from: 'filename' };
-  return { date: new Date(file.stat.mtimeMs), from: 'mtime' };
+  const invalidReason = invalidExif ? 'EXIF 2005년 이전' : null;
+  if (exif && filename?.kind === 'camera') {
+    const difference = Math.abs(exif.getTime() - filename.date.getTime());
+    if (difference <= 2 * 60_000) return { date: exif, from: 'exif', confidence: 'confirmed' };
+    return { date: exif, from: 'exif', confidence: 'review', reason: differenceReason(exif, filename.date) };
+  }
+  if (exif && filename?.kind === 'saved') {
+    if (exif.getTime() - filename.date.getTime() > 2 * 60_000) {
+      return { date: exif, from: 'exif', confidence: 'review', reason: 'EXIF가 저장 시각보다 늦음' };
+    }
+    return { date: exif, from: 'exif', confidence: 'single' };
+  }
+  if (exif) return { date: exif, from: 'exif', confidence: 'single' };
+  if (filename) return {
+    date: filename.date, from: 'filename', confidence: filename.kind === 'camera' ? 'single' : 'estimated',
+    ...((invalidReason || filename.kind === 'saved')
+      ? { reason: [invalidReason, filename.kind === 'saved' ? '저장 시각 파일명만' : null].filter(Boolean).join('·') }
+      : {}),
+  };
+  return { date: new Date(file.stat.mtimeMs), from: 'mtime', confidence: 'review',
+    reason: [invalidReason, '수정일뿐'].filter(Boolean).join('·') };
 }
 
 function kstIso(date) {
@@ -425,7 +466,9 @@ export async function repairMediaArchiveTimes({
       const currentMonth = record.archivePath.match(/^Archive\/(\d{4})\/(\d{2})\//);
       if (!currentMonth) throw new Error(`색인 보관 경로 형식 오류: ${record.archivePath}`);
       const move = currentMonth[1] !== capturedAt.slice(0, 4) || currentMonth[2] !== capturedAt.slice(5, 7);
-      if (capturedAt === record.capturedAt && captured.from === record.capturedFrom && !move) continue;
+      if (capturedAt === record.capturedAt && captured.from === record.capturedFrom
+        && captured.confidence === record.capturedConfidence
+        && captured.reason === record.capturedReason && !move) continue;
       if (capturedAt !== record.capturedAt) {
         summary.changed += 1;
         summary.byKind[record.kind] = (summary.byKind[record.kind] || 0) + 1;
@@ -434,7 +477,8 @@ export async function repairMediaArchiveTimes({
         ? join(mediaRoot, 'Archive', capturedAt.slice(0, 4), capturedAt.slice(5, 7), record.kind, basename(source))
         : null;
       if (move) summary.moves.push({ from: record.archivePath, to: relative(mediaRoot, destination).split('\\').join('/') });
-      changes.push({ record, source, stat, capturedAt, capturedFrom: captured.from, destination });
+      changes.push({ record, source, stat, capturedAt, capturedFrom: captured.from,
+        capturedConfidence: captured.confidence, capturedReason: captured.reason, destination });
     }
 
     if (apply && changes.length) {
@@ -465,6 +509,9 @@ export async function repairMediaArchiveTimes({
         for (const change of changes) {
           change.record.capturedAt = change.capturedAt;
           change.record.capturedFrom = change.capturedFrom;
+          change.record.capturedConfidence = change.capturedConfidence;
+          if (change.capturedReason) change.record.capturedReason = change.capturedReason;
+          else delete change.record.capturedReason;
           if (change.newPath) {
             change.record.repairFrom = change.record.archivePath;
             change.record.archivePath = relative(mediaRoot, change.newPath).split('\\').join('/');
@@ -507,7 +554,8 @@ export async function runMediaArchive({
 } = {}) {
   const summary = { archived: 0, skipped: 0, failed: 0, trashedNew: 0,
     trashedExisting: 0, trashedOrphan: 0, orphanCalls: 0, cleanedTrash: 0, trashedByContact: {},
-    capturedFrom: { exif: 0, filename: 0, mtime: 0 } };
+    capturedFrom: { exif: 0, filename: 0, mtime: 0 },
+    capturedConfidence: { confirmed: 0, single: 0, estimated: 0, review: 0 } };
   await fs.stat(mediaRoot); // 마운트가 빠졌다면 빈 Inbox로 오인하지 않고 잡 실패를 알린다.
   const files = await collectFiles(mediaRoot, now);
   // 대량 차단 판단 전에는 색인 복구도 쓰기이므로 읽기 전용으로 파싱한다.
@@ -613,6 +661,7 @@ export async function runMediaArchive({
         await verifyIndexedRecord(existing, mediaRoot, hash);
         summary.skipped += 1;
         summary.capturedFrom[captured.from] += 1;
+        summary.capturedConfidence[captured.confidence] += 1;
         continue;
       }
       if (dryRun) {
@@ -636,7 +685,8 @@ export async function runMediaArchive({
         const record = {
           id, kind: file.kind, inboxPath: relativeInbox,
           archivePath: relative(mediaRoot, target).split('\\').join('/'),
-          capturedAt: kst, capturedFrom: captured.from, size: file.stat.size,
+          capturedAt: kst, capturedFrom: captured.from, capturedConfidence: captured.confidence,
+          ...(captured.reason ? { capturedReason: captured.reason } : {}), size: file.stat.size,
           ...(gps ? { gps } : {}),
           archivedAt: kstIso(now),
         };
@@ -646,6 +696,7 @@ export async function runMediaArchive({
         else summary.skipped += 1;
       }
       summary.capturedFrom[captured.from] += 1;
+      summary.capturedConfidence[captured.confidence] += 1;
     } catch (error) {
       summary.failed += 1;
       output.error(`[media-archive] 실패: ${file.path}: ${error.message}`);
@@ -841,7 +892,7 @@ export async function runMediaArchive({
     }
   }
   if (trashSkipped.length) output.log(`[media-archive] 통화 휴지통 ${trashSkipped.join(' / ')}`);
-  output.log(`[media-archive] ${dryRun ? 'dry-run ' : ''}새로 보관 ${summary.archived}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}; 근거 exif ${summary.capturedFrom.exif}, filename ${summary.capturedFrom.filename}, mtime ${summary.capturedFrom.mtime}; 휴지통 ${summary.trashedNew + summary.trashedExisting + summary.trashedOrphan}(새 ${summary.trashedNew}·기존 ${summary.trashedExisting}·고아 이동 ${summary.trashedOrphan}), 고아 통화 ${summary.orphanCalls}건, 휴지통 정리 ${summary.cleanedTrash}폴더`);
+  output.log(`[media-archive] ${dryRun ? 'dry-run ' : ''}새로 보관 ${summary.archived}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}; 근거 exif ${summary.capturedFrom.exif}, filename ${summary.capturedFrom.filename}, mtime ${summary.capturedFrom.mtime}; 판정 confirmed ${summary.capturedConfidence.confirmed}, single ${summary.capturedConfidence.single}, estimated ${summary.capturedConfidence.estimated}, review ${summary.capturedConfidence.review}; 휴지통 ${summary.trashedNew + summary.trashedExisting + summary.trashedOrphan}(새 ${summary.trashedNew}·기존 ${summary.trashedExisting}·고아 이동 ${summary.trashedOrphan}), 고아 통화 ${summary.orphanCalls}건, 휴지통 정리 ${summary.cleanedTrash}폴더`);
   return summary;
 }
 

@@ -26,6 +26,18 @@ const args = process.argv.slice(2).filter((arg) => !arg.startsWith('-'));
 fs.appendFileSync(${JSON.stringify(join(root, 'calls'))}, 'call\\n');
 process.stdout.write(JSON.stringify(args.map((file) => {
   const name = path.basename(file);
+  const cases = {
+    'old_20240102_030405.jpg': '2000:01:09 00:00:00',
+    'agree_20240102_030405.jpg': '2024:01:02 03:05:00',
+    'boundary_20240102_030405.jpg': '2024:01:02 03:06:05',
+    'differ_20240102_030405.jpg': '2024:01:05 03:04:05',
+    '1704164645000.jpg': '2024:01:02 03:04:05',
+    'BandPhoto_2024_01_02_03_04_05.jpg': '2024:01:02 03:07:06',
+    'only-exif.jpg': '2024:01:02 03:04:05',
+    'old-plain.jpg': '2000:01:09 00:00:00',
+  };
+  if (cases[name]) return { SourceFile: file, DateTimeOriginal: cases[name] };
+  if (name === 'oldutc_20250101_010000.mp4') return { SourceFile: file, MediaCreateDate: '2004:12:31 16:00:00' };
   if (name === 'exif.bin') return { SourceFile: file, DateTimeOriginal: '2022:03:04 05:06:07', CreateDate: '2021:01:01 00:00:00', GPSLatitude: 37.5, GPSLongitude: 127.1 };
   if (name === 'created.bin') return { SourceFile: file, CreateDate: '2022:04:05 06:07:08' };
   if (name === 'movie.bin') return { SourceFile: file, MediaCreateDate: '2023:01:01 16:20:30' };
@@ -517,6 +529,99 @@ test('날짜 우선순위, KST 영상, 파일명 형식, mtime, 하드링크와 
   assert.deepEqual(second.capturedFrom, { exif: 5, filename: 4, mtime: 1 });
   assert.equal((await rows(f.indexPath)).length, 10);
   assert.equal((await fs.readFile(join(f.root, 'calls'), 'utf8')).trim().split('\n').length, 2);
+});
+
+test('KakaoTalk 사진을 촬영 시각 월의 Archive에 하드링크로 보관한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const source = await f.put('KakaoTalk', '1704164645001.jpg', 'kakao-photo');
+
+  const summary = await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  const target = join(f.mediaRoot, record.archivePath);
+
+  assert.equal(summary.archived, 1);
+  assert.equal(record.kind, 'KakaoTalk');
+  assert.equal(record.inboxPath, 'Inbox/KakaoTalk/1704164645001.jpg');
+  assert.equal(record.archivePath, 'Archive/2024/01/KakaoTalk/1704164645001.jpg');
+  assert.equal(record.capturedFrom, 'filename');
+  assert.equal(record.capturedConfidence, 'estimated');
+  assert.equal((await fs.stat(source)).ino, (await fs.stat(target)).ino);
+});
+
+test('촬영 시각은 EXIF·카메라형·저장형 파일명을 대조하고 불확실성을 색인과 요약에 남긴다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const names = [
+    'old_20240102_030405.jpg', 'agree_20240102_030405.jpg',
+    'differ_20240102_030405.jpg', '1704164645000.jpg',
+    'BandPhoto_2024_01_02_03_04_05.jpg', 'only-exif.jpg',
+    'camera_20240102-030405.jpg', '1704164645001.jpg',
+    'BandPhoto_2024_01_02_03_04_06.jpg',
+    'plain-no-date.jpg', 'old-plain.jpg',
+  ];
+  for (const name of names) await f.put('Camera', name, name);
+  const logs = [];
+  const summary = await runMediaArchive({ ...f.options, output: { log: (line) => logs.push(line), error() {} } });
+  const records = await rows(f.indexPath);
+  const byName = (name) => records.find((row) => row.inboxPath.endsWith(name));
+  assert.equal(summary.archived, names.length);
+  assert.equal(byName('old_20240102_030405.jpg').capturedFrom, 'filename');
+  assert.equal(byName('old_20240102_030405.jpg').capturedConfidence, 'single');
+  assert.match(byName('old_20240102_030405.jpg').capturedReason, /EXIF 2005년 이전/);
+  assert.equal(byName('agree_20240102_030405.jpg').capturedConfidence, 'confirmed');
+  assert.equal(byName('agree_20240102_030405.jpg').capturedAt, '2024-01-02T03:05:00.000+09:00');
+  assert.equal(byName('differ_20240102_030405.jpg').capturedConfidence, 'review');
+  assert.match(byName('differ_20240102_030405.jpg').capturedReason, /3일 차이/);
+  assert.equal(byName('1704164645000.jpg').capturedConfidence, 'single');
+  assert.equal(byName('1704164645000.jpg').capturedFrom, 'exif');
+  assert.equal(byName('BandPhoto_2024_01_02_03_04_05.jpg').capturedConfidence, 'review');
+  assert.match(byName('BandPhoto_2024_01_02_03_04_05.jpg').capturedReason, /저장 시각보다 늦음/);
+  assert.equal(byName('only-exif.jpg').capturedConfidence, 'single');
+  assert.equal(byName('camera_20240102-030405.jpg').capturedConfidence, 'single');
+  assert.equal(byName('camera_20240102-030405.jpg').capturedFrom, 'filename');
+  assert.equal(byName('1704164645001.jpg').capturedConfidence, 'estimated');
+  assert.match(byName('1704164645001.jpg').capturedReason, /저장 시각 파일명만/);
+  assert.equal(byName('BandPhoto_2024_01_02_03_04_06.jpg').capturedConfidence, 'estimated');
+  assert.equal(byName('BandPhoto_2024_01_02_03_04_06.jpg').capturedAt, '2024-01-02T03:04:06.000+09:00');
+  assert.equal(byName('plain-no-date.jpg').capturedConfidence, 'review');
+  assert.equal(byName('plain-no-date.jpg').capturedReason, '수정일뿐');
+  assert.equal(byName('old-plain.jpg').capturedReason, 'EXIF 2005년 이전·수정일뿐');
+  assert.deepEqual(summary.capturedConfidence, { confirmed: 1, single: 4, estimated: 2, review: 4 });
+  assert.match(logs.at(-1), /판정 confirmed 1, single 4, estimated 2, review 4/);
+});
+
+test('repair-times는 촬영 시각이 같아도 confidence와 reason 변경을 색인에 반영한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Camera', 'agree_20240102_030405.jpg', 'agree');
+  await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  record.capturedConfidence = 'review';
+  record.capturedReason = '옛 판정';
+  await fs.writeFile(f.indexPath, `${JSON.stringify(record)}\n`);
+  const dry = await repairMediaArchiveTimes(f.options);
+  assert.equal(dry.changed, 0);
+  assert.equal((await rows(f.indexPath))[0].capturedConfidence, 'review');
+  await repairMediaArchiveTimes({ ...f.options, apply: true });
+  const [fixed] = await rows(f.indexPath);
+  assert.equal(fixed.capturedConfidence, 'confirmed');
+  assert.equal(fixed.capturedReason, undefined);
+  assert.equal((await repairMediaArchiveTimes(f.options)).changed, 0);
+});
+
+test('2분 일치는 confirmed이고 UTC 비디오 EXIF의 원본 연도가 2004면 버린다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Camera', 'boundary_20240102_030405.jpg', 'boundary');
+  await f.put('Camera', 'oldutc_20250101_010000.mp4', 'oldutc');
+  await runMediaArchive(f.options);
+  const records = await rows(f.indexPath);
+  const byName = (name) => records.find((row) => row.inboxPath.endsWith(name));
+  assert.equal(byName('boundary_20240102_030405.jpg').capturedConfidence, 'confirmed');
+  assert.equal(byName('oldutc_20250101_010000.mp4').capturedFrom, 'filename');
+  assert.equal(byName('oldutc_20250101_010000.mp4').capturedAt, '2025-01-01T01:00:00.000+09:00');
+  assert.match(byName('oldutc_20250101_010000.mp4').capturedReason, /EXIF 2005년 이전/);
 });
 
 test('Syncthing 임시 파일, 숨김 파일, 최근 수정 파일을 제외한다', async (t) => {
