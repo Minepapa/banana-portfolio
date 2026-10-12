@@ -81,6 +81,9 @@ function existingTranscriptPaths(root) {
 }
 
 function notePath(record) {
+  if (record.kind === 'Recordings' && /^\d{4}-\d{2}-\d{2} \S/.test(record.stem)) {
+    return `${VAULT_REL.mediaConversations}/${record.stem.slice(0, 4)}/${cleanTitle(record.stem)}.md`;
+  }
   const date = record.occurred.slice(0, 10);
   const suffix = record.kind === 'Calls' ? `${record.counterpart} 통화` : `${record.stem} 녹음`;
   const title = cleanTitle(suffix);

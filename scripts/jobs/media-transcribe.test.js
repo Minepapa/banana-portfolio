@@ -205,6 +205,22 @@ test('dry-run은 전사·상태·노트·잠금 파일을 쓰지 않고 예상 �
   assert.ok(logs.some((line) => line.includes('upcoming')));
 });
 
+test('날짜로 시작하는 녹음 이름은 그 날짜의 연도 폴더에 접미 없이 쓴다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '2025-09-20 아이 노래 바다.m4a');
+  const summary = await runMediaTranscribe({ ...f.options, dryRun: true });
+  assert.equal(summary.upcoming[0].notePath,
+    `${VAULT_REL.mediaConversations}/2025/2025-09-20 아이 노래 바다.md`);
+});
+
+test('기존 녹음 이름은 발생 날짜와 녹음 접미를 유지한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '아이 노래 바다.m4a');
+  const summary = await runMediaTranscribe({ ...f.options, dryRun: true });
+  assert.equal(summary.upcoming[0].notePath,
+    `${VAULT_REL.mediaConversations}/2030/2030-01-01 아이 노래 바다 녹음.md`);
+});
+
 test('미연결 통화는 전사와 노트 복구에서 제외하고 미연결 녹음은 유지한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
   f.person('가상연결', { phoneContacts: ['가상연결'] });
