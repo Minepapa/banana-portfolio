@@ -567,7 +567,7 @@ export async function runMediaArchive({
   output = console,
 } = {}) {
   const summary = { archived: 0, skipped: 0, failed: 0, trashedNew: 0,
-    trashedExisting: 0, trashedOrphan: 0, orphanCalls: 0, cleanedTrash: 0, trashedByContact: {},
+    trashedExisting: 0, trashedOrphan: 0, orphanCalls: 0, cleanedTrash: 0, ignoreAdded: 0, trashedByContact: {},
     capturedFrom: { exif: 0, filename: 0, mtime: 0 },
     capturedConfidence: { confirmed: 0, single: 0, estimated: 0, review: 0 } };
   await fs.stat(mediaRoot); // 마운트가 빠졌다면 빈 Inbox로 오인하지 않고 잡 실패를 알린다.
@@ -725,6 +725,11 @@ export async function runMediaArchive({
   const candidates = [];
   const movedByContact = new Map();
   const reportedProtected = new Set();
+  const removedInboxByKind = new Map();
+  const rememberRemovedInbox = (kind, path) => {
+    if (!removedInboxByKind.has(kind)) removedInboxByKind.set(kind, new Set());
+    removedInboxByKind.get(kind).add(path);
+  };
   if (people && !bulkBlocked) {
     for (const record of records.values()) {
       if (record.kind !== 'Calls') continue;
@@ -819,6 +824,7 @@ export async function runMediaArchive({
           await noSymlinks(join(mediaRoot, 'Trash'), trashCalls);
           await fs.mkdir(trashCalls, { recursive: true });
           await fs.rename(file.path, await uniqueTrashPath(trashCalls, basename(file.path)));
+          rememberRemovedInbox(file.kind, file.path);
           summary.trashedNew += 1;
           const contact = parseCallFilename(basename(file.path)).contact;
           movedByContact.set(contact, (movedByContact.get(contact) || 0) + 1);
@@ -859,7 +865,10 @@ export async function runMediaArchive({
           // 동일한 하드링크인 Inbox만 제거한다. 다른 inode로 교체된 파일은 보존한다.
           try {
             const inboxStat = await fs.lstat(inbox);
-            if (inboxStat.isFile() && inboxStat.dev === source.dev && inboxStat.ino === source.ino) await fs.unlink(inbox);
+            if (inboxStat.isFile() && inboxStat.dev === source.dev && inboxStat.ino === source.ino) {
+              await fs.unlink(inbox);
+              rememberRemovedInbox(record.kind, inbox);
+            }
           } catch (error) { if (error.code !== 'ENOENT') throw error; }
         } catch (error) {
           summary.failed += 1;
@@ -902,11 +911,42 @@ export async function runMediaArchive({
           output.error(`[media-archive] 휴지통 정리 실패: ${directory}: ${error.message}`);
         }
       }
+      for (const [kind, paths] of removedInboxByKind) {
+        const folder = join(mediaRoot, 'Inbox', kind);
+        const ignorePath = join(folder, '.stignore');
+        try {
+          await noSymlinks(join(mediaRoot, 'Inbox'), ignorePath);
+          let existing;
+          try { existing = await fs.readFile(ignorePath, 'utf8'); }
+          catch (error) { if (error.code === 'ENOENT') existing = ''; else throw error; }
+          const known = new Set(existing.split(/\r?\n/));
+          const additions = [];
+          for (const path of paths) {
+            const relativePath = relative(folder, path).split(sep).join('/');
+            if (!relativePath || relativePath.startsWith('../') || /[\r\n]/.test(relativePath)) {
+              output.error(`[media-archive] 무시 목록 경로 건너뜀: ${path}`);
+              continue;
+            }
+            // Syncthing의 macOS glob 패턴은 백슬래시로 메타문자를 리터럴로 취급한다.
+            const pattern = `/${relativePath.replace(/[\\*?\[\]{}!]/g, '\\$&')}`;
+            if (!known.has(pattern)) {
+              known.add(pattern);
+              additions.push(pattern);
+            }
+          }
+          if (additions.length) {
+            atomicWrite(ignorePath, `${existing}${existing && !existing.endsWith('\n') ? '\n' : ''}${additions.join('\n')}\n`);
+            summary.ignoreAdded += additions.length;
+          }
+        } catch (error) {
+          output.error(`[media-archive] 무시 목록 쓰기 실패: ${ignorePath}: ${error.message}`);
+        }
+      }
       summary.trashedByContact = Object.fromEntries(movedByContact);
     }
   }
   if (trashSkipped.length) output.log(`[media-archive] 통화 휴지통 ${trashSkipped.join(' / ')}`);
-  output.log(`[media-archive] ${dryRun ? 'dry-run ' : ''}새로 보관 ${summary.archived}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}; 근거 exif ${summary.capturedFrom.exif}, filename ${summary.capturedFrom.filename}, mtime ${summary.capturedFrom.mtime}; 판정 confirmed ${summary.capturedConfidence.confirmed}, single ${summary.capturedConfidence.single}, estimated ${summary.capturedConfidence.estimated}, review ${summary.capturedConfidence.review}; 휴지통 ${summary.trashedNew + summary.trashedExisting + summary.trashedOrphan}(새 ${summary.trashedNew}·기존 ${summary.trashedExisting}·고아 이동 ${summary.trashedOrphan}), 고아 통화 ${summary.orphanCalls}건, 휴지통 정리 ${summary.cleanedTrash}폴더`);
+  output.log(`[media-archive] ${dryRun ? 'dry-run ' : ''}새로 보관 ${summary.archived}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}; 근거 exif ${summary.capturedFrom.exif}, filename ${summary.capturedFrom.filename}, mtime ${summary.capturedFrom.mtime}; 판정 confirmed ${summary.capturedConfidence.confirmed}, single ${summary.capturedConfidence.single}, estimated ${summary.capturedConfidence.estimated}, review ${summary.capturedConfidence.review}; 휴지통 ${summary.trashedNew + summary.trashedExisting + summary.trashedOrphan}(새 ${summary.trashedNew}·기존 ${summary.trashedExisting}·고아 이동 ${summary.trashedOrphan}), 무시 목록 추가 ${summary.ignoreAdded}, 고아 통화 ${summary.orphanCalls}건, 휴지통 정리 ${summary.cleanedTrash}폴더`);
   return summary;
 }
 

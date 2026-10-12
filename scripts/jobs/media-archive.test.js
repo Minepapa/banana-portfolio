@@ -265,8 +265,10 @@ test('기존 미연결 통화는 보관본·전사를 휴지통에 보존하고 
   await f.person();
   await fs.unlink(separate);
   await fs.writeFile(separate, 'different inode');
-  await runMediaArchive(f.options);
+  const secondResult = await runMediaArchive(f.options);
+  assert.equal(secondResult.ignoreAdded, 0);
   assert.equal(await fs.readFile(separate, 'utf8'), 'different inode');
+  assert.doesNotMatch(await fs.readFile(join(f.mediaRoot, 'Inbox', 'Calls', '.stignore'), 'utf8'), /261011_100000/);
   assert.deepEqual(await rows(f.indexPath), []);
   assert.ok((await fs.readdir(join(f.mediaRoot, 'Trash', '2026-10-11', 'Calls'))).length >= 2);
   assert.ok(second);
@@ -406,15 +408,86 @@ test('기존 대상 여러 건과 새 보관 건을 색인에 한 번만 원자�
   await runMediaArchive(f.options);
   await f.person();
   await f.put('Camera', 'photo.jpg', 'photo');
-  let writes = 0;
+  const writes = [];
   const result = await runMediaArchive({ ...f.options, atomicWrite(path, content) {
-    writes += 1;
+    writes.push(path);
     writeAtomic(path, content);
   } });
-  assert.equal(writes, 1);
+  assert.equal(writes.filter((path) => path === f.indexPath).length, 1);
+  assert.equal(writes.filter((path) => path === join(f.mediaRoot, 'Inbox', 'Calls', '.stignore')).length, 1);
   assert.equal(result.archived, 1);
   assert.equal(result.trashedExisting, 2);
+  assert.equal(result.ignoreAdded, 2);
   assert.equal((await rows(f.indexPath)).length, 1);
+});
+
+test('새 통화를 휴지통으로 옮긴 뒤 기존 .stignore 줄을 보존하고 중복 없이 한 번 쓴다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const first = '통화 녹음 가상미연결_261011_090000.m4a';
+  const second = '통화 녹음 가상미연결_261011_100000.m4a';
+  await f.put('Calls', first, 'first');
+  await f.put('Calls', second, 'second');
+  const ignorePath = join(f.mediaRoot, 'Inbox', 'Calls', '.stignore');
+  const original = `(?d).DS_Store\n/${first}\n`;
+  await fs.writeFile(ignorePath, original);
+  const writes = [];
+  const result = await runMediaArchive({ ...f.options, atomicWrite(path, content) {
+    writes.push(path);
+    writeAtomic(path, content);
+  } });
+  assert.equal(result.trashedNew, 2);
+  assert.equal(result.ignoreAdded, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(await fs.readFile(ignorePath, 'utf8'), `${original}/${second}\n`);
+  assert.deepEqual(writes, [ignorePath]);
+});
+
+test('새 통화 경로의 Syncthing 특수문자를 이스케이프한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const name = '통화 녹음 가상*[x]{y}!\\?_261011_090000.m4a';
+  await f.put('Calls', name, 'special', { folder: 'a[b]' });
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.trashedNew, 1);
+  assert.equal(result.ignoreAdded, 1);
+  const ignore = await fs.readFile(join(f.mediaRoot, 'Inbox', 'Calls', '.stignore'), 'utf8');
+  assert.equal(ignore, `${String.raw`/a\[b\]/통화 녹음 가상\*\[x\]\{y\}\!\\\?_261011_090000.m4a`}\n`);
+});
+
+test('dry-run은 새 통화의 .stignore를 바꾸지 않는다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const call = await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'call');
+  const ignorePath = join(f.mediaRoot, 'Inbox', 'Calls', '.stignore');
+  await fs.writeFile(ignorePath, '(?d).DS_Store\n');
+  const result = await runMediaArchive({ ...f.options, dryRun: true });
+  assert.equal(result.trashedNew, 1);
+  assert.equal(result.ignoreAdded, 0);
+  assert.equal(await fs.readFile(ignorePath, 'utf8'), '(?d).DS_Store\n');
+  assert.ok((await fs.stat(call)).isFile());
+});
+
+test('.stignore 쓰기 실패는 휴지통 이동 결과를 실패로 바꾸지 않는다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const name = '통화 녹음 가상미연결_261011_090000.m4a';
+  const call = await f.put('Calls', name, 'call');
+  const errors = [];
+  const result = await runMediaArchive({ ...f.options,
+    atomicWrite() { throw new Error('가상 쓰기 실패'); },
+    output: { log() {}, error(message) { errors.push(message); } },
+  });
+  assert.equal(result.trashedNew, 1);
+  assert.equal(result.ignoreAdded, 0);
+  assert.equal(result.failed, 0);
+  assert.match(errors.join('\n'), /무시 목록 쓰기 실패/);
+  await assert.rejects(fs.stat(call), { code: 'ENOENT' });
+  assert.equal(await fs.readFile(join(f.mediaRoot, 'Trash', '2026-10-11', 'Calls', name), 'utf8'), 'call');
 });
 
 test('색인 쓰기 실패 후에는 보관 통화를 이동하지 않는다', async (t) => {
