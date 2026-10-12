@@ -119,6 +119,10 @@ test('연결된 최근 자료, 미연결 최근 자료, 오래된 자료 순으�
   ];
   assert.deepEqual(orderPending(rows, new Date('2030-01-03T00:00:00Z')).map((row) => row.id),
     ['linked', 'unlinked', 'old']);
+  assert.deepEqual(orderPending([
+    { id: 'call', kind: 'Calls', occurred: '2030-01-02T00:00:00+09:00', people: ['가상'] },
+    { id: 'recording', kind: 'Recordings', occurred: '2028-01-01T00:00:00+09:00', people: [] },
+  ], new Date('2030-01-03T00:00:00Z')).map((row) => row.id), ['recording', 'call']);
 });
 
 test('통화 description 조사는 받침과 영문 이름에 맞춘다', async (t) => {
@@ -216,7 +220,7 @@ test('미연결 통화는 전사와 노트 복구에서 제외하고 미연결 �
   const dry = await runMediaTranscribe({ ...f.options, dryRun: true,
     output: { log: (line) => dryLogs.push(line), error() {} } });
   assert.deepEqual(dry.buckets.map((bucket) => bucket.count), [1, 1, 0]);
-  assert.deepEqual(dry.upcoming.map((record) => record.id), [ID(1), ID(4)]);
+  assert.deepEqual(dry.upcoming.map((record) => record.id), [ID(4), ID(1)]);
   assert.equal(dry.remaining, 2);
   assert.equal(dry.excludedCalls, 2);
   assert.match(dryLogs.at(-1), /남은 대기 2, 미연결 통화 제외 2$/);

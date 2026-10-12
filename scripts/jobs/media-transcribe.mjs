@@ -178,7 +178,9 @@ function priority(record, recentCutoff) {
 
 export function orderPending(records, now = new Date()) {
   const cutoff = now.getTime() - 365 * 24 * 60 * 60_000;
-  return [...records].sort((a, b) => priority(a, cutoff) - priority(b, cutoff)
+  // 녹음 내용을 확인해 파일명을 정리할 수 있도록 통화보다 먼저 전사한다.
+  return [...records].sort((a, b) => Number(b.kind === 'Recordings') - Number(a.kind === 'Recordings')
+    || priority(a, cutoff) - priority(b, cutoff)
     || Date.parse(b.occurred) - Date.parse(a.occurred) || a.id.localeCompare(b.id));
 }
 
