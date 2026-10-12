@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runMediaArchive } from './media-archive.mjs';
+import { runMediaArchive, repairMediaArchiveTimes } from './media-archive.mjs';
 
 const NOW = new Date('2026-10-11T06:00:00Z');
 const QUIET = { log() {}, error() {} };
@@ -26,6 +26,9 @@ process.stdout.write(JSON.stringify(args.map((file) => {
   if (name === 'movie.bin') return { SourceFile: file, MediaCreateDate: '2023:01:01 16:20:30' };
   if (name === 'video.mp4') return { SourceFile: file, CreateDate: '2020:01:01 00:00:00', MediaCreateDate: '2023:01:01 16:20:30' };
   if (name === 'photo.jpg') return { SourceFile: file, CreateDate: '2022:02:02 03:04:05', MediaCreateDate: '2023:01:01 16:20:30' };
+  if (name === 'call_260911_122817.m4a') return { SourceFile: file, CreateDate: '2026:09:11 03:29:11' };
+  if (name.startsWith('cross_260131_235959') && name.endsWith('.m4a')) return { SourceFile: file, CreateDate: '2026:01:31 16:00:00' };
+  if (name === 'zero_260201_010203.mp4') return { SourceFile: file, CreateDate: '0000:00:00 00:00:00', MediaCreateDate: '0000:00:00 00:00:00' };
   return { SourceFile: file };
 })));
 if (args.some((file) => path.basename(file) === 'badmeta_20240607_080910.bin')) process.exitCode = 1;
@@ -224,4 +227,74 @@ test('exiftool 일부 파일 오류에도 JSON의 다른 메타데이터를 사�
   const records = await rows(f.indexPath);
   assert.equal(records.find((row) => row.inboxPath.endsWith('exif.bin')).capturedFrom, 'exif');
   assert.equal(records.find((row) => row.inboxPath.endsWith('badmeta_20240607_080910.bin')).capturedFrom, 'filename');
+});
+
+test('m4a QuickTime 시각은 UTC, 6자리 통화 파일명은 KST, 0000 날짜는 파일명으로 넘어간다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Calls', 'call_260911_122817.m4a', 'call');
+  await f.put('Calls', 'plain_260911_122817.m4a', 'plain');
+  await f.put('Camera', 'zero_260201_010203.mp4', 'zero');
+  await runMediaArchive(f.options);
+  const records = await rows(f.indexPath);
+  const byName = (name) => records.find((row) => row.inboxPath.endsWith(name));
+  assert.equal(byName('call_260911_122817.m4a').capturedAt, '2026-09-11T12:29:11.000+09:00');
+  assert.equal(byName('call_260911_122817.m4a').capturedFrom, 'exif');
+  assert.equal(byName('plain_260911_122817.m4a').capturedAt, '2026-09-11T12:28:17.000+09:00');
+  assert.equal(byName('plain_260911_122817.m4a').capturedFrom, 'filename');
+  assert.equal(byName('zero_260201_010203.mp4').capturedAt, '2026-02-01T01:02:03.000+09:00');
+  assert.equal(byName('zero_260201_010203.mp4').capturedFrom, 'filename');
+});
+
+test('repair dry-run은 읽기 전용이고 apply는 새 월 하드링크와 원자적 색인을 갱신한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const inbox = await f.put('Calls', 'cross_260131_235959.m4a', 'cross');
+  await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  const newPath = join(f.mediaRoot, record.archivePath);
+  const oldPath = join(f.mediaRoot, 'Archive', '2026', '01', 'Calls', 'cross_260131_235959.m4a');
+  await fs.mkdir(join(oldPath, '..'), { recursive: true });
+  await fs.link(newPath, oldPath);
+  await fs.unlink(newPath);
+  record.archivePath = 'Archive/2026/01/Calls/cross_260131_235959.m4a';
+  record.capturedAt = '2026-01-31T16:00:00.000+09:00';
+  await fs.writeFile(f.indexPath, `${JSON.stringify(record)}\n`);
+  record.capturedAt = '2026-02-01T01:00:00.000+09:00';
+  await fs.writeFile(f.indexPath, `${JSON.stringify(record)}\n`);
+  const misplaced = await repairMediaArchiveTimes(f.options);
+  assert.equal(misplaced.changed, 0);
+  assert.equal(misplaced.moves.length, 1);
+  record.capturedAt = '2026-01-31T16:00:00.000+09:00';
+  await fs.writeFile(f.indexPath, `${JSON.stringify(record)}\n`);
+  const before = await fs.readFile(f.indexPath, 'utf8');
+
+  const dry = await repairMediaArchiveTimes(f.options);
+  assert.equal(dry.changed, 1);
+  assert.deepEqual(dry.byKind, { Calls: 1 });
+  assert.equal(dry.moves.length, 1);
+  assert.equal(await fs.readFile(f.indexPath, 'utf8'), before);
+  assert.equal((await fs.stat(oldPath)).ino, (await fs.stat(inbox)).ino);
+  await assert.rejects(fs.stat(newPath), { code: 'ENOENT' });
+
+  // 내용이 같은 독립 복사본은 기존 하드링크를 대체할 수 없다.
+  await fs.copyFile(oldPath, newPath);
+  const applied = await repairMediaArchiveTimes({ ...f.options, apply: true });
+  assert.equal(applied.changed, 1);
+  const [fixed] = await rows(f.indexPath);
+  assert.equal(fixed.capturedAt, '2026-02-01T01:00:00.000+09:00');
+  assert.equal(fixed.archivePath, record.archivePath.replace('/01/', '/02/').replace('.m4a', ' (2).m4a'));
+  assert.notEqual((await fs.stat(newPath)).ino, (await fs.stat(inbox)).ino);
+  assert.equal((await fs.stat(join(f.mediaRoot, fixed.archivePath))).ino, (await fs.stat(inbox)).ino);
+  await assert.rejects(fs.stat(oldPath), { code: 'ENOENT' });
+  assert.equal((await repairMediaArchiveTimes(f.options)).changed, 0);
+
+  // 색인 교체 직후 중단된 경우 다음 apply가 이전 링크 정리를 마친다.
+  await fs.link(join(f.mediaRoot, fixed.archivePath), oldPath);
+  fixed.repairFrom = record.archivePath;
+  await fs.writeFile(f.indexPath, `${JSON.stringify(fixed)}\n`);
+  assert.equal((await repairMediaArchiveTimes(f.options)).pendingCleanup, 1);
+  await repairMediaArchiveTimes({ ...f.options, apply: true });
+  assert.equal((await rows(f.indexPath))[0].repairFrom, undefined);
+  await assert.rejects(fs.stat(oldPath), { code: 'ENOENT' });
 });

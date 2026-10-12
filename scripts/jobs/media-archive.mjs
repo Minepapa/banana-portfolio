@@ -8,12 +8,13 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { withLock } from '../lib/state-writer.mjs';
+import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 
 const execFileAsync = promisify(execFile);
 const KINDS = ['Camera', 'Recordings', 'Calls', 'Screenshots'];
 const STABLE_AGE_MS = 2 * 60 * 1000;
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.3gp', '.avi', '.mkv', '.webm']);
+const QUICKTIME_EXTENSIONS = new Set(['.m4a', '.m4b', '.m4p', '.m4r', '.mp4', '.mov', '.m4v', '.3gp', '.3g2', '.3ga', '.qt']);
 
 function excluded(name) {
   return name.startsWith('.') || name.startsWith('~syncthing~') || name.endsWith('.tmp');
@@ -80,6 +81,11 @@ function dateFromFilename(name) {
     const date = new Date(Number(epoch[1]));
     if (!Number.isNaN(date.getTime())) return date;
   }
+  const shortWithSeconds = name.match(/(?:^|\D)(\d{2})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})(?=\D|$)/);
+  if (shortWithSeconds) {
+    const date = parseTimestamp(`20${shortWithSeconds[1]}:${shortWithSeconds[2]}:${shortWithSeconds[3]} ${shortWithSeconds[4]}:${shortWithSeconds[5]}:${shortWithSeconds[6]}`);
+    if (date) return date;
+  }
   const short = name.match(/(?:^|\D)(\d{2})(\d{2})(\d{2})[_-](\d{2})(\d{2})(?=\D|$)/);
   if (short) return parseTimestamp(`20${short[1]}:${short[2]}:${short[3]} ${short[4]}:${short[5]}:00`);
   return null;
@@ -87,9 +93,10 @@ function dateFromFilename(name) {
 
 function capturedTime(file, metadata) {
   const video = VIDEO_EXTENSIONS.has(extname(file.path).toLowerCase());
+  const quickTime = QUICKTIME_EXTENSIONS.has(extname(file.path).toLowerCase());
   const exif = parseTimestamp(metadata?.DateTimeOriginal)
     || (video ? parseTimestamp(metadata?.MediaCreateDate, { utc: true }) : null)
-    || parseTimestamp(metadata?.CreateDate)
+    || parseTimestamp(metadata?.CreateDate, { utc: quickTime })
     || parseTimestamp(metadata?.MediaCreateDate, { utc: true });
   if (exif) return { date: exif, from: 'exif' };
   const filename = dateFromFilename(basename(file.path));
@@ -115,7 +122,7 @@ async function sameContent(target, sourceStat, sourceHash) {
   return sourceStat.size === targetStat.size && sourceHash === await sha256(target);
 }
 
-async function archiveLink(file, destination, sourceHash, link) {
+async function archiveLink(file, destination, sourceHash, link, { sameInodeOnly = false } = {}) {
   const extension = extname(destination);
   const stem = basename(destination, extension);
   for (let number = 1; ; number += 1) {
@@ -126,6 +133,14 @@ async function archiveLink(file, destination, sourceHash, link) {
       return { target, created: true };
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
+      if (sameInodeOnly) {
+        const targetStat = await fs.lstat(target);
+        if (!targetStat.isFile()) throw new Error(`보관 대상이 일반 파일이 아닙니다: ${target}`);
+        if (file.stat.dev === targetStat.dev && file.stat.ino === targetStat.ino) {
+          return { target, created: false };
+        }
+        continue;
+      }
       if (await sameContent(target, file.stat, sourceHash)) return { target, created: false };
     }
   }
@@ -194,6 +209,157 @@ async function destinationExistsWithSameContent(file, destination, hash) {
       throw error;
     }
   }
+}
+
+export async function repairMediaArchiveTimes({
+  mediaRoot = join(homedir(), 'Pantheon', 'Media'),
+  indexPath = VAULT_PATHS.mediaArchiveIndex,
+  exiftoolPath = '/opt/homebrew/bin/exiftool',
+  apply = false,
+  link = fs.link,
+  output = console,
+} = {}) {
+  const repair = async () => {
+    await fs.stat(mediaRoot);
+    const records = await readIndexRecords(indexPath, { dryRun: true });
+    const archiveRoot = resolve(mediaRoot, 'Archive');
+    const indexContent = () => `${[...records.values()].map((record) => JSON.stringify(record)).join('\n')}\n`;
+    const pendingCleanup = [...records.values()].filter((record) => record.repairFrom);
+    if (apply && pendingCleanup.length) {
+      for (const record of pendingCleanup) {
+        const oldPath = resolve(mediaRoot, record.repairFrom);
+        const inside = relative(archiveRoot, oldPath);
+        if (isAbsolute(inside) || !inside || inside === '..' || inside.startsWith(`..${sep}`)) {
+          throw new Error(`복구 전 경로가 Archive 밖입니다: ${record.repairFrom}`);
+        }
+        const currentPath = resolve(mediaRoot, record.archivePath);
+        const currentInside = relative(archiveRoot, currentPath);
+        if (oldPath === currentPath || isAbsolute(currentInside) || !currentInside
+          || currentInside === '..' || currentInside.startsWith(`..${sep}`)) {
+          throw new Error(`복구 색인 경로 오류: ${record.archivePath}`);
+        }
+        const current = await fs.lstat(currentPath);
+        try {
+          const old = await fs.lstat(oldPath);
+          if (old.dev !== current.dev || old.ino !== current.ino) {
+            throw new Error(`복구 전 링크가 색인 파일과 다릅니다: ${record.repairFrom}`);
+          }
+          await fs.unlink(oldPath);
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+        delete record.repairFrom;
+      }
+      writeAtomic(indexPath, indexContent());
+    }
+    const indexed = [];
+    for (const record of records.values()) {
+      const source = resolve(mediaRoot, record.archivePath);
+      const inside = relative(archiveRoot, source);
+      if (isAbsolute(inside) || !inside || inside === '..' || inside.startsWith(`..${sep}`)) {
+        throw new Error(`색인 보관 경로가 Archive 밖입니다: ${record.archivePath}`);
+      }
+      const stat = await fs.lstat(source);
+      if (!stat.isFile()) throw new Error(`보관 대상이 일반 파일이 아닙니다: ${source}`);
+      indexed.push({ record, source, stat });
+    }
+
+    let metadataByPath = new Map();
+    if (indexed.length) {
+      let stdout;
+      try {
+        ({ stdout } = await execFileAsync(exiftoolPath, [
+          '-json', '-n', '-DateTimeOriginal', '-CreateDate', '-MediaCreateDate',
+          ...indexed.map(({ source }) => source),
+        ], { maxBuffer: 32 * 1024 * 1024 }));
+      } catch (error) {
+        if (!error.stdout) throw error;
+        stdout = error.stdout;
+        output.error(`[media-archive] exiftool 일부 파일 경고: ${error.message}`);
+      }
+      const metadata = JSON.parse(stdout);
+      if (!Array.isArray(metadata)) throw new Error('exiftool JSON 배열이 아닙니다');
+      metadataByPath = new Map(metadata.map((item) => [item.SourceFile, item]));
+      for (const { source } of indexed) {
+        if (!metadataByPath.has(source)) throw new Error(`exiftool 메타데이터 누락: ${source}`);
+      }
+    }
+
+    const summary = { changed: 0, byKind: {}, moves: [], pendingCleanup: apply ? 0 : pendingCleanup.length };
+    const changes = [];
+    for (const { record, source, stat } of indexed) {
+      const file = { path: join(mediaRoot, record.inboxPath), stat };
+      const captured = capturedTime(file, metadataByPath.get(source));
+      const capturedAt = kstIso(captured.date);
+      const currentMonth = record.archivePath.match(/^Archive\/(\d{4})\/(\d{2})\//);
+      if (!currentMonth) throw new Error(`색인 보관 경로 형식 오류: ${record.archivePath}`);
+      const move = currentMonth[1] !== capturedAt.slice(0, 4) || currentMonth[2] !== capturedAt.slice(5, 7);
+      if (capturedAt === record.capturedAt && captured.from === record.capturedFrom && !move) continue;
+      if (capturedAt !== record.capturedAt) {
+        summary.changed += 1;
+        summary.byKind[record.kind] = (summary.byKind[record.kind] || 0) + 1;
+      }
+      const destination = move
+        ? join(mediaRoot, 'Archive', capturedAt.slice(0, 4), capturedAt.slice(5, 7), record.kind, basename(source))
+        : null;
+      if (move) summary.moves.push({ from: record.archivePath, to: relative(mediaRoot, destination).split('\\').join('/') });
+      changes.push({ record, source, stat, capturedAt, capturedFrom: captured.from, destination });
+    }
+
+    if (apply && changes.length) {
+      const createdLinks = [];
+      let indexCommitted = false;
+      try {
+        for (const change of changes) {
+          const before = await fs.lstat(change.source);
+          if (!before.isFile() || before.dev !== change.stat.dev || before.ino !== change.stat.ino
+            || before.size !== change.stat.size || before.mtimeMs !== change.stat.mtimeMs
+            || (await sha256(change.source)).slice(0, 16) !== change.record.id) {
+            throw new Error(`색인 보관 파일이 검사 중 변경되었습니다: ${change.source}`);
+          }
+          if (!change.destination) continue;
+          await fs.mkdir(dirname(change.destination), { recursive: true });
+          const result = await archiveLink({ path: change.source, stat: change.stat }, change.destination,
+            null, link, { sameInodeOnly: true });
+          change.newPath = result.target;
+          if (result.created) createdLinks.push(result.target);
+        }
+        for (const change of changes) {
+          const current = await fs.lstat(change.source);
+          if (!current.isFile() || current.dev !== change.stat.dev || current.ino !== change.stat.ino
+            || current.size !== change.stat.size || current.mtimeMs !== change.stat.mtimeMs) {
+            throw new Error(`링크 생성 중 보관 파일이 변경되었습니다: ${change.source}`);
+          }
+        }
+        for (const change of changes) {
+          change.record.capturedAt = change.capturedAt;
+          change.record.capturedFrom = change.capturedFrom;
+          if (change.newPath) {
+            change.record.repairFrom = change.record.archivePath;
+            change.record.archivePath = relative(mediaRoot, change.newPath).split('\\').join('/');
+          }
+        }
+        writeAtomic(indexPath, indexContent());
+        indexCommitted = true;
+      } catch (error) {
+        if (!indexCommitted) await Promise.all(createdLinks.map((path) => fs.unlink(path)));
+        throw error;
+      }
+      // 색인이 새 링크를 가리킨 뒤에만 이전 링크를 제거한다.
+      for (const change of changes) {
+        if (change.newPath) {
+          await fs.unlink(change.source);
+          delete change.record.repairFrom;
+        }
+      }
+      writeAtomic(indexPath, indexContent());
+    }
+
+    output.log(`[media-archive] repair ${apply ? 'apply' : 'dry-run'}: 시각 변경 ${summary.changed}, 종류별 ${JSON.stringify(summary.byKind)}, 월 폴더 이동 ${summary.moves.length}, 정리 대기 ${summary.pendingCleanup}`);
+    for (const move of summary.moves) output.log(`[media-archive] 이동: ${move.from} -> ${move.to}`);
+    return summary;
+  };
+  return apply ? withLock(indexPath, repair, { retries: 1200, retryDelayMs: 100 }) : repair();
 }
 
 export async function runMediaArchive({
@@ -298,11 +464,14 @@ export async function runMediaArchive({
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
-  if (args.some((arg) => arg !== '--dry-run')) {
-    console.error('usage: node scripts/jobs/media-archive.mjs [--dry-run]');
+  if (args.some((arg) => !['--dry-run', '--repair-times', '--apply'].includes(arg))
+    || (args.includes('--apply') && !args.includes('--repair-times'))
+    || (args.includes('--dry-run') && args.includes('--apply'))) {
+    console.error('usage: node scripts/jobs/media-archive.mjs [--dry-run | --repair-times [--apply]]');
     process.exitCode = 2;
   } else {
     (async () => {
+      if (args.includes('--repair-times')) return repairMediaArchiveTimes({ apply: args.includes('--apply') });
       const dryRun = args.includes('--dry-run');
       if (dryRun) return runMediaArchive({ dryRun });
       await fs.mkdir(dirname(VAULT_PATHS.mediaArchiveIndex), { recursive: true });
