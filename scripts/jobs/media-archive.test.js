@@ -22,6 +22,7 @@ async function fixture() {
   await fs.writeFile(exiftoolPath, `#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
+if (!process.argv.slice(2).includes('-Duration#')) process.exit(2);
 const args = process.argv.slice(2).filter((arg) => !arg.startsWith('-'));
 fs.appendFileSync(${JSON.stringify(join(root, 'calls'))}, 'call\\n');
 process.stdout.write(JSON.stringify(args.map((file) => {
@@ -36,6 +37,12 @@ process.stdout.write(JSON.stringify(args.map((file) => {
     'only-exif.jpg': '2024:01:02 03:04:05',
     'old-plain.jpg': '2000:01:09 00:00:00',
   };
+  if (name === 'inside_20240102_030405.m4a') return { SourceFile: file, CreateDate: '2024:01:01 18:07:05', Duration: 65 };
+  if (name === 'outside_20240102_030405.mp3') return { SourceFile: file, CreateDate: '2024:01:02 03:07:11', Duration: 65 };
+  if (name === 'missing_20240102_030405.m4a') return { SourceFile: file, CreateDate: '2024:01:01 18:07:05' };
+  if (name === 'before_20240102_030405.wav') return { SourceFile: file, CreateDate: '2024:01:02 03:01:04', Duration: 3600 };
+  if (name === 'video_20240102_030405.mp4') return { SourceFile: file, DateTimeOriginal: '2024:01:02 03:07:05', Duration: 65 };
+  if (name === 'photo_20240102_030405.jpg') return { SourceFile: file, DateTimeOriginal: '2024:01:02 03:07:05', Duration: 65 };
   if (cases[name]) return { SourceFile: file, DateTimeOriginal: cases[name] };
   if (name === 'oldutc_20250101_010000.mp4') return { SourceFile: file, MediaCreateDate: '2004:12:31 16:00:00' };
   if (name === 'exif.bin') return { SourceFile: file, DateTimeOriginal: '2022:03:04 05:06:07', CreateDate: '2021:01:01 00:00:00', GPSLatitude: 37.5, GPSLongitude: 127.1 };
@@ -622,6 +629,39 @@ test('2분 일치는 confirmed이고 UTC 비디오 EXIF의 원본 연도가 2004
   assert.equal(byName('oldutc_20250101_010000.mp4').capturedFrom, 'filename');
   assert.equal(byName('oldutc_20250101_010000.mp4').capturedAt, '2025-01-01T01:00:00.000+09:00');
   assert.match(byName('oldutc_20250101_010000.mp4').capturedReason, /EXIF 2005년 이전/);
+});
+
+test('녹음·영상은 EXIF 종료 시각이 재생 길이와 2분 이내면 원래 EXIF 시각으로 confirmed한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  for (const name of [
+    'inside_20240102_030405.m4a', 'outside_20240102_030405.mp3',
+    'missing_20240102_030405.m4a', 'before_20240102_030405.wav',
+    'video_20240102_030405.mp4', 'photo_20240102_030405.jpg',
+  ]) await f.put('Recordings', name, name);
+  await runMediaArchive(f.options);
+  const records = await rows(f.indexPath);
+  const byName = (name) => records.find((row) => row.inboxPath.endsWith(name));
+  for (const name of ['inside_20240102_030405.m4a', 'video_20240102_030405.mp4']) {
+    assert.equal(byName(name).capturedConfidence, 'confirmed');
+    assert.equal(byName(name).capturedFrom, 'exif');
+    assert.equal(byName(name).capturedAt, '2024-01-02T03:07:05.000+09:00');
+  }
+  for (const name of [
+    'outside_20240102_030405.mp3', 'missing_20240102_030405.m4a',
+    'before_20240102_030405.wav', 'photo_20240102_030405.jpg',
+  ]) assert.equal(byName(name).capturedConfidence, 'review');
+
+  const originalTime = byName('inside_20240102_030405.m4a').capturedAt;
+  byName('inside_20240102_030405.m4a').capturedConfidence = 'review';
+  byName('inside_20240102_030405.m4a').capturedReason = '옛 판정';
+  await fs.writeFile(f.indexPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`);
+  assert.equal((await repairMediaArchiveTimes(f.options)).changed, 0);
+  await repairMediaArchiveTimes({ ...f.options, apply: true });
+  const repaired = (await rows(f.indexPath)).find((row) => row.inboxPath.endsWith('inside_20240102_030405.m4a'));
+  assert.equal(repaired.capturedConfidence, 'confirmed');
+  assert.equal(repaired.capturedAt, originalTime);
+  assert.equal(repaired.capturedReason, undefined);
 });
 
 test('Syncthing 임시 파일, 숨김 파일, 최근 수정 파일을 제외한다', async (t) => {

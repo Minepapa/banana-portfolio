@@ -16,6 +16,7 @@ const execFileAsync = promisify(execFile);
 const KINDS = ['Camera', 'Recordings', 'Calls', 'Screenshots', 'KakaoTalk'];
 const STABLE_AGE_MS = 2 * 60 * 1000;
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.3gp', '.avi', '.mkv', '.webm']);
+const AUDIO_EXTENSIONS = new Set(['.m4a', '.m4b', '.m4p', '.m4r', '.mp3', '.wav', '.aac', '.flac', '.ogg', '.wma', '.amr', '.3ga']);
 const QUICKTIME_EXTENSIONS = new Set(['.m4a', '.m4b', '.m4p', '.m4r', '.mp4', '.mov', '.m4v', '.3gp', '.3g2', '.3ga', '.qt']);
 const MAX_TRASH_PER_RUN = 20;
 
@@ -237,8 +238,9 @@ function differenceReason(first, second) {
 }
 
 function capturedTime(file, metadata) {
-  const video = VIDEO_EXTENSIONS.has(extname(file.path).toLowerCase());
-  const quickTime = QUICKTIME_EXTENSIONS.has(extname(file.path).toLowerCase());
+  const extension = extname(file.path).toLowerCase();
+  const video = VIDEO_EXTENSIONS.has(extension);
+  const quickTime = QUICKTIME_EXTENSIONS.has(extension);
   const exifFields = [
     { value: metadata?.DateTimeOriginal },
     ...(video ? [{ value: metadata?.MediaCreateDate, utc: true }] : []),
@@ -256,6 +258,13 @@ function capturedTime(file, metadata) {
   if (exif && filename?.kind === 'camera') {
     const difference = Math.abs(exif.getTime() - filename.date.getTime());
     if (difference <= 2 * 60_000) return { date: exif, from: 'exif', confidence: 'confirmed' };
+    const duration = metadata?.Duration;
+    if ((video || AUDIO_EXTENSIONS.has(extension)) && typeof duration === 'number'
+      && Number.isFinite(duration) && duration >= 0
+      && exif.getTime() - filename.date.getTime() >= 0
+      && difference <= duration * 1000 + 2 * 60_000) {
+      return { date: exif, from: 'exif', confidence: 'confirmed' };
+    }
     return { date: exif, from: 'exif', confidence: 'review', reason: differenceReason(exif, filename.date) };
   }
   if (exif && filename?.kind === 'saved') {
@@ -441,7 +450,7 @@ export async function repairMediaArchiveTimes({
       let stdout;
       try {
         ({ stdout } = await execFileAsync(exiftoolPath, [
-          '-json', '-n', '-DateTimeOriginal', '-CreateDate', '-MediaCreateDate',
+          '-json', '-n', '-DateTimeOriginal', '-CreateDate', '-MediaCreateDate', '-Duration#',
           ...indexed.map(({ source }) => source),
         ], { maxBuffer: 32 * 1024 * 1024 }));
       } catch (error) {
@@ -623,7 +632,7 @@ export async function runMediaArchive({
       let stdout;
       try {
         ({ stdout } = await execFileAsync(exiftoolPath, [
-        '-json', '-n', '-DateTimeOriginal', '-CreateDate', '-MediaCreateDate',
+        '-json', '-n', '-DateTimeOriginal', '-CreateDate', '-MediaCreateDate', '-Duration#',
         '-GPSLatitude', '-GPSLongitude', ...activeFiles.map((file) => file.path),
         ], { maxBuffer: 32 * 1024 * 1024 }));
       } catch (error) {
