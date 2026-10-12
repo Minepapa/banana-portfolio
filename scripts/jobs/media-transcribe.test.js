@@ -39,7 +39,10 @@ function fixture() {
   const ffmpegPath = executable('ffmpeg', `require('node:fs').writeFileSync(process.argv.at(-1), 'wav');`);
   const whisperPath = executable('whisper', `const fs = require('node:fs');
 fs.appendFileSync(${JSON.stringify(calls)}, 'call\\n');
-process.stdout.write(fs.readFileSync(${JSON.stringify(response)}, 'utf8'));`);
+const prefix = process.argv[process.argv.indexOf('-of') + 1];
+const lines = fs.readFileSync(${JSON.stringify(response)}, 'utf8').split('\\n');
+fs.writeFileSync(prefix + '.json', JSON.stringify({ transcription: lines.map((text, index) => ({
+  offsets: { from: index * 1000, to: index * 1000 + 900 }, text: ' ' + text })) }));`);
   const indexPath = join(root, VAULT_REL.mediaArchiveIndex);
   const statePath = join(root, VAULT_REL.mediaTranscribeState);
   const records = [];
@@ -333,4 +336,52 @@ test('색인 시각이 다른 해로 보정되어도 기존 ID를 다시 전사�
   assert.equal(result.transcribed, 0);
   assert.equal(readFileSync(f.calls, 'utf8').trim().split('\n').length, 1);
   assert.equal(existsSync(join(f.root, VAULT_REL.mediaTranscripts, '2031', `${ID(1)}.json`)), false);
+});
+
+test('구간별 시각을 저장하고 빈 구간은 빼며 text는 구간을 이어 붙인다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상별', { phoneContacts: ['가상연락처'] });
+  f.put(1, 'Calls', '통화 가상연락처_300101_090000.m4a');
+  writeFileSync(f.response, '가상 첫 문장\n   \n가상 둘째 문장');
+  const summary = await runMediaTranscribe(f.options);
+  assert.equal(summary.transcribed, 1);
+  const transcript = f.transcript(1);
+  assert.deepEqual(transcript.segments, [
+    { start: 0, end: 900, text: '가상 첫 문장' },
+    { start: 2000, end: 2900, text: '가상 둘째 문장' },
+  ]);
+  assert.equal(transcript.text, '가상 첫 문장 가상 둘째 문장');
+});
+
+test('Whisper JSON이 없으면 실패로 기록하고 전사 원본을 쓰지 않는다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상별', { phoneContacts: ['가상연락처'] });
+  f.put(1, 'Calls', '통화 가상연락처_300101_090000.m4a');
+  const noJson = join(f.base, 'bin', 'whisper-nojson');
+  writeFileSync(noJson, '#!/bin/sh\nexit 0\n'); chmodSync(noJson, 0o755);
+  const summary = await runMediaTranscribe({ ...f.options, whisperPath: noJson });
+  assert.equal(summary.transcribed, 0);
+  assert.equal(summary.failed, 1);
+  assert.equal(JSON.parse(readFileSync(f.statePath, 'utf8')).failures[ID(1)].length, 1);
+});
+
+test('구간 시각이 없는 옛 전사 원본은 다시 전사하고 노트를 다시 만든다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상별', { phoneContacts: ['가상연락처'] });
+  f.put(1, 'Calls', '통화 가상연락처_300101_090000.m4a');
+  await runMediaTranscribe(f.options);
+  const path = join(f.root, VAULT_REL.mediaTranscripts, '2030', `${ID(1)}.json`);
+  const legacy = { ...f.transcript(1), text: '옛 가상 전사' };
+  delete legacy.segments;
+  writeFileSync(path, `${JSON.stringify(legacy)}\n`);
+  const dry = await runMediaTranscribe({ ...f.options, dryRun: true });
+  assert.equal(dry.remaining, 1);
+  writeFileSync(f.response, '새 가상 전사');
+  const again = await runMediaTranscribe(f.options);
+  assert.equal(again.transcribed, 1);
+  assert.equal(again.remaining, 0);
+  assert.ok(Array.isArray(f.transcript(1).segments));
+  assert.match(f.note('2030-01-01 가상별 통화.md'), /새 가상 전사/);
+  const idle = await runMediaTranscribe(f.options);
+  assert.equal(idle.transcribed, 0);
 });

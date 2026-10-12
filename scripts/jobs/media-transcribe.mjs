@@ -161,6 +161,8 @@ function prepareRecords(records, people, root, mediaRoot, persistedPaths) {
       };
       item.notePath = notePath(item);
       item.transcriptPath = persisted || transcriptPath(root, item);
+      // 구간 시각이 없는 옛 전사 원본은 다시 전사한다.
+      item.needsSegments = Boolean(transcript) && !Array.isArray(transcript.segments);
       return [item];
     });
   assignNotePaths(prepared, root);
@@ -205,14 +207,24 @@ async function transcribe(record, { ffmpegPath, ffprobePath, whisperPath, model,
   try {
     await execFileAsync(ffmpegPath, ['-nostdin', '-loglevel', 'error', '-i', record.path,
       '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav], { maxBuffer: 1024 * 1024 });
-    const { stdout } = await execFileAsync(whisperPath,
-      ['-m', model, '-l', 'ko', '-nt', '-np', '-f', wav],
+    // 구간별 시각(-oj, 최대 30자·단어 경계)을 남겨 나중에 화자 분리와 맞출 수 있게 한다(2026-10-12 오너 결정).
+    const outPrefix = join(directory, 'out');
+    await execFileAsync(whisperPath,
+      ['-m', model, '-l', 'ko', '-np', '-oj', '-ml', '30', '-sow', '-of', outPrefix, '-f', wav],
       { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-    const text = stdout.trim();
+    const parsed = JSON.parse(await fs.readFile(`${outPrefix}.json`, 'utf8'));
+    if (!Array.isArray(parsed?.transcription)) throw new Error('Whisper JSON 형식 오류');
+    const segments = parsed.transcription.map((segment) => ({
+      start: Number(segment?.offsets?.from), end: Number(segment?.offsets?.to), text: String(segment?.text ?? '').trim(),
+    })).filter((segment) => segment.text);
+    if (segments.some((segment) => !Number.isFinite(segment.start) || !Number.isFinite(segment.end))) {
+      throw new Error('Whisper 구간 시각 오류');
+    }
+    const text = segments.map((segment) => segment.text).join(' ');
     return {
       id: record.id, kind: record.kind, ...(record.kind === 'Calls' ? { contact: record.contact } : {}),
       people: record.people, occurred: record.occurred, durationSec: duration,
-      speech: normalizeSpeech(text), text, model, transcribedAt: now,
+      speech: normalizeSpeech(text), text, segments, model, transcribedAt: now,
     };
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
@@ -288,8 +300,9 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
     const persistedPaths = existingTranscriptPaths(root);
     const people = loadPeople(root);
     const { prepared: records, excludedCalls } = prepareRecords(readIndex(indexPath), people, root, mediaRoot, persistedPaths);
-    const available = orderPending(records.filter((record) => !existsSync(record.transcriptPath)
+    const available = orderPending(records.filter((record) => (!existsSync(record.transcriptPath) || record.needsSegments)
       && (state.failures[record.id]?.length || 0) < 3), now);
+    const done = new Set();
     const buckets = [0, 1, 2].map((group) => ({ group: group + 1, count: 0, durationSec: 0, expectedSec: 0 }));
     const durations = new Map();
     const summary = { transcribed: 0, silent: 0, failed: 0, created: 0, updated: 0,
@@ -337,6 +350,7 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
           write(record.transcriptPath, `${JSON.stringify(transcript, null, 2)}\n`);
           changedPaths.add(record.notePath);
           summary.transcribed += 1;
+          done.add(record.id);
           if (!transcript.speech) summary.silent += 1;
           if (state.failures[record.id]) { delete state.failures[record.id]; write(statePath, `${JSON.stringify(state, null, 2)}\n`); }
         } catch (error) {
@@ -384,7 +398,7 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
           output.error(`[media-transcribe] 노트 실패 ${path}: ${error.message}`);
         }
       }
-      summary.remaining = available.filter((record) => !existsSync(record.transcriptPath)).length;
+      summary.remaining = available.filter((record) => !done.has(record.id)).length;
     }
     output.log(`[media-transcribe] 전사 ${summary.transcribed}(음성없음 ${summary.silent}), 실패 ${summary.failed}, 노트 생성 ${summary.created}·갱신 ${summary.updated}, 남은 대기 ${summary.remaining}, 미연결 통화 제외 ${summary.excludedCalls}`);
     return summary;
