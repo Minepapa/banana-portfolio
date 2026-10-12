@@ -71,6 +71,7 @@ shift || true
 case "$JOB" in
   media-archive) CMD=(scripts/jobs/media-archive.mjs) ;;
   media-moments) CMD=(scripts/jobs/media-moments.mjs) ;;
+  media-transcribe) CMD=(scripts/jobs/media-transcribe.mjs) ;;
   backup-vault)   CMD=(scripts/jobs/backup-vault-snapshot.mjs) ;;
   vault-offsite-backup) CMD=(scripts/jobs/vault-offsite-backup.mjs) ;;
   question-digest) CMD=(scripts/jobs/question-digest.mjs) ;;
@@ -123,7 +124,7 @@ case "$JOB" in
   reconcile-breakout-protection) CMD=(scripts/jobs/reconcile-breakout-protection.mjs) ;;
   update-macro-indicators-cache) CMD=(scripts/jobs/update-macro-indicators-cache.mjs) ;;
   update-krx-trading-calendar) CMD=(scripts/jobs/update-krx-trading-calendar.mjs) ;;
-  *) echo "usage: run.sh {media-archive|media-moments|backup-vault|vault-offsite-backup|question-digest|daily-note|clio-inbox-ingest|hermes-briefing|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|ingest-spending-inbox|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-nh-fx-rp|reconcile-irp-executions|reconcile-nh-executions|expire-stale-nh-orders|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|owntracks-receiver|isa-maturity-check|telegram-session-health-check|intraday-market-move-monitor|process-warning-actions|weekly-vault-health-check|weekly-warning-review|pension-balance-reminder|update-fund-holdings-from-purchases|annual-instrument-rescore|monthly-macro-tilt-proposal|update-breakout-price-cache|daily-breakout-signal-scan|place-breakout-fallback-entry|reconcile-breakout-protection|update-macro-indicators-cache|update-krx-trading-calendar}" >&2; exit 2 ;;
+  *) echo "usage: run.sh {media-archive|media-moments|media-transcribe|backup-vault|vault-offsite-backup|question-digest|daily-note|clio-inbox-ingest|hermes-briefing|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|ingest-spending-inbox|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-nh-fx-rp|reconcile-irp-executions|reconcile-nh-executions|expire-stale-nh-orders|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|owntracks-receiver|isa-maturity-check|telegram-session-health-check|intraday-market-move-monitor|process-warning-actions|weekly-vault-health-check|weekly-warning-review|pension-balance-reminder|update-fund-holdings-from-purchases|annual-instrument-rescore|monthly-macro-tilt-proposal|update-breakout-price-cache|daily-breakout-signal-scan|place-breakout-fallback-entry|reconcile-breakout-protection|update-macro-indicators-cache|update-krx-trading-calendar}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지). "$@"는 위 shift 이후라
