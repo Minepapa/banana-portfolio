@@ -534,7 +534,7 @@ test('날짜 우선순위, KST 영상, 파일명 형식, mtime, 하드링크와 
   assert.equal(second.archived, 0);
   assert.equal(second.skipped, 10);
   assert.deepEqual(second.capturedFrom, { exif: 5, filename: 4, mtime: 1 });
-  assert.equal((await rows(f.indexPath)).length, 10);
+  assert.deepEqual(await rows(f.indexPath), records);
   assert.equal((await fs.readFile(join(f.root, 'calls'), 'utf8')).trim().split('\n').length, 2);
 });
 
@@ -554,6 +554,40 @@ test('KakaoTalk 사진을 촬영 시각 월의 Archive에 하드링크로 보관
   assert.equal(record.capturedFrom, 'filename');
   assert.equal(record.capturedConfidence, 'estimated');
   assert.equal((await fs.stat(source)).ino, (await fs.stat(target)).ino);
+});
+
+test('KakaoTalkMovie를 저장 시각 월에 하드링크로 보관하고 촬영 시각을 추정한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const source = await f.put('KakaoTalkMovie', '2026_01_29 19_51.mp4', 'kakao-movie');
+
+  const summary = await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  const target = join(f.mediaRoot, record.archivePath);
+
+  assert.equal(summary.archived, 1);
+  assert.equal(record.kind, 'KakaoTalkMovie');
+  assert.equal(record.inboxPath, 'Inbox/KakaoTalkMovie/2026_01_29 19_51.mp4');
+  assert.equal(record.archivePath, 'Archive/2026/01/KakaoTalkMovie/2026_01_29 19_51.mp4');
+  assert.equal(record.capturedAt, '2026-01-29T19:51:00.000+09:00');
+  assert.equal(record.capturedFrom, 'filename');
+  assert.equal(record.capturedConfidence, 'estimated');
+  assert.match(record.capturedReason, /저장 시각 파일명만/);
+  assert.equal((await fs.stat(source)).ino, (await fs.stat(target)).ino);
+});
+
+test('저장 시각 파일명은 밑줄 구분과 선택적 초도 파싱한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('KakaoTalkMovie', '2026_01_29_19_51.mp4', 'minute');
+  await f.put('KakaoTalkMovie', '2026_01_29 19_51_42.mp4', 'second');
+
+  await runMediaArchive(f.options);
+  const records = await rows(f.indexPath);
+  const byName = (name) => records.find((record) => record.inboxPath.endsWith(name));
+  assert.equal(byName('2026_01_29_19_51.mp4').capturedAt, '2026-01-29T19:51:00.000+09:00');
+  assert.equal(byName('2026_01_29 19_51_42.mp4').capturedAt, '2026-01-29T19:51:42.000+09:00');
+  assert.ok(records.every((record) => record.capturedConfidence === 'estimated'));
 });
 
 test('촬영 시각은 EXIF·카메라형·저장형 파일명을 대조하고 불확실성을 색인과 요약에 남긴다', async (t) => {

@@ -13,7 +13,7 @@ import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 
 const execFileAsync = promisify(execFile);
-const KINDS = ['Camera', 'Recordings', 'Calls', 'Screenshots', 'KakaoTalk'];
+const KINDS = ['Camera', 'Recordings', 'Calls', 'Screenshots', 'KakaoTalk', 'KakaoTalkMovie'];
 const STABLE_AGE_MS = 2 * 60 * 1000;
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.3gp', '.avi', '.mkv', '.webm']);
 const AUDIO_EXTENSIONS = new Set(['.m4a', '.m4b', '.m4p', '.m4r', '.mp3', '.wav', '.aac', '.flac', '.ogg', '.wma', '.amr', '.3ga']);
@@ -226,6 +226,11 @@ function dateFromFilename(name) {
   if (short) {
     const date = parseTimestamp(`20${short[1]}:${short[2]}:${short[3]} ${short[4]}:${short[5]}:00`);
     if (date) return { date, kind: 'camera' };
+  }
+  const savedMovie = name.match(/(?:^|\D)(\d{4})_(\d{2})_(\d{2})[ _](\d{2})_(\d{2})(?:_(\d{2}))?(?=\D|$)/);
+  if (savedMovie) {
+    const date = parseTimestamp(`${savedMovie[1]}:${savedMovie[2]}:${savedMovie[3]} ${savedMovie[4]}:${savedMovie[5]}:${savedMovie[6] || '00'}`);
+    if (date) return { date, kind: 'saved' };
   }
   return null;
 }

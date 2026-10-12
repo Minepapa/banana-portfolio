@@ -53,6 +53,18 @@ test('Camera와 EXIF 촬영 시각이 확인된 KakaoTalk 사진만 순간으로
     [['camera', 'camera-estimated', 'confirmed', 'single']]);
 });
 
+test('KakaoTalkMovie는 EXIF 시각이 확인된 경우만 순간에 포함한다', () => {
+  const movie = (id, capturedFrom, capturedConfidence) => ({ ...item(id, time('10:10')),
+    kind: 'KakaoTalkMovie', archivePath: `Archive/2030/01/KakaoTalkMovie/item-${id}.mp4`,
+    capturedFrom, capturedConfidence });
+  const records = [movie('confirmed', 'exif', 'confirmed'), movie('single', 'exif', 'single'),
+    movie('estimated', 'filename', 'estimated'), movie('review', 'exif', 'review'),
+    movie('no-source', undefined, 'confirmed')];
+
+  assert.deepEqual(groupMoments(records).map((moment) => moment.map((record) => record.id)),
+    [['confirmed', 'single']]);
+});
+
 test('동선이 GPS와 결제보다 우선하고 등록 장소가 지오코더보다 우선한다', async () => {
   const records = [item('a', time('10:00'))];
   const route = await describeMoment(records, { root: '/unused', dryRun: false,
