@@ -156,6 +156,76 @@ test('한 이슈 전송 실패가 다음 이슈와 복구를 막지 않는다', 
   assert.equal(state.good.sentCount, 1);
 });
 
+test('워처 전송 중에는 상태 잠금을 놓고 겹친 실행은 같은 이슈를 건너뛴다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'queue.json');
+  const issue = [{ key: 'job:sample:silent', job: 'sample', text: '가상 잡 조용함' }];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let entered;
+  const sending = new Promise((resolve) => { entered = resolve; });
+  let sends = 0;
+  const send = async () => {
+    sends++;
+    assert.equal(readdirSync(dir).includes('watcher.json.lock'), false);
+    entered();
+    await gate;
+    return { ok: true, result: { message_id: 1 } };
+  };
+  const first = processHealthIssues(issue, { stateFile, queueFile, send, now: Date.parse('2026-10-11T03:00:00Z') });
+  await sending;
+  await processHealthIssues(issue, { stateFile, queueFile, send, now: Date.parse('2026-10-11T03:00:00Z') });
+  release();
+  await first;
+  assert.equal(sends, 1);
+});
+
+test('중단된 워처 전송 표시는 30분 뒤 다시 시도한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const first = Date.parse('2026-10-11T03:00:00Z');
+  writeFileSync(stateFile, JSON.stringify({ stale: { firstSeenAt: first, lastSentAt: null,
+    sentCount: 0, sending: true, sendingAt: first } }));
+  let sends = 0;
+  await processHealthIssues([{ key: 'stale', text: '가상 잡' }], {
+    stateFile, queueFile: join(dir, 'queue.json'), now: first + 31 * 60_000,
+    send: async () => { sends++; return { ok: true, result: { message_id: 1 } }; },
+  });
+  assert.equal(sends, 1);
+  assert.equal(JSON.parse(readFileSync(stateFile, 'utf8')).stale.sending, undefined);
+});
+
+test('만료된 전송의 늦은 완료는 새 전송 표시를 지우지 않는다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'queue.json');
+  const issue = [{ key: 'stale', text: '가상 잡' }];
+  const firstAt = Date.parse('2026-10-11T03:00:00Z');
+  const releases = [];
+  let wake;
+  const entered = new Promise((resolve) => { wake = resolve; });
+  const send = async () => {
+    const gate = new Promise((resolve) => { releases.push(resolve); });
+    wake();
+    await gate;
+    return { ok: true, result: { message_id: 1 } };
+  };
+  const first = processHealthIssues(issue, { stateFile, queueFile, now: firstAt, send });
+  await entered;
+  const second = processHealthIssues(issue, { stateFile, queueFile, now: firstAt + 31 * 60_000, send });
+  while (releases.length < 2) await new Promise((resolve) => setTimeout(resolve, 1));
+  releases[0]();
+  await first;
+  await processHealthIssues(issue, { stateFile, queueFile, now: firstAt + 31 * 60_000, send });
+  assert.equal(releases.length, 2);
+  releases[1]();
+  await second;
+});
+
 test('07시 첫 실행은 밤새 보류된 이슈를 요약하고 별도 리마인더를 중복 발송하지 않는다', async (t) => {
   const dir = makeTmpDir();
   t.after(() => rmSync(dir, { recursive: true, force: true }));

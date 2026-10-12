@@ -1,5 +1,5 @@
 // 야간 경고는 볼트 기계 데이터에 예약한 뒤 아침에 담당별 요약으로 한 번만 보낸다.
-import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { VAULT_REL, vaultAbs } from './vault-paths.mjs';
@@ -65,7 +65,9 @@ async function notifyCorruption(sendCritical, logger) {
 async function sendCriticalWarning(sendCritical, message, details) {
   const response = await sendCritical(message, details);
   if (response?.ok !== true || !Number.isSafeInteger(response.result?.message_id)) {
-    throw new Error('보류 경고 critical 경보 전달 확인 불가');
+    const error = new Error('보류 경고 critical 경보 전달 확인 불가');
+    if (response?.ok === false) error.confirmedNotSent = true;
+    throw error;
   }
 }
 
@@ -138,7 +140,10 @@ export async function deferWarning({ agent, detail, facts, source, sources, issu
     queue.pending.push(entry);
     writeAtomic(queueFile, JSON.stringify(queue));
   });
-  if (corrupt) await notifyCorruption(sendCritical, logger);
+  if (corrupt) {
+    try { await notifyCorruption(sendCritical, logger); }
+    catch (error) { logger.error(`보류 경고 큐 손상 알림 실패: ${error.message}`); }
+  }
   return entry;
 }
 
@@ -174,18 +179,52 @@ export async function drainDeferredWarnings({ send, sendCritical = (message) => 
   queueFile = queuePath(queueFile);
   if (!existsSync(queueFile)) return { status: 'not-due' };
   let corrupt = false;
-  const aged = await withLock(queueFile, () => {
+  let expiredNotices = [];
+  await withLock(queueFile, () => {
     const queue = readQueue(queueFile);
     corrupt = !!queue.corrupt;
-    return queue.pending.some((entry) => !entry.staleNotified && now - Date.parse(entry.at) > 9 * 3600_000);
+    const expired = queue.inFlight.filter((entry) => !entry.digestSentMessageId
+      && now - Date.parse(entry.claimedAt ?? entry.at) >= 7 * 24 * 3600_000);
+    if (!expired.length) return;
+    expiredNotices = expired.filter((entry) => !entry.unknownNotified && !entry.unknownNotifyingAt);
+    appendFileSync(`${queueFile}.unknown-archive.jsonl`, `${expired.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+    const ids = new Set(expired.map((entry) => entry.id));
+    queue.inFlight = queue.inFlight.filter((entry) => !ids.has(entry.id));
+    writeAtomic(queueFile, JSON.stringify(queue));
+    logger.error(`보류 경고 전달 불명 ${expired.length}건을 보관했습니다`);
+  });
+  for (const [agent, entries] of Map.groupBy(expiredNotices, (entry) => entry.agent)) {
+    try {
+      await sendCriticalWarning(sendCritical, { agent, kind: '판단', topic: '긴급 경고',
+        facts: [`전달 확인 불가 — 밤사이 경고 ${entries.length}건, 보관 원장 확인`] },
+      { kind: 'operational', severity: 'critical', warningCode: 'DEFERRED_DIGEST_UNKNOWN', subjectKey: 'digest' });
+    } catch (error) { logger.error(`보관된 불명 경고 알림 실패: ${error.message}`); }
+  }
+  const aged = await withLock(queueFile, () => {
+    const queue = readQueue(queueFile);
+    corrupt ||= !!queue.corrupt;
+    const overdue = queue.pending.filter((entry) => !entry.staleNotified && !entry.staleNotifyingAt
+      && now - Date.parse(entry.at) > 9 * 3600_000);
+    for (const entry of overdue) entry.staleNotifyingAt = new Date(now).toISOString();
+    if (overdue.length) writeAtomic(queueFile, JSON.stringify(queue));
+    return overdue.length > 0;
   });
   if (corrupt) await notifyCorruption(sendCritical, logger);
-  if (aged) await sendCriticalWarning(sendCritical, { agent: 'zeus', kind: '판단', topic: '긴급 경고',
-    facts: ['보류 경고 큐 지연', '가장 오래된 경고가 9시간을 넘었습니다. 큐와 원장을 확인해 주세요.'] },
-  { kind: 'operational', severity: 'critical', warningCode: 'DEFERRED_QUEUE_STALE', subjectKey: 'queue' });
+  if (aged) try {
+    await sendCriticalWarning(sendCritical, { agent: 'zeus', kind: '판단', topic: '긴급 경고',
+      facts: ['보류 경고 큐 지연', '가장 오래된 경고가 9시간을 넘었습니다. 큐와 원장을 확인해 주세요.'] },
+    { kind: 'operational', severity: 'critical', warningCode: 'DEFERRED_QUEUE_STALE', subjectKey: 'queue' });
+  } catch (error) {
+    if (error.confirmedNotSent || error.telegramExplicitRejection) await withLock(queueFile, () => {
+      const queue = readQueue(queueFile);
+      for (const entry of queue.pending) if (entry.staleNotifyingAt === new Date(now).toISOString()) delete entry.staleNotifyingAt;
+      writeAtomic(queueFile, JSON.stringify(queue));
+    });
+    throw error;
+  }
   if (aged) await withLock(queueFile, () => {
     const queue = readQueue(queueFile);
-    for (const entry of queue.pending) if (now - Date.parse(entry.at) > 9 * 3600_000) entry.staleNotified = true;
+    for (const entry of queue.pending) if (entry.staleNotifyingAt === new Date(now).toISOString()) entry.staleNotified = true;
     writeAtomic(queueFile, JSON.stringify(queue));
   });
   if (isQuietHour(now)) return { status: 'not-due' };
@@ -195,15 +234,28 @@ export async function drainDeferredWarnings({ send, sendCritical = (message) => 
   const stale = await withLock(queueFile, () => {
     const queue = readQueue(queueFile);
     const overdue = queue.inFlight.filter((entry) => !entry.digestSentMessageId && !entry.unknownNotified
+      && !entry.unknownNotifyingAt
       && now - Date.parse(entry.claimedAt ?? entry.at) >= 30 * 60_000);
+    for (const entry of overdue) entry.unknownNotifyingAt = new Date(now).toISOString();
+    if (overdue.length) writeAtomic(queueFile, JSON.stringify(queue));
     return overdue;
   });
   if (stale.length) {
     const byAgent = Map.groupBy(stale, (entry) => entry.agent);
     for (const [agent, entries] of byAgent) {
-      await sendCriticalWarning(sendCritical, { agent, kind: '판단', topic: '긴급 경고',
-        facts: [`전달 확인 불가 — 밤사이 경고 ${entries.length}건, 원장 확인`] },
-      { kind: 'operational', severity: 'critical', warningCode: 'DEFERRED_DIGEST_UNKNOWN', subjectKey: 'digest' });
+      try {
+        await sendCriticalWarning(sendCritical, { agent, kind: '판단', topic: '긴급 경고',
+          facts: [`전달 확인 불가 — 밤사이 경고 ${entries.length}건, 원장 확인`] },
+        { kind: 'operational', severity: 'critical', warningCode: 'DEFERRED_DIGEST_UNKNOWN', subjectKey: 'digest' });
+      } catch (error) {
+        if (error.confirmedNotSent || error.telegramExplicitRejection) await withLock(queueFile, () => {
+          const queue = readQueue(queueFile);
+          const ids = new Set(entries.map((entry) => entry.id));
+          for (const entry of queue.inFlight) if (ids.has(entry.id)) delete entry.unknownNotifyingAt;
+          writeAtomic(queueFile, JSON.stringify(queue));
+        });
+        throw error;
+      }
       const ids = new Set(entries.map((entry) => entry.id));
       await withLock(queueFile, () => {
         const queue = readQueue(queueFile);

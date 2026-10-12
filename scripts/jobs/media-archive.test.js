@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs, appendFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runMediaArchive, repairMediaArchiveTimes } from './media-archive.mjs';
@@ -62,6 +63,90 @@ async function rows(indexPath) {
   const content = (await fs.readFile(indexPath, 'utf8')).trim();
   return content ? content.split('\n').map(JSON.parse) : [];
 }
+
+async function orphanFixture(f, name = '통화 녹음 가상미연결_261011_090000.m4a') {
+  await f.put('Calls', name, '가상 통화');
+  await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  await fs.writeFile(f.indexPath, '');
+  await fs.unlink(join(f.mediaRoot, record.inboxPath));
+  await f.person();
+  const trashPath = `Trash/2026-10-11/Calls/${name}`;
+  const manifest = join(f.mediaRoot, 'Trash', '2026-10-11', 'manifest.jsonl');
+  await fs.mkdir(join(manifest, '..'), { recursive: true });
+  await fs.writeFile(manifest, `${JSON.stringify({ record, trashPath })}\n`);
+  return { record, trashPath, manifest };
+}
+
+test('manifest와 id가 맞는 미연결 고아 통화만 dry-run 후 휴지통 이동을 마친다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const { record, trashPath } = await orphanFixture(f);
+  const archive = join(f.mediaRoot, record.archivePath);
+  const dry = await runMediaArchive({ ...f.options, dryRun: true });
+  assert.equal(dry.orphanCalls, 1);
+  assert.equal(dry.trashedOrphan, 1);
+  assert.ok((await fs.stat(archive)).isFile());
+  const applied = await runMediaArchive(f.options);
+  assert.equal(applied.trashedOrphan, 1);
+  assert.equal(await fs.readFile(join(f.mediaRoot, trashPath), 'utf8'), '가상 통화');
+  await assert.rejects(fs.stat(archive), { code: 'ENOENT' });
+});
+
+test('고아 통화의 manifest 부재·연결 연락처·대상 충돌은 원본을 보존한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const { record, trashPath, manifest } = await orphanFixture(f);
+  const archive = join(f.mediaRoot, record.archivePath);
+  await fs.writeFile(manifest, '');
+  assert.equal((await runMediaArchive(f.options)).trashedOrphan, 0);
+  assert.ok((await fs.stat(archive)).isFile());
+  await fs.writeFile(manifest, `${JSON.stringify({ record, trashPath })}\n`);
+  await f.person(['가상미연결']);
+  assert.equal((await runMediaArchive(f.options)).trashedOrphan, 0);
+  await f.person();
+  await fs.mkdir(join(f.mediaRoot, trashPath, '..'), { recursive: true });
+  await fs.writeFile(join(f.mediaRoot, trashPath), '다른 내용');
+  const conflict = await runMediaArchive(f.options);
+  assert.equal(conflict.trashedOrphan, 0);
+  assert.ok(conflict.failed > 0);
+  assert.ok((await fs.stat(archive)).isFile());
+});
+
+test('고아 통화 대상에 동일 내용이 이미 있으면 보관본만 정리한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const { record, trashPath } = await orphanFixture(f);
+  const archive = join(f.mediaRoot, record.archivePath);
+  await fs.mkdir(join(f.mediaRoot, trashPath, '..'), { recursive: true });
+  await fs.copyFile(archive, join(f.mediaRoot, trashPath));
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.trashedOrphan, 1);
+  await assert.rejects(fs.stat(archive), { code: 'ENOENT' });
+});
+
+test('고아 통화도 기존 대량 이동 한도에 포함한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const calls = join(f.mediaRoot, 'Archive', '2026', '10', 'Calls');
+  const manifest = join(f.mediaRoot, 'Trash', '2026-10-11', 'manifest.jsonl');
+  await fs.mkdir(calls, { recursive: true });
+  await fs.mkdir(join(manifest, '..'), { recursive: true });
+  for (let number = 0; number < 21; number++) {
+    const name = `통화 녹음 가상미연결_261011_${String(100000 + number)}.m4a`;
+    const content = `가상 통화 ${number}`;
+    const id = createHash('sha256').update(content).digest('hex').slice(0, 16);
+    const archivePath = `Archive/2026/10/Calls/${name}`;
+    await fs.writeFile(join(calls, name), content);
+    await fs.appendFile(manifest, `${JSON.stringify({ record: { id, kind: 'Calls', archivePath },
+      trashPath: `Trash/2026-10-11/Calls/${name}` })}\n`);
+  }
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.orphanCalls, 21);
+  assert.equal(result.trashedOrphan, 0);
+  assert.equal((await fs.readdir(calls)).length, 21);
+});
 
 test('미연결 새 통화만 휴지통으로 옮기고 연결·형식 오류 통화는 보관한다', async (t) => {
   const f = await fixture();

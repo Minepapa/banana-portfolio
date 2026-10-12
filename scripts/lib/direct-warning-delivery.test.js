@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { sendDirectWarning, warningSubjectKey } from './direct-warning-delivery.mjs';
 import { readWarningEvents } from './warning-event-journal.mjs';
 import { warningsSignature } from './job-alerts.mjs';
-import { drainDeferredWarnings, isQuietHour, resolveDeferredIssue } from './deferred-warnings.mjs';
+import { deferWarning, drainDeferredWarnings, isQuietHour, resolveDeferredIssue } from './deferred-warnings.mjs';
 
 function setup(t) {
   const dir = mkdtempSync(join(tmpdir(), 'direct-warning-'));
@@ -282,4 +282,104 @@ test('테스트에서 기본 실볼트 큐 경로를 사용하면 쓰지 않고 
     journalRoot: join(tmpdir(), 'guard-journal-' + Date.now()),
     send: async () => ({ ok: true, result: { message_id: 1 } }), logger: { error() {} } }),
   /실볼트/);
+});
+
+test('큐 기록 뒤 손상 알림이 실패해도 경고는 보류된 것으로 남는다', async (t) => {
+  const input = setup(t);
+  const queueFile = join(input.journalRoot, '..', 'deferred.json');
+  writeFileSync(queueFile, '{broken');
+  const errors = [];
+  const entry = await deferWarning({ queueFile, agent: 'zeus', detail: '가상 경고',
+    sendCritical: async () => { throw new Error('전송 실패'); },
+    logger: { error: (message) => errors.push(message) } });
+  assert.equal(JSON.parse(readFileSync(queueFile, 'utf8')).pending[0].id, entry.id);
+  assert.match(errors[0], /손상 알림 실패/);
+});
+
+test('동시 drain은 지연 critical을 한 번만 선점한다', async (t) => {
+  const input = setup(t);
+  const queueFile = join(input.journalRoot, '..', 'deferred.json');
+  const night = Date.parse('2026-10-11T15:00:00Z');
+  await deferWarning({ queueFile, detail: '가상 경고', at: night });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  let sends = 0;
+  const options = { queueFile, now: night + 10 * 3600_000,
+    sendCritical: async () => { sends++; started(); await gate;
+      return { ok: true, result: { message_id: 1 } }; } };
+  const first = drainDeferredWarnings(options);
+  await entered;
+  await drainDeferredWarnings(options);
+  release();
+  await first;
+  assert.equal(sends, 1);
+});
+
+test('동시 drain은 전달 불명 critical을 한 번만 선점하고 7일 뒤 보관한다', async (t) => {
+  const input = setup(t);
+  const queueFile = join(input.journalRoot, '..', 'deferred.json');
+  const night = Date.parse('2026-10-11T15:00:00Z');
+  const morning = Date.parse('2026-10-11T22:00:00Z');
+  await deferWarning({ queueFile, detail: '가상 경고', at: night });
+  await drainDeferredWarnings({ queueFile, now: morning,
+    send: async () => { throw new Error('응답 불명'); }, logger: { error() {} } });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  let sends = 0;
+  const options = { queueFile, now: morning + 31 * 60_000,
+    sendCritical: async () => { sends++; started(); await gate;
+      return { ok: true, result: { message_id: 2 } }; } };
+  const first = drainDeferredWarnings(options);
+  await entered;
+  await drainDeferredWarnings(options);
+  release();
+  await first;
+  assert.equal(sends, 1);
+  await drainDeferredWarnings({ queueFile, now: morning + 8 * 24 * 3600_000 });
+  assert.equal(JSON.parse(readFileSync(queueFile, 'utf8')).inFlight.length, 0);
+  assert.equal(readFileSync(`${queueFile}.unknown-archive.jsonl`, 'utf8').trim().split('\n').length, 1);
+});
+
+test('critical 전송이 거절되면 선점을 풀고, 오래된 불명 항목은 알림 없이도 보관한다', async (t) => {
+  const input = setup(t);
+  const queueFile = join(input.journalRoot, '..', 'deferred.json');
+  const night = Date.parse('2026-10-11T15:00:00Z');
+  await deferWarning({ queueFile, detail: '가상 경고', at: night });
+  const rejection = Object.assign(new Error('거절'), { telegramExplicitRejection: true });
+  await assert.rejects(() => drainDeferredWarnings({ queueFile, now: night + 10 * 3600_000,
+    sendCritical: async () => { throw rejection; } }), (error) => error === rejection);
+  assert.equal(JSON.parse(readFileSync(queueFile, 'utf8')).pending[0].staleNotifyingAt, undefined);
+  await drainDeferredWarnings({ queueFile, now: night + 10 * 3600_000,
+    sendCritical: async () => ({ ok: true, result: { message_id: 1 } }),
+    send: async () => { throw new Error('응답 불명'); }, logger: { error() {} } });
+  const morning = night + 10 * 3600_000;
+  await assert.rejects(() => drainDeferredWarnings({ queueFile, now: morning + 31 * 60_000,
+    sendCritical: async () => { throw rejection; } }), (error) => error === rejection);
+  assert.equal(JSON.parse(readFileSync(queueFile, 'utf8')).inFlight[0].unknownNotifyingAt, undefined);
+  const logs = [];
+  await drainDeferredWarnings({ queueFile, now: morning + 8 * 24 * 3600_000,
+    logger: { error: (message) => logs.push(message) } });
+  assert.equal(JSON.parse(readFileSync(queueFile, 'utf8')).inFlight.length, 0);
+  assert.match(logs[0], /보관/);
+});
+
+test('7일 동안 drain이 없던 전달 불명도 보관하며 critical 한 번을 보낸다', async (t) => {
+  const input = setup(t);
+  const queueFile = join(input.journalRoot, '..', 'deferred.json');
+  const night = Date.parse('2026-10-11T15:00:00Z');
+  const morning = Date.parse('2026-10-11T22:00:00Z');
+  await deferWarning({ queueFile, detail: '가상 경고', at: night });
+  await drainDeferredWarnings({ queueFile, now: morning,
+    send: async () => { throw new Error('응답 불명'); }, logger: { error() {} } });
+  let notices = 0;
+  const options = { queueFile, now: morning + 8 * 24 * 3600_000,
+    sendCritical: async () => { notices++; return { ok: true, result: { message_id: 3 } }; } };
+  await drainDeferredWarnings(options);
+  await drainDeferredWarnings(options);
+  assert.equal(notices, 1);
+  assert.equal(JSON.parse(readFileSync(queueFile, 'utf8')).inFlight.length, 0);
 });

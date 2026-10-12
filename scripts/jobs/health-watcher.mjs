@@ -14,6 +14,7 @@
  * 사용법: node scripts/jobs/health-watcher.mjs [--dry-run]
  */
 import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFrontmatter, isStale } from '../lib/job-health.mjs';
@@ -76,26 +77,34 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
     throw new Error('테스트에서 실 감시 상태 경로 사용 금지');
   }
   mkdirSync(dirname(stateFile), { recursive: true });
-  return withLock(stateFile, async () => {
-    // 큐 손상 경보는 has/resolve 내부에서도 발송될 수 있다. 이 잠금을 쥔 동안
-    // direct-warning의 아침 drain이 watcher 상태 잠금을 다시 잡지 않게 한다.
-    const sendWithoutDrain = (message, details = {}) => send(message, {
-      ...details, drainBeforeSend: false,
-    });
+  const sendWithoutDrain = (message, details = {}) => send(message, {
+    ...details, drainBeforeSend: false,
+  });
+  const corrupt = await withLock(stateFile, () => {
     const state = readWatcherState(stateFile);
-    if (state.__corrupt) {
-      delete state.__corrupt;
-      try {
-        await send({ agent: SENDER_AGENT, kind: '판단', topic: '긴급 경고',
-          facts: ['감시 상태 손상', '손상 파일을 격리하고 빈 상태로 다시 시작했습니다.'] },
-        { warningCode: 'WATCHER_STATE_CORRUPT', subjectKey: 'state', severity: 'critical', queueFile,
-          drainBeforeSend: false });
-      } catch (error) { console.error(`감시 상태 손상 경보 실패: ${error.message}`); }
-    }
-    const current = new Set(issues.map((issue) => issue.key));
-    let sent = 0;
-    for (const issue of issues) {
-      try {
+    const wasCorrupt = !!state.__corrupt;
+    delete state.__corrupt;
+    writeAtomic(stateFile, JSON.stringify(state));
+    return wasCorrupt;
+  });
+  if (corrupt) {
+    try {
+      await send({ agent: SENDER_AGENT, kind: '판단', topic: '긴급 경고',
+        facts: ['감시 상태 손상', '손상 파일을 격리하고 빈 상태로 다시 시작했습니다.'] },
+      { warningCode: 'WATCHER_STATE_CORRUPT', subjectKey: 'state', severity: 'critical', queueFile,
+        drainBeforeSend: false });
+    } catch (error) { console.error(`감시 상태 손상 경보 실패: ${error.message}`); }
+  }
+  const current = new Set(issues.map((issue) => issue.key));
+  let sent = 0;
+  for (const issue of issues) {
+    try {
+      const subjectKey = warningSubjectKey('issue', issue.key);
+      let queued = false;
+      try { queued = await hasDeferredIssue(`health-watcher|JOB_HEALTH_ISSUES|${subjectKey}`, queueFile, sendWithoutDrain); }
+      catch (error) { console.error(`보류 큐 확인 실패 (${issue.key}): ${error.message}`); }
+      const claim = await withLock(stateFile, () => {
+        const state = readWatcherState(stateFile);
         const prior = state[issue.key] ?? { firstSeenAt: now, lastSentAt: null, sentCount: 0 };
         state[issue.key] = prior;
         const elapsed = now - prior.firstSeenAt;
@@ -104,37 +113,63 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
           : elapsedHours < REMINDER_HOURS[1] ? REMINDER_HOURS[0]
             : REMINDER_HOURS[1] + Math.floor((elapsedHours - REMINDER_HOURS[1]) / 24) * 24;
         // 실행이 건너뛰어져도 지난 임계값을 연속해서 따라잡지 않는다.
-        if (prior.sentCount && prior.lastSentAt >= prior.firstSeenAt + milestoneHours * 3600_000) continue;
-        const subjectKey = warningSubjectKey('issue', issue.key);
-        // 첫 아침 실행의 요약에 이미 같은 이슈가 들어 있으면 리마인더를 따로 보내지 않는다.
-        let queued = false;
-        try { queued = await hasDeferredIssue(`health-watcher|JOB_HEALTH_ISSUES|${subjectKey}`, queueFile, sendWithoutDrain); }
-        catch (error) { console.error(`보류 큐 확인 실패 (${issue.key}): ${error.message}`); }
-        if (queued) continue;
-        const label = prior.sentCount ? '여전히 조용함' : '새 이슈';
-        const message = { agent: SENDER_AGENT, kind: '판단', topic: '경고',
-          facts: [`장애감지: ${label}`, issue.text] };
-        const result = await send(message, { subjectKey, targetJob: issue.job, queueFile,
-          drainBeforeSend: false,
-          watcherStateFile: stateFile, watcherIssueKey: issue.key });
-        if (!result?.deferred) {
-          prior.lastSentAt = now;
-          prior.sentCount++;
-          sent++;
-        }
-      } catch (error) {
-        console.error(`감시 이슈 경고 실패 (${issue.key}): ${error.message}`);
-      } finally {
+        // 전송 중 프로세스가 종료되면 표시가 남는다. 30분 지난 claim은 다시 시도한다.
+        const sending = prior.sending && now - (prior.sendingAt ?? 0) < 30 * 60_000;
+        const due = !queued && !sending
+          && !(prior.sentCount && prior.lastSentAt >= prior.firstSeenAt + milestoneHours * 3600_000);
+        const claimId = due ? randomUUID() : null;
+        if (due) { prior.sending = true; prior.sendingAt = now; prior.sendingId = claimId; }
         writeAtomic(stateFile, JSON.stringify(state));
-      }
-    }
-    for (const [key, prior] of Object.entries(state)) {
-      if (current.has(key)) continue;
+        return due ? { label: prior.sentCount ? '여전히 조용함' : '새 이슈', claimId } : null;
+      });
+      if (!claim) continue;
+      let result;
       try {
-        if (prior.sentCount > 0 || await hasDeferredIssue(`health-watcher|JOB_HEALTH_ISSUES|${warningSubjectKey('issue', key)}`, queueFile, sendWithoutDrain)) {
-          const subjectKey = warningSubjectKey('issue', key);
-          const issueKey = `health-watcher|JOB_HEALTH_ISSUES|${subjectKey}`;
-          const queued = await hasDeferredIssue(issueKey, queueFile, sendWithoutDrain);
+        result = await send({ agent: SENDER_AGENT, kind: '판단', topic: '경고',
+          facts: [`장애감지: ${claim.label}`, issue.text] },
+        { subjectKey, targetJob: issue.job, queueFile, drainBeforeSend: false,
+          watcherStateFile: stateFile, watcherIssueKey: issue.key });
+      } finally {
+        await withLock(stateFile, () => {
+          const state = readWatcherState(stateFile);
+          const prior = state[issue.key];
+          if (prior?.sendingId === claim.claimId) {
+            delete prior.sending;
+            delete prior.sendingAt;
+            delete prior.sendingId;
+            if (result && !result.deferred) {
+              prior.lastSentAt = now;
+              prior.sentCount++;
+              sent++;
+            }
+            writeAtomic(stateFile, JSON.stringify(state));
+          }
+        });
+      }
+    } catch (error) {
+      console.error(`감시 이슈 경고 실패 (${issue.key}): ${error.message}`);
+    }
+  }
+  const state = await withLock(stateFile, () => readWatcherState(stateFile));
+  for (const [key, prior] of Object.entries(state)) {
+    if (current.has(key) || (prior.sending && now - (prior.sendingAt ?? 0) < 30 * 60_000)) continue;
+    try {
+      const subjectKey = warningSubjectKey('issue', key);
+      const issueKey = `health-watcher|JOB_HEALTH_ISSUES|${subjectKey}`;
+      const queued = await hasDeferredIssue(issueKey, queueFile, sendWithoutDrain);
+      const claimId = randomUUID();
+      const claimed = await withLock(stateFile, () => {
+        const latest = readWatcherState(stateFile);
+        if (!latest[key] || (latest[key].sending && now - (latest[key].sendingAt ?? 0) < 30 * 60_000)) return false;
+        latest[key].sending = true;
+        latest[key].sendingAt = now;
+        latest[key].sendingId = claimId;
+        writeAtomic(stateFile, JSON.stringify(latest));
+        return true;
+      });
+      if (!claimed) continue;
+      try {
+        if (prior.sentCount > 0 || queued) {
           await resolveDeferredIssue(issueKey, queueFile, sendWithoutDrain);
           if (!queued) {
             await send({ agent: SENDER_AGENT, kind: '판단', topic: '복구',
@@ -143,13 +178,28 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
             sent++;
           }
         }
-        delete state[key];
-        writeAtomic(stateFile, JSON.stringify(state));
-      } catch (error) { console.error(`감시 이슈 복구 실패 (${key}): ${error.message}`); }
+        await withLock(stateFile, () => {
+          const latest = readWatcherState(stateFile);
+          if (latest[key]?.sendingId === claimId) {
+            delete latest[key];
+            writeAtomic(stateFile, JSON.stringify(latest));
+          }
+        });
+      } catch (error) {
+        await withLock(stateFile, () => {
+          const latest = readWatcherState(stateFile);
+          if (latest[key]?.sendingId === claimId) {
+            delete latest[key].sending;
+            delete latest[key].sendingAt;
+            delete latest[key].sendingId;
+          }
+          writeAtomic(stateFile, JSON.stringify(latest));
+        });
+        throw error;
+      }
+    } catch (error) { console.error(`감시 이슈 복구 실패 (${key}): ${error.message}`); }
     }
-    writeAtomic(stateFile, JSON.stringify(state));
-    return { sent };
-  });
+  return { sent };
 }
 
 // 잡별 기대 실행 주기 — 새 v2 잡이 생길 때마다 여기 추가한다(구현계획서 Phase 5+).
