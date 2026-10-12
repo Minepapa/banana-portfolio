@@ -23,7 +23,8 @@ const QUIET_PHRASES = new Set([
   '감사합니다', '자막제공', '영상편집',
 ]);
 const KST_OFFSET_MS = 9 * 60 * 60_000;
-const DEFAULT_MODEL = join(homedir(), 'Pantheon', 'Models', 'whisper', 'ggml-large-v3-turbo.bin');
+// 2026-10-13 오너 결정: turbo보다 뜻을 바꾸는 오류가 적어 large-v3 사용(실측 실시간 약 3배)
+const DEFAULT_MODEL = join(homedir(), 'Pantheon', 'Models', 'whisper', 'ggml-large-v3.bin');
 
 function kstParts(value) {
   const timestamp = Date.parse(value);
@@ -130,7 +131,7 @@ function assignNotePaths(records, root) {
   if (new Set(allPaths).size !== allPaths.length) throw new Error('녹음 노트 경로 충돌');
 }
 
-function prepareRecords(records, people, root, mediaRoot, persistedPaths) {
+function prepareRecords(records, people, root, mediaRoot, persistedPaths, model) {
   const seen = new Set();
   let excludedCalls = 0;
   const prepared = records.filter((record) => record.kind === 'Calls' || record.kind === 'Recordings')
@@ -161,8 +162,9 @@ function prepareRecords(records, people, root, mediaRoot, persistedPaths) {
       };
       item.notePath = notePath(item);
       item.transcriptPath = persisted || transcriptPath(root, item);
-      // 구간 시각이 없는 옛 전사 원본은 다시 전사한다.
-      item.needsSegments = Boolean(transcript) && !Array.isArray(transcript.segments);
+      // 모델이 바뀌었거나 구간 시각이 없는 옛 전사 원본은 다시 전사한다.
+      item.needsRetranscribe = Boolean(transcript) &&
+        (basename(transcript.model || '') !== basename(model) || !Array.isArray(transcript.segments));
       return [item];
     });
   assignNotePaths(prepared, root);
@@ -299,8 +301,8 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
     if (!state || typeof state !== 'object' || !state.failures || typeof state.failures !== 'object') throw new Error('전사 상태 형식 오류');
     const persistedPaths = existingTranscriptPaths(root);
     const people = loadPeople(root);
-    const { prepared: records, excludedCalls } = prepareRecords(readIndex(indexPath), people, root, mediaRoot, persistedPaths);
-    const available = orderPending(records.filter((record) => (!existsSync(record.transcriptPath) || record.needsSegments)
+    const { prepared: records, excludedCalls } = prepareRecords(readIndex(indexPath), people, root, mediaRoot, persistedPaths, model);
+    const available = orderPending(records.filter((record) => (!existsSync(record.transcriptPath) || record.needsRetranscribe)
       && (state.failures[record.id]?.length || 0) < 3), now);
     const done = new Set();
     const buckets = [0, 1, 2].map((group) => ({ group: group + 1, count: 0, durationSec: 0, expectedSec: 0 }));

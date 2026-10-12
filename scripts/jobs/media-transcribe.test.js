@@ -385,3 +385,33 @@ test('구간 시각이 없는 옛 전사 원본은 다시 전사하고 노트를
   const idle = await runMediaTranscribe(f.options);
   assert.equal(idle.transcribed, 0);
 });
+
+test('전사 모델 파일명이 바뀌면 다시 전사하고 같으면 대기하지 않는다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상별', { phoneContacts: ['가상연락처'] });
+  f.put(1, 'Calls', '통화 가상연락처_300101_090000.m4a');
+  const oldModel = join(f.base, 'ggml-old.bin');
+  const newModel = join(f.base, 'ggml-new.bin');
+  writeFileSync(oldModel, 'old model');
+  writeFileSync(newModel, 'new model');
+  await runMediaTranscribe({ ...f.options, model: oldModel });
+  assert.equal(f.transcript(1).model, oldModel);
+  const dry = await runMediaTranscribe({ ...f.options, model: newModel, dryRun: true });
+  assert.equal(dry.remaining, 1);
+  writeFileSync(f.response, '새 모델의 가상 전사');
+  const again = await runMediaTranscribe({ ...f.options, model: newModel });
+  assert.equal(again.transcribed, 1);
+  assert.equal(again.updated, 1);
+  assert.equal(again.remaining, 0);
+  assert.equal(f.transcript(1).model, newModel);
+  assert.match(f.note('2030-01-01 가상별 통화.md'), /새 모델의 가상 전사/);
+  const idle = await runMediaTranscribe({ ...f.options, model: newModel, dryRun: true });
+  assert.equal(idle.remaining, 0);
+  const alternateDirectory = join(f.base, 'alternate');
+  mkdirSync(alternateDirectory);
+  const sameFilename = join(alternateDirectory, 'ggml-new.bin');
+  writeFileSync(sameFilename, 'same model filename');
+  const sameName = await runMediaTranscribe({ ...f.options, model: sameFilename, dryRun: true });
+  assert.equal(sameName.remaining, 0);
+  assert.equal(readFileSync(f.calls, 'utf8').trim().split('\n').length, 2);
+});
