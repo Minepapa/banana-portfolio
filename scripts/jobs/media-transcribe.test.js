@@ -102,13 +102,14 @@ test('연결된 최근 자료, 미연결 최근 자료, 오래된 자료 순으�
 
 test('통화 description 조사는 받침과 영문 이름에 맞춘다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
+  for (const title of ['가상봄', '가상나', 'MockAlex']) f.person(title, {});
   f.put(1, 'Calls', '통화 가상봄_300101_090000.m4a');
   f.put(2, 'Calls', '통화 가상나_300101_100000.m4a');
-  f.put(3, 'Calls', '통화 Alex_300101_110000.m4a');
+  f.put(3, 'Calls', '통화 MockAlex_300101_110000.m4a');
   await runMediaTranscribe(f.options);
   assert.equal(parseFrontmatter(f.note('2030-01-01 가상봄 통화.md')).description, '가상봄과 통화 1건, 총 2분');
   assert.equal(parseFrontmatter(f.note('2030-01-01 가상나 통화.md')).description, '가상나와 통화 1건, 총 2분');
-  assert.equal(parseFrontmatter(f.note('2030-01-01 Alex 통화.md')).description, 'Alex와 통화 1건, 총 2분');
+  assert.equal(parseFrontmatter(f.note('2030-01-01 MockAlex 통화.md')).description, 'MockAlex와 통화 1건, 총 2분');
 });
 
 test('phoneContacts·aliases 연결, 하루 통화 묶음, 시각순, 멱등, 녹음 개별 노트', async (t) => {
@@ -137,6 +138,7 @@ test('phoneContacts·aliases 연결, 하루 통화 묶음, 시각순, 멱등, �
 
 test('기존 오너 영역과 미관리 머리말을 보존하고 새 통화만 합친다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
+  f.person('가상A', {});
   f.put(1, 'Calls', '통화 가상A_300101_090000.m4a');
   await runMediaTranscribe(f.options);
   const path = join(f.root, VAULT_REL.mediaConversations, '2030', '2030-01-01 가상A 통화.md');
@@ -164,11 +166,12 @@ test('무음 문구는 speech:false로 저장하고 노트에 음성 없음으�
 
 test('dry-run은 전사·상태·노트·잠금 파일을 쓰지 않고 예상 시간을 보고한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
+  f.person('가상A', {});
   f.put(1, 'Calls', '통화 가상A_300101_090000.m4a');
   const logs = [];
   const summary = await runMediaTranscribe({ ...f.options, dryRun: true, output: { log: (line) => logs.push(line), error() {} } });
-  assert.equal(summary.buckets[1].count, 1);
-  assert.equal(summary.buckets[1].expectedSec, 11);
+  assert.equal(summary.buckets[0].count, 1);
+  assert.equal(summary.buckets[0].expectedSec, 11);
   assert.equal(summary.upcoming[0].notePath, `${VAULT_REL.mediaConversations}/2030/2030-01-01 가상A 통화.md`);
   assert.equal(existsSync(f.statePath), false);
   assert.equal(existsSync(`${f.statePath}.lock`), false);
@@ -177,8 +180,44 @@ test('dry-run은 전사·상태·노트·잠금 파일을 쓰지 않고 예상 �
   assert.ok(logs.some((line) => line.includes('upcoming')));
 });
 
+test('미연결 통화는 전사와 노트 복구에서 제외하고 미연결 녹음은 유지한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상연결', {});
+  f.put(1, 'Calls', '통화 가상연결_300101_090000.m4a');
+  f.put(2, 'Calls', '통화 가상미연결_300101_100000.m4a');
+  f.put(3, 'Calls', '통화 가상과거_300101_110000.m4a');
+  f.put(4, 'Recordings', '가상 독백.m4a');
+  const oldTranscript = join(f.root, VAULT_REL.mediaTranscripts, '2030', `${ID(3)}.json`);
+  mkdirSync(dirname(oldTranscript), { recursive: true });
+  writeFileSync(oldTranscript, JSON.stringify({ id: ID(3), occurred: '2030-01-01T11:00:00+09:00' }));
+
+  const dryLogs = [];
+  const dry = await runMediaTranscribe({ ...f.options, dryRun: true,
+    output: { log: (line) => dryLogs.push(line), error() {} } });
+  assert.deepEqual(dry.buckets.map((bucket) => bucket.count), [1, 1, 0]);
+  assert.deepEqual(dry.upcoming.map((record) => record.id), [ID(1), ID(4)]);
+  assert.equal(dry.remaining, 2);
+  assert.equal(dry.excludedCalls, 2);
+  assert.match(dryLogs.at(-1), /남은 대기 2, 미연결 통화 제외 2$/);
+
+  const logs = [];
+  const result = await runMediaTranscribe({ ...f.options,
+    output: { log: (line) => logs.push(line), error() {} } });
+  assert.equal(result.transcribed, 2);
+  assert.equal(result.created, 2);
+  assert.equal(result.remaining, 0);
+  assert.equal(result.excludedCalls, 2);
+  assert.equal(existsSync(join(f.root, VAULT_REL.mediaTranscripts, '2030', `${ID(2)}.json`)), false);
+  assert.equal(existsSync(join(f.root, VAULT_REL.mediaConversations, '2030', '2030-01-01 가상미연결 통화.md')), false);
+  assert.equal(existsSync(join(f.root, VAULT_REL.mediaConversations, '2030', '2030-01-01 가상과거 통화.md')), false);
+  assert.ok(f.note('2030-01-01 가상 독백 녹음.md').includes('가상의 대화입니다.'));
+  assert.equal(readFileSync(f.calls, 'utf8').trim().split('\n').length, 2);
+  assert.match(logs.at(-1), /남은 대기 0, 미연결 통화 제외 2$/);
+});
+
 test('실패를 기록하고 세 번 실패한 항목은 건너뛴다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
+  f.person('가상A', {});
   f.put(1, 'Calls', '통화 가상A_300101_090000.m4a');
   const bad = join(f.base, 'bad');
   writeFileSync(bad, '#!/bin/sh\nexit 1\n'); chmodSync(bad, 0o755);
@@ -195,6 +234,7 @@ test('실패를 기록하고 세 번 실패한 항목은 건너뛴다', async (t
 
 test('전사 JSON 기록 후 중단되어 노트가 없으면 다음 실행에서 복구한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
+  f.person('가상A', {});
   f.put(1, 'Calls', '통화 가상A_300101_090000.m4a');
   await runMediaTranscribe(f.options);
   const path = join(f.root, VAULT_REL.mediaConversations, '2030', '2030-01-01 가상A 통화.md');
@@ -207,6 +247,7 @@ test('전사 JSON 기록 후 중단되어 노트가 없으면 다음 실행에�
 
 test('기존 노트 갱신 실패도 저장된 전사에서 다음 실행에 복구한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
+  f.person('가상A', {});
   f.put(1, 'Calls', '통화 가상A_300101_090000.m4a');
   await runMediaTranscribe(f.options);
   f.put(2, 'Calls', '통화 가상A_300101_100000.m4a');
@@ -256,6 +297,8 @@ test('녹음 제목 충돌은 색인 순서가 바뀌거나 새 항목이 생겨
 
 test('서로 다른 통화 연락처가 같은 정리 제목으로 충돌하면 쓰기 전에 멈춘다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
+  f.person('가상#A', {});
+  f.person('가상 A', {});
   f.put(1, 'Calls', '통화 가상#A_300101_090000.m4a');
   f.put(2, 'Calls', '통화 가상 A_300101_100000.m4a');
   await assert.rejects(runMediaTranscribe(f.options), /통화 상대의 노트 제목 충돌/);

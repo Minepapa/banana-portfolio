@@ -183,8 +183,9 @@ function assignNotePaths(records, root) {
 
 function prepareRecords(records, people, root, mediaRoot, persistedPaths) {
   const seen = new Set();
+  let excludedCalls = 0;
   const prepared = records.filter((record) => record.kind === 'Calls' || record.kind === 'Recordings')
-    .map((record) => {
+    .flatMap((record) => {
       if (!/^[a-f0-9]{16}$/i.test(record.id) || seen.has(record.id)) throw new Error('색인 ID 오류 또는 중복');
       seen.add(record.id);
       const path = safeArchivePath(mediaRoot, record.archivePath);
@@ -192,13 +193,17 @@ function prepareRecords(records, people, root, mediaRoot, persistedPaths) {
       const call = record.kind === 'Calls' ? parseCallFilename(filename) : null;
       const contact = record.kind === 'Calls' ? call?.contact || contactFromFilename(filename) : null;
       if (!Number.isFinite(Date.parse(record.capturedAt))) throw new Error('색인 촬영 시각 오류');
+      const linked = matchPeople(record.kind, filename, contact, people);
+      if (record.kind === 'Calls' && !linked.length) {
+        excludedCalls += 1;
+        return [];
+      }
       const persisted = persistedPaths.get(record.id);
       const transcript = persisted ? JSON.parse(readFileSync(persisted, 'utf8')) : null;
       if (transcript && (transcript.id !== record.id || !Number.isFinite(Date.parse(transcript.occurred)))) {
         throw new Error(`전사 원본 형식 오류: ${record.id}`);
       }
       const occurred = transcript?.occurred || call?.occurred || record.capturedAt;
-      const linked = matchPeople(record.kind, filename, contact, people);
       const counterpart = record.kind === 'Calls' ? (linked[0]?.title || cleanTitle(contact)) : null;
       const item = {
         ...record, path, filename, occurred, contact,
@@ -207,10 +212,10 @@ function prepareRecords(records, people, root, mediaRoot, persistedPaths) {
       };
       item.notePath = notePath(item);
       item.transcriptPath = persisted || transcriptPath(root, item);
-      return item;
+      return [item];
     });
   assignNotePaths(prepared, root);
-  return prepared;
+  return { prepared, excludedCalls };
 }
 
 function priority(record, recentCutoff) {
@@ -333,13 +338,13 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
     if (!state || typeof state !== 'object' || !state.failures || typeof state.failures !== 'object') throw new Error('전사 상태 형식 오류');
     const persistedPaths = existingTranscriptPaths(root);
     const people = loadPeople(root);
-    const records = prepareRecords(readIndex(indexPath), people, root, mediaRoot, persistedPaths);
+    const { prepared: records, excludedCalls } = prepareRecords(readIndex(indexPath), people, root, mediaRoot, persistedPaths);
     const available = orderPending(records.filter((record) => !existsSync(record.transcriptPath)
       && (state.failures[record.id]?.length || 0) < 3), now);
     const buckets = [0, 1, 2].map((group) => ({ group: group + 1, count: 0, durationSec: 0, expectedSec: 0 }));
     const durations = new Map();
     const summary = { transcribed: 0, silent: 0, failed: 0, created: 0, updated: 0,
-      remaining: available.length, buckets, upcoming: [] };
+      remaining: available.length, excludedCalls, buckets, upcoming: [] };
     const start = Date.now();
     const cutoff = now.getTime() - 365 * 24 * 60 * 60_000;
     if (dryRun) {
@@ -432,7 +437,7 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
       }
       summary.remaining = available.filter((record) => !existsSync(record.transcriptPath)).length;
     }
-    output.log(`[media-transcribe] 전사 ${summary.transcribed}(음성없음 ${summary.silent}), 실패 ${summary.failed}, 노트 생성 ${summary.created}·갱신 ${summary.updated}, 남은 대기 ${summary.remaining}`);
+    output.log(`[media-transcribe] 전사 ${summary.transcribed}(음성없음 ${summary.silent}), 실패 ${summary.failed}, 노트 생성 ${summary.created}·갱신 ${summary.updated}, 남은 대기 ${summary.remaining}, 미연결 통화 제외 ${summary.excludedCalls}`);
     return summary;
   };
   if (dryRun) return run();
