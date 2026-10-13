@@ -38,6 +38,76 @@ function fixture(t, albums = { A: { label: '미네', category: '201 미네', pri
   return { root, mediaRoot, add, records, output, metadataForFiles, geocode, registryRules, noCalendar: true };
 }
 
+test('Imports Vision 장면은 이름표 뒤 시간대 앞에 넣고 장소·기념일 제목은 유지한다', async (t) => {
+  const f = fixture(t);
+  f.add('A', 'IMG_20170503_150000.jpg', 'one');
+  await indexImports({ ...f, hash: async () => 'one' });
+  await runImportMoments({ ...f, places: [] });
+  const statePath = join(f.root, VAULT_REL.mediaImportMomentsState);
+  const oldRel = JSON.parse(readFileSync(statePath, 'utf8')).one.notePath;
+  writeFileSync(join(f.root, VAULT_REL.mediaVisionIndex), `${JSON.stringify({ id: 'one', schema: 2,
+    labels: [{ name: 'cake', confidence: 0.8 }], faces: 1 })}\n`);
+  writeFileSync(join(f.root, VAULT_REL.mediaVisionLabels), JSON.stringify({ labels: { cake: '케이크' } }));
+  const result = await runImportMoments({ ...f, places: [] });
+  const newRel = JSON.parse(readFileSync(statePath, 'utf8')).one.notePath;
+  assert.equal(result.updated, 1);
+  assert.match(newRel, /미네 케이크 오후 순간/);
+  const visionNote = readFileSync(join(f.root, newRel), 'utf8');
+  assert.deepEqual(parseFrontmatter(visionNote).movedFrom, [oldRel]);
+  assert.equal(parseFrontmatter(visionNote).titleScene, '케이크');
+  assert.match(visionNote, /- 장소·활동: 미네 오후/);
+  assert.doesNotMatch(visionNote, /- 장소·활동: 미네 케이크/);
+  assert.equal((await runImportMoments({ ...f, places: [] })).skipped, 1);
+  writeFileSync(join(f.root, VAULT_REL.mediaVisionLabels), JSON.stringify({ labels: { cake: '케이크/파티' } }));
+  await runImportMoments({ ...f, places: [] });
+  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).one.notePath, newRel);
+  const rows = f.records();
+  rows[0].gps = { lat: 37, lon: 127 };
+  writeFileSync(join(f.root, VAULT_REL.mediaImportsIndex), `${JSON.stringify(rows[0])}\n`);
+  await runImportMoments({ ...f, places: [{ lat: 37, lon: 127, name: '집', radius: 150 }] });
+  const withPlace = JSON.parse(readFileSync(statePath, 'utf8')).one.notePath;
+  assert.match(withPlace, /미네 · 집 순간/);
+  assert.doesNotMatch(withPlace, /케이크/);
+});
+
+test('Imports 기존 titleScene 뒤 미분석 사진이 추가되면 장면 없는 제목으로 이동한다', async (t) => {
+  const f = fixture(t);
+  f.add('A', 'IMG_20170503_150000.jpg', 'one');
+  await indexImports({ ...f, hash: async () => 'one' });
+  writeFileSync(join(f.root, VAULT_REL.mediaVisionIndex), `${JSON.stringify({ id: 'one', schema: 2,
+    labels: [{ name: 'cake', confidence: 0.8 }] })}\n`);
+  writeFileSync(join(f.root, VAULT_REL.mediaVisionLabels), JSON.stringify({ labels: { cake: '케이크' } }));
+  await runImportMoments({ ...f, places: [] });
+  const statePath = join(f.root, VAULT_REL.mediaImportMomentsState);
+  assert.match(JSON.parse(readFileSync(statePath, 'utf8')).one.notePath, /케이크/);
+  const records = f.records();
+  const added = { ...records[0], id: 'two', importPath: 'Imports/A/IMG_20170503_150100.jpg',
+    capturedAt: '2017-05-03T15:01:00+09:00' };
+  writeFileSync(join(f.root, VAULT_REL.mediaImportsIndex), `${records.map((row) => JSON.stringify(row)).join('\n')}\n${JSON.stringify(added)}\n`);
+  await runImportMoments({ ...f, places: [] });
+  const rel = JSON.parse(readFileSync(statePath, 'utf8')).one.notePath;
+  assert.doesNotMatch(rel, /케이크/);
+  assert.equal(parseFrontmatter(readFileSync(join(f.root, rel), 'utf8')).titleScene, undefined);
+});
+
+test('Imports 기존 장면 제목은 vision index가 없어져도 유지한다', async (t) => {
+  const f = fixture(t);
+  f.add('A', 'IMG_20170503_150000.jpg', 'one');
+  await indexImports({ ...f, hash: async () => 'one' });
+  const visionIndex = join(f.root, VAULT_REL.mediaVisionIndex);
+  writeFileSync(visionIndex, `${JSON.stringify({ id: 'one', schema: 2,
+    labels: [{ name: 'cake', confidence: 0.8 }] })}\n`);
+  writeFileSync(join(f.root, VAULT_REL.mediaVisionLabels), JSON.stringify({ labels: { cake: '케이크' } }));
+  await runImportMoments({ ...f, places: [] });
+  const statePath = join(f.root, VAULT_REL.mediaImportMomentsState);
+  const rel = JSON.parse(readFileSync(statePath, 'utf8')).one.notePath;
+  rmSync(visionIndex);
+  const result = await runImportMoments({ ...f, places: [] });
+  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).one.notePath, rel);
+  assert.equal(parseFrontmatter(readFileSync(join(f.root, rel), 'utf8')).titleScene, '케이크');
+  assert.equal(result.updated + result.skipped, 1);
+});
+
 test('국내 좌표 경계와 기념일·윤일·여러 인물', () => {
   assert.equal(isDomesticGps({ lat: 33, lon: 124.5 }), true);
   assert.equal(isDomesticGps({ lat: 38.7, lon: 131.9 }), true);

@@ -60,6 +60,8 @@ export const VAULT_REL = {
   locationGeocodeCache: '95_Etna/Location/geocode-cache.json',
   mediaArchiveIndex: '95_Etna/Media/archive-index.jsonl',
   mediaImportsIndex: '95_Etna/Media/imports-index.jsonl',
+  mediaVisionIndex: '95_Etna/Media/vision-index.jsonl',
+  mediaVisionLabels: '95_Etna/Media/vision-labels.json',
   mediaImportAlbums: '95_Etna/Media/import-albums.json',
   mediaImportMomentsState: '95_Etna/Media/import-moments.json',
   mediaTranscripts: '95_Etna/Media/Transcripts',
@@ -117,6 +119,8 @@ export function vaultYearFiles(baseAbsDir) {
 export const VAULT_PATHS = {
   root: VAULT_ROOT,
   mediaArchiveIndex: vaultAbs(VAULT_REL.mediaArchiveIndex),
+  mediaVisionIndex: vaultAbs(VAULT_REL.mediaVisionIndex),
+  mediaVisionLabels: vaultAbs(VAULT_REL.mediaVisionLabels),
   todoLog: vaultAbs(VAULT_REL.todoLog),
   spending: vaultAbs(VAULT_REL.spending),
   location: {

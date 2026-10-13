@@ -9,7 +9,8 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { capturedTime, gpsFrom, kstIso } from './media-archive.mjs';
-import { groupTimedRecords, render, timePeriod, titlePlace } from './media-moments.mjs';
+import { groupTimedRecords, render, timePeriod, titlePlace, visionForMoment, loadMomentVision,
+  titleWithScene } from './media-moments.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
 import { listSelectedCalendars, listEventsForRange } from '../lib/google-calendar.mjs';
 import { getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
@@ -263,6 +264,7 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
   const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {};
   const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
   const groups = groupImportMoments(jsonLines(indexPath)).filter((group) => !album || group[0].album === album);
+  const vision = loadMomentVision(root, output);
   const people = loadPeople(root);
   const eventsByYear = new Map();
   if (!noCalendar && groups.length) {
@@ -316,17 +318,17 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
     const anniversaries = anniversariesForDay(date, people);
     const calendarMatches = calendarOccasions(group, eventsByYear.get(date.slice(0, 4)) ?? [], calendar);
     const occasions = selectOccasions(anniversaries, calendarMatches);
+    const enrichment = visionForMoment(group, vision?.rows, vision?.config);
     const period = timePeriod(Date.parse(first.capturedAt));
     const titleParts = () => [config.label, ...occasions, titlePlace(place, address)].filter(Boolean).join(' · ');
-    const title = clean(titleParts() + (!place && !occasions.length && config.label ? ` ${period}` : '') || period);
+    const summaryTitle = clean(titleParts() + (!place && !occasions.length && config.label ? ` ${period}` : '') || period);
     const occasionSource = [...new Set([
       ...(occasions.some((item) => anniversaries.includes(item)) ? ['anniversary'] : []),
       ...(occasions.some((item) => calendarMatches.includes(item)) ? ['calendar'] : []),
     ])];
-    const description = { summary: title, place, address,
+    const description = { summary: summaryTitle, place, address,
       source: place ? 'gps' : occasionSource[0] || 'time' };
     const directory = `${VAULT_REL.mediaMoments}/${date.slice(0, 4)}`;
-    const base = `${date} ${title} 순간`;
     if (!discovered.has(date.slice(0, 4))) discovered.set(date.slice(0, 4), existingImportNotes(root, date.slice(0, 4)));
     const savedRel = state[first.id]?.notePath;
     const interruptedMoveFrom = savedRel && !existsSync(join(root, savedRel)) ? savedRel : null;
@@ -335,6 +337,13 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
       : savedRel || discovered.get(date.slice(0, 4)).get(first.id);
     if (interruptedMoveFrom && !oldRel) throw new Error(`이동된 Imports 순간 노트 없음: ${savedRel}`);
     if (oldRel && (!oldRel.startsWith(`${directory}/`) || !existsSync(join(root, oldRel)))) throw new Error(`기존 Imports 순간 노트 없음: ${oldRel}`);
+    const previousScene = oldRel ? parseFrontmatter(readFileSync(join(root, oldRel), 'utf8')).titleScene : null;
+    const chosenScene = place || occasions.length || enrichment?.allPhotosAnalyzed === false ? null
+      : previousScene || enrichment?.scenes[0];
+    const withScene = titleWithScene(summaryTitle, { place, occasions, scene: chosenScene, period });
+    const titleScene = withScene === summaryTitle ? null : chosenScene;
+    const title = withScene === summaryTitle ? summaryTitle : clean(withScene);
+    const base = `${date} ${title} 순간`;
     const candidates = [`${directory}/${base}.md`, `${directory}/${base} ${clockOf(first)}.md`,
       `${directory}/${base} ${first.id.slice(0, 8)}.md`];
     const rel = candidates.find((candidate) => candidate === oldRel || (!reserved.has(candidate) && !existsSync(join(root, candidate))));
@@ -347,7 +356,7 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
     const next = render(group, description, existing, now,
       oldRel && oldRel !== rel ? oldRel : interruptedMoveFrom,
       { category: config.category, source: 'import', album: first.album, albumLabel: config.label,
-        pathField: 'importPath', occasions, occasionSource, placeCategory });
+        pathField: 'importPath', occasions, occasionSource, placeCategory, vision: enrichment, titleScene });
     if (existing && next.replace(/^modified:.*$/m, '') === existing.replace(/^modified:.*$/m, '')) {
       if (!dryRun && (!state[first.id] || state[first.id].notePath !== rel
         || JSON.stringify(state[first.id].mediaIds) !== JSON.stringify(group.map((record) => record.id)))) {

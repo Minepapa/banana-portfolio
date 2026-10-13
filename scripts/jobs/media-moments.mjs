@@ -5,6 +5,7 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { loadVisionConfig } from './media-vision.mjs';
 import { writeAtomic, withLock } from '../lib/state-writer.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
@@ -38,6 +39,56 @@ const cleanRouteLabel = (label) => {
   const value = String(label || '').replace(/^미등록:\s*/, '');
   return value.startsWith('미등록 장소') ? '' : value;
 };
+
+export function visionForMoment(records, visionRows, config) {
+  if (!visionRows) return null;
+  const counts = new Map();
+  let faces = 0;
+  let allPhotosAnalyzed = true;
+  for (const record of records) {
+    const vision = visionRows.get(record.id);
+    const video = VIDEO.has(extname(record.archivePath || record.importPath).toLowerCase());
+    if (!video && (!vision || (vision.schema ?? 0) < 2 || vision.error)) allPhotosAnalyzed = false;
+    if (!vision || (vision.schema ?? 0) < 2 || vision.error) continue;
+    faces = Math.max(faces, Number(vision.faces) || 0);
+    if (video) continue;
+    const photoLabels = new Map();
+    for (const label of vision.labels ?? []) {
+      if (Number(label.confidence) < config.minConfidence || config.ignore.includes(label.name)) continue;
+      const korean = config.labels[label.name];
+      if (typeof korean === 'string' && korean.trim()) {
+        photoLabels.set(korean, Math.max(photoLabels.get(korean) || 0, Number(label.confidence)));
+      }
+    }
+    for (const [name, confidence] of photoLabels) {
+      const score = counts.get(name) ?? { photos: 0, confidence: 0 };
+      counts.set(name, { photos: score.photos + 1, confidence: score.confidence + confidence });
+    }
+  }
+  const scenes = [...counts].sort((a, b) => b[1].photos - a[1].photos
+    || b[1].confidence - a[1].confidence || a[0].localeCompare(b[0], 'ko'))
+    .slice(0, 3).map(([name]) => name);
+  return { scenes, faces, allPhotosAnalyzed };
+}
+
+export function titleWithScene(summary, { place, occasions = [], scene, period }) {
+  if (!scene || place || occasions.length || !summary.endsWith(period)) return summary;
+  return `${summary.slice(0, -period.length)}${scene} ${period}`;
+}
+
+export function loadMomentVision(root, output = console) {
+  const path = join(root, VAULT_REL.mediaVisionIndex);
+  const configPath = join(root, VAULT_REL.mediaVisionLabels);
+  let config;
+  try { config = loadVisionConfig(configPath); }
+  catch (error) {
+    output.log(`[media-moments] vision 설정 오류: ${String(error.message).replace(/[\r\n]+/g, ' ')}`);
+    return null;
+  }
+  if (!existsSync(path)) return null;
+  const rows = readIndex(path);
+  return { rows: new Map(rows.map((row) => [row.id, row])), config };
+}
 
 export function groupMoments(records) {
   const sorted = records.filter((record) => (record.kind === 'Camera'
@@ -177,6 +228,14 @@ export function render(records, description, existing, now, movedFrom = null, op
   }
   if (options.placeCategory) fields.placeCategory = options.placeCategory;
   else if (options.source === 'import') delete fields.placeCategory;
+  if (options.vision) {
+    if (options.vision.scenes.length) fields.scenes = options.vision.scenes;
+    else delete fields.scenes;
+    if (options.vision.faces > 0) fields.faces = options.vision.faces;
+    else delete fields.faces;
+  }
+  if (options.titleScene) fields.titleScene = options.titleScene;
+  else delete fields.titleScene;
   if (movedFrom) fields.movedFrom = [...new Set([
     ...(Array.isArray(previousFields.movedFrom) ? previousFields.movedFrom
       : previousFields.movedFrom ? [previousFields.movedFrom] : []), movedFrom])];
@@ -185,7 +244,7 @@ export function render(records, description, existing, now, movedFrom = null, op
     const path = record[options.pathField || 'archivePath'];
     return `- ${VIDEO.has(extname(path).toLowerCase()) ? '영상' : '사진'}: ${path}`;
   });
-  const generated = `${START}\n# ${day(first)} ${description.summary} 순간\n\n- 시간: ${clock(first)}–${clock(last)}\n- 장소·활동: ${description.summary}${description.address ? `\n- 주소: ${description.address}` : ''}${options.occasions?.length ? `\n- 기념일·일정: ${options.occasions.join(' · ')}` : ''}\n- 정보 출처: ${description.source}\n\n## 원본\n\n${lines.join('\n')}\n${END}`;
+  const generated = `${START}\n# ${day(first)} ${description.summary} 순간\n\n- 시간: ${clock(first)}–${clock(last)}\n- 장소·활동: ${description.summary}${description.address ? `\n- 주소: ${description.address}` : ''}${options.occasions?.length ? `\n- 기념일·일정: ${options.occasions.join(' · ')}` : ''}${options.vision?.scenes.length ? `\n- 장면: ${options.vision.scenes.join(', ')}` : ''}\n- 정보 출처: ${description.source}\n\n## 원본\n\n${lines.join('\n')}\n${END}`;
   return `${frontmatter}${before}${generated}${owner}`;
 }
 
@@ -204,6 +263,7 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
   const records = dryRun || !existsSync(dirname(indexPath)) ? readIndex(indexPath)
     : await withLock(indexPath, () => readIndex(indexPath), { retries: 1200, retryDelayMs: 100 });
   const moments = groupMoments(records).filter((group) => !since || day(at(group.at(-1))) >= since);
+  const vision = loadMomentVision(root, output);
   const names = new Set(Object.values(state).map((entry) => entry.notePath));
   const discovered = new Map();
   const summary = { created: 0, updated: 0, skipped: 0 };
@@ -224,8 +284,8 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
     const id = records[0].id;
     const description = await describeMoment(records, { root, dryRun, geocode, routeForDay: cachedRouteForDay, routePoints,
       paymentsForDay, places: places ?? loadPlaces(root) });
+    const enrichment = visionForMoment(records, vision?.rows, vision?.config);
     const date = day(at(records[0]));
-    const base = `${date} ${clean(description.summary)} 순간`;
     const directory = `${VAULT_REL.mediaMoments}/${date.slice(0, 4)}`;
     let oldRel = state[id]?.notePath;
     let interruptedMoveFrom = null;
@@ -240,6 +300,14 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
       oldRel = discovered.get(date.slice(0, 4)).get(id);
     }
     if (oldRel && (!oldRel.startsWith(`${directory}/`) || oldRel.includes('..'))) throw new Error(`순간 상태 경로 오류: ${id}`);
+    const previousNote = oldRel && existsSync(join(root, oldRel)) ? readFileSync(join(root, oldRel), 'utf8') : null;
+    const previousScene = previousNote && parseFrontmatter(previousNote).titleScene;
+    const chosenScene = description.place || enrichment?.allPhotosAnalyzed === false ? null
+      : previousScene || enrichment?.scenes[0];
+    const title = titleWithScene(description.summary, { place: description.place,
+      scene: chosenScene, period: timePeriod(at(records[0])) });
+    const titleScene = title === description.summary ? null : chosenScene;
+    const base = `${date} ${clean(title)} 순간`;
     const available = (candidate) => candidate === oldRel || (!names.has(candidate)
       && !visitedPaths.has(candidate) && !existsSync(join(root, candidate)));
     const candidates = [`${directory}/${base}.md`,
@@ -255,7 +323,7 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
     const existing = existsSync(oldPath) ? readFileSync(oldPath, 'utf8') : null;
     if (state[id] && existing == null) throw new Error(`기존 순간 노트가 없음: ${state[id].notePath}`);
     const next = render(records, description, existing, now,
-      oldRel && oldRel !== rel ? oldRel : interruptedMoveFrom);
+      oldRel && oldRel !== rel ? oldRel : interruptedMoveFrom, { vision: enrichment, titleScene });
     const stable = oldRel === rel && existing
       && next.replace(/^modified:.*$/m, '') === existing.replace(/^modified:.*$/m, '');
     if (stable) {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { groupMoments, describeMoment, runMediaMoments } from './media-moments.mjs';
+import { groupMoments, describeMoment, runMediaMoments, visionForMoment } from './media-moments.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -31,6 +31,115 @@ function fixture(t, records) {
     now: '2030-01-03T00:00:00.000Z' };
   return { root, index, writes, options };
 }
+
+test('Vision 장면은 한국어 표·ignore·신뢰도와 등장 사진 수 순으로 고른다', () => {
+  const records = [item('a', time('10:00')), item('b', time('10:01'))];
+  const rows = new Map([
+    ['a', { schema: 2, faces: 1, labels: [{ name: 'beach', confidence: 0.9 },
+      { name: 'cake', confidence: 0.8 }, { name: 'unknown', confidence: 0.99 }] }],
+    ['b', { schema: 2, faces: 3, labels: [{ name: 'beach', confidence: 0.4 },
+      { name: 'adult', confidence: 0.99 }, { name: 'flower', confidence: 0.2 }] }],
+  ]);
+  assert.deepEqual(visionForMoment(records, rows, { labels: { beach: '해변', cake: '케이크',
+    adult: '어른', flower: '꽃' }, ignore: ['adult'], minConfidence: 0.3 }),
+  { scenes: ['해변', '케이크'], faces: 3, allPhotosAnalyzed: true });
+});
+
+test('Vision 보강은 제목을 이동하고 장면·얼굴을 기록하며 재실행은 쓰지 않는다', async (t) => {
+  const f = fixture(t, [item('a', time('10:00'))]);
+  await runMediaMoments(f.options);
+  const statePath = join(f.root, VAULT_REL.mediaMomentsState);
+  const before = JSON.parse(readFileSync(statePath, 'utf8')).a.notePath;
+  const visionIndex = join(f.root, VAULT_REL.mediaVisionIndex);
+  const labels = join(f.root, VAULT_REL.mediaVisionLabels);
+  writeFileSync(visionIndex, `${JSON.stringify({ id: 'a', schema: 2, labels: [{ name: 'cake', confidence: 0.9 }], faces: 2 })}\n`);
+  writeFileSync(labels, JSON.stringify({ labels: { cake: '케이크' }, ignore: [] }));
+  const updated = await runMediaMoments(f.options);
+  const after = JSON.parse(readFileSync(statePath, 'utf8')).a.notePath;
+  assert.equal(updated.updated, 1);
+  assert.match(after, /케이크 아침 순간/);
+  assert.notEqual(after, before);
+  const note = readFileSync(join(f.root, after), 'utf8');
+  assert.deepEqual(parseFrontmatter(note).scenes, ['케이크']);
+  assert.equal(parseFrontmatter(note).faces, 2);
+  assert.deepEqual(parseFrontmatter(note).movedFrom, [before]);
+  assert.match(note, /- 장면: 케이크/);
+  assert.match(note, /- 장소·활동: 아침/);
+  assert.doesNotMatch(note, /- 장소·활동: 케이크/);
+  assert.equal(parseFrontmatter(note).titleScene, '케이크');
+  writeFileSync(labels, JSON.stringify({ labels: { cake: '파티' } }));
+  await runMediaMoments(f.options);
+  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).a.notePath, after);
+  const writes = f.writes.length;
+  assert.equal((await runMediaMoments(f.options)).skipped, 1);
+  assert.equal(f.writes.length, writes);
+});
+
+test('사진 하나가 미분석이면 제목에는 장면을 넣지 않는다', async (t) => {
+  const f = fixture(t, [item('a', time('10:00')), item('b', time('10:01'))]);
+  writeFileSync(join(f.root, VAULT_REL.mediaVisionIndex), `${JSON.stringify({ id: 'a', schema: 2,
+    labels: [{ name: 'cake', confidence: 0.9 }] })}\n`);
+  writeFileSync(join(f.root, VAULT_REL.mediaVisionLabels), JSON.stringify({ labels: { cake: '케이크' } }));
+  await runMediaMoments(f.options);
+  const rel = JSON.parse(readFileSync(join(f.root, VAULT_REL.mediaMomentsState), 'utf8')).a.notePath;
+  assert.doesNotMatch(rel, /케이크/);
+  assert.deepEqual(parseFrontmatter(readFileSync(join(f.root, rel), 'utf8')).scenes, ['케이크']);
+});
+
+test('기존 titleScene이 있어도 새 사진이 미분석이면 제목과 titleScene을 지운다', async (t) => {
+  const f = fixture(t, [item('a', time('10:00'))]);
+  const visionIndex = join(f.root, VAULT_REL.mediaVisionIndex);
+  writeFileSync(visionIndex, `${JSON.stringify({ id: 'a', schema: 2,
+    labels: [{ name: 'cake', confidence: 0.9 }] })}\n`);
+  writeFileSync(join(f.root, VAULT_REL.mediaVisionLabels), JSON.stringify({ labels: { cake: '케이크' } }));
+  await runMediaMoments(f.options);
+  const statePath = join(f.root, VAULT_REL.mediaMomentsState);
+  const oldRel = JSON.parse(readFileSync(statePath, 'utf8')).a.notePath;
+  assert.match(oldRel, /케이크/);
+  writeFileSync(f.index, [item('a', time('10:00')), item('b', time('10:01'))]
+    .map((record) => JSON.stringify(record)).join('\n') + '\n');
+  await runMediaMoments(f.options);
+  const rel = JSON.parse(readFileSync(statePath, 'utf8')).a.notePath;
+  assert.doesNotMatch(rel, /케이크/);
+  assert.equal(parseFrontmatter(readFileSync(join(f.root, rel), 'utf8')).titleScene, undefined);
+  assert.deepEqual(parseFrontmatter(readFileSync(join(f.root, rel), 'utf8')).scenes, ['케이크']);
+});
+
+test('schema 없는 레거시 행은 미분석으로 간주한다', () => {
+  const result = visionForMoment([item('a', time('10:00'))], new Map([['a', {
+    labels: [{ name: 'cake', confidence: 0.9 }], faces: 3 }]]),
+  { labels: { cake: '케이크' }, ignore: [], minConfidence: 0.3 });
+  assert.deepEqual(result, { scenes: [], faces: 0, allPhotosAnalyzed: false });
+});
+
+test('깨진 vision 설정은 보강만 끄고 순간 노트를 만든다', async (t) => {
+  const f = fixture(t, [item('a', time('10:00'))]);
+  writeFileSync(join(f.root, VAULT_REL.mediaVisionIndex), `${JSON.stringify({ id: 'a', schema: 2 })}\n`);
+  writeFileSync(join(f.root, VAULT_REL.mediaVisionLabels), JSON.stringify({ labels: [], ignore: {} }));
+  const logs = [];
+  await runMediaMoments({ ...f.options, output: { log: (line) => logs.push(line) } });
+  assert.equal(logs.filter((line) => line.startsWith('[media-moments] vision 설정 오류:')).length, 1);
+  assert.equal(existsSync(join(f.root, VAULT_REL.mediaMomentsState)), true);
+});
+
+test('기존 장면 제목은 vision 설정이 깨져도 유지한다', async (t) => {
+  const f = fixture(t, [item('a', time('10:00'))]);
+  const visionIndex = join(f.root, VAULT_REL.mediaVisionIndex);
+  const labels = join(f.root, VAULT_REL.mediaVisionLabels);
+  writeFileSync(visionIndex, `${JSON.stringify({ id: 'a', schema: 2,
+    labels: [{ name: 'cake', confidence: 0.9 }] })}\n`);
+  writeFileSync(labels, JSON.stringify({ labels: { cake: '케이크' } }));
+  await runMediaMoments(f.options);
+  const statePath = join(f.root, VAULT_REL.mediaMomentsState);
+  const rel = JSON.parse(readFileSync(statePath, 'utf8')).a.notePath;
+  writeFileSync(labels, '{broken');
+  const logs = [];
+  const result = await runMediaMoments({ ...f.options, output: { log: (line) => logs.push(line) } });
+  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).a.notePath, rel);
+  assert.equal(parseFrontmatter(readFileSync(join(f.root, rel), 'utf8')).titleScene, '케이크');
+  assert.equal(result.updated + result.skipped, 1);
+  assert.equal(logs.filter((line) => line.startsWith('[media-moments] vision 설정 오류:')).length, 1);
+});
 
 test('90분과 1.5km 경계에서 순간을 나눈다', () => {
   const records = [item('a', time('10:00')), item('b', time('11:30')),
