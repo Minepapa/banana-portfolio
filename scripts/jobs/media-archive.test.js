@@ -8,6 +8,7 @@ import { runMediaArchive, repairMediaArchiveTimes } from './media-archive.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
+import { warningCount, resetWarnings } from '../lib/job-alerts.mjs';
 
 const NOW = new Date('2026-10-11T06:00:00Z');
 const QUIET = { log() {}, error() {} };
@@ -331,16 +332,196 @@ test('30일 지난 날짜 폴더만 정리하고 dry-run은 모든 경로를 보
   await fs.mkdir(old, { recursive: true });
   await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-10'), { recursive: true }); // 최근 기록(시계 앞튐 보호 기준)
   await fs.mkdir(unknown, { recursive: true });
+  await fs.writeFile(join(old, 'manifest.jsonl'), `${JSON.stringify({
+    record: { id: 'abcdef0123456789', kind: 'Recordings' },
+    trashPath: 'Trash/2026-08-01/Recordings/가상녹음.m4a',
+  })}\n`);
   await f.put('Calls', '통화 녹음 가상미연결_261011_090000.m4a', 'unlinked');
   const dry = await runMediaArchive({ ...f.options, dryRun: true });
   assert.equal(dry.trashedNew, 1);
   assert.equal(dry.cleanedTrash, 1);
   assert.ok((await fs.stat(old)).isDirectory());
   await assert.rejects(fs.stat(f.indexPath), { code: 'ENOENT' });
+  await assert.rejects(fs.stat(join(f.mediaRoot, 'Trash', 'purged.jsonl')), { code: 'ENOENT' });
   const applied = await runMediaArchive(f.options);
   assert.equal(applied.cleanedTrash, 1);
   await assert.rejects(fs.stat(old), { code: 'ENOENT' });
   assert.ok((await fs.stat(unknown)).isDirectory());
+});
+
+test('영구 삭제 목록이 심볼릭 링크면 보관을 중단하고 Inbox를 보존한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  resetWarnings();
+  t.after(resetWarnings);
+  const inbox = await f.put('Recordings', '가상녹음.m4a', 'unreadable trash list');
+  const trash = join(f.mediaRoot, 'Trash');
+  await fs.mkdir(trash);
+  const target = join(f.root, 'outside.jsonl');
+  await fs.writeFile(target, '');
+  await fs.symlink(target, join(trash, 'purged.jsonl'));
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.failed, 1);
+  assert.equal(result.archived, 0);
+  assert.equal(warningCount(), 1);
+  assert.ok((await fs.stat(inbox)).isFile());
+  await assert.rejects(fs.stat(f.indexPath), { code: 'ENOENT' });
+});
+
+test('날짜형 휴지통 폴더가 심볼릭 링크면 보관을 중단하고 Inbox를 보존한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  resetWarnings();
+  t.after(resetWarnings);
+  const inbox = await f.put('Recordings', '가상녹음.m4a', 'deleted recording');
+  const id = createHash('sha256').update('deleted recording').digest('hex').slice(0, 16);
+  const outside = join(f.root, 'outside-trash');
+  await fs.mkdir(outside);
+  await fs.writeFile(join(outside, 'manifest.jsonl'), `${JSON.stringify({ record: { id } })}\n`);
+  await fs.mkdir(join(f.mediaRoot, 'Trash'));
+  await fs.symlink(outside, join(f.mediaRoot, 'Trash', '2026-08-01'));
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.failed, 1);
+  assert.equal(result.archived, 0);
+  assert.equal(warningCount(), 1);
+  assert.ok((await fs.stat(inbox)).isFile());
+  await assert.rejects(fs.stat(f.indexPath), { code: 'ENOENT' });
+});
+
+test('휴지통 manifest의 녹음 ID는 Inbox에 다시 나타나도 보관하지 않는다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const inbox = await f.put('Recordings', '가상녹음.m4a', 'deleted recording');
+  const id = createHash('sha256').update('deleted recording').digest('hex').slice(0, 16);
+  const manifest = join(f.mediaRoot, 'Trash', '2026-08-01', 'manifest.jsonl');
+  await fs.mkdir(join(manifest, '..'), { recursive: true });
+  await fs.writeFile(manifest, 'broken json\n' + `${JSON.stringify({
+    record: { id, kind: 'Recordings', inboxPath: 'Inbox/Recordings/가상녹음.m4a' },
+    trashPath: 'Trash/2026-08-01/Recordings/가상녹음.m4a',
+  })}\n`);
+  for (const options of [{ dryRun: true }, {}]) {
+    const result = await runMediaArchive({ ...f.options, ...options });
+    assert.equal(result.trashIgnored, 1);
+    assert.equal(result.archived, 0);
+    assert.equal(result.failed, 0);
+    assert.ok((await fs.stat(inbox)).isFile());
+    await assert.rejects(fs.stat(f.indexPath), { code: 'ENOENT' });
+  }
+});
+
+test('영구 삭제 목록의 녹음 ID도 다시 보관하지 않는다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const inbox = await f.put('Recordings', '가상녹음.m4a', 'purged recording');
+  const id = createHash('sha256').update('purged recording').digest('hex').slice(0, 16);
+  const purged = join(f.mediaRoot, 'Trash', 'purged.jsonl');
+  await fs.mkdir(join(purged, '..'), { recursive: true });
+  await fs.writeFile(purged, `broken json\n${JSON.stringify({ id, kind: 'Recordings' })}\n`);
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.trashIgnored, 1);
+  assert.equal(result.archived, 0);
+  assert.equal(result.failed, 0);
+  assert.ok((await fs.stat(inbox)).isFile());
+  await assert.rejects(fs.stat(f.indexPath), { code: 'ENOENT' });
+});
+
+test('만료 폴더 manifest를 영구 삭제 목록에 기록한 뒤 폴더를 지운다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const old = join(f.mediaRoot, 'Trash', '2026-08-01');
+  await fs.mkdir(old, { recursive: true });
+  await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-10'), { recursive: true });
+  const record = { id: 'abcdef0123456789', kind: 'Recordings', inboxPath: 'Inbox/Recordings/가상녹음.m4a' };
+  const trashPath = 'Trash/2026-08-01/Recordings/가상녹음.m4a';
+  await fs.writeFile(join(old, 'manifest.jsonl'), `broken json\n${JSON.stringify({ record, trashPath })}\n`);
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.cleanedTrash, 1);
+  assert.deepEqual(JSON.parse((await fs.readFile(join(f.mediaRoot, 'Trash', 'purged.jsonl'), 'utf8')).trim()),
+    { id: record.id, kind: record.kind, inboxPath: record.inboxPath, trashPath,
+      purgedAt: '2026-10-11T15:00:00.000+09:00' });
+  await assert.rejects(fs.stat(old), { code: 'ENOENT' });
+});
+
+test('끊긴 영구 삭제 목록 뒤에 새 ID를 온전한 줄로 기록한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const old = join(f.mediaRoot, 'Trash', '2026-08-01');
+  const purged = join(f.mediaRoot, 'Trash', 'purged.jsonl');
+  const content = 'newly purged recording';
+  const id = createHash('sha256').update(content).digest('hex').slice(0, 16);
+  await fs.mkdir(old, { recursive: true });
+  await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-10'), { recursive: true });
+  await fs.writeFile(join(old, 'manifest.jsonl'), `${JSON.stringify({
+    record: { id, kind: 'Recordings', inboxPath: 'Inbox/Recordings/가상녹음.m4a' },
+    trashPath: 'Trash/2026-08-01/Recordings/가상녹음.m4a',
+  })}\n`);
+  await fs.writeFile(purged, '{"id":"unfinished"');
+  assert.equal((await runMediaArchive(f.options)).cleanedTrash, 1);
+  const lines = (await fs.readFile(purged, 'utf8')).trim().split('\n');
+  assert.equal(lines.length, 2);
+  assert.equal(JSON.parse(lines[1]).id, id);
+  const inbox = await f.put('Recordings', '가상녹음.m4a', content);
+  const rerun = await runMediaArchive(f.options);
+  assert.equal(rerun.trashIgnored, 1);
+  assert.equal(rerun.archived, 0);
+  assert.ok((await fs.stat(inbox)).isFile());
+});
+
+test('이미 영구 삭제 목록에 있는 ID를 정리할 때 중복 기록하지 않는다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const old = join(f.mediaRoot, 'Trash', '2026-08-01');
+  const purged = join(f.mediaRoot, 'Trash', 'purged.jsonl');
+  const id = 'abcdef0123456789';
+  await fs.mkdir(old, { recursive: true });
+  await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-10'), { recursive: true });
+  await fs.writeFile(join(old, 'manifest.jsonl'), `${JSON.stringify({
+    record: { id, kind: 'Recordings' }, trashPath: 'Trash/2026-08-01/Recordings/가상녹음.m4a',
+  })}\n`);
+  const existing = `${JSON.stringify({ id, kind: 'Recordings' })}\n`;
+  await fs.writeFile(purged, existing);
+  assert.equal((await runMediaArchive(f.options)).cleanedTrash, 1);
+  assert.equal(await fs.readFile(purged, 'utf8'), existing);
+  await assert.rejects(fs.stat(old), { code: 'ENOENT' });
+});
+
+test('영구 삭제 목록에 기록하지 못하면 만료 폴더를 보존한다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.person();
+  const old = join(f.mediaRoot, 'Trash', '2026-08-01');
+  const purged = join(f.mediaRoot, 'Trash', 'purged.jsonl');
+  await fs.mkdir(old, { recursive: true });
+  await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-10'), { recursive: true });
+  await fs.writeFile(join(old, 'manifest.jsonl'), `${JSON.stringify({
+    record: { id: 'abcdef0123456789', kind: 'Recordings' },
+    trashPath: 'Trash/2026-08-01/Recordings/가상녹음.m4a',
+  })}\n`);
+  await fs.writeFile(purged, '');
+  await fs.chmod(purged, 0o444);
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.cleanedTrash, 0);
+  assert.equal(result.failed, 1);
+  assert.ok((await fs.stat(old)).isDirectory());
+});
+
+test('색인에 있는 ID는 휴지통 기록과 무관하게 기존대로 건너뛴다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Recordings', '가상녹음.m4a', 'indexed recording');
+  await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  const purged = join(f.mediaRoot, 'Trash', 'purged.jsonl');
+  await fs.mkdir(join(purged, '..'), { recursive: true });
+  await fs.writeFile(purged, `${JSON.stringify({ id: record.id })}\n`);
+  const result = await runMediaArchive(f.options);
+  assert.equal(result.skipped, 1);
+  assert.equal(result.trashIgnored, 0);
+  assert.equal(result.failed, 0);
+  assert.equal((await rows(f.indexPath)).length, 1);
 });
 
 test('휴지통 날짜가 미래이면 정리하지 않고, 과거 폴더도 실행당 세 개만 정리한다', async (t) => {

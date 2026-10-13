@@ -82,6 +82,55 @@ async function expiredTrashFolders(mediaRoot, now, { latestArchivedAt = null } =
     .slice(0, 3).map((entry) => join(trashRoot, entry.name));
 }
 
+async function trashRecords(manifest, trashRoot) {
+  await noSymlinks(trashRoot, manifest);
+  let content;
+  try { content = await fs.readFile(manifest, 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  const items = [];
+  for (const line of content.trim().split('\n')) {
+    try {
+      const item = JSON.parse(line);
+      if (/^[a-f0-9]{16}$/i.test(item.record?.id)) items.push(item);
+    } catch { /* 완료 전 끊긴 manifest 줄은 무시한다. */ }
+  }
+  return items;
+}
+
+async function trashedIds(mediaRoot) {
+  const trashRoot = join(mediaRoot, 'Trash');
+  const all = new Set();
+  const purgedIds = new Set();
+  let dates;
+  try {
+    if (!(await fs.lstat(trashRoot)).isDirectory()) throw new Error('휴지통 경로가 디렉터리가 아닙니다');
+    dates = await fs.readdir(trashRoot, { withFileTypes: true });
+  } catch (error) { if (error.code === 'ENOENT') return { all, purged: purgedIds }; throw error; }
+  for (const date of dates) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date.name)) continue;
+    await noSymlinks(trashRoot, join(trashRoot, date.name));
+    if (!date.isDirectory()) continue;
+    const manifest = join(trashRoot, date.name, 'manifest.jsonl');
+    for (const item of await trashRecords(manifest, trashRoot)) all.add(item.record.id.toLowerCase());
+  }
+  const purged = join(trashRoot, 'purged.jsonl');
+  await noSymlinks(trashRoot, purged);
+  let content;
+  try { content = await fs.readFile(purged, 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return { all, purged: purgedIds }; throw error; }
+  for (const line of content.trim().split('\n')) {
+    try {
+      const item = JSON.parse(line);
+      if (/^[a-f0-9]{16}$/i.test(item.id)) {
+        const id = item.id.toLowerCase();
+        all.add(id);
+        purgedIds.add(id);
+      }
+    } catch { /* 완료 전 끊긴 영구 목록 줄은 무시한다. */ }
+  }
+  return { all, purged: purgedIds };
+}
+
 async function orphanCalls(mediaRoot, records, people, now) {
   const archiveRoot = join(mediaRoot, 'Archive');
   const trashRoot = join(mediaRoot, 'Trash');
@@ -566,7 +615,7 @@ export async function runMediaArchive({
   atomicWrite = writeAtomic,
   output = console,
 } = {}) {
-  const summary = { archived: 0, skipped: 0, failed: 0, trashedNew: 0,
+  const summary = { archived: 0, skipped: 0, failed: 0, trashIgnored: 0, trashedNew: 0,
     trashedExisting: 0, trashedOrphan: 0, orphanCalls: 0, cleanedTrash: 0, trashedByContact: {},
     capturedFrom: { exif: 0, filename: 0, mtime: 0 },
     capturedConfidence: { confirmed: 0, single: 0, estimated: 0, review: 0 } };
@@ -574,6 +623,19 @@ export async function runMediaArchive({
   const files = await collectFiles(mediaRoot, now);
   // 대량 차단 판단 전에는 색인 복구도 쓰기이므로 읽기 전용으로 파싱한다.
   const records = await readIndexRecords(indexPath, { dryRun: true, allowIncomplete: !dryRun });
+  let trashIds;
+  try { trashIds = await trashedIds(mediaRoot); }
+  catch (error) {
+    summary.failed += 1;
+    output.error(`[media-archive] 휴지통 ID 검사 실패: ${error.message}`);
+    const cause = error.message.startsWith('심볼릭 링크 경로:') ? '심볼릭 링크 경로'
+      : error.code ?? '휴지통 경로/형식 오류';
+    collectWarning(`휴지통 ID 검사 실패: ${cause}`, {
+      jobName: 'media-archive', warningCode: 'MEDIA_TRASH_IDS_UNREADABLE',
+      subjectKey: 'trash-ids', kind: 'operational', severity: 'high',
+    });
+    return summary; // 휴지통 기록을 읽지 못하면 삭제 요청 파일을 다시 보관할 수 없다.
+  }
   let people = null;
   const trashSkipped = [];
   try {
@@ -676,6 +738,11 @@ export async function runMediaArchive({
         summary.skipped += 1;
         summary.capturedFrom[captured.from] += 1;
         summary.capturedConfidence[captured.confidence] += 1;
+        continue;
+      }
+      if (trashIds.all.has(id)) {
+        summary.trashIgnored += 1;
+        output.log(`[media-archive] 휴지통 제외: ${relativeInbox} (${id})`);
         continue;
       }
       if (dryRun) {
@@ -895,6 +962,27 @@ export async function runMediaArchive({
       for (const directory of cleanup) {
         try {
           await noSymlinks(join(mediaRoot, 'Trash'), directory);
+          const pendingIds = new Set();
+          const items = (await trashRecords(join(directory, 'manifest.jsonl'), join(mediaRoot, 'Trash')))
+            .filter(({ record }) => {
+              const id = record.id.toLowerCase();
+              if (trashIds.purged.has(id) || pendingIds.has(id)) return false;
+              pendingIds.add(id);
+              return true;
+            });
+          if (items.length) {
+            const purged = join(mediaRoot, 'Trash', 'purged.jsonl');
+            await noSymlinks(join(mediaRoot, 'Trash'), purged);
+            let previous = '';
+            try { previous = await fs.readFile(purged, 'utf8'); }
+            catch (error) { if (error.code !== 'ENOENT') throw error; }
+            await fs.appendFile(purged, (previous && !previous.endsWith('\n') ? '\n' : '')
+              + items.map(({ record, trashPath }) => JSON.stringify({
+              id: record.id, kind: record.kind, inboxPath: record.inboxPath, trashPath,
+              purgedAt: kstIso(now),
+            })).join('\n') + '\n');
+            for (const id of pendingIds) trashIds.purged.add(id);
+          }
           await fs.rm(directory, { recursive: true });
           summary.cleanedTrash += 1;
         } catch (error) {
@@ -906,7 +994,7 @@ export async function runMediaArchive({
     }
   }
   if (trashSkipped.length) output.log(`[media-archive] 통화 휴지통 ${trashSkipped.join(' / ')}`);
-  output.log(`[media-archive] ${dryRun ? 'dry-run ' : ''}새로 보관 ${summary.archived}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}; 근거 exif ${summary.capturedFrom.exif}, filename ${summary.capturedFrom.filename}, mtime ${summary.capturedFrom.mtime}; 판정 confirmed ${summary.capturedConfidence.confirmed}, single ${summary.capturedConfidence.single}, estimated ${summary.capturedConfidence.estimated}, review ${summary.capturedConfidence.review}; 휴지통 ${summary.trashedNew + summary.trashedExisting + summary.trashedOrphan}(새 ${summary.trashedNew}·기존 ${summary.trashedExisting}·고아 이동 ${summary.trashedOrphan}), 고아 통화 ${summary.orphanCalls}건, 휴지통 정리 ${summary.cleanedTrash}폴더`);
+  output.log(`[media-archive] ${dryRun ? 'dry-run ' : ''}새로 보관 ${summary.archived}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}; 근거 exif ${summary.capturedFrom.exif}, filename ${summary.capturedFrom.filename}, mtime ${summary.capturedFrom.mtime}; 판정 confirmed ${summary.capturedConfidence.confirmed}, single ${summary.capturedConfidence.single}, estimated ${summary.capturedConfidence.estimated}, review ${summary.capturedConfidence.review}; 휴지통 ${summary.trashedNew + summary.trashedExisting + summary.trashedOrphan}(새 ${summary.trashedNew}·기존 ${summary.trashedExisting}·고아 이동 ${summary.trashedOrphan}), 휴지통 제외 ${summary.trashIgnored}, 고아 통화 ${summary.orphanCalls}건, 휴지통 정리 ${summary.cleanedTrash}폴더`);
   return summary;
 }
 
