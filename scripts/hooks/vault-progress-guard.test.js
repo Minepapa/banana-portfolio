@@ -92,5 +92,6 @@ test('checkStatusField: 제안·성향 Decision은 도메인 집합만 허용', 
 test('checkStatusField: Knowledge는 status가 있으면 Knowledge 집합만 허용하고 없으면 통과', () => {
   assert.equal(checkStatusField({}, '30_Wiki/34_Topics/x.md'), null);
   assert.equal(checkStatusField({ status: '활성' }, '30_Wiki/34_Topics/x.md'), null);
+  assert.equal(checkStatusField({ status: '정본' }, '30_Wiki/34_Topics/x.md'), null);
   assert.match(checkStatusField({ status: '완료' }, '30_Wiki/34_Topics/x.md'), /자유서술/);
 });

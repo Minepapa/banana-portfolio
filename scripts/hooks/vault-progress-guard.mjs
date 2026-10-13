@@ -36,7 +36,7 @@ export { CANONICAL_PROGRESS_VALUES }; // 이 파일을 직접 import하던 기�
 
 export const CANONICAL_STATUS_VALUES = Object.freeze({
   lifecycle: ['예정', '진행중', '차단됨', '완료', '보류', '폐기'],
-  knowledge: ['활성', '비활성', '진행중', '탐색지도', '대체됨'],
+  knowledge: ['활성', '비활성', '진행중', '탐색지도', '대체됨', '초안', '정본', '폐기'],
   strategy: ['결정됨', '실행대기', '보류', '대체됨'],
   proposal: ['대기', '승인', '거부', '대체됨', '체결', '섀도우체결'],
   profile: ['관찰', '승격후보', '확정', '기각'],
