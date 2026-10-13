@@ -210,6 +210,12 @@ test('scripts/jobs·scripts/tools·scripts/lib 전수 — sendTelegram() 호출�
   assert.deepEqual(offenders, [], `표준 포맷터(formatFactsMessage/formatDepartmentMessage)를 안 거치는 sendTelegram() 호출 발견:\n${offenders.join('\n')}`);
 });
 
+test('판단 메시지의 decisions에 문자열 리터럴을 넘기지 않는다', () => {
+  const offenders = listScriptFiles().filter((filePath) =>
+    /\bdecisions\s*:\s*['"`]/.test(stripComments(readFileSync(filePath, 'utf8'))));
+  assert.deepEqual(offenders, []);
+});
+
 test('발송 관문 밖에서 Telegram transport import·호출 또는 Bot API 텍스트 직접 호출 금지', () => {
   const offenders = [];
   for (const filePath of listScriptFiles()) {

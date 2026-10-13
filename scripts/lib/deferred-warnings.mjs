@@ -288,7 +288,7 @@ export async function drainDeferredWarnings({ send, sendCritical = (message) => 
       response = await send({ agent, kind: '판단', topic: '경고', facts,
         conclusion: `밤사이 경고 ${entries.length}건을 정리했습니다.`,
         context: '23:00~07:00 KST에 보류한 경고입니다.',
-        decisions: '미복구 항목을 확인해 주세요.' });
+        decisions: ['미복구 항목을 확인해 주세요.'] });
       if (response?.ok !== true || !Number.isSafeInteger(response.result?.message_id)) {
         const error = new Error('아침 경고 정리 전달 확인 불가');
         if (response?.ok === false) error.confirmedNotSent = true;
@@ -307,7 +307,9 @@ export async function drainDeferredWarnings({ send, sendCritical = (message) => 
           writeAtomic(queueFile, JSON.stringify(queue));
         });
       }
-      logger.error('아침 경고 정리 발송 실패 — 중복 발송 방지를 위해 자동 재시도하지 않음');
+      logger.error(error.confirmedNotSent || error.telegramExplicitRejection
+        ? `아침 경고 정리 발송 실패 — 발송 안 됨, 큐에 되돌림: ${error.message}`
+        : `아침 경고 정리 발송 실패 — 전달 불명, 중복 방지를 위해 자동 재시도하지 않음: ${error.message}`);
       return { status: 'unknown', error };
     }
     await withLock(queueFile, () => {

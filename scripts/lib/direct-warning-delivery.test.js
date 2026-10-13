@@ -7,6 +7,7 @@ import { sendDirectWarning, warningSubjectKey } from './direct-warning-delivery.
 import { readWarningEvents } from './warning-event-journal.mjs';
 import { warningsSignature } from './job-alerts.mjs';
 import { deferWarning, drainDeferredWarnings, isQuietHour, resolveDeferredIssue } from './deferred-warnings.mjs';
+import { renderAgentMessage } from './pantheon-send.mjs';
 
 function setup(t) {
   const dir = mkdtempSync(join(tmpdir(), 'direct-warning-'));
@@ -147,6 +148,23 @@ test('23~07시 KST 경고는 보류하고 07시 요약은 중복 발송하지 �
   assert.match(digest[0].facts[0], /밤사이 경고 1건/);
   assert.match(digest[0].facts[1], /복구됨/);
   assert.equal(readWarningEvents({ rootDir: input.journalRoot }).events.at(-1).deliveryStatus, 'sent');
+});
+
+test('아침 경고 정리는 실제 발송 렌더러를 통과하고 의사결정 항목을 포함한다', async (t) => {
+  const input = setup(t);
+  const queueFile = join(input.journalRoot, '..', 'deferred.json');
+  await deferWarning({ queueFile, agent: 'zeus', detail: '미복구 경고',
+    at: Date.parse('2026-10-11T15:00:00Z') });
+  const rendered = [];
+  const result = await drainDeferredWarnings({ queueFile, now: Date.parse('2026-10-11T22:00:00Z'),
+    send: async (message) => {
+      rendered.push(renderAgentMessage(message));
+      return { ok: true, result: { message_id: 17 } };
+    } });
+  assert.deepEqual(result, { status: 'sent', count: 1 });
+  assert.equal(rendered.length, 1);
+  assert.match(rendered[0], /\[의사결정\][\s\S]*미복구 항목을 확인해 주세요\./);
+  assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')), { pending: [], inFlight: [] });
 });
 
 test('trade-safety와 critical 경고는 밤에도 즉시 발송한다', async (t) => {
