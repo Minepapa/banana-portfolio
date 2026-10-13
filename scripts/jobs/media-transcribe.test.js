@@ -111,6 +111,79 @@ test('분해형 한글 파일명과 연락처·별칭을 정규화해 인물과 
   assert.ok(f.note('2030-01-01 가상별 통화.md').includes('### 09:00'));
 });
 
+test('201 표지 인물만 등장한 녹음은 가족과 201 category를 배열로 쓴다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  // 실제 인물 노트의 category도 201로 시작한다고 가정하며, 인물 이름은 가상값만 쓴다.
+  f.person('가상별', { category: '[[01_Home/201 가상]]' });
+  f.put(1, 'Recordings', '가상별 노래.m4a');
+  await runMediaTranscribe(f.options);
+  const note = f.note('2030-01-01 가상별 노래 녹음.md');
+  assert.deepEqual(parseFrontmatter(note).category,
+    ['[[01_Home/200 가족]]', '[[01_Home/201 미네]]']);
+  assert.match(note, /^category: \["\[\[01_Home\/200 가족\]\]", "\[\[01_Home\/201 미네\]\]"\]$/m);
+});
+
+test('가족 아닌 인물의 녹음은 100 나 category를 쓴다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상동료', { category: '[[01_Home/100 나]]' });
+  f.put(1, 'Recordings', '가상동료 대화.m4a');
+  await runMediaTranscribe(f.options);
+  assert.equal(parseFrontmatter(f.note('2030-01-01 가상동료 대화 녹음.md')).category,
+    '[[01_Home/100 나]]');
+});
+
+test('재작성은 수동 people을 합치고 category를 갱신하며 아테나 필드를 보존한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상동료', { category: '[[01_Home/100 나]]' });
+  f.person('가상가족', { category: '[[01_Home/200 가족]]' });
+  f.put(1, 'Recordings', '가상동료 대화.m4a');
+  await runMediaTranscribe(f.options);
+  const name = '2030-01-01 가상동료 대화 녹음.md';
+  const path = join(f.root, VAULT_REL.mediaConversations, '2030', name);
+  const familyLink = `[[${VAULT_REL.people}/가상가족]]`;
+  const manualFields = [
+    `people: ["${familyLink}", "${familyLink}"]`,
+    'emotions: ["기쁨", "안도"]',
+    'primaryEmotion: "기쁨"',
+    'importance: 4',
+    'mineAge: "가상 나이"',
+    'coreMemory: true',
+    'islands: ["가상 섬"]',
+  ].join('\n');
+  writeFileSync(path, f.note(name).replace(`people: ["[[${VAULT_REL.people}/가상동료]]"]`, manualFields));
+  await runMediaTranscribe({ ...f.options, rewriteNotes: true });
+  let fields = parseFrontmatter(f.note(name));
+  assert.deepEqual(fields.people, [`[[${VAULT_REL.people}/가상동료]]`, familyLink]);
+  assert.equal(fields.category, '[[01_Home/200 가족]]');
+  assert.deepEqual(fields.emotions, ['기쁨', '안도']);
+  assert.equal(fields.primaryEmotion, '기쁨');
+  assert.equal(fields.importance, 4);
+  assert.equal(fields.mineAge, '가상 나이');
+  assert.equal(fields.coreMemory, true);
+  assert.deepEqual(fields.islands, ['가상 섬']);
+
+  writeFileSync(path, f.note(name).replace(/^people: .*$/m, `people: "${familyLink}"`));
+  await runMediaTranscribe({ ...f.options, rewriteNotes: true });
+  fields = parseFrontmatter(f.note(name));
+  assert.deepEqual(fields.people, [`[[${VAULT_REL.people}/가상동료]]`, familyLink]);
+  assert.equal(fields.category, '[[01_Home/200 가족]]');
+});
+
+test('미연결 녹음의 수동 people 한 명도 재작성 category 판정에 쓴다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상아이', { category: '[[01_Home/201 가상]]' });
+  f.put(1, 'Recordings', '무명 녹음.m4a');
+  await runMediaTranscribe(f.options);
+  const name = '2030-01-01 무명 녹음 녹음.md';
+  const path = join(f.root, VAULT_REL.mediaConversations, '2030', name);
+  const childLink = `[[${VAULT_REL.people}/가상아이]]`;
+  writeFileSync(path, f.note(name).replace('people: []', `people: "${childLink}"`));
+  await runMediaTranscribe({ ...f.options, rewriteNotes: true });
+  const fields = parseFrontmatter(f.note(name));
+  assert.deepEqual(fields.people, [childLink]);
+  assert.deepEqual(fields.category, ['[[01_Home/200 가족]]', '[[01_Home/201 미네]]']);
+});
+
 test('연결된 최근 자료, 미연결 최근 자료, 오래된 자료 순으로 정렬한다', () => {
   const rows = [
     { id: 'old', occurred: '2028-01-01T00:00:00+09:00', people: ['가상'] },

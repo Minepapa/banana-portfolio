@@ -244,7 +244,7 @@ function callParticle(label) {
   return code >= 0xAC00 && code <= 0xD7A3 && (code - 0xAC00) % 28 !== 0 ? '과' : '와';
 }
 
-function renderNote(records, transcripts, existing, now) {
+function renderNote(records, transcripts, existing, now, knownPeople) {
   const sorted = [...records].sort((a, b) => Date.parse(a.occurred) - Date.parse(b.occurred) || a.id.localeCompare(b.id));
   const first = sorted[0];
   const prior = existing ? parseFrontmatter(existing) : {};
@@ -274,11 +274,19 @@ function renderNote(records, transcripts, existing, now) {
   const convKind = first.kind === 'Calls' ? '통화'
     : prior.convKind && prior.convKind !== '대면' && prior.convKind !== '녹음'
       ? prior.convKind : recordingKind;
-  const people = [...new Set(sorted.flatMap((record) => record.people))]
-    .map((person) => `[[${VAULT_REL.people}/${person}]]`);
+  const priorPeople = Array.isArray(prior.people) ? prior.people : prior.people ? [prior.people] : [];
+  const people = [...new Set([
+    ...sorted.flatMap((record) => record.people).map((person) => `[[${VAULT_REL.people}/${person}]]`),
+    ...priorPeople,
+  ])];
+  const linkedPeople = knownPeople.filter((person) => people.includes(`[[${VAULT_REL.people}/${person.title}]]`));
+  const familyCategory = linkedPeople.some((person) => person.family)
+    ? `[[${VAULT_REL.homeDir}/200 가족]]` : `[[${VAULT_REL.homeDir}/100 나]]`;
+  const category = first.kind === 'Recordings' && people.length === 1 && linkedPeople[0]?.home201
+    ? [`[[${VAULT_REL.homeDir}/200 가족]]`, `[[${VAULT_REL.homeDir}/201 미네]]`]
+    : familyCategory;
   const fields = {
-    ...prior, type: 'conversation', category: sorted.some((record) => record.family)
-      ? `[[${VAULT_REL.homeDir}/200 가족]]` : `[[${VAULT_REL.homeDir}/100 나]]`,
+    ...prior, type: 'conversation', category,
     description, sensitivity: '개인', created: prior.created || first.occurred.slice(0, 10),
     modified: now.slice(0, 10), occurred: first.occurred, people,
     origin: 'media-transcribe', convKind,
@@ -403,7 +411,7 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
             JSON.parse(readFileSync(record.transcriptPath, 'utf8'))]));
           const absolute = join(root, path);
           const existing = existsSync(absolute) ? readFileSync(absolute, 'utf8') : null;
-          const next = renderNote(complete, transcripts, existing, now.toISOString());
+          const next = renderNote(complete, transcripts, existing, now.toISOString(), people);
           const problems = rules ? checkNote(path, next, rules) : [];
           if (problems.length) throw new Error(`대화 노트 쓰기 관문: ${problems.join('; ')}`);
           mkdirSync(dirname(absolute), { recursive: true });

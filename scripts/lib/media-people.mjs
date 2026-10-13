@@ -52,13 +52,14 @@ export function loadPeople(root, { strict = false } = {}) {
     if (strict && fields.phoneContacts !== undefined && !Array.isArray(fields.phoneContacts)) {
       throw new Error(`인물 노트 연락처 형식 오류: ${filename}`);
     }
+    const categories = Array.isArray(fields.category) ? fields.category : [fields.category];
     return {
       title, contacts: Array.isArray(fields.phoneContacts)
         ? fields.phoneContacts.map((name) => String(name).normalize('NFC')) : [],
       aliases: Array.isArray(fields.aliases)
         ? fields.aliases.map((name) => String(name).normalize('NFC')) : [],
-      family: (Array.isArray(fields.category) ? fields.category : [fields.category])
-        .some((category) => typeof category === 'string' && /\[\[01_Home\/20\d\s/.test(category)),
+      family: categories.some((category) => typeof category === 'string' && /\[\[01_Home\/20\d\s/.test(category)),
+      home201: categories.some((category) => typeof category === 'string' && /\[\[01_Home\/201\s/.test(category)),
     };
   });
 }
