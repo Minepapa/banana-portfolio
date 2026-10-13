@@ -50,6 +50,20 @@ export async function searchMerchant(merchant, lat, lon, { key, fetchImpl = fetc
   const place = result.documents?.[0];
   return place ? { name: place.place_name, category: place.category_group_code } : null;
 }
+export async function searchCategory(category, lat, lon, { key, fetchImpl = fetch } = {}) {
+  if (!key) return null;
+  const url = new URL('https://dapi.kakao.com/v2/local/search/category.json');
+  url.searchParams.set('category_group_code', category);
+  url.searchParams.set('x', String(lon));
+  url.searchParams.set('y', String(lat));
+  url.searchParams.set('radius', '40');
+  url.searchParams.set('sort', 'distance');
+  const response = await fetchImpl(url, { headers: { Authorization: `KakaoAK ${key}` }, signal: AbortSignal.timeout(10_000) });
+  if (!response.ok) throw new Error(`카카오 HTTP ${response.status}`);
+  const place = (await response.json()).documents?.[0];
+  return place ? { name: place.place_name, category: place.category_group_code, distance: Number(place.distance) } : null;
+}
+
 export function createCachedGeocoder({ root, keyPath = KAKAO_KEY_PATH, fetchImpl = fetch } = {}) {
   const path = join(root, VAULT_REL.locationGeocodeCache);
   let failures = 0;
@@ -115,6 +129,15 @@ export function createCachedGeocoder({ root, keyPath = KAKAO_KEY_PATH, fetchImpl
     (key) => regionAt(lat, lon, { key, fetchImpl }));
   geocode.keyword = (merchant, lat, lon) => lookup(`keyword:${merchant}:${lat.toFixed(4)},${lon.toFixed(4)}`,
     (key) => searchMerchant(merchant, lat, lon, { key, fetchImpl }));
+  geocode.nearbyPlace = async (lat, lon) => {
+    const place = await lookup(`poi:${lat.toFixed(4)},${lon.toFixed(4)}`, async (key) => {
+      const categories = ['AT4', 'CT1', 'AD5', 'FD6', 'CE7', 'HP8', 'SC4'];
+      const places = await Promise.all(categories.map((category) => searchCategory(category, lat, lon, { key, fetchImpl })));
+      return places.filter((place) => place && Number.isFinite(place.distance))
+        .sort((a, b) => a.distance - b.distance)[0] ?? null;
+    });
+    return place?.category === 'PS3' ? null : place;
+  };
   geocode.flush = async () => {
     await pending;
     if (dirty) {

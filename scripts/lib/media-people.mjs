@@ -59,7 +59,8 @@ export function loadPeople(root, { strict = false } = {}) {
       return match ? [`[[${match[1]}]]`] : [];
     }))].sort((a, b) => Number(a.match(/\/2(\d{2}) /)[1]) - Number(b.match(/\/2(\d{2}) /)[1]));
     return {
-      title, contacts: Array.isArray(fields.phoneContacts)
+      title, birthday: fields.birthday, anniversaries: Array.isArray(fields.anniversaries) ? fields.anniversaries : [],
+      contacts: Array.isArray(fields.phoneContacts)
         ? fields.phoneContacts.map((name) => String(name).normalize('NFC')) : [],
       aliases: Array.isArray(fields.aliases)
         ? fields.aliases.map((name) => String(name).normalize('NFC')) : [],

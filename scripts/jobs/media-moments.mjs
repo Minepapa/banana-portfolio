@@ -168,6 +168,15 @@ export function render(records, description, existing, now, movedFrom = null, op
   else delete fields.place;
   if (description.address) fields.address = description.address;
   else delete fields.address;
+  if (options.occasions?.length) {
+    fields.occasions = options.occasions;
+    fields.occasionSource = options.occasionSource;
+  } else if (options.source === 'import') {
+    delete fields.occasions;
+    delete fields.occasionSource;
+  }
+  if (options.placeCategory) fields.placeCategory = options.placeCategory;
+  else if (options.source === 'import') delete fields.placeCategory;
   if (movedFrom) fields.movedFrom = [...new Set([
     ...(Array.isArray(previousFields.movedFrom) ? previousFields.movedFrom
       : previousFields.movedFrom ? [previousFields.movedFrom] : []), movedFrom])];
@@ -176,7 +185,7 @@ export function render(records, description, existing, now, movedFrom = null, op
     const path = record[options.pathField || 'archivePath'];
     return `- ${VIDEO.has(extname(path).toLowerCase()) ? '영상' : '사진'}: ${path}`;
   });
-  const generated = `${START}\n# ${day(first)} ${description.summary} 순간\n\n- 시간: ${clock(first)}–${clock(last)}\n- 장소·활동: ${description.summary}${description.address ? `\n- 주소: ${description.address}` : ''}\n- 정보 출처: ${description.source}\n\n## 원본\n\n${lines.join('\n')}\n${END}`;
+  const generated = `${START}\n# ${day(first)} ${description.summary} 순간\n\n- 시간: ${clock(first)}–${clock(last)}\n- 장소·활동: ${description.summary}${description.address ? `\n- 주소: ${description.address}` : ''}${options.occasions?.length ? `\n- 기념일·일정: ${options.occasions.join(' · ')}` : ''}\n- 정보 출처: ${description.source}\n\n## 원본\n\n${lines.join('\n')}\n${END}`;
   return `${frontmatter}${before}${generated}${owner}`;
 }
 

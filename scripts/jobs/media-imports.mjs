@@ -11,6 +11,9 @@ import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { capturedTime, gpsFrom, kstIso } from './media-archive.mjs';
 import { groupTimedRecords, render, timePeriod, titlePlace } from './media-moments.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
+import { listSelectedCalendars, listEventsForRange } from '../lib/google-calendar.mjs';
+import { getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
+import { loadPeople } from '../lib/media-people.mjs';
 import { haversineM, loadPlaces } from '../lib/location-stays.mjs';
 import { parseRegistry, checkNote } from '../lib/vault-registry.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -167,6 +170,71 @@ export function groupImportMoments(records) {
       || a[0].album.localeCompare(b[0].album) || a[0].importPath.localeCompare(b[0].importPath));
 }
 
+export const isDomesticGps = (point) => point.lat >= 33 && point.lat <= 38.7
+  && point.lon >= 124.5 && point.lon <= 131.9;
+
+function observedDay(monthDay, year) {
+  return monthDay === '02-29' && new Date(year, 1, 29).getMonth() !== 1 ? '02-28' : monthDay;
+}
+
+export function anniversariesForDay(date, people) {
+  const year = Number(date.slice(0, 4));
+  const matches = [];
+  for (const person of [...people].sort((a, b) => a.title.localeCompare(b.title, 'ko'))) {
+    if (typeof person.birthday === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(person.birthday)
+      && observedDay(person.birthday.slice(5), year) === date.slice(5)
+      && year >= Number(person.birthday.slice(0, 4))) {
+      matches.push(`${person.title} ${person.birthday === date ? '태어난 날' : '생일'}`);
+    }
+    for (const entry of person.anniversaries ?? []) {
+      const match = String(entry).match(/^(\d{4}-\d{2}-\d{2})\s+(.+)$/);
+      if (!match || year < Number(match[1].slice(0, 4))
+        || observedDay(match[1].slice(5), year) !== date.slice(5)) continue;
+      matches.push(`${match[2]} ${match[1] === date ? '당일' : '기념일'}`);
+    }
+  }
+  return [...new Set(matches)];
+}
+
+function calendarRules(config) {
+  if (!Object.hasOwn(config, 'calendar')) return null;
+  const rules = config.calendar;
+  if (!rules || typeof rules !== 'object' || Array.isArray(rules)
+    || !Number.isInteger(rules.maxAllDayDays) || rules.maxAllDayDays < 0
+    || !Array.isArray(rules.keepKeywords) || !rules.keepKeywords.every((word) => typeof word === 'string' && word.length > 0)
+    || !Array.isArray(rules.excludeKeywords) || !rules.excludeKeywords.every((word) => typeof word === 'string' && word.length > 0)) {
+    throw new Error('import-albums.json calendar 형식 오류');
+  }
+  return rules;
+}
+
+export function calendarOccasions(group, events, rules = null) {
+  const date = dateOf(group[0]);
+  const start = Date.parse(group[0].capturedAt);
+  const end = Date.parse(group.at(-1).capturedAt);
+  const matches = [...events].filter((event) => {
+    if (!event.title?.trim() || event.title === '(제목 없음)' || event.pantheon
+      || /#(?:holiday|contacts|weeknum)@/.test(event.calendarId ?? '')) return false;
+    if (rules) {
+      const title = event.title.toLowerCase();
+      if (rules.excludeKeywords.some((word) => title.includes(word.toLowerCase()))) return false;
+      if (event.allDay && (Date.parse(event.end) - Date.parse(event.start)) / 86_400_000 > rules.maxAllDayDays
+        && !rules.keepKeywords.some((word) => title.includes(word.toLowerCase()))) return false;
+    }
+    if (event.allDay) return event.start <= date && date < event.end;
+    return Date.parse(event.start) <= end + 30 * 60_000
+      && Date.parse(event.end) >= start - 30 * 60_000;
+  }).sort((a, b) => Number(b.allDay) - Number(a.allDay)
+    || Date.parse(a.start) - Date.parse(b.start));
+  return [...new Set(matches.map((event) => clean(event.title)).filter(Boolean))].slice(0, 1);
+}
+
+export function selectOccasions(anniversaries, calendar) {
+  const exact = anniversaries.filter((item) => item.endsWith(' 당일') || item.endsWith(' 태어난 날'));
+  const recurring = exact.length ? [] : anniversaries.filter((item) => item.endsWith(' 기념일') || item.endsWith(' 생일'));
+  return [...new Set([...exact, ...calendar.slice(0, 1), ...recurring])].slice(0, 2);
+}
+
 function existingImportNotes(root, year) {
   const directory = join(root, VAULT_REL.mediaMoments, year);
   const found = new Map();
@@ -182,15 +250,37 @@ function existingImportNotes(root, year) {
 }
 
 export async function runImportMoments({ root = VAULT_PATHS.root, album = null, limit = 300, dryRun = false,
+  noCalendar = false, noPoi = false, calendarFetch = fetch,
+  accessToken = () => getAccessToken({ requiredScopes: CALENDAR_READ_SCOPES }),
   albumsPath = join(root, VAULT_REL.mediaImportAlbums), indexPath = join(root, VAULT_REL.mediaImportsIndex),
   statePath = join(root, VAULT_REL.mediaImportMomentsState),
   geocode = createCachedGeocoder({ root }), places = loadPlaces(root), registryRules,
   write = writeAtomic, output = console, now = new Date().toISOString() } = {}) {
   if (!Number.isInteger(limit) || limit < 0) throw new Error('--limit 양의 정수 오류');
-  const albums = JSON.parse(readFileSync(albumsPath, 'utf8')).albums;
+  const albumsConfig = JSON.parse(readFileSync(albumsPath, 'utf8'));
+  const albums = albumsConfig.albums;
+  const calendar = calendarRules(albumsConfig);
   const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {};
   const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
   const groups = groupImportMoments(jsonLines(indexPath)).filter((group) => !album || group[0].album === album);
+  const people = loadPeople(root);
+  const eventsByYear = new Map();
+  if (!noCalendar && groups.length) {
+    try {
+      const token = await accessToken();
+      const calendars = await listSelectedCalendars({ token, fetchImpl: calendarFetch });
+      for (const year of new Set(groups.map((group) => dateOf(group[0]).slice(0, 4)))) {
+        const firstDay = Date.parse(`${year}-01-01T00:00:00+09:00`);
+        const nextDay = Date.parse(`${Number(year) + 1}-01-01T00:00:00+09:00`);
+        eventsByYear.set(year, await listEventsForRange(
+          new Date(firstDay - 30 * 60_000).toISOString(), new Date(nextDay + 30 * 60_000).toISOString(),
+          { token, fetchImpl: calendarFetch, calendars }));
+      }
+    } catch (error) {
+      eventsByYear.clear();
+      (output.warn ?? output.log).call(output, `[media-imports] 캘린더 미조회: ${String(error.message).replace(/[\r\n]+/g, ' ')}`);
+    }
+  }
   const reserved = new Set(Object.values(state).map((entry) => entry.notePath));
   const discovered = new Map();
   const summary = { created: 0, updated: 0, skipped: 0, unprocessed: 0, examples: [] };
@@ -208,23 +298,33 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
     const gps = group.map((record) => record.gps).find((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lon));
     let place = null;
     let address = null;
+    let placeCategory = null;
     let unresolvedGps = false;
     if (gps) {
       const registered = places.filter((entry) => haversineM(entry, gps) <= (entry.radius ?? 150))
         .sort((a, b) => haversineM(a, gps) - haversineM(b, gps))[0];
       if (registered) place = registered.name;
-      else if (!dryRun) {
+      else if (!dryRun && isDomesticGps(gps)) {
+        const nearby = !noPoi ? await geocode.nearbyPlace?.(gps.lat, gps.lon) : null;
         const found = await geocode(gps.lat, gps.lon);
         address = found?.address || null;
-        place = found?.buildingName || address;
-      } else unresolvedGps = true;
+        place = nearby?.name || found?.buildingName || address;
+        placeCategory = nearby?.name ? nearby.category : null;
+      } else if (dryRun && isDomesticGps(gps)) unresolvedGps = true;
     }
-    const period = timePeriod(Date.parse(first.capturedAt));
-    const summaryText = clean([config.label, titlePlace(place, address)].filter(Boolean).join(' · '))
-      || period;
-    const title = config.label && !place ? clean(`${config.label} ${period}`) : summaryText;
-    const description = { summary: title, place, address, source: gps ? 'gps' : 'time' };
     const date = dateOf(first);
+    const anniversaries = anniversariesForDay(date, people);
+    const calendarMatches = calendarOccasions(group, eventsByYear.get(date.slice(0, 4)) ?? [], calendar);
+    const occasions = selectOccasions(anniversaries, calendarMatches);
+    const period = timePeriod(Date.parse(first.capturedAt));
+    const titleParts = () => [config.label, ...occasions, titlePlace(place, address)].filter(Boolean).join(' · ');
+    const title = clean(titleParts() + (!place && !occasions.length && config.label ? ` ${period}` : '') || period);
+    const occasionSource = [...new Set([
+      ...(occasions.some((item) => anniversaries.includes(item)) ? ['anniversary'] : []),
+      ...(occasions.some((item) => calendarMatches.includes(item)) ? ['calendar'] : []),
+    ])];
+    const description = { summary: title, place, address,
+      source: place ? 'gps' : occasionSource[0] || 'time' };
     const directory = `${VAULT_REL.mediaMoments}/${date.slice(0, 4)}`;
     const base = `${date} ${title} 순간`;
     if (!discovered.has(date.slice(0, 4))) discovered.set(date.slice(0, 4), existingImportNotes(root, date.slice(0, 4)));
@@ -246,7 +346,8 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
     const existing = oldRel ? readFileSync(oldPath, 'utf8') : null;
     const next = render(group, description, existing, now,
       oldRel && oldRel !== rel ? oldRel : interruptedMoveFrom,
-      { category: config.category, source: 'import', album: first.album, albumLabel: config.label, pathField: 'importPath' });
+      { category: config.category, source: 'import', album: first.album, albumLabel: config.label,
+        pathField: 'importPath', occasions, occasionSource, placeCategory });
     if (existing && next.replace(/^modified:.*$/m, '') === existing.replace(/^modified:.*$/m, '')) {
       if (!dryRun && (!state[first.id] || state[first.id].notePath !== rel
         || JSON.stringify(state[first.id].mediaIds) !== JSON.stringify(group.map((record) => record.id)))) {
@@ -292,13 +393,14 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const album = args.find((arg) => arg.startsWith('--album='))?.slice(8);
   const rawLimit = args.find((arg) => arg.startsWith('--limit='))?.slice(8);
   const limit = rawLimit === undefined ? 300 : Number(rawLimit);
-  const usage = 'usage: node scripts/jobs/media-imports.mjs [--index] [--moments] [--album=이름] [--limit=n] [--dry-run]';
+  const usage = 'usage: node scripts/jobs/media-imports.mjs [--index] [--moments] [--album=이름] [--limit=n] [--dry-run] [--no-calendar] [--no-poi]';
   if ((!stages.index && !stages.moments) || !Number.isInteger(limit) || limit < 0
-    || args.some((arg) => !['--index', '--moments', '--dry-run'].includes(arg)
+    || args.some((arg) => !['--index', '--moments', '--dry-run', '--no-calendar', '--no-poi'].includes(arg)
       && !arg.startsWith('--album=') && !arg.startsWith('--limit='))) {
     console.error(usage); process.exitCode = 2;
   } else (async () => {
     if (stages.index) await indexImports({ album, dryRun: args.includes('--dry-run') });
-    if (stages.moments) await runImportMoments({ album, limit, dryRun: args.includes('--dry-run') });
+    if (stages.moments) await runImportMoments({ album, limit, dryRun: args.includes('--dry-run'),
+      noCalendar: args.includes('--no-calendar'), noPoi: args.includes('--no-poi') });
   })().catch((error) => { console.error(`[media-imports] ${error.stack}`); process.exitCode = 1; });
 }

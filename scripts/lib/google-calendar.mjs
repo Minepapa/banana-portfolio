@@ -51,6 +51,22 @@ export async function listSelectedCalendars({ token, fetchImpl = fetch }) {
   return items.filter((item) => item.selected === true).map(({ id, summary, primary }) => ({ id, summary, primary: primary === true }));
 }
 
+export async function listEventsForRange(timeMin, timeMax, { token, fetchImpl = fetch, calendars } = {}) {
+  const selected = calendars ?? await listSelectedCalendars({ token, fetchImpl });
+  const events = [];
+  for (const calendar of selected) {
+    const items = await getPages(`/calendars/${encodeURIComponent(calendar.id)}/events`, {
+      token, fetchImpl,
+      params: { timeMin, timeMax, singleEvents: 'true', orderBy: 'startTime' },
+    });
+    events.push(...items.filter((item) => item.status !== 'cancelled').map((item) => ({
+      ...normalizeEvent(item, calendar.summary, calendar.id),
+      pantheon: item.extendedProperties?.private?.pantheon === '1',
+    })));
+  }
+  return events;
+}
+
 export function normalizeEvent(raw, calendarSummary, calendarId = null) {
   const allDay = !!raw.start?.date;
   return {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { indexImports, groupImportMoments, runImportMoments } from './media-imports.mjs';
+import { indexImports, groupImportMoments, runImportMoments, isDomesticGps, anniversariesForDay, calendarOccasions, selectOccasions } from './media-imports.mjs';
 
 function fixture(t, albums = { A: { label: '미네', category: '201 미네', priority: 2, years: [2017, 2017] },
   B: { label: null, category: '100 나', priority: 1 } }) {
@@ -35,8 +35,87 @@ function fixture(t, albums = { A: { label: '미네', category: '201 미네', pri
     return path;
   }
   const records = () => readFileSync(join(root, VAULT_REL.mediaImportsIndex), 'utf8').trim().split('\n').map(JSON.parse);
-  return { root, mediaRoot, add, records, output, metadataForFiles, geocode, registryRules };
+  return { root, mediaRoot, add, records, output, metadataForFiles, geocode, registryRules, noCalendar: true };
 }
+
+test('국내 좌표 경계와 기념일·윤일·여러 인물', () => {
+  assert.equal(isDomesticGps({ lat: 33, lon: 124.5 }), true);
+  assert.equal(isDomesticGps({ lat: 38.7, lon: 131.9 }), true);
+  assert.equal(isDomesticGps({ lat: 39, lon: 127 }), false);
+  const people = [{ title: '휘영', birthday: '2016-02-29', anniversaries: ['2016-02-29 결혼'] },
+    { title: '미네', birthday: '2016-02-29', anniversaries: ['2016-02-29 결혼'] }];
+  assert.deepEqual(anniversariesForDay('2016-02-29', people), ['미네 태어난 날', '결혼 당일', '휘영 태어난 날']);
+  assert.deepEqual(anniversariesForDay('2017-02-28', people), ['미네 생일', '결혼 기념일', '휘영 생일']);
+});
+
+test('캘린더 종일·시간 겹침과 제외 규칙', () => {
+  const group = [{ capturedAt: '2017-05-03T15:00:00+09:00' }, { capturedAt: '2017-05-03T15:10:00+09:00' }];
+  const events = [
+    { title: '종일', allDay: true, start: '2017-05-03', end: '2017-05-04' },
+    { title: '종일', allDay: true, start: '2017-05-03', end: '2017-05-04' },
+    { title: '가까운 일정', allDay: false, start: '2017-05-03T15:40:00+09:00', end: '2017-05-03T16:00:00+09:00' },
+    { title: '먼 일정', allDay: false, start: '2017-05-03T15:41:00+09:00', end: '2017-05-03T16:00:00+09:00' },
+    { title: '공휴일', allDay: true, start: '2017-05-03', end: '2017-05-04', calendarId: 'ko#holiday@group' },
+    { title: '봇', allDay: true, start: '2017-05-03', end: '2017-05-04', pantheon: true },
+  ];
+  assert.deepEqual(calendarOccasions(group, events), ['종일']);
+  assert.deepEqual(calendarOccasions(group, events.filter((event) => !event.allDay)), ['가까운 일정']);
+});
+
+test('캘린더 설정은 긴 종일 일정을 거르고 여행을 유지하며 제외어를 우선한다', () => {
+  const group = [{ capturedAt: '2017-05-03T15:00:00+09:00' }];
+  const rules = { maxAllDayDays: 3, keepKeywords: ['여행'], excludeKeywords: ['회의', 'class'] };
+  const allDay = (title) => ({ title, allDay: true, start: '2017-05-01', end: '2017-05-06' });
+  assert.deepEqual(calendarOccasions(group, [allDay('봄 방학')], rules), []);
+  assert.deepEqual(calendarOccasions(group, [allDay('가족 여행')], rules), ['가족 여행']);
+  assert.deepEqual(calendarOccasions(group, [allDay('가족 여행 CLASS')], rules), []);
+  assert.deepEqual(calendarOccasions(group, [{ title: '팀 회의', allDay: false,
+    start: '2017-05-03T15:00:00+09:00', end: '2017-05-03T16:00:00+09:00' }], rules), []);
+  assert.deepEqual(calendarOccasions(group, [allDay('봄 방학')]), ['봄 방학']);
+});
+
+test('import-albums.json의 잘못된 calendar 형식을 거부한다', async (t) => {
+  const f = fixture(t);
+  const albumsPath = join(f.root, VAULT_REL.mediaImportAlbums);
+  const original = JSON.parse(readFileSync(albumsPath, 'utf8'));
+  for (const calendar of [null, [], { maxAllDayDays: '3', keepKeywords: [], excludeKeywords: [] },
+    { maxAllDayDays: 3, keepKeywords: ['여행'], excludeKeywords: [5] }]) {
+    writeFileSync(albumsPath, JSON.stringify({ ...original, calendar }));
+    await assert.rejects(runImportMoments({ ...f }), /calendar 형식 오류/);
+  }
+});
+
+test('노트 생성 시 import-albums.json의 calendar 설정을 적용한다', async (t) => {
+  const f = fixture(t);
+  f.add('A', 'IMG_20170503_150000.jpg', 'one');
+  await indexImports({ ...f, hash: async () => 'one' });
+  const albumsPath = join(f.root, VAULT_REL.mediaImportAlbums);
+  const original = JSON.parse(readFileSync(albumsPath, 'utf8'));
+  writeFileSync(albumsPath, JSON.stringify({ ...original,
+    calendar: { maxAllDayDays: 3, keepKeywords: ['여행'], excludeKeywords: ['CLASS'] } }));
+  const calendarFetch = async (url) => ({ ok: true, json: async () => new URL(url).pathname.endsWith('calendarList')
+    ? { items: [{ id: 'personal', selected: true }] }
+    : { items: [
+      { summary: '봄방학', start: { date: '2017-05-01' }, end: { date: '2017-05-06' } },
+      { summary: '여행 class', start: { date: '2017-05-01' }, end: { date: '2017-05-06' } },
+      { summary: '가족 여행', start: { date: '2017-05-01' }, end: { date: '2017-05-06' } },
+    ] } });
+  await runImportMoments({ ...f, noCalendar: false, accessToken: async () => 'fake', calendarFetch });
+  const state = JSON.parse(readFileSync(join(f.root, VAULT_REL.mediaImportMomentsState), 'utf8'));
+  const note = readFileSync(join(f.root, state.one.notePath), 'utf8');
+  assert.deepEqual(parseFrontmatter(note).occasions, ['가족 여행']);
+  assert.match(state.one.notePath, /가족 여행/);
+});
+
+test('당일·태어난 날 우선, 반복 기념 제외, 일정 최대 하나와 전체 최대 둘', () => {
+  assert.deepEqual(selectOccasions(
+    ['첫 만남 기념일', '미네 생일', '결혼 당일'], ['영호랑 데이트', '다른 일정']),
+  ['결혼 당일', '영호랑 데이트']);
+  assert.deepEqual(selectOccasions(['미네 생일', '첫 만남 기념일'], ['영호랑 데이트']),
+    ['영호랑 데이트', '미네 생일']);
+  assert.deepEqual(selectOccasions(['미네 태어난 날', '결혼 당일', '휘영 태어난 날'], ['영호랑 데이트']),
+    ['미네 태어난 날', '결혼 당일']);
+});
 
 test('설정에 없는 앨범을 거부하고 Imports 파일을 건드리지 않는다', async (t) => {
   const f = fixture(t);
@@ -171,8 +250,9 @@ test('등록 장소를 먼저 쓰고, 미등록 GPS만 주소 변환하며 dry-r
   rows[1].gps = { lat: 38, lon: 128 };
   writeFileSync(indexPath, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
   let calls = 0;
+  let poiCalls = 0;
   const geocode = Object.assign(async () => { calls += 1; return { address: '서울시 중구 을지로', buildingName: '카페' }; },
-    { flush: async () => {} });
+    { nearbyPlace: async () => { poiCalls += 1; return null; }, flush: async () => {} });
   const places = [{ lat: 37, lon: 127, name: '집', radius: 150 }];
   const preview = await runImportMoments({ ...f, dryRun: true, geocode, places });
   assert.equal(calls, 0);
@@ -180,6 +260,7 @@ test('등록 장소를 먼저 쓰고, 미등록 GPS만 주소 변환하며 dry-r
   assert.ok(preview.examples.some((name) => name.includes('GPS 주소 미확인')));
   const result = await runImportMoments({ ...f, geocode, places });
   assert.equal(calls, 1);
+  assert.equal(poiCalls, 1);
   assert.equal(result.created, 2);
   assert.ok(result.examples.some((name) => name.includes('미네 · 카페')));
 });
@@ -209,4 +290,139 @@ test('노트 이동 뒤 상태 쓰기가 끊겨도 momentId로 복구하고 이�
   await runImportMoments({ ...f, places: [] });
   const newState = JSON.parse(readFileSync(statePath, 'utf8'));
   assert.doesNotMatch(readFileSync(join(f.root, newState.one.notePath), 'utf8'), /^albumLabel:/m);
+});
+
+test('POI·기념일·일정 제목과 머리말, 기존 노트 이동을 함께 반영한다', async (t) => {
+  const f = fixture(t);
+  f.add('A', 'IMG_20170503_150000.jpg', 'one');
+  await indexImports({ ...f, hash: async () => 'one' });
+  const indexPath = join(f.root, VAULT_REL.mediaImportsIndex);
+  const rows = f.records();
+  rows[0].gps = { lat: 37, lon: 127 };
+  writeFileSync(indexPath, `${JSON.stringify(rows[0])}\n`);
+  await runImportMoments({ ...f, places: [] });
+  const statePath = join(f.root, VAULT_REL.mediaImportMomentsState);
+  const oldRel = JSON.parse(readFileSync(statePath, 'utf8')).one.notePath;
+  const peoplePath = join(f.root, VAULT_REL.people);
+  mkdirSync(peoplePath, { recursive: true });
+  writeFileSync(join(peoplePath, '미네.md'), '---\nbirthday: "2017-05-03"\nanniversaries: ["2017-05-03 결혼"]\n---\n');
+  let poiCalls = 0;
+  let addressCalls = 0;
+  const geocode = Object.assign(async () => { addressCalls += 1; return { buildingName: '건물', address: '서울시 중구 을지로' }; }, {
+    nearbyPlace: async () => { poiCalls += 1; return { name: '카페', category: 'CE7', distance: 5 }; },
+    flush: async () => {},
+  });
+  const urls = [];
+  const calendarFetch = async (url) => {
+    const parsed = new URL(url);
+    urls.push(parsed);
+    if (parsed.pathname.endsWith('calendarList')) return { ok: true, json: async () => ({ items: [{ id: 'personal', summary: '개인', selected: true }] }) };
+    return { ok: true, json: async () => ({ items: [{ summary: '여행', start: { date: '2017-05-03' }, end: { date: '2017-05-04' } }] }) };
+  };
+  const result = await runImportMoments({ ...f, noCalendar: false, accessToken: async () => 'fake', calendarFetch,
+    geocode, places: [] });
+  assert.equal(result.updated, 1);
+  assert.equal(poiCalls, 1);
+  assert.equal(addressCalls, 1);
+  assert.equal(urls.filter((url) => url.pathname.endsWith('/events')).length, 1);
+  const newRel = JSON.parse(readFileSync(statePath, 'utf8')).one.notePath;
+  assert.notEqual(newRel, oldRel);
+  assert.equal(existsSync(join(f.root, oldRel)), false);
+  const note = readFileSync(join(f.root, newRel), 'utf8');
+  const fields = parseFrontmatter(note);
+  assert.equal(fields.place, '카페');
+  assert.equal(fields.address, '서울시 중구 을지로');
+  assert.equal(fields.placeCategory, 'CE7');
+  assert.deepEqual(fields.occasions, ['미네 태어난 날', '결혼 당일']);
+  assert.deepEqual(fields.occasionSource, ['anniversary']);
+  assert.deepEqual(fields.movedFrom, [oldRel]);
+  assert.match(note, /기념일·일정: 미네 태어난 날 · 결혼 당일/);
+  assert.match(newRel, /미네 · 미네 태어난 날 · 결혼 당일 · 카페/);
+});
+
+test('2016-02-20 결혼식은 반복 기념일을 빼고 당일과 일정만 제목·머리말에 쓴다', async (t) => {
+  const f = fixture(t, { A: { label: '결혼 웨딩사진', category: '100 나', priority: 1, years: [2016, 2016] } });
+  f.add('A', 'IMG_20160220_150000.jpg', 'wedding');
+  const metadataForFiles = async (files) => new Map(files.map((file) => [file.path,
+    { DateTimeOriginal: '2016:02:20 15:00:00' }]));
+  await indexImports({ ...f, metadataForFiles, hash: async () => 'wedding' });
+  const indexPath = join(f.root, VAULT_REL.mediaImportsIndex);
+  const [record] = f.records();
+  writeFileSync(indexPath, `${JSON.stringify({ ...record, gps: { lat: 35.85, lon: 128.6 } })}\n`);
+  const peoplePath = join(f.root, VAULT_REL.people);
+  mkdirSync(peoplePath, { recursive: true });
+  writeFileSync(join(peoplePath, '나.md'), '---\nanniversaries: ["2015-02-20 첫 만남", "2016-02-20 결혼"]\n---\n');
+  const calendarFetch = async (url) => ({ ok: true, json: async () => new URL(url).pathname.endsWith('calendarList')
+    ? { items: [{ id: 'personal', selected: true }] }
+    : { items: [{ summary: '영호랑 데이트', start: { date: '2016-02-20' }, end: { date: '2016-02-21' } },
+      { summary: '다른 일정', start: { date: '2016-02-20' }, end: { date: '2016-02-21' } }] } });
+  await runImportMoments({ ...f, noCalendar: false, accessToken: async () => 'fake', calendarFetch,
+    places: [{ lat: 35.85, lon: 128.6, name: '수성구 두산동 일대', radius: 150 }] });
+  const state = JSON.parse(readFileSync(join(f.root, VAULT_REL.mediaImportMomentsState), 'utf8'));
+  const notePath = state.wedding.notePath;
+  const note = readFileSync(join(f.root, notePath), 'utf8');
+  assert.match(notePath, /2016-02-20 결혼 웨딩사진 · 결혼 당일 · 영호랑 데이트 · 수성구 두산동 일대 순간\.md$/);
+  assert.deepEqual(parseFrontmatter(note).occasions, ['결혼 당일', '영호랑 데이트']);
+  assert.match(note, /기념일·일정: 결혼 당일 · 영호랑 데이트/);
+  assert.doesNotMatch(note, /첫 만남 기념일|다른 일정/);
+});
+
+test('해외 GPS는 카카오를 건너뛰고 시간 출처를 쓰며 캘린더 실패 후에도 기념일을 쓴다', async (t) => {
+  const f = fixture(t);
+  f.add('A', 'IMG_20170503_150000.jpg', 'one');
+  await indexImports({ ...f, hash: async () => 'one' });
+  const indexPath = join(f.root, VAULT_REL.mediaImportsIndex);
+  const rows = f.records();
+  rows[0].gps = { lat: 48, lon: 2 };
+  writeFileSync(indexPath, `${JSON.stringify(rows[0])}\n`);
+  const geocode = Object.assign(async () => { throw Error('해외 주소 호출'); }, {
+    nearbyPlace: async () => { throw Error('해외 POI 호출'); }, flush: async () => {},
+  });
+  await runImportMoments({ ...f, geocode, places: [] });
+  const statePath = join(f.root, VAULT_REL.mediaImportMomentsState);
+  const firstState = JSON.parse(readFileSync(statePath, 'utf8'));
+  assert.equal(parseFrontmatter(readFileSync(join(f.root, firstState.one.notePath), 'utf8')).infoSource, 'time');
+  const peoplePath = join(f.root, VAULT_REL.people);
+  mkdirSync(peoplePath, { recursive: true });
+  writeFileSync(join(peoplePath, '미네.md'), '---\nbirthday: "2017-05-03"\n---\n');
+  const warnings = [];
+  const output = { log() {}, warn: (line) => warnings.push(line) };
+  await runImportMoments({ ...f, geocode, output, places: [], noCalendar: false,
+    accessToken: async () => { throw Error('토큰 없음'); } });
+  assert.deepEqual(warnings, ['[media-imports] 캘린더 미조회: 토큰 없음']);
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  const note = readFileSync(join(f.root, state.one.notePath), 'utf8');
+  assert.equal(parseFrontmatter(note).infoSource, 'anniversary');
+  assert.match(state.one.notePath, /미네 · 미네 태어난 날 순간/);
+});
+
+test('한 연도 두 순간은 일정 범위를 한 번 읽고 no-poi는 주소로 대체한다', async (t) => {
+  const f = fixture(t);
+  f.add('A', 'IMG_20170503_150000.jpg', 'one');
+  f.add('A', 'IMG_20170503_190000.jpg', 'two');
+  await indexImports({ ...f, hash: async (path) => path.includes('190000') ? 'two' : 'one' });
+  const indexPath = join(f.root, VAULT_REL.mediaImportsIndex);
+  const rows = f.records().map((row) => ({ ...row, gps: { lat: 37, lon: 127 } }));
+  writeFileSync(indexPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
+  let poiCalls = 0;
+  const geocode = Object.assign(async () => ({ buildingName: '건물', address: '서울시 중구 을지로' }), {
+    nearbyPlace: async () => { poiCalls += 1; return { name: '카페', category: 'CE7' }; }, flush: async () => {},
+  });
+  const urls = [];
+  const calendarFetch = async (url) => {
+    const parsed = new URL(url);
+    urls.push(parsed);
+    return { ok: true, json: async () => parsed.pathname.endsWith('calendarList')
+      ? { items: [{ id: 'personal', selected: true }] } : { items: [] } };
+  };
+  await runImportMoments({ ...f, noCalendar: false, noPoi: true, accessToken: async () => 'fake',
+    calendarFetch, geocode, places: [] });
+  assert.equal(urls.filter((url) => url.pathname.endsWith('/events')).length, 1);
+  assert.equal(poiCalls, 0);
+  const state = JSON.parse(readFileSync(join(f.root, VAULT_REL.mediaImportMomentsState), 'utf8'));
+  for (const entry of Object.values(state)) {
+    const fields = parseFrontmatter(readFileSync(join(f.root, entry.notePath), 'utf8'));
+    assert.equal(fields.place, '건물');
+    assert.equal(fields.placeCategory, undefined);
+  }
 });

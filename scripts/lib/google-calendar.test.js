@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { listSelectedCalendars, listEventsForKstDay, normalizeEvent, formatEventLine } from './google-calendar.mjs';
+import { listSelectedCalendars, listEventsForKstDay, listEventsForRange, normalizeEvent, formatEventLine } from './google-calendar.mjs';
 
 test('selected calendar와 일정 페이지 처리, 취소 제외, 종일 우선, KST 범위', async () => {
   const requests = [];
@@ -59,4 +59,24 @@ test('정규화한 캘린더 ID와 UID, 공유 일정 표시', () => {
   assert.equal(event.iCalUID, 'uid');
   assert.equal(formatEventLine({ ...event, sharedWith: ['휘영'] }, { owner: '나', showCalendar: false }), '- 종일 가족 모임 (나·휘영 함께)');
   assert.equal(formatEventLine({ ...event, owner: '나', sharedWith: ['휘영'] }, { showCalendar: false }), '- 종일 가족 모임 (나·휘영 함께)');
+});
+
+test('범위 조회는 선택 캘린더를 페이지별로 읽고 취소 일정과 판테온 표식을 구분한다', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    const parsed = new URL(url);
+    calls.push(parsed);
+    assert.equal(parsed.searchParams.get('singleEvents'), 'true');
+    assert.equal(parsed.searchParams.get('timeMin'), '2017-01-01T00:00:00+09:00');
+    if (!parsed.searchParams.has('pageToken')) return { ok: true, json: async () => ({ items: [
+      { summary: '일정', start: { date: '2017-05-03' }, end: { date: '2017-05-04' } },
+      { summary: '취소', status: 'cancelled', start: { date: '2017-05-03' } },
+    ], nextPageToken: 'next' }) };
+    return { ok: true, json: async () => ({ items: [{ summary: '봇', start: { date: '2017-05-03' },
+      end: { date: '2017-05-04' }, extendedProperties: { private: { pantheon: '1' } } }] }) };
+  };
+  const events = await listEventsForRange('2017-01-01T00:00:00+09:00', '2018-01-01T00:00:00+09:00',
+    { token: 'fake', calendars: [{ id: 'one', summary: '개인' }], fetchImpl });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(events.map((event) => [event.title, event.pantheon]), [['일정', false], ['봇', true]]);
 });
