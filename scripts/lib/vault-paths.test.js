@@ -65,7 +65,7 @@ test('5대분류 하위경로가 전부 VAULT_ROOT 밑에 걸린다', () => {
   // telegramSession, Log/ 최초로 코드가 직접 쓰는 경로가 생겨 VAULT_PATHS에 처음
   // 등록됨. 2026-09-04 +implementation·devRequests(weekly-vault-health-check.mjs가
   // progress 필드·"남은 것" 섹션을 읽음))
-  assert.equal(flat.length, 41);
+  assert.equal(flat.length, 42);
   for (const p of flat) assert.ok(p.startsWith(VAULT_ROOT), `${p} should start with ${VAULT_ROOT}`);
 });
 

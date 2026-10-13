@@ -38,9 +38,9 @@ export const TICKERS = { KOSPI: '^KS11', SP500: '^GSPC', TNX: '^TNX', IRX: '^IRX
 
 // export(2026-09-06, "자산분배 트랙 핵심 로직 설계" §4) — monthly-macro-tilt-
 // proposal.mjs가 같은 yfinance 조회를 새로 베끼지 않고 이 함수를 그대로 재사용한다.
-export function fetchCloses() {
+export function fetchCloses(tickers = TICKERS) {
   const py = new URL('../lib/yf-macro.py', import.meta.url).pathname;
-  const r = spawnSync('python3', [py, ...Object.values(TICKERS)], { encoding: 'utf8', timeout: 120000 });
+  const r = spawnSync('python3', [py, ...Object.values(tickers)], { encoding: 'utf8', timeout: 120000 });
   if (r.status !== 0) throw new Error(`yfinance 거시 조회 실패: ${(r.stderr || '').slice(-200)}`);
   return JSON.parse(r.stdout);
 }

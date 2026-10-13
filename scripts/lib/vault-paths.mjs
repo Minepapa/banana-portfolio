@@ -217,6 +217,7 @@ export const VAULT_PATHS = {
     // KST 달력일 하나당 계산 1회만 — 같은 날 여러 무인 잡(Themis·weekly-report·
     // quarterly-review)이 각자 독립 호출하다 서로 다른 수치를 내던 사고 방지.
     macroIndicators: join(VAULT_ROOT, '95_Etna', 'Investing', 'MacroIndicators', 'MacroIndicators.md'),
+    usdkrwBollingerState: join(VAULT_ROOT, '95_Etna', 'Investing', 'MacroIndicators', 'usdkrw-bollinger-state.json'),
     // monthly-macro-tilt-proposal.mjs 전용 Faber 크로스 상태(2026-09-06 신설, "자산분배
     // 트랙 핵심 로직 설계" §4) — daily-asset-allocation-check.mjs가 매 평일 갱신하는
     // State/MacroOverlay(macroOverlay 키)와 의도적으로 분리된 폴더. 같은 파일을 공유하면
