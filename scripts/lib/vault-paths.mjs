@@ -49,6 +49,7 @@ export const VAULT_REL = {
   portfolioKpiTopics: '30_Wiki/34_Topics/PortfolioKPI', // 폴더는 영문 유지, 노트 제목만 한글(2026-10-08)
   inboxRoot: '00_Inbox',
   recordsRoot: '20_Records',
+  recordsNotes: '20_Records/21_Notes',
   inboxIngestProcessed: '95_Etna/Ingest/processed.json',
   inboxIngestPlans: '95_Etna/Ingest/plans',
   clioLog: '60_Logs/Clio',

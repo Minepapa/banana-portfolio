@@ -5,7 +5,8 @@ import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_REL, VAULT_PATHS, vaultAbs } from '../lib/vault-paths.mjs';
 import { readCandidates, saveCandidates, readyCandidate, candidateVisitCount } from '../lib/place-candidates.mjs';
-import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { escapeHtml } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
@@ -32,6 +33,49 @@ export function readPeople() {
 
 export function readOwners() {
   return parseCalendarOwners(readFileSync(vaultAbs(VAULT_REL.calendarOwnersFile), 'utf8'));
+}
+
+export function readUnregisteredVoices(today, dir = vaultAbs(VAULT_REL.inboxRoot),
+  recordsDir = dir === vaultAbs(VAULT_REL.inboxRoot) ? vaultAbs(VAULT_REL.recordsNotes) : null) {
+  const start = Date.parse(`${nextDay(today)}T00:00:00Z`) - 2 * 86_400_000 + 12 * 3_600_000;
+  const end = start + 86_400_000;
+  const files = [];
+  function collect(folder) {
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      const path = join(folder, entry.name);
+      if (entry.isDirectory()) collect(path);
+      else if (entry.isFile() && entry.name.endsWith('.md')) files.push(path);
+    }
+  }
+  collect(dir);
+  if (recordsDir) collect(recordsDir);
+  return files.sort().flatMap((path) => {
+      try {
+        const content = readFileSync(path, 'utf8');
+        const fields = parseFrontmatter(content);
+        const createdAt = Date.parse(fields.capturedAt);
+        if (fields.kind !== '음성' || fields.voiceConfirm !== '확인 대기 → 미등록' || fields.voiceRemindedAt
+          || !Number.isFinite(createdAt) || createdAt <= start || createdAt > end) return [];
+        const transcript = content.split(/^## 전사\s*$/m)[1]?.split(/^정정: /m)[0]?.trim() ?? '';
+        return [{ path, text: transcript.replace(/\s+/g, ' ').slice(0, 60) || '(전사 없음)' }];
+      } catch (error) { console.warn(`음성 노트 읽기 실패 ${path}:`, error.message); return []; }
+    }).slice(0, 5);
+}
+
+export async function markVoiceReminded(voices, at) {
+  for (const voice of voices) {
+    if (!voice.path) continue;
+    try {
+      await withLock(voice.path, () => {
+        const content = readFileSync(voice.path, 'utf8');
+        const fields = parseFrontmatter(content);
+        if (fields.kind !== '음성' || fields.voiceRemindedAt) return;
+        const updated = `${updateFrontmatter(content, { voiceRemindedAt: at })}${content.slice(content.indexOf('\n---\n') + 5)}`;
+        if (readFileSync(voice.path, 'utf8') !== content) throw new Error('음성 노트가 갱신됨');
+        writeAtomic(voice.path, updated);
+      });
+    } catch (error) { console.warn(`음성 알림 기록 실패 ${voice.path}:`, error.message); }
+  }
 }
 
 export function birthdayLines(date, people) {
@@ -82,7 +126,12 @@ export async function runBriefing({ mode, date, preview = false, deps = {} } = {
     catch (error) { console.warn('장소 후보 읽기 실패:', error.message); }
   }
   const requests = candidates.filter((candidate) => candidate.status === '관찰' && readyCandidate(candidate, today)).slice(0, 3);
-  if (selectedMode === 'evening' && !events.length && !calendarError && !requests.length) return { skipped: true, reason: 'no-events' };
+  let unregisteredVoices = [];
+  if (selectedMode === 'evening') {
+    try { unregisteredVoices = await (deps.readUnregisteredVoices ?? readUnregisteredVoices)(today); }
+    catch (error) { console.warn('음성 노트 읽기 실패:', error.message); }
+  }
+  if (selectedMode === 'evening' && !events.length && !calendarError && !requests.length && !unregisteredVoices.length) return { skipped: true, reason: 'no-events' };
   const period = selectedMode === 'morning' ? '오늘 일정' : '내일 일정';
   let groups = null;
   if (events.length) {
@@ -104,18 +153,24 @@ export async function runBriefing({ mode, date, preview = false, deps = {} } = {
     const exampleId = oneLineHtml(requests[0].id);
     sections.push(`■ 장소 등록 요청\n${lines.join('\n')}\n<code>장소 ${exampleId} 이름</code>으로 답하면 등록, <code>장소 ${exampleId} 제외</code>`);
   }
+  if (unregisteredVoices.length) sections.push(`■ 음성으로 받은 일정·할 일 (미등록)\n${unregisteredVoices.map((voice) => `- ${oneLineHtml(voice.text ?? voice)}`).join('\n')}`);
   const body = [`${selectedMode === 'morning' ? '아침 브리핑' : '내일 일정'} (${targetDate})`, ...sections].join('\n\n');
   if (!preview) {
     const message = { agent: SENDER_AGENT, kind: '정보', topic: selectedMode === 'morning' ? '아침 브리핑' : '내일 일정', body };
     const send = deps.send ?? sendAgentMessage;
+    let delivery;
     if (calendarError || birthdayError) {
-      await sendDirectWarning({
+      delivery = await sendDirectWarning({
         message, send, jobName: 'hermes-briefing', warningCode: 'PERSONAL_BRIEFING_SOURCE_FAILED',
         subjectKey: 'source', kind: 'operational', severity: 'medium', journalRoot: deps.journalRoot,
         queueFile: deps.queueFile, clock: () => now.getTime(),
         detail: [calendarError && '캘린더 연결 확인 필요', birthdayError && '생일 정보 조회 실패'].filter(Boolean).join(' | '),
       });
-    } else await send(message);
+    } else delivery = await send(message);
+    if (delivery?.ok === false) throw new Error('브리핑 발송 실패');
+    if (unregisteredVoices.length && !delivery?.deferred) {
+      await (deps.markVoiceReminded ?? markVoiceReminded)(unregisteredVoices, now.toISOString());
+    }
   }
   if (!preview && requests.length) {
     for (const candidate of requests) { candidate.status = '물음'; candidate.askedAt = now.toISOString(); }

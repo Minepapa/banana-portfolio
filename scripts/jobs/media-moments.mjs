@@ -11,6 +11,7 @@ import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
 import { haversineM, loadPlaces } from '../lib/location-stays.mjs';
 import { computeRoute, readRoutePayments, readRoutePoints } from './daily-note.mjs';
+import { linkPhotoMemos } from './media-photo-memos.mjs';
 
 export const MOMENT_GAP_MS = 90 * 60_000;
 export const MOMENT_DISTANCE_M = 1500;
@@ -199,12 +200,16 @@ export function render(records, description, existing, now, movedFrom = null, op
   const before = existing ? existing.slice(frontmatterEnd, existing.indexOf(START)) : '';
   const owner = existing ? existing.slice(existing.indexOf(END) + END.length) : '\n\n## 오너 메모\n\n';
   const created = String(previousFields.created || now).slice(0, 10);
+  const titleSummary = options.titleScene
+    ? clean(titleWithScene(description.summary, { place: description.place, occasions: options.occasions,
+      scene: options.titleScene, period: timePeriod(first) })) : description.summary;
+  const momentTitle = `${day(first)} ${titleSummary} 순간`;
   const fields = {
     ...previousFields,
     type: 'media', category: Array.isArray(options.category)
       ? options.category.map((category) => `[[${VAULT_REL.homeDir}/${category}]]`)
       : `[[${VAULT_REL.homeDir}/${options.category || '100 나'}]]`,
-    description: `${day(first)} ${description.summary} 순간`,
+    description: momentTitle,
     sensitivity: '개인', created, modified: now.slice(0, 10), occurred: records[0].capturedAt,
     origin: `media:${records[0][options.pathField || 'archivePath']}`, mediaCount: records.length,
     momentId: records[0].id,
@@ -244,7 +249,8 @@ export function render(records, description, existing, now, movedFrom = null, op
     const path = record[options.pathField || 'archivePath'];
     return `- ${VIDEO.has(extname(path).toLowerCase()) ? '영상' : '사진'}: ${path}`;
   });
-  const generated = `${START}\n# ${day(first)} ${description.summary} 순간\n\n- 시간: ${clock(first)}–${clock(last)}\n- 장소·활동: ${description.summary}${description.address ? `\n- 주소: ${description.address}` : ''}${options.occasions?.length ? `\n- 기념일·일정: ${options.occasions.join(' · ')}` : ''}${options.vision?.scenes.length ? `\n- 장면: ${options.vision.scenes.join(', ')}` : ''}\n- 정보 출처: ${description.source}\n\n## 원본\n\n${lines.join('\n')}\n${END}`;
+  const memoLinks = Array.isArray(fields.memos) ? fields.memos : [];
+  const generated = `${START}\n# ${momentTitle}\n\n- 시간: ${clock(first)}–${clock(last)}\n- 장소·활동: ${description.summary}${description.address ? `\n- 주소: ${description.address}` : ''}${options.occasions?.length ? `\n- 기념일·일정: ${options.occasions.join(' · ')}` : ''}${options.vision?.scenes.length ? `\n- 장면: ${options.vision.scenes.join(', ')}` : ''}\n- 정보 출처: ${description.source}\n\n## 원본\n\n${lines.join('\n')}${memoLinks.length ? `\n\n${memoLinks.map((link) => `- 📎 메모: ${link}`).join('\n')}` : ''}\n${END}`;
   return `${frontmatter}${before}${generated}${owner}`;
 }
 
@@ -358,6 +364,9 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
       await withLock(statePath, () => write(statePath, `${JSON.stringify(state, null, 2)}\n`));
     }
   }
+  // 이 실행에서 새 순간 노트의 상태를 기록한 다음 연결해야 새 사진도 찾을 수 있다.
+  try { await linkPhotoMemos({ root, state, archive: records, dryRun, now, write, registryRules: rules, output }); }
+  catch (error) { output.log(`[media-moments] 사진 메모 연결 실패: ${String(error.message).split(/[\r\n]/, 1)[0]}`); }
   output.log(`[media-moments] ${dryRun ? 'dry-run ' : ''}새 순간 ${summary.created}, 갱신 ${summary.updated}, 건너뜀 ${summary.skipped}`);
   return summary;
 }

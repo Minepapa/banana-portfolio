@@ -1,9 +1,11 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { birthdayLines, main, runBriefing } from './hermes-briefing.mjs';
+import { birthdayLines, main, runBriefing, readUnregisteredVoices } from './hermes-briefing.mjs';
+import { buildMemo } from '../tools/inbox-memo.mjs';
+import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { readWarningEvents } from '../lib/warning-event-journal.mjs';
 import { deferWarning } from '../lib/deferred-warnings.mjs';
 
@@ -14,12 +16,13 @@ const capture = (sent) => async (message) => {
   sent.push(message);
   return { ok: true, result: { message_id: sent.length } };
 };
+const noVoices = () => [];
 
 const ev = { calendar: '개인', title: '<치과>', start: '2026-10-10T10:00:00+09:00', end: '2026-10-10T11:00:00+09:00', allDay: false, location: 'A&B' };
 
 test('아침 일정과 생일, 저녁 내일 일정, 일정 없는 저녁 미발송', async () => {
   const sent = [];
-  const deps = { fetchEvents: async () => [ev], readOwners: async () => { throw new Error('unavailable'); }, readPeople: async () => [{ name: '<민>', birthday: '1990-10-10' }, { name: '동생', birthday: '2000-10-14' }], send: async (message) => sent.push(message), now: () => new Date('2026-10-10T01:00:00Z') };
+  const deps = { fetchEvents: async () => [ev], readOwners: async () => { throw new Error('unavailable'); }, readPeople: async () => [{ name: '<민>', birthday: '1990-10-10' }, { name: '동생', birthday: '2000-10-14' }], readUnregisteredVoices: noVoices, send: async (message) => sent.push(message), now: () => new Date('2026-10-10T01:00:00Z') };
   const morning = await runBriefing({ deps });
   assert.equal(sent[0].agent, 'hermes');
   assert.equal(sent[0].topic, '아침 브리핑');
@@ -64,7 +67,7 @@ test('07:30 아침 브리핑은 일정 조회 실패와 별개로 보류 경고�
 
 test('일정 조회 권한 실패여도 저녁 연결 경고를 발송한다', async () => {
   const sent = [];
-  const result = await runBriefing({ mode: 'evening', date: '2026-10-11', deps: { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, send: capture(sent), journalRoot, now: warningNow } });
+  const result = await runBriefing({ mode: 'evening', date: '2026-10-11', deps: { fetchEvents: async () => { throw new Error('권한 범위 부족'); }, readUnregisteredVoices: noVoices, send: capture(sent), journalRoot, now: warningNow } });
   assert.equal(result.alert, true);
   assert.match(sent[0].body, /- 캘린더 연결 확인 필요\(google-oauth-setup\)/);
 });
@@ -95,7 +98,7 @@ test('실제 날짜만 허용하고 잘못된 생일은 무시, 2월 29일생은
 
 test('자동 모드는 05~11시·18~23시만 실행한다', async () => {
   const sent = [];
-  const deps = { fetchEvents: async () => [ev], readPeople: async () => [], send: async (message) => sent.push(message) };
+  const deps = { fetchEvents: async () => [ev], readPeople: async () => [], readUnregisteredVoices: noVoices, send: async (message) => sent.push(message) };
   for (const hour of [0, 4, 12, 17]) {
     const result = await runBriefing({ deps: { ...deps, now: () => new Date(`2026-10-10T${String((hour + 15) % 24).padStart(2, '0')}:00:00Z`) } });
     assert.equal(result.reason, 'outside-hours');
@@ -120,6 +123,7 @@ test('소유자별 아침·저녁 일정, 빈 아침과 대응표 실패 폴백'
       { calendarId: 'c@example.com', owner: '미네' },
     ],
     readPeople: async () => [],
+    readUnregisteredVoices: noVoices,
     send: async (message) => sent.push(message),
   };
   const morning = await runBriefing({ mode: 'morning', date: '2026-10-10', deps });
@@ -133,4 +137,94 @@ test('소유자별 아침·저녁 일정, 빈 아침과 대응표 실패 폴백'
   const fallback = await runBriefing({ mode: 'morning', date: '2026-10-10', deps: { ...deps, readOwners: async () => { throw new Error('unavailable'); } } });
   assert.match(fallback.body, /■ 오늘 일정\n- 10:00–11:00/);
   assert.equal(sent.length, 4);
+});
+
+test('저녁에는 오늘의 미등록 음성 최대 5개를 읽고 그 섹션만으로 발송한다', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hermes-voice-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const today = '2026-10-11';
+  for (let index = 0; index < 7; index += 1) {
+    const content = buildMemo(`가상 음성 ${index} <병원>`, { now: new Date('2026-10-10T22:00:00Z'),
+      kind: '음성', voiceDurationSec: 3, transcriptModel: 'fake' });
+    writeFileSync(join(dir, `${today} 070${index} 음성 ${index}.md`), `${updateFrontmatter(content, { voiceConfirm: '확인 대기 → 미등록' })}${content.slice(content.indexOf('\n---\n') + 5)}`);
+  }
+  writeFileSync(join(dir, '2026-10-10 0700 어제.md'), buildMemo('어제', { now: new Date('2026-10-09T22:00:00Z'), kind: '음성' }));
+  const voices = readUnregisteredVoices(today, dir);
+  assert.equal(voices.length, 5);
+  const sent = [];
+  const result = await runBriefing({ mode: 'evening', date: '2026-10-12', deps: {
+    now: () => new Date('2026-10-11T12:00:00Z'), fetchEvents: async () => [], readCandidates: async () => [],
+    readUnregisteredVoices: (date) => readUnregisteredVoices(date, dir), send: capture(sent),
+  } });
+  assert.equal(result.sent, true);
+  assert.equal(sent.length, 1);
+  assert.match(result.body, /■ 음성으로 받은 일정·할 일 \(미등록\)/);
+  assert.match(result.body, /가상 음성 0 &lt;병원&gt;/);
+  assert.doesNotMatch(result.body, /가상 음성 5/);
+  assert.doesNotMatch(result.body, /어제/);
+});
+
+test('전날 21시 이후 음성은 다음 저녁에 Inbox와 Records에서 한 번만 알린다', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'hermes-window-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const inbox = join(root, 'inbox');
+  const records = join(root, 'records', '2030');
+  mkdirSync(inbox);
+  mkdirSync(records, { recursive: true });
+  const add = (folder, title, at) => {
+    const content = buildMemo(title, { now: new Date(at), kind: '음성' });
+    writeFileSync(join(folder, `${title}.md`), `${updateFrontmatter(content,
+      { voiceConfirm: '확인 대기 → 미등록' })}${content.slice(content.indexOf('\n---\n') + 5)}`);
+  };
+  add(inbox, '전날 저녁 후', '2026-10-10T12:01:00Z');
+  add(records, '당일 이관', '2026-10-11T00:00:00Z');
+  add(inbox, '전날 저녁 전', '2026-10-10T11:59:00Z');
+  add(inbox, '다음 창', '2026-10-11T12:01:00Z');
+  assert.deepEqual(readUnregisteredVoices('2026-10-11', inbox, join(root, 'records')).map((voice) => voice.text).sort(),
+    ['당일 이관', '전날 저녁 후']);
+  assert.deepEqual(readUnregisteredVoices('2026-10-12', inbox, join(root, 'records')).map((voice) => voice.text),
+    ['다음 창']);
+});
+
+test('저녁 재실행은 이미 발송한 음성 노트를 다시 알리지 않는다', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hermes-reminded-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const inboxDir = join(dir, 'inbox');
+  const recordsDir = join(dir, 'records');
+  mkdirSync(inboxDir);
+  mkdirSync(recordsDir);
+  const path = join(inboxDir, 'voice.md');
+  const content = buildMemo('저녁 뒤 음성', { now: new Date('2026-10-10T13:00:00Z'), kind: '음성' });
+  writeFileSync(path, `${updateFrontmatter(content, { voiceConfirm: '확인 대기 → 미등록' })}${content.slice(content.indexOf('\n---\n') + 5)}`);
+  const recordsPath = join(recordsDir, 'voice-record.md');
+  const recordContent = buildMemo('옮겨진 음성', { now: new Date('2026-10-11T00:00:00Z'), kind: '음성' });
+  writeFileSync(recordsPath, `${updateFrontmatter(recordContent,
+    { voiceConfirm: '확인 대기 → 미등록' })}${recordContent.slice(recordContent.indexOf('\n---\n') + 5)}`);
+  const sent = [];
+  const deps = { now: () => new Date('2026-10-11T12:00:00Z'), fetchEvents: async () => [],
+    readCandidates: async () => [], readUnregisteredVoices: (date) => readUnregisteredVoices(date, inboxDir, recordsDir),
+    send: capture(sent) };
+  const first = await runBriefing({ mode: 'evening', date: '2026-10-12', deps });
+  assert.equal(first.sent, true);
+  assert.equal(parseFrontmatter(readFileSync(path, 'utf8')).voiceRemindedAt, '2026-10-11T12:00:00.000Z');
+  assert.equal(parseFrontmatter(readFileSync(recordsPath, 'utf8')).voiceRemindedAt, '2026-10-11T12:00:00.000Z');
+  const second = await runBriefing({ mode: 'evening', date: '2026-10-12', deps });
+  assert.equal(second.reason, 'no-events');
+  assert.equal(sent.length, 1);
+  const unsentPath = join(inboxDir, 'unsent.md');
+  writeFileSync(unsentPath, `${updateFrontmatter(content, { voiceConfirm: '확인 대기 → 미등록' })}${content.slice(content.indexOf('\n---\n') + 5)}`);
+  await assert.rejects(() => runBriefing({ mode: 'evening', date: '2026-10-12',
+    deps: { ...deps, send: async () => { throw new Error('발송 실패'); } } }), /발송 실패/);
+  assert.equal(parseFrontmatter(readFileSync(unsentPath, 'utf8')).voiceRemindedAt, undefined);
+});
+
+test('음성 노트 조회 실패는 저녁 브리핑을 중단하지 않는다', async () => {
+  const sent = [];
+  const result = await runBriefing({ mode: 'evening', date: '2026-10-12', deps: {
+    now: () => new Date('2026-10-11T12:00:00Z'), fetchEvents: async () => [ev], readOwners: async () => [],
+    readCandidates: async () => [], readUnregisteredVoices: () => { throw new Error('unavailable'); }, send: capture(sent),
+  } });
+  assert.equal(result.sent, true);
+  assert.equal(sent.length, 1);
+  assert.match(result.body, /■ 기타 — 내일 일정/);
 });

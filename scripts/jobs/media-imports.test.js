@@ -55,6 +55,8 @@ test('Imports Vision 장면은 이름표 뒤 시간대 앞에 넣고 장소·기
   const visionNote = readFileSync(join(f.root, newRel), 'utf8');
   assert.deepEqual(parseFrontmatter(visionNote).movedFrom, [oldRel]);
   assert.equal(parseFrontmatter(visionNote).titleScene, '케이크');
+  assert.match(visionNote, /# 2017-05-03 미네 케이크 오후 순간/);
+  assert.equal(parseFrontmatter(visionNote).description, '2017-05-03 미네 케이크 오후 순간');
   assert.match(visionNote, /- 장소·활동: 미네 오후/);
   assert.doesNotMatch(visionNote, /- 장소·활동: 미네 케이크/);
   assert.equal((await runImportMoments({ ...f, places: [] })).skipped, 1);

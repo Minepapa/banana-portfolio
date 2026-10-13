@@ -197,7 +197,7 @@ function normalizeSpeech(text) {
   return remainder.length > 0;
 }
 
-async function durationSec(path, ffprobePath) {
+export async function durationSec(path, ffprobePath) {
   const { stdout } = await execFileAsync(ffprobePath,
     ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', path],
     { encoding: 'utf8', maxBuffer: 1024 * 1024 });
@@ -207,7 +207,7 @@ async function durationSec(path, ffprobePath) {
   return duration;
 }
 
-async function transcribe(record, { ffmpegPath, ffprobePath, whisperPath, model, temporaryRoot, now }) {
+export async function transcribe(record, { ffmpegPath, ffprobePath, whisperPath, model, temporaryRoot, now }) {
   const duration = await durationSec(record.path, ffprobePath);
   const directory = await fs.mkdtemp(join(temporaryRoot, 'media-transcribe-'));
   const wav = join(directory, `${randomUUID()}.wav`);

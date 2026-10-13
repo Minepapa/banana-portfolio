@@ -18,7 +18,10 @@ export const DEFAULT_VISION_CONFIG = Object.freeze({ labels: {}, ignore: [], min
   utilityTextLength: 80, duplicateWindowSec: 120,
   // VNFeaturePrintObservation의 L2 값은 정규화된 사진 지문의 실측값으로 재보정 전까지
   // 매우 가까운 연사만 묶는 보수적 초기값이다. 삭제/이동 판단에는 쓰지 않는다.
-  duplicateDistance: 0.35 });
+  duplicateDistance: 0.35,
+  // 재압축 실측 전에는 기존 중복 판정 거리와 같은 보수적 상한만 허용한다.
+  // 2026-10-13 재압축 실측: 같은 사진 0.10~0.22, 다른 사진 최소 0.80.
+  memoMatchDistance: 0.35, memoMatchMargin: 0.1 });
 
 function jsonLines(path) {
   return existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
@@ -34,7 +37,9 @@ export function loadVisionConfig(path) {
     || (value.minConfidence !== undefined && (!Number.isFinite(value.minConfidence) || value.minConfidence < 0 || value.minConfidence > 1))
     || (value.utilityTextLength !== undefined && (!Number.isInteger(value.utilityTextLength) || value.utilityTextLength < 0))
     || (value.duplicateWindowSec !== undefined && (!Number.isFinite(value.duplicateWindowSec) || value.duplicateWindowSec < 0))
-    || (value.duplicateDistance !== undefined && (!Number.isFinite(value.duplicateDistance) || value.duplicateDistance < 0))) {
+    || (value.duplicateDistance !== undefined && (!Number.isFinite(value.duplicateDistance) || value.duplicateDistance < 0))
+    || (value.memoMatchDistance !== undefined && (!Number.isFinite(value.memoMatchDistance) || value.memoMatchDistance < 0))
+    || (value.memoMatchMargin !== undefined && (!Number.isFinite(value.memoMatchMargin) || value.memoMatchMargin < 0))) {
     throw new Error('vision-labels.json 형식 오류');
   }
   return { ...DEFAULT_VISION_CONFIG, ...value };
