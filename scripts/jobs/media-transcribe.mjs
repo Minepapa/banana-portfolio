@@ -265,9 +265,15 @@ function renderNote(records, transcripts, existing, now) {
   const after = existing ? existing.slice(existing.indexOf(END) + END.length) : '\n\n## 오너 메모\n\n';
   const total = sorted.reduce((sum, record) => sum + transcripts.get(record.id).durationSec, 0);
   const label = first.kind === 'Calls' ? first.counterpart : first.stem;
+  const datedRecording = first.kind === 'Recordings' && /^\d{4}-\d{2}-\d{2} \S/.test(first.stem);
   const description = first.kind === 'Calls'
     ? `${label}${callParticle(label)} 통화 ${sorted.length}건, 총 ${Math.ceil(total / 60)}분`
-    : `${label} 녹음 ${Math.ceil(total / 60)}분`;
+    : datedRecording ? `${label.slice(11)} ${Math.ceil(total / 60)}분`
+      : `${label} 녹음 ${Math.ceil(total / 60)}분`;
+  const recordingKind = /통화|전화/.test(first.stem) ? '통화' : '녹음';
+  const convKind = first.kind === 'Calls' ? '통화'
+    : prior.convKind && prior.convKind !== '대면' && prior.convKind !== '녹음'
+      ? prior.convKind : recordingKind;
   const people = [...new Set(sorted.flatMap((record) => record.people))]
     .map((person) => `[[${VAULT_REL.people}/${person}]]`);
   const fields = {
@@ -275,7 +281,7 @@ function renderNote(records, transcripts, existing, now) {
       ? `[[${VAULT_REL.homeDir}/200 가족]]` : `[[${VAULT_REL.homeDir}/100 나]]`,
     description, sensitivity: '개인', created: prior.created || first.occurred.slice(0, 10),
     modified: now.slice(0, 10), occurred: first.occurred, people,
-    origin: 'media-transcribe', convKind: first.kind === 'Calls' ? '통화' : '대면',
+    origin: 'media-transcribe', convKind,
   };
   const body = sorted.map((record) => {
     const transcript = transcripts.get(record.id);
@@ -287,7 +293,9 @@ function renderNote(records, transcripts, existing, now) {
       : `### ${minutes}분 ${seconds}초`;
     return `<!-- media-transcribe:id ${record.id} -->\n${heading}\n\n${transcript.speech ? transcript.text : '(음성 없음)'}\n\n원본: ${record.archivePath}`;
   }).join('\n\n');
-  return `${buildFrontmatter(fields)}${before}${START}\n# ${first.occurred.slice(0, 10)} ${label} ${first.kind === 'Calls' ? '통화' : '녹음'}\n\n${body}\n${END}${after}`;
+  const title = datedRecording ? first.stem
+    : `${first.occurred.slice(0, 10)} ${label} ${first.kind === 'Calls' ? '통화' : '녹음'}`;
+  return `${buildFrontmatter(fields)}${before}${START}\n# ${title}\n\n${body}\n${END}${after}`;
 }
 
 export async function runMediaTranscribe({ root = VAULT_PATHS.root,
@@ -296,10 +304,10 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
   statePath = join(root, VAULT_REL.mediaTranscribeState),
   model = DEFAULT_MODEL, ffmpegPath = '/opt/homebrew/bin/ffmpeg',
   ffprobePath = '/opt/homebrew/bin/ffprobe', whisperPath = '/opt/homebrew/bin/whisper-cli',
-  temporaryRoot = tmpdir(), dryRun = false, limit = Infinity, maxMinutes = 50,
+  temporaryRoot = tmpdir(), dryRun = false, rewriteNotes = false, limit = Infinity, maxMinutes = 50,
   now = new Date(), output = console, write = writeAtomic, registryRules } = {}) {
-  if (!Number.isInteger(limit) && limit !== Infinity || limit < 0) throw new Error('--limit 값 오류');
-  if (!Number.isFinite(maxMinutes) || maxMinutes <= 0) throw new Error('--max-minutes 값 오류');
+  if (!rewriteNotes && ((!Number.isInteger(limit) && limit !== Infinity) || limit < 0)) throw new Error('--limit 값 오류');
+  if (!rewriteNotes && (!Number.isFinite(maxMinutes) || maxMinutes <= 0)) throw new Error('--max-minutes 값 오류');
   if (!existsSync(root)) throw new Error('볼트 경로 없음');
   const run = async () => {
     const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { failures: {} };
@@ -307,16 +315,22 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
     const persistedPaths = existingTranscriptPaths(root);
     const people = loadPeople(root);
     const { prepared: records, excludedCalls } = prepareRecords(readIndex(indexPath), people, root, mediaRoot, persistedPaths, model);
+    const rewritePaths = new Set(records.filter((record) => existsSync(record.transcriptPath))
+      .map((record) => record.notePath));
     const available = orderPending(records.filter((record) => (!existsSync(record.transcriptPath) || record.needsRetranscribe)
       && (state.failures[record.id]?.length || 0) < 3), now);
     const done = new Set();
     const buckets = [0, 1, 2].map((group) => ({ group: group + 1, count: 0, durationSec: 0, expectedSec: 0 }));
     const durations = new Map();
-    const summary = { transcribed: 0, silent: 0, failed: 0, created: 0, updated: 0,
+    const summary = { transcribed: 0, silent: 0, failed: 0, created: 0, updated: 0, rewritten: 0,
       remaining: available.length, excludedCalls, buckets, upcoming: [] };
     const start = Date.now();
     const cutoff = now.getTime() - 365 * 24 * 60 * 60_000;
-    if (dryRun) {
+    if (dryRun && rewriteNotes) {
+      summary.remaining = 0;
+      output.log(`[media-transcribe] 재작성 dry-run ${JSON.stringify({ count: rewritePaths.size,
+        paths: [...rewritePaths].slice(0, 10) })}`);
+    } else if (dryRun) {
       for (const record of available) {
         const bucket = buckets[priority(record, cutoff)];
         bucket.count += 1;
@@ -340,15 +354,15 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
         notePath: record.notePath }));
       output.log(`[media-transcribe] dry-run ${JSON.stringify({ buckets, upcoming: summary.upcoming })}`);
     } else {
-      if (!existsSync(model)) throw new Error('Whisper 모델 없음');
-      const changedPaths = new Set();
+      if (!rewriteNotes && !existsSync(model)) throw new Error('Whisper 모델 없음');
+      const changedPaths = new Set(rewriteNotes ? rewritePaths : []);
       const allByPath = new Map();
       for (const record of records) {
         if (!allByPath.has(record.notePath)) allByPath.set(record.notePath, []);
         allByPath.get(record.notePath).push(record);
       }
       const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
-      for (const record of available) {
+      for (const record of rewriteNotes ? [] : available) {
         if (summary.transcribed + summary.failed >= limit || Date.now() - start >= maxMinutes * 60_000) break;
         try {
           const transcript = await transcribe(record, { ffmpegPath, ffprobePath, whisperPath,
@@ -400,14 +414,15 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
           });
           if (existing) summary.updated += 1;
           else summary.created += 1;
+          if (rewriteNotes) summary.rewritten += 1;
         } catch (error) {
           summary.failed += 1;
           output.error(`[media-transcribe] 노트 실패 ${path}: ${error.message}`);
         }
       }
-      summary.remaining = available.filter((record) => !done.has(record.id)).length;
+      summary.remaining = rewriteNotes ? 0 : available.filter((record) => !done.has(record.id)).length;
     }
-    output.log(`[media-transcribe] 전사 ${summary.transcribed}(음성없음 ${summary.silent}), 실패 ${summary.failed}, 노트 생성 ${summary.created}·갱신 ${summary.updated}, 남은 대기 ${summary.remaining}, 미연결 통화 제외 ${summary.excludedCalls}`);
+    output.log(`[media-transcribe] 전사 ${summary.transcribed}(음성없음 ${summary.silent}), 실패 ${summary.failed}, 노트 생성 ${summary.created}·갱신 ${summary.updated}, 재작성 ${summary.rewritten}, 남은 대기 ${summary.remaining}, 미연결 통화 제외 ${summary.excludedCalls}`);
     return summary;
   };
   if (dryRun) return run();
@@ -417,12 +432,13 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
-  const allowed = args.every((arg) => arg === '--dry-run' || /^--(?:limit|max-minutes|model)=.+$/.test(arg));
+  const allowed = args.every((arg) => arg === '--dry-run' || arg === '--rewrite-notes'
+    || /^--(?:limit|max-minutes|model)=.+$/.test(arg));
   const option = (name) => args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
   if (!allowed) {
-    console.error('usage: node scripts/jobs/media-transcribe.mjs [--dry-run] [--limit=N] [--max-minutes=M] [--model=PATH]');
+    console.error('usage: node scripts/jobs/media-transcribe.mjs [--dry-run] [--rewrite-notes] [--limit=N] [--max-minutes=M] [--model=PATH]');
     process.exitCode = 2;
-  } else runMediaTranscribe({ dryRun: args.includes('--dry-run'),
+  } else runMediaTranscribe({ dryRun: args.includes('--dry-run'), rewriteNotes: args.includes('--rewrite-notes'),
     limit: option('limit') === undefined ? Infinity : Number(option('limit')),
     maxMinutes: option('max-minutes') === undefined ? 50 : Number(option('max-minutes')),
     model: option('model') || DEFAULT_MODEL }).catch((error) => {

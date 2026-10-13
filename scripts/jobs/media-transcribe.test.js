@@ -213,6 +213,64 @@ test('날짜로 시작하는 녹음 이름은 그 날짜의 연도 폴더에 접
     `${VAULT_REL.mediaConversations}/2025/2025-09-20 아이 노래 바다.md`);
 });
 
+test('녹음 convKind는 기본 녹음이고 파일명에 통화·전화가 있으면 통화다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '가상 노래.m4a');
+  f.put(2, 'Recordings', '가상 통화 기록.m4a');
+  f.put(3, 'Recordings', '가상 전화 기록.m4a');
+  await runMediaTranscribe(f.options);
+  assert.equal(parseFrontmatter(f.note('2030-01-01 가상 노래 녹음.md')).convKind, '녹음');
+  assert.equal(parseFrontmatter(f.note('2030-01-01 가상 통화 기록 녹음.md')).convKind, '통화');
+  assert.equal(parseFrontmatter(f.note('2030-01-01 가상 전화 기록 녹음.md')).convKind, '통화');
+});
+
+test('날짜 접두 녹음은 본문 제목에 날짜를 반복하지 않고 description에서 날짜를 뺀다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '2025-09-20 가상 노래 바다.m4a');
+  await runMediaTranscribe(f.options);
+  const note = readFileSync(join(f.root, VAULT_REL.mediaConversations, '2025',
+    '2025-09-20 가상 노래 바다.md'), 'utf8');
+  assert.match(note, /<!-- media-transcribe:start -->\n# 2025-09-20 가상 노래 바다\n/);
+  assert.equal(parseFrontmatter(note).description, '가상 노래 바다 2분');
+});
+
+test('재작성은 Whisper와 예산 없이 노트를 갱신하고 수동 convKind·오너 메모를 보존한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '가상 노래.m4a');
+  f.put(2, 'Recordings', '가상 이야기.m4a');
+  f.put(3, 'Recordings', '가상 통화 기록.m4a');
+  await runMediaTranscribe(f.options);
+  const names = ['2030-01-01 가상 노래 녹음.md', '2030-01-01 가상 이야기 녹음.md',
+    '2030-01-01 가상 통화 기록 녹음.md'];
+  const paths = names.map((name) => join(f.root, VAULT_REL.mediaConversations, '2030', name));
+  writeFileSync(paths[0], f.note(names[0]).replace('convKind: "녹음"', 'convKind: "통화"')
+    + '\n가상 오너 메모\n');
+  writeFileSync(paths[1], f.note(names[1]).replace('convKind: "녹음"', 'convKind: "대면"'));
+  writeFileSync(paths[2], f.note(names[2]).replace('convKind: "통화"', 'convKind: "녹음"'));
+  const before = paths.map((path) => readFileSync(path, 'utf8'));
+  const whisperCalls = readFileSync(f.calls, 'utf8');
+  rmSync(f.options.model);
+  const logs = [];
+  const options = { ...f.options, rewriteNotes: true, limit: 0, maxMinutes: 0,
+    whisperPath: join(f.base, 'missing-whisper'),
+    output: { log: (line) => logs.push(line), error() {} } };
+  const dry = await runMediaTranscribe({ ...options, dryRun: true });
+  assert.equal(dry.rewritten, 0);
+  assert.match(logs[0], /"count":3/);
+  assert.ok(logs[0].includes(names[0]));
+  assert.deepEqual(paths.map((path) => readFileSync(path, 'utf8')), before);
+  const result = await runMediaTranscribe(options);
+  assert.equal(result.transcribed, 0);
+  assert.equal(result.rewritten, 3);
+  assert.equal(result.updated, 3);
+  assert.equal(parseFrontmatter(f.note(names[0])).convKind, '통화');
+  assert.equal(parseFrontmatter(f.note(names[1])).convKind, '녹음');
+  assert.equal(parseFrontmatter(f.note(names[2])).convKind, '통화');
+  assert.ok(f.note(names[0]).includes('가상 오너 메모'));
+  assert.equal(readFileSync(f.calls, 'utf8'), whisperCalls);
+  assert.ok(logs.at(-1).includes('재작성 3'));
+});
+
 test('기존 녹음 이름은 발생 날짜와 녹음 접미를 유지한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
   f.put(1, 'Recordings', '아이 노래 바다.m4a');
