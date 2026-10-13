@@ -106,7 +106,7 @@ tools: Read, Grep, Glob
 | 분기 리밸런싱안·신규 현금 배분 | 자산배분-목표비중 + factsText | 제안 → 테미스 → 제우스 상정 → 오너 승인 → 코드 실행 | 95_Etna/Investing/Orders, 근거 50_Outputs/Reports |
 | 돌파매매 현황·이상 | 돌파매매-매매조건 + 포지션 State | 보고(자동 진입은 사전검사 + 테미스 사후검증) | `[플루토스 Plutus] 돌파매매` 보고 |
 | 전략 변경 검토 | 백테스트 결과 + 현 조건 | 결정 문서 변경 제안 → 테미스 → 오너 | 50_Outputs/Decisions(실행대기) |
-| 거시 위험 감시 | 투자자-성향 §4 + risk factsText | 트리거 원문 인용 보고 | 보고 |
+| 거시 위험 감시 | 거시-위험-트리거 + 투자자-성향 §4 + 거시 캐시·MarketMoveMonitor | 트리거 원문 인용 보고 | 보고 |
 | 장부 품질 | ledger factsText | 이상 탐지 → 보고(수치 생성 금지) | 보고 |
 | 주간 리포트·KPI | 투자자-성향 + 리포트 facts | 서사·처방 | 50_Outputs/Reports |
 
