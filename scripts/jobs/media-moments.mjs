@@ -22,7 +22,7 @@ const day = (time) => kst(time).slice(0, 10);
 const clock = (time) => kst(time).slice(11, 16);
 const coordinate = (gps) => gps && Number.isFinite(gps.lat) && Number.isFinite(gps.lon) ? gps : null;
 const clean = (text) => String(text || '').replace(/[\\/:*?"<>|\r\n#^\[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 70);
-const timePeriod = (time) => {
+export const timePeriod = (time) => {
   const hour = Number(clock(time).slice(0, 2));
   return ['새벽', '아침', '낮', '오후', '저녁', '밤'][
     hour < 6 ? 0 : hour < 11 ? 1 : hour < 14 ? 2 : hour < 18 ? 3 : hour < 22 ? 4 : 5];
@@ -33,7 +33,7 @@ const addressLabel = (address) => {
   const area = parts.slice(district + 1).find((part) => /(?:동|읍|면|로|길)$/.test(part));
   return clean([district >= 0 ? parts[district] : null, area].filter(Boolean).join(' ')) || clean(address);
 };
-const titlePlace = (place, address) => address && place === address ? `${addressLabel(address)} 일대` : place;
+export const titlePlace = (place, address) => address && place === address ? `${addressLabel(address)} 일대` : place;
 const cleanRouteLabel = (label) => {
   const value = String(label || '').replace(/^미등록:\s*/, '');
   return value.startsWith('미등록 장소') ? '' : value;
@@ -45,7 +45,11 @@ export function groupMoments(records) {
       && ['confirmed', 'single'].includes(record.capturedConfidence)))
     && typeof record.id === 'string'
     && Number.isFinite(at(record)) && typeof record.archivePath === 'string')
-    .sort((a, b) => at(a) - at(b) || a.id.localeCompare(b.id));
+  return groupTimedRecords(sorted);
+}
+
+export function groupTimedRecords(records) {
+  const sorted = [...records].sort((a, b) => at(a) - at(b) || a.id.localeCompare(b.id));
   const moments = [];
   for (const record of sorted) {
     const current = moments.at(-1);
@@ -131,7 +135,7 @@ export async function describeMoment(records, { root, dryRun, geocode, routeForD
     || timePeriod(first), source: source || (activity ? 'payment' : 'time') };
 }
 
-function render(records, description, existing, now, movedFrom = null) {
+export function render(records, description, existing, now, movedFrom = null, options = {}) {
   const first = at(records[0]);
   const last = at(records.at(-1));
   const prior = existing?.match(new RegExp(`${START}([\\s\\S]*?)${END}`));
@@ -146,13 +150,20 @@ function render(records, description, existing, now, movedFrom = null) {
   const created = String(previousFields.created || now).slice(0, 10);
   const fields = {
     ...previousFields,
-    type: 'media', category: `[[${VAULT_REL.homeDir}/100 나]]`, description: `${day(first)} ${description.summary} 순간`,
+    type: 'media', category: Array.isArray(options.category)
+      ? options.category.map((category) => `[[${VAULT_REL.homeDir}/${category}]]`)
+      : `[[${VAULT_REL.homeDir}/${options.category || '100 나'}]]`,
+    description: `${day(first)} ${description.summary} 순간`,
     sensitivity: '개인', created, modified: now.slice(0, 10), occurred: records[0].capturedAt,
-    origin: `media:${records[0].archivePath}`, mediaCount: records.length,
+    origin: `media:${records[0][options.pathField || 'archivePath']}`, mediaCount: records.length,
     momentId: records[0].id,
     mediaIds: records.map((record) => record.id), startAt: records[0].capturedAt,
     endAt: records.at(-1).capturedAt, infoSource: description.source,
   };
+  if (options.source) fields.source = options.source;
+  if (options.album) fields.album = options.album;
+  if (options.albumLabel) fields.albumLabel = options.albumLabel;
+  else if (options.source === 'import') delete fields.albumLabel;
   if (description.place) fields.place = description.place;
   else delete fields.place;
   if (description.address) fields.address = description.address;
@@ -161,7 +172,10 @@ function render(records, description, existing, now, movedFrom = null) {
     ...(Array.isArray(previousFields.movedFrom) ? previousFields.movedFrom
       : previousFields.movedFrom ? [previousFields.movedFrom] : []), movedFrom])];
   const frontmatter = buildFrontmatter(fields);
-  const lines = records.map((record) => `- ${VIDEO.has(extname(record.archivePath).toLowerCase()) ? '영상' : '사진'}: ${record.archivePath}`);
+  const lines = records.map((record) => {
+    const path = record[options.pathField || 'archivePath'];
+    return `- ${VIDEO.has(extname(path).toLowerCase()) ? '영상' : '사진'}: ${path}`;
+  });
   const generated = `${START}\n# ${day(first)} ${description.summary} 순간\n\n- 시간: ${clock(first)}–${clock(last)}\n- 장소·활동: ${description.summary}${description.address ? `\n- 주소: ${description.address}` : ''}\n- 정보 출처: ${description.source}\n\n## 원본\n\n${lines.join('\n')}\n${END}`;
   return `${frontmatter}${before}${generated}${owner}`;
 }

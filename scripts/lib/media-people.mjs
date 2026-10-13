@@ -53,13 +53,19 @@ export function loadPeople(root, { strict = false } = {}) {
       throw new Error(`인물 노트 연락처 형식 오류: ${filename}`);
     }
     const categories = Array.isArray(fields.category) ? fields.category : [fields.category];
+    const subcategories = [...new Set(categories.flatMap((category) => {
+      if (typeof category !== 'string') return [];
+      const match = category.match(/^\[\[(01_Home\/2(?!00)\d{2} [^\]]+)\]\]$/u);
+      return match ? [`[[${match[1]}]]`] : [];
+    }))].sort((a, b) => Number(a.match(/\/2(\d{2}) /)[1]) - Number(b.match(/\/2(\d{2}) /)[1]));
     return {
       title, contacts: Array.isArray(fields.phoneContacts)
         ? fields.phoneContacts.map((name) => String(name).normalize('NFC')) : [],
       aliases: Array.isArray(fields.aliases)
         ? fields.aliases.map((name) => String(name).normalize('NFC')) : [],
-      family: categories.some((category) => typeof category === 'string' && /\[\[01_Home\/20\d\s/.test(category)),
+      family: categories.some((category) => typeof category === 'string' && /\[\[01_Home\/2\d{2}\s/.test(category)),
       home201: categories.some((category) => typeof category === 'string' && /\[\[01_Home\/201\s/.test(category)),
+      subcategories,
     };
   });
 }

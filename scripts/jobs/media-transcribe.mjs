@@ -244,6 +244,24 @@ function callParticle(label) {
   return code >= 0xAC00 && code <= 0xD7A3 && (code - 0xAC00) % 28 !== 0 ? '과' : '와';
 }
 
+function conversationCategory(linkedPeople) {
+  const subcategories = [...new Set(linkedPeople.flatMap((person) => person.subcategories || []))]
+    .sort((a, b) => Number(a.match(/\/2(\d{2}) /)[1]) - Number(b.match(/\/2(\d{2}) /)[1]));
+  if (subcategories.length) return [`[[${VAULT_REL.homeDir}/200 가족]]`, ...subcategories];
+  return linkedPeople.some((person) => person.family)
+    ? `[[${VAULT_REL.homeDir}/200 가족]]` : `[[${VAULT_REL.homeDir}/100 나]]`;
+}
+
+function linkedPeopleForNote(records, existing, knownPeople) {
+  const prior = existing ? parseFrontmatter(existing) : {};
+  const priorPeople = Array.isArray(prior.people) ? prior.people : prior.people ? [prior.people] : [];
+  const links = new Set([
+    ...records.flatMap((record) => record.people).map((person) => `[[${VAULT_REL.people}/${person}]]`),
+    ...priorPeople,
+  ]);
+  return knownPeople.filter((person) => links.has(`[[${VAULT_REL.people}/${person.title}]]`));
+}
+
 function renderNote(records, transcripts, existing, now, knownPeople) {
   const sorted = [...records].sort((a, b) => Date.parse(a.occurred) - Date.parse(b.occurred) || a.id.localeCompare(b.id));
   const first = sorted[0];
@@ -279,12 +297,7 @@ function renderNote(records, transcripts, existing, now, knownPeople) {
     ...sorted.flatMap((record) => record.people).map((person) => `[[${VAULT_REL.people}/${person}]]`),
     ...priorPeople,
   ])];
-  const linkedPeople = knownPeople.filter((person) => people.includes(`[[${VAULT_REL.people}/${person.title}]]`));
-  const familyCategory = linkedPeople.some((person) => person.family)
-    ? `[[${VAULT_REL.homeDir}/200 가족]]` : `[[${VAULT_REL.homeDir}/100 나]]`;
-  const category = first.kind === 'Recordings' && people.length === 1 && linkedPeople[0]?.home201
-    ? [`[[${VAULT_REL.homeDir}/200 가족]]`, `[[${VAULT_REL.homeDir}/201 미네]]`]
-    : familyCategory;
+  const category = conversationCategory(linkedPeopleForNote(sorted, existing, knownPeople));
   const fields = {
     ...prior, type: 'conversation', category,
     description, sensitivity: '개인', created: prior.created || first.occurred.slice(0, 10),
@@ -401,6 +414,11 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
           ? existing.slice(existing.indexOf(START), existing.indexOf(END)) : '';
         if (persisted.some((record) => !generated.includes(`<!-- media-transcribe:id ${record.id} -->`))) {
           changedPaths.add(path);
+        }
+        if (existing) {
+          const currentCategory = parseFrontmatter(existing).category;
+          const expectedCategory = conversationCategory(linkedPeopleForNote(persisted, existing, people));
+          if (JSON.stringify(currentCategory) !== JSON.stringify(expectedCategory)) changedPaths.add(path);
         }
       }
       for (const path of changedPaths) {

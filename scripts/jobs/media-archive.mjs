@@ -291,7 +291,7 @@ function differenceReason(first, second) {
   return `EXIF·파일명 ${minutes}분 차이`;
 }
 
-function capturedTime(file, metadata) {
+export function capturedTime(file, metadata) {
   const extension = extname(file.path).toLowerCase();
   const video = VIDEO_EXTENSIONS.has(extension);
   const quickTime = QUICKTIME_EXTENSIONS.has(extension);
@@ -338,7 +338,7 @@ function capturedTime(file, metadata) {
     reason: [invalidReason, '수정일뿐'].filter(Boolean).join('·') };
 }
 
-function kstIso(date) {
+export function kstIso(date) {
   // KST는 UTC+09:00이며 DST가 없다.
   return new Date(date.getTime() + 9 * 60 * 60 * 1000).toISOString().replace('Z', '+09:00');
 }
@@ -380,7 +380,7 @@ async function archiveLink(file, destination, sourceHash, link, { sameInodeOnly 
   }
 }
 
-function gpsFrom(metadata) {
+export function gpsFrom(metadata) {
   const lat = Number(metadata?.GPSLatitude);
   const lon = Number(metadata?.GPSLongitude);
   return Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90

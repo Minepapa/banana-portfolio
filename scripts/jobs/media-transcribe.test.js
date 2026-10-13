@@ -114,7 +114,7 @@ test('분해형 한글 파일명과 연락처·별칭을 정규화해 인물과 
 test('201 표지 인물만 등장한 녹음은 가족과 201 category를 배열로 쓴다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
   // 실제 인물 노트의 category도 201로 시작한다고 가정하며, 인물 이름은 가상값만 쓴다.
-  f.person('가상별', { category: '[[01_Home/201 가상]]' });
+  f.person('가상별', { category: '[[01_Home/201 미네]]' });
   f.put(1, 'Recordings', '가상별 노래.m4a');
   await runMediaTranscribe(f.options);
   const note = f.note('2030-01-01 가상별 노래 녹음.md');
@@ -130,6 +130,38 @@ test('가족 아닌 인물의 녹음은 100 나 category를 쓴다', async (t) =
   await runMediaTranscribe(f.options);
   assert.equal(parseFrontmatter(f.note('2030-01-01 가상동료 대화 녹음.md')).category,
     '[[01_Home/100 나]]');
+});
+
+test('통화 휘영과 녹음 미네·휘영의 하위 category를 번호순으로 쓴다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상휘영', { phoneContacts: ['가상휘영'],
+    category: ['[[01_Home/200 가족]]', '[[01_Home/202 휘영]]'] });
+  f.person('가상미네', { category: '[[01_Home/201 미네]]' });
+  f.put(1, 'Calls', '통화 가상휘영_300101_090000.m4a');
+  f.put(2, 'Recordings', '가상미네 가상휘영 대화.m4a');
+  await runMediaTranscribe(f.options);
+  assert.deepEqual(parseFrontmatter(f.note('2030-01-01 가상휘영 통화.md')).category,
+    ['[[01_Home/200 가족]]', '[[01_Home/202 휘영]]']);
+  assert.deepEqual(parseFrontmatter(f.note('2030-01-01 가상미네 가상휘영 대화 녹음.md')).category,
+    ['[[01_Home/200 가족]]', '[[01_Home/201 미네]]', '[[01_Home/202 휘영]]']);
+});
+
+test('일반 재실행에서 기존 category만 바뀌어도 오너 메모를 보존하며 갱신한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상휘영', { phoneContacts: ['가상휘영'], category: '[[01_Home/200 가족]]' });
+  f.put(1, 'Calls', '통화 가상휘영_300101_090000.m4a');
+  await runMediaTranscribe(f.options);
+  const name = '2030-01-01 가상휘영 통화.md';
+  const path = join(f.root, VAULT_REL.mediaConversations, '2030', name);
+  writeFileSync(path, `${f.note(name)}\n오너가 쓴 내용\n`);
+  f.person('가상휘영', { phoneContacts: ['가상휘영'],
+    category: ['[[01_Home/200 가족]]', '[[01_Home/202 휘영]]'] });
+  const result = await runMediaTranscribe(f.options);
+  assert.equal(result.transcribed, 0);
+  assert.equal(result.updated, 1);
+  assert.deepEqual(parseFrontmatter(f.note(name)).category,
+    ['[[01_Home/200 가족]]', '[[01_Home/202 휘영]]']);
+  assert.match(f.note(name), /오너가 쓴 내용/);
 });
 
 test('재작성은 수동 people을 합치고 category를 갱신하며 아테나 필드를 보존한다', async (t) => {
@@ -171,7 +203,7 @@ test('재작성은 수동 people을 합치고 category를 갱신하며 아테나
 
 test('미연결 녹음의 수동 people 한 명도 재작성 category 판정에 쓴다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
-  f.person('가상아이', { category: '[[01_Home/201 가상]]' });
+  f.person('가상아이', { category: '[[01_Home/201 미네]]' });
   f.put(1, 'Recordings', '무명 녹음.m4a');
   await runMediaTranscribe(f.options);
   const name = '2030-01-01 무명 녹음 녹음.md';
@@ -212,7 +244,7 @@ test('통화 description 조사는 받침과 영문 이름에 맞춘다', async 
 
 test('phoneContacts·aliases 연결, 하루 통화 묶음, 시각순, 멱등, 녹음 개별 노트', async (t) => {
   const f = fixture(); t.after(f.cleanup);
-  f.person('가상별', { phoneContacts: ['가상,⭐#1'], aliases: ['별이'], category: '[[01_Home/201 가상]]' });
+  f.person('가상별', { phoneContacts: ['가상,⭐#1'], aliases: ['별이'], category: '[[01_Home/201 미네]]' });
   f.put(1, 'Calls', '통화 가상,⭐#1_300101_120000.m4a');
   f.put(2, 'Calls', '통화 녹음 가상,⭐#1_300101_090000.m4a');
   f.put(3, 'Recordings', '별이 노래.m4a');
@@ -223,7 +255,7 @@ test('phoneContacts·aliases 연결, 하루 통화 묶음, 시각순, 멱등, �
   assert.deepEqual(f.transcript(3).people, ['가상별']);
   const call = f.note('2030-01-01 가상별 통화.md');
   assert.ok(call.indexOf('### 09:00') < call.indexOf('### 12:00'));
-  assert.equal(parseFrontmatter(call).category, '[[01_Home/200 가족]]');
+  assert.deepEqual(parseFrontmatter(call).category, ['[[01_Home/200 가족]]', '[[01_Home/201 미네]]']);
   assert.equal(parseFrontmatter(call).created, '2030-01-01');
   assert.deepEqual(parseFrontmatter(call).people, [`[[${VAULT_REL.people}/가상별]]`]);
   assert.ok(call.includes('원본: Archive/'));
