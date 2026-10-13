@@ -73,6 +73,14 @@ test('[레지스트리 연동] stockTag: 수동 별칭표에 있는 이름 파�
   // 적용된다(resolveCanonicalStockName이 별칭표를 먼저 확인).
   assert.equal(stockTag('삼성전자보통주', NO_REGISTRY), '종목/삼성전자');
   assert.equal(stockTag('하이닉스', NO_REGISTRY), '종목/SK하이닉스');
+  assert.equal(stockTag('KIWOOM 종합채권(AA-)', NO_REGISTRY), '종목/KIWOOM-종합채권AA-이상액티브');
+});
+
+test('buildVaultTags: 잘린 배당 원문 이름은 정식 종목 태그로 치환', () => {
+  assert.deepEqual(
+    buildVaultTags({ stockName: 'KIWOOM 종합채권(AA-)' }, NO_REGISTRY),
+    ['종목/KIWOOM-종합채권AA-이상액티브'],
+  );
 });
 
 test('[레지스트리 연동] stockTag: 레지스트리에도 별칭표에도 없으면 원본 그대로(안전한 폴백)', () => {

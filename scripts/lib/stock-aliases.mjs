@@ -62,6 +62,8 @@ const RAW_ALIASES = {
   // 카카오 정식 장문명(끝이 잘려 "TOP10액티브" 문구 자체가 아예 없음)은 일반
   // "TIGER 리츠부동산인프라" 쪽 — TOP10액티브와 착각해 합치지 않도록 주의.
   '미래에셋 TIGER 리츠부동산인프라혼합자산상장지수투자신탁(재간': 'TIGER 리츠부동산인프라',
+  // 증권사 배당 데이터에서 끝이 잘린 이름 — 원장 stockName은 원문으로 유지.
+  'KIWOOM 종합채권(AA-)': 'KIWOOM 종합채권(AA-이상)액티브',
 };
 
 // canonName 기준 Map — resolveCanonicalStockName이 조회할 실제 테이블.

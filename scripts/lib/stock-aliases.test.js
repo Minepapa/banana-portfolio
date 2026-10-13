@@ -79,6 +79,13 @@ test('[오너 확인 2026-09-05] 미래에셋 TIGER 리츠부동산인프라 혼
   );
 });
 
+test('KIWOOM 종합채권(AA-) 배당 원문 → KIWOOM 종합채권(AA-이상)액티브', () => {
+  assert.equal(
+    MANUAL_STOCK_ALIASES.get(canonName('KIWOOM 종합채권(AA-)')),
+    'KIWOOM 종합채권(AA-이상)액티브',
+  );
+});
+
 test('키는 canonName 기준이라 대소문자·공백 차이는 흡수', () => {
   assert.equal(MANUAL_STOCK_ALIASES.get(canonName('  하이닉스  ')), 'SK하이닉스');
 });
