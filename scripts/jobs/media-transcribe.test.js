@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { parseCallFilename, orderPending, runMediaTranscribe } from './media-transcribe.mjs';
+import { detectRepetition, parseCallFilename, orderPending, runMediaTranscribe } from './media-transcribe.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -16,6 +16,7 @@ const RULES = [{ type: 'conversation', path: `${VAULT_REL.mediaConversations}/{Y
   required: { bundle: ['type', 'category', 'description', 'sensitivity', 'created', 'modified'],
     extra: ['occurred', 'people', 'origin', 'convKind'] } }];
 const ID = (number) => number.toString(16).padStart(16, '0');
+const LOOP = '문경읍이 뭐에요? '.repeat(20).trim();
 
 function fixture() {
   const base = mkdtempSync(join(tmpdir(), 'media-transcribe-test-'));
@@ -28,6 +29,7 @@ function fixture() {
   writeFileSync(model, 'model');
   const calls = join(base, 'calls.txt');
   const response = join(base, 'response.txt');
+  const retryResponse = join(base, 'response-mc0.txt');
   writeFileSync(response, '가상의 대화입니다.');
   const executable = (name, source) => {
     const path = join(binaries, name);
@@ -38,9 +40,12 @@ function fixture() {
   const ffprobePath = executable('ffprobe', `process.stdout.write('61.2\\n');`);
   const ffmpegPath = executable('ffmpeg', `require('node:fs').writeFileSync(process.argv.at(-1), 'wav');`);
   const whisperPath = executable('whisper', `const fs = require('node:fs');
-fs.appendFileSync(${JSON.stringify(calls)}, 'call\\n');
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)) + '\\n');
 const prefix = process.argv[process.argv.indexOf('-of') + 1];
-const lines = fs.readFileSync(${JSON.stringify(response)}, 'utf8').split('\\n');
+const retry = process.argv.includes('-mc');
+const source = retry && fs.existsSync(${JSON.stringify(retryResponse)})
+  ? ${JSON.stringify(retryResponse)} : ${JSON.stringify(response)};
+const lines = fs.readFileSync(source, 'utf8').split('\\n');
 fs.writeFileSync(prefix + '.json', JSON.stringify({ transcription: lines.map((text, index) => ({
   offsets: { from: index * 1000, to: index * 1000 + 900 }, text: ' ' + text })) }));`);
   const indexPath = join(root, VAULT_REL.mediaArchiveIndex);
@@ -64,11 +69,271 @@ fs.writeFileSync(prefix + '.json', JSON.stringify({ transcription: lines.map((te
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${buildFrontmatter(fields)}# ${title}\n`);
   };
-  return { base, root, mediaRoot, temporaryRoot, calls, response, indexPath, statePath, options, put, person,
+  return { base, root, mediaRoot, temporaryRoot, calls, response, retryResponse, indexPath, statePath, options, put, person,
     cleanup: () => rmSync(base, { recursive: true, force: true }),
     transcript: (number) => JSON.parse(readFileSync(join(root, VAULT_REL.mediaTranscripts, '2030', `${ID(number)}.json`), 'utf8')),
     note: (name) => readFileSync(join(root, VAULT_REL.mediaConversations, '2030', name), 'utf8') };
 }
+
+test('반복 감지는 긴 환각만 찾고 긴 입력도 빠르게 처리한다', () => {
+  const found = detectRepetition(`먼저 대화 ${LOOP} 다음 대화`);
+  assert.equal(found.looped, true);
+  assert.equal(found.phrase, '문경읍이 뭐에요?');
+  assert.equal(found.count, 20);
+  assert.ok(found.span.length >= 80);
+  assert.equal(detectRepetition('짧은 노래 후렴 '.repeat(7)).looped, false);
+  assert.equal(detectRepetition('abcdefghi '.repeat(8)).looped, false);
+  const start = performance.now();
+  assert.equal(detectRepetition('가상의 일상 대화가 이어집니다. '.repeat(700)).looped, true);
+  assert.ok(performance.now() - start < 5000);
+  const varied = Array.from({ length: 2000 }, (_, index) => `가상${index}의 이야기`).join(' ');
+  const scanStart = performance.now();
+  assert.equal(detectRepetition(varied).looped, false);
+  assert.ok(performance.now() - scanStart < 5000);
+});
+
+test('반복 1차 결과는 mc0으로 한 번 재시도하고 개선된 전사를 채택한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '가상 대화.m4a');
+  writeFileSync(f.response, LOOP);
+  writeFileSync(f.retryResponse, '문경읍의 이야기를 나눴습니다.');
+  await runMediaTranscribe(f.options);
+  const calls = readFileSync(f.calls, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].includes('-mc'), false);
+  assert.deepEqual(calls[1].slice(calls[1].indexOf('-mc'), calls[1].indexOf('-mc') + 2), ['-mc', '0']);
+  assert.equal(f.transcript(1).text, '문경읍의 이야기를 나눴습니다.');
+  assert.equal(f.transcript(1).decodeRetry, 'mc0');
+  assert.equal(f.transcript(1).repetition, undefined);
+});
+
+test('정상 전사는 재시도 없이 기존 출력 형식을 유지한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '가상 대화.m4a');
+  await runMediaTranscribe(f.options);
+  assert.equal(readFileSync(f.calls, 'utf8').trim().split('\n').length, 1);
+  assert.equal(f.transcript(1).decodeRetry, undefined);
+  assert.equal(f.transcript(1).repetition, undefined);
+  assert.match(f.note('2030-01-01 가상 대화 녹음.md'), /가상의 대화입니다\./);
+});
+
+test('재시도도 반복이면 원문과 구간을 보존하고 노트만 줄인다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '가상 대화.m4a');
+  writeFileSync(f.response, LOOP.repeat(2));
+  writeFileSync(f.retryResponse, LOOP);
+  await runMediaTranscribe(f.options);
+  assert.equal(f.transcript(1).decodeRetry, 'mc0');
+  assert.equal(f.transcript(1).text, LOOP);
+  assert.equal(f.transcript(1).segments[0].text, LOOP);
+  assert.equal(f.transcript(1).repetition.looped, true);
+  const note = f.note('2030-01-01 가상 대화 녹음.md');
+  assert.match(note, /같은 구절 17회 반복 — 전사 오류로 줄임/);
+  assert.ok(!note.includes(LOOP));
+});
+
+test('일반 mc0 재시도는 뒤쪽 반복이 더 길어지면 채택하지 않는다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '가상 반복.m4a');
+  writeFileSync(f.response, LOOP);
+  const worse = `${'작은 반복 문장 '.repeat(10)} 중간 ${'아주 길게 반복되는 가상 문장 '.repeat(25)}`;
+  writeFileSync(f.retryResponse, worse);
+  await runMediaTranscribe(f.options);
+  assert.equal(f.transcript(1).text, LOOP);
+  assert.equal(f.transcript(1).decodeRetry, undefined);
+});
+
+test('mc0 재시도 실패는 원문을 유지하고 한 줄 오류를 기록한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '가상 반복.m4a');
+  writeFileSync(f.response, LOOP);
+  const script = readFileSync(f.options.whisperPath, 'utf8');
+  writeFileSync(f.options.whisperPath, script.replace('const source = retry',
+    "if (retry) { process.stderr.write('가상 실패\\n상세'); process.exit(7); }\nconst source = retry"));
+  const errors = [];
+  await runMediaTranscribe({ ...f.options,
+    output: { log() {}, error: (line) => errors.push(line) } });
+  assert.equal(f.transcript(1).text, LOOP);
+  assert.equal(f.transcript(1).decodeRetry, undefined);
+  assert.equal(typeof f.transcript(1).decodeRetryError, 'string');
+  assert.equal(f.transcript(1).decodeRetryError.includes('\n'), false);
+  assert.match(errors.join('\n'), /-mc 0 재시도 실패/);
+});
+
+test('서로 떨어진 반복 구간과 무음 문구 반복도 노트에서 줄인다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '가상 반복.m4a');
+  const repeated = `감사합니다 `.repeat(20).trim();
+  writeFileSync(f.response, `${repeated} 중간 대화 ${repeated}`);
+  await runMediaTranscribe(f.options);
+  assert.equal(f.transcript(1).text, `${repeated} 중간 대화 ${repeated}`);
+  const note = f.note('2030-01-01 가상 반복 녹음.md');
+  assert.equal((note.match(/전사 오류로 줄임/g) || []).length, 2);
+  f.put(2, 'Recordings', '가상 무음 반복.m4a');
+  writeFileSync(f.response, repeated);
+  await runMediaTranscribe(f.options);
+  assert.equal(f.transcript(2).speech, false);
+  assert.match(f.note('2030-01-01 가상 무음 반복 녹음.md'), /\(음성 없음 — 반복 환각 20회\)/);
+});
+
+test('fix-loops는 저장된 반복만 N개 처리하고 dry-run에서는 아무것도 쓰지 않는다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  for (let number = 1; number <= 3; number += 1) {
+    f.put(number, 'Recordings', `가상 대화 ${number}.m4a`);
+    writeFileSync(f.response, number === 3 ? '정상적인 가상 대화' : LOOP);
+    await runMediaTranscribe(f.options);
+  }
+  const names = [1, 2].map((number) => `2030-01-01 가상 대화 ${number} 녹음.md`);
+  const notePath = join(f.root, VAULT_REL.mediaConversations, '2030', names[0]);
+  const transcriptPath = join(f.root, VAULT_REL.mediaTranscripts, '2030', `${ID(1)}.json`);
+  const originalNote = f.note(names[0]);
+  const originalTranscript = readFileSync(transcriptPath, 'utf8');
+  const callsBefore = readFileSync(f.calls, 'utf8');
+  const logs = [];
+  const dry = await runMediaTranscribe({ ...f.options, fixLoops: 1, dryRun: true,
+    output: { log: (line) => logs.push(line), error() {} } });
+  assert.equal(dry.upcoming.length, 1);
+  assert.match(logs[0], /"count":2/);
+  assert.equal(readFileSync(f.calls, 'utf8'), callsBefore);
+  assert.equal(readFileSync(notePath, 'utf8'), originalNote);
+  assert.equal(readFileSync(transcriptPath, 'utf8'), originalTranscript);
+  assert.equal(existsSync(`${f.statePath}.lock`), false);
+
+  writeFileSync(notePath, originalNote.replace('convKind: "녹음"', 'convKind: "통화"')
+    .replace('people: []', 'people: ["[[30_Wiki/31_People/가상인물]]"]')
+    .replace('category: "[[01_Home/100 나]]"', 'category: "[[01_Home/500 기술]]"\nemotions: ["기쁨"]\nprimaryEmotion: "기쁨"\nimportance: 4\nmineAge: "가상 나이"')
+    + '\n오너가 남긴 메모\n');
+  writeFileSync(f.response, LOOP);
+  writeFileSync(f.retryResponse, '정상적인 새 전사입니다.');
+  const result = await runMediaTranscribe({ ...f.options, fixLoops: 1 });
+  assert.equal(result.transcribed, 1);
+  assert.equal(f.transcript(1).decodeRetry, 'mc0');
+  assert.equal(f.transcript(2).text, LOOP);
+  const updated = f.note(names[0]);
+  const fields = parseFrontmatter(updated);
+  // 자동값(대면·녹음) 밖의 수동 convKind와 수동 people은 보존한다. category는 합친 people
+  // 기준으로 다시 계산한다(people 밖 수동 category는 바뀌는 의도된 한계).
+  assert.equal(fields.convKind, '통화');
+  assert.notEqual(fields.category, '[[01_Home/500 기술]]');
+  assert.deepEqual(fields.people, ['[[30_Wiki/31_People/가상인물]]']);
+  assert.deepEqual(fields.emotions, ['기쁨']);
+  assert.equal(fields.primaryEmotion, '기쁨');
+  assert.equal(fields.importance, 4);
+  assert.equal(fields.mineAge, '가상 나이');
+  assert.match(updated, /오너가 남긴 메모/);
+  assert.match(updated, /정상적인 새 전사입니다/);
+  const legacyTranscript = f.transcript(1);
+  delete legacyTranscript.segments;
+  writeFileSync(transcriptPath, `${JSON.stringify(legacyTranscript)}\n`);
+  await runMediaTranscribe(f.options);
+  // 다음 일반 실행 뒤에도 수동 convKind·people·아테나 필드·오너 메모가 남는다.
+  const after = f.note(names[0]);
+  const afterFields = parseFrontmatter(after);
+  assert.equal(afterFields.category, '[[01_Home/100 나]]');
+  assert.equal(afterFields.convKind, '통화');
+  assert.deepEqual(afterFields.people, ['[[30_Wiki/31_People/가상인물]]']);
+  assert.deepEqual(afterFields.emotions, ['기쁨']);
+  assert.equal(afterFields.importance, 4);
+  assert.match(after, /오너가 남긴 메모/);
+});
+
+test('fix-loops는 악화된 전사를 보존하고 같은 모델의 재시도를 제외한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '가상 반복.m4a');
+  writeFileSync(f.response, LOOP);
+  await runMediaTranscribe(f.options);
+  const note = f.note('2030-01-01 가상 반복 녹음.md');
+  const before = f.transcript(1);
+  const callsBefore = readFileSync(f.calls, 'utf8').trim().split('\n').length;
+  const logs = [];
+  const result = await runMediaTranscribe({ ...f.options, fixLoops: 1,
+    output: { log: (line) => logs.push(line), error: (line) => logs.push(line) } });
+  assert.equal(result.loopFixSkipped, 1);
+  assert.equal(result.transcribed, 0);
+  assert.equal(f.transcript(1).text, before.text);
+  assert.equal(f.transcript(1).loopFixAttemptedModel, f.options.model);
+  assert.equal(f.transcript(1).loopFixAttemptedAt, f.options.now.toISOString());
+  assert.equal(f.note('2030-01-01 가상 반복 녹음.md'), note);
+  assert.match(logs.join('\n'), /반복 수정 건너뜀/);
+  const newCalls = readFileSync(f.calls, 'utf8').trim().split('\n').slice(callsBefore).map(JSON.parse);
+  assert.equal(newCalls.length, 1);
+  assert.ok(newCalls[0].includes('-mc'));
+  const dry = await runMediaTranscribe({ ...f.options, fixLoops: 1, dryRun: true });
+  assert.equal(dry.excludedLoops, 1);
+  assert.equal(dry.upcoming.length, 0);
+  const olderModel = { ...f.transcript(1), model: '/older/legacy.bin' };
+  writeFileSync(join(f.root, VAULT_REL.mediaTranscripts, '2030', `${ID(1)}.json`),
+    `${JSON.stringify(olderModel)}\n`);
+  const changedModelDry = await runMediaTranscribe({ ...f.options, fixLoops: 1, dryRun: true });
+  assert.equal(changedModelDry.excludedLoops, 1);
+});
+
+test('fix-loops는 이미 mc0을 채택한 같은 모델을 제외하고 원본 없음·JSON 오류를 집계한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  for (let number = 1; number <= 3; number += 1) {
+    f.put(number, 'Recordings', `가상 반복 ${number}.m4a`);
+    writeFileSync(f.response, number === 1 ? LOOP.repeat(2) : LOOP);
+    writeFileSync(f.retryResponse, number === 1 ? LOOP : LOOP);
+    await runMediaTranscribe(f.options);
+  }
+  const missing = join(f.mediaRoot, f.put(4, 'Recordings', '가상 임시.m4a').archivePath);
+  rmSync(missing);
+  rmSync(join(f.mediaRoot, 'Archive/2030/01/Recordings/가상 반복 2.m4a'));
+  writeFileSync(join(f.root, VAULT_REL.mediaTranscripts, '2030', `${ID(3)}.json`), '{broken');
+  const errors = [];
+  const dry = await runMediaTranscribe({ ...f.options, fixLoops: 10, dryRun: true,
+    output: { log() {}, error: (line) => errors.push(line) } });
+  assert.equal(dry.excludedLoops, 1);
+  assert.equal(dry.missingAudio, 1);
+  assert.equal(dry.invalidTranscript, 1);
+  assert.equal(dry.upcoming.length, 0);
+  assert.match(errors.join('\n'), /전사 JSON 건너뜀/);
+});
+
+test('fix-loops는 누적 오디오 길이 상한에서 다음 항목을 멈춘다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  for (let number = 1; number <= 2; number += 1) {
+    f.put(number, 'Recordings', `가상 반복 ${number}.m4a`);
+    writeFileSync(f.response, LOOP);
+    await runMediaTranscribe(f.options);
+  }
+  writeFileSync(f.retryResponse, '개선된 가상 대화입니다.');
+  const result = await runMediaTranscribe({ ...f.options, fixLoops: 2, maxMinutes: 1.1 });
+  assert.equal(result.transcribed, 1);
+  assert.equal(result.remaining, 1);
+  const strict = await runMediaTranscribe({ ...f.options, fixLoops: 2, maxMinutes: 1 });
+  assert.equal(strict.transcribed, 0);
+  assert.equal(strict.remaining, 1);
+});
+
+test('fix-loops는 뒤쪽 반복이 더 길어지면 앞쪽 반복이 짧아도 버린다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '가상 반복.m4a');
+  writeFileSync(f.response, LOOP);
+  await runMediaTranscribe(f.options);
+  const worse = `${'작은 반복 문장 '.repeat(10)} 중간 ${'아주 길게 반복되는 가상 문장 '.repeat(25)}`;
+  assert.ok(detectRepetition(worse).span.length < detectRepetition(LOOP).span.length);
+  writeFileSync(f.retryResponse, worse);
+  const result = await runMediaTranscribe({ ...f.options, fixLoops: 1 });
+  assert.equal(result.loopFixSkipped, 1);
+  assert.equal(f.transcript(1).text, LOOP);
+});
+
+test('fix-loops는 긴 첫 후보를 건너뛰고 예산에 맞는 뒤 후보를 처리한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  for (let number = 1; number <= 2; number += 1) {
+    f.put(number, 'Recordings', `가상 반복 ${number}.m4a`);
+    writeFileSync(f.response, LOOP);
+    await runMediaTranscribe(f.options);
+  }
+  writeFileSync(f.options.ffprobePath, `#!/usr/bin/env node\nprocess.stdout.write(process.argv.at(-1).includes('반복 1') ? '120\\n' : '30\\n');\n`);
+  writeFileSync(f.retryResponse, '개선된 대화입니다.');
+  const result = await runMediaTranscribe({ ...f.options, fixLoops: 2, maxMinutes: 1 });
+  assert.equal(result.transcribed, 1);
+  assert.equal(result.remaining, 1);
+  assert.equal(f.transcript(1).text, LOOP);
+  assert.equal(f.transcript(2).text, '개선된 대화입니다.');
+});
 
 test('통화 파일명은 쉼표·이모지·#이 포함된 연락처와 KST 시각을 파싱한다', () => {
   assert.deepEqual(parseCallFilename('통화 녹음 가상,⭐#1_300101_123456.m4a'),
@@ -146,7 +411,7 @@ test('통화 휘영과 녹음 미네·휘영의 하위 category를 번호순으�
     ['[[01_Home/200 가족]]', '[[01_Home/201 미네]]', '[[01_Home/202 휘영]]']);
 });
 
-test('일반 재실행에서 기존 category만 바뀌어도 오너 메모를 보존하며 갱신한다', async (t) => {
+test('일반 재실행은 수동 category를 자동 갱신하지 않는다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
   f.person('가상휘영', { phoneContacts: ['가상휘영'], category: '[[01_Home/200 가족]]' });
   f.put(1, 'Calls', '통화 가상휘영_300101_090000.m4a');
@@ -164,7 +429,7 @@ test('일반 재실행에서 기존 category만 바뀌어도 오너 메모를 �
   assert.match(f.note(name), /오너가 쓴 내용/);
 });
 
-test('재작성은 수동 people을 합치고 category를 갱신하며 아테나 필드를 보존한다', async (t) => {
+test('재작성은 수동 people·category와 아테나 필드를 보존한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
   f.person('가상동료', { category: '[[01_Home/100 나]]' });
   f.person('가상가족', { category: '[[01_Home/200 가족]]' });
@@ -201,7 +466,7 @@ test('재작성은 수동 people을 합치고 category를 갱신하며 아테나
   assert.equal(fields.category, '[[01_Home/200 가족]]');
 });
 
-test('미연결 녹음의 수동 people 한 명도 재작성 category 판정에 쓴다', async (t) => {
+test('미연결 녹음의 수동 people과 기존 category를 재작성에서 유지한다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
   f.person('가상아이', { category: '[[01_Home/201 미네]]' });
   f.put(1, 'Recordings', '무명 녹음.m4a');

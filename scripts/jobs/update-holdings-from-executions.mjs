@@ -71,7 +71,7 @@
  *   node scripts/jobs/update-holdings-from-executions.mjs --dry-run  # 계산만, 쓰기 없음
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -98,7 +98,9 @@ function readVaultFiles(dir) {
 
 export function pickUnprocessedExecutions(executionFiles) {
   return executionFiles
-    .filter(({ parsed }) => !parsed.legacy && !parsed.holdingsApplied)
+    // 중복·외부 잔고 정본 스킵도 처리 완료 상태다. truthy 값에 의존하지 않고
+    // 미처리(false/누락)만 다시 선택해 수량을 재적용하지 않는다.
+    .filter(({ parsed }) => !parsed.legacy && (parsed.holdingsApplied == null || parsed.holdingsApplied === false))
     .sort((a, b) => String(a.parsed.tradeDate).localeCompare(String(b.parsed.tradeDate))
       || String(a.parsed.recordedAt).localeCompare(String(b.parsed.recordedAt)));
 }
@@ -179,7 +181,7 @@ export function findMatchingKnownExecution(exec, knownExecutions, allExecutions 
   if (exec.orderNo) {
     const apiMatches = knownExecutions.filter((g) => orderMatch(g) && g.source === 'NH_API');
     if (apiMatches.length) {
-      const relevantKakao = allExecutions.filter((g) => g.source !== 'NH_API' && orderMatch(g));
+      const relevantKakao = allExecutions.filter((g) => g.source !== 'NH_API' && !g.duplicateOf && orderMatch(g));
       const accounts = new Set(allExecutions.filter((g) => orderMatch(g) && g.source === 'NH_API').map((g) => g.account).filter(Boolean));
       if (!exec.account) return { crossSourceConflict: true, reason: '카카오 체결의 계좌가 없어 NH API 주문과 같은 계좌인지 판정할 수 없음' };
       if (accounts.size > 1) return { crossSourceConflict: true, reason: '같은 주문번호가 복수 계좌에 있어 카카오 알림 계좌를 판정할 수 없음' };
@@ -198,7 +200,8 @@ export function findMatchingKnownExecution(exec, knownExecutions, allExecutions 
   // 레코드 자체는 반환 — "이 이벤트가 이미 알려진 체결과 중복"이라는 dedup 판정
   // (matchesKnownExecution)은 계좌 모호성과 무관하게 여전히 유효해야 하므로.
   const accounts = new Set(matches.map((m) => m.account));
-  if (accounts.size > 1) return { ...matches[0], account: null };
+  // 계좌가 다른 복수 후보 중 특정 파일을 duplicateOf로 지목할 근거도 없다.
+  if (accounts.size > 1) return { ...matches[0], account: null, filepath: undefined };
   return matches[0];
 }
 
@@ -223,7 +226,33 @@ export function pickUnprocessedDividends(dividendFiles) {
 // 이 상태). 보유수량엔 이미 정확히 반영돼 있으니 재적용은 불필요 — account 필드만
 // 뒤늦게 채워 넣는다(cash-ledger.mjs가 이 필드로 흐름을 계좌별로 가른다).
 export function pickAccountlessAppliedExecutions(executionFiles) {
-  return executionFiles.filter(({ parsed }) => !parsed.legacy && parsed.holdingsApplied && !parsed.account);
+  // 소급 백필은 실제로 반영된 옛 체결만 대상으로 한다. duplicate-skipped를
+  // true처럼 취급하면 중복 체결에 계좌를 채워 적용 이력으로 오인할 수 있다.
+  return executionFiles.filter(({ parsed }) => !parsed.legacy && parsed.holdingsApplied === true && !parsed.account);
+}
+
+export function duplicateSkipFrontmatter(account, exec, matchedExecution = null) {
+  const updates = {
+    account,
+    tags: buildVaultTags({ account, stockName: exec.stockName }),
+    holdingsApplied: 'duplicate-skipped',
+    holdingsAppliedAt: new Date().toISOString(),
+  };
+  if (matchedExecution?.filepath) updates.duplicateOf = basename(matchedExecution.filepath, '.md');
+  return updates;
+}
+
+export function pickKnownExecutions(allExecutions, holdingsMap) {
+  return allExecutions.filter((execution) => {
+    // duplicateOf 표시 행도 대조 기준에 남긴다. 같은 체결의 다른 경로 기록이라
+    // 새로운 일치를 만들지 않고, NH 행이면 주문번호 대조 단서를 지켜 준다.
+    if (execution.legacy || execution.holdingsApplied === true) return true;
+    if (execution.holdingsApplied !== 'duplicate-skipped' || !execution.dedupKey) return false;
+    // 2차 방어에서 건너뛴 체결은 보유 파일의 appliedDedupKeys가 실제 반영
+    // 증거다. 일반 크로스소스 중복에는 이 키가 없으므로 known에 넣지 않는다.
+    const holding = holdingsMap.get(`${execution.account}|${execution.stockName}`);
+    return holding?.appliedDedupKeys?.includes(execution.dedupKey) ?? false;
+  });
 }
 
 // ⚠️ writeHoldingSafely로 전환(2026-09-04, State/Holdings 동시쓰기 경합 방지 — 남은
@@ -275,16 +304,8 @@ async function loadConsolidatedHoldings() {
 
 async function main() {
   const executionFiles = readVaultFiles(VAULT_PATHS.facts.ledger.executions);
-  const legacyExecutions = executionFiles.filter(({ parsed }) => parsed.legacy).map(({ parsed }) => parsed);
-  // ⚠️ 크로스소스 이중반영 방지(2026-09-03, code-reviewer 지적으로 발견 — findMatching
-  // KnownExecution 헤더 주석 참고) — legacy뿐 아니라 이미 holdingsApplied된 다른 소스의
-  // 체결도 dedup 대조 대상에 넣는다. mutable — 이 루프가 새로 적용/스킵 판정한 체결도
-  // 그때그때 이 배열에 추가해, 카카오·NH API 두 소스의 같은 체결이 "같은 실행" 안에서
-  // 나란히 들어와도(둘 다 오늘 막 파싱된 경우) 서로를 잡아낸다.
-  const knownExecutions = [
-    ...legacyExecutions,
-    ...executionFiles.filter(({ parsed }) => !parsed.legacy && parsed.holdingsApplied).map(({ parsed }) => parsed),
-  ];
+  const allExecutions = executionFiles.map(({ filepath, parsed }) => ({ ...parsed, filepath }));
+  const legacyExecutions = allExecutions.filter((execution) => execution.legacy);
   const targets = pickUnprocessedExecutions(executionFiles);
   console.log(`🔎 미처리 체결 ${targets.length}건 (전체 ${executionFiles.length}건 중)`);
 
@@ -303,6 +324,10 @@ async function main() {
   }
 
   const holdingsMap = await loadConsolidatedHoldings();
+  // legacy·실제 적용분과, 보유 파일의 키로 적용이 증명된 재시도분만 대조한다.
+  // mutable — 같은 실행 안에서 적용된 체결도 즉시 추가해 두 소스를 대조한다.
+  // 과거 Quant·IRP 매수의 true는 소급 변경하지 않는다.
+  const knownExecutions = pickKnownExecutions(allExecutions, holdingsMap);
 
   let buys = 0, sells = 0, closed = 0, unresolvedAccount = 0, warnings = 0, alreadyApplied = 0, duplicateOfKnown = 0, totalRealizedProfit = 0;
 
@@ -315,7 +340,7 @@ async function main() {
   if (targets.length === 0) console.log('처리할 체결 없음 — 배당 계좌귀속으로 진행.');
   for (const { filepath, content, parsed: exec } of targets) {
     const currentHoldings = [...holdingsMap.values()];
-    const knownMatch = findMatchingKnownExecution(exec, knownExecutions, executionFiles.map(({ parsed }) => parsed));
+    const knownMatch = findMatchingKnownExecution(exec, knownExecutions, allExecutions);
     // ⚠️ 버그 수정(2026-08-19, 오너 지시 "체결도 매핑 가능하면 매핑해봐") — 전량청산돼
     // 지금은 보유 파일 자체가 없는 종목(예: 삼성바이오로직스·현대차 매도)은 acctNo도
     // 없고(NH 체결 원문엔 애초에 계좌번호가 없음) 이름매칭도 대조할 보유 파일이 없어
@@ -339,8 +364,10 @@ async function main() {
     if (knownMatch) {
       console.log(`  ↩️  이미 알려진 체결과 중복(마이그레이션 스냅샷 또는 다른 소스에서 이미 반영됨) — 적용 없이 플래그만 기록: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName}`);
       duplicateOfKnown++;
-      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, tags: buildVaultTags({ account, stockName: exec.stockName }), holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
-      knownExecutions.push({ ...exec, account });
+      if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, duplicateSkipFrontmatter(account, exec, knownMatch)));
+      // 이번 실행 안에서만 대조 기준에 넣는다(종목코드·이름 표기가 다른 세 번째 기록도 잡도록).
+      // 파일에서 다시 읽을 때는 pickKnownExecutions 규칙을 따른다.
+      knownExecutions.push({ ...exec, account, filepath, holdingsApplied: 'duplicate-skipped' });
       continue;
     }
     // ⚠️ 버그 수정(2026-08-13, 독립 코드리뷰 HIGH 지적) — 퀀트 트랙 체결(exec.account가
@@ -408,7 +435,9 @@ async function main() {
       console.log(`  ↩️  이미 반영된 체결(재시도) — 재적용 없이 플래그만 기록: ${exec.stockName}`);
       alreadyApplied++;
       if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, tags: buildVaultTags({ account, stockName: exec.stockName }), holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
-      knownExecutions.push({ ...exec, account });
+      // 파일 플래그 쓰기만 실패했던 재시도라서 이 체결 자체가 실제 반영 증거다.
+      // 이후 같은 실행에서 다른 dedupKey로 온 같은 체결도 다시 적용하지 않는다.
+      knownExecutions.push({ ...execWithAccount, filepath });
       continue;
     }
 
@@ -454,7 +483,7 @@ async function main() {
     }
 
     if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
-    knownExecutions.push(execWithAccount);
+    knownExecutions.push({ ...execWithAccount, filepath });
   }
 
   console.log(

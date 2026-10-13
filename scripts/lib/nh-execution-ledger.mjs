@@ -54,7 +54,10 @@ function findCoveredSnapshot(records) {
       // 아직 Holdings에 반영되지 않은 카카오 행은 API 누적량을 이미 적용한 것으로
       // 볼 수 없다. 여기서 차감하면 API delta만 적용되고 카카오 행은 뒤에서 중복으로
       // 건너뛰어 실제 수량보다 적게 반영된다.
-      if (record.holdingsApplied !== true) continue;
+      // duplicate-skipped는 이미 반영된 다른 기록(legacy·다른 경로)과 같은 체결이라 수량은
+      // 보유에 들어가 있다(2026-10-14 전에는 이 행도 true였다). API 누적과는 합이 아니라
+      // 큰 값을 쓰므로 반영분으로 세어도 이중 계산되지 않는다.
+      if (record.holdingsApplied !== true && record.holdingsApplied !== 'duplicate-skipped') continue;
       const quantity = Number(record.quantity);
       const amount = quantity * Number(record.price);
       if (Number.isFinite(quantity) && quantity > 0 && Number.isFinite(amount) && amount > 0) {

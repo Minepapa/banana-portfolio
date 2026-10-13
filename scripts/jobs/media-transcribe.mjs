@@ -134,7 +134,7 @@ function assignNotePaths(records, root) {
   if (new Set(allPaths).size !== allPaths.length) throw new Error('녹음 노트 경로 충돌');
 }
 
-function prepareRecords(records, people, root, mediaRoot, persistedPaths, model) {
+function prepareRecords(records, people, root, mediaRoot, persistedPaths, model, onTranscriptError) {
   const seen = new Set();
   let excludedCalls = 0;
   const prepared = records.filter((record) => record.kind === 'Calls' || record.kind === 'Recordings')
@@ -152,7 +152,15 @@ function prepareRecords(records, people, root, mediaRoot, persistedPaths, model)
         return [];
       }
       const persisted = persistedPaths.get(record.id);
-      const transcript = persisted ? JSON.parse(readFileSync(persisted, 'utf8')) : null;
+      let transcript = null;
+      if (persisted) {
+        try { transcript = JSON.parse(readFileSync(persisted, 'utf8')); }
+        catch (error) {
+          if (!onTranscriptError) throw error;
+          onTranscriptError(record.id, error);
+          return [];
+        }
+      }
       if (transcript && (transcript.id !== record.id || !Number.isFinite(Date.parse(transcript.occurred)))) {
         throw new Error(`전사 원본 형식 오류: ${record.id}`);
       }
@@ -197,6 +205,62 @@ function normalizeSpeech(text) {
   return remainder.length > 0;
 }
 
+// 정규식의 중첩 반복은 긴 Whisper 환각에서 급격히 느려질 수 있어 길이를 제한해 직접 비교한다.
+export function detectRepetition(text) {
+  const source = String(text ?? '');
+  for (let start = 0; start < source.length; start += 1) {
+    if (/\s/u.test(source[start])) continue;
+    for (let length = 2; length <= 60 && start + length * 8 <= source.length; length += 1) {
+      const phrase = source.slice(start, start + length);
+      if (/\s/u.test(phrase.at(-1))) continue;
+      let cursor = start + length;
+      let count = 1;
+      while (cursor < source.length) {
+        let next = cursor;
+        while (next < source.length && /\s/u.test(source[next])) next += 1;
+        if (!source.startsWith(phrase, next)) break;
+        count += 1;
+        cursor = next + length;
+      }
+      if (count >= 8 && cursor - start >= 80) {
+        return { looped: true, phrase, count, span: { start, end: cursor, length: cursor - start } };
+      }
+    }
+  }
+  return { looped: false, phrase: null, count: 0, span: null };
+}
+
+function longestRepetitionSpan(text) {
+  let offset = 0;
+  let longest = 0;
+  while (offset < text.length) {
+    const repetition = detectRepetition(text.slice(offset));
+    if (!repetition.looped) break;
+    longest = Math.max(longest, repetition.span.length);
+    offset += repetition.span.end;
+  }
+  return longest;
+}
+
+function shortenRepetition(text) {
+  let offset = 0;
+  let rendered = '';
+  while (offset < text.length) {
+    const repetition = detectRepetition(text.slice(offset));
+    if (!repetition.looped) break;
+    const { start, end } = repetition.span;
+    const match = text.slice(offset + start, offset + end);
+    let cursor = 0;
+    for (let repeat = 0; repeat < 3; repeat += 1) {
+      while (cursor < match.length && /\s/u.test(match[cursor])) cursor += 1;
+      cursor += repetition.phrase.length;
+    }
+    rendered += `${text.slice(offset, offset + start)}${match.slice(0, cursor)} (같은 구절 ${repetition.count - 3}회 반복 — 전사 오류로 줄임)`;
+    offset += end;
+  }
+  return rendered ? rendered + text.slice(offset) : text;
+}
+
 export async function durationSec(path, ffprobePath) {
   const { stdout } = await execFileAsync(ffprobePath,
     ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', path],
@@ -207,7 +271,8 @@ export async function durationSec(path, ffprobePath) {
   return duration;
 }
 
-export async function transcribe(record, { ffmpegPath, ffprobePath, whisperPath, model, temporaryRoot, now }) {
+export async function transcribe(record, { ffmpegPath, ffprobePath, whisperPath, model, temporaryRoot, now,
+  directMc0 = false, output = console }) {
   const duration = await durationSec(record.path, ffprobePath);
   const directory = await fs.mkdtemp(join(temporaryRoot, 'media-transcribe-'));
   const wav = join(directory, `${randomUUID()}.wav`);
@@ -216,22 +281,47 @@ export async function transcribe(record, { ffmpegPath, ffprobePath, whisperPath,
       '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav], { maxBuffer: 1024 * 1024 });
     // 구간별 시각(-oj, 최대 30자·단어 경계)을 남겨 나중에 화자 분리와 맞출 수 있게 한다(2026-10-12 오너 결정).
     const outPrefix = join(directory, 'out');
-    await execFileAsync(whisperPath,
-      ['-m', model, '-l', 'ko', '-np', '-oj', '-ml', '30', '-sow', '-of', outPrefix, '-f', wav],
-      { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-    const parsed = JSON.parse(await fs.readFile(`${outPrefix}.json`, 'utf8'));
-    if (!Array.isArray(parsed?.transcription)) throw new Error('Whisper JSON 형식 오류');
-    const segments = parsed.transcription.map((segment) => ({
-      start: Number(segment?.offsets?.from), end: Number(segment?.offsets?.to), text: String(segment?.text ?? '').trim(),
-    })).filter((segment) => segment.text);
-    if (segments.some((segment) => !Number.isFinite(segment.start) || !Number.isFinite(segment.end))) {
-      throw new Error('Whisper 구간 시각 오류');
+    const decode = async (maxContext = false) => {
+      await fs.rm(`${outPrefix}.json`, { force: true });
+      await execFileAsync(whisperPath,
+        ['-m', model, '-l', 'ko', '-np', '-oj', '-ml', '30', '-sow',
+          ...(maxContext ? ['-mc', '0'] : []), '-of', outPrefix, '-f', wav],
+        { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+      const parsed = JSON.parse(await fs.readFile(`${outPrefix}.json`, 'utf8'));
+      if (!Array.isArray(parsed?.transcription)) throw new Error('Whisper JSON 형식 오류');
+      const segments = parsed.transcription.map((segment) => ({
+        start: Number(segment?.offsets?.from), end: Number(segment?.offsets?.to), text: String(segment?.text ?? '').trim(),
+      })).filter((segment) => segment.text);
+      if (segments.some((segment) => !Number.isFinite(segment.start) || !Number.isFinite(segment.end))) {
+        throw new Error('Whisper 구간 시각 오류');
+      }
+      return { segments, text: segments.map((segment) => segment.text).join(' ') };
+    };
+    let decoded = await decode(directMc0);
+    let repetition = detectRepetition(decoded.text);
+    let decodeRetry = directMc0 ? 'mc0' : undefined;
+    let decodeRetryError;
+    if (repetition.looped && !directMc0) {
+      try {
+        const retry = await decode(true);
+        const retryRepetition = detectRepetition(retry.text);
+        if (!retryRepetition.looped || longestRepetitionSpan(retry.text) < longestRepetitionSpan(decoded.text)) {
+          decoded = retry;
+          repetition = retryRepetition;
+          decodeRetry = 'mc0';
+        }
+      } catch (error) {
+        // 재시도 실패만으로 원래 전사 원문을 잃지 않는다. 반복 표시는 렌더에서 처리한다.
+        decodeRetryError = String(error.message).split(/\r?\n/)[0];
+        output.error(`[media-transcribe] -mc 0 재시도 실패 ${record.id}: ${decodeRetryError}`);
+      }
     }
-    const text = segments.map((segment) => segment.text).join(' ');
     return {
       id: record.id, kind: record.kind, ...(record.kind === 'Calls' ? { contact: record.contact } : {}),
       people: record.people, occurred: record.occurred, durationSec: duration,
-      speech: normalizeSpeech(text), text, segments, model, transcribedAt: now,
+      speech: normalizeSpeech(decoded.text), text: decoded.text, segments: decoded.segments, model, transcribedAt: now,
+      ...(decodeRetry ? { decodeRetry } : {}), ...(decodeRetryError ? { decodeRetryError } : {}),
+      ...(repetition.looped ? { repetition } : {}),
     };
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
@@ -312,7 +402,11 @@ function renderNote(records, transcripts, existing, now, knownPeople) {
     const heading = record.kind === 'Calls'
       ? `### ${kstParts(record.occurred).slice(11, 16)} (${minutes}분 ${seconds}초)`
       : `### ${minutes}분 ${seconds}초`;
-    return `<!-- media-transcribe:id ${record.id} -->\n${heading}\n\n${transcript.speech ? transcript.text : '(음성 없음)'}\n\n원본: ${record.archivePath}`;
+    const repetition = detectRepetition(transcript.text);
+    const bodyText = !transcript.speech
+      ? repetition.looped ? `(음성 없음 — 반복 환각 ${repetition.count}회)` : '(음성 없음)'
+      : shortenRepetition(transcript.text);
+    return `<!-- media-transcribe:id ${record.id} -->\n${heading}\n\n${bodyText}\n\n원본: ${record.archivePath}`;
   }).join('\n\n');
   const title = datedRecording ? first.stem
     : `${first.occurred.slice(0, 10)} ${label} ${first.kind === 'Calls' ? '통화' : '녹음'}`;
@@ -325,8 +419,11 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
   statePath = join(root, VAULT_REL.mediaTranscribeState),
   model = DEFAULT_MODEL, ffmpegPath = '/opt/homebrew/bin/ffmpeg',
   ffprobePath = '/opt/homebrew/bin/ffprobe', whisperPath = '/opt/homebrew/bin/whisper-cli',
-  temporaryRoot = tmpdir(), dryRun = false, rewriteNotes = false, limit = Infinity, maxMinutes = 50,
+  temporaryRoot = tmpdir(), dryRun = false, rewriteNotes = false, fixLoops = false,
+  limit = Infinity, maxMinutes = 50,
   now = new Date(), output = console, write = writeAtomic, registryRules } = {}) {
+  if (fixLoops !== false && (!Number.isInteger(fixLoops) || fixLoops < 1)) throw new Error('--fix-loops 값 오류');
+  if (fixLoops && rewriteNotes) throw new Error('--fix-loops와 --rewrite-notes 동시 사용 불가');
   if (!rewriteNotes && ((!Number.isInteger(limit) && limit !== Infinity) || limit < 0)) throw new Error('--limit 값 오류');
   if (!rewriteNotes && (!Number.isFinite(maxMinutes) || maxMinutes <= 0)) throw new Error('--max-minutes 값 오류');
   if (!existsSync(root)) throw new Error('볼트 경로 없음');
@@ -335,19 +432,57 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
     if (!state || typeof state !== 'object' || !state.failures || typeof state.failures !== 'object') throw new Error('전사 상태 형식 오류');
     const persistedPaths = existingTranscriptPaths(root);
     const people = loadPeople(root);
-    const { prepared: records, excludedCalls } = prepareRecords(readIndex(indexPath), people, root, mediaRoot, persistedPaths, model);
+    let invalidTranscript = 0;
+    const { prepared: records, excludedCalls } = prepareRecords(readIndex(indexPath), people, root, mediaRoot,
+      persistedPaths, model, fixLoops ? (id, error) => {
+        invalidTranscript += 1;
+        output.error(`[media-transcribe] 전사 JSON 건너뜀 ${id}: ${String(error.message).split(/\r?\n/)[0]}`);
+      } : null);
     const rewritePaths = new Set(records.filter((record) => existsSync(record.transcriptPath))
       .map((record) => record.notePath));
-    const available = orderPending(records.filter((record) => (!existsSync(record.transcriptPath) || record.needsRetranscribe)
-      && (state.failures[record.id]?.length || 0) < 3), now);
+    let missingAudio = 0;
+    let excludedLoops = 0;
+    const loopCandidates = fixLoops ? records.flatMap((record) => {
+      if (!existsSync(record.transcriptPath)) return [];
+      let transcript;
+      try { transcript = JSON.parse(readFileSync(record.transcriptPath, 'utf8')); }
+      catch (error) {
+        invalidTranscript += 1;
+        output.error(`[media-transcribe] 전사 JSON 건너뜀 ${record.id}: ${String(error.message).split(/\r?\n/)[0]}`);
+        return [];
+      }
+      const repetition = detectRepetition(transcript.text);
+      if (!repetition.looped) return [];
+      if (!existsSync(record.path)) { missingAudio += 1; return []; }
+      const sameModel = basename(transcript.model || '') === basename(model);
+      if (sameModel && transcript.decodeRetry === 'mc0'
+        || transcript.loopFixAttemptedAt && basename(transcript.loopFixAttemptedModel || '') === basename(model)) {
+        excludedLoops += 1;
+        return [];
+      }
+      return [{ record, repetition, transcript, sameModel,
+        longestSpan: longestRepetitionSpan(transcript.text) }];
+    }) : [];
+    const selectedLoops = loopCandidates.slice(0, fixLoops || 0);
+    const available = fixLoops ? selectedLoops.map(({ record }) => record)
+      : orderPending(records.filter((record) => (!existsSync(record.transcriptPath) || record.needsRetranscribe)
+        && (state.failures[record.id]?.length || 0) < 3), now);
     const done = new Set();
     const buckets = [0, 1, 2].map((group) => ({ group: group + 1, count: 0, durationSec: 0, expectedSec: 0 }));
     const durations = new Map();
     const summary = { transcribed: 0, silent: 0, failed: 0, created: 0, updated: 0, rewritten: 0,
+      loopFixSkipped: 0, excludedLoops, missingAudio, invalidTranscript,
       remaining: available.length, excludedCalls, buckets, upcoming: [] };
     const start = Date.now();
     const cutoff = now.getTime() - 365 * 24 * 60 * 60_000;
-    if (dryRun && rewriteNotes) {
+    if (dryRun && fixLoops) {
+      summary.upcoming = selectedLoops.map(({ record, repetition }) => ({ id: record.id,
+        notePath: record.notePath, phrase: repetition.phrase, count: repetition.count,
+        length: repetition.span.length }));
+      output.log(`[media-transcribe] 반복 수정 dry-run ${JSON.stringify({ count: loopCandidates.length,
+        excludedLoops, missingAudio, invalidTranscript,
+        upcoming: summary.upcoming })}`);
+    } else if (dryRun && rewriteNotes) {
       summary.remaining = 0;
       output.log(`[media-transcribe] 재작성 dry-run ${JSON.stringify({ count: rewritePaths.size,
         paths: [...rewritePaths].slice(0, 10) })}`);
@@ -383,11 +518,34 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
         allByPath.get(record.notePath).push(record);
       }
       const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
+      let processedAudioSec = 0;
       for (const record of rewriteNotes ? [] : available) {
-        if (summary.transcribed + summary.failed >= limit || Date.now() - start >= maxMinutes * 60_000) break;
+        if (fixLoops ? processedAudioSec >= maxMinutes * 60 || Date.now() - start >= maxMinutes * 60_000
+          : summary.transcribed + summary.failed >= limit || Date.now() - start >= maxMinutes * 60_000) break;
         try {
+          const loopCandidate = fixLoops ? selectedLoops.find((item) => item.record.id === record.id) : null;
+          if (fixLoops) {
+            const seconds = await durationSec(record.path, ffprobePath);
+            if (processedAudioSec + seconds > maxMinutes * 60) {
+              output.log(`[media-transcribe] 반복 수정 길이 상한 건너뜀 ${record.id}: ${seconds}초`);
+              continue;
+            }
+          }
           const transcript = await transcribe(record, { ffmpegPath, ffprobePath, whisperPath,
-            model, temporaryRoot, now: now.toISOString() });
+            model, temporaryRoot, now: now.toISOString(), directMc0: Boolean(loopCandidate?.sameModel), output });
+          if (fixLoops) {
+            processedAudioSec += transcript.durationSec;
+            const newLongestSpan = longestRepetitionSpan(transcript.text);
+            if (newLongestSpan >= loopCandidate.longestSpan) {
+              const attempted = { ...loopCandidate.transcript, loopFixAttemptedAt: now.toISOString(),
+                loopFixAttemptedModel: model };
+              write(record.transcriptPath, `${JSON.stringify(attempted, null, 2)}\n`);
+              summary.loopFixSkipped += 1;
+              done.add(record.id);
+              output.log(`[media-transcribe] 반복 수정 건너뜀 ${record.id}: 기존 ${loopCandidate.longestSpan}자, 새 ${newLongestSpan}자`);
+              continue;
+            }
+          }
           mkdirSync(dirname(record.transcriptPath), { recursive: true });
           write(record.transcriptPath, `${JSON.stringify(transcript, null, 2)}\n`);
           changedPaths.add(record.notePath);
@@ -406,6 +564,7 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
       }
       // 전사 원본 저장 직후 또는 노트 갱신 중단 시, 생성 블록을 대조해 복구한다.
       for (const [path, grouped] of allByPath) {
+        if (fixLoops && !changedPaths.has(path)) continue;
         const persisted = grouped.filter((record) => existsSync(record.transcriptPath));
         if (!persisted.length) continue;
         const absolute = join(root, path);
@@ -415,6 +574,8 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
         if (persisted.some((record) => !generated.includes(`<!-- media-transcribe:id ${record.id} -->`))) {
           changedPaths.add(path);
         }
+        // 합친 people(수동 포함) 기준으로 category를 다시 계산한다. people 밖에서 손으로 바꾼
+        // category는 이 재계산으로 바뀐다 — 의도된 한계(수동 people·convKind·아테나 필드·오너 메모는 보존).
         if (existing) {
           const currentCategory = parseFrontmatter(existing).category;
           const expectedCategory = conversationCategory(linkedPeopleForNote(persisted, existing, people));
@@ -448,7 +609,7 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
       }
       summary.remaining = rewriteNotes ? 0 : available.filter((record) => !done.has(record.id)).length;
     }
-    output.log(`[media-transcribe] 전사 ${summary.transcribed}(음성없음 ${summary.silent}), 실패 ${summary.failed}, 노트 생성 ${summary.created}·갱신 ${summary.updated}, 재작성 ${summary.rewritten}, 남은 대기 ${summary.remaining}, 미연결 통화 제외 ${summary.excludedCalls}`);
+    output.log(`[media-transcribe] 전사 ${summary.transcribed}(음성없음 ${summary.silent}), 실패 ${summary.failed}, 노트 생성 ${summary.created}·갱신 ${summary.updated}, 재작성 ${summary.rewritten}, 반복 수정 건너뜀 ${summary.loopFixSkipped}·제외 ${summary.excludedLoops}·원본 없음 ${summary.missingAudio}·JSON 오류 ${summary.invalidTranscript}, 남은 대기 ${summary.remaining}, 미연결 통화 제외 ${summary.excludedCalls}`);
     return summary;
   };
   if (dryRun) return run();
@@ -458,13 +619,15 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
-  const allowed = args.every((arg) => arg === '--dry-run' || arg === '--rewrite-notes'
+  const allowed = args.every((arg) => arg === '--dry-run' || arg === '--rewrite-notes' || arg === '--fix-loops'
+    || /^--fix-loops=.+$/.test(arg)
     || /^--(?:limit|max-minutes|model)=.+$/.test(arg));
   const option = (name) => args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
   if (!allowed) {
-    console.error('usage: node scripts/jobs/media-transcribe.mjs [--dry-run] [--rewrite-notes] [--limit=N] [--max-minutes=M] [--model=PATH]');
+    console.error('usage: node scripts/jobs/media-transcribe.mjs [--dry-run] [--rewrite-notes] [--fix-loops[=N]] [--limit=N] [--max-minutes=M] [--model=PATH] (fix-loops는 낮에 실행 권장)');
     process.exitCode = 2;
   } else runMediaTranscribe({ dryRun: args.includes('--dry-run'), rewriteNotes: args.includes('--rewrite-notes'),
+    fixLoops: option('fix-loops') === undefined ? (args.includes('--fix-loops') ? 10 : false) : Number(option('fix-loops')),
     limit: option('limit') === undefined ? Infinity : Number(option('limit')),
     maxMinutes: option('max-minutes') === undefined ? 50 : Number(option('max-minutes')),
     model: option('model') || DEFAULT_MODEL }).catch((error) => {

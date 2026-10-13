@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickUnprocessedExecutions, pickUnprocessedDividends, pickAccountlessAppliedExecutions, matchesKnownExecution, findMatchingKnownExecution } from './update-holdings-from-executions.mjs';
+import { pickUnprocessedExecutions, pickUnprocessedDividends, pickAccountlessAppliedExecutions, matchesKnownExecution, findMatchingKnownExecution, duplicateSkipFrontmatter, pickKnownExecutions } from './update-holdings-from-executions.mjs';
 
 const f = (parsed) => ({ filepath: '/x', content: '', parsed });
 
@@ -12,9 +12,35 @@ test('pickUnprocessedExecutions: legacy(Phase 7 마이그레이션) 제외 — �
 });
 
 test('pickUnprocessedExecutions: holdingsApplied 이미 true인 것 제외 — 재처리 방지', () => {
-  const files = [f({ holdingsApplied: true, tradeDate: '2026-01-01' }), f({ tradeDate: '2026-01-02' })];
+  const files = [
+    f({ holdingsApplied: true, tradeDate: '2026-01-01' }),
+    f({ holdingsApplied: 'duplicate-skipped', tradeDate: '2026-01-01' }),
+    f({ tradeDate: '2026-01-02' }),
+  ];
   const r = pickUnprocessedExecutions(files);
   assert.equal(r.length, 1);
+});
+
+test('duplicateSkipFrontmatter: 건너뛴 체결은 적용 완료와 구분하고 매치 파일 경로가 있을 때만 연결', () => {
+  const execution = { stockName: '삼성전자' };
+  const withMatch = duplicateSkipFrontmatter('위탁', execution, { filepath: '/tmp/2026-09-03-체결.md' });
+  assert.equal(withMatch.holdingsApplied, 'duplicate-skipped');
+  assert.equal(withMatch.duplicateOf, '2026-09-03-체결');
+  assert.equal(duplicateSkipFrontmatter('위탁', execution).duplicateOf, undefined);
+});
+
+test('2차 방어 재시도는 appliedDedupKeys가 증명할 때만 다음 실행의 known 체결이다', () => {
+  const fill = { tradeDate: '2026-06-19 10:15:04', tradeType: '매수', stockName: '금 99.99K', quantity: 2, price: 205350, account: '위탁' };
+  const retry = { ...fill, dedupKey: 'first-key', holdingsApplied: true, filepath: '/tmp/first.md' };
+  const crossSource = { ...fill, dedupKey: 'other-key', holdingsApplied: 'duplicate-skipped', filepath: '/tmp/other.md' };
+  const linked = { ...fill, dedupKey: 'third-key', holdingsApplied: true, duplicateOf: 'first', filepath: '/tmp/linked.md' };
+  const holdings = new Map([['위탁|금 99.99K', { appliedDedupKeys: ['first-key'] }]]);
+  const known = pickKnownExecutions([retry, crossSource, linked], holdings);
+  // duplicateOf 표시 행(옛 이중 기록, holdingsApplied true)은 대조 기준에 남는다 — 주문번호 단서 보존.
+  assert.deepEqual(known, [retry, linked]);
+  const laterDifferentKey = { ...fill, dedupKey: 'later-key' };
+  assert.equal(findMatchingKnownExecution(laterDifferentKey, known), retry);
+  assert.equal(pickKnownExecutions([retry], new Map()).length, 1);
 });
 
 test('pickUnprocessedExecutions: tradeDate 오름차순 정렬(가중평균 순서가 중요)', () => {
@@ -48,6 +74,7 @@ test('[막아야 함/실사고] pickAccountlessAppliedExecutions: holdingsApplie
     f({ holdingsApplied: true, account: null, tradeDate: '2026-06-01' }), // 백필 대상(실측 84건 중 60건이 이 상태였음)
     f({ holdingsApplied: true, account: '위탁', tradeDate: '2026-06-02' }), // 이미 채워짐 — 제외
     f({ holdingsApplied: false, account: null, tradeDate: '2026-06-03' }), // 아직 미처리 — pickUnprocessedExecutions 몫, 여기 대상 아님
+    f({ holdingsApplied: 'duplicate-skipped', account: null, tradeDate: '2026-06-04' }), // 적용 이력이 아니므로 백필 제외
   ];
   const r = pickAccountlessAppliedExecutions(files);
   assert.equal(r.length, 1);
@@ -84,6 +111,15 @@ test('matchesKnownExecution: 수량이 다르면 중복 아님(진짜 다른 체
 
 test('matchesKnownExecution: legacy 없으면 false', () => {
   assert.equal(matchesKnownExecution(exec(), []), false);
+});
+
+test('NH 누적 대조에서 duplicateOf 카카오 행은 별도 체결 수량으로 세지 않는다', () => {
+  const order = { tradeDate: '2026-06-19 00:00:00', tradeType: '매수', stockName: '금 99.99K',
+    quantity: 1, orderNo: '123', account: '위탁', broker: 'NH투자증권' };
+  const api = { ...order, source: 'NH_API', orderCumulativeQty: 1 };
+  const kakao = { ...order, source: 'KAKAO' };
+  const marked = { ...kakao, duplicateOf: 'original' };
+  assert.equal(findMatchingKnownExecution(kakao, [api], [api, kakao, marked]), api);
 });
 
 // 실사고 회귀 테스트(2026-08-19, 오너 지시 "체결도 매핑 가능하면 매핑해봐") — 전량청산돼
@@ -132,12 +168,13 @@ test('[중복방지] 한쪽 주문번호가 빠져도 알려진 계좌가 다르
 // 유지하되 account만 null로 낮춘다.
 test('[막아야 함] findMatchingKnownExecution: 후보가 여럿인데 계좌가 갈리면 추정하지 않고 account:null(레코드는 반환 — dedup 판정은 유지)', () => {
   const legacy = [
-    { tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 2, account: 'ISA' },
-    { tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 2, account: '위탁' },
+    { tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 2, account: 'ISA', filepath: '/tmp/isa.md' },
+    { tradeDate: '2026-06-19', tradeType: '매수', stockName: '금 99.99K', quantity: 2, account: '위탁', filepath: '/tmp/consignment.md' },
   ];
   const r = findMatchingKnownExecution(exec(), legacy);
   assert.notEqual(r, null);
   assert.equal(r.account, null);
+  assert.equal(r.filepath, undefined);
 });
 
 test('findMatchingKnownExecution: 후보가 여럿이어도 계좌가 전부 같으면 그 계좌 그대로', () => {

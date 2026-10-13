@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { AUTO_END, AUTO_START, buildVaultIndex, parseCategories, replaceAutoBlock } from './vault-index-builder.mjs';
+import { AUTO_END, AUTO_START, buildIndexBlock, buildVaultIndex, parseCategories, replaceAutoBlock } from './vault-index-builder.mjs';
 import { VAULT_REL } from './vault-paths.mjs';
 import { MOUSEION_TOP_FOLDERS } from './vault-layout.mjs';
 
@@ -43,6 +43,28 @@ test('replaceAutoBlock: 없으면 붙이고, 있으면 그 구역만 바꾸며, 
   assert.match(twice, /\nB\n/);
   assert.doesNotMatch(twice, /\nA\n/);
   assert.throws(() => replaceAutoBlock(`x ${AUTO_START} y`, 'C'), /손상/);
+});
+
+test('buildIndexBlock: 결정 요지는 있을 때만 한 줄로 붙이고 120자를 넘으면 줄인다', () => {
+  const decision = (key, description) => ({
+    rel: `${VAULT_REL.decisionsCanonical}/${key}.md`,
+    decisionKey: key,
+    status: '결정됨',
+    categories: [],
+    description,
+  });
+  const block = buildIndexBlock([
+    decision('있음', '요지 내용'),
+    decision('없음'),
+    decision('줄바꿈', '첫 줄\n둘째 줄'),
+    decision('긴 문장', '가'.repeat(121)),
+    decision('배열', ['요지', '문자열 아님']),
+  ]);
+  assert.match(block, /`있음` → \[\[.*\/있음\]\] — 요지 내용/);
+  assert.match(block, /`없음` → \[\[.*\/없음\]\]\n/);
+  assert.match(block, /`줄바꿈` → \[\[.*\/줄바꿈\]\] — 첫 줄 둘째 줄/);
+  assert.ok(block.includes(`\`긴 문장\` → [[${VAULT_REL.decisionsCanonical}/긴 문장]] — ${'가'.repeat(120)}…`));
+  assert.match(block, /`배열` → \[\[.*\/배열\]\]\n/);
 });
 
 test('buildVaultIndex: 키워드 표는 보존하고 자동 구역·분류 목록을 만들며, 다시 돌리면 변경 없음', () => {

@@ -92,7 +92,11 @@ export function buildIndexBlock(notes) {
   }
   const decisions = notes.filter((n) => n.decisionKey && n.status === '결정됨').sort((a, b) => a.decisionKey.localeCompare(b.decisionKey));
   lines.push('', '### 정본 결정 (decisionKey)', '');
-  for (const d of decisions) lines.push(`- \`${d.decisionKey}\` → ${wikilink(d.rel)}`);
+  for (const d of decisions) {
+    const description = typeof d.description === 'string' ? d.description.replace(/\s+/g, ' ').trim() : '';
+    const summary = description?.length > 120 ? `${description.slice(0, 120)}…` : description;
+    lines.push(`- \`${d.decisionKey}\` → ${wikilink(d.rel)}${summary ? ` — ${summary}` : ''}`);
+  }
   const features = notes.filter((n) => n.rel.startsWith(`${VAULT_REL.projectFeatures}/`));
   lines.push('', '### 기능 허브', '');
   for (const f of features) lines.push(`- ${wikilink(f.rel, noteName(f.rel).split('/').pop())}${f.description ? ` — ${f.description}` : ''}`);

@@ -121,6 +121,22 @@ test('recordNhTerminalExecution: 같은 주문 카카오 체결분은 차감하�
   assert.equal(record.orderCumulativeAmount, 480);
 });
 
+test('recordNhTerminalExecution: duplicate-skipped 카카오 체결도 이미 반영된 수량으로 차감', async (t) => {
+  const dir = tempLedger(t);
+  const kakao = buildFrontmatter({
+    type: 'execution', tradeDate: '2026-09-24 09:01:00', tradeType: '매수',
+    stockCode: '005930', stockName: '삼성전자', quantity: 3, price: 90,
+    broker: 'NH투자증권', orderNo: '847026', account: '위탁', holdingsApplied: 'duplicate-skipped',
+  });
+  await import('node:fs').then(({ writeFileSync }) => writeFileSync(join(dir, 'kakao.md'), kakao));
+  const result = await recordNhTerminalExecution({
+    row: row({ quantity: 5, price: 96, executionAmount: 480 }),
+    tradeDate: '2026-09-24 00:00:00', account: '위탁', acctNo: '2050****019', dir,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.event.quantity, 2);
+});
+
 test('[실사고 재현] 아직 보유수량에 반영되지 않은 Kakao 체결은 API 누적수량에서 차감하지 않는다', async (t) => {
   const dir = tempLedger(t);
   const kakao = buildFrontmatter({
