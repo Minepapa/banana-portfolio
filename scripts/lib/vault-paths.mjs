@@ -65,6 +65,7 @@ export const VAULT_REL = {
   mediaVisionLabels: '95_Etna/Media/vision-labels.json',
   mediaImportAlbums: '95_Etna/Media/import-albums.json',
   mediaFaceGallery: '95_Etna/Media/face-gallery.json',
+  mediaFacePeople: '95_Etna/Media/face-people.json',
   mediaFaceReports: '50_Outputs/Reports',
   mediaImportMomentsState: '95_Etna/Media/import-moments.json',
   mediaTranscripts: '95_Etna/Media/Transcripts',

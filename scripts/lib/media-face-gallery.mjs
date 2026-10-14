@@ -7,6 +7,9 @@ export const FACE_PARAMS = Object.freeze({ minDetection: 0.7, minSize: 60,
   blurExcludedFraction: 0.1, minSimilarity: 0.45, sheetLimit: 30 });
 export const MATCH_HIGH = 0.50;
 export const MATCH_LOW = 0.35;
+// D100은 얼굴 리포트의 레거시 불확실 구간(0.35)과 별개의 사진 이름표 기준이다.
+export const PHOTO_HIGH = 0.50;
+export const PHOTO_HOLD = 0.40;
 export const FACE_BIRTH = '2016-11-04';
 export const FACE_BANDS = Object.freeze(['0-6m', '6-12m', '12-18m', '18-24m',
   ...Array.from({ length: 8 }, (_, index) => `${index + 2}y`)]);
@@ -163,6 +166,48 @@ export function clusterBand(candidates, vectorFor, minSimilarity = FACE_PARAMS.m
     distances: new Map(selected.map(({ member, score }) => [memberKey(member), score])) };
 }
 
+export function clusterFamily(faceRows, matches, vectorFor, params = FACE_PARAMS) {
+  const mineKeys = new Set(matches.filter((match) => !match.person && !match.prebirth
+    && match.score >= 0.40).map(memberKey));
+  const candidates = faceRows.flatMap((row) => row.error ? [] : (row.faces ?? [])
+    .filter((face) => face.det >= params.minDetection && face.size >= params.minSize
+      && Number.isFinite(face.blur) && !mineKeys.has(memberKey({ id: row.id, i: face.i })))
+    .map((face) => ({ id: row.id, i: face.i, blur: face.blur })));
+  candidates.sort((left, right) => left.blur - right.blur);
+  const eligible = candidates.slice(Math.floor(candidates.length * params.blurExcludedFraction));
+  const vectors = eligible.map(vectorFor);
+  const parent = eligible.map((_, index) => index);
+  const find = (index) => {
+    while (parent[index] !== index) { parent[index] = parent[parent[index]]; index = parent[index]; }
+    return index;
+  };
+  for (let left = 0; left < eligible.length; left += 1) {
+    for (let right = left + 1; right < eligible.length; right += 1) {
+      if (cosine(vectors[left], vectors[right]) >= params.minSimilarity) parent[find(right)] = find(left);
+    }
+  }
+  const groups = new Map();
+  for (let index = 0; index < eligible.length; index += 1) {
+    const root = find(index);
+    const members = groups.get(root) ?? [];
+    members.push(index);
+    groups.set(root, members);
+  }
+  return [...groups.values()].sort((left, right) => right.length - left.length
+    || memberKey(eligible[left[0]]).localeCompare(memberKey(eligible[right[0]]))).slice(0, 12)
+    .map((indexes) => {
+      const center = new Float32Array(vectors[indexes[0]].length);
+      for (const index of indexes) {
+        for (let dimension = 0; dimension < center.length; dimension += 1) {
+          center[dimension] += vectors[index][dimension];
+        }
+      }
+      return indexes.sort((left, right) => cosine(vectors[right], center) - cosine(vectors[left], center)
+        || memberKey(eligible[left]).localeCompare(memberKey(eligible[right])))
+        .map((index) => eligible[index]);
+    });
+}
+
 export function buildGallery(previous, candidatesByBand, vectorFor, now, params = FACE_PARAMS) {
   const bands = {};
   const distances = new Map();
@@ -171,7 +216,8 @@ export function buildGallery(previous, candidatesByBand, vectorFor, now, params 
     if (old?.confirmed === true) {
       bands[band] = { members: old.members.map(({ id, i }) => ({ id, i })),
         candidateCount: old.candidateCount, clusterSizes: old.clusterSizes,
-        confirmed: true, removed: old.removed.map(({ id, i }) => ({ id, i })) };
+        confirmed: true, removed: old.removed.map(({ id, i }) => ({ id, i })),
+        ...(old.holdCandidates ? { holdCandidates: old.holdCandidates } : {}) };
       continue;
     }
     const candidates = candidatesByBand.get(band) ?? [];
@@ -181,11 +227,12 @@ export function buildGallery(previous, candidatesByBand, vectorFor, now, params 
     const result = clusterBand(candidates.filter((member) => !excluded.has(memberKey(member))),
       vectorFor, params.minSimilarity);
     bands[band] = { members: result.members, candidateCount: candidates.length,
-      clusterSizes: result.clusterSizes, confirmed: false, removed };
+      clusterSizes: result.clusterSizes, confirmed: false, removed,
+      ...(old?.holdCandidates ? { holdCandidates: old.holdCandidates } : {}) };
     distances.set(band, result.distances);
   }
   return { gallery: { schema: 1, person: '미네', birth: FACE_BIRTH, updatedAt: now,
-    params: { ...params }, bands }, distances };
+    params: { ...params }, bands, ...(previous?.people ? { people: previous.people } : {}) }, distances };
 }
 
 export function selectSheetMembers(members, vectorFor, limit = FACE_PARAMS.sheetLimit) {
@@ -236,7 +283,10 @@ export function confirmBand(gallery, band, mapping, removeNumbers, now) {
     }
   }
   return { ...gallery, updatedAt: now, bands: { ...gallery.bands,
-    [band]: { ...current, members: current.members.filter((member) => !removedKeys.has(memberKey(member))),
+    [band]: { ...current, members: [...new Map([
+      ...current.members.filter((member) => !removedKeys.has(memberKey(member))),
+      ...(current.holdCandidates ?? []),
+    ].map((member) => [memberKey(member), member])).values()],
       confirmed: true, removed } } };
 }
 
@@ -287,12 +337,26 @@ export function matchFaces(faceRows, mediaRows, gallery, vectorFor) {
         .map((member) => cosine(vector, vectorFor(member)))
         .sort((left, right) => right - left).slice(0, 5);
       const score = scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : null;
-      return { id: row.id, i, band, score,
-        label: period === 'prebirth' || score === null ? 'other' : classifyFaceScore(score),
+      const familyScores = Object.entries(gallery.people ?? {}).map(([person, state]) => {
+        const values = (state.members ?? []).filter((member) => member.id !== row.id)
+          .map((member) => cosine(vector, vectorFor(member))).sort((left, right) => right - left).slice(0, 5);
+        return { person, score: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null };
+      }).filter((item) => item.score !== null);
+      const bestFamily = familyScores.sort((left, right) => right.score - left.score)[0];
+      const confirmedFamily = Object.entries(gallery.people ?? {}).find(([, state]) => state.confirmed
+        && (state.members ?? []).some((member) => member.id === row.id && member.i === i));
+      const familyWins = confirmedFamily || bestFamily
+        && (period === 'prebirth' || bestFamily.score > (score ?? -Infinity));
+      const familyPerson = confirmedFamily?.[0] ?? bestFamily?.person;
+      const familyScore = confirmedFamily ? 1 : bestFamily?.score;
+      return { id: row.id, i, band, score: familyWins ? familyScore : score,
+        ...(familyWins ? { person: familyPerson, mineScore: score } : {}),
+        label: familyWins ? classifyFaceScore(familyScore, PHOTO_HIGH, PHOTO_HOLD)
+          : period === 'prebirth' || score === null ? 'other' : classifyFaceScore(score),
         ...(period === 'prebirth' ? { prebirth: true, reason: '출생 이전' } : {}),
         ...(period === 'bandless' ? { bandless: true } : {}) };
     });
-    const likely = faces.filter((face) => face.label === 'mine')
+    const likely = faces.filter((face) => !face.person && face.label === 'mine')
       .sort((left, right) => right.score - left.score || left.i - right.i);
     for (const face of likely.slice(1)) {
       face.label = 'uncertain';
@@ -301,14 +365,14 @@ export function matchFaces(faceRows, mediaRows, gallery, vectorFor) {
     results.push(...faces.sort((left, right) => left.i - right.i));
   }
   const mineByPhoto = new Map();
-  for (const face of results.filter((item) => item.label === 'mine')) {
+  for (const face of results.filter((item) => !item.person && item.label === 'mine')) {
     const previous = mineByPhoto.get(face.id);
     if (!previous || face.score > previous.score || face.score === previous.score && face.i < previous.i) {
       mineByPhoto.set(face.id, face);
     }
   }
   for (const face of results) {
-    if (face.label === 'mine' && mineByPhoto.get(face.id) !== face) {
+    if (!face.person && face.label === 'mine' && mineByPhoto.get(face.id) !== face) {
       face.label = 'uncertain';
       face.reason = 'same-photo-mine-limit';
     }

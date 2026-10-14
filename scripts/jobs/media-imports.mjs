@@ -263,6 +263,9 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
   const calendar = calendarRules(albumsConfig);
   const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {};
   const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
+  const facePeoplePath = join(root, VAULT_REL.mediaFacePeople);
+  const facePhotos = existsSync(facePeoplePath)
+    ? JSON.parse(readFileSync(facePeoplePath, 'utf8')).photos ?? {} : null;
   const groups = groupImportMoments(jsonLines(indexPath)).filter((group) => !album || group[0].album === album);
   const vision = loadMomentVision(root, output);
   const people = loadPeople(root);
@@ -356,7 +359,8 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
     const next = render(group, description, existing, now,
       oldRel && oldRel !== rel ? oldRel : interruptedMoveFrom,
       { category: config.category, source: 'import', album: first.album, albumLabel: config.label,
-        pathField: 'importPath', occasions, occasionSource, placeCategory, vision: enrichment, titleScene });
+        pathField: 'importPath', occasions, occasionSource, placeCategory, vision: enrichment,
+        titleScene, facePhotos });
     if (existing && next.replace(/^modified:.*$/m, '') === existing.replace(/^modified:.*$/m, '')) {
       if (!dryRun && (!state[first.id] || state[first.id].notePath !== rel
         || JSON.stringify(state[first.id].mediaIds) !== JSON.stringify(group.map((record) => record.id)))) {

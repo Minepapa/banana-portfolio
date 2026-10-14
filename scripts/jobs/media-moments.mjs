@@ -8,6 +8,7 @@ import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs
 import { loadVisionConfig } from './media-vision.mjs';
 import { writeAtomic, withLock } from '../lib/state-writer.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
+import { mergeMomentPeople, momentPeople } from '../lib/media-face-people.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
 import { haversineM, loadPlaces } from '../lib/location-stays.mjs';
 import { computeRoute, readRoutePayments, readRoutePoints } from './daily-note.mjs';
@@ -204,11 +205,20 @@ export function render(records, description, existing, now, movedFrom = null, op
     ? clean(titleWithScene(description.summary, { place: description.place, occasions: options.occasions,
       scene: options.titleScene, period: timePeriod(first) })) : description.summary;
   const momentTitle = `${day(first)} ${titleSummary} 순간`;
+  const previousCategories = Array.isArray(previousFields.category) ? previousFields.category
+    : previousFields.category ? [previousFields.category] : [];
+  const configuredCategories = Array.isArray(options.category)
+    ? options.category.map((category) => `[[${VAULT_REL.homeDir}/${category}]]`)
+    : options.category || !previousCategories.length || previousFields.autoBaseCategory
+      ? [`[[${VAULT_REL.homeDir}/${options.category || '100 나'}]]`] : [];
+  // 출처가 기록된 자동 카테고리만 교체한다. 구형 노트의 출처 불명 값은 수동 값일 수 있다.
+  const retainedCategories = previousCategories.filter((category) =>
+    !(previousFields.autoBaseCategory ?? []).includes(category)
+      || configuredCategories.includes(category));
+  const categories = [...new Set([...retainedCategories, ...configuredCategories])];
   const fields = {
     ...previousFields,
-    type: 'media', category: Array.isArray(options.category)
-      ? options.category.map((category) => `[[${VAULT_REL.homeDir}/${category}]]`)
-      : `[[${VAULT_REL.homeDir}/${options.category || '100 나'}]]`,
+    type: 'media', category: categories.length === 1 ? categories[0] : categories,
     description: momentTitle,
     sensitivity: '개인', created, modified: now.slice(0, 10), occurred: records[0].capturedAt,
     origin: `media:${records[0][options.pathField || 'archivePath']}`, mediaCount: records.length,
@@ -216,6 +226,9 @@ export function render(records, description, existing, now, movedFrom = null, op
     mediaIds: records.map((record) => record.id), startAt: records[0].capturedAt,
     endAt: records.at(-1).capturedAt, infoSource: description.source,
   };
+  if (options.category || !previousCategories.length || previousFields.autoBaseCategory) {
+    fields.autoBaseCategory = configuredCategories;
+  }
   if (options.source) fields.source = options.source;
   if (options.album) fields.album = options.album;
   if (options.albumLabel) fields.albumLabel = options.albumLabel;
@@ -244,7 +257,16 @@ export function render(records, description, existing, now, movedFrom = null, op
   if (movedFrom) fields.movedFrom = [...new Set([
     ...(Array.isArray(previousFields.movedFrom) ? previousFields.movedFrom
       : previousFields.movedFrom ? [previousFields.movedFrom] : []), movedFrom])];
-  const frontmatter = buildFrontmatter(fields);
+  const counts = options.facePhotos ? momentPeople(records.map((record) => record.id), options.facePhotos) : null;
+  const needsPeople = counts && (Object.values(counts).some(Boolean)
+    || fields.albumLabel === '미네' || previousFields.autoPeople?.length
+    || previousFields.autoCategory?.length || previousFields.mineFaces != null
+    || previousFields.mineBasis != null);
+  const withPeople = needsPeople
+    ? mergeMomentPeople(fields, records.map((record) => record.id), options.facePhotos,
+      { albumMine: options.albumLabel === '미네' || fields.albumLabel === '미네' })
+    : fields;
+  const frontmatter = buildFrontmatter(withPeople);
   const lines = records.map((record) => {
     const path = record[options.pathField || 'archivePath'];
     return `- ${VIDEO.has(extname(path).toLowerCase()) ? '영상' : '사진'}: ${path}`;
@@ -264,6 +286,9 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
   const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {};
   if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('moments.json 형식 오류');
   const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
+  const facePeoplePath = join(root, VAULT_REL.mediaFacePeople);
+  const facePhotos = existsSync(facePeoplePath)
+    ? JSON.parse(readFileSync(facePeoplePath, 'utf8')).photos ?? {} : null;
   // media-archive가 같은 JSONL을 append/복구할 수 있으므로 락 아래서 완성된 스냅샷만 읽는다.
   // 사진 분류·노트 생성은 락을 놓은 뒤 수행해 archive를 오래 막지 않는다.
   const records = dryRun || !existsSync(dirname(indexPath)) ? readIndex(indexPath)
@@ -329,7 +354,8 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
     const existing = existsSync(oldPath) ? readFileSync(oldPath, 'utf8') : null;
     if (state[id] && existing == null) throw new Error(`기존 순간 노트가 없음: ${state[id].notePath}`);
     const next = render(records, description, existing, now,
-      oldRel && oldRel !== rel ? oldRel : interruptedMoveFrom, { vision: enrichment, titleScene });
+      oldRel && oldRel !== rel ? oldRel : interruptedMoveFrom,
+      { vision: enrichment, titleScene, facePhotos });
     const stable = oldRel === rel && existing
       && next.replace(/^modified:.*$/m, '') === existing.replace(/^modified:.*$/m, '');
     if (stable) {
@@ -371,13 +397,89 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
   return summary;
 }
 
+export async function refreshMomentPeople({ root = VAULT_PATHS.root, dryRun = false,
+  write = writeAtomic, output = console, now = new Date().toISOString(), registryRules } = {}) {
+  const facePeoplePath = join(root, VAULT_REL.mediaFacePeople);
+  if (!existsSync(facePeoplePath)) throw new Error('face-people.json이 없습니다. --label을 먼저 실행하세요');
+  const photos = JSON.parse(readFileSync(facePeoplePath, 'utf8')).photos ?? {};
+  const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
+  const albumsPath = join(root, VAULT_REL.mediaImportAlbums);
+  const albums = existsSync(albumsPath)
+    ? JSON.parse(readFileSync(albumsPath, 'utf8')).albums ?? {} : {};
+  const summary = { changed: 0, skipped: 0, failed: 0, examples: [], failures: [] };
+  for (const stateRel of [VAULT_REL.mediaMomentsState, VAULT_REL.mediaImportMomentsState]) {
+    const statePath = join(root, stateRel);
+    if (!existsSync(statePath)) continue;
+    const state = JSON.parse(readFileSync(statePath, 'utf8'));
+    for (const entry of Object.values(state)) {
+      if (!entry?.notePath || !Array.isArray(entry.mediaIds)) continue;
+      const rel = entry.notePath;
+      try {
+      if (!rel.startsWith(`${VAULT_REL.mediaMoments}/`) || rel.includes('..')) throw new Error(`순간 경로 오류: ${rel}`);
+      const path = join(root, rel);
+      const existing = readFileSync(path, 'utf8');
+      const header = existing.match(/^---\n[\s\S]*?\n---\n/);
+      if (!header) throw new Error(`순간 머리말 오류: ${rel}`);
+      // 공용 파서는 지원하지 않는 YAML 줄을 건너뛰므로 왕복 쓰기 전에 완전 파싱을 확인한다.
+      const headerLines = header[0].slice(4, -5).split('\n');
+      if (headerLines.some((line) => !/^[A-Za-z0-9_]+:\s*.*$/.test(line))) {
+        throw new Error(`순간 머리말 미해석 줄: ${rel}`);
+      }
+      const fields = parseFrontmatter(existing);
+      const counts = momentPeople(entry.mediaIds, photos);
+      const configuredAlbum = fields.source === 'import' && fields.album ? albums[fields.album] : null;
+      const needsBaseCategory = configuredAlbum && !Object.hasOwn(fields, 'autoBaseCategory');
+      if (!Object.values(counts).some(Boolean) && fields.albumLabel !== '미네'
+        && !fields.autoPeople?.length && !fields.autoCategory?.length
+        && fields.mineFaces == null && fields.mineBasis == null && !needsBaseCategory) {
+        summary.skipped += 1; continue;
+      }
+      const nextFields = mergeMomentPeople(fields, entry.mediaIds, photos,
+        { albumMine: fields.albumLabel === '미네' });
+      if (nextFields.category.length === 1) {
+        nextFields.category = nextFields.category[0];
+      }
+      if (needsBaseCategory) {
+        const configured = Array.isArray(configuredAlbum.category)
+          ? configuredAlbum.category : [configuredAlbum.category];
+        nextFields.autoBaseCategory = configured.map((category) => `[[${VAULT_REL.homeDir}/${category}]]`);
+      }
+      const comparable = (value) => JSON.stringify({ ...value, modified: null });
+      if (comparable(nextFields) === comparable(fields)) { summary.skipped += 1; continue; }
+      nextFields.modified = now.slice(0, 10);
+      const next = `${buildFrontmatter(nextFields)}${existing.slice(header[0].length)}`;
+      const problems = checkNote(rel, next, rules);
+      if (problems.length) throw new Error(`순간 노트 쓰기 관문: ${problems.join('; ')}`);
+      if (!dryRun) await withLock(path, () => {
+        if (readFileSync(path, 'utf8') !== existing) throw new Error(`쓰기 전 노트 변경: ${rel}`);
+        write(path, next);
+      });
+      summary.changed += 1;
+      if (summary.examples.length < 10) summary.examples.push(rel);
+      } catch (error) {
+        summary.failed += 1;
+        summary.failures.push({ notePath: rel, error: error.message });
+        output.error?.(`[media-moments] 이름표 갱신 실패 ${rel}: ${error.message}`);
+      }
+    }
+  }
+  output.log(`[media-moments] ${dryRun ? 'dry-run ' : ''}이름표 갱신 ${summary.changed}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}`);
+  for (const rel of summary.examples) output.log(`  ${rel}`);
+  return summary;
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
   const since = args.find((arg) => arg.startsWith('--since='))?.slice('--since='.length);
-  if (args.some((arg) => arg !== '--dry-run' && !arg.startsWith('--since='))) {
-    console.error('usage: node scripts/jobs/media-moments.mjs [--dry-run] [--since=YYYY-MM-DD]');
+  if (args.some((arg) => arg !== '--dry-run' && arg !== '--refresh-people' && !arg.startsWith('--since='))
+    || args.includes('--refresh-people') && since) {
+    console.error('usage: node scripts/jobs/media-moments.mjs [--dry-run] [--since=YYYY-MM-DD] | --refresh-people [--dry-run]');
     process.exitCode = 2;
-  } else runMediaMoments({ dryRun: args.includes('--dry-run'), since }).catch((error) => {
+  } else (args.includes('--refresh-people')
+    ? refreshMomentPeople({ dryRun: args.includes('--dry-run') })
+    : runMediaMoments({ dryRun: args.includes('--dry-run'), since })).catch((error) => {
     console.error(`[media-moments] ${error.stack}`); process.exitCode = 1;
+  }).then((summary) => {
+    if (args.includes('--refresh-people') && summary?.failed) process.exitCode = 1;
   });
 }

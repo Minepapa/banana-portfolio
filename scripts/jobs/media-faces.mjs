@@ -7,9 +7,11 @@ import { homedir } from 'node:os';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MEDIA_FACES_PATHS, VAULT_PATHS, VAULT_REL, categoryLink } from '../lib/vault-paths.mjs';
-import { buildGallery, confirmBand, FACE_BANDS, FACE_PARAMS, MATCH_HIGH, MATCH_LOW, mineAlbum,
-  selectGalleryCandidates, selectSheetMembers,
+import { buildGallery, confirmBand, FACE_BANDS, FACE_PARAMS, MATCH_HIGH, MATCH_LOW, mineAlbum, ageBand,
+  classifyFaceScore,
+  selectGalleryCandidates, selectSheetMembers, clusterFamily,
   vectorLoader, matchFaces, selectGoldSample, goldMetrics } from '../lib/media-face-gallery.mjs';
+import { photoPeopleWithGallery, PHOTO_HIGH, PHOTO_HOLD } from '../lib/media-face-people.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -443,10 +445,308 @@ export async function matchMediaFaces({ root = VAULT_PATHS.root, out = MEDIA_FAC
   const execute = () => {
     const gallery = readGallery(galleryPath);
     if (!gallery?.bands) throw new Error('face-gallery.json이 없습니다');
-    const matches = matchFaces(jsonLines(indexPath), mediaRows(root), gallery, vectorFor);
+    const galleryHash = sheetHash(gallery);
+    const statePath = join(out, 'matches-state.json');
+    const previousState = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {};
+    const media = mediaRows(root);
+    const mediaById = new Map(media.map((row) => [row.id, row]));
+    const rows = jsonLines(indexPath);
+    const rowsById = new Map(rows.map((row) => [row.id, row]));
+    const inputHashes = Object.fromEntries(rows.filter((row) => !row.error && Array.isArray(row.faces))
+      .map((row) => {
+        const record = mediaById.get(row.id);
+        return [row.id, sheetHash({ faces: row.faces, capturedAt: record?.capturedAt,
+          capturedConfidence: record?.capturedConfidence,
+          band: ageBand(record?.capturedAt, record?.capturedConfidence) })];
+      }));
+    const oldMatchesById = new Map();
+    for (const face of jsonLines(matchesPath)) {
+      if (face.galleryHash !== galleryHash || face.inputHash !== inputHashes[face.id]) continue;
+      const group = oldMatchesById.get(face.id) ?? [];
+      group.push(face);
+      oldMatchesById.set(face.id, group);
+    }
+    const completeMatches = (row) => {
+      const matches = oldMatchesById.get(row.id) ?? [];
+      const expected = row.faces.map((face) => face.i);
+      return matches.length === expected.length
+        && new Set(matches.map((face) => face.i)).size === expected.length
+        && expected.every((index) => matches.some((face) => face.i === index));
+    };
+    // 결과와 상태 중 먼저 기록된 쪽으로 복구하되, 현재 사진 입력 해시가 같아야 재사용한다.
+    const completed = new Set(Object.entries(previousState.galleryHash === galleryHash
+      ? previousState.inputHashes ?? {} : {})
+      .filter(([id, hash]) => inputHashes[id] === hash
+        && Array.isArray(rowsById.get(id)?.faces) && completeMatches(rowsById.get(id)))
+      .map(([id]) => id));
+    for (const row of rows.filter((item) => Array.isArray(item.faces) && item.faces.length)) {
+      if (completeMatches(row)) completed.add(row.id);
+    }
+    const previous = [...completed].flatMap((id) => oldMatchesById.get(id) ?? []);
+    const pending = rows.filter((row) => !completed.has(row.id));
+    const pendingIds = new Set(pending.map((row) => row.id));
+    const matches = [...previous, ...matchFaces(pending, media, gallery, vectorFor)
+      .map((face) => ({ ...face, galleryHash, inputHash: inputHashes[face.id] }))];
     writeAtomic(matchesPath, `${matches.map(JSON.stringify).join('\n')}\n`);
+    writeAtomic(statePath, `${JSON.stringify({ galleryHash, count: matches.length,
+      inputHashes: Object.fromEntries(Object.entries(inputHashes)
+        .filter(([id]) => completed.has(id) || pendingIds.has(id))) })}\n`);
     output.log(`[media-faces] 판정 ${matches.length}개 얼굴`);
     return matches;
+  };
+  mkdirSync(out, { recursive: true });
+  return withLock(join(out, '.media-faces'), execute, { retries: 0 });
+}
+
+export async function labelMediaFaces({ root = VAULT_PATHS.root, out = MEDIA_FACES_PATHS.root,
+  matchesPath = join(out, 'matches.jsonl'), peoplePath = join(root, VAULT_REL.mediaFacePeople),
+  galleryPath = join(root, VAULT_REL.mediaFaceGallery),
+  now = new Date().toISOString(), output = console } = {}) {
+  const execute = () => {
+  if (!existsSync(matchesPath)) throw new Error('matches.jsonl이 없습니다. --match를 먼저 실행하세요');
+  const previous = existsSync(peoplePath) ? JSON.parse(readFileSync(peoplePath, 'utf8')) : {};
+  const confirmations = previous.confirmations ?? {};
+  const photos = photoPeopleWithGallery(jsonLines(matchesPath), readGallery(galleryPath), confirmations);
+  const index = { version: 1, updatedAt: now,
+    thresholds: { label: PHOTO_HIGH, hold: PHOTO_HOLD }, photos,
+    ...(Object.keys(confirmations).length ? { confirmations } : {}) };
+  writeAtomic(peoplePath, `${JSON.stringify(index, null, 2)}\n`);
+  output.log(`[media-faces] 사진 이름표 ${Object.keys(photos).length}개`);
+  return index;
+  };
+  mkdirSync(out, { recursive: true });
+  return withLock(join(out, '.media-faces'), execute, { retries: 0 });
+}
+
+export async function runFacePipeline({ limit = 500, ids = null, dryRun = false,
+  detect = runMediaFaces, match = matchMediaFaces, label = labelMediaFaces } = {}) {
+  const detected = await detect({ limit, ids, dryRun });
+  if (dryRun) return detected;
+  await match();
+  return label();
+}
+
+export function parseFacePipelineArgs(args) {
+  if (!['--detect', '--match', '--label'].every((command) => args.includes(command))) return null;
+  const rawLimit = args.find((arg) => arg.startsWith('--limit='))?.slice(8);
+  const ids = args.find((arg) => arg.startsWith('--ids='))?.slice(6).split(',') ?? null;
+  const limit = rawLimit === undefined ? 500 : Number(rawLimit);
+  if (!args.every((arg) => ['--detect', '--match', '--label', '--dry-run'].includes(arg)
+    || arg.startsWith('--limit=') || arg.startsWith('--ids='))
+    || ['--detect', '--match', '--label'].some((command) => args.filter((arg) => arg === command).length !== 1)
+    || !Number.isInteger(limit) || limit < 0 || ids?.some((id) => !id)) {
+    throw new Error('파이프라인 인자 오류');
+  }
+  return { limit, ids, dryRun: args.includes('--dry-run') };
+}
+
+export function parseFamilyConfirm(text, count) {
+  const mapping = {};
+  const used = new Set();
+  for (const item of text.split(';')) {
+    const match = item.trim().match(/^(휘영|나):([\d,]+)$/);
+    if (!match || mapping[match[1]]) throw new Error(`가족 확인 형식 오류: ${item}`);
+    const numbers = match[2].split(',').map(Number);
+    for (const number of numbers) {
+      if (!Number.isInteger(number) || number < 1 || number > count || used.has(number)) {
+        throw new Error(`가족 묶음 번호 오류: ${number}`);
+      }
+      used.add(number);
+    }
+    mapping[match[1]] = numbers;
+  }
+  return mapping;
+}
+
+export function renderFamilySheet(clusters) {
+  const cards = clusters.map((members, index) => `<section><h2>묶음 ${index + 1} · ${members.length}개</h2><div class="faces">${members
+    .map((member) => `<img src="../crops/${htmlText(member.id)}_${member.i}.jpg" alt="묶음 ${index + 1} 얼굴">`).join('')}</div><select data-cluster="${index + 1}"><option value="">기타·모름</option><option>휘영</option><option>나</option></select></section>`).join('\n');
+  return `<!doctype html><html lang="ko"><meta charset="utf-8"><title>가족 얼굴 묶음</title><style>body{font-family:system-ui;margin:2rem}.faces{display:flex;flex-wrap:wrap;gap:.3rem}.faces img{width:100px;height:100px;object-fit:contain}section{border:1px solid #aaa;padding:1rem;margin:1rem 0}textarea{display:block;width:100%;height:4rem}</style><h1>가족 얼굴 묶음</h1><p>묶음별 이름을 고르세요. 기타·모름은 기준에 넣지 않습니다.</p><button id="copy">결과 복사</button><textarea id="result" readonly></textarea>${cards}<script>const root=${scriptJson(REPO_ROOT)};function command(){const groups={휘영:[],나:[]};for(const select of document.querySelectorAll('select'))if(groups[select.value])groups[select.value].push(select.dataset.cluster);return 'cd '+JSON.stringify(root)+' && node scripts/jobs/media-faces.mjs --family-confirm='+JSON.stringify(Object.entries(groups).filter(([,ids])=>ids.length).map(([name,ids])=>name+':'+ids.join(',')).join(';'));}document.getElementById('copy').onclick=async()=>{const value=command();document.getElementById('result').value=value;try{await navigator.clipboard.writeText(value)}catch{document.getElementById('result').select()}};</script></html>\n`;
+}
+
+export function selectFamilyDisplay(members, clusterNumber, limit = 24) {
+  if (members.length <= limit) return members.map(({ id, i }) => ({ id, i }));
+  const nearCount = Math.ceil(limit / 2);
+  const near = members.slice(0, nearCount);
+  // 남은 절반은 묶음 번호와 얼굴 ID로 고정된 추첨을 한다. 재생성해도 번호가 안정적이다.
+  const sampled = members.slice(nearCount).map((member) => ({ member,
+    order: sheetHash(`family:${clusterNumber}:${member.id}:${member.i}`) }))
+    .sort((left, right) => left.order.localeCompare(right.order))
+    .slice(0, limit - nearCount).map(({ member }) => member);
+  return [...near, ...sampled].map(({ id, i }) => ({ id, i }));
+}
+
+export async function clusterFamilyFaces({ root = VAULT_PATHS.root, out = MEDIA_FACES_PATHS.root,
+  mediaRoot = MEDIA_FACES_PATHS.mediaRoot, indexPath = MEDIA_FACES_PATHS.index,
+  matchesPath = join(out, 'matches.jsonl'), embeddingsPath = MEDIA_FACES_PATHS.embeddings,
+  cropper = runCropFaces, output = console } = {}) {
+  if (!existsSync(matchesPath)) throw new Error('matches.jsonl이 없습니다. --match를 먼저 실행하세요');
+  const rows = jsonLines(indexPath);
+  const clusters = clusterFamily(rows, jsonLines(matchesPath), vectorLoader(embeddingsPath));
+  const displayed = Object.fromEntries(clusters.map((members, index) =>
+    [index + 1, selectFamilyDisplay(members, index + 1)]));
+  const byId = facesById(rows);
+  const source = new Map(mediaRows(root).map((row) => [row.id, row]));
+  const cropsPath = join(out, 'crops');
+  const sheetsPath = join(out, 'sheets');
+  const planned = Object.values(displayed).flatMap((members) => members).flatMap((member) => {
+    const face = byId.get(member.id)?.faces?.find((item) => item.i === member.i);
+    const record = source.get(member.id);
+    if (!record || face?.bbox?.length !== 4) throw new Error(`가족 시트 원본/좌표 누락: ${member.id}/${member.i}`);
+    return [{ id: member.id, i: member.i,
+      path: safeMediaPath(mediaRoot, record), bbox: face.bbox,
+      out: join(cropsPath, `${member.id}_${member.i}.jpg`) }];
+  });
+  mkdirSync(cropsPath, { recursive: true });
+  mkdirSync(sheetsPath, { recursive: true });
+  const cropped = new Set(await cropper(planned));
+  if (planned.some((item) => !cropped.has(item.out))) throw new Error('가족 시트 얼굴 조각 생성 누락');
+  writeAtomic(join(sheetsPath, 'family.json'), `${JSON.stringify({ clusters, displayed }, null, 2)}\n`);
+  writeAtomic(join(sheetsPath, 'family.html'), renderFamilySheet(Object.values(displayed)));
+  output.log(`[media-faces] 가족 묶음 ${clusters.length}개`);
+  return clusters;
+}
+
+export async function confirmFamilyFaces(input, { root = VAULT_PATHS.root,
+  out = MEDIA_FACES_PATHS.root, galleryPath = join(root, VAULT_REL.mediaFaceGallery),
+  now = new Date().toISOString(), output = console } = {}) {
+  const execute = () => {
+  const { clusters, displayed } = JSON.parse(readFileSync(join(out, 'sheets', 'family.json'), 'utf8'));
+  if (!displayed || clusters.some((_, index) => !Array.isArray(displayed[index + 1]))) {
+    throw new Error('가족 시트 표시 얼굴 기록이 없습니다. --family-cluster 재실행');
+  }
+  const mapping = parseFamilyConfirm(input, clusters.length);
+  const gallery = readGallery(galleryPath);
+  if (!gallery?.bands) throw new Error('face-gallery.json이 없습니다');
+  const people = { ...(gallery.people ?? {}) };
+  for (const [person, numbers] of Object.entries(mapping)) {
+    people[person] = { members: numbers.flatMap((number) => displayed[number])
+      .map(({ id, i }) => ({ id, i })), confirmed: true };
+  }
+  const updated = { ...gallery, updatedAt: now, people };
+  writeAtomic(galleryPath, `${JSON.stringify(updated, null, 2)}\n`);
+  output.log(`[media-faces] 가족 기준 ${Object.keys(mapping).join(', ')}`);
+  return updated;
+  };
+  mkdirSync(out, { recursive: true });
+  return withLock(join(out, '.media-faces'), execute, { retries: 0 });
+}
+
+export function parseHoldAnswers(text, sample) {
+  const match = text.trim().match(/^미네\s*:\s*([\d,\s]*)$/);
+  if (!match) throw new Error('보류함 결과 형식 오류: 미네: 1,2');
+  const byNumber = new Map(sample.map((item) => [item.number, item]));
+  const numbers = match[1].trim() ? match[1].split(',').map((part) => Number(part.trim())) : [];
+  if (new Set(numbers).size !== numbers.length || numbers.some((number) => !byNumber.has(number))) {
+    throw new Error('보류함 번호 오류');
+  }
+  return numbers;
+}
+
+export function renderHoldSheet(sample) {
+  const cards = sample.map((item) => `<button class="card" data-number="${item.number}" aria-pressed="false"><img src="../crops/${htmlText(item.id)}_${item.i}.jpg" alt="보류 얼굴 ${item.number}"><strong>${item.number}</strong><span>아님</span></button>`).join('');
+  return `<!doctype html><html lang="ko"><meta charset="utf-8"><title>미네 보류함</title><style>body{font-family:system-ui;margin:2rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,130px);gap:.5rem}.card{cursor:pointer;background:white;border:2px solid #888}.card[aria-pressed=true]{border-color:#27824c;background:#e9f5ed}.card img{width:120px;height:120px;object-fit:contain}.card span{display:block}textarea{display:block;width:100%}</style><h1>미네 얼굴 보류함</h1><p>기본 답은 아님입니다. 미네인 얼굴만 누르세요.</p><button id="copy">결과 복사</button><button id="save">파일로 저장</button><textarea id="result" readonly></textarea><div class="grid">${cards}</div><script>const cards=[...document.querySelectorAll('.card')];for(const card of cards)card.onclick=()=>{const yes=card.getAttribute('aria-pressed')!=='true';card.setAttribute('aria-pressed',String(yes));card.querySelector('span').textContent=yes?'미네':'아님'};function result(){return '미네: '+cards.filter(card=>card.getAttribute('aria-pressed')==='true').map(card=>card.dataset.number).join(',')}document.getElementById('copy').onclick=async()=>{const value=result();document.getElementById('result').value=value;try{await navigator.clipboard.writeText(value)}catch{document.getElementById('result').select()}};document.getElementById('save').onclick=()=>{const url=URL.createObjectURL(new Blob([result()],{type:'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=location.pathname.split('/').pop().replace('.html','.txt');link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};</script></html>\n`;
+}
+
+export function renderPersonGoldSheet(person, sample) {
+  const cards = sample.map((item) => `<button class="card" data-number="${item.number}" data-predicted="${item.predicted}" aria-pressed="false"><img src="../crops/gold-${htmlText(person)}-${item.number}.jpg" alt="${htmlText(person)} 표본 ${item.number}"><strong>${item.number}</strong><span>${item.predicted === 'mine' ? person : '아님'}</span></button>`).join('');
+  return `<!doctype html><html lang="ko"><meta charset="utf-8"><title>${htmlText(person)} 얼굴 표본</title><style>body{font-family:system-ui;margin:2rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,130px);gap:.5rem}.card{cursor:pointer;background:white;border:2px solid #888}.card[aria-pressed=true]{border-color:#d22;background:#fff3f3}.card img{width:120px;height:120px;object-fit:contain}.card span{display:block}textarea{display:block;width:100%}</style><h1>${htmlText(person)} 얼굴 표본</h1><p>틀린 판정만 누르세요.</p><button id="copy">결과 복사</button><textarea id="result" readonly></textarea><div class="grid">${cards}</div><script>const cards=[...document.querySelectorAll('.card')];for(const card of cards)card.onclick=()=>{const yes=card.getAttribute('aria-pressed')!=='true';card.setAttribute('aria-pressed',String(yes))};document.getElementById('copy').onclick=async()=>{const wrong=cards.filter(card=>card.dataset.predicted==='mine'&&card.getAttribute('aria-pressed')==='true').map(card=>card.dataset.number);const missed=cards.filter(card=>card.dataset.predicted!=='mine'&&card.getAttribute('aria-pressed')==='true').map(card=>card.dataset.number);const value='${htmlText(person)}가 아닌 번호: '+wrong.join(',')+'\\n${htmlText(person)}인데 아니라고 한 번호: '+missed.join(',');document.getElementById('result').value=value;try{await navigator.clipboard.writeText(value)}catch{document.getElementById('result').select()}};</script></html>\n`;
+}
+
+export async function holdSheetMediaFaces({ root = VAULT_PATHS.root, out = MEDIA_FACES_PATHS.root,
+  mediaRoot = MEDIA_FACES_PATHS.mediaRoot, indexPath = MEDIA_FACES_PATHS.index,
+  matchesPath = join(out, 'matches.jsonl'), cropper = runCropFaces,
+  output = console } = {}) {
+  const matches = jsonLines(matchesPath);
+  const previousPath = join(root, VAULT_REL.mediaFacePeople);
+  const previous = existsSync(previousPath) ? JSON.parse(readFileSync(previousPath, 'utf8')) : {};
+  const gallery = readGallery(join(root, VAULT_REL.mediaFaceGallery));
+  const photos = photoPeopleWithGallery(matches, gallery, previous.confirmations ?? {});
+  const removed = new Set(Object.values(gallery?.bands ?? {})
+    .filter((state) => state.confirmed)
+    .flatMap((state) => state.removed ?? [])
+    .map((face) => `${face.id}:${face.i}`));
+  const byId = new Map(mediaRows(root).map((row) => [row.id, row]));
+  const faceRows = facesById(jsonLines(indexPath));
+  const byMonth = new Map();
+  for (const [id, entry] of Object.entries(photos)) {
+    if (!entry.hold?.includes('미네')) continue;
+    const record = byId.get(id);
+    const month = record?.capturedAt?.slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(month)) continue;
+    const match = matches.filter((face) => face.id === id && !face.person && !face.prebirth
+      && !removed.has(`${face.id}:${face.i}`)
+      && face.score >= PHOTO_HOLD && face.score < PHOTO_HIGH)
+      .sort((left, right) => right.score - left.score)[0];
+    if (!match) continue;
+    const sample = byMonth.get(month) ?? [];
+    sample.push({ id, i: match.i });
+    byMonth.set(month, sample);
+  }
+  const sheetsPath = join(out, 'sheets');
+  const cropsPath = join(out, 'crops');
+  mkdirSync(sheetsPath, { recursive: true });
+  mkdirSync(cropsPath, { recursive: true });
+  for (const [month, entries] of byMonth) {
+    const sample = entries.map((entry, index) => ({ ...entry, number: index + 1 }));
+    const planned = sample.flatMap((entry) => {
+      const face = faceRows.get(entry.id)?.faces?.find((item) => item.i === entry.i);
+      const record = byId.get(entry.id);
+      if (!record || face?.bbox?.length !== 4) throw new Error(`보류함 원본/좌표 누락: ${entry.id}/${entry.i}`);
+      return [{ ...entry,
+        path: safeMediaPath(mediaRoot, record), bbox: face.bbox,
+        out: join(cropsPath, `${entry.id}_${entry.i}.jpg`) }];
+    });
+    const cropped = new Set(await cropper(planned));
+    if (planned.some((item) => !cropped.has(item.out))) throw new Error('보류함 얼굴 조각 생성 누락');
+    writeAtomic(join(sheetsPath, `hold-${month}.json`), `${JSON.stringify({ sample }, null, 2)}\n`);
+    writeAtomic(join(sheetsPath, `hold-${month}.html`), renderHoldSheet(sample));
+  }
+  output.log(`[media-faces] 보류함 ${byMonth.size}개월`);
+  return byMonth.size;
+}
+
+export async function confirmHoldFaces(input, { root = VAULT_PATHS.root, out = MEDIA_FACES_PATHS.root,
+  peoplePath = join(root, VAULT_REL.mediaFacePeople),
+  galleryPath = join(root, VAULT_REL.mediaFaceGallery), allNo = false, output = console } = {}) {
+  const execute = () => {
+  const expanded = input.startsWith('~/') ? join(homedir(), input.slice(2)) : input;
+  const basename = expanded.match(/hold-(\d{4}-\d{2})(?:\.txt)?$/)?.[1];
+  if (!basename) throw new Error('보류함 파일명은 hold-YYYY-MM.txt 형식이어야 합니다');
+  const sample = JSON.parse(readFileSync(join(out, 'sheets', `hold-${basename}.json`), 'utf8')).sample;
+  const yes = new Set(parseHoldAnswers(readFileSync(expanded, 'utf8'), sample));
+  if (!yes.size && !allNo) {
+    output.log('[media-faces] 미네 선택이 0개입니다. 모두 아님을 적용하려면 --hold-all-no를 함께 지정하세요.');
+    return null;
+  }
+  const current = existsSync(peoplePath) ? JSON.parse(readFileSync(peoplePath, 'utf8')) : {};
+  const confirmations = { ...(current.confirmations ?? {}) };
+  for (const item of sample) confirmations[item.id] = { ...(confirmations[item.id] ?? {}), 미네: yes.has(item.number) };
+  const photos = photoPeopleWithGallery(jsonLines(join(out, 'matches.jsonl')),
+    readGallery(galleryPath), confirmations);
+  const index = { version: 1, updatedAt: new Date().toISOString(),
+    thresholds: { label: PHOTO_HIGH, hold: PHOTO_HOLD }, photos, confirmations };
+  writeAtomic(peoplePath, `${JSON.stringify(index, null, 2)}\n`);
+  const gallery = readGallery(galleryPath);
+  if (gallery?.bands && yes.size) {
+    const source = new Map(mediaRows(root).map((row) => [row.id, row]));
+    const bands = { ...gallery.bands };
+    for (const item of sample.filter((entry) => yes.has(entry.number))) {
+      const media = source.get(item.id);
+      const band = ageBand(media?.capturedAt, media?.capturedConfidence);
+      if (!band || !bands[band]) continue;
+      const state = bands[band];
+      const member = { id: item.id, i: item.i };
+      const holdCandidates = state.holdCandidates ?? [];
+      const present = (items) => items.some((entry) => entry.id === item.id && entry.i === item.i);
+      bands[band] = { ...state,
+        holdCandidates: present(holdCandidates) ? holdCandidates : [...holdCandidates, member],
+        members: state.confirmed && !present(state.members) ? [...state.members, member] : state.members };
+    }
+    writeAtomic(galleryPath, `${JSON.stringify({ ...gallery, bands, updatedAt: index.updatedAt }, null, 2)}\n`);
+  }
+  output.log(`[media-faces] 보류함 확인 ${sample.length}장`);
+  return index;
   };
   mkdirSync(out, { recursive: true });
   return withLock(join(out, '.media-faces'), execute, { retries: 0 });
@@ -567,6 +867,19 @@ function reportGenerated(matches, gallery, metrics, albums, sheetPath) {
 const REPORT_START = '<!-- media-faces:generated:start -->';
 const REPORT_END = '<!-- media-faces:generated:end -->';
 
+export function validatePersonGold(person, gold, sheet, matches) {
+  if (!sheet || JSON.stringify(sheet.sample) !== JSON.stringify(gold.sample)) {
+    throw new Error(`가족 골드 라벨과 시트가 다릅니다. --gold-sheet --person=${person} 재실행`);
+  }
+  const current = new Map(matches.map((face) => [`${face.id}:${face.i}`, face]));
+  if (gold.sample.some((member) => {
+    const face = current.get(`${member.id}:${member.i}`);
+    return !face || face.person !== person || face.score !== member.score
+      || face.band !== member.band
+      || (face.score >= PHOTO_HIGH ? 'mine' : 'uncertain') !== member.predicted;
+  })) throw new Error(`가족 골드 표본이 현재 판정과 다릅니다. --gold-sheet --person=${person} 재실행`);
+}
+
 export async function reportMediaFaces({ root = VAULT_PATHS.root, out = MEDIA_FACES_PATHS.root,
   matchesPath = join(out, 'matches.jsonl'), galleryPath = join(root, VAULT_REL.mediaFaceGallery),
   goldPath = join(out, 'gold-labels.json'), reportRel,
@@ -595,6 +908,17 @@ export async function reportMediaFaces({ root = VAULT_PATHS.root, out = MEDIA_FA
       })) throw new Error('골드 표본과 현재 판정이 다릅니다. --gold-sheet를 다시 실행하세요');
     }
     const metrics = gold ? goldMetrics(gold.sample, gold.labels, matches) : null;
+    const familyRows = ['휘영', '나'].map((person) => {
+      const path = join(out, `gold-${person}-labels.json`);
+      if (!existsSync(path)) return `| ${person} | 판정 대기 | 자료 없음 |`;
+      const sample = JSON.parse(readFileSync(path, 'utf8'));
+      const sheetPath = join(out, 'sheets', `gold-${person}.json`);
+      const sheet = existsSync(sheetPath) ? JSON.parse(readFileSync(sheetPath, 'utf8')) : null;
+      validatePersonGold(person, sample, sheet, matches);
+      const selected = sample.sample.filter((item) => item.predicted === 'mine');
+      const correct = selected.filter((item) => sample.labels[item.number] === true).length;
+      return `| ${person} | ${selected.length} | ${percentage(correct, selected.length)} |`;
+    });
     const path = join(root, relativeReport);
     const existing = existsSync(path) ? readFileSync(path, 'utf8') : null;
     let before = '';
@@ -617,14 +941,17 @@ export async function reportMediaFaces({ root = VAULT_PATHS.root, out = MEDIA_FA
     const mediaById = new Map(mediaRows(root).map((row) => [row.id, row]));
     const reportMatches = matches.map((face) => {
       const media = mediaById.get(face.id);
-      return { ...face, album: media?.album ?? null,
+      return { ...face,
+        ...(face.person ? { score: face.mineScore,
+          label: face.prebirth || face.mineScore == null ? 'other' : classifyFaceScore(face.mineScore) } : {}),
+        album: media?.album ?? null,
         source: media?.importPath ? 'Imports' : media?.archivePath ? 'Archive' : null };
     });
     const note = `${buildFrontmatter({ type: 'report',
       category: [categoryLink('201 미네'), categoryLink('500 기술')],
       description: '미네 얼굴 인식 정확도 검증', sensitivity: '개인',
       created: date, modified: date,
-      author: 'zeus', model: 'media-faces' })}${before}${REPORT_START}\n${reportGenerated(reportMatches, gallery, metrics, albums, join(out, 'sheets', 'gold.html'))}${REPORT_END}${after}`;
+      author: 'zeus', model: 'media-faces' })}${before}${REPORT_START}\n${reportGenerated(reportMatches, gallery, metrics, albums, join(out, 'sheets', 'gold.html'))}\n### 가족별 표본 정밀도\n\n| 사람 | 자동 판정 표본 | 정밀도 |\n|---|---:|---:|\n${familyRows.join('\n')}\n${REPORT_END}${after}`;
     const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
     const problems = checkNote(relativeReport, note, rules);
     if (problems.length) throw new Error(`리포트 경로 검사 실패: ${problems.join('; ')}`);
@@ -637,15 +964,35 @@ export async function reportMediaFaces({ root = VAULT_PATHS.root, out = MEDIA_FA
   return withLock(join(out, '.media-faces'), execute, { retries: 0 });
 }
 
+export function selectPersonGoldSample(matches, person) {
+  const select = (low, high, limit) => {
+    const bestByPhoto = new Map();
+    for (const face of matches) {
+      if (face.person !== person || face.score < low || face.score >= high) continue;
+      const previous = bestByPhoto.get(face.id);
+      if (!previous || face.score > previous.score) bestByPhoto.set(face.id, face);
+    }
+    return [...bestByPhoto.values()].sort((left, right) =>
+      sheetHash(`${person}:${left.id}`).localeCompare(sheetHash(`${person}:${right.id}`)))
+      .slice(0, limit);
+  };
+  return [...select(PHOTO_HIGH, Infinity, 40), ...select(PHOTO_HOLD, PHOTO_HIGH, 20)]
+    .map((face, index) => ({ number: index + 1, id: face.id, i: face.i,
+      predicted: face.score >= PHOTO_HIGH ? 'mine' : 'uncertain', score: face.score,
+      band: face.band, winner: true }));
+}
+
 export async function goldSheetMediaFaces({ root = VAULT_PATHS.root,
   mediaRoot = MEDIA_FACES_PATHS.mediaRoot, out = MEDIA_FACES_PATHS.root,
   indexPath = MEDIA_FACES_PATHS.index, matchesPath = join(out, 'matches.jsonl'),
-  count = 200, cropper = runCropFaces, output = console } = {}) {
+  count = 200, person = null, cropper = runCropFaces, output = console } = {}) {
   if (!Number.isInteger(count) || count < 1) throw new Error('골드 표본 크기 오류');
+  if (person && !['휘영', '나'].includes(person)) throw new Error('가족 표본 사람 오류');
   const execute = async () => {
     const quotas = { mine: Math.round(count * 0.4), uncertain: Math.round(count * 0.3) };
     quotas.other = count - quotas.mine - quotas.uncertain;
-    const sample = selectGoldSample(jsonLines(matchesPath), quotas);
+    const matches = jsonLines(matchesPath);
+    const sample = person ? selectPersonGoldSample(matches, person) : selectGoldSample(matches, quotas);
     const source = new Map(mediaRows(root).map((row) => [row.id, row]));
     const faceIndex = new Map(jsonLines(indexPath).map((row) => [row.id, row]));
     const cropPath = join(out, 'crops');
@@ -656,7 +1003,7 @@ export async function goldSheetMediaFaces({ root = VAULT_PATHS.root,
         throw new Error(`골드 표본 원본/좌표 누락: ${member.number}`);
       }
       return { id: member.id, i: member.i, path: safeMediaPath(mediaRoot, record),
-        bbox: face.bbox, out: join(cropPath, `gold-${member.number}.jpg`) };
+        bbox: face.bbox, out: join(cropPath, `${person ? `gold-${person}` : 'gold'}-${member.number}.jpg`) };
     });
     mkdirSync(cropPath, { recursive: true });
     const cropped = new Set(await cropper(images));
@@ -665,8 +1012,9 @@ export async function goldSheetMediaFaces({ root = VAULT_PATHS.root,
     }
     const sheetsPath = join(out, 'sheets');
     mkdirSync(sheetsPath, { recursive: true });
-    writeAtomic(join(sheetsPath, 'gold.json'), `${JSON.stringify({ sample }, null, 2)}\n`);
-    writeAtomic(join(sheetsPath, 'gold.html'), renderFaceSheet({ sample }));
+    writeAtomic(join(sheetsPath, `${person ? `gold-${person}` : 'gold'}.json`), `${JSON.stringify({ sample }, null, 2)}\n`);
+    writeAtomic(join(sheetsPath, `${person ? `gold-${person}` : 'gold'}.html`),
+      person ? renderPersonGoldSheet(person, sample) : renderFaceSheet({ sample }));
     output.log(`[media-faces] 골드 표본 ${sample.length}개`);
     return sample;
   };
@@ -702,15 +1050,19 @@ export function parseGoldCorrections(text, sample) {
 }
 
 export async function recordGoldLabels(input, { out = MEDIA_FACES_PATHS.root,
-  goldPath = join(out, 'gold-labels.json'), output = console } = {}) {
+  person = null, goldPath = join(out, person ? `gold-${person}-labels.json` : 'gold-labels.json'),
+  output = console } = {}) {
   const execute = () => {
-    const { sample } = JSON.parse(readFileSync(join(out, 'sheets', 'gold.json'), 'utf8'));
+    const sheetName = person ? `gold-${person}.json` : 'gold.json';
+    const { sample } = JSON.parse(readFileSync(join(out, 'sheets', sheetName), 'utf8'));
     const expanded = input.startsWith('~/') ? join(homedir(), input.slice(2)) : input;
     const content = existsSync(expanded) ? readFileSync(expanded, 'utf8') : input;
-    if (content === input && !/^\s*\uFEFF?미네가 아닌 번호\s*:/u.test(input)) {
+    if (content === input && !new RegExp(`^\\s*\\uFEFF?${person ?? '미네'}가 아닌 번호\\s*:`).test(input)) {
       throw new Error(`파일을 찾을 수 없음: ${expanded}`);
     }
-    const labels = parseGoldCorrections(content, sample);
+    const labels = parseGoldCorrections(person ? content
+      .replaceAll(`${person}가 아닌 번호`, '미네가 아닌 번호')
+      .replaceAll(`${person}인데 아니라고 한 번호`, '미네인데 아니라고 한 번호') : content, sample);
     writeAtomic(goldPath, `${JSON.stringify({ sample, labels }, null, 2)}\n`);
     output.log(`[media-faces] 골드 라벨 ${sample.length}개`);
     return { sample, labels };
@@ -721,6 +1073,37 @@ export async function recordGoldLabels(input, { out = MEDIA_FACES_PATHS.root,
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
+  const pipeline = ['--detect', '--match', '--label'].every((command) => args.includes(command));
+  if (pipeline) {
+    let options;
+    try { options = parseFacePipelineArgs(args); } catch {
+      console.error('usage: media-faces.mjs --detect --match --label [--limit=N] [--ids=a,b] [--dry-run]');
+      process.exitCode = 2;
+    }
+    if (options) runFacePipeline(options).catch((error) => {
+      console.error(`[media-faces] ${error.stack}`);
+      process.exitCode = 1;
+    });
+  } else {
+  const newCommands = ['--label', '--hold-sheet', '--family-cluster',
+    ...args.filter((arg) => arg.startsWith('--hold=') || arg.startsWith('--family-confirm='))];
+  const newSelected = newCommands.filter((command) => args.includes(command));
+  if (newSelected.length) {
+    const command = newSelected[0];
+    const allNo = args.includes('--hold-all-no');
+    if (newSelected.length !== 1 || args.length !== (allNo ? 2 : 1)
+      || allNo && !command.startsWith('--hold=')) {
+      console.error('usage: media-faces.mjs --label | --hold-sheet | --hold=hold-YYYY-MM.txt [--hold-all-no] | --family-cluster | --family-confirm="휘영:3,7;나:1"');
+      process.exitCode = 2;
+    } else (command === '--label' ? labelMediaFaces()
+      : command === '--hold-sheet' ? holdSheetMediaFaces()
+        : command === '--family-cluster' ? clusterFamilyFaces()
+          : command.startsWith('--hold=') ? confirmHoldFaces(command.slice(7), { allNo })
+            : confirmFamilyFaces(command.slice(17))).catch((error) => {
+      console.error(`[media-faces] ${error.stack}`);
+      process.exitCode = 1;
+    });
+  } else {
   const rawLimit = args.find((arg) => arg.startsWith('--limit='))?.slice(8);
   const ids = args.find((arg) => arg.startsWith('--ids='))?.slice(6).split(',') ?? null;
   const limit = rawLimit === undefined ? 500 : Number(rawLimit);
@@ -737,13 +1120,16 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     && args.every((arg) => arg.startsWith('--confirm=') || arg.startsWith('--remove='))
     && removeNumbers.every((number) => Number.isInteger(number) && number > 0);
   const goldInput = args.find((arg) => arg.startsWith('--gold='))?.slice(7);
+  const person = args.find((arg) => arg.startsWith('--person='))?.slice(9) ?? null;
   const rawGoldCount = args.find((arg) => arg.startsWith('--gold-size='))?.slice(12);
   const goldCount = rawGoldCount === undefined ? 200 : Number(rawGoldCount);
   const validGoldSheet = selected[0] === '--gold-sheet'
-    && args.every((arg) => arg === '--gold-sheet' || arg.startsWith('--gold-size='))
+    && args.every((arg) => arg === '--gold-sheet' || arg.startsWith('--gold-size=') || arg.startsWith('--person='))
+    && (!person || ['휘영', '나'].includes(person))
     && Number.isInteger(goldCount) && goldCount > 0;
   const validGold = selected.length === 1 && selected[0].startsWith('--gold=')
-    && args.length === 1 && !!goldInput;
+    && args.every((arg) => arg.startsWith('--gold=') || arg.startsWith('--person='))
+    && (!person || ['휘영', '나'].includes(person)) && !!goldInput;
   if (selected.length !== 1 || !(validDetect || selected[0] === '--cluster' && args.length === 1
     || selected[0] === '--sheets' && args.length === 1 || validConfirm
     || selected[0] === '--match' && args.length === 1
@@ -755,10 +1141,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       : selected[0] === '--sheets' ? sheetMediaFaces()
         : selected[0] === '--match' ? matchMediaFaces()
           : selected[0] === '--report' ? reportMediaFaces()
-            : selected[0] === '--gold-sheet' ? goldSheetMediaFaces({ count: goldCount })
-              : validGold ? recordGoldLabels(goldInput)
+            : selected[0] === '--gold-sheet' ? goldSheetMediaFaces({ count: person ? 60 : goldCount, person })
+              : validGold ? recordGoldLabels(goldInput, { person })
                 : confirmMediaFaces(confirm, removeNumbers)).catch((error) => {
     console.error(`[media-faces] ${error.stack}`);
     process.exitCode = 1;
   });
+  }
+  }
 }
