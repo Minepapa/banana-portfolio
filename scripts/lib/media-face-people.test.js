@@ -114,3 +114,17 @@ test('기존 앨범 201·202와 수동 사람은 얼굴 이름표가 사라져�
   assert.deepEqual(newMine.autoCategory, [mine]);
   assert.deepEqual(mergeMomentPeople(newMine, ['p'], {}).category, ['[[01_Home/500 기술]]']);
 });
+
+test('휘영·나는 0.40 이상 자동, 0.35~0.40 보류(D101), 미네는 0.50/0.40 그대로', async () => {
+  const { photoPeople } = await import('./media-face-people.mjs');
+  const photos = photoPeople([
+    { id: 'a', i: 0, person: '휘영', score: 0.42, label: 'uncertain' },
+    { id: 'b', i: 0, person: '나', score: 0.37, label: 'other' },
+    { id: 'c', i: 0, score: 0.45, label: 'uncertain' },
+    { id: 'd', i: 0, person: '휘영', score: 0.2, label: 'other' },
+  ]);
+  assert.deepEqual(photos.a.people, ['휘영']);
+  assert.deepEqual(photos.b, { people: [], hold: ['나'] });
+  assert.deepEqual(photos.c, { people: [], hold: ['미네'] });
+  assert.equal(photos.d, undefined);
+});

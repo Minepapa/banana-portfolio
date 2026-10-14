@@ -3,11 +3,20 @@ import { VAULT_REL, categoryLink } from './vault-paths.mjs';
 import { PHOTO_HIGH, PHOTO_HOLD } from './media-face-gallery.mjs';
 export { PHOTO_HIGH, PHOTO_HOLD };
 export const FACE_PEOPLE = Object.freeze({ mine: '미네', family: ['휘영', '나'] });
+// 사람별 사진 이름표 기준. 미네는 D100(0.50 자동·0.40 보류), 휘영·나는 D101(2026-10-15 표본 60개씩:
+// 0.40~0.50 구간 20개 모두 본인 → 0.40 자동·0.35 보류).
+export const PERSON_THRESHOLDS = Object.freeze({
+  미네: Object.freeze({ label: PHOTO_HIGH, hold: PHOTO_HOLD }),
+  휘영: Object.freeze({ label: 0.40, hold: 0.35 }),
+  나: Object.freeze({ label: 0.40, hold: 0.35 }),
+});
 
 export function photoPeople(matches, confirmations = {}) {
   const grouped = new Map();
   for (const match of matches) {
-    if (!match?.id || match.prebirth && !match.person || match.label === 'other' || match.score == null) continue;
+    // 가족은 미네 기준 'other'(0.35 미만 등)여도 사람별 보류 기준 이상이면 본다(D101).
+    const familyKept = match?.person && match.score >= (PERSON_THRESHOLDS[match.person]?.hold ?? Infinity);
+    if (!match?.id || match.prebirth && !match.person || match.label === 'other' && !familyKept || match.score == null) continue;
     const person = match.person || FACE_PEOPLE.mine;
     if (![FACE_PEOPLE.mine, ...FACE_PEOPLE.family].includes(person)) continue;
     const scores = grouped.get(match.id) ?? new Map();
@@ -16,9 +25,10 @@ export function photoPeople(matches, confirmations = {}) {
   }
   const photos = {};
   for (const [id, scores] of grouped) {
-    const people = [...scores].filter(([, score]) => score >= PHOTO_HIGH).map(([person]) => person);
-    const hold = [...scores].filter(([, score]) => score >= PHOTO_HOLD && score < PHOTO_HIGH)
+    const people = [...scores].filter(([person, score]) => score >= PERSON_THRESHOLDS[person].label)
       .map(([person]) => person);
+    const hold = [...scores].filter(([person, score]) => score >= PERSON_THRESHOLDS[person].hold
+      && score < PERSON_THRESHOLDS[person].label).map(([person]) => person);
     photos[id] = { people, ...(hold.length ? { hold } : {}) };
   }
   for (const [id, decisions] of Object.entries(confirmations)) {

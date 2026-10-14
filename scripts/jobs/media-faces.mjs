@@ -11,7 +11,7 @@ import { buildGallery, confirmBand, FACE_BANDS, FACE_PARAMS, MATCH_HIGH, MATCH_L
   classifyFaceScore,
   selectGalleryCandidates, selectSheetMembers, clusterFamily,
   vectorLoader, matchFaces, selectGoldSample, goldMetrics, selectTailMembers, removeTailMembers } from '../lib/media-face-gallery.mjs';
-import { photoPeopleWithGallery, PHOTO_HIGH, PHOTO_HOLD } from '../lib/media-face-people.mjs';
+import { photoPeopleWithGallery, PHOTO_HIGH, PHOTO_HOLD, PERSON_THRESHOLDS } from '../lib/media-face-people.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -511,7 +511,7 @@ export async function labelMediaFaces({ root = VAULT_PATHS.root, out = MEDIA_FAC
   const confirmations = previous.confirmations ?? {};
   const photos = photoPeopleWithGallery(jsonLines(matchesPath), readGallery(galleryPath), confirmations);
   const index = { version: 1, updatedAt: now,
-    thresholds: { label: PHOTO_HIGH, hold: PHOTO_HOLD }, photos,
+    thresholds: { label: PHOTO_HIGH, hold: PHOTO_HOLD, byPerson: PERSON_THRESHOLDS }, photos,
     ...(Object.keys(confirmations).length ? { confirmations } : {}) };
   writeAtomic(peoplePath, `${JSON.stringify(index, null, 2)}\n`);
   output.log(`[media-faces] 사진 이름표 ${Object.keys(photos).length}개`);
@@ -865,7 +865,7 @@ export async function confirmHoldFaces(input, { root = VAULT_PATHS.root, out = M
   const photos = photoPeopleWithGallery(jsonLines(join(out, 'matches.jsonl')),
     readGallery(galleryPath), confirmations);
   const index = { version: 1, updatedAt: new Date().toISOString(),
-    thresholds: { label: PHOTO_HIGH, hold: PHOTO_HOLD }, photos, confirmations };
+    thresholds: { label: PHOTO_HIGH, hold: PHOTO_HOLD, byPerson: PERSON_THRESHOLDS }, photos, confirmations };
   writeAtomic(peoplePath, `${JSON.stringify(index, null, 2)}\n`);
   const gallery = readGallery(galleryPath);
   if (gallery?.bands && yes.size) {
