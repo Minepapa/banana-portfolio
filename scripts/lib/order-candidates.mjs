@@ -6,6 +6,7 @@
 // 수량 산출이 통화 혼동 없이 원화 기준으로 일관되게 하기 위함.
 
 import { NOTE_COL as N, JOURNAL_COL as J, RISK_COL as R, EXEC_COL as T, JOURNAL_STATUS, PROPOSAL_SOURCE } from './sheet-contracts.mjs';
+import { agentTitle } from './agent-registry.mjs';
 
 export const GAP_TRIGGER_PCT = 5;       // 리밸런싱 갭 트리거 ±5%p (오늘탭·자산분배와 동일)
 
@@ -291,7 +292,7 @@ export function applyThesisGuard(candidates, bSignals, releases) {
     }
     const rel = (releases || new Map()).get(c.name);
     if (rel) {
-      c.why = { ...c.why, 차단해제대기: `B🔴(${rel.from})→${rel.newSignal}(${rel.to}) 최근 회복 — Zeus 반대검증 확인 필요(헌장 §2)`.slice(0, 120) };
+      c.why = { ...c.why, 차단해제대기: `B🔴(${rel.from})→${rel.newSignal}(${rel.to}) 최근 회복 — ${agentTitle('zeus')} 반대검증 확인 필요(헌장 §2)`.slice(0, 120) };
     }
     kept.push(c);
   }

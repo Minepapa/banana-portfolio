@@ -159,7 +159,7 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
     const batch = targets.slice(0, maxNotes);
     summary.remaining = targets.length - batch.length;
     if (dryRun) {
-      output.log(`[mine-athena-fields] 대상 ${targets.length}개(이번 묶음 ${batch.length}개, dry-run — 아테나 호출·쓰기 없음)`);
+      output.log(`[mine-athena-fields] 대상 ${targets.length}개(이번 묶음 ${batch.length}개, dry-run — 판단 호출·쓰기 없음)`);
       for (const item of batch) output.log(`  ${item.rel}`);
       return summary;
     }

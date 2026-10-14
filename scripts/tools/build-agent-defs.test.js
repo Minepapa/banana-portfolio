@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AGENT_NAMES, buildAgentDefs, renderAgent } from './build-agent-defs.mjs';
+import { AGENT_NAMES, buildAgentDefs, buildAgentRegistry, renderAgent } from './build-agent-defs.mjs';
 import { LEGACY_OVERRIDES, AGENT_SPECIFIC_OVERRIDES, APPENDIX_OVERRIDES, COMMON_OVERRIDES } from './agent-legacy-overrides.mjs';
 import { parseAgentMd } from '../lib/agent-loader.mjs';
 
@@ -19,10 +19,11 @@ function fixture() {
     const legacyAppendix = name === 'zeus' ? '["[[80_Archive/agents-2026-10-08/zeus]]"]' : '[]';
     const sections = ['신화적 원형', '사명', '성격', '말투', '책임', '경계', '작업 유형별 절차', '협업', '개별 금지']
       .map((heading, index) => `## ${index + 1}. ${heading}\n\n개별 판단 기준.`).join('\n\n');
-    writeFileSync(join(charterDir, `${name}.md`), `---\nname: "${name}"\ntitle: "제목"\ndescription: "업무 설명"\nroutingHint: "요청 내용"\nroutingKeywords: ["키워드"]\nruntimeModel: "sonnet"\ntools: "Read, Grep"\nlegacyAppendix: ${legacyAppendix}\n---\n# ${name}\n\n${sections}\n\n## 변경 이력\n\n- 생성.\n`);
+    writeFileSync(join(charterDir, `${name}.md`), `---\nname: "${name}"\ntitle: "제목"\ntelegramLabel: "[제목 ${name[0].toUpperCase() + name.slice(1)}]"\ndescription: "업무 설명"\nroutingHint: "요청 내용"\nroutingKeywords: ["키워드"]\nruntimeModel: "sonnet"\ntools: "Read, Grep"\nlegacyAppendix: ${legacyAppendix}\n---\n# ${name}\n\n${sections}\n\n## 변경 이력\n\n- 생성.\n`);
   }
   writeFileSync(join(archiveDir, 'zeus.md'), '---\nname: zeus\n---\n# 옛 Zeus\n\n비서실이 텔레그램 즉시 1줄 + 주간리포트.\n\n## 텔레그램 상시세션 프로토콜\n제거할 규칙.\n\n## 운영 규칙\n보존할 규칙.\n');
-  return { routeOut: join(root, 'route-keywords.generated.json'), root, charterDir, archiveDir, outDir };
+  // 생성 파일 경로를 모두 임시 폴더로 준다 — 빠뜨리면 가짜 헌장이 실제 생성 파일(라이브 잡이 읽는 파일)을 덮는다(2026-10-14 사고).
+  return { routeOut: join(root, 'route-keywords.generated.json'), registryOut: join(root, 'agent-registry.generated.json'), root, charterDir, archiveDir, outDir };
 }
 
 test('헌장 머리말·공통 본문·옛 지침을 생성하고 텔레그램 절만 대체한다', () => {
@@ -61,7 +62,7 @@ test('본문 9섹션이나 부록 경계가 손상되면 생성 전에 멈추고
 test('--check는 불일치를 보고하고 파일을 고치지 않는다', () => {
   const dirs = fixture();
   try {
-    assert.equal(buildAgentDefs(dirs).differences.length, 7); // 정의 6개 + 라우팅 키워드 파일(이관 4-5)
+    assert.equal(buildAgentDefs(dirs).differences.length, 8); // 정의 6개 + 라우팅 키워드 파일(이관 4-5) + 담당 레지스트리
     assert.deepEqual(buildAgentDefs({ ...dirs, check: true }).differences, []);
     const path = join(dirs.outDir, 'plutus.md');
     writeFileSync(path, 'stale');
@@ -117,4 +118,27 @@ test('생성된 지침에 남은 옛 이름 줄 목록은 리뷰된 스냅숏과
     .flatMap((line, index) => oldRole.test(line) ? [`.claude/agents/${name}.md:${index + 1}:${line}`] : []));
   const snapshotPath = join(dirname(fileURLToPath(import.meta.url)), 'agent-legacy-lines.snapshot.txt');
   assert.equal(`${lines.join('\n')}\n`, readFileSync(snapshotPath, 'utf8'));
+});
+
+test('담당 레지스트리: 헌장 title·telegramLabel과 decisionDocs 키(업무 → 담당)에서 생성, 라벨 불일치·업무 중복은 멈춘다', () => {
+  const dirs = fixture();
+  try {
+    const plutus = join(dirs.charterDir, 'plutus.md');
+    writeFileSync(plutus, readFileSync(plutus, 'utf8').replace('legacyAppendix:', 'decisionDocs: {"거시 위험 트리거": "거시-위험-트리거"}\nlegacyAppendix:'));
+    const registry = buildAgentRegistry({ charterDir: dirs.charterDir });
+    assert.deepEqual(registry.agents.plutus, { title: '제목', english: 'Plutus', label: '제목 Plutus' });
+    assert.deepEqual(registry.duties, { '거시 위험 트리거': 'plutus' });
+    buildAgentDefs(dirs);
+    assert.deepEqual(JSON.parse(readFileSync(dirs.registryOut, 'utf8')), registry);
+    const themis = join(dirs.charterDir, 'themis.md');
+    writeFileSync(themis, readFileSync(themis, 'utf8').replace('legacyAppendix:', 'decisionDocs: {"거시 위험 트리거": "x"}\nlegacyAppendix:'));
+    assert.throws(() => buildAgentRegistry({ charterDir: dirs.charterDir }), /업무 담당 중복/);
+    writeFileSync(themis, readFileSync(themis, 'utf8').replace('[제목 Themis]', '[다른 Themis]'));
+    assert.throws(() => buildAgentRegistry({ charterDir: dirs.charterDir }), /title·telegramLabel 불일치: themis/);
+  } finally { rmSync(dirs.root, { recursive: true, force: true }); }
+});
+
+test('실제 헌장과 생성된 담당 레지스트리가 같다(헌장만 고치고 생성기를 안 돌리면 실패)', () => {
+  const registryPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'agent-registry.generated.json');
+  assert.equal(readFileSync(registryPath, 'utf8'), `${JSON.stringify(buildAgentRegistry(), null, 2)}\n`);
 });

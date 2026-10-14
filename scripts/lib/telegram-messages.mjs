@@ -7,6 +7,8 @@
 // 대괄호 태그(예: [경고][완료][취소][차단][만료][오류][제안][안내])로 상태를 명시하는
 // 방식으로 교체(오너가 미리보기 3안 중 "대괄호 태그형"을 확정). 부서 헤더 아래 구분선
 // (SEPARATOR)을 추가해 모바일에서 헤더/본문 경계가 시각적으로 분명해지게 했다.
+import { AGENT_IDS, agentLabel, agentTitle } from './agent-registry.mjs';
+
 const SEPARATOR = '─'.repeat(16);
 
 // tag: 이 메시지의 상태를 나타내는 대괄호 단어(예: '제안'·'완료'·'경고') — 없으면
@@ -23,7 +25,7 @@ function buildHeader(departmentLabel, tag) {
 // 형식에 맞다는 판단(DevRequest 2026-09-19-제우스-라벨-영문표기-Zeus.md). 구 표기
 // "[제우스]"는 전환 기간에만 허용했고, 현재는 발신자 라벨 가드가 차단한다.
 // 이관 4-4(D64): 헤더와 같은 "[한글 English]" 표기로 통일.
-export const ZEUS_MARKER = '[제우스 Zeus]';
+export const ZEUS_MARKER = `[${agentLabel('zeus')}]`;
 
 // 부서 보고와 Zeus 판단 코멘트를 한 메시지에 합친다(2026-08-05 오너 확정 — 텔레그램
 // 알림 개수를 늘리지 않기 위함). zeusComment가 없으면(아직 Zeus 판단 전 등) 부서
@@ -282,12 +284,12 @@ export function parseProposalModeCommand(text) {
 // 쉼표·공백 어느 쪽이든 허용.
 import { hasInvestmentKeyword } from './route-keywords.mjs';
 
-const DEPARTMENTS = ['제우스', '클리오', '테미스', '헤르메스', '아테나', '플루토스'];
+const DEPARTMENTS = AGENT_IDS.map(agentTitle);
 
 export function renamedRoleHint(text) {
   const call = String(text ?? '').trim().match(/^(아테나|헤르메스)(?=[,\s]|$)/);
   return call && hasInvestmentKeyword(String(text).slice(call[0].length))
-    ? '이름이 바뀌었다(투자는 플루토스)'
+    ? `이름이 바뀌었다(투자는 ${agentTitle('plutus')})`
     : null;
 }
 

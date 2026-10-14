@@ -121,7 +121,7 @@ export function renderSignalsReport(signals) {
   // "텔레그램 발송 여부"를 판정하는 시그널이다(2026-08-23, rebalance-facts.mjs와 같은
   // 이유로 이모지⚠️→대괄호 태그 교체) — 이 문자열을 바꾸면 그 판정도 같이 깨진다.
   lines.push(signals.anyMeaningfulChange
-    ? '\n[경고] 의미있는 변화 감지 — Athena 종합판단 필요(진짜 국면전환인지 노이즈인지)'
+    ? '\n[경고] 의미있는 변화 감지 — 종합판단 필요(진짜 국면전환인지 노이즈인지)'
     : '\n[정상] 5개 신호(한국·미국 금리차 포함 7개 계산) 전부 조용함 — 협의체 소집 불필요');
   return lines.join('\n');
 }

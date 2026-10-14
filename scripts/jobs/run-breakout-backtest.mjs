@@ -297,7 +297,7 @@ async function main() {
       maxDrawdown: maxDrawdown(benchmarkCumulative),
     },
   }, null, 2));
-  console.error('\n※ 이 보고는 벤치마크 대비 상대비교 사실까지만 — 통과/재검토 판단은 Zeus/Themis+오너 몫.');
+  console.error('\n※ 이 보고는 벤치마크 대비 상대비교 사실까지만 — 통과/재검토 판단은 이 보고 밖(오너 확인)에서 한다.');
 }
 
 main().catch((e) => { console.error('\n❌ 오류:', e.message, e.stack); process.exit(1); });

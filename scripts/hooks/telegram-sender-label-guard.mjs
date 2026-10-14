@@ -34,11 +34,10 @@
  * 텔레그램 세션 전용 env var로 그 외 세션에서는 즉시 통과시킨다.
  */
 import { pathToFileURL } from 'node:url';
+import { AGENT_IDS, agentLabel } from '../lib/agent-registry.mjs';
 
-export const VALID_SENDER_LABELS = [
-  '[제우스 Zeus]',
-  '[클리오 Clio]', '[테미스 Themis]', '[헤르메스 Hermes]', '[아테나 Athena]', '[플루토스 Plutus]',
-];
+// 라벨 목록은 헌장에서 생성한 레지스트리에서 읽는다(손 복사 금지, 2026-10-14).
+export const VALID_SENDER_LABELS = AGENT_IDS.map((id) => `[${agentLabel(id)}]`);
 
 // 순수함수 — 텍스트 맨 앞(공백 제거 후)이 알려진 라벨로 시작하는지만 본다. 문장
 // 중간·끝에 라벨 비슷한 문구가 있어도 인정 안 함(zeus.md 규칙이 "첫 줄"을 명시).
@@ -94,7 +93,7 @@ async function main() {
 
     deny(
       `텔레그램으로 나가는 메시지 첫 줄에 발신자 라벨이 없습니다(zeus.md "발신자 라벨" 절). ` +
-      `직접 답할 때는 "[제우스 Zeus] "로 시작하고, 부서를 중계할 때는 그 부서 자신의 라벨을 그대로 두세요. ` +
+      `직접 답할 때는 "[${agentLabel('zeus')}] "로 시작하고, 부서를 중계할 때는 그 부서 자신의 라벨을 그대로 두세요. ` +
       `같은 텍스트 앞에 라벨만 추가해 ${toolName}을 다시 호출하세요.`,
     );
   } catch (e) {

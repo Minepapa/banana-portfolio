@@ -52,6 +52,7 @@ import { parseProposal } from '../lib/proposal-vault.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
+import { agentLabel } from '../lib/agent-registry.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
@@ -162,7 +163,7 @@ ${cashLines}
   반드시 그 목록 안에서만 골라라 — 스스로 다른 브랜드를 지어내지 마라.
 - side는 "매수"(비중 확대) 또는 "매도"(비중 축소) — 매도는 실보유가 있는 계좌·종목만
   가능하다.
-- reasoning은 네(아테나) 성격대로 — 왜 이 신호가 이 자산군·방향에 영향을 준다고
+- reasoning은 네 성격대로 — 왜 이 신호가 이 자산군·방향에 영향을 준다고
   보는지 1~2문장, Frank에게 텔레그램으로 그대로 전달된다.
 - 특별히 조정할 만한 자산군이 없다고 판단되면 actions를 빈 배열로 둬라(빈 배열도
   정상 응답이다 — 억지로 뭔가 제안하지 마라).
@@ -249,13 +250,13 @@ export function validateMacroTiltActions(actions, { capBudgetByClass, holdings, 
 // 판정 요청만 한다.
 export function buildThemisTiltReviewPrompt({ signalsReport, actions }) {
   const actionLines = actions.map((a) => `  - [${a.account}] ${a.side} ${a.instrumentName}(${a.assetClass}) 약 ${Math.round(a.amountWon).toLocaleString('ko-KR')}원 — ${a.reasoning}`).join('\n');
-  return `[월간 거시틸트 2차 검증] 플루토스 Plutus가 아래 거시 신호를 근거로 제안한 틸트
+  return `[월간 거시틸트 2차 검증] 아래 거시 신호를 근거로 제안된 틸트
 액션을 검증해라(숫자 재도출 금지, 신호강도 대비 틸트 크기가 타당한지만 판단).
 
 [거시 신호]
 ${signalsReport.trim()}
 
-[Athena가 제안한 틸트 액션]
+[제안된 틸트 액션]
 ${actionLines}
 
 판단 요청: 신호의 강도(크로스·볼린저 이탈 정도)에 비해 이 틸트 금액·방향이 과도하거나
@@ -282,7 +283,7 @@ export function buildTiltReason(action, themisVerdict) {
   const verdict = String(themisVerdict?.verdict ?? '판정불명').trim();
   const caveat = String(themisVerdict?.caveat ?? '').trim();
   if (!caveat) return action.reasoning;
-  return `${action.reasoning}\n\n[테미스 Themis · ${verdict}] ${caveat}`;
+  return `${action.reasoning}\n\n[${agentLabel('themis')} · ${verdict}] ${caveat}`;
 }
 
 // 매도/매수 제안 발송 결과가 전부 'created'여야 월 마커를 전진시킨다(rebalance-
@@ -410,7 +411,7 @@ async function main() {
   const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || PLUTUS.model;
 
   const prompt = buildMacroTiltPrompt({ signalsReport, roomFacts, rankedUniverseByClass, cashByAccount });
-  if (DRY_RUN) { console.log(`\n┌─── 프롬프트(Athena) ───┐\n${prompt}\n└──────────────────┘`); return; }
+  if (DRY_RUN) { console.log(`\n┌─── 프롬프트 ───┐\n${prompt}\n└──────────────────┘`); return; }
 
   const capBudgetByClass = Object.fromEntries(roomFacts.map((f) => [f.assetClass, f.capBudgetWon]));
   let actions;
@@ -421,11 +422,11 @@ async function main() {
     actions = kept;
   } catch (e) {
     if (e.isLimit) { console.log('  ⏳ 사용량 한도 → 판단 보류(다음 실행 재시도, 월 마커 미전진).'); return; }
-    console.error(`  ❌ Athena 틸트 판단 실패: ${e.message} — 다음 실행 재시도(월 마커 미전진)`);
+    console.error(`  ❌ 틸트 판단 실패: ${e.message} — 다음 실행 재시도(월 마커 미전진)`);
     return;
   }
   if (!actions.length) {
-    console.log('  ℹ️ Athena가 제안한 유효 액션 없음 — 이번 달 틸트 없음');
+    console.log('  ℹ️ 제안된 유효 액션 없음 — 이번 달 틸트 없음');
     commitMonth();
     return;
   }
@@ -440,10 +441,10 @@ async function main() {
     // Themis 검증 실패해도 발송 자체는 막지 않는다(§5와 같은 정신 — 실시간 오너 세션이
     // 없는 무인 실행이라 검증 단계 하나가 죽었다고 액션 전체가 유실되면 안 됨). 검증을
     // 못 받았다는 사실 자체를 caveat로 남긴다.
-    console.error(`  ⚠️ Themis 2차 검증 실패(발송은 진행): ${e.message}`);
+    console.error(`  ⚠️ 2차 검증 실패(발송은 진행): ${e.message}`);
     themisVerdict = { verdict: '검증실패', caveat: '2차 검증 실행 자체가 실패함(로그 확인 필요)' };
   }
-  console.log(`  🔍 Themis 검증: ${themisVerdict.verdict}${themisVerdict.caveat ? ` — ${themisVerdict.caveat}` : ''}`);
+  console.log(`  🔍 2차 검증: ${themisVerdict.verdict}${themisVerdict.caveat ? ` — ${themisVerdict.caveat}` : ''}`);
 
   const existingProposals = loadExistingProposals(VAULT_PATHS.decisions.proposals);
   const sendResults = [];

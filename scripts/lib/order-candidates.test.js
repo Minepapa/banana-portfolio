@@ -322,7 +322,7 @@ test('applyThesisGuard: 막 회복(releases) 매수 후보는 통과하되 차�
   assert.equal(dropped.length, 0);            // 자동 차단 아님 — 통과
   assert.equal(kept.length, 1);
   assert.match(kept[0].why.차단해제대기, /B🔴\(2026-06-01\)→🟢\(2026-07-06\)/);
-  assert.match(kept[0].why.차단해제대기, /Zeus 반대검증/);
+  assert.match(kept[0].why.차단해제대기, /반대검증 확인 필요/);
 });
 
 test('applyThesisGuard: releases 미전달(기존 호출부 하위호환) 시 차단해제대기 없음', () => {

@@ -51,7 +51,7 @@ async function main() {
   await writeStateFile(VAULT_PATHS.state.proposalMode, content);
 
   if (targetMode === MODE_BLOCKED) {
-    console.log('🚫 제안모드 오프 — 이후 new-cash-allocation·rebalance-proposal·퀀트 제안 전부 생성되지 않습니다(기존 대기/승인 제안 처리는 그대로 가능, 카이로스는 영향 없음). 되돌리려면 "제안모드 온" 명령.');
+    console.log('🚫 제안모드 오프 — 이후 new-cash-allocation·rebalance-proposal·퀀트 제안 전부 생성되지 않습니다(기존 대기/승인 제안 처리는 그대로 가능, 돌파매매는 영향 없음). 되돌리려면 "제안모드 온" 명령.');
   } else {
     console.log('✅ 제안모드 온 — 자동 제안 생성이 다시 정상적으로 이루어집니다.');
   }

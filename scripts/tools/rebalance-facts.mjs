@@ -54,7 +54,7 @@ function main() {
   // stdout 전체를 캡처해 .includes('[경고]')로 "텔레그램으로 보낼 만한 변화가 있는가"를
   // 판정하는 시그널이다(2026-08-23, 이모지⚠️→대괄호 태그로 교체하며 시그널 문자열도
   // 같이 바꿈 — 두 파일이 어긋나면 daily-asset-allocation-check가 영원히 조용해진다).
-  console.log(anyBreached ? '\n[경고] 밴드 이탈 자산군 있음 — Athena 리밸런싱 판단 필요' : '\n[정상] 전 자산군 밴드 안 — 이번 분기 리밸런싱 불필요');
+  console.log(anyBreached ? '\n[경고] 밴드 이탈 자산군 있음 — 리밸런싱 판단 필요' : '\n[정상] 전 자산군 밴드 안 — 이번 분기 리밸런싱 불필요');
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main();

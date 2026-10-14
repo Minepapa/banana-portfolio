@@ -85,7 +85,7 @@ ${macroReport.trim()}
 
 판단 요청:
 1. 어떤 신호가 왜 경고 상태인지, 지금 자산분배 트랙(위탁·연금저축·ISA) 관점에서 얼마나
-   시급한 변화인지 네(아테나) 성격대로 판단해라 — 과잉반응하지 마라, 노이즈일 가능성도
+   시급한 변화인지 네 성격대로 판단해라 — 과잉반응하지 마라, 노이즈일 가능성도
    솔직히 인정해라.
 2. 이게 진짜 국면전환처럼 보이는지 일시적 변동으로 보이는지, 판단 근거를 밝혀라.
 
@@ -147,14 +147,14 @@ async function main() {
   // 필수(쿨다운 중이면 skip). 이 잡은 2026-08-31에 처음 LLM을 부르게 된 잡이라 이 규칙
   // 대상 — 쿨다운 중이어도 사실만은 발송한다(위 HIGH 수정과 동일 원칙, 통째로 유실 안 함).
   if (cooldownActive()) {
-    console.log('⏳ 쿨다운 중 — Athena 판단 생략, 사실만 발송');
+    console.log('⏳ 쿨다운 중 — 헤드리스 판단 생략, 사실만 발송');
   } else {
     try {
       const judgment = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
       console.log(judgment);
       ({ conclusion, context, decisions } = parseDepartmentResponse(judgment));
     } catch (e) {
-      console.error(`⚠ Athena 헤드리스 판단 실패(사실만 발송): ${e.message}`);
+      console.error(`⚠ 헤드리스 판단 실패(사실만 발송): ${e.message}`);
     }
   }
 

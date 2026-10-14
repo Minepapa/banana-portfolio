@@ -216,7 +216,7 @@ function fetchMacroText() {
 export function buildMorningWarningDetail({ macroFailed, judgmentFailed }) {
   const failedMetrics = [
     macroFailed && '거시신호 조회',
-    judgmentFailed && 'Plutus 판단',
+    judgmentFailed && '헤드리스 판단',
   ].filter(Boolean);
   return `아침 브리핑 일부 지표 실패: ${failedMetrics.join(', ')}`;
 }
@@ -264,7 +264,7 @@ async function main() {
     // AGENTS.md "claude 호출 규칙" — 새 claude 호출 잡은 호출 전 cooldownActive() 가드
     // 필수(쿨다운 중이면 skip). 이 잡은 2026-08-31에 처음 LLM을 부르게 된 잡이라 이
     // 규칙 대상 — 사실만 발송(아래 catch와 동일하게 통째로 유실 안 함).
-    console.log('⏳ 쿨다운 중 — Plutus 판단 생략, 사실만 발송');
+    console.log('⏳ 쿨다운 중 — 헤드리스 판단 생략, 사실만 발송');
   } else {
     loadEnv();
     const AGENT = loadAgent('plutus', { fallbackModel: 'sonnet', appendix: ['hermes'] });
@@ -277,7 +277,7 @@ async function main() {
     } catch (e) {
       // Hermes 판단 실패해도 브리핑 자체(사실)는 여전히 유용하니 잡을 죽이지 않는다 —
       // 사실만이라도 발송(conclusion·context·decisions는 null로 남음).
-      console.error(`⚠ Plutus 헤드리스 판단 실패(사실만 발송): ${e.message}`);
+      console.error(`⚠ 헤드리스 판단 실패(사실만 발송): ${e.message}`);
       judgmentFailed = true;
     }
   }

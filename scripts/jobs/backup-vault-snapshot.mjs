@@ -105,7 +105,7 @@ async function notifyRegistryLint() {
   // lint·알림 실패가 백업을 막으면 안 되므로 오류는 알리고 백업은 이미 끝난 뒤에 돈다(알림 지연이 백업을 늦추지 않게).
   try {
     const notice = buildLintNotice(lintVault(VAULT_PATHS.root));
-    console.log(notice ? `🔎 등록부 위반 있음 — 클리오 알림` : '🔎 등록부 위반 없음');
+    console.log(notice ? `🔎 등록부 위반 있음 — 알림` : '🔎 등록부 위반 없음');
     if (notice) await sendRegistryWarning({ agent: SENDER_AGENT, kind: '정보', topic: '점검', body: notice });
   } catch (e) {
     console.error('⚠️ 등록부 lint 실패(백업은 이미 끝남):', e);

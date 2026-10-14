@@ -219,7 +219,7 @@ async function main() {
 
         reviewedAny = true;
         const prompt = buildRescorePrompt({ account, assetClass, heldScore, bestAlternative: evaluation.bestAlternative, scoreDelta: evaluation.scoreDelta });
-        console.log(`  🔎 [${account}/${assetClass}] ${inst.name} — 격차 ${evaluation.scoreDelta.toFixed(1)}점, Athena 판단 요청`);
+        console.log(`  🔎 [${account}/${assetClass}] ${inst.name} — 격차 ${evaluation.scoreDelta.toFixed(1)}점, 유지/교체 판단 요청`);
         if (DRY_RUN) { console.log(`\n┌─── 프롬프트 [${account}/${assetClass}/${inst.name}] ───┐\n${prompt}\n└──────────────────┘`); continue; }
 
         let verdict;
@@ -232,7 +232,7 @@ async function main() {
           continue;
         }
         if (verdict.verdict !== '교체') {
-          console.log(`  ℹ️  [${account}/${assetClass}] ${inst.name}: Athena 판단 "유지" — ${verdict.reasoning ?? ''}`);
+          console.log(`  ℹ️  [${account}/${assetClass}] ${inst.name}: 판단 "유지" — ${verdict.reasoning ?? ''}`);
           continue;
         }
 

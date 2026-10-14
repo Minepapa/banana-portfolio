@@ -1,15 +1,10 @@
 // 모든 Node 텍스트 발송은 여기서 담당과 형식을 확인한 뒤 Telegram transport로 보낸다.
 import { sendTelegram, editTelegramMessage } from './telegram.mjs';
 import { formatDepartmentMessage, formatFactsMessage } from './telegram-messages.mjs';
+import { AGENT_IDS, agentLabel } from './agent-registry.mjs';
 
-export const AGENT_HEADERS = Object.freeze({
-  zeus: '제우스 Zeus',
-  plutus: '플루토스 Plutus',
-  themis: '테미스 Themis',
-  clio: '클리오 Clio',
-  hermes: '헤르메스 Hermes',
-  athena: '아테나 Athena',
-});
+// 발신 헤더는 헌장 telegramLabel에서 생성한 레지스트리를 읽는다(손 복사 금지, 2026-10-14).
+export const AGENT_HEADERS = Object.freeze(Object.fromEntries(AGENT_IDS.map((id) => [id, agentLabel(id)])));
 
 export function renderAgentMessage({ agent, topic = null, kind, body, facts,
   conclusion, context, decisions, zeusComment } = {}) {

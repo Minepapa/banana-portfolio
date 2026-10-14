@@ -82,7 +82,7 @@ async function main() {
   console.log(JSON.stringify({ window: { peakDate, troughDate }, results }, null, 2));
   console.error('\n※ 이 진단은 SUE 공식 출처(원 논문 미확인, Foster-Olsen-Shevlin 표준정의 사용)와');
   console.error('   정확한 매수 진입일 미재현(구간 전체 월별 SUE로 대체)이라는 두 가지 한계가 있음.');
-  console.error('   해석·재검토 판단은 Kairos+오너 몫.');
+  console.error('   해석·재검토 판단은 이 보고 밖(오너 확인)에서 한다.');
 }
 
 main().catch((e) => { console.error('\n❌ 오류:', e.message); process.exit(1); });

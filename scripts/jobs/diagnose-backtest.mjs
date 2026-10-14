@@ -140,7 +140,7 @@ async function main() {
       worstContributors: contributions.slice(0, 15),
     },
   }, null, 2));
-  console.error('\n※ 이 보고는 원인 분해 사실까지만 — 해석·재검토 판단은 Zeus/Themis+오너 몫.');
+  console.error('\n※ 이 보고는 원인 분해 사실까지만 — 해석·재검토 판단은 이 보고 밖(오너 확인)에서 한다.');
 }
 
 main().catch((e) => { console.error('\n❌ 오류:', e.message); process.exit(1); });

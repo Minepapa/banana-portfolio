@@ -177,10 +177,10 @@ test('음성 노트 확인 3종과 정정 누적; 경로 탈출과 다른 kind �
     await assert.rejects(() => updateVoiceMemo({ note: '20_Records/voice.md', confirm: '등록' }, { dir }), /경로 오류/);
     const other = saveMemo({ text: '일반 메모' }, { now, dir }).split('00_Inbox/')[1];
     await assert.rejects(() => updateVoiceMemo({ note: `00_Inbox/${other}.md`, confirm: '등록' }, { dir }), /음성 노트가 아님/);
-    await assert.rejects(() => updateVoiceMemo({ note: '00_Inbox/moved.md', confirm: '등록' }, { dir }), /이미 정리됨\(클리오가 옮김\)/);
+    await assert.rejects(() => updateVoiceMemo({ note: '00_Inbox/moved.md', confirm: '등록' }, { dir }), /이미 정리됨\(옮겨짐\)/);
     const lines = [];
     await assert.rejects(() => main(['--note=00_Inbox/moved.md', '--confirm=등록'],
-      { output: (line) => lines.push(line), updateOptions: { dir } }), /이미 정리됨\(클리오가 옮김\)/);
+      { output: (line) => lines.push(line), updateOptions: { dir } }), /이미 정리됨\(옮겨짐\)/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -125,14 +125,14 @@ export function buildThemisPrompt(breaches) {
   return `[장중 시장 급변 감시] 아래 신호가 방금 임계값을 넘었다(재조회·추정 금지, 이
 숫자만 사용). 이 숫자는 텔레그램 메시지에 이미 불릿으로 따로 나간다 — 아래 출력에서
 다시 나열하지 마라. 이 감시는 자산분배 전용이 아니라 오너가 필요시 대응할 수 있도록
-시장 상황 전반을 점검하는 차원이라 플루토스(너) 소관이다.
+시장 상황 전반을 점검하는 차원이라 너의 소관이다.
 
 [임계 돌파 신호]
 ${factsText}
 
 판단 요청:
 1. 지금 이 움직임이 오너가 실제로 신경 써야 할 수준인지, 흔한 변동성 범위인지 네
-   (플루토스) 성격대로 판정해라 — 과잉반응하지 마라, 노이즈일 가능성도 솔직히 인정해라.
+   성격대로 판정해라 — 과잉반응하지 마라, 노이즈일 가능성도 솔직히 인정해라.
 2. 이 신호가 자산분배·퀀트·장부·기록 중 한 관점의 추가 의견이 필요할 정도로 직접
    관련돼 있으면(예: 코스피 급락이 리밸런싱 판단에 영향, 특정 계좌·전략에 관련된
    움직임 등) 그 관점 이름을
@@ -212,13 +212,13 @@ export function parseConsultationRequest(consultationText) {
 // 관점의 의견 하나면 충분, 재종합은 Call C의 Themis 몫).
 export function buildConsultationPrompt(breaches, reason) {
   const factsText = factsBlock(breaches);
-  return `[플루토스의 자문 요청] 지금 아래 시장 신호가 임계값을 넘어 플루토스가
-너의 의견이 필요하다고 판단했다(재조회·추정 금지, 이 숫자만 사용).
+  return `[자문 요청] 지금 아래 시장 신호가 임계값을 넘어 1차 판단에서 아래 관점의
+추가 의견이 필요하다고 판단했다(재조회·추정 금지, 이 숫자만 사용).
 
 [임계 돌파 신호]
 ${factsText}
 
-[플루토스가 자문을 요청한 이유]
+[자문을 요청한 이유]
 ${reason || '(사유 미기재)'}
 
 네 소관 관점에서 자유롭게 의견을 서술해라(마커·형식 없이 순수 텍스트, 이모지·
@@ -471,7 +471,7 @@ async function main() {
   let decisions = null;
   // AGENTS.md "claude 호출 규칙" — 새 claude 호출 잡은 호출 전 cooldownActive() 가드 필수.
   if (cooldownActive()) {
-    console.log('⏳ 쿨다운 중 — Themis 판단 생략, 사실만 발송');
+    console.log('⏳ 쿨다운 중 — 2차 판단 생략, 사실만 발송');
   } else {
     try {
       const raw = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt, timeoutMs: LLM_CALL_TIMEOUT_MS })).trim();
@@ -506,7 +506,7 @@ async function main() {
         console.log(`⚠ 자문요청 파싱 실패(자문 생략): ${rawFirst}`);
       }
     } catch (e) {
-      console.error(`⚠ Plutus 헤드리스 판단 실패(사실만 발송): ${e.message}`);
+      console.error(`⚠ 헤드리스 판단 실패(사실만 발송): ${e.message}`);
     }
   }
 

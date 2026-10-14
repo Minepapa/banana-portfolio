@@ -276,7 +276,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
       });
       if (result?.deferred) return { failed: !!s.failed || events === 'failed', candidatesFailed };
     } else await deps.send(message);
-    console.log('  📨 클리오 데일리 요약 발송');
+    console.log('  📨 데일리 요약 발송');
   } catch (e) {
     console.error('  ❌ 텔레그램 발송 실패:', e.message);
     return { failed: true, candidatesFailed };

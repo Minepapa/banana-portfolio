@@ -12,6 +12,7 @@ import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+import { agentTitle } from '../lib/agent-registry.mjs';
 
 export const MAX_ITEMS = 10;
 export const MAX_INPUT_CHARS = 30_000;
@@ -311,7 +312,7 @@ function monthlyReport(date, section, existing, previousSection = null) {
   const start = `<!-- clio-inbox-ingest:${date}:start -->`;
   const end = `<!-- clio-inbox-ingest:${date}:end -->`;
   if (existing === null) {
-    return `---\ntype: "agent-log"\ndescription: "Clio agent log"\ncreated: "${date}"\nmodified: "${date}"\nagent: "clio"\n---\n\n# ${date.slice(0, 7)} Clio 기록\n\n${section}`;
+    return `---\ntype: "agent-log"\ndescription: "${agentTitle('clio')} 작업 기록"\ncreated: "${date}"\nmodified: "${date}"\nagent: "clio"\n---\n\n# ${date.slice(0, 7)} ${agentTitle('clio')} 기록\n\n${section}`;
   }
   const from = existing.indexOf(start);
   if (from !== -1) {
@@ -495,6 +496,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   run({ mode: args.mode ?? 'report', dryRun: args['dry-run'] === true, noSend: args['no-send'] === true })
     .then((result) => {
       if (result.blocked) { console.error(result.blocked); process.exitCode = 1; }
-      else console.log(`Clio Inbox 계획 ${result.items.length}건, 남은 ${result.remaining}건`);
-    }).catch((error) => { console.error(`Clio Inbox ingest 실패: ${error.message}`); process.exitCode = 1; });
+      else console.log(`Inbox 계획 ${result.items.length}건, 남은 ${result.remaining}건`);
+    }).catch((error) => { console.error(`Inbox ingest 실패: ${error.message}`); process.exitCode = 1; });
 }

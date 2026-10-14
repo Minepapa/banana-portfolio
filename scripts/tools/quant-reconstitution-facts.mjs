@@ -70,7 +70,7 @@ async function main() {
 
   console.log(`\n[퀀트 트랙 리컨스티튜션] 유니버스 ${universeCount} → 유동성통과 ${liquidCount} → 순위산출 ${ranked.length}건 · 실계좌 보유 ${holdings.length}종목`);
   console.log(`  법인코드 매칭 실패 ${unresolvedCorp}건 · OCF 공시 미확인/조회실패 ${ocfFetchFailed}건`);
-  console.log(`포지션 사이징 밴드: 종목당 ${won(band.min)}~${won(band.max)}원(기준 ${won(band.target)}원, 정확한 금액은 Kairos 재량)\n`);
+  console.log(`포지션 사이징 밴드: 종목당 ${won(band.min)}~${won(band.max)}원(기준 ${won(band.target)}원, 정확한 금액은 재량 판단)\n`);
 
   console.log(`매수(신규 진입, 상위${BUY_RANK}위 이내) ${buys.length}건`);
   for (const b of buys) console.log(`  ${b.name}(${b.code}) — ${b.rank}위, OCF/P ${pct(b.ocfToPrice)}`);
@@ -86,7 +86,7 @@ async function main() {
     for (const n of needsReview) console.log(`  ${n.name}(${n.code}) — 보유 ${n.qty}주 — ${n.reason}`);
   }
 
-  console.log('\n※ 이 보고는 분류·포지션사이징 밴드까지만 — 실제 수량·타이밍 판단은 Kairos 재량.');
+  console.log('\n※ 이 보고는 분류·포지션사이징 밴드까지만 — 실제 수량·타이밍은 재량 판단.');
 }
 
 main().catch((e) => { console.error('\n❌ 오류:', e.message); process.exit(1); });

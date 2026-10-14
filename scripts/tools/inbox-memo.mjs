@@ -161,7 +161,7 @@ export async function updateVoiceMemo({ note, confirm, correction }, { now = new
   if (confirm !== undefined && !Object.hasOwn(VOICE_CONFIRM, confirm)) throw new Error('확인 상태 오류');
   if (correction !== undefined && (!String(correction).trim() || /[\r\n]/.test(correction))) throw new Error('정정 문구 오류');
   const path = join(dir, basename(note));
-  if (!existsSync(path)) throw new Error(`이미 정리됨(클리오가 옮김): ${note}`);
+  if (!existsSync(path)) throw new Error(`이미 정리됨(옮겨짐): ${note}`);
   try { return await withLock(path, () => {
     if (!lstatSync(path).isFile()) throw new Error('음성 노트 파일 오류');
     const content = readFileSync(path, 'utf8');
@@ -175,7 +175,7 @@ export async function updateVoiceMemo({ note, confirm, correction }, { now = new
     }
     return `🎙️ 음성 노트 갱신: ${note}`;
   }); } catch (error) {
-    if (error.code === 'ENOENT') throw new Error(`이미 정리됨(클리오가 옮김): ${note}`);
+    if (error.code === 'ENOENT') throw new Error(`이미 정리됨(옮겨짐): ${note}`);
     throw error;
   }
 }

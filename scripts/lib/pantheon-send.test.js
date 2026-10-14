@@ -30,3 +30,10 @@ test('볼트 에이전트 헌장이 있으면 telegramLabel을 발송 관문 라
     assert.equal(documented, `[${label}]`, `${agent} telegramLabel`);
   }
 });
+
+test('발신 헤더 6개는 리뷰된 값과 같다(헌장 title 오탈자가 헤더를 조용히 바꾸지 않게, 개편 때 함께 갱신)', () => {
+  assert.deepEqual(AGENT_HEADERS, {
+    zeus: '제우스 Zeus', clio: '클리오 Clio', themis: '테미스 Themis',
+    hermes: '헤르메스 Hermes', athena: '아테나 Athena', plutus: '플루토스 Plutus',
+  });
+});

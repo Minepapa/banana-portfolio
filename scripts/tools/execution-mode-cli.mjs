@@ -59,7 +59,7 @@ async function main() {
   await writeStateFile(VAULT_PATHS.state.executionMode, content);
 
   if (targetMode === MODE_LIVE) {
-    console.log('🔴 체결모드 온(실전) — 검문소를 통과한 승인된 제안은 이제 실제 KIS 계좌에 매수/매도 주문이 나갑니다(카이로스는 이 스위치와 무관하게 항상 실전). 되돌리려면 "체결모드 오프" 명령.');
+    console.log('🔴 체결모드 온(실전) — 검문소를 통과한 승인된 제안은 이제 실제 KIS 계좌에 매수/매도 주문이 나갑니다(돌파매매는 이 스위치와 무관하게 항상 실전). 되돌리려면 "체결모드 오프" 명령.');
   } else {
     console.log('🟢 체결모드 오프(섀도우) — 이후 체결은 실제 주문 없이 로그로만 기록됩니다.');
   }

@@ -6,6 +6,7 @@
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { agentTitle } from './agent-registry.mjs';
 
 const DEFAULT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.claude', 'agents');
 
@@ -48,7 +49,11 @@ export function loadAgent(agentName, { fallbackModel, dir = DEFAULT_DIR, appendi
       const selected = sections.flatMap((section, index) => appendix.includes(section[1])
         ? [appendixText.slice(section.index, sections[index + 1]?.index).trim()]
         : []);
-      systemPrompt = [prefix, ...selected].join('\n\n');
+      // 부록은 통합 이전 부서의 원문이라 옛 이름이 나온다. LLM이 그 이름으로 스스로를 부르지 않게 현재 이름을 레지스트리에서 밝힌다.
+      const preface = selected.length
+        ? [`## 부록 — 통합 이전 부서 지침\n\n아래는 2026-10-08 통합 이전 부서의 업무 원문이다. 지금 너의 이름은 ${agentTitle(agentName)}이고, 원문 속 옛 부서 이름으로 스스로를 부르지 않는다. 현행 헌장과 충돌하면 위 현행 헌장이 우선한다.`]
+        : [];
+      systemPrompt = [prefix, ...preface, ...selected].join('\n\n');
     }
     return { model: parsed.model, systemPrompt, warning };
   } catch (e) {

@@ -140,7 +140,7 @@ ${recentProposalsText}
 ${macro}
 
 판단 요청:
-1. 위 목표비중이 지금도 적절해 보이는지 네(아테나) 성격대로 판단해라 — 특정 자산군이
+1. 위 목표비중이 지금도 적절해 보이는지 네 성격대로 판단해라 — 특정 자산군이
    분기 내내 계속 이탈·재이탈을 반복했다면 목표 자체가 현실과 안 맞을 수 있다는 신호다.
    거시환경 변화(금리·환율·주식시장 국면)도 참고해라.
 2. 만약 재검토가 필요하다고 판단되면 어느 자산군을 어느 방향으로 얼마나 조정할지
@@ -234,7 +234,7 @@ async function main() {
   try {
     judgment = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
   } catch (e) {
-    console.error(`❌ Athena 헤드리스 판단 실패: ${e.message}`);
+    console.error(`❌ 헤드리스 판단 실패: ${e.message}`);
     process.exit(1);
   }
 

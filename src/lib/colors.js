@@ -50,11 +50,13 @@ export const COLORS = {
 // ── 판테온 부서 색상·아이콘 — 앱 UX에 조직 정체성을 입히는 배지(DeptBadge)가 소비 ──────
 // Zeus는 신규 hex 대신 기존 ACCENT 재사용(CHART_BAR_COLOR도 이미 이렇게 씀 — 기존 관례).
 // 담당별 색상은 기존 팔레트를 재사용하고 Plutus와 Athena를 구별한다.
+// 영문 이름은 담당 id에서 만든다(헌장 생성기와 같은 규칙) — 담당 이름을 문자열로 박지 않는다(2026-10-14).
+const department = (id, rest) => ({ name: id[0].toUpperCase() + id.slice(1), ...rest });
 export const DEPARTMENTS = {
-  zeus:   { name: 'Zeus',   label: '대표',         color: ACCENT,    icon: '⚡' },
-  clio:   { name: 'Clio',   label: '기록',         color: '#B8862F', icon: '📚' },
-  themis: { name: 'Themis', label: '검증',         color: '#3D4A7A', icon: '⚖️' },
-  hermes: { name: 'Hermes', label: '100 나',      color: '#B5722E', icon: '🪽' },
-  athena: { name: 'Athena', label: '201 미네',    color: '#765B8F', icon: '🛡️' },
-  plutus: { name: 'Plutus', label: '700 자산',    color: '#5B7B4F', icon: '💰' },
+  zeus:   department('zeus',   { label: '대표',      color: ACCENT,    icon: '⚡' }),
+  clio:   department('clio',   { label: '기록',      color: '#B8862F', icon: '📚' }),
+  themis: department('themis', { label: '검증',      color: '#3D4A7A', icon: '⚖️' }),
+  hermes: department('hermes', { label: '100 나',   color: '#B5722E', icon: '🪽' }),
+  athena: department('athena', { label: '201 미네', color: '#765B8F', icon: '🛡️' }),
+  plutus: department('plutus', { label: '700 자산', color: '#5B7B4F', icon: '💰' }),
 };

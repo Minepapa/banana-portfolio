@@ -71,7 +71,8 @@ test('buildQuarterlyReviewPrompt: 목표비중·제안이력·거시지표가 �
   assert.match(prompt, /달러: 10%/);
   assert.match(prompt, /VIX: 15\.13/);
   assert.match(prompt, /재조회·추정 금지/);
-  assert.match(prompt, /아테나/);
+  assert.match(prompt, /네 성격대로/);
+  assert.doesNotMatch(prompt, /아테나|Athena|플루토스/); // 정체성은 시스템 프롬프트(헌장)가 정한다
 });
 
 // ── buildQuarterlyReviewFacts(2026-08-30 신설) — themis-risk-review.mjs와 동일 결함

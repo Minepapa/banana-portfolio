@@ -54,7 +54,7 @@ async function main() {
     const zone = c.rank <= 10 ? '매수' : c.rank <= 20 ? '유지(버퍼)' : '';
     console.log(`${String(c.rank).padStart(3)}  ${c.Name.padEnd(20)}  ${(c.ocfToPrice * 100).toFixed(2)}%  ${won(c.Marcap).padStart(15)}원  ${c.disclosureDate ?? '-'}  ${zone}`);
   }
-  console.log('\n※ 이 보고는 순위까지만 — 실제 매수·매도 판단은 Kairos 재량(버퍼존 매수10위/매도20위, 동일가중±50% 사이징).');
+  console.log('\n※ 이 보고는 순위까지만 — 실제 매수·매도는 재량 판단(버퍼존 매수10위/매도20위, 동일가중±50% 사이징).');
 }
 
 main().catch((e) => { console.error('\n❌ 오류:', e.message); process.exit(1); });

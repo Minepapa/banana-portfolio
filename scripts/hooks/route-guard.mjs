@@ -10,14 +10,10 @@
 // 판정 로직은 순수함수 classifyRequest(route-keywords.mjs, 테스트됨)에 위임 — 이 파일은 I/O만.
 
 import { classifyRequest } from '../lib/route-keywords.mjs';
+import { AGENT_IDS, agentLabel } from '../lib/agent-registry.mjs';
 
-const DEPT_LABEL = {
-  athena: '아테나 Athena',
-  themis: '테미스 Themis',
-  plutus: '플루토스 Plutus',
-  hermes: '헤르메스 Hermes',
-  clio: '클리오 Clio',
-};
+// 담당 라벨은 헌장에서 생성한 레지스트리에서 읽는다(손 복사 금지, 2026-10-14).
+const DEPT_LABEL = Object.fromEntries(AGENT_IDS.map((id) => [id, agentLabel(id)]));
 
 function readStdin() {
   return new Promise((resolve) => {

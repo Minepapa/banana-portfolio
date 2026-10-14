@@ -441,7 +441,7 @@ async function main() {
   try {
     judgment = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
   } catch (e) {
-    console.error(`❌ Apollo 헤드리스 판단 실패: ${e.message}`);
+    console.error(`❌ 헤드리스 판단 실패: ${e.message}`);
     process.exit(1);
   }
 

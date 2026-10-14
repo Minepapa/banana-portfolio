@@ -11,6 +11,7 @@ import { stripEmDash } from './telegram-messages.mjs';
 import { AGENT_HEADERS, sendAgentMessage } from './pantheon-send.mjs';
 import { evaluateDoneWhen, isWorkDoc, parseDoneWhen, stringArray, workStatus } from './work-doc-freshness.mjs';
 import { checkNote, parseRegistry } from './vault-registry.mjs';
+import { agentTitle } from './agent-registry.mjs';
 
 const QUEUE_DIR = vaultAbs(VAULT_REL.stateWikiQuestions);
 const QUEUE_LOCK = join(QUEUE_DIR, '.queue');
@@ -134,7 +135,7 @@ function validateInput(input) {
   // 키워드 등록은 위키 변경이라 클리오만 할 수 있다(공통 헌장: Wiki는 클리오만 쓴다).
   const asker = input.asker === undefined ? 'clio' : String(input.asker);
   if (!Object.hasOwn(AGENT_HEADERS, asker)) throw new Error(`asker는 등록된 담당이어야 합니다: ${asker}`);
-  if (['keyword-registration', 'close-work-doc'].includes(input.kind) && asker !== 'clio') throw new Error('볼트 자동 반영 질문은 클리오만 할 수 있습니다.');
+  if (['keyword-registration', 'close-work-doc'].includes(input.kind) && asker !== 'clio') throw new Error(`볼트 자동 반영 질문은 ${agentTitle('clio')}만 할 수 있습니다.`);
   // urgent:false는 즉시 보내지 않고 묶음대기로 두었다가 question-digest 잡이 하루 두 번 담당별로 묶어 보낸다(D68). 기본은 즉시.
   if (input.urgent !== undefined && typeof input.urgent !== 'boolean') throw new Error('urgent는 true/false여야 합니다.');
   const urgent = input.urgent ?? true;

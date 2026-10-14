@@ -112,7 +112,7 @@ export function buildIsaMaturityPrompt({ isaSummary, maturityDate }) {
 [ISA 현재 보유내역 — 총 평가액 ${Math.round(isaSummary.totalEval).toLocaleString('ko-KR')}원]
 ${lines}
 
-판단 요청(아테나 성격대로 서술):
+판단 요청(네 성격대로 서술):
 1. 한국 ISA 제도상 만기 시 "연금계좌로 전환 납입"하면 추가 세액공제 혜택이 있다는
    일반 제도 지식을 근거로, 이번 만기 이전을 오너에게 권고할지 판단해라 — 무조건
    이전이 정답은 아니다(당장 현금이 필요하면 일반 인출도 선택지).
@@ -191,7 +191,7 @@ async function main() {
   try {
     judgment = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
   } catch (e) {
-    console.error(`❌ Athena 헤드리스 판단 실패: ${e.message}`);
+    console.error(`❌ 헤드리스 판단 실패: ${e.message}`);
     process.exit(1);
   }
 

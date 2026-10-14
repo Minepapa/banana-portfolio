@@ -1,0 +1,42 @@
+{
+  "agents": {
+    "zeus": {
+      "title": "제우스",
+      "english": "Zeus",
+      "label": "제우스 Zeus"
+    },
+    "clio": {
+      "title": "클리오",
+      "english": "Clio",
+      "label": "클리오 Clio"
+    },
+    "themis": {
+      "title": "테미스",
+      "english": "Themis",
+      "label": "테미스 Themis"
+    },
+    "hermes": {
+      "title": "헤르메스",
+      "english": "Hermes",
+      "label": "헤르메스 Hermes"
+    },
+    "athena": {
+      "title": "아테나",
+      "english": "Athena",
+      "label": "아테나 Athena"
+    },
+    "plutus": {
+      "title": "플루토스",
+      "english": "Plutus",
+      "label": "플루토스 Plutus"
+    }
+  },
+  "duties": {
+    "공통": "plutus",
+    "자산분배": "plutus",
+    "돌파매매": "plutus",
+    "매수규모": "plutus",
+    "자산분배 운영 기준": "plutus",
+    "거시 위험 트리거": "plutus"
+  }
+}

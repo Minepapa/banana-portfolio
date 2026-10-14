@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 볼트 헌장을 Claude Code 에이전트 정의로 복사한다. 볼트는 읽기만 한다.
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
@@ -13,6 +13,28 @@ const OLD_NAMES = ['Athena', 'Kairos', 'Hermes', 'Apollo', '투자전략실', '�
 const DEFAULT_OUT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.claude', 'agents');
 // 라우팅 키워드 표(이관 4-5, D60): 헌장 머리말 routingKeywords에서 생성한다. route-keywords.mjs가 읽는다.
 export const DEFAULT_ROUTE_OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'route-keywords.generated.json');
+
+// 담당 레지스트리(2026-10-14): 코드가 담당 이름을 문자열로 박지 않고 읽는 표. 헌장 머리말 title·telegramLabel과
+// decisionDocs 키(업무 → 담당)에서 생성한다. agent-registry.mjs가 읽는다.
+export const DEFAULT_REGISTRY_OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'agent-registry.generated.json');
+
+export function buildAgentRegistry({ charterDir = vaultAbs(VAULT_REL.agentCharters) } = {}) {
+  const agents = {};
+  const duties = {};
+  for (const name of AGENT_NAMES) {
+    const { fields } = parseVaultNote(readFileSync(join(charterDir, `${name}.md`), 'utf8'));
+    const english = name[0].toUpperCase() + name.slice(1);
+    const label = `${fields.title} ${english}`;
+    if (!fields.title || fields.telegramLabel !== `[${label}]`) throw new Error(`title·telegramLabel 불일치: ${name}`);
+    agents[name] = { title: fields.title, english, label };
+    const docs = fields.decisionDocs && typeof fields.decisionDocs === 'object' ? fields.decisionDocs : {};
+    for (const duty of Object.keys(docs)) {
+      if (duties[duty] && duties[duty] !== name) throw new Error(`업무 담당 중복: ${duty} (${duties[duty]}, ${name})`);
+      duties[duty] = name;
+    }
+  }
+  return { agents, duties };
+}
 
 export function buildRouteKeywords({ charterDir = vaultAbs(VAULT_REL.agentCharters) } = {}) {
   const table = {};
@@ -35,7 +57,7 @@ function parseVaultNote(text) {
     if (separator < 0) continue;
     const key = line.slice(0, separator);
     const raw = line.slice(separator + 1).trim();
-    fields[key] = raw.startsWith('[') ? JSON.parse(raw) : raw.startsWith('"') ? JSON.parse(raw) : raw;
+    fields[key] = raw.startsWith('[') || raw.startsWith('{') || raw.startsWith('"') ? JSON.parse(raw) : raw;
   }
   return { fields, body: text.slice(match[0].length).trim() };
 }
@@ -81,24 +103,40 @@ export function renderAgent(name, { charterDir = vaultAbs(VAULT_REL.agentCharter
   const sections = [
     `생성물 — 정본은 볼트 \`${VAULT_REL.agentCharters}/${name}\`. 손으로 고치지 말고 헌장을 고친 뒤 생성기를 다시 돌린다.`,
     applyCommonOverrides(common.body), charter.body,
-    ...(appendix.length ? ['## 부록 — 구 부서 정의에서 이관한 상세 지침\n\n2026-10-08 이전 역할의 역사적 서술은 참고만 한다. 아래 역할 지시와 충돌하면 위 현행 헌장이 우선한다.', ...appendix] : []),
+    ...(appendix.length ? [`## 부록 — 구 부서 정의에서 이관한 상세 지침\n\n2026-10-08 이전 역할의 역사적 서술은 참고만 한다. 지금 너의 이름은 ${fields.title}이고, 원문 속 옛 부서 이름으로 스스로를 부르지 않는다. 아래 역할 지시와 충돌하면 위 현행 헌장이 우선한다.`, ...appendix] : []),
   ];
   return `${frontmatter}\n\n${sections.join('\n\n')}\n`;
 }
 
-export function buildAgentDefs({ check = false, outDir = DEFAULT_OUT, routeOut = DEFAULT_ROUTE_OUT, charterDir, archiveDir } = {}) {
+// 생성 파일은 라이브 잡·훅이 언제든 읽으므로 임시 파일에 쓴 뒤 바꿔치기한다(반쯤 쓰인 JSON을 읽지 않게).
+function writeGenerated(path, text) {
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
+}
+
+export function buildAgentDefs({ check = false, outDir = DEFAULT_OUT, routeOut = DEFAULT_ROUTE_OUT, registryOut = DEFAULT_REGISTRY_OUT, charterDir, archiveDir } = {}) {
+  // 다른 헌장(테스트 fixture 등)으로 생성하면서 출력 경로를 빠뜨리면 실제 생성 파일을 덮는다(2026-10-14 사고).
+  if (charterDir && (outDir === DEFAULT_OUT || routeOut === DEFAULT_ROUTE_OUT || registryOut === DEFAULT_REGISTRY_OUT)) {
+    throw new Error('charterDir를 바꾸면 outDir·routeOut·registryOut도 모두 지정해야 한다');
+  }
   const outputs = AGENT_NAMES.map((name) => ({ name, text: renderAgent(name, { charterDir, archiveDir }) }));
   const differences = [];
   const routeText = `${JSON.stringify(buildRouteKeywords(charterDir ? { charterDir } : {}), null, 2)}\n`;
   if (!existsSync(routeOut) || readFileSync(routeOut, 'utf8') !== routeText) {
     differences.push('route-keywords.generated.json');
-    if (!check) writeFileSync(routeOut, routeText);
+    if (!check) writeGenerated(routeOut, routeText);
+  }
+  const registryText = `${JSON.stringify(buildAgentRegistry(charterDir ? { charterDir } : {}), null, 2)}\n`;
+  if (!existsSync(registryOut) || readFileSync(registryOut, 'utf8') !== registryText) {
+    differences.push('agent-registry.generated.json');
+    if (!check) writeGenerated(registryOut, registryText);
   }
   for (const { name, text } of outputs) {
     const path = join(outDir, `${name}.md`);
     if (!existsSync(path) || readFileSync(path, 'utf8') !== text) {
       differences.push(`${name}.md`);
-      if (!check) writeFileSync(path, text);
+      if (!check) writeGenerated(path, text);
     }
   }
   for (const name of OLD_FILES) {
