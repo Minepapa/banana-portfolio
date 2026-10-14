@@ -13,7 +13,7 @@ import { MEDIA_DIARIZE_PATHS, VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.
 import { writeAtomic, withLock } from '../lib/state-writer.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
-import { renderDialogue, counterpartFromNote } from '../lib/media-dialogue.mjs';
+import { renderDialogue, counterpartFromNote, speakerParts } from '../lib/media-dialogue.mjs';
 import { detectRepetition } from './media-transcribe.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -538,11 +538,13 @@ function readOwner(paths) {
 function assignSpeakers(item, turns, voices, owner, now) {
   if (voices.length !== 2) throw new Error('화자 특징값 2개 아님');
   const result = identifyOwner(voices, owner.mean, { minSimilarity: owner.meta.minSimilarity ?? -1 });
+  const segments = combineSegments(item.transcript.segments, turns).segments.map((segment, i) => ({
+    i, speaker: segment.speaker === result.speaker ? 'owner' : 'other', uncertain: segment.uncertain,
+  }));
+  const parts = speakerParts(item.transcript, { segments, turns }, result.speaker);
   return { id: item.id, engine: 'pyannote', model: 'pyannote/speaker-diarization-community-1',
     diarizedAt: now.toISOString(), transcribedAt: item.transcript.transcribedAt, turns,
-    segments: combineSegments(item.transcript.segments, turns).segments.map((segment, i) => ({
-      i, speaker: segment.speaker === result.speaker ? 'owner' : 'other', uncertain: segment.uncertain,
-    })), ownerMargin: result.margin, ownerVersion: owner.meta.version,
+    segments, ...(parts.length ? { parts } : {}), ownerMargin: result.margin, ownerVersion: owner.meta.version,
     ...(result.check ? { check: result.check } : {}) };
 }
 
@@ -773,6 +775,15 @@ export async function runApply({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_
           if (!dryRun) persist(item, next); else saved.set(item.id, next);
           summary.reassigned += 1;
         } catch (error) { summary.failed += 1; output.error(`[media-diarize] 재배정 ${item.id}: ${error.message}`); }
+      }
+      // 옛 Speakers 파일도 저장된 turns로 하위 구간을 다시 계산한다. 음성 엔진은 호출하지 않는다.
+      for (const item of records) {
+        const old = saved.get(item.id);
+        if (!old?.segments?.length || old.transcribedAt !== item.transcript.transcribedAt) continue;
+        const parts = speakerParts(item.transcript, old);
+        if (!parts.length || JSON.stringify(parts) === JSON.stringify(old.parts)) continue;
+        const next = { ...old, parts };
+        if (!dryRun) persist(item, next); else saved.set(item.id, next);
       }
       await refreshNotes(root, records, saved, { dryRun, write, rules, notePaths, output, summary });
     } else if (!renderNotes && candidateStale(paths, records, saved)) {

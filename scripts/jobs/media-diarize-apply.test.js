@@ -57,8 +57,8 @@ test('shared dialogue renderer groups speakers, marks uncertain text and uses co
   const speakers = { transcribedAt: 'now', segments: [
     { i: 0, speaker: 'owner', uncertain: false }, { i: 1, speaker: 'owner', uncertain: true },
     { i: 2, speaker: 'other', uncertain: false }] };
-  assert.equal(renderDialogue(transcript, speakers, '미네'), '나: 하나 둘 [?]\n미네: 셋');
-  assert.equal(renderDialogue(transcript, speakers), '나: 하나 둘 [?]\n상대: 셋');
+  assert.equal(renderDialogue(transcript, speakers, '미네'), '나: 하나 둘\n미네: 셋');
+  assert.equal(renderDialogue(transcript, speakers), '나: 하나 둘\n상대: 셋');
   assert.equal(renderDialogue({ ...transcript, transcribedAt: 'later' }, speakers), null);
   assert.equal(renderDialogue({ ...transcript, speech: false }, speakers), null);
   assert.equal(renderDialogue(transcript, speakers, '미네', { looped: true }), null);
@@ -87,7 +87,7 @@ test('note rewrite preserves manual fields and owner memo; second pass changes n
   const speakers = { id: idValue, transcribedAt: 'now', check: '필요', segments: [
     { i: 0, speaker: 'owner', uncertain: false }, { i: 1, speaker: 'other', uncertain: true }] };
   const next = renderSpeakerNote(note, transcript, speakers);
-  assert.match(next, /\[화자 확인 필요\]\n나: 안녕\n미네: 잘 지내 \[\?\]/);
+  assert.match(next, /\[화자 확인 필요\]\n나: 안녕\n미네: 잘 지내/);
   assert.match(next, /athena: "보존"/);
   assert.match(next, /## 오너 메모\n\n손으로 쓴 메모/);
   assert.equal(renderSpeakerNote(next, transcript, speakers), next);
@@ -177,6 +177,22 @@ test('apply with injected worker stores no biometrics in Vault, updates note onc
   assert.equal(second.processed, 0);
   assert.equal(workerCalls, 1);
   assert.equal(existsSync(paths.ownerVoice), true);
+  const transcriptPath = join(root, VAULT_REL.mediaTranscripts, '2026', `${item.id}.json`);
+  const changedTranscript = { ...item.transcript, text: '- 우리 반이거든. - 응.',
+    segments: [{ start: 0, end: 1000, text: '- 우리 반이거든. - 응.' }] };
+  writeFileSync(transcriptPath, JSON.stringify(changedTranscript));
+  const speakerPath = join(root, VAULT_REL.mediaSpeakers, '2026', `${item.id}.json`);
+  const legacy = JSON.parse(readFileSync(speakerPath, 'utf8'));
+  legacy.turns = [{ start: 0, end: 600, speaker: 'S0' },
+    { start: 600, end: 1000, speaker: 'S1' }];
+  writeFileSync(speakerPath, JSON.stringify(legacy));
+  const rendered = await runApply({ ...options, renderNotes: true });
+  assert.equal(rendered.notes, 1);
+  assert.equal(workerCalls, 1);
+  assert.deepEqual(JSON.parse(readFileSync(speakerPath, 'utf8')).parts.map((part) => part.speaker),
+    ['owner', 'other']);
+  assert.match(readFileSync(notePath, 'utf8'), /나: 우리 반이거든\.\n미네: 응\./);
+  assert.equal((await runApply({ ...options, renderNotes: true })).notes, 0);
 });
 
 test('owner enrollment makes a gated candidate, notes change only after owner confirmation', async (t) => {

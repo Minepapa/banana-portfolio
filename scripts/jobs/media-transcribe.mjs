@@ -14,7 +14,7 @@ export { parseCallFilename } from '../lib/media-people.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic, withLock } from '../lib/state-writer.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
-import { renderDialogue, counterpartFromNote } from '../lib/media-dialogue.mjs';
+import { renderDialogue, counterpartFromNote, shortenSegmentRepetition } from '../lib/media-dialogue.mjs';
 import { recordingNoteTitle } from '../lib/media-recording-title.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -444,7 +444,7 @@ function renderNote(records, transcripts, existing, now, knownPeople, root) {
         if (speakers && speakers.id !== record.id) throw new Error(`화자 원본 ID 오류: ${record.id}`);
         return renderDialogue(transcript, speakers, counterpartFromNote(prior, record.counterpart),
           { looped: repetition.looped })
-          || shortenRepetition(transcript.text);
+          || shortenRepetition(shortenSegmentRepetition(transcript.text, transcript.segments));
       })();
     return `<!-- media-transcribe:id ${record.id} -->\n${heading}\n\n${bodyText}\n\n원본: ${record.archivePath}`;
   }).join('\n\n');

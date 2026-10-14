@@ -8,6 +8,8 @@ import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { contactKey, isLinkedCall } from '../lib/media-people.mjs';
+import { renderSpeakerNote } from './media-diarize.mjs';
+import { speakerParts } from '../lib/media-dialogue.mjs';
 
 const QUIET = { log() {}, error() {} };
 const RULES = [{ type: 'conversation', path: `${VAULT_REL.mediaConversations}/{YYYY}/`,
@@ -174,6 +176,20 @@ test('서로 떨어진 반복 구간과 무음 문구 반복도 노트에서 줄
   await runMediaTranscribe(f.options);
   assert.equal(f.transcript(2).speech, false);
   assert.match(f.note('2030-01-01 가상 무음 반복 녹음.md'), /\(음성 없음 — 반복 환각 20회\)/);
+});
+
+test('연속 반복과 맞장구가 낀 반복을 같은 평문 노트에서 모두 줄인다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.put(1, 'Recordings', '가상 혼합 반복.m4a');
+  const phrase = '왜냐면 우리 팀이 이길 수 있어';
+  writeFileSync(f.response, [LOOP, `${phrase}.`, '응.', `${phrase}.`,
+    '응.', `${phrase}.`, '오늘 일정도 확인했어.'].join('\n'));
+  await runMediaTranscribe(f.options);
+  const note = f.note('2030-01-01 가상 혼합 반복 녹음.md');
+  assert.match(note, /같은 구절 \d+회 반복 — 전사 오류로 줄임/);
+  assert.match(note, /같은 문장 3회 반복 — 전사 오류로 줄임/);
+  assert.match(note, /오늘 일정도 확인했어/);
+  assert.equal((note.match(/왜냐면 우리 팀이 이길 수 있어/g) || []).length, 1);
 });
 
 test('fix-loops는 저장된 반복만 N개 처리하고 dry-run에서는 아무것도 쓰지 않는다', async (t) => {
@@ -917,4 +933,30 @@ test('긴 이름과 이모지의 녹음 제목은 공용 정리 규칙을 따르
   writeFileSync(path, `${before}\n오너 메모 보존\n`);
   await runMediaTranscribe({ ...f.options, rewriteNotes: true, limit: 0, maxMinutes: 0 });
   assert.match(readFileSync(path, 'utf8'), /오너 메모 보존/);
+});
+
+test('전사 재렌더와 화자 잡 렌더가 같은 대화 노트를 만들고 두 번째에는 변경이 없다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상별', { phoneContacts: ['가상연락처'] });
+  f.put(1, 'Calls', '통화 가상연락처_300101_090000.m4a');
+  writeFileSync(f.response, '- 우리 반이거든. - 응. [?]');
+  await runMediaTranscribe(f.options);
+  const transcript = f.transcript(1);
+  const name = '2030-01-01 가상별 통화.md';
+  const before = f.note(name);
+  const turns = [{ start: 0, end: 514, speaker: 'S0' },
+    { start: 514, end: 900, speaker: 'S1' }];
+  const speakers = { id: ID(1), transcribedAt: transcript.transcribedAt, turns,
+    segments: [{ i: 0, speaker: 'owner', uncertain: true }] };
+  speakers.parts = speakerParts(transcript, speakers, 'S0');
+  const path = join(f.root, VAULT_REL.mediaSpeakers, '2030', `${ID(1)}.json`);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(speakers));
+  const expected = renderSpeakerNote(before, transcript, speakers, '가상별');
+  await runMediaTranscribe({ ...f.options, rewriteNotes: true, limit: 0, maxMinutes: 0 });
+  assert.equal(f.note(name), expected);
+  assert.match(expected, /나: 우리 반이거든\.\n가상별: 응\./);
+  assert.doesNotMatch(expected, /\[\?\]|나: -|가상별: -/);
+  await runMediaTranscribe({ ...f.options, rewriteNotes: true, limit: 0, maxMinutes: 0 });
+  assert.equal(f.note(name), expected);
 });
