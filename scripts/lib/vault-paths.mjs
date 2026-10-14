@@ -301,6 +301,17 @@ export const MEDIA_FACES_PATHS = Object.freeze({
   modelRoot: join(homedir(), 'Pantheon', 'Models', 'insightface'),
 });
 
+// 통화 화자 특징값과 시험 산출물은 Vault 밖에서만 보관한다.
+export const MEDIA_DIARIZE_PATHS = Object.freeze({
+  mediaRoot: join(homedir(), 'Pantheon', 'Media'),
+  root: join(homedir(), 'Pantheon', 'Media', 'Diarize'),
+  voices: join(homedir(), 'Pantheon', 'Media', 'Diarize', 'voices'),
+  trial: join(homedir(), 'Pantheon', 'Media', 'Diarize', 'trial'),
+  python: join(homedir(), 'Pantheon', 'Models', 'diarize-venv', 'bin', 'python'),
+  sherpa: join(homedir(), 'Pantheon', 'Models', 'diarize', 'sherpa'),
+  pyannote: join(homedir(), 'Pantheon', 'Models', 'diarize', 'pyannote'),
+});
+
 // 카테고리 노트 위키링크(예: categoryLink('700 자산') → '[[01_Home/700 자산]]').
 export function categoryLink(name) {
   return `[[${VAULT_REL.homeDir}/${name}]]`;

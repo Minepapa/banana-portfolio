@@ -1,0 +1,6 @@
+sherpa-onnx==1.13.8
+numpy==2.3.3
+soundfile==0.13.1
+pyannote.audio==4.0.3
+torch==2.8.0
+huggingface-hub==0.35.3

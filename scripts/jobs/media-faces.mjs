@@ -2,6 +2,8 @@
 // 원본과 Vault 색인은 읽기만 한다. 얼굴 특징값·메타는 Media/Faces에만 기록한다.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MEDIA_FACES_PATHS, VAULT_PATHS, VAULT_REL, categoryLink } from '../lib/vault-paths.mjs';
@@ -13,6 +15,7 @@ import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../tools/faces/media_faces.py', import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.heic', '.heif', '.png']);
 const BATCH_SIZE = 200;
 
@@ -82,11 +85,148 @@ export async function runCropFaces(images, { python = MEDIA_FACES_PATHS.python,
   });
 }
 
-function sheetHtml(band, state, sheet) {
-  const cards = sheet.map((member, index) => `<figure><img src="../crops/${member.id}_${member.i}.jpg" alt="얼굴 ${index + 1}"><figcaption>${index + 1}</figcaption></figure>`).join('\n');
-  return `<!doctype html><html lang="ko"><meta charset="utf-8"><title>미네 ${band}</title>
-<style>body{font-family:system-ui;margin:2rem}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:1rem}figure{margin:0;text-align:center}img{max-width:100%;height:160px;object-fit:contain}figcaption{font-size:1.4rem}</style>
-<h1>미네 ${band}</h1><p>후보 ${state.candidateCount} · 묶음 크기 ${state.clusterSizes.join(', ')}</p><main>${cards}</main></html>\n`;
+function sheetHash(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function scriptJson(value) {
+  return JSON.stringify(value).replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+}
+
+// HTML에는 선택에 필요한 표시값만 둔다. 원본 ID와 얼굴 좌표는 JSON 확인 시트에만 남긴다.
+export function renderFaceSheet({ band = null, state = null, sheet = null, sample = null }) {
+  const gold = sample !== null;
+  const entries = gold ? sample : sheet;
+  const hash = sheetHash(gold ? { sample } : { members: state.members, sheet });
+  const storageKey = `media-faces:${gold ? 'gold' : band}:${hash}`;
+  const title = gold ? '미네 얼굴 골드 판정' : `미네 ${band}`;
+  const cards = entries.map((member, index) => {
+    const number = gold ? member.number : index + 1;
+    const predicted = gold ? member.predicted : 'mine';
+    const image = gold ? `gold-${number}.jpg` : `${member.id}_${member.i}.jpg`;
+    const details = gold
+      ? `<span class="details">모델 ${htmlText(predicted)} · ${htmlText(member.band ?? '날짜 없음')}</span>`
+      : '';
+    const initialAnswer = predicted === 'mine' ? '미네' : '아님';
+    return `<figure><button class="card ${htmlText(predicted)}" type="button" data-number="${htmlText(number)}" data-predicted="${htmlText(predicted)}" aria-pressed="false"><img src="../crops/${htmlText(image)}" alt="얼굴 ${htmlText(number)}"><figcaption>${htmlText(number)}</figcaption>${details}<span class="answer">오너 답: ${initialAnswer}</span><span class="badge" hidden>${gold ? '교정' : '제외'}</span></button></figure>`;
+  }).join('\n');
+  const summary = gold
+    ? '<span>교정 <strong id="count">0</strong>개</span><span>미네가 아닌 번호: <strong id="not-mine">없음</strong></span><span>미네인데 아니라고 한 번호: <strong id="is-mine">없음</strong></span>'
+    : '<span>제외 <strong id="count">0</strong>개</span><span>제외 번호: <strong id="removed">없음</strong></span>';
+  const description = gold
+    ? '<p>얼굴을 누르면 오너 답이 바뀝니다. 모델 판정은 mine=미네, uncertain·other=아님으로 시작합니다.</p>'
+    : `<p>후보 ${state.candidateCount} · 묶음 크기 ${state.clusterSizes.join(', ')} · 얼굴을 누르면 제외됩니다.</p>`;
+  return `<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlText(title)}</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;color:#202124;background:#f6f7f8}
+.toolbar{position:sticky;top:0;z-index:1;background:#fff;border-bottom:1px solid #bbb;padding:.75rem 1rem;box-shadow:0 2px 8px #0002}
+.stats{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;margin-bottom:.5rem}button{font:inherit;cursor:pointer}
+.actions{display:flex;gap:.5rem;flex-wrap:wrap}.actions button{padding:.45rem .8rem}
+#fallback{display:none;width:min(100%,44rem);height:4rem;margin-top:.5rem}#fallback.visible{display:block}
+.content{padding:1rem}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.75rem}
+figure{margin:0}.card{position:relative;width:100%;height:100%;padding:.4rem;background:white;border:3px solid #888;border-radius:8px;text-align:center}
+.card.mine{border-color:#338252}.card.uncertain{border-color:#b8860b}.card.other{border-color:#63748a}
+.card.changed{border-color:#d52222;background:#fff3f3}.card:focus-visible{outline:3px solid #115bc4;outline-offset:2px}
+img{display:block;width:160px;max-width:100%;height:160px;margin:auto;object-fit:contain}
+figcaption{font-size:1.3rem;font-weight:700}.details,.answer{display:block;font-size:.85rem;margin-top:.2rem}
+.badge{position:absolute;top:.3rem;right:.3rem;background:#d52222;color:white;padding:.15rem .35rem;border-radius:4px;font-size:.8rem}
+.badge[hidden]{display:none}
+@media(min-width:1550px){main{grid-template-columns:repeat(9,minmax(0,1fr))}}
+</style>
+<div class="toolbar"><div class="stats">${summary}</div><div class="actions"><button id="copy" type="button">결과 복사</button><button id="save" type="button">파일로 저장</button><button id="reset" type="button">초기화</button></div><textarea id="fallback" aria-label="복사할 결과" readonly></textarea></div>
+<div class="content"><h1>${htmlText(title)}</h1>${description}<main>${cards}</main></div>
+<script>
+(() => {
+  const gold = ${gold};
+  const band = ${scriptJson(band)};
+  const storageKey = ${scriptJson(storageKey)};
+  const repoRoot = ${scriptJson(REPO_ROOT)};
+  const cards = [...document.querySelectorAll('.card')];
+  let changed = new Set();
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey) || '[]');
+    if (Array.isArray(saved)) changed = new Set(saved.filter((number) => Number.isInteger(number)));
+  } catch { /* file:// 저장소가 차단되어도 시트는 사용할 수 있다. */ }
+
+  function result() {
+    const mineToOther = [];
+    const otherToMine = [];
+    for (const card of cards) {
+      const number = Number(card.dataset.number);
+      if (!changed.has(number)) continue;
+      if (gold && card.dataset.predicted !== 'mine') otherToMine.push(number);
+      else mineToOther.push(number);
+    }
+    if (gold) return '미네가 아닌 번호: ' + mineToOther.join(', ')
+      + '\\n미네인데 아니라고 한 번호: ' + otherToMine.join(', ');
+    return 'cd ' + JSON.stringify(repoRoot) + ' && node scripts/jobs/media-faces.mjs --confirm=' + band
+      + (mineToOther.length ? ' --remove=' + mineToOther.join(',') : '');
+  }
+
+  function update() {
+    let count = 0;
+    const mineToOther = [];
+    const otherToMine = [];
+    for (const card of cards) {
+      const number = Number(card.dataset.number);
+      const corrected = changed.has(number);
+      const ownerMine = (card.dataset.predicted === 'mine') !== corrected;
+      card.classList.toggle('changed', corrected);
+      card.querySelector('.badge').hidden = !corrected;
+      card.querySelector('.answer').textContent = '오너 답: ' + (ownerMine ? '미네' : gold ? '아님' : '제외');
+      card.setAttribute('aria-pressed', String(corrected));
+      if (!corrected) continue;
+      count++;
+      if (gold && card.dataset.predicted !== 'mine') otherToMine.push(number);
+      else mineToOther.push(number);
+    }
+    document.getElementById('count').textContent = String(count);
+    if (gold) {
+      document.getElementById('not-mine').textContent = mineToOther.join(', ') || '없음';
+      document.getElementById('is-mine').textContent = otherToMine.join(', ') || '없음';
+    } else document.getElementById('removed').textContent = mineToOther.join(', ') || '없음';
+  }
+
+  for (const card of cards) card.addEventListener('click', () => {
+    const number = Number(card.dataset.number);
+    if (changed.has(number)) changed.delete(number);
+    else changed.add(number);
+    try { localStorage.setItem(storageKey, JSON.stringify([...changed])); } catch {}
+    update();
+  });
+  document.getElementById('copy').addEventListener('click', async () => {
+    const value = result();
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(value);
+    } catch {
+      const fallback = document.getElementById('fallback');
+      fallback.value = value;
+      fallback.classList.add('visible');
+      fallback.focus();
+      fallback.select();
+    }
+  });
+  document.getElementById('save').addEventListener('click', () => {
+    const url = URL.createObjectURL(new Blob([result()], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = gold ? 'gold-answers.txt' : band + '-answers.txt';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  document.getElementById('reset').addEventListener('click', () => {
+    changed.clear();
+    try { localStorage.removeItem(storageKey); } catch {}
+    document.getElementById('fallback').classList.remove('visible');
+    update();
+  });
+  update();
+})();
+</script></html>\n`;
 }
 
 export async function sheetMediaFaces({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PATHS.mediaRoot,
@@ -129,9 +269,10 @@ export async function sheetMediaFaces({ root = VAULT_PATHS.root, mediaRoot = MED
     for (const { band, state, sheet } of pages) {
       const available = sheet.filter((member) => cropped.has(join(cropsPath, `${member.id}_${member.i}.jpg`)));
       writeAtomic(join(sheetsPath, `${band}.json`), `${JSON.stringify({ members: state.members, sheet: available })}\n`);
-      writeAtomic(join(sheetsPath, `${band}.html`), sheetHtml(band, state, available));
+      writeAtomic(join(sheetsPath, `${band}.html`), renderFaceSheet({ band, state, sheet: available }));
     }
-    writeAtomic(join(sheetsPath, 'index.html'), `<!doctype html><html lang="ko"><meta charset="utf-8"><title>미네 얼굴 확인 시트</title><h1>미네 얼굴 확인 시트</h1><ul>${pages.map(({ band }) => `<li><a href="${band}.html">${band}</a></li>`).join('')}</ul></html>\n`);
+    const goldLink = existsSync(join(sheetsPath, 'gold.html')) ? '<li><a href="gold.html">골드 표본</a></li>' : '';
+    writeAtomic(join(sheetsPath, 'index.html'), `<!doctype html><html lang="ko"><meta charset="utf-8"><title>미네 얼굴 확인 시트</title><h1>미네 얼굴 확인 시트</h1><ul>${pages.map(({ band }) => `<li><a href="${band}.html">${band}</a></li>`).join('')}${goldLink}</ul></html>\n`);
     output.log(`[media-faces] 확인 시트 ${pages.length}개`);
     return pages.length;
   };
@@ -525,8 +666,7 @@ export async function goldSheetMediaFaces({ root = VAULT_PATHS.root,
     const sheetsPath = join(out, 'sheets');
     mkdirSync(sheetsPath, { recursive: true });
     writeAtomic(join(sheetsPath, 'gold.json'), `${JSON.stringify({ sample }, null, 2)}\n`);
-    const cards = sample.map((member) => `<figure><img src="../crops/gold-${member.number}.jpg" alt="표본 ${member.number}"><figcaption>${member.number} · ${htmlText(member.predicted)} · ${htmlText(member.band ?? '날짜 없음')}</figcaption></figure>`).join('\n');
-    writeAtomic(join(sheetsPath, 'gold.html'), `<!doctype html><html lang="ko"><meta charset="utf-8"><title>미네 얼굴 골드 판정</title><style>body{font-family:system-ui;margin:2rem}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:1rem}img{width:140px;height:160px;object-fit:contain}figure{margin:0}</style><h1>미네 얼굴 골드 판정</h1><p>모든 얼굴을 확인한 뒤 두 줄로 교정하세요: ‘미네가 아닌 번호: 3,7’과 ‘미네인데 아니라고 한 번호: 12’. 교정이 없으면 콜론 뒤를 비워 둡니다.</p><main>${cards}</main></html>\n`);
+    writeAtomic(join(sheetsPath, 'gold.html'), renderFaceSheet({ sample }));
     output.log(`[media-faces] 골드 표본 ${sample.length}개`);
     return sample;
   };
@@ -538,7 +678,7 @@ export function parseGoldCorrections(text, sample) {
   const labels = Object.fromEntries(sample.map((member) => [member.number,
     member.predicted === 'mine']));
   const byNumber = new Map(sample.map((member) => [member.number, member]));
-  const lines = text.split(/\r?\n|;/).map((line) => line.trim()).filter(Boolean);
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n|;/).map((line) => line.trim()).filter(Boolean);
   const seen = new Set();
   for (const line of lines) {
     const match = line.match(/^(미네가 아닌 번호|미네인데 아니라고 한 번호)\s*:\s*(.*)$/);
@@ -565,7 +705,11 @@ export async function recordGoldLabels(input, { out = MEDIA_FACES_PATHS.root,
   goldPath = join(out, 'gold-labels.json'), output = console } = {}) {
   const execute = () => {
     const { sample } = JSON.parse(readFileSync(join(out, 'sheets', 'gold.json'), 'utf8'));
-    const content = existsSync(input) ? readFileSync(input, 'utf8') : input;
+    const expanded = input.startsWith('~/') ? join(homedir(), input.slice(2)) : input;
+    const content = existsSync(expanded) ? readFileSync(expanded, 'utf8') : input;
+    if (content === input && !/^\s*\uFEFF?미네가 아닌 번호\s*:/u.test(input)) {
+      throw new Error(`파일을 찾을 수 없음: ${expanded}`);
+    }
     const labels = parseGoldCorrections(content, sample);
     writeAtomic(goldPath, `${JSON.stringify({ sample, labels }, null, 2)}\n`);
     output.log(`[media-faces] 골드 라벨 ${sample.length}개`);

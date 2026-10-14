@@ -5,10 +5,11 @@ import { PassThrough } from 'node:stream';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { MEDIA_FACES_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
+import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { clusterMediaFaces, confirmMediaFaces, parseFaceOutput, runMediaFaces, runPythonFaces,
   runCropFaces, selectFaceTargets, sheetMediaFaces, matchMediaFaces, reportMediaFaces,
-  goldSheetMediaFaces, parseGoldCorrections, recordGoldLabels, prebirthFalsePositiveRows } from './media-faces.mjs';
+  goldSheetMediaFaces, parseGoldCorrections, recordGoldLabels, prebirthFalsePositiveRows,
+  renderFaceSheet } from './media-faces.mjs';
 import { ageBand, capturePeriod, buildGallery, clusterBand, confirmBand, mineAlbum, selectGalleryCandidates,
   selectSheetMembers, matchFaces, selectGoldSample, goldMetrics } from '../lib/media-face-gallery.mjs';
 
@@ -265,6 +266,10 @@ test('cluster, sheets, confirm은 임시 경로에서만 실행하고 원본을 
   const mapping = JSON.parse(readFileSync(join(f.out, 'sheets', '2y.json'), 'utf8'));
   assert.deepEqual(mapping.sheet, [{ id: 'a', i: 0 }]);
   assert.match(readFileSync(join(f.out, 'sheets', '2y.html'), 'utf8'), /후보 1/);
+  assert.doesNotMatch(readFileSync(join(f.out, 'sheets', 'index.html'), 'utf8'), /href="gold\.html"/);
+  writeFileSync(join(f.out, 'sheets', 'gold.html'), 'gold');
+  await sheetMediaFaces({ ...options, cropper: async (images) => images.map((image) => image.out) });
+  assert.match(readFileSync(join(f.out, 'sheets', 'index.html'), 'utf8'), /href="gold\.html"/);
   await confirmMediaFaces('2y', [1], { ...options, sheetsPath: join(f.out, 'sheets') });
   const updated = JSON.parse(readFileSync(galleryPath, 'utf8'));
   assert.deepEqual(updated.bands['2y'].members, []);
@@ -309,6 +314,61 @@ test('조각 실패·좌표 누락은 다른 얼굴의 시트 번호를 바꾸�
   assert.doesNotMatch(html, /a_0\.jpg/);
   assert.doesNotMatch(html, /c_0\.jpg/);
   assert.match(html, /<figcaption>1<\/figcaption>/);
+});
+
+test('클릭 시트는 표시값과 조각 경로만 포함하고 표본별 저장 키를 만든다', () => {
+  const state = { members: [{ id: 'face-a', i: 0 }], candidateCount: 1, clusterSizes: [1] };
+  const bandHtml = renderFaceSheet({ band: '2y', state, sheet: [{ id: 'face-a', i: 0 }] });
+  assert.equal((bandHtml.match(/class="card /g) ?? []).length, 1);
+  assert.match(bandHtml, /\.\.\/crops\/face-a_0\.jpg/);
+  assert.match(bandHtml, /--confirm=/);
+  assert.match(bandHtml, /--remove=/);
+  assert.match(bandHtml, /const repoRoot = "\/.*banana-portfolio-v2\/"/);
+  assert.match(bandHtml, /return 'cd ' \+ JSON\.stringify\(repoRoot\) \+ ' && node scripts\/jobs\/media-faces\.mjs/);
+  assert.match(bandHtml, /결과 복사|파일로 저장|초기화/);
+  assert.doesNotMatch(bandHtml, /https?:\/\/|bbox|score|archivePath/);
+
+  const sample = [
+    { number: 1, id: 'hidden-one', i: 0, predicted: 'mine', band: '2y', score: 0.91,
+      bbox: [1, 2, 3, 4], archivePath: 'Archive/private.jpg' },
+    { number: 2, id: 'hidden-two', i: 0, predicted: 'uncertain', band: '3y' },
+    { number: 3, id: 'hidden-three', i: 0, predicted: 'other', band: null },
+  ];
+  const goldHtml = renderFaceSheet({ sample });
+  assert.equal((goldHtml.match(/class="card /g) ?? []).length, 3);
+  assert.match(goldHtml, /data-number="1" data-predicted="mine"/);
+  assert.match(goldHtml, /data-number="2" data-predicted="uncertain"/);
+  assert.match(goldHtml, /data-number="3" data-predicted="other"/);
+  assert.match(goldHtml, /모델 mine · 2y/);
+  assert.match(goldHtml, /data-predicted="uncertain"[\s\S]*?오너 답: 아님/);
+  assert.match(goldHtml, /gold-answers\.txt/);
+  assert.doesNotMatch(goldHtml, /hidden-one|hidden-two|hidden-three|private\.jpg|archivePath|bbox|score/);
+  assert.doesNotMatch(goldHtml, /https?:\/\//);
+  assert.notEqual(goldHtml.match(/media-faces:gold:[a-f0-9]{64}/)?.[0],
+    renderFaceSheet({ sample: sample.slice(0, 2) }).match(/media-faces:gold:[a-f0-9]{64}/)?.[0]);
+});
+
+test('sheet script data and displayed numbers escape HTML and JavaScript delimiters', () => {
+  const html = renderFaceSheet({ band: '</script>\u2028\u2029',
+    state: { members: [], candidateCount: 0, clusterSizes: [] }, sheet: [] });
+  assert.doesNotMatch(html, /const band = "<\/script>/);
+  assert.match(html, /\\u003c\/script>/);
+  assert.match(html, /\\u2028\\u2029/);
+  const gold = renderFaceSheet({ sample: [{ number: '<img src=x>', predicted: 'other', band: '2y' }] });
+  assert.match(gold, /&lt;img src=x&gt;/);
+  assert.doesNotMatch(gold, /<figcaption><img/);
+});
+
+test('gold label input distinguishes missing file from inline corrections', async (t) => {
+  const f = fixture(t);
+  mkdirSync(join(f.out, 'sheets'), { recursive: true });
+  writeFileSync(join(f.out, 'sheets', 'gold.json'), JSON.stringify({ sample: [
+    { number: 1, predicted: 'mine' }] }));
+  await assert.rejects(recordGoldLabels(join(f.out, 'missing.txt'), { out: f.out, output: f.output }),
+    /파일을 찾을 수 없음/);
+  const labels = await recordGoldLabels('미네가 아닌 번호: 1\n미네인데 아니라고 한 번호:',
+    { out: f.out, output: f.output });
+  assert.equal(labels.labels[1], false);
 });
 
 test('매칭은 인접 나이대 상위 5개 평균이며 같은 사진과 중복 미네를 제외한다', () => {
@@ -378,6 +438,14 @@ test('골드 표본은 재현 가능하게 층화하고 무양성 임계값은 �
     onePhoto), { 1: true, 2: true });
   assert.deepEqual(parseGoldCorrections('미네가 아닌 번호: 1; 미네인데 아니라고 한 번호: 2',
     onePhoto), { 1: false, 2: true });
+  assert.deepEqual(parseGoldCorrections('\uFEFF미네가 아닌 번호: 1  \n미네인데 아니라고 한 번호: 2  \n',
+    onePhoto), { 1: false, 2: true });
+  assert.deepEqual(parseGoldCorrections('\uFEFF미네가 아닌 번호:   \r\n미네인데 아니라고 한 번호:  \r\n',
+    onePhoto), { 1: true, 2: false });
+  assert.deepEqual(parseGoldCorrections('\uFEFF미네가 아닌 번호: 1, 2\n미네인데 아니라고 한 번호: 3  ', [
+    { number: 1, predicted: 'mine' }, { number: 2, predicted: 'mine' },
+    { number: 3, predicted: 'other' },
+  ]), { 1: false, 2: false, 3: true });
   assert.throws(() => parseGoldCorrections('미네가 아닌 번호: 1', onePhoto), /두 교정 목록/);
   const weighted = goldMetrics([
     { number: 1, predicted: 'mine', winner: true, score: 0.55 },
@@ -432,7 +500,7 @@ test('매칭·골드·리포트는 임시 경로만 쓰고 메모를 보존한�
   assert.equal(existsSync(join(f.out, 'sheets', 'gold.html')), true);
   assert.equal(existsSync(join(f.out, 'sheets', 'gold.json')), true);
   const labelsPath = join(f.out, 'input.txt');
-  writeFileSync(labelsPath, '미네가 아닌 번호: \n미네인데 아니라고 한 번호: \n');
+  writeFileSync(labelsPath, '\uFEFF미네가 아닌 번호:  \n미네인데 아니라고 한 번호:  \n');
   await recordGoldLabels(labelsPath, { out: f.out, output: f.output });
   const rules = [{ type: 'report', path: '50_Outputs/Reports/{YYYY}/',
     pathRegex: /^50_Outputs\/Reports\/\d{4}\/[^/]+\.md$/,
