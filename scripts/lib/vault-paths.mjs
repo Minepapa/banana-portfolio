@@ -68,6 +68,7 @@ export const VAULT_REL = {
   mediaTranscripts: '95_Etna/Media/Transcripts',
   mediaTranscribeState: '95_Etna/Media/transcribe-state.json',
   mediaConversations: '20_Records/23_Conversations',
+  mineAthenaState: '95_Etna/Jobs/MineAthenaFields/state.json', // 아테나 주간 묶음이 비워 둔 노트(2026-10-14)
   mediaMoments: '20_Records/24_Media',
   mediaMomentsState: '95_Etna/Media/moments.json',
   jobHealth: '95_Etna/Jobs/JobHealth',

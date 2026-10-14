@@ -15,6 +15,7 @@ export const JOB_LABELS = {
   'media-moments': 'Camera와 촬영 시각이 확인된 KakaoTalk 사진·동영상을 순간별 Vault 노트로 묶음(매시간)',
   'media-transcribe': '통화·녹음 로컬 Whisper 전사 → 대화 노트(매일 01~05시 매시)',
   'media-vision': '사진·영상 로컬 Apple Vision 분석 → 순간 노트 장면 보강(매일 05:30)',
+  'mine-athena-fields': '미네 노트 아테나 필드 주간 묶음(일 06:30, 발송 없음)',
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
   'vault-offsite-backup': '매일 00:20 Vault 암호화 외부 백업',
   'question-digest': '비긴급 질문 하루 두 번(09:00·19:00) 담당별 묶음 발송',

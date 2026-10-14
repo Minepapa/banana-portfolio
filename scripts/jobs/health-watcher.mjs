@@ -382,6 +382,8 @@ export const EXPECTED_INTERVALS_MS = {
   // 동일 클래스(저정보 억제라 텔레그램 발송 없는 주도 많지만 heartbeat 자체는 매주).
   'weekly-vault-health-check': 7 * 24 * 60 * 60 * 1000,
   'weekly-warning-review': 7 * 24 * 60 * 60 * 1000,
+  // mine-athena-fields(2026-10-14 신설) — 매주 일 06:30 미네 노트 아테나 필드 묶음, 발송 없음.
+  'mine-athena-fields': 7 * 24 * 60 * 60 * 1000,
   // update-breakout-price-cache(2026-09-16 신설, 돌파매매 전략 개별종목 시세 캐시
   // 갱신) — 평일 07:00 하루 1회, daily-asset-allocation-check 등과 동일 클래스
   // (평일 전용이라 48h로 주말 간격 흡수).
