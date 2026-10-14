@@ -191,6 +191,42 @@ test('judgment failure is retried once with validation error and reported for on
   assert.equal(result.sent, false);
 });
 
+test('object people is rejected with its index and type, then corrected on retry', async (t) => {
+  const { root, put } = fixture(t);
+  put('00_Inbox/memo.md', memo('옵시디언', '가상 원문'));
+  const prompts = [];
+  const invalid = { ...judgment(), extracted: { ...judgment().extracted,
+    people: [{ name: '가상 인물 A', relation: '딸' }] } };
+  const result = await run({ root, rules, now: date, dryRun: true,
+    judge: async (prompt) => { prompts.push(prompt); return prompts.length === 1 ? invalid : judgment(); },
+    charter: { model: 'test', systemPrompt: 'test' }, cooldown: () => false });
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[0], /extracted의 모든 값은 문자열 배열이며 객체를 넣지 마라/);
+  assert.match(prompts[0], /frontmatter 값은 문자열·숫자·불리언 또는 그 배열만/);
+  assert.match(prompts[1], /직전 검증 오류: 추출 스키마 위반: people\[0\]이 문자열이 아님\(object\)/);
+  assert.equal(result.items[0].status, '계획함');
+});
+
+test('last invalid response preview is kept only in the plan item', async (t) => {
+  const { root, put } = fixture(t);
+  put('00_Inbox/memo.md', memo('옵시디언', '가상 원문'));
+  const first = { ...judgment(), extracted: { ...judgment().extracted, people: [{ name: '가상 인물 A' }] } };
+  const last = { ...judgment(), extracted: { ...judgment().extracted,
+    people: [{ name: '가상 인물 B', relation: '딸', detail: '가'.repeat(600) }] } };
+  let calls = 0;
+  const result = await run({ root, rules, now: date, noSend: true,
+    judge: async () => { calls += 1; return calls === 1 ? first : last; },
+    charter: { model: 'test', systemPrompt: 'test' }, cooldown: () => false });
+  const plan = JSON.parse(readFileSync(join(root, result.planRel), 'utf8'));
+  assert.equal(calls, 2);
+  assert.equal(plan.items[0].status, '판단 실패');
+  assert.equal(plan.items[0].rawPreview, JSON.stringify(last).slice(0, 500));
+  assert.ok(plan.items[0].rawPreview.length <= 500);
+  assert.equal(plan.pendingMessageItems.some((item) => 'rawPreview' in item), false);
+  assert.equal(result.report.includes('rawPreview'), false);
+  assert.equal(result.message.body.includes('rawPreview'), false);
+});
+
 test('JSON validation checks registry, schema, and missing Wiki append downgrade', (t) => {
   const { root } = fixture(t);
   const valid = judgment();
@@ -199,6 +235,10 @@ test('JSON validation checks registry, schema, and missing Wiki append downgrade
   assert.equal(parsed.wiki[0].action, 'candidate');
   assert.throws(() => validateJudgment({ ...valid, target: { ...valid.target, folder: '../outside' } }, { root, rules, date: '2026-10-11' }), /경로/);
   assert.throws(() => validateJudgment({ ...valid, extracted: { people: 'invalid' } }, { root, rules, date: '2026-10-11' }), /스키마/);
+  assert.throws(() => validateJudgment({ ...valid, extracted: { ...valid.extracted, people: [{ name: '가상 인물 A', relation: '딸' }] } },
+    { root, rules, date: '2026-10-11' }), /추출 스키마 위반: people\[0\]이 문자열이 아님\(object\)/);
+  assert.throws(() => validateJudgment({ ...valid, extracted: { ...valid.extracted, people: null } },
+    { root, rules, date: '2026-10-11' }), /추출 스키마 위반: people이 배열이 아님\(null\)/);
   assert.throws(() => validateJudgment({ ...valid, frontmatter: { ...valid.frontmatter, nested: { a: 1 } } }, { root, rules, date: '2026-10-11' }), /중첩/);
   const missingOccurred = { ...valid.frontmatter };
   delete missingOccurred.occurred;
@@ -413,6 +453,7 @@ test('timeout is not retried; job deadline leaves unstarted memos in remaining c
   assert.equal(calls, 1);
   assert.equal(result.remaining, 1);
   assert.equal(result.items[0].status, '판단 실패');
+  assert.equal('rawPreview' in result.items[0], false);
 });
 
 test('same-day rerun keeps earlier plans while adding newly arrived memo', async (t) => {

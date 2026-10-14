@@ -230,7 +230,13 @@ export function validateJudgment(raw, { rules, root, date, wikiIndex = readWikiI
   if (!plain(value) || !plain(value.target) || !plain(value.frontmatter) || !plain(value.extracted)
       || !Array.isArray(value.wiki) || !(value.dailyLink === null || typeof value.dailyLink === 'string')
       || !(value.unclassifiable === null || typeof value.unclassifiable === 'string')) throw new Error('JSON 스키마 위반');
-  for (const key of EXTRACTED_KEYS) if (!Array.isArray(value.extracted[key]) || !value.extracted[key].every((x) => typeof x === 'string')) throw new Error(`추출 스키마 위반: ${key}`);
+  for (const key of EXTRACTED_KEYS) {
+    const entries = value.extracted[key];
+    const actualType = (entry) => entry === null ? 'null' : Array.isArray(entry) ? 'array' : typeof entry;
+    if (!Array.isArray(entries)) throw new Error(`추출 스키마 위반: ${key}이 배열이 아님(${actualType(entries)})`);
+    const invalidIndex = entries.findIndex((entry) => typeof entry !== 'string');
+    if (invalidIndex !== -1) throw new Error(`추출 스키마 위반: ${key}[${invalidIndex}]이 문자열이 아님(${actualType(entries[invalidIndex])})`);
+  }
   const dailyLink = value.dailyLink?.match(DATE_RE)?.[0] ?? null;
   if (value.wiki.some((entry) => !plain(entry) || !WIKI_ACTIONS.has(entry.action)
       || typeof entry.page !== 'string' || !entry.page.trim()
@@ -265,6 +271,7 @@ function promptFor(item, registrySummary) {
     + `배우자·아내·와이프·엄마·아빠 같은 관계어는 relation으로 기존 인물에 매칭하라.\n`
     + `경로 등록부 요약:\n${registrySummary}\n`
     + `정확한 JSON 스키마: {"target":{"folder":"${VAULT_REL.recordsRoot}/.../{YYYY}","type":"note|literature|conversation|media","title":"YYYY-MM-DD 제목"},"frontmatter":{},"extracted":{"people":[],"places":[],"topics":[],"objects":[],"dates":[],"todos":[],"decisions":[]},"wiki":[{"action":"append-source|candidate|question","page":"${VAULT_REL.knowledge}/...","reason":"..."}],"dailyLink":null,"unclassifiable":null}\n`
+    + `extracted의 모든 값은 문자열 배열이며 객체를 넣지 마라. 인물은 Wiki 페이지 제목 그대로(예: "미네") 쓰고 관계 정보는 넣지 마라. frontmatter 값은 문자열·숫자·불리언 또는 그 배열만 허용한다.\n`
     + `제목은 날짜를 포함해 60자 이내로 작성하라.\n`
     + `원본 경로: ${item.source}\n원문:\n${item.content}`;
 }
@@ -440,12 +447,20 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
     let failure;
     let attempts = item.attempts;
     let validationError = '';
+    let rawPreview;
     for (let attempt = 0; attempt < Math.min(2, 3 - item.attempts) && clock() - startedAt < MAX_JOB_MS; attempt += 1) {
+      rawPreview = undefined;
       try {
         const prompt = promptFor(item, registrySummary) + (validationError ? `\n직전 검증 오류: ${validationError}\n오류를 고쳐 JSON 객체만 다시 출력하라.` : '');
         const raw = await decide(prompt, item, systemPrompt);
         attempts += 1;
-        const judgment = validateJudgment(raw, { rules: activeRules, root, date, wikiIndex });
+        let judgment;
+        try {
+          judgment = validateJudgment(raw, { rules: activeRules, root, date, wikiIndex });
+        } catch (error) {
+          rawPreview = (typeof raw === 'string' ? raw : JSON.stringify(raw))?.slice(0, 500);
+          throw error;
+        }
         items.push({ source: item.source, hash: item.hash, status: judgment.unclassifiable ? '분류 불가' : '계획함',
           attempts, ...(judgment.unclassifiable ? { reason: judgment.unclassifiable } : { judgment }) });
         failure = null;
@@ -458,7 +473,8 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
       }
     }
     if (failure) items.push({ source: item.source, hash: item.hash, status: '판단 실패', attempts,
-      reason: failure.isLimit ? '사용량 한도' : String(failure.message).slice(0, 200) });
+      reason: failure.isLimit ? '사용량 한도' : String(failure.message).slice(0, 200),
+      ...(rawPreview === undefined ? {} : { rawPreview }) });
     if (failure?.isLimit) break;
   }
   const finalRemaining = remaining + selected.length - items.length;
@@ -467,7 +483,8 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
   const newSources = new Set(items.map((item) => item.source));
   const allItems = [...previousItems.filter((item) => !newSources.has(item.source)), ...items];
   const newMessageItems = items.filter((item) => item.status !== '보류(재시도 소진)'
-    && !(item.status === '판단 실패' && previousStates.get(item.hash)?.status === '판단 실패'));
+    && !(item.status === '판단 실패' && previousStates.get(item.hash)?.status === '판단 실패'))
+    .map(({ rawPreview, ...item }) => item);
   const pendingMessageItems = [...previousPending.filter((item) => !newSources.has(item.source)), ...newMessageItems];
   const planContent = (pending) => `${JSON.stringify({ date, mode: 'report', remaining: finalRemaining, items: allItems,
     reportBaseSection: previousSection, pendingMessageItems: pending }, null, 2)}\n`;
