@@ -832,6 +832,21 @@ test('repair-times는 촬영 시각이 같아도 confidence와 reason 변경을 
   assert.equal((await repairMediaArchiveTimes(f.options)).changed, 0);
 });
 
+test('repair-times --apply는 오너 확정 날짜를 다시 계산하지 않는다', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.put('Camera', 'agree_20240102_030405.jpg', 'agree');
+  await runMediaArchive(f.options);
+  const [record] = await rows(f.indexPath);
+  record.capturedAt = '2023-12-31T12:00:00+09:00';
+  record.capturedFrom = 'owner';
+  record.capturedConfidence = 'confirmed';
+  await fs.writeFile(f.indexPath, `${JSON.stringify(record)}\n`);
+  const before = await fs.readFile(f.indexPath, 'utf8');
+  assert.equal((await repairMediaArchiveTimes({ ...f.options, apply: true })).changed, 0);
+  assert.equal(await fs.readFile(f.indexPath, 'utf8'), before);
+});
+
 test('2분 일치는 confirmed이고 UTC 비디오 EXIF의 원본 연도가 2004면 버린다', async (t) => {
   const f = await fixture();
   t.after(f.cleanup);

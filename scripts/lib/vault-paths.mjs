@@ -46,6 +46,8 @@ export const VAULT_REL = {
   // 2026-10-08 등록부 정리: 90_Delphi 바로 아래 운영 문서를 등록부가 정한 하위 폴더로 옮겼다.
   registryFile: '90_Delphi/Schema/경로 등록부.md',
   homeDir: '01_Home', // 카테고리 노트 폴더(category 링크 대상)
+  projectsRoot: '40_Projects',
+  outputsRoot: '50_Outputs',
   portfolioKpiTopics: '30_Wiki/34_Topics/PortfolioKPI', // 폴더는 영문 유지, 노트 제목만 한글(2026-10-08)
   inboxRoot: '00_Inbox',
   recordsRoot: '20_Records',
@@ -71,6 +73,7 @@ export const VAULT_REL = {
   mediaTranscripts: '95_Etna/Media/Transcripts',
   mediaSpeakers: '95_Etna/Media/Speakers',
   mediaTranscribeState: '95_Etna/Media/transcribe-state.json',
+  mediaRenameLog: '95_Etna/Media/rename-log.jsonl',
   mediaConversations: '20_Records/23_Conversations',
   mineAthenaState: '95_Etna/Jobs/MineAthenaFields/state.json', // 아테나 주간 묶음이 비워 둔 노트(2026-10-14)
   mediaMoments: '20_Records/24_Media',
@@ -82,6 +85,7 @@ export const VAULT_REL = {
   // 등록부 lint 범위 밖 최상위 폴더: 보관본(원래 type 유지)·코드가 쓰는 기계 데이터·금고(내용을 읽지 않음)
   archiveRoot: '80_Archive',
   etnaRoot: '95_Etna',
+  logsRoot: '60_Logs',
   adytonRoot: '99_Adyton',
   statusStandardFile: '90_Delphi/Schema/상태표준.md',
   jobCatalogFile: '90_Delphi/Schema/무인잡-카탈로그.md',
@@ -288,6 +292,12 @@ export const VAULT_PATHS = {
     infra: join(VAULT_ROOT, '30_Wiki', '34_Topics'),
   },
 };
+
+export const MEDIA_RECORDINGS_PATHS = Object.freeze({
+  mediaRoot: join(homedir(), 'Pantheon', 'Media'),
+  root: join(homedir(), 'Pantheon', 'Media', 'Rename'),
+  sheet: join(homedir(), 'Pantheon', 'Media', 'Rename', 'recordings.html'),
+});
 
 // 얼굴 특징값은 생체 정보라 Vault와 저장소 밖에만 둔다.
 export const MEDIA_FACES_PATHS = Object.freeze({

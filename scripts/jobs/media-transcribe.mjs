@@ -15,6 +15,7 @@ import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs
 import { writeAtomic, withLock } from '../lib/state-writer.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { renderDialogue, counterpartFromNote } from '../lib/media-dialogue.mjs';
+import { recordingNoteTitle } from '../lib/media-recording-title.mjs';
 
 const execFileAsync = promisify(execFile);
 const START = '<!-- media-transcribe:start -->';
@@ -83,7 +84,7 @@ function existingTranscriptPaths(root) {
 
 function notePath(record) {
   if (record.kind === 'Recordings' && /^\d{4}-\d{2}-\d{2} \S/.test(record.stem)) {
-    return `${VAULT_REL.mediaConversations}/${record.stem.slice(0, 4)}/${cleanTitle(record.stem)}.md`;
+    return `${VAULT_REL.mediaConversations}/${record.stem.slice(0, 4)}/${recordingNoteTitle(record.stem)}.md`;
   }
   const date = record.occurred.slice(0, 10);
   const suffix = record.kind === 'Calls' ? `${record.counterpart} 통화` : `${record.stem} 녹음`;
@@ -103,6 +104,26 @@ function recordingOwner(root, relPath) {
     .map((match) => match[1]);
   if (ids.length !== 1) throw new Error('기존 녹음 노트 ID 오류');
   return ids[0];
+}
+
+function existingRecordingNotes(root) {
+  const base = join(root, VAULT_REL.mediaConversations);
+  const found = new Map();
+  if (!existsSync(base)) return found;
+  for (const year of readdirSync(base).filter((name) => /^\d{4}$/.test(name))) {
+    for (const filename of readdirSync(join(base, year)).filter((name) => name.endsWith('.md'))) {
+      const rel = `${VAULT_REL.mediaConversations}/${year}/${filename}`;
+      const content = readFileSync(join(root, rel), 'utf8');
+      const start = content.indexOf(START);
+      const end = content.indexOf(END);
+      if (start < 0 || end <= start) continue;
+      for (const match of content.slice(start, end).matchAll(/<!-- media-transcribe:id ([a-f0-9]{16}) -->/gi)) {
+        if (found.has(match[1]) && found.get(match[1]) !== rel) throw new Error(`중복 녹음 노트: ${match[1]}`);
+        found.set(match[1], rel);
+      }
+    }
+  }
+  return found;
 }
 
 function assignNotePaths(records, root) {
@@ -147,7 +168,9 @@ function prepareRecords(records, people, root, mediaRoot, persistedPaths, model,
       const call = record.kind === 'Calls' ? parseCallFilename(filename) : null;
       const contact = record.kind === 'Calls' ? call?.contact || contactFromFilename(filename) : null;
       if (!Number.isFinite(Date.parse(record.capturedAt))) throw new Error('색인 촬영 시각 오류');
-      const linked = matchPeople(record.kind, filename, contact, people);
+      // Archive 파일명은 오너가 개명한다. 인물 판정에는 변경되지 않는 Inbox 이름을 쓴다.
+      const linked = matchPeople(record.kind, record.kind === 'Recordings'
+        ? basename(record.inboxPath || filename) : filename, contact, people);
       if (record.kind === 'Calls' && !linked.length) {
         excludedCalls += 1;
         return [];
@@ -170,7 +193,8 @@ function prepareRecords(records, people, root, mediaRoot, persistedPaths, model,
       const item = {
         ...record, path, filename, occurred, contact,
         people: linked.map((person) => person.title), family: linked.some((person) => person.family),
-        counterpart, stem: cleanTitle(basename(filename, extname(filename))),
+        counterpart, stem: record.kind === 'Recordings' && /^\d{4}-\d{2}-\d{2} \S/.test(basename(filename, extname(filename)))
+          ? basename(filename, extname(filename)).normalize('NFC') : cleanTitle(basename(filename, extname(filename))),
       };
       item.notePath = notePath(item);
       item.transcriptPath = persisted || transcriptPath(root, item);
@@ -179,6 +203,10 @@ function prepareRecords(records, people, root, mediaRoot, persistedPaths, model,
         (basename(transcript.model || '') !== basename(model) || !Array.isArray(transcript.segments));
       return [item];
     });
+  const existingNotes = existingRecordingNotes(root);
+  for (const record of prepared) {
+    if (record.kind === 'Recordings' && existingNotes.has(record.id)) record.notePath = existingNotes.get(record.id);
+  }
   assignNotePaths(prepared, root);
   return { prepared, excludedCalls };
 }
@@ -395,6 +423,9 @@ function renderNote(records, transcripts, existing, now, knownPeople, root) {
     modified: now.slice(0, 10), occurred: first.occurred, people,
     origin: 'media-transcribe', convKind,
   };
+  if (sorted.some((record) => record.kind === 'Recordings'
+    && (record.capturedConfidence === 'review' || record.capturedFrom === 'mtime'))) fields.dateCheck = '의심';
+  else delete fields.dateCheck;
   const body = sorted.map((record) => {
     const transcript = transcripts.get(record.id);
     const roundedDuration = Math.round(transcript.durationSec);
@@ -417,7 +448,7 @@ function renderNote(records, transcripts, existing, now, knownPeople, root) {
       })();
     return `<!-- media-transcribe:id ${record.id} -->\n${heading}\n\n${bodyText}\n\n원본: ${record.archivePath}`;
   }).join('\n\n');
-  const title = datedRecording ? first.stem
+  const title = datedRecording ? basename(first.notePath, '.md')
     : `${first.occurred.slice(0, 10)} ${label} ${first.kind === 'Calls' ? '통화' : '녹음'}`;
   return `${buildFrontmatter(fields)}${before}${START}\n# ${title}\n\n${body}\n${END}${after}`;
 }
@@ -586,9 +617,13 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
         // 합친 people(수동 포함) 기준으로 category를 다시 계산한다. people 밖에서 손으로 바꾼
         // category는 이 재계산으로 바뀐다 — 의도된 한계(수동 people·convKind·아테나 필드·오너 메모는 보존).
         if (existing) {
-          const currentCategory = parseFrontmatter(existing).category;
+          const fields = parseFrontmatter(existing);
+          const currentCategory = fields.category;
           const expectedCategory = conversationCategory(linkedPeopleForNote(persisted, existing, people));
           if (JSON.stringify(currentCategory) !== JSON.stringify(expectedCategory)) changedPaths.add(path);
+          const expectedDateCheck = persisted.some((record) => record.kind === 'Recordings'
+            && (record.capturedConfidence === 'review' || record.capturedFrom === 'mtime')) ? '의심' : undefined;
+          if (fields.dateCheck !== expectedDateCheck) changedPaths.add(path);
         }
       }
       for (const path of changedPaths) {

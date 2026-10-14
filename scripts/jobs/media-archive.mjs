@@ -419,7 +419,7 @@ async function readIndexRecords(indexPath, { dryRun, allowIncomplete = false }) 
   return records;
 }
 
-async function verifyIndexedRecord(record, mediaRoot, sourceHash) {
+export async function verifyIndexedRecord(record, mediaRoot, sourceHash) {
   const archiveRoot = resolve(mediaRoot, 'Archive');
   const target = resolve(mediaRoot, record.archivePath);
   const inside = relative(archiveRoot, target);
@@ -459,7 +459,8 @@ export async function repairMediaArchiveTimes({
     const records = await readIndexRecords(indexPath, { dryRun: true });
     const archiveRoot = resolve(mediaRoot, 'Archive');
     const indexContent = () => `${[...records.values()].map((record) => JSON.stringify(record)).join('\n')}\n`;
-    const pendingCleanup = [...records.values()].filter((record) => record.repairFrom);
+    const pendingCleanup = [...records.values()].filter((record) => record.repairFrom
+      && record.capturedFrom !== 'owner');
     if (apply && pendingCleanup.length) {
       for (const record of pendingCleanup) {
         const oldPath = resolve(mediaRoot, record.repairFrom);
@@ -489,6 +490,7 @@ export async function repairMediaArchiveTimes({
     }
     const indexed = [];
     for (const record of records.values()) {
+      if (record.capturedFrom === 'owner') continue;
       const source = resolve(mediaRoot, record.archivePath);
       const inside = relative(archiveRoot, source);
       if (isAbsolute(inside) || !inside || inside === '..' || inside.startsWith(`..${sep}`)) {

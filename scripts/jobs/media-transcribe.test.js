@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, chmodSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { detectRepetition, parseCallFilename, orderPending, runMediaTranscribe } from './media-transcribe.mjs';
@@ -575,12 +575,37 @@ test('dry-run은 전사·상태·노트·잠금 파일을 쓰지 않고 예상 �
   assert.ok(logs.some((line) => line.includes('upcoming')));
 });
 
-test('날짜로 시작하는 녹음 이름은 그 날짜의 연도 폴더에 접미 없이 쓴다', async (t) => {
+test('날짜로 시작하는 녹음 이름은 파일명 전체와 녹음 접미를 쓴다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
   f.put(1, 'Recordings', '2025-09-20 아이 노래 바다.m4a');
   const summary = await runMediaTranscribe({ ...f.options, dryRun: true });
   assert.equal(summary.upcoming[0].notePath,
-    `${VAULT_REL.mediaConversations}/2025/2025-09-20 아이 노래 바다.md`);
+    `${VAULT_REL.mediaConversations}/2025/2025-09-20 아이 노래 바다 녹음.md`);
+});
+
+test('예전 제목의 녹음 노트 네 건은 같은 ID를 찾아 기존 경로에서 재렌더한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const names = [
+    ['2025-09-20 미네 노래 Ocean', '2025-09-20 미네 노래 Ocean'],
+    ['2026-06-10 미네 통화 숙제 힘들어 4', '2026-06-10 미네 통화 숙제 힘들어 4'],
+    ['2025-11-03 미네 동화 숲 이야기', '2025-11-03 미네 동화 숲 이야기'],
+    ['2026-01-12 미네 대화 학교 소식', '2026-01-12 미네 대화 학교 소식'],
+  ];
+  const { recordingNoteTitle } = await import('../lib/media-recording-title.mjs');
+  for (const [stem] of names) f.put(names.findIndex(([name]) => name === stem) + 1, 'Recordings', `${stem}.m4a`);
+  await runMediaTranscribe(f.options);
+  for (const [stem, oldTitle] of names) {
+    const year = stem.slice(0, 4);
+    const directory = join(f.root, VAULT_REL.mediaConversations, year);
+    renameSync(join(directory, `${recordingNoteTitle(stem)}.md`), join(directory, `${oldTitle}.md`));
+  }
+  const result = await runMediaTranscribe({ ...f.options, rewriteNotes: true, limit: 0, maxMinutes: 0 });
+  assert.equal(result.failed, 0);
+  for (const [stem, oldTitle] of names) {
+    const directory = join(f.root, VAULT_REL.mediaConversations, stem.slice(0, 4));
+    assert.equal(existsSync(join(directory, `${oldTitle}.md`)), true);
+    assert.equal(existsSync(join(directory, `${recordingNoteTitle(stem)}.md`)), false);
+  }
 });
 
 test('녹음 convKind는 기본 녹음이고 파일명에 통화·전화가 있으면 통화다', async (t) => {
@@ -599,8 +624,8 @@ test('날짜 접두 녹음은 본문 제목에 날짜를 반복하지 않고 des
   f.put(1, 'Recordings', '2025-09-20 가상 노래 바다.m4a');
   await runMediaTranscribe(f.options);
   const note = readFileSync(join(f.root, VAULT_REL.mediaConversations, '2025',
-    '2025-09-20 가상 노래 바다.md'), 'utf8');
-  assert.match(note, /<!-- media-transcribe:start -->\n# 2025-09-20 가상 노래 바다\n/);
+    '2025-09-20 가상 노래 바다 녹음.md'), 'utf8');
+  assert.match(note, /<!-- media-transcribe:start -->\n# 2025-09-20 가상 노래 바다 녹음\n/);
   assert.equal(parseFrontmatter(note).description, '가상 노래 바다 2분');
 });
 
@@ -862,4 +887,34 @@ test('전사 모델 파일명이 바뀌면 다시 전사하고 같으면 대기�
   const sameName = await runMediaTranscribe({ ...f.options, model: sameFilename, dryRun: true });
   assert.equal(sameName.remaining, 0);
   assert.equal(readFileSync(f.calls, 'utf8').trim().split('\n').length, 2);
+});
+test('색인 날짜 의심 변경은 기존 완성 노트를 재렌더하고 오너 확정 때 표시를 뺀다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const record = f.put(1, 'Recordings', '가상 대화.m4a');
+  await runMediaTranscribe(f.options);
+  const name = '2030-01-01 가상 대화 녹음.md';
+  assert.equal(parseFrontmatter(f.note(name)).dateCheck, undefined);
+  record.capturedFrom = 'mtime';
+  record.capturedConfidence = 'review';
+  writeFileSync(f.indexPath, `${JSON.stringify(record)}\n`);
+  await runMediaTranscribe({ ...f.options, limit: 0 });
+  assert.equal(parseFrontmatter(f.note(name)).dateCheck, '의심');
+  record.capturedFrom = 'owner';
+  record.capturedConfidence = 'confirmed';
+  writeFileSync(f.indexPath, `${JSON.stringify(record)}\n`);
+  await runMediaTranscribe({ ...f.options, limit: 0 });
+  assert.equal(parseFrontmatter(f.note(name)).dateCheck, undefined);
+});
+test('긴 이름과 이모지의 녹음 제목은 공용 정리 규칙을 따르고 재렌더해도 오너 메모를 보존한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const stem = `2030-01-01 가상 노래 ${'긴이야기'.repeat(12)} 😀`;
+  f.put(1, 'Recordings', `${stem}.m4a`);
+  await runMediaTranscribe(f.options);
+  const { recordingNoteTitle } = await import('../lib/media-recording-title.mjs');
+  const title = recordingNoteTitle(stem);
+  const path = join(f.root, VAULT_REL.mediaConversations, '2030', `${title}.md`);
+  const before = readFileSync(path, 'utf8');
+  writeFileSync(path, `${before}\n오너 메모 보존\n`);
+  await runMediaTranscribe({ ...f.options, rewriteNotes: true, limit: 0, maxMinutes: 0 });
+  assert.match(readFileSync(path, 'utf8'), /오너 메모 보존/);
 });
