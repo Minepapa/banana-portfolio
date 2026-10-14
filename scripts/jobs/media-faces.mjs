@@ -10,7 +10,7 @@ import { MEDIA_FACES_PATHS, VAULT_PATHS, VAULT_REL, categoryLink } from '../lib/
 import { buildGallery, confirmBand, FACE_BANDS, FACE_PARAMS, MATCH_HIGH, MATCH_LOW, mineAlbum, ageBand,
   classifyFaceScore,
   selectGalleryCandidates, selectSheetMembers, clusterFamily,
-  vectorLoader, matchFaces, selectGoldSample, goldMetrics } from '../lib/media-face-gallery.mjs';
+  vectorLoader, matchFaces, selectGoldSample, goldMetrics, selectTailMembers, removeTailMembers } from '../lib/media-face-gallery.mjs';
 import { photoPeopleWithGallery, PHOTO_HIGH, PHOTO_HOLD } from '../lib/media-face-people.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
@@ -97,12 +97,13 @@ function scriptJson(value) {
 }
 
 // HTML에는 선택에 필요한 표시값만 둔다. 원본 ID와 얼굴 좌표는 JSON 확인 시트에만 남긴다.
-export function renderFaceSheet({ band = null, state = null, sheet = null, sample = null }) {
+export function renderFaceSheet({ band = null, state = null, sheet = null, sample = null, tail = false }) {
   const gold = sample !== null;
   const entries = gold ? sample : sheet;
   const hash = sheetHash(gold ? { sample } : { members: state.members, sheet });
-  const storageKey = `media-faces:${gold ? 'gold' : band}:${hash}`;
-  const title = gold ? '미네 얼굴 골드 판정' : `미네 ${band}`;
+  const storageKey = `media-faces:${gold ? 'gold' : band}${tail ? ':tail' : ''}:${hash}`;
+  const title = gold ? '미네 얼굴 골드 판정' : `미네 ${band}${tail ? ' 추가 확인(그다음으로 먼 얼굴)' : ''}`;
+  const confirmFlag = tail ? '--confirm-tail=' : '--confirm=';
   const cards = entries.map((member, index) => {
     const number = gold ? member.number : index + 1;
     const predicted = gold ? member.predicted : 'mine';
@@ -118,7 +119,8 @@ export function renderFaceSheet({ band = null, state = null, sheet = null, sampl
     : '<span>제외 <strong id="count">0</strong>개</span><span>제외 번호: <strong id="removed">없음</strong></span>';
   const description = gold
     ? '<p>얼굴을 누르면 오너 답이 바뀝니다. 모델 판정은 mine=미네, uncertain·other=아님으로 시작합니다.</p>'
-    : `<p>후보 ${state.candidateCount} · 묶음 크기 ${state.clusterSizes.join(', ')} · 얼굴을 누르면 제외됩니다.</p>`;
+    : tail ? '<p>지난 시트에 안 나온, 묶음 중심에서 그다음으로 먼 얼굴입니다. 미네가 아닌 얼굴만 누르면 제외됩니다.</p>'
+      : `<p>후보 ${state.candidateCount} · 묶음 크기 ${state.clusterSizes.join(', ')} · 얼굴을 누르면 제외됩니다.</p>`;
   return `<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlText(title)}</title>
 <style>
 body{font-family:system-ui,sans-serif;margin:0;color:#202124;background:#f6f7f8}
@@ -144,6 +146,7 @@ figcaption{font-size:1.3rem;font-weight:700}.details,.answer{display:block;font-
   const band = ${scriptJson(band)};
   const storageKey = ${scriptJson(storageKey)};
   const repoRoot = ${scriptJson(REPO_ROOT)};
+  const confirmFlag = ${scriptJson(confirmFlag)};
   const cards = [...document.querySelectorAll('.card')];
   let changed = new Set();
   try {
@@ -162,7 +165,7 @@ figcaption{font-size:1.3rem;font-weight:700}.details,.answer{display:block;font-
     }
     if (gold) return '미네가 아닌 번호: ' + mineToOther.join(', ')
       + '\\n미네인데 아니라고 한 번호: ' + otherToMine.join(', ');
-    return 'cd ' + JSON.stringify(repoRoot) + ' && node scripts/jobs/media-faces.mjs --confirm=' + band
+    return 'cd ' + JSON.stringify(repoRoot) + ' && node scripts/jobs/media-faces.mjs ' + confirmFlag + band
       + (mineToOther.length ? ' --remove=' + mineToOther.join(',') : '');
   }
 
@@ -540,13 +543,15 @@ export function parseFacePipelineArgs(args) {
   return { limit, ids, dryRun: args.includes('--dry-run') };
 }
 
+// 형식: "휘영:1,3;나:2;제외:1.4,1.9" — 묶음 번호를 사람에 붙이고, "제외"는 묶음.얼굴번호(시트에 보인 순서, 1부터).
 export function parseFamilyConfirm(text, count) {
   const mapping = {};
   const used = new Set();
-  for (const item of text.split(';')) {
-    const match = item.trim().match(/^(휘영|나):([\d,]+)$/);
+  for (const item of text.split(';').map((part) => part.trim()).filter(Boolean)) {
+    if (item.startsWith('제외:')) continue;
+    const match = item.match(/^(휘영|나):([\d,\s]+)$/);
     if (!match || mapping[match[1]]) throw new Error(`가족 확인 형식 오류: ${item}`);
-    const numbers = match[2].split(',').map(Number);
+    const numbers = match[2].split(',').map((part) => Number(part.trim()));
     for (const number of numbers) {
       if (!Number.isInteger(number) || number < 1 || number > count || used.has(number)) {
         throw new Error(`가족 묶음 번호 오류: ${number}`);
@@ -558,10 +563,75 @@ export function parseFamilyConfirm(text, count) {
   return mapping;
 }
 
+export function parseFamilyExclusions(text, displayed) {
+  const excluded = new Map();
+  const parts = text.split(';').map((part) => part.trim()).filter((part) => part.startsWith('제외:'));
+  if (parts.length > 1) throw new Error('가족 확인 형식 오류: 제외는 한 번만');
+  for (const token of parts.length ? parts[0].slice(3).split(',').map((part) => part.trim()).filter(Boolean) : []) {
+    const match = token.match(/^(\d+)\.(\d+)$/);
+    const cluster = Number(match?.[1]); const face = Number(match?.[2]);
+    if (!match || !displayed[cluster] || face < 1 || face > displayed[cluster].length) {
+      throw new Error(`가족 제외 번호 오류: ${token}`);
+    }
+    if (!excluded.has(cluster)) excluded.set(cluster, new Set());
+    excluded.get(cluster).add(face);
+  }
+  return excluded;
+}
+
+export const FAMILY_MIN_FACES = 5;
+
 export function renderFamilySheet(clusters) {
-  const cards = clusters.map((members, index) => `<section><h2>묶음 ${index + 1} · ${members.length}개</h2><div class="faces">${members
-    .map((member) => `<img src="../crops/${htmlText(member.id)}_${member.i}.jpg" alt="묶음 ${index + 1} 얼굴">`).join('')}</div><select data-cluster="${index + 1}"><option value="">기타·모름</option><option>휘영</option><option>나</option></select></section>`).join('\n');
-  return `<!doctype html><html lang="ko"><meta charset="utf-8"><title>가족 얼굴 묶음</title><style>body{font-family:system-ui;margin:2rem}.faces{display:flex;flex-wrap:wrap;gap:.3rem}.faces img{width:100px;height:100px;object-fit:contain}section{border:1px solid #aaa;padding:1rem;margin:1rem 0}textarea{display:block;width:100%;height:4rem}</style><h1>가족 얼굴 묶음</h1><p>묶음별 이름을 고르세요. 기타·모름은 기준에 넣지 않습니다.</p><button id="copy">결과 복사</button><textarea id="result" readonly></textarea>${cards}<script>const root=${scriptJson(REPO_ROOT)};function command(){const groups={휘영:[],나:[]};for(const select of document.querySelectorAll('select'))if(groups[select.value])groups[select.value].push(select.dataset.cluster);return 'cd '+JSON.stringify(root)+' && node scripts/jobs/media-faces.mjs --family-confirm='+JSON.stringify(Object.entries(groups).filter(([,ids])=>ids.length).map(([name,ids])=>name+':'+ids.join(',')).join(';'));}document.getElementById('copy').onclick=async()=>{const value=command();document.getElementById('result').value=value;try{await navigator.clipboard.writeText(value)}catch{document.getElementById('result').select()}};</script></html>\n`;
+  const key = `family-sheet:${sheetHash(JSON.stringify(clusters))}`;
+  const cards = clusters.map((members, index) => {
+    const number = index + 1;
+    const faces = members.map((member, faceIndex) => `<button class="face" data-cluster="${number}" data-face="${faceIndex + 1}" aria-pressed="false"><img src="../crops/${htmlText(member.id)}_${htmlText(member.i)}.jpg" alt="묶음 ${number} 얼굴 ${faceIndex + 1}"><span>${faceIndex + 1}</span></button>`).join('');
+    return `<section data-cluster="${number}"><h2>묶음 ${number} <small>얼굴 ${members.length}개 표시</small></h2><div class="choose">${['휘영', '나', '기타'].map((name) => `<button class="name" data-cluster="${number}" data-name="${name}">${name}</button>`).join('')}</div><div class="faces">${faces}</div></section>`;
+  }).join('\n');
+  return `<!doctype html><html lang="ko"><meta charset="utf-8"><title>가족 얼굴 묶음</title><style>
+body{font-family:system-ui,sans-serif;margin:0;background:#f6f7f8;color:#202124}
+header{position:sticky;top:0;z-index:2;background:white;border-bottom:1px solid #ccc;padding:.8rem 1.5rem}
+header p{margin:.2rem 0}textarea{display:block;width:100%;height:3.2rem;font-size:.85rem}
+header button{font-size:1rem;padding:.4rem .9rem;margin:.3rem .3rem 0 0}
+main{padding:0 1.5rem 3rem}section{background:white;border:3px solid #bbb;border-radius:8px;padding:.8rem 1rem;margin:1rem 0}
+section.휘영{border-color:#c2185b}section.나{border-color:#1565c0}section.기타{opacity:.65}
+.choose button{font-size:1.1rem;padding:.5rem 1.4rem;margin-right:.5rem;border:2px solid #888;border-radius:6px;background:#fafafa;cursor:pointer}
+.choose button.on[data-name=휘영]{background:#c2185b;color:white;border-color:#c2185b}
+.choose button.on[data-name=나]{background:#1565c0;color:white;border-color:#1565c0}
+.choose button.on[data-name=기타]{background:#666;color:white;border-color:#666}
+.faces{display:grid;grid-template-columns:repeat(auto-fill,150px);gap:.5rem;margin-top:.8rem}
+.face{position:relative;padding:0;border:3px solid transparent;border-radius:6px;background:#eee;cursor:pointer}
+.face img{width:144px;height:144px;object-fit:contain;display:block}
+.face span{position:absolute;left:4px;top:4px;background:rgba(0,0,0,.6);color:white;font-size:.8rem;padding:0 .3rem;border-radius:3px}
+.face[aria-pressed=true]{border-color:#d32f2f}.face[aria-pressed=true] img{opacity:.35}
+.face[aria-pressed=true]::after{content:"제외";position:absolute;right:4px;bottom:4px;background:#d32f2f;color:white;font-size:.8rem;padding:0 .3rem;border-radius:3px}
+</style><header><h1 style="margin:.2rem 0">가족 얼굴 묶음</h1>
+<p>① 묶음마다 <b>휘영 / 나 / 기타</b> 중 하나를 누르세요(누르지 않으면 기타). 둘 다 아니면 기타로 두면 등록되지 않습니다.</p>
+<p>② 휘영·나로 고른 묶음에 다른 사람 얼굴이 섞여 있으면 그 얼굴을 눌러 <b>제외</b>하세요. 제외하지 않은 얼굴만 기준이 됩니다.</p>
+<p id="summary"></p><textarea id="result" readonly></textarea>
+<button id="copy">결과 복사</button><button id="save">파일로 저장</button><button id="reset">초기화</button></header>
+<main>${cards}</main><script>
+const root=${scriptJson(REPO_ROOT)};const key=${scriptJson(key)};
+let state={names:{},excluded:{}};try{state=JSON.parse(localStorage.getItem(key))||state}catch{}
+function save(){try{localStorage.setItem(key,JSON.stringify(state))}catch{}}
+function command(){const groups={휘영:[],나:[]};const ex=[];for(const section of document.querySelectorAll('section')){const c=section.dataset.cluster;const name=state.names[c];if(groups[name]){groups[name].push(c);for(const f of (state.excluded[c]||[]))ex.push(c+'.'+f)}}
+const parts=Object.entries(groups).filter(([,ids])=>ids.length).map(([name,ids])=>name+':'+ids.join(','));if(ex.length)parts.push('제외:'+ex.join(','));
+return parts.length?'cd '+JSON.stringify(root)+' && node scripts/jobs/media-faces.mjs --family-confirm='+JSON.stringify(parts.join(';')):'';}
+function render(){for(const section of document.querySelectorAll('section')){const c=section.dataset.cluster;const name=state.names[c]||'기타';section.className=name;
+for(const b of section.querySelectorAll('.name'))b.classList.toggle('on',b.dataset.name===name);
+const ex=new Set(state.excluded[c]||[]);for(const f of section.querySelectorAll('.face'))f.setAttribute('aria-pressed',String(ex.has(f.dataset.face)))}
+const count=n=>Object.values(state.names).filter(v=>v===n).length;const exCount=Object.entries(state.excluded).filter(([c])=>['휘영','나'].includes(state.names[c])).reduce((s,[,v])=>s+v.length,0);
+document.getElementById('summary').textContent='휘영 묶음 '+count('휘영')+'개 · 나 묶음 '+count('나')+'개 · 제외 얼굴 '+exCount+'개';
+const value=command();document.getElementById('result').value=value||'(아직 휘영·나로 고른 묶음이 없습니다)';}
+document.addEventListener('click',event=>{const nameButton=event.target.closest('.name');const face=event.target.closest('.face');
+if(nameButton){state.names[nameButton.dataset.cluster]=nameButton.dataset.name;save();render();}
+else if(face){const c=face.dataset.cluster;const set=new Set(state.excluded[c]||[]);set.has(face.dataset.face)?set.delete(face.dataset.face):set.add(face.dataset.face);state.excluded[c]=[...set].sort((a,b)=>a-b);save();render();}});
+document.getElementById('copy').onclick=async()=>{const value=command();const box=document.getElementById('result');if(!value)return;box.value=value;try{await navigator.clipboard.writeText(value);document.getElementById('copy').textContent='복사됨'}catch{box.focus();box.select()}};
+document.getElementById('save').onclick=()=>{const value=command();if(!value)return;const url=URL.createObjectURL(new Blob([value+'\\n'],{type:'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='family-answers.txt';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+document.getElementById('reset').onclick=()=>{state={names:{},excluded:{}};save();render()};
+render();
+</script></html>
+`;
 }
 
 export function selectFamilyDisplay(members, clusterNumber, limit = 24) {
@@ -607,6 +677,67 @@ export async function clusterFamilyFaces({ root = VAULT_PATHS.root, out = MEDIA_
   return clusters;
 }
 
+export async function tailSheetMediaFaces(bands, { root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PATHS.mediaRoot,
+  out = MEDIA_FACES_PATHS.root, indexPath = MEDIA_FACES_PATHS.index, embeddingsPath = MEDIA_FACES_PATHS.embeddings,
+  galleryPath = join(root, VAULT_REL.mediaFaceGallery), cropper = runCropFaces, count = 30, output = console } = {}) {
+  const execute = async () => {
+    const gallery = readGallery(galleryPath);
+    if (!gallery?.bands) throw new Error('face-gallery.json이 없습니다.');
+    const source = new Map([...jsonLines(join(root, VAULT_REL.mediaArchiveIndex)),
+      ...jsonLines(join(root, VAULT_REL.mediaImportsIndex))].map((row) => [row.id, row]));
+    const faces = facesById(jsonLines(indexPath));
+    const vectorFor = vectorLoader(embeddingsPath);
+    const sheetsPath = join(out, 'sheets');
+    const cropsPath = join(out, 'crops');
+    const pages = [];
+    const planned = [];
+    for (const band of bands) {
+      const state = gallery.bands[band];
+      if (!FACE_BANDS.includes(band) || !state?.members?.length) throw new Error(`나이대 오류: ${band}`);
+      const shownPath = join(sheetsPath, `${band}.json`);
+      const shown = existsSync(shownPath) ? JSON.parse(readFileSync(shownPath, 'utf8')).sheet ?? [] : [];
+      const earlier = existsSync(join(sheetsPath, `${band}-tail.json`))
+        ? JSON.parse(readFileSync(join(sheetsPath, `${band}-tail.json`), 'utf8')).shownBefore ?? [] : [];
+      const sheet = selectTailMembers(state.members, [...shown, ...earlier], vectorFor, count);
+      for (const member of sheet) {
+        const record = source.get(member.id);
+        const face = faces.get(member.id)?.faces?.find((item) => item.i === member.i);
+        if (!record || face?.bbox?.length !== 4) continue;
+        planned.push({ id: member.id, i: member.i, path: safeMediaPath(mediaRoot, record), bbox: face.bbox,
+          out: join(cropsPath, `${member.id}_${member.i}.jpg`) });
+      }
+      pages.push({ band, state, sheet, shownBefore: [...earlier, ...sheet] });
+    }
+    mkdirSync(cropsPath, { recursive: true });
+    mkdirSync(sheetsPath, { recursive: true });
+    const cropped = new Set(await cropper(planned));
+    for (const { band, state, sheet, shownBefore } of pages) {
+      const available = sheet.filter((member) => cropped.has(join(cropsPath, `${member.id}_${member.i}.jpg`)));
+      writeAtomic(join(sheetsPath, `${band}-tail.json`), `${JSON.stringify({ members: state.members, sheet: available, shownBefore })}\n`);
+      writeAtomic(join(sheetsPath, `${band}-tail.html`), renderFaceSheet({ band, state, sheet: available, tail: true }));
+    }
+    output.log(`[media-faces] 추가 확인 시트 ${pages.map(({ band }) => `${band}-tail.html`).join(', ')}`);
+    return pages.length;
+  };
+  mkdirSync(out, { recursive: true });
+  return withLock(join(out, '.media-faces'), execute, { retries: 0 });
+}
+
+export async function confirmTailMediaFaces(band, removeNumbers, { root = VAULT_PATHS.root,
+  out = MEDIA_FACES_PATHS.root, galleryPath = join(root, VAULT_REL.mediaFaceGallery),
+  now = new Date().toISOString(), output = console } = {}) {
+  const execute = () => {
+    const gallery = readGallery(galleryPath);
+    const mapping = JSON.parse(readFileSync(join(out, 'sheets', `${band}-tail.json`), 'utf8'));
+    const updated = removeTailMembers(gallery, band, mapping, removeNumbers, now);
+    writeAtomic(galleryPath, `${JSON.stringify(updated, null, 2)}\n`);
+    output.log(`[media-faces] ${band} 추가 확인: 제외 ${removeNumbers.length}`);
+    return updated;
+  };
+  mkdirSync(out, { recursive: true });
+  return withLock(join(out, '.media-faces'), execute, { retries: 0 });
+}
+
 export async function confirmFamilyFaces(input, { root = VAULT_PATHS.root,
   out = MEDIA_FACES_PATHS.root, galleryPath = join(root, VAULT_REL.mediaFaceGallery),
   now = new Date().toISOString(), output = console } = {}) {
@@ -616,12 +747,21 @@ export async function confirmFamilyFaces(input, { root = VAULT_PATHS.root,
     throw new Error('가족 시트 표시 얼굴 기록이 없습니다. --family-cluster 재실행');
   }
   const mapping = parseFamilyConfirm(input, clusters.length);
+  const excluded = parseFamilyExclusions(input, displayed);
+  const assigned = new Set(Object.values(mapping).flat());
+  for (const cluster of excluded.keys()) {
+    if (!assigned.has(cluster)) throw new Error(`제외한 얼굴의 묶음 ${cluster}이 휘영·나로 고르지 않은 묶음`);
+  }
   const gallery = readGallery(galleryPath);
   if (!gallery?.bands) throw new Error('face-gallery.json이 없습니다');
   const people = { ...(gallery.people ?? {}) };
   for (const [person, numbers] of Object.entries(mapping)) {
-    people[person] = { members: numbers.flatMap((number) => displayed[number])
-      .map(({ id, i }) => ({ id, i })), confirmed: true };
+    // 시트에 보인 얼굴 중 오너가 제외하지 않은 것만 기준으로 삼는다.
+    const members = numbers.flatMap((number) => displayed[number]
+      .filter((_, faceIndex) => !excluded.get(number)?.has(faceIndex + 1)))
+      .map(({ id, i }) => ({ id, i }));
+    if (members.length < FAMILY_MIN_FACES) throw new Error(`${person} 기준 얼굴이 ${members.length}개 — 최소 ${FAMILY_MIN_FACES}개`);
+    people[person] = { members, confirmed: true };
   }
   const updated = { ...gallery, updatedAt: now, people };
   writeAtomic(galleryPath, `${JSON.stringify(updated, null, 2)}\n`);
@@ -1093,7 +1233,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     const allNo = args.includes('--hold-all-no');
     if (newSelected.length !== 1 || args.length !== (allNo ? 2 : 1)
       || allNo && !command.startsWith('--hold=')) {
-      console.error('usage: media-faces.mjs --label | --hold-sheet | --hold=hold-YYYY-MM.txt [--hold-all-no] | --family-cluster | --family-confirm="휘영:3,7;나:1"');
+      console.error('usage: media-faces.mjs --label | --hold-sheet | --hold=hold-YYYY-MM.txt [--hold-all-no] | --family-cluster | --family-confirm="휘영:3,7;나:1;제외:3.4"');
       process.exitCode = 2;
     } else (command === '--label' ? labelMediaFaces()
       : command === '--hold-sheet' ? holdSheetMediaFaces()
@@ -1108,7 +1248,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const ids = args.find((arg) => arg.startsWith('--ids='))?.slice(6).split(',') ?? null;
   const limit = rawLimit === undefined ? 500 : Number(rawLimit);
   const commands = ['--detect', '--cluster', '--sheets', '--match', '--report', '--gold-sheet',
-    ...args.filter((arg) => arg.startsWith('--confirm=') || arg.startsWith('--gold='))];
+    ...args.filter((arg) => arg.startsWith('--confirm=') || arg.startsWith('--gold=')
+      || arg.startsWith('--tail-sheets=') || arg.startsWith('--confirm-tail='))];
+  const tailBands = args.find((arg) => arg.startsWith('--tail-sheets='))?.slice(14).split(',');
+  const confirmTail = args.find((arg) => arg.startsWith('--confirm-tail='))?.slice(15);
   const selected = commands.filter((command) => args.includes(command));
   const confirm = args.find((arg) => arg.startsWith('--confirm='))?.slice(10);
   const rawRemove = args.find((arg) => arg.startsWith('--remove='))?.slice(9);
@@ -1116,6 +1259,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const validDetect = selected[0] === '--detect' && args.every((arg) => arg === '--detect'
     || arg === '--dry-run' || arg.startsWith('--limit=') || arg.startsWith('--ids='))
     && Number.isInteger(limit) && limit >= 0 && !ids?.some((id) => !id);
+  const validTail = selected.length === 1 && (tailBands && args.length === 1 && tailBands.every((band) => FACE_BANDS.includes(band))
+    || confirmTail && FACE_BANDS.includes(confirmTail)
+      && args.every((arg) => arg.startsWith('--confirm-tail=') || arg.startsWith('--remove='))
+      && removeNumbers.every((number) => Number.isInteger(number) && number > 0));
   const validConfirm = selected.length === 1 && confirm && FACE_BANDS.includes(confirm)
     && args.every((arg) => arg.startsWith('--confirm=') || arg.startsWith('--remove='))
     && removeNumbers.every((number) => Number.isInteger(number) && number > 0);
@@ -1131,10 +1278,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     && args.every((arg) => arg.startsWith('--gold=') || arg.startsWith('--person='))
     && (!person || ['휘영', '나'].includes(person)) && !!goldInput;
   if (selected.length !== 1 || !(validDetect || selected[0] === '--cluster' && args.length === 1
-    || selected[0] === '--sheets' && args.length === 1 || validConfirm
+    || selected[0] === '--sheets' && args.length === 1 || validConfirm || validTail
     || selected[0] === '--match' && args.length === 1
     || selected[0] === '--report' && args.length === 1 || validGoldSheet || validGold)) {
-    console.error('usage: media-faces.mjs --detect [--limit=N] [--ids=a,b] [--dry-run] | --cluster | --sheets | --confirm=BAND [--remove=1,2] | --match | --report | --gold-sheet [--gold-size=N] | --gold="미네가 아닌 번호: 3,7; 미네인데 아니라고 한 번호: 12"');
+    console.error('usage: media-faces.mjs --detect [--limit=N] [--ids=a,b] [--dry-run] | --cluster | --sheets | --confirm=BAND [--remove=1,2] | --tail-sheets=5y,4y | --confirm-tail=BAND [--remove=1,2] | --match | --report | --gold-sheet [--gold-size=N] | --gold="미네가 아닌 번호: 3,7; 미네인데 아니라고 한 번호: 12"');
     process.exitCode = 2;
   } else (selected[0] === '--detect' ? runMediaFaces({ limit, ids, dryRun: args.includes('--dry-run') })
     : selected[0] === '--cluster' ? clusterMediaFaces()
@@ -1143,7 +1290,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
           : selected[0] === '--report' ? reportMediaFaces()
             : selected[0] === '--gold-sheet' ? goldSheetMediaFaces({ count: person ? 60 : goldCount, person })
               : validGold ? recordGoldLabels(goldInput, { person })
-                : confirmMediaFaces(confirm, removeNumbers)).catch((error) => {
+                : tailBands ? tailSheetMediaFaces(tailBands)
+                  : confirmTail ? confirmTailMediaFaces(confirmTail, removeNumbers)
+                    : confirmMediaFaces(confirm, removeNumbers)).catch((error) => {
     console.error(`[media-faces] ${error.stack}`);
     process.exitCode = 1;
   });

@@ -214,6 +214,7 @@ export const EXPECTED_INTERVALS_MS = {
   'media-archive': 60 * 60 * 1000,
   'media-moments': 60 * 60 * 1000,
   'media-transcribe': 24 * 60 * 60 * 1000,
+  'media-diarize': 10 * 60 * 60 * 1000, // 08:20~22:20 매시 → 밤 공백 10시간
   'media-vision': 24 * 60 * 60 * 1000,
   // 위치 수신이 12시간 없으면 폰 앱·Tailscale 점검.
   'owntracks-receiver': 12 * 60 * 60 * 1000,

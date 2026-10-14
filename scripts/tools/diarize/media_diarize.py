@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 
+os.umask(0o077)  # 목소리 특징값(.npy)과 폴더를 처음부터 본인만 읽게 만든다.
 result_output = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
 sys.stdout = sys.stderr
 

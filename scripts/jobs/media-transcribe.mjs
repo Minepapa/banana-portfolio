@@ -14,6 +14,7 @@ export { parseCallFilename } from '../lib/media-people.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic, withLock } from '../lib/state-writer.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
+import { renderDialogue, counterpartFromNote } from '../lib/media-dialogue.mjs';
 
 const execFileAsync = promisify(execFile);
 const START = '<!-- media-transcribe:start -->';
@@ -352,7 +353,7 @@ function linkedPeopleForNote(records, existing, knownPeople) {
   return knownPeople.filter((person) => links.has(`[[${VAULT_REL.people}/${person.title}]]`));
 }
 
-function renderNote(records, transcripts, existing, now, knownPeople) {
+function renderNote(records, transcripts, existing, now, knownPeople, root) {
   const sorted = [...records].sort((a, b) => Date.parse(a.occurred) - Date.parse(b.occurred) || a.id.localeCompare(b.id));
   const first = sorted[0];
   const prior = existing ? parseFrontmatter(existing) : {};
@@ -405,7 +406,15 @@ function renderNote(records, transcripts, existing, now, knownPeople) {
     const repetition = detectRepetition(transcript.text);
     const bodyText = !transcript.speech
       ? repetition.looped ? `(음성 없음 — 반복 환각 ${repetition.count}회)` : '(음성 없음)'
-      : shortenRepetition(transcript.text);
+      : (() => {
+        const speakerPath = join(root, VAULT_REL.mediaSpeakers, record.occurred.slice(0, 4), `${record.id}.json`);
+        const speakers = record.kind === 'Calls' && existsSync(speakerPath)
+          ? JSON.parse(readFileSync(speakerPath, 'utf8')) : null;
+        if (speakers && speakers.id !== record.id) throw new Error(`화자 원본 ID 오류: ${record.id}`);
+        return renderDialogue(transcript, speakers, counterpartFromNote(prior, record.counterpart),
+          { looped: repetition.looped })
+          || shortenRepetition(transcript.text);
+      })();
     return `<!-- media-transcribe:id ${record.id} -->\n${heading}\n\n${bodyText}\n\n원본: ${record.archivePath}`;
   }).join('\n\n');
   const title = datedRecording ? first.stem
@@ -590,7 +599,7 @@ export async function runMediaTranscribe({ root = VAULT_PATHS.root,
             JSON.parse(readFileSync(record.transcriptPath, 'utf8'))]));
           const absolute = join(root, path);
           const existing = existsSync(absolute) ? readFileSync(absolute, 'utf8') : null;
-          const next = renderNote(complete, transcripts, existing, now.toISOString(), people);
+          const next = renderNote(complete, transcripts, existing, now.toISOString(), people, root);
           const problems = rules ? checkNote(path, next, rules) : [];
           if (problems.length) throw new Error(`대화 노트 쓰기 관문: ${problems.join('; ')}`);
           mkdirSync(dirname(absolute), { recursive: true });

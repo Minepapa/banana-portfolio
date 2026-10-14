@@ -290,6 +290,45 @@ export function confirmBand(gallery, band, mapping, removeNumbers, now) {
       confirmed: true, removed } } };
 }
 
+// 확인된 나이대에서 시트에 안 나온 "그다음으로 먼" 얼굴을 고른다(중심과의 유사도 낮은 순).
+export function selectTailMembers(members, shown, vectorFor, count = 30) {
+  const shownKeys = new Set(shown.map(memberKey));
+  const vectors = members.map(vectorFor);
+  if (!vectors.length) return [];
+  const center = new Float32Array(vectors[0].length);
+  for (const vector of vectors) for (let index = 0; index < center.length; index += 1) center[index] += vector[index];
+  return members.map((member, index) => ({ member, score: dot(vectors[index], center) }))
+    .filter(({ member }) => !shownKeys.has(memberKey(member)))
+    .sort((left, right) => left.score - right.score || memberKey(left.member).localeCompare(memberKey(right.member)))
+    .slice(0, count).map(({ member }) => ({ id: member.id, i: member.i }));
+}
+
+// 확인이 끝난 나이대에서 추가 시트로 고른 얼굴만 뺀다(확인 상태는 유지).
+export function removeTailMembers(gallery, band, mapping, removeNumbers, now) {
+  if (!FACE_BANDS.includes(band) || !gallery.bands?.[band]) throw new Error(`나이대 오류: ${band}`);
+  const current = gallery.bands[band];
+  if (JSON.stringify(mapping.members) !== JSON.stringify(current.members)) {
+    throw new Error('추가 시트가 현재 기준 목록과 다릅니다. --tail-sheets를 다시 실행하세요.');
+  }
+  const currentKeys = new Set(current.members.map(memberKey));
+  if (!Array.isArray(mapping.sheet) || mapping.sheet.some((member) => !currentKeys.has(memberKey(member)))) {
+    throw new Error('추가 시트 번호표가 기준 목록과 다릅니다. --tail-sheets를 다시 실행하세요.');
+  }
+  const valid = new Map(mapping.sheet.map((member, index) => [index + 1, member]));
+  const removed = [...(current.removed ?? [])];
+  const removedKeys = new Set(removed.map(memberKey));
+  for (const number of removeNumbers) {
+    if (!Number.isInteger(number) || !valid.has(number)) throw new Error(`시트 번호 오류: ${number}`);
+    const member = valid.get(number);
+    if (!removedKeys.has(memberKey(member))) {
+      removed.push({ id: member.id, i: member.i });
+      removedKeys.add(memberKey(member));
+    }
+  }
+  return { ...gallery, updatedAt: now, bands: { ...gallery.bands,
+    [band]: { ...current, members: current.members.filter((member) => !removedKeys.has(memberKey(member))), removed } } };
+}
+
 export function vectorLoader(embeddingsPath) {
   const cache = new Map();
   return ({ id, i }) => {

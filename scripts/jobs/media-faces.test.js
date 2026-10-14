@@ -508,7 +508,7 @@ test('매칭·골드·리포트는 임시 경로만 쓰고 메모를 보존한�
       bundle: ['type', 'category', 'description', 'sensitivity', 'created', 'modified'],
       extra: ['author', 'model'],
     } }];
-  const options = { ...f, galleryPath, registryRules: rules };
+  const options = { ...f, galleryPath, registryRules: rules, now: '2026-10-14T03:00:00Z' };
   await reportMediaFaces(options);
   const path = join(f.root, VAULT_REL.mediaFaceReports, '2026', '2026-10-14 미네 얼굴 인식 검증.md');
   const first = readFileSync(path, 'utf8');

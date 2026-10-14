@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
-import { labelMediaFaces, parseFamilyConfirm, renderFamilySheet,
+import { labelMediaFaces, parseFamilyConfirm, parseFamilyExclusions, renderFamilySheet, renderFaceSheet,
   parseHoldAnswers, renderHoldSheet, matchMediaFaces, runFacePipeline,
   parseFacePipelineArgs, selectPersonGoldSample, holdSheetMediaFaces,
   validatePersonGold, selectFamilyDisplay, confirmFamilyFaces, confirmHoldFaces } from './media-faces.mjs';
@@ -65,6 +65,26 @@ test('가족 시트는 최대 24개를 안정적으로 보여주고 확인은 �
   writeFileSync(galleryPath, JSON.stringify({ bands: {} }));
   const gallery = await confirmFamilyFaces('휘영:1', { root, out, output: { log() {} } });
   assert.deepEqual(gallery.people.휘영.members, shown);
+  // 오너가 누른 얼굴(묶음.얼굴번호)은 기준에서 빠진다.
+  const trimmed = await confirmFamilyFaces('휘영:1;제외:1.2,1.24', { root, out, output: { log() {} } });
+  assert.deepEqual(trimmed.people.휘영.members, shown.filter((_, index) => index !== 1 && index !== 23));
+  await assert.rejects(confirmFamilyFaces('휘영:1;제외:2.1', { root, out, output: { log() {} } }), /제외 번호 오류/);
+});
+
+test('가족 시트는 버튼·얼굴 제외·즉시 결과를 갖고 제외 형식을 해석한다', () => {
+  const displayed = { 1: [{ id: 'a', i: 0 }, { id: 'b', i: 1 }], 2: [{ id: 'c', i: 0 }] };
+  assert.deepEqual(parseFamilyConfirm('휘영:1;나:2;제외:1.2', 2), { 휘영: [1], 나: [2] });
+  assert.deepEqual([...parseFamilyExclusions('휘영:1;제외:1.2', displayed).get(1)], [2]);
+  assert.equal(parseFamilyExclusions('휘영:1', displayed).size, 0);
+  assert.throws(() => parseFamilyExclusions('제외:1.3', displayed), /제외 번호 오류/);
+  assert.throws(() => parseFamilyExclusions('제외:1.1;제외:1.2', displayed), /한 번만/);
+  const html = renderFamilySheet(Object.values(displayed));
+  assert.match(html, /data-name="휘영"/);
+  assert.match(html, /data-name="기타"/);
+  assert.match(html, /data-face="2"/);
+  assert.match(html, /localStorage/);
+  assert.match(html, /제외:/);
+  assert.doesNotMatch(html, /https?:\/\/|bbox|vector|score|<select/);
 });
 
 test('보류함 미네 0개 답은 명시 플래그 전까지 쓰지 않는다', async (t) => {
@@ -353,4 +373,21 @@ test('일반 순간 렌더도 얼굴이 사라지면 남은 수동 링크를 보
   assert.equal(fields.mineBasis, undefined);
   assert.deepEqual(fields.people, ['[[30_Wiki/31_People/친구]]']);
   assert.ok(fields.category.includes('[[01_Home/500 기술]]'));
+});
+
+test('추가 확인 시트는 이미 보인 얼굴을 빼고 먼 순으로 고르고, 제외는 확인 상태를 유지한다', async () => {
+  const { selectTailMembers, removeTailMembers } = await import('../lib/media-face-gallery.mjs');
+  const members = [0, 1, 2, 3, 4].map((n) => ({ id: `m${n}`, i: 0 }));
+  const vectors = { m0: [1, 0], m1: [1, 0], m2: [0.9, 0.1], m3: [0.2, 0.8], m4: [0, 1] };
+  const tail = selectTailMembers(members, [{ id: 'm4', i: 0 }], ({ id }) => vectors[id], 2);
+  assert.deepEqual(tail.map((member) => member.id), ['m3', 'm2']);
+  const gallery = { bands: { '5y': { members, removed: [{ id: 'x', i: 0 }], confirmed: true } } };
+  const updated = removeTailMembers(gallery, '5y', { members, sheet: tail }, [1], 'now');
+  assert.deepEqual(updated.bands['5y'].members.map((member) => member.id), ['m0', 'm1', 'm2', 'm4']);
+  assert.equal(updated.bands['5y'].confirmed, true);
+  assert.equal(updated.bands['5y'].removed.length, 2);
+  assert.throws(() => removeTailMembers(gallery, '5y', { members: members.slice(1), sheet: tail }, [1], 'now'), /다시 실행/);
+  const html = renderFaceSheet({ band: '5y', state: { members }, sheet: tail, tail: true });
+  assert.match(html, /--confirm-tail=/);
+  assert.match(html, /추가 확인/);
 });
