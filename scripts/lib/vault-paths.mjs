@@ -64,6 +64,8 @@ export const VAULT_REL = {
   mediaVisionIndex: '95_Etna/Media/vision-index.jsonl',
   mediaVisionLabels: '95_Etna/Media/vision-labels.json',
   mediaImportAlbums: '95_Etna/Media/import-albums.json',
+  mediaFaceGallery: '95_Etna/Media/face-gallery.json',
+  mediaFaceReports: '50_Outputs/Reports',
   mediaImportMomentsState: '95_Etna/Media/import-moments.json',
   mediaTranscripts: '95_Etna/Media/Transcripts',
   mediaTranscribeState: '95_Etna/Media/transcribe-state.json',
@@ -284,6 +286,20 @@ export const VAULT_PATHS = {
     infra: join(VAULT_ROOT, '30_Wiki', '34_Topics'),
   },
 };
+
+// 얼굴 특징값은 생체 정보라 Vault와 저장소 밖에만 둔다.
+export const MEDIA_FACES_PATHS = Object.freeze({
+  mediaRoot: join(homedir(), 'Pantheon', 'Media'),
+  root: join(homedir(), 'Pantheon', 'Media', 'Faces'),
+  embeddings: join(homedir(), 'Pantheon', 'Media', 'Faces', 'embeddings'),
+  crops: join(homedir(), 'Pantheon', 'Media', 'Faces', 'crops'),
+  sheets: join(homedir(), 'Pantheon', 'Media', 'Faces', 'sheets'),
+  index: join(homedir(), 'Pantheon', 'Media', 'Faces', 'faces-index.jsonl'),
+  matches: join(homedir(), 'Pantheon', 'Media', 'Faces', 'matches.jsonl'),
+  goldLabels: join(homedir(), 'Pantheon', 'Media', 'Faces', 'gold-labels.json'),
+  python: join(homedir(), 'Pantheon', 'Models', 'faces-venv', 'bin', 'python'),
+  modelRoot: join(homedir(), 'Pantheon', 'Models', 'insightface'),
+});
 
 // 카테고리 노트 위키링크(예: categoryLink('700 자산') → '[[01_Home/700 자산]]').
 export function categoryLink(name) {
