@@ -85,12 +85,13 @@ export function shortenSegmentRepetition(text, segments) {
 }
 
 function turnScore(part, turns) {
-  const scores = { S0: 0, S1: 0 };
+  const scores = Object.fromEntries([...new Set(turns.map((turn) => turn.speaker))]
+    .filter((speaker) => /^S[0-2]$/.test(speaker)).map((speaker) => [speaker, 0]));
   for (const turn of turns) {
     if (!(turn.speaker in scores)) continue;
     scores[turn.speaker] += Math.max(0, Math.min(part.end, turn.end) - Math.max(part.start, turn.start));
   }
-  const speaker = scores.S1 > scores.S0 ? 'S1' : 'S0';
+  const speaker = Object.keys(scores).sort((a, b) => scores[b] - scores[a] || a.localeCompare(b))[0] || 'S0';
   return { speaker, uncertain: part.end <= part.start
     || scores[speaker] < (part.end - part.start) * 0.5 };
 }
@@ -100,6 +101,13 @@ export function speakerParts(transcript, speakers, ownerTurnSpeaker) {
   const pieces = splitDialogueParts(transcript.segments);
   if (pieces.length === transcript.segments.length) return [];
   const assignments = new Map(speakers.segments.map((part) => [part.i, part]));
+  if (speakers.kind === 'Recordings') return pieces.map((part) => {
+    const original = assignments.get(part.i);
+    if (!original) return null;
+    const scored = speakers.turns?.length ? turnScore(part, speakers.turns) : null;
+    return { i: part.i, k: part.k, speaker: scored?.speaker || original.speaker,
+      uncertain: scored?.uncertain ?? original.uncertain };
+  }).filter(Boolean);
   let ownerSpeaker = ownerTurnSpeaker;
   if (!ownerSpeaker && speakers.turns?.length) {
     const votes = { S0: 0, S1: 0 };
@@ -130,12 +138,16 @@ export function renderDialogue(transcript, speakers, counterpart = '상대', { l
   const assignments = inferredParts.length ? inferredParts : speakers.segments;
   const split = new Map(splitDialogueParts(transcript.segments)
     .map((part) => [`${part.i}:${part.k}`, part]));
+  const recording = speakers.kind === 'Recordings';
+  if (recording && new Set(Object.values(speakers.labels || {})).size < 2) return null;
   const entries = assignments.map((assignment) => {
     const part = split.get(`${assignment.i}:${assignment.k ?? 0}`);
     return part && { ...assignment, text: part.text.replace(/\[\?\]/gu, '').trim() };
-  }).filter((part) => part?.text && ['owner', 'other'].includes(part.speaker));
+  }).filter((part) => part?.text && (recording ? Boolean(speakers.labels?.[part.speaker])
+    : ['owner', 'other'].includes(part.speaker)));
   for (const assignment of entries) {
-    const label = assignment.speaker === 'owner' ? '나' : counterpart || '상대';
+    const label = recording ? speakers.labels[assignment.speaker]
+      : assignment.speaker === 'owner' ? '나' : counterpart || '상대';
     const text = assignment.text;
     const previous = lines.at(-1);
     if (previous?.label === label) previous.parts.push(text);

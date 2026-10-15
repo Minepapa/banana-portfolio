@@ -78,14 +78,16 @@ def init_pyannote(_num_speakers):
     return Pipeline.from_pretrained(str(PYANNOTE_MODEL))
 
 
-def pyannote_result(pipeline, audio):
+def pyannote_result(pipeline, audio, speaker_options):
     import torch
     result = pipeline({"waveform": torch.from_numpy(audio)[None], "sample_rate": 16000},
-                      num_speakers=2)
+                      **speaker_options)
     annotation = result.exclusive_speaker_diarization
     speakers = annotation.labels()
-    if len(speakers) != 2 or result.speaker_embeddings is None:
-        raise RuntimeError(f"expected two speakers with embeddings, found {len(speakers)}")
+    minimum = speaker_options.get("min_speakers", speaker_options.get("num_speakers"))
+    maximum = speaker_options.get("max_speakers", speaker_options.get("num_speakers"))
+    if not minimum <= len(speakers) <= maximum or result.speaker_embeddings is None:
+        raise RuntimeError(f"expected {minimum}..{maximum} speakers with embeddings, found {len(speakers)}")
     labels = {speaker: f"S{index}" for index, speaker in enumerate(speakers)}
     turns = [{"start": round(segment.start * 1000), "end": round(segment.end * 1000),
               "speaker": labels[speaker]}
@@ -98,10 +100,14 @@ def pyannote_result(pipeline, audio):
 def main():
     request = json.loads(sys.stdin.readline())
     backend = request["backend"]
-    if backend not in ("sherpa", "pyannote") or request.get("numSpeakers") != 2:
+    fixed = request.get("numSpeakers") == 2 and "minSpeakers" not in request and "maxSpeakers" not in request
+    ranged = (backend == "pyannote" and request.get("minSpeakers") == 1
+              and request.get("maxSpeakers") == 3 and "numSpeakers" not in request)
+    if backend not in ("sherpa", "pyannote") or not (fixed or ranged):
         raise ValueError("backend or numSpeakers invalid")
     voices_dir = Path(request["voicesDir"])
     models = init_sherpa(2) if backend == "sherpa" else init_pyannote(2)
+    speaker_options = {"num_speakers": 2} if fixed else {"min_speakers": 1, "max_speakers": 3}
     for item in request["items"]:
         started = time.monotonic()
         try:
@@ -111,8 +117,8 @@ def main():
             if backend == "sherpa":
                 turns, vectors = sherpa_result(models, audio)
             else:
-                turns, vectors = pyannote_result(models, audio)
-            path = voices_dir / backend / f"{item['id']}.npy"
+                turns, vectors = pyannote_result(models, audio, speaker_options)
+            path = voices_dir / ("pyannote-rec" if ranged else backend) / f"{item['id']}.npy"
             path.parent.mkdir(parents=True, exist_ok=True)
             np.save(path, vectors)
             path.chmod(0o600)

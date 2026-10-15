@@ -6,7 +6,7 @@ import { spawn, execFile } from 'node:child_process';
 import { existsSync, readFileSync, mkdirSync, writeFileSync, lstatSync, readdirSync, renameSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, relative, sep } from 'node:path';
+import { join, resolve, relative, sep, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { MEDIA_DIARIZE_PATHS, VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
@@ -136,7 +136,7 @@ export function findOwner(calls) {
   });
 }
 
-export function parsePythonOutput(text, items, backend) {
+export function parsePythonOutput(text, items, backend, { recordings = false } = {}) {
   const rows = text.trim() ? text.trim().split(/\r?\n/).map((line) => JSON.parse(line)) : [];
   const ids = new Set(items.map((item) => item.id));
   const found = new Map();
@@ -144,7 +144,7 @@ export function parsePythonOutput(text, items, backend) {
     if (!ids.has(row.id) || found.has(row.id)) throw new Error('파이썬 결과 ID 오류/중복');
     if (!row.error && (row.backend !== backend || !Array.isArray(row.turns)
       || !Number.isFinite(row.ms) || !Number.isFinite(row.audioSec)
-      || row.turns.some((turn) => !['S0', 'S1'].includes(turn.speaker)
+      || row.turns.some((turn) => !(recordings ? ['S0', 'S1', 'S2'] : ['S0', 'S1']).includes(turn.speaker)
         || !Number.isFinite(turn.start) || !Number.isFinite(turn.end) || turn.end <= turn.start))) {
       throw new Error(`파이썬 결과 형식 오류: ${row.id}`);
     }
@@ -156,7 +156,7 @@ export function parsePythonOutput(text, items, backend) {
 export async function runPython(backend, items, { python = MEDIA_DIARIZE_PATHS.python,
   voicesDir = MEDIA_DIARIZE_PATHS.voices,
   signal,
-  spawnProcess = spawn, lowPriority = false } = {}) {
+  spawnProcess = spawn, lowPriority = false, recordings = false } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
     const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
       !/^(?:HF|HUGGINGFACE|HUGGING_FACE).*TOKEN$/i.test(key)));
@@ -171,10 +171,11 @@ export async function runPython(backend, items, { python = MEDIA_DIARIZE_PATHS.p
     child.on('close', (code) => {
       if (spawnError) { rejectPromise(spawnError); return; }
       if (code !== 0) { rejectPromise(new Error(`화자 엔진 실패: ${stderr.slice(0, 500)}`)); return; }
-      try { resolvePromise(parsePythonOutput(stdout, items, backend)); }
+      try { resolvePromise(parsePythonOutput(stdout, items, backend, { recordings })); }
       catch (error) { rejectPromise(error); }
     });
-    child.stdin.end(`${JSON.stringify({ backend, items, numSpeakers: 2, voicesDir })}\n`);
+    child.stdin.end(`${JSON.stringify({ backend, items, ...(recordings
+      ? { minSpeakers: 1, maxSpeakers: 3 } : { numSpeakers: 2 }), voicesDir })}\n`);
   });
 }
 
@@ -222,9 +223,17 @@ function safeAudioPath(mediaRoot, archivePath) {
   return path;
 }
 
-function loadCandidates(root, mediaRoot) {
+export const RECORDING_DIALOGUE_KINDS = Object.freeze(['대화', '통화', '말하기', '상담', '수업', '병원']);
+
+export function recordingKind(item) {
+  const stem = basename(String(item.archivePath || ''), extname(String(item.archivePath || '')));
+  return /^\d{4}-\d{2}-\d{2} \S+ (\S+)(?: |$)/u.exec(stem)?.[1] || null;
+}
+
+function loadCandidates(root, mediaRoot, kind = 'Calls') {
   const index = readFileSync(join(root, VAULT_REL.mediaArchiveIndex), 'utf8').split('\n').filter(Boolean).map(JSON.parse);
-  return index.filter((item) => item.kind === 'Calls' && ID.test(item.id)).flatMap((item) => {
+  return index.filter((item) => item.kind === kind && ID.test(item.id)
+    && (kind !== 'Recordings' || RECORDING_DIALOGUE_KINDS.includes(recordingKind(item)))).flatMap((item) => {
     const transcriptRoot = join(root, VAULT_REL.mediaTranscripts);
     const year = item.occurred?.slice(0, 4);
     const years = readdirSync(transcriptRoot, { withFileTypes: true })
@@ -385,6 +394,30 @@ export function selectApply(records, saved, { ids = null, limit = 20, maxMinutes
     seconds += item.transcript.durationSec;
   }
   if (ids && chosen.length !== ids.length) throw new Error('지정한 ID 중 대상이 아니거나 시간 상한 초과');
+  return chosen;
+}
+
+export function selectRecordings(records, saved, { ids = null, limit = 10, maxMinutes = 50, state = null } = {}) {
+  const eligible = records.filter((item) => item.kind === 'Recordings' && ID.test(item.id)
+    && RECORDING_DIALOGUE_KINDS.includes(recordingKind(item))
+    && item.transcript?.kind === 'Recordings' && item.transcript.speech
+    && item.transcript.segments?.length && Number.isFinite(item.transcript.durationSec)
+    && item.transcript.transcribedAt && (ids !== null
+      || saved.get(item.id)?.transcribedAt !== item.transcript.transcribedAt)
+    && !failureBlocks(state, item));
+  const filtered = ids ? eligible.filter((item) => ids.includes(item.id)) : eligible;
+  filtered.sort((a, b) => Date.parse(b.transcript.occurred) - Date.parse(a.transcript.occurred));
+  const chosen = [];
+  chosen.oversized = [];
+  let seconds = 0;
+  for (const item of filtered) {
+    if (chosen.length >= limit) break;
+    if (item.transcript.durationSec > maxMinutes * 60) { chosen.oversized.push(item); continue; }
+    if (seconds + item.transcript.durationSec > maxMinutes * 60) continue;
+    chosen.push(item);
+    seconds += item.transcript.durationSec;
+  }
+  if (ids && chosen.length !== ids.length) throw new Error('지정한 ID 중 녹음 대상이 아니거나 시간 상한 초과');
   return chosen;
 }
 
@@ -552,6 +585,67 @@ function voicePathFor(paths, id) {
   return join(paths.voices, 'pyannote', `${id}.npy`);
 }
 
+function recordingVoicePath(paths, id) {
+  return join(paths.voices, 'pyannote-rec', `${id}.npy`);
+}
+
+// 2026-10-15 녹음 10개 시험: 미네 0.336은 휘영 오판, 실제 휘영은 0.480·0.485·0.581.
+const RECORDING_PERSON_MIN_SIMILARITY = Object.freeze({ 휘영: 0.45 });
+
+export function assignRecordingNames(voices, people = [], references = {}, turns = []) {
+  if (voices.length < 1 || voices.length > 3) throw new Error('녹음 화자 수 1~3 범위 밖');
+  const labels = {};
+  const similarities = {};
+  const proposals = [];
+  for (const [name, reference] of Object.entries(references)) {
+    if (!reference?.mean || !Number.isFinite(reference.minSimilarity)) continue;
+    const scores = voices.map((voice) => cosine(normalized(voice), normalized(reference.mean)));
+    const rank = scores.map((score, index) => ({ score, index })).sort((a, b) => b.score - a.score);
+    similarities[name] = Object.fromEntries(scores.map((score, index) => [`S${index}`, score]));
+    const minSimilarity = Math.max(reference.minSimilarity, RECORDING_PERSON_MIN_SIMILARITY[name] ?? -1);
+    if (rank[0].score >= minSimilarity && (rank.length === 1 || rank[0].score > rank[1].score))
+      proposals.push({ name, speaker: `S${rank[0].index}`, score: rank[0].score });
+  }
+  proposals.sort((a, b) => b.score - a.score);
+  for (const proposal of proposals) if (!labels[proposal.speaker]) labels[proposal.speaker] = proposal.name;
+  const remaining = voices.map((_, index) => `S${index}`).filter((speaker) => !labels[speaker]);
+  const peopleList = people == null ? [] : Array.isArray(people) ? people : [people];
+  const knownPeople = peopleList.map((person) => String(person)
+    .replace(/^\[\[/u, '').replace(/\]\]$/u, '').split('|')[0].replace(/^.*\//u, ''))
+    .filter((person) => person !== '나' && person !== '휘영');
+  const mineOnly = knownPeople.length === 1 && knownPeople[0] === '미네';
+  if (mineOnly && remaining.length) {
+    const spokenSeconds = Object.fromEntries(remaining.map((speaker) => [speaker, 0]));
+    for (const turn of turns) if (turn.speaker in spokenSeconds)
+      spokenSeconds[turn.speaker] += Math.max(0, turn.end - turn.start);
+    // 노트에 미네만 있으면 남은 화자 중 발화 시간이 가장 긴 목소리를 미네로 둔다.
+    const mineSpeaker = [...remaining].sort((a, b) => spokenSeconds[b] - spokenSeconds[a]
+      || a.localeCompare(b))[0];
+    labels[mineSpeaker] = '미네';
+  }
+  const unknown = remaining.filter((speaker) => !labels[speaker]);
+  for (const [index, speaker] of unknown.entries()) labels[speaker] = unknown.length === 1
+    ? '다른 사람' : `다른 사람 ${index + 1}`;
+  return { labels, similarities };
+}
+
+function recordingSpeakers(item, turns, voices, references, people, now) {
+  const { labels, similarities } = assignRecordingNames(voices, people, references, turns);
+  const segments = item.transcript.segments.map((segment, i) => {
+    const scores = Object.fromEntries(Object.keys(labels).map((speaker) => [speaker, 0]));
+    for (const turn of turns) if (turn.speaker in scores)
+      scores[turn.speaker] += Math.max(0, Math.min(segment.end, turn.end) - Math.max(segment.start, turn.start));
+    const speaker = Object.keys(scores).sort((a, b) => scores[b] - scores[a] || a.localeCompare(b))[0];
+    return { i, speaker, uncertain: segment.end <= segment.start
+      || scores[speaker] < (segment.end - segment.start) * 0.5 };
+  });
+  const base = { id: item.id, kind: 'Recordings', engine: 'pyannote',
+    model: 'pyannote/speaker-diarization-community-1', diarizedAt: now.toISOString(),
+    transcribedAt: item.transcript.transcribedAt, turns, labels, segments };
+  const parts = speakerParts(item.transcript, base);
+  return { ...base, ...(parts.length ? { parts } : {}), similarities };
+}
+
 // '나' 등록 후보: 상대마다 60초 이상 통화 3건 이상, 상대 2명 이상. 상대별로 최근 순 번갈아 최대 20건.
 export function enrollmentCalls(rows, { perCounterpart = 3, minSeconds = 60, max = 20 } = {}) {
   const groups = new Map();
@@ -658,6 +752,95 @@ export async function confirmOwner({ paths = MEDIA_DIARIZE_PATHS, now = new Date
     callCount: candidate.calls.length, calls: candidate.calls, minSimilarity: candidate.minSimilarity,
     median: candidate.median, cohesion: candidate.cohesion }));
   output.log(`[media-diarize] '나' 목소리 등록(통화 ${candidate.calls.length}건). 다음 --apply가 저장된 통화를 다시 배정하고 노트를 고친다.`);
+  return { confirmed: true };
+}
+
+// 이미 확인된 통화만 사용한다. '나'와 닮은 상대 목소리는 별도 인물 기준에 넣지 않는다.
+export const PERSON_GATE = Object.freeze({ minCalls: 6, cohesion: 0.3, maxOwnerSimilarity: 0.7 });
+export function evaluatePersonCandidate(calls, ownerMean) {
+  const reasons = [];
+  if (calls.length < PERSON_GATE.minCalls) reasons.push(`통화 ${calls.length}건 < ${PERSON_GATE.minCalls}`);
+  const voices = calls.map((call) => normalized(call.voice));
+  if (voices.some((voice) => voice.length !== ownerMean.length)) throw new Error('목소리 벡터 차원 오류');
+  let sum = 0; let count = 0;
+  for (let i = 0; i < voices.length; i += 1) for (let j = i + 1; j < voices.length; j += 1) {
+    sum += cosine(voices[i], voices[j]); count += 1;
+  }
+  const cohesion = count ? sum / count : 0;
+  const mean = voices.length ? normalized(voices[0].map((_, k) =>
+    voices.reduce((total, voice) => total + voice[k], 0))) : null;
+  const ownerSimilarity = mean ? cosine(mean, normalized(ownerMean)) : 1;
+  if (cohesion < PERSON_GATE.cohesion) reasons.push(`응집 ${cohesion.toFixed(3)} < ${PERSON_GATE.cohesion}`);
+  if (ownerSimilarity > PERSON_GATE.maxOwnerSimilarity) reasons.push(`'나' 유사도 ${ownerSimilarity.toFixed(3)} > ${PERSON_GATE.maxOwnerSimilarity}`);
+  const similarities = mean ? voices.map((voice) => cosine(voice, mean)) : [];
+  return { mean, cohesion, ownerSimilarity, minSimilarity: similarities.length
+    ? Math.min(0.5, Math.max(0.2, Math.min(...similarities) - 0.1)) : 0.2,
+  passed: reasons.length === 0, reasons };
+}
+
+export async function personCandidate({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_PATHS,
+  now = new Date(), output = console } = {}) {
+  const owner = readOwner(paths);
+  if (!owner) throw new Error("'나' 기준 목소리 미등록");
+  const saved = savedSpeakers(root);
+  const calls = loadCandidates(root, paths.mediaRoot).filter((item) => {
+    const row = saved.get(item.id);
+    return item.counterpart === '휘영' && row?.transcribedAt === item.transcript.transcribedAt
+      && row.ownerVersion === owner.meta.version && row.ownerMargin >= ENROLL_STRONG_MARGIN
+      && !row.check && row.segments?.length && row.turns?.length
+      && existsSync(voicePathFor(paths, item.id));
+  }).map((item) => {
+    const row = saved.get(item.id);
+    const vectors = readNpy(voicePathFor(paths, item.id));
+    if (vectors.length !== 2) return null;
+    const identified = identifyOwner(vectors, owner.mean,
+      { minSimilarity: owner.meta.minSimilarity ?? -1 });
+    if (identified.check || identified.margin < ENROLL_STRONG_MARGIN) return null;
+    // 저장된 owner/other 라벨과 목소리 기준 판정이 반대면 후보를 오염시키지 않는다.
+    const agreement = row.segments.reduce((sum, assignment) => {
+      const segment = item.transcript.segments[assignment.i];
+      if (!segment || !['owner', 'other'].includes(assignment.speaker)) return sum;
+      const balance = row.turns.reduce((value, turn) => value + (turn.speaker === identified.speaker ? 1 : -1)
+        * Math.max(0, Math.min(segment.end, turn.end) - Math.max(segment.start, turn.start)), 0);
+      return sum + (assignment.speaker === 'owner' ? balance : -balance);
+    }, 0);
+    if (!(agreement > 0)) return null;
+    return { item, voice: vectors[identified.speaker === 'S0' ? 1 : 0] };
+  }).filter(Boolean);
+  const result = evaluatePersonCandidate(calls, owner.mean);
+  const lines = [`# 휘영 목소리 등록 후보 (${now.toISOString()})`, '',
+    `- 통화 ${calls.length}건 · 응집 ${result.cohesion.toFixed(3)} · '나' 유사도 ${result.ownerSimilarity.toFixed(3)}`,
+    `- 품질 관문: ${result.passed ? '통과' : result.reasons.join(', ')}`, '',
+    '확인 뒤 등록: `node scripts/jobs/media-diarize.mjs --confirm-person=휘영`', ''];
+  for (const { item } of calls) {
+    const row = saved.get(item.id);
+    lines.push(`## ${item.transcript.occurred.slice(0, 16)} ${item.id}`, '');
+    for (const segment of row.segments.filter((part) => part.speaker === 'other').slice(0, 4))
+      lines.push(`- 휘영: ${item.transcript.segments[segment.i]?.text?.slice(0, 100) || ''}`);
+    lines.push('');
+  }
+  if (result.mean) writePrivate(paths.personCandidate, npyBuffer([result.mean]));
+  writePrivate(paths.personCandidateMeta, JSON.stringify({ createdAt: now.toISOString(),
+    calls: calls.map(({ item }) => item.id), ownerVersion: owner.meta.version,
+    cohesion: result.cohesion, ownerSimilarity: result.ownerSimilarity,
+    minSimilarity: result.minSimilarity, passed: result.passed, reasons: result.reasons }));
+  writePrivate(paths.personReview, `${lines.join('\n')}\n`);
+  output.log(`[media-diarize] 휘영 후보 ${result.passed ? '관문 통과' : '관문 미달'}: ${paths.personReview}`);
+  return result;
+}
+
+export async function confirmPerson({ paths = MEDIA_DIARIZE_PATHS, now = new Date(), output = console } = {}) {
+  if (!existsSync(paths.personCandidate) || !existsSync(paths.personCandidateMeta)) throw new Error('휘영 등록 후보 없음');
+  const candidate = JSON.parse(readFileSync(paths.personCandidateMeta, 'utf8'));
+  if (!candidate.passed || candidate.calls.length < PERSON_GATE.minCalls) throw new Error('휘영 후보 품질 관문 미달');
+  const owner = readOwner(paths);
+  if (!owner || owner.meta.version !== candidate.ownerVersion) throw new Error("'나' 기준 목소리 버전 변경");
+  writePrivate(paths.personVoice, readFileSync(paths.personCandidate));
+  writePrivate(paths.personMeta, JSON.stringify({ version: now.toISOString(), confirmedAt: now.toISOString(),
+    callCount: candidate.calls.length, calls: candidate.calls, ownerVersion: candidate.ownerVersion,
+    cohesion: candidate.cohesion, ownerSimilarity: candidate.ownerSimilarity,
+    minSimilarity: candidate.minSimilarity }));
+  output.log('[media-diarize] 휘영 목소리 등록');
   return { confirmed: true };
 }
 
@@ -808,6 +991,134 @@ export async function runApply({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_
   }
 }
 
+export async function runRecordings({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_PATHS,
+  trial = false, ids = null, limit = 10, maxMinutes = 50, dryRun = false,
+  output = console, runWorker = runPython, exec = execFileAsync, write = writeAtomic,
+  now = new Date(), temporaryRoot = tmpdir(), registryRules, callTimeoutMs = 30 * 60_000,
+  clock = () => Date.now(), allowNight = false } = {}) {
+  const records = loadCandidates(root, paths.mediaRoot, 'Recordings');
+  const saved = savedSpeakers(root);
+  const state = loadState(paths);
+  const chosen = selectRecordings(records, saved, { ids, limit, maxMinutes, state });
+  const nightBlocked = (trial || !allowNight && !ids)
+    && new Date(now.getTime() + 9 * 3_600_000).getUTCHours() < 8;
+  const summary = { processed: 0, notes: 0, failed: 0, skipped: 0, remaining: chosen.length };
+  if (nightBlocked) { output.log('[media-diarize] 00~07시는 전사 시간대 — 녹음 처리 건너뜀'); return summary; }
+  if (dryRun) { output.log(`[media-diarize] 녹음 dry-run ${JSON.stringify(chosen.map((item) => item.id))}`); return summary; }
+  const run = async () => {
+    // 시험은 볼트에 잠금 파일도 남기지 않는다. 이미 전사 중이면 읽기만 하고 건너뛴다.
+    if (trial && existsSync(`${join(root, VAULT_REL.mediaTranscribeState)}.lock`)) {
+      output.log('[media-diarize] 전사 작업 잠금 중 — 녹음 시험 건너뜀');
+      return { ...summary, busy: true };
+    }
+    if (chosen.length && !existsSync(join(paths.pyannote, 'speaker-diarization-community-1', 'config.yaml')))
+      throw new Error('pyannote 모델 없음 — 대체 엔진 사용 안 함');
+    const owner = readOwner(paths);
+    const person = existsSync(paths.personVoice) && existsSync(paths.personMeta)
+      ? { mean: readNpy(paths.personVoice)[0], meta: JSON.parse(readFileSync(paths.personMeta, 'utf8')) } : null;
+    const references = {
+      ...(owner ? { 나: { mean: owner.mean, minSimilarity: owner.meta.minSimilarity ?? 0.2 } } : {}),
+      ...(person ? { 휘영: { mean: person.mean, minSimilarity: person.meta.minSimilarity } } : {}),
+    };
+    const notePaths = indexNotes(root);
+    const rules = trial ? null : registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
+    const previews = [];
+    const deadline = clock() + (maxMinutes + 15) * 60_000;
+    const controller = new AbortController();
+    const interrupt = () => { process.exitCode = 130; controller.abort(); };
+    const terminate = () => { process.exitCode = 143; controller.abort(); };
+    process.once('SIGINT', interrupt); process.once('SIGTERM', terminate);
+    try {
+      for (const item of chosen) {
+        if (controller.signal.aborted) break;
+        if (trial && existsSync(`${join(root, VAULT_REL.mediaTranscribeState)}.lock`)) {
+          output.log('[media-diarize] 전사 작업 잠금 중 — 남은 녹음 시험 건너뜀');
+          break;
+        }
+        if (clock() > deadline) { output.log('[media-diarize] 녹음 회차 시간 상한'); break; }
+        const temporary = await fs.mkdtemp(join(temporaryRoot, 'media-diarize-rec-'));
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(callTimeoutMs)]);
+        try {
+          const audio = safeAudioPath(paths.mediaRoot, item.archivePath);
+          if (!existsSync(audio)) throw new Error('음성 없음');
+          const wav = join(temporary, `${item.id}.wav`);
+          await exec('/opt/homebrew/bin/ffmpeg', ['-nostdin', '-loglevel', 'error', '-i', audio,
+            '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav], { timeout: 300_000, signal });
+          let rows;
+          try { rows = await runWorker('pyannote', [{ id: item.id, wav }],
+            { voicesDir: paths.voices, signal, lowPriority: true, recordings: true }); }
+          catch (error) { error.processFailure = true; throw error; }
+          if (rows[0]?.error) throw new Error(rows[0].error);
+          if (rows[0]?.id !== item.id || !Array.isArray(rows[0]?.turns)) throw new Error('화자 결과 오류');
+          const latest = JSON.parse(readFileSync(item.transcriptPath, 'utf8'));
+          if (latest.transcribedAt !== item.transcript.transcribedAt) throw new Error('처리 중 전사 갱신');
+          const voices = readNpy(recordingVoicePath(paths, item.id));
+          const count = new Set(rows[0].turns.map((turn) => turn.speaker)).size;
+          if (count < 1 || count > 3 || voices.length !== count) throw new Error('녹음 화자 수/특징값 오류');
+          const notePath = notePaths.get(item.id);
+          const people = notePath ? parseFrontmatter(readFileSync(notePath, 'utf8')).people : [];
+          const { similarities, ...speakers } = recordingSpeakers(item, rows[0].turns, voices, references, people, now);
+          if (trial) {
+            const preview = renderDialogue(latest, speakers, '', { looped: detectRepetition(latest.text).looped })
+              || latest.text;
+            previews.push({ item, speakers, similarities, preview });
+          } else {
+            const path = speakerFile(root, item);
+            mkdirSync(join(path, '..'), { recursive: true });
+            write(path, `${JSON.stringify(speakers, null, 2)}\n`);
+            saved.set(item.id, speakers);
+          }
+          delete state.failures[item.id];
+          summary.processed += 1;
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          recordFailure(state, item, error.message, { process: Boolean(error.processFailure) });
+          summary.failed += 1;
+          output.error(`[media-diarize] 녹음 ${item.id}: ${error.message}`);
+        } finally { await fs.rm(temporary, { recursive: true, force: true }); }
+      }
+    } finally {
+      process.off('SIGINT', interrupt); process.off('SIGTERM', terminate);
+      if (!trial) { mkdirSync(paths.root, { recursive: true });
+        writeAtomic(paths.state, `${JSON.stringify(state, null, 2)}\n`); }
+    }
+    if (trial) {
+      mkdirSync(paths.trialRec, { recursive: true, mode: 0o700 });
+      const lines = ['# 녹음 화자 분리 시험', '', '| ID | 화자 수 | 이름 | 이름 판정 유사도 |', '|---|---:|---|---|'];
+      for (const { item, speakers, similarities, preview } of previews) {
+        writePrivate(join(paths.trialRec, `${item.id}.md`), `# ${item.id}\n\n${preview}\n`);
+        const scores = Object.entries(similarities).flatMap(([name, rows]) =>
+          Object.entries(rows).map(([speaker, score]) => `${name}/${speaker} ${score.toFixed(3)}`));
+        lines.push(`| ${item.id} | ${Object.keys(speakers.labels).length} | ${Object.values(speakers.labels).join('·')} | ${scores.join(', ') || '—'} |`);
+      }
+      writePrivate(join(paths.trialRec, 'summary.md'), `${lines.join('\n')}\n`);
+    } else {
+      // Speakers 저장 뒤 노트 쓰기가 실패해도 다음 회차에 다시 반영한다.
+      const renderable = records.filter((item) => {
+        const speakers = saved.get(item.id);
+        return speakers?.kind === 'Recordings' && speakers.transcribedAt === item.transcript.transcribedAt
+          && Object.keys(speakers.labels || {}).length > 1;
+      });
+      await refreshNotes(root, renderable, saved,
+        { dryRun: false, write, rules, notePaths, output, summary });
+    }
+    summary.remaining = Math.max(0, chosen.length - summary.processed - summary.failed);
+    output.log(`[media-diarize] 녹음 처리 ${summary.processed}, 노트 ${summary.notes}, 실패 ${summary.failed}`);
+    return summary;
+  };
+  mkdirSync(paths.root, { recursive: true });
+  try {
+    return await withLock(join(paths.root, '.media-diarize'), () => trial ? run()
+      : withLock(join(root, VAULT_REL.mediaTranscribeState), run, { retries: 0 }), { retries: 0 });
+  } catch (error) {
+    if (/락 획득 실패/.test(error.message)) {
+      output.log('[media-diarize] 다른 미디어 작업 실행 중 — 이번 회차 건너뜀');
+      return { ...summary, busy: true };
+    }
+    throw error;
+  }
+}
+
 export function parseArgs(args) {
   const options = {};
   for (const arg of args) {
@@ -815,6 +1126,9 @@ export function parseArgs(args) {
     else if (arg === '--apply') options.apply = true;
     else if (arg === '--render-notes') options.renderNotes = true;
     else if (arg === '--confirm-owner') options.confirmOwner = true;
+    else if (arg === '--recordings') options.recordings = true;
+    else if (arg === '--person-candidate=휘영') options.personCandidate = true;
+    else if (arg === '--confirm-person=휘영') options.confirmPerson = true;
     else if (arg === '--allow-night') options.allowNight = true;
     else if (arg === '--dry-run') options.dryRun = true;
     else if (arg.startsWith('--ids=')) options.ids = arg.slice(6).split(',');
@@ -823,16 +1137,18 @@ export function parseArgs(args) {
     else if (arg.startsWith('--backend=')) options.backend = arg.slice(10);
     else throw new Error(`알 수 없는 옵션: ${arg}`);
   }
-  if ([options.trial, options.apply, options.renderNotes, options.confirmOwner].filter(Boolean).length !== 1
-    || options.confirmOwner && Object.keys(options).length !== 1
-    || options.trial && options.dryRun || options.renderNotes && (options.ids || options.limit || options.maxMinutes)
+  if ([options.trial, options.apply, options.renderNotes, options.confirmOwner,
+    options.personCandidate, options.confirmPerson].filter(Boolean).length !== 1
+    || (options.confirmOwner || options.personCandidate || options.confirmPerson) && Object.keys(options).length !== 1
+    || options.renderNotes && (options.ids || options.limit || options.maxMinutes || options.recordings)
     || options.trial && (options.apply || options.renderNotes || options.maxMinutes)
     || options.trial && options.ids && options.limit !== undefined
     || options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 20)
     || options.ids && (options.ids.length < 1 || options.ids.length > 20
       || new Set(options.ids).size !== options.ids.length)
     || options.ids?.some((id) => !ID.test(id))
-    || options.maxMinutes !== undefined && (!Number.isFinite(options.maxMinutes) || options.maxMinutes <= 0))
+    || options.maxMinutes !== undefined && (!Number.isFinite(options.maxMinutes) || options.maxMinutes <= 0)
+    || options.recordings && (!options.trial && !options.apply || options.backend))
     throw new Error('--trial 또는 --apply [--limit=N] [--max-minutes=M] [--ids=...] [--dry-run] 또는 --render-notes [--dry-run] 또는 --confirm-owner 필요');
   return options;
 }
@@ -843,7 +1159,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const argv = process.argv.slice(2);
   try { options = parseArgs(argv.length ? argv : ['--apply', '--limit=20', '--max-minutes=45']); }
   catch (error) { console.error(`[media-diarize] ${error.message}`); process.exitCode = 2; }
-  if (options) (options.trial ? runTrial(options) : options.confirmOwner ? confirmOwner() : runApply(options)).then((summary) => {
+  if (options) (options.personCandidate ? personCandidate()
+    : options.confirmPerson ? confirmPerson()
+      : options.recordings ? runRecordings(options)
+        : options.trial ? runTrial(options) : options.confirmOwner ? confirmOwner() : runApply(options)).then((summary) => {
     if (summary?.failed) process.exitCode = 1;
   }).catch((error) => {
     console.error(`[media-diarize] ${error.message}`);

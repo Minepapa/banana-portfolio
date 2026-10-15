@@ -439,7 +439,7 @@ function renderNote(records, transcripts, existing, now, knownPeople, root) {
       ? repetition.looped ? `(음성 없음 — 반복 환각 ${repetition.count}회)` : '(음성 없음)'
       : (() => {
         const speakerPath = join(root, VAULT_REL.mediaSpeakers, record.occurred.slice(0, 4), `${record.id}.json`);
-        const speakers = record.kind === 'Calls' && existsSync(speakerPath)
+        const speakers = existsSync(speakerPath)
           ? JSON.parse(readFileSync(speakerPath, 'utf8')) : null;
         if (speakers && speakers.id !== record.id) throw new Error(`화자 원본 ID 오류: ${record.id}`);
         return renderDialogue(transcript, speakers, counterpartFromNote(prior, record.counterpart),
