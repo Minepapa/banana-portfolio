@@ -4,13 +4,23 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { EMOTIONS, IMPORTANCE_GUIDE } from '../jobs/mine-athena-fields.mjs';
+import { IMPORTANCE_GUIDE } from '../jobs/mine-athena-fields.mjs';
+import { allowedEmotions, parseEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
+import { fixture, fixtureCriteria as criteria } from '../lib/mine-emotion-criteria.fixture.js';
+const EMOTIONS = allowedEmotions('2026-10-16', criteria).map((emotion) => emotion.name);
 import { buildArgs, headlessJsonFailure } from '../lib/headless-claude.mjs';
 import { agentTitle } from '../lib/agent-registry.mjs';
-import { albumForMoment, buildPrompt, makeGrid, chooseTargets, choosePhotos, momentPhotos, verifyStripped, validateProposal, ownerEmotions,
-  parseClaudeResult, summarize, renderSheet, run } from './media-memory-orb-trial.mjs';
+import { albumForMoment, buildPrompt as rawBuildPrompt, makeGrid, chooseTargets, choosePhotos, momentPhotos, verifyStripped,
+  validateProposal as rawValidateProposal, ownerEmotions, parseClaudeResult, summarize,
+  renderSheet as rawRenderSheet, run as rawRun } from './media-memory-orb-trial.mjs';
 
-const proposal = { emotions: ['기쁨'], primaryEmotion: '기쁨', confidence: '보통', importance: 2,
+const buildPrompt = (item, copies) => rawBuildPrompt(item, copies, criteria);
+const validateProposal = (raw, owner, ownerPrimary, recordDate) =>
+  rawValidateProposal(raw, owner, ownerPrimary, recordDate ?? '2026-10-16', criteria);
+const renderSheet = (rows, options) => rawRenderSheet(rows, { ...options, criteria });
+const run = (options) => rawRun({ ...options, criteria });
+
+const proposal = { emotions: ['기쁨'], primaryEmotion: '기쁨', emotionIntensity: 2, emotionEvidence: '미네가 웃음', secondFilmSignal: null, confidence: '보통', importance: 2,
   scene: '미네가 웃고 있다.', titleSuggestion: '웃는 날', coreMemoryCandidate: { value: false, reason: '일상' } };
 
 test('결정론 표본은 연도와 장면을 먼저 분산한다', () => {
@@ -79,9 +89,13 @@ test('프롬프트는 사건 정보·핵심 후보 주체·공유 중요도 기�
 test('감정 어휘·대표 감정·중요도·핵심 후보 스키마를 검사한다', () => {
   assert.deepEqual(validateProposal(proposal).emotions, ['기쁨']);
   assert.throws(() => validateProposal({ ...proposal, emotions: ['환희'] }), /감정/);
-  assert.throws(() => validateProposal({ ...proposal, primaryEmotion: EMOTIONS[1] }), /대표 감정/);
+  assert.throws(() => validateProposal({ ...proposal, primaryEmotion: EMOTIONS[1] }), /primaryEmotion/);
   assert.throws(() => validateProposal({ ...proposal, importance: 6 }), /중요도/);
   assert.throws(() => validateProposal({ ...proposal, coreMemoryCandidate: true }), /핵심/);
+  assert.throws(() => validateProposal({ ...proposal, emotions: ['불안'], primaryEmotion: '불안' }, [], null, '2026-10-16'), /경보 상태/);
+  assert.throws(() => validateProposal({ ...proposal, emotions: [], primaryEmotion: null,
+    emotionIntensity: null }, ['슬픔'], null, '2026-10-16'), /emotionIntensity/);
+  assert.throws(() => validateProposal(proposal, ['기쁨', '슬픔', '버럭', '까칠'], null, '2026-10-16'), /오너 메모 감정/);
 });
 
 test('오너 감정은 보존하고 Claude 제안은 별도 필드에 둔다', () => {
@@ -155,25 +169,43 @@ test('쿨다운 중에는 판단도 파일 쓰기도 하지 않는다', async ()
 });
 
 test('시트는 즉시 답 버튼·고친 감정·JSON 내보내기를 갖는다', () => {
-  const sheet = renderSheet([{ id: 'abc', title: '<test>', copies: [{ name: 'x.jpg' }],
+  const sheet = renderSheet([{ id: 'abc', recordDate: '2026-10-16', title: '<test>', copies: [{ name: 'x.jpg' }],
     ownerEmotions: [], proposal }]);
   assert.match(sheet, /data-answer="맞음"/);
   assert.match(sheet, /data-answer="틀림"/);
   assert.match(sheet, /data-emotion="기쁨"/);
+  const youngSheet = renderSheet([{ id: 'young', title: 'young', recordDate: '2026-10-16', copies: [], ownerEmotions: [], proposal }]);
+  assert.equal((youngSheet.match(/data-emotion=/g) ?? []).length, 5);
+  assert.doesNotMatch(youngSheet, /data-emotion="불안"/);
   assert.match(sheet, /data-importance="5"/);
   assert.match(sheet, /data-core="yes"/);
   assert.match(sheet, /data-primary-emotion="기쁨"/);
+  assert.match(sheet, /data-intensity="2"/);
+  assert.match(sheet, /data-signal="불안"/);
+  assert.match(sheet, /secondFilmSignal/);
+  assert.match(sheet, /2편 신호: 없음/);
+  const raised = parseEmotionCriteria(fixture.replace('사춘기 경보: 미발령', '사춘기 경보: 2026-10-16'));
+  const afterAlarm = rawRenderSheet([{ id: 'after', recordDate: '2026-10-16', title: 'after', copies: [],
+    ownerEmotions: [], proposal }], { criteria: raised });
+  assert.match(afterAlarm, /data-emotion="불안"/);
+  assert.doesNotMatch(afterAlarm, /data-signal="불안"/);
+  assert.match(sheet, /emotionEvidence/);
+  assert.match(sheet, /selected.length >= maxEmotions/);
+  assert.match(sheet, /item.emotionEvidence.trim\(\)/);
   assert.match(sheet, /coreMemoryCandidate/);
   assert.match(sheet, /memo/);
   assert.match(sheet, /JSON 내보내기/);
   assert.match(sheet, /new Blob/);
   assert.doesNotMatch(sheet, /<h2><test><\/h2>/);
-  assert.match(renderSheet([{ id: 'x', title: 'x', copies: [], ownerEmotions: ['슬픔'],
+  assert.match(renderSheet([{ id: 'x', recordDate: '2026-10-16', title: 'x', copies: [], ownerEmotions: ['슬픔'],
     proposal: { ...proposal, emotions: ['슬픔'], primaryEmotion: '슬픔', suggestedEmotions: ['기쁨'] } }]), /제안 감정: 기쁨/);
-  const preserved = renderSheet([{ id: 'x', title: 'x', copies: [], ownerEmotions: ['슬픔'],
+  const preserved = renderSheet([{ id: 'x', recordDate: '2026-10-16', title: 'x', copies: [], ownerEmotions: ['슬픔'],
     proposal: { ...proposal, emotions: ['슬픔'], primaryEmotion: '슬픔', suggestedEmotions: ['기쁨'] } }]);
   assert.match(preserved, /data-emotion="슬픔" class="active"/);
   assert.doesNotMatch(preserved, /data-emotion="기쁨" class="active"/);
+  const unknownAge = renderSheet([{ id: 'unknown', title: 'unknown', copies: [], ownerEmotions: [], proposal }]);
+  assert.doesNotMatch(unknownAge, /data-emotion="기쁨"/);
+  assert.match(unknownAge, /기록 날짜를 확인할 수 없어/);
 });
 
 test('헤드리스 호출 옵션은 Read만 노출하고 JSON 계측을 허용한다', () => {

@@ -71,6 +71,7 @@
     }
   },
   "duties": {
+    "감정 분류": "athena",
     "공통": "plutus",
     "자산분배": "plutus",
     "돌파매매": "plutus",
