@@ -436,7 +436,8 @@ export async function refreshMomentPeople({ root = VAULT_PATHS.root, dryRun = fa
       }
       const nextFields = mergeMomentPeople(fields, entry.mediaIds, photos,
         { albumMine: fields.albumLabel === '미네' });
-      if (nextFields.category.length === 1) {
+      // 값이 하나일 때 원래 노트의 표기(목록/한 값)를 그대로 따른다 — 매시 순간 노트 잡과 번갈아 다시 쓰지 않게.
+      if (nextFields.category.length === 1 && !Array.isArray(fields.category)) {
         nextFields.category = nextFields.category[0];
       }
       if (needsBaseCategory) {

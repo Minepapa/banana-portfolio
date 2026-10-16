@@ -16,6 +16,7 @@ export const JOB_LABELS = {
   'media-transcribe': '통화·녹음 로컬 Whisper 전사 → 대화 노트(매일 01~07시 매시, 08시 전 마침)',
   'media-diarize': '통화 로컬 pyannote 화자 분리 → 대화 노트(매일 08:20~22:20 매시, 전날 전사분)',
   'media-vision': '사진·영상 로컬 Apple Vision 분석 → 순간 노트 장면 보강(매일 05:30)',
+  'media-faces-nightly': '새 사진 로컬 얼굴 판정 → 미네·휘영·나 이름표·순간 노트 반영(매일 06:30)',
   'mine-athena-fields': '미네 노트 감정·중요도 필드 주간 묶음(일 06:30, 발송 없음)',
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
   'vault-offsite-backup': '매일 00:20 Vault 암호화 외부 백업',
