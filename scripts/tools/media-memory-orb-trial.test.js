@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { EMOTIONS, IMPORTANCE_GUIDE } from '../jobs/mine-athena-fields.mjs';
 import { buildArgs, headlessJsonFailure } from '../lib/headless-claude.mjs';
+import { agentTitle } from '../lib/agent-registry.mjs';
 import { albumForMoment, buildPrompt, makeGrid, chooseTargets, choosePhotos, momentPhotos, verifyStripped, validateProposal, ownerEmotions,
   parseClaudeResult, summarize, renderSheet, run } from './media-memory-orb-trial.mjs';
 
@@ -71,7 +72,7 @@ test('사진 격자 한 장은 1536px 이하이며 EXIF가 없다', () => {
 test('프롬프트는 사건 정보·핵심 후보 주체·공유 중요도 기준을 포함한다', () => {
   const album = albumForMoment([{ id: 'media1', path: 'Imports/폴더명/a.jpg' }], new Map([['media1', { album: '첫돌 앨범' }]]));
   const text = buildPrompt({ id: 'x', album, fields: { occurred: '2017-11-09', description: '미네 첫돌', place: '집' }, memo: '가족 행사' }, [{ path: '/tmp/grid.jpg', reason: '1번' }]);
-  for (const phrase of ['첫돌 앨범', '미네 첫돌', '집', '가족 행사', '후보 표시는 아테나의 일', '확정만 오너 몫', 'confidence', IMPORTANCE_GUIDE]) assert.ok(text.includes(phrase));
+  for (const phrase of ['첫돌 앨범', '미네 첫돌', '집', '가족 행사', `후보 표시는 ${agentTitle('athena')}의 일`, '확정만 오너 몫', 'confidence', IMPORTANCE_GUIDE]) assert.ok(text.includes(phrase));
   assert.equal(text.match(/\/tmp\/grid.jpg/g).length, 1);
 });
 

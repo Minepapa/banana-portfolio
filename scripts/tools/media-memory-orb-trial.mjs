@@ -11,6 +11,7 @@ import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { EMOTIONS, IMPORTANCE_GUIDE, mineAge } from '../jobs/mine-athena-fields.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
+import { agentTitle } from '../lib/agent-registry.mjs';
 import { headlessJsonFailure, parseJsonBlock, runHeadlessClaude } from '../lib/headless-claude.mjs';
 
 const PHOTO = new Set(['.jpg', '.jpeg', '.heic', '.heif', '.png', '.webp', '.tif', '.tiff']);
@@ -120,7 +121,7 @@ export function buildPrompt(item, copies) {
     `JSON 객체만 출력: {"emotions":["기쁨"],"primaryEmotion":"기쁨","confidence":"보통","importance":2,"scene":"한두 문장","titleSuggestion":"짧은 제목","coreMemoryCandidate":{"value":false,"reason":"이유"}}. ` +
     `감정은 1~3개, 반드시 ${EMOTIONS.join('·')} 안에서 실제 보이는 감정으로 고르고 대표 감정은 그중 하나. 표정이 애매하면 기쁨으로 몰지 말고 confidence를 낮음·보통·높음 중에서 고른다. ` +
     `중요도: ${IMPORTANCE_GUIDE} 순간 노트의 앨범 이름·제목·기념일·장소 등 사건 정보를 근거로 삼고 사진 표정만으로 중요도를 정하지 마라. ` +
-    `첫 경험·첫돌·생일·여행·가족 행사·큰 변화는 핵심 기억 후보로 올릴 근거가 된다. 사진과 노트에 실제 근거가 있으면 아테나가 후보를 예로 표시한다. 후보 표시는 아테나의 일이며 확정만 오너 몫이다. ` +
+    `첫 경험·첫돌·생일·여행·가족 행사·큰 변화는 핵심 기억 후보로 올릴 근거가 된다. 사진과 노트에 실제 근거가 있으면 ${agentTitle('athena')}가 후보를 예로 표시한다. 후보 표시는 ${agentTitle('athena')}의 일이며 확정만 오너 몫이다. ` +
     `오너 메모 감정은 우선이며 바꾸지 말고, 다른 제안은 별도 결과로만 남는다.`;
 }
 
