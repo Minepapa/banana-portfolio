@@ -54,6 +54,7 @@ export const VAULT_REL = {
   recordsNotes: '20_Records/21_Notes',
   inboxIngestProcessed: '95_Etna/Ingest/processed.json',
   inboxIngestPlans: '95_Etna/Ingest/plans',
+  inboxIngestWikiCandidates: '95_Etna/Ingest/wiki-candidates.json',
   clioLog: '60_Logs/Clio',
   periodicRoot: '10_Periodic',
   people: '30_Wiki/31_People', // 헤르메스 생일 브리핑 대상

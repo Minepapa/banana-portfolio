@@ -13,6 +13,7 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { agentTitle } from '../lib/agent-registry.mjs';
+import { buildWikiCandidates, sourceMeta } from '../lib/wiki-candidates.mjs';
 
 export const MAX_ITEMS = 10;
 export const MAX_INPUT_CHARS = 30_000;
@@ -105,6 +106,38 @@ export function readWikiIndex(root) {
     }
   }
   return { paths, prompt: lines.join('\n') };
+}
+
+function readWikiCatalog(root) {
+  const catalog = [];
+  for (const folder of WIKI_FOLDERS) {
+    const queue = [folder];
+    while (queue.length) {
+      const current = queue.shift();
+      if (!existsSync(join(root, current))) continue;
+      for (const entry of readdirSync(join(root, current), { withFileTypes: true })) {
+        const rel = `${current}/${entry.name}`;
+        if (entry.isDirectory()) queue.push(rel);
+        else if (entry.isFile() && entry.name.endsWith('.md')) {
+          catalog.push({ path: rel.slice(0, -3), aliases: wikiAliases(readWikiHeader(join(root, rel))) });
+        }
+      }
+    }
+  }
+  return catalog;
+}
+
+function refreshWikiCandidates(root, write) {
+  const dir = join(root, VAULT_REL.inboxIngestPlans);
+  const plans = existsSync(dir) ? readdirSync(dir).filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+    .sort().map((name) => readJson(join(dir, name), {})) : [];
+  const content = `${JSON.stringify(buildWikiCandidates(plans, readWikiCatalog(root)), null, 2)}\n`;
+  const path = join(root, VAULT_REL.inboxIngestWikiCandidates);
+  if (!existsSync(path) && !plans.some((plan) => plan.items?.some((item) => item.status === '계획함'
+    && item.judgment?.wiki?.some((wiki) => wiki.action === 'candidate')))) return;
+  if (existsSync(path) && readFileSync(path, 'utf8') === content) return;
+  mkdirSync(dirname(path), { recursive: true });
+  write(path, content);
 }
 
 export function priorityOf(content) {
@@ -422,7 +455,10 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
   };
   if (!selected.length && !oversized.length && !exhausted.length && !remaining && !needsReportRecovery && !previousPending.length) {
     const message = telegramMessage(olderPendingItems, remaining);
-    if (!dryRun) recoverOlderReports();
+    if (!dryRun) {
+      refreshWikiCandidates(root, write);
+      recoverOlderReports();
+    }
     const sent = !dryRun && !noSend && await sendWithinDeadline(message, send, clock, startedAt);
     return { date, items: [], remaining, sent, written: !dryRun && !!olderPendingPlans.length, message };
   }
@@ -462,7 +498,8 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
           throw error;
         }
         items.push({ source: item.source, hash: item.hash, status: judgment.unclassifiable ? '분류 불가' : '계획함',
-          attempts, ...(judgment.unclassifiable ? { reason: judgment.unclassifiable } : { judgment }) });
+          attempts, ...(judgment.unclassifiable ? { reason: judgment.unclassifiable }
+            : { judgment, sourceMeta: sourceMeta(item.content, date, parseFrontmatter) }) });
         failure = null;
         break;
       } catch (error) {
@@ -493,12 +530,12 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
   if (problems.length) return { date, items, remaining: finalRemaining, sent: false, written: false,
     blocked: `리포트 등록부 위반: ${problems.join(' / ')}`, report };
   if (!dryRun) {
-    // 상태 파일을 먼저 남기면 보고서 쓰기 실패 후에도 다음 실행이 절을 복구할 수 있다.
-    for (const [rel, content] of [[planRel, planContent(pendingMessageItems)], [reportRel, report]]) {
-      const path = join(root, rel);
-      mkdirSync(dirname(path), { recursive: true });
-      write(path, content);
-    }
+    // 후보 갱신 실패 시 보고서를 아직 쓰지 않아 pending 발송을 다음 실행에서 복구한다.
+    mkdirSync(dirname(join(root, planRel)), { recursive: true });
+    write(join(root, planRel), planContent(pendingMessageItems));
+    refreshWikiCandidates(root, write);
+    mkdirSync(dirname(reportPath), { recursive: true });
+    write(reportPath, report);
     write(join(root, planRel), planContent([]));
     recoverOlderReports();
   }

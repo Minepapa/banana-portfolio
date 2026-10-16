@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { collectInbox, priorityOf, readWikiIndex, validateJudgment, run, telegramMessage,
@@ -338,6 +338,64 @@ test('dry-run and no-send are enforced; apply rejected before any IO', async (t)
   assert.equal(existsSync(join(root, dry.reportRel)), false);
   await run({ ...deps, noSend: true });
   assert.equal(sends, 0);
+});
+
+test('candidate file is written once on change, restored from plans, and untouched by dry-run', async (t) => {
+  const { root, put } = fixture(t);
+  put('00_Inbox/memo.md', '---\norigin: "옵시디언"\noccurred: "2026-09-01"\n---\n가상 원문');
+  const candidateJudgment = () => ({ ...judgment(), wiki: [{ action: 'candidate',
+    page: '30_Wiki/34_Topics/가상 주제', reason: '반복 후보' }] });
+  const writes = [];
+  const deps = { root, rules, now: date, judge: async () => candidateJudgment(),
+    charter: { model: 'test', systemPrompt: 'test' }, cooldown: () => false, noSend: true,
+    write: (path, content) => { writes.push(path); writeAtomic(path, content); } };
+  const candidatePath = join(root, VAULT_REL.inboxIngestWikiCandidates);
+  await run({ ...deps, dryRun: true });
+  assert.equal(writes.length, 0);
+  assert.equal(existsSync(candidatePath), false);
+  await run(deps);
+  const candidate = JSON.parse(readFileSync(candidatePath, 'utf8')).candidates[0];
+  assert.equal(candidate.sourceStatus, 'provisional');
+  assert.equal(candidate.sources[0].occurredAt, '2026-09-01');
+  assert.equal(candidate.sources[0].path, '00_Inbox/memo.md');
+  assert.equal(candidate.sources[0].hash.length, 64);
+  assert.equal(JSON.stringify(candidate).includes('가상 원문'), false);
+  assert.equal(writes.filter((path) => path === candidatePath).length, 1);
+  await run(deps);
+  assert.equal(writes.filter((path) => path === candidatePath).length, 1);
+  unlinkSync(candidatePath);
+  await run(deps);
+  assert.equal(writes.filter((path) => path === candidatePath).length, 2);
+  const restored = readFileSync(candidatePath, 'utf8');
+  put('00_Inbox/new.md', memo('외부', '새 기록'));
+  await run({ ...deps, dryRun: true });
+  assert.equal(readFileSync(candidatePath, 'utf8'), restored);
+  assert.equal(writes.filter((path) => path === candidatePath).length, 2);
+});
+
+test('candidate write failure keeps pending message and rerun sends it once', async (t) => {
+  const { root, put } = fixture(t);
+  put('00_Inbox/memo.md', memo('오너 직접', '복구할 Wiki 후보'));
+  const messages = [];
+  const candidatePath = join(root, VAULT_REL.inboxIngestWikiCandidates);
+  const deps = { root, rules, now: date, charter: { model: 'test', systemPrompt: 'test' },
+    cooldown: () => false, judge: async () => ({ ...judgment(), wiki: [{ action: 'candidate',
+      page: '30_Wiki/34_Topics/복구 주제', reason: '반복 후보' }] }),
+    send: async (message) => { messages.push(message); } };
+  await assert.rejects(run({ ...deps, write: (path, content) => {
+    if (path === candidatePath) throw new Error('후보 쓰기 장애');
+    writeAtomic(path, content);
+  } }), /후보 쓰기 장애/);
+  const planPath = join(root, VAULT_REL.inboxIngestPlans, '2026-10-11.json');
+  assert.equal(JSON.parse(readFileSync(planPath, 'utf8')).pendingMessageItems.length, 1);
+  assert.equal(existsSync(join(root, VAULT_REL.clioLog, '2026-10.md')), false);
+  assert.equal(messages.length, 0);
+  await run(deps);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].body, /복구 주제/);
+  assert.equal(JSON.parse(readFileSync(planPath, 'utf8')).pendingMessageItems.length, 0);
+  await run(deps);
+  assert.equal(messages.length, 1);
 });
 
 test('invalid report registry blocks both writes and sends', async (t) => {
