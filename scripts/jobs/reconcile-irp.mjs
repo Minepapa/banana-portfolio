@@ -260,7 +260,7 @@ async function main() {
   const holdingsMap = new Map(allHoldings.map((holding) => [`${holding.account}|${holding.name}`, holding]));
   let assetClassSources = { holdingsMap };
   try { assetClassSources = loadHoldingAssetClassSources({ holdingsMap }); }
-  catch (error) { collectWarning(`IRP 자산군 출처 로딩 실패 — 보유 정보만 사용: ${error.message}`); }
+  catch (error) { console.error('IRP 자산군 출처 로딩 실패:', error); collectWarning('IRP 자산군 출처 로딩 실패 — 보유 정보만 사용(상세는 로그)'); }
   const { writes, closes, skipped, assetClassMissing, suspiciousEmpty, renames } = buildIrpHoldingsPlan(
     allHoldings.filter((holding) => holding.account === IRP_ACCOUNT_LABEL && !holding.isCashLike),
     kisHoldings, { assetClassSources });
