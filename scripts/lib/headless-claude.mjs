@@ -20,17 +20,57 @@ export const HEADLESS_NOTE = `
 // 도메인 페르소나만 보태기 위함. 잡의 -p 태스크 프롬프트(결정론 사실·출력 계약)는 불변.
 // tools(선택): 사용 가능한 내장 도구 목록 자체를 정한다. ''이면 도구를 모두 끈다(요약처럼 도구가 필요 없는 호출용 —
 // bypassPermissions에서는 allowedTools가 제한 효과가 없을 수 있어, 읽기·실행을 확실히 막으려면 이걸 쓴다).
-export function buildArgs(prompt, model, allowedTools, { appendSystemPrompt, tools } = {}) {
+export function buildArgs(prompt, model, allowedTools, {
+  appendSystemPrompt, tools, outputFormat = 'text', permissionMode = 'bypassPermissions',
+  disallowedTools, addDir, restricted = false, strictMcpConfig = false, mcpConfig,
+} = {}) {
   const args = [
     '-p', prompt,
-    '--permission-mode', 'bypassPermissions',
+    '--permission-mode', permissionMode,
     '--allowedTools', allowedTools,
     '--model', model,
-    '--output-format', 'text',
+    '--output-format', outputFormat,
   ];
   if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt);
   if (tools !== undefined) args.push('--tools', tools);
+  if (disallowedTools) args.push('--disallowedTools', disallowedTools);
+  if (addDir) args.push('--add-dir', addDir);
+  if (restricted) args.push('--restricted');
+  if (strictMcpConfig) args.push('--strict-mcp-config');
+  if (mcpConfig) args.push('--mcp-config', mcpConfig);
   return args;
+}
+
+export function headlessJsonFailure(output) {
+  const parsed = JSON.parse(output);
+  if (!parsed.is_error) return null;
+  const fullDetail = String(parsed.result ?? 'claude JSON 오류');
+  const error = new Error(fullDetail.slice(-300));
+  if (parsed.usage && typeof parsed.usage === 'object') error.usage = parsed.usage;
+  if (parsed.num_turns !== undefined) error.num_turns = parsed.num_turns;
+  if (parsed.total_cost_usd !== undefined) error.total_cost_usd = parsed.total_cost_usd;
+  if (LIMIT_RE.test(fullDetail)) {
+    error.isLimit = true;
+    error.limitDetail = fullDetail;
+  }
+  return error;
+}
+
+export function headlessExitFailure(code, output, stderr, json = false) {
+  if (json && output.trim()) {
+    try {
+      const failure = headlessJsonFailure(output);
+      if (failure) return failure;
+    } catch { /* stdout가 JSON이 아니면 기존 stderr 오류를 사용한다. */ }
+  }
+  const clean = stderr.split('\n').filter(line => !/no stdin data received/i.test(line)).join('\n').trim();
+  const fullDetail = (clean || output).trim() || '(stderr/stdout 비어있음)';
+  const error = new Error(`claude 종료코드 ${code}: ${fullDetail.slice(-300)}`);
+  if (LIMIT_RE.test(fullDetail)) {
+    error.isLimit = true;
+    error.limitDetail = fullDetail;
+  }
+  return error;
 }
 
 export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools = 'Bash,Read,Glob,Grep,WebFetch', opts = {}) {
@@ -40,7 +80,7 @@ export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools = 'Bash
   const timeoutMs = opts.timeoutMs ?? 12 * 60 * 1000;
   return new Promise((resolve, reject) => {
     const cp = spawn('claude', buildArgs(prompt, model, allowedTools, opts),
-      { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+      { cwd: opts.cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     const timer = setTimeout(() => { cp.kill('SIGKILL'); reject(new Error(`헤드리스 타임아웃 (${Math.round(timeoutMs / 60000)}분 초과)`)); }, timeoutMs);
     cp.stdout.on('data', d => { out += d; });
@@ -49,16 +89,20 @@ export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools = 'Bash
     cp.on('close', code => {
       clearTimeout(timer);
       if (code !== 0) {
-        const clean = err.split('\n').filter(l => !/no stdin data received/i.test(l)).join('\n').trim();
-        const detail = ((clean || out).trim().slice(-300)) || '(stderr/stdout 비어있음)';
-        const e = new Error(`claude 종료코드 ${code}: ${detail}`);
-        if (LIMIT_RE.test(detail)) {
-          e.isLimit = true;
-          setCooldown(parseResetTime(detail) ?? Date.now() + 3600_000, detail);
-        }
+        const e = headlessExitFailure(code, out, err, opts.outputFormat === 'json');
+        if (e.isLimit) setCooldown(parseResetTime(e.limitDetail ?? e.message) ?? Date.now() + 3600_000, e.limitDetail ?? e.message);
         return reject(e);
       }
       if (!out.trim()) return reject(new Error('claude 빈 출력'));
+      if (opts.outputFormat === 'json') {
+        let failure;
+        try { failure = headlessJsonFailure(out); }
+        catch { return reject(new Error('claude JSON 출력 오류')); }
+        if (failure) {
+          if (failure.isLimit) setCooldown(parseResetTime(failure.limitDetail ?? failure.message) ?? Date.now() + 3600_000, failure.limitDetail ?? failure.message);
+          return reject(failure);
+        }
+      }
       resolve(out);
     });
   });
