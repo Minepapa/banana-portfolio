@@ -7,7 +7,7 @@
 // "같은 파일로 합쳐지는 게 맞는 설계"(가중평균 갱신)이므로 안전하다.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildFrontmatter, updateFrontmatter } from './vault-frontmatter.mjs';
+import { buildFrontmatter, parseFrontmatter, updateFrontmatter } from './vault-frontmatter.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
 import { withLock, writeAtomic } from './state-writer.mjs';
 // 그래프 뷰 다중축 클러스터링용 태그(2026-09-05, vault-tags.mjs 헤더 주석 참고).
@@ -78,13 +78,21 @@ export async function writeHoldingSafely(holding) {
   const filepath = join(dir, filename);
   mkdirSync(dir, { recursive: true });
   const patch = buildFullHoldingPatch(holding);
-  await withLock(filepath, () => {
+  return withLock(filepath, () => {
     if (existsSync(filepath)) {
       const freshContent = readFileSync(filepath, 'utf8');
+      // 질문에 답해 락 밖에서 직접 채운 자산군은 뒤늦은 잡의 빈 값으로 덮지 않는다.
+      const freshAssetClass = parseFrontmatter(freshContent).assetClass;
+      if (freshAssetClass && freshAssetClass !== patch.assetClass) {
+        patch.assetClass = freshAssetClass;
+        patch.tags = buildVaultTags({ account: holding.account, assetClass: freshAssetClass,
+          stockName: holding.isCashLike ? undefined : holding.name });
+      }
       writeAtomic(filepath, updateFrontmatter(freshContent, patch));
     } else {
       writeAtomic(filepath, fullContent);
     }
+    return patch.assetClass;
   });
 }
 

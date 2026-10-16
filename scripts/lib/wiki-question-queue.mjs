@@ -60,6 +60,7 @@ function listRecords() {
     });
 }
 function hashQuestion(input) {
+  if (input.dedupeKey) return createHash('sha256').update(`manual:${input.kind}:${input.dedupeKey}`).digest('hex');
   const stable = JSON.stringify({
     kind: input.kind,
     question: String(input.question).trim(),

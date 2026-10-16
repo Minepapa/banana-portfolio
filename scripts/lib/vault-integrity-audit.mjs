@@ -100,6 +100,14 @@ export function findExecutionDuplicates(records) {
   return [...groups.values()].filter((paths) => paths.length > 1);
 }
 
+export function findHoldingsWithoutAssetClass(records) {
+  return records.filter(({ text }) => {
+    const fm = parseFlatFrontmatter(text);
+    return fm?.type === 'holding' && fm.isCashLike !== 'true'
+      && (!fm.assetClass?.trim() || fm.assetClass.trim().toLowerCase() === 'null');
+  }).map(({ path }) => `${path}: holding assetClass is empty`);
+}
+
 export function findDecisionKeyErrors(records) {
   const groups = new Map();
   const errors = [];
@@ -127,6 +135,7 @@ export function findDecisionKeyErrors(records) {
 function walk(dir) {
   if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return [];
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.name.startsWith('99_')) return [];
     const path = join(dir, entry.name);
     return entry.isDirectory() ? walk(path) : entry.isFile() && entry.name.endsWith('.md') ? [path] : [];
   });
@@ -134,6 +143,7 @@ function walk(dir) {
 
 export function auditVault(root, repoRoot) {
   const errors = [];
+  const warnings = [];
   const implementationAllowed = implementationStatuses(root);
   if (!implementationAllowed) errors.push(`${VAULT_REL.statusStandardFile}: 구현 기록과 개발 요청 상태값 파싱 실패`);
   const allFiles = walk(root);
@@ -158,6 +168,9 @@ export function auditVault(root, repoRoot) {
   const decisionRecords = walk(join(root, VAULT_REL.decisionsCanonical))
     .map((file) => ({ path: relative(root, file), text: readFileSync(file, 'utf8') }));
   errors.push(...findDecisionKeyErrors(decisionRecords));
+  const holdingRecords = walk(join(root, VAULT_REL.stateHoldings))
+    .map((file) => ({ path: relative(root, file), text: readFileSync(file, 'utf8') }));
+  warnings.push(...findHoldingsWithoutAssetClass(holdingRecords));
   for (const folder of ID_RULE_PATHS) {
     for (const file of walk(join(root, folder))) {
       const fm = parseFlatFrontmatter(readFileSync(file, 'utf8'));
@@ -178,5 +191,5 @@ export function auditVault(root, repoRoot) {
     const text = readFileSync(join(repoRoot, file), 'utf8');
     if (/RULE500_WON/.test(text)) errors.push(`${file}: RULE500_WON regression`);
   }
-  return { errors, failedPositions: failed.map((f) => relative(root, f)), executionDuplicates: duplicates };
+  return { errors, warnings, failedPositions: failed.map((f) => relative(root, f)), executionDuplicates: duplicates };
 }

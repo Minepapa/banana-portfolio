@@ -84,6 +84,8 @@ import { fetchUsdKrwRate } from '../lib/fundamentals.mjs';
 // 한다(2026-09-05 코드리뷰 HIGH 지적 — account:null로 쓰여진 뒤 여기서 나중에 채워지는
 // 레코드가, 쓰기 시점 스냅샷인 tags를 그대로 두면 계좌 축이 영구히 빠진 채 남는다).
 import { buildVaultTags } from '../lib/vault-tags.mjs';
+import { loadHoldingAssetClassSources, resolveHoldingAssetClass, missingAssetClassQuestion } from '../lib/holding-asset-class.mjs';
+import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -260,7 +262,8 @@ export function pickKnownExecutions(allExecutions, holdingsMap) {
 // 다른 잡)가 이 잡의 체결 처리 도중 같은 보유 파일을 갱신하면, 예전(bare writeAtomic
 // + buildLiveHoldingRecord 전체재작성) 방식은 그 갱신을 조용히 되돌릴 수 있었다.
 async function writeHolding(holding) {
-  if (!DRY_RUN) await writeHoldingSafely(holding);
+  if (!DRY_RUN) return writeHoldingSafely(holding);
+  return holding.assetClass;
 }
 
 // 계좌당 종목 하나 = 파일 하나로 수렴시킨다. 여러 로트가 있던 항목은 통합 결과를 쓰고
@@ -324,6 +327,9 @@ async function main() {
   }
 
   const holdingsMap = await loadConsolidatedHoldings();
+  let assetClassSources = { holdingsMap };
+  try { assetClassSources = loadHoldingAssetClassSources({ holdingsMap }); }
+  catch (error) { console.warn(`  ⚠️ 자산군 출처 로딩 실패 — 보유 정보만 사용: ${error.message}`); }
   // legacy·실제 적용분과, 보유 파일의 키로 적용이 증명된 재시도분만 대조한다.
   // mutable — 같은 실행 안에서 적용된 체결도 즉시 추가해 두 소스를 대조한다.
   // 과거 Quant·IRP 매수의 true는 소급 변경하지 않는다.
@@ -442,15 +448,26 @@ async function main() {
     }
 
     if (exec.tradeType === '매수') {
-      const buyResult = applyBuy(existing, execWithAccount, { usdKrwRate });
+      const assetClassResolution = existing ? null : resolveHoldingAssetClass(execWithAccount, assetClassSources);
+      const buyResult = applyBuy(existing, execWithAccount, { usdKrwRate, assetClassResolution });
       if (buyResult.warning) {
         console.log(`  ⚠️  ${buyResult.warning} — 건너뜀`);
         warnings++;
         continue;
       }
-      const updated = { ...buyResult.holding, appliedDedupKeys: [...(existing?.appliedDedupKeys ?? []), exec.dedupKey] };
+      const updated = {
+        ...buyResult.holding,
+        assetClass: existing?.assetClass || assetClassResolution?.assetClass || '',
+        appliedDedupKeys: [...(existing?.appliedDedupKeys ?? []), exec.dedupKey],
+      };
+      for (const warning of assetClassResolution?.warnings ?? []) console.warn(`  ⚠️  ${account} ${exec.stockName}: ${warning}`);
+      if (assetClassResolution && !assetClassResolution.assetClass) console.warn(`  ⚠️  ${account} ${exec.stockName}: 자산군을 결정하지 못함 — 오너 질문 큐 등록`);
       console.log(`  + [매수] ${account} ${exec.stockName} ${exec.quantity}주 @${exec.price} → 보유 ${updated.qty}주(평단 ${Math.round(updated.avgPrice)})`);
-      await writeHolding(updated);
+      updated.assetClass = await writeHolding(updated);
+      if ((!updated.assetClass || assetClassResolution?.conflict) && !DRY_RUN) {
+        try { await createWikiQuestion(missingAssetClassQuestion(updated, assetClassResolution)); }
+        catch (error) { console.error(`  ⚠️  자산군 질문 큐 등록 실패: ${error.message}`); }
+      }
       holdingsMap.set(key, updated);
       buys++;
     } else if (exec.tradeType === '매도') {

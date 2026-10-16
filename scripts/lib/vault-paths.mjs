@@ -35,6 +35,7 @@ export const VAULT_REL = {
   decisionsProfile: '50_Outputs/Preferences', // D94: 성향 관찰 위치
   knowledge: '30_Wiki',
   knowledgeTopics: '30_Wiki/34_Topics',
+  assetClassTopics: '30_Wiki/34_Topics/AssetClass',
   wikiObjects: '30_Wiki/33_Objects',
   projectFeatures: '40_Projects/banana-portfolio/Features',
   knowledgeMeta: '90_Delphi',

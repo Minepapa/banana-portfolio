@@ -68,6 +68,11 @@ export const PHYSICAL_GOLD_IEM_CD = 'M04020000';
 // 상품에도 이 1kg 코드를 잘못 씌워 10배 차이 나는 금액으로 주문할 위험이 있었다).
 // 새 실물금 상품을 실제로 사게 되면 이 집합과 PHYSICAL_GOLD_IEM_CD 매핑을 먼저 갱신할 것.
 const KNOWN_PHYSICAL_GOLD_NAMES = new Set(['금 99.99K']);
+// 자산군 역참조에 쓸 수 있는 유일한 확정 매핑. KR_STOCK 분류에는 여러
+// 자산군의 ETF가 섞여 있으므로 그 분류를 국내주식으로 환산하면 안 된다.
+export const PHYSICAL_GOLD_ASSET_CLASS_MAPPING = {
+  account: '금현물', code: PHYSICAL_GOLD_IEM_CD, name: '금 99.99K', assetClass: '금',
+};
 
 // 이미 티커 형태(영문 대문자·점만)로 보이는 assetKey는 usTicker 조회 없이 그대로
 // 사용 — "VOO"처럼 한글 별칭이 애초에 필요 없는(한글명이 곧 티커가 아닌) 종목까지

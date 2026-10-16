@@ -55,7 +55,7 @@ export function consolidateLots(lots) {
 // 해외주식 신규매수/추가매수부터 바로 터질 잠복 버그였다.
 // `usdKrwRate`는 exec.currency==='USD'일 때만 쓰고, 조회 실패로 null이면 잘못된 값을
 // 쓰지 않고 warning으로 건너뛴다(applySell과 동일 원칙 — ADR 0003 폴백 금지).
-export function applyBuy(existingHolding, exec, { usdKrwRate = null } = {}) {
+export function applyBuy(existingHolding, exec, { usdKrwRate = null, assetClassResolution = null } = {}) {
   const fx = exec.currency === 'USD' ? usdKrwRate : 1;
   if (fx == null) {
     return { holding: null, warning: `USD 매수 체결인데 환율을 못 가져와 KRW 환산 불가 — ${exec.account ?? '(계좌미상)'} ${exec.stockName}` };
@@ -64,7 +64,7 @@ export function applyBuy(existingHolding, exec, { usdKrwRate = null } = {}) {
   if (!existingHolding) {
     return {
       holding: {
-        account: exec.account, assetClass: exec.assetClass ?? '', name: exec.stockName,
+        account: exec.account, assetClass: assetClassResolution?.assetClass ?? exec.assetClass ?? '', name: exec.stockName,
         ticker: exec.stockCode ?? '', market: '',
         avgPrice: exec.price, qty: exec.quantity, invest: buyInvest,
         curPrice: null, evalAmount: null, profitAmount: null, profitPct: null,

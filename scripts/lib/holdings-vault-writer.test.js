@@ -129,6 +129,20 @@ test('writeHoldingSafely: 파일이 없으면 새로 생성', { skip: !CAN_WRITE
   }
 });
 
+test('writeHoldingSafely: 락 안에서 확인한 오너의 자산군 수정을 보존', { skip: !CAN_WRITE_VAULT }, async () => {
+  cleanupTestHolding();
+  try {
+    writeFileSync(testHoldingPath(), buildFrontmatter({
+      type: 'holding', account: TEST_ACCOUNT, name: TEST_NAME, assetClass: '채권', qty: 1,
+    }));
+    const assetClass = await writeHoldingSafely({
+      account: TEST_ACCOUNT, name: TEST_NAME, assetClass: '', qty: 2, avgPrice: 100, invest: 200,
+    });
+    assert.equal(assetClass, '채권');
+    assert.equal(parseFrontmatter(readFileSync(testHoldingPath(), 'utf8')).assetClass, '채권');
+  } finally { cleanupTestHolding(); }
+});
+
 test('writeHoldingSafely: 쓰기 후 락파일이 남지 않음', { skip: !CAN_WRITE_VAULT }, async () => {
   cleanupTestHolding();
   try {

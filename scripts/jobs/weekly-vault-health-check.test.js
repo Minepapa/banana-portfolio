@@ -22,6 +22,17 @@ import {
 
 const mkFile = (relPath, content, frontmatter = {}) => ({ relPath, absPath: `/vault/${relPath}.md`, content, frontmatter });
 
+test('주간 건강검진은 보유 자산군 빈칸을 발견 사항에 포함한다', () => {
+  const result = {
+    broken: [], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [],
+    emptyHoldingAssetClasses: ['95_Etna/Investing/Holdings/위탁-새종목.md: holding assetClass is empty'],
+    workChecks: { overdue: [], missing: [], scheduledCount: 0 }, questionFailures: [],
+    staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [],
+  };
+  assert.equal(hasAnyIssue(result), true);
+  assert.match(buildHealthCheckFacts(result).join('\n'), /보유 자산군 빈칸 1건/);
+});
+
 test('C1: 열린 작업의 경과·누락만 보고하고 확인일이 남은 문서는 개수만 센다', () => {
   const files = [
     mkFile('40_Projects/a/Requests/old', '## 남은 것\n- 일', { status: '보류', waitingOn: '외부', nextCheck: '2026-10-10' }),

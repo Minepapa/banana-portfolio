@@ -82,6 +82,8 @@ import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { buildCashHoldingRecord, writeHoldingSafely, holdingFilename } from '../lib/holdings-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { IRP_ACCOUNT_LABEL } from '../lib/account-resolver.mjs';
+import { loadHoldingAssetClassSources, resolveHoldingAssetClass, missingAssetClassQuestion } from '../lib/holding-asset-class.mjs';
+import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -89,11 +91,14 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // 장부 기준으로 썼는데, Phase 8·9 완료로 State/Holdings가 이미 IRP 실보유를 반영하고
 // 있어 더 이상 시트를 거칠 이유가 없다(v1 시트는 더 갱신되지 않아 조용히 낡아가는 중이었음).
 // isCashLike(예수금)은 종목 대사 대상이 아니라 제외(holdings-vault-writer.mjs 관례).
-export function readIrpHoldings(holdingsDir = VAULT_PATHS.state.holdings) {
+function readAllHoldings(holdingsDir = VAULT_PATHS.state.holdings) {
   if (!existsSync(holdingsDir)) return [];
   return readdirSync(holdingsDir).filter((f) => f.endsWith('.md'))
-    .map((f) => parseFrontmatter(readFileSync(join(holdingsDir, f), 'utf8')))
-    .filter((h) => h.account === IRP_ACCOUNT_LABEL && !h.isCashLike);
+    .map((f) => parseFrontmatter(readFileSync(join(holdingsDir, f), 'utf8')));
+}
+
+export function readIrpHoldings(holdingsDir = VAULT_PATHS.state.holdings) {
+  return readAllHoldings(holdingsDir).filter((h) => h.account === IRP_ACCOUNT_LABEL && !h.isCashLike);
 }
 
 // vaultHoldings: readIrpHoldings() 반환값. kisHoldings: getAccountBalance().holdings
@@ -111,8 +116,8 @@ export function readIrpHoldings(holdingsDir = VAULT_PATHS.state.holdings) {
 // 행 자체가 avgPrice 없이 옴)인 종목은 skipped로 분리해 반영하지 않는다 — 추정하지
 // 않고 기존 Vault 값을 그대로 둔다(parseBalanceResponse의 null 처리와 동일 원칙).
 // assetClass/market은 identity 필드라 KIS 응답에 없으므로 기존 Vault 파일 값을 그대로
-// 이어받는다(신규 종목이면 빈 문자열 — assetClassMissing에 담아 호출측이 경고할 수
-// 있게 한다, 다음에 오너가 채울 수 있게 남겨둠). ticker는 반대로 매번 kh.code로 채운다
+// 이어받는다(신규 종목의 assetClass는 확인된 출처에서 결정하고, 끝내 없으면 빈 문자열로
+// assetClassMissing에 담아 호출측이 경고한다). ticker는 반대로 매번 kh.code로 채운다
 // (이후 실행에서 종목명 대신 code로 매칭할 수 있도록 — 아래 참고).
 //
 // ⚠️ 이름매칭의 한계 + code 우선매칭(코드리뷰 지적, 2026-09-04) — 이름(prdt_name)만
@@ -131,7 +136,7 @@ export function readIrpHoldings(holdingsDir = VAULT_PATHS.state.holdings) {
 // kisByName이 비어 writes도 자동으로 0건이라 별도 분기 불필요). KIS가 실제로 최소
 // 1개 종목을 보고하는 정상 응답일 때만 "그 응답에 없는 Vault 종목=진짜 청산"으로
 // 판단한다.
-export function buildIrpHoldingsPlan(vaultHoldings, kisHoldings) {
+export function buildIrpHoldingsPlan(vaultHoldings, kisHoldings, { assetClassSources = {} } = {}) {
   const vaultList = vaultHoldings || [];
   const kisList = kisHoldings || [];
   const vaultByCode = new Map(vaultList.filter((h) => h.ticker).map((h) => [h.ticker, h]));
@@ -151,7 +156,10 @@ export function buildIrpHoldingsPlan(vaultHoldings, kisHoldings) {
     const existing = (kh.code && vaultByCode.get(kh.code)) || vaultByName.get(kh.name);
     if (existing) matchedVaultKeys.add(existing.name);
     if (kh.avgPrice == null || kh.invest == null) { skipped.push(kh.name); continue; }
-    if (!existing?.assetClass) assetClassMissing.push(kh.name);
+    const resolution = existing ? null : resolveHoldingAssetClass({
+      account: IRP_ACCOUNT_LABEL, stockName: kh.name, stockCode: kh.code,
+    }, assetClassSources);
+    if (!existing?.assetClass && !resolution?.assetClass) assetClassMissing.push(kh.name);
     // ⚠️ 상품명 변경 시 이중계상 버그 수정(코드리뷰 발견, 2026-09-05) — code로
     // 매칭됐는데 이름이 다르면(상품명 개정) writeHoldingSafely가 `holding.name`
     // (새 이름) 기준으로 새 파일을 쓴다(holdingFilename이 계좌+이름으로 파일명을
@@ -166,7 +174,9 @@ export function buildIrpHoldingsPlan(vaultHoldings, kisHoldings) {
     if (existing && existing.name !== kh.name) renames.push({ oldName: existing.name, newName: kh.name });
     writes.push({
       account: IRP_ACCOUNT_LABEL,
-      assetClass: existing?.assetClass ?? '',
+      assetClass: existing?.assetClass || resolution?.assetClass || '',
+      assetClassConflict: resolution?.conflict ?? false,
+      assetClassWarnings: resolution?.warnings ?? [],
       name: kh.name,
       ticker: kh.code ?? '',
       market: existing?.market ?? '',
@@ -246,7 +256,14 @@ async function main() {
   // 헤더 "설계 재정정" 참고). update-holdings-from-executions.mjs도 이제 IRP 체결을
   // State/Holdings에 반영하지 않는다(퀀트와 동일 스킵) — 카카오 체결누적은 이 계좌에서
   // 완전히 손을 뗐다, buildIrpHoldingsPlan 헤더 주석 참고.
-  const { writes, closes, skipped, assetClassMissing, suspiciousEmpty, renames } = buildIrpHoldingsPlan(readIrpHoldings(), kisHoldings);
+  const allHoldings = readAllHoldings();
+  const holdingsMap = new Map(allHoldings.map((holding) => [`${holding.account}|${holding.name}`, holding]));
+  let assetClassSources = { holdingsMap };
+  try { assetClassSources = loadHoldingAssetClassSources({ holdingsMap }); }
+  catch (error) { collectWarning(`IRP 자산군 출처 로딩 실패 — 보유 정보만 사용: ${error.message}`); }
+  const { writes, closes, skipped, assetClassMissing, suspiciousEmpty, renames } = buildIrpHoldingsPlan(
+    allHoldings.filter((holding) => holding.account === IRP_ACCOUNT_LABEL && !holding.isCashLike),
+    kisHoldings, { assetClassSources });
   if (suspiciousEmpty) {
     collectWarning('IRP 종목 KIS 잔고조회가 빈 응답 — 예수금과 같은 API 호출의 output1이 통째로 비었다(간헐적 결측 가능성, 파일 상단 주석 참고), 전량청산으로 추정하지 않고 이번 실행은 종목 반영을 건너뜀');
     console.log(`  ⚠️ IRP 종목 KIS 잔고조회 빈 응답 — 전량청산 추정 안 함, 기존 ${VAULT_REL.stateHoldings} 그대로 유지`);
@@ -258,13 +275,18 @@ async function main() {
     collectWarning(`IRP ${name} — assetClass 정보 없음(신규 종목이거나 기존 Vault 파일에 미기재), 빈 값으로 기록됨 — 오너 확인 필요`);
   }
   for (const w of writes) {
-    const { changed, ...holding } = w;
+    const { changed, assetClassWarnings, assetClassConflict, ...holding } = w;
+    for (const warning of assetClassWarnings) console.warn(`  ⚠️  IRP ${holding.name}: ${warning}`);
     console.log(`  ${changed ? '↻' : '='} [종목${DRY_RUN ? '(예정)' : ''}] IRP ${holding.name} ${holding.qty}주 @${Math.round(holding.avgPrice)}원(KIS 직접조회)`);
     // ⚠️ writeHoldingSafely로 전환(2026-09-04, State/Holdings 동시쓰기 경합 방지) —
     // update-holdings-prices.mjs도 IRP 보유분 curPrice를 별도로 갱신한다(getKrQuote,
     // IRP만 KIS 유지하는 예외 경로) — 이 잡과 그 잡이 같은 IRP 보유 파일을 거의 동시에
     // 쓸 수 있어 락+재확인읽기가 필요하다.
-    if (!DRY_RUN) await writeHoldingSafely(holding);
+    if (!DRY_RUN) holding.assetClass = await writeHoldingSafely(holding);
+    if ((!holding.assetClass || assetClassConflict) && !DRY_RUN) {
+      try { await createWikiQuestion(missingAssetClassQuestion(holding, { conflict: assetClassConflict })); }
+      catch (error) { console.error(`  ⚠️  IRP 자산군 질문 큐 등록 실패: ${error.message}`); }
+    }
   }
   // 상품명 변경으로 남는 옛 파일 정리(코드리뷰 발견, 2026-09-05 — buildIrpHoldingsPlan
   // 헤더 주석 참고) — 위 writes 루프가 이미 새 이름으로 파일을 썼으니, 옛 이름 파일을

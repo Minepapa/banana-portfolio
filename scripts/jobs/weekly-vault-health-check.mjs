@@ -43,6 +43,7 @@ import { parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_M
 import { CANONICAL_PROGRESS_VALUES } from '../lib/vault-frontmatter.mjs';
 import { evaluateDoneWhen, isWorkDoc, parseDoneWhen, stringArray, validDate, workStatus } from '../lib/work-doc-freshness.mjs';
 import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
+import { findHoldingsWithoutAssetClass } from '../lib/vault-integrity-audit.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const SENDER_AGENT = 'clio';
@@ -60,7 +61,7 @@ const STALE_AUTO_CLAIM_DAYS = 56; // 8주
 // ── 볼트 전체 파일 수집 ──────────────────────────────────────────────
 function walkMdFiles(dir, out = []) {
   for (const f of readdirSync(dir)) {
-    if (f === '.git' || f === '.obsidian') continue;
+    if (f === '.git' || f === '.obsidian' || f.startsWith('99_')) continue;
     const p = join(dir, f);
     const st = statSync(p);
     if (st.isDirectory()) walkMdFiles(p, out);
@@ -326,6 +327,7 @@ export function buildHealthCheckFacts(r) {
   if (r.recentLegacy.length) lines.push(`대정리(${LEGACY_WATCH_SINCE}) 이후 새로 쌓인 legacy 파일 ${r.recentLegacy.length}건: ${r.recentLegacy.join(', ')}`);
   if (r.fxAnomalies.length) lines.push(`Profits 환율 이상치 ${r.fxAnomalies.length}건: ${r.fxAnomalies.map((a) => `${a.stockName}(배율 ${a.impliedRate.toFixed(2)})`).join(', ')}`);
   if (r.missingCurrency.length) lines.push(`Profits 통화 필드 누락(${LEGACY_WATCH_SINCE} 이후) ${r.missingCurrency.length}건: ${r.missingCurrency.join(', ')}`);
+  if (r.emptyHoldingAssetClasses?.length) lines.push(`보유 자산군 빈칸 ${r.emptyHoldingAssetClasses.length}건: ${r.emptyHoldingAssetClasses.join(', ')}`);
   if (r.workChecks.overdue.length) lines.push(`확인일 지난 작업 문서 ${r.workChecks.overdue.length}건: ${r.workChecks.overdue.slice(0, 8).map((p) => `${p.file}(${p.nextCheck})`).join(', ')}${r.workChecks.overdue.length > 8 ? ' 외' : ''}`);
   if (r.workChecks.missing.length) lines.push(`waitingOn·nextCheck 누락 작업 문서 ${r.workChecks.missing.length}건: ${r.workChecks.missing.slice(0, 8).map((p) => p.file).join(', ')}${r.workChecks.missing.length > 8 ? ' 외' : ''}`);
   if (r.workChecks.scheduledCount) lines.push(`확인일이 남은 작업 문서 ${r.workChecks.scheduledCount}건`);
@@ -339,7 +341,7 @@ export function buildHealthCheckFacts(r) {
 export function hasAnyIssue(r) {
   return Boolean(
     r.broken.length || r.ambiguous.length || r.orphaned.length || r.recentLegacy.length
-    || r.fxAnomalies.length || r.missingCurrency.length
+    || r.fxAnomalies.length || r.missingCurrency.length || r.emptyHoldingAssetClasses?.length
     || r.workChecks.overdue.length || r.workChecks.missing.length || r.questionFailures?.length || r.staleAutoClaims.length
     || r.invalidProgress.length || r.staleEmptyClaims.length,
   );
@@ -399,6 +401,9 @@ async function main() {
     .map((f) => ({ ...f.frontmatter, __relPath: f.relPath }));
   const fxAnomalies = findFxAnomalies(profitRecords);
   const missingCurrency = findMissingCurrencyField(profitRecords);
+  const emptyHoldingAssetClasses = findHoldingsWithoutAssetClass(allFiles
+    .filter((file) => file.relPath.startsWith(`${VAULT_REL.stateHoldings}/`))
+    .map((file) => ({ path: file.relPath, text: file.content })));
 
   const staleAutoClaims = findStaleAutoClaims(
     allFiles.filter((f) => f.relPath.startsWith(`${VAULT_REL.knowledgeMeta}/`) || f.relPath.startsWith(`${VAULT_REL.knowledgeTopics}/`)
@@ -416,7 +421,7 @@ async function main() {
   const staleEmptyClaims = [];
 
   const results = {
-    broken, ambiguous, orphaned, recentLegacy, fxAnomalies, missingCurrency,
+    broken, ambiguous, orphaned, recentLegacy, fxAnomalies, missingCurrency, emptyHoldingAssetClasses,
     workChecks, questionFailures, staleAutoClaims, invalidProgress, staleEmptyClaims,
   };
 

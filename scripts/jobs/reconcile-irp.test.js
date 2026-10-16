@@ -88,6 +88,36 @@ test('buildIrpHoldingsPlan: KIS에만 있는 신규 종목 — assetClass 빈 �
   assert.deepEqual(assetClassMissing, ['신규매수종목']);
 });
 
+test('buildIrpHoldingsPlan: 신규 IRP 종목은 자산군 표에서 결정한다', () => {
+  const { writes, assetClassMissing } = buildIrpHoldingsPlan([], [
+    { code: '123456', name: '새 IRP ETF', qty: 1, avgPrice: 100, invest: 100 },
+  ], { assetClassSources: { wikiRows: [{ account: 'IRP', name: '새 IRP ETF', assetClass: '채권' }] } });
+  assert.equal(writes[0].assetClass, '채권');
+  assert.deepEqual(assetClassMissing, []);
+});
+
+test('buildIrpHoldingsPlan: 신규 IRP 종목도 다른 계좌 보유 코드의 허용 자산군을 쓴다', () => {
+  const holdingsMap = new Map([['위탁|옛 이름', {
+    account: '위탁', name: '옛 이름', ticker: '123456', assetClass: '채권',
+  }]]);
+  const { writes, assetClassMissing } = buildIrpHoldingsPlan([], [
+    { code: '123456', name: '새 이름', qty: 1, avgPrice: 100, invest: 100 },
+  ], { assetClassSources: { holdingsMap } });
+  assert.equal(writes[0].assetClass, '채권');
+  assert.deepEqual(writes[0].assetClassWarnings, []);
+  assert.deepEqual(assetClassMissing, []);
+});
+
+test('buildIrpHoldingsPlan: 기존 빈 자산군은 자동 채우지 않고 질문 대상으로 남긴다', () => {
+  const existing = [{ name: '기존 ETF', ticker: '123456', qty: 1, avgPrice: 100, assetClass: '' }];
+  const kis = [{ code: '123456', name: '기존 ETF', qty: 2, avgPrice: 100, invest: 200 }];
+  const { writes, assetClassMissing } = buildIrpHoldingsPlan(existing, kis, {
+    assetClassSources: { wikiRows: [{ account: 'IRP', name: '기존 ETF', assetClass: '채권' }] },
+  });
+  assert.equal(writes[0].assetClass, '');
+  assert.deepEqual(assetClassMissing, ['기존 ETF']);
+});
+
 test('buildIrpHoldingsPlan: Vault에만 있고 KIS엔 최소 1개 다른 종목이 있으면(정상 응답) 사라진 종목은 closes', () => {
   const { writes, closes } = buildIrpHoldingsPlan(
     [{ name: '청산된종목', ticker: '111111', qty: 10, avgPrice: 5000 }],

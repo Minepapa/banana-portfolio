@@ -6,11 +6,37 @@ import { join } from 'node:path';
 import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import {
   STATUS_RULES, auditVault, extractWikiLinks, findDecisionKeyErrors, findExecutionDuplicates, findIdMismatches,
-  parseFlatFrontmatter, resolveWikiTarget, validateStatus,
+  parseFlatFrontmatter, resolveWikiTarget, validateStatus, findHoldingsWithoutAssetClass,
 } from '../lib/vault-integrity-audit.mjs';
 
 const CAN_RUN = process.env.TEST_REAL_VAULT === '1' && process.platform === 'darwin' && existsSync(vaultAbs(VAULT_REL.statusStandardFile));
 const repoRoot = join(import.meta.dirname, '..', '..');
+
+test('빈 자산군 보유 점검은 비현금 보유만 잡는다', () => {
+  const records = [
+    { path: 'empty.md', text: '---\ntype: holding\nassetClass: ""\nisCashLike: false\n---\n' },
+    { path: 'cash.md', text: '---\ntype: holding\nassetClass: ""\nisCashLike: true\n---\n' },
+    { path: 'null.md', text: '---\ntype: holding\nassetClass: null\nisCashLike: false\n---\n' },
+    { path: 'ok.md', text: '---\ntype: holding\nassetClass: 국내주식\n---\n' },
+  ];
+  assert.deepEqual(findHoldingsWithoutAssetClass(records), [
+    'empty.md: holding assetClass is empty', 'null.md: holding assetClass is empty',
+  ]);
+});
+
+test('빈 자산군 보유는 감사 오류가 아니라 경고다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vault-audit-asset-class-'));
+  try {
+    writeStatusStandard(root);
+    const holdingsDir = join(root, VAULT_REL.stateHoldings);
+    mkdirSync(holdingsDir, { recursive: true });
+    writeFileSync(join(holdingsDir, '위탁-새종목.md'),
+      '---\ntype: holding\naccount: 위탁\nname: 새종목\nassetClass: null\n---\n');
+    const result = auditVault(root, repoRoot);
+    assert.deepEqual(result.errors, []);
+    assert.match(result.warnings.join('\n'), /위탁-새종목\.md: holding assetClass is empty/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 function writeStatusStandard(root, values = ['예정', '진행중', '차단됨', '완료', '보류', '폐기']) {
   const path = join(root, VAULT_REL.statusStandardFile);
