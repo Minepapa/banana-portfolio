@@ -5,7 +5,9 @@ import os
 import sys
 from pathlib import Path
 
-result_output = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
+# 결과 전용 fd를 따로 두고 fd 1 자체를 stderr로 돌린다. C 확장(onnxruntime·torch)이 stdout에 찍어도 결과 줄에 섞이지 않게.
+result_output = os.fdopen(os.dup(1), "w", encoding="utf-8", buffering=1)
+os.dup2(2, 1)
 sys.stdout = sys.stderr
 
 import numpy as np
@@ -36,12 +38,16 @@ def load_tagger():
 
 
 def pitch_hz(segment, sample_rate):
-    import torch
-    import torchaudio
-    if np.sqrt(np.mean(segment ** 2)) < 0.005:
+    # 높이 계산 실패(라이브러리 변경 등)는 그 창의 pitch만 비우고 태그 결과는 살린다.
+    try:
+        import torch
+        import torchaudio
+        if np.sqrt(np.mean(segment ** 2)) < 0.005:
+            return None
+        value = torchaudio.functional.detect_pitch_frequency(torch.from_numpy(segment)[None], sample_rate).median().item()
+        return round(value, 1) if 60 <= value <= 1200 else None
+    except Exception:
         return None
-    value = torchaudio.functional.detect_pitch_frequency(torch.from_numpy(segment)[None], sample_rate).median().item()
-    return round(value, 1) if 60 <= value <= 1200 else None
 
 
 def analyze(tagger, audio, sample_rate, window_sec, hop_sec):

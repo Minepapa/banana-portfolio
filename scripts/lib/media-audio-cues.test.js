@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import {
-  audioCuesForNote, clock, computeCues, mineIntervals, summarizeCues, windowsInIntervals,
+  attachAudioCues, audioCuesForNote, clock, computeCues, mineIntervals, runCueWorker, summarizeCues, windowsInIntervals,
 } from './media-audio-cues.mjs';
 
 const win = (start, tags = {}, pitch = 280, rms = 0.05) =>
@@ -23,11 +25,13 @@ test('mineIntervals: 녹음 이름표에서 미네 화자 구간만(초), 이름
   assert.equal(mineIntervals(null), null);
 });
 
-test('windowsInIntervals: 미네 구간과 절반 이상 겹치는 창만', () => {
-  const windows = [win(0), win(2), win(6)];
+test('windowsInIntervals: 미네 구간과 75% 이상 겹치는 창만, 겹친 구간은 한 번만 센다', () => {
+  const windows = [win(0), win(2), win(3), win(6)];
   const kept = windowsInIntervals(windows, [{ start: 4, end: 10 }]);
-  assert.deepEqual(kept.map((w) => w.start), [2, 6]);
-  assert.equal(windowsInIntervals(windows, null).length, 3);
+  assert.deepEqual(kept.map((w) => w.start), [3, 6]);
+  assert.equal(windowsInIntervals(windows, null).length, 4);
+  // 같은 구간이 두 번 들어와도 겹침을 부풀리지 않는다(2~6 창은 4~6만 겹침 = 50%).
+  assert.deepEqual(windowsInIntervals([win(2)], [{ start: 4, end: 6 }, { start: 4, end: 6 }]), []);
 });
 
 test('summarizeCues: 문턱 이상만, 이어진 창은 한 번으로, 웃음·노래·높이·세기 문장', () => {
@@ -99,7 +103,7 @@ test('audioCuesForNote: 녹음은 미네 구간 요약, 화자 파일 없으면 
   assert.match(withSpeakers.text, /웃음 1회/);
   assert.doesNotMatch(withSpeakers.text, /울음 1회/);
   const alone = await audioCuesForNote(note, { compute, archivePaths: new Map(), speakersFor: () => null });
-  assert.match(alone.text, /전체\(화자 분리 없음\)/);
+  assert.match(alone.text, /전체\(한 사람 녹음\)/);
   assert.match(alone.text, /울음 1회/);
   const call = await audioCuesForNote(note.replace('녹음', '통화'), { compute, archivePaths: new Map() });
   assert.equal(call.ok, false);
@@ -107,4 +111,68 @@ test('audioCuesForNote: 녹음은 미네 구간 요약, 화자 파일 없으면 
   const failed = await audioCuesForNote(note, { compute: async () => ({ error: '원본 파일 없음' }), archivePaths: new Map() });
   assert.equal(failed.ok, false);
   assert.match(failed.text, /없음\(원본 파일 없음\)/);
+});
+
+function fakeSpawn({ stdout = '', stderr = '', code = 0 } = {}) {
+  return () => {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough();
+    child.kill = () => {};
+    setImmediate(() => { child.stdout.end(stdout); child.stderr.end(stderr); setImmediate(() => child.emit('close', code)); });
+    return child;
+  };
+}
+
+test('runCueWorker: 결과가 아닌 줄은 버리고, 실패 종료는 거부로(프로세스를 죽이지 않음)', async () => {
+  const rows = await runCueWorker([{ id: 'a', wav: 'x' }], { spawnProcess: fakeSpawn({ stdout: 'onnx warning\n{"id":"a","windows":[]}\n' }) });
+  assert.deepEqual(rows, [{ id: 'a', windows: [] }]);
+  await assert.rejects(runCueWorker([], { spawnProcess: fakeSpawn({ stderr: 'boom', code: 1 }) }), /소리 분석 실패: boom/);
+});
+
+test('attachAudioCues: 계산 예외는 노트별 없음으로, 시간 예산을 넘으면 나머지는 예산 초과', async () => {
+  const withId = '<!-- media-transcribe:id aaaaaaaaaaaaaaaa -->';
+  const items = [{ content: withId }, { content: withId }, { content: withId }];
+  let t = 0;
+  await attachAudioCues(items, { archivePaths: new Map(), budgetMs: 10, now: () => t,
+    compute: async () => { t += 20; throw new Error('x'); } });
+  assert.match(items[0].audioCues.text, /없음/);
+  assert.equal(items[0].audioCues.ok, false);
+  assert.match(items[1].audioCues.text, /시간 예산 초과/);
+});
+
+test('audioCuesForNote: 화자 분리에 미네가 없으면 소리 근거 없음(전체를 쓰지 않음)', async () => {
+  const note = '---\nconvKind: "녹음"\n---\n<!-- media-transcribe:id aaaaaaaaaaaaaaaa -->';
+  const r = await audioCuesForNote(note, { compute: async () => ({ windows: [win(0, { laughter: 0.9 })] }), archivePaths: new Map(),
+    speakersFor: () => ({ labels: { S0: '나', S1: '다른 사람' }, turns: [{ start: 0, end: 4000, speaker: 'S0' }] }) });
+  assert.match(r.text, /미네 화자 미확인/);
+  assert.doesNotMatch(r.text, /웃음 1회/);
+  const single = await audioCuesForNote(note.replace('"녹음"', "'통화'"), { compute: async () => ({ windows: [] }), archivePaths: new Map() });
+  assert.match(single.text, /통화는 미네 구간 연결 전/);
+});
+
+test('computeCues: 통화(kind Calls)·Archive 밖 경로는 읽지 않고, 실패는 원본이 같으면 다시 시도하지 않는다', async () => {
+  const f = fixture();
+  try {
+    const base = { mediaRoot: f.mediaRoot, cacheDir: f.cacheDir, temporaryRoot: f.dir, exec: async () => {} };
+    const calls = new Map([['aaaaaaaaaaaaaaaa', { archivePath: 'Archive/2020/07/Recordings/a.m4a', kind: 'Calls' }]]);
+    assert.deepEqual(await computeCues('aaaaaaaaaaaaaaaa', { ...base, archivePaths: calls }), { error: '녹음이 아님(통화 등)' });
+    const escape = new Map([['aaaaaaaaaaaaaaaa', { archivePath: 'Archive/../../x.m4a', kind: 'Recordings' }]]);
+    assert.deepEqual(await computeCues('aaaaaaaaaaaaaaaa', { ...base, archivePaths: escape }), { error: 'Archive 경로 오류' });
+    let tries = 0;
+    const failing = { ...base, archivePaths: f.archivePaths, worker: async () => { tries += 1; return [{ id: 'aaaaaaaaaaaaaaaa', error: 'boom' }]; } };
+    await computeCues('aaaaaaaaaaaaaaaa', failing);
+    const again = await computeCues('aaaaaaaaaaaaaaaa', failing);
+    assert.equal(tries, 1);
+    assert.match(again.error, /boom\(이전 실패 기록\)/);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test('audioCuesForNote: 대화형 녹음인데 화자 분리 전이면 소리 근거를 주지 않는다', async () => {
+  const note = '---\nconvKind: "녹음"\n---\n<!-- media-transcribe:id aaaaaaaaaaaaaaaa -->';
+  const paths = new Map([['aaaaaaaaaaaaaaaa', { archivePath: 'Archive/2023/01/Recordings/2023-01-01 미네 대화 친구 이야기.m4a', kind: 'Recordings' }]]);
+  const r = await audioCuesForNote(note, { compute: async () => ({ windows: [win(0, { laughter: 0.9 })] }), archivePaths: paths, speakersFor: () => null });
+  assert.match(r.text, /화자 분리 전/);
+  const song = new Map([['aaaaaaaaaaaaaaaa', { archivePath: 'Archive/2021/01/Recordings/2021-01-20 미네 노래 아침 해.m4a', kind: 'Recordings' }]]);
+  const s2 = await audioCuesForNote(note, { compute: async () => ({ windows: [win(0, { laughter: 0.9 })] }), archivePaths: song, speakersFor: () => null });
+  assert.match(s2.text, /전체\(한 사람 녹음\)/);
 });
