@@ -19,6 +19,7 @@ import { haversineM, loadPlaces } from '../lib/location-stays.mjs';
 import { parseRegistry, checkNote } from '../lib/vault-registry.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic, withLock } from '../lib/state-writer.mjs';
+import { writeReviewSheet, applyReview } from './media-import-review.mjs';
 
 const execFileAsync = promisify(execFile);
 const videoExtensions = new Set(['.mp4', '.mov', '.m4v', '.3gp', '.avi', '.mkv', '.webm']);
@@ -161,14 +162,28 @@ export function groupImportMoments(records) {
   const albums = new Map();
   for (const record of records) {
     if (record.kind !== 'Import' || record.duplicateOf || record.screenshot
-      || !['confirmed', 'single'].includes(record.capturedConfidence)
+      || !['confirmed', 'single', 'album'].includes(record.capturedConfidence)
       || !Number.isFinite(Date.parse(record.capturedAt)) || typeof record.id !== 'string') continue;
-    if (!albums.has(record.album)) albums.set(record.album, []);
-    albums.get(record.album).push(record);
+    const key = `${record.album}\0${record.capturedConfidence === 'album' ? 'unknown' : 'dated'}`;
+    if (!albums.has(key)) albums.set(key, []);
+    albums.get(key).push(record);
   }
-  return [...albums.values()].flatMap(groupTimedRecords)
+  return [...albums].flatMap(([key, rows]) => key.endsWith('\0unknown')
+    ? [[...rows].sort((a, b) => a.importPath.localeCompare(b.importPath))] : groupTimedRecords(rows))
     .sort((a, b) => Date.parse(a[0].capturedAt) - Date.parse(b[0].capturedAt)
       || a[0].album.localeCompare(b[0].album) || a[0].importPath.localeCompare(b[0].importPath));
+}
+
+export function unknownDateFormatRegistered(root) {
+  const path = join(root, VAULT_REL.registryFile);
+  if (!existsSync(path)) return false;
+  // 등록부의 media 표 행에 경로·제목·occurred 값·dateCertainty가 모두 명시되어야
+  // 새 형식을 허용한다. 일반 YYYY 정규식의 0000 매칭은 승인으로 취급하지 않는다.
+  return readFileSync(path, 'utf8').split('\n').some((line) =>
+    /^\|\s*`media`\s*\|/.test(line)
+    && line.includes('24_Media/0000/') && line.includes('0000-00-00')
+    && line.includes('occurred') && line.includes('날짜 미상')
+    && line.includes('dateCertainty'));
 }
 
 export const isDomesticGps = (point) => point.lat >= 33 && point.lat <= 38.7
@@ -256,7 +271,8 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
   albumsPath = join(root, VAULT_REL.mediaImportAlbums), indexPath = join(root, VAULT_REL.mediaImportsIndex),
   statePath = join(root, VAULT_REL.mediaImportMomentsState),
   geocode = createCachedGeocoder({ root }), places = loadPlaces(root), registryRules,
-  write = writeAtomic, output = console, now = new Date().toISOString() } = {}) {
+  write = writeAtomic, output = console, now = new Date().toISOString(), indexRecords = null,
+  reviewIds = null } = {}) {
   if (!Number.isInteger(limit) || limit < 0) throw new Error('--limit 양의 정수 오류');
   const albumsConfig = JSON.parse(readFileSync(albumsPath, 'utf8'));
   const albums = albumsConfig.albums;
@@ -266,15 +282,30 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
   const facePeoplePath = join(root, VAULT_REL.mediaFacePeople);
   const facePhotos = existsSync(facePeoplePath)
     ? JSON.parse(readFileSync(facePeoplePath, 'utf8')).photos ?? {} : null;
-  const groups = groupImportMoments(jsonLines(indexPath)).filter((group) => !album || group[0].album === album);
+  const allGroups = groupImportMoments(indexRecords ?? jsonLines(indexPath));
+  const selectedGroups = allGroups.filter((group) => (!album || group[0].album === album)
+    && (!reviewIds || group.some((record) => reviewIds.has(record.id))));
+  const stateEntries = Object.entries(state);
+  const overlaps = (group, ownerId, entry) => group.some((record) => record.id === ownerId
+    || entry.mediaIds?.includes(record.id));
+  // 날짜 교정으로 기존 순간의 첫 파일이 바뀌어도 기존 노트를 다시 사용한다.
+  // 한 노트가 두 순간으로 갈라지거나 두 노트가 합쳐지면 자동 이관은 메모 소유권을 잃을 수 있어 중단한다.
+  for (const [ownerId, entry] of stateEntries) {
+    if (!selectedGroups.some((group) => overlaps(group, ownerId, entry))) continue;
+    if (allGroups.filter((group) => overlaps(group, ownerId, entry)).length > 1)
+      throw new Error(`Imports 순간 분할 판정 보류: ${ownerId}`);
+  }
+  const groups = selectedGroups;
+  const unknownDateApproved = unknownDateFormatRegistered(root);
   const vision = loadMomentVision(root, output);
   const people = loadPeople(root);
   const eventsByYear = new Map();
-  if (!noCalendar && groups.length) {
+  const datedGroups = groups.filter((group) => group[0].capturedConfidence !== 'album');
+  if (!noCalendar && datedGroups.length) {
     try {
       const token = await accessToken();
       const calendars = await listSelectedCalendars({ token, fetchImpl: calendarFetch });
-      for (const year of new Set(groups.map((group) => dateOf(group[0]).slice(0, 4)))) {
+      for (const year of new Set(datedGroups.map((group) => dateOf(group[0]).slice(0, 4)))) {
         const firstDay = Date.parse(`${year}-01-01T00:00:00+09:00`);
         const nextDay = Date.parse(`${Number(year) + 1}-01-01T00:00:00+09:00`);
         eventsByYear.set(year, await listEventsForRange(
@@ -288,7 +319,7 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
   }
   const reserved = new Set(Object.values(state).map((entry) => entry.notePath));
   const discovered = new Map();
-  const summary = { created: 0, updated: 0, skipped: 0, unprocessed: 0, examples: [] };
+  const summary = { created: 0, updated: 0, skipped: 0, deferred: 0, unprocessed: 0, examples: [] };
   let stateDirty = false;
   for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
     if (!dryRun && summary.created + summary.updated >= limit) {
@@ -298,6 +329,11 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
     }
     const group = groups[groupIndex];
     const first = group[0];
+    const dateUnknown = group.some((record) => record.capturedConfidence === 'album');
+    if (dateUnknown && !dryRun && !unknownDateApproved) {
+      summary.deferred += 1;
+      continue;
+    }
     const config = albums[first.album];
     if (!config) throw new Error(`설정에 없는 Imports 앨범: ${first.album}`);
     const gps = group.map((record) => record.gps).find((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lon));
@@ -318,37 +354,46 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
       } else if (dryRun && isDomesticGps(gps)) unresolvedGps = true;
     }
     const date = dateOf(first);
-    const anniversaries = anniversariesForDay(date, people);
-    const calendarMatches = calendarOccasions(group, eventsByYear.get(date.slice(0, 4)) ?? [], calendar);
+    const noteDay = dateUnknown ? '0000-00-00' : date;
+    const noteYear = noteDay.slice(0, 4);
+    const anniversaries = dateUnknown ? [] : anniversariesForDay(date, people);
+    const calendarMatches = dateUnknown ? [] : calendarOccasions(group, eventsByYear.get(date.slice(0, 4)) ?? [], calendar);
     const occasions = selectOccasions(anniversaries, calendarMatches);
     const enrichment = visionForMoment(group, vision?.rows, vision?.config);
     const period = timePeriod(Date.parse(first.capturedAt));
-    const titleParts = () => [config.label, ...occasions, titlePlace(place, address)].filter(Boolean).join(' · ');
-    const summaryTitle = clean(titleParts() + (!place && !occasions.length && config.label ? ` ${period}` : '') || period);
+    const titleParts = () => [dateUnknown ? '날짜 미상' : null, config.label || (dateUnknown ? first.album : null),
+      ...occasions, titlePlace(place, address)].filter(Boolean).join(' · ');
+    const summaryTitle = clean(titleParts() + (!dateUnknown && !place && !occasions.length && config.label ? ` ${period}` : '') || period);
     const occasionSource = [...new Set([
       ...(occasions.some((item) => anniversaries.includes(item)) ? ['anniversary'] : []),
       ...(occasions.some((item) => calendarMatches.includes(item)) ? ['calendar'] : []),
     ])];
     const description = { summary: summaryTitle, place, address,
-      source: place ? 'gps' : occasionSource[0] || 'time' };
-    const directory = `${VAULT_REL.mediaMoments}/${date.slice(0, 4)}`;
-    if (!discovered.has(date.slice(0, 4))) discovered.set(date.slice(0, 4), existingImportNotes(root, date.slice(0, 4)));
-    const savedRel = state[first.id]?.notePath;
+      source: dateUnknown ? 'album' : place ? 'gps' : occasionSource[0] || 'time' };
+    const directory = `${VAULT_REL.mediaMoments}/${noteYear}`;
+    if (!discovered.has(noteYear)) discovered.set(noteYear, existingImportNotes(root, noteYear));
+    const owners = stateEntries.filter(([ownerId, entry]) => overlaps(group, ownerId, entry));
+    if (owners.length > 1) throw new Error(`Imports 순간 병합 판정 보류: ${first.id}`);
+    const ownerId = owners[0]?.[0] ?? first.id;
+    const savedRel = owners[0]?.[1].notePath;
     const interruptedMoveFrom = savedRel && !existsSync(join(root, savedRel)) ? savedRel : null;
     const oldRel = interruptedMoveFrom
-      ? discovered.get(date.slice(0, 4)).get(first.id)
-      : savedRel || discovered.get(date.slice(0, 4)).get(first.id);
+      ? discovered.get(noteYear).get(first.id) || discovered.get(noteYear).get(ownerId)
+      : savedRel || discovered.get(noteYear).get(first.id);
     if (interruptedMoveFrom && !oldRel) throw new Error(`이동된 Imports 순간 노트 없음: ${savedRel}`);
-    if (oldRel && (!oldRel.startsWith(`${directory}/`) || !existsSync(join(root, oldRel)))) throw new Error(`기존 Imports 순간 노트 없음: ${oldRel}`);
+    if (oldRel && (!new RegExp(`^${VAULT_REL.mediaMoments}/\\d{4}/[^/]+\\.md$`).test(oldRel)
+      || !existsSync(join(root, oldRel)))) throw new Error(`기존 Imports 순간 노트 없음: ${oldRel}`);
     const previousScene = oldRel ? parseFrontmatter(readFileSync(join(root, oldRel), 'utf8')).titleScene : null;
     const chosenScene = place || occasions.length || enrichment?.allPhotosAnalyzed === false ? null
       : previousScene || enrichment?.scenes[0];
     const withScene = titleWithScene(summaryTitle, { place, occasions, scene: chosenScene, period });
     const titleScene = withScene === summaryTitle ? null : chosenScene;
     const title = withScene === summaryTitle ? summaryTitle : clean(withScene);
-    const base = `${date} ${title} 순간`;
-    const candidates = [`${directory}/${base}.md`, `${directory}/${base} ${clockOf(first)}.md`,
-      `${directory}/${base} ${first.id.slice(0, 8)}.md`];
+    const base = `${noteDay} ${title} 순간`;
+    const candidates = dateUnknown
+      ? [`${directory}/${base}.md`, `${directory}/${base} ${first.id.slice(0, 8)}.md`]
+      : [`${directory}/${base}.md`, `${directory}/${base} ${clockOf(first)}.md`,
+        `${directory}/${base} ${first.id.slice(0, 8)}.md`];
     const rel = candidates.find((candidate) => candidate === oldRel || (!reserved.has(candidate) && !existsSync(join(root, candidate))));
     if (!rel) throw new Error(`순간 노트 파일명 충돌: ${first.id}`);
     reserved.add(rel);
@@ -356,14 +401,20 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
       ? `${rel} (GPS 주소 미확인; 실제 제목 변경 가능)` : rel);
     const oldPath = join(root, oldRel || rel);
     const existing = oldRel ? readFileSync(oldPath, 'utf8') : null;
+    const existingFields = existing ? parseFrontmatter(existing) : null;
+    if (existingFields && (existingFields.source !== 'import'
+      || ![ownerId, first.id].includes(existingFields.momentId)))
+      throw new Error(`기존 Imports 순간 소유자 불일치: ${oldRel}`);
     const next = render(group, description, existing, now,
       oldRel && oldRel !== rel ? oldRel : interruptedMoveFrom,
       { category: config.category, source: 'import', album: first.album, albumLabel: config.label,
         pathField: 'importPath', occasions, occasionSource, placeCategory, vision: enrichment,
-        titleScene, facePhotos });
+        titleScene, facePhotos, dateUnknown,
+        previousMomentId: existingFields?.momentId });
     if (existing && next.replace(/^modified:.*$/m, '') === existing.replace(/^modified:.*$/m, '')) {
       if (!dryRun && (!state[first.id] || state[first.id].notePath !== rel
         || JSON.stringify(state[first.id].mediaIds) !== JSON.stringify(group.map((record) => record.id)))) {
+        if (ownerId !== first.id) delete state[ownerId];
         state[first.id] = { notePath: rel, mediaIds: group.map((record) => record.id) };
         stateDirty = true;
       }
@@ -383,6 +434,7 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
         }
         write(path, next);
       });
+      if (ownerId !== first.id) delete state[ownerId];
       state[first.id] = { notePath: rel, mediaIds: group.map((record) => record.id) };
       stateDirty = true;
     }
@@ -402,18 +454,25 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
-  const stages = { index: args.includes('--index'), moments: args.includes('--moments') };
+  const stages = { index: args.includes('--index'), moments: args.includes('--moments'),
+    reviewSheet: args.includes('--review-sheet'), applyReview: args.find((arg) => arg.startsWith('--apply-review=')) };
   const album = args.find((arg) => arg.startsWith('--album='))?.slice(8);
   const rawLimit = args.find((arg) => arg.startsWith('--limit='))?.slice(8);
   const limit = rawLimit === undefined ? 300 : Number(rawLimit);
-  const usage = 'usage: node scripts/jobs/media-imports.mjs [--index] [--moments] [--album=이름] [--limit=n] [--dry-run] [--no-calendar] [--no-poi]';
-  if ((!stages.index && !stages.moments) || !Number.isInteger(limit) || limit < 0
-    || args.some((arg) => !['--index', '--moments', '--dry-run', '--no-calendar', '--no-poi'].includes(arg)
-      && !arg.startsWith('--album=') && !arg.startsWith('--limit='))) {
+  const usage = 'usage: node scripts/jobs/media-imports.mjs --review-sheet [--include-estimated] | --apply-review=answers.json [--dry-run] | [--index] [--moments] [--album=이름] [--limit=n] [--dry-run] [--no-calendar] [--no-poi]';
+  if ((!stages.index && !stages.moments && !stages.reviewSheet && !stages.applyReview)
+    || [stages.index, stages.moments, stages.reviewSheet, stages.applyReview].filter(Boolean).length > 2
+    || (stages.reviewSheet || stages.applyReview) && (stages.index || stages.moments || album || rawLimit)
+    || !Number.isInteger(limit) || limit < 0
+    || args.some((arg) => !['--index', '--moments', '--review-sheet', '--include-estimated', '--dry-run', '--no-calendar', '--no-poi'].includes(arg)
+      && !arg.startsWith('--apply-review=') && !arg.startsWith('--album=') && !arg.startsWith('--limit='))) {
     console.error(usage); process.exitCode = 2;
   } else (async () => {
     if (stages.index) await indexImports({ album, dryRun: args.includes('--dry-run') });
     if (stages.moments) await runImportMoments({ album, limit, dryRun: args.includes('--dry-run'),
       noCalendar: args.includes('--no-calendar'), noPoi: args.includes('--no-poi') });
+    if (stages.reviewSheet) await writeReviewSheet({ includeEstimated: args.includes('--include-estimated') });
+    if (stages.applyReview) await applyReview({ answersPath: stages.applyReview.slice('--apply-review='.length),
+      dryRun: args.includes('--dry-run'), runMoments: runImportMoments });
   })().catch((error) => { console.error(`[media-imports] ${error.stack}`); process.exitCode = 1; });
 }

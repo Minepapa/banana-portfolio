@@ -159,6 +159,7 @@ test('서울 촬영 날짜의 만 나이 경계와 불확실한 날짜를 제외
   assert.equal(ageBand('2018-11-03T16:00:00Z'), '2y');
   assert.equal(ageBand('2017-01-01', 'estimated'), null);
   assert.equal(ageBand('2017-01-01', 'review'), null);
+  assert.equal(ageBand('2017-01-01', 'album'), null);
   assert.equal(ageBand(null), null);
   for (const confidence of [undefined, 'confirmed', 'single', 'estimated', 'review']) {
     assert.equal(capturePeriod('2016-11-03', confidence), 'prebirth');
@@ -168,6 +169,7 @@ test('서울 촬영 날짜의 만 나이 경계와 불확실한 날짜를 제외
   assert.equal(capturePeriod('2016-11-04', 'single'), 'banded');
   assert.equal(capturePeriod('2016-11-04', 'estimated'), 'bandless');
   assert.equal(capturePeriod('2016-11-04', 'review'), 'bandless');
+  assert.equal(capturePeriod('2016-11-03', 'album'), 'bandless');
   assert.equal(capturePeriod(null, 'confirmed'), 'bandless');
 });
 
@@ -190,6 +192,8 @@ test('미네 앨범과 얼굴 품질을 걸러 흐림 하위 10%를 제외한다
   const candidates = selectGalleryCandidates(rows, media, albums).get('2y');
   assert.equal(candidates.length, 9);
   assert.equal(candidates.some((member) => member.id === 'p0'), false);
+  media.find((row) => row.id === 'p1').capturedConfidence = 'album';
+  assert.equal(selectGalleryCandidates(rows, media, albums).get('2y').some((member) => member.id === 'p1'), false);
 });
 
 test('연결 요소의 가장 큰 묶음을 택하고 같은 사진은 중심 가까운 얼굴만 남긴다', () => {

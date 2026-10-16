@@ -233,6 +233,15 @@ test('앨범별로 묶고 estimated·review·스크린샷·중복을 제외한�
   assert.deepEqual(groupImportMoments(records).map((group) => group.length), [1, 1]);
 });
 
+test('날짜 미상은 의심 시각 간격과 무관하게 앨범당 한 순간이다', () => {
+  const base = { kind: 'Import', album: 'A', capturedConfidence: 'album' };
+  const rows = [
+    { ...base, id: 'one', importPath: 'Imports/A/one.jpg', capturedAt: '2017-01-01T00:00:00+09:00' },
+    { ...base, id: 'two', importPath: 'Imports/A/two.jpg', capturedAt: '2019-01-01T00:00:00+09:00' },
+  ];
+  assert.deepEqual(groupImportMoments(rows).map((group) => group.map((row) => row.id)), [['one', 'two']]);
+});
+
 test('색인 dry-run은 해시와 쓰기를 하지 않고, 앨범 재색인은 다른 앨범을 보존한다', async (t) => {
   const f = fixture(t);
   const a = f.add('A', 'a.jpg', 'a');
