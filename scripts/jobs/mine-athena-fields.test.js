@@ -270,3 +270,25 @@ test('재분류 실행 두 개는 같은 잡 락을 공유한다', async (t) => 
   release(response);
   assert.equal((await first).changed, 1);
 });
+
+test('buildPrompt: 노트에 붙은 소리 근거를 넣고, 소리 근거 사용 규칙을 안내한다', () => {
+  const item = { rel: `${C}/2020/2020-07-27 미네 노래 요들송 웃음 녹음.md`, content: note(), occurred: '2020-07-27', date: '2020-07-27',
+    audioCues: { text: '소리 근거(전체(화자 분리 없음), 맥 안 기계 감지 — 틀릴 수 있음):\n- 웃음 3회(0:06·0:24·0:42, 최대 0.39)', ok: true } };
+  const prompt = buildPrompt([item], { criteria });
+  assert.match(prompt, /웃음 3회\(0:06·0:24·0:42/);
+  assert.match(prompt, /소리 근거: 노트에 맥 안 기계 감지 결과/);
+});
+
+test('reclassify: 판단 호출 전에 소리 근거를 붙인다(주입)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'athena-cues-'));
+  try {
+    const rel = `${C}/2020/2020-07-27 미네 노래 녹음.md`;
+    mkdirSync(join(root, dirname(rel)), { recursive: true });
+    writeFileSync(join(root, rel), note({ occurred: '2020-07-27T10:00:00+09:00', extra: '\nemotions: []\nprimaryEmotion: null' }).replace('convKind: "통화"', 'convKind: "녹음"'));
+    let seen = '';
+    await reclassify({ root, dryRun: true, criteria, now: new Date('2026-10-16T12:00:00Z'), output: { log() {}, error() {} },
+      cues: async (batch) => { for (const item of batch) item.audioCues = { text: '소리 근거: 테스트 웃음', ok: true }; },
+      judge: async (prompt) => { seen = prompt; return '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"웃음","secondFilmSignal":null}]'; } });
+    assert.match(seen, /소리 근거: 테스트 웃음/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
