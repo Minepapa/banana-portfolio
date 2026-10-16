@@ -14,6 +14,7 @@ import { runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { agentTitle } from '../lib/agent-registry.mjs';
 import { buildWikiCandidates, sourceMeta } from '../lib/wiki-candidates.mjs';
+import { aiHashOf, inspectExisting, parseSections, splitNote } from '../lib/daily-note.mjs';
 
 export const MAX_ITEMS = 10;
 export const MAX_INPUT_CHARS = 30_000;
@@ -240,6 +241,10 @@ export function planShapeProblems(judgment) {
   const frontmatter = judgment?.frontmatter ?? {};
   if (target.type === 'conversation' && !CONVERSATION_KINDS.has(frontmatter.convKind))
     problems.push(`conversation convKind 등록부 허용값 위반: ${frontmatter.convKind} (허용: ${[...CONVERSATION_KINDS].join('·')})`);
+  for (const [key, value] of Object.entries(frontmatter)) {
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(key)) problems.push(`머리말 키 형식 위반: ${key}`);
+    if ([value].flat().some((part) => typeof part === 'string' && /[\r\n]/.test(part))) problems.push(`머리말 값에 줄바꿈 금지: ${key}`);
+  }
   const categories = Array.isArray(frontmatter.category) ? frontmatter.category : null;
   if (!categories || !categories.length || !categories.every((value) => /^\[\[01_Home\/[^\]]+\]\]$/.test(value)))
     problems.push('category는 01_Home 링크 배열이어야 함(예: ["[[01_Home/201 미네]]"])');
@@ -258,18 +263,31 @@ function targetPreview(judgment, date) {
   return `---\n${lines.join('\n')}\n---\n\n계획 검증용 본문\n`;
 }
 
-function movedContent(item, sourceContent, date) {
-  const body = sourceContent.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/)?.[1] ?? sourceContent;
+// 원본 인박스 머리말에서 출처·작성 시각을 보존한다(판단 머리말보다 원본이 정본인 값).
+function sourceFields(sourceContent) {
+  const match = sourceContent.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const fields = match ? parseFrontmatter(`---\n${match[1]}\n---\n`) ?? {} : {};
+  const body = match ? sourceContent.slice(match[0].length) : sourceContent;
+  return { fields, body };
+}
+
+function movedContent(item, sourceContent, { planDate, applyDate }) {
+  const { fields: original, body } = sourceFields(sourceContent);
+  const created = String(original.created ?? item.judgment.frontmatter.created ?? planDate).slice(0, 10);
   const fields = { type: item.judgment.target.type, category: item.judgment.frontmatter.category,
     description: item.judgment.frontmatter.description, sensitivity: item.judgment.frontmatter.sensitivity,
-    created: item.judgment.frontmatter.created ?? date, modified: item.judgment.frontmatter.modified ?? date,
-    ...item.judgment.frontmatter, movedFrom: [item.source.replace(/\.md$/, '')] };
+    ...item.judgment.frontmatter, created, modified: applyDate,
+    ...(original.origin ? { origin: original.origin } : {}),
+    movedFrom: [item.source.replace(/\.md$/, '')] };
   return `---\n${Object.entries(fields).map(([key, value]) => `${key}: ${yamlValue(value)}`).join('\n')}\n---\n${body}`;
 }
 
-function dailyChange(content, source, target) {
+// 데일리 기계 구역(오늘 들어온 기록)에 링크 한 줄. 데일리 잡의 무결성 지문(aiHash)을 같은 쓰기에서 다시 계산한다
+// (안 하면 데일리 잡이 오너 수정으로 보고 그날 노트 갱신을 영구히 거부함 — 리뷰 HIGH). 이미 오너가 AI 칸을 고친 노트면 손대지 않는다.
+function dailyChange(content, source, target, applyDate) {
+  if (!inspectExisting(content).ok) return { pending: '데일리 AI 칸이 오너 수정 상태라 손대지 않음' };
   const start = content.search(/^## 오늘 들어온 기록\s*$/m);
-  if (start < 0) throw new Error('데일리 기계 구역 없음: 오늘 들어온 기록');
+  if (start < 0) return { pending: '데일리 기계 구역(오늘 들어온 기록) 없음' };
   const next = content.slice(start + 1).search(/^## /m);
   const end = next < 0 ? content.length : start + 1 + next;
   const section = content.slice(start, end);
@@ -277,79 +295,115 @@ function dailyChange(content, source, target) {
   const newLink = `[[${target.replace(/\.md$/, '')}|`;
   if (section.includes(newLink)) return { content, line: section.split('\n').find((line) => line.includes(newLink)) };
   const oldLine = section.split('\n').find((line) => line.includes(oldLink));
+  const title = target.split('/').at(-1).replace(/\.md$/, '');
   const line = oldLine
-    ? oldLine.replace(oldLink, newLink).replace(source.split('/').at(-1).replace(/\.md$/, ''), target.split('/').at(-1).replace(/\.md$/, ''))
-    : `- [[${target.replace(/\.md$/, '')}|${target.split('/').at(-1).replace(/\.md$/, '')}]]`;
+    ? oldLine.replace(oldLink, newLink).replace(source.split('/').at(-1).replace(/\.md$/, ''), title)
+    : `- [[${target.replace(/\.md$/, '')}|${title}]]`;
   const changed = oldLine ? section.replace(oldLine, line) : `${section.replace(/\s*$/, '')}\n${line}\n\n`;
-  return { content: content.slice(0, start) + changed + content.slice(end), line };
+  const body = content.slice(0, start) + changed + content.slice(end);
+  const sections = parseSections(splitNote(body).body).sections;
+  const fmEnd = body.indexOf('\n---', 4);
+  const head = body.slice(0, fmEnd).replace(/^aiHash: .*$/m, `aiHash: "${aiHashOf(sections)}"`)
+    .replace(/^modified: .*$/m, `modified: "${applyDate}"`);
+  return { content: head + body.slice(fmEnd), line };
 }
 
-function applyOne(root, item, date, rules, { dryRun, noWiki, write }) {
+function applyOne(root, item, planDate, rules, { dryRun, noWiki, write, applyDate }) {
   if (item.status !== '계획함' || !item.judgment || !item.hash) throw new Error('적용 가능한 계획 항목이 아님');
   if (!item.source.startsWith(`${VAULT_REL.inboxRoot}/`) || item.source.includes('..') || item.source.includes('\\')) throw new Error('원본 경로 위반');
-  const { target, frontmatter, dailyLink, wiki } = item.judgment;
+  const { target, dailyLink, wiki } = item.judgment;
   const rel = `${target.folder}/${target.title}.md`;
   if (!target.folder.startsWith(`${VAULT_REL.recordsRoot}/`) || target.folder.includes('..')
       || target.title.includes('/') || target.title.includes('\\')) throw new Error('대상 경로 위반');
+  if (dailyLink != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(dailyLink))) throw new Error('dailyLink 형식 위반');
   if (wiki?.length && !noWiki) throw new Error('Wiki 반영은 아직 지원하지 않음: --no-wiki로 보류 필요');
   const shape = planShapeProblems(item.judgment);
   if (shape.length) throw new Error(shape.join(' / '));
+  const statePath = join(root, VAULT_REL.inboxIngestProcessed);
+  const state = readJson(statePath, {});
+  const resuming = state[item.source]?.status === 'applying' && state[item.source]?.hash === item.hash;
   const sourcePath = join(root, item.source);
-  if (!existsSync(sourcePath)) throw new Error(`원본 없음: ${item.source}`);
-  const sourceContent = readFileSync(sourcePath, 'utf8');
-  if (hashOf(sourceContent) !== item.hash) throw new Error(`원본 해시 변경: ${item.source}`);
   const targetPath = join(root, rel);
-  if (existsSync(targetPath)) throw new Error(`대상 이미 있음: ${rel}`);
-  const content = movedContent(item, sourceContent, date);
-  const problems = checkNote(rel, content, rules);
-  if (problems.length) throw new Error(`등록부 위반: ${problems.join(' / ')}`);
+  const sourceExists = existsSync(sourcePath);
+  if (!sourceExists && !resuming) throw new Error(`원본 없음: ${item.source}`);
+  const sourceContent = sourceExists ? readFileSync(sourcePath, 'utf8') : null;
+  if (sourceContent != null && hashOf(sourceContent) !== item.hash) throw new Error(`원본 해시 변경: ${item.source}`);
+  let content = null;
+  if (existsSync(targetPath)) {
+    // 중간에 멈춘 적용의 재개: 대상이 이미 이 원본에서 옮겨진 노트면 남은 단계만 한다.
+    const existing = readFileSync(targetPath, 'utf8');
+    if (!resuming || !existing.includes(`"${item.source.replace(/\.md$/, '')}"`)) throw new Error(`대상 이미 있음: ${rel}`);
+  } else {
+    if (!sourceContent) throw new Error(`원본 없음: ${item.source}`);
+    content = movedContent(item, sourceContent, { planDate, applyDate });
+    const problems = checkNote(rel, content, rules);
+    if (problems.length) throw new Error(`등록부 위반: ${problems.join(' / ')}`);
+  }
   const dailyRel = dailyLink ? `${VAULT_REL.dailyNotes}/${dailyLink.slice(0, 4)}/${dailyLink}.md` : null;
   const dailyPath = dailyRel ? join(root, dailyRel) : null;
-  const daily = dailyPath && existsSync(dailyPath) ? dailyChange(readFileSync(dailyPath, 'utf8'), item.source, rel) : null;
-  if (daily) {
+  const dailyBefore = dailyPath && existsSync(dailyPath) ? readFileSync(dailyPath, 'utf8') : null;
+  const daily = dailyBefore != null ? dailyChange(dailyBefore, item.source, rel, applyDate) : null;
+  if (daily?.content) {
     const dailyProblems = checkNote(dailyRel, daily.content, rules);
     if (dailyProblems.length) throw new Error(`데일리 등록부 위반: ${dailyProblems.join(' / ')}`);
   }
-  const statePath = join(root, VAULT_REL.inboxIngestProcessed);
-  const state = readJson(statePath, {});
-  const logRel = `${VAULT_REL.clioLog}/${date.slice(0, 7)}.md`;
+  const logRel = `${VAULT_REL.clioLog}/${applyDate.slice(0, 7)}.md`;
   const logPath = join(root, logRel);
   const oldLog = existsSync(logPath) ? readFileSync(logPath, 'utf8') : null;
-  const logLine = `- ${date} Inbox apply: [[${rel.replace(/\.md$/, '')}]] ← ${item.source} (Wiki ${noWiki ? '보류' : '없음'}; 데일리 ${daily ? '연결' : '보류'})`;
-  const log = oldLog ? `${oldLog.replace(/\s*$/, '')}\n${logLine}\n` : `---\ntype: "agent-log"\ndescription: "클리오 작업 기록"\ncreated: "${date}"\nmodified: "${date}"\nagent: "clio"\n---\n\n# ${date.slice(0, 7)}\n\n${logLine}\n`;
+  const logLine = `- ${applyDate} Inbox apply: [[${rel.replace(/\.md$/, '')}]] ← ${item.source} (Wiki ${noWiki ? '보류' : '없음'}; 데일리 ${daily?.content ? '연결' : '보류'})`;
+  const log = oldLog?.includes(logLine) ? oldLog : oldLog ? `${oldLog.replace(/\s*$/, '')}\n${logLine}\n`
+    : `---\ntype: "agent-log"\ndescription: "클리오 작업 기록"\ncreated: "${applyDate}"\nmodified: "${applyDate}"\nagent: "clio"\n---\n\n# ${applyDate.slice(0, 7)}\n\n${logLine}\n`;
   const logProblems = checkNote(logRel, log, rules);
   if (logProblems.length) throw new Error(`로그 등록부 위반: ${logProblems.join(' / ')}`);
   const result = { source: item.source, target: rel, daily: daily?.line ?? null,
-    dailyPending: dailyRel && !daily ? dailyRel : null, wikiPending: noWiki ? wiki ?? [] : [], written: !dryRun };
+    dailyPending: dailyRel && !daily?.content ? (daily?.pending ? `${dailyRel} (${daily.pending})` : dailyRel) : null,
+    wikiPending: noWiki ? wiki ?? [] : [], written: !dryRun, resumed: resuming };
   if (dryRun) return result;
-  mkdirSync(dirname(targetPath), { recursive: true });
-  write(targetPath, content); // 클리오 절차 §5: LiveSync 손상 방지를 위해 노트 한 번 쓰기.
-  if (daily && daily.content !== readFileSync(dailyPath, 'utf8')) write(dailyPath, daily.content);
-  mkdirSync(dirname(logPath), { recursive: true });
-  write(logPath, log);
+  const saveState = (value) => {
+    mkdirSync(dirname(statePath), { recursive: true });
+    write(statePath, `${JSON.stringify({ ...readJson(statePath, {}), [item.source]: value }, null, 2)}\n`);
+  };
+  // 쓰기 순서: 진행 표시 → 노트 → 데일리 → 로그 → 원본 비움 → 완료. 중간에 멈추면 다음 실행이 'applying'을 보고 남은 단계만 한다.
+  saveState({ hash: item.hash, target: rel, status: 'applying', startedAt: applyDate });
+  if (content != null) {
+    mkdirSync(dirname(targetPath), { recursive: true });
+    write(targetPath, content); // 클리오 절차 §5: LiveSync 손상 방지를 위해 노트 한 번 쓰기.
+  }
+  if (daily?.content && daily.content !== dailyBefore) write(dailyPath, daily.content);
+  if (log !== oldLog) { mkdirSync(dirname(logPath), { recursive: true }); write(logPath, log); }
   // D30·D95: Inbox 원본은 새 기록으로 옮긴 뒤 비운다. 옛 경로는 movedFrom에 남기며 재사용하지 않는다.
-  unlinkSync(sourcePath);
-  mkdirSync(dirname(statePath), { recursive: true });
-  write(statePath, `${JSON.stringify({ ...state, [item.source]: { hash: item.hash, target: rel, appliedAt: date } }, null, 2)}\n`);
+  if (existsSync(sourcePath)) unlinkSync(sourcePath);
+  saveState({ hash: item.hash, target: rel, appliedAt: applyDate });
   return result;
 }
 
+// 같은 원본이 여러 날짜 계획에 있으면(재판단 등) 지금 기준을 통과하는 '계획함' 중 가장 최신 날짜 1건만 쓴다.
+export function findPlan(root, id) {
+  const dir = join(root, VAULT_REL.inboxIngestPlans);
+  if (!existsSync(dir)) return [];
+  const byKey = new Map();
+  for (const name of readdirSync(dir).filter((x) => /^\d{4}-\d{2}-\d{2}\.json$/.test(x)).sort()) {
+    for (const item of readJson(join(dir, name), {}).items ?? []) {
+      if ((item.source !== id && item.hash !== id) || item.status !== '계획함' || planShapeProblems(item.judgment).length) continue;
+      byKey.set(item.source, { item, date: name.slice(0, 10) });
+    }
+  }
+  return [...byKey.values()];
+}
+
 export function applyPlans({ root = VAULT_PATHS.root, ids, dryRun = false, noWiki = false,
-  rules, write = writeAtomic } = {}) {
+  rules, write = writeAtomic, now = new Date() } = {}) {
   // 점진 가동: 한 번에 1건만. 인박스 파일 이름에 쉼표가 들어갈 수 있어 문자열은 나누지 않고 통째로 하나로 본다.
   const selected = typeof ids === 'string' ? [ids.trim()].filter(Boolean) : ids;
   if (!Array.isArray(selected) || selected.length !== 1) throw new Error('--apply는 --ids로 계획 항목 1건을 명시해야 함');
   const activeRules = rules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
-  const dir = join(root, VAULT_REL.inboxIngestPlans);
-  const matches = existsSync(dir) ? readdirSync(dir).filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name)).sort()
-    .flatMap((name) => (readJson(join(dir, name), {}).items ?? []).filter((item) => selected[0] === item.source || selected[0] === item.hash)
-      .map((item) => ({ item, date: name.slice(0, 10) }))) : [];
-  if (matches.length !== 1) throw new Error(`계획 항목 ${matches.length}건 일치: ${selected[0]}`);
+  const matches = findPlan(root, selected[0]);
+  if (matches.length !== 1) throw new Error(`적용 가능한 계획 항목 ${matches.length}건 일치: ${selected[0]}`);
   const { item, date } = matches[0];
   const state = readJson(join(root, VAULT_REL.inboxIngestProcessed), {});
   if (state[item.source]?.hash === item.hash && state[item.source]?.appliedAt)
     return { items: [{ source: item.source, target: state[item.source].target, alreadyApplied: true, written: false }], written: false };
-  return { items: [applyOne(root, item, date, activeRules, { dryRun, noWiki, write })], written: !dryRun };
+  return { items: [applyOne(root, item, date, activeRules, { dryRun, noWiki, write, applyDate: kstDate(now) })], written: !dryRun };
 }
 
 function parseJudgment(raw) {
@@ -663,7 +717,8 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const args = Object.fromEntries(process.argv.slice(2).map((arg) => arg.replace(/^--/, '').split('=')).map(([key, value]) => [key, value ?? true]));
+  const args = Object.fromEntries(process.argv.slice(2).map((arg) => { const text = arg.replace(/^--/, ''); const at = text.indexOf('=');
+    return at < 0 ? [text, true] : [text.slice(0, at), text.slice(at + 1)]; }));
   if (args.apply) {
     try {
       const result = applyPlans({ ids: args.ids, dryRun: args['dry-run'] === true, noWiki: args['no-wiki'] === true });
