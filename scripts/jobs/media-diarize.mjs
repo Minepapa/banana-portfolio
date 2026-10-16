@@ -590,15 +590,37 @@ function recordingVoicePath(paths, id) {
   return join(paths.voices, 'pyannote-rec', `${id}.npy`);
 }
 
-// 2026-10-15 녹음 10개 시험: 미네 0.336은 휘영 오판, 실제 휘영은 0.480·0.485·0.581.
-const RECORDING_PERSON_MIN_SIMILARITY = Object.freeze({ 휘영: 0.45 });
+// 2026-10-15 녹음 시험에서 0.336은 휘영 오판이었다. 미네 후보의 계산 기준선도
+// 0.2까지 내려가 휘영 기준과의 유사도(0.34)보다 낮았으므로 두 인물 모두 0.45를 하한으로 둔다.
+const RECORDING_PERSON_MIN_SIMILARITY = Object.freeze({ 휘영: 0.45, 미네: 0.45 });
+// 기간 밖 3년부터 약한 판정의 목소리 가중치를 0.2로 낮춘다. 강한 목소리 판정은 등록 기준선을 그대로 쓴다.
+export const MINE_RECORDING_RULE = Object.freeze({ nearVoiceWeight: 0.7, farVoiceWeight: 0.2,
+  farYears: 3, weakLead: 0.08 });
 
-export function assignRecordingNames(voices, people = [], references = {}, turns = []) {
+function mineReference(reference, occurred) {
+  const year = Number(String(occurred || '').slice(0, 4));
+  const closest = reference.years?.length && Number.isFinite(year)
+    ? [...reference.years].sort((a, b) => Math.abs(a.year - year) - Math.abs(b.year - year)
+      || b.year - a.year)[0] : null;
+  const mean = closest && reference.vectors?.[closest.index] || reference.mean;
+  const recordedDay = Date.parse(String(occurred || '').slice(0, 10));
+  const firstDay = Date.parse(reference.period?.first);
+  const lastDay = Date.parse(reference.period?.last);
+  const distance = [recordedDay, firstDay, lastDay].every(Number.isFinite)
+    ? Math.max(0, firstDay - recordedDay, recordedDay - lastDay) / (365.25 * 86_400_000) : 0;
+  const voiceWeight = MINE_RECORDING_RULE.nearVoiceWeight
+    - (MINE_RECORDING_RULE.nearVoiceWeight - MINE_RECORDING_RULE.farVoiceWeight)
+    * Math.min(distance / MINE_RECORDING_RULE.farYears, 1);
+  return { mean, voiceWeight };
+}
+
+export function assignRecordingNames(voices, people = [], references = {}, turns = [], occurred = null) {
   if (voices.length < 1 || voices.length > 3) throw new Error('녹음 화자 수 1~3 범위 밖');
   const labels = {};
   const similarities = {};
   const proposals = [];
   for (const [name, reference] of Object.entries(references)) {
+    if (name === '미네') continue;
     if (!reference?.mean || !Number.isFinite(reference.minSimilarity)) continue;
     const scores = voices.map((voice) => cosine(normalized(voice), normalized(reference.mean)));
     const rank = scores.map((score, index) => ({ score, index })).sort((a, b) => b.score - a.score);
@@ -610,28 +632,59 @@ export function assignRecordingNames(voices, people = [], references = {}, turns
   proposals.sort((a, b) => b.score - a.score);
   for (const proposal of proposals) if (!labels[proposal.speaker]) labels[proposal.speaker] = proposal.name;
   const remaining = voices.map((_, index) => `S${index}`).filter((speaker) => !labels[speaker]);
+  const duration = Object.fromEntries(voices.map((_, index) => [`S${index}`, 0]));
+  for (const turn of turns) if (turn.speaker in duration)
+    duration[turn.speaker] += Math.max(0, turn.end - turn.start);
+  const total = Object.values(duration).reduce((sum, seconds) => sum + seconds, 0);
+  const shares = Object.fromEntries(Object.entries(duration).map(([speaker, seconds]) =>
+    [speaker, total ? seconds / total : 0]));
   const peopleList = people == null ? [] : Array.isArray(people) ? people : [people];
   const knownPeople = peopleList.map((person) => String(person)
     .replace(/^\[\[/u, '').replace(/\]\]$/u, '').split('|')[0].replace(/^.*\//u, ''))
     .filter((person) => person !== '나' && person !== '휘영');
   const mineOnly = knownPeople.length === 1 && knownPeople[0] === '미네';
-  if (mineOnly && remaining.length) {
-    const spokenSeconds = Object.fromEntries(remaining.map((speaker) => [speaker, 0]));
-    for (const turn of turns) if (turn.speaker in spokenSeconds)
-      spokenSeconds[turn.speaker] += Math.max(0, turn.end - turn.start);
+  const mine = references.미네;
+  let mineBasis = null;
+  if (mine?.mean && Number.isFinite(mine.minSimilarity) && remaining.length) {
+    const { mean, voiceWeight } = mineReference(mine, occurred);
+    const scores = Object.fromEntries(voices.map((voice, index) =>
+      [`S${index}`, cosine(normalized(voice), normalized(mean))]));
+    similarities.미네 = scores;
+    const ranked = [...remaining].sort((a, b) => scores[b] - scores[a] || a.localeCompare(b));
+    const strongest = ranked[0];
+    if (scores[strongest] >= Math.max(mine.minSimilarity, RECORDING_PERSON_MIN_SIMILARITY.미네)
+      && (ranked.length === 1 || scores[strongest] > scores[ranked[1]])) {
+      labels[strongest] = '미네';
+      mineBasis = 'voice';
+    } else if (knownPeople.includes('미네')) {
+      const combined = [...remaining].map((speaker) => ({ speaker,
+        score: voiceWeight * Math.max(0, scores[speaker]) + (1 - voiceWeight) * shares[speaker] }))
+        .sort((a, b) => b.score - a.score || a.speaker.localeCompare(b.speaker));
+      if (combined[0].score - (combined[1]?.score ?? 0) >= MINE_RECORDING_RULE.weakLead) {
+        labels[combined[0].speaker] = '미네';
+        mineBasis = 'voice+share';
+      }
+    }
+  } else if (!mine && mineOnly && remaining.length) {
     // 노트에 미네만 있으면 남은 화자 중 발화 시간이 가장 긴 목소리를 미네로 둔다.
-    const mineSpeaker = [...remaining].sort((a, b) => spokenSeconds[b] - spokenSeconds[a]
+    const mineSpeaker = [...remaining].sort((a, b) => duration[b] - duration[a]
       || a.localeCompare(b))[0];
     labels[mineSpeaker] = '미네';
+    mineBasis = 'share';
   }
   const unknown = remaining.filter((speaker) => !labels[speaker]);
   for (const [index, speaker] of unknown.entries()) labels[speaker] = unknown.length === 1
     ? '다른 사람' : `다른 사람 ${index + 1}`;
-  return { labels, similarities };
+  const evidence = Object.fromEntries(Object.entries(labels).map(([speaker, label]) => [speaker, {
+    label, basis: label === '미네' ? mineBasis : label === '나' || label === '휘영' ? 'voice' : 'share',
+    mineSimilarity: similarities.미네?.[speaker] ?? null, share: shares[speaker],
+  }]));
+  return { labels, similarities, evidence };
 }
 
 function recordingSpeakers(item, turns, voices, references, people, now) {
-  const { labels, similarities } = assignRecordingNames(voices, people, references, turns);
+  const { labels, similarities, evidence } = assignRecordingNames(voices, people, references,
+    turns, item.transcript.occurred);
   const segments = item.transcript.segments.map((segment, i) => {
     const scores = Object.fromEntries(Object.keys(labels).map((speaker) => [speaker, 0]));
     for (const turn of turns) if (turn.speaker in scores)
@@ -642,7 +695,7 @@ function recordingSpeakers(item, turns, voices, references, people, now) {
   });
   const base = { id: item.id, kind: 'Recordings', engine: 'pyannote',
     model: 'pyannote/speaker-diarization-community-1', diarizedAt: now.toISOString(),
-    transcribedAt: item.transcript.transcribedAt, turns, labels, segments };
+    transcribedAt: item.transcript.transcribedAt, turns, labels, evidence, segments };
   const parts = speakerParts(item.transcript, base);
   return { ...base, ...(parts.length ? { parts } : {}), similarities };
 }
@@ -757,8 +810,9 @@ export async function confirmOwner({ paths = MEDIA_DIARIZE_PATHS, now = new Date
 }
 
 // 이미 확인된 통화만 사용한다. '나'와 닮은 상대 목소리는 별도 인물 기준에 넣지 않는다.
-export const PERSON_GATE = Object.freeze({ minCalls: 6, cohesion: 0.3, maxOwnerSimilarity: 0.7 });
-export function evaluatePersonCandidate(calls, ownerMean) {
+export const PERSON_GATE = Object.freeze({ minCalls: 6, cohesion: 0.3, maxOwnerSimilarity: 0.7,
+  maxOtherSimilarity: 0.7, yearlyMinCalls: 4, yearlyMaxCalls: 10, maxCalls: 40 });
+export function evaluatePersonCandidate(calls, ownerMean, otherMean = null, { minSimilarityFloor = 0.2 } = {}) {
   const reasons = [];
   if (calls.length < PERSON_GATE.minCalls) reasons.push(`통화 ${calls.length}건 < ${PERSON_GATE.minCalls}`);
   const voices = calls.map((call) => normalized(call.voice));
@@ -771,26 +825,53 @@ export function evaluatePersonCandidate(calls, ownerMean) {
   const mean = voices.length ? normalized(voices[0].map((_, k) =>
     voices.reduce((total, voice) => total + voice[k], 0))) : null;
   const ownerSimilarity = mean ? cosine(mean, normalized(ownerMean)) : 1;
+  const otherSimilarity = otherMean && mean ? cosine(mean, normalized(otherMean)) : null;
   if (cohesion < PERSON_GATE.cohesion) reasons.push(`응집 ${cohesion.toFixed(3)} < ${PERSON_GATE.cohesion}`);
   if (ownerSimilarity > PERSON_GATE.maxOwnerSimilarity) reasons.push(`'나' 유사도 ${ownerSimilarity.toFixed(3)} > ${PERSON_GATE.maxOwnerSimilarity}`);
+  if (otherSimilarity !== null && otherSimilarity > PERSON_GATE.maxOtherSimilarity)
+    reasons.push(`다른 기준 유사도 ${otherSimilarity.toFixed(3)} > ${PERSON_GATE.maxOtherSimilarity}`);
   const similarities = mean ? voices.map((voice) => cosine(voice, mean)) : [];
-  return { mean, cohesion, ownerSimilarity, minSimilarity: similarities.length
-    ? Math.min(0.5, Math.max(0.2, Math.min(...similarities) - 0.1)) : 0.2,
+  const minSimilarity = Math.max(minSimilarityFloor, similarities.length
+    ? Math.min(0.5, Math.max(0.2, Math.min(...similarities) - 0.1)) : 0.2);
+  if (otherSimilarity !== null && minSimilarity <= otherSimilarity)
+    reasons.push(`기준선 ${minSimilarity.toFixed(3)} <= 다른 기준 유사도 ${otherSimilarity.toFixed(3)}`);
+  return { mean, cohesion, ownerSimilarity, otherSimilarity, minSimilarity,
   passed: reasons.length === 0, reasons };
 }
 
+export function selectYearlyPersonCalls(calls) {
+  const yearCounts = new Map();
+  return calls.filter(({ item }) => {
+    const year = item.transcript.occurred.slice(0, 4);
+    const count = yearCounts.get(year) ?? 0;
+    if (count >= PERSON_GATE.yearlyMaxCalls) return false;
+    yearCounts.set(year, count + 1);
+    return true;
+  }).slice(0, PERSON_GATE.maxCalls);
+}
+
+function personPaths(paths, name) {
+  if (name === '휘영') return { candidate: paths.personCandidate, candidateMeta: paths.personCandidateMeta,
+    voice: paths.personVoice, meta: paths.personMeta, review: paths.personReview };
+  if (name === '미네') return { candidate: paths.mineCandidate, candidateMeta: paths.mineCandidateMeta,
+    voice: paths.mineVoice, meta: paths.mineMeta, review: paths.mineReview };
+  throw new Error(`지원하지 않는 사람: ${name}`);
+}
+
 export async function personCandidate({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_PATHS,
-  now = new Date(), output = console } = {}) {
+  name = '휘영', now = new Date(), output = console } = {}) {
+  const target = personPaths(paths, name);
   const owner = readOwner(paths);
   if (!owner) throw new Error("'나' 기준 목소리 미등록");
   const saved = savedSpeakers(root);
-  const calls = loadCandidates(root, paths.mediaRoot).filter((item) => {
+  const eligible = loadCandidates(root, paths.mediaRoot).filter((item) => {
     const row = saved.get(item.id);
-    return item.counterpart === '휘영' && row?.transcribedAt === item.transcript.transcribedAt
+    return item.counterpart === name && row?.transcribedAt === item.transcript.transcribedAt
       && row.ownerVersion === owner.meta.version && row.ownerMargin >= ENROLL_STRONG_MARGIN
       && !row.check && row.segments?.length && row.turns?.length
       && existsSync(voicePathFor(paths, item.id));
-  }).map((item) => {
+  }).sort((a, b) => Date.parse(b.transcript.occurred) - Date.parse(a.transcript.occurred));
+  const verified = eligible.map((item) => {
     const row = saved.get(item.id);
     const vectors = readNpy(voicePathFor(paths, item.id));
     if (vectors.length !== 2) return null;
@@ -808,40 +889,78 @@ export async function personCandidate({ root = VAULT_PATHS.root, paths = MEDIA_D
     if (!(agreement > 0)) return null;
     return { item, voice: vectors[identified.speaker === 'S0' ? 1 : 0] };
   }).filter(Boolean);
-  const result = evaluatePersonCandidate(calls, owner.mean);
-  const lines = [`# 휘영 목소리 등록 후보 (${now.toISOString()})`, '',
+  const calls = name === '미네' ? selectYearlyPersonCalls(verified) : verified;
+  const other = name === '미네' && paths.personVoice && paths.personMeta
+    && existsSync(paths.personVoice) && existsSync(paths.personMeta)
+    ? readNpy(paths.personVoice)[0] : null;
+  const otherVersion = other ? JSON.parse(readFileSync(paths.personMeta, 'utf8')).version : null;
+  const result = evaluatePersonCandidate(calls, owner.mean, other,
+    { minSimilarityFloor: name === '미네' ? RECORDING_PERSON_MIN_SIMILARITY.미네 : 0.2 });
+  if (name === '미네' && (!other || !otherVersion)) {
+    result.reasons.push('휘영 기준 목소리 없음');
+    result.passed = false;
+  }
+  const dated = calls.map(({ item }) => item.transcript.occurred.slice(0, 10)).sort();
+  const period = dated.length ? { first: dated[0], last: dated.at(-1) } : null;
+  const yearCounts = [...new Set(dated.map((date) => date.slice(0, 4)))].sort()
+    .map((year) => ({ year: Number(year), count: dated.filter((date) => date.startsWith(year)).length }));
+  const years = [];
+  const vectors = result.mean ? [result.mean] : [];
+  if (name === '미네') {
+    for (const { year, count } of yearCounts) {
+      const samples = calls.filter(({ item }) => item.transcript.occurred.startsWith(String(year)));
+      if (count < PERSON_GATE.yearlyMinCalls) continue;
+      const unit = samples.map(({ voice }) => normalized(voice));
+      vectors.push(normalized(unit[0].map((_, index) =>
+        unit.reduce((sum, voice) => sum + voice[index], 0))));
+      years.push({ year: Number(year), count: samples.length, index: vectors.length - 1 });
+    }
+  }
+  const lines = [`# ${name} 목소리 등록 후보 (${now.toISOString()})`, '',
     `- 통화 ${calls.length}건 · 응집 ${result.cohesion.toFixed(3)} · '나' 유사도 ${result.ownerSimilarity.toFixed(3)}`,
+    ...(name === '미네' ? [`- 휘영 유사도 ${result.otherSimilarity === null ? '기준 없음' : result.otherSimilarity.toFixed(3)}`,
+      `- 통화 기간 ${period ? `${period.first} ~ ${period.last}` : '없음'} · 연도별 기준 ${years.map(({ year }) => year).join(', ') || '없음'}`,
+      `- 연도별 표본 ${yearCounts.map(({ year, count }) => `${year}년 ${count}건`).join(', ') || '없음'}`] : []),
     `- 품질 관문: ${result.passed ? '통과' : result.reasons.join(', ')}`, '',
-    '확인 뒤 등록: `node scripts/jobs/media-diarize.mjs --confirm-person=휘영`', ''];
+    `확인 뒤 등록: \`node scripts/jobs/media-diarize.mjs --confirm-person=${name}\``, ''];
   for (const { item } of calls) {
     const row = saved.get(item.id);
     lines.push(`## ${item.transcript.occurred.slice(0, 16)} ${item.id}`, '');
     for (const segment of row.segments.filter((part) => part.speaker === 'other').slice(0, 4))
-      lines.push(`- 휘영: ${item.transcript.segments[segment.i]?.text?.slice(0, 100) || ''}`);
+      lines.push(`- ${name}: ${item.transcript.segments[segment.i]?.text?.slice(0, 100) || ''}`);
     lines.push('');
   }
-  if (result.mean) writePrivate(paths.personCandidate, npyBuffer([result.mean]));
-  writePrivate(paths.personCandidateMeta, JSON.stringify({ createdAt: now.toISOString(),
+  if (result.mean) writePrivate(target.candidate, npyBuffer(vectors));
+  writePrivate(target.candidateMeta, JSON.stringify({ createdAt: now.toISOString(), name,
     calls: calls.map(({ item }) => item.id), ownerVersion: owner.meta.version,
     cohesion: result.cohesion, ownerSimilarity: result.ownerSimilarity,
+    ...(name === '미네' ? { otherSimilarity: result.otherSimilarity, otherVersion, period, years } : {}),
     minSimilarity: result.minSimilarity, passed: result.passed, reasons: result.reasons }));
-  writePrivate(paths.personReview, `${lines.join('\n')}\n`);
-  output.log(`[media-diarize] 휘영 후보 ${result.passed ? '관문 통과' : '관문 미달'}: ${paths.personReview}`);
+  writePrivate(target.review, `${lines.join('\n')}\n`);
+  output.log(`[media-diarize] ${name} 후보 ${result.passed ? '관문 통과' : '관문 미달'}: ${target.review}`);
   return result;
 }
 
-export async function confirmPerson({ paths = MEDIA_DIARIZE_PATHS, now = new Date(), output = console } = {}) {
-  if (!existsSync(paths.personCandidate) || !existsSync(paths.personCandidateMeta)) throw new Error('휘영 등록 후보 없음');
-  const candidate = JSON.parse(readFileSync(paths.personCandidateMeta, 'utf8'));
-  if (!candidate.passed || candidate.calls.length < PERSON_GATE.minCalls) throw new Error('휘영 후보 품질 관문 미달');
+export async function confirmPerson({ paths = MEDIA_DIARIZE_PATHS, name = '휘영',
+  now = new Date(), output = console } = {}) {
+  const target = personPaths(paths, name);
+  if (!existsSync(target.candidate) || !existsSync(target.candidateMeta)) throw new Error(`${name} 등록 후보 없음`);
+  const candidate = JSON.parse(readFileSync(target.candidateMeta, 'utf8'));
+  if (!candidate.passed || candidate.calls.length < PERSON_GATE.minCalls
+    || candidate.name && candidate.name !== name) throw new Error(`${name} 후보 품질 관문 미달`);
   const owner = readOwner(paths);
   if (!owner || owner.meta.version !== candidate.ownerVersion) throw new Error("'나' 기준 목소리 버전 변경");
-  writePrivate(paths.personVoice, readFileSync(paths.personCandidate));
-  writePrivate(paths.personMeta, JSON.stringify({ version: now.toISOString(), confirmedAt: now.toISOString(),
+  if (name === '미네' && (!paths.personMeta || !existsSync(paths.personMeta)
+    || JSON.parse(readFileSync(paths.personMeta, 'utf8')).version !== candidate.otherVersion))
+    throw new Error('휘영 기준 목소리 버전 변경');
+  writePrivate(target.voice, readFileSync(target.candidate));
+  writePrivate(target.meta, JSON.stringify({ version: now.toISOString(), confirmedAt: now.toISOString(),
     callCount: candidate.calls.length, calls: candidate.calls, ownerVersion: candidate.ownerVersion,
     cohesion: candidate.cohesion, ownerSimilarity: candidate.ownerSimilarity,
+    ...(name === '미네' ? { otherSimilarity: candidate.otherSimilarity, otherVersion: candidate.otherVersion,
+      period: candidate.period, years: candidate.years } : {}),
     minSimilarity: candidate.minSimilarity }));
-  output.log('[media-diarize] 휘영 목소리 등록');
+  output.log(`[media-diarize] ${name} 목소리 등록`);
   return { confirmed: true };
 }
 
@@ -1018,9 +1137,13 @@ export async function runRecordings({ root = VAULT_PATHS.root, paths = MEDIA_DIA
     const owner = readOwner(paths);
     const person = existsSync(paths.personVoice) && existsSync(paths.personMeta)
       ? { mean: readNpy(paths.personVoice)[0], meta: JSON.parse(readFileSync(paths.personMeta, 'utf8')) } : null;
+    const mine = paths.mineVoice && paths.mineMeta && existsSync(paths.mineVoice) && existsSync(paths.mineMeta)
+      ? { vectors: readNpy(paths.mineVoice), meta: JSON.parse(readFileSync(paths.mineMeta, 'utf8')) } : null;
     const references = {
       ...(owner ? { 나: { mean: owner.mean, minSimilarity: owner.meta.minSimilarity ?? 0.2 } } : {}),
       ...(person ? { 휘영: { mean: person.mean, minSimilarity: person.meta.minSimilarity } } : {}),
+      ...(mine ? { 미네: { mean: mine.vectors[0], vectors: mine.vectors,
+        minSimilarity: mine.meta.minSimilarity, period: mine.meta.period, years: mine.meta.years } } : {}),
     };
     const notePaths = indexNotes(root);
     const rules = trial ? null : registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
@@ -1086,12 +1209,15 @@ export async function runRecordings({ root = VAULT_PATHS.root, paths = MEDIA_DIA
     }
     if (trial) {
       mkdirSync(paths.trialRec, { recursive: true, mode: 0o700 });
-      const lines = ['# 녹음 화자 분리 시험', '', '| ID | 화자 수 | 이름 | 이름 판정 유사도 |', '|---|---:|---|---|'];
+      const lines = ['# 녹음 화자 분리 시험', '',
+        '| ID | 화자 수 | 이름 | 이름 판정 유사도 | 화자별 미네 유사도 | 발화 비율 | 판정 근거 |',
+        '|---|---:|---|---|---|---|---|'];
       for (const { item, speakers, similarities, preview } of previews) {
         writePrivate(join(paths.trialRec, `${item.id}.md`), `# ${item.id}\n\n${preview}\n`);
         const scores = Object.entries(similarities).flatMap(([name, rows]) =>
           Object.entries(rows).map(([speaker, score]) => `${name}/${speaker} ${score.toFixed(3)}`));
-        lines.push(`| ${item.id} | ${Object.keys(speakers.labels).length} | ${Object.values(speakers.labels).join('·')} | ${scores.join(', ') || '—'} |`);
+        const evidence = Object.entries(speakers.evidence);
+        lines.push(`| ${item.id} | ${Object.keys(speakers.labels).length} | ${Object.values(speakers.labels).join('·')} | ${scores.join(', ') || '—'} | ${evidence.map(([speaker, row]) => `${speaker} ${row.mineSimilarity === null ? '—' : row.mineSimilarity.toFixed(3)}`).join(', ')} | ${evidence.map(([speaker, row]) => `${speaker} ${(row.share * 100).toFixed(1)}%`).join(', ')} | ${evidence.map(([speaker, row]) => `${speaker} ${row.label}:${row.basis}`).join(', ')} |`);
       }
       writePrivate(join(paths.trialRec, 'summary.md'), `${lines.join('\n')}\n`);
     } else {
@@ -1129,8 +1255,10 @@ export function parseArgs(args) {
     else if (arg === '--render-notes') options.renderNotes = true;
     else if (arg === '--confirm-owner') options.confirmOwner = true;
     else if (arg === '--recordings') options.recordings = true;
-    else if (arg === '--person-candidate=휘영') options.personCandidate = true;
-    else if (arg === '--confirm-person=휘영') options.confirmPerson = true;
+    else if (['--person-candidate=휘영', '--person-candidate=미네'].includes(arg))
+      options.personCandidate = arg.split('=')[1];
+    else if (['--confirm-person=휘영', '--confirm-person=미네'].includes(arg))
+      options.confirmPerson = arg.split('=')[1];
     else if (arg === '--allow-night') options.allowNight = true;
     else if (arg === '--dry-run') options.dryRun = true;
     else if (arg.startsWith('--ids=')) options.ids = arg.slice(6).split(',');
@@ -1162,8 +1290,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // 정기 실행: pyannote가 음성 길이의 약 0.7배라 음성 합계 70분 ≈ 실제 50분(2026-10-16 회차당 9~10건 → 상향).
   try { options = parseArgs(argv.length ? argv : ['--apply', '--limit=30', '--max-minutes=70']); }
   catch (error) { console.error(`[media-diarize] ${error.message}`); process.exitCode = 2; }
-  if (options) (options.personCandidate ? personCandidate()
-    : options.confirmPerson ? confirmPerson()
+  if (options) (options.personCandidate ? personCandidate({ name: options.personCandidate })
+    : options.confirmPerson ? confirmPerson({ name: options.confirmPerson })
       : options.recordings ? runRecordings(options)
         : options.trial ? runTrial(options) : options.confirmOwner ? confirmOwner() : runApply(options)).then((summary) => {
     if (summary?.failed) process.exitCode = 1;

@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { recordingKind, RECORDING_DIALOGUE_KINDS, selectRecordings, assignRecordingNames,
   evaluatePersonCandidate, personCandidate, confirmPerson, runRecordings, parseArgs,
+  MINE_RECORDING_RULE, selectYearlyPersonCalls,
   renderSpeakerNote, runPython, parsePythonOutput } from './media-diarize.mjs';
 import { renderDialogue } from '../lib/media-dialogue.mjs';
 import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -88,6 +89,80 @@ test('휘영 녹음 기준선은 등록값보다 낮아지지 않고 0.45를 밑
   assert.deepEqual(assignRecordingNames([voice(0.48)], ['미네'], refs).labels, { S0: '휘영' });
   assert.deepEqual(assignRecordingNames([voice(0.48)], ['미네'], {
     휘영: { ...refs.휘영, minSimilarity: 0.5 } }).labels, { S0: '미네' });
+});
+
+test('미네 기준은 강한 목소리를 우선하고 약한 경우에는 발화 비율·기간을 결합한다', () => {
+  const voice = (similarity) => [Math.sqrt(1 - similarity ** 2), similarity];
+  const references = { 미네: { mean: [0, 1], minSimilarity: 0.8,
+    period: { first: '2029-01-01', last: '2030-12-31' } } };
+  const turns = [{ speaker: 'S0', start: 0, end: 35 }, { speaker: 'S1', start: 35, end: 100 }];
+  const strong = assignRecordingNames([voice(0.9), voice(0.5)], [], references, turns, '2030-05-01');
+  assert.equal(strong.labels.S0, '미네');
+  assert.equal(strong.evidence.S0.basis, 'voice');
+  assert.equal(strong.evidence.S0.share, 0.35);
+  assert.equal(strong.evidence.S0.mineSimilarity > 0.89, true);
+  const near = assignRecordingNames([voice(0.7), voice(0.3)], ['미네'], references, turns, '2030-05-01');
+  assert.equal(near.labels.S0, '미네');
+  assert.equal(near.evidence.S0.basis, 'voice+share');
+  const far = assignRecordingNames([voice(0.7), voice(0.3)], ['미네'], references, turns, '2034-05-01');
+  assert.equal(far.labels.S1, '미네');
+  assert.equal(far.evidence.S1.basis, 'voice+share');
+  assert.equal(MINE_RECORDING_RULE.farYears, 3);
+  assert.equal(assignRecordingNames([voice(0.6), voice(0.5)], [], references, turns,
+    '2030-05-01').labels.S0, '다른 사람 1');
+  assert.equal(assignRecordingNames([voice(0.6), voice(0.5)], ['미네'], references,
+    [{ speaker: 'S0', start: 0, end: 50 }, { speaker: 'S1', start: 50, end: 100 }],
+    '2030-05-01').labels.S0, '다른 사람 1');
+  assert.equal(assignRecordingNames([voice(0.9), voice(0.5)], ['지인'], references, turns,
+    '2030-05-01').labels.S0, '미네');
+});
+
+test('미네는 녹음 날짜에 가까운 연도별 기준을 사용한다', () => {
+  const references = { 미네: { mean: [0, 1, 0], vectors: [[0, 1, 0], [0, 0, 1]],
+    years: [{ year: 2030, count: 4, index: 1 }], minSimilarity: 0.8,
+    period: { first: '2029-01-01', last: '2030-12-31' } } };
+  const result = assignRecordingNames([[0, 0, 1]], [], references, [], '2030-01-01');
+  assert.equal(result.labels.S0, '미네');
+  assert.equal(result.evidence.S0.mineSimilarity, 1);
+});
+
+test('미네 후보는 나·휘영과 구별되지 않거나 표본이 부족하면 관문을 넘지 못한다', () => {
+  const calls = Array.from({ length: 6 }, (_, index) => ({ id: String(index), voice: [0, 1] }));
+  assert.equal(evaluatePersonCandidate(calls, [1, 0], [0, 1]).passed, false);
+  assert.equal(evaluatePersonCandidate(calls.slice(0, 5), [1, 0], [1, 0]).passed, false);
+  assert.equal(evaluatePersonCandidate(calls, [0, 1], [1, 0]).passed, false);
+});
+
+test('미네 판정 기준선은 0.45 이상이고 휘영 유사도보다 높아야 한다', () => {
+  const references = { 미네: { mean: [0, 1], minSimilarity: 0.2 } };
+  const voice = (similarity) => [Math.sqrt(1 - similarity ** 2), similarity];
+  assert.equal(assignRecordingNames([voice(0.44)], [], references).labels.S0, '다른 사람');
+  assert.equal(assignRecordingNames([voice(0.46)], [], references).labels.S0, '미네');
+  assert.equal(assignRecordingNames([voice(0.46)], [], { 미네: {
+    ...references.미네, minSimilarity: 0.5 } }).labels.S0, '다른 사람');
+  const calls = Array.from({ length: 6 }, (_, index) => ({ id: String(index),
+    voice: index === 5 ? [0, -1] : [0, 1] }));
+  const below = evaluatePersonCandidate(calls, [1, 0], voice(0.44), { minSimilarityFloor: 0.45 });
+  assert.equal(below.minSimilarity, 0.45);
+  assert.equal(below.passed, true);
+  const above = evaluatePersonCandidate(calls, [1, 0], voice(0.46), { minSimilarityFloor: 0.45 });
+  assert.equal(above.passed, false);
+  assert.match(above.reasons.join(', '), /기준선 0\.450 <= 다른 기준 유사도 0\.460/);
+});
+
+test('미네 후보 표본은 연도별 최근 10건과 전체 최근 40건으로 제한한다', () => {
+  const calls = [];
+  for (let year = 2030; year >= 2026; year -= 1)
+    for (let day = 12; day >= 1; day -= 1)
+      calls.push({ item: { transcript: { occurred: `${year}-01-${String(day).padStart(2, '0')}` } } });
+  const chosen = selectYearlyPersonCalls(calls);
+  assert.equal(chosen.length, 40);
+  assert.deepEqual([...new Set(chosen.map(({ item }) => item.transcript.occurred.slice(0, 4)))],
+    ['2030', '2029', '2028', '2027']);
+  for (const year of ['2030', '2029', '2028', '2027'])
+    assert.deepEqual(chosen.filter(({ item }) => item.transcript.occurred.startsWith(year))
+      .map(({ item }) => item.transcript.occurred.slice(8)),
+    ['12', '11', '10', '09', '08', '07', '06', '05', '04', '03']);
 });
 
 test('녹음 엔진 요청은 1~3명 범위를 쓰고 S2 결과를 받는다', async () => {
@@ -177,6 +252,82 @@ test('휘영 후보는 확인된 통화의 상대 특징값과 전사 예시만 
   assert.match(readFileSync(paths.personReview, 'utf8'), /휘영: 휘영의 말/);
 });
 
+test('미네 후보는 최근 확인 통화만 사용해 기간·연도별 기준을 만들고 확인 뒤 0600으로 등록한다', async (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'diarize-mine-calls-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const root = join(base, 'vault');
+  const paths = { mediaRoot: join(base, 'Media'), voices: join(base, 'Diarize', 'voices'),
+    ownerVoice: join(base, 'Diarize', 'voices', 'owner.npy'),
+    ownerMeta: join(base, 'Diarize', 'voices', 'owner.json'),
+    personVoice: join(base, 'Diarize', 'voices', 'person.npy'),
+    personMeta: join(base, 'Diarize', 'voices', 'person.json'),
+    mineCandidate: join(base, 'Diarize', 'voices', 'mine-candidate.npy'),
+    mineCandidateMeta: join(base, 'Diarize', 'voices', 'mine-candidate.json'),
+    mineVoice: join(base, 'Diarize', 'voices', 'mine.npy'),
+    mineMeta: join(base, 'Diarize', 'voices', 'mine.json'),
+    mineReview: join(base, 'Diarize', 'mine-review.md') };
+  put(paths.ownerVoice, npy([[1, 0, 0]]));
+  put(paths.ownerMeta, JSON.stringify({ version: 'v1', minSimilarity: 0.5 }));
+  put(paths.personVoice, npy([[0, 0, -1]]));
+  put(paths.personMeta, JSON.stringify({ version: 'v1' }));
+  const index = [];
+  for (let number = 1; number <= 9; number += 1) {
+    const id = number.toString(16).padStart(16, '0');
+    const year = number <= 4 ? 2028 : 2030;
+    const day = String(number <= 4 ? number : number - 4).padStart(2, '0');
+    const occurred = `${year}-01-${day}T12:00:00+09:00`;
+    const transcript = { id, kind: 'Calls', occurred, transcribedAt: 'v1', speech: true,
+      people: ['미네'], durationSec: 60, segments: [
+        { start: 0, end: 1000, text: '나의 말' }, { start: 1000, end: 2000, text: '미네의 말' }] };
+    index.push({ id, kind: 'Calls', occurred, archivePath: `Archive/${year}/${id}.m4a` });
+    put(join(root, VAULT_REL.mediaTranscripts, String(year), `${id}.json`), JSON.stringify(transcript));
+    put(join(root, VAULT_REL.mediaSpeakers, String(year), `${id}.json`), JSON.stringify({
+      id, transcribedAt: 'v1', ownerVersion: 'v1', ownerMargin: number === 9 ? 0.05 : 0.2,
+      turns: [{ start: 0, end: 1000, speaker: 'S0' }, { start: 1000, end: 2000, speaker: 'S1' }],
+      segments: [{ i: 0, speaker: 'owner' }, { i: 1, speaker: 'other' }] }));
+    put(join(paths.voices, 'pyannote', `${id}.npy`), npy([[1, 0, 0],
+      year === 2028 ? [0, 1, 0] : number === 8 ? [0, -1, 0] : [0, 0.8, 0.6]]));
+  }
+  put(join(root, VAULT_REL.mediaArchiveIndex), `${index.map((row) => JSON.stringify(row)).join('\n')}\n`);
+  assert.equal(parseArgs(['--person-candidate=미네']).personCandidate, '미네');
+  assert.equal(parseArgs(['--confirm-person=미네']).confirmPerson, '미네');
+  const result = await personCandidate({ root, paths, name: '미네',
+    now: new Date('2030-02-01'), output: QUIET });
+  assert.equal(result.passed, true);
+  const meta = JSON.parse(readFileSync(paths.mineCandidateMeta, 'utf8'));
+  assert.deepEqual(meta.period, { first: '2028-01-01', last: '2030-01-04' });
+  assert.deepEqual(meta.years.map(({ year, count }) => [year, count]), [[2028, 4], [2030, 4]]);
+  assert.equal(meta.calls.length, 8);
+  assert.equal(meta.minSimilarity, 0.45);
+  assert.match(readFileSync(paths.mineReview, 'utf8'), /연도별 표본 2028년 4건, 2030년 4건/);
+  const candidateVoice = readFileSync(paths.mineCandidate);
+  const dataStart = 10 + candidateVoice.readUInt16LE(8);
+  assert.match(candidateVoice.toString('latin1', 10, dataStart), /'shape': \(3, 3\)/);
+  assert.ok(candidateVoice.readFloatLE(dataStart + 4 * 4) > 0.99);
+  assert.ok(candidateVoice.readFloatLE(dataStart + 4 * 8) > 0.59);
+  assert.equal(existsSync(paths.mineVoice), false);
+  assert.match(readFileSync(paths.mineReview, 'utf8'), /미네: 미네의 말/);
+  for (const path of [paths.mineCandidate, paths.mineCandidateMeta, paths.mineReview])
+    assert.equal(statSync(path).mode & 0o777, 0o600);
+  put(paths.personMeta, JSON.stringify({ version: 'v2' }));
+  await assert.rejects(() => confirmPerson({ paths, name: '미네', output: QUIET }), /휘영 기준 목소리 버전 변경/);
+  put(paths.personMeta, JSON.stringify({ version: 'v1' }));
+  await confirmPerson({ paths, name: '미네', now: new Date('2030-02-02'), output: QUIET });
+  for (const path of [paths.mineVoice, paths.mineMeta])
+    assert.equal(statSync(path).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(readFileSync(paths.mineMeta)).years, meta.years);
+  put(paths.personVoice, npy([[0, 0.75, -Math.sqrt(1 - 0.75 ** 2)]]));
+  const tooSimilar = await personCandidate({ root, paths, name: '미네',
+    now: new Date('2030-02-03'), output: QUIET });
+  assert.equal(tooSimilar.passed, false);
+  assert.match(tooSimilar.reasons.join(', '), /기준선 0\.450 <= 다른 기준 유사도/);
+  const noReferencePaths = { ...paths, personVoice: join(base, 'missing-person.npy') };
+  const blocked = await personCandidate({ root, paths: noReferencePaths, name: '미네',
+    now: new Date('2030-02-04'), output: QUIET });
+  assert.equal(blocked.passed, false);
+  await assert.rejects(() => confirmPerson({ paths, name: '미네', output: QUIET }), /관문 미달/);
+});
+
 test('녹음 렌더는 세 화자와 하위 발화를 표시하고 두 번째 결과가 같다', () => {
   const transcript = { speech: true, transcribedAt: 'v1', segments: [
     { start: 0, end: 1000, text: '안녕 - 응' }, { start: 1000, end: 2000, text: '잘 지내' }] };
@@ -257,6 +408,9 @@ test('녹음 시험은 볼트 쓰기 없이 미리보기만 만들고 적용은 
   assert.equal(existsSync(join(root, VAULT_REL.mediaSpeakers, '2030', `${ID}.json`)), false);
   assert.equal(existsSync(`${join(root, VAULT_REL.mediaTranscribeState)}.lock`), false);
   assert.match(readFileSync(join(paths.trialRec, `${ID}.md`), 'utf8'), /나: 안녕\n미네: 응/);
+  const trialSummary = readFileSync(join(paths.trialRec, 'summary.md'), 'utf8');
+  assert.match(trialSummary, /화자별 미네 유사도 \| 발화 비율 \| 판정 근거/);
+  assert.match(trialSummary, /S1 미네:share/);
   assert.equal(statSync(join(paths.trialRec, `${ID}.md`)).mode & 0o777, 0o600);
   let failNote = true;
   const write = (path, content) => {
@@ -274,11 +428,23 @@ test('녹음 시험은 볼트 쓰기 없이 미리보기만 만들고 적용은 
   assert.match(updated, /## 오너 메모\n\n보존/);
   assert.equal(JSON.parse(readFileSync(join(root, VAULT_REL.mediaSpeakers, '2030', `${ID}.json`))).kind, 'Recordings');
   const stored = JSON.parse(readFileSync(join(root, VAULT_REL.mediaSpeakers, '2030', `${ID}.json`)));
+  assert.deepEqual(stored.evidence.S1,
+    { label: '미네', basis: 'share', mineSimilarity: null, share: 0.5 });
   assert.equal(renderSpeakerNote(updated, transcript, stored), updated);
   assert.equal(renderSpeakerNote(note, transcript, { ...stored, labels: { S0: '나' },
     segments: [{ i: 0, speaker: 'S0' }], parts: [] }), note);
   const second = await runRecordings({ ...options, ids: null, write });
   assert.equal(second.notes, 0);
+  assert.equal(readFileSync(notePath, 'utf8'), updated);
+  paths.mineVoice = join(base, 'Diarize', 'voices', 'mine.npy');
+  paths.mineMeta = join(base, 'Diarize', 'voices', 'mine.json');
+  put(paths.mineVoice, npy([[0, 1]]));
+  put(paths.mineMeta, JSON.stringify({ minSimilarity: 0.8,
+    period: { first: '2029-01-01', last: '2030-12-31' }, years: [] }));
+  await runRecordings({ ...options, trial: true });
+  const withMine = readFileSync(join(paths.trialRec, 'summary.md'), 'utf8');
+  assert.match(withMine, /S1 1\.000/);
+  assert.match(withMine, /S1 미네:voice/);
   assert.equal(readFileSync(notePath, 'utf8'), updated);
   assert.equal(parseArgs(['--recordings', '--trial', '--limit=10']).recordings, true);
   assert.equal(parseArgs(['--recordings', '--apply', '--dry-run']).dryRun, true);
