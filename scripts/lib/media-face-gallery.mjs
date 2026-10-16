@@ -33,12 +33,12 @@ function capturedDate(capturedAt) {
 export function capturePeriod(capturedAt, capturedConfidence) {
   const date = capturedDate(capturedAt);
   // estimated는 저장 시각 상한이므로 상한이 출생 전이면 촬영도 출생 전이다.
-  if (date && date < FACE_BIRTH) return 'prebirth';
+  if (capturedConfidence !== 'album' && date && date < FACE_BIRTH) return 'prebirth';
   return ageBand(capturedAt, capturedConfidence) ? 'banded' : 'bandless';
 }
 
 export function ageBand(capturedAt, capturedConfidence) {
-  if (['estimated', 'review'].includes(capturedConfidence)) return null;
+  if (['estimated', 'review', 'album'].includes(capturedConfidence)) return null;
   const date = capturedDate(capturedAt);
   if (!date || date < FACE_BIRTH) return null;
   const [year, month, day] = date.split('-').map(Number);

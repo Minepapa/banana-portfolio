@@ -223,7 +223,8 @@ export function render(records, description, existing, now, movedFrom = null, op
   if (existing && (!prior || existing.indexOf(START) !== existing.lastIndexOf(START)
     || existing.indexOf(END) !== existing.lastIndexOf(END))) throw new Error('기계 생성 표식이 없거나 중복됨');
   const previousFields = existing ? parseFrontmatter(existing) : {};
-  if (existing && previousFields.momentId !== records[0].id) throw new Error('기존 노트 momentId 불일치');
+  if (existing && previousFields.momentId !== (options.previousMomentId || records[0].id))
+    throw new Error('기존 노트 momentId 불일치');
   const frontmatterEnd = existing?.match(/^---\n[\s\S]*?\n---\n/)?.[0].length;
   if (existing && (frontmatterEnd == null || frontmatterEnd > existing.indexOf(START))) throw new Error('기존 노트 머리말 오류');
   const before = existing ? existing.slice(frontmatterEnd, existing.indexOf(START)) : '';
@@ -232,7 +233,7 @@ export function render(records, description, existing, now, movedFrom = null, op
   const titleSummary = options.titleScene
     ? clean(titleWithScene(description.summary, { place: description.place, occasions: options.occasions,
       scene: options.titleScene, period: timePeriod(first) })) : description.summary;
-  const momentTitle = `${day(first)} ${titleSummary} 순간`;
+  const momentTitle = `${options.dateUnknown ? '0000-00-00' : day(first)} ${titleSummary} 순간`;
   const previousCategories = Array.isArray(previousFields.category) ? previousFields.category
     : previousFields.category ? [previousFields.category] : [];
   const configuredCategories = Array.isArray(options.category)
@@ -248,7 +249,8 @@ export function render(records, description, existing, now, movedFrom = null, op
     ...previousFields,
     type: 'media', category: categories.length === 1 ? categories[0] : categories,
     description: momentTitle,
-    sensitivity: '개인', created, modified: now.slice(0, 10), occurred: records[0].capturedAt,
+    sensitivity: '개인', created, modified: now.slice(0, 10),
+    occurred: options.dateUnknown ? '날짜 미상' : records[0].capturedAt,
     origin: `media:${records[0][options.pathField || 'archivePath']}`, mediaCount: records.length,
     momentId: records[0].id,
     mediaIds: records.map((record) => record.id), startAt: records[0].capturedAt,
@@ -261,6 +263,12 @@ export function render(records, description, existing, now, movedFrom = null, op
   if (options.album) fields.album = options.album;
   if (options.albumLabel) fields.albumLabel = options.albumLabel;
   else if (options.source === 'import') delete fields.albumLabel;
+  if (options.dateUnknown) fields.dateCertainty = 'unknown';
+  else if (options.source === 'import') delete fields.dateCertainty;
+  if (options.dateUnknown) {
+    delete fields.startAt;
+    delete fields.endAt;
+  }
   if (description.place) fields.place = description.place;
   else delete fields.place;
   if (description.address) fields.address = description.address;
@@ -300,7 +308,7 @@ export function render(records, description, existing, now, movedFrom = null, op
     return `- ${VIDEO.has(extname(path).toLowerCase()) ? '영상' : '사진'}: ${path}`;
   });
   const memoLinks = Array.isArray(fields.memos) ? fields.memos : [];
-  const generated = `${START}\n# ${momentTitle}\n\n- 시간: ${clock(first)}–${clock(last)}\n- 장소·활동: ${description.summary}${description.address ? `\n- 주소: ${description.address}` : ''}${options.occasions?.length ? `\n- 기념일·일정: ${options.occasions.join(' · ')}` : ''}${options.vision?.scenes.length ? `\n- 장면: ${options.vision.scenes.join(', ')}` : ''}\n- 정보 출처: ${description.source}\n\n## 원본\n\n${lines.join('\n')}${memoLinks.length ? `\n\n${memoLinks.map((link) => `- 📎 메모: ${link}`).join('\n')}` : ''}\n${END}`;
+  const generated = `${START}\n# ${momentTitle}\n\n- 시간: ${options.dateUnknown ? '촬영 날짜 미상 (앨범 기준; 색인 시각은 배치용)' : `${clock(first)}–${clock(last)}`}\n- 장소·활동: ${description.summary}${description.address ? `\n- 주소: ${description.address}` : ''}${options.occasions?.length ? `\n- 기념일·일정: ${options.occasions.join(' · ')}` : ''}${options.vision?.scenes.length ? `\n- 장면: ${options.vision.scenes.join(', ')}` : ''}\n- 정보 출처: ${options.dateUnknown ? '앨범 이름표 (날짜 미상)' : description.source}\n\n## 원본\n\n${lines.join('\n')}${memoLinks.length ? `\n\n${memoLinks.map((link) => `- 📎 메모: ${link}`).join('\n')}` : ''}\n${END}`;
   return `${frontmatter}${before}${generated}${owner}`;
 }
 
