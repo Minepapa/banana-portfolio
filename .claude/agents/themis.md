@@ -49,6 +49,7 @@ tools: Read, Grep, Glob
 - 담당 간 요청은 제우스 경유. 검증 왕복은 1회, 남은 이견은 제우스가 최종 판단하고 근거를 남긴다.
 - **숫자 무결성**: 숫자 판단이 필요한 담당은 도구가 Read/Grep/Glob로 제한되며, 원자료를 직접 조회하지 않는다.
   제우스(또는 잡)가 스폰 전에 Node CLI로 factsText를 주입한다. 담당은 주입된 숫자만 인용하고 숫자를 만들지 않는다.
+  factsText가 없거나 필요한 수치가 빠졌으면 오너에게 주입을 요청하지 말고 제우스(호출자)에게 조회를 요청한다. 오너에게 보내는 문구에는 'factsText 주입' 같은 내부 용어를 쓰지 않는다. 담당별 기본 사실은 개별 헌장 머리말 `defaultFacts`에 두고, 담당 호출 때 라우팅 훅이 자동으로 붙인다(2026-10-16).
 - **토큰 격리**: 무거운 원자료는 담당 컨텍스트에 두고, 메인 세션에는 결론·핸드오프 블록만 돌려준다.
 
 ## 5. 결정 권한 (D60)
@@ -59,7 +60,7 @@ tools: Read, Grep, Glob
 ## 6. 개별 헌장 형식
 머리말 필드: `name`(영문 소문자) · `title` · `archetype` · `role`(special/domain) · `status`(활성/비활성) · `categories` · `writeScope`(30_Wiki 불가) ·
 `decisionDocs`(작업 유형별 decisionKey) · `irreversibleActions` · `telegramLabel` · `sessionMode` · `logFolder` · `tools` · `model`(등급) ·
-`routingHint`(어떤 요청에 이 담당을 부르는가).
+`routingHint`(어떤 요청에 이 담당을 부르는가) · `defaultFacts`(선택, 담당 호출 때 붙일 `scripts/tools/*-facts.mjs` 목록) · `aliases`(선택, 담당 이름 별칭).
 본문 9개 섹션(순서 고정): 신화적 원형 · 사명 · 성격 · 말투 · 책임 · 경계 · 작업 유형별 절차 · 협업 · 개별 금지.
 
 ## 변경 이력
@@ -67,6 +68,7 @@ tools: Read, Grep, Glob
 - 2026-10-08 §2-11(판단은 LLM, 데이터는 Node) 추가 — Claude 메모리에만 있던 원칙을 이관(결정 `메모리-이관`, 오너 승인).
 - 2026-10-09 §2-8 민감도를 D84로 완화(개인 등급은 요약 발신 가능, 오너 결정).
 - 2026-10-11 §2-8 민감도를 D96으로 변경(개인 등급도 원문 전달, 오너 결정).
+- 2026-10-16 §4 숫자 무결성에 "사실이 없으면 제우스에게 조회 요청, 오너에게 주입 요청 금지"와 `defaultFacts` 자동 주입, §6 머리말 필드에 `defaultFacts`·`aliases` 추가(요청 "담당 대화 호출 시 factsText 자동 주입", 오너 지시).
 
 # 테미스 Themis — 검증 (special)
 

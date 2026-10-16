@@ -4,13 +4,17 @@
 //
 // I/O 계약(Claude Code UserPromptSubmit):
 // - stdin: JSON { prompt, session_id, cwd, ... }
-// - stdout: 출력 텍스트는 프롬프트 처리 전 컨텍스트로 주입된다. 매칭 시에만 1블록 방출.
+// - stdout: 출력 텍스트는 프롬프트 처리 전 컨텍스트로 주입된다. 담당 기본 사실이 있으면 두 번째 블록을 방출.
 // - exit: 항상 0. 차단이 아니라 리마인드다(오발은 무해). 파싱/기타 실패도 조용히 통과.
 //
 // 판정 로직은 순수함수 classifyRequest(route-keywords.mjs, 테스트됨)에 위임 — 이 파일은 I/O만.
 
-import { classifyRequest } from '../lib/route-keywords.mjs';
-import { AGENT_IDS, agentLabel } from '../lib/agent-registry.mjs';
+import { classifyRequest, namedDepartment } from '../lib/route-keywords.mjs';
+import { AGENT_IDS, agentDefaultFacts, agentLabel } from '../lib/agent-registry.mjs';
+import { departmentCallFacts } from '../tools/department-call-facts.mjs';
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // 담당 라벨은 헌장에서 생성한 레지스트리에서 읽는다(손 복사 금지, 2026-10-14).
 const DEPT_LABEL = Object.fromEntries(AGENT_IDS.map((id) => [id, agentLabel(id)]));
@@ -31,31 +35,54 @@ function readStdin() {
   });
 }
 
-async function main() {
-  let prompt = '';
-  try {
-    const raw = await readStdin();
-    if (raw) prompt = String(JSON.parse(raw)?.prompt ?? '');
-  } catch {
-    // 파싱 실패 → 조용히 통과(무해).
-    process.exit(0);
-  }
-
+export async function routeReminder(prompt, {
+  telegram = process.env.CLAUDE_TELEGRAM_SESSION === '1',
+  factsForAgent = departmentCallFacts,
+  defaultFacts = agentDefaultFacts,
+} = {}) {
   const { delegate, dept } = classifyRequest(prompt);
-  if (!delegate) process.exit(0);
+  if (!delegate) return '';
 
   const label = DEPT_LABEL[dept] ?? '해당 부서';
   // system-reminder 톤(하네스가 컨텍스트로 주입). 차단 아님.
-  process.stdout.write(
+  let output =
     `<system-reminder>` +
       `[판테온 라우팅] 이 요청이 담당 업무라면 해당 에이전트에 위임하라(헌장 §1·§3). ` +
       `1차 추정 부서: ${label}. Agent tool로 이름 없이 동기 스폰(run_in_background:false)하고, ` +
       `무거운 조회·평가는 부서 컨텍스트에 격리한 채 필수입력 블록만 회수해 종합하라. ` +
       `게이트 결정(성향 갱신·확정/기각·차단해제·주문/리밸런싱 제안)이면 부서 필수입력을 모아 복합 종합(§2). ` +
       `코드 수정 등 담당 업무가 아니거나 이미 위임 경로면 이 리마인드는 무시하라.` +
-      `</system-reminder>\n`,
-  );
-  process.exit(0);
+      `</system-reminder>\n`;
+  if (!defaultFacts(dept).length || (!telegram && namedDepartment(prompt) !== dept)) return output;
+  try {
+    const result = await factsForAgent(dept);
+    if (result.timedOut) {
+      output += `<system-reminder>node scripts/tools/department-call-facts.mjs ${dept}로 직접 조회하라.</system-reminder>\n`;
+    } else if (result.factsText) {
+      output += `<system-reminder>[담당 기본 사실 — 스폰 시 factsText로 그대로 전달]\n${result.factsText}\n</system-reminder>\n`;
+    }
+  } catch {
+    // 잘못된 생성물이나 예상 밖 조회 오류도 UserPromptSubmit 훅을 막지 않는다.
+  }
+  return output;
 }
 
-main();
+async function main() {
+  try {
+    const raw = await readStdin();
+    const prompt = raw ? String(JSON.parse(raw)?.prompt ?? '') : '';
+    process.stdout.write(await routeReminder(prompt));
+  } catch {
+    // 파싱 실패 → 조용히 통과(무해).
+  }
+}
+
+if (process.argv[1]) {
+  let invokedPath;
+  try {
+    invokedPath = realpathSync(process.argv[1]);
+  } catch {
+    invokedPath = resolve(process.argv[1]);
+  }
+  if (fileURLToPath(import.meta.url) === invokedPath) await main();
+}

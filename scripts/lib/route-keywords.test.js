@@ -36,3 +36,23 @@ test('비업무와 이미 위임 중인 요청은 훅이 통과시킨다', () =>
   }
   for (const bad of [null, undefined, 123, {}, []]) assert.equal(classifyRequest(bad).delegate, false);
 });
+
+test('담당 이름은 키워드보다 우선하며 먼저 나온 이름을 고른다', () => {
+  for (const prompt of ['플루토스 안녕 요즘 어때', '플루토스 밴드 괜찮아?', '카이로스 오늘 어땠어', 'Plutus 안녕', 'kairos 안녕']) {
+    assert.deepEqual(classifyRequest(prompt), { delegate: true, dept: 'plutus', matched: [] }, prompt);
+  }
+  assert.equal(classifyRequest('클리오 플루토스 리밸런싱').dept, 'clio');
+  assert.equal(classifyRequest('플루토스 클리오 기록').dept, 'plutus');
+  assert.equal(classifyRequest('제우스 안녕').delegate, false);
+  assert.equal(classifyRequest('제우스 리밸런싱').dept, 'plutus');
+  assert.equal(classifyRequest('Plutonic 안녕').delegate, false);
+});
+
+test('channel 태그가 있으면 속성 대신 본문으로 라우팅한다', () => {
+  const channel = (attributes, body) => `<channel source="plugin:telegram:telegram" ${attributes}>${body}</channel>`;
+  assert.equal(classifyRequest(channel('user="클리오"', '플루토스 밴드 괜찮아?')).dept, 'plutus');
+  assert.equal(classifyRequest(channel('user="클리오 > 플루토스"', '안녕')).delegate, false);
+  assert.equal(classifyRequest(channel('user="플루토스"', '안녕')).delegate, false);
+  assert.equal(classifyRequest(channel('user="플루토스"', '코드 리팩터링 해줘')).delegate, false);
+  assert.equal(classifyRequest(channel('user="클리오"', '/plutus 리밸런싱')).delegate, false);
+});
