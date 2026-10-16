@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 볼트 헌장을 Claude Code 에이전트 정의로 복사한다. 볼트는 읽기만 한다.
-import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
@@ -11,7 +11,6 @@ const OLD_FILES = ['kairos.md', 'apollo.md', 'PANTHEON.md'];
 export { LEGACY_OVERRIDES, AGENT_SPECIFIC_OVERRIDES };
 const OLD_NAMES = ['Athena', 'Kairos', 'Hermes', 'Apollo', '투자전략실', '퀀트전략실', '운영실', '비서실', '리스크관리실'];
 const DEFAULT_OUT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.claude', 'agents');
-const TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
 // 라우팅 키워드 표(이관 4-5, D60): 헌장 머리말 routingKeywords에서 생성한다. route-keywords.mjs가 읽는다.
 export const DEFAULT_ROUTE_OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'route-keywords.generated.json');
 
@@ -19,36 +18,30 @@ export const DEFAULT_ROUTE_OUT = join(dirname(fileURLToPath(import.meta.url)), '
 // decisionDocs 키(업무 → 담당)에서 생성한다. agent-registry.mjs가 읽는다.
 export const DEFAULT_REGISTRY_OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'agent-registry.generated.json');
 
-export function validateDefaultFacts(value, name, toolsDir = TOOLS_DIR) {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) throw new Error(`defaultFacts 형식 오류: ${name}`);
-  return value.map((command) => {
-    if (typeof command !== 'string') throw new Error(`defaultFacts 명령 오류: ${name}`);
-    const match = /^([a-z0-9][a-z0-9-]*-facts\.mjs)( --dry-run)?$/.exec(command);
-    if (!match || (match[1] === 'macro-overlay-facts.mjs' && !match[2]) ||
-        (match[2] && match[1] !== 'macro-overlay-facts.mjs')) {
-      throw new Error(`defaultFacts 명령 오류: ${name}: ${command}`);
-    }
-    const path = join(toolsDir, match[1]);
-    if (!existsSync(path) || !lstatSync(path).isFile()) throw new Error(`defaultFacts 파일 없음: ${name}: ${match[1]}`);
-    return command;
-  });
+export function parseWorkTypes(body, name) {
+  const section = body.match(/^## 7\. 작업 유형별 절차\r?\n([\s\S]*?)(?=^## 8\.)/m)?.[1];
+  const rows = section?.split(/\r?\n/).filter((line) => line.startsWith('|')) ?? [];
+  if (rows.length < 3 || rows[0].split('|')[1].trim() !== '유형') throw new Error(`작업 유형별 절차 표 없음: ${name}`);
+  const types = rows.slice(2).map((line) => line.split('|')[1]?.trim());
+  if (types.some((type) => !type) || new Set(types).size !== types.length) throw new Error(`작업 유형 중복·누락: ${name}`);
+  return types;
 }
 
-export function buildAgentRegistry({ charterDir = vaultAbs(VAULT_REL.agentCharters), toolsDir = TOOLS_DIR } = {}) {
+export function buildAgentRegistry({ charterDir = vaultAbs(VAULT_REL.agentCharters) } = {}) {
   const agents = {};
   const duties = {};
   for (const name of AGENT_NAMES) {
-    const { fields } = parseVaultNote(readFileSync(join(charterDir, `${name}.md`), 'utf8'));
+    const { fields, body } = parseVaultNote(readFileSync(join(charterDir, `${name}.md`), 'utf8'));
+    if (fields.defaultFacts !== undefined) console.warn(`헌장 defaultFacts 제거 필요: ${name}`);
+    const workTypes = parseWorkTypes(body, name);
     const english = name[0].toUpperCase() + name.slice(1);
     const label = `${fields.title} ${english}`;
     if (!fields.title || fields.telegramLabel !== `[${label}]`) throw new Error(`title·telegramLabel 불일치: ${name}`);
-    const defaultFacts = validateDefaultFacts(fields.defaultFacts, name, toolsDir);
     const aliases = fields.aliases ?? [];
     if (!Array.isArray(aliases) || aliases.some((alias) => typeof alias !== 'string' || !alias.trim())) {
       throw new Error(`aliases 형식 오류: ${name}`);
     }
-    agents[name] = { title: fields.title, english, label, ...(defaultFacts.length ? { defaultFacts } : {}), ...(aliases.length ? { aliases } : {}) };
+    agents[name] = { title: fields.title, english, label, workTypes, ...(aliases.length ? { aliases } : {}) };
     const docs = fields.decisionDocs && typeof fields.decisionDocs === 'object' ? fields.decisionDocs : {};
     for (const duty of Object.keys(docs)) {
       if (duties[duty] && duties[duty] !== name) throw new Error(`업무 담당 중복: ${duty} (${duties[duty]}, ${name})`);

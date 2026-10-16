@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+export const FACTS_META = {"serves":[{"agent":"plutus","workType":"거시 위험 감시"}],"attach":"always","args":["--dry-run"],"summary":"거시 전술 오버레이 신호"};
 // macro-overlay-facts.mjs — 거시 전술 오버레이 대화형 보고용 Node 결정론 사실 조립기.
 //
 // ledger-facts.mjs·rebalance-facts.mjs와 같은 패턴(Node는 사실만 조립, 판단은 LLM)이되

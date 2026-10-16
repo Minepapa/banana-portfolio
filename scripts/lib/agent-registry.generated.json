@@ -3,37 +3,66 @@
     "zeus": {
       "title": "제우스",
       "english": "Zeus",
-      "label": "제우스 Zeus"
+      "label": "제우스 Zeus",
+      "workTypes": [
+        "일반 요청",
+        "게이트 결정(주문·리밸런싱 제안 등)",
+        "텔레그램",
+        "기록"
+      ]
     },
     "clio": {
       "title": "클리오",
       "english": "Clio",
-      "label": "클리오 Clio"
+      "label": "클리오 Clio",
+      "workTypes": [
+        "ingest",
+        "query",
+        "lint",
+        "성향 관찰"
+      ]
     },
     "themis": {
       "title": "테미스",
       "english": "Themis",
-      "label": "테미스 Themis"
+      "label": "테미스 Themis",
+      "workTypes": [
+        "사전 검증",
+        "보류",
+        "발신"
+      ]
     },
     "hermes": {
       "title": "헤르메스",
       "english": "Hermes",
-      "label": "헤르메스 Hermes"
+      "label": "헤르메스 Hermes",
+      "workTypes": [
+        "아침 브리핑",
+        "할 일 추출",
+        "일정 조회",
+        "일정 등록·수정"
+      ]
     },
     "athena": {
       "title": "아테나",
       "english": "Athena",
-      "label": "아테나 Athena"
+      "label": "아테나 Athena",
+      "workTypes": [
+        "순간 정리",
+        "핵심 기억 후보"
+      ]
     },
     "plutus": {
       "title": "플루토스",
       "english": "Plutus",
       "label": "플루토스 Plutus",
-      "defaultFacts": [
-        "rebalance-facts.mjs",
-        "macro-overlay-facts.mjs --dry-run",
-        "ledger-facts.mjs",
-        "risk-facts.mjs"
+      "workTypes": [
+        "분기 리밸런싱안·신규 현금 배분",
+        "돌파매매 현황·이상",
+        "전략 변경 검토",
+        "거시 위험 감시",
+        "장부 품질",
+        "주간 리포트·KPI"
       ],
       "aliases": [
         "카이로스",

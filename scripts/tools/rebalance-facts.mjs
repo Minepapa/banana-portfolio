@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// rebalance-facts.mjs — 자산분배 트랙(Athena) 대화형 보고용 Node 결정론 사실 조립기.
+export const FACTS_META = {"serves":[{"agent":"plutus","workType":"분기 리밸런싱안·신규 현금 배분"}],"attach":"always","args":[],"summary":"계좌 비중과 리밸런싱 밴드 갭"};
+// rebalance-facts.mjs — 플루토스 대화형 보고용 Node 결정론 사실 조립기.
 //
-// ledger-facts.mjs·risk-facts.mjs와 같은 패턴(Hermes/Athena 스폰 전에 이 CLI로 factsText를
+// ledger-facts.mjs·risk-facts.mjs와 같은 패턴(플루토스 스폰 전에 이 CLI로 factsText를
 // 만들어 주입) — 이 파일은 State/Holdings를 읽어 5/25 밴드 갭까지만 계산한다("Node는
 // 사실만 조립, 판단은 LLM" 원칙). 이탈이 확인된 뒤 "구체적으로 무엇을 팔고 살지"는
-// Athena의 재량 판단이라 여기서 만들지 않는다.
+// 플루토스의 재량 판단이라 여기서 만들지 않는다.
 //
 // 사용법:
 //   node scripts/tools/rebalance-facts.mjs            # 사람이 읽는 보고

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// quant-factor-facts.mjs — 퀀트 트랙(Kairos) OCF/P 랭킹 대화형 보고용 Node 결정론
+export const FACTS_META = {"serves":[],"attach":"on-request","args":[],"summary":"옛 퀀트 팩터 랭킹","deprecated":"팩터 전략은 돌파매매 전환으로 폐기"};
+// quant-factor-facts.mjs — 폐기된 퀀트 트랙 OCF/P 랭킹 대화형 보고용 Node 결정론
 // 사실 조립기. ledger-facts.mjs·rebalance-facts.mjs와 같은 패턴(Node는 사실만 조립,
-// 판단은 LLM) — 순위까지만 내고, "진짜로 이 10종목을 살지"는 Kairos 재량.
+// 판단은 LLM) — 순위까지만 내고, "진짜로 이 10종목을 살지"는 당시 담당 재량.
 //
 // 흐름: 유니버스(시가총액 상위 350, 코스피200+코스닥150 근사) → 유동성 필터(30억원) →
 // 종목별 실제공시일 기준 OCF 조회(fetchOcfPointInTime, 룩어헤드 방지) → OCF/P 순위.

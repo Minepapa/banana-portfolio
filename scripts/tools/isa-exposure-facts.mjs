@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+export const FACTS_META = {"serves":[{"agent":"plutus","workType":"분기 리밸런싱안·신규 현금 배분"}],"attach":"on-request","args":[],"summary":"ISA 포함 3계좌 합산 노출"};
 // isa-exposure-facts.mjs — ISA 분기점검·3계좌 합산 노출 보고용 Node 결정론 사실 조립기.
 // ledger-facts.mjs·rebalance-facts.mjs와 같은 패턴(Node는 사실만 조립, 판단은 LLM) —
 // 순수 읽기전용(macro-overlay-facts.mjs와 달리 상태 갱신 없음).

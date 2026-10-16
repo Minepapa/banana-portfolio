@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-// stock-facts.mjs — 대화형 부서(투자전략실 Athena 등)에 주입할 "Node 결정론 숫자"를 조립·출력한다.
+export const FACTS_META = {"serves":[{"agent":"plutus","workType":"전략 변경 검토"}],"attach":"on-request","args":[],"input":"\"<종목명>\"","summary":"개별 종목 평가용 결정론 사실"};
+// stock-facts.mjs — 플루토스에 주입할 "Node 결정론 숫자"를 조립·출력한다.
 //
 // 앱 최우선 원칙: LLM은 숫자를 지어내지 않는다 — Node가 가져오고 LLM은 판단만.
-// /athena 커맨드가 Athena 스폰 전에 이걸 Bash로 실행 → factsText를 프롬프트에 주입.
-// (하드 보장의 나머지 절반은 athena.md frontmatter의 도구 제한 — 대화형 Athena가 직접 fetch 불가.)
+// 필요할 때 플루토스 스폰 전에 연결기가 이 CLI를 실행 → factsText를 프롬프트에 주입.
+// (하드 보장의 나머지 절반은 담당 헌장의 도구 제한 — 대화형 담당이 직접 fetch하지 않는다.)
 //
 // ⚠️ 보유현황(loadHoldings)은 2026-08-22까지 v1 구글시트(계좌별 탭 A2:I)를 직접 조회했다
 // — PANTHEON.md가 "risk-facts·preference-facts·ledger-facts는 Vault로 전환됐는데
 // stock-facts만 남았다"고 명시해뒀던 항목. Vault State/Holdings(rebalance-facts.mjs와
-// 같은 readdirSync+parseFrontmatter 패턴)로 교체 — Athena가 스폰 직전마다 참조하는
+// 같은 readdirSync+parseFrontmatter 패턴)로 교체 — 플루토스가 호출 시 참조하는
 // 라이브 investment facts라 v1 시트가 더 이상 갱신되지 않으면 조용히 낡은 값을 주입할
 // 위험이 있었다.
 //

@@ -16,7 +16,7 @@ function agent(id) {
 export const agentTitle = (id) => agent(id).title;
 // '플루토스 Plutus' — 텔레그램 첫 줄 헤더 안쪽 문자열
 export const agentLabel = (id) => agent(id).label;
-export const agentDefaultFacts = (id) => agent(id).defaultFacts ?? [];
+export const agentWorkTypes = (id) => agent(id).workTypes ?? [];
 export const agentNames = (id) => {
   const entry = agent(id);
   return [entry.title, entry.english, ...(entry.aliases ?? [])];

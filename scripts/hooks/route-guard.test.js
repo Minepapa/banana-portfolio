@@ -18,22 +18,22 @@ function runHook(path, prompt) {
   });
 }
 
-const facts = () => ['rebalance-facts.mjs'];
-const result = { factsText: '### rebalance-facts.mjs\n비중 20%', timedOut: false };
+const catalog = (agent) => agent === 'hermes' ? { always: [], onRequest: [] } : { always: [{ command: 'rebalance-facts.mjs' }], onRequest: [{ command: 'stock-facts.mjs', summary: '종목 평가' }] };
+const result = { onRequestText: 'node scripts/tools/stock-facts.mjs — 종목 평가', factsText: '### rebalance-facts.mjs\n비중 20%', timedOut: false };
 
 test('텔레그램 담당 요청과 이름을 명시한 개발 세션에 사실을 붙인다', async () => {
   const calls = [];
   const factsForAgent = async (agent) => { calls.push(agent); return result; };
-  const telegram = await routeReminder('리밸런싱 밴드 괜찮아?', { telegram: true, defaultFacts: facts, factsForAgent });
+  const telegram = await routeReminder('리밸런싱 밴드 괜찮아?', { telegram: true, catalog, factsForAgent });
   assert.match(telegram, /\[판테온 라우팅\]/);
-  assert.match(telegram, /\[담당 기본 사실 — 스폰 시 factsText로 그대로 전달\]/);
+  assert.match(telegram, /\[자동 연결된 기본 사실 — 스폰 시 factsText로 그대로 전달\]/);
   assert.match(telegram, /비중 20%/);
-  const named = await routeReminder('플루토스 리밸런싱 밴드 괜찮아?', { telegram: false, defaultFacts: facts, factsForAgent });
+  const named = await routeReminder('플루토스 리밸런싱 밴드 괜찮아?', { telegram: false, catalog, factsForAgent });
   assert.match(named, /비중 20%/);
-  const english = await routeReminder('Plutus 리밸런싱 밴드 괜찮아?', { telegram: false, defaultFacts: facts, factsForAgent });
+  const english = await routeReminder('Plutus 리밸런싱 밴드 괜찮아?', { telegram: false, catalog, factsForAgent });
   assert.match(english, /비중 20%/);
   const alias = await routeReminder('카이로스 리밸런싱 밴드 괜찮아?', {
-    telegram: false, defaultFacts: facts, factsForAgent,
+    telegram: false, catalog, factsForAgent,
   });
   assert.match(alias, /비중 20%/);
   assert.deepEqual(calls, ['plutus', 'plutus', 'plutus', 'plutus']);
@@ -46,9 +46,9 @@ test('텔레그램 channel 본문에서 담당을 부르면 기본 사실을 주
     const calls = [];
     const output = await routeReminder(
       '<channel source="plugin:telegram:telegram" user="클리오">플루토스 밴드 괜찮아?</channel>',
-      { defaultFacts: facts, factsForAgent: async (agent) => { calls.push(agent); return result; } },
+      { catalog, factsForAgent: async (agent) => { calls.push(agent); return result; } },
     );
-    assert.match(output, /\[담당 기본 사실 — 스폰 시 factsText로 그대로 전달\]/);
+    assert.match(output, /\[자동 연결된 기본 사실 — 스폰 시 factsText로 그대로 전달\]/);
     assert.match(output, /비중 20%/);
     assert.deepEqual(calls, ['plutus']);
   } finally {
@@ -59,7 +59,7 @@ test('텔레그램 channel 본문에서 담당을 부르면 기본 사실을 주
 
 test('개발 세션에서 담당 이름이 없으면 기존 리마인드만 출력한다', async () => {
   const output = await routeReminder('리밸런싱 밴드 괜찮아?', {
-    telegram: false, defaultFacts: facts,
+    telegram: false, catalog,
     factsForAgent: () => { throw new Error('실행되면 안 됨'); },
   });
   assert.match(output, /\[판테온 라우팅\]/);
@@ -68,13 +68,13 @@ test('개발 세션에서 담당 이름이 없으면 기존 리마인드만 출�
 
 test('조회 실패는 사실 안에 남기고 전체 시간 초과는 직접 조회 안내로 바꾼다', async () => {
   const failed = await routeReminder('플루토스 리밸런싱', {
-    defaultFacts: facts, factsForAgent: async () => ({ factsText: '[조회 실패: rebalance-facts.mjs — 오류]', timedOut: false }),
+    catalog, factsForAgent: async () => ({ factsText: '[조회 실패: rebalance-facts.mjs — 오류]', timedOut: false }),
   });
   assert.match(failed, /\[조회 실패: rebalance-facts\.mjs — 오류\]/);
   const timedOut = await routeReminder('플루토스 리밸런싱', {
-    defaultFacts: facts, factsForAgent: async () => ({ factsText: '', timedOut: true }),
+    catalog, factsForAgent: async () => ({ factsText: '', timedOut: true }),
   });
-  assert.match(timedOut, /<system-reminder>node scripts\/tools\/department-call-facts\.mjs plutus로 직접 조회하라\.<\/system-reminder>/);
+  assert.match(timedOut, /node scripts\/tools\/department-call-facts\.mjs plutus로 직접 조회하라\./);
   assert.doesNotMatch(timedOut, /담당 기본 사실/);
 });
 
@@ -107,4 +107,15 @@ test('훅 입력 JSON 파싱 실패는 조용히 exit 0', () => {
     input: '{broken', encoding: 'utf8', timeout: 3000,
   });
   assert.equal(output, '');
+});
+
+test('중간 언급은 리마인드만, 앞 기호 뒤 호출은 사실을 붙인다', async () => {
+  const runner = async () => result;
+  const middle = await routeReminder('오늘 개발 세션에서 플루토스로 부르면?', { telegram: false, catalog, factsForAgent: runner });
+  assert.doesNotMatch(middle, /자동 연결된 기본 사실/);
+  const direct = await routeReminder('  · 플루토스 밴드 괜찮아?', { telegram: false, catalog, factsForAgent: runner });
+  assert.match(direct, /자동 연결된 기본 사실/);
+  assert.match(direct, /필요 시 추가 실행 목록/);
+  const empty = await routeReminder('헤르메스 일정 조회', { telegram: true, catalog, factsForAgent: runner });
+  assert.doesNotMatch(empty, /자동 연결된 기본 사실|필요 시 추가 실행 목록/);
 });

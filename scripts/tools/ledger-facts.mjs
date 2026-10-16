@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// ledger-facts.mjs — 운영실 Hermes 대화형 보고용 Node 결정론 사실 조립기.
+export const FACTS_META = {"serves":[{"agent":"plutus","workType":"장부 품질"}],"attach":"always","args":[],"summary":"예수금·체결·잡 상태 장부 사실"};
+// ledger-facts.mjs — 플루토스 대화형 보고용 Node 결정론 사실 조립기.
 //
-// 앱 최우선 원칙(LLM 숫자 날조 금지)의 Hermes 확장. Hermes는 "Vault 쓰기 단일 창구"라
-// 실제 쓰기는 헤드리스 잡(parse-notifications-to-vault·update-holdings-from-executions
+// 앱 최우선 원칙(LLM 숫자 날조 금지)을 플루토스 장부 보고에 적용한다. Vault 쓰기는
+// 헤드리스 잡(parse-notifications-to-vault·update-holdings-from-executions
 // 등)이 담당 — 이 파일은 보고(읽기) 전용이다.
 //
 // ⚠️ 2026-08-20 Vault 네이티브 전환 — 원래 구글시트(예수금기준·체결내역·잡상태)를
@@ -14,8 +15,8 @@
 //   - 체결내역 → Facts/Ledger/Executions/*.md(update-holdings-from-executions.mjs가 기록)
 //   - 잡상태 → State/JobHealth/*.md(record-heartbeat-vault.mjs가 매 실행마다 기록)
 //
-// /hermes 커맨드가 Hermes 스폰 전에 이 CLI를 실행해 factsText를 주입한다.
-// (하드 보장의 나머지 절반은 hermes.md frontmatter의 도구 제한.)
+// 담당 호출 연결기가 플루토스 스폰 전에 이 CLI를 실행해 factsText를 주입한다.
+// 숫자 판단은 주입된 사실에만 근거한다.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

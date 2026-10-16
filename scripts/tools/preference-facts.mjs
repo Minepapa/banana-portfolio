@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// preference-facts.mjs — 비서실 Apollo 대화형 보고용 Node 결정론 사실 조립기(성향관찰만).
+export const FACTS_META = {"serves":[{"agent":"clio","workType":"성향 관찰"}],"attach":"on-request","args":[],"summary":"성향 관찰 상태와 근거"};
+// preference-facts.mjs — 클리오 대화형 보고용 Node 결정론 사실 조립기(성향관찰만).
 //
-// Apollo는 다른 부서와 무결성 구멍의 성격이 다르다: KPI(profile/kpi_baseline.md)·주간리포트
+// 클리오는 다른 담당과 무결성 구멍의 성격이 다르다: KPI(profile/kpi_baseline.md)·주간리포트
 // (50_Outputs/Reports/{연}/*.md)는 이미 로컬 파일이라 Read 도구가 리터럴 원문을 그대로 보여준다 —
 // fetch가 아니므로 지어낼 수가 없고 그 자체로 하드 보장이다. 성향관찰만 여러 파일에 흩어진
 // 실시간 상태(신뢰도·상태 등)를 집계해야 해서 이 CLI가 그것만 담당한다.
@@ -13,7 +14,7 @@
 // 파일 하나)로 옮김 — 이 CLI도 그쪽을 읽도록 교체.
 //
 // preferences.mjs의 renderPrefRows는 "다른 프롬프트에 확정 성향만 주입"용이라 기각을 항상
-// 배제한다 — Apollo의 감사형 보고(전체 상태 노출·대기건 카운트·거부 이력 추적)엔 안 맞아
+// 배제한다 — 클리오의 감사형 보고(전체 상태 노출·대기건 카운트·거부 이력 추적)엔 안 맞아
 // 별도 조립기를 둔다(중복이 아니라 다른 소비자).
 
 import { readFileSync } from 'node:fs';

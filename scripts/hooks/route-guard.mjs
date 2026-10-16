@@ -9,8 +9,9 @@
 //
 // 판정 로직은 순수함수 classifyRequest(route-keywords.mjs, 테스트됨)에 위임 — 이 파일은 I/O만.
 
-import { classifyRequest, namedDepartment } from '../lib/route-keywords.mjs';
-import { AGENT_IDS, agentDefaultFacts, agentLabel } from '../lib/agent-registry.mjs';
+import { classifyRequest, requestBody } from '../lib/route-keywords.mjs';
+import { AGENT_IDS, agentLabel, agentNames } from '../lib/agent-registry.mjs';
+import { factsFor } from '../lib/facts-catalog.mjs';
 import { departmentCallFacts } from '../tools/department-call-facts.mjs';
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -35,10 +36,18 @@ function readStdin() {
   });
 }
 
+function startsWithDepartmentCall(prompt, dept) {
+  const body = requestBody(prompt).replace(/^[\s\p{P}\p{S}]+/u, '').toLowerCase();
+  return agentNames(dept).some((name) => {
+    const term = name.toLowerCase();
+    return body.startsWith(term) && (!/^[a-z ]+$/.test(term) || !/[a-z]/.test(body[term.length] ?? ''));
+  });
+}
+
 export async function routeReminder(prompt, {
   telegram = process.env.CLAUDE_TELEGRAM_SESSION === '1',
   factsForAgent = departmentCallFacts,
-  defaultFacts = agentDefaultFacts,
+  catalog = factsFor,
 } = {}) {
   const { delegate, dept } = classifyRequest(prompt);
   if (!delegate) return '';
@@ -53,13 +62,19 @@ export async function routeReminder(prompt, {
       `게이트 결정(성향 갱신·확정/기각·차단해제·주문/리밸런싱 제안)이면 부서 필수입력을 모아 복합 종합(§2). ` +
       `코드 수정 등 담당 업무가 아니거나 이미 위임 경로면 이 리마인드는 무시하라.` +
       `</system-reminder>\n`;
-  if (!defaultFacts(dept).length || (!telegram && namedDepartment(prompt) !== dept)) return output;
+  if (!telegram && !startsWithDepartmentCall(prompt, dept)) return output;
+  let available;
+  try { available = catalog(dept); } catch { return output; }
+  if (!available.always.length && !available.onRequest.length) return output;
   try {
     const result = await factsForAgent(dept);
+    const onRequestText = result.onRequestText ?? available.onRequest.map(({ command, summary }) => `node scripts/tools/${command} — ${summary}`).join('\n');
     if (result.timedOut) {
-      output += `<system-reminder>node scripts/tools/department-call-facts.mjs ${dept}로 직접 조회하라.</system-reminder>\n`;
+      output += `<system-reminder>node scripts/tools/department-call-facts.mjs ${dept}로 직접 조회하라.${onRequestText ? `\n[필요 시 추가 실행 목록]\n${onRequestText}` : ''}</system-reminder>\n`;
     } else if (result.factsText) {
-      output += `<system-reminder>[담당 기본 사실 — 스폰 시 factsText로 그대로 전달]\n${result.factsText}\n</system-reminder>\n`;
+      output += `<system-reminder>[자동 연결된 기본 사실 — 스폰 시 factsText로 그대로 전달]\n${result.factsText}\n${onRequestText ? `\n[필요 시 추가 실행 목록]\n${onRequestText}\n` : ''}</system-reminder>\n`;
+    } else if (onRequestText) {
+      output += `<system-reminder>[필요 시 추가 실행 목록]\n${onRequestText}\n</system-reminder>\n`;
     }
   } catch {
     // 잘못된 생성물이나 예상 밖 조회 오류도 UserPromptSubmit 훅을 막지 않는다.

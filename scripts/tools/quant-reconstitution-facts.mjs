@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// quant-reconstitution-facts.mjs — 퀀트 트랙(Kairos) 월간 리컨스티튜션 판정 대화형 보고.
+export const FACTS_META = {"serves":[],"attach":"on-request","args":[],"summary":"옛 퀀트 월간 리컨스티튜션","deprecated":"팩터 전략은 돌파매매 전환으로 폐기"};
+// quant-reconstitution-facts.mjs — 폐기된 퀀트 트랙 월간 리컨스티튜션 판정 대화형 보고.
 // quant-factor-facts.mjs(랭킹까지만)에 실제 KIS 잔고를 더해 매수·매도·유지·확인필요로
 // 분류한다. "현재 보유종목" 추적은 Vault State/Holdings가 아니라 리컨스티튜션 시점마다
 // KIS 잔고조회 API를 직접 호출(오너 확정, 2026-08-07 — 실시간 진실, 미러 지연 리스크 없음).
-// 이 스크립트도 순위·분류·포지션사이징 밴드까지만 낸다 — 실제 수량·타이밍은 Kairos 재량.
+// 이 스크립트도 순위·분류·포지션사이징 밴드까지만 낸다 — 실제 수량·타이밍은 당시 담당 재량.
 //
 // 사용법:
 //   node scripts/tools/quant-reconstitution-facts.mjs                # 전체 350종목
