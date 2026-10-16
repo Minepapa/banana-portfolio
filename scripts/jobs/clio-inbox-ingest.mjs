@@ -351,7 +351,8 @@ function applyOne(root, item, planDate, rules, { dryRun, noWiki, write, applyDat
   const logPath = join(root, logRel);
   const oldLog = existsSync(logPath) ? readFileSync(logPath, 'utf8') : null;
   const logLine = `- ${applyDate} Inbox apply: [[${rel.replace(/\.md$/, '')}]] ← ${item.source} (Wiki ${noWiki ? '보류' : '없음'}; 데일리 ${daily?.content ? '연결' : '보류'})`;
-  const log = oldLog?.includes(logLine) ? oldLog : oldLog ? `${oldLog.replace(/\s*$/, '')}\n${logLine}\n`
+  // 재개를 다른 날 해도 같은 원본의 적용 줄이 두 번 붙지 않게 원본 경로 기준으로 비교한다.
+  const log = oldLog?.includes(`Inbox apply: [[${rel.replace(/\.md$/, '')}]] ← ${item.source} `) ? oldLog : oldLog ? `${oldLog.replace(/\s*$/, '')}\n${logLine}\n`
     : `---\ntype: "agent-log"\ndescription: "클리오 작업 기록"\ncreated: "${applyDate}"\nmodified: "${applyDate}"\nagent: "clio"\n---\n\n# ${applyDate.slice(0, 7)}\n\n${logLine}\n`;
   const logProblems = checkNote(logRel, log, rules);
   if (logProblems.length) throw new Error(`로그 등록부 위반: ${logProblems.join(' / ')}`);
