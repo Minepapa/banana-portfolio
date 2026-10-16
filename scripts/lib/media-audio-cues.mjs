@@ -8,7 +8,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, relative, resolve, sep } from 'node:path';
+import { extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { MEDIA_DIARIZE_PATHS, VAULT_PATHS, VAULT_REL } from './vault-paths.mjs';
@@ -25,6 +25,8 @@ export const AUDIO_CUES_PATHS = Object.freeze({
 });
 
 export const CUE_VERSION = 1;
+const DEFAULT_TIMEOUT_MS = 10 * 60_000;
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.3gp', '.avi', '.mkv', '.webm']);
 // 한 묶음(주간 잡 최대 30노트)의 소리 분석 전체 예산. 넘으면 나머지 노트는 '시간 예산 초과'로 소리 근거 없이 진행.
 export const BATCH_BUDGET_MS = 20 * 60_000;
 // 묶음별 확률 문턱. 웃음·울음은 짧고 확률이 낮게 나오는 편이라 노래보다 낮게 둔다
@@ -44,12 +46,16 @@ export function clock(seconds) {
 
 // id → { archivePath, kind }. 통화(Calls)는 kind로 한 번 더 거른다.
 export function loadArchivePaths(root = VAULT_PATHS.root) {
-  const path = join(root, VAULT_REL.mediaArchiveIndex);
   const map = new Map();
-  if (!existsSync(path)) return map;
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
-    if (!line.trim()) continue;
-    try { const row = JSON.parse(line); if (row.id && row.archivePath) map.set(row.id, { archivePath: row.archivePath, kind: row.kind }); } catch { /* 깨진 줄은 건너뜀 */ }
+  for (const index of [VAULT_REL.mediaArchiveIndex, VAULT_REL.mediaImportsIndex]) {
+    const path = join(root, index);
+    if (!existsSync(path)) continue;
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      try { const row = JSON.parse(line); if (row.id && !row.duplicateOf && (row.archivePath || row.importPath)) {
+        map.set(row.id, { archivePath: row.archivePath || row.importPath, kind: row.kind });
+      } } catch { /* 깨진 줄은 건너뜀 */ }
+    }
   }
   return map;
 }
@@ -118,14 +124,16 @@ function describeRuns(runs, { limit = 4 } = {}) {
 }
 
 // LLM에 넘길 한국어 요약. scope: '미네 구간' | '전체(화자 분리 없음)'.
-export function summarizeCues(windows, { scope, thresholds = CUE_THRESHOLDS } = {}) {
-  if (!windows.length) return { lines: [`소리 근거(${scope}): 분석할 구간 없음`], counts: {} };
+export function summarizeCues(windows, { scope, thresholds = CUE_THRESHOLDS, includeSpeech = scope === '영상 전체' } = {}) {
+  if (!windows.length) return { lines: [`소리 근거(${scope}): 분석할 구간 없음`], counts: {}, intervals: {} };
   const lines = [`소리 근거(${scope}, 맥 안 기계 감지 — 틀릴 수 있음):`];
   const counts = {};
+  const intervals = {};
   for (const [group, label] of Object.entries(CUE_NAMES)) {
     const marked = windows.map((window) => ({ ...window, peak: window.tags?.[group] ?? 0 }));
     const runs = runsOf(marked, (window) => window.peak >= thresholds[group]);
     counts[group] = runs.length;
+    intervals[group] = runs.map(({ start, end }) => ({ start, end }));
     if (!runs.length) continue;
     const seconds = Math.round(runs.reduce((sum, run) => sum + run.end - run.start, 0));
     const peak = Math.max(...runs.map((run) => run.peak));
@@ -134,6 +142,11 @@ export function summarizeCues(windows, { scope, thresholds = CUE_THRESHOLDS } = 
       : `- ${label} ${runs.length}회(${describeRuns(runs)}, 최대 ${peak.toFixed(2)})`);
   }
   if (!counts.laughter && !counts.crying) lines.push('- 웃음·울음 신호 없음');
+  const speechRuns = runsOf(windows.map((window) => ({ ...window, peak: window.tags?.speech ?? 0 })),
+    (window) => window.peak >= 0.3);
+  counts.speech = speechRuns.length;
+  intervals.speech = speechRuns.map(({ start, end }) => ({ start, end }));
+  if (includeSpeech && speechRuns.length) lines.push(`- 말소리 있음(대략 ${Math.round(speechRuns.reduce((sum, run) => sum + run.end - run.start, 0))}초)`);
   const pitchMedian = median(windows.map((window) => window.pitch));
   if (pitchMedian) {
     const high = runsOf(windows, (window) => window.pitch && window.pitch >= pitchMedian * HIGH_PITCH_RATIO);
@@ -144,7 +157,7 @@ export function summarizeCues(windows, { scope, thresholds = CUE_THRESHOLDS } = 
     const loud = runsOf(windows, (window) => window.rms >= rmsMedian * LOUD_RATIO);
     lines.push(`- 소리 세기: ${loud.length ? `커진 구간 ${describeRuns(loud)}` : '크게 커진 구간 없음'}`);
   }
-  return { lines, counts };
+  return { lines, counts, intervals };
 }
 
 function inside(base, path) {
@@ -154,11 +167,12 @@ function inside(base, path) {
 
 // 문자열 검사 + 실제 경로(심볼릭 링크 해제) 검사. Archive 밖(볼트·금고 등)을 가리키면 읽지 않는다.
 function safeAudioPath(mediaRoot, archivePath) {
-  if (typeof archivePath !== 'string' || !archivePath.startsWith('Archive/')) throw new Error('Archive 경로 오류');
-  const base = resolve(mediaRoot, 'Archive');
+  const errorText = archivePath?.startsWith('Imports/') ? 'Imports 경로 오류' : 'Archive 경로 오류';
+  if (typeof archivePath !== 'string' || !/^(Archive|Imports)\//.test(archivePath)) throw new Error(errorText);
+  const base = resolve(mediaRoot, archivePath.split('/')[0]);
   const path = resolve(mediaRoot, archivePath);
-  if (!inside(base, path)) throw new Error('Archive 경로 오류');
-  if (existsSync(path) && !inside(realpathSync(base), realpathSync(path))) throw new Error('Archive 경로 오류');
+  if (!inside(base, path)) throw new Error(errorText);
+  if (existsSync(path) && !inside(realpathSync(base), realpathSync(path))) throw new Error(errorText);
   return path;
 }
 
@@ -168,7 +182,7 @@ function writePrivate(path, content) {
   try { renameSync(temporary, path); } catch (error) { rmSync(temporary, { force: true }); throw error; }
 }
 
-export function runCueWorker(items, { python = AUDIO_CUES_PATHS.python, spawnProcess = spawn, timeoutMs = 10 * 60_000 } = {}) {
+export function runCueWorker(items, { python = AUDIO_CUES_PATHS.python, spawnProcess = spawn, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawnProcess('nice', ['-n', '10', python, SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, HF_HUB_OFFLINE: '1' } });
@@ -198,22 +212,33 @@ export function runCueWorker(items, { python = AUDIO_CUES_PATHS.python, spawnPro
 // 한 미디어 id의 창별 결과(캐시 우선). 반환: { windows, durationSec } 또는 { error }.
 export async function computeCues(id, { root = VAULT_PATHS.root, mediaRoot = AUDIO_CUES_PATHS.mediaRoot,
   cacheDir = AUDIO_CUES_PATHS.cacheDir, archivePaths = loadArchivePaths(root), exec = execFileAsync,
-  worker = runCueWorker, write = writePrivate, temporaryRoot = tmpdir() } = {}) {
+  worker = runCueWorker, write = writePrivate, temporaryRoot = tmpdir(), timeoutMs = DEFAULT_TIMEOUT_MS,
+  allowVideo = false } = {}) {
   const entry = archivePaths.get(id);
   const archivePath = typeof entry === 'string' ? entry : entry?.archivePath;
   if (!archivePath) return { error: '색인에 원본 없음' };
-  if (entry?.kind && entry.kind !== 'Recordings') return { error: '녹음이 아님(통화 등)' };
+  const video = allowVideo && ['Camera', 'KakaoTalkMovie', 'Import', 'Imports', 'Recordings'].includes(entry?.kind)
+    && VIDEO_EXTENSIONS.has(extname(archivePath).toLowerCase());
+  if (entry?.kind === 'Calls' || entry?.kind && entry.kind !== 'Recordings' && !video
+    || !entry?.kind && VIDEO_EXTENSIONS.has(extname(archivePath).toLowerCase())) {
+    return { error: '녹음이 아님(통화 등)' };
+  }
   let audio;
   try { audio = safeAudioPath(mediaRoot, archivePath); } catch (error) { return { error: error.message }; }
   if (!existsSync(audio)) return { error: '원본 파일 없음' };
   const source = statSync(audio);
-  const key = { version: CUE_VERSION, size: source.size, mtimeMs: Math.round(source.mtimeMs) };
+  const budgetLimited = timeoutMs < DEFAULT_TIMEOUT_MS;
+  // 기존 녹음 95개 캐시는 보존한다. 영상은 말소리 태그를 포함한 새 스키마를 쓴다.
+  const key = { version: video ? 2 : CUE_VERSION, size: source.size, mtimeMs: Math.round(source.mtimeMs) };
   const cachePath = join(cacheDir, `${id}.json`);
   if (existsSync(cachePath)) {
     try {
       const cached = JSON.parse(readFileSync(cachePath, 'utf8'));
       if (cached.version === key.version && cached.size === key.size && cached.mtimeMs === key.mtimeMs) {
-        return cached.error ? { error: `${cached.error}(이전 실패 기록)` } : cached;
+        // 이전 회차의 짧은 예산 때문에 남은 실패 기록만 재시도한다.
+        if (!cached.budgetLimited) {
+          return cached.error ? { error: `${cached.error}(이전 실패 기록)` } : cached;
+        }
       }
     } catch { /* 깨진 캐시는 다시 계산 */ }
   }
@@ -228,19 +253,30 @@ export async function computeCues(id, { root = VAULT_PATHS.root, mediaRoot = AUD
   const temporary = mkdtempSync(join(temporaryRoot, 'media-audio-cues-'));
   try {
     const wav = join(temporary, `${id}.wav`);
-    await exec('/opt/homebrew/bin/ffmpeg', ['-nostdin', '-loglevel', 'error', '-i', audio,
-      '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav], { timeout: 300_000 });
-    const [row] = await worker([{ id, wav }]);
+    const started = Date.now();
+    const ffmpegArgs = ['-nostdin', '-loglevel', 'error', '-i', audio,
+      '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav];
+    await exec(video ? 'nice' : '/opt/homebrew/bin/ffmpeg',
+      video ? ['-n', '10', '/opt/homebrew/bin/ffmpeg', ...ffmpegArgs] : ffmpegArgs,
+      { timeout: Math.min(300_000, timeoutMs) });
+    const remaining = timeoutMs - (Date.now() - started);
+    if (remaining <= 0) throw new Error('소리 분석 시간 초과');
+    const [row] = await worker([{ id, wav }], { timeoutMs: remaining });
     if (!row || row.error) {
       const error = row?.error ?? '소리 분석 결과 없음';
-      await remember({ id, ...key, error });
+      if (!budgetLimited || !/시간 초과|timed out|ETIMEDOUT/i.test(error)) await remember({ id, ...key, error });
       return { error };
     }
     const { error: _ignored, ...clean } = { id, ...key, durationSec: row.durationSec, windowSec: row.windowSec, hopSec: row.hopSec, windows: row.windows };
     return await remember(clean);
   } catch (error) {
+    if (video && /does not contain any stream|Output file #0 does not contain any stream|Stream map.*matches no streams/i.test(error.stderr || error.message)) {
+      return await remember({ id, ...key, sound: 'none', durationSec: null, windows: [] });
+    }
     if (error.killed || /시간 초과|timed out|ETIMEDOUT/i.test(error.message)) {
-      try { await remember({ id, ...key, error: '소리 분석 시간 초과' }); } catch { /* 기록 실패는 무시 */ }
+      if (!budgetLimited) {
+        try { await remember({ id, ...key, error: '소리 분석 시간 초과' }); } catch { /* 기록 실패는 무시 */ }
+      }
     }
     return { error: error.message };
   } finally {

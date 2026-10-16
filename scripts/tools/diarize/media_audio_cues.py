@@ -24,6 +24,7 @@ GROUPS = {
     "singing": ["Child singing", "Singing", "Humming"],
     "sigh": ["Sigh"],
     "whisper": ["Whispering"],
+    "speech": ["Speech", "Child speech, kid speaking"],
 }
 
 

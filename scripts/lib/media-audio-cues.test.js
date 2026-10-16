@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -53,6 +53,132 @@ test('summarizeCues: 문턱 이상만, 이어진 창은 한 번으로, 웃음·�
 test('summarizeCues: 웃음·울음 없으면 그렇게 적고, 창이 없으면 분석할 구간 없음', () => {
   assert.ok(summarizeCues([win(0)], { scope: '전체(화자 분리 없음)' }).lines.includes('- 웃음·울음 신호 없음'));
   assert.match(summarizeCues([], { scope: '미네 구간' }).lines[0], /분석할 구간 없음/);
+});
+
+test('영상 말소리 요약은 감정과 별도로 시작·끝 구간을 남긴다', () => {
+  const result = summarizeCues([win(0, { speech: 0.5 }), win(2, { speech: 0.6 }),
+    win(10, { speech: 0.1 })], { scope: '영상 전체' });
+  assert.equal(result.counts.speech, 1);
+  assert.deepEqual(result.intervals.speech, [{ start: 0, end: 6 }]);
+  assert.ok(result.lines.some((line) => line.includes('말소리 있음(대략 6초)')));
+  assert.ok(!summarizeCues([win(0, { speech: 0.5 })], { scope: '미네 구간' }).lines
+    .some((line) => line.includes('말소리 있음')));
+});
+
+test('영상 Camera/Import는 허용하고 통화는 차단하며 무음 영상은 정상 결과다', async (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.dir, { recursive: true, force: true }));
+  const camera = join(f.mediaRoot, 'Archive', 'video.mov');
+  const imported = join(f.mediaRoot, 'Imports', 'video.mp4');
+  mkdirSync(join(f.mediaRoot, 'Imports'));
+  writeFileSync(camera, 'video');
+  writeFileSync(imported, 'video');
+  const paths = new Map([
+    ['camera', { archivePath: 'Archive/video.mov', kind: 'Camera' }],
+    ['import', { archivePath: 'Imports/video.mp4', kind: 'Import' }],
+    ['call', { archivePath: 'Archive/video.mov', kind: 'Calls' }],
+  ]);
+  const noAudio = Object.assign(new Error('ffmpeg failed'), { stderr: 'Output file #0 does not contain any stream' });
+  const commands = [];
+  const options = { mediaRoot: f.mediaRoot, cacheDir: f.cacheDir, archivePaths: paths, allowVideo: true,
+    exec: async (command, args) => { commands.push([command, args.slice(0, 3)]); throw noAudio; },
+    worker: async () => { throw new Error('worker should not run'); } };
+  assert.equal((await computeCues('call', options)).error, '녹음이 아님(통화 등)');
+  assert.equal((await computeCues('camera', { ...options, allowVideo: false })).error, '녹음이 아님(통화 등)');
+  assert.equal((await computeCues('camera', options)).sound, 'none');
+  assert.equal((await computeCues('import', options)).sound, 'none');
+  assert.deepEqual(commands.map(([command]) => command), ['nice', 'nice']);
+  assert.deepEqual(commands[0][1], ['-n', '10', '/opt/homebrew/bin/ffmpeg']);
+});
+
+test('Recordings .3gp/.mp4는 기본 녹음 v1을 유지하고 allowVideo 때 영상 v2로 재분석한다', async (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.dir, { recursive: true, force: true }));
+  const recordings = join(f.mediaRoot, 'Archive', '2020', '07', 'Recordings');
+  writeFileSync(join(recordings, 'a.3gp'), 'video');
+  writeFileSync(join(recordings, 'b.mp4'), 'video');
+  const paths = new Map([
+    ['threegp', { archivePath: 'Archive/2020/07/Recordings/a.3gp', kind: 'Recordings' }],
+    ['mpfour', { archivePath: 'Archive/2020/07/Recordings/b.mp4', kind: 'Recordings' }],
+  ]);
+  const commands = [];
+  const options = { mediaRoot: f.mediaRoot, cacheDir: f.cacheDir, archivePaths: paths,
+    temporaryRoot: f.dir, exec: async (command) => { commands.push(command); },
+    worker: async () => [{ durationSec: 4, windows: [win(0)] }] };
+  assert.equal((await computeCues('threegp', options)).version, 1);
+  assert.equal((await computeCues('mpfour', options)).version, 1);
+  assert.deepEqual(commands, ['/opt/homebrew/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg']);
+  assert.equal((await computeCues('threegp', { ...options, allowVideo: true })).version, 2);
+  assert.equal((await computeCues('mpfour', { ...options, allowVideo: true })).version, 2);
+  assert.deepEqual(commands.slice(2), ['nice', 'nice']);
+  const noAudio = Object.assign(new Error('ffmpeg failed'), { stderr: 'Output file #0 does not contain any stream' });
+  assert.equal((await computeCues('threegp', { ...options, cacheDir: join(f.dir, 'no-audio'),
+    allowVideo: true, exec: async () => { throw noAudio; } })).sound, 'none');
+});
+
+test('짧아진 예산의 시간 초과는 캐시에 남기지 않고 다음 실행에서 재시도한다', async (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.dir, { recursive: true, force: true }));
+  let calls = 0;
+  const options = { mediaRoot: f.mediaRoot, cacheDir: f.cacheDir, archivePaths: f.archivePaths,
+    temporaryRoot: f.dir, timeoutMs: 1000, exec: async () => {},
+    worker: async () => { calls += 1; if (calls === 1) throw new Error('소리 분석 시간 초과');
+      return [{ durationSec: 4, windows: [win(0)] }]; } };
+  assert.match((await computeCues('aaaaaaaaaaaaaaaa', options)).error, /시간 초과/);
+  assert.equal(existsSync(join(f.cacheDir, 'aaaaaaaaaaaaaaaa.json')), false);
+  assert.equal((await computeCues('aaaaaaaaaaaaaaaa', options)).windows.length, 1);
+  assert.equal(calls, 2);
+});
+
+test('기본 상한의 시간 초과는 캐시에 남기고 두 번째 실행에서 재시도하지 않는다', async (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.dir, { recursive: true, force: true }));
+  let calls = 0;
+  const options = { mediaRoot: f.mediaRoot, cacheDir: f.cacheDir, archivePaths: f.archivePaths,
+    temporaryRoot: f.dir, exec: async () => {},
+    worker: async () => { calls += 1; throw new Error('소리 분석 시간 초과'); } };
+  assert.match((await computeCues('aaaaaaaaaaaaaaaa', options)).error, /시간 초과/);
+  assert.equal(existsSync(join(f.cacheDir, 'aaaaaaaaaaaaaaaa.json')), true);
+  assert.match((await computeCues('aaaaaaaaaaaaaaaa', options)).error, /시간 초과\(이전 실패 기록\)/);
+  assert.equal(calls, 1);
+});
+
+test('작업기가 반환한 시간 초과도 기본 상한에서는 캐시에 남기고 짧은 예산에서는 재시도한다', async (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.dir, { recursive: true, force: true }));
+  let calls = 0;
+  const options = { mediaRoot: f.mediaRoot, cacheDir: f.cacheDir, archivePaths: f.archivePaths,
+    temporaryRoot: f.dir, exec: async () => {},
+    worker: async () => { calls += 1; return [{ error: '소리 분석 시간 초과' }]; } };
+  await computeCues('aaaaaaaaaaaaaaaa', options);
+  assert.match((await computeCues('aaaaaaaaaaaaaaaa', options)).error, /이전 실패 기록/);
+  assert.equal(calls, 1);
+  rmSync(f.cacheDir, { recursive: true, force: true });
+  await computeCues('aaaaaaaaaaaaaaaa', { ...options, timeoutMs: 1000 });
+  assert.equal(existsSync(join(f.cacheDir, 'aaaaaaaaaaaaaaaa.json')), false);
+  await computeCues('aaaaaaaaaaaaaaaa', { ...options, timeoutMs: 1000 });
+  assert.equal(calls, 3);
+});
+
+test('이전에 저장된 기본 상한 시간 초과는 존중하고 budgetLimited 표시 기록은 무시한다', async (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.dir, { recursive: true, force: true }));
+  mkdirSync(f.cacheDir);
+  const source = statSync(join(f.mediaRoot, 'Archive', '2020', '07', 'Recordings', 'a.m4a'));
+  const cachePath = join(f.cacheDir, 'aaaaaaaaaaaaaaaa.json');
+  const cached = { id: 'aaaaaaaaaaaaaaaa', version: 1, size: source.size,
+    mtimeMs: Math.round(source.mtimeMs), error: '소리 분석 시간 초과' };
+  writeFileSync(cachePath, JSON.stringify(cached));
+  let calls = 0;
+  const options = { mediaRoot: f.mediaRoot, cacheDir: f.cacheDir,
+    archivePaths: f.archivePaths, temporaryRoot: f.dir, exec: async () => {},
+    worker: async () => { calls += 1; return [{ durationSec: 4, windows: [win(0)] }]; } };
+  assert.match((await computeCues('aaaaaaaaaaaaaaaa', options)).error, /이전 실패 기록/);
+  assert.equal(calls, 0);
+  writeFileSync(cachePath, JSON.stringify({ ...cached, budgetLimited: true }));
+  const result = await computeCues('aaaaaaaaaaaaaaaa', options);
+  assert.equal(result.windows.length, 1);
+  assert.equal(calls, 1);
 });
 
 function fixture() {

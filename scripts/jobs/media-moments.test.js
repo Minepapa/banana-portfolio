@@ -27,7 +27,8 @@ function fixture(t, records) {
   mkdirSync(dirname(index), { recursive: true });
   writeFileSync(index, records.map((record) => JSON.stringify(record)).join('\n') + '\n');
   const writes = [];
-  const options = { root, registryRules: rules, routePoints: () => [], paymentsForDay: () => [],
+  const options = { root, videoPeoplePath: join(root, 'video-matches.jsonl'), registryRules: rules,
+    routePoints: () => [], paymentsForDay: () => [],
     places: [], geocode: Object.assign(async () => null, { flush: async () => {} }),
     write: (path, content) => { writes.push(path); writeAtomic(path, content); }, output: silent,
     now: '2030-01-03T00:00:00.000Z' };

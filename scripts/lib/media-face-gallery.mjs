@@ -262,6 +262,10 @@ export function selectSheetMembers(members, vectorFor, limit = FACE_PARAMS.sheet
 export function confirmBand(gallery, band, mapping, removeNumbers, now) {
   if (!FACE_BANDS.includes(band) || !gallery.bands?.[band]) throw new Error(`나이대 오류: ${band}`);
   const current = gallery.bands[band];
+  if ([...current.members, ...(current.removed ?? []), ...(current.holdCandidates ?? []),
+    ...(mapping.members ?? []), ...(mapping.sheet ?? [])].some((member) => member.id?.includes('@'))) {
+    throw new Error('영상 프레임은 사진 갤러리에서 편집할 수 없습니다');
+  }
   if (current.confirmed) throw new Error(`이미 확인된 나이대: ${band}`);
   if (JSON.stringify(mapping.members) !== JSON.stringify(current.members)) {
     throw new Error('시트가 현재 기준 목록과 다릅니다. --sheets를 다시 실행하세요.');
@@ -292,6 +296,9 @@ export function confirmBand(gallery, band, mapping, removeNumbers, now) {
 
 // 확인된 나이대에서 시트에 안 나온 "그다음으로 먼" 얼굴을 고른다(중심과의 유사도 낮은 순).
 export function selectTailMembers(members, shown, vectorFor, count = 30) {
+  if ([...members, ...shown].some((member) => member.id?.includes('@'))) {
+    throw new Error('영상 프레임은 사진 갤러리에서 편집할 수 없습니다');
+  }
   const shownKeys = new Set(shown.map(memberKey));
   const vectors = members.map(vectorFor);
   if (!vectors.length) return [];
@@ -307,6 +314,10 @@ export function selectTailMembers(members, shown, vectorFor, count = 30) {
 export function removeTailMembers(gallery, band, mapping, removeNumbers, now) {
   if (!FACE_BANDS.includes(band) || !gallery.bands?.[band]) throw new Error(`나이대 오류: ${band}`);
   const current = gallery.bands[band];
+  if ([...current.members, ...(current.removed ?? []), ...(mapping.members ?? []),
+    ...(mapping.sheet ?? [])].some((member) => member.id?.includes('@'))) {
+    throw new Error('영상 프레임은 사진 갤러리에서 편집할 수 없습니다');
+  }
   if (JSON.stringify(mapping.members) !== JSON.stringify(current.members)) {
     throw new Error('추가 시트가 현재 기준 목록과 다릅니다. --tail-sheets를 다시 실행하세요.');
   }
@@ -332,7 +343,7 @@ export function removeTailMembers(gallery, band, mapping, removeNumbers, now) {
 export function vectorLoader(embeddingsPath) {
   const cache = new Map();
   return ({ id, i }) => {
-    if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`얼굴 id 오류: ${id}`);
+    if (!/^[A-Za-z0-9_-]+(?:@\d+)?$/.test(id)) throw new Error(`얼굴 id 오류: ${id}`);
     if (!cache.has(id)) cache.set(id, readNpyVectors(join(embeddingsPath, `${id}.npy`)));
     const vector = cache.get(id)[i];
     if (!vector || vector.some((value) => !Number.isFinite(value))) throw new Error(`특징값 오류: ${id}/${i}`);
@@ -356,7 +367,7 @@ export function classifyFaceScore(score, high = MATCH_HIGH, low = MATCH_LOW) {
   return score >= high ? 'mine' : score >= low ? 'uncertain' : 'other';
 }
 
-export function matchFaces(faceRows, mediaRows, gallery, vectorFor) {
+export function matchFaces(faceRows, mediaRows, gallery, vectorFor, { videoFrames = false } = {}) {
   const mediaById = new Map(mediaRows.map((row) => [row.id, row]));
   const galleryByBand = gallery?.bands ?? {};
   const allMembers = Object.values(galleryByBand).flatMap((state) => state.members ?? []);
@@ -397,7 +408,7 @@ export function matchFaces(faceRows, mediaRows, gallery, vectorFor) {
     });
     const likely = faces.filter((face) => !face.person && face.label === 'mine')
       .sort((left, right) => right.score - left.score || left.i - right.i);
-    for (const face of likely.slice(1)) {
+    for (const face of videoFrames ? [] : likely.slice(1)) {
       face.label = 'uncertain';
       face.reason = 'same-photo-mine-limit';
     }
@@ -410,7 +421,7 @@ export function matchFaces(faceRows, mediaRows, gallery, vectorFor) {
       mineByPhoto.set(face.id, face);
     }
   }
-  for (const face of results) {
+  for (const face of videoFrames ? [] : results) {
     if (!face.person && face.label === 'mine' && mineByPhoto.get(face.id) !== face) {
       face.label = 'uncertain';
       face.reason = 'same-photo-mine-limit';

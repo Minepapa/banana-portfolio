@@ -347,9 +347,11 @@ export function parseFaceOutput(lines, inputs) {
 
 export async function runPythonFaces(images, { out = MEDIA_FACES_PATHS.root,
   python = MEDIA_FACES_PATHS.python, spawnProcess = spawn, timeoutMs = images.length * 60_000,
+  nice = false,
 } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawnProcess(python, [SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawnProcess(nice ? 'nice' : python,
+      nice ? ['-n', '10', python, SCRIPT] : [SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let timedOut = false;

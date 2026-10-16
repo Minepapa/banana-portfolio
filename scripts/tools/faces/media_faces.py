@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 import sys
 import time
 from contextlib import redirect_stdout
@@ -52,7 +53,8 @@ def main():
     batch = json.loads(sys.stdin.readline())
     out = Path(batch["out"])
     embedding_dir = out / "embeddings"
-    embedding_dir.mkdir(parents=True, exist_ok=True)
+    embedding_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    embedding_dir.chmod(0o700)
     model_root = Path.home() / "Pantheon" / "Models" / "insightface"
     model_dir = model_root / "models" / "buffalo_l"
     # Processing must never initiate a model download. setup.sh owns all networking.
@@ -65,9 +67,7 @@ def main():
     for image in batch["images"]:
         image_id = image.get("id", "")
         try:
-            if not isinstance(image_id, str) or not image_id or not all(
-                character.isalnum() or character in "-_" for character in image_id
-            ):
+            if not isinstance(image_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+(?:@[0-9]+)?", image_id):
                 raise ValueError("invalid image id")
             with redirect_stdout(sys.stderr):
                 metadata, vectors = analyze_image(app, image)
@@ -75,6 +75,7 @@ def main():
             temporary = embedding_dir / f".{image_id}.{os.getpid()}.npy"
             try:
                 np.save(temporary, vectors.astype(np.float32, copy=False))
+                temporary.chmod(0o600)
                 os.replace(temporary, destination)
             finally:
                 temporary.unlink(missing_ok=True)

@@ -7,10 +7,10 @@ import { promisify } from 'node:util';
 import { basename, dirname, extname, join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
+import { MEDIA_FACES_PATHS, VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { capturedTime, gpsFrom, kstIso } from './media-archive.mjs';
 import { groupTimedRecords, render, timePeriod, titlePlace, visionForMoment, loadMomentVision,
-  titleWithScene } from './media-moments.mjs';
+  titleWithScene, loadFacePhotos } from './media-moments.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
 import { listSelectedCalendars, listEventsForRange } from '../lib/google-calendar.mjs';
 import { getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
@@ -251,6 +251,7 @@ function existingImportNotes(root, year) {
 }
 
 export async function runImportMoments({ root = VAULT_PATHS.root, album = null, limit = 300, dryRun = false,
+  videoPeoplePath = join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl'),
   noCalendar = false, noPoi = false, calendarFetch = fetch,
   accessToken = () => getAccessToken({ requiredScopes: CALENDAR_READ_SCOPES }),
   albumsPath = join(root, VAULT_REL.mediaImportAlbums), indexPath = join(root, VAULT_REL.mediaImportsIndex),
@@ -263,9 +264,7 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
   const calendar = calendarRules(albumsConfig);
   const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {};
   const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
-  const facePeoplePath = join(root, VAULT_REL.mediaFacePeople);
-  const facePhotos = existsSync(facePeoplePath)
-    ? JSON.parse(readFileSync(facePeoplePath, 'utf8')).photos ?? {} : null;
+  const facePhotos = loadFacePhotos(root, { videoPeoplePath, output });
   const groups = groupImportMoments(jsonLines(indexPath)).filter((group) => !album || group[0].album === album);
   const vision = loadMomentVision(root, output);
   const people = loadPeople(root);

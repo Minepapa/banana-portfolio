@@ -35,7 +35,8 @@ function fixture(t, albums = { A: { label: '미네', category: '201 미네', pri
     return path;
   }
   const records = () => readFileSync(join(root, VAULT_REL.mediaImportsIndex), 'utf8').trim().split('\n').map(JSON.parse);
-  return { root, mediaRoot, add, records, output, metadataForFiles, geocode, registryRules, noCalendar: true };
+  return { root, mediaRoot, add, records, output, metadataForFiles, geocode, registryRules,
+    videoPeoplePath: join(base, 'video-matches.jsonl'), noCalendar: true };
 }
 
 test('Imports Vision 장면은 이름표 뒤 시간대 앞에 넣고 장소·기념일 제목은 유지한다', async (t) => {
@@ -309,6 +310,37 @@ test('앨범 category 배열을 쓰고 설정 변경 시 기존 순간 노트를
     ['[[01_Home/200 가족]]', '[[01_Home/202 휘영]]']);
   const repeated = await runImportMoments({ ...f, places: [] });
   assert.equal(repeated.skipped, 1);
+});
+
+test('Imports 순간 재실행은 영상 이름표를 지우지 않는다', async (t) => {
+  const f = fixture(t);
+  f.add('A', 'VID_20170503_150000.mp4', 'video');
+  await indexImports({ ...f, hash: async () => 'video' });
+  const facePath = join(f.root, VAULT_REL.mediaFacePeople);
+  mkdirSync(dirname(facePath), { recursive: true });
+  writeFileSync(facePath, JSON.stringify({ photos: {} }));
+  const videoId = f.records()[0].id;
+  writeFileSync(f.videoPeoplePath, `${JSON.stringify({ id: videoId, people: ['휘영'] })}\n`);
+  await runImportMoments({ ...f, places: [] });
+  const state = JSON.parse(readFileSync(join(f.root, VAULT_REL.mediaImportMomentsState), 'utf8'));
+  const notePath = join(f.root, state[videoId].notePath);
+  assert.ok(parseFrontmatter(readFileSync(notePath, 'utf8')).people.includes(`[[${VAULT_REL.people}/휘영]]`));
+  assert.equal((await runImportMoments({ ...f, places: [] })).skipped, 1);
+  assert.ok(parseFrontmatter(readFileSync(notePath, 'utf8')).people.includes(`[[${VAULT_REL.people}/휘영]]`));
+});
+
+test('사진 이름표 파일이 없으면 영상 결과가 있어도 미네 앨범 얼굴 근거를 새로 계산하지 않는다', async (t) => {
+  const f = fixture(t);
+  f.add('A', 'VID_20170503_150000.mp4', 'video');
+  await indexImports({ ...f, hash: async () => 'video' });
+  const videoId = f.records()[0].id;
+  writeFileSync(f.videoPeoplePath, `${JSON.stringify({ id: videoId, people: ['미네'] })}\n`);
+  await runImportMoments({ ...f, places: [] });
+  const state = JSON.parse(readFileSync(join(f.root, VAULT_REL.mediaImportMomentsState), 'utf8'));
+  const fields = parseFrontmatter(readFileSync(join(f.root, state[videoId].notePath), 'utf8'));
+  assert.equal(fields.mineFaces, undefined);
+  assert.equal(fields.mineBasis, undefined);
+  assert.equal(fields.autoPeople, undefined);
 });
 
 test('등록 장소를 먼저 쓰고, 미등록 GPS만 주소 변환하며 dry-run은 네트워크를 호출하지 않는다', async (t) => {
