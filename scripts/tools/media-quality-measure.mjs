@@ -108,8 +108,7 @@ export function main(argv = process.argv.slice(2)) {
   const fd = openSync(lock, 'wx', 0o600);
   writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
   const release = () => { try { closeSync(fd); } catch {} try { unlinkSync(lock); } catch {} };
-  const onSignal = () => { release(); process.exit(130); };
-  process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal);
+  // 신호 핸들러는 두지 않는다: 동기 측정 루프 중엔 실행되지 못하고 Ctrl-C만 막는다. 멈춘 잠금은 다음 실행의 clearStaleLock이 정리한다.
   let measuredSinceSave = 0;
   const save = () => {
     // 원자적 저장: 임시 파일에 쓰고 이름을 바꾼다(쓰는 중 멈춰도 기존 결과가 깨지지 않음).
@@ -130,6 +129,6 @@ export function main(argv = process.argv.slice(2)) {
     }
     save();
     console.log(JSON.stringify({ measured: selected.length, errors: [...cache.values()].filter((row) => row.error).length }));
-  } finally { release(); process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal); }
+  } finally { release(); }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
