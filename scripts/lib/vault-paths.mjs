@@ -300,6 +300,12 @@ export const MEDIA_RECORDINGS_PATHS = Object.freeze({
   sheet: join(homedir(), 'Pantheon', 'Media', 'Rename', 'recordings.html'),
 });
 
+// 통화·녹음 원본 암호화 외부 백업(10-13 결정). 원격 이름은 ID만 쓰고, 영구 삭제 목록은 휴지통 purged.jsonl.
+export const MEDIA_AUDIO_BACKUP_PATHS = Object.freeze({
+  mediaRoot: join(homedir(), 'Pantheon', 'Media'),
+  purged: join(homedir(), 'Pantheon', 'Media', 'Trash', 'purged.jsonl'),
+});
+
 // 얼굴 특징값은 생체 정보라 Vault와 저장소 밖에만 둔다.
 export const MEDIA_FACES_PATHS = Object.freeze({
   mediaRoot: join(homedir(), 'Pantheon', 'Media'),
