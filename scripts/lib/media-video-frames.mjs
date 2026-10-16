@@ -30,7 +30,8 @@ export function frameTimes(durationSec, maxFrames = 30) {
   if (!Number.isFinite(durationSec) || durationSec <= 0) throw new Error('영상 길이 오류');
   const count = Math.min(maxFrames, Math.max(1, Math.ceil(durationSec)));
   return [...new Set(Array.from({ length: count }, (_, index) => {
-    const time = count === 1 ? 0 : index * (durationSec - Math.min(0.1, durationSec / 100)) / (count - 1);
+    // 컨테이너 길이(오디오 포함)가 영상 스트림보다 길 수 있어 끝 0.5초 안쪽에서는 뽑지 않는다(실측: 3.04초 영상의 3초 프레임 실패).
+    const time = count === 1 ? 0 : index * Math.max(0, durationSec - 0.5) / (count - 1);
     return Math.floor(time);
   }))];
 }
@@ -66,6 +67,7 @@ export async function extractVideoFrames(record, { mediaRoot = join(homedir(), '
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
   const frames = [];
+  const skipped = [];
   for (const second of seconds) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error('프레임 시간 예산 초과');
@@ -78,9 +80,13 @@ export async function extractVideoFrames(record, { mediaRoot = join(homedir(), '
       if (!existsSync(temporary)) throw new Error(`프레임 누락: ${second}`);
       chmodSync(temporary, 0o600);
       renameSync(temporary, destination);
+      frames.push({ id: `${record.id}@${second}`, second, path: destination });
+    } catch (error) {
+      // 한 시점 실패는 그 프레임만 건너뛴다. 하나도 못 뽑으면 아래에서 영상 실패로 본다.
+      skipped.push({ second, error: String(error.message).slice(0, 200) });
     } finally { rmSync(temporary, { force: true }); }
-    frames.push({ id: `${record.id}@${second}`, second, path: destination });
   }
+  if (!frames.length) throw new Error(`프레임을 하나도 뽑지 못함: ${skipped.map((x) => x.second).join(',')}`);
   const finalSource = statSync(original);
   if (finalSource.size !== stamp.size || Math.round(finalSource.mtimeMs) !== stamp.mtimeMs) {
     throw new Error('추출 중 영상 원본 변경');

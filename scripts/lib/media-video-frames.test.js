@@ -16,6 +16,7 @@ test('ffprobe는 전달된 남은 시간 이내에서 끝난다', async () => {
 
 test('영상 길이에 따라 최대 30장, 짧은 영상은 약 1초 간격', () => {
   assert.deepEqual(frameTimes(3), [0, 1, 2]);
+  assert.ok(Math.max(...frameTimes(3.04)) <= 2, '끝 0.5초 안쪽에서는 뽑지 않음');
   assert.equal(frameTimes(300).length, 30);
   assert.equal(frameTimes(0.2).length, 1);
   assert.throws(() => frameTimes(0), /길이/);
@@ -54,4 +55,20 @@ test('프레임 캐시는 원본 크기·mtime이 같으면 재사용하고 바�
   writeFileSync(original, 'changed');
   await extractVideoFrames(record, { mediaRoot, frameRoot, probe: async () => 2, run });
   assert.equal(calls, 4);
+});
+
+test('한 시점 프레임 실패는 건너뛰고 나머지로 진행, 전부 실패하면 영상 실패', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'video-frames-skip-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const mediaRoot = join(root, 'Media');
+  mkdirSync(join(mediaRoot, 'Archive'), { recursive: true });
+  writeFileSync(join(mediaRoot, 'Archive', 'b.mov'), 'video');
+  const record = { id: 'b', archivePath: 'Archive/b.mov' };
+  const failAt = (bad) => async (_command, args) => {
+    if (bad(Number(args[args.indexOf('-ss') + 1]))) throw new Error('Nothing was written');
+    writeFileSync(args.at(-1), 'jpeg'); return {};
+  };
+  const partial = await extractVideoFrames(record, { mediaRoot, frameRoot: join(root, 'F1'), probe: async () => 3, run: failAt((s) => s === 1) });
+  assert.deepEqual(partial.frames.map((frame) => frame.second), [0, 2]);
+  await assert.rejects(extractVideoFrames(record, { mediaRoot, frameRoot: join(root, 'F2'), probe: async () => 3, run: failAt(() => true) }), /하나도/);
 });
