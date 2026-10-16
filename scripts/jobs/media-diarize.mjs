@@ -360,7 +360,8 @@ export async function runTrial({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_
 // 영구 실패(화자 2명 아님 등)는 같은 전사 버전에서 다시 고르지 않는다. 일시 실패는 3회까지.
 export const MAX_ATTEMPTS = 3;
 // 통화 자체의 문제만 영구 실패로 본다. 엔진 프로세스 실패(메모리 등 일시 장애)는 시도 횟수로만 센다.
-const FINAL_ERROR = /^(?:화자 특징값 2개 아님|expected two speakers|oversized |Archive 경로 오류|Archive 심볼릭 링크)/;
+// 녹음 화자 분리(min/max) 도입 뒤 파이썬 문구가 `expected N..M speakers with embeddings, found K`로도 나온다.
+const FINAL_ERROR = /^(?:화자 특징값 2개 아님|expected (?:two|\d+\.\.\d+) speakers|oversized |Archive 경로 오류|Archive 심볼릭 링크)/;
 
 function failureBlocks(state, item) {
   const failure = state?.failures?.[item.id];
@@ -864,7 +865,8 @@ export async function runApply({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_
   // 한 회차는 시작 후 maxMinutes+15분이 지나면 새 통화를 시작하지 않는다.
   const kstHour = (new Date(now.getTime() + 9 * 3_600_000)).getUTCHours();
   const nightBlocked = !allowNight && !ids && kstHour < 8;
-  const deadline = clock() + (maxMinutes + 15) * 60_000;
+  // 매시 20분 시작이라 회차 실제 경과는 50분을 넘기지 않는다(다음 회차 전에 끝남).
+  const deadline = clock() + Math.min(maxMinutes + 15, 50) * 60_000;
   const records = loadCandidates(root, paths.mediaRoot);
   const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
   const run = async () => {
@@ -1143,7 +1145,7 @@ export function parseArgs(args) {
     || options.renderNotes && (options.ids || options.limit || options.maxMinutes || options.recordings)
     || options.trial && (options.apply || options.renderNotes || options.maxMinutes)
     || options.trial && options.ids && options.limit !== undefined
-    || options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 20)
+    || options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 30)
     || options.ids && (options.ids.length < 1 || options.ids.length > 20
       || new Set(options.ids).size !== options.ids.length)
     || options.ids?.some((id) => !ID.test(id))
@@ -1157,7 +1159,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   let options;
   // launchd(run.sh)는 인자 없이 부른다 → 정기 실행 기본값.
   const argv = process.argv.slice(2);
-  try { options = parseArgs(argv.length ? argv : ['--apply', '--limit=20', '--max-minutes=45']); }
+  // 정기 실행: pyannote가 음성 길이의 약 0.7배라 음성 합계 70분 ≈ 실제 50분(2026-10-16 회차당 9~10건 → 상향).
+  try { options = parseArgs(argv.length ? argv : ['--apply', '--limit=30', '--max-minutes=70']); }
   catch (error) { console.error(`[media-diarize] ${error.message}`); process.exitCode = 2; }
   if (options) (options.personCandidate ? personCandidate()
     : options.confirmPerson ? confirmPerson()

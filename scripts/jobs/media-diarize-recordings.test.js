@@ -283,3 +283,11 @@ test('녹음 시험은 볼트 쓰기 없이 미리보기만 만들고 적용은 
   assert.equal(parseArgs(['--recordings', '--trial', '--limit=10']).recordings, true);
   assert.equal(parseArgs(['--recordings', '--apply', '--dry-run']).dryRun, true);
 });
+
+test('엔진의 화자 수 범위 문구(expected N..M speakers … found 1)도 영구 실패로 본다', async () => {
+  const source = (await import('node:fs')).readFileSync(new URL('./media-diarize.mjs', import.meta.url), 'utf8');
+  const pattern = new RegExp(source.match(/const FINAL_ERROR = \/(.+)\/;/)[1]);
+  assert.ok(pattern.test('expected 2..2 speakers with embeddings, found 1'));
+  assert.ok(pattern.test('expected two speakers, found 1'));
+  assert.ok(!pattern.test('화자 엔진 실패: CUDA out of memory'));
+});
