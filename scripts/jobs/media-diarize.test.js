@@ -75,6 +75,16 @@ test('parsePythonOutput handles missing rows, per-item errors, malformed output'
   assert.throws(() => parsePythonOutput('{"id":"z","error":"bad"}', items, 'sherpa'));
 });
 
+test('parsePythonOutput accepts device metadata and legacy results without it', () => {
+  const items = [{ id: 'a' }, { id: 'b' }];
+  const rows = [
+    { id: 'a', backend: 'pyannote', device: 'mps', turns: [], ms: 8, audioSec: 70 },
+    { id: 'b', backend: 'pyannote', turns: [], ms: 52, audioSec: 70 },
+  ];
+  assert.deepEqual(parsePythonOutput(rows.map((row) => JSON.stringify(row)).join('\n'),
+    items, 'pyannote'), rows);
+});
+
 test('runPython sends JSON to injected process and parses response', async () => {
   const child = new EventEmitter();
   child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough();

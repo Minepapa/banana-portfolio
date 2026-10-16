@@ -14,7 +14,7 @@ export const JOB_LABELS = {
   'media-archive': 'Syncthing Media Inbox 안정 파일을 Archive에 하드링크 보관·색인(매시간)',
   'media-moments': 'Camera와 촬영 시각이 확인된 KakaoTalk 사진·동영상을 순간별 Vault 노트로 묶음(매시간)',
   'media-transcribe': '통화·녹음 로컬 Whisper 전사 → 대화 노트(매일 01~07시 매시, 08시 전 마침)',
-  'media-diarize': '통화 로컬 pyannote 화자 분리 → 대화 노트(매일 08:20~22:20 매시, 전날 전사분)',
+  'media-diarize': '통화 로컬 pyannote 화자 분리 → 대화 노트(24시간 매시 :05, 전사 잡 잠금 시 건너뜀)',
   'media-vision': '사진·영상 로컬 Apple Vision 분석 → 순간 노트 장면 보강(매일 05:30)',
   'media-audio-offsite-backup': '통화·녹음 원본 암호화(AES-256-GCM) 구글 드라이브 백업, 새 파일만(매일 00:40)',
   'media-faces-nightly': '새 사진 로컬 얼굴 판정 → 미네·휘영·나 이름표·순간 노트 반영(매일 06:30)',

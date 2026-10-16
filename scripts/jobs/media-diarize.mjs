@@ -19,6 +19,8 @@ import { detectRepetition } from './media-transcribe.mjs';
 const execFileAsync = promisify(execFile);
 const SCRIPT = fileURLToPath(new URL('../tools/diarize/media_diarize.py', import.meta.url));
 const ID = /^[a-f0-9]{16}$/i;
+// :05 시작 회차가 다음 :05 회차보다 먼저 끝나도록 새 통화 시작은 45분까지만 허용한다.
+const APPLY_WALL_MINUTES = 45;
 
 export function selectTrial(records, { ids = null, limit = 10 } = {}) {
   const eligible = records.filter((item) => item.kind === 'Calls' && item.transcript?.segments?.length
@@ -980,16 +982,16 @@ export async function runApply({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_
   output = console, runWorker = runPython, exec = execFileAsync, write = writeAtomic,
   now = new Date(), temporaryRoot = tmpdir(), registryRules, callTimeoutMs = 30 * 60_000,
   clock = () => Date.now(), allowNight = false } = {}) {
-  // 01~08시 전사 잡과 겹치지 않게(2026-10-15 오너): 00~07시에는 새 통화 처리를 하지 않고(--ids 수동 지정 제외),
-  // 한 회차는 시작 후 maxMinutes+15분이 지나면 새 통화를 시작하지 않는다.
+  // 수동 실행은 00~07시에 새 통화를 처리하지 않는다(--ids 또는 --allow-night 제외).
+  // 정기 실행은 allowNight=true이며 전사 잡과는 아래 공유 잠금으로 겹치지 않는다.
   const kstHour = (new Date(now.getTime() + 9 * 3_600_000)).getUTCHours();
   const nightBlocked = !allowNight && !ids && kstHour < 8;
-  // 매시 20분 시작이라 회차 실제 경과는 50분을 넘기지 않는다(다음 회차 전에 끝남).
-  const deadline = clock() + Math.min(maxMinutes + 15, 50) * 60_000;
+  const deadline = clock() + Math.min(maxMinutes + 15, APPLY_WALL_MINUTES) * 60_000;
   const records = loadCandidates(root, paths.mediaRoot);
   const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
   const run = async () => {
     const summary = { processed: 0, notes: 0, failed: 0, skipped: 0, reassigned: 0, remaining: 0 };
+    const devices = new Set();
     const saved = savedSpeakers(root);
     const notePaths = indexNotes(root);
     const state = loadState(paths);
@@ -1040,6 +1042,7 @@ export async function runApply({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_
             } catch (error) { error.processFailure = true; throw error; }
             if (rows[0]?.error) throw new Error(rows[0].error);
             if (rows[0]?.id !== item.id || !Array.isArray(rows[0]?.turns)) throw new Error('화자 결과 오류');
+            if (rows[0].device) devices.add(rows[0].device);
             const latest = JSON.parse(readFileSync(item.transcriptPath, 'utf8'));
             if (latest.transcribedAt !== item.transcript.transcribedAt) throw new Error('처리 중 전사 갱신');
             const voices = readNpy(voicePathFor(paths, item.id));
@@ -1094,7 +1097,7 @@ export async function runApply({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_
       try { buildCandidate(root, records, saved, paths, now, output); }
       catch (error) { summary.failed += 1; output.error(`[media-diarize] 등록 후보: ${error.message}`); }
     }
-    output.log(`[media-diarize] 처리 ${summary.processed}, 재배정 ${summary.reassigned}, 노트 ${summary.notes}, 실패 ${summary.failed}, 건너뜀 ${summary.skipped}, 남음 ${summary.remaining}${owner ? '' : ", '나' 미등록(노트 변경 없음)"}`);
+    output.log(`[media-diarize] 처리 ${summary.processed}, 재배정 ${summary.reassigned}, 노트 ${summary.notes}, 실패 ${summary.failed}, 건너뜀 ${summary.skipped}, 남음 ${summary.remaining}${devices.size ? `, 장치 ${[...devices].join('/')}` : ''}${owner ? '' : ", '나' 미등록(노트 변경 없음)"}`);
     return summary;
   };
   if (dryRun) return run();
@@ -1124,6 +1127,7 @@ export async function runRecordings({ root = VAULT_PATHS.root, paths = MEDIA_DIA
   const nightBlocked = (trial || !allowNight && !ids)
     && new Date(now.getTime() + 9 * 3_600_000).getUTCHours() < 8;
   const summary = { processed: 0, notes: 0, failed: 0, skipped: 0, remaining: chosen.length };
+  const devices = new Set();
   if (nightBlocked) { output.log('[media-diarize] 00~07시는 전사 시간대 — 녹음 처리 건너뜀'); return summary; }
   if (dryRun) { output.log(`[media-diarize] 녹음 dry-run ${JSON.stringify(chosen.map((item) => item.id))}`); return summary; }
   const run = async () => {
@@ -1175,6 +1179,7 @@ export async function runRecordings({ root = VAULT_PATHS.root, paths = MEDIA_DIA
           catch (error) { error.processFailure = true; throw error; }
           if (rows[0]?.error) throw new Error(rows[0].error);
           if (rows[0]?.id !== item.id || !Array.isArray(rows[0]?.turns)) throw new Error('화자 결과 오류');
+          if (rows[0].device) devices.add(rows[0].device);
           const latest = JSON.parse(readFileSync(item.transcriptPath, 'utf8'));
           if (latest.transcribedAt !== item.transcript.transcribedAt) throw new Error('처리 중 전사 갱신');
           const voices = readNpy(recordingVoicePath(paths, item.id));
@@ -1231,7 +1236,7 @@ export async function runRecordings({ root = VAULT_PATHS.root, paths = MEDIA_DIA
         { dryRun: false, write, rules, notePaths, output, summary });
     }
     summary.remaining = Math.max(0, chosen.length - summary.processed - summary.failed);
-    output.log(`[media-diarize] 녹음 처리 ${summary.processed}, 노트 ${summary.notes}, 실패 ${summary.failed}`);
+    output.log(`[media-diarize] 녹음 처리 ${summary.processed}, 노트 ${summary.notes}, 실패 ${summary.failed}${devices.size ? `, 장치 ${[...devices].join('/')}` : ''}`);
     return summary;
   };
   mkdirSync(paths.root, { recursive: true });
@@ -1283,12 +1288,15 @@ export function parseArgs(args) {
   return options;
 }
 
+export function launchOptions(argv) {
+  // launchd(run.sh)는 인자 없이 부른다. 수동 인자는 기존 parseArgs 검증을 그대로 따른다.
+  return argv.length ? parseArgs(argv) : { apply: true, limit: 200, maxMinutes: 600, allowNight: true };
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let options;
-  // launchd(run.sh)는 인자 없이 부른다 → 정기 실행 기본값.
   const argv = process.argv.slice(2);
-  // 정기 실행: pyannote가 음성 길이의 약 0.7배라 음성 합계 70분 ≈ 실제 50분(2026-10-16 회차당 9~10건 → 상향).
-  try { options = parseArgs(argv.length ? argv : ['--apply', '--limit=30', '--max-minutes=70']); }
+  try { options = launchOptions(argv); }
   catch (error) { console.error(`[media-diarize] ${error.message}`); process.exitCode = 2; }
   if (options) (options.personCandidate ? personCandidate({ name: options.personCandidate })
     : options.confirmPerson ? confirmPerson({ name: options.confirmPerson })

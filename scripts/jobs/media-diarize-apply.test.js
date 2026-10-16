@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { selectApply, identifyOwner, updateOwnerMean, renderSpeakerNote, parseArgs, runApply, confirmOwner,
+import { selectApply, identifyOwner, updateOwnerMean, renderSpeakerNote, parseArgs, launchOptions, runApply, confirmOwner,
   evaluateEnrollment, enrollmentCalls } from './media-diarize.mjs';
 import { renderDialogue } from '../lib/media-dialogue.mjs';
 import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -93,13 +93,17 @@ test('note rewrite preserves manual fields and owner memo; second pass changes n
   assert.equal(renderSpeakerNote(next, transcript, speakers), next);
 });
 
-test('apply flags and daytime plist are explicit', () => {
+test('scheduled apply runs all day while manual flags keep their limits', () => {
   assert.deepEqual(parseArgs(['--apply', '--limit=20', '--max-minutes=45']).maxMinutes, 45);
+  assert.deepEqual(launchOptions([]), { apply: true, limit: 200, maxMinutes: 600, allowNight: true });
+  assert.equal(launchOptions(['--apply']).allowNight, undefined);
+  assert.throws(() => launchOptions(['--apply', '--limit=200']), /필요/);
   assert.equal(parseArgs(['--render-notes', '--dry-run']).dryRun, true);
   assert.throws(() => parseArgs(['--apply', '--trial']), /필요/);
   const plist = readFileSync(new URL('../launchd/com.banana2.media-diarize.plist', import.meta.url), 'utf8');
-  assert.equal((plist.match(/<key>Hour<\/key>/g) || []).length, 15);
-  assert.equal((plist.match(/<integer>20<\/integer>/g) || []).length, 16); // 20:20 has two 20 values
+  const slots = [...plist.matchAll(/<dict><key>Hour<\/key><integer>(\d+)<\/integer><key>Minute<\/key><integer>(\d+)<\/integer><\/dict>/g)]
+    .map((match) => [Number(match[1]), Number(match[2])]);
+  assert.deepEqual(slots, Array.from({ length: 24 }, (_, hour) => [hour, 5]));
 });
 
 function npy(matrix) {
@@ -154,23 +158,26 @@ test('apply with injected worker stores no biometrics in Vault, updates note onc
 보존
 `);
   let workerCalls = 0;
+  const logs = [];
   const options = { root, paths, allowNight: true, registryRules: [{ type: 'conversation',
     pathRegex: /^20_Records\/23_Conversations\/\d{4}\/[^/]+\.md$/,
     titleRegex: /^\d{4}-\d{2}-\d{2} \S/,
     required: { bundle: ['type', 'category', 'description', 'sensitivity', 'created', 'modified'],
       extra: ['occurred', 'people', 'origin', 'convKind'] } }],
-    output: { log() {}, error(message) { throw new Error(message); } },
+    output: { log(message) { logs.push(message); }, error(message) { throw new Error(message); } },
     exec: async (_binary, args) => put(args.at(-1), 'wav'),
     runWorker: async (_backend, items, config) => {
       workerCalls += 1;
       put(join(config.voicesDir, 'pyannote', `${items[0].id}.npy`), npy([[1, 0], [0, 1]]));
-      return [{ id: items[0].id, turns: [{ start: 0, end: 1000, speaker: 'S0' }] }];
+      return [{ id: items[0].id, device: 'mps', turns: [{ start: 0, end: 1000, speaker: 'S0' }] }];
     } };
   const first = await runApply(options);
   assert.equal(first.processed, 1);
   assert.equal(first.notes, 1);
   const speakerText = readFileSync(join(root, VAULT_REL.mediaSpeakers, '2026', `${item.id}.json`), 'utf8');
   assert.equal(speakerText.includes('voices'), false);
+  assert.equal(speakerText.includes('device'), false);
+  assert.equal(logs.filter((line) => line.includes('장치 mps')).length, 1);
   assert.deepEqual(JSON.parse(speakerText).segments, [{ i: 0, speaker: 'owner', uncertain: false }]);
   assert.match(readFileSync(notePath, 'utf8'), /나: 예/);
   const second = await runApply(options);
@@ -352,24 +359,34 @@ test('night hours skip new diarization unless explicitly allowed; process failur
       ownerCandidateMeta: join(base, 'c.json'), ownerReview: join(base, 'r.md'), state: join(base, 'Diarize', 'state.json'),
       pyannote: join(base, 'model') };
     const row = call(1, '2026-10-14'); row.archivePath = 'Archive/2026/a.m4a';
+    const second = call(2, '2026-10-13'); second.archivePath = 'Archive/2026/b.m4a';
     mkdirSync(join(root, VAULT_REL.mediaTranscripts, '2026'), { recursive: true });
     writeFileSync(join(root, VAULT_REL.mediaTranscripts, '2026', `${row.id}.json`), JSON.stringify(row.transcript));
+    writeFileSync(join(root, VAULT_REL.mediaTranscripts, '2026', `${second.id}.json`), JSON.stringify(second.transcript));
     mkdirSync(dirname(join(root, VAULT_REL.mediaArchiveIndex)), { recursive: true });
-    writeFileSync(join(root, VAULT_REL.mediaArchiveIndex), `${JSON.stringify(row)}\n`);
+    writeFileSync(join(root, VAULT_REL.mediaArchiveIndex), `${JSON.stringify(row)}\n${JSON.stringify(second)}\n`);
     mkdirSync(join(paths.pyannote, 'speaker-diarization-community-1'), { recursive: true });
     writeFileSync(join(paths.pyannote, 'speaker-diarization-community-1', 'config.yaml'), 'x');
     mkdirSync(join(paths.mediaRoot, 'Archive', '2026'), { recursive: true });
     writeFileSync(join(paths.mediaRoot, row.archivePath), 'audio');
+    writeFileSync(join(paths.mediaRoot, second.archivePath), 'audio');
     let calls = 0;
+    let elapsed = 0;
     const options = { root, paths, registryRules: [], output: { log() {}, error() {} },
+      clock: () => elapsed,
       exec: async (_b, args) => writeFileSync(args.at(-1), 'wav'),
-      runWorker: async () => { calls += 1; throw new Error('화자 엔진 실패: speaker-diarization traceback'); } };
+      runWorker: async () => {
+        calls += 1;
+        elapsed = 45 * 60_000 + 1;
+        throw new Error('화자 엔진 실패: speaker-diarization traceback');
+      } };
     // 03시(KST)는 건너뜀(00~07시 전사 시간대)
-    const night = await runApply({ ...options, now: new Date('2026-10-14T18:00:00Z') });
+    const night = await runApply({ ...options, ...launchOptions(['--apply']), now: new Date('2026-10-14T18:00:00Z') });
     assert.equal(night.processed + night.failed, 0);
     assert.equal(calls, 0);
-    const day = await runApply({ ...options, now: new Date('2026-10-14T03:00:00Z') }); // 12시 KST
-    assert.equal(day.failed, 1);
+    const scheduled = await runApply({ ...options, ...launchOptions([]), now: new Date('2026-10-14T18:00:00Z') });
+    assert.equal(scheduled.failed, 1); // 03시에도 첫 통화는 처리한다.
+    assert.equal(calls, 1); // 45분을 넘기면 다음 통화를 시작하지 않는다.
     const state = JSON.parse(readFileSync(paths.state, 'utf8'));
     assert.equal(state.failures[row.id].final, false);
   } finally { rmSync(base, { recursive: true, force: true }); }

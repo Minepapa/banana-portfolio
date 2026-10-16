@@ -75,7 +75,26 @@ def init_pyannote(_num_speakers):
     if not (PYANNOTE_MODEL / "config.yaml").is_file():
         raise RuntimeError("pyannote model missing; run setup.sh with HF token")
     from pyannote.audio import Pipeline
-    return Pipeline.from_pretrained(str(PYANNOTE_MODEL))
+    import torch
+    pipeline = Pipeline.from_pretrained(str(PYANNOTE_MODEL))
+    requested = os.environ.get("MEDIA_DIARIZE_DEVICE", "auto").lower()
+    if requested not in ("auto", "cpu", "mps"):
+        raise ValueError("MEDIA_DIARIZE_DEVICE must be auto, cpu, or mps")
+    if requested == "cpu":
+        return pipeline, "cpu"
+    if not torch.backends.mps.is_available():
+        if requested == "mps":
+            raise RuntimeError("MPS requested but unavailable")
+        return pipeline, "cpu"
+    try:
+        pipeline.to(torch.device("mps"))
+    except Exception as error:
+        if requested == "mps":
+            raise
+        message = " ".join(str(error).splitlines())
+        print(f"MPS initialization failed; using CPU: {message}", file=sys.stderr)
+        return Pipeline.from_pretrained(str(PYANNOTE_MODEL)), "cpu"
+    return pipeline, "mps"
 
 
 def pyannote_result(pipeline, audio, speaker_options):
@@ -106,7 +125,10 @@ def main():
     if backend not in ("sherpa", "pyannote") or not (fixed or ranged):
         raise ValueError("backend or numSpeakers invalid")
     voices_dir = Path(request["voicesDir"])
-    models = init_sherpa(2) if backend == "sherpa" else init_pyannote(2)
+    if backend == "sherpa":
+        models, device = init_sherpa(2), "cpu"
+    else:
+        models, device = init_pyannote(2)
     speaker_options = {"num_speakers": 2} if fixed else {"min_speakers": 1, "max_speakers": 3}
     for item in request["items"]:
         started = time.monotonic()
@@ -122,7 +144,7 @@ def main():
             path.parent.mkdir(parents=True, exist_ok=True)
             np.save(path, vectors)
             path.chmod(0o600)
-            result = {"id": item["id"], "backend": backend, "turns": turns,
+            result = {"id": item["id"], "backend": backend, "device": device, "turns": turns,
                       "ms": round((time.monotonic() - started) * 1000),
                       "audioSec": round(len(audio) / sample_rate, 3)}
         except Exception as error:

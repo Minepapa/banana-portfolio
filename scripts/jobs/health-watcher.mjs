@@ -214,7 +214,7 @@ export const EXPECTED_INTERVALS_MS = {
   'media-archive': 60 * 60 * 1000,
   'media-moments': 60 * 60 * 1000,
   'media-transcribe': 24 * 60 * 60 * 1000,
-  'media-diarize': 10 * 60 * 60 * 1000, // 08:20~22:20 매시 → 밤 공백 10시간
+  'media-diarize': 3 * 60 * 60 * 1000, // 24시간 매시 :05, 전사 잠금으로 몇 회 건너뛸 여유
   'media-vision': 24 * 60 * 60 * 1000,
   'media-faces-nightly': 24 * 60 * 60 * 1000,
   'media-audio-offsite-backup': 24 * 60 * 60 * 1000,
