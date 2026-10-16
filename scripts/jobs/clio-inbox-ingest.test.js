@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { collectInbox, priorityOf, readWikiIndex, validateJudgment, run, telegramMessage,
+import { applyPlans, collectInbox, planShapeProblems, priorityOf, readWikiIndex, validateJudgment, run, telegramMessage,
   MAX_WIKI_TITLES_PER_FOLDER, MAX_WIKI_INDEX_CHARS, MAX_JOB_MS } from './clio-inbox-ingest.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -16,7 +16,7 @@ const rules = [
     required: { bundle: ['type', 'description', 'created', 'modified'], extra: ['agent'] } },
 ];
 const judgment = () => ({ target: { folder: '20_Records/21_Notes/2026', type: 'note', title: '2026-10-11 가상 메모' },
-  frontmatter: { category: '201', description: '가상 기록', sensitivity: '일반', occurred: '2026-10-11', origin: '테스트' },
+  frontmatter: { category: ['[[01_Home/201 미네]]'], description: '가상 기록', sensitivity: '일반', occurred: '2026-10-11', origin: '테스트' },
   extracted: { people: [], places: [], topics: ['가상 주제'], objects: [], dates: [], todos: [], decisions: [] },
   wiki: [], dailyLink: '2026-10-11', unclassifiable: null });
 function fixture(t) {
@@ -562,4 +562,70 @@ test('another day appends to the same monthly log without changing earlier day o
   assert.ok(report.startsWith(`${before}\n## 오너 기록\n직접 쓴 메모\n`));
   assert.match(report, /## 2026-10-12 Inbox ingest 계획/);
   assert.equal(report.match(/^---$/gm)?.length, 2);
+});
+
+const dailyRule = { type: 'periodic', path: '10_Periodic/Daily/{YYYY}/', pathRegex: /^10_Periodic\/Daily\/\d{4}\/[^/]+\.md$/, titleRegex: /^\d{4}-\d{2}-\d{2}$/,
+  required: { bundle: ['type'], extra: [] } };
+function applyFixture(t, { daily = true, judgmentValue = judgment() } = {}) {
+  const { root, put } = fixture(t);
+  const source = '00_Inbox/2026-10-11 1200 가상 메모.md';
+  const content = memo('텔레그램 📜', '오너 가상 메모 본문');
+  put(source, content);
+  if (daily) put('10_Periodic/Daily/2026/2026-10-11.md', '---\ntype: "periodic"\n---\n## 오너 메모\n오너 글\n\n## 오늘 들어온 기록\n- 기존 줄\n');
+  const { createHash } = awaitHash;
+  put('95_Etna/Ingest/plans/2026-10-11.json', JSON.stringify({ items: [
+    { source, hash: createHash('sha256').update(content).digest('hex'), status: '계획함', judgment: judgmentValue },
+    { source: '00_Inbox/other.md', hash: 'x', status: '계획함', judgment: judgment() }] }));
+  return { root, source, rules: [...rules, dailyRule] };
+}
+import * as awaitHash from 'node:crypto';
+
+test('planShapeProblems: convKind 허용값·category 링크 배열·201 미네 대화 조건부 필드', () => {
+  assert.deepEqual(planShapeProblems(judgment()), []);
+  const bad = { target: { type: 'conversation' }, frontmatter: { category: '가족', convKind: '텔레그램 메시지' } };
+  const problems = planShapeProblems(bad);
+  assert.equal(problems.length, 2);
+  assert.match(problems[0], /convKind/);
+  const mine = { target: { type: 'conversation' }, frontmatter: { category: ['[[01_Home/201 미네]]'], convKind: '대면' } };
+  assert.match(planShapeProblems(mine).join(), /21_Notes/);
+});
+
+test('applyPlans: 1건 명시 필수, dry-run은 쓰기 없음, 적용은 노트·데일리 기계 구역 한 줄·원본 비움, 재실행 멱등', (t) => {
+  const { root, source, rules: r } = applyFixture(t);
+  assert.throws(() => applyPlans({ root, ids: undefined, rules: r }), /1건을 명시/);
+  assert.throws(() => applyPlans({ root, ids: [source, '00_Inbox/other.md'], rules: r }), /1건을 명시/);
+  assert.throws(() => applyPlans({ root, ids: `${source},00_Inbox/other.md`, rules: r }), /0건 일치/);
+  const preview = applyPlans({ root, ids: source, dryRun: true, noWiki: true, rules: r });
+  assert.equal(preview.written, false);
+  assert.ok(existsSync(join(root, source)));
+  assert.ok(!existsSync(join(root, '20_Records/21_Notes/2026/2026-10-11 가상 메모.md')));
+  const done = applyPlans({ root, ids: source, noWiki: true, rules: r });
+  assert.equal(done.written, true);
+  const note = readFileSync(join(root, '20_Records/21_Notes/2026/2026-10-11 가상 메모.md'), 'utf8');
+  assert.match(note, /movedFrom: \["00_Inbox\/2026-10-11 1200 가상 메모"\]/);
+  assert.match(note, /오너 가상 메모 본문/);
+  assert.ok(!existsSync(join(root, source)));
+  const daily = readFileSync(join(root, '10_Periodic/Daily/2026/2026-10-11.md'), 'utf8');
+  assert.match(daily, /## 오너 메모\n오너 글\n/);
+  assert.match(daily, /- 기존 줄\n- \[\[20_Records\/21_Notes\/2026\/2026-10-11 가상 메모\|/);
+  const again = applyPlans({ root, ids: source, noWiki: true, rules: r });
+  assert.equal(again.items[0].alreadyApplied, true);
+});
+
+test('applyPlans: 데일리가 없으면 보류로 보고, 등록부 값 규칙 위반 계획은 적용하지 않음', (t) => {
+  const { root, source, rules: r } = applyFixture(t, { daily: false });
+  const result = applyPlans({ root, ids: source, dryRun: true, noWiki: true, rules: r });
+  assert.equal(result.items[0].dailyPending, '10_Periodic/Daily/2026/2026-10-11.md');
+  const bad = judgment(); bad.frontmatter.category = '가족';
+  const second = applyFixture(t, { judgmentValue: bad });
+  assert.throws(() => applyPlans({ root: second.root, ids: second.source, noWiki: true, rules: second.rules }), /01_Home 링크 배열/);
+  assert.ok(existsSync(join(second.root, second.source)));
+});
+
+test('collectInbox: 지금 기준에 어긋나는 옛 계획함 항목은 다시 판단 대상, 맞는 계획은 건너뜀', (t) => {
+  const bad = judgment(); bad.frontmatter.category = '가족';
+  const invalid = applyFixture(t, { judgmentValue: bad });
+  assert.deepEqual(collectInbox(invalid.root).selected.map((x) => x.source), [invalid.source]);
+  const valid = applyFixture(t);
+  assert.deepEqual(collectInbox(valid.root).selected.map((x) => x.source), []);
 });
