@@ -246,8 +246,9 @@ export function planShapeProblems(judgment) {
     if ([value].flat().some((part) => typeof part === 'string' && /[\r\n]/.test(part))) problems.push(`머리말 값에 줄바꿈 금지: ${key}`);
   }
   const categories = Array.isArray(frontmatter.category) ? frontmatter.category : null;
-  if (!categories || !categories.length || !categories.every((value) => /^\[\[01_Home\/[^\]]+\]\]$/.test(value)))
-    problems.push('category는 01_Home 링크 배열이어야 함(예: ["[[01_Home/201 미네]]"])');
+  const categoryLink = new RegExp(`^\\[\\[${VAULT_REL.homeDir}/[^\\]]+\\]\\]$`);
+  if (!categories || !categories.length || !categories.every((value) => categoryLink.test(value)))
+    problems.push(`category는 ${VAULT_REL.homeDir} 링크 배열이어야 함(예: ["[[${VAULT_REL.homeDir}/201 미네]]"])`);
   if (target.type === 'conversation' && categories?.some((value) => value.includes('201 미네'))
       && ['emotions', 'primaryEmotion', 'importance', 'mineAge'].some((key) => frontmatter[key] == null))
     problems.push('201 미네 conversation은 emotions·primaryEmotion·importance·mineAge가 필요함 — 대화가 아닌 글 메모는 21_Notes 노트로');
@@ -353,7 +354,7 @@ function applyOne(root, item, planDate, rules, { dryRun, noWiki, write, applyDat
   const logLine = `- ${applyDate} Inbox apply: [[${rel.replace(/\.md$/, '')}]] ← ${item.source} (Wiki ${noWiki ? '보류' : '없음'}; 데일리 ${daily?.content ? '연결' : '보류'})`;
   // 재개를 다른 날 해도 같은 원본의 적용 줄이 두 번 붙지 않게 원본 경로 기준으로 비교한다.
   const log = oldLog?.includes(`Inbox apply: [[${rel.replace(/\.md$/, '')}]] ← ${item.source} `) ? oldLog : oldLog ? `${oldLog.replace(/\s*$/, '')}\n${logLine}\n`
-    : `---\ntype: "agent-log"\ndescription: "클리오 작업 기록"\ncreated: "${applyDate}"\nmodified: "${applyDate}"\nagent: "clio"\n---\n\n# ${applyDate.slice(0, 7)}\n\n${logLine}\n`;
+    : `---\ntype: "agent-log"\ndescription: "${agentTitle('clio')} 작업 기록"\ncreated: "${applyDate}"\nmodified: "${applyDate}"\nagent: "clio"\n---\n\n# ${applyDate.slice(0, 7)}\n\n${logLine}\n`;
   const logProblems = checkNote(logRel, log, rules);
   if (logProblems.length) throw new Error(`로그 등록부 위반: ${logProblems.join(' / ')}`);
   const result = { source: item.source, target: rel, daily: daily?.line ?? null,
