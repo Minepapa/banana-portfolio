@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AGENT_NAMES, buildAgentDefs, buildAgentRegistry, renderAgent } from './build-agent-defs.mjs';
+import { AGENT_NAMES, buildAgentDefs, buildAgentRegistry, renderAgent, validateDefaultFacts } from './build-agent-defs.mjs';
 import { LEGACY_OVERRIDES, AGENT_SPECIFIC_OVERRIDES, APPENDIX_OVERRIDES, COMMON_OVERRIDES } from './agent-legacy-overrides.mjs';
 import { parseAgentMd } from '../lib/agent-loader.mjs';
 
@@ -141,4 +141,29 @@ test('담당 레지스트리: 헌장 title·telegramLabel과 decisionDocs 키(�
 test('실제 헌장과 생성된 담당 레지스트리가 같다(헌장만 고치고 생성기를 안 돌리면 실패)', () => {
   const registryPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'agent-registry.generated.json');
   assert.equal(readFileSync(registryPath, 'utf8'), `${JSON.stringify(buildAgentRegistry(), null, 2)}\n`);
+});
+
+test('defaultFacts와 별칭은 헌장 머리말에서 레지스트리로 생성한다', () => {
+  const dirs = fixture();
+  try {
+    const path = join(dirs.charterDir, 'plutus.md');
+    writeFileSync(path, readFileSync(path, 'utf8').replace('legacyAppendix:',
+      'defaultFacts: ["rebalance-facts.mjs", "macro-overlay-facts.mjs --dry-run"]\naliases: ["카이로스"]\nlegacyAppendix:'));
+    const registry = buildAgentRegistry({ charterDir: dirs.charterDir });
+    assert.deepEqual(registry.agents.plutus.defaultFacts, ['rebalance-facts.mjs', 'macro-overlay-facts.mjs --dry-run']);
+    assert.deepEqual(registry.agents.plutus.aliases, ['카이로스']);
+    buildAgentDefs(dirs);
+    assert.deepEqual(JSON.parse(readFileSync(dirs.registryOut, 'utf8')), registry);
+  } finally { rmSync(dirs.root, { recursive: true, force: true }); }
+});
+
+test('defaultFacts는 tools의 일반 facts 파일만 허용하고 macro는 dry-run을 강제한다', () => {
+  assert.deepEqual(validateDefaultFacts(['ledger-facts.mjs', 'macro-overlay-facts.mjs --dry-run'], 'plutus'),
+    ['ledger-facts.mjs', 'macro-overlay-facts.mjs --dry-run']);
+  for (const command of ['../ledger-facts.mjs', '/tmp/ledger-facts.mjs', 'ledger-facts.mjs; echo bad',
+    'ledger-facts.mjs --json', 'macro-overlay-facts.mjs', 'macro-overlay-facts.mjs --dry-run --json',
+    'missing-facts.mjs', 'risk-facts.js']) {
+    assert.throws(() => validateDefaultFacts([command], 'plutus'), /defaultFacts/, command);
+  }
+  assert.throws(() => validateDefaultFacts('ledger-facts.mjs', 'plutus'), /형식 오류/);
 });
