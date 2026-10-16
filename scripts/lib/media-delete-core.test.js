@@ -4,7 +4,9 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SHORT_VIDEO_SECONDS, chooseRepresentative, classify, exclusionReasons, detectSignals } from './media-delete-core.mjs';
-import { frameArgs, frameMetrics } from '../tools/media-quality-measure.mjs';
+import { clearStaleLock, frameArgs, frameMetrics } from '../tools/media-quality-measure.mjs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const clean = (overrides = {}) => ({
   record: { id: 'a', archivePath: 'Archive/2025/01/Camera/a.jpg', size: 100, googlePhotosBackupConfirmed: true, ...overrides.record },
@@ -87,9 +89,11 @@ test('측정·리포트 코드에는 원본 삭제·이동이 없다(측정 잠�
   const dir = fileURLToPath(new URL('..', import.meta.url));
   for (const file of ['lib/media-delete-core.mjs', 'tools/media-delete-report.mjs', 'tools/media-quality-measure.mjs']) {
     const source = readFileSync(join(dir, file), 'utf8');
-    assert.doesNotMatch(source, /\brmSync\b|\brenameSync\b|\bcpSync\b|Trash/, file);
+    assert.doesNotMatch(source, /\brmSync\b|\bcpSync\b|Trash/, file);
     const unlinks = source.match(/unlinkSync\(([^)]*)\)/g) ?? [];
     assert.ok(unlinks.every((call) => call === 'unlinkSync(lock)'), `${file}: ${unlinks}`);
+    const renames = source.match(/renameSync\(([^)]*)\)/g) ?? [];
+    assert.ok(renames.every((call) => call === 'renameSync(temporary, OUTPUT)'), `${file}: ${renames}`);
   }
 });
 
@@ -97,4 +101,27 @@ test('측정 ffmpeg 인자: 사진은 -map 0:v:0 다음에 -frames:v 1(실측 �
   const photo = frameArgs('/x.jpg', 'photo');
   assert.deepEqual(photo.slice(4, 8), ['-map', '0:v:0', '-frames:v', '1']);
   assert.ok(!frameArgs('/x.mp4', 'video').includes('-frames:v'));
+});
+
+test('리뷰 반영: 판정된 얼굴은 이름과 무관하게(나 포함) 제외, 핵심 기억 후보 필드, 순간 노트 없음·얼굴 데이터 없음도 제외', () => {
+  assert.ok(exclusionReasons(clean({ face: { people: ['나'] } })).some((r) => r.includes('미네·가족')));
+  assert.ok(exclusionReasons(clean({ note: { coreMemoryCandidate: { value: true } } })).includes('핵심 기억'));
+  assert.ok(exclusionReasons(clean({ note: { coreMemoryCandidate: true } })).includes('핵심 기억'));
+  assert.ok(exclusionReasons(clean({ note: { noteMissing: true } })).includes('순간 노트 확인 불가'));
+  assert.ok(exclusionReasons(clean(), { sourceError: '얼굴 데이터 없음' }).includes('보호 데이터 확인 불가'));
+  assert.ok(exclusionReasons(clean({ record: { importPath: 'Imports/결혼/x.jpg' } })).includes('사건·기념일'));
+});
+
+test('측정 잠금: 살아 있는 최근 잠금은 유지, 죽은 PID·오래된 잠금·형식 오류는 정리', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'measure-lock-'));
+  try {
+    const lock = join(dir, 'measure.lock');
+    writeFileSync(lock, JSON.stringify({ pid: 1, startedAt: 1000 }));
+    assert.equal(clearStaleLock(lock, { now: 2000, alive: () => true }), false);
+    assert.equal(clearStaleLock(lock, { now: 2000, alive: () => false }), true);
+    writeFileSync(lock, JSON.stringify({ pid: 1, startedAt: 0 }));
+    assert.equal(clearStaleLock(lock, { now: 3 * 3_600_000, alive: () => true }), true);
+    writeFileSync(lock, 'garbage');
+    assert.equal(clearStaleLock(lock, { now: 1, alive: () => true }), true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

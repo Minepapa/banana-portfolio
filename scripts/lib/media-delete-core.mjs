@@ -36,9 +36,12 @@ export function exclusionReasons(item, context = {}) {
   const reasons = [];
   const people = [...(face.people || []), ...(face.hold || [])];
   const noteText = [note.category, note.people, note.album, record.album, record.importPath].flat().join(' ');
-  if (people.some((person) => FAMILY.test(String(person))) || FAMILY.test(noteText)) reasons.push('미네·가족 얼굴·앨범·분류');
-  if (note.coreMemory || /핵심 기억/.test(String(note.description || ''))) reasons.push('핵심 기억');
-  if (EVENT.test([note.description, note.title, note.occasion].join(' '))) reasons.push('사건·기념일');
+  // 얼굴 판정에 이름이 하나라도 있으면(미네·휘영·나 등 신원이 판정된 사람) 이름과 무관하게 제외한다(리뷰 HIGH: '나' 누락).
+  if (people.length || FAMILY.test(noteText)) reasons.push('미네·가족 얼굴·앨범·분류');
+  const candidate = note.coreMemoryCandidate;
+  if (note.coreMemory || candidate === true || candidate === 'true' || candidate?.value === true
+    || /핵심 기억/.test(String(note.description || ''))) reasons.push('핵심 기억');
+  if (EVENT.test([note.description, note.title, note.occasion, note.album, record.album, record.importPath].join(' '))) reasons.push('사건·기념일');
   if (note.memos?.length || note.ownerMemo) reasons.push('오너 메모');
   if (note.recording || note.call || !mediaKind(record)) reasons.push('녹음·통화 또는 비대상 형식');
   if (!vision || vision.error || !quality || quality.error) reasons.push('분석 누락');

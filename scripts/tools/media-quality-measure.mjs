@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // 결정 미디어-삭제-판정 §4-1: 원본 읽기 전용 측정. 삭제·이동 기능 없음.
-import { existsSync, mkdirSync, openSync, closeSync, readFileSync, statSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, closeSync, readFileSync, statSync, writeFileSync, unlinkSync, renameSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { join, resolve, sep } from 'node:path';
 import { MEDIA_RECORDINGS_PATHS, VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
@@ -63,7 +64,8 @@ export function targets(archive, imports, cache, { limit = 500, ids = null } = {
   return [...archive, ...imports].filter((record) => record.id && mediaKind(record)
     && (!requested || requested.has(record.id)))
     .filter((record) => {
-      const path = sourcePath(record);
+      let path;
+      try { path = sourcePath(record); } catch { return false; } // 잘못된 경로 1건이 전체 실행을 막지 않게
       if (!existsSync(path)) return false;
       return !cacheHit(cache.get(record.id), statSync(path));
     }).slice(0, limit);
@@ -82,6 +84,15 @@ export function parseArgs(argv) {
   if (!Number.isInteger(result.limit) || result.limit < 1 || result.limit > 10000) throw new Error('--limit 범위 오류');
   return result;
 }
+// 남은 잠금 파일 정리: 기록된 PID가 없거나 2시간이 지났으면 오래된 잠금으로 본다.
+export function clearStaleLock(lock, { now = Date.now(), alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } } } = {}) {
+  if (!existsSync(lock)) return false;
+  let info = {};
+  try { info = JSON.parse(readFileSync(lock, 'utf8') || '{}'); } catch {}
+  if (info.pid && alive(info.pid) && now - (info.startedAt ?? 0) < 2 * 3_600_000) return false;
+  unlinkSync(lock);
+  return true;
+}
 export function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   const cache = new Map(lines(OUTPUT).map((row) => [row.id, row]));
@@ -93,7 +104,19 @@ export function main(argv = process.argv.slice(2)) {
   }
   mkdirSync(join(MEDIA, 'Quality'), { recursive: true, mode: 0o700 });
   const lock = join(MEDIA, 'Quality', 'measure.lock');
+  clearStaleLock(lock);
   const fd = openSync(lock, 'wx', 0o600);
+  writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+  const release = () => { try { closeSync(fd); } catch {} try { unlinkSync(lock); } catch {} };
+  const onSignal = () => { release(); process.exit(130); };
+  process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal);
+  let measuredSinceSave = 0;
+  const save = () => {
+    // 원자적 저장: 임시 파일에 쓰고 이름을 바꾼다(쓰는 중 멈춰도 기존 결과가 깨지지 않음).
+    const temporary = `${OUTPUT}.tmp-${process.pid}`;
+    writeFileSync(temporary, [...cache.values()].map((row) => JSON.stringify(row)).join('\n') + '\n', { mode: 0o600 });
+    renameSync(temporary, OUTPUT);
+  };
   try {
     const deadline = Date.now() + 10 * 60_000;
     for (const record of selected) {
@@ -103,10 +126,10 @@ export function main(argv = process.argv.slice(2)) {
       try { result = measure(path, mediaKind(record)); }
       catch (error) { result = { error: String(error.message).slice(0, 300) }; }
       cache.set(record.id, { id: record.id, sourceSize: stat.size, sourceMtimeMs: stat.mtimeMs, ...result });
+      if (++measuredSinceSave >= 200) { save(); measuredSinceSave = 0; } // 중간 저장
     }
-    const content = [...cache.values()].map((row) => JSON.stringify(row)).join('\n') + '\n';
-    writeFileSync(OUTPUT, content, { mode: 0o600 });
+    save();
     console.log(JSON.stringify({ measured: selected.length, errors: [...cache.values()].filter((row) => row.error).length }));
-  } finally { closeSync(fd); unlinkSync(lock); }
+  } finally { release(); process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal); }
 }
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

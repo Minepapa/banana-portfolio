@@ -2,6 +2,7 @@
 // 결정 미디어-삭제-판정 §4-2: 수동 리포트 전용. 원본과 볼트는 읽기만 한다.
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { MEDIA_FACES_PATHS, MEDIA_RECORDINGS_PATHS, VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { resolveDecision } from '../lib/decision-resolver.mjs';
@@ -23,7 +24,10 @@ function loadNotes(root) {
   }
   return notes;
 }
+// 얼굴 보호 데이터가 없으면 조용히 보호가 꺼지지 않도록 sourceError로 표시해 모든 행을 제외한다(리뷰 MEDIUM).
 function faceMap(root) {
+  const missing = [join(root, VAULT_REL.mediaFacePeople), MEDIA_FACES_PATHS.matches].filter((path) => !existsSync(path));
+  if (missing.length) return { photos: {}, videos: new Map(), matches: new Map(), sourceError: `얼굴 데이터 없음: ${missing.join(', ')}` };
   const photos = json(join(root, VAULT_REL.mediaFacePeople)).photos || {};
   const videos = new Map(lines(join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl')).map((row) => [row.id, row]));
   const matches = new Map();
@@ -52,7 +56,7 @@ export function makeItems({ archive, imports, vision, quality, notes, faces, med
       } catch { sameInode = true; } // 원본 확인 실패는 후보로 보내지 않는다.
     }
     return { record, vision: visionById.get(record.id), quality: qualityById.get(record.id),
-      note: notes.get(record.id) || {}, face: { ...face, people: faceNames }, sameInode,
+      note: notes.get(record.id) || { noteMissing: true }, face: { ...face, people: faceNames }, sameInode,
       mineFaceScore: Math.max(0, ...raw.filter((entry) => entry.label === 'mine').map((entry) => entry.score || 0)) };
   });
   const groups = new Map();
@@ -103,15 +107,16 @@ export function main(argv = process.argv.slice(2)) {
   const decision = resolveDecision('미디어-삭제-판정');
   resolveDecision('미디어-삭제-요청'); // §4: 두 결정의 범위를 함께 확인한다.
   const root = VAULT_PATHS.root;
+  const faceSource = faceMap(root);
   const items = makeItems({ archive: lines(VAULT_PATHS.mediaArchiveIndex),
     imports: lines(join(root, VAULT_REL.mediaImportsIndex)),
     vision: lines(VAULT_PATHS.mediaVisionIndex),
     quality: lines(join(MEDIA_RECORDINGS_PATHS.mediaRoot, 'Quality', 'quality.jsonl')),
-    notes: loadNotes(root), faces: faceMap(root), mediaRoot: MEDIA_RECORDINGS_PATHS.mediaRoot });
-  const rows = items.map((item) => classify(item));
+    notes: loadNotes(root), faces: faceSource, mediaRoot: MEDIA_RECORDINGS_PATHS.mediaRoot });
+  const rows = items.map((item) => classify(item, { sourceError: faceSource.sourceError }));
   const summary = summarize(rows);
   if (dryRun) { console.log(JSON.stringify({ dryRun, ...summary })); return summary; }
-  const day = new Date().toISOString().slice(0, 10);
+  const day = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10); // KST
   const directory = join(MEDIA_RECORDINGS_PATHS.mediaRoot, 'DeleteReport');
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const table = (object) => Object.entries(object).sort((a, b) => (b[1].count ?? b[1]) - (a[1].count ?? a[1]))
@@ -122,4 +127,4 @@ export function main(argv = process.argv.slice(2)) {
   console.log(JSON.stringify(summary));
   return summary;
 }
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
