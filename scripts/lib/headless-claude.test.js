@@ -3,7 +3,10 @@
 // 교체 아님), 없으면 argv 는 종전과 완전 동일(하위호환 — 기존 호출부 동작 불변).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildArgs, headlessExitFailure, headlessJsonFailure } from './headless-claude.mjs';
+import { existsSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { buildArgs, headlessExitFailure, headlessJsonFailure, headlessResult, runHeadlessClaude } from './headless-claude.mjs';
 
 const BASE = ['-p', 'P', '--permission-mode', 'bypassPermissions', '--allowedTools', 'Read', '--model', 'sonnet', '--output-format', 'text'];
 
@@ -58,4 +61,51 @@ test('비정상 종료 JSON stdout의 과금·한도 정보를 stderr보다 우�
   const fallback = headlessExitFailure(2, 'not json', 'no stdin data received\nreal stderr', true);
   assert.match(fallback.message, /claude 종료코드 2: real stderr/);
   assert.match(headlessExitFailure(3, 'stdout fallback', 'no stdin data received').message, /stdout fallback/);
+});
+
+test('lean 프리셋은 도구·MCP·권한·JSON 옵션을 CLI 인자로 고정한다', () => {
+  const args = buildArgs('P', 'sonnet', 'Read(/tmp/copies/**),WebSearch', { lean: true, maxTurns: 2 });
+  const value = flag => args[args.indexOf(flag) + 1];
+  assert.equal(value('--permission-mode'), 'dontAsk');
+  assert.equal(value('--allowedTools'), 'Read(/tmp/copies/**),WebSearch');
+  assert.equal(value('--tools'), 'Read,WebSearch');
+  assert.equal(value('--disallowedTools'), 'mcp__*');
+  assert.equal(value('--mcp-config'), '{"mcpServers":{}}');
+  assert.equal(value('--output-format'), 'json');
+  assert.equal(value('--max-turns'), '2');
+  assert.ok(args.includes('--restricted'));
+  assert.ok(args.includes('--strict-mcp-config'));
+  assert.equal(buildArgs('P', 'sonnet', '', { lean: true })[10], '--tools');
+  assert.equal(buildArgs('P', 'sonnet', undefined, { lean: true })[5], '');
+});
+
+test('JSON envelope의 result를 기존 텍스트 파서 입력으로 복원한다', () => {
+  assert.equal(headlessResult(JSON.stringify({ result: '```json\n{"ok":true}\n```', usage: { input_tokens: 2 } })),
+    '```json\n{"ok":true}\n```');
+  assert.throws(() => headlessResult('{"result":null}'), /JSON 결과 오류/);
+});
+
+test('lean 실행은 빈 임시 cwd를 쓰고 성공·오류 때 지우며 usage를 기록한다', async () => {
+  const seen = [];
+  const logs = [];
+  const spawnImpl = (_command, _args, options) => {
+    seen.push(options.cwd);
+    assert.equal(existsSync(options.cwd), true);
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = () => {};
+    queueMicrotask(() => {
+      child.stdout.write(JSON.stringify({ is_error: seen.length === 2, result: seen.length === 2 ? 'failure' : 'ok',
+        usage: { input_tokens: 4, output_tokens: 2 } }));
+      child.emit('close', 0);
+    });
+    return child;
+  };
+  const opts = { lean: true, maxTurns: 1, spawnImpl, usageLogger: message => logs.push(message) };
+  assert.equal(headlessResult(await runHeadlessClaude('P', 'sonnet', '', opts)), 'ok');
+  assert.equal(existsSync(seen[0]), false);
+  await assert.rejects(runHeadlessClaude('P', 'sonnet', '', opts), /failure/);
+  assert.equal(existsSync(seen[1]), false);
+  assert.match(logs[0], /input_tokens/);
 });

@@ -46,7 +46,7 @@ import { buildHomeMirror } from '../lib/firestore-mirror.mjs';
 import { computeRebalanceGaps } from '../lib/rebalance-gap.mjs';
 import { loadEnv } from '../lib/auth.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
@@ -271,7 +271,9 @@ async function main() {
     if (AGENT.warning) console.log(`⚠ ${AGENT.warning}`);
     const MODEL = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1] || AGENT.model;
     try {
-      const judgment = (await runHeadlessClaude(buildMorningBriefingPrompt(sections), MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
+      const judgment = headlessResult(await runHeadlessClaude(buildMorningBriefingPrompt(sections), MODEL, '', {
+        lean: true, appendSystemPrompt: AGENT.systemPrompt, tools: '', maxTurns: 1,
+      })).trim();
       console.log(judgment);
       ({ conclusion, context, decisions } = parseDepartmentResponse(judgment));
     } catch (e) {

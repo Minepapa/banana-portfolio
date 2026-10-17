@@ -49,7 +49,7 @@ import {
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { markMacroWarningRecovered } from '../lib/warning-action-executor.mjs';
-import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
@@ -474,7 +474,10 @@ async function main() {
     console.log('⏳ 쿨다운 중 — 2차 판단 생략, 사실만 발송');
   } else {
     try {
-      const raw = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt, timeoutMs: LLM_CALL_TIMEOUT_MS })).trim();
+      const raw = headlessResult(await runHeadlessClaude(prompt, MODEL, '', {
+        appendSystemPrompt: AGENT.systemPrompt, timeoutMs: LLM_CALL_TIMEOUT_MS,
+        lean: true, tools: '', maxTurns: 1,
+      })).trim();
       console.log(raw);
       const { mainText, consultationText } = splitOffConsultation(raw);
       ({ conclusion, context, decisions } = parseDepartmentResponse(mainText));
@@ -485,13 +488,19 @@ async function main() {
         const consultationAppendix = { 자산분배: 'athena', 퀀트: 'kairos', 장부: 'hermes', 기록: 'apollo' }[department];
         const consultAgent = loadAgent(agentKey, { fallbackModel: 'sonnet', appendix: [consultationAppendix] });
         if (consultAgent.warning) console.log(`⚠ ${consultAgent.warning}`);
-        const consultRaw = (await runHeadlessClaude(
-          buildConsultationPrompt(breaches, reason), consultAgent.model, 'Read', { appendSystemPrompt: consultAgent.systemPrompt, timeoutMs: LLM_CALL_TIMEOUT_MS },
+        const consultRaw = headlessResult(await runHeadlessClaude(
+          buildConsultationPrompt(breaches, reason), consultAgent.model, '', {
+            appendSystemPrompt: consultAgent.systemPrompt, timeoutMs: LLM_CALL_TIMEOUT_MS,
+            lean: true, tools: '', maxTurns: 1,
+          },
         )).trim();
         console.log(consultRaw);
 
-        const synthRaw = (await runHeadlessClaude(
-          buildFinalSynthesisPrompt(breaches, department, consultRaw), MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt, timeoutMs: LLM_CALL_TIMEOUT_MS },
+        const synthRaw = headlessResult(await runHeadlessClaude(
+          buildFinalSynthesisPrompt(breaches, department, consultRaw), MODEL, '', {
+            appendSystemPrompt: AGENT.systemPrompt, timeoutMs: LLM_CALL_TIMEOUT_MS,
+            lean: true, tools: '', maxTurns: 1,
+          },
         )).trim();
         console.log(synthRaw);
         // ⚠️ Call C도 Call A와 같은 이유로 splitOffConsultation을 거쳐야 한다 — 프롬프트가

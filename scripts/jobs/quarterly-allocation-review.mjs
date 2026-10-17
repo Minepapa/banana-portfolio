@@ -36,7 +36,7 @@ import { writeAtomic } from '../lib/state-writer.mjs';
 import { TARGET_ALLOCATION } from '../lib/rebalance-gap.mjs';
 import { getCachedMacroIndicators } from '../lib/macro-cache.mjs';
 import { assembleMacro } from '../tools/risk-facts.mjs';
-import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
@@ -232,7 +232,9 @@ async function main() {
 
   let judgment;
   try {
-    judgment = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
+    judgment = headlessResult(await runHeadlessClaude(prompt, MODEL, '', {
+      appendSystemPrompt: AGENT.systemPrompt, lean: true, tools: '', maxTurns: 1,
+    })).trim();
   } catch (e) {
     console.error(`❌ 헤드리스 판단 실패: ${e.message}`);
     process.exit(1);
@@ -240,8 +242,8 @@ async function main() {
 
   const checked = await ensureNoQuestionDecisions({
     judgment, parse: parseDepartmentResponse,
-    regenerate: async () => (await runHeadlessClaude(`${prompt}\n\n[교정] 직전 응답의 ${DECISIONS_MARKER}에 오너에게 되묻는 질문형이 있었다. 질문 없이 확정 권고안(평서문)으로만 다시 써라.`,
-      MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim(),
+    regenerate: async () => headlessResult(await runHeadlessClaude(`${prompt}\n\n[교정] 직전 응답의 ${DECISIONS_MARKER}에 오너에게 되묻는 질문형이 있었다. 질문 없이 확정 권고안(평서문)으로만 다시 써라.`,
+      MODEL, '', { appendSystemPrompt: AGENT.systemPrompt, lean: true, tools: '', maxTurns: 1 })).trim(),
   });
   judgment = checked.judgment;
   console.log(judgment);

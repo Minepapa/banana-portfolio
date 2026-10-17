@@ -42,9 +42,7 @@ export async function restrictedDecision(prompt, agent, { invoke = runHeadlessCl
   const cwd = mkdtempSync('/tmp/mine-athena-claude-');
   try {
     const raw = await invoke(prompt, agent.model, '', {
-      appendSystemPrompt: agent.systemPrompt, tools: '', disallowedTools: 'mcp__*',
-      permissionMode: 'dontAsk', restricted: true, strictMcpConfig: true,
-      mcpConfig: '{"mcpServers":{}}', maxTurns: 1, outputFormat: 'json',
+      appendSystemPrompt: agent.systemPrompt, lean: true, tools: '', maxTurns: 1,
       cwd, timeoutMs: MAX_JOB_MS,
     });
     const envelope = JSON.parse(raw);

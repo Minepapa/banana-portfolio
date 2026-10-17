@@ -45,7 +45,7 @@ import { CAP_FRACTION, applyCappedAllocation, isAllowedAllocationInstrument, res
 import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/cash-allocation-candidates.mjs';
 import { findCashBalance, resolveDesignatedCashBalance } from '../lib/cash-ledger.mjs';
 import { rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
-import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
@@ -416,7 +416,9 @@ async function main() {
   const capBudgetByClass = Object.fromEntries(roomFacts.map((f) => [f.assetClass, f.capBudgetWon]));
   let actions;
   try {
-    const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: PLUTUS.systemPrompt }));
+    const r = parseJsonBlock(headlessResult(await runHeadlessClaude(prompt, MODEL, '', {
+      appendSystemPrompt: PLUTUS.systemPrompt, lean: true, tools: '', maxTurns: 1,
+    })));
     const { kept, dropped } = validateMacroTiltActions(r.actions, { capBudgetByClass, holdings, rankedUniverseByClass });
     dropped.forEach((d) => console.log(`  ⚠️ 액션 드롭: ${d.reason}`));
     actions = kept;
@@ -436,7 +438,9 @@ async function main() {
   let themisVerdict = { verdict: '통과', caveat: '' };
   try {
     const themisPrompt = buildThemisTiltReviewPrompt({ signalsReport, actions });
-    themisVerdict = parseJsonBlock(await runHeadlessClaude(themisPrompt, THEMIS.model, 'Read', { appendSystemPrompt: THEMIS.systemPrompt }));
+    themisVerdict = parseJsonBlock(headlessResult(await runHeadlessClaude(themisPrompt, THEMIS.model, '', {
+      appendSystemPrompt: THEMIS.systemPrompt, lean: true, tools: '', maxTurns: 1,
+    })));
   } catch (e) {
     // Themis 검증 실패해도 발송 자체는 막지 않는다(§5와 같은 정신 — 실시간 오너 세션이
     // 없는 무인 실행이라 검증 단계 하나가 죽었다고 액션 전체가 유실되면 안 됨). 검증을

@@ -458,6 +458,9 @@ test('restricted 호출은 빈 임시 cwd와 도구 차단 옵션을 전달하�
     assert.equal(prompt, 'prompt');
     assert.equal(allowedTools, '');
     cwd = options.cwd;
+    assert.equal(options.lean, true);
+    assert.equal(options.maxTurns, 1);
+    assert.equal(options.timeoutMs, 30 * 60_000);
     assert.equal(existsSync(cwd), true);
     assert.deepEqual(readdirSync(cwd), []);
     const args = buildArgs(prompt, model, allowedTools, options);

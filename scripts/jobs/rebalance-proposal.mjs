@@ -69,7 +69,7 @@ import { computeRebalanceGaps, normalizeAccount, isLegacyIndividualStock } from 
 import { CAP_FRACTION, applyCappedAllocation, isAllowedAllocationInstrument, resolveAllocationPricing } from '../lib/allocation-proposal-shared.mjs';
 import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/cash-allocation-candidates.mjs';
 import { rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
-import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
@@ -407,7 +407,9 @@ async function main() {
 
   let actions;
   try {
-    const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt }));
+    const r = parseJsonBlock(headlessResult(await runHeadlessClaude(prompt, MODEL, '', {
+      lean: true, appendSystemPrompt: AGENT.systemPrompt, tools: '', maxTurns: 1,
+    })));
     const validated = validateRebalanceActions(r.actions, { breachFacts, holdings, rankedUniverseByClass });
     const capped = applyCashCap(validated.kept, cashByAccount, { pendingKeys });
     const dropped = [...validated.dropped, ...capped.dropped];

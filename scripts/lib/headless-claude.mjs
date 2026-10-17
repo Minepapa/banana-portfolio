@@ -1,4 +1,7 @@
 import { spawn } from 'child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setCooldown, parseResetTime, LIMIT_RE } from './quota-cooldown.mjs';
 
 export const HEADLESS_NOTE = `
@@ -23,23 +26,35 @@ export const HEADLESS_NOTE = `
 export function buildArgs(prompt, model, allowedTools, {
   appendSystemPrompt, tools, outputFormat = 'text', permissionMode = 'bypassPermissions',
   disallowedTools, addDir, restricted = false, strictMcpConfig = false, mcpConfig, maxTurns,
+  lean = false,
 } = {}) {
+  // --restricted 환경에서는 --allowedTools만으로 Bash/WebFetch 등을 노출할 수 없다.
+  // 실제 필요한 도구 이름을 --tools에도 전달한다. 경로 제한은 --allowedTools가 맡는다.
+  const permittedTools = allowedTools ?? (lean ? '' : 'Bash,Read,Glob,Grep,WebFetch');
+  const leanTools = permittedTools.split(',').map(tool => tool.trim().split('(')[0]).filter(Boolean).join(',');
   const args = [
     '-p', prompt,
-    '--permission-mode', permissionMode,
-    '--allowedTools', allowedTools,
+    '--permission-mode', lean ? 'dontAsk' : permissionMode,
+    '--allowedTools', permittedTools,
     '--model', model,
-    '--output-format', outputFormat,
+    '--output-format', lean ? 'json' : outputFormat,
   ];
   if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt);
-  if (tools !== undefined) args.push('--tools', tools);
-  if (disallowedTools) args.push('--disallowedTools', disallowedTools);
+  if (lean || tools !== undefined) args.push('--tools', tools ?? leanTools);
+  if (lean || disallowedTools) args.push('--disallowedTools', disallowedTools ?? 'mcp__*');
   if (addDir) args.push('--add-dir', addDir);
-  if (restricted) args.push('--restricted');
-  if (strictMcpConfig) args.push('--strict-mcp-config');
-  if (mcpConfig) args.push('--mcp-config', mcpConfig);
+  if (lean || restricted) args.push('--restricted');
+  if (lean || strictMcpConfig) args.push('--strict-mcp-config');
+  if (lean || mcpConfig) args.push('--mcp-config', mcpConfig ?? '{"mcpServers":{}}');
   if (maxTurns) args.push('--max-turns', String(maxTurns));
   return args;
+}
+
+// 출력 계약은 기존처럼 raw 문자열이다. text였던 호출부만 이 함수로 envelope를 벗긴다.
+export function headlessResult(output) {
+  const envelope = JSON.parse(output);
+  if (typeof envelope.result !== 'string') throw new Error('claude JSON 결과 오류');
+  return envelope.result;
 }
 
 export function headlessJsonFailure(output) {
@@ -74,14 +89,20 @@ export function headlessExitFailure(code, output, stderr, json = false) {
   return error;
 }
 
-export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools = 'Bash,Read,Glob,Grep,WebFetch', opts = {}) {
+export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools, opts = {}) {
   // timeoutMs(선택) — 기본 12분 그대로 유지. 여러 호출을 순차로 거는 잡(예:
   // intraday-market-move-monitor.mjs의 Call A/B/C)은 기본값이면 최악의 경우 36분까지
   // 감시가 완전히 멈출 수 있어 더 짧은 값을 넘길 수 있게 열어둠(2026-09-01, 코드리뷰 지적).
   const timeoutMs = opts.timeoutMs ?? 12 * 60 * 1000;
+  const temporaryCwd = opts.lean && !opts.cwd ? mkdtempSync(join(tmpdir(), 'headless-claude-')) : null;
+  const cwd = opts.cwd ?? temporaryCwd;
+  const invoke = opts.spawnImpl ?? spawn;
   return new Promise((resolve, reject) => {
-    const cp = spawn('claude', buildArgs(prompt, model, allowedTools, opts),
-      { cwd: opts.cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let cp;
+    try {
+      cp = invoke('claude', buildArgs(prompt, model, allowedTools, opts),
+        { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) { reject(error); return; }
     let out = '', err = '';
     const timer = setTimeout(() => { cp.kill('SIGKILL'); reject(new Error(`헤드리스 타임아웃 (${Math.round(timeoutMs / 60000)}분 초과)`)); }, timeoutMs);
     cp.stdout.on('data', d => { out += d; });
@@ -90,12 +111,12 @@ export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools = 'Bash
     cp.on('close', code => {
       clearTimeout(timer);
       if (code !== 0) {
-        const e = headlessExitFailure(code, out, err, opts.outputFormat === 'json');
+        const e = headlessExitFailure(code, out, err, opts.lean || opts.outputFormat === 'json');
         if (e.isLimit) setCooldown(parseResetTime(e.limitDetail ?? e.message) ?? Date.now() + 3600_000, e.limitDetail ?? e.message);
         return reject(e);
       }
       if (!out.trim()) return reject(new Error('claude 빈 출력'));
-      if (opts.outputFormat === 'json') {
+      if (opts.lean || opts.outputFormat === 'json') {
         let failure;
         try { failure = headlessJsonFailure(out); }
         catch { return reject(new Error('claude JSON 출력 오류')); }
@@ -103,10 +124,14 @@ export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools = 'Bash
           if (failure.isLimit) setCooldown(parseResetTime(failure.limitDetail ?? failure.message) ?? Date.now() + 3600_000, failure.limitDetail ?? failure.message);
           return reject(failure);
         }
+        if (opts.lean) {
+          const { usage, num_turns, total_cost_usd } = JSON.parse(out);
+          (opts.usageLogger ?? console.log)(`[headless-claude] usage ${JSON.stringify({ usage, num_turns, total_cost_usd })}`);
+        }
       }
       resolve(out);
     });
-  });
+  }).finally(() => { if (temporaryCwd) rmSync(temporaryCwd, { recursive: true, force: true }); });
 }
 
 export function parseJsonBlock(text) {

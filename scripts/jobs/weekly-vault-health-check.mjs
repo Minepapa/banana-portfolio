@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS, VAULT_ROOT, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
@@ -444,7 +444,9 @@ async function main() {
 
   let judgment;
   try {
-    judgment = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
+    judgment = headlessResult(await runHeadlessClaude(prompt, MODEL, '', {
+      lean: true, appendSystemPrompt: AGENT.systemPrompt, tools: '', maxTurns: 1,
+    })).trim();
   } catch (e) {
     console.error(`❌ 헤드리스 판단 실패: ${e.message}`);
     process.exit(1);

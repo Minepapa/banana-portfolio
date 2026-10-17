@@ -21,7 +21,7 @@ import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { readTodos } from '../lib/todo-log.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
-import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
@@ -176,9 +176,9 @@ async function summarize(date, records, prevFields, recordHash, dryRun) {
   if (cooldownActive()) return { summary: '(사용량 한도 쿨다운으로 요약 보류 — 다음 실행에서 다시 시도)', summaryStatus: 'cooldown', model: '없음' };
   try {
     const clio = loadAgent('clio', { fallbackModel: 'sonnet' });
-    const out = sanitizeSummary(await runHeadlessClaude(buildSummaryPrompt(date, records), clio.model, 'Read', {
-      appendSystemPrompt: clio.systemPrompt, tools: '', timeoutMs: 5 * 60 * 1000,
-    }));
+    const out = sanitizeSummary(headlessResult(await runHeadlessClaude(buildSummaryPrompt(date, records), clio.model, '', {
+      lean: true, appendSystemPrompt: clio.systemPrompt, tools: '', maxTurns: 1, timeoutMs: 5 * 60 * 1000,
+    })));
     if (!out) throw new Error('요약 형식("- " 줄) 출력 없음');
     return { summary: out, summaryStatus: 'ok', model: clio.model };
   } catch (e) {

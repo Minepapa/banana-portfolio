@@ -469,9 +469,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
       gridPhoto(copies, gridPath);
       const prompt = buildPrompt(item, [{ path: gridPath, reason: copies.map((copy, index) => `${index + 1}번 ${copy.reason}`).join('; ') }], criteria);
       const raw = await (judge ?? ((text) => runHeadlessClaude(text, agent.model, `Read(/${join(out, 'copies')}/**)`, {
-        appendSystemPrompt: agent.systemPrompt, tools: 'Read', disallowedTools: 'mcp__*',
-        permissionMode: 'dontAsk', restricted: true, strictMcpConfig: true,
-        mcpConfig: '{"mcpServers":{}}', outputFormat: 'json', cwd: join(out, 'copies'), maxTurns: 2,
+        appendSystemPrompt: agent.systemPrompt, lean: true, tools: 'Read', cwd: join(out, 'copies'), maxTurns: 2,
       })))(prompt);
       measured = parseClaudeResult(raw);
       rows.push({ id: item.id, rel: item.rel, title: item.title, recordDate: occurredDate(item.fields.occurred), status: 'ok', copies,

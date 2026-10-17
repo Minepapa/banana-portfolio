@@ -41,9 +41,7 @@ test('제한 판단은 옵션을 전달하고 JSON result·토큰 사용량을 �
   assert.equal(result, '[{"id":1}]');
   assert.deepEqual(invocation.slice(0, 3), ['prompt', 'sonnet', '']);
   assert.deepEqual(invocation[3], {
-    appendSystemPrompt: 'charter', tools: '', disallowedTools: 'mcp__*',
-    permissionMode: 'dontAsk', restricted: true, strictMcpConfig: true,
-    mcpConfig: '{"mcpServers":{}}', maxTurns: 1, outputFormat: 'json',
+    appendSystemPrompt: 'charter', lean: true, tools: '', maxTurns: 1,
     cwd: invocation[3].cwd, timeoutMs: 30 * 60_000,
   });
   assert.equal(existsSync(invocation[3].cwd), false);

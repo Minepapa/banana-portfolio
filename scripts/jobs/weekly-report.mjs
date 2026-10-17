@@ -47,7 +47,7 @@ import {
 } from '../lib/llm-guard.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { escapeHtml } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 
@@ -506,7 +506,9 @@ async function main() {
   console.log(`\n⏳ 리포트 작성 중 (claude -p ${MODEL}, 수 분)...`);
   let md;
   try {
-    md = (await runHeadlessClaude(prompt, MODEL, 'Read,WebSearch', { appendSystemPrompt: PLUTUS_REPORT.systemPrompt })).trim();
+    md = headlessResult(await runHeadlessClaude(prompt, MODEL, 'WebSearch', {
+      lean: true, appendSystemPrompt: PLUTUS_REPORT.systemPrompt, tools: 'WebSearch', maxTurns: 5,
+    })).trim();
   } catch (e) {
     if (e.isLimit) { console.log(`   ⏳ 사용량 한도 → 이번 리포트 발행 보류. 한도 해제 후 재실행하세요.`); return; }
     throw e;
@@ -580,7 +582,9 @@ async function main() {
   //    리포트 발행과 분리 — 실패해도 리포트 발행은 성공 처리.
   try {
     console.log(`\n⏳ 성향 관찰 추출 중 (claude -p ${CLIO_PREFS.model})...`);
-    const obsRaw = parseJsonBlock(await runHeadlessClaude(buildObservationPrompt(signalsText, priorPrefsText, profileText), CLIO_PREFS.model, 'Read', { appendSystemPrompt: CLIO_PREFS.systemPrompt }));
+    const obsRaw = parseJsonBlock(headlessResult(await runHeadlessClaude(buildObservationPrompt(signalsText, priorPrefsText, profileText), CLIO_PREFS.model, '', {
+      lean: true, appendSystemPrompt: CLIO_PREFS.systemPrompt, tools: '', maxTurns: 1,
+    })));
     const priorObsTexts = prefRecords.filter((r) => r.status !== '기각').map((r) => r.observation).filter(Boolean);
     const { kept, dropped } = filterObservations(Array.isArray(obsRaw) ? obsRaw : [], {
       universe, factsText: signalsText, claimAllowed: [], priorTexts: priorObsTexts, maxRows: 3,

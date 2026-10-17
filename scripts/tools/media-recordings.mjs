@@ -10,7 +10,7 @@ import { parseRegistry, checkNote } from '../lib/vault-registry.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { verifyIndexedRecord } from '../jobs/media-archive.mjs';
 import { recordingNoteTitle } from '../lib/media-recording-title.mjs';
 import { linkSnapshot, replaceLinks, hasSuspectLink } from '../lib/media-note-links.mjs';
@@ -144,9 +144,9 @@ export async function proposeRecordings({ root = VAULT_PATHS.root, mediaRoot = M
   const eligible = rows.filter((row) => row.promptText);
   if (eligible.length && cooldown()) return { cooldown: true, count: rows.length };
   const agent = eligible.length ? charter ?? loadAgent('athena', { fallbackModel: 'sonnet' }) : null;
-  const decide = judge ?? ((prompt) => runHeadlessClaude(prompt, agent.model, '', {
-    appendSystemPrompt: agent.systemPrompt, tools: '', timeoutMs: 30 * 60_000,
-  }));
+  const decide = judge ?? (async (prompt) => headlessResult(await runHeadlessClaude(prompt, agent.model, '', {
+    appendSystemPrompt: agent.systemPrompt, lean: true, tools: '', maxTurns: 1, timeoutMs: 30 * 60_000,
+  })));
   const suggestions = new Map();
   for (let offset = 0; offset < eligible.length; offset += 30) {
     const batch = eligible.slice(offset, offset + 30);

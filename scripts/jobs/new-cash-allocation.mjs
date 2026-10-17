@@ -67,7 +67,7 @@ import { rankEligibleGaps, findExistingInstruments, ACCOUNT_ELIGIBLE_ASSET_CLASS
 import { rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
 import { computeRebalanceGaps } from '../lib/rebalance-gap.mjs';
 import { CAP_FRACTION, applyCappedAllocation, isAllowedAllocationInstrument, resolveAllocationPricingByName } from '../lib/allocation-proposal-shared.mjs';
-import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
@@ -343,7 +343,9 @@ async function main() {
 
     let allocations;
     try {
-      const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt }));
+      const r = parseJsonBlock(headlessResult(await runHeadlessClaude(prompt, MODEL, '', {
+        lean: true, appendSystemPrompt: AGENT.systemPrompt, tools: '', maxTurns: 1,
+      })));
       const { kept, dropped } = validateAllocations(r.allocations, { account, availableCash, eligibleClasses, candidatesByClass, rankedUniverseByClass });
       dropped.forEach((d) => console.log(`  ⚠️ 배분 라인 드롭: ${d.reason}`));
       allocations = kept;

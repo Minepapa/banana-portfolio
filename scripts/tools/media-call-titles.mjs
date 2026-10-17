@@ -75,9 +75,9 @@ export function makePrompt(batch) {
 export async function defaultJudge(prompt, run = runHeadlessClaude) {
   const cwd = mkdtempSync(join(tmpdir(), 'call-titles-claude-'));
   try {
-    return await run(prompt, 'sonnet', '', { tools: '', disallowedTools: 'mcp__*',
-      permissionMode: 'dontAsk', restricted: true, strictMcpConfig: true,
-      mcpConfig: '{"mcpServers":{}}', maxTurns: 1, cwd, outputFormat: 'json', timeoutMs: 30 * 60_000 });
+    return await run(prompt, 'sonnet', '', {
+      lean: true, tools: '', maxTurns: 1, cwd, timeoutMs: 30 * 60_000,
+    });
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 }
 

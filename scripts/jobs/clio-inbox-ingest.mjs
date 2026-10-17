@@ -10,7 +10,7 @@ import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { agentTitle } from '../lib/agent-registry.mjs';
 import { buildWikiCandidates, sourceMeta } from '../lib/wiki-candidates.mjs';
@@ -683,9 +683,10 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
   const agent = selected.length ? (charter ?? loadAgent('clio', { fallbackModel: 'sonnet' })) : null;
   if (agent?.warning) console.warn(agent.warning);
   const systemPrompt = `${agent?.systemPrompt ?? ''}\n\n글 메모는 note, 실제 통화·대면·회의·녹음 기록만 conversation. category는 ${VAULT_REL.homeDir} 링크 배열.\n\n경로 등록부 요약:\n${registrySummary}\n\n기존 Wiki 색인 (인물: 폴더 · 제목 · 관계 · 별칭 · 설명):\n${wikiIndex.prompt || '없음'}`;
-  const decide = judge ?? ((prompt) => runHeadlessClaude(prompt, agent.model, '', {
-    appendSystemPrompt: systemPrompt, tools: '', timeoutMs: Math.max(1, Math.min(5 * 60_000, MAX_JOB_MS - (clock() - startedAt))),
-  }));
+  const decide = judge ?? (async (prompt) => headlessResult(await runHeadlessClaude(prompt, agent.model, '', {
+    lean: true, appendSystemPrompt: systemPrompt, tools: '', maxTurns: 1,
+    timeoutMs: Math.max(1, Math.min(5 * 60_000, MAX_JOB_MS - (clock() - startedAt))),
+  })));
   const items = [];
   for (const item of selected) {
     if (clock() - startedAt >= MAX_JOB_MS) break;

@@ -36,7 +36,7 @@ import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs
 import { writeAtomic, writeStateFile } from '../lib/state-writer.mjs';
 import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/cash-allocation-candidates.mjs';
 import { computeInstrumentScore, rankAssetClassUniverse, fetchInstrumentSeries } from '../lib/instrument-scoring.mjs';
-import { runHeadlessClaude, parseJsonBlock } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult, parseJsonBlock } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
@@ -224,7 +224,9 @@ async function main() {
 
         let verdict;
         try {
-          const r = parseJsonBlock(await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt }));
+          const r = parseJsonBlock(headlessResult(await runHeadlessClaude(prompt, MODEL, '', {
+            appendSystemPrompt: AGENT.systemPrompt, lean: true, tools: '', maxTurns: 1,
+          })));
           verdict = r;
         } catch (e) {
           if (e.isLimit) { console.log('  ⏳ 사용량 한도 → 이 종목 판단 보류(캘린더 창 안에서 재시도).'); hadLimitError = true; continue; }

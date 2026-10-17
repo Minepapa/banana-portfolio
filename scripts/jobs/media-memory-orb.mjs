@@ -141,9 +141,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   const activeCriteria = criteria ?? loadEmotionCriteria();
   const agent = charter ?? loadAgent('athena', { fallbackModel: 'sonnet' });
   const decide = judge ?? ((prompt, cwd, timeoutMs) => runHeadlessClaude(prompt, agent.model, `Read(/${cwd}/**)`, {
-    appendSystemPrompt: agent.systemPrompt, tools: 'Read', disallowedTools: 'mcp__*',
-    permissionMode: 'dontAsk', restricted: true, strictMcpConfig: true,
-    mcpConfig: '{"mcpServers":{}}', outputFormat: 'json', cwd, timeoutMs, maxTurns: 2,
+    appendSystemPrompt: agent.systemPrompt, lean: true, tools: 'Read', cwd, timeoutMs, maxTurns: 2,
   }));
   const runId = `${new Date(runStarted).toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
   const copyDir = join(out, 'copies', runId);

@@ -62,7 +62,7 @@ import { homedir } from 'node:os';
 import { vaultYearDir, VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
-import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const CONVERSATION_MAX_CHARS = 40_000;
@@ -341,12 +341,10 @@ export function readTranscriptLines(path) {
 
 async function summarizeConversation(turns, targetDateStr) {
   const prompt = buildConversationPrompt(turns, targetDateStr);
-  // allowedTools='Read'(코드리뷰 지적, 2026-09-04) — 이 코드베이스의 모든 다른
-  // runHeadlessClaude 호출부가 최소 'Read'를 쓴다(빈 문자열을 쓰는 곳은 없었음).
-  // 이 요약 태스크는 프롬프트에 이미 원문을 다 담아 넘기므로 도구가 필요 없지만,
-  // 빈 문자열의 정확한 의미(도구 완전 차단 vs 다른 동작)가 이 환경에서 검증된 적
-  // 없어 확정 관례를 그대로 따른다 — 새로운 미검증 패턴을 만들지 않는다.
-  const out = await runHeadlessClaude(prompt, 'sonnet', 'Read', { timeoutMs: SUMMARY_TIMEOUT_MS });
+  // 대화 원문을 프롬프트에 모두 주입하므로 파일 읽기 도구가 필요 없다.
+  const out = headlessResult(await runHeadlessClaude(prompt, 'sonnet', '', {
+    lean: true, tools: '', maxTurns: 1, timeoutMs: SUMMARY_TIMEOUT_MS,
+  }));
   return out.trim();
 }
 

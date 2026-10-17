@@ -38,7 +38,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnv } from '../lib/auth.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
@@ -150,7 +150,9 @@ async function main() {
     console.log('⏳ 쿨다운 중 — 헤드리스 판단 생략, 사실만 발송');
   } else {
     try {
-      const judgment = (await runHeadlessClaude(prompt, MODEL, 'Read', { appendSystemPrompt: AGENT.systemPrompt })).trim();
+      const judgment = headlessResult(await runHeadlessClaude(prompt, MODEL, '', {
+        lean: true, appendSystemPrompt: AGENT.systemPrompt, tools: '', maxTurns: 1,
+      })).trim();
       console.log(judgment);
       ({ conclusion, context, decisions } = parseDepartmentResponse(judgment));
     } catch (e) {
