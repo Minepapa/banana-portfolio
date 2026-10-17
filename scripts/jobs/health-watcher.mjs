@@ -213,8 +213,8 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
 export const EXPECTED_INTERVALS_MS = {
   'media-archive': 60 * 60 * 1000,
   'media-moments': 60 * 60 * 1000,
-  'media-transcribe': 24 * 60 * 60 * 1000,
-  'media-diarize': 3 * 60 * 60 * 1000, // 24시간 매시 :05, 전사 잠금으로 몇 회 건너뛸 여유
+  'media-transcribe': 24 * 60 * 60 * 1000, // 매일 01:00·02:00
+  'media-diarize': 26 * 60 * 60 * 1000, // 매일 03:05·04:05, 전사 잠금으로 한 회차를 건너뛸 여유(조용함 판정은 이 값의 2배 초과)
   'media-vision': 24 * 60 * 60 * 1000,
   'media-faces-nightly': 24 * 60 * 60 * 1000,
   'media-delete-report-weekly': 7 * 24 * 60 * 60 * 1000,

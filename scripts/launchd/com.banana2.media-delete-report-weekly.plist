@@ -9,7 +9,7 @@
     <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>media-delete-report-weekly</string>
   </array>
-  <!-- 매주 일요일 04:15 KST. 04:00 전사·04:05 화자 분리와 간격을 둔다. -->
+  <!-- 매주 일요일 04:15 KST. 01~03시 전사 뒤 04:05 화자 분리 회차와 함께 돈다. -->
   <key>StartCalendarInterval</key>
   <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>4</integer><key>Minute</key><integer>15</integer></dict>
   <!-- kickstart 검증은 run.sh에 --no-send를 전달해 실제 발송을 막는다. -->

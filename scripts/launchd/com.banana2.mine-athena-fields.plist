@@ -10,7 +10,7 @@
     <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>mine-athena-fields</string>
   </array>
-  <!-- 매주 일요일 06:30 KST — media-transcribe(01~05시)와 media-vision(05:30)이 끝난 뒤.
+  <!-- 매주 일요일 06:30 KST — media-transcribe(01~03시)·media-diarize(03~05시)와 media-vision(05:30)이 끝난 뒤.
        미네 노트 아테나 필드 주간 묶음(2026-10-14 신설), 텔레그램 발신 없음. -->
   <key>StartCalendarInterval</key>
   <array>

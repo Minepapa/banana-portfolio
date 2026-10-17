@@ -11,14 +11,12 @@
     <string>media-transcribe</string>
   </array>
   <key>StartCalendarInterval</key>
+  <!-- 매일 01:00·02:00. 50분은 다음 파일 시작 전 확인하는 회차 예산이며,
+       이미 시작한 파일은 03시 이후에 끝날 수 있다.
+       사진 기억 구슬 02:20 예정 잡(별도 브랜치)과는 CPU만 겹치며 잠금 충돌은 없다. -->
   <array>
     <dict><key>Hour</key><integer>1</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
   </array>
   <key>RunAtLoad</key>
   <false/>
