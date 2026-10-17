@@ -67,9 +67,10 @@ function listNotes(root, rel) {
 export function findTargets(root, { skipped = {}, cutoff, reclassify = false, ids, kind = '녹음', includeUnclassified = false } = {}) {
   const targets = [];
   for (const rel of listNotes(root, CONVERSATIONS_REL)) {
-    if (!reclassify && skipped[rel]) continue;
     const content = readFileSync(join(root, rel), 'utf8');
     const fm = parseFrontmatter(content);
+    const unclassified = fm.emotions === undefined || fm.primaryEmotion === undefined;
+    if (skipped[rel] && (!reclassify || includeUnclassified && unclassified)) continue;
     const category = Array.isArray(fm.category) ? fm.category : [fm.category];
     if (!category.includes(MINE_CATEGORY)) continue;
     if (reclassify) {
@@ -197,12 +198,49 @@ export function replaceEmotionFields(content, fields, today) {
   if (EMOTION_KEYS.every((key) => JSON.stringify(previous[key] ?? null) === JSON.stringify(fields[key] ?? null))) return content;
   const next = lines.map((line) => line.startsWith('modified:') ? `modified: "${today}"` : line);
   next.push(...EMOTION_KEYS.map((key) => `${key}: ${JSON.stringify(fields[key] ?? null)}`));
-  // 처음 분류되는 노트는 등록부 필수인 mineAge(기록 날짜로 계산)도 채운다. importance는 중요도 결정 전이라 쓰지 않는다.
-  if (previous.mineAge == null && previous.occurred) {
-    const age = mineAge(String(previous.occurred));
-    if (age != null) next.push(`mineAge: ${age}`);
-  }
   return `---\n${next.join('\n')}${content.slice(end)}`;
+}
+
+function firstClassification(item) {
+  return item.fields.emotions === undefined || item.fields.primaryEmotion === undefined;
+}
+
+function applyInitialFields(content, fields, age, today) {
+  const previous = parseFrontmatter(content);
+  if (ATHENA_KEYS.every((key) => previous[key] === undefined)) return applyFields(content, fields, age, today);
+  if (!content.startsWith('---\n')) return null;
+  const end = content.indexOf('\n---', 4);
+  if (end < 0) return null;
+  const keepImportance = Number.isInteger(previous.importance)
+    && previous.importance >= 1 && previous.importance <= 5;
+  const keepAge = Number.isInteger(previous.mineAge) && previous.mineAge >= 0;
+  const lines = content.slice(4, end).split('\n')
+    .filter((line) => !EMOTION_KEYS.some((key) => line.startsWith(`${key}:`))
+      && (keepImportance || !line.startsWith('importance:'))
+      && (keepAge || !line.startsWith('mineAge:')))
+    .map((line) => line.startsWith('modified:') ? `modified: "${today}"` : line);
+  lines.push(...EMOTION_KEYS.map((key) => `${key}: ${JSON.stringify(fields[key] ?? null)}`));
+  if (!keepImportance) lines.push(`importance: ${fields.importance}`);
+  if (!keepAge) lines.push(`mineAge: ${age}`);
+  return `---\n${lines.join('\n')}${content.slice(end)}`;
+}
+
+async function reclassificationProposals(batch, decide, criteria, signalTrend, cooldown) {
+  const proposals = new Map();
+  for (const initial of [true, false]) {
+    const group = batch.map((item, index) => ({ item, index }))
+      .filter(({ item }) => firstClassification(item) === initial);
+    if (!group.length) continue;
+    if (cooldown()) return null;
+    const items = group.map(({ item }) => item);
+    const parsed = validateProposals(parseJsonBlock(await decide(buildPrompt(items,
+      { reclassify: !initial, criteria, signalTrend: initial ? signalTrend : undefined }))),
+    items, { reclassify: !initial, criteria });
+    for (const [index, { index: originalIndex }] of group.entries()) {
+      proposals.set(originalIndex + 1, parsed.get(index + 1));
+    }
+  }
+  return proposals;
 }
 
 function distribution(targets, field = 'fields') {
@@ -256,8 +294,12 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   rules, write = writeAtomic, criteria = loadEmotionCriteria(), output = console, cues = attachAudioCues } = {}) {
   const today = kstDate(now);
   if (!['녹음', '통화', 'all'].includes(kind)) throw new Error('--kind는 통화, 녹음, all 중 하나');
-  const targets = findTargets(root, { reclassify: true, ids, kind, includeUnclassified, cutoff: today });
+  const statePath = join(root, STATE_REL);
+  const state = includeUnclassified ? readJson(statePath, { skipped: {} }) : { skipped: {} };
+  const targets = findTargets(root, { reclassify: true, ids, kind, includeUnclassified,
+    skipped: state.skipped ?? {}, cutoff: today });
   const batch = targets.slice(0, maxNotes);
+  const signalTrend = batch.some(firstClassification) ? recentSignalTrend(root, today, criteria) : undefined;
   const summary = { targets: targets.length, selected: batch.length, changed: 0, unchanged: 0,
     invalid: [], before: distribution(batch), after: {}, beforeSignals: signalDistribution(batch),
     afterSignals: {}, reasons: {} };
@@ -265,8 +307,8 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
     if (judge && batch.length) {
       // dry-run도 소리 분석은 실제로 하고 볼트 밖 캐시만 쓴다(볼트 쓰기는 없음).
       await cues(batch, { root });
-      const preview = validateProposals(parseJsonBlock(await judge(buildPrompt(batch, { reclassify: true, criteria }))), batch,
-        { reclassify: true, criteria });
+      const preview = await reclassificationProposals(batch, judge, criteria, signalTrend, cooldown);
+      if (!preview) return { ...summary, cooldown: true };
       for (const [index, item] of batch.entries()) {
         const proposal = preview.get(index + 1);
         if (!proposal?.fields) continue;
@@ -277,7 +319,12 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
           fields.primaryEmotion = owner.includes(item.fields.primaryEmotion) ? item.fields.primaryEmotion : owner[0];
         }
         validateEmotionResult(fields, { recordDate: item.date, ownerEmotions: owner, criteria });
-        if (replaceEmotionFields(item.content, fields, today) !== item.content) summary.changed += 1;
+        const age = firstClassification(item) ? mineAge(item.occurred) : null;
+        if (firstClassification(item) && age === null) continue;
+        const next = firstClassification(item)
+          ? applyInitialFields(item.content, fields, age, today)
+          : replaceEmotionFields(item.content, fields, today);
+        if (next && next !== item.content) summary.changed += 1;
       }
     }
     output.log(`[mine-athena-fields] 재분류 dry-run 대상 ${kind} ${targets.length}개(이번 묶음 ${batch.length}개), 쓰기·Claude 호출 없음`);
@@ -290,8 +337,8 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
     appendSystemPrompt: agent.systemPrompt, tools: '', timeoutMs: MAX_JOB_MS }));
   await cues(batch, { root });
   if (cooldown()) return { ...summary, cooldown: true };
-  const proposals = validateProposals(parseJsonBlock(await decide(buildPrompt(batch, { reclassify: true, criteria }))), batch,
-    { reclassify: true, criteria });
+  const proposals = await reclassificationProposals(batch, decide, criteria, signalTrend, cooldown);
+  if (!proposals) return { ...summary, cooldown: true };
   const activeRules = rules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
   const backupPath = join(out, `reclassify-backup-${today}.jsonl`);
   const reportPath = join(out, `reclassify-report-${today}.md`);
@@ -301,7 +348,7 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   const backed = existsSync(backupPath) ? new Set(readFileSync(backupPath, 'utf8').split('\n').filter(Boolean)
     .map((line) => JSON.stringify(JSON.parse(line)))) : new Set();
   const missing = batch.map((item) => JSON.stringify({ rel: item.rel,
-    fields: Object.fromEntries([...EMOTION_KEYS, 'modified'].map((key) => [key, item.fields[key] ?? null])) }))
+    fields: Object.fromEntries([...ATHENA_KEYS, 'modified'].map((key) => [key, item.fields[key] ?? null])) }))
     .filter((line) => !backed.has(line));
   if (!existsSync(backupPath)) writeFileSync(backupPath, '', { mode: 0o600, flag: 'wx' });
   if (missing.length) appendFileSync(backupPath, `${missing.join('\n')}\n`, { mode: 0o600 });
@@ -323,10 +370,15 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
     const absolute = join(root, item.rel);
     try {
       validateEmotionResult(proposed, { recordDate: item.date, ownerEmotions: owner, criteria });
+      const age = firstClassification(item) ? mineAge(item.occurred) : null;
+      if (firstClassification(item) && age === null) throw new Error(`나이 계산 불가(occurred ${item.occurred})`);
       const outcome = await withLock(absolute, () => {
         const latest = readFileSync(absolute, 'utf8');
         if (latest !== item.content) throw new Error('판단 중 노트가 바뀜');
-        const next = replaceEmotionFields(latest, proposed, today);
+        const next = firstClassification(item)
+          ? applyInitialFields(latest, proposed, age, today)
+          : replaceEmotionFields(latest, proposed, today);
+        if (!next) throw new Error('처음 분류할 필드를 쓸 수 없음');
         if (next === latest) return 'unchanged';
         const problems = checkNote(item.rel, next, activeRules);
         if (problems.length) throw new Error(`쓰기 관문: ${problems.join('; ')}`);

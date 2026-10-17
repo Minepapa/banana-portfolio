@@ -12,7 +12,7 @@ import { extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { MEDIA_DIARIZE_PATHS, VAULT_PATHS, VAULT_REL } from './vault-paths.mjs';
-import { OWNER_MARGIN_MIN, RECORDING_DIALOGUE_KINDS, identifyOwner, readNpy, recordingKind } from '../jobs/media-diarize.mjs';
+import { MINE_RECORDING_RULE, OWNER_MARGIN_MIN, RECORDING_DIALOGUE_KINDS, identifyOwner, readNpy, recordingKind } from '../jobs/media-diarize.mjs';
 import { parseFrontmatter } from './vault-frontmatter.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -97,7 +97,24 @@ function nearestMineVoice(mine, occurred) {
   const nearest = mine.meta.years?.length && Number.isFinite(year)
     ? [...mine.meta.years].sort((left, right) => Math.abs(left.year - year) - Math.abs(right.year - year)
       || right.year - left.year)[0] : null;
-  return mine.vectors[nearest?.index ?? 0];
+  return { reference: mine.vectors[nearest?.index ?? 0],
+    distance: nearest ? Math.abs(nearest.year - year) : Infinity };
+}
+
+function subtractIntervals(other, owner) {
+  const ownerParts = mergeIntervals(owner);
+  return mergeIntervals(other).flatMap((part) => {
+    const pieces = [];
+    let start = part.start;
+    for (const covered of ownerParts) {
+      if (covered.end <= start || covered.start >= part.end) continue;
+      if (covered.start - start >= 0.5) pieces.push({ start, end: covered.start });
+      start = Math.max(start, covered.end);
+      if (start >= part.end) break;
+    }
+    if (part.end - start >= 0.5) pieces.push({ start, end: part.end });
+    return pieces;
+  });
 }
 
 // Calls에는 labels가 없다. 저장된 owner/other 판정과 실제 목소리 특징값이 일치할 때만
@@ -126,16 +143,22 @@ export function callMineIntervals(speakers, { people, occurred, callVoices, owne
     return { intervals: [], reason: '화자 확인 필요' };
   }
   const otherSpeaker = identified.speaker === 'S0' ? 'S1' : 'S0';
-  const reference = nearestMineVoice(mine, occurred);
-  const similarity = cosine(callVoices[Number(otherSpeaker.slice(1))], reference);
-  const threshold = Math.max(0.45, Number(mine.meta.minSimilarity));
-  if (!Number.isFinite(threshold) || similarity < threshold) {
-    return { intervals: [], reason: '상대 목소리가 미네 기준과 다름', similarity };
+  const { reference, distance } = nearestMineVoice(mine, occurred);
+  if (distance >= MINE_RECORDING_RULE.farYears) {
+    return { intervals: [], reason: '미네 목소리 기준 연도가 멀어 확인 불가' };
   }
-  const intervals = speakers.turns.filter((turn) => turn.speaker === otherSpeaker
+  const similarity = cosine(callVoices[Number(otherSpeaker.slice(1))], reference);
+  const ownerSimilarity = cosine(callVoices[Number(otherSpeaker.slice(1))], owner.mean);
+  const threshold = Math.max(0.45, Number(mine.meta.minSimilarity));
+  if (!Number.isFinite(threshold) || similarity < threshold || similarity <= ownerSimilarity + 0.1) {
+    return { intervals: [], reason: '상대 목소리가 미네 기준과 다름', similarity, ownerSimilarity };
+  }
+  const toIntervals = (speaker) => speakers.turns.filter((turn) => turn.speaker === speaker
     && Number.isFinite(turn.start) && Number.isFinite(turn.end) && turn.end > turn.start)
     .map((turn) => ({ start: turn.start / 1000, end: turn.end / 1000 }));
-  return intervals.length ? { intervals, similarity } : { intervals: [], reason: '미네 발화 구간 없음' };
+  const intervals = subtractIntervals(toIntervals(otherSpeaker), toIntervals(identified.speaker));
+  return intervals.length ? { intervals, similarity, ownerSimilarity }
+    : { intervals: [], reason: '미네 발화 구간 없음', similarity, ownerSimilarity };
 }
 
 export function loadCallVoices(id, paths = MEDIA_DIARIZE_PATHS) {
@@ -389,7 +412,7 @@ export async function audioCuesForNote(content, { root = VAULT_PATHS.root, compu
       }
       let confirmation;
       try {
-        confirmation = callMineIntervals(speakers, { people, occurred: entry.occurred ?? fields.occurred,
+        confirmation = callMineIntervals(speakers, { people, occurred: fields.occurred ?? entry.occurred,
           ...voicesFor(id) });
       } catch (error) {
         parts.push(`${prefix}소리 근거: 없음(목소리 판정 오류: ${error.message})`);
@@ -465,7 +488,7 @@ export function selectCallCueTargets(rows, { root = VAULT_PATHS.root, ids,
     try {
       confirmation = callMineIntervals(speakersFor(row.id), {
         people: [fields.people, fields.counterpart, fields.상대].flat(),
-        occurred: row.occurred ?? fields.occurred, ...voicesFor(row.id),
+        occurred: fields.occurred ?? row.occurred, ...voicesFor(row.id),
       });
     } catch { continue; }
     if (confirmation.intervals.length) selected.push(row);

@@ -326,10 +326,36 @@ test('통화 other 목소리는 이름과 가까운 연도 기준을 모두 충�
   assert.deepEqual(callMineIntervals(callSpeakers, { people: ['휘영'], occurred: '2024-05-01', ...callVoices }).intervals, []);
 });
 
+test('통화 other는 미네 유사도 하한과 오너 대비 0.1 초과 우위를 충족해야 한다', () => {
+  const speakers = { ...callSpeakers, ownerMargin: 0.19999999999999996 };
+  const closeToOwner = { ...callVoices, callVoices: [[1, 0], [0.8, 0.6]],
+    mine: { vectors: [[0.8, 0.6]], meta: { minSimilarity: 0.5, years: [{ year: 2024, index: 0 }] } } };
+  assert.deepEqual(callMineIntervals(speakers,
+    { people: ['미네'], occurred: '2024-05-01', ...closeToOwner }).intervals, [{ start: 4, end: 8 }]);
+  const noLead = { ...closeToOwner, mine: { ...closeToOwner.mine, vectors: [[1, 0]] } };
+  const rejected = callMineIntervals(speakers, { people: ['미네'], occurred: '2024-05-01', ...noLead });
+  assert.deepEqual(rejected.intervals, []);
+  assert.ok(rejected.similarity <= rejected.ownerSimilarity + 0.1);
+  assert.deepEqual(callMineIntervals(speakers,
+    { people: ['미네'], occurred: '2021-05-01', ...closeToOwner }).intervals, []);
+});
+
+test('통화 미네 구간에서 겹친 오너 발화를 빼고 0.5초 미만 조각을 버린다', () => {
+  const speakers = { ...callSpeakers, turns: [
+    { start: 0, end: 8000, speaker: 'S1' },
+    { start: 1000, end: 3000, speaker: 'S0' },
+    { start: 7000, end: 7600, speaker: 'S0' }] };
+  const { intervals } = callMineIntervals(speakers,
+    { people: ['미네'], occurred: '2024-05-01', ...callVoices });
+  assert.deepEqual(intervals, [{ start: 0, end: 1 }, { start: 3, end: 7 }]);
+  assert.deepEqual(windowsInIntervals([win(0), win(3)], intervals).map((window) => window.start), [3]);
+});
+
 test('통화는 확정 전 계산하지 않고, 확정 후 미네 창만 여러 ID별로 요약한다', async () => {
   const one = 'aaaaaaaaaaaaaaaa'; const two = 'bbbbbbbbbbbbbbbb';
   const content = `---\nconvKind: "통화"\npeople: ["[[01_Home/201 미네|미네]]"]\noccurred: "2024-05-01"\n---\n<!-- media-transcribe:id ${one} -->\n<!-- media-transcribe:id ${two} -->`;
-  const archivePaths = new Map([one, two].map((id) => [id, { kind: 'Calls', archivePath: 'Archive/call.m4a' }]));
+  const archivePaths = new Map([one, two].map((id) => [id,
+    { kind: 'Calls', archivePath: 'Archive/call.m4a', occurred: '2021-05-01' }]));
   const calls = [];
   const result = await audioCuesForNote(content, { archivePaths, speakersFor: () => callSpeakers,
     voicesFor: () => callVoices, compute: async (id, options) => {
@@ -369,8 +395,8 @@ test('computeCues의 Calls 허용은 allowCalls에만 의존한다', async (t) =
 
 test('통화 사전 계산 선택은 미네 노트와 목소리 확인을 거친 ID만 남긴다', () => {
   const one = 'aaaaaaaaaaaaaaaa'; const two = 'bbbbbbbbbbbbbbbb';
-  const rows = [one, two].map((id) => ({ id, kind: 'Calls', occurred: '2024-05-01' }));
-  const notes = [{ content: `---\nconvKind: "통화"\npeople: ["미네"]\n---\n<!-- media-transcribe:id ${one} -->\n<!-- media-transcribe:id ${two} -->` }];
+  const rows = [one, two].map((id) => ({ id, kind: 'Calls', occurred: '2021-05-01' }));
+  const notes = [{ content: `---\nconvKind: "통화"\npeople: ["미네"]\noccurred: "2024-05-01"\n---\n<!-- media-transcribe:id ${one} -->\n<!-- media-transcribe:id ${two} -->` }];
   const selected = selectCallCueTargets(rows, { notes, speakersFor: (id) => id === one ? callSpeakers
     : { ...callSpeakers, check: '필요' }, voicesFor: () => callVoices });
   assert.deepEqual(selected.map((row) => row.id), [one]);
