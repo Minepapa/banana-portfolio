@@ -7,7 +7,7 @@ import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { fixtureCriteria } from '../lib/mine-emotion-criteria.fixture.js';
-import { NIGHTLY_LIMIT, ORB_FIELDS, applyOrbFields, attemptState, readRuns, requireRegistryFields, run, upsertOrbIndex } from './media-memory-orb.mjs';
+import { MAX_JOB_MS, NIGHTLY_LIMIT, ORB_FIELDS, applyOrbFields, attemptState, readRuns, requireRegistryFields, run, upsertOrbIndex } from './media-memory-orb.mjs';
 
 test('예약 상한은 직전 24시간, 두 번 실패한 후보는 14일 동안 보류한다', () => {
   const now = Date.parse('2026-10-17T02:20:00+09:00');
@@ -16,12 +16,45 @@ test('예약 상한은 직전 24시간, 두 번 실패한 후보는 14일 동안
     { id: 'recent', status: 'reserved', at: new Date(now - 23 * 3_600_000).toISOString() },
     { id: 'bad', status: 'error', at: new Date(now - 3 * 86_400_000).toISOString() },
     { id: 'bad', status: 'error', at: new Date(now - 2 * 86_400_000).toISOString() },
+    { id: 'bad', status: 'deferred', at: new Date(now - 86_400_000).toISOString() },
   ];
   const state = attemptState(rows, now);
   assert.equal(state.count, 1);
   assert.deepEqual([...state.reserved], ['recent']);
   assert.equal(state.failed.get('bad'), 2);
   assert.equal(attemptState(rows, now + 15 * 86_400_000).failed.has('bad'), false);
+});
+
+test('한도와 시간 상한은 연기로 기록하고 실패 2회에 세지 않는다', async (t) => {
+  for (const cause of ['limit', 'timeout']) {
+    const fixture = setup(t);
+    const failure = new Error(cause === 'limit' ? '사용량 한도' : '잡 시간 상한');
+    if (cause === 'limit') failure.isLimit = true;
+    const summary = await run(options(fixture, cause === 'limit'
+      ? { judge: () => { throw failure; } }
+      : { copyPhoto: () => { throw failure; }, judge: () => { throw new Error('호출하면 안 됨'); } }));
+    assert.equal(summary.failed.length, 0);
+    assert.equal(summary.deferred.length, 1);
+    assert.equal(summary.cooldown, cause === 'limit');
+    assert.equal(summary.timedOut, cause === 'timeout');
+    const rows = readRuns(join(fixture.out, 'runs.jsonl'));
+    assert.equal(rows.at(-1).status, 'deferred');
+    assert.equal(attemptState(rows, Date.now()).failed.has(fixture.candidates[0].id), false);
+  }
+});
+
+test('다음 후보를 시작하기 전 시간 상한에 도달해도 연기로 기록한다', async (t) => {
+  const fixture = setup(t);
+  const started = Date.parse('2026-10-17T00:00:00Z');
+  let reads = 0;
+  const summary = await run(options(fixture, {
+    now: () => ++reads < 3 ? started : started + MAX_JOB_MS,
+    judge: () => { throw new Error('호출하면 안 됨'); },
+  }));
+  assert.equal(summary.failed.length, 0);
+  assert.equal(summary.deferred.length, 1);
+  assert.equal(summary.timedOut, true);
+  assert.equal(readRuns(join(fixture.out, 'runs.jsonl')).at(-1).status, 'deferred');
 });
 
 test('runs.jsonl은 끊긴 마지막 행만 버리고 완성된 오류는 닫힌 채로 실패한다', (t) => {

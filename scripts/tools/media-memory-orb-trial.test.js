@@ -113,6 +113,10 @@ test('감정 어휘·대표 감정·중요도·핵심 후보 스키마를 검사
   assert.throws(() => validateProposal({ ...proposal, importance: 6 }), /중요도/);
   assert.throws(() => validateProposal({ ...proposal, coreMemoryCandidate: true }), /핵심/);
   assert.throws(() => validateProposal({ ...proposal, scene: '장면\nimportance: 5' }), /scene/);
+  assert.equal(validateProposal({ ...proposal, scene: '장'.repeat(300) }).scene.length, 300);
+  assert.throws(() => validateProposal({ ...proposal, scene: '장'.repeat(301) }), /scene/);
+  assert.equal(validateProposal({ ...proposal, titleSuggestion: '제'.repeat(200) }).titleSuggestion.length, 200);
+  assert.throws(() => validateProposal({ ...proposal, titleSuggestion: '제'.repeat(201) }), /titleSuggestion/);
   assert.throws(() => validateProposal({ ...proposal, coreMemoryCandidate: { value: true, reason: '첫돌\norbScene: 변조' } }), /coreMemoryCandidate.reason/);
   assert.throws(() => validateProposal({ ...proposal, emotions: ['불안'], primaryEmotion: '불안' }, [], null, '2026-10-16'), /경보 상태/);
   assert.equal(validateProposal({ ...proposal, emotions: [], primaryEmotion: null,
@@ -128,6 +132,9 @@ test('오너의 명시 감정은 사진 판정이 감정 없음이어도 강도 
   assert.equal(chosen.primaryEmotion, '슬픔');
   assert.equal(chosen.emotionIntensity, 1);
   assert.match(chosen.emotionEvidence, /오너 메모 감정: 슬픔/);
+  const longEvidence = validateProposal({ ...none, emotionEvidence: '사'.repeat(200) }, ['슬픔']);
+  assert.equal(longEvidence.emotionEvidence.length, 200);
+  assert.ok(longEvidence.emotionEvidence.startsWith('오너 메모 감정: 슬픔; 사진 근거: '));
 });
 
 test('오너 감정은 보존하고 Claude 제안은 별도 필드에 둔다', () => {

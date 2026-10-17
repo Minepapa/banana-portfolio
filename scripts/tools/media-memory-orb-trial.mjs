@@ -139,9 +139,8 @@ export function validateProposal(raw, owner = [], ownerPrimary = null, recordDat
   const suggestions = emotionFields.emotions;
   if (!['낮음', '보통', '높음'].includes(value.confidence)) throw new Error('감정 확신도 오류');
   if (!Number.isInteger(value.importance) || value.importance < 1 || value.importance > 5) throw new Error('중요도 범위 오류');
-  for (const key of ['scene', 'titleSuggestion']) {
-    safeEvidence(value[key], key);
-  }
+  safeEvidence(value.scene, 'scene', 300);
+  safeEvidence(value.titleSuggestion, 'titleSuggestion');
   if (typeof value.coreMemoryCandidate?.value !== 'boolean') throw new Error('핵심 기억 후보 오류');
   const coreReason = safeEvidence(value.coreMemoryCandidate.reason, 'coreMemoryCandidate.reason');
   const chosen = { ...emotionFields,
@@ -151,7 +150,8 @@ export function validateProposal(raw, owner = [], ownerPrimary = null, recordDat
     // The owner's explicit feeling remains the authority; a visual absence of emotion
     // cannot provide its intensity. Use the weakest level and retain that provenance.
     chosen.emotionIntensity = 1;
-    chosen.emotionEvidence = `오너 메모 감정: ${owner.join(', ')}; 사진 근거: ${emotionFields.emotionEvidence}`;
+    const prefix = `오너 메모 감정: ${owner.join(', ')}; 사진 근거: `;
+    chosen.emotionEvidence = prefix + emotionFields.emotionEvidence.slice(0, 200 - prefix.length);
   }
   const validated = validateEmotionResult(chosen, { recordDate, ownerEmotions: owner, criteria });
   return { emotions: chosen.emotions,

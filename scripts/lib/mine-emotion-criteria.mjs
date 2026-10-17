@@ -5,8 +5,8 @@ export const MIN_INTENSITY = 1;
 export const MAX_INTENSITY = 3;
 export const MAX_EVIDENCE_CHARS = 200;
 
-export function safeEvidence(value, field = 'emotionEvidence') {
-  if (typeof value !== 'string' || !value.trim() || value.length > MAX_EVIDENCE_CHARS ||
+export function safeEvidence(value, field = 'emotionEvidence', maxChars = MAX_EVIDENCE_CHARS) {
+  if (typeof value !== 'string' || !value.trim() || value.length > maxChars ||
     /[\r\n\u0000-\u001f]/.test(value)) throw new Error(`${field} 형식 오류`);
   return value.trim();
 }

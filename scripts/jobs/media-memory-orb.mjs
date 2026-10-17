@@ -67,7 +67,7 @@ export function attemptState(rows, timestamp) {
   for (const row of rows) {
     const at = Date.parse(row?.at);
     if (!row || typeof row.id !== 'string' || !row.id ||
-      !['reserved', 'error', 'written', 'already-written'].includes(row.status) ||
+      !['reserved', 'error', 'deferred', 'written', 'already-written'].includes(row.status) ||
       !Number.isFinite(at) || at > timestamp) throw new Error('runs.jsonl 행 오류: 복구 필요');
     if (row.status === 'reserved' && at > timestamp - WINDOW_MS) { count += 1; reserved.add(row.id); }
     if (row.status === 'error' && at > timestamp - RETRY_MS) failed.set(row.id, (failed.get(row.id) ?? 0) + 1);
@@ -132,7 +132,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   const allCandidates = candidates ?? loadCandidates({ root, mediaRoot });
   const selected = dryRun ? allCandidates.slice(0, Math.min(NIGHTLY_LIMIT, limit)) : allCandidates;
   const summary = { candidates: allCandidates.length, selected: Math.min(selected.length, NIGHTLY_LIMIT, limit), written: 0,
-    failed: [], cooldown: false, timedOut: false };
+    failed: [], deferred: [], cooldown: false, timedOut: false };
   if (!selected.length && !dryRun) return summary;
   if (!dryRun && cooldown()) return { ...summary, cooldown: true };
   const registry = registryText ?? readFileSync(join(root, VAULT_REL.registryFile), 'utf8');
@@ -191,8 +191,20 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
     const attempts = attemptState(readRuns(logPath), now());
     let attemptedThisRun = 0;
     for (const item of selected) {
-      if (now() - runStarted >= MAX_JOB_MS) { summary.timedOut = true; break; }
-      if (cooldown()) { summary.cooldown = true; break; }
+      if (now() - runStarted >= MAX_JOB_MS) {
+        summary.timedOut = true;
+        summary.deferred.push({ id: item.id, reason: '잡 시간 상한' });
+        logRow(logPath, { runId, id: item.id, rel: item.rel, status: 'deferred',
+          error: '잡 시간 상한', at: new Date(now()).toISOString() });
+        break;
+      }
+      if (cooldown()) {
+        summary.cooldown = true;
+        summary.deferred.push({ id: item.id, reason: '쿨다운 활성' });
+        logRow(logPath, { runId, id: item.id, rel: item.rel, status: 'deferred',
+          error: '쿨다운 활성', at: new Date(now()).toISOString() });
+        break;
+      }
       if (attempts.count >= Math.min(NIGHTLY_LIMIT, limit) || attemptedThisRun >= Math.min(NIGHTLY_LIMIT, limit)) break;
       if (attempts.reserved.has(item.id) || (attempts.failed.get(item.id) ?? 0) >= 2) continue;
       let measured;
@@ -260,8 +272,9 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         for (const copy of copies) rmSync(copy.path, { force: true });
         rmSync(gridPath, { force: true });
       } catch (error) {
-        summary.failed.push({ id: item.id, reason: error.message });
-        logRow(logPath, { runId, id: item.id, rel: item.rel, status: 'error', error: error.message,
+        const deferred = error.isLimit || error.message === '잡 시간 상한';
+        summary[deferred ? 'deferred' : 'failed'].push({ id: item.id, reason: error.message });
+        logRow(logPath, { runId, id: item.id, rel: item.rel, status: deferred ? 'deferred' : 'error', error: error.message,
           ...((measured || error.usage) ? { usage: measured?.usage ?? error.usage,
             inputTokens: measured?.inputTokens ?? (Number(error.usage?.input_tokens) || 0)
               + (Number(error.usage?.cache_creation_input_tokens) || 0)
@@ -269,8 +282,11 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
             outputTokens: measured?.outputTokens ?? (Number(error.usage?.output_tokens) || 0),
             total_cost_usd: measured?.total_cost_usd ?? (Number(error.total_cost_usd) || 0) } : {}),
           at: new Date(now()).toISOString() });
-        output.error(`${item.id}: ${error.message}`);
-        attempts.failed.set(item.id, (attempts.failed.get(item.id) ?? 0) + 1);
+        if (deferred) output.log(`${item.id}: 연기됨: ${error.message}`);
+        else {
+          output.error(`${item.id}: ${error.message}`);
+          attempts.failed.set(item.id, (attempts.failed.get(item.id) ?? 0) + 1);
+        }
         if (error.message === '잡 시간 상한') { summary.timedOut = true; break; }
         if (error.isLimit) { summary.cooldown = true; break; }
       }

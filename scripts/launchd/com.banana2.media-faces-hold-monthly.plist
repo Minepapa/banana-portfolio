@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.banana2.media-faces-hold-monthly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>media-faces-hold-monthly</string>
+  </array>
+  <!-- 매월 1일 09:20 KST. 야간 얼굴 판정(06:30)과 주문 제안 알림(09:10) 뒤. -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Day</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>20</integer></dict>
+  <!-- kickstart 검증은 run.sh에 --no-send를 전달해 실제 발송을 막는다. -->
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>WorkingDirectory</key><string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-faces-hold-monthly.log</string>
+  <key>StandardErrorPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-faces-hold-monthly.log</string>
+</dict>
+</plist>

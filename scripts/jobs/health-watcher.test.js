@@ -481,8 +481,9 @@ test('EXPECTED_INTERVALS_MS: run.sh가 디스패치하는 잡은 전부 등록�
   assert.deepEqual(missing, [], `EXPECTED_INTERVALS_MS에 등록 안 된 잡: ${missing.join(', ')} — health-watcher.mjs에 실제 launchd 주기에 맞는 값을 추가할 것(기본값 60분을 그대로 두면 몇 시간 안에 오알람 발생)`);
 });
 
-test('media-diarize는 전사 잠금으로 건너뛴 회차를 감안해 3시간을 기대주기로 둔다', () => {
-  assert.equal(EXPECTED_INTERVALS_MS['media-diarize'], 3 * 60 * 60 * 1000);
+test('미디어 잡은 매일 실행하고 화자 분리는 전사 잠금으로 건너뛴 회차를 감안한다', () => {
+  assert.equal(EXPECTED_INTERVALS_MS['media-transcribe'], 24 * 60 * 60 * 1000);
+  assert.equal(EXPECTED_INTERVALS_MS['media-diarize'], 26 * 60 * 60 * 1000);
 });
 
 test('media-memory-orb plist·디스패치·감시 주기는 매일 02:20으로 일치한다', () => {
