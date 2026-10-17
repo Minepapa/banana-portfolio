@@ -254,6 +254,32 @@ test('빈 감정과 null 대표 감정도 녹음 재분류 대상이며 정확�
   assert.equal(findTargets(root, { reclassify: true, ids: ['aabb'], cutoff: '2026-10-18' }).length, 0);
 });
 
+test('재분류 kind는 통화·녹음·all을 선택하고 기본은 녹음이다', (t) => {
+  const { root, put } = fixture(t);
+  put(`${C}/2026/2026-10-15 미네 통화.md`, note({ extra: '\nemotions: []\nprimaryEmotion: null' }));
+  put(`${C}/2026/2026-10-14 미네 녹음.md`, note({ occurred: '2026-10-14',
+    extra: '\nemotions: []\nprimaryEmotion: null' }).replace('convKind: "통화"', 'convKind: "녹음"'));
+  const find = (kind) => findTargets(root, { reclassify: true, cutoff: '2026-10-18', ...(kind ? { kind } : {}) });
+  assert.equal(find().length, 1);
+  assert.equal(find('통화').length, 1);
+  assert.equal(find('all').length, 2);
+  assert.equal(find('녹음')[0].fields.convKind, '녹음');
+  assert.equal(find('통화')[0].fields.convKind, '통화');
+});
+
+test('통화 재분류 프롬프트는 미네 발화와 목소리 거절 이유를 명시한다', () => {
+  const content = note({ body: '나: 오늘 기분이 좋아 보이네\n미네: 응 기뻐',
+    extra: '\nemotions: []\nprimaryEmotion: null' });
+  const item = { rel: `${C}/2026/2026-10-15 미네 통화.md`, content,
+    occurred: '2026-10-15', date: '2026-10-15', fields: { convKind: '통화' },
+    audioCues: { text: '소리 근거: 없음(상대 목소리가 미네 기준과 다름)', ok: false } };
+  const prompt = buildPrompt([item], { reclassify: true, criteria });
+  assert.match(prompt, /대화 형식의 미네: 줄과 확인된 미네 구간 소리만 감정 근거/);
+  assert.match(prompt, /다른 화자의 말은 맥락 해석에만/);
+  assert.match(prompt, /상대 목소리가 미네 기준과 다름/);
+  assert.match(prompt, /기존 importance·coreMemory 등 다른 필드는 다시 판단하지 않는다/);
+});
+
 test('재분류 실행 두 개는 같은 잡 락을 공유한다', async (t) => {
   const { root, put } = fixture(t);
   const out = mkdtempSync(join(tmpdir(), 'mine-reclassify-lock-'));
@@ -291,4 +317,27 @@ test('reclassify: 판단 호출 전에 소리 근거를 붙인다(주입)', asyn
       judge: async (prompt) => { seen = prompt; return '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"웃음","secondFilmSignal":null}]'; } });
     assert.match(seen, /소리 근거: 테스트 웃음/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('재분류 --include-unclassified: 감정 필드 없는 통화도 처음 분류하고 mineAge를 채운다(importance는 쓰지 않음)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'athena-unclassified-'));
+  try {
+    const rel = `${C}/2025/2025-03-01 미네 통화.md`;
+    mkdirSync(join(root, dirname(rel)), { recursive: true });
+    writeFileSync(join(root, rel), note({ occurred: '2025-03-01T10:00:00+09:00' }));
+    const opts = { root, criteria, kind: '통화', now: new Date('2026-10-17T03:00:00Z'), output: { log() {}, error() {} },
+      cues: async () => {}, judge: async () => '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"미네가 웃으며 말함","secondFilmSignal":null}]' };
+    const skipped = await reclassify({ ...opts, dryRun: true });
+    assert.equal(skipped.targets, 0);
+    const included = await reclassify({ ...opts, dryRun: true, includeUnclassified: true });
+    assert.equal(included.targets, 1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('replaceEmotionFields: 처음 분류되는 노트에 mineAge를 기록 날짜로 채운다', async () => {
+  const { replaceEmotionFields } = await import('./mine-athena-fields.mjs');
+  const next = replaceEmotionFields(note({ occurred: '2025-03-01T10:00:00+09:00' }),
+    { emotions: ['기쁨'], primaryEmotion: '기쁨', emotionIntensity: 1, emotionEvidence: '웃음', secondFilmSignal: null }, '2026-10-17');
+  assert.match(next, /mineAge: 8\n/);
+  assert.doesNotMatch(next, /importance:/);
 });

@@ -191,7 +191,7 @@ export function availableBackends(requested, pyannoteReady) {
   return pyannoteReady ? ['sherpa', 'pyannote'] : ['sherpa'];
 }
 
-function readNpy(path) {
+export function readNpy(path) {
   const data = readFileSync(path);
   if (data.toString('latin1', 0, 6) !== '\x93NUMPY') throw new Error('npy 형식 오류');
   const major = data[6];

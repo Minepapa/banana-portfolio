@@ -12,7 +12,8 @@ import { extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { MEDIA_DIARIZE_PATHS, VAULT_PATHS, VAULT_REL } from './vault-paths.mjs';
-import { RECORDING_DIALOGUE_KINDS, recordingKind } from '../jobs/media-diarize.mjs';
+import { OWNER_MARGIN_MIN, RECORDING_DIALOGUE_KINDS, identifyOwner, readNpy, recordingKind } from '../jobs/media-diarize.mjs';
+import { parseFrontmatter } from './vault-frontmatter.mjs';
 
 const execFileAsync = promisify(execFile);
 const SCRIPT = fileURLToPath(new URL('../tools/diarize/media_audio_cues.py', import.meta.url));
@@ -53,7 +54,7 @@ export function loadArchivePaths(root = VAULT_PATHS.root) {
     for (const line of readFileSync(path, 'utf8').split('\n')) {
       if (!line.trim()) continue;
       try { const row = JSON.parse(line); if (row.id && !row.duplicateOf && (row.archivePath || row.importPath)) {
-        map.set(row.id, { archivePath: row.archivePath || row.importPath, kind: row.kind });
+        map.set(row.id, { archivePath: row.archivePath || row.importPath, kind: row.kind, occurred: row.occurred });
       } } catch { /* 깨진 줄은 건너뜀 */ }
     }
   }
@@ -78,6 +79,73 @@ export function mineIntervals(speakers, name = '미네') {
   const ids = Object.entries(speakers.labels).filter(([, label]) => label === name).map(([speaker]) => speaker);
   return speakers.turns.filter((turn) => ids.includes(turn.speaker))
     .map((turn) => ({ start: turn.start / 1000, end: turn.end / 1000 }));
+}
+
+function cosine(left, right) {
+  if (!left || !right || left.length !== right.length) return -1;
+  let product = 0; let leftSquare = 0; let rightSquare = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    product += left[index] * right[index];
+    leftSquare += left[index] ** 2;
+    rightSquare += right[index] ** 2;
+  }
+  return leftSquare && rightSquare ? product / Math.sqrt(leftSquare * rightSquare) : -1;
+}
+
+function nearestMineVoice(mine, occurred) {
+  const year = Number(String(occurred ?? '').slice(0, 4));
+  const nearest = mine.meta.years?.length && Number.isFinite(year)
+    ? [...mine.meta.years].sort((left, right) => Math.abs(left.year - year) - Math.abs(right.year - year)
+      || right.year - left.year)[0] : null;
+  return mine.vectors[nearest?.index ?? 0];
+}
+
+// Calls에는 labels가 없다. 저장된 owner/other 판정과 실제 목소리 특징값이 일치할 때만
+// other를 미네로 확정한다. 실패 이유는 프롬프트에도 남겨 전화 명의만으로 추정하지 않게 한다.
+export function callMineIntervals(speakers, { people, occurred, callVoices, owner, mine } = {}) {
+  const namedPeople = (Array.isArray(people) ? people : [people]).map((person) => String(person ?? '')
+    .replace(/^\[\[/u, '').replace(/\]\]$/u, '').split('|')[0].split('/').at(-1)
+    .replace(/^\d+\s+/u, ''));
+  if (!namedPeople.includes('미네')) return { intervals: [], reason: '노트 상대가 미네가 아님' };
+  if (!speakers || !Array.isArray(speakers.turns) || !Array.isArray(speakers.segments)
+    || speakers.check || !Number.isFinite(speakers.ownerMargin)
+    || speakers.ownerMargin < OWNER_MARGIN_MIN
+    || !speakers.segments.some((part) => part.speaker === 'owner')
+    || !speakers.segments.some((part) => part.speaker === 'other')) {
+    return { intervals: [], reason: '화자 확인 필요' };
+  }
+  if (!owner?.mean || !owner.meta || !mine?.vectors?.length || !mine.meta
+    || !Array.isArray(callVoices) || callVoices.length !== 2
+    || speakers.ownerVersion !== owner.meta.version) {
+    return { intervals: [], reason: '목소리 기준 또는 화자 특징값 없음' };
+  }
+  const identified = identifyOwner(callVoices, owner.mean,
+    { minSimilarity: owner.meta.minSimilarity ?? -1 });
+  if (identified.check || identified.margin < OWNER_MARGIN_MIN
+    || Math.abs(identified.margin - speakers.ownerMargin) > 0.001) {
+    return { intervals: [], reason: '화자 확인 필요' };
+  }
+  const otherSpeaker = identified.speaker === 'S0' ? 'S1' : 'S0';
+  const reference = nearestMineVoice(mine, occurred);
+  const similarity = cosine(callVoices[Number(otherSpeaker.slice(1))], reference);
+  const threshold = Math.max(0.45, Number(mine.meta.minSimilarity));
+  if (!Number.isFinite(threshold) || similarity < threshold) {
+    return { intervals: [], reason: '상대 목소리가 미네 기준과 다름', similarity };
+  }
+  const intervals = speakers.turns.filter((turn) => turn.speaker === otherSpeaker
+    && Number.isFinite(turn.start) && Number.isFinite(turn.end) && turn.end > turn.start)
+    .map((turn) => ({ start: turn.start / 1000, end: turn.end / 1000 }));
+  return intervals.length ? { intervals, similarity } : { intervals: [], reason: '미네 발화 구간 없음' };
+}
+
+export function loadCallVoices(id, paths = MEDIA_DIARIZE_PATHS) {
+  if (!/^[a-f0-9]{16}$/i.test(id)) return null;
+  const callPath = join(paths.voices, 'pyannote', `${id}.npy`);
+  if (![callPath, paths.ownerVoice, paths.ownerMeta, paths.mineVoice, paths.mineMeta]
+    .every((path) => existsSync(path))) return null;
+  return { callVoices: readNpy(callPath),
+    owner: { mean: readNpy(paths.ownerVoice)[0], meta: JSON.parse(readFileSync(paths.ownerMeta, 'utf8')) },
+    mine: { vectors: readNpy(paths.mineVoice), meta: JSON.parse(readFileSync(paths.mineMeta, 'utf8')) } };
 }
 
 function mergeIntervals(intervals) {
@@ -213,13 +281,13 @@ export function runCueWorker(items, { python = AUDIO_CUES_PATHS.python, spawnPro
 export async function computeCues(id, { root = VAULT_PATHS.root, mediaRoot = AUDIO_CUES_PATHS.mediaRoot,
   cacheDir = AUDIO_CUES_PATHS.cacheDir, archivePaths = loadArchivePaths(root), exec = execFileAsync,
   worker = runCueWorker, write = writePrivate, temporaryRoot = tmpdir(), timeoutMs = DEFAULT_TIMEOUT_MS,
-  allowVideo = false } = {}) {
+  allowVideo = false, allowCalls = false } = {}) {
   const entry = archivePaths.get(id);
   const archivePath = typeof entry === 'string' ? entry : entry?.archivePath;
   if (!archivePath) return { error: '색인에 원본 없음' };
   const video = allowVideo && ['Camera', 'KakaoTalkMovie', 'Import', 'Imports', 'Recordings'].includes(entry?.kind)
     && VIDEO_EXTENSIONS.has(extname(archivePath).toLowerCase());
-  if (entry?.kind === 'Calls' || entry?.kind && entry.kind !== 'Recordings' && !video
+  if (entry?.kind === 'Calls' && !allowCalls || entry?.kind && !['Recordings', 'Calls'].includes(entry.kind) && !video
     || !entry?.kind && VIDEO_EXTENSIONS.has(extname(archivePath).toLowerCase())) {
     return { error: '녹음이 아님(통화 등)' };
   }
@@ -288,30 +356,64 @@ export function noteMediaIds(content) {
   return [...String(content).matchAll(/<!-- media-transcribe:id ([a-f0-9]{16}) -->/gi)].map((match) => match[1]);
 }
 
-// 노트(녹음) 하나의 소리 근거 문장. 여러 파일이 묶인 노트면 파일마다 요약.
-export async function audioCuesForNote(content, { root = VAULT_PATHS.root, compute = computeCues, archivePaths, speakersFor } = {}) {
-  // 통화는 Speakers에 '미네' 이름표가 없어 아빠 목소리가 섞인다. 통화 감정 재분류(화자 분리 완료 뒤)에서 따로 연결한다.
-  if (/^convKind:\s*["']?통화["']?\s*$/m.test(String(content))) return { text: '소리 근거: 없음(통화는 미네 구간 연결 전)', ok: false };
+function callSectionNeedsReview(content, id) {
+  const marker = `<!-- media-transcribe:id ${id} -->`;
+  const start = content.indexOf(marker);
+  if (start < 0) return true;
+  const next = content.indexOf('<!-- media-transcribe:id ', start + marker.length);
+  const end = content.indexOf('<!-- media-transcribe:end -->', start + marker.length);
+  const boundary = [next, end].filter((position) => position >= 0).sort((a, b) => a - b)[0] ?? content.length;
+  return /\[화자 확인 필요\]/u.test(content.slice(start, boundary));
+}
+
+// 노트 하나의 소리 근거 문장. 여러 파일이 묶인 노트면 파일마다 요약.
+export async function audioCuesForNote(content, { root = VAULT_PATHS.root, compute = computeCues,
+  archivePaths, speakersFor, voicesFor = loadCallVoices } = {}) {
+  const call = /^convKind:\s*["']?통화["']?\s*$/m.test(String(content));
+  const fields = call ? parseFrontmatter(content) : null;
+  const people = call ? [fields.people, fields.counterpart, fields.상대].flat() : null;
   const ids = noteMediaIds(content);
   if (!ids.length) return { text: '소리 근거: 없음(노트에 미디어 id 없음)', ok: false };
   const paths = archivePaths ?? loadArchivePaths(root);
   const parts = [];
   let ok = false;
   for (const id of ids) {
-    const cues = await compute(id, { root, archivePaths: paths });
-    if (cues.error) { parts.push(`소리 근거: 없음(${cues.error})`); continue; }
+    const prefix = ids.length > 1 ? `[${id}] ` : '';
+    const entry = paths.get(id);
     const speakers = (speakersFor ?? ((mediaId) => loadSpeakers(root, mediaId)))(id);
+    let intervals;
+    if (call) {
+      if (entry?.kind !== 'Calls') { parts.push(`${prefix}소리 근거: 없음(통화 원본 색인 아님)`); continue; }
+      if (callSectionNeedsReview(content, id)) {
+        parts.push(`${prefix}소리 근거: 없음(화자 확인 필요)`); continue;
+      }
+      let confirmation;
+      try {
+        confirmation = callMineIntervals(speakers, { people, occurred: entry.occurred ?? fields.occurred,
+          ...voicesFor(id) });
+      } catch (error) {
+        parts.push(`${prefix}소리 근거: 없음(목소리 판정 오류: ${error.message})`);
+        continue;
+      }
+      if (!confirmation.intervals.length) {
+        parts.push(`${prefix}소리 근거: 없음(${confirmation.reason})`);
+        continue;
+      }
+      intervals = confirmation.intervals;
+    }
+    // 통화는 미네 구간이 확정된 다음에만 원본 분석·캐시 접근을 허용한다.
+    const cues = await compute(id, { root, archivePaths: paths, ...(call ? { allowCalls: true } : {}) });
+    if (cues.error) { parts.push(`${prefix}소리 근거: 없음(${cues.error})`); continue; }
     // 화자 분리는 대화형 녹음만 한다. 대화형인데 화자 파일이 없으면 '아직 분리 전'이라 누구 소리인지 모른다 → 쓰지 않는다.
     // 노래·혼잣말 등 비대화형은 원래 분리하지 않는 한 사람 녹음이라 전체를 쓴다.
-    const entry = paths.get(id);
     const kind = recordingKind({ archivePath: typeof entry === 'string' ? entry : entry?.archivePath });
-    if (!speakers && RECORDING_DIALOGUE_KINDS.includes(kind)) { parts.push(`${ids.length > 1 ? `[${id}] ` : ''}소리 근거: 없음(대화형 녹음인데 화자 분리 전)`); continue; }
-    const intervals = mineIntervals(speakers);
-    if (intervals && !intervals.length) { parts.push(`${ids.length > 1 ? `[${id}] ` : ''}소리 근거: 없음(화자 분리에서 미네 화자 미확인)`); continue; }
-    const scope = intervals ? '미네 구간' : speakers ? '전체(미네 이름표 없음)' : '전체(한 사람 녹음)';
+    if (!call && !speakers && RECORDING_DIALOGUE_KINDS.includes(kind)) { parts.push(`${prefix}소리 근거: 없음(대화형 녹음인데 화자 분리 전)`); continue; }
+    if (!call) intervals = mineIntervals(speakers);
+    if (intervals && !intervals.length) { parts.push(`${prefix}소리 근거: 없음(화자 분리에서 미네 화자 미확인)`); continue; }
+    const scope = call || intervals ? '미네 구간' : speakers ? '전체(미네 이름표 없음)' : '전체(한 사람 녹음)';
     const windows = windowsInIntervals(cues.windows ?? [], intervals);
     const summary = summarizeCues(windows, { scope });
-    parts.push(`${ids.length > 1 ? `[${id}] ` : ''}${summary.lines.join('\n')}`);
+    parts.push(`${prefix}${summary.lines.join('\n')}`);
     ok = true;
   }
   return { text: parts.join('\n'), ok };
@@ -330,6 +432,47 @@ export async function attachAudioCues(items, options = {}) {
   return items;
 }
 
+function callNotes(root, rel = VAULT_REL.mediaConversations) {
+  const directory = join(root, rel);
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.name.startsWith('99_')) return [];
+    const child = `${rel}/${entry.name}`;
+    if (entry.isDirectory()) return callNotes(root, child);
+    if (!entry.isFile() || !entry.name.endsWith('.md')) return [];
+    const content = readFileSync(join(root, child), 'utf8');
+    if (!/^convKind:\s*["']?통화["']?\s*$/m.test(content)) return [];
+    const fields = parseFrontmatter(content);
+    const people = [fields.people, fields.counterpart, fields.상대].flat();
+    if (!people.some((person) => String(person ?? '').split('|')[0].includes('미네'))) return [];
+    return [{ content, fields }];
+  });
+}
+
+// CLI 사전 계산은 노트에 연결된 미네 통화 중 목소리 확인까지 통과한 ID만 선택한다.
+export function selectCallCueTargets(rows, { root = VAULT_PATHS.root, ids,
+  limit = Infinity, notes = callNotes(root), speakersFor = (id) => loadSpeakers(root, id),
+  voicesFor = loadCallVoices } = {}) {
+  const noteById = new Map(notes.flatMap((note) => noteMediaIds(note.content).map((id) => [id, note])));
+  const selected = [];
+  for (const row of rows) {
+    if (selected.length >= limit) break;
+    if (row.kind !== 'Calls' || ids && !ids.includes(row.id)) continue;
+    const note = noteById.get(row.id);
+    if (!note || callSectionNeedsReview(note.content, row.id)) continue;
+    const fields = note.fields ?? parseFrontmatter(note.content);
+    let confirmation;
+    try {
+      confirmation = callMineIntervals(speakersFor(row.id), {
+        people: [fields.people, fields.counterpart, fields.상대].flat(),
+        occurred: row.occurred ?? fields.occurred, ...voicesFor(row.id),
+      });
+    } catch { continue; }
+    if (confirmation.intervals.length) selected.push(row);
+  }
+  return selected;
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const ids = args.find((arg) => arg.startsWith('--ids='))?.slice(6).split(',').filter(Boolean);
@@ -337,20 +480,25 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const limit = limitArg === undefined ? Infinity : Number(limitArg);
   if (!Number.isInteger(limit) && limit !== Infinity) throw new Error('--limit은 정수');
   const dryRun = args.includes('--dry-run');
-  if (!args.includes('--recordings') && !ids) {
-    console.error('usage: media-audio-cues.mjs --recordings [--ids=id1,id2] [--limit=N] [--dry-run]');
+  const calls = args.includes('--calls');
+  if (!args.every((arg) => ['--calls', '--recordings', '--dry-run'].includes(arg)
+    || /^--ids=[a-f0-9,]+$/i.test(arg) || /^--limit=\d+$/.test(arg))
+    || (calls && args.includes('--recordings')) || (!calls && !args.includes('--recordings') && !ids)) {
+    console.error('usage: media-audio-cues.mjs (--recordings|--calls) [--ids=id1,id2] [--limit=N] [--dry-run]');
     process.exitCode = 2;
   } else {
     const root = VAULT_PATHS.root;
     const index = join(root, VAULT_REL.mediaArchiveIndex);
     const rows = readFileSync(index, 'utf8').split('\n').filter(Boolean).flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
-    const targets = rows.filter((row) => (ids ? ids.includes(row.id) : row.kind === 'Recordings')).slice(0, limit);
-    if (dryRun) console.log(`[media-audio-cues] dry-run 대상 ${targets.length}개`);
+    const notes = calls ? callNotes(root) : [];
+    const targets = calls ? selectCallCueTargets(rows, { root, ids, limit, notes })
+      : rows.filter((row) => (ids ? ids.includes(row.id) : row.kind === 'Recordings')).slice(0, limit);
+    if (dryRun) console.log(`[media-audio-cues] dry-run 대상 ${targets.length}개${calls ? `, 미네 통화 노트 ${notes.length}개` : ''}, 쓰기·분석 없음`);
     else {
       const archivePaths = loadArchivePaths(root);
       let done = 0; let failed = 0;
       for (const row of targets) {
-        const result = await computeCues(row.id, { root, archivePaths });
+        const result = await computeCues(row.id, { root, archivePaths, ...(calls ? { allowCalls: true } : {}) });
         if (result.error) { failed += 1; console.error(`[media-audio-cues] ${row.id}: ${result.error}`); } else done += 1;
       }
       console.log(`[media-audio-cues] 완료 ${done}, 실패 ${failed}`);
