@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.banana2.media-delete-report-weekly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>media-delete-report-weekly</string>
+  </array>
+  <!-- 매주 일요일 04:15 KST. 04:00 전사·04:05 화자 분리와 간격을 둔다. -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>4</integer><key>Minute</key><integer>15</integer></dict>
+  <!-- kickstart 검증은 run.sh에 --no-send를 전달해 실제 발송을 막는다. -->
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>WorkingDirectory</key><string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-delete-report-weekly.log</string>
+  <key>StandardErrorPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-delete-report-weekly.log</string>
+</dict>
+</plist>

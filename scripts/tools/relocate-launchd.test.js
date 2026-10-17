@@ -323,12 +323,29 @@ test('임시 심볼릭 링크 경유 CLI도 --check를 실행한다', (t) => {
   assert.match(output, /저장소 루트:/);
 });
 
-test('실제 저장소 plist 62개는 현재 루트로 rewrite할 때 바이트가 같다', () => {
+test('실제 저장소 plist 64개는 현재 루트로 rewrite할 때 바이트가 같다', () => {
   const directory = path.join(repositoryRoot, 'scripts', 'launchd');
   const names = fs.readdirSync(directory).filter((name) => name.endsWith('.plist'));
-  assert.equal(names.length, 62);
+  assert.equal(names.length, 64);
   for (const name of names) {
     const source = fs.readFileSync(path.join(directory, name));
     assert.equal(Buffer.from(rewritePlist(source.toString('utf8'), repositoryRoot, repositoryRoot)).equals(source), true, name);
+  }
+});
+
+test('모든 운영 plist의 run.sh와 WorkingDirectory는 본 저장소를 가리킨다', () => {
+  const directory = path.join(repositoryRoot, 'scripts', 'launchd');
+  const productionRoot = '/Users/huinique/Pantheon/Repos/banana-portfolio-v2';
+  for (const name of fs.readdirSync(directory).filter((item) => item.endsWith('.plist'))) {
+    const source = fs.readFileSync(path.join(directory, name), 'utf8');
+    const runPath = source.match(/<string>([^<]*\/scripts\/launchd\/run\.sh)<\/string>/)?.[1];
+    const workingDirectory = source.match(/<key>WorkingDirectory<\/key>\s*<string>([^<]+)<\/string>/)?.[1];
+    if (runPath) assert.equal(runPath, `${productionRoot}/scripts/launchd/run.sh`, name);
+    if (workingDirectory?.includes('/Repos/banana-portfolio-v2')) {
+      assert.equal(workingDirectory, productionRoot, name);
+    }
+    for (const value of source.matchAll(/<string>([^<]*\/Repos\/banana-portfolio[^<]*)<\/string>/g)) {
+      assert.ok(value[1] === productionRoot || value[1].startsWith(`${productionRoot}/`), name);
+    }
   }
 });

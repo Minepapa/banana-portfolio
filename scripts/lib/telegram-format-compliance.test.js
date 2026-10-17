@@ -44,7 +44,7 @@ import { AGENT_HEADERS, renderAgentMessage } from './pantheon-send.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCAN_DIRS = [join(HERE, '..', 'jobs'), join(HERE, '..', 'tools'), join(HERE, '..', 'hooks'), HERE];
 const EXCLUDED_FILENAMES = new Set(['telegram.mjs', 'pantheon-send.mjs']); // 발송 관문과 transport
-const PERSONAL_SENDER_FILES = new Set(['hermes-briefing.mjs']); // 오너 개인 일정 전용
+const PERSONAL_SENDER_FILES = new Set(['hermes-briefing.mjs', 'media-faces-hold-monthly.mjs']); // 오너 개인 일정·미네 미디어 전용
 const INVESTMENT_IMPORT_RE = /(?:\b(?:import|from)\s+(?:[^;]*?\sfrom\s+)?|\bimport\s*\(\s*)['"][^'"]*(?:kis|nhplug|holdings|proposal|order)[^'"]*['"]/i;
 const SAFE_WRAPPERS = ['formatFactsMessage(', 'formatDepartmentMessage('];
 // 매치 직전 텍스트가 이 패턴으로 끝나야만("줄 단위" 근접 확인) 콜백 정의 자체로 인정 —

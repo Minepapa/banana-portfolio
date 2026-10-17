@@ -101,7 +101,7 @@ export function summarize(rows) {
     candidateBytes, signals, candidates, exclusions, pendingBackup,
     representatives: rows.filter((row) => row.role === '대표').length };
 }
-export function main(argv = process.argv.slice(2)) {
+export function main(argv = process.argv.slice(2), { writer = null } = {}) {
   if (argv.some((arg) => arg !== '--dry-run')) throw new Error('지원 옵션: --dry-run');
   const dryRun = argv.includes('--dry-run');
   const decision = resolveDecision('미디어-삭제-판정');
@@ -122,8 +122,11 @@ export function main(argv = process.argv.slice(2)) {
   const table = (object) => Object.entries(object).sort((a, b) => (b[1].count ?? b[1]) - (a[1].count ?? a[1]))
     .map(([key, value]) => `| ${key} | ${value.count ?? value} | ${value.bytes ?? ''} |`).join('\n');
   const markdown = `# 미디어 삭제 후보 측정 ${day}\n\n기준: ${decision.frontmatter.decisionKey} (${decision.frontmatter.appliesFrom})\n\n총 ${summary.total}건, 후보 ${summary.candidateItems}건, 후보 용량 ${summary.candidateBytes}바이트, 연사 대표 ${summary.representatives}건.\n\n## 유형·등급별 후보\n\n| 유형·등급 | 건수 | 바이트 |\n|---|---:|---:|\n${table(summary.candidates)}\n\n## 백업 확인만 남은 행(후보 아님)\n\n| 유형·등급 | 건수 | 바이트 |\n|---|---:|---:|\n${table(summary.pendingBackup)}\n\n## 감지 신호\n\n| 유형 | 건수 | |\n|---|---:|---|\n${table(summary.signals)}\n\n## 제외 사유\n\n| 사유 | 건수 | |\n|---|---:|---|\n${table(summary.exclusions)}\n\n개별 행과 연사 대표/나머지는 같은 날짜 JSONL에 기록했다.\n`;
-  writeFileSync(join(directory, `${day}.md`), markdown, { mode: 0o600 });
   writeFileSync(join(directory, `${day}.jsonl`), rows.map((row) => JSON.stringify(row)).join('\n') + '\n', { mode: 0o600 });
+  if (writer) writer({ day, markdown, rows, summary });
+  else {
+    writeFileSync(join(directory, `${day}.md`), markdown, { mode: 0o600 });
+  }
   console.log(JSON.stringify(summary));
   return summary;
 }
