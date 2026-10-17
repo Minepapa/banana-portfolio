@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fixture as criteriaFixture, fixtureCriteria as criteria } from '../lib/mine-emotion-criteria.fixture.js';
 import { parseEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
-import { applyFields, buildPrompt, failed, findTargets, mineAge, noteText, recentSignalTrend, reclassify, run, validateProposals,
+import { applyFields, buildPrompt, failed, findTargets, mineAge, noteText, recentSignalTrend, reclassify, restrictedAthenaDecision, run, validateProposals,
   STATE_REL } from './mine-athena-fields.mjs';
 
 const now = new Date('2026-10-18T12:00:00Z'); // KST 10-18 21:00
@@ -22,6 +22,45 @@ function fixture(t) {
   return { root, put };
 }
 const C = '20_Records/23_Conversations';
+
+test('제한 판단은 옵션을 전달하고 JSON result·토큰 사용량을 기록한 뒤 cwd를 지운다', async () => {
+  let invocation;
+  let log = '';
+  const result = await restrictedAthenaDecision('prompt', { model: 'sonnet', systemPrompt: 'charter' }, {
+    invoke: async (...args) => {
+      invocation = args;
+      assert.match(args[3].cwd, /^\/tmp\/mine-athena-claude-/);
+      assert.equal(args[3].cwd.startsWith(`${process.cwd()}/`), false);
+      assert.equal(existsSync(args[3].cwd), true);
+      assert.deepEqual(readdirSync(args[3].cwd), []);
+      return JSON.stringify({ result: '[{"id":1}]', usage: {
+        input_tokens: 10, cache_creation_input_tokens: 20, cache_read_input_tokens: 30, output_tokens: 4 } });
+    },
+    output: { log(message) { log = message; } },
+  });
+  assert.equal(result, '[{"id":1}]');
+  assert.deepEqual(invocation.slice(0, 3), ['prompt', 'sonnet', '']);
+  assert.deepEqual(invocation[3], {
+    appendSystemPrompt: 'charter', tools: '', disallowedTools: 'mcp__*',
+    permissionMode: 'dontAsk', restricted: true, strictMcpConfig: true,
+    mcpConfig: '{"mcpServers":{}}', maxTurns: 1, outputFormat: 'json',
+    cwd: invocation[3].cwd, timeoutMs: 30 * 60_000,
+  });
+  assert.equal(existsSync(invocation[3].cwd), false);
+  assert.match(log, /"inputTokens":60,"outputTokens":4/);
+});
+
+test('제한 판단은 오류에서도 임시 cwd를 지운다', async () => {
+  let cwd;
+  await assert.rejects(restrictedAthenaDecision('prompt', { model: 'sonnet', systemPrompt: '' }, {
+    invoke: async (_prompt, _model, _tools, options) => {
+      cwd = options.cwd;
+      throw new Error('실패');
+    },
+    output: { log() {} },
+  }), /실패/);
+  assert.equal(existsSync(cwd), false);
+});
 
 test('mineAge는 생일(11-04) 전후로 만 나이를 계산한다', () => {
   assert.equal(mineAge('2026-11-03T10:00:00+09:00'), 9);

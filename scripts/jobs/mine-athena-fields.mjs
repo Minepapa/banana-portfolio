@@ -5,7 +5,7 @@
  * 판단 근거가 없다고 아테나가 답한 노트는 상태 파일에 남겨 다시 묻지 않는다.
  * 텔레그램은 보내지 않는다. 결과는 로그와 상태 파일에 남는다(요청 2026-10-14 미네 녹음 아테나 필드 주간 묶음).
  */
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { attachAudioCues } from '../lib/media-audio-cues.mjs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -36,6 +36,32 @@ export const MAX_JOB_MS = 30 * 60_000;
 
 const kstDate = (now) => new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
 const readJson = (path, fallback) => existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : fallback;
+
+// TMPDIR가 저장소·볼트 안을 가리켜도 Claude의 cwd는 그 밖의 빈 시스템 임시 폴더에 둔다.
+export async function restrictedAthenaDecision(prompt, agent, { invoke = runHeadlessClaude, output = console } = {}) {
+  const cwd = mkdtempSync('/tmp/mine-athena-claude-');
+  try {
+    const raw = await invoke(prompt, agent.model, '', {
+      appendSystemPrompt: agent.systemPrompt, tools: '', disallowedTools: 'mcp__*',
+      permissionMode: 'dontAsk', restricted: true, strictMcpConfig: true,
+      mcpConfig: '{"mcpServers":{}}', maxTurns: 1, outputFormat: 'json',
+      cwd, timeoutMs: MAX_JOB_MS,
+    });
+    const envelope = JSON.parse(raw);
+    if (typeof envelope.result !== 'string') throw new Error('Claude JSON 결과 오류');
+    const usage = envelope.usage ?? {};
+    const inputTokens = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']
+      .reduce((sum, key) => sum + (Number(usage[key]) || 0), 0);
+    const outputTokens = Number(usage.output_tokens) || 0;
+    output.log(`[mine-athena-fields] Claude usage ${JSON.stringify({ inputTokens, outputTokens, usage })}`);
+    return envelope.result;
+  } catch (error) {
+    if (error.usage) output.log(`[mine-athena-fields] Claude usage ${JSON.stringify({ usage: error.usage, error: error.message })}`);
+    throw error;
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
 
 // occurred를 KST 날짜로. 시간대가 Z로 적혀 있어도 KST 기준 날짜가 된다.
 export function occurredDate(occurred) {
@@ -333,8 +359,7 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   if (!batch.length) return summary;
   if (cooldown()) return { ...summary, cooldown: true };
   const agent = charter ?? loadAgent('athena', { fallbackModel: 'sonnet' });
-  const decide = judge ?? ((prompt) => runHeadlessClaude(prompt, agent.model, '', {
-    appendSystemPrompt: agent.systemPrompt, tools: '', timeoutMs: MAX_JOB_MS }));
+  const decide = judge ?? ((prompt) => restrictedAthenaDecision(prompt, agent, { output }));
   await cues(batch, { root });
   if (cooldown()) return { ...summary, cooldown: true };
   const proposals = await reclassificationProposals(batch, decide, criteria, signalTrend, cooldown);
@@ -449,9 +474,7 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
 
     const agent = charter ?? loadAgent('athena', { fallbackModel: 'sonnet' });
     if (agent.warning) output.error(`[mine-athena-fields] ${agent.warning}`);
-    const decide = judge ?? ((prompt) => runHeadlessClaude(prompt, agent.model, '', {
-      appendSystemPrompt: agent.systemPrompt, tools: '', timeoutMs: MAX_JOB_MS,
-    }));
+    const decide = judge ?? ((prompt) => restrictedAthenaDecision(prompt, agent, { output }));
     const signalTrendBefore = recentSignalTrend(root, today, criteria);
     await cues(batch, { root });
     if (cooldown()) return { ...summary, cooldown: true };
