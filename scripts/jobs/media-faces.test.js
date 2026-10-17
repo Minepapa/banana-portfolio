@@ -327,7 +327,7 @@ test('클릭 시트는 표시값과 조각 경로만 포함하고 표본별 저�
   assert.match(bandHtml, /\.\.\/crops\/face-a_0\.jpg/);
   assert.match(bandHtml, /--confirm=/);
   assert.match(bandHtml, /--remove=/);
-  assert.match(bandHtml, /const repoRoot = "\/.*banana-portfolio-v2\/"/);
+  assert.match(bandHtml, /const repoRoot = "\/.*banana-portfolio-v2[^/]*\/"/);
   assert.match(bandHtml, /return 'cd ' \+ JSON\.stringify\(repoRoot\) \+ ' && node scripts\/jobs\/media-faces\.mjs/);
   assert.match(bandHtml, /결과 복사|파일로 저장|초기화/);
   assert.doesNotMatch(bandHtml, /https?:\/\/|bbox|score|archivePath/);

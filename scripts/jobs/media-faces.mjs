@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // 원본과 Vault 색인은 읽기만 한다. 얼굴 특징값·메타는 Media/Faces에만 기록한다.
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { MEDIA_FACES_PATHS, VAULT_PATHS, VAULT_REL, categoryLink } from '../lib/vault-paths.mjs';
 import { buildGallery, confirmBand, FACE_BANDS, FACE_PARAMS, MATCH_HIGH, MATCH_LOW, mineAlbum, ageBand,
   classifyFaceScore,
@@ -15,6 +16,7 @@ import { photoPeopleWithGallery, PHOTO_HIGH, PHOTO_HOLD, PERSON_THRESHOLDS } fro
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { VIDEO_FRAME_ROOT } from '../lib/media-video-frames.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../tools/faces/media_faces.py', import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -775,8 +777,8 @@ export async function confirmFamilyFaces(input, { root = VAULT_PATHS.root,
 }
 
 export function parseHoldAnswers(text, sample) {
-  const match = text.trim().match(/^미네\s*:\s*([\d,\s]*)$/);
-  if (!match) throw new Error('보류함 결과 형식 오류: 미네: 1,2');
+  const match = text.trim().match(/^(?:미네|보류함)\s*:\s*([\d,\s]*)$/);
+  if (!match) throw new Error('보류함 결과 형식 오류: 보류함: 1,2');
   const byNumber = new Map(sample.map((item) => [item.number, item]));
   const numbers = match[1].trim() ? match[1].split(',').map((part) => Number(part.trim())) : [];
   if (new Set(numbers).size !== numbers.length || numbers.some((number) => !byNumber.has(number))) {
@@ -785,9 +787,32 @@ export function parseHoldAnswers(text, sample) {
   return numbers;
 }
 
-export function renderHoldSheet(sample) {
-  const cards = sample.map((item) => `<button class="card" data-number="${item.number}" aria-pressed="false"><img src="../crops/${htmlText(item.id)}_${item.i}.jpg" alt="보류 얼굴 ${item.number}"><strong>${item.number}</strong><span>아님</span></button>`).join('');
-  return `<!doctype html><html lang="ko"><meta charset="utf-8"><title>미네 보류함</title><style>body{font-family:system-ui;margin:2rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,130px);gap:.5rem}.card{cursor:pointer;background:white;border:2px solid #888}.card[aria-pressed=true]{border-color:#27824c;background:#e9f5ed}.card img{width:120px;height:120px;object-fit:contain}.card span{display:block}textarea{display:block;width:100%}</style><h1>미네 얼굴 보류함</h1><p>기본 답은 아님입니다. 미네인 얼굴만 누르세요.</p><button id="copy">결과 복사</button><button id="save">파일로 저장</button><textarea id="result" readonly></textarea><div class="grid">${cards}</div><script>const cards=[...document.querySelectorAll('.card')];for(const card of cards)card.onclick=()=>{const yes=card.getAttribute('aria-pressed')!=='true';card.setAttribute('aria-pressed',String(yes));card.querySelector('span').textContent=yes?'미네':'아님'};function result(){return '미네: '+cards.filter(card=>card.getAttribute('aria-pressed')==='true').map(card=>card.dataset.number).join(',')}document.getElementById('copy').onclick=async()=>{const value=result();document.getElementById('result').value=value;try{await navigator.clipboard.writeText(value)}catch{document.getElementById('result').select()}};document.getElementById('save').onclick=()=>{const url=URL.createObjectURL(new Blob([result()],{type:'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=location.pathname.split('/').pop().replace('.html','.txt');link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};</script></html>\n`;
+export function holdSampleHash(sample) {
+  return sheetHash(sample.map(({ id, i, kind, person, timestampSec }) =>
+    ({ id, i, kind, person, timestampSec })));
+}
+
+export function answeredVideoHolds(sheetsPath) {
+  const answered = new Set();
+  if (!existsSync(sheetsPath)) return answered;
+  for (const name of readdirSync(sheetsPath).filter((item) => /^video-hold-review-\d{4}-\d{2}\.json$/.test(item))) {
+    const review = JSON.parse(readFileSync(join(sheetsPath, name), 'utf8'));
+    for (const item of review.videoAnswers ?? []) {
+      answered.add(`${item.id}:${item.person}:${item.timestampSec}`);
+    }
+  }
+  return answered;
+}
+
+export function renderHoldSheet(sample, sampleHash = holdSampleHash(sample)) {
+  const answerLabel = sample.some((item) => item.kind === 'video') ? '보류함' : '미네';
+  const cards = sample.map((item) => {
+    const source = item.kind === 'video' ? pathToFileURL(item.framePath).href
+      : `../crops/${htmlText(item.id)}_${item.i}.jpg`;
+    const caption = item.kind === 'video' ? `영상 ${item.timestampSec}초 · ${htmlText(item.person)} 후보` : '사진';
+    return `<button class="card" data-number="${item.number}" data-person="${htmlText(item.person || '미네')}" aria-pressed="false"><img src="${htmlText(source)}" alt="보류 얼굴 ${item.number}"><strong>${item.number}</strong><small>${caption}</small><span>아님</span></button>`;
+  }).join('');
+  return `<!doctype html><html lang="ko"><meta charset="utf-8"><title>얼굴 보류함</title><style>body{font-family:system-ui;margin:2rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,130px);gap:.5rem}.card{cursor:pointer;background:white;border:2px solid #888}.card[aria-pressed=true]{border-color:#27824c;background:#e9f5ed}.card img{width:120px;height:120px;object-fit:contain}.card span{display:block}textarea{display:block;width:100%}</style><h1>얼굴 보류함</h1><p>기본 답은 아님입니다. 카드에 적힌 인물의 얼굴이면 누르세요. 영상 답변은 별도 검토 파일에 저장됩니다.</p><button id="copy">결과 복사</button><button id="save">파일로 저장</button><textarea id="result" readonly></textarea><div class="grid">${cards}</div><script>const cards=[...document.querySelectorAll('.card')];for(const card of cards)card.onclick=()=>{const yes=card.getAttribute('aria-pressed')!=='true';card.setAttribute('aria-pressed',String(yes));card.querySelector('span').textContent=yes?card.dataset.person:'아님'};function result(){return '해시: ${sampleHash}\\n${answerLabel}: '+cards.filter(card=>card.getAttribute('aria-pressed')==='true').map(card=>card.dataset.number).join(',')}document.getElementById('copy').onclick=async()=>{const value=result();document.getElementById('result').value=value;try{await navigator.clipboard.writeText(value)}catch{document.getElementById('result').select()}};document.getElementById('save').onclick=()=>{const url=URL.createObjectURL(new Blob([result()],{type:'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=location.pathname.split('/').pop().replace('.html','.txt');link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};</script></html>\n`;
 }
 
 export function renderPersonGoldSheet(person, sample) {
@@ -797,8 +822,11 @@ export function renderPersonGoldSheet(person, sample) {
 
 export async function holdSheetMediaFaces({ root = VAULT_PATHS.root, out = MEDIA_FACES_PATHS.root,
   mediaRoot = MEDIA_FACES_PATHS.mediaRoot, indexPath = MEDIA_FACES_PATHS.index,
-  matchesPath = join(out, 'matches.jsonl'), cropper = runCropFaces,
+  matchesPath = join(out, 'matches.jsonl'), videoMatchesPath = join(out, 'video-matches.jsonl'),
+  frameRoot = VIDEO_FRAME_ROOT, cropper = runCropFaces, returnDetails = false,
   output = console } = {}) {
+  mkdirSync(out, { recursive: true });
+  return withLock(join(out, '.media-faces'), async () => {
   const matches = jsonLines(matchesPath);
   const previousPath = join(root, VAULT_REL.mediaFacePeople);
   const previous = existsSync(previousPath) ? JSON.parse(readFileSync(previousPath, 'utf8')) : {};
@@ -811,6 +839,9 @@ export async function holdSheetMediaFaces({ root = VAULT_PATHS.root, out = MEDIA
   const byId = new Map(mediaRows(root).map((row) => [row.id, row]));
   const faceRows = facesById(jsonLines(indexPath));
   const byMonth = new Map();
+  const sheetsPath = join(out, 'sheets');
+  const answeredVideos = answeredVideoHolds(sheetsPath);
+  let missingFrames = 0;
   for (const [id, entry] of Object.entries(photos)) {
     if (!entry.hold?.includes('미네')) continue;
     const record = byId.get(id);
@@ -825,13 +856,55 @@ export async function holdSheetMediaFaces({ root = VAULT_PATHS.root, out = MEDIA
     sample.push({ id, i: match.i });
     byMonth.set(month, sample);
   }
-  const sheetsPath = join(out, 'sheets');
+  for (const entry of jsonLines(videoMatchesPath)) {
+    if (!entry.hold?.length || !/^[A-Za-z0-9_-]+$/.test(entry.id)) continue;
+    const record = byId.get(entry.id);
+    const month = record?.capturedAt?.slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(month)) continue;
+    const pendingPeople = entry.hold.filter((person) => {
+      const timestamp = entry.representatives?.[person]?.timestampSec;
+      return !answeredVideos.has(`${entry.id}:${person}:${timestamp}`);
+    });
+    if (!pendingPeople.length) continue;
+    const videoSamples = [];
+    let missingFrame = false;
+    for (const person of pendingPeople) {
+      const representative = entry.representatives?.[person];
+      if (!Number.isInteger(representative?.timestampSec) || representative.timestampSec < 0) {
+        output.warn?.(`[media-faces] 영상 보류 대표 프레임 없음: ${entry.id}/${person}`);
+        missingFrame = true;
+        break;
+      }
+      const framePath = join(frameRoot, entry.id, `${representative.timestampSec}.jpg`);
+      if (!existsSync(framePath)) {
+        output.warn?.(`[media-faces] 영상 보류 프레임 파일 없음: ${entry.id}/${representative.timestampSec}`);
+        missingFrame = true;
+        break;
+      }
+      videoSamples.push({ id: entry.id, kind: 'video', person,
+        timestampSec: representative.timestampSec, framePath });
+    }
+    if (missingFrame) { missingFrames++; continue; }
+    const sample = byMonth.get(month) ?? [];
+    sample.push(...videoSamples);
+    byMonth.set(month, sample);
+  }
   const cropsPath = join(out, 'crops');
   mkdirSync(sheetsPath, { recursive: true });
   mkdirSync(cropsPath, { recursive: true });
   for (const [month, entries] of byMonth) {
+    const jsonPath = join(sheetsPath, `hold-${month}.json`);
+    const htmlPath = join(sheetsPath, `hold-${month}.html`);
+    // 미응답 시트를 보존해야 번호가 다른 표본에 재할당되지 않는다.
+    if (existsSync(jsonPath) && existsSync(htmlPath)
+      && !existsSync(join(sheetsPath, `hold-${month}.answered.json`))) {
+      const existing = JSON.parse(readFileSync(jsonPath, 'utf8'));
+      const previousSample = existing.sample ?? [];
+      byMonth.set(month, previousSample);
+      continue;
+    }
     const sample = entries.map((entry, index) => ({ ...entry, number: index + 1 }));
-    const planned = sample.flatMap((entry) => {
+    const planned = sample.filter((entry) => entry.kind !== 'video').flatMap((entry) => {
       const face = faceRows.get(entry.id)?.faces?.find((item) => item.i === entry.i);
       const record = byId.get(entry.id);
       if (!record || face?.bbox?.length !== 4) throw new Error(`보류함 원본/좌표 누락: ${entry.id}/${entry.i}`);
@@ -841,11 +914,14 @@ export async function holdSheetMediaFaces({ root = VAULT_PATHS.root, out = MEDIA
     });
     const cropped = new Set(await cropper(planned));
     if (planned.some((item) => !cropped.has(item.out))) throw new Error('보류함 얼굴 조각 생성 누락');
-    writeAtomic(join(sheetsPath, `hold-${month}.json`), `${JSON.stringify({ sample }, null, 2)}\n`);
-    writeAtomic(join(sheetsPath, `hold-${month}.html`), renderHoldSheet(sample));
+    const sampleHash = holdSampleHash(sample);
+    writeAtomic(jsonPath, `${JSON.stringify({ sample, sampleHash }, null, 2)}\n`);
+    writeAtomic(htmlPath, renderHoldSheet(sample, sampleHash));
   }
   output.log(`[media-faces] 보류함 ${byMonth.size}개월`);
-  return byMonth.size;
+  return returnDetails ? { count: [...byMonth.values()].reduce((sum, entries) => sum + entries.length, 0),
+    sheets: [...byMonth.keys()].map((month) => join(sheetsPath, `hold-${month}.html`)), missingFrames } : byMonth.size;
+  }, { retries: 0 });
 }
 
 export async function confirmHoldFaces(input, { root = VAULT_PATHS.root, out = MEDIA_FACES_PATHS.root,
@@ -855,25 +931,47 @@ export async function confirmHoldFaces(input, { root = VAULT_PATHS.root, out = M
   const expanded = input.startsWith('~/') ? join(homedir(), input.slice(2)) : input;
   const basename = expanded.match(/hold-(\d{4}-\d{2})(?:\.txt)?$/)?.[1];
   if (!basename) throw new Error('보류함 파일명은 hold-YYYY-MM.txt 형식이어야 합니다');
-  const sample = JSON.parse(readFileSync(join(out, 'sheets', `hold-${basename}.json`), 'utf8')).sample;
-  const yes = new Set(parseHoldAnswers(readFileSync(expanded, 'utf8'), sample));
+  const sheet = JSON.parse(readFileSync(join(out, 'sheets', `hold-${basename}.json`), 'utf8'));
+  const sample = sheet.sample;
+  const answer = readFileSync(expanded, 'utf8');
+  const answerHash = answer.match(/^해시: ([a-f0-9]{64})$/m)?.[1];
+  if (!sheet.sampleHash || sheet.sampleHash !== holdSampleHash(sample) || answerHash !== sheet.sampleHash) {
+    throw new Error('보류함 표본 해시 불일치: 최신 시트에서 답을 다시 복사하세요');
+  }
+  const yes = new Set(parseHoldAnswers(answer.replace(/^해시: [a-f0-9]{64}\r?\n/m, ''), sample));
   if (!yes.size && !allNo) {
     output.log('[media-faces] 미네 선택이 0개입니다. 모두 아님을 적용하려면 --hold-all-no를 함께 지정하세요.');
     return null;
   }
+  const videoAnswers = sample.filter((entry) => entry.kind === 'video')
+    .map((entry) => ({ id: entry.id, person: entry.person, timestampSec: entry.timestampSec,
+      confirmedPerson: yes.has(entry.number) }));
+  if (videoAnswers.length) {
+    const reviewPath = join(out, 'sheets', `video-hold-review-${basename}.json`);
+    const previousAnswers = existsSync(reviewPath)
+      ? JSON.parse(readFileSync(reviewPath, 'utf8')).videoAnswers ?? [] : [];
+    const merged = new Map(previousAnswers.map((item) =>
+      [`${item.id}:${item.person}:${item.timestampSec}`, item]));
+    for (const item of videoAnswers) merged.set(`${item.id}:${item.person}:${item.timestampSec}`, item);
+    writeAtomic(reviewPath, `${JSON.stringify({ videoAnswers: [...merged.values()] }, null, 2)}\n`);
+    output.log('[media-faces] 영상 답변은 별도 검토 파일에 저장했습니다. 자동 이름표에는 반영하지 않습니다.');
+  }
   const current = existsSync(peoplePath) ? JSON.parse(readFileSync(peoplePath, 'utf8')) : {};
   const confirmations = { ...(current.confirmations ?? {}) };
-  for (const item of sample) confirmations[item.id] = { ...(confirmations[item.id] ?? {}), 미네: yes.has(item.number) };
+  for (const item of sample.filter((entry) => entry.kind !== 'video')) {
+    confirmations[item.id] = { ...(confirmations[item.id] ?? {}), 미네: yes.has(item.number) };
+  }
   const photos = photoPeopleWithGallery(jsonLines(join(out, 'matches.jsonl')),
     readGallery(galleryPath), confirmations);
   const index = { version: 1, updatedAt: new Date().toISOString(),
     thresholds: { label: PHOTO_HIGH, hold: PHOTO_HOLD, byPerson: PERSON_THRESHOLDS }, photos, confirmations };
   writeAtomic(peoplePath, `${JSON.stringify(index, null, 2)}\n`);
   const gallery = readGallery(galleryPath);
-  if (gallery?.bands && yes.size) {
+  const selectedPhotos = sample.filter((entry) => entry.kind !== 'video' && yes.has(entry.number));
+  if (gallery?.bands && selectedPhotos.length) {
     const source = new Map(mediaRows(root).map((row) => [row.id, row]));
     const bands = { ...gallery.bands };
-    for (const item of sample.filter((entry) => yes.has(entry.number))) {
+    for (const item of selectedPhotos) {
       const media = source.get(item.id);
       const band = ageBand(media?.capturedAt, media?.capturedConfidence);
       if (!band || !bands[band]) continue;
@@ -887,6 +985,8 @@ export async function confirmHoldFaces(input, { root = VAULT_PATHS.root, out = M
     }
     writeAtomic(galleryPath, `${JSON.stringify({ ...gallery, bands, updatedAt: index.updatedAt }, null, 2)}\n`);
   }
+  writeAtomic(join(out, 'sheets', `hold-${basename}.answered.json`),
+    `${JSON.stringify({ sampleHash: sheet.sampleHash, answeredAt: new Date().toISOString() })}\n`);
   output.log(`[media-faces] 보류함 확인 ${sample.length}장`);
   return index;
   };

@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { labelMediaFaces, parseFamilyConfirm, parseFamilyExclusions, renderFamilySheet, renderFaceSheet,
-  parseHoldAnswers, renderHoldSheet, matchMediaFaces, runFacePipeline,
+  parseHoldAnswers, renderHoldSheet, holdSampleHash, matchMediaFaces, runFacePipeline,
   parseFacePipelineArgs, selectPersonGoldSample, holdSheetMediaFaces,
   validatePersonGold, selectFamilyDisplay, confirmFamilyFaces, confirmHoldFaces } from './media-faces.mjs';
 import { refreshMomentPeople, render as renderMoment } from './media-moments.mjs';
@@ -97,8 +97,9 @@ test('보류함 미네 0개 답은 명시 플래그 전까지 쓰지 않는다',
   const peoplePath = join(root, VAULT_REL.mediaFacePeople);
   const galleryPath = join(root, VAULT_REL.mediaFaceGallery);
   for (const path of [sheetPath, peoplePath, galleryPath]) mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(sheetPath, JSON.stringify({ sample: [{ number: 1, id: 'p', i: 0 }] }));
-  writeFileSync(input, '미네: ');
+  const sample = [{ number: 1, id: 'p', i: 0 }];
+  writeFileSync(sheetPath, JSON.stringify({ sample, sampleHash: holdSampleHash(sample) }));
+  writeFileSync(input, `해시: ${holdSampleHash(sample)}\n미네: `);
   writeFileSync(peoplePath, JSON.stringify({ photos: {} }));
   writeFileSync(galleryPath, JSON.stringify({ bands: {} }));
   assert.equal(await confirmHoldFaces(input, { root, out, output: { log() {} } }), null);
