@@ -3,7 +3,7 @@
 // --trial: 엔진 비교 시험(결과는 Media/Diarize/trial). --apply: 본 처리 → 95_Etna/Media/Speakers + 통화 노트 대화 형식.
 // '나' 목소리는 후보를 만든 뒤 오너 확인(--confirm-owner)으로만 등록한다. 목소리 특징값은 볼트 밖에만 둔다.
 import { spawn, execFile } from 'node:child_process';
-import { existsSync, readFileSync, mkdirSync, writeFileSync, lstatSync, readdirSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync, lstatSync, readdirSync, renameSync, realpathSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, relative, sep, basename, extname } from 'node:path';
@@ -453,6 +453,38 @@ function normalized(vector) {
 
 // 여유(두 화자 유사도 차)가 작거나, 더 비슷한 쪽도 등록 목소리와 멀면(둘 다 '나'가 아닐 수 있음) 확인 필요.
 export const OWNER_MARGIN_MIN = 0.05;
+export const RECHECK_RULE = Object.freeze({ minSimilarity: 0.45, counterpartLead: 0.15,
+  maxMineYearDistance: 2, ownerContradictionLead: 0 });
+
+// 상대 목소리로 한 화자를 고를 때 오너 기준이 그 선택과 정면으로 충돌하면 보류한다.
+export function recheckSpeaker(voices, counterpart, occurred, owner, reference) {
+  if (!['미네', '휘영'].includes(counterpart) || voices.length !== 2 || !owner?.mean || !reference?.vectors?.length)
+    return { reason: '기준 또는 특징값 없음' };
+  const year = Number(String(occurred || '').slice(0, 4));
+  const dated = counterpart === '미네' && reference.years?.length
+    ? [...reference.years].sort((a, b) => Math.abs(a.year - year) - Math.abs(b.year - year)
+      || b.year - a.year)[0] : null;
+  if (counterpart === '미네' && (!dated || !Number.isInteger(year)
+    || Math.abs(dated.year - year) > RECHECK_RULE.maxMineYearDistance))
+    return { reason: '미네 연도 기준 거리 초과' };
+  const referenceVector = dated ? reference.vectors[dated.index] : reference.vectors[0];
+  if (!referenceVector) return { reason: '상대 기준 벡터 없음' };
+  const counterpartScores = voices.map((voice) => cosine(voice, referenceVector));
+  const ownerScores = voices.map((voice) => cosine(voice, owner.mean));
+  const otherIndex = counterpartScores[1] > counterpartScores[0] ? 1 : 0;
+  const ownerIndex = 1 - otherIndex;
+  const best = counterpartScores[otherIndex];
+  const lead = best - counterpartScores[ownerIndex];
+  const ownerLead = ownerScores[ownerIndex] - ownerScores[otherIndex];
+  const scores = { counterpartScores, ownerScores, best, lead, ownerLead,
+    referenceYear: dated?.year ?? null };
+  if (best < Math.max(RECHECK_RULE.minSimilarity, reference.minSimilarity ?? -1))
+    return { reason: '상대 유사도 부족', ...scores };
+  if (lead < RECHECK_RULE.counterpartLead) return { reason: '상대 유사도 여유 부족', ...scores };
+  if (ownerLead < RECHECK_RULE.ownerContradictionLead)
+    return { reason: '오너 기준 모순', ...scores };
+  return { speaker: `S${ownerIndex}`, ...scores };
+}
 export function identifyOwner(voices, mean, { minSimilarity = -1 } = {}) {
   const similarities = voices.map((voice) => cosine(normalized(voice), normalized(mean)));
   const index = similarities[1] > similarities[0] ? 1 : 0;
@@ -569,6 +601,79 @@ function readOwner(paths) {
   const meta = JSON.parse(readFileSync(paths.ownerMeta, 'utf8'));
   if (!meta.version) throw new Error('오너 목소리 메타에 version 없음 — --confirm-owner로 다시 등록');
   return { mean: readNpy(paths.ownerVoice)[0], meta };
+}
+
+function readRecheckReference(paths, name) {
+  const target = personPaths(paths, name);
+  if (!target.voice || !target.meta || !existsSync(target.voice) || !existsSync(target.meta)) return null;
+  const meta = JSON.parse(readFileSync(target.meta, 'utf8'));
+  return { vectors: readNpy(target.voice), years: meta.years,
+    minSimilarity: meta.minSimilarity, version: meta.version };
+}
+
+function recheckedSpeakers(item, old, ownerSpeaker, now) {
+  const segments = combineSegments(item.transcript.segments, old.turns).segments.map((segment, i) => ({
+    i, speaker: segment.speaker === ownerSpeaker ? 'owner' : 'other', uncertain: segment.uncertain,
+  }));
+  const parts = speakerParts(item.transcript, { segments, turns: old.turns }, ownerSpeaker);
+  const { check: _check, parts: _parts, ...prior } = old;
+  return { ...prior, segments, ...(parts.length ? { parts } : {}),
+    recheckedAt: now.toISOString(), recheckOwnerSpeaker: ownerSpeaker };
+}
+
+function scoreDistribution(values) {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const percentile = (fraction) => sorted[Math.floor((sorted.length - 1) * fraction)];
+  return { count: sorted.length, min: sorted[0], p25: percentile(0.25),
+    median: percentile(0.5), p75: percentile(0.75), max: sorted.at(-1) };
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character]);
+}
+
+export function renderRecheckReview(rows) {
+  const cards = rows.map(({ item, speakers }) => {
+    const excerpt = combineSegments(item.transcript.segments, speakers.turns).utterances
+      .slice(0, 8).map((turn) => `<p><b>${escapeHtml(turn.speaker === 'S0' ? 'A' : 'B')}</b>: ${escapeHtml(turn.text.slice(0, 180))}</p>`).join('');
+    return `<article data-id="${escapeHtml(item.id)}"><h2>${escapeHtml(item.transcript.occurred.slice(0, 16))} · ${escapeHtml(item.counterpart)}</h2>${excerpt || '<p>발췌 없음</p>'}<div class="choices"><button data-answer="S0">A가 아빠</button><button data-answer="S1">B가 아빠</button><button data-answer="unknown">모르겠음</button></div></article>`;
+  }).join('\n');
+  return `<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>통화 화자 확인</title><style>body{font:17px system-ui;max-width:700px;margin:auto;padding:16px;background:#f7f7f5;color:#222}article{background:white;border:1px solid #ddd;border-radius:16px;padding:18px;margin:16px 0}p{line-height:1.6}.choices{display:flex;gap:8px;flex-wrap:wrap}button{font:inherit;padding:12px;border:1px solid #999;border-radius:10px;background:#fff}button.selected{background:#235caa;color:white}#export{position:sticky;bottom:10px;background:#235caa;color:white;width:100%}</style><h1>통화 화자 확인</h1><p>대화를 듣거나 읽고 아빠 화자를 고르세요. 모르면 그대로 두세요.</p>${cards}<button id="export">답 JSON 내보내기</button><script>const answers={};document.querySelectorAll('article').forEach(card=>card.querySelectorAll('[data-answer]').forEach(button=>button.onclick=()=>{answers[card.dataset.id]=button.dataset.answer;card.querySelectorAll('button').forEach(value=>value.classList.toggle('selected',value===button))}));document.querySelector('#export').onclick=()=>{const blob=new Blob([JSON.stringify({version:1,answers},null,2)],{type:'application/json'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='speaker-recheck-answers.json';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000)};</script></html>`;
+}
+
+export function parseRecheckAnswers(text) {
+  const document = JSON.parse(text);
+  if (document?.version !== 1 || !document.answers || Array.isArray(document.answers)
+    || typeof document.answers !== 'object') throw new Error('화자 답 JSON 형식 오류');
+  for (const [id, answer] of Object.entries(document.answers))
+    if (!ID.test(id) || !['S0', 'S1', 'unknown'].includes(answer)) throw new Error(`화자 답 오류: ${id}`);
+  return document.answers;
+}
+
+function noteHasUncertainCall(note, id) {
+  const marker = `<!-- media-transcribe:id ${id} -->`;
+  const start = note.indexOf(marker);
+  if (start < 0) return false;
+  const source = note.indexOf('\n원본:', start);
+  const nextCall = note.indexOf('<!-- media-transcribe:id ', start + marker.length);
+  const autoEnd = note.indexOf('<!-- media-transcribe:end -->', start + marker.length);
+  const boundaries = [source, nextCall, autoEnd].filter((position) => position >= 0);
+  if (!boundaries.length) return false;
+  return note.slice(start, Math.min(...boundaries)).includes('[화자 확인 필요]');
+}
+
+function effectivePath(path) {
+  const absolute = resolve(path);
+  let ancestor = absolute;
+  while (!existsSync(ancestor)) {
+    const parent = join(ancestor, '..');
+    if (parent === ancestor) throw new Error(`경로 확인 실패: ${path}`);
+    ancestor = parent;
+  }
+  return resolve(realpathSync(ancestor), relative(ancestor, absolute));
 }
 
 function assignSpeakers(item, turns, voices, owner, now) {
@@ -1183,6 +1288,156 @@ export async function runApply({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_
   }
 }
 
+export async function runRecheck({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_PATHS,
+  ids = null, dryRun = false, answersPath = null, reviewPath = null, output = console, write = writeAtomic,
+  now = new Date(), registryRules } = {}) {
+  const records = loadCandidates(root, paths.mediaRoot);
+  const saved = savedSpeakers(root);
+  const notePaths = indexNotes(root);
+  const owner = readOwner(paths);
+  const references = Object.fromEntries(['미네', '휘영'].map((name) => [name, readRecheckReference(paths, name)]));
+  for (const path of [answersPath, reviewPath].filter(Boolean)) {
+    const relativePath = relative(realpathSync(root), effectivePath(path));
+    if (relativePath === '' || relativePath === '.'
+      || relativePath !== '..' && !relativePath.startsWith(`..${sep}`))
+      throw new Error('화자 검토 파일은 볼트 밖 경로만 허용');
+  }
+  const answers = answersPath ? parseRecheckAnswers(readFileSync(answersPath, 'utf8')) : null;
+  const selected = [];
+  const validIds = new Set();
+  for (const item of records) {
+    if (ids && !ids.includes(item.id)) continue;
+    const old = saved.get(item.id);
+    const notePath = notePaths.get(item.id);
+    if (!(old?.check || old?.recheckOwnerSpeaker) || old.transcribedAt !== item.transcript.transcribedAt
+      || !old.turns?.length || !notePath) continue;
+    const note = readFileSync(notePath, 'utf8');
+    const counterpart = counterpartFromNote(parseFrontmatter(note), item.counterpart);
+    if (!['미네', '휘영'].includes(counterpart)) continue;
+    if (!noteHasUncertainCall(note, item.id)) continue;
+    selected.push({ item: { ...item, counterpart }, old, notePath });
+    validIds.add(item.id);
+  }
+  if (ids?.some((id) => !validIds.has(id))) throw new Error('지정 ID에 재판정 대상이 아닌 통화가 있음');
+  if (answers && Object.keys(answers).some((id) => !validIds.has(id)))
+    throw new Error('답 JSON에 재판정 대상이 아닌 ID가 있음');
+  const summary = { target: selected.length, confirmed: 0, remaining: 0, notes: 0, failed: 0,
+    reasons: {}, distributions: {} };
+  const scoreRows = [];
+  const unresolved = [];
+  const changed = [];
+  for (const { item, old, notePath } of selected) {
+    try {
+      let decision;
+      const answer = answers?.[item.id];
+      if (old.recheckOwnerSpeaker && !old.check)
+        decision = { speaker: old.recheckOwnerSpeaker, source: 'recovery' };
+      else if (answer) decision = answer === 'unknown' ? { reason: '표본 답 모름' }
+        : { speaker: answer, source: 'review' };
+      else if (answers) decision = { reason: '표본 답 없음' };
+      else if (!existsSync(voicePathFor(paths, item.id))) decision = { reason: '특징값 없음' };
+      else decision = recheckSpeaker(readNpy(voicePathFor(paths, item.id)), item.counterpart,
+        item.transcript.occurred, owner, references[item.counterpart]);
+      if (Number.isFinite(decision.best)) scoreRows.push(decision);
+      if (!decision.speaker) {
+        summary.remaining += 1;
+        summary.reasons[decision.reason] = (summary.reasons[decision.reason] || 0) + 1;
+        unresolved.push({ item, speakers: old });
+        continue;
+      }
+      const latest = JSON.parse(readFileSync(item.transcriptPath, 'utf8'));
+      if (latest.transcribedAt !== old.transcribedAt) throw new Error('전사 갱신');
+      const next = decision.source === 'recovery' ? old
+        : recheckedSpeakers(item, old, decision.speaker, now);
+      changed.push({ item, old, next, notePath, decision });
+      saved.set(item.id, next);
+      summary.confirmed += 1;
+    } catch (error) {
+      summary.failed += 1;
+      summary.remaining += 1;
+      summary.reasons['처리 오류'] = (summary.reasons['처리 오류'] || 0) + 1;
+      unresolved.push({ item, speakers: old });
+      output.error(`[media-diarize] 재판정 ${item.id}: ${error.message}`);
+    }
+  }
+  for (const key of ['best', 'lead', 'ownerLead'])
+    summary.distributions[key] = scoreDistribution(scoreRows.map((row) => row[key]));
+  const rules = registryRules ?? (changed.length
+    ? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8')) : null);
+  // 노트별 완성본을 먼저 검사한다. Speakers를 저장한 뒤 노트가 실패해도 재실행으로 복구할 수 있다.
+  const byNote = new Map();
+  for (const entry of changed) {
+    if (!byNote.has(entry.notePath)) byNote.set(entry.notePath, []);
+    byNote.get(entry.notePath).push(entry);
+  }
+  const noteUpdates = [];
+  const rejected = new Set();
+  for (const [path, entries] of byNote) {
+    try {
+      const before = readFileSync(path, 'utf8');
+      let next = before;
+      for (const { item, next: speakers } of entries)
+        next = renderSpeakerNote(next, item.transcript, speakers, item.counterpart);
+      for (const { item } of entries)
+        if (noteHasUncertainCall(next, item.id)) throw new Error(`화자 확인 표식 유지: ${item.id}`);
+      const problems = checkNote(relative(root, path).split(sep).join('/'), next, rules);
+      if (problems.length) throw new Error(`대화 노트 쓰기 관문: ${problems.join('; ')}`);
+      noteUpdates.push({ path, before, next });
+    } catch (error) {
+      for (const { item, old } of entries) {
+        rejected.add(item.id);
+        saved.set(item.id, old);
+        summary.confirmed -= 1;
+        summary.remaining += 1;
+        summary.failed += 1;
+        unresolved.push({ item, speakers: old });
+      }
+      output.error(`[media-diarize] 노트 ${relative(root, path)}: ${error.message}`);
+    }
+  }
+  summary.notes = noteUpdates.filter(({ before, next }) => before !== next).length;
+  output.log(`[media-diarize] 재판정 ${JSON.stringify(summary)}`);
+  if (reviewPath) {
+    writePrivate(resolve(reviewPath), renderRecheckReview(unresolved));
+    return summary;
+  }
+  if (dryRun) return summary;
+  const run = async () => {
+    for (const { item, next, decision } of changed.filter(({ item }) => !rejected.has(item.id))) {
+      if (decision.source === 'recovery') continue;
+      const path = speakerFile(root, item);
+      await withLock(path, () => {
+        const current = JSON.parse(readFileSync(path, 'utf8'));
+        if (current.transcribedAt !== next.transcribedAt || !current.check)
+          throw new Error(`쓰기 전 Speakers 변경: ${item.id}`);
+        write(path, `${JSON.stringify(next, null, 2)}\n`);
+      });
+    }
+    for (const { path, before, next } of noteUpdates) if (before !== next)
+      await withLock(path, () => {
+        if (readFileSync(path, 'utf8') !== before) throw new Error('쓰기 전 대화 노트 변경');
+        write(path, next);
+      });
+    mkdirSync(paths.root, { recursive: true });
+    const log = join(paths.root, 'speaker-recheck-log.jsonl');
+    const previous = existsSync(log) ? readFileSync(log, 'utf8') : '';
+    const accepted = changed.filter(({ item, decision }) => !rejected.has(item.id)
+      && decision.source !== 'recovery');
+    writePrivate(log, `${previous}${accepted.map(({ item, decision }) => JSON.stringify({
+      at: now.toISOString(), id: item.id, counterpart: item.counterpart,
+      ownerSpeaker: decision.speaker, source: decision.source || 'voice',
+      best: decision.best ?? null, lead: decision.lead ?? null,
+      ownerLead: decision.ownerLead ?? null,
+    })).join('\n')}${accepted.length ? '\n' : ''}`);
+    if (unresolved.length && !answers)
+      writePrivate(join(paths.root, 'speaker-recheck-review.html'), renderRecheckReview(unresolved));
+    return summary;
+  };
+  mkdirSync(paths.root, { recursive: true });
+  return withLock(join(paths.root, '.media-diarize'), () =>
+    withLock(join(root, VAULT_REL.mediaTranscribeState), run, { retries: 0 }), { retries: 0 });
+}
+
 export async function runRecordings({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_PATHS,
   trial = false, ids = null, limit = 10, maxMinutes = 50, dryRun = false,
   output = console, runWorker = runPython, exec = execFileAsync, write = writeAtomic,
@@ -1326,6 +1581,9 @@ export function parseArgs(args) {
     if (arg === '--trial') options.trial = true;
     else if (arg === '--apply') options.apply = true;
     else if (arg === '--render-notes') options.renderNotes = true;
+    else if (arg === '--recheck-uncertain') options.recheckUncertain = true;
+    else if (arg.startsWith('--review-answers=')) options.answersPath = arg.slice(17);
+    else if (arg.startsWith('--export-review=')) options.reviewPath = arg.slice(16);
     else if (arg === '--confirm-owner') options.confirmOwner = true;
     else if (arg === '--recordings') options.recordings = true;
     else if (['--person-candidate=휘영', '--person-candidate=미네'].includes(arg))
@@ -1341,22 +1599,25 @@ export function parseArgs(args) {
     else if (arg.startsWith('--backend=')) options.backend = arg.slice(10);
     else throw new Error(`알 수 없는 옵션: ${arg}`);
   }
-  if ([options.trial, options.apply, options.renderNotes, options.confirmOwner,
+  if ([options.trial, options.apply, options.renderNotes, options.recheckUncertain, options.confirmOwner,
     options.personCandidate, options.confirmPerson].filter(Boolean).length !== 1
     || (options.confirmOwner || options.confirmPerson) && Object.keys(options).length !== 1
     || options.personCandidate && Object.keys(options).some((key) => !['personCandidate', 'exclude'].includes(key))
     || options.exclude && (!options.personCandidate || !options.exclude.length
       || options.exclude.some((id) => !/^[a-f0-9]{13,16}$/i.test(id)))
     || options.renderNotes && (options.ids || options.limit || options.maxMinutes || options.recordings)
+    || options.answersPath && !options.recheckUncertain
+    || options.reviewPath && (!options.recheckUncertain || options.dryRun || options.answersPath)
+    || options.recheckUncertain && (options.limit || options.maxMinutes || options.recordings || options.backend || options.allowNight)
     || options.trial && (options.apply || options.renderNotes || options.maxMinutes)
     || options.trial && options.ids && options.limit !== undefined
     || options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 30)
-    || options.ids && (options.ids.length < 1 || options.ids.length > 20
+    || options.ids && (options.ids.length < 1 || options.ids.length > (options.recheckUncertain ? 500 : 20)
       || new Set(options.ids).size !== options.ids.length)
     || options.ids?.some((id) => !ID.test(id))
     || options.maxMinutes !== undefined && (!Number.isFinite(options.maxMinutes) || options.maxMinutes <= 0)
     || options.recordings && (!options.trial && !options.apply || options.backend))
-    throw new Error('--trial 또는 --apply [--limit=N] [--max-minutes=M] [--ids=...] [--dry-run] 또는 --render-notes [--dry-run] 또는 --confirm-owner 필요');
+    throw new Error('--trial 또는 --apply 또는 --recheck-uncertain [--ids=...] [--dry-run] [--export-review=HTML] [--review-answers=JSON] 필요');
   return options;
 }
 
@@ -1373,6 +1634,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (options) (options.personCandidate ? personCandidate({ name: options.personCandidate,
     exclude: options.exclude ?? [] })
     : options.confirmPerson ? confirmPerson({ name: options.confirmPerson })
+      : options.recheckUncertain ? runRecheck(options)
       : options.recordings ? runRecordings(options)
         : options.trial ? runTrial(options) : options.confirmOwner ? confirmOwner() : runApply(options)).then((summary) => {
     if (summary?.failed) process.exitCode = 1;
