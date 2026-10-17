@@ -206,7 +206,7 @@ function prepareRecords(records, people, root, mediaRoot, persistedPaths, model,
   const existingNotes = existingRecordingNotes(root);
   const existingCallPaths = [...new Set(existingNotes.values())].filter((path) => {
     const fields = parseFrontmatter(readFileSync(join(root, path), 'utf8'));
-    return fields.convKind === '통화' && / 통화(?: .+)?\.md$/.test(path) && !path.endsWith(' 녹음.md');
+    return fields.convKind === '통화';
   });
   for (const record of prepared) {
     if (existingNotes.has(record.id)) record.notePath = existingNotes.get(record.id);

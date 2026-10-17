@@ -929,6 +929,22 @@ test('전사 모델 파일명이 바뀌면 다시 전사하고 같으면 대기�
   assert.equal(sameName.remaining, 0);
   assert.equal(readFileSync(f.calls, 'utf8').trim().split('\n').length, 2);
 });
+
+test('제목 끝이 녹음인 통화 노트를 기존 경로로 재사용한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상별', { phoneContacts: ['가상연락처'] });
+  f.put(1, 'Calls', '통화 가상연락처_300101_090000.m4a');
+  await runMediaTranscribe(f.options);
+  const original = join(f.root, VAULT_REL.mediaConversations, '2030', '2030-01-01 가상별 통화.md');
+  const renamed = join(f.root, VAULT_REL.mediaConversations, '2030', '2030-01-01 가상별 통화 가족 녹음.md');
+  renameSync(original, renamed);
+  f.put(2, 'Calls', '통화 가상연락처_300101_100000.m4a');
+  const result = await runMediaTranscribe(f.options);
+  assert.equal(result.updated, 1);
+  assert.equal(existsSync(original), false);
+  assert.equal(existsSync(renamed), true);
+  assert.match(readFileSync(renamed, 'utf8'), new RegExp(ID(2)));
+});
 test('색인 날짜 의심 변경은 기존 완성 노트를 재렌더하고 오너 확정 때 표시를 뺀다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
   const record = f.put(1, 'Recordings', '가상 대화.m4a');

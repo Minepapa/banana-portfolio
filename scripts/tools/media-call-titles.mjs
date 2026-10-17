@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -26,6 +26,7 @@ export function checkedTopic(value) {
   if (typeof value !== 'string' || value !== value.trim() || !value || value.length > 32
     || value.split(/\s+/).length > 5 || /[\\/:*?"<>|#^\[\]\x00-\x1f\n\r]/u.test(value)
     || /[.!?]$/u.test(value)) throw new Error(`주제 형식 오류: ${value}`);
+  if (/녹음$/u.test(value.normalize('NFC'))) throw new Error(`주제 형식 오류: ${value}`);
   return value.normalize('NFC');
 }
 
@@ -108,7 +109,11 @@ export async function proposeCallTitles({ root = VAULT_PATHS.root, out = OUT, li
     const batch = selected.slice(offset, offset + BATCH_SIZE);
     let result;
     try { result = await judge(makePrompt(batch)); }
-    catch (error) { if (error.isLimit) break; throw error; }
+    catch (error) {
+      if (error.isLimit) break;
+      failed.push(...batch.map((row) => ({ id: row.id, error: error.message ?? String(error) })));
+      break;
+    }
     // 한 배치의 형식 오류가 앞선 배치 결과까지 버리지 않게: 그 배치만 실패로 남기고 다음 배치로 간다.
     // 실패한 노트는 시트에 나오지 않고 제목도 그대로다(다음 --propose --ids로 다시 시도).
     let suggestions;
@@ -138,7 +143,8 @@ export async function proposeCallTitles({ root = VAULT_PATHS.root, out = OUT, li
   mkdirSync(out, { recursive: true });
   write(join(out, 'proposal.json'), `${JSON.stringify(proposal, null, 2)}\n`);
   write(join(out, 'calls.html'), renderSheet(proposal));
-  return { proposal, path: join(out, 'proposal.json'), sheet: join(out, 'calls.html'), ...(remaining ? { cooldown: true } : {}) };
+  return { proposal, path: join(out, 'proposal.json'), sheet: join(out, 'calls.html'),
+    ...(remaining && !failed.length ? { cooldown: true } : {}) };
 }
 
 export function renderSheet(proposal) {
@@ -165,6 +171,179 @@ function revisedNote(content, oldRel, newRel, now) {
   return `${buildFrontmatter({ ...fm, modified: kstDate(now), movedFrom: [...new Set([...oldMoved, oldRel])] })}${body.slice(0, start)}${block}${body.slice(end + END.length)}`;
 }
 
+function intentEvents(logPath, repair = false) {
+  if (!existsSync(logPath)) return [];
+  const content = readFileSync(logPath, 'utf8');
+  let complete = content;
+  if (content && !content.endsWith('\n')) {
+    const lastLine = content.slice(content.lastIndexOf('\n') + 1);
+    try { JSON.parse(lastLine); complete += '\n'; }
+    catch { complete = content.slice(0, content.lastIndexOf('\n') + 1); }
+  }
+  if (repair && complete !== content) writeAtomic(logPath, complete);
+  return complete.split('\n').filter(Boolean).map(JSON.parse);
+}
+
+function pendingIntents(logPath, repair = false) {
+  const pending = new Map();
+  for (const event of intentEvents(logPath, repair)) {
+    const id = event.transactionId ?? event.oldRel;
+    if (event.stage === 'start') pending.set(id, event);
+    if (event.stage === 'complete' || event.stage === 'rolled-back') pending.delete(id);
+  }
+  return [...pending.values()];
+}
+
+function fileContents(path) {
+  return existsSync(path) ? readFileSync(path, 'utf8') : null;
+}
+
+function legacyPairs(logPath, at) {
+  const pairs = new Map();
+  for (const event of intentEvents(logPath)) {
+    if (event.at !== at || !event.oldRel || !event.newRel) continue;
+    if (event.stage === 'start') pairs.set(event.oldRel, { oldRel: event.oldRel, newRel: event.newRel });
+    if (event.stage === 'rolled-back') pairs.delete(event.oldRel);
+  }
+  return [...pairs.values()];
+}
+
+function maskLinkTargets(content) {
+  return content.replace(/\[\[([^\]]+?)\]\]/g, (whole, inner) => {
+    const split = inner.search(/[#^|]/);
+    return `[[${split < 0 ? '' : inner.slice(split)}]]`;
+  });
+}
+
+function onlyUnloggedLinkChanges(expected, actual, pairs, root) {
+  if (maskLinkTargets(expected) !== maskLinkTargets(actual)) return false;
+  const expectedTargets = [...expected.matchAll(/\[\[([^\]]+?)\]\]/g)].map((match) => match[1].split(/[#^|]/, 1)[0]);
+  const actualTargets = [...actual.matchAll(/\[\[([^\]]+?)\]\]/g)].map((match) => match[1].split(/[#^|]/, 1)[0]);
+  return expectedTargets.every((target, index) => {
+    const replacement = actualTargets[index];
+    if (target === replacement) return true;
+    if (pairs.some((pair) => [pair.oldRel, pair.newRel].some((rel) => key(target) === key(rel.slice(0, -3))
+      || key(target) === key(basename(rel, '.md'))))) return false;
+    if (!replacement.startsWith(`${target} `)) return false;
+    try { if (!checkedTopic(replacement.slice(target.length + 1))) return false; }
+    catch { return false; }
+    const matches = notes(root).filter((rel) => key(target) === key(rel.slice(0, -3))
+      || key(target) === key(basename(rel, '.md')));
+    if (matches.length !== 1) return false;
+    const fm = parseFrontmatter(readFileSync(join(root, matches[0]), 'utf8'));
+    return fm.type === 'conversation' && fm.convKind === '통화' && fm.origin === 'media-transcribe';
+  });
+}
+
+function legacyRecovery(intent, root, pairs) {
+  const conversationPath = new RegExp(`^${VAULT_REL.mediaConversations}/\\d{4}/[^/]+\\.md$`);
+  if (!conversationPath.test(intent.oldRel) || !conversationPath.test(intent.newRel)
+    || !Number.isFinite(Date.parse(intent.at))) throw new Error('이전 intent 경로·시각 오류');
+  const oldText = fileContents(join(root, intent.oldRel));
+  const newText = fileContents(join(root, intent.newRel));
+  if (oldText === null && newText === null) throw new Error(`복구 중 양쪽 노트 없음: ${intent.oldRel}`);
+  let action;
+  if (oldText !== null) {
+    if (newText === null) action = 'rolled-back';
+    else {
+      const linked = pairs.reduce((content, pair) => replaceLinks(content, pair.oldRel, pair.newRel), oldText);
+      const expected = revisedNote(linked, intent.oldRel, intent.newRel, new Date(intent.at));
+      if (newText !== expected && !onlyUnloggedLinkChanges(expected, newText, pairs, root)) {
+        throw new Error(`복구 중 새 노트 외부 변경: ${intent.newRel}`);
+      }
+      const fm = parseFrontmatter(newText);
+      const moved = Array.isArray(fm.movedFrom) ? fm.movedFrom : [fm.movedFrom];
+      if (!moved.includes(intent.oldRel) || !newText.includes(`# ${basename(intent.newRel, '.md')}\n`)) {
+        throw new Error(`복구 중 새 노트 소유권 오류: ${intent.newRel}`);
+      }
+      // 다음 노트의 start가 기록되기 전에 링크 대상만 먼저 바뀔 수 있다.
+      // 계획 대상을 증명할 수 없으므로 원본을 두고 새 노트를 버린다.
+      action = newText === expected ? 'complete' : 'rolled-back';
+    }
+  } else {
+    // 이전 intent는 원본 내용을 저장하지 않았다. 원본 삭제 뒤에는 소유권과 movedFrom만
+    // 확인할 수 있으므로 새 노트 내용은 건드리지 않는다.
+    const fm = parseFrontmatter(newText);
+    const moved = Array.isArray(fm.movedFrom) ? fm.movedFrom : [fm.movedFrom];
+    if (fm.type !== 'conversation' || fm.convKind !== '통화' || fm.origin !== 'media-transcribe'
+      || !moved.includes(intent.oldRel) || !newText.includes(`# ${basename(intent.newRel, '.md')}\n`)) {
+      throw new Error(`이전 intent 원본 없음·새 노트 소유권 불명: ${intent.oldRel}`);
+    }
+    action = 'complete';
+  }
+  const links = action === 'complete' ? [...linkSnapshot(root)].map(([rel, item]) => ({
+    rel, current: item.current, next: replaceLinks(item.current, intent.oldRel, intent.newRel),
+  })).filter((item) => item.rel !== intent.oldRel && item.current !== item.next) : [];
+  return { action, links, oldText, newText };
+}
+
+export function recoverCallTitles({ root = VAULT_PATHS.root, out = OUT, dryRun = false,
+  write = writeAtomic, append = appendFileSync, now = new Date() } = {}) {
+  const execute = () => {
+    const logPath = join(out, 'intent.jsonl');
+    const pending = pendingIntents(logPath, !dryRun);
+    const results = [];
+    for (const intent of pending) {
+      if (!Array.isArray(intent.plans) || !Array.isArray(intent.links)) {
+        const legacy = legacyRecovery(intent, root, legacyPairs(logPath, intent.at));
+        results.push({ oldRel: intent.oldRel, action: legacy.action, notes: 1, links: legacy.links.length });
+        if (dryRun) continue;
+        if (legacy.action === 'complete' && legacy.oldText !== null) unlinkSync(join(root, intent.oldRel));
+        if (legacy.action === 'rolled-back' && legacy.newText !== null) unlinkSync(join(root, intent.newRel));
+        for (const item of legacy.links) {
+          if (readFileSync(join(root, item.rel), 'utf8') !== item.current) throw new Error(`복구 중 링크 외부 변경: ${item.rel}`);
+          write(join(root, item.rel), item.next);
+        }
+        append(logPath, `${JSON.stringify({ at: now.toISOString(), stage: legacy.action,
+          oldRel: intent.oldRel, newRel: intent.newRel })}\n`);
+        continue;
+      }
+      const conversationPath = new RegExp(`^${VAULT_REL.mediaConversations}/\\d{4}/[^/]+\\.md$`);
+      const allowedLinks = linkSnapshot(root);
+      for (const plan of intent.plans) {
+        if (!conversationPath.test(plan.oldRel) || !conversationPath.test(plan.newRel)
+          || typeof plan.source !== 'string' || typeof plan.next !== 'string') throw new Error('복구 노트 계획 오류');
+      }
+      for (const item of intent.links) {
+        if (!allowedLinks.has(item.rel) || typeof item.current !== 'string' || typeof item.next !== 'string') {
+          throw new Error('복구 링크 계획 오류');
+        }
+      }
+      const notes = intent.plans.map((plan) => ({ ...plan,
+        oldText: fileContents(join(root, plan.oldRel)), newText: fileContents(join(root, plan.newRel)) }));
+      const links = intent.links.map((item) => ({ ...item, text: fileContents(join(root, item.rel)) }));
+      const canFinish = notes.every((item) => item.newText === item.next
+        && (item.oldText === item.source || item.oldText === null));
+      const action = canFinish ? 'complete' : 'rolled-back';
+      // Inspect every file before changing any; an externally edited file must remain untouched.
+      for (const item of notes) {
+        if (item.oldText !== null && item.oldText !== item.source) throw new Error(`복구 중 원본 외부 변경: ${item.oldRel}`);
+        if (item.newText !== null && item.newText !== item.next) throw new Error(`복구 중 새 노트 외부 변경: ${item.newRel}`);
+        if (!canFinish && item.oldText === null && item.newText === null) throw new Error(`복구 중 양쪽 노트 없음: ${item.oldRel}`);
+      }
+      for (const item of links) {
+        if (item.text !== item.current && item.text !== item.next) throw new Error(`복구 중 링크 외부 변경: ${item.rel}`);
+      }
+      results.push({ transactionId: intent.transactionId, action, notes: notes.length, links: links.length });
+      if (dryRun) continue;
+      if (canFinish) {
+        for (const item of notes) if (item.oldText !== null) unlinkSync(join(root, item.oldRel));
+        for (const item of links) if (item.text === item.current) write(join(root, item.rel), item.next);
+      } else {
+        for (const item of notes) {
+          if (item.oldText === null) write(join(root, item.oldRel), item.source);
+          if (item.newText !== null) unlinkSync(join(root, item.newRel));
+        }
+        for (const item of links) if (item.text === item.next) write(join(root, item.rel), item.current);
+      }
+      append(logPath, `${JSON.stringify({ at: now.toISOString(), stage: action,
+        transactionId: intent.transactionId })}\n`);
+    }
+    return { dryRun, recovered: results };
+  };
+  return dryRun ? execute() : withLock(join(root, VAULT_REL.mediaTranscribeState), execute, { retries: 0 });
+}
+
 export async function applyCallTitles({ root = VAULT_PATHS.root, out = OUT, answersPath, proposalPath = join(out, 'proposal.json'),
   dryRun = false, now = new Date(), write = writeAtomic, append = appendFileSync, rules } = {}) {
   if (!answersPath) throw new Error('--apply=<answers.json> 필요');
@@ -174,14 +353,7 @@ export async function applyCallTitles({ root = VAULT_PATHS.root, out = OUT, answ
     || !Array.isArray(answers.rows) || answers.rows.length !== proposal.rows.length) throw new Error('제안·답변 해시/행 오류');
   const execute = () => {
     const logPath = join(out, 'intent.jsonl');
-    if (!dryRun && existsSync(logPath)) {
-      const pending = new Set();
-      for (const event of readFileSync(logPath, 'utf8').split('\n').filter(Boolean).map(JSON.parse)) {
-        if (event.stage === 'start') pending.add(event.oldRel);
-        if (event.stage === 'complete' || event.stage === 'rolled-back') pending.delete(event.oldRel);
-      }
-      if (pending.size) throw new Error(`미완료 개명 intent: ${[...pending].join(', ')}`);
-    }
+    if (!dryRun && pendingIntents(logPath, true).length) throw new Error('미완료 개명 intent: --recover 실행 필요');
     const current = new Map(callRows(root).map((row) => [row.id, row]));
     const history = new Set(notes(root).flatMap((path) => {
       const moved = parseFrontmatter(readFileSync(join(root, path), 'utf8')).movedFrom;
@@ -200,7 +372,7 @@ export async function applyCallTitles({ root = VAULT_PATHS.root, out = OUT, answ
       if (!topic) continue;
       const oldRel = row.id, newTitle = `${row.currentTitle} ${topic}`;
       if (Buffer.byteLength(`${newTitle}.md`) > 255) throw new Error(`노트 제목 255바이트 초과: ${row.id}`);
-      const newRel = `${VAULT_REL.mediaConversations}/${row.currentTitle.slice(0, 4)}/${newTitle}.md`;
+      const newRel = `${dirname(row.id)}/${newTitle}.md`;
       const existing = current.get(oldRel);
       if (!existing && existsSync(join(root, newRel))) {
         const applied = readFileSync(join(root, newRel), 'utf8');
@@ -237,11 +409,15 @@ export async function applyCallTitles({ root = VAULT_PATHS.root, out = OUT, answ
     if (dryRun || !plans.length) return summary;
     mkdirSync(out, { recursive: true });
     const log = (event) => append(logPath, `${JSON.stringify({ at: now.toISOString(), ...event })}\n`);
+    const transactionId = `${now.toISOString()}-${digest(JSON.stringify(plans)).slice(0, 16)}`;
+    const changedLinks = [...links].filter(([rel, item]) => item.next && item.next !== item.current
+      && !plans.some((plan) => plan.oldRel === rel))
+      .map(([rel, item]) => ({ rel, current: item.current, next: item.next }));
     const attempted = [], writtenLinks = [];
     try {
+      log({ stage: 'start', transactionId, plans, links: changedLinks });
       for (const plan of plans) {
         if (readFileSync(join(root, plan.oldRel), 'utf8') !== plan.source) throw new Error(`적용 중 원본 변경: ${plan.oldRel}`);
-        log({ stage: 'start', oldRel: plan.oldRel, newRel: plan.newRel });
         attempted.push(plan);
         write(join(root, plan.newRel), plan.next);
         unlinkSync(join(root, plan.oldRel));
@@ -253,7 +429,7 @@ export async function applyCallTitles({ root = VAULT_PATHS.root, out = OUT, answ
         writtenLinks.push({ path, ...item });
         write(path, item.next);
       }
-      for (const plan of plans) log({ stage: 'complete', oldRel: plan.oldRel, newRel: plan.newRel });
+      log({ stage: 'complete', transactionId });
     } catch (error) {
       const failures = [];
       const restore = (label, action) => { try { action(); } catch (failure) { failures.push(`${label}: ${failure.message}`); } };
@@ -271,8 +447,8 @@ export async function applyCallTitles({ root = VAULT_PATHS.root, out = OUT, answ
           unlinkSync(newPath);
         } else if (!existsSync(oldPath)) throw new Error('양쪽 노트 없음');
       });
-      if (!failures.length) for (const plan of attempted) restore(`intent ${plan.oldRel}`,
-        () => log({ stage: 'rolled-back', oldRel: plan.oldRel, newRel: plan.newRel }));
+      if (!failures.length) restore(`intent ${transactionId}`,
+        () => log({ stage: 'rolled-back', transactionId }));
       throw new Error(`${error.message}${failures.length ? `; 복구 실패: ${failures.join('; ')}` : '; 변경 복구됨'}`);
     }
     return summary;
@@ -283,7 +459,9 @@ export async function applyCallTitles({ root = VAULT_PATHS.root, out = OUT, answ
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const args = process.argv.slice(2);
-    if (args.includes('--propose')) {
+    if (args.includes('--recover')) {
+      console.log(JSON.stringify(await recoverCallTitles({ dryRun: args.includes('--dry-run') }), null, 2));
+    } else if (args.includes('--propose')) {
       const limit = Number(args.find((arg) => arg.startsWith('--limit='))?.slice(8) ?? Infinity);
       const ids = args.find((arg) => arg.startsWith('--ids='))?.slice(6).split(',');
       const result = await proposeCallTitles({ limit, ids, dryRun: args.includes('--dry-run') });
