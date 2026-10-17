@@ -204,8 +204,18 @@ function prepareRecords(records, people, root, mediaRoot, persistedPaths, model,
       return [item];
     });
   const existingNotes = existingRecordingNotes(root);
+  const existingCallPaths = [...new Set(existingNotes.values())].filter((path) => {
+    const fields = parseFrontmatter(readFileSync(join(root, path), 'utf8'));
+    return fields.convKind === '통화' && / 통화(?: .+)?\.md$/.test(path) && !path.endsWith(' 녹음.md');
+  });
   for (const record of prepared) {
-    if (record.kind === 'Recordings' && existingNotes.has(record.id)) record.notePath = existingNotes.get(record.id);
+    if (existingNotes.has(record.id)) record.notePath = existingNotes.get(record.id);
+    else if (record.kind === 'Calls') {
+      const base = record.notePath.slice(0, -3);
+      const candidates = existingCallPaths.filter((path) => path === record.notePath || path.startsWith(`${base} `));
+      if (candidates.length > 1) throw new Error(`통화 노트 경로 중복: ${base}`);
+      if (candidates.length) record.notePath = candidates[0];
+    }
   }
   assignNotePaths(prepared, root);
   return { prepared, excludedCalls };
@@ -448,7 +458,7 @@ function renderNote(records, transcripts, existing, now, knownPeople, root) {
       })();
     return `<!-- media-transcribe:id ${record.id} -->\n${heading}\n\n${bodyText}\n\n원본: ${record.archivePath}`;
   }).join('\n\n');
-  const title = datedRecording ? basename(first.notePath, '.md')
+  const title = datedRecording || first.kind === 'Calls' ? basename(first.notePath, '.md')
     : `${first.occurred.slice(0, 10)} ${label} ${first.kind === 'Calls' ? '통화' : '녹음'}`;
   return `${buildFrontmatter(fields)}${before}${START}\n# ${title}\n\n${body}\n${END}${after}`;
 }
