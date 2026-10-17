@@ -860,8 +860,48 @@ function personPaths(paths, name) {
   throw new Error(`지원하지 않는 사람: ${name}`);
 }
 
+function registeredOtherVoices(paths, candidateName) {
+  const entries = [
+    { name: '나', voice: paths.ownerVoice, meta: paths.ownerMeta },
+    { name: '휘영', voice: paths.personVoice, meta: paths.personMeta },
+    { name: '미네', voice: paths.mineVoice, meta: paths.mineMeta },
+  ];
+  if (paths.voices && existsSync(paths.voices)) {
+    for (const file of readdirSync(paths.voices).filter((value) => /^person-(?!.*-candidate\.)[^/]+\.npy$/u.test(value))) {
+      entries.push({ name: file.slice(7, -4), voice: join(paths.voices, file),
+        meta: join(paths.voices, file.replace(/\.npy$/, '.json')) });
+    }
+  }
+  const seen = new Set();
+  return entries.filter(({ name, voice, meta }) => name !== candidateName && voice && meta
+    && !seen.has(voice) && seen.add(voice) && existsSync(voice) && existsSync(meta)).flatMap(({ name, voice, meta }) => {
+    const metadata = JSON.parse(readFileSync(meta, 'utf8'));
+    const floor = RECORDING_PERSON_MIN_SIMILARITY[name];
+    if (!Number.isFinite(metadata.minSimilarity) && floor === undefined) return [];
+    return [{ name, version: metadata.version ?? null, vectors: readNpy(voice).map(normalized),
+      minSimilarity: Math.max(metadata.minSimilarity ?? -1, floor ?? -1) }];
+  });
+}
+
+function referenceSnapshot(references) {
+  return references.map(({ name, version, minSimilarity }) => ({ name, version, minSimilarity }))
+    .sort((left, right) => left.name.localeCompare(right.name, 'ko'));
+}
+
+export function resolveExcludedCallIds(prefixes, callIds) {
+  const resolved = new Set();
+  for (const prefix of prefixes) {
+    if (!/^[a-f0-9]{13,16}$/i.test(prefix)) throw new Error(`제외 ID 형식 오류: ${prefix}`);
+    const matches = callIds.filter((id) => id.toLowerCase().startsWith(prefix.toLowerCase()));
+    if (!matches.length) throw new Error(`제외 ID 대상 없음: ${prefix}`);
+    if (matches.length > 1) throw new Error(`제외 ID 접두 모호함: ${prefix}`);
+    resolved.add(matches[0]);
+  }
+  return resolved;
+}
+
 export async function personCandidate({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_PATHS,
-  name = '휘영', now = new Date(), output = console } = {}) {
+  name = '휘영', exclude = [], now = new Date(), output = console } = {}) {
   const target = personPaths(paths, name);
   const owner = readOwner(paths);
   if (!owner) throw new Error("'나' 기준 목소리 미등록");
@@ -873,6 +913,7 @@ export async function personCandidate({ root = VAULT_PATHS.root, paths = MEDIA_D
       && !row.check && row.segments?.length && row.turns?.length
       && existsSync(voicePathFor(paths, item.id));
   }).sort((a, b) => Date.parse(b.transcript.occurred) - Date.parse(a.transcript.occurred));
+  const references = registeredOtherVoices(paths, name);
   const verified = eligible.map((item) => {
     const row = saved.get(item.id);
     const vectors = readNpy(voicePathFor(paths, item.id));
@@ -891,7 +932,22 @@ export async function personCandidate({ root = VAULT_PATHS.root, paths = MEDIA_D
     if (!(agreement > 0)) return null;
     return { item, voice: vectors[identified.speaker === 'S0' ? 1 : 0] };
   }).filter(Boolean);
-  const calls = name === '미네' ? selectYearlyPersonCalls(verified) : verified;
+  const manualExclusions = resolveExcludedCallIds(exclude, verified.map(({ item }) => item.id));
+  const exclusions = [];
+  const available = verified.filter((call) => {
+    const scores = references.map((reference) => ({ name: reference.name,
+      similarity: Math.max(...reference.vectors.map((vector) => cosine(normalized(call.voice), vector))),
+      minSimilarity: reference.minSimilarity }));
+    call.similarities = Object.fromEntries(scores.map(({ name: referenceName, similarity }) =>
+      [referenceName, similarity]));
+    const matched = scores.filter(({ similarity, minSimilarity }) => similarity >= minSimilarity)
+      .sort((left, right) => right.similarity - left.similarity)[0];
+    const reason = matched ? `제외: ${matched.name} 목소리와 유사(${matched.similarity.toFixed(2)})`
+      : manualExclusions.has(call.item.id) ? '제외: 수동 지정' : null;
+    if (reason) exclusions.push({ ...call, reason });
+    return !reason;
+  });
+  const calls = name === '미네' ? selectYearlyPersonCalls(available) : available;
   const other = name === '미네' && paths.personVoice && paths.personMeta
     && existsSync(paths.personVoice) && existsSync(paths.personMeta)
     ? readNpy(paths.personVoice)[0] : null;
@@ -925,6 +981,10 @@ export async function personCandidate({ root = VAULT_PATHS.root, paths = MEDIA_D
       `- 연도별 표본 ${yearCounts.map(({ year, count }) => `${year}년 ${count}건`).join(', ') || '없음'}`] : []),
     `- 품질 관문: ${result.passed ? '통과' : result.reasons.join(', ')}`, '',
     `확인 뒤 등록: \`node scripts/jobs/media-diarize.mjs --confirm-person=${name}\``, ''];
+  lines.push('## 표본별 유사도', '', '| 통화 ID | 날짜 | 휘영 유사도 |', '| --- | --- | ---: |');
+  for (const { item, similarities } of calls)
+    lines.push(`| ${item.id} | ${item.transcript.occurred.slice(0, 16)} | ${similarities.휘영 === undefined ? '기준 없음' : similarities.휘영.toFixed(3)} |`);
+  lines.push('');
   for (const { item } of calls) {
     const row = saved.get(item.id);
     lines.push(`## ${item.transcript.occurred.slice(0, 16)} ${item.id}`, '');
@@ -932,9 +992,15 @@ export async function personCandidate({ root = VAULT_PATHS.root, paths = MEDIA_D
       lines.push(`- ${name}: ${item.transcript.segments[segment.i]?.text?.slice(0, 100) || ''}`);
     lines.push('');
   }
+  lines.push('## 제외 목록', '');
+  if (!exclusions.length) lines.push('- 없음');
+  for (const { item, reason, similarities } of exclusions)
+    lines.push(`- ${item.transcript.occurred.slice(0, 16)} ${item.id}: ${reason} · 휘영 유사도 ${similarities.휘영 === undefined ? '기준 없음' : similarities.휘영.toFixed(3)}`);
+  lines.push('');
   if (result.mean) writePrivate(target.candidate, npyBuffer(vectors));
   writePrivate(target.candidateMeta, JSON.stringify({ createdAt: now.toISOString(), name,
-    calls: calls.map(({ item }) => item.id), ownerVersion: owner.meta.version,
+    calls: calls.map(({ item }) => item.id), excludedIds: exclusions.map(({ item }) => item.id),
+    ownerVersion: owner.meta.version, referenceVersions: referenceSnapshot(references),
     cohesion: result.cohesion, ownerSimilarity: result.ownerSimilarity,
     ...(name === '미네' ? { otherSimilarity: result.otherSimilarity, otherVersion, period, years } : {}),
     minSimilarity: result.minSimilarity, passed: result.passed, reasons: result.reasons }));
@@ -955,6 +1021,8 @@ export async function confirmPerson({ paths = MEDIA_DIARIZE_PATHS, name = '휘�
   if (name === '미네' && (!paths.personMeta || !existsSync(paths.personMeta)
     || JSON.parse(readFileSync(paths.personMeta, 'utf8')).version !== candidate.otherVersion))
     throw new Error('휘영 기준 목소리 버전 변경');
+  if (candidate.referenceVersions && JSON.stringify(referenceSnapshot(registeredOtherVoices(paths, name)))
+    !== JSON.stringify(candidate.referenceVersions)) throw new Error('다른 사람 기준 목소리 변경 — 후보 재생성 필요');
   writePrivate(target.voice, readFileSync(target.candidate));
   writePrivate(target.meta, JSON.stringify({ version: now.toISOString(), confirmedAt: now.toISOString(),
     callCount: candidate.calls.length, calls: candidate.calls, ownerVersion: candidate.ownerVersion,
@@ -1267,6 +1335,7 @@ export function parseArgs(args) {
     else if (arg === '--allow-night') options.allowNight = true;
     else if (arg === '--dry-run') options.dryRun = true;
     else if (arg.startsWith('--ids=')) options.ids = arg.slice(6).split(',');
+    else if (arg.startsWith('--exclude=')) options.exclude = arg.slice(10).split(',');
     else if (arg.startsWith('--limit=')) options.limit = Number(arg.slice(8));
     else if (arg.startsWith('--max-minutes=')) options.maxMinutes = Number(arg.slice(14));
     else if (arg.startsWith('--backend=')) options.backend = arg.slice(10);
@@ -1274,7 +1343,10 @@ export function parseArgs(args) {
   }
   if ([options.trial, options.apply, options.renderNotes, options.confirmOwner,
     options.personCandidate, options.confirmPerson].filter(Boolean).length !== 1
-    || (options.confirmOwner || options.personCandidate || options.confirmPerson) && Object.keys(options).length !== 1
+    || (options.confirmOwner || options.confirmPerson) && Object.keys(options).length !== 1
+    || options.personCandidate && Object.keys(options).some((key) => !['personCandidate', 'exclude'].includes(key))
+    || options.exclude && (!options.personCandidate || !options.exclude.length
+      || options.exclude.some((id) => !/^[a-f0-9]{13,16}$/i.test(id)))
     || options.renderNotes && (options.ids || options.limit || options.maxMinutes || options.recordings)
     || options.trial && (options.apply || options.renderNotes || options.maxMinutes)
     || options.trial && options.ids && options.limit !== undefined
@@ -1298,7 +1370,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const argv = process.argv.slice(2);
   try { options = launchOptions(argv); }
   catch (error) { console.error(`[media-diarize] ${error.message}`); process.exitCode = 2; }
-  if (options) (options.personCandidate ? personCandidate({ name: options.personCandidate })
+  if (options) (options.personCandidate ? personCandidate({ name: options.personCandidate,
+    exclude: options.exclude ?? [] })
     : options.confirmPerson ? confirmPerson({ name: options.confirmPerson })
       : options.recordings ? runRecordings(options)
         : options.trial ? runTrial(options) : options.confirmOwner ? confirmOwner() : runApply(options)).then((summary) => {

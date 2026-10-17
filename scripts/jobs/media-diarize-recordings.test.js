@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSync, rmSync,
+  unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { recordingKind, RECORDING_DIALOGUE_KINDS, selectRecordings, assignRecordingNames,
   evaluatePersonCandidate, personCandidate, confirmPerson, runRecordings, parseArgs,
-  MINE_RECORDING_RULE, selectYearlyPersonCalls,
+  MINE_RECORDING_RULE, selectYearlyPersonCalls, resolveExcludedCallIds,
   renderSpeakerNote, runPython, parsePythonOutput } from './media-diarize.mjs';
 import { renderDialogue } from '../lib/media-dialogue.mjs';
 import { buildFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -165,6 +166,18 @@ test('미네 후보 표본은 연도별 최근 10건과 전체 최근 40건으�
     ['12', '11', '10', '09', '08', '07', '06', '05', '04', '03']);
 });
 
+test('제외 ID는 전체 16자리 또는 유일한 13자리 이상 접두로 해석한다', () => {
+  const ids = ['abcdef0123456000', 'abcdef0123456fff', '123456789abcd000'];
+  assert.deepEqual([...resolveExcludedCallIds(['123456789abcd', ids[0]], ids)],
+    [ids[2], ids[0]]);
+  assert.throws(() => resolveExcludedCallIds(['abcdef0123456'], ids), /접두 모호함/);
+  assert.throws(() => resolveExcludedCallIds(['123456789abce'], ids), /대상 없음/);
+  assert.throws(() => parseArgs(['--person-candidate=미네', '--exclude=123']), /필요/);
+  assert.deepEqual(parseArgs(['--person-candidate=미네', '--exclude=123456789abcd']).exclude,
+    ['123456789abcd']);
+  assert.throws(() => parseArgs(['--apply', '--exclude=123456789abcd']), /필요/);
+});
+
 test('녹음 엔진 요청은 1~3명 범위를 쓰고 S2 결과를 받는다', async () => {
   const child = new EventEmitter();
   child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough();
@@ -241,7 +254,9 @@ test('휘영 후보는 확인된 통화의 상대 특징값과 전사 예시만 
     put(join(paths.voices, 'pyannote', `${id}.npy`), npy(straddled ? [[0, 1], [1, 0]] : [[1, 0], [0, 1]]));
   }
   put(join(root, VAULT_REL.mediaArchiveIndex), `${index.map((row) => JSON.stringify(row)).join('\n')}\n`);
-  const result = await personCandidate({ root, paths, now: new Date('2030-02-01'), output: QUIET });
+  const result = await personCandidate({ root, paths,
+    exclude: parseArgs(['--person-candidate=휘영']).exclude,
+    now: new Date('2030-02-01'), output: QUIET });
   assert.equal(result.passed, true);
   assert.ok(Math.abs(result.mean[0]) < 1e-6 && result.mean[1] > 0.99);
   const meta = JSON.parse(readFileSync(paths.personCandidateMeta, 'utf8'));
@@ -250,6 +265,26 @@ test('휘영 후보는 확인된 통화의 상대 특징값과 전사 예시만 
   assert.equal(statSync(paths.personCandidateMeta).mode & 0o777, 0o600);
   assert.equal(statSync(paths.personReview).mode & 0o777, 0o600);
   assert.match(readFileSync(paths.personReview, 'utf8'), /휘영: 휘영의 말/);
+  paths.mineVoice = join(base, 'Diarize', 'voices', 'person-미네.npy');
+  paths.mineMeta = join(base, 'Diarize', 'voices', 'person-미네.json');
+  put(paths.mineVoice, npy([[0, 1]]));
+  put(paths.mineMeta, JSON.stringify({ version: 'mine-v1', minSimilarity: 0.5 }));
+  const guarded = await personCandidate({ root, paths, name: '휘영',
+    now: new Date('2030-02-02'), output: QUIET });
+  assert.equal(guarded.passed, false);
+  const guardedMeta = JSON.parse(readFileSync(paths.personCandidateMeta, 'utf8'));
+  assert.equal(guardedMeta.calls.length, 0);
+  assert.equal(guardedMeta.excludedIds.length, 6);
+  assert.match(readFileSync(paths.personReview, 'utf8'), /제외: 미네 목소리와 유사\(1\.00\)/);
+  const ownerLikeId = '0000000000000002';
+  const ownerLikePath = join(paths.voices, 'pyannote', `${ownerLikeId}.npy`);
+  put(paths.mineVoice, npy([[0, -1]]));
+  put(paths.ownerMeta, JSON.stringify({ version: 'v1', minSimilarity: 0.5 }));
+  put(ownerLikePath, npy([[1, 0], [0.6, 0.8]]));
+  await personCandidate({ root, paths, name: '휘영',
+    now: new Date('2030-02-03'), output: QUIET });
+  assert.match(readFileSync(paths.personReview, 'utf8'),
+    /0000000000000002: 제외: 나 목소리와 유사\(0\.60\)/);
 });
 
 test('미네 후보는 최근 확인 통화만 사용해 기간·연도별 기준을 만들고 확인 뒤 0600으로 등록한다', async (t) => {
@@ -307,6 +342,7 @@ test('미네 후보는 최근 확인 통화만 사용해 기간·연도별 기�
   assert.ok(candidateVoice.readFloatLE(dataStart + 4 * 8) > 0.59);
   assert.equal(existsSync(paths.mineVoice), false);
   assert.match(readFileSync(paths.mineReview, 'utf8'), /미네: 미네의 말/);
+  assert.match(readFileSync(paths.mineReview, 'utf8'), /\| 통화 ID \| 날짜 \| 휘영 유사도 \|/);
   for (const path of [paths.mineCandidate, paths.mineCandidateMeta, paths.mineReview])
     assert.equal(statSync(path).mode & 0o777, 0o600);
   put(paths.personMeta, JSON.stringify({ version: 'v2' }));
@@ -316,11 +352,39 @@ test('미네 후보는 최근 확인 통화만 사용해 기간·연도별 기�
   for (const path of [paths.mineVoice, paths.mineMeta])
     assert.equal(statSync(path).mode & 0o777, 0o600);
   assert.deepEqual(JSON.parse(readFileSync(paths.mineMeta)).years, meta.years);
+  const thirdVoice = join(paths.voices, 'person-지인.npy');
+  const thirdMeta = join(paths.voices, 'person-지인.json');
+  put(thirdVoice, npy([[0, -1, 0]]));
+  put(thirdMeta, JSON.stringify({ version: 'friend-v1', minSimilarity: 0.5 }));
+  await assert.rejects(() => confirmPerson({ paths, name: '미네', output: QUIET }),
+    /다른 사람 기준 목소리 변경/);
+  await personCandidate({ root, paths, name: '미네',
+    now: new Date('2030-02-02'), output: QUIET });
+  const thirdGuard = JSON.parse(readFileSync(paths.mineCandidateMeta, 'utf8'));
+  assert.ok(thirdGuard.excludedIds.includes('0000000000000008'));
+  assert.ok(thirdGuard.referenceVersions.some((reference) => reference.name === '지인'));
+  assert.match(readFileSync(paths.mineReview, 'utf8'), /제외: 지인 목소리와 유사\(1\.00\)/);
+  put(thirdMeta, JSON.stringify({ version: 'friend-v2', minSimilarity: 0.5 }));
+  await assert.rejects(() => confirmPerson({ paths, name: '미네', output: QUIET }),
+    /다른 사람 기준 목소리 변경/);
+  unlinkSync(thirdVoice);
+  unlinkSync(thirdMeta);
+  await personCandidate({ root, paths, name: '미네', exclude: ['0000000000000008'],
+    now: new Date('2030-02-02'), output: QUIET });
+  const manuallyExcluded = JSON.parse(readFileSync(paths.mineCandidateMeta, 'utf8'));
+  assert.equal(manuallyExcluded.calls.includes('0000000000000008'), false);
+  assert.deepEqual(manuallyExcluded.excludedIds, ['0000000000000008']);
+  assert.match(readFileSync(paths.mineReview, 'utf8'), /0000000000000008: 제외: 수동 지정/);
+  await assert.rejects(() => personCandidate({ root, paths, name: '미네',
+    exclude: ['0000000000000'], output: QUIET }), /접두 모호함/);
   put(paths.personVoice, npy([[0, 0.75, -Math.sqrt(1 - 0.75 ** 2)]]));
   const tooSimilar = await personCandidate({ root, paths, name: '미네',
     now: new Date('2030-02-03'), output: QUIET });
   assert.equal(tooSimilar.passed, false);
-  assert.match(tooSimilar.reasons.join(', '), /기준선 0\.450 <= 다른 기준 유사도/);
+  const automaticallyExcluded = JSON.parse(readFileSync(paths.mineCandidateMeta, 'utf8'));
+  assert.equal(automaticallyExcluded.excludedIds.length, 4);
+  assert.ok(automaticallyExcluded.excludedIds.every((id) => !automaticallyExcluded.calls.includes(id)));
+  assert.match(readFileSync(paths.mineReview, 'utf8'), /제외: 휘영 목소리와 유사\(0\.[0-9]{2}\)/);
   const noReferencePaths = { ...paths, personVoice: join(base, 'missing-person.npy') };
   const blocked = await personCandidate({ root, paths: noReferencePaths, name: '미네',
     now: new Date('2030-02-04'), output: QUIET });
