@@ -272,6 +272,25 @@ function sourceFields(sourceContent) {
   return { fields, body };
 }
 
+function sourceDailyDate(sourceContent) {
+  const { fields } = sourceFields(sourceContent);
+  for (const value of [fields.occurred, fields.created]) {
+    const date = typeof value === 'string' ? value.match(/^\d{4}-\d{2}-\d{2}/)?.[0] : null;
+    if (!date || Number.isNaN(Date.parse(`${date}T00:00:00Z`))
+        || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) continue;
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) {
+      const instant = new Date(value);
+      if (!Number.isNaN(instant.getTime())) {
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul',
+          year: 'numeric', month: '2-digit', day: '2-digit' }).format(instant);
+      }
+      continue;
+    }
+    return date;
+  }
+  return null;
+}
+
 function movedContent(item, sourceContent, { planDate, applyDate }) {
   const { fields: original, body } = sourceFields(sourceContent);
   const created = String(original.created ?? item.judgment.frontmatter.created ?? planDate).slice(0, 10);
@@ -431,10 +450,10 @@ function parseJudgment(raw) {
   }
 }
 
-export function validateJudgment(raw, { rules, root, date, wikiIndex = readWikiIndex(root) }) {
+export function validateJudgment(raw, { rules, root, date, sourceContent, wikiIndex = readWikiIndex(root) }) {
   const value = typeof raw === 'string' ? parseJudgment(raw) : raw;
   if (!plain(value) || !plain(value.target) || !plain(value.frontmatter) || !plain(value.extracted)
-      || !Array.isArray(value.wiki) || !(value.dailyLink === null || typeof value.dailyLink === 'string')
+      || !Array.isArray(value.wiki) || !(value.dailyLink == null || typeof value.dailyLink === 'string')
       || !(value.unclassifiable === null || typeof value.unclassifiable === 'string')) throw new Error('JSON 스키마 위반');
   for (const key of EXTRACTED_KEYS) {
     const entries = value.extracted[key];
@@ -443,7 +462,9 @@ export function validateJudgment(raw, { rules, root, date, wikiIndex = readWikiI
     const invalidIndex = entries.findIndex((entry) => typeof entry !== 'string');
     if (invalidIndex !== -1) throw new Error(`추출 스키마 위반: ${key}[${invalidIndex}]이 문자열이 아님(${actualType(entries[invalidIndex])})`);
   }
-  const dailyLink = value.dailyLink?.match(DATE_RE)?.[0] ?? null;
+  // 데일리 연결은 판단 누락으로 잃지 않게 원본 머리말의 사건일·작성일을 우선 근거로 보정한다.
+  const dailyLink = value.dailyLink?.match(DATE_RE)?.[0]
+    ?? (sourceContent ? sourceDailyDate(sourceContent) : null);
   if (value.wiki.some((entry) => !plain(entry) || !WIKI_ACTIONS.has(entry.action)
       || typeof entry.page !== 'string' || !entry.page.trim()
       || typeof entry.reason !== 'string' || !entry.reason.trim())) throw new Error('Wiki 스키마 위반');
@@ -470,13 +491,27 @@ export function validateJudgment(raw, { rules, root, date, wikiIndex = readWikiI
   return { ...value, dailyLink, wiki };
 }
 
-function promptFor(item, registrySummary) {
+function homeCategories(root) {
+  const dir = join(root, VAULT_REL.homeDir);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /^\d{3} .+\.md$/.test(entry.name))
+    .map((entry) => `[[${VAULT_REL.homeDir}/${entry.name.slice(0, -3)}]]`)
+    .sort((a, b) => a.localeCompare(b, 'ko'));
+}
+
+function promptFor(item, registrySummary, categories, conversationKinds) {
+  const categoryExample = categories[0] ?? `[[${VAULT_REL.homeDir}/카테고리 노트]]`;
   return `다음 Inbox 메모를 기록 대상으로 분류하라. JSON 객체만 출력하고 도구는 사용하지 마라.\n`
     + `순서: 분류→인물·장소·주제·물건·날짜·할 일·결정 추출→Wiki 기존 페이지 보강 또는 후보/질문→데일리 연결.\n`
     + `새 Wiki 페이지는 D32 생성 관문과 D79 개념 테스트를 통과할 때까지 candidate로 둔다. 분류 불가면 이유를 적는다.\n`
     + `배우자·아내·와이프·엄마·아빠 같은 관계어는 relation으로 기존 인물에 매칭하라.\n`
+    + `텔레그램·옵시디언 글 메모는 note(${VAULT_REL.recordsRoot}/21_Notes)다. 미네가 직접 쓴 글도 note다. conversation은 실제 통화·대면·회의·녹음 기록에만 사용하라.\n`
+    + `category는 다음 실제 카테고리 노트 링크 중에서 골라 배열로 넣어라: ${categories.join(', ') || '목록 없음'}\n`
+    + `conversation의 convKind 허용값: ${conversationKinds.join(', ') || '등록부에 없음'}\n`
     + `경로 등록부 요약:\n${registrySummary}\n`
-    + `정확한 JSON 스키마: {"target":{"folder":"${VAULT_REL.recordsRoot}/.../{YYYY}","type":"note|literature|conversation|media","title":"YYYY-MM-DD 제목"},"frontmatter":{},"extracted":{"people":[],"places":[],"topics":[],"objects":[],"dates":[],"todos":[],"decisions":[]},"wiki":[{"action":"append-source|candidate|question","page":"${VAULT_REL.knowledge}/...","reason":"..."}],"dailyLink":null,"unclassifiable":null}\n`
+    + `정확한 JSON 스키마: {"target":{"folder":"${VAULT_REL.recordsRoot}/.../{YYYY}","type":"note|literature|conversation|media","title":"YYYY-MM-DD 제목"},"frontmatter":{"category":["${categoryExample}"]},"extracted":{"people":[],"places":[],"topics":[],"objects":[],"dates":[],"todos":[],"decisions":[]},"wiki":[{"action":"append-source|candidate|question","page":"${VAULT_REL.knowledge}/...","reason":"..."}],"dailyLink":"YYYY-MM-DD","unclassifiable":null}\n`
+    + `원본 머리말에 occurred 또는 created 날짜가 있으면 dailyLink에 그 날짜(YYYY-MM-DD)를 반드시 넣어라. 둘 다 있으면 occurred를 우선한다.\n`
     + `extracted의 모든 값은 문자열 배열이며 객체를 넣지 마라. 인물은 Wiki 페이지 제목 그대로(예: "미네") 쓰고 관계 정보는 넣지 마라. frontmatter 값은 문자열·숫자·불리언 또는 그 배열만 허용한다.\n`
     + `제목은 날짜를 포함해 60자 이내로 작성하라.\n`
     + `원본 경로: ${item.source}\n원문:\n${item.content}`;
@@ -642,10 +677,12 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
     blocked: `리포트 등록부 위반: ${preflight.join(' / ')}` };
   const registrySummary = activeRules.filter((r) => r.path.startsWith(`${VAULT_REL.recordsRoot}/`) || r.path.startsWith(`${VAULT_REL.knowledge}/`))
     .map((r) => `${r.type}: ${r.path}; 필수 ${[...r.required.bundle, ...r.required.extra].join(', ')}`).join('\n');
+  const categories = selected.length ? homeCategories(root) : [];
+  const conversationKinds = activeRules.find((rule) => rule.type === 'conversation')?.allowedValues?.convKind ?? [];
   const wikiIndex = selected.length ? readWikiIndex(root) : { paths: new Set(), prompt: '' };
   const agent = selected.length ? (charter ?? loadAgent('clio', { fallbackModel: 'sonnet' })) : null;
   if (agent?.warning) console.warn(agent.warning);
-  const systemPrompt = `${agent?.systemPrompt ?? ''}\n\n경로 등록부 요약:\n${registrySummary}\n\n기존 Wiki 색인 (인물: 폴더 · 제목 · 관계 · 별칭 · 설명):\n${wikiIndex.prompt || '없음'}`;
+  const systemPrompt = `${agent?.systemPrompt ?? ''}\n\n글 메모는 note, 실제 통화·대면·회의·녹음 기록만 conversation. category는 ${VAULT_REL.homeDir} 링크 배열.\n\n경로 등록부 요약:\n${registrySummary}\n\n기존 Wiki 색인 (인물: 폴더 · 제목 · 관계 · 별칭 · 설명):\n${wikiIndex.prompt || '없음'}`;
   const decide = judge ?? ((prompt) => runHeadlessClaude(prompt, agent.model, '', {
     appendSystemPrompt: systemPrompt, tools: '', timeoutMs: Math.max(1, Math.min(5 * 60_000, MAX_JOB_MS - (clock() - startedAt))),
   }));
@@ -660,12 +697,12 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
     for (let attempt = 0; attempt < Math.min(2, 3 - item.attempts) && clock() - startedAt < MAX_JOB_MS; attempt += 1) {
       rawPreview = undefined;
       try {
-        const prompt = promptFor(item, registrySummary) + (validationError ? `\n직전 검증 오류: ${validationError}\n오류를 고쳐 JSON 객체만 다시 출력하라.` : '');
+        const prompt = promptFor(item, registrySummary, categories, conversationKinds) + (validationError ? `\n직전 검증 오류: ${validationError}\n오류를 고쳐 JSON 객체만 다시 출력하라.` : '');
         const raw = await decide(prompt, item, systemPrompt);
         attempts += 1;
         let judgment;
         try {
-          judgment = validateJudgment(raw, { rules: activeRules, root, date, wikiIndex });
+          judgment = validateJudgment(raw, { rules: activeRules, root, date, sourceContent: item.content, wikiIndex });
         } catch (error) {
           rawPreview = (typeof raw === 'string' ? raw : JSON.stringify(raw))?.slice(0, 500);
           throw error;

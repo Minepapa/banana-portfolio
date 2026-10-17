@@ -75,6 +75,16 @@ function requiredFields(requiredCell) {
   return { bundle: bundleFields, extra: [...new Set(extra)] };
 }
 
+function allowedValues(requiredCell) {
+  const values = {};
+  for (const match of requiredCell.matchAll(/`([A-Za-z][A-Za-z0-9_]*)`\(([^)]*)\)/g)) {
+    const options = match[2].split('—')[0].split('/').map((value) => value.trim())
+      .filter((value) => !value.includes('허용값은') && /^[^\s`:/]+$/.test(value));
+    if (options.length > 1) values[match[1]] = options;
+  }
+  return values;
+}
+
 export const EXTRA_FIELDS_FROM = '2026-10-08';
 export const FOLDER_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -102,6 +112,7 @@ export function parseRegistry(markdown) {
           pathRegex: path.regex,
           titleRegex: titleRule(row[idx('제목')]),
           required: LOCATION_ONLY.has(type) ? { bundle: [], extra: [] } : requiredFields(row[idx('필수')]),
+          allowedValues: allowedValues(row[idx('필수')]),
           writer: idx('쓰는 주체') >= 0 ? (row[idx('쓰는 주체')] ?? '') : '',
         });
       }

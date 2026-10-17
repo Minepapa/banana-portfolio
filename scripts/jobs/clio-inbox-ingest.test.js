@@ -301,6 +301,42 @@ test('dailyLink extracts a date or becomes null without failing judgment', (t) =
   assert.equal(validateJudgment({ ...judgment(), dailyLink: '일일 기록 연결' }, { root, rules, date: '2026-10-11' }).dailyLink, null);
 });
 
+test('dailyLink 누락은 원본 머리말 occurred, 그다음 created 날짜로 보정한다', async (t) => {
+  const { root, put } = fixture(t);
+  const missing = { ...judgment(), dailyLink: null };
+  const source = '---\ncreated: "2026-10-10T09:00:00+09:00"\noccurred: "2026-10-09T18:00:00+09:00"\n---\n글 메모';
+  assert.equal(validateJudgment(missing, { root, rules, date: '2026-10-11', sourceContent: source }).dailyLink, '2026-10-09');
+  const omitted = { ...judgment() }; delete omitted.dailyLink;
+  assert.equal(validateJudgment(omitted, { root, rules, date: '2026-10-11', sourceContent: source }).dailyLink, '2026-10-09');
+  assert.equal(validateJudgment(missing, { root, rules, date: '2026-10-11',
+    sourceContent: '---\ncreated: "2026-10-10"\n---\n글 메모' }).dailyLink, '2026-10-10');
+  assert.equal(validateJudgment(missing, { root, rules, date: '2026-10-11',
+    sourceContent: '---\ncreated: "2026-10-10T18:30:00Z"\n---\n글 메모' }).dailyLink, '2026-10-11');
+  assert.equal(validateJudgment(missing, { root, rules, date: '2026-10-11', sourceContent: '날짜 없는 글' }).dailyLink, null);
+  put('00_Inbox/memo.md', source);
+  const result = await run({ root, rules, now: date, dryRun: true, judge: async () => missing,
+    charter: { model: 'test', systemPrompt: 'test' }, cooldown: () => false });
+  assert.equal(result.items[0].judgment.dailyLink, '2026-10-09');
+});
+
+test('판단 프롬프트는 실제 카테고리 링크 배열과 등록부 convKind 허용값, 글 메모 분류를 안내한다', async (t) => {
+  const { root, put } = fixture(t);
+  put('00_Inbox/memo.md', memo('텔레그램 📜', '미네가 직접 쓴 글'));
+  put(`${VAULT_REL.homeDir}/200 가족.md`, '');
+  put(`${VAULT_REL.homeDir}/201 미네.md`, '');
+  const promptRules = [...rules, { type: 'conversation', path: '20_Records/23_Conversations/{YYYY}/',
+    required: { bundle: [], extra: ['convKind'] }, allowedValues: { convKind: ['통화', '대면', '회의', '녹음'] } }];
+  let prompt;
+  await run({ root, rules: promptRules, now: date, dryRun: true,
+    judge: async (value) => { prompt = value; return judgment(); },
+    charter: { model: 'test', systemPrompt: 'test' }, cooldown: () => false });
+  assert.match(prompt, /"category":\["\[\[01_Home\/200 가족\]\]"\]/);
+  assert.match(prompt, /\[\[01_Home\/201 미네\]\]/);
+  assert.match(prompt, /convKind 허용값: 통화, 대면, 회의, 녹음/);
+  assert.match(prompt, /미네가 직접 쓴 글도 note/);
+  assert.match(prompt, /dailyLink에 그 날짜/);
+});
+
 test('report and plans are written atomically through injected writer; no source mutation', async (t) => {
   const { root, put } = fixture(t);
   const source = memo('옵시디언', '공개하면 안 되는 가상 원문');

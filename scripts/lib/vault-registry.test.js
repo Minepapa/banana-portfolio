@@ -30,6 +30,20 @@ test('parseRegistry: 묶음·추가 필드·조건부 필드·여러 경로를 �
   assert.ok(rules.find((r) => r.type === 'config').pathRegex.test('90_Delphi/Config/x.md'));
 });
 
+test('parseRegistry: 필수 칸의 슬래시 구분 허용값을 rules에 보존한다', () => {
+  const source = REGISTRY.replace('| `note` |', '| `conversation` |')
+    .replace('C + `occurred` · `origin`', 'C + `occurred` · `convKind`(통화/대면/회의/녹음 — 설명)');
+  const conversation = parseRegistry(source).find((rule) => rule.type === 'conversation');
+  assert.deepEqual(conversation.allowedValues.convKind, ['통화', '대면', '회의', '녹음']);
+});
+
+test('parseRegistry: 경로 설명과 허용값 안내 문구는 값으로 읽지 않는다', () => {
+  const source = REGISTRY.replace('C + `occurred` · `origin`',
+    'C + `progress`(허용값은 `90_Delphi/Schema/상태표준`) · `status`(허용값은 `상태표준`: 예정/진행중)');
+  const note = parseRegistry(source).find((rule) => rule.type === 'note');
+  assert.deepEqual(note.allowedValues, {});
+});
+
 test('checkNote: type·경로·제목·필수 필드, 추가 필드는 시행일 이후 노트만', () => {
   const rules = parseRegistry(REGISTRY);
   const ok = fm({ type: 'note', ...C, created: '"2026-10-09"', occurred: '"2026-10-09"', origin: '"telegram"' });
@@ -52,6 +66,17 @@ test('실제 경로 등록부를 읽을 수 있다', { skip: !existsSync(vaultAb
   for (const t of ['inbox', 'note', 'decision', 'implementation', 'session-log', 'telegram-log', 'report', 'topic', 'schema', 'agent']) {
     assert.ok(rules.some((r) => r.type === t), t);
   }
+  assert.deepEqual(Object.fromEntries(rules.filter((r) => Object.keys(r.allowedValues).length)
+    .map((r) => [r.type, r.allowedValues])), {
+    daily: { dailyStatus: ['초안', '확정'] },
+    literature: { litKind: ['책', '기사', '영상', '강의', '웹'], status: ['읽는중', '완료'] },
+    conversation: { convKind: ['통화', '대면', '회의', '녹음'] },
+    project: { status: ['진행', '보류', '완료'] },
+    feature: { status: ['운영', '개발', '중단'] },
+    implementation: { implementer: ['Claude', 'Codex'] },
+    decision: { status: ['실행대기', '결정됨', '보류', '대체됨'] },
+    'preference-observation': { status: ['관찰', '승격후보', '확정', '기각'] },
+  });
 });
 
 test('parseRegistry: 괄호 안 다른 필드 설명은 앞 필드를 조건부로 만들지 않는다(media mediaCount), 셀 모자란 행은 건너뜀', () => {
