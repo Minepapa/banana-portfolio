@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import {
-  attachAudioCues, audioCuesForNote, clock, computeCues, mineIntervals, runCueWorker, summarizeCues, windowsInIntervals,
+  attachAudioCues, audioCuesForNote, callMineIntervals, clock, computeCues, mineIntervals, runCueWorker,
+  selectCallCueTargets, summarizeCues, windowsInIntervals,
 } from './media-audio-cues.mjs';
 
 const win = (start, tags = {}, pitch = 280, rms = 0.05) =>
@@ -219,7 +220,7 @@ test('computeCues: 색인에 없거나 원본이 없거나 작업기가 실패�
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
 
-test('audioCuesForNote: 녹음은 미네 구간 요약, 화자 파일 없으면 전체, 통화는 아직 연결하지 않음', async () => {
+test('audioCuesForNote: 녹음은 미네 구간 요약, 화자 파일 없으면 전체, 색인 없는 통화는 거절', async () => {
   const note = '---\nconvKind: "녹음"\n---\n<!-- media-transcribe:id aaaaaaaaaaaaaaaa -->\n본문';
   const compute = async () => ({ windows: [win(0, { laughter: 0.4 }), win(8, { crying: 0.5 })] });
   const withSpeakers = await audioCuesForNote(note, { compute, archivePaths: new Map(), speakersFor: () => ({
@@ -233,7 +234,7 @@ test('audioCuesForNote: 녹음은 미네 구간 요약, 화자 파일 없으면 
   assert.match(alone.text, /울음 1회/);
   const call = await audioCuesForNote(note.replace('녹음', '통화'), { compute, archivePaths: new Map() });
   assert.equal(call.ok, false);
-  assert.match(call.text, /통화는 미네 구간 연결 전/);
+  assert.match(call.text, /통화 원본 색인 아님/);
   const failed = await audioCuesForNote(note, { compute: async () => ({ error: '원본 파일 없음' }), archivePaths: new Map() });
   assert.equal(failed.ok, false);
   assert.match(failed.text, /없음\(원본 파일 없음\)/);
@@ -273,7 +274,7 @@ test('audioCuesForNote: 화자 분리에 미네가 없으면 소리 근거 없�
   assert.match(r.text, /미네 화자 미확인/);
   assert.doesNotMatch(r.text, /웃음 1회/);
   const single = await audioCuesForNote(note.replace('"녹음"', "'통화'"), { compute: async () => ({ windows: [] }), archivePaths: new Map() });
-  assert.match(single.text, /통화는 미네 구간 연결 전/);
+  assert.match(single.text, /통화 원본 색인 아님/);
 });
 
 test('computeCues: 통화(kind Calls)·Archive 밖 경로는 읽지 않고, 실패는 원본이 같으면 다시 시도하지 않는다', async () => {
@@ -301,4 +302,102 @@ test('audioCuesForNote: 대화형 녹음인데 화자 분리 전이면 소리 �
   const song = new Map([['aaaaaaaaaaaaaaaa', { archivePath: 'Archive/2021/01/Recordings/2021-01-20 미네 노래 아침 해.m4a', kind: 'Recordings' }]]);
   const s2 = await audioCuesForNote(note, { compute: async () => ({ windows: [win(0, { laughter: 0.9 })] }), archivePaths: song, speakersFor: () => null });
   assert.match(s2.text, /전체\(한 사람 녹음\)/);
+});
+
+const callSpeakers = { ownerMargin: 1, ownerVersion: 'owner-v1', segments: [
+  { i: 0, speaker: 'owner' }, { i: 1, speaker: 'other' }], turns: [
+  { start: 0, end: 4000, speaker: 'S0' }, { start: 4000, end: 8000, speaker: 'S1' }] };
+const callVoices = { callVoices: [[1, 0], [0, 1]],
+  owner: { mean: [1, 0], meta: { version: 'owner-v1', minSimilarity: 0.45 } },
+  mine: { vectors: [[1, 0], [0, 1], [1, 0]],
+    meta: { minSimilarity: 0.5, years: [{ year: 2024, index: 1 }, { year: 2026, index: 2 }] } } };
+
+test('통화 other 목소리는 이름과 가까운 연도 기준을 모두 충족해야 미네 구간이 된다', () => {
+  const good = callMineIntervals(callSpeakers, { people: ['[[01_Home/201 미네|미네]]'],
+    occurred: '2024-05-01', ...callVoices });
+  assert.deepEqual(good.intervals, [{ start: 4, end: 8 }]);
+  const wrongVoice = callMineIntervals(callSpeakers, { people: ['미네'], occurred: '2026-05-01', ...callVoices });
+  assert.deepEqual(wrongVoice.intervals, []);
+  assert.match(wrongVoice.reason, /상대 목소리가 미네 기준과 다름/);
+  assert.deepEqual(callMineIntervals({ ...callSpeakers, ownerMargin: 0.02 },
+    { people: ['미네'], occurred: '2024-05-01', ...callVoices }).intervals, []);
+  assert.deepEqual(callMineIntervals({ ...callSpeakers, check: '필요' },
+    { people: ['미네'], occurred: '2024-05-01', ...callVoices }).intervals, []);
+  assert.deepEqual(callMineIntervals(callSpeakers, { people: ['휘영'], occurred: '2024-05-01', ...callVoices }).intervals, []);
+});
+
+test('통화 other는 미네 유사도 하한과 오너 대비 0.1 초과 우위를 충족해야 한다', () => {
+  const speakers = { ...callSpeakers, ownerMargin: 0.19999999999999996 };
+  const closeToOwner = { ...callVoices, callVoices: [[1, 0], [0.8, 0.6]],
+    mine: { vectors: [[0.8, 0.6]], meta: { minSimilarity: 0.5, years: [{ year: 2024, index: 0 }] } } };
+  assert.deepEqual(callMineIntervals(speakers,
+    { people: ['미네'], occurred: '2024-05-01', ...closeToOwner }).intervals, [{ start: 4, end: 8 }]);
+  const noLead = { ...closeToOwner, mine: { ...closeToOwner.mine, vectors: [[1, 0]] } };
+  const rejected = callMineIntervals(speakers, { people: ['미네'], occurred: '2024-05-01', ...noLead });
+  assert.deepEqual(rejected.intervals, []);
+  assert.ok(rejected.similarity <= rejected.ownerSimilarity + 0.1);
+  assert.deepEqual(callMineIntervals(speakers,
+    { people: ['미네'], occurred: '2021-05-01', ...closeToOwner }).intervals, []);
+});
+
+test('통화 미네 구간에서 겹친 오너 발화를 빼고 0.5초 미만 조각을 버린다', () => {
+  const speakers = { ...callSpeakers, turns: [
+    { start: 0, end: 8000, speaker: 'S1' },
+    { start: 1000, end: 3000, speaker: 'S0' },
+    { start: 7000, end: 7600, speaker: 'S0' }] };
+  const { intervals } = callMineIntervals(speakers,
+    { people: ['미네'], occurred: '2024-05-01', ...callVoices });
+  assert.deepEqual(intervals, [{ start: 0, end: 1 }, { start: 3, end: 7 }]);
+  assert.deepEqual(windowsInIntervals([win(0), win(3)], intervals).map((window) => window.start), [3]);
+});
+
+test('통화는 확정 전 계산하지 않고, 확정 후 미네 창만 여러 ID별로 요약한다', async () => {
+  const one = 'aaaaaaaaaaaaaaaa'; const two = 'bbbbbbbbbbbbbbbb';
+  const content = `---\nconvKind: "통화"\npeople: ["[[01_Home/201 미네|미네]]"]\noccurred: "2024-05-01"\n---\n<!-- media-transcribe:id ${one} -->\n<!-- media-transcribe:id ${two} -->`;
+  const archivePaths = new Map([one, two].map((id) => [id,
+    { kind: 'Calls', archivePath: 'Archive/call.m4a', occurred: '2021-05-01' }]));
+  const calls = [];
+  const result = await audioCuesForNote(content, { archivePaths, speakersFor: () => callSpeakers,
+    voicesFor: () => callVoices, compute: async (id, options) => {
+      calls.push([id, options.allowCalls]);
+      return { windows: [win(0, { crying: 0.9 }), win(4, { laughter: 0.9 })] };
+    } });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [[one, true], [two, true]]);
+  assert.equal((result.text.match(/웃음 1회/g) ?? []).length, 2);
+  assert.doesNotMatch(result.text, /울음 1회/);
+  assert.match(result.text, /\[aaaaaaaaaaaaaaaa\]/);
+  const rejected = await audioCuesForNote(content, { archivePaths, speakersFor: () => callSpeakers,
+    voicesFor: () => ({ ...callVoices, mine: { ...callVoices.mine,
+      vectors: [[1, 0], [1, 0]], meta: { minSimilarity: 0.5, years: [{ year: 2024, index: 1 }] } } }),
+    compute: async () => { throw new Error('거절된 통화는 계산하면 안 됨'); } });
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.text, /상대 목소리가 미네 기준과 다름/);
+  const reviewed = await audioCuesForNote(content.replace(`<!-- media-transcribe:id ${one} -->`,
+    `<!-- media-transcribe:id ${one} -->\n[화자 확인 필요]`), {
+    archivePaths, speakersFor: () => callSpeakers, voicesFor: () => callVoices,
+    compute: async (id) => { assert.equal(id, two); return { windows: [win(4, { laughter: 0.9 })] }; },
+  });
+  assert.equal(reviewed.ok, true);
+  assert.match(reviewed.text, /\[aaaaaaaaaaaaaaaa\] 소리 근거: 없음\(화자 확인 필요\)/);
+  assert.match(reviewed.text, /\[bbbbbbbbbbbbbbbb\] 소리 근거\(미네 구간/);
+});
+
+test('computeCues의 Calls 허용은 allowCalls에만 의존한다', async (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.dir, { recursive: true, force: true }));
+  const paths = new Map([['aaaaaaaaaaaaaaaa', { kind: 'Calls', archivePath: 'Archive/2020/07/Recordings/a.m4a' }]]);
+  const options = { mediaRoot: f.mediaRoot, cacheDir: f.cacheDir, archivePaths: paths, temporaryRoot: f.dir,
+    exec: async () => {}, worker: async () => [{ durationSec: 4, windows: [win(0)] }] };
+  assert.equal((await computeCues('aaaaaaaaaaaaaaaa', options)).error, '녹음이 아님(통화 등)');
+  assert.equal((await computeCues('aaaaaaaaaaaaaaaa', { ...options, allowCalls: true })).windows.length, 1);
+});
+
+test('통화 사전 계산 선택은 미네 노트와 목소리 확인을 거친 ID만 남긴다', () => {
+  const one = 'aaaaaaaaaaaaaaaa'; const two = 'bbbbbbbbbbbbbbbb';
+  const rows = [one, two].map((id) => ({ id, kind: 'Calls', occurred: '2021-05-01' }));
+  const notes = [{ content: `---\nconvKind: "통화"\npeople: ["미네"]\noccurred: "2024-05-01"\n---\n<!-- media-transcribe:id ${one} -->\n<!-- media-transcribe:id ${two} -->` }];
+  const selected = selectCallCueTargets(rows, { notes, speakersFor: (id) => id === one ? callSpeakers
+    : { ...callSpeakers, check: '필요' }, voicesFor: () => callVoices });
+  assert.deepEqual(selected.map((row) => row.id), [one]);
 });

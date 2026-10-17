@@ -254,6 +254,32 @@ test('빈 감정과 null 대표 감정도 녹음 재분류 대상이며 정확�
   assert.equal(findTargets(root, { reclassify: true, ids: ['aabb'], cutoff: '2026-10-18' }).length, 0);
 });
 
+test('재분류 kind는 통화·녹음·all을 선택하고 기본은 녹음이다', (t) => {
+  const { root, put } = fixture(t);
+  put(`${C}/2026/2026-10-15 미네 통화.md`, note({ extra: '\nemotions: []\nprimaryEmotion: null' }));
+  put(`${C}/2026/2026-10-14 미네 녹음.md`, note({ occurred: '2026-10-14',
+    extra: '\nemotions: []\nprimaryEmotion: null' }).replace('convKind: "통화"', 'convKind: "녹음"'));
+  const find = (kind) => findTargets(root, { reclassify: true, cutoff: '2026-10-18', ...(kind ? { kind } : {}) });
+  assert.equal(find().length, 1);
+  assert.equal(find('통화').length, 1);
+  assert.equal(find('all').length, 2);
+  assert.equal(find('녹음')[0].fields.convKind, '녹음');
+  assert.equal(find('통화')[0].fields.convKind, '통화');
+});
+
+test('통화 재분류 프롬프트는 미네 발화와 목소리 거절 이유를 명시한다', () => {
+  const content = note({ body: '나: 오늘 기분이 좋아 보이네\n미네: 응 기뻐',
+    extra: '\nemotions: []\nprimaryEmotion: null' });
+  const item = { rel: `${C}/2026/2026-10-15 미네 통화.md`, content,
+    occurred: '2026-10-15', date: '2026-10-15', fields: { convKind: '통화' },
+    audioCues: { text: '소리 근거: 없음(상대 목소리가 미네 기준과 다름)', ok: false } };
+  const prompt = buildPrompt([item], { reclassify: true, criteria });
+  assert.match(prompt, /대화 형식의 미네: 줄과 확인된 미네 구간 소리만 감정 근거/);
+  assert.match(prompt, /다른 화자의 말은 맥락 해석에만/);
+  assert.match(prompt, /상대 목소리가 미네 기준과 다름/);
+  assert.match(prompt, /기존 importance·coreMemory 등 다른 필드는 다시 판단하지 않는다/);
+});
+
 test('재분류 실행 두 개는 같은 잡 락을 공유한다', async (t) => {
   const { root, put } = fixture(t);
   const out = mkdtempSync(join(tmpdir(), 'mine-reclassify-lock-'));
@@ -291,4 +317,109 @@ test('reclassify: 판단 호출 전에 소리 근거를 붙인다(주입)', asyn
       judge: async (prompt) => { seen = prompt; return '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"웃음","secondFilmSignal":null}]'; } });
     assert.match(seen, /소리 근거: 테스트 웃음/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('재분류 --include-unclassified: 처음 분류는 주간 잡과 같이 importance와 mineAge를 쓴다', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'athena-unclassified-'));
+  const out = mkdtempSync(join(tmpdir(), 'athena-unclassified-report-'));
+  try {
+    const rel = `${C}/2025/2025-03-01 미네 통화.md`;
+    mkdirSync(join(root, dirname(rel)), { recursive: true });
+    writeFileSync(join(root, rel), note({ occurred: '2025-03-01T10:00:00+09:00' }));
+    const opts = { root, out, rules, criteria, kind: '통화', now: new Date('2026-10-17T03:00:00Z'),
+      output: { log() {}, error() {} }, cooldown: () => false, cues: async () => {},
+      judge: async (prompt) => {
+        assert.match(prompt, /importance: 1~5 정수/);
+        return '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"미네가 웃으며 말함","secondFilmSignal":null,"importance":3}]';
+      } };
+    const skipped = await reclassify({ ...opts, dryRun: true });
+    assert.equal(skipped.targets, 0);
+    const included = await reclassify({ ...opts, dryRun: true, includeUnclassified: true });
+    assert.equal(included.targets, 1);
+    assert.equal(included.changed, 1);
+    const written = await reclassify({ ...opts, includeUnclassified: true });
+    assert.equal(written.changed, 1);
+    assert.match(readFileSync(join(root, rel), 'utf8'), /importance: 3\nmineAge: 8\n---/);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); }
+});
+
+test('재분류는 주간 잡의 skipped 노트를 처음 분류 대상으로 다시 열지 않는다', async (t) => {
+  const { root, put } = fixture(t);
+  const rel = `${C}/2025/2025-03-01 미네 통화.md`;
+  put(rel, note({ occurred: '2025-03-01T10:00:00+09:00' }));
+  put(STATE_REL, JSON.stringify({ skipped: { [rel]: { reason: '판단 불가' } } }));
+  assert.equal((await reclassify({ root, dryRun: true, kind: '통화', includeUnclassified: true,
+    now, criteria, output: { log() {} } })).targets, 0);
+});
+
+test('처음 분류와 기존 재분류가 섞이면 importance 판단을 처음 분류에만 요구한다', async (t) => {
+  const { root, put } = fixture(t);
+  put(`${C}/2025/2025-03-01 미네 통화.md`, note({ occurred: '2025-03-01T10:00:00+09:00' }));
+  put(`${C}/2025/2025-03-02 미네 통화.md`, note({ occurred: '2025-03-02T10:00:00+09:00',
+    extra: '\nemotions: []\nprimaryEmotion: null\nimportance: 4\nmineAge: 8' }));
+  const prompts = [];
+  const result = await reclassify({ root, dryRun: true, includeUnclassified: true, kind: '통화',
+    now, criteria, output: { log() {} }, cues: async () => {}, judge: async (prompt) => {
+      prompts.push(prompt);
+      return `[ {"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,
+        "emotionEvidence":"웃음","secondFilmSignal":null${prompt.includes('importance: 1~5 정수') ? ',"importance":2' : ''}} ]`;
+    } });
+  assert.equal(result.changed, 2);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[0], /importance: 1~5 정수/);
+  assert.match(prompts[0], /최근 사춘기 신호 관찰/);
+  assert.match(prompts[1], /기존 importance·coreMemory 등 다른 필드는 다시 판단하지 않는다/);
+  assert.doesNotMatch(prompts[1], /최근 사춘기 신호 관찰/);
+});
+
+test('부분 머리말 첫 분류는 빠진 importance·mineAge를 채우고 기존 값은 보존한다', async (t) => {
+  const { root, put } = fixture(t);
+  const out = mkdtempSync(join(tmpdir(), 'athena-partial-report-'));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const one = `${C}/2025/2025-03-01 미네 통화.md`;
+  const two = `${C}/2025/2025-03-02 미네 통화.md`;
+  const three = `${C}/2025/2025-03-03 미네 통화.md`;
+  put(one, note({ occurred: '2025-03-01T10:00:00+09:00', extra: '\nemotions: []' }));
+  put(two, note({ occurred: '2025-03-02T10:00:00+09:00', extra: '\nimportance: 4\nmineAge: 8' }));
+  put(three, note({ occurred: '2025-03-03T10:00:00+09:00', extra: '\nimportance: null\nmineAge: null' }));
+  const result = await reclassify({ root, out, rules, includeUnclassified: true, kind: '통화',
+    now, criteria, cooldown: () => false, output: { log() {} }, cues: async () => {},
+    judge: async (prompt) => {
+      assert.match(prompt, /importance: 1~5 정수/);
+      return '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"웃음","importance":2},'
+        + '{"id":2,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"웃음","importance":2},'
+        + '{"id":3,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"웃음","importance":2}]';
+    } });
+  assert.equal(result.changed, 3);
+  assert.match(readFileSync(join(root, one), 'utf8'), /importance: 2\nmineAge: 8\n---/);
+  const existing = readFileSync(join(root, two), 'utf8');
+  assert.match(existing, /importance: 4\nmineAge: 8/);
+  assert.match(existing, /primaryEmotion: "기쁨"/);
+  assert.equal((existing.match(/importance:/g) ?? []).length, 1);
+  const empty = readFileSync(join(root, three), 'utf8');
+  assert.match(empty, /importance: 2\nmineAge: 8\n---/);
+  assert.equal((empty.match(/mineAge:/g) ?? []).length, 1);
+});
+
+test('혼합 묶음은 두 번째 판단 직전 쿨다운이 켜지면 추가 호출을 멈춘다', async (t) => {
+  const { root, put } = fixture(t);
+  put(`${C}/2025/2025-03-01 미네 통화.md`, note({ occurred: '2025-03-01T10:00:00+09:00' }));
+  put(`${C}/2025/2025-03-02 미네 통화.md`, note({ occurred: '2025-03-02T10:00:00+09:00',
+    extra: '\nemotions: []\nprimaryEmotion: null\nimportance: 4' }));
+  let calls = 0;
+  const result = await reclassify({ root, dryRun: true, includeUnclassified: true, kind: '통화',
+    now, criteria, output: { log() {} }, cues: async () => {}, cooldown: () => calls > 0,
+    judge: async () => { calls += 1; return '[]'; } });
+  assert.equal(calls, 1);
+  assert.equal(result.cooldown, true);
+});
+
+test('replaceEmotionFields: 기존 감정 필드만 교체한다', async () => {
+  const { replaceEmotionFields } = await import('./mine-athena-fields.mjs');
+  const next = replaceEmotionFields(note({ occurred: '2025-03-01T10:00:00+09:00',
+    extra: '\nemotions: []\nprimaryEmotion: null' }),
+    { emotions: ['기쁨'], primaryEmotion: '기쁨', emotionIntensity: 1, emotionEvidence: '웃음', secondFilmSignal: null }, '2026-10-17');
+  assert.match(next, /primaryEmotion: "기쁨"/);
+  assert.doesNotMatch(next, /importance:/);
+  assert.doesNotMatch(next, /mineAge:/);
 });
