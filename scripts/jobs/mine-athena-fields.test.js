@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fixture as criteriaFixture, fixtureCriteria as criteria } from '../lib/mine-emotion-criteria.fixture.js';
 import { parseEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
-import { applyFields, buildPrompt, failed, findTargets, mineAge, noteText, recentSignalTrend, reclassify, restrictedAthenaDecision, run, validateProposals,
+import { applyFields, buildPrompt, failed, findTargets, mineAge, noteText, recentSignalTrend, reclassify, restrictedDecision, run, validateProposals,
   STATE_REL } from './mine-athena-fields.mjs';
 
 const now = new Date('2026-10-18T12:00:00Z'); // KST 10-18 21:00
@@ -26,7 +26,7 @@ const C = '20_Records/23_Conversations';
 test('제한 판단은 옵션을 전달하고 JSON result·토큰 사용량을 기록한 뒤 cwd를 지운다', async () => {
   let invocation;
   let log = '';
-  const result = await restrictedAthenaDecision('prompt', { model: 'sonnet', systemPrompt: 'charter' }, {
+  const result = await restrictedDecision('prompt', { model: 'sonnet', systemPrompt: 'charter' }, {
     invoke: async (...args) => {
       invocation = args;
       assert.match(args[3].cwd, /^\/tmp\/mine-athena-claude-/);
@@ -52,7 +52,7 @@ test('제한 판단은 옵션을 전달하고 JSON result·토큰 사용량을 �
 
 test('제한 판단은 오류에서도 임시 cwd를 지운다', async () => {
   let cwd;
-  await assert.rejects(restrictedAthenaDecision('prompt', { model: 'sonnet', systemPrompt: '' }, {
+  await assert.rejects(restrictedDecision('prompt', { model: 'sonnet', systemPrompt: '' }, {
     invoke: async (_prompt, _model, _tools, options) => {
       cwd = options.cwd;
       throw new Error('실패');

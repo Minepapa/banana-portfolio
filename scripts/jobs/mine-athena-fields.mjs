@@ -38,7 +38,7 @@ const kstDate = (now) => new Date(now.getTime() + 9 * 3_600_000).toISOString().s
 const readJson = (path, fallback) => existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : fallback;
 
 // TMPDIR가 저장소·볼트 안을 가리켜도 Claude의 cwd는 그 밖의 빈 시스템 임시 폴더에 둔다.
-export async function restrictedAthenaDecision(prompt, agent, { invoke = runHeadlessClaude, output = console } = {}) {
+export async function restrictedDecision(prompt, agent, { invoke = runHeadlessClaude, output = console } = {}) {
   const cwd = mkdtempSync('/tmp/mine-athena-claude-');
   try {
     const raw = await invoke(prompt, agent.model, '', {
@@ -359,7 +359,7 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   if (!batch.length) return summary;
   if (cooldown()) return { ...summary, cooldown: true };
   const agent = charter ?? loadAgent('athena', { fallbackModel: 'sonnet' });
-  const decide = judge ?? ((prompt) => restrictedAthenaDecision(prompt, agent, { output }));
+  const decide = judge ?? ((prompt) => restrictedDecision(prompt, agent, { output }));
   await cues(batch, { root });
   if (cooldown()) return { ...summary, cooldown: true };
   const proposals = await reclassificationProposals(batch, decide, criteria, signalTrend, cooldown);
@@ -474,7 +474,7 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
 
     const agent = charter ?? loadAgent('athena', { fallbackModel: 'sonnet' });
     if (agent.warning) output.error(`[mine-athena-fields] ${agent.warning}`);
-    const decide = judge ?? ((prompt) => restrictedAthenaDecision(prompt, agent, { output }));
+    const decide = judge ?? ((prompt) => restrictedDecision(prompt, agent, { output }));
     const signalTrendBefore = recentSignalTrend(root, today, criteria);
     await cues(batch, { root });
     if (cooldown()) return { ...summary, cooldown: true };
