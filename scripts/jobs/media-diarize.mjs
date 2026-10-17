@@ -1070,7 +1070,7 @@ export async function runApply({ root = VAULT_PATHS.root, paths = MEDIA_DIARIZE_
       write(path, `${JSON.stringify(speakers, null, 2)}\n`);
       saved.set(item.id, speakers);
     };
-    if (!renderNotes && nightBlocked) output.log('[media-diarize] 00~07시는 전사 시간대 — 새 통화 처리 건너뜀');
+    if (!renderNotes && nightBlocked) output.log('[media-diarize] 00~07시는 수동 실행 제한 시간대 — 새 통화 처리 건너뜀');
     if (!renderNotes && !nightBlocked) {
       const chosen = selectApply(records, saved, { ids, limit, maxMinutes, state });
       summary.remaining = records.filter((item) => item.transcript.speech && item.transcript.segments?.length
@@ -1196,7 +1196,7 @@ export async function runRecordings({ root = VAULT_PATHS.root, paths = MEDIA_DIA
     && new Date(now.getTime() + 9 * 3_600_000).getUTCHours() < 8;
   const summary = { processed: 0, notes: 0, failed: 0, skipped: 0, remaining: chosen.length };
   const devices = new Set();
-  if (nightBlocked) { output.log('[media-diarize] 00~07시는 전사 시간대 — 녹음 처리 건너뜀'); return summary; }
+  if (nightBlocked) { output.log('[media-diarize] 00~07시는 수동 실행 제한 시간대 — 녹음 처리 건너뜀'); return summary; }
   if (dryRun) { output.log(`[media-diarize] 녹음 dry-run ${JSON.stringify(chosen.map((item) => item.id))}`); return summary; }
   const run = async () => {
     // 시험은 볼트에 잠금 파일도 남기지 않는다. 이미 전사 중이면 읽기만 하고 건너뛴다.

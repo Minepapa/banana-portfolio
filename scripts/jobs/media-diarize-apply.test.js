@@ -93,7 +93,7 @@ test('note rewrite preserves manual fields and owner memo; second pass changes n
   assert.equal(renderSpeakerNote(next, transcript, speakers), next);
 });
 
-test('scheduled apply runs all day while manual flags keep their limits', () => {
+test('scheduled apply runs at 03:05 and 04:05 while manual flags keep their limits', () => {
   assert.deepEqual(parseArgs(['--apply', '--limit=20', '--max-minutes=45']).maxMinutes, 45);
   assert.deepEqual(launchOptions([]), { apply: true, limit: 200, maxMinutes: 600, allowNight: true });
   assert.equal(launchOptions(['--apply']).allowNight, undefined);
@@ -103,7 +103,7 @@ test('scheduled apply runs all day while manual flags keep their limits', () => 
   const plist = readFileSync(new URL('../launchd/com.banana2.media-diarize.plist', import.meta.url), 'utf8');
   const slots = [...plist.matchAll(/<dict><key>Hour<\/key><integer>(\d+)<\/integer><key>Minute<\/key><integer>(\d+)<\/integer><\/dict>/g)]
     .map((match) => [Number(match[1]), Number(match[2])]);
-  assert.deepEqual(slots, Array.from({ length: 24 }, (_, hour) => [hour, 5]));
+  assert.deepEqual(slots, [[3, 5], [4, 5]]);
 });
 
 function npy(matrix) {
@@ -304,7 +304,7 @@ test('enrollment gate rejects incoherent owner voices and needs three calls per 
   assert.equal(result.passed, false);
 });
 
-test('busy media lock skips the hourly run quietly; failures are recorded and not retried forever', async (t) => {
+test('busy media lock skips the scheduled run quietly; failures are recorded and not retried forever', async (t) => {
   const base = mkdtempSync(join(tmpdir(), 'diarize-busy-test-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const root = join(base, 'vault'); const mediaRoot = join(base, 'Media');
@@ -380,7 +380,7 @@ test('night hours skip new diarization unless explicitly allowed; process failur
         elapsed = 45 * 60_000 + 1;
         throw new Error('화자 엔진 실패: speaker-diarization traceback');
       } };
-    // 03시(KST)는 건너뜀(00~07시 전사 시간대)
+    // 수동 실행은 03시(KST)에 건너뜀(00~07시 제한), 정기 실행은 허용한다.
     const night = await runApply({ ...options, ...launchOptions(['--apply']), now: new Date('2026-10-14T18:00:00Z') });
     assert.equal(night.processed + night.failed, 0);
     assert.equal(calls, 0);
