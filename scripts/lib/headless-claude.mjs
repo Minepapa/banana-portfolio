@@ -26,7 +26,7 @@ export const HEADLESS_NOTE = `
 export function buildArgs(prompt, model, allowedTools, {
   appendSystemPrompt, tools, outputFormat = 'text', permissionMode = 'bypassPermissions',
   disallowedTools, addDir, restricted = false, strictMcpConfig = false, mcpConfig, maxTurns,
-  lean = false,
+  lean = false, effort,
 } = {}) {
   // --restricted 환경에서는 --allowedTools만으로 Bash/WebFetch 등을 노출할 수 없다.
   // 실제 필요한 도구 이름을 --tools에도 전달한다. 경로 제한은 --allowedTools가 맡는다.
@@ -44,6 +44,7 @@ export function buildArgs(prompt, model, allowedTools, {
   if (lean || disallowedTools) args.push('--disallowedTools', disallowedTools ?? 'mcp__*');
   if (addDir) args.push('--add-dir', addDir);
   if (lean || restricted) args.push('--restricted');
+  if (lean || effort !== undefined) args.push('--effort', effort ?? 'high');
   if (lean || strictMcpConfig) args.push('--strict-mcp-config');
   if (lean || mcpConfig) args.push('--mcp-config', mcpConfig ?? '{"mcpServers":{}}');
   if (maxTurns) args.push('--max-turns', String(maxTurns));
@@ -53,15 +54,18 @@ export function buildArgs(prompt, model, allowedTools, {
 // 출력 계약은 기존처럼 raw 문자열이다. text였던 호출부만 이 함수로 envelope를 벗긴다.
 export function headlessResult(output) {
   const envelope = JSON.parse(output);
-  if (typeof envelope.result !== 'string') throw new Error('claude JSON 결과 오류');
+  if (typeof envelope?.result !== 'string' || !envelope.result.trim()) throw new Error('claude 빈 출력');
   return envelope.result;
 }
 
 export function headlessJsonFailure(output) {
   const parsed = JSON.parse(output);
   if (!parsed.is_error) return null;
-  const fullDetail = String(parsed.result ?? 'claude JSON 오류');
+  const fullDetail = typeof parsed.result === 'string' && parsed.result.trim()
+    ? parsed.result : [parsed.subtype, ...(Array.isArray(parsed.errors) ? parsed.errors : [])]
+      .filter(Boolean).map(String).join(': ') || 'claude JSON 오류';
   const error = new Error(fullDetail.slice(-300));
+  if (parsed.subtype) error.subtype = parsed.subtype;
   if (parsed.usage && typeof parsed.usage === 'object') error.usage = parsed.usage;
   if (parsed.num_turns !== undefined) error.num_turns = parsed.num_turns;
   if (parsed.total_cost_usd !== undefined) error.total_cost_usd = parsed.total_cost_usd;

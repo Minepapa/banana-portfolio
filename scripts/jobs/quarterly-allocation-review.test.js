@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   getQuarterLabel, shouldRunToday, buildRecentAllocationProposalsSummary, buildQuarterlyReviewPrompt,
-  buildQuarterlyReviewFacts,
+  buildQuarterlyReviewFacts, loadQuarterlyDecisionSections,
 } from './quarterly-allocation-review.mjs';
 
 test('getQuarterLabel: 월별로 올바른 분기 라벨', () => {
@@ -66,6 +69,7 @@ test('buildQuarterlyReviewPrompt: 목표비중·제안이력·거시지표가 �
     targetAllocation: { 채권: 20, 금: 10, 달러: 10, 국내주식: 30, 해외주식: 30 },
     recentProposalsText: '(없음)',
     macro: '  VIX: 15.13',
+    decisionSections: '[자산배분-목표비중] 실제 본문',
   });
   assert.match(prompt, /채권: 20%/);
   assert.match(prompt, /달러: 10%/);
@@ -91,10 +95,34 @@ test('buildQuarterlyReviewFacts: 최근 제안 건수가 마지막 불릿', () =
 
 test('분기점검 프롬프트: 질문형 예시를 없애고 확정 권고·되묻기 금지 계약을 담는다(2026-10-01 오너 지적)', async () => {
   const { buildQuarterlyReviewPrompt } = await import('./quarterly-allocation-review.mjs');
-  const prompt = buildQuarterlyReviewPrompt({ targetAllocation: { 채권: 20 }, recentProposalsText: '(없음)', macro: '(없음)' });
+  const prompt = buildQuarterlyReviewPrompt({ targetAllocation: { 채권: 20 }, recentProposalsText: '(없음)', macro: '(없음)', decisionSections: '결정 절' });
   assert.doesNotMatch(prompt, /조정할지 다음 분기까지 관찰할지/);
   assert.match(prompt, /오너에게 되묻지 마라/);
   assert.match(prompt, /확정 권고안/);
+});
+
+test('분기 점검은 활성 결정 두 건의 필요 절을 주입하며 누락 시 오류로 중단한다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'quarterly-decisions-'));
+  const dir = join(root, '50_Outputs', 'Decisions');
+  mkdirSync(dir, { recursive: true });
+  const put = (key, body) => writeFileSync(join(dir, `${key}.md`),
+    `---\ndecisionKey: "${key}"\nstatus: "결정됨"\n---\n${body}`);
+  try {
+    put('자산배분-목표비중', '# 제목\n## 현재 목표비중\n| 채권 | 문서 비중 |\n## 적용 범위\n위탁과 연금저축\n');
+    put('자산분배-운영-기준', '# 제목\n## 결정\n1. 범위\n2. 분기 점검\n3. 다른 운영\n');
+    const architectureText = '### 리밸런싱 규칙 — Swedroe 5/25 룰 (확정)\n절대 5%p 또는 상대 25%\n\n**실행 프로토콜**\n다른 내용';
+    const sections = loadQuarterlyDecisionSections({ vaultRoot: root, architectureText });
+    assert.match(sections, /문서 비중/);
+    assert.match(sections, /분기 점검/);
+    assert.match(sections, /절대 5%p 또는 상대 25%/);
+    assert.doesNotMatch(sections, /다른 운영/);
+    assert.match(buildQuarterlyReviewPrompt({ targetAllocation: { 채권: 20 }, recentProposalsText: '', macro: '', decisionSections: sections }), /위탁과 연금저축/);
+    rmSync(join(dir, '자산분배-운영-기준.md'));
+    assert.throws(() => loadQuarterlyDecisionSections({ vaultRoot: root, architectureText }), /0개/);
+    assert.throws(() => buildQuarterlyReviewPrompt({ targetAllocation: {}, recentProposalsText: '', macro: '' }), /본문이 없습니다/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('questionLikeDecisions·ensureNoQuestionDecisions: 질문형이면 한 번 재생성, 남으면 그 줄만 뺀다', async () => {

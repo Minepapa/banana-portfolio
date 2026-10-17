@@ -37,6 +37,7 @@ import { TARGET_ALLOCATION } from '../lib/rebalance-gap.mjs';
 import { getCachedMacroIndicators } from '../lib/macro-cache.mjs';
 import { assembleMacro } from '../tools/risk-facts.mjs';
 import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
+import { resolveDecision } from '../lib/decision-resolver.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
@@ -124,7 +125,33 @@ export function buildQuarterlyReviewFacts({ targetAllocation, recentProposalsCou
 // 사실만 쓰게 강제(재조회·추정 금지), 판단(비중 자체가 적절한지)만 시킨다.
 // ⚠️ 목표비중·제안건수는 이제 위 buildQuarterlyReviewFacts로 별도 불릿 처리돼 먼저
 // 나가므로(formatFactsMessage), LLM 출력은 숫자 재나열이 아니라 판단에 집중한다.
-export function buildQuarterlyReviewPrompt({ targetAllocation, recentProposalsText, macro }) {
+function requiredSection(body, heading, decisionKey) {
+  const marker = body.split('\n').find((line) => line.startsWith(`## ${heading}`));
+  const section = marker ? body.split(`${marker}\n`)[1]?.split(/^## /m)[0]?.trim() : null;
+  if (!section) throw new Error(`decisionKey '${decisionKey}'에 필수 절이 없습니다: ${heading}`);
+  return section;
+}
+
+export function loadQuarterlyDecisionSections({ architectureText, ...resolverOptions } = {}) {
+  const allocationKey = '자산배분-목표비중';
+  const operationKey = '자산분배-운영-기준';
+  const allocation = resolveDecision(allocationKey, resolverOptions).body;
+  const operation = resolveDecision(operationKey, resolverOptions).body;
+  const operationRules = requiredSection(operation, '결정', operationKey).split(/^3\. /m)[0].trim();
+  const architecture = architectureText ?? readFileSync(new URL('../../docs/ARCHITECTURE-V2.md', import.meta.url), 'utf8');
+  const bandRule = architecture.split('### 리밸런싱 규칙 — Swedroe 5/25 룰 (확정)\n')[1]
+    ?.split(/^### /m)[0]?.split('**실행 프로토콜')[0]?.trim();
+  if (!bandRule) throw new Error('저장소 설계 문서에 5/25 리밸런싱 규칙 절이 없습니다');
+  return [
+    `[${allocationKey} — 현재 목표비중]\n${requiredSection(allocation, '현재 목표비중', allocationKey)}`,
+    `[${allocationKey} — 적용 범위]\n${requiredSection(allocation, '적용 범위', allocationKey)}`,
+    `[${operationKey} — 점검 주기와 판단 역할]\n${operationRules}`,
+    `[저장소 설계 문서 — 5/25 밴드]\n${bandRule}`,
+  ].join('\n\n');
+}
+
+export function buildQuarterlyReviewPrompt({ targetAllocation, recentProposalsText, macro, decisionSections }) {
+  if (!decisionSections?.trim()) throw new Error('분기 점검 결정 문서 본문이 없습니다');
   const targetLines = Object.entries(targetAllocation).map(([k, v]) => `  ${k}: ${v}%`).join('\n');
   return `[분기별 목표비중 적정성 점검] 아래는 검증된 사실이다(재조회·추정 금지, 이 숫자만 사용).
 목표비중·최근 제안 건수는 텔레그램 메시지에 이미 불릿으로 따로 나간다 — 아래 출력에서
@@ -138,6 +165,9 @@ ${recentProposalsText}
 
 [거시지표]
 ${macro}
+
+[적용 중인 결정 문서 절 — 실행 시 decisionKey로 조회]
+${decisionSections}
 
 판단 요청:
 1. 위 목표비중이 지금도 적절해 보이는지 네 성격대로 판단해라 — 특정 자산군이
@@ -221,7 +251,8 @@ async function main() {
   });
   const macro = macroData ? assembleMacro(macroData) : '(거시지표 데이터 부족: 조회 실패)';
 
-  const prompt = buildQuarterlyReviewPrompt({ targetAllocation: TARGET_ALLOCATION, recentProposalsText, macro });
+  const decisionSections = loadQuarterlyDecisionSections();
+  const prompt = buildQuarterlyReviewPrompt({ targetAllocation: TARGET_ALLOCATION, recentProposalsText, macro, decisionSections });
   const facts = buildQuarterlyReviewFacts({ targetAllocation: TARGET_ALLOCATION, recentProposalsCount });
 
   if (DRY_RUN) {

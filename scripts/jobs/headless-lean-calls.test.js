@@ -8,7 +8,6 @@ const jobs = {
   'weekly-vault-health-check': ["''"],
   'telegram-session-handoff': ["''"],
   'morning-briefing': ["''"],
-  'weekly-report': ["'WebSearch'", "''"],
   'themis-risk-review': ["''"],
   'rebalance-proposal': ["''"],
   'daily-asset-allocation-check': ["''"],

@@ -73,6 +73,9 @@ test('lean 프리셋은 도구·MCP·권한·JSON 옵션을 CLI 인자로 고정
   assert.equal(value('--mcp-config'), '{"mcpServers":{}}');
   assert.equal(value('--output-format'), 'json');
   assert.equal(value('--max-turns'), '2');
+  assert.equal(value('--effort'), 'high');
+  const mediumArgs = buildArgs('P', 'sonnet', '', { lean: true, effort: 'medium' });
+  assert.equal(mediumArgs[mediumArgs.indexOf('--effort') + 1], 'medium');
   assert.ok(args.includes('--restricted'));
   assert.ok(args.includes('--strict-mcp-config'));
   assert.equal(buildArgs('P', 'sonnet', '', { lean: true })[10], '--tools');
@@ -82,7 +85,15 @@ test('lean 프리셋은 도구·MCP·권한·JSON 옵션을 CLI 인자로 고정
 test('JSON envelope의 result를 기존 텍스트 파서 입력으로 복원한다', () => {
   assert.equal(headlessResult(JSON.stringify({ result: '```json\n{"ok":true}\n```', usage: { input_tokens: 2 } })),
     '```json\n{"ok":true}\n```');
-  assert.throws(() => headlessResult('{"result":null}'), /JSON 결과 오류/);
+  assert.throws(() => headlessResult('{"result":null}'), /claude 빈 출력/);
+  assert.throws(() => headlessResult('null'), /claude 빈 출력/);
+  assert.throws(() => headlessResult(JSON.stringify({ result: '  \n' })), /claude 빈 출력/);
+});
+
+test('result 없는 JSON 오류는 subtype과 errors를 전달한다', () => {
+  const error = headlessJsonFailure(JSON.stringify({ is_error: true, subtype: 'error_max_turns', errors: ['WebSearch 초과'] }));
+  assert.equal(error.subtype, 'error_max_turns');
+  assert.match(error.message, /error_max_turns.*WebSearch 초과/);
 });
 
 test('lean 실행은 빈 임시 cwd를 쓰고 성공·오류 때 지우며 usage를 기록한다', async () => {

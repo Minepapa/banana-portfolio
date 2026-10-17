@@ -7,6 +7,7 @@ import {
   extractSummary, extractSummaryBullets, safeTrim, markdownBoldToHtml,
   biggestMacroMover, formatMacroMoverBullet, buildReportPrompt, buildObservationPrompt,
   selectReportModel,
+  generateReportMarkdown,
 } from './weekly-report.mjs';
 import * as weeklyReport from './weekly-report.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -16,6 +17,31 @@ import { resolveDecision } from '../lib/decision-resolver.mjs';
 test('주간 리포트 모델은 기본 Opus이며 --model 인자로 재정의할 수 있다', () => {
   assert.equal(selectReportModel([]), 'opus');
   assert.equal(selectReportModel(['--dry-run', '--model=sonnet']), 'sonnet');
+});
+
+test('WebSearch 턴 초과만 facts 전용 1회 재시도한다', async () => {
+  const calls = [];
+  const logs = [];
+  const invoke = async (prompt, _model, allowedTools, options) => {
+    calls.push({ prompt, allowedTools, options });
+    if (calls.length === 1) {
+      const error = new Error('턴 초과');
+      error.subtype = 'error_max_turns';
+      throw error;
+    }
+    return JSON.stringify({ result: '# facts 리포트' });
+  };
+  const result = await generateReportMarkdown('검증된 facts', 'opus', 'system', { invoke, log: message => logs.push(message) });
+  assert.deepEqual(result, { md: '# facts 리포트', retried: true });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].allowedTools, 'WebSearch');
+  assert.equal(calls[0].options.maxTurns, 12);
+  assert.equal(calls[1].allowedTools, '');
+  assert.equal(calls[1].options.tools, '');
+  assert.equal(calls[1].options.maxTurns, 1);
+  assert.match(calls[1].prompt, /도구를 사용하지 말고.*facts만/);
+  assert.match(logs[0], /재작성/);
+  await assert.rejects(generateReportMarkdown('facts', 'opus', 'system', { invoke: async () => { throw new Error('다른 오류'); } }), /다른 오류/);
 });
 
 test('주간 리포트 프롬프트는 결정 문서 본문만 주입하고 옛 프로필을 읽으라고 하지 않는다', () => {

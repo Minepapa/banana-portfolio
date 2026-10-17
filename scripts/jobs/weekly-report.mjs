@@ -346,6 +346,24 @@ ${signalsText}
 \`\`\``;
 }
 
+// WebSearch가 턴 상한에 걸릴 때만 facts 전용으로 한 번 재시도한다.
+export async function generateReportMarkdown(prompt, model, systemPrompt, {
+  invoke = runHeadlessClaude, log = console.log,
+} = {}) {
+  try {
+    return { md: headlessResult(await invoke(prompt, model, 'WebSearch', {
+      lean: true, appendSystemPrompt: systemPrompt, tools: 'WebSearch', maxTurns: 12,
+    })).trim(), retried: false };
+  } catch (error) {
+    if (error.subtype !== 'error_max_turns') throw error;
+    log('   ⚠️ WebSearch 턴 상한 도달 — 도구 없이 facts만으로 리포트 재작성');
+    const factsOnlyPrompt = `${prompt}\n\n[재시도] WebSearch가 턴 상한에 도달했다. 도구를 사용하지 말고 위에 주입된 facts만으로 리포트를 작성하라. 확인할 수 없는 일정·뉴스는 데이터 부족으로 적어라.`;
+    return { md: headlessResult(await invoke(factsOnlyPrompt, model, '', {
+      lean: true, appendSystemPrompt: systemPrompt, tools: '', maxTurns: 1,
+    })).trim(), retried: true };
+  }
+}
+
 // 관찰 JSON → Preferences/{YYYY}/*.md 신규 파일. 상충/promote면
 // 상태=승격후보, 아니면 관찰. 한 관찰당 파일 하나(다른 Vault 레코드와 동일 관례).
 // 반환값에 promoted(신규 승격후보 목록)를 같이 담는다(2026-09-20 오너 DevRequest —
@@ -505,10 +523,9 @@ async function main() {
   // ⑤ claude -p 서술 생성 (성향 정본은 본문 주입, WebSearch=정성 뉴스. Bash 제외 — 수치 재조회 차단)
   console.log(`\n⏳ 리포트 작성 중 (claude -p ${MODEL}, 수 분)...`);
   let md;
+  let reportRetried = false;
   try {
-    md = headlessResult(await runHeadlessClaude(prompt, MODEL, 'WebSearch', {
-      lean: true, appendSystemPrompt: PLUTUS_REPORT.systemPrompt, tools: 'WebSearch', maxTurns: 5,
-    })).trim();
+    ({ md, retried: reportRetried } = await generateReportMarkdown(prompt, MODEL, PLUTUS_REPORT.systemPrompt));
   } catch (e) {
     if (e.isLimit) { console.log(`   ⏳ 사용량 한도 → 이번 리포트 발행 보류. 한도 해제 후 재실행하세요.`); return; }
     throw e;
@@ -552,6 +569,7 @@ async function main() {
       + (numericLow.length > 20 ? `\n- 외 ${numericLow.length - 20}건` : '') + '\n';
     console.log(`   ℹ️ 확신 낮은 수치 ${numericLow.length}건 — 경고 없이 리포트 메모에만 기록`);
   }
+  if (reportRetried) md = `${md.trimEnd()}\n\n*WebSearch 턴 상한 도달로 도구 없이 facts만 사용해 한 번 재작성함.*`;
 
 
   // ⑥ Vault 저장 — frontmatter는 반드시 한 줄(위 extractSummary 주석 참고).
