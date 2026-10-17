@@ -217,6 +217,7 @@ export const EXPECTED_INTERVALS_MS = {
   'media-diarize': 26 * 60 * 60 * 1000, // 매일 03:05·04:05, 전사 잠금으로 한 회차를 건너뛸 여유(조용함 판정은 이 값의 2배 초과)
   'media-vision': 24 * 60 * 60 * 1000,
   'media-faces-nightly': 24 * 60 * 60 * 1000,
+  'media-video': 24 * 60 * 60 * 1000,
   'media-delete-report-weekly': 7 * 24 * 60 * 60 * 1000,
   'media-faces-hold-monthly': 35 * 24 * 60 * 60 * 1000,
   'media-memory-orb': 24 * 60 * 60 * 1000, // 02:20 시작, 최대 90분(03:50 전 종료)

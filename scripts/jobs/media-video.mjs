@@ -101,6 +101,7 @@ export function fingerprintFrames(manifest) {
 export async function runMediaVideo(options = {}) {
   const { root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PATHS.mediaRoot,
     paths = VIDEO_PATHS, limit = 30, ids = null, dryRun = false, faces = true, cues = true,
+    recheckGallery = true,
     framesFor = extractVideoFrames, faceWorker = runPythonFaces, cueWorker = computeCues,
     durationFor = probeVideo,
     output = console, now = Date.now, budgetMs = BUDGET_MS } = options;
@@ -121,7 +122,7 @@ export async function runMediaVideo(options = {}) {
       const mtimeMs = Math.round(source.mtimeMs);
       const match = previousMatches.get(record.id);
       return faces && (match.sourceSize !== size || match.sourceMtimeMs !== mtimeMs
-        || match.galleryHash !== galleryHash)
+        || recheckGallery && match.galleryHash !== galleryHash)
         || cues && (stages.cues.sourceSize !== size || stages.cues.sourceMtimeMs !== mtimeMs);
     };
     const targets = selectVideos(records, { limit, ids, pending });

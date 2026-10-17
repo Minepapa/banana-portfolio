@@ -76,11 +76,15 @@ test('완료된 앞 영상은 건너뛰어 다음 영상에 도달하고 단계�
   assert.match(shown.pop(), /dry-run c /);
   await dry({ faces: true, cues: false, ids: ['a'] });
   assert.match(shown.pop(), /dry-run a /);
+  writeFileSync(gallery, '{"updated":true}');
+  const nightly = await dry({ faces: true, cues: true, recheckGallery: false });
+  assert.equal(nightly.selected, 1);
+  assert.match(shown.pop(), /dry-run c /);
   writeFileSync(join(base, 'Archive', 'a.mov'), 'changed video');
   await dry({ faces: false, cues: true });
   assert.match(shown.pop(), /dry-run a /);
   writeFileSync(join(base, 'Archive', 'a.mov'), 'video');
-  writeFileSync(gallery, '{"updated":true}');
+  writeFileSync(gallery, '{"updatedAgain":true}');
   await dry({ faces: true, cues: false });
   assert.match(shown.pop(), /dry-run a /);
 });
