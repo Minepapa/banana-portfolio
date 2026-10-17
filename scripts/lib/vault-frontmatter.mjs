@@ -141,3 +141,13 @@ export function parseFrontmatter(content) {
   }
   return out;
 }
+
+// A flat frontmatter patch must survive the repository parser before any vault write.
+export function assertFrontmatterRoundTrip(content, expected) {
+  const actual = parseFrontmatter(content);
+  for (const [key, value] of Object.entries(expected)) {
+    if (JSON.stringify(actual[key]) !== JSON.stringify(value)) {
+      throw new Error(`머리말 왕복 검증 실패: ${key}`);
+    }
+  }
+}

@@ -22,7 +22,7 @@ export const HEADLESS_NOTE = `
 // bypassPermissions에서는 allowedTools가 제한 효과가 없을 수 있어, 읽기·실행을 확실히 막으려면 이걸 쓴다).
 export function buildArgs(prompt, model, allowedTools, {
   appendSystemPrompt, tools, outputFormat = 'text', permissionMode = 'bypassPermissions',
-  disallowedTools, addDir, restricted = false, strictMcpConfig = false, mcpConfig,
+  disallowedTools, addDir, restricted = false, strictMcpConfig = false, mcpConfig, maxTurns,
 } = {}) {
   const args = [
     '-p', prompt,
@@ -38,6 +38,7 @@ export function buildArgs(prompt, model, allowedTools, {
   if (restricted) args.push('--restricted');
   if (strictMcpConfig) args.push('--strict-mcp-config');
   if (mcpConfig) args.push('--mcp-config', mcpConfig);
+  if (maxTurns) args.push('--max-turns', String(maxTurns));
   return args;
 }
 

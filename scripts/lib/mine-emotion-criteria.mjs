@@ -3,6 +3,13 @@ import { resolveDecision } from './decision-resolver.mjs';
 export const MAX_EMOTIONS = 3;
 export const MIN_INTENSITY = 1;
 export const MAX_INTENSITY = 3;
+export const MAX_EVIDENCE_CHARS = 200;
+
+export function safeEvidence(value, field = 'emotionEvidence') {
+  if (typeof value !== 'string' || !value.trim() || value.length > MAX_EVIDENCE_CHARS ||
+    /[\r\n\u0000-\u001f]/.test(value)) throw new Error(`${field} 형식 오류`);
+  return value.trim();
+}
 
 function section(body, number) {
   const match = body.match(new RegExp(`^## ${number}\\. [^\\n]+\\n([\\s\\S]*?)(?=^## \\d+\\. |^## 변경 이력|$(?![\\s\\S]))`, 'm'));
@@ -102,7 +109,7 @@ export function validateEmotionResult(result, { recordDate, ownerEmotions = [], 
   }
   if (emotions.length ? !Number.isInteger(result.emotionIntensity) || result.emotionIntensity < MIN_INTENSITY || result.emotionIntensity > MAX_INTENSITY
     : result.emotionIntensity != null) throw new Error('emotionIntensity는 감정이 있으면 1~3, 없으면 비워야 합니다');
-  if (typeof result.emotionEvidence !== 'string' || !result.emotionEvidence.trim()) throw new Error('emotionEvidence가 필요합니다');
+  const emotionEvidence = safeEvidence(result.emotionEvidence);
   if (ownerEmotions.some((emotion) => !allowed.has(emotion))) {
     throw new Error('오너 메모에 경보 상태 또는 어휘 밖 감정이 있습니다');
   }
@@ -112,6 +119,6 @@ export function validateEmotionResult(result, { recordDate, ownerEmotions = [], 
     throw new Error('secondFilmSignal은 경보 전 2편 감정 하나 또는 비움이어야 합니다');
   }
   return { emotions, primaryEmotion: result.primaryEmotion || null,
-    emotionIntensity: result.emotionIntensity ?? null, emotionEvidence: result.emotionEvidence.trim(),
+    emotionIntensity: result.emotionIntensity ?? null, emotionEvidence,
     secondFilmSignal: result.secondFilmSignal || null };
 }

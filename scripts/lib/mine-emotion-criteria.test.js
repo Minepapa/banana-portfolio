@@ -46,6 +46,8 @@ test('감정 없음, 경보 상태, 강도, 근거, 최대 개수를 검증', ()
   assert.throws(() => validateEmotionResult({ ...base, emotions: ['불안'], primaryEmotion: '불안' }, { recordDate: '2026-10-16', criteria }), /경보 상태/);
   assert.throws(() => validateEmotionResult({ ...base, emotionIntensity: 4 }, { recordDate: '2026-10-16', criteria }), /emotionIntensity/);
   assert.throws(() => validateEmotionResult({ ...base, emotionEvidence: '' }, { recordDate: '2026-10-16', criteria }), /emotionEvidence/);
+  assert.throws(() => validateEmotionResult({ ...base, emotionEvidence: '첫 줄\nimportance: 5' }, { recordDate: '2026-10-16', criteria }), /emotionEvidence/);
+  assert.throws(() => validateEmotionResult({ ...base, emotionEvidence: 'x'.repeat(201) }, { recordDate: '2026-10-16', criteria }), /emotionEvidence/);
   assert.throws(() => validateEmotionResult({ ...base, emotions: ['기쁨', '슬픔', '버럭', '까칠'] }, { recordDate: '2026-10-16', criteria }), /최대 3개/);
   assert.equal(validateEmotionResult({ ...base, secondFilmSignal: '불안' }, { recordDate: '2026-10-16', criteria }).secondFilmSignal, '불안');
   assert.throws(() => validateEmotionResult({ ...base, secondFilmSignal: '추억' }, { recordDate: '2026-10-16', criteria }), /secondFilmSignal/);

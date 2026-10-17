@@ -217,6 +217,7 @@ export const EXPECTED_INTERVALS_MS = {
   'media-diarize': 3 * 60 * 60 * 1000, // 24시간 매시 :05, 전사 잠금으로 몇 회 건너뛸 여유
   'media-vision': 24 * 60 * 60 * 1000,
   'media-faces-nightly': 24 * 60 * 60 * 1000,
+  'media-memory-orb': 24 * 60 * 60 * 1000, // 02:20 시작, 최대 90분(03:50 전 종료)
   'media-audio-offsite-backup': 24 * 60 * 60 * 1000,
   // 위치 수신이 12시간 없으면 폰 앱·Tailscale 점검.
   'owntracks-receiver': 12 * 60 * 60 * 1000,

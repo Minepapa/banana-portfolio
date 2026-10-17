@@ -484,3 +484,13 @@ test('EXPECTED_INTERVALS_MS: run.sh가 디스패치하는 잡은 전부 등록�
 test('media-diarize는 전사 잠금으로 건너뛴 회차를 감안해 3시간을 기대주기로 둔다', () => {
   assert.equal(EXPECTED_INTERVALS_MS['media-diarize'], 3 * 60 * 60 * 1000);
 });
+
+test('media-memory-orb plist·디스패치·감시 주기는 매일 02:20으로 일치한다', () => {
+  const plist = readFileSync(new URL('../launchd/com.banana2.media-memory-orb.plist', import.meta.url), 'utf8');
+  const runSh = readFileSync(new URL('../launchd/run.sh', import.meta.url), 'utf8');
+  assert.match(plist, /<string>com\.banana2\.media-memory-orb<\/string>/);
+  assert.match(plist, /<key>Hour<\/key><integer>2<\/integer><key>Minute<\/key><integer>20<\/integer>/);
+  assert.match(plist, /<string>media-memory-orb<\/string>/);
+  assert.match(runSh, /media-memory-orb\) CMD=\(scripts\/jobs\/media-memory-orb\.mjs\)/);
+  assert.equal(EXPECTED_INTERVALS_MS['media-memory-orb'], 24 * 60 * 60 * 1000);
+});
