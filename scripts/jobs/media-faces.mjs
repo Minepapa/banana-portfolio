@@ -777,7 +777,7 @@ export async function confirmFamilyFaces(input, { root = VAULT_PATHS.root,
 }
 
 export function parseHoldAnswers(text, sample) {
-  const match = text.trim().match(/^(?:미네|보류함)\s*:\s*([\d,\s]*)$/);
+  const match = text.trim().match(/^(?:미네|보류함|인물)\s*:\s*([\d,\s]*)$/);
   if (!match) throw new Error('보류함 결과 형식 오류: 보류함: 1,2');
   const byNumber = new Map(sample.map((item) => [item.number, item]));
   const numbers = match[1].trim() ? match[1].split(',').map((part) => Number(part.trim())) : [];
@@ -815,6 +815,34 @@ export function renderHoldSheet(sample, sampleHash = holdSampleHash(sample)) {
   return `<!doctype html><html lang="ko"><meta charset="utf-8"><title>얼굴 보류함</title><style>body{font-family:system-ui;margin:2rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,130px);gap:.5rem}.card{cursor:pointer;background:white;border:2px solid #888}.card[aria-pressed=true]{border-color:#27824c;background:#e9f5ed}.card img{width:120px;height:120px;object-fit:contain}.card span{display:block}textarea{display:block;width:100%}</style><h1>얼굴 보류함</h1><p>기본 답은 아님입니다. 카드에 적힌 인물의 얼굴이면 누르세요. 영상 답변은 별도 검토 파일에 저장됩니다.</p><button id="copy">결과 복사</button><button id="save">파일로 저장</button><textarea id="result" readonly></textarea><div class="grid">${cards}</div><script>const cards=[...document.querySelectorAll('.card')];for(const card of cards)card.onclick=()=>{const yes=card.getAttribute('aria-pressed')!=='true';card.setAttribute('aria-pressed',String(yes));card.querySelector('span').textContent=yes?card.dataset.person:'아님'};function result(){return '해시: ${sampleHash}\\n${answerLabel}: '+cards.filter(card=>card.getAttribute('aria-pressed')==='true').map(card=>card.dataset.number).join(',')}document.getElementById('copy').onclick=async()=>{const value=result();document.getElementById('result').value=value;try{await navigator.clipboard.writeText(value)}catch{document.getElementById('result').select()}};document.getElementById('save').onclick=()=>{const url=URL.createObjectURL(new Blob([result()],{type:'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=location.pathname.split('/').pop().replace('.html','.txt');link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};</script></html>\n`;
 }
 
+const HOLD_THUMBNAIL_SCRIPT = fileURLToPath(new URL('../tools/faces/hold_thumbnails.py', import.meta.url));
+
+export async function runHoldThumbnails(paths, { python = MEDIA_FACES_PATHS.python,
+  spawnProcess = spawn } = {}) {
+  if (!paths.length) return [];
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawnProcess(python, [HOLD_THUMBNAIL_SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    child.on('error', rejectPromise);
+    child.on('close', (code) => {
+      if (code !== 0) return rejectPromise(new Error(`보류함 축소 이미지 실패: ${stderr.slice(0, 500)}`));
+      try { resolvePromise(JSON.parse(stdout)); } catch (error) { rejectPromise(error); }
+    });
+    child.stdin.end(`${JSON.stringify(paths)}\n`);
+  });
+}
+
+export function renderHoldAllSheet(months) {
+  const sections = months.map(({ month, sampleHash, photos }) => {
+    const cards = photos.map(({ number, image }) => `<button class="card" type="button" data-number="${number}" aria-pressed="false"><img src="data:image/jpeg;base64,${image}" alt="보류 얼굴 ${number}"><strong>${number}</strong><span>아님</span></button>`).join('');
+    return `<section class="month" data-hash="${sampleHash}"><h2>${month} · ${photos.length}장</h2><div class="grid">${cards}</div></section>`;
+  }).join('');
+  return `<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>얼굴 보류함 통합 시트</title><style>body{font-family:system-ui;margin:1rem;max-width:760px}header{position:sticky;top:0;background:white;padding:.5rem 0;z-index:1}button{font:inherit}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(115px,1fr));gap:.5rem}.card{cursor:pointer;background:white;border:2px solid #888;border-radius:8px;padding:.3rem}.card[aria-pressed=true]{border-color:#27824c;background:#e9f5ed}.card img{display:block;width:100%;height:130px;object-fit:contain}.card span{display:block}textarea{box-sizing:border-box;width:100%;height:7rem}.month{margin:1.5rem 0}</style><header><h1>얼굴 보류함</h1><p>기본 답은 아님입니다. 해당 인물이 맞으면 카드를 누르세요.</p><p id="progress" aria-live="polite"></p><button id="copy">결과 복사</button> <button id="save">파일로 저장</button><textarea id="result" readonly aria-label="답변 결과"></textarea></header>${sections}<script>const months=[...document.querySelectorAll('.month')];const cards=[...document.querySelectorAll('.card')];function result(){return months.map(month=>'해시: '+month.dataset.hash+'\\n인물: '+[...month.querySelectorAll('.card[aria-pressed=true]')].map(card=>card.dataset.number).join(',')).join('\\n\\n')}function refresh(){document.getElementById('progress').textContent='확인 '+cards.filter(card=>card.dataset.reviewed==='true').length+' / '+cards.length+'장 · 맞음 '+cards.filter(card=>card.getAttribute('aria-pressed')==='true').length+'장';document.getElementById('result').value=result()}for(const card of cards)card.onclick=()=>{const yes=card.getAttribute('aria-pressed')!=='true';card.dataset.reviewed='true';card.setAttribute('aria-pressed',String(yes));card.querySelector('span').textContent=yes?'그 인물 맞음':'아님';refresh()};document.getElementById('copy').onclick=async()=>{const value=result();try{await navigator.clipboard.writeText(value)}catch{document.getElementById('result').select()}};document.getElementById('save').onclick=()=>{const url=URL.createObjectURL(new Blob([result()],{type:'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='hold-all.txt';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};refresh();</script></html>\n`;
+}
+
 export function renderPersonGoldSheet(person, sample) {
   const cards = sample.map((item) => `<button class="card" data-number="${item.number}" data-predicted="${item.predicted}" aria-pressed="false"><img src="../crops/gold-${htmlText(person)}-${item.number}.jpg" alt="${htmlText(person)} 표본 ${item.number}"><strong>${item.number}</strong><span>${item.predicted === 'mine' ? person : '아님'}</span></button>`).join('');
   return `<!doctype html><html lang="ko"><meta charset="utf-8"><title>${htmlText(person)} 얼굴 표본</title><style>body{font-family:system-ui;margin:2rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,130px);gap:.5rem}.card{cursor:pointer;background:white;border:2px solid #888}.card[aria-pressed=true]{border-color:#d22;background:#fff3f3}.card img{width:120px;height:120px;object-fit:contain}.card span{display:block}textarea{display:block;width:100%}</style><h1>${htmlText(person)} 얼굴 표본</h1><p>틀린 판정만 누르세요.</p><button id="copy">결과 복사</button><textarea id="result" readonly></textarea><div class="grid">${cards}</div><script>const cards=[...document.querySelectorAll('.card')];for(const card of cards)card.onclick=()=>{const yes=card.getAttribute('aria-pressed')!=='true';card.setAttribute('aria-pressed',String(yes))};document.getElementById('copy').onclick=async()=>{const wrong=cards.filter(card=>card.dataset.predicted==='mine'&&card.getAttribute('aria-pressed')==='true').map(card=>card.dataset.number);const missed=cards.filter(card=>card.dataset.predicted!=='mine'&&card.getAttribute('aria-pressed')==='true').map(card=>card.dataset.number);const value='${htmlText(person)}가 아닌 번호: '+wrong.join(',')+'\\n${htmlText(person)}인데 아니라고 한 번호: '+missed.join(',');document.getElementById('result').value=value;try{await navigator.clipboard.writeText(value)}catch{document.getElementById('result').select()}};</script></html>\n`;
@@ -823,7 +851,8 @@ export function renderPersonGoldSheet(person, sample) {
 export async function holdSheetMediaFaces({ root = VAULT_PATHS.root, out = MEDIA_FACES_PATHS.root,
   mediaRoot = MEDIA_FACES_PATHS.mediaRoot, indexPath = MEDIA_FACES_PATHS.index,
   matchesPath = join(out, 'matches.jsonl'), videoMatchesPath = join(out, 'video-matches.jsonl'),
-  frameRoot = VIDEO_FRAME_ROOT, cropper = runCropFaces, returnDetails = false,
+  frameRoot = VIDEO_FRAME_ROOT, cropper = runCropFaces, thumbnailer = runHoldThumbnails,
+  returnDetails = false,
   output = console } = {}) {
   mkdirSync(out, { recursive: true });
   return withLock(join(out, '.media-faces'), async () => {
@@ -918,6 +947,22 @@ export async function holdSheetMediaFaces({ root = VAULT_PATHS.root, out = MEDIA
     writeAtomic(jsonPath, `${JSON.stringify({ sample, sampleHash }, null, 2)}\n`);
     writeAtomic(htmlPath, renderHoldSheet(sample, sampleHash));
   }
+  // Reuse persisted monthly samples: their numbering and hashes survive an unanswered rerun.
+  const holdMonths = [];
+  for (const month of [...byMonth.keys()].sort()) {
+    const { sample, sampleHash } = JSON.parse(readFileSync(join(sheetsPath, `hold-${month}.json`), 'utf8'));
+    const photos = sample.filter((item) => item.kind !== 'video');
+    if (!photos.length) continue;
+    const paths = photos.map((item) => join(cropsPath, `${item.id}_${item.i}.jpg`));
+    const images = await thumbnailer(paths);
+    if (images.length !== photos.length || images.some((image) => !/^[A-Za-z0-9+/]+={0,2}$/.test(image))) {
+      throw new Error(`보류함 축소 이미지 누락: ${month}`);
+    }
+    holdMonths.push({ month, sampleHash,
+      photos: photos.map((item, index) => ({ number: item.number, image: images[index] })) });
+  }
+  writeAtomic(join(sheetsPath, 'hold-all.json'), `${JSON.stringify({ months: holdMonths.map(({ month, sampleHash }) => ({ month, sampleHash })) }, null, 2)}\n`);
+  writeAtomic(join(sheetsPath, 'hold-all.html'), renderHoldAllSheet(holdMonths));
   output.log(`[media-faces] 보류함 ${byMonth.size}개월`);
   return returnDetails ? { count: [...byMonth.values()].reduce((sum, entries) => sum + entries.length, 0),
     sheets: [...byMonth.keys()].map((month) => join(sheetsPath, `hold-${month}.html`)), missingFrames } : byMonth.size;
@@ -929,6 +974,9 @@ export async function confirmHoldFaces(input, { root = VAULT_PATHS.root, out = M
   galleryPath = join(root, VAULT_REL.mediaFaceGallery), allNo = false, output = console } = {}) {
   const execute = () => {
   const expanded = input.startsWith('~/') ? join(homedir(), input.slice(2)) : input;
+  if (expanded.endsWith('hold-all.txt')) {
+    return confirmHoldAllFaces(expanded, { root, out, peoplePath, galleryPath, allNo, output });
+  }
   const basename = expanded.match(/hold-(\d{4}-\d{2})(?:\.txt)?$/)?.[1];
   if (!basename) throw new Error('보류함 파일명은 hold-YYYY-MM.txt 형식이어야 합니다');
   const sheet = JSON.parse(readFileSync(join(out, 'sheets', `hold-${basename}.json`), 'utf8'));
@@ -992,6 +1040,78 @@ export async function confirmHoldFaces(input, { root = VAULT_PATHS.root, out = M
   };
   mkdirSync(out, { recursive: true });
   return withLock(join(out, '.media-faces'), execute, { retries: 0 });
+}
+
+function confirmHoldAllFaces(input, { root, out, peoplePath, galleryPath, allNo, output }) {
+  const sheetsPath = join(out, 'sheets');
+  const manifest = JSON.parse(readFileSync(join(sheetsPath, 'hold-all.json'), 'utf8'));
+  const blocks = readFileSync(input, 'utf8').trim().split(/\r?\n\s*\r?\n/);
+  if (!manifest.months?.length || blocks.length !== manifest.months.length) {
+    throw new Error('통합 보류함 답변 블록 수 불일치');
+  }
+  const answers = [];
+  const seen = new Set();
+  // Validate every block before changing people, gallery, or answered markers.
+  for (let index = 0; index < manifest.months.length; index++) {
+    const { month, sampleHash } = manifest.months[index];
+    const match = blocks[index].match(/^해시: ([a-f0-9]{64})\r?\n인물:[ \t]*([\d,\s]*)$/);
+    if (!match || seen.has(month) || !/^\d{4}-\d{2}$/.test(month)) {
+      throw new Error('통합 보류함 답변 형식 오류');
+    }
+    seen.add(month);
+    const sheet = JSON.parse(readFileSync(join(sheetsPath, `hold-${month}.json`), 'utf8'));
+    if (sampleHash !== sheet.sampleHash || sheet.sampleHash !== holdSampleHash(sheet.sample)
+      || match[1] !== sampleHash) {
+      throw new Error('보류함 표본 해시 불일치: 최신 시트에서 답을 다시 복사하세요');
+    }
+    const photos = sheet.sample.filter((item) => item.kind !== 'video');
+    if (!photos.length) throw new Error('통합 보류함 사진 표본 누락');
+    const yes = new Set(parseHoldAnswers(`인물: ${match[2]}`, photos));
+    if (!yes.size && !allNo) {
+      output.log('[media-faces] 인물 선택이 0개인 달이 있습니다. 모두 아님을 적용하려면 --hold-all-no를 함께 지정하세요.');
+      return null;
+    }
+    answers.push({ month, sampleHash, photos, yes });
+  }
+  const current = existsSync(peoplePath) ? JSON.parse(readFileSync(peoplePath, 'utf8')) : {};
+  const gallery = readGallery(galleryPath);
+  const confirmations = { ...(current.confirmations ?? {}) };
+  for (const { photos, yes } of answers) {
+    for (const item of photos) {
+      confirmations[item.id] = { ...(confirmations[item.id] ?? {}), 미네: yes.has(item.number) };
+    }
+  }
+  const photos = photoPeopleWithGallery(jsonLines(join(out, 'matches.jsonl')), gallery, confirmations);
+  const index = { version: 1, updatedAt: new Date().toISOString(),
+    thresholds: { label: PHOTO_HIGH, hold: PHOTO_HOLD, byPerson: PERSON_THRESHOLDS }, photos, confirmations };
+  let updatedGallery = null;
+  const selectedPhotos = answers.flatMap(({ photos: items, yes }) =>
+    items.filter((item) => yes.has(item.number)));
+  if (gallery?.bands && selectedPhotos.length) {
+    const source = new Map(mediaRows(root).map((row) => [row.id, row]));
+    const bands = { ...gallery.bands };
+    for (const item of selectedPhotos) {
+      const media = source.get(item.id);
+      const band = ageBand(media?.capturedAt, media?.capturedConfidence);
+      if (!band || !bands[band]) continue;
+      const state = bands[band];
+      const member = { id: item.id, i: item.i };
+      const holdCandidates = state.holdCandidates ?? [];
+      const present = (items) => items.some((entry) => entry.id === item.id && entry.i === item.i);
+      bands[band] = { ...state,
+        holdCandidates: present(holdCandidates) ? holdCandidates : [...holdCandidates, member],
+        members: state.confirmed && !present(state.members) ? [...state.members, member] : state.members };
+    }
+    updatedGallery = { ...gallery, bands, updatedAt: index.updatedAt };
+  }
+  writeAtomic(peoplePath, `${JSON.stringify(index, null, 2)}\n`);
+  if (updatedGallery) writeAtomic(galleryPath, `${JSON.stringify(updatedGallery, null, 2)}\n`);
+  for (const { month, sampleHash } of answers) {
+    writeAtomic(join(sheetsPath, `hold-${month}.answered.json`),
+      `${JSON.stringify({ sampleHash, answeredAt: index.updatedAt })}\n`);
+  }
+  output.log(`[media-faces] 통합 보류함 확인 ${answers.reduce((sum, answer) => sum + answer.photos.length, 0)}장`);
+  return index;
 }
 
 function percentage(numerator, denominator) {

@@ -121,7 +121,8 @@ test('보류 콜라주는 갤러리에서 제외한 얼굴 대신 살아남은 �
   put(join(out, 'faces-index.jsonl'), `${JSON.stringify({ id: 'collage', faces: [
     { i: 0, bbox: [0, 0, 1, 1] }, { i: 1, bbox: [0, 0, 1, 1] }] })}\n`);
   await holdSheetMediaFaces({ root, out, indexPath: join(out, 'faces-index.jsonl'),
-    cropper: async (images) => images.map((image) => image.out), output: { log() {} } });
+    cropper: async (images) => images.map((image) => image.out),
+    thumbnailer: async (paths) => paths.map(() => 'YQ=='), output: { log() {} } });
   const sheet = JSON.parse(readFileSync(join(out, 'sheets', 'hold-2020-01.json'), 'utf8'));
   assert.deepEqual(sheet.sample.map((item) => item.i), [1]);
 });
