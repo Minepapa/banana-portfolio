@@ -598,6 +598,24 @@ test('dry-run은 전사·상태·노트·잠금 파일을 쓰지 않고 예상 �
   assert.ok(logs.some((line) => line.includes('upcoming')));
 });
 
+test('주제를 붙여 개명한 통화 노트는 기존 ID와 같은 날의 새 통화에도 재사용한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상A', { phoneContacts: ['가상A'] });
+  f.put(1, 'Calls', '통화 가상A_300101_090000.m4a');
+  await runMediaTranscribe(f.options);
+  const folder = join(f.root, VAULT_REL.mediaConversations, '2030');
+  const oldName = '2030-01-01 가상A 통화.md';
+  const newName = '2030-01-01 가상A 통화 피아노 연습.md';
+  renameSync(join(folder, oldName), join(folder, newName));
+  f.put(2, 'Calls', '통화 가상A_300101_100000.m4a', '2030-01-01T10:00:00+09:00');
+  const dry = await runMediaTranscribe({ ...f.options, dryRun: true });
+  assert.equal(dry.upcoming[0].notePath, `${VAULT_REL.mediaConversations}/2030/${newName}`);
+  await runMediaTranscribe(f.options);
+  assert.equal(existsSync(join(folder, oldName)), false);
+  assert.match(f.note(newName), /# 2030-01-01 가상A 통화 피아노 연습/);
+  assert.match(f.note(newName), new RegExp(ID(2)));
+});
+
 test('날짜로 시작하는 녹음 이름은 파일명 전체와 녹음 접미를 쓴다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
   f.put(1, 'Recordings', '2025-09-20 아이 노래 바다.m4a');
@@ -910,6 +928,22 @@ test('전사 모델 파일명이 바뀌면 다시 전사하고 같으면 대기�
   const sameName = await runMediaTranscribe({ ...f.options, model: sameFilename, dryRun: true });
   assert.equal(sameName.remaining, 0);
   assert.equal(readFileSync(f.calls, 'utf8').trim().split('\n').length, 2);
+});
+
+test('제목 끝이 녹음인 통화 노트를 기존 경로로 재사용한다', async (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  f.person('가상별', { phoneContacts: ['가상연락처'] });
+  f.put(1, 'Calls', '통화 가상연락처_300101_090000.m4a');
+  await runMediaTranscribe(f.options);
+  const original = join(f.root, VAULT_REL.mediaConversations, '2030', '2030-01-01 가상별 통화.md');
+  const renamed = join(f.root, VAULT_REL.mediaConversations, '2030', '2030-01-01 가상별 통화 가족 녹음.md');
+  renameSync(original, renamed);
+  f.put(2, 'Calls', '통화 가상연락처_300101_100000.m4a');
+  const result = await runMediaTranscribe(f.options);
+  assert.equal(result.updated, 1);
+  assert.equal(existsSync(original), false);
+  assert.equal(existsSync(renamed), true);
+  assert.match(readFileSync(renamed, 'utf8'), new RegExp(ID(2)));
 });
 test('색인 날짜 의심 변경은 기존 완성 노트를 재렌더하고 오너 확정 때 표시를 뺀다', async (t) => {
   const f = fixture(); t.after(f.cleanup);
