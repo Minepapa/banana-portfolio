@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL, categoryLink } from '../lib/vault-paths.mjs';
-import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { assertFrontmatterRoundTrip, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
@@ -317,6 +317,7 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
         if (latest !== item.content) throw new Error('판단 중 노트가 바뀜');
         const next = replaceEmotionFields(latest, proposed, today);
         if (next === latest) return 'unchanged';
+        assertFrontmatterRoundTrip(next, Object.fromEntries(EMOTION_KEYS.map((key) => [key, proposed[key] ?? null])));
         const problems = checkNote(item.rel, next, activeRules);
         if (problems.length) throw new Error(`쓰기 관문: ${problems.join('; ')}`);
         write(absolute, next);
@@ -425,6 +426,7 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
           if (latest !== item.content) return 'changed';
           const next = applyFields(latest, fields, age, today);
           if (!next) return 'unchanged';
+          assertFrontmatterRoundTrip(next, { ...fields, mineAge: age });
           const problems = checkNote(item.rel, next, activeRules);
           if (problems.length) throw new Error(`쓰기 관문: ${problems.join('; ')}`);
           write(absolute, next);

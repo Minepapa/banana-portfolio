@@ -27,6 +27,12 @@ test('buildArgs: tools 옵션은 --tools로 넘기고(빈 문자열 = 도구 전
   assert.ok(!buildArgs('p', 'sonnet', 'Read').includes('--tools'));
 });
 
+test('buildArgs: 제한된 읽기와 턴 상한을 CLI 인자로 전달한다', () => {
+  const args = buildArgs('P', 'sonnet', 'Read(//tmp/copies/**)', { maxTurns: 2 });
+  assert.deepEqual(args.slice(2, 6), ['--permission-mode', 'bypassPermissions', '--allowedTools', 'Read(//tmp/copies/**)']);
+  assert.deepEqual(args.slice(-2), ['--max-turns', '2']);
+});
+
 test('JSON 성공 종료에 담긴 quota 오류도 한도 오류로 분류한다', () => {
   const usage = { input_tokens: 12, cache_creation_input_tokens: 3, cache_read_input_tokens: 4, output_tokens: 5 };
   const error = headlessJsonFailure(JSON.stringify({ is_error: true, result: 'hit your session limit; resets 10:50am',

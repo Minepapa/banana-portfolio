@@ -20,6 +20,7 @@ export const JOB_LABELS = {
   'media-faces-nightly': '새 사진 로컬 얼굴 판정 → 미네·휘영·나 이름표·순간 노트 반영(매일 06:30)',
   'media-delete-report-weekly': '미디어 삭제 후보 측정·관찰 리포트(매주 일요일 04:15, 원본 처리 없음)',
   'media-faces-hold-monthly': '미네 얼굴 보류 사진·영상 클릭 시트(매월 1일 09:20, 보류 있을 때만)',
+  'media-memory-orb': '미네 사진 기억 구슬 후보 50개 감정·중요도 제안(매일 02:20, 90분 상한, 발송 없음)',
   'mine-athena-fields': '미네 노트 감정·중요도 필드 주간 묶음(일 06:30, 발송 없음)',
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
   'vault-offsite-backup': '매일 00:20 Vault 암호화 외부 백업',

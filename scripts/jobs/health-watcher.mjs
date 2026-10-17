@@ -219,6 +219,7 @@ export const EXPECTED_INTERVALS_MS = {
   'media-faces-nightly': 24 * 60 * 60 * 1000,
   'media-delete-report-weekly': 7 * 24 * 60 * 60 * 1000,
   'media-faces-hold-monthly': 35 * 24 * 60 * 60 * 1000,
+  'media-memory-orb': 24 * 60 * 60 * 1000, // 02:20 시작, 최대 90분(03:50 전 종료)
   'media-audio-offsite-backup': 24 * 60 * 60 * 1000,
   // 위치 수신이 12시간 없으면 폰 앱·Tailscale 점검.
   'owntracks-receiver': 12 * 60 * 60 * 1000,

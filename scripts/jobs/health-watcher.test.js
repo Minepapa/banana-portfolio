@@ -485,3 +485,13 @@ test('미디어 잡은 매일 실행하고 화자 분리는 전사 잠금으로 
   assert.equal(EXPECTED_INTERVALS_MS['media-transcribe'], 24 * 60 * 60 * 1000);
   assert.equal(EXPECTED_INTERVALS_MS['media-diarize'], 26 * 60 * 60 * 1000);
 });
+
+test('media-memory-orb plist·디스패치·감시 주기는 매일 02:20으로 일치한다', () => {
+  const plist = readFileSync(new URL('../launchd/com.banana2.media-memory-orb.plist', import.meta.url), 'utf8');
+  const runSh = readFileSync(new URL('../launchd/run.sh', import.meta.url), 'utf8');
+  assert.match(plist, /<string>com\.banana2\.media-memory-orb<\/string>/);
+  assert.match(plist, /<key>Hour<\/key><integer>2<\/integer><key>Minute<\/key><integer>20<\/integer>/);
+  assert.match(plist, /<string>media-memory-orb<\/string>/);
+  assert.match(runSh, /media-memory-orb\) CMD=\(scripts\/jobs\/media-memory-orb\.mjs\)/);
+  assert.equal(EXPECTED_INTERVALS_MS['media-memory-orb'], 24 * 60 * 60 * 1000);
+});
