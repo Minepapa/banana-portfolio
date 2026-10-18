@@ -10,11 +10,11 @@
     <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>daily-note</string>
   </array>
-  <!-- 데일리 노트(D85, 5단계 1번) — 23:30 초안(밤 백업 23:50 전), 다음날 05:00 확정. 실행 시각으로 모드를 정한다. -->
+  <!-- 데일리 노트(D85, 5단계 1번) — 23:30 초안(밤 백업 23:50 전), 다음날 05:30 확정(05:00 인박스 정리 뒤 — 인박스가 넣은 기록까지 요약에 포함). 실행 시각으로 모드를 정한다. -->
   <key>StartCalendarInterval</key>
   <array>
     <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>30</integer></dict>
-    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>30</integer></dict>
   </array>
   <key>RunAtLoad</key>
   <false/>

@@ -17,11 +17,11 @@ test('영상 밤 잡의 plist·디스패치·감시 주기가 일치한다', () 
   const runner = readFileSync(join(root, 'scripts/launchd/run.sh'), 'utf8');
   assert.match(plist, /<string>com\.banana2\.media-video<\/string>/);
   assert.match(plist, /<string>media-video<\/string>/);
-  assert.match(plist, /<key>Hour<\/key><integer>7<\/integer><key>Minute<\/key><integer>10<\/integer>/);
+  assert.match(plist, /<key>Hour<\/key><integer>4<\/integer><key>Minute<\/key><integer>0<\/integer>/);
   assert.match(runner, /media-video\) CMD=\(scripts\/jobs\/media-video-nightly\.mjs\)/);
   assert.match(runner, /usage: run\.sh \{[^\n]*media-video/);
   assert.equal(EXPECTED_INTERVALS_MS['media-video'], 24 * 60 * 60 * 1000);
-  assert.match(JOB_LABELS['media-video'], /07:10/);
+  assert.match(JOB_LABELS['media-video'], /04:00/);
 });
 
 test('영상 제한·시간 예산을 전달하고 분석 뒤에만 순간 이름표를 갱신한다', async () => {
@@ -107,7 +107,7 @@ test('분석·이름표·하이라이트·전사 순서와 전사 후 증분 하
   const calls = [];
   const freshId = '1234567890abcdef';
   const result = await runVideoNightly({ dryRun: true,
-    now: () => Date.parse('2026-10-18T07:10:00+09:00'),
+    now: () => Date.parse('2026-10-18T04:00:00+09:00'),
     video: async () => { calls.push('analysis'); return { selected: 1, processed: 1, failed: 0,
       results: [{ id: freshId, cues: { ok: true }, faces: { ok: true } }] }; },
     refresh: async () => { calls.push('labels'); return { changed: 1, failed: 0 }; },
@@ -122,7 +122,7 @@ test('분석·이름표·하이라이트·전사 순서와 전사 후 증분 하
       assert.deepEqual(options.priorityIds, [freshId]);
       assert.equal(options.newestFirst, true);
       assert.equal(options.maxMinutes, VIDEO_NIGHTLY_TRANSCRIPT_BUDGET_MINUTES);
-      assert.equal(options.stopAtMs, videoMorningDeadline(Date.parse('2026-10-18T07:10:00+09:00')));
+      assert.equal(options.stopAtMs, videoMorningDeadline(Date.parse('2026-10-18T04:00:00+09:00')));
       return { results: [{ id: freshId }], processed: 1, failed: 0 }; },
     output: { log() {} } });
   assert.deepEqual(calls, ['analysis', 'labels', `highlights:${freshId}`,
@@ -130,9 +130,9 @@ test('분석·이름표·하이라이트·전사 순서와 전사 후 증분 하
   assert.equal(result.transcriptHighlights.processed, 1);
 });
 
-test('08:30 상한은 한국 시간 기준이며 다음 날 dry-run은 다음 회차를 본다', async () => {
-  assert.equal(videoMorningDeadline(Date.parse('2026-10-18T07:10:00+09:00')),
-    Date.parse('2026-10-18T08:30:00+09:00'));
+test('04:55 상한은 한국 시간 기준이며 다음 날 dry-run은 다음 회차를 본다', async () => {
+  assert.equal(videoMorningDeadline(Date.parse('2026-10-18T04:00:00+09:00')),
+    Date.parse('2026-10-18T04:55:00+09:00'));
   let stopAtMs;
   await runVideoNightly({ dryRun: true,
     now: () => Date.parse('2026-10-18T13:30:00+09:00'),
@@ -140,7 +140,7 @@ test('08:30 상한은 한국 시간 기준이며 다음 날 dry-run은 다음 �
     highlights: async () => ({ unchanged: 0, failed: 0 }),
     transcribe: async (options) => { stopAtMs = options.stopAtMs; return { estimated: 0,
       results: [] }; }, output: { log() {} } });
-  assert.equal(stopAtMs, Date.parse('2026-10-19T08:30:00+09:00'));
+  assert.equal(stopAtMs, Date.parse('2026-10-19T04:55:00+09:00'));
 });
 
 test('전사가 이미 저장된 다음 회차에도 증분 하이라이트를 재시도한다', async () => {

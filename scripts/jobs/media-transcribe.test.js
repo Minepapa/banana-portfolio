@@ -20,11 +20,11 @@ const RULES = [{ type: 'conversation', path: `${VAULT_REL.mediaConversations}/{Y
 const ID = (number) => number.toString(16).padStart(16, '0');
 const LOOP = '문경읍이 뭐에요? '.repeat(20).trim();
 
-test('전사 정기 실행은 매일 01:00·02:00 두 회차다', () => {
+test('전사 정기 실행은 매일 01:00 한 회차다(음성 블록, 2026-10-18)', () => {
   const plist = readFileSync(new URL('../launchd/com.banana2.media-transcribe.plist', import.meta.url), 'utf8');
   const slots = [...plist.matchAll(/<dict><key>Hour<\/key><integer>(\d+)<\/integer><key>Minute<\/key><integer>(\d+)<\/integer><\/dict>/g)]
     .map((match) => [Number(match[1]), Number(match[2])]);
-  assert.deepEqual(slots, [[1, 0], [2, 0]]);
+  assert.deepEqual(slots, [[1, 0]]);
 });
 
 function fixture() {

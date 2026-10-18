@@ -11,7 +11,7 @@
     <string>media-video</string>
   </array>
   <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>10</integer></dict>
+  <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
   <key>RunAtLoad</key>
   <false/>
   <key>ProcessType</key>

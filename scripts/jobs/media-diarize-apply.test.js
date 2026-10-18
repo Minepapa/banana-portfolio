@@ -93,7 +93,7 @@ test('note rewrite preserves manual fields and owner memo; second pass changes n
   assert.equal(renderSpeakerNote(next, transcript, speakers), next);
 });
 
-test('scheduled apply runs at 03:05 and 04:05 while manual flags keep their limits', () => {
+test('scheduled apply runs at 02:00(음성 블록) while manual flags keep their limits', () => {
   assert.deepEqual(parseArgs(['--apply', '--limit=20', '--max-minutes=45']).maxMinutes, 45);
   assert.deepEqual(launchOptions([]), { apply: true, limit: 200, maxMinutes: 600, allowNight: true });
   assert.equal(launchOptions(['--apply']).allowNight, undefined);
@@ -103,7 +103,7 @@ test('scheduled apply runs at 03:05 and 04:05 while manual flags keep their limi
   const plist = readFileSync(new URL('../launchd/com.banana2.media-diarize.plist', import.meta.url), 'utf8');
   const slots = [...plist.matchAll(/<dict><key>Hour<\/key><integer>(\d+)<\/integer><key>Minute<\/key><integer>(\d+)<\/integer><\/dict>/g)]
     .map((match) => [Number(match[1]), Number(match[2])]);
-  assert.deepEqual(slots, [[3, 5], [4, 5]]);
+  assert.deepEqual(slots, [[2, 0]]);
 });
 
 function npy(matrix) {

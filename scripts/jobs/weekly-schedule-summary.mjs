@@ -77,7 +77,7 @@ export function describeSwitchStatus({ killSwitchContent, executionModeContent, 
 // buildWeeklyScheduleText에서 별도 [조건부] 그룹으로 묶이고, 값은 발송 조건을
 // 짧게 설명하는 문구(사람이 읽는 텍스트에 그대로 붙음).
 export const SCHEDULE = [
-  { day: '매일', time: '04:30', dept: agentLabel('clio'), what: 'Inbox 정리 계획 — 리포트만, 대상이 있을 때', conditional: '계획할 메모가 있을 때만', script: 'clio-inbox-ingest.mjs' },
+  { day: '매일', time: '05:00', dept: agentLabel('clio'), what: 'Inbox 정리 계획 — 리포트만, 대상이 있을 때', conditional: '계획할 메모가 있을 때만', script: 'clio-inbox-ingest.mjs' },
   { day: '매일', time: '07:30', dept: agentLabel('hermes'), what: '아침 브리핑 — 오늘 일정과 생일', script: 'hermes-briefing.mjs' },
   { day: '매일', time: '21:00', dept: agentLabel('hermes'), what: '내일 일정', conditional: '내일 일정이 있을 때만', script: 'hermes-briefing.mjs' },
   { day: '매일', time: '23:30', dept: agentLabel('clio'), what: '데일리 초안 요약 — 그날 들어온 기록 수와 AI 하루 요약(2026-10-09 신설, 리포트만 하는 기간)', script: 'daily-note.mjs' },
@@ -90,7 +90,7 @@ export const SCHEDULE = [
   { day: '평일', time: '16:15', dept: agentLabel('plutus'), what: '당일 체결 내역 보고', conditional: '체결 있을 때만', script: 'daily-execution-report.mjs' },
   { day: '평일', time: '16:30', dept: agentLabel('plutus'), what: '리밸런싱·거시 점검', conditional: '이상 있을 때만', script: 'daily-asset-allocation-check.mjs' },
   { day: '일요일', time: '07:00', dept: agentLabel('plutus'), what: '주간 위험 재검토', script: 'themis-risk-review.mjs' },
-  { day: '일요일', time: '04:15', dept: agentLabel('themis'), what: '미디어 삭제 후보 관찰 리포트(원본 처리 없음)', script: 'media-delete-report-weekly.mjs' },
+  { day: '일요일', time: '06:00', dept: agentLabel('themis'), what: '미디어 삭제 후보 관찰 리포트(원본 처리 없음)', script: 'media-delete-report-weekly.mjs' },
   { day: '일요일', time: '07:20', dept: agentLabel('zeus'), what: '경고 주간 검토(이상 있을 때만)', conditional: '이상 있을 때만', script: 'weekly-warning-review.mjs' },
   { day: '일요일', time: '07:30', dept: agentLabel('clio'), what: '무세이온 주간 건강검진 — 구조·데이터 정합성·미완료 작업', conditional: '이상 있을 때만', script: 'weekly-vault-health-check.mjs' },
   { day: '일요일', time: '08:00', dept: agentLabel('plutus'), what: '주간 리포트', script: 'weekly-report.mjs' },

@@ -7,7 +7,7 @@ import { buildProposalModeState, MODE_ALLOWED, MODE_BLOCKED } from '../lib/propo
 
 test('SCHEDULE: 주기적 보고와 정기 보호주문 대조가 포함되고 이벤트기반은 제외된다', () => {
   assert.equal(SCHEDULE.length, 15); // 미디어 삭제 후보 관찰(일요일 04:15) 추가
-  assert.ok(SCHEDULE.some((s) => s.script === 'media-delete-report-weekly.mjs' && s.time === '04:15'));
+  assert.ok(SCHEDULE.some((s) => s.script === 'media-delete-report-weekly.mjs' && s.time === '06:00'));
   assert.ok(SCHEDULE.some((s) => s.script === 'reconcile-breakout-protection.mjs'));
   assert.ok(SCHEDULE.some((s) => s.script === 'weekly-warning-review.mjs' && s.time === '07:20'));
 });

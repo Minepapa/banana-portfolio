@@ -54,10 +54,10 @@ test('키 권한이 넓으면 실패한다', async () => {
   await assert.rejects(main([], { keyPath: () => '/key', stat: async () => ({ mode: 0o100644 }), readFile: async () => Buffer.alloc(32) }), /권한/);
 });
 
-test('plist는 매일 00:40 run.sh media-audio-offsite-backup', () => {
+test('plist는 매일 00:00 run.sh media-audio-offsite-backup', () => {
   const plist = readFileSync(new URL('../launchd/com.banana2.media-audio-offsite-backup.plist', import.meta.url), 'utf8');
   assert.match(plist, /<string>media-audio-offsite-backup<\/string>/);
-  assert.match(plist, /<key>Hour<\/key><integer>0<\/integer><key>Minute<\/key><integer>40<\/integer>/);
+  assert.match(plist, /<key>Hour<\/key><integer>0<\/integer><key>Minute<\/key><integer>0<\/integer>/);
 });
 
 test('크기 불일치 사본은 지우고 실패로, 없는 파일(ENOENT)은 건너뜀으로 센다', async () => {

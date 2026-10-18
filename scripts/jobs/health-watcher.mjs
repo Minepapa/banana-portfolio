@@ -218,6 +218,7 @@ export const EXPECTED_INTERVALS_MS = {
   'media-vision': 24 * 60 * 60 * 1000,
   'media-faces-nightly': 24 * 60 * 60 * 1000,
   'media-video': 24 * 60 * 60 * 1000,
+  'media-night-check': 24 * 60 * 60 * 1000, // 매일 05:00 밤 점검
   'media-delete-report-weekly': 7 * 24 * 60 * 60 * 1000,
   'media-faces-hold-monthly': 35 * 24 * 60 * 60 * 1000,
   'media-memory-orb': 24 * 60 * 60 * 1000, // 02:20 시작, 최대 90분(03:50 전 종료)

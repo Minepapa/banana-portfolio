@@ -81,6 +81,7 @@ export const VAULT_REL = {
   mediaMoments: '20_Records/24_Media',
   mediaMomentsState: '95_Etna/Media/moments.json',
   jobHealth: '95_Etna/Jobs/JobHealth',
+  mineStatusBoard: '40_Projects/banana-portfolio/Features/미네 기록 파이프라인 현황판.md', // 05:00 밤 점검이 '밤 점검' 칸을 덮어씀
   spending: '95_Etna/Spending',
   dailyNotes: '10_Periodic/Daily', // 데일리 노트(D85) — {YYYY}/YYYY-MM-DD.md
   todoLog: '95_Etna/Todo', // 캘린더·Tasks 등록 기록 — {YYYY}/YYYY-MM-DD.jsonl

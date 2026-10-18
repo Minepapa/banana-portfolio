@@ -11,10 +11,9 @@
     <string>media-diarize</string>
   </array>
   <key>StartCalendarInterval</key>
-  <!-- 매일 03:05·04:05, 전사 완료 파일을 화자 분리한다. 새 통화 시작은 회차당 45분까지. -->
+  <!-- 매일 02:00(음성 블록, 2026-10-18 시간표 개편), 01:00 전사가 끝난 파일을 화자 분리한다. 새 통화 시작은 회차당 45분까지. -->
   <array>
-    <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>5</integer></dict>
-    <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer></dict>
   </array>
   <key>RunAtLoad</key><false/>
   <key>ProcessType</key><string>Background</string>

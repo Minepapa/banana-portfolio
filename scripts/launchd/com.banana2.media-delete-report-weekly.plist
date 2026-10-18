@@ -9,9 +9,9 @@
     <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>media-delete-report-weekly</string>
   </array>
-  <!-- 매주 일요일 04:15 KST. 01~03시 전사 뒤 04:05 화자 분리 회차와 함께 돈다. -->
+  <!-- 매주 일요일 06:00 KST(2026-10-18 시간표 개편: 밤 미디어 블록과 05:00 점검 뒤). -->
   <key>StartCalendarInterval</key>
-  <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>4</integer><key>Minute</key><integer>15</integer></dict>
+  <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
   <!-- kickstart 검증은 run.sh에 --no-send를 전달해 실제 발송을 막는다. -->
   <key>RunAtLoad</key><false/>
   <key>ProcessType</key><string>Background</string>

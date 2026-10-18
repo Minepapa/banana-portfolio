@@ -11,12 +11,12 @@ import { runMediaVideoTranscribe } from './media-video-transcribe.mjs';
 import { refreshMomentPeople } from './media-moments.mjs';
 
 export const VIDEO_NIGHTLY_LIMIT = 30;
-export const VIDEO_NIGHTLY_BUDGET_MS = 40 * 60_000;
-export const VIDEO_NIGHTLY_TRANSCRIPT_BUDGET_MINUTES = 45;
+export const VIDEO_NIGHTLY_BUDGET_MS = 20 * 60_000; // 04:00 영상 블록(2026-10-18 시간표 개편)
+export const VIDEO_NIGHTLY_TRANSCRIPT_BUDGET_MINUTES = 25;
 
 export function videoMorningDeadline(nowMs) {
   const localDay = new Date(nowMs + 9 * 60 * 60_000).toISOString().slice(0, 10);
-  return Date.parse(`${localDay}T08:30:00+09:00`);
+  return Date.parse(`${localDay}T04:55:00+09:00`);
 }
 
 export async function runVideoNightly({ video = runMediaVideo, highlights = runVideoHighlights,
