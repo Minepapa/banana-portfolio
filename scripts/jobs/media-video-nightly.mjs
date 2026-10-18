@@ -6,12 +6,14 @@ import { fileURLToPath } from 'node:url';
 import { MEDIA_FACES_PATHS, VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { withLock } from '../lib/state-writer.mjs';
 import { runMediaVideo } from './media-video.mjs';
+import { runVideoHighlights } from './media-video-highlights.mjs';
 import { refreshMomentPeople } from './media-moments.mjs';
 
 export const VIDEO_NIGHTLY_LIMIT = 30;
 export const VIDEO_NIGHTLY_BUDGET_MS = 40 * 60_000;
 
-export async function runVideoNightly({ video = runMediaVideo, refresh = refreshMomentPeople,
+export async function runVideoNightly({ video = runMediaVideo, highlights = runVideoHighlights,
+  refresh = refreshMomentPeople,
   lock = withLock, facesRoot = MEDIA_FACES_PATHS.root, vaultRoot = VAULT_PATHS.root,
   dryRun = false, output = console } = {}) {
   const execute = async () => {
@@ -21,10 +23,20 @@ export async function runVideoNightly({ video = runMediaVideo, refresh = refresh
       output.log(`[media-video-nightly] 영상 대상 ${analysis.selected}, 실제 분석 0 — 순간 이름표 갱신 건너뜀`);
       return { analysis, notes: null, skipped: false };
     }
+    const highlightIds = analysis.results.filter((row) => row.faces?.ok || row.cues?.ok)
+      .map((row) => row.id);
+    let highlightResult = null;
+    if (highlightIds.length) {
+      try { highlightResult = await highlights({ ids: highlightIds, dryRun, output }); }
+      catch (error) {
+        output.error?.(`[media-video-nightly] 하이라이트 실패: ${error.message}`);
+        highlightResult = { failed: 1, error: error.message };
+      }
+    }
     // 영상 판정은 Media에만 저장된다. 같은 실행에서 순간 노트의 people·201/202를 갱신한다.
     const notes = await refresh({ dryRun, output });
     output.log(`[media-video-nightly] 영상 대상 ${analysis.selected}, 완료 ${analysis.processed}, 실패 ${analysis.failed}; 순간 노트 갱신 ${notes.changed}, 실패 ${notes.failed}`);
-    return { analysis, notes, skipped: false };
+    return { analysis, highlights: highlightResult, notes, skipped: false };
   };
   if (dryRun) return execute();
   mkdirSync(facesRoot, { recursive: true, mode: 0o700 });
@@ -47,7 +59,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   } else {
     try {
       const result = await runVideoNightly({ dryRun: args.includes('--dry-run') });
-      if (result.analysis?.failed || result.notes?.failed) process.exitCode = 1;
+      if (result.analysis?.failed || result.highlights?.failed || result.notes?.failed) process.exitCode = 1;
     } catch (error) {
       console.error(`[media-video-nightly] ${error.stack}`);
       process.exitCode = 1;

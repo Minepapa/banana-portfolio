@@ -106,6 +106,9 @@ test('영상별 사람 최고점, 경계값, 보류와 대표 프레임', () => 
   assert.equal(result.basis, 'video-frames');
   assert.equal(result.frameCount, 3);
   assert.equal(result.representatives.미네.timestampSec, 5);
+  assert.deepEqual(result.framePeople, [
+    { second: 5, people: ['미네', '나'] },
+  ]);
 });
 
 test('영상 이름표의 깨진 줄은 건너뛰고 사진 확인값을 우선한다', (t) => {

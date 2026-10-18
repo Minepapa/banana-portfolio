@@ -68,6 +68,30 @@ test('영상 분석이 실패했어도 시도했다면 오래된 이름표 제�
   assert.equal(result.notes.changed, 1);
 });
 
+test('밤 잡은 새로 분석된 영상의 하이라이트만 이어서 계산한다', async () => {
+  const ids = [];
+  await runVideoNightly({ dryRun: true,
+    video: async () => ({ selected: 2, processed: 1, failed: 1,
+      results: [{ id: 'a', faces: { ok: true } }, { id: 'b', faces: { ok: false } }] }),
+    highlights: ({ ids: selected, dryRun }) => { ids.push(...selected); assert.equal(dryRun, true); },
+    refresh: async () => ({ changed: 0, failed: 0 }), output: { log() {} } });
+  assert.deepEqual(ids, ['a']);
+});
+
+test('하이라이트 오류가 나도 순간 이름표를 갱신하고 실패를 반환한다', async () => {
+  let refreshed = 0;
+  const errors = [];
+  const result = await runVideoNightly({ dryRun: true,
+    video: async () => ({ selected: 1, processed: 1, failed: 0,
+      results: [{ id: 'a', faces: { ok: true } }] }),
+    highlights: async () => { throw new Error('출력 실패'); },
+    refresh: async () => { refreshed += 1; return { changed: 1, failed: 0 }; },
+    output: { log() {}, error: (line) => errors.push(line) } });
+  assert.equal(refreshed, 1);
+  assert.equal(result.highlights.failed, 1);
+  assert.match(errors[0], /하이라이트 실패: 출력 실패/);
+});
+
 test('공용 미디어 잠금 또는 얼굴 잠금이 있으면 분석·노트 갱신을 건너뛴다', async (t) => {
   const base = mkdtempSync(join(tmpdir(), 'media-video-nightly-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));

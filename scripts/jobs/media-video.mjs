@@ -69,6 +69,7 @@ export function selectVideos(records, { limit = 30, ids = null, pending = null }
 // 매 프레임의 점수 중 사람별 최댓값을 영상 이름표로 쓴다. 사진 콜라주 제한은 적용하지 않는다.
 export function videoPeople(matches, manifest) {
   const best = new Map();
+  const framePeople = new Map();
   for (const match of matches) {
     if (match.prebirth && !match.person || !Number.isFinite(match.score)) continue;
     const person = match.person || '미네';
@@ -76,6 +77,11 @@ export function videoPeople(matches, manifest) {
     const frame = manifest.frames.find((item) => item.id === match.id);
     const second = frame?.second;
     if (!Number.isInteger(second)) continue;
+    if (match.score >= PERSON_THRESHOLDS[person].label) {
+      const peopleAtFrame = framePeople.get(second) ?? new Set();
+      peopleAtFrame.add(person);
+      framePeople.set(second, peopleAtFrame);
+    }
     if (!best.has(person) || match.score > best.get(person).score) {
       best.set(person, { person, score: match.score, second, timestampSec: second,
         frameId: match.id, face: match.i });
@@ -90,7 +96,9 @@ export function videoPeople(matches, manifest) {
   return { id: manifest.id, original: manifest.original, durationSec: manifest.durationSec,
     sourceSize: manifest.size, sourceMtimeMs: manifest.mtimeMs,
     basis: 'video-frames', frameCount: manifest.frames.length,
-    frameFingerprint: fingerprintFrames(manifest), people, hold, representatives };
+    frameFingerprint: fingerprintFrames(manifest), people, hold, representatives,
+    framePeople: [...framePeople].sort(([left], [right]) => left - right)
+      .map(([second, names]) => ({ second, people: [...names] })) };
 }
 
 export function fingerprintFrames(manifest) {
