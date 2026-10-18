@@ -1,8 +1,17 @@
 import { spawn } from 'child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setCooldown, parseResetTime, LIMIT_RE } from './quota-cooldown.mjs';
+
+// launchd PATH에서는 Homebrew의 옛 claude(2.1.126)가 먼저 잡혀 --restricted를 모른다(2026-10-18 사고: 사진 구슬 50개·
+// 주간 리포트·텔레그램 인수인계 실패). 대화형 세션과 같은 자동 갱신 설치본(~/.local/bin/claude)을 우선 쓴다.
+// run.sh PATH에 ~/.local/bin을 넣지 않는 이유: 그 폴더에 `env` 같은 이름의 파일이 있어 시스템 명령을 가릴 수 있다.
+export function resolveClaudeBin({ env = process.env, exists = existsSync, home = homedir() } = {}) {
+  if (env.CLAUDE_BIN) return env.CLAUDE_BIN;
+  const local = join(home, '.local', 'bin', 'claude');
+  return exists(local) ? local : 'claude';
+}
 
 export const HEADLESS_NOTE = `
 
@@ -104,7 +113,7 @@ export function runHeadlessClaude(prompt, model = 'sonnet', allowedTools, opts =
   return new Promise((resolve, reject) => {
     let cp;
     try {
-      cp = invoke('claude', buildArgs(prompt, model, allowedTools, opts),
+      cp = invoke(opts.claudeBin ?? resolveClaudeBin(), buildArgs(prompt, model, allowedTools, opts),
         { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) { reject(error); return; }
     let out = '', err = '';

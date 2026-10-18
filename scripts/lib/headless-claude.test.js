@@ -120,3 +120,10 @@ test('lean 실행은 빈 임시 cwd를 쓰고 성공·오류 때 지우며 usage
   assert.equal(existsSync(seen[1]), false);
   assert.match(logs[0], /input_tokens/);
 });
+
+test('resolveClaudeBin: CLAUDE_BIN > ~/.local/bin/claude > PATH의 claude', async () => {
+  const { resolveClaudeBin } = await import('./headless-claude.mjs');
+  assert.equal(resolveClaudeBin({ env: { CLAUDE_BIN: '/x/claude' }, exists: () => true, home: '/h' }), '/x/claude');
+  assert.equal(resolveClaudeBin({ env: {}, exists: (p) => p === '/h/.local/bin/claude', home: '/h' }), '/h/.local/bin/claude');
+  assert.equal(resolveClaudeBin({ env: {}, exists: () => false, home: '/h' }), 'claude');
+});
