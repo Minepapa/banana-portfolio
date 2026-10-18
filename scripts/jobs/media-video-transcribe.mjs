@@ -26,7 +26,11 @@ export const VIDEO_TRANSCRIPT_PATHS = Object.freeze({
 export const VIDEO_HALLUCINATION_PHRASES = Object.freeze([
   '미리보기', '자막', '시청해주셔서감사', '구독과좋아요', '영상편집',
   'thanksforwatching', 'subtitlesby', 'sampaijumpadivideoselanjutnya',
+  'terimakasihtelahmenonton', 'terimakasih', 'menonton',
 ]);
+// 가족 영상은 한국어가 대부분이다. 언어 자동 감지는 아이가 부르는 한국어 동요(깡총깡총)를 영어·말레이어로
+// 잘못 알아들어 'Kampung Kampung' 같은 글을 만들었다(2026-10-18 실측). 한국어로 먼저 전사한다.
+export const VIDEO_LANGUAGE = 'ko';
 const normalizeText = (text) => String(text || '').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
 
 function readRows(path) {
@@ -176,7 +180,29 @@ export function loadVideoVoiceReferences(paths = MEDIA_DIARIZE_PATHS) {
     references[name] = { mean: vectors[0], minSimilarity: meta.minSimilarity,
       ...(name === '미네' ? { vectors, period: meta.period, years: meta.years } : {}) };
   }
+  // 미네 혼자 녹음으로 만든 연도별 기준(scripts/tools/media-mine-voice-rec.mjs, 2017~)이 있으면 합친다.
+  // 영상 소리는 전화보다 녹음에 가깝고 어린 시절 영상이 많다(통화 기준은 2024~2026만). 같은 해는 녹음 기준을 쓴다.
+  const recVoice = paths.mineVoice?.replace(/\.npy$/, '-rec.npy');
+  const recMeta = paths.mineMeta?.replace(/\.json$/, '-rec.json');
+  if (recVoice && recMeta && existsSync(recVoice) && existsSync(recMeta)) {
+    references.미네 = mergeMineReferences(references.미네, readNpy(recVoice), JSON.parse(readFileSync(recMeta, 'utf8')));
+  }
   return references;
+}
+
+export function mergeMineReferences(calls, recVectors, recMeta) {
+  const vectors = [...recVectors];
+  const years = recMeta.years.map((entry) => ({ ...entry }));
+  const recYears = new Set(years.map((entry) => entry.year));
+  for (const entry of calls?.years ?? []) {
+    if (recYears.has(entry.year) || !calls.vectors?.[entry.index]) continue;
+    vectors.push(calls.vectors[entry.index]);
+    years.push({ ...entry, index: vectors.length - 1 });
+  }
+  const firsts = [recMeta.period?.first, calls?.period?.first].filter(Boolean).sort();
+  const lasts = [recMeta.period?.last, calls?.period?.last].filter(Boolean).sort();
+  return { mean: vectors[0], vectors, years, period: { first: firsts[0], last: lasts.at(-1) },
+    minSimilarity: recMeta.minSimilarity ?? calls?.minSimilarity };
 }
 
 export function nameVideoSegments(segments, turns, voices, references, occurred) {
@@ -273,7 +299,7 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
           whisperPath: '/opt/homebrew/bin/whisper-cli', model, temporaryRoot, now: new Date().toISOString(),
           // GPU(Metal)는 launchd·대화형 실행에서 정상 동작한다(30초 음성: GPU 8.1초 vs CPU 62.2초, 2026-10-18 실측).
           // Codex 격리 환경에서만 Metal 초기화가 실패하므로 CPU 고정을 두지 않는다.
-          language: 'auto', fullJson: true, noSpeechThreshold: 0.45,
+          language: VIDEO_LANGUAGE, fullJson: true, noSpeechThreshold: 0.45,
           inputWav: wav, inputDurationSec: plan.at(-1).audioEndMs / 1000,
           shouldRetryLanguage: (first) => repeatsThreeTimes(first.text)
             || VIDEO_HALLUCINATION_PHRASES.some((phrase) => normalizeText(first.text).includes(phrase)),
@@ -322,7 +348,7 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
           occurred: item.record.occurred, durationSec: item.durationSec,
           sourceSize: source.size, sourceMtimeMs: Math.round(source.mtimeMs),
           speech: Boolean(named.length), text: named.map((part) => part.text).join(' '),
-          segments: named, speakers, model, modelVersion: basename(model), language: 'auto',
+          segments: named, speakers, model, modelVersion: basename(model), language: VIDEO_LANGUAGE,
           detectedLanguage: decoded.detectedLanguage || null,
           ...(decoded.languageFallback ? { languageFallback: decoded.languageFallback } : {}),
           dropped, timings: { ...decoded.timings, audioExtractMs, diarizeMs, featureMs,

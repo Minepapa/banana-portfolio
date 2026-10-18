@@ -119,7 +119,7 @@ test('dry-run 무쓰기, 결과 0600, 재실행 증분', async (t) => {
     output: { log() {}, error() {} }, lock: async (_path, run) => run(),
     referencesLoader: () => ({ 미네: { mean: [1, 0], minSimilarity: 0.45 } }),
     transcribeFn: async (_record, settings) => {
-      assert.equal(settings.language, 'auto');
+      assert.equal(settings.language, 'ko');
       assert.notEqual(settings.noGpu, true); // GPU 사용(2026-10-18 실측 8배)
       assert.equal(settings.inputDurationSec, 4);
       return { durationSec: 4, segments: [{ start: 0, end: 2000, text: '미네 안녕' }] };
@@ -188,4 +188,18 @@ fs.writeFileSync(prefix + '.json', JSON.stringify({
   assert.equal(result.detectedLanguage, 'ko');
   assert.equal(result.languageFallback, 'ro');
   assert.equal(readFileSync(join(base, 'languages'), 'utf8'), 'auto\nko\n');
+});
+
+test('미네 기준 합치기: 녹음 기준 연도를 쓰고, 녹음에 없는 해만 통화 기준을 더한다', async () => {
+  const { mergeMineReferences } = await import('./media-video-transcribe.mjs');
+  const calls = { vectors: [[0, 1], [0, 2], [0, 3]], minSimilarity: 0.5,
+    period: { first: '2024-12-26', last: '2026-10-16' },
+    years: [{ year: 2024, index: 0 }, { year: 2025, index: 1 }, { year: 2026, index: 2 }] };
+  const merged = mergeMineReferences(calls, [[1, 0], [2, 0]],
+    { minSimilarity: 0.45, period: { first: '2017-01-20', last: '2025-09-20' }, years: [{ year: 2017, index: 0 }, { year: 2025, index: 1 }] });
+  assert.deepEqual(merged.years.map((y) => y.year), [2017, 2025, 2024, 2026]);
+  assert.deepEqual(merged.vectors[merged.years.find((y) => y.year === 2025).index], [2, 0]);
+  assert.deepEqual(merged.vectors[merged.years.find((y) => y.year === 2026).index], [0, 3]);
+  assert.deepEqual(merged.period, { first: '2017-01-20', last: '2026-10-16' });
+  assert.equal(merged.minSimilarity, 0.45);
 });
