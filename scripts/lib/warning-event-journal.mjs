@@ -37,14 +37,18 @@ function validKey(value) {
   return typeof value === 'string' && SAFE_KEY.test(value);
 }
 
-export function sanitizeWarningDetail(value) {
-  const redacted = String(value ?? '')
+export function redactWarningDetail(value) {
+  return String(value ?? '')
     .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
     .replace(/["']?(?:app[_-]?key|app[_-]?secret(?:key)?|access[_-]?token|token)["']?\s*[:=]\s*["']?[^"'\s,;}]+["']?/gi, '[REDACTED]')
     .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[REDACTED]')
     .replace(/\d[\d-]{7,}\d|\b\d{8,}\b/g, '[REDACTED]')
     .replace(/\b[A-Za-z0-9]{32,}\b/g, '[REDACTED]')
     .replace(/[\r\n\t]+/g, ' ');
+}
+
+export function sanitizeWarningDetail(value) {
+  const redacted = redactWarningDetail(value);
   const detail = redacted.slice(0, 200);
   const lastMarker = redacted.lastIndexOf('[REDACTED]', 199);
   // 가림 표식의 중간을 자르면 재검증 시 표식이 다시 늘어나 원장 기록이 거부된다.

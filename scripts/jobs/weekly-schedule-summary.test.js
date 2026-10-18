@@ -6,7 +6,9 @@ import { buildExecutionModeState, MODE_LIVE, MODE_SHADOW } from '../lib/shadow-m
 import { buildProposalModeState, MODE_ALLOWED, MODE_BLOCKED } from '../lib/proposal-mode.mjs';
 
 test('SCHEDULE: 주기적 보고와 정기 보호주문 대조가 포함되고 이벤트기반은 제외된다', () => {
-  assert.equal(SCHEDULE.length, 15); // 미디어 삭제 후보 관찰(일요일 04:15) 추가
+  assert.equal(SCHEDULE.length, 16);
+  assert.ok(SCHEDULE.some((s) => s.script === 'media-night-check.mjs' && s.day === '매일'
+    && s.time === '05:00' && s.dept === '제우스 Zeus' && !s.conditional));
   assert.ok(SCHEDULE.some((s) => s.script === 'media-delete-report-weekly.mjs' && s.time === '06:00'));
   assert.ok(SCHEDULE.some((s) => s.script === 'reconcile-breakout-protection.mjs'));
   assert.ok(SCHEDULE.some((s) => s.script === 'weekly-warning-review.mjs' && s.time === '07:20'));
@@ -15,6 +17,7 @@ test('SCHEDULE: 주기적 보고와 정기 보호주문 대조가 포함되고 �
 test('buildWeeklyScheduleText: 제목과 주기 일정 부서·시각이 본문에 포함된다', () => {
   const text = buildWeeklyScheduleText();
   assert.match(text, /<b>주간 보고 스케쥴<\/b>/);
+  assert.match(text, /매일 05:00 \[제우스 Zeus\] 밤 점검/);
   assert.match(text, /평일 08:00 \[플루토스 Plutus\]/);
   assert.match(text, /평일 08:35 \[플루토스 Plutus\]/);
   assert.match(text, /평일 15:32 \[플루토스 Plutus\]/);

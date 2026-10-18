@@ -78,6 +78,7 @@ export function describeSwitchStatus({ killSwitchContent, executionModeContent, 
 // 짧게 설명하는 문구(사람이 읽는 텍스트에 그대로 붙음).
 export const SCHEDULE = [
   { day: '매일', time: '05:00', dept: agentLabel('clio'), what: 'Inbox 분류·적용 결과 — Wiki 보류', conditional: '새 메모 또는 적용 대기 계획이 있을 때', script: 'clio-inbox-ingest.mjs' },
+  { day: '매일', time: '05:00', dept: agentLabel('zeus'), what: '밤 점검 — 음성·사진·영상 블록 결과와 남은 일', script: 'media-night-check.mjs' },
   { day: '매일', time: '07:30', dept: agentLabel('hermes'), what: '아침 브리핑 — 오늘 일정과 생일', script: 'hermes-briefing.mjs' },
   { day: '매일', time: '21:00', dept: agentLabel('hermes'), what: '내일 일정', conditional: '내일 일정이 있을 때만', script: 'hermes-briefing.mjs' },
   { day: '매일', time: '23:30', dept: agentLabel('clio'), what: '데일리 초안 요약 — 그날 들어온 기록 수와 AI 하루 요약(2026-10-09 신설, 리포트만 하는 기간)', script: 'daily-note.mjs' },
