@@ -84,7 +84,8 @@ case "$JOB" in
   media-audio-offsite-backup) CMD=(scripts/jobs/media-audio-offsite-backup.mjs) ;;
   question-digest) CMD=(scripts/jobs/question-digest.mjs) ;;
   daily-note) CMD=(scripts/jobs/daily-note.mjs) ;;
-  clio-inbox-ingest) CMD=(scripts/jobs/clio-inbox-ingest.mjs) ;;
+  clio-inbox-ingest) CMD=(scripts/jobs/clio-inbox-ingest.mjs)
+    if [[ " $* " != *" --mode="* ]]; then set -- "$@" --mode=auto; fi ;;
   hermes-briefing) CMD=(scripts/jobs/hermes-briefing.mjs) ;;
   health-watcher) CMD=(scripts/jobs/health-watcher.mjs) ;;
   execute-quant)  CMD=(scripts/tools/execute-quant-proposal.mjs) ;;

@@ -154,7 +154,7 @@ test('next-day run recovers prior report and sends only its pending new item', a
   assert.equal(messages.length, 1);
 });
 
-test('intentional no-send does not become delayed notification', async (t) => {
+test('no-send preserves the pending notification for a later run', async (t) => {
   const { root, put } = fixture(t);
   put('00_Inbox/memo.md', memo('옵시디언', '발송 생략 기록'));
   let sends = 0;
@@ -162,7 +162,7 @@ test('intentional no-send does not become delayed notification', async (t) => {
     judge: async () => judgment(), send: async () => { sends += 1; } };
   await run({ ...deps, now: date, noSend: true });
   await run({ ...deps, now: new Date('2026-10-11T20:00:00Z') });
-  assert.equal(sends, 0);
+  assert.equal(sends, 1);
 });
 
 test('send is aborted within remaining job time', async (t) => {
@@ -650,7 +650,7 @@ test('applyPlans: 1건 명시, dry-run 무쓰기, 노트(movedFrom·원본 origi
   const note = readFileSync(join(root, '20_Records/21_Notes/2026/2026-10-11 가상 메모.md'), 'utf8');
   assert.match(note, /movedFrom: \["00_Inbox\/2026-10-11 1200 가상 메모, 쉼표"\]/);
   assert.match(note, /origin: "텔레그램 📜"/);
-  assert.match(note, /created: "2026-10-11"/);
+  assert.match(note, /created: "2026-10-11T12:00:00\+09:00"/);
   assert.match(note, /modified: "2026-10-17"/);
   assert.match(note, /오너 가상 메모 본문/);
   assert.ok(!existsSync(join(root, source)));
@@ -660,6 +660,38 @@ test('applyPlans: 1건 명시, dry-run 무쓰기, 노트(movedFrom·원본 origi
   assert.equal(inspectExisting(daily).ok, true, '데일리 잡이 계속 갱신할 수 있어야 함(aiHash 일치)');
   assert.match(readFileSync(join(root, '60_Logs/Clio/2026-10.md'), 'utf8'), /- 2026-10-17 Inbox apply/);
   assert.equal(applyPlans({ root, ids: source, noWiki: true, rules: r, now: NOW }).items[0].alreadyApplied, true);
+});
+
+test('apply preserves original attachment, timestamps, origin, and private sensitivity', (t) => {
+  const { root, put, source, rules: r } = applyFixture(t, { daily: null });
+  const original = '---\norigin: "오너"\ncreated: "2026-10-11T12:00:00+09:00"\n'
+    + 'occurred: "2026-10-10"\ncapturedAt: "2026-10-11T12:01:00+09:00"\n'
+    + 'attachment: "assets/photo.jpg"\nsensitivity: "개인"\nownerTag: "보존"\n---\n원문';
+  put(source, original);
+  const planPath = '95_Etna/Ingest/plans/2026-10-11.json';
+  const plan = JSON.parse(readFileSync(join(root, planPath), 'utf8'));
+  plan.items[0].hash = createHash('sha256').update(original).digest('hex');
+  Object.assign(plan.items[0].judgment.frontmatter, { origin: '판단', occurred: '2026-10-11',
+    capturedAt: '판단 시각', attachment: '다른 파일', created: '2026-10-12', sensitivity: '일반' });
+  put(planPath, JSON.stringify(plan));
+  applyPlans({ root, ids: source, noWiki: true, rules: r, now: NOW });
+  const note = readFileSync(join(root, '20_Records/21_Notes/2026/2026-10-11 가상 메모.md'), 'utf8');
+  for (const field of ['origin: "오너"', 'created: "2026-10-11T12:00:00+09:00"',
+    'occurred: "2026-10-10"', 'capturedAt: "2026-10-11T12:01:00+09:00"',
+    'attachment: "assets/photo.jpg"', 'sensitivity: "개인"', 'ownerTag: "보존"'])
+    assert.ok(note.includes(field), field);
+  assert.ok(!existsSync(join(root, source)));
+});
+
+test('daily link replacement rebuilds the whole line and preserves its suffix', (t) => {
+  const source = '00_Inbox/2026-10-11 1200 가상 메모, 쉼표';
+  let body = dailyNote().replace('- 기존 줄', () => `- [[${source}|옛 제목]] · 메모 $&`);
+  body = body.replace(/^aiHash: .*$/m, `aiHash: "${aiHashOf(parseSections(splitNote(body).body).sections)}"`);
+  const { root, source: sourceRel, rules: r } = applyFixture(t, { daily: body });
+  applyPlans({ root, ids: sourceRel, noWiki: true, rules: r, now: NOW });
+  const daily = readFileSync(join(root, '10_Periodic/Daily/2026/2026-10-11.md'), 'utf8');
+  assert.match(daily, /- \[\[20_Records\/21_Notes\/2026\/2026-10-11 가상 메모\|2026-10-11 가상 메모\]\] · 메모 \$&/);
+  assert.equal(inspectExisting(daily).ok, true);
 });
 
 test('applyPlans: 데일리 없음·오너가 AI 칸을 고친 데일리는 손대지 않고 보류', (t) => {
@@ -730,6 +762,34 @@ test('old cumulative execution attempts are excluded while earlier validation at
     { source: '00_Inbox/memo.md', hash, status: '판단 실패', attempts: 3, reason: 'Not logged in' }] }));
   assert.equal(collectInbox(root).selected[0].attempts, 1);
   assert.equal(readFileSync(join(root, '95_Etna/Ingest/plans/2026-10-16.json'), 'utf8').includes('attempts":3'), true);
+});
+
+test('new validation failure reason is never treated as a legacy execution failure', (t) => {
+  const { root, put } = fixture(t);
+  const content = memo('옵시디언', '새 검증 오류');
+  put('00_Inbox/memo.md', content);
+  const hash = createHash('sha256').update(content).digest('hex');
+  put('95_Etna/Ingest/plans/2026-10-16.json', JSON.stringify({ items: [
+    { source: '00_Inbox/memo.md', hash, attemptedAt: '2026-10-16T00:00:00Z',
+      status: '판단 실패', attempts: 2, reason: 'Not logged in이라는 원문은 허용되지 않음' }] }));
+  assert.equal(collectInbox(root).selected[0].attempts, 2);
+});
+
+test('execution failure stops the batch and pauses the memo after seven failed runs', async (t) => {
+  const { root, put } = fixture(t);
+  put('00_Inbox/a.md', memo('옵시디언', '장애 항목'));
+  put('00_Inbox/b.md', memo('옵시디언', '다음 항목'));
+  let calls = 0;
+  for (let day = 0; day < 7; day += 1) {
+    const now = new Date(Date.UTC(2026, 9, 11 + day, 0));
+    const result = await run({ root, rules, now, noSend: true, charter: { model: 'test', systemPrompt: 'test' },
+      cooldown: () => false, judge: async () => { calls += 1; throw new Error('spawn EACCES'); } });
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].executionFailures, day + 1);
+  }
+  assert.equal(calls, 7);
+  assert.equal(collectInbox(root).selected.some((item) => item.source === '00_Inbox/a.md'), false);
+  assert.match(readFileSync(join(root, '95_Etna/Ingest/plans/2026-10-17.json'), 'utf8'), /보류\(실행 장애 반복\)/);
 });
 
 test('retry resets exhausted memo attempts without changing plans; changed content ignores marker', (t) => {
@@ -835,7 +895,7 @@ test('regular run applies old and new valid plans in memo date order, continues 
     hash: planItems[2].hash, target: 'already', appliedAt: '2026-10-11' } }));
   put('20_Records/21_Notes/2026/2026-10-10 충돌 메모.md', '이미 존재');
   assert.deepEqual(applicablePlans(root).map(({ item }) => item.source), ['00_Inbox/old.md', '00_Inbox/bad.md']);
-  const result = await ingestRun({ root, rules, now: date, noSend: true, cooldown: () => false,
+  const result = await ingestRun({ root, rules, mode: 'auto', now: date, noSend: true, cooldown: () => false,
     charter: { model: 'test', systemPrompt: 'test' }, judge: async () => planItems[3].judgment,
     write: (path, content) => { if (path.endsWith('processed.json')) events.push(JSON.parse(content)); writeAtomic(path, content); } });
   assert.equal(result.applyResults.length, 3);
@@ -851,7 +911,102 @@ test('regular run applies old and new valid plans in memo date order, continues 
   const log = readFileSync(join(root, '60_Logs/Clio/2026-10.md'), 'utf8');
   assert.match(log, /Inbox apply: \[\[20_Records\/21_Notes\/2026\/2026-10-09 오래된 메모\]\] ← 00_Inbox\/old.md/);
   assert.match(log, /Inbox apply: \[\[20_Records\/21_Notes\/2026\/2026-10-12 새 메모\]\] ← 00_Inbox\/new.md/);
-  assert.equal(events.length, 4);
+  assert.equal(events.length, 5);
+  const processed = JSON.parse(readFileSync(join(root, VAULT_REL.inboxIngestProcessed), 'utf8'));
+  assert.equal(processed['00_Inbox/bad.md'].status, 'target-exists');
+  assert.equal(processed['00_Inbox/bad.md'].failures, 1);
+  assert.equal(applicablePlans(root).some(({ item }) => item.source === '00_Inbox/bad.md'), false);
+});
+
+test('old applicable plans run before judgment and a missing source is reported once', async (t) => {
+  const { root, put } = fixture(t);
+  const oldSource = '00_Inbox/old.md';
+  const oldContent = memo('옵시디언', '옛 메모');
+  put(oldSource, oldContent);
+  const value = judgment();
+  value.dailyLink = null;
+  put('95_Etna/Ingest/plans/2026-10-10.json', JSON.stringify({ items: [{ source: oldSource,
+    hash: createHash('sha256').update(oldContent).digest('hex'), status: '계획함', judgment: value }] }));
+  put('00_Inbox/new.md', memo('옵시디언', '새 메모'));
+  const result = await ingestRun({ root, rules, mode: 'auto', now: date, noSend: true,
+    charter: { model: 'test', systemPrompt: 'test' }, cooldown: () => false,
+    judge: async () => {
+      assert.equal(existsSync(join(root, oldSource)), false);
+      return { ...judgment(), target: { ...judgment().target, title: '2026-10-11 새 메모' }, dailyLink: null };
+    } });
+  assert.deepEqual(result.applyResults.map((item) => item.source), [oldSource, '00_Inbox/new.md']);
+  put('95_Etna/Ingest/plans/2026-10-09.json', JSON.stringify({ items: [{ source: '00_Inbox/gone.md',
+    hash: 'missing-hash', status: '계획함', judgment: { ...judgment(), target: { ...judgment().target,
+      title: '2026-10-09 사라진 메모' } } }] }));
+  const next = await ingestRun({ root, rules, mode: 'auto', now: new Date('2026-10-11T20:00:00Z'), noSend: true });
+  assert.equal(next.applyResults.filter((item) => item.source === '00_Inbox/gone.md').length, 1);
+  const processed = JSON.parse(readFileSync(join(root, VAULT_REL.inboxIngestProcessed), 'utf8'));
+  assert.equal(processed['00_Inbox/gone.md'].status, 'source-gone');
+  assert.equal(processed['00_Inbox/gone.md'].failures, 1);
+  assert.equal(applicablePlans(root).some(({ item }) => item.source === '00_Inbox/gone.md'), false);
+});
+
+test('failed notification stays pending and sends after the 05:30 apply budget', async (t) => {
+  const { root, put } = fixture(t);
+  put('00_Inbox/memo.md', memo('옵시디언', '알림 재시도'));
+  let elapsed = 0;
+  let sends = 0;
+  const deps = { root, rules, mode: 'auto', now: new Date('2026-10-10T20:29:59Z'),
+    clock: () => elapsed, charter: { model: 'test', systemPrompt: 'test' }, cooldown: () => false,
+    judge: async () => { elapsed = 1_000; return judgment(); } };
+  const first = await ingestRun({ ...deps, send: async () => { sends += 1; throw new Error('발송 장애'); } });
+  assert.equal(first.sent, false);
+  assert.equal(sends, 1);
+  const planPath = join(root, first.planRel);
+  assert.equal(JSON.parse(readFileSync(planPath, 'utf8')).notificationPending, true);
+  const second = await ingestRun({ ...deps, send: async () => { sends += 1; } });
+  assert.equal(second.sent, true);
+  assert.equal(sends, 2);
+  assert.equal(JSON.parse(readFileSync(planPath, 'utf8')).notificationPending, false);
+});
+
+test('report rerun preserves auto results and does not resend a reported apply failure', async (t) => {
+  const { root, put } = fixture(t);
+  const source = '00_Inbox/conflict.md';
+  const content = memo('옵시디언', '충돌');
+  put(source, content);
+  put('95_Etna/Ingest/plans/2026-10-10.json', JSON.stringify({ items: [{ source,
+    hash: createHash('sha256').update(content).digest('hex'), status: '계획함', judgment: judgment() }] }));
+  put('20_Records/21_Notes/2026/2026-10-11 가상 메모.md', '충돌');
+  const messages = [];
+  const deps = { root, rules, now: date, charter: { model: 'test', systemPrompt: 'test' },
+    cooldown: () => false, send: async (message) => { messages.push(message.body); } };
+  const first = await ingestRun({ ...deps, mode: 'auto' });
+  assert.match(messages[0], /적용 실패: 00_Inbox\/conflict.md/);
+  put('00_Inbox/new.md', memo('옵시디언', '새 기록'));
+  const second = await ingestRun({ ...deps, mode: 'report', judge: async () => ({ ...judgment(),
+    target: { ...judgment().target, title: '2026-10-11 새 기록' } }) });
+  assert.equal(second.applyResults.length, 1);
+  assert.equal(second.applyResults[0].source, source);
+  assert.equal(JSON.parse(readFileSync(join(root, second.planRel), 'utf8')).mode, 'auto');
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].includes('적용 실패: 00_Inbox/conflict.md'), false);
+  assert.equal(applicablePlans(root).some(({ item }) => item.source === source), false);
+  assert.match(first.report, /적용 실패 1건/);
+});
+
+test('applied result checkpoint survives a later report write failure', async (t) => {
+  const { root, put } = fixture(t);
+  const source = '00_Inbox/old.md';
+  const content = memo('옵시디언', '옛 기록');
+  put(source, content);
+  put('95_Etna/Ingest/plans/2026-10-10.json', JSON.stringify({ items: [{ source,
+    hash: createHash('sha256').update(content).digest('hex'), status: '계획함', judgment: judgment() }] }));
+  const deps = { root, rules, mode: 'auto', now: date, noSend: true };
+  await assert.rejects(ingestRun({ ...deps, write: (path, value) => {
+    if (path.endsWith('.md') && value.includes('clio-inbox-ingest:2026-10-11:start')) throw new Error('보고서 중단');
+    writeAtomic(path, value);
+  } }), /보고서 중단/);
+  const planPath = join(root, '95_Etna/Ingest/plans/2026-10-11.json');
+  assert.equal(JSON.parse(readFileSync(planPath, 'utf8')).applyResults[0].source, source);
+  const resumed = await ingestRun(deps);
+  assert.equal(resumed.applyResults[0].source, source);
+  assert.match(resumed.report, /적용 1건/);
 });
 
 test('regular preview makes no judgment, send, or write and counts retry and apply candidates', async (t) => {
@@ -862,7 +1017,7 @@ test('regular preview makes no judgment, send, or write and counts retry and app
   put(source, content);
   put('95_Etna/Ingest/plans/2026-10-10.json', JSON.stringify({ items: [{ source,
     hash: createHash('sha256').update(content).digest('hex'), status: '계획함', judgment: judgment() }] }));
-  const result = await ingestRun({ root, rules, now: date, dryRun: true, preview: true,
+  const result = await ingestRun({ root, rules, mode: 'auto', now: date, dryRun: true, preview: true,
     judge: async () => { throw new Error('judge called'); }, send: async () => { throw new Error('send called'); },
     write: () => { throw new Error('write called'); } });
   assert.equal(result.retryCandidates, 1);
@@ -871,11 +1026,37 @@ test('regular preview makes no judgment, send, or write and counts retry and app
   assert.equal(result.sent, false);
 });
 
+test('CLI defaults to report and one job lock covers manual modes', (t) => {
+  const { root, put } = fixture(t);
+  const source = '00_Inbox/planned.md';
+  const content = memo('옵시디언', '기존 계획');
+  put(source, content);
+  put('95_Etna/Ingest/plans/2026-10-10.json', JSON.stringify({ items: [{ source,
+    hash: createHash('sha256').update(content).digest('hex'), status: '계획함', judgment: judgment() }] }));
+  const registryRows = Array.from({ length: 20 }, (_, index) =>
+    `| \`fixture${index}\` | \`00_Inbox/\` | 자유 |  | test |`).join('\n');
+  put(VAULT_REL.registryFile, `| type | 경로 | 제목 | 필수 | 쓰는 주체 |\n|---|---|---|---|---|\n${registryRows}\n`);
+  const cli = join(import.meta.dirname, 'clio-inbox-ingest.mjs');
+  const options = { env: { ...process.env, VAULT_PATH: root }, encoding: 'utf8' };
+  const report = spawnSync(process.execPath, [cli, '--dry-run'], options);
+  const auto = spawnSync(process.execPath, [cli, '--dry-run', '--mode=auto'], options);
+  assert.equal(report.status, 0, report.stderr);
+  assert.equal(auto.status, 0, auto.stderr);
+  assert.match(report.stdout, /적용 대상 0건/);
+  assert.match(auto.stdout, /적용 대상 1건/);
+  const lockPath = join(tmpdir(), `clio-inbox-ingest-${createHash('sha256').update(root).digest('hex')}.job.lock`);
+  writeFileSync(lockPath, `${process.pid}:test`);
+  t.after(() => rmSync(lockPath, { force: true }));
+  const blocked = spawnSync(process.execPath, [cli, '--retry=00_Inbox/planned.md', '--dry-run'], options);
+  assert.equal(blocked.status, 1);
+  assert.match(blocked.stderr, /락 획득 실패/);
+});
+
 test('regular run leaves unstarted applications for the next day at 05:30', async (t) => {
   const { root, put } = fixture(t);
   put('00_Inbox/memo.md', memo('옵시디언', '마감 직전 기록'));
   let elapsed = 0;
-  const result = await ingestRun({ root, rules, now: new Date('2026-10-10T20:29:59Z'), noSend: true,
+  const result = await ingestRun({ root, rules, mode: 'auto', now: new Date('2026-10-10T20:29:59Z'), noSend: true,
     clock: () => elapsed, cooldown: () => false, charter: { model: 'test', systemPrompt: 'test' },
     judge: async () => { elapsed = 1_000; return judgment(); } });
   assert.equal(result.items[0].status, '계획함');

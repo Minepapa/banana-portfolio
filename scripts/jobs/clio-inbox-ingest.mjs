@@ -4,10 +4,11 @@ import { createHash } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, yamlValue } from '../lib/vault-frontmatter.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
-import { writeAtomic } from '../lib/state-writer.mjs';
+import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
@@ -27,9 +28,10 @@ const EXTRACTED_KEYS = ['people', 'places', 'topics', 'objects', 'dates', 'todos
 const WIKI_ACTIONS = new Set(['append-source', 'candidate', 'question']);
 const DATE_RE = /\d{4}-\d{2}-\d{2}/;
 const CONVERSATION_KINDS = new Set(['통화', '대면', '회의', '녹음']);
+const MAX_EXECUTION_FAILURES = 7;
 const EXECUTION_FAILURE_RE = /claude 종료코드|unknown option|Not logged in|claude 빈 출력|claude JSON 출력 오류|타임아웃|사용량 한도|isLimit|spawn|ENOENT|EACCES|EAGAIN|ECONNRESET|EPIPE/i;
 const isExecutionFailure = (item) => item.status === '판단 보류(실행 장애)'
-  || (item.status === '판단 실패' && EXECUTION_FAILURE_RE.test(item.reason ?? ''));
+  || (item.status === '판단 실패' && !item.attemptedAt && EXECUTION_FAILURE_RE.test(item.reason ?? ''));
 
 const readJson = (path, fallback) => existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : fallback;
 const hashOf = (content) => createHash('sha256').update(content).digest('hex');
@@ -174,7 +176,8 @@ function knownHashes(root) {
       const beforeRetry = retry?.retryHash === entry.hash && retryDate
         && (entry.attemptedAt ? entry.attemptedAt <= retry.retryResetAt : name.slice(0, 10) <= retryDate);
       if (beforeRetry) continue;
-      const prior = states.get(entry.hash) ?? { attempts: 0, rawAttempts: 0, ignoredAttempts: 0 };
+      const prior = states.get(entry.hash) ?? { attempts: 0, rawAttempts: 0, ignoredAttempts: 0,
+        executionFailures: 0 };
       const rawAttempts = entry.attempts ?? 0;
       const reset = rawAttempts < prior.rawAttempts;
       const ignoredAttempts = (reset ? 0 : prior.ignoredAttempts) + (isExecutionFailure(entry)
@@ -182,6 +185,8 @@ function knownHashes(root) {
       states.set(entry.hash, { status: entry.status,
         attempts: reset ? rawAttempts - ignoredAttempts : Math.max(prior.attempts, rawAttempts - ignoredAttempts),
         rawAttempts, ignoredAttempts,
+        executionFailures: entry.executionFailures ?? (isExecutionFailure(entry)
+          ? prior.executionFailures + 1 : prior.executionFailures),
         oversized: entry.status === '판단 실패' && entry.reason?.startsWith('입력 글자 수 상한(') });
       // 지금 기준으로 검사에 걸리는 옛 계획은 '계획함'으로 보지 않고 다시 판단한다(계획 파일은 소급 수정하지 않음).
       if (entry.status === '계획함' && planShapeProblems(entry.judgment).length) {
@@ -231,7 +236,7 @@ function pendingPlans(root) {
       const version = renderReport(date, plan.items ?? [], plan.remaining ?? 0,
         { mode: plan.mode ?? 'report', applyResults: plan.applyResults ?? [], applyRemaining: plan.applyRemaining ?? 0 }).split('\n')[1];
       return { date, path: join(dir, name), plan, reportPath, needsRecovery: !report.includes(version) };
-    }).filter(({ plan, needsRecovery }) => plan.pendingMessageItems?.length && needsRecovery);
+    }).filter(({ plan }) => plan.pendingMessageItems?.length || plan.notificationPending);
 }
 
 export function collectInbox(root, { maxItems = MAX_ITEMS, maxChars = MAX_INPUT_CHARS } = {}) {
@@ -249,12 +254,15 @@ export function collectInbox(root, { maxItems = MAX_ITEMS, maxChars = MAX_INPUT_
     const state = states.get(x.hash);
     if (known.get(x.source) === x.hash || allKnownHashes.has(x.hash) || pendingHashes.has(x.hash)) return false;
     pendingHashes.add(x.hash);
-    if (state?.status === '분류 불가' || state?.oversized || state?.status === '계획함') return false;
+    if (state?.status === '분류 불가' || state?.oversized || state?.status === '계획함'
+        || state?.status === '보류(실행 장애 반복)') return false;
+    if (state?.executionFailures >= MAX_EXECUTION_FAILURES) return false;
     if (state?.attempts >= 3) {
       exhausted.push({ source: x.source, hash: x.hash, status: '보류(재시도 소진)', reason: '판단 시도 3회 소진', attempts: state.attempts });
       return false;
     }
     x.attempts = state?.attempts ?? 0;
+    x.executionFailures = state?.executionFailures ?? 0;
     return true;
   });
   const selected = [];
@@ -333,11 +341,13 @@ function sourceDailyDate(sourceContent) {
 
 function movedContent(item, sourceContent, { planDate, applyDate }) {
   const { fields: original, body } = sourceFields(sourceContent);
-  const created = String(original.created ?? item.judgment.frontmatter.created ?? planDate).slice(0, 10);
-  const fields = { type: item.judgment.target.type, category: item.judgment.frontmatter.category,
-    description: item.judgment.frontmatter.description, sensitivity: item.judgment.frontmatter.sensitivity,
-    ...item.judgment.frontmatter, created, modified: applyDate,
-    ...(original.origin ? { origin: original.origin } : {}),
+  const created = original.created ?? item.judgment.frontmatter.created ?? planDate;
+  const judged = item.judgment.frontmatter;
+  const fields = { ...original, ...judged, type: item.judgment.target.type,
+    sensitivity: original.sensitivity ?? judged.sensitivity,
+    ...Object.fromEntries(['attachment', 'capturedAt', 'occurred', 'origin', 'created']
+      .filter((key) => Object.hasOwn(original, key)).map((key) => [key, original[key]])),
+    created, modified: applyDate,
     movedFrom: [item.source.replace(/\.md$/, '')] };
   return `---\n${Object.entries(fields).map(([key, value]) => `${key}: ${yamlValue(value)}`).join('\n')}\n---\n${body}`;
 }
@@ -356,10 +366,9 @@ function dailyChange(content, source, target, applyDate) {
   if (section.includes(newLink)) return { content, line: section.split('\n').find((line) => line.includes(newLink)) };
   const oldLine = section.split('\n').find((line) => line.includes(oldLink));
   const title = target.split('/').at(-1).replace(/\.md$/, '');
-  const line = oldLine
-    ? oldLine.replace(oldLink, newLink).replace(source.split('/').at(-1).replace(/\.md$/, ''), title)
-    : `- [[${target.replace(/\.md$/, '')}|${title}]]`;
-  const changed = oldLine ? section.replace(oldLine, line) : `${section.replace(/\s*$/, '')}\n${line}\n\n`;
+  const suffix = oldLine?.match(/^.*?\]\](.*)$/)?.[1] ?? '';
+  const line = `- [[${target.replace(/\.md$/, '')}|${title}]]${suffix}`;
+  const changed = oldLine ? section.replace(oldLine, () => line) : `${section.replace(/\s*$/, '')}\n${line}\n\n`;
   const body = content.slice(0, start) + changed + content.slice(end);
   const sections = parseSections(splitNote(body).body).sections;
   const fmEnd = body.indexOf('\n---', 4);
@@ -467,21 +476,37 @@ export function applicablePlans(root) {
   const memoDate = ({ item, date }) => item.sourceMeta?.occurredAt
     ?? basename(item.source).match(/^\d{4}-\d{2}-\d{2}/)?.[0]
     ?? item.judgment?.dailyLink ?? date;
-  return [...latest.values()].filter(({ item }) => !(processed[item.source]?.hash === item.hash && processed[item.source]?.appliedAt))
+  return [...latest.values()].filter(({ item }) => !(processed[item.source]?.hash === item.hash
+    && (processed[item.source]?.appliedAt || ['source-gone', 'target-exists'].includes(processed[item.source]?.status))))
     .sort((a, b) => memoDate(a).localeCompare(memoDate(b))
       || a.item.source.localeCompare(b.item.source, 'ko'));
 }
 
-function applyPendingPlans(root, rules, { dryRun, write, now, clock, startedAt, jobBudgetMs }) {
+function applyPendingPlans(root, rules, { dryRun, write, now, clock, startedAt, jobBudgetMs, onResult }) {
   const results = [];
   const pending = applicablePlans(root);
   for (const { item } of pending) {
     if (clock() - startedAt >= jobBudgetMs) break;
+    let result;
     try {
-      results.push(applyPlans({ root, ids: item.source, dryRun, noWiki: true, rules, write, now }).items[0]);
+      result = applyPlans({ root, ids: item.source, dryRun, noWiki: true, rules, write, now }).items[0];
     } catch (error) {
-      results.push({ source: item.source, failed: String(error.message).slice(0, 200) });
+      const failed = String(error.message).slice(0, 200);
+      const status = failed.startsWith('원본 없음:') ? 'source-gone'
+        : failed.startsWith('대상 이미 있음:') ? 'target-exists' : null;
+      if (status && !dryRun) {
+        const statePath = join(root, VAULT_REL.inboxIngestProcessed);
+        const state = readJson(statePath, {});
+        const prior = state[item.source];
+        state[item.source] = { hash: item.hash, status, failures: (prior?.failures ?? 0) + 1,
+          failedAt: now.toISOString() };
+        mkdirSync(dirname(statePath), { recursive: true });
+        write(statePath, `${JSON.stringify(state, null, 2)}\n`);
+      }
+      result = { source: item.source, failed };
     }
+    results.push(result);
+    onResult?.(result, pending.length - results.length);
   }
   return { results, remaining: pending.length - results.length };
 }
@@ -496,6 +521,9 @@ export function applyPlans({ root = VAULT_PATHS.root, ids, dryRun = false, noWik
   if (matches.length !== 1) throw new Error(`적용 가능한 계획 항목 ${matches.length}건 일치: ${selected[0]}`);
   const { item, date } = matches[0];
   const state = readJson(join(root, VAULT_REL.inboxIngestProcessed), {});
+  if (state[item.source]?.hash === item.hash
+      && ['source-gone', 'target-exists'].includes(state[item.source]?.status))
+    throw new Error(`적용 실패 확정: ${state[item.source].status}: ${item.source}`);
   if (state[item.source]?.hash === item.hash && state[item.source]?.appliedAt)
     return { items: [{ source: item.source, target: state[item.source].target, alreadyApplied: true, written: false }], written: false };
   return { items: [applyOne(root, item, date, activeRules, { dryRun, noWiki, write, applyDate: kstDate(now) })], written: !dryRun };
@@ -713,12 +741,15 @@ async function sendWithinDeadline(message, send, clock, startedAt, jobBudgetMs =
   }));
   try {
     return await Promise.race([Promise.resolve().then(() => deliver(message, { signal: controller.signal })).then(() => true), deadline]);
+  } catch (error) {
+    console.error(`Inbox 알림 발송 실패: ${error.message}`);
+    return false;
   } finally {
     clearTimeout(timer);
   }
 }
 
-export async function run({ root = VAULT_PATHS.root, mode = 'auto', dryRun = false, preview = false, noSend = false,
+export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = false, preview = false, noSend = false,
   now = new Date(), rules, judge, send, cooldown = cooldownActive, charter, maxItems = MAX_ITEMS,
   maxChars = MAX_INPUT_CHARS, write = writeAtomic, clock = () => Date.now() } = {}) {
   if (!['report', 'auto'].includes(mode)) throw new Error(`지원하지 않는 mode: ${mode}`);
@@ -739,17 +770,21 @@ export async function run({ root = VAULT_PATHS.root, mode = 'auto', dryRun = fal
   const existingReport = existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : null;
   const planRel = `${VAULT_REL.inboxIngestPlans}/${date}.json`;
   const previousPlan = readJson(join(root, planRel), null);
+  const recordedMode = previousPlan?.mode === 'auto' ? 'auto' : mode;
   const olderPendingPlans = pendingPlans(root).filter(({ path }) => path !== join(root, planRel));
   const olderPendingItems = olderPendingPlans.flatMap(({ plan }) => plan.pendingMessageItems);
+  const olderPendingApplyResults = olderPendingPlans.flatMap(({ plan }) => plan.notificationPending
+    ? plan.pendingApplyResults ?? plan.applyResults ?? [] : []);
   const sectionStart = `<!-- clio-inbox-ingest:${date}:start -->`;
   const plannedSection = previousPlan ? renderReport(date, previousPlan.items ?? [], previousPlan.remaining ?? 0,
     { mode: previousPlan.mode ?? 'report', applyResults: previousPlan.applyResults ?? [], applyRemaining: previousPlan.applyRemaining ?? 0 }) : null;
   const plannedVersion = plannedSection?.split('\n')[1];
   const needsReportRecovery = previousPlan && (!existingReport?.includes(sectionStart)
     || !existingReport.includes(plannedVersion));
-  const previousPending = needsReportRecovery ? previousPlan?.pendingMessageItems ?? [] : [];
+  const previousPending = previousPlan?.pendingMessageItems ?? [];
   const recoverOlderReports = () => {
-    for (const { date: oldDate, path, plan, reportPath: oldReportPath } of olderPendingPlans) {
+    for (const { date: oldDate, plan, reportPath: oldReportPath, needsRecovery } of olderPendingPlans) {
+      if (!needsRecovery) continue;
       const oldReport = existsSync(oldReportPath) ? readFileSync(oldReportPath, 'utf8') : null;
       const oldSection = renderReport(oldDate, plan.items ?? [], plan.remaining ?? 0,
         { mode: plan.mode ?? 'report', applyResults: plan.applyResults ?? [], applyRemaining: plan.applyRemaining ?? 0 });
@@ -758,17 +793,26 @@ export async function run({ root = VAULT_PATHS.root, mode = 'auto', dryRun = fal
       if (problems.length) throw new Error(`이전 리포트 등록부 위반: ${problems.join(' / ')}`);
       mkdirSync(dirname(oldReportPath), { recursive: true });
       write(oldReportPath, recovered);
-      write(path, `${JSON.stringify({ ...plan, pendingMessageItems: [] }, null, 2)}\n`);
+    }
+  };
+  const clearPendingMessages = (paths) => {
+    for (const path of paths) {
+      const plan = readJson(path, null);
+      if (plan?.pendingMessageItems?.length || plan?.notificationPending)
+        write(path, `${JSON.stringify({ ...plan, pendingMessageItems: [], pendingApplyResults: [],
+          notificationPending: false }, null, 2)}\n`);
     }
   };
   if (!selected.length && !oversized.length && !exhausted.length && !remaining && !needsReportRecovery && !previousPending.length
+      && !previousPlan?.notificationPending
       && (mode !== 'auto' || !applicablePlans(root).length)) {
-    const message = telegramMessage(olderPendingItems, remaining, { mode });
+    const message = telegramMessage(olderPendingItems, remaining, { mode, applyResults: olderPendingApplyResults });
     if (!dryRun) {
       refreshWikiCandidates(root, write);
       recoverOlderReports();
     }
-    const sent = !dryRun && !noSend && await sendWithinDeadline(message, send, clock, startedAt, jobBudgetMs);
+    const sent = !dryRun && !noSend && await sendWithinDeadline(message, send, clock, startedAt, MAX_JOB_MS);
+    if (sent) clearPendingMessages(olderPendingPlans.map(({ path }) => path));
     return { date, items: [], remaining, sent, written: !dryRun && !!olderPendingPlans.length, message };
   }
   const previousSection = needsReportRecovery && previousPlan.reportBaseSection
@@ -776,6 +820,26 @@ export async function run({ root = VAULT_PATHS.root, mode = 'auto', dryRun = fal
   const preflight = checkNote(reportRel, monthlyReport(date, renderReport(date, [], remaining), existingReport, previousSection), activeRules);
   if (preflight.length) return { date, items: [], remaining: selected.length + remaining, sent: false, written: false,
     blocked: `리포트 등록부 위반: ${preflight.join(' / ')}` };
+  let applyResults = [...(previousPlan?.applyResults ?? [])];
+  let applyRemaining = previousPlan?.applyRemaining ?? 0;
+  let notificationApplyResults = previousPlan?.notificationPending
+    ? [...(previousPlan.pendingApplyResults ?? previousPlan.applyResults ?? [])] : [];
+  if (mode === 'auto' && !dryRun) {
+    const batch = applyPendingPlans(root, activeRules, { dryRun: false, write, now, clock, startedAt, jobBudgetMs,
+      onResult: (result, pendingCount) => {
+        applyResults = [...applyResults.filter((item) => item.source !== result.source), result];
+        notificationApplyResults = [...notificationApplyResults.filter((item) => item.source !== result.source), result];
+        applyRemaining = pendingCount;
+        const checkpoint = { date, mode: recordedMode, remaining: previousPlan?.remaining ?? remaining,
+          items: previousPlan?.items ?? [], reportBaseSection: previousSection,
+          pendingMessageItems: previousPending, notificationPending: true,
+          pendingApplyResults: notificationApplyResults, applyResults, applyRemaining };
+        const path = join(root, planRel);
+        mkdirSync(dirname(path), { recursive: true });
+        write(path, `${JSON.stringify(checkpoint, null, 2)}\n`);
+      } });
+    applyRemaining = batch.remaining;
+  }
   const registrySummary = activeRules.filter((r) => r.path.startsWith(`${VAULT_REL.recordsRoot}/`) || r.path.startsWith(`${VAULT_REL.knowledge}/`))
     .map((r) => `${r.type}: ${r.path}; 필수 ${[...r.required.bundle, ...r.required.extra].join(', ')}`).join('\n');
   const categories = selected.length ? homeCategories(root) : [];
@@ -836,10 +900,12 @@ export async function run({ root = VAULT_PATHS.root, mode = 'auto', dryRun = fal
     }
     if (failure) items.push({ source: item.source, hash: item.hash, attemptedAt: now.toISOString(),
       status: failure.executionFailure || failure.isLimit
-        ? '판단 보류(실행 장애)' : '판단 실패', attempts,
+        ? item.executionFailures + 1 >= MAX_EXECUTION_FAILURES
+          ? '보류(실행 장애 반복)' : '판단 보류(실행 장애)' : '판단 실패', attempts,
+      executionFailures: item.executionFailures + (failure.executionFailure || failure.isLimit ? 1 : 0),
       reason: failure.isLimit ? '사용량 한도' : String(failure.message).slice(0, 200),
       ...(rawPreview === undefined ? {} : { rawPreview }) });
-    if (failure?.isLimit) break;
+    if (failure?.executionFailure || failure?.isLimit) break;
   }
   const finalRemaining = remaining + selected.length - items.length;
   items.push(...oversized, ...exhausted);
@@ -850,12 +916,12 @@ export async function run({ root = VAULT_PATHS.root, mode = 'auto', dryRun = fal
     && !(item.status === '판단 실패' && previousStates.get(item.hash)?.status === '판단 실패'))
     .map(({ rawPreview, ...item }) => item);
   const pendingMessageItems = [...previousPending.filter((item) => !newSources.has(item.source)), ...newMessageItems];
-  let applyResults = mode === 'auto' ? [...(previousPlan?.applyResults ?? [])] : [];
-  let applyRemaining = mode === 'auto' ? previousPlan?.applyRemaining ?? 0 : 0;
-  const planContent = (pending) => `${JSON.stringify({ date, mode, remaining: finalRemaining, items: allItems,
-    reportBaseSection: previousSection, pendingMessageItems: pending, applyResults, applyRemaining }, null, 2)}\n`;
+  const planContent = (pending) => `${JSON.stringify({ date, mode: recordedMode, remaining: finalRemaining, items: allItems,
+    reportBaseSection: previousSection, pendingMessageItems: pending,
+    notificationPending: pending.length > 0 || notificationApplyResults.length > 0,
+    pendingApplyResults: notificationApplyResults, applyResults, applyRemaining }, null, 2)}\n`;
   const reportFor = (base = existingReport) => monthlyReport(date, renderReport(date, allItems, finalRemaining,
-    { mode, applyResults, applyRemaining }), base, previousSection);
+    { mode: recordedMode, applyResults, applyRemaining }), base, previousSection);
   let report = reportFor();
   const problems = checkNote(reportRel, report, activeRules);
   if (problems.length) return { date, items, remaining: finalRemaining, sent: false, written: false,
@@ -866,27 +932,33 @@ export async function run({ root = VAULT_PATHS.root, mode = 'auto', dryRun = fal
     write(join(root, planRel), planContent(pendingMessageItems));
     refreshWikiCandidates(root, write);
     if (mode === 'auto') {
-      const batch = applyPendingPlans(root, activeRules, { dryRun: false, write, now, clock, startedAt, jobBudgetMs });
-      const updatedSources = new Set(batch.results.map((item) => item.source));
-      applyResults = [...applyResults.filter((item) => !updatedSources.has(item.source)), ...batch.results];
+      const batch = applyPendingPlans(root, activeRules, { dryRun: false, write, now, clock, startedAt, jobBudgetMs,
+        onResult: (result, pendingCount) => {
+          applyResults = [...applyResults.filter((item) => item.source !== result.source), result];
+          notificationApplyResults = [...notificationApplyResults.filter((item) => item.source !== result.source), result];
+          applyRemaining = pendingCount;
+          write(join(root, planRel), planContent(pendingMessageItems));
+        } });
       applyRemaining = batch.remaining;
       report = reportFor(existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : null);
     }
+    write(join(root, planRel), planContent(pendingMessageItems));
     mkdirSync(dirname(reportPath), { recursive: true });
     write(reportPath, report);
-    write(join(root, planRel), planContent([]));
     recoverOlderReports();
   }
   if (dryRun && mode === 'auto') {
     const batch = applyPendingPlans(root, activeRules, { dryRun: true, write, now, clock, startedAt, jobBudgetMs });
     const updatedSources = new Set(batch.results.map((item) => item.source));
     applyResults = [...applyResults.filter((item) => !updatedSources.has(item.source)), ...batch.results];
+    notificationApplyResults = [...notificationApplyResults.filter((item) => !updatedSources.has(item.source)), ...batch.results];
     applyRemaining = batch.remaining;
     report = reportFor();
   }
   const message = telegramMessage([...olderPendingItems, ...pendingMessageItems], finalRemaining,
-    { mode, applyResults, applyRemaining });
-  const sent = !dryRun && !noSend && await sendWithinDeadline(message, send, clock, startedAt, jobBudgetMs);
+    { mode: recordedMode, applyResults: [...olderPendingApplyResults, ...notificationApplyResults], applyRemaining });
+  const sent = !dryRun && !noSend && await sendWithinDeadline(message, send, clock, startedAt, MAX_JOB_MS);
+  if (sent) clearPendingMessages([join(root, planRel), ...olderPendingPlans.map(({ path }) => path)]);
   return { date, items, remaining: finalRemaining, sent,
     written: !dryRun, report, reportRel, planRel, message, applyResults, applyRemaining };
 }
@@ -894,22 +966,25 @@ export async function run({ root = VAULT_PATHS.root, mode = 'auto', dryRun = fal
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = Object.fromEntries(process.argv.slice(2).map((arg) => { const text = arg.replace(/^--/, ''); const at = text.indexOf('=');
     return at < 0 ? [text, true] : [text.slice(0, at), text.slice(at + 1)]; }));
-  if (Object.hasOwn(args, 'retry')) {
-    try {
+  const cli = async () => {
+    if (Object.hasOwn(args, 'retry')) {
       const result = retryMemo({ source: args.retry, dryRun: args['dry-run'] === true });
       console.log(`Inbox 재시도 ${result.written ? '등록' : '미리보기(쓰기 없음)'}: ${result.source}`);
-    } catch (error) { console.error(`Inbox 재시도 중단: ${error.message}`); process.exitCode = 1; }
-  } else if (args.apply) {
-    try {
+    } else if (args.apply) {
       const result = applyPlans({ ids: args.ids, dryRun: args['dry-run'] === true, noWiki: args['no-wiki'] === true });
       for (const item of result.items) console.log(JSON.stringify(item));
       console.log(result.written ? 'Inbox apply 완료' : 'Inbox apply 미리보기(쓰기 없음)');
-    } catch (error) { console.error(`Inbox apply 중단: ${error.message}`); process.exitCode = 1; }
-  } else run({ mode: args.mode ?? 'auto', dryRun: args['dry-run'] === true,
-    preview: args['dry-run'] === true, noSend: args['no-send'] === true })
-    .then((result) => {
+    } else {
+      const result = await run({ mode: args.mode ?? 'report', dryRun: args['dry-run'] === true,
+        preview: args['dry-run'] === true, noSend: args['no-send'] === true });
       if (result.blocked) { console.error(result.blocked); process.exitCode = 1; }
       else if (args['dry-run']) console.log(`Inbox 미리보기: 다시 판단 ${result.retryCandidates}건, 적용 대상 ${result.applyCandidates}건, 남은 ${result.remaining}건`);
       else console.log(`Inbox 계획 ${result.items.length}건, 적용 ${result.applyResults?.filter((item) => item.written).length ?? 0}건, 남은 ${result.remaining}건`);
-    }).catch((error) => { console.error(`Inbox ingest 실패: ${error.message}`); process.exitCode = 1; });
+    }
+  };
+  const lockBase = join(tmpdir(), `clio-inbox-ingest-${hashOf(VAULT_PATHS.root)}.job`);
+  withLock(lockBase, cli, { retries: 0 }).catch((error) => {
+    console.error(`Inbox ingest 중단: ${error.message}`);
+    process.exitCode = 1;
+  });
 }
