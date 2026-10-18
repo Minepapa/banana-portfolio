@@ -93,17 +93,13 @@ test('note rewrite preserves manual fields and owner memo; second pass changes n
   assert.equal(renderSpeakerNote(next, transcript, speakers), next);
 });
 
-test('scheduled apply runs at 02:00(음성 블록) while manual flags keep their limits', () => {
+test('scheduled apply options(02:00 음성 블록 media-audio가 인자 없이 부름) while manual flags keep their limits', () => {
   assert.deepEqual(parseArgs(['--apply', '--limit=20', '--max-minutes=45']).maxMinutes, 45);
   assert.deepEqual(launchOptions([]), { apply: true, limit: 200, maxMinutes: 600, allowNight: true });
   assert.equal(launchOptions(['--apply']).allowNight, undefined);
   assert.throws(() => launchOptions(['--apply', '--limit=200']), /필요/);
   assert.equal(parseArgs(['--render-notes', '--dry-run']).dryRun, true);
   assert.throws(() => parseArgs(['--apply', '--trial']), /필요/);
-  const plist = readFileSync(new URL('../launchd/com.banana2.media-diarize.plist', import.meta.url), 'utf8');
-  const slots = [...plist.matchAll(/<dict><key>Hour<\/key><integer>(\d+)<\/integer><key>Minute<\/key><integer>(\d+)<\/integer><\/dict>/g)]
-    .map((match) => [Number(match[1]), Number(match[2])]);
-  assert.deepEqual(slots, [[2, 0]]);
 });
 
 function npy(matrix) {

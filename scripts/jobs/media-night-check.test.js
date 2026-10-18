@@ -26,13 +26,13 @@ function vault(t, overrides = {}) {
 }
 
 test('밤 점검: 이번 밤 정상 실행만 ✔, 실패·기록 없음은 ✖와 내일 할 일로', (t) => {
-  const { root } = vault(t, { 'media-diarize': { status: 'FAIL' }, 'media-photo': { lastRun: '2026-10-17T18:00:00.000Z' } });
+  const { root } = vault(t, { 'media-audio': { status: 'FAIL' }, 'media-photo': { lastRun: '2026-10-17T18:00:00.000Z' } });
   const blocks = judgeBlocks(root, now);
-  assert.equal(blocks.find((b) => b.job === 'media-transcribe').ok, true);
-  assert.equal(blocks.find((b) => b.job === 'media-diarize').ok, false);
+  assert.equal(blocks.find((b) => b.job === 'media-video').ok, true);
+  assert.equal(blocks.find((b) => b.job === 'media-audio').ok, false);
   assert.equal(blocks.find((b) => b.job === 'media-photo').fresh, false);
   const text = renderNightCheck(blocks, { speakerCheck: 3, untitledRecent: 1, video: { count: 10, hours: 1.2 } }, now);
-  assert.match(text, /02:00 화자 분리 점검·재실행\(FAIL\)/);
+  assert.match(text, /02:00 통화·녹음 전사·화자 분리 점검·재실행\(FAIL\)/);
   assert.match(text, /영상 말소리 전사 백필 남음 10개/);
 });
 

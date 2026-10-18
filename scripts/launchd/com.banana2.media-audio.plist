@@ -3,22 +3,23 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.banana2.media-diarize</string>
+  <string>com.banana2.media-audio</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
     <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
-    <string>media-diarize</string>
+    <string>media-audio</string>
   </array>
+  <!-- 매일 02:00 음성 블록: 통화·녹음 전사 → 화자 분리(2026-10-18 오너 결정, 사진·영상 블록과 같은 구조). -->
   <key>StartCalendarInterval</key>
-  <!-- 매일 02:00(음성 블록, 2026-10-18 시간표 개편), 01:00 전사가 끝난 파일을 화자 분리한다. 새 통화 시작은 회차당 45분까지. -->
+  
   <array>
     <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer></dict>
   </array>
   <key>RunAtLoad</key><false/>
   <key>ProcessType</key><string>Background</string>
   <key>WorkingDirectory</key><string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
-  <key>StandardOutPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-diarize.log</string>
-  <key>StandardErrorPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-diarize.log</string>
+  <key>StandardOutPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-audio.log</string>
+  <key>StandardErrorPath</key><string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-audio.log</string>
 </dict>
 </plist>

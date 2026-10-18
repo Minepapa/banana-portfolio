@@ -13,8 +13,7 @@ const displayVaultRoot = VAULT_ROOT.startsWith(`${homedir()}/`)
 export const JOB_LABELS = {
   'media-archive': 'Syncthing Media Inbox 안정 파일을 Archive에 하드링크 보관·색인(매시간)',
   'media-moments': 'Camera와 촬영 시각이 확인된 KakaoTalk 사진·동영상을 순간별 Vault 노트로 묶음(매시간)',
-  'media-transcribe': '통화·녹음 로컬 Whisper 전사 → 대화 노트(매일 01:00 음성 블록)',
-  'media-diarize': '통화 로컬 pyannote 화자 분리 → 대화 노트(매일 02:00 음성 블록, 전사 잡 잠금 시 건너뜀)',
+  'media-audio': '음성 블록: 통화·녹음 로컬 Whisper 전사 → 로컬 pyannote 화자 분리 → 대화 노트(매일 02:00, 발송 없음)',
   'media-photo': '사진 블록: 로컬 Apple Vision 장면 분석 → 로컬 얼굴 판정·미네·휘영·나 이름표·순간 노트 반영(매일 03:00, 발송 없음)',
   'media-audio-offsite-backup': '통화·녹음 원본 암호화(AES-256-GCM) 구글 드라이브 백업, 새 파일만(매일 00:00)',
   'media-video': '새 영상 얼굴·소리 분석 → 순간 이름표 → 하이라이트 → 말소리 전사·하이라이트 갱신(매일 04:00 영상 블록, 발송 없음)',
