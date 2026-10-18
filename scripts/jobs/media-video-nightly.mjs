@@ -3,7 +3,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MEDIA_FACES_PATHS, VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
+import { MEDIA_DIARIZE_PATHS, MEDIA_FACES_PATHS, VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { withLock } from '../lib/state-writer.mjs';
 import { runMediaVideo } from './media-video.mjs';
 import { runVideoHighlights } from './media-video-highlights.mjs';
@@ -15,6 +15,7 @@ export const VIDEO_NIGHTLY_BUDGET_MS = 40 * 60_000;
 export async function runVideoNightly({ video = runMediaVideo, highlights = runVideoHighlights,
   refresh = refreshMomentPeople,
   lock = withLock, facesRoot = MEDIA_FACES_PATHS.root, vaultRoot = VAULT_PATHS.root,
+  mediaRoot = MEDIA_DIARIZE_PATHS.mediaRoot,
   dryRun = false, output = console } = {}) {
   const execute = async () => {
     const analysis = await video({ limit: VIDEO_NIGHTLY_LIMIT,
@@ -40,12 +41,16 @@ export async function runVideoNightly({ video = runMediaVideo, highlights = runV
   };
   if (dryRun) return execute();
   mkdirSync(facesRoot, { recursive: true, mode: 0o700 });
+  const mediaLock = join(mediaRoot, 'Diarize', '.media-diarize');
+  mkdirSync(join(mediaRoot, 'Diarize'), { recursive: true, mode: 0o700 });
   const faceLock = join(facesRoot, '.media-faces');
-  const mediaLock = join(vaultRoot, VAULT_REL.mediaTranscribeState);
+  const vaultLock = join(vaultRoot, VAULT_REL.mediaTranscribeState);
   try {
-    return await lock(mediaLock, () => lock(faceLock, execute, { retries: 0 }), { retries: 0 });
+    return await lock(mediaLock, () => lock(vaultLock, () =>
+      lock(faceLock, execute, { retries: 0 }), { retries: 0 }), { retries: 0 });
   } catch (error) {
-    if (![mediaLock, faceLock].some((path) => error.message.startsWith(`락 획득 실패(포기): ${path} `))) throw error;
+    if (![mediaLock, vaultLock, faceLock]
+      .some((path) => error.message.startsWith(`락 획득 실패(포기): ${path} `))) throw error;
     output.log('[media-video-nightly] 다른 미디어 작업 중 — 건너뜀');
     return { analysis: null, notes: null, skipped: true };
   }

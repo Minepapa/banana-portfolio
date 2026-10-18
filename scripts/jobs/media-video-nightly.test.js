@@ -102,12 +102,18 @@ test('공용 미디어 잠금 또는 얼굴 잠금이 있으면 분석·노트 �
   const shared = join(vaultRoot, VAULT_REL.mediaTranscribeState);
   mkdirSync(dirname(shared), { recursive: true });
   const never = () => { throw new Error('잠금 중 실행됨'); };
-  const options = { facesRoot, vaultRoot, video: never, refresh: never, output: { log() {} } };
+  const options = { facesRoot, vaultRoot, mediaRoot: join(base, 'media'),
+    video: never, refresh: never, output: { log() {} } };
   await withLock(shared, async () => {
     assert.equal((await runVideoNightly(options)).skipped, true);
   });
   mkdirSync(facesRoot, { recursive: true });
   await withLock(join(facesRoot, '.media-faces'), async () => {
+    assert.equal((await runVideoNightly(options)).skipped, true);
+  });
+  const mediaLock = join(options.mediaRoot, 'Diarize', '.media-diarize');
+  mkdirSync(dirname(mediaLock), { recursive: true });
+  await withLock(mediaLock, async () => {
     assert.equal((await runVideoNightly(options)).skipped, true);
   });
 });
