@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { filterVideoSegments, nameVideoSegments, parseVideoTranscriptArgs,
-  runMediaVideoTranscribe, selectVideoTranscriptTargets, speechIntervals } from './media-video-transcribe.mjs';
+  restoreSourceTime, reviewVideoSegments, runMediaVideoTranscribe,
+  selectVideoTranscriptTargets, speechAudioPlan, speechIntervals,
+  VIDEO_TRANSCRIPT_VERSION } from './media-video-transcribe.mjs';
 import { transcribe } from './media-transcribe.mjs';
 
 const ID = '1234567890abcdef';
@@ -37,7 +39,7 @@ test('말소리 기준, 캐시 원본 일치, 실패 상한, 증분 선택', (t)
   assert.equal(selectVideoTranscriptTargets([record], options).selected.length, 1);
   const path = join(f.outputRoot, '2024', `${ID}.json`);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify({ version: 1, sourceSize: f.source.size,
+  writeFileSync(path, JSON.stringify({ version: VIDEO_TRANSCRIPT_VERSION, sourceSize: f.source.size,
     sourceMtimeMs: Math.round(f.source.mtimeMs),
     model: join(process.env.HOME, 'Pantheon', 'Models', 'whisper', 'ggml-large-v3.bin') }));
   assert.equal(selectVideoTranscriptTargets([record], options).selected.length, 0);
@@ -64,6 +66,36 @@ test('환각 문구와 말소리 바깥 전사 제거', () => {
   ], intervals), [{ start: 1000, end: 2000, text: '미네 안녕' }]);
 });
 
+test('말소리 창만 이어 붙이고 원본 시각으로 복원한다', () => {
+  const intervals = speechIntervals({ windows: [
+    { start: 0, end: 4, tags: { speech: 0.5, singing: 0 } },
+    { start: 2, end: 6, tags: { speech: 0.6, singing: 0 } },
+    { start: 6, end: 10, tags: { speech: 0.7, singing: 0.6 } },
+    { start: 12, end: 14, tags: { speech: 0.6, singing: 0 } },
+  ] });
+  assert.deepEqual(intervals, [{ start: 0, end: 6 }, { start: 12, end: 14 }]);
+  const plan = speechAudioPlan(intervals);
+  assert.equal(plan.at(-1).audioEndMs, 8000);
+  assert.deepEqual(restoreSourceTime([{ start: 6500, end: 7500, text: '안녕' }], plan),
+    [{ start: 12500, end: 13500, text: '안녕' }]);
+});
+
+test('반복과 알려진 헛자막, no-speech 확률을 이유와 함께 버린다', () => {
+  const segments = [
+    { start: 0, end: 1000, text: '안녕' },
+    { start: 1000, end: 2000, text: '안녕' },
+    { start: 2000, end: 3000, text: '안녕' },
+    { start: 3000, end: 4000, text: "'미리보기'는 미리보기입니다" },
+    { start: 4000, end: 5000, text: '여보세요', noSpeechProb: 0.8 },
+    { start: 5000, end: 6000, text: '실제 대화' },
+  ];
+  const result = reviewVideoSegments(segments, [{ start: 0, end: 6 }]);
+  assert.deepEqual(result.kept.map((part) => part.text), ['실제 대화']);
+  assert.deepEqual(result.dropped.map((part) => part.reason), [
+    'repetition', 'repetition', 'repetition', 'known-hallucination', 'no-speech-probability',
+  ]);
+});
+
 test('녹음 화자 기준을 쓰고 짧은 영상은 한 명만 판정', () => {
   const reference = { 미네: { mean: [1, 0], minSimilarity: 0.45,
     period: { first: '2024-01-01', last: '2024-12-31' } } };
@@ -88,10 +120,14 @@ test('dry-run 무쓰기, 결과 0600, 재실행 증분', async (t) => {
     referencesLoader: () => ({ 미네: { mean: [1, 0], minSimilarity: 0.45 } }),
     transcribeFn: async (_record, settings) => {
       assert.equal(settings.language, 'auto');
-      assert.equal(settings.noGpu, true);
-      return { durationSec: 8, segments: [{ start: 0, end: 2000, text: '미네 안녕' }] };
+      assert.notEqual(settings.noGpu, true); // GPU 사용(2026-10-18 실측 8배)
+      assert.equal(settings.inputDurationSec, 4);
+      return { durationSec: 4, segments: [{ start: 0, end: 2000, text: '미네 안녕' }] };
     },
-    diarizeFn: async () => [{ id: ID, turns: [{ start: 0, end: 2000, speaker: 'S0' }] }],
+    diarizeFn: async (backend) => {
+      assert.equal(backend, 'pyannote-single');
+      return [{ id: ID, turns: [{ start: 0, end: 2000, speaker: 'S0' }] }];
+    },
     voiceLoader: () => [[1, 0]], execute: async () => ({}) };
   const dry = await runMediaVideoTranscribe({ ...options, dryRun: true });
   assert.equal(dry.selected, 1);

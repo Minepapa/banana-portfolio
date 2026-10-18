@@ -311,27 +311,42 @@ export async function durationSec(path, ffprobePath, timeoutMs = 0) {
 }
 
 export async function transcribe(record, { ffmpegPath, ffprobePath, whisperPath, model, temporaryRoot, now,
-  language = 'ko', noGpu = false, timeoutMs = 0, directMc0 = false, output = console }) {
+  language = 'ko', noGpu = false, timeoutMs = 0, directMc0 = false, output = console,
+  inputWav = null, inputDurationSec = null, fullJson = false, shouldRetryLanguage = null,
+  threads = null, noSpeechThreshold = null }) {
   const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
   const remaining = () => deadline === Infinity ? 0 : Math.max(1, deadline - Date.now());
-  const duration = await durationSec(record.path, ffprobePath, remaining());
+  const timings = { probeMs: 0, ffmpegMs: 0, whisperRuns: [] };
+  let stepStarted = performance.now();
+  const duration = inputDurationSec ?? await durationSec(record.path, ffprobePath, remaining());
+  timings.probeMs = Math.round(performance.now() - stepStarted);
   const directory = await fs.mkdtemp(join(temporaryRoot, 'media-transcribe-'));
   const wav = join(directory, `${randomUUID()}.wav`);
   try {
-    await execFileAsync(ffmpegPath, ['-nostdin', '-loglevel', 'error', '-i', record.path,
+    stepStarted = performance.now();
+    if (!inputWav) await execFileAsync(ffmpegPath, ['-nostdin', '-loglevel', 'error', '-i', record.path,
       '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav], { maxBuffer: 1024 * 1024, timeout: remaining() });
+    timings.ffmpegMs = Math.round(performance.now() - stepStarted);
     // 구간별 시각(-oj, 최대 30자·단어 경계)을 남겨 나중에 화자 분리와 맞출 수 있게 한다(2026-10-12 오너 결정).
     const outPrefix = join(directory, 'out');
     const decode = async (maxContext = false, chosenLanguage = language) => {
       await fs.rm(`${outPrefix}.json`, { force: true });
+      const decodeStarted = performance.now();
       await execFileAsync(whisperPath,
-        ['-m', model, '-l', chosenLanguage, ...(noGpu ? ['-ng'] : []), '-np', '-oj', '-ml', '30', '-sow',
-          ...(maxContext ? ['-mc', '0'] : []), '-of', outPrefix, '-f', wav],
+        ['-m', model, '-l', chosenLanguage, ...(noGpu ? ['-ng'] : []),
+          ...(threads ? ['-t', String(threads)] : []), '-np', fullJson ? '-ojf' : '-oj', '-ml', '30', '-sow',
+          ...(noSpeechThreshold !== null ? ['-nth', String(noSpeechThreshold)] : []),
+          ...(maxContext ? ['-mc', '0'] : []), '-of', outPrefix, '-f', inputWav || wav],
         { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: remaining() });
+      timings.whisperRuns.push({ language: chosenLanguage, maxContext,
+        ms: Math.round(performance.now() - decodeStarted) });
       const parsed = JSON.parse(await fs.readFile(`${outPrefix}.json`, 'utf8'));
       if (!Array.isArray(parsed?.transcription)) throw new Error('Whisper JSON 형식 오류');
       const segments = parsed.transcription.map((segment) => ({
         start: Number(segment?.offsets?.from), end: Number(segment?.offsets?.to), text: String(segment?.text ?? '').trim(),
+        ...(Number.isFinite(segment?.no_speech_prob) ? { noSpeechProb: segment.no_speech_prob } : {}),
+        ...(Array.isArray(segment?.tokens) ? { tokenConfidence: segment.tokens.length
+          ? segment.tokens.reduce((sum, token) => sum + Number(token.p || 0), 0) / segment.tokens.length : null } : {}),
       })).filter((segment) => segment.text);
       if (segments.some((segment) => !Number.isFinite(segment.start) || !Number.isFinite(segment.end))) {
         throw new Error('Whisper 구간 시각 오류');
@@ -341,7 +356,8 @@ export async function transcribe(record, { ffmpegPath, ffprobePath, whisperPath,
     };
     let decoded = await decode(directMc0);
     let languageFallback;
-    if (language === 'auto' && !['ko', 'en', 'auto'].includes(decoded.detectedLanguage)) {
+    if (language === 'auto' && !['ko', 'en', 'auto'].includes(decoded.detectedLanguage)
+      && (!shouldRetryLanguage || shouldRetryLanguage(decoded))) {
       languageFallback = decoded.detectedLanguage;
       decoded = await decode(directMc0, 'ko');
     }
@@ -371,6 +387,7 @@ export async function transcribe(record, { ffmpegPath, ffprobePath, whisperPath,
       ...(languageFallback ? { languageFallback } : {}),
       ...(decodeRetry ? { decodeRetry } : {}), ...(decodeRetryError ? { decodeRetryError } : {}),
       ...(repetition.looped ? { repetition } : {}),
+      timings,
     };
   } finally {
     await fs.rm(directory, { recursive: true, force: true });

@@ -99,8 +99,14 @@ def init_pyannote(_num_speakers):
 
 def pyannote_result(pipeline, audio, speaker_options):
     import torch
+    stages = {}
+
+    def on_stage(name, _value, **_progress):
+        if name in ("speaker_counting", "embeddings"):
+            stages[name] = time.monotonic()
+
     result = pipeline({"waveform": torch.from_numpy(audio)[None], "sample_rate": 16000},
-                      **speaker_options)
+                      hook=on_stage, **speaker_options)
     annotation = result.exclusive_speaker_diarization
     speakers = annotation.labels()
     minimum = speaker_options.get("min_speakers", speaker_options.get("num_speakers"))
@@ -113,22 +119,37 @@ def pyannote_result(pipeline, audio, speaker_options):
              for segment, _, speaker in annotation.itertracks(yield_label=True)]
     source_labels = result.speaker_diarization.labels()
     vectors = np.stack([result.speaker_embeddings[source_labels.index(s)] for s in speakers])
-    return turns, vectors
+    feature_ms = round((stages["embeddings"] - stages["speaker_counting"]) * 1000)
+    return turns, vectors, feature_ms
 
 
-def main():
-    request = json.loads(sys.stdin.readline())
+def pyannote_single_result(pipeline, audio):
+    """Use the same embedding space as diarization, without running segmentation."""
+    import torch
+    started = time.monotonic()
+    waveform = torch.from_numpy(audio)[None, None]
+    vectors = np.asarray(pipeline._embedding(waveform), dtype=np.float32)
+    if vectors.shape[0] != 1 or not np.isfinite(vectors).all():
+        raise RuntimeError("single-speaker embedding invalid")
+    return [{"start": 0, "end": round(len(audio) / 16), "speaker": "S0"}], vectors, round((time.monotonic() - started) * 1000)
+
+
+def process_request(request, model_cache):
     backend = request["backend"]
     fixed = request.get("numSpeakers") == 2 and "minSpeakers" not in request and "maxSpeakers" not in request
-    ranged = (backend == "pyannote" and request.get("minSpeakers") == 1
+    ranged = (backend in ("pyannote", "pyannote-single") and request.get("minSpeakers") == 1
               and request.get("maxSpeakers") == 3 and "numSpeakers" not in request)
-    if backend not in ("sherpa", "pyannote") or not (fixed or ranged):
+    if backend not in ("sherpa", "pyannote", "pyannote-single") or not (fixed or ranged):
         raise ValueError("backend or numSpeakers invalid")
     voices_dir = Path(request["voicesDir"])
     if backend == "sherpa":
-        models, device = init_sherpa(2), "cpu"
+        if "sherpa" not in model_cache:
+            model_cache["sherpa"] = (init_sherpa(2), "cpu")
+        models, device = model_cache["sherpa"]
     else:
-        models, device = init_pyannote(2)
+        if "pyannote" not in model_cache:
+            model_cache["pyannote"] = init_pyannote(2)
+        models, device = model_cache["pyannote"]
     speaker_options = {"num_speakers": 2} if fixed else {"min_speakers": 1, "max_speakers": 3}
     for item in request["items"]:
         started = time.monotonic()
@@ -138,18 +159,29 @@ def main():
                 raise ValueError("expected mono 16kHz wav")
             if backend == "sherpa":
                 turns, vectors = sherpa_result(models, audio)
+                feature_ms = 0
+            elif backend == "pyannote":
+                turns, vectors, feature_ms = pyannote_result(models, audio, speaker_options)
             else:
-                turns, vectors = pyannote_result(models, audio, speaker_options)
+                turns, vectors, feature_ms = pyannote_single_result(models, audio)
             path = voices_dir / ("pyannote-rec" if ranged else backend) / f"{item['id']}.npy"
             path.parent.mkdir(parents=True, exist_ok=True)
             np.save(path, vectors)
             path.chmod(0o600)
             result = {"id": item["id"], "backend": backend, "device": device, "turns": turns,
                       "ms": round((time.monotonic() - started) * 1000),
+                      "featureMs": feature_ms,
                       "audioSec": round(len(audio) / sample_rate, 3)}
         except Exception as error:
             result = {"id": item.get("id"), "error": str(error)}
         print(json.dumps(result, ensure_ascii=False), file=result_output, flush=True)
+
+
+def main():
+    model_cache = {}
+    for line in sys.stdin:
+        if line.strip():
+            process_request(json.loads(line), model_cache)
 
 
 if __name__ == "__main__":

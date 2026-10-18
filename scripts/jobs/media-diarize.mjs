@@ -3,6 +3,7 @@
 // --trial: 엔진 비교 시험(결과는 Media/Diarize/trial). --apply: 본 처리 → 95_Etna/Media/Speakers + 통화 노트 대화 형식.
 // '나' 목소리는 후보를 만든 뒤 오너 확인(--confirm-owner)으로만 등록한다. 목소리 특징값은 볼트 밖에만 둔다.
 import { spawn, execFile } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { existsSync, readFileSync, mkdirSync, writeFileSync, lstatSync, readdirSync, renameSync, realpathSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -179,6 +180,52 @@ export async function runPython(backend, items, { python = MEDIA_DIARIZE_PATHS.p
     child.stdin.end(`${JSON.stringify({ backend, items, ...(recordings
       ? { minSpeakers: 1, maxSpeakers: 3 } : { numSpeakers: 2 }), voicesDir })}\n`);
   });
+}
+
+// 영상 묶음은 모델 초기화를 한 번만 치르도록 같은 로컬 작업기를 재사용한다.
+export function createPythonSession({ python = MEDIA_DIARIZE_PATHS.python,
+  voicesDir = MEDIA_DIARIZE_PATHS.voices, signal, spawnProcess = spawn, lowPriority = true } = {}) {
+  const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    !/^(?:HF|HUGGINGFACE|HUGGING_FACE).*TOKEN$/i.test(key)));
+  const child = spawnProcess(lowPriority ? 'nice' : python,
+    lowPriority ? ['-n', '10', python, SCRIPT] : [SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'], signal,
+      env: { ...environment, HF_HUB_OFFLINE: '1', TRANSFORMERS_OFFLINE: '1', PYANNOTE_METRICS_ENABLED: '0' } });
+  const pending = [];
+  let stderr = '';
+  let closed = false;
+  let failure = null;
+  child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr = (stderr + chunk).slice(-1000); });
+  createInterface({ input: child.stdout }).on('line', (line) => {
+    const request = pending[0];
+    if (!request) return;
+    request.lines.push(line);
+    if (request.lines.length < request.items.length) return;
+    pending.shift();
+    try { request.resolve(parsePythonOutput(request.lines.join('\n'), request.items, request.backend,
+      { recordings: true })); }
+    catch (error) { request.reject(error); }
+  });
+  child.on('error', (error) => { failure = error; });
+  const done = new Promise((resolvePromise) => child.on('close', (code) => {
+    closed = true;
+    failure ||= code === 0 ? new Error('화자 작업기 종료') : new Error(`화자 엔진 실패: ${stderr.slice(0, 500)}`);
+    for (const request of pending.splice(0)) request.reject(failure);
+    resolvePromise();
+  }));
+  return {
+    run(backend, items) {
+      if (closed || failure) return Promise.reject(failure || new Error('화자 작업기 종료'));
+      return new Promise((resolvePromise, rejectPromise) => {
+        pending.push({ backend, items, lines: [], resolve: resolvePromise, reject: rejectPromise });
+        child.stdin.write(`${JSON.stringify({ backend, items, minSpeakers: 1, maxSpeakers: 3,
+          voicesDir })}\n`);
+      });
+    },
+    async close() {
+      if (!closed) child.stdin.end();
+      await done;
+    },
+  };
 }
 
 export function availableBackends(requested, pyannoteReady) {

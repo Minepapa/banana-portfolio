@@ -11,19 +11,23 @@ import { AUDIO_CUES_PATHS } from '../lib/media-audio-cues.mjs';
 import { safeVideoPath } from '../lib/media-video-frames.mjs';
 import { MEDIA_DIARIZE_PATHS, VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { withLock } from '../lib/state-writer.mjs';
-import { assignRecordingNames, readNpy, runPython } from './media-diarize.mjs';
+import { assignRecordingNames, createPythonSession, readNpy, runPython } from './media-diarize.mjs';
 import { detectRepetition, transcribe } from './media-transcribe.mjs';
 import { savePrivate, selectVideos } from './media-video.mjs';
 
 const exec = promisify(execFile);
 const ID = /^[a-f0-9]{16}$/i;
 export const VIDEO_SPEECH_THRESHOLD = 0.3; // media-audio-cues.summarizeCues와 같은 문턱
-export const VIDEO_TRANSCRIPT_VERSION = 1;
+export const VIDEO_TRANSCRIPT_VERSION = 2;
 export const VIDEO_TRANSCRIPT_PATHS = Object.freeze({
   root: join(homedir(), 'Pantheon', 'Media', 'VideoTranscripts'),
   model: join(homedir(), 'Pantheon', 'Models', 'whisper', 'ggml-large-v3.bin'),
 });
-const QUIET = /^(?:시청해주셔서감사합니다|구독과좋아요(?:부탁드립니다)?|자막제공|영상편집|감사합니다|thanksforwatching|subtitlesby|music)$/iu;
+export const VIDEO_HALLUCINATION_PHRASES = Object.freeze([
+  '미리보기', '자막', '시청해주셔서감사', '구독과좋아요', '영상편집',
+  'thanksforwatching', 'subtitlesby', 'sampaijumpadivideoselanjutnya',
+]);
+const normalizeText = (text) => String(text || '').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
 
 function readRows(path) {
   return existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean).map(JSON.parse) : [];
@@ -38,6 +42,8 @@ function transcriptPath(root, record) {
 export function speechIntervals(cue) {
   const windows = (cue?.windows || []).filter((window) =>
     Number(window.tags?.speech) >= VIDEO_SPEECH_THRESHOLD
+    && Number(window.tags?.singing || 0) < 0.3
+    && Number(window.tags?.speech) >= Number(window.tags?.singing || 0) * 1.5
     && Number.isFinite(window.start) && Number.isFinite(window.end) && window.end > window.start);
   const merged = [];
   for (const window of windows.sort((a, b) => a.start - b.start)) {
@@ -48,15 +54,77 @@ export function speechIntervals(cue) {
   return merged;
 }
 
-export function filterVideoSegments(segments, intervals) {
-  if (detectRepetition(segments.map((segment) => segment.text).join(' ')).looped) return [];
-  return segments.filter((segment) => {
-    const text = String(segment.text || '').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
-    if (!text || QUIET.test(text) || detectRepetition(segment.text).looped) return false;
-    return Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start
-      && intervals.some((part) => Math.min(segment.end, part.end * 1000)
-        - Math.max(segment.start, part.start * 1000) >= Math.min(500, (segment.end - segment.start) * 0.3));
+export function speechAudioPlan(intervals) {
+  let cursorMs = 0;
+  return intervals.map((part) => {
+    const span = { sourceStart: part.start, sourceEnd: part.end,
+      audioStartMs: cursorMs, audioEndMs: cursorMs + Math.round((part.end - part.start) * 1000) };
+    cursorMs = span.audioEndMs;
+    return span;
   });
+}
+
+export function restoreSourceTime(segments, plan) {
+  return segments.flatMap((segment) => {
+    const matches = plan.map((part) => ({ part,
+      overlap: Math.max(0, Math.min(segment.end, part.audioEndMs)
+        - Math.max(segment.start, part.audioStartMs)) }));
+    const best = matches.sort((a, b) => b.overlap - a.overlap)[0];
+    if (!best?.overlap) return [];
+    const { part } = best;
+    return [{ ...segment,
+      start: Math.round(part.sourceStart * 1000 + Math.max(0, segment.start - part.audioStartMs)),
+      end: Math.round(part.sourceStart * 1000 + Math.min(part.audioEndMs - part.audioStartMs,
+        segment.end - part.audioStartMs)) }];
+  }).filter((segment) => segment.end > segment.start);
+}
+
+function repeatsThreeTimes(text) {
+  const normalized = normalizeText(text);
+  for (let length = 2; length <= Math.min(60, Math.floor(normalized.length / 3)); length += 1) {
+    for (let start = 0; start + length * 3 <= normalized.length; start += 1) {
+      const phrase = normalized.slice(start, start + length);
+      if (normalized.slice(start + length, start + length * 2) === phrase
+        && normalized.slice(start + length * 2, start + length * 3) === phrase) return true;
+    }
+  }
+  return detectRepetition(text).looped;
+}
+
+export function reviewVideoSegments(segments, intervals) {
+  const kept = [];
+  const dropped = [];
+  const normalizedTexts = segments.map((segment) => normalizeText(segment.text));
+  const repeated = new Set();
+  for (let index = 0; index < segments.length;) {
+    let end = index + 1;
+    while (end < segments.length && normalizedTexts[end] === normalizedTexts[index]) end += 1;
+    if (normalizedTexts[index] && end - index >= 3) {
+      for (let repeatedIndex = index; repeatedIndex < end; repeatedIndex += 1) repeated.add(repeatedIndex);
+    }
+    index = end;
+  }
+  for (const [index, segment] of segments.entries()) {
+    const normalized = normalizeText(segment.text);
+    const overlap = intervals.reduce((sum, part) => sum + Math.max(0,
+      Math.min(segment.end, part.end * 1000) - Math.max(segment.start, part.start * 1000)), 0);
+    let reason = null;
+    if (!normalized || !Number.isFinite(segment.start) || !Number.isFinite(segment.end)
+      || segment.end <= segment.start) reason = 'invalid';
+    else if (VIDEO_HALLUCINATION_PHRASES.some((phrase) => normalized.includes(phrase))) reason = 'known-hallucination';
+    else if (repeatsThreeTimes(segment.text) || repeated.has(index)) reason = 'repetition';
+    else if (Number(segment.noSpeechProb) >= 0.6) reason = 'no-speech-probability';
+    else if (segment.tokenConfidence !== null && Number.isFinite(segment.tokenConfidence)
+      && segment.tokenConfidence < 0.15) reason = 'low-token-confidence';
+    else if (overlap < Math.min(500, (segment.end - segment.start) * 0.3)) reason = 'low-speech-score';
+    if (reason) dropped.push({ start: segment.start, end: segment.end, text: segment.text, reason });
+    else kept.push(segment);
+  }
+  return { kept, dropped };
+}
+
+export function filterVideoSegments(segments, intervals) {
+  return reviewVideoSegments(segments, intervals).kept;
 }
 
 export function selectVideoTranscriptTargets(records, { cacheDir, outputRoot, mediaRoot,
@@ -169,6 +237,10 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
   const deadline = started + maxMinutes * 60_000;
   const run = async () => {
     const references = referencesLoader(paths);
+    const session = diarizeFn === runPython ? createPythonSession({ python: paths.python,
+      voicesDir: paths.voices, signal: AbortSignal.timeout(Math.max(1, deadline - clock())) }) : null;
+    const runDiarize = session ? (backend, items) => session.run(backend, items) : diarizeFn;
+    try {
     for (const item of selected) {
       if (clock() - started >= maxMinutes * 60_000 || existsSync(commonLock)) break;
       if (!ids && existsSync(item.path)) {
@@ -183,22 +255,46 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
         const source = statSync(video);
         if (source.size !== item.source.size || Math.round(source.mtimeMs) !== Math.round(item.source.mtimeMs))
           throw new Error('원본 변경');
-        // 이 Mac의 whisper.cpp 1.9.5 Metal 초기화가 GGML_ASSERT(buffer)로 중단되어 CPU로 실행한다.
+        const intervals = speechIntervals(item.cue);
+        const plan = speechAudioPlan(intervals);
+        const wav = join(temporary, `${item.record.id}.wav`);
+        const audioStarted = performance.now();
+        const filters = plan.map((part, index) =>
+          `[0:a]atrim=start=${part.sourceStart}:end=${part.sourceEnd},asetpts=PTS-STARTPTS[a${index}]`);
+        const filter = `${filters.join(';')};${plan.map((_, index) => `[a${index}]`).join('')}`
+          + `concat=n=${plan.length}:v=0:a=1[out]`;
+        await execute('/opt/homebrew/bin/ffmpeg', ['-nostdin', '-loglevel', 'error', '-i', video,
+          '-filter_complex', filter, '-map', '[out]', '-ar', '16000', '-ac', '1',
+          '-c:a', 'pcm_s16le', wav],
+        { timeout: Math.max(1, Math.min(300_000, deadline - clock())) });
+        const audioExtractMs = Math.round(performance.now() - audioStarted);
         const decoded = await transcribeFn({ ...item.record, path: video }, {
           ffmpegPath: '/opt/homebrew/bin/ffmpeg', ffprobePath: '/opt/homebrew/bin/ffprobe',
           whisperPath: '/opt/homebrew/bin/whisper-cli', model, temporaryRoot, now: new Date().toISOString(),
-          language: 'auto', noGpu: true, timeoutMs: Math.max(1, deadline - clock()), output });
-        const segments = filterVideoSegments(decoded.segments, speechIntervals(item.cue));
+          // GPU(Metal)는 launchd·대화형 실행에서 정상 동작한다(30초 음성: GPU 8.1초 vs CPU 62.2초, 2026-10-18 실측).
+          // Codex 격리 환경에서만 Metal 초기화가 실패하므로 CPU 고정을 두지 않는다.
+          language: 'auto', fullJson: true, noSpeechThreshold: 0.45,
+          inputWav: wav, inputDurationSec: plan.at(-1).audioEndMs / 1000,
+          shouldRetryLanguage: (first) => repeatsThreeTimes(first.text)
+            || VIDEO_HALLUCINATION_PHRASES.some((phrase) => normalizeText(first.text).includes(phrase)),
+          timeoutMs: Math.max(1, deadline - clock()), output });
+        const restored = restoreSourceTime(decoded.segments, plan);
+        const { kept: segments, dropped } = reviewVideoSegments(restored, intervals);
+        let diarizeMs = 0;
+        let featureMs = 0;
+        let diarizeDevice = null;
         let named = segments;
         let speakers = null;
         if (segments.length) {
-          const wav = join(temporary, `${item.record.id}.wav`);
-          await execute('/opt/homebrew/bin/ffmpeg', ['-nostdin', '-loglevel', 'error', '-i', video,
-            '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav],
-          { timeout: Math.max(1, Math.min(300_000, deadline - clock())) });
-          const [row] = await diarizeFn('pyannote', [{ id: item.record.id, wav }],
+          const shortSpeech = decoded.durationSec < 8;
+          const backend = shortSpeech ? 'pyannote-single' : 'pyannote';
+          const diarizeStarted = performance.now();
+          const [row] = await runDiarize(backend, [{ id: item.record.id, wav }],
             { voicesDir: paths.voices, lowPriority: true, recordings: true,
               signal: AbortSignal.timeout(Math.max(1, deadline - clock())) });
+          diarizeMs = Math.round(performance.now() - diarizeStarted);
+          featureMs = row?.featureMs || 0;
+          diarizeDevice = row?.device || null;
           if (/expected 1\.\.3 speakers with embeddings, found 0/.test(row?.error || '')) {
             named = segments.map((segment) => ({ ...segment, speaker: null, name: null, uncertain: true }));
             speakers = { turns: [], labels: {}, evidence: {}, engine: 'pyannote',
@@ -215,18 +311,22 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
               speakers = { turns: row.turns, labels: {}, evidence: {}, engine: 'pyannote',
                 model: 'pyannote/speaker-diarization-community-1', reason: '목소리 특징값 오류' };
             } else {
-              ({ segments: named, speakers } = nameVideoSegments(segments, row.turns, voices,
+              const sourceTurns = restoreSourceTime(row.turns, plan);
+              ({ segments: named, speakers } = nameVideoSegments(segments, sourceTurns, voices,
                 references, item.record.occurred));
+              if (shortSpeech) speakers.engine = 'pyannote-single';
             }
           }
         }
         const result = { version: VIDEO_TRANSCRIPT_VERSION, id: item.record.id, kind: 'Video',
-          occurred: item.record.occurred, durationSec: decoded.durationSec,
+          occurred: item.record.occurred, durationSec: item.durationSec,
           sourceSize: source.size, sourceMtimeMs: Math.round(source.mtimeMs),
           speech: Boolean(named.length), text: named.map((part) => part.text).join(' '),
           segments: named, speakers, model, modelVersion: basename(model), language: 'auto',
           detectedLanguage: decoded.detectedLanguage || null,
           ...(decoded.languageFallback ? { languageFallback: decoded.languageFallback } : {}),
+          dropped, timings: { ...decoded.timings, audioExtractMs, diarizeMs, featureMs,
+            diarizeDevice },
           transcribedAt: new Date().toISOString() };
         mkdirSync(join(outputRoot, String(item.record.occurred).slice(0, 4)),
           { recursive: true, mode: 0o700 });
@@ -246,6 +346,7 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
         savePrivate(statePath, `${JSON.stringify(state, null, 2)}\n`);
       }
     }
+    } finally { await session?.close(); }
     summary.elapsedMs = clock() - started;
     output.log(`[media-video-transcribe] 완료 ${summary.processed}, 무음 ${summary.silent}, 실패 ${summary.failed}`);
     return summary;
