@@ -110,6 +110,24 @@ test('dry-run writes nothing; apply regenerates note; reviewed answer overrides 
   assert.equal(JSON.parse(readFileSync(second.speakerPath, 'utf8')).segments[0].speaker, 'other');
 });
 
+test("answer 'none': 상대 한 사람이 둘로 쪼개진 통화는 모든 구간을 상대로 두고 확인 표시를 지운다", async (t) => {
+  const data = fixture(t);
+  const output = { log() {}, error(message) { throw new Error(message); } };
+  const rules = [{ type: 'conversation', path: 'conversation test',
+    pathRegex: /^20_Records\/23_Conversations\/\d{4}\/[^/]+\.md$/, required: { bundle: [], extra: [] } }];
+  const answersPath = join(data.paths.root, 'answers.json');
+  data.put(answersPath, JSON.stringify({ version: 1, answers: { [callId]: 'none' } }));
+  const result = await runRecheck({ ...data, output, registryRules: rules, answersPath });
+  assert.equal(result.confirmed, 1);
+  const saved = JSON.parse(readFileSync(data.speakerPath, 'utf8'));
+  assert.ok(saved.segments.every((segment) => segment.speaker === 'other'));
+  assert.equal(saved.recheckOwnerSpeaker, 'none');
+  assert.equal(saved.check, undefined);
+  assert.doesNotMatch(readFileSync(data.notePath, 'utf8'), /\[화자 확인 필요\]/);
+  assert.match(renderRecheckReview([]), /둘 다 아빠 아님/);
+  assert.deepEqual(parseRecheckAnswers(JSON.stringify({ version: 1, answers: { [callId]: 'none' } })), { [callId]: 'none' });
+});
+
 test('failed note write is recovered from stored speaker decision', async (t) => {
   const data = fixture(t);
   const rules = [{ type: 'conversation', path: 'conversation test',

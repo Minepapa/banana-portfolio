@@ -658,6 +658,8 @@ function readRecheckReference(paths, name) {
     minSimilarity: meta.minSimilarity, version: meta.version };
 }
 
+// ownerSpeaker 'none': 화자 분리가 상대 한 사람을 둘로 쪼갠 통화(아빠 말 없음) — 2026-10-18 오너 확인.
+// 모든 구간을 상대로 둔다.
 function recheckedSpeakers(item, old, ownerSpeaker, now) {
   const segments = combineSegments(item.transcript.segments, old.turns).segments.map((segment, i) => ({
     i, speaker: segment.speaker === ownerSpeaker ? 'owner' : 'other', uncertain: segment.uncertain,
@@ -686,9 +688,9 @@ export function renderRecheckReview(rows) {
   const cards = rows.map(({ item, speakers }) => {
     const excerpt = combineSegments(item.transcript.segments, speakers.turns).utterances
       .slice(0, 8).map((turn) => `<p><b>${escapeHtml(turn.speaker === 'S0' ? 'A' : 'B')}</b>: ${escapeHtml(turn.text.slice(0, 180))}</p>`).join('');
-    return `<article data-id="${escapeHtml(item.id)}"><h2>${escapeHtml(item.transcript.occurred.slice(0, 16))} · ${escapeHtml(item.counterpart)}</h2>${excerpt || '<p>발췌 없음</p>'}<div class="choices"><button data-answer="S0">A가 아빠</button><button data-answer="S1">B가 아빠</button><button data-answer="unknown">모르겠음</button></div></article>`;
+    return `<article data-id="${escapeHtml(item.id)}"><h2>${escapeHtml(item.transcript.occurred.slice(0, 16))} · ${escapeHtml(item.counterpart)}</h2>${excerpt || '<p>발췌 없음</p>'}<div class="choices"><button data-answer="S0">A가 아빠</button><button data-answer="S1">B가 아빠</button><button data-answer="none">둘 다 아빠 아님(같은 사람)</button><button data-answer="unknown">모르겠음</button></div></article>`;
   }).join('\n');
-  return `<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>통화 화자 확인</title><style>body{font:17px system-ui;max-width:700px;margin:auto;padding:16px;background:#f7f7f5;color:#222}article{background:white;border:1px solid #ddd;border-radius:16px;padding:18px;margin:16px 0}p{line-height:1.6}.choices{display:flex;gap:8px;flex-wrap:wrap}button{font:inherit;padding:12px;border:1px solid #999;border-radius:10px;background:#fff}button.selected{background:#235caa;color:white}#export{position:sticky;bottom:10px;background:#235caa;color:white;width:100%}</style><h1>통화 화자 확인</h1><p>대화를 듣거나 읽고 아빠 화자를 고르세요. 모르면 그대로 두세요.</p>${cards}<button id="export">답 JSON 내보내기</button><script>const answers={};document.querySelectorAll('article').forEach(card=>card.querySelectorAll('[data-answer]').forEach(button=>button.onclick=()=>{answers[card.dataset.id]=button.dataset.answer;card.querySelectorAll('button').forEach(value=>value.classList.toggle('selected',value===button))}));document.querySelector('#export').onclick=()=>{const blob=new Blob([JSON.stringify({version:1,answers},null,2)],{type:'application/json'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='speaker-recheck-answers.json';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000)};</script></html>`;
+  return `<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>통화 화자 확인</title><style>body{font:17px system-ui;max-width:700px;margin:auto;padding:16px;background:#f7f7f5;color:#222}article{background:white;border:1px solid #ddd;border-radius:16px;padding:18px;margin:16px 0}p{line-height:1.6}.choices{display:flex;gap:8px;flex-wrap:wrap}button{font:inherit;padding:12px;border:1px solid #999;border-radius:10px;background:#fff}button.selected{background:#235caa;color:white}#export{position:sticky;bottom:10px;background:#235caa;color:white;width:100%}</style><h1>통화 화자 확인</h1><p>대화를 듣거나 읽고 아빠 화자를 고르세요. 상대(미네·휘영) 한 사람이 A·B로 나뉘어 있고 아빠 말이 없으면 '둘 다 아빠 아님'을 고르세요. 모르면 그대로 두세요.</p>${cards}<button id="export">답 JSON 내보내기</button><script>const answers={};document.querySelectorAll('article').forEach(card=>card.querySelectorAll('[data-answer]').forEach(button=>button.onclick=()=>{answers[card.dataset.id]=button.dataset.answer;card.querySelectorAll('button').forEach(value=>value.classList.toggle('selected',value===button))}));document.querySelector('#export').onclick=()=>{const blob=new Blob([JSON.stringify({version:1,answers},null,2)],{type:'application/json'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='speaker-recheck-answers.json';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000)};</script></html>`;
 }
 
 export function parseRecheckAnswers(text) {
@@ -696,7 +698,7 @@ export function parseRecheckAnswers(text) {
   if (document?.version !== 1 || !document.answers || Array.isArray(document.answers)
     || typeof document.answers !== 'object') throw new Error('화자 답 JSON 형식 오류');
   for (const [id, answer] of Object.entries(document.answers))
-    if (!ID.test(id) || !['S0', 'S1', 'unknown'].includes(answer)) throw new Error(`화자 답 오류: ${id}`);
+    if (!ID.test(id) || !['S0', 'S1', 'none', 'unknown'].includes(answer)) throw new Error(`화자 답 오류: ${id}`);
   return document.answers;
 }
 
