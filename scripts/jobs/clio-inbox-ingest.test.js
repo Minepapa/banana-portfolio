@@ -339,6 +339,30 @@ test('판단 프롬프트는 실제 카테고리 링크 배열과 등록부 conv
   assert.match(prompt, /dailyLink에 그 날짜/);
 });
 
+test('판단 프롬프트의 필수 머리말 안내와 예시는 기록 규칙에서 생성한다', async (t) => {
+  const { root, put } = fixture(t);
+  put('00_Inbox/memo.md', memo('가상 출처', '가상 원문'));
+  put(`${VAULT_REL.homeDir}/200 가상.md`, '');
+  const noteRule = rules[0];
+  const promptRules = [{ ...noteRule, required: {
+    bundle: [...noteRule.required.bundle], extra: [...noteRule.required.extra, 'customField'] } }, rules[1]];
+  for (const [index, activeRules] of [[0, rules], [1, promptRules]]) {
+    let prompt;
+    const result = await run({ root, rules: activeRules, now: date, dryRun: true,
+      judge: async (value) => { prompt = value; return { ...judgment(), frontmatter: {
+        ...judgment().frontmatter, category: ['[[01_Home/200 가상]]'], ...(index ? { customField: '가상 값' } : {}) } }; },
+      charter: { model: 'test', systemPrompt: 'test' }, cooldown: () => false });
+    assert.equal(result.items[0].status, '계획함');
+    const required = [...activeRules[0].required.bundle, ...activeRules[0].required.extra];
+    assert.ok(prompt.includes(`frontmatter에는 고른 type의 필수 필드를 빠짐없이 모두 넣어라: note (${noteRule.path}): ${required.join(', ')}`));
+    assert.match(prompt, /type은 target\.type과 같아야 한다/);
+    const schema = JSON.parse(prompt.match(/^정확한 JSON 스키마: (.+)$/m)[1]);
+    assert.deepEqual(Object.keys(schema.frontmatter), required);
+    assert.equal(schema.frontmatter.type, 'note');
+    assert.deepEqual(schema.frontmatter.category, ['[[01_Home/200 가상]]']);
+  }
+});
+
 test('report and plans are written atomically through injected writer; no source mutation', async (t) => {
   const { root, put } = fixture(t);
   const source = memo('옵시디언', '공개하면 안 되는 가상 원문');

@@ -602,8 +602,13 @@ function homeCategories(root) {
     .sort((a, b) => a.localeCompare(b, 'ko'));
 }
 
-function promptFor(item, registrySummary, categories, conversationKinds) {
+function promptFor(item, registrySummary, requiredRules, categories, conversationKinds) {
   const categoryExample = categories[0] ?? `[[${VAULT_REL.homeDir}/카테고리 노트]]`;
+  const requiredSummary = requiredRules.map((rule) => `${rule.type} (${rule.path}): ${[...rule.required.bundle, ...rule.required.extra].join(', ')}`).join('; ');
+  const exampleRule = requiredRules.find((rule) => rule.type === 'note') ?? requiredRules[0];
+  const exampleFields = [...new Set([...exampleRule.required.bundle, ...exampleRule.required.extra])];
+  const exampleFrontmatter = Object.fromEntries(exampleFields.map((field) => [field,
+    field === 'type' ? exampleRule.type : field === 'category' ? [categoryExample] : '(필수 값)']));
   return `다음 Inbox 메모를 기록 대상으로 분류하라. JSON 객체만 출력하고 도구는 사용하지 마라.\n`
     + `순서: 분류→인물·장소·주제·물건·날짜·할 일·결정 추출→Wiki 기존 페이지 보강 또는 후보/질문→데일리 연결.\n`
     + `새 Wiki 페이지는 D32 생성 관문과 D79 개념 테스트를 통과할 때까지 candidate로 둔다. 분류 불가면 이유를 적는다.\n`
@@ -612,7 +617,8 @@ function promptFor(item, registrySummary, categories, conversationKinds) {
     + `category는 다음 실제 카테고리 노트 링크 중에서 골라 배열로 넣어라: ${categories.join(', ') || '목록 없음'}\n`
     + `conversation의 convKind 허용값: ${conversationKinds.join(', ') || '등록부에 없음'}\n`
     + `경로 등록부 요약:\n${registrySummary}\n`
-    + `정확한 JSON 스키마: {"target":{"folder":"${VAULT_REL.recordsRoot}/.../{YYYY}","type":"note|literature|conversation|media","title":"YYYY-MM-DD 제목"},"frontmatter":{"category":["${categoryExample}"]},"extracted":{"people":[],"places":[],"topics":[],"objects":[],"dates":[],"todos":[],"decisions":[]},"wiki":[{"action":"append-source|candidate|question","page":"${VAULT_REL.knowledge}/...","reason":"..."}],"dailyLink":"YYYY-MM-DD","unclassifiable":null}\n`
+    + `frontmatter에는 고른 type의 필수 필드를 빠짐없이 모두 넣어라: ${requiredSummary}. type은 target.type과 같아야 한다.\n`
+    + `정확한 JSON 스키마: {"target":{"folder":"${VAULT_REL.recordsRoot}/.../{YYYY}","type":"note|literature|conversation|media","title":"YYYY-MM-DD 제목"},"frontmatter":${JSON.stringify(exampleFrontmatter)},"extracted":{"people":[],"places":[],"topics":[],"objects":[],"dates":[],"todos":[],"decisions":[]},"wiki":[{"action":"append-source|candidate|question","page":"${VAULT_REL.knowledge}/...","reason":"..."}],"dailyLink":"YYYY-MM-DD","unclassifiable":null}\n`
     + `원본 머리말에 occurred 또는 created 날짜가 있으면 dailyLink에 그 날짜(YYYY-MM-DD)를 반드시 넣어라. 둘 다 있으면 occurred를 우선한다.\n`
     + `extracted의 모든 값은 문자열 배열이며 객체를 넣지 마라. 인물은 Wiki 페이지 제목 그대로(예: "미네") 쓰고 관계 정보는 넣지 마라. frontmatter 값은 문자열·숫자·불리언 또는 그 배열만 허용한다.\n`
     + `제목은 날짜를 포함해 60자 이내로 작성하라.\n`
@@ -840,6 +846,7 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
       } });
     applyRemaining = batch.remaining;
   }
+  const requiredRules = activeRules.filter((rule) => rule.path.startsWith(`${VAULT_REL.recordsRoot}/`));
   const registrySummary = activeRules.filter((r) => r.path.startsWith(`${VAULT_REL.recordsRoot}/`) || r.path.startsWith(`${VAULT_REL.knowledge}/`))
     .map((r) => `${r.type}: ${r.path}; 필수 ${[...r.required.bundle, ...r.required.extra].join(', ')}`).join('\n');
   const categories = selected.length ? homeCategories(root) : [];
@@ -870,7 +877,7 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
     for (let attempt = 0; attempt < 2 && attempts < 3 && clock() - startedAt < jobBudgetMs; attempt += 1) {
       rawPreview = undefined;
       try {
-        const prompt = promptFor(item, registrySummary, categories, conversationKinds) + (validationError ? `\n직전 검증 오류: ${validationError}\n오류를 고쳐 JSON 객체만 다시 출력하라.` : '');
+        const prompt = promptFor(item, registrySummary, requiredRules, categories, conversationKinds) + (validationError ? `\n직전 검증 오류: ${validationError}\n오류를 고쳐 JSON 객체만 다시 출력하라.` : '');
         let raw;
         try {
           raw = await decide(prompt, item, systemPrompt);
