@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseHighlightArgs, runVideoHighlights } from './media-video-highlights.mjs';
@@ -39,6 +39,62 @@ test('증분 계산은 최신 ID 하나씩 저장하고 재료가 바뀌면 다�
     windows: [{ start: 4, end: 8, tags: { crying: 1 } }] }));
   assert.equal(runVideoHighlights({ paths, output }).processed, 1);
   assert.ok(!JSON.parse(readFileSync(paths.highlights, 'utf8')).highlights[0].evidence.includes('울음'));
+});
+
+test('새 전사와 미네 발화 구간이 들어오면 해당 영상 하이라이트만 다시 계산한다', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'media-highlights-transcript-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const id = '1234567890abcdef';
+  const paths = { matches: join(base, 'matches.jsonl'), cues: join(base, 'cues'),
+    frames: join(base, 'frames'), transcripts: join(base, 'transcripts'),
+    highlights: join(base, 'out.jsonl'), review: join(base, 'review.html') };
+  mkdirSync(paths.cues);
+  writeFileSync(paths.matches, `${JSON.stringify({ id, durationSec: 12,
+    sourceSize: 50, sourceMtimeMs: 100 })}\n`);
+  const output = { log() {} };
+  assert.equal(runVideoHighlights({ paths, output }).processed, 1);
+  const year = join(paths.transcripts, '2024');
+  mkdirSync(year, { recursive: true });
+  writeFileSync(join(year, `${id}.json`), JSON.stringify({ id, version: 2,
+    sourceSize: 50, sourceMtimeMs: 100,
+    segments: [{ start: 2000, end: 6000, text: '안녕', name: '미네' }] }));
+  assert.equal(runVideoHighlights({ paths, output }).processed, 1);
+  const row = JSON.parse(readFileSync(paths.highlights, 'utf8'));
+  assert.ok(row.highlights[0].evidence.includes('미네 목소리'));
+  assert.ok(row.highlights[0].evidence.includes('말소리'));
+  assert.equal(runVideoHighlights({ paths, output }).unchanged, 1);
+});
+
+test('증분 한도가 있을 때 막 전사된 영상 ID를 먼저 계산한다', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'media-highlights-priority-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const paths = { matches: join(base, 'matches.jsonl'), cues: join(base, 'cues'),
+    frames: join(base, 'frames'), highlights: join(base, 'out.jsonl'),
+    review: join(base, 'review.html') };
+  writeFileSync(paths.matches, ['old', 'new'].map((id) => JSON.stringify({ id,
+    durationSec: 12, sourceSize: 1, sourceMtimeMs: 1 })).join('\n') + '\n');
+  const result = runVideoHighlights({ paths, priorityIds: ['new'], limit: 1,
+    output: { log() {} } });
+  assert.equal(result.processed, 1);
+  assert.equal(JSON.parse(readFileSync(paths.highlights, 'utf8')).id, 'new');
+});
+
+test('앞선 하이라이트 저장 실패가 반복돼도 다음 회차는 뒤쪽 후보를 확인한다', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'media-highlights-rotation-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const paths = { matches: join(base, 'matches.jsonl'), cues: join(base, 'cues'),
+    frames: join(base, 'frames'), highlights: join(base, 'out.jsonl'),
+    review: join(base, 'review.html') };
+  writeFileSync(paths.matches, ['a', 'b', 'c'].map((id) => JSON.stringify({ id,
+    durationSec: 12, sourceSize: 1, sourceMtimeMs: 1 })).join('\n') + '\n');
+  mkdirSync(paths.review);
+  assert.throws(() => runVideoHighlights({ paths, limit: 1, catchupOffset: 0,
+    output: { log() {} } }));
+  assert.equal(existsSync(paths.highlights), false);
+  rmSync(paths.review, { recursive: true });
+  assert.equal(runVideoHighlights({ paths, limit: 1, catchupOffset: 1,
+    output: { log() {} } }).processed, 1);
+  assert.equal(JSON.parse(readFileSync(paths.highlights, 'utf8')).id, 'b');
 });
 
 test('새 영상의 얼굴 실패에도 상태 파일의 소리 근거로 계산하고 낡은 얼굴을 쓰지 않는다', (t) => {

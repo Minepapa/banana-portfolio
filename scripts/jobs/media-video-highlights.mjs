@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 얼굴·소리 캐시를 읽어 볼트 밖 결과와 폰 검토용 단일 HTML을 갱신한다.
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ import { MEDIA_FACES_PATHS } from '../lib/vault-paths.mjs';
 import { AUDIO_CUES_PATHS } from '../lib/media-audio-cues.mjs';
 import { VIDEO_FRAME_ROOT } from '../lib/media-video-frames.mjs';
 import { videoHighlights } from '../lib/media-video-highlights.mjs';
+import { VIDEO_TRANSCRIPT_PATHS, VIDEO_TRANSCRIPT_VERSION } from './media-video-transcribe.mjs';
 
 const OUTPUT_ROOT = join(homedir(), 'Pantheon', 'Media', 'VideoAnalysis');
 export const HIGHLIGHT_PATHS = Object.freeze({
@@ -18,6 +19,7 @@ export const HIGHLIGHT_PATHS = Object.freeze({
   status: join(OUTPUT_ROOT, 'status.json'),
   highlights: join(OUTPUT_ROOT, 'highlights.jsonl'),
   review: join(OUTPUT_ROOT, 'highlights-review.html'),
+  transcripts: VIDEO_TRANSCRIPT_PATHS.root,
 });
 const ALGORITHM_VERSION = 1;
 
@@ -90,7 +92,11 @@ export function renderHighlightsReview(rows, { frameRoot = HIGHLIGHT_PATHS.frame
 }
 
 export function runVideoHighlights({ ids = null, limit = Infinity, dryRun = false,
+  priorityIds = [], catchupOffset = 0,
   paths = HIGHLIGHT_PATHS, output = console, random = Math.random } = {}) {
+  if (!Number.isSafeInteger(catchupOffset) || catchupOffset < 0) {
+    throw new Error('media-video-highlights catchupOffset 오류');
+  }
   const previous = new Map(lines(paths.highlights).map((row) => [row.id, row]));
   const requested = ids ? new Set(ids) : null;
   const status = paths.status && existsSync(paths.status)
@@ -114,7 +120,15 @@ export function runVideoHighlights({ ids = null, limit = Infinity, dryRun = fals
         sourceSize: stages.cues.sourceSize, sourceMtimeMs: stages.cues.sourceMtimeMs });
     }
   }
+  const priority = new Set(priorityIds);
   const matches = [...byId.values()].filter((row) => !requested || requested.has(row.id));
+  const preferred = matches.filter((row) => priority.has(row.id));
+  const catchup = matches.filter((row) => !priority.has(row.id));
+  const offset = catchup.length ? catchupOffset % catchup.length : 0;
+  matches.splice(0, matches.length, ...preferred,
+    ...catchup.slice(offset), ...catchup.slice(0, offset));
+  const transcriptYears = paths.transcripts && existsSync(paths.transcripts)
+    ? readdirSync(paths.transcripts).filter((name) => /^\d{4}$/.test(name)) : [];
   const selected = [];
   let unchanged = 0;
   for (const match of matches) {
@@ -126,10 +140,25 @@ export function runVideoHighlights({ ids = null, limit = Infinity, dryRun = fals
     }
     if (cues && Number.isFinite(cues.size) && Number.isFinite(cues.mtimeMs)
       && (cues.size !== match.sourceSize || cues.mtimeMs !== match.sourceMtimeMs)) cues = null;
+    let transcript = null;
+    if (paths.transcripts && /^[a-f0-9]{16}$/i.test(match.id)) {
+      for (const candidateYear of transcriptYears) {
+        const path = join(paths.transcripts, candidateYear, `${match.id}.json`);
+        if (!existsSync(path)) continue;
+        try {
+          const saved = JSON.parse(readFileSync(path, 'utf8'));
+          if (saved.id === match.id && saved.version === VIDEO_TRANSCRIPT_VERSION
+            && saved.sourceSize === match.sourceSize && saved.sourceMtimeMs === match.sourceMtimeMs) {
+            transcript = saved;
+          }
+        } catch { /* 깨진 전사 결과는 무시한다. */ }
+        break;
+      }
+    }
     const fingerprint = createHash('sha256').update(JSON.stringify({ version: ALGORITHM_VERSION,
-      match, cues })).digest('hex');
+      match, cues, transcript })).digest('hex');
     if (previous.get(match.id)?.fingerprint === fingerprint) { unchanged += 1; continue; }
-    selected.push({ match, cues, fingerprint });
+    selected.push({ match, cues, transcript, fingerprint });
     if (selected.length >= limit) break;
   }
   if (dryRun) {
@@ -138,10 +167,15 @@ export function runVideoHighlights({ ids = null, limit = Infinity, dryRun = fals
   }
   let processed = 0;
   let failed = 0;
-  for (const { match, cues, fingerprint } of selected) {
+  for (const { match, cues, transcript, fingerprint } of selected) {
     try {
+      const transcripts = transcript?.segments?.map((segment) => ({
+        start: segment.start / 1000, end: segment.end / 1000, text: segment.text })) ?? [];
+      const mineVoice = transcript?.segments?.filter((segment) => segment.name === '미네')
+        .map((segment) => ({ start: segment.start / 1000, end: segment.end / 1000 })) ?? [];
       previous.set(match.id, { id: match.id, original: match.original,
-        durationSec: match.durationSec, fingerprint, highlights: videoHighlights(match, cues) });
+        durationSec: match.durationSec, fingerprint,
+        highlights: videoHighlights(match, cues, { transcripts, mineVoice }) });
       processed += 1;
     } catch (error) {
       failed += 1;

@@ -19,6 +19,9 @@ const exec = promisify(execFile);
 const ID = /^[a-f0-9]{16}$/i;
 export const VIDEO_SPEECH_THRESHOLD = 0.3; // media-audio-cues.summarizeCues와 같은 문턱
 export const VIDEO_TRANSCRIPT_VERSION = 2;
+export const VIDEO_TRANSCRIPT_SESSION_ITEMS = 25;
+export const VIDEO_TRANSCRIPT_HIGHLIGHT_RESERVE_MS = 5 * 60_000;
+export const VIDEO_TRANSCRIPT_ESTIMATE_RATIO = 0.8;
 export const VIDEO_TRANSCRIPT_PATHS = Object.freeze({
   root: join(homedir(), 'Pantheon', 'Media', 'VideoTranscripts'),
   model: join(homedir(), 'Pantheon', 'Models', 'whisper', 'ggml-large-v3.bin'),
@@ -132,11 +135,17 @@ export function filterVideoSegments(segments, intervals) {
 }
 
 export function selectVideoTranscriptTargets(records, { cacheDir, outputRoot, mediaRoot,
-  ids = null, limit = Infinity, failures = {}, model = VIDEO_TRANSCRIPT_PATHS.model,
+  ids = null, priorityIds = [], newestFirst = false, limit = Infinity, failures = {}, model = VIDEO_TRANSCRIPT_PATHS.model,
   sourceStat = statSync } = {}) {
   const selected = [];
   let durationSec = 0;
-  for (const record of selectVideos(records, { ids, limit: Infinity })) {
+  const priority = new Set(priorityIds);
+  const candidates = selectVideos(records, { ids, limit: Infinity });
+  if (newestFirst) candidates.sort((left, right) =>
+    Number(priority.has(right.id)) - Number(priority.has(left.id))
+    || Date.parse(right.occurred || right.capturedAt) - Date.parse(left.occurred || left.capturedAt)
+    || left.id.localeCompare(right.id));
+  for (const record of candidates) {
     const cachePath = join(cacheDir, `${record.id}.json`);
     if (!existsSync(cachePath)) continue;
     let cue;
@@ -232,12 +241,16 @@ export function nameVideoSegments(segments, turns, voices, references, occurred)
 export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
   mediaRoot = MEDIA_DIARIZE_PATHS.mediaRoot, cacheDir = AUDIO_CUES_PATHS.cacheDir,
   outputRoot = VIDEO_TRANSCRIPT_PATHS.root, paths = MEDIA_DIARIZE_PATHS,
-  model = VIDEO_TRANSCRIPT_PATHS.model, ids = null, limit = Infinity, maxMinutes = 50,
+  model = VIDEO_TRANSCRIPT_PATHS.model, ids = null, priorityIds = [], newestFirst = false,
+  limit = Infinity, maxMinutes = 50, stopAtMs = Infinity, previewStartMs = null,
   dryRun = false, output = console, clock = () => Date.now(), temporaryRoot = tmpdir(),
   transcribeFn = transcribe, diarizeFn = runPython, execute = exec,
-  voiceLoader = readNpy, referencesLoader = loadVideoVoiceReferences, lock = withLock } = {}) {
+  voiceLoader = readNpy, referencesLoader = loadVideoVoiceReferences, lock = withLock,
+  sessionFactory = createPythonSession } = {}) {
   if (!Number.isSafeInteger(limit) && limit !== Infinity || limit < 1
-    || !Number.isFinite(maxMinutes) || maxMinutes <= 0 || ids?.some((id) => !ID.test(id))) {
+    || !Number.isFinite(maxMinutes) || maxMinutes <= 0 || ids?.some((id) => !ID.test(id))
+    || priorityIds.some((id) => !ID.test(id)) || !(stopAtMs === Infinity || Number.isFinite(stopAtMs))
+    || previewStartMs !== null && !Number.isFinite(previewStartMs)) {
     throw new Error('media-video-transcribe 옵션 오류');
   }
   const rows = [...readRows(join(root, VAULT_REL.mediaArchiveIndex)),
@@ -247,11 +260,24 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
   const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { failures: {} };
   state.failures ||= {};
   const { selected, durationSec } = selectVideoTranscriptTargets(rows, { cacheDir, outputRoot,
-    mediaRoot, ids, limit, model, failures: state.failures });
+    mediaRoot, ids, priorityIds, newestFirst, limit, model, failures: state.failures });
   const summary = { selected: selected.length, durationSec, processed: 0, silent: 0, failed: 0,
-    elapsedMs: 0, results: [], busy: false };
+    elapsedMs: 0, results: [], busy: false, morningDeferred: 0 };
   if (dryRun) {
-    output.log(`[media-video-transcribe] dry-run 대상 ${selected.length}, 총 ${(durationSec / 3600).toFixed(2)}시간`);
+    let estimated = 0;
+    let estimatedMs = 0;
+    const previewStarted = previewStartMs ?? clock();
+    for (const item of selected) {
+      const itemEstimateMs = item.durationSec * VIDEO_TRANSCRIPT_ESTIMATE_RATIO * 1000;
+      if (estimatedMs >= maxMinutes * 60_000 || previewStarted + estimatedMs >= stopAtMs) break;
+      if (stopAtMs !== Infinity && previewStarted + estimatedMs + itemEstimateMs
+        + VIDEO_TRANSCRIPT_HIGHLIGHT_RESERVE_MS > stopAtMs) break;
+      estimated += 1;
+      estimatedMs += itemEstimateMs;
+    }
+    summary.estimated = estimated;
+    output.log(`[media-video-transcribe] dry-run 대상 ${selected.length}, 총 ${(durationSec / 3600).toFixed(2)}시간; `
+      + `0.8배 추정 ${estimated}개/최대 ${maxMinutes}분`);
     return summary;
   }
   if (!selected.length) return summary;
@@ -260,15 +286,21 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
   mkdirSync(outputRoot, { recursive: true, mode: 0o700 });
   mkdirSync(paths.root, { recursive: true, mode: 0o700 });
   const started = clock();
-  const deadline = started + maxMinutes * 60_000;
+  const deadline = Math.min(started + maxMinutes * 60_000, stopAtMs);
   const run = async () => {
     const references = referencesLoader(paths);
-    const session = diarizeFn === runPython ? createPythonSession({ python: paths.python,
-      voicesDir: paths.voices, signal: AbortSignal.timeout(Math.max(1, deadline - clock())) }) : null;
-    const runDiarize = session ? (backend, items) => session.run(backend, items) : diarizeFn;
+    let session = null;
+    let sessionItems = 0;
     try {
     for (const item of selected) {
-      if (clock() - started >= maxMinutes * 60_000 || existsSync(commonLock)) break;
+      if (clock() >= deadline || existsSync(commonLock)) break;
+      const expectedMs = item.durationSec * VIDEO_TRANSCRIPT_ESTIMATE_RATIO * 1000;
+      if (stopAtMs !== Infinity
+        && clock() + expectedMs + VIDEO_TRANSCRIPT_HIGHLIGHT_RESERVE_MS > stopAtMs) {
+        summary.morningDeferred = selected.length - summary.processed - summary.failed;
+        output.log('[media-video-transcribe] 08:30 전 종료 여유 부족 — 남은 영상은 다음 회차로 이월');
+        break;
+      }
       if (!ids && existsSync(item.path)) {
         const saved = JSON.parse(readFileSync(item.path, 'utf8'));
         if (saved.version === VIDEO_TRANSCRIPT_VERSION && saved.model === model
@@ -289,10 +321,12 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
           `[0:a]atrim=start=${part.sourceStart}:end=${part.sourceEnd},asetpts=PTS-STARTPTS[a${index}]`);
         const filter = `${filters.join(';')};${plan.map((_, index) => `[a${index}]`).join('')}`
           + `concat=n=${plan.length}:v=0:a=1[out]`;
+        const itemTimeoutMs = Math.min(90 * 60_000,
+          Math.max(10 * 60_000, item.durationSec * 4_000));
         await execute('/opt/homebrew/bin/ffmpeg', ['-nostdin', '-loglevel', 'error', '-i', video,
           '-filter_complex', filter, '-map', '[out]', '-ar', '16000', '-ac', '1',
           '-c:a', 'pcm_s16le', wav],
-        { timeout: Math.max(1, Math.min(300_000, deadline - clock())) });
+        { timeout: itemTimeoutMs });
         const audioExtractMs = Math.round(performance.now() - audioStarted);
         const decoded = await transcribeFn({ ...item.record, path: video }, {
           ffmpegPath: '/opt/homebrew/bin/ffmpeg', ffprobePath: '/opt/homebrew/bin/ffprobe',
@@ -303,7 +337,7 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
           inputWav: wav, inputDurationSec: plan.at(-1).audioEndMs / 1000,
           shouldRetryLanguage: (first) => repeatsThreeTimes(first.text)
             || VIDEO_HALLUCINATION_PHRASES.some((phrase) => normalizeText(first.text).includes(phrase)),
-          timeoutMs: Math.max(1, deadline - clock()), output });
+          timeoutMs: itemTimeoutMs, output });
         const restored = restoreSourceTime(decoded.segments, plan);
         const { kept: segments, dropped } = reviewVideoSegments(restored, intervals);
         let diarizeMs = 0;
@@ -312,12 +346,22 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
         let named = segments;
         let speakers = null;
         if (segments.length) {
+          if (diarizeFn === runPython && !session) {
+            session = sessionFactory({ python: paths.python, voicesDir: paths.voices,
+              signal: AbortSignal.timeout(2 * 60 * 60_000) });
+          }
+          const runDiarize = session ? (backend, items) => session.run(backend, items) : diarizeFn;
           const shortSpeech = decoded.durationSec < 8;
           const backend = shortSpeech ? 'pyannote-single' : 'pyannote';
           const diarizeStarted = performance.now();
           const [row] = await runDiarize(backend, [{ id: item.record.id, wav }],
             { voicesDir: paths.voices, lowPriority: true, recordings: true,
-              signal: AbortSignal.timeout(Math.max(1, deadline - clock())) });
+              signal: AbortSignal.timeout(itemTimeoutMs) });
+          if (session && ++sessionItems >= VIDEO_TRANSCRIPT_SESSION_ITEMS) {
+            await session.close();
+            session = null;
+            sessionItems = 0;
+          }
           diarizeMs = Math.round(performance.now() - diarizeStarted);
           featureMs = row?.featureMs || 0;
           diarizeDevice = row?.device || null;
@@ -363,6 +407,9 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
         summary.results.push({ id: item.record.id, durationSec: item.durationSec, speech: result.speech,
           names: [...new Set(named.map((part) => part.name))] });
       } catch (error) {
+        await session?.close();
+        session = null;
+        sessionItems = 0;
         state.failures[item.record.id] ||= [];
         state.failures[item.record.id].push({ at: new Date().toISOString(), message: error.message });
         summary.failed += 1;

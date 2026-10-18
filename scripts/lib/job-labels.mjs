@@ -18,7 +18,7 @@ export const JOB_LABELS = {
   'media-vision': '사진·영상 로컬 Apple Vision 분석 → 순간 노트 장면 보강(매일 05:30)',
   'media-audio-offsite-backup': '통화·녹음 원본 암호화(AES-256-GCM) 구글 드라이브 백업, 새 파일만(매일 00:40)',
   'media-faces-nightly': '새 사진 로컬 얼굴 판정 → 미네·휘영·나 이름표·순간 노트 반영(매일 06:30)',
-  'media-video': '새 영상 로컬 얼굴·소리 분석 → 순간 노트 이름표 반영(매일 07:10, 발송 없음)',
+  'media-video': '새 영상 얼굴·소리 분석 → 순간 이름표 → 하이라이트 → 말소리 전사·하이라이트 갱신(매일 07:10, 발송 없음)',
   'media-delete-report-weekly': '미디어 삭제 후보 측정·관찰 리포트(매주 일요일 04:15, 원본 처리 없음)',
   'media-faces-hold-monthly': '미네 얼굴 보류 사진·영상 클릭 시트(매월 1일 09:20, 보류 있을 때만)',
   'media-memory-orb': '미네 사진 기억 구슬 후보 50개 감정·중요도 제안(매일 02:20, 90분 상한, 발송 없음)',

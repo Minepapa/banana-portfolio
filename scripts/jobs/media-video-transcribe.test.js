@@ -53,6 +53,105 @@ test('말소리 기준, 캐시 원본 일치, 실패 상한, 증분 선택', (t)
   assert.equal(selectVideoTranscriptTargets([record], options).selected.length, 0);
 });
 
+test('새 분석 영상을 먼저, 기존 전사 백필은 최근 순으로 선택한다', (t) => {
+  const f = fixture(t);
+  const ids = ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb'];
+  const records = [record];
+  for (const [index, id] of ids.entries()) {
+    const entry = { ...record, id, occurred: `202${index + 3}-01-01T00:00:00Z`,
+      archivePath: `Archive/${id}.mp4` };
+    records.push(entry);
+    const path = join(f.mediaRoot, entry.archivePath);
+    writeFileSync(path, 'video');
+    const source = statSync(path);
+    writeFileSync(join(f.cacheDir, `${id}.json`), JSON.stringify({ ...f.cue,
+      size: source.size, mtimeMs: Math.round(source.mtimeMs) }));
+  }
+  const selected = selectVideoTranscriptTargets(records, { cacheDir: f.cacheDir,
+    outputRoot: f.outputRoot, mediaRoot: f.mediaRoot,
+    priorityIds: [ID], newestFirst: true }).selected;
+  assert.deepEqual(selected.map((item) => item.record.id), [ID, ids[1], ids[0]]);
+});
+
+test('예산은 다음 영상을 시작하기 전에만 확인하고 끝난 영상 결과를 남긴다', async (t) => {
+  const f = fixture(t);
+  const second = { ...record, id: 'aaaaaaaaaaaaaaaa', archivePath: 'Archive/second.mp4' };
+  const secondPath = join(f.mediaRoot, second.archivePath);
+  writeFileSync(secondPath, 'video');
+  const source = statSync(secondPath);
+  writeFileSync(join(f.cacheDir, `${second.id}.json`), JSON.stringify({ ...f.cue,
+    size: source.size, mtimeMs: Math.round(source.mtimeMs) }));
+  writeFileSync(join(f.root, VAULT_REL.mediaArchiveIndex),
+    `${JSON.stringify(record)}\n${JSON.stringify(second)}\n`);
+  let time = 0;
+  const result = await runMediaVideoTranscribe({ root: f.root, mediaRoot: f.mediaRoot,
+    cacheDir: f.cacheDir, outputRoot: f.outputRoot,
+    paths: { root: join(f.mediaRoot, 'Diarize'), voices: join(f.mediaRoot, 'voices') },
+    maxMinutes: 1, clock: () => time, lock: async (_path, run) => run(),
+    referencesLoader: () => ({}), execute: async () => ({}), output: { log() {}, error() {} },
+    transcribeFn: async () => { time += 61_000; return { durationSec: 4,
+      segments: [], timings: {} }; } });
+  assert.equal(result.processed, 1);
+  assert.equal(result.selected, 2);
+  assert.equal(existsSync(join(f.outputRoot, '2024', `${ID}.json`)), true);
+  assert.equal(existsSync(join(f.outputRoot, '2024', `${second.id}.json`)), false);
+});
+
+test('08:30 직전에는 예상 전사 시간과 하이라이트 여유가 모자라면 시작하지 않는다', async (t) => {
+  const f = fixture(t);
+  const common = { root: f.root, mediaRoot: f.mediaRoot, cacheDir: f.cacheDir,
+    outputRoot: f.outputRoot, clock: () => 0, stopAtMs: 5 * 60_000 + 6_000,
+    output: { log() {} } };
+  const preview = await runMediaVideoTranscribe({ ...common, dryRun: true,
+    previewStartMs: 0 });
+  assert.equal(preview.selected, 1);
+  assert.equal(preview.estimated, 0);
+  assert.equal(existsSync(f.outputRoot), false);
+  let called = false;
+  const result = await runMediaVideoTranscribe({ ...common,
+    paths: { root: join(f.mediaRoot, 'Diarize'), voices: join(f.mediaRoot, 'voices') },
+    lock: async (_path, run) => run(),
+    referencesLoader: () => ({}),
+    transcribeFn: async () => { called = true; },
+    execute: async () => { called = true; } });
+  assert.equal(result.selected, 1);
+  assert.equal(result.processed, 0);
+  assert.equal(result.morningDeferred, 1);
+  assert.equal(called, false);
+  assert.equal(existsSync(join(f.outputRoot, '2024', `${ID}.json`)), false);
+});
+
+test('화자 파이썬 세션은 25개 처리 후 재시작하고 마지막 세션도 닫는다', async (t) => {
+  const f = fixture(t);
+  const records = Array.from({ length: 26 }, (_, index) => ({ ...record,
+    id: index.toString(16).padStart(16, '0'), archivePath: `Archive/${index}.mp4` }));
+  for (const entry of records) {
+    const path = join(f.mediaRoot, entry.archivePath);
+    writeFileSync(path, 'video');
+    const source = statSync(path);
+    writeFileSync(join(f.cacheDir, `${entry.id}.json`), JSON.stringify({ ...f.cue,
+      size: source.size, mtimeMs: Math.round(source.mtimeMs) }));
+  }
+  writeFileSync(join(f.root, VAULT_REL.mediaArchiveIndex),
+    `${records.map(JSON.stringify).join('\n')}\n`);
+  let opened = 0;
+  let closed = 0;
+  const result = await runMediaVideoTranscribe({ root: f.root, mediaRoot: f.mediaRoot,
+    cacheDir: f.cacheDir, outputRoot: f.outputRoot,
+    paths: { root: join(f.mediaRoot, 'Diarize'), voices: join(f.mediaRoot, 'voices') },
+    lock: async (_path, run) => run(), referencesLoader: () => ({}),
+    execute: async () => ({}), output: { log() {}, error() {} },
+    transcribeFn: async () => ({ durationSec: 4, segments: [{ start: 0, end: 2000,
+      text: '안녕' }], timings: {} }),
+    sessionFactory: () => { opened += 1; return {
+      run: async () => [{ turns: [{ start: 0, end: 2000, speaker: 'S0' }] }],
+      close: async () => { closed += 1; },
+    }; }, voiceLoader: () => [[1, 0]] });
+  assert.equal(result.processed, 26);
+  assert.equal(opened, 2);
+  assert.equal(closed, 2);
+});
+
 test('환각 문구와 말소리 바깥 전사 제거', () => {
   const intervals = speechIntervals({ windows: [
     { start: 0, end: 4, tags: { speech: 0.3 } },

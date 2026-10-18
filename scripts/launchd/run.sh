@@ -75,7 +75,7 @@ case "$JOB" in
   media-diarize) CMD=(scripts/jobs/media-diarize.mjs) ;;
   media-vision) CMD=(scripts/jobs/media-vision.mjs) ;;
   media-faces-nightly) CMD=(scripts/jobs/media-faces-nightly.mjs) ;;
-  media-video) CMD=(scripts/jobs/media-video-nightly.mjs) ;;
+  media-video) CMD=(scripts/jobs/media-video-nightly.mjs) ;; # 07:10 영상 분석·이름표·하이라이트·말소리 전사
   media-faces-hold-monthly) CMD=(scripts/jobs/media-faces-hold-monthly.mjs) ;;
   media-delete-report-weekly) CMD=(scripts/jobs/media-delete-report-weekly.mjs) ;;
   media-memory-orb) CMD=(scripts/jobs/media-memory-orb.mjs) ;;
