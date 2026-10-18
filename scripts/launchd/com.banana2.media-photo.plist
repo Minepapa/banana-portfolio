@@ -3,15 +3,16 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.banana2.media-faces-nightly</string>
+  <string>com.banana2.media-photo</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
     <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
-    <string>media-faces-nightly</string>
+    <string>media-photo</string>
   </array>
+  <!-- 매일 03:00 사진 블록: 장면 분석 → 얼굴 이름표(2026-10-18 오너 결정, 영상 블록과 같은 구조). -->
   <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>30</integer></dict>
+  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
   <key>RunAtLoad</key>
   <false/>
   <key>ProcessType</key>
@@ -19,8 +20,8 @@
   <key>WorkingDirectory</key>
   <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
   <key>StandardOutPath</key>
-  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-faces-nightly.log</string>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-photo.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-faces-nightly.log</string>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-photo.log</string>
 </dict>
 </plist>

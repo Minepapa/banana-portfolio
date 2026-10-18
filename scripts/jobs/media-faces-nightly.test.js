@@ -25,8 +25,3 @@ test('파이프라인이 실패하면 노트를 건드리지 않는다', async (
   assert.equal(refreshed, false);
 });
 
-test('plist는 매일 03:30 run.sh media-faces-nightly', () => {
-  const plist = readFileSync(new URL('../launchd/com.banana2.media-faces-nightly.plist', import.meta.url), 'utf8');
-  assert.match(plist, /<string>media-faces-nightly<\/string>/);
-  assert.match(plist, /<key>Hour<\/key><integer>3<\/integer><key>Minute<\/key><integer>30<\/integer>/);
-});

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 매일 05:00 밤 점검(2026-10-18 오너 지시): 그날 밤 음성(01:00 전사·02:00 화자 분리)·사진(03:00 장면·03:30 얼굴)·
+// 매일 05:00 밤 점검(2026-10-18 오너 지시): 그날 밤 음성(01:00 전사·02:00 화자 분리)·사진(03:00 장면 분석 → 얼굴 이름표)·
 // 영상(04:00) 블록과 공통 잡(매시 보관·순간 노트, 00:00 원본 백업)이 정상으로 끝났는지 확인하고,
 // 내일로 넘길 남은 일을 현황판의 '밤 점검' 칸에 덮어쓴다. 로컬 확인만 한다(LLM·텔레그램 없음).
 // 실패가 있으면 종료코드 1 — health-watcher가 기존 경로로 알린다.
@@ -22,8 +22,7 @@ export const NIGHT_BLOCKS = Object.freeze([
   { block: '공통', time: '00:00', job: 'media-audio-offsite-backup', label: '원본 암호화 백업', sinceHours: 6 },
   { block: '🎙 음성', time: '01:00', job: 'media-transcribe', label: '통화·녹음 전사', sinceHours: 6 },
   { block: '🎙 음성', time: '02:00', job: 'media-diarize', label: '화자 분리', sinceHours: 6 },
-  { block: '📷 사진', time: '03:00', job: 'media-vision', label: '장면 분석', sinceHours: 6 },
-  { block: '📷 사진', time: '03:30', job: 'media-faces-nightly', label: '얼굴 이름표', sinceHours: 6 },
+  { block: '📷 사진', time: '03:00', job: 'media-photo', label: '장면 분석·얼굴 이름표', sinceHours: 6 },
   { block: '🎬 영상', time: '04:00', job: 'media-video', label: '분석·이름표·하이라이트·말소리 전사', sinceHours: 6 },
 ]);
 

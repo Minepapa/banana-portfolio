@@ -215,8 +215,7 @@ export const EXPECTED_INTERVALS_MS = {
   'media-moments': 60 * 60 * 1000,
   'media-transcribe': 24 * 60 * 60 * 1000, // 매일 01:00·02:00
   'media-diarize': 26 * 60 * 60 * 1000, // 매일 03:05·04:05, 전사 잠금으로 한 회차를 건너뛸 여유(조용함 판정은 이 값의 2배 초과)
-  'media-vision': 24 * 60 * 60 * 1000,
-  'media-faces-nightly': 24 * 60 * 60 * 1000,
+  'media-photo': 24 * 60 * 60 * 1000, // 03:00 사진 블록(장면 분석 → 얼굴 이름표)
   'media-video': 24 * 60 * 60 * 1000,
   'media-night-check': 24 * 60 * 60 * 1000, // 매일 05:00 밤 점검
   'media-delete-report-weekly': 7 * 24 * 60 * 60 * 1000,
