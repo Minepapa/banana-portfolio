@@ -8,6 +8,7 @@ import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { resolveDecision } from '../lib/decision-resolver.mjs';
 import { chooseRepresentative, classify, mediaKind } from '../lib/media-delete-core.mjs';
 import { lines, sourcePath } from './media-quality-measure.mjs';
+import { applyVideoHoldAnswers, loadVideoHoldAnswers } from '../lib/video-hold-answers.mjs';
 
 function json(path) { return JSON.parse(readFileSync(path, 'utf8')); }
 function loadNotes(root) {
@@ -25,11 +26,13 @@ function loadNotes(root) {
   return notes;
 }
 // 얼굴 보호 데이터가 없으면 조용히 보호가 꺼지지 않도록 sourceError로 표시해 모든 행을 제외한다(리뷰 MEDIUM).
-function faceMap(root) {
+function faceMap(root, { videoPeoplePath = join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl'),
+  sheetsPath = MEDIA_FACES_PATHS.sheets } = {}) {
   const missing = [join(root, VAULT_REL.mediaFacePeople), MEDIA_FACES_PATHS.matches].filter((path) => !existsSync(path));
   if (missing.length) return { photos: {}, videos: new Map(), matches: new Map(), sourceError: `얼굴 데이터 없음: ${missing.join(', ')}` };
   const photos = json(join(root, VAULT_REL.mediaFacePeople)).photos || {};
-  const videos = new Map(lines(join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl')).map((row) => [row.id, row]));
+  const answers = loadVideoHoldAnswers(sheetsPath);
+  const videos = new Map(lines(videoPeoplePath).map((row) => [row.id, applyVideoHoldAnswers(row, answers)]));
   const matches = new Map();
   for (const row of lines(MEDIA_FACES_PATHS.matches)) {
     if (!matches.has(row.id)) matches.set(row.id, []);
@@ -101,13 +104,15 @@ export function summarize(rows) {
     candidateBytes, signals, candidates, exclusions, pendingBackup,
     representatives: rows.filter((row) => row.role === '대표').length };
 }
-export function main(argv = process.argv.slice(2), { writer = null } = {}) {
+export function main(argv = process.argv.slice(2), { writer = null,
+  videoPeoplePath = join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl'),
+  sheetsPath = MEDIA_FACES_PATHS.sheets } = {}) {
   if (argv.some((arg) => arg !== '--dry-run')) throw new Error('지원 옵션: --dry-run');
   const dryRun = argv.includes('--dry-run');
   const decision = resolveDecision('미디어-삭제-판정');
   resolveDecision('미디어-삭제-요청'); // §4: 두 결정의 범위를 함께 확인한다.
   const root = VAULT_PATHS.root;
-  const faceSource = faceMap(root);
+  const faceSource = faceMap(root, { videoPeoplePath, sheetsPath });
   const items = makeItems({ archive: lines(VAULT_PATHS.mediaArchiveIndex),
     imports: lines(join(root, VAULT_REL.mediaImportsIndex)),
     vision: lines(VAULT_PATHS.mediaVisionIndex),

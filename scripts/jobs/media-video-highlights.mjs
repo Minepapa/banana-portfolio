@@ -9,6 +9,7 @@ import { MEDIA_FACES_PATHS } from '../lib/vault-paths.mjs';
 import { AUDIO_CUES_PATHS } from '../lib/media-audio-cues.mjs';
 import { VIDEO_FRAME_ROOT } from '../lib/media-video-frames.mjs';
 import { videoHighlights } from '../lib/media-video-highlights.mjs';
+import { applyVideoHoldAnswers, loadVideoHoldAnswers } from '../lib/video-hold-answers.mjs';
 import { VIDEO_TRANSCRIPT_PATHS, VIDEO_TRANSCRIPT_VERSION } from './media-video-transcribe.mjs';
 
 const OUTPUT_ROOT = join(homedir(), 'Pantheon', 'Media', 'VideoAnalysis');
@@ -93,7 +94,8 @@ export function renderHighlightsReview(rows, { frameRoot = HIGHLIGHT_PATHS.frame
 
 export function runVideoHighlights({ ids = null, limit = Infinity, dryRun = false,
   priorityIds = [], catchupOffset = 0,
-  paths = HIGHLIGHT_PATHS, output = console, random = Math.random } = {}) {
+  paths = HIGHLIGHT_PATHS, sheetsPath = MEDIA_FACES_PATHS.sheets,
+  output = console, random = Math.random } = {}) {
   if (!Number.isSafeInteger(catchupOffset) || catchupOffset < 0) {
     throw new Error('media-video-highlights catchupOffset 오류');
   }
@@ -101,8 +103,9 @@ export function runVideoHighlights({ ids = null, limit = Infinity, dryRun = fals
   const requested = ids ? new Set(ids) : null;
   const status = paths.status && existsSync(paths.status)
     ? JSON.parse(readFileSync(paths.status, 'utf8')) : {};
+  const answers = loadVideoHoldAnswers(sheetsPath, output);
   const byId = new Map(lines(paths.matches).filter((row) => /^[A-Za-z0-9_-]+$/.test(row.id))
-    .map((row) => [row.id, row]));
+    .map((row) => [row.id, applyVideoHoldAnswers(row, answers)]));
   for (const [id, state] of Object.entries(status)) {
     if (!/^[A-Za-z0-9_-]+$/.test(id)) continue;
     const stages = state?.stages ?? {};

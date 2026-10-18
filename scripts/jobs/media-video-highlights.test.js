@@ -12,6 +12,29 @@ test('CLI 옵션은 전체 백필과 특정 ID를 허용한다', () => {
   assert.throws(() => parseHighlightArgs(['--limit=0']), /옵션/);
 });
 
+test('보류 확인은 미네 얼굴 근거와 fingerprint에 반영된다', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'media-highlights-answer-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const sheetsPath = join(base, 'sheets');
+  mkdirSync(sheetsPath);
+  const paths = { matches: join(base, 'matches.jsonl'), cues: join(base, 'cues'),
+    frames: join(base, 'frames'), highlights: join(base, 'highlights.jsonl'),
+    review: join(base, 'review.html') };
+  writeFileSync(paths.matches, `${JSON.stringify({ id: 'a', durationSec: 12, people: [], hold: ['미네'],
+    representatives: { 미네: { timestampSec: 5 } }, sourceSize: 1, sourceMtimeMs: 1 })}\n`);
+  const output = { log() {} };
+  assert.equal(runVideoHighlights({ paths, sheetsPath, output }).processed, 1);
+  const previous = JSON.parse(readFileSync(paths.highlights, 'utf8'));
+  writeFileSync(join(sheetsPath, 'video-hold-review-2030-01.json'), JSON.stringify({ videoAnswers: [
+    { id: 'a', person: '미네', timestampSec: 5, confirmedPerson: true },
+  ] }));
+  assert.equal(runVideoHighlights({ paths, sheetsPath, dryRun: true, output }).selected, 1);
+  assert.equal(runVideoHighlights({ paths, sheetsPath, output }).processed, 1);
+  const current = JSON.parse(readFileSync(paths.highlights, 'utf8'));
+  assert.notEqual(current.fingerprint, previous.fingerprint);
+  assert.ok(current.highlights.some((part) => part.evidence.includes('미네 얼굴')));
+});
+
 test('증분 계산은 최신 ID 하나씩 저장하고 재료가 바뀌면 다시 계산한다', (t) => {
   const base = mkdtempSync(join(tmpdir(), 'media-highlights-test-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));

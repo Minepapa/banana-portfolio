@@ -5,6 +5,7 @@ import { VAULT_PATHS, VAULT_REL, MEDIA_FACES_PATHS, categoryLink } from './vault
 import { parseFrontmatter } from './vault-frontmatter.mjs';
 import { occurredDate } from '../jobs/mine-athena-fields.mjs';
 import { albumForMoment, momentPhotos } from '../tools/media-memory-orb-trial.mjs';
+import { applyVideoHoldAnswers, loadVideoHoldAnswers } from './video-hold-answers.mjs';
 
 export const CANDIDATE_LIMIT = 600; // Owner's 2026-10-17 target: roughly 400–600 moments.
 export const BUSY_DAY_FRACTION = 0.10;
@@ -93,12 +94,14 @@ function sameDayRecords(root) {
 }
 
 export function loadCandidates({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PATHS.mediaRoot,
-  limit = CANDIDATE_LIMIT } = {}) {
+  videoPeoplePath = join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl'),
+  sheetsPath = MEDIA_FACES_PATHS.sheets, limit = CANDIDATE_LIMIT } = {}) {
   const people = JSON.parse(readFileSync(join(root, VAULT_REL.mediaFacePeople), 'utf8')).photos;
   const media = [...jsonLines(join(root, VAULT_REL.mediaArchiveIndex)), ...jsonLines(join(root, VAULT_REL.mediaImportsIndex))];
   const mediaById = new Map(media.map((row) => [row.id, row]));
-  const videoPeoplePath = join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl');
-  const videoPeople = existsSync(videoPeoplePath) ? new Map(jsonLines(videoPeoplePath).map((row) => [row.id, row])) : new Map();
+  const answers = loadVideoHoldAnswers(sheetsPath);
+  const videoPeople = existsSync(videoPeoplePath) ? new Map(jsonLines(videoPeoplePath)
+    .map((row) => [row.id, applyVideoHoldAnswers(row, answers)])) : new Map();
   const items = [];
   for (const rel of files(root, VAULT_REL.mediaMoments)) {
     const content = readFileSync(join(root, rel), 'utf8');

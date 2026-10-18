@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { groupMoments, describeMoment, runMediaMoments, visionForMoment } from './media-moments.mjs';
+import { groupMoments, describeMoment, runMediaMoments, visionForMoment, loadVideoPeople } from './media-moments.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -34,6 +34,21 @@ function fixture(t, records) {
     now: '2030-01-03T00:00:00.000Z' };
   return { root, index, writes, options };
 }
+
+test('순간 노트 영상 이름표는 오너 확인을 읽어 people에 반영한다', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'media-moments-video-answer-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sheetsPath = join(root, 'sheets');
+  mkdirSync(sheetsPath);
+  const videoPeoplePath = join(root, 'video-matches.jsonl');
+  writeFileSync(videoPeoplePath, `${JSON.stringify({ id: 'a', people: [], hold: ['미네'],
+    representatives: { 미네: { timestampSec: 4 } } })}\n`);
+  writeFileSync(join(sheetsPath, 'video-hold-review-2030-01.json'), JSON.stringify({ videoAnswers: [
+    { id: 'a', person: '미네', timestampSec: 4, confirmedPerson: true },
+  ] }));
+  assert.deepEqual(loadVideoPeople(videoPeoplePath, silent, sheetsPath).a,
+    { people: ['미네'], hold: [] });
+});
 
 test('Vision 장면은 한국어 표·ignore·신뢰도와 등장 사진 수 순으로 고른다', () => {
   const records = [item('a', time('10:00')), item('b', time('10:01'))];

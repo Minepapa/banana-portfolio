@@ -9,6 +9,7 @@ import { loadVisionConfig } from './media-vision.mjs';
 import { writeAtomic, withLock } from '../lib/state-writer.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { mergeMomentPeople, momentPeople } from '../lib/media-face-people.mjs';
+import { applyVideoHoldAnswers, loadVideoHoldAnswers } from '../lib/video-hold-answers.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
 import { haversineM, loadPlaces } from '../lib/location-stays.mjs';
 import { computeRoute, readRoutePayments, readRoutePoints } from './daily-note.mjs';
@@ -24,9 +25,11 @@ const kst = (time) => new Date(time + 9 * 3600_000).toISOString();
 const day = (time) => kst(time).slice(0, 10);
 const clock = (time) => kst(time).slice(11, 16);
 const coordinate = (gps) => gps && Number.isFinite(gps.lat) && Number.isFinite(gps.lon) ? gps : null;
-export function loadVideoPeople(path = join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl'), output = console) {
+export function loadVideoPeople(path = join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl'), output = console,
+  sheetsPath = MEDIA_FACES_PATHS.sheets) {
   if (!existsSync(path)) return {};
   const people = {};
+  const answers = loadVideoHoldAnswers(sheetsPath, output);
   for (const [index, line] of readFileSync(path, 'utf8').split('\n').entries()) {
     if (!line.trim()) continue;
     try {
@@ -36,7 +39,8 @@ export function loadVideoPeople(path = join(MEDIA_FACES_PATHS.root, 'video-match
         || row.hold != null && (!Array.isArray(row.hold) || !row.hold.every((name) => typeof name === 'string'))) {
         throw new Error('id/people/hold 형식 오류');
       }
-      people[row.id] = { people: row.people, hold: row.hold ?? [] };
+      const named = applyVideoHoldAnswers(row, answers);
+      people[row.id] = { people: named.people, hold: named.hold ?? [] };
     } catch (error) {
       (output.warn ?? output.log).call(output, `[media-moments] 영상 이름표 ${index + 1}행 건너뜀: ${error.message}`);
     }
@@ -45,12 +49,12 @@ export function loadVideoPeople(path = join(MEDIA_FACES_PATHS.root, 'video-match
 }
 
 export function loadFacePhotos(root, { videoPeoplePath = join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl'),
-  output = console } = {}) {
+  sheetsPath = MEDIA_FACES_PATHS.sheets, output = console } = {}) {
   const facePeoplePath = join(root, VAULT_REL.mediaFacePeople);
   // 사진 이름표 파일이 없으면 앨범만으로 기존 순간의 얼굴 근거를 다시 계산하지 않는다.
   if (!existsSync(facePeoplePath)) return null;
   const photos = JSON.parse(readFileSync(facePeoplePath, 'utf8')).photos ?? {};
-  return { ...loadVideoPeople(videoPeoplePath, output), ...photos };
+  return { ...loadVideoPeople(videoPeoplePath, output, sheetsPath), ...photos };
 }
 const clean = (text) => String(text || '').replace(/[\\/:*?"<>|\r\n#^\[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 70);
 export const timePeriod = (time) => {
@@ -315,6 +319,7 @@ export function render(records, description, existing, now, movedFrom = null, op
 export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = join(root, VAULT_REL.mediaArchiveIndex),
   statePath = join(root, VAULT_REL.mediaMomentsState), dryRun = false, since = null,
   videoPeoplePath = join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl'),
+  sheetsPath = MEDIA_FACES_PATHS.sheets,
   geocode = createCachedGeocoder({ root }), routeForDay = computeRoute,
   routePoints = readRoutePoints, paymentsForDay = readRoutePayments, places,
   write = writeAtomic, output = console, now = new Date().toISOString(), registryRules } = {}) {
@@ -323,7 +328,7 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
   const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {};
   if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('moments.json 형식 오류');
   const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
-  const facePhotos = loadFacePhotos(root, { videoPeoplePath, output });
+  const facePhotos = loadFacePhotos(root, { videoPeoplePath, sheetsPath, output });
   // media-archive가 같은 JSONL을 append/복구할 수 있으므로 락 아래서 완성된 스냅샷만 읽는다.
   // 사진 분류·노트 생성은 락을 놓은 뒤 수행해 archive를 오래 막지 않는다.
   const records = dryRun || !existsSync(dirname(indexPath)) ? readIndex(indexPath)
@@ -434,8 +439,9 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
 
 export async function refreshMomentPeople({ root = VAULT_PATHS.root, dryRun = false,
   videoPeoplePath = join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl'),
+  sheetsPath = MEDIA_FACES_PATHS.sheets,
   write = writeAtomic, output = console, now = new Date().toISOString(), registryRules } = {}) {
-  const photos = loadFacePhotos(root, { videoPeoplePath, output });
+  const photos = loadFacePhotos(root, { videoPeoplePath, sheetsPath, output });
   if (!photos) {
     throw new Error('face-people.json이 없습니다');
   }

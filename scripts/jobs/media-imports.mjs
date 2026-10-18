@@ -267,6 +267,7 @@ function existingImportNotes(root, year) {
 
 export async function runImportMoments({ root = VAULT_PATHS.root, album = null, limit = 300, dryRun = false,
   videoPeoplePath = join(MEDIA_FACES_PATHS.root, 'video-matches.jsonl'),
+  sheetsPath = MEDIA_FACES_PATHS.sheets,
   noCalendar = false, noPoi = false, calendarFetch = fetch,
   accessToken = () => getAccessToken({ requiredScopes: CALENDAR_READ_SCOPES }),
   albumsPath = join(root, VAULT_REL.mediaImportAlbums), indexPath = join(root, VAULT_REL.mediaImportsIndex),
@@ -280,7 +281,7 @@ export async function runImportMoments({ root = VAULT_PATHS.root, album = null, 
   const calendar = calendarRules(albumsConfig);
   const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {};
   const rules = registryRules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
-  const facePhotos = loadFacePhotos(root, { videoPeoplePath, output });
+  const facePhotos = loadFacePhotos(root, { videoPeoplePath, sheetsPath, output });
   const allGroups = groupImportMoments(indexRecords ?? jsonLines(indexPath));
   const selectedGroups = allGroups.filter((group) => (!album || group[0].album === album)
     && (!reviewIds || group.some((record) => reviewIds.has(record.id))));

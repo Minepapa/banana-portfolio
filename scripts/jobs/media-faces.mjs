@@ -1002,7 +1002,7 @@ export async function confirmHoldFaces(input, { root = VAULT_PATHS.root, out = M
       [`${item.id}:${item.person}:${item.timestampSec}`, item]));
     for (const item of videoAnswers) merged.set(`${item.id}:${item.person}:${item.timestampSec}`, item);
     writeAtomic(reviewPath, `${JSON.stringify({ videoAnswers: [...merged.values()] }, null, 2)}\n`);
-    output.log('[media-faces] 영상 답변은 별도 검토 파일에 저장했습니다. 자동 이름표에는 반영하지 않습니다.');
+    output.log('[media-faces] 영상 답변은 별도 검토 파일에 저장했습니다. 이름표 소비 시 반영됩니다.');
   }
   const current = existsSync(peoplePath) ? JSON.parse(readFileSync(peoplePath, 'utf8')) : {};
   const confirmations = { ...(current.confirmations ?? {}) };

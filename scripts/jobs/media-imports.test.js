@@ -338,6 +338,27 @@ test('Imports 순간 재실행은 영상 이름표를 지우지 않는다', asyn
   assert.ok(parseFrontmatter(readFileSync(notePath, 'utf8')).people.includes(`[[${VAULT_REL.people}/휘영]]`));
 });
 
+test('Imports 순간 노트는 영상 보류 오너 답을 people에 반영한다', async (t) => {
+  const f = fixture(t);
+  f.add('A', 'VID_20170503_150000.mp4', 'video');
+  await indexImports({ ...f, hash: async () => 'video' });
+  const facePath = join(f.root, VAULT_REL.mediaFacePeople);
+  mkdirSync(dirname(facePath), { recursive: true });
+  writeFileSync(facePath, JSON.stringify({ photos: {} }));
+  const videoId = f.records()[0].id;
+  writeFileSync(f.videoPeoplePath, `${JSON.stringify({ id: videoId, people: [], hold: ['미네'],
+    representatives: { 미네: { timestampSec: 5 } } })}\n`);
+  const sheetsPath = join(f.root, 'sheets');
+  mkdirSync(sheetsPath);
+  writeFileSync(join(sheetsPath, 'video-hold-review-2017-05.json'), JSON.stringify({ videoAnswers: [
+    { id: videoId, person: '미네', timestampSec: 5, confirmedPerson: true },
+  ] }));
+  await runImportMoments({ ...f, sheetsPath, places: [] });
+  const state = JSON.parse(readFileSync(join(f.root, VAULT_REL.mediaImportMomentsState), 'utf8'));
+  const fields = parseFrontmatter(readFileSync(join(f.root, state[videoId].notePath), 'utf8'));
+  assert.ok(fields.people.includes(`[[${VAULT_REL.people}/미네]]`));
+});
+
 test('사진 이름표 파일이 없으면 영상 결과가 있어도 미네 앨범 얼굴 근거를 새로 계산하지 않는다', async (t) => {
   const f = fixture(t);
   f.add('A', 'VID_20170503_150000.mp4', 'video');
