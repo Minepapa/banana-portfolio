@@ -26,7 +26,7 @@ export const JOB_LABELS = {
   'vault-offsite-backup': '매일 00:20 Vault 암호화 외부 백업',
   'question-digest': '비긴급 질문 하루 두 번(09:00·19:00) 담당별 묶음 발송',
   'daily-note': '데일리 노트 23:30 초안(요약 발송)·05:30 확정(05:00 인박스 뒤)',
-  'clio-inbox-ingest': 'Inbox 정리 계획(매일 05:00, 데일리 노트 확정 05:30 전)',
+  'clio-inbox-ingest': 'Inbox 분류·적용(매일 05:00, 데일리 노트 확정 05:30 전)',
   'hermes-briefing': '개인 일정 브리핑 07:30 오늘·21:00 내일(내일 일정 있을 때만)',
   'health-watcher': '무인 잡 장애·텔레그램 세션 감시(이 알림을 보내는 잡 자신)',
   'execute-quant': '퀀트 트랙 승인된 제안 KIS 실주문 집행',
