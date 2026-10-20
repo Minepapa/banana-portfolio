@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCipheriv } from 'node:crypto';
-import { decryptBuffer, deleteBackup, downloadBackup, encryptBuffer, findOrCreateFolder, listFiles, planRetention, uploadBackup } from './vault-offsite-backup.mjs';
+import { decryptBuffer, deleteBackup, downloadBackup, encryptBuffer, findOrCreateFolder, generateFileId, getBackupMetadata, listFiles, planRetention, uploadBackup } from './vault-offsite-backup.mjs';
 
 const file = (date) => `pantheon-vault-${date}.bundle.enc`;
 test('AES-256-GCM 왕복, 헤더, 변조 및 키 검증', () => {
@@ -91,4 +91,21 @@ test('Android 앱 폴더·파일은 별도 속성과 APK MIME을 사용한다', 
   await deleteBackup({ ...params, folderId: 'created', namePattern,
     file: { id: 'owned', name, parents: ['created'], appProperties } });
   assert.equal(calls.at(-1).options.method, 'PATCH');
+});
+
+test('사전 발급 ID를 업로드 메타데이터에 넣고 같은 ID로 원격 검증한다', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url: String(url), options });
+    if (String(url).includes('/generateIds')) return { ok: true, json: async () => ({ ids: ['generated-id'] }) };
+    if (options.method === 'POST') return { ok: true, json: async () => ({ id: 'generated-id', size: 4 }) };
+    return { ok: true, json: async () => ({ id: 'generated-id', md5Checksum: 'digest' }) };
+  };
+  const token = 'fake';
+  const id = await generateFileId({ token, fetchImpl });
+  await uploadBackup({ token, fetchImpl, folderId: 'folder', name: file('2026-10-09'), blob: Buffer.alloc(4), id });
+  const metadata = await getBackupMetadata({ token, fetchImpl, id });
+  assert.equal(metadata.md5Checksum, 'digest');
+  assert.match(calls[1].options.body.toString(), /"id":"generated-id"/);
+  assert.match(calls[2].url, /fields=id,name,size,parents,appProperties,md5Checksum/);
 });

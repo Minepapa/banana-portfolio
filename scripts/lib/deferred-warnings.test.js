@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deferWarning } from './deferred-warnings.mjs';
+import { cancelDeferredWarnings, deferWarning, drainDeferredWarnings } from './deferred-warnings.mjs';
 import { redactWarningDetail, sanitizeWarningDetail } from './warning-event-journal.mjs';
 
 test('보류 경고의 여러 사실을 각각 가리고 내용은 보존한다', async (t) => {
@@ -29,4 +29,24 @@ test('가림 함수는 200자 뒤의 경고 내용도 보존한다', () => {
   assert.match(redactWarningDetail(detail), /오류 \[REDACTED\]$/);
   assert.equal(sanitizeWarningDetail(detail).length, 200);
   assert.doesNotMatch(sanitizeWarningDetail(detail), /오류/);
+});
+
+test('요약 전송을 이미 시작한 inFlight 항목은 취소 중에도 전달 확인까지 보존한다', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'deferred-warning-overlap-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const queueFile = join(root, 'queue.json');
+  const now = Date.parse('2026-10-18T22:00:00Z');
+  await deferWarning({ queueFile, detail: '폐지 잡 경고', at: now - 1000 });
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  let release;
+  const response = new Promise((resolve) => { release = resolve; });
+  const draining = drainDeferredWarnings({ queueFile, now,
+    send: () => { entered(); return response; } });
+  await started;
+  await cancelDeferredWarnings((entry) => entry.detail === '폐지 잡 경고', queueFile);
+  assert.equal(JSON.parse(readFileSync(queueFile, 'utf8')).inFlight.length, 1);
+  release({ ok: true, result: { message_id: 1 } });
+  assert.deepEqual(await draining, { status: 'sent', count: 1 });
+  assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')).inFlight, []);
 });

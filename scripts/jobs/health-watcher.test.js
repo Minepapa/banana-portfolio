@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildJobHealthRecord } from '../lib/job-health.mjs';
-import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
+import { sendDirectWarning, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 import { deferWarning, drainDeferredWarnings } from '../lib/deferred-warnings.mjs';
 import { findStaleJobs, isPollingStuck, formatStaleJobIssue, EXPECTED_INTERVALS_MS, processHealthIssues } from './health-watcher.mjs';
 
@@ -29,6 +29,197 @@ test('같은 이슈는 최초·6시간·24시간에만 보내고 복구는 한 �
   await processHealthIssues([], { stateFile, queueFile, send, now: first + 26 * 3600_000 });
   assert.equal(messages.length, 4);
   assert.match(messages[3].facts[0], /복구됨/);
+});
+
+test('폐지된 잡의 이미 보낸 경고는 복구 알림 없이 상태에서 제거한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  const key = 'job:media-transcribe:silent';
+  writeFileSync(stateFile, JSON.stringify({
+    [key]: { firstSeenAt: 1, lastSentAt: 1, sentCount: 1 },
+  }));
+  const messages = [];
+  await processHealthIssues([], { stateFile, queueFile, now: 2,
+    send: async (message) => { messages.push(message); return { ok: true, result: { message_id: 1 } }; } });
+  assert.deepEqual(JSON.parse(readFileSync(stateFile, 'utf8')), {});
+  assert.deepEqual(messages, []);
+});
+
+test('등록된 잡과 일반 이슈는 여전히 복구 알림을 보낸다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  writeFileSync(stateFile, JSON.stringify(Object.fromEntries(
+    ['job:media-archive:silent', 'telegram-session:stuck'].map((key) =>
+      [key, { firstSeenAt: 1, lastSentAt: 1, sentCount: 1 }]),
+  )));
+  const messages = [];
+  await processHealthIssues([], { stateFile, queueFile, now: 2,
+    send: async (message, details) => { messages.push({ message, details });
+      return { ok: true, result: { message_id: messages.length } }; } });
+  assert.deepEqual(JSON.parse(readFileSync(stateFile, 'utf8')), {});
+  assert.deepEqual(messages.map(({ details }) => details.warningCode),
+    ['JOB_HEALTH_RECOVERED', 'JOB_HEALTH_RECOVERED']);
+});
+
+test('폐지된 잡의 보류 경고는 아침 요약 전에 취소한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  const key = 'job:media-vision:silent';
+  const issueKey = `health-watcher|JOB_HEALTH_ISSUES|${warningSubjectKey('issue', key)}`;
+  writeFileSync(stateFile, JSON.stringify({
+    [key]: { firstSeenAt: 1, lastSentAt: null, sentCount: 0 },
+  }));
+  await deferWarning({ queueFile, issueKey, agent: 'zeus', detail: '폐지 잡 경고' });
+  await deferWarning({ queueFile, issueKey: 'other', agent: 'zeus', detail: '다른 경고' });
+  const messages = [];
+  await processHealthIssues([], { stateFile, queueFile, now: Date.now(),
+    send: async (message) => { messages.push(message); return { ok: true, result: { message_id: 1 } }; } });
+  assert.deepEqual(JSON.parse(readFileSync(stateFile, 'utf8')), {});
+  assert.deepEqual(messages, []);
+  assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')).pending.map((entry) => entry.issueKey), ['other']);
+});
+
+test('폐지된 잡의 전송 claim이 최근 것이어도 보류 경고는 취소한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  const key = 'job:media-diarize:silent';
+  const now = Date.parse('2026-10-19T12:00:00Z');
+  const prior = { firstSeenAt: now - 1000, lastSentAt: null, sentCount: 0,
+    sending: true, sendingAt: now - 1000, sendingId: 'existing-claim' };
+  writeFileSync(stateFile, JSON.stringify({ [key]: prior }));
+  await deferWarning({ queueFile, issueKey: `health-watcher|JOB_HEALTH_ISSUES|${warningSubjectKey('issue', key)}`,
+    agent: 'zeus', detail: '폐지 잡 경고', at: now - 1000 });
+  const messages = [];
+  const options = { stateFile, queueFile,
+    send: async (message) => { messages.push(message); return { ok: true, result: { message_id: 1 } }; } };
+  await processHealthIssues([], { ...options, now });
+  assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')).pending, []);
+  assert.deepEqual(JSON.parse(readFileSync(stateFile, 'utf8'))[key], prior);
+  assert.deepEqual(messages, []);
+  await processHealthIssues([], { ...options, now: now + 31 * 60_000 });
+  assert.deepEqual(JSON.parse(readFileSync(stateFile, 'utf8')), {});
+  assert.deepEqual(messages, []);
+});
+
+test('아침 요약이 claim한 폐지 잡 경고도 전송 시작 전 취소한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  const now = Date.parse('2026-10-18T22:00:00Z');
+  const retired = await deferWarning({ queueFile, agent: 'zeus', detail: '폐지 잡 경고', at: now - 1000,
+    source: { jobName: 'health-watcher', warningCode: 'JOB_HEALTH_ISSUES', watcherIssueKey: 'job:media-vision:silent' } });
+  await deferWarning({ queueFile, agent: 'zeus', detail: '활성 잡 경고', at: now - 1000,
+    source: { jobName: 'health-watcher', warningCode: 'JOB_HEALTH_ISSUES', watcherIssueKey: 'job:media-audio:silent' } });
+  const queue = JSON.parse(readFileSync(queueFile, 'utf8'));
+  queue.inFlight.push({ ...queue.pending.shift(), claimedAt: new Date(now).toISOString() });
+  writeFileSync(queueFile, JSON.stringify(queue));
+  await processHealthIssues([], { stateFile, queueFile, now,
+    send: async () => { throw new Error('복구 알림 없어야 함'); } });
+  const after = JSON.parse(readFileSync(queueFile, 'utf8'));
+  assert.ok(!after.inFlight.some((entry) => entry.id === retired.id));
+  assert.equal(after.pending.length, 1);
+  const digest = [];
+  await drainDeferredWarnings({ queueFile, now,
+    send: async (message) => { digest.push(message); return { ok: true, result: { message_id: 1 } }; } });
+  assert.equal(digest.length, 1);
+  assert.match(digest[0].facts.join(' '), /활성 잡 경고/);
+  assert.doesNotMatch(digest[0].facts.join(' '), /폐지 잡 경고/);
+});
+
+test('요약 전송 중 워처 정리는 이미 시작한 전송의 확인을 보존한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  const now = Date.parse('2026-10-18T22:00:00Z');
+  await deferWarning({ queueFile, agent: 'zeus', detail: '폐지 잡 경고', at: now - 1000,
+    source: { watcherIssueKey: 'job:media-vision:silent' } });
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  let release;
+  const response = new Promise((resolve) => { release = resolve; });
+  const draining = drainDeferredWarnings({ queueFile, now,
+    send: () => { entered(); return response; } });
+  await started;
+  await processHealthIssues([], { stateFile, queueFile, now,
+    send: async () => { throw new Error('복구 알림 없어야 함'); } });
+  assert.equal(JSON.parse(readFileSync(queueFile, 'utf8')).inFlight.length, 1);
+  release({ ok: true, result: { message_id: 1 } });
+  assert.deepEqual(await draining, { status: 'sent', count: 1 });
+  assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')).inFlight, []);
+});
+
+test('감시 상태가 없어도 source에 남은 폐지 잡 경고만 큐에서 취소한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  await deferWarning({ queueFile, detail: '폐지 잡 경고',
+    source: { watcherIssueKey: 'job:media-diarize:silent' } });
+  await deferWarning({ queueFile, detail: '활성 잡 경고',
+    source: { watcherIssueKey: 'job:media-photo:silent' } });
+  await deferWarning({ queueFile, detail: '복구 경고', issueKey: 'health-watcher|JOB_HEALTH_RECOVERED|other' });
+  await deferWarning({ queueFile, detail: '폐지 잡의 실제 복구 경고',
+    source: { jobName: 'health-watcher', warningCode: 'JOB_HEALTH_RECOVERED',
+      watcherIssueKey: 'job:media-diarize:silent' } });
+  await processHealthIssues([], { stateFile, queueFile,
+    send: async () => { throw new Error('복구 알림 없어야 함'); } });
+  assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')).pending.map((entry) => entry.detail),
+    ['활성 잡 경고', '복구 경고', '폐지 잡의 실제 복구 경고']);
+});
+
+test('감시 상태가 손상돼 초기화돼도 폐지 잡 큐 항목을 취소한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  writeFileSync(stateFile, '{broken');
+  await deferWarning({ queueFile, detail: '폐지 잡 경고',
+    source: { watcherIssueKey: 'job:media-transcribe:silent' } });
+  await deferWarning({ queueFile, detail: '활성 잡 경고',
+    source: { watcherIssueKey: 'job:media-video:silent' } });
+  const messages = [];
+  await processHealthIssues([], { stateFile, queueFile,
+    send: async (message) => { messages.push(message); return { ok: true, result: { message_id: 1 } }; } });
+  assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')).pending.map((entry) => entry.detail),
+    ['활성 잡 경고']);
+  assert.deepEqual(messages.map((message) => message.facts[0]), ['감시 상태 손상']);
+});
+
+test('보류 큐 손상 경보가 실패해도 활성 이슈 경고를 처리한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  writeFileSync(queueFile, '{broken');
+  const issue = { key: 'job:media-archive:silent', job: 'media-archive', text: '조용함' };
+  const messages = [];
+  const errors = [];
+  const originalError = console.error;
+  console.error = (message) => { errors.push(message); };
+  try {
+    const result = await processHealthIssues([issue], { stateFile, queueFile,
+      send: async (message, details) => {
+        if (details.warningCode === 'DEFERRED_QUEUE_CORRUPT') throw new Error('Telegram unavailable');
+        messages.push({ message, details });
+        return { ok: true, result: { message_id: 1 } };
+      } });
+    assert.deepEqual(result, { sent: 1 });
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(messages.map(({ details }) => details.subjectKey), [warningSubjectKey('issue', issue.key)]);
+  assert.equal(JSON.parse(readFileSync(stateFile, 'utf8'))[issue.key].sentCount, 1);
+  assert.ok(errors.some((message) => message.includes('폐지된 잡 보류 경고 정리 실패: Telegram unavailable')));
 });
 
 test('워처가 오래 멈췄다가 재개돼도 지난 리마인더를 연속 발송하지 않는다', async (t) => {
@@ -327,13 +518,52 @@ test('findStaleJobs: 여러 잡 중 일부만 stale이면 그것만 반환', () 
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('findStaleJobs: 설정 안 된 잡은 기본 기대주기(defaultIntervalMs)를 쓴다', () => {
+test('findStaleJobs: 폐지된 미디어 잡 기록은 무시하고 활성 잡의 실제 주기로 감시한다', (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const now = new Date('2026-10-19T12:00:00.000Z');
+  for (const job of ['media-diarize', 'media-faces-nightly', 'media-transcribe', 'media-vision']) {
+    writeFileSync(join(dir, `${job}.md`), buildJobHealthRecord({
+      job, status: 'OK', now: new Date('2026-10-16T12:00:00.000Z'),
+    }).content);
+  }
+  writeFileSync(join(dir, 'media-audio.md'), buildJobHealthRecord({
+    job: 'media-audio', status: 'OK', now: new Date('2026-10-18T12:00:00.000Z'),
+  }).content);
+  writeFileSync(join(dir, 'media-photo.md'), buildJobHealthRecord({
+    job: 'media-photo', status: 'OK', now: new Date('2026-10-17T11:00:00.000Z'),
+  }).content);
+
+  assert.deepEqual(findStaleJobs(dir, { now }), [{
+    job: 'media-photo', lastRun: '2026-10-17T11:00:00.000Z',
+    expectedIntervalMs: EXPECTED_INTERVALS_MS['media-photo'],
+  }]);
+});
+
+test('findStaleJobs: 감시 목록에 없는 새 잡은 기본 1시간 주기로 감시한다', () => {
   const dir = makeTmpDir();
   const now = new Date('2026-08-05T12:01:00.000Z');
   writeFileSync(join(dir, 'unlisted.md'), buildJobHealthRecord({ job: 'unlisted', status: 'OK', now: new Date('2026-08-05T09:00:00.000Z') }).content);
-  const stale = findStaleJobs(dir, { now, expectedIntervals: {}, defaultIntervalMs: 60 * 60 * 1000 });
-  assert.equal(stale.length, 1);
+  const stale = findStaleJobs(dir, { now, expectedIntervals: {} });
+  assert.deepEqual(stale, [{ job: 'unlisted', lastRun: '2026-08-05T09:00:00.000Z',
+    expectedIntervalMs: 60 * 60 * 1000 }]);
   rmSync(dir, { recursive: true, force: true });
+});
+
+test('감시 목록에 없는 새 잡의 이전 경고도 임의로 폐지 처리하지 않는다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  const key = 'job:new-active-job:silent';
+  writeFileSync(stateFile, JSON.stringify({ [key]: { firstSeenAt: 1, lastSentAt: 1, sentCount: 1 } }));
+  const messages = [];
+  await processHealthIssues([], { stateFile, queueFile, now: 2,
+    send: async (message, details) => {
+      messages.push(details.warningCode);
+      return { ok: true, result: { message_id: 1 } };
+    } });
+  assert.deepEqual(messages, ['JOB_HEALTH_RECOVERED']);
 });
 
 test('findStaleJobs: .md 아닌 파일(예: 락파일 잔재)은 무시', () => {
@@ -345,8 +575,7 @@ test('findStaleJobs: .md 아닌 파일(예: 락파일 잔재)은 무시', () => 
 
 // ── backup-vault 실제 설정값 회귀 테스트(2026-08-14, 오너 신고로 발견) ───────
 // expectedIntervals를 안 넘겨서 모듈의 실제 EXPECTED_INTERVALS_MS(기본 파라미터)가
-// 쓰이게 한다 — "설정에 backup-vault가 빠져 기본 1시간이 적용되던" 버그가 재발하면
-// 이 테스트가 바로 잡는다.
+// 쓰이게 한다. 등록된 backup-vault가 기대 주기보다 일찍 경고되지 않는지 확인한다.
 test('[막아야 함] findStaleJobs: backup-vault는 하루 1회 잡이라 20시간 조용해도 stale 아님', () => {
   const dir = makeTmpDir();
   const now = new Date('2026-08-14T10:00:00.000Z');
@@ -368,8 +597,7 @@ test('findStaleJobs: backup-vault가 이틀 넘게(48시간+) 조용하면 진�
 
 // ── update-monthly-balance-snapshot·weekly-report 실제 설정값 회귀 테스트
 // (2026-08-23, 오너 신고 — 리포트는 실제로 발행됐는데 "조용하다" 오알람). backup-vault
-// 때와 같은 클래스: 두 잡을 EXPECTED_INTERVALS_MS에 등록 안 해 기본 1시간이 적용되던
-// 버그. expectedIntervals를 안 넘겨 모듈의 실제 기본 파라미터가 쓰이게 한다.
+// 때와 같은 클래스였던 과거 버그. expectedIntervals를 안 넘겨 실제 등록 주기를 검사한다.
 test('[막아야 함] findStaleJobs: update-monthly-balance-snapshot은 매일 23:50 1회 잡이라 20시간 조용해도 stale 아님', () => {
   const dir = makeTmpDir();
   const now = new Date('2026-08-23T19:00:00.000Z'); // 다음날 낮(KST 04:00)
@@ -474,11 +702,11 @@ test('formatStaleJobIssue: 실행 기록 자체가 없으면 "실행 기록 없�
 // 규칙은 안 지켜진다는 게 다섯 번으로 증명됐으니, run.sh가 실제로 디스패치하는 잡은
 // 전부 EXPECTED_INTERVALS_MS에 등록돼 있어야 한다는 걸 테스트로 강제한다 — 새 잡을
 // run.sh case문에 추가하고 이 등록을 빠뜨리면 npm test가 그 자리에서 실패한다.
-test('EXPECTED_INTERVALS_MS: run.sh가 디스패치하는 잡은 전부 등록돼 있어야 함(기본값 60분 오알람 재발 방지)', () => {
+test('EXPECTED_INTERVALS_MS: run.sh가 디스패치하는 잡은 전부 감시 목록에 등록돼 있어야 함', () => {
   const dispatched = listDispatchedJobs();
   assert.ok(dispatched.length > 10, 'run.sh case문 파싱이 깨졌을 가능성 — 잡 이름이 거의 안 뽑힘');
   const missing = dispatched.filter((job) => !(job in EXPECTED_INTERVALS_MS));
-  assert.deepEqual(missing, [], `EXPECTED_INTERVALS_MS에 등록 안 된 잡: ${missing.join(', ')} — health-watcher.mjs에 실제 launchd 주기에 맞는 값을 추가할 것(기본값 60분을 그대로 두면 몇 시간 안에 오알람 발생)`);
+  assert.deepEqual(missing, [], `EXPECTED_INTERVALS_MS에 등록 안 된 잡: ${missing.join(', ')} — health-watcher.mjs에 실제 launchd 주기에 맞는 값을 추가할 것(미등록 잡은 기본 60분으로 감시됨)`);
 });
 
 test('미디어 블록 잡(음성·사진·영상·밤 점검)은 매일 한 번 실행한다', () => {
@@ -486,12 +714,42 @@ test('미디어 블록 잡(음성·사진·영상·밤 점검)은 매일 한 번
     assert.equal(EXPECTED_INTERVALS_MS[job], 24 * 60 * 60 * 1000, job);
 });
 
-test('media-memory-orb plist·디스패치·감시 주기는 매일 02:20으로 일치한다', () => {
+test('중단된 두 잡은 디스패치 정의를 보존하되 오래된 하트비트를 경고하지 않는다', (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const plist = readFileSync(new URL('../launchd/com.banana2.media-memory-orb.plist', import.meta.url), 'utf8');
   const runSh = readFileSync(new URL('../launchd/run.sh', import.meta.url), 'utf8');
   assert.match(plist, /<string>com\.banana2\.media-memory-orb<\/string>/);
   assert.match(plist, /<key>Hour<\/key><integer>2<\/integer><key>Minute<\/key><integer>20<\/integer>/);
   assert.match(plist, /<string>media-memory-orb<\/string>/);
   assert.match(runSh, /media-memory-orb\) CMD=\(scripts\/jobs\/media-memory-orb\.mjs\)/);
-  assert.equal(EXPECTED_INTERVALS_MS['media-memory-orb'], 24 * 60 * 60 * 1000);
+  assert.match(runSh, /mine-athena-fields\) CMD=\(scripts\/jobs\/mine-athena-fields\.mjs\)/);
+  for (const job of ['media-memory-orb', 'mine-athena-fields']) {
+    assert.equal(EXPECTED_INTERVALS_MS[job], null);
+    writeFileSync(join(dir, `${job}.md`), buildJobHealthRecord({
+      job, status: 'OK', now: new Date('2026-10-10T00:00:00Z'),
+    }).content);
+  }
+  writeFileSync(join(dir, 'media-audio-offsite-backup.md'), buildJobHealthRecord({
+    job: 'media-audio-offsite-backup', status: 'OK', now: new Date('2026-10-10T00:00:00Z'),
+  }).content);
+  assert.deepEqual(findStaleJobs(dir, { now: new Date('2026-10-20T00:00:00Z') }).map(({ job }) => job),
+    ['media-audio-offsite-backup']);
+});
+
+test('중단된 잡의 이전 경고와 보류 경고를 복구 발송 없이 정리한다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  const queueFile = join(dir, 'deferred.json');
+  const issueKey = 'job:media-memory-orb:silent';
+  writeFileSync(stateFile, JSON.stringify({ [issueKey]: { firstSeenAt: 1, lastSentAt: 1, sentCount: 1 } }));
+  await deferWarning({ queueFile, issueKey: `health-watcher|JOB_HEALTH_ISSUES|${warningSubjectKey('issue', issueKey)}`,
+    agent: 'zeus', detail: '중단된 잡 경고' });
+  const sent = [];
+  await processHealthIssues([], { stateFile, queueFile, now: 2,
+    send: async (message) => { sent.push(message); return { ok: true, result: { message_id: 1 } }; } });
+  assert.deepEqual(sent, []);
+  assert.deepEqual(JSON.parse(readFileSync(stateFile, 'utf8')), {});
+  assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')).pending, []);
 });

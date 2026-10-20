@@ -21,7 +21,7 @@ import { parseFrontmatter, isStale } from '../lib/job-health.mjs';
 import { getTelegramWebhookInfo } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
-import { drainDeferredWarnings, hasDeferredIssue, resolveDeferredIssue } from '../lib/deferred-warnings.mjs';
+import { cancelDeferredWarnings, drainDeferredWarnings, hasDeferredIssue, resolveDeferredIssue } from '../lib/deferred-warnings.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 
 import { describeJob, JOB_REMEDIATION } from '../lib/job-labels.mjs';
@@ -71,6 +71,11 @@ function readWatcherState(stateFile) {
   }
 }
 
+function isInactiveJobIssue(key) {
+  const match = /^job:([^:]+):silent$/.exec(key);
+  return match !== null && isInactiveJob(match[1]);
+}
+
 export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FILE,
   send = sendWarning, now = Date.now(), queueFile } = {}) {
   if (process.env.NODE_TEST_CONTEXT && stateFile === WATCHER_STATE_FILE) {
@@ -96,6 +101,21 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
     } catch (error) { console.error(`감시 상태 손상 경보 실패: ${error.message}`); }
   }
   const current = new Set(issues.map((issue) => issue.key));
+  try {
+    const priorState = await withLock(stateFile, () => readWatcherState(stateFile));
+    const retiredIssueKeys = new Set(Object.keys(priorState).filter(isInactiveJobIssue).map((key) =>
+      `health-watcher|JOB_HEALTH_ISSUES|${warningSubjectKey('issue', key)}`));
+    await cancelDeferredWarnings((entry) => {
+      const source = entry.source;
+      const sourceKey = source?.watcherIssueKey;
+      if (sourceKey) return (!source.jobName || source.jobName === 'health-watcher')
+        && (!source.warningCode || source.warningCode === 'JOB_HEALTH_ISSUES')
+        && isInactiveJobIssue(sourceKey);
+      return retiredIssueKeys.has(entry.issueKey);
+    }, queueFile, sendWithoutDrain);
+  } catch (error) {
+    console.error(`폐지된 잡 보류 경고 정리 실패: ${error.message}`);
+  }
   let sent = 0;
   for (const issue of issues) {
     try {
@@ -152,11 +172,13 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
   }
   const state = await withLock(stateFile, () => readWatcherState(stateFile));
   for (const [key, prior] of Object.entries(state)) {
-    if (current.has(key) || (prior.sending && now - (prior.sendingAt ?? 0) < 30 * 60_000)) continue;
+    if (current.has(key)) continue;
     try {
       const subjectKey = warningSubjectKey('issue', key);
+      const retired = isInactiveJobIssue(key);
+      if (prior.sending && now - (prior.sendingAt ?? 0) < 30 * 60_000) continue;
       const issueKey = `health-watcher|JOB_HEALTH_ISSUES|${subjectKey}`;
-      const queued = await hasDeferredIssue(issueKey, queueFile, sendWithoutDrain);
+      const queued = retired ? false : await hasDeferredIssue(issueKey, queueFile, sendWithoutDrain);
       const claimId = randomUUID();
       const claimed = await withLock(stateFile, () => {
         const latest = readWatcherState(stateFile);
@@ -169,7 +191,7 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
       });
       if (!claimed) continue;
       try {
-        if (prior.sentCount > 0 || queued) {
+        if (!retired && (prior.sentCount > 0 || queued)) {
           await resolveDeferredIssue(issueKey, queueFile, sendWithoutDrain);
           if (!queued) {
             await send({ agent: SENDER_AGENT, kind: '판단', topic: '복구',
@@ -203,7 +225,7 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
 }
 
 // 잡별 기대 실행 주기 — 새 v2 잡이 생길 때마다 여기 추가한다(구현계획서 Phase 5+).
-// 값이 없는 잡은 기본값(EXPECTED_INTERVAL_DEFAULT_MS)을 쓴다.
+// 목록에 없는 새 잡 하트비트는 기본 1시간 주기로 감시한다. 폐지·중단 잡만 명시적으로 제외한다.
 //
 // ⚠️ 전수 재점검(2026-08-23, 오너 지시 — "지금 적용한 사항 모든 잡에 동일하게") —
 // update-monthly-balance-snapshot·weekly-report 오알람을 고치면서, 등록된 launchd
@@ -219,7 +241,7 @@ export const EXPECTED_INTERVALS_MS = {
   'media-night-check': 24 * 60 * 60 * 1000, // 매일 05:00 밤 점검
   'media-delete-report-weekly': 7 * 24 * 60 * 60 * 1000,
   'media-faces-hold-monthly': 35 * 24 * 60 * 60 * 1000,
-  'media-memory-orb': 24 * 60 * 60 * 1000, // 02:20 시작, 최대 90분(03:50 전 종료)
+  'media-memory-orb': null, // 오너의 재개 기준 확정 전까지 의도적으로 중단
   'media-audio-offsite-backup': 24 * 60 * 60 * 1000,
   // 위치 수신이 12시간 없으면 폰 앱·Tailscale 점검.
   'owntracks-receiver': 12 * 60 * 60 * 1000,
@@ -389,7 +411,7 @@ export const EXPECTED_INTERVALS_MS = {
   'weekly-vault-health-check': 7 * 24 * 60 * 60 * 1000,
   'weekly-warning-review': 7 * 24 * 60 * 60 * 1000,
   // mine-athena-fields(2026-10-14 신설) — 매주 일 06:30 미네 노트 아테나 필드 묶음, 발송 없음.
-  'mine-athena-fields': 7 * 24 * 60 * 60 * 1000,
+  'mine-athena-fields': null, // 오너의 재개 기준 확정 전까지 의도적으로 중단
   // update-breakout-price-cache(2026-09-16 신설, 돌파매매 전략 개별종목 시세 캐시
   // 갱신) — 평일 07:00 하루 1회, daily-asset-allocation-check 등과 동일 클래스
   // (평일 전용이라 48h로 주말 간격 흡수).
@@ -431,19 +453,27 @@ export const EXPECTED_INTERVALS_MS = {
   'annual-instrument-rescore': 400 * 24 * 60 * 60 * 1000,
 };
 const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
+const RETIRED_JOBS = new Set(['media-diarize', 'media-faces-nightly', 'media-transcribe', 'media-vision']);
+
+function isInactiveJob(job) {
+  return RETIRED_JOBS.has(job) || EXPECTED_INTERVALS_MS[job] === null;
+}
 
 // 텔레그램 상시세션 프로세스 감시 — 그 세션 자체가 Phase 5 산출물이라 아직 없다.
 // 환경변수로 명시적으로 켜지 않으면 이 체크는 건너뛴다(오탐 방지).
 const WATCH_TELEGRAM_SESSION = process.env.WATCH_TELEGRAM_SESSION === '1';
 
-export function findStaleJobs(jobHealthDir, { now = new Date(), expectedIntervals = EXPECTED_INTERVALS_MS, defaultIntervalMs = EXPECTED_INTERVAL_DEFAULT_MS } = {}) {
+export function findStaleJobs(jobHealthDir, { now = new Date(), expectedIntervals = EXPECTED_INTERVALS_MS,
+  defaultIntervalMs = EXPECTED_INTERVAL_DEFAULT_MS } = {}) {
   if (!existsSync(jobHealthDir)) return [];
   const stale = [];
   for (const file of readdirSync(jobHealthDir)) {
     if (!file.endsWith('.md')) continue;
     const job = file.replace(/\.md$/, '');
+    if (isInactiveJob(job)) continue;
+    const expectedIntervalMs = Object.hasOwn(expectedIntervals, job)
+      ? expectedIntervals[job] : defaultIntervalMs;
     const record = parseFrontmatter(readFileSync(join(jobHealthDir, file), 'utf8'));
-    const expectedIntervalMs = expectedIntervals[job] ?? defaultIntervalMs;
     if (isStale({ lastRun: record.lastRun, expectedIntervalMs, now })) {
       stale.push({ job, lastRun: record.lastRun ?? null, expectedIntervalMs });
     }

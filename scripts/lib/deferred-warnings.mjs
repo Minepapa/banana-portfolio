@@ -173,6 +173,27 @@ export async function hasDeferredIssue(issueKey, queueFile = DEFERRED_WARNINGS_F
   return has;
 }
 
+// 전송을 시작하지 않은 항목만 취소한다. claim된 항목도 같은 큐 잠금 아래에서
+// 전송 시작 여부를 확인하므로, 아침 요약과 워처 정리가 겹쳐도 취소가 반영된다.
+export async function cancelDeferredWarnings(predicate, queueFile = DEFERRED_WARNINGS_FILE, sendCritical) {
+  queueFile = queuePath(queueFile);
+  if (!existsSync(queueFile)) return;
+  let corrupt = false;
+  await withLock(queueFile, () => {
+    const queue = readQueue(queueFile);
+    corrupt = !!queue.corrupt;
+    const pending = queue.pending.filter((entry) => !predicate(entry));
+    const inFlight = queue.inFlight.filter((entry) => entry.digestSendingAt
+      || Number.isSafeInteger(entry.digestSentMessageId) || !predicate(entry));
+    if (pending.length !== queue.pending.length || inFlight.length !== queue.inFlight.length) {
+      queue.pending = pending;
+      queue.inFlight = inFlight;
+      writeAtomic(queueFile, JSON.stringify(queue));
+    }
+  });
+  if (corrupt) await notifyCorruption(sendCritical, console);
+}
+
 // 먼저 claim을 영속화한다. 불명 응답이나 프로세스 중단 후 재실행해도 중복 발송하지 않는다.
 export async function drainDeferredWarnings({ send, sendCritical = (message) => send(message),
   queueFile = DEFERRED_WARNINGS_FILE, now = Date.now(), logger = console, journalRoot } = {}) {
@@ -278,17 +299,29 @@ export async function drainDeferredWarnings({ send, sendCritical = (message) => 
       return { agent, entries };
     });
     if (!batch) break;
-    const { agent, entries } = batch;
-    const facts = [`밤사이 경고 ${entries.length}건`, ...entries.slice(0, 8).flatMap((entry) =>
-      (entry.facts?.length ? entry.facts : [entry.detail]).map((fact) =>
-        `${entry.resolved ? '복구됨: ' : ''}${escapeHtml(fact)}`))];
-    if (entries.length > 8) facts.push(`외 ${entries.length - 8}건(경고 원장 확인)`);
+    const { agent } = batch;
+    let entries = [];
     let response;
     try {
-      response = await send({ agent, kind: '판단', topic: '경고', facts,
-        conclusion: `밤사이 경고 ${entries.length}건을 정리했습니다.`,
-        context: '23:00~07:00 KST에 보류한 경고입니다.',
-        decisions: ['미복구 항목을 확인해 주세요.'] });
+      const attempt = await withLock(queueFile, () => {
+        const queue = readQueue(queueFile);
+        const ids = new Set(batch.entries.map((entry) => entry.id));
+        entries = queue.inFlight.filter((entry) => ids.has(entry.id));
+        if (!entries.length) return null;
+        const facts = [`밤사이 경고 ${entries.length}건`, ...entries.slice(0, 8).flatMap((entry) =>
+          (entry.facts?.length ? entry.facts : [entry.detail]).map((fact) =>
+            `${entry.resolved ? '복구됨: ' : ''}${escapeHtml(fact)}`))];
+        if (entries.length > 8) facts.push(`외 ${entries.length - 8}건(경고 원장 확인)`);
+        for (const entry of entries) entry.digestSendingAt = new Date(now).toISOString();
+        writeAtomic(queueFile, JSON.stringify(queue));
+        // 호출 자체가 전송 시작점이다. 응답을 기다리는 동안은 큐 잠금을 해제한다.
+        return { promise: send({ agent, kind: '판단', topic: '경고', facts,
+          conclusion: `밤사이 경고 ${entries.length}건을 정리했습니다.`,
+          context: '23:00~07:00 KST에 보류한 경고입니다.',
+          decisions: ['미복구 항목을 확인해 주세요.'] }) };
+      });
+      if (!attempt) continue;
+      response = await attempt.promise;
       if (response?.ok !== true || !Number.isSafeInteger(response.result?.message_id)) {
         const error = new Error('아침 경고 정리 전달 확인 불가');
         if (response?.ok === false) error.confirmedNotSent = true;
@@ -303,7 +336,7 @@ export async function drainDeferredWarnings({ send, sendCritical = (message) => 
           const queue = readQueue(queueFile);
           const ids = new Set(entries.map((entry) => entry.id));
           queue.inFlight = queue.inFlight.filter((entry) => !ids.has(entry.id));
-          queue.pending.unshift(...entries);
+          queue.pending.unshift(...entries.map(({ digestSendingAt, ...entry }) => entry));
           writeAtomic(queueFile, JSON.stringify(queue));
         });
       }

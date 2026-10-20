@@ -68,8 +68,23 @@ export function planRetention(files, today) {
 
 async function request(url, { token, fetchImpl = fetch, method = 'GET', headers = {}, body, timeout = 15000 }) {
   const response = await fetchImpl(url, { method, headers: { Authorization: `Bearer ${token}`, ...headers }, body, signal: AbortSignal.timeout(timeout) });
-  if (!response.ok) throw new Error(`Google Drive 요청 실패 (HTTP ${response.status})`);
+  if (!response.ok) {
+    const error = new Error(`Google Drive 요청 실패 (HTTP ${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return response;
+}
+export async function generateFileId({ token, fetchImpl = fetch } = {}) {
+  const data = await (await request(`${DRIVE}/generateIds?count=1&space=drive&type=files`, { token, fetchImpl })).json();
+  if (!Array.isArray(data.ids) || data.ids.length !== 1 || typeof data.ids[0] !== 'string' || !data.ids[0])
+    throw new Error('Google Drive 생성 ID 형식 오류');
+  return data.ids[0];
+}
+export async function getBackupMetadata({ token, fetchImpl = fetch, id } = {}) {
+  if (!id) throw new Error('Drive 파일 ID 없음');
+  const url = `${DRIVE}/${encodeURIComponent(id)}?fields=id,name,size,parents,appProperties,md5Checksum`;
+  return (await request(url, { token, fetchImpl })).json();
 }
 export async function listFiles({ token, fetchImpl = fetch, folderId, appProperties = APP_PROPERTY } = {}) {
   const files = [];
@@ -103,15 +118,16 @@ export async function findOrCreateFolder({ token, fetchImpl = fetch, appProperti
   });
   return response.json();
 }
-export async function uploadBackup({ token, fetchImpl = fetch, folderId, name, blob, appProperties = APP_PROPERTY, mimeType = FILE_MIME, namePattern = NAME } = {}) {
+export async function uploadBackup({ token, fetchImpl = fetch, folderId, name, blob, id, appProperties = APP_PROPERTY, mimeType = FILE_MIME, namePattern = NAME } = {}) {
   if (!folderId || !namePattern.test(name) || !Buffer.isBuffer(blob)) throw new Error('업로드 인자 오류');
   const boundary = `vault-${randomBytes(12).toString('hex')}`;
   const metadata = { name, parents: [folderId], appProperties };
+  if (id) metadata.id = id;
   const body = Buffer.concat([
     Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`),
     blob, Buffer.from(`\r\n--${boundary}--\r\n`),
   ]);
-  const response = await request(`${UPLOAD}&fields=id,name,size,parents,appProperties`, {
+  const response = await request(`${UPLOAD}&fields=id,name,size,parents,appProperties,md5Checksum`, {
     token, fetchImpl, method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body, timeout: 300000,
   });
   return response.json();
