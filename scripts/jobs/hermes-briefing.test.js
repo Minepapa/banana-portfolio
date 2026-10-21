@@ -8,6 +8,7 @@ import { buildMemo } from '../tools/inbox-memo.mjs';
 import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { readWarningEvents } from '../lib/warning-event-journal.mjs';
 import { deferWarning } from '../lib/deferred-warnings.mjs';
+import { renderAgentMessage } from '../lib/pantheon-send.mjs';
 
 const journalRoot = mkdtempSync(join(tmpdir(), 'hermes-warning-'));
 const warningNow = () => new Date('2026-10-10T03:00:00.000Z');
@@ -22,7 +23,7 @@ const ev = { calendar: '개인', title: '<치과>', start: '2026-10-10T10:00:00+
 
 test('아침 일정과 생일, 저녁 내일 일정, 일정 없는 저녁 미발송', async () => {
   const sent = [];
-  const deps = { fetchEvents: async () => [ev], readOwners: async () => { throw new Error('unavailable'); }, readPeople: async () => [{ name: '<민>', birthday: '1990-10-10' }, { name: '동생', birthday: '2000-10-14' }], readUnregisteredVoices: noVoices, send: async (message) => sent.push(message), now: () => new Date('2026-10-10T01:00:00Z') };
+  const deps = { fetchEvents: async () => [ev], readOwners: async () => { throw new Error('unavailable'); }, readPeople: async () => [{ name: '<민>', birthday: '1990-10-10' }, { name: '동생', birthday: '2000-10-14' }], readUnregisteredVoices: noVoices, readSpending: () => ({ hasSource: false }), send: capture(sent), now: () => new Date('2026-10-10T01:00:00Z') };
   const morning = await runBriefing({ deps });
   assert.equal(sent[0].agent, 'hermes');
   assert.equal(sent[0].topic, '아침 브리핑');
@@ -36,6 +37,86 @@ test('아침 일정과 생일, 저녁 내일 일정, 일정 없는 저녁 미발
   const skipped = await runBriefing({ mode: 'evening', date: '2026-10-11', deps: { ...deps, fetchEvents: async () => [] } });
   assert.equal(skipped.reason, 'no-events');
   assert.equal(sent.length, 2);
+});
+
+test('아침 브리핑은 오늘 확인된 지출과 송금 판정 대기를 구분한다', async () => {
+  const result = await runBriefing({ mode: 'morning', date: '2026-10-10', preview: true, deps: {
+    fetchEvents: async () => [], readPeople: async () => [],
+    readSpending: () => ({ hasSource: true, total: 2500, expenseCount: 1, pendingCount: 1,
+      invalidLines: 0, byCategory: { 일반: 2500, 교통비: 0, 온누리상품권: 0 } }),
+  } });
+  assert.match(result.body, /오늘 지출\n- 확인된 지출 2,500원 \(1건\)/);
+  assert.match(result.body, /송금 판정 대기 1건 \(합계 제외\)/);
+});
+
+test('저녁 브리핑은 내일 일정이 없어도 오늘 지출을 요약한다', async () => {
+  const result = await runBriefing({ mode: 'evening', date: '2026-10-11', preview: true, deps: {
+    now: () => new Date('2026-10-10T12:00:00Z'), fetchEvents: async () => [],
+    readCandidates: async () => [], readUnregisteredVoices: async () => [],
+    readSpending: () => ({ hasSource: true, total: 2500, expenseCount: 1, pendingCount: 0,
+      invalidLines: 0, byCategory: { 일반: 2500, 교통비: 0, 온누리상품권: 0 } }),
+  } });
+  assert.match(result.body, /■ 오늘 지출\n- 확인된 지출 2,500원/);
+  assert.match(result.body, /■ 내일 일정/);
+});
+
+test('저녁 브리핑은 다른 내용으로 발송할 때 원문 없는 지출도 명시하고 빈 브리핑은 건너뛴다', async () => {
+  const deps = { now: () => new Date('2026-10-10T12:00:00Z'), readCandidates: async () => [],
+    readUnregisteredVoices: async () => [], readSpending: () => ({ hasSource: false }) };
+  const withEvent = await runBriefing({ mode: 'evening', date: '2026-10-11', preview: true,
+    deps: { ...deps, fetchEvents: async () => [ev] } });
+  assert.match(withEvent.body, /■ 오늘 지출\n- 오늘 지출 알림 기록 없음/);
+  const empty = await runBriefing({ mode: 'evening', date: '2026-10-11', preview: true,
+    deps: { ...deps, fetchEvents: async () => [] } });
+  assert.deepEqual(empty, { skipped: true, reason: 'no-events' });
+});
+
+test('저녁 지출 조회 오류는 다른 일정이 없어도 오류를 발송하고 실패로 알린다', async () => {
+  const sent = [];
+  const result = await runBriefing({ mode: 'evening', date: '2026-10-11', deps: {
+    now: () => new Date('2026-10-10T12:00:00Z'), fetchEvents: async () => [],
+    readCandidates: async () => [], readUnregisteredVoices: async () => [],
+    readSpending: () => { throw new Error('설정 형식 오류'); }, send: capture(sent),
+  } });
+  assert.equal(result.alert, true);
+  assert.equal(result.sent, true);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].body, /■ 오늘 지출\n- 지출 기록 조회 실패/);
+});
+
+test('지출 항목이 많은 브리핑은 모든 항목을 전송 길이 이내의 여러 메시지로 보낸다', async () => {
+  const sent = [];
+  const entries = Array.from({ length: 40 }, (_, index) => ({
+    status: 'expense', merchant: `가상상점${index} ${'가'.repeat(110)}`, amount: index + 1,
+    category: '일반',
+  }));
+  await runBriefing({ mode: 'morning', date: '2026-10-10', deps: {
+    fetchEvents: async () => [], readPeople: async () => [], send: capture(sent),
+    readSpending: () => ({ hasSource: true, total: 820, expenseCount: 40, pendingCount: 0,
+      invalidLines: 0, byCategory: { 일반: 820, 교통비: 0, 온누리상품권: 0, 계좌이체: 0 }, entries }),
+  } });
+  assert.ok(sent.length > 1);
+  assert.ok(sent.every((message) => renderAgentMessage(message).length <= 4096));
+  const delivered = sent.map((message) => message.body).join('\n');
+  for (const entry of entries) assert.ok(delivered.includes(`- ${entry.merchant} ${entry.amount}원`));
+});
+
+test('긴 단일 지출 항목도 분할하고 모든 조각의 전달을 확인한다', async () => {
+  const sent = [];
+  const entry = { status: 'expense', merchant: `가상상점 ${'가'.repeat(5000)} &<`, amount: 1000,
+    category: '일반' };
+  const deps = { fetchEvents: async () => [], readPeople: async () => [],
+    readSpending: () => ({ hasSource: true, total: 1000, expenseCount: 1, pendingCount: 0,
+      invalidLines: 0, byCategory: { 일반: 1000 }, entries: [entry] }) };
+  await runBriefing({ mode: 'morning', date: '2026-10-10', deps: { ...deps, send: capture(sent) } });
+  assert.ok(sent.length > 1);
+  assert.ok(sent.every((message) => renderAgentMessage(message).length <= 4096));
+  assert.ok(sent.map((message) => message.body).join('').includes('&amp;&lt;'));
+  let calls = 0;
+  await assert.rejects(runBriefing({ mode: 'morning', date: '2026-10-10', deps: {
+    ...deps, send: async () => (++calls === 1 ? { ok: true } : { ok: true, result: { message_id: calls } }),
+  } }), /전달 결과 확인 불가/);
+  assert.equal(calls, 1);
 });
 
 test('OAuth 미설정이어도 생일과 일정 연결 경고를 발송한다', async () => {
@@ -98,7 +179,7 @@ test('실제 날짜만 허용하고 잘못된 생일은 무시, 2월 29일생은
 
 test('자동 모드는 05~11시·18~23시만 실행한다', async () => {
   const sent = [];
-  const deps = { fetchEvents: async () => [ev], readPeople: async () => [], readUnregisteredVoices: noVoices, send: async (message) => sent.push(message) };
+  const deps = { fetchEvents: async () => [ev], readPeople: async () => [], readUnregisteredVoices: noVoices, send: capture(sent) };
   for (const hour of [0, 4, 12, 17]) {
     const result = await runBriefing({ deps: { ...deps, now: () => new Date(`2026-10-10T${String((hour + 15) % 24).padStart(2, '0')}:00:00Z`) } });
     assert.equal(result.reason, 'outside-hours');
@@ -124,7 +205,7 @@ test('소유자별 아침·저녁 일정, 빈 아침과 대응표 실패 폴백'
     ],
     readPeople: async () => [],
     readUnregisteredVoices: noVoices,
-    send: async (message) => sent.push(message),
+    send: capture(sent),
   };
   const morning = await runBriefing({ mode: 'morning', date: '2026-10-10', deps });
   assert.match(morning.body, /■ 나 — 오늘 일정\n- 10:00–11:00 &lt;치과&gt; \(A&amp;B\) \(나·휘영 함께\)/);
@@ -202,7 +283,8 @@ test('저녁 재실행은 이미 발송한 음성 노트를 다시 알리지 않
     { voiceConfirm: '확인 대기 → 미등록' })}${recordContent.slice(recordContent.indexOf('\n---\n') + 5)}`);
   const sent = [];
   const deps = { now: () => new Date('2026-10-11T12:00:00Z'), fetchEvents: async () => [],
-    readCandidates: async () => [], readUnregisteredVoices: (date) => readUnregisteredVoices(date, inboxDir, recordsDir),
+    readCandidates: async () => [], readSpending: () => ({ hasSource: false }),
+    readUnregisteredVoices: (date) => readUnregisteredVoices(date, inboxDir, recordsDir),
     send: capture(sent) };
   const first = await runBriefing({ mode: 'evening', date: '2026-10-12', deps });
   assert.equal(first.sent, true);

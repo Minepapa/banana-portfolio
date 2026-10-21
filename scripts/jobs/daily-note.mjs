@@ -30,7 +30,7 @@ import { listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
 import { readDayPoints, detectStays, loadPlaces, describeStays, buildMoveSegments, movePaymentCoordinate, haversineM, STAY_RADIUS_M } from '../lib/location-stays.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
-import { parseSpendingRecords } from '../lib/spending-parse.mjs';
+import { readDailySpending, formatDailyNoteSpending } from '../lib/spending-daily.mjs';
 import { attachRouteActivities, moveStopovers } from '../lib/route-activities.mjs';
 import { updateCandidates } from '../lib/place-candidates.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
@@ -115,14 +115,8 @@ export function routeHashOf(points, payments = []) {
 }
 
 export function readRoutePayments(date, root = VAULT_PATHS.root) {
-  const path = join(root, VAULT_REL.spending, date.slice(0, 4), `${date}.jsonl`);
-  if (!existsSync(path)) return [];
-  const records = [];
-  for (const line of readFileSync(path, 'utf8').split('\n').filter(Boolean)) {
-    try { records.push(JSON.parse(line)); }
-    catch { /* 손상된 알림 한 줄은 동선 전체를 막지 않는다. */ }
-  }
-  return parseSpendingRecords(records);
+  return readDailySpending(date, { spendingDir: join(root, VAULT_REL.spending) }).entries
+    .filter((entry) => entry.status === 'expense');
 }
 
 export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = createCachedGeocoder({ root }), dryRun = false,
@@ -198,6 +192,9 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   if (mode === 'prepare' && first != null) { console.log(`  ℹ️ ${date}: 노트가 이미 있음 — 미리 만들기 건너뜀`); return { failed: false }; }
   const inspected = inspectExisting(first);
   if (!inspected.ok) { console.error(`  ⛔ ${date}: ${inspected.reason} — 쓰지 않음`); return { failed: true }; }
+  // 원문이 있는 날의 잘못된 판정 설정은 합계를 조용히 비우지 않고 잡 실패로 드러낸다.
+  const spendingSummary = (injected.readSpending ?? readDailySpending)(date);
+  const spending = formatDailyNoteSpending(spendingSummary);
   const records = collectRecords(VAULT_PATHS.root, date);
   const recordHash = recordHashOf(records);
   console.log(`[daily-note] ${mode} ${date} — 기록 ${records.length}개${dryRun ? ' (dry-run)' : ''}`);
@@ -237,7 +234,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
     catch (error) { route = 'failed'; routeHash = prevFields?.routeHash ?? null; console.error('  ❌ 동선 계산 실패:', String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
   }
   const statusOf = (prev) => mode === 'finalize' && (events !== 'failed' || hasNormalSchedule(prev)) ? '확정' : '초안';
-  const render = (prev) => renderDailyNote({ date, records, summary, status: statusOf(prev), model, summaryStatus, recordHash, routeHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev, events, eventGroups, route, todos });
+  const render = (prev) => renderDailyNote({ date, records, summary, status: statusOf(prev), model, summaryStatus, recordHash, routeHash, today, telegramSentAt: prev?.fields?.telegramSentAt ?? null, prev, events, eventGroups, route, todos, spending, spendingExpenseCount: spendingSummary.expenseCount });
 
   let note = render(inspected.prev);
   const rel = relative(VAULT_PATHS.root, path);

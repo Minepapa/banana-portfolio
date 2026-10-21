@@ -40,6 +40,29 @@ test('동선 재계산은 위치 지문이 머리말에서 이동해도 중복 �
   assert.equal(inspectExisting(updated).ok, true);
 });
 
+test('기존 다섯 AI 칸 노트는 오너 글을 보존하며 지출 칸으로 이관한다', () => {
+  const generated = renderDailyNote(base);
+  const withoutSpending = generated.replace(/\n## 지출\n[^\n]*\n/, '');
+  const legacyTitles = ['일정', '동선', '오늘 들어온 기록', '오늘 생긴 할 일', 'AI 하루 요약'];
+  const sections = parseSections(withoutSpending.split('\n---\n')[1]).sections;
+  const legacyText = legacyTitles.map((title) => `${title}\n${sections.find((section) => section.title === title)?.content ?? ''}`).join('\n\n');
+  const legacyHash = createHash('sha256').update(legacyText).digest('hex').slice(0, 16);
+  const legacy = withoutSpending.replace(/^aiHash: .*$/m, `aiHash: "${legacyHash}"`)
+    .replace('## 오너 메모\n<!-- 오너가 쓰는 칸. AI는 이 칸을 고치지 않는다. -->', '## 오너 메모\n오너 기록')
+    .concat('\n## 내 추가 칸\n보존할 내용\n');
+  assert.equal(inspectExisting(legacy).ok, true);
+  const routeOnly = replaceDailyRoute(legacy, [], 'new', '2026-10-10');
+  assert.equal(inspectExisting(routeOnly).ok, true);
+  assert.doesNotMatch(routeOnly, /^## 지출$/m);
+  const updated = renderDailyNote({ ...base, prev: inspectExisting(routeOnly).prev,
+    spending: '- 2026-10-09 확인된 지출 2,500원 (1건)' });
+  assert.match(updated, /## 지출\n- 2026-10-09 확인된 지출 2,500원 \(1건\)/);
+  assert.match(updated, /## 오너 메모\n오너 기록/);
+  assert.match(updated, /## 내 추가 칸\n보존할 내용/);
+  assert.equal(inspectExisting(updated).ok, true);
+  assert.equal(inspectExisting(legacy.replace('## 일정', '## 지출\n오너 값\n\n## 일정')).ok, false);
+});
+
 test('동선 재계산에서 체류가 생기면 개인으로 올리고 수정일을 KST 오늘로 바꾸며 내리지 않는다', () => {
   const args = { ...base, records: [], date: '2026-10-09', today: '2026-10-09', route: [] };
   const original = renderDailyNote(args);

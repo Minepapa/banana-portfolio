@@ -1,4 +1,4 @@
-// 알림 원문에서 확인 가능한 결제 사실만 꺼낸다. 알 수 없는 형식은 추정하지 않는다.
+// 알림에서 형식이 확인된 사실만 꺼낸다. 미확인 송금은 지출 합계에 넣지 않는다.
 export const PAYMENT_DUPLICATE_MINUTES = 3;
 const amountOf = (text) => Number(text?.replaceAll(',', ''));
 const atOf = (record) => {
@@ -7,41 +7,127 @@ const atOf = (record) => {
   const at = new Date(`${match[1]}T${match[2]}:00+09:00`);
   return Number.isNaN(at.getTime()) ? null : at.toISOString();
 };
+const categoryOf = (isOnnuri, merchant) => isOnnuri ? '온누리상품권'
+  : /(?:교통|버스|지하철|택시)/.test(merchant ?? '') ? '교통비' : '일반';
 
-export function parseSpendingRecord(record) {
+export function parseSpendingRecord(record, { ownAccounts = [], recipientDecisions = [] } = {}) {
   const at = atOf(record);
   if (!at) return null;
   const body = String(record.body ?? '');
   const sender = String(record.sender ?? '');
   const packageName = String(record.packageName ?? '');
+  const samsungOnnuri = sender === '삼성카드' && packageName === 'com.kakao.talk'
+    ? /^\[삼성카드\]([1-9]\d{0,2}(?:,\d{3})+|[1-9]\d*)원 승인\(온누리상품권 \1원 사용\)\r?\n\*결제대금에 미포함$/.exec(body)
+    : null;
+  const hanaTelecom = sender === '자동납부 요금 정상승인 안내'
+    && packageName === 'com.hanaskcard.paycla'
+    ? /^\[((?:SK텔레콤|KT)\(자동납부\)|KT(?:통신요금|유선상품) 자동납부)\] 자동납부 요금 정상승인 안내 ([1-9]\d{0,2}(?:,\d{3})+|[1-9]\d*)원$/.exec(body)
+    : null;
+  const cancellationMarker = '(?:승인취소|사용취소|결제취소|취소|환불|광고)';
+  const cancellation = /(?:취소|환불|광고)/.test(sender)
+    || new RegExp(`(?:^|\\n)\\s*[-*]?\\s*(?:${cancellationMarker}(?=\\s|$|[:：])|\\[${cancellationMarker}\\]|\\(${cancellationMarker}\\)|(?:거래종류|거래상태|상태)\\s*[:：]\\s*${cancellationMarker}(?=\\s|$))`, 'm').test(body);
+  if (cancellation
+    || (/(?:결제대금|카드값)/.test(sender + body) && !samsungOnnuri)) return null;
+
   let match;
   let card;
   let amount;
   let merchant = null;
-  if ((match = /삼성\d{4}\s*승인[\s\S]*?([\d,]+)원\s*일시불[\s\S]*?\d{2}\/\d{2}\s+\d{2}:\d{2}\s+([^\n\r]+)/.exec(body))) {
-    card = '삼성'; amount = amountOf(match[1]); merchant = match[2].trim();
+  let cardLast4 = null;
+  let cardMask = null;
+  let status = 'expense';
+  let recipientBank = null;
+  let recipientLast4 = null;
+  if (samsungOnnuri) {
+    card = '삼성'; amount = amountOf(samsungOnnuri[1]);
+  } else if (hanaTelecom) {
+    card = '하나'; merchant = hanaTelecom[1].replace(/(?:\(자동납부\)| 자동납부)$/, ''); amount = amountOf(hanaTelecom[2]);
+  } else if ((match = /삼성(\d{4})\s*승인[\s\S]*?([\d,]+)원\s*일시불[\s\S]*?\d{2}\/\d{2}\s+\d{2}:\d{2}\s+([^\n\r]+)/.exec(body))) {
+    card = '삼성'; cardLast4 = match[1]; amount = amountOf(match[2]); merchant = match[3].trim();
   } else if (/하나/.test(sender + body) && (match = /(?:사용금액|승인금액)\s*[:：]?\s*([\d,]+)원/.exec(body))) {
     card = '하나'; amount = amountOf(match[1]);
     merchant = /(?:가맹점명?|사용처)\s*[:：]\s*([^\n\r]+)/.exec(body)?.[1]?.trim() ?? null;
+    const cardNumber = /(?:카드번호|카드)\s*[:：]?\s*(\d{4}|\d\*\d\*)/.exec(body)?.[1] ?? null;
+    cardLast4 = /^\d{4}$/.test(cardNumber ?? '') ? cardNumber : null;
+    cardMask = cardNumber?.includes('*') ? cardNumber : null;
   } else if (/하나|hanaskcard/i.test(packageName + sender + body)
     && (match = /(?:\(결제\)\s*)?([\d,]+)원/.exec(sender))
     && /신용\(일시불/.test(body)) {
     card = '하나'; amount = amountOf(match[1]); merchant = body.split(/[\n\r/]/)[0]?.trim() || null;
-  } else if (/카카오페이/.test(packageName + sender) && (match = /계좌로\s*([\d,]+)원을\s*송금했어요/.exec(body))) {
-    card = '카카오페이'; amount = amountOf(match[1]);
+    const cardNumber = /일시불,\s*(\d\*\d\*|\d{4})/.exec(body)?.[1] ?? null;
+    cardLast4 = /^\d{4}$/.test(cardNumber ?? '') ? cardNumber : null;
+    cardMask = cardNumber?.includes('*') ? cardNumber : null;
+  } else if (/hanaskcard/i.test(packageName) && sender === '결제'
+    && (match = /^온누리\((\d\*\d\*)\)[^\n]*?\/일시불\/승인\/([\d,]+)원\/([^\n/]+)/.exec(body))) {
+    card = '하나'; cardMask = match[1]; amount = amountOf(match[2]); merchant = match[3].trim();
+  } else if (/카카오페이|kakaopay/i.test(packageName + sender)
+    && (match = /계좌로\s*([\d,]+)원을?\s*송금했어요/.exec(body))
+    && (/송금이 완료되었어요/.test(sender) || /카카오페이/.test(packageName + sender))) {
+    card = '카카오페이'; amount = amountOf(match[1]); status = 'pending';
+    const recipient = /(?:^|\n)\s*([^\n\d()]+?)\s+(\d{4})\s*\([^\n)]*\)계좌로/.exec(body);
+    if (recipient) { recipientBank = recipient[1].trim(); recipientLast4 = recipient[2]; }
   } else return null;
   if (!Number.isSafeInteger(amount) || amount <= 0) return null;
-  return { at, amount, merchant, card, source: packageName || sender };
+  if (status === 'pending' && recipientBank && recipientLast4 && ownAccounts.some((account) =>
+    account.bank === recipientBank && account.last4 === recipientLast4)) status = 'excluded';
+  if (status === 'pending' && recipientBank && recipientLast4) {
+    const decision = recipientDecisions.find((entry) => entry.bank === recipientBank
+      && entry.last4 === recipientLast4);
+    if (decision?.status === 'expense' || decision?.status === 'excluded') status = decision.status;
+  }
+  const isOnnuri = Boolean(samsungOnnuri || (card === '하나'
+    && /(?:^|\n)\s*-\s*이용카드\s*[:：]\s*[^\n]*온누리/.test(body))
+    || (card === '하나' && sender === '결제' && /^온누리\(/.test(body)));
+  const category = card === '카카오페이' && status === 'expense' ? '계좌이체' : categoryOf(isOnnuri, merchant);
+  return { at, amount, merchant, card, cardLast4, cardMask, status, category,
+    recipientBank, recipientLast4, source: packageName || sender };
 }
 
-export function parseSpendingRecords(records) {
-  const parsed = records.map(parseSpendingRecord).filter(Boolean).sort((a, b) => a.at.localeCompare(b.at));
+export function parseSpendingRecords(records, options = {}) {
+  const parsed = records.map((record) => parseSpendingRecord(record, options)).filter(Boolean)
+    .sort((a, b) => a.at.localeCompare(b.at));
   const payments = [];
   for (const payment of parsed) {
-    const duplicate = payments.find((prior) => prior.amount === payment.amount && prior.card === payment.card
+    const duplicate = payments.find(({ entry: prior, sources }) => !sources.has(payment.source)
+      && prior.amount === payment.amount && prior.card === payment.card
+      && prior.status === payment.status
+      && prior.category === payment.category
+      && prior.source !== payment.source
+      && (!prior.cardLast4 || !payment.cardLast4 || prior.cardLast4 === payment.cardLast4)
+      && (!prior.cardMask || !payment.cardMask || prior.cardMask === payment.cardMask)
+      && (!(prior.cardLast4 || prior.cardMask) || !(payment.cardLast4 || payment.cardMask)
+        || (prior.cardLast4 && payment.cardLast4 && prior.cardLast4 === payment.cardLast4)
+        || (prior.cardMask && payment.cardMask && prior.cardMask === payment.cardMask))
+      && ((prior.cardLast4 === payment.cardLast4 && prior.cardMask === payment.cardMask)
+        || (prior.merchant && payment.merchant && prior.merchant === payment.merchant))
+      && (!prior.recipientLast4 || !payment.recipientLast4 || prior.recipientLast4 === payment.recipientLast4)
+      && (!prior.recipientBank || !payment.recipientBank || prior.recipientBank === payment.recipientBank)
+      && (!prior.merchant || !payment.merchant || prior.merchant === payment.merchant)
+      && (prior.cardLast4 || prior.cardMask
+        || (prior.merchant && payment.merchant && prior.source !== payment.source)
+        || (prior.recipientBank && prior.recipientLast4 && payment.recipientBank
+          && payment.recipientLast4 && prior.source !== payment.source))
       && Math.abs(Date.parse(prior.at) - Date.parse(payment.at)) <= PAYMENT_DUPLICATE_MINUTES * 60_000);
-    if (!duplicate) payments.push(payment);
-    else if (!duplicate.merchant && payment.merchant) Object.assign(duplicate, payment);
+    if (!duplicate) payments.push({ entry: payment, sources: new Set([payment.source]) });
+    else {
+      const prior = duplicate.entry;
+      const preferPayment = (!prior.merchant && payment.merchant)
+        || (payment.source.includes('kakaopay.app') && !prior.source.includes('kakaopay.app'));
+      const richerFields = {
+        merchant: prior.merchant ?? payment.merchant,
+        cardLast4: prior.cardLast4 ?? payment.cardLast4,
+        cardMask: prior.cardMask ?? payment.cardMask,
+        recipientBank: prior.recipientBank ?? payment.recipientBank,
+        recipientLast4: prior.recipientLast4 ?? payment.recipientLast4,
+        category: prior.category === '계좌이체' || payment.category === '계좌이체'
+          ? '계좌이체' : prior.category === '온누리상품권' || payment.category === '온누리상품권'
+            ? '온누리상품권' : prior.category === '교통비' || payment.category === '교통비'
+              ? '교통비' : '일반',
+      };
+      if (preferPayment) Object.assign(prior, payment);
+      Object.assign(prior, richerFields);
+      duplicate.sources.add(payment.source);
+    }
   }
-  return payments;
+  return payments.map(({ entry }) => entry);
 }

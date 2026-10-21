@@ -7,7 +7,7 @@ import { join } from 'node:path';
 // 임시 볼트에서 돌린다 — 텔레그램은 가짜 발송 함수로만(실제 발송 금지).
 const vault = mkdtempSync(join(tmpdir(), 'daily-note-'));
 process.env.VAULT_PATH = vault;
-const { planActions, processDay, recomputeDailyRoute, recomputeRecentRoutes, routeHashOf, dailyWorkFailed, computeRoute } = await import('./daily-note.mjs');
+const { planActions, processDay, recomputeDailyRoute, recomputeRecentRoutes, routeHashOf, dailyWorkFailed, computeRoute, readRoutePayments } = await import('./daily-note.mjs');
 const { renderDailyNote, inspectExisting } = await import('../lib/daily-note.mjs');
 const { VAULT_REL } = await import('../lib/vault-paths.mjs');
 const rules = [{ type: 'daily', path: '10_Periodic/Daily/{YYYY}/YYYY-MM-DD.md',
@@ -46,6 +46,45 @@ test('이동 중 결제의 가맹점 검색에는 결제 시각 근처 가상 �
     payments: [{ at: iso('31'), merchant: '가상주유소' }], geocode, now: new Date('2026-10-11T12:00:00.000Z') });
   assert.deepEqual(calls, [{ merchant: '가상주유소', lat: 0, lon: 0.06 }]);
   assert.match(route.find((entry) => entry.kind === 'move').label, /주유: 가상주유소/);
+});
+
+test('송금 판정 대기는 동선 결제로 연결하지 않는다', () => {
+  const folder = join(vault, VAULT_REL.spending, '2026');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, '2026-10-21.jsonl'), `${JSON.stringify({
+    ts: '2026-10-21 12:34:00', packageName: 'com.kakaopay.app', sender: '송금이 완료되었어요',
+    body: '가상은행 1234 (가*상)계좌로 8,000원 송금했어요.',
+  })}\n`);
+  assert.deepEqual(readRoutePayments('2026-10-21', vault), []);
+});
+
+test('확정 지출만 있는 데일리 노트는 개인 등급으로 기록한다', async () => {
+  const date = '2026-10-19';
+  const result = await processDay({ mode: 'draft', date, dryRun: false, noSend: true,
+    rules, today: date, deps: {
+      readSpending: () => ({ date, hasSource: true, total: 2500, expenseCount: 1,
+        pendingCount: 0, invalidLines: 0, entries: [{ status: 'expense', category: '일반',
+          merchant: '가상식당', amount: 2500 }] }),
+      fetchEvents: async () => [], readTodos: async () => [],
+      summarize: async () => ({ summary: '- 요약', summaryStatus: 'ok', model: '없음' }),
+    } });
+  assert.equal(result.failed, false);
+  const note = readFileSync(join(vault, '10_Periodic/Daily/2026', `${date}.md`), 'utf8');
+  assert.match(note, /^sensitivity: "개인"$/m);
+  assert.match(note, /## 지출\n- 2026-10-19 확인된 지출 2,500원 \(1건\)\n- 가상식당 2,500원/);
+});
+
+test('동선 결제는 원문 없는 날 손상 설정을 무시하고 원문 있는 날 오류를 알린다', () => {
+  const folder = join(vault, VAULT_REL.spending);
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, 'settings.json'), '{bad');
+  assert.deepEqual(readRoutePayments('2026-10-18', vault), []);
+  mkdirSync(join(folder, '2026'), { recursive: true });
+  writeFileSync(join(folder, '2026', '2026-10-18.jsonl'), `${JSON.stringify({
+    ts: '2026-10-18 12:34:00', sender: '하나카드', body: '사용금액 : 1,000원\n가맹점 : 가상상점',
+  })}\n`);
+  assert.throws(() => readRoutePayments('2026-10-18', vault), /JSON/);
+  rmSync(join(folder, 'settings.json'));
 });
 
 test('planActions: 23:30은 (어제 확정 안 됐으면 확정) + 오늘 초안, 05:00은 어제 확정, 늦은 실행도 꼬이지 않음', () => {

@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, existsSync,
+  symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ingestSpendingInbox } from './ingest-spending-inbox.mjs';
+import { withLock } from '../lib/state-writer.mjs';
 
 function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'spending-inbox-test-'));
@@ -161,6 +163,93 @@ test('dry-run은 파일 생성과 Firestore 삭제 없이 계획 건수만 낸�
   assert.equal(result.deleted, 0);
   assert.deepEqual(db.deleted, []);
   assert.deepEqual(readdirSync(directory), []);
+});
+
+test('확인된 원문을 보존하고 일별 파생 요약을 갱신한다', async (t) => {
+  const directory = fixture(t);
+  const payment = { ...notification('sample-1'), sender: '하나카드',
+    body: '사용금액 : 2,500원\n가맹점 : 가상식당' };
+  await ingestSpendingInbox({ db: fakeDb([payment]), spendingDir: directory, logger: quietLogger });
+  const summaryPath = join(directory, '2026', '2026-10-10.summary.json');
+  assert.equal(JSON.parse(readFileSync(summaryPath, 'utf8')).total, 2500);
+  assert.equal(lines(directory, '2026-10-10')[0].body, payment.body);
+  await ingestSpendingInbox({ db: fakeDb([notification('sample-2')]), spendingDir: directory,
+    dryRun: true, logger: quietLogger });
+  assert.equal(JSON.parse(readFileSync(summaryPath, 'utf8')).total, 2500);
+});
+
+test('요약 실패 후 Firestore 문서가 없어도 다음 실행에서 원문으로 복구한다', async (t) => {
+  const directory = fixture(t);
+  const db = fakeDb([{ ...notification('payment'), sender: '하나카드',
+    body: '사용금액 : 2,500원\n가맹점 : 가상식당' }]);
+  const settingsPath = join(directory, 'settings.json');
+  writeFileSync(settingsPath, '{broken', 'utf8');
+
+  const first = await ingestSpendingInbox({ db, spendingDir: directory, logger: quietLogger });
+  const summaryPath = join(directory, '2026', '2026-10-10.summary.json');
+  assert.equal(first.deleted, 1);
+  assert.equal(first.failed, 1);
+  assert.equal(db.remaining.size, 0);
+  assert.equal(existsSync(summaryPath), false);
+  assert.equal(lines(directory, '2026-10-10').length, 1);
+
+  writeFileSync(settingsPath, '{"recipientDecisions":[]}', 'utf8');
+  const second = await ingestSpendingInbox({ db, spendingDir: directory, logger: quietLogger });
+  assert.equal(second.read, 0);
+  assert.equal(second.failed, 0);
+  assert.equal(JSON.parse(readFileSync(summaryPath, 'utf8')).total, 2500);
+  assert.equal(lines(directory, '2026-10-10').length, 1);
+});
+
+test('원문보다 오래된 요약은 신규 문서가 없어도 다시 계산한다', async (t) => {
+  const directory = fixture(t);
+  await ingestSpendingInbox({ db: fakeDb([{ ...notification('first'), sender: '하나카드',
+    body: '사용금액 : 2,500원\n가맹점 : 가상식당' }]), spendingDir: directory, logger: quietLogger });
+  const rawPath = join(directory, '2026', '2026-10-10.jsonl');
+  const summaryPath = join(directory, '2026', '2026-10-10.summary.json');
+  appendFileSync(rawPath, `${JSON.stringify({ ...notification('second'), sender: '하나카드',
+    body: '사용금액 : 1,500원\n가맹점 : 가상식당' })}\n`, 'utf8');
+  utimesSync(summaryPath, new Date(0), new Date(0));
+
+  await ingestSpendingInbox({ db: fakeDb([]), spendingDir: directory, logger: quietLogger });
+  assert.equal(JSON.parse(readFileSync(summaryPath, 'utf8')).total, 4000);
+  assert.equal(lines(directory, '2026-10-10').length, 2);
+});
+
+test('요약 재계산은 원문 잠금이 풀릴 때까지 기다린다', async (t) => {
+  const directory = fixture(t);
+  await ingestSpendingInbox({ db: fakeDb([{ ...notification('first'), sender: '하나카드',
+    body: '사용금액 : 2,500원\n가맹점 : 가상식당' }]), spendingDir: directory, logger: quietLogger });
+  const rawPath = join(directory, '2026', '2026-10-10.jsonl');
+  const summaryPath = join(directory, '2026', '2026-10-10.summary.json');
+  appendFileSync(rawPath, `${JSON.stringify({ ...notification('second'), sender: '하나카드',
+    body: '사용금액 : 1,500원\n가맹점 : 가상식당' })}\n`, 'utf8');
+  utimesSync(summaryPath, new Date(0), new Date(0));
+
+  let retry;
+  await withLock(rawPath, async () => {
+    retry = ingestSpendingInbox({ db: fakeDb([]), spendingDir: directory, logger: quietLogger });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(JSON.parse(readFileSync(summaryPath, 'utf8')).total, 2500);
+  });
+  await retry;
+  assert.equal(JSON.parse(readFileSync(summaryPath, 'utf8')).total, 4000);
+});
+
+test('손상된 다른 날짜 파일 항목은 유효한 요약 복구를 막지 않는다', async (t) => {
+  const directory = fixture(t);
+  const yearDir = join(directory, '2026');
+  mkdirSync(yearDir);
+  writeFileSync(join(yearDir, '2026-10-10.jsonl'), `${JSON.stringify({
+    ...notification('payment'), sender: '하나카드',
+    body: '사용금액 : 2,500원\n가맹점 : 가상식당',
+  })}\n`, 'utf8');
+  symlinkSync(join(yearDir, 'missing.jsonl'), join(yearDir, '2026-10-09.jsonl'));
+
+  const result = await ingestSpendingInbox({ db: fakeDb([]), spendingDir: directory,
+    logger: quietLogger });
+  assert.equal(result.failed, 0);
+  assert.equal(JSON.parse(readFileSync(join(yearDir, '2026-10-10.summary.json'), 'utf8')).total, 2500);
 });
 
 test('KST 자정 양쪽은 각 문서 ts의 날짜에 저장한다', async (t) => {

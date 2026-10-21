@@ -12,7 +12,8 @@ import { escapeHtml } from './telegram.mjs';
 import { formatEventLine } from './google-calendar.mjs';
 
 export const OWNER_SECTIONS = ['오늘 한 줄', '오너 메모'];
-export const AI_SECTIONS = ['일정', '동선', '오늘 들어온 기록', '오늘 생긴 할 일', 'AI 하루 요약'];
+const LEGACY_AI_SECTIONS = ['일정', '동선', '오늘 들어온 기록', '오늘 생긴 할 일', 'AI 하루 요약'];
+export const AI_SECTIONS = ['일정', '동선', '지출', '오늘 들어온 기록', '오늘 생긴 할 일', 'AI 하루 요약'];
 const SECTION_ORDER = ['오늘 한 줄', ...AI_SECTIONS, '오너 메모'];
 const MANAGED_KEYS = new Set(['type', 'category', 'description', 'sensitivity', 'created', 'modified', 'dailyStatus', 'model',
   'recordCount', 'recordHash', 'routeHash', 'aiHash', 'summaryStatus', 'telegramSentAt']);
@@ -70,7 +71,7 @@ export function parseSections(body) {
   return { preamble: preamble.join('\n'), sections: sections.map((s) => ({ title: s.title, content: s.lines.join('\n').replace(/\s+$/, '') })) };
 }
 
-export const aiHashOf = (sections) => sha(AI_SECTIONS.map((t) => `${t}\n${(sections.find((s) => s.title === t)?.content ?? '').replace(/\s+$/, '')}`).join('\n\n'));
+export const aiHashOf = (sections, titles = AI_SECTIONS) => sha(titles.map((t) => `${t}\n${(sections.find((s) => s.title === t)?.content ?? '').replace(/\s+$/, '')}`).join('\n\n'));
 export const hasNormalSchedule = (prev) => /^- (?:종일|\d{2}:\d{2})/m.test(prev?.sections.find((s) => s.title === '일정')?.content ?? '');
 
 // 기존 파일을 다시 써도 되는지 판정한다(오너 글 보존 관문). 쓸 수 없으면 reason과 함께 ok:false.
@@ -79,14 +80,16 @@ export function inspectExisting(existing) {
   const { fmRaw, body } = splitNote(existing);
   const fields = fmRaw != null ? parseFrontmatter(`---\n${fmRaw}\n---\n`) ?? {} : {};
   const parsed = parseSections(body);
+  const legacy = !parsed.sections.some((section) => section.title === '지출')
+    && aiHashOf(parsed.sections, LEGACY_AI_SECTIONS) === fields.aiHash;
   if (fields.type !== 'daily' || !fields.aiHash) {
     return { ok: false, reason: '데일리 잡이 만든 형식이 아닌 파일이 이미 있음(오너가 먼저 만든 노트일 수 있어 덮어쓰지 않음)' };
   }
   const dupAi = AI_SECTIONS.find((t) => parsed.sections.filter((s) => s.title === t).length > 1);
-  if (dupAi && aiHashOf(parsed.sections) !== fields.aiHash) {
+  if (dupAi && !legacy && aiHashOf(parsed.sections) !== fields.aiHash) {
     return { ok: false, reason: `AI 칸 "${dupAi}"과 같은 이름의 칸이 그보다 앞에 있음(오너 칸 이름을 바꾸면 다시 갱신됨)` };
   }
-  if (aiHashOf(parsed.sections) !== fields.aiHash) {
+  if (!legacy && aiHashOf(parsed.sections) !== fields.aiHash) {
     return { ok: false, reason: 'AI 칸(일정·동선·기록·할 일·요약)이 마지막 생성 뒤 바뀌었음(오너 수정으로 보고 덮어쓰지 않음)' };
   }
   return { ok: true, prev: { fields, fmRaw, preamble: parsed.preamble, sections: parsed.sections } };
@@ -154,7 +157,7 @@ function todoText(todo) {
   return `- [일정] ${day.slice(5).replace('-', '/')}${weekday}${time} ${title}`;
 }
 
-function aiSectionContents(records, summary, events, eventGroups, route, todos) {
+function aiSectionContents(records, summary, events, eventGroups, route, todos, spending) {
   const recordLines = records.length
     ? groupByCategory(records).flatMap(([cat, items]) => [`### ${cat}`, ...items.map((r) => `- [[${r.link}|${r.title}]]${r.description ? ` — ${r.description}` : ''}`), ''])
     : ['(오늘 들어온 기록 없음)'];
@@ -170,6 +173,7 @@ function aiSectionContents(records, summary, events, eventGroups, route, todos) 
       : route === 'pending' ? PENDING_TEXT
       : route === 'failed' ? '(동선 계산 실패 — 다음 실행에서 다시 시도)'
         : route.length ? route.map((stay) => `- ${stay.start}–${stay.end} ${safeRouteLabel(stay.label)}${stay.activity ? ` · ${safeRouteLabel(stay.activity)}` : ''}${stay.current ? '(현재)' : ''}`).join('\n') : '(위치 기록 없음)',
+    지출: spending ?? '(지출 기록 조회 전)',
     '오늘 들어온 기록': recordLines.join('\n').replace(/\s+$/, ''),
     '오늘 생긴 할 일': todos === 'pending' ? PENDING_TEXT : todos === 'failed' ? '(할 일 기록 읽기 실패 — 다음 실행에서 다시 시도)'
       : todos?.length ? todos.map(todoText).join('\n') : '(오늘 생긴 할 일 없음)',
@@ -178,8 +182,8 @@ function aiSectionContents(records, summary, events, eventGroups, route, todos) 
 }
 
 // 데일리 노트를 만든다. prev(inspectExisting 결과)가 있으면 AI 칸만 바꾸고 나머지는 원문 그대로 둔다.
-export function renderDailyNote({ date, records, summary, status, model, summaryStatus, recordHash, routeHash = null, today, telegramSentAt = null, prev = null, events = null, eventGroups = null, route = null, todos = [] }) {
-  const ai = aiSectionContents(records, summary, events, eventGroups, route, todos);
+export function renderDailyNote({ date, records, summary, status, model, summaryStatus, recordHash, routeHash = null, today, telegramSentAt = null, prev = null, events = null, eventGroups = null, route = null, todos = [], spending = null, spendingExpenseCount = 0 }) {
+  const ai = aiSectionContents(records, summary, events, eventGroups, route, todos, spending);
   const prevSections = prev?.sections ?? [];
   const keep = (title) => prevSections.find((s) => s.title === title)?.content;
   // 조회 실패·미연결 시 이전에 확인한 일정은 보존한다. 빈 일정이나 오류 문구는 정상 일정이 아니다.
@@ -197,7 +201,8 @@ export function renderDailyNote({ date, records, summary, status, model, summary
     category: categories.map((c) => `[[${VAULT_REL.homeDir}/${c}]]`),
     description: `${date} 데일리 — 들어온 기록 ${records.length}개`,
     sensitivity: records.some((r) => r.sensitivity === '개인') || /^- (?:종일|\d{2}:\d{2})/m.test(ai.일정)
-      || /^- /m.test(ai.동선) || /^- /m.test(ai['오늘 생긴 할 일']) || hasOwnerText(ordered) ? '개인' : '일반',
+      || /^- /m.test(ai.동선) || spendingExpenseCount > 0
+      || /^- /m.test(ai['오늘 생긴 할 일']) || hasOwnerText(ordered) ? '개인' : '일반',
     created: prev?.fields?.created ?? date,
     modified: today,
     dailyStatus: status,
@@ -239,7 +244,9 @@ export function replaceDailyRoute(content, route, routeHash, today = new Date(Da
   const next = [...lines.slice(0, start + 1), routeText, ...suffix, ...lines.slice(end)].join('\n');
   const sections = parseSections(splitNote(next).body).sections;
   const fmEnd = next.indexOf('\n---', 4);
-  let head = next.slice(0, fmEnd).replace(/^aiHash: .*$/m, `aiHash: "${aiHashOf(sections)}"`);
+  // 동선 전용 갱신은 지출 칸을 추가하지 않는다. 구형 노트는 다음 전체 렌더 때 이관한다.
+  const hashTitles = sections.some((section) => section.title === '지출') ? AI_SECTIONS : LEGACY_AI_SECTIONS;
+  let head = next.slice(0, fmEnd).replace(/^aiHash: .*$/m, `aiHash: "${aiHashOf(sections, hashTitles)}"`);
   if (/^routeHash: /m.test(head)) head = head.replace(/^routeHash: .*$/m, `routeHash: "${routeHash}"`);
   else head = head.replace(/^aiHash: /m, `routeHash: "${routeHash}"\naiHash: `);
   if (/^- /m.test(routeText)) head = head.replace(/^sensitivity: .*$/m, 'sensitivity: "개인"');

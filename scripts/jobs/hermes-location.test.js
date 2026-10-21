@@ -8,7 +8,7 @@ test('내일 일정 없어도 장소 요청을 보내고 발송 뒤에만 물음
   const candidates = [candidate()];
   let saved = false;
   const deps = { now: () => new Date('2026-10-09T12:00:00Z'), fetchEvents: async () => [], readCandidates: () => candidates,
-    saveCandidates: () => { saved = true; }, send: async ({ body }) => { assert.match(body, /■ 장소 등록 요청/); assert.match(body, /장소 C3 이름/); } };
+    saveCandidates: () => { saved = true; }, send: async ({ body }) => { assert.match(body, /■ 장소 등록 요청/); assert.match(body, /장소 C3 이름/); return { ok: true, result: { message_id: 1 } }; } };
   const result = await runBriefing({ mode: 'evening', deps });
   assert.equal(result.sent, true);
   assert.equal(candidates[0].status, '물음');
@@ -47,7 +47,7 @@ test('후보 읽기 실패에도 내일 일정을 보낸다', async () => {
     now: () => new Date('2026-10-09T12:00:00Z'),
     fetchEvents: async () => [{ title: '일정', start: '2026-10-10T01:00:00Z', end: '2026-10-10T02:00:00Z' }],
     readCandidates: () => { throw new Error('broken JSON'); }, readOwners: () => [],
-    send: async ({ body }) => { sent = true; assert.match(body, /내일 일정/); },
+    send: async ({ body }) => { sent = true; assert.match(body, /내일 일정/); return { ok: true, result: { message_id: 2 } }; },
   } });
   assert.equal(result.sent, true);
   assert.equal(sent, true);
