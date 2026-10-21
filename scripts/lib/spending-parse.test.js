@@ -41,6 +41,47 @@ test('확정 송금의 중복 알림을 합쳐도 계좌이체 분류를 보존�
   assert.equal(merged.category, '계좌이체');
 });
 
+test('설정에서 확인된 휘영 수취처는 제외하고 명시적인 지출 판정만 예외로 허용한다', () => {
+  const transfer = { ...base, packageName: 'com.kakaopay.app', sender: '송금이 완료되었어요',
+    body: '가상은행 2468 (휘*영)계좌로 8,000원 송금했어요.' };
+  const excluded = parseSpendingRecord(transfer, { recipientDecisions: [
+    { bank: '가상은행', last4: '2468', recipient: '휘영' },
+  ] });
+  assert.deepEqual([excluded.status, excluded.category, excluded.recipient], ['excluded', '계좌이체', '휘영']);
+  const expense = parseSpendingRecord(transfer, { recipientDecisions: [
+    { bank: '가상은행', last4: '2468', recipient: '휘영', status: 'expense' },
+  ] });
+  assert.deepEqual([expense.status, expense.category, expense.recipient], ['expense', '계좌이체', '휘영']);
+  const own = parseSpendingRecord(transfer, { ownAccounts: [{ bank: '가상은행', last4: '2468' }],
+    recipientDecisions: [{ bank: '가상은행', last4: '2468', recipient: '휘영', status: 'expense' }] });
+  assert.deepEqual([own.status, own.recipient], ['excluded', null]);
+});
+
+test('2468 알림에 휘영 이름이 있어도 일치하는 설정이 없으면 판정 대기다', () => {
+  const transfer = { ...base, packageName: 'com.kakaopay.app', sender: '송금이 완료되었어요',
+    body: '가상은행 2468 (휘*영)계좌로 8,000원 송금했어요.\n받는 분 : 휘영' };
+  const unrelatedDecision = { bank: '가상은행', last4: '9999', recipient: '휘영' };
+  for (const options of [{}, { recipientDecisions: [unrelatedDecision] }]) {
+    const parsed = parseSpendingRecord(transfer, options);
+    assert.deepEqual([parsed.status, parsed.recipient], ['pending', null]);
+  }
+});
+
+test('미네 계좌는 명시된 수취인 설정으로만 식별하고 임의의 알림 문구로 추정하지 않는다', () => {
+  const transfer = { ...base, packageName: 'com.kakaopay.app', sender: '송금이 완료되었어요',
+    body: '가상은행 9876 (미*네)계좌로 8,000원 송금했어요.\n받는 분 : 미네' };
+  const pending = parseSpendingRecord(transfer);
+  assert.deepEqual([pending.status, pending.category, pending.recipient], ['pending', '계좌이체', null]);
+  const mine = parseSpendingRecord(transfer, { recipientDecisions: [
+    { bank: '가상은행', last4: '9876', recipient: '미네' },
+  ] });
+  assert.deepEqual([mine.status, mine.category, mine.recipient], ['excluded', '계좌이체', '미네']);
+  const exception = parseSpendingRecord(transfer, { recipientDecisions: [
+    { bank: '가상은행', last4: '9876', recipient: '미네', status: 'expense' },
+  ] });
+  assert.deepEqual([exception.status, exception.recipient], ['expense', '미네']);
+});
+
 test('끝4가 다른 동액 승인과 취소는 지출로 합치지 않는다', () => {
   const first = { ...base, packageName: 'com.hanaskcard.paycla', sender: '(결제) 31,000원',
     body: '가상식당 / 신용(일시불,1*2*) / 10.10 12:34 / 누적이용금액 1원' };

@@ -12,14 +12,16 @@ export function spendingSummaryPath(date, spendingDir = VAULT_PATHS.spending) {
   return join(spendingDir, date.slice(0, 4), `${date}.summary.json`);
 }
 
-// 오너 확인 후에만 settings.json에 수취처별 판정을 넣는다. 파일이 없으면 모든 송금은 대기다.
+// 오너가 확인한 가족 수취처만 recipient로 기록한다. 미확인 송금은 계속 대기다.
 export function readSpendingSettings(spendingDir = VAULT_PATHS.spending) {
   const path = join(spendingDir, 'settings.json');
   if (!existsSync(path)) return { recipientDecisions: [] };
   const settings = JSON.parse(readFileSync(path, 'utf8'));
   if (!Array.isArray(settings.recipientDecisions) || settings.recipientDecisions.some((entry) =>
     typeof entry.bank !== 'string' || !/^\d{4}$/.test(entry.last4)
-    || !['expense', 'excluded'].includes(entry.status))) throw new Error('소비 판정 설정 형식 오류');
+    || (entry.recipient !== undefined && !['휘영', '미네'].includes(entry.recipient))
+    || (entry.status !== undefined && !['expense', 'excluded'].includes(entry.status))
+    || (entry.status === undefined && entry.recipient === undefined))) throw new Error('소비 판정 설정 형식 오류');
   return settings;
 }
 
@@ -63,8 +65,8 @@ export function readDailySpending(date, { spendingDir = VAULT_PATHS.spending, ow
     byCategory: Object.fromEntries(['일반', '교통비', '온누리상품권', '계좌이체'].map((category) => [category,
       expenses.filter((entry) => entry.category === category).reduce((sum, entry) => sum + entry.amount, 0)])),
     entries: entries.map(({ at, amount, merchant, card, cardLast4, cardMask, status, category,
-      recipientBank, recipientLast4 }) => ({ at, amount, merchant, card, cardLast4, cardMask, status,
-      category, recipientBank, recipientLast4 })),
+      recipientBank, recipientLast4, recipient }) => ({ at, amount, merchant, card, cardLast4, cardMask, status,
+      category, recipientBank, recipientLast4, recipient })),
   };
 }
 
@@ -83,6 +85,11 @@ export function formatTodaySpending(summary) {
     // 알림 원문에서 온 상점명은 브리핑의 HTML 본문에 들어가므로 이스케이프한다.
     const safeLabel = label.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     parts.push(`- ${safeLabel} ${amount(entry.amount)}`);
+  }
+  for (const entry of summary.entries ?? []) {
+    if (entry.status === 'excluded' && ['휘영', '미네'].includes(entry.recipient)) {
+      parts.push(`- ${entry.recipient}에게 이체 ${amount(entry.amount)} (지출 합계 제외)`);
+    }
   }
   if (summary.pendingCount) parts.push(`- 송금 판정 대기 ${summary.pendingCount}건 (합계 제외)`);
   if (summary.onnuriBillOmissionCount) parts.push(`- 온누리 승인 ${summary.onnuriBillOmissionCount}건: 결제대금에 미포함 (승인 지출에는 포함)`);
@@ -103,6 +110,11 @@ export function formatDailyNoteSpending(summary) {
       .replace(/[\r\n\u0085\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim()
       .replace(/[\\`*_[\]#]/g, '\\$&');
     lines.push(`- ${label} ${amount(entry.amount)}`);
+  }
+  for (const entry of summary.entries ?? []) {
+    if (entry.status === 'excluded' && ['휘영', '미네'].includes(entry.recipient)) {
+      lines.push(`- ${entry.recipient}에게 이체 ${amount(entry.amount)} (지출 합계 제외)`);
+    }
   }
   if (summary.pendingCount) lines.push(`- 송금 판정 대기 ${summary.pendingCount}건 (합계 제외)`);
   if (summary.onnuriBillOmissionCount) lines.push(`- 온누리 승인 ${summary.onnuriBillOmissionCount}건: 결제대금에 미포함 (승인 지출에는 포함)`);

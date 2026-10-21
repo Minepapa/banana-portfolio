@@ -38,6 +38,7 @@ export function parseSpendingRecord(record, { ownAccounts = [], recipientDecisio
   let status = 'expense';
   let recipientBank = null;
   let recipientLast4 = null;
+  let recipient = null;
   if (samsungOnnuri) {
     card = '삼성'; amount = amountOf(samsungOnnuri[1]);
   } else if (hanaTelecom) {
@@ -73,14 +74,17 @@ export function parseSpendingRecord(record, { ownAccounts = [], recipientDecisio
   if (status === 'pending' && recipientBank && recipientLast4) {
     const decision = recipientDecisions.find((entry) => entry.bank === recipientBank
       && entry.last4 === recipientLast4);
+    // 가족 판정은 계좌가 일치하는 설정에서 확인된 수취인에게만 적용한다.
+    recipient = ['휘영', '미네'].includes(decision?.recipient) ? decision.recipient : null;
     if (decision?.status === 'expense' || decision?.status === 'excluded') status = decision.status;
+    else if (recipient) status = 'excluded';
   }
   const isOnnuri = Boolean(samsungOnnuri || (card === '하나'
     && /(?:^|\n)\s*-\s*이용카드\s*[:：]\s*[^\n]*온누리/.test(body))
     || (card === '하나' && sender === '결제' && /^온누리\(/.test(body)));
-  const category = card === '카카오페이' && status === 'expense' ? '계좌이체' : categoryOf(isOnnuri, merchant);
+  const category = card === '카카오페이' ? '계좌이체' : categoryOf(isOnnuri, merchant);
   return { at, amount, merchant, card, cardLast4, cardMask, status, category,
-    recipientBank, recipientLast4, source: packageName || sender };
+    recipientBank, recipientLast4, recipient, source: packageName || sender };
 }
 
 export function parseSpendingRecords(records, options = {}) {
@@ -119,6 +123,7 @@ export function parseSpendingRecords(records, options = {}) {
         cardMask: prior.cardMask ?? payment.cardMask,
         recipientBank: prior.recipientBank ?? payment.recipientBank,
         recipientLast4: prior.recipientLast4 ?? payment.recipientLast4,
+        recipient: prior.recipient ?? payment.recipient,
         category: prior.category === '계좌이체' || payment.category === '계좌이체'
           ? '계좌이체' : prior.category === '온누리상품권' || payment.category === '온누리상품권'
             ? '온누리상품권' : prior.category === '교통비' || payment.category === '교통비'

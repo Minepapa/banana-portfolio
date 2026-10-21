@@ -68,6 +68,59 @@ test('확정된 타인 송금은 계좌이체로 합산하고 수취 계좌 대�
   assert.doesNotMatch(output, /가상은행|1111/);
 });
 
+test('가족 이체는 날짜 요약과 헤르메스 표시에서 지출과 분리하고 본인 이체는 생략한다', (t) => {
+  const spendingDir = mkdtempSync(join(tmpdir(), 'spending-daily-'));
+  t.after(() => rmSync(spendingDir, { recursive: true, force: true }));
+  mkdirSync(join(spendingDir, '2026'));
+  const transfer = (bank, last4, amount, name) => ({ ...record(
+    `${bank} ${last4} (${name})계좌로 ${amount.toLocaleString('ko-KR')}원 송금했어요.`, '송금이 완료되었어요'),
+  packageName: 'com.kakaopay.app' });
+  const rows = [
+    record('사용금액 : 2,500원\n가맹점 : 가상식당'),
+    transfer('가상은행', '2468', 8000, '휘*영'),
+    transfer('가상은행', '9876', 9000, '미*네'),
+    transfer('예시은행', '2222', 10000, '나'),
+    transfer('미확인은행', '3333', 11000, '미*네'),
+  ];
+  const rawPath = join(spendingDir, '2026', '2026-10-10.jsonl');
+  const original = rows.map((row) => JSON.stringify(row)).join('\n');
+  writeFileSync(rawPath, original);
+  writeFileSync(join(spendingDir, 'settings.json'), JSON.stringify({ recipientDecisions: [
+    { bank: '가상은행', last4: '2468', recipient: '휘영' },
+    { bank: '가상은행', last4: '9876', recipient: '미네' },
+  ] }));
+  const summary = readDailySpending('2026-10-10', { spendingDir,
+    ownAccounts: [{ bank: '예시은행', last4: '2222' }] });
+  assert.deepEqual([summary.total, summary.expenseCount, summary.pendingCount, summary.excludedCount,
+    summary.byCategory['계좌이체']], [2500, 1, 1, 3, 0]);
+  assert.deepEqual(summary.entries.filter((entry) => entry.category === '계좌이체').map((entry) =>
+    [entry.status, entry.recipient]), [['excluded', '휘영'], ['excluded', '미네'],
+    ['excluded', null], ['pending', null]]);
+  for (const output of [formatTodaySpending(summary), formatDailyNoteSpending(summary)]) {
+    assert.match(output, /휘영에게 이체 8,000원 \(지출 합계 제외\)/);
+    assert.match(output, /미네에게 이체 9,000원 \(지출 합계 제외\)/);
+    assert.match(output, /송금 판정 대기 1건 \(합계 제외\)/);
+    assert.doesNotMatch(output, /10,000원|11,000원|2468|9876|2222|3333|미확인은행/);
+  }
+  assert.equal(readFileSync(rawPath, 'utf8'), original);
+});
+
+test('확인된 가족 이체를 명시적으로 지출로 지정하면 합계에 넣고 제외 항목으로 표시하지 않는다', (t) => {
+  const spendingDir = mkdtempSync(join(tmpdir(), 'spending-daily-'));
+  t.after(() => rmSync(spendingDir, { recursive: true, force: true }));
+  mkdirSync(join(spendingDir, '2026'));
+  writeFileSync(join(spendingDir, '2026', '2026-10-10.jsonl'), JSON.stringify({
+    ...record('가상은행 2468 (휘*영)계좌로 8,000원 송금했어요.', '송금이 완료되었어요'),
+    packageName: 'com.kakaopay.app',
+  }));
+  const summary = readDailySpending('2026-10-10', { spendingDir, recipientDecisions: [
+    { bank: '가상은행', last4: '2468', recipient: '휘영', status: 'expense' },
+  ] });
+  assert.deepEqual([summary.total, summary.expenseCount, summary.byCategory['계좌이체']], [8000, 1, 8000]);
+  assert.match(formatTodaySpending(summary), /계좌이체 8,000원/);
+  assert.doesNotMatch(formatTodaySpending(summary), /지출 합계 제외/);
+});
+
 test('상점명이 없는 승인과 많은 확정 지출도 항목을 빠짐없이 표시한다', () => {
   const entries = Array.from({ length: 40 }, (_, index) => ({
     status: 'expense', merchant: index === 0 ? null : `가상상점${index}`, amount: index + 1,
