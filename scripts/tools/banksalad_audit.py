@@ -9,6 +9,7 @@ scripts/tools/banksalad-requirements.txt`` before running this tool or its tests
 """
 
 import argparse
+import calendar
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
@@ -29,6 +30,20 @@ CLASSIFICATIONS = (
     "expense reimbursement received",
     "wallet top-up for purchase", "wallet top-up", "unverified-destination transfer",
 )
+RAW_TRANSACTION_FIELDS = ("date", "time", "original_type", "original_category",
+                          "original_subcategory", "description", "signed_amount",
+                          "currency", "payment_instrument", "memo")
+APPROVED_SOURCE_SHA256 = "698322936b32008f401242c68043b4fe6f1119c2d0da585f04a94d7a552d59b2"
+SOURCE_COVERAGE_BY_SHA256 = {
+    APPROVED_SOURCE_SHA256: ("2025-10-21", "2026-10-21"),
+}
+EXPORT_DATE_RANGE = re.compile(r"(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})\Z")
+APPROVED_DUPLICATE_DATE = "2026-10-22"
+APPROVED_DUPLICATE_PAIRS = ((101, 103), (269, 271), (840, 842), (861, 862),
+                            (1018, 1020), (1338, 1340), (1434, 1436), (1720, 1722))
+APPROVED_UNVERIFIED_KAKAO_ROWS = (247, 348, 505, 786, 1451)
+APPROVED_UNVERIFIED_KAKAO_TOTAL = Decimal("400000")
+ONE_OFF_TAX_MEMOS = {"주민세", "재산세", "지방소득세", "2024 연말정산"}
 
 
 def cell_text(value):
@@ -140,6 +155,7 @@ def load_transactions(workbook_path):
             }
             transaction["classification"], transaction["classification_evidence"] = classify(transaction)
             transaction["exact_duplicate_rows"] = []
+            transaction["aggregation_status"] = "included"
             transactions.append(transaction)
         return source_hash, transactions
     finally:
@@ -148,11 +164,8 @@ def load_transactions(workbook_path):
 
 def mark_exact_duplicates(transactions):
     groups = defaultdict(list)
-    original_fields = ("date", "time", "original_type", "original_category",
-                       "original_subcategory", "description", "signed_amount",
-                       "currency", "payment_instrument", "memo")
     for transaction in transactions:
-        key = tuple(transaction[field] for field in original_fields)
+        key = tuple(transaction[field] for field in RAW_TRANSACTION_FIELDS)
         groups[key].append(transaction)
     duplicate_groups = []
     for group in groups.values():
@@ -285,6 +298,11 @@ def validate_payment_decisions(transactions, source_hash, decisions, reserved_ro
                and abs(transaction_time(item) - timestamp) <= timedelta(minutes=10)
                for item in transactions):
             raise ValueError(f"Wallet usage found near unverified transfer row {bank['source_row']}")
+    if source_hash == APPROVED_SOURCE_SHA256:
+        if (tuple(item["source_row"] for item in generic) != APPROVED_UNVERIFIED_KAKAO_ROWS
+                or sum((-amount_value(by_row[item["source_row"]]["signed_amount"])
+                        for item in generic), Decimal(0)) != APPROVED_UNVERIFIED_KAKAO_TOTAL):
+            raise ValueError("Approved unverified Kakao expense rows or total mismatch")
     for evidence in expenses:
         bank = checked_row(evidence, "review", "payment expense")
         amount = amount_value(bank["signed_amount"])
@@ -305,6 +323,54 @@ def validate_payment_decisions(transactions, source_hash, decisions, reserved_ro
     return top_ups, generic, expenses
 
 
+def validate_duplicate_decisions(transactions, source_hash, decisions):
+    """Only an owner-approved, source-bound exact pair can change aggregation."""
+    if "confirmed_exact_duplicate_pairs" in decisions:
+        pairs = decisions["confirmed_exact_duplicate_pairs"]
+    elif source_hash == APPROVED_SOURCE_SHA256:
+        pairs = [{"keep_source_row": keep, "exclude_source_row": exclude,
+                  "approval_date": APPROVED_DUPLICATE_DATE, "treatment": "count_first_once"}
+                 for keep, exclude in APPROVED_DUPLICATE_PAIRS]
+    else:
+        pairs = []
+    if not isinstance(pairs, list):
+        raise ValueError("Invalid exact duplicate decisions")
+    if source_hash == APPROVED_SOURCE_SHA256 and [
+            (pair.get("keep_source_row"), pair.get("exclude_source_row"))
+            for pair in pairs if isinstance(pair, dict)] != list(APPROVED_DUPLICATE_PAIRS):
+        raise ValueError("Approved exact duplicate source row ids mismatch")
+    by_row = {item["source_row"]: item for item in transactions}
+    used_rows = set()
+    for pair in pairs:
+        if (not isinstance(pair, dict)
+                or set(pair) != {"keep_source_row", "exclude_source_row", "approval_date", "treatment"}):
+            raise ValueError("Invalid exact duplicate decision fields")
+        keep_row, exclude_row = pair["keep_source_row"], pair["exclude_source_row"]
+        if (type(keep_row) is not int or type(exclude_row) is not int
+                or keep_row < 2 or exclude_row <= keep_row
+                or keep_row in used_rows or exclude_row in used_rows):
+            raise ValueError("Invalid or reused exact duplicate source row ids")
+        used_rows.update((keep_row, exclude_row))
+        try:
+            approval_date = date.fromisoformat(pair["approval_date"])
+        except (TypeError, ValueError):
+            raise ValueError("Invalid exact duplicate approval date") from None
+        if (approval_date.isoformat() != pair["approval_date"]
+                or pair["treatment"] != "count_first_once"
+                or (source_hash == APPROVED_SOURCE_SHA256
+                    and pair["approval_date"] != APPROVED_DUPLICATE_DATE)):
+            raise ValueError("Invalid exact duplicate approval or treatment")
+        keep, exclude = by_row.get(keep_row), by_row.get(exclude_row)
+        if (keep is None or exclude is None
+                or keep["source_file_sha256"] != source_hash
+                or exclude["source_file_sha256"] != source_hash
+                or keep["original_category"] == "교통"
+                or exclude["original_category"] == "교통"
+                or any(keep[field] != exclude[field] for field in RAW_TRANSACTION_FIELDS)):
+            raise ValueError(f"Exact duplicate source evidence mismatch: {keep_row}, {exclude_row}")
+    return pairs
+
+
 def apply_owner_decisions(transactions, source_hash, decisions):
     """Validate all source-scoped owner decisions before annotating any row."""
     required_fields = {"source_file_sha256", "approval_date", "approved_own_transfer_rows"}
@@ -319,7 +385,7 @@ def apply_owner_decisions(transactions, source_hash, decisions):
                "confirmed_kakao_payment_top_ups", "unverified_kakao_transfers",
                "confirmed_payment_transfer_expenses", "confirmed_bank_interest_income",
                "confirmed_prior_spending_reimbursements", "confirmed_food_consumption_expenses",
-               "confirmed_unmatched_wallet_top_ups"}):
+               "confirmed_unmatched_wallet_top_ups", "confirmed_exact_duplicate_pairs"}):
         raise ValueError("Invalid owner decisions fields")
     if decisions["source_file_sha256"] != source_hash:
         raise ValueError("Owner decisions source hash mismatch")
@@ -671,6 +737,22 @@ def apply_owner_decisions(transactions, source_hash, decisions):
             raise ValueError(f"Wallet top-up pair does not balance: {pair['group_id']}")
     payment_top_ups, generic_transfers, payment_expenses = validate_payment_decisions(
         transactions, source_hash, decisions, reserved_rows | wallet_rows)
+    duplicate_pairs = validate_duplicate_decisions(transactions, source_hash, decisions)
+    for pair in duplicate_pairs:
+        keep = by_row[pair["keep_source_row"]]
+        exclude = by_row[pair["exclude_source_row"]]
+        keep["aggregation_status"] = "included_owner_confirmed_duplicate"
+        keep["aggregation_decision"] = {
+            "paired_source_row": exclude["source_row"],
+            "approval_date": pair["approval_date"],
+            "treatment": pair["treatment"],
+        }
+        exclude["aggregation_status"] = "excluded_owner_confirmed_duplicate"
+        exclude["aggregation_decision"] = {
+            "paired_source_row": keep["source_row"],
+            "approval_date": pair["approval_date"],
+            "treatment": pair["treatment"],
+        }
     for row in approved_rows:
         transaction = by_row[row]
         transaction["classification"] = "own-account transfer"
@@ -831,10 +913,12 @@ def apply_owner_decisions(transactions, source_hash, decisions):
         transaction["classification"] = "unverified-destination transfer"
         transaction["classification_evidence"].extend([
             "owner_classified_generic_transfer", "no_wallet_usage_within_10min_in_this_workbook_only",
+            "owner_2026-10-23_unverified_usage_counts_as_expense",
             f"owner_approval_date:{approval_date.isoformat()}",
         ])
         transaction["destination_status"] = "unverified"
-        transaction["spending_treatment"] = "excluded_non_consumption"
+        transaction["spending_treatment"] = "unverified_usage_expense"
+        transaction["expense_label"] = "사용처 미확인 지출"
     for evidence in payment_expenses:
         transaction = by_row[evidence["source_row"]]
         transaction["classification"] = "expense"
@@ -967,8 +1051,104 @@ def spending_overlap_candidates(transactions, spending_dir):
     return matches
 
 
+def monthly_breakdown(transactions, source_coverage=None):
+    """Positive monthly amounts; finalize months only when source coverage is known."""
+    dated = [item["date"] for item in transactions if item["date"]]
+    if not dated:
+        return []
+    first_date, last_date = min(dated), max(dated)
+    months = {}
+    amount_fields = ("total_expense", "everyday_expense", "one_off_tax",
+                     "confirmed_prepayment", "unverified_usage_spending", "total_income",
+                     "recurring_salary_income", "bonus_income", "other_income")
+    for item in transactions:
+        if not item["date"] or item["aggregation_status"] == "excluded_owner_confirmed_duplicate":
+            continue
+        amount = amount_value(item["signed_amount"])
+        if amount is None:
+            continue
+        month = item["date"][:7]
+        if month not in months:
+            months[month] = {"amounts": {field: Decimal(0) for field in amount_fields},
+                             "review_rows": [], "observed_dates": []}
+        bucket = months[month]
+        bucket["observed_dates"].append(item["date"])
+        values = bucket["amounts"]
+        if amount < 0 and (item["classification"] == "expense"
+                           or item.get("spending_treatment") == "unverified_usage_expense"):
+            spent = -amount
+            values["total_expense"] += spent
+            if item.get("spending_treatment") == "unverified_usage_expense":
+                values["unverified_usage_spending"] += spent
+            elif (item["original_category"] == "금융"
+                  and item["original_subcategory"] == "세금/과태료"):
+                values["one_off_tax"] += spent
+                if item["memo"].strip() not in ONE_OFF_TAX_MEMOS:
+                    bucket["review_rows"].append(item["source_row"])
+            elif ((item["original_category"] == "뷰티/미용"
+                   and item["memo"].strip() == "미용실 선불")
+                  or (item["original_category"], item["original_subcategory"],
+                      item["description"], item["memo"].strip()) in {
+                          ("의료/건강", "운동", "국가대표 복싱센터 송도2호점", "복싱 6개월 주 5회"),
+                          ("문화/여가", "운동", "국가대표 복싱센터", "3개월"),
+                          ("온라인쇼핑", "서비스구독", "AMAZON BD", "유튜브 인도 6개월"),
+                          ("온라인쇼핑", "서비스구독", "AMAZON BD", "유튜브 3개월"),
+                          ("교육/학습", "미분류", "고래수학교습소", "미네 수학 7월, 8월"),
+                      }):
+                values["confirmed_prepayment"] += spent
+            else:
+                values["everyday_expense"] += spent
+        elif amount > 0 and item["classification"] == "income":
+            values["total_income"] += amount
+            if (item["original_category"] == "급여"
+                    and item["description"] == "전자급여"):
+                values["recurring_salary_income"] += amount
+            elif item["original_category"] == "상여금":
+                values["bonus_income"] += amount
+            else:
+                values["other_income"] += amount
+    result = []
+    for month, bucket in sorted(months.items()):
+        month_end = f"{month}-{calendar.monthrange(int(month[:4]), int(month[5:7]))[1]:02}"
+        if source_coverage and (f"{month}-01" < source_coverage[0]
+                                or month_end > source_coverage[1]):
+            continue
+        values = bucket["amounts"]
+        result.append({
+            "month": month,
+            "observed_first_date": min(bucket["observed_dates"]),
+            "observed_last_date": max(bucket["observed_dates"]),
+            "boundary_month_partial": (False if source_coverage else (
+                (month == first_date[:7] and first_date[-2:] != "01")
+                or (month == last_date[:7] and last_date != month_end))),
+            "review_rows": sorted(bucket["review_rows"]),
+            **{field: amount_text(values[field]) for field in amount_fields},
+        })
+    return result
+
+
+def resolve_source_coverage(workbook_path, source_hash):
+    if source_hash in SOURCE_COVERAGE_BY_SHA256:
+        return SOURCE_COVERAGE_BY_SHA256[source_hash]
+    path = Path(workbook_path)
+    if (path.name == "source.xlsx"
+            and path.parent.parent.name == "Banksalad"
+            and path.parent.parent.parent.name == "Spending"):
+        match = EXPORT_DATE_RANGE.fullmatch(path.parent.name)
+        if match:
+            try:
+                start, end = (date.fromisoformat(value) for value in match.groups())
+            except ValueError:
+                pass
+            else:
+                if start <= end:
+                    return start.isoformat(), end.isoformat()
+    raise ValueError("Source coverage unknown: expected approved SHA or Banksalad export date range")
+
+
 def build_report(workbook_path, spending_dir=None, owner_decisions=None):
     source_hash, transactions = load_transactions(workbook_path)
+    source_coverage = resolve_source_coverage(workbook_path, source_hash)
     mark_paired_own_account_transfers(transactions)
     pass_through_groups = []
     if owner_decisions is not None:
@@ -985,14 +1165,20 @@ def build_report(workbook_path, spending_dir=None, owner_decisions=None):
     duplicates = mark_exact_duplicates(transactions)
     category_totals = defaultdict(lambda: Decimal(0))
     classification_totals = defaultdict(lambda: Decimal(0))
+    raw_category_totals = defaultdict(lambda: Decimal(0))
+    raw_classification_totals = defaultdict(lambda: Decimal(0))
     counts = Counter()
     for item in transactions:
         amount = amount_value(item["signed_amount"])
         counts[item["classification"]] += 1
         if amount is not None:
-            category_totals[(item["original_type"], item["original_category"],
-                             item["original_subcategory"])] += amount
-            classification_totals[item["classification"]] += amount
+            category_key = (item["original_type"], item["original_category"],
+                            item["original_subcategory"])
+            raw_category_totals[category_key] += amount
+            raw_classification_totals[item["classification"]] += amount
+            if item["aggregation_status"] != "excluded_owner_confirmed_duplicate":
+                category_totals[category_key] += amount
+                classification_totals[item["classification"]] += amount
     return {
         "schema_version": 1,
         "source_file_sha256": source_hash,
@@ -1002,18 +1188,40 @@ def build_report(workbook_path, spending_dir=None, owner_decisions=None):
             "classified_rows": len(transactions) - counts["review"],
             "review_rows": counts["review"],
             "classification_counts": {name: counts[name] for name in CLASSIFICATIONS},
-            "classification_signed_totals": {name: amount_text(classification_totals[name])
+            "effective_aggregation_rows": sum(item["aggregation_status"] !=
+                                              "excluded_owner_confirmed_duplicate"
+                                              for item in transactions),
+            "excluded_approved_duplicate_rows": sum(item["aggregation_status"] ==
+                                                     "excluded_owner_confirmed_duplicate"
+                                                     for item in transactions),
+            "raw_classification_signed_totals": {name: amount_text(raw_classification_totals[name])
+                                                 for name in CLASSIFICATIONS},
+            "classification_signed_totals": {name: amount_text(raw_classification_totals[name])
                                              for name in CLASSIFICATIONS},
+            "effective_classification_signed_totals": {name: amount_text(classification_totals[name])
+                                                       for name in CLASSIFICATIONS},
             "exact_duplicate_groups": len(duplicates),
             "exact_duplicate_rows": sum(group["count"] for group in duplicates),
             "missing_date_rows": sum(not item["date"] for item in transactions),
             "missing_instrument_rows": sum(not item["payment_instrument"] for item in transactions),
         },
-        "category_totals": [
+        "effective_category_totals": [
             {"original_type": kind, "original_category": category,
              "original_subcategory": subcategory, "signed_total": amount_text(total)}
             for (kind, category, subcategory), total in sorted(category_totals.items())
         ],
+        "raw_category_totals": [
+            {"original_type": kind, "original_category": category,
+             "original_subcategory": subcategory, "signed_total": amount_text(total)}
+            for (kind, category, subcategory), total in sorted(raw_category_totals.items())
+        ],
+        "category_totals": [
+            {"original_type": kind, "original_category": category,
+             "original_subcategory": subcategory, "signed_total": amount_text(total)}
+            for (kind, category, subcategory), total in sorted(raw_category_totals.items())
+        ],
+        "monthly_breakdown": monthly_breakdown(
+            transactions, source_coverage),
         "review_queue": [{"source_row": item["source_row"],
                           "evidence": item["classification_evidence"]}
                          for item in transactions if item["classification"] == "review"],
