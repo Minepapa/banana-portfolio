@@ -371,6 +371,96 @@ def validate_duplicate_decisions(transactions, source_hash, decisions):
     return pairs
 
 
+def validate_expense_offsets(by_row, source_hash, decisions, reserved_rows,
+                             excluded_duplicate_rows):
+    """Accept evidenced credits without over-refunding or reusing group purchases."""
+    links = decisions.get("confirmed_refund_purchase_links", [])
+    groups = decisions.get("confirmed_group_reimbursement_links", [])
+    if not isinstance(links, list) or not isinstance(groups, list):
+        raise ValueError("Invalid expense offset links")
+    used_credits = set()
+    used_purchases = set()
+    refund_totals = defaultdict(lambda: Decimal(0))
+    fields = {"source_row", "expected_date", "expected_time", "expected_signed_amount",
+              "expected_description", "expected_payment_instrument", "expected_original_type"}
+
+    def checked(evidence, role, allowed_reserved=(), allow_partial_refund_purchase=False):
+        if not isinstance(evidence, dict) or set(evidence) != fields:
+            raise ValueError(f"Invalid {role} evidence fields")
+        row = evidence["source_row"]
+        if (type(row) is not int or row < 2 or row in excluded_duplicate_rows
+                or row in used_credits
+                or (row in used_purchases and not allow_partial_refund_purchase)
+                or (row in reserved_rows and row not in allowed_reserved)):
+            raise ValueError(f"Duplicate or conflicting {role} row")
+        transaction = by_row.get(row)
+        if (transaction is None or transaction["source_file_sha256"] != source_hash
+                or any(not isinstance(evidence[key], str) for key in fields - {"source_row"})
+                or any(transaction[key] != evidence[f"expected_{key}"] for key in
+                       ("date", "time", "signed_amount", "description",
+                        "payment_instrument", "original_type"))):
+            raise ValueError(f"{role} row {row} evidence mismatch")
+        return transaction
+
+    for link in links:
+        if not isinstance(link, dict) or set(link) != {"refund", "purchase"}:
+            raise ValueError("Invalid refund purchase link")
+        refund = checked(link["refund"], "refund")
+        purchase = checked(link["purchase"], "purchase", allow_partial_refund_purchase=True)
+        refund_amount = amount_value(refund["signed_amount"])
+        purchase_amount = amount_value(purchase["signed_amount"])
+        if (refund["classification"] != "refund/reversal"
+                or refund["original_type"] != "지출" or refund_amount is None or refund_amount <= 0
+                or purchase["classification"] != "expense" or purchase_amount is None
+                or purchase_amount >= 0
+                or refund["currency"] != purchase["currency"] or refund["currency"] != "KRW"
+                or refund_totals[purchase["source_row"]] + refund_amount > -purchase_amount
+                or refund["description"] != purchase["description"]
+                or refund["payment_instrument"] != purchase["payment_instrument"]
+                or transaction_time(refund) < transaction_time(purchase)):
+            raise ValueError("Refund and purchase direction or amount mismatch")
+        used_credits.add(refund["source_row"])
+        used_purchases.add(purchase["source_row"])
+        refund_totals[purchase["source_row"]] += refund_amount
+
+    approved_group_rows = {item["source_row"] for item in
+                           decisions.get("confirmed_group_expense_reimbursements", [])}
+    for group in groups:
+        if (not isinstance(group, dict)
+                or set(group) != {"reimbursements", "purchases", "expected_owner_share"}
+                or not isinstance(group["reimbursements"], list)
+                or not isinstance(group["purchases"], list)
+                or not group["reimbursements"] or not group["purchases"]
+                or not isinstance(group["expected_owner_share"], str)):
+            raise ValueError("Invalid group reimbursement link")
+        credits = [checked(item, "reimbursement", approved_group_rows)
+                   for item in group["reimbursements"]]
+        purchases = [checked(item, "purchase") for item in group["purchases"]]
+        credit_rows = [item["source_row"] for item in credits]
+        purchase_rows = [item["source_row"] for item in purchases]
+        if len(set(credit_rows)) != len(credit_rows) or len(set(purchase_rows)) != len(purchase_rows):
+            raise ValueError("Duplicate group link row")
+        credit_amounts = [amount_value(item["signed_amount"]) for item in credits]
+        purchase_amounts = [amount_value(item["signed_amount"]) for item in purchases]
+        if any(amount is None for amount in credit_amounts + purchase_amounts):
+            raise ValueError("Invalid group reimbursement amount")
+        credit_total = sum(credit_amounts, Decimal(0))
+        purchase_total = -sum(purchase_amounts, Decimal(0))
+        if (any(item["source_row"] not in approved_group_rows
+                or item["classification"] != "review"
+                or amount_value(item["signed_amount"]) <= 0 for item in credits)
+                or any(item["classification"] != "expense"
+                       or amount_value(item["signed_amount"]) >= 0 for item in purchases)
+                or {item["currency"] for item in credits + purchases} != {"KRW"}
+                or credit_total > purchase_total
+                or group["expected_owner_share"] != amount_text(purchase_total - credit_total)
+                or len({item["date"][:7] for item in credits + purchases}) != 1):
+            raise ValueError("Group reimbursement direction or residual mismatch")
+        used_credits.update(credit_rows)
+        used_purchases.update(purchase_rows)
+    return links, groups
+
+
 def apply_owner_decisions(transactions, source_hash, decisions):
     """Validate all source-scoped owner decisions before annotating any row."""
     required_fields = {"source_file_sha256", "approval_date", "approved_own_transfer_rows"}
@@ -385,7 +475,8 @@ def apply_owner_decisions(transactions, source_hash, decisions):
                "confirmed_kakao_payment_top_ups", "unverified_kakao_transfers",
                "confirmed_payment_transfer_expenses", "confirmed_bank_interest_income",
                "confirmed_prior_spending_reimbursements", "confirmed_food_consumption_expenses",
-               "confirmed_unmatched_wallet_top_ups", "confirmed_exact_duplicate_pairs"}):
+               "confirmed_unmatched_wallet_top_ups", "confirmed_exact_duplicate_pairs",
+               "confirmed_refund_purchase_links", "confirmed_group_reimbursement_links"}):
         raise ValueError("Invalid owner decisions fields")
     if decisions["source_file_sha256"] != source_hash:
         raise ValueError("Owner decisions source hash mismatch")
@@ -738,6 +829,10 @@ def apply_owner_decisions(transactions, source_hash, decisions):
     payment_top_ups, generic_transfers, payment_expenses = validate_payment_decisions(
         transactions, source_hash, decisions, reserved_rows | wallet_rows)
     duplicate_pairs = validate_duplicate_decisions(transactions, source_hash, decisions)
+    excluded_duplicate_rows = {pair["exclude_source_row"] for pair in duplicate_pairs}
+    refund_links, reimbursement_links = validate_expense_offsets(
+        by_row, source_hash, decisions,
+        reserved_rows | wallet_rows | excluded_duplicate_rows, excluded_duplicate_rows)
     for pair in duplicate_pairs:
         keep = by_row[pair["keep_source_row"]]
         exclude = by_row[pair["exclude_source_row"]]
@@ -943,6 +1038,20 @@ def apply_owner_decisions(transactions, source_hash, decisions):
             transaction["spending_treatment"] = "excluded_non_consumption"
             if leg["role"] == "receipt":
                 transaction["income_treatment"] = "excluded_non_income"
+    for link in refund_links:
+        refund = by_row[link["refund"]["source_row"]]
+        purchase = by_row[link["purchase"]["source_row"]]
+        refund["expense_offset_kind"] = "direct_refund"
+        refund["offset_purchase_rows"] = [purchase["source_row"]]
+        purchase.setdefault("offset_credit_rows", []).append(refund["source_row"])
+    for group in reimbursement_links:
+        purchase_rows = [item["source_row"] for item in group["purchases"]]
+        credit_rows = [item["source_row"] for item in group["reimbursements"]]
+        for row in credit_rows:
+            by_row[row]["expense_offset_kind"] = "group_reimbursement"
+            by_row[row]["offset_purchase_rows"] = purchase_rows
+        for row in purchase_rows:
+            by_row[row]["offset_credit_rows"] = credit_rows
 
 
 def reconciliation_candidates(transactions):
@@ -1052,7 +1161,11 @@ def spending_overlap_candidates(transactions, spending_dir):
 
 
 def monthly_breakdown(transactions, source_coverage=None):
-    """Positive monthly amounts; finalize months only when source coverage is known."""
+    """Gross amounts are positive; net can be negative when receipts exceed gross.
+
+    Confirmed offsets belong to their receipt month. Pending links and unresolved
+    reversals remain visible but never reduce net expense automatically.
+    """
     dated = [item["date"] for item in transactions if item["date"]]
     if not dated:
         return []
@@ -1060,7 +1173,10 @@ def monthly_breakdown(transactions, source_coverage=None):
     months = {}
     amount_fields = ("total_expense", "everyday_expense", "one_off_tax",
                      "confirmed_prepayment", "unverified_usage_spending", "total_income",
-                     "recurring_salary_income", "bonus_income", "other_income")
+                     "recurring_salary_income", "bonus_income", "other_income",
+                     "direct_refund_offset", "group_reimbursement_offset",
+                     "standalone_cashback_offset", "pending_reimbursement_amount",
+                     "unresolved_positive_refund_amount", "unresolved_negative_cancellation_amount")
     for item in transactions:
         if not item["date"] or item["aggregation_status"] == "excluded_owner_confirmed_duplicate":
             continue
@@ -1070,10 +1186,32 @@ def monthly_breakdown(transactions, source_coverage=None):
         month = item["date"][:7]
         if month not in months:
             months[month] = {"amounts": {field: Decimal(0) for field in amount_fields},
-                             "review_rows": [], "observed_dates": []}
+                             "review_rows": [], "observed_dates": [],
+                             "pending_reimbursement_rows": [],
+                             "unresolved_positive_refund_rows": [],
+                             "unresolved_negative_cancellation_rows": []}
         bucket = months[month]
         bucket["observed_dates"].append(item["date"])
         values = bucket["amounts"]
+        offset_kind = item.get("expense_offset_kind")
+        if amount > 0 and offset_kind in {"direct_refund", "group_reimbursement"}:
+            field = ("direct_refund_offset" if offset_kind == "direct_refund"
+                     else "group_reimbursement_offset")
+            values[field] += amount
+        elif (amount > 0 and item["classification"] == "refund/reversal"
+              and item.get("purpose") == "캐시백"
+              and item.get("spending_treatment") == "expense_offset"):
+            values["standalone_cashback_offset"] += amount
+        elif amount > 0 and item.get("spending_treatment") == "offset_pending_purchase_match":
+            values["pending_reimbursement_amount"] += amount
+            bucket["pending_reimbursement_rows"].append(item["source_row"])
+        elif item["classification"] == "refund/reversal" and offset_kind is None:
+            if amount > 0:
+                values["unresolved_positive_refund_amount"] += amount
+                bucket["unresolved_positive_refund_rows"].append(item["source_row"])
+            elif amount < 0:
+                values["unresolved_negative_cancellation_amount"] += -amount
+                bucket["unresolved_negative_cancellation_rows"].append(item["source_row"])
         if amount < 0 and (item["classification"] == "expense"
                            or item.get("spending_treatment") == "unverified_usage_expense"):
             spent = -amount
@@ -1114,6 +1252,9 @@ def monthly_breakdown(transactions, source_coverage=None):
                                 or month_end > source_coverage[1]):
             continue
         values = bucket["amounts"]
+        offset_total = sum((values[field] for field in
+                            ("direct_refund_offset", "group_reimbursement_offset",
+                             "standalone_cashback_offset")), Decimal(0))
         result.append({
             "month": month,
             "observed_first_date": min(bucket["observed_dates"]),
@@ -1122,7 +1263,14 @@ def monthly_breakdown(transactions, source_coverage=None):
                 (month == first_date[:7] and first_date[-2:] != "01")
                 or (month == last_date[:7] and last_date != month_end))),
             "review_rows": sorted(bucket["review_rows"]),
+            "pending_reimbursement_rows": sorted(bucket["pending_reimbursement_rows"]),
+            "unresolved_positive_refund_rows": sorted(bucket["unresolved_positive_refund_rows"]),
+            "unresolved_negative_cancellation_rows": sorted(bucket["unresolved_negative_cancellation_rows"]),
             **{field: amount_text(values[field]) for field in amount_fields},
+            "total_expense_offset": amount_text(offset_total),
+            "net_expense": amount_text(values["total_expense"] - offset_total),
+            "net_expense_status": ("confirmed_offsets_only_pending_links"
+                                   if bucket["pending_reimbursement_rows"] else "confirmed_offsets_only"),
         })
     return result
 

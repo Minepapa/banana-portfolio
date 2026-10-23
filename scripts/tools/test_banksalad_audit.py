@@ -27,8 +27,8 @@ APPROVAL = "2040-02-04"
 
 
 def entry(kind="이체", category="이체", description="Synthetic transfer", amount=-137,
-          instrument="Example Bank A", clock="11:00:00", memo=""):
-    return (DAY, clock, kind, category, "기타", description, amount, "KRW", instrument, memo)
+          instrument="Example Bank A", clock="11:00:00", memo="", currency="KRW"):
+    return (DAY, clock, kind, category, "기타", description, amount, currency, instrument, memo)
 
 
 def workbook(path, rows):
@@ -67,6 +67,13 @@ def final_decision_evidence(transaction):
     return result
 
 
+def offset_evidence(transaction):
+    return {"source_row": transaction["source_row"],
+            **{f"expected_{field}": transaction[field] for field in
+               ("date", "time", "signed_amount", "description",
+                "payment_instrument", "original_type")}}
+
+
 class BanksaladAuditTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -95,6 +102,258 @@ class BanksaladAuditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             apply_owner_decisions(transactions, source_hash, owner)
         self.assertEqual(transactions, before)
+
+    def test_confirmed_offsets_keep_gross_and_partial_residual(self):
+        source_hash, rows = self.load([
+            entry(kind="지출", category="식비", amount=-11000, description="Clinic"),
+            entry(kind="지출", category="식비", amount=10810, description="Clinic"),
+            entry(kind="지출", category="식비", amount=-522, description="Group meal"),
+            entry(amount=446, description="Group settlement"),
+        ])
+        group_decision = {**evidence(rows[3], include_memo=True, include_class=True),
+                          "owner_context": "group-expense settlement",
+                          "spending_treatment": "offset_pending_purchase_match"}
+        owner = decisions(source_hash,
+                          confirmed_group_expense_reimbursements=[group_decision],
+                          confirmed_refund_purchase_links=[{
+                              "refund": offset_evidence(rows[1]),
+                              "purchase": offset_evidence(rows[0])}],
+                          confirmed_group_reimbursement_links=[{
+                              "reimbursements": [offset_evidence(rows[3])],
+                              "purchases": [offset_evidence(rows[2])],
+                              "expected_owner_share": "76"}])
+        apply_owner_decisions(rows, source_hash, owner)
+        month = monthly_breakdown(rows)[0]
+        self.assertEqual(month["total_expense"], "11522")
+        self.assertEqual(month["direct_refund_offset"], "10810")
+        self.assertEqual(month["group_reimbursement_offset"], "446")
+        self.assertEqual(month["net_expense"], "266")
+        self.assertEqual(rows[0]["signed_amount"], "-11000")
+        self.assertEqual(rows[0]["offset_credit_rows"], [3])
+        self.assertEqual(rows[2]["offset_credit_rows"], [5])
+
+    def test_cross_month_refund_offsets_receipt_month_and_allows_negative_net(self):
+        purchase = ("2040-01-30", *entry(kind="지출", category="식비", amount=-100,
+                                        description="Clinic")[1:])
+        refund = ("2040-02-03", *entry(kind="지출", category="식비", amount=100,
+                                      description="Clinic", clock="12:00:00")[1:])
+        source_hash, rows = self.load([purchase, refund])
+        owner = decisions(source_hash, confirmed_refund_purchase_links=[{
+            "refund": offset_evidence(rows[1]), "purchase": offset_evidence(rows[0])}])
+        apply_owner_decisions(rows, source_hash, owner)
+        january, february = monthly_breakdown(rows)
+        self.assertEqual(january["net_expense"], "100")
+        self.assertEqual(february["total_expense"], "0")
+        self.assertEqual(february["direct_refund_offset"], "100")
+        self.assertEqual(february["net_expense"], "-100")
+        self.assertEqual(february["net_expense_status"], "confirmed_offsets_only")
+
+    def test_two_partial_refunds_accumulate_and_over_refund_is_rejected(self):
+        source_hash, rows = self.load([
+            entry(kind="지출", category="식비", amount=-100, description="Clinic"),
+            entry(kind="지출", category="식비", amount=40, description="Clinic",
+                  clock="12:00:00"),
+            entry(kind="지출", category="식비", amount=60, description="Clinic",
+                  clock="13:00:00"),
+        ])
+        links = [{"refund": offset_evidence(refund), "purchase": offset_evidence(rows[0])}
+                 for refund in rows[1:]]
+        apply_owner_decisions(rows, source_hash,
+                              decisions(source_hash, confirmed_refund_purchase_links=links))
+        self.assertEqual(rows[0]["offset_credit_rows"], [3, 4])
+        self.assertEqual(monthly_breakdown(rows)[0]["net_expense"], "0")
+        source_hash, too_much = self.load([
+            entry(kind="지출", category="식비", amount=-100, description="Clinic"),
+            entry(kind="지출", category="식비", amount=40, description="Clinic",
+                  clock="12:00:00"),
+            entry(kind="지출", category="식비", amount=61, description="Clinic",
+                  clock="13:00:00"),
+        ])
+        over_links = [{"refund": offset_evidence(refund),
+                       "purchase": offset_evidence(too_much[0])} for refund in too_much[1:]]
+        self.assert_rejected_without_mutation(
+            too_much, source_hash,
+            decisions(source_hash, confirmed_refund_purchase_links=over_links))
+
+    def test_refund_link_rejects_mismatched_and_non_krw_currency(self):
+        for purchase_currency, refund_currency in (("KRW", "USD"), ("USD", "KRW"),
+                                                   ("USD", "USD")):
+            with self.subTest(purchase_currency=purchase_currency,
+                              refund_currency=refund_currency):
+                source_hash, rows = self.load([
+                    entry(kind="지출", category="식비", amount=-100, description="Clinic",
+                          currency=purchase_currency),
+                    entry(kind="지출", category="식비", amount=100, description="Clinic",
+                          currency=refund_currency, clock="12:00:00"),
+                ])
+                self.assert_rejected_without_mutation(rows, source_hash, decisions(
+                    source_hash, confirmed_refund_purchase_links=[{
+                        "refund": offset_evidence(rows[1]),
+                        "purchase": offset_evidence(rows[0])}]))
+
+    def test_group_link_rejects_mismatched_and_non_krw_currency(self):
+        for purchase_currency, reimbursement_currency in (("KRW", "USD"), ("USD", "KRW"),
+                                                          ("USD", "USD")):
+            with self.subTest(purchase_currency=purchase_currency,
+                              reimbursement_currency=reimbursement_currency):
+                source_hash, rows = self.load([
+                    entry(kind="지출", category="식비", amount=-100,
+                          currency=purchase_currency),
+                    entry(amount=60, currency=reimbursement_currency),
+                ])
+                receipt = {**evidence(rows[1], include_memo=True, include_class=True),
+                           "owner_context": "group-expense settlement",
+                           "spending_treatment": "offset_pending_purchase_match"}
+                self.assert_rejected_without_mutation(rows, source_hash, decisions(
+                    source_hash, confirmed_group_expense_reimbursements=[receipt],
+                    confirmed_group_reimbursement_links=[{
+                        "reimbursements": [offset_evidence(rows[1])],
+                        "purchases": [offset_evidence(rows[0])],
+                        "expected_owner_share": "40"}]))
+
+    def test_refund_link_can_use_kept_duplicate_purchase_only(self):
+        purchase = entry(kind="지출", category="식비", amount=-100,
+                         description="Clinic")
+        source_hash, rows = self.load([
+            purchase, purchase,
+            entry(kind="지출", category="식비", amount=100,
+                  description="Clinic", clock="12:00:00"),
+        ])
+        pair = {"keep_source_row": rows[0]["source_row"],
+                "exclude_source_row": rows[1]["source_row"],
+                "approval_date": APPROVAL, "treatment": "count_first_once"}
+        owner = decisions(source_hash, confirmed_exact_duplicate_pairs=[pair],
+                          confirmed_refund_purchase_links=[{
+                              "refund": offset_evidence(rows[2]),
+                              "purchase": offset_evidence(rows[0])}])
+        apply_owner_decisions(rows, source_hash, owner)
+        self.assertEqual(rows[0]["offset_credit_rows"], [rows[2]["source_row"]])
+        self.assertEqual(rows[1]["aggregation_status"], "excluded_owner_confirmed_duplicate")
+        self.assertEqual(monthly_breakdown(rows)[0]["net_expense"], "0")
+
+        source_hash, rejected_rows = self.load([
+            purchase, purchase,
+            entry(kind="지출", category="식비", amount=100,
+                  description="Clinic", clock="12:00:00"),
+        ])
+        rejected_owner = decisions(source_hash, confirmed_exact_duplicate_pairs=[pair],
+                                   confirmed_refund_purchase_links=[{
+                                       "refund": offset_evidence(rejected_rows[2]),
+                                       "purchase": offset_evidence(rejected_rows[1])}])
+        self.assert_rejected_without_mutation(rejected_rows, source_hash, rejected_owner)
+
+    def test_group_link_can_use_kept_duplicate_reimbursement_only(self):
+        purchase = entry(kind="지출", category="식비", amount=-100)
+        reimbursement = entry(amount=60, description="Group settlement")
+        source_hash, rows = self.load([purchase, reimbursement, reimbursement])
+        pair = {"keep_source_row": rows[1]["source_row"],
+                "exclude_source_row": rows[2]["source_row"],
+                "approval_date": APPROVAL, "treatment": "count_first_once"}
+
+        def owner_for(loaded, reimbursement_index):
+            receipt = {**evidence(loaded[reimbursement_index], include_memo=True,
+                                  include_class=True),
+                       "owner_context": "group-expense settlement",
+                       "spending_treatment": "offset_pending_purchase_match"}
+            return decisions(source_hash, confirmed_exact_duplicate_pairs=[pair],
+                             confirmed_group_expense_reimbursements=[receipt],
+                             confirmed_group_reimbursement_links=[{
+                                 "reimbursements": [offset_evidence(loaded[reimbursement_index])],
+                                 "purchases": [offset_evidence(loaded[0])],
+                                 "expected_owner_share": "40"}])
+
+        apply_owner_decisions(rows, source_hash, owner_for(rows, 1))
+        self.assertEqual(rows[0]["offset_credit_rows"], [rows[1]["source_row"]])
+        self.assertEqual(monthly_breakdown(rows)[0]["net_expense"], "40")
+
+        source_hash, rejected_rows = self.load([purchase, reimbursement, reimbursement])
+        self.assert_rejected_without_mutation(rejected_rows, source_hash,
+                                              owner_for(rejected_rows, 2))
+
+    def test_pending_reimbursements_and_unresolved_reversals_remain_visible(self):
+        source_hash, rows = self.load([
+            entry(kind="지출", category="식비", amount=-100, description="Meal"),
+            entry(amount=60, description="Group settlement"),
+            entry(kind="지출", category="식비", amount=15, description="Unknown refund"),
+            entry(kind="지출", category="식비", amount=-10, description="결제취소 pending"),
+        ])
+        pending = {**evidence(rows[1], include_memo=True, include_class=True),
+                   "owner_context": "group-expense settlement",
+                   "spending_treatment": "offset_pending_purchase_match"}
+        apply_owner_decisions(rows, source_hash, decisions(
+            source_hash, confirmed_group_expense_reimbursements=[pending]))
+        month = monthly_breakdown(rows)[0]
+        self.assertEqual(month["pending_reimbursement_amount"], "60")
+        self.assertEqual(month["pending_reimbursement_rows"], [3])
+        self.assertEqual(month["unresolved_positive_refund_amount"], "15")
+        self.assertEqual(month["unresolved_positive_refund_rows"], [4])
+        self.assertEqual(month["unresolved_negative_cancellation_amount"], "10")
+        self.assertEqual(month["unresolved_negative_cancellation_rows"], [5])
+        self.assertEqual(month["net_expense"], "100")
+        self.assertEqual(month["net_expense_status"], "confirmed_offsets_only_pending_links")
+
+    def test_offset_links_fail_closed_on_evidence_and_reuse(self):
+        source_hash, rows = self.load([
+            entry(kind="지출", category="식비", amount=-100),
+            entry(kind="지출", category="식비", amount=90),
+            entry(kind="지출", category="식비", amount=-100,
+                  description="Different new purchase"),
+        ])
+        link = {"refund": offset_evidence(rows[1]), "purchase": offset_evidence(rows[0])}
+        for change in (
+            {"source_file_sha256": "wrong"},
+            {"confirmed_refund_purchase_links": [{**link, "refund": {
+                **link["refund"], "expected_signed_amount": "91"}}]},
+            {"confirmed_refund_purchase_links": [link, link]},
+            {"confirmed_refund_purchase_links": [{**link, "purchase": offset_evidence(rows[1])}]},
+            {"confirmed_refund_purchase_links": [{**link, "purchase": offset_evidence(rows[2])}]},
+            {"confirmed_refund_purchase_links": [{**link, "purchase": {
+                **link["purchase"], "expected_date": "2040-02-02"}}]},
+        ):
+            with self.subTest(change=change):
+                self.assert_rejected_without_mutation(
+                    rows, source_hash, {**decisions(source_hash),
+                                        "confirmed_refund_purchase_links": [link], **change})
+
+    def test_group_offset_rejects_reused_receipt_and_wrong_residual(self):
+        source_hash, rows = self.load([
+            entry(kind="지출", category="식비", amount=-100),
+            entry(amount=60),
+        ])
+        receipt = {**evidence(rows[1], include_memo=True, include_class=True),
+                   "owner_context": "group-expense settlement",
+                   "spending_treatment": "offset_pending_purchase_match"}
+        group = {"reimbursements": [offset_evidence(rows[1])],
+                 "purchases": [offset_evidence(rows[0])],
+                 "expected_owner_share": "40"}
+        base = decisions(source_hash, confirmed_group_expense_reimbursements=[receipt])
+        for invalid in ({**group, "expected_owner_share": "39"},
+                        {**group, "reimbursements": [offset_evidence(rows[1])] * 2},
+                        {**group, "purchases": [offset_evidence(rows[1])]}):
+            with self.subTest(invalid=invalid):
+                self.assert_rejected_without_mutation(
+                    rows, source_hash,
+                    {**base, "confirmed_group_reimbursement_links": [invalid]})
+
+    def test_refunded_purchase_cannot_also_back_group_reimbursement(self):
+        source_hash, rows = self.load([
+            entry(kind="지출", category="식비", amount=-100, description="Meal"),
+            entry(kind="지출", category="식비", amount=40, description="Meal",
+                  clock="12:00:00"),
+            entry(amount=60, description="Group settlement"),
+        ])
+        receipt = {**evidence(rows[2], include_memo=True, include_class=True),
+                   "owner_context": "group-expense settlement",
+                   "spending_treatment": "offset_pending_purchase_match"}
+        self.assert_rejected_without_mutation(rows, source_hash, decisions(
+            source_hash,
+            confirmed_group_expense_reimbursements=[receipt],
+            confirmed_refund_purchase_links=[{
+                "refund": offset_evidence(rows[1]), "purchase": offset_evidence(rows[0])}],
+            confirmed_group_reimbursement_links=[{
+                "reimbursements": [offset_evidence(rows[2])],
+                "purchases": [offset_evidence(rows[0])],
+                "expected_owner_share": "40"}]))
 
     def load_final_decision_rows(self, wrong_sign_group=None):
         groups = (
