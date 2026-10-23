@@ -134,3 +134,41 @@ test('인증 실패 로그는 이유 분류만 남기고 비밀번호를 남기�
   assert.match(joined, /인증 실패: 인증 헤더 없음/);
   assert.doesNotMatch(joined, /wrong-guess|secret-pw/);
 });
+
+test('아르고스 경로: 토큰 인증, 꺼져 있으면 404, OwnTracks 경로와 분리', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'argos-route-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const config = { host: '127.0.0.1', username: 'u', password: randomBytes(16).toString('base64url') };
+  const token = randomBytes(24).toString('base64url');
+  const calls = [];
+  const argos = {
+    ingest: (body) => { calls.push(body); return { status: 200, json: { acked: ['h'], rejected: [] } }; },
+    rules: (path) => (path === '/rules/manifest' ? { status: 200, json: [] } : { status: 200, buffer: Buffer.from('version: 1\n') }),
+  };
+  const request = (server, method, path, body, headers = {}) => new Promise((resolve) => {
+    const req = Readable.from(body ? [Buffer.from(body)] : []);
+    req.method = method; req.url = path; req.headers = headers;
+    const res = { headersSent: false, body: '', setHeader() {}, writeHead(status) { this.status = status; this.headersSent = true; },
+      end(chunk) { resolve({ status: this.status, body: String(chunk ?? '') }); } };
+    server.emit('request', req, res);
+  });
+  const on = createReceiver({ config, allowLoopback: true, store: async () => true, health: async () => {}, argos, argosToken: token });
+  const off = createReceiver({ config, allowLoopback: true, store: async () => true, health: async () => {} });
+
+  assert.equal((await request(off, 'POST', '/ingest', '{}', { 'x-argos-token': token })).status, 404);
+  assert.equal((await request(on, 'POST', '/ingest', '{}', { 'x-argos-token': 'wrong' })).status, 401);
+  // OwnTracks Basic 인증으로는 아르고스 경로에 못 들어온다
+  const basic = `Basic ${Buffer.from(`${config.username}:${config.password}`).toString('base64')}`;
+  assert.equal((await request(on, 'POST', '/ingest', '{}', { authorization: basic })).status, 401);
+  const ok = await request(on, 'POST', '/ingest', JSON.stringify({ protocol: 1, events: [] }), { 'x-argos-token': token });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(JSON.parse(ok.body), { acked: ['h'], rejected: [] });
+  assert.equal(calls.length, 1);
+  assert.equal((await request(on, 'POST', '/ingest', '{', { 'x-argos-token': token })).status, 400);
+  assert.equal((await request(on, 'POST', '/ingest', '{}', { 'x-argos-token': token, 'content-length': String(2 * 1024 * 1024) })).status, 413);
+  assert.equal((await request(on, 'GET', '/ingest', null, { 'x-argos-token': token })).status, 405);
+  assert.equal((await request(on, 'GET', '/rules/manifest', null, { 'x-argos-token': token })).status, 200);
+  assert.equal((await request(on, 'GET', '/rules/notifications.yaml', null, { 'x-argos-token': token })).body, 'version: 1\n');
+  // 아르고스 토큰으로는 OwnTracks 경로에 못 들어온다
+  assert.equal((await request(on, 'POST', '/pub', '{}', { 'x-argos-token': token })).status, 401);
+});

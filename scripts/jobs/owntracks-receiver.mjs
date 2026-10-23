@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { VAULT_REL, VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { buildJobHealthRecord, parseFrontmatter } from '../lib/job-health.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
+import { createArgosIngest, readArgosConfig, tokenMatches, MAX_INGEST_BODY } from '../lib/argos-ingest.mjs';
 
 export const CONFIG_PATH = process.env.OWNTRACKS_CONFIG_PATH || join(homedir(), '.config', 'banana-portfolio-v2', 'owntracks.json');
 const MAX_BODY = 64 * 1024;
@@ -65,7 +66,7 @@ export async function recordReceiverHealth({ now = new Date(), root = VAULT_PATH
   await writeStateFile(path, content);
 }
 export function createReceiver({ config, store = createLocationStore(), now = () => new Date(), health = recordReceiverHealth,
-  allowLoopback = false } = {}) {
+  allowLoopback = false, argos = null, argosToken = null } = {}) {
   if (!validHost(config?.host, { allowLoopback })) throw new Error('OwnTracks host는 Tailscale 주소여야 합니다');
   let lastHealth = 0;
   const server = createServer(async (request, response) => {
@@ -74,6 +75,11 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
       if (code !== 200) console.log(`[owntracks] 응답 ${code}`);
       response.writeHead(code, { 'Content-Type': 'application/json' }); response.end(body);
     };
+    // 아르고스(폰 수집 앱) 경로: 토큰 방식이 달라 OwnTracks 인증보다 먼저 나눈다(2026-10-23).
+    if (request.url === '/ingest' || request.url?.startsWith('/rules/')) {
+      await handleArgos(request, response, send);
+      return;
+    }
     if (request.method !== 'POST' || request.url !== '/pub') { send(404, '[]'); return; }
     const expected = `Basic ${Buffer.from(`${config.username}:${config.password}`).toString('base64')}`;
     if (!credentialsEqual(request.headers.authorization || '', expected)) {
@@ -132,6 +138,55 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
       if (!response.headersSent) send(error instanceof SyntaxError ? 400 : 500, '[]');
     }
   });
+  async function handleArgos(request, response, send) {
+    if (!argos || !argosToken) { send(404, '[]'); return; }
+    if (!tokenMatches(request.headers['x-argos-token'], argosToken)) {
+      console.log('[argos] 인증 실패');
+      send(401, JSON.stringify({ error: 'unauthorized' }));
+      return;
+    }
+    try {
+      if (request.url.startsWith('/rules/')) {
+        if (request.method !== 'GET') { send(405, '[]'); return; }
+        const result = argos.rules(request.url);
+        if (result.buffer != null) {
+          // 원본 바이트 그대로(manifest의 sha256과 같은 바이트여야 폰이 받아들인다).
+          response.writeHead(200, { 'Content-Type': 'text/yaml; charset=utf-8' });
+          response.end(result.buffer);
+        } else send(result.status, JSON.stringify(result.json));
+        return;
+      }
+      if (request.method !== 'POST') { send(405, '[]'); return; }
+      const contentLength = request.headers['content-length'];
+      // 413을 보낸 뒤 응답이 다 나간 다음에 연결을 닫는다(먼저 끊으면 폰은 413 대신 연결 리셋을 본다).
+      const tooLarge = () => {
+        response.setHeader?.('Connection', 'close');
+        response.once?.('finish', () => request.socket?.destroy());
+        send(413, '[]');
+        request.pause?.();
+      };
+      if (contentLength != null && (!/^\d+$/.test(String(contentLength)) || Number(contentLength) > MAX_INGEST_BODY)) {
+        tooLarge();
+        return;
+      }
+      let size = 0;
+      const chunks = [];
+      for await (const chunk of request) {
+        size += chunk.length;
+        if (size > MAX_INGEST_BODY) { tooLarge(); return; }
+        chunks.push(chunk);
+      }
+      const result = argos.ingest(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      // 본문(알림 원문·좌표)은 로그에 남기지 않는다. 건수만.
+      if (result.status === 200) console.log(`[argos] 받음 ${result.json.acked.length}건, 거부 ${result.json.rejected.length}건`);
+      send(result.status, JSON.stringify(result.json));
+    } catch (error) {
+      // 본문 없이 오류 분류만(ENOSPC·EACCES·SyntaxError 등).
+      console.error(`[argos] 수신 실패 ${error?.code || error?.name || 'unknown'}`);
+      if (!response.headersSent) send(error instanceof SyntaxError ? 400 : 500, JSON.stringify({ error: 'failed' }));
+    }
+  }
+
   // 처리 함수에 닿기 전에 끊기는 연결(HTTP 파싱 오류 등)도 오류 코드만 남긴다.
   server.on('clientError', (error, socket) => {
     console.error(`[owntracks] 연결 오류 ${error.code || 'unknown'}`);
@@ -146,6 +201,12 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
     const config = readConfig();
-    createReceiver({ config }).listen(config.port, config.host, () => console.log('[owntracks] 수신 대기'));
+    // 아르고스 토큰 파일이 없으면 /ingest·/rules는 404로 꺼져 있다(병행 1단계, 결정 `아르고스-올림푸스-도입`).
+    const argosConfig = readArgosConfig();
+    createReceiver({
+      config,
+      argos: argosConfig ? createArgosIngest() : null,
+      argosToken: argosConfig?.token ?? null,
+    }).listen(config.port, config.host, () => console.log(`[owntracks] 수신 대기${argosConfig ? ' (아르고스 켜짐)' : ''}`));
   } catch (error) { console.error(`[owntracks] ${error.message}`); process.exitCode = 1; }
 }

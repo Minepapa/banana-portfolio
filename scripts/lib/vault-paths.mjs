@@ -61,6 +61,8 @@ export const VAULT_REL = {
   people: '30_Wiki/31_People', // 헤르메스 생일 브리핑 대상
   places: '30_Wiki/32_Places',
   location: '95_Etna/Location',
+  argosEvents: '95_Etna/Events', // 아르고스 수신 원본(결정 `아르고스-올림푸스-도입` D2)
+  argosRules: '90_Delphi/Config/Argos', // 아르고스 규칙 파일 정본(같은 결정 2항, 폴더는 클리오가 등록 후 생성)
   locationCandidates: '95_Etna/Location/place-candidates.json',
   locationGeocodeCache: '95_Etna/Location/geocode-cache.json',
   mediaArchiveIndex: '95_Etna/Media/archive-index.jsonl',
