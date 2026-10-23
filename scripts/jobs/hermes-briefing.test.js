@@ -310,3 +310,10 @@ test('음성 노트 조회 실패는 저녁 브리핑을 중단하지 않는다'
   assert.equal(sent.length, 1);
   assert.match(result.body, /■ 기타 — 내일 일정/);
 });
+
+test('Inbox 폴더가 없으면 미등록 음성은 빈 목록이고 예외가 나지 않는다(2026-10-23)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'hermes-noinbox-'));
+  try {
+    assert.deepEqual(readUnregisteredVoices('2026-10-23', join(root, 'missing-inbox'), join(root, 'missing-records')), []);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

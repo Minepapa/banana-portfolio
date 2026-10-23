@@ -22,6 +22,8 @@ function noteFiles(root, rel, output) {
   let entries;
   try { entries = readdirSync(path, { withFileTypes: true }); }
   catch (error) {
+    // 메모가 모두 옮겨져 빈 Inbox 폴더가 사라진 경우는 '비어 있음'이다(2026-10-23).
+    if (error.code === 'ENOENT') return [];
     output.log(`[media-photo-memos] 실패: ${rel} — ${String(error.message).split(/[\r\n]/, 1)[0]}`);
     return [];
   }

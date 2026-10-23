@@ -81,7 +81,11 @@ export function readUnregisteredVoices(today, dir = vaultAbs(VAULT_REL.inboxRoot
   const end = start + 86_400_000;
   const files = [];
   function collect(folder) {
-    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+    let entries;
+    // 메모가 모두 옮겨져 빈 Inbox 폴더가 사라진 경우는 '비어 있음'이다(2026-10-23).
+    try { entries = readdirSync(folder, { withFileTypes: true }); }
+    catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    for (const entry of entries) {
       const path = join(folder, entry.name);
       if (entry.isDirectory()) collect(path);
       else if (entry.isFile() && entry.name.endsWith('.md')) files.push(path);

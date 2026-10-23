@@ -558,3 +558,13 @@ test('사진 메모 하나의 쓰기 실패를 기록하고 다음 메모 만료
     write: options.write });
   assert.equal(result.skipped, 1);
 });
+
+test('linkPhotoMemos: Inbox·Notes 폴더가 없으면 실패 로그 없이 0건(2026-10-23)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'photo-memos-noinbox-'));
+  const logs = [];
+  try {
+    assert.deepEqual(await linkPhotoMemos({ root, state: {}, archive: [], dryRun: true, output: { log: (m) => logs.push(m) } }),
+      { linked: 0, expired: 0, failed: 0 });
+    assert.equal(logs.filter((m) => m.includes('실패')).length, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
