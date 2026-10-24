@@ -22,7 +22,7 @@ import { buildFrontmatter } from './vault-frontmatter.mjs';
 // 그래프 뷰 다중축 클러스터링용 태그(2026-09-05, vault-tags.mjs 헤더 주석 참고).
 import { buildVaultTags } from './vault-tags.mjs';
 
-function sanitizeSegment(s) {
+export function sanitizeSegment(s) {
   return String(s ?? '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '-');
 }
 

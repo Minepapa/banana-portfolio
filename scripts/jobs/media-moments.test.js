@@ -11,7 +11,7 @@ import { buildMemo } from '../tools/inbox-memo.mjs';
 import { linkPhotoMemos, matchPhotoMemo } from './media-photo-memos.mjs';
 
 const gps = { lat: 0, lon: 0 };
-const item = (id, time, location = gps) => ({ id, kind: 'Camera', capturedAt: time,
+const item = (id, time, location = gps) => ({ id, kind: 'Camera', capturedAt: time, capturedFrom: 'exif', capturedConfidence: 'confirmed',
   archivePath: `Archive/2030/01/Camera/item-${id}.jpg`, gps: location });
 const time = (clock) => `2030-01-02T${clock}:00+09:00`;
 const silent = { log() {} };
@@ -167,22 +167,25 @@ test('90분과 1.5km 경계에서 순간을 나눈다', () => {
   assert.deepEqual(groupMoments(records).map((moment) => moment.map((record) => record.id)), [['a', 'b'], ['c'], ['d']]);
 });
 
-test('Camera와 EXIF 촬영 시각이 확인된 KakaoTalk 사진만 순간으로 묶는다', () => {
-  const camera = item('camera', time('10:00'));
-  const kakao = (id, capturedFrom, capturedConfidence) => ({ ...item(id, time('10:10')),
-    kind: 'KakaoTalk', archivePath: `Archive/2030/01/KakaoTalk/item-${id}.jpg`,
-    capturedFrom, capturedConfidence });
-  const records = [camera, { ...camera, id: 'camera-estimated', capturedConfidence: 'estimated' },
-    kakao('confirmed', 'exif', 'confirmed'), kakao('single', 'exif', 'single'),
-    kakao('estimated', 'exif', 'estimated'), kakao('review', 'exif', 'review'),
-    kakao('missing-confidence', 'exif'), kakao('missing-source', undefined, 'confirmed'),
-    kakao('non-exif', 'filename', 'confirmed'),
-    { ...item('call', time('10:20')), kind: 'Calls', capturedFrom: 'exif', capturedConfidence: 'confirmed' }];
-  assert.deepEqual(groupMoments(records).map((moment) => moment.map((record) => record.id)),
-    [['camera', 'camera-estimated', 'confirmed', 'single']]);
+test('종류가 아니라 촬영 시각 근거로 순간에 넣는다', () => {
+  const at10 = (id, kind, capturedFrom, capturedConfidence) => ({ ...item(id, time('10:00')),
+    kind, archivePath: `Archive/2030/01/${kind}/item-${id}.jpg`, capturedFrom, capturedConfidence });
+  const records = [
+    at10('camera-exif', 'Camera', 'exif', 'confirmed'), at10('camera-exif-single', 'Camera', 'exif', 'single'),
+    at10('camera-name', 'Camera', 'filename', 'single'), at10('owner', 'Camera', 'owner', 'single'),
+    at10('kakao-exif', 'KakaoTalk', 'exif', 'single'), at10('kakao-camera-name', 'KakaoTalk', 'filename', 'single'),
+    { ...at10('kakao-resized', 'KakaoTalk', 'filename', 'single'), archivePath: 'Archive/2026/01/KakaoTalk/Resized_20260131_183433.jpeg' },
+    // 아르고스 전환 뒤 Camera로 들어오는 카톡 저장본: 저장 시각 파일명·수정일은 촬영 시각이 아니다.
+    at10('camera-saved-name', 'Camera', 'filename', 'estimated'), at10('camera-mtime', 'Camera', 'mtime', 'review'),
+    at10('camera-exif-review', 'Camera', 'exif', 'review'), at10('camera-missing', 'Camera', undefined, undefined),
+    at10('kakao-saved-name', 'KakaoTalk', 'filename', 'estimated'), at10('kakao-missing-source', 'KakaoTalk', undefined, 'confirmed'),
+    at10('call', 'Calls', 'exif', 'confirmed'),
+  ];
+  assert.deepEqual(groupMoments(records).map((moment) => moment.map((record) => record.id).sort()),
+    [['camera-exif', 'camera-exif-single', 'camera-name', 'kakao-camera-name', 'kakao-exif', 'owner']]);
 });
 
-test('KakaoTalkMovie는 EXIF 시각이 확인된 경우만 순간에 포함한다', () => {
+test('KakaoTalkMovie도 촬영 시각 근거가 있을 때만 순간에 포함한다', () => {
   const movie = (id, capturedFrom, capturedConfidence) => ({ ...item(id, time('10:10')),
     kind: 'KakaoTalkMovie', archivePath: `Archive/2030/01/KakaoTalkMovie/item-${id}.mp4`,
     capturedFrom, capturedConfidence });
