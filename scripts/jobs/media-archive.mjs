@@ -11,6 +11,8 @@ import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseCallFilename, loadPeople, isLinkedCall, contactKey } from '../lib/media-people.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
+import { followPhoneDeletions } from '../lib/argos-media-trash.mjs';
+import { readArgosConfig } from '../lib/argos-ingest.mjs';
 
 const execFileAsync = promisify(execFile);
 const KINDS = ['Camera', 'Recordings', 'Calls', 'Screenshots', 'KakaoTalk', 'KakaoTalkMovie'];
@@ -605,6 +607,42 @@ export async function repairMediaArchiveTimes({
   return apply ? withLock(indexPath, repair, { retries: 1200, retryDelayMs: 100 }) : repair();
 }
 
+/** 폰 삭제 따라가기 한 회차(결정 `미디어-삭제-요청` 2판). 색인은 신호가 있을 때만 읽기 전용으로 읽는다. */
+export async function runPhoneDeletionFollow({ dryRun = false, allowBulkTrash = false, output = console } = {}) {
+  try {
+    const indexPath = VAULT_PATHS.mediaArchiveIndex;
+    const follow = await followPhoneDeletions({
+      mediaRoot: join(homedir(), 'Pantheon', 'Media'),
+      eventsDir: join(VAULT_PATHS.root, VAULT_REL.argosEvents),
+      statePath: join(VAULT_PATHS.root, VAULT_REL.mediaArgosTrashState),
+      loadIndex: () => readIndexRecords(indexPath, { dryRun: true, allowIncomplete: true }),
+      writeIndex: (records) => writeAtomic(indexPath,
+        records.size ? `${[...records.values()].map((record) => JSON.stringify(record)).join('\n')}\n` : ''),
+      argosDest: readArgosConfig()?.mediaDest ?? 'Inbox-Argos',
+      allowBulk: allowBulkTrash,
+      dryRun,
+    });
+    if (follow.trashed || follow.restored) {
+      output.log(`[media-archive] ${dryRun ? 'dry-run ' : ''}폰 삭제 따라가기: 휴지통 ${follow.trashed}, 복원 ${follow.restored}`);
+    }
+    for (const note of follow.notes) output.log(`[media-archive] ${note}`);
+    const warn = (message, code, severity) => collectWarning(message, {
+      jobName: 'media-archive', warningCode: code, subjectKey: 'argos-phone-delete', kind: 'operational', severity });
+    if (!dryRun && follow.blocked) warn(follow.notes.find((n) => n.includes('대량 차단')), 'ARGOS_PHONE_DELETE_BULK', 'high');
+    if (!dryRun && follow.held) warn(`폰이 미디어 삭제 감지를 보류함(한꺼번에 사라짐) ${follow.held}회 — 폰 저장소·권한 확인`, 'ARGOS_PHONE_DELETE_HELD', 'medium');
+    if (!dryRun && follow.conflicts) warn(`폰 복원 충돌 ${follow.conflicts}건 — 휴지통에 그대로 둠`, 'ARGOS_PHONE_RESTORE_CONFLICT', 'medium');
+    if (!dryRun && follow.failed) warn(`폰 삭제 따라가기 실패 ${follow.failed}건 — 다음 회차에 다시`, 'ARGOS_PHONE_DELETE_FAILED', 'medium');
+    return follow;
+  } catch (error) {
+    output.error(`[media-archive] 폰 삭제 따라가기 실패: ${error.message}`);
+    if (!dryRun) collectWarning(`폰 삭제 따라가기 실패: ${error.code ?? '오류'}`, {
+      jobName: 'media-archive', warningCode: 'ARGOS_PHONE_DELETE_FAILED',
+      subjectKey: 'argos-phone-delete', kind: 'operational', severity: 'medium',
+    });
+    return null;
+  }
+}
+
 export async function runMediaArchive({
   mediaRoot = join(homedir(), 'Pantheon', 'Media'),
   indexPath = VAULT_PATHS.mediaArchiveIndex,
@@ -1013,10 +1051,17 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       if (args.includes('--repair-times')) return repairMediaArchiveTimes({ apply: args.includes('--apply') });
       const dryRun = args.includes('--dry-run');
       const allowBulkTrash = args.includes('--allow-bulk-trash');
-      if (dryRun) return runMediaArchive({ dryRun, allowBulkTrash });
+      if (dryRun) {
+        await runPhoneDeletionFollow({ dryRun, allowBulkTrash });
+        return runMediaArchive({ dryRun, allowBulkTrash });
+      }
       await fs.mkdir(dirname(VAULT_PATHS.mediaArchiveIndex), { recursive: true });
-      const summary = await withLock(VAULT_PATHS.mediaArchiveIndex,
-        () => runMediaArchive({ allowBulkTrash }), { retries: 1200, retryDelayMs: 100 });
+      const summary = await withLock(VAULT_PATHS.mediaArchiveIndex, async () => {
+        // 폰에서 지운 사진·영상 따라가기(결정 `미디어-삭제-요청` 2판)를 같은 락 안에서 먼저 한다.
+        // 실패해도 보관은 계속한다(옮기기 전 manifest를 남기므로 중간에 끊겨도 복구 경로가 있다).
+        await runPhoneDeletionFollow({ allowBulkTrash });
+        return runMediaArchive({ allowBulkTrash });
+      }, { retries: 1200, retryDelayMs: 100 });
       for (const [contact, count] of Object.entries(summary.trashedByContact)) {
         collectWarning(`통화 휴지통 이동: ${contact} ${count}건`, {
           jobName: 'media-archive', warningCode: 'CALL_TRASH_MOVED',
