@@ -178,10 +178,15 @@ function walk(dir, root, out = []) {
   return out;
 }
 
+// 전수 검사 대상 노트 목록(볼트 상대 경로) — 야간 자동 수정(vault-lint-fix)도 같은 범위를 쓴다.
+export function listVaultNotes(root) {
+  return walk(root, root);
+}
+
 export function lintVault(root) {
   const rules = parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
   const results = [];
-  const files = walk(root, root);
+  const files = listVaultNotes(root);
   for (const rel of files) {
     const content = readFileSync(join(root, rel), 'utf8');
     const problems = [

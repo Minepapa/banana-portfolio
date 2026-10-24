@@ -17,8 +17,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { buildVaultIndex } from '../lib/vault-index-builder.mjs';
-import { lintVault } from '../lib/vault-registry.mjs';
+import { autoFixVault, lintVaultWithSuggestions, recordFixesInClioLog } from '../lib/vault-lint-fix.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+import { agentTitle } from '../lib/agent-registry.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 
 const SENDER_AGENT = 'clio'; // 볼트 등록부 위반 알림(D48 ③) — 볼트·성향 담당
@@ -47,13 +48,27 @@ export function copyRootFiles(rootDir, destDir) {
   return copied;
 }
 
-// 등록부 lint 결과를 알림 본문으로(순수). 위반이 없으면 null(알리지 않음).
-export function buildLintNotice({ checked, results }, maxItems = 10) {
-  if (!results.length) return null;
-  const lines = results.slice(0, maxItems).map(({ rel, problems }) => `- ${rel}: ${problems.join(' / ')}`);
+// 등록부 lint 결과를 알림 본문으로(순수). 위반도 자동 수정도 없으면 null(알리지 않음).
+// 위반마다 추천안(suggestions)을 붙이고, 자동 수정(fixed)한 것은 따로 알린다(3단 처리, 2026-10-24).
+export function buildLintNotice({ checked, results, fixed = [] }, maxItems = 10) {
+  if (!results.length && !fixed.length && !(fixed.skipped ?? []).length) return null;
+  const lines = results.slice(0, maxItems).flatMap(({ rel, problems, suggestions = [] }) => [
+    `- ${rel}: ${problems.join(' / ')}`,
+    ...suggestions.map((s) => `  → 추천: ${s}`),
+  ]);
   const more = results.length > maxItems ? [`- 외 ${results.length - maxItems}개(전체: node scripts/tools/vault-registry-lint.mjs --list)`] : [];
-  return [`<b>볼트 등록부 위반 ${results.length}개</b> (검사 ${checked}개)`, '', '■ 위반 노트', ...lines, ...more, '',
-    '■ 할 일', `- 경로 등록부(${VAULT_REL.registryFile})에 맞게 type·경로·제목·필수 머리말을 고친다.`].join('\n');
+  const skipped = fixed.skipped ?? [];
+  const fixedLines = [
+    ...(fixed.length ? ['', `■ 자동 수정 ${fixed.length}개 (원래 설명은 statusDetail로 옮김)`,
+      ...fixed.slice(0, maxItems).map(({ rel, changes }) => `- ${rel}: ${changes.join(' / ')}`)] : []),
+    ...(fixed.recordError ? [`- 기록 실패: ${fixed.recordError}`] : []),
+    ...(fixed.commitError ? [`- 커밋 실패(다음 스냅샷에 담김): ${fixed.commitError}`] : []),
+    ...(skipped.length ? ['', `■ 자동 수정 실패 ${skipped.length}개`, ...skipped.slice(0, maxItems).map(({ rel, error }) => `- ${rel}: ${error}`)] : []),
+  ];
+  const head = results.length ? `<b>볼트 등록부 위반 ${results.length}개</b> (검사 ${checked}개)` : `<b>볼트 등록부 위반 0개</b> (검사 ${checked}개)`;
+  const todo = results.length ? ['', '■ 할 일', `- ${agentTitle(SENDER_AGENT)} 세션에서 추천안을 확인해 적용한다.`,
+    `- 규칙: 경로 등록부(${VAULT_REL.registryFile})의 type·경로·제목·필수 머리말.`] : [];
+  return [head, ...(results.length ? ['', '■ 위반 노트', ...lines, ...more] : []), ...fixedLines, ...todo].join('\n');
 }
 
 function git(args) {
@@ -86,26 +101,60 @@ async function main() {
     console.error(`⚠️ 색인 자동 생성 실패(백업은 계속): ${e.message}`);
   }
 
+  const dateStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 10);
   git(['add', '-A']);
   const status = git(['status', '--porcelain']);
   if (!status.trim()) {
     console.log('✅ 변경 없음 — 스냅샷 스킵');
-    await notifyRegistryLint();
-    return;
+  } else {
+    git(['commit', '-m', `snapshot ${dateStr}`, '--quiet']);
+    console.log(`✅ 스냅샷 커밋 완료 — snapshot ${dateStr} (변경 ${status.trim().split('\n').length}건)`);
   }
-  const dateStr = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 10);
-  git(['commit', '-m', `snapshot ${dateStr}`, '--quiet']);
-  const changedLines = status.trim().split('\n').length;
-  console.log(`✅ 스냅샷 커밋 완료 — snapshot ${dateStr} (변경 ${changedLines}건)`);
-  await notifyRegistryLint();
+  const fixed = autoFixAfterSnapshot(dateStr);
+  await notifyRegistryLint(fixed);
 }
 
-async function notifyRegistryLint() {
+// 안전 자동 수정(3단 처리의 나, 2026-10-24) — 정보 손실 없는 것만, 30분 안에 고친 파일은 건드리지 않는다.
+// 스냅샷을 먼저 커밋해 고치기 전 원본을 git에 남기고, 수정은 따로 커밋한다(diff가 곧 수정 내역, 리뷰 M2).
+// 커밋은 고친 노트와 클리오 기록만 경로를 지정해 담는다 — 그 사이 LiveSync로 들어온 변경이 섞이지 않게.
+// 기록 쓰기가 실패해도 고친 노트는 커밋한다(작업 트리에 미커밋 수정본이 남지 않게). 실패해도 백업은 이미 끝났다.
+export function autoFixAfterSnapshot(dateStr, {
+  root = VAULT_PATHS.root, runGit = git, fix = autoFixVault, record = recordFixesInClioLog, log = console,
+} = {}) {
+  let fixed = [];
+  try {
+    fixed = fix(root);
+  } catch (e) {
+    log.error(`⚠️ 등록부 자동 수정 실패(백업은 이미 끝남): ${e.message}`);
+    return Object.assign([], { skipped: [], recordError: null });
+  }
+  for (const { rel, error } of fixed.skipped ?? []) log.error(`⚠️ 자동 수정 건너뜀 ${rel}: ${error}`);
+  if (!fixed.length) return fixed;
+  const paths = fixed.map(({ rel }) => rel);
+  try {
+    const logRel = record(root, fixed);
+    if (logRel) paths.push(logRel);
+  } catch (e) {
+    fixed.recordError = e.message;
+    log.error(`⚠️ 자동 수정 기록 실패(수정본은 커밋): ${e.message}`);
+  }
+  try {
+    runGit(['add', '--', ...paths]);
+    runGit(['commit', '-m', `autofix ${dateStr}`, '--quiet', '--', ...paths]);
+    log.log(`🩹 등록부 위반 자동 수정 ${fixed.length}개 — autofix ${dateStr} 커밋`);
+  } catch (e) {
+    fixed.commitError = e.message;
+    log.error(`⚠️ 자동 수정 커밋 실패(다음 스냅샷에 담김): ${e.message}`);
+  }
+  return fixed;
+}
+
+async function notifyRegistryLint(fixed = []) {
   // 등록부 lint(D48 ③) — AI 쓰기는 훅이 막지만, 폰·옵시디언·코드가 쓴 노트의 어긋남을 매일 잡는다.
   // lint·알림 실패가 백업을 막으면 안 되므로 오류는 알리고 백업은 이미 끝난 뒤에 돈다(알림 지연이 백업을 늦추지 않게).
   try {
-    const notice = buildLintNotice(lintVault(VAULT_PATHS.root));
-    console.log(notice ? `🔎 등록부 위반 있음 — 알림` : '🔎 등록부 위반 없음');
+    const notice = buildLintNotice({ ...lintVaultWithSuggestions(VAULT_PATHS.root), fixed });
+    console.log(notice ? `🔎 등록부 위반·자동 수정 있음 — 알림` : '🔎 등록부 위반 없음');
     if (notice) await sendRegistryWarning({ agent: SENDER_AGENT, kind: '정보', topic: '점검', body: notice });
   } catch (e) {
     console.error('⚠️ 등록부 lint 실패(백업은 이미 끝남):', e);

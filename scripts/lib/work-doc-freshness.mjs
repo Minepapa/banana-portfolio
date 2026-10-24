@@ -4,9 +4,9 @@ import { execFileSync } from 'node:child_process';
 import { parseFrontmatter } from './vault-frontmatter.mjs';
 import { VAULT_REL } from './vault-paths.mjs';
 
-const OPEN = new Set(['예정', '진행중', '차단됨', '보류']);
+export const OPEN = new Set(['예정', '진행중', '차단됨', '보류']);
 const CLOSED = new Set(['완료', '폐기']);
-const WAITING_ON = new Set(['오너 판단', '시장 이벤트', '데이터 축적', '착수 대기', '외부']);
+export const WAITING_ON = new Set(['오너 판단', '시장 이벤트', '데이터 축적', '착수 대기', '외부']);
 const WORK_PATH = /^40_Projects\/[^/]+\/(Implementation|Requests)\/[^/]+\.md$/;
 const LOG_PATH = /^60_Logs\//;
 
@@ -103,6 +103,8 @@ export function lintWorkDoc(root, rel, content) {
         || link.slice(2, -2).startsWith('/'))) problems.push('supersedes는 볼트 상대경로 링크 배열이어야 함');
       else for (const link of links) {
         const target = link.slice(2, -2).replace(/\.md$/, '');
+        // 금고는 내용을 읽지 않는다 — 쓰기 관문·Bash 훅이 대화형 세션에서 이 함수를 부른다(2026-10-24).
+        if (target.split('/')[0] === VAULT_REL.adytonRoot) { problems.push(`supersedes 대상이 금고임: ${link}`); continue; }
         const path = join(root, `${target}.md`);
         if (!existsSync(path)) { problems.push(`supersedes 대상 없음: ${link}`); continue; }
         if (!realpathSync(path).startsWith(`${realpathSync(root)}${sep}`)) {

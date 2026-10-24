@@ -84,3 +84,18 @@ test('훅 실행: 임시 볼트에서 규칙 위반 쓰기는 종료 2, 맞는 �
     assert.equal(ok.status, 0, ok.stderr);
   } finally { rm(vault, { recursive: true, force: true }); }
 });
+
+test('decideWrite: vaultRoot가 있으면 작업 문서 waitingOn 자유서술도 막고 추천안을 준다', () => {
+  const registry = REGISTRY.replace('| `note` |', '| `dev-request` | `40_Projects/{프로젝트}/Requests/` | `YYYY-MM-DD 내용` | C + `status` · `requestedVia` | 개발 세션 |\n| `note` |');
+  const rel = '40_Projects/p/Requests/2026-10-24 요청.md';
+  const content = (w) => `---\ntype: "dev-request"\ncategory: ["[[01_Home/500 기술]]"]\ndescription: "d"\nsensitivity: "일반"\ncreated: "2026-10-24"\nmodified: "2026-10-24"\nstatus: "보류"\nwaitingOn: "${w}"\nnextCheck: "2026-10-31"\nrequestedVia: "개발 세션"\n---\n`;
+  const root = mkdtempSync(join(tmpdir(), 'gate-wd-'));
+  try {
+    const bad = decideWrite({ relPath: rel, content: content('오너 확인 3건 뒤'), registryText: registry, vaultRoot: root });
+    assert.equal(bad.block, true);
+    assert.match(bad.reason, /waitingOn 없음 또는 허용값 아님/);
+    assert.match(bad.reason, /→ 추천: waitingOn "오너 판단"/);
+    assert.deepEqual(decideWrite({ relPath: rel, content: content('오너 판단'), registryText: registry, vaultRoot: root }), { block: false });
+    assert.deepEqual(decideWrite({ relPath: rel, content: content('오너 확인 3건 뒤'), registryText: registry }), { block: false }, 'vaultRoot 없으면 예전처럼 구조만');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

@@ -104,3 +104,11 @@ test('doneWhen: job-ok·commit·file·launchd 조건을 주입하여 모두 판�
     assert.equal(parseDoneWhen(['job-ok:job since:2026-02-30']), null);
   } finally { f.close(); }
 });
+
+test('lintWorkDoc: supersedes가 금고를 가리키면 읽지 않고 문제로 보고(2026-10-24)', async () => {
+  const { lintWorkDoc: lint } = await import('./work-doc-freshness.mjs');
+  const { VAULT_REL: rel } = await import('./vault-paths.mjs');
+  const link = `[[${rel.adytonRoot}/x]]`;
+  const content = `---\nstatus: "완료"\nsupersedes: ["${link}"]\n---\n`;
+  assert.deepEqual(lint('/nonexistent-root', '40_Projects/p/Requests/2026-10-24 x.md', content), [`supersedes 대상이 금고임: ${link}`]);
+});
