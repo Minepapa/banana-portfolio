@@ -9,6 +9,7 @@ import { VAULT_REL, VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { buildJobHealthRecord, parseFrontmatter } from '../lib/job-health.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { createArgosIngest, readArgosConfig, tokenMatches, MAX_INGEST_BODY } from '../lib/argos-ingest.mjs';
+import { createArgosMedia } from '../lib/argos-media.mjs';
 
 export const CONFIG_PATH = process.env.OWNTRACKS_CONFIG_PATH || join(homedir(), '.config', 'banana-portfolio-v2', 'owntracks.json');
 const MAX_BODY = 64 * 1024;
@@ -66,7 +67,7 @@ export async function recordReceiverHealth({ now = new Date(), root = VAULT_PATH
   await writeStateFile(path, content);
 }
 export function createReceiver({ config, store = createLocationStore(), now = () => new Date(), health = recordReceiverHealth,
-  allowLoopback = false, argos = null, argosToken = null } = {}) {
+  allowLoopback = false, argos = null, argosToken = null, argosMedia = null } = {}) {
   if (!validHost(config?.host, { allowLoopback })) throw new Error('OwnTracks host는 Tailscale 주소여야 합니다');
   let lastHealth = 0;
   const server = createServer(async (request, response) => {
@@ -76,7 +77,7 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
       response.writeHead(code, { 'Content-Type': 'application/json' }); response.end(body);
     };
     // 아르고스(폰 수집 앱) 경로: 토큰 방식이 달라 OwnTracks 인증보다 먼저 나눈다(2026-10-23).
-    if (request.url === '/ingest' || request.url?.startsWith('/rules/')) {
+    if (request.url === '/ingest' || request.url?.startsWith('/rules/') || request.url?.startsWith('/media/')) {
       await handleArgos(request, response, send);
       return;
     }
@@ -146,6 +147,10 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
       return;
     }
     try {
+      if (request.url.startsWith('/media/')) {
+        await handleMedia(request, response, send);
+        return;
+      }
       if (request.url.startsWith('/rules/')) {
         if (request.method !== 'GET') { send(405, '[]'); return; }
         const result = argos.rules(request.url);
@@ -187,11 +192,34 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
     }
   }
 
+  // 미디어(결정 `아르고스-올림푸스-도입` 8항): 이어받기 가능한 조각 업로드. 파일 이름·내용은 로그에 남기지 않는다.
+  async function handleMedia(request, response, send) {
+    if (!argosMedia) { send(404, '[]'); return; }
+    const url = new URL(request.url, 'http://argos.local');
+    if (url.pathname === '/media/status') {
+      if (request.method !== 'GET') { send(405, '[]'); return; }
+      const result = await argosMedia.status(url.searchParams);
+      send(result.status, JSON.stringify(result.json));
+      return;
+    }
+    if (url.pathname !== '/media/upload') { send(404, '[]'); return; }
+    if (request.method !== 'PUT') { send(405, '[]'); return; }
+    const result = await argosMedia.upload(url.searchParams, request, request.headers['content-length']);
+    // 본문을 읽지 않고 거절했으면(크기·순서 오류) 남은 바이트 때문에 연결을 재사용하지 않는다.
+    if (result.status !== 200 && !request.readableEnded) {
+      response.setHeader?.('Connection', 'close');
+      response.once?.('finish', () => request.socket?.destroy());
+    }
+    if (result.json.state === 'complete' && result.json.stored) console.log(`[argos] 미디어 1건 보관 (${url.searchParams.get('kind')})`);
+    send(result.status, JSON.stringify(result.json));
+  }
+
   // 처리 함수에 닿기 전에 끊기는 연결(HTTP 파싱 오류 등)도 오류 코드만 남긴다.
   server.on('clientError', (error, socket) => {
     console.error(`[owntracks] 연결 오류 ${error.code || 'unknown'}`);
     if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
   });
+  // 느린 요청 방어(15초)는 미디어에도 그대로 둔다: 폰이 조각을 1MB로 작게 보내고, 끊기면 이어받는다.
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
   server.maxConnections = 20;
@@ -207,6 +235,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       config,
       argos: argosConfig ? createArgosIngest() : null,
       argosToken: argosConfig?.token ?? null,
+      // 병행 기간: Media/Inbox-Argos에만 받는다. 전환 때 argos.json의 mediaDest를 "Inbox"로 바꾼다.
+      argosMedia: argosConfig ? createArgosMedia({ dest: argosConfig.mediaDest ?? 'Inbox-Argos' }) : null,
     }).listen(config.port, config.host, () => console.log(`[owntracks] 수신 대기${argosConfig ? ' (아르고스 켜짐)' : ''}`));
   } catch (error) { console.error(`[owntracks] ${error.message}`); process.exitCode = 1; }
 }
