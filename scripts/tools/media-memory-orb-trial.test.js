@@ -1,16 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { MEDIA_FACES_PATHS } from '../lib/vault-paths.mjs';
 import { IMPORTANCE_GUIDE } from '../jobs/mine-athena-fields.mjs';
 import { allowedEmotions, parseEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
 import { fixture, fixtureCriteria as criteria } from '../lib/mine-emotion-criteria.fixture.js';
 const EMOTIONS = allowedEmotions('2026-10-16', criteria).map((emotion) => emotion.name);
 import { buildArgs, headlessJsonFailure } from '../lib/headless-claude.mjs';
 import { agentTitle } from '../lib/agent-registry.mjs';
-import { albumForMoment, buildPrompt as rawBuildPrompt, makeGrid, chooseTargets, choosePhotos, momentPhotos, verifyStripped,
+import { albumForMoment, buildPrompt as rawBuildPrompt, makeCopy, makeGrid, chooseTargets, choosePhotos, momentPhotos, verifyStripped,
   validateProposal as rawValidateProposal, ownerEmotions, parseClaudeResult, summarize,
   renderSheet as rawRenderSheet, run as rawRun } from './media-memory-orb-trial.mjs';
 
@@ -282,4 +283,40 @@ test('검증 실패 순간도 이미 소비한 토큰·사진 수·시간을 res
   assert.match(readFileSync(join(out, 'sheet-standalone.html'), 'utf8'), /data:image\/jpeg;base64,/);
   assert.equal(statSync(join(out, 'sheet-standalone.html')).mode & 0o777, 0o600);
   rmSync(out, { recursive: true });
+});
+
+test('makeCopy: 회전 태그대로 세워 768px로 줄이고 메타데이터를 지운다, HEIC도 연다', (t) => {
+  const python = MEDIA_FACES_PATHS.python;
+  if (!existsSync(python)) { t.skip('faces-venv 없음'); return; }
+  const out = mkdtempSync(join(tmpdir(), 'orb-copy-'));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const rotated = join(out, 'rotated.jpg');
+  const heic = join(out, 'photo.heic');
+  // 가로 1200x900 픽셀에 회전 태그 6(시계 방향 90도로 세워 보기) + GPS, 그리고 같은 크기 HEIC.
+  const generated = spawnSync(python, ['-c', `from PIL import Image\nfrom pillow_heif import register_heif_opener\nimport sys\nregister_heif_opener()\nexif = Image.Exif()\nexif[0x0112] = 6\nexif[0x8825] = {1: 'N', 2: (37.0, 30.0, 0.0)}\nImage.new('RGB', (1200, 900), 'red').save(sys.argv[1], exif=exif)\nImage.new('RGB', (1200, 900), 'blue').save(sys.argv[2])\n`, rotated, heic], { encoding: 'utf8' });
+  assert.equal(generated.status, 0, generated.stderr);
+  const size = (path) => JSON.parse(spawnSync('exiftool', ['-j', '-n', '-ImageWidth', '-ImageHeight', '-Orientation', path], { encoding: 'utf8' }).stdout)[0];
+  assert.deepEqual(makeCopy(rotated, join(out, 'rotated-copy.jpg')), { width: 900, height: 1200 });
+  const copy = size(join(out, 'rotated-copy.jpg'));
+  assert.deepEqual([copy.ImageWidth, copy.ImageHeight, copy.Orientation], [576, 768, undefined]);
+  assert.equal(verifyStripped(join(out, 'rotated-copy.jpg')), true);
+  assert.equal(statSync(join(out, 'rotated-copy.jpg')).mode & 0o777, 0o600);
+  assert.deepEqual(makeCopy(heic, join(out, 'heic-copy.jpg')), { width: 1200, height: 900 });
+  assert.deepEqual([size(join(out, 'heic-copy.jpg')).ImageWidth, size(join(out, 'heic-copy.jpg')).ImageHeight], [768, 576]);
+});
+
+test('makeCopy: 크기를 못 읽거나 사본 방향이 원본과 다르면 멈춘다', (t) => {
+  const out = mkdtempSync(join(tmpdir(), 'orb-copy-fail-'));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const target = join(out, 'copy.jpg');
+  const convert = (reply) => (command, args) => {
+    if (command === 'exiftool') return '';
+    writeFileSync(args.at(-1), 'jpeg');
+    return reply;
+  };
+  const inspect = (dims) => (command, args) => args.includes('-G1')
+    ? JSON.stringify([{ SourceFile: target, 'File:FileType': 'JPEG' }]) : JSON.stringify([dims]);
+  assert.throws(() => makeCopy('/src.jpg', target, convert('{"width":0,"height":10}'), inspect({ ImageWidth: 10, ImageHeight: 10 }), 30_000, 'py'), /크기 읽기 실패/);
+  assert.throws(() => makeCopy('/src.jpg', target, convert('{"width":900,"height":1200}'), inspect({ ImageWidth: 768, ImageHeight: 576 }), 30_000, 'py'), /방향이 원본과 다름/);
+  assert.deepEqual(makeCopy('/src.jpg', target, convert('{"width":900,"height":1200}'), inspect({ ImageWidth: 576, ImageHeight: 768 }), 30_000, 'py'), { width: 900, height: 1200 });
 });

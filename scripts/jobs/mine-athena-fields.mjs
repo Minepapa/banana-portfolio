@@ -19,6 +19,7 @@ import { loadAgent } from '../lib/agent-loader.mjs';
 import { parseJsonBlock, runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { allowedEmotions, emotionCriteriaPrompt, loadEmotionCriteria, validateEmotionResult } from '../lib/mine-emotion-criteria.mjs';
 import { OLLAMA_MODELS, runOllama, unloadOllamaModel } from '../lib/ollama-client.mjs';
+import { mineConversation } from '../lib/mine-record-input.mjs';
 import { EMOTION_REQUIRED, appendJudgment, assertEngine, emotionProperties, judgedNotes, noteKeys, readJudgments, validScores } from '../lib/mine-judgment.mjs';
 
 // 인사이드 아웃 감정 어휘(아테나 헌장). 이 밖의 값은 쓰지 않는다.
@@ -35,8 +36,9 @@ export const SETTLE_DAYS = 2;
 export const MAX_NOTES = 30;
 export const MAX_NOTE_CHARS = 2_500;
 export const MAX_JOB_MS = 30 * 60_000;
-// 프롬프트 판. 0.0 = 기억 판단 체계 §10.5 초안(v0.1) 전, 지금까지 쓰던 프롬프트. 프롬프트를 바꾸면 올린다.
-export const PROMPT_VERSION = 'athena-fields/0.0';
+// 프롬프트 판(엔진별). 0.0 = 기억 판단 체계 §10.5 초안(v0.1) 전. Claude는 지금까지 쓰던 프롬프트,
+// Ollama는 같은 규칙에 입력만 미네 발화로 추린 것(1단계 ④). 프롬프트나 입력을 바꾸면 올린다.
+export const PROMPT_VERSIONS = Object.freeze({ claude: 'athena-fields/0.0', ollama: 'athena-fields/ollama-0.0' });
 export const JUDGMENTS_FILE = 'athena-judgments.jsonl';
 
 // 판단 기록은 볼트 밖(Media/MemoryOrb). 시험용 볼트(임시 폴더)인데 out을 따로 주지 않았으면
@@ -143,7 +145,18 @@ export function ownerMemoEmotions(content) {
   return [...new Set(explicit.split(/[,，·\s]+/).filter(Boolean))];
 }
 
-export function buildPrompt(items, { reclassify = false, criteria = loadEmotionCriteria(), signalTrend } = {}) {
+// input 'mine'(Ollama): 본문 대신 미네 발화와 바로 앞 맥락 한 줄만(mine-record-input), 오너 메모는 따로.
+function recordText(item, input) {
+  if (input !== 'mine') return noteText(item.content);
+  const { text, mode } = mineConversation(item.content);
+  const memo = item.content.split(/^## 오너 메모\s*$/m)[1]?.split(/^## /m)[0].trim() ?? '';
+  const heading = { mine: '전사(미네 발화와 그 바로 앞 다른 화자 한 줄만 추림):', whole: '전사(화자 표시 없음, 본문 전체):',
+    mixed: '전사(화자 표시된 구간은 미네 발화와 그 바로 앞 한 줄만, 화자 표시 없는 구간은 전체):' }[mode];
+  return [heading, text,
+    memo ? `오너 메모: ${memo.slice(0, 500)}` : ''].filter(Boolean).join('\n');
+}
+
+export function buildPrompt(items, { reclassify = false, criteria = loadEmotionCriteria(), signalTrend, input = 'full' } = {}) {
   const notes = items.map((item, index) => [
     `### ${index + 1}. ${item.rel.split('/').pop().replace(/\.md$/, '')}`,
     `날짜 ${item.date} · 미네 만 ${mineAge(item.occurred)}세`,
@@ -151,7 +164,7 @@ export function buildPrompt(items, { reclassify = false, criteria = loadEmotionC
     item.fields?.convKind === '통화' ? '통화 규칙: 대화 형식의 미네: 줄과 확인된 미네 구간 소리만 감정 근거. 나: 등 다른 화자의 말은 맥락 해석에만 쓴다.' : '',
     `오너 메모 감정: ${ownerMemoEmotions(item.content, criteria).join('·') || '(없음)'}`,
     item.audioCues?.text ?? '',
-    noteText(item.content),
+    recordText(item, input),
   ].filter((line) => line !== '').join('\n')).join('\n\n');
   const phases = new Map();
   for (const [index, item] of items.entries()) {
@@ -331,6 +344,7 @@ function applyInitialFields(content, fields, age, today) {
 }
 
 async function reclassificationProposals(batch, decide, criteria, signalTrend, cooldown, { engine = 'claude', deadline } = {}) {
+  const input = engine === 'ollama' ? 'mine' : 'full';
   const proposals = new Map();
   for (const initial of [true, false]) {
     const group = batch.map((item, index) => ({ item, index }))
@@ -339,7 +353,7 @@ async function reclassificationProposals(batch, decide, criteria, signalTrend, c
     if (cooldown()) return null;
     const items = group.map(({ item }) => item);
     const parsed = await judgeItems(items, { engine, decide, reclassify: !initial, deadline,
-      prompt: (subset) => buildPrompt(subset, { reclassify: !initial, criteria, signalTrend: initial ? signalTrend : undefined }),
+      prompt: (subset) => buildPrompt(subset, { reclassify: !initial, criteria, signalTrend: initial ? signalTrend : undefined, input }),
       validate: (raw, subset) => validateProposals(raw, subset, { reclassify: !initial, criteria }) });
     for (const [index, { index: originalIndex }] of group.entries()) {
       proposals.set(originalIndex + 1, parsed.get(index + 1));
@@ -408,7 +422,7 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   // (그래서 Claude 재분류는 dry-run에서도 헌장을 읽는다 — 2026-10-24부터).
   const agent = engine === 'claude' ? charter ?? loadAgent('athena', { fallbackModel: 'sonnet' }) : null;
   const version = { engine, model: engine === 'ollama' ? OLLAMA_MODELS.text : agent.model,
-    criteriaRef: criteria.ref ?? null, promptVersion: PROMPT_VERSION };
+    criteriaRef: criteria.ref ?? null, promptVersion: PROMPT_VERSIONS[engine] };
   const targets = findTargets(root, { reclassify: true, ids, kind, includeUnclassified,
     skipped: state.skipped ?? {}, cutoff: today, judged: judgedNotes(readJudgments(recordPath), version) });
   const batch = targets.slice(0, maxNotes);
@@ -581,7 +595,7 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
     const agent = engine === 'claude' ? charter ?? loadAgent('athena', { fallbackModel: 'sonnet' }) : null;
     if (agent?.warning) output.error(`[mine-athena-fields] ${agent.warning}`);
     const version = { engine, model: engine === 'ollama' ? OLLAMA_MODELS.text : agent.model,
-      criteriaRef: criteria.ref ?? null, promptVersion: PROMPT_VERSION };
+      criteriaRef: criteria.ref ?? null, promptVersion: PROMPT_VERSIONS[engine] };
     const decide = judge ?? (engine === 'ollama' ? ollamaDecision({ criteria, output, invoke })
       : (prompt) => restrictedDecision(prompt, agent, { output }));
     const signalTrendBefore = recentSignalTrend(root, today, criteria);
@@ -590,7 +604,7 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
     let proposals;
     try {
       proposals = await judgeItems(batch, { engine, decide, deadline: Date.now() + MAX_JOB_MS,
-        prompt: (items) => buildPrompt(items, { criteria, signalTrend: signalTrendBefore }),
+        prompt: (items) => buildPrompt(items, { criteria, signalTrend: signalTrendBefore, input: engine === 'ollama' ? 'mine' : 'full' }),
         validate: (raw, items) => validateProposals(raw, items, { criteria }) });
     } finally {
       if (engine === 'ollama' && !judge) await unload(OLLAMA_MODELS.text).catch((error) => output.error(`[mine-athena-fields] 모델 내리기 실패: ${error.message}`));

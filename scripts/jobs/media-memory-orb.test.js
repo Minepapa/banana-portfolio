@@ -7,7 +7,7 @@ import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { fixtureCriteria } from '../lib/mine-emotion-criteria.fixture.js';
-import { MAX_JOB_MS, NIGHTLY_LIMIT, ORB_FIELDS, PROMPT_VERSION, applyOrbFields, attemptState, ollamaPhotoDecision, orbSchema, readRuns,
+import { MAX_JOB_MS, NIGHTLY_LIMIT, ORB_FIELDS, PROMPT_VERSIONS, applyOrbFields, attemptState, ollamaPhotoDecision, orbSchema, readRuns,
   requireRegistryFields, run, upsertOrbIndex } from './media-memory-orb.mjs';
 import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
 
@@ -114,7 +114,7 @@ function options(fixture, overrides = {}) {
     rules: [{ type: 'media', pathRegex: /^20_Records\/24_Media\/2020\//,
       titleRegex: null, required: { bundle: [], extra: [] } }],
     charter: { model: 'sonnet', systemPrompt: '' }, photoScores: new Map(), visionRows: new Map(),
-    copyPhoto: () => {}, gridPhoto: () => {}, output: { log() {}, error() {} },
+    copyPhoto: () => {}, gridPhoto: () => {}, output: { log() {}, error() {} }, mineFaces: new Map(),
     ...overrides };
 }
 
@@ -266,10 +266,10 @@ test('Ollama 사진 판단: 이미지 모델에 격자 사본을 base64로 붙�
   const calls = [];
   const decide = ollamaPhotoDecision({ criteria: fixtureCriteria, output: { log() {} }, readImage: (path) => `b64:${path}`,
     invoke: async (request) => { calls.push(request); return { json: answer, usage: { promptTokens: 900, outputTokens: 80 } }; } });
-  const measured = await decide('프롬프트', '/copies', 60_000, { imagePath: '/copies/a-grid.jpg', recordDate: '2020-01-01' });
+  const measured = await decide('프롬프트', '/copies', 60_000, { imagePaths: ['/copies/a-1.jpg', '/copies/a-2.jpg'], recordDate: '2020-01-01' });
   assert.deepEqual(measured, { result: answer, inputTokens: 900, outputTokens: 80, usage: { promptTokens: 900, outputTokens: 80 } });
   assert.equal(calls[0].model, OLLAMA_MODELS.vision);
-  assert.deepEqual(calls[0].images, ['b64:/copies/a-grid.jpg']);
+  assert.deepEqual(calls[0].images, ['b64:/copies/a-1.jpg', 'b64:/copies/a-2.jpg']);
   assert.equal(calls[0].timeoutMs, 60_000);
   assert.deepEqual(calls[0].schema, schema);
 });
@@ -287,9 +287,9 @@ test('run --engine=ollama: 쿨다운과 무관, 판 이름을 색인·runs에 �
   ];
   const summary = await run(options(fixture, { engine: 'ollama', cooldown: () => true, criteria: { ...fixtureCriteria, ref: '미네-감정-분류@시험' },
     unload: async () => { unloaded += 1; },
-    judge: async (prompt, _cwd, _timeout, { imagePath, recordDate }) => {
+    judge: async (prompt, _cwd, _timeout, { imagePaths, recordDate }) => {
       prompts.push(prompt);
-      assert.match(imagePath, /-grid\.jpg$/);
+      assert.match(imagePaths[0], /-1\.jpg$/);
       assert.equal(recordDate, '2020-01-01');
       return replies[prompts.length - 1]();
     } }));
@@ -301,14 +301,14 @@ test('run --engine=ollama: 쿨다운과 무관, 판 이름을 색인·runs에 �
   assert.equal(summary.deferred.length, 1);
   assert.equal(summary.unavailable, true);
   assert.equal(unloaded, 0, '시험 주입이면 모델을 내리지 않는다');
-  const version = { engine: 'ollama', model: OLLAMA_MODELS.vision, criteriaRef: '미네-감정-분류@시험', promptVersion: PROMPT_VERSION };
+  const version = { engine: 'ollama', model: OLLAMA_MODELS.vision, criteriaRef: '미네-감정-분류@시험', promptVersion: PROMPT_VERSIONS.ollama };
   const [orb] = readFileSync(join(fixture.out, 'orbs.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   const { at, ...judgment } = orb.judgment;
   assert.ok(Date.parse(at));
   assert.deepEqual(judgment, { ...version, scores: { 기쁨: 0.7, 슬픔: 0.6 } });
   const runs = readRuns(join(fixture.out, 'runs.jsonl'));
   assert.deepEqual(runs.map((row) => row.status), ['reserved', 'written', 'reserved', 'error', 'reserved', 'deferred']);
-  assert.ok(runs.every((row) => row.engine === 'ollama' && row.model === OLLAMA_MODELS.vision && row.promptVersion === PROMPT_VERSION));
+  assert.ok(runs.every((row) => row.engine === 'ollama' && row.model === OLLAMA_MODELS.vision && row.promptVersion === PROMPT_VERSIONS.ollama));
   assert.equal(runs[3].formatFailure, true);
   await assert.rejects(run(options(fixture, { engine: 'gpt' })), /판단 엔진/);
 });
@@ -330,6 +330,20 @@ test('Ollama 실제 경로: 격자를 읽어 붙이고 끝나면 이미지 모�
   assert.equal(summary.failed.length, 1);
   assert.equal(summary.written, 1);
   assert.equal(summary.unavailable, undefined);
-  assert.ok(images.every((path) => path.endsWith('-grid.jpg')));
+  assert.ok(images.every((path) => /-1\.jpg$/.test(path)), '격자 대신 사진 사본을 붙인다');
   assert.deepEqual(unloaded, [OLLAMA_MODELS.vision]);
+});
+
+test('Ollama 사진 입력: 사진마다 세운 원본 크기로 미네 얼굴 위치를 붙이고 격자는 만들지 않는다', async (t) => {
+  const fixture = setup(t, 1);
+  const prompts = [];
+  let grids = 0;
+  await run(options(fixture, { engine: 'ollama', mineFaces: new Map([[fixture.candidates[0].id, { i: 0, score: 0.9, bbox: [1400, 1800, 1600, 2200] }]]),
+    copyPhoto: () => ({ width: 3024, height: 4032 }), gridPhoto: () => { grids += 1; },
+    judge: async (prompt) => { prompts.push(prompt); return { result: answer, inputTokens: 1, outputTokens: 1, usage: {} }; } }));
+  assert.equal(grids, 0);
+  const data = JSON.parse(prompts[0].match(/<note-data>\n([\s\S]*?)\n<\/note-data>/)[1]);
+  assert.deepEqual(data.photoCopies, [{ number: 1, reason: data.photoCopies[0].reason,
+    mineFace: '미네 얼굴: 한가운데 (가로 0.46~0.53, 세로 0.45~0.55, 사진 전체 0~1 기준)' }]);
+  assert.equal(JSON.stringify(data).includes('copies'), false, '파일 경로를 넣지 않는다');
 });

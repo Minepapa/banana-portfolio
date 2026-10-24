@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import { fixture as criteriaFixture, fixtureCriteria as criteria } from '../lib/mine-emotion-criteria.fixture.js';
 import { parseEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
 import { applyFields, buildPrompt, defaultJudgmentsPath, failed, findTargets, judgeItems, mineAge, noteText, ollamaDecision, proposalSchema, recentSignalTrend, reclassify,
-  restrictedDecision, run, validateProposals, PROMPT_VERSION, STATE_REL } from './mine-athena-fields.mjs';
+  restrictedDecision, run, validateProposals, PROMPT_VERSIONS, STATE_REL } from './mine-athena-fields.mjs';
 import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
@@ -546,7 +546,7 @@ test('run --engine=ollama: 쿨다운과 무관하게 판단하고, 판 이름을
   const rows = readFileSync(join(root, '.mine-judgments', 'athena-judgments.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(rows.map((row) => [row.rel.split('/').pop(), row.status]), [['2026-10-15 미네 통화.md', 'applied'], ['2026-10-16 미네 통화.md', 'retry']]);
   assert.deepEqual({ engine: rows[0].engine, model: rows[0].model, criteriaRef: rows[0].criteriaRef, promptVersion: rows[0].promptVersion, mode: rows[0].mode },
-    { engine: 'ollama', model: OLLAMA_MODELS.text, criteriaRef: '미네-감정-분류@시험', promptVersion: PROMPT_VERSION, mode: 'initial' });
+    { engine: 'ollama', model: OLLAMA_MODELS.text, criteriaRef: '미네-감정-분류@시험', promptVersion: PROMPT_VERSIONS.ollama, mode: 'initial' });
   assert.deepEqual(rows[0].scores, { 기쁨: 0.8, 슬픔: 0.1 });
   assert.equal(rows[0].fields.primaryEmotion, '기쁨');
   // 범위 밖 점수는 검증 실패로 쓰지 않는다.
@@ -572,7 +572,7 @@ test('재분류 같은 판 거르기: retry는 다시 고르고, --ids는 같은
   const moved = `${C}/2026/2026-10-13 미네 녹음 새이름.md`;
   const classified = (extra = '') => note({ extra: `\nemotions: ["기쁨"]\nprimaryEmotion: "기쁨"${extra}` }).replace('convKind: "통화"', 'convKind: "녹음"');
   put(done, classified()); put(retry, classified()); put(moved, classified(`\nmovedFrom: "[[${C}/2026/2026-10-13 미네 녹음]]"`));
-  const version = { engine: 'claude', model: 'sonnet', criteriaRef: null, promptVersion: PROMPT_VERSION };
+  const version = { engine: 'claude', model: 'sonnet', criteriaRef: null, promptVersion: PROMPT_VERSIONS.claude };
   writeFileSync(join(out, 'athena-judgments.jsonl'), [
     { rel: done, status: 'same', ...version }, { rel: retry, status: 'retry', ...version },
     { rel: `${C}/2026/2026-10-13 미네 녹음.md`, status: 'applied', ...version }].map((row) => JSON.stringify(row)).join('\n') + '\n');
@@ -600,4 +600,15 @@ test('Ollama 실제 경로: 판단 뒤 텍스트 모델을 한 번 내리고, �
   assert.equal(summary.recordErrors, 2);
   assert.equal(failed(summary), true);
   assert.ok(errors.some((line) => /모델 내리기 실패/.test(line)));
+});
+
+test('Ollama 프롬프트 입력은 미네 발화로 추리고, Claude는 지금 본문 그대로', () => {
+  const item = { rel: `${C}/2026/2026-10-15 미네 통화.md`, date: '2026-10-15', occurred: '2026-10-15T19:00:00+09:00',
+    fields: { convKind: '통화' }, content: note({ body: '나: 숙제 했어?\n나: 오늘 뭐 했어?\n미네: 그네 탔어\n원본: Archive/a.m4a' }).replace('## 오너 메모\n', '## 오너 메모\n소풍 다녀온 날\n') };
+  const local = buildPrompt([item], { criteria, input: 'mine' });
+  assert.match(local, /전사\(미네 발화와 그 바로 앞 다른 화자 한 줄만 추림\):\n나: 오늘 뭐 했어\?\n미네: 그네 탔어/);
+  assert.doesNotMatch(local, /숙제 했어|원본: Archive/);
+  assert.match(local, /오너 메모: 소풍 다녀온 날/);
+  const claude = buildPrompt([item], { criteria });
+  assert.match(claude, /나: 숙제 했어\?/);
 });

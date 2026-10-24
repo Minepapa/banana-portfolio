@@ -14,6 +14,7 @@ import { parseJsonBlock, runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
 import { OLLAMA_MODELS, runOllama, unloadOllamaModel } from '../lib/ollama-client.mjs';
 import { EMOTION_REQUIRED, assertEngine, emotionProperties, validScores } from '../lib/mine-judgment.mjs';
+import { faceBoxText, loadMineFaces } from '../lib/mine-record-input.mjs';
 import { loadCandidates, hasOrb } from '../lib/mine-memory-candidates.mjs';
 import { mineAge, occurredDate } from './mine-athena-fields.mjs';
 import { choosePhotos, makeCopy, makeGrid, buildPrompt, ownerEmotions, parseClaudeResult, validateProposal } from '../tools/media-memory-orb-trial.mjs';
@@ -21,9 +22,12 @@ import { choosePhotos, makeCopy, makeGrid, buildPrompt, ownerEmotions, parseClau
 export const NIGHTLY_LIMIT = 50;
 export const MAX_JOB_MS = 90 * 60_000;
 export const MAX_CALL_MS = 3 * 60_000;
+// 로컬 이미지 모델은 맥 미니에서 사진 한 장 판단에 2분 넘게 걸린다(2026-10-24 실측: 격자 1장 146초).
+export const OLLAMA_CALL_MS = 10 * 60_000;
 export const RUN_ROOT = join(homedir(), 'Pantheon', 'Media', 'MemoryOrb');
-// 프롬프트 판. 0.0 = 기억 판단 체계 §10.5 초안(v0.1) 전, 지금까지 쓰던 프롬프트. 프롬프트를 바꾸면 올린다.
-export const PROMPT_VERSION = 'memory-orb/0.0';
+// 프롬프트 판(엔진별). 0.0 = 기억 판단 체계 §10.5 초안(v0.1) 전. Claude는 지금까지 쓰던 격자 한 장 프롬프트,
+// Ollama는 세운 사진 최대 3장 + 사진마다 미네 얼굴 위치(1단계 ④). 프롬프트나 입력을 바꾸면 올린다.
+export const PROMPT_VERSIONS = Object.freeze({ claude: 'memory-orb/0.0', ollama: 'memory-orb/ollama-0.0' });
 export const ORB_FIELDS = Object.freeze([
   'emotions', 'primaryEmotion', 'emotionIntensity', 'emotionEvidence', 'secondFilmSignal',
   'importance', 'coreMemoryCandidate', 'mineAge',
@@ -51,10 +55,10 @@ export function orbSchema(recordDate, criteria) {
         properties: { value: { type: 'boolean' }, reason: text(200) } } } };
 }
 
-// Ollama 이미지 판단. 격자 사본을 base64로 붙이고(집 밖으로 나가지 않음), Claude 결과와 같은 모양으로 돌려준다.
+// Ollama 이미지 판단. 세운 사진 사본들을 base64로 붙이고(집 밖으로 나가지 않음), Claude 결과와 같은 모양으로 돌려준다.
 export function ollamaPhotoDecision({ criteria, invoke = runOllama, readImage = (path) => readFileSync(path).toString('base64'), output = console } = {}) {
-  return async (prompt, _cwd, timeoutMs, { imagePath, recordDate }) => {
-    const { json, usage } = await invoke({ model: OLLAMA_MODELS.vision, prompt, images: [readImage(imagePath)],
+  return async (prompt, _cwd, timeoutMs, { imagePaths, recordDate }) => {
+    const { json, usage } = await invoke({ model: OLLAMA_MODELS.vision, prompt, images: imagePaths.map(readImage),
       schema: orbSchema(recordDate, criteria), timeoutMs, usageLogger: (line) => output.log(`[media-memory-orb] ${line}`) });
     return { result: json, inputTokens: usage.promptTokens ?? 0, outputTokens: usage.outputTokens ?? 0, usage };
   };
@@ -151,7 +155,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   out = RUN_ROOT, dryRun = false, limit = NIGHTLY_LIMIT, candidates,
   judge, cooldown = cooldownActive, copyPhoto = makeCopy, gridPhoto = makeGrid,
   write = writeAtomic, rules, registryText, criteria, charter, photoScores, visionRows,
-  output = console, now = () => Date.now(), engine = 'claude', unload = unloadOllamaModel, invoke, readImage } = {}) {
+  output = console, now = () => Date.now(), engine = 'claude', unload = unloadOllamaModel, invoke, readImage, mineFaces } = {}) {
   assertEngine(engine);
   const runStarted = now();
   const quota = engine === 'claude' ? cooldown : () => false; // 쿨다운은 Claude 구독 사용량 가드다.
@@ -168,7 +172,10 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   const agent = engine === 'claude' ? charter ?? loadAgent('athena', { fallbackModel: 'sonnet' }) : null;
   // 판단 기록: 어느 엔진·모델·기준·프롬프트 판으로 판단했나(구슬 색인 행과 runs.jsonl에 남김).
   const version = { engine, model: engine === 'ollama' ? OLLAMA_MODELS.vision : agent.model,
-    criteriaRef: activeCriteria.ref ?? null, promptVersion: PROMPT_VERSION };
+    criteriaRef: activeCriteria.ref ?? null, promptVersion: PROMPT_VERSIONS[engine] };
+  // 미네 얼굴 상자는 Ollama 입력에만 쓴다(Claude 프롬프트는 그대로).
+  const faces = engine === 'ollama'
+    ? mineFaces ?? loadMineFaces({ ids: selected.flatMap((item) => item.photos.map((photo) => photo.id)) }) : new Map();
   const decide = judge ?? (engine === 'ollama' ? ollamaPhotoDecision({ criteria: activeCriteria, output, ...(invoke ? { invoke } : {}), ...(readImage ? { readImage } : {}) })
     : (prompt, cwd, timeoutMs) => runHeadlessClaude(prompt, agent.model, `Read(/${cwd}/**)`, {
       appendSystemPrompt: agent.systemPrompt, lean: true, tools: 'Read', cwd, timeoutMs, maxTurns: 2,
@@ -202,8 +209,10 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         for (const photo of chosen) if (!existsSync(resolve(mediaRoot, photo.path))) {
           throw new Error(`대표 사진 원본 없음: ${photo.path}`);
         }
-        buildPrompt(item, [{ path: join(copyDir, `${item.id}-grid.jpg`),
-          reason: chosen.map((photo, index) => `${index + 1}번 ${photo.reason}`).join('; ') }], activeCriteria, { engine });
+        buildPrompt(item, engine === 'ollama'
+          ? chosen.map((photo, index) => ({ path: join(copyDir, `${item.id}-${index + 1}.jpg`), reason: photo.reason }))
+          : [{ path: join(copyDir, `${item.id}-grid.jpg`), reason: chosen.map((photo, index) => `${index + 1}번 ${photo.reason}`).join('; ') }],
+        activeCriteria, { engine });
         output.log(`${item.id} ${item.title} 점수 ${item.score ?? 0}: ${(item.reasons ?? []).map((reason) => `${reason.signal}(${reason.evidence})`).join('; ')}`);
       } catch (error) {
         summary.failed.push({ id: item.id, reason: error.message });
@@ -248,13 +257,15 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         for (const [index, photo] of chosen.entries()) {
           if (now() - runStarted >= MAX_JOB_MS) throw new Error('잡 시간 상한');
           const path = join(copyDir, `${item.id}-${index + 1}.jpg`);
-          copyPhoto(resolve(mediaRoot, photo.path), path, undefined, undefined, Math.max(1, MAX_JOB_MS - (now() - runStarted)));
-          copies.push({ path, sourcePath: photo.path, reason: photo.reason });
+          const size = copyPhoto(resolve(mediaRoot, photo.path), path, undefined, undefined, Math.max(1, MAX_JOB_MS - (now() - runStarted)));
+          copies.push({ path, sourcePath: photo.path, reason: photo.reason, face: faceBoxText(faces.get(photo.id)?.bbox, size) });
         }
         const gridPath = join(copyDir, `${item.id}-grid.jpg`);
         if (now() - runStarted >= MAX_JOB_MS) throw new Error('잡 시간 상한');
-        gridPhoto(copies, gridPath, undefined, undefined, Math.max(1, MAX_JOB_MS - (now() - runStarted)));
-        const prompt = buildPrompt(item, [{ path: gridPath, reason: copies.map((copy, index) => `${index + 1}번 ${copy.reason}`).join('; ') }], activeCriteria, { engine });
+        // Claude는 격자 한 장을 Read로 본다. Ollama는 사본을 한 장씩 붙이므로 격자를 만들지 않는다.
+        if (engine === 'claude') gridPhoto(copies, gridPath, undefined, undefined, Math.max(1, MAX_JOB_MS - (now() - runStarted)));
+        const prompt = buildPrompt(item, engine === 'ollama' ? copies
+          : [{ path: gridPath, reason: copies.map((copy, index) => `${index + 1}번 ${copy.reason}`).join('; ') }], activeCriteria, { engine });
         if (now() - runStarted >= MAX_JOB_MS) throw new Error('잡 시간 상한');
         const latestAttempts = attemptState(readRuns(logPath), now());
         if (latestAttempts.count >= Math.min(NIGHTLY_LIMIT, limit) || latestAttempts.reserved.has(item.id)) break;
@@ -263,8 +274,8 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         attempts.count += 1;
         attempts.reserved.add(item.id);
         attemptedThisRun += 1;
-        const answer = await decide(prompt, copyDir, Math.min(MAX_CALL_MS, MAX_JOB_MS - (now() - runStarted)),
-          { imagePath: gridPath, recordDate: item.date ?? occurredDate(item.fields.occurred) });
+        const answer = await decide(prompt, copyDir, Math.min(engine === 'ollama' ? OLLAMA_CALL_MS : MAX_CALL_MS, MAX_JOB_MS - (now() - runStarted)),
+          { imagePaths: engine === 'ollama' ? copies.map((copy) => copy.path) : [gridPath], recordDate: item.date ?? occurredDate(item.fields.occurred) });
         measured = engine === 'ollama' ? answer : parseClaudeResult(answer);
         const owner = ownerEmotions(item.fields, item.memo);
         const proposal = validateProposal(measured.result, owner, item.fields.primaryEmotion, item.date, activeCriteria);
