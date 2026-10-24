@@ -5,10 +5,10 @@
  * 판단 근거가 없다고 아테나가 답한 노트는 상태 파일에 남겨 다시 묻지 않는다.
  * 텔레그램은 보내지 않는다. 결과는 로그와 상태 파일에 남는다(요청 2026-10-14 미네 녹음 아테나 필드 주간 묶음).
  */
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { attachAudioCues } from '../lib/media-audio-cues.mjs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL, categoryLink } from '../lib/vault-paths.mjs';
 import { assertFrontmatterRoundTrip, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -18,6 +18,8 @@ import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { parseJsonBlock, runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { allowedEmotions, emotionCriteriaPrompt, loadEmotionCriteria, validateEmotionResult } from '../lib/mine-emotion-criteria.mjs';
+import { OLLAMA_MODELS, runOllama, unloadOllamaModel } from '../lib/ollama-client.mjs';
+import { EMOTION_REQUIRED, appendJudgment, assertEngine, emotionProperties, judgedNotes, noteKeys, readJudgments, validScores } from '../lib/mine-judgment.mjs';
 
 // 인사이드 아웃 감정 어휘(아테나 헌장). 이 밖의 값은 쓰지 않는다.
 export const IMPORTANCE_GUIDE = '1 일상 안부, 3 기억할 만한 일, 5 평생 남을 핵심 기억(첫 경험·큰 사건). 대부분은 1~3이다.';
@@ -33,6 +35,18 @@ export const SETTLE_DAYS = 2;
 export const MAX_NOTES = 30;
 export const MAX_NOTE_CHARS = 2_500;
 export const MAX_JOB_MS = 30 * 60_000;
+// 프롬프트 판. 0.0 = 기억 판단 체계 §10.5 초안(v0.1) 전, 지금까지 쓰던 프롬프트. 프롬프트를 바꾸면 올린다.
+export const PROMPT_VERSION = 'athena-fields/0.0';
+export const JUDGMENTS_FILE = 'athena-judgments.jsonl';
+
+// 판단 기록은 볼트 밖(Media/MemoryOrb). 시험용 볼트(임시 폴더)인데 out을 따로 주지 않았으면
+// 그 임시 폴더 안에 두어, 진짜 기록에 시험 줄이 섞이지 않게 한다.
+// 진짜 볼트인지는 실제 경로로 가린다(끝 슬래시·옛 링크 ~/banana-vault로 불러도 볼트 안에 쓰지 않게).
+export function defaultJudgmentsPath(root, out = RECLASSIFY_ROOT) {
+  const real = (path) => { try { return realpathSync(resolve(path)); } catch { return resolve(path); } };
+  if (out === RECLASSIFY_ROOT && real(root) !== real(VAULT_PATHS.root)) return join(root, '.mine-judgments', JUDGMENTS_FILE);
+  return join(out, JUDGMENTS_FILE);
+}
 
 const kstDate = (now) => new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
 const readJson = (path, fallback) => existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : fallback;
@@ -88,7 +102,8 @@ function listNotes(root, rel) {
 }
 
 // 대상: 201 미네 category, 아테나 필드가 하나도 없음, 건너뜀 기록 없음, cutoff(KST) 이전 날짜.
-export function findTargets(root, { skipped = {}, cutoff, reclassify = false, ids, kind = '녹음', includeUnclassified = false } = {}) {
+// judged: 지금 판으로 이미 판단한 노트 경로 — 재분류에서 다시 묻지 않는다.
+export function findTargets(root, { skipped = {}, cutoff, reclassify = false, ids, kind = '녹음', includeUnclassified = false, judged = new Set() } = {}) {
   const targets = [];
   for (const rel of listNotes(root, CONVERSATIONS_REL)) {
     const content = readFileSync(join(root, rel), 'utf8');
@@ -98,6 +113,8 @@ export function findTargets(root, { skipped = {}, cutoff, reclassify = false, id
     const category = Array.isArray(fm.category) ? fm.category : [fm.category];
     if (!category.includes(MINE_CATEGORY)) continue;
     if (reclassify) {
+      // --ids로 고른 노트는 오너·운영자가 일부러 다시 묻는 것이라 같은 판이어도 고른다.
+      if (!ids && noteKeys(rel, fm).some((key) => judged.has(key))) continue;
       const noteIds = [...content.matchAll(/<!-- media-transcribe:id ([a-f0-9]{16}) -->/gi)].map((match) => match[1]);
       if (!['녹음', '통화'].includes(fm.convKind) || kind !== 'all' && fm.convKind !== kind
         // 기본은 이미 분류된 노트만 다시 분류한다. --include-unclassified면 감정 필드가 없는 노트도 처음 분류한다
@@ -193,10 +210,74 @@ export function validateProposals(raw, items, { reclassify = false, criteria = l
         ownerEmotions: ownerMemoEmotions(items[id - 1].content, criteria), criteria });
     } catch (error) { problems.push(error.message); }
     if (!reclassify && (!Number.isInteger(entry.importance) || entry.importance < 1 || entry.importance > 5)) problems.push('importance 1~5 아님');
+    let scores = null;
+    try { scores = validScores(entry.scores, criteria); } catch (error) { problems.push(error.message); }
     result.set(id, problems.length ? { error: problems.join(', ') }
-      : { fields: { ...emotionFields, ...(!reclassify ? { importance: entry.importance } : {}) } });
+      : { fields: { ...emotionFields, ...(!reclassify ? { importance: entry.importance } : {}) }, ...(scores ? { scores } : {}) });
   }
   return result;
+}
+
+// Ollama 답 모양 — buildPrompt의 출력 예시와 같은 배열. skip은 넣지 않는다: 로컬 모델이 프롬프트 예시의
+// skip 문구를 따라 쓰면 판단할 수 있는 노트가 상태 파일에 영구 제외되기 때문이다(2026-10-24 리뷰).
+// 판단할 근거가 없으면 빈 감정·강도 null로 답한다.
+export function proposalSchema(items, { reclassify = false, criteria = loadEmotionCriteria() } = {}) {
+  const dates = new Set(items.map((item) => item.date));
+  if (dates.size !== 1) throw new Error('Ollama 답 모양은 한 날짜 기록만 만든다');
+  const required = ['id', ...EMOTION_REQUIRED, ...(reclassify ? [] : ['importance'])];
+  return { type: 'array', minItems: items.length, maxItems: items.length, items: {
+    type: 'object', additionalProperties: false, required,
+    properties: { id: { type: 'integer', minimum: 1, maximum: items.length }, ...emotionProperties(items[0].date, criteria),
+      ...(reclassify ? {} : { importance: { type: 'integer', minimum: 1, maximum: 5 } }) },
+  } };
+}
+
+// Ollama 판단: 기록 하나에 한 번(§3) 부르고, 검증은 Claude와 같은 길(parseJsonBlock → validateProposals)로 보낸다.
+export function ollamaDecision({ criteria, invoke = runOllama, output = console } = {}) {
+  return async (prompt, { items, reclassify = false }) => {
+    const { json } = await invoke({ model: OLLAMA_MODELS.text, prompt, schema: proposalSchema(items, { reclassify, criteria }),
+      usageLogger: (line) => output.log(`[mine-athena-fields] ${line}`) });
+    return JSON.stringify(json);
+  };
+}
+
+// 묶음 판단. Claude는 묶음을 한 번에 묻고 실패하면 그대로 던진다(지금까지 동작).
+// Ollama는 기록 하나씩 — 형식 실패는 그 기록만 재시도로 두고(formatFailure, §10.4의 2회 실패 집계용),
+// Ollama가 멈추면(unavailable) 남은 기록을 연기하고 그 회차를 끝낸다(조용히 Claude로 넘기지 않음).
+export async function judgeItems(items, { engine, decide, prompt, validate, reclassify = false, deadline = Infinity, now = Date.now }) {
+  if (engine === 'claude') return validate(parseJsonBlock(await decide(prompt(items), { items, reclassify })), items);
+  const proposals = new Map();
+  for (const [index, item] of items.entries()) {
+    if (now() >= deadline) { proposals.set(index + 1, { error: '잡 시간 상한', deferred: true }); continue; }
+    try {
+      const single = validate(parseJsonBlock(await decide(prompt([item]), { items: [item], reclassify })), [item]);
+      proposals.set(index + 1, single.get(1) ?? { error: '제안 없음' });
+    } catch (error) {
+      if (error.unavailable) {
+        for (let rest = index; rest < items.length; rest += 1) proposals.set(rest + 1, { error: error.message, deferred: true, unavailable: true });
+        break;
+      }
+      proposals.set(index + 1, { error: error.message, ...(error.formatFailure ? { formatFailure: true } : {}) });
+    }
+  }
+  return proposals;
+}
+
+// 판단 기록 쓰기. 노트가 정본이라 기록 실패가 노트 쓰기 흐름을 끊지 않게 오류는 세어 두고 회차 끝에 실패로 본다.
+function judgmentRecorder(path, summary, output) {
+  return (row) => {
+    try { appendJudgment(path, row); } catch (error) {
+      summary.recordErrors = (summary.recordErrors ?? 0) + 1;
+      output.error(`[mine-athena-fields] 판단 기록 실패 ${row.rel}: ${error.message}`);
+    }
+  };
+}
+
+// 판단 기록 한 줄. status: applied(노트에 씀) · same(지금 값과 같음) · skip(판단 불가) · retry(다음 회차에 다시).
+function judgmentRow(item, proposal, status, { version, mode, today, reason }) {
+  return { rel: item.rel, at: today, mode, ...version, status,
+    ...(proposal?.fields ? { fields: proposal.fields } : {}), ...(proposal?.scores ? { scores: proposal.scores } : {}),
+    ...(proposal?.formatFailure ? { formatFailure: true } : {}), ...(reason ? { reason } : {}) };
 }
 
 // 닫는 --- 앞에 필드를 붙이고 modified만 바꾼다. 나머지 머리말·본문은 그대로 둔다.
@@ -249,7 +330,7 @@ function applyInitialFields(content, fields, age, today) {
   return `---\n${lines.join('\n')}${content.slice(end)}`;
 }
 
-async function reclassificationProposals(batch, decide, criteria, signalTrend, cooldown) {
+async function reclassificationProposals(batch, decide, criteria, signalTrend, cooldown, { engine = 'claude', deadline } = {}) {
   const proposals = new Map();
   for (const initial of [true, false]) {
     const group = batch.map((item, index) => ({ item, index }))
@@ -257,9 +338,9 @@ async function reclassificationProposals(batch, decide, criteria, signalTrend, c
     if (!group.length) continue;
     if (cooldown()) return null;
     const items = group.map(({ item }) => item);
-    const parsed = validateProposals(parseJsonBlock(await decide(buildPrompt(items,
-      { reclassify: !initial, criteria, signalTrend: initial ? signalTrend : undefined }))),
-    items, { reclassify: !initial, criteria });
+    const parsed = await judgeItems(items, { engine, decide, reclassify: !initial, deadline,
+      prompt: (subset) => buildPrompt(subset, { reclassify: !initial, criteria, signalTrend: initial ? signalTrend : undefined }),
+      validate: (raw, subset) => validateProposals(raw, subset, { reclassify: !initial, criteria }) });
     for (const [index, { index: originalIndex }] of group.entries()) {
       proposals.set(originalIndex + 1, parsed.get(index + 1));
     }
@@ -315,14 +396,23 @@ function changeReason(before, after) {
 
 async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_ROOT, dryRun = false,
   ids, kind = '녹음', includeUnclassified = false, maxNotes = MAX_NOTES, now = new Date(), judge, cooldown = cooldownActive, charter,
-  rules, write = writeAtomic, criteria = loadEmotionCriteria(), output = console, cues = attachAudioCues } = {}) {
+  rules, write = writeAtomic, criteria = loadEmotionCriteria(), output = console, cues = attachAudioCues,
+  engine = 'claude', judgmentsPath, unload = unloadOllamaModel, invoke } = {}) {
   const today = kstDate(now);
   if (!['녹음', '통화', 'all'].includes(kind)) throw new Error('--kind는 통화, 녹음, all 중 하나');
+  assertEngine(engine);
   const statePath = join(root, STATE_REL);
   const state = includeUnclassified ? readJson(statePath, { skipped: {} }) : { skipped: {} };
+  const recordPath = judgmentsPath ?? defaultJudgmentsPath(root, out);
+  // Claude 모델 이름은 헌장에서 온다. 같은 판 확인에 쓰므로 대상 고르기 전에 정한다
+  // (그래서 Claude 재분류는 dry-run에서도 헌장을 읽는다 — 2026-10-24부터).
+  const agent = engine === 'claude' ? charter ?? loadAgent('athena', { fallbackModel: 'sonnet' }) : null;
+  const version = { engine, model: engine === 'ollama' ? OLLAMA_MODELS.text : agent.model,
+    criteriaRef: criteria.ref ?? null, promptVersion: PROMPT_VERSION };
   const targets = findTargets(root, { reclassify: true, ids, kind, includeUnclassified,
-    skipped: state.skipped ?? {}, cutoff: today });
+    skipped: state.skipped ?? {}, cutoff: today, judged: judgedNotes(readJudgments(recordPath), version) });
   const batch = targets.slice(0, maxNotes);
+  const quota = engine === 'claude' ? cooldown : () => false; // 쿨다운은 Claude 구독 사용량 가드다.
   const signalTrend = batch.some(firstClassification) ? recentSignalTrend(root, today, criteria) : undefined;
   const summary = { targets: targets.length, selected: batch.length, changed: 0, unchanged: 0,
     invalid: [], before: distribution(batch), after: {}, beforeSignals: signalDistribution(batch),
@@ -331,7 +421,7 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
     if (judge && batch.length) {
       // dry-run도 소리 분석은 실제로 하고 볼트 밖 캐시만 쓴다(볼트 쓰기는 없음).
       await cues(batch, { root });
-      const preview = await reclassificationProposals(batch, judge, criteria, signalTrend, cooldown);
+      const preview = await reclassificationProposals(batch, judge, criteria, signalTrend, quota, { engine });
       if (!preview) return { ...summary, cooldown: true };
       for (const [index, item] of batch.entries()) {
         const proposal = preview.get(index + 1);
@@ -355,13 +445,23 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
     return summary;
   }
   if (!batch.length) return summary;
-  if (cooldown()) return { ...summary, cooldown: true };
-  const agent = charter ?? loadAgent('athena', { fallbackModel: 'sonnet' });
-  const decide = judge ?? ((prompt) => restrictedDecision(prompt, agent, { output }));
+  if (quota()) return { ...summary, cooldown: true };
+  const decide = judge ?? (engine === 'ollama' ? ollamaDecision({ criteria, output, invoke })
+    : (prompt) => restrictedDecision(prompt, agent, { output }));
   await cues(batch, { root });
-  if (cooldown()) return { ...summary, cooldown: true };
-  const proposals = await reclassificationProposals(batch, decide, criteria, signalTrend, cooldown);
+  if (quota()) return { ...summary, cooldown: true };
+  let proposals;
+  try {
+    proposals = await reclassificationProposals(batch, decide, criteria, signalTrend, quota,
+      { engine, deadline: Date.now() + MAX_JOB_MS });
+  } finally {
+    // 16GB라 다음 잡(이미지 모델)이 올라오기 전에 내린다. 시험 주입(judge)이면 부르지 않는다.
+    if (engine === 'ollama' && !judge) await unload(OLLAMA_MODELS.text).catch((error) => output.error(`[mine-athena-fields] 모델 내리기 실패: ${error.message}`));
+  }
   if (!proposals) return { ...summary, cooldown: true };
+  const append = judgmentRecorder(recordPath, summary, output);
+  const record = (item, proposal, status, reason) => append(
+    judgmentRow(item, proposal, status, { version, mode: firstClassification(item) ? 'initial' : 'reclassify', today, reason }));
   const activeRules = rules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
   const backupPath = join(out, `reclassify-backup-${today}.jsonl`);
   const reportPath = join(out, `reclassify-report-${today}.md`);
@@ -380,7 +480,10 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   for (const [index, item] of batch.entries()) {
     const proposal = proposals.get(index + 1);
     if (!proposal?.fields) {
-      summary.invalid.push({ rel: item.rel, reason: proposal?.error ?? proposal?.skip ?? '제안 없음' });
+      const reason = proposal?.error ?? proposal?.skip ?? '제안 없음';
+      summary.invalid.push({ rel: item.rel, reason });
+      if (proposal?.unavailable) summary.unavailable = true;
+      record(item, proposal, proposal?.skip ? 'skip' : 'retry', reason);
       afterItems.push(item);
       continue;
     }
@@ -410,6 +513,7 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
         return 'changed';
       });
       summary[outcome] += 1;
+      record(item, { ...proposal, fields: proposed }, outcome === 'changed' ? 'applied' : 'same');
       if (outcome === 'changed') {
         const reason = changeReason(item.fields, proposed);
         summary.reasons[reason] = (summary.reasons[reason] ?? 0) + 1;
@@ -417,6 +521,7 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
       afterItems.push({ ...item, fields: { ...item.fields, ...(outcome === 'changed' ? proposed : {}) } });
     } catch (error) {
       summary.invalid.push({ rel: item.rel, reason: error.message });
+      record(item, proposal, 'retry', error.message);
       afterItems.push(item);
     }
   }
@@ -444,8 +549,11 @@ export async function reclassify(options = {}) {
 
 export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new Date(), judge, cooldown = cooldownActive,
   charter, write = writeAtomic, maxNotes = MAX_NOTES, rules, criteria = loadEmotionCriteria(), output = console,
-  cues = attachAudioCues } = {}) {
+  cues = attachAudioCues, engine = 'claude', judgmentsPath, unload = unloadOllamaModel, invoke } = {}) {
+  assertEngine(engine);
   const today = kstDate(now);
+  const recordPath = judgmentsPath ?? defaultJudgmentsPath(root);
+  const quota = engine === 'claude' ? cooldown : () => false; // 쿨다운은 Claude 구독 사용량 가드다.
   const cutoff = kstDate(new Date(now.getTime() - SETTLE_DAYS * 86_400_000));
   const statePath = join(root, STATE_REL);
   const job = async () => {
@@ -468,31 +576,47 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
       for (const item of batch) output.log(`  ${item.rel}`);
       return summary;
     }
-    if (cooldown()) return { ...summary, cooldown: true };
+    if (quota()) return { ...summary, cooldown: true };
 
-    const agent = charter ?? loadAgent('athena', { fallbackModel: 'sonnet' });
-    if (agent.warning) output.error(`[mine-athena-fields] ${agent.warning}`);
-    const decide = judge ?? ((prompt) => restrictedDecision(prompt, agent, { output }));
+    const agent = engine === 'claude' ? charter ?? loadAgent('athena', { fallbackModel: 'sonnet' }) : null;
+    if (agent?.warning) output.error(`[mine-athena-fields] ${agent.warning}`);
+    const version = { engine, model: engine === 'ollama' ? OLLAMA_MODELS.text : agent.model,
+      criteriaRef: criteria.ref ?? null, promptVersion: PROMPT_VERSION };
+    const decide = judge ?? (engine === 'ollama' ? ollamaDecision({ criteria, output, invoke })
+      : (prompt) => restrictedDecision(prompt, agent, { output }));
     const signalTrendBefore = recentSignalTrend(root, today, criteria);
     await cues(batch, { root });
-    if (cooldown()) return { ...summary, cooldown: true };
-    const proposals = validateProposals(parseJsonBlock(await decide(buildPrompt(batch, { criteria, signalTrend: signalTrendBefore }))), batch, { criteria });
+    if (quota()) return { ...summary, cooldown: true };
+    let proposals;
+    try {
+      proposals = await judgeItems(batch, { engine, decide, deadline: Date.now() + MAX_JOB_MS,
+        prompt: (items) => buildPrompt(items, { criteria, signalTrend: signalTrendBefore }),
+        validate: (raw, items) => validateProposals(raw, items, { criteria }) });
+    } finally {
+      if (engine === 'ollama' && !judge) await unload(OLLAMA_MODELS.text).catch((error) => output.error(`[mine-athena-fields] 모델 내리기 실패: ${error.message}`));
+    }
+    const append = judgmentRecorder(recordPath, summary, output);
+    const record = (item, proposal, status, reason) => append(judgmentRow(item, proposal, status, { version, mode: 'initial', today, reason }));
     const activeRules = rules ?? parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
 
     for (const [index, item] of batch.entries()) {
       const proposal = proposals.get(index + 1);
       if (!proposal || proposal.error) {
         summary.invalid.push({ rel: item.rel, reason: proposal?.error ?? '제안 없음' });
+        if (proposal?.unavailable) summary.unavailable = true;
+        record(item, proposal, 'retry', proposal?.error ?? '제안 없음');
         continue;
       }
       if (proposal.skip) {
         state.skipped[item.rel] = { reason: proposal.skip, at: today };
         summary.skipped.push({ rel: item.rel, reason: proposal.skip });
+        record(item, proposal, 'skip', proposal.skip);
         continue;
       }
       const age = mineAge(item.occurred);
       if (age === null) {
         summary.invalid.push({ rel: item.rel, reason: `나이 계산 불가(occurred ${item.occurred})` });
+        record(item, proposal, 'retry', `나이 계산 불가(occurred ${item.occurred})`);
         continue;
       }
       const absolute = join(root, item.rel);
@@ -519,9 +643,12 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
         if (outcome === 'written') summary.written.push({ rel: item.rel, ...fields });
         else if (outcome === 'changed') summary.invalid.push({ rel: item.rel, reason: '판단 중 노트가 바뀜' });
         else summary.unchanged.push(item.rel);
+        record(item, { ...proposal, fields }, outcome === 'written' ? 'applied' : 'retry',
+          outcome === 'written' ? undefined : outcome === 'changed' ? '판단 중 노트가 바뀜' : '쓸 수 없는 머리말');
       } catch (error) {
         summary.errors += 1;
         summary.invalid.push({ rel: item.rel, reason: error.message });
+        record(item, proposal, 'retry', error.message);
       }
     }
     // 잡 락(statePath)을 이미 잡고 있으므로 같은 경로를 다시 잠그는 writeStateFile 대신 원자적 쓰기만 한다.
@@ -540,24 +667,27 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
 }
 
 // 쓰기 관문·락 오류가 있거나, 대상이 있었는데 하나도 처리하지 못하면 실패로 본다(health-watcher가 알 수 있게).
+// Ollama가 멈춘 회차(unavailable)는 사람이 봐야 하므로 실패로 본다.
 export function failed(summary) {
+  if (summary.unavailable || summary.recordErrors) return true;
   if (summary.cooldown || !summary.targets) return false;
   return summary.errors > 0 || (summary.invalid.length > 0 && !summary.written.length && !summary.skipped.length);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
-  if (!args.every((arg) => ['--dry-run', '--reclassify'].includes(arg) || /^--limit=\d+$/.test(arg)
+  if (!args.every((arg) => ['--dry-run', '--reclassify'].includes(arg) || /^--limit=\d+$/.test(arg) || /^--engine=(claude|ollama)$/.test(arg)
     || /^--ids=[^=]+$/.test(arg) || /^--kind=(통화|녹음|all)$/.test(arg) || arg === '--include-unclassified') ||
     (args.some((arg) => arg.startsWith('--ids=') || arg.startsWith('--kind=') || arg === '--include-unclassified') && !args.includes('--reclassify'))) {
-    console.error('usage: mine-athena-fields.mjs [--reclassify] [--kind=통화|녹음|all] [--include-unclassified] [--dry-run] [--ids=id1,id2] [--limit=N]');
+    console.error('usage: mine-athena-fields.mjs [--engine=claude|ollama] [--reclassify] [--kind=통화|녹음|all] [--include-unclassified] [--dry-run] [--ids=id1,id2] [--limit=N]');
     process.exit(2);
   }
   const limit = args.find((arg) => arg.startsWith('--limit='));
-  const options = { dryRun: args.includes('--dry-run'), maxNotes: limit ? Number(limit.slice(8)) : MAX_NOTES };
+  const options = { dryRun: args.includes('--dry-run'), maxNotes: limit ? Number(limit.slice(8)) : MAX_NOTES,
+    engine: args.find((arg) => arg.startsWith('--engine='))?.slice(9) ?? 'claude' };
   const ids = args.find((arg) => arg.startsWith('--ids='))?.slice(6).split(',');
   const kind = args.find((arg) => arg.startsWith('--kind='))?.slice(7) ?? '녹음';
   (args.includes('--reclassify') ? reclassify({ ...options, ids, kind, includeUnclassified: args.includes('--include-unclassified') }) : run(options))
-    .then((summary) => { if (args.includes('--reclassify') ? summary.invalid.length : failed(summary)) process.exitCode = 1; })
+    .then((summary) => { if (args.includes('--reclassify') ? summary.invalid.length || summary.unavailable || summary.recordErrors : failed(summary)) process.exitCode = 1; })
     .catch((error) => { console.error(`[mine-athena-fields] 실패: ${error.message}`); process.exitCode = 1; });
 }

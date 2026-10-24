@@ -7,7 +7,9 @@ import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { fixtureCriteria } from '../lib/mine-emotion-criteria.fixture.js';
-import { MAX_JOB_MS, NIGHTLY_LIMIT, ORB_FIELDS, applyOrbFields, attemptState, readRuns, requireRegistryFields, run, upsertOrbIndex } from './media-memory-orb.mjs';
+import { MAX_JOB_MS, NIGHTLY_LIMIT, ORB_FIELDS, PROMPT_VERSION, applyOrbFields, attemptState, ollamaPhotoDecision, orbSchema, readRuns,
+  requireRegistryFields, run, upsertOrbIndex } from './media-memory-orb.mjs';
+import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
 
 test('예약 상한은 직전 24시간, 두 번 실패한 후보는 14일 동안 보류한다', () => {
   const now = Date.parse('2026-10-17T02:20:00+09:00');
@@ -254,4 +256,80 @@ test('같은 KST 날짜 재실행에서도 예약 기록이 호출 총량을 50�
   assert.equal(calls, NIGHTLY_LIMIT);
   const rows = readFileSync(join(fixture.out, 'runs.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(rows.filter((row) => row.status === 'reserved' && row.kstDate === '2026-10-17').length, NIGHTLY_LIMIT);
+});
+
+test('Ollama 사진 판단: 이미지 모델에 격자 사본을 base64로 붙이고 답 모양을 묶는다', async () => {
+  const schema = orbSchema('2020-01-01', fixtureCriteria);
+  assert.deepEqual(schema.properties.confidence.enum, ['낮음', '보통', '높음']);
+  assert.ok(schema.required.includes('coreMemoryCandidate'));
+  assert.ok(schema.properties.primaryEmotion.enum.includes(null));
+  const calls = [];
+  const decide = ollamaPhotoDecision({ criteria: fixtureCriteria, output: { log() {} }, readImage: (path) => `b64:${path}`,
+    invoke: async (request) => { calls.push(request); return { json: answer, usage: { promptTokens: 900, outputTokens: 80 } }; } });
+  const measured = await decide('프롬프트', '/copies', 60_000, { imagePath: '/copies/a-grid.jpg', recordDate: '2020-01-01' });
+  assert.deepEqual(measured, { result: answer, inputTokens: 900, outputTokens: 80, usage: { promptTokens: 900, outputTokens: 80 } });
+  assert.equal(calls[0].model, OLLAMA_MODELS.vision);
+  assert.deepEqual(calls[0].images, ['b64:/copies/a-grid.jpg']);
+  assert.equal(calls[0].timeoutMs, 60_000);
+  assert.deepEqual(calls[0].schema, schema);
+});
+
+test('run --engine=ollama: 쿨다운과 무관, 판 이름을 색인·runs에 남기고, 형식 실패는 실패·멈춤은 연기 후 중단', async (t) => {
+  const fixture = setup(t, 4);
+  const prompts = [];
+  let unloaded = 0;
+  const measured = (value) => ({ result: value, inputTokens: 900, outputTokens: 80, usage: {} });
+  const replies = [
+    () => measured({ ...answer, scores: { 기쁨: 0.7, 슬픔: 0.6 } }),
+    () => { throw Object.assign(new Error('로컬 모델 답이 JSON이 아님'), { formatFailure: true }); },
+    () => { throw Object.assign(new Error('Ollama 연결 실패: fetch failed'), { unavailable: true }); },
+    () => { throw new Error('부르면 안 됨'); },
+  ];
+  const summary = await run(options(fixture, { engine: 'ollama', cooldown: () => true, criteria: { ...fixtureCriteria, ref: '미네-감정-분류@시험' },
+    unload: async () => { unloaded += 1; },
+    judge: async (prompt, _cwd, _timeout, { imagePath, recordDate }) => {
+      prompts.push(prompt);
+      assert.match(imagePath, /-grid\.jpg$/);
+      assert.equal(recordDate, '2020-01-01');
+      return replies[prompts.length - 1]();
+    } }));
+  assert.equal(prompts.length, 3);
+  assert.doesNotMatch(prompts[0], /Read/);
+  assert.equal(summary.cooldown, false);
+  assert.equal(summary.written, 1);
+  assert.equal(summary.failed.length, 1);
+  assert.equal(summary.deferred.length, 1);
+  assert.equal(summary.unavailable, true);
+  assert.equal(unloaded, 0, '시험 주입이면 모델을 내리지 않는다');
+  const version = { engine: 'ollama', model: OLLAMA_MODELS.vision, criteriaRef: '미네-감정-분류@시험', promptVersion: PROMPT_VERSION };
+  const [orb] = readFileSync(join(fixture.out, 'orbs.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  const { at, ...judgment } = orb.judgment;
+  assert.ok(Date.parse(at));
+  assert.deepEqual(judgment, { ...version, scores: { 기쁨: 0.7, 슬픔: 0.6 } });
+  const runs = readRuns(join(fixture.out, 'runs.jsonl'));
+  assert.deepEqual(runs.map((row) => row.status), ['reserved', 'written', 'reserved', 'error', 'reserved', 'deferred']);
+  assert.ok(runs.every((row) => row.engine === 'ollama' && row.model === OLLAMA_MODELS.vision && row.promptVersion === PROMPT_VERSION));
+  assert.equal(runs[3].formatFailure, true);
+  await assert.rejects(run(options(fixture, { engine: 'gpt' })), /판단 엔진/);
+});
+
+test('Ollama 실제 경로: 격자를 읽어 붙이고 끝나면 이미지 모델을 한 번 내린다, 시간 초과는 그 순간만의 실패', async (t) => {
+  const fixture = setup(t, 2);
+  const unloaded = [];
+  const images = [];
+  let calls = 0;
+  const summary = await run(options(fixture, { engine: 'ollama', readImage: (path) => { images.push(path); return 'aGk='; },
+    unload: async (model) => { unloaded.push(model); },
+    invoke: async (request) => {
+      calls += 1;
+      assert.deepEqual(request.images, ['aGk=']);
+      if (calls === 1) throw Object.assign(new Error('로컬 모델 시간 초과(180초)'), { timeout: true });
+      return { json: answer, usage: { promptTokens: 1, outputTokens: 1 } };
+    } }));
+  assert.equal(calls, 2, '시간 초과 뒤에도 다음 순간으로 간다');
+  assert.equal(summary.failed.length, 1);
+  assert.equal(summary.written, 1);
+  assert.equal(summary.unavailable, undefined);
+  assert.ok(images.every((path) => path.endsWith('-grid.jpg')));
+  assert.deepEqual(unloaded, [OLLAMA_MODELS.vision]);
 });

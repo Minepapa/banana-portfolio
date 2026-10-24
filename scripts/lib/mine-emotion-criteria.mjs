@@ -64,9 +64,11 @@ function validateRecordDate(recordDate) {
   }
 }
 
+// ref는 판단 기록에 남기는 기준 판 이름이다. 결정 문서는 판마다 새 문서라 appliesFrom이 판을 가른다(v1 10-16 · v2 10-18 · v3 10-19).
 export function loadEmotionCriteria(options = {}) {
   try {
-    return parseEmotionCriteria(resolveDecision('미네-감정-분류', options).body);
+    const { frontmatter, body } = resolveDecision('미네-감정-분류', options);
+    return { ...parseEmotionCriteria(body), ref: `미네-감정-분류@${frontmatter.appliesFrom ?? frontmatter.created}` };
   } catch (error) {
     throw new Error(`미네 감정 분류 기준을 읽을 수 없습니다: ${error.message}`, { cause: error });
   }

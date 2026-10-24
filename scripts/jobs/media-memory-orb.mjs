@@ -10,16 +10,20 @@ import { parseRegistry, checkNote } from '../lib/vault-registry.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
-import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { parseJsonBlock, runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
+import { OLLAMA_MODELS, runOllama, unloadOllamaModel } from '../lib/ollama-client.mjs';
+import { EMOTION_REQUIRED, assertEngine, emotionProperties, validScores } from '../lib/mine-judgment.mjs';
 import { loadCandidates, hasOrb } from '../lib/mine-memory-candidates.mjs';
-import { mineAge } from './mine-athena-fields.mjs';
+import { mineAge, occurredDate } from './mine-athena-fields.mjs';
 import { choosePhotos, makeCopy, makeGrid, buildPrompt, ownerEmotions, parseClaudeResult, validateProposal } from '../tools/media-memory-orb-trial.mjs';
 
 export const NIGHTLY_LIMIT = 50;
 export const MAX_JOB_MS = 90 * 60_000;
 export const MAX_CALL_MS = 3 * 60_000;
 export const RUN_ROOT = join(homedir(), 'Pantheon', 'Media', 'MemoryOrb');
+// 프롬프트 판. 0.0 = 기억 판단 체계 §10.5 초안(v0.1) 전, 지금까지 쓰던 프롬프트. 프롬프트를 바꾸면 올린다.
+export const PROMPT_VERSION = 'memory-orb/0.0';
 export const ORB_FIELDS = Object.freeze([
   'emotions', 'primaryEmotion', 'emotionIntensity', 'emotionEvidence', 'secondFilmSignal',
   'importance', 'coreMemoryCandidate', 'mineAge',
@@ -34,6 +38,26 @@ export function requireRegistryFields(registry) {
     && !/^#{2,3} /m.test(registry.slice(mediaRow.index, paragraph.index)) ? paragraph[0] : '';
   const missing = ORB_FIELDS.filter((key) => !scoped.includes(`\`${key}\``));
   if (missing.length) throw new Error(`사진 기억 구슬 머리말 등록 필요: ${missing.join(', ')}`);
+}
+
+// Ollama 답 모양 — buildPrompt의 출력 예시와 같은 객체. 검사는 validateProposal이 다시 한다.
+export function orbSchema(recordDate, criteria) {
+  const text = (maxLength) => ({ type: 'string', minLength: 1, maxLength });
+  return { type: 'object', additionalProperties: false,
+    required: [...EMOTION_REQUIRED, 'confidence', 'importance', 'scene', 'titleSuggestion', 'coreMemoryCandidate'],
+    properties: { ...emotionProperties(recordDate, criteria), confidence: { enum: ['낮음', '보통', '높음'] },
+      importance: { type: 'integer', minimum: 1, maximum: 5 }, scene: text(300), titleSuggestion: text(200),
+      coreMemoryCandidate: { type: 'object', additionalProperties: false, required: ['value', 'reason'],
+        properties: { value: { type: 'boolean' }, reason: text(200) } } } };
+}
+
+// Ollama 이미지 판단. 격자 사본을 base64로 붙이고(집 밖으로 나가지 않음), Claude 결과와 같은 모양으로 돌려준다.
+export function ollamaPhotoDecision({ criteria, invoke = runOllama, readImage = (path) => readFileSync(path).toString('base64'), output = console } = {}) {
+  return async (prompt, _cwd, timeoutMs, { imagePath, recordDate }) => {
+    const { json, usage } = await invoke({ model: OLLAMA_MODELS.vision, prompt, images: [readImage(imagePath)],
+      schema: orbSchema(recordDate, criteria), timeoutMs, usageLogger: (line) => output.log(`[media-memory-orb] ${line}`) });
+    return { result: json, inputTokens: usage.promptTokens ?? 0, outputTokens: usage.outputTokens ?? 0, usage };
+  };
 }
 
 const kstDay = (timestamp) => new Date(timestamp + 9 * 3_600_000).toISOString().slice(0, 10);
@@ -127,22 +151,28 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   out = RUN_ROOT, dryRun = false, limit = NIGHTLY_LIMIT, candidates,
   judge, cooldown = cooldownActive, copyPhoto = makeCopy, gridPhoto = makeGrid,
   write = writeAtomic, rules, registryText, criteria, charter, photoScores, visionRows,
-  output = console, now = () => Date.now() } = {}) {
+  output = console, now = () => Date.now(), engine = 'claude', unload = unloadOllamaModel, invoke, readImage } = {}) {
+  assertEngine(engine);
   const runStarted = now();
+  const quota = engine === 'claude' ? cooldown : () => false; // 쿨다운은 Claude 구독 사용량 가드다.
   const allCandidates = candidates ?? loadCandidates({ root, mediaRoot });
   const selected = dryRun ? allCandidates.slice(0, Math.min(NIGHTLY_LIMIT, limit)) : allCandidates;
   const summary = { candidates: allCandidates.length, selected: Math.min(selected.length, NIGHTLY_LIMIT, limit), written: 0,
     failed: [], deferred: [], cooldown: false, timedOut: false };
   if (!selected.length && !dryRun) return summary;
-  if (!dryRun && cooldown()) return { ...summary, cooldown: true };
+  if (!dryRun && quota()) return { ...summary, cooldown: true };
   const registry = registryText ?? readFileSync(join(root, VAULT_REL.registryFile), 'utf8');
   requireRegistryFields(registry);
   const activeRules = rules ?? parseRegistry(registry);
   const activeCriteria = criteria ?? loadEmotionCriteria();
-  const agent = charter ?? loadAgent('athena', { fallbackModel: 'sonnet' });
-  const decide = judge ?? ((prompt, cwd, timeoutMs) => runHeadlessClaude(prompt, agent.model, `Read(/${cwd}/**)`, {
-    appendSystemPrompt: agent.systemPrompt, lean: true, tools: 'Read', cwd, timeoutMs, maxTurns: 2,
-  }));
+  const agent = engine === 'claude' ? charter ?? loadAgent('athena', { fallbackModel: 'sonnet' }) : null;
+  // 판단 기록: 어느 엔진·모델·기준·프롬프트 판으로 판단했나(구슬 색인 행과 runs.jsonl에 남김).
+  const version = { engine, model: engine === 'ollama' ? OLLAMA_MODELS.vision : agent.model,
+    criteriaRef: activeCriteria.ref ?? null, promptVersion: PROMPT_VERSION };
+  const decide = judge ?? (engine === 'ollama' ? ollamaPhotoDecision({ criteria: activeCriteria, output, ...(invoke ? { invoke } : {}), ...(readImage ? { readImage } : {}) })
+    : (prompt, cwd, timeoutMs) => runHeadlessClaude(prompt, agent.model, `Read(/${cwd}/**)`, {
+      appendSystemPrompt: agent.systemPrompt, lean: true, tools: 'Read', cwd, timeoutMs, maxTurns: 2,
+    }));
   const runId = `${new Date(runStarted).toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
   const copyDir = join(out, 'copies', runId);
   const logPath = join(out, 'runs.jsonl');
@@ -173,7 +203,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
           throw new Error(`대표 사진 원본 없음: ${photo.path}`);
         }
         buildPrompt(item, [{ path: join(copyDir, `${item.id}-grid.jpg`),
-          reason: chosen.map((photo, index) => `${index + 1}번 ${photo.reason}`).join('; ') }], activeCriteria);
+          reason: chosen.map((photo, index) => `${index + 1}번 ${photo.reason}`).join('; ') }], activeCriteria, { engine });
         output.log(`${item.id} ${item.title} 점수 ${item.score ?? 0}: ${(item.reasons ?? []).map((reason) => `${reason.signal}(${reason.evidence})`).join('; ')}`);
       } catch (error) {
         summary.failed.push({ id: item.id, reason: error.message });
@@ -185,21 +215,21 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   mkdirSync(out, { recursive: true, mode: 0o700 });
   // A job lock outside the vault prevents duplicate launches. Per-note locks protect
   // a concurrent media pipeline's edits while we apply the one-shot frontmatter patch.
-  return withLock(logPath, async () => {
+  const job = withLock(logPath, async () => {
     const attempts = attemptState(readRuns(logPath), now());
     let attemptedThisRun = 0;
     for (const item of selected) {
       if (now() - runStarted >= MAX_JOB_MS) {
         summary.timedOut = true;
         summary.deferred.push({ id: item.id, reason: '잡 시간 상한' });
-        logRow(logPath, { runId, id: item.id, rel: item.rel, status: 'deferred',
+        logRow(logPath, { runId, id: item.id, rel: item.rel, status: 'deferred', ...version,
           error: '잡 시간 상한', at: new Date(now()).toISOString() });
         break;
       }
-      if (cooldown()) {
+      if (quota()) {
         summary.cooldown = true;
         summary.deferred.push({ id: item.id, reason: '쿨다운 활성' });
-        logRow(logPath, { runId, id: item.id, rel: item.rel, status: 'deferred',
+        logRow(logPath, { runId, id: item.id, rel: item.rel, status: 'deferred', ...version,
           error: '쿨다운 활성', at: new Date(now()).toISOString() });
         break;
       }
@@ -224,18 +254,22 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         const gridPath = join(copyDir, `${item.id}-grid.jpg`);
         if (now() - runStarted >= MAX_JOB_MS) throw new Error('잡 시간 상한');
         gridPhoto(copies, gridPath, undefined, undefined, Math.max(1, MAX_JOB_MS - (now() - runStarted)));
-        const prompt = buildPrompt(item, [{ path: gridPath, reason: copies.map((copy, index) => `${index + 1}번 ${copy.reason}`).join('; ') }], activeCriteria);
+        const prompt = buildPrompt(item, [{ path: gridPath, reason: copies.map((copy, index) => `${index + 1}번 ${copy.reason}`).join('; ') }], activeCriteria, { engine });
         if (now() - runStarted >= MAX_JOB_MS) throw new Error('잡 시간 상한');
         const latestAttempts = attemptState(readRuns(logPath), now());
         if (latestAttempts.count >= Math.min(NIGHTLY_LIMIT, limit) || latestAttempts.reserved.has(item.id)) break;
-        logRow(logPath, { runId, id: item.id, rel: item.rel, status: 'reserved', kstDate: kstDay(now()),
+        logRow(logPath, { runId, id: item.id, rel: item.rel, status: 'reserved', kstDate: kstDay(now()), ...version,
           at: new Date(now()).toISOString() });
         attempts.count += 1;
         attempts.reserved.add(item.id);
         attemptedThisRun += 1;
-        measured = parseClaudeResult(await decide(prompt, copyDir, Math.min(MAX_CALL_MS, MAX_JOB_MS - (now() - runStarted))));
+        const answer = await decide(prompt, copyDir, Math.min(MAX_CALL_MS, MAX_JOB_MS - (now() - runStarted)),
+          { imagePath: gridPath, recordDate: item.date ?? occurredDate(item.fields.occurred) });
+        measured = engine === 'ollama' ? answer : parseClaudeResult(answer);
         const owner = ownerEmotions(item.fields, item.memo);
         const proposal = validateProposal(measured.result, owner, item.fields.primaryEmotion, item.date, activeCriteria);
+        const raw = typeof measured.result === 'string' ? parseJsonBlock(measured.result) : measured.result;
+        const scores = validScores(raw?.scores, activeCriteria);
         const absolute = join(root, item.rel);
         const result = await withLock(absolute, () => {
           const latest = readFileSync(absolute, 'utf8');
@@ -253,6 +287,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
             representativePhotos: copies.map((copy) => copy.sourcePath),
             representativePhotoEvidence: copies.map((copy) => copy.reason),
             coreMemoryReason: proposal.coreMemoryCandidate.reason,
+            judgment: { ...version, ...(scores ? { scores } : {}), at: new Date(now()).toISOString() },
           });
           try {
             write(absolute, next);
@@ -264,15 +299,17 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
           return 'written';
         });
         if (result === 'written') summary.written += 1;
-        logRow(logPath, { runId, id: item.id, rel: item.rel, status: result,
+        logRow(logPath, { runId, id: item.id, rel: item.rel, status: result, ...version,
           inputTokens: measured.inputTokens, outputTokens: measured.outputTokens,
           usage: measured.usage, total_cost_usd: measured.total_cost_usd, at: new Date(now()).toISOString() });
         for (const copy of copies) rmSync(copy.path, { force: true });
         rmSync(gridPath, { force: true });
       } catch (error) {
-        const deferred = error.isLimit || error.message === '잡 시간 상한';
+        // Ollama가 멈추면(unavailable) 한도와 같이 연기하고 그 회차를 끝낸다. 형식 실패는 실패로 세어 2회면 14일 보류.
+        const deferred = error.isLimit || error.unavailable || error.message === '잡 시간 상한';
         summary[deferred ? 'deferred' : 'failed'].push({ id: item.id, reason: error.message });
-        logRow(logPath, { runId, id: item.id, rel: item.rel, status: deferred ? 'deferred' : 'error', error: error.message,
+        logRow(logPath, { runId, id: item.id, rel: item.rel, status: deferred ? 'deferred' : 'error', error: error.message, ...version,
+          ...(error.formatFailure ? { formatFailure: true } : {}),
           ...((measured || error.usage) ? { usage: measured?.usage ?? error.usage,
             inputTokens: measured?.inputTokens ?? (Number(error.usage?.input_tokens) || 0)
               + (Number(error.usage?.cache_creation_input_tokens) || 0)
@@ -287,18 +324,24 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         }
         if (error.message === '잡 시간 상한') { summary.timedOut = true; break; }
         if (error.isLimit) { summary.cooldown = true; break; }
+        if (error.unavailable) { summary.unavailable = true; break; }
       }
     }
     if (!summary.failed.length) rmSync(copyDir, { recursive: true, force: true });
-    output.log(`[media-memory-orb] 후보 ${summary.candidates}, 시도 ${attemptedThisRun}, 기록 ${summary.written}, 부분 실패 ${summary.failed.length}, 쿨다운 ${summary.cooldown}, 시간 상한 ${summary.timedOut}`);
+    output.log(`[media-memory-orb] ${engine} 후보 ${summary.candidates}, 시도 ${attemptedThisRun}, 기록 ${summary.written}, 부분 실패 ${summary.failed.length}, 쿨다운 ${summary.cooldown}, 시간 상한 ${summary.timedOut}${summary.unavailable ? ', Ollama 멈춤' : ''}`);
     return summary;
   }, { retries: 0 });
+  // 16GB라 다음 잡(텍스트 모델)이 올라오기 전에 내린다. 시험 주입(judge)이면 부르지 않는다.
+  // 불변식: 두 판단 잡(텍스트·이미지 모델)은 같은 시각에 돌지 않는다 — 매일 켤 때(6단계) 시각을 나눠 등록한다.
+  if (engine !== 'ollama' || judge) return job;
+  return job.finally(() => unload(OLLAMA_MODELS.vision).catch((error) => output.error(`[media-memory-orb] 모델 내리기 실패: ${error.message}`)));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  if (process.argv.slice(2).some((arg) => arg !== '--dry-run')) {
-    console.error('usage: media-memory-orb.mjs [--dry-run]'); process.exitCode = 2;
-  } else run({ dryRun: process.argv.includes('--dry-run') })
-    .then(() => {})
+  const args = process.argv.slice(2);
+  if (args.some((arg) => arg !== '--dry-run' && !/^--engine=(claude|ollama)$/.test(arg))) {
+    console.error('usage: media-memory-orb.mjs [--engine=claude|ollama] [--dry-run]'); process.exitCode = 2;
+  } else run({ dryRun: args.includes('--dry-run'), engine: args.find((arg) => arg.startsWith('--engine='))?.slice(9) ?? 'claude' })
+    .then((summary) => { if (summary.unavailable) process.exitCode = 1; })
     .catch((error) => { console.error(error.stack); process.exitCode = 1; });
 }

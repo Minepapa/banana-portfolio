@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fixture as criteriaFixture, fixtureCriteria as criteria } from '../lib/mine-emotion-criteria.fixture.js';
 import { parseEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
-import { applyFields, buildPrompt, failed, findTargets, mineAge, noteText, recentSignalTrend, reclassify, restrictedDecision, run, validateProposals,
-  STATE_REL } from './mine-athena-fields.mjs';
+import { applyFields, buildPrompt, defaultJudgmentsPath, failed, findTargets, judgeItems, mineAge, noteText, ollamaDecision, proposalSchema, recentSignalTrend, reclassify,
+  restrictedDecision, run, validateProposals, PROMPT_VERSION, STATE_REL } from './mine-athena-fields.mjs';
+import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
+import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
 const now = new Date('2026-10-18T12:00:00Z'); // KST 10-18 21:00
 const rules = [
@@ -243,12 +245,19 @@ test('녹음 재분류는 백업 0600 후 감정 네 필드만 바꾸며 오너 
   assert.match(after, /importance: 4/);
   assert.match(after, /coreMemory: true/);
   assert.match(after, /## 오너 메모\n감정: 슬픔/);
+  // 같은 판(엔진·모델·기준·프롬프트)으로 판단을 마친 노트는 다시 고르지 않는다.
   const second = await reclassify({ ...options, dryRun: true });
-  assert.equal(second.targets, 1);
-  assert.equal(second.changed, 0);
+  assert.equal(second.targets, 0);
   assert.equal(readFileSync(join(root, rel), 'utf8'), after);
-  const repeated = await reclassify(options);
+  const judgments = readFileSync(join(out, 'athena-judgments.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(judgments.map(({ rel: note, status, mode, engine, model, promptVersion }) => ({ note, status, mode, engine, model, promptVersion })),
+    [{ note: rel, status: 'applied', mode: 'reclassify', engine: 'claude', model: judgments[0].model, promptVersion: 'athena-fields/0.0' }]);
+  assert.equal(statSync(join(out, 'athena-judgments.jsonl')).mode & 0o777, 0o600);
+  // 기준 판이 바뀌면 다시 대상이 되고, 같은 답이면 노트는 그대로 둔다.
+  const repeated = await reclassify({ ...options, criteria: { ...criteria, ref: '미네-감정-분류@다음판' } });
+  assert.equal(repeated.selected, 1);
   assert.equal(repeated.changed, 0);
+  assert.equal(readFileSync(join(root, rel), 'utf8'), after);
   const report = join(out, 'reclassify-report-2026-10-18.md');
   assert.equal((readFileSync(report, 'utf8').match(/# 미네 녹음 감정 재분류/g) ?? []).length, 2);
   assert.equal(statSync(report).mode & 0o777, 0o600);
@@ -459,4 +468,136 @@ test('replaceEmotionFields: 기존 감정 필드만 교체한다', async () => {
   assert.match(next, /primaryEmotion: "기쁨"/);
   assert.doesNotMatch(next, /importance:/);
   assert.doesNotMatch(next, /mineAge:/);
+});
+
+test('Ollama 답 모양: 기록 날짜의 어휘로 묶고, importance는 처음 분류에만, 날짜가 섞이면 막는다', () => {
+  const item = { date: '2026-10-15', content: note() };
+  const schema = proposalSchema([item], { criteria });
+  assert.equal(schema.type, 'array');
+  assert.equal(schema.maxItems, 1);
+  const names = criteria.emotions.filter((emotion) => emotion.part === 1).map((emotion) => emotion.name);
+  assert.deepEqual(schema.items.properties.emotions.items.enum, names);
+  assert.deepEqual(schema.items.properties.primaryEmotion.enum, [...names, null]);
+  assert.ok(schema.items.required.includes('importance'));
+  assert.equal(schema.items.properties.skip, undefined, 'Ollama는 skip을 못 낸다 — 예시 문구를 따라 쓰면 노트가 영구 제외됨');
+  assert.equal(schema.items.additionalProperties, false);
+  const again = proposalSchema([item], { criteria, reclassify: true });
+  assert.equal(again.items.required.includes('importance'), false);
+  assert.equal(again.items.properties.importance, undefined);
+  assert.throws(() => proposalSchema([item, { ...item, date: '2026-10-16' }], { criteria }), /한 날짜/);
+});
+
+test('ollamaDecision: 텍스트 모델·답 모양을 넘기고 JSON 문자열로 돌려준다', async () => {
+  const calls = [];
+  const decide = ollamaDecision({ criteria, output: { log() {} },
+    invoke: async (request) => { calls.push(request); return { json: [{ id: 1, emotions: [] }] }; } });
+  const item = { date: '2026-10-15', content: note() };
+  assert.equal(await decide('프롬프트', { items: [item], reclassify: true }), '[{"id":1,"emotions":[]}]');
+  assert.equal(calls[0].model, OLLAMA_MODELS.text);
+  assert.equal(calls[0].prompt, '프롬프트');
+  assert.deepEqual(calls[0].schema, proposalSchema([item], { criteria, reclassify: true }));
+});
+
+test('judgeItems: Ollama는 기록 하나씩, 형식 실패는 그 기록만, 멈추면 남은 기록을 연기한다', async () => {
+  const items = ['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15'].map((date) => ({ date, content: note() }));
+  const validate = (raw, subset) => validateProposals(raw, subset, { criteria });
+  const answer = '[{"id":1,"emotions":[],"primaryEmotion":null,"emotionIntensity":null,"emotionEvidence":"짧은 안부","secondFilmSignal":null,"importance":1}]';
+  const prompts = [];
+  const replies = [async () => answer, async () => { throw Object.assign(new Error('로컬 모델 답이 JSON이 아님'), { formatFailure: true }); },
+    async () => { throw Object.assign(new Error('Ollama 연결 실패: fetch failed'), { unavailable: true }); }, async () => { throw new Error('부르면 안 됨'); }];
+  const result = await judgeItems(items, { engine: 'ollama', validate, prompt: (subset) => subset.map((item) => item.date).join(','),
+    decide: async (prompt) => { prompts.push(prompt); return replies[prompts.length - 1](); } });
+  assert.deepEqual(prompts, ['2026-10-12', '2026-10-13', '2026-10-14']);
+  assert.equal(result.get(1).fields.emotionEvidence, '짧은 안부');
+  assert.deepEqual(result.get(2), { error: '로컬 모델 답이 JSON이 아님', formatFailure: true });
+  assert.equal(result.get(3).unavailable, true);
+  assert.equal(result.get(4).deferred, true);
+  // 잡 시간 상한이 지나면 더 부르지 않는다.
+  const late = await judgeItems(items.slice(0, 1), { engine: 'ollama', validate, prompt: () => 'p', deadline: 0,
+    decide: async () => { throw new Error('부르면 안 됨'); } });
+  assert.deepEqual(late.get(1), { error: '잡 시간 상한', deferred: true });
+  // Claude는 묶음 한 번, 실패는 그대로 던진다.
+  let calls = 0;
+  await judgeItems(items, { engine: 'claude', validate, prompt: () => 'p', decide: async () => { calls += 1; return '[]'; } });
+  assert.equal(calls, 1);
+  await assert.rejects(judgeItems(items, { engine: 'claude', validate, prompt: () => 'p', decide: async () => { throw new Error('claude 종료코드 1'); } }), /claude/);
+});
+
+test('run --engine=ollama: 쿨다운과 무관하게 판단하고, 판 이름을 기록하며, Ollama가 멈추면 실패로 본다', async (t) => {
+  const { root, put } = fixture(t);
+  put(`${C}/2026/2026-10-15 미네 통화.md`, note({ occurred: '2026-10-12T09:00:00+09:00' }));
+  put(`${C}/2026/2026-10-16 미네 통화.md`, note({ occurred: '2026-10-13T09:00:00+09:00' }));
+  const quiet = { log() {}, error() {} };
+  let unloaded = 0;
+  const opts = { root, now, rules, output: quiet, cues: async () => {}, engine: 'ollama', cooldown: () => true,
+    criteria: { ...criteria, ref: '미네-감정-분류@시험' }, unload: async () => { unloaded += 1; } };
+  let calls = 0;
+  const summary = await run({ ...opts, judge: async (prompt, { items }) => {
+    calls += 1;
+    assert.equal(items.length, 1);
+    if (calls === 2) throw Object.assign(new Error('Ollama 연결 실패: fetch failed'), { unavailable: true });
+    return '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"미네가 웃음","secondFilmSignal":null,"importance":2,"scores":{"기쁨":0.8,"슬픔":0.1}}]';
+  } });
+  assert.equal(summary.cooldown, undefined);
+  assert.equal(summary.written.length, 1);
+  assert.equal(summary.unavailable, true);
+  assert.equal(failed(summary), true);
+  assert.equal(unloaded, 0, '시험 주입이면 모델을 내리지 않는다');
+  const rows = readFileSync(join(root, '.mine-judgments', 'athena-judgments.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(rows.map((row) => [row.rel.split('/').pop(), row.status]), [['2026-10-15 미네 통화.md', 'applied'], ['2026-10-16 미네 통화.md', 'retry']]);
+  assert.deepEqual({ engine: rows[0].engine, model: rows[0].model, criteriaRef: rows[0].criteriaRef, promptVersion: rows[0].promptVersion, mode: rows[0].mode },
+    { engine: 'ollama', model: OLLAMA_MODELS.text, criteriaRef: '미네-감정-분류@시험', promptVersion: PROMPT_VERSION, mode: 'initial' });
+  assert.deepEqual(rows[0].scores, { 기쁨: 0.8, 슬픔: 0.1 });
+  assert.equal(rows[0].fields.primaryEmotion, '기쁨');
+  // 범위 밖 점수는 검증 실패로 쓰지 않는다.
+  const bad = validateProposals([{ id: 1, emotions: [], primaryEmotion: null, emotionIntensity: null, emotionEvidence: '근거', importance: 1, scores: { 기쁨: 2 } }],
+    [{ date: '2026-10-15', content: note() }], { criteria });
+  assert.match(bad.get(1).error, /scores/);
+  await assert.rejects(run({ ...opts, engine: 'gpt' }), /판단 엔진/);
+});
+
+test('판단 기록 기본 경로: 진짜 볼트(다른 표기 포함)만 Media, 시험 볼트는 그 안', () => {
+  assert.match(defaultJudgmentsPath(VAULT_PATHS.root), /Media\/MemoryOrb\/athena-judgments\.jsonl$/);
+  assert.match(defaultJudgmentsPath(`${VAULT_PATHS.root}/`), /Media\/MemoryOrb\/athena-judgments\.jsonl$/);
+  assert.equal(defaultJudgmentsPath('/tmp/x'), '/tmp/x/.mine-judgments/athena-judgments.jsonl');
+  assert.equal(defaultJudgmentsPath('/tmp/x', '/tmp/out'), '/tmp/out/athena-judgments.jsonl');
+});
+
+test('재분류 같은 판 거르기: retry는 다시 고르고, --ids는 같은 판이어도 고르며, 옮긴 노트는 movedFrom으로 찾는다', async (t) => {
+  const { root, put } = fixture(t);
+  const out = mkdtempSync(join(tmpdir(), 'mine-judged-'));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const done = `${C}/2026/2026-10-11 미네 녹음.md`;
+  const retry = `${C}/2026/2026-10-12 미네 녹음.md`;
+  const moved = `${C}/2026/2026-10-13 미네 녹음 새이름.md`;
+  const classified = (extra = '') => note({ extra: `\nemotions: ["기쁨"]\nprimaryEmotion: "기쁨"${extra}` }).replace('convKind: "통화"', 'convKind: "녹음"');
+  put(done, classified()); put(retry, classified()); put(moved, classified(`\nmovedFrom: "[[${C}/2026/2026-10-13 미네 녹음]]"`));
+  const version = { engine: 'claude', model: 'sonnet', criteriaRef: null, promptVersion: PROMPT_VERSION };
+  writeFileSync(join(out, 'athena-judgments.jsonl'), [
+    { rel: done, status: 'same', ...version }, { rel: retry, status: 'retry', ...version },
+    { rel: `${C}/2026/2026-10-13 미네 녹음.md`, status: 'applied', ...version }].map((row) => JSON.stringify(row)).join('\n') + '\n');
+  const opts = { root, out, now, rules, criteria, output: { log() {}, error() {} }, dryRun: true, charter: { model: 'sonnet', systemPrompt: '' } };
+  const summary = await reclassify(opts);
+  assert.equal(summary.targets, 1, 'retry 노트만 남는다');
+  const forced = await reclassify({ ...opts, ids: [done] });
+  assert.equal(forced.targets, 1, '--ids는 같은 판이어도 고른다');
+});
+
+test('Ollama 실제 경로: 판단 뒤 텍스트 모델을 한 번 내리고, 내리기 실패·기록 실패는 노트 쓰기를 끊지 않는다', async (t) => {
+  const { root, put } = fixture(t);
+  put(`${C}/2026/2026-10-15 미네 통화.md`, note({ occurred: '2026-10-12T09:00:00+09:00' }));
+  put(`${C}/2026/2026-10-16 미네 통화.md`, note({ occurred: '2026-10-13T09:00:00+09:00' }));
+  const errors = [];
+  const unloaded = [];
+  const blocked = join(root, 'blocked');
+  writeFileSync(blocked, '파일이라 폴더를 만들 수 없음');
+  const summary = await run({ root, now, rules, criteria, cues: async () => {}, engine: 'ollama',
+    output: { log() {}, error: (line) => errors.push(line) }, judgmentsPath: join(blocked, 'judgments.jsonl'),
+    unload: async (model) => { unloaded.push(model); throw new Error('내리기 실패'); },
+    invoke: async () => ({ json: [{ id: 1, emotions: [], primaryEmotion: null, emotionIntensity: null, emotionEvidence: '짧은 안부', secondFilmSignal: null, importance: 1 }] }) });
+  assert.deepEqual(unloaded, [OLLAMA_MODELS.text]);
+  assert.equal(summary.written.length, 2, '기록 실패가 있어도 두 노트 모두 쓴다');
+  assert.equal(summary.recordErrors, 2);
+  assert.equal(failed(summary), true);
+  assert.ok(errors.some((line) => /모델 내리기 실패/.test(line)));
 });
