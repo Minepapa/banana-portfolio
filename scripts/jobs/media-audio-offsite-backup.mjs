@@ -255,13 +255,37 @@ async function run(io, dryRun) {
   }
   const remoteIds = new Set(allRemote.map((file) => AUDIO_NAME.exec(file.name)?.[1])
     .filter((id) => id && !intents.has(id)));
-  const { chosen, pending, bytes } = planUploads(live, remoteIds, new Map(), io.cap);
-  const summary = { uploaded: 0, bytes: 0, deleted: 0, failed: invalidExisting.size, skipped: 0, pending, remote: remote.length };
+  const unverifiedCompleted = new Set();
+  for (const row of live) {
+    const intent = intents.get(row.id);
+    if (!intent?.completed) continue;
+    if (intent.folderId !== folder.id || intent.name !== `pantheon-audio-${row.id}.enc`
+      || intent.appProperties?.kind !== row.kind) {
+      unverifiedCompleted.add(row.id);
+      continue;
+    }
+    const sameNameFiles = allRemote.filter((file) => file.name === intent.name);
+    if (sameNameFiles.length !== 1 || sameNameFiles[0].id !== intent.id) {
+      unverifiedCompleted.add(row.id);
+      continue;
+    }
+    try {
+      const copy = await io.getBackupMetadata({ token, id: intent.id });
+      if (isExactUploadedCopy(copy, intent)) remoteIds.add(row.id);
+      else unverifiedCompleted.add(row.id);
+    } catch { unverifiedCompleted.add(row.id); }
+  }
+  const pending = live.filter((row) => !remoteIds.has(row.id)).length;
+  const { chosen, bytes } = planUploads(live.filter((row) => !unverifiedCompleted.has(row.id)),
+    remoteIds, new Map(), io.cap);
+  const summary = { uploaded: 0, bytes: 0, deleted: 0,
+    failed: invalidExisting.size + unverifiedCompleted.size, skipped: 0, pending, remote: remote.length };
   if (dryRun) {
     io.log(`dry-run: 대상 ${live.length}, 원격 ${remote.length}, 이번 회차 ${chosen.length}건 ${(bytes / 1048576).toFixed(1)}MB, 남음 ${pending - chosen.length}`);
     return summary;
   }
   for (const id of invalidExisting) io.log(`[media-audio-offsite-backup] ${id}: 원격 사본 메타데이터 불일치`);
+  for (const id of unverifiedCompleted) io.log(`[media-audio-offsite-backup] ${id}: 완료된 원격 사본 확인 실패`);
   for (const row of chosen) {
     try {
       const name = `pantheon-audio-${row.id}.enc`;
@@ -283,6 +307,8 @@ async function run(io, dryRun) {
       const sameNameFiles = allRemote.filter((file) => file.name === name);
       if (sameNameFiles.some((file) => file.id !== intent.id) || sameNameFiles.length > 1)
         throw new Error('같은 이름의 다른 원격 사본 존재');
+      if (intent.completed && sameNameFiles.length !== 1)
+        throw new Error('완료된 원격 사본이 목록에 없음');
       await uploadAudioWithReconciliation(io, { token, intent, checkExisting: intents.has(row.id) });
       if (!intent.completed) {
         await io.writeIntent({ ...intent, completed: true, blobSize: intent.blob.length,
@@ -340,7 +366,7 @@ async function run(io, dryRun) {
       io.log(`[media-audio-offsite-backup] 삭제 ${id}: ${error.message}`);
     }
   }
-  io.log(`[media-audio-offsite-backup] 올림 ${summary.uploaded}건 ${(summary.bytes / 1048576).toFixed(1)}MB, 영구 삭제 반영 ${summary.deleted}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}, 남음 ${pending - summary.uploaded - summary.skipped}`);
+  io.log(`[media-audio-offsite-backup] 올림 ${summary.uploaded}건 ${(summary.bytes / 1048576).toFixed(1)}MB, 영구 삭제 반영 ${summary.deleted}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}, 남음 ${pending - summary.uploaded}`);
   return summary;
 }
 
