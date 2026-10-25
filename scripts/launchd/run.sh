@@ -139,6 +139,10 @@ esac
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지). "$@"는 위 shift 이후라
 # 잡 이름을 뺀 나머지 인자(--dry-run 등, 없으면 빈 배열이라 무해)만 남아있다.
 START=$(date +%s)
+# 이번 실행이 로그에 쓴 줄만 하트비트 detail로 넘기려고 시작 전 줄 수를 기억한다(2026-10-25: 1줄짜리
+# 실패 뒤에 직전 정상 회차의 요약이 딸려 들어가 "FAIL … 실패 0"처럼 보였다).
+LOG_LINES_BEFORE=$(wc -l < "$LOG_DIR/$JOB.log" 2>/dev/null | tr -d ' ' || echo 0)
+[ -n "$LOG_LINES_BEFORE" ] || LOG_LINES_BEFORE=0
 set +e
 if [ "$JOB" = media-moments ] && [ "$#" -eq 0 ]; then
   # 같은 실행에서 색인이 끝난 뒤 순간을 만든다. 별도 launchd 시계의 위상은 보장되지 않는다.
@@ -159,7 +163,7 @@ DUR=$(( $(date +%s) - START ))
 STATUS=OK; [ "$CODE" -ne 0 ] && STATUS=FAIL
 
 # 하트비트 기록 (잡 실패해도 기록은 시도; 기록 실패는 잡 종료코드를 가리지 않음)
-HB_DETAIL="$(tail -n 3 "$LOG_DIR/$JOB.log" 2>/dev/null | tr '\n' ' ' | cut -c1-200)" \
+HB_DETAIL="$( { tail -n "+$((LOG_LINES_BEFORE + 1))" "$LOG_DIR/$JOB.log" 2>/dev/null || true; } | tail -n 3 | tr '\n' ' ' | cut -c1-200)" \
   "$NODE" scripts/jobs/record-heartbeat-vault.mjs "$JOB" "$STATUS" "$DUR" || true
 
 exit "$CODE"

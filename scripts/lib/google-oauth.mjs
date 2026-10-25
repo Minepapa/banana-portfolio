@@ -2,6 +2,7 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { withTransientRetry } from './transient-retry.mjs';
 
 export const OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/calendar.events',
@@ -51,11 +52,12 @@ export async function getAccessToken({ fetchImpl = fetch, now = Date.now, requir
   catch { throw new Error('OAuth 토큰 파일 없음 — google-oauth-setup 필요'); }
   const refreshToken = stored.refresh_token;
   if (typeof refreshToken !== 'string' || !refreshToken) throw new Error('OAuth 갱신 토큰 없음 — google-oauth-setup 필요');
-  const response = await fetchImpl('https://oauth2.googleapis.com/token', {
+  // 토큰 갱신은 같은 요청을 다시 보내도 결과가 같다: 일시적인 네트워크 실패는 잠시 뒤 다시 시도한다.
+  const response = await withTransientRetry(() => fetchImpl('https://oauth2.googleapis.com/token', {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: client.client_id, client_secret: client.client_secret, refresh_token: refreshToken, grant_type: 'refresh_token' }),
     signal: AbortSignal.timeout(15000),
-  });
+  }));
   const data = await response.json();
   if (!response.ok || !data.access_token || !Number.isFinite(Number(data.expires_in))) {
     // Google 오류 코드만 드러낸다. description에는 토큰이나 요청 정보가 섞일 수 있다.

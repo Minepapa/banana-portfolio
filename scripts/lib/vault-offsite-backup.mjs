@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { withTransientRetry } from './transient-retry.mjs';
 
 const MAGIC = Buffer.from('PVB1');
 const PREFIX_LENGTH = 4 + 12 + 16;
@@ -66,14 +67,18 @@ export function planRetention(files, today) {
   return { keep, delete: remove };
 }
 
-async function request(url, { token, fetchImpl = fetch, method = 'GET', headers = {}, body, timeout = 15000 }) {
-  const response = await fetchImpl(url, { method, headers: { Authorization: `Bearer ${token}`, ...headers }, body, signal: AbortSignal.timeout(timeout) });
-  if (!response.ok) {
-    const error = new Error(`Google Drive 요청 실패 (HTTP ${response.status})`);
-    error.status = response.status;
-    throw error;
-  }
-  return response;
+async function request(url, { token, fetchImpl = fetch, method = 'GET', headers = {}, body, timeout = 15000, sleep }) {
+  const once = async () => {
+    const response = await fetchImpl(url, { method, headers: { Authorization: `Bearer ${token}`, ...headers }, body, signal: AbortSignal.timeout(timeout) });
+    if (!response.ok) {
+      const error = new Error(`Google Drive 요청 실패 (HTTP ${response.status})`);
+      error.status = response.status;
+      throw error;
+    }
+    return response;
+  };
+  // 읽기(GET)만 다시 시도한다. 올리기·지우기는 중복을 피하려고 한 번만 하고, 다음 회차가 이어서 처리한다.
+  return method === 'GET' ? withTransientRetry(once, sleep ? { sleep } : {}) : once();
 }
 export async function generateFileId({ token, fetchImpl = fetch } = {}) {
   const data = await (await request(`${DRIVE}/generateIds?count=1&space=drive&type=files`, { token, fetchImpl })).json();
