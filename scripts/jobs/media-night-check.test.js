@@ -221,3 +221,19 @@ test('밤 점검: 로그가 이번 실행보다 오래되면 숫자를 쓰지 �
   assert.deepEqual(lastRunLines('media-video', dir, { notBefore: Date.now() + 60_000 }), []);
   assert.equal(lastRunLines('media-video', dir).length, 1);
 });
+
+test('밤 점검: 아르고스 전날 점검을 한 칸으로 싣고, 이상은 주의로·기록 없음도 주의로', (t) => {
+  const { root } = vault(t);
+  const base = { facts: {}, notes: null };
+  const ok = buildNightMessage(judgeBlocks(root, now), { speakerCheck: 0, untitledRecent: 0, video: null },
+    { ...base, argos: { day: '2026-10-18', facts: { points: 500, stays: 3, mediaSent: 4, notifications: 2 }, issues: [] } });
+  assert.match(ok, /^■ 아르고스\n정상: 이상 신호 없음 \(2026-10-18\)\n정상: 위치 500개 · 체류 3번 · 미디어 4개 · 알림 2건$/m);
+  const bad = buildNightMessage(judgeBlocks(root, now), { speakerCheck: 0, untitledRecent: 0, video: null },
+    { ...base, argos: { day: '2026-10-18', facts: { points: 1, stays: 0, mediaSent: 0, notifications: 0 }, issues: ['체류 겹침: 07:51 체류가 끝나기 전 08:06 새 체류'] } });
+  assert.match(bad, /^주의: 이상 신호 1건 \(2026-10-18\)$/m);
+  assert.match(bad, /^주의: 체류 겹침: 07:51/m);
+  assert.match(bad, /주의 1개/);
+  const none = buildNightMessage(judgeBlocks(root, now), { speakerCheck: 0, untitledRecent: 0, video: null },
+    { ...base, argos: { day: '2026-10-18', missing: true } });
+  assert.match(none, /^주의: 2026-10-18 아르고스 기록 없음/m);
+});

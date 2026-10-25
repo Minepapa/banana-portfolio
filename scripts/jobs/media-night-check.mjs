@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { checkDay } from '../tools/argos-health-check.mjs';
 import { fileURLToPath } from 'node:url';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
@@ -147,6 +148,21 @@ export function runFacts(logs) {
   };
 }
 
+/**
+ * 아르고스 전날(KST) 하루 점검(오너 2026-10-26: "아르고스 하루 점검 매일 텔레그램 발송"). 밤 점검 한 통에 싣는다.
+ * 좌표·본문·파일명은 쓰지 않는다(시각·개수만). 이벤트 파일이 없으면 null.
+ */
+export function argosDayReport(root, now = new Date()) {
+  const day = new Date(now.getTime() + 9 * 3600_000 - 86_400_000).toISOString().slice(0, 10);
+  const path = join(root, VAULT_REL.argosEvents, day.slice(0, 4), `${day}.jsonl`);
+  if (!existsSync(path)) return { day, missing: true };
+  try {
+    const events = readFileSync(path, 'utf8').split('\n').filter(Boolean)
+      .flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
+    return { day, ...checkDay(events) };
+  } catch { return { day, missing: true }; }
+}
+
 /** 최근 24시간에 보관 색인에 새로 들어온 파일 수(매시 잡이라 마지막 1회 숫자는 밤 결과가 아니다). */
 export function archivedLast24h(root, now = new Date()) {
   const path = join(root, VAULT_REL.mediaArchiveIndex);
@@ -274,7 +290,7 @@ export function safeReason(detail) {
   return safe.length > 60 ? `${safe.slice(0, 59)}…` : safe;
 }
 
-export function buildNightMessage(blocks, backlog, { boardWriteFailed = false, facts = {}, notes = null } = {}) {
+export function buildNightMessage(blocks, backlog, { boardWriteFailed = false, facts = {}, notes = null, argos = null } = {}) {
   const byJob = new Map(blocks.map((b) => [b.job, b]));
   // 이번 밤에 돌지 않은 작업에는 지난 회차 기록을 원인처럼 붙이지 않는다.
   const failLine = (b) => (b.fresh
@@ -350,6 +366,20 @@ export function buildNightMessage(blocks, backlog, { boardWriteFailed = false, f
   else if (vault) backup.push(known(facts.vaultBackupMB) ? `정상: 볼트 암호화 백업 ${facts.vaultBackupMB}MB` : '정상: 볼트 암호화 백업 완료');
   sections.push(['백업', backup]);
 
+  if (argos) {
+    const lines = [];
+    if (argos.missing) lines.push(`주의: ${argos.day} 아르고스 기록 없음 — 폰 앱·맥 수신부 확인`);
+    else {
+      const f = argos.facts;
+      lines.push(argos.issues.length ? `주의: 이상 신호 ${argos.issues.length}건 (${argos.day})` : `정상: 이상 신호 없음 (${argos.day})`);
+      lines.push(`없음: 위치 ${f.points}개 · 체류 ${f.stays}번 · 미디어 ${f.mediaSent}개 · 알림 ${f.notifications}건`.replace(/^없음: /, '정상: '));
+      for (const issue of argos.issues.slice(0, 5)) lines.push(`주의: ${issue}`);
+      if (argos.issues.length > 5) lines.push(`주의: 그 밖에 ${argos.issues.length - 5}건 — argos-health-check로 확인`);
+    }
+    if (lines.some((l) => l.startsWith('주의'))) warnings += 1;
+    sections.push(['아르고스', lines]);
+  }
+
   const failures = blocks.filter((b) => !b.ok).length;
   const head = failures ? `확인 필요 ${failures}개 — 자세한 판단은 경고 알림`
     : warnings ? `전체 정상 (주의 ${warnings}개)` : '전체 정상';
@@ -377,12 +407,13 @@ export async function runNightCheck({ root = VAULT_PATHS.root, now = new Date(),
     b.fresh ? readLogs(b.job, { notBefore: Date.parse(b.lastRun) - 60_000 }) : []])));
   facts.archived24h = archivedLast24h(root, now);
   const notes = newConversationNotes(root, now);
+  const argos = argosDayReport(root, now);
   const block = renderNightCheck(blocks, backlog, now);
   const failed = blocks.filter((b) => !b.ok).length;
   let boardWriteFailed = false;
   output.log(`[media-night-check] 블록 ${blocks.length}개 중 이상 ${failed}개, 영상 전사 남음 ${backlog.video?.count ?? '?'}개`);
   if (dryRun) {
-    const body = buildNightMessage(blocks, backlog, { facts, notes });
+    const body = buildNightMessage(blocks, backlog, { facts, notes, argos });
     output.log(body);
     return { failed, backlog, body, boardWriteFailed };
   }
@@ -397,7 +428,7 @@ export async function runNightCheck({ root = VAULT_PATHS.root, now = new Date(),
     boardWriteFailed = true;
     output.error?.(`[media-night-check] 현황판 쓰기 실패: ${error.message}`);
   }
-  const body = buildNightMessage(blocks, backlog, { boardWriteFailed, facts, notes });
+  const body = buildNightMessage(blocks, backlog, { boardWriteFailed, facts, notes, argos });
   if (!noSend) {
     await send({ agent: SENDER_AGENT, kind: '정보', topic: '밤 점검', body });
   }
