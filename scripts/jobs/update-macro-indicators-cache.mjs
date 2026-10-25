@@ -99,7 +99,7 @@ export async function checkUsdKrwBollinger({
   if (newlyBreached) {
     const format = (value) => Number(value).toFixed(2);
     message = {
-      agent: 'plutus', kind: '판단', topic: '환율 감시',
+      agent: 'plutus', kind: '판단', topic: '환율 감시', llm: false,
       conclusion: previous === null
         ? `원/달러 환율이 12개월 볼린저 ${direction === 'upper' ? '상단' : '하단'} 밖에 있습니다(감시 시작 시점 기준)`
         : direction === 'upper'

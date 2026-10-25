@@ -315,7 +315,7 @@ export async function drainDeferredWarnings({ send, sendCritical = (message) => 
         for (const entry of entries) entry.digestSendingAt = new Date(now).toISOString();
         writeAtomic(queueFile, JSON.stringify(queue));
         // 호출 자체가 전송 시작점이다. 응답을 기다리는 동안은 큐 잠금을 해제한다.
-        return { promise: send({ agent, kind: '판단', topic: '경고', facts,
+        return { promise: send({ agent, kind: '판단', topic: '경고', llm: false, facts,
           conclusion: `밤사이 경고 ${entries.length}건을 정리했습니다.`,
           context: '23:00~07:00 KST에 보류한 경고입니다.',
           decisions: ['미복구 항목을 확인해 주세요.'] }) };

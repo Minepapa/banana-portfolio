@@ -7,17 +7,17 @@ import { AGENT_IDS, agentLabel } from './agent-registry.mjs';
 export const AGENT_HEADERS = Object.freeze(Object.fromEntries(AGENT_IDS.map((id) => [id, agentLabel(id)])));
 
 export function renderAgentMessage({ agent, topic = null, kind, body, facts,
-  conclusion, context, decisions, zeusComment } = {}) {
+  conclusion, context, decisions, zeusComment, llm = null } = {}) {
   const departmentLabel = AGENT_HEADERS[agent];
   if (!departmentLabel) throw new Error(`미등록 발신자: ${agent}`);
   if (kind === '정보') {
     if (body === undefined) throw new Error('정보 메시지 본문 누락');
-    return formatDepartmentMessage({ departmentLabel, tag: topic, body, zeusComment });
+    return formatDepartmentMessage({ departmentLabel, tag: topic, body, zeusComment, llm: llm === true });
   }
   if (kind === '판단') {
     if (!Array.isArray(facts) || !facts.length) throw new Error('판단 메시지 사실 누락');
     return formatFactsMessage({ departmentLabel, tag: topic, facts,
-      conclusion, context, decisions, zeusComment });
+      conclusion, context, decisions, zeusComment, llm: llm === false ? false : null });
   }
   throw new Error(`메시지 kind 누락 또는 미등록: ${kind}`);
 }

@@ -82,10 +82,23 @@ const FALLBACK_ERROR_LOG_MAX_LEN = 200;
 // 폴백이 이미 있어 "아예 안 감"보다는 낫다.
 const MAX_TELEGRAM_TEXT_LEN = 4096;
 const TRUNCATE_MARKER = '\n\n…(길이 제한으로 생략됨, 전체 내용은 로그 파일 참고)';
+const CLOSABLE_TAGS = new Set(['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'blockquote', 'tg-spoiler', 'a']);
 export function truncateForTelegram(text) {
   const t = String(text ?? '');
   if (t.length <= MAX_TELEGRAM_TEXT_LEN) return t;
-  return t.slice(0, MAX_TELEGRAM_TEXT_LEN - TRUNCATE_MARKER.length) + TRUNCATE_MARKER;
+  // 자른 자리에 남은 반쪽 태그·엔티티를 버리고, 열린 채 남은 태그를 역순으로 닫는다(2026-10-25 리뷰:
+  // LLM 해석 인용문이 메시지 끝에 있어 거의 항상 <blockquote> 안에서 잘려 HTML 파싱이 실패했다).
+  const budget = MAX_TELEGRAM_TEXT_LEN - TRUNCATE_MARKER.length - 64;
+  let cut = t.slice(0, budget).replace(/<[^>]*$/, '').replace(/&[#a-zA-Z0-9]*$/, '');
+  const open = [];
+  for (const m of cut.matchAll(/<(\/?)([a-zA-Z-]+)[^>]*>/g)) {
+    const tag = m[2].toLowerCase();
+    if (!CLOSABLE_TAGS.has(tag)) continue;
+    if (m[1]) { const i = open.lastIndexOf(tag); if (i >= 0) open.splice(i, 1); }
+    else open.push(tag);
+  }
+  cut += open.reverse().map((tag) => `</${tag}>`).join('');
+  return cut + TRUNCATE_MARKER;
 }
 
 function telegramSendError(message, status) {

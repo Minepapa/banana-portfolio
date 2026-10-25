@@ -9,7 +9,21 @@
 // (SEPARATOR)을 추가해 모바일에서 헤더/본문 경계가 시각적으로 분명해지게 했다.
 import { AGENT_IDS, agentLabel, agentTitle } from './agent-registry.mjs';
 
-const SEPARATOR = '─'.repeat(16);
+// 구분선으로 메시지 출처를 나눈다(2026-10-25 오너 결정, 결정 `텔레그램-메시지-구분`):
+// - 가는 선(─): 스크립트가 계산한 사실만 — 빠른 사실 전달.
+// - 굵은 선(━): LLM이 쓴 문장이 들어 있음 — LLM 문장은 인용문(<blockquote>, 왼쪽 색 막대)으로 감싼다.
+// 판단은 발신 잡이 아니라 "이 메시지에 LLM 문장이 실제로 들어 있는가"로 한다(조용한 날 LLM을 건너뛴
+// 브리핑은 가는 선).
+export const SCRIPT_SEPARATOR = '─'.repeat(16);
+export const LLM_SEPARATOR = '━'.repeat(16);
+
+/** LLM이 쓴 문단을 인용문으로 감싼다(텔레그램에서 왼쪽에 색 막대). 정보 메시지 본문에서 발신 잡이 쓴다. */
+export function interpretation(text) {
+  const t = String(text ?? '').trim();
+  if (!t) return '';
+  // 텔레그램은 인용문 중첩을 거부한다: 이미 감싼 문단은 그대로 둔다.
+  return t.startsWith('<blockquote>') ? t : `<blockquote>${t}</blockquote>`;
+}
 
 // tag: 이 메시지의 상태를 나타내는 대괄호 단어(예: '제안'·'완료'·'경고') — 없으면
 // (기본값) 태그 없이 부서 헤더만. 아래 두 포맷 함수가 공유하는 헤더 규칙.
@@ -30,13 +44,16 @@ export const ZEUS_MARKER = `[${agentLabel('zeus')}]`;
 // 부서 보고와 Zeus 판단 코멘트를 한 메시지에 합친다(2026-08-05 오너 확정 — 텔레그램
 // 알림 개수를 늘리지 않기 위함). zeusComment가 없으면(아직 Zeus 판단 전 등) 부서
 // 보고만 나간다.
-export function formatDepartmentMessage({ departmentLabel, body, zeusComment = null, tag = null }) {
+export function formatDepartmentMessage({ departmentLabel, body, zeusComment = null, tag = null, llm = false }) {
   const header = buildHeader(departmentLabel, tag);
+  // 본문에 LLM 문단(interpretation()으로 감싼 인용문)이 있거나 제우스 코멘트가 붙으면 굵은 선.
+  const hasLlm = llm || Boolean(zeusComment) || String(body ?? '').includes('<blockquote>');
+  const SEPARATOR = hasLlm ? LLM_SEPARATOR : SCRIPT_SEPARATOR;
   // body는 stripEmDash 대상이 아니다(formatFactsMessage의 facts와 동일 이유 — 호출부가
   // 이미 조립한 문장 구조를 함부로 재단하지 않는다). 이모지만은 "예외 없이" 제거한다
   // (아래 stripEmoji import 주석 참고, 2026-09-20 DevRequest).
   let msg = `${header}\n${SEPARATOR}\n${stripEmoji(body)}`;
-  if (zeusComment) msg += `\n\n${ZEUS_MARKER} ${sanitizeLlmText(zeusComment)}`;
+  if (zeusComment) msg += `\n\n${interpretation(`${ZEUS_MARKER} ${sanitizeLlmText(zeusComment)}`)}`;
   return msg;
 }
 
@@ -45,8 +62,8 @@ export function formatDepartmentMessage({ departmentLabel, body, zeusComment = n
 // [부서] → [결론](LLM 한 줄 결론) → [사실](Node가 계산한 사실, 개조식) → [맥락]
 // (LLM 근거 서술 — 왜 그 결론·의사결정이 나왔는지) → [의사결정](LLM이 제시하는 실제
 // 의사결정 항목, 개조식 — "생각해볼 점"에서 개명, 오너 지시: "생각해볼 점 대신
-// 의사결정 항목"). 구분선(SEPARATOR)은 뺐다 — 대괄호 섹션 4개가 이미 시각적 구분을
-// 준다(오너가 보여준 예시에 구분선 없음). conclusion·context·decisions 전부 없으면
+// 의사결정 항목"). 구분선은 2026-10-25부터 출처를 알린다(결정 `텔레그램-메시지-구분`):
+// LLM 섹션이 있으면 굵은 선과 인용문, [사실]만이면 가는 선. conclusion·context·decisions 전부 없으면
 // (health-watcher처럼 애초에 LLM을 안 부르는 순수 운영 알림, 또는 조용한 날의
 // morning-briefing처럼 LLM 호출 자체를 생략한 경우) [사실]만 나간다 —
 // formatDepartmentMessage와 달리 body를 자유 문자열로 안 받고 facts 배열을 강제해,
@@ -115,10 +132,14 @@ function sanitizeLlmText(s) {
   return stripEmDash(stripEmoji(s));
 }
 
-export function formatFactsMessage({ departmentLabel, facts, conclusion = null, context = null, decisions = null, zeusComment = null, tag = null }) {
+export function formatFactsMessage({ departmentLabel, facts, conclusion = null, context = null, decisions = null, zeusComment = null, tag = null, llm = null }) {
   const header = buildHeader(departmentLabel, tag);
-  let msg = header;
-  if (conclusion) msg += `\n\n${CONCLUSION_MARKER}\n${sanitizeLlmText(conclusion)}`;
+  // [결론]·[맥락]·[의사결정]·제우스 코멘트는 LLM이 쓴다: 하나라도 있으면 굵은 선, 그 부분은 인용문(색 막대).
+  // 스크립트가 만든 고정 문구·오너가 쓴 사유를 이 칸에 넣는 호출부는 llm: false로 알린다(리뷰 2026-10-25).
+  const hasLlm = llm ?? Boolean(conclusion || context || decisions?.length || zeusComment);
+  const wrap = (text) => (hasLlm ? interpretation(text) : text);
+  let msg = `${header}\n${hasLlm ? LLM_SEPARATOR : SCRIPT_SEPARATOR}`;
+  if (conclusion) msg += `\n${wrap(`${CONCLUSION_MARKER}\n${sanitizeLlmText(conclusion)}`)}`;
   // ⚠️ facts는 stripEmDash 대상이 아니다(2026-09-14 코드리뷰 지적으로 명시) — 긴
   // 하이픈 전면 금지(2026-09-01)는 LLM이 생성하는 conclusion·context·decisions·
   // zeusComment를 겨냥한 규칙이었다. facts는 Node가 직접 조립하는 사실 배열이고,
@@ -137,10 +158,10 @@ export function formatFactsMessage({ departmentLabel, facts, conclusion = null, 
     const cleaned = stripEmoji(f);
     return cleaned.startsWith('<pre>') ? cleaned : `· ${cleaned}`;
   }).join('\n\n');
-  msg += `\n\n${FACTS_MARKER}\n${factBlock}`;
-  if (context) msg += `\n\n${CONTEXT_MARKER}\n${sanitizeLlmText(context)}`;
-  if (decisions?.length) msg += `\n\n${DECISIONS_MARKER}\n${decisions.map((d) => `· ${sanitizeLlmText(d)}`).join('\n\n')}`;
-  if (zeusComment) msg += `\n\n${ZEUS_MARKER} ${sanitizeLlmText(zeusComment)}`;
+  msg += `\n${conclusion ? '\n' : ''}${FACTS_MARKER}\n${factBlock}`;
+  if (context) msg += `\n\n${wrap(`${CONTEXT_MARKER}\n${sanitizeLlmText(context)}`)}`;
+  if (decisions?.length) msg += `\n\n${wrap(`${DECISIONS_MARKER}\n${decisions.map((d) => `· ${sanitizeLlmText(d)}`).join('\n\n')}`)}`;
+  if (zeusComment) msg += `\n\n${wrap(`${ZEUS_MARKER} ${sanitizeLlmText(zeusComment)}`)}`;
   return msg;
 }
 

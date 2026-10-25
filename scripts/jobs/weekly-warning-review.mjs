@@ -223,7 +223,7 @@ export function buildMessage(week, summary) {
   if (summary.anomalies.length > 5) facts.push(`외 ${summary.anomalies.length - 5}건(노트 참고)`);
   const unclassified = summary.items.filter((item) => item.unclassified);
   if (unclassified.length) facts.push(`미분류 ${unclassified.reduce((sum, item) => sum + item.detected, 0)}건(잡 ${unclassified.length}개)`);
-  return { agent: 'zeus', kind: '판단', topic: '경고',
+  return { agent: 'zeus', kind: '판단', topic: '경고', llm: false,
     conclusion: `${week} 경고 주간 검토: 이상 ${summary.anomalies.length}건`,
     facts, context: `총 발생 ${summary.totalDetected}건. 원장 분류와 잡 현재 상태를 검토했습니다.`,
     decisions: ['오너 메모의 원인 조사·조치·재검증 칸을 확인해 주세요.'] };

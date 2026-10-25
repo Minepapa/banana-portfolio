@@ -290,7 +290,7 @@ async function markProposalFailed(writeProposalFile, filename, sendingContent, i
 
 async function notifyProposalNotApprovable(sendWarning, id, detail) {
   const warning = {
-    agent: 'plutus', kind: '판단', topic: '경고',
+    agent: 'plutus', kind: '판단', topic: '경고', llm: false,
     facts: [`제안 ${id}는 승인 연결정보가 없어 승인할 수 없습니다.`],
     context: `${detail} 새 제안은 승인하지 말고, 기존 안건 상태를 확인한 뒤 필요하면 다시 요청하세요.`,
   };

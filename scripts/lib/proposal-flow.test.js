@@ -105,7 +105,7 @@ test('[막아야 함] createAndSendProposal: 발송 메시지 전체 텍스트 �
   });
   assert.equal(
     renderAgentMessage(sender.calls[0]),
-    '[플루토스 Plutus] 제안\n\n[사실]\n· 매수 삼성전자(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n[맥락]\nOCF/P 1위',
+    '[플루토스 Plutus] 제안\n━━━━━━━━━━━━━━━━\n[사실]\n· 매수 삼성전자(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n<blockquote>[맥락]\nOCF/P 1위</blockquote>',
   );
 });
 
@@ -367,7 +367,7 @@ test('[막아야 함] buildProposalStatusEditText: 전체 텍스트 스냅샷 �
   });
   assert.equal(
     text,
-    '[플루토스 Plutus] 승인\n\n[사실]\n· 매수 005930(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n· 승인됨 (2026-08-23 10:30 KST)\n\n[맥락]\n기존안건',
+    '[플루토스 Plutus] 승인\n━━━━━━━━━━━━━━━━\n[사실]\n· 매수 005930(005930)\n\n· 수량 10주\n\n· 제안가 70,000원\n\n· 개산금액 ≈ 700,000원\n\n· 승인됨 (2026-08-23 10:30 KST)\n\n<blockquote>[맥락]\n기존안건</blockquote>',
   );
 });
 

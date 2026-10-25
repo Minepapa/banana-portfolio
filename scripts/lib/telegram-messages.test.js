@@ -6,10 +6,11 @@ import {
 } from './telegram-messages.mjs';
 
 const SEP = '─'.repeat(16);
+const LSEP = '━'.repeat(16);
 
 test('formatDepartmentMessage: 부서보고+Zeus코멘트를 한 메시지로 합침(오너 확정 형식)', () => {
   const msg = formatDepartmentMessage({ departmentLabel: '플루토스 Plutus', body: '리밸런싱 제안입니다.', zeusComment: '승인합니다.' });
-  assert.equal(msg, `[플루토스 Plutus]\n${SEP}\n리밸런싱 제안입니다.\n\n${ZEUS_MARKER} 승인합니다.`);
+  assert.equal(msg, `[플루토스 Plutus]\n${LSEP}\n리밸런싱 제안입니다.\n\n<blockquote>${ZEUS_MARKER} 승인합니다.</blockquote>`);
 });
 
 test('ZEUS_MARKER: "[제우스 Zeus]" — 이관 4-4(D64)에서 헤더와 같은 [한글 English] 표기로 통일', () => {
@@ -42,40 +43,52 @@ test('formatFactsMessage: 결론→사실→맥락→의사결정 4단 구조(20
   });
   assert.equal(
     msg,
-    `[플루토스 Plutus]\n\n[결론]\n지금 배분할 필요는 없습니다.\n\n[사실]\n· 리츠 갭 -1.98%p(밴드 이탈)\n\n· 연금저축 누적현금 962,000원\n\n[맥락]\n리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.\n\n[의사결정]\n· 지금 배분할지, 다음 현금 유입까지 기다릴지\n\n· 리츠 대신 국내주식 갭부터 메울지`,
+    `[플루토스 Plutus]\n${LSEP}\n<blockquote>[결론]\n지금 배분할 필요는 없습니다.</blockquote>\n\n[사실]\n· 리츠 갭 -1.98%p(밴드 이탈)\n\n· 연금저축 누적현금 962,000원\n\n<blockquote>[맥락]\n리츠 비중이 목표 대비 부족해 연금저축 내 후보 중 TIGER 리츠부동산인프라로 배분을 제안합니다.</blockquote>\n\n<blockquote>[의사결정]\n· 지금 배분할지, 다음 현금 유입까지 기다릴지\n\n· 리츠 대신 국내주식 갭부터 메울지</blockquote>`,
   );
 });
 
 test('formatFactsMessage: conclusion·context·decisions 전부 없으면 [사실]만(LLM 없는 순수 운영 알림, 또는 조용한 날 LLM 생략)', () => {
   const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['잡 A가 조용함', '잡 B가 조용함'] });
-  assert.equal(msg, `[플루토스 Plutus]\n\n[사실]\n· 잡 A가 조용함\n\n· 잡 B가 조용함`);
+  assert.equal(msg, `[플루토스 Plutus]\n${SEP}\n[사실]\n· 잡 A가 조용함\n\n· 잡 B가 조용함`);
 });
 
 test('formatFactsMessage: decisions 없이 context만 있어도 됨(부분 구조 허용)', () => {
   const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['사실1'], context: '맥락문단' });
-  assert.equal(msg, `[플루토스 Plutus]\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단`);
+  assert.equal(msg, `[플루토스 Plutus]\n${LSEP}\n[사실]\n· 사실1\n\n<blockquote>[맥락]\n맥락문단</blockquote>`);
 });
 
 test('formatFactsMessage: decisions가 빈 배열이면(마커는 있었지만 항목 없음) [의사결정] 섹션 자체를 안 붙임', () => {
   const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['사실1'], context: '맥락문단', decisions: [] });
-  assert.equal(msg, `[플루토스 Plutus]\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단`);
+  assert.equal(msg, `[플루토스 Plutus]\n${LSEP}\n[사실]\n· 사실1\n\n<blockquote>[맥락]\n맥락문단</blockquote>`);
 });
 
 test('formatFactsMessage: zeusComment까지 있으면 맨 뒤에 붙음', () => {
   const msg = formatFactsMessage({
     departmentLabel: '플루토스 Plutus', facts: ['사실1'], conclusion: '결론문장', context: '맥락문단', decisions: ['고민점1'], zeusComment: '승인',
   });
-  assert.equal(msg, `[플루토스 Plutus]\n\n[결론]\n결론문장\n\n[사실]\n· 사실1\n\n[맥락]\n맥락문단\n\n[의사결정]\n· 고민점1\n\n${ZEUS_MARKER} 승인`);
+  assert.equal(msg, `[플루토스 Plutus]\n${LSEP}\n<blockquote>[결론]\n결론문장</blockquote>\n\n[사실]\n· 사실1\n\n<blockquote>[맥락]\n맥락문단</blockquote>\n\n<blockquote>[의사결정]\n· 고민점1</blockquote>\n\n<blockquote>${ZEUS_MARKER} 승인</blockquote>`);
 });
 
 test('formatFactsMessage: facts 없어도(빈 배열) 헤더+[사실] 빈 줄만 남고 안 터짐', () => {
   const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: [] });
-  assert.equal(msg, `[플루토스 Plutus]\n\n[사실]\n`);
+  assert.equal(msg, `[플루토스 Plutus]\n${SEP}\n[사실]\n`);
 });
 
 test('[막아야 함] formatFactsMessage: tag를 넘기면 부서 헤더 뒤에 주제로 붙는다', () => {
   const msg = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['사실1'], tag: '제안' });
-  assert.equal(msg, `[플루토스 Plutus] 제안\n\n[사실]\n· 사실1`);
+  assert.equal(msg, `[플루토스 Plutus] 제안\n${SEP}\n[사실]\n· 사실1`);
+});
+
+test('formatFactsMessage: 스크립트 사실만이면 가는 선(─)·인용문 없음, [결론]이 있으면 굵은 선(━)·[결론]이 인용문', () => {
+  const script = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['사실1'] });
+  assert.equal(script.split('\n')[1], SEP);
+  assert.ok(!script.includes(LSEP));
+  assert.ok(!script.includes('<blockquote>'));
+  const llm = formatFactsMessage({ departmentLabel: '플루토스 Plutus', facts: ['사실1'], conclusion: '결론문장' });
+  assert.equal(llm.split('\n')[1], LSEP);
+  assert.ok(!llm.includes(SEP));
+  assert.ok(llm.includes('<blockquote>[결론]\n결론문장</blockquote>'));
+  assert.ok(!llm.includes('<blockquote>[사실]'));
 });
 
 // parseDepartmentResponse — LLM 응답을 formatFactsMessage의 conclusion·context·decisions
