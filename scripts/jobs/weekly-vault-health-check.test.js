@@ -362,3 +362,12 @@ test('buildApolloPrompt: 세 마커·사실 목록이 프롬프트에 그대로 
   assert.match(prompt, /\[의사결정\]/);
   assert.match(prompt, /깨진 링크 1건/);
 });
+
+test('findBrokenAndAmbiguousLinks: 노트#제목·#^블록 앵커는 노트가 있으면 깨진 링크가 아니다(2026-10-25)', async () => {
+  const { findBrokenAndAmbiguousLinks: find } = await import('./weekly-vault-health-check.mjs');
+  const files = [
+    { relPath: '40_Projects/p/Features/거시 모니터링', content: '## ECOS 연동 이력\n' },
+    { relPath: '30_Wiki/33_Objects/ECOS', content: '[[40_Projects/p/Features/거시 모니터링#ECOS 연동 이력]] [[거시 모니터링#^abc|별칭]] [[#자기 제목]] [[없는 노트#제목]]' },
+  ];
+  assert.deepEqual(find(files).broken.map((b) => b.target), ['없는 노트']);
+});
