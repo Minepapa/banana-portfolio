@@ -364,6 +364,7 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
   routeGeocode.region = geocode.region?.bind(geocode);
   routeGeocode.keyword = geocode.keyword?.bind(geocode);
   routeGeocode.failureCount = geocode.failureCount?.bind(geocode);
+  routeGeocode.failureReasons = geocode.failureReasons?.bind(geocode);
   // computeRoute의 날짜별 flush를 막는다. 캐시 파일은 모든 순간 처리 후 한 번만 쓴다.
   routeGeocode.flush = async () => {};
   const cachedRouteForDay = (date, options) => {

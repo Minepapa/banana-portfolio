@@ -142,7 +142,10 @@ export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = cr
   }
   finally { if (!dryRun) await geocode.flush?.(); }
   const degraded = !dryRun && geocode.failureCount?.() > 0;
-  if (degraded) console.warn(`[daily-note] 지오코딩 실패 ${geocode.failureCount()}건`);
+  if (degraded) {
+    const reasons = Object.entries(geocode.failureReasons?.() ?? {}).map(([reason, n]) => `${reason} ${n}`).join(', ');
+    console.warn(`[daily-note] 지오코딩 실패 ${geocode.failureCount()}건${reasons ? ` (${reasons})` : ''}`);
+  }
   const nextDate = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
   const nextStart = Date.parse(`${nextDate}T00:00:00+09:00`) / 1000;
   const firstNextDayPoint = points.filter((point) => point.tst >= nextStart && point.tst < nextStart + 86_400)
