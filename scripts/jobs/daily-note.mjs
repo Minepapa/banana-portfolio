@@ -24,7 +24,8 @@ import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
-import { sendDirectWarning } from '../lib/direct-warning-delivery.mjs';
+import { sendDirectWarning, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
+import { cancelDeferredWarnings, DEFERRED_WARNINGS_FILE } from '../lib/deferred-warnings.mjs';
 import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
 import { listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
@@ -181,6 +182,11 @@ async function summarize(date, records, prevFields, recordHash, dryRun) {
   }
 }
 
+// 날짜별 경고 키 — 경고 상세의 날짜는 가림 처리되므로 키로 날짜를 구분한다(그날 경고만 취소).
+function summaryWarningSubject(date) {
+  return warningSubjectKey('summary', date);
+}
+
 export async function processDay({ mode, date, dryRun, noSend, rules, today, deps: injected = {} }) {
   const deps = { send: sendAgentMessage, summarize, write: writeAtomic, computeRoute, updateCandidates, fetchEvents: async (day) => {
     if (!isConfigured()) return null;
@@ -260,6 +266,15 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   if (latest != null && sameIgnoringModified(latest, note)) console.log('  변경 없음 — 쓰지 않음');
   else { mkdirSync(dirname(path), { recursive: true }); deps.write(path, note); console.log(`  💾 ${rel} (${statusOf(inspectExisting(note).prev)})`); }
 
+  // 23:30 초안의 요약 실패 경고는 밤이라 07:00까지 보류된다. 05:30 확정에서 요약이 되면 그 경고는 이미 낡았으므로
+  // 아침에 나가기 전에 취소한다(2026-10-25: 한도로 23:30 실패 → 05:30 복구됐는데 07:00에 실패 경고가 나감).
+  if (summaryStatus === 'ok' && !dryRun && (deps.queueFile || !process.env.NODE_TEST_CONTEXT)) {
+    const issueKey = `daily-note|DAILY_SUMMARY_FAILED|${summaryWarningSubject(date)}`;
+    try {
+      await cancelDeferredWarnings((entry) => entry.issueKey === issueKey, deps.queueFile ?? DEFERRED_WARNINGS_FILE);
+    } catch (error) { console.error(`  ⚠️ 보류된 요약 실패 경고 취소 실패: ${error.message}`); }
+  }
+
   const sentAt = inspectExisting(readOrNull(path)).prev?.fields?.telegramSentAt;
   if (sentAt || noSend || mode === 'prepare') return { failed: !!s.failed || events === 'failed', candidatesFailed };
   try {
@@ -267,7 +282,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
     if (summaryStatus === 'failed') {
       const result = await sendDirectWarning({
         message, send: deps.send, jobName: 'daily-note', warningCode: 'DAILY_SUMMARY_FAILED',
-        subjectKey: 'summary', kind: 'operational', severity: 'medium', journalRoot: deps.journalRoot,
+        subjectKey: summaryWarningSubject(date), kind: 'operational', severity: 'medium', journalRoot: deps.journalRoot,
         queueFile: deps.queueFile, clock: deps.clock ?? Date.now,
         detail: `AI 요약 실패 — 다음 실행에서 다시 시도 (${date})`,
       });
