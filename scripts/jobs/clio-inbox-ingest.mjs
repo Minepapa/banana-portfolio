@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 /** 클리오 Inbox ingest: 계획을 검증한 뒤 기록을 한 건씩 적용한다. Wiki는 보류한다. */
+import { interpretation } from '../lib/telegram-messages.mjs';
+import { escapeHtml } from '../lib/telegram.mjs';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -759,13 +761,16 @@ export function telegramMessage(items, remaining, { mode = 'report', applyResult
       const folder = basename(target.folder);
       const label = /^\d{4}$/.test(folder) ? basename(dirname(target.folder)) : folder;
       const actionLabel = { 'append-source': '보강', candidate: '후보', question: '질문' };
-      return [
-        `■ ${titleLine(target.title)}`,
-        `• 폴더: ${label}`,
-        ...wiki.map((entry) => `• Wiki ${actionLabel[entry.action] ?? entry.action}: ${oneLine(entry.page)}${entry.reason ? ` — ${oneLine(entry.reason)}` : ''}`),
-        `• 인물: ${extracted?.people?.map(oneLine).join(', ') || '없음'}`,
-        `• 장소: ${extracted?.places?.map(oneLine).join(', ') || '없음'}`,
-      ];
+      // 제목·폴더·위키 연결·인물·장소는 LLM 판단이다: 항목째 인용문(색 막대)으로 묶는다(결정 `텔레그램-메시지-구분`,
+      // 오너 2026-10-26). LLM 글자는 HTML 이스케이프한다.
+      const e = (value) => escapeHtml(value);
+      return [interpretation([
+        `■ ${e(titleLine(target.title))}`,
+        `• 폴더: ${e(label)}`,
+        ...wiki.map((entry) => `• Wiki ${e(actionLabel[entry.action] ?? entry.action)}: ${e(oneLine(entry.page))}${entry.reason ? ` — ${e(oneLine(entry.reason))}` : ''}`),
+        `• 인물: ${e(extracted?.people?.map(oneLine).join(', ') || '없음')}`,
+        `• 장소: ${e(extracted?.places?.map(oneLine).join(', ') || '없음')}`,
+      ].join('\n'))];
     })].join('\n');
   return { agent: 'clio', kind: '정보', topic: mode === 'auto' ? 'Inbox 적용 결과' : 'Inbox 정리 계획', body };
 }

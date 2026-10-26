@@ -510,7 +510,15 @@ test('Telegram truncates an unchecked title to 60 characters', () => {
   value.target.title = `2026-10-11 ${'가상'.repeat(100)}`;
   const body = telegramMessage([{ status: '계획함', judgment: value }], 0).body;
   assert.equal(body.includes(value.target.title), false);
-  assert.equal(body.match(/^■ (.*?)$/m)[1].length, 60);
+  assert.equal(body.match(/^(?:<blockquote>)?■ (.*?)$/m)[1].length, 60);
+});
+
+test('Telegram: LLM 판단(제목·폴더·위키·인물·장소)은 인용문으로 묶고 이스케이프, 숫자 줄은 밖에', () => {
+  const value = judgment();
+  value.target.title = '2026-10-11 A<B & C';
+  const body = telegramMessage([{ status: '계획함', judgment: value }], 0).body;
+  assert.match(body, /<blockquote>■ 2026-10-11 A&lt;B &amp; C\n• 폴더: [^]*• 장소: [^]*<\/blockquote>/);
+  assert.match(body.split('<blockquote>')[0], /계획 1건/);
 });
 
 test('terminal outcomes skip unchanged hashes and free priority slots; changed content retries', async (t) => {
