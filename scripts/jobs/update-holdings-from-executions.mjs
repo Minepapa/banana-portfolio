@@ -88,6 +88,11 @@ import { loadHoldingAssetClassSources, resolveHoldingAssetClass, missingAssetCla
 import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
+// 알림 누락 등으로 원문이 없는 체결을 오너가 실계좌로 확인해 기록한 행의 source 값.
+// ⚠️ execution-source-policy.mjs classifyConfirmedKakaoExecution의 reason 'OWNER_CONFIRMED'
+// (오너가 계좌만 확정한 카카오 체결, 원장 source는 KAKAO)와 문자열이 같지만 뜻이 다르다.
+// 그 reason을 source로 넘기면 일반 카카오 체결이 수량 대조에서 빠진다.
+export const OWNER_CONFIRMED_SOURCE = 'OWNER_CONFIRMED';
 
 function readVaultFiles(dir) {
   if (!existsSync(dir)) return [];
@@ -194,8 +199,46 @@ export function findMatchingKnownExecution(exec, knownExecutions, allExecutions 
     }
   }
 
-  const matches = knownExecutions.filter((g) => baseMatch(g) && g.quantity === exec.quantity);
-  if (!matches.length) return null;
+  // ⚠️ 버그 수정(2026-10-29, 실사고) — 아래 수량 일치 대조는 "다른 경로가 같은 체결을
+  // 따로 기록한 것"을 찾는 기준이다. 그런데 같은 실행에서 방금 반영한 카카오 체결도
+  // knownExecutions에 들어가므로, 같은 주문을 여러 번 나눠 체결해 수량이 우연히 같은
+  // 카카오 알림끼리 서로를 중복으로 잡았다(2026-10-27 연금저축 TIGER 미국배당다우존스
+  // 매도 14건 분할체결 중 8건 12주가 duplicate-skipped, 보유가 12주 많게 남음).
+  // 2026-09-03 known 대조 범위를 legacy에서 "반영된 다른 소스"로 넓힐 때 생긴 회귀다.
+  // 불변식: 같은 출처(source)에서 sourceEventId가 서로 다른 두 기록은 서로의 중복이
+  // 아니다. 한쪽이라도 출처나 sourceEventId가 없으면(legacy·옛 카카오 행·IRP) 판단
+  // 근거가 없으므로 기존 수량 대조를 그대로 쓴다.
+  // ⚠️ 이 불변식의 근거는 "같은 실제 체결 → 같은 sourceEventId"를 만드는 쪽에 있다.
+  // 맥의 원장 단계는 sourceEventId가 같을 때만 거른다(독립 리뷰 2026-10-29 확인).
+  //   - 카카오: Kakao-Notification 앱 documentId() = SHA-256(본문·postedAt 등), 2026-10-10
+  //     이후 결정적 ID(그 전 자동 ID 행은 모두 이미 처리 완료). 카카오톡이 같은 본문을
+  //     다른 postedAt으로 다시 올리면 ID가 달라져 이중 반영될 수 있다 — 실데이터 49건에서
+  //     흔적은 없고, 같은 초·같은 단가·같은 수량도 실제 별개 체결일 수 있음이 이번 사고로
+  //     실증돼 내용 기준 중복 제거는 쓸 수 없다. 대신 아래에서 로그로 관측한다.
+  //   - NH 해외 일별거래(orderNo 없음): gb-{날짜}-{trd_sno}, 행마다 API가 주는 번호.
+  // 오너 확인 기록(알림이 오지 않은 체결을 오너가 실계좌로 확인해 손으로 넣은 행)은
+  // "다른 경로가 기록한 체결과 별개"임을 오너가 확인한 것이다. 그래서 수량 대조에서
+  // 양쪽 방향 모두 뺀다 — 오너 행을 건너뛰면 확인한 누락분이 다시 빠지고, 시각 미상
+  // (00:00:00)이라 먼저 반영된 오너 행에 같은 수량의 카카오 행이 걸리면 실제 체결이
+  // 빠진다(2026-10-27 6차 2주·13차 1주 보정 드라이런에서 카카오 7건이 걸려 확인).
+  if (exec.source === OWNER_CONFIRMED_SOURCE) return null;
+  const distinctEventOfSameSource = (g) =>
+    g.source && exec.source && g.source === exec.source &&
+    g.sourceEventId && exec.sourceEventId && String(g.sourceEventId) !== String(exec.sourceEventId);
+  const sameQuantity = knownExecutions.filter((g) => baseMatch(g) && g.quantity === exec.quantity);
+  // 늦게 온 알림이 오너 확인 행과 같은 체결이면 이중 반영된다. API 대사가 없는 계좌라
+  // 기계로 못 잡으니 막지는 않되 실계좌 대조가 필요하다고 남긴다(독립 리뷰 2026-10-29).
+  if (sameQuantity.some((g) => g.source === OWNER_CONFIRMED_SOURCE)) {
+    console.log(`  ⚠️  오너 확인 행과 같은 날·같은 수량 — 별도 체결로 반영, 실계좌 대조 필요: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName} ${exec.quantity}주 (${exec.source} ${exec.sourceEventId})`);
+  }
+  const quantityCandidates = sameQuantity.filter((g) => g.source !== OWNER_CONFIRMED_SOURCE);
+  const matches = quantityCandidates.filter((g) => !distinctEventOfSameSource(g));
+  if (!matches.length) {
+    if (quantityCandidates.length) {
+      console.log(`  ℹ️  같은 출처의 다른 이벤트(수량 동일) — 별도 체결로 반영: ${exec.tradeDate} ${exec.tradeType} ${exec.stockName} ${exec.quantity}주 (${exec.source} ${exec.sourceEventId})`);
+    }
+    return null;
+  }
   // 후보가 여럿인데 계좌가 서로 갈리면(같은 날 같은 종목·구분·수량을 다른 계좌로 거래한
   // 우연 — 이론상 가능) 어느 쪽 계좌인지 추정하지 않는다(코드리뷰 지적, 2026-08-19 —
   // 이 프로젝트의 "추정하지 않는다" 원칙과 일관되게 방어). account만 null로 낮추고

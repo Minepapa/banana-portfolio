@@ -478,3 +478,12 @@ test('buildExchangeRecord: 종목이 없는 레코드라 account를 넘겨도 ta
   const { content } = buildExchangeRecord(exchange({ account: '위탁' }));
   assert.deepEqual(parseFrontmatter(content).tags, ['계좌/위탁']);
 });
+
+test('[막아야 함/실사고] buildProfitRecord: 같은 초·같은 수량이라도 sourceEventId가 다르면 다른 파일명(2026-10-27 분할체결 손익 2건 덮어쓰기)', () => {
+  const a = buildProfitRecord(sellExec({ quantity: 3, sourceEventId: 'a71a' }), 50000, 80000);
+  const b = buildProfitRecord(sellExec({ quantity: 3, sourceEventId: 'aeed' }), 50000, 80000);
+  assert.notEqual(a.filename, b.filename);
+  assert.notEqual(a.dedupKey, b.dedupKey);
+  // sourceEventId가 없는 호출(돌파매매 청산 등)은 예전 파일명 그대로다.
+  assert.equal(buildProfitRecord(sellExec({ quantity: 3 }), 50000, 80000).filename.endsWith('-3.md'), true);
+});
