@@ -52,12 +52,13 @@ async function main() {
     const d = parseDividend(body, ts);
     if (!d) { notDividend++; continue; }
 
-    // filename은 date·receivedTime·stockName으로만 결정되고 acctRaw와 무관하다
+    // filename은 date·receivedTime·stockName·세후금액으로만 결정되고 acctRaw와 무관하다
     // (ledger-vault-writer.mjs buildDividendRecord 참고) — 재파싱해도 기존 파일과
     // 정확히 같은 경로가 나와 안전하게 매칭된다.
-    const { filename, dir } = buildDividendRecord(d);
-    const filepath = join(dir, filename);
-    if (!existsSync(filepath)) { notFound++; continue; }
+    // 2026-10-29부터 파일명 끝에 세후금액이 붙는다. 그 전 기록은 옛 이름(legacyFilename)이다.
+    const { filename, legacyFilename, dir } = buildDividendRecord(d);
+    const filepath = [join(dir, filename), join(dir, legacyFilename)].find((p) => existsSync(p));
+    if (!filepath) { notFound++; continue; }
 
     const content = readFileSync(filepath, 'utf8');
     const existing = parseFrontmatter(content);

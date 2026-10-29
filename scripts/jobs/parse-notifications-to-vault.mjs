@@ -125,6 +125,15 @@ const sendFillRoundGapWarning = createDirectWarningSender(sendAgentMessage, {
 // 반복하지 않는다. 발송 실패는 표시를 남기지 않아 다음 실행(10분 뒤)에 다시 시도한다.
 const FILL_ROUND_LOOKBACK_DAYS = 3;
 
+/**
+ * 세후금액이 파일명에 들어가기 전(2026-10-29 이전) 이름으로 같은 배당이 이미 있는지 본다.
+ * 옛 파일의 금액이 다르면(같은 초에 온 다른 배당) 같은 기록이 아니다 — 새 이름으로 쓴다.
+ */
+export function sameLegacyDividend(path, d) {
+  if (!existsSync(path)) return false;
+  return Number(parseFrontmatter(readFileSync(path, 'utf8')).afterTaxAmount) === Number(d.afterTaxAmount);
+}
+
 // 카카오 체결 원장 파일명은 `...-{Firestore 문서 ID}.md`로 끝난다(buildKakaoExecutionRecord).
 export function ledgerHasSourceEvent(id, filenames = readdirSync(VAULT_PATHS.facts.ledger.executions)) {
   const suffix = `-${sanitizeSegment(id)}.md`;
@@ -431,9 +440,9 @@ async function main() {
 
     const d = parseDividend(body, ts);
     if (d) {
-      const { filename, content, dir } = buildDividendRecord(d);
+      const { filename, legacyFilename, content, dir } = buildDividendRecord(d);
       const filepath = join(dir, filename);
-      if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
+      if (existsSync(filepath) || sameLegacyDividend(join(dir, legacyFilename), d)) { skip++; processedIds.push(id); continue; }
       console.log(`  + [배당] ${d.date} ${d.stockName} ${d.afterTaxAmount.toLocaleString()}원`);
       if (!DRY_RUN) writeAtomic(filepath, content);
       divNew++;

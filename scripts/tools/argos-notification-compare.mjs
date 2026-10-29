@@ -69,8 +69,27 @@ export function compareNotification(item, dirs, used = new Set()) {
   if (type === '예수금' && CASH_ALARM_API_EXCLUDED.has(parsed.account)) return { verdict: 'API 정본', type };
   const record = RECORD_BUILDERS[type](parsed);
   // dirs.ledgerDirs[type]은 테스트용(실제 실행은 장부 기록 함수가 정한 볼트 폴더).
-  const twin = findLedgerTwin(record.filename, dirs.ledgerDirs?.[type] ?? record.dir, { used });
+  const dir = dirs.ledgerDirs?.[type] ?? record.dir;
+  // 배당은 2026-10-29부터 파일명에 세후금액이 붙는다. 그 전 장부는 옛 이름으로도 맞춰 본다.
+  const twin = findLedgerTwin(record.filename, dir, { used }) ?? legacyDividendTwin(record, parsed, dir, used);
   return { verdict: twin ? '장부 일치' : '아르고스만', type, twin };
+}
+
+/**
+ * 옛 이름 장부는 금액이 이름에 없어 머리말 세후금액까지 같아야 같은 배당으로 본다(같은 초에 온 다른 배당과 섞지 않는다).
+ * 두 앱의 수신 시각은 몇 초 다를 수 있어, 시각이 가까운 후보부터 금액이 맞는 것을 찾는다.
+ */
+function legacyDividendTwin(record, parsed, dir, used) {
+  if (!record.legacyFilename) return null;
+  const tried = new Set(used);
+  for (;;) {
+    const twin = findLedgerTwin(record.legacyFilename, dir, { used: tried });
+    if (!twin) return null;
+    if (Number(parseFrontmatter(readFileSync(join(dir, twin), 'utf8')).afterTaxAmount) === Number(parsed.afterTaxAmount)) {
+      used.add(join(dir, twin));
+      return twin;
+    }
+  }
 }
 
 /**
@@ -87,6 +106,8 @@ export function kakaoOnly(date, ledgerDirs, used) {
         const source = parseFrontmatter(readFileSync(join(dir, file), 'utf8')).source;
         if (source && source !== 'KAKAO') continue;
       }
+      // 오너 수동 앵커(record-cash-anchor)는 알림이 아니다(2026-10-29 연금저축 오탐).
+      if (type === '예수금' && parseFrontmatter(readFileSync(join(dir, file), 'utf8')).source === 'MANUAL_ANCHOR') continue;
       counts[type] = (counts[type] ?? 0) + 1;
     }
   }

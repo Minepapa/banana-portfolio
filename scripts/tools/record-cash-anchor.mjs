@@ -189,7 +189,7 @@ export function recordAnchor({ account, balance, ts, dryRun, windowMinutes = WIN
     console.warn(`⚠️ 근접 흐름 점검 실패(기록은 계속 진행): ${e.message}`);
   }
 
-  const record = buildCashEventRecord({ account, balance, ts });
+  const record = buildCashEventRecord({ account, balance, ts, source: 'MANUAL_ANCHOR' });
   const filepath = join(record.dir, record.filename);
   console.log(`  + [예수금앵커·수동] ${ts} ${account} 잔고 ${balance.toLocaleString()}원 — ${filepath}`);
   if (!dryRun) {

@@ -101,3 +101,33 @@ test('카카오만: 짝이 없는 그날 장부 기록을 세고, 체결은 NH_A
   const used = new Set([join(exec, '2026-10-23-100003-매수-C-1.md')]);
   assert.deepEqual(kakaoOnly('2026-10-23', { 체결: exec, 배당: '/none' }, used), { 체결: 1 });
 });
+
+test('배당 대조: 옛 이름(금액 없음) 장부는 세후금액이 같을 때만 짝짓는다', () => {
+  const ledger = mkdtempSync(join(tmpdir(), 'argos-div-legacy-'));
+  const dirs = { executionsDir: '/none', apiCoveredDir: '/none', ledgerDirs: { 배당: ledger } };
+  const parsed = classifyInvestmentNotification(DIVIDEND, '2026-08-04 09:00:00').parsed;
+  const { legacyFilename } = buildDividendRecord(parsed);
+  writeFileSync(join(ledger, legacyFilename), '---\nafterTaxAmount: 15000\n---\n');
+  const argos = { body: DIVIDEND, ts: '2026-08-04 09:00:00', sender: 'NH투자증권' };
+  const other = { ...argos, body: DIVIDEND.replace('15,000원', '9,000원') };
+  assert.deepEqual(compareNotification(other, dirs, new Set()), { verdict: '아르고스만', type: '배당', twin: null });
+  assert.deepEqual(compareNotification(argos, dirs), { verdict: '장부 일치', type: '배당', twin: legacyFilename });
+});
+
+test('kakaoOnly: 오너 수동 앵커(source MANUAL_ANCHOR) 예수금은 아르고스가 놓친 알림으로 세지 않는다', () => {
+  const cash = mkdtempSync(join(tmpdir(), 'argos-cash-'));
+  writeFileSync(join(cash, '2026-10-29-140555-연금저축-567861.md'), '---\nsource: "MANUAL_ANCHOR"\n---\n');
+  writeFileSync(join(cash, '2026-10-29-150000-ISA-1000.md'), '---\nbalance: 1000\n---\n');
+  assert.deepEqual(kakaoOnly('2026-10-29', { 예수금: cash }, new Set()), { 예수금: 1 });
+});
+
+test('배당 대조: 옛 이름 후보가 여럿이면 금액이 맞는 것을 찾는다(가까운 다른 배당에 막히지 않음)', () => {
+  const ledger = mkdtempSync(join(tmpdir(), 'argos-div-multi-'));
+  const dirs = { executionsDir: '/none', apiCoveredDir: '/none', ledgerDirs: { 배당: ledger } };
+  writeFileSync(join(ledger, '2026-08-04-090001-TIGER-리츠부동산인프라.md'), '---\nafterTaxAmount: 9000\n---\n');
+  writeFileSync(join(ledger, '2026-08-04-090030-TIGER-리츠부동산인프라.md'), '---\nafterTaxAmount: 15000\n---\n');
+  const used = new Set();
+  const r = compareNotification({ body: DIVIDEND, ts: '2026-08-04 09:00:00', sender: 'NH투자증권' }, dirs, used);
+  assert.deepEqual(r, { verdict: '장부 일치', type: '배당', twin: '2026-08-04-090030-TIGER-리츠부동산인프라.md' });
+  assert.equal(used.size, 1);
+});
