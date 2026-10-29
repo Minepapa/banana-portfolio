@@ -20,8 +20,20 @@
        이 간격으로 돌아도 장외엔 KR/US 조회를 스스로 스킵한다(금현물만 예외 — KRX
        일별배치라 애초에 장중·장외 구분이 의미 없음, 그날 데이터가 아직 미발행이면
        그냥 어제 값 그대로 반복 조회될 뿐 문제 없음). -->
-  <key>StartInterval</key>
-  <integer>600</integer>
+  <!-- 2026-10-29 오너 지시("API 호출이 충돌나지 않게 분배") — StartInterval=600(로드 시점에
+       따라 위상이 제멋대로)을 매시 :00·:10·…·:50 고정 분으로 바꿨다. 같은 10분 주기인
+       intraday-market-move-monitor(:03…)·intraday-portfolio-sync(:05…)와 분을 엇갈려
+       NH·KIS를 같은 순간에 부르지 않게 한다(이 잡 실행시간 중앙값 12초). 채권·금·펀드 같은
+       느린 값은 :00 회차에만 조회한다(scripts/lib/poll-schedule.mjs). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Minute</key><integer>50</integer></dict>
+  </array>
   <key>RunAtLoad</key>
   <false/>
   <key>ProcessType</key>

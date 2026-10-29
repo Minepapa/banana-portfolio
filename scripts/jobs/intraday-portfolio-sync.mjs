@@ -48,19 +48,29 @@
  * 이미 자기 자신의 크리덴셜 확인·경고·dedup을 갖고 있으므로, 이 오케스트레이터는
  * 순서 보장과 장애 격리만 책임진다 — 판단 로직을 중복 구현하지 않는다.
  *
+ * 단계별 조회 빈도(2026-10-29 오너 지시, scripts/lib/poll-schedule.mjs) — 매 회차 7단계를
+ * 다 돌리지 않는다. 증권사 API를 부르는 단계는 값이 바뀌는 빈도에 맞춰 건너뛴다:
+ * 체결 감지는 거래 시간대 매 회차(장외엔 시간당 1회), NH 예수금은 거래 시간대 30분·장외
+ * 1시간, IRP 잔고·체결은 거래 시간대 시간당 1회. 로컬 계산 단계(3·6·7)는 매 회차.
+ * 이 잡은 launchd에서 매시 :05·:15…(시세 잡 :00·:10…과 5분 엇갈림)에 돈다.
+ *
  * 사용법:
- *   node scripts/jobs/intraday-portfolio-sync.mjs            # 실제로 반영
- *   node scripts/jobs/intraday-portfolio-sync.mjs --dry-run  # 7개 전부 드라이런으로 전달
+ *   node scripts/jobs/intraday-portfolio-sync.mjs            # 실제로 반영(이번 회차 등급만)
+ *   node scripts/jobs/intraday-portfolio-sync.mjs --full     # 등급 무시하고 7단계 전부
+ *   node scripts/jobs/intraday-portfolio-sync.mjs --dry-run  # 이번 회차 단계를 드라이런으로 전달
  */
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isUsMarketOpen } from '../lib/kis.mjs';
+import { planIntradaySyncSteps } from '../lib/poll-schedule.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.argv.includes('--dry-run');
+const FULL = process.argv.includes('--full');
 const STEP_TIMEOUT_MS = 60_000;
 
-const STEPS = [
+export const STEPS = [
   'reconcile-nh-executions.mjs',
   'reconcile-irp-executions.mjs',
   'update-holdings-from-executions.mjs',
@@ -71,8 +81,11 @@ const STEPS = [
 ];
 
 async function main() {
-  let ok = 0, failed = 0;
+  const now = new Date();
+  const plan = planIntradaySyncSteps(now, { full: FULL, usOpen: isUsMarketOpen(now) });
+  let ok = 0, failed = 0, skipped = 0;
   for (const step of STEPS) {
+    if (!plan[step]) { skipped++; continue; }
     const scriptPath = join(HERE, step);
     const args = DRY_RUN ? [scriptPath, '--dry-run'] : [scriptPath];
     console.log(`\n▶ ${step}`);
@@ -86,7 +99,8 @@ async function main() {
       console.error(`  ⚠️ ${step} 비정상 종료(exit ${e.status ?? '?'}${e.signal ? `, signal ${e.signal}` : ''}) — 다음 단계로 계속`);
     }
   }
-  console.log(`\n✅ 장중 동기화 완료 — ${ok}/${STEPS.length}단계 정상` + (DRY_RUN ? ' (드라이런)' : ''));
+  console.log(`\n✅ 장중 동기화 완료 — ${ok}/${STEPS.length - skipped}단계 정상`
+    + (skipped ? ` · 조회 주기 아님 ${skipped}단계 건너뜀` : '') + (DRY_RUN ? ' (드라이런)' : ''));
   if (failed > 0) process.exitCode = 1;
 }
 

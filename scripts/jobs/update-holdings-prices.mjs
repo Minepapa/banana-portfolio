@@ -40,7 +40,12 @@
  * 실패해도 다른 소스로 조용히 대체하지 않는다(feedback-no-silent-fallback, 2026-08-19
  * 오너 지시) — 실패는 로그·텔레그램으로 드러나야 원인을 고칠 수 있다.
  *
- * 사용: node scripts/jobs/update-holdings-prices.mjs [--dry-run]
+ * 느린 값은 매 회차 조회하지 않는다(2026-10-29 오너 지시, scripts/lib/poll-schedule.mjs
+ * planSlowValuations) — 채권 평가(NH krbond)는 거래 시간대 시간당 1회, 금 일별 종가(KRX)·
+ * VIP 펀드 기준가는 시간당 1회. 건너뛴 회차는 직전 값을 그대로 둔다(스킵으로 집계, 경고 없음).
+ * 이 잡은 launchd에서 매시 :00·:10…에 돈다(장중 동기화 :05·:15…와 5분 엇갈림).
+ *
+ * 사용: node scripts/jobs/update-holdings-prices.mjs [--dry-run] [--full(느린 값도 이번에 조회)]
  * (구글시트를 전혀 안 써서 다른 v2 잡들과 달리 token 인자가 없다.)
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -54,7 +59,9 @@ import {
   hasKisCredentials, loadKisCredentials, getKisToken, getKrQuote, getUsQuote,
   isKrMarketOpen, isUsMarketOpen, KIS_RATE_LIMIT_CODE,
 } from '../lib/kis.mjs';
-import { hasNhplugCredentials, loadNhplugCredentials, getNhToken, listNhAccounts } from '../lib/nhplug.mjs';
+import {
+  hasNhplugCredentials, loadNhplugCredentials, getNhToken, listNhAccounts, isTransientNhError,
+} from '../lib/nhplug.mjs';
 import { extractNhPrice } from '../lib/nh-response-parse.mjs';
 import { getKrCurrentPrice } from '../lib/nhplug-krstock.mjs';
 import { getGbCurrentPrice } from '../lib/nhplug-gbstock.mjs';
@@ -65,6 +72,7 @@ import { fetchUsdKrwRate } from '../lib/fundamentals.mjs';
 import { fetchVipFundPrice } from '../lib/vip-fund.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { canonName } from '../../src/lib/stockIdentity.js';
+import { planSlowValuations } from '../lib/poll-schedule.mjs';
 
 // vipasset.co.kr opt2=C-Pe(클래스 코드)에 대응하는 Vault holding 정식명 — 이 이름과
 // 정확히 일치할 때만 FUND로 분류한다(오탐 방지, 다른 펀드가 추가돼도 자동으로 같은
@@ -84,6 +92,7 @@ const VIP_FUND_NAME = 'VIP한국형가치투자증권자투자신탁(주식)-C-P
 loadEnv(); // KRX_API_KEY(금현물 조회용) — DART_API_KEY와 동일 관례
 
 const DRY_RUN = process.argv.includes('--dry-run');
+const FULL = process.argv.includes('--full');
 // KIS 레이트리밋(EGW00201) 실측 기반 — realtime-quotes.mjs와 동일 수치(2026-07 재실측
 // 확정값 그대로 재사용, 별도 튜닝 근거 없음).
 const STAGGER_MS = 800;
@@ -184,7 +193,11 @@ export function recomputeFxCashValuation(holding, usdKrwRate) {
 // 기존 테스트가 이 파일에서 직접 import하므로 재수출(re-export)해 하위호환 유지.
 export { extractNhPrice };
 
-// NH 시세 조회 1회 실패는 재시도(2026-09-02 코드리뷰 MEDIUM 지적) — callNh 자체는
+// NH 시세 조회 1회 실패는 재시도(2026-09-02 코드리뷰 MEDIUM 지적).
+// 2026-10-29부터 callNh가 조회의 429·5xx를 이미 1.5초 뒤 1회 재시도하므로(nhplug.mjs
+// isTransientNhError), 여기서는 그 둘을 다시 재시도하지 않는다 — 겹쳐 곱해지면 장애 회차에
+// 종목당 최대 8회·8초로 늘어 :03·:05 다른 잡 시각까지 밀린다(독립 리뷰 MEDIUM).
+// 아래는 이 변경 전의 설명이다: callNh 자체는
 // 주문 안전성 때문에 재시도를 안 하지만(429를 재시도하면 안 되는 이유는
 // nhplug.mjs 헤더 주석 참고, 주문처럼 부작용 있는 호출 기준), 시세 조회는 읽기
 // 전용이라 그 제약이 적용될 이유가 없다 — 이 잡으로 넘어오기 전엔 KIS 경로가
@@ -198,7 +211,7 @@ async function fetchNhPriceWithRetry(fetchFn, { retries = QUOTE_RETRIES, retryDe
       return await fetchFn();
     } catch (e) {
       lastErr = e;
-      if (e.code === 'RATE_LIMIT' || attempt === retries) throw e;
+      if (isTransientNhError(e) || attempt === retries) throw e;
       await sleep(retryDelayMs);
     }
   }
@@ -238,7 +251,8 @@ async function main() {
   // 시도한다 — 장내채권 잔고평가(getBondBalance)는 그날그날 채권시장 자체 스케줄로
   // 갱신되는 별개 값이라 주식시장 개폐와 결부시킬 이유가 없다(krgold/FUND가 이미
   // krOpen/usOpen과 무관하게 처리되는 것과 같은 원칙).
-  const hasBondTarget = files.some((f) => classifyHolding(f.parsed).kind === 'BOND');
+  const slow = planSlowValuations(new Date(), { full: FULL });
+  const hasBondTarget = slow.bond && files.some((f) => classifyHolding(f.parsed).kind === 'BOND');
 
   let kisToken = null, appkey = null, appsecret = null;
   if (hasKis && hasKisTarget && (krOpen || usOpen)) {
@@ -319,6 +333,7 @@ async function main() {
     // 이미 계산해주므로 별도 curPrice 조회 없이, Vault qty("1만원 액면 좌수" 관례)
     // 로 나눠 좌당 단가를 역산해 기존 recomputeValuation을 그대로 재사용한다.
     if (cls.kind === 'BOND') {
+      if (!slow.bond) { skipped++; continue; } // 채권은 거래 시간대 시간당 1회만(헤더 참고)
       const bondData = bondValuationByKey.get(`${h.account}|${canonName(h.name)}`);
       if (!bondData) {
         collectWarning(`채권 평가 실패: ${h.name} — NH 채권 잔고 응답에서 못 찾음(보유 확인 필요)`);
@@ -381,6 +396,9 @@ async function main() {
       continue;
     }
 
+    // 금 일별 종가·펀드 기준가는 하루 한 번 바뀌어 시간당 1회만 조회(헤더 참고).
+    if ((cls.kind === 'GOLD' && !slow.gold) || (cls.kind === 'FUND' && !slow.fund)) { skipped++; continue; }
+
     let curPrice = null;
     try {
       if (cls.kind === 'KR' && cls.source === 'KIS') {
@@ -401,7 +419,7 @@ async function main() {
         curPrice = (await fetchVipFundPrice()).price;
       }
     } catch (e) {
-      if (e.code === KIS_RATE_LIMIT_CODE) {
+      if (e.code === KIS_RATE_LIMIT_CODE || e.rateLimited) {
         console.log(`   ⏳ ${h.name}: 레이트리밋(EGW00201) — 이전 값 유지, 다음 실행 재시도`);
       } else {
         console.error(`시세 조회 실패: ${h.name}(${cls.kind}/${cls.source ?? '-'}) —`, e.message);
@@ -455,7 +473,7 @@ async function main() {
   }
 
   console.log(
-    `\n✅ 시세 갱신 ${updated}건 · 장외/크리덴셜없음 스킵 ${skipped}건 · 조회실패 ${failed}건 · 매핑없음 ${unmapped}건`
+    `\n✅ 시세 갱신 ${updated}건 · 장외/크리덴셜없음/조회주기아님 스킵 ${skipped}건 · 조회실패 ${failed}건 · 매핑없음 ${unmapped}건`
     + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
   await flushWarnings('update-holdings-prices');

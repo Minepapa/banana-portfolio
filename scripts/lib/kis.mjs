@@ -265,6 +265,23 @@ export async function getKrHoliday({ token, appkey, appsecret, date, fetchImpl, 
 export const KIS_RATE_LIMIT_CODE = 'EGW00201';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// 초당 한도 응답 판정(2026-10-29 확장) — IRP 잔고조회(TTTC8434R)는 EGW00201이 아니라
+// "원장에서 허용 가능한 초당 거래건수를 초과하였습니다"로 와서(HTTP 비정상, 장중에만
+// 10-14~29 하루 1~5회) 재시도 없이 그 회차 IRP 갱신이 통째로 빠졌다. 코드값이 실측되지
+// 않아 msg1 문구("초당 거래건수")로도 판정한다.
+// ⚠️ 문구 판정은 조회(GET)에만 쓴다. 주문(POST)은 EGW00201(게이트웨이 단 거부라 "도달 안 함"이
+// 확실)일 때만 재시도한다 — 원장 단 응답이 주문 미접수를 보장하는지는 실측된 적이 없어,
+// 자동 재전송하면 이중 주문이 될 수 있다(2026-10-29 독립 리뷰 MEDIUM).
+export function isKisRateLimitResponse(json, { method = 'GET' } = {}) {
+  if (json?.msg_cd === KIS_RATE_LIMIT_CODE) return true;
+  return method === 'GET' && json?.rt_cd !== '0' && /초당\s*거래건수/.test(String(json?.msg1 ?? ''));
+}
+
+// IRP 계좌 조회(잔고·퇴직연금 체결) 전용 재시도 — 원장 초당 한도가 일반 시세 한도보다
+// 오래 걸려(위 isKisRateLimitResponse 주석) 1·2·3초로 기다린다.
+export const IRP_LEDGER_RETRIES = 3;
+export const IRP_LEDGER_RETRY_DELAY_MS = 1000;
+
 // GET/POST + 레이트리밋 재시도 공통 로직(시세·잔고조회·주문 등 인증된 KIS 호출이 전부
 // 공유). URL·tr_id·헤더만 다르므로 재시도 루프 자체를 여러 번 따로 유지하면 한쪽만 고치는
 // 회귀 위험이 있어 여기로 뽑아둔다. label: 에러 메시지에 넣을 식별자(종목코드/티커/계좌번호
@@ -317,7 +334,7 @@ async function fetchKis(url, headers, label, { fetchImpl = fetch, retries = 2, r
       }
       continue;
     }
-    if (json?.msg_cd === KIS_RATE_LIMIT_CODE && attempt < retries) {
+    if (isKisRateLimitResponse(json, { method }) && attempt < retries) {
       await sleep(retryDelayMs * (attempt + 1));
       continue;
     }
@@ -325,6 +342,7 @@ async function fetchKis(url, headers, label, { fetchImpl = fetch, retries = 2, r
     if (!res.ok) {
       const err = new Error(`KIS 조회 실패(${label}): ${json?.msg1 || text}`);
       err.code = json?.msg_cd;
+      if (isKisRateLimitResponse(json, { method })) err.rateLimited = true;
       throw err;
     }
     return json;
