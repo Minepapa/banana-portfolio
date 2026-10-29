@@ -82,6 +82,7 @@ export const VAULT_REL = {
   mineAthenaState: '95_Etna/Jobs/MineAthenaFields/state.json', // 아테나 주간 묶음이 비워 둔 노트(2026-10-14)
   mediaMoments: '20_Records/24_Media',
   mediaMomentsState: '95_Etna/Media/moments.json',
+  mediaArgosTrashState: '95_Etna/Media/argos-trash-state.json', // 폰 삭제 따라가기 처리한 이벤트(결정 `미디어-삭제-요청` 2판)
   jobHealth: '95_Etna/Jobs/JobHealth',
   mineStatusBoard: '40_Projects/banana-portfolio/Features/미네 기록 파이프라인 현황판.md', // 05:00 밤 점검이 '밤 점검' 칸을 덮어씀
   spending: '95_Etna/Spending',

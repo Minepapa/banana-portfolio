@@ -76,14 +76,59 @@ test('[막아야 함] callNh: rsp_cd가 실패코드면 throw하고 err.code·er
   }
 });
 
-test('callNh: HTTP 429는 즉시 throw(NH는 자동재시도 대상 아님, KIS의 EGW00201 재시도와 다름) + err.code="RATE_LIMIT"', async () => {
-  const fetchImpl = mockFetch([{ status: 429, body: { rsp_msg: '초당 호출한도 초과' } }]);
+test('callNh: 조회 HTTP 429는 1회 재시도 후에도 429면 throw + err.code="RATE_LIMIT"', async () => {
+  let calls = 0;
+  const base = mockFetch([{ status: 429, body: { rsp_msg: '초당 호출한도 초과' } }]);
+  const fetchImpl = async (...a) => { calls++; return base(...a); };
   try {
-    await callNh({ token: 't', uri: '/krstock/quote/v1/currentPrice', input0: {}, fetchImpl });
+    await callNh({ token: 't', uri: '/krstock/quote/v1/currentPrice', input0: {}, fetchImpl, retryDelayMs: 0 });
     assert.fail('throw 됐어야 함');
   } catch (e) {
     assert.equal(e.code, 'RATE_LIMIT');
   }
+  assert.equal(calls, 2);
+});
+
+test('callNh: 조회가 429·5xx로 한 번 실패해도 재시도에서 성공하면 그 응답을 반환(2026-10-29 유량초과·서버 일시오류 대응)', async () => {
+  for (const first of [
+    { status: 429, body: { rsp_msg: 'APP 호출 거래건수를 초과하였습니다.' } },
+    { ok: false, status: 500, body: { rsp_msg: '서버에서 일시적인 오류가 발생했습니다.' } },
+  ]) {
+    const fetchImpl = mockFetch([first, { body: { Output_0: [{ ok: 1 }] } }]);
+    const body = await callNh({ token: 't', uri: '/gbstock/inquiry/v1/dailyTransaction', input0: {}, fetchImpl, retryDelayMs: 0 });
+    assert.deepEqual(body.Output_0, [{ ok: 1 }]);
+  }
+});
+
+test('[막아야 함] callNh: 주문은 429·5xx여도 재시도하지 않는다(브로커 도달 불명 — 이중 주문 방지)', async () => {
+  for (const r of [{ status: 429, body: {} }, { ok: false, status: 500, body: { error: 'internal' } }]) {
+    let calls = 0;
+    const base = mockFetch([r, { body: { rsp_cd: '00000' } }]);
+    const fetchImpl = async (...a) => { calls++; return base(...a); };
+    await assert.rejects(() => callNh({ token: 't', uri: '/krstock/order/v1/cashBuy', input0: {}, fetchImpl, retryDelayMs: 0 }));
+    assert.equal(calls, 1);
+  }
+});
+
+test('callNhForPaging: 페이지 조회도 429면 1회 재시도해 성공 응답을 받는다(해외주식 일별거래내역 경로)', async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls++;
+    return calls === 1
+      ? { ok: false, status: 429, text: async () => JSON.stringify({ rsp_msg: 'APP 호출 거래건수를 초과하였습니다.' }), headers: { get: () => null } }
+      : { ok: true, status: 200, text: async () => JSON.stringify({ rsp_cd: '00000', Output_0: [] }), headers: { get: () => null } };
+  };
+  const r = await callNhForPaging({ token: 't', uri: '/gbstock/inquiry/v1/dailyTransaction', input0: {}, fetchImpl, retryDelayMs: 0 });
+  assert.equal(calls, 2);
+  assert.ok(r);
+});
+
+test('[막아야 함] callNh: 조회라도 업무거부(rsp_cd 실패)는 재시도하지 않는다', async () => {
+  let calls = 0;
+  const base = mockFetch([{ body: { rsp_cd: '10006', rsp_msg: '종목코드 항목을 입력하세요.' } }]);
+  const fetchImpl = async (...a) => { calls++; return base(...a); };
+  await assert.rejects(() => callNh({ token: 't', uri: '/krstock/quote/v1/currentPrice', input0: {}, fetchImpl, retryDelayMs: 0 }));
+  assert.equal(calls, 1);
 });
 
 test('[막아야 함] callNh: 429는 businessRejection 안 붙음(게이트웨이 단 유량초과는 주문이 브로커까지 도달했는지 모름 — confirmedNotSent 승격 금지, 2026-09-01 코드리뷰 HIGH 재현 케이스)', async () => {
@@ -99,7 +144,7 @@ test('[막아야 함] callNh: 429는 businessRejection 안 붙음(게이트웨�
 test('callNh: 429 응답 몸통이 JSON이 아니어도(게이트웨이 HTML 등) RATE_LIMIT로 분류(원문 일부 인용)', async () => {
   const fetchImpl = async () => ({ ok: false, status: 429, text: async () => '<html>Too Many Requests</html>' });
   try {
-    await callNh({ token: 't', uri: '/n2/acctinfo', input0: {}, fetchImpl });
+    await callNh({ token: 't', uri: '/n2/acctinfo', input0: {}, fetchImpl, retryDelayMs: 0 });
     assert.fail('throw 됐어야 함');
   } catch (e) {
     assert.equal(e.code, 'RATE_LIMIT');
@@ -110,7 +155,7 @@ test('callNh: 429 응답 몸통이 JSON이 아니어도(게이트웨이 HTML 등
 test('callNh: 몸통이 JSON이 아니면 즉시 throw(원문 일부 인용)', async () => {
   const fetchImpl = async () => ({ ok: false, status: 502, text: async () => 'Bad Gateway' });
   await assert.rejects(
-    () => callNh({ token: 't', uri: '/n2/acctinfo', input0: {}, fetchImpl }),
+    () => callNh({ token: 't', uri: '/n2/acctinfo', input0: {}, fetchImpl, retryDelayMs: 0 }),
     /Bad Gateway/,
   );
 });
@@ -290,10 +335,10 @@ test('[막아야 함] callNhForPaging: 진짜 업무거부 코드는 여전히 t
   }
 });
 
-test('callNhForPaging: HTTP 429는 기존과 동일하게 즉시 throw(RATE_LIMIT)', async () => {
+test('callNhForPaging: HTTP 429가 재시도 뒤에도 계속되면 throw(RATE_LIMIT)', async () => {
   const fetchImpl = mockFetchWithHeaders([{ status: 429, body: { rsp_msg: '초당 호출한도 초과' }, responseHeaders: {} }]);
   try {
-    await callNhForPaging({ token: 't', uri: '/common/inquiry/v1/totalTransaction', input0: {}, fetchImpl });
+    await callNhForPaging({ token: 't', uri: '/common/inquiry/v1/totalTransaction', input0: {}, fetchImpl, retryDelayMs: 0 });
     assert.fail('throw 됐어야 함');
   } catch (e) {
     assert.equal(e.code, 'RATE_LIMIT');
@@ -366,8 +411,8 @@ for (const paging of [false, true]) {
     writeFileSync(process.env.NHPLUG_KEY_FILE, JSON.stringify({ appkey: uniqueAppkey('cause'), appsecret: 's' }));
     const uri = paging ? '/common/inquiry/v1/totalTransaction' : '/n2/acctinfo';
     const invoke = (fetchImpl) => paging
-      ? callNhForPaging({ token: 'old', uri, fetchImpl })
-      : callNh({ token: 'old', uri, fetchImpl });
+      ? callNhForPaging({ token: 'old', uri, fetchImpl, retryDelayMs: 0 })
+      : callNh({ token: 'old', uri, fetchImpl, retryDelayMs: 0 });
     for (const retryStatus of [502, 429]) {
       const fetchImpl = async (url, options) => {
         if (url.endsWith('/oauth2/token')) return {

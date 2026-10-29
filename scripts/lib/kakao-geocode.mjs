@@ -21,7 +21,9 @@ export async function reverseGeocode(lat, lon, { key, fetchImpl = fetch } = {}) 
   const response = await fetchImpl(url, { headers: { Authorization: `KakaoAK ${key}` }, signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new Error(`카카오 HTTP ${response.status}`);
   const result = await response.json();
-  const document = result.documents?.[0];
+  // documents가 배열이 아닌 응답은 '주소 없음'이 아니라 비정상 응답이다(30일 기억되지 않게 오류로).
+  if (!Array.isArray(result?.documents)) throw new Error('카카오 응답 형식 오류');
+  const document = result.documents[0];
   const buildingName = document?.road_address?.building_name || null;
   const address = document?.road_address?.address_name || document?.address?.address_name || null;
   return buildingName || address ? { buildingName, address } : null;
@@ -64,9 +66,14 @@ export async function searchCategory(category, lat, lon, { key, fetchImpl = fetc
   return place ? { name: place.place_name, category: place.category_group_code, distance: Number(place.distance) } : null;
 }
 
+const NO_ADDRESS_TTL_MS = 30 * 86_400_000;
+
 export function createCachedGeocoder({ root, keyPath = KAKAO_KEY_PATH, fetchImpl = fetch } = {}) {
   const path = join(root, VAULT_REL.locationGeocodeCache);
   let failures = 0;
+  // 실패 이유별 개수(밤 점검이 "무엇이 왜 실패했는지"를 보여 준다). 좌표는 남기지 않는다.
+  const failureReasons = {};
+  const fail = (reason) => { failures += 1; failureReasons[reason] = (failureReasons[reason] ?? 0) + 1; };
   let cache;
   let dirty = false;
   let pending = Promise.resolve();
@@ -89,20 +96,30 @@ export function createCachedGeocoder({ root, keyPath = KAKAO_KEY_PATH, fetchImpl
       loadCache();
       const coordinateKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
       const cached = cache[coordinateKey];
-      if (cached && typeof cached === 'object' && !Array.isArray(cached)
+      // 카카오에 주소가 없는 곳(바다·해외 등)은 30일 동안 다시 묻지 않는다(2026-10-25: 같은 6곳을 매시간 다시 물어
+      // '지오코딩 실패 6건'이 8일째 이어짐). 30일이 지나면 다시 확인한다.
+      if (cached?.noAddressAt && Date.now() - Date.parse(cached.noAddressAt) < NO_ADDRESS_TTL_MS) {
+        return { reason: '주소 없음: 카카오' };
+      }
+      if (cached && typeof cached === 'object' && !Array.isArray(cached) && !cached.noAddressAt
         && (cached.buildingName == null || typeof cached.buildingName === 'string')
         && (cached.address == null || typeof cached.address === 'string')) return cached;
       let key;
       try { key = readKakaoKey(keyPath); }
-      catch { failures += 1; return { reason: '주소 미조회: 카카오 키 권한 오류' }; }
-      if (!key) { failures += 1; return { reason: '주소 미조회: 카카오 키 없음' }; }
-      try {
-        const result = await reverseGeocode(lat, lon, { key, fetchImpl });
-        if (!result) throw new Error('주소 없음');
-        cache[coordinateKey] = result;
+      catch { fail('키 권한'); return { reason: '주소 미조회: 카카오 키 권한 오류' }; }
+      if (!key) { fail('키 없음'); return { reason: '주소 미조회: 카카오 키 없음' }; }
+      let result;
+      try { result = await reverseGeocode(lat, lon, { key, fetchImpl }); }
+      catch { fail('조회 오류'); return { reason: '주소 미조회: 카카오 조회 실패' }; }
+      if (!result) {
+        // 실패가 아니라 '주소 없음'이라는 답이다: 기억해 두고 세지 않는다.
+        cache[coordinateKey] = { noAddressAt: new Date().toISOString() };
         dirty = true;
-        return result;
-      } catch { failures += 1; return { reason: '주소 미조회: 카카오 조회 실패' }; }
+        return { reason: '주소 없음: 카카오' };
+      }
+      cache[coordinateKey] = result;
+      dirty = true;
+      return result;
     });
     pending = operation.then(() => {}, () => {});
     return operation;
@@ -113,14 +130,14 @@ export function createCachedGeocoder({ root, keyPath = KAKAO_KEY_PATH, fetchImpl
       if (Object.hasOwn(cache, cacheKey)) return cache[cacheKey];
       let key;
       try { key = readKakaoKey(keyPath); }
-      catch { failures += 1; return null; }
-      if (!key) { failures += 1; return null; }
+      catch { fail('키 권한'); return null; }
+      if (!key) { fail('키 없음'); return null; }
       try {
         const result = await find(key);
         cache[cacheKey] = result;
         dirty = true;
         return result;
-      } catch { failures += 1; return null; }
+      } catch { fail('조회 오류'); return null; }
     });
     pending = operation.then(() => {}, () => {});
     return operation;
@@ -147,5 +164,6 @@ export function createCachedGeocoder({ root, keyPath = KAKAO_KEY_PATH, fetchImpl
     }
   };
   geocode.failureCount = () => failures;
+  geocode.failureReasons = () => ({ ...failureReasons });
   return geocode;
 }

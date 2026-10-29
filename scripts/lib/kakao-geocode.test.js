@@ -70,3 +70,21 @@ test('PS3 검색 결과와 기존 캐시의 PS3는 장소로 쓰지 않는다', 
   assert.equal(f.calls.length, 7);
   assert.ok(f.calls.every((call) => call.code !== 'PS3'));
 });
+
+test('카카오에 주소가 없는 좌표는 실패로 세지 않고 기억해 다시 묻지 않으며, 조회 오류는 이유별로 센다', async (t) => {
+  const { root, keyPath } = fixture(t, {});
+  let calls = 0;
+  const empty = async () => { calls += 1; return { ok: true, json: async () => ({ documents: [] }) }; };
+  const first = createCachedGeocoder({ root, keyPath, fetchImpl: empty });
+  assert.equal((await first(33.1, 126.1)).reason, '주소 없음: 카카오');
+  assert.equal(first.failureCount(), 0);
+  await first.flush();
+  const again = createCachedGeocoder({ root, keyPath, fetchImpl: empty });
+  const before = calls;
+  assert.equal((await again(33.1, 126.1)).reason, '주소 없음: 카카오');
+  assert.equal(calls, before, '30일 안에는 다시 묻지 않는다');
+  const broken = createCachedGeocoder({ root, keyPath, fetchImpl: async () => ({ ok: false, status: 500, json: async () => ({}) }) });
+  await broken(35.2, 129.2);
+  assert.equal(broken.failureCount(), 1);
+  assert.deepEqual(broken.failureReasons(), { '조회 오류': 1 });
+});

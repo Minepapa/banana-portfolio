@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRecentProposalsSummary, buildThemisPrompt, buildThemisFacts, buildMacroTable } from './themis-risk-review.mjs';
+import { buildRecentProposalsSummary, buildThemisPrompt, buildThemisFacts, buildMacroTable, PHONE_PRE_COLS } from './themis-risk-review.mjs';
 
 test('buildRecentProposalsSummary: 7일 이내 생성분만 포함, 오래된 건 제외', () => {
   const now = new Date('2026-08-23T00:00:00.000Z');
@@ -78,11 +78,24 @@ test('buildMacroTable: 지표·값·5일변동·출처가 한 표에 정렬됨',
     USDKRW: { value: 1371.5, change5d: -0.97, source: 'yfinance' },
   });
   assert.match(table, /^<pre>/);
-  assert.match(table, /<\/pre>$/);
   assert.match(table, /VIX/);
   assert.match(table, /14\.51/);
   assert.match(table, /-9\.37%/);
-  assert.match(table, /yfinance/);
+  // 출처는 표 밖, 아래 한 줄(2026-10-26 오너)
+  assert.doesNotMatch(table.match(/<pre>[^]*<\/pre>/)[0], /yfinance/);
+  assert.match(table, /<\/pre>\n출처: yfinance$/);
+});
+
+test('buildMacroTable: 실제 9개 지표도 폰 한 줄 폭(44칸) 안에 들고 출처는 묶어서 아래에', () => {
+  const d = { USDKRW: { value: 1325.4, change5d: -0.6, rally5d: 0.11, source: 'yfinance(FX,~10h지연)' },
+    KOSPI: { value: 5533.77, change5d: -0.37, drawdown5d: -4.06, source: 'KRX(비지연)' },
+    KOSDAQ: { value: 764.1, change5d: 0.43, source: 'KRX(비지연)' },
+    NASDAQ: { value: 25955.34, change5d: -0.71, source: 'yfinance' }, GOLD: { value: 4007.9, change5d: -4.14, source: 'yfinance' },
+    TNX: { value: 4.99, change5d: -2.16, source: 'yfinance' } };
+  const table = buildMacroTable(d);
+  const width = (s) => [...s].reduce((w, ch) => w + (/[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFF00-\uFF60]/.test(ch) ? 2 : 1), 0);
+  for (const line of table.match(/<pre>([^]*)<\/pre>/)[1].split('\n')) assert.ok(width(line) <= PHONE_PRE_COLS, line);
+  assert.match(table, /출처: KOSPI·KOSDAQ KRX\(비지연\) · USDKRW yfinance\(FX,~10h지연\) · 그 밖은 yfinance$/);
 });
 
 test('buildMacroTable: drawdown5d·rally5d가 있으면 비고 칸에 표기(§4 D신호 근거)', () => {

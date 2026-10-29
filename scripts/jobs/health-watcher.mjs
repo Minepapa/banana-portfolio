@@ -245,6 +245,10 @@ export const EXPECTED_INTERVALS_MS = {
   'media-audio-offsite-backup': 24 * 60 * 60 * 1000,
   // 위치 수신이 12시간 없으면 폰 앱·Tailscale 점검.
   'owntracks-receiver': 12 * 60 * 60 * 1000,
+  // 아르고스 수신(owntracks-receiver 프로세스의 /ingest, launchd 잡 아님). 폰 하트비트가 15분
+  // 마다 오므로 1시간 간격으로 등록한다 — isStale은 간격의 2배를 넘겨야 알리므로 2시간 동안
+  // 받은 이벤트가 없으면 경보(2026-10-29). 아르고스를 끄면(argos.json 삭제) 이 값을 null로 바꾼다.
+  'argos-ingest': 60 * 60 * 1000,
   // ⚠️ 재수정(2026-08-28, 오너 지시) — 평일 16:00 하루 1회(StartCalendarInterval)에서
   // 상시 10분 간격(StartInterval=600)으로 변경. 아래 sync-firestore-mirror 등과 동일
   // 이유로 등록값도 실제 주기와 같이 움직여야 한다.
@@ -338,8 +342,10 @@ export const EXPECTED_INTERVALS_MS = {
   // 늦게 잡는다, 2026-08-24 EXPECTED_INTERVALS_MS 신설 취지와 동일).
   'sync-firestore-mirror': 10 * 60 * 1000,
   'update-allocation-from-holdings': 10 * 60 * 1000,
+  // update-holdings-prices는 2026-10-29부터 StartCalendarInterval 매시 :00·:10…(간격은 그대로 10분).
   'update-holdings-prices': 10 * 60 * 1000,
-  // intraday-portfolio-sync(2026-09-03 신설) — 같은 10분 패턴(StartInterval=600).
+  // intraday-portfolio-sync(2026-09-03 신설) — 같은 10분 패턴. 2026-10-29부터 매시 :05·:15…
+  // 고정 분(시세 잡과 5분 엇갈림, scripts/lib/poll-schedule.mjs).
   // 위 세 잡과 동일 원칙: 등록값이 실제 주기와 정확히 같아야 진짜 정지를 늦게
   // 안 잡는다.
   'intraday-portfolio-sync': 10 * 60 * 1000,
@@ -350,7 +356,7 @@ export const EXPECTED_INTERVALS_MS = {
   // 자신이 살아있는 한은 잡힌다.
   'telegram-session-health-check': 10 * 60 * 1000,
   // intraday-market-move-monitor(2026-09-01 신설) — 텔레그램 메시지 2단계, 장중 시장
-  // 급변 감시. StartInterval=600(10분), telegram-session-health-check와 동일 클래스.
+  // 급변 감시. 10분 주기(2026-10-29부터 매시 :03·:13… 고정 분), telegram-session-health-check와 동일 클래스.
   // ⚠️ 이 잡은 장 마감 후·주말엔 실행돼도 즉시 조용히 종료하는 게 정상 동작(isKrMarketOpen
   // ||isUsMarketOpen 게이트) — run.sh가 종료코드 0으로 하트비트를 남기므로 stale 오탐 없음.
   'intraday-market-move-monitor': 10 * 60 * 1000,

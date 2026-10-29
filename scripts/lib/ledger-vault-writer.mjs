@@ -22,7 +22,7 @@ import { buildFrontmatter } from './vault-frontmatter.mjs';
 // 그래프 뷰 다중축 클러스터링용 태그(2026-09-05, vault-tags.mjs 헤더 주석 참고).
 import { buildVaultTags } from './vault-tags.mjs';
 
-function sanitizeSegment(s) {
+export function sanitizeSegment(s) {
   return String(s ?? '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '-');
 }
 
@@ -87,6 +87,8 @@ export function buildExecutionRecord(e) {
     ...(e.source ? { source: e.source } : {}),
     ...(e.sourceEventId ? { sourceEventId: e.sourceEventId } : {}),
     ...(e.orderCumulativeQty != null ? { orderCumulativeQty: e.orderCumulativeQty } : {}),
+    // 분할 체결 차수(선택) — 파일명·dedupKey에는 넣지 않는다(기존 기록과 같은 이름 유지).
+    ...(e.fillRound != null ? { fillRound: e.fillRound } : {}),
     ...(e.orderCumulativeAmount != null ? { orderCumulativeAmount: e.orderCumulativeAmount } : {}),
     account: e.account ?? null,
     accountNote: e.account ? null : ACCOUNT_NOTE,
@@ -264,14 +266,20 @@ export function buildProfitRecord(e, avgPrice, realizedProfit, usdKrwRate = 1) {
   // (예: 8주 보유 → 4주+4주). 같은 날 같은 종목·계좌·수량으로 매도가 두 번
   // 체결되면 orderNo 없이는 파일명이 겹쳐 두 번째 실현손익 기록이 조용히
   // 스킵된다(recordLedgerFileIfNew의 "이미 있으면 스킵" idempotency 판단 때문).
+  // sourceEventId도 같은 이유로 포함(2026-10-29 실사고) — 카카오 분할체결 알림은 주문번호가
+  // 없어 같은 초·같은 수량 매도 두 건(2026-10-27 연금저축 13:40:30 3주×2·13:40:33 1주×2)이
+  // 한 파일에 덮어써져 실현손익 2건이 사라졌다. buildExecutionRecord와 같은 접미사 규칙이고,
+  // sourceEventId가 없는 호출(돌파매매 청산 등)의 파일명·dedupKey는 이전과 같다.
   const orderNoPart = e.orderNo ? `|${sanitizeSegment(e.orderNo)}` : '';
-  const dedupKey = `${e.tradeDate}|매도|${e.stockName}|${e.quantity}|profit${orderNoPart}`;
+  const sourceEventPart = e.sourceEventId ? `|${sanitizeSegment(e.sourceEventId)}` : '';
+  const dedupKey = `${e.tradeDate}|매도|${e.stockName}|${e.quantity}|profit${orderNoPart}${sourceEventPart}`;
   const datePart = e.tradeDate.slice(0, 10);
   const timePart = e.tradeDate.slice(11).replace(/:/g, '') || '000000';
   // 수량을 파일명에 포함(코드리뷰 지적, 2026-08-05) — 같은 종목·계좌를 같은 초에 분할
   // 매도(분할체결)하면 수량 없이는 파일명이 겹쳐 뒤 기록이 앞 기록을 조용히 덮어쓴다.
   const orderNoSuffix = e.orderNo ? `-${sanitizeSegment(e.orderNo)}` : '';
-  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.stockName)}-${sanitizeSegment(e.account)}-${sanitizeSegment(e.quantity)}${orderNoSuffix}.md`;
+  const eventSuffix = e.sourceEventId ? `-${sanitizeSegment(e.sourceEventId)}` : '';
+  const filename = `${sanitizeSegment(datePart)}-${sanitizeSegment(timePart)}-${sanitizeSegment(e.stockName)}-${sanitizeSegment(e.account)}-${sanitizeSegment(e.quantity)}${orderNoSuffix}${eventSuffix}.md`;
   const content = buildFrontmatter({
     type: 'realized-profit',
     date: e.tradeDate,

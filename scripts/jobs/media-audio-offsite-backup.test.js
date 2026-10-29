@@ -96,6 +96,19 @@ test('크기 불일치 응답은 실패로 남기고, 없는 파일(ENOENT)은 �
   assert.deepEqual(deletes, []);
 });
 
+test('선택한 원본이 ENOENT이면 건너뛰어도 남은 백업으로 기록한다', async () => {
+  const logs = [];
+  const summary = await main([], retryDependencies({
+    lstat: async () => { throw Object.assign(new Error('없음'), { code: 'ENOENT' }); },
+    uploadBackup: async () => { throw new Error('원본 없이 업로드하면 안 됨'); },
+    log: (message) => { logs.push(message); },
+  }));
+  assert.equal(summary.pending, 1);
+  assert.equal(summary.uploaded, 0);
+  assert.equal(summary.skipped, 1);
+  assert.match(logs.at(-1), /건너뜀 1, 실패 0, 남음 1$/);
+});
+
 test('오디오 백업 폴더가 둘이면 멈춘다', async () => {
   await assert.rejects(main([], {
     keyPath: () => '/key', stat: async () => ({ mode: 0o100600 }), lock: (fn) => fn(),
@@ -155,6 +168,129 @@ function remoteCopy(args) {
   return { id: args.id, name: args.name, size: args.blob.length, parents: [args.folderId],
     appProperties: args.appProperties, md5Checksum: createHash('md5').update(args.blob).digest('hex') };
 }
+
+test('확인된 완료 영수증은 용량 상한을 차지하지 않아 새 파일을 올린다', async () => {
+  const store = memoryIntentStore();
+  const blob = Buffer.from('ENCaudio');
+  const completed = { audioId: id(2), id: 'completed-id', folderId: 'folder',
+    name: `pantheon-audio-${id(2)}.enc`, blob: Buffer.alloc(0), completed: true,
+    blobSize: blob.length, blobMd5: createHash('md5').update(blob).digest('hex'),
+    appProperties: { pantheon: 'audio-backup', kind: 'Calls',
+      blobSha256: createHash('sha256').update(blob).digest('hex') } };
+  await store.writeIntent(completed);
+  const uploads = [];
+  const summary = await main([], retryDependencies({ ...store, cap: 100,
+    listFiles: async ({ folderId }) => folderId
+      ? [{ id: completed.id, name: completed.name }]
+      : [{ id: 'folder', mimeType: 'application/vnd.google-apps.folder', appProperties: { pantheon: 'audio-backup' } }],
+    readFile: async (path) => {
+      if (path === '/key') return Buffer.alloc(32, 1);
+      if (path === '/index') return [row(1), row(2)].map((record) => JSON.stringify(record)).join('\n');
+      if (path.includes('/Archive/')) return Buffer.from('audio');
+      throw Object.assign(new Error('없음'), { code: 'ENOENT' });
+    },
+    getBackupMetadata: async () => remoteCopy({ ...completed, blob }),
+    uploadBackup: async (args) => { uploads.push(args); return remoteCopy(args); },
+  }));
+  assert.deepEqual(uploads.map((upload) => upload.name), [`pantheon-audio-${id(1)}.enc`]);
+  assert.equal(summary.uploaded, 1);
+  assert.equal(summary.failed, 0);
+  assert.equal(summary.pending, 1);
+});
+
+test('미완료 의도는 원격 대조를 거쳐 완료 기록을 남긴다', async () => {
+  const store = memoryIntentStore();
+  const blob = Buffer.from('ENCaudio');
+  const intent = { audioId: id(1), id: 'fixed-id', folderId: 'folder',
+    name: `pantheon-audio-${id(1)}.enc`, blob,
+    appProperties: { pantheon: 'audio-backup', kind: 'Calls',
+      blobSha256: createHash('sha256').update(blob).digest('hex') } };
+  await store.writeIntent(intent);
+  let lookups = 0;
+  const summary = await main([], retryDependencies({ ...store,
+    getBackupMetadata: async () => { lookups += 1; return remoteCopy(intent); },
+    uploadBackup: async () => { throw new Error('재전송하면 안 됨'); },
+  }));
+  assert.equal(lookups, 1);
+  assert.equal(summary.uploaded, 1);
+  assert.equal(store.entries.get(id(1)).completed, true);
+});
+
+test('완료 영수증의 원격 사본이 없거나 다르면 완료로 건너뛰지 않는다', async () => {
+  for (const missing of [true, false]) {
+    const store = memoryIntentStore();
+    const blob = Buffer.from('ENCaudio');
+    const completed = { audioId: id(1), id: 'fixed-id', folderId: 'folder',
+      name: `pantheon-audio-${id(1)}.enc`, blob: Buffer.alloc(0), completed: true,
+      blobSize: blob.length, blobMd5: createHash('md5').update(blob).digest('hex'),
+      appProperties: { pantheon: 'audio-backup', kind: 'Calls',
+        blobSha256: createHash('sha256').update(blob).digest('hex') } };
+    await store.writeIntent(completed);
+    const summary = await main([], retryDependencies({ ...store,
+      listFiles: async ({ folderId }) => folderId
+        ? [{ id: completed.id, name: completed.name }]
+        : [{ id: 'folder', mimeType: 'application/vnd.google-apps.folder', appProperties: { pantheon: 'audio-backup' } }],
+      getBackupMetadata: async () => {
+        if (missing) throw Object.assign(new Error('HTTP 404'), { status: 404 });
+        return { ...remoteCopy({ ...completed, blob }), md5Checksum: 'wrong' };
+      },
+      uploadBackup: async () => { throw new Error('재전송하면 안 됨'); },
+    }));
+    assert.equal(summary.failed, 1);
+    assert.equal(summary.skipped, 0);
+    assert.equal(summary.uploaded, 0);
+    assert.equal(store.entries.get(id(1)).completed, true);
+  }
+});
+
+test('완료 사본이 Drive 목록에 없으면 ID 조회 결과만으로 완료 처리하지 않는다', async () => {
+  const store = memoryIntentStore();
+  const blob = Buffer.from('ENCaudio');
+  const completed = { audioId: id(1), id: 'fixed-id', folderId: 'folder',
+    name: `pantheon-audio-${id(1)}.enc`, blob: Buffer.alloc(0), completed: true,
+    blobSize: blob.length, blobMd5: createHash('md5').update(blob).digest('hex'),
+    appProperties: { pantheon: 'audio-backup', kind: 'Calls',
+      blobSha256: createHash('sha256').update(blob).digest('hex') } };
+  await store.writeIntent(completed);
+  const summary = await main([], retryDependencies({ ...store,
+    getBackupMetadata: async () => remoteCopy({ ...completed, blob }),
+    uploadBackup: async () => { throw new Error('재전송하면 안 됨'); },
+  }));
+  assert.equal(summary.failed, 1);
+  assert.equal(summary.skipped, 0);
+  assert.equal(store.entries.get(id(1)).completed, true);
+});
+
+test('용량 상한 밖의 누락된 완료 영수증도 실패로 세고 새 파일은 올린다', async () => {
+  const store = memoryIntentStore();
+  const blob = Buffer.from('ENCaudio');
+  const completed = { audioId: id(1), id: 'completed-id', folderId: 'folder',
+    name: `pantheon-audio-${id(1)}.enc`, blob: Buffer.alloc(0), completed: true,
+    blobSize: blob.length, blobMd5: createHash('md5').update(blob).digest('hex'),
+    appProperties: { pantheon: 'audio-backup', kind: 'Calls',
+      blobSha256: createHash('sha256').update(blob).digest('hex') } };
+  await store.writeIntent(completed);
+  const uploads = [];
+  const logs = [];
+  const summary = await main([], retryDependencies({ ...store, cap: 100,
+    readFile: async (path) => {
+      if (path === '/key') return Buffer.alloc(32, 1);
+      if (path === '/index') return [row(1), row(2)].map((record) => JSON.stringify(record)).join('\n');
+      if (path.includes('/Archive/')) return Buffer.from('audio');
+      throw Object.assign(new Error('없음'), { code: 'ENOENT' });
+    },
+    uploadBackup: async (args) => { uploads.push(args); return remoteCopy(args); },
+    getBackupMetadata: async () => { throw new Error('목록에 없으면 조회하면 안 됨'); },
+    log: (message) => { logs.push(message); },
+  }));
+  assert.deepEqual(uploads.map((upload) => upload.name), [`pantheon-audio-${id(2)}.enc`]);
+  assert.equal(summary.uploaded, 1);
+  assert.equal(summary.failed, 1);
+  assert.equal(summary.pending, 2);
+  assert.equal(summary.skipped, 0);
+  assert.equal(store.entries.get(id(1)).completed, true);
+  assert.match(logs.at(-1), /실패 1, 남음 1/);
+});
 
 test('Drive 500 뒤 같은 사전 발급 ID로 재시도해 성공한다', async () => {
   const uploads = [];
@@ -270,10 +406,14 @@ test('불확실한 실패 뒤 다음 실행도 저장한 ID와 암호문을 재�
   assert.equal(store.entries.get(id(1)).completed, true);
   assert.equal(store.entries.get(id(1)).blob.length, 0);
   const third = await main([], { ...dependencies,
+    listFiles: async ({ folderId }) => folderId
+      ? [{ id: 'fixed-id', name: `pantheon-audio-${id(1)}.enc` }]
+      : [{ id: 'folder', mimeType: 'application/vnd.google-apps.folder', appProperties: { pantheon: 'audio-backup' } }],
     getBackupMetadata: async () => remoteCopy(attempts[3]),
   });
   assert.equal(third.failed, 0);
-  assert.equal(third.skipped, 1);
+  assert.equal(third.pending, 0);
+  assert.equal(third.skipped, 0);
   assert.equal(attempts.length, 4);
 });
 

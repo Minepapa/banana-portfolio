@@ -195,7 +195,11 @@ async function callNhOnce({ token, uri, input0 = {}, fetchImpl = fetch }) {
   }
 
   let body;
-  try { body = JSON.parse(text); } catch { throw new Error(`NH PLUG 조회 실패(${uri}, JSON 아님): ${text.slice(0, 200)}`); }
+  try { body = JSON.parse(text); } catch {
+    const err = new Error(`NH PLUG 조회 실패(${uri}, JSON 아님): ${text.slice(0, 200)}`);
+    err.status = res.status; // 게이트웨이 503 HTML 등 — 조회 재시도 판정(isTransientNhError)용
+    throw err;
+  }
 
   // HTTP 전송 자체가 실패(4xx/5xx)면 rsp_cd가 없는 에러 봉투(예: {"error":"invalid_token"})
   // 일 수 있다 — isNhSuccess(rsp_cd==null)의 "rsp_cd 없으면 성공" 폴백이 이 경우까지
@@ -203,6 +207,7 @@ async function callNhOnce({ token, uri, input0 = {}, fetchImpl = fetch }) {
   // 그대로 "성공"으로 반환돼 listNhAccounts가 계좌 0건을 조용히 돌려주는 사고 확인).
   if (!res.ok && !DEFAULT_SUCCESS_CODES.has(String(body?.rsp_cd))) {
     const err = new Error(`NH PLUG HTTP ${res.status}(${uri}): ${body?.rsp_msg || text.slice(0, 200)}`);
+    err.status = res.status;
     // businessRejection 안 붙임 — 전송계층 실패라 "브로커가 명시적으로 거부"와 다름.
     throw err;
   }
@@ -229,7 +234,32 @@ async function refreshedNhToken(token, fetchImpl) {
   return getNhToken({ ...credentials, fetchImpl, invalidToken: token });
 }
 
+// 조회 전용 1회 재시도(2026-10-29 오너 지시 "한도에 걸리면 잠시 뒤 한 번 더") —
+// 로그 실측상 NH 조회 실패는 대부분 유량초과(429, 다른 잡과 같은 순간 호출)와
+// 서버 일시 오류(5xx·게이트웨이 503 HTML)였고, 다음 10분 주기엔 정상이었다.
+// ⚠️ 조회(isNhInquiry)만 재시도한다. 주문은 429·5xx가 "브로커 도달 불명"이라
+// 재시도하면 이중 주문이 될 수 있다(위 callNhOnce 에러 분류 주석).
+export const NH_INQUIRY_RETRY_DELAY_MS = 1500;
+
+export function isTransientNhError(error) {
+  return error?.code === 'RATE_LIMIT' || (Number(error?.status) >= 500);
+}
+
+async function withInquiryRetry(options, attempt) {
+  if (!isNhInquiry(options.uri)) return attempt(options);
+  try { return await attempt(options); } catch (error) {
+    if (!isTransientNhError(error)) throw error;
+    const delayMs = options.retryDelayMs ?? NH_INQUIRY_RETRY_DELAY_MS;
+    await new Promise((r) => setTimeout(r, delayMs));
+    return attempt(options);
+  }
+}
+
 export async function callNh(options) {
+  return withInquiryRetry(options, callNhWithTokenRefresh);
+}
+
+async function callNhWithTokenRefresh(options) {
   try { return await callNhOnce(options); } catch (originalError) {
     if (!isNhInquiry(options.uri) || !isInvalidNhToken(originalError)) throw originalError;
     let token;
@@ -285,13 +315,19 @@ async function callNhForPagingOnce({ token, uri, input0 = {}, cts, ctsFlag, fetc
   }
 
   let body;
-  try { body = JSON.parse(text); } catch { throw new Error(`NH PLUG 조회 실패(${uri}, JSON 아님): ${text.slice(0, 200)}`); }
+  try { body = JSON.parse(text); } catch {
+    const err = new Error(`NH PLUG 조회 실패(${uri}, JSON 아님): ${text.slice(0, 200)}`);
+    err.status = res.status; // 게이트웨이 503 HTML 등 — 조회 재시도 판정(isTransientNhError)용
+    throw err;
+  }
 
   const rspCd = String(body?.rsp_cd ?? '');
   const isContinuation = rspCd === CONTINUATION_RSP_CD;
 
   if (!res.ok && !DEFAULT_SUCCESS_CODES.has(rspCd) && !isContinuation) {
-    throw new Error(`NH PLUG HTTP ${res.status}(${uri}): ${body?.rsp_msg || text.slice(0, 200)}`);
+    const err = new Error(`NH PLUG HTTP ${res.status}(${uri}): ${body?.rsp_msg || text.slice(0, 200)}`);
+    err.status = res.status;
+    throw err;
   }
   if (!isContinuation && !isNhSuccess(body?.rsp_cd, body?.rsp_msg)) {
     const err = new Error(`NH PLUG 업무오류(${uri}): ${body?.rsp_msg || body?.rsp_cd || '알 수 없음'}`);
@@ -308,7 +344,13 @@ async function callNhForPagingOnce({ token, uri, input0 = {}, cts, ctsFlag, fetc
   };
 }
 
+// 페이지 조회도 같은 조회 전용 1회 재시도를 받는다 — 10-27 유량초과가 난 해외주식
+// 일별거래내역(/gbstock/inquiry/v1/dailyTransaction)이 이 경로다.
 export async function callNhForPaging(options) {
+  return withInquiryRetry(options, callNhForPagingWithTokenRefresh);
+}
+
+async function callNhForPagingWithTokenRefresh(options) {
   try { return await callNhForPagingOnce(options); } catch (originalError) {
     if (!isNhInquiry(options.uri) || !isInvalidNhToken(originalError)) throw originalError;
     let token;

@@ -182,6 +182,31 @@ test('야간 요약 실패 경고는 원문 사실을 나눠 보류하고 telegr
   assert.match(pending[0].facts.join(' '), /조치: 원장 확인/);
 });
 
+test('23:30 요약 실패 경고는 같은 날 05:30 확정 요약이 되면 아침 전에 취소된다(다른 날 경고는 남김)', async (t) => {
+  mkdirSync(vault, { recursive: true });
+  const date = '2026-10-24';
+  const queueFile = join(vault, 'test-deferred.json');
+  t.after(() => rmSync(vault, { recursive: true, force: true }));
+  let ok = false;
+  const deps = { fetchEvents: async () => [],
+    summarize: async () => (ok ? { summary: '- 하루 요약', summaryStatus: 'ok', model: 'sonnet' }
+      : { summary: '(AI 요약 실패 — 다음 실행에서 다시 시도)', summaryStatus: 'failed', model: '없음', failed: true }),
+    send: async () => ({ ok: true, result: { message_id: 1 } }),
+    queueFile, journalRoot: join(vault, 'journal') };
+  await processDay({ mode: 'draft', date: '2026-10-23', dryRun: false, noSend: false, rules, today: date,
+    deps: { ...deps, clock: () => Date.parse('2026-10-23T14:30:00Z') } });
+  await processDay({ mode: 'draft', date, dryRun: false, noSend: false, rules, today: date,
+    deps: { ...deps, clock: () => Date.parse('2026-10-24T14:30:00Z') } });
+  assert.equal(JSON.parse(readFileSync(queueFile, 'utf8')).pending.length, 2);
+  ok = true;
+  await processDay({ mode: 'finalize', date, dryRun: false, noSend: false, rules, today: '2026-10-25',
+    deps: { ...deps, clock: () => Date.parse('2026-10-24T20:30:00Z') } });
+  const pending = JSON.parse(readFileSync(queueFile, 'utf8')).pending;
+  assert.equal(pending.length, 1);
+  const { warningSubjectKey } = await import('../lib/direct-warning-delivery.mjs');
+  assert.equal(pending[0].issueKey, `daily-note|DAILY_SUMMARY_FAILED|${warningSubjectKey('summary', '2026-10-23')}`);
+});
+
 test('processDay prepare: 노트가 없을 때만 만들고, 요약 LLM·발송 없이 일정만 채우며 23:30 초안이 이어서 채운다', async (t) => {
   mkdirSync(vault, { recursive: true });
   t.after(() => rmSync(vault, { recursive: true, force: true }));

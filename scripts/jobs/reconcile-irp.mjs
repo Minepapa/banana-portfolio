@@ -76,7 +76,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
-import { hasKisCredentials, loadIrpAccount, getKisToken, getAccountBalance } from '../lib/kis.mjs';
+import {
+  hasKisCredentials, loadIrpAccount, getKisToken, getAccountBalance, IRP_LEDGER_RETRIES, IRP_LEDGER_RETRY_DELAY_MS,
+} from '../lib/kis.mjs';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { buildCashHoldingRecord, writeHoldingSafely, holdingFilename } from '../lib/holdings-vault-writer.mjs';
@@ -206,7 +208,11 @@ async function main() {
 
   const { appkey, appsecret, cano, acntPrdtCd } = irpAccount;
   const kisToken = await getKisToken({ appkey, appsecret });
-  const { holdings: kisHoldings, cash } = await getAccountBalance({ token: kisToken, appkey, appsecret, cano, acntPrdtCd });
+  // IRP 원장 초당 한도(2026-10-29) — 장중에 "원장에서 허용 가능한 초당 거래건수 초과"가
+  // 하루 1~5회 났다. 기본 재시도(2회, 0.7·1.4초)보다 넉넉히 기다린다(1·2·3초).
+  const { holdings: kisHoldings, cash } = await getAccountBalance({
+    token: kisToken, appkey, appsecret, cano, acntPrdtCd, retries: IRP_LEDGER_RETRIES, retryDelayMs: IRP_LEDGER_RETRY_DELAY_MS,
+  });
 
   // 예수금 자동화(2026-08-18 신설, 2026-09-03 설계 재정정 — 파일 상단 주석 참고) —
   // cash가 신뢰 가능함이 실측으로 확인됐다. State/Holdings/IRP-예수금.md를 이 값으로

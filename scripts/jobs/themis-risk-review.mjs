@@ -108,13 +108,18 @@ function padEndDisplay(s, width) {
   return w >= width ? s : s + ' '.repeat(width - w);
 }
 
+// 폰 고정폭(<pre>) 한 줄에 들어가는 폭. 실측(2026-10-26 오너 화면): 약 45칸에서 줄이 넘어갔다. 여유를 두고 44.
+// 오너 규칙: 표는 절대 두 줄로 밀리지 않게 칸·내용을 줄인다. 두 줄이 꼭 필요하면 오너에게 먼저 확인한다.
+export const PHONE_PRE_COLS = 44;
+
 export function buildMacroTable(macroData) {
   const entries = Object.entries(macroData || {});
   if (!entries.length) return null;
   const round = (n) => (n == null ? null : Math.round(n * 100) / 100);
-  const header = ['지표', '값', '5일변동', '비고', '출처'];
+  // 출처는 대부분 같아서 표에서 빼고 표 아래 한 줄로 적는다(2026-10-26 오너: 출처 칸 때문에 두 줄로 밀림).
+  const header = ['지표', '값', '5일변동', '비고'];
   const rows = entries.map(([key, d]) => {
-    if (d?.value == null) return [key, '데이터없음', '-', '-', '-'];
+    if (d?.value == null) return [key, '데이터없음', '-', '-'];
     const chg = d.change5d != null ? `${d.change5d > 0 ? '+' : ''}${round(d.change5d)}%` : '?';
     const noteParts = [];
     if (d.drawdown5d != null) noteParts.push(`고점대비 ${round(d.drawdown5d)}%`);
@@ -123,9 +128,20 @@ export function buildMacroTable(macroData) {
     // "+-1.2%"처럼 부호가 겹쳐 보이는 사고가 날 수 있다(2026-09-20 독립 코드리뷰
     // LOW 지적). change5d와 동일하게 조건부로 붙인다.
     if (d.rally5d != null) noteParts.push(`저점대비 ${d.rally5d > 0 ? '+' : ''}${round(d.rally5d)}%`);
-    return [key, String(round(d.value)), chg, noteParts.join(', ') || '-', d.source || '?'];
+    return [key, String(round(d.value)), chg, noteParts.join(', ') || '-'];
   });
-  const table = [header, ...rows].map((r) => r.map((c) => String(c)));
+  let table = [header, ...rows].map((r) => r.map((c) => String(c)));
+  const lineWidth = (t) => {
+    const w = header.map((_, i) => Math.max(...t.map((r) => displayWidth(r[i]))));
+    return w.reduce((a, b) => a + b, 0) + 2 * (w.length - 1);
+  };
+  // 폭이 넘으면 비고 문구를 줄인다('고점대비' → '고점'). 그래도 넘으면 경고를 남긴다(두 줄 표는 오너 확인 대상).
+  if (lineWidth(table) > PHONE_PRE_COLS) {
+    table = table.map((r, i) => (i === 0 ? r : [...r.slice(0, 3), r[3].replace('고점대비', '고점').replace('저점대비', '저점')]));
+  }
+  if (lineWidth(table) > PHONE_PRE_COLS) {
+    console.warn(`[themis-risk-review] 거시 표 폭 ${lineWidth(table)}칸 > ${PHONE_PRE_COLS} — 폰에서 두 줄로 밀림(오너 확인 필요)`);
+  }
   // 폭은 반드시 이스케이프 전(=실제 렌더 문자) 기준으로 잰다 — 이스케이프 후 재면
   // "S&P500"이 "S&amp;P500"(10자)로 계산돼 실제 렌더 폭(6칸)보다 훨씬 넓게 패딩된다
   // (독립 코드리뷰 지적, CRITICAL급 — "S&amp;" 같은 HTML 엔티티가 있는 지표명이
@@ -134,7 +150,18 @@ export function buildMacroTable(macroData) {
   // 정렬에 영향 없다.
   const widths = header.map((_, i) => Math.max(...table.map((r) => displayWidth(r[i]))));
   const lines = table.map((r) => r.map((c, i) => escapeHtml(padEndDisplay(c, widths[i]))).join('  ').replace(/\s+$/, ''));
-  return `<pre>${lines.join('\n')}</pre>`;
+  // 표 아래 출처 한 줄: 가장 많은 출처는 '그 밖은'으로, 나머지는 지표를 붙여 적는다.
+  const bySource = new Map();
+  for (const [key, d] of entries) {
+    if (d?.value == null) continue;
+    const src = d.source || '?';
+    bySource.set(src, [...(bySource.get(src) ?? []), key]);
+  }
+  const sorted = [...bySource.entries()].sort((a, b) => b[1].length - a[1].length);
+  const sourceLine = sorted.length <= 1
+    ? (sorted[0] ? `출처: ${sorted[0][0]}` : '')
+    : `출처: ${sorted.slice(1).map(([src, keys]) => `${keys.join('·')} ${src}`).join(' · ')} · 그 밖은 ${sorted[0][0]}`;
+  return `<pre>${lines.join('\n')}</pre>${sourceLine ? `\n${escapeHtml(sourceLine)}` : ''}`;
 }
 
 export function buildThemisFacts({ macroTable, jobsText, recentProposalsCount }) {

@@ -97,8 +97,9 @@ export function findBrokenAndAmbiguousLinks(allFiles) {
     const stripped = f.content.replace(/`[^`\n]*`/g, ''); // 코드스팬 내부는 실제 링크 아님
     let m;
     while ((m = linkRe.exec(stripped))) {
-      const target = m[1].trim().replace(/\\$/, '').replace(/\.md$/, '');
-      if (fullPaths.has(target)) continue;
+      // `노트#제목`·`노트#^블록`은 노트 경로만 본다 — Obsidian도 노트가 있으면 연다(2026-10-25: 앵커 링크 4건 오판).
+      const target = m[1].trim().replace(/\\$/, '').replace(/#.*$/, '').trim().replace(/\.md$/, '');
+      if (!target || fullPaths.has(target)) continue;
       const base = target.split('/').pop();
       const matches = byBasename.get(base);
       if (matches?.length === 1) continue;

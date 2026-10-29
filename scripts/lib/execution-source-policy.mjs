@@ -81,5 +81,8 @@ export function classifyConfirmedKakaoExecution({ kind = 'stock', event = {}, ac
   if (event.broker === '한국투자증권' && account === QUANT_TRACK_LABEL) {
     return { action: 'exclude-api', account, reason: 'KIS_API' };
   }
+  // reason 'OWNER_CONFIRMED'는 "오너가 계좌를 확정한 카카오 체결"(원장 source는 KAKAO)이다.
+  // update-holdings-from-executions.mjs의 source 값 OWNER_CONFIRMED_SOURCE(알림 없이 오너가
+  // 손으로 넣은 체결)와 문자열이 같지만 뜻이 다르니 source로 넘기지 않는다.
   return { action: 'record', account, reason: 'OWNER_CONFIRMED' };
 }

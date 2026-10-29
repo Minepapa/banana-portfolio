@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Archive 색인에서 Camera와 촬영 시각이 확인된 KakaoTalk 사진·동영상의 순간 노트를 만든다. 각 노트는 실행당 한 번만 원자적으로 쓴다.
+// Archive 색인에서 촬영 시각 근거가 믿을 만한 사진·동영상(Camera·KakaoTalk)의 순간 노트를 만든다. 각 노트는 실행당 한 번만 원자적으로 쓴다.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -124,10 +124,24 @@ export function loadMomentVision(root, output = console) {
   return { rows: new Map(rows.map((row) => [row.id, row])), config };
 }
 
+// 순간은 '언제 찍었나'가 믿을 만한 사진·영상만 묶는다. 폴더 이름(종류)이 아니라 촬영 시각 근거로 거른다.
+// 아르고스 전환 뒤에는 카톡 저장본도 Camera로 들어오므로, 종류로 거르면 저장 시각을 촬영 시각으로 착각한다.
+const MOMENT_KINDS = new Set(['Camera', 'KakaoTalk', 'KakaoTalkMovie']);
+
+export function trustedCaptureTime(record) {
+  if (record.capturedFrom === 'owner') return true;
+  if (record.capturedFrom === 'exif') return ['confirmed', 'single'].includes(record.capturedConfidence);
+  // 카메라식으로 판정된 파일명만 single이다. 저장 시각 파일명은 estimated, 수정일은 review라 빠진다.
+  // 다만 카톡 리사이즈·저장본(Resized_20260131_183433)은 카메라식 숫자여도 전송·저장 시각이라 뺀다.
+  if (record.capturedFrom === 'filename') return record.capturedConfidence === 'single' && !SAVED_NAME.test(fileName(record));
+  return false;
+}
+
+const SAVED_NAME = /^(Resized|KakaoTalk|received|download)[_-]/i;
+const fileName = (record) => String(record.inboxPath ?? record.archivePath ?? '').split('/').at(-1);
+
 export function groupMoments(records) {
-  const sorted = records.filter((record) => (record.kind === 'Camera'
-    || (['KakaoTalk', 'KakaoTalkMovie'].includes(record.kind) && record.capturedFrom === 'exif'
-      && ['confirmed', 'single'].includes(record.capturedConfidence)))
+  const sorted = records.filter((record) => MOMENT_KINDS.has(record.kind) && trustedCaptureTime(record)
     && typeof record.id === 'string'
     && Number.isFinite(at(record)) && typeof record.archivePath === 'string')
   return groupTimedRecords(sorted);
@@ -334,6 +348,12 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
   const records = dryRun || !existsSync(dirname(indexPath)) ? readIndex(indexPath)
     : await withLock(indexPath, () => readIndex(indexPath), { retries: 1200, retryDelayMs: 100 });
   const moments = groupMoments(records).filter((group) => !since || day(at(group.at(-1))) >= since);
+  if (!since) {
+    // 노트는 지우지 않는다. 촬영 시각 근거가 약해 더는 묶이지 않는 순간은 개수만 알려 오너 판단으로 넘긴다.
+    const current = new Set(moments.map((group) => group[0].id));
+    const stale = Object.keys(state).filter((id) => !current.has(id)).length;
+    if (stale) output.log(`[media-moments] 더는 갱신하지 않는 기존 순간 노트 ${stale}개(촬영 시각 근거 부족 등)`);
+  }
   const vision = loadMomentVision(root, output);
   const names = new Set(Object.values(state).map((entry) => entry.notePath));
   const discovered = new Map();
@@ -344,6 +364,7 @@ export async function runMediaMoments({ root = VAULT_PATHS.root, indexPath = joi
   routeGeocode.region = geocode.region?.bind(geocode);
   routeGeocode.keyword = geocode.keyword?.bind(geocode);
   routeGeocode.failureCount = geocode.failureCount?.bind(geocode);
+  routeGeocode.failureReasons = geocode.failureReasons?.bind(geocode);
   // computeRoute의 날짜별 flush를 막는다. 캐시 파일은 모든 순간 처리 후 한 번만 쓴다.
   routeGeocode.flush = async () => {};
   const cachedRouteForDay = (date, options) => {

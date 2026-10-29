@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickUnprocessedExecutions, pickUnprocessedDividends, pickAccountlessAppliedExecutions, matchesKnownExecution, findMatchingKnownExecution, duplicateSkipFrontmatter, pickKnownExecutions } from './update-holdings-from-executions.mjs';
+import { pickUnprocessedExecutions, pickUnprocessedDividends, pickAccountlessAppliedExecutions, matchesKnownExecution, findMatchingKnownExecution, duplicateSkipFrontmatter, pickKnownExecutions, OWNER_CONFIRMED_SOURCE } from './update-holdings-from-executions.mjs';
 
 const f = (parsed) => ({ filepath: '/x', content: '', parsed });
 
@@ -280,4 +280,50 @@ test('[막아야 함] 계좌 미상 Kakao 체결은 단일 NH API 주문번호�
   const result = findMatchingKnownExecution(kakao, [api], [api, kakao]);
   assert.equal(result.crossSourceConflict, true);
   assert.match(result.reason, /계좌가 없어/);
+});
+
+test('[막아야 함/실사고5] 같은 출처의 서로 다른 sourceEventId는 수량이 같아도 중복이 아니다(2026-10-27 연금저축 14건 분할체결 중 8건 12주 오판정)', () => {
+  // 실제 2026-10-27 13:40 받은 12건의 수량 순서. main() 루프처럼 반영한 체결을 곧바로 known에 넣는다.
+  const quantities = [2, 1, 2, 1, 3, 3, 1, 9, 2, 1, 1, 1];
+  const known = [];
+  let applied = 0;
+  quantities.forEach((quantity, index) => {
+    const exec = {
+      tradeDate: `2026-10-27 13:40:${String(27 + index).padStart(2, '0')}`, tradeType: '매도',
+      stockName: 'TIGER 미국배당다우존스', quantity, broker: '삼성증권', orderNo: '',
+      source: 'KAKAO', sourceEventId: `kakao-${index}`, account: '연금저축',
+    };
+    assert.equal(findMatchingKnownExecution(exec, known), null, `${index + 1}번째 ${quantity}주가 앞 기록의 중복으로 잡힘`);
+    known.push(exec);
+    applied += quantity;
+  });
+  assert.equal(applied, 27);
+});
+
+test('같은 출처라도 sourceEventId가 같거나 한쪽에 없으면 기존 수량 대조로 중복을 잡는다', () => {
+  const base = { tradeDate: '2026-10-27 13:40:27', tradeType: '매도', stockName: 'TIGER 미국배당다우존스', quantity: 2, broker: '삼성증권', source: 'KAKAO' };
+  assert.ok(matchesKnownExecution({ ...base, sourceEventId: 'a' }, [{ ...base, sourceEventId: 'a' }]));
+  assert.ok(matchesKnownExecution({ ...base, sourceEventId: 'a' }, [{ ...base }]));
+  // 출처가 다르면(legacy·NH API 등 다른 경로) sourceEventId가 달라도 크로스소스 중복 대조는 그대로다.
+  assert.ok(matchesKnownExecution({ ...base, sourceEventId: 'a' }, [{ ...base, source: 'NH_API', sourceEventId: 'gb-1' }]));
+  assert.ok(matchesKnownExecution({ ...base, sourceEventId: 'a' }, [{ ...base, source: undefined, legacy: true }]));
+});
+
+test('[막아야 함/실사고5] 같은 초·같은 단가·같은 수량이라도 sourceEventId가 다르면 별개 체결이다(10-27 13:40:30 3주 두 건 실데이터)', () => {
+  const pair = { tradeDate: '2026-10-27 13:40:30', tradeType: '매도', stockName: 'TIGER 미국배당다우존스', quantity: 3, price: 14825, broker: '삼성증권', orderNo: '', source: 'KAKAO', account: '연금저축' };
+  assert.equal(findMatchingKnownExecution({ ...pair, sourceEventId: 'aeed8eaf012fa0410a897f8c25d73f29' }, [{ ...pair, sourceEventId: 'a71a6344005747b42837cb34e0d7c64c' }]), null);
+});
+
+test('NH 해외 일별거래(주문번호 없음)도 trd_sno가 다르면 같은 날 같은 수량이어도 별개 거래다', () => {
+  const row = { tradeDate: '2026-10-27 00:00:00', tradeType: '매수', stockCode: 'GOOGL', stockName: '알파벳 Class A', quantity: 2, broker: 'NH투자증권 해외', orderNo: '', source: 'NH_API', account: '위탁' };
+  assert.equal(findMatchingKnownExecution({ ...row, sourceEventId: 'gb-20261027-2' }, [{ ...row, sourceEventId: 'gb-20261027-1' }]), null);
+  assert.ok(matchesKnownExecution({ ...row, sourceEventId: 'gb-20261027-1' }, [{ ...row, sourceEventId: 'gb-20261027-1' }]));
+});
+
+test('오너 확인 기록(알림 누락분)은 같은 날 같은 수량의 카카오 체결과 서로 중복으로 보지 않는다(양방향)', () => {
+  const kakao = { tradeDate: '2026-10-27 13:40:27', tradeType: '매도', stockName: 'TIGER 미국배당다우존스', quantity: 2, broker: '삼성증권', orderNo: '', source: 'KAKAO', sourceEventId: 'k1', account: '연금저축' };
+  const owner = { ...kakao, tradeDate: '2026-10-27 00:00:00', source: OWNER_CONFIRMED_SOURCE, sourceEventId: 'owner-20261027-6' };
+  assert.equal(findMatchingKnownExecution(owner, [kakao]), null);
+  // 반대 방향도 막는다: 시각 미상이라 먼저 반영된 오너 행에 같은 수량의 실제 카카오 체결이 걸리면 안 된다.
+  assert.equal(findMatchingKnownExecution({ ...kakao, sourceEventId: 'k2' }, [owner]), null);
 });

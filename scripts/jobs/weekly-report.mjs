@@ -31,6 +31,7 @@
  *   node scripts/jobs/weekly-report.mjs --no-push       # 텔레그램 요약 푸시 끔
  *   node scripts/jobs/weekly-report.mjs --force         # 같은 날짜 리포트 있어도 덮어씀
  */
+import { interpretation } from '../lib/telegram-messages.mjs';
 import { existsSync, readdirSync, readFileSync, mkdirSync, openSync, closeSync, writeFileSync, linkSync, unlinkSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join, relative } from 'node:path';
@@ -591,7 +592,8 @@ async function main() {
   if (!NO_PUSH) {
     try {
       await sendAgentMessage({ agent: SENDER_AGENT, kind: '정보', topic: '안내',
-        body: `<b>주간 리포트</b> · ${asof}\n\n${markdownBoldToHtml(summaryBullets.join('\n'))}\n\n<i>앱 리포트 탭에서 전문 확인</i>`, });
+        // 요약 불릿은 LLM이 쓴 리포트에서 뽑는다: 인용문으로(결정 `텔레그램-메시지-구분`).
+        body: `<b>주간 리포트</b> · ${asof}\n\n${interpretation(markdownBoldToHtml(summaryBullets.join('\n')))}\n\n<i>앱 리포트 탭에서 전문 확인</i>`, });
       console.log('   📲 텔레그램 요약 푸시');
     } catch (e) { console.error(`   ⚠️ 텔레그램 실패: ${e.message}`); }
   }

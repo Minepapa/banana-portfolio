@@ -16,7 +16,7 @@ test('정보와 판단은 담당 헤더가 첫 줄이고 본문 구조는 기존
   const information = renderAgentMessage({ agent: 'zeus', kind: '정보', topic: '안내', body: '본문' });
   const decision = renderAgentMessage({ agent: 'themis', kind: '판단', topic: '경고', facts: ['수치 1'], context: '맥락' });
   assert.equal(information, '[제우스 Zeus] 안내\n────────────────\n본문');
-  assert.equal(decision, '[테미스 Themis] 경고\n\n[사실]\n· 수치 1\n\n[맥락]\n맥락');
+  assert.equal(decision, '[테미스 Themis] 경고\n━━━━━━━━━━━━━━━━\n[사실]\n· 수치 1\n\n<blockquote>[맥락]\n맥락</blockquote>');
 });
 
 test('볼트 에이전트 헌장이 있으면 telegramLabel을 발송 관문 라벨과 대조한다', () => {

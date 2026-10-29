@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 /** 클리오 Inbox ingest: 계획을 검증한 뒤 기록을 한 건씩 적용한다. Wiki는 보류한다. */
+import { interpretation } from '../lib/telegram-messages.mjs';
+import { escapeHtml } from '../lib/telegram.mjs';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -377,6 +379,24 @@ function dailyChange(content, source, target, applyDate) {
   return { content: head + body.slice(fmEnd), line };
 }
 
+// 옮긴 Inbox 원본을 가리키는 데일리 링크의 경로만 새 기록으로 바꾼다(2026-10-25: 10-16에 들어온 10-11 기록의 링크가
+// 10-16 데일리에서 깨짐). 원본이 처음 들어온 날과 사건 날짜(dailyLink) 데일리 모두에 쓴다.
+// 오너가 고친 데일리라도 링크 경로만은 바꾼다 — 줄 글자와 별칭은 그대로라 오너 글을 고치는 것이 아니고, 두면 링크가 깨진다.
+// 별칭 없는 링크는 옛 이름을 별칭으로 붙여 보이는 글자를 지킨다. AI 칸이 기계 상태면 지문도 다시 계산해 데일리 잡이
+// 오너 수정으로 오인하지 않게 한다(오너 수정 상태면 지문은 그대로 둔다). 바꿀 링크가 없으면 null.
+export function relinkDaily(content, source, target, applyDate) {
+  const oldPath = source.replace(/\.md$/, '');
+  const newPath = target.replace(/\.md$/, '');
+  if (!content.includes(`[[${oldPath}|`) && !content.includes(`[[${oldPath}]]`)) return null;
+  const oldName = oldPath.split('/').at(-1);
+  const body = content.split(`[[${oldPath}|`).join(`[[${newPath}|`).split(`[[${oldPath}]]`).join(`[[${newPath}|${oldName}]]`);
+  if (splitNote(content).fmRaw == null) return body; // 머리말 없는 노트는 링크만
+  const fmEnd = body.indexOf('\n---', 4);
+  let head = body.slice(0, fmEnd).replace(/^modified: .*$/m, `modified: "${applyDate}"`);
+  if (inspectExisting(content).ok) head = head.replace(/^aiHash: .*$/m, `aiHash: "${aiHashOf(parseSections(splitNote(body).body).sections)}"`);
+  return head + body.slice(fmEnd);
+}
+
 function applyOne(root, item, planDate, rules, { dryRun, noWiki, write, applyDate }) {
   if (item.status !== '계획함' || !item.judgment || !item.hash) throw new Error('적용 가능한 계획 항목이 아님');
   if (!item.source.startsWith(`${VAULT_REL.inboxRoot}/`) || item.source.includes('..') || item.source.includes('\\')) throw new Error('원본 경로 위반');
@@ -412,14 +432,30 @@ function applyOne(root, item, planDate, rules, { dryRun, noWiki, write, applyDat
   const dailyPath = dailyRel ? join(root, dailyRel) : null;
   const dailyBefore = dailyPath && existsSync(dailyPath) ? readFileSync(dailyPath, 'utf8') : null;
   const daily = dailyBefore != null ? dailyChange(dailyBefore, item.source, rel, applyDate) : null;
-  if (daily?.content) {
-    const dailyProblems = checkNote(dailyRel, daily.content, rules);
+  // 기록 줄 갱신 뒤에도 같은 데일리의 다른 칸(요약 등)이나 오너가 고친 데일리에 옛 링크가 남을 수 있어 경로만 한 번 더 바꾼다.
+  const dailyBase = daily?.content ?? dailyBefore;
+  const dailyContent = dailyBase != null ? relinkDaily(dailyBase, item.source, rel, applyDate) ?? daily?.content ?? null : null;
+  if (dailyContent) {
+    const dailyProblems = checkNote(dailyRel, dailyContent, rules);
     if (dailyProblems.length) throw new Error(`데일리 등록부 위반: ${dailyProblems.join(' / ')}`);
+  }
+  // 원본이 처음 들어온 날(파일명 날짜)의 데일리 — 링크 경로만 바꾸는 부수 작업이라 실패해도 이동은 막지 않는다.
+  const arrivalDate = item.source.slice(VAULT_REL.inboxRoot.length + 1).match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+  const arrivalRel = arrivalDate ? `${VAULT_REL.dailyNotes}/${arrivalDate.slice(0, 4)}/${arrivalDate}.md` : null;
+  const arrivalPath = arrivalRel && arrivalRel !== dailyRel ? join(root, arrivalRel) : null;
+  let arrival = arrivalPath && existsSync(arrivalPath)
+    ? relinkDaily(readFileSync(arrivalPath, 'utf8'), item.source, rel, applyDate) : null;
+  if (arrival) {
+    const arrivalProblems = checkNote(arrivalRel, arrival, rules);
+    if (arrivalProblems.length) {
+      console.warn(`  ⚠️ 도착일 데일리 링크 갱신 건너뜀(${arrivalRel}): ${arrivalProblems.join(' / ')}`);
+      arrival = null;
+    }
   }
   const logRel = `${VAULT_REL.clioLog}/${applyDate.slice(0, 7)}.md`;
   const logPath = join(root, logRel);
   const oldLog = existsSync(logPath) ? readFileSync(logPath, 'utf8') : null;
-  const logLine = `- ${applyDate} Inbox apply: [[${rel.replace(/\.md$/, '')}]] ← ${item.source} (Wiki ${noWiki ? '보류' : '없음'}; 데일리 ${daily?.content ? '연결' : '보류'})`;
+  const logLine = `- ${applyDate} Inbox apply: [[${rel.replace(/\.md$/, '')}]] ← ${item.source} (Wiki ${noWiki ? '보류' : '없음'}; 데일리 ${daily?.content ? '연결' : '보류'}${arrival ? `; 도착일 데일리 ${arrivalDate} 링크 갱신` : ''})`;
   // 재개를 다른 날 해도 같은 원본의 적용 줄이 두 번 붙지 않게 원본 경로 기준으로 비교한다.
   const log = oldLog?.includes(`Inbox apply: [[${rel.replace(/\.md$/, '')}]] ← ${item.source} `) ? oldLog : oldLog ? `${oldLog.replace(/\s*$/, '')}\n${logLine}\n`
     : `---\ntype: "agent-log"\ndescription: "${agentTitle('clio')} 작업 기록"\ncreated: "${applyDate}"\nmodified: "${applyDate}"\nagent: "clio"\n---\n\n# ${applyDate.slice(0, 7)}\n\n${logLine}\n`;
@@ -427,19 +463,21 @@ function applyOne(root, item, planDate, rules, { dryRun, noWiki, write, applyDat
   if (logProblems.length) throw new Error(`로그 등록부 위반: ${logProblems.join(' / ')}`);
   const result = { source: item.source, target: rel, daily: daily?.line ?? null,
     dailyPending: dailyRel && !daily?.content ? (daily?.pending ? `${dailyRel} (${daily.pending})` : dailyRel) : null,
+    arrivalRelinked: arrival ? arrivalRel : null,
     wikiPending: noWiki ? wiki ?? [] : [], written: !dryRun, resumed: resuming };
   if (dryRun) return result;
   const saveState = (value) => {
     mkdirSync(dirname(statePath), { recursive: true });
     write(statePath, `${JSON.stringify({ ...readJson(statePath, {}), [item.source]: value }, null, 2)}\n`);
   };
-  // 쓰기 순서: 진행 표시 → 노트 → 데일리 → 로그 → 원본 비움 → 완료. 중간에 멈추면 다음 실행이 'applying'을 보고 남은 단계만 한다.
+  // 쓰기 순서: 진행 표시 → 노트 → 데일리 → 도착일 데일리 → 로그 → 원본 비움 → 완료. 중간에 멈추면 다음 실행이 'applying'을 보고 남은 단계만 한다.
   saveState({ hash: item.hash, target: rel, status: 'applying', startedAt: applyDate });
   if (content != null) {
     mkdirSync(dirname(targetPath), { recursive: true });
     write(targetPath, content); // 클리오 절차 §5: LiveSync 손상 방지를 위해 노트 한 번 쓰기.
   }
-  if (daily?.content && daily.content !== dailyBefore) write(dailyPath, daily.content);
+  if (dailyContent && dailyContent !== dailyBefore) write(dailyPath, dailyContent);
+  if (arrival) write(arrivalPath, arrival);
   if (log !== oldLog) { mkdirSync(dirname(logPath), { recursive: true }); write(logPath, log); }
   // D30·D95: Inbox 원본은 새 기록으로 옮긴 뒤 비운다. 옛 경로는 movedFrom에 남기며 재사용하지 않는다.
   if (existsSync(sourcePath)) unlinkSync(sourcePath);
@@ -723,13 +761,16 @@ export function telegramMessage(items, remaining, { mode = 'report', applyResult
       const folder = basename(target.folder);
       const label = /^\d{4}$/.test(folder) ? basename(dirname(target.folder)) : folder;
       const actionLabel = { 'append-source': '보강', candidate: '후보', question: '질문' };
-      return [
-        `■ ${titleLine(target.title)}`,
-        `• 폴더: ${label}`,
-        ...wiki.map((entry) => `• Wiki ${actionLabel[entry.action] ?? entry.action}: ${oneLine(entry.page)}${entry.reason ? ` — ${oneLine(entry.reason)}` : ''}`),
-        `• 인물: ${extracted?.people?.map(oneLine).join(', ') || '없음'}`,
-        `• 장소: ${extracted?.places?.map(oneLine).join(', ') || '없음'}`,
-      ];
+      // 제목·폴더·위키 연결·인물·장소는 LLM 판단이다: 항목째 인용문(색 막대)으로 묶는다(결정 `텔레그램-메시지-구분`,
+      // 오너 2026-10-26). LLM 글자는 HTML 이스케이프한다.
+      const e = (value) => escapeHtml(value);
+      return [interpretation([
+        `■ ${e(titleLine(target.title))}`,
+        `• 폴더: ${e(label)}`,
+        ...wiki.map((entry) => `• Wiki ${e(actionLabel[entry.action] ?? entry.action)}: ${e(oneLine(entry.page))}${entry.reason ? ` — ${e(oneLine(entry.reason))}` : ''}`),
+        `• 인물: ${e(extracted?.people?.map(oneLine).join(', ') || '없음')}`,
+        `• 장소: ${e(extracted?.places?.map(oneLine).join(', ') || '없음')}`,
+      ].join('\n'))];
     })].join('\n');
   return { agent: 'clio', kind: '정보', topic: mode === 'auto' ? 'Inbox 적용 결과' : 'Inbox 정리 계획', body };
 }

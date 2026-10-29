@@ -172,3 +172,67 @@ test('아르고스 경로: 토큰 인증, 꺼져 있으면 404, OwnTracks 경로
   // 아르고스 토큰으로는 OwnTracks 경로에 못 들어온다
   assert.equal((await request(on, 'POST', '/pub', '{}', { 'x-argos-token': token })).status, 401);
 });
+
+test('아르고스 수신은 받은 이벤트가 있을 때만 argos-ingest 상태를 10분에 한 번 남긴다', async () => {
+  const config = { host: '127.0.0.1', username: 'u', password: randomBytes(16).toString('base64url') };
+  const token = randomBytes(24).toString('base64url');
+  let acked = ['h'];
+  const argos = { ingest: () => ({ status: 200, json: { acked, rejected: [] } }), rules: () => ({ status: 404, json: {} }) };
+  const jobs = [];
+  let clock = Date.parse('2026-10-29T00:00:00Z');
+  const server = createReceiver({ config, allowLoopback: true, store: async () => true, argos, argosToken: token,
+    now: () => new Date(clock), health: async ({ job }) => { jobs.push(job); } });
+  const post = () => new Promise((resolve) => {
+    const req = Readable.from([Buffer.from(JSON.stringify({ protocol: 1, events: [] }))]);
+    req.method = 'POST'; req.url = '/ingest'; req.headers = { 'x-argos-token': token };
+    const res = { headersSent: false, setHeader() {}, writeHead(status) { this.status = status; this.headersSent = true; },
+      end() { setImmediate(resolve); } };
+    server.emit('request', req, res);
+  });
+  await post();
+  await post();
+  assert.deepEqual(jobs, ['argos-ingest']);
+  clock += 600_000;
+  acked = [];
+  await post();
+  assert.deepEqual(jobs, ['argos-ingest']);
+  acked = ['h2'];
+  await post();
+  assert.deepEqual(jobs, ['argos-ingest', 'argos-ingest']);
+});
+
+test('아르고스 미디어 경로: 토큰 필요, 꺼져 있으면 404, status는 GET·upload는 PUT만', async () => {
+  const config = { host: '127.0.0.1', username: 'u', password: randomBytes(16).toString('base64url') };
+  const token = randomBytes(24).toString('base64url');
+  const seen = [];
+  const argosMedia = {
+    status: (params) => { seen.push(['status', params.get('kind')]); return { status: 200, json: { state: 'absent', received: 0 } }; },
+    upload: async (params, body, length) => {
+      let n = 0;
+      for await (const chunk of body) n += chunk.length;
+      seen.push(['upload', params.get('offset'), length, n]);
+      return { status: 200, json: { state: 'partial', received: n } };
+    },
+  };
+  const request = (server, method, path, body, headers = {}) => new Promise((resolve) => {
+    const req = Readable.from(body ? [Buffer.from(body)] : []);
+    req.method = method; req.url = path; req.headers = headers;
+    const res = { headersSent: false, setHeader() {}, writeHead(status) { this.status = status; this.headersSent = true; },
+      end(chunk) { resolve({ status: this.status, body: String(chunk ?? '') }); } };
+    server.emit('request', req, res);
+  });
+  const argos = { ingest: () => ({ status: 200, json: {} }), rules: () => ({ status: 404, json: {} }) };
+  const on = createReceiver({ config, allowLoopback: true, store: async () => true, health: async () => {}, argos, argosToken: token, argosMedia });
+  const noMedia = createReceiver({ config, allowLoopback: true, store: async () => true, health: async () => {}, argos, argosToken: token });
+  const auth = { 'x-argos-token': token };
+
+  assert.equal((await request(on, 'GET', '/media/status?kind=Camera', null, { 'x-argos-token': 'bad' })).status, 401);
+  assert.equal((await request(noMedia, 'GET', '/media/status?kind=Camera', null, auth)).status, 404);
+  assert.equal((await request(on, 'GET', '/media/status?kind=Camera', null, auth)).status, 200);
+  assert.equal((await request(on, 'POST', '/media/status', null, auth)).status, 405);
+  const up = await request(on, 'PUT', '/media/upload?offset=0', 'abcd', { ...auth, 'content-length': '4' });
+  assert.deepEqual(JSON.parse(up.body), { state: 'partial', received: 4 });
+  assert.equal((await request(on, 'POST', '/media/upload', 'x', auth)).status, 405);
+  assert.equal((await request(on, 'GET', '/media/other', null, auth)).status, 404);
+  assert.deepEqual(seen, [['status', 'Camera'], ['upload', '0', '4', 4]]);
+});

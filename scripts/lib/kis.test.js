@@ -565,6 +565,27 @@ test('getAccountBalance: 레이트리밋이면 재시도 후 성공', async () =
   assert.equal(cash, 0);
 });
 
+test('getAccountBalance: "원장 초당 거래건수 초과"(EGW00201 아닌 코드, HTTP 비정상)도 재시도 후 성공(2026-10-29 IRP 실측 문구)', async () => {
+  const fetchImpl = mockFetch([
+    { ok: false, status: 500, body: { rt_cd: '1', msg_cd: 'UNKNOWN', msg1: '원장에서 허용 가능한 초당 거래건수를 초과하였습니다.' } },
+    { body: { rt_cd: '0', output1: [], output2: [{ dnca_tot_amt: '1000' }] } },
+  ]);
+  const { cash } = await getAccountBalance({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '29', fetchImpl, retryDelayMs: 1,
+  });
+  assert.equal(cash, 1000);
+});
+
+test('getAccountBalance: 원장 초당 한도가 재시도 소진 후에도 지속되면 rateLimited 표시로 throw', async () => {
+  const fetchImpl = mockFetch([
+    { ok: false, status: 500, body: { rt_cd: '1', msg_cd: 'UNKNOWN', msg1: '원장에서 허용 가능한 초당 거래건수를 초과하였습니다.' } },
+  ]);
+  await assert.rejects(
+    () => getAccountBalance({ token: 't', appkey: 'k', appsecret: 's', cano: '1', acntPrdtCd: '29', fetchImpl, retries: 1, retryDelayMs: 1 }),
+    (e) => e.rateLimited === true && e.code === 'UNKNOWN',
+  );
+});
+
 test('loadIrpAccount: cano·acntPrdtCd·appkey·appsecret 넷 다 있으면 반환(cano/acntPrdtCd는 문자열 강제 변환)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'kis-test-'));
   const file = join(dir, 'kis-key.json');
@@ -909,6 +930,20 @@ test('[핵심] placeKrOrder: conditionPrice 전달 시 ORD_DVSN=22(스톱지정�
   assert.equal(capturedBody.EXCG_ID_DVSN_CD, 'KRX');
   assert.equal(capturedBody.CNDT_PRIC, '65000');
   assert.equal(capturedBody.ORD_UNPR, '65000');
+});
+
+test('[막아야 함] placeKrOrder: "원장 초당 거래건수" 문구(EGW00201 아님)는 주문을 재전송하지 않는다(이중 주문 방지)', async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls++;
+    const body = { rt_cd: '1', msg_cd: 'UNKNOWN', msg1: '원장에서 허용 가능한 초당 거래건수를 초과하였습니다.' };
+    return { ok: false, status: 500, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  await assert.rejects(() => placeKrOrder({
+    token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '01',
+    code: '005930', side: '매도', quantity: 10, price: 65000, fetchImpl, retryDelayMs: 1,
+  }));
+  assert.equal(calls, 1);
 });
 
 test('placeKrOrder: conditionPrice 없으면 기존과 동일하게 ORD_DVSN=00(지정가), CNDT_PRIC 필드 자체가 없음', async () => {

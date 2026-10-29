@@ -1,3 +1,4 @@
+import { interpretation } from './telegram-messages.mjs';
 // 데일리 노트(D85, 5-1) — 그날 볼트에 들어온 기록을 날짜로 엮는 허브. 순수함수만 둔다(파일·LLM·발송은 잡이 한다).
 //
 // 오너 글 보존 원칙(D19, 리뷰 HIGH 1~3 반영):
@@ -337,7 +338,8 @@ export function buildDailyTelegramBody(date, records, summary, status = '초안'
     ? `- 볼트 ${VAULT_REL.dailyNotes}에서 "오늘 한 줄"을 채워 주세요. 다음날 05:00에 확정합니다.`
     : `- 볼트 ${VAULT_REL.dailyNotes}에서 확인할 수 있습니다.`;
   return [`<b>${date} 데일리 ${status}</b> — 들어온 기록 ${records.length}개`, '', '■ 기록', ...(recordLines.length ? recordLines : ['- 없음']),
-    '', '■ 하루 요약', summary && summary.trim() ? escapeHtml(summary.trim()) : '- (요약 없음)', '', '■ 확인', confirm].join('\n');
+    // 하루 요약은 LLM이 쓴다: 인용문(색 막대)으로 감싸 사실(기록 목록)과 구분한다(결정 `텔레그램-메시지-구분`).
+    '', '■ 하루 요약', summary && summary.trim() ? interpretation(escapeHtml(summary.trim())) : '- (요약 없음)', '', '■ 확인', confirm].join('\n');
 }
 
 export { parseFrontmatter };

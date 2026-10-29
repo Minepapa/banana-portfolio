@@ -510,7 +510,15 @@ test('Telegram truncates an unchecked title to 60 characters', () => {
   value.target.title = `2026-10-11 ${'가상'.repeat(100)}`;
   const body = telegramMessage([{ status: '계획함', judgment: value }], 0).body;
   assert.equal(body.includes(value.target.title), false);
-  assert.equal(body.match(/^■ (.*?)$/m)[1].length, 60);
+  assert.equal(body.match(/^(?:<blockquote>)?■ (.*?)$/m)[1].length, 60);
+});
+
+test('Telegram: LLM 판단(제목·폴더·위키·인물·장소)은 인용문으로 묶고 이스케이프, 숫자 줄은 밖에', () => {
+  const value = judgment();
+  value.target.title = '2026-10-11 A<B & C';
+  const body = telegramMessage([{ status: '계획함', judgment: value }], 0).body;
+  assert.match(body, /<blockquote>■ 2026-10-11 A&lt;B &amp; C\n• 폴더: [^]*• 장소: [^]*<\/blockquote>/);
+  assert.match(body.split('<blockquote>')[0], /계획 1건/);
 });
 
 test('terminal outcomes skip unchanged hashes and free priority slots; changed content retries', async (t) => {
@@ -1088,4 +1096,47 @@ test('regular run leaves unstarted applications for the next day at 05:30', asyn
   assert.equal(result.applyRemaining, 1);
   assert.ok(existsSync(join(root, '00_Inbox/memo.md')));
   assert.match(result.report, /적용 대기 1건/);
+});
+
+test('relinkDaily: Inbox 링크 경로만 새 기록으로 바꾸고, 기계 상태면 aiHash를 맞추고 오너 수정이면 지문은 그대로(2026-10-25)', async () => {
+  const { relinkDaily } = await import('./clio-inbox-ingest.mjs');
+  const source = '00_Inbox/2026-10-16 1952 가상 공연';
+  const target = '20_Records/21_Notes/2026/2026-10-11 가상 공연.md';
+  const body = `## 오늘 한 줄\n\n## 오늘 들어온 기록\n- [[${source}|${source.slice(9)}]] — 설명\n\n## AI 하루 요약\n- [[${source}]] 언급\n`;
+  const hash = aiHashOf(parseSections(body).sections);
+  const machine = `---\ntype: "daily"\nmodified: "2026-10-16"\naiHash: "${hash}"\n---\n${body}`;
+  const out = relinkDaily(machine, `${source}.md`, target, '2026-10-25');
+  assert.match(out, /- \[\[20_Records\/21_Notes\/2026\/2026-10-11 가상 공연\|2026-10-16 1952 가상 공연\]\] — 설명/);
+  assert.match(out, /- \[\[20_Records\/21_Notes\/2026\/2026-10-11 가상 공연\|2026-10-16 1952 가상 공연\]\] 언급/, '별칭 없던 링크는 옛 이름을 별칭으로');
+  assert.doesNotMatch(out, /00_Inbox/);
+  assert.match(out, /modified: "2026-10-25"/);
+  assert.equal(inspectExisting(out).ok, true, '데일리 잡이 오너 수정으로 오인하지 않음');
+  const owner = machine.replace('- [[', '- 오너가 덧붙임 [[');
+  assert.equal(inspectExisting(owner).ok, false);
+  const ownerOut = relinkDaily(owner, `${source}.md`, target, '2026-10-25');
+  assert.doesNotMatch(ownerOut, /00_Inbox/);
+  assert.match(ownerOut, new RegExp(`aiHash: "${hash}"`), '오너 수정이면 지문은 그대로');
+  assert.equal(inspectExisting(ownerOut).ok, false);
+  assert.equal(relinkDaily(out, `${source}.md`, target, '2026-10-25'), null, '바꿀 링크 없으면 null');
+  assert.equal(relinkDaily(`본문 [[${source}]]`, `${source}.md`, target, '2026-10-25'), `본문 [[${target.slice(0, -3)}|${source.slice(9)}]]`, '머리말 없으면 링크만');
+});
+
+test('applyPlans: 사건 날짜와 다른 도착일 데일리의 Inbox 링크도 새 기록으로 바꾸고, dry-run은 쓰지 않으며, 재실행은 멱등', (t) => {
+  const source = '00_Inbox/2026-10-11 1200 가상 메모, 쉼표';
+  const body = `## 오늘 한 줄\n\n## 오늘 들어온 기록\n- [[${source}|가상 메모]] — 들어옴\n\n## AI 하루 요약\n요약\n`;
+  const arrivalDaily = `---\ntype: "daily"\nmodified: "2026-10-11"\naiHash: "${aiHashOf(parseSections(body).sections)}"\n---\n${body}`;
+  const other = { ...judgment(), dailyLink: '2026-10-09' };
+  const f = applyFixture(t, { daily: arrivalDaily, plans: [{ date: '2026-10-11', judgment: other }] });
+  const dailyPath = join(f.root, '10_Periodic/Daily/2026/2026-10-11.md');
+  const preview = applyPlans({ root: f.root, ids: f.source, dryRun: true, noWiki: true, rules: f.rules, now: NOW });
+  assert.equal(preview.items[0].arrivalRelinked, '10_Periodic/Daily/2026/2026-10-11.md');
+  assert.equal(readFileSync(dailyPath, 'utf8'), arrivalDaily, 'dry-run은 쓰지 않음');
+  const done = applyPlans({ root: f.root, ids: f.source, noWiki: true, rules: f.rules, now: NOW });
+  const after = readFileSync(dailyPath, 'utf8');
+  assert.match(after, /- \[\[20_Records\/21_Notes\/2026\/2026-10-11 가상 메모\|가상 메모\]\] — 들어옴/);
+  assert.equal(inspectExisting(after).ok, true);
+  assert.equal(done.items[0].arrivalRelinked, '10_Periodic/Daily/2026/2026-10-11.md');
+  assert.match(readFileSync(join(f.root, '60_Logs/Clio/2026-10.md'), 'utf8'), /도착일 데일리 2026-10-11 링크 갱신/);
+  assert.equal(applyPlans({ root: f.root, ids: f.source, noWiki: true, rules: f.rules, now: NOW }).items[0].alreadyApplied, true);
+  assert.equal(readFileSync(dailyPath, 'utf8'), after, '재실행은 다시 쓰지 않음');
 });

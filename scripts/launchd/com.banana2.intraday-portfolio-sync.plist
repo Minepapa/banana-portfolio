@@ -17,8 +17,19 @@
        끝난다. 기존 고정시각 잡(reconcile-nh-executions 15:55 등)은 안전망으로
        그대로 유지 — 이 잡은 그걸 대체하지 않고 같은 스크립트를 더 자주 돌릴
        뿐이다(intraday-portfolio-sync.mjs 헤더 주석 참고). -->
-  <key>StartInterval</key>
-  <integer>600</integer>
+  <!-- 2026-10-29 오너 지시 — StartInterval=600을 매시 :05·:15·…·:55 고정 분으로 바꿨다.
+       시세 잡(:00…)과 5분 엇갈려 NH를 같은 순간에 부르지 않는다(로그 실측 NH 유량초과
+       429가 두 잡 동시 호출 때 났다). 단계별 조회 빈도는 :05 회차가 "시간당 칸"이라는
+       전제로 짜여 있다(scripts/lib/poll-schedule.mjs) — 분을 바꾸면 그 파일도 같이 볼 것. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Minute</key><integer>25</integer></dict>
+    <dict><key>Minute</key><integer>35</integer></dict>
+    <dict><key>Minute</key><integer>45</integer></dict>
+    <dict><key>Minute</key><integer>55</integer></dict>
+  </array>
   <key>RunAtLoad</key>
   <false/>
   <key>ProcessType</key>

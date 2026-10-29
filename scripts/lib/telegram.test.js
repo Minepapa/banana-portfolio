@@ -113,3 +113,11 @@ test('sendTelegram: 4096자 넘는 텍스트도 발송 자체는 잘려서라도
   await sendTelegram('A'.repeat(5000), undefined, { fetchImpl });
   assert.ok(calls[0].text.length <= 4096, 'Telegram에 실제로 나가는 payload.text는 상한 이내여야 함');
 });
+
+test('잘라낸 메시지는 열린 태그를 닫아 HTML 파싱이 깨지지 않는다', () => {
+  const long = `<b>제목</b>\n<blockquote>${'해석 문장 '.repeat(800)}</blockquote>`;
+  const cut = truncateForTelegram(long);
+  assert.ok(cut.length <= 4096);
+  assert.equal((cut.match(/<blockquote>/g) ?? []).length, (cut.match(/<\/blockquote>/g) ?? []).length);
+  assert.doesNotMatch(cut.replace(/…\(길이 제한으로 생략됨.*$/s, ''), /<[^>]*$/);
+});

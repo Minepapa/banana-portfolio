@@ -42,7 +42,9 @@
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { hasKisCredentials, loadIrpAccount, getKisToken, getIrpPensionExecutions } from '../lib/kis.mjs';
+import {
+  hasKisCredentials, loadIrpAccount, getKisToken, getIrpPensionExecutions, IRP_LEDGER_RETRIES, IRP_LEDGER_RETRY_DELAY_MS,
+} from '../lib/kis.mjs';
 import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -98,7 +100,7 @@ async function main() {
   let executions, rawCount;
   try {
     ({ executions, rawCount } = await getIrpPensionExecutions({
-      token, appkey, appsecret, cano, acntPrdtCd,
+      token, appkey, appsecret, cano, acntPrdtCd, retries: IRP_LEDGER_RETRIES, retryDelayMs: IRP_LEDGER_RETRY_DELAY_MS,
     }));
   } catch (e) {
     console.error('IRP 체결조회 실패 —', e.message);
