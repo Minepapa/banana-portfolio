@@ -314,7 +314,7 @@ test('지문이 다를 때 동선만 재계산하고 확정·발송·오너 글�
   assert.equal(computed, 1);
   assert.equal(writes, 1);
   const next = readFileSync(path, 'utf8');
-  assert.match(next, /## 동선\n- 12:00–12:30 시험 장소/);
+  assert.match(next, /## 동선\n- ① 12:00–12:30 시험 장소/);
   assert.match(next, /dailyStatus: "확정"/);
   assert.match(next, /telegramSentAt: "2026-10-10T00:00:00Z"/);
   assert.match(next, /ownerKey: 값/);
@@ -439,5 +439,54 @@ test('카카오 조회가 실패한(degraded) 재계산은 동선은 쓰되 지�
   assert.equal(result.updated, true);
   const note = readFileSync(path, 'utf8');
   assert.match(note, /routeHash: "old"/);
-  assert.match(note, /- 12:00–12:30 미등록: 가상 주소/);
+  assert.match(note, /- ① 12:00–12:30 미등록: 가상 주소/);
+});
+
+test('동선 지도: 없으면·오늘이면 건너뛰고, 실패·빈 타일이면 mapIncomplete로 지문을 묶어 둔다', async () => {
+  const { attachRouteMap } = await import('./daily-note.mjs');
+  const today = '2040-02-04';
+  const fresh = () => [{ kind: 'stay', start: '08:00', end: '09:00', label: '가상' }];
+  const ok = async () => ({ rel: '95_Etna/Location/Maps/2040/2040-02-03.svg', missingTiles: 0 });
+  let route = fresh();
+  await attachRouteMap(undefined, { date: '2040-02-03', route, points: [], today });
+  assert.equal(route.mapPath, undefined);
+  let calls = 0;
+  await attachRouteMap(async () => { calls += 1; return ok(); }, { date: today, route, points: [], today });
+  assert.equal(calls, 0); // 오늘은 그리지 않는다
+  route = fresh();
+  await attachRouteMap(async () => { throw null; }, { date: '2040-02-03', route, points: [], today });
+  assert.equal(route.mapPath, undefined);
+  assert.equal(route.mapIncomplete, true);
+  route = fresh();
+  await attachRouteMap(async () => ({ rel: '95_Etna/Location/Maps/2040/2040-02-03.svg', missingTiles: 2 }),
+    { date: '2040-02-03', route, points: [], today });
+  assert.equal(route.mapPath, '95_Etna/Location/Maps/2040/2040-02-03.svg');
+  assert.equal(route.mapIncomplete, true);
+  route = fresh();
+  await attachRouteMap(ok, { date: '2040-02-03', route, points: [], today });
+  assert.equal(route.mapPath, '95_Etna/Location/Maps/2040/2040-02-03.svg');
+  assert.equal(route.mapIncomplete, undefined);
+  assert.deepEqual(Object.keys(route), ['0']); // 비열거 속성이라 지문·직렬화에 섞이지 않는다
+});
+
+test('지도에 빈 타일이 있으면 재계산은 지도 줄을 넣되 지문은 옛 값으로 둔다(다음 실행에서 다시 그림)', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'daily-route-map-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const date = '2026-10-10';
+  const path = join(root, '10_Periodic', 'Daily', '2026', `${date}.md`);
+  mkdirSync(join(root, '10_Periodic', 'Daily', '2026'), { recursive: true });
+  mkdirSync(join(root, VAULT_REL.location), { recursive: true });
+  writeFileSync(path, renderDailyNote({ date, records: [], summary: '- 요약', status: '확정', model: '없음',
+    summaryStatus: 'ok', recordHash: 'record', routeHash: 'old', today: date, route: [] }));
+  const route = () => [{ kind: 'stay', start: '12:00', end: '12:30', label: '가상 장소' }];
+  const run = (missingTiles) => recomputeDailyRoute({ date, root, today: '2026-10-11', deps: {
+    fetchEvents: async () => [], computeRoute: async () => route(), write: (file, note) => writeFileSync(file, note),
+    renderMap: async ({ root: mapRoot }) => { assert.equal(mapRoot, root); return { rel: '95_Etna/Location/Maps/2026/2026-10-10.svg', missingTiles }; } } });
+  await run(2);
+  let note = readFileSync(path, 'utf8');
+  assert.match(note, /routeHash: "old"/);
+  assert.match(note, /## 동선\n!\[\[95_Etna\/Location\/Maps\/2026\/2026-10-10\.svg\]\]\n\n- ① 12:00–12:30 가상 장소/);
+  await run(0);
+  note = readFileSync(path, 'utf8');
+  assert.doesNotMatch(note, /routeHash: "old"/);
 });

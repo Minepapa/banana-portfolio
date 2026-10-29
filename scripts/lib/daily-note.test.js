@@ -19,11 +19,11 @@ test('동선 null·빈 배열·체류·실패 문구와 기존 오너 칸 보존
   assert.match(renderDailyNote({ ...base, route: null }), /위치 연동 전/);
   assert.match(renderDailyNote({ ...base, route: [] }), /위치 기록 없음/);
   const routed = renderDailyNote({ ...base, route: [{ start: '08:10', end: '17:50', label: '회사' }], prev });
-  assert.match(routed, /- 08:10–17:50 회사/);
+  assert.match(routed, /- ① 08:10–17:50 회사/);
   assert.match(routed, /sensitivity: "개인"/);
   assert.match(routed, /## 오늘 한 줄\n내 기록/);
   assert.equal(inspectExisting(routed).ok, true);
-  assert.match(renderDailyNote({ ...base, route: [{ start: '20:22', end: '', label: '집', current: true }] }), /- 20:22– 집\(현재\)/);
+  assert.match(renderDailyNote({ ...base, route: [{ start: '20:22', end: '', label: '집', current: true }] }), /- ① 20:22– 집\(현재\)/);
   assert.match(renderDailyNote({ ...base, route: [{ start: '19:57', end: '20:10', kind: 'move',
     label: '이동 · 차량 약 5km (주유: 가상주유소)' }] }), /- 19:57–20:10 이동 · 차량 약 5km \(주유: 가상주유소\)/);
   assert.match(renderDailyNote({ ...base, route: 'failed' }), /동선 계산 실패/);
@@ -82,7 +82,7 @@ test('외부 장소 라벨의 줄바꿈과 Markdown 기호가 데일리 칸을 �
   const route = [{ start: '08:10', end: '09:00', label: '건물\r\n## 오늘 한 줄\u2028악성 <b>**값**</b>' }];
   const rendered = renderDailyNote({ ...base, route });
   assert.equal(inspectExisting(rendered).ok, true);
-  assert.match(rendered, /- 08:10–09:00 건물 \\#\\# 오늘 한 줄 악성 &lt;b&gt;\\\*\\\*값\\\*\\\*&lt;\/b&gt;/);
+  assert.match(rendered, /- ① 08:10–09:00 건물 \\#\\# 오늘 한 줄 악성 &lt;b&gt;\\\*\\\*값\\\*\\\*&lt;\/b&gt;/);
   assert.equal((rendered.match(/^## 오늘 한 줄$/gm) || []).length, 1);
 });
 
@@ -228,4 +228,17 @@ test('캘린더 실패·미연결 때 이전 정상 일정과 aiHash를 유지�
   assert.match(rendered, /치과 ## 오너 메모 ``` \(서울 ## AI 하루 요약 ```\) · 개인 ## 조작/);
   assert.equal(inspectExisting(rendered).ok, true);
   assert.equal(inspectExisting(rendered).prev.sections.filter((section) => section.title === '오너 메모').length, 1);
+});
+
+test('동선: 머문 곳만 ①② 번호를 붙이고, 지도가 있으면 칸 맨 위에 넣는다(D90)', () => {
+  const route = [
+    { kind: 'stay', start: '08:10', end: '09:00', label: '집' },
+    { kind: 'move', start: '09:00', end: '09:30', label: '이동 · 차량 추정 · 12.3km' },
+    { kind: 'stay', start: '09:30', end: '17:50', label: '회사' },
+  ];
+  const plain = renderDailyNote({ ...base, route });
+  assert.match(plain, /## 동선\n- ① 08:10–09:00 집\n- 09:00–09:30 이동 · 차량 추정 · 12\.3km\n- ② 09:30–17:50 회사/);
+  assert.doesNotMatch(plain, /!\[\[/);
+  Object.defineProperty(route, 'mapPath', { value: '95_Etna/Location/Maps/2026/2026-10-09.svg' });
+  assert.match(renderDailyNote({ ...base, route }), /## 동선\n!\[\[95_Etna\/Location\/Maps\/2026\/2026-10-09\.svg\]\]\n\n- ① 08:10/);
 });

@@ -28,6 +28,8 @@ import { sendDirectWarning, warningSubjectKey } from '../lib/direct-warning-deli
 import { cancelDeferredWarnings, DEFERRED_WARNINGS_FILE } from '../lib/deferred-warnings.mjs';
 import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
 import { listEventsForKstDay } from '../lib/google-calendar.mjs';
+import { renderRouteMapFile } from '../lib/route-map.mjs';
+import { createTileFetcher } from '../lib/osm-tiles.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
 import { readDayPoints, detectStays, loadPlaces, describeStays, buildMoveSegments, movePaymentCoordinate, haversineM, STAY_RADIUS_M } from '../lib/location-stays.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
@@ -118,6 +120,30 @@ export function routeHashOf(points, payments = []) {
 export function readRoutePayments(date, root = VAULT_PATHS.root) {
   return readDailySpending(date, { spendingDir: join(root, VAULT_REL.spending) }).entries
     .filter((entry) => entry.status === 'expense');
+}
+
+// 동선 지도(D90). renderMap은 main()만 넘긴다 — 기본값이 없으니 테스트·도구 호출은 타일을 받지 않는다.
+// - 오늘은 그리지 않는다. 점이 계속 늘어 실행마다 큰 SVG를 다시 쓰게 되므로, 다음 날 확정 때 한 번 그린다.
+// - 지도가 실패해도 동선 글은 그대로 쓴다. 실패했거나 빈 타일이 섞였으면 route.mapIncomplete를 붙여
+//   호출부가 동선 지문을 옛 값으로 두게 한다(degraded와 같은 방식) — 그래야 다음 실행에서 다시 그린다.
+export async function attachRouteMap(renderMap, { date, route, points, root, today = kstDate(new Date()) }) {
+  if (!renderMap || !Array.isArray(route) || !route.length || date >= today) return;
+  try {
+    const result = await renderMap({ date, route, points, root });
+    if (result?.rel) Object.defineProperty(route, 'mapPath', { value: result.rel });
+    if (result?.missingTiles) {
+      // 빈 칸이 계속되면(타일 서버 차단·네트워크) 실행마다 재시도만 하고 쓰지는 않으니, 로그로 드러낸다.
+      Object.defineProperty(route, 'mapIncomplete', { value: true });
+      console.warn(`  ⚠️ ${date} 동선 지도 타일 ${result.missingTiles}칸 비어 있음 — 다음 실행에서 다시 그림`);
+    }
+  } catch (error) {
+    Object.defineProperty(route, 'mapIncomplete', { value: true });
+    console.warn(`  ⚠️ ${date} 동선 지도 실패:`, String(error?.message ?? error).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]'));
+  }
+}
+
+export function createRouteMapRenderer({ root: defaultRoot = VAULT_PATHS.root, fetcher = createTileFetcher(), write = writeAtomic } = {}) {
+  return ({ date, route, points, root = defaultRoot }) => renderRouteMapFile({ date, route, points, root, fetcher, write });
 }
 
 export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = createCachedGeocoder({ root }), dryRun = false,
@@ -237,8 +263,9 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
       routeHash = routeHashOf(routePoints, routePayments);
       route = await deps.computeRoute(date, { dryRun, points: routePoints, payments: routePayments,
         events: Array.isArray(events) ? events : [] });
+      if (!dryRun) await attachRouteMap(deps.renderMap, { date, route, points: routePoints, today });
       // 일정·카카오 조회가 실패한 결과로는 지문을 갱신하지 않는다. 그래야 7일 재계산이 다시 돌아 활동을 채운다.
-      if (events === 'failed' || route?.degraded) routeHash = prevFields?.routeHash ?? null;
+      if (events === 'failed' || route?.degraded || route?.mapIncomplete) routeHash = prevFields?.routeHash ?? null;
     }
     catch (error) { route = 'failed'; routeHash = prevFields?.routeHash ?? null; console.error('  ❌ 동선 계산 실패:', String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
   }
@@ -306,7 +333,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
 }
 
 export async function recomputeDailyRoute({ date, root = VAULT_PATHS.root, rules, dryRun = false, force = false,
-  deps: injected = {} }) {
+  today = kstDate(new Date()), deps: injected = {} }) {
   const deps = { computeRoute, write: writeAtomic, fetchEvents: async (day) => {
     if (!isConfigured()) return [];
     return listEventsForKstDay(day, { token: await getAccessToken({ requiredScopes: CALENDAR_READ_SCOPES }) });
@@ -327,13 +354,15 @@ export async function recomputeDailyRoute({ date, root = VAULT_PATHS.root, rules
   try { events = await deps.fetchEvents(date); }
   catch { return { updated: false, skipped: '캘린더 조회 실패' }; }
   const route = await deps.computeRoute(date, { root, dryRun, points, payments, events: Array.isArray(events) ? events : [] });
+  if (!dryRun) await attachRouteMap(deps.renderMap, { date, route, points, root, today });
   // 지오코딩 중 오너가 파일을 수정했으면 다시 검사해 그 변경을 보존한다.
   const latest = readOrNull(path);
   if (latest == null) return { updated: false, skipped: '노트 없음' };
   const again = inspectExisting(latest);
   if (!again.ok) return { updated: false, skipped: again.reason };
   if (!force && again.prev.fields.routeHash === routeHash) return { updated: false, skipped: '지문 동일' };
-  const note = replaceDailyRoute(latest, route, route?.degraded ? (again.prev.fields.routeHash ?? null) : routeHash);
+  const note = replaceDailyRoute(latest, route, route?.degraded || route?.mapIncomplete
+    ? (again.prev.fields.routeHash ?? null) : routeHash);
   const problems = rules ? checkNote(relative(root, path), note, rules) : [];
   if (problems.length) throw new Error(`등록부 위반: ${problems.join(' / ')}`);
   if (sameIgnoringModified(latest, note)) return { updated: false, skipped: '변경 없음' };
@@ -348,7 +377,7 @@ export async function recomputeRecentRoutes({ now = new Date(), root = VAULT_PAT
   const results = [];
   for (let offset = 0; offset < 7; offset += 1) {
     const date = new Date(Date.parse(`${today}T00:00:00Z`) - offset * 86_400_000).toISOString().slice(0, 10);
-    try { results.push({ date, ...await recomputeDailyRoute({ date, root, rules, dryRun, deps }) }); }
+    try { results.push({ date, ...await recomputeDailyRoute({ date, root, rules, dryRun, today, deps }) }); }
     catch (error) { console.warn(`  ⚠️ ${date} 동선 재계산 실패:`, String(error.message).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); results.push({ date, failed: true }); }
   }
   return results;
@@ -365,11 +394,13 @@ async function main() {
   if (!actions.length) console.log('ℹ️ 새 노트 작업 없음');
   const rules = parseRegistry(readFileSync(vaultAbs(VAULT_REL.registryFile), 'utf8'));
   const dayResults = [];
+  const renderMap = createRouteMapRenderer();
   for (const action of actions) {
-    const r = await processDay({ ...action, dryRun, noSend: args['no-send'] === true, rules, today: kstDate(now) });
+    const r = await processDay({ ...action, dryRun, noSend: args['no-send'] === true, rules, today: kstDate(now),
+      deps: { renderMap } });
     dayResults.push(r);
   }
-  await recomputeRecentRoutes({ now, rules, dryRun });
+  await recomputeRecentRoutes({ now, rules, dryRun, deps: { renderMap } });
   if (dailyWorkFailed(dayResults)) process.exitCode = 1;
 }
 
