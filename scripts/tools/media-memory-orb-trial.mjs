@@ -116,17 +116,21 @@ export function albumForMoment(photos, mediaById) {
 }
 
 // engine 'ollama'면 사진을 요청에 직접 붙이므로(이미지 모델) 파일 경로·Read 안내를 넣지 않는다.
-export function buildPrompt(item, copies, criteria = loadEmotionCriteria(), { engine = 'claude' } = {}) {
-  const memoEmotions = ownerEmotions(item.fields, item.memo, criteria);
-  const recordDate = occurredDate(item.fields.occurred);
-  const names = allowedEmotions(recordDate, criteria).map((emotion) => emotion.name);
-  const noteData = JSON.stringify({ id: item.id, date: String(item.fields.occurred ?? '').slice(0, 10),
+// 순간 노트의 사건 정보 + 사진 설명(<note-data> 안에 넣는 JSON). Claude 0.0과 Ollama 0.0·0.1이 같이 쓴다.
+export function momentNoteData(item, copies, criteria = loadEmotionCriteria(), { engine = 'claude' } = {}) {
+  return JSON.stringify({ id: item.id, date: String(item.fields.occurred ?? '').slice(0, 10),
     place: item.fields.place ?? null, age: mineAge(item.fields.occurred), title: item.fields.description ?? '',
     album: item.album ?? item.fields.album ?? null, event: item.fields.anniversary ?? item.fields.occasion ?? null,
-    scenes: list(item.fields.scenes), ownerMemo: item.memo ?? '', ownerEmotions: memoEmotions,
+    scenes: list(item.fields.scenes), ownerMemo: item.memo ?? '', ownerEmotions: ownerEmotions(item.fields, item.memo, criteria),
     photoCopies: copies.map((copy, index) => engine === 'ollama'
       ? { number: index + 1, reason: copy.reason, ...(copy.face ? { mineFace: copy.face } : {}) }
       : { path: copy.path, reason: copy.reason }) }).replace(/</g, '\\u003c');
+}
+
+export function buildPrompt(item, copies, criteria = loadEmotionCriteria(), { engine = 'claude' } = {}) {
+  const recordDate = occurredDate(item.fields.occurred);
+  const names = allowedEmotions(recordDate, criteria).map((emotion) => emotion.name);
+  const noteData = momentNoteData(item, copies, criteria, { engine });
   // Ollama는 사진을 한 장씩(최대 3장) 붙이고 사진마다 미네 얼굴 위치를 글로 준다(1단계 ④).
   const intro = engine === 'ollama'
     ? `함께 보낸 미네의 순간 사진 ${copies.length}장(보낸 순서가 photoCopies의 number)을 보고 기억 구슬을 제안한다. mineFace가 있는 사진은 그 위치의 아이가 미네다. 다른 사람의 표정은 미네 감정의 근거가 아니다.`

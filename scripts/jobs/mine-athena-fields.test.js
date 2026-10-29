@@ -4,8 +4,17 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fixture as criteriaFixture, fixtureCriteria as criteria } from '../lib/mine-emotion-criteria.fixture.js';
+
+// Ollama 0.1 시험용 기준 예시(결정 §10 표 모양). 진짜 결정 문서를 읽지 않게 주입한다.
+const anchors = [
+  { id: 'joy-1', verdict: '기쁨 1', record: '2026-07-15 미네 통화 등굣길', no: 2, why: '매주 있을 수 있는 기쁨' },
+  { id: 'none-a', verdict: '감정 없음', record: '2025-04-13 미네 통화 놀이 마무리', no: 14, why: '일상적인 협상' },
+];
+// v0.2 답(모든 감정 세기 단어). over로 일부만 바꾼다.
+const scored = (over = {}) => ({ emotionState: '있음', nearestAnchor: 'joy-1', emotionEvidence: '미네가 웃음', secondFilmSignal: null, primary: null,
+  ...over, levels: { 기쁨: '없음', 슬픔: '없음', 버럭: '없음', 까칠: '없음', 소심: '없음', ...(over.levels ?? {}) } });
 import { parseEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
-import { applyFields, buildPrompt, defaultJudgmentsPath, failed, findTargets, judgeItems, mineAge, noteText, ollamaDecision, proposalSchema, recentSignalTrend, reclassify,
+import { applyFields, buildPrompt, defaultJudgmentsPath, failed, findTargets, judgeItems, mineAge, noteText, ollamaDecision, ollamaProposalSchema, buildOllamaPrompt, validateOllamaProposals, proposalSchema, recentSignalTrend, reclassify,
   restrictedDecision, run, validateProposals, PROMPT_VERSIONS, STATE_REL } from './mine-athena-fields.mjs';
 import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
@@ -490,12 +499,13 @@ test('Ollama 답 모양: 기록 날짜의 어휘로 묶고, importance는 처음
 test('ollamaDecision: 텍스트 모델·답 모양을 넘기고 JSON 문자열로 돌려준다', async () => {
   const calls = [];
   const decide = ollamaDecision({ criteria, output: { log() {} },
-    invoke: async (request) => { calls.push(request); return { json: [{ id: 1, emotions: [] }] }; } });
+    invoke: async (request) => { calls.push(request); return { json: { emotionState: '모름' } }; } });
   const item = { date: '2026-10-15', content: note() };
-  assert.equal(await decide('프롬프트', { items: [item], reclassify: true }), '[{"id":1,"emotions":[]}]');
+  assert.equal(await decide('프롬프트', { items: [item], reclassify: true }), '{"emotionState":"모름"}');
   assert.equal(calls[0].model, OLLAMA_MODELS.text);
   assert.equal(calls[0].prompt, '프롬프트');
-  assert.deepEqual(calls[0].schema, proposalSchema([item], { criteria, reclassify: true }));
+  assert.deepEqual(calls[0].schema, ollamaProposalSchema([item], { criteria, reclassify: true }));
+  assert.deepEqual(calls[0].schema.properties.levels.required, ['기쁨', '슬픔', '버럭', '까칠', '소심']);
 });
 
 test('judgeItems: Ollama는 기록 하나씩, 형식 실패는 그 기록만, 멈추면 남은 기록을 연기한다', async () => {
@@ -530,13 +540,14 @@ test('run --engine=ollama: 쿨다운과 무관하게 판단하고, 판 이름을
   const quiet = { log() {}, error() {} };
   let unloaded = 0;
   const opts = { root, now, rules, output: quiet, cues: async () => {}, engine: 'ollama', cooldown: () => true,
-    criteria: { ...criteria, ref: '미네-감정-분류@시험' }, unload: async () => { unloaded += 1; } };
+    criteria: { ...criteria, ref: '미네-감정-분류@시험' }, unload: async () => { unloaded += 1; }, anchors };
   let calls = 0;
   const summary = await run({ ...opts, judge: async (prompt, { items }) => {
     calls += 1;
     assert.equal(items.length, 1);
     if (calls === 2) throw Object.assign(new Error('Ollama 연결 실패: fetch failed'), { unavailable: true });
-    return '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"미네가 웃음","secondFilmSignal":null,"importance":2,"scores":{"기쁨":0.8,"슬픔":0.1}}]';
+    assert.match(prompt, /# 기준 예시[\s\S]*joy-1[\s\S]*# 기록/);
+    return JSON.stringify({ ...scored({ levels: { 기쁨: '짙음', 슬픔: '옅음' } }), importance: 2 });
   } });
   assert.equal(summary.cooldown, undefined);
   assert.equal(summary.written.length, 1);
@@ -547,8 +558,11 @@ test('run --engine=ollama: 쿨다운과 무관하게 판단하고, 판 이름을
   assert.deepEqual(rows.map((row) => [row.rel.split('/').pop(), row.status]), [['2026-10-15 미네 통화.md', 'applied'], ['2026-10-16 미네 통화.md', 'retry']]);
   assert.deepEqual({ engine: rows[0].engine, model: rows[0].model, criteriaRef: rows[0].criteriaRef, promptVersion: rows[0].promptVersion, mode: rows[0].mode },
     { engine: 'ollama', model: OLLAMA_MODELS.text, criteriaRef: '미네-감정-분류@시험', promptVersion: PROMPT_VERSIONS.ollama, mode: 'initial' });
-  assert.deepEqual(rows[0].scores, { 기쁨: 0.8, 슬픔: 0.1 });
+  assert.deepEqual(rows[0].scores, { 기쁨: 0.85, 슬픔: 0.35, 버럭: 0, 까칠: 0, 소심: 0 });
+  assert.equal(rows[0].levels.기쁨, '짙음');
   assert.equal(rows[0].fields.primaryEmotion, '기쁨');
+  assert.equal(rows[0].fields.emotionIntensity, 3, '짙음은 강도 3');
+  assert.deepEqual([rows[0].emotionState, rows[0].nearestAnchor], ['있음', 'joy-1']);
   // 범위 밖 점수는 검증 실패로 쓰지 않는다.
   const bad = validateProposals([{ id: 1, emotions: [], primaryEmotion: null, emotionIntensity: null, emotionEvidence: '근거', importance: 1, scores: { 기쁨: 2 } }],
     [{ date: '2026-10-15', content: note() }], { criteria });
@@ -591,10 +605,10 @@ test('Ollama 실제 경로: 판단 뒤 텍스트 모델을 한 번 내리고, �
   const unloaded = [];
   const blocked = join(root, 'blocked');
   writeFileSync(blocked, '파일이라 폴더를 만들 수 없음');
-  const summary = await run({ root, now, rules, criteria, cues: async () => {}, engine: 'ollama',
+  const summary = await run({ root, now, rules, criteria, cues: async () => {}, engine: 'ollama', anchors,
     output: { log() {}, error: (line) => errors.push(line) }, judgmentsPath: join(blocked, 'judgments.jsonl'),
     unload: async (model) => { unloaded.push(model); throw new Error('내리기 실패'); },
-    invoke: async () => ({ json: [{ id: 1, emotions: [], primaryEmotion: null, emotionIntensity: null, emotionEvidence: '짧은 안부', secondFilmSignal: null, importance: 1 }] }) });
+    invoke: async () => ({ json: { ...scored({ emotionState: '감정 없음', emotionEvidence: '짧은 안부' }), importance: 1 } }) });
   assert.deepEqual(unloaded, [OLLAMA_MODELS.text]);
   assert.equal(summary.written.length, 2, '기록 실패가 있어도 두 노트 모두 쓴다');
   assert.equal(summary.recordErrors, 2);
@@ -611,4 +625,29 @@ test('Ollama 프롬프트 입력은 미네 발화로 추리고, Claude는 지금
   assert.match(local, /오너 메모: 소풍 다녀온 날/);
   const claude = buildPrompt([item], { criteria });
   assert.match(claude, /나: 숙제 했어\?/);
+});
+
+test('Ollama 0.2 프롬프트: 고정 앞부분(기준·예시·판단 순서·자리표시 답 양식) 뒤에 기록, 채운 예시 값 없음', () => {
+  const item = { rel: `${C}/2026/2026-10-15 미네 통화.md`, date: '2026-10-15', occurred: '2026-10-15T19:00:00+09:00',
+    fields: { convKind: '통화' }, content: note({ body: '미네: 그네 탔어' }) };
+  const prompt = buildOllamaPrompt([item], { criteria, anchors, reclassify: true });
+  const order = ['# 역할', '# 감정 기준', '# 기준 예시', '# 판단 순서', '# 답 양식', '# 소리 근거 읽는 법', '# 기록'].map((head) => prompt.indexOf(head));
+  assert.ok(order.every((at, index) => at >= 0 && (index === 0 || at > order[index - 1])), `순서 ${order}`);
+  assert.match(prompt, /미네: 그네 탔어/);
+  assert.doesNotMatch(prompt, /"emotionIntensity": ?2|미네가 웃으며 말함/, '채운 예시 값을 보여 주지 않는다');
+  assert.doesNotMatch(prompt, /importance/, '재분류는 중요도를 묻지 않는다');
+  const other = buildOllamaPrompt([{ ...item, content: note({ body: '미네: 다른 이야기' }) }], { criteria, anchors, reclassify: true });
+  assert.equal(prompt.slice(0, prompt.indexOf('# 기록')), other.slice(0, other.indexOf('# 기록')), '기록이 달라도 앞부분이 같아 캐시를 쓴다');
+  assert.equal(buildOllamaPrompt([item], { criteria, anchors, exclude: { excludeNo: 2 } }).includes('joy-1'), false);
+  assert.throws(() => buildOllamaPrompt([item, item], { criteria, anchors }), /하나씩/);
+});
+
+test('validateOllamaProposals: 세기 단어 → 필드, 형식 오류·중요도 누락은 형식 실패', () => {
+  const item = { date: '2026-10-15', content: note() };
+  const ok = validateOllamaProposals({ ...scored({ levels: { 소심: '보통', 슬픔: '옅음' } }), importance: 2 }, [item], { criteria }).get(1);
+  assert.deepEqual([ok.fields.emotions, ok.fields.primaryEmotion, ok.fields.emotionIntensity, ok.fields.importance], [['소심', '슬픔'], '소심', 2, 2]);
+  assert.equal(validateOllamaProposals(scored(), [item], { criteria }).get(1).formatFailure, true, '처음 분류는 중요도 필수');
+  assert.equal(validateOllamaProposals(scored(), [item], { criteria, reclassify: true }).get(1).fields.emotions.length, 0);
+  const bad = validateOllamaProposals({ ...scored(), levels: { 기쁨: 2 } }, [item], { criteria, reclassify: true }).get(1);
+  assert.match(bad.error, /levels/);
 });

@@ -7,7 +7,7 @@ import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { fixtureCriteria } from '../lib/mine-emotion-criteria.fixture.js';
-import { MAX_JOB_MS, NIGHTLY_LIMIT, ORB_FIELDS, PROMPT_VERSIONS, applyOrbFields, attemptState, ollamaPhotoDecision, orbSchema, readRuns,
+import { MAX_JOB_MS, NIGHTLY_LIMIT, ORB_FIELDS, PROMPT_VERSIONS, applyOrbFields, attemptState, ollamaPhotoDecision, orbSchema, validateOllamaOrb, readRuns,
   requireRegistryFields, run, upsertOrbIndex } from './media-memory-orb.mjs';
 import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
 
@@ -86,6 +86,11 @@ const answer = { emotions: ['기쁨'], primaryEmotion: '기쁨', emotionIntensit
   emotionEvidence: '사진에서 미네가 웃는다', secondFilmSignal: null, confidence: '보통',
   importance: 3, scene: '미네가 케이크를 본다.', titleSuggestion: '생일 케이크',
   coreMemoryCandidate: { value: true, reason: '첫 생일' } };
+// Ollama 0.2 답(감정별 세기 단어·상태). 사진 칸은 0.0과 같다.
+const ollamaAnswer = (levels = { 기쁨: '보통' }, state = '있음') => ({ emotionState: state, nearestAnchor: 'photo-joy-2a', primary: null,
+  levels: { 기쁨: '없음', 슬픔: '없음', 버럭: '없음', 까칠: '없음', 소심: '없음', ...levels }, emotionEvidence: '사진에서 미네가 웃는다', secondFilmSignal: null,
+  confidence: '보통', importance: 3, scene: '미네가 케이크를 본다.', titleSuggestion: '생일 케이크', coreMemoryCandidate: { value: true, reason: '첫 생일' } });
+const anchors = [{ id: 'photo-joy-2a', verdict: '기쁨 2', record: '사진 b553, 2023-06-03 웃음', no: 34, why: '큰 웃음' }];
 const envelope = (value) => JSON.stringify({ result: JSON.stringify(value),
   usage: { input_tokens: 100, output_tokens: 20 }, total_cost_usd: 0.01 });
 
@@ -114,7 +119,7 @@ function options(fixture, overrides = {}) {
     rules: [{ type: 'media', pathRegex: /^20_Records\/24_Media\/2020\//,
       titleRegex: null, required: { bundle: [], extra: [] } }],
     charter: { model: 'sonnet', systemPrompt: '' }, photoScores: new Map(), visionRows: new Map(),
-    copyPhoto: () => {}, gridPhoto: () => {}, output: { log() {}, error() {} }, mineFaces: new Map(),
+    copyPhoto: () => {}, gridPhoto: () => {}, output: { log() {}, error() {} }, mineFaces: new Map(), anchors,
     ...overrides };
 }
 
@@ -262,7 +267,8 @@ test('Ollama 사진 판단: 이미지 모델에 격자 사본을 base64로 붙�
   const schema = orbSchema('2020-01-01', fixtureCriteria);
   assert.deepEqual(schema.properties.confidence.enum, ['낮음', '보통', '높음']);
   assert.ok(schema.required.includes('coreMemoryCandidate'));
-  assert.ok(schema.properties.primaryEmotion.enum.includes(null));
+  assert.deepEqual(schema.properties.levels.required, ['기쁨', '슬픔', '버럭', '까칠', '소심']);
+  assert.equal(schema.properties.primaryEmotion, undefined, '0.2는 primaryEmotion 칸을 묻지 않는다(코드가 세기로 정함)');
   const calls = [];
   const decide = ollamaPhotoDecision({ criteria: fixtureCriteria, output: { log() {} }, readImage: (path) => `b64:${path}`,
     invoke: async (request) => { calls.push(request); return { json: answer, usage: { promptTokens: 900, outputTokens: 80 } }; } });
@@ -280,7 +286,7 @@ test('run --engine=ollama: 쿨다운과 무관, 판 이름을 색인·runs에 �
   let unloaded = 0;
   const measured = (value) => ({ result: value, inputTokens: 900, outputTokens: 80, usage: {} });
   const replies = [
-    () => measured({ ...answer, scores: { 기쁨: 0.7, 슬픔: 0.6 } }),
+    () => measured(ollamaAnswer({ 기쁨: '짙음', 슬픔: '보통' })),
     () => { throw Object.assign(new Error('로컬 모델 답이 JSON이 아님'), { formatFailure: true }); },
     () => { throw Object.assign(new Error('Ollama 연결 실패: fetch failed'), { unavailable: true }); },
     () => { throw new Error('부르면 안 됨'); },
@@ -305,7 +311,9 @@ test('run --engine=ollama: 쿨다운과 무관, 판 이름을 색인·runs에 �
   const [orb] = readFileSync(join(fixture.out, 'orbs.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   const { at, ...judgment } = orb.judgment;
   assert.ok(Date.parse(at));
-  assert.deepEqual(judgment, { ...version, scores: { 기쁨: 0.7, 슬픔: 0.6 } });
+  assert.deepEqual(judgment, { ...version, scores: { 기쁨: 0.85, 슬픔: 0.57, 버럭: 0, 까칠: 0, 소심: 0 },
+    levels: { 기쁨: '짙음', 슬픔: '보통', 버럭: '없음', 까칠: '없음', 소심: '없음' }, emotionState: '있음', nearestAnchor: 'photo-joy-2a' });
+  assert.match(prompts[0], /# 기준 예시[\s\S]*photo-joy-2a[\s\S]*<note-data>/);
   const runs = readRuns(join(fixture.out, 'runs.jsonl'));
   assert.deepEqual(runs.map((row) => row.status), ['reserved', 'written', 'reserved', 'error', 'reserved', 'deferred']);
   assert.ok(runs.every((row) => row.engine === 'ollama' && row.model === OLLAMA_MODELS.vision && row.promptVersion === PROMPT_VERSIONS.ollama));
@@ -324,7 +332,7 @@ test('Ollama 실제 경로: 격자를 읽어 붙이고 끝나면 이미지 모�
       calls += 1;
       assert.deepEqual(request.images, ['aGk=']);
       if (calls === 1) throw Object.assign(new Error('로컬 모델 시간 초과(180초)'), { timeout: true });
-      return { json: answer, usage: { promptTokens: 1, outputTokens: 1 } };
+      return { json: ollamaAnswer(), usage: { promptTokens: 1, outputTokens: 1 } };
     } }));
   assert.equal(calls, 2, '시간 초과 뒤에도 다음 순간으로 간다');
   assert.equal(summary.failed.length, 1);
@@ -340,10 +348,20 @@ test('Ollama 사진 입력: 사진마다 세운 원본 크기로 미네 얼굴 �
   let grids = 0;
   await run(options(fixture, { engine: 'ollama', mineFaces: new Map([[fixture.candidates[0].id, { i: 0, score: 0.9, bbox: [1400, 1800, 1600, 2200] }]]),
     copyPhoto: () => ({ width: 3024, height: 4032 }), gridPhoto: () => { grids += 1; },
-    judge: async (prompt) => { prompts.push(prompt); return { result: answer, inputTokens: 1, outputTokens: 1, usage: {} }; } }));
+    judge: async (prompt) => { prompts.push(prompt); return { result: ollamaAnswer(), inputTokens: 1, outputTokens: 1, usage: {} }; } }));
   assert.equal(grids, 0);
   const data = JSON.parse(prompts[0].match(/<note-data>\n([\s\S]*?)\n<\/note-data>/)[1]);
   assert.deepEqual(data.photoCopies, [{ number: 1, reason: data.photoCopies[0].reason,
     mineFace: '미네 얼굴: 한가운데 (가로 0.46~0.53, 세로 0.45~0.55, 사진 전체 0~1 기준)' }]);
   assert.equal(JSON.stringify(data).includes('copies'), false, '파일 경로를 넣지 않는다');
+});
+
+test('validateOllamaOrb: 세기 단어로 감정을 정하고 0.0과 같은 검증을 거친다, 모름은 근거에 표시', () => {
+  const joy = validateOllamaOrb(ollamaAnswer({ 기쁨: '짙음' }), [], null, '2020-01-01', fixtureCriteria);
+  assert.deepEqual([joy.primaryEmotion, joy.emotionIntensity, joy.emotionState, joy.titleSuggestion], ['기쁨', 3, '있음', '생일 케이크']);
+  const unknown = validateOllamaOrb(ollamaAnswer({ 기쁨: '보통' }, '모름'), [], null, '2020-01-01', fixtureCriteria);
+  assert.deepEqual([unknown.emotions, unknown.primaryEmotion, unknown.emotionState], [[], null, '모름']);
+  assert.match(unknown.emotionEvidence, /^모름: /);
+  assert.throws(() => validateOllamaOrb({ ...ollamaAnswer(), levels: {} }, [], null, '2020-01-01', fixtureCriteria),
+    (error) => error.formatFailure === true);
 });

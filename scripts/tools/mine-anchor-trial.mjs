@@ -3,9 +3,9 @@
  * 미네 판단 1단계 ⑤: 기준 예시(앵커) 시험 — 로컬 모델(Ollama)로 오너가 확정한 기준 예시를 판단해 보고
  * 정답과 맞춰 본다. 볼트·노트·판단 기록은 쓰지 않고, 결과는 볼트 밖 `Media/MemoryOrb/trial-anchors/`에만 남긴다.
  *
- * 왜(기억 판단 체계 §15.3 1단계 ⑤, 2026-10-29 오너 "1번부터 이어서"): 2단계 프롬프트 v0.1을 다듬으려면
+ * 왜(기억 판단 체계 §15.3 1단계 ⑤, 2026-10-29 오너 "1번부터 이어서"): 2단계 프롬프트를 다듬으려면
  * 기준 예시(시트 48개, §10 표 34행)로 첫 수치를 내야 한다. 기준 예시를 프롬프트에 넣으면 시험하는 그 예시가
- * 정답지로 새므로, `--anchors`일 때는 결정 문서 §10 표에서 시험 대상과 **같은 날짜의 예시를 모두** 빼고 넣는다
+ * 정답지로 새므로, 잡의 Ollama 프롬프트가 넣는 결정 문서 §10 표에서 시험 대상과 **같은 날짜의 예시를 모두** 빼고 넣는다
  * (같은 날 사진 세 장처럼 형제 예시가 남으면 날짜만 맞춰도 답이 나온다 — 2026-10-29 리뷰 HIGH).
  *
  * 정답이 새는 다른 길(리뷰 HIGH): 감정 기준 본문(§3~§7)에는 기준 예시에서 나온 규칙과 미네 말 원문 인용이
@@ -18,7 +18,7 @@
  * 잡과 같은 공유 캐시를 쓴다(dry-run에서는 소리 분석을 하지 않는다).
  *
  * 판단 경로는 두 잡과 같다 — 같은 프롬프트·답 모양·검증을 다시 쓴다:
- *   - 통화·녹음 → mine-athena-fields의 buildPrompt(input 'mine')·ollamaDecision·validateProposals
+ *   - 통화·녹음 → mine-athena-fields의 buildOllamaPrompt(현재 Ollama 판)·ollamaDecision·validateOllamaProposals
  *     (재분류 모양이라 옛 1~5 중요도는 묻지 않는다)
  *   - 사진 → media-memory-orb의 buildPrompt(engine 'ollama')·ollamaPhotoDecision·validateProposal.
  *     오너가 판정한 그 사진 한 장만 세운 사본으로 붙인다. 사진 설명(reason)은 잡과 같은 형식(미네 이름표·얼굴 점수).
@@ -27,9 +27,11 @@
  *
  * 사용:
  *   node scripts/tools/mine-anchor-trial.mjs --dry-run          # 대상·경로·프롬프트 길이만(모델 호출 없음)
- *   node scripts/tools/mine-anchor-trial.mjs                    # 지금 프롬프트 그대로(기준 예시 없이)
- *   node scripts/tools/mine-anchor-trial.mjs --anchors          # §10 기준 예시를 넣되 시험 대상 하나는 빼고
+ *   node scripts/tools/mine-anchor-trial.mjs                    # 잡의 현재 Ollama 프롬프트로, 하나 빼고 시험
+ *   (0.0 기준선 수치는 2026-10-29 trial-anchors/*-plain·*-anchors 보고서에 남아 있다)
  *   옵션: --only=1,7,34 (시트 번호) · --kind=text|photo
+ *   --engine=claude : 통화·녹음만 같은 프롬프트로 Claude에 물어 상한을 잰다(2026-10-29 오너 "Claude로 상한 재기").
+ *     사진은 미네 사진을 집 밖으로 보내지 않으므로 '비교 불가'로 둔다. 쿨다운 가드를 지난다.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -42,45 +44,21 @@ import { OLLAMA_MODELS, unloadOllamaModel } from '../lib/ollama-client.mjs';
 import { loadMineFaces, faceBoxText } from '../lib/mine-record-input.mjs';
 import { attachAudioCues } from '../lib/media-audio-cues.mjs';
 import { parseJsonBlock } from '../lib/headless-claude.mjs';
-import { buildPrompt as buildTextPrompt, ollamaDecision, validateProposals, occurredDate } from '../jobs/mine-athena-fields.mjs';
-import { ollamaPhotoDecision, OLLAMA_CALL_MS } from '../jobs/media-memory-orb.mjs';
-import { buildPrompt as buildPhotoPrompt, validateProposal, makeCopy } from './media-memory-orb-trial.mjs';
+import { cooldownActive } from '../lib/quota-cooldown.mjs';
+import { loadAgent } from '../lib/agent-loader.mjs';
+import { buildOllamaPrompt, restrictedDecision, ollamaDecision, validateOllamaProposals, occurredDate, PROMPT_VERSIONS as TEXT_VERSIONS } from '../jobs/mine-athena-fields.mjs';
+import { ollamaPhotoDecision, buildOllamaOrbPrompt, validateOllamaOrb, OLLAMA_CALL_MS, PROMPT_VERSIONS as PHOTO_VERSIONS } from '../jobs/media-memory-orb.mjs';
+import { makeCopy } from './media-memory-orb-trial.mjs';
+import { parseAnchorTable } from '../lib/mine-judgment-prompt.mjs';
 
 export const ANCHOR_ROOT = join(homedir(), 'Pantheon', 'Media', 'MemoryOrb', 'anchors');
 export const ANCHOR_SET = '2026-10-19';
 export const TRIAL_ANCHOR_ROOT = join(homedir(), 'Pantheon', 'Media', 'MemoryOrb', 'trial-anchors');
-export const PROMPT_LABELS = Object.freeze({ plain: '현행 프롬프트(기준 예시 없음)', anchors: '§10 기준 예시 넣음(시험 대상 하나 뺌)' });
 const NO_EMOTION = '감정 없음';
 const UNKNOWN = '모름';
 
-// 결정 문서 §10 기준 예시 표 → [{ id, verdict, record, no, why }]. 시트 번호(#n)가 없는 줄은 하나 빼고 시험에 못 쓰므로 오류.
-export function parseAnchorTable(body) {
-  const section = body.match(/^## 10\. [^\n]+\n([\s\S]*?)(?=^## \d+\. |^## 변경 이력|$(?![\s\S]))/m)?.[1];
-  if (!section) throw new Error('미네 감정 분류 결정 문서 §10 기준 예시를 찾을 수 없습니다');
-  const lines = section.split(/\r?\n/);
-  const header = lines.findIndex((line) => line === '| ID | 판정 | 기록 | 오너 근거 |');
-  if (header < 0 || !/^\|[-| ]+\|$/.test(lines[header + 1] ?? '')) throw new Error('§10 기준 예시 표 머리가 잘못되었습니다');
-  const rows = [];
-  for (const line of lines.slice(header + 2)) {
-    if (!line.startsWith('|')) break;
-    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
-    const no = Number(cells[2]?.match(/\(#(\d+)\)\s*$/)?.[1]);
-    if (cells.length !== 4 || !cells[0] || !Number.isInteger(no)) throw new Error(`§10 기준 예시 행 오류: ${line}`);
-    // 기록 칸의 볼트 링크는 제목만 남긴다(모델에 경로를 주지 않는다).
-    const record = cells[2].replace(/\s*\(#\d+\)\s*$/, '').replace(/\[\[(?:[^\]|]*\/)?([^\]|]+)(?:\|[^\]]*)?\]\]/g, '$1');
-    rows.push({ id: cells[0], verdict: cells[1], record, no, why: cells[3] });
-  }
-  if (!rows.length) throw new Error('§10 기준 예시 표가 비었습니다');
-  return rows;
-}
-
-// 프롬프트 뒤에 붙이는 기준 예시 묶음. 시험 대상(excludeNo)과, 같은 날짜(excludeDate — 기록 칸의 날짜)의 형제
-// 예시는 넣지 않는다.
-export function anchorPromptBlock(anchors, { excludeNo, excludeDate } = {}) {
-  const kept = anchors.filter((anchor) => anchor.no !== excludeNo && !(excludeDate && anchor.record.includes(excludeDate)));
-  return ['기준 예시(오너 확정). 판단 전에 가장 닮은 예시 ID를 마음속으로 고르고, 그 예시와의 차이를 생각한 뒤 판정한다. 예시의 문장을 답에 베끼지 않는다.',
-    ...kept.map((anchor) => `- ${anchor.id}: ${anchor.verdict} — ${anchor.record} — ${anchor.why}`)].join('\n');
-}
+// §10 기준 예시 표 파서는 잡과 같이 쓰도록 lib로 옮겼다(mine-judgment-prompt). 테스트 호환으로 다시 내보낸다.
+export { parseAnchorTable };
 
 // 시트 항목 + 오너 답 → 시험 대상. route: text(통화·녹음 노트) · photo(사진 한 장) · none(판단 경로 없음/정답 없음)
 export function planAnchors(items, answers) {
@@ -102,9 +80,12 @@ export function compareAnswer(answer, fields) {
   const emotions = fields.emotions ?? [];
   const got = fields.primaryEmotion ? `${fields.primaryEmotion} ${fields.emotionIntensity}` : NO_EMOTION;
   if (answer.emo === NO_EMOTION) return { outcome: emotions.length ? '불일치' : '일치', got };
+  if (fields.emotionState === UNKNOWN) {
+    return { outcome: answer.emo === UNKNOWN ? '일치' : '불일치', got: UNKNOWN };
+  }
   if (answer.emo === UNKNOWN) {
-    // 지금 답 모양에는 '모름'이 없다(결정 v2 §5) — 빈 감정으로 답하면 가장 가까운 답이다.
-    return { outcome: emotions.length ? '불일치' : '근접', got, note: emotions.length ? null : '모름 칸 없음 — 감정 없음으로 답함' };
+    // 모름 대신 감정 없음으로 답하면 가장 가까운 답이다(둘 다 빈 감정).
+    return { outcome: emotions.length ? '불일치' : '근접', got, note: emotions.length ? null : '모름 대신 감정 없음으로 답함' };
   }
   if (fields.primaryEmotion === answer.emo) {
     return answer.int == null || fields.emotionIntensity === answer.int ? { outcome: '일치', got } : { outcome: '감정만 일치', got };
@@ -194,9 +175,10 @@ function failureOutcome(error) {
 }
 
 export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PATHS.mediaRoot, anchorRoot = ANCHOR_ROOT,
-  out = TRIAL_ANCHOR_ROOT, withAnchors = false, only, kind, dryRun = false, criteria = loadEmotionCriteria(),
+  out = TRIAL_ANCHOR_ROOT, only, kind, dryRun = false, criteria = loadEmotionCriteria(),
   anchorBody, invoke, unload = unloadOllamaModel, cues = attachAudioCues, copyPhoto = makeCopy, mineFaces,
-  now = () => Date.now(), output = console } = {}) {
+  now = () => Date.now(), output = console, engine = 'ollama', charter, claude, cooldown = cooldownActive } = {}) {
+  if (!['ollama', 'claude'].includes(engine)) throw new Error(`판단 엔진은 ollama·claude 중 하나: ${engine}`);
   const items = JSON.parse(readFileSync(join(anchorRoot, `items-${ANCHOR_SET}.json`), 'utf8'));
   const answers = JSON.parse(readFileSync(join(anchorRoot, `anchor-answers-${ANCHOR_SET}.json`), 'utf8'));
   const anchors = parseAnchorTable(anchorBody ?? resolveDecision('미네-감정-분류').body);
@@ -204,10 +186,13 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   if (only) plan = plan.filter((row) => only.includes(row.no));
   if (kind) plan = plan.filter((row) => row.route === kind);
   const startedAt = new Date(now()).toISOString();
-  const runDir = join(out, `${startedAt.replace(/[:.]/g, '-')}-${withAnchors ? 'anchors' : 'plain'}`);
-  const label = PROMPT_LABELS[withAnchors ? 'anchors' : 'plain'];
-  const withBlock = (prompt, row) => withAnchors
-    ? `${prompt}\n\n${anchorPromptBlock(anchors, { excludeNo: row.no, excludeDate: row.date || undefined })}` : prompt;
+  const versions = `${TEXT_VERSIONS.ollama} · ${PHOTO_VERSIONS.ollama}`;
+  const runDir = join(out, `${startedAt.replace(/[:.]/g, '-')}-${TEXT_VERSIONS.ollama.split('/').pop()}${engine === 'claude' ? '-claude' : ''}`);
+  const agent = engine === 'claude' ? charter ?? loadAgent('athena', { fallbackModel: 'sonnet' }) : null;
+  const label = `${versions} (기준 예시 넣음, 시험 대상과 같은 날짜 예시는 뺌)${engine === 'claude'
+    ? ` — 같은 텍스트 프롬프트를 Claude(${agent.model})로, 사진은 판단 안 함` : ''}`;
+  // 하나 빼고 시험: 잡과 같은 프롬프트에서 시험 대상·같은 날짜 기준 예시만 뺀다.
+  const exclude = (row) => ({ excludeNo: row.no, excludeDate: row.date || undefined });
   const quotes = criteriaQuotes(criteria);
   const rows = [];
   const record = (row) => {
@@ -217,6 +202,10 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   if (!dryRun) mkdirSync(join(runDir, 'prompts'), { recursive: true, mode: 0o700 });
   const savePrompt = (no, prompt) => { if (!dryRun) writeFileSync(join(runDir, 'prompts', `${no}.txt`), prompt, { mode: 0o600 }); };
   for (const row of plan.filter((entry) => entry.route === 'none')) record({ ...row, outcome: '비교 불가' });
+  if (engine === 'claude') {
+    for (const row of plan.filter((entry) => entry.route === 'photo')) record({ ...row, route: 'none', outcome: '비교 불가', reason: '사진은 Claude로 보내지 않음' });
+    plan = plan.filter((entry) => entry.route !== 'photo');
+  }
 
   // Ollama가 멈추면(unavailable) 남은 행을 오류로 적고 부분 보고서를 쓴 뒤 멈춘다.
   let stopped = null;
@@ -228,9 +217,16 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   // 1) 통화·녹음 — 텍스트 모델. 잡과 같은 입력(미네 발화 추림 + 소리 근거).
   const textRows = plan.filter((row) => row.route === 'text');
   if (textRows.length) {
-    const decide = ollamaDecision({ criteria, output, ...(invoke ? { invoke } : {}) });
+    const decide = engine === 'claude'
+      ? (prompt) => (claude ?? ((text) => restrictedDecision(text, agent, { output })))(prompt)
+      : ollamaDecision({ criteria, output, ...(invoke ? { invoke } : {}) });
     try {
       for (const [index, row] of textRows.entries()) {
+        // Claude 구독 사용량 가드: 쿨다운이면 남은 행을 멈추고 부분 보고서를 쓴다.
+        if (engine === 'claude' && !dryRun && cooldown()) {
+          for (const rest of textRows.slice(index)) record({ ...rest, outcome: '오류', reason: 'Claude 쿨다운' });
+          break;
+        }
         const path = join(root, row.ref);
         if (!existsSync(path)) { record({ ...row, outcome: '오류', reason: '노트 없음' }); continue; }
         const content = readFileSync(path, 'utf8');
@@ -242,7 +238,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         // dry-run은 소리 분석(파이썬·캐시 쓰기)을 하지 않는다.
         if (dryRun) item.audioCues = { text: '소리 근거: (dry-run 생략)', ok: false };
         else await cues([item], { root });
-        const prompt = withBlock(buildTextPrompt([item], { reclassify: true, criteria, input: 'mine' }), row);
+        const prompt = buildOllamaPrompt([item], { reclassify: true, criteria, anchors, exclude: exclude(row) });
         savePrompt(row.no, prompt);
         if (dryRun) {
           output.log(`#${row.no} 텍스트 ${row.ref.split('/').pop()} — 프롬프트 ${prompt.length}자${leaks.length ? ` (${leaks.join(', ')})` : ''}`);
@@ -250,20 +246,22 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         }
         const started = now();
         try {
-          const proposal = validateProposals(parseJsonBlock(await decide(prompt, { items: [item], reclassify: true })), [item],
+          const proposal = validateOllamaProposals(parseJsonBlock(await decide(prompt, { items: [item], reclassify: true })), [item],
             { reclassify: true, criteria }).get(1);
           const seconds = Math.round((now() - started) / 1000);
-          if (!proposal?.fields) { record({ ...row, outcome: '형식 실패', reason: proposal?.error ?? proposal?.skip ?? '제안 없음', leaks, seconds }); continue; }
-          record({ ...row, ...compareAnswer(row.answer, proposal.fields), evidence: proposal.fields.emotionEvidence,
-            secondFilmSignal: proposal.fields.secondFilmSignal, leaks, seconds });
+          if (!proposal?.fields) { record({ ...row, outcome: '형식 실패', reason: proposal?.error ?? '제안 없음', leaks, seconds }); continue; }
+          record({ ...row, ...compareAnswer(row.answer, { ...proposal.fields, emotionState: proposal.emotionState }),
+            evidence: proposal.fields.emotionEvidence, secondFilmSignal: proposal.fields.secondFilmSignal, scores: proposal.scores,
+            nearestAnchor: proposal.nearestAnchor, ...(proposal.stateConflict ? { stateConflict: true } : {}), leaks, seconds });
         } catch (error) {
           if (error.unavailable) { stopRest(textRows.slice(index), error); break; }
+          if (error.isLimit) { for (const rest of textRows.slice(index)) record({ ...rest, outcome: '오류', reason: 'Claude 사용 한도' }); break; }
           record({ ...row, outcome: failureOutcome(error), reason: error.message, leaks, seconds: Math.round((now() - started) / 1000) });
         }
         output.log(`#${row.no} ${rows.at(-1).outcome} (${rows.at(-1).got ?? rows.at(-1).reason})`);
       }
     } finally {
-      if (!dryRun) await unload(OLLAMA_MODELS.text).catch(() => {});
+      if (!dryRun && engine === 'ollama') await unload(OLLAMA_MODELS.text).catch(() => {});
     }
   }
 
@@ -293,7 +291,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         const copyPath = join(copyDir, `${row.no}.jpg`);
         if (dryRun) {
           output.log(`#${row.no} 사진 ${sourcePath} (순간 노트 ${moment ? '있음' : '없음'}) — 프롬프트 ${
-            withBlock(buildPhotoPrompt(item, [{ path: copyPath, reason }], criteria, { engine: 'ollama' }), row).length}자`);
+            buildOllamaOrbPrompt(item, [{ path: copyPath, reason }], criteria, { anchors, exclude: exclude(row) }).length}자`);
           record({ ...row, outcome: '비교 불가', reason: 'dry-run', leaks }); continue;
         }
         const started = now();
@@ -301,14 +299,14 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
           mkdirSync(copyDir, { recursive: true, mode: 0o700 });
           const size = copyPhoto(resolve(mediaRoot, sourcePath), copyPath);
           const copies = [{ path: copyPath, reason, face: faceBoxText(face?.bbox, size) }];
-          const prompt = withBlock(buildPhotoPrompt(item, copies, criteria, { engine: 'ollama' }), row);
+          const prompt = buildOllamaOrbPrompt(item, copies, criteria, { anchors, exclude: exclude(row) });
           savePrompt(row.no, prompt);
           const answer = await decide(prompt, copyDir, OLLAMA_CALL_MS, { imagePaths: [copyPath], recordDate: date });
           let proposal;
-          try { proposal = validateProposal(answer.result, [], null, date, criteria); }
+          try { proposal = validateOllamaOrb(answer.result, [], null, date, criteria); }
           catch (error) { error.validation = true; throw error; }
-          record({ ...row, ...compareAnswer(row.answer, proposal), evidence: proposal.emotionEvidence,
-            scene: proposal.scene, leaks, seconds: Math.round((now() - started) / 1000) });
+          record({ ...row, ...compareAnswer(row.answer, proposal), evidence: proposal.emotionEvidence, scores: proposal.scores,
+            nearestAnchor: proposal.nearestAnchor, scene: proposal.scene, leaks, seconds: Math.round((now() - started) / 1000) });
         } catch (error) {
           if (error.unavailable) { stopRest(photoRows.slice(index), error); break; }
           record({ ...row, outcome: failureOutcome(error), reason: error.message, leaks, seconds: Math.round((now() - started) / 1000) });
@@ -321,7 +319,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   }
 
   rows.sort((a, b) => a.no - b.no);
-  const report = renderReport(rows, { label, startedAt, models: [OLLAMA_MODELS.text, OLLAMA_MODELS.vision] });
+  const report = renderReport(rows, { label, startedAt, models: engine === 'claude' ? [`claude ${agent.model}`] : [OLLAMA_MODELS.text, OLLAMA_MODELS.vision] });
   if (!dryRun) writeFileSync(join(runDir, 'report.md'), report, { mode: 0o600 });
   output.log(dryRun ? '\ndry-run — 모델 호출·파일 쓰기 없음' : `\n결과: ${runDir}/report.md`);
   const summary = summarize(rows);
@@ -331,17 +329,17 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   return { rows, summary, runDir };
 }
 
-const USAGE = '사용: node scripts/tools/mine-anchor-trial.mjs [--dry-run] [--anchors] [--only=1,7,34] [--kind=text|photo]';
+const USAGE = '사용: node scripts/tools/mine-anchor-trial.mjs [--dry-run] [--only=1,7,34] [--kind=text|photo] [--engine=ollama|claude]';
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
-  const unknown = args.filter((value) => !['--dry-run', '--anchors'].includes(value) && !/^--(only|kind)=/.test(value));
+  const unknown = args.filter((value) => value !== '--dry-run' && !/^--(only|kind)=/.test(value) && !/^--engine=(ollama|claude)$/.test(value));
   if (unknown.length) { console.error(`모르는 인자: ${unknown.join(' ')}\n${USAGE}`); process.exit(2); }
   const arg = (name) => args.find((value) => value.startsWith(`--${name}=`))?.split('=')[1];
   const only = arg('only')?.split(',').map(Number);
   if (only && (!only.length || only.some((no) => !Number.isInteger(no)))) { console.error(`--only는 시트 번호 목록\n${USAGE}`); process.exit(2); }
   const kind = arg('kind');
   if (kind && !['text', 'photo'].includes(kind)) { console.error(`--kind는 text 또는 photo\n${USAGE}`); process.exit(2); }
-  run({ withAnchors: process.argv.includes('--anchors'), dryRun: process.argv.includes('--dry-run'), only, kind })
+  run({ dryRun: process.argv.includes('--dry-run'), only, kind, engine: arg('engine') ?? 'ollama' })
     .catch((error) => { console.error(`❌ ${error.message}`); process.exit(1); });
 }

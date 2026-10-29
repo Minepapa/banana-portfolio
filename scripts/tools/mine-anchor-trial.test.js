@@ -4,10 +4,11 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  parseAnchorTable, anchorPromptBlock, planAnchors, compareAnswer, summarize, renderReport,
+  parseAnchorTable, planAnchors, compareAnswer, summarize, renderReport,
   criteriaQuotes, quoteOverlap, memoLeak, run,
 } from './mine-anchor-trial.mjs';
 import { fixtureCriteria } from '../lib/mine-emotion-criteria.fixture.js';
+import { anchorBlock as anchorPromptBlock } from '../lib/mine-judgment-prompt.mjs';
 
 const BODY = `## 9. 앞 절
 내용
@@ -108,6 +109,9 @@ test('compareAnswer: 감정 없음은 빈 감정이면 일치, 모름은 빈 감
   assert.equal(compareAnswer({ emo: '감정 없음' }, joy).outcome, '불일치');
   assert.equal(compareAnswer({ emo: '모름' }, empty).outcome, '근접');
   assert.equal(compareAnswer({ emo: '모름' }, joy).outcome, '불일치');
+  // v0.1은 모름 칸이 있다.
+  assert.equal(compareAnswer({ emo: '모름' }, { ...empty, emotionState: '모름' }).outcome, '일치');
+  assert.equal(compareAnswer({ emo: '기쁨', int: 2 }, { ...empty, emotionState: '모름' }).outcome, '불일치');
   assert.equal(compareAnswer({ emo: '감정 없음' }, empty).got, '감정 없음');
 });
 
@@ -152,16 +156,16 @@ test('run: 텍스트 한 건을 끝까지 — 결과·보고서·프롬프트는
   const f = fixture();
   const before = f.vaultFiles();
   const unloaded = [];
-  const invoke = async ({ prompt }) => ({ json: [{ id: 1, emotions: ['기쁨'], primaryEmotion: '기쁨', emotionIntensity: 1,
-    emotionEvidence: '숙제를 끝냈다고 말함', secondFilmSignal: null }], usage: {}, prompt });
-  const { rows, runDir } = await run(judgeOptions(f, { withAnchors: true, invoke, unload: async (model) => { unloaded.push(model); }}));
+  const invoke = async () => ({ json: { emotionState: '있음', nearestAnchor: '없음', emotionEvidence: '숙제를 끝냈다고 말함', secondFilmSignal: null,
+    primary: '기쁨', levels: { 기쁨: '옅음', 슬픔: '없음', 버럭: '없음', 까칠: '없음', 소심: '없음' } }, usage: {} });
+  const { rows, runDir } = await run(judgeOptions(f, { invoke, unload: async (model) => { unloaded.push(model); }}));
   assert.deepEqual(f.vaultFiles(), before);
   assert.ok(runDir.startsWith(f.out));
   const row = rows.find((entry) => entry.no === 2);
   assert.equal(row.outcome, '일치');
   assert.equal(rows.find((entry) => entry.no === 4).outcome, '비교 불가');
   const prompt = readFileSync(join(runDir, 'prompts', '2.txt'), 'utf8');
-  assert.match(prompt, /기준 예시\(오너 확정\)/);
+  assert.match(prompt, /# 기준 예시/);
   assert.equal(prompt.includes('joy-1'), false);
   assert.ok(existsSync(join(runDir, 'report.md')));
   assert.equal(unloaded.length, 1);
@@ -189,8 +193,53 @@ test('[막아야 함] run: Ollama가 멈추면 남은 행을 오류로 적고 �
 
 test('run: 검증 실패는 형식 실패로 센다', async () => {
   const f = fixture();
-  const invoke = async () => ({ json: [{ id: 1, emotions: ['기쁨'], primaryEmotion: '기쁨', emotionIntensity: 9,
-    emotionEvidence: '근거', secondFilmSignal: null }], usage: {} });
+  const invoke = async () => ({ json: { emotionState: '있음', nearestAnchor: '없음', emotionEvidence: '근거', secondFilmSignal: null,
+    primary: null, levels: { 기쁨: '아주 큼' } }, usage: {} });
   const { rows } = await run(judgeOptions(f, { invoke, unload: async () => {} }));
   assert.equal(rows.find((entry) => entry.no === 2).outcome, '형식 실패');
+});
+
+test('run --engine=claude: 같은 텍스트 프롬프트를 Claude로, 모델 내리기 없음, 쿨다운이면 부르지 않고 멈춘다', async () => {
+  const f = fixture();
+  const prompts = [];
+  const unloaded = [];
+  const answer = { emotionState: '있음', nearestAnchor: '없음', emotionEvidence: '숙제를 끝냈다고 말함', secondFilmSignal: null,
+    primary: '기쁨', levels: { 기쁨: '옅음', 슬픔: '없음', 버럭: '없음', 까칠: '없음', 소심: '없음' } };
+  const options = { engine: 'claude', charter: { model: 'sonnet', systemPrompt: '' }, unload: async (model) => { unloaded.push(model); },
+    invoke: async () => { throw new Error('Ollama를 부르면 안 됨'); } };
+  const { rows, runDir } = await run(judgeOptions(f, { ...options, cooldown: () => false,
+    claude: async (prompt) => { prompts.push(prompt); return `\`\`\`json\n${JSON.stringify(answer)}\n\`\`\``; } }));
+  assert.equal(rows.find((entry) => entry.no === 2).outcome, '일치');
+  assert.equal(prompts.length, 1);
+  assert.equal(prompts[0], readFileSync(join(runDir, 'prompts', '2.txt'), 'utf8'));
+  assert.equal(prompts[0].includes('joy-1'), false, '하나 빼고 시험은 Claude도 같다');
+  assert.match(runDir, /-claude$/);
+  assert.match(readFileSync(join(runDir, 'report.md'), 'utf8'), /claude sonnet/);
+  assert.deepEqual(unloaded, []);
+  const cooled = await run(judgeOptions(fixture(), { ...options, cooldown: () => true,
+    claude: async () => { throw new Error('쿨다운이면 부르면 안 됨'); } }));
+  assert.equal(cooled.rows.find((entry) => entry.no === 2).reason, 'Claude 쿨다운');
+  await assert.rejects(() => run(judgeOptions(fixture(), { engine: 'gpt' })), /판단 엔진/);
+});
+
+test('[막아야 함] run --engine=claude: 미네 사진은 어떤 판단에도 보내지 않고 비교 불가로, 사용 한도면 남은 행을 멈춘다', async () => {
+  const f = fixture();
+  const items = JSON.parse(readFileSync(join(f.anchorRoot, 'items-2026-10-19.json'), 'utf8'));
+  const rel2 = '20_Records/23_Conversations/2026/2026-07-16 미네 통화.md';
+  writeFileSync(join(f.root, rel2), '---\noccurred: "2026-07-16 08:00"\nconvKind: "통화"\n---\n미네: 오늘 재밌었어\n');
+  writeFileSync(join(f.anchorRoot, 'items-2026-10-19.json'), JSON.stringify([...items,
+    { no: 5, group: '감정', kind: '사진', ref: 'photo:0123456789abcdef', date: '2024-01-01' },
+    { no: 6, group: '감정', kind: '녹음/통화', ref: rel2, date: '2026-07-16' }]));
+  const answers = JSON.parse(readFileSync(join(f.anchorRoot, 'anchor-answers-2026-10-19.json'), 'utf8'));
+  writeFileSync(join(f.anchorRoot, 'anchor-answers-2026-10-19.json'), JSON.stringify({ ...answers, 5: { emo: '기쁨', int: 2 }, 6: { emo: '기쁨', int: 1 } }));
+  let claudeCalls = 0;
+  const { rows } = await run(judgeOptions(f, { engine: 'claude', charter: { model: 'sonnet', systemPrompt: '' }, cooldown: () => false,
+    invoke: async () => { throw new Error('Ollama(사진 포함)를 부르면 안 됨'); },
+    copyPhoto: () => { throw new Error('사진 사본을 만들면 안 됨'); }, mineFaces: new Map(),
+    claude: async () => { claudeCalls += 1; throw Object.assign(new Error('사용 한도'), { isLimit: true }); } }));
+  const photo = rows.find((entry) => entry.no === 5);
+  assert.equal(photo.outcome, '비교 불가');
+  assert.equal(photo.reason, '사진은 Claude로 보내지 않음');
+  assert.equal(claudeCalls, 1, '한도에 걸리면 다음 행은 부르지 않는다');
+  assert.deepEqual(rows.filter((entry) => entry.route === 'text').map((entry) => entry.reason), ['Claude 사용 한도', 'Claude 사용 한도']);
 });
