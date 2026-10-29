@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { prepareExecutionConfirmation, readHoldings } from './parse-notifications-to-vault.mjs';
+import { prepareExecutionConfirmation, readHoldings, ledgerHasSourceEvent } from './parse-notifications-to-vault.mjs';
 import { rejectExecutionConfirmation } from '../lib/execution-confirmation-queue.mjs';
 
 test('readHoldings: State/Holdings frontmatter를 계좌 판정 입력으로 읽는다', () => {
@@ -92,4 +92,10 @@ test('prepareExecutionConfirmation: 같은 원문에 대기 건이 여러 개면
   const result = prepareExecutionConfirmation({ id: 'doc-1', event: { ...event, quantity: 11 }, holdings, confirmations });
   assert.equal(result.confirmation, null);
   assert.equal(result.shouldSendTelegram, false);
+});
+
+test('같은 Firestore 문서 ID로 끝나는 원장이 있으면 이미 기록된 체결이다(재전송으로 ts만 바뀐 경우)', () => {
+  const names = ['2026-10-27-134027-매도-TIGER-미국배당다우존스-2-3f103ca55e91f231fc38432208a9e75d.md'];
+  assert.equal(ledgerHasSourceEvent('3f103ca55e91f231fc38432208a9e75d', names), true);
+  assert.equal(ledgerHasSourceEvent('095a18631fca271052691dfb690b6c6a', names), false);
 });

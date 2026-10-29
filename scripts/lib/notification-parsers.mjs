@@ -57,7 +57,10 @@ export function parseExecution(body, tsRaw) {
     // 가능한 알림 형식에서 증권사 주문번호를 보존해 API 체결과의 크로스소스 조인에 쓴다.
     // 알림별 필드 유무가 달라 선택값이며, 없는 경우에만 구형 휴리스틱 대조가 남는다.
     const orderNo = body.match(/주문\s*번호\s*[:：]?\s*(\d+)/)?.[1] ?? '';
+    // 분할 체결 차수 "체결(N차)"(삼성증권) — 빠진 차수로 알림 누락을 감지한다(fill-round-gaps.mjs).
+    const fillRound = parseInt(body.match(/체결\s*\(\s*(\d+)\s*차\s*\)/)?.[1], 10);
     return {
+      ...(Number.isInteger(fillRound) && fillRound > 0 ? { fillRound } : {}),
       tradeDate: normalizeDateTime(tsRaw),
       tradeType: body.includes('매수') ? '매수' : '매도',
       stockCode: g.stockCode?.trim() || '',

@@ -87,6 +87,8 @@ export function buildExecutionRecord(e) {
     ...(e.source ? { source: e.source } : {}),
     ...(e.sourceEventId ? { sourceEventId: e.sourceEventId } : {}),
     ...(e.orderCumulativeQty != null ? { orderCumulativeQty: e.orderCumulativeQty } : {}),
+    // 분할 체결 차수(선택) — 파일명·dedupKey에는 넣지 않는다(기존 기록과 같은 이름 유지).
+    ...(e.fillRound != null ? { fillRound: e.fillRound } : {}),
     ...(e.orderCumulativeAmount != null ? { orderCumulativeAmount: e.orderCumulativeAmount } : {}),
     account: e.account ?? null,
     accountNote: e.account ? null : ACCOUNT_NOTE,

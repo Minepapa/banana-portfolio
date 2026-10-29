@@ -65,10 +65,11 @@ import { join } from 'node:path';
 import { getFirestoreAdmin } from '../lib/firestore-admin.mjs';
 import { readKakaoInbox, deleteKakaoInboxDocs } from '../lib/kakao-inbox.mjs';
 import { parseExecution, parseDividend, parseGoldBuy, parseCashAlarm, parseFundBuy, parseFundValuation, parseExchange } from '../lib/notification-parsers.mjs';
-import { buildExecutionRecord, buildKakaoExecutionRecordCandidates, buildDividendRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from '../lib/ledger-vault-writer.mjs';
+import { sanitizeSegment, buildExecutionRecord, buildKakaoExecutionRecordCandidates, buildDividendRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from '../lib/ledger-vault-writer.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
-import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { buildFrontmatter, parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { findFillRoundGaps, fillRoundGapMessage } from '../lib/fill-round-gaps.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { FUND_PURCHASE_ACCOUNT, EXCHANGE_ACCOUNT, findExecutionAccountCandidates } from '../lib/account-resolver.mjs';
 import { classifyKakaoExecution } from '../lib/execution-source-policy.mjs';
@@ -113,6 +114,49 @@ const sendConfirmationWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'parse-notifications-to-vault', warningCode: 'EXECUTION_CONFIRMATION_NEEDED',
   kind: 'owner-decision', severity: 'high',
 });
+const sendFillRoundGapWarning = createDirectWarningSender(sendAgentMessage, {
+  jobName: 'parse-notifications-to-vault', warningCode: 'EXECUTION_FILL_ROUND_GAP',
+  kind: 'owner-decision', severity: 'high',
+});
+
+// 체결 차수 빈칸 점검(2026-10-29, 알림 누락 안전망 — fill-round-gaps.mjs 헤더 참고). 최근
+// 며칠의 체결 원장만 본다(차수는 같은 날 안에서만 의미가 있고, 늦게 본 빈칸도 놓치지 않게
+// 여유를 둔다). 보낸 뒤에는 차수가 가장 큰 기록에 빠진 차수 목록을 남겨 같은 질문을
+// 반복하지 않는다. 발송 실패는 표시를 남기지 않아 다음 실행(10분 뒤)에 다시 시도한다.
+const FILL_ROUND_LOOKBACK_DAYS = 3;
+
+// 카카오 체결 원장 파일명은 `...-{Firestore 문서 ID}.md`로 끝난다(buildKakaoExecutionRecord).
+export function ledgerHasSourceEvent(id, filenames = readdirSync(VAULT_PATHS.facts.ledger.executions)) {
+  const suffix = `-${sanitizeSegment(id)}.md`;
+  return filenames.some((name) => name.endsWith(suffix));
+}
+async function checkFillRoundGaps(now = new Date()) {
+  const dir = VAULT_PATHS.facts.ledger.executions;
+  if (!existsSync(dir)) return;
+  const since = new Date(now.getTime() - FILL_ROUND_LOOKBACK_DAYS * 86400000).toISOString().slice(0, 10);
+  const executions = readdirSync(dir).filter((f) => f.endsWith('.md') && f.slice(0, 10) >= since)
+    .map((f) => ({ ...parseFrontmatter(readFileSync(join(dir, f), 'utf8')), filepath: join(dir, f) }));
+  for (const gap of findFillRoundGaps(executions, { now: now.getTime() })) {
+    if (gap.notified) continue;
+    console.log(`  ⚠️  체결 차수 빈칸: ${gap.day} ${gap.stockName} ${gap.tradeType} — 빠진 차수 ${gap.missingKey}`);
+    if (DRY_RUN) continue;
+    try {
+      await sendFillRoundGapWarning(fillRoundGapMessage(gap), { subjectKey: warningSubjectKey('fill-round-gap', `${gap.key}|${gap.missingKey}`) });
+    } catch (error) {
+      console.error(`  체결 차수 빈칸 알림 실패: ${error.message}`);
+      collectWarning(`체결 차수 빈칸 알림 발송 실패: ${gap.day} ${gap.stockName} 차수 ${gap.missingKey} — 다음 실행에 재시도`);
+      continue;
+    }
+    // 보낸 뒤 표시 쓰기만 실패하면 10분마다 같은 질문이 반복되므로 따로 알린다(독립 리뷰 2026-10-29).
+    try {
+      const content = readFileSync(gap.anchor.filepath, 'utf8');
+      writeAtomic(gap.anchor.filepath, updateFrontmatter(content, { fillRoundGapNotified: gap.missingKey, fillRoundGapNotifiedAt: now.toISOString() }));
+    } catch (error) {
+      console.error(`  체결 차수 빈칸 표시 기록 실패: ${error.message}`);
+      collectWarning(`체결 차수 빈칸 알림은 보냈으나 표시 기록 실패: ${gap.day} ${gap.stockName} — 다음 실행에 같은 질문이 다시 갈 수 있음`);
+    }
+  }
+}
 
 // 카카오 예수금 알림을 인식은 하되 Facts/Ledger/CashEvents엔 안 쓰는 계좌
 // (2026-09-03, "위탁·CMA 먼저 진행" — 위 헤더 주석 참고). export(code-reviewer
@@ -343,7 +387,7 @@ async function main() {
         const records = buildKakaoExecutionRecordCandidates(e, route.account, id);
         const canonicalPath = join(records.canonical.dir, records.canonical.filename);
         const legacyPath = join(records.legacy.dir, records.legacy.filename);
-        recorded = !existsSync(canonicalPath) && !existsSync(legacyPath);
+        recorded = !existsSync(canonicalPath) && !existsSync(legacyPath) && !ledgerHasSourceEvent(id);
         if (recorded) console.log(`  + [체결] ${e.tradeDate} ${e.tradeType} ${e.stockName} ${e.quantity}주 @${e.price} (${e.broker})`);
       } else {
         await withLock(executionConfirmationLockPath(id), () => {
@@ -361,6 +405,9 @@ async function main() {
             return;
           }
           if (canonicalExists || legacyExists) return;
+          // 폰이 지운 문서를 같은 ID로 다시 만들면(재시작 뒤 메시지 이력 재전송) ts가 새 수신 시각이라
+          // 파일명만 달라진다. 같은 문서 ID의 원장이 이미 있으면 같은 체결이다(독립 리뷰 2026-10-29).
+          if (ledgerHasSourceEvent(id)) return;
           console.log(`  + [체결] ${e.tradeDate} ${e.tradeType} ${e.stockName} ${e.quantity}주 @${e.price} (${e.broker})`);
           writeAtomic(canonicalPath, records.canonical.content);
           recorded = true;
@@ -488,6 +535,12 @@ async function main() {
 
   if (!DRY_RUN && processedIds.length) {
     await deleteKakaoInboxDocs(db, processedIds);
+  }
+
+  try { await checkFillRoundGaps(); }
+  catch (error) {
+    console.error(`  체결 차수 빈칸 점검 실패: ${error.message}`);
+    collectWarning('체결 차수 빈칸 점검 실패 — 장부 반영은 끝났고 다음 실행에 다시 점검');
   }
 
   console.log(
