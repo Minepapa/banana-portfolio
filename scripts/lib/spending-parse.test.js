@@ -239,3 +239,36 @@ test('실제 형식 회귀: 하나 알림톡 "가맹점명"과 하나카드 앱 
     body: '가상식당 / 신용(일시불,0*0*) / 10.10 12:34 / 누적이용금액 1원' });
   assert.deepEqual([app.card, app.amount, app.merchant], ['하나', 31000, '가상식당']);
 });
+
+test('새마을금고 출금은 상대 이름만 남기고 판정 전까지 합계에서 뺀다', () => {
+  const withdrawal = { ...base, packageName: 'com.smg.spbs', sender: 'MG새마을금고',
+    body: '[출금] 78,360원 1234-5678-****-9 잔액 1,000,000원 10/10 12:30 가상보험１０１２６' };
+  const parsed = parseSpendingRecord(withdrawal);
+  assert.deepEqual([parsed.card, parsed.amount, parsed.merchant, parsed.status, parsed.category],
+    ['새마을금고', 78360, '가상보험10126', 'pending', '계좌이체']);
+  assert.ok(!JSON.stringify(parsed).includes('5678'));
+  assert.equal(parseSpendingRecord({ ...withdrawal, body: `${withdrawal.body}\n` }).merchant, '가상보험10126');
+  assert.equal(parseSpendingRecord({ ...withdrawal, body: withdrawal.body.replace('[출금]', '[입금]') }), null);
+});
+
+test('삼성 월렛 결제는 같은 금액·3분 안의 카드 승인이 있으면 한 번만 센다', () => {
+  const wallet = { ...base, ts: '2026-10-10 12:35:10', packageName: 'com.samsung.android.spay',
+    sender: '₩2,900 결제 완료', body: '가상편의점' };
+  const parsed = parseSpendingRecord(wallet);
+  assert.deepEqual([parsed.card, parsed.amount, parsed.merchant, parsed.status], ['삼성월렛', 2900, '가상편의점', 'expense']);
+  assert.equal(parseSpendingRecord({ ...wallet, sender: '선물하기', body: '쿠폰 선물을 보냈습니다.' }), null);
+  const card = { ...base, packageName: 'com.kakao.talk', sender: '삼성카드',
+    body: '삼성1234승인\n2,900원 일시불\n10/10 12:34 가상편의점\n누적 50,000원' };
+  for (const records of [[wallet, card], [card, wallet]]) {
+    const merged = parseSpendingRecords(records);
+    assert.deepEqual(merged.map((entry) => entry.card), ['삼성']);
+  }
+  assert.equal(parseSpendingRecords([wallet]).length, 1);
+  assert.equal(parseSpendingRecords([wallet, { ...wallet, ts: '2026-10-10 12:36:10' }, card]).length, 2);
+  assert.equal(parseSpendingRecords([{ ...wallet, ts: '2026-10-10 12:40:00' }, card]).length, 2);
+  const transfer = { ...base, packageName: 'com.kakaopay.app', sender: '송금이 완료되었어요',
+    body: '가상은행 1111 (가*상)계좌로 2,900원 송금했어요.' };
+  const withTransfer = parseSpendingRecords([wallet, transfer], {
+    recipientDecisions: [{ bank: '가상은행', last4: '1111', status: 'expense' }] });
+  assert.deepEqual(withTransfer.map((entry) => entry.card).sort(), ['삼성월렛', '카카오페이']);
+});

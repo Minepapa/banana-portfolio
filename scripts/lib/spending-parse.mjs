@@ -1,5 +1,6 @@
 // 알림에서 형식이 확인된 사실만 꺼낸다. 미확인 송금은 지출 합계에 넣지 않는다.
 export const PAYMENT_DUPLICATE_MINUTES = 3;
+const WALLET_CARD = '삼성월렛';
 const amountOf = (text) => Number(text?.replaceAll(',', ''));
 const atOf = (record) => {
   const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}):\d{2}$/.exec(record.ts ?? '');
@@ -67,6 +68,15 @@ export function parseSpendingRecord(record, { ownAccounts = [], recipientDecisio
     card = '카카오페이'; amount = amountOf(match[1]); status = 'pending';
     const recipient = /(?:^|\n)\s*([^\n\d()]+?)\s+(\d{4})\s*\([^\n)]*\)계좌로/.exec(body);
     if (recipient) { recipientBank = recipient[1].trim(); recipientLast4 = recipient[2]; }
+  } else if ((packageName === 'com.smg.spbs' || sender === 'MG새마을금고')
+    && (match = /^\[출금\] ([\d,]+)원 \S+ 잔액 [\d,]+원 \d{2}\/\d{2} \d{2}:\d{2} ([^\n]+)$/.exec(body.trim()))) {
+    // 계좌 출금은 카드대금·보험·본인 증권계좌 이체가 섞여 있어 판정 전까지 합계에 넣지 않는다.
+    // 계좌번호는 요약에 남기지 않는다(원문 JSONL에는 그대로 있다). 상대 이름이 결제대금이면 위에서 이미 뺐다.
+    card = '새마을금고'; amount = amountOf(match[1]); merchant = match[2].normalize('NFKC').trim(); status = 'pending';
+  } else if (packageName === 'com.samsung.android.spay'
+    && (match = /^₩([\d,]+) 결제 완료$/.exec(sender)) && body.trim()) {
+    // 삼성 월렛 결제는 실제 카드 승인 알림과 겹친다. 같은 결제의 카드 알림이 있으면 parseSpendingRecords가 지운다.
+    card = WALLET_CARD; amount = amountOf(match[1]); merchant = body.trim();
   } else return null;
   if (!Number.isSafeInteger(amount) || amount <= 0) return null;
   if (status === 'pending' && recipientBank && recipientLast4 && ownAccounts.some((account) =>
@@ -82,7 +92,7 @@ export function parseSpendingRecord(record, { ownAccounts = [], recipientDecisio
   const isOnnuri = Boolean(samsungOnnuri || (card === '하나'
     && /(?:^|\n)\s*-\s*이용카드\s*[:：]\s*[^\n]*온누리/.test(body))
     || (card === '하나' && sender === '결제' && /^온누리\(/.test(body)));
-  const category = card === '카카오페이' ? '계좌이체' : categoryOf(isOnnuri, merchant);
+  const category = ['카카오페이', '새마을금고'].includes(card) ? '계좌이체' : categoryOf(isOnnuri, merchant);
   return { at, amount, merchant, card, cardLast4, cardMask, status, category,
     recipientBank, recipientLast4, recipient, source: packageName || sender };
 }
@@ -134,5 +144,17 @@ export function parseSpendingRecords(records, options = {}) {
       duplicate.sources.add(payment.source);
     }
   }
-  return payments.map(({ entry }) => entry);
+  // 월렛 결제는 어느 카드인지 알려 주지 않는다. 같은 금액·3분 안의 카드 승인 하나와 짝지어 지우고,
+  // 짝이 없을 때만(카드 알림이 빠졌을 때) 지출로 남긴다. 카드 승인 하나는 월렛 결제 하나와만 짝짓는다.
+  const entries = payments.map(({ entry }) => entry);
+  const claimed = new Set();
+  return entries.filter((wallet) => {
+    if (wallet.card !== WALLET_CARD) return true;
+    const card = entries.find((entry) => entry.card !== WALLET_CARD && !claimed.has(entry)
+      && entry.status === 'expense' && entry.category !== '계좌이체' && entry.amount === wallet.amount
+      && Math.abs(Date.parse(entry.at) - Date.parse(wallet.at)) <= PAYMENT_DUPLICATE_MINUTES * 60_000);
+    if (!card) return true;
+    claimed.add(card);
+    return false;
+  });
 }
