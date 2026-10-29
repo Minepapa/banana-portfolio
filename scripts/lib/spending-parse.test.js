@@ -310,6 +310,9 @@ test('하나 앱 관리비 자동납부 정상승인도 괄호 안 이름을 가
   const parsed = parseSpendingRecord(approval);
   assert.deepEqual([parsed.card, parsed.merchant, parsed.amount, parsed.status, parsed.category],
     ['하나', '아파트관리비', 276750, 'expense', '일반']);
+  assert.equal(parsed.autopay, true);
+  assert.equal('autopay' in parseSpendingRecord({ ...approval, sender: '(결제) 5,000원',
+    body: '가상식당 / 신용(일시불,1*2*) / 10.10 12:34' }), false);
   assert.equal(parseSpendingRecord({ ...approval, body: approval.body.replace('정상승인', '청구') }), null);
   assert.equal(parseSpendingRecord({ ...approval, body: '[] 자동납부 요금 정상승인 안내 276,750원' }), null);
   assert.equal(parseSpendingRecord({ ...approval, body: '[아파트\n관리비] 자동납부 요금 정상승인 안내 276,750원' }), null);

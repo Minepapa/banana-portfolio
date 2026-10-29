@@ -109,8 +109,9 @@ export function parseSpendingRecord(record, { ownAccounts = [], recipientDecisio
     && /(?:^|\n)\s*-\s*이용카드\s*[:：]\s*[^\n]*온누리/.test(body))
     || (card === '하나' && sender === '결제' && /^온누리\(/.test(body)));
   const category = ['카카오페이', '새마을금고'].includes(card) ? '계좌이체' : categoryOf(isOnnuri, merchant);
+  // 자동납부는 그 시각 있던 곳과 무관하다. 동선·장소별 소비가 위치에 붙이지 않도록 표시한다.
   return { at, amount, merchant, card, cardLast4, cardMask, status, category,
-    recipientBank, recipientLast4, recipient, source: packageName || sender };
+    recipientBank, recipientLast4, recipient, source: packageName || sender, ...(hanaAutopay ? { autopay: true } : {}) };
 }
 
 export function parseSpendingRecords(records, options = {}) {

@@ -65,8 +65,8 @@ export function readDailySpending(date, { spendingDir = VAULT_PATHS.spending, ow
     byCategory: Object.fromEntries(['일반', '교통비', '온누리상품권', '계좌이체'].map((category) => [category,
       expenses.filter((entry) => entry.category === category).reduce((sum, entry) => sum + entry.amount, 0)])),
     entries: entries.map(({ at, amount, merchant, card, cardLast4, cardMask, status, category,
-      recipientBank, recipientLast4, recipient }) => ({ at, amount, merchant, card, cardLast4, cardMask, status,
-      category, recipientBank, recipientLast4, recipient })),
+      recipientBank, recipientLast4, recipient, autopay }) => ({ at, amount, merchant, card, cardLast4, cardMask, status,
+      category, recipientBank, recipientLast4, recipient, ...(autopay ? { autopay: true } : {}) })),
   };
 }
 

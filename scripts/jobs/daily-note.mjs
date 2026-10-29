@@ -161,16 +161,18 @@ export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = cr
   points = readRoutePoints(date, root), payments = readRoutePayments(date, root), events = [], now = new Date() } = {}) {
   let stays;
   let moves;
+  // 자동납부는 그 시각 머문 곳·이동과 무관하므로 동선 글의 가게 연결에서 뺀다(장소별 소비는 위치 없음으로 남는다).
+  const placedPayments = payments.filter((payment) => !payment.autopay);
   try {
     stays = await describeStays(detectStays(points, { date }), { places: loadPlaces(root),
       geocode: dryRun ? async () => ({ reason: 'dry-run' }) : geocode,
       region: dryRun ? async () => null : geocode.region?.bind(geocode) });
     moves = buildMoveSegments(stays, points, { date });
     const attachedPayments = new Set();
-    stays = await attachRouteActivities(stays, { payments, events, moves, attachedPayments,
+    stays = await attachRouteActivities(stays, { payments: placedPayments, events, moves, attachedPayments,
       keyword: dryRun ? async () => null : geocode.keyword?.bind(geocode) });
     for (const move of moves) {
-      move.label += await moveStopovers(Date.parse(move.start), Date.parse(move.end), payments,
+      move.label += await moveStopovers(Date.parse(move.start), Date.parse(move.end), placedPayments,
         dryRun ? async () => null : async (merchant, payment) => {
           const coordinate = movePaymentCoordinate(move, stays, points, Date.parse(payment.at));
           return geocode.keyword?.call(geocode, merchant, coordinate.lat, coordinate.lon);

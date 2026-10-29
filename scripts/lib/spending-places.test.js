@@ -85,3 +85,10 @@ test('파일이 없는 달은 기록 0일', () => {
   assert.deepEqual(summarizeMonthPlaces('2026-09', root), { month: '2026-09', recordedDays: 0, firstDay: null,
     places: [], moveAmount: 0, noneAmount: 0 });
 });
+
+test('자동납부는 체류·이동 시각이어도 위치 없음이다', () => {
+  const linked = linkPaymentsToRoute(route, [{ ...pay('07:00', 276750, '아파트관리비'), autopay: true },
+    { ...pay('08:00', 26550, 'SK텔레콤'), autopay: true }, pay('07:00', 1000)], { date: '2026-10-28' });
+  assert.deepEqual(linked.map(({ where, place }) => [where, place]),
+    [['none', '위치 없음'], ['none', '위치 없음'], ['stay', '집']]);
+});

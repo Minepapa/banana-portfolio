@@ -48,6 +48,21 @@ test('이동 중 결제의 가맹점 검색에는 결제 시각 근처 가상 �
   assert.match(route.find((entry) => entry.kind === 'move').label, /주유: 가상주유소/);
 });
 
+test('자동납부는 동선 글의 가게 연결에 쓰지 않는다', async () => {
+  const iso = (minute) => `2026-10-10T01:${minute}:00.000Z`;
+  const point = (minute, lon) => ({ tst: Date.parse(iso(minute)) / 1000, lat: 0, lon, acc: 5 });
+  const points = [point('00', 0), point('20', 0), point('25', 0.03), point('30', 0.06),
+    point('35', 0.09), point('40', 0.12)];
+  points.push({ ...point('00', 0.12), tst: Date.parse('2026-10-10T02:00:00.000Z') / 1000 });
+  const calls = [];
+  const geocode = async () => null;
+  geocode.keyword = async (merchant) => { calls.push(merchant); return { category: 'OL7' }; };
+  const route = await computeRoute('2026-10-10', { root: vault, points,
+    payments: [{ at: iso('31'), merchant: '아파트관리비', autopay: true }], geocode, now: new Date('2026-10-11T12:00:00.000Z') });
+  assert.deepEqual(calls, []);
+  assert.doesNotMatch(route.find((entry) => entry.kind === 'move').label, /아파트관리비/);
+});
+
 test('송금 판정 대기는 동선 결제로 연결하지 않는다', () => {
   const folder = join(vault, VAULT_REL.spending, '2026');
   mkdirSync(folder, { recursive: true });
