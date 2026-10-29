@@ -173,6 +173,34 @@ test('아르고스 경로: 토큰 인증, 꺼져 있으면 404, OwnTracks 경로
   assert.equal((await request(on, 'POST', '/pub', '{}', { 'x-argos-token': token })).status, 401);
 });
 
+test('아르고스 수신은 받은 이벤트가 있을 때만 argos-ingest 상태를 10분에 한 번 남긴다', async () => {
+  const config = { host: '127.0.0.1', username: 'u', password: randomBytes(16).toString('base64url') };
+  const token = randomBytes(24).toString('base64url');
+  let acked = ['h'];
+  const argos = { ingest: () => ({ status: 200, json: { acked, rejected: [] } }), rules: () => ({ status: 404, json: {} }) };
+  const jobs = [];
+  let clock = Date.parse('2026-10-29T00:00:00Z');
+  const server = createReceiver({ config, allowLoopback: true, store: async () => true, argos, argosToken: token,
+    now: () => new Date(clock), health: async ({ job }) => { jobs.push(job); } });
+  const post = () => new Promise((resolve) => {
+    const req = Readable.from([Buffer.from(JSON.stringify({ protocol: 1, events: [] }))]);
+    req.method = 'POST'; req.url = '/ingest'; req.headers = { 'x-argos-token': token };
+    const res = { headersSent: false, setHeader() {}, writeHead(status) { this.status = status; this.headersSent = true; },
+      end() { setImmediate(resolve); } };
+    server.emit('request', req, res);
+  });
+  await post();
+  await post();
+  assert.deepEqual(jobs, ['argos-ingest']);
+  clock += 600_000;
+  acked = [];
+  await post();
+  assert.deepEqual(jobs, ['argos-ingest']);
+  acked = ['h2'];
+  await post();
+  assert.deepEqual(jobs, ['argos-ingest', 'argos-ingest']);
+});
+
 test('아르고스 미디어 경로: 토큰 필요, 꺼져 있으면 404, status는 GET·upload는 PUT만', async () => {
   const config = { host: '127.0.0.1', username: 'u', password: randomBytes(16).toString('base64url') };
   const token = randomBytes(24).toString('base64url');

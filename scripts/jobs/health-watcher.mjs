@@ -245,6 +245,10 @@ export const EXPECTED_INTERVALS_MS = {
   'media-audio-offsite-backup': 24 * 60 * 60 * 1000,
   // 위치 수신이 12시간 없으면 폰 앱·Tailscale 점검.
   'owntracks-receiver': 12 * 60 * 60 * 1000,
+  // 아르고스 수신(owntracks-receiver 프로세스의 /ingest, launchd 잡 아님). 폰 하트비트가 15분
+  // 마다 오므로 1시간 간격으로 등록한다 — isStale은 간격의 2배를 넘겨야 알리므로 2시간 동안
+  // 받은 이벤트가 없으면 경보(2026-10-29). 아르고스를 끄면(argos.json 삭제) 이 값을 null로 바꾼다.
+  'argos-ingest': 60 * 60 * 1000,
   // ⚠️ 재수정(2026-08-28, 오너 지시) — 평일 16:00 하루 1회(StartCalendarInterval)에서
   // 상시 10분 간격(StartInterval=600)으로 변경. 아래 sync-firestore-mirror 등과 동일
   // 이유로 등록값도 실제 주기와 같이 움직여야 한다.

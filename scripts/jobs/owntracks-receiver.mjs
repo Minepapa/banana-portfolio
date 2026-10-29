@@ -59,17 +59,21 @@ export function createLocationStore({ root = VAULT_PATHS.root } = {}) {
     return true;
   };
 }
-export async function recordReceiverHealth({ now = new Date(), root = VAULT_PATHS.root } = {}) {
-  const path = join(root, VAULT_REL.jobHealth, 'owntracks-receiver.md');
+export async function recordReceiverHealth({ now = new Date(), root = VAULT_PATHS.root, job = 'owntracks-receiver' } = {}) {
+  const path = join(root, VAULT_REL.jobHealth, `${job}.md`);
   mkdirSync(dirname(path), { recursive: true });
   const prior = existsSync(path) ? parseFrontmatter(readFileSync(path, 'utf8')) : null;
-  const { content } = buildJobHealthRecord({ job: 'owntracks-receiver', status: 'OK', now }, prior);
+  const { content } = buildJobHealthRecord({ job, status: 'OK', now }, prior);
   await writeStateFile(path, content);
 }
 export function createReceiver({ config, store = createLocationStore(), now = () => new Date(), health = recordReceiverHealth,
   allowLoopback = false, argos = null, argosToken = null, argosMedia = null } = {}) {
   if (!validHost(config?.host, { allowLoopback })) throw new Error('OwnTracks host는 Tailscale 주소여야 합니다');
   let lastHealth = 0;
+  // 아르고스 수신도 따로 상태를 남긴다(2단계 5번, 2026-10-29). 위치(OwnTracks)와 나눠야
+  // 한쪽이 멈췄을 때 health-watcher가 어느 쪽인지 알린다. 폰 하트비트가 15분마다 오므로
+  // 받은 이벤트가 있으면 10분에 한 번만 쓴다.
+  let lastArgosHealth = 0;
   const server = createServer(async (request, response) => {
     const send = (code, body) => {
       // 200이 아닌 응답은 상태 코드만 남긴다(좌표·인증 정보 금지). 2026-10-09 폰 연결 실패(비밀번호 오타)를 이 로그로 찾았다.
@@ -185,6 +189,13 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
       // 본문(알림 원문·좌표)은 로그에 남기지 않는다. 건수만.
       if (result.status === 200) console.log(`[argos] 받음 ${result.json.acked.length}건, 거부 ${result.json.rejected.length}건`);
       send(result.status, JSON.stringify(result.json));
+      const current = now();
+      if (result.status === 200 && result.json.acked.length && current.getTime() - lastArgosHealth >= 600_000) {
+        lastArgosHealth = current.getTime();
+        // 상태 기록 실패가 이미 보낸 응답이나 다음 수신을 막지 않게 한다.
+        try { await health({ now: current, job: 'argos-ingest' }); }
+        catch { console.error('[argos] 상태 기록 실패'); }
+      }
     } catch (error) {
       // 본문 없이 오류 분류만(ENOSPC·EACCES·SyntaxError 등).
       console.error(`[argos] 수신 실패 ${error?.code || error?.name || 'unknown'}`);
