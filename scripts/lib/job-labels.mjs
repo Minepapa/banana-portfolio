@@ -51,6 +51,7 @@ export const JOB_LABELS = {
   'update-cash-from-ledger': '계좌별(ISA·연금저축, API 없는 2계좌만) 예수금 실잔고 계산',
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
   'owntracks-receiver': 'OwnTracks 위치 수신 서버(상시 프로세스)',
+  'olympus-server': '올림푸스 대시보드 서버(상시 프로세스)',
   'argos-ingest': '아르고스 폰 수집 앱 수신(위치 수신 서버의 /ingest)',
   'update-monthly-balance-snapshot': '월별 잔고 스냅샷(대시보드 막대그래프용) + 일별 불변 스냅샷(TWR·Sharpe·MDD 재계산용, 2026-09-04 신설) 매일 자동 기록',
   'weekly-report': '주간 리포트 자동 생성·발행(성향학습 파이프라인 동반)',
@@ -106,6 +107,7 @@ export function describeJob(jobName) {
 // "조치사항이 필요하면 등록"). 근거 없는 일반론("로그 확인해보세요")은 안 채운다 —
 // 등록 안 된 잡은 remediation 없이 잡 이름·마지막 실행시각만으로 충분히 단서가 된다.
 export const JOB_REMEDIATION = {
+  'olympus-server': 'Repos/olympus 저장소·키 설정(~/.config/olympus/olympus.json, 권한 600)·로그(~/Library/Logs/banana-portfolio-v2/olympus-server.log)와 tailscale serve 8443 확인',
   'argos-ingest': '폰 아르고스 앱 실행·Tailscale 연결·토큰(~/.config/banana-portfolio-v2/argos.json)과 위치 수신 서버(com.banana2.owntracks-receiver) 확인',
   // reconcile-irp.mjs·execute-quant-proposal.mjs 둘 다 이 파일이 없으면 "미설정 —
   // 스킵"으로 조용히 넘어간다(정상, 에러 아님) — 하지만 예전엔 잘 돌던 잡이 갑자기
