@@ -35,6 +35,7 @@ import { readDayPoints, detectStays, loadPlaces, describeStays, buildMoveSegment
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
 import { readDailySpending, formatDailyNoteSpending } from '../lib/spending-daily.mjs';
 import { attachRouteActivities, moveStopovers } from '../lib/route-activities.mjs';
+import { writeSpendingPlaces, spendingPlacesPath } from '../lib/spending-places.mjs';
 import { updateCandidates } from '../lib/place-candidates.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import {
@@ -140,6 +141,16 @@ export async function attachRouteMap(renderMap, { date, route, points, root, tod
     Object.defineProperty(route, 'mapIncomplete', { value: true });
     console.warn(`  ⚠️ ${date} 동선 지도 실패:`, String(error?.message ?? error).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]'));
   }
+}
+
+// 장소별 소비 파생(결제↔동선, `95_Etna/Spending/Places`). writePlaces도 main()만 넘긴다 — 테스트·도구 호출은 볼트에 쓰지 않는다.
+// - 오늘은 쓰지 않는다(지도와 같은 이유: 동선이 아직 자란다). 다음 날 확정 때 쓴다.
+// - 카카오 조회가 실패한 결과(degraded)는 장소 이름이 덜 붙어 있어 쓰지 않는다. 지문을 옛 값으로 두므로 다음 재계산이 다시 쓴다.
+// - 실패해도 동선 글은 그대로 쓴다.
+export function attachSpendingPlaces(writePlaces, { date, route, payments, root, today = kstDate(new Date()) }) {
+  if (!writePlaces || !Array.isArray(route) || !route.length || date >= today || route.degraded) return;
+  try { writePlaces({ date, route, payments, ...(root ? { root } : {}) }); }
+  catch (error) { console.warn(`  ⚠️ ${date} 장소별 소비 기록 실패:`, String(error?.message ?? error).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
 }
 
 export function createRouteMapRenderer({ root: defaultRoot = VAULT_PATHS.root, fetcher = createTileFetcher(), write = writeAtomic } = {}) {
@@ -264,6 +275,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
       route = await deps.computeRoute(date, { dryRun, points: routePoints, payments: routePayments,
         events: Array.isArray(events) ? events : [] });
       if (!dryRun) await attachRouteMap(deps.renderMap, { date, route, points: routePoints, today });
+      if (!dryRun) attachSpendingPlaces(deps.writePlaces, { date, route, payments: routePayments, today });
       // 일정·카카오 조회가 실패한 결과로는 지문을 갱신하지 않는다. 그래야 7일 재계산이 다시 돌아 활동을 채운다.
       if (events === 'failed' || route?.degraded || route?.mapIncomplete) routeHash = prevFields?.routeHash ?? null;
     }
@@ -348,13 +360,23 @@ export async function recomputeDailyRoute({ date, root = VAULT_PATHS.root, rules
   const points = readRoutePoints(date, root);
   const payments = readRoutePayments(date, root);
   const routeHash = routeHashOf(points, payments);
-  if (!force && inspected.prev.fields.routeHash === routeHash) return { updated: false, skipped: '지문 동일' };
+  if (!force && inspected.prev.fields.routeHash === routeHash) {
+    // 지문이 같아도 장소별 소비 파일이 없는 지난날이면 그 파일만 쓴다. 확정이 카카오 조회 실패(degraded)로 끝났는데
+    // 그 뒤 새 점·결제가 없으면 지문이 그대로라 영영 안 생기기 때문이다(2026-10-29 리뷰). 데일리 노트는 건드리지 않는다.
+    // 도입 전 최근 7일도 이 경로로 채워진다. 일정은 장소 이름에 쓰지 않으니 넘기지 않는다.
+    if (!dryRun && deps.writePlaces && date < today && !existsSync(spendingPlacesPath(date, root))) {
+      const route = await deps.computeRoute(date, { root, dryRun, points, payments, events: [] });
+      attachSpendingPlaces(deps.writePlaces, { date, route, payments, root, today });
+    }
+    return { updated: false, skipped: '지문 동일' };
+  }
   // 재계산에도 일정을 넘긴다. 못 읽으면 일정 활동(공연 등)이 사라지므로 이번엔 건너뛰고 다음 실행에서 다시 한다.
   let events;
   try { events = await deps.fetchEvents(date); }
   catch { return { updated: false, skipped: '캘린더 조회 실패' }; }
   const route = await deps.computeRoute(date, { root, dryRun, points, payments, events: Array.isArray(events) ? events : [] });
   if (!dryRun) await attachRouteMap(deps.renderMap, { date, route, points, root, today });
+  if (!dryRun) attachSpendingPlaces(deps.writePlaces, { date, route, payments, root, today });
   // 지오코딩 중 오너가 파일을 수정했으면 다시 검사해 그 변경을 보존한다.
   const latest = readOrNull(path);
   if (latest == null) return { updated: false, skipped: '노트 없음' };
@@ -397,10 +419,10 @@ async function main() {
   const renderMap = createRouteMapRenderer();
   for (const action of actions) {
     const r = await processDay({ ...action, dryRun, noSend: args['no-send'] === true, rules, today: kstDate(now),
-      deps: { renderMap } });
+      deps: { renderMap, writePlaces: writeSpendingPlaces } });
     dayResults.push(r);
   }
-  await recomputeRecentRoutes({ now, rules, dryRun, deps: { renderMap } });
+  await recomputeRecentRoutes({ now, rules, dryRun, deps: { renderMap, writePlaces: writeSpendingPlaces } });
   if (dailyWorkFailed(dayResults)) process.exitCode = 1;
 }
 

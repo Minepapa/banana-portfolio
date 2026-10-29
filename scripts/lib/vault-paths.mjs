@@ -87,6 +87,8 @@ export const VAULT_REL = {
   jobHealth: '95_Etna/Jobs/JobHealth',
   mineStatusBoard: '40_Projects/banana-portfolio/Features/미네 기록 파이프라인 현황판.md', // 05:00 밤 점검이 '밤 점검' 칸을 덮어씀
   spending: '95_Etna/Spending',
+  spendingMonthly: '95_Etna/Spending/Monthly', // 닫힌 달 합계·알림 커버리지(결정 `월별-지출-정본`) — {YYYY-MM}.json
+  spendingPlaces: '95_Etna/Spending/Places', // 결제↔동선 연결 파생 — {YYYY}/YYYY-MM-DD.json
   dailyNotes: '10_Periodic/Daily', // 데일리 노트(D85) — {YYYY}/YYYY-MM-DD.md
   todoLog: '95_Etna/Todo', // 캘린더·Tasks 등록 기록 — {YYYY}/YYYY-MM-DD.jsonl
   // 등록부 lint 범위 밖 최상위 폴더: 보관본(원래 type 유지)·코드가 쓰는 기계 데이터·금고(내용을 읽지 않음)

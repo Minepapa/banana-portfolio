@@ -490,3 +490,45 @@ test('지도에 빈 타일이 있으면 재계산은 지도 줄을 넣되 지문
   note = readFileSync(path, 'utf8');
   assert.doesNotMatch(note, /routeHash: "old"/);
 });
+
+test('장소별 소비 기록은 지난날·정상 동선에서만 쓰고, 실패해도 던지지 않는다', async () => {
+  const { attachSpendingPlaces } = await import('./daily-note.mjs');
+  const calls = [];
+  const writePlaces = (input) => calls.push(input.date);
+  const route = [{ kind: 'stay' }];
+  attachSpendingPlaces(writePlaces, { date: '2026-10-28', route, payments: [], today: '2026-10-29' });
+  attachSpendingPlaces(writePlaces, { date: '2026-10-29', route, payments: [], today: '2026-10-29' });
+  attachSpendingPlaces(writePlaces, { date: '2026-10-28', route: [], payments: [], today: '2026-10-29' });
+  attachSpendingPlaces(writePlaces, { date: '2026-10-28', route: 'failed', payments: [], today: '2026-10-29' });
+  const degraded = [{ kind: 'stay' }];
+  Object.defineProperty(degraded, 'degraded', { value: true });
+  attachSpendingPlaces(writePlaces, { date: '2026-10-28', route: degraded, payments: [], today: '2026-10-29' });
+  attachSpendingPlaces(undefined, { date: '2026-10-28', route, payments: [], today: '2026-10-29' });
+  assert.deepEqual(calls, ['2026-10-28']);
+  assert.doesNotThrow(() => attachSpendingPlaces(() => { throw new Error('disk 1.5'); },
+    { date: '2026-10-28', route, payments: [], today: '2026-10-29' }));
+});
+
+test('7일 재계산: 지문이 같아도 장소별 소비 파일이 없는 지난날이면 그 파일만 쓴다', async () => {
+  const vault = mkdtempSync(join(tmpdir(), 'daily-places-'));
+  try {
+    mkdirSync(join(vault, '95_Etna', 'Location'), { recursive: true });
+    mkdirSync(join(vault, '10_Periodic', 'Daily', '2026'), { recursive: true });
+    writeFileSync(join(vault, '10_Periodic', 'Daily', '2026', '2026-10-27.md'), renderDailyNote({ date: '2026-10-27',
+      records: [], summary: '- 요약', status: '확정', model: '없음', summaryStatus: 'ok', recordHash: 'record',
+      routeHash: routeHashOf([], []), today: '2026-10-27', telegramSentAt: null, route: [] }));
+    const calls = [];
+    const deps = { computeRoute: async (date) => { calls.push(['compute', date]); return [{ kind: 'stay' }]; },
+      writePlaces: ({ date }) => calls.push(['places', date]), write: () => calls.push(['note']) };
+    const result = await recomputeDailyRoute({ date: '2026-10-27', root: vault, today: '2026-10-29', deps });
+    assert.equal(result.skipped, '지문 동일');
+    assert.deepEqual(calls, [['compute', '2026-10-27'], ['places', '2026-10-27']]);
+    mkdirSync(join(vault, '95_Etna', 'Spending', 'Places', '2026'), { recursive: true });
+    writeFileSync(join(vault, '95_Etna', 'Spending', 'Places', '2026', '2026-10-27.json'), '{}');
+    calls.length = 0;
+    await recomputeDailyRoute({ date: '2026-10-27', root: vault, today: '2026-10-29', deps });
+    assert.deepEqual(calls, [], '파일이 있으면 계산하지 않는다');
+    await recomputeDailyRoute({ date: '2026-10-27', root: vault, today: '2026-10-29', deps: { ...deps, writePlaces: undefined } });
+    assert.deepEqual(calls, []);
+  } finally { rmSync(vault, { recursive: true, force: true }); }
+});

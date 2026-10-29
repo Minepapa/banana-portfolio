@@ -317,3 +317,105 @@ test('Inbox 폴더가 없으면 미등록 음성은 빈 목록이고 예외가 �
     assert.deepEqual(readUnregisteredVoices('2026-10-23', join(root, 'missing-inbox'), join(root, 'missing-records')), []);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// 월간 지출 점검(2026-10-29): 아침 브리핑이 지난달 내보내기를 보고 대기 한 줄 또는 별도 점검 메시지를 보낸다.
+const monthBase = { fetchEvents: async () => [], readPeople: async () => [], readSpending: () => ({ hasSource: false }),
+  readUnregisteredVoices: noVoices, now: () => new Date('2026-11-02T00:00:00Z') };
+const closedMonthReport = {
+  period: { closed_month: '2026-10' }, source: { export: '2025-11-02_2026-11-02' },
+  monthly: { total_expense: '1000', everyday_expense: '1000', total_income: '0', total_expense_offset: '0', net_expense: '1000' },
+  coverage: { transactions: 3, parsed: 0, raw_unparsed: 0, no_alert: 3, no_source: 0 },
+  missed: Array.from({ length: 3 }, () => ({ payment_instrument: 'K-패스 체크', signed_amount: '-1500', alert_coverage: 'no_alert' })),
+  alert_only: [],
+};
+const readyMonthDeps = (calls) => ({
+  planMonthCheck: ({ date }) => { calls.push(['plan', date]); return { status: 'ready', month: '2026-10' }; },
+  runMonthReport: (month) => { calls.push(['run', month]); return { report: closedMonthReport, text: '{"ok":1}' }; },
+  readMonthReport: (month) => { calls.push(['previous', month]); return null; },
+  monthPlaces: () => ({ recordedDays: 0 }),
+  commitMonthReport: (month, text) => calls.push(['commit', month, text]),
+  removeMonthReport: (month) => calls.push(['remove', month]),
+  createQuestion: async (question) => { calls.push(['question', question.asker, question.dedupeKey, question.urgent]); return {}; },
+});
+
+test('지난달 내보내기가 없으면 아침 브리핑에 대기 한 줄만 넣는다', async () => {
+  const sent = [];
+  const result = await runBriefing({ mode: 'morning', date: '2026-11-02', deps: { ...monthBase, send: capture(sent),
+    planMonthCheck: () => ({ status: 'waiting', month: '2026-10' }) } });
+  assert.equal(sent.length, 1);
+  assert.match(result.body, /■ 지난달 지출 마감\n- 2026-10 뱅크샐러드 내보내기 대기/);
+  assert.equal(result.alert, false);
+});
+
+test('내보내기가 있으면 브리핑 뒤 점검 메시지를 따로 보내고, 결과 파일을 남긴 뒤 질문을 등록한다', async () => {
+  const sent = [];
+  const calls = [];
+  const send = async (message) => { calls.push(['send', message.topic]); return capture(sent)(message); };
+  const result = await runBriefing({ mode: 'morning', date: '2026-11-02', deps: { ...monthBase, send, ...readyMonthDeps(calls) } });
+  assert.deepEqual(sent.map((message) => [message.agent, message.topic]), [['hermes', '아침 브리핑'], ['hermes', '월간 지출 점검']]);
+  assert.match(result.body, /2026-10 점검 결과는 이어서 따로 보냄/);
+  assert.match(sent[1].body, /^2026-10 지출 마감/);
+  renderAgentMessage(sent[1]);
+  // 저장 → 발송 순서: 발송 뒤 저장이 실패해 같은 메시지가 날마다 다시 나가는 일을 막는다.
+  assert.deepEqual(calls, [['plan', '2026-11-02'], ['run', '2026-10'], ['previous', '2026-09'], ['send', '아침 브리핑'],
+    ['commit', '2026-10', '{"ok":1}'], ['send', '월간 지출 점검'], ['question', 'hermes', 'spending-alert-gap:K-패스 체크', false]]);
+  assert.equal(result.alert, false);
+});
+
+test('점검 메시지 발송이 실패하면 저장한 결과 파일을 되돌리고 잡 실패로 드러낸다(다음 아침 다시)', async () => {
+  const calls = [];
+  let count = 0;
+  const send = async () => { count += 1; return count === 1 ? { ok: true, result: { message_id: 1 } } : { ok: false }; };
+  const result = await runBriefing({ mode: 'morning', date: '2026-11-02', deps: { ...monthBase, send, ...readyMonthDeps(calls) } });
+  assert.deepEqual(calls.filter(([kind]) => ['commit', 'remove', 'question'].includes(kind)).map(([kind]) => kind), ['commit', 'remove']);
+  assert.equal(result.alert, true);
+});
+
+test('결과 파일 저장이 실패하면 점검 메시지를 보내지 않는다(재발송 반복 방지)', async () => {
+  const sent = [];
+  const calls = [];
+  const result = await runBriefing({ mode: 'morning', date: '2026-11-02', deps: { ...monthBase, send: capture(sent),
+    ...readyMonthDeps(calls), commitMonthReport: () => { throw new Error('disk full'); } } });
+  assert.deepEqual(sent.map((message) => message.topic), ['아침 브리핑']);
+  assert.equal(result.alert, true);
+});
+
+test('질문 등록 실패·곁가지 읽기 실패는 메시지는 보내되 잡 경고로 올린다', async () => {
+  const sent = [];
+  const calls = [];
+  const questionFailed = await runBriefing({ mode: 'morning', date: '2026-11-02', deps: { ...monthBase, send: capture(sent),
+    ...readyMonthDeps(calls), createQuestion: async () => { throw new Error('lock'); } } });
+  assert.equal(sent.at(-1).topic, '월간 지출 점검');
+  assert.equal(questionFailed.alert, true);
+  const placesFailed = await runBriefing({ mode: 'morning', date: '2026-11-02', deps: { ...monthBase, send: capture(sent),
+    ...readyMonthDeps([]), monthPlaces: () => { throw new SyntaxError('Unexpected end of JSON input'); },
+    readMonthReport: () => { throw new SyntaxError('bad'); } } });
+  assert.match(sent.at(-1).body, /■ 합계/);
+  assert.match(sent.at(-1).body, /■ 장소별 소비\n- 읽기 실패/);
+  assert.equal(placesFailed.alert, true);
+});
+
+test('테스트에서 주입이 빠진 의존성은 실제 볼트·python 대신 실패로 끝난다', async () => {
+  const result = await runBriefing({ mode: 'morning', date: '2026-11-02', preview: true, deps: { ...monthBase,
+    planMonthCheck: () => ({ status: 'ready', month: '2026-10' }) } });
+  assert.match(result.body, /월간 점검 실패/);
+});
+
+test('점검 계산이 실패하면 브리핑에 실패 한 줄, 미리보기는 보내지도 쓰지도 않는다', async () => {
+  const sent = [];
+  const failed = await runBriefing({ mode: 'morning', date: '2026-11-02', deps: { ...monthBase, send: capture(sent),
+    planMonthCheck: () => ({ status: 'ready', month: '2026-10' }), runMonthReport: () => { throw new Error('python 없음'); } } });
+  assert.match(failed.body, /2026-10 월간 점검 실패/);
+  assert.equal(failed.alert, true);
+  assert.equal(sent.length, 1);
+  const calls = [];
+  const preview = await runBriefing({ mode: 'morning', date: '2026-11-02', preview: true, deps: { ...monthBase, ...readyMonthDeps(calls) } });
+  assert.match(preview.monthBody, /^2026-10 지출 마감/);
+  assert.ok(!calls.some(([kind]) => kind === 'commit' || kind === 'question'));
+});
+
+test('저녁 브리핑은 월간 점검을 보지 않는다', async () => {
+  const calls = [];
+  await runBriefing({ mode: 'evening', date: '2026-11-03', preview: true, deps: { ...monthBase, fetchEvents: async () => [ev], ...readyMonthDeps(calls) } });
+  assert.deepEqual(calls, []);
+});
