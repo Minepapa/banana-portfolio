@@ -412,6 +412,7 @@ export async function recomputeRecentRoutes({ now = new Date(), root = VAULT_PAT
   return results;
 }
 
+// 종료코드 규칙(llm-run-outcome)과 같다: 날짜마다 요약(claude 1건)이 실패하면 failed → exitCode=1. 쿨다운 보류는 failed가 아니다.
 export const dailyWorkFailed = (results) => results.some((result) => result.failed);
 
 async function main() {

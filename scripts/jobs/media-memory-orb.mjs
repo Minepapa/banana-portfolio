@@ -11,6 +11,7 @@ import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 import { loadEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
 import { loadCandidates, hasOrb } from '../lib/mine-memory-candidates.mjs';
 import { mineAge } from './mine-athena-fields.mjs';
@@ -270,6 +271,8 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         for (const copy of copies) rmSync(copy.path, { force: true });
         rmSync(gridPath, { force: true });
       } catch (error) {
+        // 남은 잡 예산으로 잘라 준 호출이 시간 초과로 끊긴 것도 잡 시간 상한이다(실패 아님, 종료코드 규칙).
+        if (/^헤드리스 타임아웃/.test(error.message) && now() - runStarted >= MAX_JOB_MS) error.message = '잡 시간 상한';
         const deferred = error.isLimit || error.message === '잡 시간 상한';
         summary[deferred ? 'deferred' : 'failed'].push({ id: item.id, reason: error.message });
         logRow(logPath, { runId, id: item.id, rel: item.rel, status: deferred ? 'deferred' : 'error', error: error.message,
@@ -295,10 +298,14 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   }, { retries: 0 });
 }
 
+// 종료코드 규칙(llm-run-outcome): 기록 0건인데 실패(사전 검사·판단·쓰기)가 있으면 잡 실패. 연기(쿨다운·한도·시간 상한)는 세지 않는다.
+export const memoryOrbCounts = (summary) => ({ succeeded: summary.written, failed: summary.failed.length });
+const memoryOrbOutcomeLog = (line) => console.error(line.replace('claude 판단 성공 0건·실패', '구슬 기록 0건·실패(사전 검사·claude 판단·쓰기)'));
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   if (process.argv.slice(2).some((arg) => arg !== '--dry-run')) {
     console.error('usage: media-memory-orb.mjs [--dry-run]'); process.exitCode = 2;
   } else run({ dryRun: process.argv.includes('--dry-run') })
-    .then(() => {})
+    .then((summary) => { if (!process.argv.includes('--dry-run')) markLlmRunOutcome(memoryOrbCounts(summary), { job: 'media-memory-orb', log: memoryOrbOutcomeLog }); })
     .catch((error) => { console.error(error.stack); process.exitCode = 1; });
 }

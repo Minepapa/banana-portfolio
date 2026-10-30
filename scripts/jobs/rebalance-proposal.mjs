@@ -70,6 +70,7 @@ import { CAP_FRACTION, applyCappedAllocation, isAllowedAllocationInstrument, res
 import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/cash-allocation-candidates.mjs';
 import { rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
 import { runHeadlessClaude, headlessResult, parseJsonBlock } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
@@ -425,6 +426,7 @@ async function main() {
   } catch (e) {
     if (e.isLimit) { console.log('  ⏳ 사용량 한도 → 판단 보류(다음 실행 재시도).'); return; }
     console.error(`  ❌ 리밸런싱 판단 실패: ${e.message} — 다음 실행 재시도`);
+    markLlmRunOutcome({ succeeded: 0, failed: 1 }, { job: 'rebalance-proposal' }); // 종료코드 규칙(llm-run-outcome)
     return;
   }
   if (!actions.length) { console.log('  ⚠️ 유효한 액션 없음 — 다음 실행 재시도'); return; }

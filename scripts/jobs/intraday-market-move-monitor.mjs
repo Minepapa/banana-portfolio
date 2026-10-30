@@ -50,6 +50,7 @@ import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { markMacroWarningRecovered } from '../lib/warning-action-executor.mjs';
 import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
@@ -469,6 +470,7 @@ async function main() {
   let conclusion = null;
   let context = null;
   let decisions = null;
+  const llm = { succeeded: 0, failed: 0 }; // 종료코드 규칙(llm-run-outcome): 사실은 보내고, 판단 실패는 잡 실패로 드러낸다
   // AGENTS.md "claude 호출 규칙" — 새 claude 호출 잡은 호출 전 cooldownActive() 가드 필수.
   if (cooldownActive()) {
     console.log('⏳ 쿨다운 중 — 2차 판단 생략, 사실만 발송');
@@ -514,10 +516,13 @@ async function main() {
         // 조용히 죽어도 아무도 못 알아챈다(2026-09-01 코드리뷰 MEDIUM 지적).
         console.log(`⚠ 자문요청 파싱 실패(자문 생략): ${rawFirst}`);
       }
+      llm.succeeded += 1;
     } catch (e) {
       console.error(`⚠ 헤드리스 판단 실패(사실만 발송): ${e.message}`);
+      if (!e.isLimit) llm.failed += 1;
     }
   }
+  markLlmRunOutcome(llm, { job: 'intraday-market-move-monitor' });
 
   // ⚠️ 발송 성공 시에만 상태를 갱신한다 — 실패한 채로 기록하면(2026-09-01 코드리뷰
   // HIGH 지적) 오너는 이 경보를 영영 못 받았는데 다음 실행부턴 "이미 같은/더 낮은

@@ -68,6 +68,7 @@ import { rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
 import { computeRebalanceGaps } from '../lib/rebalance-gap.mjs';
 import { CAP_FRACTION, applyCappedAllocation, isAllowedAllocationInstrument, resolveAllocationPricingByName } from '../lib/allocation-proposal-shared.mjs';
 import { runHeadlessClaude, headlessResult, parseJsonBlock } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
@@ -303,6 +304,7 @@ async function main() {
   // 자산군별 순위는 계좌와 무관(같은 자산군이면 위탁·연금저축이 같은 순위를 공유) —
   // 계좌 루프 안에서 반복 계산·중복 KRX 조회를 피하려고 이번 실행 동안 캐시한다.
   const rankedUniverseCache = {};
+  const llm = { succeeded: 0, failed: 0 }; // 종료코드 규칙(llm-run-outcome) — 한도 보류는 세지 않는다
   for (const account of CASH_ELIGIBLE_ACCOUNTS) {
     const availableCash = availableCashByAccount[account];
     if (availableCash == null) {
@@ -349,9 +351,11 @@ async function main() {
       const { kept, dropped } = validateAllocations(r.allocations, { account, availableCash, eligibleClasses, candidatesByClass, rankedUniverseByClass });
       dropped.forEach((d) => console.log(`  ⚠️ 배분 라인 드롭: ${d.reason}`));
       allocations = kept;
+      llm.succeeded += 1;
     } catch (e) {
       if (e.isLimit) { console.log(`  ⏳ 사용량 한도 → 배분 판단 보류(다음 실행 재시도).`); continue; }
       console.error(`  ❌ ${account} 배분 판단 실패: ${e.message} — 다음 실행 재시도`);
+      llm.failed += 1;
       continue;
     }
     if (!allocations.length) { console.log(`  ⚠️ 유효한 배분 라인 없음 — 다음 실행 재시도`); continue; }
@@ -403,6 +407,7 @@ async function main() {
     }
   }
 
+  if (!DRY_RUN) markLlmRunOutcome(llm, { job: 'new-cash-allocation' });
   console.log('\n🏁 완료');
 }
 

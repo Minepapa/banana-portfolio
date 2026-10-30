@@ -39,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 import { loadEnv } from '../lib/auth.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
@@ -143,6 +144,7 @@ async function main() {
   let conclusion = null;
   let context = null;
   let decisions = null;
+  const llm = { succeeded: 0, failed: 0 }; // 종료코드 규칙(llm-run-outcome): 사실은 보내고, 판단 실패는 발송 뒤 잡 실패로 드러낸다
   // AGENTS.md "claude 호출 규칙" — 새 claude 호출 잡은 호출 전 cooldownActive() 가드
   // 필수(쿨다운 중이면 skip). 이 잡은 2026-08-31에 처음 LLM을 부르게 된 잡이라 이 규칙
   // 대상 — 쿨다운 중이어도 사실만은 발송한다(위 HIGH 수정과 동일 원칙, 통째로 유실 안 함).
@@ -155,8 +157,10 @@ async function main() {
       })).trim();
       console.log(judgment);
       ({ conclusion, context, decisions } = parseDepartmentResponse(judgment));
+      llm.succeeded += 1;
     } catch (e) {
       console.error(`⚠ 헤드리스 판단 실패(사실만 발송): ${e.message}`);
+      if (!e.isLimit) llm.failed += 1;
     }
   }
 
@@ -165,6 +169,7 @@ async function main() {
   } catch (e) {
     console.error('텔레그램 알림 실패:', e.message);
   }
+  markLlmRunOutcome(llm, { job: 'daily-asset-allocation-check' });
 }
 
 // import.meta.url 가드(2026-08-31 신설) — 이 파일이 이제 buildAllocationCheckFacts·

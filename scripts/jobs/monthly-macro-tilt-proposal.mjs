@@ -46,6 +46,7 @@ import { ACCOUNT_ELIGIBLE_ASSET_CLASSES, findExistingInstruments } from '../lib/
 import { findCashBalance, resolveDesignatedCashBalance } from '../lib/cash-ledger.mjs';
 import { rankAssetClassUniverse } from '../lib/instrument-scoring.mjs';
 import { runHeadlessClaude, headlessResult, parseJsonBlock } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { createAndSendProposal } from '../lib/proposal-flow.mjs';
 import { parseProposal } from '../lib/proposal-vault.mjs';
@@ -425,6 +426,8 @@ async function main() {
   } catch (e) {
     if (e.isLimit) { console.log('  ⏳ 사용량 한도 → 판단 보류(다음 실행 재시도, 월 마커 미전진).'); return; }
     console.error(`  ❌ 틸트 판단 실패: ${e.message} — 다음 실행 재시도(월 마커 미전진)`);
+    // 종료코드 규칙(llm-run-outcome): 주 판단 1건이 실패(성공 0) → 잡 실패. 뒤의 2차 검증 실패는 주 판단이 성공한 부분 실패라 OK.
+    markLlmRunOutcome({ succeeded: 0, failed: 1 }, { job: 'monthly-macro-tilt-proposal' });
     return;
   }
   if (!actions.length) {

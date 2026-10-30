@@ -37,6 +37,7 @@ import { TARGET_ALLOCATION } from '../lib/rebalance-gap.mjs';
 import { getCachedMacroIndicators } from '../lib/macro-cache.mjs';
 import { assembleMacro } from '../tools/risk-facts.mjs';
 import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 import { resolveDecision } from '../lib/decision-resolver.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
@@ -267,8 +268,10 @@ async function main() {
       appendSystemPrompt: AGENT.systemPrompt, lean: true, tools: '', maxTurns: 1,
     })).trim();
   } catch (e) {
-    console.error(`❌ 헤드리스 판단 실패: ${e.message}`);
-    process.exit(1);
+    // 종료코드 규칙(llm-run-outcome): 다시 시도할 수단이 없는 단발 잡(retryable: false)이라 판단 실패든 사용량 한도든 잡 실패로 둔다.
+    console.error(`❌ 헤드리스 판단 실패${e.isLimit ? '(사용량 한도)' : ''}: ${e.message}`);
+    markLlmRunOutcome({ succeeded: 0, failed: e.isLimit ? 0 : 1, limited: e.isLimit ? 1 : 0, retryable: false }, { job: 'quarterly-allocation-review' });
+    process.exit(process.exitCode || 1);
   }
 
   const checked = await ensureNoQuestionDecisions({

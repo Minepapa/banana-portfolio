@@ -539,6 +539,7 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
   return withLock(statePath, job, { retries: 0 });
 }
 
+// 종료코드 규칙(llm-run-outcome)과 같다(쓰기 관문·락 오류는 더 엄하게 실패). 쿨다운은 실패가 아니다.
 // 쓰기 관문·락 오류가 있거나, 대상이 있었는데 하나도 처리하지 못하면 실패로 본다(health-watcher가 알 수 있게).
 export function failed(summary) {
   if (summary.cooldown || !summary.targets) return false;

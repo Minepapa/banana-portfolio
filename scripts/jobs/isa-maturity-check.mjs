@@ -43,6 +43,7 @@ import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { summarizeIsaHoldings } from '../lib/isa-exposure.mjs';
 import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { formatFactsMessage, parseDepartmentResponse, CONCLUSION_MARKER, CONTEXT_MARKER, DECISIONS_MARKER } from '../lib/telegram-messages.mjs';
@@ -193,8 +194,10 @@ async function main() {
       appendSystemPrompt: AGENT.systemPrompt, lean: true, tools: '', maxTurns: 1,
     })).trim();
   } catch (e) {
-    console.error(`❌ 헤드리스 판단 실패: ${e.message}`);
-    process.exit(1);
+    // 종료코드 규칙(llm-run-outcome): 다시 시도할 수단이 없는 단발 잡(retryable: false)이라 판단 실패든 사용량 한도든 잡 실패로 둔다.
+    console.error(`❌ 헤드리스 판단 실패${e.isLimit ? '(사용량 한도)' : ''}: ${e.message}`);
+    markLlmRunOutcome({ succeeded: 0, failed: e.isLimit ? 0 : 1, limited: e.isLimit ? 1 : 0, retryable: false }, { job: 'isa-maturity-check' });
+    process.exit(process.exitCode || 1);
   }
 
   console.log(judgment);

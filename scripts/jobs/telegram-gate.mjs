@@ -44,6 +44,7 @@ import { writeStateFile, writeAtomic } from '../lib/state-writer.mjs';
 import { DEFAULT_VAULT_ROOT, VAULT_PATHS, VAULT_REL, VAULT_ROOT, vaultAbs } from '../lib/vault-paths.mjs';
 import { buildHandoffSummaryArgs, createConversation } from '../lib/telegram-gate-conversation.mjs';
 import { buildGateReadEnv, runGateClaude } from '../lib/telegram-gate-llm.mjs';
+// 종료코드 규칙(llm-run-outcome) 대상 아님: 상시 데몬이라 종료코드로 성패를 남기지 않는다. LLM 실패는 메시지마다 오너에게 알리고 inbox에 실패로 적는다.
 import { businessDay, createSessionStore } from '../lib/telegram-gate-session.mjs';
 import { createJournal, handoffNoteRelPath } from '../lib/telegram-gate-journal.mjs';
 import { confirmOpenSinceSec, createConfirmStore } from '../lib/telegram-gate-confirm.mjs';
