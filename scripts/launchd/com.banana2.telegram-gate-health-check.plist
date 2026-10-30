@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.telegram-gate-health-check</string>
+  <!-- 텔레그램 관문 바깥 감시, 10분 간격(2026-10-30 관문 1단계). 하트비트 낡음·가져가지 않은 메시지를 보고
+       launchctl kickstart -k로 관문을 다시 띄운다(연속 3회 넘으면 사람 확인 알림만). 4단계 전환 때 관문과 함께 등록하고,
+       옛 telegram-session-health-check는 그때 내린다. 관문 상태 폴더가 없으면 아무것도 하지 않는다. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>telegram-gate-health-check</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>600</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-gate-health-check.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/telegram-gate-health-check.log</string>
+</dict>
+</plist>

@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 
-export const VAULT_ROOT = process.env.VAULT_PATH || join(homedir(), 'Pantheon', 'Mouseion');
+// 기본(실제) 볼트 위치. 텔레그램 관문 시험 모드가 "실제 볼트가 아님"을 확인할 때도 쓴다(2026-10-30).
+export const DEFAULT_VAULT_ROOT = join(homedir(), 'Pantheon', 'Mouseion');
+export const VAULT_ROOT = process.env.VAULT_PATH || DEFAULT_VAULT_ROOT;
 
 export const VAULT_REL = {
   agentCharters: '90_Delphi/Agents',

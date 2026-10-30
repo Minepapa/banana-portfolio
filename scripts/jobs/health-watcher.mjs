@@ -361,6 +361,11 @@ export const EXPECTED_INTERVALS_MS = {
   // 같은 구조적 한계(바로 아래 주석 참고) — 그래도 최소한 이 등록으로 health-watcher
   // 자신이 살아있는 한은 잡힌다.
   'telegram-session-health-check': 10 * 60 * 1000,
+  // 텔레그램 관문(2026-10-30 관문 1단계) — 상시 데몬이 5분마다 스스로 하트비트를 쓴다(수신 3분 넘게 실패면 FAIL).
+  // 15분으로 등록해 30분 동안 기록이 없으면 알린다. 4단계 전환 전에는 JobHealth 파일이 없어 아무 경보도 나지 않는다.
+  'telegram-gate': 15 * 60 * 1000,
+  // 관문 바깥 감시(StartInterval=600). telegram-session-health-check와 같은 클래스.
+  'telegram-gate-health-check': 10 * 60 * 1000,
   // intraday-market-move-monitor(2026-09-01 신설) — 텔레그램 메시지 2단계, 장중 시장
   // 급변 감시. 10분 주기(2026-10-29부터 매시 :03·:13… 고정 분), telegram-session-health-check와 동일 클래스.
   // ⚠️ 이 잡은 장 마감 후·주말엔 실행돼도 즉시 조용히 종료하는 게 정상 동작(isKrMarketOpen
