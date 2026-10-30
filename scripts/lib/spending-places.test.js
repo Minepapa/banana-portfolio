@@ -92,3 +92,11 @@ test('자동납부는 체류·이동 시각이어도 위치 없음이다', () =>
   assert.deepEqual(linked.map(({ where, place }) => [where, place]),
     [['none', '위치 없음'], ['none', '위치 없음'], ['stay', '집']]);
 });
+
+test('체류 안 외출 시간대의 결제는 체류 장소가 아니라 이동 중이다', () => {
+  // computeRoute를 거친 외출: start/end는 HH:MM, startAt/endAt은 원래 시각.
+  const office = { kind: 'stay', label: '회사', registered: true, placeName: '회사', start: '07:34', end: '18:44',
+    startAt: at('07:34'), endAt: at('18:44'), outings: [{ start: '10:11', end: '10:24', startAt: at('10:11'), endAt: at('10:24') }] };
+  const linked = linkPaymentsToRoute([office], [pay('10:15', 1000), pay('12:00', 2000)], { date: '2026-10-28' });
+  assert.deepEqual(linked.map(({ where }) => where), ['move', 'stay']);
+});

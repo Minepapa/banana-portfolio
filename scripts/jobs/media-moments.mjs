@@ -11,7 +11,7 @@ import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { mergeMomentPeople, momentPeople } from '../lib/media-face-people.mjs';
 import { applyVideoHoldAnswers, loadVideoHoldAnswers } from '../lib/video-hold-answers.mjs';
 import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
-import { haversineM, loadPlaces } from '../lib/location-stays.mjs';
+import { haversineM, loadPlaces, withinOuting } from '../lib/location-stays.mjs';
 import { computeRoute, readRoutePayments, readRoutePoints } from './daily-note.mjs';
 import { linkPhotoMemos } from './media-photo-memos.mjs';
 
@@ -188,7 +188,9 @@ function existingNotes(root, year) {
 }
 
 function overlapping(route, first, last) {
-  return route.filter((entry) => entry.kind !== 'move' && Date.parse(entry.startAt) <= last
+  // 순간 전체가 체류 안 외출 시간대에 들면 그 체류 장소에서 찍은 게 아니다.
+  return route.filter((entry) => entry.kind !== 'move' && !(withinOuting(entry, first) && withinOuting(entry, last))
+    && Date.parse(entry.startAt) <= last
     && (Date.parse(entry.endAt) >= first || entry.end === '24:00'))
     .sort((a, b) => Math.min(last, Date.parse(b.endAt)) - Math.max(first, Date.parse(b.startAt))
       - (Math.min(last, Date.parse(a.endAt)) - Math.max(first, Date.parse(a.startAt))))[0];

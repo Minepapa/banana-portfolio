@@ -165,7 +165,9 @@ function routeLines(route) {
   let number = 0;
   const lines = route.map((stay) => {
     const marker = stay.kind === 'move' ? '' : `${circledNumber(number += 1)} `;
-    return `- ${marker}${stay.start}–${stay.end} ${safeRouteLabel(stay.label)}${stay.activity ? ` · ${safeRouteLabel(stay.activity)}` : ''}${stay.current ? '(현재)' : ''}`;
+    // 같은 곳에서 잠깐 나갔다 온 외출은 체류 줄 끝에 단다(예: 회사에서 역까지 16분).
+    const outings = (stay.outings ?? []).map((outing) => ` · 외출 ${outing.start}–${outing.end}${outing.area ? `(${safeRouteLabel(outing.area)} 쪽)` : ''}`).join('');
+    return `- ${marker}${stay.start}–${stay.end} ${safeRouteLabel(stay.label)}${stay.activity ? ` · ${safeRouteLabel(stay.activity)}` : ''}${outings}${stay.current ? '(현재)' : ''}`;
   });
   return [...(route.mapPath ? [`![[${route.mapPath}]]`, ''] : []), ...lines].join('\n');
 }

@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { VAULT_PATHS, VAULT_REL } from './vault-paths.mjs';
 import { PAYMENT_GRACE_MINUTES } from './route-activities.mjs';
+import { withinOuting } from './location-stays.mjs';
 import { writeAtomic } from './state-writer.mjs';
 
 export const SPENDING_PLACES_SCHEMA = 1;
@@ -50,6 +51,9 @@ export function linkPaymentsToRoute(route, payments, { date = null } = {}) {
       card: payment.card ?? null, category: payment.category ?? null };
     // 자동납부는 장소와 무관하므로 그 시각 체류·이동이 있어도 위치 없음이다.
     if (!Number.isFinite(at) || payment.autopay) return { ...base, where: 'none', place: NO_PLACE, placeKind: null };
+    // 체류 안 외출 시간대의 결제는 그 장소가 아니라 이동 중으로 본다(외출지는 아직 이름이 없다).
+    const outing = stays.some(({ entry }) => withinOuting(entry, at));
+    if (outing) return { ...base, where: 'move', place: MOVE_PLACE, placeKind: null };
     const inside = stays.find(({ start, end }) => at >= start && at <= end);
     // 이동 중이라도 앞 체류가 끝난 직후의 승인 유예면 그 체류로 본다(route-activities와 같은 우선순위).
     const grace = !inside && stays.find(({ end }) => at > end && at <= end + graceMs);

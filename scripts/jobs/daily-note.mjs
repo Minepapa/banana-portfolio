@@ -157,6 +157,10 @@ export function createRouteMapRenderer({ root: defaultRoot = VAULT_PATHS.root, f
   return ({ date, route, points, root = defaultRoot }) => renderRouteMapFile({ date, route, points, root, fetcher, write });
 }
 
+// 외출 시각을 동선 줄 표기(HH:MM)로 바꾸고, 결제·사진 연결용 원래 시각은 startAt/endAt으로 남긴다.
+const toRouteOuting = (outing, date) => ({ ...outing, start: routeTime(outing.start, date), end: routeTime(outing.end, date),
+  startAt: outing.start, endAt: outing.end });
+
 export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = createCachedGeocoder({ root }), dryRun = false,
   points = readRoutePoints(date, root), payments = readRoutePayments(date, root), events = [], now = new Date() } = {}) {
   let stays;
@@ -199,7 +203,8 @@ export async function computeRoute(date, { root = VAULT_PATHS.root, geocode = cr
     const end = isLast && isToday ? '' : isLast && entry === lastStay && (!firstNextDayPoint || nextDayConfirmsPlace)
       ? '24:00' : routeTime(entry.end, date);
     return { ...entry, current: isLast && isToday, start: routeTime(entry.start, date), end,
-      startAt: entry.start, endAt: entry.end };
+      startAt: entry.start, endAt: entry.end,
+      ...(entry.outings ? { outings: entry.outings.map((outing) => toRouteOuting(outing, date)) } : {}) };
   });
   // 카카오 조회가 실패한 결과는 지문을 갱신하지 않게 표시한다(다음 실행에서 다시 계산).
   if (degraded) Object.defineProperty(route, 'degraded', { value: true });
