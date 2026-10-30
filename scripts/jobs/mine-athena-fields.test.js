@@ -642,6 +642,20 @@ test('Ollama 0.2 프롬프트: 고정 앞부분(기준·예시·판단 순서·�
   assert.throws(() => buildOllamaPrompt([item, item], { criteria, anchors }), /하나씩/);
 });
 
+test('0.3 화자 줄: 화자 표시 없는 한 사람 녹음은 대개 미네 것, 통화와 Claude 0.0은 예전 문구 그대로', () => {
+  const recording = { rel: `${C}/2018/2018-10-22 미네 노래 녹음.md`, date: '2018-10-22', occurred: '2018-10-22T19:00:00+09:00',
+    fields: { convKind: '녹음' }, content: note({ body: '산토끼 토끼야 하나 둘 셋' }).replace('convKind: "통화"', 'convKind: "녹음"') };
+  const local = buildOllamaPrompt([recording], { criteria, anchors, reclassify: true });
+  assert.match(local, /화자 분리: 화자 표시 없는 한 사람 녹음 — 노래·혼잣말·말소리는 대개 미네 것이다/);
+  assert.doesNotMatch(local, /확실한 미네 발화가 표시되지 않으면 감정 없음/);
+  assert.match(local, /화자 표시가 없는 한 사람 녹음은 기록의 화자 줄을 따른다/);
+  assert.match(buildPrompt([recording], { criteria }), /화자 분리: 확실한 미네 발화가 표시되지 않으면 감정 없음/, 'Claude 0.0 잡 프롬프트는 그대로');
+  assert.match(local, /협상 중이라도 음식·맛·물건이 싫다고 말로 드러내면\("그거 싫어해"\) 그 싫음은 까칠 옅음/, '0.4 협상 경계 줄(통화·녹음)');
+  assert.match(local, /미네가 화를 직접 말하면\("화났어", "기분 나빴어"\) 끝에 "속상해"가 붙어도 대표 감정은 버럭이다/, '0.5 화남·속상 경계 줄');
+  const call = { ...recording, fields: { convKind: '통화' }, content: note({ body: '여보세요 응 알았어' }) };
+  assert.match(buildOllamaPrompt([call], { criteria, anchors, reclassify: true }), /화자 분리: 확실한 미네 발화가 표시되지 않으면 감정 없음/);
+});
+
 test('validateOllamaProposals: 세기 단어 → 필드, 형식 오류·중요도 누락은 형식 실패', () => {
   const item = { date: '2026-10-15', content: note() };
   const ok = validateOllamaProposals({ ...scored({ levels: { 소심: '보통', 슬픔: '옅음' } }), importance: 2 }, [item], { criteria }).get(1);

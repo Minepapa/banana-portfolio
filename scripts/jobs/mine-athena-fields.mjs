@@ -40,7 +40,20 @@ export const MAX_JOB_MS = 30 * 60_000;
 // 프롬프트 판(엔진별). 0.0 = 기억 판단 체계 §10.5 초안(v0.1) 전. Claude는 지금까지 쓰던 프롬프트,
 // Ollama는 같은 규칙에 입력만 미네 발화로 추린 것(1단계 ④). 프롬프트나 입력을 바꾸면 올린다.
 // ollama-0.2(2026-10-29): 감정별 세기 단어·상태·기준 예시(scripts/lib/mine-judgment-prompt.mjs). Claude는 0.0 그대로.
-export const PROMPT_VERSIONS = Object.freeze({ claude: 'athena-fields/0.0', ollama: 'athena-fields/ollama-0.2' });
+// ollama-0.3(2026-10-30): 화자 표시 없는 한 사람 녹음의 화자 줄 — 노래·혼잣말은 대개 미네 것(전엔 "감정 없음"으로 몰아
+//   기준 예시 #21 노래·#31 기도를 Claude도 틀림). 이 프롬프트 계열은 이제 Claude 판단의 바탕이다(결정 §1 보강, 시험 도구 --engine=claude).
+// ollama-0.4(2026-10-30): 협상·조르기와 싫음 표현(음식 투정 = 까칠 옅음)의 경계 한 줄(통화·녹음만, 사진 프롬프트는 그대로).
+// ollama-0.5(2026-10-30): 억울한 일에 화를 직접 말하면 '속상해'가 붙어도 버럭(통화·녹음만).
+export const PROMPT_VERSIONS = Object.freeze({ claude: 'athena-fields/0.0', ollama: 'athena-fields/ollama-0.5' });
+
+// 화자 줄. 0.0(Claude 잡 프롬프트)은 예전 문구 그대로 두고, 0.3부터 한 사람 녹음을 따로 안내한다.
+function speakerLine(item, version) {
+  if (/^미네: /m.test(noteText(item.content))) return '화자 분리: 미네: 발화가 표시됨. 다른 화자는 맥락만';
+  if (version !== '0.0' && item.fields?.convKind === '녹음') {
+    return '화자 분리: 화자 표시 없는 한 사람 녹음 — 노래·혼잣말·말소리는 대개 미네 것이다. 어른이 이끄는 말이 섞이면 그 말은 맥락으로만 쓰고, 미네가 따라 하거나 스스로 낸 말·소리를 근거로 쓴다.';
+  }
+  return '화자 분리: 확실한 미네 발화가 표시되지 않으면 감정 없음';
+}
 export const JUDGMENTS_FILE = 'athena-judgments.jsonl';
 
 // 판단 기록은 볼트 밖(Media/MemoryOrb). 시험용 볼트(임시 폴더)인데 out을 따로 주지 않았으면
@@ -158,12 +171,12 @@ function recordText(item, input) {
     memo ? `오너 메모: ${memo.slice(0, 500)}` : ''].filter(Boolean).join('\n');
 }
 
-// 기록 한 건(제목·날짜·화자·소리 근거·전사). Claude 0.0과 Ollama 0.2이 같은 기록 입력을 쓴다.
-function noteBlock(item, index, criteria, input) {
+// 기록 한 건(제목·날짜·화자·소리 근거·전사). Claude 0.0과 새 판단 프롬프트가 같이 쓰고, 화자 줄만 판에 따라 다르다(0.3~: 한 사람 녹음).
+function noteBlock(item, index, criteria, input, version = '0.0') {
   return [
     `### ${index + 1}. ${item.rel.split('/').pop().replace(/\.md$/, '')}`,
     `날짜 ${item.date} · 미네 만 ${mineAge(item.occurred)}세`,
-    `화자 분리: ${/^미네: /m.test(noteText(item.content)) ? '미네: 발화가 표시됨. 다른 화자는 맥락만' : '확실한 미네 발화가 표시되지 않으면 감정 없음'}`,
+    speakerLine(item, version),
     item.fields?.convKind === '통화' ? '통화 규칙: 대화 형식의 미네: 줄과 확인된 미네 구간 소리만 감정 근거. 나: 등 다른 화자의 말은 맥락 해석에만 쓴다.' : '',
     `오너 메모 감정: ${ownerMemoEmotions(item.content, criteria).join('·') || '(없음)'}`,
     item.audioCues?.text ?? '',
@@ -186,7 +199,7 @@ export function buildOllamaPrompt(items, { reclassify = false, criteria = loadEm
     `# 소리 근거 읽는 법\n${AUDIO_CUE_RULE}`,
     reclassify ? '' : `# 중요도(답 양식에 importance 추가)\n- importance: 1~5 정수. ${IMPORTANCE_GUIDE}`,
     trendText,
-    `# 기록\n${noteBlock(item, 0, criteria, 'mine').replace(/^### 1\. /, '### ')}`,
+    `# 기록\n${noteBlock(item, 0, criteria, 'mine', '0.3').replace(/^### 1\. /, '### ')}`,
   ].filter(Boolean).join('\n\n');
 }
 

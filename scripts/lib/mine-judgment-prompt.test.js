@@ -97,6 +97,8 @@ test('anchorBlock·judgmentPreamble: 같은 날짜 형제 예시까지 빼고, �
   assert.doesNotMatch(text, /titleSuggestion/);
   assert.match(photo, /titleSuggestion/);
   assert.match(photo, /mineFace/);
+  assert.match(text, /협상·조르기는 싫다는/);
+  assert.doesNotMatch(photo, /협상·조르기는 싫다는|속상해|화자 표시가 없는 한 사람 녹음/, '사진 프롬프트는 대화 다듬기(0.3~0.5)에 안 바뀜');
 });
 
 test('parseAnchorTable: 시트 번호 없는 행은 오류', () => {
