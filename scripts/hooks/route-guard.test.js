@@ -11,6 +11,7 @@ const hookPath = fileURLToPath(new URL('./route-guard.mjs', import.meta.url));
 const scriptsDir = dirname(dirname(hookPath));
 const env = { ...process.env };
 delete env.CLAUDE_TELEGRAM_SESSION;
+delete env.CLAUDE_TELEGRAM_GATE;
 
 function runHook(path, prompt) {
   return execFileSync(process.execPath, [path], {
@@ -118,4 +119,24 @@ test('중간 언급은 리마인드만, 앞 기호 뒤 호출은 사실을 붙�
   assert.match(direct, /필요 시 추가 실행 목록/);
   const empty = await routeReminder('헤르메스 일정 조회', { telegram: true, catalog, factsForAgent: runner });
   assert.doesNotMatch(empty, /자동 연결된 기본 사실|필요 시 추가 실행 목록/);
+});
+
+test('telegram 인자를 생략하면 환경변수로 판정한다 — 관문 헤드리스(CLAUDE_TELEGRAM_GATE)도 텔레그램(2026-10-30)', async () => {
+  const saved = { session: process.env.CLAUDE_TELEGRAM_SESSION, gate: process.env.CLAUDE_TELEGRAM_GATE };
+  const factsForAgent = async () => result;
+  try {
+    delete process.env.CLAUDE_TELEGRAM_SESSION;
+    delete process.env.CLAUDE_TELEGRAM_GATE;
+    const plain = await routeReminder('리밸런싱 밴드 괜찮아?', { catalog, factsForAgent });
+    assert.doesNotMatch(plain, /비중 20%/, '오너 대화형 세션은 담당 이름 없이 사실을 붙이지 않음');
+    process.env.CLAUDE_TELEGRAM_GATE = '1';
+    assert.match(await routeReminder('리밸런싱 밴드 괜찮아?', { catalog, factsForAgent }), /비중 20%/);
+    delete process.env.CLAUDE_TELEGRAM_GATE;
+    process.env.CLAUDE_TELEGRAM_SESSION = '1';
+    assert.match(await routeReminder('리밸런싱 밴드 괜찮아?', { catalog, factsForAgent }), /비중 20%/);
+  } finally {
+    for (const [key, value] of [['CLAUDE_TELEGRAM_SESSION', saved.session], ['CLAUDE_TELEGRAM_GATE', saved.gate]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
 });

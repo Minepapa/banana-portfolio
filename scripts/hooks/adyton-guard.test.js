@@ -19,7 +19,9 @@ function hook(toolName, toolInput, extraEnv = {}, hookCwd = fixture) {
     cwd: process.cwd(),
     input: JSON.stringify({ tool_name: toolName, tool_input: toolInput, cwd: hookCwd }),
     encoding: 'utf8',
-    env: { ...process.env, VAULT_PATH: vault, ADYTON_UNLOCK_FILE: unlockFile, ...extraEnv },
+    // 텔레그램 채널 변수는 비워 둔다 — 관문·상시 세션 안에서 npm test를 돌려도 기본은 오너 대화형 세션 판정이어야
+    // '해제 중 허용' 테스트가 환경에 따라 흔들리지 않는다(2026-10-30 리뷰 LOW). 텔레그램 판정은 extraEnv로만 켠다.
+    env: { ...process.env, CLAUDE_TELEGRAM_SESSION: '', CLAUDE_TELEGRAM_GATE: '', VAULT_PATH: vault, ADYTON_UNLOCK_FILE: unlockFile, ...extraEnv },
   });
 }
 
@@ -133,6 +135,23 @@ test('해제 중 허용하고 만료되면 차단한다', () => {
   assert.equal(hook('Read', { file_path: join(adyton, 'a.md') }).status, 0);
   writeFileSync(unlockFile, JSON.stringify({ expiresAt: new Date(Date.now() - 60_000).toISOString() }));
   expectBlocked(hook('Read', { file_path: join(adyton, 'a.md') }));
+});
+
+test('텔레그램 채널(상시 세션·관문 헤드리스)은 해제 중에도 차단한다(2026-10-30 관문 0단계)', () => {
+  mkdirSync(join(fixture, 'config'), { recursive: true });
+  writeFileSync(unlockFile, JSON.stringify({ expiresAt: new Date(Date.now() + 60_000).toISOString() }));
+  const target = { file_path: join(adyton, 'a.md') };
+  const none = { CLAUDE_TELEGRAM_SESSION: '', CLAUDE_TELEGRAM_GATE: '' };
+  try {
+    assert.equal(hook('Read', target, none).status, 0, '오너 대화형 세션은 해제 중 허용');
+    for (const extraEnv of [{ ...none, CLAUDE_TELEGRAM_SESSION: '1' }, { ...none, CLAUDE_TELEGRAM_GATE: '1' }]) {
+      const result = hook('Read', target, extraEnv);
+      expectBlocked(result);
+      assert.match(result.stderr, /텔레그램 세션은 금고 해제 중에도/);
+    }
+  } finally {
+    writeFileSync(unlockFile, JSON.stringify({ expiresAt: new Date(Date.now() - 60_000).toISOString() }));
+  }
 });
 
 test('해제 중에도 해제 장치 조작과 텔레그램 접근을 막는다', () => {

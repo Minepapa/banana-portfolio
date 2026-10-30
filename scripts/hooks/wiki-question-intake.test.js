@@ -30,13 +30,19 @@ test('keyword-registration·close-work-doc 자동 반영과 clarify 안내 경�
   assert.match(source, /result\.action === 'clarify'/);
 });
 
-test('CLAUDE_TELEGRAM_SESSION이 없으면 main은 즉시 반환한다', async () => {
-  const original = process.env.CLAUDE_TELEGRAM_SESSION;
-  delete process.env.CLAUDE_TELEGRAM_SESSION;
-  try {
-    assert.equal(await main(), undefined);
-  } finally {
-    if (original === undefined) delete process.env.CLAUDE_TELEGRAM_SESSION;
-    else process.env.CLAUDE_TELEGRAM_SESSION = original;
+test('텔레그램 채널 변수가 없으면 main은 입력을 읽지 않고 즉시 반환한다', async () => {
+  let reads = 0;
+  const readInput = () => { reads += 1; return '{"prompt":""}'; };
+  assert.equal(await main({ env: {}, readInput }), undefined);
+  assert.equal(await main({ env: { CLAUDE_TELEGRAM_SESSION: '', CLAUDE_TELEGRAM_GATE: '' }, readInput }), undefined);
+  assert.equal(reads, 0);
+});
+
+test('상시 세션·관문 헤드리스(CLAUDE_TELEGRAM_GATE) 모두 입력을 읽어 처리한다(2026-10-30)', async () => {
+  for (const env of [{ CLAUDE_TELEGRAM_SESSION: '1' }, { CLAUDE_TELEGRAM_GATE: '1' }]) {
+    let reads = 0;
+    // 빈 prompt라 질문 큐를 건드리지 않고 끝난다 — 입력을 읽었는지만 본다.
+    await main({ env, readInput: () => { reads += 1; return '{"prompt":""}'; } });
+    assert.equal(reads, 1, JSON.stringify(env));
   }
 });

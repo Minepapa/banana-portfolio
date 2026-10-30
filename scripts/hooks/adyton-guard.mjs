@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { VAULT_ROOT, VAULT_REL } from '../lib/vault-paths.mjs';
+import { isTelegramChannel } from '../lib/telegram-channel-env.mjs';
 
 const VAULT_DIR = resolve(VAULT_ROOT, VAULT_REL.adytonRoot);
 const UNLOCK_FILE = process.env.ADYTON_UNLOCK_FILE ||
@@ -228,7 +229,8 @@ async function main() {
     toolName: data.tool_name || data.toolName || '',
     toolInput: data.tool_input || data.toolInput || {},
     cwd: data.cwd || process.cwd(),
-    telegram: process.env.CLAUDE_TELEGRAM_SESSION === '1',
+    // 상시 세션과 관문 헤드리스 실행 모두 해제 중에도 막는다(telegram-channel-env.mjs).
+    telegram: isTelegramChannel(),
   });
   if (decision.block) {
     process.stderr.write(`${decision.reason}\n`);
