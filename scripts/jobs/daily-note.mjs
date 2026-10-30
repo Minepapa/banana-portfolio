@@ -36,6 +36,7 @@ import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
 import { readDailySpending, formatDailyNoteSpending } from '../lib/spending-daily.mjs';
 import { attachRouteActivities, moveStopovers } from '../lib/route-activities.mjs';
 import { writeSpendingPlaces, spendingPlacesPath } from '../lib/spending-places.mjs';
+import { routeDayPath, writeRouteDay } from '../lib/route-days.mjs';
 import { updateCandidates } from '../lib/place-candidates.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import {
@@ -151,6 +152,13 @@ export function attachSpendingPlaces(writePlaces, { date, route, payments, root,
   if (!writePlaces || !Array.isArray(route) || !route.length || date >= today || route.degraded) return;
   try { writePlaces({ date, route, payments, ...(root ? { root } : {}) }); }
   catch (error) { console.warn(`  ⚠️ ${date} 장소별 소비 기록 실패:`, String(error?.message ?? error).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
+}
+
+// 하루 동선 파일(`95_Etna/Location/Days`). 장소별 소비와 같은 조건(지난날·카카오 조회 성공)에서만 쓴다. writeDay도 main()만 넘긴다.
+export function attachRouteDay(writeDay, { date, route, root, today = kstDate(new Date()) }) {
+  if (!writeDay || !Array.isArray(route) || !route.length || date >= today || route.degraded) return;
+  try { writeDay({ date, route, ...(root ? { root } : {}) }); }
+  catch (error) { console.warn(`  ⚠️ ${date} 하루 동선 파일 기록 실패:`, String(error?.message ?? error).replace(/[-+]?\d+(?:\.\d+)?/g, '[수치]')); }
 }
 
 export function createRouteMapRenderer({ root: defaultRoot = VAULT_PATHS.root, fetcher = createTileFetcher(), write = writeAtomic } = {}) {
@@ -283,6 +291,7 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
         events: Array.isArray(events) ? events : [] });
       if (!dryRun) await attachRouteMap(deps.renderMap, { date, route, points: routePoints, today });
       if (!dryRun) attachSpendingPlaces(deps.writePlaces, { date, route, payments: routePayments, today });
+      if (!dryRun) attachRouteDay(deps.writeDay, { date, route, today });
       // 일정·카카오 조회가 실패한 결과로는 지문을 갱신하지 않는다. 그래야 7일 재계산이 다시 돌아 활동을 채운다.
       if (events === 'failed' || route?.degraded || route?.mapIncomplete) routeHash = prevFields?.routeHash ?? null;
     }
@@ -371,9 +380,20 @@ export async function recomputeDailyRoute({ date, root = VAULT_PATHS.root, rules
     // 지문이 같아도 장소별 소비 파일이 없는 지난날이면 그 파일만 쓴다. 확정이 카카오 조회 실패(degraded)로 끝났는데
     // 그 뒤 새 점·결제가 없으면 지문이 그대로라 영영 안 생기기 때문이다(2026-10-29 리뷰). 데일리 노트는 건드리지 않는다.
     // 도입 전 최근 7일도 이 경로로 채워진다. 일정은 장소 이름에 쓰지 않으니 넘기지 않는다.
-    if (!dryRun && deps.writePlaces && date < today && !existsSync(spendingPlacesPath(date, root))) {
-      const route = await deps.computeRoute(date, { root, dryRun, points, payments, events: [] });
-      attachSpendingPlaces(deps.writePlaces, { date, route, payments, root, today });
+    // 하루 동선 파일도 같은 이유로 없으면 채운다(도입 전 최근 7일 포함).
+    const missingPlaces = deps.writePlaces && !existsSync(spendingPlacesPath(date, root));
+    const missingDay = deps.writeDay && !existsSync(routeDayPath(date, root));
+    if (!dryRun && date < today && (missingPlaces || missingDay)) {
+      // 하루 동선 파일은 일정 활동(공연 등)도 담으므로 일정을 받아 넘긴다. 못 받으면 이번엔 그 파일만 건너뛴다(다음 실행에서 다시).
+      let events = [];
+      let dayEvents = missingDay;
+      if (missingDay) {
+        try { events = await deps.fetchEvents(date); if (!Array.isArray(events)) events = []; }
+        catch { events = []; dayEvents = false; }
+      }
+      const route = await deps.computeRoute(date, { root, dryRun, points, payments, events });
+      if (missingPlaces) attachSpendingPlaces(deps.writePlaces, { date, route, payments, root, today });
+      if (dayEvents) attachRouteDay(deps.writeDay, { date, route, root, today });
     }
     return { updated: false, skipped: '지문 동일' };
   }
@@ -384,6 +404,7 @@ export async function recomputeDailyRoute({ date, root = VAULT_PATHS.root, rules
   const route = await deps.computeRoute(date, { root, dryRun, points, payments, events: Array.isArray(events) ? events : [] });
   if (!dryRun) await attachRouteMap(deps.renderMap, { date, route, points, root, today });
   if (!dryRun) attachSpendingPlaces(deps.writePlaces, { date, route, payments, root, today });
+  if (!dryRun) attachRouteDay(deps.writeDay, { date, route, root, today });
   // 지오코딩 중 오너가 파일을 수정했으면 다시 검사해 그 변경을 보존한다.
   const latest = readOrNull(path);
   if (latest == null) return { updated: false, skipped: '노트 없음' };
@@ -427,10 +448,10 @@ async function main() {
   const renderMap = createRouteMapRenderer();
   for (const action of actions) {
     const r = await processDay({ ...action, dryRun, noSend: args['no-send'] === true, rules, today: kstDate(now),
-      deps: { renderMap, writePlaces: writeSpendingPlaces } });
+      deps: { renderMap, writePlaces: writeSpendingPlaces, writeDay: writeRouteDay } });
     dayResults.push(r);
   }
-  await recomputeRecentRoutes({ now, rules, dryRun, deps: { renderMap, writePlaces: writeSpendingPlaces } });
+  await recomputeRecentRoutes({ now, rules, dryRun, deps: { renderMap, writePlaces: writeSpendingPlaces, writeDay: writeRouteDay } });
   if (dailyWorkFailed(dayResults)) process.exitCode = 1;
 }
 

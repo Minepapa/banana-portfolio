@@ -12,6 +12,7 @@ import { VAULT_REL } from './vault-paths.mjs';
 import { escapeHtml } from './telegram.mjs';
 import { formatEventLine } from './google-calendar.mjs';
 import { circledNumber } from './route-map.mjs';
+import { routeMinutes } from './route-days.mjs';
 
 export const OWNER_SECTIONS = ['오늘 한 줄', '오너 메모'];
 const LEGACY_AI_SECTIONS = ['일정', '동선', '오늘 들어온 기록', '오늘 생긴 할 일', 'AI 하루 요약'];
@@ -159,6 +160,14 @@ function todoText(todo) {
   return `- [일정] ${day.slice(5).replace('-', '/')}${weekday}${time} ${title}`;
 }
 
+// 걸린 시간 표기(오너 요청 2026-10-31: 머문 곳·이동마다 얼마나 걸렸는지). 1시간 미만은 분, 이상은 시간·분.
+function durationText(minutes) {
+  // 0분(같은 분 안의 이동)은 시간을 붙이지 않는다.
+  if (!minutes) return '';
+  if (minutes < 60) return `${minutes}분`;
+  return minutes % 60 ? `${Math.floor(minutes / 60)}시간 ${minutes % 60}분` : `${minutes / 60}시간`;
+}
+
 // 머문 곳에는 지도 핀과 같은 번호(①②…)를 붙이고, 이동 줄은 번호 없이 둔다(D90).
 // 지도가 있으면 칸 맨 위에 넣는다. route.mapPath는 잡이 지도를 저장했을 때만 붙는다.
 function routeLines(route) {
@@ -166,8 +175,18 @@ function routeLines(route) {
   const lines = route.map((stay) => {
     const marker = stay.kind === 'move' ? '' : `${circledNumber(number += 1)} `;
     // 같은 곳에서 잠깐 나갔다 온 외출은 체류 줄 끝에 단다(예: 회사에서 역까지 16분).
-    const outings = (stay.outings ?? []).map((outing) => ` · 외출 ${outing.start}–${outing.end}${outing.area ? `(${safeRouteLabel(outing.area)} 쪽)` : ''}`).join('');
-    return `- ${marker}${stay.start}–${stay.end} ${safeRouteLabel(stay.label)}${stay.activity ? ` · ${safeRouteLabel(stay.activity)}` : ''}${outings}${stay.current ? '(현재)' : ''}`;
+    const outings = (stay.outings ?? []).map((outing) => {
+      const detail = [durationText(routeMinutes(outing.start, outing.end)), outing.area ? `${safeRouteLabel(outing.area)} 쪽` : ''].filter(Boolean).join(', ');
+      return ` · 외출 ${outing.start}–${outing.end}${detail ? `(${detail})` : ''}`;
+    }).join('');
+    // 지금 머무는 곳(오늘 마지막)은 끝이 없어 시간을 붙이지 않는다.
+    const duration = stay.current ? '' : durationText(routeMinutes(stay.start, stay.end));
+    const label = safeRouteLabel(stay.label);
+    // 이동 줄은 "이동 · 52분 · 차량 약 38km"처럼 "이동" 바로 뒤에, 머문 곳은 이름·활동 뒤에 붙인다.
+    const text = stay.kind === 'move'
+      ? (label.startsWith('이동') ? label.replace(/^이동/, `이동${duration ? ` · ${duration}` : ''}`) : `${label}${duration ? ` · ${duration}` : ''}`)
+      : `${label}${stay.activity ? ` · ${safeRouteLabel(stay.activity)}` : ''}${duration ? ` · ${duration}` : ''}`;
+    return `- ${marker}${stay.start}–${stay.end} ${text}${outings}${stay.current ? '(현재)' : ''}`;
   });
   return [...(route.mapPath ? [`![[${route.mapPath}]]`, ''] : []), ...lines].join('\n');
 }

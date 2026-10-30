@@ -19,16 +19,16 @@ test('동선 null·빈 배열·체류·실패 문구와 기존 오너 칸 보존
   assert.match(renderDailyNote({ ...base, route: null }), /위치 연동 전/);
   assert.match(renderDailyNote({ ...base, route: [] }), /위치 기록 없음/);
   const routed = renderDailyNote({ ...base, route: [{ start: '08:10', end: '17:50', label: '회사' }], prev });
-  assert.match(routed, /- ① 08:10–17:50 회사/);
+  assert.match(routed, /- ① 08:10–17:50 회사 · 9시간 40분/);
   assert.match(routed, /sensitivity: "개인"/);
   assert.match(routed, /## 오늘 한 줄\n내 기록/);
   assert.equal(inspectExisting(routed).ok, true);
   assert.match(renderDailyNote({ ...base, route: [{ start: '20:22', end: '', label: '집', current: true }] }), /- ① 20:22– 집\(현재\)/);
   assert.match(renderDailyNote({ ...base, route: [{ start: '19:57', end: '20:10', kind: 'move',
-    label: '이동 · 차량 약 5km (주유: 가상주유소)' }] }), /- 19:57–20:10 이동 · 차량 약 5km \(주유: 가상주유소\)/);
+    label: '이동 · 차량 약 5km (주유: 가상주유소)' }] }), /- 19:57–20:10 이동 · 13분 · 차량 약 5km \(주유: 가상주유소\)/);
   assert.match(renderDailyNote({ ...base, route: [{ start: '07:34', end: '18:44', label: '회사(서울)',
     outings: [{ start: '10:11', end: '10:24', area: '낙성대동' }, { start: '15:00', end: '15:20', area: null }] }] }),
-    /- ① 07:34–18:44 회사\(서울\) · 외출 10:11–10:24\(낙성대동 쪽\) · 외출 15:00–15:20\n/);
+    /- ① 07:34–18:44 회사\(서울\) · 11시간 10분 · 외출 10:11–10:24\(13분, 낙성대동 쪽\) · 외출 15:00–15:20\(20분\)\n/);
   assert.match(renderDailyNote({ ...base, route: 'failed' }), /동선 계산 실패/);
   assert.doesNotMatch(buildSummaryPrompt(base.date, recs), /회사/);
   assert.doesNotMatch(buildDailyTelegramBody(base.date, recs, '- 요약'), /회사/);
@@ -240,7 +240,7 @@ test('동선: 머문 곳만 ①② 번호를 붙이고, 지도가 있으면 칸 
     { kind: 'stay', start: '09:30', end: '17:50', label: '회사' },
   ];
   const plain = renderDailyNote({ ...base, route });
-  assert.match(plain, /## 동선\n- ① 08:10–09:00 집\n- 09:00–09:30 이동 · 차량 추정 · 12\.3km\n- ② 09:30–17:50 회사/);
+  assert.match(plain, /## 동선\n- ① 08:10–09:00 집 · 50분\n- 09:00–09:30 이동 · 30분 · 차량 추정 · 12\.3km\n- ② 09:30–17:50 회사 · 8시간 20분/);
   assert.doesNotMatch(plain, /!\[\[/);
   Object.defineProperty(route, 'mapPath', { value: '95_Etna/Location/Maps/2026/2026-10-09.svg' });
   assert.match(renderDailyNote({ ...base, route }), /## 동선\n!\[\[95_Etna\/Location\/Maps\/2026\/2026-10-09\.svg\]\]\n\n- ① 08:10/);
