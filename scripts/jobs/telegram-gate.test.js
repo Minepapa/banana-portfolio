@@ -12,7 +12,7 @@ import { createGateInbox } from '../lib/telegram-gate-inbox.mjs';
 const OWNER = '31337';
 const T0 = Date.parse('2026-10-30T05:00:00Z');
 
-function setup({ mode = 'live', getUpdates = null, runTool = null } = {}) {
+function setup({ mode = 'live', getUpdates = null, runTool = null, conversation = null, confirmStore = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'gate-daemon-'));
   const clock = { ms: T0 };
   const inbox = createGateInbox({ dir, now: () => new Date(clock.ms) });
@@ -41,6 +41,8 @@ function setup({ mode = 'live', getUpdates = null, runTool = null } = {}) {
     writeHeartbeat: async (beat) => { beats.push(beat); },
     log: () => {},
     listPollers: () => ['123 bun run <server>.ts'],
+    conversation,
+    confirmStore,
   });
   return { dir, inbox, daemon, sent, warned, tools, beats, clock, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
@@ -283,4 +285,129 @@ test('installExitCleanup: exit·처리 안 된 예외 때 도구 그룹을 SIGKI
   proc.emit('uncaughtException', new Error('boom'));
   assert.deepEqual(kills, ['SIGKILL', 'SIGKILL']);
   assert.deepEqual(exits, [1]);
+});
+
+function fakeConversation() {
+  const calls = { batches: [], confirms: [], closes: [], cancels: 0, queued: [] };
+  let running = false;
+  return {
+    calls,
+    state: { lastRun: null, lastRateLimit: null },
+    isRunning: () => running,
+    setRunning: (v) => { running = v; },
+    cancel: () => { calls.cancels += 1; return running; },
+    setQueued: (n) => calls.queued.push(n),
+    processBatch: async (items) => { calls.batches.push(items.map((i) => i.args.text ?? i.args.caption)); return { status: '완료', detail: 'ok' }; },
+    handleConfirm: async (args) => { calls.confirms.push(args.yes); return { status: '완료', detail: 'confirm' }; },
+    closeConfirm: async (reason) => { calls.closes.push(reason); return false; },
+    writeHandoffIfDue: async () => null,
+  };
+}
+
+test('대화 줄: 쌓인 대화 입력을 합쳐 한 번에 처리하고(Q6), 결정론 입력은 섞지 않는다', async () => {
+  const conv = fakeConversation();
+  const s = setup({ conversation: conv });
+  try {
+    s.inbox.appendUpdates([msg(1, '내일 3시 치과'), msg(2, '킬스위치 온'), msg(3, '클리오 어제 뭐 했지'), msg(4, { photo: [{ file_id: 'p' }], caption: '이거 뭐야' })]);
+    assert.equal(await s.daemon.processLlmBatch(), true);
+    assert.deepEqual(conv.calls.batches, [['내일 3시 치과', '클리오 어제 뭐 했지', '이거 뭐야']]);
+    assert.equal(s.inbox.get(2).status, '받음', '스위치는 main 줄 몫');
+    for (const id of [1, 3, 4]) assert.equal(s.inbox.get(id).status, '완료');
+    assert.equal(await s.daemon.processLlmBatch(), false);
+  } finally { s.cleanup(); }
+});
+
+test('확인 대기 중: 응은 confirm으로, 상태·안녕은 대기를 유지, 다른 입력은 다른 주제로 닫는다', async () => {
+  const conv = fakeConversation();
+  let pending = true;
+  // 확인 질문을 T0-60초에 보냈다 — msg() 기본 시각(T0)은 그 뒤다.
+  const confirmStore = { pending: () => (pending ? { id: 'CF', announced: true, announcedAt: new Date(T0 - 60_000).toISOString() } : null) };
+  const s = setup({ conversation: conv, confirmStore });
+  try {
+    s.inbox.appendUpdates([msg(1, '응'), msg(2, '상태'), msg(3, '📜 메모')]);
+    await s.daemon.processItem(s.inbox.get(1));
+    assert.deepEqual(conv.calls.confirms, [true]);
+    await s.daemon.processItem(s.inbox.get(2));
+    assert.deepEqual(conv.calls.closes, []);
+    await s.daemon.processItem(s.inbox.get(3));
+    assert.deepEqual(conv.calls.closes, ['다른 주제']);
+    pending = false;
+    s.inbox.appendUpdates([msg(4, '응')]);
+    await s.daemon.processLlmBatch();
+    assert.deepEqual(conv.calls.batches, [['응']], '확인 대기가 없으면 응은 그냥 대화');
+  } finally { s.cleanup(); }
+});
+
+test('취소: 실행 중 대화를 멈추고, 취소 전부는 대기 중 대화 입력까지 버린다', async () => {
+  const conv = fakeConversation();
+  const s = setup({ conversation: conv });
+  try {
+    conv.setRunning(true);
+    s.inbox.appendUpdates([msg(1, '하나'), msg(2, '둘'), msg(3, '취소 전부')]);
+    await s.daemon.processItem(s.inbox.get(3));
+    assert.equal(conv.calls.cancels, 1);
+    assert.equal(s.inbox.get(1).detail, '취소 전부로 취소됨');
+    assert.equal(s.inbox.get(2).status, '완료');
+    assert.match(s.sent.at(-1).body, /기다리던 메시지 2건/);
+    conv.setRunning(false);
+    s.inbox.appendUpdates([msg(4, '취소')]);
+    await s.daemon.processItem(s.inbox.get(4));
+    assert.match(s.sent.at(-1).body, /취소할 대화 작업이 없습니다/);
+  } finally { s.cleanup(); }
+});
+
+test('1분 틱: 확인 대기 만료와 인수인계 노트를 대화 줄에 맡긴다', async () => {
+  const conv = fakeConversation();
+  let handoffChecked = 0;
+  conv.writeHandoffIfDue = async () => { handoffChecked += 1; return null; };
+  const s = setup({ conversation: conv });
+  try {
+    await s.daemon.minuteTick();
+    assert.deepEqual(conv.calls.closes, ['만료']);
+    assert.equal(handoffChecked, 1);
+  } finally { s.cleanup(); }
+});
+
+test('확인 질문 뒤 응보다 먼저 보낸 다른 입력이 대기 중이면, 응을 실행하지 않고 다른 주제로 닫는다', async () => {
+  const conv = fakeConversation();
+  const confirmStore = { pending: () => ({ id: 'CF', announced: true, announcedAt: new Date(T0 - 60_000).toISOString() }) };
+  const s = setup({ conversation: conv, confirmStore });
+  try {
+    s.inbox.appendUpdates([msg(1, '그런데 하이닉스는?', { date: T0 / 1000 }), msg(2, '응', { date: T0 / 1000 + 1 })]);
+    await s.daemon.processItem(s.inbox.get(2));
+    assert.deepEqual(conv.calls.confirms, [], '응을 확인으로 쓰지 않음');
+    assert.deepEqual(conv.calls.closes, ['다른 주제']);
+  } finally { s.cleanup(); }
+});
+
+test('확인 질문 전에 보낸 대화가 늦게 처리돼도 확인 대기를 닫지 않는다', async () => {
+  const conv = fakeConversation();
+  const confirmStore = { pending: () => ({ id: 'CF', announced: true, announcedAt: new Date(T0 + 60_000).toISOString() }) };
+  const s = setup({ conversation: conv, confirmStore });
+  try {
+    s.inbox.appendUpdates([msg(1, '고마워', { date: T0 / 1000 })]);
+    await s.daemon.processLlmBatch();
+    assert.deepEqual(conv.calls.closes, []);
+    s.inbox.appendUpdates([msg(2, '다른 질문', { date: T0 / 1000 + 120 })]);
+    await s.daemon.processLlmBatch();
+    assert.deepEqual(conv.calls.closes, ['다른 주제']);
+  } finally { s.cleanup(); }
+});
+
+test('확인 대기가 만료됐거나 없으면 "응"은 자유 문장(대화 줄)이고 실행기를 부르지 않는다', async () => {
+  const conv = fakeConversation();
+  let confirm = null;
+  const confirmStore = { pending: () => confirm };
+  const s = setup({ conversation: conv, confirmStore });
+  try {
+    s.inbox.appendUpdates([msg(1, '응')]);
+    await s.daemon.processLlmBatch();
+    assert.deepEqual(conv.calls.batches, [['응']]);
+    assert.deepEqual(conv.calls.confirms, []);
+    // 발표 전(announced 없음) 대기만 있을 때도 confirm이 아니다.
+    confirm = { id: 'CF', announced: false };
+    s.inbox.appendUpdates([msg(2, '응')]);
+    await s.daemon.processLlmBatch();
+    assert.deepEqual(conv.calls.confirms, []);
+  } finally { s.cleanup(); }
 });

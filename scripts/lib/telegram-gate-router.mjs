@@ -9,6 +9,11 @@
 import { parseExecutionModeCommand, parseKillSwitchCommand, parseProposalModeCommand, parseDepartmentCall } from './telegram-messages.mjs';
 import { parseExplicitWikiAnswers } from './wiki-question-queue.mjs';
 
+// 확인 대기(돈 지시 재확인) 답. 정확일치만 인정한다. 확인 대기가 있을 때만 이 뜻으로 쓴다.
+// 입력 규칙 4-8의 명확한 긍정(응·승인·ㅇㅇ)만. 네·예 같은 넓은 답은 확인으로 보지 않는다(2단계 리뷰 LOW).
+export const CONFIRM_YES = new Set(['응', 'ㅇㅇ', '승인']);
+export const CONFIRM_NO = new Set(['아니', '아니요', '아니오', 'ㄴㄴ', '취소']);
+
 const MEMO = '📜';
 const PHOTO_MEMO = '📎';
 const ONE_LINE = '🪶';
@@ -35,8 +40,12 @@ function isWikiAnswerOnly(text) {
 
 // 처리 줄: 음성·사진은 내려받기·전사로 오래 걸릴 수 있어 따로 처리해 스위치·상태가 그 뒤에 묶이지 않게 한다(1단계 리뷰 HIGH).
 export const MEDIA_ROUTES = new Set(['voice', 'photoMemo']);
+// llm 줄: 헤드리스 claude 대화(직렬, 처리 중 온 것은 합쳐 한 번에 — Q6).
 export function laneOf(decision) {
-  return decision.action === 'handle' && MEDIA_ROUTES.has(decision.route) ? 'media' : 'main';
+  if (decision.action !== 'handle') return 'main';
+  if (MEDIA_ROUTES.has(decision.route)) return 'media';
+  if (decision.route === 'llm') return 'llm';
+  return 'main';
 }
 
 // 허용 사용자의 개인 채팅이 아니면 원문을 대기열에 남기지 않는다(설계 10-1). update_id만 남겨 중복 제거·offset에 쓴다.
@@ -47,7 +56,8 @@ export function sanitizeUpdate(update, { allowFrom }) {
 }
 
 // update → { action: 'drop', reason } | { action: 'handle', route, args, meta }
-export function routeUpdate(update, { allowFrom }) {
+// confirmOpenSince: 확인 질문을 보낸 시각(초). 그 초보다 엄격히 뒤에 온 응·아니만 확인 답으로 본다(2단계 리뷰 HIGH-1·재리뷰 LOW).
+export function routeUpdate(update, { allowFrom, confirmOpenSince = null }) {
   const message = update?.message;
   if (!message) return { action: 'drop', reason: '메시지 아닌 업데이트' };
   if (message.chat?.type !== 'private') return { action: 'drop', reason: '개인 채팅 아님' };
@@ -81,6 +91,9 @@ export function routeUpdate(update, { allowFrom }) {
   if (!text) return handle('llm', { kind: 'other', text: caption });
   const trimmed = text.trim();
 
+  // 확인 대기가 있으면 응·아니가 먼저다("취소"도 여기서는 접수 취소). 전달·음성·사진은 위에서 이미 걸러졌다.
+  const confirmOpen = Number.isFinite(confirmOpenSince) && Number.isFinite(meta.date) && meta.date > confirmOpenSince;
+  if (confirmOpen && (CONFIRM_YES.has(trimmed) || CONFIRM_NO.has(trimmed))) return handle('confirm', { yes: CONFIRM_YES.has(trimmed) });
   if (trimmed === '상태') return handle('status');
   if (trimmed === '취소') return handle('cancel', { all: false });
   if (trimmed === '취소 전부') return handle('cancel', { all: true });

@@ -290,3 +290,8 @@ export async function downloadTelegramFile(filePath, { fetchImpl = fetch, config
   if (buffer.length > maxBytes) throw new Error(`텔레그램 파일이 너무 큽니다(${buffer.length}바이트)`);
   return buffer;
 }
+
+// 관문 진행 메시지를 완료 뒤 지운다(Q2). 텍스트를 내보내지 않는 호출이라 발송 관문을 거치지 않는다.
+export function deleteTelegramMessage({ chatId, messageId }, options = {}) {
+  return callTelegramApi('deleteMessage', { chat_id: chatId, message_id: messageId }, options);
+}

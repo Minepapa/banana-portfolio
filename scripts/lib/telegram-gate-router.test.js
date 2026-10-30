@@ -139,3 +139,23 @@ test('sanitizeUpdate: 허용 밖·그룹 업데이트는 update_id만 남긴다'
   assert.equal(sanitizeUpdate(mine, ctx), mine);
   assert.equal(routeUpdate(sanitizeUpdate(foreign, ctx), ctx).action, 'drop');
 });
+
+test('확인 질문 뒤에 온 응·아니(취소 포함)만 confirm으로 간다', () => {
+  const since = 1_800_000_000 - 1; // msg() 기본 date보다 1초 앞
+  const pending = (text) => routeUpdate(msg({ text }), { ...ctx, confirmOpenSince: since });
+  assert.deepEqual([pending('응'), pending('ㅇㅇ'), pending('승인')].map((d) => [d.route, d.args.yes]), [['confirm', true], ['confirm', true], ['confirm', true]]);
+  assert.equal(pending('네').route, 'llm', '네·예는 확인으로 보지 않음');
+  assert.equal(routeUpdate(msg({ text: '응' }), { ...ctx, confirmOpenSince: since + 1 }).route, 'llm', '질문과 같은 초의 응은 인정 안 함');
+  assert.equal(routeUpdate(msg({ text: '응' }), { ...ctx, confirmOpenSince: since + 2 }).route, 'llm', '확인 질문 전에 보낸 응');
+  assert.deepEqual([pending('아니'), pending('취소')].map((d) => [d.route, d.args.yes]), [['confirm', false], ['confirm', false]]);
+  assert.equal(pending('응 사줘').route, 'llm', '정확일치만');
+  assert.equal(route({ text: '응' }).route, 'llm', '대기가 없으면 대화');
+  assert.equal(route({ text: '취소' }).route, 'cancel');
+  assert.equal(routeUpdate(msg({ text: '응', forward_origin: { type: 'user' } }), { ...ctx, confirmOpenSince: since }).route, 'llm', '전달된 응은 확인이 아님');
+  assert.equal(routeUpdate(msg({ voice: { file_id: 'v' } }), { ...ctx, confirmOpenSince: since }).route, 'voice', '음성은 확인이 아님');
+});
+
+test('laneOf: 대화는 llm 줄', () => {
+  assert.equal(laneOf(route({ text: '내일 3시 치과' })), 'llm');
+  assert.equal(laneOf(route({ photo: [{ file_id: 'p' }], caption: '영수증' })), 'llm');
+});

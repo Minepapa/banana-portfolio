@@ -127,6 +127,11 @@ export function createGateInbox({ dir, now = () => new Date() }) {
 
     get(updateId) { return items.get(updateId) ?? null; },
 
+    // 지금 처리 중인 것(처리중), update_id 순.
+    inFlight() {
+      return [...items.values()].filter((i) => i.status === '처리중').sort((a, b) => a.updateId - b.updateId);
+    },
+
     // 아직 처리하지 않은 것(받음), update_id 순.
     pending() {
       return [...items.values()].filter((i) => i.status === '받음').sort((a, b) => a.updateId - b.updateId);

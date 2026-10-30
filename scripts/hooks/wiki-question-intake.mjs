@@ -2,7 +2,6 @@
 // 텔레그램 세션의 UserPromptSubmit 훅. 새 Telegram 수신 폴러 없이 제출된 메시지만 분류한다.
 import { readFileSync } from 'node:fs';
 import { listPendingWikiQuestions, parseExplicitWikiAnswers, resolveWikiQuestion, applyWikiQuestion } from '../lib/wiki-question-queue.mjs';
-import { isTelegramChannel } from '../lib/telegram-channel-env.mjs';
 
 function emit(context) {
   if (context) process.stdout.write(`${JSON.stringify({
@@ -56,10 +55,11 @@ async function handleExplicitAnswer(explicit) {
   return `[무세이온 질문 ${explicit.questionId}] 답변을 ${result.status ?? result.action} 상태로 기록했다. 투자 제안·주문 승인과 무관하다. 결과를 회신하라.`;
 }
 
-// env·readInput은 시험 주입용이다. 상시 세션과 관문 헤드리스 실행 모두 질문 답을 기록해야 해서 공용 판정을 쓴다
-// (telegram-channel-env.mjs, 2026-10-30 관문 0단계).
+// env·readInput은 시험 주입용이다. 상시 세션(CLAUDE_TELEGRAM_SESSION)에서만 돈다.
+// 관문 헤드리스 실행(CLAUDE_TELEGRAM_GATE)은 제외한다(2026-10-30 관문 2단계 리뷰): 관문은 정확한 WQ 답을 LLM 전에 결정론으로
+// 처리하고, LLM 프롬프트에는 전달된 글·인수인계 노트처럼 오너가 직접 답하지 않은 WQ 문구가 섞일 수 있어 자동 적용하면 안 된다.
 export async function main({ env = process.env, readInput = () => readFileSync(0, 'utf8') } = {}) {
-  if (!isTelegramChannel(env)) return;
+  if (env.CLAUDE_TELEGRAM_SESSION !== '1') return;
   let input;
   try { input = JSON.parse(readInput()); } catch { return; }
   const prompt = String(input?.prompt ?? '').trim();

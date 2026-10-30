@@ -25,22 +25,30 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { freemem, totalmem } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
+import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { fileURLToPath } from 'node:url';
-import { assertTestIsolation, loadGateConfig } from '../lib/telegram-gate-config.mjs';
+import { assertTestIsolation, buildGateSpawnEnv, loadGateConfig } from '../lib/telegram-gate-config.mjs';
 import { createGateInbox } from '../lib/telegram-gate-inbox.mjs';
 import { laneOf, routeUpdate, sanitizeUpdate } from '../lib/telegram-gate-router.mjs';
 import { createGateHandlers, gateMediaDir, killRunningGateTools, pruneGateMedia } from '../lib/telegram-gate-handlers.mjs';
 import { classifyPollError, pollOnce, pollRetryDelayMs, shouldAlertPollError, POLL_TIMEOUT_SEC } from '../lib/telegram-gate-poller.mjs';
-import { getTelegramUpdates, setTelegramReaction, getTelegramFile, downloadTelegramFile, escapeHtml, TelegramApiError } from '../lib/telegram.mjs';
-import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+import { getTelegramUpdates, setTelegramReaction, getTelegramFile, downloadTelegramFile, deleteTelegramMessage, escapeHtml, TelegramApiError } from '../lib/telegram.mjs';
+import { sendAgentMessage, editAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { getCooldown } from '../lib/quota-cooldown.mjs';
 import { resolveClaudeBin } from '../lib/headless-claude.mjs';
 import { resolveWikiQuestion, applyWikiQuestion } from '../lib/wiki-question-queue.mjs';
 import { buildJobHealthRecord, parseFrontmatter } from '../lib/job-health.mjs';
 import { writeStateFile, writeAtomic } from '../lib/state-writer.mjs';
-import { DEFAULT_VAULT_ROOT, VAULT_PATHS, VAULT_REL, VAULT_ROOT } from '../lib/vault-paths.mjs';
+import { DEFAULT_VAULT_ROOT, VAULT_PATHS, VAULT_REL, VAULT_ROOT, vaultAbs } from '../lib/vault-paths.mjs';
+import { buildHandoffSummaryArgs, createConversation } from '../lib/telegram-gate-conversation.mjs';
+import { buildGateReadEnv, runGateClaude } from '../lib/telegram-gate-llm.mjs';
+import { businessDay, createSessionStore } from '../lib/telegram-gate-session.mjs';
+import { createJournal, handoffNoteRelPath } from '../lib/telegram-gate-journal.mjs';
+import { confirmOpenSinceSec, createConfirmStore } from '../lib/telegram-gate-confirm.mjs';
+import { createGateMcpTools, gateMcpToolNames } from '../lib/telegram-gate-mcp-tools.mjs';
+import { isShadowMode } from '../lib/shadow-mode.mjs';
 
 // 발신 카탈로그 대조용(vault-job-catalog-audit): 관문의 답장·경고는 제우스 이름으로 나간다(세부 담당 답은 처리기가 담당 헤더로).
 const SENDER_AGENT = 'zeus';
@@ -55,6 +63,7 @@ const BACKLOG_NOTICE_MS = 2 * 60 * 1000;
 // 409와 성공이 번갈아 오는 가로채기에서 경고·복구가 반복되지 않게, 복구 알림은 이만큼 연속 정상일 때만 보낸다.
 export const RECOVERY_CONFIRM_MS = 5 * 60 * 1000;
 const MAINTENANCE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const TICK_INTERVAL_MS = 60 * 1000;
 
 function sleepChunked(ms, { onBeat, isStopping, sleep }) {
   return (async () => {
@@ -71,7 +80,7 @@ function sleepChunked(ms, { onBeat, isStopping, sleep }) {
 // deps는 시험에서 가짜로 바꾼다: api{getUpdates, react, getFile, download}, send(message), now, sleep, exit, heartbeatWriter …
 export function createGateDaemon({ gate, inbox, api, send, warn = null, now = () => new Date(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   exit = (code) => process.exit(code), selfCheck, statusExtras = () => ({}), runTool, wiki, writeHeartbeat = async () => {},
-  log = (line) => console.log(line), listPollers = () => [] } = {}) {
+  log = (line) => console.log(line), listPollers = () => [], conversation = null, confirmStore = null, journal = null } = {}) {
   const startedAt = now().getTime();
   const state = {
     stopping: false,
@@ -84,7 +93,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     healthySince: null,
     lastPollError: null,
     backlogChecked: false,
-    processing: { main: null, media: null },
+    processing: { main: null, media: null, llm: null },
   };
   let pollAbort = null;
   const waiters = new Set();
@@ -115,9 +124,11 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
       runTool,
       telegram: { getFile: api.getFile, download: api.download },
       wiki,
-      selfCheck: () => selfCheck({ state, now: now() }),
+      selfCheck: () => selfCheck({ state, now: now(), lastRun: conversation?.state.lastRun ?? null }),
       status: () => ({
-        startedAt, now: now().getTime(), lastPollOkAt: state.lastPollOkAt, counts: inbox.counts(), mode: gate.mode, ...statusExtras(),
+        startedAt, now: now().getTime(), lastPollOkAt: state.lastPollOkAt, counts: inbox.counts(), mode: gate.mode,
+        llm: conversation ? { running: conversation.isRunning(), queued: llmQueue().length, lastRun: conversation.state.lastRun, rateLimit: conversation.state.lastRateLimit } : null,
+        ...statusExtras(),
       }),
       mediaDir: gateMediaDir(gate.stateDir),
       testMode: gate.mode === 'test',
@@ -126,8 +137,40 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     });
   }
 
+  // 확인 질문을 실제로 보낸 확인 대기만 연다(보낸 시각 이후 메시지만 응·아니로 본다, 2단계 리뷰 HIGH-1).
+  const confirmOpenSince = () => confirmOpenSinceSec(confirmStore?.pending(now()));
+  const routeOf = (item) => routeUpdate(item.update, { allowFrom: gate.allowFrom, confirmOpenSince: confirmOpenSince() });
+  // 확인 질문 뒤, 이 "응"보다 먼저 보낸 다른 입력이 있으면(줄 처리 순서와 무관하게) 다른 주제로 본다(2단계 리뷰 MEDIUM).
+  function hasEarlierOtherInput(item, since) {
+    const me = item.update.message;
+    return [...inbox.pending(), ...inbox.inFlight()].some((other) => {
+      const m = other.update?.message;
+      if (!m || other.updateId === item.updateId || !Number.isFinite(m.date) || m.date <= since) return false;
+      const earlier = m.date < me.date || (m.date === me.date && m.message_id < me.message_id);
+      if (!earlier) return false;
+      const r = routeOf(other);
+      return r.action === 'handle' && !KEEPS_CONFIRM.has(r.route);
+    });
+  }
+  const llmQueue = () => inbox.pending().filter((item) => laneOf(routeOf(item)) === 'llm');
+  // 확인 대기 중에도 닫지 않는 입력(상태 확인·생존 확인). 그 밖의 오너 입력은 "다른 주제"로 확인 대기를 닫는다.
+  const KEEPS_CONFIRM = new Set(['confirm', 'status', 'greeting']);
+
+  async function cancelRoute(args, meta) {
+    const runningCancelled = conversation?.cancel() ?? false;
+    let queuedCancelled = 0;
+    if (args.all) {
+      for (const item of llmQueue()) { inbox.markStatus(item.updateId, '완료', '취소 전부로 취소됨'); queuedCancelled += 1; }
+      conversation?.setQueued(0);
+    }
+    if (!runningCancelled && !queuedCancelled) return null; // 처리기의 "취소할 작업 없음" 답으로
+    // 실행 중인 대화는 대화 줄이 진행 메시지를 "취소함"으로 고친다. 대기분만 여기서 알린다.
+    if (queuedCancelled) await reply(meta.chatId)(SENDER_AGENT, '취소', `기다리던 메시지 ${queuedCancelled}건도 처리하지 않습니다.`);
+    return { status: '완료', detail: `취소(실행 중 ${runningCancelled ? 1 : 0}, 대기 ${queuedCancelled})` };
+  }
+
   async function processItem(item, lane = 'main') {
-    const decision = routeUpdate(item.update, { allowFrom: gate.allowFrom });
+    const decision = routeOf(item);
     if (decision.action === 'drop') {
       inbox.markStatus(item.updateId, '버림', decision.reason);
       return;
@@ -142,9 +185,26 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
         inbox.markStatus(item.updateId, '완료', '오래된 스위치 명령 — 실행 안 함');
         return;
       }
-      const result = await buildHandlers(meta, lane)(route, args);
+      // 확인 질문 뒤에 온 다른 입력만 확인 대기를 닫는다(질문 전에 보낸 메시지가 늦게 처리돼도 닫지 않음).
+      const openSince = confirmOpenSince();
+      if (conversation && !KEEPS_CONFIRM.has(route) && openSince !== null && Number.isFinite(meta.date) && meta.date > openSince) {
+        await conversation.closeConfirm('다른 주제', meta.chatId);
+      }
+      let result = null;
+      if (route === 'confirm' && conversation) {
+        const since = confirmOpenSince();
+        if (since !== null && hasEarlierOtherInput(item, since)) {
+          await conversation.closeConfirm('다른 주제', meta.chatId);
+          result = { status: '완료', detail: '확인 답보다 먼저 온 다른 입력 — 접수 안 함' };
+        } else {
+          result = await conversation.handleConfirm(args, meta);
+        }
+      }
+      else if (route === 'cancel') result = await cancelRoute(args, meta);
+      if (!result) result = await buildHandlers(meta, lane)(route, args);
       // 종료로 끊긴 건은 '처리중'으로 둔다 — 재시작 때 확인필요 안내 경로를 탄다.
       if (!result.interruptedByShutdown) inbox.markStatus(item.updateId, result.status, result.detail ?? '');
+      journal?.append({ type: 'det', route, status: result.status, detail: String(result.detail ?? '').slice(0, 200) });
     } catch (error) {
       // 처리기 자체가 실패 답장까지 못 보낸 경우(네트워크 등). 다시 실행하지 않는다.
       inbox.markStatus(item.updateId, '실패', error.message);
@@ -157,11 +217,47 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
   // 줄(lane)마다 하나씩 처리한다. main: 스위치·기록·상태 등, media: 음성·사진(오래 걸림). 같은 건을 두 줄이 집지 않게
   // 고르는 즉시 processItem이 '처리중'으로 바꾼다(await 전 동기 구간).
   function nextFor(lane) {
-    return inbox.pending().find((item) => laneOf(routeUpdate(item.update, { allowFrom: gate.allowFrom })) === lane) ?? null;
+    return inbox.pending().find((item) => laneOf(routeOf(item)) === lane) ?? null;
+  }
+
+  // 대화 줄: 쌓인 대화 입력을 모두 집어 한 번에 처리한다(Q6). 고르는 즉시 전부 '처리중'.
+  async function processLlmBatch() {
+    const batch = llmQueue();
+    if (!batch.length) return false;
+    const items = [];
+    for (const item of batch) {
+      const decision = routeOf(item);
+      inbox.markStatus(item.updateId, '처리중', 'llm');
+      items.push({ updateId: item.updateId, meta: decision.meta, args: decision.args });
+    }
+    state.processing.llm = { updateIds: items.map((i) => i.updateId), since: now().toISOString() };
+    conversation.setQueued(0);
+    try {
+      // 확인 질문 뒤에 온 대화가 있으면 다른 주제로 닫는다(질문 전에 보낸 대화는 닫지 않음).
+      const openSince = confirmOpenSince();
+      if (openSince !== null && items.some((i) => Number.isFinite(i.meta.date) && i.meta.date > openSince)) {
+        await conversation.closeConfirm('다른 주제', items[0].meta.chatId);
+      }
+      const result = await conversation.processBatch(items);
+      // 관문 종료로 끊긴 대화는 '처리중'으로 둔다 — 재시작 때 확인필요 안내로 간다.
+      if (!result.interruptedByShutdown) for (const item of items) inbox.markStatus(item.updateId, result.status, result.detail ?? '');
+    } catch (error) {
+      for (const item of items) inbox.markStatus(item.updateId, '실패', error.message);
+      log(`[gate] 대화 줄 실패: ${error.message}`);
+    } finally {
+      state.processing.llm = null;
+    }
+    return true;
   }
 
   async function workerLoop(lane = 'main') {
     while (!state.stopping) {
+      if (lane === 'llm' && conversation) {
+        if (!(await processLlmBatch())) {
+          await new Promise((r) => { const done = () => { waiters.delete(done); clearTimeout(t); r(); }; const t = setTimeout(done, 1000); waiters.add(done); });
+        }
+        continue;
+      }
       const next = nextFor(lane);
       if (!next) {
         await new Promise((r) => {
@@ -228,7 +324,11 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
           state.backlogChecked = true;
           await announceBacklog();
         }
-        if (fresh) wakeAll();
+        if (fresh) {
+          // 대화 실행 중에 새 대화 입력이 오면 진행 메시지에 대기 건수를 보인다.
+          if (conversation?.isRunning()) conversation.setQueued(llmQueue().length);
+          wakeAll();
+        }
       } catch (error) {
         if (error?.name === 'AbortError' && !state.stopping) {
           await handlePollError(Object.assign(new Error('getUpdates 응답 시간 초과'), { network: true }));
@@ -281,9 +381,17 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     }
   }
 
+  async function minuteTick() {
+    if (!conversation) return;
+    await conversation.closeConfirm('만료', gate.config.chatId);
+    await conversation.writeHandoffIfDue(now());
+  }
+
   return {
     state,
     processItem,
+    processLlmBatch,
+    minuteTick,
     watchdogCheck,
     heartbeat,
     announceRecovered,
@@ -296,6 +404,8 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
       // media 줄(음성 전사)만 끝낸다 — 노트는 전사가 끝난 뒤에만 생겨 끊어도 기록 중복이 없다. main 줄 도구(기록·스위치)는
       // 끝날 때까지 기다려 상태를 완료로 남긴다(main()이 최대 10초 기다린 뒤 종료).
       killRunningGateTools('SIGTERM', { group: 'media' });
+      // 대화도 멈춘다(세션은 다음 --resume에서 이어진다). 끊긴 대화 입력은 재시작 때 확인필요 안내로 간다.
+      conversation?.cancel();
       wakeAll();
     },
     async run() {
@@ -308,17 +418,24 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
       state.lastTickAt = now().getTime();
       state.lastPollProgressAt = now().getTime();
       const maintenance = setInterval(() => {
-        try { inbox.compact(); pruneGateMedia(gateMediaDir(gate.stateDir), { now: now() }); } catch (e) { log(`[gate] 정리 실패: ${e.message}`); }
+        try {
+          inbox.compact();
+          pruneGateMedia(gateMediaDir(gate.stateDir), { now: now() });
+          if (gate.llmMediaDir) pruneGateMedia(gate.llmMediaDir, { now: now() });
+        } catch (e) { log(`[gate] 정리 실패: ${e.message}`); }
       }, MAINTENANCE_INTERVAL_MS);
       const watchdog = setInterval(() => {
         const reason = watchdogCheck();
         if (reason) { log(`[gate] 감시견: ${reason} — 종료(launchd가 다시 띄움)`); exit(1); }
       }, WATCHDOG_INTERVAL_MS);
       const beat = setInterval(() => { heartbeat().catch((e) => log(`[gate] 하트비트 실패: ${e.message}`)); }, HEARTBEAT_INTERVAL_MS);
+      // 1분 틱: 확인 대기 만료, 업무일이 바뀌면 전날 인수인계 노트.
+      const tick = setInterval(() => { minuteTick().catch((e) => log(`[gate] 1분 점검 실패: ${e.message}`)); }, TICK_INTERVAL_MS);
       try {
         // 첫 하트비트는 5분 뒤 — 시작 직후엔 수신 성공 전이라 FAIL로 남아 재시작마다 잡음이 생긴다.
-        await Promise.all([pollLoop(), workerLoop('main'), workerLoop('media')]);
+        await Promise.all([pollLoop(), workerLoop('main'), workerLoop('media'), workerLoop('llm')]);
       } finally {
+        clearInterval(tick);
         clearInterval(watchdog);
         clearInterval(beat);
         clearInterval(maintenance);
@@ -328,8 +445,9 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
 }
 
 // 안녕 점검: 관문 수신 정상 + 2단계 LLM 경로의 전제(claude 실행 파일, 사용량 쿨다운 없음). LLM은 부르지 않는다.
-export function gateSelfCheck({ state, now, claudeBin = resolveClaudeBin(), exists = existsSync, cooldown = getCooldown() }) {
+export function gateSelfCheck({ state, now, claudeBin = resolveClaudeBin(), exists = existsSync, cooldown = getCooldown(), lastRun = null }) {
   const problems = [];
+  if (lastRun && lastRun.ok === false) problems.push(`마지막 대화 처리가 ${lastRun.status}로 끝남`);
   if (!state.lastPollOkAt || now.getTime() - Date.parse(state.lastPollOkAt) > 3 * 60 * 1000) problems.push('수신 루프가 최근 3분 안에 성공하지 않음');
   if (!(claudeBin.startsWith('/') ? exists(claudeBin) : true)) problems.push(`claude 실행 파일 없음: ${claudeBin}`);
   if (cooldown) problems.push(`사용량 한도 쿨다운 중(해제 ${new Date(cooldown.resetAt).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false })})`);
@@ -365,6 +483,75 @@ export function installExitCleanup({ proc = process, kill = killRunningGateTools
   });
 }
 
+function readText(path) {
+  try { return readFileSync(path, 'utf8'); } catch { return null; }
+}
+
+// 대화 줄 조립(실제 네트워크·프로세스). 시험은 createConversation에 가짜를 넣는다.
+function buildConversationDeps({ gate, options, journal, confirmStore }) {
+  // 시험 모드면 관문 MCP 도구가 외부 서비스(구글 캘린더·할 일)에 쓰지 않게 모드를 넘긴다(2단계 리뷰 MEDIUM).
+  const mediaDir = gate.llmMediaDir;
+  const spawnEnv = {
+    ...buildGateSpawnEnv(process.env, { stateDir: gate.stateDir }),
+    TELEGRAM_GATE_MODE: gate.mode,
+    // 읽기 경로 제한 훅의 허용 뿌리(볼트·저장소·사진 폴더)와 금고(2단계 리뷰 HIGH-3).
+    ...buildGateReadEnv({ vaultRoot: VAULT_ROOT, mediaDir, adytonDir: vaultAbs(VAULT_REL.adytonRoot) }),
+  };
+  const handoffPath = (day) => handoffNoteRelPath(VAULT_PATHS.log.telegramSession, day);
+  const send = (message, chatId) => sendAgentMessage(message, chatId, options);
+  return {
+    send,
+    // 인수인계 노트를 반복해서 못 쓰면 알린다. 실전은 경고 원장, 시험은 원장 없이 시험 봇으로만.
+    warn: gate.mode === 'live'
+      ? createDirectWarningSender(sendAgentMessage, { jobName: 'telegram-gate', warningCode: 'TELEGRAM_GATE_HANDOFF', subjectKey: 'telegram-gate-handoff', kind: 'operational', severity: 'medium' })
+      : (message) => send(message, gate.config.chatId),
+    edit: (messageId, message, chatId) => editAgentMessage(messageId, message, chatId, options),
+    del: (messageId, chatId) => deleteTelegramMessage({ chatId, messageId }, options),
+    downloadPhoto: async (fileId) => {
+      const file = await getTelegramFile(fileId, options);
+      const buffer = await downloadTelegramFile(file.file_path, options);
+      mkdirSync(mediaDir, { recursive: true, mode: 0o700 });
+      const path = join(mediaDir, `${Date.now()}-${String(file.file_unique_id ?? 'photo').replace(/[^A-Za-z0-9_-]/g, '_')}.jpg`);
+      writeAtomic(path, buffer);
+      return path;
+    },
+    runner: ({ args, env, onEvent }) => runGateClaude({ args, env, onEvent }),
+    spawnEnv,
+    cooldown: () => getCooldown(),
+    readRules: () => ({
+      inputRules: readText(vaultAbs(VAULT_REL.telegramInputRulesFile)) ?? '',
+      sessionRules: readText(vaultAbs(VAULT_REL.telegramChannelFile)) ?? '',
+    }),
+    readHandoff: (day) => {
+      const text = readText(handoffPath(day));
+      return text ? text.replace(/^---\n[\s\S]*?\n---\n/, '').trim() : null;
+    },
+    writeHandoff: (day, content) => {
+      const path = handoffPath(day);
+      // 멱등: 같은 날 노트가 이미 있으면 덮어쓰지 않는다(겹친 호출·옛 잡과의 충돌, 2단계 리뷰 HIGH-2).
+      if (existsSync(path)) return;
+      // 볼트 쓰기 관문과 같은 검사(경로 등록부). 어긋나면 쓰지 않는다.
+      const problems = checkNote(relative(VAULT_PATHS.root, path), content, parseRegistry(readFileSync(vaultAbs(VAULT_REL.registryFile), 'utf8')));
+      if (problems.length) throw new Error(`등록부 검사 실패: ${problems.join('; ')}`);
+      mkdirSync(dirname(path), { recursive: true });
+      writeAtomic(path, content);
+    },
+    summarize: async (day, entries) => {
+      // 요약은 3분 안에 끝나야 한다(겹침 방지와 함께 사용량 보호, 2단계 리뷰 HIGH-2).
+      const res = await runGateClaude({ args: buildHandoffSummaryArgs(day, entries), env: spawnEnv, hardTimeoutMs: 3 * 60 * 1000 }).promise;
+      if (res.isError || !res.structured) throw new Error(res.isError ? '요약 실행 실패' : '요약 구조화 출력 없음');
+      return res.structured;
+    },
+    // 확인 문구에 "실제 주문이 나간다"를 붙일지. 파일이 없거나 이상하면 섀도우로 본다(shadow-mode 안전 기본값).
+    isLive: () => !isShadowMode(readText(VAULT_PATHS.state.executionMode) ?? ''),
+    mcpToolNames: gateMcpToolNames(createGateMcpTools()),
+    journal,
+    sessionStore: createSessionStore({ stateDir: gate.stateDir }),
+    confirmStore,
+    log: (line) => console.log(line),
+  };
+}
+
 function selfTest() {
   const claudeBin = resolveClaudeBin();
   let claudeVersion = '(확인 실패)';
@@ -389,7 +576,14 @@ async function main() {
   assertTestIsolation({ mode: gate.mode, vaultRoot: gate.vaultRoot, processVaultRoot: VAULT_ROOT, realVaultRoot: DEFAULT_VAULT_ROOT });
   const inbox = createGateInbox({ dir: gate.stateDir });
   const options = { config: gate.config };
+  const journal = createJournal({ stateDir: gate.stateDir, dayOf: businessDay });
+  const confirmStore = createConfirmStore({ stateDir: gate.stateDir });
+  let daemonRef = null;
+  const conversation = createConversation({ ...buildConversationDeps({ gate, options, journal, confirmStore }), isStopping: () => Boolean(daemonRef?.state.stopping) });
   const daemon = createGateDaemon({
+    conversation,
+    confirmStore,
+    journal,
     gate,
     inbox,
     api: {
@@ -404,7 +598,7 @@ async function main() {
         jobName: 'telegram-gate', warningCode: 'TELEGRAM_GATE_POLL', subjectKey: 'telegram-gate', kind: 'operational', severity: 'high',
       })
       : null,
-    selfCheck: ({ state, now }) => gateSelfCheck({ state, now }),
+    selfCheck: ({ state, now, lastRun }) => gateSelfCheck({ state, now, lastRun }),
     statusExtras: () => ({ cooldown: getCooldown(), freeMemPct: Math.round((freemem() / totalmem()) * 100) }),
     wiki: { resolve: resolveWikiQuestion, apply: applyWikiQuestion },
     writeHeartbeat: async (beat) => {
@@ -414,6 +608,7 @@ async function main() {
     },
     listPollers: listTelegramPollers,
   });
+  daemonRef = daemon;
   installExitCleanup();
   console.log(`[gate] 시작 mode=${gate.mode} node=${process.version} claude=${resolveClaudeBin()} state=${gate.stateDir}`);
   const stop = (signal) => { console.log(`[gate] ${signal} — 종료`); daemon.stop(); setTimeout(() => process.exit(0), 10_000).unref(); };

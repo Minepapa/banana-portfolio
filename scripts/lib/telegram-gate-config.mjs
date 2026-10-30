@@ -20,7 +20,12 @@ export function defaultGatePaths({ home = homedir() } = {}) {
     access: join(home, '.claude', 'channels', 'telegram', 'access.json'),
     testEnv: join(home, '.config', 'banana-portfolio-v2', 'telegram-gate-test.env'),
     liveStateDir: join(home, '.config', 'banana-portfolio-v2', 'telegram-gate'),
-    testStateDir: join(home, '.config', 'banana-portfolio-v2', 'telegram-gate-test'),
+    // 시험 상태(시험 볼트 포함)는 ~/.cache에 둔다 — 관문 LLM은 ~/.config 전체를 읽지 못하게 막는데(자격증명),
+    // 시험 볼트는 LLM이 읽어야 하기 때문이다(2단계 리뷰 HIGH-3).
+    testStateDir: join(home, '.cache', 'banana-portfolio-v2', 'telegram-gate-test'),
+    // 관문 LLM이 판독할 사진을 내려받는 곳(읽기 허용 뿌리, ~/.config 밖).
+    liveLlmMediaDir: join(home, '.cache', 'banana-portfolio-v2', 'telegram-gate-media'),
+    testLlmMediaDir: join(home, '.cache', 'banana-portfolio-v2', 'telegram-gate-test-media'),
   };
 }
 
@@ -58,7 +63,7 @@ export function loadGateConfig({ mode = 'live', env = process.env, paths = defau
     const config = loadLive({ envPath: paths.liveEnv, accessPath: paths.access });
     const allowFrom = new Set(readAllowFrom(paths.access, readFile));
     if (!allowFrom.size) throw new Error('관문 허용 사용자가 없습니다(access.json allowFrom)');
-    return { mode, config, allowFrom, stateDir: env.TELEGRAM_GATE_STATE_DIR || paths.liveStateDir, heartbeatJob: 'telegram-gate', vaultRoot: null };
+    return { mode, config, allowFrom, stateDir: env.TELEGRAM_GATE_STATE_DIR || paths.liveStateDir, heartbeatJob: 'telegram-gate', vaultRoot: null, llmMediaDir: paths.liveLlmMediaDir };
   }
   if (mode !== 'test') throw new Error(`관문 모드는 live 또는 test: ${mode}`);
   const testEnvPath = env.TELEGRAM_GATE_TEST_ENV || paths.testEnv;
@@ -82,6 +87,7 @@ export function loadGateConfig({ mode = 'live', env = process.env, paths = defau
     heartbeatJob: null,
     // 시험 모드의 볼트: 스위치·기록·질문 큐·장부 쓰기가 전부 여기로 간다(데몬이 VAULT_PATH를 이 폴더로 두고 다시 뜬다).
     vaultRoot: join(stateDir, 'vault'),
+    llmMediaDir: paths.testLlmMediaDir,
   };
 }
 
@@ -104,10 +110,12 @@ export function assertTestIsolation({ mode, vaultRoot, processVaultRoot, realVau
   }
 }
 
-export function buildGateSpawnEnv(base = process.env) {
+// stateDir(선택): 관문 MCP 도구(확인 대기 접수)가 관문 상태 폴더를 찾게 TELEGRAM_GATE_STATE_DIR로 넘긴다.
+export function buildGateSpawnEnv(base = process.env, { stateDir } = {}) {
   const env = { ...base };
   delete env.CLAUDE_TELEGRAM_SESSION;
   delete env.TELEGRAM_BOT_TOKEN;
   env.CLAUDE_TELEGRAM_GATE = '1';
+  if (stateDir) env.TELEGRAM_GATE_STATE_DIR = stateDir;
   return env;
 }

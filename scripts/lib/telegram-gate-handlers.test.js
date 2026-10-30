@@ -269,3 +269,18 @@ test('처리기 lane: media 줄 도구는 media 그룹으로 띄운다(종료 �
     assert.deepEqual(groups, ['media']);
   } finally { s.cleanup(); }
 });
+
+test('상태 표: 대화 줄(처리 중·대기·최근 실패)과 사용량(5시간·7일)을 보인다', () => {
+  const body = buildStatusBody({ startedAt: 0, now: 60_000, lastPollOkAt: null, counts: {}, cooldown: null, freeMemPct: 20, mode: 'live',
+    llm: { running: true, queued: 2, lastRun: { status: '시간 초과' }, rateLimit: { unifiedWindows: { five_hour: { utilization: 0.05 }, seven_day: { utilization: 0.31 } } } } });
+  assert.match(body, /처리 중 · 대기 2 · 최근 시간 초과/);
+  assert.match(body, /5시간 5% · 7일 31%/);
+});
+
+test('isGateToolAllowed: 결정론·LLM 도구와 선언된 사실 도구만, 돈 도구는 어디에도 없다', async () => {
+  const { isGateToolAllowed, LLM_GATE_TOOLS } = await import('./telegram-gate-handlers.mjs');
+  for (const t of ['kill-switch-cli.mjs', 'calendar-add-event.mjs', 'rebalance-facts.mjs']) assert.equal(isGateToolAllowed(t), true, t);
+  for (const t of ['place-nh-direct-order.mjs', 'modify-cancel-nh-order.mjs', 'retry-breakout-protection.mjs', 'execute-proposal.mjs', 'quant-factor-facts.mjs', '../x-facts.mjs'])
+    assert.equal(isGateToolAllowed(t), false, t);
+  assert.equal([...GATE_TOOLS, ...LLM_GATE_TOOLS].some((t) => /order|breakout|execute/.test(t)), false);
+});

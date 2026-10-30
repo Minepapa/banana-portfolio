@@ -15,8 +15,9 @@ import { fileURLToPath } from 'node:url';
 import { assertTestIsolation, defaultGatePaths } from '../lib/telegram-gate-config.mjs';
 import { DEFAULT_VAULT_ROOT, VAULT_REL, VAULT_ROOT } from '../lib/vault-paths.mjs';
 
-// 복사해도 되는 구조 파일(규칙·스키마만, 개인 기록 없음). 늘릴 때도 규칙층(90_Delphi/Schema) 파일만 넣는다.
-export const SEED_FILES = Object.freeze([VAULT_REL.registryFile, VAULT_REL.statusStandardFile]);
+// 복사해도 되는 구조 파일(규칙층 90_Delphi의 스키마·채널 규칙만, 개인 기록 없음). 2단계부터 관문 LLM 시스템 프롬프트가
+// 텔레그램 입력 규칙·세션 운영 규칙 원문을 읽으므로 두 채널 규칙도 넣는다.
+export const SEED_FILES = Object.freeze([VAULT_REL.registryFile, VAULT_REL.statusStandardFile, VAULT_REL.telegramInputRulesFile, VAULT_REL.telegramChannelFile]);
 
 export function testVaultRoot(env = process.env) {
   return join(env.TELEGRAM_GATE_STATE_DIR || defaultGatePaths().testStateDir, 'vault');

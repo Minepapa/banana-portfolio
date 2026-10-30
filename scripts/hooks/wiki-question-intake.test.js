@@ -38,11 +38,11 @@ test('텔레그램 채널 변수가 없으면 main은 입력을 읽지 않고 �
   assert.equal(reads, 0);
 });
 
-test('상시 세션·관문 헤드리스(CLAUDE_TELEGRAM_GATE) 모두 입력을 읽어 처리한다(2026-10-30)', async () => {
-  for (const env of [{ CLAUDE_TELEGRAM_SESSION: '1' }, { CLAUDE_TELEGRAM_GATE: '1' }]) {
-    let reads = 0;
-    // 빈 prompt라 질문 큐를 건드리지 않고 끝난다 — 입력을 읽었는지만 본다.
-    await main({ env, readInput: () => { reads += 1; return '{"prompt":""}'; } });
-    assert.equal(reads, 1, JSON.stringify(env));
-  }
+test('상시 세션만 입력을 읽는다 — 관문 헤드리스(GATE)는 WQ를 결정론으로 처리하므로 훅이 자동 적용하지 않는다(2026-10-30 2단계)', async () => {
+  let reads = 0;
+  // 빈 prompt라 질문 큐를 건드리지 않고 끝난다 — 입력을 읽었는지만 본다.
+  await main({ env: { CLAUDE_TELEGRAM_SESSION: '1' }, readInput: () => { reads += 1; return '{"prompt":""}'; } });
+  assert.equal(reads, 1);
+  await main({ env: { CLAUDE_TELEGRAM_GATE: '1' }, readInput: () => { reads += 1; return '{"prompt":"WQ-20261030-abcd1234 등록"}'; } });
+  assert.equal(reads, 1, '관문 실행에서는 읽지 않음');
 });

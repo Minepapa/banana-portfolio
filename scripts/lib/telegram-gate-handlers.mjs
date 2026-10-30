@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildGateSpawnEnv } from './telegram-gate-config.mjs';
+import { factsCatalog } from './facts-catalog.mjs';
 import { escapeHtml } from './telegram.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -52,8 +53,27 @@ export function runningGateToolCount() {
   return RUNNING.size;
 }
 
-export function runGateTool(tool, args = [], { input = null, timeoutMs = TOOL_TIMEOUT_MS, env = buildGateSpawnEnv(), spawnImpl = spawn, group = 'main' } = {}) {
-  if (!GATE_TOOLS.includes(tool)) return Promise.reject(new Error(`관문 허용 목록에 없는 도구: ${tool}`));
+// 2단계 LLM이 관문 MCP 도구(telegram-gate-mcp)를 거쳐 부를 수 있는 운영 도구. 돈 도구(주문·정정취소·손절·제안 체결)는
+// 여기에도 없다 — 그것들은 확인 대기(telegram-gate-confirm) 뒤 관문만 실행한다. 사실 도구(*-facts.mjs)는 각 도구의 자기 선언
+// (facts-catalog)으로 허용한다(규칙에 고정 목록을 적지 않는다).
+export const LLM_GATE_TOOLS = Object.freeze([
+  'calendar-add-event.mjs',
+  'tasks-add.mjs',
+  'tasks-delete.mjs',
+  'place-register.mjs',
+  'inbox-memo.mjs',
+  'process-telegram-reply.mjs',
+  'wiki-question-cli.mjs',
+  'department-call-facts.mjs',
+]);
+
+export function isGateToolAllowed(tool, { factsFiles = () => factsCatalog().filter((e) => !e.deprecated).map((e) => e.filename) } = {}) {
+  if (GATE_TOOLS.includes(tool) || LLM_GATE_TOOLS.includes(tool)) return true;
+  return /^[a-z0-9-]+-facts\.mjs$/.test(tool) && factsFiles().includes(tool);
+}
+
+export function runGateTool(tool, args = [], { input = null, timeoutMs = TOOL_TIMEOUT_MS, env = buildGateSpawnEnv(), spawnImpl = spawn, group = 'main', allowed = isGateToolAllowed } = {}) {
+  if (!allowed(tool)) return Promise.reject(new Error(`관문 허용 목록에 없는 도구: ${tool}`));
   return new Promise((resolvePromise, reject) => {
     const child = spawnImpl(process.execPath, [join(REPO_ROOT, 'scripts', 'tools', tool), ...args], {
       cwd: REPO_ROOT, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true,
@@ -96,14 +116,32 @@ function kstTime(iso) {
 }
 
 // 순수 함수: 상태 표(<pre>, 폰 한 줄 44칸 안). 2단계 전이라 LLM 줄은 준비 중으로 표시한다.
-export function buildStatusBody({ startedAt, now, lastPollOkAt, counts, cooldown, freeMemPct, mode }) {
+function llmLine(llm) {
+  if (!llm) return '대화 처리 꺼짐';
+  const parts = [llm.running ? '처리 중' : '쉬는 중'];
+  if (llm.queued) parts.push(`대기 ${llm.queued}`);
+  if (llm.lastRun?.status && llm.lastRun.status !== '완료') parts.push(`최근 ${llm.lastRun.status}`);
+  return parts.join(' · ');
+}
+
+function usageLine(cooldown, rateLimit) {
+  if (cooldown) return `한도 쿨다운 ~${kstTime(new Date(cooldown.resetAt).toISOString())}`;
+  const w = rateLimit?.unifiedWindows;
+  if (w?.five_hour || w?.seven_day) {
+    const pct = (x) => (Number.isFinite(x?.utilization) ? `${Math.round(x.utilization * 100)}%` : '?');
+    return `5시간 ${pct(w.five_hour)} · 7일 ${pct(w.seven_day)}`;
+  }
+  return '쿨다운 없음';
+}
+
+export function buildStatusBody({ startedAt, now, lastPollOkAt, counts, cooldown, freeMemPct, mode, llm = null }) {
   const pending = (counts['받음'] ?? 0) + (counts['처리중'] ?? 0);
   const rows = [
     ['관문', `정상 · 가동 ${formatDuration(now - startedAt)}${mode === 'test' ? ' · 시험' : ''}`],
     ['수신', `마지막 ${kstTime(lastPollOkAt)} · 밀린 것 ${pending}`],
     ['확인', `끊긴 메시지 ${counts['확인필요'] ?? 0}`],
-    ['LLM', '2단계 전(대화 처리 준비 중)'],
-    ['사용량', cooldown ? `한도 쿨다운 ~${kstTime(new Date(cooldown.resetAt).toISOString())}` : '쿨다운 없음'],
+    ['LLM', llmLine(llm)],
+    ['사용량', usageLine(cooldown, llm?.rateLimit)],
     ['메모리', `여유 ${freeMemPct}%`],
   ];
   // 폰 고정폭 글꼴에서 한글은 2칸 — 칸 너비로 맞춰 값 열이 한 줄로 서게 한다.

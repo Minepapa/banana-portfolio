@@ -14,7 +14,7 @@ function withRoots(fn) {
   try { return fn({ source, target }); } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
-test('seedTestVault: 구조 파일(등록부·상태표준)만 복사한다', () => withRoots(({ source, target }) => {
+test('seedTestVault: 구조 파일(등록부·상태표준·채널 규칙)만 복사한다', () => withRoots(({ source, target }) => {
   for (const rel of SEED_FILES) {
     mkdirSync(dirname(join(source, rel)), { recursive: true });
     writeFileSync(join(source, rel), `구조 ${rel}`);
@@ -24,7 +24,7 @@ test('seedTestVault: 구조 파일(등록부·상태표준)만 복사한다', ()
   assert.deepEqual(seedTestVault({ sourceRoot: source, targetRoot: target }), [...SEED_FILES]);
   assert.equal(readFileSync(join(target, VAULT_REL.registryFile), 'utf8'), `구조 ${VAULT_REL.registryFile}`);
   assert.equal(existsSync(join(target, VAULT_REL.inboxRoot)), false, '개인 노트 폴더는 복사하지 않음');
-  assert.ok(SEED_FILES.every((rel) => rel.startsWith('90_Delphi/Schema/')));
+  assert.ok(SEED_FILES.every((rel) => rel.startsWith('90_Delphi/Schema/') || rel.startsWith('90_Delphi/Channels/')));
 }));
 
 test('seedTestVault: 금고 경로·상위 경로는 거부한다', () => withRoots(({ source, target }) => {

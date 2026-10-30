@@ -128,3 +128,10 @@ test('assertTestIsolation: 시험 볼트가 실제 볼트를 가리키는 심볼
     assert.doesNotThrow(() => assertTestIsolation({ mode: 'test', vaultRoot: okVault, processVaultRoot: okVault, realVaultRoot: real }));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('buildGateSpawnEnv: stateDir를 주면 관문 MCP 도구용 TELEGRAM_GATE_STATE_DIR를 넣는다', () => {
+  const env = buildGateSpawnEnv({ PATH: '/b', CLAUDE_TELEGRAM_SESSION: '1' }, { stateDir: '/s' });
+  assert.equal(env.TELEGRAM_GATE_STATE_DIR, '/s');
+  assert.equal(env.CLAUDE_TELEGRAM_GATE, '1');
+  assert.equal('CLAUDE_TELEGRAM_SESSION' in env, false);
+});
