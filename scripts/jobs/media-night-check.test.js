@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { renderAgentMessage } from '../lib/pantheon-send.mjs';
 import { NIGHT_BLOCKS, buildNightMessage, judgeBlocks, renderNightCheck, replaceBlock, runFacts, lastRunLines, newConversationNotes, safeReason,
-  runNightCheck, summarizeDetail, main } from './media-night-check.mjs';
+  runNightCheck, summarizeDetail, main, nightCheckSnapshot } from './media-night-check.mjs';
 
 const now = new Date('2026-10-19T05:00:00+09:00');
 function vault(t, overrides = {}) {
@@ -26,6 +26,9 @@ function vault(t, overrides = {}) {
   writeFileSync(board, '---\ntype: "feature"\n---\n# 현황판\n\n## ■ 한눈에 보기\n표\n');
   return { root, board };
 }
+
+// 시험이 진짜 판단 기록(~/Pantheon/Media)을 읽지 않게 한다.
+const emptyOrbs = () => ({ schemaVersion: 1, totals: {}, days: [] });
 
 test('밤 점검: 이번 밤 정상 실행만 ✔, 실패·기록 없음은 ✖와 내일 할 일로', (t) => {
   const { root } = vault(t, { 'media-audio': { status: 'FAIL' }, 'media-photo': { lastRun: '2026-10-17T18:00:00.000Z' } });
@@ -63,12 +66,12 @@ test('밤 점검: detail은 앞부분과 태그별 마지막 문장을 보존하
 test('밤 점검: 현황판 칸을 처음엔 한눈에 보기 앞에 넣고, 다음부터는 그 칸만 덮어쓴다', async (t) => {
   const { root, board } = vault(t);
   const output = { log() {} };
-  const first = await runNightCheck({ root, now, output, noSend: true, videoDryRun: () => '대상 5, 총 0.5시간' });
+  const first = await runNightCheck({ root, now, output, noSend: true, videoDryRun: () => '대상 5, 총 0.5시간', buildOrbs: emptyOrbs });
   assert.equal(first.failed, 0);
   const once = readFileSync(board, 'utf8');
   assert.match(once, /## ■ 밤 점검 \(매일 05:00 자동\)[\s\S]*## ■ 한눈에 보기/);
   await runNightCheck({ root, now: new Date(now.getTime() + 86_400_000), output, noSend: true,
-    videoDryRun: () => '대상 0, 총 0시간' });
+    videoDryRun: () => '대상 0, 총 0시간', buildOrbs: emptyOrbs });
   const twice = readFileSync(board, 'utf8');
   assert.equal((twice.match(/night-check:start/g) || []).length, 1);
   assert.equal(replaceBlock('x', '<!-- night-check:start -->a<!-- night-check:end -->').includes('밤 점검'), true);
@@ -79,7 +82,7 @@ test('밤 점검: dry-run은 본문만 출력하고 쓰기·발송을 건너뛰�
   const original = readFileSync(board, 'utf8');
   const logged = []; const sent = [];
   const options = { root, now, output: { log: (line) => logged.push(line) }, videoDryRun: () => '대상 0, 총 0시간',
-    send: async (message) => sent.push(message) };
+    send: async (message) => sent.push(message), buildOrbs: emptyOrbs };
   const dry = await runNightCheck({ ...options, dryRun: true, write: () => assert.fail('dry-run wrote') });
   assert.equal(readFileSync(board, 'utf8'), original);
   assert.deepEqual(sent, []);
@@ -93,7 +96,7 @@ test('밤 점검: 발송은 현황판 쓰기 뒤 한 번, 발송 실패는 쓰�
   const { root, board } = vault(t, { 'media-audio': { detail: '[audio] 처리 0, 실패 0' } });
   const original = readFileSync(board, 'utf8');
   let calls = 0;
-  const options = { root, now, output: { log() {} }, videoDryRun: () => '대상 0, 총 0시간', readLogs: () => [] };
+  const options = { root, now, output: { log() {} }, videoDryRun: () => '대상 0, 총 0시간', readLogs: () => [], buildOrbs: emptyOrbs };
   await runNightCheck({ ...options, send: async (message) => {
     calls += 1;
     assert.notEqual(readFileSync(board, 'utf8'), original);
@@ -113,7 +116,7 @@ test('밤 점검: 현황판 쓰기 실패 후에도 메시지를 보내고 종�
   const { root } = vault(t);
   const sent = [];
   const options = { root, now, output: { log() {}, error() {} }, videoDryRun: () => '대상 0, 총 0시간', readLogs: () => [],
-    write: () => { throw new Error('디스크 오류'); }, send: async (message) => sent.push(message) };
+    write: () => { throw new Error('디스크 오류'); }, send: async (message) => sent.push(message), buildOrbs: emptyOrbs };
   assert.equal(await main([], options), 1);
   assert.equal(sent.length, 1);
   assert.match(sent[0].body, /^현황판 쓰기 실패\n전체 정상/);
@@ -124,7 +127,7 @@ test('밤 점검: CLI는 발송 실패와 블록 이상을 종료코드 1로 보
   const original = readFileSync(board, 'utf8');
   const sent = []; const errors = [];
   const options = { root, now, output: { log() {} }, errorOutput: { error: (line) => errors.push(line) },
-    videoDryRun: () => '대상 0, 총 0시간', send: async (message) => sent.push(message) };
+    videoDryRun: () => '대상 0, 총 0시간', send: async (message) => sent.push(message), buildOrbs: emptyOrbs };
   assert.equal(await main(['--dry-run'], options), 0);
   assert.equal(readFileSync(board, 'utf8'), original);
   assert.equal(sent.length, 0);
@@ -236,4 +239,40 @@ test('밤 점검: 아르고스 전날 점검을 한 칸으로 싣고, 이상은 
   const none = buildNightMessage(judgeBlocks(root, now), { speakerCheck: 0, untitledRecent: 0, video: null },
     { ...base, argos: { day: '2026-10-18', missing: true } });
   assert.match(none, /^주의: 2026-10-18 아르고스 기록 없음/m);
+});
+
+test('nightCheckSnapshot: 블록 상태와 분류별 건수만, 모르는 값은 null, 경로·상세 문장은 넣지 않는다', () => {
+  const blocks = [
+    { block: '공통', job: 'media-archive', time: '매시', ok: true, fresh: true, status: 'OK', lastRun: '2026-10-31T04:30:00Z', detail: '/Users/x/a.jpg 보관' },
+    { block: '🎙 음성', job: 'media-audio', time: '02:00', ok: false, fresh: true, status: 'FAIL', lastRun: '2026-10-31T17:10:00Z', detail: '' },
+    { block: '📷 사진', job: 'media-photo', time: '03:00', ok: false, fresh: false, status: 'OK', lastRun: '2026-10-29T18:00:00Z', detail: '' },
+    { block: '🎬 영상', job: 'media-video', time: '04:00', ok: false, fresh: false, status: '기록 없음', lastRun: null, detail: '' },
+  ];
+  const snap = nightCheckSnapshot(blocks, { speakerCheck: 3, video: { count: 7 } },
+    { transcribed: 5, transcribeFailed: 1, diarizeFailed: null, videoTarget: 2, videoDone: 2, videoFailed: 0, momentsNew: 1, momentsUpdated: null,
+      archived24h: 12, archiveFailed: null, uploadFailed: null }, new Date('2026-10-31T20:00:00Z'));
+  assert.deepEqual([snap.schemaVersion, snap.generatedAt, snap.failedBlocks], [1, '2026-10-31T20:00:00.000Z', 3]);
+  assert.deepEqual(snap.blocks.map((b) => [b.key, b.status]), [['common', 'OK'], ['audio', 'FAIL'], ['photo', 'stale'], ['video', 'none']]);
+  assert.deepEqual(snap.categories.audio, { target: null, processed: 5, pending: 3, failed: 1 });
+  assert.deepEqual(snap.categories.video, { target: 2, processed: 2, pending: 7, failed: 0 });
+  assert.deepEqual(snap.categories.note, { target: null, processed: 1, pending: null, failed: null });
+  assert.deepEqual(snap.categories.backup, { target: null, processed: 12, pending: null, failed: null });
+  assert.equal(snap.categories.photo.processed, null);
+  assert.doesNotMatch(JSON.stringify(snap), /Users|\.jpg|보관/);
+});
+
+test('밤 점검: 대시보드 파일만 실패해도 현황판·발송은 그대로, night-check.json은 쓰고 종료코드 1', async (t) => {
+  const { root, board } = vault(t);
+  const sent = []; const errors = [];
+  const options = { root, now, output: { log() {}, error: (line) => errors.push(line) }, videoDryRun: () => '대상 0, 총 0시간', readLogs: () => [],
+    send: async (message) => sent.push(message), buildOrbs: () => { throw new Error('집계 실패'); } };
+  assert.equal(await main([], options), 1);
+  assert.equal(sent.length, 1);
+  assert.match(readFileSync(board, 'utf8'), /night-check:start/);
+  const feed = JSON.parse(readFileSync(join(root, VAULT_REL.mediaNightCheckFeed), 'utf8'));
+  assert.equal(feed.schemaVersion, 1);
+  assert.equal(existsSync(join(root, VAULT_REL.mediaOrbDailyFeed)), false);
+  assert.match(errors.join('\n'), /대시보드 파일 쓰기 실패 .*orb-daily\.json: 집계 실패/);
+  assert.equal(await main(['--no-send'], { ...options, buildOrbs: emptyOrbs }), 0);
+  assert.equal(existsSync(join(root, VAULT_REL.mediaOrbDailyFeed)), true, '--no-send도 대시보드 파일은 쓴다');
 });

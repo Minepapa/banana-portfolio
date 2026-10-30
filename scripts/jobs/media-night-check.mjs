@@ -2,10 +2,10 @@
 // 매일 05:00 밤 점검(2026-10-18 오너 지시): 그날 밤 음성(02:00 전사 → 화자 분리)·사진(03:00 장면 분석 → 얼굴 이름표)·
 // 영상(04:00) 블록과 공통 잡(매시 보관·순간 노트, 00:00 원본 백업)이 정상으로 끝났는지 확인하고,
 // 내일로 넘길 남은 일을 현황판의 '밤 점검' 칸에 덮어쓰고 오너에게 결과를 보낸다(LLM 없음).
-// 블록 이상·현황판 쓰기·발송 실패는 종료코드 1. run.sh가 FAIL 하트비트로 기록한다.
+// 블록 이상·현황판 쓰기·대시보드 파일(95_Etna/Media 두 JSON) 쓰기·발송 실패는 종료코드 1. run.sh가 FAIL 하트비트로 기록한다.
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { checkDay } from '../tools/argos-health-check.mjs';
 import { fileURLToPath } from 'node:url';
@@ -14,8 +14,11 @@ import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { redactWarningDetail } from '../lib/warning-event-journal.mjs';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
+import { buildOrbDaily } from '../lib/mine-orb-daily.mjs';
 
 export const STATUS_BOARD_REL = VAULT_REL.mineStatusBoard;
+export const NIGHT_CHECK_SCHEMA_VERSION = 1;
+const BLOCK_KEYS = Object.freeze({ '공통': 'common', '🎙 음성': 'audio', '📷 사진': 'photo', '🎬 영상': 'video' });
 const START = '<!-- night-check:start -->';
 const END = '<!-- night-check:end -->';
 const SENDER_AGENT = 'zeus';
@@ -398,8 +401,51 @@ export function replaceBlock(content, block) {
   return at >= 0 ? `${content.slice(0, at)}${section}${content.slice(at)}` : `${content.trimEnd()}\n\n${section}`;
 }
 
+const sum = (...values) => (values.every((value) => value == null) ? null : values.reduce((total, value) => total + (value ?? 0), 0));
+
+/**
+ * 올림푸스 대시보드용 밤 점검 숫자(2026-10-31 오너 승인, 읽기만 하는 소비자). 현황판 표와 같은 숫자를 JSON으로.
+ * 모르는 값은 null. 잡 이름·시각·건수만 — 개인 경로·파일 이름·좌표·상세 문장은 넣지 않는다.
+ */
+export function nightCheckSnapshot(blocks, backlog, facts, now = new Date()) {
+  return {
+    schemaVersion: NIGHT_CHECK_SCHEMA_VERSION, generatedAt: now.toISOString(), failedBlocks: blocks.filter((b) => !b.ok).length,
+    blocks: blocks.map((b) => ({ key: BLOCK_KEYS[b.block] ?? 'common', job: b.job, time: b.time, ok: b.ok,
+      // 네 값만 낸다: 정상이 아닌 신선한 기록(SKIP·실행 중 등 앞으로 생길 값 포함)은 FAIL로 접는다.
+      status: b.ok ? 'OK' : !b.lastRun ? 'none' : b.fresh ? 'FAIL' : 'stale',
+      lastRun: b.lastRun ?? null })),
+    categories: {
+      audio: { target: null, processed: facts.transcribed ?? null, pending: backlog.speakerCheck ?? null,
+        failed: sum(facts.transcribeFailed, facts.diarizeFailed) },
+      photo: { target: null, processed: facts.sceneAnalyzed ?? null, pending: null, failed: sum(facts.sceneFailed, facts.facesFailed) },
+      video: { target: facts.videoTarget ?? null, processed: facts.videoDone ?? null, pending: backlog.video?.count ?? null,
+        failed: facts.videoFailed ?? null },
+      note: { target: null, processed: sum(facts.momentsNew, facts.momentsUpdated), pending: null, failed: facts.geocodeFailed ?? null },
+      backup: { target: null, processed: facts.archived24h ?? null, pending: null, failed: sum(facts.archiveFailed, facts.uploadFailed) },
+    },
+  };
+}
+
+// 대시보드 정본 두 파일을 한 번에 원자적으로 쓴다(LiveSync). 실패해도 현황판·발송은 막지 않고, 종료코드로 알린다.
+function writeFeeds(root, { blocks, backlog, facts, now, write, buildOrbs, output }) {
+  const feeds = [[VAULT_REL.mediaNightCheckFeed, () => nightCheckSnapshot(blocks, backlog, facts, now)],
+    [VAULT_REL.mediaOrbDailyFeed, () => buildOrbs(root, { now })]];
+  let failed = false;
+  for (const [rel, build] of feeds) {
+    try {
+      const path = join(root, rel);
+      mkdirSync(dirname(path), { recursive: true });
+      write(path, `${JSON.stringify(build(), null, 1)}\n`);
+    } catch (error) {
+      failed = true;
+      output.error?.(`[media-night-check] 대시보드 파일 쓰기 실패 ${rel}: ${error.message}`);
+    }
+  }
+  return failed;
+}
+
 export async function runNightCheck({ root = VAULT_PATHS.root, now = new Date(), dryRun = false, output = console,
-  noSend = false, send = sendAgentMessage, write = writeAtomic, videoDryRun,
+  noSend = false, send = sendAgentMessage, write = writeAtomic, videoDryRun, buildOrbs = buildOrbDaily,
   readLogs = (job, options) => lastRunLines(job, JOB_LOG_DIR, options) } = {}) {
   const blocks = judgeBlocks(root, now);
   const backlog = countBacklog(root, now, { videoDryRun });
@@ -417,6 +463,7 @@ export async function runNightCheck({ root = VAULT_PATHS.root, now = new Date(),
     output.log(body);
     return { failed, backlog, body, boardWriteFailed };
   }
+  const feedWriteFailed = writeFeeds(root, { blocks, backlog, facts, now, write, buildOrbs, output });
   const path = join(root, STATUS_BOARD_REL);
   try {
     await withLock(path, () => {
@@ -432,14 +479,14 @@ export async function runNightCheck({ root = VAULT_PATHS.root, now = new Date(),
   if (!noSend) {
     await send({ agent: SENDER_AGENT, kind: '정보', topic: '밤 점검', body });
   }
-  return { failed, backlog, body, boardWriteFailed };
+  return { failed, backlog, body, boardWriteFailed, feedWriteFailed };
 }
 
 export async function main(args = process.argv.slice(2), options = {}) {
   try {
     const result = await runNightCheck({ ...options, dryRun: args.includes('--dry-run'),
       noSend: args.includes('--no-send') });
-    return result.failed || result.boardWriteFailed ? 1 : 0;
+    return result.failed || result.boardWriteFailed || result.feedWriteFailed ? 1 : 0;
   } catch (error) {
     (options.errorOutput ?? console).error(`[media-night-check] ${error.message}`);
     return 1;
