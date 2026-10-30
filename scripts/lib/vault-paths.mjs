@@ -70,6 +70,7 @@ export const VAULT_REL = {
   locationCandidates: '95_Etna/Location/place-candidates.json',
   locationGeocodeCache: '95_Etna/Location/geocode-cache.json',
   locationMaps: '95_Etna/Location/Maps', // 데일리 동선 지도 SVG(D90) — {YYYY}/YYYY-MM-DD.svg
+  locationDays: '95_Etna/Location/Days', // 하루 동선 파일(머문 곳·이동 구조값, 2026-10-31) — {YYYY}/YYYY-MM-DD.json
   mediaArchiveIndex: '95_Etna/Media/archive-index.jsonl',
   mediaImportsIndex: '95_Etna/Media/imports-index.jsonl',
   mediaVisionIndex: '95_Etna/Media/vision-index.jsonl',
@@ -87,6 +88,8 @@ export const VAULT_REL = {
   mineAthenaState: '95_Etna/Jobs/MineAthenaFields/state.json', // 아테나 주간 묶음이 비워 둔 노트(2026-10-14)
   mediaMoments: '20_Records/24_Media',
   mediaMomentsState: '95_Etna/Media/moments.json',
+  mediaNightCheckFeed: '95_Etna/Media/night-check.json', // 05:00 밤 점검이 씀, 올림푸스가 읽기만(2026-10-31 오너 승인)
+  mediaOrbDailyFeed: '95_Etna/Media/orb-daily.json', // 05:00 밤 점검이 씀(기억 구슬 일일 집계), 올림푸스가 읽기만
   mediaArgosTrashState: '95_Etna/Media/argos-trash-state.json', // 폰 삭제 따라가기 처리한 이벤트(결정 `미디어-삭제-요청` 2판)
   jobHealth: '95_Etna/Jobs/JobHealth',
   mineStatusBoard: '40_Projects/banana-portfolio/Features/미네 기록 파이프라인 현황판.md', // 05:00 밤 점검이 '밤 점검' 칸을 덮어씀

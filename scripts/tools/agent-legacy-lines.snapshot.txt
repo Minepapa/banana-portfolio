@@ -4,10 +4,10 @@
 .claude/agents/clio.md:121:# Apollo — 비서실
 .claude/agents/clio.md:123:비서실장. 오너에게 보고하는 일과 오너를 이해하는 일 — 둘은 한 사람의 일이다.
 .claude/agents/themis.md:96:상시 거시 위험 감시는 플루토스 소관이다(구 리스크관리실의 감시 업무는 플루토스로 이관, 2차 검증만 테미스에 남음).
-.claude/agents/themis.md:120:# Themis — 리스크관리실
-.claude/agents/themis.md:122:리스크관리실장. 위험을 미리 알리는 일 — 감시와 검증은 같은 일이다.
-.claude/agents/themis.md:141:메모리) 이 전제가 더 이상 안 맞아 폐지했다: Athena(자산분배)는 신규 매수가 ETF뿐이라
-.claude/agents/themis.md:142:"재량적 개별종목 매수논리"가 애초에 안 생기고, Kairos(퀀트)는 팩터스코어 기계선정이라
+.claude/agents/themis.md:121:# Themis — 리스크관리실
+.claude/agents/themis.md:123:리스크관리실장. 위험을 미리 알리는 일 — 감시와 검증은 같은 일이다.
+.claude/agents/themis.md:142:메모리) 이 전제가 더 이상 안 맞아 폐지했다: Athena(자산분배)는 신규 매수가 ETF뿐이라
+.claude/agents/themis.md:143:"재량적 개별종목 매수논리"가 애초에 안 생기고, Kairos(퀀트)는 팩터스코어 기계선정이라
 .claude/agents/hermes.md:3:description: "헤르메스(Hermes) — 100 나 담당 — 일정·동선·소비·할 일·리마인더. 이럴 때 사용: 오너 본인의 일정·할 일·리마인더·동선·소비(\"오늘 뭐 챙겨야 해\", \"내가 어디 갔었지\")"
 .claude/agents/hermes.md:73:# 헤르메스 Hermes — 100 나 (domain)
 .claude/agents/hermes.md:77:> 이름 주의: 2026-10-08 이전의 "운영실 Hermes"(장부·데이터)는 플루토스로 통합됐다. 지금의 헤르메스는 오너 본인 담당이다.

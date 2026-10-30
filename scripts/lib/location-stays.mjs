@@ -203,7 +203,9 @@ export function buildMoveSegments(stays, points, { date } = {}) {
     const distanceKm = distanceM == null ? null : distanceM / 1000;
     const distanceText = distanceKm == null ? '' : ` · ${mode ? `${mode} ` : ''}약 ${distanceKm < 1 ? distanceKm.toFixed(1) : Math.round(distanceKm)}km`;
     moves.push({ kind: 'move', start: new Date(start).toISOString(), end: new Date(end).toISOString(),
-      label: `이동${distanceText}`, lat: origin?.lat ?? previous.lat, lon: origin?.lon ?? previous.lon });
+      label: `이동${distanceText}`, lat: origin?.lat ?? previous.lat, lon: origin?.lon ?? previous.lon,
+      // 하루 동선 파일·지도용 구조값(표시 문구는 label).
+      distanceKm: distanceKm == null ? null : Math.round(distanceKm * 10) / 10, mode });
   }
   return moves;
 }

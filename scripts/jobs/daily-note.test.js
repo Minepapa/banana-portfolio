@@ -547,3 +547,42 @@ test('7일 재계산: 지문이 같아도 장소별 소비 파일이 없는 지�
     assert.deepEqual(calls, []);
   } finally { rmSync(vault, { recursive: true, force: true }); }
 });
+
+test('하루 동선 파일은 지난날·정상 동선에서만 쓰고, 지문이 같아도 파일이 없으면 채운다', async () => {
+  const { attachRouteDay } = await import('./daily-note.mjs');
+  const calls = [];
+  const writeDay = (input) => calls.push(input.date);
+  const route = [{ kind: 'stay' }];
+  attachRouteDay(writeDay, { date: '2026-10-28', route, today: '2026-10-29' });
+  attachRouteDay(writeDay, { date: '2026-10-29', route, today: '2026-10-29' });
+  const degraded = [{ kind: 'stay' }];
+  Object.defineProperty(degraded, 'degraded', { value: true });
+  attachRouteDay(writeDay, { date: '2026-10-28', route: degraded, today: '2026-10-29' });
+  assert.deepEqual(calls, ['2026-10-28']);
+  assert.doesNotThrow(() => attachRouteDay(() => { throw new Error('disk'); }, { date: '2026-10-28', route, today: '2026-10-29' }));
+
+  const vault = mkdtempSync(join(tmpdir(), 'daily-days-'));
+  try {
+    mkdirSync(join(vault, '95_Etna', 'Location'), { recursive: true });
+    mkdirSync(join(vault, '10_Periodic', 'Daily', '2026'), { recursive: true });
+    writeFileSync(join(vault, '10_Periodic', 'Daily', '2026', '2026-10-27.md'), renderDailyNote({ date: '2026-10-27',
+      records: [], summary: '- 요약', status: '확정', model: '없음', summaryStatus: 'ok', recordHash: 'record',
+      routeHash: routeHashOf([], []), today: '2026-10-27', telegramSentAt: null, route: [] }));
+    // 장소별 소비 파일은 이미 있고 하루 동선 파일만 없다.
+    mkdirSync(join(vault, '95_Etna', 'Spending', 'Places', '2026'), { recursive: true });
+    writeFileSync(join(vault, '95_Etna', 'Spending', 'Places', '2026', '2026-10-27.json'), '{}');
+    const log = [];
+    // 하루 동선 파일은 일정 활동도 담으므로 일정을 받아 계산에 넘긴다.
+    const deps = { computeRoute: async (date, { events }) => { log.push(['compute', date, events.length]); return [{ kind: 'stay' }]; },
+      fetchEvents: async () => [{ title: '가상 공연' }],
+      writePlaces: ({ date }) => log.push(['places', date]), writeDay: ({ date }) => log.push(['day', date]),
+      write: () => log.push(['note']) };
+    await recomputeDailyRoute({ date: '2026-10-27', root: vault, today: '2026-10-29', deps });
+    assert.deepEqual(log, [['compute', '2026-10-27', 1], ['day', '2026-10-27']]);
+    // 일정 조회가 실패하면 이번엔 하루 동선 파일을 쓰지 않는다(일정 활동이 빠진 파일이 영구히 남지 않게).
+    log.length = 0;
+    await recomputeDailyRoute({ date: '2026-10-27', root: vault, today: '2026-10-29',
+      deps: { ...deps, fetchEvents: async () => { throw new Error('calendar'); } } });
+    assert.deepEqual(log, [['compute', '2026-10-27', 0]]);
+  } finally { rmSync(vault, { recursive: true, force: true }); }
+});
