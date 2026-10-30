@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Instruments the inspected Telegram MCP plugin without changing its control flow.
+// Instruments the inspected Telegram MCP plugin. The lifecycle diagnostics never change
+// control flow; the channel-owner guard (v2) only stops non-channel sessions from polling.
 // Recheck the source and anchors before supporting a future plugin release.
 import { createHash } from 'node:crypto'
 import { lstat, readFile, rename, rm, writeFile } from 'node:fs/promises'
@@ -68,7 +69,41 @@ process.on('exit', code => lifecycleRecord('exit', { code }))
 
 `
 
-const changes = [
+// Every new plugin instance SIGTERMs the previous poller via bot.pid, so any other claude
+// session with the plugin enabled used to steal the bot (2026-10-24, 2026-10-30 4h outage).
+// Plugin servers do not inherit the session env, so the guard walks the process ancestry.
+// It fails open on ps errors: a diagnostic failure must never cost the channel its bot.
+const channelOwnerGuard = `// banana-portfolio-v2 channel-owner guard v1 — only the always-on --channels session polls
+function channelOwnerAncestry(): { verdict: 'channels' | 'other' | 'unknown', depth: number, nearestClaudePid: number } {
+  let nearestClaudePid = 0
+  let depth = 0
+  try {
+    let pid = process.ppid
+    for (; depth < 12 && pid > 1; depth++) {
+      const line = execFileSync('ps', ['-p', String(pid), '-o', 'ppid=,args='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+      const match = /^(\\d+)\\s+([\\s\\S]*)$/.exec(line)
+      if (!match) return { verdict: 'unknown', depth, nearestClaudePid }
+      // The claude executable itself must carry --channels (not a shell line that mentions it),
+      // or the ancestor is the launchd wrapper line that exports our session marker.
+      if (/^(\\S*\\/)?claude\\s(.*\\s)?--channels\\s+plugin:telegram@/.test(match[2]) ||
+        /(^|\\s)export CLAUDE_TELEGRAM_SESSION=1;/.test(match[2])) return { verdict: 'channels', depth, nearestClaudePid }
+      if (!nearestClaudePid && /\\/claude(\\s|$)|^claude(\\s|$)/.test(match[2])) nearestClaudePid = pid
+      pid = parseInt(match[1], 10)
+    }
+    return { verdict: pid <= 1 ? 'other' : 'unknown', depth, nearestClaudePid }
+  } catch { return { verdict: 'unknown', depth, nearestClaudePid } }
+}
+const channelOwner = channelOwnerAncestry()
+if (channelOwner.verdict === 'other') {
+  lifecycleRecord('guard_exit', { reason: 'not_channels_session', depth: channelOwner.depth, nearestClaudePid: channelOwner.nearestClaudePid })
+  process.stderr.write('telegram channel: not the --channels session; exiting without polling\\n')
+  process.exit(0)
+}
+// end banana-portfolio-v2 channel-owner guard v1
+
+`
+
+export const LIFECYCLE_CHANGES = [
   [
     "import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync } from 'fs'",
     "import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, openSync, fchmodSync, writeSync, closeSync, lstatSync, constants } from 'fs'",
@@ -104,16 +139,21 @@ const changes = [
   ],
 ]
 
+const GUARD_ANCHOR = '// Telegram allows exactly one getUpdates consumer per token.'
+const changes = [...LIFECYCLE_CHANGES, [GUARD_ANCHOR, channelOwnerGuard + GUARD_ANCHOR]]
+// Exact earlier patch generations that --apply may upgrade in place.
+const PREVIOUS_CHANGE_SETS = [LIFECYCLE_CHANGES]
+
 function sha256(source) {
   return createHash('sha256').update(source).digest('hex')
 }
 
-export function instrumentSource(source, expectedHash = BASE_SOURCE_SHA256) {
+export function instrumentSource(source, expectedHash = BASE_SOURCE_SHA256, changeSet = changes) {
   if (sha256(source) !== expectedHash) throw new Error('Unknown or modified plugin source; refusing to patch')
   let patched = source
-  for (const [anchor, replacement] of changes) {
+  for (const [anchor, replacement] of changeSet) {
     if (patched.split(anchor).length !== 2) throw new Error(`Unexpected plugin source anchor: ${anchor.slice(0, 60)}`)
-    patched = patched.replace(anchor, replacement)
+    patched = patched.replace(anchor, () => replacement)
   }
   return patched
 }
@@ -135,25 +175,32 @@ export async function inspectPlugin(pluginRoot = DEFAULT_PLUGIN_ROOT) {
   return { sourcePath, source, patched, status: source === patched ? 'patched' : 'unpatched' }
 }
 
+function reconstructWith(source, expectedHash, changeSet) {
+  let original = source
+  for (const [anchor, replacement] of [...changeSet].reverse()) {
+    if (original.split(replacement).length !== 2) return { error: 'partial' }
+    original = original.replace(replacement, () => anchor)
+  }
+  if (sha256(original) !== expectedHash || instrumentSource(original, expectedHash, changeSet) !== source) {
+    return { error: 'modified' }
+  }
+  return { original }
+}
+
 export function reconstructReviewedSource(source, expectedHash = BASE_SOURCE_SHA256) {
   if (sha256(source) === expectedHash) return source
-  // Exact reconstruction rejects partial or locally edited instrumentation.
-  let original = source
-  for (const [anchor, replacement] of [...changes].reverse()) {
-    if (original.split(replacement).length !== 2) {
-      throw new Error('Unknown or partially modified plugin source; refusing to patch')
-    }
-    original = original.replace(replacement, anchor)
-  }
-  if (sha256(original) !== expectedHash || instrumentSource(original, expectedHash) !== source) {
-    throw new Error('Unknown or modified lifecycle patch; refusing to patch')
-  }
-  return original
+  // Exact reconstruction rejects partial or locally edited instrumentation. Only the
+  // current patch or an exact earlier generation is accepted.
+  const attempts = [changes, ...PREVIOUS_CHANGE_SETS].map(changeSet => reconstructWith(source, expectedHash, changeSet))
+  const found = attempts.find(attempt => attempt.original !== undefined)
+  if (found) return found.original
+  if (attempts.some(attempt => attempt.error === 'modified')) throw new Error('Unknown or modified lifecycle patch; refusing to patch')
+  throw new Error('Unknown or partially modified plugin source; refusing to patch')
 }
 
 export function instrumentSourceFromKnownHash(source, expectedHash = BASE_SOURCE_SHA256) {
-  const original = reconstructReviewedSource(source, expectedHash)
-  return original === source ? instrumentSource(source, expectedHash) : source
+  // An earlier generation reconstructs to the baseline and is re-instrumented in full.
+  return instrumentSource(reconstructReviewedSource(source, expectedHash), expectedHash)
 }
 
 export async function run(mode, pluginRoot = DEFAULT_PLUGIN_ROOT) {

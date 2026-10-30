@@ -79,7 +79,7 @@ import { getTelegramWebhookInfo } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 
-import { isProcessAlive, isPollingStuck, isSessionLogStale, TELEGRAM_SESSION_PROCESS_PATTERN, TELEGRAM_MCP_SUBPROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
+import { isProcessAlive, isPollingStuck, isSessionLogStale, classifyPluginOwnership, summarizeStaleClaudeSessions, readProcessTable, TELEGRAM_SESSION_PROCESS_PATTERN, TELEGRAM_MCP_SUBPROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
 import { findTelegramTranscripts, readTranscriptLines, findLatestUnansweredTelegramOwnerMessage } from './telegram-session-handoff.mjs';
 
 const MCP_LOSS_LOG_FILE = vaultAbs(VAULT_REL.mcpLossLogFile); // 2026-10-08: 코드가 누적하는 기계 로그라 95_Etna로 옮김
@@ -114,8 +114,11 @@ const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 순수함수 — 네 신호를 종합해 "재시작이 필요한가"와 그 이유를 판정. 인자는 이미
 // 조회된 값(프로세스 생존 여부·폴링정체 여부·로그/미답변 상태)만 받는다 — I/O는
 // 호출부(main)가 담당.
-export function diagnose({ sessionAlive, mcpSubprocessAlive, pollingStuck, sessionLogStale = false, ownerMessageAwaitingReply = false }) {
+export function diagnose({ sessionAlive, mcpSubprocessAlive, pollingStuck, sessionLogStale = false, ownerMessageAwaitingReply = false, pluginHijacked = false }) {
   if (!sessionAlive) return { unhealthy: true, reasonKey: 'session-process-missing', reason: '세션 프로세스 자체가 응답하지 않음(생존 확인 실패)' };
+  // mcpSubprocessAlive는 "상시 세션 아래의" 플러그인만 센다. 다른 세션 아래에 플러그인이
+  // 있으면 봇이 그쪽으로 넘어간 것이다. 재시작하면 새 플러그인이 그 폴러를 끊고 되찾는다.
+  if (!mcpSubprocessAlive && pluginHijacked) return { unhealthy: true, reasonKey: 'plugin-hijacked', reason: '텔레그램 봇이 다른 claude 세션에 넘어감(가로채기) — 상시 세션은 메시지를 못 받음' };
   if (!mcpSubprocessAlive) return { unhealthy: true, reasonKey: 'mcp-subprocess-missing', reason: 'telegram MCP 서버(bun 서브프로세스) 소실 — 세션 프로세스는 살아있지만 MCP 연결 끊김' };
   if (pollingStuck) return { unhealthy: true, reasonKey: 'polling-stuck', reason: '폴링 정체 의심(미수신 메시지가 큐에 쌓여있음) — 서브프로세스는 떠있지만 내부적으로 멎었을 가능성' };
   if (sessionLogStale && ownerMessageAwaitingReply) return { unhealthy: true, reasonKey: SESSION_HANG_REASON_KEY, reason: '세션이 응답 없이 멈춰있음(로그 정체) — 대화형 확인창 등에 걸려있을 가능성' };
@@ -285,9 +288,33 @@ function readOwnerMessageAwaitingReply(nowMs, lastRestartAtMs) {
   }
 }
 
+// 플러그인 소유 판정. 프로세스 표를 못 읽으면 예전 신호(어느 세션이든 플러그인이 있는가)로
+// 돌아간다 — 진단 실패가 재시작을 부르면 안 된다(이 잡의 보수적 조치 원칙).
+function readPluginSignals(sessionAlive) {
+  if (!sessionAlive) return { mcpSubprocessAlive: false, pluginHijacked: false };
+  try {
+    const { ownedPluginPids, foreignPlugins } = classifyPluginOwnership(readProcessTable());
+    const mcpSubprocessAlive = ownedPluginPids.length > 0;
+    return { mcpSubprocessAlive, pluginHijacked: !mcpSubprocessAlive && foreignPlugins.length > 0, foreignPlugins };
+  } catch (e) {
+    console.error(`⚠ 프로세스 표 확인 실패(가로채기 판정 제외, 예전 신호로 판정): ${e.message}`);
+    return { mcpSubprocessAlive: isProcessAlive(TELEGRAM_MCP_SUBPROCESS_PATTERN), pluginHijacked: false };
+  }
+}
+
+function staleSessionsFact() {
+  try {
+    const { count, totalRssMb } = summarizeStaleClaudeSessions(readProcessTable());
+    if (count === 0) return null;
+    return `<b>오래된 claude 세션</b>: ${count}개(2일 이상, 약 ${(totalRssMb / 1024).toFixed(1)}GB) — 메모리 부족이 끊김 원인 후보`;
+  } catch {
+    return null;
+  }
+}
+
 async function checkSignalsOnce() {
   const sessionAlive = isProcessAlive(TELEGRAM_SESSION_PROCESS_PATTERN);
-  const mcpSubprocessAlive = sessionAlive ? isProcessAlive(TELEGRAM_MCP_SUBPROCESS_PATTERN) : false;
+  const { mcpSubprocessAlive, pluginHijacked, foreignPlugins = [] } = readPluginSignals(sessionAlive);
   let pollingStuck = false;
   if (sessionAlive && mcpSubprocessAlive) {
     // 앞 두 신호가 정상일 때만 확인(불필요한 API 호출 절약) — 확인 자체가 실패해도
@@ -307,12 +334,12 @@ async function checkSignalsOnce() {
     console.error(`⚠ 세션 로그 mtime 확인 실패(재시작 판단에서 제외, 다음 실행 재시도): ${e.message}`);
   }
   const ownerMessageAwaitingReply = readOwnerMessageAwaitingReply(Date.now(), readState().lastRestartAtMs);
-  return { sessionAlive, mcpSubprocessAlive, pollingStuck, sessionLogStale, ownerMessageAwaitingReply };
+  return { sessionAlive, mcpSubprocessAlive, pluginHijacked, foreignPlugins, pollingStuck, sessionLogStale, ownerMessageAwaitingReply };
 }
 
 async function main() {
   const health = (signals) => diagnose(signals).unhealthy;
-  const { sessionAlive, mcpSubprocessAlive, pollingStuck, sessionLogStale, ownerMessageAwaitingReply, recheckedAndRecovered, firstCheckUnhealthy } = await checkWithRecheck(checkSignalsOnce, { isUnhealthy: health });
+  const { sessionAlive, mcpSubprocessAlive, pluginHijacked, foreignPlugins = [], pollingStuck, sessionLogStale, ownerMessageAwaitingReply, recheckedAndRecovered, firstCheckUnhealthy } = await checkWithRecheck(checkSignalsOnce, { isUnhealthy: health });
   if (recheckedAndRecovered) {
     console.log(`⏳ 1차 확인에서 이상 감지됐으나 ${RECHECK_DELAY_MS / 1000}초 후 재확인에서 정상 회복 — 일시적 현상으로 판단, 조치 없음`);
   }
@@ -325,7 +352,7 @@ async function main() {
     if (!DRY_RUN) appendMcpLossLine(line);
   }
 
-  const { unhealthy, reasonKey, reason } = diagnose({ sessionAlive, mcpSubprocessAlive, pollingStuck, sessionLogStale, ownerMessageAwaitingReply });
+  const { unhealthy, reasonKey, reason } = diagnose({ sessionAlive, mcpSubprocessAlive, pollingStuck, sessionLogStale, ownerMessageAwaitingReply, pluginHijacked });
   const nowMs = Date.now();
   const nextState = nextRestartState(readState(), { unhealthy, reasonKey, nowMs });
 
@@ -339,6 +366,11 @@ async function main() {
   const escalate = shouldEscalateInsteadOfRestart(consecutiveRestarts);
 
   console.log(`🔔 telegram-session-health-check: ${reason} (연속 ${consecutiveRestarts}회째)`);
+  const hijackFact = pluginHijacked
+    ? `<b>가로챈 세션</b>: ${foreignPlugins.map((f) => (f.ownerPid ? `claude pid ${f.ownerPid}` : `플러그인 pid ${f.pid}`)).join(', ')}`
+    : null;
+  const contextFacts = [hijackFact, staleSessionsFact()].filter(Boolean);
+  if (hijackFact) console.log(`   ${hijackFact.replace(/<\/?b>/g, '')}`);
 
   if (DRY_RUN) {
     console.log(`(드라이런 — ${escalate ? '에스컬레이션' : '재시작'}·상태갱신·알림 없음)`);
@@ -354,6 +386,7 @@ async function main() {
           `<b>감지</b>: ${reason}`,
           `<b>연속 ${consecutiveRestarts}회째 감지</b> — 자동 재시작을 ${MAX_CONSECUTIVE_RESTARTS}회 넘어 중단함(반복 재시작이 오히려 방해가 될 수 있음)`,
           '<b>수동 확인 필요</b>: launchd 상태·MCP 플러그인 로그 직접 점검',
+          ...contextFacts,
         ], });
     } catch (e) {
       console.error('텔레그램 알림 실패:', e.message);
@@ -363,7 +396,7 @@ async function main() {
 
   let restartOk = true;
   try {
-    execFileSync('bash', [RESTART_SCRIPT], { stdio: 'inherit', timeout: RESTART_TIMEOUT_MS, killSignal: 'SIGKILL' });
+    execFileSync('bash', [RESTART_SCRIPT, reasonKey], { stdio: 'inherit', timeout: RESTART_TIMEOUT_MS, killSignal: 'SIGKILL' });
   } catch (e) {
     restartOk = false;
     console.error('재시작 스크립트 실행 실패(타임아웃 포함):', e.message);
@@ -376,6 +409,7 @@ async function main() {
       facts: [
         `<b>감지</b>: ${reason}`,
         `<b>조치</b>: com.banana2.telegram-session 자동 재시작 ${restartOk ? '완료' : '실패(수동 확인 필요)'}(연속 ${consecutiveRestarts}회째)`,
+        ...contextFacts,
       ], });
   } catch (e) {
     console.error('텔레그램 알림 실패:', e.message);

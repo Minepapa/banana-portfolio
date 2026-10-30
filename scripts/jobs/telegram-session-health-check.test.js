@@ -274,3 +274,15 @@ test('buildMcpLossSnapshotLine: 재확인 후 회복된 경우는 "일시적"로
   });
   assert.match(line, /일시적\(재확인 후 회복\)/);
 });
+
+test('[실사고 재현] diagnose: 플러그인이 다른 세션 아래에만 있으면 가로채기로 판정(2026-10-30 4시간 무감지)', () => {
+  const r = diagnose({ sessionAlive: true, mcpSubprocessAlive: false, pluginHijacked: true, pollingStuck: false });
+  assert.equal(r.unhealthy, true);
+  assert.equal(r.reasonKey, 'plugin-hijacked');
+  assert.match(r.reason, /가로채기/);
+});
+
+test('diagnose: 가로채기 신호가 없으면 기존 MCP 소실 사유를 유지', () => {
+  const r = diagnose({ sessionAlive: true, mcpSubprocessAlive: false, pluginHijacked: false, pollingStuck: false });
+  assert.equal(r.reasonKey, 'mcp-subprocess-missing');
+});

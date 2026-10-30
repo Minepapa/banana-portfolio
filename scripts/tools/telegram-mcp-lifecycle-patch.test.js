@@ -8,6 +8,7 @@ import { test } from 'node:test'
 import {
   BASE_SOURCE_SHA256,
   DEFAULT_PLUGIN_ROOT,
+  LIFECYCLE_CHANGES,
   inspectPlugin,
   instrumentSource,
   instrumentSourceFromKnownHash,
@@ -19,6 +20,7 @@ const hash = source => createHash('sha256').update(source).digest('hex')
 const syntheticSource = [
   "import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync } from 'fs'",
   'const STATE_DIR = process.env.TELEGRAM_STATE_DIR',
+  '// Telegram allows exactly one getUpdates consumer per token.',
   "process.on('unhandledRejection', err => {\n  process.stderr.write",
   "process.on('uncaughtException', err => {\n  process.stderr.write",
   'function shutdown(): void {\n  if (shuttingDown) return\n  shuttingDown = true',
@@ -166,4 +168,65 @@ test('installed plugin is either the reviewed baseline or the exact patch', asyn
     if (error.code === 'ENOENT') t.skip('Telegram plugin cache is not installed')
     else throw error
   }
+})
+
+test('channel-owner guard is inserted before the stale-poller takeover', () => {
+  const patched = instrumentSource(syntheticSource, hash(syntheticSource))
+  const guard = patched.indexOf('// banana-portfolio-v2 channel-owner guard v1')
+  assert.ok(guard > patched.indexOf('// end banana-portfolio-v2 lifecycle diagnostics v1'))
+  assert.ok(guard < patched.indexOf('// Telegram allows exactly one getUpdates consumer per token.'))
+  assert.match(patched, /lifecycleRecord\('guard_exit', \{ reason: 'not_channels_session', depth: /)
+})
+
+test('an exact earlier lifecycle-only patch is recognized and upgraded in place', async t => {
+  const v1 = instrumentSource(syntheticSource, hash(syntheticSource), LIFECYCLE_CHANGES)
+  assert.equal(reconstructReviewedSource(v1, hash(syntheticSource)), syntheticSource)
+  const upgraded = instrumentSourceFromKnownHash(v1, hash(syntheticSource))
+  assert.equal(upgraded, instrumentSource(syntheticSource, hash(syntheticSource)))
+  assert.throws(() => reconstructReviewedSource(v1.replace("shutdown('SIGTERM')", "shutdown('signal')"), hash(syntheticSource)),
+    /partially modified|modified lifecycle patch/)
+})
+
+test('[실사고 재현] guard exits non-channel sessions without polling and lets the channel session through', async t => {
+  const BUN = spawnSync('which', ['bun'], { encoding: 'utf8' }).stdout.trim()
+  if (!BUN) { t.skip('bun is not installed'); return }
+  const parent = await mkdtemp(join(tmpdir(), 'telegram-guard-runtime-'))
+  t.after(() => rm(parent, { recursive: true, force: true }))
+  const patched = instrumentSource(syntheticSource, hash(syntheticSource))
+  const start = patched.indexOf('// banana-portfolio-v2 channel-owner guard v1')
+  const guard = patched.slice(start, patched.indexOf('// end banana-portfolio-v2 channel-owner guard v1'))
+  const scriptPath = join(parent, 'guard.ts')
+  await writeFile(scriptPath, `
+    import { execFileSync } from 'node:child_process'
+    const lifecycleRecord = (event, fields) => console.log('LIFECYCLE ' + event + ' ' + JSON.stringify(fields))
+    ${guard}
+    console.log('POLLING')
+  `)
+  // A wrapper keeps bash alive as bun's parent so its argv is what the guard sees.
+  const runUnder = (argv0, env = process.env) => spawnSync('/bin/bash', ['-c', `exec -a "${argv0}" /bin/bash -c '"$1" "$0"; exit $?' "${scriptPath}" "${BUN}"`], { encoding: 'utf8', env })
+
+  const other = runUnder('claude --output-format stream-json')
+  assert.equal(other.status, 0, other.stderr)
+  assert.match(other.stdout, /LIFECYCLE guard_exit \{"reason":"not_channels_session","depth":\d+,"nearestClaudePid":\d+\}/)
+  assert.doesNotMatch(other.stdout, /POLLING/)
+
+  const wrapper = runUnder('/bin/bash -lc export X=1; claude --channels plugin:telegram@claude-plugins-official')
+  assert.match(wrapper.stdout, /guard_exit/, 'a shell line mentioning the flag is not the channel session')
+
+  const desktop = runUnder('/Users/x/Library/Application Support/Claude/MacOS/claude --channels plugin:telegram@x')
+  assert.match(desktop.stdout, /guard_exit/, 'a Desktop path with spaces is not the launchd channel session')
+
+  const fullPath = runUnder('/Users/x/.local/bin/claude --channels plugin:telegram@claude-plugins-official')
+  assert.match(fullPath.stdout, /POLLING/)
+
+  const marker = runUnder('/bin/bash -lc export PATH=x; export CLAUDE_TELEGRAM_SESSION=1; node cli.js')
+  assert.match(marker.stdout, /POLLING/, 'the launchd wrapper marker is a second acceptance condition')
+
+  const noPs = runUnder('claude --output-format stream-json', { ...process.env, PATH: '/nonexistent' })
+  assert.match(noPs.stdout, /POLLING/, 'ps failure must fail open')
+
+  const channel = runUnder('claude --channels plugin:telegram@claude-plugins-official --name x')
+  assert.equal(channel.status, 0, channel.stderr)
+  assert.match(channel.stdout, /POLLING/)
+  assert.doesNotMatch(channel.stdout, /guard_exit/)
 })
