@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EXPECTED_INTERVALS_MS } from './health-watcher.mjs';
+import { EXPECTED_INTERVALS_MS } from '../lib/job-schedule.mjs';
 import { JOB_LABELS } from '../lib/job-labels.mjs';
 import { withLock } from '../lib/state-writer.mjs';
 import { runVideoNightly, VIDEO_NIGHTLY_BUDGET_MS, VIDEO_NIGHTLY_LIMIT,

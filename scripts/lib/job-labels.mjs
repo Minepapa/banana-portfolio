@@ -2,7 +2,7 @@
 //
 // 텔레그램 알림(특히 health-watcher의 장애감지)에 잡 이름이 영어 파일명만 나와서
 // 어떤 잡이 왜 문제인지 못 알아보겠다는 오너 지적(2026-08-17) 반영. 잡이 새로
-// 생기거나 폐기될 때마다 여기도 같이 갱신할 것 — health-watcher.mjs의
+// 생기거나 폐기될 때마다 여기도 같이 갱신할 것 — job-schedule.mjs의
 // EXPECTED_INTERVALS_MS와 등록 대상이 어긋나면(한쪽만 갱신) 새 잡이 라벨 없이
 // 뜨거나, 폐기된 잡 라벨이 죽지 않고 남는다.
 import { homedir } from 'node:os';
@@ -57,7 +57,7 @@ export const JOB_LABELS = {
   'update-monthly-balance-snapshot': '월별 잔고 스냅샷(대시보드 막대그래프용) + 일별 불변 스냅샷(TWR·Sharpe·MDD 재계산용, 2026-09-04 신설) 매일 자동 기록',
   'weekly-report': '주간 리포트 자동 생성·발행(성향학습 파이프라인 동반)',
   // 2026-08-23 전수 재점검(오너 지시)에서 발견 — 아래 셋은 실제 launchd에 등록돼
-  // 30분마다 도는데(health-watcher.mjs EXPECTED_INTERVALS_MS 참고) 여기 라벨이 없어
+  // 30분마다 도는데(job-schedule.mjs EXPECTED_INTERVALS_MS 참고) 여기 라벨이 없어
   // 지금까지 알림에 영어 이름만 뜨고 있었다.
   'sync-firestore-mirror': 'Vault → Firestore 미러 동기화(대시보드가 읽는 데이터)',
   'update-allocation-from-holdings': '보유종목 기준 자산분배 탭 목표·현재비중 재계산',

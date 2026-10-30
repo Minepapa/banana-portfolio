@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { makeCalendarFetcher, parseArgs, runCalendarDays } from './calendar-days.mjs';
-import { EXPECTED_INTERVALS_MS } from './health-watcher.mjs';
+import { EXPECTED_INTERVALS_MS } from '../lib/job-schedule.mjs';
 
 const owners = [{ calendarId: 'me@x', owner: '나' }];
 const now = new Date('2026-10-30T23:00:00Z'); // KST 10-31 08:00
