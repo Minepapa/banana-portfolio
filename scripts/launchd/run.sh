@@ -121,7 +121,7 @@ case "$JOB" in
   olympus-server) CMD=(scripts/jobs/olympus-server.mjs) ;;
   isa-maturity-check) CMD=(scripts/jobs/isa-maturity-check.mjs) ;;
   telegram-session-health-check) CMD=(scripts/jobs/telegram-session-health-check.mjs) ;;
-  telegram-gate) CMD=(scripts/jobs/telegram-gate.mjs) ;; # 텔레그램 관문 상시 데몬(4단계 전환 전에는 등록 금지)
+  telegram-gate) CMD=(scripts/jobs/telegram-gate.mjs --mode=live) ;; # 텔레그램 관문 상시 데몬(4단계 전환 전에는 등록 금지)
   telegram-gate-health-check) CMD=(scripts/jobs/telegram-gate-health-check.mjs) ;;
   intraday-market-move-monitor) CMD=(scripts/jobs/intraday-market-move-monitor.mjs) ;;
   process-warning-actions) CMD=(scripts/jobs/process-warning-actions.mjs) ;;
@@ -167,7 +167,8 @@ DUR=$(( $(date +%s) - START ))
 STATUS=OK; [ "$CODE" -ne 0 ] && STATUS=FAIL
 
 # 하트비트 기록 (잡 실패해도 기록은 시도; 기록 실패는 잡 종료코드를 가리지 않음)
-HB_DETAIL="$( { tail -n "+$((LOG_LINES_BEFORE + 1))" "$LOG_DIR/$JOB.log" 2>/dev/null || true; } | tail -n 3 | tr '\n' ' ' | cut -c1-200)" \
+# 한글 사유가 바이트 단위로 잘려 깨지지 않게 문자 단위로 자른다(launchd 환경에는 LANG이 없다, 2026-10-31).
+HB_DETAIL="$( { tail -n "+$((LOG_LINES_BEFORE + 1))" "$LOG_DIR/$JOB.log" 2>/dev/null || true; } | tail -n 3 | tr '\n' ' ' | LC_ALL=en_US.UTF-8 cut -c1-200)" \
   "$NODE" scripts/jobs/record-heartbeat-vault.mjs "$JOB" "$STATUS" "$DUR" || true
 
 exit "$CODE"

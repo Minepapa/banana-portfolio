@@ -434,3 +434,145 @@ test('약속: 1분 틱이 이행기를 돌리고, 약속 LLM은 대화 줄이 �
     assert.match(conv.calls.batches.at(-1)[0], /약속 이행 시점이다: 전사 끝\n조건 충족: 잡 성공/);
   } finally { s.cleanup(); }
 });
+
+// ── 실전 가드(2026-10-31 사고: `--help`가 무시되고 기본값 live로 떠 실제 봇을 2분 가져감) ──
+// launch(실제 수신 시작 = getUpdates)가 몇 번 불렸는지로 "수신 0회"를 확인한다. 실제 봇·네트워크·launchctl·ps는 쓰지 않는다.
+const LAUNCHD_PRINT = (pid) => `gui/501/com.banana2.telegram-gate = {\n\tactive count = 1\n\tstate = running\n\n\tprogram = /bin/bash\n${pid ? `\tpid = ${pid}\n` : ''}\tendpoints = {\n\t\tpid = 999\n\t}\n}`;
+
+test('실전 가드: --help·모르는 인자·--mode 없음·live 가드 불통과면 수신을 시작하지 않는다', async () => {
+  const { main, parseGateArgs, decideLiveStart } = await import('./telegram-gate.mjs');
+  const self = { pid: process.pid, args: 'node scripts/jobs/telegram-gate.mjs --mode=live' };
+  const parent = { pid: process.ppid, args: '/bin/bash /x/scripts/launchd/run.sh telegram-gate' };
+  const session = { pid: 72497, args: '/Users/x/.local/bin/claude --channels plugin:telegram@claude-plugins-official' };
+  const plugin = { pid: 72500, args: 'bun run --cwd /x/telegram --silent start' };
+  const otherLive = { pid: 72600, args: '/opt/node/bin/node scripts/jobs/telegram-gate.mjs --mode=live' };
+  const accidentHelp = { pid: 72601, args: 'node scripts/jobs/telegram-gate.mjs --help' }; // 이번 사고 형태(옛 코드면 실전)
+  const accidentBare = { pid: 72602, args: 'node /x/scripts/jobs/telegram-gate.mjs' };
+  const watchers = [
+    { pid: 72700, args: 'pgrep -f claude.*--channels.*telegram' },
+    { pid: 72701, args: '/bin/sh -c pgrep -f "claude.*--channels.*telegram"' },
+    { pid: 72702, args: '/bin/zsh -c ps -axo pid,args | grep telegram-gate.mjs' },
+    // Claude 세션 Bash 도구 래퍼가 명령 문자열에 관문·세션 이름을 담은 경우(실측 오탐)
+    { pid: 72703, args: '/bin/zsh -c source /x/snapshot.sh && eval \'node scripts/jobs/telegram-gate.mjs --mode=live\'' },
+    { pid: 72704, args: '/bin/bash -lc export CLAUDE_TELEGRAM_SESSION=1; claude --channels plugin:telegram' },
+  ];
+  const launchdOk = { loaded: true, pid: process.ppid };
+  const run = async (argv, { env = {}, launchd = launchdOk, processes = [self, parent], second } = {}) => {
+    const launched = [];
+    const lines = [];
+    const refusals = [];
+    let selfTests = 0;
+    let reads = 0;
+    let waited = 0;
+    const code = await main({ argv, env, out: { log: (l) => lines.push(l), error: (l) => lines.push(l) },
+      liveChecks: () => { reads += 1; return { launchd, processes: reads > 1 && second ? second : processes }; },
+      launch: async (mode) => { launched.push(mode); }, runSelfTest: () => { selfTests += 1; },
+      wait: async (ms) => { waited += ms; }, recordRefusal: (d) => refusals.push(d.reasons.map((r) => r.code)) });
+    return { code, launched, text: lines.join('\n'), selfTests, refusals, waited };
+  };
+  const cutover = { TELEGRAM_GATE_LIVE_CUTOVER: '1' };
+
+  for (const argv of [['--help'], ['-h'], ['--mode=test', '--help']]) {
+    const r = await run(argv);
+    assert.deepEqual([r.code, r.launched], [0, []], argv.join(' '));
+    assert.match(r.text, /사용법/);
+  }
+  for (const argv of [[], ['--verbose'], ['--mode'], ['--mode=prod'], ['--mode=test', '--mode=live'], ['--mode=test', 'extra'], ['--self-test', '--mode=live']]) {
+    const r = await run(argv, { env: cutover });
+    assert.deepEqual([r.code, r.launched], [2, []], JSON.stringify(argv));
+    assert.match(r.text, /사용법/);
+  }
+  // live: 하나라도 어긋나면 거부 — exit 0(launchd가 다시 띄우지 않게), 수신 0회, 사유는 'LIVE_REFUSED 코드'로 시작하는 한 줄
+  for (const [label, opts, code] of [
+    ['환경변수 없음', {}, 'NO_CUTOVER_FLAG'],
+    ['plist 미등록', { env: cutover, launchd: { loaded: false, pid: null } }, 'NOT_LOADED'],
+    ['터미널에서 띄움(launchd pid가 다른 프로세스)', { env: cutover, launchd: { loaded: true, pid: 4242 } }, 'NOT_LAUNCHD'],
+    ['등록만 되고 안 도는 상태에서 터미널 실행', { env: cutover, launchd: { loaded: true, pid: null } }, 'NOT_LAUNCHD'],
+    ['상시 세션 살아 있음', { env: cutover, processes: [self, parent, session] }, 'RIVAL'],
+    ['플러그인 폴러 살아 있음', { env: cutover, processes: [self, parent, plugin] }, 'RIVAL'],
+    ['다른 실전 관문 살아 있음', { env: cutover, processes: [self, parent, otherLive] }, 'RIVAL'],
+    ['사고 형태: --help로 뜬 옛 관문', { env: cutover, processes: [self, parent, accidentHelp] }, 'RIVAL'],
+    ['사고 형태: 인자 없이 뜬 옛 관문', { env: cutover, processes: [self, parent, accidentBare] }, 'RIVAL'],
+    ['프로세스 표 비어 있음', { env: cutover, processes: [] }, 'PS_UNREADABLE'],
+    ['프로세스 표에 자기 자신이 없음', { env: cutover, processes: [{ pid: 1, args: '/sbin/launchd' }] }, 'PS_UNREADABLE'],
+  ]) {
+    const r = await run(['--mode=live'], opts);
+    assert.deepEqual([r.code, r.launched], [0, []], label);
+    assert.match(r.text, new RegExp(`^LIVE_REFUSED .*${code}`), label);
+    assert.equal(r.text.split('\n').length, 1, `${label}: 사유는 한 줄(run.sh가 끝 줄을 JobHealth detail로)`);
+    // 상태 파일은 launchd가 띄운 관문의 거부만 남긴다(터미널 실행이 실전 관문 하트비트를 덮지 않게)
+    assert.equal(r.refusals.length, ['NOT_LOADED', 'NOT_LAUNCHD'].includes(code) ? 0 : 1, label);
+  }
+  // 경쟁자만 걸리면 1초 뒤 다시 읽어, 두 번 다 걸릴 때만 거부(잠깐 스친 프로세스로 재시작 없는 정지 방지)
+  const transient = await run(['--mode=live'], { env: cutover, processes: [self, parent, session], second: [self, parent] });
+  assert.deepEqual([transient.launched, transient.waited], [['live'], 1000]);
+  const persistent = await run(['--mode=live'], { env: cutover, processes: [self, parent, session] });
+  assert.deepEqual([persistent.launched, persistent.waited], [[], 1000]);
+  assert.equal((await run(['--mode=live'])).waited, 0, '경쟁자 아닌 사유는 다시 읽지 않는다');
+  // 통과: 감시 명령 줄(맨 앞이든 sh -c·zsh -c 래퍼 안이든)은 경쟁자가 아니다. launchd pid가 자기 자신이어도 통과.
+  assert.deepEqual((await run(['--mode=live'], { env: cutover, processes: [self, parent, ...watchers] })).launched, ['live']);
+  assert.deepEqual((await run(['--mode=live'], { env: cutover, launchd: { loaded: true, pid: process.pid } })).launched, ['live']);
+  assert.deepEqual((await run(['--mode=test'])).launched, ['test'], '시험 모드는 실전 가드와 무관');
+  const selfTest = await run(['--self-test']);
+  assert.deepEqual([selfTest.code, selfTest.launched, selfTest.selfTests], [0, [], 1]);
+
+  // 실행 파일 기준: 버전 경로 claude·node 플러그인·bun 관문도 경쟁자, 인자에 grep 단어가 있는 진짜 세션도 경쟁자(재리뷰 2차 L1~L3)
+  for (const rival of [
+    { pid: 72800, args: '/Users/x/.local/share/claude/versions/2.1.314 --channels plugin:telegram@claude-plugins-official' },
+    { pid: 72801, args: 'node /Users/x/.claude/plugins/cache/claude-plugins-official/telegram/0.0.9/server.ts' },
+    { pid: 72802, args: 'bun scripts/jobs/telegram-gate.mjs' },
+    { pid: 72803, args: 'node22 scripts/jobs/telegram-gate.mjs --mode=live' },
+    { pid: 72804, args: 'claude --channels plugin:telegram --name "ps grep 메모"' },
+  ]) {
+    const r = await run(['--mode=live'], { env: cutover, processes: [self, parent, rival] });
+    assert.deepEqual(r.launched, [], rival.args);
+    assert.match(r.text, /RIVAL/, rival.args);
+  }
+
+  assert.deepEqual(parseGateArgs(['--mode=live']), { action: 'run', mode: 'live' });
+  assert.equal(decideLiveStart({ env: cutover, launchd: { loaded: true, pid: 4 }, selfPid: 5, parentPid: 4,
+    processes: [{ pid: 5, args: 'node scripts/jobs/telegram-gate.mjs --mode=live' }, { pid: 6, args: 'node scripts/jobs/telegram-gate.mjs --mode=test' },
+      { pid: 7, args: 'node scripts/jobs/telegram-gate.mjs --self-test' }] }).ok, true,
+  '관문 자신·시험 관문(다른 봇)·자가 점검은 경쟁자가 아니다');
+});
+
+test('실전 가드: launchctl print의 최상위 pid만 읽고, 확인 함수는 실패하면 막는 쪽', async () => {
+  const { parseLaunchdPid, readLaunchdGate, readProcessTableSafe, decideLiveStart } = await import('./telegram-gate.mjs');
+  assert.equal(parseLaunchdPid(LAUNCHD_PRINT(439)), 439);
+  assert.equal(parseLaunchdPid(LAUNCHD_PRINT(null)), null, '중첩된 pid 줄(탭 둘)은 읽지 않는다');
+  assert.deepEqual(readLaunchdGate({ uid: 501, run: () => ({ status: 0, stdout: LAUNCHD_PRINT(439) }) }), { loaded: true, pid: 439 });
+  assert.deepEqual(readLaunchdGate({ uid: 501, run: () => ({ status: 113, stdout: '' }) }), { loaded: false, pid: null }, '미등록');
+  assert.deepEqual(readLaunchdGate({ uid: 501, run: () => ({ status: null, error: new Error('ETIMEDOUT') }) }), { loaded: false, pid: null }, '시간 초과');
+  assert.deepEqual(readLaunchdGate({ uid: 501, run: () => { throw new Error('spawn 실패'); } }), { loaded: false, pid: null });
+  assert.deepEqual(readLaunchdGate({ uid: null }), { loaded: false, pid: null });
+  const table = readProcessTableSafe({ read: () => { throw new Error('ps 실패'); } });
+  assert.deepEqual(table, []);
+  assert.deepEqual(decideLiveStart({ env: { TELEGRAM_GATE_LIVE_CUTOVER: '1' }, launchd: { loaded: true, pid: 1 }, processes: table, selfPid: 1 })
+    .reasons.map((r) => r.code), ['PS_UNREADABLE']);
+});
+
+test('실전 가드: run.sh는 --mode=live로 부르고 detail을 문자 단위로 자른다, plist는 비정상 종료만 다시 띄운다', { skip: process.platform !== 'darwin' && 'plutil은 macOS 전용' }, async () => {
+  const { readFileSync } = await import('node:fs');
+  const { execFileSync } = await import('node:child_process');
+  const runSh = readFileSync(new URL('../launchd/run.sh', import.meta.url), 'utf8');
+  assert.match(runSh, /telegram-gate\) CMD=\(scripts\/jobs\/telegram-gate\.mjs --mode=live\)/);
+  assert.match(runSh, /LC_ALL=en_US\.UTF-8 cut -c1-200/);
+  const plist = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', new URL('../launchd/com.banana2.telegram-gate.plist', import.meta.url).pathname], { encoding: 'utf8' }));
+  assert.deepEqual(plist.KeepAlive, { SuccessfulExit: false });
+  assert.equal(plist.EnvironmentVariables?.TELEGRAM_GATE_LIVE_CUTOVER, undefined, '전환 플래그는 4단계에서만 넣는다');
+});
+
+test('실전 가드: 거부 기록은 heartbeat.json이 아니라 refusal.json, 상태 폴더가 없으면 만들지 않는다', async (t) => {
+  const { writeRefusalRecord } = await import('./telegram-gate.mjs');
+  const { mkdtempSync, rmSync, existsSync, readFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const root = mkdtempSync(join(tmpdir(), 'gate-refusal-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const decision = { reasons: [{ code: 'RIVAL', text: 'x' }] };
+  const missing = join(root, 'none');
+  assert.equal(writeRefusalRecord(decision, { env: { TELEGRAM_GATE_STATE_DIR: missing } }), false);
+  assert.equal(existsSync(missing), false, '없는 상태 폴더를 만들지 않는다(바깥 감시의 폴더 없음 보호)');
+  assert.equal(writeRefusalRecord(decision, { env: { TELEGRAM_GATE_STATE_DIR: root }, now: () => new Date('2026-11-07T01:00:00Z'), pid: 7 }), true);
+  assert.deepEqual(JSON.parse(readFileSync(join(root, 'refusal.json'), 'utf8')), { at: '2026-11-07T01:00:00.000Z', codes: ['RIVAL'], detail: 'LIVE_REFUSED RIVAL', pid: 7, mode: 'live' });
+  assert.equal(existsSync(join(root, 'heartbeat.json')), false, '하트비트는 건드리지 않는다');
+});

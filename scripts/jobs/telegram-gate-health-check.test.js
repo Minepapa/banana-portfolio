@@ -8,7 +8,7 @@ import { assessGate, decideAction, runHealthCheck, HEARTBEAT_STALE_MS, MAX_CONSE
 const NOW = Date.parse('2026-10-30T05:00:00Z');
 
 test('assessGate: 하트비트 없음·낡음, 남은 메시지 두 번 연속이면 비정상', () => {
-  assert.deepEqual(assessGate({ heartbeat: { at: new Date(NOW - 60_000).toISOString() }, nowMs: NOW, pendingCount: 0 }), { healthy: true, reasons: [], pendingStreak: 0 });
+  assert.deepEqual(assessGate({ heartbeat: { at: new Date(NOW - 60_000).toISOString() }, nowMs: NOW, pendingCount: 0 }), { healthy: true, refused: false, reasons: [], pendingStreak: 0 });
   assert.equal(assessGate({ heartbeat: null, nowMs: NOW, pendingCount: 0 }).healthy, false);
   assert.match(assessGate({ heartbeat: { at: new Date(NOW - HEARTBEAT_STALE_MS - 60_000).toISOString() }, nowMs: NOW }).reasons[0], /16분 전/);
   const once = assessGate({ heartbeat: { at: new Date(NOW).toISOString() }, nowMs: NOW, pendingCount: 2 });
@@ -59,3 +59,33 @@ test('runHealthCheck: --dry-run은 판정만 하고 재시작·발송·상태 �
   assert.equal(result.decision.action, 'restart');
   assert.throws(() => readFileSync(join(dir, 'health-check.json')), /ENOENT/);
 }));
+
+test('runHealthCheck: 실전 가드 거부(refusal.json이 하트비트보다 새것)는 재시작하지 않고 거부마다 경고 한 번', () => withState(async (dir) => {
+  writeFileSync(join(dir, 'heartbeat.json'), JSON.stringify({ at: new Date(NOW - 60 * 60_000).toISOString() }));
+  writeFileSync(join(dir, 'refusal.json'), JSON.stringify({ at: new Date(NOW - 20 * 60_000).toISOString(), codes: ['RIVAL'] }));
+  const restarts = [];
+  const warnings = [];
+  const opts = { stateDir: dir, nowMs: NOW, webhookInfo: async () => ({ pending_update_count: 3 }), restart: () => restarts.push(1), warn: async (m) => warnings.push(m), log: () => {} };
+  const first = await runHealthCheck(opts);
+  await runHealthCheck({ ...opts, nowMs: NOW + 10 * 60_000 });
+  await runHealthCheck({ ...opts, nowMs: NOW + 20 * 60_000 });
+  assert.equal(first.decision.action, 'refused');
+  assert.equal(restarts.length, 0, '다시 띄워도 또 거부하니 재시작하지 않는다(끝없는 재시작·경고 반복 방지)');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].body, /실전 시작을 스스로 거부/);
+  assert.match(warnings[0].body, /RIVAL/);
+  // 새 거부가 생기면 다시 한 번 알린다
+  writeFileSync(join(dir, 'refusal.json'), JSON.stringify({ at: new Date(NOW + 25 * 60_000).toISOString(), codes: ['NOT_LAUNCHD'] }));
+  await runHealthCheck({ ...opts, nowMs: NOW + 30 * 60_000 });
+  assert.equal(warnings.length, 2);
+  // 관문이 정상으로 뜨면(하트비트가 거부보다 새것) 거부 판정은 끝난다
+  writeFileSync(join(dir, 'heartbeat.json'), JSON.stringify({ at: new Date(NOW + 35 * 60_000).toISOString() }));
+  const after = await runHealthCheck({ ...opts, nowMs: NOW + 36 * 60_000, webhookInfo: async () => ({ pending_update_count: 0 }) });
+  assert.equal(after.decision.action, 'none');
+}));
+
+test('assessGate: 거부 코드는 정해진 형식만 메시지에 넣는다', () => {
+  const r = assessGate({ heartbeat: null, nowMs: NOW, refusal: { at: new Date(NOW).toISOString(), codes: ['RIVAL', '<b>x</b>'] } });
+  assert.equal(r.refused, true);
+  assert.match(r.reasons[0], /\(RIVAL\)/);
+});

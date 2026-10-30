@@ -17,18 +17,27 @@
  * 1단계 범위: 결정론 입력(안녕·상태·취소·스위치 3종·📜·📎·🪶·음성 기록·WQ·체결확인·장소). 'llm' route는 고정 안내.
  * 제안 승인·직접 주문·사진 판독·자유 대화는 2단계.
  *
- * 사용법:
+ * 사용법(GATE_USAGE와 같게 유지):
  *   node scripts/jobs/telegram-gate.mjs --mode=test       시험 봇(~/.config/banana-portfolio-v2/telegram-gate-test.env)
- *   node scripts/jobs/telegram-gate.mjs                   실전(전환 뒤 launchd만). 상시 세션이 떠 있으면 봇을 빼앗으니 금지
+ *   node scripts/jobs/telegram-gate.mjs --mode=live       실전 — 전환 뒤 launchd만(실전 가드 통과 필요)
  *   node scripts/jobs/telegram-gate.mjs --self-test       네트워크 없이 실행 환경(node·claude 경로·버전)만 출력
+ *   node scripts/jobs/telegram-gate.mjs --help            사용법만 출력
+ *
+ * 실전 가드(2026-10-31 사고: `--help`가 무시되고 기본값 live로 떠 실제 봇을 2분 가져감, 상시 세션 409 5회):
+ * 모르는 인자는 거부(exit 2), --mode는 필수. live는 아래를 모두 만족할 때만 시작한다.
+ *   TELEGRAM_GATE_LIVE_CUTOVER=1 · launchd에 관문 plist 등록 + launchd가 아는 pid가 자기 자신이나 부모(run.sh) ·
+ *   상시 세션(--channels)·텔레그램 플러그인 폴러·다른 관문이 없음 · 프로세스 표를 정상으로 읽음(못 읽으면 거부).
+ * 거부는 수신을 시작하지 않고 exit 0으로 끝낸다(사유는 로그 → run.sh가 JobHealth detail에 남김). plist KeepAlive가
+ * {SuccessfulExit:false}라 거부(0)는 다시 띄우지 않고, 감시견 exit(1) 같은 비정상 종료만 다시 띄운다 — 10초마다 거부·FAIL이 쌓이지 않게(재리뷰 M1).
  */
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { freemem, totalmem } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
+import { readProcessTable, TELEGRAM_MCP_SUBPROCESS_PATTERN, TELEGRAM_SESSION_PROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
 import { fileURLToPath } from 'node:url';
-import { assertTestIsolation, buildGateSpawnEnv, loadGateConfig } from '../lib/telegram-gate-config.mjs';
+import { assertTestIsolation, buildGateSpawnEnv, defaultGatePaths, loadGateConfig } from '../lib/telegram-gate-config.mjs';
 import { createGateInbox } from '../lib/telegram-gate-inbox.mjs';
 import { laneOf, routeUpdate, sanitizeUpdate } from '../lib/telegram-gate-router.mjs';
 import { createGateHandlers, gateMediaDir, killRunningGateTools, pruneGateMedia } from '../lib/telegram-gate-handlers.mjs';
@@ -581,10 +590,128 @@ function selfTest() {
   console.log(JSON.stringify({ node: process.version, execPath: process.execPath, claudeBin, claudeVersion, PATH: process.env.PATH }, null, 2));
 }
 
-async function main() {
-  const argv = process.argv.slice(2);
-  if (argv.includes('--self-test')) { selfTest(); return; }
-  const mode = argv.find((a) => a.startsWith('--mode='))?.slice(7) ?? 'live';
+export const GATE_USAGE = [
+  '사용법: node scripts/jobs/telegram-gate.mjs --mode=test|live | --self-test | --help',
+  '  --mode=test   시험 봇(시험 볼트로 격리)',
+  '  --mode=live   실전 — 전환 뒤 launchd만. TELEGRAM_GATE_LIVE_CUTOVER=1·launchd 실행·plist 등록·상시 세션 없음이 모두 필요',
+  '  --self-test   네트워크 없이 실행 환경만 출력',
+].join('\n');
+export const GATE_LIVE_LABEL = 'com.banana2.telegram-gate';
+
+// 순수 함수: 인자 해석. 모르는 인자·중복·값 없는 --mode는 오류. { action: 'help'|'self-test'|'run', mode } 또는 { error }.
+export function parseGateArgs(argv) {
+  if (argv.some((a) => a === '--help' || a === '-h')) return { action: 'help' };
+  const unknown = argv.filter((a) => a !== '--self-test' && !/^--mode=(test|live)$/.test(a));
+  if (unknown.length) return { error: `모르는 인자: ${unknown.join(' ')}` };
+  const modes = argv.filter((a) => a.startsWith('--mode='));
+  if (argv.includes('--self-test')) return modes.length ? { error: '--self-test는 --mode와 함께 쓰지 않습니다' } : { action: 'self-test' };
+  if (modes.length !== 1) return { error: modes.length ? '--mode는 한 번만' : '--mode=test 또는 --mode=live가 필요합니다(기본값 없음)' };
+  return { action: 'run', mode: modes[0].slice(7) };
+}
+
+// 순수 함수: launchctl print 출력에서 실행 중인 pid(최상위 "\tpid = N" 줄). 없으면 null(등록만 돼 있고 안 도는 상태 포함).
+export function parseLaunchdPid(text) {
+  const m = /^\tpid = (\d+)$/m.exec(String(text ?? ''));
+  return m ? Number(m[1]) : null;
+}
+
+// 순수 함수: 실전 시작 허용 여부. { ok, reasons: [{ code, text }], rivalOnly }.
+// - launchd: launchctl print 결과 { loaded, pid }. 실전은 launchd가 이 라벨로 띄운 프로세스만 — launchd가 아는 pid가
+//   자기 자신이나 부모(run.sh bash)여야 한다. XPC_SERVICE_NAME은 bash로 run.sh를 감싸는 잡에서 0으로 들어와 쓸 수 없다(재리뷰 HIGH 실측).
+// - processes: telegram-session-liveness의 프로세스 표. 상시 세션(claude --channels telegram)·텔레그램 플러그인 폴러(bun)·
+//   다른 관문(시험·자가 점검이 아닌 telegram-gate.mjs 줄 — 옛 코드의 인자 없는 실행·--help 실행도 실전이었다)이 있으면 409가 난다.
+// - 경쟁자는 실제 실행 파일로 좁힌다: 상시 세션은 claude(버전 경로 ~/.local/share/claude/versions/… 포함) 또는 node로 띄운 claude,
+//   플러그인은 bun 또는 node, 관문은 node 또는 bun(버전 붙은 이름 포함). 명령 문자열에 그 이름을 담기만 한 셸 래퍼(sh -c·zsh -c —
+//   감시 명령, Claude 세션의 Bash 도구)와 pgrep·grep 같은 감시 명령은 실행 파일이 달라 저절로 빠진다(실측: 도구 래퍼가 걸렸다).
+//   줄 전체에서 감시 도구 이름을 찾아 빼지 않는다 — 진짜 세션 인자에 그 단어가 있으면 놓치기 때문(재리뷰 2차 L1).
+// - 표가 비었거나 자기 자신이 없으면 제대로 읽지 못한 것으로 보고 거부한다(fail-closed).
+const GATE_SCRIPT_RE = /telegram-gate\.mjs\b/;
+const NON_LIVE_GATE_RE = /--mode=test\b|--self-test\b/;
+const PLUGIN_PATH_RE = /\/plugins\/\S*\/telegram\//; // 플러그인을 bun 대신 node로 띄워도 플러그인 폴더 경로로 알아본다
+const firstToken = (args) => String(args).trim().split(/\s+/)[0];
+const executableOf = (args) => firstToken(args).split('/').pop();
+const isNodeLike = (exe) => /^(node|bun)(\d[\w.-]*)?$/.test(exe);
+const isClaudeExe = (args) => executableOf(args) === 'claude' || firstToken(args).includes('/claude/versions/');
+export function decideLiveStart({ env = {}, launchd = { loaded: false, pid: null }, processes = [], selfPid = null, parentPid = null }) {
+  const reasons = [];
+  if (env.TELEGRAM_GATE_LIVE_CUTOVER !== '1') reasons.push({ code: 'NO_CUTOVER_FLAG', text: 'TELEGRAM_GATE_LIVE_CUTOVER=1이 없음(4단계 전환 때만 plist에 넣는다)' });
+  if (!launchd.loaded) reasons.push({ code: 'NOT_LOADED', text: `launchd에 ${GATE_LIVE_LABEL}이 등록돼 있지 않음` });
+  else if (launchd.pid === null || (launchd.pid !== selfPid && launchd.pid !== parentPid)) {
+    reasons.push({ code: 'NOT_LAUNCHD', text: `launchd(${GATE_LIVE_LABEL})가 띄운 프로세스가 아님(launchd pid ${launchd.pid ?? '없음'}) — 실전은 터미널에서 띄우지 않는다` });
+  }
+  if (!processes.length || (selfPid !== null && !processes.some((p) => p.pid === selfPid))) {
+    reasons.push({ code: 'PS_UNREADABLE', text: '프로세스 표를 확인하지 못함(비었거나 자기 자신이 없음)' });
+  }
+  const sessionRe = new RegExp(TELEGRAM_SESSION_PROCESS_PATTERN);
+  const pluginRe = new RegExp(TELEGRAM_MCP_SUBPROCESS_PATTERN);
+  const rivals = processes.filter((p) => {
+    if (p.pid === selfPid || p.pid === parentPid) return false;
+    const exe = executableOf(p.args);
+    return ((isClaudeExe(p.args) || isNodeLike(exe)) && sessionRe.test(p.args))
+      || (isNodeLike(exe) && (pluginRe.test(p.args) || PLUGIN_PATH_RE.test(p.args)))
+      || (isNodeLike(exe) && GATE_SCRIPT_RE.test(p.args) && !NON_LIVE_GATE_RE.test(p.args));
+  });
+  if (rivals.length) reasons.push({ code: 'RIVAL', text: `텔레그램 상시 세션·플러그인 폴러·다른 관문이 살아 있음(pid ${rivals.map((p) => p.pid).join(', ')})` });
+  return { ok: reasons.length === 0, reasons, rivalOnly: reasons.length > 0 && reasons.every((r) => r.code === 'RIVAL') };
+}
+
+// 읽기만 한다(launchctl print). 등록돼 있지 않거나 시간 초과·실행 실패면 { loaded: false }(막는 쪽).
+export function readLaunchdGate({ uid = typeof process.getuid === 'function' ? process.getuid() : null, run = spawnSync } = {}) {
+  if (uid === null) return { loaded: false, pid: null };
+  try {
+    const res = run('launchctl', ['print', `gui/${uid}/${GATE_LIVE_LABEL}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 });
+    if (res.status !== 0) return { loaded: false, pid: null };
+    return { loaded: true, pid: parseLaunchdPid(res.stdout) };
+  } catch { return { loaded: false, pid: null }; }
+}
+
+// 프로세스 표를 못 읽으면 빈 표 — decideLiveStart가 확인 실패로 거부한다.
+export function readProcessTableSafe({ read = readProcessTable } = {}) {
+  try { return read(); } catch { return []; }
+}
+
+// 거부를 관문 상태 폴더 refusal.json에 짧은 코드와 함께 남긴다. heartbeat.json과 분리한다 — 바깥 감시(telegram-gate-health-check)가
+// 하트비트를 '살아 있음'으로 읽어 15분마다 재시작·경고를 되풀이하지 않게, 거부는 따로 읽어 재시작 없이 한 번만 알린다(재리뷰 2차 M1).
+// 상태 폴더가 없으면 만들지 않는다(관문이 한 번도 안 돈 기계에서 바깥 감시의 '폴더 없으면 건너뜀'을 깨지 않게). 실패해도 거부는 그대로.
+export function writeRefusalRecord(decision, { env = process.env, now = () => new Date(), pid = process.pid } = {}) {
+  try {
+    const dir = env.TELEGRAM_GATE_STATE_DIR || defaultGatePaths().liveStateDir;
+    if (!existsSync(dir)) return false;
+    const codes = decision.reasons.map((r) => r.code);
+    writeAtomic(join(dir, 'refusal.json'), `${JSON.stringify({ at: now().toISOString(), codes, detail: `LIVE_REFUSED ${codes.join(',')}`, pid, mode: 'live' })}\n`);
+    return true;
+  } catch { return false; }
+}
+
+// 진입점: 인자·가드를 통과해야만 launch(실제 수신 시작)를 부른다. 종료코드를 돌려준다(시작하면 데몬이 끝날 때까지 기다린다).
+// 거부는 exit 0: plist KeepAlive가 {SuccessfulExit:false}라 다시 띄우지 않는다(10초마다 거부·FAIL 반복 방지).
+// 로그 한 줄은 'LIVE_REFUSED 코드…'로 시작해 run.sh가 JobHealth detail 앞에 남긴다(상태는 OK라 detail로 구분). 상태 폴더에는 refusal.json.
+// 같은 이유로 SIGTERM 정상 종료(사람이 node에 TERM)도 다시 띄우지 않는다 — 의도다. 다시 올리기는 kickstart -k(관문 health-check가 쓰는 방식).
+export async function main({ argv = process.argv.slice(2), env = process.env, out = console,
+  liveChecks = () => ({ launchd: readLaunchdGate(), processes: readProcessTableSafe() }),
+  launch = launchGate, runSelfTest = selfTest, wait = (ms) => new Promise((r) => setTimeout(r, ms)),
+  recordRefusal = (decision) => writeRefusalRecord(decision, { env }) } = {}) {
+  const parsed = parseGateArgs(argv);
+  if (parsed.error) { out.error(`[gate] ${parsed.error}\n${GATE_USAGE}`); return 2; }
+  if (parsed.action === 'help') { out.log(GATE_USAGE); return 0; }
+  if (parsed.action === 'self-test') { runSelfTest(); return 0; }
+  if (parsed.mode === 'live') {
+    const check = () => decideLiveStart({ env, ...liveChecks(), selfPid: process.pid, parentPid: process.ppid });
+    let decision = check();
+    // 경쟁자만 걸렸으면 1초 뒤 다시 읽어 두 번 다 걸릴 때만 거부한다(잠깐 스친 프로세스로 재시작 없는 정지가 되지 않게).
+    if (!decision.ok && decision.rivalOnly) { await wait(1000); decision = check(); }
+    if (!decision.ok) {
+      // 상태 파일은 launchd가 띄운 관문일 때만 쓴다 — 터미널에서 잘못 띄운 실행이 돌고 있는 실전 관문의 하트비트를 덮지 않게.
+      if (!decision.reasons.some((r) => r.code === 'NOT_LAUNCHD' || r.code === 'NOT_LOADED')) recordRefusal(decision);
+      out.error(`LIVE_REFUSED ${decision.reasons.map((r) => r.code).join(',')} [gate] 실전 시작 거부 — 수신을 시작하지 않습니다: ${decision.reasons.map((r) => r.text).join(' / ')}`);
+      return 0;
+    }
+  }
+  await launch(parsed.mode);
+  return 0;
+}
+
+async function launchGate(mode) {
   const gate = loadGateConfig({ mode });
   // 시험 모드: 볼트 경로는 모듈을 불러올 때 정해진다. 시험 볼트로 정해져 있지 않으면 VAULT_PATH를 시험 볼트로 두고
   // 자기 자신을 다시 띄운다 — 데몬 안(위키 질문 큐)과 자식 도구(스위치·기록·장부)가 모두 시험 볼트만 보게 된다.
@@ -671,5 +798,6 @@ async function main() {
 
 const invokedPath = (() => { try { return realpathSync(process.argv[1] ?? ''); } catch { return null; } })();
 if (invokedPath && invokedPath === fileURLToPath(import.meta.url)) {
-  main().catch((error) => { console.error(`[gate] 시작 실패: ${error.message}`); process.exit(1); });
+  main().then((code) => { if (code) process.exit(code); })
+    .catch((error) => { console.error(`[gate] 시작 실패: ${error.message}`); process.exit(1); });
 }

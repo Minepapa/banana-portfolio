@@ -19,8 +19,13 @@
   </array>
   <key>RunAtLoad</key>
   <true/>
+  <!-- 비정상 종료(감시견 exit 1 등)만 다시 띄운다. 실전 가드 거부는 exit 0이라 다시 띄우지 않는다(10초마다 거부·FAIL 반복 방지, 2026-10-31).
+       4단계 전환 때 EnvironmentVariables에 TELEGRAM_GATE_LIVE_CUTOVER=1을 넣는다(launchctl setenv는 쓰지 않는다). -->
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
   <key>ThrottleInterval</key>
   <integer>10</integer>
   <key>ProcessType</key>
