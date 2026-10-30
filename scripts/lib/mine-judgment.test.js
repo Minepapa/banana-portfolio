@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fixtureCriteria as criteria } from './mine-emotion-criteria.fixture.js';
-import { appendJudgment, assertEngine, callsOn, emotionProperties, judgedNotes, noteKeys, readJudgments, validScores } from './mine-judgment.mjs';
+import { OWNER_ENGINE, appendJudgment, assertEngine, callsOn, emotionProperties, judgedNotes, noteKeys, readJudgments, validScores } from './mine-judgment.mjs';
 
 const version = { engine: 'ollama', model: 'exaone', criteriaRef: '미네-감정-분류@2026-10-19', promptVersion: 'athena-fields/0.0' };
 
@@ -64,4 +64,9 @@ test('callsOn: 그 날 그 엔진으로 실제로 부른 횟수만 센다', () =
     { engine: 'claude', at: '2026-10-31' }, { engine: 'claude', at: '2026-10-30', calls: 2 }, { engine: 'ollama', at: '2026-10-31', calls: 1 }];
   assert.equal(callsOn(rows, { engine: 'claude', date: '2026-10-31' }), 3);
   assert.equal(callsOn([], { engine: 'claude', date: '2026-10-31' }), 0);
+});
+
+test('오너가 검수 시트로 정한 노트는 어느 판으로도 다시 고르지 않는다', () => {
+  const rows = [{ rel: 'owner.md', engine: OWNER_ENGINE, status: 'applied' }, { rel: 'owner-failed.md', engine: OWNER_ENGINE, status: 'retry' }];
+  assert.deepEqual([...judgedNotes(rows, version)], ['owner.md']);
 });

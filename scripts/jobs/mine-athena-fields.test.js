@@ -304,6 +304,7 @@ test('재분류 kind는 통화·녹음·all을 선택하고 기본은 녹음이�
   assert.equal(find('all').length, 2);
   assert.equal(find('녹음')[0].fields.convKind, '녹음');
   assert.equal(find('통화')[0].fields.convKind, '통화');
+  assert.equal(findTargets(root, { reclassify: true, cutoff: '2026-10-18', kind: 'all', since: '2026-10-15' }).length, 1, 'since 이전 기록은 뺀다');
 });
 
 test('통화 재분류 프롬프트는 미네 발화와 목소리 거절 이유를 명시하고 중요도는 묻지 않는다', () => {

@@ -34,11 +34,18 @@ export function appendJudgment(path, row) {
 const sameVersion = (row, current) => ['engine', 'model', 'criteriaRef', 'promptVersion']
   .every((key) => (row[key] ?? null) === (current[key] ?? null));
 
-// 지금 판(엔진·모델·기준·프롬프트)으로 이미 끝난 노트 경로.
+// 오너가 검수 시트로 정한 노트의 판단 기록 엔진 이름. 이 줄이 있으면 어느 판으로도 다시 묻지 않는다.
+export const OWNER_ENGINE = 'owner';
+// 노트 머리말의 오너 표식(정본은 노트) — 근거가 이것으로 시작하면 노트를 옮겨도 모델이 다시 묻지 않는다.
+export const OWNER_EVIDENCE = '오너 판단(검수 시트)';
+export const ownerDecided = (fields) => String(fields?.emotionEvidence ?? '').replace(/^모름: /, '').startsWith(OWNER_EVIDENCE);
+
+// 지금 판(엔진·모델·기준·프롬프트)으로 이미 끝난 노트 경로 + 오너가 정한 노트.
 export function judgedNotes(rows, current) {
   const done = new Set();
   for (const row of rows) {
-    if (typeof row?.rel === 'string' && DONE_STATUSES.includes(row.status) && sameVersion(row, current)) done.add(row.rel);
+    if (typeof row?.rel !== 'string') continue;
+    if (row.engine === OWNER_ENGINE ? row.status === 'applied' : DONE_STATUSES.includes(row.status) && sameVersion(row, current)) done.add(row.rel);
   }
   return done;
 }

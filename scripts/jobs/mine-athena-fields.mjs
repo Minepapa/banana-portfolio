@@ -22,7 +22,7 @@ import { parseJsonBlock, runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadEmotionCriteria, validateEmotionResult } from '../lib/mine-emotion-criteria.mjs';
 import { OLLAMA_MODELS, runOllama, unloadOllamaModel } from '../lib/ollama-client.mjs';
 import { mineConversation } from '../lib/mine-record-input.mjs';
-import { EMOTION_REQUIRED, appendJudgment, assertEngine, callsOn, emotionProperties, judgedNotes, noteKeys, readJudgments } from '../lib/mine-judgment.mjs';
+import { EMOTION_REQUIRED, appendJudgment, assertEngine, callsOn, emotionProperties, judgedNotes, noteKeys, ownerDecided, readJudgments } from '../lib/mine-judgment.mjs';
 import { SCORE_REQUIRED, deriveEmotionFields, judgmentPreamble, loadEmotionAnchors, scoreProperties } from '../lib/mine-judgment-prompt.mjs';
 
 // 인사이드 아웃 감정 어휘(아테나 헌장). 이 밖의 값은 쓰지 않는다.
@@ -131,7 +131,8 @@ function listNotes(root, rel) {
 
 // 대상: 201 미네 category, 아테나 필드가 하나도 없음, 건너뜀 기록 없음, cutoff(KST) 이전 날짜.
 // judged: 지금 판으로 이미 판단한 노트 경로(애매함 포함) — 다시 묻지 않는다.
-export function findTargets(root, { skipped = {}, cutoff, reclassify = false, ids, kind = '녹음', includeUnclassified = false, judged = new Set() } = {}) {
+// since: 이 날짜(KST) 이후 기록만 — 2023년~ 먼저 전수(오너 결정 F-2, 기억 판단 체계 §10.2).
+export function findTargets(root, { skipped = {}, cutoff, reclassify = false, ids, kind = '녹음', includeUnclassified = false, judged = new Set(), since } = {}) {
   const targets = [];
   for (const rel of listNotes(root, CONVERSATIONS_REL)) {
     const content = readFileSync(join(root, rel), 'utf8');
@@ -141,7 +142,8 @@ export function findTargets(root, { skipped = {}, cutoff, reclassify = false, id
     const category = Array.isArray(fm.category) ? fm.category : [fm.category];
     if (!category.includes(MINE_CATEGORY)) continue;
     // --ids로 고른 노트는 오너·운영자가 일부러 다시 묻는 것이라 같은 판이어도 고른다.
-    if (!ids && noteKeys(rel, fm).some((key) => judged.has(key))) continue;
+    // 오너가 검수 시트로 정한 노트(머리말 표식)는 --ids로도 모델이 덮지 않는다.
+    if (ownerDecided(fm) || !ids && noteKeys(rel, fm).some((key) => judged.has(key))) continue;
     if (reclassify) {
       const noteIds = [...content.matchAll(/<!-- media-transcribe:id ([a-f0-9]{16}) -->/gi)].map((match) => match[1]);
       if (!['녹음', '통화'].includes(fm.convKind) || kind !== 'all' && fm.convKind !== kind
@@ -151,7 +153,7 @@ export function findTargets(root, { skipped = {}, cutoff, reclassify = false, id
         (ids && !ids.some((id) => noteIds.includes(id) || rel === id))) continue;
     } else if (ATHENA_KEYS.some((key) => fm[key] !== undefined)) continue;
     const date = occurredDate(fm.occurred);
-    if (!date || (!reclassify && date >= cutoff)) continue;
+    if (!date || (!reclassify && date >= cutoff) || (since && date < since)) continue;
     targets.push({ rel, content, occurred: String(fm.occurred), date, fields: fm });
   }
   return targets.sort((a, b) => a.date.localeCompare(b.date) || a.rel.localeCompare(b.rel, 'ko'));
@@ -446,7 +448,7 @@ function dailyRoom(engine, rows, today) {
 }
 
 async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_ROOT, dryRun = false,
-  ids, kind = '녹음', includeUnclassified = false, maxNotes = MAX_NOTES, now = new Date(), judge, cooldown = cooldownActive, charter,
+  ids, kind = '녹음', includeUnclassified = false, since, maxNotes = MAX_NOTES, now = new Date(), judge, cooldown = cooldownActive, charter,
   rules, write = writeAtomic, criteria = loadEmotionCriteria(), output = console, cues = attachAudioCues, anchors,
   engine = 'claude', judgmentsPath, unload = unloadOllamaModel, invoke } = {}) {
   const today = kstDate(now);
@@ -461,7 +463,7 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   const version = { engine, model: engine === 'ollama' ? OLLAMA_MODELS.text : agent.model,
     criteriaRef: criteria.ref ?? null, promptVersion: PROMPT_VERSIONS[engine] };
   const rows = readJudgments(recordPath);
-  const targets = findTargets(root, { reclassify: true, ids, kind, includeUnclassified,
+  const targets = findTargets(root, { reclassify: true, ids, kind, includeUnclassified, since,
     skipped: state.skipped ?? {}, cutoff: today, judged: judgedNotes(rows, version) });
   const room = dailyRoom(engine, rows, today);
   const batch = targets.slice(0, Math.min(maxNotes, room));
@@ -752,9 +754,9 @@ export function failed(summary) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
   if (!args.every((arg) => ['--dry-run', '--reclassify'].includes(arg) || /^--limit=\d+$/.test(arg) || /^--engine=(claude|ollama)$/.test(arg)
-    || /^--ids=[^=]+$/.test(arg) || /^--kind=(통화|녹음|all)$/.test(arg) || arg === '--include-unclassified') ||
-    (args.some((arg) => arg.startsWith('--ids=') || arg.startsWith('--kind=') || arg === '--include-unclassified') && !args.includes('--reclassify'))) {
-    console.error('usage: mine-athena-fields.mjs [--engine=claude|ollama] [--reclassify] [--kind=통화|녹음|all] [--include-unclassified] [--dry-run] [--ids=id1,id2] [--limit=N]');
+    || /^--ids=[^=]+$/.test(arg) || /^--kind=(통화|녹음|all)$/.test(arg) || arg === '--include-unclassified' || /^--since=\d{4}-\d{2}-\d{2}$/.test(arg) && occurredDate(arg.slice(8)) === arg.slice(8)) ||
+    (args.some((arg) => arg.startsWith('--ids=') || arg.startsWith('--kind=') || arg.startsWith('--since=') || arg === '--include-unclassified') && !args.includes('--reclassify'))) {
+    console.error('usage: mine-athena-fields.mjs [--engine=claude|ollama] [--reclassify] [--kind=통화|녹음|all] [--include-unclassified] [--since=YYYY-MM-DD] [--dry-run] [--ids=id1,id2] [--limit=N]');
     process.exit(2);
   }
   const limit = args.find((arg) => arg.startsWith('--limit='));
@@ -762,7 +764,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     engine: args.find((arg) => arg.startsWith('--engine='))?.slice(9) ?? 'claude' };
   const ids = args.find((arg) => arg.startsWith('--ids='))?.slice(6).split(',');
   const kind = args.find((arg) => arg.startsWith('--kind='))?.slice(7) ?? '녹음';
-  (args.includes('--reclassify') ? reclassify({ ...options, ids, kind, includeUnclassified: args.includes('--include-unclassified') }) : run(options))
+  const since = args.find((arg) => arg.startsWith('--since='))?.slice(8);
+  (args.includes('--reclassify') ? reclassify({ ...options, ids, kind, since, includeUnclassified: args.includes('--include-unclassified') }) : run(options))
     .then((summary) => { if (args.includes('--reclassify') ? summary.invalid.length || summary.unavailable || summary.recordErrors : failed(summary)) process.exitCode = 1; })
     .catch((error) => { console.error(`[mine-athena-fields] 실패: ${error.message}`); process.exitCode = 1; });
 }
