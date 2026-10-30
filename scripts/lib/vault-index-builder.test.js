@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { AUTO_END, AUTO_START, buildIndexBlock, buildVaultIndex, parseCategories, replaceAutoBlock } from './vault-index-builder.mjs';
+import { AUTO_END, AUTO_START, buildConceptCounts, buildIndexBlock, buildVaultIndex, parseCategories, replaceAutoBlock } from './vault-index-builder.mjs';
 import { VAULT_REL } from './vault-paths.mjs';
 import { MOUSEION_TOP_FOLDERS } from './vault-layout.mjs';
 
@@ -71,7 +71,7 @@ test('buildVaultIndex: 키워드 표는 보존하고 자동 구역·분류 목�
   const { root, home } = makeVault();
   try {
     const changed = buildVaultIndex(root);
-    assert.deepEqual(changed.sort(), [`${home}/500 기술.md`, `${home}/700 자산.md`, VAULT_REL.knowledgeIndexFile].sort());
+    assert.deepEqual(changed.sort(), [`${home}/500 기술.md`, `${home}/700 자산.md`, VAULT_REL.knowledgeIndexFile, VAULT_REL.mouseionConceptCounts].sort());
     const index = readFileSync(join(root, VAULT_REL.knowledgeIndexFile), 'utf8');
     assert.match(index, /## 개인 원칙과 투자 결정\n\n\| 표준 키워드/);
     assert.match(index, /`투자자-성향` → \[\[.*2026-10-08 투자자 성향\]\]/);
@@ -93,6 +93,69 @@ test('buildVaultIndex: apply=false면 파일을 쓰지 않는다', () => {
     const before = readFileSync(join(root, VAULT_REL.knowledgeIndexFile), 'utf8');
     assert.ok(buildVaultIndex(root, { apply: false }).length > 0);
     assert.equal(readFileSync(join(root, VAULT_REL.knowledgeIndexFile), 'utf8'), before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildConceptCounts: 분류 노트별 건수, 이름순, 99로 시작하는 개념은 넣지 않는다', () => {
+  const notes = [
+    { rel: '01_Home/700 자산.md', type: 'category', categories: [] },
+    { rel: '01_Home/500 기술.md', type: 'category', categories: [] },
+    { rel: '01_Home/99 금고.md', type: 'category', categories: [] },
+    { rel: `${top('80_')}/옛 분류.md`, type: 'category', categories: [] },
+    { rel: 'a.md', type: 'note', categories: ['700 자산', '500 기술'] },
+    { rel: 'b.md', type: 'note', categories: ['700 자산', '99 금고'] },
+  ];
+  const now = new Date('2026-10-31T14:50:00Z');
+  assert.deepEqual(buildConceptCounts(notes, now), {
+    schemaVersion: 1,
+    generatedAt: '2026-10-31T14:50:00.000Z',
+    totalNotes: 6,
+    concepts: [{ name: '500 기술', count: 1 }, { name: '700 자산', count: 2 }],
+  });
+});
+
+test('buildVaultIndex: 개념별 건수 파일을 쓰고, 건수가 같으면 다시 쓰지 않으며, 바뀌면 다시 쓴다', () => {
+  const { root, home } = makeVault();
+  const file = join(root, VAULT_REL.mouseionConceptCounts);
+  try {
+    buildVaultIndex(root, { now: new Date('2026-10-30T14:50:00Z') });
+    const first = JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(first.generatedAt, '2026-10-30T14:50:00.000Z');
+    assert.deepEqual(first.concepts, [{ name: '500 기술', count: 1 }, { name: '700 자산', count: 2 }]);
+    assert.ok(!JSON.stringify(first).includes('위탁-삼성전자'), '기계 데이터는 세지 않는다');
+    assert.deepEqual(buildVaultIndex(root, { now: new Date('2026-10-31T14:50:00Z') }), []);
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).generatedAt, '2026-10-30T14:50:00.000Z');
+    writeFileSync(join(root, '30_Wiki', '새 노트.md'), `---\ncategory: ["[[${home}/500 기술]]"]\n---\n`);
+    assert.ok(buildVaultIndex(root, { now: new Date('2026-10-31T14:50:00Z') }).includes(VAULT_REL.mouseionConceptCounts));
+    const second = JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(second.generatedAt, '2026-10-31T14:50:00.000Z');
+    assert.deepEqual(second.concepts[0], { name: '500 기술', count: 2 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildVaultIndex: apply=false면 개념별 건수 파일도 쓰지 않는다', () => {
+  const { root } = makeVault();
+  try {
+    assert.ok(buildVaultIndex(root, { apply: false }).includes(VAULT_REL.mouseionConceptCounts));
+    assert.throws(() => readFileSync(join(root, VAULT_REL.mouseionConceptCounts), 'utf8'), { code: 'ENOENT' });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildVaultIndex: 이전 건수 파일이 깨졌으면 새로 쓰고, 색인 파일이 없어 실패해도 건수는 먼저 쓴다', () => {
+  const { root } = makeVault();
+  const file = join(root, VAULT_REL.mouseionConceptCounts);
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, '{"schemaVersion": 1, "conce');
+    rmSync(join(root, VAULT_REL.knowledgeIndexFile));
+    assert.throws(() => buildVaultIndex(root), /색인 파일이 없습니다/);
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).concepts.length, 2);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
