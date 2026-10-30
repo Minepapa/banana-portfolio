@@ -60,6 +60,7 @@ export const VAULT_REL = {
   periodicRoot: '10_Periodic',
   people: '30_Wiki/31_People', // 헤르메스 생일 브리핑 대상
   places: '30_Wiki/32_Places',
+  calendarDays: '95_Etna/Calendar', // 일정 파일 정본(헤르메스 calendar-days 잡, 2026-10-30) — {YYYY}/YYYY-MM-DD.json
   location: '95_Etna/Location',
   argosEvents: '95_Etna/Events', // 아르고스 수신 원본(결정 `아르고스-올림푸스-도입` D2)
   argosRules: '90_Delphi/Config/Argos', // 아르고스 규칙 파일 정본(같은 결정 2항, 폴더는 클리오가 등록 후 생성)
