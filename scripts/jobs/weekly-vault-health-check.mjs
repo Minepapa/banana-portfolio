@@ -36,6 +36,7 @@ import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS, VAULT_ROOT, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
@@ -44,6 +45,8 @@ import { CANONICAL_PROGRESS_VALUES } from '../lib/vault-frontmatter.mjs';
 import { evaluateDoneWhen, isWorkDoc, parseDoneWhen, stringArray, validDate, workStatus } from '../lib/work-doc-freshness.mjs';
 import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
 import { findHoldingsWithoutAssetClass } from '../lib/vault-integrity-audit.mjs';
+import { JOB_LABELS } from '../lib/job-labels.mjs';
+import { EXPECTED_INTERVALS_MS, RETIRED_JOBS } from '../lib/job-schedule.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const SENDER_AGENT = 'clio';
@@ -319,6 +322,28 @@ export function syncIndexCounts(indexMdContent, allFiles) {
   return { updatedContent: lines.join('\n'), changes };
 }
 
+// 고아 잡 상태 파일 — 2026-10-31 오너 승인(제우스 경유): 폐지된 미디어 잡 4개의 JobHealth 파일이 2주 가까이
+// 남아 있었다. 감지·보고만 하고 지우거나 고치지 않는다(지우는 것은 매번 오너 승인 뒤).
+// 고아 = 잡 라벨에도 기대 주기에도 없는 이름, 또는 폐지 목록(RETIRED_JOBS)에 있는 이름(폐지됐는데 파일이 남음).
+export function findOrphanJobHealthFiles(fileNames, {
+  labels = JOB_LABELS, intervals = EXPECTED_INTERVALS_MS, retired = RETIRED_JOBS,
+} = {}) {
+  return fileNames
+    .filter((name) => name.endsWith('.md'))
+    .map((name) => name.slice(0, -3))
+    .filter((job) => retired.has(job) || (!Object.hasOwn(labels, job) && !Object.hasOwn(intervals, job)))
+    .sort();
+}
+
+export function listJobHealthFileNames(dir = VAULT_PATHS.state.jobHealth) {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).filter((d) => d.isFile()).map((d) => d.name);
+  } catch (e) {
+    if (e.code === 'ENOENT') return [];
+    throw e;
+  }
+}
+
 // ── 사실 조립 ─────────────────────────────────────────────────────────
 export function buildHealthCheckFacts(r) {
   const lines = [];
@@ -328,6 +353,8 @@ export function buildHealthCheckFacts(r) {
   if (r.recentLegacy.length) lines.push(`대정리(${LEGACY_WATCH_SINCE}) 이후 새로 쌓인 legacy 파일 ${r.recentLegacy.length}건: ${r.recentLegacy.join(', ')}`);
   if (r.fxAnomalies.length) lines.push(`Profits 환율 이상치 ${r.fxAnomalies.length}건: ${r.fxAnomalies.map((a) => `${a.stockName}(배율 ${a.impliedRate.toFixed(2)})`).join(', ')}`);
   if (r.missingCurrency.length) lines.push(`Profits 통화 필드 누락(${LEGACY_WATCH_SINCE} 이후) ${r.missingCurrency.length}건: ${r.missingCurrency.join(', ')}`);
+  if (r.orphanJobHealth?.length) lines.push(`고아 상태 파일 ${r.orphanJobHealth.length}개(${VAULT_REL.jobHealth}, 지우지 않음 — 삭제는 오너 승인 뒤): ${r.orphanJobHealth.slice(0, 8).join(', ')}${r.orphanJobHealth.length > 8 ? ' 외' : ''}`);
+  if (r.orphanJobHealthError) lines.push(`고아 상태 파일 점검 실패(${VAULT_REL.jobHealth} 읽기): ${r.orphanJobHealthError}`);
   if (r.emptyHoldingAssetClasses?.length) lines.push(`보유 자산군 빈칸 ${r.emptyHoldingAssetClasses.length}건: ${r.emptyHoldingAssetClasses.join(', ')}`);
   if (r.workChecks.overdue.length) lines.push(`확인일 지난 작업 문서 ${r.workChecks.overdue.length}건: ${r.workChecks.overdue.slice(0, 8).map((p) => `${p.file}(${p.nextCheck})`).join(', ')}${r.workChecks.overdue.length > 8 ? ' 외' : ''}`);
   if (r.workChecks.missing.length) lines.push(`waitingOn·nextCheck 누락 작업 문서 ${r.workChecks.missing.length}건: ${r.workChecks.missing.slice(0, 8).map((p) => p.file).join(', ')}${r.workChecks.missing.length > 8 ? ' 외' : ''}`);
@@ -342,7 +369,7 @@ export function buildHealthCheckFacts(r) {
 export function hasAnyIssue(r) {
   return Boolean(
     r.broken.length || r.ambiguous.length || r.orphaned.length || r.recentLegacy.length
-    || r.fxAnomalies.length || r.missingCurrency.length || r.emptyHoldingAssetClasses?.length
+    || r.fxAnomalies.length || r.missingCurrency.length || r.emptyHoldingAssetClasses?.length || r.orphanJobHealth?.length || r.orphanJobHealthError
     || r.workChecks.overdue.length || r.workChecks.missing.length || r.questionFailures?.length || r.staleAutoClaims.length
     || r.invalidProgress.length || r.staleEmptyClaims.length,
   );
@@ -405,6 +432,15 @@ async function main() {
   const emptyHoldingAssetClasses = findHoldingsWithoutAssetClass(allFiles
     .filter((file) => file.relPath.startsWith(`${VAULT_REL.stateHoldings}/`))
     .map((file) => ({ path: file.relPath, text: file.content })));
+  // 부가 점검이라 폴더 읽기 실패로 주간 점검 전체를 멈추지 않는다 — 대신 실패를 발견 사항으로 올려 감시가 조용히 꺼지지 않게 한다.
+  let orphanJobHealth = [];
+  let orphanJobHealthError = null;
+  try {
+    orphanJobHealth = findOrphanJobHealthFiles(listJobHealthFileNames());
+  } catch (e) {
+    orphanJobHealthError = e.message;
+    console.error(`⚠ 고아 상태 파일 점검 실패: ${e.message}`);
+  }
 
   const staleAutoClaims = findStaleAutoClaims(
     allFiles.filter((f) => f.relPath.startsWith(`${VAULT_REL.knowledgeMeta}/`) || f.relPath.startsWith(`${VAULT_REL.knowledgeTopics}/`)
@@ -422,7 +458,7 @@ async function main() {
   const staleEmptyClaims = [];
 
   const results = {
-    broken, ambiguous, orphaned, recentLegacy, fxAnomalies, missingCurrency, emptyHoldingAssetClasses,
+    broken, ambiguous, orphaned, recentLegacy, fxAnomalies, missingCurrency, emptyHoldingAssetClasses, orphanJobHealth, orphanJobHealthError,
     workChecks, questionFailures, staleAutoClaims, invalidProgress, staleEmptyClaims,
   };
 
@@ -449,8 +485,10 @@ async function main() {
       lean: true, appendSystemPrompt: AGENT.systemPrompt, tools: '', maxTurns: 1,
     })).trim();
   } catch (e) {
-    console.error(`❌ 헤드리스 판단 실패: ${e.message}`);
-    process.exit(1);
+    // 종료코드 규칙(llm-run-outcome): 다시 시도할 수단이 없는 단발 잡(retryable: false)이라 판단 실패든 사용량 한도든 잡 실패로 둔다.
+    console.error(`❌ 헤드리스 판단 실패${e.isLimit ? '(사용량 한도)' : ''}: ${e.message}`);
+    markLlmRunOutcome({ succeeded: 0, failed: e.isLimit ? 0 : 1, limited: e.isLimit ? 1 : 0, retryable: false }, { job: 'weekly-vault-health-check' });
+    process.exit(process.exitCode || 1);
   }
 
   console.log(judgment);

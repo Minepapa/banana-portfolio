@@ -11,6 +11,7 @@ import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { parseJsonBlock, runHeadlessClaude } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 import { loadEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
 import { OLLAMA_MODELS, runOllama, unloadOllamaModel } from '../lib/ollama-client.mjs';
 import { assertEngine, validScores } from '../lib/mine-judgment.mjs';
@@ -352,6 +353,8 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         for (const copy of copies) rmSync(copy.path, { force: true });
         rmSync(gridPath, { force: true });
       } catch (error) {
+        // 남은 잡 예산으로 잘라 준 호출이 시간 초과로 끊긴 것도 잡 시간 상한이다(실패 아님, 종료코드 규칙).
+        if (/^헤드리스 타임아웃/.test(error.message) && now() - runStarted >= MAX_JOB_MS) error.message = '잡 시간 상한';
         // Ollama가 멈추면(unavailable) 한도와 같이 연기하고 그 회차를 끝낸다. 형식 실패는 실패로 세어 2회면 14일 보류.
         const deferred = error.isLimit || error.unavailable || error.message === '잡 시간 상한';
         summary[deferred ? 'deferred' : 'failed'].push({ id: item.id, reason: error.message });
@@ -384,11 +387,18 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   return job.finally(() => unload(OLLAMA_MODELS.vision).catch((error) => output.error(`[media-memory-orb] 모델 내리기 실패: ${error.message}`)));
 }
 
+// 종료코드 규칙(llm-run-outcome): 기록 0건인데 실패(사전 검사·판단·쓰기)가 있으면 잡 실패. 연기(쿨다운·한도·시간 상한)는 세지 않는다.
+export const memoryOrbCounts = (summary) => ({ succeeded: summary.written, failed: summary.failed.length });
+const memoryOrbOutcomeLog = (line) => console.error(line.replace('claude 판단 성공 0건·실패', '구슬 기록 0건·실패(사전 검사·claude 판단·쓰기)'));
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   const args = process.argv.slice(2);
   if (args.some((arg) => arg !== '--dry-run' && !/^--engine=(claude|ollama)$/.test(arg))) {
     console.error('usage: media-memory-orb.mjs [--engine=claude|ollama] [--dry-run]'); process.exitCode = 2;
   } else run({ dryRun: args.includes('--dry-run'), engine: args.find((arg) => arg.startsWith('--engine='))?.slice(9) ?? 'claude' })
-    .then((summary) => { if (summary.unavailable) process.exitCode = 1; })
+    .then((summary) => {
+      if (summary.unavailable) process.exitCode = 1;
+      if (!args.includes('--dry-run')) markLlmRunOutcome(memoryOrbCounts(summary), { job: 'media-memory-orb', log: memoryOrbOutcomeLog });
+    })
     .catch((error) => { console.error(error.stack); process.exitCode = 1; });
 }

@@ -33,7 +33,10 @@ set -euo pipefail
 
 LOG_DIR="$HOME/Library/Logs/banana-portfolio-v2"
 mkdir -p "$LOG_DIR"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] 텔레그램 상시세션 예방적 재시작" >> "$LOG_DIR/telegram-session-restart.log"
+# 사유(2026-10-30): 헬스체크는 장애 사유 키를 넘긴다. 인자가 없으면 04:00 정기 재시작이다.
+# 예전에는 장애 재시작도 전부 "예방적"으로 적혀 원인 추적이 안 됐다.
+REASON="${1:-정기 예방}"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] 텔레그램 상시세션 재시작 — 사유: $REASON" >> "$LOG_DIR/telegram-session-restart.log"
 
 launchctl bootout "gui/$(id -u)/com.banana2.telegram-session" 2>/dev/null || true
 

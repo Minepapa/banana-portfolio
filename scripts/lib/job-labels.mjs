@@ -2,7 +2,7 @@
 //
 // 텔레그램 알림(특히 health-watcher의 장애감지)에 잡 이름이 영어 파일명만 나와서
 // 어떤 잡이 왜 문제인지 못 알아보겠다는 오너 지적(2026-08-17) 반영. 잡이 새로
-// 생기거나 폐기될 때마다 여기도 같이 갱신할 것 — health-watcher.mjs의
+// 생기거나 폐기될 때마다 여기도 같이 갱신할 것 — job-schedule.mjs의
 // EXPECTED_INTERVALS_MS와 등록 대상이 어긋나면(한쪽만 갱신) 새 잡이 라벨 없이
 // 뜨거나, 폐기된 잡 라벨이 죽지 않고 남는다.
 import { homedir } from 'node:os';
@@ -21,7 +21,7 @@ export const JOB_LABELS = {
   'media-delete-report-weekly': '미디어 삭제 후보 측정·관찰 리포트(매주 일요일 06:00, 원본 처리 없음)',
   'media-faces-hold-monthly': '미네 얼굴 보류 사진·영상 클릭 시트(매월 1일 09:20, 보류 있을 때만)',
   'media-memory-orb': '미네 사진 기억 구슬 후보 50개 감정·중요도 제안(매일 02:20, 90분 상한, 발송 없음)',
-  'mine-athena-fields': '미네 노트 감정·중요도 필드 주간 묶음(일 06:30, 발송 없음)',
+  'mine-athena-fields': '미네 통화·녹음 감정 v1.0 재판단(매일 06:30, 하루 100개·Claude 두 번씩, 발송 없음)',
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
   'vault-offsite-backup': '매일 00:20 Vault 암호화 외부 백업',
   'question-digest': '비긴급 질문 하루 두 번(09:00·19:00) 담당별 묶음 발송',
@@ -51,16 +51,20 @@ export const JOB_LABELS = {
   'update-cash-from-ledger': '계좌별(ISA·연금저축, API 없는 2계좌만) 예수금 실잔고 계산',
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
   'owntracks-receiver': 'OwnTracks 위치 수신 서버(상시 프로세스)',
+  'olympus-server': '올림푸스 대시보드 서버(상시 프로세스)',
+  'calendar-days': '일정 파일 정본(오늘부터 7일 구글 캘린더 → 볼트 Calendar 파일, 15분마다)',
   'argos-ingest': '아르고스 폰 수집 앱 수신(위치 수신 서버의 /ingest)',
   'update-monthly-balance-snapshot': '월별 잔고 스냅샷(대시보드 막대그래프용) + 일별 불변 스냅샷(TWR·Sharpe·MDD 재계산용, 2026-09-04 신설) 매일 자동 기록',
   'weekly-report': '주간 리포트 자동 생성·발행(성향학습 파이프라인 동반)',
   // 2026-08-23 전수 재점검(오너 지시)에서 발견 — 아래 셋은 실제 launchd에 등록돼
-  // 30분마다 도는데(health-watcher.mjs EXPECTED_INTERVALS_MS 참고) 여기 라벨이 없어
+  // 30분마다 도는데(job-schedule.mjs EXPECTED_INTERVALS_MS 참고) 여기 라벨이 없어
   // 지금까지 알림에 영어 이름만 뜨고 있었다.
   'sync-firestore-mirror': 'Vault → Firestore 미러 동기화(대시보드가 읽는 데이터)',
   'update-allocation-from-holdings': '보유종목 기준 자산분배 탭 목표·현재비중 재계산',
   'update-holdings-prices': '보유종목 실시간 시세 갱신(KRX·해외·환율)',
   'telegram-session-health-check': '상시 텔레그램 세션 MCP 연결 끊김 감지·자동복구',
+  'telegram-gate': '텔레그램 관문(봇의 유일한 수신·발신 상시 데몬, 결정론 입력 즉시 처리)',
+  'telegram-gate-health-check': '텔레그램 관문 하트비트·미수신 감시와 재시작(10분마다)',
   'intraday-market-move-monitor': '장중 시장 급변 실시간 감시(코스피·S&P500·VIX·DXY·USD/KRW·미국10Y)',
   'process-warning-actions': '운영 경고 원장에서 허용된 거시 조회 실패만 사건당 1회·30분 뒤 VIX 읽기 재조회(주문·장부·Telegram 변경 없음)',
   'weekly-vault-health-check': '무세이온 주간 건강검진(구조 정합성·데이터 정합성·미완료 작업, 2026-09-04 신설)',
@@ -106,6 +110,8 @@ export function describeJob(jobName) {
 // "조치사항이 필요하면 등록"). 근거 없는 일반론("로그 확인해보세요")은 안 채운다 —
 // 등록 안 된 잡은 remediation 없이 잡 이름·마지막 실행시각만으로 충분히 단서가 된다.
 export const JOB_REMEDIATION = {
+  'calendar-days': '구글 연결(node scripts/tools/google-oauth-setup.mjs, 캘린더 읽기 범위)과 볼트 「캘린더 소유자」 표 형식 확인',
+  'olympus-server': 'Repos/olympus 저장소·키 설정(~/.config/olympus/olympus.json, 권한 600)·로그(~/Library/Logs/banana-portfolio-v2/olympus-server.log)와 tailscale serve 8443 확인',
   'argos-ingest': '폰 아르고스 앱 실행·Tailscale 연결·토큰(~/.config/banana-portfolio-v2/argos.json)과 위치 수신 서버(com.banana2.owntracks-receiver) 확인',
   // reconcile-irp.mjs·execute-quant-proposal.mjs 둘 다 이 파일이 없으면 "미설정 —
   // 스킵"으로 조용히 넘어간다(정상, 에러 아님) — 하지만 예전엔 잘 돌던 잡이 갑자기

@@ -11,6 +11,7 @@ import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 import { VAULT_REL } from './vault-paths.mjs';
 import { escapeHtml } from './telegram.mjs';
 import { formatEventLine } from './google-calendar.mjs';
+import { circledNumber } from './route-map.mjs';
 
 export const OWNER_SECTIONS = ['오늘 한 줄', '오너 메모'];
 const LEGACY_AI_SECTIONS = ['일정', '동선', '오늘 들어온 기록', '오늘 생긴 할 일', 'AI 하루 요약'];
@@ -158,6 +159,19 @@ function todoText(todo) {
   return `- [일정] ${day.slice(5).replace('-', '/')}${weekday}${time} ${title}`;
 }
 
+// 머문 곳에는 지도 핀과 같은 번호(①②…)를 붙이고, 이동 줄은 번호 없이 둔다(D90).
+// 지도가 있으면 칸 맨 위에 넣는다. route.mapPath는 잡이 지도를 저장했을 때만 붙는다.
+function routeLines(route) {
+  let number = 0;
+  const lines = route.map((stay) => {
+    const marker = stay.kind === 'move' ? '' : `${circledNumber(number += 1)} `;
+    // 같은 곳에서 잠깐 나갔다 온 외출은 체류 줄 끝에 단다(예: 회사에서 역까지 16분).
+    const outings = (stay.outings ?? []).map((outing) => ` · 외출 ${outing.start}–${outing.end}${outing.area ? `(${safeRouteLabel(outing.area)} 쪽)` : ''}`).join('');
+    return `- ${marker}${stay.start}–${stay.end} ${safeRouteLabel(stay.label)}${stay.activity ? ` · ${safeRouteLabel(stay.activity)}` : ''}${outings}${stay.current ? '(현재)' : ''}`;
+  });
+  return [...(route.mapPath ? [`![[${route.mapPath}]]`, ''] : []), ...lines].join('\n');
+}
+
 function aiSectionContents(records, summary, events, eventGroups, route, todos, spending) {
   const recordLines = records.length
     ? groupByCategory(records).flatMap(([cat, items]) => [`### ${cat}`, ...items.map((r) => `- [[${r.link}|${r.title}]]${r.description ? ` — ${r.description}` : ''}`), ''])
@@ -173,7 +187,7 @@ function aiSectionContents(records, summary, events, eventGroups, route, todos, 
     동선: route === null ? '(위치 연동 전 — 5단계 3번에서 채운다)'
       : route === 'pending' ? PENDING_TEXT
       : route === 'failed' ? '(동선 계산 실패 — 다음 실행에서 다시 시도)'
-        : route.length ? route.map((stay) => `- ${stay.start}–${stay.end} ${safeRouteLabel(stay.label)}${stay.activity ? ` · ${safeRouteLabel(stay.activity)}` : ''}${stay.current ? '(현재)' : ''}`).join('\n') : '(위치 기록 없음)',
+        : route.length ? routeLines(route) : '(위치 기록 없음)',
     지출: spending ?? '(지출 기록 조회 전)',
     '오늘 들어온 기록': recordLines.join('\n').replace(/\s+$/, ''),
     '오늘 생긴 할 일': todos === 'pending' ? PENDING_TEXT : todos === 'failed' ? '(할 일 기록 읽기 실패 — 다음 실행에서 다시 시도)'

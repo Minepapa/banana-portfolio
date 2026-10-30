@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 
-export const VAULT_ROOT = process.env.VAULT_PATH || join(homedir(), 'Pantheon', 'Mouseion');
+// 기본(실제) 볼트 위치. 텔레그램 관문 시험 모드가 "실제 볼트가 아님"을 확인할 때도 쓴다(2026-10-30).
+export const DEFAULT_VAULT_ROOT = join(homedir(), 'Pantheon', 'Mouseion');
+export const VAULT_ROOT = process.env.VAULT_PATH || DEFAULT_VAULT_ROOT;
 
 export const VAULT_REL = {
   agentCharters: '90_Delphi/Agents',
@@ -60,11 +62,14 @@ export const VAULT_REL = {
   periodicRoot: '10_Periodic',
   people: '30_Wiki/31_People', // 헤르메스 생일 브리핑 대상
   places: '30_Wiki/32_Places',
+  calendarDays: '95_Etna/Calendar', // 일정 파일 정본(헤르메스 calendar-days 잡, 2026-10-30) — {YYYY}/YYYY-MM-DD.json
+  themisVerdicts: '95_Etna/Themis/verdicts.jsonl', // 테미스 판정 원장(2026-10-31 오너 승인) — themis-verdict-cli.mjs append만 쓴다
   location: '95_Etna/Location',
   argosEvents: '95_Etna/Events', // 아르고스 수신 원본(결정 `아르고스-올림푸스-도입` D2)
   argosRules: '90_Delphi/Config/Argos', // 아르고스 규칙 파일 정본(같은 결정 2항, 폴더는 클리오가 등록 후 생성)
   locationCandidates: '95_Etna/Location/place-candidates.json',
   locationGeocodeCache: '95_Etna/Location/geocode-cache.json',
+  locationMaps: '95_Etna/Location/Maps', // 데일리 동선 지도 SVG(D90) — {YYYY}/YYYY-MM-DD.svg
   mediaArchiveIndex: '95_Etna/Media/archive-index.jsonl',
   mediaImportsIndex: '95_Etna/Media/imports-index.jsonl',
   mediaVisionIndex: '95_Etna/Media/vision-index.jsonl',
@@ -86,8 +91,12 @@ export const VAULT_REL = {
   jobHealth: '95_Etna/Jobs/JobHealth',
   mineStatusBoard: '40_Projects/banana-portfolio/Features/미네 기록 파이프라인 현황판.md', // 05:00 밤 점검이 '밤 점검' 칸을 덮어씀
   spending: '95_Etna/Spending',
+  spendingMonthly: '95_Etna/Spending/Monthly', // 닫힌 달 합계·알림 커버리지(결정 `월별-지출-정본`) — {YYYY-MM}.json
+  spendingPlaces: '95_Etna/Spending/Places', // 결제↔동선 연결 파생 — {YYYY}/YYYY-MM-DD.json
   dailyNotes: '10_Periodic/Daily', // 데일리 노트(D85) — {YYYY}/YYYY-MM-DD.md
   todoLog: '95_Etna/Todo', // 캘린더·Tasks 등록 기록 — {YYYY}/YYYY-MM-DD.jsonl
+  // 개념(01_Home 분류)별 노트 건수(2026-10-31 오너 승인, 올림푸스 빈 칸 정본). 쓰는 주체는 야간 색인(backup-vault-snapshot)뿐.
+  mouseionConceptCounts: '95_Etna/Mouseion/concept-counts.json',
   // 등록부 lint 범위 밖 최상위 폴더: 보관본(원래 type 유지)·코드가 쓰는 기계 데이터·금고(내용을 읽지 않음)
   archiveRoot: '80_Archive',
   etnaRoot: '95_Etna',
@@ -100,6 +109,8 @@ export const VAULT_REL = {
   stateBreakoutPositions: '95_Etna/Investing/BreakoutPositions',
   stateBreakoutPendingEntries: '95_Etna/Investing/BreakoutPendingEntries',
   stateTelegramSession: '95_Etna/Jobs/TelegramSession',
+  // 텔레그램 관문 약속 대기열(2026-10-30 관문 3단계, 경로 등록부 95_Etna/Jobs/TelegramGate). 쓰는 주체는 관문 데몬뿐.
+  telegramGatePromises: '95_Etna/Jobs/TelegramGate/promises.jsonl',
   stateTelegramSessionHealth: '95_Etna/Jobs/TelegramSessionHealth',
   stateWikiQuestions: '95_Etna/Questions',
   stateInstrumentRescoring: '95_Etna/Investing/InstrumentRescoring',

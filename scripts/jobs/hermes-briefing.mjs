@@ -15,6 +15,9 @@ import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/googl
 import { formatEventLine, listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
 import { readDailySpending, formatTodaySpending } from '../lib/spending-daily.mjs';
+import { planMonthCheck, runMonthReport, commitMonthReport, removeMonthReport, readMonthReport, renderMonthCheck,
+  monthPlaces, gapQuestions, previousMonth } from '../lib/spending-month-check.mjs';
+import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
 
 const SENDER_AGENT = 'hermes';
 const TELEGRAM_TEXT_LIMIT = 4096;
@@ -137,6 +140,67 @@ export function birthdayLines(date, people) {
   });
 }
 
+// 월간 지출 점검(결정 `월별-지출-정본`, 2026-10-29 오너 승인): 아침마다 지난달 결과 파일이 있는지 본다.
+// - 내보내기가 아직 없으면 브리핑에 대기 한 줄(오너가 넣을 때까지 날마다 — 매달 하는 요청을 대신한다).
+// - 있으면 점검을 돌려 본문을 만든다. 발송·결과 파일 저장은 브리핑 발송 뒤 deliverMonthCheck가 한다.
+// - 실패는 숨기지 않는다: 브리핑에 실패 한 줄 + 잡 실패 코드. 결과 파일이 없으니 다음 아침 다시 돈다.
+// - 지난달 결과·장소별 소비는 곁가지다. 읽기가 깨져도(LiveSync 손상 등) 합계·커버리지는 보내고 그 칸만 실패로 적는다
+//   (곁가지 파일 하나가 본 점검을 날마다 막지 않게, 2026-10-29 리뷰 MEDIUM).
+// 테스트에서는 기본 구현을 하나도 쓰지 않는다(주입이 빠지면 실제 볼트·python 대신 실패로 끝난다).
+const MONTH_CHECK_DEFAULTS = process.env.NODE_TEST_CONTEXT ? {} : {
+  planMonthCheck, runMonthReport, readMonthReport, monthPlaces, commitMonthReport,
+  removeMonthReport, createQuestion: createWikiQuestion };
+const monthCheckDep = (deps, name) => deps[name] ?? MONTH_CHECK_DEFAULTS[name]
+  ?? (() => { throw new Error(`월간 점검 의존성 없음: ${name}`); });
+
+export function prepareMonthCheck(date, deps = {}) {
+  if (!deps.planMonthCheck && !MONTH_CHECK_DEFAULTS.planMonthCheck) return null;
+  let month = previousMonth(date);
+  try {
+    const planned = monthCheckDep(deps, 'planMonthCheck')({ date });
+    month = planned.month;
+    if (planned.status === 'none') return null;
+    if (planned.status === 'waiting') {
+      return { status: 'waiting', month, section: `■ 지난달 지출 마감\n- ${month} 뱅크샐러드 내보내기 대기(${VAULT_REL.spending}/Banksalad에 넣으면 다음 아침 점검)` };
+    }
+    const { report, text } = monthCheckDep(deps, 'runMonthReport')(month);
+    const sideFailures = [];
+    let previous = null;
+    try { previous = monthCheckDep(deps, 'readMonthReport')(previousMonth(`${month}-01`)); }
+    catch (error) { sideFailures.push('지난달 결과'); console.error('월간 점검: 지난달 결과 읽기 실패:', error.message); }
+    let places;
+    try { places = monthCheckDep(deps, 'monthPlaces')(month); }
+    catch (error) { places = { failed: true }; sideFailures.push('장소별 소비'); console.error('월간 점검: 장소별 소비 읽기 실패:', error.message); }
+    const body = renderMonthCheck(report, { previous, places });
+    return { status: 'ready', month, report, text, body, sideFailures,
+      section: `■ 지난달 지출 마감\n- ${month} 점검 결과는 이어서 따로 보냄(실패하면 잡 경고)` };
+  } catch (error) {
+    console.error('월간 지출 점검 실패:', error.message);
+    return { status: 'failed', month, section: `■ 지난달 지출 마감\n- ${month} 월간 점검 실패(잡 로그 확인, 다음 아침 다시)` };
+  }
+}
+
+// 순서: 결과 파일 저장 → 발송 → (발송 실패면 파일을 지워 다음 아침 다시) → 빠진 결제수단 질문.
+// 저장을 먼저 하는 이유: 발송 뒤 저장이 실패하면 다음 아침 같은 메시지가 또 나가고, 저장 실패가 이어지는 동안
+// 날마다 반복된다(2026-10-29 리뷰 MEDIUM). 저장이 안 되면 아예 보내지 않고, 보내기가 안 되면 파일을 되돌린다.
+// 되돌리기마저 실패하면 그 달 메시지는 빠지지만 잡 경고로 드러난다(중복 반복보다 한 번 누락 + 경고를 고른다).
+// 반환: 질문 등록 실패 건수(호출부가 잡 경고로 올린다).
+export async function deliverMonthCheck(check, { sendAll, deps = {} }) {
+  monthCheckDep(deps, 'commitMonthReport')(check.month, check.text);
+  try { await sendAll({ agent: SENDER_AGENT, kind: '정보', topic: '월간 지출 점검', body: check.body }); }
+  catch (error) {
+    try { monthCheckDep(deps, 'removeMonthReport')(check.month); }
+    catch (removeError) { console.error('월간 점검 결과 파일 되돌리기 실패 — 이 달 메시지는 다시 보내지 않음:', removeError.message); }
+    throw error;
+  }
+  let questionFailures = 0;
+  for (const question of gapQuestions(check.report)) {
+    try { await monthCheckDep(deps, 'createQuestion')({ ...question, asker: SENDER_AGENT }); }
+    catch (error) { questionFailures += 1; console.error('빠진 결제수단 질문 등록 실패:', error.message); }
+  }
+  return { questionFailures };
+}
+
 export async function runBriefing({ mode, date, preview = false, deps = {} } = {}) {
   const now = deps.now?.() ?? new Date();
   const current = kstParts(now);
@@ -179,6 +243,7 @@ export async function runBriefing({ mode, date, preview = false, deps = {} } = {
       spendingSection = '■ 오늘 지출\n- 지출 기록 조회 실패';
     }
   }
+  const monthCheck = selectedMode === 'morning' ? prepareMonthCheck(targetDate, deps) : null;
   let candidates = [];
   if (selectedMode === 'evening') {
     try { candidates = await (deps.readCandidates ?? readCandidates)(VAULT_PATHS.root); }
@@ -209,6 +274,7 @@ export async function runBriefing({ mode, date, preview = false, deps = {} } = {
     if (birthday.length) sections.push(`■ 생일\n${birthday.join('\n')}`);
   }
   if (spendingSection) sections.push(spendingSection);
+  if (monthCheck?.section) sections.push(monthCheck.section);
   if (requests.length) {
     const lines = requests.map((candidate) => `- ${oneLineHtml(candidate.id)} · ${oneLineHtml(candidate.address || '미등록 장소')} 근처 · 최근 30일 ${candidateVisitCount(candidate, today)}회 방문${candidate.eventTitles.length ? ` · 일정: ${oneLineHtml(candidate.eventTitles.join(', '))}` : ''}`);
     const exampleId = oneLineHtml(requests[0].id);
@@ -243,12 +309,19 @@ export async function runBriefing({ mode, date, preview = false, deps = {} } = {
     if (unregisteredVoices.length && !delivery?.deferred) {
       await (deps.markVoiceReminded ?? markVoiceReminded)(unregisteredVoices, now.toISOString());
     }
+    if (monthCheck?.status === 'ready') {
+      try {
+        const { questionFailures } = await deliverMonthCheck(monthCheck, { sendAll, deps });
+        if (questionFailures || monthCheck.sideFailures.length) monthCheck.status = 'partial';
+      } catch (error) { console.error('월간 지출 점검 발송 실패:', error.message); monthCheck.status = 'failed'; }
+    }
   }
   if (!preview && requests.length) {
     for (const candidate of requests) { candidate.status = '물음'; candidate.askedAt = now.toISOString(); }
     await (deps.saveCandidates ?? saveCandidates)(VAULT_PATHS.root, candidates);
   }
-  return { body, sent: !preview, alert: calendarError || spendingError };
+  return { body, monthBody: monthCheck?.body ?? null, sent: !preview,
+    alert: calendarError || spendingError || ['failed', 'partial'].includes(monthCheck?.status) };
 }
 
 export async function main(argv = process.argv.slice(2), deps = {}) {
@@ -256,6 +329,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   const noSend = args['dry-run'] === true || args['no-send'] === true;
   const result = await runBriefing({ mode: args.mode, date: args.date, preview: noSend, deps });
   if (args['dry-run'] && result.body) console.log(result.body);
+  if (args['dry-run'] && result.monthBody) console.log(`\n── 월간 지출 점검(따로 보낼 메시지) ──\n${result.monthBody}`);
   if (result.alert) process.exitCode = 1;
 }
 

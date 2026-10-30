@@ -13,6 +13,7 @@ const ALLOWED_RAW_SENDS = Object.freeze({
   'jobs/annual-instrument-rescore.mjs': { count: 2, reason: '재평가 제안 발송 두 경로' },
   'jobs/daily-breakout-signal-scan.mjs': { count: 2, reason: '약세장 중단·신호 없음 완료 안내' },
   'jobs/daily-execution-report.mjs': { count: 1, reason: '체결 내역 정기 보고' },
+  'jobs/telegram-gate.mjs': { count: 2, reason: '텔레그램 관문의 결정론 답장·운영 안내와 대화 줄 답장·진행 메시지(가로채기·수신 멈춤 경고는 원장 경유)' },
   'jobs/isa-maturity-check.mjs': { count: 1, reason: '만기 대응 제안' },
   'jobs/monthly-macro-tilt-proposal.mjs': { count: 1, reason: '월간 배분 제안 발송' },
   'jobs/morning-briefing.mjs': { count: 1, reason: '실패가 없는 아침 브리핑' },

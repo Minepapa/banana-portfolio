@@ -124,7 +124,11 @@ export function buildKakaoExecutionRecordCandidates(event, account, firestoreDoc
 export function buildDividendRecord(d) {
   const dedupKey = `${d.date}|${d.stockName}|${d.uniqueKey}`;
   const timePart = String(d.receivedTime ?? '').replace(/:/g, '') || '000000';
-  const filename = `${sanitizeSegment(d.date)}-${sanitizeSegment(timePart)}-${sanitizeSegment(d.stockName)}.md`;
+  // 세후금액을 파일명에 포함(2026-10-29 실사고) — 2026-10-26 NH 채권 이자 두 건(79,320원·39,665원)이
+  // 같은 초(14:57:37)에 와 이름이 겹쳐 앞 건이 "이미 있음"으로 빠졌다(buildCashEventRecord의 잔고 포함과 같은 이유).
+  // legacyFilename은 그 전 이름 — 이미 쓴 장부와 맞춰 볼 때만 쓴다(새 기록은 filename만).
+  const legacyFilename = `${sanitizeSegment(d.date)}-${sanitizeSegment(timePart)}-${sanitizeSegment(d.stockName)}.md`;
+  const filename = legacyFilename.replace(/\.md$/, `-${sanitizeSegment(d.afterTaxAmount)}.md`);
   const content = buildFrontmatter({
     type: 'dividend',
     date: d.date,
@@ -140,7 +144,7 @@ export function buildDividendRecord(d) {
     dedupKey,
     recordedAt: new Date().toISOString(),
   });
-  return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.dividends };
+  return { dedupKey, filename, legacyFilename, content, dir: VAULT_PATHS.facts.ledger.dividends };
 }
 
 // c: parseCashAlarm()의 반환값 { account, acctNo, balance, ts }. 체결·배당과 달리
@@ -164,6 +168,9 @@ export function buildCashEventRecord(c) {
     // parsers.mjs parseCashAlarm 참고). update-cash-from-ledger.mjs가 ISA 예수금을
     // 고정 기준점+flow 누적으로 계산할 때 이 값을 입금 flow(+)로 쓴다.
     depositAmount: Number.isFinite(c.depositAmount) ? c.depositAmount : null,
+    // source(2026-10-29 신설) — 오너 수동 앵커(record-cash-anchor)만 'MANUAL_ANCHOR'를 남긴다. 알림 대조
+    // (argos-notification-compare)가 수동 앵커를 '카카오만(아르고스가 놓침)'으로 세지 않게 한다. 알림 경로는 비운다.
+    ...(c.source ? { source: c.source } : {}),
     tags: buildVaultTags({ account: c.account }),
     dedupKey,
     recordedAt: new Date().toISOString(),

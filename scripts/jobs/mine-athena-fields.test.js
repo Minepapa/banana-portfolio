@@ -19,7 +19,7 @@ const joy2 = (extra = {}) => reply({ levels: { 기쁨: '보통' } }, extra);
 const claude = { charter: { model: 'sonnet', systemPrompt: '' }, anchors };
 import { parseEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
 import { applyFields, defaultJudgmentsPath, failed, findTargets, judgeItems, mineAge, noteText, ollamaDecision, ollamaProposalSchema, buildOllamaPrompt, validateOllamaProposals, proposalSchema, recentSignalTrend, reclassify,
-  restrictedDecision, run, CLAUDE_RUNS, DAILY_CLAUDE_CALLS, PROMPT_VERSIONS, STATE_REL } from './mine-athena-fields.mjs';
+  restrictedDecision, reclassifyFailed, run, CLAUDE_RUNS, DAILY_CLAUDE_CALLS, PROMPT_VERSIONS, STATE_REL } from './mine-athena-fields.mjs';
 import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
@@ -714,4 +714,14 @@ test('run: 회차 중간 쿨다운은 남은 기록을 미루고 실패로 보�
   assert.deepEqual([summary.written.length, summary.invalid.length, summary.cooldown, failed(summary)], [1, 0, true, false]);
   const rows = readFileSync(join(root, '.mine-judgments', 'athena-judgments.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(rows.map((row) => [row.status, row.calls]), [['applied', 2], ['retry', 1]]);
+});
+
+test('reclassifyFailed: 부분 실패는 정상, 하나도 못 했거나 쓰기 오류·기록 실패면 실패', () => {
+  const base = { changed: 0, unchanged: 0, ambiguous: [], invalid: [] };
+  assert.equal(reclassifyFailed({ ...base, changed: 5, invalid: [{}] }), false);
+  assert.equal(reclassifyFailed({ ...base, ambiguous: [{}], invalid: [{}] }), false);
+  assert.equal(reclassifyFailed({ ...base, invalid: [{}] }), true);
+  assert.equal(reclassifyFailed({ ...base, changed: 5, errors: 1 }), true);
+  assert.equal(reclassifyFailed({ ...base, changed: 5, recordErrors: 1 }), true);
+  assert.equal(reclassifyFailed({ ...base, timedOut: true, cooldown: true }), false);
 });

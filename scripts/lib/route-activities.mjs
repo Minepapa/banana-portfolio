@@ -1,3 +1,5 @@
+import { withinOuting } from './location-stays.mjs';
+
 export const PAYMENT_GRACE_MINUTES = 10;
 export const EVENT_OVERLAP_MINUTES = 30;
 export const ACTIVITY_BY_CATEGORY = { FD6: '식사', CE7: '카페', CT1: '관람' };
@@ -28,8 +30,9 @@ export async function attachRouteActivities(stays, { payments = [], events = [],
   for (const payment of payments) {
     const at = Date.parse(payment.at);
     if (!Number.isFinite(at) || !payment.merchant || genericMerchant(payment.merchant)) continue;
+    // 외출 중 결제는 그 체류의 활동이 아니다(체류 이름이 외출지 가게로 바뀌지 않게).
     const candidates = result.filter((stay) => stay.kind !== 'move' && at >= Date.parse(stay.start)
-      && at <= Date.parse(stay.end) + PAYMENT_GRACE_MINUTES * 60_000);
+      && at <= Date.parse(stay.end) + PAYMENT_GRACE_MINUTES * 60_000 && !withinOuting(stay, at));
     const stay = candidates.find((candidate) => at <= Date.parse(candidate.end)) ?? candidates[0];
     // 이동 중 결제라도 앞 체류가 끝난 직후의 승인 유예에 해당하면 그 체류를 우선한다.
     if (moves.some((move) => at > Date.parse(move.start) && at < Date.parse(move.end))

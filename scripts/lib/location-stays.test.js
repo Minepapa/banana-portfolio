@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { VAULT_REL } from './vault-paths.mjs';
-import { readDayPoints, detectStays, matchPlace, loadPlaces, describeStays, haversineM } from './location-stays.mjs';
+import { readDayPoints, detectStays, matchPlace, loadPlaces, describeStays, haversineM, dropConflictingFixes } from './location-stays.mjs';
 import { reverseGeocode, createCachedGeocoder, readKakaoKey } from './kakao-geocode.mjs';
 import { updateCandidates, readCandidates } from './place-candidates.mjs';
 import { computeRoute } from '../jobs/daily-note.mjs';
@@ -110,7 +110,8 @@ test('가까운 다음 군집이 15분 미만이면 긴 공백의 앵커를 분�
   const stays = detectStays([point(0, 0, 0), point(20, 0, 0.001),
     point(120, 0, 0.002), point(125, 0, 0.002)]);
   assert.equal(stays.length, 1);
-  assert.equal(stays[0].end, new Date(point(20).tst * 1000).toISOString());
+  // 다음 점(앞 군집 중심에서 약 170m)이 걸어갈 거리라, 체류는 걸어가는 2~3분만 빼고 다음 점 직전까지 이어진다(2026-10-30).
+  assert.ok(Date.parse(stays[0].end) > point(115).tst * 1000 && Date.parse(stays[0].end) < point(120).tst * 1000);
 });
 
 test('자정으로 잘린 뒤 구간이 15분 미만이면 긴 공백을 분리하지 않는다', () => {
@@ -118,7 +119,7 @@ test('자정으로 잘린 뒤 구간이 15분 미만이면 긴 공백을 분리�
   const nextDayPoint = (time, lon) => ({ tst: Date.parse(`2026-10-11T${time}+09:00`) / 1000, lat: 0, lon });
   const terminal = detectStays([kstPoint('22:00:00', 0, 0), kstPoint('22:20:00', 0, 0.001),
     kstPoint('23:50:00', 0, 0.002), nextDayPoint('00:10:00', 0.002)], { date });
-  assert.equal(terminal[0].end, '2026-10-10T13:20:00.000Z');
+  assert.ok(Date.parse(terminal[0].end) > Date.parse('2026-10-10T14:45:00Z') && Date.parse(terminal[0].end) < Date.parse('2026-10-10T14:50:00Z'));
   assert.equal(terminal.some((stay) => stay.start === '2026-10-10T13:20:00.000Z'), false);
 
   const withinCluster = detectStays([kstPoint('22:00:00', 0, 0), kstPoint('22:30:00', 0, 0),
@@ -342,4 +343,120 @@ test('실내 GPS 튐(점 촘촘·누적거리만 큼)은 산책이 아니고, �
   assert.equal(described.length, 1);
   assert.equal(described[0].end, '2026-10-10T02:40:00.000Z');
   assert.equal(geocodes, 1, '합친 뒤 한 번만 조회');
+});
+
+// 2026-10-29 회사(서울): 망 위치(정확도 100m, 900m 옆 같은 좌표)가 GPS 점 사이에 끼어 체류가 "서울대학교"로 붙었다.
+const OFFICE = { lat: 37.46718, lon: 126.96072 };
+const GHOST = { lat: 37.46000, lon: 126.95595 };
+
+test('앞뒤 점은 같은 자리인데 그 사이 정확도 나쁜 점만 멀면 튄 점으로 뺀다', () => {
+  const before = { tst: 1000, ...OFFICE, acc: 13 };
+  const ghost = { tst: 1012, ...GHOST, acc: 100 };
+  const after = { tst: 1060, ...OFFICE, acc: 60 };
+  assert.deepEqual(dropConflictingFixes([before, ghost, after]), [before, after]);
+  // 앞뒤가 2분 넘게 떨어져 있으면 진짜 외출 점일 수 있으니 남긴다.
+  const lone = { tst: 2000, ...GHOST, acc: 100 };
+  assert.equal(dropConflictingFixes([before, lone, { tst: 3000, ...OFFICE, acc: 13 }]).length, 3);
+  // 정확도가 없으면 판정하지 않는다.
+  assert.equal(dropConflictingFixes([before, { tst: 1012, ...GHOST }, after]).length, 3);
+});
+
+test('달리는 중에는 앞뒤 점이 멀어 정확도가 나빠도 빼지 않는다', () => {
+  const driving = [
+    { tst: 0, lat: 37.3885, lon: 126.6360, acc: 10 },
+    { tst: 60, lat: 37.3880, lon: 126.6450, acc: 150 },
+    { tst: 120, lat: 37.3875, lon: 126.6540, acc: 10 },
+  ];
+  assert.equal(dropConflictingFixes(driving).length, 3);
+});
+
+test('체류 뒤 점이 오래 끊기면 다음 점까지 걸어가는 시간만 빼고 체류를 늘린다', () => {
+  const at = (time, lat, lon, acc = 10) => ({ tst: Date.parse(`2026-10-29T${time}+09:00`) / 1000, lat, lon, acc });
+  const points = [at('07:34:00', OFFICE.lat, OFFICE.lon), at('08:55:00', OFFICE.lat, OFFICE.lon),
+    // 10:11 첫 점은 회사에서 약 170m — 걸어서 2~3분 거리다.
+    at('10:11:00', 37.4656, 126.9597), at('10:20:00', 37.4780, 126.9597), at('10:21:00', 37.4770, 126.9600)];
+  // 30분 넘는 공백 앵커 분리로 조각이 나뉠 수 있다. 끝 시각은 마지막 회사 조각에서 본다.
+  const end = Date.parse(detectStays(points, { date: '2026-10-29' }).at(-1).end);
+  assert.ok(end > Date.parse('2026-10-29T10:05:00+09:00') && end < Date.parse('2026-10-29T10:11:00+09:00'));
+  // 다음 점이 멀면(차로 간 곳) 걸어서 못 가는 거리라 체류를 늘리지 않는다.
+  const far = detectStays([points[0], points[1], at('10:11:00', 37.3877, 126.6335)], { date: '2026-10-29' });
+  assert.equal(far.at(-1).end, new Date(points[1].tst * 1000).toISOString());
+});
+
+test('같은 곳에서 30분 안에 나갔다 오면 한 체류로 묶고 외출을 남긴다', async () => {
+  const at = (minute, lat, lon) => ({ tst: Date.parse('2026-10-29T10:00:00+09:00') / 1000 + minute * 60, lat, lon, acc: 10 });
+  const points = [
+    ...[-60, -40, -20, 0].map((minute) => at(minute, OFFICE.lat, OFFICE.lon)),
+    at(11, 37.4656, 126.9597), at(16, 37.4780, 126.9597), at(20, 37.4712, 126.9674),
+    ...[26, 40, 60, 90].map((minute) => at(minute, OFFICE.lat, OFFICE.lon)),
+  ];
+  const stays = detectStays(points, { date: '2026-10-29' });
+  assert.equal(stays.flatMap((stay) => stay.outings ?? []).length, 1);
+  assert.equal(stays[0].outings[0].lat, 37.4780);
+  const described = await describeStays(stays, { places: [{ name: '회사(서울)', ...OFFICE, radius: 150 }],
+    geocode: async () => null, region: async () => '낙성대동' });
+  assert.equal(described.length, 1);
+  assert.equal(described[0].label, '회사(서울)');
+  assert.equal(described[0].end, '2026-10-29T02:30:00.000Z');
+  assert.equal(described[0].outings[0].area, '낙성대동');
+  // 점 하나만 튄 것은 외출이 아니다.
+  const jitter = detectStays([...[-60, -40, -20, 0].map((minute) => at(minute, OFFICE.lat, OFFICE.lon)), at(10, 37.4780, 126.9597),
+    ...[20, 40, 60].map((minute) => at(minute, OFFICE.lat, OFFICE.lon))], { date: '2026-10-29' });
+  assert.equal(jitter.some((stay) => stay.outings), false);
+});
+
+test('공백 뒤 첫 점이 500m 넘게 떨어져 있으면 체류를 늘리지 않는다(폰이 꺼진 밤·저녁 식당)', () => {
+  const at = (time, lat, lon) => ({ tst: Date.parse(`2026-10-29T${time}+09:00`) / 1000, lat, lon, acc: 10 });
+  const stays = detectStays([at('09:00:00', OFFICE.lat, OFFICE.lon), at('12:00:00', OFFICE.lat, OFFICE.lon),
+    at('18:30:00', OFFICE.lat, OFFICE.lon), at('22:00:00', 37.4760, 126.9600)], { date: '2026-10-29' });
+  assert.equal(stays.at(-1).end, '2026-10-29T09:30:00.000Z');
+  // 오후 내내 점이 없다가 4시간 뒤 300m 옆(나서는 길)에서 찍히면 그때까지 회사에 있었다.
+  const afternoon = detectStays([at('09:00:00', OFFICE.lat, OFFICE.lon), at('14:18:00', OFFICE.lat, OFFICE.lon),
+    at('18:27:00', 37.4645, OFFICE.lon)], { date: '2026-10-29' });
+  assert.ok(Date.parse(afternoon.at(-1).end) > Date.parse('2026-10-29T18:20:00+09:00'));
+});
+
+test('주행 점 뒤 공백으로 늘린 체류는 일대 산책이 아니라 머문 곳이다', () => {
+  const at = (time, lon) => ({ tst: Date.parse(`2026-10-25T${time}+09:00`) / 1000, lat: 37.5, lon, acc: 10 });
+  // 2분 동안 차로 약 140m 안을 움직인 점 5개 뒤 41분 공백, 다음 점은 걸어서 2분 거리.
+  const stays = detectStays([at('12:55:00', 127.0000), at('12:55:30', 127.0004), at('12:56:00', 127.0008),
+    at('12:56:30', 127.0012), at('12:57:00', 127.0016), at('13:38:00', 127.0030)], { date: '2026-10-25' });
+  assert.equal(stays[0].kind, 'stay');
+});
+
+test('주행 중 망 위치 이웃이 있어도 정확한 GPS 점은 빼지 않는다', () => {
+  // 2026-10-28 07:20 실측 모양: 앞 망 위치(200m), 가운데 정확한 GPS(6m, 70km/h), 뒤 GPS(4m).
+  const points = [{ tst: 0, lat: 37.3900, lon: 126.7000, acc: 200 }, { tst: 30, lat: 37.3905, lon: 126.7060, acc: 6, vel: 70 },
+    { tst: 60, lat: 37.3910, lon: 126.7120, acc: 4 }];
+  assert.equal(dropConflictingFixes(points).length, 3);
+  // 속도 기록이 없어도 앞뒤가 체류 반경보다 멀면 주행으로 보고 남긴다.
+  assert.equal(dropConflictingFixes(points.map(({ vel, ...point }) => point)).length, 3);
+});
+
+test('망 위치가 연달아 찍힌 0분짜리 이탈은 외출로 남기지 않는다', () => {
+  const at = (minute, lat, lon, acc = 10) => ({ tst: Date.parse('2026-10-27T10:00:00+09:00') / 1000 + minute * 60, lat, lon, acc });
+  const stays = detectStays([...[-60, -40, -20, 0].map((minute) => at(minute, OFFICE.lat, OFFICE.lon)),
+    at(10, GHOST.lat, GHOST.lon, 100), at(10.5, GHOST.lat, GHOST.lon, 100),
+    ...[20, 40, 60].map((minute) => at(minute, OFFICE.lat, OFFICE.lon))], { date: '2026-10-27' });
+  assert.equal(stays.some((stay) => stay.outings), false);
+});
+
+test('하루에 반복되는 망 위치 좌표는 2분 안의 정확한 점과 어긋나면 이웃과 상관없이 뺀다', () => {
+  // 2026-10-29 18:58 실측 모양: 회사(17:02) → 망 위치(18:58, 반복 좌표) → 나서는 길 GPS(18:59, 300m).
+  const office = { tst: 0, ...OFFICE, acc: 68 };
+  const earlierGhost = { tst: 100, ...GHOST, acc: 100 };
+  const ghost = { tst: 7000, ...GHOST, acc: 100 };
+  const leaving = { tst: 7040, lat: 37.4647, lon: 126.9592, acc: 38 };
+  assert.deepEqual(dropConflictingFixes([office, earlierGhost, ghost, leaving]), [office, leaving]);
+  // 한 번만 찍힌 좌표는 이 규칙으로 빼지 않는다.
+  assert.equal(dropConflictingFixes([office, ghost, leaving]).length, 3);
+});
+
+test('군집 첫 점보다 정확한 점은 튄 점으로 건너뛰지 않는다', () => {
+  // 2026-10-19 실측 모양: 도착 직후 100m 점(회사에서 232m)이 기준이 되면, 바로 뒤 9m짜리 회사 점이 튄 점으로 버려져 체류 중심이 회사 반경 밖으로 밀렸다.
+  const at = (time, lat, lon, acc) => ({ tst: Date.parse(`2026-10-19T${time}+09:00`) / 1000, lat, lon, acc });
+  const stays = detectStays([at('08:10:35', 37.46542, 126.95931, 100), at('08:12:16', 37.46725, 126.96066, 83),
+    at('11:31:52', 37.46621, 126.96032, 100), at('11:32:01', 37.46543, 126.95967, 9)], { date: '2026-10-19' });
+  const office = stays.find((stay) => Date.parse(stay.end) > Date.parse('2026-10-19T11:00:00+09:00'));
+  assert.ok(haversineM(office, OFFICE) <= 150);
 });

@@ -9,12 +9,18 @@
     <string>/bin/bash</string>
     <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>mine-athena-fields</string>
+    <string>--reclassify</string>
+    <string>--kind=all</string>
+    <string>--include-unclassified</string>
+    <string>--since=2023-01-01</string>
+    <string>--limit=100</string>
   </array>
-  <!-- 매주 일요일 06:30 KST — media-transcribe(01~03시)·media-diarize(03~05시)와 media-vision(05:30)이 끝난 뒤.
-       미네 노트 아테나 필드 주간 묶음(2026-10-14 신설), 텔레그램 발신 없음. -->
+  <!-- 매일 06:30 KST — 05:00 밤 점검 뒤. 미네 통화·녹음 감정 v1.0 재판단(2026-10-31 오너 "-mj 병합·launchd 등록 진행"):
+       Claude 기록마다 두 번, 하루 100개(호출 200번) 상한, 쿨다운 가드, 2023년~ 먼저(F-2). 두 답이 갈리면 애매함 → 검수 시트.
+       최근 2일 노트는 전사가 더 붙을 수 있어 기다린다. 텔레그램 발신 없음. 2016~2022년 백필은 오너가 따로 정한다. -->
   <key>StartCalendarInterval</key>
   <array>
-    <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
   </array>
   <key>RunAtLoad</key>
   <false/>

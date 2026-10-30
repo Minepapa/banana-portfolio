@@ -8,8 +8,9 @@ import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { fixtureCriteria } from '../lib/mine-emotion-criteria.fixture.js';
 import { MAX_JOB_MS, NIGHTLY_LIMIT, ORB_FIELDS, PROMPT_VERSIONS, applyOrbFields, attemptState, ollamaPhotoDecision, orbSchema, validateOllamaOrb, readRuns,
-  requireRegistryFields, run, upsertOrbIndex } from './media-memory-orb.mjs';
+  requireRegistryFields, run, upsertOrbIndex, memoryOrbCounts } from './media-memory-orb.mjs';
 import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
+import { llmRunFailed } from '../lib/llm-run-outcome.mjs';
 
 test('예약 상한은 직전 24시간, 두 번 실패한 후보는 14일 동안 보류한다', () => {
   const now = Date.parse('2026-10-17T02:20:00+09:00');
@@ -364,4 +365,30 @@ test('validateOllamaOrb: 세기 단어로 감정을 정하고 0.0과 같은 검�
   assert.match(unknown.emotionEvidence, /^모름: /);
   assert.throws(() => validateOllamaOrb({ ...ollamaAnswer(), levels: {} }, [], null, '2020-01-01', fixtureCriteria),
     (error) => error.formatFailure === true);
+});
+
+test('종료코드 규칙: 판단이 전부 실패하면(10-18 --restricted 사고) 잡 실패, 한도로 연기만 됐으면 OK', async (t) => {
+  const broken = setup(t);
+  const failed = await run(options(broken, { judge: () => { throw new Error("claude 종료코드 1: error: unknown option '--restricted'"); } }));
+  assert.equal(failed.written, 0);
+  assert.equal(failed.failed.length, 1);
+  assert.equal(llmRunFailed(memoryOrbCounts(failed)), true);
+  const limited = setup(t);
+  const limit = new Error('사용량 한도');
+  limit.isLimit = true;
+  const deferred = await run(options(limited, { judge: () => { throw limit; } }));
+  assert.equal(llmRunFailed(memoryOrbCounts(deferred)), false);
+});
+
+test('종료코드 규칙: 남은 잡 예산으로 잘린 claude 호출의 시간 초과는 연기(잡 시간 상한)로 센다', async (t) => {
+  const fixture = setup(t);
+  const started = Date.parse('2026-10-17T00:00:00Z');
+  let late = false;
+  const summary = await run(options(fixture, {
+    now: () => (late ? started + MAX_JOB_MS : started),
+    judge: () => { late = true; throw new Error('헤드리스 타임아웃 (5분 초과)'); },
+  }));
+  assert.equal(summary.failed.length, 0);
+  assert.equal(summary.timedOut, true);
+  assert.equal(llmRunFailed(memoryOrbCounts(summary)), false);
 });

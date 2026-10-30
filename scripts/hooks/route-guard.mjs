@@ -13,6 +13,7 @@ import { classifyRequest, requestBody } from '../lib/route-keywords.mjs';
 import { AGENT_IDS, agentLabel, agentNames } from '../lib/agent-registry.mjs';
 import { factsFor } from '../lib/facts-catalog.mjs';
 import { departmentCallFacts } from '../tools/department-call-facts.mjs';
+import { isTelegramChannel } from '../lib/telegram-channel-env.mjs';
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,7 +46,7 @@ function startsWithDepartmentCall(prompt, dept) {
 }
 
 export async function routeReminder(prompt, {
-  telegram = process.env.CLAUDE_TELEGRAM_SESSION === '1',
+  telegram = isTelegramChannel(),
   factsForAgent = departmentCallFacts,
   catalog = factsFor,
 } = {}) {

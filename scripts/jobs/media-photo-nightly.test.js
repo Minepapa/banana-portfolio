@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PHOTO_STEPS, runPhotoNightly } from './media-photo-nightly.mjs';
-import { EXPECTED_INTERVALS_MS } from './health-watcher.mjs';
+import { EXPECTED_INTERVALS_MS } from '../lib/job-schedule.mjs';
 
 test('사진 블록: 장면 분석 → 얼굴 이름표 순서, 앞 단계가 실패해도 뒤 단계는 돌고 실패 수를 센다', () => {
   const calls = [];

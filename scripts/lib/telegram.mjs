@@ -30,14 +30,33 @@ export function escapeHtml(text) {
   return String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function loadTelegramConfig() {
-  const env = readFileSync(TG_ENV, 'utf8');
+// envPath·accessPath(선택): 기본은 상시 봇 설정 파일. 텔레그램 관문 시험 봇처럼 다른 봇 설정을 읽을 때만 넘긴다.
+export function loadTelegramConfig({ envPath = TG_ENV, accessPath = TG_ACCESS } = {}) {
+  const env = readFileSync(envPath, 'utf8');
   const m = env.match(/TELEGRAM_BOT_TOKEN\s*=\s*(\S+)/);
   if (!m) throw new Error('TELEGRAM_BOT_TOKEN 누락 (channels/telegram/.env)');
-  const access = JSON.parse(readFileSync(TG_ACCESS, 'utf8'));
+  const access = JSON.parse(readFileSync(accessPath, 'utf8'));
   const chatId = (access.allowFrom || [])[0];
   if (!chatId) throw new Error('수신 chat_id 누락 (access.json allowFrom)');
   return { botToken: m[1], chatId };
+}
+
+// config 주입(2026-10-30, 텔레그램 관문 0단계) — 관문 시험 봇은 상시 봇과 토큰·수신자가 다르다. 발송 함수가
+// 매번 고정 경로를 읽으면 시험 데몬의 진행 표시·답장이 실제 봇으로 나갈 수 있어, 호출부가 { botToken, chatId }를
+// 넘기면 그 값만 쓴다. 반쪽 설정(토큰만 있음 등)은 실제 봇과 섞일 수 있어 조용히 채우지 않고 거부한다.
+// undefined(인자 생략)만 기본 설정으로 간다. null은 "설정을 읽으려다 실패한 값"일 수 있어(예: 시험 봇 설정 로드 실패
+// → null) 기본(실제 봇)으로 돌아가면 시험 발송이 실제 봇으로 샌다 — 거부한다(2026-10-30 리뷰 MEDIUM).
+const BOT_TOKEN_RE = /^\S+:\S+$/;
+const CHAT_ID_RE = /^-?[1-9]\d*$/;
+export function resolveTelegramConfig(config) {
+  if (config === undefined) return loadTelegramConfig();
+  const botToken = config?.botToken;
+  const chatId = config?.chatId;
+  const chatIdOk = (typeof chatId === 'string' || typeof chatId === 'number') && CHAT_ID_RE.test(String(chatId));
+  if (typeof botToken !== 'string' || !BOT_TOKEN_RE.test(botToken) || !chatIdOk) {
+    throw new Error('텔레그램 config 주입값에 botToken·chatId가 모두 있어야 합니다');
+  }
+  return config;
 }
 
 // HTML parse_mode 요청이 "can't parse entities" 계열로 거부되면 서식을 포기하고
@@ -108,8 +127,8 @@ function telegramSendError(message, status) {
   return error;
 }
 
-export async function sendTelegram(text, chatId, { fetchImpl = fetch } = {}) {
-  const cfg = loadTelegramConfig();
+export async function sendTelegram(text, chatId, { fetchImpl = fetch, config } = {}) {
+  const cfg = resolveTelegramConfig(config);
   const url = `https://api.telegram.org/bot${cfg.botToken}/sendMessage`;
   const payload = { chat_id: chatId || cfg.chatId, text: truncateForTelegram(text), disable_web_page_preview: true };
   let res = await fetchImpl(url, {
@@ -142,8 +161,8 @@ export async function sendTelegram(text, chatId, { fetchImpl = fetch } = {}) {
 // 완성된 텍스트를 통째로 넘겨야 한다.
 // sendTelegram과 동일한 HTML 파싱 실패 안전망(2026-09-18) — 이 경로도 동적 텍스트를
 // <b> 서식과 함께 보낼 수 있어 같은 실패모드에 노출된다.
-export async function editTelegramMessage(messageId, text, chatId, { fetchImpl = fetch } = {}) {
-  const cfg = loadTelegramConfig();
+export async function editTelegramMessage(messageId, text, chatId, { fetchImpl = fetch, config } = {}) {
+  const cfg = resolveTelegramConfig(config);
   const url = `https://api.telegram.org/bot${cfg.botToken}/editMessageText`;
   const payload = { chat_id: chatId || cfg.chatId, message_id: messageId, text: truncateForTelegram(text), disable_web_page_preview: true };
   let res = await fetchImpl(url, {
@@ -173,11 +192,106 @@ export async function editTelegramMessage(messageId, text, chatId, { fetchImpl =
 // "좀비" 상태 감지). getUpdates 자체를 호출하지 않는 별개 read-only 엔드포인트라
 // 상시세션의 단일 소비자 슬롯과 절대 충돌하지 않는다(409 Conflict 없음, plist 주석의
 // "getUpdates 소비자는 1개만 허용" 제약과 무관).
-export async function getTelegramWebhookInfo() {
-  const cfg = loadTelegramConfig();
-  const res = await fetch(`https://api.telegram.org/bot${cfg.botToken}/getWebhookInfo`);
+export async function getTelegramWebhookInfo({ fetchImpl = fetch, config } = {}) {
+  const cfg = resolveTelegramConfig(config);
+  const res = await fetchImpl(`https://api.telegram.org/bot${cfg.botToken}/getWebhookInfo`);
   if (!res.ok) throw new Error(`getWebhookInfo 실패: ${await res.text()}`);
   const json = await res.json();
   if (!json.ok) throw new Error(`getWebhookInfo 오류: ${json.description || '알 수 없음'}`);
   return json.result; // { url, pending_update_count, last_error_date?, last_error_message? }
+}
+
+// ── 텔레그램 관문(telegram-gate) 수신용 Bot API 호출(2026-10-30, 관문 1단계) ─────────────────────
+// 관문 데몬이 봇의 유일한 수신자가 되면서 getUpdates·리액션·파일 받기가 Node에 필요해졌다. 발송(sendMessage)은
+// 지금처럼 위 sendTelegram(발송 관문 경유)만 쓰고, 여기에는 텍스트를 내보내지 않는 호출만 둔다.
+// ⚠️ getUpdates는 봇 토큰당 소비자가 하나뿐이다. 상시 세션이 떠 있는 동안 실제 봇 토큰으로 부르면 그 세션의
+// 폴링을 끊는다 — 관문 데몬(전환 뒤)과 시험 봇 config 외에는 부르지 않는다.
+// 오류 메시지에는 URL(토큰 포함)을 넣지 않고 Bot API의 description만 담는다.
+export class TelegramApiError extends Error {
+  constructor(method, { status = null, errorCode = null, description = '', retryAfterSec = null, network = false } = {}) {
+    super(network ? `텔레그램 ${method} 연결 실패: ${description}` : `텔레그램 ${method} 실패(${errorCode ?? status}): ${description}`);
+    this.name = 'TelegramApiError';
+    this.method = method;
+    this.status = status;
+    this.errorCode = errorCode;
+    this.retryAfterSec = retryAfterSec;
+    this.network = network;
+    // 409 = 다른 소비자가 같은 봇 토큰으로 getUpdates 중(가로채기). 관문은 이걸 경보로 바꾼다.
+    this.conflict = errorCode === 409 || status === 409;
+    this.rateLimited = errorCode === 429 || status === 429;
+  }
+}
+
+export async function callTelegramApi(method, params = {}, { fetchImpl = fetch, config, signal } = {}) {
+  const cfg = resolveTelegramConfig(config);
+  let res;
+  try {
+    res = await fetchImpl(`https://api.telegram.org/bot${cfg.botToken}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+      signal,
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    throw new TelegramApiError(method, { network: true, description: error?.name ?? 'fetch failed' });
+  }
+  let json = null;
+  try {
+    json = await res.json();
+  } catch (error) {
+    // 본문을 읽다 중단되면(타임아웃 abort) 호출부가 중단으로 다루게 그대로 던진다. 그 밖엔 상태 코드로만 판정.
+    if (error?.name === 'AbortError') throw error;
+  }
+  if (!res.ok || !json?.ok) {
+    throw new TelegramApiError(method, {
+      status: res.status,
+      errorCode: json?.error_code ?? res.status,
+      description: String(json?.description ?? '').slice(0, 200),
+      retryAfterSec: Number.isFinite(json?.parameters?.retry_after) ? json.parameters.retry_after : null,
+    });
+  }
+  return json.result;
+}
+
+// 롱폴링. offset은 "이미 안전하게 저장한 마지막 update_id + 1"만 넘긴다(넘기는 순간 서버가 그 이전을 지운다).
+export function getTelegramUpdates({ offset, timeoutSec = 50, allowedUpdates = ['message'] } = {}, options = {}) {
+  const params = { timeout: timeoutSec, allowed_updates: allowedUpdates };
+  if (Number.isInteger(offset)) params.offset = offset;
+  return callTelegramApi('getUpdates', params, options);
+}
+
+// emoji 빈 값이면 리액션을 지운다. Telegram 고정 화이트리스트 밖 이모지는 400으로 거부된다.
+export function setTelegramReaction({ chatId, messageId, emoji }, options = {}) {
+  return callTelegramApi('setMessageReaction', {
+    chat_id: chatId,
+    message_id: messageId,
+    reaction: emoji ? [{ type: 'emoji', emoji }] : [],
+  }, options);
+}
+
+export function getTelegramFile(fileId, options = {}) {
+  return callTelegramApi('getFile', { file_id: fileId }, options);
+}
+
+// getFile이 돌려준 file_path를 받아 바이트를 돌려준다. 저장 위치는 호출부(관문 media 폴더)가 정한다.
+export async function downloadTelegramFile(filePath, { fetchImpl = fetch, config, signal, maxBytes = 25 * 1024 * 1024 } = {}) {
+  const cfg = resolveTelegramConfig(config);
+  if (typeof filePath !== 'string' || !filePath || filePath.includes('..')) throw new Error('텔레그램 file_path가 올바르지 않습니다');
+  let res;
+  try {
+    res = await fetchImpl(`https://api.telegram.org/file/bot${cfg.botToken}/${filePath}`, { signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    throw new TelegramApiError('file', { network: true, description: error?.name ?? 'fetch failed' });
+  }
+  if (!res.ok) throw new TelegramApiError('file', { status: res.status, errorCode: res.status, description: 'download failed' });
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.length > maxBytes) throw new Error(`텔레그램 파일이 너무 큽니다(${buffer.length}바이트)`);
+  return buffer;
+}
+
+// 관문 진행 메시지를 완료 뒤 지운다(Q2). 텍스트를 내보내지 않는 호출이라 발송 관문을 거치지 않는다.
+export function deleteTelegramMessage({ chatId, messageId }, options = {}) {
+  return callTelegramApi('deleteMessage', { chat_id: chatId, message_id: messageId }, options);
 }

@@ -14,6 +14,7 @@ import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
 import { loadAgent } from '../lib/agent-loader.mjs';
 import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { agentTitle } from '../lib/agent-registry.mjs';
 import { buildWikiCandidates, sourceMeta } from '../lib/wiki-candidates.mjs';
@@ -775,6 +776,15 @@ export function telegramMessage(items, remaining, { mode = 'report', applyResult
   return { agent: 'clio', kind: '정보', topic: mode === 'auto' ? 'Inbox 적용 결과' : 'Inbox 정리 계획', body };
 }
 
+// 종료코드 규칙(llm-run-outcome)용 집계 — 이번 실행에서 실제로 판단을 시도한 항목만 센다(글자 수 상한·재시도 소진은 호출 전이라 빼고,
+// 사용량 한도·잡 시간 상한(남은 예산으로 잘린 호출)으로 멈춘 항목은 실패로 세지 않는다). 계획함·분류 불가 = 성공, 판단 실패·실행 장애 = 실패.
+export function inboxLlmCounts(items) {
+  const succeeded = items.filter((item) => ['계획함', '분류 불가'].includes(item.status)).length;
+  const failed = items.filter((item) => ['판단 실패', '판단 보류(실행 장애)', '보류(실행 장애 반복)'].includes(item.status)
+    && !['사용량 한도', '잡 시간 상한'].includes(item.reason)).length;
+  return { succeeded, failed };
+}
+
 async function sendWithinDeadline(message, send, clock, startedAt, jobBudgetMs = MAX_JOB_MS) {
   const timeLeft = jobBudgetMs - (clock() - startedAt);
   if (!message || timeLeft <= 0) return false;
@@ -951,11 +961,13 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
         ? item.executionFailures + 1 >= MAX_EXECUTION_FAILURES
           ? '보류(실행 장애 반복)' : '판단 보류(실행 장애)' : '판단 실패', attempts,
       executionFailures: item.executionFailures + (failure.executionFailure || failure.isLimit ? 1 : 0),
-      reason: failure.isLimit ? '사용량 한도' : String(failure.message).slice(0, 200),
+      reason: failure.isLimit ? '사용량 한도'
+        : /^헤드리스 타임아웃/.test(failure.message) && clock() - startedAt >= jobBudgetMs ? '잡 시간 상한' : String(failure.message).slice(0, 200),
       ...(rawPreview === undefined ? {} : { rawPreview }) });
     if (failure?.executionFailure || failure?.isLimit) break;
   }
   const finalRemaining = remaining + selected.length - items.length;
+  const llm = inboxLlmCounts(items);
   items.push(...oversized, ...exhausted);
   const previousItems = previousPlan?.items ?? [];
   const newSources = new Set(items.map((item) => item.source));
@@ -972,7 +984,7 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
     { mode: recordedMode, applyResults, applyRemaining }), base, previousSection);
   let report = reportFor();
   const problems = checkNote(reportRel, report, activeRules);
-  if (problems.length) return { date, items, remaining: finalRemaining, sent: false, written: false,
+  if (problems.length) return { date, items, remaining: finalRemaining, sent: false, written: false, llm,
     blocked: `리포트 등록부 위반: ${problems.join(' / ')}`, report };
   if (!dryRun) {
     // 후보 갱신 실패 시 보고서를 아직 쓰지 않아 pending 발송을 다음 실행에서 복구한다.
@@ -1007,7 +1019,7 @@ export async function run({ root = VAULT_PATHS.root, mode = 'report', dryRun = f
     { mode: recordedMode, applyResults: [...olderPendingApplyResults, ...notificationApplyResults], applyRemaining });
   const sent = !dryRun && !noSend && await sendWithinDeadline(message, send, clock, startedAt, MAX_JOB_MS);
   if (sent) clearPendingMessages([join(root, planRel), ...olderPendingPlans.map(({ path }) => path)]);
-  return { date, items, remaining: finalRemaining, sent,
+  return { date, items, remaining: finalRemaining, sent, llm,
     written: !dryRun, report, reportRel, planRel, message, applyResults, applyRemaining };
 }
 
@@ -1028,6 +1040,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       if (result.blocked) { console.error(result.blocked); process.exitCode = 1; }
       else if (args['dry-run']) console.log(`Inbox 미리보기: 다시 판단 ${result.retryCandidates}건, 적용 대상 ${result.applyCandidates}건, 남은 ${result.remaining}건`);
       else console.log(`Inbox 계획 ${result.items.length}건, 적용 ${result.applyResults?.filter((item) => item.written).length ?? 0}건, 남은 ${result.remaining}건`);
+      if (result.llm && args['dry-run'] !== true) markLlmRunOutcome(result.llm, { job: 'clio-inbox-ingest' });
     }
   };
   const lockBase = join(tmpdir(), `clio-inbox-ingest-${hashOf(VAULT_PATHS.root)}.job`);

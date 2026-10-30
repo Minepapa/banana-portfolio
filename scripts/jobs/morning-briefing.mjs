@@ -254,6 +254,8 @@ async function main() {
   let context = null;
   let decisions = null;
   let judgmentFailed = false;
+  // 종료코드 규칙(llm-run-outcome) 예외: 판단 실패는 이미 MORNING_JUDGMENT_FAILED 운영 경고로 오너에게 가므로(조용하지 않음)
+  // 잡을 FAIL로 만들지 않는다 — health-watcher 경보와 겹치는 이중 경보를 피한다.
 
   if (quiet) {
     console.log('ℹ️ morning-briefing: 완전히 조용한 날 — LLM 해석 생략, 사실만 발송');

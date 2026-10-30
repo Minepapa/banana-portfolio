@@ -12,13 +12,12 @@ import { AGENT_HEADERS, sendAgentMessage } from './pantheon-send.mjs';
 import { evaluateDoneWhen, isWorkDoc, parseDoneWhen, stringArray, workStatus } from './work-doc-freshness.mjs';
 import { checkNote, parseRegistry } from './vault-registry.mjs';
 import { agentTitle } from './agent-registry.mjs';
+import { ACTIVE_STATUSES } from './wiki-question-status.mjs';
 
 const QUEUE_DIR = vaultAbs(VAULT_REL.stateWikiQuestions);
 const QUEUE_LOCK = join(QUEUE_DIR, '.queue');
 const INDEX_PATH = vaultAbs(VAULT_REL.knowledgeIndexFile);
 const QUESTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-// 묶음대기: 비긴급(urgent:false) 질문이 하루 두 번 묶음 발송(sendQuestionDigest)을 기다리는 상태(2026-10-09, D68).
-const ACTIVE_STATUSES = new Set(['묶음대기', '발송중', '발송결과불명', '재발송허용', '답변대기', '승인', '반영대기']);
 const DIGEST_MAX_CHARS = 3500; // 텔레그램 4096자 한도 안에서 헤더·여유를 둔다
 const ACTIONS = new Map([
   ['등록', 'approve'], ['승인', 'approve'], ['예', 'approve'],

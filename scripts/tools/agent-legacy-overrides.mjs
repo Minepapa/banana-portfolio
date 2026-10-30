@@ -6,6 +6,8 @@ export const LEGACY_OVERRIDES = [
   ['[Zeus]', '[제우스 Zeus]'],
   // 2026-10-08 등록부 정리로 사용안내는 보관됨 — 카테고리 설명의 현행 위치는 01_Home 카테고리 노트와 경로 등록부.
   [`\`${VAULT_REL.knowledgeMeta}/므네모시네-사용안내.md\`의 카테고리 설명`, `\`${VAULT_REL.homeDir}\` 카테고리 노트·\`${VAULT_REL.registryFile.replace(/\.md$/, '')}\`의 카테고리 설명`],
+  // 결정 `구현-주체`: 구현은 Claude가 직접 한다(외부 코딩 에이전트 위임 없음).
+  ['별도 구현 경로(Claude→Codex)로 간다', '개발 세션(Claude 직접 구현)으로 간다'],
   ['| 투자전략실 Athena |', '| 플루토스 Plutus |'],
   ['| 퀀트전략실 Kairos |', '| 플루토스 Plutus |'],
   ['| 운영실 Hermes |', '| 플루토스 Plutus |'],

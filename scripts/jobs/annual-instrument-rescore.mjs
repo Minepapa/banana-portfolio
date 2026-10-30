@@ -43,6 +43,7 @@ import { parseProposal } from '../lib/proposal-vault.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -185,6 +186,7 @@ async function main() {
   const rankedCache = {};
   let existingProposals = null;
   let reviewedAny = false;
+  const llm = { succeeded: 0, failed: 0 }; // 종료코드 규칙(llm-run-outcome) — 한도 보류는 세지 않는다
   let hadLimitError = false; // 사용량 한도로 판단 보류된 종목이 있으면 연 마커를 안 써서
   // 남은 캘린더 창(1~3일) 안에서 재시도되게 한다(quarterly-allocation-review.mjs의
   // "발송 실패 시 마커 미전진"과 동일 원칙).
@@ -228,9 +230,11 @@ async function main() {
             appendSystemPrompt: AGENT.systemPrompt, lean: true, tools: '', maxTurns: 1,
           })));
           verdict = r;
+          llm.succeeded += 1;
         } catch (e) {
           if (e.isLimit) { console.log('  ⏳ 사용량 한도 → 이 종목 판단 보류(캘린더 창 안에서 재시도).'); hadLimitError = true; continue; }
           console.error(`  ❌ [${account}/${assetClass}] ${inst.name} 판단 실패: ${e.message}`);
+          llm.failed += 1;
           continue;
         }
         if (verdict.verdict !== '교체') {
@@ -333,6 +337,7 @@ async function main() {
   }
 
   if (DRY_RUN) return;
+  markLlmRunOutcome(llm, { job: 'annual-instrument-rescore' });
   if (!reviewedAny) console.log('  ℹ️ 이번 연도엔 재검토 대상(격차 임계값 이상) 없음');
   if (hadLimitError) { console.log('  ⏳ 사용량 한도로 보류된 종목이 있어 연 마커 미전진(캘린더 창 안에서 재시도).'); return; }
   if (hadPartialFailure) { console.log('  ⚠️ 반쪽 발송된 교체가 있어 연 마커 미전진(캘린더 창 안에서 재시도).'); return; }

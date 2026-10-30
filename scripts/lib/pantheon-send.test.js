@@ -37,3 +37,20 @@ test('발신 헤더 6개는 리뷰된 값과 같다(헌장 title 오탈자가 �
     hermes: '헤르메스 Hermes', athena: '아테나 Athena', plutus: '플루토스 Plutus',
   });
 });
+
+test('발송 관문은 options.config를 transport까지 그대로 넘긴다(관문 시험 봇, 2026-10-30)', async () => {
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, json: async () => ({ ok: true, result: { message_id: 3 } }) };
+  };
+  const config = { botToken: 'FAKE:gate-test-token', chatId: '424242' };
+  await sendAgentMessage({ agent: 'zeus', kind: '정보', topic: '시험', body: '본문' }, undefined, { fetchImpl, config });
+  await editAgentMessage(3, { agent: 'zeus', kind: '정보', topic: '시험', body: '고침' }, undefined, { fetchImpl, config });
+  assert.deepEqual(calls.map((c) => c.url), [
+    'https://api.telegram.org/botFAKE:gate-test-token/sendMessage',
+    'https://api.telegram.org/botFAKE:gate-test-token/editMessageText',
+  ]);
+  assert.ok(calls.every((c) => c.body.chat_id === '424242'));
+  assert.match(calls[0].body.text, /^\[제우스 Zeus\] 시험\n/);
+});

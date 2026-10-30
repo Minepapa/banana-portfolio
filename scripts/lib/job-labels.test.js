@@ -1,18 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describeJob, JOB_LABELS, JOB_REMEDIATION } from './job-labels.mjs';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// run.sh의 case문에서 실제로 디스패치되는 잡 이름만 뽑는다 — health-watcher.test.js
-// listDispatchedJobs와 동일 패턴(2026-09-19, DevRequest 잡실패알림-잡한글설명추가).
-function listDispatchedJobs() {
-  const runSh = readFileSync(join(__dirname, '..', 'launchd', 'run.sh'), 'utf8');
-  return [...runSh.matchAll(/^\s*([a-z][a-z0-9-]*)\)\s+CMD=/gm)].map((m) => m[1]);
-}
+import { listDispatchedJobs } from './launchd-jobs.mjs';
 
 test('describeJob: 등록된 잡은 "이름(한글설명)" 형태로 반환', () => {
   assert.equal(describeJob('backup-vault'), 'backup-vault(매일 밤 Vault 전체 스냅샷 git 백업)');

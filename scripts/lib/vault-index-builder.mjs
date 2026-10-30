@@ -4,8 +4,8 @@
 // 파일 끝의 자동 구역(AUTO_START~AUTO_END)만 다시 만든다. 01_Home의 분류 노트도 같은 방식으로
 // 자동 구역에 그 분류의 노트 목록을 채운다(D12: 분류 노트는 색인만, 종합은 Wiki).
 // 내용이 같으면 파일을 쓰지 않는다 — 야간 백업 잡이 매일 부르므로 불필요한 변경·동기화를 만들지 않기 위해서다.
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 import { VAULT_REL } from './vault-paths.mjs';
 import { MOUSEION_TOP_FOLDERS } from './vault-layout.mjs';
 
@@ -140,10 +140,43 @@ export function buildCategoryBlock(categoryName, notes) {
   return lines.join('\n');
 }
 
+// 개념별 건수(2026-10-31, 올림푸스 무세이온 칸이 읽기만 한다). 개념 = 01_Home 분류 노트, 건수 = 그 분류를
+// category로 단 노트 수(색인 "분류별 노트 수"와 같은 기준). 01_Home 밖의 분류 노트(보관본 등)는 개념이 아니다. 금고는 walk에서 이미 빠지고,
+// 이름이 99로 시작하는 개념도 넣지 않는다.
+export function buildConceptCounts(notes, now = new Date()) {
+  const counts = new Map();
+  for (const n of notes) for (const c of n.categories) counts.set(c, (counts.get(c) ?? 0) + 1);
+  const concepts = notes
+    .filter((n) => n.type === 'category' && n.rel.startsWith(`${HOME_FOLDER}/`))
+    .map((n) => noteName(n.rel).split('/').pop())
+    .filter((name) => !name.startsWith('99'))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) // 실행 환경 로캘과 무관하게(수동·야간 실행 순서가 같아야 재작성이 안 생긴다)
+    .map((name) => ({ name, count: counts.get(name) ?? 0 }));
+  return { schemaVersion: 1, generatedAt: now.toISOString(), totalNotes: notes.length, concepts };
+}
+
+// 건수가 같으면 다시 쓰지 않는다(generatedAt = 지금 건수를 처음 계산한 시각). 신선도는 잡 상태 backup-vault-snapshot.
+function updateConceptCounts(root, notes, { apply, now }) {
+  const abs = join(root, VAULT_REL.mouseionConceptCounts);
+  const next = buildConceptCounts(notes, now);
+  let prev = null;
+  try { prev = JSON.parse(readFileSync(abs, 'utf8')); } catch { /* 없거나 깨졌으면 새로 쓴다 */ }
+  const same = prev && prev.schemaVersion === next.schemaVersion && prev.totalNotes === next.totalNotes
+    && JSON.stringify(prev.concepts) === JSON.stringify(next.concepts);
+  if (same) return false;
+  if (apply) {
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, `${JSON.stringify(next, null, 2)}\n`);
+  }
+  return true;
+}
+
 // 변경된 파일 상대경로 목록을 돌려준다. apply=false면 쓰지 않는다.
-export function buildVaultIndex(root, { apply = true } = {}) {
+export function buildVaultIndex(root, { apply = true, now = new Date() } = {}) {
   const notes = collectNotes(root);
   const changed = [];
+  // 건수 파일을 먼저 갱신한다 — 색인 파일 없음·표시선 손상으로 아래가 throw해도 건수는 최신으로 남게(리뷰 MEDIUM).
+  if (updateConceptCounts(root, notes, { apply, now })) changed.push(VAULT_REL.mouseionConceptCounts);
   const update = (rel, block) => {
     const abs = join(root, rel);
     const before = readFileSync(abs, 'utf8');

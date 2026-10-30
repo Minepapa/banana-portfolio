@@ -54,3 +54,68 @@ export function isSessionLogStale({ lastModifiedMs, nowMs, thresholdMs }) {
   if (!Number.isFinite(lastModifiedMs) || !Number.isFinite(nowMs) || !Number.isFinite(thresholdMs) || thresholdMs <= 0) return false;
   return nowMs - lastModifiedMs > thresholdMs;
 }
+
+// 봇 가로채기 감지(2026-10-30) — 플러그인 서버는 새로 뜰 때마다 bot.pid의 이전 폴러를
+// SIGTERM한다. 그래서 다른 claude 세션이 플러그인을 띄우면 봇이 그 세션으로 넘어가는데,
+// TELEGRAM_MCP_SUBPROCESS_PATTERN은 "어느 세션의 플러그인이든" 맞아서 헬스체크가 계속
+// 정상으로 봤다(2026-10-30 11:46~15:47 KST 4시간 실사고). 플러그인 조상에 상시 세션
+// 프로세스가 있는지로 소유를 판정한다.
+const MAX_ANCESTRY_DEPTH = 12;
+
+// `ps -axo pid=,ppid=,etime=,rss=,args=` 출력 → [{ pid, ppid, etimeSec, rssKb, args }].
+export function parseProcessTable(text) {
+  return String(text || '').split('\n').map((line) => {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\d+)\s+(.*)$/.exec(line);
+    if (!m) return null;
+    return { pid: Number(m[1]), ppid: Number(m[2]), etimeSec: parseEtime(m[3]), rssKb: Number(m[4]), args: m[5] };
+  }).filter(Boolean);
+}
+
+// ps etime `[[DD-]HH:]MM:SS` → 초. 형식이 다르면 NaN.
+export function parseEtime(etime) {
+  const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(String(etime || ''));
+  if (!m) return NaN;
+  const [, d = 0, h = 0, min, s] = m;
+  return ((Number(d) * 24 + Number(h)) * 60 + Number(min)) * 60 + Number(s);
+}
+
+// 순수함수 — 플러그인 프로세스마다 조상에 상시 세션이 있는지 본다. 오너가 터미널에서
+// 직접 띄운 --channels 세션도 소유로 본다(플러그인 가드와 같은 기준, 의도된 동작). 상시 세션 밖의
+// 플러그인은 가장 가까운 claude 조상을 가로챈 세션으로 보고한다.
+export function classifyPluginOwnership(processes, {
+  sessionPattern = TELEGRAM_SESSION_PROCESS_PATTERN, pluginPattern = TELEGRAM_MCP_SUBPROCESS_PATTERN,
+} = {}) {
+  const byPid = new Map(processes.map((p) => [p.pid, p]));
+  const sessionRe = new RegExp(sessionPattern);
+  const pluginRe = new RegExp(pluginPattern);
+  const claudeRe = /(^|\/)claude(\s|$)/;
+  const owned = [];
+  const foreign = [];
+  for (const plugin of processes.filter((p) => pluginRe.test(p.args))) {
+    let underSession = false;
+    let ownerPid = null;
+    let cursor = byPid.get(plugin.ppid);
+    for (let depth = 0; cursor && depth < MAX_ANCESTRY_DEPTH; depth++) {
+      if (sessionRe.test(cursor.args)) { underSession = true; break; }
+      if (ownerPid === null && claudeRe.test(cursor.args)) ownerPid = cursor.pid;
+      cursor = byPid.get(cursor.ppid);
+    }
+    if (underSession) owned.push(plugin.pid);
+    else foreign.push({ pid: plugin.pid, ownerPid });
+  }
+  return { ownedPluginPids: owned, foreignPlugins: foreign };
+}
+
+// 순수함수 — 상시 세션이 아닌 오래된 claude 세션 요약(메모리 부족이 끊김 원인 후보,
+// 장애 시점 여유 메모리 0.5~2% 실측). 프로세스를 끄지 않는다 — 오너가 직접 정리한다.
+export function summarizeStaleClaudeSessions(processes, { minAgeSec = 2 * 86_400, sessionPattern = TELEGRAM_SESSION_PROCESS_PATTERN } = {}) {
+  const sessionRe = new RegExp(sessionPattern);
+  // 데스크톱 세션은 disclaimer 래퍼 줄에도 claude 경로가 들어 있어 두 번 세지 않게 뺀다.
+  const stale = processes.filter((p) => /(^|\/)claude(\s|$)/.test(p.args) && !/\/disclaimer\s/.test(p.args) && !sessionRe.test(p.args) &&
+    Number.isFinite(p.etimeSec) && p.etimeSec >= minAgeSec);
+  return { count: stale.length, totalRssMb: Math.round(stale.reduce((sum, p) => sum + (p.rssKb || 0), 0) / 1024) };
+}
+
+export function readProcessTable() {
+  return parseProcessTable(execSync('ps -axo pid=,ppid=,etime=,rss=,args=', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 8 * 1024 * 1024 }));
+}

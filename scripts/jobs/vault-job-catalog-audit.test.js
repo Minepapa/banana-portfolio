@@ -58,7 +58,7 @@ const CAN_RUN = process.platform === 'darwin' && PLUTIL_AVAILABLE && existsSync(
 function listDispatchedJobs() {
   const runSh = readFileSync(join(LAUNCHD_DIR, 'run.sh'), 'utf8');
   return [...runSh.matchAll(/^\s*([a-z][a-z0-9-]*)\)\s+CMD=\(([^)]+)\)/gm)]
-    .map((m) => ({ job: m[1], scriptPath: m[2].trim() }));
+    .map((m) => ({ job: m[1], scriptPath: m[2].trim().split(/\s+/)[0] })); // 인자(예: 관문 --mode=live)는 빼고 스크립트 경로만
 }
 
 function readPlistSchedule(job) {

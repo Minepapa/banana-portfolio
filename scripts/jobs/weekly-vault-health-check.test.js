@@ -18,7 +18,12 @@ import {
   buildHealthCheckFacts,
   hasAnyIssue,
   buildApolloPrompt,
+  findOrphanJobHealthFiles,
+  listJobHealthFileNames,
 } from './weekly-vault-health-check.mjs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const mkFile = (relPath, content, frontmatter = {}) => ({ relPath, absPath: `/vault/${relPath}.md`, content, frontmatter });
 
@@ -370,4 +375,58 @@ test('findBrokenAndAmbiguousLinks: 노트#제목·#^블록 앵커는 노트가 �
     { relPath: '30_Wiki/33_Objects/ECOS', content: '[[40_Projects/p/Features/거시 모니터링#ECOS 연동 이력]] [[거시 모니터링#^abc|별칭]] [[#자기 제목]] [[없는 노트#제목]]' },
   ];
   assert.deepEqual(find(files).broken.map((b) => b.target), ['없는 노트']);
+});
+
+test('findOrphanJobHealthFiles: 라벨·기대 주기 어디에도 없거나 폐지된 잡의 상태 파일만 고아로 본다', () => {
+  const labels = { 'daily-note': '데일리', 'only-label': '라벨만' };
+  const intervals = { 'daily-note': 1, 'only-interval': 1, 'paused-job': null };
+  const retired = new Set(['old-media']);
+  const names = ['daily-note.md', 'only-label.md', 'only-interval.md', 'paused-job.md', 'old-media.md', 'ghost.md', 'notes.txt'];
+  assert.deepEqual(findOrphanJobHealthFiles(names, { labels, intervals, retired }), ['ghost', 'old-media']);
+});
+
+test('findOrphanJobHealthFiles: 프로토타입 이름(constructor 등)도 등록된 잡으로 오인하지 않는다', () => {
+  assert.deepEqual(findOrphanJobHealthFiles(['constructor.md', 'toString.md'], { labels: {}, intervals: {}, retired: new Set() }), ['constructor', 'toString']);
+});
+
+test('listJobHealthFileNames: 폴더가 없으면 빈 목록, 하위 폴더는 제외', () => {
+  const root = mkdtempSync(join(tmpdir(), 'jobhealth-'));
+  assert.deepEqual(listJobHealthFileNames(join(root, 'missing')), []);
+  mkdirSync(join(root, 'sub.md'));
+  writeFileSync(join(root, 'a.md'), '');
+  assert.deepEqual(listJobHealthFileNames(root), ['a.md']);
+});
+
+test('고아 상태 파일은 발견 사항에 이름 목록으로 실리고 알림 대상이 된다(삭제 안 함 명시)', () => {
+  const result = {
+    broken: [], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [],
+    emptyHoldingAssetClasses: [], orphanJobHealth: ['ghost', 'old-media'],
+    workChecks: { overdue: [], missing: [], scheduledCount: 0 }, questionFailures: [],
+    staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [],
+  };
+  assert.equal(hasAnyIssue(result), true);
+  assert.match(buildHealthCheckFacts(result).join('\n'), /고아 상태 파일 2개.*지우지 않음.*ghost, old-media/);
+});
+
+
+test('고아 상태 파일 점검 실패는 발견 사항 한 줄로 올라가고 목록이 길면 8개에서 자른다', () => {
+  const base = {
+    broken: [], ambiguous: [], orphaned: [], recentLegacy: [], fxAnomalies: [], missingCurrency: [],
+    emptyHoldingAssetClasses: [], workChecks: { overdue: [], missing: [], scheduledCount: 0 }, questionFailures: [],
+    staleAutoClaims: [], invalidProgress: [], staleEmptyClaims: [],
+  };
+  const failed = { ...base, orphanJobHealth: [], orphanJobHealthError: 'EACCES: permission denied' };
+  assert.equal(hasAnyIssue(failed), true);
+  assert.match(buildHealthCheckFacts(failed).join('\n'), /고아 상태 파일 점검 실패.*EACCES/);
+  const many = { ...base, orphanJobHealth: Array.from({ length: 10 }, (_, i) => `job-${i}`) };
+  const line = buildHealthCheckFacts(many).join('\n');
+  assert.match(line, /고아 상태 파일 10개/);
+  assert.match(line, /job-7 외/);
+  assert.doesNotMatch(line, /job-8/);
+});
+
+test('listJobHealthFileNames: 폴더 대신 파일이면(ENOTDIR) 오류를 던져 호출부가 실패로 보고한다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'jobhealth-'));
+  writeFileSync(join(root, 'not-a-dir'), '');
+  assert.throws(() => listJobHealthFileNames(join(root, 'not-a-dir')), /ENOTDIR/);
 });

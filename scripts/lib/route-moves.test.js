@@ -132,3 +132,19 @@ test('익명화 위치 픽스처의 마지막 체류 뒤 관측 구간은 차량
   assert.equal(moves.at(-1).end, '2026-10-10T11:10:54.000Z');
   assert.match(moves.at(-1).label, /^이동 · 차량 약 \d+km$/);
 });
+
+test('자정에 잘린 집 체류도 전날 점을 출발점으로 써서 출근 이동 거리를 낸다', () => {
+  // 2026-10-12 실측 모양: 집 점은 전날 밤 하나뿐이고, 05:52부터 차로 2분마다 점이 찍히며 수원으로 간다.
+  const at = (date, time, lat, lon) => ({ tst: Date.parse(`${date}T${time}+09:00`) / 1000, lat, lon, acc: 10 });
+  const drive = Array.from({ length: 20 }, (_, index) => {
+    const minutes = 52 + index * 2;
+    const time = `${String(5 + Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}:00`;
+    return at('2026-10-12', time, 37.3877 - index * 0.0065, 126.6400 + index * 0.0221);
+  });
+  const points = [at('2026-10-11', '22:00:00', 37.3877, 126.6335), ...drive,
+    ...['07:40:00', '08:10:00', '08:40:00'].map((time) => at('2026-10-12', time, 37.2574, 127.0546))];
+  const stays = detectStays(points, { date: '2026-10-12' });
+  assert.equal(stays[0].start, '2026-10-11T15:00:00.000Z');
+  const [commute] = buildMoveSegments(stays, points, { date: '2026-10-12' });
+  assert.match(commute.label, /약 \d+km/);
+});

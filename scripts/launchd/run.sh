@@ -87,6 +87,7 @@ case "$JOB" in
   clio-inbox-ingest) CMD=(scripts/jobs/clio-inbox-ingest.mjs)
     if [[ " $* " != *" --mode="* ]]; then set -- "$@" --mode=auto; fi ;;
   hermes-briefing) CMD=(scripts/jobs/hermes-briefing.mjs) ;;
+  calendar-days) CMD=(scripts/jobs/calendar-days.mjs) ;;
   health-watcher) CMD=(scripts/jobs/health-watcher.mjs) ;;
   execute-quant)  CMD=(scripts/tools/execute-quant-proposal.mjs) ;;
   execute-asset-allocation) CMD=(scripts/tools/execute-asset-allocation-proposal.mjs) ;;
@@ -117,8 +118,11 @@ case "$JOB" in
   proposal-execution-reminder) CMD=(scripts/jobs/proposal-execution-reminder.mjs) ;;
   telegram-session-handoff) CMD=(scripts/jobs/telegram-session-handoff.mjs) ;;
   owntracks-receiver) CMD=(scripts/jobs/owntracks-receiver.mjs) ;;
+  olympus-server) CMD=(scripts/jobs/olympus-server.mjs) ;;
   isa-maturity-check) CMD=(scripts/jobs/isa-maturity-check.mjs) ;;
   telegram-session-health-check) CMD=(scripts/jobs/telegram-session-health-check.mjs) ;;
+  telegram-gate) CMD=(scripts/jobs/telegram-gate.mjs --mode=live) ;; # 텔레그램 관문 상시 데몬(4단계 전환 전에는 등록 금지)
+  telegram-gate-health-check) CMD=(scripts/jobs/telegram-gate-health-check.mjs) ;;
   intraday-market-move-monitor) CMD=(scripts/jobs/intraday-market-move-monitor.mjs) ;;
   process-warning-actions) CMD=(scripts/jobs/process-warning-actions.mjs) ;;
   weekly-vault-health-check) CMD=(scripts/jobs/weekly-vault-health-check.mjs) ;;
@@ -133,7 +137,7 @@ case "$JOB" in
   reconcile-breakout-protection) CMD=(scripts/jobs/reconcile-breakout-protection.mjs) ;;
   update-macro-indicators-cache) CMD=(scripts/jobs/update-macro-indicators-cache.mjs) ;;
   update-krx-trading-calendar) CMD=(scripts/jobs/update-krx-trading-calendar.mjs) ;;
-  *) echo "usage: run.sh {media-archive|media-moments|media-audio|media-photo|media-video|media-night-check|media-faces-hold-monthly|media-delete-report-weekly|media-memory-orb|mine-athena-fields|backup-vault|vault-offsite-backup|media-audio-offsite-backup|question-digest|daily-note|clio-inbox-ingest|hermes-briefing|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|ingest-spending-inbox|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-nh-fx-rp|reconcile-irp-executions|reconcile-nh-executions|expire-stale-nh-orders|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|owntracks-receiver|isa-maturity-check|telegram-session-health-check|intraday-market-move-monitor|process-warning-actions|weekly-vault-health-check|weekly-warning-review|pension-balance-reminder|update-fund-holdings-from-purchases|annual-instrument-rescore|monthly-macro-tilt-proposal|update-breakout-price-cache|daily-breakout-signal-scan|place-breakout-fallback-entry|reconcile-breakout-protection|update-macro-indicators-cache|update-krx-trading-calendar}" >&2; exit 2 ;;
+  *) echo "usage: run.sh {media-archive|media-moments|media-audio|media-photo|media-video|media-night-check|media-faces-hold-monthly|media-delete-report-weekly|media-memory-orb|mine-athena-fields|backup-vault|vault-offsite-backup|media-audio-offsite-backup|question-digest|daily-note|clio-inbox-ingest|hermes-briefing|calendar-days|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|ingest-spending-inbox|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-nh-fx-rp|reconcile-irp-executions|reconcile-nh-executions|expire-stale-nh-orders|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|owntracks-receiver|olympus-server|isa-maturity-check|telegram-session-health-check|telegram-gate|telegram-gate-health-check|intraday-market-move-monitor|process-warning-actions|weekly-vault-health-check|weekly-warning-review|pension-balance-reminder|update-fund-holdings-from-purchases|annual-instrument-rescore|monthly-macro-tilt-proposal|update-breakout-price-cache|daily-breakout-signal-scan|place-breakout-fallback-entry|reconcile-breakout-protection|update-macro-indicators-cache|update-krx-trading-calendar}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지). "$@"는 위 shift 이후라
@@ -163,7 +167,8 @@ DUR=$(( $(date +%s) - START ))
 STATUS=OK; [ "$CODE" -ne 0 ] && STATUS=FAIL
 
 # 하트비트 기록 (잡 실패해도 기록은 시도; 기록 실패는 잡 종료코드를 가리지 않음)
-HB_DETAIL="$( { tail -n "+$((LOG_LINES_BEFORE + 1))" "$LOG_DIR/$JOB.log" 2>/dev/null || true; } | tail -n 3 | tr '\n' ' ' | cut -c1-200)" \
+# 한글 사유가 바이트 단위로 잘려 깨지지 않게 문자 단위로 자른다(launchd 환경에는 LANG이 없다, 2026-10-31).
+HB_DETAIL="$( { tail -n "+$((LOG_LINES_BEFORE + 1))" "$LOG_DIR/$JOB.log" 2>/dev/null || true; } | tail -n 3 | tr '\n' ' ' | LC_ALL=en_US.UTF-8 cut -c1-200)" \
   "$NODE" scripts/jobs/record-heartbeat-vault.mjs "$JOB" "$STATUS" "$DUR" || true
 
 exit "$CODE"

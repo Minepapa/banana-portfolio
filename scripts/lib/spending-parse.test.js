@@ -239,3 +239,84 @@ test('실제 형식 회귀: 하나 알림톡 "가맹점명"과 하나카드 앱 
     body: '가상식당 / 신용(일시불,0*0*) / 10.10 12:34 / 누적이용금액 1원' });
   assert.deepEqual([app.card, app.amount, app.merchant], ['하나', 31000, '가상식당']);
 });
+
+test('새마을금고 출금은 상대 이름만 남기고 판정 전까지 합계에서 뺀다', () => {
+  const withdrawal = { ...base, packageName: 'com.smg.spbs', sender: 'MG새마을금고',
+    body: '[출금] 78,360원 1234-5678-****-9 잔액 1,000,000원 10/10 12:30 가상보험１０１２６' };
+  const parsed = parseSpendingRecord(withdrawal);
+  assert.deepEqual([parsed.card, parsed.amount, parsed.merchant, parsed.status, parsed.category],
+    ['새마을금고', 78360, '가상보험10126', 'pending', '계좌이체']);
+  assert.ok(!JSON.stringify(parsed).includes('5678'));
+  assert.equal(parseSpendingRecord({ ...withdrawal, body: `${withdrawal.body}\n` }).merchant, '가상보험10126');
+  assert.equal(parseSpendingRecord({ ...withdrawal, body: withdrawal.body.replace('[출금]', '[입금]') }), null);
+});
+
+test('삼성 월렛 결제는 같은 금액·3분 안의 카드 승인이 있으면 한 번만 센다', () => {
+  const wallet = { ...base, ts: '2026-10-10 12:35:10', packageName: 'com.samsung.android.spay',
+    sender: '₩2,900 결제 완료', body: '가상편의점' };
+  const parsed = parseSpendingRecord(wallet);
+  assert.deepEqual([parsed.card, parsed.amount, parsed.merchant, parsed.status], ['삼성월렛', 2900, '가상편의점', 'expense']);
+  assert.equal(parseSpendingRecord({ ...wallet, sender: '선물하기', body: '쿠폰 선물을 보냈습니다.' }), null);
+  const card = { ...base, packageName: 'com.kakao.talk', sender: '삼성카드',
+    body: '삼성1234승인\n2,900원 일시불\n10/10 12:34 가상편의점\n누적 50,000원' };
+  for (const records of [[wallet, card], [card, wallet]]) {
+    const merged = parseSpendingRecords(records);
+    assert.deepEqual(merged.map((entry) => entry.card), ['삼성']);
+  }
+  assert.equal(parseSpendingRecords([wallet]).length, 1);
+  assert.equal(parseSpendingRecords([wallet, { ...wallet, ts: '2026-10-10 12:36:10' }, card]).length, 2);
+  assert.equal(parseSpendingRecords([{ ...wallet, ts: '2026-10-10 12:40:00' }, card]).length, 2);
+  const transfer = { ...base, packageName: 'com.kakaopay.app', sender: '송금이 완료되었어요',
+    body: '가상은행 1111 (가*상)계좌로 2,900원 송금했어요.' };
+  const withTransfer = parseSpendingRecords([wallet, transfer], {
+    recipientDecisions: [{ bank: '가상은행', last4: '1111', status: 'expense' }] });
+  assert.deepEqual(withTransfer.map((entry) => entry.card).sort(), ['삼성월렛', '카카오페이']);
+});
+
+test('실제 형식 회귀: 카톡 "MG+ 하나 5*8*" 카드 번호와 지점명이 붙은 앱 가맹점을 한 건으로 합친다', () => {
+  const talk = { ...base, ts: '2026-10-28 06:38:51', packageName: 'com.kakao.talk', sender: '하나카드',
+    body: '[하나카드] 승인 안내\n\n◆ 사용금액 : 30,000원 \n◆ 이용현황\n    - 이용카드 : MG+ 하나 5*8*                    \n    - 거래종류 : 신용\n    - 가맹점명 : 가상주유(주)\n    - 거래시간 : 10/28 06:38 ' };
+  const app = { ...base, ts: '2026-10-28 06:38:55', packageName: 'com.hanaskcard.paycla', sender: '(결제) 30,000원',
+    body: '가상주유(주)직영송도점 / 신용(일시불,5*8*) / 10.28 06:38 / 누적이용금액 1원' };
+  assert.equal(parseSpendingRecord(talk).cardMask, '5*8*');
+  for (const records of [[talk, app], [app, talk]]) {
+    const merged = parseSpendingRecords(records);
+    assert.equal(merged.length, 1);
+    assert.deepEqual([merged[0].amount, merged[0].merchant, merged[0].cardMask], [30000, '가상주유(주)직영송도점', '5*8*']);
+  }
+  // 카드 이름 앞 글자가 있어도 다른 번호면 다른 카드다.
+  assert.equal(parseSpendingRecords([app, { ...talk, body: talk.body.replace('5*8*', '3*4*') }]).length, 2);
+  // 앞부분 일치는 짧은 쪽이 4자 이상이고 두 알림의 카드 번호가 같을 때만 같은 가게로 본다.
+  const withMerchant = (record, from, to) => ({ ...record, body: record.body.replace(from, to) });
+  assert.equal(parseSpendingRecords([withMerchant(app, '가상주유(주)직영송도점', '가상주유송도점'),
+    withMerchant(talk, '가상주유(주)', '가상주유')]).length, 1);
+  assert.equal(parseSpendingRecords([withMerchant(app, '가상주유(주)직영송도점', '가상주송도점'),
+    withMerchant(talk, '가상주유(주)', '가상주')]).length, 2);
+  const talkWithoutCard = withMerchant(talk, 'MG+ 하나 5*8*', '하나');
+  assert.equal(parseSpendingRecord(talkWithoutCard).cardMask, null);
+  assert.equal(parseSpendingRecords([app, talkWithoutCard]).length, 2);
+  // 카드 이름 안 숫자는 번호가 아니고, 줄 끝 번호만 읽는다.
+  const travel = parseSpendingRecord(withMerchant(talk, 'MG+ 하나 5*8*', '트래블로그 2030 5*8*'));
+  assert.deepEqual([travel.cardLast4, travel.cardMask], [null, '5*8*']);
+  assert.deepEqual([parseSpendingRecord(withMerchant(talk, 'MG+ 하나 5*8*', '트래블로그 2030 하나')).cardLast4,
+    parseSpendingRecord(withMerchant(talk, 'MG+ 하나 5*8*', 'MG+ 하나 5*8*온누리')).cardMask], [null, '5*8*']);
+  // '이용카드' 줄이 아닌 곳의 네 자리 숫자는 카드 번호로 읽지 않는다.
+  assert.equal(parseSpendingRecord({ ...talk, body: talk.body.replace('MG+ 하나 5*8*', 'MG+ 하나').replace('[하나카드] 승인 안내', '[하나카드] 2026 승인 안내') }).cardLast4, null);
+});
+
+test('하나 앱 관리비 자동납부 정상승인도 괄호 안 이름을 가맹점으로 파싱한다', () => {
+  const approval = { ...base, packageName: 'com.hanaskcard.paycla', sender: '자동납부 요금 정상승인 안내',
+    body: '[아파트관리비] 자동납부 요금 정상승인 안내 276,750원' };
+  const parsed = parseSpendingRecord(approval);
+  assert.deepEqual([parsed.card, parsed.merchant, parsed.amount, parsed.status, parsed.category],
+    ['하나', '아파트관리비', 276750, 'expense', '일반']);
+  assert.equal(parsed.autopay, true);
+  assert.equal('autopay' in parseSpendingRecord({ ...approval, sender: '(결제) 5,000원',
+    body: '가상식당 / 신용(일시불,1*2*) / 10.10 12:34' }), false);
+  assert.equal(parseSpendingRecord({ ...approval, body: approval.body.replace('정상승인', '청구') }), null);
+  assert.equal(parseSpendingRecord({ ...approval, body: '[] 자동납부 요금 정상승인 안내 276,750원' }), null);
+  assert.equal(parseSpendingRecord({ ...approval, body: '[아파트\n관리비] 자동납부 요금 정상승인 안내 276,750원' }), null);
+  assert.equal(parseSpendingRecord({ ...approval, body: '[하나카드 결제대금] 자동납부 요금 정상승인 안내 276,750원' }), null);
+  assert.equal(parseSpendingRecord({ ...approval, body: '[ ] 자동납부 요금 정상승인 안내 276,750원' }), null);
+  assert.equal(parseSpendingRecord({ ...approval, body: '[SKT 환불금] 자동납부 요금 정상승인 안내 1,000원' }), null);
+});

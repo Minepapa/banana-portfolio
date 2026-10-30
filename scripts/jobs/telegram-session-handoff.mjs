@@ -63,6 +63,7 @@ import { vaultYearDir, VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
+import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const CONVERSATION_MAX_CHARS = 40_000;
@@ -413,6 +414,7 @@ async function main() {
 
   // 대화 요약 — 실패해도 앞서 남긴 결정론 데이터나 기존 완성본을 유지한다.
   let conversationSummary = null;
+  let summarizing = false; // transcript 읽기 오류와 claude 요약 실패를 구분해 기록한다(리뷰 LOW)
   try {
     const transcriptPaths = findTelegramTranscripts();
     const groups = [];
@@ -424,6 +426,7 @@ async function main() {
     groups.sort((a, b) => a.earliestMs - b.earliestMs);
     const turns = groups.flatMap((g) => g.turns);
     if (turns.length) {
+      summarizing = true;
       conversationSummary = await summarizeConversation(turns, targetDateStr);
     } else if (transcriptPaths.length) {
       console.log(`ℹ️ 텔레그램 세션 transcript ${transcriptPaths.length}개 중 ${targetDateStr}(KST) 대화 turn 없음 — 요약 스킵`);
@@ -431,7 +434,14 @@ async function main() {
       console.log('ℹ️ 텔레그램 세션 transcript를 못 찾음(agent-name 마커 미검출) — 요약 스킵');
     }
   } catch (e) {
-    console.error(`⚠️ 대화 요약 생성 실패(제안·모드 기록은 이미 정상 저장됨): ${e?.message ?? e}`);
+    if (!summarizing) {
+      // claude를 부르기 전 단계(transcript 찾기·읽기) 오류 — 원인 그대로 남기고 종료코드는 예전처럼 건드리지 않는다.
+      console.error(`⚠️ 텔레그램 세션 transcript 읽기 실패(요약 생략, 제안·모드 기록은 이미 정상 저장됨): ${e?.message ?? e}`);
+    } else {
+      console.error(`⚠️ 대화 요약 생성 실패(제안·모드 기록은 이미 정상 저장됨): ${e?.message ?? e}`);
+      // 종료코드 규칙(llm-run-outcome): 요약 1건 실패(성공 0) → 잡 실패. 한도는 세지 않는다(매일 도는 잡이라 다음 날 다시 남는다).
+      if (!DRY_RUN) markLlmRunOutcome({ succeeded: 0, failed: e?.isLimit ? 0 : 1, limited: e?.isLimit ? 1 : 0 }, { job: 'telegram-session-handoff' });
+    }
   }
 
   if (!conversationSummary) {

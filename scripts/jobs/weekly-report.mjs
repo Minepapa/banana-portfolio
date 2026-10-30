@@ -521,6 +521,8 @@ async function main() {
     return;
   }
 
+  // 종료코드 규칙(llm-run-outcome): 리포트 본문(claude 1건) 실패는 throw → exit 1, 한도는 보류(exit 0).
+  // 뒤의 성향 관찰 실패는 리포트가 성공한 부분 실패라 OK(로그만).
   // ⑤ claude -p 서술 생성 (성향 정본은 본문 주입, WebSearch=정성 뉴스. Bash 제외 — 수치 재조회 차단)
   console.log(`\n⏳ 리포트 작성 중 (claude -p ${MODEL}, 수 분)...`);
   let md;

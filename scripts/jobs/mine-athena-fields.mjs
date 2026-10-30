@@ -56,6 +56,9 @@ export const CLAUDE_RUNS = 2;
 export const DAILY_CLAUDE_CALLS = 200;
 // 기록 한 건 호출 상한. 실측 약 15초.
 export const CLAUDE_CALL_MS = 5 * 60_000;
+// Claude 회차 상한. 실측 기록당 약 21초(두 번 묻기)라 30분이면 84개쯤에서 멈춘다 — 하루 100개를 한 회차에 끝내게 60분(2026-10-31).
+export const CLAUDE_JOB_MS = 60 * 60_000;
+const jobDeadline = (engine) => Date.now() + (engine === 'claude' ? CLAUDE_JOB_MS : MAX_JOB_MS);
 
 // 화자 줄. 화자 표시 없는 한 사람 녹음은 따로 안내한다(0.3~).
 function speakerLine(item) {
@@ -153,7 +156,7 @@ export function findTargets(root, { skipped = {}, cutoff, reclassify = false, id
         (ids && !ids.some((id) => noteIds.includes(id) || rel === id))) continue;
     } else if (ATHENA_KEYS.some((key) => fm[key] !== undefined)) continue;
     const date = occurredDate(fm.occurred);
-    if (!date || (!reclassify && date >= cutoff) || (since && date < since)) continue;
+    if (!date || (cutoff && date >= cutoff) || (since && date < since)) continue;
     targets.push({ rel, content, occurred: String(fm.occurred), date, fields: fm });
   }
   return targets.sort((a, b) => a.date.localeCompare(b.date) || a.rel.localeCompare(b.rel, 'ko'));
@@ -463,8 +466,10 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   const version = { engine, model: engine === 'ollama' ? OLLAMA_MODELS.text : agent.model,
     criteriaRef: criteria.ref ?? null, promptVersion: PROMPT_VERSIONS[engine] };
   const rows = readJudgments(recordPath);
+  // 최근 노트는 밀린 녹음 전사가 며칠 뒤 더 붙을 수 있어 주간 잡과 같이 SETTLE_DAYS를 기다린다(--ids는 바로).
+  const settle = ids ? undefined : kstDate(new Date(now.getTime() - SETTLE_DAYS * 86_400_000));
   const targets = findTargets(root, { reclassify: true, ids, kind, includeUnclassified, since,
-    skipped: state.skipped ?? {}, cutoff: today, judged: judgedNotes(rows, version) });
+    skipped: state.skipped ?? {}, cutoff: settle, judged: judgedNotes(rows, version) });
   const room = dailyRoom(engine, rows, today);
   const batch = targets.slice(0, Math.min(maxNotes, room));
   const quota = engine === 'claude' ? cooldown : () => false; // 쿨다운은 Claude 구독 사용량 가드다.
@@ -512,7 +517,7 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   let proposals;
   try {
     proposals = await reclassificationProposals(batch, decide, criteria, signalTrend, quota,
-      { engine, deadline: Date.now() + MAX_JOB_MS, anchors: activeAnchors() });
+      { engine, deadline: jobDeadline(engine), anchors: activeAnchors() });
   } finally {
     // 16GB라 다음 잡(이미지 모델)이 올라오기 전에 내린다. 시험 주입(judge)이면 부르지 않는다.
     if (engine === 'ollama' && !judge) await unload(OLLAMA_MODELS.text).catch((error) => output.error(`[mine-athena-fields] 모델 내리기 실패: ${error.message}`));
@@ -546,8 +551,9 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
     }
     if (!proposal?.fields) {
       const reason = proposal?.error ?? proposal?.skip ?? '제안 없음';
-      // 쿨다운으로 미룬 기록은 실패가 아니다 — 다음 회차에 다시 묻는다.
+      // 쿨다운·회차 시간 상한으로 미룬 기록은 실패가 아니다 — 다음 회차에 다시 묻는다.
       if (proposal?.cooldown) summary.cooldown = true;
+      else if (proposal?.deferred && !proposal.unavailable) summary.timedOut = true;
       else summary.invalid.push({ rel: item.rel, reason });
       if (proposal?.unavailable) summary.unavailable = true;
       record(item, proposal, proposal?.skip ? 'skip' : 'retry', reason);
@@ -588,6 +594,8 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
       afterItems.push({ ...item, fields: { ...item.fields, ...(outcome === 'changed' ? proposed : {}) } });
     } catch (error) {
       summary.invalid.push({ rel: item.rel, reason: error.message });
+      // 쓰기 관문·락 오류는 사람이 봐야 한다(판단 중 노트가 바뀐 것은 다음 회차에 다시 본다).
+      if (error.message !== '판단 중 노트가 바뀜') summary.errors = (summary.errors ?? 0) + 1;
       record(item, proposal, 'retry', error.message);
       afterItems.push(item);
     }
@@ -606,6 +614,14 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   chmodSync(reportPath, 0o600);
   output.log(report);
   return summary;
+}
+
+// 재분류 종료코드(무인 잡 공용 규칙 llm-run-outcome과 같은 뜻): 쓰기 관문·락 오류·기록 실패·Ollama 멈춤은 실패,
+// 그 밖에는 하나도 처리하지 못하고 실패만 있을 때만 실패(부분 실패는 보고서에만 — 경보 피로 방지).
+export function reclassifyFailed(summary) {
+  if (summary.unavailable || summary.recordErrors || summary.errors > 0) return true;
+  const done = summary.changed + summary.unchanged + (summary.ambiguous?.length ?? 0);
+  return summary.invalid.length > 0 && done === 0;
 }
 
 export async function reclassify(options = {}) {
@@ -666,7 +682,7 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
     let proposals;
     try {
       const activeAnchors = anchors ?? loadEmotionAnchors();
-      proposals = await judgeItems(batch, { decide, deadline: Date.now() + MAX_JOB_MS, quota,
+      proposals = await judgeItems(batch, { decide, deadline: jobDeadline(engine), quota,
         runs: engine === 'claude' ? CLAUDE_RUNS : 1,
         prompt: (items) => buildOllamaPrompt(items, { criteria, signalTrend: signalTrendBefore, anchors: activeAnchors }),
         validate: (raw, items) => validateOllamaProposals(raw, items, { criteria }) });
@@ -743,6 +759,7 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
   return withLock(statePath, job, { retries: 0 });
 }
 
+// 종료코드 규칙(llm-run-outcome)과 같다(쓰기 관문·락 오류는 더 엄하게 실패). 쿨다운은 실패가 아니다.
 // 쓰기 관문·락 오류가 있거나, 대상이 있었는데 하나도 처리하지 못하면 실패로 본다(health-watcher가 알 수 있게).
 // Ollama가 멈춘 회차(unavailable)는 사람이 봐야 하므로 실패로 본다. 애매함은 처리한 것이다(오너에게 넘김).
 export function failed(summary) {
@@ -766,6 +783,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const kind = args.find((arg) => arg.startsWith('--kind='))?.slice(7) ?? '녹음';
   const since = args.find((arg) => arg.startsWith('--since='))?.slice(8);
   (args.includes('--reclassify') ? reclassify({ ...options, ids, kind, since, includeUnclassified: args.includes('--include-unclassified') }) : run(options))
-    .then((summary) => { if (args.includes('--reclassify') ? summary.invalid.length || summary.unavailable || summary.recordErrors : failed(summary)) process.exitCode = 1; })
+    .then((summary) => { if (args.includes('--reclassify') ? reclassifyFailed(summary) : failed(summary)) process.exitCode = 1; })
     .catch((error) => { console.error(`[mine-athena-fields] 실패: ${error.message}`); process.exitCode = 1; });
 }

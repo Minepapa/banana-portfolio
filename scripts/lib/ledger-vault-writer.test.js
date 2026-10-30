@@ -156,7 +156,8 @@ test('buildDividendRecord: 파일명·dedupKey가 결정론적(파일명도 종�
   const a = buildDividendRecord(div());
   const b = buildDividendRecord(div());
   assert.equal(a.filename, b.filename);
-  assert.equal(a.filename, '2026-08-04-090000-TIGER-리츠부동산인프라.md');
+  assert.equal(a.filename, '2026-08-04-090000-TIGER-리츠부동산인프라-15000.md');
+  assert.equal(a.legacyFilename, '2026-08-04-090000-TIGER-리츠부동산인프라.md');
   assert.equal(a.dedupKey, '2026-08-04|TIGER 리츠부동산인프라|09:00:00_15000');
 });
 
@@ -170,6 +171,8 @@ test('buildDividendRecord: 금액이 다르면(같은 시각) uniqueKey가 달�
   const a = buildDividendRecord(div({ afterTaxAmount: 15000, uniqueKey: '09:00:00_15000' }));
   const b = buildDividendRecord(div({ afterTaxAmount: 20000, uniqueKey: '09:00:00_20000' }));
   assert.notEqual(a.dedupKey, b.dedupKey);
+  // 2026-10-26 실사고: 같은 초 두 배당이 같은 파일명이 돼 한 건이 빠졌다 — 파일명도 달라야 한다.
+  assert.notEqual(a.filename, b.filename);
 });
 
 test('buildDividendRecord: frontmatter에 배당 필드 포함', () => {
@@ -486,4 +489,11 @@ test('[막아야 함/실사고] buildProfitRecord: 같은 초·같은 수량이�
   assert.notEqual(a.dedupKey, b.dedupKey);
   // sourceEventId가 없는 호출(돌파매매 청산 등)은 예전 파일명 그대로다.
   assert.equal(buildProfitRecord(sellExec({ quantity: 3 }), 50000, 80000).filename.endsWith('-3.md'), true);
+});
+
+test('buildCashEventRecord: source는 넘겼을 때만(수동 앵커) 머리말에 남는다', () => {
+  const base = { account: '연금저축', balance: 567861, ts: '2026-10-29 14:05:55' };
+  assert.equal(parseFrontmatter(buildCashEventRecord({ ...base, source: 'MANUAL_ANCHOR' }).content).source, 'MANUAL_ANCHOR');
+  assert.equal(parseFrontmatter(buildCashEventRecord(base).content).source, undefined);
+  assert.equal(buildCashEventRecord(base).filename, buildCashEventRecord({ ...base, source: 'MANUAL_ANCHOR' }).filename);
 });

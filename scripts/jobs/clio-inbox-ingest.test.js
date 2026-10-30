@@ -4,10 +4,11 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { applyPlans, applicablePlans, collectInbox, planShapeProblems, priorityOf, readWikiIndex, retryMemo, validateJudgment, run as ingestRun, telegramMessage,
+import { applyPlans, applicablePlans, collectInbox, inboxLlmCounts, planShapeProblems, priorityOf, readWikiIndex, retryMemo, validateJudgment, run as ingestRun, telegramMessage,
   MAX_WIKI_TITLES_PER_FOLDER, MAX_WIKI_INDEX_CHARS, MAX_JOB_MS } from './clio-inbox-ingest.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
+import { llmRunFailed } from '../lib/llm-run-outcome.mjs';
 
 const date = new Date('2026-10-10T20:00:00Z');
 const rules = [
@@ -1139,4 +1140,31 @@ test('applyPlans: 사건 날짜와 다른 도착일 데일리의 Inbox 링크도
   assert.match(readFileSync(join(f.root, '60_Logs/Clio/2026-10.md'), 'utf8'), /도착일 데일리 2026-10-11 링크 갱신/);
   assert.equal(applyPlans({ root: f.root, ids: f.source, noWiki: true, rules: f.rules, now: NOW }).items[0].alreadyApplied, true);
   assert.equal(readFileSync(dailyPath, 'utf8'), after, '재실행은 다시 쓰지 않음');
+});
+
+test('종료코드 규칙: 판단 실행이 전부 실패하면 잡 실패, 글자 수 상한·한도는 세지 않고 성공이 있으면 OK', async (t) => {
+  const { root, put } = fixture(t);
+  put('00_Inbox/a.md', memo('옵시디언', '가상 메모'));
+  put('00_Inbox/large.md', memo('옵시디언', '가상 메모'.repeat(20)));
+  const base = { root, rules, now: date, dryRun: true, maxChars: 30, charter: { model: 'test', systemPrompt: 'test' }, cooldown: () => false };
+  const broken = await run({ ...base, judge: async () => { throw new Error("claude 종료코드 1: error: unknown option '--restricted'"); } });
+  assert.deepEqual(broken.llm, { succeeded: 0, failed: 1 }, '글자 수 상한 메모는 판단 시도가 아니라 빠진다');
+  assert.equal(llmRunFailed(broken.llm), true);
+  const limit = new Error('사용량 한도');
+  limit.isLimit = true;
+  const limited = await run({ ...base, judge: async () => { throw limit; } });
+  assert.deepEqual(limited.llm, { succeeded: 0, failed: 0 });
+  const ok = await run({ ...base, judge: async () => judgment() });
+  assert.equal(llmRunFailed(ok.llm), false);
+  assert.deepEqual(inboxLlmCounts([{ status: '계획함' }, { status: '판단 실패', reason: 'x' }]), { succeeded: 1, failed: 1 }, '부분 실패는 OK');
+});
+
+test('종료코드 규칙: 남은 잡 예산으로 잘린 호출이 시간 초과로 끊기면 실패가 아니라 잡 시간 상한(멈춤)', async (t) => {
+  const { root, put } = fixture(t);
+  put('00_Inbox/a.md', memo('옵시디언', '가상 메모'));
+  let ms = 0;
+  const result = await run({ root, rules, now: date, dryRun: true, charter: { model: 'test', systemPrompt: 'test' }, cooldown: () => false,
+    clock: () => ms, judge: async () => { ms = MAX_JOB_MS + 1; throw new Error('헤드리스 타임아웃 (5분 초과)'); } });
+  assert.equal(result.items[0].reason, '잡 시간 상한');
+  assert.deepEqual(result.llm, { succeeded: 0, failed: 0 });
 });

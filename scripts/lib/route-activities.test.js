@@ -66,3 +66,13 @@ test('등록 장소·roam 체류의 유예 결제는 이동 괄호에 남는다'
       async () => ({ category: 'CE7' }), attachedPayments), ' (카페: 가상카페)');
   }
 });
+
+test('체류 안 외출 시간대의 결제는 그 체류 이름·활동을 바꾸지 않는다', async () => {
+  const outings = [{ start: '2026-10-10T01:10:00.000Z', end: '2026-10-10T01:25:00.000Z', lat: 1, lon: 2.01 }];
+  const result = await attachRouteActivities([stay('00:00', '09:00', { outings })], {
+    payments: [{ at: '2026-10-10T01:15:00.000Z', amount: 1, merchant: '가상식당' }],
+    keyword: async () => ({ name: '가상식당', category: 'FD6' }),
+  });
+  assert.equal(result[0].label, '미등록: 가상 주소');
+  assert.equal(result[0].activity, undefined);
+});

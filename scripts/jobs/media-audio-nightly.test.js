@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { AUDIO_STEPS, runAudioNightly } from './media-audio-nightly.mjs';
-import { EXPECTED_INTERVALS_MS } from './health-watcher.mjs';
+import { EXPECTED_INTERVALS_MS } from '../lib/job-schedule.mjs';
 
 test('음성 블록: 전사 → 화자 분리 순서, 화자 분리는 인자 없이(정기 옵션), 앞 단계 실패해도 뒤 단계는 돈다', () => {
   const calls = [];
