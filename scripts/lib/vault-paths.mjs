@@ -106,6 +106,8 @@ export const VAULT_REL = {
   stateBreakoutPositions: '95_Etna/Investing/BreakoutPositions',
   stateBreakoutPendingEntries: '95_Etna/Investing/BreakoutPendingEntries',
   stateTelegramSession: '95_Etna/Jobs/TelegramSession',
+  // 텔레그램 관문 약속 대기열(2026-10-30 관문 3단계, 경로 등록부 95_Etna/Jobs/TelegramGate). 쓰는 주체는 관문 데몬뿐.
+  telegramGatePromises: '95_Etna/Jobs/TelegramGate/promises.jsonl',
   stateTelegramSessionHealth: '95_Etna/Jobs/TelegramSessionHealth',
   stateWikiQuestions: '95_Etna/Questions',
   stateInstrumentRescoring: '95_Etna/Investing/InstrumentRescoring',

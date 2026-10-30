@@ -23,7 +23,7 @@
  *   node scripts/jobs/telegram-gate.mjs --self-test       네트워크 없이 실행 환경(node·claude 경로·버전)만 출력
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { freemem, totalmem } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
@@ -47,7 +47,10 @@ import { buildGateReadEnv, runGateClaude } from '../lib/telegram-gate-llm.mjs';
 import { businessDay, createSessionStore } from '../lib/telegram-gate-session.mjs';
 import { createJournal, handoffNoteRelPath } from '../lib/telegram-gate-journal.mjs';
 import { confirmOpenSinceSec, createConfirmStore } from '../lib/telegram-gate-confirm.mjs';
-import { createGateMcpTools, gateMcpToolNames } from '../lib/telegram-gate-mcp-tools.mjs';
+import { createGateMcpTools, gateMcpToolNames, promiseRequestDir } from '../lib/telegram-gate-mcp-tools.mjs';
+import { createPromiseStore, describeTrigger } from '../lib/telegram-gate-promises.mjs';
+import { createFiredLog, createPromiseRunner } from '../lib/telegram-gate-promise-runner.mjs';
+import { JOB_LABELS } from '../lib/job-labels.mjs';
 import { isShadowMode } from '../lib/shadow-mode.mjs';
 
 // 발신 카탈로그 대조용(vault-job-catalog-audit): 관문의 답장·경고는 제우스 이름으로 나간다(세부 담당 답은 처리기가 담당 헤더로).
@@ -80,7 +83,7 @@ function sleepChunked(ms, { onBeat, isStopping, sleep }) {
 // deps는 시험에서 가짜로 바꾼다: api{getUpdates, react, getFile, download}, send(message), now, sleep, exit, heartbeatWriter …
 export function createGateDaemon({ gate, inbox, api, send, warn = null, now = () => new Date(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   exit = (code) => process.exit(code), selfCheck, statusExtras = () => ({}), runTool, wiki, writeHeartbeat = async () => {},
-  log = (line) => console.log(line), listPollers = () => [], conversation = null, confirmStore = null, journal = null } = {}) {
+  log = (line) => console.log(line), listPollers = () => [], conversation = null, confirmStore = null, journal = null, promiseRunner = null } = {}) {
   const startedAt = now().getTime();
   const state = {
     stopping: false,
@@ -94,6 +97,8 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     lastPollError: null,
     backlogChecked: false,
     processing: { main: null, media: null, llm: null },
+    // 대화 줄과 약속 이행(LLM)이 동시에 claude를 띄우지 않게 하는 표시(같은 하루 세션을 이어 붙이므로).
+    llmBusy: false,
   };
   let pollAbort = null;
   const waiters = new Set();
@@ -128,6 +133,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
       status: () => ({
         startedAt, now: now().getTime(), lastPollOkAt: state.lastPollOkAt, counts: inbox.counts(), mode: gate.mode,
         llm: conversation ? { running: conversation.isRunning(), queued: llmQueue().length, lastRun: conversation.state.lastRun, rateLimit: conversation.state.lastRateLimit } : null,
+        promises: promiseRunner ? promiseRunner.summary() : null,
         ...statusExtras(),
       }),
       mediaDir: gateMediaDir(gate.stateDir),
@@ -222,8 +228,10 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
 
   // 대화 줄: 쌓인 대화 입력을 모두 집어 한 번에 처리한다(Q6). 고르는 즉시 전부 '처리중'.
   async function processLlmBatch() {
+    if (state.llmBusy) return false;
     const batch = llmQueue();
     if (!batch.length) return false;
+    state.llmBusy = true;
     const items = [];
     for (const item of batch) {
       const decision = routeOf(item);
@@ -246,8 +254,18 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
       log(`[gate] 대화 줄 실패: ${error.message}`);
     } finally {
       state.processing.llm = null;
+      state.llmBusy = false;
     }
     return true;
+  }
+
+  // 약속 이행(LLM 보고형): 대화 줄이 쉬고 있을 때만 같은 하루 세션으로 한 번 돌린다. 바쁘면 null — 다음 1분 점검에서 다시.
+  function runPromiseLlm(promise, describe) {
+    if (!conversation || state.llmBusy || conversation.isRunning()) return null;
+    state.llmBusy = true;
+    const item = { updateId: null, meta: { chatId: gate.config.chatId, messageId: null, date: Math.floor(now().getTime() / 1000) },
+      args: { kind: 'promise', text: `약속 이행 시점이다: ${promise.text}\n조건 충족: ${describe(promise)}` } };
+    return conversation.processBatch([item]).finally(() => { state.llmBusy = false; });
   }
 
   async function workerLoop(lane = 'main') {
@@ -382,8 +400,10 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
   }
 
   async function minuteTick() {
+    if (promiseRunner) await promiseRunner.tick().catch((e) => log(`[gate] 약속 점검 실패: ${e.message}`));
     if (!conversation) return;
     await conversation.closeConfirm('만료', gate.config.chatId);
+    await conversation.checkCooldownRelease(gate.config.chatId);
     await conversation.writeHandoffIfDue(now());
   }
 
@@ -391,6 +411,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     state,
     processItem,
     processLlmBatch,
+    runPromiseLlm,
     minuteTick,
     watchdogCheck,
     heartbeat,
@@ -579,8 +600,38 @@ async function main() {
   const journal = createJournal({ stateDir: gate.stateDir, dayOf: businessDay });
   const confirmStore = createConfirmStore({ stateDir: gate.stateDir });
   let daemonRef = null;
-  const conversation = createConversation({ ...buildConversationDeps({ gate, options, journal, confirmStore }), isStopping: () => Boolean(daemonRef?.state.stopping) });
+  let promiseRunner = null;
+  const conversationDeps = buildConversationDeps({ gate, options, journal, confirmStore });
+  const conversation = createConversation({
+    ...conversationDeps,
+    isStopping: () => Boolean(daemonRef?.state.stopping),
+    listPendingPromises: () => promiseRunner?.pendingForHandoff() ?? null,
+  });
+  promiseRunner = createPromiseRunner({
+    store: createPromiseStore({ vaultFile: vaultAbs(VAULT_REL.telegramGatePromises), requestDir: promiseRequestDir(gate.stateDir) }),
+    knownJobs: Object.keys(JOB_LABELS),
+    // 보낸 약속 기록(볼트 밖) — 볼트 기록 전에 관문이 재시작돼도 다시 보내지 않게(3단계 리뷰 M1).
+    firedLog: createFiredLog(join(gate.stateDir, 'promise-fired.json')),
+    jobHealth: (job) => {
+      const text = readText(join(VAULT_PATHS.state.jobHealth, `${job}.md`));
+      return text ? parseFrontmatter(text) : null;
+    },
+    // 약속 조건의 파일 경로는 볼트 상대 경로로만 받는다(금고 제외, validateTrigger). 링크로 볼트 밖을 가리키면 보지 않는다(리뷰 L4).
+    fileMtime: (path) => {
+      try {
+        const real = realpathSync(vaultAbs(path));
+        const root = realpathSync(VAULT_ROOT);
+        return real.startsWith(`${root}/`) ? statSync(real).mtimeMs : null;
+      } catch { return null; }
+    },
+    send: conversationDeps.send,
+    chatId: gate.config.chatId,
+    runLlm: (promise) => daemonRef?.runPromiseLlm(promise, (p) => `${describeTrigger(p.trigger)}${p.or ? ` 또는 ${describeTrigger(p.or)}` : ''}`) ?? null,
+    cooldown: () => getCooldown(),
+    log: (line) => console.log(line),
+  });
   const daemon = createGateDaemon({
+    promiseRunner,
     conversation,
     confirmStore,
     journal,

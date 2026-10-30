@@ -301,6 +301,7 @@ function fakeConversation() {
     handleConfirm: async (args) => { calls.confirms.push(args.yes); return { status: '완료', detail: 'confirm' }; },
     closeConfirm: async (reason) => { calls.closes.push(reason); return false; },
     writeHandoffIfDue: async () => null,
+    checkCooldownRelease: async () => { calls.cooldownChecks = (calls.cooldownChecks ?? 0) + 1; return false; },
   };
 }
 
@@ -409,5 +410,27 @@ test('확인 대기가 만료됐거나 없으면 "응"은 자유 문장(대화 �
     s.inbox.appendUpdates([msg(2, '응')]);
     await s.daemon.processLlmBatch();
     assert.deepEqual(conv.calls.confirms, []);
+  } finally { s.cleanup(); }
+});
+
+test('약속: 1분 틱이 이행기를 돌리고, 약속 LLM은 대화 줄이 바쁘면 null(다음 점검)', async () => {
+  const conv = fakeConversation();
+  let ticks = 0;
+  const promiseRunner = { tick: async () => { ticks += 1; return {}; }, summary: () => ({ pending: 2, nextAt: '2026-10-30T09:00:00Z' }), pendingForHandoff: () => [] };
+  const s = setup({ conversation: conv });
+  // promiseRunner는 setup이 받지 않으므로 데몬을 직접 만든다.
+  const { createGateDaemon: make } = await import('./telegram-gate.mjs');
+  const d = make({ gate: { mode: 'test', config: { chatId: '31337' }, allowFrom: new Set(['31337']), stateDir: s.dir }, inbox: s.inbox, api: {}, send: async () => {},
+    now: () => new Date(T0), conversation: conv, promiseRunner, log: () => {} });
+  try {
+    await d.minuteTick();
+    assert.equal(ticks, 1);
+    assert.equal(conv.calls.cooldownChecks, 1);
+    conv.setRunning(true);
+    assert.equal(d.runPromiseLlm({ text: 'x' }, () => '조건'), null, '대화 중이면 다음 점검');
+    conv.setRunning(false);
+    const r = await d.runPromiseLlm({ text: '전사 끝' }, () => '잡 성공');
+    assert.equal(r.status, '완료');
+    assert.match(conv.calls.batches.at(-1)[0], /약속 이행 시점이다: 전사 끝\n조건 충족: 잡 성공/);
   } finally { s.cleanup(); }
 });

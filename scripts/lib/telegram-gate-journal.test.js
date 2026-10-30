@@ -63,3 +63,9 @@ test('기록: 업무일 파일에 덧붙이고 읽는다(04:00 경계)', () => {
     assert.deepEqual(journal.read('2026-11-01'), []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('인수인계 약속 칸은 약속 대기열(대기 중)을 쓴다', () => {
+  const note = buildHandoffNote({ day: '2026-10-30', entries: [], summary: { decisions: [], summary: [] }, now: new Date(),
+    pendingPromises: [{ id: 'P-20261030-abcdef', text: '밤 전사 끝나면 알려줘', condition: 'media-audio 잡이 성공하면', expiresAt: '2026-11-06T05:00:00Z' }] });
+  assert.match(note.body, /■ 약속\n\n- P-20261030-abcdef: 밤 전사 끝나면 알려줘 \(media-audio 잡이 성공하면, 기한 2026-11-06\)/);
+});

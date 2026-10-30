@@ -19,6 +19,13 @@ import { checkNote, parseRegistry } from './vault-registry.mjs';
 import { VAULT_PATHS, VAULT_REL, vaultAbs } from './vault-paths.mjs';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { writeAtomic } from './state-writer.mjs';
+import { createPromiseStore, describeTrigger, MAX_PENDING, validatePromiseInput, TRIGGER_TYPES } from './telegram-gate-promises.mjs';
+import { JOB_LABELS } from './job-labels.mjs';
+import { randomUUID } from 'node:crypto';
+
+export function promiseRequestDir(stateDir) {
+  return join(stateDir, 'promise-requests');
+}
 
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra });
 
@@ -55,6 +62,8 @@ export function createGateMcpTools(deps = {}) {
     if (deps.testMode) return `시험 모드라 ${name}을 실행하지 않았습니다(실제 외부 계정에 씀).`;
     return handler(a);
   };
+  // 약속 저장소: MCP는 요청 파일만 쓰고, 볼트 대기열은 읽기만 한다(쓰는 주체는 관문 데몬, 경로 등록부).
+  const promiseStoreFor = (stateDir) => createPromiseStore({ vaultFile: deps.promiseVaultFile ?? vaultAbs(VAULT_REL.telegramGatePromises), requestDir: promiseRequestDir(stateDir), now });
   const tools = [
     {
       name: 'calendar_add_event',
@@ -132,6 +141,53 @@ export function createGateMcpTools(deps = {}) {
         const store = createConfirmStore({ stateDir: deps.stateDir, now });
         const confirm = store.stage({ action: a.action, params: a.params, sourceMessageId: a.sourceMessageId });
         return `접수 대기로 넘김(${confirm.id}): ${confirm.summary}. 관문이 오너에게 다시 묻는다. 너는 실행됐다고 말하지 말고 "확인 질문을 보냈다"고만 답한다.`;
+      },
+    },
+    {
+      name: 'promise_add',
+      description: '"끝나면 알려줄게" 같은 약속을 관문에 맡긴다(설계 9-1). 약속은 말로만 하지 말고 반드시 이 도구로 남긴다. 조건: time {at: ISO 시각} · job {job: 잡 이름, status: ok|fail|any} · file {path: 볼트 상대 경로}, 둘 중 하나면 or. action은 기본 notify(고정 문구), 맥락 설명이 필요할 때만 llm. 기한 7일.',
+      inputSchema: { type: 'object', properties: {
+        text: str('이행할 때 오너에게 알릴 내용(무엇을 알려 주기로 했는지)'),
+        trigger: { type: 'object', properties: { type: { type: 'string', enum: TRIGGER_TYPES }, at: str('ISO 시각'), job: str('잡 이름'), status: { type: 'string', enum: ['ok', 'fail', 'any'] }, path: str('볼트 상대 경로') }, required: ['type'] },
+        or: { type: 'object', properties: { type: { type: 'string', enum: TRIGGER_TYPES }, at: str('ISO 시각'), job: str('잡 이름'), status: { type: 'string', enum: ['ok', 'fail', 'any'] }, path: str('볼트 상대 경로') }, required: ['type'] },
+        action: { type: 'string', enum: ['notify', 'llm'] },
+        agent: { type: 'string', enum: AGENT_IDS },
+        sourceMessageId: { type: 'integer' },
+      }, required: ['text', 'trigger'], additionalProperties: false },
+      handler: async (a) => {
+        if (!deps.stateDir) throw new Error('관문 상태 폴더가 없어 약속을 남길 수 없습니다');
+        const store = promiseStoreFor(deps.stateDir);
+        // 대기 20건 한도를 맡기기 전에 본다(맡겼다고 답한 뒤 거절되지 않게, 리뷰 L3).
+        if (store.pending().length + store.pendingRequestCount() >= MAX_PENDING) throw new Error(`대기 약속이 ${MAX_PENDING}건이라 더 받을 수 없습니다`);
+        // uuid·요청 시각을 여기서 정해 최종 id를 미리 계산한다 — 데몬도 같은 값으로 같은 id를 만든다(리뷰 M3).
+        const uuid = randomUUID();
+        const requestedAt = now().toISOString();
+        const promise = validatePromiseInput(a, { now: new Date(requestedAt), knownJobs: Object.keys(JOB_LABELS), uuid: () => uuid });
+        store.request({ kind: 'add', input: a }, { uuid, requestedAt });
+        return `약속을 관문에 맡겼다(id ${promise.id}, 1분 안에 대기열에 오름): ${promise.text}. 기한 ${promise.expiresAt.slice(0, 10)}. 오너에게 "조건이 되면 관문이 알려 준다"고 말하고, 취소는 이 id로 한다.`;
+      },
+    },
+    {
+      name: 'promise_cancel',
+      description: '대기 중인 약속을 취소한다(오너가 그만 알려 달라고 할 때). id는 P-YYYYMMDD-xxxxxx.',
+      inputSchema: { type: 'object', properties: { id: str('약속 ID') }, required: ['id'], additionalProperties: false },
+      handler: async (a) => {
+        if (!deps.stateDir) throw new Error('관문 상태 폴더가 없어 취소할 수 없습니다');
+        if (!/^P-\d{8}-[0-9a-f]{6}$/.test(String(a.id))) throw new Error('약속 ID 형식이 올바르지 않습니다');
+        promiseStoreFor(deps.stateDir).request({ kind: 'cancel', id: a.id });
+        return `약속 취소를 관문에 넘겼다: ${a.id}`;
+      },
+    },
+    {
+      name: 'promise_list',
+      description: '대기 중인 약속 목록(id·문구·조건·기한)과 아직 대기열에 오르기 전인 요청 수. 오너가 약속을 묻거나 취소할 때 먼저 본다.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      handler: async () => {
+        if (!deps.stateDir) throw new Error('관문 상태 폴더가 없습니다');
+        const store = promiseStoreFor(deps.stateDir);
+        const lines = store.pending().map(({ promise: p }) => `${p.id}: ${p.text} — ${describeTrigger(p.trigger)}${p.or ? ` 또는 ${describeTrigger(p.or)}` : ''}, 기한 ${p.expiresAt.slice(0, 10)}`);
+        const waiting = store.pendingRequestCount();
+        return [lines.length ? lines.join('\n') : '대기 중인 약속 없음', ...(waiting ? [`대기열에 오르기 전 요청 ${waiting}건`] : [])].join('\n');
       },
     },
     {

@@ -44,6 +44,11 @@ export function createConversation(deps) {
 
   const progressMessage = (body) => ({ agent: 'zeus', kind: '정보', topic: PROGRESS_TOPIC, body });
 
+  function safeList(fn) {
+    if (!fn) return null;
+    try { return fn(); } catch (error) { log(`[gate] 약속 대기열 읽기 실패: ${error.message}`); return null; }
+  }
+
   async function safe(fn, label) {
     try { return await fn(); } catch (error) { log(`[gate] ${label} 실패: ${error.message}`); return null; }
   }
@@ -118,10 +123,13 @@ export function createConversation(deps) {
     try {
       const cooldown = deps.cooldown();
       if (cooldown) {
-        await finishProgress(`사용량 한도 쿨다운 중이라 처리하지 않았습니다. ${kstTime(cooldown.resetAt)} 이후 다시 보내 주세요.`);
+        // 한도가 풀리면 관문이 먼저 알린다(Q11: 사용량 한도 해제 알림). 그래서 몇 건을 못 했는지 센다.
+        state.cooldownRefused = (state.cooldownRefused ?? 0) + items.filter((i) => i.args.kind !== 'promise').length;
+        await finishProgress(`사용량 한도 쿨다운 중이라 처리하지 않았습니다. ${kstTime(cooldown.resetAt)} 이후 한도가 풀리면 관문이 알려 드립니다.`);
         deps.journal.append({ type: 'llm', status: '쿨다운', input: inputText });
         state.lastRun = { ok: true, at: now().toISOString(), status: '쿨다운' };
-        return { status: '완료', detail: '쿨다운 — 처리 안 함' };
+        // refused: 약속 이행기가 "이행"으로 착각하지 않고 고정 문구로 대신하게(3단계 리뷰 M4).
+        return { status: '완료', detail: '쿨다운 — 처리 안 함', refused: true };
       }
 
       for (const item of items) {
@@ -307,7 +315,7 @@ export function createConversation(deps) {
     else {
       try { summary = await deps.summarize(day, entries); } catch (error) { summaryError = error.message; }
     }
-    const note = buildHandoffNote({ day, entries, summary, summaryError, now: at });
+    const note = buildHandoffNote({ day, entries, summary, summaryError, now: at, pendingPromises: safeList(deps.listPendingPromises) });
     try {
       deps.writeHandoff(day, note.content);
     } catch (error) {
@@ -330,9 +338,20 @@ export function createConversation(deps) {
     return note;
   }
 
+  // 쿨다운 때문에 처리하지 못한 메시지가 있었고 이제 한도가 풀렸으면 한 번 알린다(먼저 보내기 범위 Q11).
+  // 다른 잡은 한도 해제를 알리지 않아 겹치지 않는다. 알리는 것은 관문이 실제로 처리를 거절했을 때뿐이다.
+  async function checkCooldownRelease(chatId) {
+    if (!state.cooldownRefused || deps.cooldown()) return false;
+    const count = state.cooldownRefused;
+    state.cooldownRefused = 0;
+    await safe(() => deps.send({ agent: 'zeus', kind: '정보', topic: '한도 해제', body: `사용량 한도가 풀렸습니다. 한도 때문에 처리하지 못한 메시지 ${count}건은 필요하면 다시 보내 주세요.` }, chatId), '한도 해제 알림');
+    return true;
+  }
+
   return {
     state,
     processBatch,
+    checkCooldownRelease,
     handleConfirm,
     closeConfirm,
     writeHandoffIfDue,

@@ -7,7 +7,7 @@ import { buildRequestNote, createGateMcpTools, gateMcpToolNames } from './telegr
 import { handleMcpMessage } from '../tools/telegram-gate-mcp.mjs';
 import { checkNote, parseRegistry } from './vault-registry.mjs';
 import { vaultAbs, VAULT_REL } from './vault-paths.mjs';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 
 // 도구 실행은 가짜 run으로 바꾼다. 실제 CLI·볼트·텔레그램을 건드리지 않는다.
 function toolsWith(calls, extra = {}) {
@@ -114,4 +114,27 @@ test('시험 모드: 구글 캘린더·할 일처럼 외부에 쓰는 도구는 
   assert.match(await tools.tasks_delete.handler({ id: 'x' }), /시험 모드라/);
   await tools.place_register.handler({ here: true, name: '회사' });
   assert.deepEqual(calls.map((c) => c.tool), ['place-register.mjs'], '시험 볼트로 격리되는 도구는 그대로');
+});
+
+test('promise_add·promise_cancel·promise_list: 검사 뒤 요청 파일만 쓰고(볼트에 쓰지 않음), 최종 id를 돌려준다', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gate-mcp-promise-'));
+  try {
+    const vaultFile = join(dir, 'vault-promises.jsonl');
+    const tools = Object.fromEntries(toolsWith([], { stateDir: dir, promiseVaultFile: vaultFile }).map((t) => [t.name, t]));
+    const out = await tools.promise_add.handler({ text: '밤 전사 끝나면 알려줘', trigger: { type: 'job', job: 'media-audio', status: 'ok' } });
+    const id = /id (P-\d{8}-[0-9a-f]{6})/.exec(out)[1];
+    await assert.rejects(tools.promise_add.handler({ text: 'x', trigger: { type: 'job', job: '없는-잡' } }), /모르는 잡/);
+    await tools.promise_cancel.handler({ id });
+    await assert.rejects(tools.promise_cancel.handler({ id: 'P-1' }), /형식/);
+    const files = readdirSync(join(dir, 'promise-requests')).filter((n) => n.endsWith('.json'));
+    assert.equal(files.length, 2);
+    assert.equal(existsSync(vaultFile), false, 'MCP는 볼트 대기열에 쓰지 않음');
+    assert.match(await tools.promise_list.handler({}), /대기 중인 약속 없음\n대기열에 오르기 전 요청 1건/);
+    // 데몬이 옮긴 뒤에는 같은 id로 대기열에 있다.
+    const { createPromiseStore } = await import('./telegram-gate-promises.mjs');
+    const store = createPromiseStore({ vaultFile, requestDir: join(dir, 'promise-requests') });
+    store.ingest({ knownJobs: ['media-audio'] });
+    assert.equal(store.list()[0].promise.id, id);
+    assert.equal(store.list()[0].status, '취소', '같은 묶음의 추가→취소도 반영');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

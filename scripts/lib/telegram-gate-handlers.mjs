@@ -134,7 +134,13 @@ function usageLine(cooldown, rateLimit) {
   return '쿨다운 없음';
 }
 
-export function buildStatusBody({ startedAt, now, lastPollOkAt, counts, cooldown, freeMemPct, mode, llm = null }) {
+function promiseLine(promises) {
+  if (!promises) return '꺼짐';
+  if (!promises.pending) return '대기 없음';
+  return `대기 ${promises.pending}${promises.nextAt ? ` · 다음 ${kstTime(promises.nextAt)}` : ''}`;
+}
+
+export function buildStatusBody({ startedAt, now, lastPollOkAt, counts, cooldown, freeMemPct, mode, llm = null, promises = null }) {
   const pending = (counts['받음'] ?? 0) + (counts['처리중'] ?? 0);
   const rows = [
     ['관문', `정상 · 가동 ${formatDuration(now - startedAt)}${mode === 'test' ? ' · 시험' : ''}`],
@@ -142,6 +148,7 @@ export function buildStatusBody({ startedAt, now, lastPollOkAt, counts, cooldown
     ['확인', `끊긴 메시지 ${counts['확인필요'] ?? 0}`],
     ['LLM', llmLine(llm)],
     ['사용량', usageLine(cooldown, llm?.rateLimit)],
+    ['약속', promiseLine(promises)],
     ['메모리', `여유 ${freeMemPct}%`],
   ];
   // 폰 고정폭 글꼴에서 한글은 2칸 — 칸 너비로 맞춰 값 열이 한 줄로 서게 한다.

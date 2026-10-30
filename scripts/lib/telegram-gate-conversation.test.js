@@ -150,7 +150,7 @@ test('쿨다운 중이면 claude를 부르지 않고 진행 메시지에 해제 
   try {
     const r = await s.conv.processBatch([item(1, '질문')]);
     assert.equal(s.runs.length, 0);
-    assert.match(s.edits.at(-1).body, /15:30 이후 다시 보내 주세요/);
+    assert.match(s.edits.at(-1).body, /15:30 이후 한도가 풀리면 관문이 알려 드립니다/);
     assert.equal(r.detail, '쿨다운 — 처리 안 함');
   } finally { s.cleanup(); }
 });
@@ -357,5 +357,35 @@ test('인수인계 노트 쓰기 실패: 완료로 표시하지 않고 백오프
     await s.conv.writeHandoffIfDue(new Date(t + 3 * 3600_000));
     assert.equal(s.conv.state.handoffDays.has('2026-10-30'), true);
     assert.equal(s.conv.state.handoffFallback.size, 0);
+  } finally { s.cleanup(); }
+});
+
+test('한도 해제 알림: 쿨다운으로 거절한 메시지가 있었고 한도가 풀리면 한 번만 알린다', async () => {
+  const s = setup();
+  try {
+    // 한도 중 거절이 2건 있었고(setup의 cooldown은 null = 지금은 풀림) 이제 알린다.
+    s.conv.state.cooldownRefused = 2;
+    assert.equal(await s.conv.checkCooldownRelease(CHAT), true);
+    assert.match(s.sent.at(-1).body, /사용량 한도가 풀렸습니다.*2건/);
+    assert.equal(await s.conv.checkCooldownRelease(CHAT), false, '한 번만');
+  } finally { s.cleanup(); }
+});
+
+test('한도 중에는 해제 알림을 보내지 않고, 거절 건수를 센다', async () => {
+  const s = setup({ cooldown: { resetAt: Date.parse('2026-10-30T06:00:00Z') } });
+  try {
+    await s.conv.processBatch([item(1, 'a'), item(2, 'b')]);
+    assert.equal(s.conv.state.cooldownRefused, 2);
+    assert.equal(await s.conv.checkCooldownRelease(CHAT), false);
+  } finally { s.cleanup(); }
+});
+
+test('약속 이행 입력(kind promise)은 message_id 없이 origin="promise"로 넘긴다', async () => {
+  const s = setup();
+  try {
+    await s.conv.processBatch([{ updateId: null, meta: { chatId: CHAT, messageId: null }, args: { kind: 'promise', text: '약속 이행 시점이다: 전사 끝' } }]);
+    const prompt = flag(s.runs[0], '-p');
+    assert.match(prompt, /<telegram origin="promise">\n약속 이행 시점이다: 전사 끝/);
+    assert.doesNotMatch(prompt, /message_id="null"/);
   } finally { s.cleanup(); }
 });

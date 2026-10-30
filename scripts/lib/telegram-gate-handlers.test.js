@@ -284,3 +284,8 @@ test('isGateToolAllowed: 결정론·LLM 도구와 선언된 사실 도구만, �
     assert.equal(isGateToolAllowed(t), false, t);
   assert.equal([...GATE_TOOLS, ...LLM_GATE_TOOLS].some((t) => /order|breakout|execute/.test(t)), false);
 });
+
+test('상태 표: 약속 대기 수와 다음 시각', () => {
+  const body = buildStatusBody({ startedAt: 0, now: 60_000, lastPollOkAt: null, counts: {}, cooldown: null, freeMemPct: 20, mode: 'live', promises: { pending: 2, nextAt: '2026-10-30T09:00:00Z' } });
+  assert.match(body, /약속 +대기 2 · 다음 18:00/);
+});

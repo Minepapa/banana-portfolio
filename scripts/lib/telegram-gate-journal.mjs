@@ -47,8 +47,9 @@ export function openItems(entries) {
   return items;
 }
 
-// 순수 함수: 약속 — 3단계 약속 대기열 전에는 기록에 남은 약속(type promise)만.
-export function promiseItems(entries) {
+// 순수 함수: 약속 — 약속 대기열(3단계)에서 아직 대기 중인 것. 대기열을 못 읽으면 기록(type promise)으로 대신한다.
+export function promiseItems(entries, pendingPromises = null) {
+  if (Array.isArray(pendingPromises)) return pendingPromises.map((p) => `${p.id}: ${short(p.text)} (${short(p.condition ?? '', 60)}, 기한 ${String(p.expiresAt ?? '').slice(0, 10)})`);
   return entries.filter((e) => e.type === 'promise').map((e) => `${short(e.text)}${e.due ? ` (기한 ${e.due})` : ''}`);
 }
 
@@ -89,9 +90,9 @@ export function handoffSummaryPrompt(day, transcript) {
 const bullet = (items, empty) => (items.length ? items.map((i) => `- ${i}`).join('\n') : `- ${empty}`);
 
 // 순수 함수: 인수인계 노트(머리말 + 네 칸). summary가 null이면 LLM 칸은 "요약 실패"로 남긴다.
-export function buildHandoffNote({ day, entries, summary, summaryError = null, now }) {
+export function buildHandoffNote({ day, entries, summary, summaryError = null, now, pendingPromises = null }) {
   const open = openItems(entries);
-  const promises = promiseItems(entries);
+  const promises = promiseItems(entries, pendingPromises);
   const inCount = entries.filter((e) => e.type === 'in').length;
   const body = [
     `# ${day} 텔레그램 세션 인수인계`,
@@ -104,7 +105,7 @@ export function buildHandoffNote({ day, entries, summary, summaryError = null, n
     '',
     '■ 약속',
     '',
-    bullet(promises, '없음(약속 대기열은 관문 3단계부터)'),
+    bullet(promises, '없음'),
     '',
     '■ 오너 결정·지시',
     '',
