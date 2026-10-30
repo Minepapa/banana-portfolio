@@ -57,7 +57,7 @@ export const DAILY_CLAUDE_CALLS = 200;
 // 기록 한 건 호출 상한. 실측 약 15초.
 export const CLAUDE_CALL_MS = 5 * 60_000;
 // Claude 회차 상한. 실측 기록당 약 21초(두 번 묻기)라 30분이면 84개쯤에서 멈춘다 — 하루 100개를 한 회차에 끝내게 60분(2026-10-31).
-export const CLAUDE_JOB_MS = 60 * 60_000;
+export const CLAUDE_JOB_MS = 60 * 60_000; // 상한 직전에 시작한 기록은 호출 상한(5분)만큼 더 갈 수 있다(최대 약 65분).
 const jobDeadline = (engine) => Date.now() + (engine === 'claude' ? CLAUDE_JOB_MS : MAX_JOB_MS);
 
 // 화자 줄. 화자 표시 없는 한 사람 녹음은 따로 안내한다(0.3~).
@@ -384,7 +384,12 @@ async function reclassificationProposals(batch, decide, criteria, signalTrend, c
     const group = batch.map((item, index) => ({ item, index }))
       .filter(({ item }) => firstClassification(item) === initial);
     if (!group.length) continue;
-    if (cooldown()) return null;
+    // 첫 묶음 뒤에 쿨다운이 켜져도 이미 받은 답은 버리지 않는다 — 이 묶음만 연기로 남긴다(쓴 호출도 기록돼 하루 상한에 들어감).
+    if (cooldown()) {
+      if (!proposals.size) return null;
+      for (const { index } of group) proposals.set(index + 1, { error: '쿨다운', deferred: true, cooldown: true });
+      continue;
+    }
     const items = group.map(({ item }) => item);
     const trend = initial ? signalTrend : undefined;
     const parsed = await judgeItems(items, { decide, reclassify: !initial, deadline, quota: cooldown,
@@ -602,7 +607,8 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   }
   summary.after = distribution(afterItems);
   summary.afterSignals = signalDistribution(afterItems);
-  const report = [`# 미네 ${kind} 감정 재분류`, '', `대상 ${summary.targets}개, 처리 ${summary.selected}개, 변경 ${summary.changed}개, 동일 ${summary.unchanged}개, 애매함 ${summary.ambiguous.length}개, 실패 ${summary.invalid.length}개.`,
+  const deferred = summary.selected - summary.changed - summary.unchanged - summary.ambiguous.length - summary.invalid.length;
+  const report = [`# 미네 ${kind} 감정 재분류`, '', `대상 ${summary.targets}개, 처리 ${summary.selected}개, 변경 ${summary.changed}개, 동일 ${summary.unchanged}개, 애매함 ${summary.ambiguous.length}개, 실패 ${summary.invalid.length}개${deferred ? `, 다음 회차로 미룸 ${deferred}개(시간 상한·쿨다운)` : ''}.`,
     '', '## 감정 분포 (이번 처리 묶음)', `이전: ${JSON.stringify(summary.before)}`, `이후: ${JSON.stringify(summary.after)}`,
     '', '## secondFilmSignal 분포 (이번 처리 묶음)', `이전: ${JSON.stringify(summary.beforeSignals)}`, `이후: ${JSON.stringify(summary.afterSignals)}`,
     '', '## 변경 사유 상위',

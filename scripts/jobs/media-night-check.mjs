@@ -14,7 +14,6 @@ import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { redactWarningDetail } from '../lib/warning-event-journal.mjs';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
-import { buildOrbDaily } from '../lib/mine-orb-daily.mjs';
 
 export const STATUS_BOARD_REL = VAULT_REL.mineStatusBoard;
 export const NIGHT_CHECK_SCHEMA_VERSION = 1;
@@ -427,7 +426,10 @@ export function nightCheckSnapshot(blocks, backlog, facts, now = new Date()) {
 }
 
 // 대시보드 정본 두 파일을 한 번에 원자적으로 쓴다(LiveSync). 실패해도 현황판·발송은 막지 않고, 종료코드로 알린다.
-function writeFeeds(root, { blocks, backlog, facts, now, write, buildOrbs, output }) {
+// 구슬 집계는 미네 판단 잡 모듈을 끌어오므로 그때 불러온다 — 그쪽 import가 깨져도 밤 점검·현황판·발송은 돈다.
+const loadOrbDaily = async (root, options) => (await import('../lib/mine-orb-daily.mjs')).buildOrbDaily(root, options);
+
+async function writeFeeds(root, { blocks, backlog, facts, now, write, buildOrbs, output }) {
   const feeds = [[VAULT_REL.mediaNightCheckFeed, () => nightCheckSnapshot(blocks, backlog, facts, now)],
     [VAULT_REL.mediaOrbDailyFeed, () => buildOrbs(root, { now })]];
   let failed = false;
@@ -435,7 +437,7 @@ function writeFeeds(root, { blocks, backlog, facts, now, write, buildOrbs, outpu
     try {
       const path = join(root, rel);
       mkdirSync(dirname(path), { recursive: true });
-      write(path, `${JSON.stringify(build(), null, 1)}\n`);
+      write(path, `${JSON.stringify(await build(), null, 1)}\n`);
     } catch (error) {
       failed = true;
       output.error?.(`[media-night-check] 대시보드 파일 쓰기 실패 ${rel}: ${error.message}`);
@@ -445,7 +447,7 @@ function writeFeeds(root, { blocks, backlog, facts, now, write, buildOrbs, outpu
 }
 
 export async function runNightCheck({ root = VAULT_PATHS.root, now = new Date(), dryRun = false, output = console,
-  noSend = false, send = sendAgentMessage, write = writeAtomic, videoDryRun, buildOrbs = buildOrbDaily,
+  noSend = false, send = sendAgentMessage, write = writeAtomic, videoDryRun, buildOrbs = loadOrbDaily,
   readLogs = (job, options) => lastRunLines(job, JOB_LOG_DIR, options) } = {}) {
   const blocks = judgeBlocks(root, now);
   const backlog = countBacklog(root, now, { videoDryRun });
@@ -463,7 +465,7 @@ export async function runNightCheck({ root = VAULT_PATHS.root, now = new Date(),
     output.log(body);
     return { failed, backlog, body, boardWriteFailed };
   }
-  const feedWriteFailed = writeFeeds(root, { blocks, backlog, facts, now, write, buildOrbs, output });
+  const feedWriteFailed = await writeFeeds(root, { blocks, backlog, facts, now, write, buildOrbs, output });
   const path = join(root, STATUS_BOARD_REL);
   try {
     await withLock(path, () => {

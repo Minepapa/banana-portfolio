@@ -725,3 +725,21 @@ test('reclassifyFailed: 부분 실패는 정상, 하나도 못 했거나 쓰기 
   assert.equal(reclassifyFailed({ ...base, changed: 5, recordErrors: 1 }), true);
   assert.equal(reclassifyFailed({ ...base, timedOut: true, cooldown: true }), false);
 });
+
+test('재분류: 첫 분류 묶음 뒤 쿨다운이 켜져도 받은 답은 쓰고, 재분류 묶음만 미룬다', async (t) => {
+  const { root, put } = fixture(t);
+  const out = mkdtempSync(join(tmpdir(), 'mine-cooldown-mid-'));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const first = `${C}/2025/2025-03-01 미네 통화.md`;
+  const again = `${C}/2025/2025-03-02 미네 통화.md`;
+  put(first, note({ occurred: '2025-03-01T10:00:00+09:00' }));
+  put(again, note({ occurred: '2025-03-02T10:00:00+09:00', extra: '\nemotions: []\nprimaryEmotion: null\nimportance: 4\nmineAge: 8' }));
+  let calls = 0;
+  const summary = await reclassify({ root, out, rules, includeUnclassified: true, kind: '통화', now, criteria, anchors, cues: async () => {},
+    output: { log() {}, error() {} }, cooldown: () => calls >= 2, judge: async () => { calls += 1; return joy2({ importance: 2 }); } });
+  assert.deepEqual([calls, summary.changed, summary.cooldown, summary.invalid.length, reclassifyFailed(summary)], [2, 1, true, 0, false]);
+  assert.match(readFileSync(join(root, first), 'utf8'), /primaryEmotion: "기쁨"/);
+  const rows = readFileSync(join(out, 'athena-judgments.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(rows.map((row) => [row.rel, row.status, row.calls]), [[first, 'applied', 2], [again, 'retry', 0]]);
+  assert.match(readFileSync(join(out, 'reclassify-report-2026-10-18.md'), 'utf8'), /다음 회차로 미룸 1개/);
+});
