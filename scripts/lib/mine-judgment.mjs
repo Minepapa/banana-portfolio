@@ -7,7 +7,8 @@ import { MAX_EMOTIONS, MAX_EVIDENCE_CHARS, MAX_INTENSITY, MIN_INTENSITY, allowed
 
 export const JUDGMENT_ENGINES = Object.freeze(['claude', 'ollama']);
 // 이 판정이면 그 판으로는 끝난 것이다. 그 밖(형식 실패·검증 실패·연기)은 다음 회차에 다시 묻는다.
-export const DONE_STATUSES = Object.freeze(['applied', 'same', 'skip']);
+// ambiguous: Claude 두 답이 달라 노트에 쓰지 않고 오너 확인을 기다린다 — 같은 판으로 다시 묻지 않는다(§15.3 5단계).
+export const DONE_STATUSES = Object.freeze(['applied', 'same', 'skip', 'ambiguous']);
 
 export function assertEngine(engine) {
   if (!JUDGMENT_ENGINES.includes(engine)) throw new Error(`판단 엔진은 ${JUDGMENT_ENGINES.join('·')} 중 하나: ${engine}`);
@@ -40,6 +41,11 @@ export function judgedNotes(rows, current) {
     if (typeof row?.rel === 'string' && DONE_STATUSES.includes(row.status) && sameVersion(row, current)) done.add(row.rel);
   }
   return done;
+}
+
+// 그 날(KST 날짜, 기록의 at) 그 엔진으로 실제로 부른 횟수. 하루 상한에 쓴다 — 연기된 기록은 calls가 0이라 세지 않는다.
+export function callsOn(rows, { engine, date }) {
+  return rows.reduce((sum, row) => sum + (row?.engine === engine && row.at === date ? Number(row.calls) || 0 : 0), 0);
 }
 
 // 노트를 옮기면 경로가 바뀐다. 옛 경로는 movedFrom에 남는다(D95) — 옛 경로의 기록도 같은 노트로 본다.

@@ -13,9 +13,13 @@ const anchors = [
 // v0.2 답(모든 감정 세기 단어). over로 일부만 바꾼다.
 const scored = (over = {}) => ({ emotionState: '있음', nearestAnchor: 'joy-1', emotionEvidence: '미네가 웃음', secondFilmSignal: null, primary: null,
   ...over, levels: { 기쁨: '없음', 슬픔: '없음', 버럭: '없음', 까칠: '없음', 소심: '없음', ...(over.levels ?? {}) } });
+// Claude 1.0 답 한 건(JSON 문자열). extra로 importance 등을 붙인다.
+const reply = (over = {}, extra = {}) => JSON.stringify({ ...scored(over), ...extra });
+const joy2 = (extra = {}) => reply({ levels: { 기쁨: '보통' } }, extra);
+const claude = { charter: { model: 'sonnet', systemPrompt: '' }, anchors };
 import { parseEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
-import { applyFields, buildPrompt, defaultJudgmentsPath, failed, findTargets, judgeItems, mineAge, noteText, ollamaDecision, ollamaProposalSchema, buildOllamaPrompt, validateOllamaProposals, proposalSchema, recentSignalTrend, reclassify,
-  restrictedDecision, run, validateProposals, PROMPT_VERSIONS, STATE_REL } from './mine-athena-fields.mjs';
+import { applyFields, defaultJudgmentsPath, failed, findTargets, judgeItems, mineAge, noteText, ollamaDecision, ollamaProposalSchema, buildOllamaPrompt, validateOllamaProposals, proposalSchema, recentSignalTrend, reclassify,
+  restrictedDecision, run, CLAUDE_RUNS, DAILY_CLAUDE_CALLS, PROMPT_VERSIONS, STATE_REL } from './mine-athena-fields.mjs';
 import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
@@ -53,7 +57,7 @@ test('제한 판단은 옵션을 전달하고 JSON result·토큰 사용량을 �
   assert.deepEqual(invocation.slice(0, 3), ['prompt', 'sonnet', '']);
   assert.deepEqual(invocation[3], {
     appendSystemPrompt: 'charter', lean: true, tools: '', maxTurns: 1,
-    cwd: invocation[3].cwd, timeoutMs: 30 * 60_000,
+    cwd: invocation[3].cwd, timeoutMs: 5 * 60_000,
   });
   assert.equal(existsSync(invocation[3].cwd), false);
   assert.match(log, /"inputTokens":60,"outputTokens":4/);
@@ -92,46 +96,12 @@ test('대상은 201 미네·아테나 키 없음·건너뜀 기록 없음·cutof
   assert.deepEqual(targets.map((x) => x.rel), [`${C}/2026/2026-10-15 미네 통화.md`]);
 });
 
-test('noteText는 머리말·주석을 빼고 길이를 자른다, 프롬프트에 어휘와 나이가 들어간다', () => {
+test('noteText는 머리말·주석을 빼고 길이를 자른다, 프롬프트에 제목과 나이가 들어간다', () => {
   const text = noteText(note({ body: '가'.repeat(50) }), 10);
   assert.equal(text, `${'가'.repeat(10)}…(이하 생략)`);
-  const prompt = buildPrompt([{ rel: `${C}/2026/2026-10-15 미네 통화.md`, content: note(), occurred: '2026-10-15', date: '2026-10-15' }], { criteria });
-  assert.match(prompt, /기쁨·슬픔·버럭/);
-  assert.match(prompt, /### 1\. 2026-10-15 미네 통화/);
+  const prompt = buildOllamaPrompt([{ rel: `${C}/2026/2026-10-15 미네 통화.md`, content: note(), occurred: '2026-10-15', date: '2026-10-15' }], { criteria, anchors });
+  assert.match(prompt, /### 2026-10-15 미네 통화\n/);
   assert.match(prompt, /만 9세/);
-});
-
-test('혼합 날짜 묶음은 경보 전후 기준을 각각 한 번만 넣고 노트 번호를 연결한다', () => {
-  const raised = parseEmotionCriteria(criteriaFixture.replace('사춘기 경보: 미발령', '사춘기 경보: 2026-10-16'));
-  const items = ['2026-10-14', '2026-10-15', '2026-10-16'].map((date, index) => ({
-    rel: `${C}/2026/${date} 미네 ${index}.md`, content: note({ occurred: date }), occurred: date, date,
-  }));
-  const prompt = buildPrompt(items, { criteria: raised });
-  assert.match(prompt, /경보 전 기록 \(노트 번호 1·2\)/);
-  assert.match(prompt, /경보 뒤 기록 \(노트 번호 3\)/);
-  assert.equal((prompt.match(/## 3\. 감정별 정의와 관찰 근거/g) ?? []).length, 2);
-});
-
-test('제안 검증: 어휘 밖·주감정 불일치·중요도 범위 밖은 오류, skip은 이유를 남긴다', () => {
-  const items = Array.from({ length: 5 }, (_, index) => ({
-    date: `2026-10-${String(11 + index).padStart(2, '0')}`, content: note(),
-  }));
-  const result = validateProposals([
-    { id: 1, emotions: ['기쁨', '슬픔'], primaryEmotion: '기쁨', emotionIntensity: 2, emotionEvidence: '미네가 웃음', importance: 3 },
-    { id: 2, emotions: ['행복'], primaryEmotion: '행복', emotionIntensity: 2, emotionEvidence: '근거', importance: 2 },
-    { id: 3, emotions: ['슬픔'], primaryEmotion: '기쁨', emotionIntensity: 2, emotionEvidence: '근거', importance: 2 },
-    { id: 4, emotions: ['슬픔'], primaryEmotion: '슬픔', emotionIntensity: 2, emotionEvidence: '근거', importance: 6 },
-    { id: 5, skip: '3초 통화' },
-    { id: 9, emotions: ['기쁨'], primaryEmotion: '기쁨', importance: 1 },
-  ], items, { criteria });
-  assert.deepEqual(result.get(1), { fields: { emotions: ['기쁨', '슬픔'], primaryEmotion: '기쁨', emotionIntensity: 2, emotionEvidence: '미네가 웃음', secondFilmSignal: null, importance: 3 } });
-  assert.match(result.get(2).error, /어휘 밖/);
-  assert.match(result.get(3).error, /primaryEmotion/);
-  assert.match(result.get(4).error, /importance/);
-  assert.deepEqual(result.get(5), { skip: '3초 통화' });
-  assert.equal(result.has(9), false);
-  assert.throws(() => validateProposals({}, items, { criteria }), /JSON 배열/);
-  assert.throws(() => validateProposals([], 5, { criteria }), /날짜가 있는 노트 배열/);
 });
 
 test('applyFields는 닫는 --- 앞에 붙이고 modified만 바꾼다, 이미 있으면 null', () => {
@@ -155,52 +125,64 @@ test('run: dry-run은 아테나를 부르지 않고, 쿨다운이면 건너뛴�
   assert.equal(readFileSync(join(root, `${C}/2026/2026-10-15 미네 통화.md`), 'utf8'), note());
 });
 
-test('run: 제안대로 쓰고, skip은 상태 파일에 남겨 다음 실행에서 다시 묻지 않는다, 형식 오류는 재시도', async (t) => {
+test('run: 두 답이 같으면 쓰고, 다르면 애매함으로 남겨 다시 묻지 않으며, 형식 오류는 재시도', async (t) => {
   const { root, put } = fixture(t);
-  put(`${C}/2026/2026-10-15 미네 통화.md`, note({ occurred: '2026-10-12T09:00:00+09:00' }));
-  put(`${C}/2026/2026-10-16 미네 통화.md`, note({ occurred: '2026-10-13T09:00:00+09:00' }));
-  put(`${C}/2026/2026-10-17 미네 통화.md`, note({ occurred: '2026-10-14T09:00:00+09:00' }));
+  const [same, split, broken] = ['2026-10-15', '2026-10-16', '2026-10-17'].map((day) => `${C}/2026/${day} 미네 통화.md`);
+  put(same, note({ occurred: '2026-10-12T09:00:00+09:00' }));
+  put(split, note({ occurred: '2026-10-13T09:00:00+09:00' }));
+  put(broken, note({ occurred: '2026-10-14T09:00:00+09:00' }));
   put(`${C}/2026/2026-10-18 미네 녹음.md`, note({ occurred: '2026-10-15', extra: '\nemotions: ["소심"]\nprimaryEmotion: "소심"\nsecondFilmSignal: "불안"\nemotionEvidence: "미네가 내일 일을 걱정함"' }));
   const prompts = [];
-  const judge = async (prompt) => {
+  const asked = {};
+  const judge = async (prompt, { items: [item] }) => {
     prompts.push(prompt);
-    return '```json\n[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"미네가 웃음","importance":4},{"id":2,"skip":"3초 통화"},{"id":3,"emotions":["행복"],"primaryEmotion":"행복","emotionIntensity":2,"emotionEvidence":"근거","importance":2}]\n```';
+    asked[item.rel] = (asked[item.rel] ?? 0) + 1;
+    if (item.rel === split) return asked[item.rel] === 1 ? joy2({ importance: 2 }) : reply({ emotionState: '감정 없음' }, { importance: 2 });
+    if (item.rel === broken) return reply({ levels: { 행복: '보통' } }, { importance: 2 });
+    return reply({ levels: { 기쁨: '보통' } }, { importance: 4 });
   };
   const quiet = { log() {}, error() {} };
-  const summary = await run({ root, now, judge, cooldown: () => false, criteria, charter: { model: 'sonnet', systemPrompt: '' }, rules, output: quiet });
-  assert.match(prompts[0], /최근 사춘기 신호 관찰 .*: 1건/);
-  assert.match(prompts[0], /감정별: 불안 1건/);
-  assert.match(prompts[0], /근거 예시: 불안 — 미네가 내일 일을 걱정함/);
-  assert.deepEqual(summary.written.map((x) => x.rel), [`${C}/2026/2026-10-15 미네 통화.md`]);
-  assert.match(readFileSync(join(root, `${C}/2026/2026-10-15 미네 통화.md`), 'utf8'), /importance: 4\nmineAge: 9\n---/);
-  assert.equal(summary.skipped.length, 1);
+  const summary = await run({ root, now, judge, cooldown: () => false, criteria, ...claude, rules, output: quiet });
+  assert.match(prompts[0], /# 최근 사춘기 신호 관찰 .*: 1건 — 불안 1건/);
+  assert.deepEqual(asked, { [same]: CLAUDE_RUNS, [split]: 2, [broken]: 1 }, '형식 오류가 나면 두 번째는 묻지 않는다');
+  assert.deepEqual(summary.written.map((x) => x.rel), [same]);
+  assert.match(readFileSync(join(root, same), 'utf8'), /primaryEmotion: "기쁨"\nemotionIntensity: 2\n[\s\S]*importance: 4\nmineAge: 9\n---/);
+  assert.deepEqual(summary.ambiguous, [{ rel: split, answers: ['있음|기쁨|2', '감정 없음||'] }]);
+  assert.equal(readFileSync(join(root, split), 'utf8'), note({ occurred: '2026-10-13T09:00:00+09:00' }), '애매함은 노트에 쓰지 않는다');
   assert.equal(summary.invalid.length, 1);
-  const state = JSON.parse(readFileSync(join(root, STATE_REL), 'utf8'));
-  assert.deepEqual(Object.keys(state.skipped), [`${C}/2026/2026-10-16 미네 통화.md`]);
-  assert.equal(readFileSync(join(root, `${C}/2026/2026-10-17 미네 통화.md`), 'utf8'), note({ occurred: '2026-10-14T09:00:00+09:00' }));
+  assert.equal(failed(summary), false);
+  const rows = readFileSync(join(root, '.mine-judgments', 'athena-judgments.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const ambiguous = rows.find((row) => row.status === 'ambiguous');
+  assert.equal(ambiguous.calls, 2);
+  assert.deepEqual(ambiguous.answers.map((answer) => [answer.emotionState, answer.fields.primaryEmotion]), [['있음', '기쁨'], ['감정 없음', null]]);
+  assert.equal(rows.find((row) => row.status === 'applied').promptVersion, 'athena-fields/1.0');
 
-  const again = await run({ root, now, criteria, judge: async () => '[{"id":1,"emotions":["슬픔"],"primaryEmotion":"슬픔","emotionIntensity":2,"emotionEvidence":"미네가 울음","importance":2}]',
-    cooldown: () => false, charter: { model: 'sonnet', systemPrompt: '' }, rules, output: quiet });
-  assert.deepEqual(again.written.map((x) => x.rel), [`${C}/2026/2026-10-17 미네 통화.md`]);
-  assert.equal(existsSync(join(root, `${C}/2026/2026-10-17 미네 통화.md.lock`)), false);
+  const again = await run({ root, now, criteria, judge: async (_prompt, { items: [item] }) => { asked[item.rel] += 1; return joy2({ importance: 2 }); },
+    cooldown: () => false, ...claude, rules, output: quiet });
+  assert.deepEqual(again.written.map((x) => x.rel), [broken], '애매함은 같은 판으로 다시 묻지 않는다');
+  assert.equal(asked[split], 2);
+  assert.equal(existsSync(join(root, `${broken}.lock`)), false);
 });
 
-test('run: 판단 중 노트가 바뀌면 쓰지 않고 재시도, 아테나 오류는 reject하고 파일은 그대로', async (t) => {
+test('run: 판단 중 노트가 바뀌면 쓰지 않고 재시도, 아테나 오류도 그 기록만 재시도하고 파일은 그대로', async (t) => {
   const { root, put } = fixture(t);
   const rel = `${C}/2026/2026-10-15 미네 통화.md`;
   put(rel, note());
   const quiet = { log() {}, error() {} };
-  const opts = { root, now, criteria, cooldown: () => false, charter: { model: 'sonnet', systemPrompt: '' }, rules, output: quiet };
+  const opts = { root, now, criteria, cooldown: () => false, ...claude, rules, output: quiet };
   const summary = await run({ ...opts, judge: async () => {
     put(rel, note({ body: '전사 본문\n추가된 통화' }));
-    return '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"미네가 웃음","importance":2}]';
+    return joy2({ importance: 2 });
   } });
   assert.equal(summary.written.length, 0);
   assert.equal(summary.invalid[0].reason, '판단 중 노트가 바뀜');
   assert.equal(failed(summary), true);
   assert.equal(readFileSync(join(root, rel), 'utf8'), note({ body: '전사 본문\n추가된 통화' }));
-  await assert.rejects(run({ ...opts, judge: async () => { throw new Error('claude 종료코드 1'); } }), /claude 종료코드/);
-  await assert.rejects(run({ ...opts, judge: async () => '설명만 있고 JSON 없음' }), /JSON/);
+  const crashed = await run({ ...opts, judgmentsPath: join(root, 'crash.jsonl'), judge: async () => { throw new Error('claude 종료코드 1'); } });
+  assert.match(crashed.invalid[0].reason, /claude 종료코드/, '호출 오류는 그 기록만 재시도');
+  assert.equal(failed(crashed), true);
+  const prose = await run({ ...opts, judgmentsPath: join(root, 'prose.jsonl'), judge: async () => '설명만 있고 JSON 없음' });
+  assert.match(prose.invalid[0].reason, /JSON/);
   assert.equal(existsSync(join(root, `${STATE_REL}.lock`)), false);
 });
 
@@ -211,6 +193,8 @@ test('failed: 오류가 있거나 하나도 처리하지 못했을 때만 실패
   assert.equal(failed({ ...base, written: [{}], errors: 1 }), true);
   assert.equal(failed({ ...base, cooldown: true, invalid: [{}] }), false);
   assert.equal(failed({ ...base, targets: 0 }), false);
+  assert.equal(failed({ ...base, cooldown: true, errors: 1 }), true, '쿨다운이 같은 회차의 쓰기 관문 오류를 가리지 않는다');
+  assert.equal(failed({ ...base, invalid: [{}], ambiguous: [{}] }), false, '애매함은 처리한 것');
 });
 
 test('주간 로그용 신호 추이는 최근 발생 기록의 건수·종류·근거를 집계한다', (t) => {
@@ -234,8 +218,8 @@ test('녹음 재분류는 백업 0600 후 감정 네 필드만 바꾸며 오너 
   put(rel, original);
   put(`${C}/2026/2026-10-14 미네 통화.md`, note({ extra: '\nemotions: ["기쁨"]\nprimaryEmotion: "기쁨"' }));
   const quiet = { log() {}, error() {} };
-  const options = { root, out, now, rules, criteria, output: quiet, cooldown: () => false, maxNotes: 10,
-    judge: async () => '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"미네가 즐거워라고 말함"}]' };
+  const options = { root, out, now, rules, criteria, output: quiet, cooldown: () => false, maxNotes: 10, anchors,
+    judge: async () => reply({ levels: { 기쁨: '보통' }, emotionEvidence: '미네가 즐거워라고 말함' }) };
   const dry = await reclassify({ ...options, dryRun: true, judge: undefined });
   assert.equal(dry.targets, 1);
   assert.equal(existsSync(join(out, 'reclassify-backup-2026-10-18.jsonl')), false);
@@ -260,7 +244,8 @@ test('녹음 재분류는 백업 0600 후 감정 네 필드만 바꾸며 오너 
   assert.equal(readFileSync(join(root, rel), 'utf8'), after);
   const judgments = readFileSync(join(out, 'athena-judgments.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(judgments.map(({ rel: note, status, mode, engine, model, promptVersion }) => ({ note, status, mode, engine, model, promptVersion })),
-    [{ note: rel, status: 'applied', mode: 'reclassify', engine: 'claude', model: judgments[0].model, promptVersion: 'athena-fields/0.0' }]);
+    [{ note: rel, status: 'applied', mode: 'reclassify', engine: 'claude', model: judgments[0].model, promptVersion: PROMPT_VERSIONS.claude }]);
+  assert.equal(judgments[0].calls, CLAUDE_RUNS);
   assert.equal(statSync(join(out, 'athena-judgments.jsonl')).mode & 0o777, 0o600);
   // 기준 판이 바뀌면 다시 대상이 되고, 같은 답이면 노트는 그대로 둔다.
   const repeated = await reclassify({ ...options, criteria: { ...criteria, ref: '미네-감정-분류@다음판' } });
@@ -280,8 +265,7 @@ test('같은 날 외부 수정 뒤 재분류는 새 사전 상태를 쓰기 전�
   const rel = `${C}/2026/2026-10-15 미네 녹음.md`;
   put(rel, note({ extra: '\nemotions: ["슬픔"]\nprimaryEmotion: "슬픔"' }).replace('convKind: "통화"', 'convKind: "녹음"'));
   const backup = join(out, 'reclassify-backup-2026-10-18.jsonl');
-  const options = { root, out, now, rules, criteria, output: { log() {} }, cooldown: () => false,
-    judge: async () => '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"미네가 웃음"}]' };
+  const options = { root, out, now, rules, criteria, output: { log() {} }, cooldown: () => false, anchors, judge: async () => joy2() };
   await reclassify(options);
   const externallyChanged = readFileSync(join(root, rel), 'utf8').replace('emotions: ["기쁨"]', 'emotions: ["버럭"]')
     .replace('primaryEmotion: "기쁨"', 'primaryEmotion: "버럭"')
@@ -322,17 +306,17 @@ test('재분류 kind는 통화·녹음·all을 선택하고 기본은 녹음이�
   assert.equal(find('통화')[0].fields.convKind, '통화');
 });
 
-test('통화 재분류 프롬프트는 미네 발화와 목소리 거절 이유를 명시한다', () => {
+test('통화 재분류 프롬프트는 미네 발화와 목소리 거절 이유를 명시하고 중요도는 묻지 않는다', () => {
   const content = note({ body: '나: 오늘 기분이 좋아 보이네\n미네: 응 기뻐',
     extra: '\nemotions: []\nprimaryEmotion: null' });
   const item = { rel: `${C}/2026/2026-10-15 미네 통화.md`, content,
     occurred: '2026-10-15', date: '2026-10-15', fields: { convKind: '통화' },
     audioCues: { text: '소리 근거: 없음(상대 목소리가 미네 기준과 다름)', ok: false } };
-  const prompt = buildPrompt([item], { reclassify: true, criteria });
+  const prompt = buildOllamaPrompt([item], { reclassify: true, criteria, anchors });
   assert.match(prompt, /대화 형식의 미네: 줄과 확인된 미네 구간 소리만 감정 근거/);
   assert.match(prompt, /다른 화자의 말은 맥락 해석에만/);
   assert.match(prompt, /상대 목소리가 미네 기준과 다름/);
-  assert.match(prompt, /기존 importance·coreMemory 등 다른 필드는 다시 판단하지 않는다/);
+  assert.doesNotMatch(prompt, /importance/);
 });
 
 test('재분류 실행 두 개는 같은 잡 락을 공유한다', async (t) => {
@@ -342,9 +326,9 @@ test('재분류 실행 두 개는 같은 잡 락을 공유한다', async (t) => 
   put(`${C}/2026/2026-10-15 미네 녹음.md`, note({ extra: '\nemotions: ["슬픔"]\nprimaryEmotion: "슬픔"' })
     .replace('convKind: "통화"', 'convKind: "녹음"'));
   let release;
-  const response = '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"미네가 웃음"}]';
-  const options = { root, out, now, rules, criteria, output: { log() {} }, cooldown: () => false, maxNotes: 1 };
-  const first = reclassify({ ...options, judge: () => new Promise((resolve) => { release = resolve; }) });
+  const response = joy2();
+  const options = { root, out, now, rules, criteria, output: { log() {} }, cooldown: () => false, maxNotes: 1, anchors };
+  const first = reclassify({ ...options, judge: () => release ? response : new Promise((resolve) => { release = resolve; }) });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(typeof release, 'function');
   await assert.rejects(reclassify({ ...options, judge: async () => response }), /락 획득 실패/);
@@ -352,10 +336,10 @@ test('재분류 실행 두 개는 같은 잡 락을 공유한다', async (t) => 
   assert.equal((await first).changed, 1);
 });
 
-test('buildPrompt: 노트에 붙은 소리 근거를 넣고, 소리 근거 사용 규칙을 안내한다', () => {
+test('판단 프롬프트: 노트에 붙은 소리 근거를 넣고, 소리 근거 사용 규칙을 안내한다', () => {
   const item = { rel: `${C}/2020/2020-07-27 미네 노래 요들송 웃음 녹음.md`, content: note(), occurred: '2020-07-27', date: '2020-07-27',
     audioCues: { text: '소리 근거(전체(화자 분리 없음), 맥 안 기계 감지 — 틀릴 수 있음):\n- 웃음 3회(0:06·0:24·0:42, 최대 0.39)', ok: true } };
-  const prompt = buildPrompt([item], { criteria });
+  const prompt = buildOllamaPrompt([item], { criteria, anchors });
   assert.match(prompt, /웃음 3회\(0:06·0:24·0:42/);
   assert.match(prompt, /소리 근거: 노트에 맥 안 기계 감지 결과/);
 });
@@ -367,9 +351,9 @@ test('reclassify: 판단 호출 전에 소리 근거를 붙인다(주입)', asyn
     mkdirSync(join(root, dirname(rel)), { recursive: true });
     writeFileSync(join(root, rel), note({ occurred: '2020-07-27T10:00:00+09:00', extra: '\nemotions: []\nprimaryEmotion: null' }).replace('convKind: "통화"', 'convKind: "녹음"'));
     let seen = '';
-    await reclassify({ root, dryRun: true, criteria, now: new Date('2026-10-16T12:00:00Z'), output: { log() {}, error() {} },
+    await reclassify({ root, dryRun: true, criteria, now: new Date('2026-10-16T12:00:00Z'), output: { log() {}, error() {} }, anchors,
       cues: async (batch) => { for (const item of batch) item.audioCues = { text: '소리 근거: 테스트 웃음', ok: true }; },
-      judge: async (prompt) => { seen = prompt; return '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"웃음","secondFilmSignal":null}]'; } });
+      judge: async (prompt) => { seen = prompt; return joy2(); } });
     assert.match(seen, /소리 근거: 테스트 웃음/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -382,10 +366,10 @@ test('재분류 --include-unclassified: 처음 분류는 주간 잡과 같이 im
     mkdirSync(join(root, dirname(rel)), { recursive: true });
     writeFileSync(join(root, rel), note({ occurred: '2025-03-01T10:00:00+09:00' }));
     const opts = { root, out, rules, criteria, kind: '통화', now: new Date('2026-10-17T03:00:00Z'),
-      output: { log() {}, error() {} }, cooldown: () => false, cues: async () => {},
+      output: { log() {}, error() {} }, cooldown: () => false, cues: async () => {}, anchors,
       judge: async (prompt) => {
         assert.match(prompt, /importance: 1~5 정수/);
-        return '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"미네가 웃으며 말함","secondFilmSignal":null,"importance":3}]';
+        return joy2({ importance: 3 });
       } };
     const skipped = await reclassify({ ...opts, dryRun: true });
     assert.equal(skipped.targets, 0);
@@ -414,17 +398,16 @@ test('처음 분류와 기존 재분류가 섞이면 importance 판단을 처음
     extra: '\nemotions: []\nprimaryEmotion: null\nimportance: 4\nmineAge: 8' }));
   const prompts = [];
   const result = await reclassify({ root, dryRun: true, includeUnclassified: true, kind: '통화',
-    now, criteria, output: { log() {} }, cues: async () => {}, judge: async (prompt) => {
+    now, criteria, output: { log() {} }, cues: async () => {}, anchors, judge: async (prompt) => {
       prompts.push(prompt);
-      return `[ {"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,
-        "emotionEvidence":"웃음","secondFilmSignal":null${prompt.includes('importance: 1~5 정수') ? ',"importance":2' : ''}} ]`;
+      return joy2(prompt.includes('importance: 1~5 정수') ? { importance: 2 } : {});
     } });
   assert.equal(result.changed, 2);
-  assert.equal(prompts.length, 2);
+  assert.equal(prompts.length, 2 * CLAUDE_RUNS);
   assert.match(prompts[0], /importance: 1~5 정수/);
   assert.match(prompts[0], /최근 사춘기 신호 관찰/);
-  assert.match(prompts[1], /기존 importance·coreMemory 등 다른 필드는 다시 판단하지 않는다/);
-  assert.doesNotMatch(prompts[1], /최근 사춘기 신호 관찰/);
+  assert.doesNotMatch(prompts.at(-1), /importance/);
+  assert.doesNotMatch(prompts.at(-1), /최근 사춘기 신호 관찰/);
 });
 
 test('부분 머리말 첫 분류는 빠진 importance·mineAge를 채우고 기존 값은 보존한다', async (t) => {
@@ -438,12 +421,10 @@ test('부분 머리말 첫 분류는 빠진 importance·mineAge를 채우고 기
   put(two, note({ occurred: '2025-03-02T10:00:00+09:00', extra: '\nimportance: 4\nmineAge: 8' }));
   put(three, note({ occurred: '2025-03-03T10:00:00+09:00', extra: '\nimportance: null\nmineAge: null' }));
   const result = await reclassify({ root, out, rules, includeUnclassified: true, kind: '통화',
-    now, criteria, cooldown: () => false, output: { log() {} }, cues: async () => {},
+    now, criteria, cooldown: () => false, output: { log() {} }, cues: async () => {}, anchors,
     judge: async (prompt) => {
       assert.match(prompt, /importance: 1~5 정수/);
-      return '[{"id":1,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"웃음","importance":2},'
-        + '{"id":2,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"웃음","importance":2},'
-        + '{"id":3,"emotions":["기쁨"],"primaryEmotion":"기쁨","emotionIntensity":2,"emotionEvidence":"웃음","importance":2}]';
+      return joy2({ importance: 2 });
     } });
   assert.equal(result.changed, 3);
   assert.match(readFileSync(join(root, one), 'utf8'), /importance: 2\nmineAge: 8\n---/);
@@ -456,15 +437,15 @@ test('부분 머리말 첫 분류는 빠진 importance·mineAge를 채우고 기
   assert.equal((empty.match(/mineAge:/g) ?? []).length, 1);
 });
 
-test('혼합 묶음은 두 번째 판단 직전 쿨다운이 켜지면 추가 호출을 멈춘다', async (t) => {
+test('쿨다운이 켜지면 같은 기록의 두 번째 호출부터 멈춘다', async (t) => {
   const { root, put } = fixture(t);
   put(`${C}/2025/2025-03-01 미네 통화.md`, note({ occurred: '2025-03-01T10:00:00+09:00' }));
   put(`${C}/2025/2025-03-02 미네 통화.md`, note({ occurred: '2025-03-02T10:00:00+09:00',
     extra: '\nemotions: []\nprimaryEmotion: null\nimportance: 4' }));
   let calls = 0;
   const result = await reclassify({ root, dryRun: true, includeUnclassified: true, kind: '통화',
-    now, criteria, output: { log() {} }, cues: async () => {}, cooldown: () => calls > 0,
-    judge: async () => { calls += 1; return '[]'; } });
+    now, criteria, output: { log() {} }, cues: async () => {}, cooldown: () => calls > 0, anchors,
+    judge: async () => { calls += 1; return joy2({ importance: 2 }); } });
   assert.equal(calls, 1);
   assert.equal(result.cooldown, true);
 });
@@ -508,29 +489,71 @@ test('ollamaDecision: 텍스트 모델·답 모양을 넘기고 JSON 문자열�
   assert.deepEqual(calls[0].schema.properties.levels.required, ['기쁨', '슬픔', '버럭', '까칠', '소심']);
 });
 
-test('judgeItems: Ollama는 기록 하나씩, 형식 실패는 그 기록만, 멈추면 남은 기록을 연기한다', async () => {
+test('judgeItems: 기록 하나씩, 형식 실패는 그 기록만, 멈추면 남은 기록을 연기한다', async () => {
   const items = ['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15'].map((date) => ({ date, content: note() }));
-  const validate = (raw, subset) => validateProposals(raw, subset, { criteria });
-  const answer = '[{"id":1,"emotions":[],"primaryEmotion":null,"emotionIntensity":null,"emotionEvidence":"짧은 안부","secondFilmSignal":null,"importance":1}]';
+  const validate = (raw, subset) => validateOllamaProposals(raw, subset, { criteria });
+  const answer = reply({ emotionState: '감정 없음', emotionEvidence: '짧은 안부' }, { importance: 1 });
   const prompts = [];
   const replies = [async () => answer, async () => { throw Object.assign(new Error('로컬 모델 답이 JSON이 아님'), { formatFailure: true }); },
     async () => { throw Object.assign(new Error('Ollama 연결 실패: fetch failed'), { unavailable: true }); }, async () => { throw new Error('부르면 안 됨'); }];
-  const result = await judgeItems(items, { engine: 'ollama', validate, prompt: (subset) => subset.map((item) => item.date).join(','),
+  const result = await judgeItems(items, { validate, prompt: (subset) => subset.map((item) => item.date).join(','),
     decide: async (prompt) => { prompts.push(prompt); return replies[prompts.length - 1](); } });
   assert.deepEqual(prompts, ['2026-10-12', '2026-10-13', '2026-10-14']);
   assert.equal(result.get(1).fields.emotionEvidence, '짧은 안부');
-  assert.deepEqual(result.get(2), { error: '로컬 모델 답이 JSON이 아님', formatFailure: true });
+  assert.equal(result.get(1).calls, 1);
+  assert.deepEqual(result.get(2), { error: '로컬 모델 답이 JSON이 아님', calls: 1, formatFailure: true });
   assert.equal(result.get(3).unavailable, true);
   assert.equal(result.get(4).deferred, true);
   // 잡 시간 상한이 지나면 더 부르지 않는다.
-  const late = await judgeItems(items.slice(0, 1), { engine: 'ollama', validate, prompt: () => 'p', deadline: 0,
+  const late = await judgeItems(items.slice(0, 1), { validate, prompt: () => 'p', deadline: 0,
     decide: async () => { throw new Error('부르면 안 됨'); } });
   assert.deepEqual(late.get(1), { error: '잡 시간 상한', deferred: true });
-  // Claude는 묶음 한 번, 실패는 그대로 던진다.
+});
+
+test('judgeItems 두 번 묻기: 같으면 첫 답, 대표 감정·강도·상태가 다르면 애매함, 쿨다운이면 남은 기록 연기', async () => {
+  const items = ['2026-10-12', '2026-10-13', '2026-10-14'].map((date) => ({ date, content: note() }));
+  const validate = (raw, subset) => validateOllamaProposals(raw, subset, { criteria, reclassify: true });
   let calls = 0;
-  await judgeItems(items, { engine: 'claude', validate, prompt: () => 'p', decide: async () => { calls += 1; return '[]'; } });
-  assert.equal(calls, 1);
-  await assert.rejects(judgeItems(items, { engine: 'claude', validate, prompt: () => 'p', decide: async () => { throw new Error('claude 종료코드 1'); } }), /claude/);
+  const twice = await judgeItems(items.slice(0, 1), { validate, runs: 2, prompt: () => 'p',
+    decide: async () => { calls += 1; return calls === 1 ? joy2() : reply({ levels: { 기쁨: '보통', 소심: '옅음' }, emotionEvidence: '다른 말' }); } });
+  assert.equal(calls, 2);
+  assert.equal(twice.get(1).ambiguous, undefined, '곁 감정·근거만 다르면 같은 답');
+  assert.deepEqual([twice.get(1).fields.emotionEvidence, twice.get(1).calls], ['미네가 웃음', 2]);
+  const answers = [joy2(), reply({ levels: { 기쁨: '옅음' } }), joy2(), joy2()];
+  const split = await judgeItems(items.slice(0, 2), { validate, runs: 2, prompt: () => 'p', decide: async () => answers.shift() });
+  assert.equal(split.get(1).ambiguous, true);
+  assert.deepEqual(split.get(1).answers.map((answer) => answer.fields.emotionIntensity), [2, 1]);
+  assert.equal(split.get(2).ambiguous, undefined);
+  let asked = 0;
+  const cooled = await judgeItems(items, { validate, runs: 2, prompt: () => 'p', quota: () => asked >= 3,
+    decide: async () => { asked += 1; return joy2(); } });
+  assert.equal(asked, 3);
+  assert.equal(cooled.get(1).calls, 2);
+  assert.deepEqual(cooled.get(2), { error: '쿨다운', deferred: true, cooldown: true, calls: 1 });
+  assert.deepEqual(cooled.get(3), { error: '쿨다운', deferred: true, cooldown: true });
+  const crashed = await judgeItems(items.slice(0, 1), { validate, runs: 2, prompt: () => 'p', decide: async () => { throw new Error('claude 종료코드 1'); } });
+  assert.deepEqual(crashed.get(1), { error: 'claude 종료코드 1', calls: 1 });
+});
+
+test('하루 상한: 오늘 Claude를 부른 횟수만큼 덜 고르고, 다 쓰면 묻지 않으며 실패가 아니다', async (t) => {
+  const { root, put } = fixture(t);
+  for (const day of ['10', '11', '12']) put(`${C}/2026/2026-10-${day} 미네 통화.md`, note({ occurred: `2026-10-${day}T09:00:00+09:00` }));
+  const judgmentsPath = join(root, 'judgments.jsonl');
+  const today = '2026-10-18';
+  writeFileSync(judgmentsPath, `${JSON.stringify({ rel: 'x.md', engine: 'claude', at: today, calls: DAILY_CLAUDE_CALLS - 2 })}\n`);
+  let calls = 0;
+  const opts = { root, now, rules, criteria, ...claude, judgmentsPath, cooldown: () => false, output: { log() {}, error() {} },
+    cues: async () => {}, judge: async () => { calls += 1; return joy2({ importance: 2 }); } };
+  const first = await run(opts);
+  assert.equal(first.written.length, 1);
+  assert.equal(first.capped, true);
+  assert.equal(calls, 2);
+  const full = await run(opts);
+  assert.deepEqual([full.written.length, full.capped, failed(full), calls], [0, true, false, 2]);
+  const dry = await reclassify({ ...opts, dryRun: true, kind: '통화', includeUnclassified: true });
+  assert.deepEqual([dry.selected, dry.capped], [0, true]);
+  const local = await run({ ...opts, engine: 'ollama', judge: async () => reply({}, { importance: 2 }) });
+  assert.equal(local.written.length, 2, 'Ollama는 상한 없음');
 });
 
 test('run --engine=ollama: 쿨다운과 무관하게 판단하고, 판 이름을 기록하며, Ollama가 멈추면 실패로 본다', async (t) => {
@@ -563,10 +586,6 @@ test('run --engine=ollama: 쿨다운과 무관하게 판단하고, 판 이름을
   assert.equal(rows[0].fields.primaryEmotion, '기쁨');
   assert.equal(rows[0].fields.emotionIntensity, 3, '짙음은 강도 3');
   assert.deepEqual([rows[0].emotionState, rows[0].nearestAnchor], ['있음', 'joy-1']);
-  // 범위 밖 점수는 검증 실패로 쓰지 않는다.
-  const bad = validateProposals([{ id: 1, emotions: [], primaryEmotion: null, emotionIntensity: null, emotionEvidence: '근거', importance: 1, scores: { 기쁨: 2 } }],
-    [{ date: '2026-10-15', content: note() }], { criteria });
-  assert.match(bad.get(1).error, /scores/);
   await assert.rejects(run({ ...opts, engine: 'gpt' }), /판단 엔진/);
 });
 
@@ -616,15 +635,13 @@ test('Ollama 실제 경로: 판단 뒤 텍스트 모델을 한 번 내리고, �
   assert.ok(errors.some((line) => /모델 내리기 실패/.test(line)));
 });
 
-test('Ollama 프롬프트 입력은 미네 발화로 추리고, Claude는 지금 본문 그대로', () => {
+test('판단 프롬프트 입력은 미네 발화로 추리고 오너 메모는 따로 붙인다', () => {
   const item = { rel: `${C}/2026/2026-10-15 미네 통화.md`, date: '2026-10-15', occurred: '2026-10-15T19:00:00+09:00',
     fields: { convKind: '통화' }, content: note({ body: '나: 숙제 했어?\n나: 오늘 뭐 했어?\n미네: 그네 탔어\n원본: Archive/a.m4a' }).replace('## 오너 메모\n', '## 오너 메모\n소풍 다녀온 날\n') };
-  const local = buildPrompt([item], { criteria, input: 'mine' });
+  const local = buildOllamaPrompt([item], { criteria, anchors });
   assert.match(local, /전사\(미네 발화와 그 바로 앞 다른 화자 한 줄만 추림\):\n나: 오늘 뭐 했어\?\n미네: 그네 탔어/);
   assert.doesNotMatch(local, /숙제 했어|원본: Archive/);
   assert.match(local, /오너 메모: 소풍 다녀온 날/);
-  const claude = buildPrompt([item], { criteria });
-  assert.match(claude, /나: 숙제 했어\?/);
 });
 
 test('Ollama 0.2 프롬프트: 고정 앞부분(기준·예시·판단 순서·자리표시 답 양식) 뒤에 기록, 채운 예시 값 없음', () => {
@@ -642,14 +659,13 @@ test('Ollama 0.2 프롬프트: 고정 앞부분(기준·예시·판단 순서·�
   assert.throws(() => buildOllamaPrompt([item, item], { criteria, anchors }), /하나씩/);
 });
 
-test('0.3 화자 줄: 화자 표시 없는 한 사람 녹음은 대개 미네 것, 통화와 Claude 0.0은 예전 문구 그대로', () => {
+test('0.3 화자 줄: 화자 표시 없는 한 사람 녹음은 대개 미네 것, 통화는 예전 문구 그대로', () => {
   const recording = { rel: `${C}/2018/2018-10-22 미네 노래 녹음.md`, date: '2018-10-22', occurred: '2018-10-22T19:00:00+09:00',
     fields: { convKind: '녹음' }, content: note({ body: '산토끼 토끼야 하나 둘 셋' }).replace('convKind: "통화"', 'convKind: "녹음"') };
   const local = buildOllamaPrompt([recording], { criteria, anchors, reclassify: true });
   assert.match(local, /화자 분리: 화자 표시 없는 한 사람 녹음 — 노래·혼잣말·말소리는 대개 미네 것이다/);
   assert.doesNotMatch(local, /확실한 미네 발화가 표시되지 않으면 감정 없음/);
   assert.match(local, /화자 표시가 없는 한 사람 녹음은 기록의 화자 줄을 따른다/);
-  assert.match(buildPrompt([recording], { criteria }), /화자 분리: 확실한 미네 발화가 표시되지 않으면 감정 없음/, 'Claude 0.0 잡 프롬프트는 그대로');
   assert.match(local, /협상 중이라도 음식·맛·물건이 싫다고 말로 드러내면\("그거 싫어해"\) 그 싫음은 까칠 옅음/, '0.4 협상 경계 줄(통화·녹음)');
   assert.match(local, /미네가 화를 직접 말하면\("화났어", "기분 나빴어"\) 끝에 "속상해"가 붙어도 대표 감정은 버럭이다/, '0.5 화남·속상 경계 줄');
   const call = { ...recording, fields: { convKind: '통화' }, content: note({ body: '여보세요 응 알았어' }) };
@@ -664,4 +680,37 @@ test('validateOllamaProposals: 세기 단어 → 필드, 형식 오류·중요�
   assert.equal(validateOllamaProposals(scored(), [item], { criteria, reclassify: true }).get(1).fields.emotions.length, 0);
   const bad = validateOllamaProposals({ ...scored(), levels: { 기쁨: 2 } }, [item], { criteria, reclassify: true }).get(1);
   assert.match(bad.error, /levels/);
+});
+
+test('재분류 실제 실행: 애매함은 노트를 그대로 두고 기록·보고서에 남기며, 같은 답도 두 답을 기록한다', async (t) => {
+  const { root, put } = fixture(t);
+  const out = mkdtempSync(join(tmpdir(), 'mine-ambiguous-'));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const recording = (day) => note({ occurred: `2026-10-${day}`, extra: '\nemotions: ["슬픔"]\nprimaryEmotion: "슬픔"' }).replace('convKind: "통화"', 'convKind: "녹음"');
+  const [split, same] = ['11', '12'].map((day) => `${C}/2026/2026-10-${day} 미네 녹음.md`);
+  put(split, recording('11')); put(same, recording('12'));
+  const asked = {};
+  const summary = await reclassify({ root, out, now, rules, criteria, output: { log() {} }, cooldown: () => false, anchors, cues: async () => {},
+    judge: async (_prompt, { items: [item] }) => {
+      asked[item.rel] = (asked[item.rel] ?? 0) + 1;
+      if (item.rel === split) return asked[split] === 1 ? joy2() : reply({ levels: { 슬픔: '보통' } });
+      return asked[same] === 1 ? joy2() : reply({ levels: { 기쁨: '보통', 소심: '옅음' }, secondFilmSignal: '불안' });
+    } });
+  assert.deepEqual([summary.changed, summary.ambiguous.length, summary.invalid.length], [1, 1, 0]);
+  assert.equal(readFileSync(join(root, split), 'utf8'), recording('11'));
+  const rows = readFileSync(join(out, 'athena-judgments.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(rows.map((row) => [row.rel, row.status, row.calls, row.answers?.length]), [[split, 'ambiguous', 2, 2], [same, 'applied', 2, 2]]);
+  assert.equal(rows[1].answers[1].fields.secondFilmSignal, '불안', '같은 답이어도 흔들린 값이 기록에 남는다');
+  assert.match(readFileSync(join(out, 'reclassify-report-2026-10-18.md'), 'utf8'), /## 애매함[^\n]*\n- [^\n]*2026-10-11 미네 녹음\.md: 있음\|기쁨\|2 \/ 있음\|슬픔\|2/);
+});
+
+test('run: 회차 중간 쿨다운은 남은 기록을 미루고 실패로 보지 않으며, 부른 횟수를 기록한다', async (t) => {
+  const { root, put } = fixture(t);
+  for (const day of ['10', '11']) put(`${C}/2026/2026-10-${day} 미네 통화.md`, note({ occurred: `2026-10-${day}T09:00:00+09:00` }));
+  let calls = 0;
+  const summary = await run({ root, now, rules, criteria, ...claude, output: { log() {}, error() {} }, cues: async () => {},
+    cooldown: () => calls >= 3, judge: async () => { calls += 1; return joy2({ importance: 2 }); } });
+  assert.deepEqual([summary.written.length, summary.invalid.length, summary.cooldown, failed(summary)], [1, 0, true, false]);
+  const rows = readFileSync(join(root, '.mine-judgments', 'athena-judgments.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(rows.map((row) => [row.status, row.calls]), [['applied', 2], ['retry', 1]]);
 });
