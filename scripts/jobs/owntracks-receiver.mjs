@@ -10,6 +10,7 @@ import { buildJobHealthRecord, parseFrontmatter } from '../lib/job-health.mjs';
 import { writeStateFile } from '../lib/state-writer.mjs';
 import { createArgosIngest, readArgosConfig, tokenMatches, MAX_INGEST_BODY } from '../lib/argos-ingest.mjs';
 import { createArgosMedia } from '../lib/argos-media.mjs';
+import { readLiveSyncSummary } from '../lib/livesync-status.mjs';
 
 export const CONFIG_PATH = process.env.OWNTRACKS_CONFIG_PATH || join(homedir(), '.config', 'banana-portfolio-v2', 'owntracks.json');
 const MAX_BODY = 64 * 1024;
@@ -67,7 +68,7 @@ export async function recordReceiverHealth({ now = new Date(), root = VAULT_PATH
   await writeStateFile(path, content);
 }
 export function createReceiver({ config, store = createLocationStore(), now = () => new Date(), health = recordReceiverHealth,
-  allowLoopback = false, argos = null, argosToken = null, argosMedia = null } = {}) {
+  allowLoopback = false, argos = null, argosToken = null, argosMedia = null, livesyncStatus = readLiveSyncSummary } = {}) {
   if (!validHost(config?.host, { allowLoopback })) throw new Error('OwnTracks host는 Tailscale 주소여야 합니다');
   let lastHealth = 0;
   // 아르고스 수신도 따로 상태를 남긴다(2단계 5번, 2026-10-29). 위치(OwnTracks)와 나눠야
@@ -81,7 +82,8 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
       response.writeHead(code, { 'Content-Type': 'application/json' }); response.end(body);
     };
     // 아르고스(폰 수집 앱) 경로: 토큰 방식이 달라 OwnTracks 인증보다 먼저 나눈다(2026-10-23).
-    if (request.url === '/ingest' || request.url?.startsWith('/rules/') || request.url?.startsWith('/media/')) {
+    if (request.url === '/ingest' || request.url?.startsWith('/rules/') || request.url?.startsWith('/media/')
+      || request.url?.startsWith('/status/')) {
       await handleArgos(request, response, send);
       return;
     }
@@ -153,6 +155,13 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
     try {
       if (request.url.startsWith('/media/')) {
         await handleMedia(request, response, send);
+        return;
+      }
+      // 볼트 동기화 상태(2026-11-01, 아르고스 홈 카드): livesync-watch 상태 파일 요약을 읽기만 한다.
+      if (request.url.startsWith('/status/')) {
+        if (request.url !== '/status/livesync') { send(404, '[]'); return; }
+        if (request.method !== 'GET') { send(405, '[]'); return; }
+        send(200, JSON.stringify(livesyncStatus()));
         return;
       }
       if (request.url.startsWith('/rules/')) {

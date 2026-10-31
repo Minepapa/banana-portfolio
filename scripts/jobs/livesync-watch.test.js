@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { dueAgain, evaluate, findReverted, parseNameStatus, planAction, vaultChangedAfter, ESCALATE_REPEAT_MS, MAX_RESTARTS_PER_DAY, STALL_MS } from './livesync-watch.mjs';
+import { classifyCause, parseTailscaleState, planTailscale, dueAgain, evaluate, findReverted, parseNameStatus, planAction, vaultChangedAfter, ESCALATE_REPEAT_MS, MAX_RESTARTS_PER_DAY, STALL_MS } from './livesync-watch.mjs';
 import { MOUSEION_TOP_FOLDERS } from '../lib/vault-layout.mjs';
 
 const T0 = new Date('2026-10-31T05:00:00Z');
@@ -77,4 +77,59 @@ test('dueAgain: 같은 알림은 6시간에 한 번', () => {
   assert.equal(dueAgain(undefined, T0), true);
   assert.equal(dueAgain(at(-60).toISOString(), T0), false);
   assert.equal(dueAgain(new Date(T0.getTime() - ESCALATE_REPEAT_MS).toISOString(), T0), true);
+});
+
+test('classifyCause·parseTailscaleState: Tailscale이 Running이 아닐 때만 재시작하지 않는다(2026-11-01)', () => {
+  assert.deepEqual(classifyCause({ tailscale: 'Running' }), { cause: 'unknown', restart: true });
+  assert.deepEqual(classifyCause({ tailscale: null }), { cause: 'unknown', restart: true }, '조회 실패는 기존 경로');
+  for (const s of ['NeedsLogin', 'Stopped', 'NoState']) assert.deepEqual(classifyCause({ tailscale: s }), { cause: 'tailscale', restart: false }, s);
+  assert.equal(parseTailscaleState('{"BackendState":"NeedsLogin","Self":{}}'), 'NeedsLogin');
+  assert.equal(parseTailscaleState('{"BackendState":"Run ning"}'), null);
+  assert.equal(parseTailscaleState('{}'), null);
+  assert.equal(parseTailscaleState('Logged out.'), null);
+});
+
+test('planTailscale: 즉시·2회 연속 알림, 6시간 상한, 복구 1회와 그 회차 재시작 생략(리뷰 M1·M2·M3)', () => {
+  const apply = (state, plan) => {
+    const next = { ...state };
+    for (const [k, v] of Object.entries(plan.fields)) { if (v === undefined) delete next[k]; else next[k] = v; }
+    return next;
+  };
+  // 정상·조회 실패는 아무것도 안 하고 기존 재시작 경로
+  assert.deepEqual(planTailscale({}, 'Running', T0), { alert: null, skipRestart: false, fields: {} });
+  assert.deepEqual(planTailscale({}, null, T0), { alert: null, skipRestart: false, fields: {} });
+
+  // 사람이 손대야 하는 상태는 첫 회차에 바로 알림, 재시작 안 함
+  let p = planTailscale({}, 'NeedsLogin', T0);
+  assert.equal(p.alert, 'down');
+  assert.equal(p.skipRestart, true);
+  let s = apply({}, p);
+  assert.equal(s.tailscaleDownSince, T0.toISOString());
+  // 6시간 안 다시 끊김 → 조용히, 6시간 뒤 → 다시 알림
+  p = planTailscale(s, 'NeedsLogin', at(15)); assert.equal(p.alert, null); s = apply(s, p);
+  assert.equal(s.tailscaleDownSince, T0.toISOString(), '끊긴 시각은 처음 것 유지');
+  p = planTailscale(s, 'NeedsLogin', at(6 * 60)); assert.equal(p.alert, 'down'); s = apply(s, p);
+  // 끊긴 중 조회 실패는 기록 유지
+  assert.deepEqual(planTailscale(s, null, at(6 * 60 + 15)).fields, {});
+  // 복구: 한 번 알리고 그 회차는 재시작 안 함, 다음 회차는 정상 경로
+  p = planTailscale(s, 'Running', at(6 * 60 + 30));
+  assert.equal(p.alert, 'recovered');
+  assert.equal(p.skipRestart, true);
+  s = apply(s, p);
+  assert.equal(s.tailscaleDownSince, undefined);
+  assert.ok(s.lastTailscaleAlertAt, '알린 시각은 남겨 6시간 상한 유지');
+  assert.deepEqual(planTailscale(s, 'Running', at(6 * 60 + 45)), { alert: null, skipRestart: false, fields: {} });
+  // 오락가락: 복구 직후 다시 끊겨도 6시간 안이면 알리지 않는다
+  assert.equal(planTailscale(s, 'NeedsLogin', at(6 * 60 + 50)).alert, null);
+
+  // 잠깐 거치는 상태는 두 회차 연속일 때만
+  p = planTailscale({}, 'Starting', T0);
+  assert.equal(p.alert, null);
+  assert.equal(p.skipRestart, true);
+  s = apply({}, p);
+  assert.equal(planTailscale(s, 'Starting', at(15)).alert, 'down');
+  // 알리지 않은 끊김이 풀리면 복구 알림도 없다(재시작만 한 회차 미룸)
+  p = planTailscale(s, 'Running', at(15));
+  assert.equal(p.alert, null);
+  assert.equal(p.skipRestart, true);
 });

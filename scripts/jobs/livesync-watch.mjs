@@ -24,11 +24,23 @@
  *      밀린 내려받기가 늦게 올 수 있어 1시간 동안 다음 회차마다 같은 기준점으로 다시 검사하고 새로 나온 것만 알린다.
  *   재시작은 24시간에 MAX_RESTARTS_PER_DAY(2)회까지. 넘으면 6시간에 한 번 "수동 확인 필요" 알림만.
  *   볼트 git이 잠겨 있으면(23:50 스냅숏 등) 이번 회차는 건너뛴다.
+ * 원인 구분(2026-11-01): 10-31 17시 Mac Tailscale이 로그아웃돼 LiveSync가 서버 이름을 못 찾았다
+ *   (ERR_NAME_NOT_RESOLVED). 재시작 2회가 소용없었고, 같은 때 폰→Mac 아르고스·위치 수신도 끊겼다(9시간).
+ *   그래서 매 회차 Tailscale 상태(`tailscale status --json`의 BackendState)와 LiveSync 상태 표시줄
+ *   (Obsidian CLI `dev:dom`, Obsidian이 켜져 있을 때만)을 읽는다.
+ *   - Tailscale이 Running이 아니면 멈춤이어도 재시작하지 않고 "Tailscale 재로그인 필요"를 6시간에 한 번 알린다.
+ *     번호 멈춤을 기다리지 않는다(아르고스·위치 수신도 같이 끊기므로). 사람이 손대야 하는 상태(NeedsLogin 등)는
+ *     바로, 잠깐 거치는 상태(Starting·NoState)는 두 회차 연속일 때만 알린다. 알렸던 끊김이 풀리면 한 번 알리고,
+ *     그 회차는 재시작하지 않는다(LiveSync가 스스로 다시 붙을 기회 — 아직 멈춰 있으면 다음 회차에 재시작).
+ *   - 조회 실패(null)는 원인을 모르는 것으로 보고 기존 재시작 경로를 그대로 탄다.
+ *   - 회차마다 상태 파일에 lastCheckAt·status·tailscale·liveSyncWarning을 남긴다 — 아르고스 앱 카드가
+ *     수신부 `/status/livesync`로 읽는다(scripts/lib/livesync-status.mjs).
  *
  * CouchDB 자격증명은 코드·볼트에 두지 않는다 — 컨테이너 안 환경변수로 컨테이너 안에서 조회한다.
  * 금고(99_)는 열지도 훑지도 않는다.
  *
- * 사용법: node scripts/jobs/livesync-watch.mjs [--dry-run]   (--dry-run: 판정만 출력, 재시작·발송·상태 저장 없음)
+ * 사용법: node scripts/jobs/livesync-watch.mjs [--dry-run]   (--dry-run: 판정만 출력, 재시작·발송·상태 저장 없음.
+ *   읽기 전용 조회 — CouchDB 번호·tailscale status·Obsidian 상태 표시줄 — 은 한다)
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
@@ -39,6 +51,7 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { MOUSEION_TOP_FOLDERS } from '../lib/vault-layout.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
+import { LIVESYNC_STATE_FILE, describeLiveSyncWarning, parseLiveSyncStatusText } from '../lib/livesync-status.mjs';
 
 const JOB = 'livesync-watch';
 const SENDER_AGENT = 'clio'; // 볼트·동기화는 클리오 담당
@@ -56,7 +69,7 @@ const RECOVERY_WAIT_MS = 3 * 60_000;
 const RECOVERY_POLL_MS = 15_000;
 const QUIT_WAIT_MS = 30_000;
 const REVERT_RECHECK_MS = 60 * 60_000;
-const STATE_FILE = join(homedir(), '.cache', 'banana-portfolio-v2', 'livesync-watch.json');
+const STATE_FILE = LIVESYNC_STATE_FILE;
 const COUCH_CONTAINER = 'livesync-couchdb';
 const COUCH_DB = 'obsidiannotes';
 // 금고는 훑지 않는다(이름은 vault-layout 상수에서 번호로 찾는다). 점으로 시작하는 항목은 LiveSync가 올리지 않는다
@@ -84,6 +97,42 @@ export function planAction(state, now) {
   const recent = (state.restarts ?? []).filter((t) => now.getTime() - Date.parse(t) < DAY_MS);
   if (recent.length < MAX_RESTARTS_PER_DAY) return { action: 'restart', recent };
   return { action: dueAgain(state.lastEscalatedAt, now) ? 'escalate' : 'quiet', recent };
+}
+
+// 순수함수 — Tailscale 상태로 멈춤 원인을 나눈다. null(조회 실패)은 모름 → 기존처럼 재시작.
+export function classifyCause({ tailscale }) {
+  if (tailscale && tailscale !== 'Running') return { cause: 'tailscale', restart: false };
+  return { cause: 'unknown', restart: true };
+}
+
+// 사람이 손대야 풀리는 상태 — 한 회차만 봐도 알린다. 그 밖(Starting·NoState 등)은 두 회차 연속일 때만.
+const TAILSCALE_NEEDS_OWNER = new Set(['NeedsLogin', 'NeedsMachineAuth', 'Stopped']);
+
+// 순수함수 — 이번 회차 Tailscale 상태로 알림·재시작 생략·다음 상태 칸을 정한다.
+// 반환: { alert: 'down'|'recovered'|null, skipRestart, fields }. fields의 undefined는 그 칸을 지운다는 뜻.
+// lastTailscaleAlertAt은 복구 뒤에도 지우지 않는다 — 끊김·복구가 오락가락해도 6시간 상한을 지킨다(리뷰 M2).
+export function planTailscale(state, tailscale, now) {
+  if (tailscale && tailscale !== 'Running') {
+    const runs = (state.tailscaleDownRuns ?? 0) + 1;
+    const since = state.tailscaleDownSince ?? now.toISOString();
+    const confirmed = TAILSCALE_NEEDS_OWNER.has(tailscale) || runs >= 2;
+    const alert = confirmed && dueAgain(state.lastTailscaleAlertAt, now) ? 'down' : null;
+    return { alert, skipRestart: true, fields: { tailscaleDownRuns: runs, tailscaleDownSince: since,
+      ...(alert ? { lastTailscaleAlertAt: now.toISOString(), tailscaleAlerted: true } : {}) } };
+  }
+  if (tailscale === 'Running' && state.tailscaleDownSince) {
+    return { alert: state.tailscaleAlerted ? 'recovered' : null, skipRestart: true,
+      fields: { tailscaleDownRuns: undefined, tailscaleDownSince: undefined, tailscaleAlerted: undefined } };
+  }
+  return { alert: null, skipRestart: false, fields: {} }; // 정상이거나 조회 실패(null) — 끊김 기록은 그대로 둔다
+}
+
+// `tailscale status --json` 출력 → BackendState(Running·NeedsLogin·Stopped…). 못 읽으면 null.
+export function parseTailscaleState(out) {
+  try {
+    const state = JSON.parse(out)?.BackendState;
+    return typeof state === 'string' && /^[A-Za-z]+$/.test(state) ? state : null;
+  } catch { return null; }
 }
 
 // 같은 종류 알림을 6시간에 한 번만 보내기 위한 판정.
@@ -114,6 +163,23 @@ function readCouchSeq() {
   const seq = String(JSON.parse(out).update_seq ?? '').split('-')[0];
   if (!/^\d+$/.test(seq)) throw new Error('CouchDB 응답에 update_seq 없음');
   return Number(seq);
+}
+
+function readTailscaleState() {
+  try {
+    return parseTailscaleState(execFileSync('tailscale', ['status', '--json'],
+      { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] }));
+  } catch (e) { return typeof e.stdout === 'string' ? parseTailscaleState(e.stdout) : null; }
+}
+
+// LiveSync 상태 표시줄(Obsidian CLI). CLI가 Obsidian을 띄우지 않게 켜져 있을 때만 부른다. 실패는 null.
+// 한계: 확인과 호출 사이(수십 ms)에 Obsidian이 꺼지면 CLI가 앱을 띄울 수 있다 — 드물어 받아들인다.
+function readLiveSyncStatus(running) {
+  if (!running) return null;
+  try {
+    return parseLiveSyncStatusText(execFileSync('obsidian', ['dev:dom', 'selector=.livesync-status', 'text'],
+      { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] }));
+  } catch { return null; }
 }
 
 function readState() {
@@ -221,21 +287,55 @@ async function recheckPendingReverts(state, now) {
   ]);
 }
 
+// planTailscale의 알림을 보낸다. 발송 전에 상태를 써서, 발송이 죽어도 6시간 상한·복구 1회를 지킨다.
+async function notifyTailscale(alert, tailscale, downSince, state) {
+  if (!alert) return;
+  writeState(state);
+  if (alert === 'down') {
+    await notify([
+      `Mac Tailscale이 연결돼 있지 않습니다(상태 ${tailscale}).`,
+      '폰↔Mac 연결이 끊겨 볼트 동기화·아르고스·위치 수신이 멈춥니다. Obsidian을 다시 켜도 풀리지 않아 재시작하지 않습니다.',
+      'Mac 메뉴 막대의 Tailscale에서 다시 로그인해 주세요(터미널: tailscale up).',
+    ]);
+    return;
+  }
+  await notify([`Mac Tailscale이 다시 연결됐습니다${downSince ? `(끊긴 시각 ${downSince})` : ''}.`,
+    '볼트 동기화가 아직 멈춰 있으면 다음 회차부터 기존 절차(기준점 → Obsidian 재시작)로 복구합니다.']);
+}
+
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const now = new Date();
-  const seq = readCouchSeq();
-  const prev = readState();
-  const result = evaluate(prev, { seq, now, vaultChangedAfter: (ms) => vaultChangedAfter(VAULT_PATHS.root, ms) });
+  const tailscale = readTailscaleState();
   const running = obsidianRunning();
-  console.log(`[${JOB}] seq ${seq} · ${result.reason}${running ? '' : ' · Obsidian 꺼짐'}`);
+  const liveSync = readLiveSyncStatus(running);
+  const prev = readState();
+  let seq;
+  try { seq = readCouchSeq(); } catch (e) {
+    // 서버 장애는 재시작 대상이 아니다 — 카드용 상태만 남기고 잡 FAIL(health-watcher가 알린다).
+    if (!dryRun) writeState({ ...prev, lastCheckAt: now.toISOString(), status: 'server-error', tailscale, liveSyncWarning: liveSync?.warning ?? null });
+    throw e;
+  }
+  const result = evaluate(prev, { seq, now, vaultChangedAfter: (ms) => vaultChangedAfter(VAULT_PATHS.root, ms) });
+  const cause = classifyCause({ tailscale });
+  console.log(`[${JOB}] seq ${seq} · ${result.reason}${running ? '' : ' · Obsidian 꺼짐'} · Tailscale ${tailscale ?? '모름'}`
+    + `${liveSync?.warning ? ` · LiveSync 경고: ${liveSync.warning}` : ''}`);
   if (dryRun) {
-    if (result.stalled) console.log(`[${JOB}] 멈춤 — ${planAction(result.state, now).action}`);
+    if (result.stalled) console.log(`[${JOB}] 멈춤 — ${cause.restart ? planAction(result.state, now).action : 'Tailscale 끊김 — 재시작 안 함'}`);
     return;
   }
-  const state = { ...result.state };
+  const state = { ...result.state, lastCheckAt: now.toISOString(), tailscale, liveSyncWarning: liveSync?.warning ?? null };
+  state.status = cause.cause === 'tailscale' ? 'tailscale' : result.stalled ? 'stalled' : 'ok';
   await recheckPendingReverts(state, now);
+  const ts = planTailscale(state, tailscale, now);
+  for (const [k, v] of Object.entries(ts.fields)) { if (v === undefined) delete state[k]; else state[k] = v; }
+  await notifyTailscale(ts.alert, tailscale, prev?.tailscaleDownSince, state);
   if (!result.stalled) { writeState(state); return; }
+  if (ts.skipRestart) {
+    console.log(`[${JOB}] 멈춤 — ${cause.restart ? 'Tailscale 막 복구, 이번 회차는 재시작 안 함' : `Tailscale ${tailscale}, 재시작 안 함`}`);
+    writeState(state);
+    return;
+  }
 
   const plan = planAction(state, now);
   console.log(`[${JOB}] 멈춤 — ${plan.action} (24시간 재시작 ${plan.recent.length}회)`);
@@ -247,6 +347,7 @@ async function main() {
       `Mac → 동기화 서버 업로드가 멈췄습니다(${result.reason}).`,
       `24시간 안에 이미 ${plan.recent.length}번 다시 켰는데 또 멈춰 자동 재시작을 멈췄습니다.`,
       '폰에 새 노트가 안 들어옵니다. Mac Obsidian의 LiveSync 로그를 직접 확인해 주세요.',
+      ...(liveSync?.warning ? [`LiveSync 경고: ${describeLiveSyncWarning(liveSync.warning)}`] : []),
     ]);
     return;
   }
@@ -275,13 +376,14 @@ async function main() {
   const newSeq = await waitForSeqAdvance(seq);
   let found = null;
   try { found = checkReverts(base); } catch (e) { console.error(`[${JOB}] 되돌림 검사 실패: ${e.message}`); }
-  if (newSeq) { state.seq = newSeq; state.seqChangedAt = new Date().toISOString(); }
+  if (newSeq) { state.seq = newSeq; state.seqChangedAt = new Date().toISOString(); state.status = 'ok'; }
   state.pendingRevertCheck = { base, until: new Date(now.getTime() + REVERT_RECHECK_MS).toISOString(),
     reported: found ? [...found.reverted, ...found.deleted] : [] };
   writeState(state);
   const lines = [
     running ? `Mac → 동기화 서버 업로드가 멈춰 Obsidian을 다시 켰습니다(${result.reason}).`
       : `Mac Obsidian이 꺼져 있어 업로드가 멈춰 있었습니다. Obsidian을 켰습니다(${result.reason}).`,
+    ...(liveSync?.warning ? [`다시 켜기 전 LiveSync 경고: ${describeLiveSyncWarning(liveSync.warning)}`] : []),
     newSeq ? `다시 켠 뒤 서버 번호 증가: ${seq} → ${newSeq}` : '다시 켠 뒤 3분 동안 서버 번호가 오르지 않았습니다 — 다음 회차에 다시 봅니다.',
     `볼트 기준점: ${base.slice(0, 8)}(1시간 동안 늦게 들어오는 변경도 다시 검사)`,
     ...(found === null ? ['되돌림 검사 실패 — 로그 확인 필요'] : [

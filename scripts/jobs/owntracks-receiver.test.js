@@ -173,6 +173,32 @@ test('아르고스 경로: 토큰 인증, 꺼져 있으면 404, OwnTracks 경로
   assert.equal((await request(on, 'POST', '/pub', '{}', { 'x-argos-token': token })).status, 401);
 });
 
+test('볼트 동기화 상태: 아르고스 토큰으로 GET /status/livesync만 읽는다(2026-11-01)', async () => {
+  const config = { host: '127.0.0.1', username: 'u', password: randomBytes(16).toString('base64url') };
+  const token = randomBytes(24).toString('base64url');
+  const argos = { ingest: () => ({ status: 200, json: { acked: [], rejected: [] } }), rules: () => ({ status: 404, json: {} }) };
+  const summary = { status: 'ok', checkedAt: '2026-11-01T00:00:00.000Z', restarts24h: 0 };
+  const request = (server, method, path, headers = {}) => new Promise((resolve) => {
+    const req = Readable.from([]);
+    req.method = method; req.url = path; req.headers = headers;
+    const res = { headersSent: false, setHeader() {}, writeHead(status) { this.status = status; this.headersSent = true; },
+      end(chunk) { resolve({ status: this.status, body: String(chunk ?? '') }); } };
+    server.emit('request', req, res);
+  });
+  const on = createReceiver({ config, allowLoopback: true, store: async () => true, health: async () => {}, argos, argosToken: token,
+    livesyncStatus: () => summary });
+  const off = createReceiver({ config, allowLoopback: true, store: async () => true, health: async () => {}, livesyncStatus: () => summary });
+  const ok = await request(on, 'GET', '/status/livesync', { 'x-argos-token': token });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(JSON.parse(ok.body), summary);
+  assert.equal((await request(on, 'GET', '/status/livesync', { 'x-argos-token': 'wrong' })).status, 401, '토큰 필요');
+  assert.equal((await request(on, 'GET', '/status/livesync')).status, 401, '토큰 없음');
+  assert.equal((await request(off, 'GET', '/status/livesync', { 'x-argos-token': token })).status, 404, '아르고스 꺼지면 없음');
+  assert.equal((await request(on, 'POST', '/status/livesync', { 'x-argos-token': token })).status, 405);
+  assert.equal((await request(on, 'GET', '/status/other', { 'x-argos-token': token })).status, 404);
+  assert.equal((await request(on, 'GET', '/status/livesync?x=1', { 'x-argos-token': token })).status, 404, '정확한 경로만');
+});
+
 test('아르고스 수신은 받은 이벤트가 있을 때만 argos-ingest 상태를 10분에 한 번 남긴다', async () => {
   const config = { host: '127.0.0.1', username: 'u', password: randomBytes(16).toString('base64url') };
   const token = randomBytes(24).toString('base64url');
