@@ -53,6 +53,7 @@ export const JOB_LABELS = {
   'owntracks-receiver': 'OwnTracks 위치 수신 서버(상시 프로세스)',
   'olympus-server': '올림푸스 대시보드 서버(상시 프로세스)',
   'calendar-days': '일정 파일 정본(오늘부터 7일 구글 캘린더 → 볼트 Calendar 파일, 15분마다)',
+  'zeus-headline': '종합 헤드라인: 판테온 정본에서 후보를 모아 경량 모델이 오늘 가장 중요한 일 한 줄을 고름 → 볼트 헤드라인 파일(매일 07:40, 발송 없음)',
   'argos-ingest': '아르고스 폰 수집 앱 수신(위치 수신 서버의 /ingest)',
   'update-monthly-balance-snapshot': '월별 잔고 스냅샷(대시보드 막대그래프용) + 일별 불변 스냅샷(TWR·Sharpe·MDD 재계산용, 2026-09-04 신설) 매일 자동 기록',
   'weekly-report': '주간 리포트 자동 생성·발행(성향학습 파이프라인 동반)',

@@ -63,6 +63,7 @@ export const VAULT_REL = {
   people: '30_Wiki/31_People', // 헤르메스 생일 브리핑 대상
   places: '30_Wiki/32_Places',
   calendarDays: '95_Etna/Calendar', // 일정 파일 정본(헤르메스 calendar-days 잡, 2026-10-30) — {YYYY}/YYYY-MM-DD.json
+  zeusHeadline: '95_Etna/Zeus/headline.json', // 제우스 종합 헤드라인(2026-10-31 오너 승인) — zeus-headline 잡만 쓴다, 올림푸스 홈이 읽는다
   themisVerdicts: '95_Etna/Themis/verdicts.jsonl', // 테미스 판정 원장(2026-10-31 오너 승인) — themis-verdict-cli.mjs append만 쓴다
   location: '95_Etna/Location',
   argosEvents: '95_Etna/Events', // 아르고스 수신 원본(결정 `아르고스-올림푸스-도입` D2)

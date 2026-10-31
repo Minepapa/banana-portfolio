@@ -5,6 +5,7 @@
 export const JOB_OWNERS = {
   // 제우스: 시스템 운영 경보·발신 관문·텔레그램·세션 간 인프라(D83)
   'health-watcher': 'zeus',
+  'zeus-headline': 'zeus', // 올림푸스 홈 헤드라인(제우스 종합)
   'weekly-schedule-summary': 'zeus',
   'weekly-warning-review': 'zeus',
   'process-warning-actions': 'zeus',

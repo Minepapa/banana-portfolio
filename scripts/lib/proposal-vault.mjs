@@ -86,7 +86,7 @@ export function listProposalsFromContents(contents) {
 
 // 제안 작성 단계의 활성 상태. 주문 접수·부분체결은 승인 대기 제안과 처리 방식이
 // 다르므로 resolveProposalIntake가 별도로 찾아 새 제안 생성을 차단한다.
-const ACTIVE_PROPOSAL_STATUSES = new Set(['대기', '승인']);
+export const ACTIVE_PROPOSAL_STATUSES = new Set(['대기', '승인']); // zeus-headline 후보 수집도 같은 집합을 쓴다
 const BLOCKING_PROPOSAL_STATUSES = new Set(['대기', '승인', '주문접수', '부분체결']);
 
 // 같은 안건(track+assetKey+side)의 활성(대기·승인) 상태 제안 중 가장 최근 것 — 없으면

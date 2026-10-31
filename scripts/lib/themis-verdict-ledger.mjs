@@ -57,7 +57,8 @@ const SAFE_NUMBER_SHAPES = [
   /\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,12}\b/g,
 ];
 const JOINED_NUMBER = /\d(?:[\s*-]+\d|\d)*/g;
-function assertNoSensitive(field, text) {
+// 다른 무인 잡(zeus-headline 출력 검증)도 같은 민감값 기준을 쓴다 — 기준을 한곳에 둔다.
+export function assertNoSensitive(field, text) {
   if (SECRET_VAULT.some((pattern) => pattern.test(text))) throw new Error(`${field}: 금고 경로·이름은 넣을 수 없다`);
   if (CREDENTIAL.some((pattern) => pattern.test(text))) throw new Error(`${field}: 자격증명으로 보이는 값은 넣을 수 없다`);
   const withoutSafe = SAFE_NUMBER_SHAPES.reduce((value, pattern) => value.replace(pattern, ' '), text);
