@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.livesync-watch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>livesync-watch</string>
+  </array>
+  <!-- 15분 간격(2026-10-31 신설, 오너 승인 "알림 + 자동 재시작") — Mac Obsidian(LiveSync)이 프로세스는 산 채로
+       CouchDB 업로드를 멈추는 걸(2026-10-30 23시~10-31 14시, 오너가 폰에서 발견) 잡는다. CouchDB 변경 번호가 30분
+       넘게 그대로인데 볼트가 바뀌었으면 볼트 git 기준점 커밋 → Obsidian 정상 종료·재실행 → 되돌아간 파일 검사 →
+       클리오 알림. 재시작은 24시간에 2회까지(넘으면 6시간에 한 번 수동 확인 알림). scripts/jobs/livesync-watch.mjs 헤더 참고. -->
+  <key>StartInterval</key>
+  <integer>900</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/livesync-watch.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/livesync-watch.log</string>
+</dict>
+</plist>

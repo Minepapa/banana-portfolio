@@ -64,6 +64,7 @@ export const JOB_LABELS = {
   'update-allocation-from-holdings': '보유종목 기준 자산분배 탭 목표·현재비중 재계산',
   'update-holdings-prices': '보유종목 실시간 시세 갱신(KRX·해외·환율)',
   'telegram-session-health-check': '상시 텔레그램 세션 MCP 연결 끊김 감지·자동복구',
+  'livesync-watch': '볼트 동기화(LiveSync) 업로드 멈춤 감지·Obsidian 자동 재시작',
   'telegram-gate': '텔레그램 관문(봇의 유일한 수신·발신 상시 데몬, 결정론 입력 즉시 처리)',
   'telegram-gate-health-check': '텔레그램 관문 하트비트·미수신 감시와 재시작(10분마다)',
   'intraday-market-move-monitor': '장중 시장 급변 실시간 감시(코스피·S&P500·VIX·DXY·USD/KRW·미국10Y)',

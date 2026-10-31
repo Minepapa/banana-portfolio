@@ -17,6 +17,7 @@ export const JOB_OWNERS = {
   'telegram-session-restart': 'zeus',
   'telegram-session-handoff': 'zeus',
   'telegram-session-health-check': 'zeus',
+  'livesync-watch': 'clio',
   'telegram-gate': 'zeus',
   'telegram-gate-health-check': 'zeus',
   // 클리오: 볼트 ingest·Periodic·구조 정합성·볼트 백업
