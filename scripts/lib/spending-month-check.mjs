@@ -226,11 +226,12 @@ function alertOnlySection(report) {
 
 // 카드별·항목별·고정비(요청 "소비 보고 카드별·항목별·고정비" 2단계). 옛 결과 파일에는 breakdown이 없어 칸을 뺀다.
 function instrumentSection(report) {
+  if (report.breakdown?.error) return '■ 결제수단별·항목별·고정비\n- 표 만들기 실패(소비 설정 확인, 합계·커버리지는 위와 같음)';
   const groups = report.breakdown?.by_instrument ?? [];
   if (!groups.length) return null;
   const table = preTable([['결제수단', 24, 'left'], ['건', 4, 'right'], ['금액', 12, 'right']],
     groups.slice(0, 8).map((group) => [group.instrument, String(group.count), comma(group.amount)]));
-  const routes = groups.flatMap((group) => Object.entries(group.routes ?? {})
+  const routes = groups.slice(0, 8).flatMap((group) => Object.entries(group.routes ?? {})
     .map(([via, amount]) => `- ${escapeHtml(group.instrument)} 중 ${escapeHtml(via)} 경유 ${won(amount)}`));
   const rest = groups.length > 8 ? [`- 외 ${groups.length - 8}개 결제수단`] : [];
   return [`■ 결제수단별 지출`, table, ...routes, ...rest].join('\n');
@@ -243,7 +244,8 @@ function categorySection(report) {
   const restAmount = groups.slice(8).reduce((sum, group) => sum + Number(group.amount), 0);
   const rows = top.map((group) => [group.category, String(group.count), comma(group.amount)]);
   if (groups.length > 8) rows.push(['나머지', String(groups.slice(8).reduce((sum, group) => sum + group.count, 0)), comma(restAmount)]);
-  return `■ 항목별 지출(뱅크샐러드 분류)\n${preTable([['항목', 24, 'left'], ['건', 4, 'right'], ['금액', 12, 'right']], rows)}`;
+  const owner = groups.reduce((sum, group) => sum + (group.owner_override ?? 0), 0);
+  return `■ 항목별 지출(뱅크샐러드 분류${owner ? `, 오너 지정 ${owner}건 포함` : ''})\n${preTable([['항목', 24, 'left'], ['건', 4, 'right'], ['금액', 12, 'right']], rows)}`;
 }
 
 function fixedSection(report) {

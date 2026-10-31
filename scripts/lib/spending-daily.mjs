@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { VAULT_PATHS } from './vault-paths.mjs';
 import { parseSpendingRecord, parseSpendingRecords } from './spending-parse.mjs';
-import { validateSpendingSettings } from './spending-settings.mjs';
+import { validateRecipientDecisions } from './spending-settings.mjs';
 
 export function spendingRawPath(date, spendingDir = VAULT_PATHS.spending) {
   return join(spendingDir, date.slice(0, 4), `${date}.jsonl`);
@@ -14,11 +14,11 @@ export function spendingSummaryPath(date, spendingDir = VAULT_PATHS.spending) {
 }
 
 // 오너가 확인한 가족 수취처만 recipient로 기록한다. 미확인 송금은 계속 대기다.
-// 형식 검사는 소비 보고 2단계 칸(cardMap 등)까지 spending-settings가 한 곳에서 한다.
+// 일일 경로는 송금 판정 칸만 검사한다. 월간 칸(cardMap 등)은 spending-settings 도구와 월 점검이 따로 본다.
 export function readSpendingSettings(spendingDir = VAULT_PATHS.spending) {
   const path = join(spendingDir, 'settings.json');
   if (!existsSync(path)) return { recipientDecisions: [] };
-  const settings = validateSpendingSettings(JSON.parse(readFileSync(path, 'utf8')));
+  const settings = validateRecipientDecisions(JSON.parse(readFileSync(path, 'utf8')));
   return { ...settings, recipientDecisions: settings.recipientDecisions ?? [] };
 }
 

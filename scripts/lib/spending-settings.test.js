@@ -28,6 +28,8 @@ test('설정 형식: 칸마다 필수값·중복·별칭 연쇄를 막는다', (
     { fixedCosts: [{ ...patch.fixedCosts[0], variable: 'yes' }] },
     { fixedCosts: [patch.fixedCosts[0], patch.fixedCosts[0]] },
     { merchantCategories: [{ merchant: '가게' }] },
+    { fixedCosts: [{ ...patch.fixedCosts[0], merchant: 'K T' }] },
+    { merchantCategories: [{ merchant: '(주)AB', category: '식비' }] },
     { recipientDecisions: [{ bank: '하나', last4: '12', status: 'excluded' }] },
   ];
   for (const settings of bad) assert.throws(() => validateSpendingSettings(settings), /소비 설정 형식 오류/, JSON.stringify(settings));
@@ -62,4 +64,13 @@ test('도구: 기본은 미리보기라 파일을 바꾸지 않고, 모르는 �
   assert.throws(() => runSettingsTool([`--patch=${patchPath}`, '--force'], { spendingDir: dir, log: () => {} }), /모르는 옵션/);
   runSettingsTool([`--patch=${patchPath}`, '--apply'], { spendingDir: dir, log: () => {} });
   assert.equal(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).cardMap.length, 1);
+});
+
+test('일일 경로는 송금 판정 칸만 검사해 월간 칸 손 편집 실수에 멈추지 않는다', () => {
+  const dir = join(root, 'daily');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ recipientDecisions: [], fixedCosts: [{ name: 'x', variable: 'yes' }] }));
+  assert.deepEqual(readSpendingSettings(dir).recipientDecisions, []);
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ recipientDecisions: [{ bank: '하나', last4: '1' }] }));
+  assert.throws(() => readSpendingSettings(dir), /recipientDecisions/);
 });

@@ -341,9 +341,14 @@ def build_month(banksalad_dir, spending_dir, events_dir, start, end, closed_mont
     tables = None
     if closed_month:
         previous_start = shift(start, -1)[:7] + "-01"
-        tables = breakdown(report["transactions"], closed_month, read_settings(spending_dir),
-                           EXPORT_DATE_RANGE.fullmatch(export.name).group(1) <= previous_start)
-        for name in ("by_instrument", "by_category"):
+        # A malformed settings table (hand edit) only loses the tables, not the month total and coverage.
+        # A sum mismatch is a code bug (the two expense rules drifted) and still fails the run loudly.
+        try:
+            tables = breakdown(report["transactions"], closed_month, read_settings(spending_dir),
+                               EXPORT_DATE_RANGE.fullmatch(export.name).group(1) <= previous_start)
+        except (KeyError, TypeError, AttributeError, ValueError, json.JSONDecodeError) as error:
+            tables = {"error": f"{type(error).__name__}: {error}"}
+        for name in (() if "error" in tables else ("by_instrument", "by_category")):
             total = sum((Decimal(group["amount"]) for group in tables[name]), Decimal(0))
             if total != Decimal(str(monthly["total_expense"])):
                 raise ValueError(f"{name} sum {total} != total_expense {monthly['total_expense']}")
@@ -405,11 +410,28 @@ def spent_amount(item):
     return None
 
 
-def fixed_payments(rows, entry, resolve):
-    key = normalize_merchant(entry["merchant"])
-    return [{"date": item["date"], "amount": amount_text(spent)} for item, spent in rows
-            if resolve(item)[0] == entry["instrument"]
-            and key and (key in normalize_merchant(item["description"]))]
+def in_day_window(day, day_from, day_to):
+    """dayFrom..dayTo inclusive; a window like 28..3 wraps over the month end."""
+    return day_from <= day <= day_to if day_from <= day_to else day >= day_from or day <= day_to
+
+
+def assign_fixed(rows, entries, resolve):
+    """Each row pays at most one fixed cost: same instrument, inside the day window, merchant key contained.
+
+    Longer merchant keys claim rows first, so "KT통신요금" is not taken by a broader "KT..." entry.
+    """
+    claimed = set()
+    payments = {entry["name"]: [] for entry in entries}
+    for entry in sorted(entries, key=lambda item: -len(normalize_merchant(item["merchant"]))):
+        key = normalize_merchant(entry["merchant"])
+        for index, (item, spent) in enumerate(rows):
+            if (index in claimed or resolve(item)[0] != entry["instrument"]
+                    or not in_day_window(int(item["date"][8:10]), entry["dayFrom"], entry["dayTo"])
+                    or key not in normalize_merchant(item["description"])):
+                continue
+            claimed.add(index)
+            payments[entry["name"]].append({"date": item["date"], "amount": amount_text(spent)})
+    return {name: sorted(paid, key=lambda payment: payment["date"]) for name, paid in payments.items()}
 
 
 def breakdown(transactions, month, settings, previous_covered):
@@ -451,14 +473,16 @@ def breakdown(transactions, month, settings, previous_covered):
     year, number = (int(part) for part in month.split("-"))
     previous_month = f"{year - 1}-12" if number == 1 else f"{year}-{number - 1:02}"
     previous_rows = spent_rows(previous_month) if previous_covered else None
+    entries = settings.get("fixedCosts", [])
+    paid_now = assign_fixed(rows, entries, resolve)
+    paid_before = assign_fixed(previous_rows, entries, resolve) if previous_rows is not None else None
     fixed = []
-    for entry in settings.get("fixedCosts", []):
-        paid = fixed_payments(rows, entry, resolve)
+    for entry in entries:
+        paid = paid_now[entry["name"]]
         total = sum((Decimal(payment["amount"]) for payment in paid), Decimal(0))
         before = None
-        if previous_rows is not None:
-            before = sum((Decimal(payment["amount"]) for payment in fixed_payments(previous_rows, entry, resolve)),
-                         Decimal(0))
+        if paid_before is not None:
+            before = sum((Decimal(payment["amount"]) for payment in paid_before[entry["name"]]), Decimal(0))
         fixed.append({"name": entry["name"], "instrument": entry["instrument"], "day_from": entry["dayFrom"],
                       "day_to": entry["dayTo"], "variable": entry["variable"],
                       "status": "paid" if paid else "missing", "payments": paid, "amount": amount_text(total),

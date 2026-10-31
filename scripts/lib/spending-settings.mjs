@@ -18,7 +18,9 @@ function check(condition, message) {
   if (!condition) throw new Error(`소비 설정 형식 오류: ${message}`);
 }
 
-export function validateSpendingSettings(settings) {
+// 일일 경로(요약 재생성·브리핑)는 송금 판정 칸만 쓴다. 월간 칸의 손 편집 실수가 10분 주기 요약을 멈추지 않게
+// 일일 경로는 이 검사만 한다(2026-10-31 리뷰 MEDIUM). 나머지 칸은 도구가 쓰기 전에, 월 점검이 읽을 때 따로 본다.
+export function validateRecipientDecisions(settings) {
   check(settings && typeof settings === 'object' && !Array.isArray(settings), '객체가 아님');
   const recipients = settings.recipientDecisions ?? [];
   check(Array.isArray(recipients) && !recipients.some((entry) =>
@@ -26,6 +28,16 @@ export function validateSpendingSettings(settings) {
     || (entry.recipient !== undefined && !['휘영', '미네'].includes(entry.recipient))
     || (entry.status !== undefined && !['expense', 'excluded'].includes(entry.status))
     || (entry.status === undefined && entry.recipient === undefined)), 'recipientDecisions');
+  return settings;
+}
+
+// 고정비·항목 가맹점 키는 정규화 뒤 이 길이 이상이어야 한다(짧은 키는 다른 가게 이름에 우연히 들어간다).
+export const MIN_MERCHANT_KEY = 3;
+const merchantKey = (name) => String(name ?? '').replace(/\(?자동납부\)?/g, '').replace(/\(주\)|㈜|주식회사/g, '')
+  .replace(/[\s_()\-.·]/g, '').toLowerCase();
+
+export function validateSpendingSettings(settings) {
+  validateRecipientDecisions(settings);
   const cards = settings.cardMap ?? [];
   check(Array.isArray(cards) && cards.every((entry) => text(entry.card) && text(entry.mask) && text(entry.instrument)),
     'cardMap 항목은 card·mask·instrument');
@@ -39,11 +51,13 @@ export function validateSpendingSettings(settings) {
   check(!aliases.some((entry) => aliases.some((other) => other.from === entry.to)), 'instrumentAliases 연쇄');
   const fixed = settings.fixedCosts ?? [];
   check(Array.isArray(fixed) && fixed.every((entry) => text(entry.name) && text(entry.merchant) && text(entry.instrument)
-    && day(entry.dayFrom) && day(entry.dayTo) && typeof entry.variable === 'boolean'),
-  'fixedCosts 항목은 name·merchant·instrument·dayFrom·dayTo(1~31)·variable');
+    && day(entry.dayFrom) && day(entry.dayTo) && typeof entry.variable === 'boolean'
+    && merchantKey(entry.merchant).length >= MIN_MERCHANT_KEY),
+  `fixedCosts 항목은 name·merchant(정규화 ${MIN_MERCHANT_KEY}자 이상)·instrument·dayFrom·dayTo(1~31)·variable`);
   check(new Set(fixed.map((entry) => entry.name)).size === fixed.length, 'fixedCosts 이름 중복');
   const categories = settings.merchantCategories ?? [];
   check(Array.isArray(categories) && categories.every((entry) => text(entry.merchant) && text(entry.category)
+    && merchantKey(entry.merchant).length >= MIN_MERCHANT_KEY
     && (entry.subcategory === undefined || text(entry.subcategory))), 'merchantCategories 항목은 merchant·category(·subcategory)');
   return settings;
 }

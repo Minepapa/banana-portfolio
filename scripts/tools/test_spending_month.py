@@ -262,6 +262,30 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(fixed["구독"]["status"], "missing")
         self.assertEqual(tables["previous_month"], "2040-01")
 
+    def test_fixed_costs_use_day_window_and_claim_each_row_once(self):
+        fixture = Fixture(self.root, [
+            row("2040-02-11", "09:00:00", -30000, "Card A", description="KT 통신요금"),
+            row("2040-02-20", "09:00:00", -59800, "Card A", description="KTX 코레일 통신"),
+            row("2040-02-01", "09:00:00", -9900, "Card A", description="월말 구독"),
+        ])
+        (fixture.spending / "settings.json").write_text(json.dumps({"fixedCosts": [
+            {"name": "넓은 키", "merchant": "통신", "instrument": "Card A", "dayFrom": 10, "dayTo": 13, "variable": False},
+            {"name": "통신요금", "merchant": "통신요금", "instrument": "Card A", "dayFrom": 10, "dayTo": 13, "variable": True},
+            {"name": "월말", "merchant": "월말 구독", "instrument": "Card A", "dayFrom": 28, "dayTo": 2, "variable": False},
+        ]}), encoding="utf-8")
+        fixed = {item["name"]: item for item in fixture.run("2040-02-01", "2040-02-29", "2040-02")["breakdown"]["fixed"]}
+        self.assertEqual(fixed["통신요금"]["amount"], "30000", "longer key claims the row first")
+        self.assertEqual(fixed["넓은 키"]["status"], "missing", "02-20 is outside 10..13 and 02-11 is taken")
+        self.assertEqual(fixed["월말"]["payments"], [{"date": "2040-02-01", "amount": "9900"}], "28..2 wraps")
+
+    def test_bad_settings_lose_tables_not_the_month(self):
+        fixture = Fixture(self.root, [row("2040-02-03", "12:00:00", -5000, "Card A")])
+        (fixture.spending / "settings.json").write_text(json.dumps({"instrumentAliases": [{"to": "Card B"}]}),
+                                                        encoding="utf-8")
+        result = fixture.run("2040-02-01", "2040-02-29", "2040-02")
+        self.assertEqual(result["monthly"]["total_expense"], "5000")
+        self.assertIn("KeyError", result["breakdown"]["error"])
+
     def test_breakdown_without_previous_month_in_export(self):
         fixture = Fixture(self.root, [row("2040-02-11", "09:00:00", -30000, "Card A", description="통신요금")],
                           folder="2040-02-01_2040-03-05")
