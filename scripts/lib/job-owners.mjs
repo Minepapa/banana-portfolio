@@ -1,6 +1,6 @@
 // 잡 → 담당 자기 선언 — import 없는 순수 상수(2026-10-30, 올림푸스 '신들 현황'이 담당별로 잡 상태를 묶어 보이도록).
 // 근거는 헌장(볼트 90_Delphi/Agents) §5 책임이다. 발신자(SENDER_AGENT)와 다를 수 있다 — 여기는 "그 일의 주인"이다
-// (예: themis-risk-review는 거시 위험 감시가 플루토스 소관이라 plutus, media-night-check는 미네 기록 파이프라인이라 athena).
+// (예: media-night-check는 미네 기록 파이프라인이라 athena).
 // 새 잡을 run.sh·plist·job-schedule.mjs에 넣으면 여기에도 한 줄 넣는다. job-owners.test.js가 빠짐과 6인 밖 값을 막는다.
 export const JOB_OWNERS = {
   // 제우스: 시스템 운영 경보·발신 관문·텔레그램·세션 간 인프라(D83)
@@ -28,6 +28,9 @@ export const JOB_OWNERS = {
   'vault-offsite-backup': 'clio',
   // 테미스: 비가역 행동(미디어 삭제) 검증
   'media-delete-report-weekly': 'themis',
+  // themis-risk-review: 표시 소속만 테미스(오너 승인 2026-10-31 저녁 보고 — 올림푸스 테미스 페이지와 홈·잡·크론의 담당 표기 일치).
+  // 발신자·인격은 plutus(themis-risk-review.mjs SENDER_AGENT·loadAgent)로 유지하고, 헌장 소관(상시 거시 위험 감시 = 플루토스)도 바뀌지 않는다.
+  'themis-risk-review': 'themis',
   // 헤르메스: 일정·위치·동선·소비
   'hermes-briefing': 'hermes',
   'calendar-days': 'hermes',
@@ -64,7 +67,6 @@ export const JOB_OWNERS = {
   'update-allocation-from-holdings': 'plutus',
   'update-monthly-balance-snapshot': 'plutus',
   'morning-briefing': 'plutus',
-  'themis-risk-review': 'plutus',
   'quarterly-allocation-review': 'plutus',
   'rebalance-proposal': 'plutus',
   'proposal-execution-reminder': 'plutus',

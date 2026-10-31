@@ -34,3 +34,7 @@ test('JOB_OWNERS: 값은 판테온 6인 중 하나, 등록되지 않은 잡 이�
     assert.ok(all.includes(job), `${job}: 등록되지 않은(폐지된) 잡의 담당 선언`);
   }
 });
+
+test('JOB_OWNERS: themis-risk-review는 표시 소속만 테미스(오너 승인 2026-10-31) — 발신자 plutus와 다른 의도된 예외', () => {
+  assert.equal(JOB_OWNERS['themis-risk-review'], 'themis');
+});
