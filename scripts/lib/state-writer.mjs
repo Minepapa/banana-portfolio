@@ -145,10 +145,28 @@ export async function withLock(filePath, fn, {
 // rename은 같은 파일시스템 내에서 원자적이라, 쓰는 도중 다른 프로세스가 절반만 쓰인
 // 파일을 보는 사고를 방지한다. 락 없이 단독으로도 쓸 수 있으나(원자성은 이것만으로도
 // 확보), 여러 프로세스의 read-modify-write 경합까지 막으려면 withLock과 함께 써야 한다.
+// 임시 파일은 같은 폴더의 점 파일(`.{파일명}.tmp-…`)이다(2026-10-31) — 볼트 안에서 쓰면 LiveSync가 숨김 파일은 옮기지 않아,
+// 잠깐 보이는 임시 파일이 폰으로 넘어가 'corrupted'가 나던 계열(2026-10-11 사고)을 막는다(락 파일 `.{파일}.lock`과 같은 원칙).
+// fsync는 넣지 않는다 — macOS fsync는 F_FULLFSYNC라 쓰기가 수십 배 느려지고, 디스크가 바쁠 때 락을 쥔 시간이 다른 잡의 대기 한도(500ms)를 넘을 수 있다.
+// 쓰다가 실패하면 임시 파일을 지우고 다시 던진다 — 원본은 그대로다.
+export function atomicTempPath(filePath) {
+  return join(dirname(filePath), `.${basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+}
+
 export function writeAtomic(filePath, content) {
-  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  writeFileSync(tmpPath, content, 'utf8');
-  renameSync(tmpPath, filePath);
+  const tmpPath = atomicTempPath(filePath);
+  const fd = openSync(tmpPath, 'wx');
+  let closed = false;
+  try {
+    writeFileSync(fd, content, 'utf8');
+    closeSync(fd);
+    closed = true;
+    renameSync(tmpPath, filePath);
+  } catch (error) {
+    if (!closed) { try { closeSync(fd); } catch { /* 이미 닫힘 */ } }
+    try { unlinkSync(tmpPath); } catch { /* 없음 */ }
+    throw error;
+  }
 }
 
 // 락+원자적쓰기를 한 번에 — State 파일을 쓸 때는 기본적으로 이 함수 하나만 쓰면 된다.

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { withLock, writeAtomic, writeStateFile, patchFrontmatterFileSafely, lockFilePath, legacyLockFilePath, lockFilesFor } from './state-writer.mjs';
+import { withLock, writeAtomic, atomicTempPath, writeStateFile, patchFrontmatterFileSafely, lockFilePath, legacyLockFilePath, lockFilesFor } from './state-writer.mjs';
 
 function makeTmpDir() {
   return mkdtempSync(join(tmpdir(), 'state-writer-test-'));
@@ -20,6 +20,28 @@ test('writeAtomic: 파일에 내용이 그대로 쓰이고 임시 파일은 남�
   assert.equal(readFileSync(file, 'utf8'), '{"a":1}');
   const leftovers = readdirSync(dir).filter((f) => f.includes('.tmp-'));
   assert.deepEqual(leftovers, []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('writeAtomic: 임시 파일은 같은 폴더의 점 파일, 실패하면 원본은 그대로·임시 파일 정리(2026-10-31 LiveSync)', async () => {
+  const fs = await import('node:fs');
+  const { dirname: dirOf } = await import('node:path');
+  const dir = makeTmpDir();
+  const file = join(dir, 'state.json');
+  // 이름 규칙(결정적으로 확인): 같은 폴더, 점으로 시작, `.{파일명}.tmp-{pid}-`
+  const tmp = atomicTempPath(file);
+  assert.equal(dirOf(tmp), dir);
+  assert.match(tmp.slice(dir.length + 1), new RegExp(`^\\.state\\.json\\.tmp-${process.pid}-\\d+-[a-z0-9]+$`));
+  // rename 대상이 폴더면 실패한다 — 그때 원본과 다른 파일은 그대로, 점 임시 파일은 남지 않아야 한다(예전 코드는 임시 파일이 남았다).
+  writeFileSync(file, 'old');
+  const blocked = join(dir, 'blocked');
+  fs.mkdirSync(join(blocked, 'child'), { recursive: true });
+  assert.throws(() => writeAtomic(blocked, 'x'));
+  assert.deepEqual(readdirSync(dir).sort(), ['blocked', 'state.json'], '임시 파일이 남지 않음');
+  assert.equal(readFileSync(file, 'utf8'), 'old');
+  writeAtomic(file, 'new');
+  assert.equal(readFileSync(file, 'utf8'), 'new');
+  assert.deepEqual(readdirSync(dir).sort(), ['blocked', 'state.json']);
   rmSync(dir, { recursive: true, force: true });
 });
 
