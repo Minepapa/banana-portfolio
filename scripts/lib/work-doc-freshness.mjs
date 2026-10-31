@@ -7,8 +7,13 @@ import { VAULT_REL } from './vault-paths.mjs';
 export const OPEN = new Set(['예정', '진행중', '차단됨', '보류']);
 const CLOSED = new Set(['완료', '폐기']);
 export const WAITING_ON = new Set(['오너 판단', '시장 이벤트', '데이터 축적', '착수 대기', '외부']);
+// 문서 담당 신(선택, 2026-10-31 오너 승인) — 올림푸스가 신별 대기 문서를 센다. 값은 job-owners와 같은 6인 영문 id.
+// 쓰기 관문 훅이 읽는 모듈이라 생성 파일(agent-registry)에 기대지 않고 적는다. 정본 AGENT_IDS와 같은지는 테스트가 막는다.
+export const OWNER_GODS = new Set(['zeus', 'clio', 'themis', 'hermes', 'athena', 'plutus']);
 const WORK_PATH = /^40_Projects\/[^/]+\/(Implementation|Requests)\/[^/]+\.md$/;
 const LOG_PATH = /^60_Logs\//;
+
+const filled = (value) => value != null && value !== '';
 
 export function isWorkDoc(rel) { return WORK_PATH.test(rel); }
 export function workStatus(fields) {
@@ -95,6 +100,9 @@ export function lintWorkDoc(root, rel, content) {
       if (!WAITING_ON.has(fields.waitingOn)) problems.push('작업 문서 waitingOn 없음 또는 허용값 아님');
       if (!validDate(fields.nextCheck)) problems.push('작업 문서 nextCheck 없음 또는 유효한 날짜 아님');
     }
+    // ownerGod·waitingSince는 선택이다(기존 문서는 빈칸 허용). 키만 남은 빈 값도 빈칸으로 보고, 적었으면 값만 검사한다(리뷰 M2).
+    if (filled(fields.ownerGod) && !OWNER_GODS.has(fields.ownerGod)) problems.push(`작업 문서 ownerGod는 ${[...OWNER_GODS].join('·')} 중 하나`);
+    if (filled(fields.waitingSince) && !validDate(fields.waitingSince)) problems.push('작업 문서 waitingSince는 유효한 YYYY-MM-DD');
     if (rel.includes('/Implementation/') && status === '예정') problems.push('Implementation 예정 상태 위반: 계획은 Requests에');
     if (Object.hasOwn(fields, 'supersedes')) {
       const links = stringArray(content, 'supersedes');

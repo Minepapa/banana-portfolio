@@ -112,3 +112,40 @@ test('lintWorkDoc: supersedes가 금고를 가리키면 읽지 않고 문제로 
   const content = `---\nstatus: "완료"\nsupersedes: ["${link}"]\n---\n`;
   assert.deepEqual(lint('/nonexistent-root', '40_Projects/p/Requests/2026-10-24 x.md', content), [`supersedes 대상이 금고임: ${link}`]);
 });
+
+test('lintVault: ownerGod·waitingSince는 선택이며 적었으면 값을 검사한다(2026-10-31)', () => {
+  const f = fixture();
+  try {
+    const path = '40_Projects/alpha/Requests/work.md';
+    const open = 'status: "진행중"\nwaitingOn: "오너 판단"\nnextCheck: "2026-11-01"\n';
+    f.put(path, note('request', open));
+    assert.deepEqual(f.lint(), [], '둘 다 없어도 통과(기존 문서)');
+    for (const god of ['zeus', 'clio', 'themis', 'hermes', 'athena', 'plutus']) {
+      f.put(path, note('request', `${open}ownerGod: "${god}"\nwaitingSince: "2026-10-31"\n`));
+      assert.deepEqual(f.lint(), [], god);
+    }
+    f.put(path, note('request', `${open}ownerGod: hermes\nwaitingSince: 2026-10-31\n`));
+    assert.deepEqual(f.lint(), [], '따옴표 없는 값(Obsidian 속성 편집기 형태)');
+    for (const empty of ['ownerGod:\nwaitingSince:\n', 'ownerGod: ""\nwaitingSince: ""\n', 'ownerGod: null\nwaitingSince: null\n']) {
+      f.put(path, note('request', `${open}${empty}`));
+      assert.deepEqual(f.lint(), [], `키만 남은 빈 값은 빈칸: ${JSON.stringify(empty)}`);
+    }
+    for (const god of ['제우스', 'Zeus']) {
+      f.put(path, note('request', `${open}ownerGod: "${god}"\n`));
+      assert.match(f.lint()[0].problems.join(), /ownerGod/, god);
+    }
+    for (const since of ['2026-02-30', '2026-10-31T09:00Z', '20261031']) {
+      f.put(path, note('request', `${open}waitingSince: "${since}"\n`));
+      assert.match(f.lint()[0].problems.join(), /waitingSince/, since);
+    }
+    f.put(path, note('request', open));
+    f.put('40_Projects/alpha/Implementation/done.md', note('implementation', 'status: "완료"\nprogress: "완료"\nownerGod: "clio"\n'));
+    assert.deepEqual(f.lint(), [], '닫힌 문서도 ownerGod 허용');
+  } finally { f.close(); }
+});
+
+test('OWNER_GODS는 헌장에서 생성한 담당 id(AGENT_IDS)와 같다', async () => {
+  const { OWNER_GODS } = await import('./work-doc-freshness.mjs');
+  const { AGENT_IDS } = await import('./agent-registry.mjs');
+  assert.deepEqual([...OWNER_GODS].sort(), [...AGENT_IDS].sort());
+});
