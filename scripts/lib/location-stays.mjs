@@ -204,8 +204,10 @@ export function buildMoveSegments(stays, points, { date } = {}) {
     const distanceText = distanceKm == null ? '' : ` · ${mode ? `${mode} ` : ''}약 ${distanceKm < 1 ? distanceKm.toFixed(1) : Math.round(distanceKm)}km`;
     moves.push({ kind: 'move', start: new Date(start).toISOString(), end: new Date(end).toISOString(),
       label: `이동${distanceText}`, lat: origin?.lat ?? previous.lat, lon: origin?.lon ?? previous.lon,
-      // 하루 동선 파일·지도용 구조값(표시 문구는 label).
-      distanceKm: distanceKm == null ? null : Math.round(distanceKm * 10) / 10, mode });
+      // 하루 동선 파일·지도용 구조값(표시 문구는 label). track은 거리 계산에 쓴 점 그대로(유령점·튀는 점을 뺀 뒤)라
+      // 지도가 원본을 다시 거르지 않아도 된다. 관측점 없이 양 끝만 있으면 비운다(직선을 경로처럼 그리지 않게).
+      distanceKm: distanceKm == null ? null : Math.round(distanceKm * 10) / 10, mode,
+      track: hasRoute ? path.map((point) => ({ lat: point.lat, lon: point.lon, tst: point.tst })) : [] });
   }
   return moves;
 }

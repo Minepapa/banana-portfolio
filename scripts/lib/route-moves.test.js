@@ -47,13 +47,16 @@ test('150km/h를 넘는 튐은 거리와 속도에서 제외하고 결제 좌표
     point('01', '20', 0.04), point('01', '30', 0.06)];
   const move = buildMoveSegments(stays, points, { date })[0];
   assert.match(move.label, /^이동 · 차량 약 7km$/);
+  assert.deepEqual(move.track.map((item) => item.lon), [0, 0.02, 0.04, 0.06], '튄 점(0.1)은 지도 경로에도 넣지 않는다');
   assert.deepEqual(movePaymentCoordinate(move, stays, points, Date.parse(iso('01', '16'))), { lat: 0, lon: 0.02 });
 });
 
 test('유일한 구간 점이 이상점이면 양 끝 체류만으로 거리와 수단을 추정하지 않는다', () => {
   const stays = [stay(iso('01', '00'), iso('01', '10'), 0), stay(iso('01', '30'), iso('02', '00'), 0.02)];
   const points = [point('01', '05', 0), point('01', '20', 1), point('01', '30', 0.02)];
-  assert.equal(buildMoveSegments(stays, points, { date })[0].label, '이동');
+  const [move] = buildMoveSegments(stays, points, { date });
+  assert.equal(move.label, '이동');
+  assert.deepEqual(move.track, [], '관측점이 없으면 양 끝 직선을 경로로 남기지 않는다');
 });
 
 test('하루 끝 이상점은 이동 종료 시각과 거리를 늘리지 않는다', () => {

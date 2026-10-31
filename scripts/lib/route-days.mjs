@@ -8,7 +8,8 @@ import { dirname, join } from 'node:path';
 import { VAULT_PATHS, VAULT_REL } from './vault-paths.mjs';
 import { writeAtomic } from './state-writer.mjs';
 
-export const ROUTE_DAY_SCHEMA = 1;
+// 2(2026-10-31): 이동에 track(거른 점 [위도, 경도, 초]) 추가. 옛 판의 파일은 재계산이 다시 쓴다(routeDayCurrent).
+export const ROUTE_DAY_SCHEMA = 2;
 
 export function routeDayPath(date, root = VAULT_PATHS.root) {
   return join(root, ...VAULT_REL.locationDays.split('/'), date.slice(0, 4), `${date}.json`);
@@ -32,7 +33,8 @@ export function buildRouteDay({ date, route }) {
     const base = { kind: entry.kind ?? 'stay', start: entry.start, end: entry.end || null,
       startAt: entry.startAt ?? null, endAt: entry.endAt ?? null, minutes: routeMinutes(entry.start, entry.end),
       label: String(entry.label ?? ''), lat: rounded(entry.lat), lon: rounded(entry.lon) };
-    if (entry.kind === 'move') return { ...base, distanceKm: entry.distanceKm ?? null, mode: entry.mode ?? null };
+    if (entry.kind === 'move') return { ...base, distanceKm: entry.distanceKm ?? null, mode: entry.mode ?? null,
+      track: (entry.track ?? []).map((point) => [rounded(point.lat), rounded(point.lon), point.tst]) };
     return { ...base, registered: Boolean(entry.registered), placeName: entry.placeName ?? null,
       activity: entry.activity ?? null, current: Boolean(entry.current),
       outings: (entry.outings ?? []).map((outing) => ({ start: outing.start, end: outing.end,
@@ -40,6 +42,14 @@ export function buildRouteDay({ date, route }) {
         area: outing.area ?? null, lat: rounded(outing.lat), lon: rounded(outing.lon) })) };
   });
   return { schemaVersion: ROUTE_DAY_SCHEMA, date, entries };
+}
+
+// 지금 판의 파일이 있는지. 없거나 옛 판·깨진 파일이면 재계산이 채운다.
+export function routeDayCurrent(date, root = VAULT_PATHS.root) {
+  const path = routeDayPath(date, root);
+  if (!existsSync(path)) return false;
+  try { return JSON.parse(readFileSync(path, 'utf8')).schemaVersion === ROUTE_DAY_SCHEMA; }
+  catch { return false; }
 }
 
 // 같은 내용이면 다시 쓰지 않는다(LiveSync 부담). 반환: 쓴 경로 또는 null.

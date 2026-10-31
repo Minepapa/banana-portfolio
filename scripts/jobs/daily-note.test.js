@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 // 임시 볼트에서 돌린다 — 텔레그램은 가짜 발송 함수로만(실제 발송 금지).
 const vault = mkdtempSync(join(tmpdir(), 'daily-note-'));
@@ -10,6 +10,8 @@ process.env.VAULT_PATH = vault;
 const { planActions, processDay, recomputeDailyRoute, recomputeRecentRoutes, routeHashOf, dailyWorkFailed, computeRoute, readRoutePayments } = await import('./daily-note.mjs');
 const { renderDailyNote, inspectExisting } = await import('../lib/daily-note.mjs');
 const { VAULT_REL } = await import('../lib/vault-paths.mjs');
+// vault-paths를 읽는 모듈은 VAULT_PATH를 정한 뒤에만 불러온다(정적 import면 실제 볼트에 쓴다 — 2026-10-31 사고).
+const { ROUTE_DAY_SCHEMA } = await import('../lib/route-days.mjs');
 const rules = [{ type: 'daily', path: '10_Periodic/Daily/{YYYY}/YYYY-MM-DD.md',
   pathRegex: /^10_Periodic\/Daily\/\d{4}\/\d{4}-\d{2}-\d{2}\.md$/,
   titleRegex: /^\d{4}-\d{2}-\d{2}$/,
@@ -584,5 +586,16 @@ test('하루 동선 파일은 지난날·정상 동선에서만 쓰고, 지문�
     await recomputeDailyRoute({ date: '2026-10-27', root: vault, today: '2026-10-29',
       deps: { ...deps, fetchEvents: async () => { throw new Error('calendar'); } } });
     assert.deepEqual(log, [['compute', '2026-10-27', 0]]);
+    // 옛 판(schema 1) 파일은 지금 판이 아니므로 다시 채우고, 지금 판이면 건드리지 않는다.
+    const dayPath = join(vault, '95_Etna', 'Location', 'Days', '2026', '2026-10-27.json');
+    mkdirSync(dirname(dayPath), { recursive: true });
+    writeFileSync(dayPath, JSON.stringify({ schemaVersion: 1, date: '2026-10-27', entries: [] }));
+    log.length = 0;
+    await recomputeDailyRoute({ date: '2026-10-27', root: vault, today: '2026-10-29', deps });
+    assert.deepEqual(log, [['compute', '2026-10-27', 1], ['day', '2026-10-27']]);
+    writeFileSync(dayPath, JSON.stringify({ schemaVersion: ROUTE_DAY_SCHEMA, date: '2026-10-27', entries: [] }));
+    log.length = 0;
+    await recomputeDailyRoute({ date: '2026-10-27', root: vault, today: '2026-10-29', deps });
+    assert.deepEqual(log, []);
   } finally { rmSync(vault, { recursive: true, force: true }); }
 });

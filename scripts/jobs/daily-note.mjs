@@ -36,7 +36,7 @@ import { createCachedGeocoder } from '../lib/kakao-geocode.mjs';
 import { readDailySpending, formatDailyNoteSpending } from '../lib/spending-daily.mjs';
 import { attachRouteActivities, moveStopovers } from '../lib/route-activities.mjs';
 import { writeSpendingPlaces, spendingPlacesPath } from '../lib/spending-places.mjs';
-import { routeDayPath, writeRouteDay } from '../lib/route-days.mjs';
+import { routeDayCurrent, writeRouteDay } from '../lib/route-days.mjs';
 import { updateCandidates } from '../lib/place-candidates.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import {
@@ -380,9 +380,9 @@ export async function recomputeDailyRoute({ date, root = VAULT_PATHS.root, rules
     // 지문이 같아도 장소별 소비 파일이 없는 지난날이면 그 파일만 쓴다. 확정이 카카오 조회 실패(degraded)로 끝났는데
     // 그 뒤 새 점·결제가 없으면 지문이 그대로라 영영 안 생기기 때문이다(2026-10-29 리뷰). 데일리 노트는 건드리지 않는다.
     // 도입 전 최근 7일도 이 경로로 채워진다. 일정은 장소 이름에 쓰지 않으니 넘기지 않는다.
-    // 하루 동선 파일도 같은 이유로 없으면 채운다(도입 전 최근 7일 포함).
+    // 하루 동선 파일도 같은 이유로 없거나 옛 판이면 채운다(도입 전 최근 7일 포함).
     const missingPlaces = deps.writePlaces && !existsSync(spendingPlacesPath(date, root));
-    const missingDay = deps.writeDay && !existsSync(routeDayPath(date, root));
+    const missingDay = deps.writeDay && !routeDayCurrent(date, root);
     if (!dryRun && date < today && (missingPlaces || missingDay)) {
       // 하루 동선 파일은 일정 활동(공연 등)도 담으므로 일정을 받아 넘긴다. 못 받으면 이번엔 그 파일만 건너뛴다(다음 실행에서 다시).
       let events = [];
