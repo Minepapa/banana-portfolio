@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, linkSync, utimesSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { lockFilePath } from '../lib/state-writer.mjs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { runInNewContext, Script } from 'node:vm';
@@ -243,7 +244,7 @@ test('전사 잠금과 미완료 기록은 적용 전에 중단한다', async ()
   const answersPath = join(f.out, 'answers.json');
   writeFileSync(answersPath, JSON.stringify({ proposalHash: proposal.proposal.hash,
     rows: [{ id: f.id, date: '2019-10-01', newName: '2019-10-01 미네 대화 내용 확인', skip: false }] }));
-  const lock = join(f.root, `${VAULT_REL.mediaTranscribeState}.lock`);
+  const lock = lockFilePath(join(f.root, VAULT_REL.mediaTranscribeState));
   writeFileSync(lock, `${process.pid}:test`);
   await assert.rejects(applyRecordings({ ...f, answersPath, proposalPath: proposal.path }), /전사 잡 실행 중/);
   unlinkSync(lock);

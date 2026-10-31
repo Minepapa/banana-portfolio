@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { lockFilePath } from './state-writer.mjs';
 import { collectWarning, flushWarnings, resetWarnings, warningsSignature } from './job-alerts.mjs';
 import { appendWarningEvent, readWarningEvents } from './warning-event-journal.mjs';
 import { queryWarningIncidents } from './warning-incident-query.mjs';
@@ -361,7 +362,7 @@ test('다른 프로세스 예약 잠금을 확인할 수 없으면 전송하지 
   const config = paths(t);
   resetWarnings();
   collectWarning('락 충돌 경고');
-  writeFileSync(`${config.stateFile}.lock`, `${process.pid}:${randomUUID()}`);
+  writeFileSync(lockFilePath(config.stateFile), `${process.pid}:${randomUUID()}`);
   let sends = 0;
   const result = await flushWarnings('test-job', {
     ...config,

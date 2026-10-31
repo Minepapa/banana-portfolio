@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 import { AUDIO_CUES_PATHS } from '../lib/media-audio-cues.mjs';
 import { safeVideoPath } from '../lib/media-video-frames.mjs';
 import { MEDIA_DIARIZE_PATHS, VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
-import { withLock } from '../lib/state-writer.mjs';
+import { lockFilesFor, withLock } from '../lib/state-writer.mjs';
 import { assignRecordingNames, createPythonSession, readNpy, runPython } from './media-diarize.mjs';
 import { detectRepetition, transcribe } from './media-transcribe.mjs';
 import { savePrivate, selectVideos } from './media-video.mjs';
@@ -281,8 +281,10 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
     return summary;
   }
   if (!selected.length) return summary;
-  const commonLock = join(root, VAULT_REL.mediaTranscribeState) + '.lock';
-  if (existsSync(commonLock)) return { ...summary, busy: true };
+  // 전사 잡이 쥐는 공용 락(새 점 파일 이름과 전환 기간의 예전 이름 둘 다)이 있으면 양보한다.
+  const commonLocks = lockFilesFor(join(root, VAULT_REL.mediaTranscribeState));
+  const transcribeBusy = () => commonLocks.some((lock) => existsSync(lock));
+  if (transcribeBusy()) return { ...summary, busy: true };
   mkdirSync(outputRoot, { recursive: true, mode: 0o700 });
   mkdirSync(paths.root, { recursive: true, mode: 0o700 });
   const started = clock();
@@ -293,7 +295,7 @@ export async function runMediaVideoTranscribe({ root = VAULT_PATHS.root,
     let sessionItems = 0;
     try {
     for (const item of selected) {
-      if (clock() >= deadline || existsSync(commonLock)) break;
+      if (clock() >= deadline || transcribeBusy()) break;
       const expectedMs = item.durationSec * VIDEO_TRANSCRIPT_ESTIMATE_RATIO * 1000;
       if (stopAtMs !== Infinity
         && clock() + expectedMs + VIDEO_TRANSCRIPT_HIGHLIGHT_RESERVE_MS > stopAtMs) {

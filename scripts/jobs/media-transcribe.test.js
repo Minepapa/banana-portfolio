@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { detectRepetition, parseCallFilename, orderPending, runMediaTranscribe } from './media-transcribe.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { writeAtomic } from '../lib/state-writer.mjs';
+import { lockFilesFor, writeAtomic } from '../lib/state-writer.mjs';
 import { contactKey, isLinkedCall } from '../lib/media-people.mjs';
 import { renderSpeakerNote } from './media-diarize.mjs';
 import { speakerParts } from '../lib/media-dialogue.mjs';
@@ -214,7 +214,7 @@ test('fix-loops는 저장된 반복만 N개 처리하고 dry-run에서는 아무
   assert.equal(readFileSync(f.calls, 'utf8'), callsBefore);
   assert.equal(readFileSync(notePath, 'utf8'), originalNote);
   assert.equal(readFileSync(transcriptPath, 'utf8'), originalTranscript);
-  assert.equal(existsSync(`${f.statePath}.lock`), false);
+  assert.equal(lockFilesFor(f.statePath).some((lock) => existsSync(lock)), false);
 
   writeFileSync(notePath, originalNote.replace('convKind: "녹음"', 'convKind: "통화"')
     .replace('people: []', 'people: ["[[30_Wiki/31_People/가상인물]]"]')
@@ -586,7 +586,7 @@ test('dry-run은 전사·상태·노트·잠금 파일을 쓰지 않고 예상 �
   assert.equal(summary.buckets[0].expectedSec, 11);
   assert.equal(summary.upcoming[0].notePath, `${VAULT_REL.mediaConversations}/2030/2030-01-01 가상A 통화.md`);
   assert.equal(existsSync(f.statePath), false);
-  assert.equal(existsSync(`${f.statePath}.lock`), false);
+  assert.equal(lockFilesFor(f.statePath).some((lock) => existsSync(lock)), false);
   assert.equal(existsSync(join(f.root, VAULT_REL.mediaTranscripts)), false);
   assert.equal(existsSync(f.calls), false);
   assert.ok(logs.some((line) => line.includes('upcoming')));

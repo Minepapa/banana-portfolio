@@ -22,6 +22,7 @@ import { applyFields, defaultJudgmentsPath, failed, findTargets, judgeItems, min
   restrictedDecision, reclassifyFailed, run, CLAUDE_RUNS, DAILY_CLAUDE_CALLS, PROMPT_VERSIONS, STATE_REL } from './mine-athena-fields.mjs';
 import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { lockFilesFor } from '../lib/state-writer.mjs';
 
 const now = new Date('2026-10-18T12:00:00Z'); // KST 10-18 21:00
 const rules = [
@@ -161,7 +162,7 @@ test('run: 두 답이 같으면 쓰고, 다르면 애매함으로 남겨 다시 
     cooldown: () => false, ...claude, rules, output: quiet });
   assert.deepEqual(again.written.map((x) => x.rel), [broken], '애매함은 같은 판으로 다시 묻지 않는다');
   assert.equal(asked[split], 2);
-  assert.equal(existsSync(join(root, `${broken}.lock`)), false);
+  assert.equal(lockFilesFor(join(root, broken)).some((lock) => existsSync(lock)), false);
 });
 
 test('run: 판단 중 노트가 바뀌면 쓰지 않고 재시도, 아테나 오류도 그 기록만 재시도하고 파일은 그대로', async (t) => {
@@ -183,7 +184,7 @@ test('run: 판단 중 노트가 바뀌면 쓰지 않고 재시도, 아테나 오
   assert.equal(failed(crashed), true);
   const prose = await run({ ...opts, judgmentsPath: join(root, 'prose.jsonl'), judge: async () => '설명만 있고 JSON 없음' });
   assert.match(prose.invalid[0].reason, /JSON/);
-  assert.equal(existsSync(join(root, `${STATE_REL}.lock`)), false);
+  assert.equal(lockFilesFor(join(root, STATE_REL)).some((lock) => existsSync(lock)), false);
 });
 
 test('failed: 오류가 있거나 하나도 처리하지 못했을 때만 실패, 쿨다운·대상 없음은 정상', () => {

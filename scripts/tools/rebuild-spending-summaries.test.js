@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rebuildSpendingSummaries } from './rebuild-spending-summaries.mjs';
-import { withLock } from '../lib/state-writer.mjs';
+import { lockFilesFor, withLock } from '../lib/state-writer.mjs';
 
 test('기존 일별 원문은 dry-run에서 그대로 두고 명시 적용 시 요약만 생성한다', async (t) => {
   const spendingDir = mkdtempSync(join(tmpdir(), 'spending-rebuild-'));
@@ -45,7 +45,7 @@ test('원문 락을 기다리는 동안 요약 락을 먼저 잡지 않는다', 
   try {
     const rebuild = rebuildSpendingSummaries({ spendingDir, apply: true, logger: { log() {} } });
     await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.equal(existsSync(`${summaryPath}.lock`), false);
+    assert.equal(lockFilesFor(summaryPath).some((lock) => existsSync(lock)), false);
     release();
     await held;
     await rebuild;

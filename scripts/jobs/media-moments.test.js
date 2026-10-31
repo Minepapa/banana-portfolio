@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { groupMoments, describeMoment, runMediaMoments, visionForMoment, loadVideoPeople } from './media-moments.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { writeAtomic } from '../lib/state-writer.mjs';
+import { lockFilesFor, writeAtomic } from '../lib/state-writer.mjs';
 import { buildMemo } from '../tools/inbox-memo.mjs';
 import { linkPhotoMemos, matchPhotoMemo } from './media-photo-memos.mjs';
 
@@ -412,7 +412,7 @@ test('dry-run은 append 중 마지막 미완성 색인 행을 건너뛰고 락 �
   writeFileSync(index, `${readFileSync(index, 'utf8')}{"id":"partial"`);
   const summary = await runMediaMoments({ ...options, dryRun: true });
   assert.equal(summary.created, 1);
-  assert.equal(existsSync(`${index}.lock`), false);
+  assert.equal(lockFilesFor(index).some((lock) => existsSync(lock)), false);
 });
 
 test('📎 지문은 30일 창·거리·2등 간격을 통과해야 하고 연결은 멱등이며 오너 메모를 보존한다', async (t) => {

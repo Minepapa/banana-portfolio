@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { lockFilePath } from '../lib/state-writer.mjs';
 import { selectApply, identifyOwner, updateOwnerMean, renderSpeakerNote, parseArgs, launchOptions, runApply, confirmOwner,
   evaluateEnrollment, enrollmentCalls } from './media-diarize.mjs';
 import { renderDialogue } from '../lib/media-dialogue.mjs';
@@ -330,9 +331,9 @@ test('busy media lock skips the scheduled run quietly; failures are recorded and
       return [{ id: items[0].id, turns: [{ start: 0, end: 1000, speaker: 'S0' }] }];
     } };
   // 전사 잡이 상태 잠금을 잡고 있으면 이번 회차는 조용히 건너뛴다.
-  put(`${join(root, VAULT_REL.mediaTranscribeState)}.lock`, `${process.pid}:test`);
+  put(lockFilePath(join(root, VAULT_REL.mediaTranscribeState)), `${process.pid}:test`);
   assert.equal((await runApply(options)).busy, true);
-  rmSync(`${join(root, VAULT_REL.mediaTranscribeState)}.lock`);
+  rmSync(lockFilePath(join(root, VAULT_REL.mediaTranscribeState)));
   const first = await runApply(options);
   assert.equal(first.processed, 1);
   assert.equal(first.failed, 0); // 영구 실패(2화자 아님)·긴 통화는 건너뜀으로만 센다

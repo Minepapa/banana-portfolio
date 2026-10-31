@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSy
   unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { lockFilePath, lockFilesFor } from '../lib/state-writer.mjs';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { recordingKind, RECORDING_DIALOGUE_KINDS, selectRecordings, assignRecordingNames,
@@ -461,7 +462,7 @@ test('녹음 시험은 볼트 쓰기 없이 미리보기만 만들고 적용은 
     now: new Date('2030-01-01T16:00:00Z'), runWorker: () => { throw new Error('야간 실행'); } });
   assert.equal(blockedNight.processed, 0);
   assert.equal(existsSync(paths.trialRec), false);
-  const transcribeLock = `${join(root, VAULT_REL.mediaTranscribeState)}.lock`;
+  const transcribeLock = lockFilePath(join(root, VAULT_REL.mediaTranscribeState));
   put(transcribeLock, 'active');
   const blockedLock = await runRecordings({ ...options, trial: true,
     runWorker: () => { throw new Error('전사 잠금 중 실행'); } });
@@ -470,7 +471,7 @@ test('녹음 시험은 볼트 쓰기 없이 미리보기만 만들고 적용은 
   await runRecordings({ ...options, trial: true });
   assert.equal(readFileSync(notePath, 'utf8'), note);
   assert.equal(existsSync(join(root, VAULT_REL.mediaSpeakers, '2030', `${ID}.json`)), false);
-  assert.equal(existsSync(`${join(root, VAULT_REL.mediaTranscribeState)}.lock`), false);
+  assert.equal(lockFilesFor(join(root, VAULT_REL.mediaTranscribeState)).some((lock) => existsSync(lock)), false);
   assert.match(readFileSync(join(paths.trialRec, `${ID}.md`), 'utf8'), /나: 안녕\n미네: 응/);
   const trialSummary = readFileSync(join(paths.trialRec, 'summary.md'), 'utf8');
   assert.match(trialSummary, /화자별 미네 유사도 \| 발화 비율 \| 판정 근거/);

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { lockFilePath } from './state-writer.mjs';
 import { join } from 'node:path';
 import { holdingFilename, buildLiveHoldingRecord, parseAppliedDedupKeys, buildCashHoldingRecord, writeHoldingSafely } from './holdings-vault-writer.mjs';
 import { parseFrontmatter, buildFrontmatter } from './vault-frontmatter.mjs';
@@ -83,7 +84,7 @@ function testHoldingPath() {
 }
 function cleanupTestHolding() {
   try { rmSync(testHoldingPath(), { force: true }); } catch { /* 무시 */ }
-  try { rmSync(`${testHoldingPath()}.lock`, { force: true }); } catch { /* 무시 */ }
+  try { rmSync(lockFilePath(testHoldingPath()), { force: true }); } catch { /* 무시 */ }
 }
 
 test('[코드리뷰 HIGH 지적/실사고 재현] writeHoldingSafely: 기존 파일이 있어도 identity 필드(ticker 등)를 실제로 갱신함', { skip: !CAN_WRITE_VAULT }, async () => {
@@ -147,7 +148,7 @@ test('writeHoldingSafely: 쓰기 후 락파일이 남지 않음', { skip: !CAN_W
   cleanupTestHolding();
   try {
     await writeHoldingSafely({ account: TEST_ACCOUNT, name: TEST_NAME, avgPrice: 1, qty: 1, invest: 1 });
-    assert.equal(existsSync(`${testHoldingPath()}.lock`), false);
+    assert.equal(existsSync(lockFilePath(testHoldingPath())), false);
   } finally {
     cleanupTestHolding();
   }

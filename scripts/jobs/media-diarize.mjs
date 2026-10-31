@@ -11,7 +11,7 @@ import { join, resolve, relative, sep, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { MEDIA_DIARIZE_PATHS, VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
-import { writeAtomic, withLock } from '../lib/state-writer.mjs';
+import { writeAtomic, withLock, lockFilesFor } from '../lib/state-writer.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { renderDialogue, counterpartFromNote, speakerParts } from '../lib/media-dialogue.mjs';
@@ -1504,7 +1504,7 @@ export async function runRecordings({ root = VAULT_PATHS.root, paths = MEDIA_DIA
   if (dryRun) { output.log(`[media-diarize] 녹음 dry-run ${JSON.stringify(chosen.map((item) => item.id))}`); return summary; }
   const run = async () => {
     // 시험은 볼트에 잠금 파일도 남기지 않는다. 이미 전사 중이면 읽기만 하고 건너뛴다.
-    if (trial && existsSync(`${join(root, VAULT_REL.mediaTranscribeState)}.lock`)) {
+    if (trial && lockFilesFor(join(root, VAULT_REL.mediaTranscribeState)).some((lock) => existsSync(lock))) {
       output.log('[media-diarize] 전사 작업 잠금 중 — 녹음 시험 건너뜀');
       return { ...summary, busy: true };
     }
@@ -1532,7 +1532,7 @@ export async function runRecordings({ root = VAULT_PATHS.root, paths = MEDIA_DIA
     try {
       for (const item of chosen) {
         if (controller.signal.aborted) break;
-        if (trial && existsSync(`${join(root, VAULT_REL.mediaTranscribeState)}.lock`)) {
+        if (trial && lockFilesFor(join(root, VAULT_REL.mediaTranscribeState)).some((lock) => existsSync(lock))) {
           output.log('[media-diarize] 전사 작업 잠금 중 — 남은 녹음 시험 건너뜀');
           break;
         }

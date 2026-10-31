@@ -9,17 +9,37 @@
 // 소유 프로세스가 죽은 경우에만 정리한다. 살아 있는 프로세스의 장시간 쓰기는 보존한다.
 
 import {
-  writeFileSync, renameSync, unlinkSync, closeSync, openSync, statSync, readFileSync,
+  writeFileSync, renameSync, unlinkSync, closeSync, openSync, statSync, readFileSync, existsSync,
 } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { basename, dirname, join } from 'node:path';
 import { updateFrontmatter } from './vault-frontmatter.mjs';
 
 const DEFAULT_RETRIES = 10;
 const DEFAULT_RETRY_DELAY_MS = 50;
 const DEFAULT_STALE_LOCK_MS = 10_000;
 
-function lockPath(filePath) {
+// 락 파일은 같은 폴더의 점 파일 `.{파일명}.lock`이다(2026-10-31). 볼트 안 State 파일의 락이 점 파일이 아니면
+// LiveSync가 잠깐 생긴 락까지 폰으로 옮기고 볼트 lint에도 걸린다 — 점 파일은 둘 다 건너뛴다.
+// 이미 점으로 시작하는 파일(`.nh-order-….lock` 등)은 예전 이름 그대로 쓴다(이미 숨김이고, 이름을 바꿀 이유가 없다).
+export function lockFilePath(filePath) {
+  const name = basename(filePath);
+  return name.startsWith('.') ? `${filePath}.lock` : join(dirname(filePath), `.${name}.lock`);
+}
+
+// 전환 기간: 옛 코드를 이미 메모리에 올린 프로세스는 예전 이름 `{파일}.lock`을 잡는다. 새 이름을 잡기 전과 잡은 뒤
+// 예전 이름도 확인해 겹칠 창을 줄인다 — 완전히 막지는 못한다(잡은 뒤 확인을 지난 다음 옛 코드가 예전 이름을 잡을 수
+// 있다). 완전한 배제는 배포 직후 이 모듈을 쓰는 상시 프로세스를 모두 다시 띄운 뒤부터다. 그 뒤에는 예전 이름이
+// 생기지 않으므로 이 확인은 늘 비어 있다(제거 조건·대상은 Requests `2026-10-31 락 파일 예전 이름 확인 제거`).
+export function legacyLockFilePath(filePath) {
   return `${filePath}.lock`;
+}
+
+// 다른 코드가 '이 파일을 누가 쓰고 있나'를 볼 때 쓰는 두 이름(새·예전). 둘 중 하나라도 있으면 쓰는 중이다.
+export function lockFilesFor(filePath) {
+  const current = lockFilePath(filePath);
+  const legacy = legacyLockFilePath(filePath);
+  return current === legacy ? [current] : [current, legacy];
 }
 
 function processIsAlive(pid) {
@@ -32,13 +52,39 @@ function processIsAlive(pid) {
   }
 }
 
+// 락 파일이 오래됐고 소유 프로세스가 죽었으면 지운다(살아 있으면 그대로). 그 사이 바뀌었으면 손대지 않는다.
+function reapIfDead(lp, staleLockMs) {
+  try {
+    const stat = statSync(lp);
+    if (Date.now() - stat.mtimeMs > staleLockMs) {
+      const owner = readFileSync(lp, 'utf8');
+      const pid = Number(owner.split(':', 1)[0]);
+      if (!processIsAlive(pid)) {
+        const current = statSync(lp);
+        if (current.ino === stat.ino && readFileSync(lp, 'utf8') === owner) unlinkSync(lp);
+      }
+    }
+  } catch {
+    // 그 사이 다른 프로세스가 이미 정리·해제했으면 무시 — 다음 재시도에서 다시 판단
+  }
+}
+
+function legacyLockHeld(filePath, staleLockMs) {
+  const legacy = legacyLockFilePath(filePath);
+  if (legacy === lockFilePath(filePath) || !existsSync(legacy)) return false;
+  reapIfDead(legacy, staleLockMs);
+  return existsSync(legacy);
+}
+
 // O_EXCL(wx)로 생성한 락에 소유자 토큰을 남긴다. 시간이 오래됐다는 이유만으로 살아
 // 있는 쓰기의 락을 회수하지 않는다(긴 fsync 중 두 쓰기가 겹치는 사고 방지).
 function tryAcquireLock(filePath, staleLockMs) {
-  const lp = lockPath(filePath);
+  const lp = lockFilePath(filePath);
+  if (legacyLockHeld(filePath, staleLockMs)) return null; // 옛 코드가 쥐고 있음 — 다음 재시도에서 다시 본다
+  let owner;
   try {
     const fd = openSync(lp, 'wx', 0o600);
-    const owner = `${process.pid}:${randomUUID()}`;
+    owner = `${process.pid}:${randomUUID()}`;
     try {
       writeFileSync(fd, owner);
     } catch (error) {
@@ -47,29 +93,22 @@ function tryAcquireLock(filePath, staleLockMs) {
     } finally {
       closeSync(fd);
     }
-    return owner;
   } catch (e) {
     if (e.code !== 'EEXIST') throw e;
-    try {
-      const stat = statSync(lp);
-      if (Date.now() - stat.mtimeMs > staleLockMs) {
-        const owner = readFileSync(lp, 'utf8');
-        const pid = Number(owner.split(':', 1)[0]);
-        if (!processIsAlive(pid)) {
-          const current = statSync(lp);
-          if (current.ino === stat.ino && readFileSync(lp, 'utf8') === owner) unlinkSync(lp);
-        }
-      }
-    } catch {
-      // 그 사이 다른 프로세스가 이미 정리·해제했으면 무시 — 다음 재시도에서 다시 판단
-    }
+    reapIfDead(lp, staleLockMs);
     return null;
   }
+  // 새 이름을 잡은 사이 옛 코드가 예전 이름을 잡았으면 내 것을 풀고 물러난다(겹칠 창을 줄인다).
+  if (legacyLockHeld(filePath, staleLockMs)) {
+    releaseLock(filePath, owner);
+    return null;
+  }
+  return owner;
 }
 
 function releaseLock(filePath, owner) {
   try {
-    const lp = lockPath(filePath);
+    const lp = lockFilePath(filePath);
     if (readFileSync(lp, 'utf8') === owner) unlinkSync(lp);
   } catch {
     // 이미 없으면(예: 정리됨) 무시 — 해제는 best-effort

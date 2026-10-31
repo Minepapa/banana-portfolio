@@ -361,7 +361,7 @@ test('워처 전송 중에는 상태 잠금을 놓고 겹친 실행은 같은 �
   let sends = 0;
   const send = async () => {
     sends++;
-    assert.equal(readdirSync(dir).includes('watcher.json.lock'), false);
+    assert.equal(readdirSync(dir).some((name) => name === 'watcher.json.lock' || name === '.watcher.json.lock'), false);
     entered();
     await gate;
     return { ok: true, result: { message_id: 1 } };

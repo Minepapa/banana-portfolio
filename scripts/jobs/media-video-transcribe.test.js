@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { lockFilePath, lockFilesFor } from '../lib/state-writer.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 import { filterVideoSegments, nameVideoSegments, parseVideoTranscriptArgs,
   restoreSourceTime, reviewVideoSegments, runMediaVideoTranscribe,
@@ -238,9 +239,17 @@ test('dry-run 무쓰기, 결과 0600, 재실행 증분', async (t) => {
   assert.equal(statSync(path).mode & 0o777, 0o600);
   assert.equal(result.segments[0].name, '미네');
   assert.equal(result.speakers.evidence.S0.basis, 'voice');
-  assert.equal(existsSync(join(f.root, `${VAULT_REL.mediaTranscribeState}.lock`)), false);
+  assert.equal(lockFilesFor(join(f.root, VAULT_REL.mediaTranscribeState)).some((lock) => existsSync(lock)), false);
   assert.equal((await runMediaVideoTranscribe(options)).selected, 0);
   rmSync(path);
+  // 전사 잡이 공용 락을 쥐고 있으면(새 점 파일 이름·전환 기간의 예전 이름 모두) 영상 전사는 양보한다.
+  const transcribeState = join(f.root, VAULT_REL.mediaTranscribeState);
+  for (const lock of lockFilesFor(transcribeState)) {
+    writeFileSync(lock, `${process.pid}:test`);
+    assert.equal((await runMediaVideoTranscribe(options)).busy, true, lock);
+    rmSync(lock);
+  }
+  assert.equal(lockFilePath(transcribeState), join(f.root, '95_Etna', 'Media', '.transcribe-state.json.lock'));
   const noSpeaker = await runMediaVideoTranscribe({ ...options,
     diarizeFn: async () => [{ id: ID, error: 'expected 1..3 speakers with embeddings, found 0' }] });
   assert.equal(noSpeaker.processed, 1);

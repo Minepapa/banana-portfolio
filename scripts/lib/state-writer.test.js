@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { withLock, writeAtomic, writeStateFile, patchFrontmatterFileSafely } from './state-writer.mjs';
+import { withLock, writeAtomic, writeStateFile, patchFrontmatterFileSafely, lockFilePath, legacyLockFilePath, lockFilesFor } from './state-writer.mjs';
 
 function makeTmpDir() {
   return mkdtempSync(join(tmpdir(), 'state-writer-test-'));
@@ -39,7 +39,7 @@ test('withLock: 락을 정상 해제한다(작업 후 .lock 파일이 남지 않
   await withLock(file, async () => {
     writeAtomic(file, '1');
   });
-  assert.equal(existsSync(`${file}.lock`), false);
+  assert.equal(existsSync(lockFilePath(file)), false);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -52,7 +52,7 @@ test('withLock: fn이 던져도 락은 반드시 해제된다', async () => {
     }),
     /작업 실패/,
   );
-  assert.equal(existsSync(`${file}.lock`), false);
+  assert.equal(existsSync(lockFilePath(file)), false);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -87,7 +87,7 @@ test('[핵심] withLock: 동시 호출이 직렬화되어 read-modify-write 경�
 test('withLock: 락이 이미 점유 중이면 재시도 소진 후 명시적으로 포기(무한 대기 금지)', async () => {
   const dir = makeTmpDir();
   const file = join(dir, 'state.json');
-  writeFileSync(`${file}.lock`, '99999'); // 다른 프로세스가 쥐고 있는 것처럼 시뮬레이션(신선한 락)
+  writeFileSync(lockFilePath(file), '99999'); // 다른 프로세스가 쥐고 있는 것처럼 시뮬레이션(신선한 락)
   await assert.rejects(
     withLock(file, async () => {}, { retries: 2, retryDelayMs: 5 }),
     /락 획득 실패\(포기\)/,
@@ -98,7 +98,7 @@ test('withLock: 락이 이미 점유 중이면 재시도 소진 후 명시적으
 test('withLock: 오래된(stale) 락은 죽은 프로세스의 잔재로 보고 정리 후 획득 성공', async () => {
   const dir = makeTmpDir();
   const file = join(dir, 'state.json');
-  const lockFile = `${file}.lock`;
+  const lockFile = lockFilePath(file);
   writeFileSync(lockFile, '99999999');
   const old = new Date(Date.now() - 60_000); // 60초 전 — staleLockMs(작게 설정)를 넘김
   utimesSync(lockFile, old, old);
@@ -119,7 +119,7 @@ test('withLock: 오래된(stale) 락은 죽은 프로세스의 잔재로 보고 
 test('withLock: 살아 있는 프로세스의 오래된 락은 회수하지 않는다', async () => {
   const dir = makeTmpDir();
   const file = join(dir, 'state.json');
-  const lockFile = `${file}.lock`;
+  const lockFile = lockFilePath(file);
   writeFileSync(lockFile, String(process.pid));
   const old = new Date(Date.now() - 60_000);
   utimesSync(lockFile, old, old);
@@ -134,7 +134,7 @@ test('withLock: 살아 있는 프로세스의 오래된 락은 회수하지 않�
 test('withLock: 내 락이 다른 소유자의 락으로 바뀌면 해제하지 않는다', async () => {
   const dir = makeTmpDir();
   const file = join(dir, 'state.json');
-  const lockFile = `${file}.lock`;
+  const lockFile = lockFilePath(file);
   await withLock(file, () => {
     unlinkSync(lockFile);
     writeFileSync(lockFile, '99999999:replacement');
@@ -148,7 +148,7 @@ test('writeStateFile: 락+원자적쓰기를 한 번에 수행', async () => {
   const file = join(dir, 'state.json');
   await writeStateFile(file, '{"holdings":[]}');
   assert.equal(readFileSync(file, 'utf8'), '{"holdings":[]}');
-  assert.equal(existsSync(`${file}.lock`), false);
+  assert.equal(existsSync(lockFilePath(file)), false);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -191,7 +191,7 @@ test('patchFrontmatterFileSafely: 락 파일이 끝나고 정리됨', async () =
   const file = join(dir, 'holding.md');
   writeFileSync(file, '---\nqty: 1\n---\n');
   await patchFrontmatterFileSafely(file, { qty: 2 });
-  assert.equal(existsSync(`${file}.lock`), false);
+  assert.equal(existsSync(lockFilePath(file)), false);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -202,6 +202,37 @@ test('[코드리뷰 MEDIUM 지적] patchFrontmatterFileSafely: 파일이 없으�
   // 그 사이 다른 잡이 전량청산으로 파일 자체를 지운 상황을 재현.
   const result = await patchFrontmatterFileSafely(file, { qty: 2 });
   assert.equal(result, false);
-  assert.equal(existsSync(`${file}.lock`), false, '실패해도 락파일은 남지 않아야 함');
+  assert.equal(existsSync(lockFilePath(file)), false, '실패해도 락파일은 남지 않아야 함');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('락 파일은 같은 폴더의 점 파일, 이미 점으로 시작하는 파일은 예전 이름', () => {
+  assert.equal(lockFilePath('/v/95_Etna/Investing/Holdings/위탁-테슬라.md'), '/v/95_Etna/Investing/Holdings/.위탁-테슬라.md.lock');
+  assert.equal(lockFilePath('/v/x/.nh-order-1.lock'), '/v/x/.nh-order-1.lock.lock');
+  assert.deepEqual(lockFilesFor('/v/a.json'), ['/v/.a.json.lock', '/v/a.json.lock']);
+  assert.deepEqual(lockFilesFor('/v/.hidden'), ['/v/.hidden.lock']);
+});
+
+test('전환 기간: 옛 이름 락을 살아 있는 프로세스가 쥐고 있으면 기다리다 포기하고, 새 이름 락은 만들지 않는다', async () => {
+  const dir = makeTmpDir();
+  const file = join(dir, 'state.json');
+  writeFileSync(legacyLockFilePath(file), `${process.pid}:old-code`);
+  await assert.rejects(withLock(file, () => {}, { retries: 2, retryDelayMs: 1 }), /락 획득 실패\(포기\)/);
+  assert.equal(existsSync(lockFilePath(file)), false);
+  assert.equal(readFileSync(legacyLockFilePath(file), 'utf8'), `${process.pid}:old-code`);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('전환 기간: 죽은 프로세스의 오래된 옛 이름 락은 정리하고 새 이름으로 잡는다', async () => {
+  const dir = makeTmpDir();
+  const file = join(dir, 'state.json');
+  writeFileSync(legacyLockFilePath(file), '99999999:dead');
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(legacyLockFilePath(file), old, old);
+  let ran = false;
+  await withLock(file, () => { ran = true; assert.equal(existsSync(lockFilePath(file)), true); }, { staleLockMs: 1000, retries: 3, retryDelayMs: 1 });
+  assert.equal(ran, true);
+  assert.equal(existsSync(legacyLockFilePath(file)), false);
+  assert.equal(existsSync(lockFilePath(file)), false);
   rmSync(dir, { recursive: true, force: true });
 });
