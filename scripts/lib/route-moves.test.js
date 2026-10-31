@@ -67,6 +67,7 @@ test('하루 끝 이상점은 이동 종료 시각과 거리를 늘리지 않는
   const move = buildMoveSegments(stays, moving, { date })[0];
   assert.equal(move.end, iso('01', '15'));
   assert.equal(move.label, '이동 · 약 2km');
+  assert.ok(move.track.every((item) => item.lon !== 1), '자정 직전 튄 점은 경로에도 없다');
 });
 
 test('이동 결제는 결제 시각에 가장 가까운 구간 점을 쓰고 점이 없으면 시간상 가까운 체류를 쓴다', () => {
@@ -115,6 +116,7 @@ test('하루 끝을 넘는 이동은 24:00에 자른다', () => {
   const moves = buildMoveSegments(stays, points, { date });
   assert.equal(moves[0].end, '2026-10-10T15:00:00.000Z');
   assert.equal(moves[0].label, '이동 · 차량 약 8km');
+  assert.deepEqual(moves[0].track.map((item) => item.lon), [0, 0.03, 0.07], '다음 날 점(00:10)은 오늘 경로에 넣지 않는다');
 });
 
 test('다음 날 체류 앞 자정 직전 이상점은 오늘 이동의 도착점과 거리에 쓰지 않는다', () => {

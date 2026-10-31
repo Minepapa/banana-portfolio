@@ -8,7 +8,8 @@ import { dirname, join } from 'node:path';
 import { VAULT_PATHS, VAULT_REL } from './vault-paths.mjs';
 import { writeAtomic } from './state-writer.mjs';
 
-// 2(2026-10-31): 이동에 track(거른 점 [위도, 경도, 초]) 추가. 옛 판의 파일은 재계산이 다시 쓴다(routeDayCurrent).
+// 2(2026-10-31): 이동에 track(거른 점 [위도, 경도, 초]) 추가. track[0]은 출발 체류의 마지막 점이라 시각이
+// 이동 시작보다 이르고(자정에 잘린 체류면 전날일 수 있다), 관측점이 없는 이동은 빈 배열이다. 옛 판의 파일은 재계산이 다시 쓴다(routeDayCurrent).
 export const ROUTE_DAY_SCHEMA = 2;
 
 export function routeDayPath(date, root = VAULT_PATHS.root) {
@@ -52,10 +53,16 @@ export function routeDayCurrent(date, root = VAULT_PATHS.root) {
   catch { return false; }
 }
 
+// 항목 하나를 한 줄로 쓴다. 들여쓴 JSON은 track 점 하나가 다섯 줄이 돼 파일이 수십 KB로 커진다(2026-10-31 리뷰).
+export function routeDayText(day) {
+  const entries = day.entries.map((entry) => `    ${JSON.stringify(entry)}`).join(',\n');
+  return `{\n  "schemaVersion": ${day.schemaVersion},\n  "date": ${JSON.stringify(day.date)},\n  "entries": [${entries ? `\n${entries}\n  ` : ''}]\n}\n`;
+}
+
 // 같은 내용이면 다시 쓰지 않는다(LiveSync 부담). 반환: 쓴 경로 또는 null.
 export function writeRouteDay({ date, route, root = VAULT_PATHS.root, write = writeAtomic }) {
   const path = routeDayPath(date, root);
-  const text = `${JSON.stringify(buildRouteDay({ date, route }), null, 2)}\n`;
+  const text = routeDayText(buildRouteDay({ date, route }));
   if (existsSync(path) && readFileSync(path, 'utf8') === text) return null;
   mkdirSync(dirname(path), { recursive: true });
   write(path, text);

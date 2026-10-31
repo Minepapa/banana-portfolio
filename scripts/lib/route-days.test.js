@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { buildRouteDay, routeDayCurrent, routeDayPath, routeMinutes, writeRouteDay } from './route-days.mjs';
+import { buildRouteDay, routeDayCurrent, routeDayPath, routeDayText, routeMinutes, writeRouteDay } from './route-days.mjs';
 
 const route = [
   { kind: 'stay', start: '00:00', end: '06:23', startAt: '2026-10-28T15:00:00.000Z', endAt: '2026-10-28T21:23:00.000Z',
@@ -59,4 +59,13 @@ test('옛 판·깨진 파일은 지금 판이 아니라서 재계산이 다시 �
   assert.equal(routeDayCurrent('2026-10-29', root), false);
   writeRouteDay({ date: '2026-10-29', route, root });
   assert.equal(routeDayCurrent('2026-10-29', root), true);
+});
+
+test('파일은 항목마다 한 줄이고 그대로 다시 읽힌다(track 없는 이동은 빈 배열)', () => {
+  const day = buildRouteDay({ date: '2026-10-29', route: [...route, { kind: 'move', start: '19:00', end: '19:10', label: '이동' }] });
+  const text = routeDayText(day);
+  assert.deepEqual(JSON.parse(text), day);
+  assert.equal(text.split('\n').length, day.entries.length + 7);
+  assert.deepEqual(day.entries.at(-1).track, []);
+  assert.equal(routeDayText({ schemaVersion: 2, date: '2026-10-29', entries: [] }), '{\n  "schemaVersion": 2,\n  "date": "2026-10-29",\n  "entries": []\n}\n');
 });
