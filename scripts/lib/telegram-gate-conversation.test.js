@@ -23,7 +23,7 @@ function memoryConfirmStore(initial = null) {
 }
 
 function setup({ clock = new Date('2026-10-30T05:00:00Z'), results = [], events = [{ type: 'system', subtype: 'init' }], cooldown = null, handoffs = {}, confirm = null, summarize,
-  sendImpl = null, downloadPhoto = null, isStopping = () => false, runnerHook = null, writeHandoffImpl = null, warns = null } = {}) {
+  sendImpl = null, downloadPhoto = null, isStopping = () => false, runnerHook = null, writeHandoffImpl = null, warns = null, journalWrap = (j) => j } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'gate-conv-'));
   const state = { now: clock };
   const sent = [];
@@ -54,7 +54,7 @@ function setup({ clock = new Date('2026-10-30T05:00:00Z'), results = [], events 
     writeHandoff: (day, content) => { if (writeHandoffImpl) writeHandoffImpl(day, content); vault[day] = content.replace(/^---\n[\s\S]*?\n---\n/, '').trim(); },
     warn: async (m) => { warns?.push(m); },
     summarize: summarize ?? (async () => ({ decisions: [], summary: [] })),
-    journal: createJournal({ stateDir: dir, now: () => state.now, dayOf: businessDay }),
+    journal: journalWrap(createJournal({ stateDir: dir, now: () => state.now, dayOf: businessDay })),
     sessionStore: createSessionStore({ stateDir: dir, uuid: () => `S${++n}` }),
     confirmStore,
     isLive: () => true,
@@ -85,6 +85,44 @@ test('대화 한 번: 진행 메시지(받음) → 최종 답은 새 메시지 �
     assert.equal(flag(s.runs[1], '--resume'), 'S1');
     const journal = s.conv.state; // 상태 노출 확인
     assert.equal(journal.lastRun.status, '완료');
+  } finally { s.cleanup(); }
+});
+
+test('진행 메시지 시각 기록: 관문이 받은 시각(ms)부터 지연을 재고 kind·항목 수·대기 건수를 남긴다(1초 기준 측정용)', async () => {
+  const s = setup({ clock: new Date('2026-10-31T05:06:59.400Z') });
+  try {
+    const receivedAtMs = Date.parse('2026-10-31T05:06:58.900Z');
+    await s.conv.processBatch([{ updateId: 7, meta: { chatId: CHAT, messageId: 7, date: Math.floor(receivedAtMs / 1000), receivedAtMs }, args: { kind: 'text', text: '날짜' } }]);
+    const { readFileSync, readdirSync } = await import('node:fs');
+    const dir = join(s.dir, 'journal');
+    const rows = readdirSync(dir).flatMap((f) => readFileSync(join(dir, f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    const p = rows.find((r) => r.type === 'progress');
+    assert.deepEqual({ ok: p.ok, receivedAt: p.receivedAt, delayMs: p.delayMs, kinds: p.kinds, items: p.items, telegramDate: p.telegramDate },
+      { ok: true, receivedAt: '2026-10-31T05:06:58.900Z', delayMs: 500, kinds: ['text'], items: 1, telegramDate: '2026-10-31T05:06:58.000Z' });
+  } finally { s.cleanup(); }
+});
+
+test('progressRecord: 0·null·없는 시각은 쓰지 않고, 가장 이른 항목 기준, 발송 실패는 ok:false', async () => {
+  const { progressRecord } = await import('./telegram-gate-conversation.mjs');
+  const sentAtMs = Date.parse('2026-10-31T05:00:01.000Z');
+  const none = progressRecord([{ meta: { date: 0, receivedAtMs: null }, args: { kind: 'text' } }], { sentAtMs, ok: false });
+  assert.equal(none.ok, false);
+  assert.equal('receivedAt' in none, false);
+  assert.equal('telegramDate' in none, false);
+  const two = progressRecord([
+    { meta: { receivedAtMs: Date.parse('2026-10-31T05:00:00.700Z') }, args: { kind: 'text' } },
+    { meta: { receivedAtMs: Date.parse('2026-10-31T05:00:00.200Z') }, args: { kind: 'photo' } },
+  ], { sentAtMs, ok: true, queued: 1 });
+  assert.deepEqual([two.delayMs, two.items, two.queued, two.kinds], [800, 2, 1, ['text', 'photo']]);
+});
+
+test('진행 시각 기록이 실패해도 대화 줄이 실행 중에 갇히지 않는다(리뷰 M2)', async () => {
+  const s = setup({ journalWrap: (j) => ({ ...j, append: (e) => { if (e.type === 'progress') throw new Error('디스크 가득 참'); return j.append(e); } }) });
+  try {
+    const result = await s.conv.processBatch([item(1, '안녕하세요')]);
+    assert.equal(result.status, '완료', '기록 실패는 로그만 — 대화는 끝까지 간다');
+    assert.equal(s.conv.isRunning(), false, 'state.running이 풀린다');
+    assert.equal(s.sent.at(-1).topic, '답');
   } finally { s.cleanup(); }
 });
 

@@ -576,3 +576,16 @@ test('실전 가드: 거부 기록은 heartbeat.json이 아니라 refusal.json, 
   assert.deepEqual(JSON.parse(readFileSync(join(root, 'refusal.json'), 'utf8')), { at: '2026-11-07T01:00:00.000Z', codes: ['RIVAL'], detail: 'LIVE_REFUSED RIVAL', pid: 7, mode: 'live' });
   assert.equal(existsSync(join(root, 'heartbeat.json')), false, '하트비트는 건드리지 않는다');
 });
+
+test('stampConsole: daemon.log 줄마다 ISO 시각을 앞에 붙인다', async () => {
+  const { stampConsole } = await import('./telegram-gate.mjs');
+  const lines = [];
+  const fake = { log: (...a) => lines.push(a.join(' ')), warn: (...a) => lines.push(a.join(' ')), error: (...a) => lines.push(a.join(' ')) };
+  stampConsole(fake, () => new Date('2026-10-31T05:07:00.000Z'));
+  fake.log('[gate] 시작');
+  fake.error('[gate] 진행 메시지 발송 실패: fetch failed');
+  assert.deepEqual(lines, ['2026-10-31T05:07:00.000Z [gate] 시작', '2026-10-31T05:07:00.000Z [gate] 진행 메시지 발송 실패: fetch failed']);
+  stampConsole(fake, () => new Date('2026-10-31T05:08:00.000Z'));
+  fake.log('x');
+  assert.equal(lines.at(-1), '2026-10-31T05:07:00.000Z x', '두 번 불러도 시각은 한 번만');
+});

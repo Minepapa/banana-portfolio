@@ -59,6 +59,10 @@ test('시스템 프롬프트: 출력 계약·구현 금지·자료 경계·금�
   assert.doesNotMatch(sys, /type: x/, '머리말 제거');
   assert.doesNotMatch(sys, /## 변경 이력/, '4절만');
   assert.match(buildGateSystemPrompt({}), /입력 규칙 문서를 읽지 못함/);
+  // 볼트 경로 명시(2026-10-31 시험 봇 실측): 시험 모드면 시험 볼트 경로가 프롬프트에 들어간다.
+  const testVault = '/Users/x/.cache/banana-portfolio-v2/telegram-gate-test/vault';
+  assert.ok(buildGateSystemPrompt({ vaultRoot: testVault }).includes(`이번 실행의 볼트는 \`${testVault}\``));
+  assert.doesNotMatch(buildGateSystemPrompt({}), /이번 실행의 볼트는/, '경로가 없으면 줄을 넣지 않는다');
 });
 
 test('구조화 출력 → 발송 메시지: 정보는 인용문(LLM 표시), 판단은 사실 필수, 계약 위반은 문제로 돌려준다', () => {

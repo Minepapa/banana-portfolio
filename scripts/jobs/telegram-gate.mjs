@@ -134,6 +134,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
   function buildHandlers(meta, lane) {
     return createGateHandlers({
       lane,
+      log,
       reply: reply(meta.chatId),
       react: (emoji) => api.react({ chatId: meta.chatId, messageId: meta.messageId, emoji }),
       runTool,
@@ -246,7 +247,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     for (const item of batch) {
       const decision = routeOf(item);
       inbox.markStatus(item.updateId, '처리중', 'llm');
-      items.push({ updateId: item.updateId, meta: decision.meta, args: decision.args });
+      items.push({ updateId: item.updateId, meta: { ...decision.meta, receivedAtMs: Date.parse(item.receivedAt) }, args: decision.args });
     }
     state.processing.llm = { updateIds: items.map((i) => i.updateId), since: now().toISOString() };
     conversation.setQueued(0);
@@ -550,6 +551,7 @@ function buildConversationDeps({ gate, options, journal, confirmStore }) {
     spawnEnv,
     cooldown: () => getCooldown(),
     readRules: () => ({
+      vaultRoot: VAULT_ROOT,
       inputRules: readText(vaultAbs(VAULT_REL.telegramInputRulesFile)) ?? '',
       sessionRules: readText(vaultAbs(VAULT_REL.telegramChannelFile)) ?? '',
     }),
@@ -797,7 +799,19 @@ async function launchGate(mode) {
 }
 
 const invokedPath = (() => { try { return realpathSync(process.argv[1] ?? ''); } catch { return null; } })();
+// daemon.log 줄마다 ISO 시각을 붙인다(2026-10-31 시험 봇 실측: 어느 대화의 오류인지 시각으로 찾을 수 없었다). CLI로 직접 띄울 때만.
+export function stampConsole(target = console, now = () => new Date()) {
+  if (target.__gateStamped) return; // 두 번 불러도 시각은 한 번만
+  target.__gateStamped = true;
+  for (const name of ['log', 'warn', 'error']) {
+    const original = target[name].bind(target);
+    target[name] = (...args) => original(now().toISOString(), ...args);
+  }
+}
+
 if (invokedPath && invokedPath === fileURLToPath(import.meta.url)) {
+  // 사용법·자가 점검 출력(사람·기계가 그대로 읽음)에는 시각을 붙이지 않는다.
+  if (!process.argv.slice(2).some((a) => ['--help', '-h', '--self-test'].includes(a))) stampConsole();
   main().then((code) => { if (code) process.exit(code); })
     .catch((error) => { console.error(`[gate] 시작 실패: ${error.message}`); process.exit(1); });
 }

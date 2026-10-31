@@ -76,6 +76,27 @@ test('📜·🪶·장소·체결확인: 기존 도구에 원문 JSON/인자를 �
   } finally { s.cleanup(); }
 });
 
+test('🪶: 도구 출력(진행 로그·파일 경로)을 그대로 보내지 않고 고정 문구로 답한다(2026-10-31 시험 봇 실측)', async () => {
+  const s = setup({ toolOut: '[daily-note] prepare 2026-10-31 — 기록 1개\n  💾 10_Periodic/Daily/2026/2026-10-31.md (초안)\n오늘 한 줄 저장(2026-10-31)' });
+  try {
+    const result = await s.handle('oneLine', { text: '좋은 하루' });
+    assert.equal(s.replies[0].body, '🪶 오늘 한 줄을 저장했습니다(2026-10-31).');
+    assert.doesNotMatch(s.replies[0].body, /daily-note|💾|10_Periodic/);
+    assert.match(result.detail, /오늘 한 줄 저장/, '원문은 기록 detail에만');
+  } finally { s.cleanup(); }
+  const t = setup({ toolOut: '예상과 다른 출력' });
+  try {
+    await t.handle('oneLine', { text: 'x' });
+    assert.equal(t.replies[0].body, '🪶 오늘 한 줄을 저장했습니다.');
+  } finally { t.cleanup(); }
+  // 같은 날 두 번째 🪶: 도구가 붙이는 덮어쓰기 알림을 살린다(리뷰 M1).
+  const u = setup({ toolOut: '[daily-note] prepare 2026-10-31\n오늘 한 줄 저장(2026-10-31) — 이전 한 줄을 바꿈' });
+  try {
+    await u.handle('oneLine', { text: '다시' });
+    assert.equal(u.replies[0].body, '🪶 오늘 한 줄을 저장했습니다(2026-10-31). (이전 한 줄을 바꿨습니다)');
+  } finally { u.cleanup(); }
+});
+
 test('📎 사진 메모: 사진을 관문 media 폴더에 받아 photoPath로 넘긴다(파일명은 안전한 문자만)', async () => {
   const s = setup();
   try {

@@ -30,6 +30,20 @@ export async function fakeOrderExecutor(confirm) {
 //       runner({args, env, onEvent}) → {promise, cancel}, spawnEnv, cooldown() → {resetAt}|null, readRules() → {inputRules, sessionRules},
 //       readHandoff(day) → text|null, writeHandoff(day, content), journal, sessionStore, confirmStore, isLive() → bool, orderExecutor, mcpToolNames,
 //       now, log, setTimer, clearTimer
+// 순수 함수: 진행 메시지 시각 기록 한 줄. 지연은 관문이 받은 시각(inbox 저장, ms)부터 잰다 — 텔레그램 message.date는 초 단위로 잘리고
+// 서버 시계 차이가 섞여서(리뷰 L1) 참고로만 남긴다. 0·null 같은 값은 쓰지 않는다(L2). kind·항목 수·대기 건수로 통계에서 거른다.
+export function progressRecord(items, { sentAtMs, ok, queued = 0 }) {
+  const earliest = (values) => { const v = values.filter((n) => Number.isFinite(n) && n > 0); return v.length ? Math.min(...v) : null; };
+  const receivedMs = earliest(items.map((i) => Number(i.meta?.receivedAtMs)));
+  const telegramSec = earliest(items.map((i) => Number(i.meta?.date)));
+  return {
+    type: 'progress', ok, sentAt: new Date(sentAtMs).toISOString(),
+    kinds: [...new Set(items.map((i) => i.args?.kind ?? '?'))], items: items.length, queued,
+    ...(receivedMs ? { receivedAt: new Date(receivedMs).toISOString(), delayMs: sentAtMs - receivedMs } : {}),
+    ...(telegramSec ? { telegramDate: new Date(telegramSec * 1000).toISOString() } : {}),
+  };
+}
+
 export function createConversation(deps) {
   const now = deps.now ?? (() => new Date());
   const log = deps.log ?? (() => {});
@@ -47,6 +61,10 @@ export function createConversation(deps) {
   function safeList(fn) {
     if (!fn) return null;
     try { return fn(); } catch (error) { log(`[gate] 약속 대기열 읽기 실패: ${error.message}`); return null; }
+  }
+
+  function safeSync(fn, label) {
+    try { return fn(); } catch (error) { log(`[gate] ${label} 실패: ${error.message}`); return null; }
   }
 
   async function safe(fn, label) {
@@ -110,6 +128,7 @@ export function createConversation(deps) {
     const firstText = renderProgress(run.progress, startedAt);
     const sent = await safe(() => deps.send(progressMessage(firstText), chatId), '진행 메시지 발송');
     const progressId = sent?.result?.message_id ?? null;
+    const sentAtMs = now().getTime();
     run.throttle = createEditThrottle({
       initialText: firstText,
       edit: (text) => (progressId ? deps.edit(progressId, progressMessage(text), chatId) : Promise.resolve()),
@@ -121,6 +140,9 @@ export function createConversation(deps) {
     };
 
     try {
+      // 진행 메시지 첫 발송 시각을 남긴다 — "1초 안" 기준 측정용(2026-10-31 시험 봇 실측). try 안에서 하고 실패는 로그만:
+      // 기록이 실패해도 finally가 state.running을 풀어야 한다(리뷰 M2).
+      safeSync(() => deps.journal.append(progressRecord(items, { sentAtMs, ok: Boolean(progressId), queued: state.queued })), '진행 시각 기록');
       const cooldown = deps.cooldown();
       if (cooldown) {
         // 한도가 풀리면 관문이 먼저 알린다(Q11: 사용량 한도 해제 알림). 그래서 몇 건을 못 했는지 센다.

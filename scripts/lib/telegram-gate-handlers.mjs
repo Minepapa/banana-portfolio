@@ -176,6 +176,7 @@ export function describeWikiResult(questionId, result, applied = null, applyErro
 export function createGateHandlers(deps) {
   const baseRun = deps.runTool ?? runGateTool;
   const run = (tool, args, opts = {}) => baseRun(tool, args, { ...opts, group: deps.lane ?? 'main' });
+  const log = deps.log ?? ((line) => console.log(line));
   async function refuseInTestMode(agent, topic, what) {
     await deps.reply(agent, topic, `시험 모드라 실행하지 않았습니다(${what}은 볼트 밖 외부 기록을 바꿉니다).`);
     return { status: '완료', detail: `시험 모드 — ${what} 실행 안 함` };
@@ -250,8 +251,15 @@ export function createGateHandlers(deps) {
 
     async oneLine({ text }) {
       const out = await run('daily-owner-input.mjs', ['--json=-'], { input: JSON.stringify({ kind: '한줄', text }) });
-      await deps.reply('clio', '데일리', escapeHtml(out));
-      return { status: '완료', detail: out.slice(0, 120) };
+      // 도구 출력(진행 로그·파일 경로)을 그대로 보내지 않고 고정 문구로 답한다(2026-10-31 시험 봇 실측). 같은 날 두 번째면
+      // 도구가 " — 이전 한 줄을 바꿈"을 붙이니 그 알림은 살린다(리뷰 M1). 원문 핵심 줄은 기록 detail에.
+      const saved = /오늘 한 줄 저장\((\d{4}-\d{2}-\d{2})\)( — 이전 한 줄을 바꿈)?/.exec(out);
+      if (!saved) log(`[gate] 🪶 도구 출력 형식이 예상과 다름(고정 문구로 답함): ${out.split('\n').filter(Boolean).at(-1)?.slice(0, 80) ?? ''}`);
+      const body = saved
+        ? `🪶 오늘 한 줄을 저장했습니다(${saved[1]}).${saved[2] ? ' (이전 한 줄을 바꿨습니다)' : ''}`
+        : '🪶 오늘 한 줄을 저장했습니다.';
+      await deps.reply('clio', '데일리', body);
+      return { status: '완료', detail: (saved?.[0] ?? out.split('\n').filter(Boolean).at(-1) ?? '').slice(0, 120) };
     },
 
     async wiki({ answers }) {
