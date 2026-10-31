@@ -33,6 +33,8 @@ MATCH_WINDOW = timedelta(minutes=10)
 # 하나카드 자동납부 alerts arrive the next morning; see assign_delayed().
 DELAYED_WINDOW = timedelta(hours=48)
 RAW_ECHO_WINDOW = timedelta(minutes=2)
+# 간편결제 and the card it charged notify within seconds (owner sample: 0-2 s); see link_cards().
+LINK_WINDOW = timedelta(minutes=3)
 AMOUNT_PATTERN = re.compile(r"(?<![\d,])(\d{1,3}(?:,\d{3})+|\d+)\s*원")
 # Balances and running totals are not the transaction amount.
 BALANCE_PATTERN = re.compile(r"(?:잔액|누적\S*|한도\S*)\s*[:：]?\s*[\d,]+\s*원")
@@ -113,6 +115,7 @@ def load_parsed_alerts(spending_dir, start, end):
                 merged[key]["summary_refs"].append(f"{path.name}#{index}")
                 continue
             merged[key] = {"at": at, "amount": key[1], "card": entry.get("card"),
+                           "card_id": entry.get("cardMask") or entry.get("cardLast4"),
                            "merchant": entry.get("merchant"), "status": entry.get("status"),
                            "summary_refs": [f"{path.name}#{index}"]}
     return sorted(merged.values(), key=lambda alert: alert["at"])
@@ -314,6 +317,14 @@ def build_month(banksalad_dir, spending_dir, events_dir, start, end, closed_mont
     export = find_export(banksalad_dir, start, end, closed_month=bool(closed_month))
     decisions = export / "owner-decisions.json"
     report = build_report(export / "source.xlsx", owner_decisions=decisions if decisions.exists() else None)
+    # Route duplicates are dropped after build_report, so report's own summary fields predate them.
+    # A malformed settings table (hand edit) only loses the tables, not the month total and coverage.
+    settings, settings_error, route_duplicates = {}, None, []
+    try:
+        settings = read_settings(spending_dir)
+        route_duplicates = drop_route_duplicates(report["transactions"], settings)
+    except (KeyError, TypeError, AttributeError, ValueError, json.JSONDecodeError) as error:
+        settings_error = f"{type(error).__name__}: {error}"
     # Rows and alerts one day either side take part in matching so boundary
     # pairs consume each other; only rows inside the period are reported.
     padded_start, padded_end = shift(start, -1), shift(end, 1)
@@ -341,10 +352,20 @@ def build_month(banksalad_dir, spending_dir, events_dir, start, end, closed_mont
     tables = None
     if closed_month:
         previous_start = shift(start, -1)[:7] + "-01"
-        # A malformed settings table (hand edit) only loses the tables, not the month total and coverage.
         # A sum mismatch is a code bug (the two expense rules drifted) and still fails the run loudly.
         try:
-            tables = breakdown(report["transactions"], closed_month, read_settings(spending_dir),
+            if settings_error:
+                raise ValueError(settings_error)
+            # From the previous month on: its fixed-cost payments are compared too.
+            window_start = shift(previous_start, -1)
+            linked = link_cards([item for item in report["transactions"]
+                                 if item["date"] and window_start <= item["date"] <= padded_end],
+                                load_parsed_alerts(spending_dir, window_start, padded_end), settings)
+            # The card alert behind a 간편결제 row is that row's payment, not an alert-only one.
+            paid = {(alert["at"], alert["amount"], alert["card"], alert["status"]) for alert in linked.values()}
+            alert_only = [alert for alert in alert_only
+                          if (alert["at"], alert["amount"], alert["card"], alert["status"]) not in paid]
+            tables = breakdown(report["transactions"], closed_month, settings,
                                EXPORT_DATE_RANGE.fullmatch(export.name).group(1) <= previous_start)
         except (KeyError, TypeError, AttributeError, ValueError, json.JSONDecodeError) as error:
             tables = {"error": f"{type(error).__name__}: {error}"}
@@ -366,6 +387,8 @@ def build_month(banksalad_dir, spending_dir, events_dir, start, end, closed_mont
         },
         "monthly": monthly,
         "breakdown": tables,
+        "route_duplicates": [item for item in route_duplicates if start <= item["date"] <= end],
+        "settings_error": settings_error,
         "coverage": {
             "transactions": len(transactions), **counts,
             "by_instrument": coverage_groups(transactions, "payment_instrument"),
@@ -434,16 +457,92 @@ def assign_fixed(rows, entries, resolve):
     return {name: sorted(paid, key=lambda payment: payment["date"]) for name, paid in payments.items()}
 
 
+def drop_route_duplicates(transactions, settings):
+    """Count once a payment that two 간편결제 routes both exported (owner confirmed 2026-10-31).
+
+    네이버페이 and 페이코 each list the same 컬리·배민 payment at the same second for the same amount.
+    duplicateRoutes [{keep, drop}] names the pair; the drop row is excluded like an owner-confirmed
+    duplicate, so monthly_breakdown and spent_amount both skip it. Each keep row covers one drop row.
+    Only pairs where both rows already count as spending qualify: dropping one beside a keep row that
+    is not counted (review, transfer) would erase the payment from the total, which the sum check
+    cannot see. Rows without a clock (00:00) never pair.
+    """
+    rules = [(entry["keep"].strip(), entry["drop"].strip()) for entry in settings.get("duplicateRoutes") or []]
+    if {drop for _, drop in rules} & {keep for keep, _ in rules} or len({drop for _, drop in rules}) != len(rules):
+        raise ValueError("duplicateRoutes 중복·연쇄")
+    live = [item for item in transactions
+            if spent_amount(item) is not None and transaction_moment(item) is not None]
+    dropped, used = [], set()
+    for keep_name, drop_name in rules:
+        keeps = defaultdict(list)
+        for item in live:
+            if (item["payment_instrument"] or "").strip() == keep_name:
+                keeps[(item["date"], item["time"], item["signed_amount"])].append(item)
+        for item in live:
+            if (item["payment_instrument"] or "").strip() != drop_name or id(item) in used:
+                continue
+            keep = next((other for other in keeps[(item["date"], item["time"], item["signed_amount"])]
+                         if id(other) not in used), None)
+            if keep is None:
+                continue
+            used.update((id(item), id(keep)))
+            dropped.append({"source_row": item["source_row"], "date": item["date"], "time": item["time"],
+                            "amount": amount_text(spent_amount(item)), "description": item["description"],
+                            "dropped": drop_name, "kept": keep_name, "kept_source_row": keep["source_row"],
+                            "owner_confirmed": bool(item.get("aggregation_decision")
+                                                    or item.get("spending_treatment") == "consumption")})
+            item["aggregation_status"] = "excluded_owner_confirmed_duplicate"
+            # Keep any earlier owner decision on the row next to the new reason.
+            item["aggregation_decision"] = {"paired_source_row": keep["source_row"],
+                                            "treatment": "settings_duplicate_route",
+                                            "previous_decision": item.get("aggregation_decision")}
+    return dropped
+
+
+def link_cards(transactions, alerts, settings):
+    """Tag 간편결제-style rows with the card that actually paid; returns {row id: alert}.
+
+    A 간편결제 (네이버페이·카카오페이·페이코 …) can charge any of several cards, so its row names no card.
+    The card's own approval alert rings at the same moment for the same amount; when that alert's card
+    is in cardMap the row is counted under that card. Rows already on a cardMap card, rows without a
+    clock, and rows whose card alert never arrived (before collection, money/point payments) stay as
+    they are. One alert pays for one row.
+    """
+    cards = {(entry["card"], entry["mask"]): entry["instrument"] for entry in settings.get("cardMap", [])}
+    own = set(cards.values())
+    candidates = [alert for alert in alerts
+                  if alert["status"] == "expense" and (alert["card"], alert.get("card_id")) in cards]
+    edges = []
+    for row_index, item in enumerate(transactions):
+        moment = transaction_moment(item)
+        amount = spent_amount(item)
+        if moment is None or amount is None or (item["payment_instrument"] or "").strip() in own:
+            continue
+        for alert_index, alert in enumerate(candidates):
+            if alert["amount"] == amount and abs(alert["at"] - moment) <= LINK_WINDOW:
+                edges.append((abs(alert["at"] - moment), row_index, alert_index))
+    linked = {}
+    for row_index, alert_index in max_matching(edges).items():
+        alert = candidates[alert_index]
+        transactions[row_index]["linked_card"] = cards[(alert["card"], alert["card_id"])]
+        linked[row_index] = alert
+    return linked
+
+
 def breakdown(transactions, month, settings, previous_covered):
     """Card, category and fixed-cost tables for a closed month (Requests "소비 보고 카드별·항목별·고정비" 2단계).
 
     Sums use spent_amount, so by_instrument and by_category both add up to monthly.total_expense.
-    A payment-route alias (e.g. 네이버페이 간편결제 → the linked card) folds into its card and keeps the route.
+    A 간편결제 row whose card alert was found (link_cards) folds into that card and keeps the route;
+    one whose card is unknown stays under its own name. instrumentAliases is only for a route that
+    always charges one card.
     """
     aliases = {entry["from"]: entry for entry in settings.get("instrumentAliases", [])}
 
     def resolve(item):
         instrument = (item["payment_instrument"] or "").strip() or "(없음)"
+        if item.get("linked_card"):
+            return item["linked_card"], instrument
         alias = aliases.get(instrument)
         return (alias["to"], alias.get("via") or instrument) if alias else (instrument, None)
 

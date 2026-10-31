@@ -134,8 +134,10 @@ test('월간 점검 본문: 결제수단별·항목별·고정비 표(경유 결
       { name: 'KT유선상품', status: 'missing', payments: [], amount: '0', change: null },
     ],
   };
-  const body = renderMonthCheck({ ...report, breakdown }, { places: { recordedDays: 0 } });
+  const route_duplicates = [{ amount: '1900' }, { amount: '17760' }];
+  const body = renderMonthCheck({ ...report, breakdown, route_duplicates }, { places: { recordedDays: 0 } });
   assert.match(body, /■ 결제수단별 지출\n<pre>/);
+  assert.match(body, /- 간편결제 중복 2건 뺌\(19,660원\)/);
   assert.match(body, /MG\+ S 하나카드 중 네이버페이 경유 10,000원/);
   assert.match(body, /나머지 +2 +19,983/, '9번째부터는 나머지 한 줄');
   assert.match(body, /■ 항목별 지출\(뱅크샐러드 분류, 오너 지정 1건 포함\)/);
@@ -158,4 +160,10 @@ test('월간 점검 본문: 표를 못 만든 달은 한 줄로 알리고 합계
   assert.match(body, /■ 결제수단별·항목별·고정비\n- 표 만들기 실패/);
   assert.match(body, /- 전체 지출 3,000,000원/);
   assert.doesNotMatch(body, /KeyError/, '오류 원문은 메시지로 내보내지 않는다');
+  const broken = renderMonthCheck({ ...report, breakdown: { error: 'ValueError: duplicateRoutes' }, settings_error: 'ValueError: duplicateRoutes' },
+    { places: { recordedDays: 0 } });
+  assert.match(broken, /- 표 만들기 실패\(소비 설정 확인\)\n- 간편결제 중복 빼기 못 함\(소비 설정 오류\): 위 합계에 중복이 섞였을 수 있음/);
+  const cardMapBroken = renderMonthCheck({ ...report, breakdown: { error: 'KeyError: mask' }, route_duplicates: [{ amount: '1900' }] },
+    { places: { recordedDays: 0 } });
+  assert.match(cardMapBroken, /합계·커버리지는 위와 같음\)\n- 간편결제 중복 1건 뺌\(1,900원\)/);
 });

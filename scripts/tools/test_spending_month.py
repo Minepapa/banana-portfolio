@@ -262,6 +262,93 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(fixed["구독"]["status"], "missing")
         self.assertEqual(tables["previous_month"], "2040-01")
 
+    def test_simple_pay_rows_follow_the_card_alert_that_rang_with_them(self):
+        fixture = Fixture(self.root, [
+            row("2040-02-03", "12:00:00", -4000, "Pay A", description="Shop 1"),
+            row("2040-02-04", "18:30:00", -7000, "Pay A", description="Shop 2"),
+            row("2040-02-05", "09:00:00", -2500, "Pay A", description="Shop 3"),
+            row("2040-02-06", "10:00:00", -1500, "Pay A", description="Shop 4"),
+            row("2040-02-07", "11:00:00", -6000, "Card A", description="Shop 5"),
+        ])
+        # The pay app's own alert is the closer coverage match, so the card alert is left over.
+        fixture.summary("2040-02-03", [alert("2040-02-03 12:00:00", 4000, card="페이 앱", status="excluded"),
+                                       {**alert("2040-02-03 12:00:01", 4000, card="하나"), "cardMask": "5*8*"}])
+        fixture.summary("2040-02-04", [{**alert("2040-02-04 18:30:00", 7000, card="삼성"), "cardLast4": "3663"}])
+        fixture.summary("2040-02-06", [{**alert("2040-02-06 10:05:00", 1500, card="하나"), "cardMask": "5*8*"}])
+        fixture.summary("2040-02-07", [{**alert("2040-02-07 11:00:00", 6000, card="하나"), "cardMask": "5*6*"}])
+        (fixture.spending / "settings.json").write_text(json.dumps({"cardMap": [
+            {"card": "하나", "mask": "5*8*", "instrument": "Card A"},
+            {"card": "삼성", "mask": "3663", "instrument": "Card S"},
+            {"card": "하나", "mask": "5*6*", "instrument": "Card B"},
+        ]}), encoding="utf-8")
+        result = fixture.run("2040-02-01", "2040-02-29", "2040-02")
+        groups = {group["instrument"]: group for group in result["breakdown"]["by_instrument"]}
+        self.assertEqual((groups["Card A"]["amount"], groups["Card A"]["routes"]), ("10000", {"Pay A": "4000"}),
+                         "a row already on a cardMap card is not moved by another card's alert")
+        self.assertEqual((groups["Card S"]["amount"], groups["Card S"]["routes"]), ("7000", {"Pay A": "7000"}))
+        self.assertEqual(groups["Pay A"]["amount"], "4000", "no alert, or one 5 minutes off, leaves the card unknown")
+        self.assertNotIn("Card B", groups)
+        self.assertEqual(result["alert_only"], [], "the linked card alert is the row's payment, not alert-only")
+
+    def test_card_link_beats_alias_and_one_alert_pays_one_row(self):
+        fixture = Fixture(self.root, [
+            row("2040-02-03", "12:00:00", -4000, "Pay A", description="Shop 1"),
+            row("2040-02-03", "12:00:30", -4000, "Pay A", description="Shop 2"),
+            row("2040-02-03", "12:00:10", -4000, "Bank", description="Friend", kind="이체", category="이체"),
+            row("2040-01-31", "23:59:50", -2000, "Pay A", description="Shop 3"),
+        ])
+        fixture.summary("2040-02-03", [{**alert("2040-02-03 12:00:05", 4000, card="삼성"), "cardLast4": "3663"},
+                                       alert("2040-02-03 15:00:00", 8000, card="삼성")])
+        fixture.summary("2040-02-01", [{**alert("2040-02-01 00:00:20", 2000, card="삼성"), "cardLast4": "3663"}])
+        (fixture.spending / "settings.json").write_text(json.dumps({
+            "cardMap": [{"card": "삼성", "mask": "3663", "instrument": "Card S"}],
+            "instrumentAliases": [{"from": "Pay A", "to": "Card A", "via": "Pay"}],
+        }), encoding="utf-8")
+        result = fixture.run("2040-02-01", "2040-02-29", "2040-02")
+        groups = {group["instrument"]: group for group in result["breakdown"]["by_instrument"]}
+        self.assertEqual(groups["Card S"]["routes"], {"Pay A": "4000"}, "the link wins over the alias, once")
+        self.assertEqual(groups["Card A"]["routes"], {"Pay": "4000"}, "the second row falls back to the alias")
+        self.assertEqual([item["amount"] for item in result["alert_only"]], ["8000"])
+        self.assertEqual(result["breakdown"]["previous_month"], "2040-01")
+
+    def test_route_duplicates_count_once(self):
+        fixture = Fixture(self.root, [
+            row("2040-02-03", "12:00:00", -1900, "Pay A", description="컬리(멤버스)"),
+            row("2040-02-03", "12:00:00", -1900, "Pay B", description="컬리페이"),
+            row("2040-02-04", "12:00:00", -5000, "Pay A", description="Other shop"),
+            row("2040-02-05", "09:00:00", -700, "Pay A", description="Shop"),
+            row("2040-02-05", "09:00:01", -700, "Pay B", description="Shop"),
+            # Not paired: the keep row is a transfer (not spending), or neither row has a clock.
+            row("2040-02-06", "10:00:00", -3000, "Pay A", description="Shop 6"),
+            row("2040-02-06", "10:00:00", -3000, "Pay B", description="Top-up", kind="이체", category="이체"),
+            row("2040-02-07", "00:00:00", -400, "Pay A", description="Shop 7"),
+            row("2040-02-07", "00:00:00", -400, "Pay B", description="Shop 7"),
+            # One keep row covers one drop row.
+            row("2040-02-08", "11:00:00", -100, "Pay A", description="Shop 8"),
+            row("2040-02-08", "11:00:00", -100, "Pay A", description="Shop 8b"),
+            row("2040-02-08", "11:00:00", -100, "Pay B", description="Shop 8"),
+        ])
+        (fixture.spending / "settings.json").write_text(json.dumps({
+            "duplicateRoutes": [{"keep": "Pay B", "drop": "Pay A"}]}), encoding="utf-8")
+        result = fixture.run("2040-02-01", "2040-02-29", "2040-02")
+        self.assertEqual(result["monthly"]["total_expense"], "12300")
+        self.assertEqual([(item["date"], item["amount"], item["dropped"], item["kept"])
+                          for item in result["route_duplicates"]],
+                         [("2040-02-03", "1900", "Pay A", "Pay B"), ("2040-02-08", "100", "Pay A", "Pay B")])
+        groups = {group["instrument"]: group["amount"] for group in result["breakdown"]["by_instrument"]}
+        self.assertEqual(groups, {"Pay A": "9200", "Pay B": "3100"})
+        self.assertIsNone(result["settings_error"])
+        self.assertEqual(result["coverage"]["transactions"], 10, "dropped rows leave coverage too")
+
+    def test_chained_duplicate_routes_are_a_settings_error(self):
+        fixture = Fixture(self.root, [row("2040-02-03", "12:00:00", -5000, "Card A")])
+        (fixture.spending / "settings.json").write_text(json.dumps({"duplicateRoutes": [
+            {"keep": "B", "drop": "A"}, {"keep": "C", "drop": "B "}]}), encoding="utf-8")
+        result = fixture.run("2040-02-01", "2040-02-29", "2040-02")
+        self.assertEqual(result["monthly"]["total_expense"], "5000")
+        self.assertIn("duplicateRoutes", result["settings_error"])
+        self.assertIn("error", result["breakdown"])
+
     def test_fixed_costs_use_day_window_and_claim_each_row_once(self):
         fixture = Fixture(self.root, [
             row("2040-02-11", "09:00:00", -30000, "Card A", description="KT 통신요금"),

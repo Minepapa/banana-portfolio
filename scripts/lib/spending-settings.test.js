@@ -15,6 +15,7 @@ const patch = {
   instrumentAliases: [{ from: 'Pay A', to: 'Card A', via: 'Pay' }],
   fixedCosts: [{ name: '통신', merchant: '통신요금', instrument: 'Card A', dayFrom: 11, dayTo: 13, variable: true }],
   merchantCategories: [{ merchant: '주차장', category: '자동차', subcategory: '주차' }],
+  duplicateRoutes: [{ keep: 'Pay B', drop: 'Pay A' }],
 };
 
 test('설정 형식: 칸마다 필수값·중복·별칭 연쇄를 막는다', () => {
@@ -31,6 +32,10 @@ test('설정 형식: 칸마다 필수값·중복·별칭 연쇄를 막는다', (
     { fixedCosts: [{ ...patch.fixedCosts[0], merchant: 'K T' }] },
     { merchantCategories: [{ merchant: '(주)AB', category: '식비' }] },
     { recipientDecisions: [{ bank: '하나', last4: '12', status: 'excluded' }] },
+    { duplicateRoutes: [{ keep: 'A', drop: 'A' }] },
+    { duplicateRoutes: [null] },
+    { duplicateRoutes: [{ keep: 'B', drop: 'A' }, { keep: 'C', drop: 'B ' }] },
+    { duplicateRoutes: [{ keep: 'A', drop: 'B' }, { keep: 'B', drop: 'C' }] },
   ];
   for (const settings of bad) assert.throws(() => validateSpendingSettings(settings), /소비 설정 형식 오류/, JSON.stringify(settings));
 });

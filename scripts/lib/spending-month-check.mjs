@@ -226,15 +226,25 @@ function alertOnlySection(report) {
 
 // 카드별·항목별·고정비(요청 "소비 보고 카드별·항목별·고정비" 2단계). 옛 결과 파일에는 breakdown이 없어 칸을 뺀다.
 function instrumentSection(report) {
-  if (report.breakdown?.error) return '■ 결제수단별·항목별·고정비\n- 표 만들기 실패(소비 설정 확인, 합계·커버리지는 위와 같음)';
+  // 두 간편결제가 함께 내보낸 같은 결제(설정 duplicateRoutes)는 한 번만 셌다는 것을 남긴다. 설정이 깨져 못 뺐으면
+  // 위 합계에 중복이 섞였을 수 있다(결과 파일은 한 번 저장되면 다시 안 돌므로 그 달 메시지에 꼭 남긴다).
+  const duplicates = report.route_duplicates ?? [];
+  const dropped = report.settings_error
+    ? ['- 간편결제 중복 빼기 못 함(소비 설정 오류): 위 합계에 중복이 섞였을 수 있음']
+    : duplicates.length
+      ? [`- 간편결제 중복 ${duplicates.length}건 뺌(${won(duplicates.reduce((sum, item) => sum + Number(item.amount), 0))})`] : [];
+  if (report.breakdown?.error) {
+    const totals = report.settings_error ? '' : ', 합계·커버리지는 위와 같음';
+    return ['■ 결제수단별·항목별·고정비', `- 표 만들기 실패(소비 설정 확인${totals})`, ...dropped].join('\n');
+  }
   const groups = report.breakdown?.by_instrument ?? [];
-  if (!groups.length) return null;
+  if (!groups.length) return dropped.length ? ['■ 결제수단별 지출', ...dropped].join('\n') : null;
   const table = preTable([['결제수단', 24, 'left'], ['건', 4, 'right'], ['금액', 12, 'right']],
     groups.slice(0, 8).map((group) => [group.instrument, String(group.count), comma(group.amount)]));
   const routes = groups.slice(0, 8).flatMap((group) => Object.entries(group.routes ?? {})
     .map(([via, amount]) => `- ${escapeHtml(group.instrument)} 중 ${escapeHtml(via)} 경유 ${won(amount)}`));
   const rest = groups.length > 8 ? [`- 외 ${groups.length - 8}개 결제수단`] : [];
-  return [`■ 결제수단별 지출`, table, ...routes, ...rest].join('\n');
+  return [`■ 결제수단별 지출`, table, ...routes, ...rest, ...dropped].join('\n');
 }
 
 function categorySection(report) {

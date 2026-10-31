@@ -2,6 +2,8 @@
 // - recipientDecisions: 오너가 확인한 송금 수취처(spending-parse가 읽는다).
 // - cardMap·instrumentAliases·fixedCosts·merchantCategories: 소비 보고 2단계(Requests "소비 보고 카드별·항목별·고정비",
 //   2026-10-31 오너 확정·제우스 판단 — 고정비 목록은 새 파일 대신 이 파일의 칸). 월 점검(spending_month.py)이 읽는다.
+// - duplicateRoutes: 두 간편결제가 같은 결제를 같은 초·같은 금액으로 함께 내보낼 때 keep만 센다(2026-10-31 오너 확정,
+//   네이버페이·페이코 컬리·배민). 간편결제는 여러 카드에 묶이므로 카드는 별칭이 아니라 함께 온 카드 알림으로 정한다.
 // 값은 코드에 박지 않는다. 오너가 확정한 값을 patch 파일로 받아 이 파일에만 쓴다(도구 spending-settings.mjs).
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,7 +11,7 @@ import { writeAtomic } from './state-writer.mjs';
 
 export const SETTINGS_FILE = 'settings.json';
 // 도구가 바꿀 수 있는 칸. recipientDecisions·investmentAccounts는 다른 경로로 관리한다.
-export const PATCHABLE_KEYS = ['cardMap', 'instrumentAliases', 'fixedCosts', 'merchantCategories'];
+export const PATCHABLE_KEYS = ['cardMap', 'instrumentAliases', 'fixedCosts', 'merchantCategories', 'duplicateRoutes'];
 
 const text = (value) => typeof value === 'string' && value.trim().length > 0;
 const day = (value) => Number.isInteger(value) && value >= 1 && value <= 31;
@@ -59,6 +61,14 @@ export function validateSpendingSettings(settings) {
   check(Array.isArray(categories) && categories.every((entry) => text(entry.merchant) && text(entry.category)
     && merchantKey(entry.merchant).length >= MIN_MERCHANT_KEY
     && (entry.subcategory === undefined || text(entry.subcategory))), 'merchantCategories 항목은 merchant·category(·subcategory)');
+  const duplicates = settings.duplicateRoutes ?? [];
+  // 월 점검(파이썬)은 이름 앞뒤 공백을 떼고 비교하므로 검사도 뗀 값으로 한다.
+  check(Array.isArray(duplicates) && duplicates.every((entry) => entry && text(entry.keep) && text(entry.drop)
+    && entry.keep.trim() !== entry.drop.trim()), 'duplicateRoutes 항목은 keep·drop(서로 다름)');
+  const drops = duplicates.map((entry) => entry.drop.trim());
+  // 한 결제수단이 남기는 쪽과 빼는 쪽을 다 맡으면 어느 줄이 남을지 규칙 순서에 달린다.
+  check(new Set(drops).size === drops.length && !duplicates.some((entry) => drops.includes(entry.keep.trim())),
+    'duplicateRoutes 중복·연쇄');
   return settings;
 }
 
