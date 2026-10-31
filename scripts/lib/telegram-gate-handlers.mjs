@@ -73,7 +73,7 @@ export function isGateToolAllowed(tool, { factsFiles = () => factsCatalog().filt
 }
 
 export function runGateTool(tool, args = [], { input = null, timeoutMs = TOOL_TIMEOUT_MS, env = buildGateSpawnEnv(), spawnImpl = spawn, group = 'main', allowed = isGateToolAllowed } = {}) {
-  if (!allowed(tool)) return Promise.reject(new Error(`관문 허용 목록에 없는 도구: ${tool}`));
+  if (!allowed(tool)) return Promise.reject(new Error(`창구 허용 목록에 없는 도구: ${tool}`));
   return new Promise((resolvePromise, reject) => {
     const child = spawnImpl(process.execPath, [join(REPO_ROOT, 'scripts', 'tools', tool), ...args], {
       cwd: REPO_ROOT, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true,
@@ -145,7 +145,7 @@ function promiseLine(promises, nowMs) {
 export function buildStatusBody({ startedAt, now, lastPollOkAt, counts, cooldown, freeMemPct, mode, llm = null, promises = null }) {
   const pending = (counts['받음'] ?? 0) + (counts['처리중'] ?? 0);
   const rows = [
-    ['관문', `정상 · 가동 ${formatDuration(now - startedAt)}${mode === 'test' ? ' · 시험' : ''}`],
+    ['창구', `정상 · 가동 ${formatDuration(now - startedAt)}${mode === 'test' ? ' · 시험' : ''}`],
     ['수신', `마지막 ${kstTime(lastPollOkAt)} · 밀린 것 ${pending}`],
     ['확인', `끊긴 메시지 ${counts['확인필요'] ?? 0}`],
     ['LLM', llmLine(llm)],
@@ -202,7 +202,7 @@ export function createGateHandlers(deps) {
         await deps.react('😘');
         return { status: '완료', detail: '안녕 점검 통과' };
       }
-      await deps.reply('zeus', '생존 확인', ['관문은 받았지만 아래가 정상이 아닙니다.', ...check.problems.map((p) => `· ${escapeHtml(p)}`)].join('\n'));
+      await deps.reply('zeus', '생존 확인', ['창구는 받았지만 아래가 정상이 아닙니다.', ...check.problems.map((p) => `· ${escapeHtml(p)}`)].join('\n'));
       return { status: '완료', detail: `안녕 점검 실패: ${check.problems.join(', ')}` };
     },
 
@@ -293,7 +293,7 @@ export function createGateHandlers(deps) {
     },
 
     async llm() {
-      await deps.reply('zeus', '안내', '대화 처리(관문 2단계)는 아직 준비 중입니다. 기호 입력·스위치·장소·체결확인·위키 답은 지금 처리됩니다.');
+      await deps.reply('zeus', '안내', '대화 처리(창구 2단계)는 아직 준비 중입니다. 기호 입력·스위치·장소·체결확인·위키 답은 지금 처리됩니다.');
       return { status: '완료', detail: 'llm 2단계 전' };
     },
   };
@@ -307,7 +307,7 @@ export function createGateHandlers(deps) {
     } catch (error) {
       // 관문 종료 중에 도구가 끊긴 경우: 답장하지 않는다. 호출부가 상태를 '처리중'으로 남겨 두면 재시작 때
       // recoverInterrupted가 '확인필요'로 바꿔 한 번에 안내한다(1단계 재리뷰 LOW-N1).
-      if (deps.isStopping?.()) return { status: '중단', detail: '관문 종료 중 끊김', interruptedByShutdown: true };
+      if (deps.isStopping?.()) return { status: '중단', detail: '창구 종료 중 끊김', interruptedByShutdown: true };
       const agent = route === 'execConfirm' ? 'plutus' : route === 'place' ? 'hermes' : ['memo', 'photoMemo', 'voice', 'oneLine', 'wiki'].includes(route) ? 'clio' : 'zeus';
       // 도구가 오너에게 보여 주려고 출력한 사유(예: "처리하지 않음: 대기 건 없음")를 첫 줄만 전한다(입력 규칙 3절:
       // 원인을 그대로 알림). 스택·여러 줄 원문은 보내지 않고 상태 기록에만 남긴다.

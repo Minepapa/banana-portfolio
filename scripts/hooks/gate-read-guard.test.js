@@ -51,7 +51,7 @@ test('훅 프로세스: 관문 실행(GATE=1)에서만 막고(exit 2), 다른 �
     const blocked = run({ CLAUDE_TELEGRAM_GATE: '1', GATE_READ_ROOTS: `${f.vault}:${f.repo}` });
     assert.equal(blocked.status, 2);
     assert.match(blocked.stderr, /볼트·저장소 안만/);
-    assert.equal(run({}).status, 0, '관문 실행이 아니면 관여하지 않음');
+    assert.equal(run({}).status, 0, '창구 실행이 아니면 관여하지 않음');
     assert.equal(run({ CLAUDE_TELEGRAM_GATE: '1' }).status, 2, '허용 뿌리가 없으면 막음');
   } finally { f.cleanup(); }
 });

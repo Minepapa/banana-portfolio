@@ -45,7 +45,7 @@ test('인수인계 노트: 네 칸 고정, 요약 실패해도 앞의 두 칸은
 test('요약용 원문: 오너 입력·답·결정론 처리만, 길면 뒤쪽', () => {
   const t = conversationTranscript(ENTRIES);
   assert.match(t, /^오너: 삼성전자 10주 사줘/);
-  assert.match(t, /관문\(zeus\): 확인 질문을 보냈습니다/);
+  assert.match(t, /창구\(zeus\): 확인 질문을 보냈습니다/);
   assert.doesNotMatch(t, /order_stage/);
   assert.match(conversationTranscript([{ type: 'in', text: 'x'.repeat(100) }], 20), /^…\(앞부분 생략\)/);
 });

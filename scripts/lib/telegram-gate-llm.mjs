@@ -98,7 +98,7 @@ export function buildGateClaudeArgs({ prompt, sessionId, resume, appendSystemPro
     '--settings', readGuardSettings,
     '--json-schema', JSON.stringify(schema),
     ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
-    '--name', '판테온 텔레그램 관문',
+    '--name', '판테온 텔레그램 창구',
   ];
 }
 
@@ -141,7 +141,7 @@ export function runGateClaude({ args, env = buildGateSpawnEnv(), cwd = GATE_LLM_
       if (event.type === 'rate_limit_event') {
         out.rateLimit = event.rate_limit_info ?? null;
         const until = rateLimitBlockedUntil(event);
-        if (until) cooldownWriter(until, `관문 실행 중 사용량 한도(${event.rate_limit_info?.rateLimitType ?? '?'})`);
+        if (until) cooldownWriter(until, `창구 실행 중 사용량 한도(${event.rate_limit_info?.rateLimitType ?? '?'})`);
       }
       if (event.type === 'result') {
         out.result = typeof event.result === 'string' ? event.result : null;

@@ -40,7 +40,7 @@ export async function createTestQuestion({ create }) {
   // 가짜 발송: message_id만 돌려줘 큐 상태를 "답변대기"로 만든다. 실제 텔레그램으로 아무것도 나가지 않는다.
   return create({
     kind: 'manual-change',
-    question: '[시험] 텔레그램 관문 위키 답 처리 확인용 질문입니다. 등록·보류·제외 중 하나로 답해 주세요.',
+    question: '[시험] 텔레그램 창구 위키 답 처리 확인용 질문입니다. 등록·보류·제외 중 하나로 답해 주세요.',
     asker: 'zeus',
     urgent: true,
   }, { sender: async () => ({ result: { message_id: 1 } }) });

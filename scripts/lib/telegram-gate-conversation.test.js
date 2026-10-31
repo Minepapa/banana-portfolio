@@ -188,7 +188,7 @@ test('쿨다운 중이면 claude를 부르지 않고 진행 메시지에 해제 
   try {
     const r = await s.conv.processBatch([item(1, '질문')]);
     assert.equal(s.runs.length, 0);
-    assert.match(s.edits.at(-1).body, /15:30 이후 한도가 풀리면 관문이 알려 드립니다/);
+    assert.match(s.edits.at(-1).body, /15:30 이후 한도가 풀리면 창구가 알려 드립니다/);
     assert.equal(r.detail, '쿨다운 — 처리 안 함');
   } finally { s.cleanup(); }
 });
@@ -239,7 +239,7 @@ test('사진은 내려받아 프롬프트에 경로를 넣는다', async () => {
   const s = setup();
   try {
     await s.conv.processBatch([{ updateId: 1, meta: { chatId: CHAT, messageId: 1 }, args: { kind: 'photo', fileId: 'F1', caption: '영수증' } }]);
-    assert.match(flag(s.runs[0], '-p'), /\[관문\] 사진: \/media\/F1.jpg/);
+    assert.match(flag(s.runs[0], '-p'), /\[창구\] 사진: \/media\/F1.jpg/);
   } finally { s.cleanup(); }
 });
 

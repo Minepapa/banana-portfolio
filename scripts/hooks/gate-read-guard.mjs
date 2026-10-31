@@ -51,7 +51,7 @@ export function fixedPrefix(pattern) {
 
 export function decideGateRead({ toolName, toolInput = {}, cwd, roots, deniedRoots = [] }) {
   if (!['Read', 'Grep', 'Glob'].includes(toolName)) return { block: false };
-  if (!roots.length) return { block: true, reason: '관문 읽기 허용 경로가 없어 막았습니다' };
+  if (!roots.length) return { block: true, reason: '창구 읽기 허용 경로가 없어 막았습니다' };
   const target = toolName === 'Read' ? toolInput.file_path : (toolInput.path ?? cwd);
   if (typeof target !== 'string' || !target) return { block: true, reason: '읽을 경로가 없습니다' };
   const base = isAbsolute(target) ? target : resolve(cwd, target);
@@ -72,7 +72,7 @@ export function decideGateRead({ toolName, toolInput = {}, cwd, roots, deniedRoo
   for (const raw of targets) {
     const abs = realish(raw);
     if (!realRoots.some((root) => within(abs, root))) {
-      return { block: true, reason: `관문에서는 볼트·저장소 안만 읽을 수 있습니다(path를 그 안으로 지정): ${abs}` };
+      return { block: true, reason: `창구에서는 볼트·저장소 안만 읽을 수 있습니다(path를 그 안으로 지정): ${abs}` };
     }
     if (realDenied.some((root) => within(abs, root))) return { block: true, reason: '금고·토큰 캐시는 읽을 수 없습니다' };
     if (SECRET_DIR_RE.test(abs)) return { block: true, reason: '토큰 캐시 폴더는 읽을 수 없습니다' };
@@ -87,7 +87,7 @@ async function main() {
   for await (const chunk of process.stdin) chunks.push(chunk);
   let data;
   try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {
-    process.stderr.write('관문 읽기 가드: 입력을 해석하지 못해 막았습니다\n');
+    process.stderr.write('창구 읽기 가드: 입력을 해석하지 못해 막았습니다\n');
     process.exitCode = 2;
     return;
   }

@@ -101,7 +101,7 @@ test('시험 모드: 상태 폴더를 실전 관문 상태 폴더로 바꾸면 �
   try {
     writeFileSync(paths.testEnv, 'TELEGRAM_BOT_TOKEN=FAKE:test\n');
     mkdirSync(paths.liveStateDir, { recursive: true });
-    assert.throws(() => loadGateConfig({ mode: 'test', env: { TELEGRAM_GATE_STATE_DIR: paths.liveStateDir }, paths }), /실전 관문 상태 폴더/);
+    assert.throws(() => loadGateConfig({ mode: 'test', env: { TELEGRAM_GATE_STATE_DIR: paths.liveStateDir }, paths }), /실전 창구 상태 폴더/);
   } finally { cleanup(); }
 });
 

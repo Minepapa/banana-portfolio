@@ -43,10 +43,10 @@ export function buildRequestNote({ title, what, why, ownerText, background = '',
   const name = `${date} ${cleanTitle}`;
   const content = `${buildFrontmatter({
     type: 'dev-request', category: [`[[${VAULT_REL.homeDir}/500 기술]]`], description: String(what).replace(/[\r\n]+/g, ' ').slice(0, 150),
-    sensitivity: '일반', created: date, modified: date, requestedVia: '텔레그램 관문', status: '예정', waitingOn: '착수 대기', nextCheck: next,
+    sensitivity: '일반', created: date, modified: date, requestedVia: '텔레그램 창구', status: '예정', waitingOn: '착수 대기', nextCheck: next,
   })}\n# ${cleanTitle}\n\n## 무엇이 필요한가\n${what}\n\n## 왜(오너 원문)\n${why}\n\n> ${String(ownerText).replace(/\n/g, '\n> ')}\n`
     + (background ? `\n## 배경\n${background}\n` : '') + (priority ? `\n## 우선순위\n${priority}\n` : '')
-    + '\n텔레그램 관문에서 받은 구현 요청이다. 구현은 개발 세션에서 한다.\n';
+    + '\n텔레그램 창구에서 받은 구현 요청이다. 구현은 개발 세션에서 한다.\n';
   return { name, content, relPath: `${VAULT_REL.logDevRequests}/${name}.md` };
 }
 
@@ -79,7 +79,7 @@ export function createGateMcpTools(deps = {}) {
     },
     {
       name: 'tasks_delete',
-      description: '관문·세션이 만든 할 일을 지운다. 오너가 지우라고 확인한 뒤에만.',
+      description: '창구·세션이 만든 할 일을 지운다. 오너가 지우라고 확인한 뒤에만.',
       inputSchema: { type: 'object', properties: { id: str('할 일 ID') }, required: ['id'], additionalProperties: false },
       handler: externalGuard('할 일 삭제', (a) => run('tasks-delete.mjs', [`--id=${a.id}`])),
     },
@@ -97,10 +97,10 @@ export function createGateMcpTools(deps = {}) {
     },
     {
       name: 'proposal_reply',
-      description: '담당 제안 승인·거부 답장 기록(4-7). 상태만 바뀐다(실제 체결은 하지 않음). sourceMessageId는 오너가 승인·거부를 직접 친 원본 메시지 — 답장 원문과 답장 대상(reply_to)은 관문이 그 메시지에서 그대로 가져온다(LLM이 승인 문구를 만들지 못함).',
+      description: '담당 제안 승인·거부 답장 기록(4-7). 상태만 바뀐다(실제 체결은 하지 않음). sourceMessageId는 오너가 승인·거부를 직접 친 원본 메시지 — 답장 원문과 답장 대상(reply_to)은 창구가 그 메시지에서 그대로 가져온다(LLM이 승인 문구를 만들지 못함).',
       inputSchema: { type: 'object', properties: { sourceMessageId: { type: 'integer' } }, required: ['sourceMessageId'], additionalProperties: false },
       handler: async (a) => {
-        if (!deps.stateDir) throw new Error('관문 상태 폴더가 없어 처리할 수 없습니다');
+        if (!deps.stateDir) throw new Error('창구 상태 폴더가 없어 처리할 수 없습니다');
         const source = createConfirmStore({ stateDir: deps.stateDir, now }).source(a.sourceMessageId);
         return run('process-telegram-reply.mjs', [source.replyTo ? `--reply-to=${source.replyTo}` : '--infer-pending', `--text=${source.text}`]);
       },
@@ -130,22 +130,22 @@ export function createGateMcpTools(deps = {}) {
     },
     {
       name: 'order_stage',
-      description: '직접 매수·매도·정정·취소·돌파매매 손절 재시도를 "접수 대기"로 넘긴다. 실행하지 않는다 — 관문이 오너에게 고정 문구로 다시 묻고, 오너가 글로 "응"이라고 답할 때만 실행한다. sourceMessageId는 주문을 지시한 오너 원본 메시지의 message_id.',
+      description: '직접 매수·매도·정정·취소·돌파매매 손절 재시도를 "접수 대기"로 넘긴다. 실행하지 않는다 — 창구가 오너에게 고정 문구로 다시 묻고, 오너가 글로 "응"이라고 답할 때만 실행한다. sourceMessageId는 주문을 지시한 오너 원본 메시지의 message_id.',
       inputSchema: { type: 'object', properties: {
         action: { type: 'string', enum: ORDER_ACTIONS },
         sourceMessageId: { type: 'integer' },
         params: { type: 'object', description: '매수·매도 {asset,quantity,price?} / 정정·취소 {orderNo,account(위탁|금현물),code,name,side(매수|매도),price(정정)} / 손절재시도 {code}|{positionId}' },
       }, required: ['action', 'sourceMessageId', 'params'], additionalProperties: false },
       handler: async (a) => {
-        if (!deps.stateDir) throw new Error('관문 상태 폴더가 없어 접수할 수 없습니다');
+        if (!deps.stateDir) throw new Error('창구 상태 폴더가 없어 접수할 수 없습니다');
         const store = createConfirmStore({ stateDir: deps.stateDir, now });
         const confirm = store.stage({ action: a.action, params: a.params, sourceMessageId: a.sourceMessageId });
-        return `접수 대기로 넘김(${confirm.id}): ${confirm.summary}. 관문이 오너에게 다시 묻는다. 너는 실행됐다고 말하지 말고 "확인 질문을 보냈다"고만 답한다.`;
+        return `접수 대기로 넘김(${confirm.id}): ${confirm.summary}. 창구가 오너에게 다시 묻는다. 너는 실행됐다고 말하지 말고 "확인 질문을 보냈다"고만 답한다.`;
       },
     },
     {
       name: 'promise_add',
-      description: '"끝나면 알려줄게" 같은 약속을 관문에 맡긴다(설계 9-1). 약속은 말로만 하지 말고 반드시 이 도구로 남긴다. 조건: time {at: ISO 시각} · job {job: 잡 이름, status: ok|fail|any} · file {path: 볼트 상대 경로}, 둘 중 하나면 or. action은 기본 notify(고정 문구), 맥락 설명이 필요할 때만 llm. 기한 7일.',
+      description: '"끝나면 알려줄게" 같은 약속을 창구에 맡긴다(설계 9-1). 약속은 말로만 하지 말고 반드시 이 도구로 남긴다. 조건: time {at: ISO 시각} · job {job: 잡 이름, status: ok|fail|any} · file {path: 볼트 상대 경로}, 둘 중 하나면 or. action은 기본 notify(고정 문구), 맥락 설명이 필요할 때만 llm. 기한 7일.',
       inputSchema: { type: 'object', properties: {
         text: str('이행할 때 오너에게 알릴 내용(무엇을 알려 주기로 했는지)'),
         trigger: { type: 'object', properties: { type: { type: 'string', enum: TRIGGER_TYPES }, at: str('ISO 시각'), job: str('잡 이름'), status: { type: 'string', enum: ['ok', 'fail', 'any'] }, path: str('볼트 상대 경로') }, required: ['type'] },
@@ -155,7 +155,7 @@ export function createGateMcpTools(deps = {}) {
         sourceMessageId: { type: 'integer' },
       }, required: ['text', 'trigger'], additionalProperties: false },
       handler: async (a) => {
-        if (!deps.stateDir) throw new Error('관문 상태 폴더가 없어 약속을 남길 수 없습니다');
+        if (!deps.stateDir) throw new Error('창구 상태 폴더가 없어 약속을 남길 수 없습니다');
         const store = promiseStoreFor(deps.stateDir);
         // 대기 20건 한도를 맡기기 전에 본다(맡겼다고 답한 뒤 거절되지 않게, 리뷰 L3).
         if (store.pending().length + store.pendingRequestCount() >= MAX_PENDING) throw new Error(`대기 약속이 ${MAX_PENDING}건이라 더 받을 수 없습니다`);
@@ -164,7 +164,7 @@ export function createGateMcpTools(deps = {}) {
         const requestedAt = now().toISOString();
         const promise = validatePromiseInput(a, { now: new Date(requestedAt), knownJobs: Object.keys(JOB_LABELS), uuid: () => uuid });
         store.request({ kind: 'add', input: a }, { uuid, requestedAt });
-        return `약속을 관문에 맡겼다(id ${promise.id}, 1분 안에 대기열에 오름): ${promise.text}. 기한 ${promise.expiresAt.slice(0, 10)}. 오너에게 "조건이 되면 관문이 알려 준다"고 말하고, 취소는 이 id로 한다.`;
+        return `약속을 창구에 맡겼다(id ${promise.id}, 1분 안에 대기열에 오름): ${promise.text}. 기한 ${promise.expiresAt.slice(0, 10)}. 오너에게 "조건이 되면 창구가 알려 준다"고 말하고, 취소는 이 id로 한다.`;
       },
     },
     {
@@ -172,10 +172,10 @@ export function createGateMcpTools(deps = {}) {
       description: '대기 중인 약속을 취소한다(오너가 그만 알려 달라고 할 때). id는 P-YYYYMMDD-xxxxxx.',
       inputSchema: { type: 'object', properties: { id: str('약속 ID') }, required: ['id'], additionalProperties: false },
       handler: async (a) => {
-        if (!deps.stateDir) throw new Error('관문 상태 폴더가 없어 취소할 수 없습니다');
+        if (!deps.stateDir) throw new Error('창구 상태 폴더가 없어 취소할 수 없습니다');
         if (!/^P-\d{8}-[0-9a-f]{6}$/.test(String(a.id))) throw new Error('약속 ID 형식이 올바르지 않습니다');
         promiseStoreFor(deps.stateDir).request({ kind: 'cancel', id: a.id });
-        return `약속 취소를 관문에 넘겼다: ${a.id}`;
+        return `약속 취소를 창구에 넘겼다: ${a.id}`;
       },
     },
     {
@@ -183,7 +183,7 @@ export function createGateMcpTools(deps = {}) {
       description: '대기 중인 약속 목록(id·문구·조건·기한)과 아직 대기열에 오르기 전인 요청 수. 오너가 약속을 묻거나 취소할 때 먼저 본다.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       handler: async () => {
-        if (!deps.stateDir) throw new Error('관문 상태 폴더가 없습니다');
+        if (!deps.stateDir) throw new Error('창구 상태 폴더가 없습니다');
         const store = promiseStoreFor(deps.stateDir);
         const lines = store.pending().map(({ promise: p }) => `${p.id}: ${p.text} — ${describeTrigger(p.trigger)}${p.or ? ` 또는 ${describeTrigger(p.or)}` : ''}, 기한 ${p.expiresAt.slice(0, 10)}`);
         const waiting = store.pendingRequestCount();
@@ -192,7 +192,7 @@ export function createGateMcpTools(deps = {}) {
     },
     {
       name: 'request_record',
-      description: '구현(코드·설정 변경) 요청을 개발 요청 노트로 기록한다. 텔레그램 관문은 구현하지 않는다(운영 규칙 2절) — 구현 요청은 이것만 하고 "개발 세션에서 이어서 구현한다"고 답한다.',
+      description: '구현(코드·설정 변경) 요청을 개발 요청 노트로 기록한다. 텔레그램 창구는 구현하지 않는다(운영 규칙 2절) — 구현 요청은 이것만 하고 "개발 세션에서 이어서 구현한다"고 답한다.',
       inputSchema: { type: 'object', properties: { title: str('짧은 설명(파일 제목)'), what: str('무엇이 필요한지'), why: str('왜 필요한지'), ownerText: str('오너 원문'), background: str('관련 배경'), priority: str('우선순위') }, required: ['title', 'what', 'why', 'ownerText'], additionalProperties: false },
       handler: async (a) => {
         const note = buildRequestNote(a, { now: now() });

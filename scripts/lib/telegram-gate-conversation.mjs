@@ -13,7 +13,7 @@ const NO_CONVERSATION_RE = /No conversation found|no conversation/i;
 
 function shortReason(res) {
   if (/limit|한도/i.test(res.errorText ?? '')) return '사용량 한도';
-  return '처리 중 오류(관문 로그 참고)';
+  return '처리 중 오류(창구 로그 참고)';
 }
 
 function kstTime(ms) {
@@ -23,7 +23,7 @@ function kstTime(ms) {
 // 2단계 가짜 실행기: 실행할 명령을 보여 주기만 한다. 실제 실행 배선은 전환 전 별도 리뷰(설계 14절).
 export async function fakeOrderExecutor(confirm) {
   const { tool, args } = buildOrderCommand(confirm);
-  return { executed: false, text: `관문 2단계라 실제로 실행하지 않았습니다.\n· 실행할 명령: ${tool} ${args.join(' ')}` };
+  return { executed: false, text: `창구 2단계라 실제로 실행하지 않았습니다.\n· 실행할 명령: ${tool} ${args.join(' ')}` };
 }
 
 // deps: send(message, chatId) → Bot API 응답, edit(messageId, message, chatId), del(messageId, chatId), downloadPhoto(fileId) → path,
@@ -147,7 +147,7 @@ export function createConversation(deps) {
       if (cooldown) {
         // 한도가 풀리면 관문이 먼저 알린다(Q11: 사용량 한도 해제 알림). 그래서 몇 건을 못 했는지 센다.
         state.cooldownRefused = (state.cooldownRefused ?? 0) + items.filter((i) => i.args.kind !== 'promise').length;
-        await finishProgress(`사용량 한도 쿨다운 중이라 처리하지 않았습니다. ${kstTime(cooldown.resetAt)} 이후 한도가 풀리면 관문이 알려 드립니다.`);
+        await finishProgress(`사용량 한도 쿨다운 중이라 처리하지 않았습니다. ${kstTime(cooldown.resetAt)} 이후 한도가 풀리면 창구가 알려 드립니다.`);
         deps.journal.append({ type: 'llm', status: '쿨다운', input: inputText });
         state.lastRun = { ok: true, at: now().toISOString(), status: '쿨다운' };
         // refused: 약속 이행기가 "이행"으로 착각하지 않고 고정 문구로 대신하게(3단계 리뷰 M4).
@@ -200,9 +200,9 @@ export function createConversation(deps) {
         dropUnannouncedConfirm(startedAt);
         if (isStopping()) {
           // 관문 재시작으로 끊김 — 입력은 '처리중'으로 남겨 재시작 때 확인필요 안내로 간다.
-          await finishProgress('관문이 다시 시작되느라 멈췄습니다. 재시작 뒤 안내를 확인해 주세요.');
+          await finishProgress('창구가 다시 시작되느라 멈췄습니다. 재시작 뒤 안내를 확인해 주세요.');
           deps.journal.append({ type: 'llm', status: '중단', input: inputText });
-          return { status: '중단', detail: '관문 종료로 끊김', interruptedByShutdown: true };
+          return { status: '중단', detail: '창구 종료로 끊김', interruptedByShutdown: true };
         }
         await finishProgress(`취소함(경과 ${seconds}초, 마지막 단계: ${escapeHtml(lastStep)})`);
         deps.journal.append({ type: 'llm', status: '취소', input: inputText });
@@ -349,7 +349,7 @@ export function createConversation(deps) {
       log(`[gate] ${day} 인수인계 노트 쓰기 실패(${count}회): ${error.message}`);
       if (count >= 3 && !state.handoffFailures.get(day).warned) {
         state.handoffFailures.get(day).warned = true;
-        await safe(() => deps.warn?.({ agent: 'zeus', kind: '정보', topic: '경고', body: `${day} 텔레그램 인수인계 노트를 ${count}번 쓰지 못했습니다. 다음 첫 대화에는 관문이 직접 넘깁니다.\n· 자세한 원인은 telegram-gate.log` }), '인수인계 경고');
+        await safe(() => deps.warn?.({ agent: 'zeus', kind: '정보', topic: '경고', body: `${day} 텔레그램 인수인계 노트를 ${count}번 쓰지 못했습니다. 다음 첫 대화에는 창구가 직접 넘깁니다.\n· 자세한 원인은 telegram-gate.log` }), '인수인계 경고');
       }
       return null;
     }

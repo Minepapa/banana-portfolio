@@ -176,7 +176,7 @@ test('상태 표: <pre> 안 한 줄 44칸(한글 2칸) 이내, HTML 이스케이
 
 test('runGateTool: 허용 목록 밖 도구는 실행하지 않는다', async () => {
   await assert.rejects(runGateTool('place-nh-direct-order.mjs', []), /허용 목록에 없는 도구/);
-  assert.equal(GATE_TOOLS.some((t) => /order|breakout|execute/.test(t)), false, '돈 도구는 1단계 관문 결정론 목록에 없다');
+  assert.equal(GATE_TOOLS.some((t) => /order|breakout|execute/.test(t)), false, '돈 도구는 1단계 창구 결정론 목록에 없다');
 });
 
 test('runGateTool: 관문 env(GATE=1)로 node 도구를 띄우고 표준입력에 JSON을 쓴다', async () => {

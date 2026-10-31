@@ -313,11 +313,11 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
       state.alertOpen = true;
       const cause = error instanceof TelegramApiError
         ? `Bot API 오류 코드 ${error.errorCode ?? error.status ?? '알 수 없음'}`
-        : '관문 내부 오류(저장 실패 등)';
+        : '창구 내부 오류(저장 실패 등)';
       const body = kind === 'conflict'
-        ? ['다른 프로그램이 같은 봇을 받고 있어 관문이 메시지를 못 받습니다(409).', '관문은 계속 다시 잡습니다.',
+        ? ['다른 프로그램이 같은 봇을 받고 있어 창구가 메시지를 못 받습니다(409).', '창구는 계속 다시 잡습니다.',
           ...listPollers().slice(0, 3).map((line) => `· ${escapeHtml(line)}`)].join('\n')
-        : `관문 수신이 멈췄습니다. 사람이 확인해야 합니다.\n· ${cause}(자세한 원인은 telegram-gate.log)`;
+        : `창구 수신이 멈췄습니다. 사람이 확인해야 합니다.\n· ${cause}(자세한 원인은 telegram-gate.log)`;
       await warnOwner(body);
       state.lastPollProgressAt = now().getTime();
     }
@@ -346,7 +346,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
         // 경고를 보낸 뒤 5분 연속 정상일 때만 복구를 알린다. lastAlert.at은 지우지 않아 같은 종류 재경고는 30분 간격을 지킨다.
         if (state.alertOpen && nowMs - state.healthySince >= RECOVERY_CONFIRM_MS) {
           state.alertOpen = false;
-          await notifyOwner(SENDER_AGENT, '복구', '관문 수신이 다시 정상입니다.');
+          await notifyOwner(SENDER_AGENT, '복구', '창구 수신이 다시 정상입니다.');
         }
         // 다운 중 서버에 쌓였던 메시지는 첫 수신에서 들어온다 — 그때 한 번 안내한다(설계 9-2).
         if (!state.backlogChecked) {
@@ -395,7 +395,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     if (interrupted.length) {
       const lines = interrupted.slice(0, 5).map((i) => `· ${escapeHtml(String(i.update?.message?.text ?? i.update?.message?.caption ?? '(글 없음)').slice(0, 30))}`);
       await notifyOwner(SENDER_AGENT, '확인 필요', [
-        `처리 중에 관문이 멈춘 메시지 ${interrupted.length}건이 있습니다. 두 번 실행되지 않게 다시 처리하지 않았습니다.`,
+        `처리 중에 창구가 멈춘 메시지 ${interrupted.length}건이 있습니다. 두 번 실행되지 않게 다시 처리하지 않았습니다.`,
         '기록이 이미 남았을 수 있으니 확인한 뒤 필요할 때만 다시 보내 주세요.',
         ...lines,
       ].join('\n'));
@@ -406,7 +406,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     const pending = inbox.pending();
     const oldest = pending[0]?.update?.message?.date;
     if (pending.length && Number.isFinite(oldest) && now().getTime() - oldest * 1000 > BACKLOG_NOTICE_MS) {
-      await notifyOwner(SENDER_AGENT, '밀린 메시지', `관문이 멈춘 동안 온 메시지 ${pending.length}건을 지금 처리합니다.`);
+      await notifyOwner(SENDER_AGENT, '밀린 메시지', `창구가 멈춘 동안 온 메시지 ${pending.length}건을 지금 처리합니다.`);
     }
   }
 
@@ -653,7 +653,7 @@ export function decideLiveStart({ env = {}, launchd = { loaded: false, pid: null
       || (isNodeLike(exe) && (pluginRe.test(p.args) || PLUGIN_PATH_RE.test(p.args)))
       || (isNodeLike(exe) && GATE_SCRIPT_RE.test(p.args) && !NON_LIVE_GATE_RE.test(p.args));
   });
-  if (rivals.length) reasons.push({ code: 'RIVAL', text: `텔레그램 상시 세션·플러그인 폴러·다른 관문이 살아 있음(pid ${rivals.map((p) => p.pid).join(', ')})` });
+  if (rivals.length) reasons.push({ code: 'RIVAL', text: `텔레그램 상시 세션·플러그인 폴러·다른 창구가 살아 있음(pid ${rivals.map((p) => p.pid).join(', ')})` });
   return { ok: reasons.length === 0, reasons, rivalOnly: reasons.length > 0 && reasons.every((r) => r.code === 'RIVAL') };
 }
 

@@ -201,7 +201,7 @@ test('수신 루프: 관문 내부 오류(저장 실패)는 Bot API 오류로 �
   try {
     s.inbox.appendUpdates = () => { throw new Error('ENOSPC'); };
     await s.daemon.pollLoop();
-    assert.match(s.warned[0].body, /관문 내부 오류/);
+    assert.match(s.warned[0].body, /창구 내부 오류/);
     assert.doesNotMatch(s.warned[0].body, /ENOSPC/, '오류 원문은 로그에만');
   } finally { s.cleanup(); }
 });
@@ -490,9 +490,9 @@ test('실전 가드: --help·모르는 인자·--mode 없음·live 가드 불통
     ['등록만 되고 안 도는 상태에서 터미널 실행', { env: cutover, launchd: { loaded: true, pid: null } }, 'NOT_LAUNCHD'],
     ['상시 세션 살아 있음', { env: cutover, processes: [self, parent, session] }, 'RIVAL'],
     ['플러그인 폴러 살아 있음', { env: cutover, processes: [self, parent, plugin] }, 'RIVAL'],
-    ['다른 실전 관문 살아 있음', { env: cutover, processes: [self, parent, otherLive] }, 'RIVAL'],
-    ['사고 형태: --help로 뜬 옛 관문', { env: cutover, processes: [self, parent, accidentHelp] }, 'RIVAL'],
-    ['사고 형태: 인자 없이 뜬 옛 관문', { env: cutover, processes: [self, parent, accidentBare] }, 'RIVAL'],
+    ['다른 실전 창구 살아 있음', { env: cutover, processes: [self, parent, otherLive] }, 'RIVAL'],
+    ['사고 형태: --help로 뜬 옛 창구', { env: cutover, processes: [self, parent, accidentHelp] }, 'RIVAL'],
+    ['사고 형태: 인자 없이 뜬 옛 창구', { env: cutover, processes: [self, parent, accidentBare] }, 'RIVAL'],
     ['프로세스 표 비어 있음', { env: cutover, processes: [] }, 'PS_UNREADABLE'],
     ['프로세스 표에 자기 자신이 없음', { env: cutover, processes: [{ pid: 1, args: '/sbin/launchd' }] }, 'PS_UNREADABLE'],
   ]) {
@@ -533,7 +533,7 @@ test('실전 가드: --help·모르는 인자·--mode 없음·live 가드 불통
   assert.equal(decideLiveStart({ env: cutover, launchd: { loaded: true, pid: 4 }, selfPid: 5, parentPid: 4,
     processes: [{ pid: 5, args: 'node scripts/jobs/telegram-gate.mjs --mode=live' }, { pid: 6, args: 'node scripts/jobs/telegram-gate.mjs --mode=test' },
       { pid: 7, args: 'node scripts/jobs/telegram-gate.mjs --self-test' }] }).ok, true,
-  '관문 자신·시험 관문(다른 봇)·자가 점검은 경쟁자가 아니다');
+  '창구 자신·시험 창구(다른 봇)·자가 점검은 경쟁자가 아니다');
 });
 
 test('실전 가드: launchctl print의 최상위 pid만 읽고, 확인 함수는 실패하면 막는 쪽', async () => {

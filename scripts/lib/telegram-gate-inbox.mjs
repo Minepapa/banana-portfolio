@@ -140,7 +140,7 @@ export function createGateInbox({ dir, now = () => new Date() }) {
     // 재시작 직후 한 번: 처리중으로 끊긴 건을 확인필요로 돌리고 돌려준다.
     recoverInterrupted() {
       const interrupted = [...items.values()].filter((i) => i.status === '처리중');
-      for (const item of interrupted) this.markStatus(item.updateId, '확인필요', '처리 중 관문이 멈춤 — 다시 실행하지 않음');
+      for (const item of interrupted) this.markStatus(item.updateId, '확인필요', '처리 중 창구가 멈춤 — 다시 실행하지 않음');
       return interrupted;
     },
 

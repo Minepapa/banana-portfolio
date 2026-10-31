@@ -39,10 +39,10 @@ export function assessGate({ heartbeat, nowMs, pendingCount, priorPendingStreak 
   const refusedAt = refusal?.at ? Date.parse(refusal.at) : NaN;
   if (Number.isFinite(refusedAt) && !(Number.isFinite(beatAt) && beatAt > refusedAt)) {
     const codes = Array.isArray(refusal.codes) ? refusal.codes.filter((c) => /^[A-Z_]{2,40}$/.test(String(c))) : [];
-    return { healthy: false, refused: true, refusedAt: refusal.at, reasons: [`관문이 실전 시작을 거부하고 꺼져 있음(${codes.join(', ') || '사유 코드 없음'})`], pendingStreak: 0 };
+    return { healthy: false, refused: true, refusedAt: refusal.at, reasons: [`창구가 실전 시작을 거부하고 꺼져 있음(${codes.join(', ') || '사유 코드 없음'})`], pendingStreak: 0 };
   }
-  if (!Number.isFinite(beatAt)) reasons.push('관문 하트비트 없음');
-  else if (nowMs - beatAt > HEARTBEAT_STALE_MS) reasons.push(`관문 하트비트 ${Math.round((nowMs - beatAt) / 60000)}분 전`);
+  if (!Number.isFinite(beatAt)) reasons.push('창구 하트비트 없음');
+  else if (nowMs - beatAt > HEARTBEAT_STALE_MS) reasons.push(`창구 하트비트 ${Math.round((nowMs - beatAt) / 60000)}분 전`);
   const pendingStreak = Number.isFinite(pendingCount) && pendingCount > 0 ? priorPendingStreak + 1 : 0;
   if (pendingStreak >= 2) reasons.push(`가져가지 않은 메시지 ${pendingCount}건이 두 번 연속 남음`);
   return { healthy: reasons.length === 0, refused: false, reasons, pendingStreak };
@@ -71,24 +71,24 @@ export async function runHealthCheck({ stateDir = defaultGatePaths().liveStateDi
   const assessment = assessGate({ heartbeat: readJson(join(stateDir, 'heartbeat.json')), nowMs, pendingCount, priorPendingStreak: prior.pendingStreak ?? 0,
     refusal: readJson(join(stateDir, 'refusal.json')) });
   const decision = decideAction({ healthy: assessment.healthy, consecutiveRestarts: prior.consecutiveRestarts ?? 0, refused: assessment.refused });
-  log(`관문 점검: ${assessment.healthy ? '정상' : assessment.reasons.join(' · ')} → ${decision.action}`);
+  log(`창구 점검: ${assessment.healthy ? '정상' : assessment.reasons.join(' · ')} → ${decision.action}`);
   if (dryRun) return { assessment, decision };
 
   if (decision.action === 'restart') {
     try {
       restart();
-      await warn({ agent: SENDER_AGENT, kind: '정보', topic: '경고', body: [`관문이 멈춘 것 같아 다시 띄웠습니다(연속 ${decision.consecutiveRestarts}회째).`, ...assessment.reasons.map((r) => `· ${r}`)].join('\n') });
+      await warn({ agent: SENDER_AGENT, kind: '정보', topic: '경고', body: [`창구가 멈춘 것 같아 다시 띄웠습니다(연속 ${decision.consecutiveRestarts}회째).`, ...assessment.reasons.map((r) => `· ${r}`)].join('\n') });
     } catch (error) {
       // 오류 원문은 오너 메시지에 넣지 않고 로그에만 남긴다(2026-09-20 오너 DevRequest, telegram-format-compliance 가드).
-      log(`관문 재시작 실패: ${error.message}`);
-      await warn({ agent: SENDER_AGENT, kind: '정보', topic: '경고', body: '관문 재시작 실패 — 사람 확인 필요.\n· 자세한 원인은 telegram-gate-health-check.log' });
+      log(`창구 재시작 실패: ${error.message}`);
+      await warn({ agent: SENDER_AGENT, kind: '정보', topic: '경고', body: '창구 재시작 실패 — 사람 확인 필요.\n· 자세한 원인은 telegram-gate-health-check.log' });
     }
   } else if (decision.action === 'refused' && prior.refusalAlertedAt !== assessment.refusedAt) {
     await warn({ agent: SENDER_AGENT, kind: '정보', topic: '경고', body: [
-      '관문이 실전 시작을 스스로 거부하고 꺼져 있습니다. 다시 띄워도 같은 이유로 거부하므로 자동 재시작하지 않습니다. 사람 확인이 필요합니다.',
+      '창구가 실전 시작을 스스로 거부하고 꺼져 있습니다. 다시 띄워도 같은 이유로 거부하므로 자동 재시작하지 않습니다. 사람 확인이 필요합니다.',
       ...assessment.reasons.map((r) => `· ${r}`), '· 자세한 사유는 telegram-gate.log의 LIVE_REFUSED 줄'].join('\n') });
   } else if (decision.action === 'escalate' && !prior.escalated) {
-    await warn({ agent: SENDER_AGENT, kind: '정보', topic: '경고', body: [`관문이 ${MAX_CONSECUTIVE_RESTARTS}번 다시 띄워도 회복하지 않아 자동 재시작을 멈췄습니다. 사람 확인이 필요합니다.`, ...assessment.reasons.map((r) => `· ${r}`)].join('\n') });
+    await warn({ agent: SENDER_AGENT, kind: '정보', topic: '경고', body: [`창구가 ${MAX_CONSECUTIVE_RESTARTS}번 다시 띄워도 회복하지 않아 자동 재시작을 멈췄습니다. 사람 확인이 필요합니다.`, ...assessment.reasons.map((r) => `· ${r}`)].join('\n') });
   }
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   writeAtomic(statePath, `${JSON.stringify({
@@ -103,7 +103,7 @@ const invokedPath = (() => { try { return realpathSync(process.argv[1] ?? ''); }
 if (invokedPath && invokedPath === fileURLToPath(import.meta.url)) {
   const stateDir = defaultGatePaths().liveStateDir;
   if (!existsSync(stateDir)) {
-    console.log('관문 상태 폴더가 없음 — 관문이 아직 설치되지 않았다(점검 건너뜀)');
+    console.log('창구 상태 폴더가 없음 — 창구가 아직 설치되지 않았다(점검 건너뜀)');
   } else {
     runHealthCheck({ dryRun: process.argv.includes('--dry-run') }).catch((error) => { console.error(error.message); process.exitCode = 1; });
   }

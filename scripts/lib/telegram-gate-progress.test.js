@@ -11,7 +11,7 @@ test('이벤트 → 단계·문구: 받음 → 처리 중(도구 문구) → 답
   assert.deepEqual(describeEvent(toolUse('Agent', { subagent_type: 'clio' })), { stage: STAGE_WORKING, step: '클리오 호출 중' });
   assert.deepEqual(describeEvent(toolUse('Agent', { subagent_type: 'Explore' })), { stage: STAGE_WORKING, step: '도우미 호출 중' });
   assert.deepEqual(describeEvent(toolUse('Read', { file_path: '/v/90_Delphi/Channels/텔레그램 입력 규칙.md' })), { stage: STAGE_WORKING, step: '읽는 중: 텔레그램 입력 규칙' });
-  assert.deepEqual(describeEvent(toolUse('Grep', { pattern: '관문' }, 'parent')), { stage: STAGE_WORKING, step: '담당 작업 중 · 볼트 검색(관문)' });
+  assert.deepEqual(describeEvent(toolUse('Grep', { pattern: '창구' }, 'parent')), { stage: STAGE_WORKING, step: '담당 작업 중 · 볼트 검색(창구)' });
   assert.deepEqual(describeEvent(toolUse('StructuredOutput')), { stage: STAGE_ANSWERING });
   assert.deepEqual(describeEvent({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'text' } } }), { stage: STAGE_ANSWERING });
   assert.equal(describeEvent({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'text' } }, parent_tool_use_id: 'p' }), null);
@@ -39,7 +39,7 @@ test('진행 상태: 단계 순서·최근 2개 문구·단계 수', () => {
 
 test('진행 메시지 한 줄은 44칸(한글 2칸) 이내', () => {
   const width = (l) => [...l].reduce((w, ch) => w + (/[ᄀ-ￜ]/.test(ch) ? 2 : 1), 0);
-  const s = { ...initialProgress({ startedAt: 0, queued: 3 }), stage: STAGE_ANSWERING, stepCount: 12, steps: ['담당 작업 중 · 읽는 중: 2026-10-30 텔레그램 관문 설계 문서', '사실 조회'] };
+  const s = { ...initialProgress({ startedAt: 0, queued: 3 }), stage: STAGE_ANSWERING, stepCount: 12, steps: ['담당 작업 중 · 읽는 중: 2026-10-30 텔레그램 창구 설계 문서', '사실 조회'] };
   for (const l of renderProgress(s, 754_000).split('\n')) assert.ok(width(l) <= 44, `${l} (${width(l)})`);
 });
 

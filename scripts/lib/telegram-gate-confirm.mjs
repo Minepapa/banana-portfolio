@@ -96,7 +96,7 @@ export function findSourceMessage(inboxRecords, sourceMessageId, { activeBatch =
     if (typeof message.text !== 'string' || !message.text.trim()) throw new Error('글 메시지가 아닌 입력(음성·사진)으로는 주문을 접수하지 않습니다');
     return { chatId: String(message.chat.id), messageId: message.message_id, updateId: item.updateId, text: message.text, replyTo: message.reply_to_message?.message_id ?? null };
   }
-  throw new Error('원본 메시지를 관문 수신 기록에서 찾지 못했습니다');
+  throw new Error('원본 메시지를 창구 수신 기록에서 찾지 못했습니다');
 }
 
 export function createConfirmStore({ stateDir, now = () => new Date() }) {

@@ -62,10 +62,10 @@ export function loadGateConfig({ mode = 'live', env = process.env, paths = defau
   if (mode === 'live') {
     const config = loadLive({ envPath: paths.liveEnv, accessPath: paths.access });
     const allowFrom = new Set(readAllowFrom(paths.access, readFile));
-    if (!allowFrom.size) throw new Error('관문 허용 사용자가 없습니다(access.json allowFrom)');
+    if (!allowFrom.size) throw new Error('창구 허용 사용자가 없습니다(access.json allowFrom)');
     return { mode, config, allowFrom, stateDir: env.TELEGRAM_GATE_STATE_DIR || paths.liveStateDir, heartbeatJob: 'telegram-gate', vaultRoot: null, llmMediaDir: paths.liveLlmMediaDir };
   }
-  if (mode !== 'test') throw new Error(`관문 모드는 live 또는 test: ${mode}`);
+  if (mode !== 'test') throw new Error(`창구 모드는 live 또는 test: ${mode}`);
   const testEnvPath = env.TELEGRAM_GATE_TEST_ENV || paths.testEnv;
   if (sameFile(testEnvPath, paths.liveEnv)) throw new Error('시험 모드는 실제 봇 설정 파일을 읽지 않습니다');
   if (!exists(testEnvPath)) throw new Error(`시험 봇 설정 파일이 없습니다: ${testEnvPath}`);
@@ -78,7 +78,7 @@ export function loadGateConfig({ mode = 'live', env = process.env, paths = defau
   if (!allowList.length || !allowList.every((id) => CHAT_ID_RE.test(id))) throw new Error('시험 봇 허용 사용자가 올바르지 않습니다');
   const stateDir = env.TELEGRAM_GATE_STATE_DIR || paths.testStateDir;
   // 시험 상태 폴더가 실전 상태 폴더와 같으면 실전 offset·대기열을 섞는다 — 거부한다.
-  if (sameFile(stateDir, paths.liveStateDir) || stateDir === paths.liveStateDir) throw new Error('시험 모드 상태 폴더가 실전 관문 상태 폴더와 같습니다');
+  if (sameFile(stateDir, paths.liveStateDir) || stateDir === paths.liveStateDir) throw new Error('시험 모드 상태 폴더가 실전 창구 상태 폴더와 같습니다');
   return {
     mode,
     config: { botToken, chatId: allowList[0] },
