@@ -37,9 +37,12 @@ test('JOB_REMEDIATION: 알려진 크리덴셜·경로 의존이 있는 잡만 �
   assert.equal(JOB_REMEDIATION['update-monthly-balance-snapshot'], undefined);
 });
 
-test('JOB_SHORT_LABELS: 라벨 있는 잡은 전부 화면용 짧은 이름(12자 이내)이 있다', () => {
+test('JOB_SHORT_LABELS: JOB_LABELS와 양방향으로 맞고(빠짐·고아 없음) 12자 이내', () => {
   const missing = Object.keys(JOB_LABELS).filter((job) => typeof JOB_SHORT_LABELS[job] !== 'string' || !JOB_SHORT_LABELS[job].trim());
   assert.deepEqual(missing, [], `JOB_SHORT_LABELS에 없는 잡: ${missing.join(', ')} — job-labels.mjs에 한 줄 추가할 것`);
+  // 반대 방향: 짧은 이름만 있고 JOB_LABELS에 없는 고아 항목도 없어야 한다(잡을 지우면 둘 다 지운다).
+  const orphan = Object.keys(JOB_SHORT_LABELS).filter((job) => !Object.hasOwn(JOB_LABELS, job));
+  assert.deepEqual(orphan, [], `JOB_LABELS에 없는 짧은 이름: ${orphan.join(', ')}`);
   const long = Object.entries(JOB_SHORT_LABELS).filter(([, label]) => [...label].length > 12).map(([job]) => job);
   assert.deepEqual(long, [], `12자 넘는 짧은 이름: ${long.join(', ')}`);
 });

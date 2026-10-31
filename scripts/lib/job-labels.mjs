@@ -150,7 +150,7 @@ export const JOB_SHORT_LABELS = {
   'update-allocation-from-holdings': '자산분배 비중 갱신',
   'update-holdings-prices': '보유 시세 갱신',
   'telegram-session-health-check': '세션 연결 감시',
-  'livesync-watch': '볼트 동기화 감시', // 다른 세션이 추가 중인 잡(JOB_LABELS 반영 전) — 미리 둔다
+  'livesync-watch': '볼트 동기화 감시',
   'telegram-gate': '텔레그램 관문',
   'telegram-gate-health-check': '관문 감시',
   'intraday-market-move-monitor': '장중 급변 감시',
