@@ -138,10 +138,18 @@ export function createPromiseRunner(deps) {
   }
 
   // 상태 표용: 대기 수와 다음 시각 조건.
+  // 상태 표용: 볼트 대기열의 대기 약속 + 아직 반영되지 않은 요청 파일('반영 중', 다음 1분 점검에서 볼트로 옮겨진다).
+  // 취소 요청이 반영 중인 볼트 약속은 대기 수에서 뺀다(리뷰 L1). 지난 시각은 상태 표가 '곧'으로 보인다(nextAt은 그대로 둠).
   function summary() {
-    const pending = deps.store.pending();
-    const times = pending.flatMap((p) => [p.promise.trigger, p.promise.or].filter((t) => t?.type === 'time').map((t) => Date.parse(t.at))).filter(Number.isFinite);
-    return { pending: pending.length, nextAt: times.length ? new Date(Math.min(...times)).toISOString() : null };
+    let inflight = { added: [], cancelled: [] };
+    try { inflight = deps.store.inflight?.({ knownJobs: deps.knownJobs }) ?? inflight; } catch (error) {
+      log(`[gate] 반영 중 약속 읽기 실패: ${error.message}`);
+    }
+    const cancelling = new Set(inflight.cancelled);
+    const pending = deps.store.pending().map((p) => p.promise).filter((p) => !cancelling.has(p.id));
+    const times = [...pending, ...inflight.added].flatMap((p) => [p.trigger, p.or].filter((t) => t?.type === 'time').map((t) => Date.parse(t.at))).filter(Number.isFinite);
+    return { pending: pending.length + inflight.added.length, inflight: inflight.added.length,
+      nextAt: times.length ? new Date(Math.min(...times)).toISOString() : null };
   }
 
   function pendingForHandoff() {

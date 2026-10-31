@@ -310,3 +310,13 @@ test('상태 표: 약속 대기 수와 다음 시각', () => {
   const body = buildStatusBody({ startedAt: 0, now: 60_000, lastPollOkAt: null, counts: {}, cooldown: null, freeMemPct: 20, mode: 'live', promises: { pending: 2, nextAt: '2026-10-30T09:00:00Z' } });
   assert.match(body, /약속 +대기 2 · 다음 18:00/);
 });
+
+test('상태 표: 아직 볼트에 반영되지 않은 약속은 "반영 중"으로 함께 센다(2026-10-31 시험 봇 실측)', () => {
+  const body = buildStatusBody({ startedAt: 0, now: 60_000, lastPollOkAt: null, counts: {}, cooldown: null, freeMemPct: 20, mode: 'live', promises: { pending: 1, inflight: 1, nextAt: '2026-10-30T09:00:00Z' } });
+  assert.match(body, /약속 +대기 1\(반영 중 1\) · 다음 18:00/);
+  for (const line of body.replace(/<\/?pre>/g, '').split('\n')) assert.ok([...line].reduce((w, c) => w + (/[\u1100-\uffdc]/.test(c) ? 2 : 1), 0) <= 44, `폭 초과: ${line}`);
+  // 최대 자릿수(대기 20·반영 중 20)도 한 줄 안, 지난 시각은 '곧'(리뷰 L4·L5)
+  const max = buildStatusBody({ startedAt: 0, now: Date.parse('2026-10-30T10:00:00Z'), lastPollOkAt: null, counts: {}, cooldown: null, freeMemPct: 20, mode: 'live', promises: { pending: 20, inflight: 20, nextAt: '2026-10-30T09:00:00Z' } });
+  assert.match(max, /약속 +대기 20\(반영 중 20\) · 다음 곧/);
+  for (const line of max.replace(/<\/?pre>/g, '').split('\n')) assert.ok([...line].reduce((w, c) => w + (/[\u1100-\uffdc]/.test(c) ? 2 : 1), 0) <= 44, `폭 초과: ${line}`);
+});

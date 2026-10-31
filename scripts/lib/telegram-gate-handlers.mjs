@@ -134,10 +134,12 @@ function usageLine(cooldown, rateLimit) {
   return '쿨다운 없음';
 }
 
-function promiseLine(promises) {
+function promiseLine(promises, nowMs) {
   if (!promises) return '꺼짐';
   if (!promises.pending) return '대기 없음';
-  return `대기 ${promises.pending}${promises.nextAt ? ` · 다음 ${kstTime(promises.nextAt)}` : ''}`;
+  // 다음 시각이 이미 지났으면(다음 1분 점검에서 바로 이행·만료) '곧'으로 보인다(리뷰 L4).
+  const next = promises.nextAt ? (Date.parse(promises.nextAt) <= nowMs ? '곧' : kstTime(promises.nextAt)) : null;
+  return `대기 ${promises.pending}${promises.inflight ? `(반영 중 ${promises.inflight})` : ''}${next ? ` · 다음 ${next}` : ''}`;
 }
 
 export function buildStatusBody({ startedAt, now, lastPollOkAt, counts, cooldown, freeMemPct, mode, llm = null, promises = null }) {
@@ -148,7 +150,7 @@ export function buildStatusBody({ startedAt, now, lastPollOkAt, counts, cooldown
     ['확인', `끊긴 메시지 ${counts['확인필요'] ?? 0}`],
     ['LLM', llmLine(llm)],
     ['사용량', usageLine(cooldown, llm?.rateLimit)],
-    ['약속', promiseLine(promises)],
+    ['약속', promiseLine(promises, now)],
     ['메모리', `여유 ${freeMemPct}%`],
   ];
   // 폰 고정폭 글꼴에서 한글은 2칸 — 칸 너비로 맞춰 값 열이 한 줄로 서게 한다.

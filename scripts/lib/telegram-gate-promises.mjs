@@ -166,6 +166,41 @@ export function safeReason(error) {
   return error?.constructor === Error ? String(error.message).slice(0, 120) : '요청 형식 오류';
 }
 
+// 순수에 가까운 판정(파일을 읽거나 쓰지 않음): 요청 파일 목록 + 현재 상태(foldPromises 결과, 이 함수가 고친다) → 버퍼에 넣을 줄과 결과.
+// ingest(실제 반영)와 inflight(상태 표용 미리보기)가 같은 함수를 써서 상한(MAX_PENDING)·같은 묶음의 추가→취소 순서가 항상 같다.
+export function planIngest(files, current, { knownJobs, now = () => new Date() }) {
+  const lines = [];
+  const added = [];
+  const cancelled = [];
+  const rejected = [];
+  const rejectedPaths = [];
+  for (const { path, request: r } of files) {
+    try {
+      if (!r) throw new Error('읽을 수 없는 요청');
+      if (r.kind === 'cancel') {
+        const target = current.get(r.id);
+        if (target?.status === '취소') continue; // 다시 읽은 요청
+        if (!target || target.status !== '대기') throw new Error(`대기 중인 약속이 아님: ${r.id}`);
+        lines.push({ type: 'status', id: r.id, status: '취소', at: now().toISOString(), detail: '오너·담당 요청으로 취소' });
+        target.status = '취소';
+        cancelled.push(r.id);
+        continue;
+      }
+      const promise = validatePromiseInput(r.input, { now: new Date(r.requestedAt ?? now()), knownJobs, uuid: () => r.uuid ?? randomUUID() });
+      if (current.has(promise.id)) continue;
+      const pendingCount = [...current.values()].filter((p) => p.status === '대기').length;
+      if (pendingCount >= MAX_PENDING) throw new Error(`대기 약속이 ${MAX_PENDING}건을 넘습니다`);
+      lines.push(promise);
+      current.set(promise.id, { promise, status: '대기', at: promise.createdAt, detail: '' });
+      added.push(promise);
+    } catch (error) {
+      rejected.push({ request: r, reason: safeReason(error), error });
+      rejectedPaths.push(path);
+    }
+  }
+  return { lines, added, cancelled, rejected, rejectedPaths };
+}
+
 function readRequests(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((n) => n.endsWith('.json')).sort().map((name) => {
@@ -195,42 +230,27 @@ export function createPromiseStore({ vaultFile, requestDir, now = () => new Date
     pendingRequestCount() {
       return readRequests(requestDir).filter((r) => r.request?.kind === 'add').length;
     },
+    // 읽기만: 아직 볼트에 반영되지 않은 요청(promise_add·promise_cancel 직후 ~ 다음 1분 점검 전) — 상태 표가 '반영 중'으로 함께 보이게
+    // (2026-10-31 시험 봇 실측: 약속 직후 `상태`에 약속이 없었다). 판정은 ingest와 같은 planIngest를 복사한 상태로 돌려
+    // 상한·취소 순서가 구조적으로 같다(리뷰 M1). uuid가 없는 옛 요청은 id가 실행마다 달라지므로 건너뛴다(L3). 파일·버퍼를 바꾸지 않는다.
+    inflight({ knownJobs }) {
+      const files = readRequests(requestDir).filter((f) => f.request?.kind !== 'add' || f.request.uuid);
+      if (!files.length) return { added: [], cancelled: [] };
+      const plan = planIngest(files, foldPromises(allLines()), { knownJobs, now });
+      // 같은 묶음에서 추가했다가 취소한 약속은 보이지 않고, cancelled에는 볼트에 이미 있던 약속만 남긴다(상태 표가 대기에서 뺀다).
+      const addedIds = new Set(plan.added.map((p) => p.id));
+      return { added: plan.added.filter((p) => !plan.cancelled.includes(p.id)), cancelled: plan.cancelled.filter((id) => !addedIds.has(id)) };
+    },
     // 데몬 쪽: 요청 파일들을 다시 검사해 버퍼에 담는다. 반환한 consumed(요청 파일 경로)는 flush가 성공한 뒤에만 지운다.
     // 지우기 전에 멈추면 다음 점검이 다시 읽지만 id가 uuid로 정해져 있어 한 번만 저장된다. 같은 묶음의 추가→취소도 반영(리뷰 L2).
     ingest({ knownJobs }) {
       const files = readRequests(requestDir);
       if (!files.length) return { added: [], cancelled: [], rejected: [], consumed: [], rejectedPaths: [] };
-      const current = foldPromises(allLines());
-      const added = [];
-      const cancelled = [];
-      const rejected = [];
-      const rejectedPaths = [];
-      for (const { path, request: r } of files) {
-        try {
-          if (!r) throw new Error('읽을 수 없는 요청');
-          if (r.kind === 'cancel') {
-            const target = current.get(r.id);
-            if (target?.status === '취소') continue; // 다시 읽은 요청
-            if (!target || target.status !== '대기') throw new Error(`대기 중인 약속이 아님: ${r.id}`);
-            buffer.push({ type: 'status', id: r.id, status: '취소', at: now().toISOString(), detail: '오너·담당 요청으로 취소' });
-            target.status = '취소';
-            cancelled.push(r.id);
-            continue;
-          }
-          const promise = validatePromiseInput(r.input, { now: new Date(r.requestedAt ?? now()), knownJobs, uuid: () => r.uuid ?? randomUUID() });
-          if (current.has(promise.id)) continue;
-          const pendingCount = [...current.values()].filter((p) => p.status === '대기').length;
-          if (pendingCount >= MAX_PENDING) throw new Error(`대기 약속이 ${MAX_PENDING}건을 넘습니다`);
-          buffer.push(promise);
-          current.set(promise.id, { promise, status: '대기', at: promise.createdAt, detail: '' });
-          added.push(promise);
-        } catch (error) {
-          rejected.push({ request: r, reason: safeReason(error), error });
-          rejectedPaths.push(path);
-        }
-      }
+      const plan = planIngest(files, foldPromises(allLines()), { knownJobs, now });
+      buffer.push(...plan.lines);
       // 거절한 요청 파일은 볼트 기록과 상관없어 바로 지운다(볼트 쓰기가 실패해도 거절 알림이 반복되지 않게).
-      return { added, cancelled, rejected, consumed: files.map((f) => f.path).filter((p) => !rejectedPaths.includes(p)), rejectedPaths };
+      return { added: plan.added, cancelled: plan.cancelled, rejected: plan.rejected,
+        consumed: files.map((f) => f.path).filter((p) => !plan.rejectedPaths.includes(p)), rejectedPaths: plan.rejectedPaths };
     },
     list() {
       return [...foldPromises(allLines()).values()];

@@ -348,3 +348,71 @@ test('flush가 정리(compact)도 같은 한 번의 쓰기로 한다', () => wit
   assert.equal(readFileSync(vfile, 'utf8').trim().split('\n').length, 1, '오래된 완료 600줄 정리 + 새 약속 1줄');
   assert.equal(s5.pending().length, 1);
 }));
+
+test('inflight: promise_add 직후(요청 파일만) 상태 표용 반영 중 약속을 돌려주고, 볼트 반영·취소·잘못된 요청은 뺀다', () => withStore(async (store) => {
+  const { uuid } = store.request({ kind: 'add', input: { text: 'A', trigger: { type: 'time', at: '2026-10-30T06:00:00Z' } } });
+  store.request({ kind: 'add', input: { text: '나쁜', trigger: { type: 'job', job: 'nope' } } });
+  const before = store.inflight({ knownJobs: JOBS }).added;
+  assert.equal(before.length, 1, '검사를 통과하는 추가 요청만');
+  assert.equal(before[0].text, 'A');
+  assert.equal(store.pending().length, 0, '볼트 대기열은 아직 비어 있음(읽기만, 반영하지 않음)');
+  // 1분 점검이 반영하면 같은 id는 반영 중에서 빠진다(중복 없음).
+  const ingested = store.ingest({ knownJobs: JOBS });
+  store.flush();
+  store.removeRequests([...ingested.consumed, ...ingested.rejectedPaths]);
+  assert.equal(store.inflight({ knownJobs: JOBS }).added.length, 0);
+  assert.equal(store.pending().length, 1);
+  // 같은 묶음에 취소 요청이 있으면 반영 중으로 보이지 않는다.
+  const next = store.request({ kind: 'add', input: { text: 'B', trigger: { type: 'time', at: '2026-10-30T07:00:00Z' } } });
+  const id = validatePromiseInput({ text: 'B', trigger: { type: 'time', at: '2026-10-30T07:00:00Z' } }, { now: new Date(next.requestedAt), knownJobs: JOBS, uuid: () => next.uuid }).id;
+  assert.equal(store.inflight({ knownJobs: JOBS }).added.length, 1);
+  store.request({ kind: 'cancel', id }, { requestedAt: new Date(NOW.getTime() + 1000).toISOString() }); // 실제로는 추가보다 늦음(파일 이름은 요청 시각순)
+  assert.equal(store.inflight({ knownJobs: JOBS }).added.length, 0);
+  assert.ok(uuid);
+}));
+
+test('이행기 summary: 볼트 대기 + 반영 중 요청을 함께 세고 다음 시각도 반영 중 약속까지 본다', () => withStore(async (store) => {
+  store.request({ kind: 'add', input: { text: 'A', trigger: { type: 'time', at: '2026-10-30T09:00:00Z' } } });
+  const { runner } = runnerWith(store);
+  assert.deepEqual(runner.summary(), { pending: 1, inflight: 1, nextAt: '2026-10-30T09:00:00.000Z' });
+}));
+
+test('inflight·ingest는 같은 판정(planIngest): 상한 경계에서 반영 중 수와 실제 반영 수가 같다(리뷰 M1)', () => withStore(async (store) => {
+  for (let i = 0; i < MAX_PENDING - 1; i += 1) store.request({ kind: 'add', input: { text: `기존${i}`, trigger: { type: 'time', at: '2026-10-30T09:00:00Z' } } });
+  store.removeRequests(store.ingest({ knownJobs: JOBS }).consumed);
+  store.flush();
+  // 대기 19 + 동시 요청 2 → 상한 때문에 1건만 들어간다. 미리보기도 1건.
+  store.request({ kind: 'add', input: { text: 'X', trigger: { type: 'time', at: '2026-10-30T09:00:00Z' } } });
+  store.request({ kind: 'add', input: { text: 'Y', trigger: { type: 'time', at: '2026-10-30T09:00:00Z' } } });
+  const preview = store.inflight({ knownJobs: JOBS });
+  const real = store.ingest({ knownJobs: JOBS });
+  assert.equal(preview.added.length, 1);
+  assert.deepEqual(preview.added.map((p) => p.id), real.added.map((p) => p.id));
+  assert.equal(real.rejected.length, 1);
+}));
+
+test('inflight: 깨진 JSON·요청 폴더 없음은 빈 결과, uuid 없는 옛 요청은 건너뜀, 볼트 약속 취소 요청은 cancelled로(리뷰 L1·L3·L5)', () => withStore(async (store, dir) => {
+  assert.deepEqual(store.inflight({ knownJobs: JOBS }), { added: [], cancelled: [] }, '요청 폴더 없음');
+  const requestDir = join(dir, 'state', 'promise-requests');
+  mkdirSync(requestDir, { recursive: true });
+  writeFileSync(join(requestDir, '0-broken.json'), '{"kind":"add",');
+  writeFileSync(join(requestDir, '1-legacy.json'), JSON.stringify({ kind: 'add', input: { text: '옛', trigger: { type: 'time', at: '2026-10-30T09:00:00Z' } }, requestedAt: NOW.toISOString() }));
+  assert.deepEqual(store.inflight({ knownJobs: JOBS }).added, [], '깨진 파일·uuid 없는 요청은 반영 중으로 세지 않음');
+  rmSync(requestDir, { recursive: true, force: true });
+  store.request({ kind: 'add', input: { text: 'A', trigger: { type: 'time', at: '2026-10-30T09:00:00Z' } } });
+  store.removeRequests(store.ingest({ knownJobs: JOBS }).consumed);
+  store.flush();
+  const id = store.pending()[0].promise.id;
+  store.request({ kind: 'cancel', id }, { requestedAt: new Date(NOW.getTime() + 1000).toISOString() });
+  assert.deepEqual(store.inflight({ knownJobs: JOBS }), { added: [], cancelled: [id] });
+  const { runner } = runnerWith(store);
+  assert.deepEqual(runner.summary(), { pending: 0, inflight: 0, nextAt: null }, '취소 반영 중인 볼트 약속은 대기에서 뺀다');
+}));
+
+test('이행기 summary: 볼트에 이미 있는 id는 반영 중과 겹쳐 세지 않는다', () => withStore(async (store) => {
+  store.request({ kind: 'add', input: { text: 'A', trigger: { type: 'time', at: '2026-10-30T09:00:00Z' } } });
+  store.ingest({ knownJobs: JOBS });
+  store.flush(); // 요청 파일은 아직 남아 있음(지우기 전에 멈춘 경우)
+  const { runner } = runnerWith(store);
+  assert.deepEqual(runner.summary(), { pending: 1, inflight: 0, nextAt: '2026-10-30T09:00:00.000Z' });
+}));
