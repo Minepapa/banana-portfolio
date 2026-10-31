@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { describeJob, JOB_LABELS, JOB_REMEDIATION } from './job-labels.mjs';
+import { describeJob, JOB_LABELS, JOB_REMEDIATION, JOB_SHORT_LABELS } from './job-labels.mjs';
 import { listDispatchedJobs } from './launchd-jobs.mjs';
 
 test('describeJob: 등록된 잡은 "이름(한글설명)" 형태로 반환', () => {
@@ -35,4 +35,11 @@ test('JOB_REMEDIATION: 알려진 크리덴셜·경로 의존이 있는 잡만 �
   // (등록하면 "근거 없는 일반론"이 된다는 헤더 주석 원칙 위반).
   assert.equal(JOB_REMEDIATION['weekly-report'], undefined);
   assert.equal(JOB_REMEDIATION['update-monthly-balance-snapshot'], undefined);
+});
+
+test('JOB_SHORT_LABELS: 라벨 있는 잡은 전부 화면용 짧은 이름(12자 이내)이 있다', () => {
+  const missing = Object.keys(JOB_LABELS).filter((job) => typeof JOB_SHORT_LABELS[job] !== 'string' || !JOB_SHORT_LABELS[job].trim());
+  assert.deepEqual(missing, [], `JOB_SHORT_LABELS에 없는 잡: ${missing.join(', ')} — job-labels.mjs에 한 줄 추가할 것`);
+  const long = Object.entries(JOB_SHORT_LABELS).filter(([, label]) => [...label].length > 12).map(([job]) => job);
+  assert.deepEqual(long, [], `12자 넘는 짧은 이름: ${long.join(', ')}`);
 });
