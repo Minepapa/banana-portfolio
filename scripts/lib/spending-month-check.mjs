@@ -224,6 +224,44 @@ function alertOnlySection(report) {
   return `■ 알림에만 있는 결제(뱅크샐러드에 없음)\n${lines.join('\n')}`;
 }
 
+// 카드별·항목별·고정비(요청 "소비 보고 카드별·항목별·고정비" 2단계). 옛 결과 파일에는 breakdown이 없어 칸을 뺀다.
+function instrumentSection(report) {
+  const groups = report.breakdown?.by_instrument ?? [];
+  if (!groups.length) return null;
+  const table = preTable([['결제수단', 24, 'left'], ['건', 4, 'right'], ['금액', 12, 'right']],
+    groups.slice(0, 8).map((group) => [group.instrument, String(group.count), comma(group.amount)]));
+  const routes = groups.flatMap((group) => Object.entries(group.routes ?? {})
+    .map(([via, amount]) => `- ${escapeHtml(group.instrument)} 중 ${escapeHtml(via)} 경유 ${won(amount)}`));
+  const rest = groups.length > 8 ? [`- 외 ${groups.length - 8}개 결제수단`] : [];
+  return [`■ 결제수단별 지출`, table, ...routes, ...rest].join('\n');
+}
+
+function categorySection(report) {
+  const groups = report.breakdown?.by_category ?? [];
+  if (!groups.length) return null;
+  const top = groups.slice(0, 8);
+  const restAmount = groups.slice(8).reduce((sum, group) => sum + Number(group.amount), 0);
+  const rows = top.map((group) => [group.category, String(group.count), comma(group.amount)]);
+  if (groups.length > 8) rows.push(['나머지', String(groups.slice(8).reduce((sum, group) => sum + group.count, 0)), comma(restAmount)]);
+  return `■ 항목별 지출(뱅크샐러드 분류)\n${preTable([['항목', 24, 'left'], ['건', 4, 'right'], ['금액', 12, 'right']], rows)}`;
+}
+
+function fixedSection(report) {
+  const items = report.breakdown?.fixed ?? [];
+  if (!items.length) return null;
+  const change = (item) => {
+    if (item.status === 'missing') return '안 나감';
+    if (item.change === null || item.change === undefined) return '-';
+    const value = Number(item.change);
+    return value === 0 ? '같음' : `${value > 0 ? '+' : '-'}${comma(Math.abs(value))}`;
+  };
+  const table = preTable([['고정비', 14, 'left'], ['날', 3, 'right'], ['금액', 10, 'right'], ['전월대비', 10, 'right']],
+    items.map((item) => [item.name, item.payments?.length ? String(Number(item.payments[0].date.slice(8, 10))) : '-',
+      item.status === 'missing' ? '0' : comma(item.amount), change(item)]));
+  const total = items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  return `■ 고정비(자동납부)\n${table}\n- 합계 ${won(total)}`;
+}
+
 function placesSection(places) {
   if (places?.failed) return '■ 장소별 소비\n- 읽기 실패(잡 로그 확인)';
   if (!places?.recordedDays) return '■ 장소별 소비\n- 기록 없음(동선이 확정된 날부터 쌓인다)';
@@ -250,6 +288,9 @@ export function renderMonthCheck(report, { previous = null, places = null } = {}
     gapSection(report),
     unparsedSection(report),
     alertOnlySection(report),
+    instrumentSection(report),
+    categorySection(report),
+    fixedSection(report),
     placesSection(places),
   ].filter(Boolean);
   return sections.join('\n\n');

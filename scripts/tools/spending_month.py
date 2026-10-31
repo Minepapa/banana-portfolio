@@ -338,6 +338,15 @@ def build_month(banksalad_dir, spending_dir, events_dir, start, end, closed_mont
               for status in COVERAGE_STATUSES}
     counts["parsed_delayed"] = sum(item.get("alert_match", {}).get("delayed", False) for item in transactions)
     period_days = {day: sources for day, sources in source_days.items() if start <= day <= end}
+    tables = None
+    if closed_month:
+        previous_start = shift(start, -1)[:7] + "-01"
+        tables = breakdown(report["transactions"], closed_month, read_settings(spending_dir),
+                           EXPORT_DATE_RANGE.fullmatch(export.name).group(1) <= previous_start)
+        for name in ("by_instrument", "by_category"):
+            total = sum((Decimal(group["amount"]) for group in tables[name]), Decimal(0))
+            if total != Decimal(str(monthly["total_expense"])):
+                raise ValueError(f"{name} sum {total} != total_expense {monthly['total_expense']}")
     return {
         "schema_version": 1,
         "decision_key": "월별-지출-정본",
@@ -351,6 +360,7 @@ def build_month(banksalad_dir, spending_dir, events_dir, start, end, closed_mont
                           for source in ("kakao-app", "argos")},
         },
         "monthly": monthly,
+        "breakdown": tables,
         "coverage": {
             "transactions": len(transactions), **counts,
             "by_instrument": coverage_groups(transactions, "payment_instrument"),
@@ -366,6 +376,103 @@ def build_month(banksalad_dir, spending_dir, events_dir, start, end, closed_mont
                         "summary_refs": alert["summary_refs"]}
                        for alert in alert_only],
     }
+
+
+MERCHANT_NOISE = re.compile(r"\(?자동납부\)?|\(주\)|㈜|주식회사")
+MERCHANT_PUNCT = re.compile(r"[\s_()\-.·]")
+
+
+def normalize_merchant(name):
+    """Same normalisation as spending-tables.mjs normalizeMerchant (alerts and exports spell shops differently)."""
+    return MERCHANT_PUNCT.sub("", MERCHANT_NOISE.sub("", str(name or ""))).lower()
+
+
+def read_settings(spending_dir):
+    """Owner-confirmed tables (cardMap etc.); validated on write by spending-settings.mjs."""
+    path = spending_dir / "settings.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def spent_amount(item):
+    """The amount monthly_breakdown adds to total_expense for this row, else None (keep the two rules equal)."""
+    if not item["date"] or item["aggregation_status"] == "excluded_owner_confirmed_duplicate":
+        return None
+    amount = amount_value(item["signed_amount"])
+    if amount is None or amount >= 0:
+        return None
+    if item["classification"] == "expense" or item.get("spending_treatment") == "unverified_usage_expense":
+        return -amount
+    return None
+
+
+def fixed_payments(rows, entry, resolve):
+    key = normalize_merchant(entry["merchant"])
+    return [{"date": item["date"], "amount": amount_text(spent)} for item, spent in rows
+            if resolve(item)[0] == entry["instrument"]
+            and key and (key in normalize_merchant(item["description"]))]
+
+
+def breakdown(transactions, month, settings, previous_covered):
+    """Card, category and fixed-cost tables for a closed month (Requests "소비 보고 카드별·항목별·고정비" 2단계).
+
+    Sums use spent_amount, so by_instrument and by_category both add up to monthly.total_expense.
+    A payment-route alias (e.g. 네이버페이 간편결제 → the linked card) folds into its card and keeps the route.
+    """
+    aliases = {entry["from"]: entry for entry in settings.get("instrumentAliases", [])}
+
+    def resolve(item):
+        instrument = (item["payment_instrument"] or "").strip() or "(없음)"
+        alias = aliases.get(instrument)
+        return (alias["to"], alias.get("via") or instrument) if alias else (instrument, None)
+
+    overrides = {normalize_merchant(entry["merchant"]): entry for entry in settings.get("merchantCategories", [])}
+
+    def spent_rows(target):
+        return [(item, spent) for item in transactions if item["date"] and item["date"][:7] == target
+                for spent in [spent_amount(item)] if spent is not None]
+
+    rows = spent_rows(month)
+    instruments = {}
+    for item, spent in rows:
+        name, via = resolve(item)
+        bucket = instruments.setdefault(name, {"instrument": name, "count": 0, "amount": Decimal(0), "routes": {}})
+        bucket["count"] += 1
+        bucket["amount"] += spent
+        if via:
+            bucket["routes"][via] = bucket["routes"].get(via, Decimal(0)) + spent
+    categories = {}
+    for item, spent in rows:
+        override = overrides.get(normalize_merchant(item["description"]))
+        name = (override or {}).get("category") or item["original_category"] or "미분류"
+        bucket = categories.setdefault(name, {"category": name, "count": 0, "amount": Decimal(0), "owner_override": 0})
+        bucket["count"] += 1
+        bucket["amount"] += spent
+        bucket["owner_override"] += 1 if override else 0
+    year, number = (int(part) for part in month.split("-"))
+    previous_month = f"{year - 1}-12" if number == 1 else f"{year}-{number - 1:02}"
+    previous_rows = spent_rows(previous_month) if previous_covered else None
+    fixed = []
+    for entry in settings.get("fixedCosts", []):
+        paid = fixed_payments(rows, entry, resolve)
+        total = sum((Decimal(payment["amount"]) for payment in paid), Decimal(0))
+        before = None
+        if previous_rows is not None:
+            before = sum((Decimal(payment["amount"]) for payment in fixed_payments(previous_rows, entry, resolve)),
+                         Decimal(0))
+        fixed.append({"name": entry["name"], "instrument": entry["instrument"], "day_from": entry["dayFrom"],
+                      "day_to": entry["dayTo"], "variable": entry["variable"],
+                      "status": "paid" if paid else "missing", "payments": paid, "amount": amount_text(total),
+                      "previous_amount": amount_text(before) if before is not None else None,
+                      "change": amount_text(total - before) if before is not None and paid and before else None})
+
+    def rows_out(groups, key):
+        ordered = sorted(groups.values(), key=lambda group: (-group["amount"], group[key]))
+        return [{**group, "amount": amount_text(group["amount"]),
+                 **({"routes": {via: amount_text(value) for via, value in group["routes"].items()}}
+                    if "routes" in group else {})} for group in ordered]
+
+    return {"by_instrument": rows_out(instruments, "instrument"), "by_category": rows_out(categories, "category"),
+            "fixed": fixed, "previous_month": previous_month if previous_covered else None}
 
 
 def month_bounds(month):

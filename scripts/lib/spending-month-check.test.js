@@ -119,3 +119,34 @@ test('빈칸 질문은 문턱 이상인 결제수단만, 달이 바뀌어도 같
   const nextMonth = gapQuestions({ ...report, missed: [...report.missed, ...report.missed] });
   assert.equal(nextMonth[0].question, questions[0].question);
 });
+
+test('월간 점검 본문: 결제수단별·항목별·고정비 표(경유 결제·안 나간 고정비 포함), 옛 결과 파일은 칸을 뺀다', () => {
+  const breakdown = {
+    by_instrument: [
+      { instrument: '삼성카드 SFC & MILEAGE PLATINUM (스카이패스)', count: 3, amount: '90000', routes: {} },
+      { instrument: 'MG+ S 하나카드', count: 2, amount: '30000', routes: { 네이버페이: '10000' } },
+    ],
+    by_category: Array.from({ length: 10 }, (_, index) => ({ category: `항목${index}`, count: 1, amount: String(10000 - index) })),
+    fixed: [
+      { name: '아파트관리비', status: 'paid', payments: [{ date: '2026-10-22', amount: '325140' }], amount: '325140', change: '33330' },
+      { name: 'LG전자 구독료', status: 'paid', payments: [{ date: '2026-10-10', amount: '22900' }], amount: '22900', change: '0' },
+      { name: 'KT유선상품', status: 'missing', payments: [], amount: '0', change: null },
+    ],
+  };
+  const body = renderMonthCheck({ ...report, breakdown }, { places: { recordedDays: 0 } });
+  assert.match(body, /■ 결제수단별 지출\n<pre>/);
+  assert.match(body, /MG\+ S 하나카드 중 네이버페이 경유 10,000원/);
+  assert.match(body, /나머지 +2 +19,983/, '9번째부터는 나머지 한 줄');
+  assert.match(body, /아파트관리비 +22 +325,140 +\+33,330/);
+  assert.match(body, /LG전자 구독료 +10 +22,900 +같음/);
+  assert.match(body, /KT유선상품 +- +0 +안 나감/);
+  assert.match(body, /- 합계 348,040원/);
+  for (const block of body.match(/<pre>[\s\S]*?<\/pre>/g)) {
+    for (const line of block.replace(/<\/?pre>/g, '').replace(/&amp;/g, '&').split('\n')) {
+      const width = [...line].reduce((sum, char) => sum + (/[ᄀ-ᅟ⺀-꓏가-힣]/.test(char) ? 2 : 1), 0);
+      assert.ok(width <= 44, `표 한 줄 ${width}칸: ${line}`);
+    }
+  }
+  const old = renderMonthCheck(report, { places: { recordedDays: 0 } });
+  assert.doesNotMatch(old, /결제수단별 지출|항목별 지출|고정비/);
+});

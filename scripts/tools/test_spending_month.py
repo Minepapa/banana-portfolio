@@ -231,6 +231,51 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(result["monthly"]["total_expense"], "5000")
         self.assertEqual(result["coverage"]["transactions"], 1)
 
+    def test_closed_month_breakdown_tables(self):
+        fixture = Fixture(self.root, [
+            row("2040-02-03", "12:00:00", -5000, "Card A", description="Lunch"),
+            row("2040-02-04", "12:00:00", -3000, "Pay A", description="주차장 주식회사", category="생활"),
+            row("2040-02-11", "09:00:00", -30000, "Card A", description="통신요금 자동납부", category="주거/통신"),
+            row("2040-01-12", "09:00:00", -28000, "Card A", description="통신요금 자동납부", category="주거/통신"),
+            row("2040-02-05", "12:00:00", 9000, "Bank", description="Salary", kind="수입", category="급여"),
+        ])
+        (fixture.spending / "settings.json").write_text(json.dumps({
+            "instrumentAliases": [{"from": "Pay A", "to": "Card A", "via": "Pay"}],
+            "merchantCategories": [{"merchant": "주차장", "category": "자동차", "subcategory": "주차"}],
+            "fixedCosts": [
+                {"name": "통신", "merchant": "통신요금", "instrument": "Card A", "dayFrom": 10, "dayTo": 13, "variable": True},
+                {"name": "구독", "merchant": "Sub", "instrument": "Card A", "dayFrom": 1, "dayTo": 3, "variable": False},
+            ],
+        }), encoding="utf-8")
+        result = fixture.run("2040-02-01", "2040-02-29", "2040-02")
+        tables = result["breakdown"]
+        self.assertEqual(result["monthly"]["total_expense"], "38000")
+        self.assertEqual(tables["by_instrument"], [
+            {"instrument": "Card A", "count": 3, "amount": "38000", "routes": {"Pay": "3000"}}])
+        categories = {group["category"]: group for group in tables["by_category"]}
+        self.assertEqual(categories["자동차"]["amount"], "3000")
+        self.assertEqual(categories["자동차"]["owner_override"], 1)
+        self.assertNotIn("급여", categories, "income is not spending")
+        fixed = {item["name"]: item for item in tables["fixed"]}
+        self.assertEqual(fixed["통신"]["payments"], [{"date": "2040-02-11", "amount": "30000"}])
+        self.assertEqual((fixed["통신"]["previous_amount"], fixed["통신"]["change"]), ("28000", "2000"))
+        self.assertEqual(fixed["구독"]["status"], "missing")
+        self.assertEqual(tables["previous_month"], "2040-01")
+
+    def test_breakdown_without_previous_month_in_export(self):
+        fixture = Fixture(self.root, [row("2040-02-11", "09:00:00", -30000, "Card A", description="통신요금")],
+                          folder="2040-02-01_2040-03-05")
+        (fixture.spending / "settings.json").write_text(json.dumps({"fixedCosts": [
+            {"name": "통신", "merchant": "통신요금", "instrument": "Card A", "dayFrom": 10, "dayTo": 13,
+             "variable": False}]}), encoding="utf-8")
+        tables = fixture.run("2040-02-01", "2040-02-29", "2040-02")["breakdown"]
+        self.assertIsNone(tables["previous_month"])
+        self.assertEqual((tables["fixed"][0]["previous_amount"], tables["fixed"][0]["change"]), (None, None))
+
+    def test_range_check_has_no_breakdown(self):
+        fixture = Fixture(self.root, [row("2040-02-03", "12:00:00", -5000, "Card A")])
+        self.assertIsNone(fixture.run("2040-02-01", "2040-02-10")["breakdown"])
+
     def test_export_selection_requires_full_coverage(self):
         fixture = Fixture(self.root, [row("2040-02-03", "12:00:00", -5000, "Card A")],
                           folder="2040-02-01_2040-02-15")

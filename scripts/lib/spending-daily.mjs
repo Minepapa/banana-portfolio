@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { VAULT_PATHS } from './vault-paths.mjs';
 import { parseSpendingRecord, parseSpendingRecords } from './spending-parse.mjs';
+import { validateSpendingSettings } from './spending-settings.mjs';
 
 export function spendingRawPath(date, spendingDir = VAULT_PATHS.spending) {
   return join(spendingDir, date.slice(0, 4), `${date}.jsonl`);
@@ -13,16 +14,12 @@ export function spendingSummaryPath(date, spendingDir = VAULT_PATHS.spending) {
 }
 
 // 오너가 확인한 가족 수취처만 recipient로 기록한다. 미확인 송금은 계속 대기다.
+// 형식 검사는 소비 보고 2단계 칸(cardMap 등)까지 spending-settings가 한 곳에서 한다.
 export function readSpendingSettings(spendingDir = VAULT_PATHS.spending) {
   const path = join(spendingDir, 'settings.json');
   if (!existsSync(path)) return { recipientDecisions: [] };
-  const settings = JSON.parse(readFileSync(path, 'utf8'));
-  if (!Array.isArray(settings.recipientDecisions) || settings.recipientDecisions.some((entry) =>
-    typeof entry.bank !== 'string' || !/^\d{4}$/.test(entry.last4)
-    || (entry.recipient !== undefined && !['휘영', '미네'].includes(entry.recipient))
-    || (entry.status !== undefined && !['expense', 'excluded'].includes(entry.status))
-    || (entry.status === undefined && entry.recipient === undefined))) throw new Error('소비 판정 설정 형식 오류');
-  return settings;
+  const settings = validateSpendingSettings(JSON.parse(readFileSync(path, 'utf8')));
+  return { ...settings, recipientDecisions: settings.recipientDecisions ?? [] };
 }
 
 export function readDailySpending(date, { spendingDir = VAULT_PATHS.spending, ownAccounts = [],

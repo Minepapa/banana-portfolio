@@ -419,3 +419,20 @@ test('저녁 브리핑은 월간 점검을 보지 않는다', async () => {
   await runBriefing({ mode: 'evening', date: '2026-11-03', preview: true, deps: { ...monthBase, fetchEvents: async () => [ev], ...readyMonthDeps(calls) } });
   assert.deepEqual(calls, []);
 });
+
+test('아침 브리핑은 어제 지출 수집이 의심될 때만 한 줄을 붙인다', async () => {
+  const base = { fetchEvents: async () => [], readPeople: async () => [],
+    readSpending: () => ({ hasSource: true, total: 0, expenseCount: 0, pendingCount: 0, invalidLines: 0,
+      byCategory: { 일반: 0, 교통비: 0, 온누리상품권: 0 } }) };
+  const asked = [];
+  const check = await runBriefing({ mode: 'morning', date: '2026-11-02', preview: true, deps: { ...base,
+    dayCollection: (date) => { asked.push(date); return { date, status: 'check', reason: 'argos-more', argosCount: 2, alertCount: 1 }; } } });
+  assert.deepEqual(asked, ['2026-11-01']);
+  assert.match(check.body, /■ 어제 지출 수집\n- 11-01 지출 수집 확인 필요: 아르고스 결제 2건, 지출 기록 1건/);
+  const quiet = await runBriefing({ mode: 'morning', date: '2026-11-02', preview: true, deps: { ...base,
+    dayCollection: (date) => ({ date, status: 'quiet', reason: null }) } });
+  assert.doesNotMatch(quiet.body, /어제 지출 수집/);
+  const broken = await runBriefing({ mode: 'morning', date: '2026-11-02', preview: true, deps: { ...base,
+    dayCollection: () => { throw new Error('읽기 실패'); } } });
+  assert.doesNotMatch(broken.body, /어제 지출 수집/);
+});

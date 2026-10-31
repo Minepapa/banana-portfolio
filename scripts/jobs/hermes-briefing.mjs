@@ -15,6 +15,7 @@ import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/googl
 import { formatEventLine, listEventsForKstDay } from '../lib/google-calendar.mjs';
 import { groupEventsByOwner, parseCalendarOwners } from '../lib/calendar-owners.mjs';
 import { readDailySpending, formatTodaySpending } from '../lib/spending-daily.mjs';
+import { dayCollection, formatCollectionLine } from '../lib/spending-collection.mjs';
 import { planMonthCheck, runMonthReport, commitMonthReport, removeMonthReport, readMonthReport, renderMonthCheck,
   monthPlaces, gapQuestions, previousMonth } from '../lib/spending-month-check.mjs';
 import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
@@ -23,6 +24,7 @@ const SENDER_AGENT = 'hermes';
 const TELEGRAM_TEXT_LIMIT = 4096;
 const kstParts = (now) => new Date(now.getTime() + 9 * 3_600_000).toISOString();
 const nextDay = (date) => new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+const previousDay = (date) => new Date(Date.parse(`${date}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 const validDate = (date) => /^\d{4}-\d{2}-\d{2}$/.test(date)
   && Number.isFinite(Date.parse(`${date}T00:00:00Z`))
   && new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) === date;
@@ -244,6 +246,14 @@ export async function runBriefing({ mode, date, preview = false, deps = {} } = {
     }
   }
   const monthCheck = selectedMode === 'morning' ? prepareMonthCheck(targetDate, deps) : null;
+  // 어제 '지출 0원'이 결제가 없던 날인지 수집이 빠진 날인지(소비 보고 2단계). 확인이 필요할 때만 한 줄을 낸다.
+  // 테스트에서는 주입이 없으면 돌지 않는다(실제 볼트를 읽지 않게).
+  let collectionLine = null;
+  const collection = deps.dayCollection ?? (process.env.NODE_TEST_CONTEXT ? null : dayCollection);
+  if (selectedMode === 'morning' && collection) {
+    try { collectionLine = formatCollectionLine(collection(previousDay(targetDate))); }
+    catch (error) { console.error('지출 수집 점검 실패:', error.message); }
+  }
   let candidates = [];
   if (selectedMode === 'evening') {
     try { candidates = await (deps.readCandidates ?? readCandidates)(VAULT_PATHS.root); }
@@ -274,6 +284,7 @@ export async function runBriefing({ mode, date, preview = false, deps = {} } = {
     if (birthday.length) sections.push(`■ 생일\n${birthday.join('\n')}`);
   }
   if (spendingSection) sections.push(spendingSection);
+  if (collectionLine) sections.push(`■ 어제 지출 수집\n${collectionLine}`);
   if (monthCheck?.section) sections.push(monthCheck.section);
   if (requests.length) {
     const lines = requests.map((candidate) => `- ${oneLineHtml(candidate.id)} · ${oneLineHtml(candidate.address || '미등록 장소')} 근처 · 최근 30일 ${candidateVisitCount(candidate, today)}회 방문${candidate.eventTitles.length ? ` · 일정: ${oneLineHtml(candidate.eventTitles.join(', '))}` : ''}`);
