@@ -56,6 +56,13 @@ function readJson(path) { return existsSync(path) ? JSON.parse(readFileSync(path
 function mdFiles(dir) { return existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith('.md') && !name.startsWith('.')).sort() : []; }
 const kstClock = (date) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
 const hoursSince = (iso, now) => { const at = Date.parse(iso); return Number.isFinite(at) ? Math.max(0, Math.round((now - at) / 3_600_000)) : null; };
+// 대기 시간 사실: 48시간까지는 시간, 넘으면 일 단위만 준다 — '382시간'처럼 사람이 읽기 어려운 숫자를 문장에 못 쓰게(아는 숫자도 일 단위가 된다).
+const WAITING_DAYS_AFTER_HOURS = 48;
+function waitingFacts(iso, now) {
+  const hours = hoursSince(iso, now);
+  return hours !== null && hours > WAITING_DAYS_AFTER_HOURS ? { waitingDays: Math.round(hours / 24) } : { waitingHours: hours };
+}
+const waitingOrder = (facts) => facts.waitingHours ?? (facts.waitingDays ?? 0) * 24;
 
 // 후보 제목에 볼트 경로·위키링크가 들어가지 않게(본문 첫 줄을 쓰는 질문 등) 보이는 이름만 남긴다.
 function plainTitle(text) {
@@ -103,14 +110,14 @@ export function collectCandidates({ root = VAULT_PATHS.root, now = new Date(), s
     if (!ACTIVE_STATUSES.has(record.status) || OWNER_ANSWERED.has(record.status)) return [];
     if (record.expiresAt && Date.parse(record.expiresAt) <= at) return [];
     return [{ refId: String(record.questionId ?? name.replace(/\.md$/, '')), owner: record.asker || 'zeus',
-      title: plainTitle(firstBodyLine(text)) || '오너 확인 질문', facts: { urgent: record.urgent !== false, waitingHours: hoursSince(record.createdAt, at), status: record.status } }];
-  }).sort((a, b) => (b.facts.waitingHours ?? 0) - (a.facts.waitingHours ?? 0))));
+      title: plainTitle(firstBodyLine(text)) || '오너 확인 질문', facts: { urgent: record.urgent !== false, ...waitingFacts(record.createdAt, at), status: record.status } }];
+  }).sort((a, b) => waitingOrder(b.facts) - waitingOrder(a.facts))));
 
   add(from('confirmation'), safe(() => mdFiles(abs(VAULT_PATHS.state.executionConfirmations)).flatMap((name) => {
     const record = parseFrontmatter(readFileSync(join(abs(VAULT_PATHS.state.executionConfirmations), name), 'utf8'));
     if (!PENDING_CONFIRMATION.has(record.status)) return [];
     return [{ refId: String(record.id ?? name.replace(/\.md$/, '')), owner: 'plutus',
-      title: plainTitle(`체결 기록 확인 대기 — ${[record.stockName, record.tradeType].filter(Boolean).join(' ')}`), facts: { waitingHours: hoursSince(record.createdAt, at) } }];
+      title: plainTitle(`체결 기록 확인 대기 — ${[record.stockName, record.tradeType].filter(Boolean).join(' ')}`), facts: waitingFacts(record.createdAt, at) }];
   })));
 
   add(from('job'), safe(() => mdFiles(rel('jobHealth')).flatMap((name) => {

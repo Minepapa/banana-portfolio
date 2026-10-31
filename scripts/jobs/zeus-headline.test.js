@@ -205,3 +205,18 @@ test('dry-run은 claude를 부르지 않고, 같은 날 좋은 헤드라인은 �
   await runZeusHeadline({ root: v.root, now: NOW, judge, cooldown: () => true, log: quiet });
   assert.equal(JSON.parse(readFileSync(headlinePath(v.root), 'utf8')).status, 'ok'); // 보존
 });
+
+test('대기 시간: 48시간을 넘으면 일 단위만 사실로 주고(정렬은 그대로 오래된 순), 문장에도 일 단위만 허용', (t) => {
+  const v = vault(t);
+  seed(v);
+  // NOW 기준 382시간(약 16일) 전
+  const longAgo = new Date(NOW.getTime() - 382 * 3_600_000).toISOString();
+  v.put(`${VAULT_REL.stateWikiQuestions}/WQ-20261015-0000000d.md`, `${v.fm({ questionId: 'WQ-20261015-0000000d', status: '답변대기', asker: 'plutus', urgent: true, createdAt: longAgo })}# q\n\n매수 체결 기록 확인\n`);
+  const candidates = collectCandidates({ root: v.root, now: NOW });
+  const questions = candidates.filter((item) => item.source === 'question');
+  assert.equal(questions[0].refId, 'WQ-20261015-0000000d'); // 오래된 것이 먼저
+  assert.deepEqual(questions[0].facts, { urgent: true, waitingDays: 16, status: '답변대기' });
+  assert.equal(questions[1].facts.waitingHours, 24); // 48시간 이하는 시간 그대로
+  assert.doesNotThrow(() => validatePick({ refId: 'WQ-20261015-0000000d', text: '매수 체결 기록 확인이 16일째 대기 중', sub: '' }, candidates, TODAY));
+  assert.throws(() => validatePick({ refId: 'WQ-20261015-0000000d', text: '매수 체결 기록 확인이 382시간째 대기 중', sub: '' }, candidates, TODAY), /후보에 없는 숫자/);
+});
