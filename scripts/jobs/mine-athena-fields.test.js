@@ -714,7 +714,7 @@ test('run: 회차 중간 쿨다운은 남은 기록을 미루고 실패로 보�
     cooldown: () => calls >= 3, judge: async () => { calls += 1; return joy2({ importance: 2 }); } });
   assert.deepEqual([summary.written.length, summary.invalid.length, summary.cooldown, failed(summary)], [1, 0, true, false]);
   const rows = readFileSync(join(root, '.mine-judgments', 'athena-judgments.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-  assert.deepEqual(rows.map((row) => [row.status, row.calls]), [['applied', 2], ['retry', 1]]);
+  assert.deepEqual(rows.map((row) => [row.status, row.calls, row.formatFailure]), [['applied', 2, undefined], ['retry', 1, undefined]], '미룬 기록은 형식 실패가 아니다');
 });
 
 test('reclassifyFailed: 부분 실패는 정상, 하나도 못 했거나 쓰기 오류·기록 실패면 실패', () => {
@@ -743,4 +743,43 @@ test('재분류: 첫 분류 묶음 뒤 쿨다운이 켜져도 받은 답은 쓰�
   const rows = readFileSync(join(out, 'athena-judgments.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(rows.map((row) => [row.rel, row.status, row.calls]), [[first, 'applied', 2], [again, 'retry', 0]]);
   assert.match(readFileSync(join(out, 'reclassify-report-2026-10-18.md'), 'utf8'), /다음 회차로 미룸 1개/);
+});
+
+test('연달아 두 번 실패한 노트는 14일 쉰다: 주간·재분류 모두 고르지 않고, --ids는 고른다', async (t) => {
+  const { root, put } = fixture(t);
+  const out = mkdtempSync(join(tmpdir(), 'mine-held-'));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const held = `${C}/2026/2026-10-11 미네 녹음.md`;
+  const fresh = `${C}/2026/2026-10-12 미네 녹음.md`;
+  const recording = (occurred) => note({ occurred, extra: '\nemotions: ["기쁨"]\nprimaryEmotion: "기쁨"' }).replace('convKind: "통화"', 'convKind: "녹음"');
+  put(held, recording('2026-10-11T09:00:00+09:00')); put(fresh, recording('2026-10-12T09:00:00+09:00'));
+  const version = { engine: 'claude', model: 'sonnet', criteriaRef: null, promptVersion: PROMPT_VERSIONS.claude };
+  const fail = (at) => JSON.stringify({ rel: held, at, status: 'retry', calls: 2, reason: '형식 오류', formatFailure: true, ...version });
+  writeFileSync(join(out, 'athena-judgments.jsonl'), `${fail('2026-10-16')}\n${fail('2026-10-17')}\n`);
+  const logs = [];
+  const opts = { root, out, now, rules, criteria, output: { log: (line) => logs.push(line), error() {} }, dryRun: true, ...claude };
+  const summary = await reclassify(opts);
+  assert.deepEqual([summary.targets, summary.held], [1, 1]);
+  assert.ok(logs.some((line) => line.includes('14일 쉬는 기록 1개')));
+  assert.equal((await reclassify({ ...opts, ids: [held] })).targets, 1, '--ids는 쉬는 중이어도 고른다');
+
+  const weekly = `${C}/2026/2026-10-13 미네 통화.md`;
+  put(weekly, note({ occurred: '2026-10-13T09:00:00+09:00' }));
+  const judgmentsPath = join(out, 'weekly.jsonl');
+  const failWeekly = (at) => JSON.stringify({ rel: weekly, at, status: 'retry', calls: 1, reason: '형식 오류', formatFailure: true, ...version });
+  writeFileSync(judgmentsPath, `${failWeekly('2026-10-16')}\n${failWeekly('2026-10-17')}\n`);
+  const weeklySummary = await run({ root, now, rules, criteria, ...claude, judgmentsPath, dryRun: true, output: { log() {}, error() {} } });
+  assert.deepEqual([weeklySummary.held, findTargets(root, {}).some((item) => item.rel === weekly)], [1, true]);
+  assert.equal(weeklySummary.targets, findTargets(root, { cutoff: '2026-10-16' }).length - 1, '쉬는 노트만 빠진다');
+});
+
+test('judgeItems: 답했는데 쓸 수 없으면 형식 실패, 호출이 던지면(장애) 형식 실패가 아니다 — 연속 실패 보류에 장애가 안 섞인다', async () => {
+  const items = [{ rel: 'a.md', date: '2026-10-15', content: '' }];
+  const base = { prompt: () => 'p', validate: (raw, subset) => validateOllamaProposals(raw, subset, { reclassify: true, criteria }), runs: 2 };
+  const prose = await judgeItems(items, { ...base, decide: async () => '설명만 있고 JSON 없음' });
+  assert.deepEqual([prose.get(1).formatFailure, prose.get(1).calls], [true, 1]);
+  const invalid = await judgeItems(items, { ...base, decide: async () => JSON.stringify({ emotionState: '평온' }) });
+  assert.equal(invalid.get(1).formatFailure, true);
+  const outage = await judgeItems(items, { ...base, decide: async () => { throw new Error('claude 종료코드 1'); } });
+  assert.deepEqual([outage.get(1).error, outage.get(1).formatFailure, outage.get(1).calls], ['claude 종료코드 1', undefined, 1]);
 });

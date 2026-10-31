@@ -50,6 +50,29 @@ export function judgedNotes(rows, current) {
   return done;
 }
 
+// 같은 판으로 연달아 형식 실패한 노트는 쉬게 한다(기억 판단 체계 §15.3 후속 '2회 실패 → 14일 보류', 2026-10-31).
+// 형식 실패(formatFailure) = 모델이 답했는데 쓸 수 없는 답(JSON 없음·검증 실패) — 노트 탓일 수 있어 매일 다시 물으면 하루 상한만 깎는다.
+// 호출 장애(시간 초과·한도·인증)·미룸·쓰기 관문 오류·판단 중 노트가 바뀐 retry는 세지 않는다: 모델 답 탓이 아니고,
+// 쓰기 관문 오류는 고칠 때까지 매 회차 실패로 드러나야 한다(2026-10-31 리뷰). 다른 판정 줄·오너 줄이 오면 연속이 끊긴다.
+// 마지막 실패 날(at, KST)부터 HOLD_DAYS 동안 고르지 않고, 그 뒤 또 실패하면 다시 그만큼 쉰다. --ids로 고르면 쉬는 중이어도 묻는다.
+export const HOLD_FAILURES = 2;
+export const HOLD_DAYS = 14;
+export function heldNotes(rows, current, today) {
+  const streaks = new Map();
+  for (const row of rows) {
+    if (typeof row?.rel !== 'string') continue;
+    if (row.engine === OWNER_ENGINE || sameVersion(row, current) && row.status !== 'retry') { streaks.delete(row.rel); continue; }
+    if (!sameVersion(row, current) || !row.formatFailure) continue;
+    streaks.set(row.rel, { count: (streaks.get(row.rel)?.count ?? 0) + 1, last: row.at });
+  }
+  const held = new Set();
+  for (const [rel, { count, last }] of streaks) {
+    const days = (Date.parse(today) - Date.parse(last)) / 86_400_000;
+    if (count >= HOLD_FAILURES && days < HOLD_DAYS) held.add(rel);
+  }
+  return held;
+}
+
 // 그 날(KST 날짜, 기록의 at) 그 엔진으로 실제로 부른 횟수. 하루 상한에 쓴다 — 연기된 기록은 calls가 0이라 세지 않는다.
 export function callsOn(rows, { engine, date }) {
   return rows.reduce((sum, row) => sum + (row?.engine === engine && row.at === date ? Number(row.calls) || 0 : 0), 0);

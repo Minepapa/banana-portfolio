@@ -22,7 +22,8 @@ import { parseJsonBlock, runHeadlessClaude } from '../lib/headless-claude.mjs';
 import { loadEmotionCriteria, validateEmotionResult } from '../lib/mine-emotion-criteria.mjs';
 import { OLLAMA_MODELS, runOllama, unloadOllamaModel } from '../lib/ollama-client.mjs';
 import { mineConversation } from '../lib/mine-record-input.mjs';
-import { EMOTION_REQUIRED, appendJudgment, assertEngine, callsOn, emotionProperties, judgedNotes, noteKeys, ownerDecided, readJudgments } from '../lib/mine-judgment.mjs';
+import { EMOTION_REQUIRED, HOLD_DAYS, HOLD_FAILURES, appendJudgment, assertEngine, callsOn, emotionProperties, heldNotes, judgedNotes, noteKeys,
+  ownerDecided, readJudgments } from '../lib/mine-judgment.mjs';
 import { SCORE_REQUIRED, deriveEmotionFields, judgmentPreamble, loadEmotionAnchors, scoreProperties } from '../lib/mine-judgment-prompt.mjs';
 
 // 인사이드 아웃 감정 어휘(아테나 헌장). 이 밖의 값은 쓰지 않는다.
@@ -280,7 +281,10 @@ export async function judgeItems(items, { decide, prompt, validate, reclassify =
         if (quota()) break;
         if (answers.length && now() >= deadline) { answers.push({ error: '잡 시간 상한', deferred: true }); break; }
         calls += 1;
-        answers.push(validate(parseJsonBlock(await decide(prompt([item]), { items: [item], reclassify })), [item]).get(1) ?? { error: '제안 없음' });
+        const raw = await decide(prompt([item]), { items: [item], reclassify }); // 여기서 던지면 호출 장애(형식 실패 아님)
+        let parsed;
+        try { parsed = parseJsonBlock(raw); } catch (error) { error.formatFailure = true; throw error; }
+        answers.push(validate(parsed, [item]).get(1) ?? { error: '제안 없음', formatFailure: true });
       }
     } catch (error) {
       if (error.unavailable) {
@@ -449,6 +453,14 @@ function changeReason(before, after) {
   return '판단 근거 보완';
 }
 
+// 지금 판으로 끝난 노트 + 연달아 형식 실패해 쉬는 노트(heldNotes). 둘 다 이번 대상에서 뺀다(--ids는 findTargets가 무시).
+// 쉬는 수는 판단 기록 전체 기준이라 이번 --kind·--since 범위 밖 노트도 들어갈 수 있다.
+function skipJudged(rows, version, today, output) {
+  const held = heldNotes(rows, version, today);
+  if (held.size) output.log(`[mine-athena-fields] ${HOLD_FAILURES}번 연달아 형식 실패해 ${HOLD_DAYS}일 쉬는 기록 ${held.size}개(판단 기록 기준)`);
+  return { judged: new Set([...judgedNotes(rows, version), ...held]), held: held.size };
+}
+
 // Claude 하루 상한 안에서 이번에 고를 수 있는 기록 수(기록 하나에 CLAUDE_RUNS번 부른다). Ollama는 상한 없음.
 function dailyRoom(engine, rows, today) {
   if (engine !== 'claude') return Infinity;
@@ -473,14 +485,15 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   const rows = readJudgments(recordPath);
   // 최근 노트는 밀린 녹음 전사가 며칠 뒤 더 붙을 수 있어 주간 잡과 같이 SETTLE_DAYS를 기다린다(--ids는 바로).
   const settle = ids ? undefined : kstDate(new Date(now.getTime() - SETTLE_DAYS * 86_400_000));
+  const { judged, held } = skipJudged(rows, version, today, output);
   const targets = findTargets(root, { reclassify: true, ids, kind, includeUnclassified, since,
-    skipped: state.skipped ?? {}, cutoff: settle, judged: judgedNotes(rows, version) });
+    skipped: state.skipped ?? {}, cutoff: settle, judged });
   const room = dailyRoom(engine, rows, today);
   const batch = targets.slice(0, Math.min(maxNotes, room));
   const quota = engine === 'claude' ? cooldown : () => false; // 쿨다운은 Claude 구독 사용량 가드다.
   const signalTrend = batch.some(firstClassification) ? recentSignalTrend(root, today, criteria) : undefined;
   const summary = { targets: targets.length, selected: batch.length, changed: 0, unchanged: 0,
-    invalid: [], ambiguous: [], before: distribution(batch), after: {}, beforeSignals: signalDistribution(batch),
+    invalid: [], ambiguous: [], held, before: distribution(batch), after: {}, beforeSignals: signalDistribution(batch),
     afterSignals: {}, reasons: {}, ...(room < Math.min(maxNotes, targets.length) ? { capped: true } : {}) };
   if (summary.capped) output.log(`[mine-athena-fields] Claude 하루 상한(${DAILY_CLAUDE_CALLS}번): 오늘 남은 기록 ${room}개만 고름`);
   const activeAnchors = () => anchors ?? loadEmotionAnchors();
@@ -608,7 +621,7 @@ async function reclassifyUnlocked({ root = VAULT_PATHS.root, out = RECLASSIFY_RO
   summary.after = distribution(afterItems);
   summary.afterSignals = signalDistribution(afterItems);
   const deferred = summary.selected - summary.changed - summary.unchanged - summary.ambiguous.length - summary.invalid.length;
-  const report = [`# 미네 ${kind} 감정 재분류`, '', `대상 ${summary.targets}개, 처리 ${summary.selected}개, 변경 ${summary.changed}개, 동일 ${summary.unchanged}개, 애매함 ${summary.ambiguous.length}개, 실패 ${summary.invalid.length}개${deferred ? `, 다음 회차로 미룸 ${deferred}개(시간 상한·쿨다운)` : ''}.`,
+  const report = [`# 미네 ${kind} 감정 재분류`, '', `대상 ${summary.targets}개, 처리 ${summary.selected}개, 변경 ${summary.changed}개, 동일 ${summary.unchanged}개, 애매함 ${summary.ambiguous.length}개, 실패 ${summary.invalid.length}개${deferred ? `, 다음 회차로 미룸 ${deferred}개(시간 상한·쿨다운)` : ''}${held ? `, 연달아 형식 실패해 쉬는 기록 ${held}개(판단 기록 기준)` : ''}.`,
     '', '## 감정 분포 (이번 처리 묶음)', `이전: ${JSON.stringify(summary.before)}`, `이후: ${JSON.stringify(summary.after)}`,
     '', '## secondFilmSignal 분포 (이번 처리 묶음)', `이전: ${JSON.stringify(summary.beforeSignals)}`, `이후: ${JSON.stringify(summary.afterSignals)}`,
     '', '## 변경 사유 상위',
@@ -654,8 +667,9 @@ export async function run({ root = VAULT_PATHS.root, dryRun = false, now = new D
     const version = { engine, model: engine === 'ollama' ? OLLAMA_MODELS.text : agent.model,
       criteriaRef: criteria.ref ?? null, promptVersion: PROMPT_VERSIONS[engine] };
     const rows = readJudgments(recordPath);
-    const targets = findTargets(root, { skipped: state.skipped, cutoff, judged: judgedNotes(rows, version) });
-    const summary = { today, targets: targets.length, written: [], skipped: [], invalid: [], ambiguous: [], unchanged: [], errors: 0, remaining: 0 };
+    const { judged, held } = skipJudged(rows, version, today, output);
+    const targets = findTargets(root, { skipped: state.skipped, cutoff, judged });
+    const summary = { today, targets: targets.length, written: [], skipped: [], invalid: [], ambiguous: [], unchanged: [], held, errors: 0, remaining: 0 };
     if (!targets.length) {
       output.log('[mine-athena-fields] 대상 없음');
       if (!dryRun) {

@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fixtureCriteria as criteria } from './mine-emotion-criteria.fixture.js';
-import { OWNER_ENGINE, appendJudgment, assertEngine, callsOn, emotionProperties, judgedNotes, noteKeys, readJudgments, validScores } from './mine-judgment.mjs';
+import { HOLD_DAYS, OWNER_ENGINE, appendJudgment, assertEngine, callsOn, emotionProperties, heldNotes, judgedNotes, noteKeys, readJudgments,
+  validScores } from './mine-judgment.mjs';
 
 const version = { engine: 'ollama', model: 'exaone', criteriaRef: '미네-감정-분류@2026-10-19', promptVersion: 'athena-fields/0.0' };
 
@@ -69,4 +70,26 @@ test('callsOn: 그 날 그 엔진으로 실제로 부른 횟수만 센다', () =
 test('오너가 검수 시트로 정한 노트는 어느 판으로도 다시 고르지 않는다', () => {
   const rows = [{ rel: 'owner.md', engine: OWNER_ENGINE, status: 'applied' }, { rel: 'owner-failed.md', engine: OWNER_ENGINE, status: 'retry' }];
   assert.deepEqual([...judgedNotes(rows, version)], ['owner.md']);
+});
+
+test('heldNotes: 같은 판 형식 실패가 연달아 두 번이면 마지막 실패 날부터 14일 쉬고, 호출 장애·쓰기 오류는 세지 않는다', () => {
+  const fail = (rel, at, extra = {}) => ({ rel, at, status: 'retry', calls: 2, reason: 'JSON 블록을 찾지 못했습니다.', formatFailure: true, ...version, ...extra });
+  const other = (rel, at, reason) => ({ rel, at, status: 'retry', calls: 1, reason, ...version });
+  const rows = [
+    fail('held.md', '2026-10-20'), fail('held.md', '2026-10-25'),
+    fail('once.md', '2026-10-25'),
+    fail('reset.md', '2026-10-20'), { rel: 'reset.md', at: '2026-10-21', status: 'applied', ...version }, fail('reset.md', '2026-10-25'),
+    fail('owner.md', '2026-10-20'), fail('owner.md', '2026-10-21'), { rel: 'owner.md', engine: OWNER_ENGINE, status: 'applied' },
+    other('outage.md', '2026-10-20', 'claude 종료코드 1'), other('outage.md', '2026-10-21', '시간 초과'),
+    other('gate.md', '2026-10-20', '쓰기 관문: x'), other('gate.md', '2026-10-21', '쓰기 관문: x'),
+    other('deferred.md', '2026-10-20', '잡 시간 상한'), fail('deferred.md', '2026-10-21'),
+    fail('old.md', '2026-10-20', { promptVersion: 'athena-fields/-1' }), fail('old.md', '2026-10-21'),
+    fail('other-version.md', '2026-10-20'), { rel: 'other-version.md', status: 'applied', ...version, promptVersion: 'x' }, fail('other-version.md', '2026-10-21'),
+  ];
+  assert.deepEqual([...heldNotes(rows, version, '2026-10-31')].sort(), ['held.md', 'other-version.md']);
+  const day = (offset) => new Date(Date.parse('2026-10-25') + offset * 86_400_000).toISOString().slice(0, 10);
+  assert.ok(heldNotes(rows, version, day(HOLD_DAYS - 1)).has('held.md'), '13일째까지 쉰다');
+  assert.ok(!heldNotes(rows, version, day(HOLD_DAYS)).has('held.md'), '14일 뒤 다시 묻는다');
+  assert.ok(heldNotes([...rows, fail('held.md', day(HOLD_DAYS))], version, day(HOLD_DAYS)).has('held.md'), '다시 실패하면 또 쉰다');
+  assert.equal(heldNotes([fail('bad.md', ''), fail('bad.md', 'x')], version, '2026-10-31').size, 0, '날짜가 깨지면 쉬게 하지 않는다');
 });
