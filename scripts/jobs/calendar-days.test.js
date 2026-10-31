@@ -78,3 +78,43 @@ test('인자: --days N·--days=N·--dry-run, 모르는 인자는 실패', () => 
   assert.throws(() => parseArgs(['--day=2']), /모르는 인자/);
   assert.ok(Number.isNaN(parseArgs(['--days']).days));
 });
+
+test('할 일 스냅샷: 목록을 모두 받은 뒤 한 번 쓰고, 목록 0개·조회 실패면 쓰지 않는다', async () => {
+  const { runTodoOpen } = await import('./calendar-days.mjs');
+  const writes = [];
+  const base = { configured: () => true, getToken: async () => 'tok',
+    listLists: async () => [{ id: 'L1', title: '내 할 일' }],
+    listTasks: async ({ listId }) => [{ id: `${listId}-1`, title: '장보기' }],
+    write: (snapshot) => { writes.push(snapshot); return '/x/Open.json'; } };
+  const result = await runTodoOpen(base);
+  assert.equal(result.written, '/x/Open.json');
+  assert.equal(writes[0].tasks[0].title, '장보기');
+  assert.equal((await runTodoOpen({ ...base, dryRun: true })).written, null);
+  assert.equal(writes.length, 1, '미리보기는 쓰지 않는다');
+  await assert.rejects(runTodoOpen({ ...base, listLists: async () => [] }), /목록 0개/);
+  await assert.rejects(runTodoOpen({ ...base, listLists: async () => [{ id: 'L1' }, { id: 'L2' }],
+    listTasks: async ({ listId }) => { if (listId === 'L2') throw new Error('HTTP 503'); return [{ id: 'a', title: '첫 목록' }]; } }), /HTTP 503/,
+  '첫 목록이 성공해도 두 번째가 실패하면 쓰지 않는다');
+  await assert.rejects(runTodoOpen({ ...base, configured: () => false }), /미연결/);
+  assert.equal(writes.length, 1);
+});
+
+test('잡 본체: 일정과 할 일은 따로 돌아 한쪽이 실패해도 다른 쪽은 하고, 실패가 있으면 1을 돌려준다', async () => {
+  const { main } = await import('./calendar-days.mjs');
+  const calendarOk = async () => ({ days: [{ date: '2026-10-31', events: [] }], written: [] });
+  const todoOk = async () => ({ snapshot: { count: 2 }, written: null });
+  const logs = [];
+  const errors = [];
+  const io = { log: (line) => logs.push(line), error: (line) => errors.push(line) };
+  assert.equal(await main([], { calendar: calendarOk, todo: todoOk, ...io }), 0);
+  let todoRan = false;
+  assert.equal(await main([], { calendar: async () => { throw new Error('HTTP 500'); },
+    todo: async () => { todoRan = true; return todoOk(); }, ...io }), 1);
+  assert.ok(todoRan, '일정이 실패해도 할 일은 돈다');
+  let calendarRan = false;
+  assert.equal(await main([], { calendar: async () => { calendarRan = true; return calendarOk(); },
+    todo: async () => { throw new Error('할 일 목록 0개'); }, ...io }), 1);
+  assert.ok(calendarRan);
+  assert.deepEqual(errors, ['[calendar-days] 일정 실패: HTTP 500', '[calendar-days] 할 일 실패: 할 일 목록 0개']);
+  assert.ok(logs.includes('[calendar-days] 열린 할 일 2개 — 그대로'));
+});

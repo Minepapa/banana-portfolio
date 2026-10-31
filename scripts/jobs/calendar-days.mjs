@@ -10,16 +10,21 @@
  *   끝날 수 있는데, 날마다 원자적 쓰기라 깨지지 않고 다음 15분 회차에 맞춰진다.
  * - 선택된 캘린더가 0개면 실패한다. 연결 계정이 바뀐 것을 '일정 없음'으로 덮어쓰지 않게 한다.
  * - 텔레그램 발송 없음.
+ * - 같은 회차에 열린 할 일 스냅샷 `95_Etna/Todo/Open.json`도 쓴다(2026-10-31 오너 승인, 헤르메스 방 '할 일').
+ *   일정과 할 일은 따로 돈다. 한쪽 조회가 실패해도 다른 쪽은 쓰고, 끝에서 종료 코드 1로 실패를 알린다.
+ *   할 일 목록이 0개면 실패한다(연결 계정이 바뀐 것을 '할 일 없음'으로 덮어쓰지 않게).
  *
  * 사용법: node scripts/jobs/calendar-days.mjs [--dry-run] [--days N]
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
-import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES } from '../lib/google-oauth.mjs';
+import { isConfigured, getAccessToken, CALENDAR_READ_SCOPES, TASKS_READ_SCOPES } from '../lib/google-oauth.mjs';
 import { listEventsForKstDay, listSelectedCalendars } from '../lib/google-calendar.mjs';
 import { parseCalendarOwners } from '../lib/calendar-owners.mjs';
 import { buildCalendarDay, writeCalendarDay, kstDate, nextDates } from '../lib/calendar-days.mjs';
+import { listTaskLists, listOpenTasks } from '../lib/google-tasks.mjs';
+import { buildTodoOpen, writeTodoOpen } from '../lib/todo-open.mjs';
 
 export const DEFAULT_DAYS = 7;
 
@@ -58,14 +63,39 @@ export async function runCalendarDays({ now = new Date(), days = DEFAULT_DAYS, d
   return { days: built, written };
 }
 
-async function main() {
-  const { days, dryRun } = parseArgs(process.argv.slice(2));
-  const { days: built, written } = await runCalendarDays({ days, dryRun });
-  const counts = built.map((day) => `${day.date.slice(5)} ${day.events.length}`).join(' · ');
-  console.log(`[calendar-days] ${dryRun ? '미리보기 ' : ''}${counts} — 새로 쓴 파일 ${written.length}개`);
-  if (dryRun) for (const day of built) console.log(JSON.stringify(day));
+// 목록을 모두 받은 뒤에 한 번 쓴다. 목록 하나라도 조회가 실패하면 쓰지 않는다(반쪽 스냅샷 방지).
+export async function runTodoOpen({ dryRun = false, configured = isConfigured,
+  getToken = () => getAccessToken({ requiredScopes: TASKS_READ_SCOPES }),
+  listLists = listTaskLists, listTasks = listOpenTasks, write = writeTodoOpen } = {}) {
+  if (!configured()) throw new Error('구글 미연결 — google-oauth-setup 필요');
+  const token = await getToken();
+  const lists = await listLists({ token });
+  if (!lists.length) throw new Error('할 일 목록 0개 — 연결 계정 확인');
+  const tasksByList = {};
+  for (const list of lists) tasksByList[list.id] = await listTasks({ token, listId: list.id });
+  const snapshot = buildTodoOpen({ lists, tasksByList });
+  return { snapshot, written: dryRun ? null : write(snapshot) };
+}
+
+export async function main(args = process.argv.slice(2), { calendar = runCalendarDays, todo = runTodoOpen,
+  log = console.log, error = console.error } = {}) {
+  const { days, dryRun } = parseArgs(args);
+  let failed = false;
+  try {
+    const { days: built, written } = await calendar({ days, dryRun });
+    const counts = built.map((day) => `${day.date.slice(5)} ${day.events.length}`).join(' · ');
+    log(`[calendar-days] ${dryRun ? '미리보기 ' : ''}${counts} — 새로 쓴 파일 ${written.length}개`);
+    if (dryRun) for (const day of built) log(JSON.stringify(day));
+  } catch (caught) { failed = true; error(`[calendar-days] 일정 실패: ${caught.message}`); }
+  try {
+    const { snapshot, written } = await todo({ dryRun });
+    log(`[calendar-days] ${dryRun ? '미리보기 ' : ''}열린 할 일 ${snapshot.count}개 — ${written ? '새로 씀' : '그대로'}`);
+    if (dryRun) log(JSON.stringify(snapshot));
+  } catch (caught) { failed = true; error(`[calendar-days] 할 일 실패: ${caught.message}`); }
+  return failed ? 1 : 0;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main().catch((error) => { console.error(`[calendar-days] 실패: ${error.message}`); process.exit(1); });
+  main().then((code) => { process.exitCode = code; },
+    (caught) => { console.error(`[calendar-days] 실패: ${caught.message}`); process.exitCode = 1; });
 }

@@ -99,6 +99,7 @@ export const VAULT_REL = {
   spendingPlaces: '95_Etna/Spending/Places', // 결제↔동선 연결 파생 — {YYYY}/YYYY-MM-DD.json
   dailyNotes: '10_Periodic/Daily', // 데일리 노트(D85) — {YYYY}/YYYY-MM-DD.md
   todoLog: '95_Etna/Todo', // 캘린더·Tasks 등록 기록 — {YYYY}/YYYY-MM-DD.jsonl
+  todoOpen: '95_Etna/Todo/Open.json', // 열린 할 일 스냅샷(헤르메스 calendar-days 잡, 2026-10-31 오너 승인) — 올림푸스가 읽기만
   // 개념(01_Home 분류)별 노트 건수(2026-10-31 오너 승인, 올림푸스 빈 칸 정본). 쓰는 주체는 야간 색인(backup-vault-snapshot)뿐.
   mouseionConceptCounts: '95_Etna/Mouseion/concept-counts.json',
   // 등록부 lint 범위 밖 최상위 폴더: 보관본(원래 type 유지)·코드가 쓰는 기계 데이터·금고(내용을 읽지 않음)

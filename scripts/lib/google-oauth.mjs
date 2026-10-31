@@ -17,6 +17,7 @@ export const CALENDAR_READ_SCOPES = [
   [scope('calendar.calendarlist.readonly'), scope('calendar.readonly')],
 ];
 export const CALENDAR_WRITE_SCOPES = [scope('calendar.events')];
+export const TASKS_READ_SCOPES = [[scope('tasks'), scope('tasks.readonly')]];
 export const DRIVE_BACKUP_SCOPES = [scope('drive.file')];
 export const oauthDir = () => process.env.GOOGLE_OAUTH_DIR || join(homedir(), '.config', 'banana-portfolio-v2');
 export const clientPath = () => join(oauthDir(), 'google-oauth-client.json');

@@ -52,7 +52,7 @@ export const JOB_LABELS = {
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
   'owntracks-receiver': 'OwnTracks 위치 수신 서버(상시 프로세스)',
   'olympus-server': '올림푸스 대시보드 서버(상시 프로세스)',
-  'calendar-days': '일정 파일 정본(오늘부터 7일 구글 캘린더 → 볼트 Calendar 파일, 15분마다)',
+  'calendar-days': `일정 파일 정본(오늘부터 7일 구글 캘린더 → 볼트 Calendar 파일) + 열린 할 일 스냅샷(구글 Tasks → ${VAULT_REL.todoOpen}), 15분마다`,
   'zeus-headline': '종합 헤드라인: 판테온 정본에서 후보를 모아 경량 모델이 오늘 가장 중요한 일 한 줄을 고름 → 볼트 헤드라인 파일(매일 07:40, 발송 없음)',
   'argos-ingest': '아르고스 폰 수집 앱 수신(위치 수신 서버의 /ingest)',
   'update-monthly-balance-snapshot': '월별 잔고 스냅샷(대시보드 막대그래프용) + 일별 불변 스냅샷(TWR·Sharpe·MDD 재계산용, 2026-09-04 신설) 매일 자동 기록',
@@ -141,7 +141,7 @@ export const JOB_SHORT_LABELS = {
   'telegram-session': '텔레그램 세션',
   'owntracks-receiver': '위치 수신',
   'olympus-server': '대시보드 서버',
-  'calendar-days': '일정 파일',
+  'calendar-days': '일정·할 일 파일',
   'zeus-headline': '종합 헤드라인',
   'argos-ingest': '폰 수집 수신',
   'update-monthly-balance-snapshot': '잔고 스냅샷',
@@ -189,7 +189,7 @@ export function describeJob(jobName) {
 // "조치사항이 필요하면 등록"). 근거 없는 일반론("로그 확인해보세요")은 안 채운다 —
 // 등록 안 된 잡은 remediation 없이 잡 이름·마지막 실행시각만으로 충분히 단서가 된다.
 export const JOB_REMEDIATION = {
-  'calendar-days': '구글 연결(node scripts/tools/google-oauth-setup.mjs, 캘린더 읽기 범위)과 볼트 「캘린더 소유자」 표 형식 확인',
+  'calendar-days': '로그의 「일정 실패」·「할 일 실패」로 어느 쪽인지 본다. 일정: 구글 연결(node scripts/tools/google-oauth-setup.mjs, 캘린더 읽기 범위)과 볼트 「캘린더 소유자」 표 형식 확인. 할 일: Tasks 범위(auth/tasks), 할 일 목록 0개면 연결 계정 확인',
   'olympus-server': 'Repos/olympus 저장소·키 설정(~/.config/olympus/olympus.json, 권한 600)·로그(~/Library/Logs/banana-portfolio-v2/olympus-server.log)와 tailscale serve 8443 확인',
   'argos-ingest': '폰 아르고스 앱 실행·Tailscale 연결·토큰(~/.config/banana-portfolio-v2/argos.json)과 위치 수신 서버(com.banana2.owntracks-receiver) 확인',
   // reconcile-irp.mjs·execute-quant-proposal.mjs 둘 다 이 파일이 없으면 "미설정 —
