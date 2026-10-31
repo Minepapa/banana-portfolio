@@ -17,6 +17,7 @@ const SAFE_SUMMARIES = Object.freeze({
   DUPLICATE_APPROVED_PROPOSAL: '동일 안건의 승인 제안이 중복됨',
   EXECUTION_CONFIRMATION_NEEDED: '체결 기록에 오너 확인 필요',
   INSTRUMENT_REPLACEMENT_PARTIAL_SEND: '종목 교체 제안의 일부만 발송됨',
+  INSTRUMENT_RESCORE_JUDGMENT_FAILED: '연 재평가 창이 끝날 때까지 종목 판단 실패가 남음',
   JOB_HEALTH_ISSUES: '자동화 잡 상태 이상',
   JOB_HEARTBEAT_FAILED: '자동화 잡 실행 실패',
   KIS_FILL_WATCH_TIMEOUT: 'KIS 주문 체결 확인 시간 초과',

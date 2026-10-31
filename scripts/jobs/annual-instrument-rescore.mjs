@@ -62,6 +62,10 @@ const SERIES_DAYS = 252;
 const RESCORE_THRESHOLD = 10; // 1차 placeholder(100점 만점) — 오너가 나중에 조정
 const STATE_DIR = vaultAbs(VAULT_REL.stateInstrumentRescoring);
 const STATE_FILE = join(STATE_DIR, 'last-year.md');
+// 올해 창 안의 진행(연 마커와 별개, 2026-10-31 오너 결정 안 2 리뷰 반영): 그해 성공한 판정(유지·교체)은 남겨 재실행 때 다시 묻지 않고
+// (비용 절감, 1일 '유지'가 2일 '교체'로 뒤집히지 않게) 실패한 종목만 다시 판단한다. 창 끝 알림은 한 해에 한 번만.
+// { year, verdicts: { 키: { verdict, reasoning, alternative(교체만 — 그날 고른 대안) } }, alertedFor }. 연 마커 미전진은 "남은 실패·보류 종목이 있다"는 뜻으로만 쓴다.
+const PROGRESS_FILE = join(STATE_DIR, 'progress.json');
 
 function kstCalendarParts(date) {
   return Object.fromEntries(new Intl.DateTimeFormat('en-US', {
@@ -85,6 +89,144 @@ export function shouldRunThisYear(date, lastYearLabel) {
   if (month !== 1 || day > 3) return false;
   if (dow === 'Sun' || dow === 'Sat') return false;
   return getYearLabel(date) !== lastYearLabel;
+}
+
+// 순수함수 — 오늘이 재평가 창(1월 1~3일 평일)의 마지막 실행일인지: 오늘 뒤로 창 안에 평일이 더 없으면 true.
+// 창이 끝날 때까지 판단 실패가 남았을 때 한 번만 알리는 데 쓴다(2026-10-31 오너 결정 안 2).
+export function isLastWindowRun(date) {
+  const parts = kstCalendarParts(date);
+  const year = Number(parts.year);
+  const day = Number(parts.day);
+  if (Number(parts.month) !== 1 || day > 3) return false;
+  for (let d = day + 1; d <= 3; d += 1) {
+    const dow = new Date(Date.UTC(year, 0, d)).getUTCDay();
+    if (dow !== 0 && dow !== 6) return false;
+  }
+  return true;
+}
+
+// 순수함수 — 연 마커를 넘기지 않을 이유(있으면 로그 문구, 없으면 null). 한도 보류·반쪽 발송·판단 실패 중 하나라도 있으면
+// 마커를 안 써서 남은 캘린더 창 안에서 다시 시도한다(판단 실패는 2026-10-31 오너 결정 안 2로 추가).
+// 사유가 겹치면 모두 이어 붙인다(리뷰 3차 L1).
+export function yearMarkerHold({ hadLimitError, hadPartialFailure, judgmentFailureCount, hadDataFailure = false }) {
+  const reasons = [
+    hadDataFailure && '교체 판단 뒤 평가액·대안 가격 확인 실패',
+    hadLimitError && '사용량 한도 보류',
+    hadPartialFailure && '반쪽 발송된 교체',
+    judgmentFailureCount > 0 && '판단 실패',
+  ].filter(Boolean);
+  return reasons.length ? `⚠️ ${reasons.join(' · ')} 종목이 있어 연 마커 미전진(캘린더 창 안에서 재시도).` : null;
+}
+
+// 순수함수 — 올해 진행 상태 정규화: 연도가 다르거나 깨졌으면 새 해로 비운다.
+export function normalizeProgress(raw, year) {
+  if (!raw || raw.year !== year) return { year, verdicts: {}, alertedFor: null };
+  const verdicts = {};
+  for (const [key, v] of Object.entries(raw.verdicts && typeof raw.verdicts === 'object' ? raw.verdicts : {})) {
+    if (v?.verdict === '유지') verdicts[key] = { verdict: '유지', reasoning: String(v.reasoning ?? '') };
+    // 교체는 대안 이름이 있어야 재사용한다(재실행 때 다른 대안으로 매수 제안이 하나 더 생기지 않게).
+    else if (v?.verdict === '교체' && typeof v.alternative === 'string' && v.alternative) {
+      verdicts[key] = { verdict: '교체', reasoning: String(v.reasoning ?? ''), alternative: v.alternative };
+    }
+  }
+  return { year, verdicts, alertedFor: raw.alertedFor === year ? year : null };
+}
+
+// 순수함수 — 그해 재평가 창이 끝났는지(창 마지막 실행일이거나 창이 지난 뒤의 실행 — 수동 --force). 창 끝 알림 시점.
+// 마지막 날 실행을 놓쳤으면 창이 끝난 뒤 첫 실행에서 알린다. 잡이 그날 아예 안 돌았으면 health-watcher가 잡는다.
+export function isWindowEnded(date) {
+  if (isLastWindowRun(date)) return true;
+  const parts = kstCalendarParts(date);
+  return !(Number(parts.month) === 1 && Number(parts.day) <= 3);
+}
+export const instrumentKey = (account, inst) => `${account}|${inst.ticker || inst.name}`;
+
+// 순수함수 — 그해(KST) 이 잡이 낸(사유가 '[연 1회 재스코어링]') 이 다리(계좌·종목·방향)의 가장 최근 제안 상태 →
+// (다른 잡의 같은 종목 제안 — 예: 신규현금 매수 승인 — 을 교체의 한 다리로 착각하지 않게 이 잡 제안만 본다) 'rejected'(오너 거부, 결함 거부 제외)·
+// 'decided'(승인·실행대기·주문 진행·체결 — 결정 끝남)·'pending'(대기)·null(없음·대체됨·만료·발송오류 등). 재실행 판단에 쓴다.
+const DECIDED_LEG_STATUSES = new Set(['승인', '실행대기', '주문접수', '부분체결', '체결', '실행됨']);
+export const RESCORE_REASON_TAG = '[연 1회 재스코어링]';
+export function latestRescoreLeg(proposals, { account, assetKey, side, year }) {
+  const mine = (proposals || []).filter((p) => p.track === '자산분배' && p.account === account && p.assetKey === assetKey && p.side === side
+    && String(p.reason ?? '').includes(RESCORE_REASON_TAG)
+    && typeof p.createdAt === 'string' && getYearLabel(new Date(p.createdAt)) === year);
+  return mine.length ? mine.reduce((a, b) => (a.createdAt >= b.createdAt ? a : b)) : null;
+}
+export function legYearState(proposals, query) {
+  const latest = latestRescoreLeg(proposals, query);
+  if (!latest) return null;
+  if (latest.status === '거부' && latest.rejectTag !== '결함') return 'rejected';
+  if (DECIDED_LEG_STATUSES.has(latest.status)) return 'decided';
+  if (latest.status === '대기') return 'pending';
+  return null;
+}
+
+// 순수함수 — 저장된 판정·그해 제안 상태로 이번 실행에서 이 종목을 어떻게 다룰지(리뷰 2차 MEDIUM 1·2).
+//   keep: 오너가 그해 교체를 거부함 → '유지'로 확정, 다시 제안하지 않음
+//   skip: 창 밖 수동 실행에서 저장된 판정만 있음(발송 안 함) / 이미 다른 대안으로 교체 제안이 나가 있음(매수 제안 둘 방지)
+//   rejudge: 저장된 '교체'의 대안이 오늘과 다르고 그 교체 제안도 나가 있지 않음 → 저장 판정을 버리고 다시 판단
+//   proceed: 저장 판정을 쓰거나(있으면) 새로 판단해서 진행
+//   note: 오너가 알아야 할 남은 상태(창 끝 알림 사실에 한 줄) — 즉시 알림은 하지 않는다(경보 피로).
+const LIVE_LEG = new Set(['pending', 'decided']);
+export function decideReplacementStep({ cached, bestAlternativeName, sellState, buyState, forceOutsideWindow }) {
+  if (sellState === 'rejected' && LIVE_LEG.has(buyState)) return { action: 'keep', reason: '매도 거부 — 매수 다리 남음', note: '매도 거부 — 매수 다리 남음' };
+  if (buyState === 'rejected' && LIVE_LEG.has(sellState)) return { action: 'keep', reason: '매수 거부 — 매도 다리 남음', note: '매수 거부 — 매도 다리 남음' };
+  if (sellState === 'rejected' || buyState === 'rejected') return { action: 'keep', reason: '그해 오너가 이 교체를 거부함 — 유지로 확정' };
+  if (cached && forceOutsideWindow) return { action: 'skip', reason: '창 밖 수동 실행 — 저장된 판정으로는 제안을 보내지 않음' };
+  // 저장 판정이 없는데(기록 실패 등) 그해 교체 다리가 이미 나가 있으면 대안을 모르므로 새 다리를 만들지 않는다(매수 제안 둘 방지, 리뷰 3차 M2).
+  if (!cached && (LIVE_LEG.has(sellState) || LIVE_LEG.has(buyState))) {
+    return { action: 'skip', reason: '그해 교체 제안이 이미 나가 있는데 저장된 판정이 없음 — 새 제안을 만들지 않음', note: '교체 제안 진행 중(판정 기록 없음 — 확인 필요)' };
+  }
+  if (cached?.verdict === '교체' && cached.alternative !== bestAlternativeName) {
+    if (sellState === 'pending' || sellState === 'decided') return { action: 'skip', reason: `이미 ${cached.alternative}(으)로 교체 제안이 나가 있음 — 오늘 최상위(${bestAlternativeName})로 바꾸지 않음` };
+    return { action: 'rejudge', reason: `저장된 교체 대안(${cached.alternative})이 오늘 최상위(${bestAlternativeName})와 다름 — 다시 판단` };
+  }
+  return { action: 'proceed' };
+}
+
+// 순수함수 — 교체 제안 한 다리의 결과. 새로 보냈거나(created) 같은 안건이 이미 대기·승인 중이거나(pending, keepPending)
+// 그해 이미 결정이 끝났으면(decided — 승인·주문 진행·체결, 다시 보내지 않음) 보낸 것이다.
+export const isLegSent = (r) => r?.action === 'created' || r?.action === 'pending' || r?.action === 'decided';
+// 오너가 24시간 안에 거부한 다리(blocked:cooldown)는 결정이 난 것이라 반쪽 발송이 아니다.
+const isLegDeclined = (r) => r?.action === 'blocked' && r.blockedBy === 'cooldown';
+// 순수함수 — 반쪽 발송(경고 + 연 마커 미전진)인지. 매도를 거부당했으면 매수는 시도하지 않으니 반쪽이 아니다.
+// 그해 이미 승인·주문 진행·체결된 다리는 decided로 들어와 반쪽이 아니다(리뷰 2차 MEDIUM 3). 그해 기록 밖의 진행 중 주문(blocked:open-order)만
+// 반쪽으로 남는다 — 한쪽만 체결되는 교체가 될 수 있어 오너가 직접 확인해야 한다.
+export function isPartialReplacement(sellResult, buyResult) {
+  if (isLegDeclined(sellResult)) return false;
+  if (!isLegSent(sellResult)) return true;
+  return !isLegSent(buyResult) && !isLegDeclined(buyResult);
+}
+
+// 순수함수 — 창 끝 알림 사실 줄. 종목 라벨·건수·로그 파일명만 넣는다(오류 원문 없음).
+// dataFailures: 교체 판단 뒤 평가액·대안 가격 확인 실패(리뷰 3차 M3). notes: '[계좌] 종목 — 남은 상태'(거부 뒤 남은 다리·부분체결 등).
+export function buildWindowEndFacts({ judgmentFailures, limitHeld, dataFailures = [], notes = [] }) {
+  const list = (items) => [...items.slice(0, 5), ...(items.length > 5 ? [`외 ${items.length - 5}건`] : [])];
+  const unresolved = judgmentFailures.length + limitHeld.length + dataFailures.length;
+  return [
+    unresolved
+      ? `올해 재평가 창(1월 1~3일)이 끝났는데 판단하지 못한 종목이 남음(판단 실패 ${judgmentFailures.length}건 · 사용량 한도 보류 ${limitHeld.length}건 · 데이터 확인 실패 ${dataFailures.length}건)`
+      : '올해 재평가 창(1월 1~3일)이 끝남 — 오너 확인이 필요한 교체 상태가 남음',
+    ...list([...judgmentFailures, ...limitHeld.map((l) => `${l}(한도 보류)`), ...dataFailures.map((l) => `${l}(데이터 확인 실패)`), ...notes]),
+    ...(unresolved ? ['연 마커를 넘기지 않음 — 수동 재실행(--force) 또는 내년 창에서 다시 판단'] : []),
+    '원인은 annual-instrument-rescore.log',
+  ];
+}
+
+// 없으면 새 해. 깨졌으면 빈 기록으로 덮지 않고 이번 실행을 보류한다(fail-closed — 알림 기록·판정이 조용히 사라지지 않게).
+export function readProgress(year, { path = PROGRESS_FILE } = {}) {
+  if (!existsSync(path)) return normalizeProgress(null, year);
+  let raw;
+  try { raw = JSON.parse(readFileSync(path, 'utf8')); } catch {
+    throw new Error(`진행 기록(${path})을 읽을 수 없음 — 이번 실행 보류, 파일 확인 필요`);
+  }
+  return normalizeProgress(raw, year);
+}
+
+// 잠금 + 원자적 쓰기(writeStateFile) — launchd 실행과 수동 --force가 겹쳐도 한쪽 기록이 사라지지 않게.
+async function writeProgress(progress) {
+  mkdirSync(STATE_DIR, { recursive: true });
+  await writeStateFile(PROGRESS_FILE, `${JSON.stringify(progress)}\n`);
 }
 
 function readLastYear() {
@@ -190,6 +332,20 @@ async function main() {
   let hadLimitError = false; // 사용량 한도로 판단 보류된 종목이 있으면 연 마커를 안 써서
   // 남은 캘린더 창(1~3일) 안에서 재시도되게 한다(quarterly-allocation-review.mjs의
   // "발송 실패 시 마커 미전진"과 동일 원칙).
+  const judgmentFailures = []; // 판단 실패 종목 — 있으면 연 마커를 안 써서 창 안에서 재시도, 창 마지막 실행이면 한 번 알림(오너 결정 안 2)
+  const limitHeld = []; // 사용량 한도로 판단을 못 한 종목 — 창 마지막 실행이면 알림에 함께 넣는다(1월 4일 뒤로는 잡이 돌지 않는다)
+  const progress = readProgress(getYearLabel(now));
+  const forceOutsideWindow = FORCE && isWindowEnded(now) && !isLastWindowRun(now);
+  const reused = Object.values(progress.verdicts);
+  if (FORCE && reused.length) {
+    const counts = `유지 ${reused.filter((v) => v.verdict === '유지').length}·교체 ${reused.filter((v) => v.verdict === '교체').length}`;
+    console.log(forceOutsideWindow
+      ? `  ℹ️ --force(창 밖): 올해 이미 판단한 ${reused.length}종목(${counts})은 claude에 다시 묻지도, 제안을 보내지도 않고 건너뜀 — 처음부터 다시 하려면 ${PROGRESS_FILE} 확인`
+      : `  ℹ️ --force: 올해 이미 판단한 ${reused.length}종목(${counts})은 claude에 다시 묻지 않고 그 판정으로 진행 — 처음부터 다시 하려면 ${PROGRESS_FILE} 확인`);
+  }
+  let hadDataFailure = false; // 교체 판단 뒤 평가액·대안 가격 확인 실패 — 예전엔 마커가 넘어가 1년 뒤로 밀렸다(리뷰 2차 LOW 3)
+  const dataFailures = [];
+  const windowNotes = []; // 창 끝 알림에 한 줄씩 넣을 남은 상태(거부 뒤 남은 다리·판정 기록 없는 진행 중 교체·부분체결)
   let hadPartialFailure = false; // 매도/매수 한쪽만 발송된 교체가 있으면 마찬가지로
   // 연 마커를 안 써서 재시도되게 한다(2026-09-06 코드리뷰 지적).
 
@@ -224,17 +380,38 @@ async function main() {
         console.log(`  🔎 [${account}/${assetClass}] ${inst.name} — 격차 ${evaluation.scoreDelta.toFixed(1)}점, 유지/교체 판단 요청`);
         if (DRY_RUN) { console.log(`\n┌─── 프롬프트 [${account}/${assetClass}/${inst.name}] ───┐\n${prompt}\n└──────────────────┘`); continue; }
 
-        let verdict;
-        try {
+        existingProposals ??= loadExistingProposals(VAULT_PATHS.decisions.proposals);
+        const sellKey = inst.ticker || inst.name;
+        const sellState = legYearState(existingProposals, { account, assetKey: sellKey, side: '매도', year: progress.year });
+        const buyState = legYearState(existingProposals, { account, assetKey: evaluation.bestAlternative.name, side: '매수', year: progress.year });
+        let verdict = progress.verdicts[instrumentKey(account, inst)] ?? null;
+        const step = decideReplacementStep({ cached: verdict, bestAlternativeName: evaluation.bestAlternative.name, sellState, buyState, forceOutsideWindow });
+        if (step.note) windowNotes.push(`[${account}] ${inst.name} — ${step.note}`);
+        if (step.action === 'keep') {
+          console.log(`  ℹ️  [${account}/${assetClass}] ${inst.name}: ${step.reason}`);
+          progress.verdicts[instrumentKey(account, inst)] = { verdict: '유지', reasoning: step.reason };
+          try { await writeProgress(progress); } catch (e) { console.error(`  ⚠️ 진행 기록 실패: ${e.message}`); }
+          continue;
+        }
+        if (step.action === 'skip') { console.log(`  ℹ️  [${account}/${assetClass}] ${inst.name}: ${step.reason}`); continue; }
+        if (step.action === 'rejudge') { console.log(`  ℹ️  [${account}/${assetClass}] ${inst.name}: ${step.reason}`); verdict = null; }
+        if (verdict) console.log(`  ♻️  [${account}/${assetClass}] ${inst.name}: 올해 판단("${verdict.verdict}")을 다시 씀 — claude 재호출 없음`);
+        if (!verdict) try {
           const r = parseJsonBlock(headlessResult(await runHeadlessClaude(prompt, MODEL, '', {
             appendSystemPrompt: AGENT.systemPrompt, lean: true, tools: '', maxTurns: 1,
           })));
+          // 빈·잘못된 판정 JSON은 그 종목만 판단 실패로 처리한다(예전엔 아래 verdict.verdict에서 잡 전체가 멈췄다, 리뷰 2차 LOW 3).
+          if (!['유지', '교체'].includes(r?.verdict)) throw new Error('판정 형식 오류(유지·교체 아님)');
           verdict = r;
           llm.succeeded += 1;
+          progress.verdicts[instrumentKey(account, inst)] = { verdict: r.verdict, reasoning: String(r.reasoning ?? ''),
+            ...(r.verdict === '교체' ? { alternative: evaluation.bestAlternative.name } : {}) };
+          try { await writeProgress(progress); } catch (e) { console.error(`  ⚠️ 진행 기록 실패(다음 실행에서 다시 판단): ${e.message}`); }
         } catch (e) {
-          if (e.isLimit) { console.log('  ⏳ 사용량 한도 → 이 종목 판단 보류(캘린더 창 안에서 재시도).'); hadLimitError = true; continue; }
+          if (e.isLimit) { console.log('  ⏳ 사용량 한도 → 이 종목 판단 보류(캘린더 창 안에서 재시도).'); hadLimitError = true; limitHeld.push(`[${account}] ${inst.name}`); continue; }
           console.error(`  ❌ [${account}/${assetClass}] ${inst.name} 판단 실패: ${e.message}`);
           llm.failed += 1;
+          judgmentFailures.push(`[${account}] ${inst.name}`);
           continue;
         }
         if (verdict.verdict !== '교체') {
@@ -248,6 +425,8 @@ async function main() {
         // 크기가 아예 없는 매수" 제안이 나간다.
         if (!Number.isFinite(inst.evalAmount) || inst.evalAmount <= 0) {
           console.error(`  ❌ [${account}/${assetClass}] ${inst.name} 보유평가액 데이터 없음 — 교체 제안 생성 보류(수동 확인 필요)`);
+          hadDataFailure = true;
+          dataFailures.push(`[${account}] ${inst.name}`);
           continue;
         }
 
@@ -255,20 +434,30 @@ async function main() {
         const altLatest = altSeries[altSeries.length - 1];
         if (!altLatest || !Number.isFinite(altLatest.close) || altLatest.close <= 0) {
           console.error(`  ❌ [${account}/${assetClass}] 교체 대상 ${evaluation.bestAlternative.name} 가격 조회 실패 — 제안 생성 보류`);
+          hadDataFailure = true;
+          dataFailures.push(`[${account}] ${inst.name}`);
           continue;
         }
         const buyQuantity = Math.floor(inst.evalAmount / altLatest.close);
 
-        existingProposals ??= loadExistingProposals(VAULT_PATHS.decisions.proposals);
-        const reason = `[연 1회 재스코어링] ${verdict.reasoning ?? ''} (점수 ${heldScore.composite.toFixed(1)}→${evaluation.bestAlternative.composite.toFixed(1)})`;
-        const isSent = (r) => r?.action === 'created';
+        const reason = `${RESCORE_REASON_TAG} ${verdict.reasoning ?? ''} (점수 ${heldScore.composite.toFixed(1)}→${evaluation.bestAlternative.composite.toFixed(1)})`;
+        // keepPending(2026-10-31 리뷰 HIGH): 마커 미전진으로 다음 날 재실행되면 어제 보낸 교체 제안이 대체 발송되고 승인된 제안까지
+        // '대체됨'이 되던 경로를 막는다(신규현금·리밸런싱·월간틸트와 같은 방식). 판정은 isLegSent·isPartialReplacement.
+        const isCreated = (r) => r?.action === 'created';
+        const isSent = isLegSent;
         let sellResult = { action: 'failed' };
         let buyResult = { action: 'failed' };
-        try {
+        const legStatus = (side, assetKey) => latestRescoreLeg(existingProposals, { account, assetKey, side, year: progress.year })?.status;
+        if (legStatus('매도', sellKey) === '부분체결') windowNotes.push(`[${account}] ${inst.name} — 매도 부분체결 남음`);
+        if (legStatus('매수', evaluation.bestAlternative.name) === '부분체결') windowNotes.push(`[${account}] ${evaluation.bestAlternative.name} — 매수 부분체결 남음`);
+        if (sellState === 'decided') {
+          sellResult = { action: 'decided', reason: '그해 이미 승인·주문 진행·체결 — 다시 보내지 않음' };
+          console.log(`  ℹ️  [${account}/${assetClass}] 매도 ${inst.name}: ${sellResult.reason}`);
+        } else try {
           sellResult = await createAndSendProposal({
             track: '자산분배', account, assetKey: inst.ticker || inst.name, name: inst.name,
             side: '매도', quantity: inst.qty, proposedPrice: inst.curPrice,
-            reason, senderAgent: SENDER_AGENT,
+            reason, senderAgent: SENDER_AGENT, keepPending: true,
             existingProposals,
             writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
             sendMessage: (message) => sendAgentMessage(message).then((r) => r?.result ?? r),
@@ -281,20 +470,23 @@ async function main() {
           // 않으면(rebalance-proposal.mjs·new-cash-allocation.mjs는 이미 이렇게 함) 같은
           // (account,assetClass) 안의 다른 보유 종목이 같은 bestAlternative로 교체될 때
           // 단일활성제안 판정이 이 방금 만든 제안을 못 보고 중복 매수 제안을 또 만든다.
-          if (isSent(sellResult)) {
+          if (isCreated(sellResult)) {
             existingProposals.push({ filename: sellResult.filename, content: sellResult.content, ...parseProposal(sellResult.content) });
           }
         } catch (e) {
           console.error(`  ❌ [${account}/${assetClass}] 매도 제안 발송 실패: ${e.message}`);
         }
 
-        if (isSent(sellResult)) {
+        if (isSent(sellResult) && buyState === 'decided') {
+          buyResult = { action: 'decided', reason: '그해 이미 승인·주문 진행·체결 — 다시 보내지 않음' };
+          console.log(`  ℹ️  [${account}/${assetClass}] 매수 ${evaluation.bestAlternative.name}: ${buyResult.reason}`);
+        } else if (isSent(sellResult)) {
           try {
             buyResult = await createAndSendProposal({
               track: '자산분배', account, assetKey: evaluation.bestAlternative.name, name: evaluation.bestAlternative.name,
               side: '매수', quantity: buyQuantity > 0 ? buyQuantity : null, proposedPrice: altLatest.close,
               amountWon: inst.evalAmount,
-              reason, senderAgent: SENDER_AGENT,
+              reason, senderAgent: SENDER_AGENT, keepPending: true,
               existingProposals,
               writeProposalFile: (filename, content) => writeStateFile(join(VAULT_PATHS.decisions.proposals, filename), content),
               sendMessage: (message) => sendAgentMessage(message).then((r) => r?.result ?? r),
@@ -303,7 +495,7 @@ async function main() {
               }),
             });
             console.log(`  📤 [${account}/${assetClass}] 매수 ${evaluation.bestAlternative.name}: ${buyResult.action}${buyResult.reason ? ` (${buyResult.reason})` : ''}`);
-            if (isSent(buyResult)) {
+            if (isCreated(buyResult)) {
               existingProposals.push({ filename: buyResult.filename, content: buyResult.content, ...parseProposal(buyResult.content) });
             }
           } catch (e) {
@@ -314,8 +506,8 @@ async function main() {
         // 코드리뷰 지적(2026-09-06, HIGH) — 매도만 나가고 매수가 실패(또는 그 반대)하면
         // 오너가 "반쪽짜리 교체"를 알 방법이 없었다(콘솔 로그만 남고 연 마커는 그대로
         // 전진 → 다음 기회가 1년 뒤). 텔레그램으로 명시 경고 + 연 마커 미전진(캘린더 창
-        // 안에서 재시도 — 성공한 다리는 단일활성제안 판정이 재중복 안 되게 막아준다).
-        if (!isSent(sellResult) || !isSent(buyResult)) {
+        // 안에서 재시도 — 이미 보낸 다리는 keepPending이 다시 보내지 않는다).
+        if (isPartialReplacement(sellResult, buyResult)) {
           hadPartialFailure = true;
           const plainAlert = `[연 1회 재스코어링] 교체 제안 반쪽 발송 — [${account}] ${inst.name}→${evaluation.bestAlternative.name}: 매도 ${sellResult.action}${sellResult.reason ? `(${sellResult.reason})` : ''}, 매수 ${buyResult.action}${buyResult.reason ? `(${buyResult.reason})` : ''} — 수동 확인 필요`;
           console.error(plainAlert);
@@ -339,8 +531,23 @@ async function main() {
   if (DRY_RUN) return;
   markLlmRunOutcome(llm, { job: 'annual-instrument-rescore' });
   if (!reviewedAny) console.log('  ℹ️ 이번 연도엔 재검토 대상(격차 임계값 이상) 없음');
-  if (hadLimitError) { console.log('  ⏳ 사용량 한도로 보류된 종목이 있어 연 마커 미전진(캘린더 창 안에서 재시도).'); return; }
-  if (hadPartialFailure) { console.log('  ⚠️ 반쪽 발송된 교체가 있어 연 마커 미전진(캘린더 창 안에서 재시도).'); return; }
+  // 창이 끝났는데(마지막 실행일, 또는 그 뒤 첫 실행) 판단하지 못한 종목(실패·한도 보류)이 남았으면 한 해에 한 번 알린다(progress.alertedFor).
+  // 같은 해 재실행·--force로는 다시 보내지 않는다. 오류 원문은 넣지 않는다 — 로그에만. 아래 마커 판단과 무관하게 먼저.
+  // 판단이 전부 실패한 날은 종료코드 규칙으로 잡 실패 경보(health-watcher)도 가지만, 이 알림은 창 끝에 한 번이라 겹침은 그날 하루뿐이다.
+  if ((judgmentFailures.length || limitHeld.length || dataFailures.length || windowNotes.length) && isWindowEnded(now) && progress.alertedFor !== progress.year) {
+    let alerted = false;
+    try {
+      await sendWarning({ agent: SENDER_AGENT, kind: '판단', topic: '경고', facts: buildWindowEndFacts({ judgmentFailures, limitHeld, dataFailures, notes: windowNotes }) },
+        { warningCode: 'INSTRUMENT_RESCORE_JUDGMENT_FAILED', kind: 'operational', severity: 'medium', subjectKey: warningSubjectKey('rescore-judgment', getYearLabel(now)) });
+      alerted = true;
+    } catch (e) { console.error(`  ❌ 판단 실패 알림 텔레그램 실패: ${e.message}`); }
+    if (alerted) {
+      progress.alertedFor = progress.year;
+      try { await writeProgress(progress); } catch (e) { console.error(`  ⚠️ 알림은 보냈으나 진행 기록 실패(다음 실행에서 다시 알릴 수 있음): ${e.message}`); }
+    }
+  }
+  const hold = yearMarkerHold({ hadLimitError, hadPartialFailure, judgmentFailureCount: judgmentFailures.length, hadDataFailure });
+  if (hold) { console.log(`  ${hold}`); return; }
   writeLastYear(getYearLabel(now));
 }
 
