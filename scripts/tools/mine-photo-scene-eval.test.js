@@ -141,3 +141,46 @@ test('평가 세트 나누기: 사진 종류별로 번호 순서대로 번갈아
   assert.equal((await run(holdout.options)).judged, 1);
   await assert.rejects(run(options(fixture, { stage: 'judge', set: 'all' }).options), /--set은/);
 });
+
+test('--face-crop(0.4-face): 얼굴 상자가 있으면 확대 그림을 두 번째로, 없으면 사진 전체만 — 판 이름이 붙은 파일에 따로 쓴다', async (t) => {
+  const fixture = setup(t, ['얼굴 가까이', '가려짐']);
+  const cards = JSON.parse(readFileSync(fixture.cardsPath, 'utf8'));
+  delete cards[1].mineBox; // 얼굴 인식이 미네를 못 찾은 사진
+  writeFileSync(fixture.cardsPath, JSON.stringify(cards));
+  const crops = [];
+  const first = options(fixture, { faceCrop: true, readImage: (path) => (path.endsWith('-face.jpg') ? 'RkFDRQ==' : 'aGk='),
+    cropFace: (source, target, box) => { crops.push([source, box]); return { width: 448, height: 448 }; } });
+  await run(first.options);
+  assert.deepEqual(crops.map(([, box]) => box), [[10, 10, 50, 50]]);
+  assert.deepEqual(first.calls.ollama.map((request) => request.images), [['aGk=', 'RkFDRQ=='], ['aGk=']]);
+  assert.match(first.calls.ollama[0].prompt, /두 번째는 첫 번째 사진에서 미네 얼굴 부분만 잘라 크게 키운 것/);
+  assert.doesNotMatch(first.calls.ollama[1].prompt, /두 번째 그림/);
+  const rows = lines(join(fixture.dir, `photo-scenes-photo-scene-ollama-0.4-face-${STAMP}.jsonl`));
+  assert.deepEqual(rows.map((row) => [row.sceneVersion, row.faceCrop]), [['photo-scene/ollama-0.4-face', true], ['photo-scene/ollama-0.4-face', false]]);
+  assert.equal(existsSync(scenesFileFor(fixture.dir, STAMP)), false, '기본 판 장면 파일은 건드리지 않는다');
+  const judged = options(fixture, { stage: 'judge', faceCrop: true });
+  await run(judged.options);
+  const answers = lines(join(fixture.dir, `model-answers-photo-text-claude-0.3-photo-scene-ollama-0.4-face-${STAMP}.jsonl`));
+  assert.ok(answers.every((row) => row.sceneVersion === 'photo-scene/ollama-0.4-face'));
+  assert.equal(lines(fixture.ledgerPath)[0].scenePromptVersion, 'photo-scene/ollama-0.4-face');
+});
+
+test('--set은 장면 낱말 단계에도 걸리고, 답 줄에 세트를 남긴다(리뷰 LOW-5·MEDIUM-1)', async (t) => {
+  const fixture = setup(t, ['얼굴 가까이', '얼굴 가까이', '얼굴 가까이']);
+  const sceneRun = options(fixture, { stage: 'scene', set: 'holdout' });
+  await run(sceneRun.options);
+  assert.equal(sceneRun.calls.ollama.length, 1, '2번만 holdout');
+  assert.deepEqual(lines(scenesFileFor(fixture.dir, STAMP)).map((row) => row.no), [2]);
+  await run(options(fixture, { stage: 'judge', set: 'holdout' }).options);
+  assert.deepEqual(lines(answersFileFor(fixture.dir, STAMP)).map((row) => [row.no, row.set]), [[2, 'holdout']]);
+});
+
+test('--face-crop: 확대 그림을 못 만들면 사진 전체로 장면 낱말을 뽑고 이유를 남긴다(실패로 세지 않음, 리뷰 LOW-7)', async (t) => {
+  const fixture = setup(t, ['얼굴 가까이']);
+  const run1 = options(fixture, { faceCrop: true, cropFace: () => { throw new Error('exiftool 없음'); } });
+  const summary = await run(run1.options);
+  assert.deepEqual([summary.scenes, summary.sceneFailures], [1, 0]);
+  assert.deepEqual(run1.calls.ollama[0].images, ['aGk=']);
+  const [row] = lines(join(fixture.dir, `photo-scenes-photo-scene-ollama-0.4-face-${STAMP}.jsonl`));
+  assert.deepEqual([row.faceCrop, row.faceCropError], [false, 'exiftool 없음']);
+});

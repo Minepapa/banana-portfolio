@@ -18,6 +18,7 @@
  *   scene:   카드마다 장면 낱말 → 시트 폴더 photo-scenes-<판>-<시트 판>.jsonl(Claude 재판단 때 사진을 다시 보지 않는다).
  *   judge:   Claude 두 번(athena 헌장, 도구 없음·한 턴·빈 임시 cwd). 매 호출 전 쿨다운·06:20~07:30 가드, 하루 상한은
  *            잡과 같은 판단 기록(Media/MemoryOrb/photo-text-judgments.jsonl, mode review)으로 센다. --max-calls로 이번 회차를 더 줄인다.
+ * --face-crop(0.4-face 시험): 장면 낱말에 원본에서 잘라 키운 미네 얼굴 그림을 함께 준다(파일 이름에 장면 판이 붙는다).
  * 볼트는 읽기만 한다(기준 예시 사진 경로·얼굴 색인). 텔레그램은 보내지 않는다.
  *
  * 사용:
@@ -35,11 +36,11 @@ import { appendJudgment, readJudgments } from '../lib/mine-judgment.mjs';
 import { OLLAMA_MODELS, unloadOllamaModel } from '../lib/ollama-client.mjs';
 import { faceBoxText, loadMineFaces } from '../lib/mine-record-input.mjs';
 import { loadPhotoFaces, photoKind } from '../lib/mine-photo-kind.mjs';
-import { BLOCKED_WINDOW, DAILY_PHOTO_TEXT_CALLS, PHOTO_TEXT_JUDGMENTS_FILE, PHOTO_TEXT_PROMPT_VERSION, SCENE_PROMPT_VERSION, anchorScenesPath,
+import { BLOCKED_WINDOW, DAILY_PHOTO_TEXT_CALLS, PHOTO_TEXT_JUDGMENTS_FILE, PHOTO_TEXT_PROMPT_VERSION, SCENE_FACE_PROMPT_VERSION, SCENE_PROMPT_VERSION, anchorScenesPath,
   effectiveKind, extractScene, faceEmotionUnknown, inBlockedWindow, kstDay, photoTextRoom, promptSlug } from '../lib/mine-photo-scene.mjs';
 import { CLAUDE_RUNS, mineAge, restrictedDecision } from '../jobs/mine-athena-fields.mjs';
 import { OLLAMA_CALL_MS, RUN_ROOT, judgeSceneMoment, loadAnchorScenes } from '../jobs/media-memory-orb.mjs';
-import { makeCopy } from './media-memory-orb-trial.mjs';
+import { makeCopy, runTool, verifyStripped } from './media-memory-orb-trial.mjs';
 import { ANCHOR_ROOT } from './mine-anchor-trial.mjs';
 import { fileStamp } from './mine-photo-review-sheet.mjs';
 
@@ -62,8 +63,27 @@ export function evalSplit(cards) {
 // 같은 카드가 장면 낱말·Claude 형식 실패를 이만큼 하면 이 판에서는 다시 묻지 않는다(잡의 2회 실패 보류와 같은 뜻).
 export const MAX_FAILURES = 2;
 
-export const scenesFileFor = (dir, stamp) => join(dir, `photo-scenes-${promptSlug(SCENE_PROMPT_VERSION)}-${stamp}.jsonl`);
-export const answersFileFor = (dir, stamp) => join(dir, `model-answers-${promptSlug(PHOTO_TEXT_PROMPT_VERSION)}-${stamp}.jsonl`);
+export const scenesFileFor = (dir, stamp, sceneVersion = SCENE_PROMPT_VERSION) => join(dir, `photo-scenes-${promptSlug(sceneVersion)}-${stamp}.jsonl`);
+// 장면 판이 기본(SCENE_PROMPT_VERSION)이 아니면 파일 이름에 장면 판도 넣는다(같은 Claude 판을 장면 판별로 견준다).
+export const answersFileFor = (dir, stamp, sceneVersion = SCENE_PROMPT_VERSION) => join(dir, `model-answers-${promptSlug(PHOTO_TEXT_PROMPT_VERSION)}${
+  sceneVersion === SCENE_PROMPT_VERSION ? '' : `-${promptSlug(sceneVersion)}`}-${stamp}.jsonl`);
+
+// 얼굴 확대 그림(0.4-face): 세운 원본에서 미네 얼굴 상자를 가운데 두고 얼굴 긴 변의 2.2배 정사각형으로 잘라 448px로 키운다.
+// 메타데이터를 지우고 확인한다(makeCopy와 같은 규칙). 원본 좌표 상자(card.mineBox)는 세운 원본 기준이다.
+export const FACE_CROP_PX = 448;
+export const FACE_CROP_SCRIPT = `from PIL import Image, ImageOps\nfrom pillow_heif import register_heif_opener\nimport sys, json\nregister_heif_opener()\nx1, y1, x2, y2 = [float(v) for v in sys.argv[3:7]]\nwith Image.open(sys.argv[1]) as source:\n    photo = ImageOps.exif_transpose(source).convert('RGB')\n    side = max(x2 - x1, y2 - y1) * 2.2\n    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2\n    left, top = max(0, cx - side / 2), max(0, cy - side / 2)\n    right, bottom = min(photo.width, cx + side / 2), min(photo.height, cy + side / 2)\n    if right - left < 8 or bottom - top < 8: raise SystemExit('face box too small')\n    crop = photo.crop((int(left), int(top), int(right), int(bottom)))\n    if max(crop.size) > ${FACE_CROP_PX}: crop.thumbnail((${FACE_CROP_PX}, ${FACE_CROP_PX}))\n    scale = ${FACE_CROP_PX} / max(crop.size)\n    if scale > 1: crop = crop.resize((round(crop.width * scale), round(crop.height * scale)), Image.LANCZOS)\n    crop.save(sys.argv[2], 'JPEG', quality=90)\nprint(json.dumps({'width': crop.width, 'height': crop.height}))\n`;
+export function makeFaceCrop(source, target, box, convert = runTool, inspect = runTool, timeoutMs = 30_000, python = MEDIA_FACES_PATHS.python) {
+  if (!Array.isArray(box) || box.length !== 4 || !box.every(Number.isFinite)) return null;
+  const deadline = Date.now() + timeoutMs;
+  const timed = (tool, command, args) => tool(command, args, Math.max(1, deadline - Date.now()));
+  mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+  const size = JSON.parse(timed(convert, python, ['-c', FACE_CROP_SCRIPT, source, target, ...box.map(String)]));
+  chmodSync(target, 0o600);
+  timed(convert, 'exiftool', ['-all=', '-overwrite_original', target]);
+  chmodSync(target, 0o600);
+  verifyStripped(target, (command, args) => timed(inspect, command, args));
+  return size;
+}
 
 function jsonLines(path) {
   if (!existsSync(path)) return [];
@@ -90,8 +110,9 @@ export function progress(rows, cards, { done }) {
 }
 
 // 모델 답 한 줄(검수 시트 --compare가 읽는 모양 + 감사용 칸).
-export function answerLine(card, judged, { forcedKind } = {}) {
-  const base = { no: card.no, photoId: card.photoId, title: card.title, promptVersion: PHOTO_TEXT_PROMPT_VERSION, sceneVersion: SCENE_PROMPT_VERSION,
+export function answerLine(card, judged, { forcedKind, sceneVersion = SCENE_PROMPT_VERSION, set = null } = {}) {
+  // set: 이 카드의 평가 세트(evalSplit) — tune·holdout 줄이 한 파일에 쌓여도 holdout만 따로 채점하게(리뷰 MEDIUM-1).
+  const base = { no: card.no, photoId: card.photoId, title: card.title, ...(set ? { set } : {}), promptVersion: PHOTO_TEXT_PROMPT_VERSION, sceneVersion,
     photoKind: forcedKind?.kind ?? null, kindCorrected: Boolean(forcedKind?.corrected), calls: judged?.calls ?? 0 };
   if (!judged) return { ...base, state: '모름', primaryEmotion: null, intensity: null, emotions: [], forcedUnknown: true };
   const key = (answer) => ({ state: answer.emotionState, primaryEmotion: answer.fields.primaryEmotion, intensity: answer.fields.emotionIntensity });
@@ -111,20 +132,29 @@ export function anchorPhotoIds(anchors) {
 
 const ageOn = (date) => (date ? mineAge(`${date}T12:00:00+09:00`) : null);
 
-async function sceneFor({ source, target, age, kind, kindReason, face, copyPhoto, readImage, invoke, output }) {
+async function sceneFor({ source, target, age, kind, kindReason, face, copyPhoto, readImage, invoke, output, faceBox = null, cropFace = null }) {
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+  const faceTarget = target.replace(/\.jpg$/, '-face.jpg');
   try {
     const size = copyPhoto(source, target);
+    // 얼굴 상자가 없는 사진(얼굴 인식이 미네를 못 찾음)은 확대 그림 없이 사진 전체만.
+    // 확대 그림을 못 만들면(자르기·메타데이터 도구 실패) 사진 전체만으로 장면 낱말을 뽑는다 — 모델 형식 실패와 섞지 않는다(리뷰 LOW-7).
+    let faceImage = null; let faceCropError = null;
+    if (cropFace && faceBox) {
+      try { faceImage = cropFace(source, faceTarget, faceBox) ? readImage(faceTarget) : null; }
+      catch (error) { faceCropError = error.message; output.error(`[photo-scene-eval] 얼굴 확대 그림 실패 — 사진 전체만: ${error.message}`); }
+    }
     const started = Date.now();
-    const { scene, usage } = await extractScene({ image: readImage(target), age, kind: kind(size)?.kind ?? null, kindReason: kind(size)?.reason ?? null,
+    const { scene, usage } = await extractScene({ image: readImage(target), faceImage, age, kind: kind(size)?.kind ?? null, kindReason: kind(size)?.reason ?? null,
       face: face(size), ...(invoke ? { invoke } : {}), timeoutMs: OLLAMA_CALL_MS, usageLogger: (line) => output.log(`[photo-scene-eval] ${line}`) });
-    return { scene, usage, size, seconds: Math.round((Date.now() - started) / 1000) };
+    return { scene, usage, size, faceCrop: Boolean(faceImage), ...(faceCropError ? { faceCropError } : {}), seconds: Math.round((Date.now() - started) / 1000) };
   } finally {
     rmSync(target, { force: true });
+    rmSync(faceTarget, { force: true });
   }
 }
 
-export async function run({ cardsPath, stage = 'all', set = null, maxCalls = DAILY_PHOTO_TEXT_CALLS, limit = Infinity, ignoreWindow = false, dryRun = false,
+export async function run({ cardsPath, stage = 'all', set = null, faceCrop = false, cropFace = makeFaceCrop, maxCalls = DAILY_PHOTO_TEXT_CALLS, limit = Infinity, ignoreWindow = false, dryRun = false,
   root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PATHS.mediaRoot, anchorRoot = ANCHOR_ROOT, ledgerPath = join(RUN_ROOT, PHOTO_TEXT_JUDGMENTS_FILE),
   now = () => Date.now(), cooldown = cooldownActive, invoke, judge, copyPhoto = makeCopy, readImage = (path) => readFileSync(path).toString('base64'),
   criteria = loadEmotionCriteria(), anchors = loadEmotionAnchors(), charter, unload = unloadOllamaModel, output = console } = {}) {
@@ -140,11 +170,13 @@ export async function run({ cardsPath, stage = 'all', set = null, maxCalls = DAI
   const cards = allCards;
   const inSet = (card) => set === null || split.get(card.no) === set;
   const moments = JSON.parse(readFileSync(join(dir, `photo-moments-${stamp}.json`), 'utf8'));
-  const scenesPath = scenesFileFor(dir, stamp);
-  const answersPath = answersFileFor(dir, stamp);
-  const anchorPath = anchorScenesPath(anchorRoot);
+  const sceneVersion = faceCrop ? SCENE_FACE_PROMPT_VERSION : SCENE_PROMPT_VERSION;
+  const crop = faceCrop ? cropFace : null;
+  const scenesPath = scenesFileFor(dir, stamp, sceneVersion);
+  const answersPath = answersFileFor(dir, stamp, sceneVersion);
+  const anchorPath = anchorScenesPath(anchorRoot, sceneVersion);
   const blocked = () => !ignoreWindow && inBlockedWindow(now());
-  const summary = { stage, cards: cards.length, anchorScenes: 0, scenes: 0, sceneFailures: 0, judged: 0, forced: 0, ambiguous: 0, judgeFailures: 0,
+  const summary = { stage, set, sceneVersion, cards: cards.length, anchorScenes: 0, scenes: 0, sceneFailures: 0, judged: 0, forced: 0, ambiguous: 0, judgeFailures: 0,
     calls: 0, skipped: 0, capped: false, cooldown: false, blockedWindow: false, scenesPath, answersPath, anchorPath };
   if (!dryRun && blocked()) {
     output.error(`[photo-scene-eval] ${BLOCKED_WINDOW.text}(KST)은 mine-athena-fields 회차 시간 — 돌리지 않음(--ignore-window로 무시)`);
@@ -158,7 +190,7 @@ export async function run({ cardsPath, stage = 'all', set = null, maxCalls = DAI
     if (want('anchors')) {
       const targets = anchorPhotoIds(anchors);
       const saved = existsSync(anchorPath) ? JSON.parse(readFileSync(anchorPath, 'utf8')) : {};
-      const missing = targets.filter((target) => saved[target.photoId]?.sceneVersion !== SCENE_PROMPT_VERSION);
+      const missing = targets.filter((target) => saved[target.photoId]?.sceneVersion !== sceneVersion);
       output.log(`[photo-scene-eval] 기준 예시 사진 ${targets.length}장 중 장면 낱말 없음 ${missing.length}장`);
       if (missing.length && !dryRun) {
         const media = new Map([...jsonLines(join(root, VAULT_REL.mediaArchiveIndex)), ...jsonLines(join(root, VAULT_REL.mediaImportsIndex))].map((row) => [row.id, row]));
@@ -173,9 +205,9 @@ export async function run({ cardsPath, stage = 'all', set = null, maxCalls = DAI
           try {
             ollamaUsed = true;
             const result = await sceneFor({ source: resolve(mediaRoot, path), target: join(copyDir, `anchor-${target.photoId}.jpg`), age: ageOn(target.date),
-              kind: kindOf, face: (size) => faceBoxText(face?.bbox, size), copyPhoto, readImage, invoke, output });
+              kind: kindOf, face: (size) => faceBoxText(face?.bbox, size), copyPhoto, readImage, invoke, output, faceBox: face?.bbox ?? null, cropFace: crop });
             const kind = kindOf(result.size);
-            saved[target.photoId] = { anchorId: target.anchorId, sceneVersion: SCENE_PROMPT_VERSION, model: OLLAMA_MODELS.vision,
+            saved[target.photoId] = { anchorId: target.anchorId, sceneVersion, model: OLLAMA_MODELS.vision,
               ...effectiveKind(kind?.kind ?? null, result.scene, kind?.reason ?? null), scene: result.scene, seconds: result.seconds, at: new Date(now()).toISOString() };
             mkdirSync(dirname(anchorPath), { recursive: true, mode: 0o700 });
             writeFileSync(anchorPath, `${JSON.stringify(saved, null, 1)}\n`, { mode: 0o600 });
@@ -191,24 +223,24 @@ export async function run({ cardsPath, stage = 'all', set = null, maxCalls = DAI
 
     // 2) 카드마다 장면 낱말
     if (want('scene')) {
-      const { finished, failures } = progress(jsonLines(scenesPath), cards, { done: (row) => Boolean(row.scene) && row.sceneVersion === SCENE_PROMPT_VERSION });
+      const { finished, failures } = progress(jsonLines(scenesPath), cards, { done: (row) => Boolean(row.scene) && row.sceneVersion === sceneVersion });
       const todo = cards.filter((card) => inSet(card) && !finished.has(card.no) && (failures.get(card.no) ?? 0) < MAX_FAILURES).slice(0, limit);
-      output.log(`[photo-scene-eval] 장면 낱말: 카드 ${cards.length}장 중 끝남 ${finished.size}, 할 것 ${todo.length}${dryRun ? ' (dry-run — 호출 없음)' : ''}`);
+      output.log(`[photo-scene-eval] 장면 낱말(${sceneVersion}${set ? `, 세트 ${set} ${cards.filter(inSet).length}장` : ''}): 카드 ${cards.length}장 중 끝남 ${finished.size}, 할 것 ${todo.length}${dryRun ? ' (dry-run — 호출 없음)' : ''}`);
       if (!dryRun) for (const card of todo) {
         const moment = moments[card.momentId];
         try {
           ollamaUsed = true;
           const result = await sceneFor({ source: resolve(mediaRoot, card.path), target: join(copyDir, `${card.no}.jpg`), age: ageOn(card.date),
             kind: () => (card.kind ? { kind: card.kind, reason: card.kindReason } : null), face: () => faceBoxText(card.mineBox, card.size),
-            copyPhoto, readImage, invoke, output });
-          appendRow(scenesPath, { no: card.no, photoId: card.photoId, title: card.title, momentId: moment?.id ?? card.momentId, sceneVersion: SCENE_PROMPT_VERSION,
-            model: OLLAMA_MODELS.vision, kind: card.kind ?? null, scene: result.scene, seconds: result.seconds, usage: result.usage, at: new Date(now()).toISOString() });
+            copyPhoto, readImage, invoke, output, faceBox: card.mineBox ?? null, cropFace: crop });
+          appendRow(scenesPath, { no: card.no, photoId: card.photoId, title: card.title, momentId: moment?.id ?? card.momentId, sceneVersion,
+            model: OLLAMA_MODELS.vision, kind: card.kind ?? null, faceCrop: result.faceCrop, ...(result.faceCropError ? { faceCropError: result.faceCropError } : {}), scene: result.scene, seconds: result.seconds, usage: result.usage, at: new Date(now()).toISOString() });
           summary.scenes += 1;
           output.log(`[photo-scene-eval] #${card.no} 장면 낱말 (${result.seconds}초)`);
         } catch (error) {
           if (error.unavailable) throw error;
           summary.sceneFailures += 1;
-          appendRow(scenesPath, { no: card.no, photoId: card.photoId, title: card.title, sceneVersion: SCENE_PROMPT_VERSION, error: error.message,
+          appendRow(scenesPath, { no: card.no, photoId: card.photoId, title: card.title, sceneVersion, error: error.message,
             ...(error.formatFailure ? { formatFailure: true } : {}), at: new Date(now()).toISOString() });
           output.error(`[photo-scene-eval] #${card.no} 장면 낱말 실패: ${error.message}`);
         }
@@ -221,17 +253,17 @@ export async function run({ cardsPath, stage = 'all', set = null, maxCalls = DAI
 
   // 3) Claude 감정 판단(글만)
   if (want('judge')) {
-    const sceneRows = new Map(jsonLines(scenesPath).filter((row) => row.scene && row.sceneVersion === SCENE_PROMPT_VERSION).map((row) => [row.no, row]));
+    const sceneRows = new Map(jsonLines(scenesPath).filter((row) => row.scene && row.sceneVersion === sceneVersion).map((row) => [row.no, row]));
     const { finished, failures } = progress(jsonLines(answersPath), cards, { done: (row) => !row.error || row.ambiguous });
     const anchorScenes = loadAnchorScenes(anchorPath);
     const agent = charter ?? loadAgent('athena', { fallbackModel: 'sonnet' });
     const version = { engine: 'claude', model: agent.model, criteriaRef: criteria.ref ?? null, promptVersion: PHOTO_TEXT_PROMPT_VERSION,
-      sceneEngine: 'ollama', sceneModel: OLLAMA_MODELS.vision, scenePromptVersion: SCENE_PROMPT_VERSION };
+      sceneEngine: 'ollama', sceneModel: OLLAMA_MODELS.vision, scenePromptVersion: sceneVersion };
     const decide = judge ?? ((prompt) => restrictedDecision(prompt, agent, { output }));
     const quota = () => cooldown() || blocked();
     const todo = cards.filter((card) => inSet(card) && !finished.has(card.no) && (failures.get(card.no) ?? 0) < MAX_FAILURES).slice(0, limit);
     const noScene = todo.filter((card) => !sceneRows.has(card.no));
-    output.log(`[photo-scene-eval] Claude 판단: 카드 ${cards.length}장 중 끝남 ${finished.size}, 할 것 ${todo.length}(장면 낱말 없음 ${noScene.length} 건너뜀), `
+    output.log(`[photo-scene-eval] Claude 판단(${PHOTO_TEXT_PROMPT_VERSION} · 장면 ${sceneVersion}${set ? ` · 세트 ${set} ${cards.filter(inSet).length}장` : ''}): 카드 ${cards.length}장 중 끝남 ${finished.size}, 할 것 ${todo.length}(장면 낱말 없음 ${noScene.length} 건너뜀), `
       + `기준 예시 사진 장면 낱말 ${Object.keys(anchorScenes).length}개, 오늘 남은 호출 ${photoTextRoom(readJudgments(ledgerPath), now())}번${dryRun ? ' (dry-run — 호출 없음)' : ''}`);
     summary.skipped = noScene.length;
     for (const card of todo) {
@@ -244,7 +276,7 @@ export async function run({ cardsPath, stage = 'all', set = null, maxCalls = DAI
       const item = { id: moment.id, rel: moment.rel, date: moment.date, fields: moment.fields, memo: moment.memo ?? '', album: moment.album ?? null };
       // 표정을 읽을 수 없는 카드: 감정은 코드가 모름(Claude 부르지 않음).
       if (faceEmotionUnknown([photo])) {
-        if (!dryRun) appendRow(answersPath, answerLine(card, null, { forcedKind: photo }));
+        if (!dryRun) appendRow(answersPath, answerLine(card, null, { forcedKind: photo, sceneVersion, set: split.get(card.no) }));
         summary.forced += 1;
         continue;
       }
@@ -261,7 +293,7 @@ export async function run({ cardsPath, stage = 'all', set = null, maxCalls = DAI
       }
       if (judged.deferred) { summary[blocked() ? 'blockedWindow' : judged.cooldown ? 'cooldown' : 'capped'] = true; break; }
       if (judged.error && cooldown()) { summary.cooldown = true; break; }
-      appendRow(answersPath, answerLine(card, judged, { forcedKind: photo }));
+      appendRow(answersPath, answerLine(card, judged, { forcedKind: photo, sceneVersion, set: split.get(card.no) }));
       if (judged.ambiguous) summary.ambiguous += 1;
       else if (judged.error) { summary.judgeFailures += 1; output.error(`[photo-scene-eval] #${card.no} 판단 실패: ${judged.error}`); }
       else summary.judged += 1;
@@ -276,13 +308,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   const args = process.argv.slice(2);
   const cardsPath = args.find((arg) => !arg.startsWith('--'));
   const value = (name) => args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
-  const valid = args.every((arg) => !arg.startsWith('--') || ['--dry-run', '--ignore-window'].includes(arg)
+  const valid = args.every((arg) => !arg.startsWith('--') || ['--dry-run', '--ignore-window', '--face-crop'].includes(arg)
     || /^--stage=(anchors|scene|judge|all)$/.test(arg) || /^--set=(tune|holdout)$/.test(arg) || /^--(max-calls|limit)=\d+$/.test(arg));
   if (!cardsPath || !valid || args.filter((arg) => !arg.startsWith('--')).length !== 1) {
-    console.error('사용: node scripts/tools/mine-photo-scene-eval.mjs <photo-cards-*.json> [--stage=anchors|scene|judge|all] [--set=tune|holdout] [--max-calls=N] [--limit=N] [--ignore-window] [--dry-run]');
+    console.error('사용: node scripts/tools/mine-photo-scene-eval.mjs <photo-cards-*.json> [--stage=anchors|scene|judge|all] [--set=tune|holdout] [--face-crop] [--max-calls=N] [--limit=N] [--ignore-window] [--dry-run]');
     process.exitCode = 2;
   } else {
-    run({ cardsPath, stage: value('stage') ?? 'all', set: value('set') ?? null, dryRun: args.includes('--dry-run'), ignoreWindow: args.includes('--ignore-window'),
+    run({ cardsPath, stage: value('stage') ?? 'all', set: value('set') ?? null, faceCrop: args.includes('--face-crop'), dryRun: args.includes('--dry-run'), ignoreWindow: args.includes('--ignore-window'),
       ...(value('max-calls') ? { maxCalls: Number(value('max-calls')) } : {}), ...(value('limit') ? { limit: Number(value('limit')) } : {}) })
       .catch((error) => { console.error(`[photo-scene-eval] 실패: ${error.message}`); process.exitCode = 1; });
   }

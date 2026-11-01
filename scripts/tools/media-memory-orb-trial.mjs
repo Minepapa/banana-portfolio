@@ -222,7 +222,7 @@ export function summarize(rows, total = 3000, nightly = 50) {
     estimatedNights: Math.ceil(total / nightly), estimatedNightHours: average('elapsedMs') * nightly / 3_600_000 };
 }
 
-function runTool(command, args, timeoutMs = 30_000) {
+export function runTool(command, args, timeoutMs = 30_000) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: Math.max(1, Math.min(30_000, timeoutMs)) });
   if (result.status !== 0) throw new Error(`${command}: ${(result.stderr || result.stdout).slice(0, 300)}`);
   return result.stdout;

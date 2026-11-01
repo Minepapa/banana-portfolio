@@ -42,15 +42,20 @@ export const SCENE_PROMPT_VERSION = 'photo-scene/ollama-0.2';
 // text 0.3(11-02, tune 40장 0.2 결과 23/40): 입꼬리 내려감 하나로 소심·슬픔을 고름(로컬 모델이 감정 없는 얼굴에도 '내려감'을 자주 씀),
 //   기쁨 강도가 1·2로 흔들려 애매함 — 불편 감정은 얼굴 단서 두 개, 기쁨은 옅음이 기본.
 export const PHOTO_TEXT_PROMPT_VERSION = 'photo-text/claude-0.3';
+// scene 0.4-face(11-02 시험, 평가 도구 --face-crop만): 0.2 tune 40장 중 20장이 같은 단서 조합 — 768px 사본에서 미네 얼굴이 30px 남짓이라
+//   로컬 모델이 단서를 못 가른다고 보고, 원본에서 미네 얼굴 상자를 잘라 키운 그림을 두 번째로 함께 준다(사진은 여전히 맥 안에서만).
+//   잡(media-memory-orb)은 아직 0.2 — 평가에서 나아지면 그때 잡에 옮긴다.
+export const SCENE_FACE_PROMPT_VERSION = 'photo-scene/ollama-0.4-face';
 export const promptSlug = (version) => version.replace(/[^A-Za-z0-9.]+/g, '-');
 
 // 하루 Claude 호출 상한(이 경로만, 판단 기록 photo-text-judgments.jsonl로 셈 — 잡·평가 도구 둘 다 같은 기록에 쓴다).
 // 통화·녹음(mine-athena-fields)이 하루 200번을 쓰고 대화 세션과 같은 구독을 나눠 쓰므로 그 절반으로 시작한다.
-// 순간 하나에 두 번 묻는다(모두 멀리서·가려짐이라 감정이 코드로 정해지면 잡은 중요도용으로 한 번).
+// 순간 하나에 두 번 묻는다(대표 사진 모두 장면 낱말상 얼굴이 안 보여 감정이 코드로 정해지면 잡은 중요도용으로 한 번).
 export const DAILY_PHOTO_TEXT_CALLS = 100;
 export const PHOTO_TEXT_JUDGMENTS_FILE = 'photo-text-judgments.jsonl';
 export const ANCHOR_SCENES_FILE = `photo-anchor-scenes-${promptSlug(SCENE_PROMPT_VERSION)}.json`;
-export const anchorScenesPath = (anchorRoot = join(MEDIA_FACES_PATHS.mediaRoot, 'MemoryOrb', 'anchors')) => join(anchorRoot, ANCHOR_SCENES_FILE);
+export const anchorScenesPath = (anchorRoot = join(MEDIA_FACES_PATHS.mediaRoot, 'MemoryOrb', 'anchors'), version = SCENE_PROMPT_VERSION) =>
+  join(anchorRoot, version === SCENE_PROMPT_VERSION ? ANCHOR_SCENES_FILE : `photo-anchor-scenes-${promptSlug(version)}.json`);
 
 // mine-athena-fields 매일 06:30 회차(Claude 하루 100개 × 두 번, 약 35분)와 겹치지 않게 이 시간(KST)에는 Claude를 부르지 않는다.
 export const BLOCKED_WINDOW = Object.freeze({ start: 6 * 60 + 20, end: 7 * 60 + 30, text: '06:20~07:30' });
@@ -110,7 +115,7 @@ export function sceneSchema() {
 
 // 사진 한 장의 장면 낱말 프롬프트. 순간 노트(제목·앨범·메모)는 넣지 않는다 — 사진에 보이는 것만 적게(노트 제목을 자리 칸에 베끼지 않게).
 // Claude는 노트 정보를 따로 받는다.
-export function buildScenePrompt({ age = null, kind = null, kindReason = null, face = null } = {}) {
+export function buildScenePrompt({ age = null, kind = null, kindReason = null, face = null, faceCrop = false } = {}) {
   return [
     '# 역할',
     `사진 한 장을 보고 보이는 것만 짧은 한국어 구절로 칸마다 적는다. 사진 속 아이 미네(여자아이${Number.isInteger(age) ? `, 만 ${age}세` : ''})를 중심으로 쓴다.`,
@@ -122,6 +127,8 @@ export function buildScenePrompt({ age = null, kind = null, kindReason = null, f
     '# 미네 찾기',
     face ? `- ${face}. 그 자리의 아이가 미네다.` : '- 미네 얼굴 위치를 모른다. 사진 속 아이 가운데 가장 크게 보이는 아이를 미네로 보고, 아이가 없으면 mineVisible "안 보임".',
     ...(kind ? [`- 사진 종류(얼굴 인식으로 정한 값): ${kind}${kindReason ? ` — ${kindReason}` : ''}`] : []),
+    ...(faceCrop ? ['- 그림이 두 장이다. 첫 번째는 사진 전체, 두 번째는 첫 번째 사진에서 미네 얼굴 부분만 잘라 크게 키운 것이다.',
+      '- 얼굴 단서 칸(mouthCorners·mouthShape·eyeShape·browShape·tears·gaze)과 mineExpression은 두 번째 그림(확대한 얼굴)을 보고 고른다. 나머지 칸은 첫 번째 그림으로 쓴다.'] : []),
     '',
     '# 칸 (아래는 칸 설명이며 설명 글을 그대로 베끼지 않는다. 글 칸은 40자 안팎)',
     ...Object.entries(SCENE_CHOICES).map(([key, values]) => `- ${key}: ${values.map((value) => `"${value}"`).join(' | ')} — ${CHOICE_GUIDES[key]}`),
@@ -162,7 +169,7 @@ export const FEELING_STEMS = Object.freeze(['행복', '즐거', '즐겁', '신�
   '만족', '편안', '평온', '긴장', '흥분', '귀찮', '심술', '삐친', '삐져']);
 export const REDACTED = '[감정 낱말 뺌]';
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// 멀리서·가려짐 사진은 표정이 읽히지 않는 사진이라 다른 칸(몸짓·그 밖)에 적힌 얼굴 동작도 지운다(리뷰 2026-11-01).
+// 얼굴을 읽을 수 없는 사진(faceUnreadable, 0.1까지는 멀리서·가려짐)은 다른 칸(몸짓·그 밖)에 적힌 얼굴 동작도 지운다(리뷰 2026-11-01).
 export const EXPRESSION_STEMS = Object.freeze(['웃', '울', '눈물', '미소', '찡그', '입꼬리', '표정', '삐죽', '찌푸']);
 export function redactFeelingWords(text, criteria, extra = []) {
   const words = [...new Set([...(criteria?.emotions ?? []).map((emotion) => emotion.name), ...FEELING_STEMS, ...extra])].sort((a, b) => b.length - a.length);
@@ -185,8 +192,11 @@ export function effectiveKind(kind, scene, kindReason = null) {
 // 코드가 모름으로 정하고, 작은 얼굴은 단서를 받은 Claude가 판단한다(단서가 모두 '안 보임'이면 Claude도 모름).
 export function faceUnreadable(scene) {
   if (!scene) return false; // 장면 낱말이 없으면 판단을 Claude에 맡긴다(0.1 종류 규칙과 같은 '모르면 맡김')
+  // 얼굴 단서 칸이 있는 판(0.2~)에서 단서가 모두 '안 보임'이면 얼굴을 못 읽은 것(리뷰 LOW-1: Claude 두 번 부르는 낭비·애매함 방지).
+  const cues = [...FACE_CUE_KEYS].filter((key) => scene[key] !== undefined);
   return scene.mineVisible === '안 보임' || ['뒷모습', '얼굴 안 보임'].includes(scene.mineFaceView)
-    || scene.mineMask === '씀' || scene.faceCovered === '대부분 가려짐';
+    || scene.mineMask === '씀' || scene.faceCovered === '대부분 가려짐'
+    || (cues.length > 0 && cues.every((key) => scene[key] === '안 보임'));
 }
 // 대표 사진 모두 얼굴을 읽을 수 없으면 표정 감정은 모름. photos: [{ kind, scene }]
 export function faceEmotionUnknown(photos) {
@@ -199,7 +209,7 @@ export function unknownReason(photos) {
 
 // Claude에 넘길 사진 한 장의 장면 낱말. 감정 낱말은 지운다. 얼굴을 읽을 수 없는 사진(faceUnreadable)은 표정 칸과 다른 칸의
 // 얼굴 동작 낱말을 뺀다(0.1까지는 멀리서·가려짐 종류에 걸던 규칙). kind는 0.1 기준 예시 호출 모양을 위해 받기만 한다.
-export function sceneForClaude(scene, kind, criteria) {
+export function sceneForClaude(scene, _kind, criteria) {
   let redactions = 0;
   const out = {};
   const unreadable = faceUnreadable(scene);
@@ -277,8 +287,8 @@ export function buildPhotoTextPrompt(item, photos, criteria, { anchors, anchorSc
 }
 
 // 사진 한 장의 장면 낱말 뽑기(로컬 Ollama만 — runOllama가 127.0.0.1 밖 주소를 막는다).
-export async function extractScene({ image, age, kind, kindReason, face, invoke = runOllama, timeoutMs, usageLogger }) {
-  const { json, usage } = await invoke({ model: OLLAMA_MODELS.vision, prompt: buildScenePrompt({ age, kind, kindReason, face }),
-    images: [image], schema: sceneSchema(), ...(timeoutMs ? { timeoutMs } : {}), ...(usageLogger ? { usageLogger } : {}) });
+export async function extractScene({ image, faceImage = null, age, kind, kindReason, face, invoke = runOllama, timeoutMs, usageLogger }) {
+  const { json, usage } = await invoke({ model: OLLAMA_MODELS.vision, prompt: buildScenePrompt({ age, kind, kindReason, face, faceCrop: Boolean(faceImage) }),
+    images: faceImage ? [image, faceImage] : [image], schema: sceneSchema(), ...(timeoutMs ? { timeoutMs } : {}), ...(usageLogger ? { usageLogger } : {}) });
   return { scene: validateScene(json), usage };
 }

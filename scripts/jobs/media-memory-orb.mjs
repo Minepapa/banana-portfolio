@@ -118,6 +118,8 @@ const kstDay = (timestamp) => new Date(timestamp + 9 * 3_600_000).toISOString().
 // 강도가 다르면 ambiguous). 대표 사진이 모두 장면 낱말상 얼굴이 안 보이면(0.2, faceUnreadable) 감정은 코드가 모름으로 두고, 오너 메모에 감정이 있으면 오너 값이
 // 이기므로(validateProposal) 두 경우 모두 한 번만 묻는다(중요도·장면·제목용 — 두 답 대조는 모델 감정이 노트에 갈 때만 뜻이 있다).
 // photos: [{ kind, kindReason, face, scene, corrected }] — 경로·이미지는 프롬프트에 들어가지 않는다(buildPhotoTextPrompt).
+// 주의(리뷰 2026-11-02 MEDIUM-3): 0.2부터 모름 강제 기준이 결정 `미네-감정-분류` v4 초안 §4·§5(멀리서·가려짐 모름)와 다르다.
+// 이 잡을 launchd에 다시 올리기 전에 결정 문서 개정(오너 승인, 제우스 경유)이 먼저다.
 export async function judgeSceneMoment(item, photos, { criteria, anchors, anchorScenes, decide, quota = () => false, deadline, now } = {}) {
   const recordDate = item.date ?? occurredDate(item.fields.occurred);
   const owner = ownerEmotions(item.fields, item.memo ?? '');

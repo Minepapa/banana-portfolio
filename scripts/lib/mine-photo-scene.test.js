@@ -70,6 +70,9 @@ test('모름 강제(0.2): 사진 종류가 아니라 장면 낱말이 미네 얼
   }
   assert.equal(faceUnreadable(scene({ faceCovered: '일부 가려짐', mineFaceView: '옆얼굴' })), false);
   assert.equal(faceUnreadable(undefined), false, '장면 낱말이 없으면 Claude에 맡긴다');
+  const allHidden = { mouthCorners: '안 보임', mouthShape: '안 보임', eyeShape: '안 보임', browShape: '안 보임', tears: '안 보임', gaze: '안 보임' };
+  assert.equal(faceUnreadable(scene({ mineFaceView: '옆얼굴', ...allHidden })), true, '단서가 모두 안 보임이면 못 읽음(리뷰 LOW-1)');
+  assert.equal(faceUnreadable(scene({ ...allHidden, gaze: '다른 곳을 봄' })), false);
   // 멀리서·가려짐 종류여도 얼굴 단서가 보이면 Claude가 판단한다(오너 검수: 멀리서 27/30 읽힘).
   assert.equal(faceEmotionUnknown([{ kind: PHOTO_KINDS.far, scene: scene() }]), false);
   assert.equal(faceEmotionUnknown([{ kind: PHOTO_KINDS.hidden, scene: scene() }]), false);

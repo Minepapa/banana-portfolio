@@ -124,3 +124,17 @@ test('judgmentPreamble 사진 0.3: 사진 종류별 안내는 사진 프롬프�
   assert.match(photo, /# 감정 기준[\s\S]*# 사진 종류[\s\S]*# 기준 예시/, '고정 앞부분 안(기록 앞)에 둔다');
   assert.doesNotMatch(text, /# 사진 종류|photoKind/);
 });
+
+test('사진 글 판 안내의 단서 값은 장면 낱말 고르는 칸 값과 맞는다(리뷰 LOW-4 정합성)', async () => {
+  const { SCENE_CHOICES } = await import('./mine-photo-scene.mjs');
+  const text = judgmentPreamble({ criteria, recordDate: '2026-10-15', anchors: [], medium: 'photo-text' });
+  const block = text.slice(text.indexOf('# 얼굴 단서 읽기'), text.indexOf('# 기준 예시'));
+  assert.ok(block.length > 100, '단서 읽기 블록이 있다');
+  const cueValues = new Set(Object.entries(SCENE_CHOICES).filter(([key]) => !['mineVisible', 'mineFaceView', 'mineMask', 'faceCovered'].includes(key))
+    .flatMap(([, values]) => values));
+  const quoted = [...block.matchAll(/(?:mouthCorners|mouthShape|eyeShape|browShape|tears|gaze|bodyPose|입꼬리|입|눈썹|눈|눈물) "([^"]+)"/g)].map((match) => match[1]);
+  assert.ok(quoted.length >= 10, `단서 값 인용 ${quoted.length}개`);
+  for (const value of quoted) assert.ok(cueValues.has(value), `안내의 단서 값 "${value}"가 장면 낱말 값에 없음`);
+  assert.match(block, /우선순위: ① 판단 순서 1번/);
+  assert.doesNotMatch(judgmentPreamble({ criteria, recordDate: '2026-10-15', anchors: [], medium: 'photo' }), /# 얼굴 단서 읽기/, '이미지 판(photo)에는 없다');
+});
