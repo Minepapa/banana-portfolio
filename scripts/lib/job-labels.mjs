@@ -52,7 +52,7 @@ export const JOB_LABELS = {
   'telegram-session': '텔레그램 상시 응답 세션(launchd 무인 잡 아님, 상시 프로세스)',
   'owntracks-receiver': 'OwnTracks 위치 수신 서버(상시 프로세스)',
   'olympus-server': '올림푸스 대시보드 서버(상시 프로세스)',
-  'calendar-days': `일정 파일 정본(오늘부터 7일 구글 캘린더 → 볼트 Calendar 파일) + 열린 할 일 스냅샷(구글 Tasks → ${VAULT_REL.todoOpen}), 15분마다`,
+  'calendar-days': `일정 파일 정본(오늘부터 31일 구글 캘린더 → 볼트 Calendar 파일) + 열린 할 일 스냅샷(구글 Tasks → ${VAULT_REL.todoOpen}), 15분마다`,
   'route-today': `오늘 동선 임시 파일(지금까지의 머문 곳·이동 → ${VAULT_REL.locationToday}, 15분마다)`,
   'zeus-headline': '종합 헤드라인: 판테온 정본에서 후보를 모아 경량 모델이 오늘 가장 중요한 일 한 줄을 고름 → 볼트 헤드라인 파일(매일 07:40, 발송 없음)',
   'argos-ingest': '아르고스 폰 수집 앱 수신(위치 수신 서버의 /ingest)',

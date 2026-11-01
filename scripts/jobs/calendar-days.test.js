@@ -72,7 +72,7 @@ test('선택된 캘린더가 0개면 빈 일정으로 덮어쓰지 않고 실패
 });
 
 test('인자: --days N·--days=N·--dry-run, 모르는 인자는 실패', () => {
-  assert.deepEqual(parseArgs([]), { days: 7, dryRun: false });
+  assert.deepEqual(parseArgs([]), { days: 31, dryRun: false });
   assert.deepEqual(parseArgs(['--days', '3', '--dry-run']), { days: 3, dryRun: true });
   assert.deepEqual(parseArgs(['--days=2']), { days: 2, dryRun: false });
   assert.throws(() => parseArgs(['--day=2']), /모르는 인자/);

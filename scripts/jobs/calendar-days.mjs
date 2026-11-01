@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * 일정 파일 정본 잡(2026-10-30, 헤르메스 — 오너 승인, 제우스 요청): 15분마다 오늘부터 7일 치 구글 캘린더
+ * 일정 파일 정본 잡(2026-10-30, 헤르메스 — 오너 승인, 제우스 요청): 15분마다 오늘부터 31일 치(2026-11-02 7→31, 올림푸스 월간 달력) 구글 캘린더
  * 일정을 `95_Etna/Calendar/{YYYY}/{날짜}.json`에 남긴다. 올림푸스 홈 '오늘'·헤르메스 방 '오늘 일정'이 읽는다.
  *
  * - 지난날은 건드리지 않는다. 어제 파일은 어제 마지막 조회 그대로 남는다.
  * - 내용이 같으면 쓰지 않는다(LiveSync 부담). 조회 시각은 파일에 넣지 않고 잡 상태로 본다.
  * - 조회가 하나라도 실패하면 아무 날도 쓰지 않고 종료 코드 1(두 번 연속이면 잡 실패 경보).
- *   조회 실패로 반쯤 갱신된 주가 남지 않게 모두 받은 뒤에 쓴다. 쓰기 도중 실패(디스크 등)는 앞날만 갱신된 채
+ *   조회 실패로 반쯤 갱신된 기간이 남지 않게 모두 받은 뒤에 쓴다. 쓰기 도중 실패(디스크 등)는 앞날만 갱신된 채
  *   끝날 수 있는데, 날마다 원자적 쓰기라 깨지지 않고 다음 15분 회차에 맞춰진다.
  * - 선택된 캘린더가 0개면 실패한다. 연결 계정이 바뀐 것을 '일정 없음'으로 덮어쓰지 않게 한다.
  * - 텔레그램 발송 없음.
@@ -26,7 +26,7 @@ import { buildCalendarDay, writeCalendarDay, kstDate, nextDates } from '../lib/c
 import { listTaskLists, listOpenTasks } from '../lib/google-tasks.mjs';
 import { buildTodoOpen, writeTodoOpen } from '../lib/todo-open.mjs';
 
-export const DEFAULT_DAYS = 7;
+export const DEFAULT_DAYS = 31;
 
 export async function makeCalendarFetcher({ configured = isConfigured,
   getToken = () => getAccessToken({ requiredScopes: CALENDAR_READ_SCOPES }),
