@@ -123,7 +123,8 @@ export function momentNoteData(item, copies, criteria = loadEmotionCriteria(), {
     album: item.album ?? item.fields.album ?? null, event: item.fields.anniversary ?? item.fields.occasion ?? null,
     scenes: list(item.fields.scenes), ownerMemo: item.memo ?? '', ownerEmotions: ownerEmotions(item.fields, item.memo, criteria),
     photoCopies: copies.map((copy, index) => engine === 'ollama'
-      ? { number: index + 1, reason: copy.reason, ...(copy.face ? { mineFace: copy.face } : {}) }
+      // photoKind: Ollama 0.3부터 코드가 정한 사진 종류(mine-photo-kind). 없으면(얼굴 분석 전·0.2 이전 호출) 넣지 않는다.
+      ? { number: index + 1, reason: copy.reason, ...(copy.face ? { mineFace: copy.face } : {}), ...(copy.kind ? { photoKind: copy.kind } : {}) }
       : { path: copy.path, reason: copy.reason }) }).replace(/</g, '\\u003c');
 }
 

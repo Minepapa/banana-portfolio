@@ -243,3 +243,33 @@ test('[막아야 함] run --engine=claude: 미네 사진은 어떤 판단에도 
   assert.equal(claudeCalls, 1, '한도에 걸리면 다음 행은 부르지 않는다');
   assert.deepEqual(rows.filter((entry) => entry.route === 'text').map((entry) => entry.reason), ['Claude 사용 한도', 'Claude 사용 한도']);
 });
+
+test('run 사진(0.3): 잡과 같은 사진 종류를 붙이고, 가려짐이면 모델이 기쁨이라 해도 코드가 모름 — 볼트는 그대로', async () => {
+  const f = fixture();
+  writeFileSync(join(f.anchorRoot, 'items-2026-10-19.json'), JSON.stringify([
+    { no: 33, group: '경계', kind: '사진', ref: 'photo:c5e3b1f76d03d430', date: '2022-11-04' },
+    { no: 34, group: '사진', kind: '사진', ref: 'photo:b553faed17c2e6b4', date: '2023-06-03' },
+  ]));
+  writeFileSync(join(f.anchorRoot, 'anchor-answers-2026-10-19.json'), JSON.stringify({ 33: { emo: '모름' }, 34: { emo: '기쁨', int: 2 } }));
+  mkdirSync(join(f.root, '95_Etna/Media'), { recursive: true });
+  mkdirSync(join(f.root, '20_Records/24_Media'), { recursive: true });
+  writeFileSync(join(f.root, '95_Etna/Media/imports-index.jsonl'), ['c5e3b1f76d03d430', 'b553faed17c2e6b4']
+    .map((id) => JSON.stringify({ id, importPath: `Imports/미네/${id}.jpg` })).join('\n') + '\n');
+  const before = f.vaultFiles();
+  const box = [700, 600, 1860, 1760];
+  const prompts = [];
+  const { rows } = await run(judgeOptions(f, { mediaRoot: join(f.base, 'media'), unload: async () => {},
+    copyPhoto: (_source, target) => { writeFileSync(target, 'x'); return { width: 3000, height: 4000 }; },
+    mineFaces: new Map([['b553faed17c2e6b4', { i: 0, score: 0.7, bbox: box }]]),
+    photoFaces: new Map([['c5e3b1f76d03d430', [{ i: 0, bbox: box }]], ['b553faed17c2e6b4', [{ i: 0, bbox: box }]]]),
+    invoke: async (request) => { prompts.push(request.prompt); return { json: { emotionState: '있음', nearestAnchor: '없음', emotionEvidence: '활짝 웃음',
+      secondFilmSignal: null, primary: '기쁨', levels: { 기쁨: '보통', 슬픔: '없음', 버럭: '없음', 까칠: '없음', 소심: '없음' },
+      confidence: '보통', importance: 2, scene: '케이블카 안', titleSuggestion: '케이블카', coreMemoryCandidate: { value: false, reason: '일상' } }, usage: {} }; } }));
+  const hidden = rows.find((row) => row.no === 33);
+  assert.deepEqual([hidden.photoKind, hidden.outcome, hidden.got], ['가려짐', '일치', '모름']);
+  assert.deepEqual(hidden.forcedUnknown, { modelState: '있음' });
+  const close = rows.find((row) => row.no === 34);
+  assert.deepEqual([close.photoKind, close.outcome, close.got], ['얼굴 가까이', '일치', '기쁨 2']);
+  assert.match(prompts[0], /"photoKind":"가려짐"/);
+  assert.deepEqual(f.vaultFiles(), before, '볼트에 아무것도 쓰지 않는다');
+});

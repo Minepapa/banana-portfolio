@@ -116,3 +116,11 @@ test('bandScore·기준 예시 단어: 강도마다 §6 구간 대표 점수, �
   assert.match(block, /mix-1: 슬픔 3=짙음 \+ 소심·까칠/);
   assert.match(block, /unk-a: 모름 —/);
 });
+
+test('judgmentPreamble 사진 0.3: 사진 종류별 안내는 사진 프롬프트에만', () => {
+  const text = judgmentPreamble({ criteria, recordDate: '2026-10-15', anchors });
+  const photo = judgmentPreamble({ criteria, recordDate: '2026-10-15', anchors, medium: 'photo' });
+  for (const kind of ['얼굴 가까이', '여럿이 함께', '멀리서', '가려짐']) assert.match(photo, new RegExp(`^- ${kind}: `, 'm'));
+  assert.match(photo, /# 감정 기준[\s\S]*# 사진 종류[\s\S]*# 기준 예시/, '고정 앞부분 안(기록 앞)에 둔다');
+  assert.doesNotMatch(text, /# 사진 종류|photoKind/);
+});

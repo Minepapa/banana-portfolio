@@ -16,11 +16,12 @@ import { loadEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
 import { OLLAMA_MODELS, runOllama, unloadOllamaModel } from '../lib/ollama-client.mjs';
 import { assertEngine, validScores } from '../lib/mine-judgment.mjs';
 import { faceBoxText, loadMineFaces } from '../lib/mine-record-input.mjs';
+import { PHOTO_KINDS, loadPhotoFaces, momentForcesUnknown, photoKind } from '../lib/mine-photo-kind.mjs';
 import { loadCandidates, hasOrb } from '../lib/mine-memory-candidates.mjs';
 import { IMPORTANCE_GUIDE, mineAge, occurredDate } from './mine-athena-fields.mjs';
 import { agentTitle } from '../lib/agent-registry.mjs';
 import { choosePhotos, makeCopy, makeGrid, buildPrompt, momentNoteData, ownerEmotions, parseClaudeResult, validateProposal } from '../tools/media-memory-orb-trial.mjs';
-import { SCORE_REQUIRED, deriveEmotionFields, judgmentPreamble, loadEmotionAnchors, scoreProperties } from '../lib/mine-judgment-prompt.mjs';
+import { EMOTION_STATES, SCORE_REQUIRED, deriveEmotionFields, judgmentPreamble, loadEmotionAnchors, scoreProperties } from '../lib/mine-judgment-prompt.mjs';
 
 export const NIGHTLY_LIMIT = 50;
 export const MAX_JOB_MS = 90 * 60_000;
@@ -31,7 +32,9 @@ export const RUN_ROOT = join(homedir(), 'Pantheon', 'Media', 'MemoryOrb');
 // 프롬프트 판(엔진별). 0.0 = 기억 판단 체계 §10.5 초안(v0.1) 전. Claude는 지금까지 쓰던 격자 한 장 프롬프트,
 // Ollama는 세운 사진 최대 3장 + 사진마다 미네 얼굴 위치(1단계 ④). 프롬프트나 입력을 바꾸면 올린다.
 // ollama-0.2(2026-10-29): 감정별 세기 단어·상태·기준 예시(scripts/lib/mine-judgment-prompt.mjs). Claude는 0.0 그대로.
-export const PROMPT_VERSIONS = Object.freeze({ claude: 'memory-orb/0.0', ollama: 'memory-orb/ollama-0.2' });
+// ollama-0.3(2026-11-01, 기억 판단 체계 §16.2): 사진마다 코드가 정한 사진 종류(photoKind)와 종류별 안내.
+//   대표 사진이 모두 '가려짐'(미네 얼굴 없음)이면 모델 답과 관계없이 코드가 감정 상태를 모름으로 둔다.
+export const PROMPT_VERSIONS = Object.freeze({ claude: 'memory-orb/0.0', ollama: 'memory-orb/ollama-0.3' });
 export const ORB_FIELDS = Object.freeze([
   'emotions', 'primaryEmotion', 'emotionIntensity', 'emotionEvidence', 'secondFilmSignal',
   'importance', 'coreMemoryCandidate', 'mineAge',
@@ -72,15 +75,22 @@ export function buildOllamaOrbPrompt(item, copies, criteria, { anchors = loadEmo
   ].join('\n\n');
 }
 
-// Ollama 0.2 답 → 점수에서 감정 필드를 만든 뒤 0.0과 같은 검증(validateProposal)을 거친다.
-export function validateOllamaOrb(raw, owner, ownerPrimary, recordDate, criteria) {
+// Ollama 답 → 점수에서 감정 필드를 만든 뒤 0.0과 같은 검증(validateProposal)을 거친다.
+// forceUnknown(0.3): 대표 사진이 모두 가려짐이면 상태를 코드가 모름으로 두고, 근거도 모델 글 대신 코드의 이유로 쓴다
+// (모델은 가려진 얼굴에도 기쁨을 답했다 — 2026-10-30 시험). 장면·제목·중요도는 모델 답을 그대로 쓴다(상황 근거).
+// 판단 기록의 scores·levels는 이때 모델 의견(감사용)일 뿐 감정 근거가 아니다 — forcedUnknown 표시로 가른다.
+export function validateOllamaOrb(raw, owner, ownerPrimary, recordDate, criteria, { forceUnknown = false } = {}) {
+  // 덮어쓰기 전에 모델 답의 상태 칸도 형식 검사한다(형식 실패율이 모름 강제 순간에서 낮게 세지지 않도록).
+  if (forceUnknown && !EMOTION_STATES.includes(raw?.emotionState)) throw Object.assign(new Error('emotionState 오류'), { formatFailure: true });
+  const answer = forceUnknown && raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? { ...raw, emotionState: '모름', emotionEvidence: `모름: 사진 종류 ${PHOTO_KINDS.hidden} — 미네 얼굴이 보이지 않음` } : raw;
   let derived;
-  try { derived = deriveEmotionFields(raw, { recordDate, criteria, ownerEmotions: owner }); }
+  try { derived = deriveEmotionFields(answer, { recordDate, criteria, ownerEmotions: owner }); }
   catch (error) { throw Object.assign(error, { formatFailure: true }); }
   const proposal = validateProposal({ ...derived.fields, confidence: raw.confidence, importance: raw.importance, scene: raw.scene,
     titleSuggestion: raw.titleSuggestion, coreMemoryCandidate: raw.coreMemoryCandidate }, owner, ownerPrimary, recordDate, criteria);
   return { ...proposal, scores: derived.scores, levels: derived.levels, emotionState: derived.emotionState, nearestAnchor: derived.nearestAnchor,
-    ...(derived.stateConflict ? { stateConflict: true } : {}) };
+    ...(derived.stateConflict ? { stateConflict: true } : {}), ...(forceUnknown ? { forcedUnknown: { modelState: raw.emotionState } } : {}) };
 }
 
 // Ollama 이미지 판단. 세운 사진 사본들을 base64로 붙이고(집 밖으로 나가지 않음), Claude 결과와 같은 모양으로 돌려준다.
@@ -183,7 +193,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   out = RUN_ROOT, dryRun = false, limit = NIGHTLY_LIMIT, candidates,
   judge, cooldown = cooldownActive, copyPhoto = makeCopy, gridPhoto = makeGrid,
   write = writeAtomic, rules, registryText, criteria, charter, photoScores, visionRows,
-  output = console, now = () => Date.now(), engine = 'claude', unload = unloadOllamaModel, invoke, readImage, mineFaces, anchors } = {}) {
+  output = console, now = () => Date.now(), engine = 'claude', unload = unloadOllamaModel, invoke, readImage, mineFaces, photoFaces, anchors } = {}) {
   assertEngine(engine);
   const runStarted = now();
   const quota = engine === 'claude' ? cooldown : () => false; // 쿨다운은 Claude 구독 사용량 가드다.
@@ -205,6 +215,9 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   // 미네 얼굴 상자는 Ollama 입력에만 쓴다(Claude 프롬프트는 그대로).
   const faces = engine === 'ollama'
     ? mineFaces ?? loadMineFaces({ ids: selected.flatMap((item) => item.photos.map((photo) => photo.id)) }) : new Map();
+  // 사진 종류(0.3)에 쓰는 사진별 얼굴 전부. 색인에 없는 사진 = 얼굴 분석 전 → 종류 없음.
+  const allFaces = engine === 'ollama'
+    ? photoFaces ?? loadPhotoFaces({ ids: selected.flatMap((item) => item.photos.map((photo) => photo.id)) }) : new Map();
   const decide = judge ?? (engine === 'ollama' ? ollamaPhotoDecision({ criteria: activeCriteria, output, ...(invoke ? { invoke } : {}), ...(readImage ? { readImage } : {}) })
     : (prompt, cwd, timeoutMs) => runHeadlessClaude(prompt, agent.model, `Read(/${cwd}/**)`, {
       appendSystemPrompt: agent.systemPrompt, lean: true, tools: 'Read', cwd, timeoutMs, maxTurns: 2,
@@ -290,7 +303,10 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
           if (now() - runStarted >= MAX_JOB_MS) throw new Error('잡 시간 상한');
           const path = join(copyDir, `${item.id}-${index + 1}.jpg`);
           const size = copyPhoto(resolve(mediaRoot, photo.path), path, undefined, undefined, Math.max(1, MAX_JOB_MS - (now() - runStarted)));
-          copies.push({ path, sourcePath: photo.path, reason: photo.reason, face: faceBoxText(faces.get(photo.id)?.bbox, size) });
+          const kind = engine === 'ollama' ? photoKind({ analyzed: allFaces.has(photo.id), faces: allFaces.get(photo.id) ?? [],
+            mineIndex: faces.get(photo.id)?.i, size }) : null;
+          copies.push({ path, sourcePath: photo.path, reason: photo.reason, face: faceBoxText(faces.get(photo.id)?.bbox, size),
+            ...(kind ? { kind: kind.kind, kindReason: kind.reason } : {}) });
         }
         const gridPath = join(copyDir, `${item.id}-grid.jpg`);
         if (now() - runStarted >= MAX_JOB_MS) throw new Error('잡 시간 상한');
@@ -311,7 +327,8 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         measured = engine === 'ollama' ? answer : parseClaudeResult(answer);
         const owner = ownerEmotions(item.fields, item.memo);
         const proposal = engine === 'ollama'
-          ? validateOllamaOrb(measured.result, owner, item.fields.primaryEmotion, item.date, activeCriteria)
+          ? validateOllamaOrb(measured.result, owner, item.fields.primaryEmotion, item.date, activeCriteria,
+            { forceUnknown: momentForcesUnknown(copies.map((copy) => copy.kind ? { kind: copy.kind } : null)) })
           : validateProposal(measured.result, owner, item.fields.primaryEmotion, item.date, activeCriteria);
         const raw = typeof measured.result === 'string' ? parseJsonBlock(measured.result) : measured.result;
         // Ollama는 세기 단어를 코드가 원장 점수로 바꾼 값, Claude는 답에 점수가 있으면 그 값.
@@ -335,7 +352,9 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
             coreMemoryReason: proposal.coreMemoryCandidate.reason,
             judgment: { ...version, ...(scores ? { scores } : {}),
               ...(proposal.emotionState ? { levels: proposal.levels, emotionState: proposal.emotionState, nearestAnchor: proposal.nearestAnchor } : {}),
-              ...(proposal.stateConflict ? { stateConflict: true } : {}), at: new Date(now()).toISOString() },
+              ...(proposal.stateConflict ? { stateConflict: true } : {}),
+              ...(engine === 'ollama' ? { photoKinds: copies.map((copy) => copy.kind ?? null) } : {}),
+              ...(proposal.forcedUnknown ? { forcedUnknown: proposal.forcedUnknown } : {}), at: new Date(now()).toISOString() },
           });
           try {
             write(absolute, next);

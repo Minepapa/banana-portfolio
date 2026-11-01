@@ -22,6 +22,7 @@
  *     (재분류 모양이라 옛 1~5 중요도는 묻지 않는다)
  *   - 사진 → media-memory-orb의 buildPrompt(engine 'ollama')·ollamaPhotoDecision·validateProposal.
  *     오너가 판정한 그 사진 한 장만 세운 사본으로 붙인다. 사진 설명(reason)은 잡과 같은 형식(미네 이름표·얼굴 점수).
+ *     사진 0.3부터 잡과 같은 사진 종류(mine-photo-kind)를 붙이고, 가려짐이면 코드가 모름으로 둔다(보고서 종류 칸에 표시).
  *   - 영상 → 판단 경로가 아직 없다(7단계 영상 구슬). '비교 불가'로 남긴다.
  * 서사적 무게(#39~48)는 지금 프롬프트가 묻지 않아 판단하지 않는다(2단계에서 넣는다).
  *
@@ -42,6 +43,7 @@ import { resolveDecision } from '../lib/decision-resolver.mjs';
 import { loadEmotionCriteria } from '../lib/mine-emotion-criteria.mjs';
 import { OLLAMA_MODELS, unloadOllamaModel } from '../lib/ollama-client.mjs';
 import { loadMineFaces, faceBoxText } from '../lib/mine-record-input.mjs';
+import { loadPhotoFaces, momentForcesUnknown, photoKind } from '../lib/mine-photo-kind.mjs';
 import { attachAudioCues } from '../lib/media-audio-cues.mjs';
 import { parseJsonBlock } from '../lib/headless-claude.mjs';
 import { cooldownActive } from '../lib/quota-cooldown.mjs';
@@ -137,7 +139,7 @@ export function renderReport(rows, { label, startedAt, models }) {
     '- 누출 표시: 기준 문장 겹침 = 감정 기준 본문의 따옴표 인용이 노트에 그대로 있음 · 메모 누출 가능 = 오너 메모에 감정이 적힘',
     '- 감정 기준 본문에는 기준 예시에서 나온 일반 규칙(노래 부르는 기쁨, 울음 그친 얼굴 등)도 있어, 표시가 없어도 수치가 다소 후하다.', '',
     '| # | 묶음 | 종류 | 정답 | 모델 | 결과 | 누출 | 근거·메모 | 초 |', '|---|---|---|---|---|---|---|---|---|',
-    ...rows.map((row) => `| ${row.no} | ${row.group} | ${row.kind || '-'} | ${answerText(row.answer)} | ${row.got ?? '-'} | ${row.outcome} | ${
+    ...rows.map((row) => `| ${row.no} | ${row.group} | ${row.kind || '-'}${row.photoKind ? `(${row.photoKind})` : ''} | ${answerText(row.answer)} | ${row.got ?? '-'} | ${row.outcome} | ${
       (row.leaks ?? []).join(', ')} | ${
       String(row.evidence ?? row.reason ?? row.note ?? '').replace(/\|/g, '/').slice(0, 120)} | ${row.seconds ?? ''} |`),
     ''].join('\n');
@@ -176,7 +178,7 @@ function failureOutcome(error) {
 
 export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PATHS.mediaRoot, anchorRoot = ANCHOR_ROOT,
   out = TRIAL_ANCHOR_ROOT, only, kind, dryRun = false, criteria = loadEmotionCriteria(),
-  anchorBody, invoke, unload = unloadOllamaModel, cues = attachAudioCues, copyPhoto = makeCopy, mineFaces,
+  anchorBody, invoke, unload = unloadOllamaModel, cues = attachAudioCues, copyPhoto = makeCopy, mineFaces, photoFaces,
   now = () => Date.now(), output = console, engine = 'ollama', charter, claude, cooldown = cooldownActive } = {}) {
   if (!['ollama', 'claude'].includes(engine)) throw new Error(`판단 엔진은 ollama·claude 중 하나: ${engine}`);
   const items = JSON.parse(readFileSync(join(anchorRoot, `items-${ANCHOR_SET}.json`), 'utf8'));
@@ -272,6 +274,8 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
     const media = [...jsonLines(join(root, VAULT_REL.mediaArchiveIndex)), ...jsonLines(join(root, VAULT_REL.mediaImportsIndex))];
     const mediaById = new Map(media.map((entry) => [entry.id, entry]));
     const faces = mineFaces ?? loadMineFaces({ ids: photoRows.map((row) => row.photoId) });
+    // 사진 종류(사진 0.3부터, 잡과 같은 규칙): 사진별 얼굴 전부.
+    const allFaces = photoFaces ?? loadPhotoFaces({ ids: photoRows.map((row) => row.photoId) });
     const moments = momentsForPhotos(root, photoRows.map((row) => row.photoId));
     const decide = ollamaPhotoDecision({ criteria, output, ...(invoke ? { invoke } : {}) });
     const copyDir = join(runDir, 'copies');
@@ -298,15 +302,17 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
         try {
           mkdirSync(copyDir, { recursive: true, mode: 0o700 });
           const size = copyPhoto(resolve(mediaRoot, sourcePath), copyPath);
-          const copies = [{ path: copyPath, reason, face: faceBoxText(face?.bbox, size) }];
+          const kind = photoKind({ analyzed: allFaces.has(row.photoId), faces: allFaces.get(row.photoId) ?? [], mineIndex: face?.i, size });
+          const copies = [{ path: copyPath, reason, face: faceBoxText(face?.bbox, size), ...(kind ? { kind: kind.kind, kindReason: kind.reason } : {}) }];
           const prompt = buildOllamaOrbPrompt(item, copies, criteria, { anchors, exclude: exclude(row) });
           savePrompt(row.no, prompt);
           const answer = await decide(prompt, copyDir, OLLAMA_CALL_MS, { imagePaths: [copyPath], recordDate: date });
           let proposal;
-          try { proposal = validateOllamaOrb(answer.result, [], null, date, criteria); }
+          try { proposal = validateOllamaOrb(answer.result, [], null, date, criteria, { forceUnknown: momentForcesUnknown([kind]) }); }
           catch (error) { error.validation = true; throw error; }
           record({ ...row, ...compareAnswer(row.answer, proposal), evidence: proposal.emotionEvidence, scores: proposal.scores,
-            nearestAnchor: proposal.nearestAnchor, scene: proposal.scene, leaks, seconds: Math.round((now() - started) / 1000) });
+            nearestAnchor: proposal.nearestAnchor, scene: proposal.scene, photoKind: kind?.kind ?? null, photoKindReason: kind?.reason ?? null,
+            ...(proposal.forcedUnknown ? { forcedUnknown: proposal.forcedUnknown } : {}), leaks, seconds: Math.round((now() - started) / 1000) });
         } catch (error) {
           if (error.unavailable) { stopRest(photoRows.slice(index), error); break; }
           record({ ...row, outcome: failureOutcome(error), reason: error.message, leaks, seconds: Math.round((now() - started) / 1000) });
