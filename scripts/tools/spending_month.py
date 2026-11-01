@@ -43,11 +43,34 @@ SKIPPED_CLASSIFICATIONS = {"zero-value informational income"}
 CARD_BRANDS = ("삼성", "신한", "하나", "국민", "현대", "롯데", "우리", "카카오", "네이버", "페이코")
 
 
+def workbook_created_kst(path):
+    """KST date the export workbook was created (docProps created), or None when unreadable.
+
+    openpyxl drops the timezone suffix and returns a naive value, which is read as UTC here. Banksalad
+    writes "...Z" (UTC). A "+09:00" value would land 9 hours late; Node (exportCreatedKst) reads the raw
+    XML correctly and decides ready/waiting first, so that edge only ever errs towards waiting.
+    """
+    try:
+        from openpyxl import load_workbook
+        book = load_workbook(path, read_only=True)
+        created = book.properties.created
+        book.close()
+    except Exception:  # noqa: BLE001 — an unreadable workbook simply proves nothing about its export time
+        return None
+    if created is None:
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return created.astimezone(KST).date().isoformat()
+
+
 def find_export(banksalad_dir, start, end, closed_month=False):
     """Latest-ending export whose folder range covers [start, end].
 
     A closed month needs an export that ends after the month: an export taken
-    on the last day can still miss that evening.
+    on the last day can still miss that evening. A range that ends on the last
+    day also counts when the workbook itself was created after the month
+    (owner exports "1st..last day" the next day, 2026-11-01).
     """
     chosen = None
     for folder in sorted(path for path in banksalad_dir.iterdir() if path.is_dir()):
@@ -55,7 +78,8 @@ def find_export(banksalad_dir, start, end, closed_month=False):
         if not match or not (folder / "source.xlsx").exists():
             continue
         first, last = match.groups()
-        covers = last > end if closed_month else last >= end
+        covers = (last > end or (last == end and (workbook_created_kst(folder / "source.xlsx") or "") > end)
+                  if closed_month else last >= end)
         if first <= start and covers and (chosen is None or last > chosen[1]):
             chosen = (folder, last)
     if chosen is None:

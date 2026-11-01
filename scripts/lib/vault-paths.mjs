@@ -72,6 +72,7 @@ export const VAULT_REL = {
   locationGeocodeCache: '95_Etna/Location/geocode-cache.json',
   locationMaps: '95_Etna/Location/Maps', // 데일리 동선 지도 SVG(D90) — {YYYY}/YYYY-MM-DD.svg
   locationDays: '95_Etna/Location/Days', // 하루 동선 파일(머문 곳·이동 구조값, 2026-10-31) — {YYYY}/YYYY-MM-DD.json
+  locationToday: '95_Etna/Location/Today.json', // 오늘 동선 임시 파일(route-today 잡 15분, 2026-11-01) — 확정본은 locationDays
   mediaArchiveIndex: '95_Etna/Media/archive-index.jsonl',
   mediaImportsIndex: '95_Etna/Media/imports-index.jsonl',
   mediaVisionIndex: '95_Etna/Media/vision-index.jsonl',

@@ -59,8 +59,9 @@ export function validateSpendingSettings(settings) {
   `fixedCosts 항목은 name·merchant(정규화 ${MIN_MERCHANT_KEY}자 이상)·instrument·dayFrom·dayTo(1~31)·variable`);
   check(new Set(fixed.map((entry) => entry.name)).size === fixed.length, 'fixedCosts 이름 중복');
   const categories = settings.merchantCategories ?? [];
+  // 분류 지정은 짧은 가게 이름("강뼈")도 받는다. 3자 미만은 보강·월 점검 모두 이름이 똑같을 때만 맞춘다(2026-11-01 오너 지정).
   check(Array.isArray(categories) && categories.every((entry) => text(entry.merchant) && text(entry.category)
-    && merchantKey(entry.merchant).length >= MIN_MERCHANT_KEY
+    && merchantKey(entry.merchant).length > 0
     && (entry.subcategory === undefined || text(entry.subcategory))), 'merchantCategories 항목은 merchant·category(·subcategory)');
   const duplicates = settings.duplicateRoutes ?? [];
   // 월 점검(파이썬)은 이름 앞뒤 공백을 떼고 비교하므로 검사도 뗀 값으로 한다.

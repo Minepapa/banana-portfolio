@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
-  planMonthCheck, findClosedMonthExport, runMonthReport, renderMonthCheck, gapQuestions, previousMonth,
+  planMonthCheck, findClosedMonthExport, exportCreatedKst, runMonthReport, renderMonthCheck, gapQuestions, previousMonth,
   monthReportPath, missingInstruments,
 } from './spending-month-check.mjs';
 
@@ -15,6 +16,40 @@ const addExport = (name) => {
   mkdirSync(join(banksalad, name), { recursive: true });
   writeFileSync(join(banksalad, name, 'source.xlsx'), '');
 };
+
+test('말일에 끝나는 내보내기도 파일을 다음 달에 만들었으면 닫힌 달로 쓴다', () => {
+  const own = mkdtempSync(join(tmpdir(), 'spending-month-created-'));
+  after(() => rmSync(own, { recursive: true, force: true }));
+  const dir = join(own, '95_Etna', 'Spending', 'Banksalad', '2026-10-01_2026-10-31');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'source.xlsx'), '');
+  assert.equal(findClosedMonthExport('2026-10', own, { createdKst: () => '2026-10-31' }), null, '말일에 만든 파일');
+  assert.equal(findClosedMonthExport('2026-10', own, { createdKst: () => null }), null, '만든 시각을 못 읽음');
+  assert.equal(findClosedMonthExport('2026-10', own, { createdKst: () => '2026-11-01' }), '2026-10-01_2026-10-31');
+  // 더 늦게 끝나는 내보내기가 있으면 시작일이 이르더라도 그쪽을 쓴다(spending_month.py find_export와 같다).
+  const later = join(own, '95_Etna', 'Spending', 'Banksalad', '2025-11-02_2026-11-02');
+  mkdirSync(later, { recursive: true });
+  writeFileSync(join(later, 'source.xlsx'), '');
+  assert.equal(findClosedMonthExport('2026-10', own, { createdKst: () => '2026-11-01' }), '2025-11-02_2026-11-02');
+  // 끝나는 날이 같으면 일찍 시작하는 것(spending_month.find_export와 같다).
+  const sameEnd = join(own, '95_Etna', 'Spending', 'Banksalad', '2025-12-01_2026-11-02');
+  mkdirSync(sameEnd, { recursive: true });
+  writeFileSync(join(sameEnd, 'source.xlsx'), '');
+  assert.equal(findClosedMonthExport('2026-10', own, { createdKst: () => null }), '2025-11-02_2026-11-02');
+});
+
+test('내보내기 만든 시각은 xlsx docProps에서 KST 날짜로 읽는다', () => {
+  const own = mkdtempSync(join(tmpdir(), 'spending-month-core-'));
+  after(() => rmSync(own, { recursive: true, force: true }));
+  mkdirSync(join(own, 'docProps'));
+  writeFileSync(join(own, 'docProps', 'core.xml'), '<cp:coreProperties><dcterms:created xsi:type="dcterms:W3CDTF">2026-10-31T15:30:00Z</dcterms:created></cp:coreProperties>');
+  execFileSync('zip', ['-q', 'book.xlsx', 'docProps/core.xml'], { cwd: own });
+  assert.equal(exportCreatedKst(join(own, 'book.xlsx')), '2026-11-01', 'UTC 15:30은 KST 다음 날 00:30');
+  writeFileSync(join(own, 'empty.xlsx'), '');
+  const warnings = [];
+  assert.equal(exportCreatedKst(join(own, 'empty.xlsx'), { warn: (message) => warnings.push(message) }), null);
+  assert.equal(warnings.length, 1, '못 읽으면 이유를 남긴다');
+});
 
 test('지난달 계산은 해를 넘긴다', () => {
   assert.equal(previousMonth('2026-11-01'), '2026-10');

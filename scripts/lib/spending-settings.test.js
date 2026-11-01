@@ -30,7 +30,7 @@ test('설정 형식: 칸마다 필수값·중복·별칭 연쇄를 막는다', (
     { fixedCosts: [patch.fixedCosts[0], patch.fixedCosts[0]] },
     { merchantCategories: [{ merchant: '가게' }] },
     { fixedCosts: [{ ...patch.fixedCosts[0], merchant: 'K T' }] },
-    { merchantCategories: [{ merchant: '(주)AB', category: '식비' }] },
+    { merchantCategories: [{ merchant: '(주)', category: '식비' }] },
     { recipientDecisions: [{ bank: '하나', last4: '12', status: 'excluded' }] },
     { duplicateRoutes: [{ keep: 'A', drop: 'A' }] },
     { duplicateRoutes: [null] },

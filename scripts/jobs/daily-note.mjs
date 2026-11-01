@@ -360,6 +360,18 @@ export async function processDay({ mode, date, dryRun, noSend, rules, today, dep
   return { failed: !!s.failed || events === 'failed', candidatesFailed };
 }
 
+// 데일리 노트를 다시 쓸 수 없는 날(노트 없음·오너가 고친 노트 등)도 하루 동선 파일은 위치 원문에서 따로 채운다.
+// 동선 파일은 원문에서 언제든 다시 계산하는 파생값이라 노트 보존과 묶을 이유가 없다(2026-11-01, 10-31 노트 수정으로
+// 3판 파일이 안 생긴 사례). 지난날·없거나 옛 판일 때만, 일정을 못 받으면 이번엔 건너뛴다(다음 실행에서 다시).
+async function fillRouteDayOnly(date, { root, today, deps }) {
+  if (!deps.writeDay || date >= today || routeDayCurrent(date, root) || !existsSync(join(root, VAULT_REL.location))) return;
+  let events;
+  try { events = await deps.fetchEvents(date); } catch { return; }
+  const route = await deps.computeRoute(date, { root, points: readRoutePoints(date, root), payments: readRoutePayments(date, root),
+    events: Array.isArray(events) ? events : [] });
+  attachRouteDay(deps.writeDay, { date, route, root, today });
+}
+
 export async function recomputeDailyRoute({ date, root = VAULT_PATHS.root, rules, dryRun = false, force = false,
   today = kstDate(new Date()), deps: injected = {} }) {
   const deps = { computeRoute, write: writeAtomic, fetchEvents: async (day) => {
@@ -368,9 +380,15 @@ export async function recomputeDailyRoute({ date, root = VAULT_PATHS.root, rules
   }, ...injected };
   const path = notePathAt(root, date);
   const first = readOrNull(path);
-  if (first == null) return { updated: false, skipped: '노트 없음' };
+  if (first == null) {
+    if (!dryRun) await fillRouteDayOnly(date, { root, today, deps });
+    return { updated: false, skipped: '노트 없음' };
+  }
   const inspected = inspectExisting(first);
-  if (!inspected.ok) return { updated: false, skipped: inspected.reason };
+  if (!inspected.ok) {
+    if (!dryRun) await fillRouteDayOnly(date, { root, today, deps });
+    return { updated: false, skipped: inspected.reason };
+  }
   if (inspected.prev.fields.summaryStatus === 'pending') return { updated: false, skipped: '미리 만든 노트' };
   if (!existsSync(join(root, VAULT_REL.location))) return { updated: false, skipped: '위치 폴더 없음' };
   const points = readRoutePoints(date, root);

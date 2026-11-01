@@ -17,7 +17,8 @@ import { withLock, writeAtomic } from './state-writer.mjs';
 
 // 보강 규칙 판. 요약의 enrichmentVersion이 이보다 낮거나 없으면 수집 잡이 그날 요약을 다시 계산한다.
 // 2(2026-11-01): 고정비 판정에서 결제일 창을 뺐다(오너 지시). 판정 규칙을 바꾸면 이 번호를 올린다.
-export const ENRICHMENT_VERSION = 2;
+// 3(2026-11-01): 짧은 가게 이름(3자 미만)의 오너 분류 지정을 이름이 똑같을 때 쓴다.
+export const ENRICHMENT_VERSION = 3;
 
 // 가맹점 키가 이보다 짧으면 포함 비교에서 우연히 맞는다(spending-settings MIN_MERCHANT_KEY와 같은 값).
 const MIN_KEY = 3;
@@ -98,9 +99,11 @@ export function enrichEntry(entry, given) {
       // 카드번호가 없는 알림(하나 자동납부)만 카드사로 대신 맞춘다. 번호가 있는데 표에 없는 카드는 다른 카드다.
       && (instrument ? instrument === cost.instrument
         : !(entry.cardMask ?? entry.cardLast4) && Boolean(entry.card) && entry.card === cost.brand)) : null;
-  // 오너 지정은 알림 가맹점 이름에 앞뒤가 붙어도("NICE_주차장 나이스인프라") 포함으로 찾는다. 긴 키 먼저.
-  const ownerKey = key.length >= MIN_KEY ? Object.keys(enrichment.overrides).filter((other) => other.length >= MIN_KEY
-    && (key.includes(other) || other.includes(key))).sort((a, b) => b.length - a.length || a.localeCompare(b))[0] : null;
+  // 오너 지정은 이름이 똑같으면 길이와 상관없이 쓴다("강뼈"). 아니면 알림 가맹점 이름에 앞뒤가 붙어도
+  // ("NICE_주차장 나이스인프라") 포함으로 찾되, 우연 일치를 막으려고 양쪽 다 3자 이상일 때만. 긴 키 먼저.
+  const ownerKey = key && Object.hasOwn(enrichment.overrides, key) ? key
+    : key.length >= MIN_KEY ? Object.keys(enrichment.overrides).filter((other) => other.length >= MIN_KEY
+      && (key.includes(other) || other.includes(key))).sort((a, b) => b.length - a.length || a.localeCompare(b))[0] : null;
   const guess = ownerKey ? { ...enrichment.overrides[ownerKey], via: 'owner' } : categoryFor(entry.merchant, enrichment.index);
   return { instrument, fixedCost: fixed?.name ?? null,
     categoryGuess: guess ? { category: guess.category, subcategory: guess.subcategory ?? null, via: guess.via } : null };

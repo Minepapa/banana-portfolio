@@ -404,6 +404,13 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(find_export(fixture.spending / "Banksalad", "2040-02-01", "2040-02-29"), same_day)
         with self.assertRaises(ValueError):
             find_export(fixture.spending / "Banksalad", "2040-02-01", "2040-02-29", closed_month=True)
+        # Same range, but the workbook was created after the month (exported the next day): a closed month may use it.
+        from openpyxl import load_workbook
+        book = load_workbook(same_day / "source.xlsx")
+        book.properties.created = datetime(2040, 2, 29, 15, 30)  # UTC → 2040-03-01 00:30 KST
+        book.save(same_day / "source.xlsx")
+        self.assertEqual(find_export(fixture.spending / "Banksalad", "2040-02-01", "2040-02-29", closed_month=True),
+                         same_day)
 
     def test_output_cannot_land_on_inputs(self):
         spending, events = self.root / "Spending", self.root / "Events"

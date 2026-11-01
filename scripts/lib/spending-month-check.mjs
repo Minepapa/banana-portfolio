@@ -41,18 +41,33 @@ export function monthReportPath(month, root = VAULT_PATHS.root) {
   return join(root, ...VAULT_REL.spendingMonthly.split('/'), `${month}.json`);
 }
 
-// spending_month.find_export(closed_month=True)와 같은 기준: 그 달 1일 이전에 시작하고 말일 "뒤"에 끝나는
-// 내보내기(말일 당일에 받은 내보내기는 그날 저녁 거래가 빠질 수 있다).
-export function findClosedMonthExport(month, root = VAULT_PATHS.root) {
+// 내보내기 파일(xlsx) 안의 만든 시각(docProps/core.xml dcterms:created)을 KST 날짜로. 못 읽으면 null + 경고 한 줄
+// (unzip 없음·시간 초과·깨진 파일이 "내보내기 대기"로만 보이지 않게).
+export function exportCreatedKst(path, { spawn = spawnSync, warn = console.warn } = {}) {
+  const result = spawn('unzip', ['-p', path, 'docProps/core.xml'], { encoding: 'utf8', timeout: 10_000 });
+  if (result.error || result.status !== 0) warn(`월간 점검: 내보내기 만든 시각을 못 읽음(${result.error?.code ?? `unzip ${result.status}`})`);
+  const match = result.status === 0 ? /<dcterms:created[^>]*>([^<]+)<\/dcterms:created>/.exec(result.stdout ?? '') : null;
+  const ms = match ? Date.parse(match[1]) : NaN;
+  return Number.isFinite(ms) ? new Date(ms + 9 * 3_600_000).toISOString().slice(0, 10) : null;
+}
+
+// 닫힌 달은 달이 끝난 뒤에 끝나는 내보내기만 쓴다(말일 당일 내보내기는 그날 저녁이 빠질 수 있다).
+// 범위가 말일에 끝나도 파일을 만든 날이 다음 달이면 쓴다 — 오너는 "1일~말일"을 다음 날 내보낸다(2026-11-01).
+// 같은 판단을 spending_month.py find_export도 한다.
+export function findClosedMonthExport(month, root = VAULT_PATHS.root, { createdKst = exportCreatedKst } = {}) {
   const dir = join(spendingDir(root), 'Banksalad');
   if (!existsSync(dir)) return null;
   const start = `${month}-01`;
   const end = monthEnd(month);
   const covering = readdirSync(dir).filter((name) => {
     const match = EXPORT_FOLDER_RE.exec(name);
-    return match && match[1] <= start && match[2] > end && existsSync(join(dir, name, 'source.xlsx'));
+    const source = join(dir, name, 'source.xlsx');
+    return match && match[1] <= start && existsSync(source)
+      && (match[2] > end || (match[2] === end && (createdKst(source) ?? '') > end));
   });
-  return covering.sort().at(-1) ?? null;
+  // 가장 늦게 끝나는 것, 같으면 일찍 시작하는 것(spending_month.find_export와 같다). 폴더 이름순이면 시작일이 먼저
+  // 비교돼 끝이 이른 것을 고를 수 있다.
+  return covering.sort((a, b) => a.slice(11).localeCompare(b.slice(11)) || b.localeCompare(a)).at(-1) ?? null;
 }
 
 // 반환 status:

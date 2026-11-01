@@ -597,5 +597,21 @@ test('하루 동선 파일은 지난날·정상 동선에서만 쓰고, 지문�
     log.length = 0;
     await recomputeDailyRoute({ date: '2026-10-27', root: vault, today: '2026-10-29', deps });
     assert.deepEqual(log, []);
+    // 데일리 노트를 다시 쓸 수 없는 날도(노트 없음·오너가 고친 노트) 하루 동선 파일은 따로 채운다. 노트는 건드리지 않는다.
+    log.length = 0;
+    assert.equal((await recomputeDailyRoute({ date: '2026-10-26', root: vault, today: '2026-10-29', deps })).skipped, '노트 없음');
+    assert.deepEqual(log, [['compute', '2026-10-26', 1], ['day', '2026-10-26']]);
+    const notePath = join(vault, '10_Periodic', 'Daily', '2026', '2026-10-25.md');
+    writeFileSync(notePath, renderDailyNote({ date: '2026-10-25', records: [], summary: '- 요약', status: '확정', model: '없음',
+      summaryStatus: 'ok', recordHash: 'record', routeHash: 'old', today: '2026-10-25', telegramSentAt: null, route: [] })
+      .replace('- 요약', '- 오너가 고친 요약'));
+    log.length = 0;
+    const edited = await recomputeDailyRoute({ date: '2026-10-25', root: vault, today: '2026-10-29', deps });
+    assert.match(edited.skipped, /오너 수정/);
+    assert.deepEqual(log, [['compute', '2026-10-25', 1], ['day', '2026-10-25']]);
+    // 오늘(아직 끝나지 않은 날)은 쓰지 않는다.
+    log.length = 0;
+    await recomputeDailyRoute({ date: '2026-10-29', root: vault, today: '2026-10-29', deps });
+    assert.deepEqual(log, []);
   } finally { rmSync(vault, { recursive: true, force: true }); }
 });

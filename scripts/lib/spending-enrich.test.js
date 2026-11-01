@@ -56,6 +56,10 @@ test('카드 이름·고정비·분류 짐작을 붙인다', () => {
   assert.equal(enrichEntry(entry({ merchant: '강뼈' }), enrichment).categoryGuess, null, '두 글자는 우연 일치라 찾지 않는다');
   assert.deepEqual(enrichEntry(entry({ merchant: 'NICE_주차장 나이스' }), enrichment).categoryGuess,
     { category: '자동차', subcategory: '주차', via: 'owner' });
+  const short = { ...enrichment, overrides: { ...enrichment.overrides, 강뼈: { category: '식비', subcategory: '한식' } } };
+  assert.deepEqual(enrichEntry(entry({ merchant: '강 뼈' }), short).categoryGuess,
+    { category: '식비', subcategory: '한식', via: 'owner' }, '짧은 오너 지정은 이름이 똑같으면 쓴다');
+  assert.equal(enrichEntry(entry({ merchant: '강뼈집' }), short).categoryGuess, null, '짧은 오너 지정은 포함으로 넓히지 않는다');
   assert.deepEqual(enrichEntry(entry({ status: 'excluded', merchant: 'KT통신요금' }), enrichment),
     { instrument: null, fixedCost: null, categoryGuess: null }, '결제가 아닌 줄은 비운다');
 });

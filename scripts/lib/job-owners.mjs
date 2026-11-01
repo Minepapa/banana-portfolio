@@ -34,6 +34,7 @@ export const JOB_OWNERS = {
   // 헤르메스: 일정·위치·동선·소비
   'hermes-briefing': 'hermes',
   'calendar-days': 'hermes',
+  'route-today': 'hermes',
   'owntracks-receiver': 'hermes',
   'argos-ingest': 'hermes',
   'ingest-spending-inbox': 'hermes',
