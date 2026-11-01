@@ -9,7 +9,7 @@
  *
  * 카드는 사진 한 장이다(시트가 사진 한 장씩 묻는다). 그래서 순간 하나 = 그 카드 사진 한 장 + 시트를 만든 때의 순간 노트
  * 사본(photo-moments-*.json)으로 잡과 같은 판단 함수(judgeSceneMoment)를 부른다. 사진 종류·미네 얼굴 위치는 번호표 값을 쓴다.
- * 표정을 읽을 수 없는 카드(멀리서·가려짐, 마스크로 정정된 것 포함)는 감정이 코드로 모름이라 Claude를 부르지 않는다
+ * 표정을 읽을 수 없는 카드(0.2: 장면 낱말에 미네 얼굴이 안 보임·마스크·대부분 가려짐)는 감정이 코드로 모름이라 Claude를 부르지 않는다
  * (잡은 중요도를 받으려 한 번 묻지만 평가에는 감정만 쓴다).
  *
  * 단계(--stage, 기본 all = anchors → scene → judge). 모두 이어 하기가 된다 — 끝난 사진·카드는 다시 하지 않는다.
@@ -21,7 +21,7 @@
  * 볼트는 읽기만 한다(기준 예시 사진 경로·얼굴 색인). 텔레그램은 보내지 않는다.
  *
  * 사용:
- *   node scripts/tools/mine-photo-scene-eval.mjs <photo-cards-*.json> [--stage=anchors|scene|judge|all] [--max-calls=N] [--limit=N] [--ignore-window] [--dry-run]
+ *   node scripts/tools/mine-photo-scene-eval.mjs <photo-cards-*.json> [--stage=anchors|scene|judge|all] [--set=tune|holdout] [--max-calls=N] [--limit=N] [--ignore-window] [--dry-run]
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync, chmodSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -44,6 +44,21 @@ import { ANCHOR_ROOT } from './mine-anchor-trial.mjs';
 import { fileStamp } from './mine-photo-review-sheet.mjs';
 
 export const STAGES = Object.freeze(['anchors', 'scene', 'judge', 'all']);
+export const SETS = Object.freeze(['tune', 'holdout']);
+
+// 평가 세트 나누기(2026-11-01, 사진 0.2): 프롬프트를 다듬는 카드(tune)와 점수만 재는 카드(holdout)를 가른다 — 같은 카드로 고치고
+// 채점하면 실제보다 좋아 보인다. 사진 종류별로 번호 순서대로 번갈아(첫 장 tune) 나눠 종류 비율을 맞춘다. 번호표만으로 정해진다.
+export function evalSplit(cards) {
+  const byKind = new Map();
+  for (const card of [...cards].sort((a, b) => a.no - b.no)) {
+    const key = card.kind ?? '종류 없음';
+    if (!byKind.has(key)) byKind.set(key, []);
+    byKind.get(key).push(card.no);
+  }
+  const split = new Map();
+  for (const nos of byKind.values()) nos.forEach((no, index) => split.set(no, SETS[index % 2]));
+  return split;
+}
 // 같은 카드가 장면 낱말·Claude 형식 실패를 이만큼 하면 이 판에서는 다시 묻지 않는다(잡의 2회 실패 보류와 같은 뜻).
 export const MAX_FAILURES = 2;
 
@@ -109,7 +124,7 @@ async function sceneFor({ source, target, age, kind, kindReason, face, copyPhoto
   }
 }
 
-export async function run({ cardsPath, stage = 'all', maxCalls = DAILY_PHOTO_TEXT_CALLS, limit = Infinity, ignoreWindow = false, dryRun = false,
+export async function run({ cardsPath, stage = 'all', set = null, maxCalls = DAILY_PHOTO_TEXT_CALLS, limit = Infinity, ignoreWindow = false, dryRun = false,
   root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PATHS.mediaRoot, anchorRoot = ANCHOR_ROOT, ledgerPath = join(RUN_ROOT, PHOTO_TEXT_JUDGMENTS_FILE),
   now = () => Date.now(), cooldown = cooldownActive, invoke, judge, copyPhoto = makeCopy, readImage = (path) => readFileSync(path).toString('base64'),
   criteria = loadEmotionCriteria(), anchors = loadEmotionAnchors(), charter, unload = unloadOllamaModel, output = console } = {}) {
@@ -118,7 +133,12 @@ export async function run({ cardsPath, stage = 'all', maxCalls = DAILY_PHOTO_TEX
   if (!stamp) throw new Error(`번호표 이름이 photo-cards-<판>.json이 아님: ${basename(cardsPath)}`);
   const dir = dirname(resolve(cardsPath));
   // limit은 이번에 할 카드 수에만 건다 — 이어 하기 대조(progress)는 번호표 전체로(리뷰 2026-11-01).
-  const cards = JSON.parse(readFileSync(cardsPath, 'utf8'));
+  const allCards = JSON.parse(readFileSync(cardsPath, 'utf8'));
+  if (set !== null && !SETS.includes(set)) throw new Error(`--set은 ${SETS.join('|')} 중 하나`);
+  const split = evalSplit(allCards);
+  // --set은 할 카드만 고른다. 이어 하기 대조(progress)는 번호표 전체로 한다(다른 세트 줄도 같은 파일에 있다).
+  const cards = allCards;
+  const inSet = (card) => set === null || split.get(card.no) === set;
   const moments = JSON.parse(readFileSync(join(dir, `photo-moments-${stamp}.json`), 'utf8'));
   const scenesPath = scenesFileFor(dir, stamp);
   const answersPath = answersFileFor(dir, stamp);
@@ -172,7 +192,7 @@ export async function run({ cardsPath, stage = 'all', maxCalls = DAILY_PHOTO_TEX
     // 2) 카드마다 장면 낱말
     if (want('scene')) {
       const { finished, failures } = progress(jsonLines(scenesPath), cards, { done: (row) => Boolean(row.scene) && row.sceneVersion === SCENE_PROMPT_VERSION });
-      const todo = cards.filter((card) => !finished.has(card.no) && (failures.get(card.no) ?? 0) < MAX_FAILURES).slice(0, limit);
+      const todo = cards.filter((card) => inSet(card) && !finished.has(card.no) && (failures.get(card.no) ?? 0) < MAX_FAILURES).slice(0, limit);
       output.log(`[photo-scene-eval] 장면 낱말: 카드 ${cards.length}장 중 끝남 ${finished.size}, 할 것 ${todo.length}${dryRun ? ' (dry-run — 호출 없음)' : ''}`);
       if (!dryRun) for (const card of todo) {
         const moment = moments[card.momentId];
@@ -209,7 +229,7 @@ export async function run({ cardsPath, stage = 'all', maxCalls = DAILY_PHOTO_TEX
       sceneEngine: 'ollama', sceneModel: OLLAMA_MODELS.vision, scenePromptVersion: SCENE_PROMPT_VERSION };
     const decide = judge ?? ((prompt) => restrictedDecision(prompt, agent, { output }));
     const quota = () => cooldown() || blocked();
-    const todo = cards.filter((card) => !finished.has(card.no) && (failures.get(card.no) ?? 0) < MAX_FAILURES).slice(0, limit);
+    const todo = cards.filter((card) => inSet(card) && !finished.has(card.no) && (failures.get(card.no) ?? 0) < MAX_FAILURES).slice(0, limit);
     const noScene = todo.filter((card) => !sceneRows.has(card.no));
     output.log(`[photo-scene-eval] Claude 판단: 카드 ${cards.length}장 중 끝남 ${finished.size}, 할 것 ${todo.length}(장면 낱말 없음 ${noScene.length} 건너뜀), `
       + `기준 예시 사진 장면 낱말 ${Object.keys(anchorScenes).length}개, 오늘 남은 호출 ${photoTextRoom(readJudgments(ledgerPath), now())}번${dryRun ? ' (dry-run — 호출 없음)' : ''}`);
@@ -223,7 +243,7 @@ export async function run({ cardsPath, stage = 'all', maxCalls = DAILY_PHOTO_TEX
       Object.assign(photo, effectiveKind(photo.kind, photo.scene, photo.kindReason));
       const item = { id: moment.id, rel: moment.rel, date: moment.date, fields: moment.fields, memo: moment.memo ?? '', album: moment.album ?? null };
       // 표정을 읽을 수 없는 카드: 감정은 코드가 모름(Claude 부르지 않음).
-      if (faceEmotionUnknown([photo.kind])) {
+      if (faceEmotionUnknown([photo])) {
         if (!dryRun) appendRow(answersPath, answerLine(card, null, { forcedKind: photo }));
         summary.forced += 1;
         continue;
@@ -257,12 +277,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   const cardsPath = args.find((arg) => !arg.startsWith('--'));
   const value = (name) => args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
   const valid = args.every((arg) => !arg.startsWith('--') || ['--dry-run', '--ignore-window'].includes(arg)
-    || /^--stage=(anchors|scene|judge|all)$/.test(arg) || /^--(max-calls|limit)=\d+$/.test(arg));
+    || /^--stage=(anchors|scene|judge|all)$/.test(arg) || /^--set=(tune|holdout)$/.test(arg) || /^--(max-calls|limit)=\d+$/.test(arg));
   if (!cardsPath || !valid || args.filter((arg) => !arg.startsWith('--')).length !== 1) {
-    console.error('사용: node scripts/tools/mine-photo-scene-eval.mjs <photo-cards-*.json> [--stage=anchors|scene|judge|all] [--max-calls=N] [--limit=N] [--ignore-window] [--dry-run]');
+    console.error('사용: node scripts/tools/mine-photo-scene-eval.mjs <photo-cards-*.json> [--stage=anchors|scene|judge|all] [--set=tune|holdout] [--max-calls=N] [--limit=N] [--ignore-window] [--dry-run]');
     process.exitCode = 2;
   } else {
-    run({ cardsPath, stage: value('stage') ?? 'all', dryRun: args.includes('--dry-run'), ignoreWindow: args.includes('--ignore-window'),
+    run({ cardsPath, stage: value('stage') ?? 'all', set: value('set') ?? null, dryRun: args.includes('--dry-run'), ignoreWindow: args.includes('--ignore-window'),
       ...(value('max-calls') ? { maxCalls: Number(value('max-calls')) } : {}), ...(value('limit') ? { limit: Number(value('limit')) } : {}) })
       .catch((error) => { console.error(`[photo-scene-eval] 실패: ${error.message}`); process.exitCode = 1; });
   }

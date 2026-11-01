@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { fixtureCriteria } from './mine-emotion-criteria.fixture.js';
 import { PHOTO_KINDS } from './mine-photo-kind.mjs';
 import { BLOCKED_WINDOW, DAILY_PHOTO_TEXT_CALLS, REDACTED, SCENE_CHOICES, SCENE_TEXT_FIELDS, buildPhotoTextPrompt, buildScenePrompt, effectiveKind, extractScene,
-  faceEmotionUnknown, inBlockedWindow, photoTextAnchors, photoTextRoom, redactFeelingWords, sceneForClaude, sceneSchema, unknownReason, validateScene } from './mine-photo-scene.mjs';
+  faceEmotionUnknown, faceUnreadable, inBlockedWindow, photoTextAnchors, photoTextRoom, redactFeelingWords, sceneForClaude, sceneSchema, unknownReason, validateScene } from './mine-photo-scene.mjs';
 
 const scene = (overrides = {}) => ({ mineVisible: '보임', mineFaceView: '정면', mineMask: '안 씀', faceCovered: '안 가려짐',
+  mouthCorners: '올라감', mouthShape: '이가 보이게 벌림', eyeShape: '반달처럼 접힘', browShape: '편안함', tears: '없음', gaze: '카메라를 봄', bodyPose: '편안함',
   mineExpression: '입꼬리가 올라가고 이가 보임', mineAction: '두 팔을 들고 서 있음', place: '실외 놀이터', occasion: '미끄럼틀 놀이',
   people: '없음', other: '없음', ...overrides });
 const at = (hhmm) => Date.parse(`2026-11-01T${hhmm}:00+09:00`);
@@ -24,7 +25,10 @@ test('장면 낱말 프롬프트: 미네 얼굴 위치·종류·나이를 글로
   assert.match(prompt, /미네 얼굴: 왼쪽 위.*그 자리의 아이가 미네다/);
   assert.match(prompt, /사진 종류\(얼굴 인식으로 정한 값\): 멀리서 — 미네 얼굴이 작음/);
   assert.match(prompt, /마음을 나타내는 낱말은 쓰지 않는다/);
-  assert.doesNotMatch(prompt, /삐죽|입꼬리/, '얼굴 모양 예시 구절을 두지 않는다(0.1 첫 시험에서 그대로 베낌)');
+  // 0.2: 얼굴 단서는 고르는 칸(값 목록)으로 묻는다. 글 칸에 채운 예시 구절은 여전히 두지 않는다(0.1 첫 시험에서 그대로 베낌).
+  assert.match(prompt, /- mouthCorners: "올라감" \| "평평함" \| "내려감" \| "안 보임"/);
+  assert.match(prompt, /얼굴이 정말 보이지 않을 때만 "안 보임"/);
+  assert.doesNotMatch(prompt, /입꼬리가 올라가고|눈을 감고 입을/, '글 칸 채운 예시 없음'); 
   assert.match(buildScenePrompt({}), /위치를 모른다/);
 });
 
@@ -58,23 +62,34 @@ test('마스크 정정: 장면 낱말에 미네 마스크가 있으면 가려짐
   assert.equal(effectiveKind(PHOTO_KINDS.hidden, scene({ mineVisible: '보임', mineFaceView: '정면' })).kind, PHOTO_KINDS.hidden, '장면 낱말로 가려짐을 올리지 않는다');
 });
 
-test('모름 강제: 대표 사진이 모두 멀리서·가려짐일 때만, 종류 모르는 사진이 섞이면 Claude에 맡긴다', () => {
-  assert.equal(faceEmotionUnknown([PHOTO_KINDS.far, PHOTO_KINDS.hidden]), true);
-  assert.equal(faceEmotionUnknown([PHOTO_KINDS.far]), true);
-  assert.equal(faceEmotionUnknown([PHOTO_KINDS.far, PHOTO_KINDS.close]), false);
-  assert.equal(faceEmotionUnknown([PHOTO_KINDS.group]), false);
-  assert.equal(faceEmotionUnknown([null, PHOTO_KINDS.far]), false);
+test('모름 강제(0.2): 사진 종류가 아니라 장면 낱말이 미네 얼굴이 안 보인다고 할 때만, 대표 사진 모두 그럴 때', () => {
+  const hiddenFace = scene({ mineFaceView: '얼굴 안 보임' });
+  assert.equal(faceUnreadable(scene()), false);
+  for (const overrides of [{ mineVisible: '안 보임' }, { mineFaceView: '뒷모습' }, { mineFaceView: '얼굴 안 보임' }, { mineMask: '씀' }, { faceCovered: '대부분 가려짐' }]) {
+    assert.equal(faceUnreadable(scene(overrides)), true, JSON.stringify(overrides));
+  }
+  assert.equal(faceUnreadable(scene({ faceCovered: '일부 가려짐', mineFaceView: '옆얼굴' })), false);
+  assert.equal(faceUnreadable(undefined), false, '장면 낱말이 없으면 Claude에 맡긴다');
+  // 멀리서·가려짐 종류여도 얼굴 단서가 보이면 Claude가 판단한다(오너 검수: 멀리서 27/30 읽힘).
+  assert.equal(faceEmotionUnknown([{ kind: PHOTO_KINDS.far, scene: scene() }]), false);
+  assert.equal(faceEmotionUnknown([{ kind: PHOTO_KINDS.hidden, scene: scene() }]), false);
+  assert.equal(faceEmotionUnknown([{ kind: PHOTO_KINDS.close, scene: hiddenFace }]), true);
+  assert.equal(faceEmotionUnknown([{ kind: PHOTO_KINDS.far, scene: hiddenFace }, { kind: PHOTO_KINDS.far, scene: scene() }]), false);
   assert.equal(faceEmotionUnknown([]), false);
-  assert.match(unknownReason([{ corrected: true }, { corrected: false }]), /2장이 모두 멀리서·가려짐.*마스크 1장/);
+  assert.match(unknownReason([{ scene: scene({ mineMask: '씀' }) }, { scene: hiddenFace }]), /2장 모두 장면 낱말에 미네 얼굴이 보이지 않음\(마스크 1장\)/);
 });
 
-test('Claude에 넘기는 장면 낱말: 멀리서·가려짐은 표정 낱말을 빼고, 감정 낱말은 지운다', () => {
-  const far = sceneForClaude(scene({ mineAction: '신나게 뛰어감' }), PHOTO_KINDS.far, fixtureCriteria);
-  assert.equal(far.scene.mineExpression, undefined);
-  assert.equal(far.scene.mineAction, `${REDACTED} 뛰어감`);
-  assert.equal(far.redactions, 1);
-  const mixed = sceneForClaude(scene({ mineAction: '활짝 웃으며 달림', other: '눈물 자국' }), PHOTO_KINDS.far, fixtureCriteria).scene;
-  assert.equal(mixed.mineAction, `활짝 ${REDACTED} 달림`, '멀리서 사진은 다른 칸의 얼굴 동작도 지운다');
+test('Claude에 넘기는 장면 낱말: 얼굴이 안 보이는 사진은 표정 칸·단서 칸을 빼고, 감정 낱말은 지운다', () => {
+  const back = sceneForClaude(scene({ mineFaceView: '뒷모습', mineAction: '신나게 뛰어감' }), PHOTO_KINDS.far, fixtureCriteria);
+  assert.equal(back.scene.mineExpression, undefined);
+  for (const key of ['mouthCorners', 'mouthShape', 'eyeShape', 'browShape', 'tears', 'gaze']) assert.equal(back.scene[key], undefined, key);
+  assert.equal(back.scene.bodyPose, '편안함', '몸 모양은 얼굴이 안 보여도 넘긴다');
+  assert.equal(back.scene.mineAction, `${REDACTED} 뛰어감`);
+  assert.equal(back.redactions, 1);
+  const mixed = sceneForClaude(scene({ mineMask: '씀', mineAction: '활짝 웃으며 달림', other: '눈물 자국' }), PHOTO_KINDS.hidden, fixtureCriteria).scene;
+  assert.equal(mixed.mineAction, `활짝 ${REDACTED} 달림`, '얼굴이 안 보이는 사진은 다른 칸의 얼굴 동작도 지운다');
+  const far = sceneForClaude(scene({ mineAction: '웃으며 달림' }), PHOTO_KINDS.far, fixtureCriteria).scene;
+  assert.deepEqual([far.mineExpression, far.mouthCorners, far.mineAction], ['입꼬리가 올라가고 이가 보임', '올라감', '웃으며 달림'], '0.2: 멀리서여도 얼굴이 보이면 단서를 넘긴다');
   assert.equal(mixed.other, `${REDACTED} 자국`);
   assert.equal(sceneForClaude(scene({ mineAction: '웃으며 달림' }), PHOTO_KINDS.close, fixtureCriteria).scene.mineAction, '웃으며 달림');
   assert.equal(sceneForClaude(scene(), PHOTO_KINDS.close, fixtureCriteria).scene.mineExpression, '입꼬리가 올라가고 이가 보임');

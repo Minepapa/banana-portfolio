@@ -20,8 +20,9 @@
  * 코드 규칙(모델에 말로 시키지 않음 — 2026-10-30·11-01 시험에서 로컬 모델은 "멀거나 가려지면 모름"을 따르지 않았다):
  *   - 장면 낱말이 "미네가 마스크를 씀"이면 그 사진은 가려짐(§4 "장면 낱말에 가려짐이 드러나면 낱말 단계에서 표시").
  *     낮추기만 한다 — 장면 낱말로 가려짐을 다른 종류로 올리지 않는다.
- *   - 멀리서·가려짐 사진은 표정 감정 모름(§4·§5): Claude에 그 사진의 표정 낱말을 빼고 넘기고, 대표 사진이 모두
- *     멀리서·가려짐이면 감정 상태는 코드가 모름으로 정한다(Claude 답의 감정은 쓰지 않음).
+ *   - (0.1) 멀리서·가려짐 사진은 표정 감정 모름(§4·§5) → (0.2, 2026-11-01 오너 검수 대조·오너 선택) 장면 낱말이 미네 얼굴이
+ *     안 보인다고 할 때만(faceUnreadable) 그 사진의 표정 단서를 빼고, 대표 사진 모두 그러면 감정 상태는 코드가 모름으로 정한다.
+ *     작은 얼굴·얼굴 인식이 놓친 사진은 단서를 받은 Claude가 판단한다. 결정 `미네-감정-분류` v4 초안 §4·§5 고침 필요(제우스 경유).
  */
 import { MEDIA_FACES_PATHS } from './vault-paths.mjs';
 import { PHOTO_KINDS } from './mine-photo-kind.mjs';
@@ -34,8 +35,13 @@ import { join } from 'node:path';
 // 판 이름. 프롬프트·입력을 바꾸면 올린다(판단 기록에 남는다).
 // scene 0.1(2026-11-01): 사진 한 장, 미네 얼굴 위치·사진 종류·나이를 글로 주고 보이는 것만 칸별로.
 // text 0.1(2026-11-01): athena-fields 1.0(통화·녹음)과 같은 앞부분에 사진 글 안내(judgmentPreamble medium 'photo-text').
-export const SCENE_PROMPT_VERSION = 'photo-scene/ollama-0.1';
-export const PHOTO_TEXT_PROMPT_VERSION = 'photo-text/claude-0.1';
+// scene 0.2(2026-11-01 오너 검수 80장 대조): 0.1의 글 칸 "입·눈·눈썹 모양"만으로는 Claude가 미소·놀람·무표정을 못 갈랐다(같은 15장에서
+//   사진 직접 12/15 vs 글 8/15). 얼굴 단서를 고르는 칸(입꼬리·입·눈·눈썹·눈물·시선·몸)으로 나눠 묻는다 — 감정 낱말은 여전히 없다.
+// text 0.2(같은 날): 단서 칸을 감정으로 읽는 안내 + 멀리서·가려짐도 단서가 보이면 판단(오너가 사본 얼굴 20~30px에서도 80% 읽음).
+export const SCENE_PROMPT_VERSION = 'photo-scene/ollama-0.2';
+// text 0.3(11-02, tune 40장 0.2 결과 23/40): 입꼬리 내려감 하나로 소심·슬픔을 고름(로컬 모델이 감정 없는 얼굴에도 '내려감'을 자주 씀),
+//   기쁨 강도가 1·2로 흔들려 애매함 — 불편 감정은 얼굴 단서 두 개, 기쁨은 옅음이 기본.
+export const PHOTO_TEXT_PROMPT_VERSION = 'photo-text/claude-0.3';
 export const promptSlug = (version) => version.replace(/[^A-Za-z0-9.]+/g, '-');
 
 // 하루 Claude 호출 상한(이 경로만, 판단 기록 photo-text-judgments.jsonl로 셈 — 잡·평가 도구 둘 다 같은 기록에 쓴다).
@@ -67,6 +73,22 @@ export const SCENE_CHOICES = Object.freeze({
   mineFaceView: Object.freeze(['정면', '옆얼굴', '뒷모습', '얼굴 안 보임']),
   mineMask: Object.freeze(['안 씀', '씀', '모름']),
   faceCovered: Object.freeze(['안 가려짐', '일부 가려짐', '대부분 가려짐']),
+  // 0.2 얼굴 단서. 얼굴이 작아도 보이는 만큼 고르고, 정말 안 보일 때만 '안 보임'.
+  mouthCorners: Object.freeze(['올라감', '평평함', '내려감', '안 보임']),
+  mouthShape: Object.freeze(['다묾', '살짝 벌림', '크게 벌림', '이가 보이게 벌림', '삐죽 내밂', '안 보임']),
+  eyeShape: Object.freeze(['반달처럼 접힘', '보통', '크게 뜸', '감음', '찡그림', '안 보임']),
+  browShape: Object.freeze(['편안함', '올라감', '가운데로 모임', '안 보임']),
+  tears: Object.freeze(['없음', '있음', '안 보임']),
+  gaze: Object.freeze(['카메라를 봄', '다른 곳을 봄', '안 보임']),
+  bodyPose: Object.freeze(['편안함', '활발히 움직임', '움츠림·숨음', '안기거나 기댐', '모름']),
+});
+// 칸 설명(프롬프트에만). 고르는 칸은 값 목록이 곧 답이라 설명만 붙인다.
+const CHOICE_GUIDES = Object.freeze({
+  mineVisible: '미네가 사진에 보이는가', mineFaceView: '미네 얼굴이 어느 쪽으로 보이는가',
+  mineMask: '미네가 마스크를 썼는가', faceCovered: '손·물건·머리카락·마스크로 미네 얼굴이 가려진 정도',
+  mouthCorners: '미네 입꼬리(입 양 끝)가 어느 쪽인가', mouthShape: '미네 입 모양',
+  eyeShape: '미네 눈 모양(웃을 때 눈이 반달처럼 접히는지)', browShape: '미네 눈썹 모양',
+  tears: '미네 눈가·볼에 눈물이 보이는가', gaze: '미네 눈이 어디를 보는가', bodyPose: '미네 몸 전체의 모양',
 });
 // 글 칸과 칸 설명. 설명은 프롬프트에만 나오고, 답에 설명을 그대로 베끼면 형식 실패다(채운 예시를 베끼는 문제, 1단계 발견).
 export const SCENE_TEXT_FIELDS = Object.freeze({
@@ -78,6 +100,7 @@ export const SCENE_TEXT_FIELDS = Object.freeze({
   other: { max: 100, guide: '그 밖에 눈에 띄는 것(소품·글자·음식·날씨)' },
 });
 const SCENE_KEYS = Object.freeze([...Object.keys(SCENE_CHOICES), ...Object.keys(SCENE_TEXT_FIELDS)]);
+const FACE_CUE_KEYS = new Set(['mouthCorners', 'mouthShape', 'eyeShape', 'browShape', 'tears', 'gaze']);
 
 export function sceneSchema() {
   return { type: 'object', additionalProperties: false, required: [...SCENE_KEYS],
@@ -101,10 +124,10 @@ export function buildScenePrompt({ age = null, kind = null, kindReason = null, f
     ...(kind ? [`- 사진 종류(얼굴 인식으로 정한 값): ${kind}${kindReason ? ` — ${kindReason}` : ''}`] : []),
     '',
     '# 칸 (아래는 칸 설명이며 설명 글을 그대로 베끼지 않는다. 글 칸은 40자 안팎)',
-    ...Object.entries(SCENE_CHOICES).map(([key, values]) => `- ${key}: ${values.map((value) => `"${value}"`).join(' | ')}${{
-      mineVisible: ' — 미네가 사진에 보이는가', mineFaceView: ' — 미네 얼굴이 어느 쪽으로 보이는가',
-      mineMask: ' — 미네가 마스크를 썼는가', faceCovered: ' — 손·물건·머리카락·마스크로 미네 얼굴이 가려진 정도' }[key]}`),
+    ...Object.entries(SCENE_CHOICES).map(([key, values]) => `- ${key}: ${values.map((value) => `"${value}"`).join(' | ')} — ${CHOICE_GUIDES[key]}`),
     ...Object.entries(SCENE_TEXT_FIELDS).map(([key, { guide }]) => `- ${key}: ${guide}`),
+    '- 얼굴 단서 칸(mouthCorners·mouthShape·eyeShape·browShape·tears·gaze)은 미네 얼굴이 작아도 보이는 만큼 고른다. 얼굴이 정말 보이지 않을 때만 "안 보임".',
+    '- 입꼬리는 입 양 끝만 본다: 끝이 위로 휘면 "올라감", 일자면 "평평함", 아래로 처지면 "내려감". 입을 벌렸는지와 따로 고른다.',
     '- 미네 얼굴이 보이지 않으면 mineExpression은 "보이지 않음", 해당 없는 칸은 "없음"이라고 쓴다.',
     '',
     '# 답: JSON 객체 하나',
@@ -157,25 +180,34 @@ export function effectiveKind(kind, scene, kindReason = null) {
   return { kind: kind ?? null, kindReason, corrected: false };
 }
 
-const NO_FACE_KINDS = new Set([PHOTO_KINDS.far, PHOTO_KINDS.hidden]);
-// 대표 사진이 모두 멀리서·가려짐이면 표정 감정은 모름(v4 §4·§5). 종류를 모르는 사진이 하나라도 있으면 Claude에 맡긴다.
-export function faceEmotionUnknown(kinds) {
-  return kinds.length > 0 && kinds.every((kind) => NO_FACE_KINDS.has(kind));
+// 0.1까지는 사진 종류(멀리서·가려짐)로 표정 감정을 모름으로 정했다. 2026-11-01 오너 검수 80장에서 그 46장 중 36장을 오너가 읽었다
+// (멀리서 27/30, 가려짐 6/9 — 가려짐 9장은 얼굴 인식이 미네를 놓친 사진). 0.2부터는 장면 낱말이 "얼굴이 안 보임"이라고 할 때만
+// 코드가 모름으로 정하고, 작은 얼굴은 단서를 받은 Claude가 판단한다(단서가 모두 '안 보임'이면 Claude도 모름).
+export function faceUnreadable(scene) {
+  if (!scene) return false; // 장면 낱말이 없으면 판단을 Claude에 맡긴다(0.1 종류 규칙과 같은 '모르면 맡김')
+  return scene.mineVisible === '안 보임' || ['뒷모습', '얼굴 안 보임'].includes(scene.mineFaceView)
+    || scene.mineMask === '씀' || scene.faceCovered === '대부분 가려짐';
+}
+// 대표 사진 모두 얼굴을 읽을 수 없으면 표정 감정은 모름. photos: [{ kind, scene }]
+export function faceEmotionUnknown(photos) {
+  return photos.length > 0 && photos.every((photo) => faceUnreadable(photo.scene));
 }
 export function unknownReason(photos) {
-  const masked = photos.filter((photo) => photo.corrected).length;
-  return `대표 사진 ${photos.length}장이 모두 ${PHOTO_KINDS.far}·${PHOTO_KINDS.hidden} — 표정을 읽을 수 없음${masked ? `(마스크 ${masked}장)` : ''}`;
+  const masked = photos.filter((photo) => photo.scene?.mineMask === '씀').length;
+  return `대표 사진 ${photos.length}장 모두 장면 낱말에 미네 얼굴이 보이지 않음${masked ? `(마스크 ${masked}장)` : ''}`;
 }
 
-// Claude에 넘길 사진 한 장의 장면 낱말. 멀리서·가려짐은 표정 낱말을 뺀다. 감정 낱말은 지운다.
+// Claude에 넘길 사진 한 장의 장면 낱말. 감정 낱말은 지운다. 얼굴을 읽을 수 없는 사진(faceUnreadable)은 표정 칸과 다른 칸의
+// 얼굴 동작 낱말을 뺀다(0.1까지는 멀리서·가려짐 종류에 걸던 규칙). kind는 0.1 기준 예시 호출 모양을 위해 받기만 한다.
 export function sceneForClaude(scene, kind, criteria) {
   let redactions = 0;
   const out = {};
+  const unreadable = faceUnreadable(scene);
   for (const key of SCENE_KEYS) {
     if (scene?.[key] === undefined) continue;
-    if (key === 'mineExpression' && NO_FACE_KINDS.has(kind)) continue;
+    if (unreadable && (key === 'mineExpression' || FACE_CUE_KEYS.has(key))) continue;
     if (SCENE_TEXT_FIELDS[key]) {
-      const { text, count } = redactFeelingWords(scene[key], criteria, NO_FACE_KINDS.has(kind) ? EXPRESSION_STEMS : []);
+      const { text, count } = redactFeelingWords(scene[key], criteria, unreadable ? EXPRESSION_STEMS : []);
       redactions += count;
       out[key] = text;
     } else out[key] = scene[key];

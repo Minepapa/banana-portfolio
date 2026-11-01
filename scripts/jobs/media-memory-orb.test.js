@@ -434,6 +434,7 @@ test('종료코드 규칙: 남은 잡 예산으로 잘린 claude 호출의 시�
 
 // ---- 사진 글 판(scene-claude): 로컬 장면 낱말 → Claude 두 번 ----
 const sceneWords = (overrides = {}) => ({ mineVisible: '보임', mineFaceView: '정면', mineMask: '안 씀', faceCovered: '안 가려짐',
+  mouthCorners: '올라감', mouthShape: '이가 보이게 벌림', eyeShape: '반달처럼 접힘', browShape: '편안함', tears: '없음', gaze: '카메라를 봄', bodyPose: '편안함',
   mineExpression: '입꼬리가 올라가고 이가 보임', mineAction: '케이크 앞에 앉아 있음', place: '실내', occasion: '생일 케이크 앞', people: '어른 1명',
   other: '없음', ...overrides });
 const AFTERNOON = () => Date.parse('2026-11-01T14:00:00+09:00');
@@ -504,7 +505,7 @@ test('scene-claude: 장면 낱말에 미네 마스크면 가려짐 → 감정은
   assert.deepEqual([row.forcedUnknown, row.kindCorrected, row.calls], [true, [true], 1]);
   const orb = JSON.parse(readFileSync(join(fixture.out, 'orbs.jsonl'), 'utf8').trim());
   assert.equal(orb.judgment.emotionState, '모름');
-  assert.match(readFileSync(join(fixture.root, fixture.candidates[0].rel), 'utf8'), /^emotionEvidence: "모름: 대표 사진 1장이 모두 멀리서·가려짐 — 표정을 읽을 수 없음\(마스크 1장\)"$/m);
+  assert.match(readFileSync(join(fixture.root, fixture.candidates[0].rel), 'utf8'), /^emotionEvidence: "모름: 대표 사진 1장 모두 장면 낱말에 미네 얼굴이 보이지 않음\(마스크 1장\)"$/m);
 });
 
 test('scene-claude: 06:20~07:30에는 돌지 않는다(--ignore-window면 돈다), 하루 상한이 차면 묻지 않는다', async (t) => {
@@ -554,16 +555,21 @@ test('scene-claude: 오너 메모에 감정이 있으면 오너 값이 노트에
   assert.match(readFileSync(join(fixture.root, fixture.candidates[0].rel), 'utf8'), /^emotions: \["슬픔"\]$/m);
 });
 
-test('judgeSceneMoment: 사진 종류가 섞이면(가까이 + 멀리서) Claude 두 번, 멀리서 사진은 표정 낱말 없이', async () => {
+test('judgeSceneMoment: 얼굴이 보이는 사진이 하나라도 있으면 Claude 두 번, 얼굴 안 보이는 사진은 표정 낱말 없이, 멀리서도 얼굴이 보이면 단서를 넘긴다', async () => {
   const item = { id: 'm', date: '2020-01-01', memo: '', fields: { occurred: '2020-01-01', description: '순간' } };
   const prompts = [];
-  const result = await judgeSceneMoment(item, [{ kind: '얼굴 가까이', scene: sceneWords() }, { kind: '멀리서', scene: sceneWords() }],
+  const result = await judgeSceneMoment(item, [{ kind: '얼굴 가까이', scene: sceneWords() }, { kind: '멀리서', scene: sceneWords({ mineFaceView: '뒷모습' }) },
+    { kind: '멀리서', scene: sceneWords() }],
     { criteria: fixtureCriteria, anchors, anchorScenes: {}, decide: async (prompt) => { prompts.push(prompt); return JSON.stringify(ollamaAnswer()); } });
   assert.equal(result.forced, false);
   assert.equal(result.calls, 2);
   const data = JSON.parse(prompts[0].match(/<note-data>\n([\s\S]*?)\n<\/note-data>/)[1]);
   assert.equal(data.photos[0].scene.mineExpression, '입꼬리가 올라가고 이가 보임');
   assert.equal(data.photos[1].scene.mineExpression, undefined);
+  assert.equal(data.photos[2].scene.mineExpression, '입꼬리가 올라가고 이가 보임');
+  const allHidden = await judgeSceneMoment(item, [{ kind: '멀리서', scene: sceneWords({ mineVisible: '안 보임' }) }],
+    { criteria: fixtureCriteria, anchors, anchorScenes: {}, decide: async () => JSON.stringify(ollamaAnswer()) });
+  assert.equal(allHidden.forced, true);
   const bad = await judgeSceneMoment(item, [{ kind: '얼굴 가까이', scene: sceneWords() }],
     { criteria: fixtureCriteria, anchors, decide: async () => 'JSON 아님' });
   assert.equal(bad.formatFailure, true);

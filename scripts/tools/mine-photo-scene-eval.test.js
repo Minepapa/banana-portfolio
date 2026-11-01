@@ -6,10 +6,11 @@ import { join } from 'node:path';
 import { fixtureCriteria } from '../lib/mine-emotion-criteria.fixture.js';
 import { DAILY_PHOTO_TEXT_CALLS } from '../lib/mine-photo-scene.mjs';
 import { readModelRows, modelReady } from './mine-photo-review-sheet.mjs';
-import { anchorPhotoIds, answerLine, answersFileFor, progress, run, scenesFileFor } from './mine-photo-scene-eval.mjs';
+import { anchorPhotoIds, answerLine, answersFileFor, evalSplit, progress, run, scenesFileFor } from './mine-photo-scene-eval.mjs';
 
 const STAMP = '2026-11-01-13-08';
 const scene = (overrides = {}) => ({ mineVisible: '보임', mineFaceView: '정면', mineMask: '안 씀', faceCovered: '안 가려짐',
+  mouthCorners: '올라감', mouthShape: '이가 보이게 벌림', eyeShape: '반달처럼 접힘', browShape: '편안함', tears: '없음', gaze: '카메라를 봄', bodyPose: '편안함',
   mineExpression: '입꼬리가 올라가고 이가 보임', mineAction: '서 있음', place: '실외', occasion: '놀이터', people: '없음', other: '없음', ...overrides });
 const answer = (level = '보통') => ({ emotionState: '있음', nearestAnchor: 'joy-1', primary: '기쁨',
   levels: { 기쁨: level, 슬픔: '없음', 버럭: '없음', 까칠: '없음', 소심: '없음' }, emotionEvidence: '이가 보이게 웃음', secondFilmSignal: null,
@@ -46,7 +47,8 @@ const lines = (path) => readFileSync(path, 'utf8').trim().split('\n').map(JSON.p
 
 test('장면 낱말 → Claude 판단: 검수 시트 --compare가 읽는 모델 답 줄, 표정 못 읽는 카드는 Claude 없이 모름', async (t) => {
   const fixture = setup(t);
-  const first = options(fixture);
+  // 0.2: 멀리서 카드(2번)라도 얼굴 단서가 보이면 판단한다. 표정 못 읽는 카드는 장면 낱말이 얼굴 안 보임인 카드.
+  const first = options(fixture, { sceneOf: (n) => (n === 2 ? scene({ mineFaceView: '얼굴 안 보임' }) : scene()) });
   await run(first.options);
   assert.equal(first.calls.ollama.length, 3);
   assert.equal(lines(scenesFileFor(fixture.dir, STAMP)).length, 3);
@@ -125,4 +127,17 @@ test('progress·answerLine·anchorPhotoIds', () => {
   assert.throws(() => progress([{ no: 1, photoId: 'z' }], cards, { done: () => true }), /번호표와 다름/);
   assert.deepEqual(answerLine({ no: 1, photoId: 'a', title: 't' }, null, { forcedKind: { kind: '멀리서' } }).state, '모름');
   assert.deepEqual(anchorPhotoIds(anchors), [{ anchorId: 'photo-joy-2a', photoId: 'b553faed17c2e6b4', date: '2023-06-03' }]);
+});
+
+test('평가 세트 나누기: 사진 종류별로 번호 순서대로 번갈아 tune·holdout, --set은 그 세트 카드만 묻는다', async (t) => {
+  const split = evalSplit([{ no: 4, kind: '멀리서' }, { no: 1, kind: '얼굴 가까이' }, { no: 2, kind: '멀리서' }, { no: 3, kind: '얼굴 가까이' }, { no: 5 }]);
+  assert.deepEqual([...split.entries()].sort((a, b) => a[0] - b[0]), [[1, 'tune'], [2, 'tune'], [3, 'holdout'], [4, 'holdout'], [5, 'tune']]);
+  const fixture = setup(t, ['얼굴 가까이', '얼굴 가까이', '얼굴 가까이']);
+  await run(options(fixture, { stage: 'scene' }).options);
+  const tune = options(fixture, { stage: 'judge', set: 'tune' });
+  const summary = await run(tune.options);
+  assert.equal(summary.judged, 2, '1·3번이 tune');
+  const holdout = options(fixture, { stage: 'judge', set: 'holdout' });
+  assert.equal((await run(holdout.options)).judged, 1);
+  await assert.rejects(run(options(fixture, { stage: 'judge', set: 'all' }).options), /--set은/);
 });

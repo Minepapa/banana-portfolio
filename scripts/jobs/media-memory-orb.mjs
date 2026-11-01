@@ -115,13 +115,13 @@ export function ollamaPhotoDecision({ criteria, invoke = runOllama, readImage = 
 const kstDay = (timestamp) => new Date(timestamp + 9 * 3_600_000).toISOString().slice(0, 10);
 
 // 사진 글 판: 장면 낱말이 붙은 대표 사진들로 순간 하나를 Claude에 묻는다(athena-fields 1.0과 같은 judgeItems — 두 번 묻고 상태·대표 감정·
-// 강도가 다르면 ambiguous). 대표 사진이 모두 멀리서·가려짐이면 감정은 코드가 모름으로 두고, 오너 메모에 감정이 있으면 오너 값이
+// 강도가 다르면 ambiguous). 대표 사진이 모두 장면 낱말상 얼굴이 안 보이면(0.2, faceUnreadable) 감정은 코드가 모름으로 두고, 오너 메모에 감정이 있으면 오너 값이
 // 이기므로(validateProposal) 두 경우 모두 한 번만 묻는다(중요도·장면·제목용 — 두 답 대조는 모델 감정이 노트에 갈 때만 뜻이 있다).
 // photos: [{ kind, kindReason, face, scene, corrected }] — 경로·이미지는 프롬프트에 들어가지 않는다(buildPhotoTextPrompt).
 export async function judgeSceneMoment(item, photos, { criteria, anchors, anchorScenes, decide, quota = () => false, deadline, now } = {}) {
   const recordDate = item.date ?? occurredDate(item.fields.occurred);
   const owner = ownerEmotions(item.fields, item.memo ?? '');
-  const forced = faceEmotionUnknown(photos.map((photo) => photo.kind ?? null));
+  const forced = faceEmotionUnknown(photos);
   const built = buildPhotoTextPrompt(item, photos, criteria, { anchors, anchorScenes, recordDate, age: mineAge(item.fields.occurred),
     ownerEmotions: owner, importanceGuide: IMPORTANCE_GUIDE });
   const validate = (raw) => {
