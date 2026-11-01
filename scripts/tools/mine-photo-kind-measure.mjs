@@ -95,17 +95,21 @@ export function renderReport({ startedAt, anchors, photos, moments }) {
     ''].join('\n');
 }
 
-export function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PATHS.mediaRoot, anchorRoot = ANCHOR_ROOT, out = PHOTO_KIND_ROOT,
-  candidates, sizes = uprightSizes, now = () => Date.now(), output = console } = {}) {
-  const startedAt = new Date(now()).toISOString();
-  const allCandidates = candidates ?? loadCandidates({ root, mediaRoot });
-  // 잡(media-memory-orb run)과 같은 대표 사진 고르기 재료: 미네 얼굴 점수·Vision 장면.
+// 후보 순간마다 잡(media-memory-orb run)과 같은 대표 사진 고르기 → [{ item, photos }]. 재료: 미네 얼굴 점수·Vision 장면.
+// 사진 검수 시트(mine-photo-review-sheet)도 같은 고르기를 써서 시트 사진이 잡이 실제로 볼 사진과 같다.
+export function chooseCandidatePhotos({ root = VAULT_PATHS.root, candidates, matchesPath = MEDIA_FACES_PATHS.matches }) {
   const scoreById = new Map();
-  for (const face of jsonLines(MEDIA_FACES_PATHS.matches)) {
+  for (const face of jsonLines(matchesPath)) {
     if (face.person === '미네' || face.label === 'mine' && !face.person) scoreById.set(face.id, Math.max(scoreById.get(face.id) ?? 0, Number(face.score) || 0));
   }
   const visionById = new Map(jsonLines(join(root, VAULT_REL.mediaVisionIndex)).map((row) => [row.id, row]));
-  const chosen = allCandidates.map((item) => ({ item, photos: choosePhotos(item, scoreById, visionById) }));
+  return candidates.map((item) => ({ item, photos: choosePhotos(item, scoreById, visionById) }));
+}
+
+export function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PATHS.mediaRoot, anchorRoot = ANCHOR_ROOT, out = PHOTO_KIND_ROOT,
+  candidates, sizes = uprightSizes, now = () => Date.now(), output = console } = {}) {
+  const startedAt = new Date(now()).toISOString();
+  const chosen = chooseCandidatePhotos({ root, candidates: candidates ?? loadCandidates({ root, mediaRoot }) });
   // 기준 예시 사진(오너가 감정 답을 단 사진만): 시트 항목 + 미디어 색인 경로.
   const items = JSON.parse(readFileSync(join(anchorRoot, `items-${ANCHOR_SET}.json`), 'utf8'));
   const answers = JSON.parse(readFileSync(join(anchorRoot, `anchor-answers-${ANCHOR_SET}.json`), 'utf8'));
