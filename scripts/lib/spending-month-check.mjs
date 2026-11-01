@@ -149,12 +149,21 @@ const won = (value) => `${Math.round(Number(value)).toLocaleString('ko-KR')}원`
 const comma = (value) => Math.round(Number(value)).toLocaleString('ko-KR');
 
 // 열 정의: [제목, 폭, 정렬]. 합이 PHONE_PRE_COLS를 넘으면 렌더 단계에서 막는다.
+// 글자 칸(left)은 늘 맨 오른쪽에 그린다(오너 2026-11-02 "건·금액이 일렬로 안 맞음"). 텔레그램 폰 고정폭 글꼴에서
+// 한글은 영문 정확히 두 칸이 아니어서, 한글 이름 뒤에 숫자를 두면 줄마다 숫자 시작점이 어긋난다. 숫자(영문·숫자만)를
+// 앞에 오른쪽 정렬로 두고 한글이 든 칸을 끝에 두면 글꼴과 상관없이 숫자 열이 맞는다. 그래서 숫자 칸 값에는 한글을
+// 쓰지 않는다(예: '안 나감'은 이름 칸에, 횟수는 '27,28'처럼 날짜로).
 function preTable(columns, rows) {
   const total = columns.reduce((sum, [, width]) => sum + width, 0) + columns.length - 1;
   if (total > PHONE_PRE_COLS) throw new Error(`표 폭 ${total}칸 > ${PHONE_PRE_COLS}칸`);
-  const line = (cells) => cells.map((cell, index) => {
-    const [, width, align] = columns[index];
-    return align === 'right' ? padStartDisplay(fitDisplay(cell, width).trimEnd(), width) : fitDisplay(cell, width);
+  const order = [...columns.keys()].sort((a, b) => (columns[a][2] === 'left') - (columns[b][2] === 'left') || a - b);
+  // 맨 끝 글자 칸은 남는 폭을 다 쓴다(뒤에 칸이 없으니 폰 한 줄 안에서 덜 자르게).
+  const last = order.at(-1);
+  const widthOf = (index) => (index === last && columns[index][2] === 'left' ? columns[index][1] + PHONE_PRE_COLS - total : columns[index][1]);
+  const line = (cells) => order.map((index) => {
+    const [, , align] = columns[index];
+    const width = widthOf(index);
+    return align === 'right' ? padStartDisplay(fitDisplay(cells[index], width).trimEnd(), width) : fitDisplay(cells[index], width);
   }).join(' ').trimEnd();
   return `<pre>${escapeHtml([line(columns.map(([title]) => title)), ...rows.map(line)].join('\n'))}</pre>`;
 }
@@ -277,16 +286,19 @@ function fixedSection(report) {
   const items = report.breakdown?.fixed ?? [];
   if (!items.length) return null;
   const change = (item) => {
-    if (item.status === 'missing') return '안 나감';
-    if (item.change === null || item.change === undefined) return '-';
+    if (item.status === 'missing' || item.change === null || item.change === undefined) return '-';
     const value = Number(item.change);
-    return value === 0 ? '같음' : `${value > 0 ? '+' : '-'}${comma(Math.abs(value))}`;
+    return value === 0 ? '0' : `${value > 0 ? '+' : '-'}${comma(Math.abs(value))}`;
   };
   // 고정비 판정은 날짜를 보지 않아(오너 2026-11-01) 한 달에 같은 항목이 두 번 붙을 수 있다. 그때 날 칸은 횟수다.
-  const day = (item) => (item.payments?.length > 1 ? `${item.payments.length}회`
-    : item.payments?.length ? String(Number(item.payments[0].date.slice(8, 10))) : '-');
-  const table = preTable([['고정비', 14, 'left'], ['날', 3, 'right'], ['금액', 10, 'right'], ['전월대비', 10, 'right']],
-    items.map((item) => [item.name, day(item),
+  const day = (item) => {
+    const days = (item.payments ?? []).map((payment) => String(Number(payment.date.slice(8, 10))));
+    if (!days.length) return '-';
+    const joined = days.join(',');
+    return joined.length <= 5 ? joined : `${days.length}x`;
+  };
+  const table = preTable([['고정비', 16, 'left'], ['날', 5, 'right'], ['금액', 8, 'right'], ['전월대비', 8, 'right']],
+    items.map((item) => [item.status === 'missing' ? `${item.name}(안 나감)` : item.name, day(item),
       item.status === 'missing' ? '0' : comma(item.amount), change(item)]));
   const total = items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   return `■ 고정비(자동납부)\n${table}\n- 합계 ${won(total)}`;
