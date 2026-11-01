@@ -65,10 +65,26 @@ function validateRecordDate(recordDate) {
 }
 
 // ref는 판단 기록에 남기는 기준 판 이름이다. 결정 문서는 판마다 새 문서라 appliesFrom이 판을 가른다(v1 10-16 · v2 10-18 · v3 10-19).
+// 판이 바뀌어도 통화·녹음 기록 하나를 판단하는 규칙이 그대로면 recordCriteriaFrom(머리말)에 그 규칙이 바뀐 날을 둔다 — 판단 잡은 ref가
+// 다르면 이미 판단한 기록을 다시 묻기 때문이다(v4 2026-11-01은 묶음 층·사진 종류만 더해 통화·녹음 판단 규칙이 v3와 같다 → 10-19).
+// 사진(순간) 판단 규칙은 v4에서 바뀌었다(§4·§5·§9). 사진 경로는 이 ref가 아니라 프롬프트 판(promptVersion)으로 판을 가른다 —
+// 사진 구슬 잡을 다시 켜기 전에 claude·ollama 사진 판을 올려야 한다(2026-11-01 리뷰 MEDIUM, 후속).
+// 잘못된 값이면 appliesFrom으로 조용히 넘어가지 않고 멈춘다(판 이름이 틀리면 대량으로 다시 묻는다).
+export function criteriaRef(frontmatter = {}) {
+  const record = frontmatter.recordCriteriaFrom;
+  if (record !== undefined) {
+    try { validateRecordDate(String(record)); } catch { throw new Error(`recordCriteriaFrom 날짜 오류: ${record}`); }
+    if (frontmatter.appliesFrom && String(record) > String(frontmatter.appliesFrom)) {
+      throw new Error(`recordCriteriaFrom(${record})이 appliesFrom(${frontmatter.appliesFrom})보다 늦음`);
+    }
+  }
+  return `미네-감정-분류@${record ?? frontmatter.appliesFrom ?? frontmatter.created}`;
+}
+
 export function loadEmotionCriteria(options = {}) {
   try {
     const { frontmatter, body } = resolveDecision('미네-감정-분류', options);
-    return { ...parseEmotionCriteria(body), ref: `미네-감정-분류@${frontmatter.appliesFrom ?? frontmatter.created}` };
+    return { ...parseEmotionCriteria(body), ref: criteriaRef(frontmatter) };
   } catch (error) {
     throw new Error(`미네 감정 분류 기준을 읽을 수 없습니다: ${error.message}`, { cause: error });
   }

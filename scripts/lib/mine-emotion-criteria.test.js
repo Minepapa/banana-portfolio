@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { VAULT_PATHS, VAULT_REL } from './vault-paths.mjs';
-import { allowedEmotions, emotionCriteriaPrompt, loadEmotionCriteria, parseEmotionCriteria,
+import { allowedEmotions, criteriaRef, emotionCriteriaPrompt, loadEmotionCriteria, parseEmotionCriteria,
   validateEmotionResult } from './mine-emotion-criteria.mjs';
 
 import { fixture, fixtureCriteria as criteria } from './mine-emotion-criteria.fixture.js';
@@ -65,4 +65,23 @@ test('실제 결정 문서가 있는 Mac이면 로드', { skip: !existsSync(join
   assert.equal(actual.pubertyAlarmDate, null);
   assert.match(actual.sections[6], /최대 3개/);
   assert.match(actual.sections[6], /1\(옅음\)·2\(보통\)·3\(짙음\)/);
+});
+
+test('기준 판 이름: recordCriteriaFrom이 있으면 그 날짜, 없으면 appliesFrom·created — 기록 판단 규칙이 같으면 다시 묻지 않게', () => {
+  assert.equal(criteriaRef({ appliesFrom: '2026-11-01', recordCriteriaFrom: '2026-10-19' }), '미네-감정-분류@2026-10-19');
+  assert.equal(criteriaRef({ appliesFrom: '2026-10-19' }), '미네-감정-분류@2026-10-19');
+  assert.equal(criteriaRef({ created: '2026-10-16' }), '미네-감정-분류@2026-10-16');
+  assert.throws(() => criteriaRef({ appliesFrom: '2026-11-01', recordCriteriaFrom: '어제' }), /recordCriteriaFrom/);
+  assert.throws(() => criteriaRef({ appliesFrom: '2026-11-01', recordCriteriaFrom: '2026-02-30' }), /recordCriteriaFrom/, '없는 날짜');
+  assert.throws(() => criteriaRef({ appliesFrom: '2026-11-01', recordCriteriaFrom: '' }), /recordCriteriaFrom/, '빈 값도 멈춘다');
+  assert.throws(() => criteriaRef({ appliesFrom: '2026-11-01', recordCriteriaFrom: null }), /recordCriteriaFrom/, 'null도 멈춘다');
+  assert.throws(() => criteriaRef({ appliesFrom: '2026-11-01', recordCriteriaFrom: '2026-12-01' }), /appliesFrom/, '시행일보다 늦으면 멈춘다');
+});
+
+// recordCriteriaFrom은 통화·녹음 등 기록 하나를 판단하는 규칙이 v3(10-19)와 같을 때만 쓴다.
+// 다음 개정에서 기록 판단 규칙(감정 정의·문턱·강도·기준 예시·주체 규칙 등)이 바뀌면 이 칸을 그 개정일로 올리고
+// 아래 기대값도 같이 바꾼다 — 안 올리면 새 규칙으로 다시 판단해야 할 기록을 옛 판으로 끝난 것으로 본다.
+test('실제 결정 문서: v4(2026-11-01)도 통화·녹음 판단 기록과 같은 판 이름(10-19) — 이미 판단한 기록을 다시 묻지 않는다',
+  { skip: !existsSync(join(VAULT_PATHS.root, VAULT_REL.decisionsCanonical)) }, () => {
+  assert.equal(loadEmotionCriteria().ref, '미네-감정-분류@2026-10-19');
 });
