@@ -433,13 +433,11 @@ def spent_amount(item):
     return None
 
 
-def in_day_window(day, day_from, day_to):
-    """dayFrom..dayTo inclusive; a window like 28..3 wraps over the month end."""
-    return day_from <= day <= day_to if day_from <= day_to else day >= day_from or day <= day_to
-
-
 def assign_fixed(rows, entries, resolve):
-    """Each row pays at most one fixed cost: same instrument, inside the day window, merchant key contained.
+    """Each row pays at most one fixed cost: same instrument, merchant key contained.
+
+    The payment date never decides it (owner 2026-11-01): a fixed cost is the item itself, and
+    dayFrom..dayTo is only the usual date shown for upcoming payments.
 
     Longer merchant keys claim rows first, so "KT통신요금" is not taken by a broader "KT..." entry.
     """
@@ -449,7 +447,6 @@ def assign_fixed(rows, entries, resolve):
         key = normalize_merchant(entry["merchant"])
         for index, (item, spent) in enumerate(rows):
             if (index in claimed or resolve(item)[0] != entry["instrument"]
-                    or not in_day_window(int(item["date"][8:10]), entry["dayFrom"], entry["dayTo"])
                     or key not in normalize_merchant(item["description"])):
                 continue
             claimed.add(index)

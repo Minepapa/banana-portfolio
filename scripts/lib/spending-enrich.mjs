@@ -1,6 +1,7 @@
 // 하루 소비 요약의 결제마다 화면용 칸 셋을 붙인다(2026-11-01, 올림푸스 헤르메스 방 — 제우스 요청, 새 볼트 경로 없음).
 // - instrument: 카드 이름. 소비 설정 cardMap(알림 카드사 + 카드번호 일부 → 결제수단)에서 찾는다. 모르면 null.
-// - fixedCost: 고정비 이름. 소비 설정 fixedCosts의 가맹점 키·카드·결제일 창이 맞으면. 하나카드 자동납부 알림은 카드번호가
+// - fixedCost: 고정비 이름. 소비 설정 fixedCosts의 가맹점 키·카드가 맞으면. 결제일(dayFrom~dayTo)은 판정에 쓰지 않는다 —
+//   고정비는 항목 자체로 정하고 날짜는 그 근처에 나간다는 참고값이다(오너 2026-11-01). 하나카드 자동납부 알림은 카드번호가
 //   없어서(마스크 없음) 카드사가 그 고정비 카드의 카드사와 같으면 같은 카드로 본다.
 // - categoryGuess: { category, subcategory, via } 또는 null. 알림 분류는 거의 '일반'이라 화면 분류로 못 쓴다.
 //   오너 지정(merchantCategories) → 지난 뱅크샐러드 같은 가맹점의 가장 많은 분류(spending-tables.categoryFor) 순.
@@ -15,12 +16,11 @@ import { buildMerchantIndex, categoryFor, normalizeMerchant, readBanksaladTransa
 import { withLock, writeAtomic } from './state-writer.mjs';
 
 // 보강 규칙 판. 요약의 enrichmentVersion이 이보다 낮거나 없으면 수집 잡이 그날 요약을 다시 계산한다.
-export const ENRICHMENT_VERSION = 1;
+// 2(2026-11-01): 고정비 판정에서 결제일 창을 뺐다(오너 지시). 판정 규칙을 바꾸면 이 번호를 올린다.
+export const ENRICHMENT_VERSION = 2;
 
 // 가맹점 키가 이보다 짧으면 포함 비교에서 우연히 맞는다(spending-settings MIN_MERCHANT_KEY와 같은 값).
 const MIN_KEY = 3;
-const kstDay = (at) => Number(new Date(Date.parse(at) + 9 * 3_600_000).toISOString().slice(8, 10));
-const inWindow = (day, from, to) => (from <= to ? from <= day && day <= to : day >= from || day <= to);
 
 export const EMPTY_ENRICHMENT = { cards: new Map(), fixedCosts: [], overrides: {}, index: new Map(), problems: [] };
 
@@ -91,15 +91,13 @@ export function enrichEntry(entry, given) {
   if (entry.status !== 'expense') return { instrument: null, fixedCost: null, categoryGuess: null };
   const instrument = enrichment.cards.get(`${entry.card}|${entry.cardMask ?? entry.cardLast4}`) ?? null;
   const key = normalizeMerchant(entry.merchant);
-  const day = Number.isFinite(Date.parse(entry.at)) ? kstDay(entry.at) : null;
   // 긴 가맹점 키부터 본다. 키가 가맹점 이름 안에 들어 있어야 한다(spending_month assign_fixed와 같은 한 방향). 결제 하나는 고정비 하나다.
-  const fixed = key.length >= MIN_KEY && day != null ? [...enrichment.fixedCosts]
+  const fixed = key.length >= MIN_KEY ? [...enrichment.fixedCosts]
     .sort((a, b) => b.key.length - a.key.length || a.name.localeCompare(b.name))
     .find((cost) => cost.key.length >= MIN_KEY && key.includes(cost.key)
       // 카드번호가 없는 알림(하나 자동납부)만 카드사로 대신 맞춘다. 번호가 있는데 표에 없는 카드는 다른 카드다.
       && (instrument ? instrument === cost.instrument
-        : !(entry.cardMask ?? entry.cardLast4) && Boolean(entry.card) && entry.card === cost.brand)
-      && inWindow(day, cost.dayFrom, cost.dayTo)) : null;
+        : !(entry.cardMask ?? entry.cardLast4) && Boolean(entry.card) && entry.card === cost.brand)) : null;
   // 오너 지정은 알림 가맹점 이름에 앞뒤가 붙어도("NICE_주차장 나이스인프라") 포함으로 찾는다. 긴 키 먼저.
   const ownerKey = key.length >= MIN_KEY ? Object.keys(enrichment.overrides).filter((other) => other.length >= MIN_KEY
     && (key.includes(other) || other.includes(key))).sort((a, b) => b.length - a.length || a.localeCompare(b))[0] : null;

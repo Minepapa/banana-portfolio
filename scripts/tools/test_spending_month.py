@@ -353,7 +353,7 @@ class CoverageTests(unittest.TestCase):
         self.assertIn("duplicateRoutes", result["settings_error"])
         self.assertIn("error", result["breakdown"])
 
-    def test_fixed_costs_use_day_window_and_claim_each_row_once(self):
+    def test_fixed_costs_ignore_the_date_and_claim_each_row_once(self):
         fixture = Fixture(self.root, [
             row("2040-02-11", "09:00:00", -30000, "Card A", description="KT 통신요금"),
             row("2040-02-20", "09:00:00", -59800, "Card A", description="KTX 코레일 통신"),
@@ -366,8 +366,9 @@ class CoverageTests(unittest.TestCase):
         ]}), encoding="utf-8")
         fixed = {item["name"]: item for item in fixture.run("2040-02-01", "2040-02-29", "2040-02")["breakdown"]["fixed"]}
         self.assertEqual(fixed["통신요금"]["amount"], "30000", "longer key claims the row first")
-        self.assertEqual(fixed["넓은 키"]["status"], "missing", "02-20 is outside 10..13 and 02-11 is taken")
-        self.assertEqual(fixed["월말"]["payments"], [{"date": "2040-02-01", "amount": "9900"}], "28..2 wraps")
+        self.assertEqual(fixed["넓은 키"]["payments"], [{"date": "2040-02-20", "amount": "59800"}],
+                         "outside 10..13 still counts: the date is only a reference; 02-11 is already taken")
+        self.assertEqual(fixed["월말"]["payments"], [{"date": "2040-02-01", "amount": "9900"}])
 
     def test_bad_settings_lose_tables_not_the_month(self):
         fixture = Fixture(self.root, [row("2040-02-03", "12:00:00", -5000, "Card A")])

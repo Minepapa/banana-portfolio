@@ -45,11 +45,12 @@ test('카드 이름·고정비·분류 짐작을 붙인다', () => {
   // 하나 자동납부 알림은 카드번호가 없다: 카드사가 고정비 카드의 카드사와 같으면 고정비로 본다.
   assert.equal(enrichEntry(entry({ merchant: 'KT통신요금', cardMask: null }), enrichment).fixedCost, '통신');
   assert.equal(enrichEntry(entry({ merchant: 'KT통신요금', cardMask: null }), enrichment).instrument, null);
-  assert.equal(enrichEntry(entry({ merchant: 'KT통신요금', at: at('2040-02-20') }), enrichment).fixedCost, null, '결제일 창 밖');
+  assert.equal(enrichEntry(entry({ merchant: 'KT통신요금', at: at('2040-02-20') }), enrichment).fixedCost, '통신',
+    '결제일 창 밖이어도 고정비다(날짜는 참고값)');
   assert.equal(enrichEntry(entry({ merchant: 'KT통신요금', card: '삼성', cardMask: null, cardLast4: '3663' }), enrichment).fixedCost, null,
     '다른 카드');
   assert.equal(enrichEntry(entry({ merchant: '구독서비스', card: '삼성', cardMask: null, cardLast4: '3663', at: at('2040-03-01') }),
-    enrichment).fixedCost, '월말 구독', '28~2 창은 달을 넘는다');
+    enrichment).fixedCost, '월말 구독');
   assert.deepEqual(enrichEntry(entry({ merchant: '강뼈 탕' }), enrichment).categoryGuess,
     { category: '식비', subcategory: '한식', via: 'partial' }, '알림 가맹점 이름이 잘려도 포함으로 찾는다');
   assert.equal(enrichEntry(entry({ merchant: '강뼈' }), enrichment).categoryGuess, null, '두 글자는 우연 일치라 찾지 않는다');

@@ -132,6 +132,8 @@ test('월간 점검 본문: 결제수단별·항목별·고정비 표(경유 결
       { name: '아파트관리비', status: 'paid', payments: [{ date: '2026-10-22', amount: '325140' }], amount: '325140', change: '33330' },
       { name: 'LG전자 구독료', status: 'paid', payments: [{ date: '2026-10-10', amount: '22900' }], amount: '22900', change: '0' },
       { name: 'KT유선상품', status: 'missing', payments: [], amount: '0', change: null },
+      { name: 'SK텔레콤', status: 'paid', payments: [{ date: '2026-10-01', amount: '1000' }, { date: '2026-10-13', amount: '1000' }],
+        amount: '2000', change: null },
     ],
   };
   const route_duplicates = [{ amount: '1900' }, { amount: '17760' }];
@@ -144,7 +146,8 @@ test('월간 점검 본문: 결제수단별·항목별·고정비 표(경유 결
   assert.match(body, /아파트관리비 +22 +325,140 +\+33,330/);
   assert.match(body, /LG전자 구독료 +10 +22,900 +같음/);
   assert.match(body, /KT유선상품 +- +0 +안 나감/);
-  assert.match(body, /- 합계 348,040원/);
+  assert.match(body, /SK텔레콤 +2회 +2,000/, '한 달에 두 번 붙으면 날 칸은 횟수');
+  assert.match(body, /- 합계 350,040원/);
   for (const block of body.match(/<pre>[\s\S]*?<\/pre>/g)) {
     for (const line of block.replace(/<\/?pre>/g, '').replace(/&amp;/g, '&').split('\n')) {
       const width = [...line].reduce((sum, char) => sum + (/[ᄀ-ᅟ⺀-꓏가-힣]/.test(char) ? 2 : 1), 0);

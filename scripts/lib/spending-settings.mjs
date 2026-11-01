@@ -2,6 +2,7 @@
 // - recipientDecisions: 오너가 확인한 송금 수취처(spending-parse가 읽는다).
 // - cardMap·instrumentAliases·fixedCosts·merchantCategories: 소비 보고 2단계(Requests "소비 보고 카드별·항목별·고정비",
 //   2026-10-31 오너 확정·제우스 판단 — 고정비 목록은 새 파일 대신 이 파일의 칸). 월 점검(spending_month.py)이 읽는다.
+// - fixedCosts의 dayFrom·dayTo는 보통 나가는 날(다가오는 결제 표시용 참고값)이다. 고정비 판정에는 쓰지 않는다(오너 2026-11-01).
 // - duplicateRoutes: 두 간편결제가 같은 결제를 같은 초·같은 금액으로 함께 내보낼 때 keep만 센다(2026-10-31 오너 확정,
 //   네이버페이·페이코 컬리·배민). 간편결제는 여러 카드에 묶이므로 카드는 별칭이 아니라 함께 온 카드 알림으로 정한다.
 // 값은 코드에 박지 않는다. 오너가 확정한 값을 patch 파일로 받아 이 파일에만 쓴다(도구 spending-settings.mjs).

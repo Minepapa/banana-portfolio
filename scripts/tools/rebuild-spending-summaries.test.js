@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rebuildSpendingSummaries } from './rebuild-spending-summaries.mjs';
+import { ENRICHMENT_VERSION } from '../lib/spending-enrich.mjs';
 import { lockFilesFor, withLock } from '../lib/state-writer.mjs';
 
 test('기존 일별 원문은 dry-run에서 그대로 두고 명시 적용 시 요약만 생성한다', async (t) => {
@@ -36,7 +37,7 @@ test('재생성도 수집 잡과 같은 길로 써서 화면 칸(보강)을 채�
     merchantCategories: [{ merchant: '가상식당', category: '식비' }] }));
   await rebuildSpendingSummaries({ spendingDir, apply: true, logger: { log() {} } });
   const summary = JSON.parse(readFileSync(join(spendingDir, '2026', '2026-10-10.summary.json'), 'utf8'));
-  assert.equal(summary.enrichmentVersion, 1);
+  assert.equal(summary.enrichmentVersion, ENRICHMENT_VERSION);
   assert.deepEqual(summary.entries[0].categoryGuess, { category: '식비', subcategory: null, via: 'owner' });
 });
 

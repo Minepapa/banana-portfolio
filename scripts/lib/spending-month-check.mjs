@@ -267,8 +267,11 @@ function fixedSection(report) {
     const value = Number(item.change);
     return value === 0 ? '같음' : `${value > 0 ? '+' : '-'}${comma(Math.abs(value))}`;
   };
+  // 고정비 판정은 날짜를 보지 않아(오너 2026-11-01) 한 달에 같은 항목이 두 번 붙을 수 있다. 그때 날 칸은 횟수다.
+  const day = (item) => (item.payments?.length > 1 ? `${item.payments.length}회`
+    : item.payments?.length ? String(Number(item.payments[0].date.slice(8, 10))) : '-');
   const table = preTable([['고정비', 14, 'left'], ['날', 3, 'right'], ['금액', 10, 'right'], ['전월대비', 10, 'right']],
-    items.map((item) => [item.name, item.payments?.length ? String(Number(item.payments[0].date.slice(8, 10))) : '-',
+    items.map((item) => [item.name, day(item),
       item.status === 'missing' ? '0' : comma(item.amount), change(item)]));
   const total = items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   return `■ 고정비(자동납부)\n${table}\n- 합계 ${won(total)}`;

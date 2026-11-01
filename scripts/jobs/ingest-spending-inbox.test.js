@@ -5,6 +5,7 @@ import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ingestSpendingInbox } from './ingest-spending-inbox.mjs';
+import { ENRICHMENT_VERSION } from '../lib/spending-enrich.mjs';
 import { withLock } from '../lib/state-writer.mjs';
 
 function fixture(t) {
@@ -254,7 +255,7 @@ test('보강 판이 없는 옛 요약은 원문·설정보다 새로워도 다�
   utimesSync(join(directory, 'settings.json'), new Date(0), new Date(0));
   await ingestSpendingInbox({ db: fakeDb([]), spendingDir: directory, logger: { log: (line) => logs.push(line) } });
   const summary = JSON.parse(readFileSync(summaryPath, 'utf8'));
-  assert.equal(summary.enrichmentVersion, 1);
+  assert.equal(summary.enrichmentVersion, ENRICHMENT_VERSION);
   assert.ok('categoryGuess' in summary.entries[0]);
   assert.match(logs.at(-1), /enrichmentProblems=fixedCosts/, '깨진 설정 칸은 로그로 드러난다');
 });
