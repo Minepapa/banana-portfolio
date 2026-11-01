@@ -223,9 +223,9 @@ test('모든 출금 표: 묶음별 건·금액, 중복·판정 대기는 표시�
     ] };
   const body = renderMonthCheck({ ...report, breakdown: { ...report.breakdown, outflows } }, { places: { recordedDays: 0 } });
   assert.match(body, /■ 이번 달 나간 돈\(모든 출금 112건\)/);
-  assert.match(body, /대출 상환 +1 +1,506,810/);
-  assert.match(body, /확인 필요\(대기\) +8 +4,794,800/);
-  assert.match(body, /내 계좌 이동\(중복\) +1 +1,520,000/);
+  assert.match(body, / +1 +1,506,810 대출 상환/);
+  assert.match(body, / +8 +4,794,800 확인 필요\(대기\)/);
+  assert.match(body, / +1 +1,520,000 내 계좌 이동\(중복\)/);
   assert.match(body, /- 나간 돈 합계 4,421,146원/);
   assert.match(body, /- 확인 필요 4,794,800원: 판정 전이라 합계 밖/);
   assert.match(body, /- 중복 4,676,610원: 합계 밖/);
