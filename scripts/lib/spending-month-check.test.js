@@ -119,7 +119,7 @@ test('월간 점검 본문: 합계·커버리지·빈칸 표·파서 후보·장
   assert.match(body, /거래 100건: 잡힘 40 · 못 읽음 5 · 알림 없음 45/);
   assert.match(body, /알림 수집이 없던 날 거래 10건/);
   assert.match(body, /잡힘 비율 44% \(지난달 20%\)/);
-  assert.match(body, /K-패스 체크 +4 +6,000/);
+  assert.match(body, / +4 +6,000 K-패스 체크/);
   assert.doesNotMatch(body, /월급통장/, '들어온 돈은 빈칸 표에 넣지 않는다');
   assert.match(body, /컬리&lt;멤버스&gt; 1,900원 \(kakao-app:PAYCO\)/);
   assert.match(body, /10-05 A&amp;B 7,000원/);
@@ -132,7 +132,7 @@ test('월간 점검 본문: 합계·커버리지·빈칸 표·파서 후보·장
   }
   assert.match(body, /~/, '긴 이름은 잘린다');
   assert.doesNotMatch(body, /null/);
-  assert.match(body, /\(없음\) +3 +300/);
+  assert.match(body, / +3 +300 \(없음\)/);
 });
 
 test('지난달 결과가 없으면 비교 줄을 빼고, 장소 기록이 없으면 그렇게 쓴다', () => {
@@ -176,12 +176,18 @@ test('월간 점검 본문: 결제수단별·항목별·고정비 표(경유 결
   assert.match(body, /■ 결제수단별 지출\n<pre>/);
   assert.match(body, /- 간편결제 중복 2건 뺌\(19,660원\)/);
   assert.match(body, /MG\+ S 하나카드 중 네이버페이 경유 10,000원/);
-  assert.match(body, /나머지 +2 +19,983/, '9번째부터는 나머지 한 줄');
+  assert.match(body, / +2 +19,983 나머지/, '9번째부터는 나머지 한 줄');
   assert.match(body, /■ 항목별 지출\(뱅크샐러드 분류, 오너 지정 1건 포함\)/);
-  assert.match(body, /아파트관리비 +22 +325,140 +\+33,330/);
-  assert.match(body, /LG전자 구독료 +10 +22,900 +같음/);
-  assert.match(body, /KT유선상품 +- +0 +안 나감/);
-  assert.match(body, /SK텔레콤 +2회 +2,000/, '한 달에 두 번 붙으면 날 칸은 횟수');
+  assert.match(body, / +22 +325,140 +\+33,330 아파트관리비/);
+  assert.match(body, / +10 +22,900 +0 LG전자 구독료/);
+  assert.match(body, / +- +0 +- KT유선상품\(안 나감\)/);
+  // 숫자 칸은 한글 이름 앞에만 — 한글 뒤에 (두 칸 이상 띄고) 숫자 칸이 오면 텔레그램 폰 글꼴에서 줄마다 어긋난다(오너 2026-11-02)
+  for (const pre of body.match(/<pre>[\s\S]*?<\/pre>/g)) {
+    for (const row of pre.replace(/<\/?pre>/g, '').split('\n').slice(1)) {
+      assert.ok(!/[\uAC00-\uD7A3][^\n]*\s{2,}[\d,+\-]+/.test(row), `한글 뒤에 숫자 칸: ${row}`);
+    }
+  }
+  assert.match(body, / +1,13 +2,000 .*SK텔레콤/, '한 달에 두 번 붙으면 날 칸은 그 날짜들');
   assert.match(body, /- 합계 350,040원/);
   for (const block of body.match(/<pre>[\s\S]*?<\/pre>/g)) {
     for (const line of block.replace(/<\/?pre>/g, '').replace(/&amp;/g, '&').split('\n')) {
