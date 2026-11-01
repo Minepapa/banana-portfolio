@@ -384,6 +384,13 @@ export function loadPlaces(root) {
   });
 }
 
+// 지번 주소에서 동네 이름(…동·…읍·…면·…가)을 꺼낸다. 예: '경기 과천시 과천동 450-1' → '과천동'. 도로명 주소처럼 없으면 null.
+// 시·도와 시·군·구(앞 두 칸)는 건너뛴다('대구 동구'처럼 '동'으로 끝나는 구 이름을 동네로 잡지 않게).
+export function dongFromAddress(address) {
+  if (!address) return null;
+  return String(address).split(/\s+/).slice(2).find((token) => /^[가-힣0-9.]+(동|읍|면|가)$/.test(token)) ?? null;
+}
+
 export async function describeStays(stays, { places, geocode, region = async () => null }) {
   const described = [];
   let previousPlace = null;
@@ -423,7 +430,9 @@ export async function describeStays(stays, { places, geocode, region = async () 
     const result = await geocode(stay.lat, stay.lon);
     const address = result?.address ?? (typeof result === 'string' ? result : null);
     const buildingName = result?.buildingName ?? null;
-    const label = buildingName || (address ? `미등록: ${address}`
+    // 표시 이름은 동네까지만(2026-11-02 제우스 3D 점검: 주소 전체가 화면에 길게 나옴). 전체 주소는 address에 남는다.
+    const area = result?.dong || dongFromAddress(address) || address;
+    const label = buildingName || (address ? `미등록: ${area}`
       : (result?.reason === 'dry-run' ? '미등록 장소(dry-run)' : `미등록 장소 (${result?.reason || '주소 미조회'})`));
     described.push({ ...publicStay, label, registered: false, autoNamed: Boolean(buildingName), address: address ?? null });
     previousPlace = null;

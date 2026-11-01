@@ -44,7 +44,9 @@ test('카드 이름·고정비·분류 짐작을 붙인다', () => {
     { instrument: 'Card A', fixedCost: '통신', categoryGuess: null });
   // 하나 자동납부 알림은 카드번호가 없다: 카드사가 고정비 카드의 카드사와 같으면 고정비로 본다.
   assert.equal(enrichEntry(entry({ merchant: 'KT통신요금', cardMask: null }), enrichment).fixedCost, '통신');
-  assert.equal(enrichEntry(entry({ merchant: 'KT통신요금', cardMask: null }), enrichment).instrument, null);
+  assert.equal(enrichEntry(entry({ merchant: 'KT통신요금', cardMask: null }), enrichment).instrument, 'Card A',
+    '카드번호 없는 자동납부가 고정비로 맞으면 카드는 고정비 설정의 카드');
+  assert.equal(enrichEntry(entry({ merchant: '모르는가게', cardMask: null }), enrichment).instrument, null, '고정비가 아니면 그대로 모름');
   assert.equal(enrichEntry(entry({ merchant: 'KT통신요금', at: at('2040-02-20') }), enrichment).fixedCost, '통신',
     '결제일 창 밖이어도 고정비다(날짜는 참고값)');
   assert.equal(enrichEntry(entry({ merchant: 'KT통신요금', card: '삼성', cardMask: null, cardLast4: '3663' }), enrichment).fixedCost, null,

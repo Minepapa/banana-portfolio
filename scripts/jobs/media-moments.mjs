@@ -69,9 +69,10 @@ const addressLabel = (address) => {
   return clean([district >= 0 ? parts[district] : null, area].filter(Boolean).join(' ')) || clean(address);
 };
 export const titlePlace = (place, address) => address && place === address ? `${addressLabel(address)} 일대` : place;
+// 미등록 체류 라벨('미등록: 과천동' — 2026-11-02부터 동네 이름까지만)은 쓰지 않고 address로 제목을 만든다(이전과 같은 'OO시 OO동 일대').
 const cleanRouteLabel = (label) => {
-  const value = String(label || '').replace(/^미등록:\s*/, '');
-  return value.startsWith('미등록 장소') ? '' : value;
+  const value = String(label || '');
+  return value.startsWith('미등록') ? '' : value;
 };
 
 export function visionForMoment(records, visionRows, config) {

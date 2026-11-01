@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { VAULT_REL } from './vault-paths.mjs';
-import { readDayPoints, detectStays, matchPlace, loadPlaces, describeStays, haversineM, dropConflictingFixes } from './location-stays.mjs';
+import { readDayPoints, detectStays, matchPlace, loadPlaces, describeStays, haversineM, dropConflictingFixes, dongFromAddress } from './location-stays.mjs';
 import { reverseGeocode, createCachedGeocoder, readKakaoKey } from './kakao-geocode.mjs';
 import { updateCandidates, readCandidates } from './place-candidates.mjs';
 import { computeRoute } from '../jobs/daily-note.mjs';
@@ -193,16 +193,16 @@ test('카카오 역지오코딩 우선순위, 캐시, 키 없음, 실패', async
   const keyPath = join(root, 'kakao.key');
   const key = randomBytes(16).toString('base64url');
   let calls = 0;
-  const fetchImpl = async (url, options) => { calls += 1; assert.match(String(url), /x=34/); assert.equal(options.headers.Authorization, `KakaoAK ${key}`); return { ok: true, json: async () => ({ documents: [{ road_address: { building_name: '건물', address_name: '도로' }, address: { address_name: '지번' } }] }) }; };
-  assert.deepEqual(await reverseGeocode(12, 34, { key, fetchImpl }), { buildingName: '건물', address: '도로' });
+  const fetchImpl = async (url, options) => { calls += 1; assert.match(String(url), /x=34/); assert.equal(options.headers.Authorization, `KakaoAK ${key}`); return { ok: true, json: async () => ({ documents: [{ road_address: { building_name: '건물', address_name: '도로' }, address: { address_name: '지번', region_3depth_name: '가상동' } }] }) }; };
+  assert.deepEqual(await reverseGeocode(12, 34, { key, fetchImpl }), { buildingName: '건물', address: '도로', dong: '가상동' });
   const missing = createCachedGeocoder({ root, keyPath, fetchImpl });
   assert.match((await missing(12, 34)).reason, /키 없음/);
   writeFileSync(keyPath, `${key}\n`, { mode: 0o600 });
   symlinkSync(keyPath, join(root, 'key-link'));
   assert.throws(() => readKakaoKey(join(root, 'key-link')), /링크/);
   const geocode = createCachedGeocoder({ root, keyPath, fetchImpl });
-  assert.deepEqual(await geocode(12, 34), { buildingName: '건물', address: '도로' });
-  assert.deepEqual(await geocode(12, 34), { buildingName: '건물', address: '도로' });
+  assert.deepEqual(await geocode(12, 34), { buildingName: '건물', address: '도로', dong: '가상동' });
+  assert.deepEqual(await geocode(12, 34), { buildingName: '건물', address: '도로', dong: '가상동' });
   await geocode.flush();
   assert.equal(calls, 2);
   const failed = createCachedGeocoder({ root, keyPath, fetchImpl: async () => { throw new Error('offline'); } });
@@ -240,6 +240,12 @@ test('건물명은 자동 라벨로 표시하고 후보에서 제외하며 주�
   assert.equal(updateCandidates({ date: '2026-10-09', stays: building, root }).candidates.length, 0);
   const address = await describeStays([buildingStay], { places: [], geocode: async () => ({ buildingName: null, address: '가상 도로 1' }) });
   assert.equal(address[0].label, '미등록: 가상 도로 1');
+  // 표시 이름은 동네까지만, 전체 주소는 address에 남긴다(2026-11-02).
+  const dong = await describeStays([buildingStay], { places: [], geocode: async () => ({ buildingName: null, address: '경기 가상시 가상로 1', dong: '가상동' }) });
+  assert.equal(dong[0].label, '미등록: 가상동');
+  assert.equal(dong[0].address, '경기 가상시 가상로 1');
+  const parsed = await describeStays([buildingStay], { places: [], geocode: async () => ({ buildingName: null, address: '경기 가상시 가상동 450-1' }) });
+  assert.equal(parsed[0].label, '미등록: 가상동', '옛 캐시(dong 없음)는 지번 주소에서 동네를 꺼낸다');
   updateCandidates({ date: '2026-10-09', stays: address, root });
   assert.equal(updateCandidates({ date: '2026-10-10', stays: [], root }).ready.length, 0);
   updateCandidates({ date: '2026-10-10', stays: address, root });
@@ -258,10 +264,10 @@ test('옛 문자열 지오코딩 캐시는 무효화하고 새 객체로 다시 
     calls += 1;
     return { ok: true, json: async () => ({ documents: [{ road_address: { building_name: '새 건물', address_name: '가상 도로 2' } }] }) };
   } });
-  assert.deepEqual(await geocode(12, 34), { buildingName: '새 건물', address: '가상 도로 2' });
+  assert.deepEqual(await geocode(12, 34), { buildingName: '새 건물', address: '가상 도로 2', dong: null });
   await geocode.flush();
   assert.equal(calls, 1);
-  assert.deepEqual(JSON.parse(readFileSync(cachePath, 'utf8'))['12.0000,34.0000'], { buildingName: '새 건물', address: '가상 도로 2' });
+  assert.deepEqual(JSON.parse(readFileSync(cachePath, 'utf8'))['12.0000,34.0000'], { buildingName: '새 건물', address: '가상 도로 2', dong: null });
 });
 
 test('데일리 동선은 지오코딩 실패 건수를 로그로 남긴다', async (t) => {
@@ -459,4 +465,13 @@ test('군집 첫 점보다 정확한 점은 튄 점으로 건너뛰지 않는다
     at('11:31:52', 37.46621, 126.96032, 100), at('11:32:01', 37.46543, 126.95967, 9)], { date: '2026-10-19' });
   const office = stays.find((stay) => Date.parse(stay.end) > Date.parse('2026-10-19T11:00:00+09:00'));
   assert.ok(haversineM(office, OFFICE) <= 150);
+});
+
+test('dongFromAddress는 지번 주소의 동·읍·면·가만 꺼낸다', () => {
+  assert.equal(dongFromAddress('경기 과천시 과천동 450-1'), '과천동');
+  assert.equal(dongFromAddress('경기 수원시 영통구 매탄동 3'), '매탄동');
+  assert.equal(dongFromAddress('대구 동구 신암동 1'), '신암동', '앞 두 칸(시·도, 구)은 건너뛴다');
+  assert.equal(dongFromAddress('경기 양평군 양평읍 1'), '양평읍');
+  assert.equal(dongFromAddress('경기 과천시 중앙로 12'), null, '도로명 주소는 없음');
+  assert.equal(dongFromAddress(null), null);
 });

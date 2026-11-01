@@ -237,6 +237,16 @@ test('미등록 주소는 짧은 제목으로 쓰고 전체 주소를 분리한�
   assert.match(note, /- 장소·활동: 강서구 공항대로 일대\n- 주소: 서울특별시 강서구 공항대로 165/);
 });
 
+test('동네 이름만 남은 미등록 라벨(2026-11-02~)도 전체 주소로 같은 제목을 만든다', async (t) => {
+  const { root, options } = fixture(t, [item('a', time('10:00'))]);
+  const address = '서울특별시 강서구 공항대로 165';
+  await runMediaMoments({ ...options, routePoints: () => [{ tst: 1 }],
+    routeForDay: async () => [{ kind: 'stay', startAt: time('09:00'), endAt: time('11:00'),
+      label: '미등록: 공항동', address }] });
+  const state = JSON.parse(readFileSync(join(root, VAULT_REL.mediaMomentsState), 'utf8'));
+  assert.match(state.a.notePath, /강서구 공항대로 일대 순간\.md$/);
+});
+
 test('동선 장소·활동과 GPS 주소를 본문과 머리말에 나누어 쓴다', async (t) => {
   const { root, options } = fixture(t, [item('a', time('10:00'))]);
   await runMediaMoments({ ...options, routePoints: () => [{ tst: 1 }],

@@ -1,5 +1,6 @@
 // 하루 소비 요약의 결제마다 화면용 칸 셋을 붙인다(2026-11-01, 올림푸스 헤르메스 방 — 제우스 요청, 새 볼트 경로 없음).
-// - instrument: 카드 이름. 소비 설정 cardMap(알림 카드사 + 카드번호 일부 → 결제수단)에서 찾는다. 모르면 null.
+// - instrument: 카드 이름. 소비 설정 cardMap(알림 카드사 + 카드번호 일부 → 결제수단)에서 찾는다. 카드번호 없는 자동납부가
+//   고정비로 맞으면 그 고정비의 카드. 모르면 null.
 // - fixedCost: 고정비 이름. 소비 설정 fixedCosts의 가맹점 키·카드가 맞으면. 결제일(dayFrom~dayTo)은 판정에 쓰지 않는다 —
 //   고정비는 항목 자체로 정하고 날짜는 그 근처에 나간다는 참고값이다(오너 2026-11-01). 하나카드 자동납부 알림은 카드번호가
 //   없어서(마스크 없음) 카드사가 그 고정비 카드의 카드사와 같으면 같은 카드로 본다.
@@ -18,7 +19,7 @@ import { withLock, writeAtomic } from './state-writer.mjs';
 // 보강 규칙 판. 요약의 enrichmentVersion이 이보다 낮거나 없으면 수집 잡이 그날 요약을 다시 계산한다.
 // 2(2026-11-01): 고정비 판정에서 결제일 창을 뺐다(오너 지시). 판정 규칙을 바꾸면 이 번호를 올린다.
 // 3(2026-11-01): 짧은 가게 이름(3자 미만)의 오너 분류 지정을 이름이 똑같을 때 쓴다.
-export const ENRICHMENT_VERSION = 3;
+export const ENRICHMENT_VERSION = 4;
 
 // 가맹점 키가 이보다 짧으면 포함 비교에서 우연히 맞는다(spending-settings MIN_MERCHANT_KEY와 같은 값).
 const MIN_KEY = 3;
@@ -105,6 +106,7 @@ export function enrichEntry(entry, given) {
     : key.length >= MIN_KEY ? Object.keys(enrichment.overrides).filter((other) => other.length >= MIN_KEY
       && (key.includes(other) || other.includes(key))).sort((a, b) => b.length - a.length || a.localeCompare(b))[0] : null;
   const guess = ownerKey ? { ...enrichment.overrides[ownerKey], via: 'owner' } : categoryFor(entry.merchant, enrichment.index);
-  return { instrument, fixedCost: fixed?.name ?? null,
+  // 카드번호 없는 자동납부 알림이 고정비로 맞으면 카드는 그 고정비 설정의 카드다(2026-11-02, 화면마다 '하나'와 카드 이름이 갈림).
+  return { instrument: instrument ?? fixed?.instrument ?? null, fixedCost: fixed?.name ?? null,
     categoryGuess: guess ? { category: guess.category, subcategory: guess.subcategory ?? null, via: guess.via } : null };
 }

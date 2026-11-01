@@ -26,7 +26,9 @@ export async function reverseGeocode(lat, lon, { key, fetchImpl = fetch } = {}) 
   const document = result.documents[0];
   const buildingName = document?.road_address?.building_name || null;
   const address = document?.road_address?.address_name || document?.address?.address_name || null;
-  return buildingName || address ? { buildingName, address } : null;
+  // 동네 이름(법정동, 예: 과천동) — 미등록 체류의 짧은 표시 이름(2026-11-02). 도로명 주소에는 동이 없어 지번 쪽에서 받는다.
+  const dong = document?.address?.region_3depth_name || null;
+  return buildingName || address ? { buildingName, address, dong } : null;
 }
 export async function regionAt(lat, lon, { key, fetchImpl = fetch } = {}) {
   if (!key) return null;
@@ -103,7 +105,8 @@ export function createCachedGeocoder({ root, keyPath = KAKAO_KEY_PATH, fetchImpl
       }
       if (cached && typeof cached === 'object' && !Array.isArray(cached) && !cached.noAddressAt
         && (cached.buildingName == null || typeof cached.buildingName === 'string')
-        && (cached.address == null || typeof cached.address === 'string')) return cached;
+        && (cached.address == null || typeof cached.address === 'string')
+        && (cached.dong == null || typeof cached.dong === 'string')) return cached;
       let key;
       try { key = readKakaoKey(keyPath); }
       catch { fail('키 권한'); return { reason: '주소 미조회: 카카오 키 권한 오류' }; }
