@@ -1,19 +1,28 @@
 #!/usr/bin/env node
 // spendingInbox 알림 원문을 날짜별 JSONL로 보관한다. 파싱과 발송은 후속 단계의 몫이다.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, truncateSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, truncateSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { getFirestoreAdmin } from '../lib/firestore-admin.mjs';
 import { readSpendingInbox, deleteSpendingInboxDocs } from '../lib/spending-inbox.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { readDailySpending, spendingRawPath, spendingSummaryPath } from '../lib/spending-daily.mjs';
+import { spendingRawPath, spendingSummaryPath, writeSpendingSummary } from '../lib/spending-daily.mjs';
+import { enrichmentMtime, loadEnrichment, ENRICHMENT_VERSION } from '../lib/spending-enrich.mjs';
 
 const FILE_OPS = { appendFileSync, existsSync, mkdirSync, readFileSync, truncateSync };
 const TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
 const MAX_SUMMARY_RECOVERIES = 16;
 
+// 요약은 원문 + 소비 설정 + 뱅크샐러드 분류에서 나온다. 설정·분류가 요약보다 새롭거나 요약의 보강 판이 낮으면
+// 그날 요약도 다시 계산한다(고정비·카드 표를 고치면 지난날 화면 칸도 따라 바뀌게, 2026-11-01).
+function summaryVersion(summaryPath) {
+  try { return JSON.parse(readFileSync(summaryPath, 'utf8')).enrichmentVersion ?? 0; }
+  catch { return 0; }
+}
+
 function summariesNeedingRecovery(spendingDir, changedDates) {
   if (!existsSync(spendingDir)) return [];
+  const dependsOn = enrichmentMtime(spendingDir);
   const candidates = [];
   for (const year of readdirSync(spendingDir, { withFileTypes: true })) {
     if (!year.isDirectory() || !/^\d{4}$/.test(year.name)) continue;
@@ -27,7 +36,8 @@ function summariesNeedingRecovery(spendingDir, changedDates) {
       const summaryPath = spendingSummaryPath(date, spendingDir);
       try {
         const rawMtime = statSync(rawPath).mtimeMs;
-        if (!existsSync(summaryPath) || rawMtime >= statSync(summaryPath).mtimeMs) {
+        if (!existsSync(summaryPath) || Math.max(rawMtime, dependsOn) >= statSync(summaryPath).mtimeMs
+            || summaryVersion(summaryPath) < ENRICHMENT_VERSION) {
           candidates.push({ date, rawMtime });
         }
       } catch { /* A disappearing file must not block recovery of other dates. */ }
@@ -89,6 +99,7 @@ export async function ingestSpendingInbox({
   let plannedCount = 0;
   let failedCount = 0;
   const changedDates = new Set();
+  let enrichmentProblems = '';
 
   for (const document of documents) {
     const date = dateFromKstTimestamp(document.ts);
@@ -147,25 +158,27 @@ export async function ingestSpendingInbox({
     let recoveryDates = [];
     try { recoveryDates = summariesNeedingRecovery(spendingDir, changedDates); }
     catch { failedCount += 1; }
-    for (const date of [...changedDates, ...recoveryDates]) {
+    const summaryDates = [...changedDates, ...recoveryDates];
+    let enrichment;
+    // 보강 입력을 읽기 직전 시각. 요약 시각을 이것으로 맞춰, 읽은 뒤 바뀐 설정은 다음 회차가 반영한다.
+    const stamp = new Date();
+    if (summaryDates.length) {
+      try { enrichment = loadEnrichment(spendingDir); }
+      catch { enrichment = undefined; failedCount += 1; }
+      if (enrichment?.problems.length) enrichmentProblems = enrichment.problems.join(',');
+    }
+    for (const date of summaryDates) {
       try {
-        const summaryPath = spendingSummaryPath(date, spendingDir);
         // Keep the raw snapshot stable until its summary is committed. An overlapping append
         // must happen afterward, so its raw mtime remains newer if that run then fails.
-        await withLock(spendingRawPath(date, spendingDir), () => withLock(summaryPath, () => {
-          const summary = readDailySpending(date, { spendingDir });
-          const content = `${JSON.stringify(summary, null, 2)}\n`;
-          if (!existsSync(summaryPath) || readFileSync(summaryPath, 'utf8') !== content) {
-            writeAtomic(summaryPath, content);
-          }
-        }));
+        await writeSpendingSummary(date, { spendingDir, enrichment, stamp });
       } catch {
         // 원문은 이미 검증했다. 파생 요약 오류는 원문 수집·삭제를 되돌리지 않는다.
         failedCount += 1;
       }
     }
   }
-  logger.log(`[ingest-spending-inbox] read=${documents.length} planned=${plannedCount} duplicate=${duplicateCount} invalid=${invalidCount} failed=${failedCount} deleted=${dryRun ? 0 : confirmedIds.length} dryRun=${dryRun}`);
+  logger.log(`[ingest-spending-inbox] read=${documents.length} planned=${plannedCount} duplicate=${duplicateCount} invalid=${invalidCount} failed=${failedCount} deleted=${dryRun ? 0 : confirmedIds.length} dryRun=${dryRun}${enrichmentProblems ? ` enrichmentProblems=${enrichmentProblems}` : ''}`);
   return { read: documents.length, planned: plannedCount, duplicate: duplicateCount,
     invalid: invalidCount, failed: failedCount, deleted: dryRun ? 0 : confirmedIds.length };
 }

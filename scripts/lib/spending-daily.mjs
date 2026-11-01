@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { VAULT_PATHS } from './vault-paths.mjs';
 import { parseSpendingRecord, parseSpendingRecords } from './spending-parse.mjs';
 import { validateRecipientDecisions } from './spending-settings.mjs';
+import { enrichEntry, writeDailySummary, EMPTY_ENRICHMENT, ENRICHMENT_VERSION } from './spending-enrich.mjs';
 
 export function spendingRawPath(date, spendingDir = VAULT_PATHS.spending) {
   return join(spendingDir, date.slice(0, 4), `${date}.jsonl`);
@@ -22,8 +23,10 @@ export function readSpendingSettings(spendingDir = VAULT_PATHS.spending) {
   return { ...settings, recipientDecisions: settings.recipientDecisions ?? [] };
 }
 
+// enrichment(spending-enrich.loadEnrichment)를 주면 결제마다 instrument·fixedCost·categoryGuess를 채운다. 안 주면 null.
 export function readDailySpending(date, { spendingDir = VAULT_PATHS.spending, ownAccounts = [],
-  recipientDecisions } = {}) {
+  recipientDecisions, enrichment: given } = {}) {
+  const enrichment = given ?? EMPTY_ENRICHMENT;
   const path = spendingRawPath(date, spendingDir);
   const hasSource = existsSync(path);
   const records = [];
@@ -49,6 +52,8 @@ export function readDailySpending(date, { spendingDir = VAULT_PATHS.spending, ow
     && !isOnnuriBillOmission(record));
   return {
     date,
+    // 보강 칸을 채운 규칙 판. 보강 없이 읽은 요약(미리보기 등)은 0이다.
+    enrichmentVersion: enrichment === EMPTY_ENRICHMENT ? 0 : ENRICHMENT_VERSION,
     hasSource,
     total: expenses.reduce((sum, entry) => sum + entry.amount, 0),
     expenseCount: expenses.length,
@@ -61,10 +66,20 @@ export function readDailySpending(date, { spendingDir = VAULT_PATHS.spending, ow
     onnuriBillOmissionCount,
     byCategory: Object.fromEntries(['일반', '교통비', '온누리상품권', '계좌이체'].map((category) => [category,
       expenses.filter((entry) => entry.category === category).reduce((sum, entry) => sum + entry.amount, 0)])),
-    entries: entries.map(({ at, amount, merchant, card, cardLast4, cardMask, status, category,
-      recipientBank, recipientLast4, recipient, autopay }) => ({ at, amount, merchant, card, cardLast4, cardMask, status,
-      category, recipientBank, recipientLast4, recipient, ...(autopay ? { autopay: true } : {}) })),
+    entries: entries.map((entry) => {
+      const { at, amount, merchant, card, cardLast4, cardMask, status, category,
+        recipientBank, recipientLast4, recipient, autopay } = entry;
+      return { at, amount, merchant, card, cardLast4, cardMask, status,
+        category, recipientBank, recipientLast4, recipient, ...(autopay ? { autopay: true } : {}),
+        ...enrichEntry(entry, enrichment) };
+    }),
   };
+}
+
+// 하루 요약 파일 쓰기(수집 잡·아르고스 전달·재생성 도구 공통). enrichment는 spending-enrich.loadEnrichment 결과.
+export function writeSpendingSummary(date, { spendingDir = VAULT_PATHS.spending, enrichment, stamp } = {}) {
+  return writeDailySummary(date, { spendingDir, enrichment, stamp, read: readDailySpending,
+    rawPath: spendingRawPath(date, spendingDir), summaryPath: spendingSummaryPath(date, spendingDir) });
 }
 
 export function formatTodaySpending(summary) {

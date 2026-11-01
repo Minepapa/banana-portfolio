@@ -9,7 +9,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createLocationStore } from '../jobs/owntracks-receiver.mjs';
 import { locationPointsFromEvents, spendingRecordsFromEvents } from '../lib/argos-forward.mjs';
-import { readDailySpending, spendingRawPath, spendingSummaryPath } from '../lib/spending-daily.mjs';
+import { spendingRawPath, writeSpendingSummary } from '../lib/spending-daily.mjs';
+import { loadEnrichment } from '../lib/spending-enrich.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 
@@ -43,13 +44,11 @@ async function appendSpending(records, spendingDir) {
     });
     if (added) { written += 1; changed.add(date); }
   }
-  for (const date of changed) {
-    const summaryPath = spendingSummaryPath(date, spendingDir);
-    await withLock(spendingRawPath(date, spendingDir), () => withLock(summaryPath, () => {
-      const content = `${JSON.stringify(readDailySpending(date, { spendingDir }), null, 2)}\n`;
-      if (!existsSync(summaryPath) || readFileSync(summaryPath, 'utf8') !== content) writeAtomic(summaryPath, content);
-    }));
-  }
+  // 수집 잡과 같은 요약 쓰기(보강 칸 포함). 따로 쓰면 화면 칸이 null로 덮인다.
+  const stamp = new Date();
+  const enrichment = changed.size ? loadEnrichment(spendingDir) : undefined;
+  if (enrichment?.problems.length) console.error(`[argos-forward] enrichmentProblems=${enrichment.problems.join(',')}`);
+  for (const date of changed) await writeSpendingSummary(date, { spendingDir, enrichment, stamp });
   return written;
 }
 

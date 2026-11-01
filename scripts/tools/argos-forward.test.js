@@ -46,6 +46,7 @@ test('미리보기는 쓰지 않고, 적용은 두 번 돌아도 한 번만 쓴�
   assert.equal(JSON.parse(spendingLines[0]).ts, '2040-02-03 12:00:00');
   const summary = JSON.parse(readFileSync(join(spendingDir, '2040', '2040-02-03.summary.json'), 'utf8'));
   assert.equal(summary.hasSource, true); // 파생 요약도 함께 다시 만든다
+  assert.equal(summary.enrichmentVersion, 1, '수집 잡과 같은 길로 써서 화면 칸(보강)이 지워지지 않는다');
 });
 
 test('kinds로 한쪽만 넘긴다', async (t) => {

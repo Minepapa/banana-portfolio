@@ -18,9 +18,9 @@ test('함께 쓰는 일정은 소유자 표 첫 소유자로 묶고 종일 먼�
   ] });
   assert.equal(day.schemaVersion, 1);
   assert.equal(day.date, '2026-10-30');
-  assert.deepEqual(day.events.map((item) => [item.title, item.owner, item.sharedWith]),
-    [['휴가', '나', []], ['병원', '휘영', []], ['저녁', '나', ['휘영']]]);
-  assert.deepEqual(Object.keys(day.events[1]), ['owner', 'sharedWith', 'title', 'start', 'end', 'allDay', 'location', 'calendar']);
+  assert.deepEqual(day.events.map((item) => [item.title, item.owner, item.person, item.sharedWith]),
+    [['휴가', '나', '나', []], ['병원', '휘영', '휘영', []], ['저녁', '나', '가족', ['휘영']]]);
+  assert.deepEqual(Object.keys(day.events[1]), ['owner', 'person', 'sharedWith', 'title', 'start', 'end', 'allDay', 'location', 'calendar']);
   assert.equal(day.events[1].location, '송도');
 });
 
@@ -64,4 +64,12 @@ test('KST 날짜는 UTC 15:00에 넘어가고 날짜 목록은 달·해를 넘�
   assert.equal(kstDate(new Date('2026-10-30T14:59:00Z')), '2026-10-30');
   assert.equal(kstDate(new Date('2026-10-30T15:00:00Z')), '2026-10-31');
   assert.deepEqual(nextDates('2026-12-30', 3), ['2026-12-30', '2026-12-31', '2027-01-01']);
+});
+
+test('사람 태그: 표에 없는 캘린더(기타)는 사람 수에 넣지 않는다', async () => {
+  const { personOf } = await import('./calendar-days.mjs');
+  assert.equal(personOf({ owner: '미네', sharedWith: [] }), '미네');
+  assert.equal(personOf({ owner: '나', sharedWith: ['기타'] }), '나');
+  assert.equal(personOf({ owner: '기타', sharedWith: [] }), '기타');
+  assert.equal(personOf({ owner: '휘영', sharedWith: ['미네'] }), '가족');
 });

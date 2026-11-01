@@ -13,6 +13,13 @@ export function calendarDayPath(date, root = VAULT_PATHS.root) {
   return join(root, ...VAULT_REL.calendarDays.split('/'), date.slice(0, 4), `${date}.json`);
 }
 
+// 화면 사람 색 태그(올림푸스 헤르메스 방, 2026-11-01): 같은 일정이 두 사람 이상 캘린더에 있으면 '가족', 아니면 소유자.
+// 소유자 표에 없는 캘린더(기타)는 사람 수에 넣지 않는다.
+export function personOf(event) {
+  const people = new Set([event.owner, ...(event.sharedWith ?? [])].filter((person) => person && person !== '기타'));
+  return people.size >= 2 ? '가족' : event.owner;
+}
+
 // 함께 쓰는 일정(같은 iCalUID·시작)은 소유자 표 순서의 첫 소유자 하나로 묶고 나머지는 sharedWith에 둔다.
 // 순서는 종일 먼저, 그다음 시작 시각(listEventsForKstDay와 같은 기준). 시작이 같으면 소유자 표 순서·끝·제목·캘린더로
 // 끝까지 정한다 — API 동률 순서가 흔들려도 같은 내용이면 같은 바이트여야 다시 쓰지 않는다.
@@ -23,6 +30,7 @@ export function buildCalendarDay({ date, events, owners }) {
   const merged = groupEventsByOwner(events, owners).flatMap(({ events: ownerEvents }) => ownerEvents);
   const entries = merged.map((event) => ({
     owner: event.owner,
+    person: personOf(event),
     sharedWith: event.sharedWith ?? [],
     title: event.title,
     start: event.start,

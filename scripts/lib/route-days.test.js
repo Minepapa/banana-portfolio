@@ -26,8 +26,11 @@ test('표시 시각(HH:MM, 끝 24:00)으로 걸린 분을 낸다', () => {
 
 test('머문 곳·이동·외출을 걸린 분과 함께 구조화한다', () => {
   const day = buildRouteDay({ date: '2026-10-29', route });
-  assert.equal(day.schemaVersion, 2);
+  assert.equal(day.schemaVersion, 3);
   assert.deepEqual(day.entries.map(({ kind, minutes }) => [kind, minutes]), [['stay', 383], ['move', 71], ['stay', 680], ['stay', 254]]);
+  assert.deepEqual(day.entries.map((entry) => entry.order), [1, undefined, 2, 3], '체류만 들른 순서 번호');
+  // 집 밖: 이동 71 + 회사 680(그 안 외출은 회사 체류에 이미 들어 있음). 집 체류는 외출만 센다(없음).
+  assert.deepEqual(day.summary, { distanceKm: 41.2, stays: 3, outsideMinutes: 751 });
   assert.equal(day.entries[0].lat, 37.387712);
   assert.deepEqual(day.entries[1], { kind: 'move', start: '06:23', end: '07:34', startAt: 'a', endAt: 'b', minutes: 71,
     label: '이동 · 차량 약 41km', lat: 1, lon: 2, distanceKm: 41.2, mode: '차량',
@@ -65,7 +68,20 @@ test('파일은 항목마다 한 줄이고 그대로 다시 읽힌다(track 없�
   const day = buildRouteDay({ date: '2026-10-29', route: [...route, { kind: 'move', start: '19:00', end: '19:10', label: '이동' }] });
   const text = routeDayText(day);
   assert.deepEqual(JSON.parse(text), day);
-  assert.equal(text.split('\n').length, day.entries.length + 7);
+  assert.equal(text.split('\n').length, day.entries.length + 8);
   assert.deepEqual(day.entries.at(-1).track, []);
-  assert.equal(routeDayText({ schemaVersion: 2, date: '2026-10-29', entries: [] }), '{\n  "schemaVersion": 2,\n  "date": "2026-10-29",\n  "entries": []\n}\n');
+  const empty = buildRouteDay({ date: '2026-10-29', route: [] });
+  assert.deepEqual(empty.summary, { distanceKm: 0, stays: 0, outsideMinutes: 0 });
+  assert.equal(routeDayText(empty), '{\n  "schemaVersion": 3,\n  "date": "2026-10-29",\n  "summary": {"distanceKm":0,"stays":0,"outsideMinutes":0},\n  "entries": []\n}\n');
+});
+
+test('하루 요약: 집 체류 중 잠깐 나간 시간은 집 밖으로 세고, 걸린 시간을 모르는 항목은 더하지 않는다', () => {
+  const day = buildRouteDay({ date: '2026-10-30', route: [
+    { kind: 'stay', start: '00:00', end: '12:00', label: '집', registered: true, placeName: '집', lat: 1, lon: 1,
+      outings: [{ start: '09:00', end: '09:20', area: '송도동', lat: 1, lon: 1 }] },
+    { kind: 'move', start: '12:00', end: '', label: '이동', distanceKm: 1.25 },
+    { kind: 'stay', start: '12:30', end: '13:00', label: '미등록: 송도동', registered: false, lat: 2, lon: 2 },
+    { kind: 'stay', start: '13:00', end: '14:00', label: '집(미등록 같은 이름)', registered: false, placeName: '집', lat: 1, lon: 1 },
+  ] });
+  assert.deepEqual(day.summary, { distanceKm: 1.3, stays: 3, outsideMinutes: 20 + 30 + 60 });
 });

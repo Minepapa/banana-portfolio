@@ -10,7 +10,11 @@ import { writeAtomic } from './state-writer.mjs';
 
 // 2(2026-10-31): 이동에 track(거른 점 [위도, 경도, 초]) 추가. track[0]은 출발 체류의 마지막 점이라 시각이
 // 이동 시작보다 이르고(자정에 잘린 체류면 전날일 수 있다), 관측점이 없는 이동은 빈 배열이다. 옛 판의 파일은 재계산이 다시 쓴다(routeDayCurrent).
-export const ROUTE_DAY_SCHEMA = 2;
+// 3(2026-11-01, 올림푸스 헤르메스 방): 체류에 들른 순서 order(1부터), 파일에 하루 요약 summary
+// { distanceKm, stays, outsideMinutes } 추가. 2판 파일은 재계산이 다시 쓴다.
+export const ROUTE_DAY_SCHEMA = 3;
+// 집 밖 시간의 기준이 되는 등록 장소 이름(30_Wiki/32_Places/집). 장소 노트에 집 표시 칸이 따로 없어 이름으로 본다.
+export const HOME_PLACE = '집';
 
 export function routeDayPath(date, root = VAULT_PATHS.root) {
   return join(root, ...VAULT_REL.locationDays.split('/'), date.slice(0, 4), `${date}.json`);
@@ -42,7 +46,29 @@ export function buildRouteDay({ date, route }) {
         startAt: outing.startAt ?? null, endAt: outing.endAt ?? null, minutes: routeMinutes(outing.start, outing.end),
         area: outing.area ?? null, lat: rounded(outing.lat), lon: rounded(outing.lon) })) };
   });
-  return { schemaVersion: ROUTE_DAY_SCHEMA, date, entries };
+  let order = 0;
+  for (const entry of entries) if (entry.kind === 'stay') { order += 1; entry.order = order; }
+  return { schemaVersion: ROUTE_DAY_SCHEMA, date, summary: routeDaySummary(entries), entries };
+}
+
+// 하루 요약: 이동 거리 합, 머문 곳 수, 집 밖에 있던 분(이동 + 집 아닌 체류 + 집 체류 중 잠깐 나간 시간).
+// 걸린 시간을 모르는 항목(minutes null)은 더하지 않는다.
+export function routeDaySummary(entries) {
+  const minutes = (value) => (Number.isFinite(value) ? value : 0);
+  let distance = 0;
+  let outside = 0;
+  for (const entry of entries) {
+    if (entry.kind === 'move') {
+      distance += Number.isFinite(entry.distanceKm) ? entry.distanceKm : 0;
+      outside += minutes(entry.minutes);
+    } else if (entry.registered && entry.placeName === HOME_PLACE) {
+      outside += entry.outings.reduce((sum, outing) => sum + minutes(outing.minutes), 0);
+    } else {
+      outside += minutes(entry.minutes);
+    }
+  }
+  return { distanceKm: Math.round(distance * 10) / 10, stays: entries.filter((entry) => entry.kind === 'stay').length,
+    outsideMinutes: outside };
 }
 
 // 지금 판의 파일이 있는지. 없거나 옛 판·깨진 파일이면 재계산이 채운다.
@@ -56,7 +82,7 @@ export function routeDayCurrent(date, root = VAULT_PATHS.root) {
 // 항목 하나를 한 줄로 쓴다. 들여쓴 JSON은 track 점 하나가 다섯 줄이 돼 파일이 수십 KB로 커진다(2026-10-31 리뷰).
 export function routeDayText(day) {
   const entries = day.entries.map((entry) => `    ${JSON.stringify(entry)}`).join(',\n');
-  return `{\n  "schemaVersion": ${day.schemaVersion},\n  "date": ${JSON.stringify(day.date)},\n  "entries": [${entries ? `\n${entries}\n  ` : ''}]\n}\n`;
+  return `{\n  "schemaVersion": ${day.schemaVersion},\n  "date": ${JSON.stringify(day.date)},\n  "summary": ${JSON.stringify(day.summary)},\n  "entries": [${entries ? `\n${entries}\n  ` : ''}]\n}\n`;
 }
 
 // 같은 내용이면 다시 쓰지 않는다(LiveSync 부담). 반환: 쓴 경로 또는 null.

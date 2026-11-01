@@ -552,23 +552,30 @@ def breakdown(transactions, month, settings, previous_covered):
         return [(item, spent) for item in transactions if item["date"] and item["date"][:7] == target
                 for spent in [spent_amount(item)] if spent is not None]
 
+    def by_instrument(month_rows):
+        instruments = {}
+        for item, spent in month_rows:
+            name, via = resolve(item)
+            bucket = instruments.setdefault(name, {"instrument": name, "count": 0, "amount": Decimal(0), "routes": {}})
+            bucket["count"] += 1
+            bucket["amount"] += spent
+            if via:
+                bucket["routes"][via] = bucket["routes"].get(via, Decimal(0)) + spent
+        return instruments
+
+    def by_category(month_rows):
+        categories = {}
+        for item, spent in month_rows:
+            override = overrides.get(normalize_merchant(item["description"]))
+            name = (override or {}).get("category") or item["original_category"] or "미분류"
+            bucket = categories.setdefault(name, {"category": name, "count": 0, "amount": Decimal(0),
+                                                  "owner_override": 0})
+            bucket["count"] += 1
+            bucket["amount"] += spent
+            bucket["owner_override"] += 1 if override else 0
+        return categories
+
     rows = spent_rows(month)
-    instruments = {}
-    for item, spent in rows:
-        name, via = resolve(item)
-        bucket = instruments.setdefault(name, {"instrument": name, "count": 0, "amount": Decimal(0), "routes": {}})
-        bucket["count"] += 1
-        bucket["amount"] += spent
-        if via:
-            bucket["routes"][via] = bucket["routes"].get(via, Decimal(0)) + spent
-    categories = {}
-    for item, spent in rows:
-        override = overrides.get(normalize_merchant(item["description"]))
-        name = (override or {}).get("category") or item["original_category"] or "미분류"
-        bucket = categories.setdefault(name, {"category": name, "count": 0, "amount": Decimal(0), "owner_override": 0})
-        bucket["count"] += 1
-        bucket["amount"] += spent
-        bucket["owner_override"] += 1 if override else 0
     year, number = (int(part) for part in month.split("-"))
     previous_month = f"{year - 1}-12" if number == 1 else f"{year}-{number - 1:02}"
     previous_rows = spent_rows(previous_month) if previous_covered else None
@@ -594,8 +601,16 @@ def breakdown(transactions, month, settings, previous_covered):
                  **({"routes": {via: amount_text(value) for via, value in group["routes"].items()}}
                     if "routes" in group else {})} for group in ordered]
 
-    return {"by_instrument": rows_out(instruments, "instrument"), "by_category": rows_out(categories, "category"),
-            "fixed": fixed, "previous_month": previous_month if previous_covered else None}
+    # 지난달 같은 기준 합계(올림푸스 '지난달 대비', 2026-11-01). 내보내기가 지난달 전체를 덮지 않으면 null.
+    previous = None
+    if previous_rows is not None:
+        previous = {"month": previous_month,
+                    "total": amount_text(sum((spent for _, spent in previous_rows), Decimal(0))),
+                    "by_instrument": rows_out(by_instrument(previous_rows), "instrument"),
+                    "by_category": rows_out(by_category(previous_rows), "category")}
+    return {"by_instrument": rows_out(by_instrument(rows), "instrument"),
+            "by_category": rows_out(by_category(rows), "category"),
+            "fixed": fixed, "previous_month": previous_month if previous_covered else None, "previous": previous}
 
 
 def month_bounds(month):

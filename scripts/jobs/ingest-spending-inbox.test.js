@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, existsSync,
-  symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+  statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ingestSpendingInbox } from './ingest-spending-inbox.mjs';
@@ -214,6 +214,49 @@ test('원문보다 오래된 요약은 신규 문서가 없어도 다시 계산�
   await ingestSpendingInbox({ db: fakeDb([]), spendingDir: directory, logger: quietLogger });
   assert.equal(JSON.parse(readFileSync(summaryPath, 'utf8')).total, 4000);
   assert.equal(lines(directory, '2026-10-10').length, 2);
+});
+
+test('소비 설정이 요약보다 새로우면 지난날 요약에도 화면 칸을 다시 채우고, 내용이 같으면 수정 시각만 올린다', async (t) => {
+  const directory = fixture(t);
+  await ingestSpendingInbox({ db: fakeDb([{ ...notification('first'), sender: '하나카드',
+    body: '사용금액 : 2,500원\n가맹점 : 가상식당' }]), spendingDir: directory, logger: quietLogger });
+  const summaryPath = join(directory, '2026', '2026-10-10.summary.json');
+  const before = JSON.parse(readFileSync(summaryPath, 'utf8')).entries[0];
+  assert.deepEqual([before.instrument, before.fixedCost, before.categoryGuess], [null, null, null]);
+  utimesSync(summaryPath, new Date(1000), new Date(1000));
+  writeFileSync(join(directory, 'settings.json'), JSON.stringify({ recipientDecisions: [],
+    merchantCategories: [{ merchant: '가상식당', category: '식비' }] }));
+  await ingestSpendingInbox({ db: fakeDb([]), spendingDir: directory, logger: quietLogger });
+  assert.deepEqual(JSON.parse(readFileSync(summaryPath, 'utf8')).entries[0].categoryGuess,
+    { category: '식비', subcategory: null, via: 'owner' });
+  const settingsPath = join(directory, 'settings.json');
+  utimesSync(summaryPath, new Date(1000), new Date(1000));
+  utimesSync(settingsPath, new Date(2000), new Date(2000));
+  const content = readFileSync(summaryPath, 'utf8');
+  await ingestSpendingInbox({ db: fakeDb([]), spendingDir: directory, logger: quietLogger });
+  assert.equal(readFileSync(summaryPath, 'utf8'), content);
+  assert.ok(statSync(summaryPath).mtimeMs > 2000, '같은 내용이면 다시 쓰지 않고 수정 시각만 올려 다음 회차 후보에서 빠진다');
+});
+
+test('보강 판이 없는 옛 요약은 원문·설정보다 새로워도 다시 계산해 화면 칸을 채운다', async (t) => {
+  const directory = fixture(t);
+  await ingestSpendingInbox({ db: fakeDb([{ ...notification('first'), sender: '하나카드',
+    body: '사용금액 : 2,500원\n가맹점 : 가상식당' }]), spendingDir: directory, logger: quietLogger });
+  const summaryPath = join(directory, '2026', '2026-10-10.summary.json');
+  const old = JSON.parse(readFileSync(summaryPath, 'utf8'));
+  delete old.enrichmentVersion;
+  for (const entry of old.entries) { delete entry.instrument; delete entry.fixedCost; delete entry.categoryGuess; }
+  writeFileSync(summaryPath, `${JSON.stringify(old, null, 2)}\n`);
+  const future = new Date(Date.now() + 60_000);
+  utimesSync(summaryPath, future, future);
+  const logs = [];
+  writeFileSync(join(directory, 'settings.json'), JSON.stringify({ recipientDecisions: [], fixedCosts: [{ name: 'x' }] }));
+  utimesSync(join(directory, 'settings.json'), new Date(0), new Date(0));
+  await ingestSpendingInbox({ db: fakeDb([]), spendingDir: directory, logger: { log: (line) => logs.push(line) } });
+  const summary = JSON.parse(readFileSync(summaryPath, 'utf8'));
+  assert.equal(summary.enrichmentVersion, 1);
+  assert.ok('categoryGuess' in summary.entries[0]);
+  assert.match(logs.at(-1), /enrichmentProblems=fixedCosts/, '깨진 설정 칸은 로그로 드러난다');
 });
 
 test('요약 재계산은 원문 잠금이 풀릴 때까지 기다린다', async (t) => {

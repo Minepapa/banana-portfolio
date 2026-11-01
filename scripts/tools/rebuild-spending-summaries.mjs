@@ -4,8 +4,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
-import { withLock, writeAtomic } from '../lib/state-writer.mjs';
-import { readDailySpending, spendingRawPath, spendingSummaryPath } from '../lib/spending-daily.mjs';
+import { writeSpendingSummary } from '../lib/spending-daily.mjs';
+import { loadEnrichment } from '../lib/spending-enrich.mjs';
 
 export async function rebuildSpendingSummaries({ spendingDir = VAULT_PATHS.spending,
   apply = false, logger = console } = {}) {
@@ -17,17 +17,13 @@ export async function rebuildSpendingSummaries({ spendingDir = VAULT_PATHS.spend
     }
   }
   let changed = 0;
+  // 수집 잡과 같은 요약 쓰기(원문 → 요약 잠금, 보강 칸 포함).
+  const stamp = new Date();
+  const enrichment = apply && dates.length ? loadEnrichment(spendingDir) : undefined;
+  if (enrichment?.problems.length) logger.log(`[spending-summary] enrichmentProblems=${enrichment.problems.join(',')}`);
   for (const date of dates.sort()) {
-    const path = spendingSummaryPath(date, spendingDir);
     if (apply) {
-      // 수집 잡과 같은 원문 → 요약 락 순서를 지켜 원문 쓰기 중 스냅샷을 피한다.
-      await withLock(spendingRawPath(date, spendingDir), () => withLock(path, () => {
-        const content = `${JSON.stringify(readDailySpending(date, { spendingDir }), null, 2)}\n`;
-        if (!existsSync(path) || readFileSync(path, 'utf8') !== content) {
-          writeAtomic(path, content);
-          changed += 1;
-        }
-      }));
+      if (await writeSpendingSummary(date, { spendingDir, enrichment, stamp })) changed += 1;
     } else changed += 1;
   }
   logger.log(`[spending-summary] dates=${dates.length} ${apply ? 'written' : 'planned'}=${changed} dryRun=${!apply}`);

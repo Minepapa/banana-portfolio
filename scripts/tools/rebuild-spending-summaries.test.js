@@ -26,6 +26,20 @@ test('기존 일별 원문은 dry-run에서 그대로 두고 명시 적용 시 �
   assert.equal((await rebuildSpendingSummaries({ spendingDir, apply: true, logger })).changed, 0);
 });
 
+test('재생성도 수집 잡과 같은 길로 써서 화면 칸(보강)을 채운다', async (t) => {
+  const spendingDir = mkdtempSync(join(tmpdir(), 'spending-rebuild-enrich-'));
+  t.after(() => rmSync(spendingDir, { recursive: true, force: true }));
+  mkdirSync(join(spendingDir, '2026'));
+  writeFileSync(join(spendingDir, '2026', '2026-10-10.jsonl'), `${JSON.stringify({ ts: '2026-10-10 12:34:00', sender: '하나카드',
+    body: '사용금액 : 2,500원\n가맹점 : 가상식당' })}\n`);
+  writeFileSync(join(spendingDir, 'settings.json'), JSON.stringify({ recipientDecisions: [],
+    merchantCategories: [{ merchant: '가상식당', category: '식비' }] }));
+  await rebuildSpendingSummaries({ spendingDir, apply: true, logger: { log() {} } });
+  const summary = JSON.parse(readFileSync(join(spendingDir, '2026', '2026-10-10.summary.json'), 'utf8'));
+  assert.equal(summary.enrichmentVersion, 1);
+  assert.deepEqual(summary.entries[0].categoryGuess, { category: '식비', subcategory: null, via: 'owner' });
+});
+
 test('원문 락을 기다리는 동안 요약 락을 먼저 잡지 않는다', async (t) => {
   const spendingDir = mkdtempSync(join(tmpdir(), 'spending-rebuild-'));
   t.after(() => rmSync(spendingDir, { recursive: true, force: true }));

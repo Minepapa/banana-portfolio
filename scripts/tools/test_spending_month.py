@@ -261,6 +261,10 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual((fixed["통신"]["previous_amount"], fixed["통신"]["change"]), ("28000", "2000"))
         self.assertEqual(fixed["구독"]["status"], "missing")
         self.assertEqual(tables["previous_month"], "2040-01")
+        self.assertEqual(tables["previous"], {
+            "month": "2040-01", "total": "28000",
+            "by_instrument": [{"instrument": "Card A", "count": 1, "amount": "28000", "routes": {}}],
+            "by_category": [{"category": "주거/통신", "count": 1, "amount": "28000", "owner_override": 0}]})
 
     def test_simple_pay_rows_follow_the_card_alert_that_rang_with_them(self):
         fixture = Fixture(self.root, [
@@ -381,6 +385,7 @@ class CoverageTests(unittest.TestCase):
              "variable": False}]}), encoding="utf-8")
         tables = fixture.run("2040-02-01", "2040-02-29", "2040-02")["breakdown"]
         self.assertIsNone(tables["previous_month"])
+        self.assertIsNone(tables["previous"])
         self.assertEqual((tables["fixed"][0]["previous_amount"], tables["fixed"][0]["change"]), (None, None))
 
     def test_range_check_has_no_breakdown(self):
