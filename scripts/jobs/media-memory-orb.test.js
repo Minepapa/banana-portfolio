@@ -8,7 +8,8 @@ import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { fixtureCriteria } from '../lib/mine-emotion-criteria.fixture.js';
 import { MAX_JOB_MS, NIGHTLY_LIMIT, ORB_FIELDS, PROMPT_VERSIONS, applyOrbFields, attemptState, ollamaPhotoDecision, orbSchema, validateOllamaOrb, readRuns,
-  requireRegistryFields, run, upsertOrbIndex, memoryOrbCounts } from './media-memory-orb.mjs';
+  requireRegistryFields, run, upsertOrbIndex, memoryOrbCounts, SCENE_ENGINE, SCENES_FILE, judgeSceneMoment } from './media-memory-orb.mjs';
+import { PHOTO_TEXT_JUDGMENTS_FILE, PHOTO_TEXT_PROMPT_VERSION, SCENE_PROMPT_VERSION } from '../lib/mine-photo-scene.mjs';
 import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
 import { llmRunFailed } from '../lib/llm-run-outcome.mjs';
 
@@ -429,4 +430,141 @@ test('종료코드 규칙: 남은 잡 예산으로 잘린 claude 호출의 시�
   assert.equal(summary.failed.length, 0);
   assert.equal(summary.timedOut, true);
   assert.equal(llmRunFailed(memoryOrbCounts(summary)), false);
+});
+
+// ---- 사진 글 판(scene-claude): 로컬 장면 낱말 → Claude 두 번 ----
+const sceneWords = (overrides = {}) => ({ mineVisible: '보임', mineFaceView: '정면', mineMask: '안 씀', faceCovered: '안 가려짐',
+  mineExpression: '입꼬리가 올라가고 이가 보임', mineAction: '케이크 앞에 앉아 있음', place: '실내', occasion: '생일 케이크 앞', people: '어른 1명',
+  other: '없음', ...overrides });
+const AFTERNOON = () => Date.parse('2026-11-01T14:00:00+09:00');
+function sceneOptions(fixture, { scene = sceneWords(), answers = [ollamaAnswer({ 기쁨: '보통' })], ...overrides } = {}) {
+  const ollama = []; const claude = [];
+  let index = 0;
+  // 오너 메모 감정이 있으면 한 번만 묻는다 — 두 번 묻기 시험은 메모 없는 순간으로.
+  if (!overrides.keepMemo) for (const item of fixture.candidates) item.memo = '';
+  delete overrides.keepMemo;
+  const visible = new Map(fixture.candidates.map((item) => [item.id, { i: 0, score: 0.9, bbox: [700, 600, 1860, 1760] }]));
+  return { ollama, claude, options: options(fixture, { engine: SCENE_ENGINE, now: AFTERNOON, cooldown: () => false, anchorScenes: {},
+    mineFaces: visible, photoFaces: new Map([...visible].map(([id, face]) => [id, [{ ...face, det: 0.9, blur: 80 }]])),
+    copyPhoto: () => ({ width: 3000, height: 4000 }), readImage: () => 'aGk=',
+    invoke: async (request) => { ollama.push(request); return { json: scene, usage: { promptTokens: 1 } }; },
+    judge: async (prompt) => { claude.push(prompt); const answer = answers[Math.min(index, answers.length - 1)]; index += 1; return JSON.stringify(answer); },
+    ...overrides }) };
+}
+const ledger = (fixture) => readFileSync(join(fixture.out, PHOTO_TEXT_JUDGMENTS_FILE), 'utf8').trim().split('\n').map(JSON.parse);
+
+test('scene-claude: 사진은 로컬 모델에만(base64), Claude에는 장면 낱말 글만 두 번, 판 이름·호출 수를 판단 기록에', async (t) => {
+  const fixture = setup(t);
+  const { ollama, claude, options: opts } = sceneOptions(fixture);
+  const summary = await run(opts);
+  assert.equal(summary.written, 1);
+  assert.equal(ollama.length, 1);
+  assert.deepEqual(ollama[0].images, ['aGk=']);
+  assert.equal(JSON.stringify(ollama[0].schema).includes('emotion'), false, '장면 낱말 답 모양에 감정 칸 없음');
+  assert.equal(claude.length, 2, '순간마다 두 번');
+  for (const prompt of claude) {
+    for (const leak of ['aGk=', '.jpg', fixture.root, 'photo.jpg']) assert.equal(prompt.includes(leak), false, `Claude 프롬프트에 ${leak}`);
+    assert.match(prompt, /장면 낱말/);
+  }
+  const [row] = ledger(fixture);
+  assert.deepEqual([row.mode, row.status, row.calls, row.engine, row.promptVersion, row.sceneModel, row.scenePromptVersion, row.at],
+    ['orb', 'applied', 2, 'claude', PHOTO_TEXT_PROMPT_VERSION, OLLAMA_MODELS.vision, SCENE_PROMPT_VERSION, '2026-11-01']);
+  assert.equal(row.answers.length, 2);
+  const stored = readFileSync(join(fixture.out, SCENES_FILE), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual([stored[0].photoId, stored[0].sceneVersion], [fixture.candidates[0].id, SCENE_PROMPT_VERSION]);
+  const orb = JSON.parse(readFileSync(join(fixture.out, 'orbs.jsonl'), 'utf8').trim());
+  assert.deepEqual([orb.judgment.promptVersion, orb.judgment.photoKinds, orb.judgment.emotionState], [PHOTO_TEXT_PROMPT_VERSION, ['얼굴 가까이'], '있음']);
+});
+
+test('scene-claude: 두 답이 다르면 애매함 — 노트에 쓰지 않고 같은 판으로 다시 묻지 않는다', async (t) => {
+  const fixture = setup(t);
+  const { claude, options: opts } = sceneOptions(fixture, { answers: [ollamaAnswer({ 기쁨: '보통' }), ollamaAnswer({ 기쁨: '옅음' })] });
+  const summary = await run(opts);
+  assert.equal(summary.written, 0);
+  assert.deepEqual(summary.ambiguous, [fixture.candidates[0].id]);
+  assert.equal(readFileSync(join(fixture.root, fixture.candidates[0].rel), 'utf8'), fixture.candidates[0].content);
+  assert.equal(ledger(fixture)[0].status, 'ambiguous');
+  assert.equal(readRuns(join(fixture.out, 'runs.jsonl')).at(-1).status, 'ambiguous');
+  // 다음 날 다시 돌려도(예약 24시간 뒤) 묻지 않는다.
+  const again = sceneOptions(fixture, { now: () => AFTERNOON() + 2 * 86_400_000 });
+  await run(again.options);
+  assert.equal(claude.length, 2);
+  assert.equal(again.claude.length, 0);
+});
+
+test('scene-claude: 장면 낱말에 미네 마스크면 가려짐 → 감정은 코드가 모름, 중요도용으로 한 번만 묻는다', async (t) => {
+  const fixture = setup(t);
+  const { claude, options: opts } = sceneOptions(fixture, { scene: sceneWords({ mineMask: '씀', faceCovered: '일부 가려짐' }) });
+  await run(opts);
+  assert.equal(claude.length, 1);
+  const data = JSON.parse(claude[0].match(/<note-data>\n([\s\S]*?)\n<\/note-data>/)[1]);
+  assert.equal(data.photos[0].photoKind, '가려짐');
+  assert.equal(data.photos[0].scene.mineExpression, undefined, '가려진 사진의 표정 낱말은 넘기지 않는다');
+  const [row] = ledger(fixture);
+  assert.deepEqual([row.forcedUnknown, row.kindCorrected, row.calls], [true, [true], 1]);
+  const orb = JSON.parse(readFileSync(join(fixture.out, 'orbs.jsonl'), 'utf8').trim());
+  assert.equal(orb.judgment.emotionState, '모름');
+  assert.match(readFileSync(join(fixture.root, fixture.candidates[0].rel), 'utf8'), /^emotionEvidence: "모름: 대표 사진 1장이 모두 멀리서·가려짐 — 표정을 읽을 수 없음\(마스크 1장\)"$/m);
+});
+
+test('scene-claude: 06:20~07:30에는 돌지 않는다(--ignore-window면 돈다), 하루 상한이 차면 묻지 않는다', async (t) => {
+  const fixture = setup(t);
+  const morning = sceneOptions(fixture, { now: () => Date.parse('2026-11-01T06:45:00+09:00') });
+  const blocked = await run(morning.options);
+  assert.equal(blocked.blockedWindow, true);
+  assert.equal(morning.ollama.length + morning.claude.length, 0);
+  const override = sceneOptions(fixture, { now: () => Date.parse('2026-11-01T06:45:00+09:00'), ignoreWindow: true });
+  assert.equal((await run(override.options)).written, 1);
+
+  const full = setup(t);
+  mkdirSync(full.out, { recursive: true });
+  writeFileSync(join(full.out, PHOTO_TEXT_JUDGMENTS_FILE), `${JSON.stringify({ mode: 'review', engine: 'claude', at: '2026-11-01', calls: 99 })}\n`);
+  const capped = sceneOptions(full);
+  const summary = await run(capped.options);
+  assert.equal(summary.capped, true);
+  assert.equal(capped.claude.length + capped.ollama.length, 0);
+});
+
+test('scene-claude: 호출 중 회차 시간에 들어서면 남은 호출을 미루고 연기로 남긴다, 쿨다운도 매 호출 전 확인', async (t) => {
+  const fixture = setup(t);
+  let clock = Date.parse('2026-11-01T06:19:00+09:00');
+  const { claude, options: opts } = sceneOptions(fixture, { now: () => clock });
+  opts.judge = async (prompt) => { claude.push(prompt); clock = Date.parse('2026-11-01T06:21:00+09:00'); return JSON.stringify(ollamaAnswer()); };
+  const summary = await run(opts);
+  assert.equal(claude.length, 1);
+  assert.equal(summary.blockedWindow, true);
+  assert.equal(summary.deferred.length, 1);
+  assert.equal(ledger(fixture)[0].status, 'retry');
+  assert.equal(ledger(fixture)[0].calls, 1, '부른 한 번은 상한에 센다');
+
+  const other = setup(t);
+  let cooled = false;
+  const second = sceneOptions(other, { cooldown: () => cooled });
+  second.options.judge = async () => { second.claude.push(1); cooled = true; return JSON.stringify(ollamaAnswer()); };
+  const result = await run(second.options);
+  assert.equal(second.claude.length, 1);
+  assert.equal(result.cooldown, true);
+});
+
+test('scene-claude: 오너 메모에 감정이 있으면 오너 값이 노트에 가고 한 번만 묻는다', async (t) => {
+  const fixture = setup(t);
+  const { claude, options: opts } = sceneOptions(fixture, { keepMemo: true });
+  assert.equal((await run(opts)).written, 1);
+  assert.equal(claude.length, 1);
+  assert.match(readFileSync(join(fixture.root, fixture.candidates[0].rel), 'utf8'), /^emotions: \["슬픔"\]$/m);
+});
+
+test('judgeSceneMoment: 사진 종류가 섞이면(가까이 + 멀리서) Claude 두 번, 멀리서 사진은 표정 낱말 없이', async () => {
+  const item = { id: 'm', date: '2020-01-01', memo: '', fields: { occurred: '2020-01-01', description: '순간' } };
+  const prompts = [];
+  const result = await judgeSceneMoment(item, [{ kind: '얼굴 가까이', scene: sceneWords() }, { kind: '멀리서', scene: sceneWords() }],
+    { criteria: fixtureCriteria, anchors, anchorScenes: {}, decide: async (prompt) => { prompts.push(prompt); return JSON.stringify(ollamaAnswer()); } });
+  assert.equal(result.forced, false);
+  assert.equal(result.calls, 2);
+  const data = JSON.parse(prompts[0].match(/<note-data>\n([\s\S]*?)\n<\/note-data>/)[1]);
+  assert.equal(data.photos[0].scene.mineExpression, '입꼬리가 올라가고 이가 보임');
+  assert.equal(data.photos[1].scene.mineExpression, undefined);
+  const bad = await judgeSceneMoment(item, [{ kind: '얼굴 가까이', scene: sceneWords() }],
+    { criteria: fixtureCriteria, anchors, decide: async () => 'JSON 아님' });
+  assert.equal(bad.formatFailure, true);
 });

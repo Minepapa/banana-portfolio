@@ -91,9 +91,14 @@ export function anchorBlock(anchors, { excludeNo, excludeDate } = {}) {
 }
 
 // 바뀌지 않는 앞부분(기록 앞). medium: 'text'(통화·녹음) | 'photo'.
+// photo-text(2026-11-01 오너 결정, 결정 v4 §1): 사진은 보지 않고, 맥 안 로컬 이미지 모델이 뽑은 장면 낱말(글)로 Claude가 판단한다
+// (scripts/lib/mine-photo-scene.mjs). 사진 기준 예시는 그 사진의 장면 낱말로 바꿔 넘긴다(photoTextAnchors).
 export function judgmentPreamble({ criteria, recordDate, anchors, exclude = {}, medium = 'text' }) {
   const names = allowedEmotions(recordDate, criteria).map((emotion) => emotion.name);
-  const subject = medium === 'photo'
+  const photoLike = medium === 'photo' || medium === 'photo-text';
+  const subject = medium === 'photo-text'
+    ? '맥 안의 로컬 이미지 모델이 미네의 순간 사진에서 뽑은 장면 낱말(글)을 보고 미네의 감정을 판단한다. 사진은 보지 않는다. 장면 낱말은 기계가 쓴 묘사라 틀리거나 빠진 것이 있다 — 적힌 것만 근거로 쓰고 적히지 않은 표정을 짐작하지 않는다. 사진에 mineFace 위치가 있으면 그 자리의 아이가 미네다. 다른 사람의 표정·행동은 근거가 아니다.'
+    : medium === 'photo'
     ? '함께 보낸 미네의 순간 사진을 보고 미네의 감정을 판단한다. 사진에 mineFace 위치가 있으면 그 아이가 미네다. 다른 사람의 표정은 근거가 아니다.'
     : '미네(딸)가 나오는 통화·녹음 기록 하나를 보고 미네의 감정을 판단한다. "미네:" 발화와 확인된 미네 소리만 근거다. 다른 화자의 말은 맥락으로만 쓴다. 화자 표시가 없는 한 사람 녹음은 기록의 화자 줄을 따른다.';
   return [
@@ -108,6 +113,15 @@ export function judgmentPreamble({ criteria, recordDate, anchors, exclude = {}, 
       `- ${PHOTO_KINDS.hidden}: 미네 얼굴이 보이지 않는다. 감정 근거가 아니다.`,
       '- photoKind가 없는 사진은 사진을 보고 판단한다.',
       `- 감정 근거가 되는 사진이 하나도 없으면 상태 "${UNKNOWN}"이다. 그때도 장면·활동은 scene에 적는다(분위기는 미네의 감정이 아니다).`].join('\n')] : []),
+    // 사진 글 판(photo-text 0.1): 멀리서·가려짐은 결정 v4 §4·§5대로 표정 감정 모름 — 코드가 그 사진의 표정 낱말을 빼고 넘긴다.
+    ...(medium === 'photo-text' ? [[`# 사진 종류 (photos의 photoKind — 얼굴 인식 결과와 장면 낱말의 마스크 표시로 코드가 정한 값이며 그대로 따른다)`,
+      `- ${PHOTO_KINDS.close}: 장면 낱말의 mineExpression(미네 얼굴 모양)과 mineAction(몸짓)으로 감정을 읽는다.`,
+      `- ${PHOTO_KINDS.group}: 표정 하나보다 무슨 자리인가(occasion·people)와 미네가 어떻게 함께하는가를 본다. 모두 카메라를 보고 짓는 웃음은 포즈 웃음(옅음)이다.`,
+      `- ${PHOTO_KINDS.far}·${PHOTO_KINDS.hidden}: 표정을 읽을 수 없는 사진이라 코드가 표정 낱말을 뺐다. 장면·활동은 상황 근거일 뿐 감정 근거가 아니다.`,
+      `- 대표 사진이 모두 ${PHOTO_KINDS.far}·${PHOTO_KINDS.hidden}이면 감정 상태는 코드가 "${UNKNOWN}"으로 정한다. 그때도 importance·scene·titleSuggestion·coreMemoryCandidate는 답한다.`,
+      '- photoKind가 없는 사진은 장면 낱말(mineVisible·mineFaceView·mineMask)을 보고 표정을 읽을 수 있는 사진인지 판단한다.',
+      '- 장면 낱말의 "[감정 낱말 뺌]"은 로컬 모델이 쓴 감정 낱말을 코드가 지운 자리다. 로컬 모델의 감정 짐작은 근거가 아니다.',
+      `- 감정 근거가 되는 사진이 하나도 없으면 상태 "${UNKNOWN}"이다(분위기는 미네의 감정이 아니다).`].join('\n')] : []),
     `# 기준 예시 (오너가 정답을 단 실제 기록, "기쁨 1=옅음"은 그 감정에 고를 단어)\n${anchorBlock(anchors, exclude)}`,
     ['# 판단 순서',
       `1. 미네의 근거(얼굴·목소리·발화)가 있는가? 없거나 누구인지 불확실하면 상태 "${UNKNOWN}".`,
@@ -129,10 +143,10 @@ export function judgmentPreamble({ criteria, recordDate, anchors, exclude = {}, 
       '- primary: 대표 감정 이름(상태가 "있음"일 때) 또는 null',
       '- emotionEvidence: 근거 한 줄',
       '- secondFilmSignal: 경보 전 2편 감정과 닮은 순간이면 그 2편 감정 이름, 아니면 null',
-      ...(medium === 'photo' ? [
+      ...(photoLike ? [
         '- confidence: "낮음" | "보통" | "높음"',
         '- importance: 1~5 정수(순간 노트의 앨범·제목·기념일·장소 같은 사건 정보로, 표정만으로 정하지 않는다)',
-        '- scene: 사진 장면을 이 사진에 맞게 새로 쓴 한 문장',
+        medium === 'photo-text' ? '- scene: 장면 낱말로 순간의 장면을 새로 쓴 한 문장' : '- scene: 사진 장면을 이 사진에 맞게 새로 쓴 한 문장',
         '- titleSuggestion: 이 순간의 제목을 새로 지은 것',
         '- coreMemoryCandidate: { value: 참/거짓, reason: 이유 한 줄 }',
       ] : []),
