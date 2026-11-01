@@ -390,7 +390,7 @@ test('질문 등록 실패·곁가지 읽기 실패는 메시지는 보내되 �
   const placesFailed = await runBriefing({ mode: 'morning', date: '2026-11-02', deps: { ...monthBase, send: capture(sent),
     ...readyMonthDeps([]), monthPlaces: () => { throw new SyntaxError('Unexpected end of JSON input'); },
     readMonthReport: () => { throw new SyntaxError('bad'); } } });
-  assert.match(sent.at(-1).body, /■ 합계/);
+  assert.match(sent.at(-1).body, /■ 소비 합계/);
   assert.match(sent.at(-1).body, /■ 장소별 소비\n- 읽기 실패/);
   assert.equal(placesFailed.alert, true);
 });

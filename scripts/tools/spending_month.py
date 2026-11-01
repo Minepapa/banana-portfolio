@@ -397,6 +397,14 @@ def build_month(banksalad_dir, spending_dir, events_dir, start, end, closed_mont
             total = sum((Decimal(group["amount"]) for group in tables[name]), Decimal(0))
             if total != Decimal(str(monthly["total_expense"])):
                 raise ValueError(f"{name} sum {total} != total_expense {monthly['total_expense']}")
+        if "error" not in tables:
+            living = next((Decimal(g["amount"]) for g in tables["outflows"]["groups"] if g["group"] == "생활 지출"), Decimal(0))
+            if living != Decimal(str(monthly["total_expense"])):
+                raise ValueError(f"outflows 생활 지출 {living} != total_expense {monthly['total_expense']}")
+            row_sum = sum((Decimal(row["amount"]) for row in tables["outflows"]["rows"]), Decimal(0))
+            if row_sum != sum((Decimal(tables["outflows"][key]) for key in ("total", "pending_total", "overlap_total")),
+                              Decimal(0)):
+                raise ValueError(f"outflows rows {row_sum} != groups")
     return {
         "schema_version": 1,
         "decision_key": "월별-지출-정본",
@@ -550,6 +558,36 @@ def link_cards(transactions, alerts, settings):
     return linked
 
 
+# 모든 출금(오너 2026-11-02: "지출 내역은 그 달의 모든 항목이 포함되어야 해 ... 임의로 제거하면 안된다").
+# 생활 지출(total_expense와 같은 줄) 밖의 출금도 빠짐없이 묶음별로 남긴다. 카드대금·내 계좌 이동은 이미 다른 줄로
+# 잡힌 돈이 다시 나간 기록이라 목록에는 보이되 합계에서만 뺀다(overlap, 오너 선택 "중복만 표시하고 합계 제외").
+OUTFLOW_GROUPS = {
+    "debt-service-unsplit": "대출 상환",
+    "investment contribution": "저축·투자",
+    "savings contribution": "저축·투자",
+    "card settlement": "카드대금",
+    "own-account transfer": "내 계좌 이동",
+    "review": "확인 필요",
+}
+OVERLAP_GROUPS = {"카드대금", "내 계좌 이동"}
+# 확인 필요(내 계좌인지 남에게 보낸 돈인지 아직 모르는 이체 등)는 오너 판정 전이라 합계에 넣지도 빼지도 않고 따로 센다.
+PENDING_GROUPS = {"확인 필요"}
+OUTFLOW_ORDER = ["생활 지출", "대출 상환", "저축·투자", "확인 필요", "기타 출금", "카드대금", "내 계좌 이동"]
+
+
+def outflow_group(item):
+    """(group, amount) for an outgoing row, else None. 생활 지출 uses spent_amount so it equals total_expense."""
+    spent = spent_amount(item)
+    if spent is not None:
+        return "생활 지출", spent
+    if not item["date"] or item["aggregation_status"] == "excluded_owner_confirmed_duplicate":
+        return None
+    amount = amount_value(item["signed_amount"])
+    if amount is None or amount >= 0:
+        return None
+    return OUTFLOW_GROUPS.get(item["classification"], "기타 출금"), -amount
+
+
 def breakdown(transactions, month, settings, previous_covered):
     """Card, category and fixed-cost tables for a closed month (Requests "소비 보고 카드별·항목별·고정비" 2단계).
 
@@ -629,9 +667,64 @@ def breakdown(transactions, month, settings, previous_covered):
                     "total": amount_text(sum((spent for _, spent in previous_rows), Decimal(0))),
                     "by_instrument": rows_out(by_instrument(previous_rows), "instrument"),
                     "by_category": rows_out(by_category(previous_rows), "category")}
+    # 줄마다 고정비 이름(assign_fixed와 같은 규칙: 같은 카드, 긴 가맹점 키 먼저).
+    fixed_keys = sorted(((normalize_merchant(entry["merchant"]), entry) for entry in entries), key=lambda pair: -len(pair[0]))
+
+    def fixed_for(item, name):
+        description = normalize_merchant(item["description"])
+        return next((entry["name"] for key, entry in fixed_keys
+                     if entry["instrument"] == name and key in description), None)
+
+    out_rows, groups = [], {}
+    # 오너 확정 중복·간편결제 이중 줄(drop_route_duplicates)은 같은 결제의 두 번째 줄이라 목록에서 빼고 건수만 남긴다.
+    duplicates = {"count": 0, "amount": Decimal(0)}
+    for item in transactions:
+        if not item["date"] or item["date"][:7] != month:
+            continue
+        if item["aggregation_status"] == "excluded_owner_confirmed_duplicate":
+            amount = amount_value(item["signed_amount"])
+            if amount is not None and amount < 0:
+                duplicates["count"] += 1
+                duplicates["amount"] -= amount
+            continue
+        found = outflow_group(item)
+        if found is None:
+            continue
+        group, amount = found
+        name, via = resolve(item)
+        override = overrides.get(normalize_merchant(item["description"]))
+        fixed_cost = fixed_for(item, name) if group == "생활 지출" else None
+        out_rows.append({"date": item["date"], "time": item["time"], "description": item["description"],
+                         "instrument": name, "via": via, "group": group, "classification": item["classification"],
+                         "category": (override or {}).get("category") or item["original_category"] or "미분류",
+                         "subcategory": (override or {}).get("subcategory") or item.get("original_subcategory") or None,
+                         "fixed_cost": fixed_cost, "amount": amount_text(amount), "source_row": item["source_row"]})
+        bucket = groups.setdefault(group, {"group": group, "overlap": group in OVERLAP_GROUPS,
+                                           "pending": group in PENDING_GROUPS, "count": 0,
+                                           "amount": Decimal(0), "instruments": {}})
+        bucket["count"] += 1
+        bucket["amount"] += amount
+        card = bucket["instruments"].setdefault(name, {"instrument": name, "count": 0, "amount": Decimal(0)})
+        card["count"] += 1
+        card["amount"] += amount
+    out_rows.sort(key=lambda row: (row["date"], row["time"] or "", row["source_row"]))
+    ordered = [groups[name] for name in OUTFLOW_ORDER if name in groups]
+    outflows = {
+        "total": amount_text(sum((g["amount"] for g in ordered if not g["overlap"] and not g["pending"]), Decimal(0))),
+        "pending_total": amount_text(sum((g["amount"] for g in ordered if g["pending"]), Decimal(0))),
+        "overlap_total": amount_text(sum((g["amount"] for g in ordered if g["overlap"]), Decimal(0))),
+        "groups": [{"group": g["group"], "overlap": g["overlap"], "pending": g["pending"], "count": g["count"],
+                    "amount": amount_text(g["amount"]),
+                    "by_instrument": [{**card, "amount": amount_text(card["amount"])} for card in
+                                      sorted(g["instruments"].values(), key=lambda c: (-c["amount"], c["instrument"]))]}
+                   for g in ordered],
+        "rows": out_rows,
+        "excluded_duplicates": {"count": duplicates["count"], "amount": amount_text(duplicates["amount"])},
+    }
     return {"by_instrument": rows_out(by_instrument(rows), "instrument"),
             "by_category": rows_out(by_category(rows), "category"),
-            "fixed": fixed, "previous_month": previous_month if previous_covered else None, "previous": previous}
+            "fixed": fixed, "previous_month": previous_month if previous_covered else None, "previous": previous,
+            "outflows": outflows}
 
 
 def month_bounds(month):

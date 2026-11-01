@@ -189,7 +189,7 @@ function coverageRatio(coverage) {
 }
 
 function totalsSection(monthly, previous) {
-  const lines = [`- 전체 지출 ${won(monthly.total_expense)}`, `- 생활비 ${won(monthly.everyday_expense)}`];
+  const lines = [`- 소비 지출 ${won(monthly.total_expense)}`, `- 생활비 ${won(monthly.everyday_expense)}`];
   for (const [field, label] of [['one_off_tax', '세금·과태료'], ['confirmed_prepayment', '선납'],
     ['unverified_usage_spending', '사용처 미확인 출금']]) {
     if (Number(monthly[field])) lines.push(`- ${label} ${won(monthly[field])}`);
@@ -200,9 +200,25 @@ function totalsSection(monthly, previous) {
   lines.push(`- 수입 ${won(monthly.total_income)}`);
   if (previous?.monthly) {
     const diff = Number(monthly.total_expense) - Number(previous.monthly.total_expense);
-    lines.push(`- 지난달 대비 전체 지출 ${diff >= 0 ? '+' : '-'}${won(Math.abs(diff))}`);
+    lines.push(`- 지난달 대비 소비 지출 ${diff >= 0 ? '+' : '-'}${won(Math.abs(diff))}`);
   }
-  return `■ 합계(뱅크샐러드 기준)\n${lines.join('\n')}`;
+  return `■ 소비 합계(뱅크샐러드 기준, 대출·저축·이체 제외)\n${lines.join('\n')}`;
+}
+
+// 모든 출금(오너 2026-11-02 "그 달의 모든 항목"): 묶음별 표. 합계 = 중복·판정 대기를 뺀 나간 돈.
+// 카드대금·내 계좌 이동(중복)과 확인 필요(판정 대기)도 줄은 보이고 합계 아래 따로 적는다. 옛 결과 파일(outflows 없음)은 생략.
+function outflowSection(report) {
+  const outflows = report.breakdown?.outflows;
+  if (!outflows?.groups?.length) return null;
+  const mark = (group) => (group.overlap ? '(중복)' : group.pending ? '(대기)' : '');
+  const table = preTable([['구분', 18, 'left'], ['건', 4, 'right'], ['금액', 12, 'right']],
+    outflows.groups.map((group) => [`${group.group}${mark(group)}`, String(group.count), comma(group.amount)]));
+  const lines = [`- 나간 돈 합계 ${won(outflows.total)}(중복·확인 필요를 뺀 모든 출금)`];
+  if (Number(outflows.pending_total)) lines.push(`- 확인 필요 ${won(outflows.pending_total)}: 판정 전이라 합계 밖(내 계좌 이동인지 확인)`);
+  if (Number(outflows.overlap_total)) lines.push(`- 중복 ${won(outflows.overlap_total)}: 합계 밖(카드 결제·계좌 이동으로 이미 잡힌 돈)`);
+  const duplicates = outflows.excluded_duplicates;
+  if (duplicates?.count) lines.push(`- 같은 결제의 이중 기록 ${duplicates.count}건(${won(duplicates.amount)})은 한 번만 셈`);
+  return `■ 이번 달 나간 돈(모든 출금 ${outflows.rows?.length ?? 0}건)\n${table}\n${lines.join('\n')}`;
 }
 
 function coverageSection(report, previous) {
@@ -314,6 +330,7 @@ export function renderMonthCheck(report, { previous = null, places = null } = {}
   const sections = [
     `${month} 지출 마감 (내보내기 ${escapeHtml(report.source.export)})`,
     totalsSection(report.monthly, previous),
+    outflowSection(report),
     coverageSection(report, previous),
     gapSection(report),
     unparsedSection(report),

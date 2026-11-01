@@ -112,10 +112,10 @@ const places = { month: '2026-10', recordedDays: 3, firstDay: '2026-10-29',
 test('월간 점검 본문: 합계·커버리지·빈칸 표·파서 후보·장소별, 표는 폰 한 줄 안', () => {
   const body = renderMonthCheck(report, { previous: { monthly: { total_expense: '2800000' }, coverage: { transactions: 50, parsed: 10, no_source: 0 } }, places });
   assert.match(body, /^2026-10 지출 마감 \(내보내기 2025-11-02_2026-11-02\)/);
-  assert.match(body, /- 전체 지출 3,000,000원\n- 생활비 2,500,000원\n- 선납 300,000원\n- 사용처 미확인 출금 200,000원/);
+  assert.match(body, /- 소비 지출 3,000,000원\n- 생활비 2,500,000원\n- 선납 300,000원\n- 사용처 미확인 출금 200,000원/);
   assert.doesNotMatch(body, /세금/);
   assert.match(body, /환불·정산 차감 50,000원 → 순지출 2,950,000원/);
-  assert.match(body, /지난달 대비 전체 지출 \+200,000원/);
+  assert.match(body, /지난달 대비 소비 지출 \+200,000원/);
   assert.match(body, /거래 100건: 잡힘 40 · 못 읽음 5 · 알림 없음 45/);
   assert.match(body, /알림 수집이 없던 날 거래 10건/);
   assert.match(body, /잡힘 비율 44% \(지난달 20%\)/);
@@ -196,7 +196,7 @@ test('월간 점검 본문: 결제수단별·항목별·고정비 표(경유 결
 test('월간 점검 본문: 표를 못 만든 달은 한 줄로 알리고 합계는 그대로 보낸다', () => {
   const body = renderMonthCheck({ ...report, breakdown: { error: 'KeyError: from' } }, { places: { recordedDays: 0 } });
   assert.match(body, /■ 결제수단별·항목별·고정비\n- 표 만들기 실패/);
-  assert.match(body, /- 전체 지출 3,000,000원/);
+  assert.match(body, /- 소비 지출 3,000,000원/);
   assert.doesNotMatch(body, /KeyError/, '오류 원문은 메시지로 내보내지 않는다');
   const broken = renderMonthCheck({ ...report, breakdown: { error: 'ValueError: duplicateRoutes' }, settings_error: 'ValueError: duplicateRoutes' },
     { places: { recordedDays: 0 } });
@@ -204,4 +204,29 @@ test('월간 점검 본문: 표를 못 만든 달은 한 줄로 알리고 합계
   const cardMapBroken = renderMonthCheck({ ...report, breakdown: { error: 'KeyError: mask' }, route_duplicates: [{ amount: '1900' }] },
     { places: { recordedDays: 0 } });
   assert.match(cardMapBroken, /합계·커버리지는 위와 같음\)\n- 간편결제 중복 1건 뺌\(1,900원\)/);
+});
+
+test('모든 출금 표: 묶음별 건·금액, 중복·판정 대기는 표시하고 합계 밖(오너 2026-11-02)', () => {
+  const outflows = { total: '4421146', pending_total: '4794800', overlap_total: '4676610', rows: Array.from({ length: 112 }),
+    excluded_duplicates: { count: 2, amount: '33000' },
+    groups: [
+      { group: '생활 지출', overlap: false, pending: false, count: 95, amount: '2563836' },
+      { group: '대출 상환', overlap: false, pending: false, count: 1, amount: '1506810' },
+      { group: '확인 필요', overlap: false, pending: true, count: 8, amount: '4794800' },
+      { group: '내 계좌 이동', overlap: true, pending: false, count: 1, amount: '1520000' },
+    ] };
+  const body = renderMonthCheck({ ...report, breakdown: { ...report.breakdown, outflows } }, { places: { recordedDays: 0 } });
+  assert.match(body, /■ 이번 달 나간 돈\(모든 출금 112건\)/);
+  assert.match(body, /대출 상환 +1 +1,506,810/);
+  assert.match(body, /확인 필요\(대기\) +8 +4,794,800/);
+  assert.match(body, /내 계좌 이동\(중복\) +1 +1,520,000/);
+  assert.match(body, /- 나간 돈 합계 4,421,146원/);
+  assert.match(body, /- 확인 필요 4,794,800원: 판정 전이라 합계 밖/);
+  assert.match(body, /- 중복 4,676,610원: 합계 밖/);
+  assert.match(body, /- 같은 결제의 이중 기록 2건\(33,000원\)은 한 번만 셈/);
+  for (const line of body.match(/<pre>[\s\S]*?<\/pre>/g)[0].replace(/<\/?pre>/g, '').split('\n')) {
+    const width = [...line].reduce((sum, char) => sum + (/[ᄀ-ᅟ⺀-꓏가-힣]/.test(char) ? 2 : 1), 0);
+    assert.ok(width <= 44, `표 한 줄 ${width}칸: ${line}`);
+  }
+  assert.doesNotMatch(renderMonthCheck(report, { places: { recordedDays: 0 } }), /이번 달 나간 돈/, '옛 결과 파일은 생략');
 });

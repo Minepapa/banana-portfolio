@@ -266,6 +266,36 @@ class CoverageTests(unittest.TestCase):
             "by_instrument": [{"instrument": "Card A", "count": 1, "amount": "28000", "routes": {}}],
             "by_category": [{"category": "주거/통신", "count": 1, "amount": "28000", "owner_override": 0}]})
 
+    def test_outflows_keep_every_outgoing_row(self):
+        # 오너 2026-11-02: 그 달의 모든 출금을 남기고 묶음별로 나눈다. 중복(카드대금·내 계좌 이동)은 합계에서만 뺀다.
+        fixture = Fixture(self.root, [
+            row("2040-02-03", "12:00:00", -5000, "Card A", description="Lunch"),
+            row("2040-02-11", "09:00:00", -30000, "Card A", description="통신요금 자동납부", category="주거/통신"),
+            row("2040-02-10", "00:00:00", -100000, "Bank", description="대출원리금상환", kind="이체", category="금융"),
+            row("2040-02-12", "00:00:00", -50000, "Bank", description="주택청약", kind="이체", category="저축"),
+            row("2040-02-13", "00:00:00", -35000, "Bank", description="Card A 대금", kind="이체", category="카드대금"),
+            row("2040-02-14", "00:00:00", -7000, "Bank", description="누군가", kind="이체", category="이체"),
+            row("2040-02-15", "12:00:00", 9000, "Bank", description="Salary", kind="수입", category="급여"),
+        ])
+        (fixture.spending / "settings.json").write_text(json.dumps({"fixedCosts": [
+            {"name": "통신", "merchant": "통신요금", "instrument": "Card A", "dayFrom": 10, "dayTo": 13, "variable": True}]}),
+            encoding="utf-8")
+        outflows = fixture.run("2040-02-01", "2040-02-29", "2040-02")["breakdown"]["outflows"]
+        groups = {group["group"]: group for group in outflows["groups"]}
+        self.assertEqual([group["group"] for group in outflows["groups"]],
+                         ["생활 지출", "대출 상환", "저축·투자", "확인 필요", "카드대금"])
+        self.assertEqual(groups["생활 지출"]["amount"], "35000")
+        self.assertEqual(groups["대출 상환"]["amount"], "100000")
+        self.assertEqual(groups["저축·투자"]["amount"], "50000")
+        self.assertTrue(groups["카드대금"]["overlap"])
+        self.assertTrue(groups["확인 필요"]["pending"])
+        self.assertEqual((outflows["total"], outflows["pending_total"], outflows["overlap_total"]),
+                         ("185000", "7000", "35000"))
+        self.assertEqual(len(outflows["rows"]), 6, "income is not an outflow; every outgoing row is listed")
+        self.assertEqual([row["fixed_cost"] for row in outflows["rows"] if row["fixed_cost"]], ["통신"])
+        self.assertEqual(groups["대출 상환"]["by_instrument"], [{"instrument": "Bank", "count": 1, "amount": "100000"}])
+        self.assertEqual(outflows["excluded_duplicates"], {"count": 0, "amount": "0"})
+
     def test_simple_pay_rows_follow_the_card_alert_that_rang_with_them(self):
         fixture = Fixture(self.root, [
             row("2040-02-03", "12:00:00", -4000, "Pay A", description="Shop 1"),
@@ -343,6 +373,9 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(groups, {"Pay A": "9200", "Pay B": "3100"})
         self.assertIsNone(result["settings_error"])
         self.assertEqual(result["coverage"]["transactions"], 10, "dropped rows leave coverage too")
+        outflows = result["breakdown"]["outflows"]
+        self.assertEqual(outflows["excluded_duplicates"]["count"], len(result["route_duplicates"]),
+                         "the second row of one payment is counted, not listed")
 
     def test_chained_duplicate_routes_are_a_settings_error(self):
         fixture = Fixture(self.root, [row("2040-02-03", "12:00:00", -5000, "Card A")])
