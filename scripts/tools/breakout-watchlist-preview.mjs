@@ -26,6 +26,7 @@ import { computeDailyCandidates } from '../lib/breakout-simulator.mjs';
 import { is52WeekHighBreakout, computeRelativeStrengthSmoothedAnchor, computeVcpReadiness, RS_LOOKBACK_DAYS, RS_ANCHOR_SMOOTH_DAYS, MARKET_CAP_FLOOR_WON } from '../lib/breakout-factor.mjs';
 import { todayKST } from '../lib/sheets-api.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+import { stopIfStrategyOff } from '../lib/strategy-switch.mjs';
 
 const SENDER_AGENT = 'plutus';
 const HIGH_LOOKBACK_DAYS = 252;
@@ -94,6 +95,8 @@ export function formatWatchlistFact(c) {
 }
 
 async function main() {
+  // 결정 `전략-가동` — 꺼져 있으면 어떤 조회·주문보다 먼저 끝낸다(strategy-switch.mjs).
+  if (stopIfStrategyOff('breakout')) return;
   const args = parseArgs(process.argv.slice(2));
   const dryRun = Boolean(args['dry-run']);
   const top = args.top ? Number(args.top) : DEFAULT_TOP;

@@ -34,6 +34,7 @@ import { patchFrontmatterFileSafely, withLock } from '../lib/state-writer.mjs';
 // 딸려 들이고 계층 방향도 거꾸로라(2026-09-29 4차 코드리뷰 LOW 지적) 공용
 // 모듈로 옮겼다.
 import { BREAKOUT_PROTECTION_LOCK_FILE, BREAKOUT_PROTECTION_LOCK_STALE_MS } from '../lib/breakout-protection-lock.mjs';
+import { stopIfStrategyOff } from '../lib/strategy-switch.mjs';
 
 const LOCK_FILE = BREAKOUT_PROTECTION_LOCK_FILE;
 const LOCK_STALE_MS = BREAKOUT_PROTECTION_LOCK_STALE_MS;
@@ -83,6 +84,9 @@ function gatesAllowOrder() {
 }
 
 async function main() {
+  // 결정 `전략-가동` — 꺼져 있으면 어떤 조회·주문보다 먼저 끝낸다(strategy-switch.mjs). 꺼졌는데
+  // 열린 포지션이 남아 있으면 손절 보호가 끊기므로 조용히 끝내지 않고 실패로 드러낸다.
+  if (stopIfStrategyOff('breakout', { openPositionsDir: VAULT_PATHS.state.breakoutPositions })) return;
   const args = parseArgs(process.argv.slice(2));
   const code = String(args.code ?? '').trim();
   const positionId = String(args['position-id'] ?? '').trim();

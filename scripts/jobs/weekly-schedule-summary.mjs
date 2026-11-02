@@ -36,6 +36,7 @@ import { getExecutionMode, MODE_LIVE } from '../lib/shadow-mode.mjs';
 import { getProposalMode, MODE_BLOCKED } from '../lib/proposal-mode.mjs';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { agentLabel } from '../lib/agent-registry.mjs';
+import { describeStrategySwitches, strategySwitches, switchedOffScripts } from '../lib/strategy-switch.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const SENDER_AGENT = 'zeus'; // 시스템 잡 일정 공지 — 헤르메스(오너 개인 일정)와 구분(이관 4-3)
@@ -52,16 +53,19 @@ function readStateFileOrNull(filepath) {
 // 상태 요약 텍스트로. 2026-09-18 오너 지시 대응, 세 스위치 명령어 통일 개명과 같은
 // 턴("OO 온"/"OO 오프" 공통 패턴)에 진행 — 이름을 통일한 김에 매주 상태도 같이
 // 보고해 방치되지 않게 한다.
-export function describeSwitchStatus({ killSwitchContent, executionModeContent, proposalModeContent }) {
+// strategySwitches(옵션, 2026-11-02 결정 `전략-가동`): 전략별 켜짐 여부. 넘기면 전략마다 한 줄을 덧붙인다 —
+// 꺼진 전략의 일정은 목록에서 빠지므로, 왜 빠졌는지 여기서 보이게 한다.
+export function describeSwitchStatus({ killSwitchContent, executionModeContent, proposalModeContent, strategySwitches: switches = null }) {
   const killOn = isKillSwitchActive(killSwitchContent);
   const execMode = getExecutionMode(executionModeContent);
   const proposalBlocked = getProposalMode(proposalModeContent) === MODE_BLOCKED;
   const lines = [
     '[스위치 상태]',
     `· 킬스위치: ${killOn ? '온(모든 자동 체결 중단 중 — 돌파매매 포함)' : '오프(평소)'}`,
-    `· 체결모드: ${execMode === MODE_LIVE ? '온(자산분배·구퀀트 실제 체결)' : '오프(섀도우 — 자산분배·구퀀트는 로그만, 돌파매매는 이 스위치와 무관하게 항상 실전)'}`,
+    `· 체결모드: ${execMode === MODE_LIVE ? '온(자산분배·구퀀트 실제 체결)' : '오프(섀도우 — 자산분배·구퀀트는 로그만, 돌파매매는 이 스위치와 무관하고 아래 전략 스위치를 따름)'}`,
     `· 제안모드: ${proposalBlocked ? '오프(new-cash-allocation 등 신규 제안 생성 중단 중)' : '온(평소)'}`,
   ];
+  if (switches) lines.push(...describeStrategySwitches(switches));
   return lines.join('\n');
 }
 
@@ -98,6 +102,12 @@ export const SCHEDULE = [
   { day: '월요일', time: '07:10', dept: agentLabel('plutus'), what: 'ISA 3년 만기 감시', conditional: '만기 도달 임박 시에만', script: 'isa-maturity-check.mjs' },
 ];
 
+// 순수함수 — 꺼진 전략(결정 `전략-가동`)의 진입점 스크립트 일정을 뺀다. 다시 켜면 저절로 돌아온다.
+export function scheduleForSwitches(schedule, switches) {
+  const offScripts = switchedOffScripts(switches);
+  return schedule.filter((s) => !offScripts.has(s.script));
+}
+
 // 순수함수 — SCHEDULE을 텔레그램 본문 텍스트로. 테스트 가능.
 //
 // [매주 고정]/[조건부] 두 그룹으로 나눠 표시(2026-09-14, 오너 지적 반영) — 조건부
@@ -133,12 +143,14 @@ export function buildWeeklyScheduleText(schedule = SCHEDULE, switchStatus = null
 }
 
 async function main() {
+  const switches = strategySwitches();
   const switchStatus = describeSwitchStatus({
+    strategySwitches: switches,
     killSwitchContent: readStateFileOrNull(VAULT_PATHS.state.killSwitch),
     executionModeContent: readStateFileOrNull(VAULT_PATHS.state.executionMode),
     proposalModeContent: readStateFileOrNull(VAULT_PATHS.state.proposalMode),
   });
-  const body = buildWeeklyScheduleText(SCHEDULE, switchStatus);
+  const body = buildWeeklyScheduleText(scheduleForSwitches(SCHEDULE, switches), switchStatus);
   console.log(body);
   if (!DRY_RUN) {
     try {

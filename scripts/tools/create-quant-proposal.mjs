@@ -19,6 +19,7 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { isProposalBlocked } from '../lib/proposal-mode.mjs';
+import { stopIfStrategyOff } from '../lib/strategy-switch.mjs';
 
 function parseArgs(argv) {
   const out = { flags: new Set() };
@@ -45,6 +46,8 @@ function loadExistingProposals(dir) {
 }
 
 async function main() {
+  // 결정 `전략-가동` — 꺼져 있으면 어떤 조회·주문보다 먼저 끝낸다(strategy-switch.mjs).
+  if (stopIfStrategyOff('breakout')) return;
   const args = parseArgs(process.argv.slice(2));
   const DRY_RUN = args.flags.has('dry-run');
 

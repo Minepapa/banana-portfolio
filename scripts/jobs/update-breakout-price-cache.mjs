@@ -45,6 +45,7 @@
 // 사용법: node scripts/jobs/update-breakout-price-cache.mjs
 import { buildCandidatePool, updatePrices, cachePrices } from '../lib/historical-universe.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
+import { stopIfStrategyOff } from '../lib/strategy-switch.mjs';
 
 const JOB_NAME = 'update-breakout-price-cache';
 // 신규상장 종목 자동 백필 시작일 — 이 프로젝트의 백테스트 기본 시작일(run-breakout-
@@ -89,6 +90,8 @@ export function summarizeUpdateResult(result) {
 }
 
 async function main() {
+  // 결정 `전략-가동` — 꺼져 있으면 어떤 조회·주문보다 먼저 끝낸다(strategy-switch.mjs).
+  if (stopIfStrategyOff('breakout')) return;
   let stage = 'CANDIDATE_POOL';
   try {
     console.error('[1/3] 후보풀 조회 중...');

@@ -59,6 +59,7 @@ import {
   hasKisCredentials, loadKisCredentials, loadQuantAccount,
   getKisToken, getKrQuote, getAccountBalance, placeKrOrder,
 } from '../lib/kis.mjs';
+import { stopIfStrategyOff } from '../lib/strategy-switch.mjs';
 
 // 이 잡의 운영 알림(승인만료·검문소차단·정합성이상) 3종은 전부 이 파일 안의 순수 Node
 // 판정(날짜비교·중복탐지·order-gate.mjs 결정론적 게이트)이 낸 결과다 — 부서(LLM) 판단이
@@ -92,6 +93,8 @@ function loadProposals(dir) {
 }
 
 async function main() {
+  // 결정 `전략-가동` — 꺼져 있으면 어떤 조회·주문보다 먼저 끝낸다(strategy-switch.mjs).
+  if (stopIfStrategyOff('breakout')) return;
   const args = parseArgs(process.argv.slice(2));
 
   if (!hasKisCredentials()) {

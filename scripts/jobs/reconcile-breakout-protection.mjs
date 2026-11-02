@@ -34,6 +34,7 @@ import { buildExecutionRecord, buildProfitRecord } from '../lib/ledger-vault-wri
 import { QUANT_TRACK_LABEL } from '../lib/account-resolver.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
+import { STRATEGY_OFF_OPEN_POSITIONS, stopIfStrategyOff } from '../lib/strategy-switch.mjs';
 
 const SENDER_AGENT = 'plutus';
 const sendWarning = createDirectWarningSender(sendAgentMessage, {
@@ -494,6 +495,9 @@ export async function processOpenPositions({ openPositions, balanceByCode, cance
 }
 
 async function main() {
+  // 결정 `전략-가동` — 꺼져 있으면 어떤 조회·주문보다 먼저 끝낸다(strategy-switch.mjs). 꺼졌는데
+  // 열린 포지션이 남아 있으면 손절 보호가 끊기므로 조용히 끝내지 않고 실패로 드러낸다.
+  if (stopIfStrategyOff('breakout', { openPositionsDir: VAULT_PATHS.state.breakoutPositions })) return;
   const now = new Date();
   if (!DRY_RUN) {
     const calendar = readKrxTradingDayStatus(now);
@@ -568,7 +572,11 @@ async function main() {
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(async (e) => {
     console.error(`[청산관리 중단] ${e.message}`);
-    await notify(['KIS 조회 또는 청산 관리가 실패했습니다. 주문 중복 방지를 위해 자동 조정을 중단했습니다.'], '경고').catch(() => {});
+    // 전략 꺼짐 + 열린 포지션은 KIS 장애가 아니므로 오해되지 않게 다른 고정 문구로 알린다(원문은 위 로그에만).
+    const line = e.code === STRATEGY_OFF_OPEN_POSITIONS
+      ? '돌파매매 전략이 꺼져 있는데 열린 포지션이 남아 있어(또는 확인하지 못해) 청산 관리를 하지 않았습니다. 손절 보호주문이 다시 걸리지 않으니 전략을 켜거나 수동 청산이 필요합니다.'
+      : 'KIS 조회 또는 청산 관리가 실패했습니다. 주문 중복 방지를 위해 자동 조정을 중단했습니다.';
+    await notify([line], '경고').catch(() => {});
     process.exit(1);
   });
 }

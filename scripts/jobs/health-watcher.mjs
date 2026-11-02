@@ -27,6 +27,7 @@ import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { describeJob, JOB_REMEDIATION } from '../lib/job-labels.mjs';
 import { EXPECTED_INTERVALS_MS, EXPECTED_INTERVAL_DEFAULT_MS, isInactiveJob } from '../lib/job-schedule.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
+import { STRATEGY_DECISION_KEY, strategySwitchStatus, switchedOffJobs } from '../lib/strategy-switch.mjs';
 import { isProcessAlive, isPollingStuck, TELEGRAM_SESSION_PROCESS_PATTERN } from '../lib/telegram-session-liveness.mjs';
 
 // telegram-session-health-check.mjs와 공유하는 isPollingStuck을 예전 import 경로
@@ -72,13 +73,16 @@ function readWatcherState(stateFile) {
   }
 }
 
-function isInactiveJobIssue(key) {
+// switchedOff: 꺼진 전략의 잡(결정 `전략-가동`). 폐지된 잡과 같이 다뤄, 이미 보낸 '조용함' 경고는
+// '복구됨' 알림 없이 상태에서 지운다(실제로 복구된 게 아니라 끈 것이라서).
+function isInactiveJobIssue(key, switchedOff = new Set()) {
   const match = /^job:([^:]+):silent$/.exec(key);
-  return match !== null && isInactiveJob(match[1]);
+  return match !== null && (isInactiveJob(match[1]) || switchedOff.has(match[1]));
 }
 
 export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FILE,
-  send = sendWarning, now = Date.now(), queueFile } = {}) {
+  send = sendWarning, now = Date.now(), queueFile, switchedOff = new Set() } = {}) {
+  const isInactiveIssue = (key) => isInactiveJobIssue(key, switchedOff);
   if (process.env.NODE_TEST_CONTEXT && stateFile === WATCHER_STATE_FILE) {
     throw new Error('테스트에서 실 감시 상태 경로 사용 금지');
   }
@@ -104,14 +108,14 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
   const current = new Set(issues.map((issue) => issue.key));
   try {
     const priorState = await withLock(stateFile, () => readWatcherState(stateFile));
-    const retiredIssueKeys = new Set(Object.keys(priorState).filter(isInactiveJobIssue).map((key) =>
+    const retiredIssueKeys = new Set(Object.keys(priorState).filter(isInactiveIssue).map((key) =>
       `health-watcher|JOB_HEALTH_ISSUES|${warningSubjectKey('issue', key)}`));
     await cancelDeferredWarnings((entry) => {
       const source = entry.source;
       const sourceKey = source?.watcherIssueKey;
       if (sourceKey) return (!source.jobName || source.jobName === 'health-watcher')
         && (!source.warningCode || source.warningCode === 'JOB_HEALTH_ISSUES')
-        && isInactiveJobIssue(sourceKey);
+        && isInactiveIssue(sourceKey);
       return retiredIssueKeys.has(entry.issueKey);
     }, queueFile, sendWithoutDrain);
   } catch (error) {
@@ -176,7 +180,7 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
     if (current.has(key)) continue;
     try {
       const subjectKey = warningSubjectKey('issue', key);
-      const retired = isInactiveJobIssue(key);
+      const retired = isInactiveIssue(key);
       if (prior.sending && now - (prior.sendingAt ?? 0) < 30 * 60_000) continue;
       const issueKey = `health-watcher|JOB_HEALTH_ISSUES|${subjectKey}`;
       const queued = retired ? false : await hasDeferredIssue(issueKey, queueFile, sendWithoutDrain);
@@ -230,14 +234,16 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
 // 환경변수로 명시적으로 켜지 않으면 이 체크는 건너뛴다(오탐 방지).
 const WATCH_TELEGRAM_SESSION = process.env.WATCH_TELEGRAM_SESSION === '1';
 
+// switchedOff: 꺼진 전략의 잡 이름 집합(strategy-switch.mjs switchedOffJobs). 기대 주기 표는 그대로 두고
+// 여기서만 거르므로, 전략을 다시 켜면 감시가 저절로 돌아온다.
 export function findStaleJobs(jobHealthDir, { now = new Date(), expectedIntervals = EXPECTED_INTERVALS_MS,
-  defaultIntervalMs = EXPECTED_INTERVAL_DEFAULT_MS } = {}) {
+  defaultIntervalMs = EXPECTED_INTERVAL_DEFAULT_MS, switchedOff = new Set() } = {}) {
   if (!existsSync(jobHealthDir)) return [];
   const stale = [];
   for (const file of readdirSync(jobHealthDir)) {
     if (!file.endsWith('.md')) continue;
     const job = file.replace(/\.md$/, '');
-    if (isInactiveJob(job)) continue;
+    if (isInactiveJob(job) || switchedOff.has(job)) continue;
     const expectedIntervalMs = Object.hasOwn(expectedIntervals, job)
       ? expectedIntervals[job] : defaultIntervalMs;
     const record = parseFrontmatter(readFileSync(join(jobHealthDir, file), 'utf8'));
@@ -264,9 +270,17 @@ export function formatStaleJobIssue(s) {
 
 async function main() {
   try {
-    const issues = findStaleJobs(VAULT_PATHS.state.jobHealth).map((stale) => ({
+    // 결정 문서를 못 읽으면 전부 꺼짐(fail-closed)이라 전략 잡 경보가 빠진다. 칸이 없는 것(끈 상태)과 달리
+    // 문서 고장은 원인 모를 꺼짐이므로 따로 경보한다.
+    const switchStatus = strategySwitchStatus();
+    const switchedOff = switchedOffJobs(switchStatus.switches);
+    const issues = findStaleJobs(VAULT_PATHS.state.jobHealth, { switchedOff }).map((stale) => ({
       key: `job:${stale.job}:silent`, job: stale.job, text: formatStaleJobIssue(stale),
     }));
+    if (switchStatus.fault) {
+      issues.push({ key: 'strategy-switch:unreadable', text:
+        `전략 스위치(결정 ${STRATEGY_DECISION_KEY})를 읽지 못해 모든 전략을 꺼짐으로 처리 중입니다 — ${switchStatus.reason}` });
+    }
 
     if (WATCH_TELEGRAM_SESSION) {
       if (!isProcessAlive(TELEGRAM_SESSION_PROCESS_PATTERN)) {
@@ -295,7 +309,7 @@ async function main() {
       issues.forEach((i) => console.log(`  ${i.text}`));
     }
     if (DRY_RUN) return;
-    try { await processHealthIssues(issues); }
+    try { await processHealthIssues(issues, { switchedOff }); }
     catch (error) { console.error('텔레그램 알림 실패:', error.message); }
   } finally {
     // 스캔·장애 알림 어느 단계가 실패해도 보류 큐를 독립적으로 확인한다.

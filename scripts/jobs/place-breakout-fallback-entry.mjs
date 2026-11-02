@@ -54,6 +54,7 @@ import { parseBreakoutPosition, findOpenPositions } from '../lib/breakout-positi
 import { MAX_CONCURRENT_POSITIONS, STOP_LOSS_PCT } from '../lib/breakout-risk.mjs';
 import { checkBreakoutEntryPrecheck, conservativeCash } from '../lib/order-gate.mjs';
 import { buildHeldCodeSet, readBreakoutRecordFiles } from '../lib/breakout-held-codes.mjs';
+import { stopIfStrategyOff } from '../lib/strategy-switch.mjs';
 
 const SENDER_AGENT = 'plutus';
 const sendWarning = createDirectWarningSender(sendAgentMessage, {
@@ -558,6 +559,8 @@ export async function processFallbackEntry({ entry, state, dir, ctx, deps }) {
 }
 
 async function main() {
+  // 결정 `전략-가동` — 꺼져 있으면 어떤 조회·주문보다 먼저 끝낸다(strategy-switch.mjs).
+  if (stopIfStrategyOff('breakout')) return;
   const calendar = readKrxTradingDayStatus();
   if (calendar.isOpen !== true) {
     console.log(`[건너뜀] ${calendar.date} KRX 개장일이 확인되지 않아 다음날시가 폴백을 실행하지 않음: ${calendar.reason || '휴장일'}`);

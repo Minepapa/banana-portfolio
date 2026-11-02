@@ -27,6 +27,7 @@ import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
+import { stopIfStrategyOff } from '../lib/strategy-switch.mjs';
 
 const SENDER_AGENT = 'plutus'; // watch-breakout-entry-fill.mjs와 동일 원칙 — 순수 API조회+발주 결과 전달, 부서 판단 없음
 const sendWarning = createDirectWarningSender(sendAgentMessage, {
@@ -104,6 +105,8 @@ async function alertAndExit(body, code = 1) {
 }
 
 async function main() {
+  // 결정 `전략-가동` — 꺼져 있으면 어떤 조회·주문보다 먼저 끝낸다(strategy-switch.mjs).
+  if (stopIfStrategyOff('breakout')) return;
   const args = parseArgs(process.argv.slice(2));
   const code = args.code || '';
   const name = args.name || code;

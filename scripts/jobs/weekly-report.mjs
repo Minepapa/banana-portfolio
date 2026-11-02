@@ -54,6 +54,7 @@ import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 
 import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
 import { resolveDecision } from '../lib/decision-resolver.mjs';
+import { strategySwitches, STRATEGY_DECISION_KEY, STRATEGY_LABELS } from '../lib/strategy-switch.mjs';
 // 종목명 표준화(2026-09-05, 오너 지시 — "최대한 원문 그대로를 지키면서 통일된
 // 명칭으로 보고 싶어") — Vault 원본(Facts/Ledger)의 stockName은 안 건드리고,
 // 리포트 텍스트로 나가기 직전(LLM에 팩트로 주입되는 시점)에만 표준명으로
@@ -477,6 +478,9 @@ async function main() {
   const prevReport = loadPrevReport(asof);
   // 활성 돌파매매 포지션의 이미 기록된 보호주문 상태만 집계한다. 이 운영 사실은
   // LLM 프롬프트·facts·행동신호에 넣지 않고, 발행 리포트의 frontmatter에만 기록한다.
+  // 결정 `전략-가동` — 돌파매매가 꺼져 있으면 뺐다는 한 줄을 본문 끝에 남긴다(아래 ⑥ 직전). 보호주문 실패
+  // 배지는 스위치와 무관하게 계산한다 — 꺼진 뒤에도 보유가 남아 있으면 그게 바로 알려야 할 위험이다.
+  const breakoutOn = strategySwitches().breakout === true;
   let breakoutProtectionRisk = { riskFlag: false, riskNote: '' };
   try {
     breakoutProtectionRisk = computeBreakoutProtectionRiskFlag(readVaultDir(VAULT_PATHS.state.breakoutPositions));
@@ -573,6 +577,7 @@ async function main() {
     console.log(`   ℹ️ 확신 낮은 수치 ${numericLow.length}건 — 경고 없이 리포트 메모에만 기록`);
   }
   if (reportRetried) md = `${md.trimEnd()}\n\n*WebSearch 턴 상한 도달로 도구 없이 facts만 사용해 한 번 재작성함.*`;
+  if (!breakoutOn) md = `${md.trimEnd()}\n\n*${STRATEGY_LABELS.breakout}: 꺼짐(결정 \`${STRATEGY_DECISION_KEY}\`) — 이 리포트에서 뺐다.*`;
 
 
   // ⑥ Vault 저장 — frontmatter는 반드시 한 줄(위 extractSummary 주석 참고).
