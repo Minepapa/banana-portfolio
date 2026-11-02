@@ -568,11 +568,13 @@ OUTFLOW_GROUPS = {
     "card settlement": "카드대금",
     "own-account transfer": "내 계좌 이동",
     "review": "확인 필요",
+    # 남의 몫을 대신 결제하고 돌려받은 건(오너 확정 pass-through). 나간 돈이라 합계에 넣고, 이름으로 구분한다.
+    "third-party purchase pass-through": "대신 결제",
 }
 OVERLAP_GROUPS = {"카드대금", "내 계좌 이동"}
 # 확인 필요(내 계좌인지 남에게 보낸 돈인지 아직 모르는 이체 등)는 오너 판정 전이라 합계에 넣지도 빼지도 않고 따로 센다.
 PENDING_GROUPS = {"확인 필요"}
-OUTFLOW_ORDER = ["생활 지출", "대출 상환", "저축·투자", "확인 필요", "기타 출금", "카드대금", "내 계좌 이동"]
+OUTFLOW_ORDER = ["생활 지출", "대출 상환", "저축·투자", "대신 결제", "확인 필요", "기타 출금", "카드대금", "내 계좌 이동"]
 
 
 def outflow_group(item):

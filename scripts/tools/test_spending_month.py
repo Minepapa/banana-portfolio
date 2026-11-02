@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 from test_banksalad_audit import workbook
-from spending_month import KST, alert_amounts, build_month, find_export, safe_output
+from spending_month import KST, alert_amounts, build_month, find_export, outflow_group, safe_output
 
 
 def row(day, clock, amount, instrument, description="Synthetic shop", kind="지출", category="식비"):
@@ -295,6 +295,12 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual([row["fixed_cost"] for row in outflows["rows"] if row["fixed_cost"]], ["통신"])
         self.assertEqual(groups["대출 상환"]["by_instrument"], [{"instrument": "Bank", "count": 1, "amount": "100000"}])
         self.assertEqual(outflows["excluded_duplicates"], {"count": 0, "amount": "0"})
+
+    def test_pass_through_charge_is_its_own_outflow_group(self):
+        item = {"date": "2040-02-11", "aggregation_status": "included", "signed_amount": "-1390900",
+                "classification": "third-party purchase pass-through"}
+        self.assertEqual(outflow_group(item), ("대신 결제", 1390900))
+        self.assertIsNone(outflow_group({**item, "signed_amount": "1390000"}), "the receipt leg is not an outflow")
 
     def test_simple_pay_rows_follow_the_card_alert_that_rang_with_them(self):
         fixture = Fixture(self.root, [
