@@ -94,7 +94,7 @@ export const VAULT_REL = {
   mediaOrbDailyFeed: '95_Etna/Media/orb-daily.json', // 05:00 밤 점검이 씀(기억 구슬 일일 집계), 올림푸스가 읽기만
   mediaArgosTrashState: '95_Etna/Media/argos-trash-state.json', // 폰 삭제 따라가기 처리한 이벤트(결정 `미디어-삭제-요청` 2판)
   jobHealth: '95_Etna/Jobs/JobHealth',
-  mineStatusBoard: '40_Projects/banana-portfolio/Features/미네 기록 파이프라인 현황판.md', // 05:00 밤 점검이 '밤 점검' 칸을 덮어씀
+  mineStatusBoard: '40_Projects/Memory_World/Features/미네 기록 파이프라인 현황판.md', // 05:00 밤 점검이 '밤 점검' 칸을 덮어씀(2026-11-02 banana-portfolio/Features에서 옮김, 오너)
   spending: '95_Etna/Spending',
   spendingMonthly: '95_Etna/Spending/Monthly', // 닫힌 달 합계·알림 커버리지(결정 `월별-지출-정본`) — {YYYY-MM}.json
   spendingPlaces: '95_Etna/Spending/Places', // 결제↔동선 연결 파생 — {YYYY}/YYYY-MM-DD.json
