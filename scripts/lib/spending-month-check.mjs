@@ -219,12 +219,19 @@ function totalsSection(monthly, previous) {
 function outflowSection(report) {
   const outflows = report.breakdown?.outflows;
   if (!outflows?.groups?.length) return null;
-  const mark = (group) => (group.overlap ? '(중복)' : group.pending ? '(대기)' : '');
+  const mark = (group) => (group.overlap ? '(중복)' : group.pending ? '(대기)' : group.reimbursed ? '(돌려받음)' : '');
   const table = preTable([['구분', 18, 'left'], ['건', 4, 'right'], ['금액', 12, 'right']],
     outflows.groups.map((group) => [`${group.group}${mark(group)}`, String(group.count), comma(group.amount)]));
-  const lines = [`- 나간 돈 합계 ${won(outflows.total)}(중복·확인 필요를 뺀 모든 출금)`];
+  const lines = [`- 나간 돈 합계 ${won(outflows.total)}(중복·확인 필요·돌려받은 돈을 뺀 모든 출금)`];
   if (Number(outflows.pending_total)) lines.push(`- 확인 필요 ${won(outflows.pending_total)}: 판정 전이라 합계 밖(내 계좌 이동인지 확인)`);
   if (Number(outflows.overlap_total)) lines.push(`- 중복 ${won(outflows.overlap_total)}: 합계 밖(카드 결제·계좌 이동으로 이미 잡힌 돈)`);
+  // 돌려받은 대신 결제(오너 2026-11-02: 순액에서 뺀다). 못 돌려받은 차액은 합계에 남았다고 숨기지 않고 적는다.
+  const reimbursed = Number(outflows.reimbursed_total);
+  if (reimbursed) {
+    const residual = outflows.groups.filter((group) => group.reimbursed)
+      .reduce((sum, group) => sum + Number(group.amount) - Number(group.reimbursed_amount), 0);
+    lines.push(`- 대신 결제 돌려받음 ${won(reimbursed)}: 합계 밖${residual ? `(못 돌려받은 차액 ${won(residual)}은 합계에 포함)` : ''}`);
+  }
   const duplicates = outflows.excluded_duplicates;
   if (duplicates?.count) lines.push(`- 같은 결제의 이중 기록 ${duplicates.count}건(${won(duplicates.amount)})은 한 번만 셈`);
   return `■ 이번 달 나간 돈(모든 출금 ${outflows.rows?.length ?? 0}건)\n${table}\n${lines.join('\n')}`;

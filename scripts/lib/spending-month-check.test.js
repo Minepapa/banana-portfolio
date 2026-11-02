@@ -236,3 +236,15 @@ test('모든 출금 표: 묶음별 건·금액, 중복·판정 대기는 표시�
   }
   assert.doesNotMatch(renderMonthCheck(report, { places: { recordedDays: 0 } }), /이번 달 나간 돈/, '옛 결과 파일은 생략');
 });
+
+test('돌려받은 대신 결제는 합계 밖, 못 돌려받은 차액은 합계에 넣고 적는다(오너 2026-11-02)', () => {
+  const outflows = { total: '4421046', pending_total: '0', overlap_total: '0', reimbursed_total: '1390000', rows: Array.from({ length: 2 }),
+    groups: [
+      { group: '생활 지출', overlap: false, pending: false, reimbursed: false, reimbursed_amount: '0', count: 1, amount: '4420146' },
+      { group: '대신 결제', overlap: false, pending: false, reimbursed: true, reimbursed_amount: '1390000', count: 1, amount: '1390900' },
+    ] };
+  const body = renderMonthCheck({ ...report, breakdown: { ...report.breakdown, outflows } }, { places: { recordedDays: 0 } });
+  assert.match(body, /1 +1,390,900 대신 결제\(돌려받음\)/);
+  assert.match(body, /- 대신 결제 돌려받음 1,390,000원: 합계 밖\(못 돌려받은 차액 900원은 합계에 포함\)/);
+  assert.match(body, /- 나간 돈 합계 4,421,046원\(중복·확인 필요·돌려받은 돈을 뺀 모든 출금\)/);
+});

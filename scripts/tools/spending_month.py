@@ -402,7 +402,8 @@ def build_month(banksalad_dir, spending_dir, events_dir, start, end, closed_mont
             if living != Decimal(str(monthly["total_expense"])):
                 raise ValueError(f"outflows 생활 지출 {living} != total_expense {monthly['total_expense']}")
             row_sum = sum((Decimal(row["amount"]) for row in tables["outflows"]["rows"]), Decimal(0))
-            if row_sum != sum((Decimal(tables["outflows"][key]) for key in ("total", "pending_total", "overlap_total")),
+            if row_sum != sum((Decimal(tables["outflows"][key]) for key in ("total", "pending_total", "overlap_total",
+                                                                               "reimbursed_total")),
                               Decimal(0)):
                 raise ValueError(f"outflows rows {row_sum} != groups")
     return {
@@ -568,7 +569,9 @@ OUTFLOW_GROUPS = {
     "card settlement": "카드대금",
     "own-account transfer": "내 계좌 이동",
     "review": "확인 필요",
-    # 남의 몫을 대신 결제하고 돌려받은 건(오너 확정 pass-through). 나간 돈이라 합계에 넣고, 이름으로 구분한다.
+    # 남의 몫을 대신 결제하고 돌려받은 건(오너 확정 pass-through). 목록·묶음에는 남기고, 돌려받은 만큼은 합계 밖이다
+    # (오너 2026-11-02 "나간 돈을 그대로 돌려받았고 받은 돈이 수입으로 잡힌 게 아니라 순액 증감에서 모두 빼는 게 맞다").
+    # 돌려받지 못한 차액(예: 1,390,900 결제에 1,390,000 환급 → 900)은 실제로 나간 돈이라 합계에 남긴다.
     "third-party purchase pass-through": "대신 결제",
 }
 OVERLAP_GROUPS = {"카드대금", "내 계좌 이동"}
@@ -678,6 +681,23 @@ def breakdown(transactions, month, settings, previous_covered):
                      if entry["instrument"] == name and key in description), None)
 
     out_rows, groups = [], {}
+    # 대신 결제 묶음(pass_through_group_id)마다 돌려받은 돈. 받은 날이 다른 달이어도 같은 묶음이면 센다.
+    receipts = {}
+    for item in transactions:
+        group_id = item.get("pass_through_group_id")
+        amount = amount_value(item["signed_amount"]) if group_id else None
+        if group_id and amount is not None and amount > 0 and item["aggregation_status"] != "excluded_owner_confirmed_duplicate":
+            receipts[group_id] = receipts.get(group_id, Decimal(0)) + amount
+    # 같은 묶음에 결제가 여럿이면 날짜순으로 환급을 채운다.
+    charges = sorted((item for item in transactions if item.get("pass_through_group_id") and item["date"]
+                      and (amount_value(item["signed_amount"]) or 0) < 0),
+                     key=lambda item: (item["date"], item["time"] or "", item["source_row"]))
+    reimbursed_by_row = {}
+    for item in charges:
+        left = receipts.get(item["pass_through_group_id"], Decimal(0))
+        covered = min(-amount_value(item["signed_amount"]), left)
+        receipts[item["pass_through_group_id"]] = left - covered
+        reimbursed_by_row[item["source_row"]] = covered
     # 오너 확정 중복·간편결제 이중 줄(drop_route_duplicates)은 같은 결제의 두 번째 줄이라 목록에서 빼고 건수만 남긴다.
     duplicates = {"count": 0, "amount": Decimal(0)}
     for item in transactions:
@@ -696,27 +716,34 @@ def breakdown(transactions, month, settings, previous_covered):
         name, via = resolve(item)
         override = overrides.get(normalize_merchant(item["description"]))
         fixed_cost = fixed_for(item, name) if group == "생활 지출" else None
+        reimbursed = reimbursed_by_row.get(item["source_row"], Decimal(0)) if group == "대신 결제" else Decimal(0)
         out_rows.append({"date": item["date"], "time": item["time"], "description": item["description"],
                          "instrument": name, "via": via, "group": group, "classification": item["classification"],
                          "category": (override or {}).get("category") or item["original_category"] or "미분류",
                          "subcategory": (override or {}).get("subcategory") or item.get("original_subcategory") or None,
-                         "fixed_cost": fixed_cost, "amount": amount_text(amount), "source_row": item["source_row"]})
+                         "fixed_cost": fixed_cost, "amount": amount_text(amount),
+                         "reimbursed_amount": amount_text(reimbursed), "source_row": item["source_row"]})
         bucket = groups.setdefault(group, {"group": group, "overlap": group in OVERLAP_GROUPS,
                                            "pending": group in PENDING_GROUPS, "count": 0,
-                                           "amount": Decimal(0), "instruments": {}})
+                                           "amount": Decimal(0), "reimbursed": Decimal(0), "instruments": {}})
         bucket["count"] += 1
         bucket["amount"] += amount
+        bucket["reimbursed"] += reimbursed
         card = bucket["instruments"].setdefault(name, {"instrument": name, "count": 0, "amount": Decimal(0)})
         card["count"] += 1
         card["amount"] += amount
     out_rows.sort(key=lambda row: (row["date"], row["time"] or "", row["source_row"]))
     ordered = [groups[name] for name in OUTFLOW_ORDER if name in groups]
     outflows = {
-        "total": amount_text(sum((g["amount"] for g in ordered if not g["overlap"] and not g["pending"]), Decimal(0))),
+        "total": amount_text(sum((g["amount"] - g["reimbursed"] for g in ordered if not g["overlap"] and not g["pending"]),
+                                 Decimal(0))),
         "pending_total": amount_text(sum((g["amount"] for g in ordered if g["pending"]), Decimal(0))),
+        "reimbursed_total": amount_text(sum((g["reimbursed"] for g in ordered if not g["overlap"] and not g["pending"]),
+                                            Decimal(0))),
         "overlap_total": amount_text(sum((g["amount"] for g in ordered if g["overlap"]), Decimal(0))),
-        "groups": [{"group": g["group"], "overlap": g["overlap"], "pending": g["pending"], "count": g["count"],
-                    "amount": amount_text(g["amount"]),
+        "groups": [{"group": g["group"], "overlap": g["overlap"], "pending": g["pending"],
+                    "reimbursed": g["reimbursed"] > 0, "reimbursed_amount": amount_text(g["reimbursed"]),
+                    "count": g["count"], "amount": amount_text(g["amount"]),
                     "by_instrument": [{**card, "amount": amount_text(card["amount"])} for card in
                                       sorted(g["instruments"].values(), key=lambda c: (-c["amount"], c["instrument"]))]}
                    for g in ordered],

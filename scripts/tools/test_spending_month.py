@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 from test_banksalad_audit import workbook
-from spending_month import KST, alert_amounts, build_month, find_export, outflow_group, safe_output
+from spending_month import KST, alert_amounts, breakdown, build_month, find_export, outflow_group, safe_output
 
 
 def row(day, clock, amount, instrument, description="Synthetic shop", kind="지출", category="식비"):
@@ -301,6 +301,27 @@ class CoverageTests(unittest.TestCase):
                 "classification": "third-party purchase pass-through"}
         self.assertEqual(outflow_group(item), ("대신 결제", 1390900))
         self.assertIsNone(outflow_group({**item, "signed_amount": "1390000"}), "the receipt leg is not an outflow")
+
+    def test_reimbursed_pass_through_leaves_the_total_but_keeps_the_residual(self):
+        # 오너 2026-11-02: 대신 결제하고 돌려받은 돈은 순액에서 뺀다. 못 돌려받은 차액은 나간 돈으로 남긴다.
+        def tx(row, day, amount, classification, description, **extra):
+            return {"source_row": row, "date": day, "time": "12:00:00", "signed_amount": amount,
+                    "classification": classification, "aggregation_status": "included", "description": description,
+                    "payment_instrument": "Card A", "original_category": "미분류", **extra}
+        transactions = [
+            tx(2, "2040-02-03", "-5000", "expense", "Lunch"),
+            tx(3, "2040-02-11", "-1390900", "third-party purchase pass-through", "Mall",
+               pass_through_group_id="g1", pass_through_role="charge"),
+            tx(4, "2040-02-11", "1390000", "third-party purchase pass-through", "Friend",
+               pass_through_group_id="g1", pass_through_role="receipt"),
+        ]
+        outflows = breakdown(transactions, "2040-02", {}, False)["outflows"]
+        group = next(group for group in outflows["groups"] if group["group"] == "대신 결제")
+        self.assertEqual((group["amount"], group["reimbursed"], group["reimbursed_amount"]), ("1390900", True, "1390000"))
+        self.assertEqual((outflows["total"], outflows["reimbursed_total"]), ("5900", "1390000"), "residual 900 stays in")
+        row = next(row for row in outflows["rows"] if row["source_row"] == 3)
+        self.assertEqual(row["reimbursed_amount"], "1390000")
+        self.assertEqual(len(outflows["rows"]), 2, "the receipt is not an outflow")
 
     def test_simple_pay_rows_follow_the_card_alert_that_rang_with_them(self):
         fixture = Fixture(self.root, [
