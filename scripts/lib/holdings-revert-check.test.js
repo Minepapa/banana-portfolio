@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findRevertedHoldings, buildRevertedHoldingsMessage, isExternallyManagedAccount } from './holdings-revert-check.mjs';
+import { findRevertedHoldings, buildRevertedHoldingsMessage, isExternallyManagedAccount, decideRevertAlert, recordRevertAlert } from './holdings-revert-check.mjs';
 import { renderAgentMessage } from './pantheon-send.mjs';
 
 const key = (tradeDate, tradeType, name, quantity) => `${tradeDate}|${tradeType}|${name}|${quantity}`;
@@ -155,4 +155,29 @@ test('경고 메시지: 4단 구조·종목당 사실 한 항목·체결 한 줄
   assert.deepEqual([...order].sort((a, b) => a - b), order);
   assert.match(text.split('\n')[0], /^\[플루토스 Plutus\] /);
   assert.match(text, /적용 키 목록을 함께 고칩니다/);
+});
+
+test('같은 이상은 KST 하루 1회만 보낸다 — 같은 날 두 번째 실행은 보내지 않음', () => {
+  const first = new Date('2026-11-02T07:05:00Z'); // KST 16:05
+  const d1 = decideRevertAlert(null, 'holdings:a', first);
+  assert.deepEqual(d1, { send: true, today: '2026-11-02' });
+  const state = recordRevertAlert(null, 'holdings:a', d1.today);
+  // 같은 날 10분 뒤 장중 동기화 실행
+  assert.equal(decideRevertAlert(state, 'holdings:a', new Date('2026-11-02T07:15:00Z')).send, false);
+  // KST 자정 직전(UTC 14:59)도 같은 날
+  assert.equal(decideRevertAlert(state, 'holdings:a', new Date('2026-11-02T14:59:00Z')).send, false);
+  // 다른 묶음(새 종목이 더해짐)은 같은 날에도 보낸다
+  assert.equal(decideRevertAlert(state, 'holdings:b', new Date('2026-11-02T07:15:00Z')).send, true);
+  // KST 다음 날(UTC 15:00 = KST 00:00)은 다시 보낸다
+  assert.deepEqual(decideRevertAlert(state, 'holdings:a', new Date('2026-11-02T15:00:00Z')), { send: true, today: '2026-11-03' });
+});
+
+test('억제 상태는 오늘 항목만 남겨 커지지 않는다', () => {
+  const next = recordRevertAlert({ sent: { 'holdings:old': '2026-11-01', 'holdings:a': '2026-11-02' } }, 'holdings:b', '2026-11-02');
+  assert.deepEqual(next, { sent: { 'holdings:a': '2026-11-02', 'holdings:b': '2026-11-02' } });
+  assert.deepEqual(recordRevertAlert(undefined, 'holdings:a', '2026-11-03'), { sent: { 'holdings:a': '2026-11-03' } });
+  // 상태가 없거나(null, 깨진 JSON을 잡이 null로 읽음) 모양이 다르면 보낸다 — 억제보다 알림이 안전하다
+  assert.equal(decideRevertAlert(null, 'holdings:a', new Date('2026-11-02T07:05:00Z')).send, true);
+  assert.equal(decideRevertAlert({}, 'holdings:a', new Date('2026-11-02T07:05:00Z')).send, true);
+  assert.equal(decideRevertAlert([], 'holdings:a', new Date('2026-11-02T07:05:00Z')).send, true);
 });

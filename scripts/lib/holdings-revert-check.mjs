@@ -86,3 +86,21 @@ export function buildRevertedHoldingsMessage(anomalies) {
     decisions,
   };
 }
+
+// 같은 이상 묶음(subjectKey)은 KST 하루 1회만 알린다(2026-11-02 제우스·클리오 지적).
+// 이 잡은 평일 16:05 단독 실행 외에 intraday-portfolio-sync(10분 주기) 안에서도 돌아,
+// 억제가 없으면 이상이 남은 동안 10분마다 같은 경고가 나간다. 나머지 실행은 로그만 남긴다.
+// 상태는 볼트 밖 작은 JSON({ sent: { [subjectKey]: 'YYYY-MM-DD' } })이고, 오늘 날짜 항목만 남겨 커지지 않는다.
+function kstDay(now) {
+  return new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
+}
+
+export function decideRevertAlert(state, subjectKey, now = new Date()) {
+  const today = kstDay(now);
+  return { send: state?.sent?.[subjectKey] !== today, today };
+}
+
+export function recordRevertAlert(state, subjectKey, today) {
+  const kept = Object.fromEntries(Object.entries(state?.sent ?? {}).filter(([, day]) => day === today));
+  return { sent: { ...kept, [subjectKey]: today } };
+}

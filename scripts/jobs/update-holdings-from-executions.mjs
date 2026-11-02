@@ -71,10 +71,11 @@
  *   node scripts/jobs/update-holdings-from-executions.mjs --dry-run  # 계산만, 쓰기 없음
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter, updateFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { writeAtomic } from '../lib/state-writer.mjs';
+import { writeAtomic, withLock } from '../lib/state-writer.mjs';
+import { homedir } from 'node:os';
 import { resolveExecutionAccount, QUANT_TRACK_LABEL, IRP_ACCOUNT_LABEL } from '../lib/account-resolver.mjs';
 import { applyBuy, applySell, consolidateLots } from '../lib/holdings-updater.mjs';
 import { writeHoldingSafely, holdingFilename, parseAppliedDedupKeys } from '../lib/holdings-vault-writer.mjs';
@@ -86,7 +87,7 @@ import { fetchUsdKrwRate } from '../lib/fundamentals.mjs';
 import { buildVaultTags } from '../lib/vault-tags.mjs';
 import { loadHoldingAssetClassSources, resolveHoldingAssetClass, missingAssetClassQuestion } from '../lib/holding-asset-class.mjs';
 import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
-import { findRevertedHoldings, buildRevertedHoldingsMessage } from '../lib/holdings-revert-check.mjs';
+import { findRevertedHoldings, buildRevertedHoldingsMessage, decideRevertAlert, recordRevertAlert } from '../lib/holdings-revert-check.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 
@@ -95,6 +96,8 @@ const sendRevertWarning = createDirectWarningSender(sendAgentMessage, {
   jobName: 'update-holdings-from-executions', warningCode: 'HOLDING_REVERTED',
   kind: 'data-quality', severity: 'high',
 });
+// 하루 1회 억제 상태(볼트 밖). holdings-revert-check.mjs decideRevertAlert 참고.
+const REVERT_ALERT_STATE_FILE = join(homedir(), '.cache', 'banana-portfolio-v2', 'holding-revert-alerts.json');
 // 알림 누락 등으로 원문이 없는 체결을 오너가 실계좌로 확인해 기록한 행의 source 값.
 // ⚠️ execution-source-policy.mjs classifyConfirmedKakaoExecution의 reason 'OWNER_CONFIRMED'
 // (오너가 계좌만 확정한 카카오 체결, 원장 source는 KAKAO)와 문자열이 같지만 뜻이 다르다.
@@ -357,7 +360,7 @@ async function loadConsolidatedHoldings() {
 
 // 보유 파일 되돌아감 감지(2026-10-28 알파벳 사고 — holdings-revert-check.mjs 헤더 참고).
 // 이번 실행의 쓰기가 끝난 뒤 디스크를 다시 읽어 판정한다. 드라이런이면 발송 없이 로그만.
-// 이상이 남아 있는 동안 실행마다(평일 하루 1회) 다시 알린다 — 직접 경고는 자체 억제가 없다.
+// 이상이 남아 있는 동안 같은 묶음은 KST 하루 1회만 알린다(장중 동기화로 10분마다 돌기 때문).
 async function reportRevertedHoldings() {
   const anomalies = findRevertedHoldings(
     readVaultFiles(VAULT_PATHS.facts.ledger.executions).map(({ parsed }) => parsed),
@@ -375,7 +378,26 @@ async function reportRevertedHoldings() {
     return;
   }
   const subjects = anomalies.map(({ account, name }) => `${account}|${name}`).join(',');
-  await sendRevertWarning(buildRevertedHoldingsMessage(anomalies), { subjectKey: warningSubjectKey('holdings', subjects) });
+  const subjectKey = warningSubjectKey('holdings', subjects);
+  mkdirSync(dirname(REVERT_ALERT_STATE_FILE), { recursive: true });
+  // 락 안에서 판정·발송·기록을 묶는다(16:05 단독 실행과 장중 동기화가 겹쳐도 하루 1회).
+  // 기록은 발송(또는 아침 보류 큐 등록)이 성공한 뒤에만 한다 — 실패하면 다음 실행이 다시 시도한다.
+  await withLock(REVERT_ALERT_STATE_FILE, async () => {
+    let state = null;
+    try { state = JSON.parse(readFileSync(REVERT_ALERT_STATE_FILE, 'utf8')); } catch { state = null; }
+    const { send, today } = decideRevertAlert(state, subjectKey);
+    if (!send) {
+      console.log('  (같은 이상은 오늘 이미 알림 — 발송 생략)');
+      return;
+    }
+    await sendRevertWarning(buildRevertedHoldingsMessage(anomalies), { subjectKey });
+    // 발송은 이미 성공했다. 기록 실패는 원인을 따로 남긴다(이 경우 다음 실행이 다시 보낼 수 있다).
+    try {
+      writeAtomic(REVERT_ALERT_STATE_FILE, `${JSON.stringify(recordRevertAlert(state, subjectKey, today))}\n`);
+    } catch (error) {
+      console.error(`  ⚠️  되돌아감 경고는 보냈으나 하루 1회 억제 기록 실패 — 다음 실행에서 다시 보낼 수 있음: ${error.message}`);
+    }
+  }, { retries: 300, retryDelayMs: 100 }); // 다른 실행이 발송 중이면 최대 30초 기다린다(보류 경고 정리로 수 초 걸릴 수 있음).
 }
 
 async function main() {
