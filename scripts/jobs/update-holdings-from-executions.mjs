@@ -86,8 +86,15 @@ import { fetchUsdKrwRate } from '../lib/fundamentals.mjs';
 import { buildVaultTags } from '../lib/vault-tags.mjs';
 import { loadHoldingAssetClassSources, resolveHoldingAssetClass, missingAssetClassQuestion } from '../lib/holding-asset-class.mjs';
 import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
+import { findRevertedHoldings, buildRevertedHoldingsMessage } from '../lib/holdings-revert-check.mjs';
+import { sendAgentMessage } from '../lib/pantheon-send.mjs';
+import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
+const sendRevertWarning = createDirectWarningSender(sendAgentMessage, {
+  jobName: 'update-holdings-from-executions', warningCode: 'HOLDING_REVERTED',
+  kind: 'data-quality', severity: 'high',
+});
 // 알림 누락 등으로 원문이 없는 체결을 오너가 실계좌로 확인해 기록한 행의 source 값.
 // ⚠️ execution-source-policy.mjs classifyConfirmedKakaoExecution의 reason 'OWNER_CONFIRMED'
 // (오너가 계좌만 확정한 카카오 체결, 원장 source는 KAKAO)와 문자열이 같지만 뜻이 다르다.
@@ -346,6 +353,29 @@ async function loadConsolidatedHoldings() {
     holdingsMap.set(key, { ...merged, appliedDedupKeys: parseAppliedDedupKeys(merged) });
   }
   return holdingsMap;
+}
+
+// 보유 파일 되돌아감 감지(2026-10-28 알파벳 사고 — holdings-revert-check.mjs 헤더 참고).
+// 이번 실행의 쓰기가 끝난 뒤 디스크를 다시 읽어 판정한다. 드라이런이면 발송 없이 로그만.
+// 이상이 남아 있는 동안 실행마다(평일 하루 1회) 다시 알린다 — 직접 경고는 자체 억제가 없다.
+async function reportRevertedHoldings() {
+  const anomalies = findRevertedHoldings(
+    readVaultFiles(VAULT_PATHS.facts.ledger.executions).map(({ parsed }) => parsed),
+    readVaultFiles(VAULT_PATHS.state.holdings).map(({ parsed }) => parsed),
+  );
+  if (!anomalies.length) {
+    console.log('\n🔎 보유 파일 되돌아감 검사: 이상 없음');
+    return;
+  }
+  for (const { account, name, qty, missing } of anomalies) {
+    console.error(`  ⚠️  보유 파일 되돌아감 의심: ${account}|${name} ${qty}주 — 적용 키에 없는 반영 체결 ${missing.map((item) => `${item.tradeDate} ${item.tradeType} ${item.quantity}`).join(', ')}`);
+  }
+  if (DRY_RUN) {
+    console.log('  (드라이런 — 경고 발송 생략)');
+    return;
+  }
+  const subjects = anomalies.map(({ account, name }) => `${account}|${name}`).join(',');
+  await sendRevertWarning(buildRevertedHoldingsMessage(anomalies), { subjectKey: warningSubjectKey('holdings', subjects) });
 }
 
 async function main() {
@@ -616,6 +646,13 @@ async function main() {
       divResolved++;
     }
     console.log(`📊 배당 계좌귀속 완료 ${divResolved}건 · 계좌귀속불가 ${divUnresolved}건` + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''));
+  }
+
+  // 감지 실패가 위 반영 결과를 실패로 바꾸지 않게 따로 잡는다. 삼키지 않고 오류 로그로 남긴다.
+  try {
+    await reportRevertedHoldings();
+  } catch (error) {
+    console.error(`보유 파일 되돌아감 검사 실패(체결 반영 결과와 무관): ${error.message}`);
   }
 }
 

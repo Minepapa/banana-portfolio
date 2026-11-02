@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { parseAppliedDedupKeys } from '../lib/holdings-vault-writer.mjs';
+import { isExternallyManagedAccount } from '../lib/holdings-revert-check.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
 function readRecords(dir) {
@@ -48,9 +49,8 @@ export function compareHoldingsReplay(executions, holdings, opening = {}) {
     const ledger = replay.get(key) ?? { quantity: Number(opening[key] ?? 0), keys: new Set(), count: 0 };
     const holding = current.get(key);
     const actualKeys = new Set(parseAppliedDedupKeys(holding ?? {}));
-    // IRP·퀀트는 API 잔고가 정본이다. 해당 동기화가 appliedDedupKeys를 재설정하므로
-    // 이 원장과 키를 일대일 대조하면 정상 상태도 누락으로 오인한다.
-    const externallyManaged = key.startsWith('IRP|') || key.startsWith('퀀트|');
+    // IRP·퀀트는 API 잔고가 정본이다(판정은 holdings-revert-check.mjs와 공유).
+    const externallyManaged = isExternallyManagedAccount(key.split('|')[0]);
     return {
       key,
       opening: Number(opening[key] ?? 0),

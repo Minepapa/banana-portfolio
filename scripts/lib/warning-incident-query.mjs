@@ -16,6 +16,7 @@ const SAFE_SUMMARIES = Object.freeze({
   BREAKOUT_STOP_ORDER_FAILED: '돌파매매 체결 후 손절 보호주문 실패',
   DUPLICATE_APPROVED_PROPOSAL: '동일 안건의 승인 제안이 중복됨',
   EXECUTION_CONFIRMATION_NEEDED: '체결 기록에 오너 확인 필요',
+  HOLDING_REVERTED: '보유 파일이 옛 버전으로 되돌아갔을 가능성',
   INSTRUMENT_REPLACEMENT_PARTIAL_SEND: '종목 교체 제안의 일부만 발송됨',
   INSTRUMENT_RESCORE_JUDGMENT_FAILED: '연 재평가 창이 끝날 때까지 종목 판단 실패가 남음',
   JOB_HEALTH_ISSUES: '자동화 잡 상태 이상',
