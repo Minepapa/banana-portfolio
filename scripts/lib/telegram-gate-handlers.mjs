@@ -81,11 +81,18 @@ export function isGateToolAllowed(tool, { factsFiles = () => factsCatalog().filt
 
 // logFile(선택): 표준출력·오류를 파이프 대신 이 파일로 보낸다. 창구가 먼저 끝나도 도구가 출력하다 EPIPE로 죽지 않는다(주문 줄, 리뷰 MEDIUM-3).
 // 주문 줄(order)은 시간이 지나도 끊지 않는다: 'GATE_TOOL_TIMEOUT' 오류로 먼저 알리고, 도구는 끝날 때까지 RUNNING에 남는다(리뷰 MEDIUM-4).
-export function runGateTool(tool, args = [], { input = null, timeoutMs = TOOL_TIMEOUT_MS, env = buildGateSpawnEnv(), spawnImpl = spawn, group = 'main', allowed = isGateToolAllowed, logFile = null } = {}) {
+export function runGateTool(tool, args = [], { input = null, timeoutMs = TOOL_TIMEOUT_MS, env = buildGateSpawnEnv(), spawnImpl = spawn, group = 'main', allowed = isGateToolAllowed, logFile = null, onLateExit = null } = {}) {
   if (!allowed(tool)) return Promise.reject(new Error(`창구 허용 목록에 없는 도구: ${tool}`));
   return new Promise((resolvePromise, reject) => {
     let logFd = null;
-    if (logFile) { mkdirSync(dirname(logFile), { recursive: true, mode: 0o700 }); logFd = openSync(logFile, 'a', 0o600); }
+    try {
+      if (logFile) { mkdirSync(dirname(logFile), { recursive: true, mode: 0o700 }); logFd = openSync(logFile, 'a', 0o600); }
+    } catch (error) {
+      // 도구를 띄우기 전 실패 — 호출자가 "실행 안 함"으로 구분한다(재리뷰 LOW-C).
+      error.code = 'GATE_TOOL_NOT_STARTED';
+      reject(error);
+      return;
+    }
     let child;
     try {
       child = spawnImpl(process.execPath, [join(REPO_ROOT, 'scripts', 'tools', tool), ...args], {
@@ -110,6 +117,8 @@ export function runGateTool(tool, args = [], { input = null, timeoutMs = TOOL_TI
     child.on('close', (code) => {
       RUNNING.delete(child);
       if (logFile) out = readTail(logFile);
+      // 시간 초과로 먼저 알린 뒤에 끝난 도구(주문 줄): 결과를 버리지 않고 호출자에게 넘긴다(재리뷰 MEDIUM-A).
+      if (settled) { if (onLateExit) { try { onLateExit(code, (err.trim() || out.trim()).split('\n').slice(-3).join('\n')); } catch { /* 기록 실패는 무시 */ } } return; }
       if (code === 0) finish(resolvePromise, out.trim());
       else finish(reject, new Error((err.trim() || out.trim() || `${tool} 종료코드 ${code}`).split('\n').slice(-3).join('\n')));
     });

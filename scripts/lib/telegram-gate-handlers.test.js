@@ -366,3 +366,24 @@ test('runGateTool logFile: 출력은 파이프가 아니라 파일로(창구가 
     assert.equal(out, '✅ 접수');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('주문 줄 시간 초과 뒤 늦은 종료: RUNNING에서 빠지고 onLateExit로 결과 전달 / 로그 파일 못 열면 NOT_STARTED', async () => {
+  let child;
+  const spawnImpl = () => {
+    child = new EventEmitter();
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+    child.stdin = { on() {}, end() {} };
+    child.kill = () => {};
+    return child;
+  };
+  const lates = [];
+  const p = runGateTool('place-nh-direct-order.mjs', [], { env: {}, group: 'order', allowed: () => true, spawnImpl, timeoutMs: 10, onLateExit: (code, out) => lates.push({ code, out }) });
+  await assert.rejects(p, (e) => e.code === 'GATE_TOOL_TIMEOUT');
+  assert.equal(runningGateToolCount({ group: 'order' }), 1);
+  child.stdout.emit('data', '✅ 늦은 접수\n');
+  child.emit('close', 0);
+  assert.equal(runningGateToolCount({ group: 'order' }), 0);
+  assert.deepEqual(lates, [{ code: 0, out: '✅ 늦은 접수' }]);
+  await assert.rejects(runGateTool('place-nh-direct-order.mjs', [], { env: {}, group: 'order', allowed: () => true, spawnImpl, logFile: '/dev/null/x/y.log' }),
+    (e) => e.code === 'GATE_TOOL_NOT_STARTED');
+});

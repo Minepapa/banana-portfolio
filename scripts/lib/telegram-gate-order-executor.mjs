@@ -103,6 +103,9 @@ const tail = (text) => { const t = String(text ?? '').trim(); return t.length > 
 // 그래서 "다시 지시하지 말 것"을 먼저 말한다 — 다시 지시하면 새 요청이라 같은 주문이 두 번 나갈 수 있다.
 export function describeOrderFailure(confirm, error) {
   const reason = tail(error?.message);
+  if (error?.code === 'GATE_TOOL_NOT_STARTED') {
+    return { status: '실행 안 함(시작 실패)', text: `주문 도구를 띄우지 못해 실행하지 않았습니다(창구 로그 참고). 같은 메시지로는 다시 실행되지 않으니 필요하면 새로 지시해 주세요.\n· ${confirm.summary}` };
+  }
   if (error?.code === 'GATE_TOOL_TIMEOUT') {
     return { status: '결과 불명(시간 초과)', text: `주문 도구가 ${Math.round(ORDER_TOOL_TIMEOUT_MS / 60000)}분 안에 끝나지 않았습니다. 도구는 끊지 않고 계속 돌고 있어 결과를 아직 모릅니다.\n· 같은 주문을 다시 지시하지 말고 NH 앱과 제안 상태를 먼저 확인해 주세요.\n· ${confirm.summary}` };
   }
@@ -136,13 +139,18 @@ export function createOrderExecutor({ mode, ledger, runTool, logDir = null, isBu
     log(`[gate] 주문 실행 시작 ${confirm.id} ${commandText(command)}`);
     try {
       const logFile = logDir ? join(logDir, `${confirm.id}.log`) : null;
-      const out = await runTool(command.tool, command.args, { timeoutMs: ORDER_TOOL_TIMEOUT_MS, group: 'order', allowed: (t) => ORDER_TOOLS.includes(t), logFile });
+      // 시간 초과 뒤 늦게 끝나면 종료코드·끝부분을 원장에 덧붙인다(사후 대조용, 재리뷰 MEDIUM-A). 오너 후속 알림은 아직 없다.
+      const onLateExit = (code, output) => {
+        log(`[gate] 주문 도구 늦은 종료 ${confirm.id} code=${code}`);
+        safeFinish(ledger, key, { lateExitCode: code, lateOutput: String(output ?? '').slice(-500) }, log);
+      };
+      const out = await runTool(command.tool, command.args, { timeoutMs: ORDER_TOOL_TIMEOUT_MS, group: 'order', allowed: (t) => ORDER_TOOLS.includes(t), logFile, onLateExit });
       safeFinish(ledger, key, { status: '성공', output: String(out ?? '').slice(-500), logFile }, log);
       return { executed: true, status: '실행됨', text: `실행했습니다.\n${tail(out) || '(도구 출력 없음)'}` };
     } catch (error) {
       // 실패여도 창구는 다시 실행하지 않는다 — 도구가 증권사에 접수한 뒤 실패했을 수 있다.
       const failure = describeOrderFailure(confirm, error);
-      safeFinish(ledger, key, { status: failure.status, output: String(error.message ?? '').slice(-500) }, log);
+      safeFinish(ledger, key, { status: failure.status, output: String(error.message ?? '').slice(-500), logFile: logDir ? join(logDir, `${confirm.id}.log`) : null }, log);
       return { executed: true, status: failure.status, text: failure.text };
     }
   };

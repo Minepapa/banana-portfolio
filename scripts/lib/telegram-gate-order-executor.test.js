@@ -161,3 +161,20 @@ test('I5: 앞 주문 도구가 아직 돌면(시간 초과 뒤 포함) 실행하
     assert.equal(s.ledger.get('31337:7').status, '결과 불명(시간 초과)');
   } finally { s.cleanup(); }
 });
+
+test('재리뷰 반영: 시작 실패는 실행 안 함으로, 늦은 종료는 원장에 덧붙임, 실패 기록에 로그 경로', async () => {
+  const s = setup();
+  try {
+    assert.equal(describeOrderFailure(confirmOf(), Object.assign(new Error('EACCES'), { code: 'GATE_TOOL_NOT_STARTED' })).status, '실행 안 함(시작 실패)');
+    let late = null;
+    s.setBehavior(async (tool, args, opts) => { late = opts.onLateExit; throw Object.assign(new Error('시간 초과'), { code: 'GATE_TOOL_TIMEOUT' }); });
+    const exec = createOrderExecutor({ mode: 'live', ledger: s.ledger, runTool: s.runTool, logDir: join(s.dir, 'order-logs') });
+    await exec(confirmOf());
+    assert.equal(s.ledger.get('31337:7').logFile, join(s.dir, 'order-logs', 'CF-1.log'));
+    late(0, '✅ 접수');
+    const e = s.ledger.get('31337:7');
+    assert.equal(e.status, '결과 불명(시간 초과)', '상태는 그대로(재실행 근거 아님)');
+    assert.equal(e.lateExitCode, 0);
+    assert.match(e.lateOutput, /접수/);
+  } finally { s.cleanup(); }
+});
