@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   addDays, buildFreshnessDocument, createVaultReaders, currentDigestSlot, findStaleSources, formatSourceIssue,
-  kstDateOf, parseTimeValue, planDigest, readFrontmatterField, trackDigestState, writeIfChanged,
+  digestOpenSince, kstDateOf, parseTimeValue, planDigest, readFrontmatterField, trackDigestState, writeIfChanged,
   DIGEST_RECOVERY_HOLD_MS, DIGEST_REMIND_AFTER_MS,
 } from './data-freshness.mjs';
 
@@ -159,7 +159,29 @@ test('daily-rhythm 마감 시각: 기록 시작 전 날짜는 빈칸으로 치�
     'factsLedgerDailySnapshots/2026-11-03.md': 'x' });
   const r = findStaleSources({ now, sources: [snap], readers: gap }).results[0];
   assert.equal(r.status, 'stale');
-  assert.equal(r.detail, '빈 날짜 2026-10-31, 2026-11-02');
+  assert.equal(r.detail, '2026-10-31, 2026-11-02');
+  assert.equal(r.reason, 'missing-dates');
+  assert.match(formatSourceIssue(r), /^데이터 <code>스냅샷<\/code>\(snap\) 빈 날짜 — 2026-10-31, 2026-11-02$/);
+});
+
+test('daily-rhythm 마감 시각: 이미 경보한 빈 날짜가 확인 기간 밖으로 밀려나도 파일이 생기기 전엔 ok가 아니다', () => {
+  const daily = {
+    id: 'daily', label: '데일리', owner: 'clio', producer: 'daily-note',
+    probe: { type: 'dated-files', pathKey: 'dailyNotes', layout: 'year', ext: '.md' },
+    kind: 'daily-rhythm', threshold: { dueHourNextDayKst: 2, lookbackDays: 3 }, urgent: true, liveness: null,
+  };
+  const files = { 'dailyNotes/2026/2026-10-30.md': 'x', 'dailyNotes/2026/2026-11-01.md': 'x', 'dailyNotes/2026/2026-11-02.md': 'x',
+    'dailyNotes/2026/2026-11-03.md': 'x', 'dailyNotes/2026/2026-11-04.md': 'x', 'dailyNotes/2026/2026-11-05.md': 'x' };
+  const firstSeen = at('2026-10-31T17:30:00Z'); // 11-01 02:30 KST에 10-31 빈칸을 처음 경보
+  const now = at('2026-11-06T05:00:00Z'); // 11-06: 10-31은 3일 확인 기간 밖
+  const plain = findStaleSources({ now, sources: [daily], readers: fakeReaders(files) }).results[0];
+  assert.equal(plain.status, 'ok', '경보 기록이 없으면 기간 안만 본다');
+  const open = findStaleSources({ now, sources: [daily], readers: fakeReaders(files), openSince: { daily: firstSeen } }).results[0];
+  assert.equal(open.status, 'stale');
+  assert.equal(open.detail, '2026-10-31');
+  const filled = findStaleSources({ now, sources: [daily], readers: fakeReaders({ ...files, 'dailyNotes/2026/2026-10-31.md': 'x' }),
+    openSince: { daily: firstSeen } }).results[0];
+  assert.equal(filled.status, 'ok', '그 날짜 파일이 실제로 생겨야 복구');
 });
 
 const MACRO = {
@@ -291,23 +313,46 @@ test('createVaultReaders: 임시 볼트에서 경로 키로 읽고, 점 파일·
   assert.equal(findStaleSources({ now, sources: [HEARTBEAT], readers }).results[0].status, 'ok');
 });
 
-test('writeIfChanged: generatedAt만 바뀌면 쓰지 않고, 내용이 바뀌면 쓴다', (t) => {
+test('writeIfChanged: 비교 키(status·owner·kind·사유)가 같으면 1시간 안엔 안 쓰고, 바뀌면 바로·1시간 지나면 다시 쓴다', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'freshness-file-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, 'Jobs', 'DataFreshness.json');
-  const results = [{ id: 'hb', label: '상태 신호', owner: 'hermes', kind: 'continuous', urgent: true, status: 'ok', lastAt: 1000, detail: '' }];
-  assert.equal(writeIfChanged(file, buildFreshnessDocument(results, 5000)), true);
+  const t0 = at('2026-11-04T00:00:00Z');
+  const results = [{ id: 'hb', label: '상태 신호', owner: 'hermes', kind: 'continuous', urgent: true, status: 'ok', reason: '', lastAt: t0 - 60_000, detail: '' }];
+  assert.equal(writeIfChanged(file, buildFreshnessDocument(results, t0), { now: t0 }), true);
   const firstMtime = statSync(file).mtimeMs;
-  assert.equal(writeIfChanged(file, buildFreshnessDocument(results, 9000)), false);
+  // 마지막 수신·generatedAt만 바뀜 → 1시간 안이면 안 쓴다
+  const moved = [{ ...results[0], lastAt: t0 + 30 * 60_000 }];
+  assert.equal(writeIfChanged(file, buildFreshnessDocument(moved, t0 + 30 * 60_000), { now: t0 + 30 * 60_000 }), false);
   assert.equal(statSync(file).mtimeMs, firstMtime);
-  assert.equal(JSON.parse(readFileSync(file, 'utf8')).generatedAt, new Date(5000).toISOString());
-  assert.equal(writeIfChanged(file, buildFreshnessDocument([{ ...results[0], status: 'stale' }], 9000)), true);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).generatedAt, new Date(t0).toISOString());
+  // 시각이 든 사유 문구(detail)만 바뀐 것도 같은 키
+  const detailOnly = [{ ...results[0], status: 'stale', reason: 'too-old', detail: '2.1시간째 없음' }];
+  assert.equal(writeIfChanged(file, buildFreshnessDocument(detailOnly, t0 + 40 * 60_000), { now: t0 + 40 * 60_000 }), true, '상태가 바뀌면 바로');
+  const detailMoved = [{ ...detailOnly[0], detail: '2.6시간째 없음' }];
+  assert.equal(writeIfChanged(file, buildFreshnessDocument(detailMoved, t0 + 70 * 60_000), { now: t0 + 70 * 60_000 }), false);
+  // 1시간 지나면 lastReceivedAt을 새로 고치려고 다시 쓴다
+  assert.equal(writeIfChanged(file, buildFreshnessDocument(detailMoved, t0 + 101 * 60_000), { now: t0 + 101 * 60_000 }), true);
   const doc = JSON.parse(readFileSync(file, 'utf8'));
   assert.equal(doc.sources[0].status, 'stale');
-  assert.equal(doc.sources[0].lastReceivedAt, new Date(1000).toISOString());
+  assert.equal(doc.sources[0].reason, 'too-old');
+  assert.equal(doc.sources[0].detail, '2.6시간째 없음');
   assert.deepEqual(readdirSync(join(dir, 'Jobs')), ['DataFreshness.json'], '임시 파일이 남지 않는다');
   writeFileSync(file, '{깨짐');
-  assert.equal(writeIfChanged(file, buildFreshnessDocument(results, 9000)), true);
+  assert.equal(writeIfChanged(file, buildFreshnessDocument(results, t0), { now: t0 }), true);
+});
+
+test('writeIfChanged: 테스트 중 주입한 vaultRoot 아래 경로는 거부하고, 쓰기 실패 땐 임시 파일을 지운다', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'freshness-guard-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const doc = buildFreshnessDocument([], 1);
+  assert.throws(() => writeIfChanged(join(dir, 'vault', 'Jobs', 'x.json'), doc, { vaultRoot: join(dir, 'vault') }), /실볼트 경로 쓰기 금지/);
+  assert.equal(writeIfChanged(join(dir, 'other', 'x.json'), doc, { vaultRoot: join(dir, 'vault') }), true);
+  // 대상이 폴더라 이름 바꾸기가 실패하는 경우
+  mkdirSync(join(dir, 'target', 'x.json'), { recursive: true });
+  writeFileSync(join(dir, 'target', 'x.json', 'keep'), '');
+  assert.throws(() => writeIfChanged(join(dir, 'target', 'x.json'), doc));
+  assert.deepEqual(readdirSync(join(dir, 'target')), ['x.json'], '임시 파일 정리');
 });
 
 test('formatSourceIssue: 이름·마지막 수신(KST)·사유를 한 줄로', () => {
@@ -362,6 +407,23 @@ test('묶음 계획: 계속 끊겨 있으면 하루 한 번만 다시 알린다,
   state = trackDigestState(state, nonUrgent('suppressed'), next + 7 * HOUR);
   assert.equal(state.sources.loc.lastBadAt, next + 7 * HOUR);
   assert.deepEqual(planDigest(state, nonUrgent('suppressed'), next + 10 * HOUR).recovered, []);
+  // 표시 전용으로 바뀐 출처는 복구 알림 없이 지운다.
+  const shown = planDigest(state, nonUrgent('display'), next + 11 * HOUR);
+  assert.deepEqual([shown.recovered, shown.due, shown.dropped], [[], [], ['loc']]);
   // 긴급 출처는 묶음 상태에 넣지 않는다.
   assert.deepEqual(trackDigestState({}, [{ ...nonUrgent('stale')[0], urgent: true }], nine).sources, {});
+});
+
+test('묶음 계획: 비긴급 판정 실패(error)도 묶음에 들어가고 문구는 "판정 실패"', () => {
+  const nine = at('2026-11-04T00:00:00Z');
+  const failing = [{ ...nonUrgent('error')[0], detail: '읽기 실패: 가상' }];
+  const state = trackDigestState({}, failing, nine);
+  const plan = planDigest(state, failing, nine);
+  assert.deepEqual(plan.due.map((r) => r.status), ['error']);
+  assert.equal(formatSourceIssue(plan.due[0]), '데이터 <code>위치점</code>(loc) 판정 실패 — 읽기 실패: 가상');
+});
+
+test('digestOpenSince: 묶음 상태의 처음 감지 시각만 뽑는다', () => {
+  assert.deepEqual(digestOpenSince({ sources: { a: { firstSeenAt: 5 }, b: {} } }), { a: 5 });
+  assert.deepEqual(digestOpenSince(null), {});
 });

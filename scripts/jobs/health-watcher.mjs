@@ -26,9 +26,9 @@ import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 
 import { describeJob, JOB_REMEDIATION } from '../lib/job-labels.mjs';
 import { EXPECTED_INTERVALS_MS, EXPECTED_INTERVAL_DEFAULT_MS, JOB_FIRST_HEARTBEAT_BY, isInactiveJob } from '../lib/job-schedule.mjs';
-import { VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
+import { DEFAULT_VAULT_ROOT, VAULT_PATHS, VAULT_REL, vaultAbs } from '../lib/vault-paths.mjs';
 import { DATA_SOURCES } from '../lib/data-sources.mjs';
-import { buildFreshnessDocument, createVaultReaders, currentDigestSlot, findStaleSources, formatSourceIssue,
+import { buildFreshnessDocument, createVaultReaders, currentDigestSlot, digestOpenSince, findStaleSources, formatSourceIssue,
   kstDateOf, planDigest, sourceIssueKey, trackDigestState, writeIfChanged } from '../lib/data-freshness.mjs';
 import { readKrxTradingDayStatus } from '../lib/krx-trading-calendar.mjs';
 import { STRATEGY_DECISION_KEY, strategySwitchStatus, switchedOffJobs } from '../lib/strategy-switch.mjs';
@@ -82,6 +82,14 @@ function readWatcherState(stateFile) {
     renameSync(stateFile, `${stateFile}.corrupt-${Date.now()}`);
     return { __corrupt: true };
   }
+}
+
+// 복구 문구. 데이터 출처(source:<id>:stale|error) 키는 사람이 읽는 출처 이름으로 바꾼다. 나머지(잡 등)는 예전 그대로 키.
+export function recoveryText(key) {
+  const match = /^source:([^:]+):(stale|error)$/.exec(key);
+  const source = match && DATA_SOURCES.find((item) => item.id === match[1]);
+  if (!source) return `복구됨: ${key}`;
+  return match[2] === 'error' ? `판정 정상화: 데이터 <code>${source.label}</code>` : `복구됨: 데이터 <code>${source.label}</code>`;
 }
 
 // switchedOff: 꺼진 전략의 잡(결정 `전략-가동`). 폐지된 잡과 같이 다뤄, 이미 보낸 '조용함' 경고는
@@ -211,7 +219,7 @@ export async function processHealthIssues(issues, { stateFile = WATCHER_STATE_FI
           await resolveDeferredIssue(issueKey, queueFile, sendWithoutDrain);
           if (!queued) {
             await send({ agent: SENDER_AGENT, kind: '판단', topic: '복구',
-              facts: [`복구됨: ${key}`] }, { warningCode: 'JOB_HEALTH_RECOVERED', subjectKey, queueFile,
+              facts: [recoveryText(key)] }, { warningCode: 'JOB_HEALTH_RECOVERED', subjectKey, queueFile,
               drainBeforeSend: false });
             sent++;
           }
@@ -281,10 +289,23 @@ export function findStaleJobs(jobHealthDir, { now = new Date(), expectedInterval
 // ── 데이터 신선도(2026-11-03, 데이터 체계 개선 ④) ──
 // 표는 lib/data-sources.mjs, 판정은 lib/data-freshness.mjs. 긴급 출처는 위 잡 경보와 같은 processHealthIssues 일정으로,
 // 나머지는 09·19시 담당별 묶음(runFreshnessDigest)으로 보낸다.
-export function checkDataFreshness({ now = Date.now(), root = VAULT_PATHS.root, silentJobs = new Set(),
+export function checkDataFreshness({ now = Date.now(), root = VAULT_PATHS.root, silentJobs = new Set(), openSince = {},
   sources = DATA_SOURCES, isTradingDay = (label) => krxTradingDayFromCache(label) } = {}) {
   const readers = createVaultReaders({ root, rel: VAULT_REL, isTradingDay });
-  return findStaleSources({ now, sources, readers, silentJobs });
+  return findStaleSources({ now, sources, readers, silentJobs, openSince });
+}
+
+// 이미 경보 중인 출처의 처음 감지 시각 — 긴급은 감시 상태(source:<id>:stale), 비긴급은 묶음 상태에서 읽는다. 읽기만 한다.
+export function readOpenSince({ watcherStateFile = WATCHER_STATE_FILE, digestStateFile = FRESHNESS_DIGEST_STATE_FILE } = {}) {
+  const open = {};
+  try { Object.assign(open, digestOpenSince(JSON.parse(readFileSync(digestStateFile, 'utf8')))); } catch { /* 없으면 빈 값 */ }
+  try {
+    for (const [key, issue] of Object.entries(JSON.parse(readFileSync(watcherStateFile, 'utf8')))) {
+      const match = /^source:([^:]+):stale$/.exec(key);
+      if (match && Number.isFinite(issue?.firstSeenAt)) open[match[1]] = issue.firstSeenAt;
+    }
+  } catch { /* 없으면 빈 값 */ }
+  return open;
 }
 
 // 거래일 캐시는 그날 조회한 파일만 믿는다(krx-trading-calendar.mjs). 없으면 null → 판정 쪽이 주말만 쉬는 날로 본다.
@@ -299,19 +320,24 @@ export function readPriorSourceKeys(stateFile = WATCHER_STATE_FILE) {
   } catch { return new Set(); }
 }
 
-// 긴급 출처 → 감시 이슈. 판정을 못 했거나(error·검사 자체 실패) 다른 경보로 묶였는데(suppressed) 이미 경보 중이던 출처는
-// 이슈를 그대로 유지한다 — 빠지면 processHealthIssues가 "복구됨"을 보낸다(가짜 복구).
+// 긴급 출처 → 감시 이슈(processHealthIssues 일정 — 처음·6시간·24시간·하루 한 번).
+// - stale → source:<id>:stale, 판정 실패(error) → source:<id>:error.
+// - 판정을 못 했거나(error) 다른 경보로 묶였는데(suppressed) 이미 stale 경보 중이던 출처는 그 이슈를 유지한다 —
+//   빠지면 processHealthIssues가 "복구됨"을 보낸다(가짜 복구).
+// - results가 null(검사 전체 실패)이면 freshness:check-failed를 내고 경보 중이던 source:* 이슈를 모두 유지한다.
 export function sourceIssuesFor(results, priorKeys) {
   if (!results) {
-    return [...priorKeys].map((key) => ({ key, text: `데이터 신선도 검사 실패 — 이전 경보 유지(${key})` }));
+    return [{ key: 'freshness:check-failed', text: '데이터 신선도 검사 전체가 실패했습니다 — health-watcher 로그 확인' },
+      ...[...priorKeys].map((key) => ({ key, text: `데이터 신선도 검사 실패 — 이전 경보 유지(${key})` }))];
   }
   const issues = [];
   for (const r of results) {
     if (!r.urgent) continue;
     const key = sourceIssueKey(r.id);
     if (r.status === 'stale') issues.push({ key, text: formatSourceIssue(r) });
-    else if ((r.status === 'error' || r.status === 'suppressed') && priorKeys.has(key)) {
-      issues.push({ key, text: `${formatSourceIssue(r)} (판정 보류 — 이전 경보 유지)` });
+    if (r.status === 'error') issues.push({ key: `source:${r.id}:error`, text: formatSourceIssue(r) });
+    if ((r.status === 'error' || r.status === 'suppressed') && priorKeys.has(key)) {
+      issues.push({ key, text: `${formatSourceIssue({ ...r, status: 'stale' })} (판정 보류 — 이전 경보 유지)` });
     }
   }
   return issues;
@@ -341,7 +367,7 @@ export async function runFreshnessDigest(results, { stateFile = FRESHNESS_DIGEST
   });
   if (!plan) return { sent: 0 };
   const owners = new Map();
-  for (const r of plan.due) owners.set(r.owner, [...(owners.get(r.owner) ?? []), { r, line: `${r.reminder ? '여전히 끊김' : '새로 끊김'}: ${formatSourceIssue(r)}` }]);
+  for (const r of plan.due) owners.set(r.owner, [...(owners.get(r.owner) ?? []), { r, line: `${r.reminder ? '계속' : '새 경보'}: ${formatSourceIssue(r)}` }]);
   for (const r of plan.recovered) owners.set(r.owner, [...(owners.get(r.owner) ?? []), { r, line: `복구됨: 데이터 <code>${r.label}</code>(${r.id})`, recovered: true }]);
   let sent = 0;
   for (const [owner, items] of owners) {
@@ -356,6 +382,7 @@ export async function runFreshnessDigest(results, { stateFile = FRESHNESS_DIGEST
     await withLock(stateFile, () => {
       let state = {};
       try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch { return; }
+      state.sources ??= {};
       for (const item of items) {
         if (item.recovered) delete state.sources[item.r.id];
         else if (state.sources[item.r.id]) state.sources[item.r.id].lastSentAt = now;
@@ -368,7 +395,7 @@ export async function runFreshnessDigest(results, { stateFile = FRESHNESS_DIGEST
 
 export function writeDataFreshnessFile(results, { file = DATA_FRESHNESS_FILE, now = Date.now() } = {}) {
   if (process.env.NODE_TEST_CONTEXT && file === DATA_FRESHNESS_FILE) throw new Error('테스트에서 실볼트 신선도 파일 경로 사용 금지');
-  return writeIfChanged(file, buildFreshnessDocument(results, now));
+  return writeIfChanged(file, buildFreshnessDocument(results, now), { now, vaultRoot: DEFAULT_VAULT_ROOT });
 }
 
 // s: findStaleJobs()가 반환한 { job, lastRun, expectedIntervalMs } 하나. 순수 함수 —
@@ -398,7 +425,10 @@ async function main() {
     // 데이터 신선도 — 잡 검사 다음, 따로 감싼다. 여기서 throw해도 잡 감시는 계속된다.
     const freshnessNow = Date.now();
     let freshness = null;
-    try { freshness = checkDataFreshness({ now: freshnessNow, silentJobs: new Set(staleJobs.map((stale) => stale.job)) }); }
+    try {
+      freshness = checkDataFreshness({ now: freshnessNow, silentJobs: new Set(staleJobs.map((stale) => stale.job)),
+        openSince: readOpenSince() });
+    }
     catch (error) { console.error('데이터 신선도 검사 실패:', error.message); }
     issues.push(...sourceIssuesFor(freshness?.results ?? null, readPriorSourceKeys()));
     if (switchStatus.fault) {
