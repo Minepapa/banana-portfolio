@@ -15,13 +15,13 @@ test('readIrpHoldings: 존재하지 않는 디렉토리면 빈 배열', () => {
 
 test('buildIrpHoldingsPlan: 수량·평단가 모두 일치하면 changed:false', () => {
   const { writes, closes, skipped, suspiciousEmpty } = buildIrpHoldingsPlan(
-    [{ name: 'TIGER TDF2045', ticker: '0025N0', qty: 100, avgPrice: 11500, assetClass: 'TDF' }],
-    [{ code: '0025N0', name: 'TIGER TDF2045', qty: 100, avgPrice: 11500, invest: 1150000, curPrice: 11900, evalAmount: 1190000, profitAmount: 40000, profitPct: 3.48 }],
+    [{ name: '가상 TDF2099', ticker: '900103', qty: 100, avgPrice: 11500, assetClass: 'TDF' }],
+    [{ code: '900103', name: '가상 TDF2099', qty: 100, avgPrice: 11500, invest: 1150000, curPrice: 11900, evalAmount: 1190000, profitAmount: 40000, profitPct: 3.48 }],
   );
   assert.equal(writes.length, 1);
   assert.equal(writes[0].changed, false);
   assert.equal(writes[0].assetClass, 'TDF'); // 기존 Vault identity 필드 보존
-  assert.equal(writes[0].ticker, '0025N0');
+  assert.equal(writes[0].ticker, '900103');
   assert.deepEqual(closes, []);
   assert.deepEqual(skipped, []);
   assert.equal(suspiciousEmpty, false);
@@ -29,8 +29,8 @@ test('buildIrpHoldingsPlan: 수량·평단가 모두 일치하면 changed:false'
 
 test('buildIrpHoldingsPlan: 수량 불일치면 changed:true로 KIS 값 반영', () => {
   const { writes } = buildIrpHoldingsPlan(
-    [{ name: 'TIGER TDF2045', ticker: '0025N0', qty: 412, avgPrice: 11504.5 }],
-    [{ code: '0025N0', name: 'TIGER TDF2045', qty: 413, avgPrice: 11505.57, invest: 4751800, curPrice: 11925, evalAmount: 4925025, profitAmount: 173225, profitPct: 3.64 }],
+    [{ name: '가상 TDF2099', ticker: '900103', qty: 412, avgPrice: 11504.5 }],
+    [{ code: '900103', name: '가상 TDF2099', qty: 413, avgPrice: 11505.57, invest: 4751800, curPrice: 11925, evalAmount: 4925025, profitAmount: 173225, profitPct: 3.64 }],
   );
   assert.equal(writes[0].changed, true);
   assert.equal(writes[0].qty, 413);
@@ -39,32 +39,32 @@ test('buildIrpHoldingsPlan: 수량 불일치면 changed:true로 KIS 값 반영',
 
 test('buildIrpHoldingsPlan: code로 매칭 — 종목명이 바뀌어도 같은 code면 기존 identity 보존(전량청산 오판 방지)', () => {
   const { writes, closes } = buildIrpHoldingsPlan(
-    [{ name: 'TIGER TDF2045 적격(구)', ticker: '0025N0', qty: 413, avgPrice: 11505, assetClass: 'TDF' }],
-    [{ code: '0025N0', name: 'TIGER TDF2045 적격(신)', qty: 413, avgPrice: 11505.57, invest: 4751800, curPrice: 11925, evalAmount: 4925025, profitAmount: 173225, profitPct: 3.64 }],
+    [{ name: '가상 TDF2099 적격(구)', ticker: '900103', qty: 413, avgPrice: 11505, assetClass: 'TDF' }],
+    [{ code: '900103', name: '가상 TDF2099 적격(신)', qty: 413, avgPrice: 11505.57, invest: 4751800, curPrice: 11925, evalAmount: 4925025, profitAmount: 173225, profitPct: 3.64 }],
   );
   assert.equal(writes.length, 1);
-  assert.equal(writes[0].name, 'TIGER TDF2045 적격(신)');
+  assert.equal(writes[0].name, '가상 TDF2099 적격(신)');
   assert.equal(writes[0].assetClass, 'TDF'); // code로 매칭됐으니 옛 이름 파일의 assetClass를 그대로 이어받음
   assert.deepEqual(closes, []); // 이름이 바뀐 것뿐, 청산 아님
 });
 
 test('[코드리뷰 발견/이중계상 재현] buildIrpHoldingsPlan: 상품명이 바뀌면 옛 이름을 renames로 담아 옛 파일을 정리 대상으로 표시', () => {
   const { writes, closes, renames } = buildIrpHoldingsPlan(
-    [{ name: 'TIGER TDF2045 적격(구)', ticker: '0025N0', qty: 413, avgPrice: 11505, assetClass: 'TDF' }],
-    [{ code: '0025N0', name: 'TIGER TDF2045 적격(신)', qty: 413, avgPrice: 11505.57, invest: 4751800, curPrice: 11925, evalAmount: 4925025, profitAmount: 173225, profitPct: 3.64 }],
+    [{ name: '가상 TDF2099 적격(구)', ticker: '900103', qty: 413, avgPrice: 11505, assetClass: 'TDF' }],
+    [{ code: '900103', name: '가상 TDF2099 적격(신)', qty: 413, avgPrice: 11505.57, invest: 4751800, curPrice: 11925, evalAmount: 4925025, profitAmount: 173225, profitPct: 3.64 }],
   );
   // 새 이름으로 파일을 쓰고(writes) + 청산 목록엔 안 들어가면서(closes 비어있음) +
   // 동시에 옛 이름 파일을 지워야 한다는 신호(renames)가 함께 있어야 한다 — 셋 중
   // 하나라도 빠지면 옛 파일이 남아 이중계상된다.
-  assert.equal(writes[0].name, 'TIGER TDF2045 적격(신)');
+  assert.equal(writes[0].name, '가상 TDF2099 적격(신)');
   assert.deepEqual(closes, []);
-  assert.deepEqual(renames, [{ oldName: 'TIGER TDF2045 적격(구)', newName: 'TIGER TDF2045 적격(신)' }]);
+  assert.deepEqual(renames, [{ oldName: '가상 TDF2099 적격(구)', newName: '가상 TDF2099 적격(신)' }]);
 });
 
 test('buildIrpHoldingsPlan: 상품명이 그대로면(이름매칭) renames 없음', () => {
   const { renames } = buildIrpHoldingsPlan(
-    [{ name: 'TIGER TDF2045', ticker: '0025N0', qty: 100, avgPrice: 11500, assetClass: 'TDF' }],
-    [{ code: '0025N0', name: 'TIGER TDF2045', qty: 100, avgPrice: 11500, invest: 1150000, curPrice: 11900, evalAmount: 1190000, profitAmount: 40000, profitPct: 3.48 }],
+    [{ name: '가상 TDF2099', ticker: '900103', qty: 100, avgPrice: 11500, assetClass: 'TDF' }],
+    [{ code: '900103', name: '가상 TDF2099', qty: 100, avgPrice: 11500, invest: 1150000, curPrice: 11900, evalAmount: 1190000, profitAmount: 40000, profitPct: 3.48 }],
   );
   assert.deepEqual(renames, []);
 });
@@ -129,7 +129,7 @@ test('buildIrpHoldingsPlan: Vault에만 있고 KIS엔 최소 1개 다른 종목�
 
 test('[코드리뷰 CRITICAL] buildIrpHoldingsPlan: KIS 응답이 통째로 빈 배열이면(간헐적 결측 가능성) 전량청산으로 추정 안 함 — closes 비고 suspiciousEmpty:true', () => {
   const { writes, closes, suspiciousEmpty } = buildIrpHoldingsPlan(
-    [{ name: 'TIGER TDF2045', ticker: '0025N0', qty: 413, avgPrice: 11505 }],
+    [{ name: '가상 TDF2099', ticker: '900103', qty: 413, avgPrice: 11505 }],
     [],
   );
   assert.deepEqual(writes, []);

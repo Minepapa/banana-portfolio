@@ -8,9 +8,9 @@ import { buildProfitLookup, lookupRealizedProfit } from './realized-profit-ledge
 
 test('lookupRealizedProfit: account 있는 정확일치를 찾으면 실현손익 반환', () => {
   const lookup = buildProfitLookup([
-    { date: '2026-08-27 10:06:45', stockName: 'PLUS 고배당주', quantity: 30, buyPrice: 17766, sellPrice: 25500, profit: 232020, account: '연금저축' },
+    { date: '2026-08-27 10:06:45', stockName: '가상 고배당 ETF', quantity: 30, buyPrice: 17766, sellPrice: 25500, profit: 232020, account: '연금저축' },
   ]);
-  const hit = lookupRealizedProfit({ date: '2026-08-27 10:06:45', account: '연금저축', name: 'PLUS 고배당주', qty: '30' }, lookup);
+  const hit = lookupRealizedProfit({ date: '2026-08-27 10:06:45', account: '연금저축', name: '가상 고배당 ETF', qty: '30' }, lookup);
   assert.equal(hit.realizedWon, 232020);
   assert.equal(hit.realizedPct, 43.5);
 });

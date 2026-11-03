@@ -11,7 +11,7 @@ const baseInput = () => ({
   asof: '2026-06-14',
   weekStart: '2026-06-08',
   holdings: [
-    { account: '위탁', name: 'SK하이닉스', assetClass: '국내주식', qty: 8, invest: 15920000, evalAmount: 17200000 },
+    { account: '위탁', name: '가상반도체', assetClass: '국내주식', qty: 8, invest: 15920000, evalAmount: 17200000 },
     { account: '위탁', name: '애플', assetClass: '해외주식', qty: 8, invest: 2400000, evalAmount: 2651420 },
   ],
   macro: {
@@ -22,7 +22,7 @@ const baseInput = () => ({
   },
   // 체결내역 실제 스키마: A날짜 B구분 C계좌 D코드 E자산군 F종목명 G체결가 H수량 I금액
   tradeRows: [
-    ['2026-06-05', '매수', '위탁', '000660', '국내주식', 'SK하이닉스', '1990000', '5', '9950000'],
+    ['2026-06-05', '매수', '위탁', '900102', '국내주식', '가상반도체', '1990000', '5', '9950000'],
     ['2026-05-01', '매수', '위탁', '005930', '국내주식', '삼성전자', '70000', '10', '700000'],
   ],
   dividendRows: [
@@ -34,16 +34,16 @@ const baseInput = () => ({
 
 test('buildReportFacts: 평가액·총수익률은 State/Holdings 원본값 그대로(재계산 안 함)', () => {
   const { facts } = buildReportFacts(baseInput());
-  const hynix = facts.holdings.find(h => h.name === 'SK하이닉스');
+  const hynix = facts.holdings.find(h => h.name === '가상반도체');
   assert.equal(hynix.evalValue, 17200000);
   assert.equal(hynix.totalReturnPct, Math.round((17200000 - 15920000) / 15920000 * 1000) / 10);
 });
 
 test('buildReportFacts: 같은 종목이 여러 계좌에 걸치면 평가액·원금 합산', () => {
   const input = baseInput();
-  input.holdings.push({ account: '연금저축', name: 'SK하이닉스', assetClass: '국내주식', qty: 2, invest: 3980000, evalAmount: 4300000 });
+  input.holdings.push({ account: '연금저축', name: '가상반도체', assetClass: '국내주식', qty: 2, invest: 3980000, evalAmount: 4300000 });
   const { facts } = buildReportFacts(input);
-  const hynix = facts.holdings.find(h => h.name === 'SK하이닉스');
+  const hynix = facts.holdings.find(h => h.name === '가상반도체');
   assert.equal(hynix.qty, 10);
   assert.equal(hynix.evalValue, 17200000 + 4300000);
   assert.equal(hynix.invest, 15920000 + 3980000);
@@ -83,9 +83,9 @@ test('buildReportFacts: 계좌별 수익률은 평가액과 원금으로 계산�
 
 test('buildReportFacts: evalAmount 결측이면 null, 추정 금지', () => {
   const input = baseInput();
-  input.holdings[0] = { account: '위탁', name: 'SK하이닉스', assetClass: '국내주식', qty: 8, invest: 15920000 }; // evalAmount 없음
+  input.holdings[0] = { account: '위탁', name: '가상반도체', assetClass: '국내주식', qty: 8, invest: 15920000 }; // evalAmount 없음
   const { facts } = buildReportFacts(input);
-  const hynix = facts.holdings.find(h => h.name === 'SK하이닉스');
+  const hynix = facts.holdings.find(h => h.name === '가상반도체');
   assert.equal(hynix.evalValue, null);
   assert.equal(hynix.totalReturnPct, null);
 });
@@ -97,7 +97,7 @@ test('buildReportFacts: 이번 주 체결만 필터(weekStart 이상)', () => {
   // weekStart를 6/01로 낮추면 6/05만 포함(5/01 제외) → 1건
   const wider = buildReportFacts({ ...baseInput(), weekStart: '2026-06-01' });
   assert.equal(wider.facts.weekTrades.length, 1);
-  assert.equal(wider.facts.weekTrades[0].name, 'SK하이닉스');
+  assert.equal(wider.facts.weekTrades[0].name, '가상반도체');
 });
 
 test('buildReportFacts: 매도 실현손익은 체결이력 매입평균 대비로 계산(체결행 라이브 컬럼 무시) — 2026-07 현대차 회귀 재현', () => {
@@ -151,12 +151,12 @@ test('buildReportFacts: 이번 주 배당만 필터', () => {
 test('buildReportFacts: factsText에 핵심 수치가 포함되고 추정 표현이 없다', () => {
   const { factsText } = buildReportFacts(baseInput());
   assert.ok(factsText.includes('17,200,000'));
-  assert.ok(factsText.includes('SK하이닉스'));
+  assert.ok(factsText.includes('가상반도체'));
   assert.ok(!/추정/.test(factsText));                    // 추정 단어가 facts엔 없어야
 });
 
 // ── Facts/Ledger/Profits 정본 매칭(2026-08-30 신설, 오너 신고 재현) ─────────────────
-// 실사고: PLUS 고배당주·TIGER 미국배당다우존스가 리포트에서 "손익 미확정"으로 나왔다.
+// 실사고: 가상 고배당 ETF·TIGER 미국배당다우존스가 리포트에서 "손익 미확정"으로 나왔다.
 // 원인은 Executions 원장에 매수 체결이 하나도 없어서(v1→v2 이관 이전 매수 포지션이라
 // 매수 "체결" 자체가 기록된 적 없음, 매도만 있음) — 매입평균 재구성이 항상 실패.
 // Facts/Ledger/Profits엔 이미 정확한 실현손익이 있는데(대시보드 수익금 탭이 읽는 바로
@@ -168,20 +168,20 @@ test('buildReportFacts: 매수 이력이 전혀 없어도 Profits 정본에 매�
     weekStart: '2026-08-24',
     asof: '2026-08-30',
     tradeRows: [
-      // PLUS 고배당주 실사고 그대로 — 매수 체결 자체가 없음(v1→v2 이관 이전 포지션).
-      ['2026-08-27 10:06:45', '매도', '연금저축', '', '배당주', 'PLUS 고배당주', '25500', '30', '765000'],
+      // 가상 고배당 ETF 실사고 그대로 — 매수 체결 자체가 없음(v1→v2 이관 이전 포지션).
+      ['2026-08-27 10:06:45', '매도', '연금저축', '', '배당주', '가상 고배당 ETF', '25500', '30', '765000'],
     ],
     profitRows: [
-      { date: '2026-08-27 10:06:45', stockName: 'PLUS 고배당주', quantity: 30, buyPrice: 17766, sellPrice: 25500, profit: 232020, account: '연금저축' },
+      { date: '2026-08-27 10:06:45', stockName: '가상 고배당 ETF', quantity: 30, buyPrice: 17766, sellPrice: 25500, profit: 232020, account: '연금저축' },
     ],
   };
   const { facts, factsText } = buildReportFacts(input);
-  const sell = facts.weekTrades.find(t => t.name === 'PLUS 고배당주');
+  const sell = facts.weekTrades.find(t => t.name === '가상 고배당 ETF');
   assert.equal(sell.ledgerMatched, true);
   assert.equal(sell.realizedWon, 232020);
   assert.equal(sell.partialHistory, false); // 재구성이 아니라 정본이라 "일부만 추적" 플래그 자체가 무의미
-  assert.match(factsText, /PLUS 고배당주.*실현손익 \+232,020원.*정본 원장/);
-  assert.doesNotMatch(factsText, /PLUS 고배당주.*손익 미확정/);
+  assert.match(factsText, /가상 고배당 ETF.*실현손익 \+232,020원.*정본 원장/);
+  assert.doesNotMatch(factsText, /가상 고배당 ETF.*손익 미확정/);
 });
 
 test('buildReportFacts: Profits에 매칭되는 기록이 없으면 기존처럼 Executions 재구성으로 폴백(하위호환)', () => {
@@ -379,7 +379,7 @@ test('buildReportFacts: "총 실탄으로 합산 금지" 경고가 항상 포함
 });
 
 test('buildReportFacts: 현금 계좌가 전혀 없으면 자유 재투자 가능 0원으로 명시(추정 아님)', () => {
-  const input = { ...baseInput(), holdings: [{ account: '위탁', name: 'SK하이닉스', assetClass: '국내주식', qty: 8, invest: 15920000, evalAmount: 17200000 }] };
+  const input = { ...baseInput(), holdings: [{ account: '위탁', name: '가상반도체', assetClass: '국내주식', qty: 8, invest: 15920000, evalAmount: 17200000 }] };
   const { factsText } = buildReportFacts(input);
   assert.match(factsText, /자유 재투자 가능\(위탁\+금현물, 신규현금배분 실제 배정 대상\): 0원/);
 });

@@ -7,7 +7,7 @@ import { parseArgs, renderFacts, assembleFacts, findHolding, formatHoldings, res
 // buildEvalFacts로 산출해 주입. 환각 차단이 최우선이므로 실패는 "데이터 부족"으로 정직하게.
 
 test('parseArgs — 종목명 필수, --market/--json 플래그', () => {
-  assert.deepEqual(parseArgs(['알파벳']), { name: '알파벳', market: null, json: false });
+  assert.deepEqual(parseArgs(['가상테크']), { name: '가상테크', market: null, json: false });
   assert.deepEqual(parseArgs(['삼성전자', '--market', 'KR']), { name: '삼성전자', market: 'KR', json: false });
   assert.deepEqual(parseArgs(['AAPL', '--json']), { name: 'AAPL', market: null, json: true });
   assert.deepEqual(parseArgs(['엔비디아', '--market', 'US', '--json']), { name: '엔비디아', market: 'US', json: true });
@@ -80,15 +80,15 @@ test('assembleFacts — 매핑 실패 종목은 데이터 부족(추정 금지)'
 
 // 보유 파싱: 2026-08-22부터 Vault State/Holdings 프론트매터 배열이 입력(v1 시트 탭 A2:I
 // 조회를 대체 — PANTHEON.md가 명시했던 마지막 미전환 항목). 종목명 정식표기는
-// "알파벳 Class A"인데 Frank는 "알파벳"으로 부른다 → 선행 단어 매칭 필요.
+// "가상테크 Class A"인데 Frank는 "가상테크"으로 부른다 → 선행 단어 매칭 필요.
 const holdingsFixture = () => ([
-  { account: '위탁', assetClass: '해외주식', name: '알파벳 Class A', avgPrice: 311500, qty: 14, invest: 6488790, profitAmount: 734006, profitPct: 11.3 },
+  { account: '위탁', assetClass: '해외주식', name: '가상테크 Class A', avgPrice: 311500, qty: 14, invest: 6488790, profitAmount: 734006, profitPct: 11.3 },
   { account: '위탁', assetClass: '해외주식', name: '엔비디아', avgPrice: 100, qty: 10, invest: 1000, profitAmount: 50, profitPct: 5 },
-  { account: 'ISA', assetClass: '배당주', name: '알파벳 Class C', avgPrice: 340000, qty: 2, invest: 680000, profitAmount: 13000, profitPct: 1.9 },
+  { account: 'ISA', assetClass: '배당주', name: '가상테크 Class C', avgPrice: 340000, qty: 2, invest: 680000, profitAmount: 13000, profitPct: 1.9 },
 ]);
 
-test('findHolding — 포지션 집계(평단·수익률 포함) + 선행단어 매칭("알파벳"→"알파벳 Class A")', () => {
-  const rows = findHolding(holdingsFixture(), '알파벳');
+test('findHolding — 포지션 집계(평단·수익률 포함) + 선행단어 매칭("가상테크"→"가상테크 Class A")', () => {
+  const rows = findHolding(holdingsFixture(), '가상테크');
   assert.equal(rows.length, 2);              // 위탁 Class A + ISA Class C
   assert.equal(rows[0].account, '위탁');
   assert.equal(rows[0].qty, 14);
@@ -117,7 +117,7 @@ test('formatHoldings — 미보유는 "미보유" 명시', () => {
 });
 
 test('formatHoldings — 보유는 수치·계좌를 서술', () => {
-  const out = formatHoldings(findHolding(holdingsFixture(), '알파벳'));
+  const out = formatHoldings(findHolding(holdingsFixture(), '가상테크'));
   assert.match(out, /위탁/);
   assert.match(out, /14/);
   assert.match(out, /311[,.]?500/);
@@ -130,7 +130,7 @@ test('formatHoldings — profitPct가 null(invest 0/결측)이면 추정하지 �
 
 test('resolveHoldingsText — Vault State/Holdings 전체가 빈 응답이면 "미보유"가 아니라 데이터 부족(읽기 이상)', () => {
   // 리뷰 지적(readHoldings 가드 미러): 실계좌엔 항상 보유가 있으므로 전부 빈 응답 = 읽기 이상.
-  const r = resolveHoldingsText([], '알파벳');
+  const r = resolveHoldingsText([], '가상테크');
   assert.equal(r.holdings, null);
   assert.match(r.holdingsText, /데이터 부족|읽기 이상/);
 });
@@ -142,7 +142,7 @@ test('resolveHoldingsText — 데이터는 있는데 그 종목만 없으면 정
 });
 
 test('resolveHoldingsText — 보유 종목은 리스트+서술', () => {
-  const r = resolveHoldingsText(holdingsFixture(), '알파벳');
+  const r = resolveHoldingsText(holdingsFixture(), '가상테크');
   assert.equal(r.holdings.length, 2);
   assert.match(r.holdingsText, /위탁/);
 });

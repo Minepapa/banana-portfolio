@@ -24,7 +24,7 @@ import { buildReportFacts } from './report-facts.mjs';
 // rebalance-gap.mjs 등은 의도적으로 스코프가 다른 부분합(3계좌만·5개 자산군만 등)
 // 이라 "다른 게 정상"이므로 이 테스트 대상이 아니다.
 
-// SK하이닉스 evalAmount에 일부러 소수점(.4)을 남겼다 — report-facts.mjs의
+// 가상반도체 evalAmount에 일부러 소수점(.4)을 남겼다 — report-facts.mjs의
 // hList는 "종목명 기준으로 합산 후 그룹당 Math.round" 하지만(코드리뷰 HIGH-1
 // 지적), buildHomeMirror·buildHoldingsMirror는 원시값을 그대로 합산한다. 즉 총
 // 평가액이 정수가 아닌 실전 데이터(해외주식 환산 등)에서는 두 계산이 "그룹 개수 ×
@@ -33,7 +33,7 @@ import { buildReportFacts } from './report-facts.mjs';
 // 오탐(false positive)을 낸다. 여기선 그 비대칭을 일부러 재현해 허용오차 기반
 // 비교가 진짜로 필요함을 실증한다.
 const FIXTURE_HOLDINGS = [
-  { account: '위탁', name: 'SK하이닉스', assetClass: '국내주식', qty: 8, invest: 15920000, evalAmount: 17200000.4 },
+  { account: '위탁', name: '가상반도체', assetClass: '국내주식', qty: 8, invest: 15920000, evalAmount: 17200000.4 },
   { account: '위탁', name: '애플', assetClass: '해외주식', qty: 8, invest: 2400000, evalAmount: 2651420 },
   // avgPrice=1560/qty=8202681처럼 1,000좌당 기준가 관례를 그대로 재현 — 2026-08-19
   // 사고(avgPrice*qty 재계산이 1,000배 부풀려짐)가 재발한다면 evalAmount가 아니라
@@ -115,7 +115,7 @@ test('총자산 교차검증: account 없는(고아) 보유는 home 전체합엔
   // account 결측 데이터가 섞였을 때 "왜 재고 안 맞지"를 이 가드가 못 잡는다. 여기서
   // 그 경계를 명시적으로 고정한다.
   const holdings = [
-    { account: '위탁', name: 'SK하이닉스', assetClass: '국내주식', qty: 8, invest: 1000000, evalAmount: 1100000 },
+    { account: '위탁', name: '가상반도체', assetClass: '국내주식', qty: 8, invest: 1000000, evalAmount: 1100000 },
     { account: '', name: '계좌미상', assetClass: '국내주식', qty: 1, invest: 500000, evalAmount: 500000 },
   ];
   const home = buildHomeMirror({ holdings });

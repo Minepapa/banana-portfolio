@@ -8,21 +8,21 @@ import { parseFrontmatter, buildFrontmatter } from './vault-frontmatter.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
 
 test('holdingFilename: 계좌-종목명 고정 형태(로트 구분 없음 — 항상 하나로 수렴)', () => {
-  assert.equal(holdingFilename('위탁', '삼성전자'), '위탁-삼성전자.md');
+  assert.equal(holdingFilename('위탁', '가상전자'), '위탁-가상전자.md');
 });
 
 test('buildLiveHoldingRecord: legacy 필드 없음(마이그레이션 레코드와 구분)', () => {
-  const holding = { account: '위탁', assetClass: '국내주식', name: '삼성전자', ticker: '005930', avgPrice: 50450, qty: 40, invest: 2018000 };
+  const holding = { account: '위탁', assetClass: '국내주식', name: '가상전자', ticker: '900101', avgPrice: 50450, qty: 40, invest: 2018000 };
   const r = buildLiveHoldingRecord(holding);
   const fm = parseFrontmatter(r.content);
   assert.equal(fm.legacy, undefined);
   assert.equal(fm.qty, 40);
   assert.equal(r.dir, VAULT_PATHS.state.holdings);
-  assert.equal(r.filename, '위탁-삼성전자.md');
+  assert.equal(r.filename, '위탁-가상전자.md');
 });
 
 test('buildLiveHoldingRecord → parseAppliedDedupKeys: 왕복 보장(idempotency 마커, 코드리뷰 지적 2026-08-05)', () => {
-  const holding = { account: '위탁', name: '삼성전자', avgPrice: 1, qty: 1, invest: 1, appliedDedupKeys: ['k1', 'k2'] };
+  const holding = { account: '위탁', name: '가상전자', avgPrice: 1, qty: 1, invest: 1, appliedDedupKeys: ['k1', 'k2'] };
   const r = buildLiveHoldingRecord(holding);
   const fm = parseFrontmatter(r.content);
   assert.deepEqual(parseAppliedDedupKeys(fm), ['k1', 'k2']);
@@ -99,12 +99,12 @@ test('[코드리뷰 HIGH 지적/실사고 재현] writeHoldingSafely: 기존 파
       isCashLike: false, appliedDedupKeys: '[]', updatedAt: '2026-01-01T00:00:00.000Z',
     }));
     await writeHoldingSafely({
-      account: TEST_ACCOUNT, assetClass: 'TDF', name: TEST_NAME, ticker: '0025N0', market: '',
+      account: TEST_ACCOUNT, assetClass: 'TDF', name: TEST_NAME, ticker: '900103', market: '',
       avgPrice: 105, qty: 11, invest: 1155, curPrice: 105, evalAmount: 1155, profitAmount: 0, profitPct: 0,
       isCashLike: false, appliedDedupKeys: [],
     });
     const fm = parseFrontmatter(readFileSync(testHoldingPath(), 'utf8'));
-    assert.equal(fm.ticker, '0025N0', '기존 파일이 있어도 identity 필드(ticker)가 갱신돼야 함 — 처음엔 이게 안 됐던 회귀');
+    assert.equal(fm.ticker, '900103', '기존 파일이 있어도 identity 필드(ticker)가 갱신돼야 함 — 처음엔 이게 안 됐던 회귀');
     assert.equal(fm.qty, 11);
     assert.equal(fm.assetClass, 'TDF');
   } finally {
@@ -117,13 +117,13 @@ test('writeHoldingSafely: 파일이 없으면 새로 생성', { skip: !CAN_WRITE
   try {
     assert.equal(existsSync(testHoldingPath()), false);
     await writeHoldingSafely({
-      account: TEST_ACCOUNT, assetClass: '국내주식', name: TEST_NAME, ticker: '005930', market: 'KRX',
+      account: TEST_ACCOUNT, assetClass: '국내주식', name: TEST_NAME, ticker: '900101', market: 'KRX',
       avgPrice: 50000, qty: 5, invest: 250000, curPrice: 50000, evalAmount: 250000, profitAmount: 0, profitPct: 0,
       isCashLike: false, appliedDedupKeys: ['key1'],
     });
     const fm = parseFrontmatter(readFileSync(testHoldingPath(), 'utf8'));
     assert.equal(fm.qty, 5);
-    assert.equal(fm.ticker, '005930');
+    assert.equal(fm.ticker, '900101');
     assert.deepEqual(parseAppliedDedupKeys(fm), ['key1']);
   } finally {
     cleanupTestHolding();
@@ -157,9 +157,9 @@ test('writeHoldingSafely: 쓰기 후 락파일이 남지 않음', { skip: !CAN_W
 // ── 그래프 뷰 다중축 태그(2026-09-05, vault-tags.mjs 참고) ──────────────────────
 
 test('buildLiveHoldingRecord: tags에 계좌·자산군·종목 전부 반영', () => {
-  const holding = { account: '위탁', assetClass: '국내주식', name: '삼성전자', avgPrice: 1, qty: 1, invest: 1 };
+  const holding = { account: '위탁', assetClass: '국내주식', name: '가상전자', avgPrice: 1, qty: 1, invest: 1 };
   const fm = parseFrontmatter(buildLiveHoldingRecord(holding).content);
-  assert.deepEqual(fm.tags, ['계좌/위탁', '자산군/국내주식', '종목/삼성전자']);
+  assert.deepEqual(fm.tags, ['계좌/위탁', '자산군/국내주식', '종목/가상전자']);
 });
 
 test('Holdings frontmatter: 알려진 계좌를 운영 Topic에 연결하고 연금저축은 보정 Topic도 포함', () => {

@@ -487,12 +487,12 @@ test('parseBalanceResponse: output1에서 보유종목 추출, 수량 0은 제�
   const { holdings } = parseBalanceResponse({
     rt_cd: '0',
     output1: [
-      { pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격', hldg_qty: '120' },
+      { pdno: '900103', prdt_name: '가상 TDF2099 적격', hldg_qty: '120' },
       { pdno: '005930', prdt_name: '삼성전자', hldg_qty: '0' }, // 전량 매도된 잔존 행 — 제외돼야 함
     ],
   });
   assert.deepEqual(holdings, [{
-    code: '0025N0', name: 'TIGER TDF2045 적격', qty: 120,
+    code: '900103', name: '가상 TDF2099 적격', qty: 120,
     avgPrice: null, invest: null, curPrice: null, evalAmount: null, profitAmount: null, profitPct: null,
   }]);
 });
@@ -502,14 +502,14 @@ test('parseBalanceResponse: 평단가·원가·현재가·평가손익 필드 �
     rt_cd: '0',
     output1: [
       {
-        pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격', hldg_qty: '413',
+        pdno: '900103', prdt_name: '가상 TDF2099 적격', hldg_qty: '413',
         pchs_avg_pric: '11505.5690', pchs_amt: '4751800', prpr: '11925',
         evlu_amt: '4925025', evlu_pfls_amt: '173225', evlu_pfls_rt: '3.64',
       },
     ],
   });
   assert.deepEqual(holdings, [{
-    code: '0025N0', name: 'TIGER TDF2045 적격', qty: 413,
+    code: '900103', name: '가상 TDF2099 적격', qty: 413,
     avgPrice: 11505.569, invest: 4751800, curPrice: 11925,
     evalAmount: 4925025, profitAmount: 173225, profitPct: 3.64,
   }]);
@@ -556,12 +556,12 @@ test('parseBalanceResponse: dnca_tot_amt가 "0"이면 진짜 0원(null 아님)',
 test('getAccountBalance: 레이트리밋이면 재시도 후 성공', async () => {
   const fetchImpl = mockFetch([
     { body: { rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수를 초과하였습니다.' } },
-    { body: { rt_cd: '0', output1: [{ pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격', hldg_qty: '120' }], output2: [{ dnca_tot_amt: '0' }] } },
+    { body: { rt_cd: '0', output1: [{ pdno: '900103', prdt_name: '가상 TDF2099 적격', hldg_qty: '120' }], output2: [{ dnca_tot_amt: '0' }] } },
   ]);
   const { holdings, cash } = await getAccountBalance({
     token: 't', appkey: 'k', appsecret: 's', cano: '12345678', acntPrdtCd: '29', fetchImpl, retryDelayMs: 1,
   });
-  assert.equal(holdings[0].name, 'TIGER TDF2045 적격');
+  assert.equal(holdings[0].name, '가상 TDF2099 적격');
   assert.equal(cash, 0);
 });
 
@@ -1348,7 +1348,7 @@ test('parseIrpPensionExecutions: 정상 체결 1건 파싱(공식 예제 COLUMN_
   const json = {
     rt_cd: '0',
     output: [{
-      odno: '12345', pdno: '0025N0', prdt_name: 'TIGER TDF2045 적격',
+      odno: '12345', pdno: '900103', prdt_name: '가상 TDF2099 적격',
       trad_dvsn_name: '매수', tot_ccld_qty: '10', ord_qty: '10', ord_unpr: '11504.4', ord_tmd: '093015',
     }],
   };
@@ -1356,7 +1356,7 @@ test('parseIrpPensionExecutions: 정상 체결 1건 파싱(공식 예제 COLUMN_
   assert.equal(rawCount, 1);
   assert.equal(executions.length, 1);
   assert.deepEqual(executions[0], {
-    orderNo: '12345', stockCode: '0025N0', stockName: 'TIGER TDF2045 적격',
+    orderNo: '12345', stockCode: '900103', stockName: '가상 TDF2099 적격',
     tradeType: '매수', quantity: 10, orderQty: 10, fullyFilled: true, price: 11504.4, orderTime: '093015',
   });
 });
