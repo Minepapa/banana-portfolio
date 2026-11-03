@@ -53,7 +53,7 @@ import { join } from 'node:path';
 import { loadEnv } from '../lib/auth.mjs';
 import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { patchFrontmatterFileSafely } from '../lib/state-writer.mjs';
+import { patchFrontmatterFileIfChanged } from '../lib/state-writer.mjs';
 import { krStockCode, usTicker, usExchange } from '../lib/instruments.mjs';
 import {
   hasKisCredentials, loadKisCredentials, getKisToken, getKrQuote, getUsQuote,
@@ -100,6 +100,20 @@ const QUOTE_RETRIES = 3;
 const QUOTE_RETRY_DELAY_MS = 700;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 같은 내용이면 쓰지 않기(2026-11-03, 데이터 체계 개선 ⑤). 장이 닫힌 시간·주말엔 시세·환율이 그대로라 updatedAt만 바뀐 채
+// 10분마다 덮어쓰고 있었다(LiveSync 부담). 휘발 칸은 updatedAt 하나 — 나머지 칸(시세·평가액·손익 등)이 같으면 같은 내용이다.
+// ⚠️ updatedAt은 신선도 감시(data-sources.mjs holding-prices: 거래일 D 18:00 KST까지 비현금 보유 중 하나라도 updatedAt ≥ D 00:00
+// KST)가 본다. 그래서 건너뛰는 건 "마지막으로 쓴 시각이 오늘(KST)이고 1시간이 안 지났을 때"뿐이다(sameKstDay) —
+// 이 잡이 그날 한 번이라도 갱신을 시도하면 그 파일의 updatedAt은 반드시 그날 날짜가 된다. 그래서 감시 판정은 예전과 같다
+// (update-holdings-prices.test.js가 증명). 그날 안에서 updatedAt은 최대 1시간 늦을 수 있다.
+export const HOLDING_PRICE_WRITE = { ignoreKeys: ['updatedAt'], stampKey: 'updatedAt', refreshMs: 60 * 60 * 1000, sameKstDay: true };
+let unchangedWrites = 0;
+async function patchHoldingPrice(filepath, patch) {
+  const result = await patchFrontmatterFileIfChanged(filepath, patch, HOLDING_PRICE_WRITE);
+  if (result === 'unchanged') unchangedWrites++;
+  return result;
+}
 
 function readHoldingFiles() {
   const dir = VAULT_PATHS.state.holdings;
@@ -351,7 +365,7 @@ async function main() {
       console.log(`   · ${h.name}(BOND): 평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원(평가손익 ${Math.round(valuation.profitAmount).toLocaleString()}원)`);
       let wroteOk = true;
       if (!DRY_RUN) {
-        wroteOk = await patchFrontmatterFileSafely(f.filepath, {
+        wroteOk = await patchHoldingPrice(f.filepath, {
           curPrice: valuation.curPrice, evalAmount: valuation.evalAmount,
           profitAmount: valuation.profitAmount, profitPct: valuation.profitPct,
           bondCode: bondData.bondCode, updatedAt: new Date().toISOString(),
@@ -385,7 +399,7 @@ async function main() {
       const reason = !usOpen ? '장외' : '크리덴셜 없음';
       console.log(`   · ${h.name}(US, ${reason} — 환율만 재평가): $${h.curPrice} × ₩${usdKrwRate.toFixed(2)} → 평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원`);
       if (!DRY_RUN) {
-        const ok = await patchFrontmatterFileSafely(f.filepath, {
+        const ok = await patchHoldingPrice(f.filepath, {
           curPrice: valuation.curPrice, evalAmount: valuation.evalAmount,
           profitAmount: valuation.profitAmount, profitPct: valuation.profitPct,
           updatedAt: new Date().toISOString(),
@@ -437,7 +451,7 @@ async function main() {
     console.log(`   · ${h.name}(${cls.kind}${cls.source ? `/${cls.source}` : ''}): ${h.curPrice ?? '없음'} → ${curPrice} (평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원)`);
     let wroteOk = true;
     if (!DRY_RUN) {
-      wroteOk = await patchFrontmatterFileSafely(f.filepath, {
+      wroteOk = await patchHoldingPrice(f.filepath, {
         curPrice: valuation.curPrice, evalAmount: valuation.evalAmount,
         profitAmount: valuation.profitAmount, profitPct: valuation.profitPct,
         updatedAt: new Date().toISOString(),
@@ -461,7 +475,7 @@ async function main() {
     console.log(`   · ${h.name}(FX현금): 환율 ${h.curPrice ?? '없음'} → ${usdKrwRate.toFixed(2)} (평가액 ${Math.round(valuation.evalAmount).toLocaleString()}원, 손익 항상 0)`);
     let wroteOk = true;
     if (!DRY_RUN) {
-      wroteOk = await patchFrontmatterFileSafely(f.filepath, {
+      wroteOk = await patchHoldingPrice(f.filepath, {
         curPrice: valuation.curPrice, avgPrice: valuation.avgPrice,
         invest: valuation.invest, evalAmount: valuation.evalAmount,
         profitAmount: valuation.profitAmount, profitPct: valuation.profitPct,
@@ -473,7 +487,7 @@ async function main() {
   }
 
   console.log(
-    `\n✅ 시세 갱신 ${updated}건 · 장외/크리덴셜없음/조회주기아님 스킵 ${skipped}건 · 조회실패 ${failed}건 · 매핑없음 ${unmapped}건`
+    `\n✅ 시세 갱신 ${updated}건(그중 같은 내용이라 쓰지 않음 ${unchangedWrites}건) · 장외/크리덴셜없음/조회주기아님 스킵 ${skipped}건 · 조회실패 ${failed}건 · 매핑없음 ${unmapped}건`
     + (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
   await flushWarnings('update-holdings-prices');

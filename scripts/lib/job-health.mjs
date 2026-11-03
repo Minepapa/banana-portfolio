@@ -10,6 +10,8 @@
 // frontmatter 빌드/파싱은 vault-frontmatter.mjs 공용 모듈 사용(2026-08-05 리팩터 —
 // ledger-vault-writer.mjs와 중복이던 걸 정리해 한 곳으로 모음).
 import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
+import { EXPECTED_INTERVALS_MS, EXPECTED_INTERVAL_DEFAULT_MS } from './job-schedule.mjs';
+import { frontmatterTime, frontmatterWithout } from './write-if-changed.mjs';
 
 export { parseFrontmatter };
 
@@ -52,4 +54,25 @@ export function isStale({ lastRun, expectedIntervalMs, now = new Date() }) {
   const last = new Date(lastRun).getTime();
   if (!Number.isFinite(last)) return true; // 파싱 불가한 값도 안전하게 stale 취급
   return now.getTime() - last > expectedIntervalMs * 2;
+}
+
+// 같은 내용이면 하트비트를 다시 쓰지 않기(2026-11-03, 데이터 체계 개선 ⑤) — write-if-changed.mjs writeIfChanged에 넘길 옵션.
+// 휘발 칸은 lastRun·durationSec뿐이다. status·failStreak·detail·alertDate·alertCount·firstFailureAt·failureAlertSent 중
+// 하나라도 바뀌면 쓴다(상태 변화·실패 누적·날짜 바뀜은 늘 기록).
+// ⚠️ lastRun은 "조용함" 감시(isStale: 기대 주기 E의 2배)·데이터 신선도의 silentJobs·관문 약속(잡이 돌면)·작업 문서 완료 조건이 본다.
+// 그래서 내용이 같아도 마지막으로 쓴 lastRun에서 E/2가 지나면 다시 쓴다. 파일의 lastRun은 실제 마지막 실행보다 E/2 넘게
+// 늦지 않는다 → 실제 실행 간격이 1.5E 안인 잡은 절대 조용함으로 잡히지 않고(job-health.test.js가 증명), 정말 멈춘 잡은
+// 예전과 같은 때 잡힌다(파일의 lastRun은 실제 마지막 실행보다 늦을 수 없으므로 감지가 늦어지지 않는다).
+// 실행 간격이 E/2 이상인 잡(launchd 주기 = 등록 주기인 대부분의 잡)은 건너뛸 일이 아예 없어 예전과 똑같이 쓴다.
+// force(알림·복구 알림을 보내는 실행)이거나 기대 주기가 없으면(null·미정) 늘 쓴다.
+export const HEARTBEAT_VOLATILE_KEYS = ['lastRun', 'durationSec'];
+export function heartbeatWriteOptions({ job, now = new Date(), force = false,
+  intervals = EXPECTED_INTERVALS_MS, defaultIntervalMs = EXPECTED_INTERVAL_DEFAULT_MS }) {
+  const expectedIntervalMs = Object.hasOwn(intervals, job) ? intervals[job] : defaultIntervalMs;
+  const refreshMs = !force && Number.isFinite(expectedIntervalMs) && expectedIntervalMs > 0 ? expectedIntervalMs / 2 : 0;
+  return {
+    compareKey: (text) => frontmatterWithout(text, HEARTBEAT_VOLATILE_KEYS),
+    writtenAt: (text) => frontmatterTime(text, 'lastRun'),
+    refreshMs, now: now.getTime(),
+  };
 }

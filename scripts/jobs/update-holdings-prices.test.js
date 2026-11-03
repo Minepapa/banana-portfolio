@@ -1,8 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
-  classifyHolding, recomputeValuation, recomputeFxCashValuation, quoteSourceForAccount, extractNhPrice,
+  classifyHolding, recomputeValuation, recomputeFxCashValuation, quoteSourceForAccount, extractNhPrice, HOLDING_PRICE_WRITE,
 } from './update-holdings-prices.mjs';
+import { patchFrontmatterFileIfChanged, patchFrontmatterFileSafely } from '../lib/state-writer.mjs';
+import { DATA_SOURCES } from '../lib/data-sources.mjs';
+import { createVaultReaders, findStaleSources } from '../lib/data-freshness.mjs';
 
 // 2026-09-02 코드리뷰 HIGH 지적 — 처음엔 `Number.isFinite(curPrice)`로만
 // 검증했는데, `Number(null)`·`Number('')`·`Number('0')`가 전부 0(유한수)이라
@@ -209,4 +215,70 @@ test('recomputeValuation: unitScale 지정 시 1,000좌당 기준가를 좌당�
   const r = recomputeValuation({ qty: 8202681, invest: 12800000 }, 1950, { unitScale: 0.001 });
   assert.equal(r.evalAmount, 1950 * 8202681 * 0.001);
   assert.ok(r.evalAmount > 10_000_000 && r.evalAmount < 20_000_000, `비정상 evalAmount: ${r.evalAmount}`);
+});
+
+// ── 같은 내용이면 쓰지 않기(2026-11-03, ⑤)와 보유 시세 신선도 감시(holding-prices)의 상호작용 ──
+// 같은 시세 갱신 시도를 예전 방식(늘 씀)과 새 방식(같은 내용이면 건너뜀)으로 나란히 흘려 보내고, 10분마다 실제
+// findStaleSources(holding-prices 출처)로 판정해 두 결과가 한 번도 다르지 않음을 보인다. 가상 보유·가상 값만 쓴다.
+// 날마다 잡의 모습을 바꾼다: 정상(10분마다)·아침에 멈춤·하루 종일 안 돎·18시 직전 한 번만·띄엄띄엄·주말.
+test('보유 시세 쓰기 건너뛰기: holding-prices 신선도 판정이 예전(늘 씀)과 10분 단위로 완전히 같다', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'holding-skip-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const source = DATA_SOURCES.find((item) => item.id === 'holding-prices');
+  const roots = { old: join(dir, 'old'), new: join(dir, 'new') };
+  const start = Date.parse('2026-11-01T15:00:00Z'); // 2026-11-02(월) 00:00 KST
+  const initial = `---\ntype: "holding"\naccount: "가상계좌"\nname: "가상종목"\nisCashLike: false\ncurPrice: 100\nevalAmount: 1000\nupdatedAt: "${new Date(start - 3 * 86_400_000).toISOString()}"\n---\n`;
+  for (const root of Object.values(roots)) {
+    mkdirSync(join(root, 'H'), { recursive: true });
+    writeFileSync(join(root, 'H', '가상계좌-가상종목.md'), initial);
+  }
+  const readers = Object.fromEntries(Object.entries(roots).map(([key, root]) =>
+    [key, createVaultReaders({ root, rel: { stateHoldings: 'H' }, isTradingDay: () => null })]));
+  // 날짜(0=월, 7=다음 월) → 이 시각(KST 분)에 잡이 갱신을 시도하는가
+  const attempts = [
+    () => true, // 월: 정상
+    (minute) => minute < 30, // 화: 자정 직후 잠깐 돌고 멈춤(전날 밤 쓴 값과 같아 건너뛰기 쉬운 자리)
+    (minute) => minute < 8 * 60, // 수: 08시에 멈춤
+    () => false, // 목: 하루 종일 안 돎
+    (minute) => minute === 17 * 60 + 50, // 금: 17:50 한 번
+    () => true, () => true, // 토·일
+    (minute) => minute % 70 === 0, // 월: 띄엄띄엄
+    (minute) => minute >= 19 * 60, // 화: 19시부터
+  ];
+  let price = 100;
+  let compared = 0;
+  const statuses = new Set();
+  const counts = { written: 0, unchanged: 0 };
+  for (let step = 0; step < attempts.length * 144; step += 1) {
+    const now = start + step * 10 * 60_000;
+    const day = Math.floor(step / 144);
+    const minute = (step % 144) * 10;
+    if (attempts[day](minute)) {
+      if (minute >= 9 * 60 && minute <= 15 * 60 + 30 && day % 7 < 5 && step % 3 === 0) price += 1; // 장중에만 가끔 바뀜
+      const patch = { curPrice: price, evalAmount: price * 10, updatedAt: new Date(now).toISOString() };
+      await patchFrontmatterFileSafely(join(roots.old, 'H', '가상계좌-가상종목.md'), patch);
+      const result = await patchFrontmatterFileIfChanged(join(roots.new, 'H', '가상계좌-가상종목.md'), patch,
+        { ...HOLDING_PRICE_WRITE, now });
+      counts[result] += 1;
+    }
+    for (const checkAt of [now, now + 5 * 60_000]) {
+      const judge = (key) => findStaleSources({ now: checkAt, sources: [source], readers: readers[key] }).results[0];
+      const [before, after] = [judge('old'), judge('new')];
+      assert.deepEqual([after.status, after.reason, after.detail], [before.status, before.reason, before.detail],
+        `${new Date(checkAt).toISOString()} 판정이 달라짐`);
+      statuses.add(before.status);
+      compared += 1;
+    }
+  }
+  assert.ok(statuses.has('ok') && statuses.has('stale'), '정상·끊김 둘 다 겪어야 의미 있는 비교');
+  assert.ok(counts.unchanged > counts.written, `건너뛴 쓰기가 실제로 많아야 한다(${JSON.stringify(counts)})`);
+  assert.equal(compared, attempts.length * 144 * 2);
+  // 내용은 예전 방식과 같고(시각 칸만 최대 1시간 늦음) 날짜는 같다.
+  const strip = (text) => text.replace(/updatedAt: .*\n/, '');
+  const [oldText, newText] = ['old', 'new'].map((key) => readFileSync(join(roots[key], 'H', '가상계좌-가상종목.md'), 'utf8'));
+  assert.equal(strip(newText), strip(oldText));
+});
+
+test('HOLDING_PRICE_WRITE: 휘발 칸은 updatedAt 하나, 그날(KST)·1시간 안에서만 건너뛴다', () => {
+  assert.deepEqual(HOLDING_PRICE_WRITE, { ignoreKeys: ['updatedAt'], stampKey: 'updatedAt', refreshMs: 60 * 60 * 1000, sameKstDay: true });
 });

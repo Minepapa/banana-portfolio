@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { withLock, writeAtomic, atomicTempPath, writeStateFile, patchFrontmatterFileSafely, lockFilePath, legacyLockFilePath, lockFilesFor } from './state-writer.mjs';
+import { withLock, writeAtomic, atomicTempPath, writeStateFile, patchFrontmatterFileSafely, patchFrontmatterFileIfChanged, lockFilePath, legacyLockFilePath, lockFilesFor } from './state-writer.mjs';
 
 function makeTmpDir() {
   return mkdtempSync(join(tmpdir(), 'state-writer-test-'));
@@ -257,4 +257,23 @@ test('전환 기간: 죽은 프로세스의 오래된 옛 이름 락은 정리�
   assert.equal(existsSync(legacyLockFilePath(file)), false);
   assert.equal(existsSync(lockFilePath(file)), false);
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ── patchFrontmatterFileIfChanged(2026-11-03, ⑤) ──
+test('patchFrontmatterFileIfChanged: 시각 칸만 바뀌면 건너뛰고(unchanged), 다른 칸은 그대로 지키며, 값이 바뀌면 쓴다', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'patch-if-changed-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'h.md');
+  const t0 = Date.parse('2026-11-03T03:00:00Z');
+  writeFileSync(file, `---\ntype: "holding"\nqty: 3\ncurPrice: 10\nupdatedAt: "${new Date(t0).toISOString()}"\n---\n`);
+  const options = { ignoreKeys: ['updatedAt'], stampKey: 'updatedAt', refreshMs: 60 * 60 * 1000, sameKstDay: true };
+  const at = (minutes) => ({ ...options, now: t0 + minutes * 60_000 });
+  const stamp = (minutes) => new Date(t0 + minutes * 60_000).toISOString();
+  assert.equal(await patchFrontmatterFileIfChanged(file, { curPrice: 10, updatedAt: stamp(10) }, at(10)), 'unchanged');
+  assert.match(readFileSync(file, 'utf8'), new RegExp(`updatedAt: "${new Date(t0).toISOString()}"`));
+  assert.equal(await patchFrontmatterFileIfChanged(file, { curPrice: 11, updatedAt: stamp(20) }, at(20)), 'written');
+  assert.match(readFileSync(file, 'utf8'), /qty: 3/, '패치하지 않은 칸은 지킨다(락 안에서 다시 읽음)');
+  assert.equal(await patchFrontmatterFileIfChanged(file, { curPrice: 11, updatedAt: stamp(80) }, at(80)), 'written', '1시간이 지나면 다시');
+  assert.equal(await patchFrontmatterFileIfChanged(join(dir, 'gone.md'), { curPrice: 1 }, at(90)), false, '없는 파일은 예전처럼 false');
+  assert.deepEqual(readdirSync(dir).filter((name) => name.startsWith('.')), [], '락·임시 파일이 남지 않는다');
 });

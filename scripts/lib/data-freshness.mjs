@@ -2,8 +2,9 @@
 // 판정(findStaleSources)은 순수 함수다 — 파일 읽기는 readers로 주입한다. 실제 볼트 읽기는 createVaultReaders.
 // ⚠️ 이 모듈은 vault-paths를 import하지 않는다(테스트가 정적 import해도 실제 볼트 경로를 잡지 않게, 10-31 사고).
 // 경로는 호출부가 VAULT_REL과 볼트 루트를 넘긴다.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { assertNotRealVaultInTest, writeIfChanged as writeContentIfChanged } from './write-if-changed.mjs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -338,28 +339,16 @@ export function freshnessCompareKey(doc) {
   return JSON.stringify((doc?.sources ?? []).map((r) => [r.id, r.status, r.owner, r.kind, r.reason ?? '']));
 }
 
+// 판단·원자적 쓰기·테스트 중 실볼트 거부는 공용 write-if-changed.mjs가 한다(⑤에서 끌어올림). 파일이 깨졌으면 새로 쓴다.
 export function writeIfChanged(file, doc, { now = Date.now(), refreshMs = FRESHNESS_REFRESH_MS, vaultRoot = null } = {}) {
-  if (process.env.NODE_TEST_CONTEXT && vaultRoot) {
-    const rel = relative(resolve(vaultRoot), resolve(file));
-    if (!rel.startsWith('..') && !isAbsolute(rel)) throw new Error('테스트에서 실볼트 경로 쓰기 금지');
-  }
-  let prev = null;
-  try { prev = JSON.parse(readFileSync(file, 'utf8')); } catch { /* 없거나 깨졌으면 새로 쓴다 */ }
-  if (prev && freshnessCompareKey(prev) === freshnessCompareKey(doc)) {
-    const lastWritten = Date.parse(prev.generatedAt);
-    if (Number.isFinite(lastWritten) && now - lastWritten < refreshMs) return false;
-  }
+  const guardRoots = vaultRoot ? [vaultRoot] : [];
+  assertNotRealVaultInTest(file, guardRoots); // 폴더를 만들기 전에 막는다
   mkdirSync(dirname(file), { recursive: true });
-  // 임시 파일에 다 쓴 뒤 이름을 바꾼다(LiveSync가 반쯤 쓴 파일을 옮기지 않게). 임시 이름은 점 파일이라 LiveSync가 건너뛴다.
-  const temp = join(dirname(file), `.${process.pid}.${Date.now()}.data-freshness.tmp`);
-  try {
-    writeFileSync(temp, `${JSON.stringify(doc, null, 2)}\n`);
-    renameSync(temp, file);
-  } catch (error) {
-    try { rmSync(temp, { force: true }); } catch { /* 지우기 실패는 원래 오류를 가리지 않는다 */ }
-    throw error;
-  }
-  return true;
+  return writeContentIfChanged(file, `${JSON.stringify(doc, null, 2)}\n`, {
+    compareKey: (text) => freshnessCompareKey(JSON.parse(text)),
+    writtenAt: (text) => Date.parse(JSON.parse(text).generatedAt),
+    refreshMs, now, guardRoots,
+  });
 }
 
 // ── 비긴급 묶음(09:00·19:00 KST) 상태 계획 — 순수 함수 ──

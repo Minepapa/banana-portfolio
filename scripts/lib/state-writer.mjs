@@ -14,6 +14,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { updateFrontmatter } from './vault-frontmatter.mjs';
+import { frontmatterTime, frontmatterWithout, writeIfChanged } from './write-if-changed.mjs';
 
 const DEFAULT_RETRIES = 10;
 const DEFAULT_RETRY_DELAY_MS = 50;
@@ -207,5 +208,28 @@ export async function patchFrontmatterFileSafely(filePath, patch, lockOpts = {})
     }
     writeAtomic(filePath, updateFrontmatter(freshContent, patch));
     return true;
+  }, lockOpts);
+}
+
+// patchFrontmatterFileSafely와 같은 계약(락을 잡은 채 다시 읽고 patch만 얹음, 파일이 없으면 false)에 "같은 내용이면 쓰지
+// 않기"만 더했다(2026-11-03, 데이터 체계 개선 ⑤). ignoreKeys(시각 칸)를 뺀 결과가 지금 파일과 같고, stampKey 시각이
+// refreshMs 안이며 (sameKstDay면) 오늘(KST)이면 쓰지 않는다. 반환: false(파일 없음) | 'written' | 'unchanged' —
+// 둘 다 참 값이라 `if (!ok)`로 "파일 없음"만 거르는 호출부는 그대로 동작한다.
+export async function patchFrontmatterFileIfChanged(filePath, patch, { ignoreKeys, stampKey, refreshMs, sameKstDay = false,
+  now = Date.now() }, lockOpts = {}) {
+  return withLock(filePath, () => {
+    let freshContent;
+    try {
+      freshContent = readFileSync(filePath, 'utf8');
+    } catch (e) {
+      if (e.code === 'ENOENT') return false;
+      throw e;
+    }
+    const wrote = writeIfChanged(filePath, updateFrontmatter(freshContent, patch), {
+      compareKey: (text) => frontmatterWithout(text, ignoreKeys),
+      writtenAt: (text) => frontmatterTime(text, stampKey),
+      refreshMs, sameKstDay, now,
+    });
+    return wrote ? 'written' : 'unchanged';
   }, lockOpts);
 }

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildJobHealthRecord } from '../lib/job-health.mjs';
+import { buildJobHealthRecord, heartbeatWriteOptions, parseFrontmatter } from '../lib/job-health.mjs';
+import { writeIfChanged } from '../lib/write-if-changed.mjs';
 import { sendDirectWarning, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 import { deferWarning, drainDeferredWarnings } from '../lib/deferred-warnings.mjs';
 import { findStaleJobs, isPollingStuck, formatStaleJobIssue, processHealthIssues, checkDataFreshness, sourceIssuesFor,
@@ -999,3 +1000,56 @@ test('runFreshnessDigest: 비긴급 판정 실패는 묶음에 "판정 실패" �
   assert.match(renderAgentMessage(sent[0]), /판정 실패/);
   assert.equal(JSON.parse(readFileSync(stateFile, 'utf8')).sources.m.lastSentAt, nine);
 });
+
+// ── 같은 내용이면 하트비트를 다시 쓰지 않기(2026-11-03, ⑤)와 '조용함' 감시의 상호작용 ──
+// record-heartbeat-vault와 같은 순서(앞 파일 읽기 → 기록 만들기 → 같은 내용이면 건너뛰기)로 하트비트를 흉내 내고,
+// 실제 findStaleJobs로 판정한다. 증명하는 것:
+//  ① 실제 실행 간격이 1.5E 안이면(아주 잦은 재실행 포함) 어느 시점에도 조용함으로 잡히지 않는다(오탐 없음).
+//  ② 파일의 lastRun은 실제 마지막 실행보다 나중일 수 없고(감지가 늦어지지 않음), E/2 넘게 이르지도 않다.
+//  ③ 멈추면 늦어도 예전과 같은 때(마지막 실제 실행 + 2E 초과)에는 잡힌다. 마지막 실행이 건너뛴 쓰기였다면 최대 E/2
+//     일찍(1.5E~2E 사이) 잡힐 수 있다 — 그때는 실제로 1.5E 넘게 안 돈 상태다.
+function seeded(seed) {
+  let x = seed >>> 0;
+  return () => { x = (Math.imul(x, 1664525) + 1013904223) >>> 0; return x / 2 ** 32; };
+}
+for (const [label, E, minGap] of [
+  ['5분 잡·잦은 재실행', 5 * 60_000, 0.05], ['10분 잡', 10 * 60_000, 0.05], ['15분 잡', 15 * 60_000, 0.3],
+  ['30분 잡', 30 * 60_000, 0.05], ['1시간 잡', 60 * 60_000, 0.2], ['하루 잡', 24 * 60 * 60_000, 0.05],
+]) {
+  test(`하트비트 건너뛰기 + findStaleJobs: ${label} — 간격 1.5E 안이면 조용함 오탐 없음, 멈추면 2E 뒤 그대로 잡힘`, (t) => {
+    const dir = makeTmpDir();
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const file = join(dir, 'sim.md');
+    const intervals = { sim: E };
+    const random = seeded(E);
+    let at = Date.parse('2026-11-03T00:00:00Z');
+    let skipped = 0;
+    let lastReal = null;
+    for (let run = 0; run < 300; run += 1) {
+      let prior = null;
+      try { prior = parseFrontmatter(readFileSync(file, 'utf8')); } catch { /* 첫 실행 */ }
+      const status = random() < 0.05 ? 'FAIL' : 'OK';
+      const detail = random() < 0.1 ? `달라짐 ${run}` : '같음';
+      const now = new Date(at);
+      const record = buildJobHealthRecord({ job: 'sim', status, detail, durationSec: 1, now }, prior);
+      const wrote = writeIfChanged(file, record.content,
+        heartbeatWriteOptions({ job: 'sim', now, intervals, force: record.shouldAlert || record.shouldRecover }));
+      if (!wrote) skipped += 1;
+      lastReal = at;
+      const gap = (minGap + random() * (1.5 - minGap)) * E;
+      for (const fraction of [0.25, 0.5, 0.75, 0.999]) {
+        const checkAt = lastReal + gap * fraction;
+        const observed = Date.parse(parseFrontmatter(readFileSync(file, 'utf8')).lastRun);
+        assert.ok(observed <= lastReal && lastReal - observed < E / 2, `lastRun 지연 범위(실행 ${run})`);
+        const stale = findStaleJobs(dir, { now: new Date(checkAt), expectedIntervals: intervals });
+        assert.deepEqual(stale, [], `실행 ${run} 뒤 ${Math.round((checkAt - lastReal) / 60_000)}분 — 오탐`);
+      }
+      at += gap;
+    }
+    assert.ok(minGap >= 0.5 || skipped > 0, '잦은 재실행이 있으면 실제로 건너뛴 쓰기가 있어야 한다');
+    assert.deepEqual(findStaleJobs(dir, { now: new Date(lastReal + 1.5 * E), expectedIntervals: intervals }), [],
+      '멈춘 뒤에도 마지막 실제 실행 + 1.5E까지는 조용함 아님');
+    assert.equal(findStaleJobs(dir, { now: new Date(lastReal + 2 * E + 1), expectedIntervals: intervals }).length, 1,
+      '멈추면 늦어도 예전과 같은 때(2E 초과)에는 잡힌다');
+  });
+}
