@@ -253,6 +253,15 @@ export const EXPECTED_INTERVALS_MS = {
   'annual-instrument-rescore': 400 * 24 * 60 * 60 * 1000,
 };
 export const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
+// 아직 가동 전이라 하트비트 파일이 없는 게 정상인 잡 — 이 날짜(KST, 이날 00:00부터)까지는 파일이 없어도 경보하지 않는다
+// (health-watcher findStaleJobs, 2026-11-03). 그 뒤에도 파일이 없으면 '실행 기록 없음'으로 알린다. 가동이 미뤄지면 날짜를 고친다.
+export const JOB_FIRST_HEARTBEAT_BY = {
+  // 텔레그램 관문 4단계 전환(11-08 오전) 다음날까지.
+  'telegram-gate': '2026-11-09',
+  'telegram-gate-health-check': '2026-11-09',
+  // 연 1회(1월 1~3일) 잡. 첫 실행 다음날까지.
+  'annual-instrument-rescore': '2027-01-04',
+};
 export const RETIRED_JOBS = new Set(['media-diarize', 'media-faces-nightly', 'media-transcribe', 'media-vision']);
 
 export function isInactiveJob(job) {

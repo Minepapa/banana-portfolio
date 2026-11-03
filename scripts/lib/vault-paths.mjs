@@ -25,6 +25,8 @@ export const VAULT_REL = {
   factsLedgerDividends: '95_Etna/Investing/Ledger/Dividends',
   factsLedgerExecutions: '95_Etna/Investing/Ledger/Executions',
   factsLedgerProfits: '95_Etna/Investing/Ledger/Profits',
+  factsLedgerDailySnapshots: '95_Etna/Investing/Ledger/DailySnapshots', // 신선도 감시용(VAULT_PATHS.facts.ledger.dailySnapshots와 같은 곳)
+  macroIndicatorsFile: '95_Etna/Investing/MacroIndicators/MacroIndicators.md', // 신선도 감시용(VAULT_PATHS.state.macroIndicators와 같은 곳)
   logImplementation: '40_Projects/banana-portfolio/Implementation',
   logDevRequests: '40_Projects/banana-portfolio/Requests',
   logStrategy: '50_Outputs/Decisions',
@@ -33,6 +35,8 @@ export const VAULT_REL = {
   logSessions: '60_Logs/Zeus',
   logWarningEvents: '95_Etna/Jobs/WarningEvents',
   stateDeferredWarnings: '95_Etna/Jobs/DeferredWarnings.json',
+  // 데이터 출처별 마지막 수신 시각·상태(2026-11-03 오너 결정, health-watcher만 쓴다 — 내용이 바뀔 때만). 표는 data-sources.mjs.
+  dataFreshness: '95_Etna/Jobs/DataFreshness.json',
   decisionsProposals: '95_Etna/Investing/Orders',
   decisionsProfile: '50_Outputs/Preferences', // D94: 성향 관찰 위치
   knowledge: '30_Wiki',

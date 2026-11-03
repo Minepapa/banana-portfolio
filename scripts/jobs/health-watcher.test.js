@@ -6,7 +6,12 @@ import { join } from 'node:path';
 import { buildJobHealthRecord } from '../lib/job-health.mjs';
 import { sendDirectWarning, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
 import { deferWarning, drainDeferredWarnings } from '../lib/deferred-warnings.mjs';
-import { findStaleJobs, isPollingStuck, formatStaleJobIssue, processHealthIssues } from './health-watcher.mjs';
+import { findStaleJobs, isPollingStuck, formatStaleJobIssue, processHealthIssues, checkDataFreshness, sourceIssuesFor,
+  readPriorSourceKeys, runFreshnessDigest, writeDataFreshnessFile } from './health-watcher.mjs';
+import { mkdirSync } from 'node:fs';
+import { renderAgentMessage } from '../lib/pantheon-send.mjs';
+import { VAULT_REL } from '../lib/vault-paths.mjs';
+import { DATA_SOURCES } from '../lib/data-sources.mjs';
 import { EXPECTED_INTERVALS_MS } from '../lib/job-schedule.mjs';
 import { listDispatchedJobs } from '../lib/launchd-jobs.mjs';
 
@@ -746,4 +751,186 @@ test('중단된 잡의 이전 경고와 보류 경고를 복구 발송 없이 �
   assert.deepEqual(sent, []);
   assert.deepEqual(JSON.parse(readFileSync(stateFile, 'utf8')), {});
   assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')).pending, []);
+});
+
+// ── 하트비트 파일이 없는 잡(2026-11-03) ──
+test('findStaleJobs(includeMissing): 기대 주기 표에는 있는데 하트비트 파일이 없는 잡도 잡는다', (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const now = new Date('2026-11-04T03:00:00.000Z');
+  writeFileSync(join(dir, 'present.md'), buildJobHealthRecord({ job: 'present', status: 'OK', now: new Date('2026-11-04T02:50:00.000Z') }).content);
+  mkdirSync(join(dir, '.omc')); // 비-.md 폴더는 무시
+  const expectedIntervals = { present: 3600_000, never: 3600_000, retired: null };
+  assert.deepEqual(findStaleJobs(dir, { now, expectedIntervals }), [], '끄면 예전처럼 파일만 본다');
+  assert.deepEqual(findStaleJobs(dir, { now, expectedIntervals, includeMissing: true, firstHeartbeatBy: {} }),
+    [{ job: 'never', lastRun: null, expectedIntervalMs: 3600_000 }]);
+  assert.deepEqual(findStaleJobs(dir, { now, expectedIntervals, includeMissing: true, firstHeartbeatBy: {}, switchedOff: new Set(['never']) }), []);
+  assert.match(formatStaleJobIssue({ job: 'never', lastRun: null, expectedIntervalMs: 3600_000 }), /실행 기록 없음/);
+});
+
+test('findStaleJobs(includeMissing): 가동 전 잡은 JOB_FIRST_HEARTBEAT_BY 날짜(KST) 전까지 유예한다', (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const expectedIntervals = { 'telegram-gate': 15 * 60_000, 'annual-instrument-rescore': 400 * 86_400_000 };
+  const firstHeartbeatBy = { 'telegram-gate': '2026-11-09', 'annual-instrument-rescore': '2027-01-04' };
+  const jobs = (iso) => findStaleJobs(dir, { now: new Date(iso), expectedIntervals, firstHeartbeatBy, includeMissing: true }).map((s) => s.job);
+  assert.deepEqual(jobs('2026-11-08T14:59:00.000Z'), []); // 11-08 23:59 KST
+  assert.deepEqual(jobs('2026-11-08T15:00:00.000Z'), ['telegram-gate']); // 11-09 00:00 KST
+  assert.deepEqual(jobs('2027-01-03T15:00:00.000Z'), ['telegram-gate', 'annual-instrument-rescore']);
+});
+
+test('findStaleJobs(includeMissing, 실제 표): 폐지·중단 잡과 가동 전 잡은 파일이 없어도 오늘 경보하지 않는다', (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const now = new Date('2026-11-03T05:00:00.000Z');
+  for (const job of Object.keys(EXPECTED_INTERVALS_MS)) {
+    writeFileSync(join(dir, `${job}.md`), buildJobHealthRecord({ job, status: 'OK', now }).content);
+  }
+  for (const job of ['telegram-gate', 'telegram-gate-health-check', 'annual-instrument-rescore', 'media-memory-orb']) rmSync(join(dir, `${job}.md`));
+  assert.deepEqual(findStaleJobs(dir, { now, includeMissing: true }), []);
+});
+
+// ── 데이터 신선도 통합(2026-11-03) ──
+function writeVaultFile(root, relKey, sub, content) {
+  const path = join(root, ...VAULT_REL[relKey].split('/'), ...sub);
+  mkdirSync(join(path, '..'), { recursive: true });
+  writeFileSync(path, content);
+}
+const heartbeatLine = (ms) => JSON.stringify({ type: 'core.heartbeat', received_at: ms, payload: {} });
+
+test('checkDataFreshness → sourceIssuesFor: 긴급 출처 끊김은 source:<id>:stale 이슈가 되고 processHealthIssues로 나간다', async (t) => {
+  const root = makeTmpDir();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const now = Date.parse('2026-11-04T05:00:00.000Z');
+  writeVaultFile(root, 'argosEvents', ['2026', '2026-11-04.jsonl'], `${heartbeatLine(now - 3 * 3600_000)}\n`);
+  for (const date of ['2026-11-01', '2026-11-02', '2026-11-03']) writeVaultFile(root, 'dailyNotes', ['2026', `${date}.md`], 'x');
+  const freshness = checkDataFreshness({ now, root, isTradingDay: () => null });
+  const byId = new Map(freshness.results.map((r) => [r.id, r]));
+  assert.equal(byId.get('argos-heartbeat').status, 'stale');
+  assert.equal(byId.get('argos-location').status, 'suppressed', '상위 채널 끊김으로 묶임');
+  assert.equal(byId.get('daily-note').status, 'ok');
+  assert.equal(byId.get('argos-recordings').status, 'not-collected');
+  const issues = sourceIssuesFor(freshness.results, new Set());
+  assert.deepEqual(issues.map((i) => i.key), ['source:argos-heartbeat:stale']);
+  const stateFile = join(root, 'watcher.json');
+  const messages = [];
+  await processHealthIssues(issues, { stateFile, queueFile: join(root, 'deferred.json'), now,
+    send: async (message) => { messages.push(message); return { ok: true, result: { message_id: 1 } }; } });
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].facts[1], /아르고스 상태 신호/);
+  assert.ok(renderAgentMessage(messages[0]).length > 0);
+  assert.deepEqual([...readPriorSourceKeys(stateFile)], ['source:argos-heartbeat:stale']);
+  // 수신 잡이 이미 조용함 경보 중이면 출처 경보는 내지 않는다(잡 경보로 갈음).
+  const silent = checkDataFreshness({ now, root, isTradingDay: () => null, silentJobs: new Set(['argos-ingest']) });
+  assert.deepEqual(sourceIssuesFor(silent.results, new Set()), []);
+});
+
+test('sourceIssuesFor: 검사 실패·판정 보류인 긴급 출처는 이전 경보를 유지해 가짜 복구를 막는다', async (t) => {
+  const prior = new Set(['source:argos-heartbeat:stale']);
+  assert.deepEqual(sourceIssuesFor(null, prior).map((i) => i.key), ['source:argos-heartbeat:stale']);
+  const base = { id: 'argos-heartbeat', label: '상태 신호', owner: 'hermes', urgent: true, lastAt: null, detail: '' };
+  assert.deepEqual(sourceIssuesFor([{ ...base, status: 'error' }], prior).map((i) => i.key), ['source:argos-heartbeat:stale']);
+  assert.deepEqual(sourceIssuesFor([{ ...base, status: 'error' }], new Set()), []);
+  assert.deepEqual(sourceIssuesFor([{ ...base, status: 'ok' }], prior), []);
+  assert.deepEqual(sourceIssuesFor([{ ...base, urgent: false, status: 'stale' }], new Set()), [], '비긴급은 즉시 경보 안 함');
+  // 검사 실패로 이슈를 유지하면 processHealthIssues는 복구 알림을 보내지 않는다.
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'watcher.json');
+  writeFileSync(stateFile, JSON.stringify({ 'source:argos-heartbeat:stale': { firstSeenAt: 1, lastSentAt: 1, sentCount: 1 } }));
+  const sent = [];
+  await processHealthIssues(sourceIssuesFor(null, readPriorSourceKeys(stateFile)), { stateFile, queueFile: join(dir, 'q.json'), now: 2,
+    send: async (message) => { sent.push(message); return { ok: true, result: { message_id: 1 } }; } });
+  assert.deepEqual(sent, []);
+});
+
+const staleResult = (id, owner, extra = {}) => ({ id, label: `가상 ${id}`, owner, kind: 'continuous', urgent: false,
+  status: 'stale', lastAt: null, detail: '가상 사유', ...extra });
+
+test('runFreshnessDigest: 09시 슬롯에 담당별로 한 번 묶어 보내고 같은 슬롯엔 다시 안 보낸다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'digest.json');
+  const sent = [];
+  const send = async (message, details) => { sent.push({ message, details }); return { ok: true, result: { message_id: sent.length } }; };
+  const results = [staleResult('a', 'hermes'), staleResult('b', 'hermes'), staleResult('c', 'plutus'),
+    { ...staleResult('d', 'athena'), status: 'ok' }, { ...staleResult('u', 'clio'), urgent: true }];
+  const ten = Date.parse('2026-11-04T01:00:00.000Z'); // 10:00 KST(09시 슬롯 안)
+  assert.deepEqual(await runFreshnessDigest(results, { stateFile, send, now: ten }), { sent: 2 });
+  assert.deepEqual(sent.map((s) => [s.message.agent, s.message.facts.length]), [['hermes', 2], ['plutus', 1]]);
+  for (const { message } of sent) {
+    assert.equal(message.kind, '판단');
+    assert.match(message.facts[0], /^새로 끊김: 데이터 <code>/);
+    assert.match(renderAgentMessage(message), /^\[/);
+  }
+  assert.deepEqual(await runFreshnessDigest(results, { stateFile, send, now: ten + 30 * 60_000 }), { sent: 0 });
+  // 슬롯 밖(14:00)에는 상태만 갱신
+  assert.deepEqual(await runFreshnessDigest(results, { stateFile, send, now: ten + 4 * 3600_000 }), { sent: 0 });
+  assert.equal(sent.length, 2);
+  // 같은 날 19시: 20시간 안 됐으니 재알림 없음. 다음날 09시: 재알림.
+  assert.deepEqual(await runFreshnessDigest(results, { stateFile, send, now: ten + 9.5 * 3600_000 }), { sent: 0 });
+  assert.deepEqual(await runFreshnessDigest(results, { stateFile, send, now: ten + 23.5 * 3600_000 }), { sent: 2 });
+  assert.match(sent[2].message.facts[0], /^여전히 끊김/);
+});
+
+test('runFreshnessDigest: 30분 깜빡임은 가짜 복구를 안 보내고, 6시간 연속 정상이면 복구를 한 번 보낸다', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'digest.json');
+  const sent = [];
+  const send = async (message) => { sent.push(message); return { ok: true, result: { message_id: sent.length } }; };
+  const nine = Date.parse('2026-11-04T00:00:00.000Z');
+  const stale = [staleResult('loc', 'hermes')];
+  const ok = [{ ...stale[0], status: 'ok' }];
+  await runFreshnessDigest(stale, { stateFile, send, now: nine });
+  assert.equal(sent.length, 1);
+  for (let i = 1; i <= 19; i += 1) {
+    await runFreshnessDigest(i % 2 ? ok : stale, { stateFile, send, now: nine + i * 30 * 60_000 });
+  }
+  await runFreshnessDigest(ok, { stateFile, send, now: nine + 10 * 3600_000 }); // 19:00, 직전 18:30까지 깜빡임
+  assert.equal(sent.length, 1, '깜빡이는 동안 복구 알림 없음');
+  for (let h = 10.5; h <= 24; h += 0.5) await runFreshnessDigest(ok, { stateFile, send, now: nine + h * 3600_000 });
+  assert.equal(sent.length, 2);
+  assert.match(sent[1].facts[0], /^복구됨: 데이터/);
+  await runFreshnessDigest(ok, { stateFile, send, now: nine + 34 * 3600_000 });
+  assert.equal(sent.length, 2, '복구는 한 번만');
+});
+
+test('runFreshnessDigest: 발송 실패는 상태를 남겨 다음 슬롯에 다시 보낸다, 실 상태 경로는 테스트에서 거부', async (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'digest.json');
+  const nine = Date.parse('2026-11-04T00:00:00.000Z');
+  let fail = true;
+  const sent = [];
+  const send = async (message) => {
+    if (fail) { const error = new Error('가상 실패'); error.confirmedNotSent = true; throw error; }
+    sent.push(message); return { ok: true, result: { message_id: 1 } };
+  };
+  assert.deepEqual(await runFreshnessDigest([staleResult('a', 'hermes')], { stateFile, send, now: nine }), { sent: 0 });
+  fail = false;
+  await runFreshnessDigest([staleResult('a', 'hermes')], { stateFile, send, now: nine + 3600_000 });
+  assert.equal(sent.length, 0, '같은 슬롯에선 재시도 안 함');
+  await runFreshnessDigest([staleResult('a', 'hermes')], { stateFile, send, now: nine + 10 * 3600_000 });
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].facts[0], /^새로 끊김/);
+  await assert.rejects(runFreshnessDigest([], { send }), /실 신선도 묶음 상태 경로/);
+});
+
+test('writeDataFreshnessFile: 임시 경로에 바뀔 때만 쓰고, 실볼트 기본 경로는 테스트에서 거부', (t) => {
+  const dir = makeTmpDir();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'DataFreshness.json');
+  const results = [staleResult('a', 'hermes')];
+  assert.equal(writeDataFreshnessFile(results, { file, now: 1 }), true);
+  assert.equal(writeDataFreshnessFile(results, { file, now: 2 }), false);
+  assert.throws(() => writeDataFreshnessFile(results), /실볼트 신선도 파일/);
+});
+
+test('DATA_SOURCES 전 출처가 빈 임시 볼트에서도 throw 없이 판정된다(읽기 실패 없음)', (t) => {
+  const root = makeTmpDir();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const freshness = checkDataFreshness({ now: Date.parse('2026-11-04T05:00:00.000Z'), root, isTradingDay: () => null });
+  assert.equal(freshness.results.length, DATA_SOURCES.length);
+  assert.deepEqual(freshness.results.filter((r) => r.status === 'error'), []);
 });

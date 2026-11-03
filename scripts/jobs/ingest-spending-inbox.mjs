@@ -185,5 +185,7 @@ export async function ingestSpendingInbox({
 
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   ingestSpendingInbox({ db: getFirestoreAdmin(), dryRun: process.argv.includes('--dry-run') })
+    // 일부 실패(failed>0)도 잡 실패로 남겨 하트비트·실패 경보가 보게 한다(2026-11-03, 예전엔 exit 0).
+    .then((result) => { if (result.failed > 0) process.exitCode = 1; })
     .catch(() => { console.error('[ingest-spending-inbox] failed=1'); process.exitCode = 1; });
 }
