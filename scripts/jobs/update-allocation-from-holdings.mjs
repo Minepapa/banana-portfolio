@@ -51,8 +51,11 @@ export function findOrphanedAllocationFiles(existingFilenames, expectedFilenames
 // 목표·현재 비중·리밸런싱 금액이 그대로라 updatedAt만 바뀐 채 덮어쓰고 있었다(LiveSync로 폰에 하루 3천 번 넘게 복제).
 // - 휘발 칸: updatedAt 하나(계산 시각일 뿐 판단에 안 쓴다). 나머지 칸(비중·금액·태그·related)이 같으면 같은 내용이다.
 // - 내용이 같아도 마지막으로 쓴 지 1시간이 지나면 다시 쓴다 — 파일을 연 사람이 "잡이 살아 있다"는 걸 1시간 단위로 볼 수 있게
-//   (DataFreshness.json과 같은 1시간, 2026-11-03 제우스 결정). 이 파일의 updatedAt을 신선도 판정에 쓰는 코드는 없다
-//   (data-sources.mjs에 Allocation 출처 없음, Firestore 미러는 자기 시각을 찍음). 잡이 도는지는 JobHealth가 본다.
+//   (DataFreshness.json과 같은 1시간, 2026-11-03 제우스 결정).
+// - ⚠️ 이 파일의 updatedAt을 읽는 곳: 올림푸스(별도 저장소 olympus, server/vault-api.mjs allocationCards)가 계좌별 가장 늦은
+//   updatedAt을 배분 카드의 as_of로 쓰고, 36시간(STALE_SEC.allocation)이 지나면 카드를 '낡음'으로 표시한다. 그래서 refreshMs는
+//   36시간보다 충분히 짧아야 한다 — 상한 6시간을 update-allocation-from-holdings.test.js가 지킨다. data-sources.mjs 신선도 감시에는
+//   Allocation 출처가 없고, Firestore 미러는 자기 시각을 찍는다. 잡이 도는지는 JobHealth가 본다.
 export const ALLOCATION_REFRESH_MS = 60 * 60 * 1000;
 export function writeAllocationIfChanged(filepath, record, { now = Date.now() } = {}) {
   return writeIfChanged(filepath, record, {

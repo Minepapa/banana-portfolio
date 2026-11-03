@@ -119,3 +119,11 @@ test('비교 함수가 던지면 건너뛰지 않고 쓴다(안전한 쪽)', (t)
   assert.equal(writeIfChanged(file, 'x', { compareKey: () => { throw new Error('비교 실패'); } }), true);
   assert.equal(readFileSync(file, 'utf8'), 'x');
 });
+
+test('previous를 주면 파일을 다시 읽지 않고 그 내용으로 비교한다(null이면 없는 파일로 보고 쓴다)', (t) => {
+  const file = join(tempDir(t), 'a.txt');
+  writeFileSync(file, 'x');
+  assert.equal(writeIfChanged(file, 'y', { previous: 'y' }), false, '디스크 내용(x)이 아니라 넘긴 내용(y)과 비교');
+  assert.equal(readFileSync(file, 'utf8'), 'x');
+  assert.equal(writeIfChanged(file, 'x', { previous: null }), true);
+});

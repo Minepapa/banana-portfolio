@@ -14,7 +14,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { updateFrontmatter } from './vault-frontmatter.mjs';
-import { frontmatterTime, frontmatterWithout, writeIfChanged } from './write-if-changed.mjs';
+import { assertNotRealVaultInTest, frontmatterTime, frontmatterWithout, writeIfChanged } from './write-if-changed.mjs';
 
 const DEFAULT_RETRIES = 10;
 const DEFAULT_RETRY_DELAY_MS = 50;
@@ -217,6 +217,7 @@ export async function patchFrontmatterFileSafely(filePath, patch, lockOpts = {})
 // 둘 다 참 값이라 `if (!ok)`로 "파일 없음"만 거르는 호출부는 그대로 동작한다.
 export async function patchFrontmatterFileIfChanged(filePath, patch, { ignoreKeys, stampKey, refreshMs, sameKstDay = false,
   now = Date.now() }, lockOpts = {}) {
+  assertNotRealVaultInTest(filePath); // 락 파일을 만들기 전에 막는다
   return withLock(filePath, () => {
     let freshContent;
     try {
@@ -228,7 +229,7 @@ export async function patchFrontmatterFileIfChanged(filePath, patch, { ignoreKey
     const wrote = writeIfChanged(filePath, updateFrontmatter(freshContent, patch), {
       compareKey: (text) => frontmatterWithout(text, ignoreKeys),
       writtenAt: (text) => frontmatterTime(text, stampKey),
-      refreshMs, sameKstDay, now,
+      refreshMs, sameKstDay, now, previous: freshContent, // 락 안에서 이미 읽은 내용 — 다시 읽지 않는다
     });
     return wrote ? 'written' : 'unchanged';
   }, lockOpts);

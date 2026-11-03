@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { REAL_VAULT_ROOT } from './write-if-changed.mjs';
 import { join } from 'node:path';
 import { withLock, writeAtomic, atomicTempPath, writeStateFile, patchFrontmatterFileSafely, patchFrontmatterFileIfChanged, lockFilePath, legacyLockFilePath, lockFilesFor } from './state-writer.mjs';
 
@@ -276,4 +277,11 @@ test('patchFrontmatterFileIfChanged: 시각 칸만 바뀌면 건너뛰고(unchan
   assert.equal(await patchFrontmatterFileIfChanged(file, { curPrice: 11, updatedAt: stamp(80) }, at(80)), 'written', '1시간이 지나면 다시');
   assert.equal(await patchFrontmatterFileIfChanged(join(dir, 'gone.md'), { curPrice: 1 }, at(90)), false, '없는 파일은 예전처럼 false');
   assert.deepEqual(readdirSync(dir).filter((name) => name.startsWith('.')), [], '락·임시 파일이 남지 않는다');
+});
+
+test('patchFrontmatterFileIfChanged: 테스트 중 실볼트 경로는 락 파일을 만들기 전에 거부한다', async () => {
+  const dir = join(REAL_VAULT_ROOT, '.patch-if-changed-test-never');
+  await assert.rejects(() => patchFrontmatterFileIfChanged(join(dir, 'x.md'), { a: 1 },
+    { ignoreKeys: ['updatedAt'], stampKey: 'updatedAt', refreshMs: 1 }, { retries: 0 }), /실볼트 경로 쓰기 금지/);
+  assert.equal(existsSync(dir), false);
 });

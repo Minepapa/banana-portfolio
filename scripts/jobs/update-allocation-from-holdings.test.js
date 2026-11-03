@@ -44,3 +44,7 @@ test('writeAllocationIfChanged: updatedAt만 다르면 1시간 안엔 안 쓰고
   assert.equal(writeAllocationIfChanged(file, record(9.6, later - 1), { now: later - 1 }), false);
   assert.equal(writeAllocationIfChanged(file, record(9.6, later), { now: later }), true);
 });
+
+test('ALLOCATION_REFRESH_MS: 올림푸스 배분 카드 낡음 기준(36시간)보다 충분히 짧게 — 상한 6시간', () => {
+  assert.ok(ALLOCATION_REFRESH_MS > 0 && ALLOCATION_REFRESH_MS <= 6 * 60 * 60 * 1000);
+});

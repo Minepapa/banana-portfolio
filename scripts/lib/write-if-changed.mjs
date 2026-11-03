@@ -104,12 +104,15 @@ export function kstDateLabel(ms) {
  *   refreshMs: 마지막으로 쓴 지 이만큼 지나면 내용이 같아도 다시 쓴다(시각 칸 새로 고침). 기본 Infinity.
  *   sameKstDay: true면 마지막으로 쓴 날(KST)이 오늘이 아니면 다시 쓴다 — "그날 갱신이 있었나"를 보는 감시가 오탐하지 않게.
  *   now: 지금(ms). guardRoots: 테스트 중 쓰기를 막을 루트를 더한다(실볼트는 항상 막는다).
+ *   previous: 호출부가 이미 읽은 지금 파일 내용(락 안에서 읽은 것 등). 주면 다시 읽지 않는다. null이면 파일이 없는 것으로 본다.
  */
 export function writeIfChanged(file, content, { compareKey = (text) => text, writtenAt = null, refreshMs = Infinity,
-  sameKstDay = false, now = Date.now(), guardRoots = [] } = {}) {
+  sameKstDay = false, now = Date.now(), guardRoots = [], previous } = {}) {
   assertNotRealVaultInTest(file, guardRoots);
-  let previous = null;
-  try { previous = readFileSync(file, 'utf8'); } catch { /* 없거나 못 읽으면 새로 쓴다 */ }
+  if (previous === undefined) {
+    previous = null;
+    try { previous = readFileSync(file, 'utf8'); } catch { /* 없거나 못 읽으면 새로 쓴다 */ }
+  }
   if (previous !== null && skipWrite(previous, content, { compareKey, writtenAt, refreshMs, sameKstDay, now })) return false;
   writeFileAtomic(file, content);
   return true;
