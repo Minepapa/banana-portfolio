@@ -50,6 +50,7 @@ test('보낸 지 7일 안에 폰에서 지운 사진은 Archive·아르고스 �
   const manifest = readFileSync(join(env.media, 'Trash/2026-10-24/manifest.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(manifest[0].record.id, ID);
   assert.equal(manifest[0].reason, 'phone-deleted');
+  assert.equal(manifest[0].route, 'phone-deleted');
   assert.ok(existsSync(join(env.media, manifest[0].trashPath)));
   assert.ok(existsSync(join(env.media, manifest[0].argosTrashPath)));
   assert.equal(env.written.at(-1).has(ID), false);

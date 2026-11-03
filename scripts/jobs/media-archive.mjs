@@ -13,6 +13,7 @@ import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { collectWarning, flushWarnings } from '../lib/job-alerts.mjs';
 import { followPhoneDeletions } from '../lib/argos-media-trash.mjs';
 import { readArgosConfig } from '../lib/argos-ingest.mjs';
+import { readVerdicts, THEMIS_VERDICTS_PATH } from '../lib/themis-verdict-ledger.mjs';
 
 const execFileAsync = promisify(execFile);
 const KINDS = ['Camera', 'Recordings', 'Calls', 'Screenshots', 'KakaoTalk', 'KakaoTalkMovie'];
@@ -21,6 +22,7 @@ const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.3gp', '.avi', '.mkv'
 const AUDIO_EXTENSIONS = new Set(['.m4a', '.m4b', '.m4p', '.m4r', '.mp3', '.wav', '.aac', '.flac', '.ogg', '.wma', '.amr', '.3ga']);
 const QUICKTIME_EXTENSIONS = new Set(['.m4a', '.m4b', '.m4p', '.m4r', '.mp4', '.mov', '.m4v', '.3gp', '.3g2', '.3ga', '.qt']);
 const MAX_TRASH_PER_RUN = 20;
+const MAX_PURGE_FOLDERS_PER_RUN = 3;
 
 function insidePath(root, candidate) {
   const inside = relative(resolve(root), resolve(candidate));
@@ -80,8 +82,96 @@ async function expiredTrashFolders(mediaRoot, now, { latestArchivedAt = null } =
   // 시계가 앞으로 튀면 정리하지 않는다: 오늘이 가장 최근 기록(보관 시각·휴지통 날짜)보다 2일 넘게 앞서면 멈춘다.
   const latest = [latestArchivedAt, dated.at(-1)?.name].filter(Boolean).sort().at(-1);
   if (latest && Date.parse(`${today}T00:00:00+09:00`) - Date.parse(`${latest}T00:00:00+09:00`) > 2 * 24 * 60 * 60_000) return [];
+  // 실행당 세 폴더 한도는 정리 루프가 보류 검사를 통과한 폴더에만 센다(보류 폴더가 한도를 막지 않게).
   return dated.filter((entry) => Date.parse(`${entry.name}T00:00:00+09:00`) < cutoff)
-    .slice(0, 3).map((entry) => join(trashRoot, entry.name));
+    .map((entry) => join(trashRoot, entry.name));
+}
+
+// 휴지통으로 들어온 경로(오너 결정 2026-11-03 — 영구 삭제 직전 경로별 확인). 휴지통에 넣는 코드는 manifest 줄마다 route를 남긴다:
+// owner-request(오너 요청, 결정 `미디어-삭제-요청` — 세션이 손으로 쓰는 줄도 같은 값을 넣는다), phone-deleted(argos-media-trash),
+// unlinked-call(미연결 통화, D98), auto-candidate(자동 후보, 결정 `미디어-삭제-판정` — 줄에 verdictId로 테미스 판정을 단다).
+export const TRASH_ROUTES = Object.freeze(['owner-request', 'phone-deleted', 'unlinked-call', 'auto-candidate']);
+// route가 없는 줄은 '경로 미상'이다(reason·폴더 모양으로 추정하지 않는다). 다만 이 날짜까지 만든 휴지통 폴더의 route 없는 줄은
+// legacy로 허용한다: 2026-11-03까지 휴지통에 넣는 길은 (a) 오너 요청·폰 삭제와 (b) 미연결 통화뿐이었고, (c) 자동 후보 코드는
+// 아직 없었다(오너 결정 2026-11-03). 이 날 뒤 폴더의 route 없는 줄은 보류한다 — 이 코드가 늦게 배포되면 이 날짜를 배포일로 맞춘다.
+const LEGACY_ROUTE_LAST_DAY = '2026-11-03';
+// 지울 폴더 안에서 manifest 대조를 하지 않는 이름: manifest 자신(폴더 맨 위)과 Finder가 만드는 .DS_Store(미디어가 아님).
+const TRASH_UNLISTED_OK = new Set(['.DS_Store']);
+const nfc = (path) => path.normalize('NFC'); // APFS 파일 이름(NFD일 수 있음)과 manifest(대개 NFC)를 같은 모양으로 비교한다
+
+async function trashFolderFiles(directory, mediaRoot) {
+  const files = [];
+  const others = [];
+  async function visit(folder) {
+    for (const entry of await fs.readdir(folder, { withFileTypes: true })) {
+      const path = join(folder, entry.name);
+      if (entry.isDirectory()) await visit(path);
+      else if (TRASH_UNLISTED_OK.has(entry.name) || path === join(directory, 'manifest.jsonl')) continue;
+      // 심볼릭 링크·특수 파일은 manifest가 가리킬 수 없으므로 늘 보류 사유다.
+      else (entry.isFile() ? files : others).push(nfc(relative(mediaRoot, path).split(sep).join('/')));
+    }
+  }
+  await visit(directory);
+  return { files, others };
+}
+
+/**
+ * 만료 휴지통 폴더를 영구 삭제해도 되는지 본다. 반환: 보류 사유 목록(비면 지워도 된다).
+ * 불변식: 하나라도 걸리면 그 폴더는 purged.jsonl에도 오르지 않고 지워지지도 않으며, 다음 회차에 다시 검사한다.
+ * - 폴더에 파일이 없으면(빈 하위 폴더·.DS_Store뿐) 잃을 것이 없으므로 manifest 없이도 지운다.
+ * - 파일이 있는데 manifest가 없거나 일반 파일이 아니면 보류한다(누가 왜 넣었는지 모르는 파일을 지우지 않는다).
+ * - 모든 파일은 manifest 줄의 trashPath·argosTrashPath·transcripts·moved[].to 중 하나여야 한다.
+ * - 읽을 수 있는 줄은 모두 route를 본다: 모르는 값·경로 미상(legacy 날짜 뒤)·auto-candidate인데 테미스 '미디어 삭제' 통과 판정이
+ *   verdictId로 이어지지 않으면 보류. 끊긴 줄은 route를 알 수 없지만 그 줄의 파일이 목록에 없게 되므로 위 대조에서 걸린다.
+ */
+async function trashFolderHolds(directory, mediaRoot, loadVerdicts) {
+  const { files, others } = await trashFolderFiles(directory, mediaRoot);
+  const holds = [];
+  if (others.length) holds.push(`일반 파일 아님 ${others.length}개`);
+  if (!files.length && !others.length) return holds;
+  const manifest = join(directory, 'manifest.jsonl');
+  let content;
+  try {
+    if (!(await fs.lstat(manifest)).isFile()) return [...holds, 'manifest 형식 오류'];
+    content = await fs.readFile(manifest, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return [...holds, 'manifest 없음'];
+    throw error;
+  }
+  const listed = new Set();
+  const legacy = basename(directory) <= LEGACY_ROUTE_LAST_DAY;
+  let unknownRoute = 0;
+  let noRoute = 0;
+  const autoVerdictIds = [];
+  for (const line of content.split('\n')) {
+    if (!line.trim()) continue;
+    let item;
+    try { item = JSON.parse(line); } catch { continue; }
+    if (!item || typeof item !== 'object') continue;
+    for (const path of [item.trashPath, item.argosTrashPath, ...(Array.isArray(item.transcripts) ? item.transcripts : []),
+      ...(Array.isArray(item.moved) ? item.moved.map((move) => move?.to) : [])]) {
+      if (typeof path === 'string') listed.add(nfc(path));
+    }
+    if (item.route === undefined) { if (!legacy) noRoute += 1; }
+    else if (!TRASH_ROUTES.includes(item.route)) unknownRoute += 1;
+    else if (item.route === 'auto-candidate') autoVerdictIds.push(item.verdictId);
+  }
+  const unlisted = files.filter((path) => !listed.has(path)).length;
+  if (unlisted) holds.push(`manifest 밖 파일 ${unlisted}개`);
+  if (noRoute) holds.push(`경로 미상 ${noRoute}건`);
+  if (unknownRoute) holds.push(`모르는 경로 ${unknownRoute}건`);
+  if (autoVerdictIds.length) {
+    let passed;
+    try {
+      passed = new Set(loadVerdicts().filter((verdict) => verdict.kind === '미디어 삭제' && verdict.verdict === '통과')
+        .map((verdict) => verdict.id));
+    } catch (error) {
+      return [...holds, `판정 원장 읽기 실패: ${error.code ?? '형식 오류'}`];
+    }
+    const missing = autoVerdictIds.filter((id) => typeof id !== 'string' || !passed.has(id)).length;
+    if (missing) holds.push(`자동 후보 통과 판정 없음 ${missing}건`);
+  }
+  return holds;
 }
 
 async function trashRecords(manifest, trashRoot) {
@@ -654,9 +744,10 @@ export async function runMediaArchive({
   link = fs.link,
   atomicWrite = writeAtomic,
   output = console,
+  verdictsPath = THEMIS_VERDICTS_PATH,
 } = {}) {
   const summary = { archived: 0, skipped: 0, failed: 0, trashIgnored: 0, trashedNew: 0,
-    trashedExisting: 0, trashedOrphan: 0, orphanCalls: 0, cleanedTrash: 0, trashedByContact: {},
+    trashedExisting: 0, trashedOrphan: 0, orphanCalls: 0, cleanedTrash: 0, heldTrash: 0, trashedByContact: {},
     capturedFrom: { exif: 0, filename: 0, mtime: 0 },
     capturedConfidence: { confirmed: 0, single: 0, estimated: 0, review: 0 } };
   await fs.stat(mediaRoot); // 마운트가 빠졌다면 빈 Inbox로 오인하지 않고 잡 실패를 알린다.
@@ -893,11 +984,40 @@ export async function runMediaArchive({
       output.error(`[media-archive] 휴지통 정리 준비 실패: ${error.message}`);
     }
   }
+  // 영구 삭제 전 경로별 확인(오너 결정 2026-11-03). 보류 폴더는 경고만 남기고 다음 회차에 다시 검사한다.
+  // 판정 원장은 auto-candidate 줄이 있을 때만 한 번 읽는다(읽기 전용).
+  let verdicts = null;
+  const loadVerdicts = () => (verdicts ??= readVerdicts(verdictsPath));
+  async function purgeHolds(directory) {
+    let holds;
+    try {
+      await noSymlinks(join(mediaRoot, 'Trash'), directory);
+      holds = await trashFolderHolds(directory, mediaRoot, loadVerdicts);
+    } catch (error) {
+      // 경고(텔레그램)에는 절대경로가 실리지 않게 코드만 싣고, 상세는 로그에만 남긴다.
+      output.error(`[media-archive] 휴지통 영구 삭제 검사 실패: ${directory}: ${error.message}`);
+      holds = [`검사 실패: ${error.code ?? '경로/형식 오류'}`];
+    }
+    if (!holds.length) return false;
+    summary.heldTrash += 1;
+    const date = basename(directory);
+    output.error(`[media-archive] ${dryRun ? 'dry-run ' : ''}휴지통 영구 삭제 보류: ${date} (${holds.join(', ')})`);
+    if (!dryRun) {
+      collectWarning(`휴지통 영구 삭제 보류: ${date} (${holds.join(', ')})`, {
+        jobName: 'media-archive', warningCode: 'MEDIA_TRASH_PURGE_HELD',
+        subjectKey: `trash-purge-held:${date}`, kind: 'operational', severity: 'medium',
+      });
+    }
+    return true;
+  }
   if (dryRun) {
     summary.trashedNew = newTrash.length;
     summary.trashedExisting = candidates.length;
     summary.trashedOrphan = bulkBlocked ? 0 : orphans.length;
-    summary.cleanedTrash = cleanup.length;
+    for (const directory of cleanup) {
+      if (summary.cleanedTrash >= MAX_PURGE_FOLDERS_PER_RUN) break;
+      if (!await purgeHolds(directory)) summary.cleanedTrash += 1;
+    }
     for (const file of newTrash) output.log(`[media-archive] dry-run 휴지통 새 통화: ${file.path}`);
     for (const item of candidates) output.log(`[media-archive] dry-run 휴지통 기존 통화: ${item.record.archivePath}`);
     for (const item of orphans) if (!bulkBlocked) output.log(`[media-archive] dry-run 휴지통 고아 통화: ${item.archive}`);
@@ -925,7 +1045,13 @@ export async function runMediaArchive({
             || current.size !== file.stat.size || current.mtimeMs !== file.stat.mtimeMs) throw new Error('Inbox 파일 변경');
           await noSymlinks(join(mediaRoot, 'Trash'), trashCalls);
           await fs.mkdir(trashCalls, { recursive: true });
-          await fs.rename(file.path, await uniqueTrashPath(trashCalls, basename(file.path)));
+          const destination = await uniqueTrashPath(trashCalls, basename(file.path));
+          // 보관 전 통화라 색인 레코드(id)는 없다. 이동 전에 경로를 남겨 영구 삭제 직전 대조에서 manifest 밖 파일이 되지 않게 한다.
+          await noSymlinks(join(mediaRoot, 'Trash'), manifestPath);
+          await fs.appendFile(manifestPath, `${JSON.stringify({ route: 'unlinked-call',
+            inboxPath: relative(mediaRoot, file.path).split('\\').join('/'),
+            trashPath: relative(mediaRoot, destination).split('\\').join('/') })}\n`);
+          await fs.rename(file.path, destination);
           summary.trashedNew += 1;
           const contact = parseCallFilename(basename(file.path)).contact;
           movedByContact.set(contact, (movedByContact.get(contact) || 0) + 1);
@@ -956,7 +1082,7 @@ export async function runMediaArchive({
           }
           // 이동 전에 복구 경로를 기록한다. 중단되면 예정 경로를 따라 수동 복구할 수 있다.
           await noSymlinks(join(mediaRoot, 'Trash'), manifestPath);
-          await fs.appendFile(manifestPath, `${JSON.stringify({ record,
+          await fs.appendFile(manifestPath, `${JSON.stringify({ route: 'unlinked-call', record,
             trashPath: relative(mediaRoot, destination).split('\\').join('/'),
             transcripts: transcriptMoves.map(({ target }) => relative(mediaRoot, target).split('\\').join('/')) })}\n`);
           await fs.rename(archive, destination);
@@ -999,17 +1125,30 @@ export async function runMediaArchive({
           output.error(`[media-archive] 고아 통화 이동 건너뜀: ${item.archive}: ${error.message}`);
         }
       }
+      let purgeAttempts = 0;
       for (const directory of cleanup) {
+        if (purgeAttempts >= MAX_PURGE_FOLDERS_PER_RUN) break;
+        // 보류 검사를 통과하지 못하면 purged.jsonl 기록과 삭제를 모두 건너뛴다(purged.jsonl에는 실제로 지운 것만).
+        if (await purgeHolds(directory)) continue;
+        purgeAttempts += 1;
         try {
           await noSymlinks(join(mediaRoot, 'Trash'), directory);
           const pendingIds = new Set();
-          const items = (await trashRecords(join(directory, 'manifest.jsonl'), join(mediaRoot, 'Trash')))
-            .filter(({ record }) => {
-              const id = record.id.toLowerCase();
-              if (trashIds.purged.has(id) || pendingIds.has(id)) return false;
-              pendingIds.add(id);
-              return true;
+          // purged.jsonl에는 이 폴더에 파일이 실제로 있어 함께 지워지는 항목만 올린다(오너 결정 2026-11-03 4항).
+          // manifest만 쓰고 이동이 끊긴 줄(원본이 아직 Archive에 있음)이 드라이브 백업 삭제로 이어지지 않게.
+          const present = async (path) => typeof path === 'string' && insidePath(directory, join(mediaRoot, path))
+            && await fs.lstat(join(mediaRoot, path)).then((stat) => stat.isFile(), (error) => {
+              if (error.code === 'ENOENT') return false;
+              throw error;
             });
+          const items = [];
+          for (const item of await trashRecords(join(directory, 'manifest.jsonl'), join(mediaRoot, 'Trash'))) {
+            const id = item.record.id.toLowerCase();
+            if (trashIds.purged.has(id) || pendingIds.has(id)) continue;
+            if (!await present(item.trashPath) && !await present(item.argosTrashPath)) continue;
+            pendingIds.add(id);
+            items.push(item);
+          }
           if (items.length) {
             const purged = join(mediaRoot, 'Trash', 'purged.jsonl');
             await noSymlinks(join(mediaRoot, 'Trash'), purged);
@@ -1034,7 +1173,7 @@ export async function runMediaArchive({
     }
   }
   if (trashSkipped.length) output.log(`[media-archive] 통화 휴지통 ${trashSkipped.join(' / ')}`);
-  output.log(`[media-archive] ${dryRun ? 'dry-run ' : ''}새로 보관 ${summary.archived}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}; 근거 exif ${summary.capturedFrom.exif}, filename ${summary.capturedFrom.filename}, mtime ${summary.capturedFrom.mtime}; 판정 confirmed ${summary.capturedConfidence.confirmed}, single ${summary.capturedConfidence.single}, estimated ${summary.capturedConfidence.estimated}, review ${summary.capturedConfidence.review}; 휴지통 ${summary.trashedNew + summary.trashedExisting + summary.trashedOrphan}(새 ${summary.trashedNew}·기존 ${summary.trashedExisting}·고아 이동 ${summary.trashedOrphan}), 휴지통 제외 ${summary.trashIgnored}, 고아 통화 ${summary.orphanCalls}건, 휴지통 정리 ${summary.cleanedTrash}폴더`);
+  output.log(`[media-archive] ${dryRun ? 'dry-run ' : ''}새로 보관 ${summary.archived}, 건너뜀 ${summary.skipped}, 실패 ${summary.failed}; 근거 exif ${summary.capturedFrom.exif}, filename ${summary.capturedFrom.filename}, mtime ${summary.capturedFrom.mtime}; 판정 confirmed ${summary.capturedConfidence.confirmed}, single ${summary.capturedConfidence.single}, estimated ${summary.capturedConfidence.estimated}, review ${summary.capturedConfidence.review}; 휴지통 ${summary.trashedNew + summary.trashedExisting + summary.trashedOrphan}(새 ${summary.trashedNew}·기존 ${summary.trashedExisting}·고아 이동 ${summary.trashedOrphan}), 휴지통 제외 ${summary.trashIgnored}, 고아 통화 ${summary.orphanCalls}건, 휴지통 정리 ${summary.cleanedTrash}폴더, 영구 삭제 보류 ${summary.heldTrash}폴더`);
   return summary;
 }
 

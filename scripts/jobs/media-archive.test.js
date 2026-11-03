@@ -256,6 +256,7 @@ test('기존 미연결 통화는 보관본·전사를 휴지통에 보존하고 
   assert.equal(await fs.readFile(join(f.mediaRoot, 'Trash', '2026-10-11', 'Transcripts', `${record.id}.json`), 'utf8'), '{}');
   const manifest = await fs.readFile(join(f.mediaRoot, 'Trash', '2026-10-11', 'manifest.jsonl'), 'utf8');
   assert.equal(JSON.parse(manifest.trim()).record.id, record.id);
+  assert.equal(JSON.parse(manifest.trim()).route, 'unlinked-call');
   await assert.rejects(fs.stat(join(f.mediaRoot, record.archivePath)), { code: 'ENOENT' });
   assert.deepEqual(await fs.readdir(join(f.mediaRoot, 'Trash', '2026-10-11', 'Calls')),
     ['통화 녹음 가상미연결_261011_090000.m4a']);
@@ -430,7 +431,9 @@ test('만료 폴더 manifest를 영구 삭제 목록에 기록한 뒤 폴더를 
   t.after(f.cleanup);
   await f.person();
   const old = join(f.mediaRoot, 'Trash', '2026-08-01');
-  await fs.mkdir(old, { recursive: true });
+  await fs.mkdir(join(old, 'Recordings'), { recursive: true });
+  // 영구 삭제 목록에는 폴더에 파일이 실제로 있던 항목만 오른다(2026-11-03).
+  await fs.writeFile(join(old, 'Recordings', '가상녹음.m4a'), 'trashed');
   await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-10'), { recursive: true });
   const record = { id: 'abcdef0123456789', kind: 'Recordings', inboxPath: 'Inbox/Recordings/가상녹음.m4a' };
   const trashPath = 'Trash/2026-08-01/Recordings/가상녹음.m4a';
@@ -451,7 +454,9 @@ test('끊긴 영구 삭제 목록 뒤에 새 ID를 온전한 줄로 기록한다
   const purged = join(f.mediaRoot, 'Trash', 'purged.jsonl');
   const content = 'newly purged recording';
   const id = createHash('sha256').update(content).digest('hex').slice(0, 16);
-  await fs.mkdir(old, { recursive: true });
+  await fs.mkdir(join(old, 'Recordings'), { recursive: true });
+  // 영구 삭제 목록에는 폴더에 파일이 실제로 있던 항목만 오른다(2026-11-03).
+  await fs.writeFile(join(old, 'Recordings', '가상녹음.m4a'), 'trashed');
   await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-10'), { recursive: true });
   await fs.writeFile(join(old, 'manifest.jsonl'), `${JSON.stringify({
     record: { id, kind: 'Recordings', inboxPath: 'Inbox/Recordings/가상녹음.m4a' },
@@ -494,7 +499,9 @@ test('영구 삭제 목록에 기록하지 못하면 만료 폴더를 보존한�
   await f.person();
   const old = join(f.mediaRoot, 'Trash', '2026-08-01');
   const purged = join(f.mediaRoot, 'Trash', 'purged.jsonl');
-  await fs.mkdir(old, { recursive: true });
+  await fs.mkdir(join(old, 'Recordings'), { recursive: true });
+  // 영구 삭제 목록에는 폴더에 파일이 실제로 있던 항목만 오른다(2026-11-03).
+  await fs.writeFile(join(old, 'Recordings', '가상녹음.m4a'), 'trashed');
   await fs.mkdir(join(f.mediaRoot, 'Trash', '2026-10-10'), { recursive: true });
   await fs.writeFile(join(old, 'manifest.jsonl'), `${JSON.stringify({
     record: { id: 'abcdef0123456789', kind: 'Recordings' },

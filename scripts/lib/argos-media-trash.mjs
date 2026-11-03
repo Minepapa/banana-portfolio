@@ -214,7 +214,8 @@ export async function followPhoneDeletions({
             result.skipped += 1; done(); continue;
           }
           if (dryRun) { result.trashed += 1; continue; }
-          const entry = { record: archiveIsThis ? record : { id, kind: p.kind }, reason: 'phone-deleted', event: e.id };
+          // route: 영구 삭제 직전 경로별 확인(media-archive TRASH_ROUTES, 오너 결정 2026-11-03). reason은 복원 조회가 쓰므로 그대로 둔다.
+          const entry = { record: archiveIsThis ? record : { id, kind: p.kind }, reason: 'phone-deleted', route: 'phone-deleted', event: e.id };
           const taken = new Set();
           for (const m of present) { m.to = await uniquePath(m.dir, basename(m.from), taken); entry[m.field] = rel(mediaRoot, m.to); }
           if (got.path) entry.argosPath = rel(mediaRoot, join(argosBase, got.path));
