@@ -10,14 +10,14 @@ export const DEFAULT_FUND_ASSET_CLASS = '국내주식';
 //
 // avgPrice는 1,000좌당 표기 관례(update-holdings-prices.mjs recomputeValuation의
 // unitScale=0.001과 짝) — invest/qty*1000으로 역산해야 vip-fund.mjs가 조회하는 원시
-// NAV와 같은 스케일이 된다. 실측 검증(2026-09-04): 기존 보유 invest 12,800,000원/
-// qty 8,202,681좌 → (12800000/8202681)*1000 ≈ 1560.47, 기존 avgPrice(1560)와 일치.
+// NAV와 같은 스케일이 된다. 실측 검증(2026-09-04): 실제 보유 invest/qty로 역산한 값이 기존
+// avgPrice와 일치했다(예: invest 1,500,000원/qty 1,000,000좌 → avgPrice 1,500).
 //
 // dedupKey(코드리뷰 HIGH 지적, 2026-09-04) — 호출부의 holdingsApplied 플래그(펀드
 // 매수 원장 쪽)가 1차 방어지만, 보유 파일 쓰기는 성공하고 그 직후 플래그 쓰기가
 // 실패/중단되면(intraday-portfolio-sync.mjs가 60초 타임아웃으로 단계를 SIGTERM
 // 시킬 수 있어 이 창이 실제로 열려있음) 다음 실행에서 같은 매수가 다시 적용돼
-// 200,000원이 중복 반영될 수 있다 — update-holdings-from-executions.mjs의
+// 한 달 적립금이 중복 반영될 수 있다 — update-holdings-from-executions.mjs의
 // appliedDedupKeys 2차 방어와 동일 원칙을 그대로 가져온다(호출부가 이미 적용된
 // dedupKey면 재적용 전에 걸러야 함, 이 함수 자체는 "적용"만 담당).
 //

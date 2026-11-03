@@ -6,7 +6,7 @@
 // holdings-revert-check는 "적용 키 목록"만 보고, tools/verify-holdings-replay는 기초 잔고를
 // 사람이 넣어야 하는 수동 도구다. 이 모듈은 그 둘 사이를 매일 자동으로 메운다.
 //
-// 기준점(앵커) 설계 — 원장은 2026-05부터라 그 전 보유(기초 잔고)는 원장 밖에 있다. 그래서
+// 기준점(앵커) 설계 — 원장은 어느 시점부터만 있어 그 전 보유(기초 잔고)는 원장 밖에 있다. 그래서
 //   보유 수량 = 기초 잔고 + Σ(반영된 체결의 부호 있는 수량)
 // 이 성립해야 하고, 원장이 빠짐없이 기록되는 한 "기초 잔고 = 보유 − Σ체결"(이하 암묵 기초)은
 // 시간이 지나도 변하지 않는 상수다. 처음 본 날의 암묵 기초를 기준점으로 저장해 두고, 이후에는
@@ -19,8 +19,14 @@
 //   - 수량만 본다. 평가금액·평단가·현재가는 읽지 않는다(평가값이 정본 파일에 섞여 있어도 무관).
 //   - 퀀트는 State/Holdings에 쓰지 않는다(KIS API 정본, update-holdings-from-executions 참고) — 대조하지 않는다.
 //   - 현금성 보유(isCashLike: 예수금·CMA·외화RP 잔고)는 체결이 아니라 잔고 조회로 덮어쓰므로 대조하지 않는다.
+//     같은 계좌|종목 키의 원장 행도 함께 뺀다(한쪽만 빼면 원장 쪽만 남아 거짓 차이가 난다).
 //   - IRP는 보유를 KIS 잔고조회가 덮어쓰고 원장은 카카오가 유일 소스다. 그래서 IRP의 재생 대조는
-//     "카카오 원장 ↔ API 잔고" 외부 대사가 된다(다른 계좌는 원장에서 만든 보유와의 내부 정합성).
+//     "카카오 원장 ↔ KIS 잔고" 외부 대사가 된다(다른 계좌는 원장에서 만든 보유와의 내부 정합성).
+//     외부 대사가 되는 유일한 계좌라 빼지 않는다(제우스 결정 2026-11-04). KIS 잔고에는 체결이 곧바로
+//     들어가므로 IRP는 아직 보유 반영 표시가 안 된 체결(pending)도 원장 합에 넣고, 어긋나면 external-mismatch.
+//   - 키는 계좌·종목명을 trim + NFC 정규화한 "계좌|종목"이다. 같은 계좌의 보유 파일 ticker와 체결
+//     stockCode가 같으면 체결을 보유 이름으로 묶는다(종목명 표기만 다른 경우). 그 밖의 이름 차이는
+//     자동으로 합치지 않고, 오너 확인 뒤 종목 단위 기준점 재설정(--rebaseline=계좌|종목)으로 인정한다.
 //   - 반영 대상 판정은 tools/verify-holdings-replay.mjs compareHoldingsReplay와 같은 규칙이다
 //     (legacy 제외, duplicateOf·duplicate-skipped는 보유 적용 키가 실제 반영을 증명할 때만 포함,
 //     미반영은 따로 보고). 그 모듈은 vault-paths를 import 시점에 읽어 테스트 정적 import가 금지라
@@ -37,13 +43,44 @@ export const QTY_ABS_TOLERANCE = 0.001;
 const QTY_REL_TOLERANCE = 1e-9;
 // 아직 보유에 반영되지 않은 체결이 이 시간보다 오래되면 이상으로 본다(보유 반영 잡은 평일 16:05 + 장중 10분).
 export const STALE_PENDING_MS = 24 * 60 * 60 * 1000;
+// KIS 잔고가 보유 정본이라 원장 ↔ 잔고가 외부 대사가 되는 계좌.
+export const EXTERNAL_BALANCE_ACCOUNTS = new Set(['IRP']);
 // 오너가 실계좌로 확인해 손으로 넣은 체결(update-holdings-from-executions OWNER_CONFIRMED_SOURCE와 같은 값).
 const OWNER_CONFIRMED_SOURCE = 'OWNER_CONFIRMED';
 // 보유 파일을 쓰지 않는 계좌 — 체결은 원장에 있어도 보유와 대조할 대상이 없다.
 const NOT_IN_HOLDINGS_ACCOUNTS = new Set(['퀀트']);
 
+const normalizeText = (value) => String(value ?? '').trim().normalize('NFC');
+
 export function holdingKey(account, name) {
-  return `${account}|${name}`;
+  return `${normalizeText(account)}|${normalizeText(name)}`;
+}
+
+// 보유 ticker와 체결 stockCode를 같은 모양으로(국내 코드의 'A' 접두 유무만 맞춘다).
+function normalizeCode(code) {
+  return normalizeText(code).toUpperCase().replace(/^A(?=\d{6}$)/, '');
+}
+
+const isCashLike = (holding) => holding?.isCashLike === true || holding?.isCashLike === 'true';
+
+// 체결 → 키. 같은 계좌 보유 파일의 ticker와 stockCode가 같으면 보유 이름으로 묶는다.
+export function makeKeyResolver(holdings = []) {
+  const byCode = new Map();
+  for (const holding of holdings) {
+    const code = normalizeCode(holding?.ticker);
+    if (!holding?.account || !holding.name || !code) continue;
+    byCode.set(`${normalizeText(holding.account)}|${code}`, holdingKey(holding.account, holding.name));
+  }
+  return (record) => {
+    const code = normalizeCode(record.stockCode);
+    return (code && byCode.get(`${normalizeText(record.account)}|${code}`)) || holdingKey(record.account, record.stockName);
+  };
+}
+
+// 현금성 보유의 키 — 원장 쪽에서도 같은 키를 뺀다.
+export function cashLikeKeys(holdings = []) {
+  return new Set(holdings.filter((holding) => holding?.account && holding.name && isCashLike(holding))
+    .map((holding) => holdingKey(holding.account, holding.name)));
 }
 
 export function qtyEqual(a, b) {
@@ -74,8 +111,8 @@ function parseKeys(holding) {
 export function collectActualHoldings(holdings) {
   const actual = new Map();
   for (const holding of holdings) {
-    if (!holding?.account || !holding.name || holding.isCashLike === true || holding.isCashLike === 'true') continue;
-    if (NOT_IN_HOLDINGS_ACCOUNTS.has(holding.account)) continue;
+    if (!holding?.account || !holding.name || isCashLike(holding)) continue;
+    if (NOT_IN_HOLDINGS_ACCOUNTS.has(normalizeText(holding.account))) continue;
     const key = holdingKey(holding.account, holding.name);
     const prev = actual.get(key) ?? { qty: 0, appliedKeys: new Set() };
     prev.qty += Number(holding.qty) || 0;
@@ -87,23 +124,40 @@ export function collectActualHoldings(holdings) {
 
 const dayOf = (tradeDate) => String(tradeDate ?? '').slice(0, 10);
 
+// 기록 시각이 없으면 체결 시각으로, 둘 다 읽을 수 없으면 오래된 것으로 본다(조용히 넘기지 않는다).
+function isStalePending(record, now, stalePendingMs) {
+  const at = Date.parse(record.recordedAt) || Date.parse(record.tradeDate);
+  return !Number.isFinite(at) || now - at > stalePendingMs;
+}
+
 // executions: 원장 체결(+ 펀드 매수를 같은 모양으로 바꾼 것) 프론트매터 + filename.
 // anchors: { '계좌|종목': 기초 잔고 }. holdings: 보유 파일 프론트매터(재시도 증거 판정용).
-export function replayHoldings(executions, anchors = {}, { holdings = [], now = Date.now(), stalePendingMs = STALE_PENDING_MS } = {}) {
+export function replayHoldings(executions, rawAnchors = {}, { holdings = [], now = Date.now(), stalePendingMs = STALE_PENDING_MS } = {}) {
+  // 기준점 파일·지정 파일의 키도 같은 정규화를 거친다(손으로 쓴 키의 공백·자모 분리 차이).
+  const anchors = Object.fromEntries(Object.entries(rawAnchors ?? {}).map(([key, value]) => {
+    const [account, ...rest] = key.split('|');
+    return [holdingKey(account, rest.join('|')), value];
+  }));
   const actual = collectActualHoldings(holdings);
+  const keyOf = makeKeyResolver(holdings);
+  const cashKeys = cashLikeKeys(holdings);
   const appliedRetryWitness = (record) => record.holdingsApplied === 'duplicate-skipped' && record.dedupKey
-    && (actual.get(holdingKey(record.account, record.stockName))?.appliedKeys.has(record.dedupKey) ?? false);
+    && (actual.get(keyOf(record))?.appliedKeys.has(record.dedupKey) ?? false);
   const rows = new Map();
   const pending = [];
   const unassigned = [];
   let notInHoldings = 0;
+  let cashLikeSkipped = 0;
   for (const record of executions) {
     if (record.legacy === true || record.legacy === 'true') continue;
     const witnessed = appliedRetryWitness(record);
     if (record.duplicateOf && !witnessed) continue;
     if (record.holdingsApplied === 'duplicate-skipped' && !witnessed) continue;
-    if (record.holdingsApplied !== true && !witnessed) {
-      pending.push({ ...record, stale: now - (Date.parse(record.recordedAt) || now) > stalePendingMs });
+    // IRP 보유는 KIS 잔고라 반영 표시 전 체결도 이미 들어가 있다 — 원장 합에 넣는다.
+    const externalPending = record.holdingsApplied !== true && !witnessed
+      && EXTERNAL_BALANCE_ACCOUNTS.has(normalizeText(record.account));
+    if (record.holdingsApplied !== true && !witnessed && !externalPending) {
+      pending.push({ ...record, stale: isStalePending(record, now, stalePendingMs) });
       continue;
     }
     const quantity = Number(record.quantity);
@@ -112,12 +166,17 @@ export function replayHoldings(executions, anchors = {}, { holdings = [], now = 
       unassigned.push(record.filename ?? record.dedupKey ?? '(이름 없음)');
       continue;
     }
-    if (NOT_IN_HOLDINGS_ACCOUNTS.has(record.account)) {
+    if (NOT_IN_HOLDINGS_ACCOUNTS.has(normalizeText(record.account))) {
       notInHoldings += 1;
       continue;
     }
-    const key = holdingKey(record.account, record.stockName);
-    const row = rows.get(key) ?? { key, account: record.account, name: record.stockName, ledgerNet: 0, ledgerCount: 0, byDay: new Map() };
+    const key = keyOf(record);
+    if (cashKeys.has(key)) {
+      cashLikeSkipped += 1;
+      continue;
+    }
+    const [account, ...rest] = key.split('|');
+    const row = rows.get(key) ?? { key, account, name: rest.join('|'), ledgerNet: 0, ledgerCount: 0, byDay: new Map() };
     const signed = (record.tradeType === '매도' ? -1 : 1) * quantity;
     row.ledgerNet += signed;
     row.ledgerCount += 1;
@@ -144,7 +203,7 @@ export function replayHoldings(executions, anchors = {}, { holdings = [], now = 
     row.expected = row.anchor == null ? null : row.anchor + row.ledgerNet;
     delete row.byDay;
   }
-  return { rows, pending, unassigned, notInHoldings, actual };
+  return { rows, pending, unassigned, notInHoldings, cashLikeSkipped, actual, keyOf };
 }
 
 // 상태:
@@ -153,6 +212,7 @@ export function replayHoldings(executions, anchors = {}, { holdings = [], now = 
 //   negative-opening  — 기준점 없음, 보유 − Σ체결 < 0(원장 매도가 보유보다 많음)
 //   negative-history  — 기초 잔고로 시작해도 하루 끝 잔고가 이력 중 음수
 //   new-anchor        — 기준점 없음, 기초 잔고가 0이 아님(처음 보면 정상, 기준점이 이미 있던 뒤라면 설명 안 되는 보유)
+//   external-mismatch — IRP(KIS 잔고가 보유 정본)에서 위 세 이상 중 하나 — 카카오 원장 ↔ KIS 잔고 불일치
 export function diffHoldings(replay, holdings = null) {
   const actual = holdings ? collectActualHoldings(holdings) : replay.actual;
   const keys = new Set([...replay.rows.keys(), ...actual.keys()]);
@@ -171,8 +231,12 @@ export function diffHoldings(replay, holdings = null) {
     else if (isNegative(opening + row.minRunningFromZero)) status = 'negative-history';
     else if (row.anchor == null && !qtyEqual(impliedOpening, 0)) status = 'new-anchor';
     else status = 'ok';
+    // IRP는 보유가 KIS 잔고라, 어긋나면 내부 정합성이 아니라 외부 대사 불일치다. 원래 판정은 cause로 남긴다.
+    const external = EXTERNAL_BALANCE_ACCOUNTS.has(row.account)
+      && (status === 'mismatch' || status === 'negative-opening' || status === 'negative-history');
     result.push({
-      key, account: row.account, name: row.name, status,
+      key, account: row.account, name: row.name, status: external ? 'external-mismatch' : status,
+      ...(external ? { cause: status } : {}),
       anchor: row.anchor, ledgerNet: roundQty(row.ledgerNet), ledgerCount: row.ledgerCount,
       expected: roundQty(row.anchor == null ? row.ledgerNet : row.expected),
       actual: roundQty(actualQty), diff: roundQty(actualQty - (row.anchor == null ? row.ledgerNet : row.expected)),
@@ -193,20 +257,46 @@ export function fundPurchaseAsExecution(purchase) {
   };
 }
 
-// 새 기준점: 기준점이 없던 종목 중 이상 신호가 없는 것만 지금 암묵 기초로 잡는다.
-// 상태 파일이 이미 있던 뒤에 나타난 종목의 0이 아닌 기초는 "설명 안 되는 보유"라 잡지 않는다(경고 유지).
-export function nextAnchors(rows, previous, { rebaseline = false, nowIso = new Date().toISOString() } = {}) {
-  const anchors = rebaseline ? {} : { ...(previous?.anchors ?? {}) };
-  const anchorsExisted = !rebaseline && previous != null;
-  let seeded = 0;
+// 기준점 계획 — 저장할 기준점과 그 이유를 만든다(쓰기는 호출부).
+//   - 기준점이 없던 종목 중 이상 신호가 없는 것만 지금 암묵 기초로 잡는다.
+//   - 상태 파일이 이미 있던 뒤에 나타난 종목의 0이 아닌 기초는 "설명 안 되는 보유"라 잡지 않는다(경고 유지).
+//   - 중복 의심이 걸린 종목(heldKeys)은 잡지 않고 보류한다 — 의심이 진짜 중복이면 틀린 값이 굳는다.
+//   - rebaselineKeys: 오너 확인 뒤 종목 단위로 다시 잡는다(보류·이상과 무관하게 지금 값으로, 음수만 거부).
+//   - rebaselineAll: 전 종목을 비우고 다시 잡는다. 보류·음수 종목은 여전히 잡지 않는다(종목 단위로 인정할 것).
+export function planAnchors({ rows, previous = null, heldKeys = new Set(), rebaselineKeys = [], rebaselineAll = false,
+  nowIso = new Date().toISOString() }) {
+  const previousAnchors = Object.fromEntries(Object.entries(previous?.anchors ?? {}).map(([key, value]) => {
+    const [account, ...rest] = key.split('|');
+    return [holdingKey(account, rest.join('|')), value];
+  }));
+  const anchors = rebaselineAll ? {} : { ...previousAnchors };
+  const anchorsExisted = !rebaselineAll && previous != null;
+  const byKey = new Map(rows.map((row) => [row.key, row]));
+  const seeded = [];
+  const held = [];
+  const rejected = [];
+  const explicit = new Set();
+  for (const rawKey of rebaselineKeys) {
+    const [account, ...rest] = String(rawKey).split('|');
+    const key = holdingKey(account, rest.join('|'));
+    const row = byKey.get(key);
+    if (!row) { rejected.push({ key, reason: '대조 대상에 없는 종목' }); continue; }
+    if (isNegative(row.impliedOpening)) { rejected.push({ key, reason: '암묵 기초가 음수(원장 매도가 보유 초과) — 원장·보유를 먼저 바로잡을 것' }); continue; }
+    anchors[key] = roundQty(row.impliedOpening);
+    explicit.add(key);
+  }
   for (const row of rows) {
     if (Object.hasOwn(anchors, row.key)) continue;
-    if (row.status === 'negative-opening' || row.status === 'negative-history') continue;
+    if (row.status === 'negative-opening' || row.status === 'negative-history' || row.status === 'external-mismatch') continue;
     if (anchorsExisted && row.status === 'new-anchor') continue;
+    if (heldKeys.has(row.key)) { held.push(row.key); continue; }
     anchors[row.key] = roundQty(row.impliedOpening);
-    seeded += 1;
+    seeded.push(row.key);
   }
-  return { state: { version: 1, updatedAt: nowIso, anchors }, seeded };
+  const changes = [...new Set([...Object.keys(previousAnchors), ...Object.keys(anchors)])].sort()
+    .filter((key) => previousAnchors[key] !== anchors[key])
+    .map((key) => ({ key, before: previousAnchors[key] ?? null, after: anchors[key] ?? null }));
+  return { state: { version: 1, updatedAt: nowIso, anchors }, seeded, held, rejected, changes, explicit: [...explicit] };
 }
 
 // 중복(확정)과 중복 의심. 이미 duplicateOf·duplicate-skipped로 표시된 기록은 처리 끝난 것이라 뺀다.
@@ -285,7 +375,7 @@ export function classifyExecutionFilename(filename, record) {
 
 // 알림 대상 이상만 고른다. 중복 의심·파일명 규칙은 로그·보고에만 남긴다(사람 확인 전 단정 금지).
 export function selectAlertIssues({ rows, duplicates, pending, anchorsExisted }) {
-  const quantityIssues = rows.filter((row) => row.status === 'mismatch' || row.status === 'negative-opening'
+  const quantityIssues = rows.filter((row) => row.status === 'mismatch' || row.status === 'external-mismatch' || row.status === 'negative-opening'
     || row.status === 'negative-history' || (anchorsExisted && row.status === 'new-anchor'));
   return {
     quantityIssues,
@@ -320,14 +410,20 @@ function displayWidth(text) {
   }
   return width;
 }
+// 코드포인트 단위로 자른다(서로게이트 쌍이 반쪽으로 잘리지 않게).
 function fitDisplay(text, width) {
-  let out = '';
-  for (const ch of String(text)) {
-    if (displayWidth(out + ch) > width) return `${out.slice(0, -1)}…`;
-    out += ch;
+  const chars = [...String(text)];
+  if (displayWidth(chars.join('')) <= width) return chars.join('');
+  const out = [];
+  for (const ch of chars) {
+    if (displayWidth([...out, ch].join('')) > width - 1) break;
+    out.push(ch);
   }
-  return out;
+  return `${out.join('')}…`;
 }
+
+// 표 이름 칸을 아끼려고 긴 계좌명만 줄인다.
+const ACCOUNT_SHORT = { 연금저축: '연금' };
 
 export function formatQty(value) {
   const n = Number(value);
@@ -337,7 +433,8 @@ export function formatQty(value) {
 }
 
 const STATUS_SHORT = {
-  mismatch: '기준점 대비 불일치', 'negative-opening': '원장 매도가 보유 초과',
+  mismatch: '기준점 대비 불일치', 'external-mismatch': '카카오 원장 ↔ KIS 잔고 불일치',
+  'negative-opening': '원장 매도가 보유 초과',
   'negative-history': '이력 중 잔고 음수', 'new-anchor': '원장으로 설명 안 되는 새 보유',
 };
 
@@ -356,7 +453,7 @@ export function buildQuantityTable(rows) {
   const nameWidth = Math.max(MIN_NAME_COLS, PHONE_PRE_COLS - widths.reduce((a, b) => a + b, 0) - widths.length);
   const pad = (text, width) => ' '.repeat(Math.max(0, width - displayWidth(text))) + text;
   const line = (nums, name) => `${nums.map((text, i) => pad(text, widths[i])).join(' ')} ${fitDisplay(name, nameWidth)}`.trimEnd();
-  const lines = [line(header, '계좌 종목'), ...rows.map((row, i) => line(cells[i], `${row.account} ${row.name}`))];
+  const lines = [line(header, '계좌 종목'), ...rows.map((row, i) => line(cells[i], `${ACCOUNT_SHORT[row.account] ?? row.account} ${row.name}`))];
   return `<pre>${escapeHtml(lines.join('\n'))}</pre>`;
 }
 
@@ -391,4 +488,15 @@ export function buildReconMessage(issues) {
       '정정은 개발 세션이 원장 대조(verify-holdings-replay) 뒤 원장·보유를 함께 고치고 기준점을 다시 잡습니다.',
     ],
   };
+}
+
+// 기준점을 처음 잡거나(상태 파일 없음) 다시 잡은 날 한 번 보내는 정보성 요약. 항목마다 한 줄.
+export function buildAnchorSummaryMessage({ seeded, held, heldReasons = {} }) {
+  const lines = ['■ 보유↔원장 대조 기준점', '', `잡은 종목 ${seeded.length}개`];
+  if (held.length) {
+    lines.push('', `■ 기준점 보류 ${held.length}종목`, '');
+    for (const key of held) lines.push(`- ${escapeHtml(key.replace('|', ' '))}: ${escapeHtml(heldReasons[key] ?? '중복 의심')}`);
+    lines.push('', '보류 종목은 중복 의심을 확인한 뒤 종목 단위 재설정(--rebaseline=계좌|종목)으로 인정합니다.');
+  }
+  return { agent: 'plutus', kind: '정보', topic: '장부 대조', body: lines.join('\n') };
 }

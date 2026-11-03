@@ -1,0 +1,195 @@
+// 보유↔원장 재생 대조 잡의 실행 흐름(인자 해석·기준점 저장·하루 1회 억제·발송) — 주입 가능한 형태.
+//
+// 잡 진입점(scripts/jobs/reconcile-holdings-ledger.mjs)은 볼트를 읽어 이 함수에 넘기고, 상태 디렉터리와
+// 발송 함수를 주입한다. 진입점은 vault-paths를 import 시점에 읽어 테스트가 정적 import할 수 없으므로
+// 흐름 전체를 여기 두고 테스트는 이 모듈만 부른다. 이 모듈은 볼트를 읽거나 쓰지 않는다.
+//
+// 불변식:
+//   - Holdings·Ledger에 쓰지 않는다. 쓰는 곳은 stateDir(볼트 밖) 아래 기준점·억제 파일뿐이다.
+//   - 미리보기 모드(--dry-run 또는 --anchors)는 어떤 파일도 쓰지 않고 어떤 발송도 하지 않는다.
+//   - 기준점 파일을 덮어쓰기 전에는 항상 타임스탬프 백업을 남기고, 바뀐 종목마다 "이전 → 새"를 로그에 남긴다.
+//   - 종목 단위 재설정 키가 하나라도 거부되면 아무것도 쓰지 않고 실패한다(부분 적용 금지).
+//   - 같은 이상 묶음 경고는 KST 하루 1회. 억제 기록은 발송(또는 아침 보류 큐 등록) 성공 뒤에만 남긴다.
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { withLock, writeAtomic } from './state-writer.mjs';
+import { renderAgentMessage } from './pantheon-send.mjs';
+import {
+  replayHoldings, diffHoldings, findExecutionDuplicates, classifyExecutionFilename, FILENAME_RULES,
+  selectAlertIssues, hasAlertIssues, alertSignature, buildReconMessage, buildAnchorSummaryMessage,
+  formatQty, fundPurchaseAsExecution, planAnchors,
+} from './holdings-ledger-recon.mjs';
+
+export const ANCHORS_FILENAME = 'holdings-ledger-anchors.json';
+export const ALERTS_FILENAME = 'holdings-ledger-alerts.json';
+
+export function parseReconArgs(argv) {
+  const args = { dryRun: false, anchorsFile: null, rebaselineKeys: [], rebaselineAll: false };
+  for (const arg of argv) {
+    if (arg === '--dry-run') args.dryRun = true;
+    else if (arg === '--rebaseline-all') args.rebaselineAll = true;
+    else if (arg.startsWith('--anchors=')) {
+      const file = arg.slice('--anchors='.length).trim();
+      if (!file) throw new Error('--anchors= 뒤에 파일 경로가 없음');
+      args.anchorsFile = file;
+    } else if (arg.startsWith('--rebaseline=')) {
+      const key = arg.slice('--rebaseline='.length).trim();
+      if (!key.includes('|') || key.startsWith('|') || key.endsWith('|')) throw new Error(`--rebaseline=계좌|종목 형식이 아님: ${arg}`);
+      args.rebaselineKeys.push(key);
+    } else if (arg === '--rebaseline') {
+      throw new Error('전 종목 재설정은 --rebaseline-all, 종목 단위는 --rebaseline=계좌|종목');
+    } else {
+      // 모르는 인자로 실제 실행이 돌지 않게 막는다(데몬을 --help로 떠보다 실행된 2026-10-31 사고).
+      throw new Error(`알 수 없는 인자: ${arg} — 사용법은 잡 파일 헤더 참고`);
+    }
+  }
+  if (args.anchorsFile && (args.rebaselineAll || args.rebaselineKeys.length)) {
+    throw new Error('--anchors와 기준점 재설정은 함께 쓸 수 없음');
+  }
+  if (args.rebaselineAll && args.rebaselineKeys.length) throw new Error('--rebaseline-all과 --rebaseline=은 함께 쓸 수 없음');
+  return args;
+}
+
+// holdings-revert-check decideRevertAlert·recordRevertAlert와 같은 규칙(그 모듈은 vault-paths를 끌어와 여기서 import하지 않는다).
+function kstDay(now) {
+  return new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
+}
+export function decideDailyAlert(state, subjectKey, now = new Date()) {
+  const today = kstDay(now);
+  return { send: state?.sent?.[subjectKey] !== today, today };
+}
+export function recordDailyAlert(state, subjectKey, today) {
+  const kept = Object.fromEntries(Object.entries(state?.sent ?? {}).filter(([, day]) => day === today));
+  return { sent: { ...kept, [subjectKey]: today } };
+}
+
+function readJson(file) {
+  return JSON.parse(readFileSync(file, 'utf8'));
+}
+
+function logReport(log, { rows, replay, duplicates, filenameCounts, unknownFilenames, anchorsLabel }) {
+  log(`🔎 보유↔원장 재생 대조 — 기준점: ${anchorsLabel}`);
+  log(`   대조 ${rows.length}종목 · 반영 체결 ${[...replay.rows.values()].reduce((sum, row) => sum + row.ledgerCount, 0)}건 · 미반영 ${replay.pending.length}건 · 계좌 미확정 ${replay.unassigned.length}건 · 보유 미기록 계좌(퀀트) ${replay.notInHoldings}건 · 현금성 키 제외 ${replay.cashLikeSkipped}건`);
+  const counts = rows.reduce((acc, row) => ({ ...acc, [row.status]: (acc[row.status] ?? 0) + 1 }), {});
+  log(`   상태: ${Object.entries(counts).map(([status, n]) => `${status} ${n}`).join(' · ')}`);
+  for (const row of rows.filter((item) => item.status !== 'ok')) {
+    log(`   - [${row.status}${row.cause ? `:${row.cause}` : ''}] ${row.key} 기대 ${formatQty(row.expected)} 실제 ${formatQty(row.actual)} 차이 ${formatQty(row.diff)} (원장 ${row.ledgerCount}건 합 ${formatQty(row.ledgerNet)}, 암묵 기초 ${formatQty(row.impliedOpening)}, 기준점 ${row.anchor == null ? '없음' : formatQty(row.anchor)}, 이력 최저 ${formatQty(row.minRunning)})`);
+  }
+  for (const record of replay.pending) log(`   - [미반영${record.stale ? '·하루 넘음' : ''}] ${record.filename}`);
+  for (const dup of duplicates.confirmed) log(`   - [중복:${dup.reason}] ${dup.records.map((r) => r.filename).join(' / ')}`);
+  for (const dup of duplicates.suspected) log(`   - [중복 의심:${dup.reason}] ${dup.records.map((r) => r.filename).join(' / ')}`);
+  log(`   파일명 규칙: ${Object.entries(filenameCounts).map(([rule, n]) => `${FILENAME_RULES[rule]} ${n}`).join(' · ')}`);
+  for (const filename of unknownFilenames) log(`   - [파일명 규칙 밖] ${filename}`);
+}
+
+// sendWarning(message, signature): 경고 발송(호출부가 경고 원장·보류 큐를 거치게 감싼다).
+// sendInfo(message): 기준점 첫 설정 정보성 요약 발송.
+export async function runHoldingsLedgerRecon({
+  args, executions, fundPurchases = [], holdings, stateDir, sendWarning, sendInfo,
+  log = console.log, logError = console.error, now = new Date(),
+}) {
+  const preview = args.dryRun || Boolean(args.anchorsFile);
+  const anchorsFile = join(stateDir, ANCHORS_FILENAME);
+  const alertsFile = join(stateDir, ALERTS_FILENAME);
+  const result = { wroteAnchors: false, backupFile: null, sentWarning: false, sentInfo: false, suppressed: false };
+
+  const previous = args.anchorsFile ? null : (existsSync(anchorsFile) ? readJson(anchorsFile) : null);
+  if (previous && (typeof previous.anchors !== 'object' || previous.anchors == null)) throw new Error(`기준점 파일 형식 오류: ${anchorsFile}`);
+  const anchors = args.anchorsFile ? readJson(args.anchorsFile) : (args.rebaselineAll ? {} : (previous?.anchors ?? {}));
+  const anchorsLabel = args.anchorsFile ? `지정 파일 ${args.anchorsFile}(미리보기 — 쓰기·발송 없음)`
+    : args.rebaselineAll ? '전 종목 다시 잡기(--rebaseline-all)'
+      : previous ? `상태 파일(${Object.keys(previous.anchors).length}종목, ${previous.updatedAt})` : '없음(첫 실행 — 지금 값으로 잡음)';
+
+  const ledger = [...executions, ...fundPurchases.map(fundPurchaseAsExecution)];
+  const replay = replayHoldings(ledger, anchors, { holdings, now: now.getTime() });
+  let rows = diffHoldings(replay);
+  const duplicates = findExecutionDuplicates(executions);
+  const filenameCounts = {};
+  const unknownFilenames = [];
+  for (const record of executions) {
+    const rule = classifyExecutionFilename(record.filename, record);
+    filenameCounts[rule] = (filenameCounts[rule] ?? 0) + 1;
+    if (rule === 'unknown') unknownFilenames.push(record.filename);
+  }
+  logReport(log, { rows, replay, duplicates, filenameCounts, unknownFilenames, anchorsLabel });
+
+  // 중복 의심이 걸린 종목은 기준점을 잡지 않는다(의심이 진짜면 틀린 값이 굳는다).
+  const heldReasons = {};
+  for (const dup of duplicates.suspected) for (const record of dup.records) heldReasons[replay.keyOf(record)] = `중복 의심(${dup.reason})`;
+  const heldKeys = new Set(Object.keys(heldReasons));
+
+  let plan = null;
+  if (!args.anchorsFile) {
+    plan = planAnchors({ rows, previous, heldKeys, rebaselineKeys: args.rebaselineKeys, rebaselineAll: args.rebaselineAll, nowIso: now.toISOString() });
+    if (plan.rejected.length) {
+      for (const item of plan.rejected) logError(`   ❌ 재설정 거부: ${item.key} — ${item.reason}`);
+      throw new Error(`기준점 재설정 거부 ${plan.rejected.length}건 — 아무것도 저장하지 않음`);
+    }
+    for (const change of plan.changes) {
+      log(`   기준점 ${change.key}: ${change.before == null ? '없음' : formatQty(change.before)} → ${change.after == null ? '없음' : formatQty(change.after)}`);
+    }
+    for (const key of plan.held) log(`   기준점 보류 ${key}: ${heldReasons[key]}`);
+    if (plan.seeded.length) log(`   기준점 새로 잡음 ${plan.seeded.length}종목${preview ? ' (미리보기 — 저장 안 함)' : ''}`);
+    if (!preview && plan.changes.length) {
+      mkdirSync(stateDir, { recursive: true });
+      if (existsSync(anchorsFile)) {
+        result.backupFile = join(stateDir, `${ANCHORS_FILENAME.replace(/\.json$/, '')}.${now.toISOString().replace(/[:.]/g, '-')}.json`);
+        copyFileSync(anchorsFile, result.backupFile);
+        log(`   기준점 백업: ${result.backupFile}`);
+      }
+      writeAtomic(anchorsFile, `${JSON.stringify(plan.state, null, 2)}\n`);
+      result.wroteAnchors = true;
+    }
+    // 기준점을 처음 잡거나 상태 파일이 사라져 다시 잡은 날 한 번 — 실운영에서만.
+    if (!preview && previous == null && plan.seeded.length) {
+      try {
+        await sendInfo(buildAnchorSummaryMessage({ seeded: plan.seeded, held: plan.held, heldReasons }));
+        result.sentInfo = true;
+      } catch (error) {
+        logError(`   ⚠️  기준점 요약 발송 실패(대조 결과와 무관): ${error.message}`);
+      }
+    }
+  }
+
+  // 재설정한 날은 새 기준점으로 다시 판정한다(방금 인정한 차이를 경고로 내보내지 않게).
+  if (plan && (args.rebaselineAll || args.rebaselineKeys.length)) {
+    rows = diffHoldings(replayHoldings(ledger, plan.state.anchors, { holdings, now: now.getTime() }));
+  }
+  const anchorsExisted = Boolean(args.anchorsFile) || (!args.rebaselineAll && previous != null);
+  const issues = selectAlertIssues({ rows, duplicates, pending: replay.pending, anchorsExisted });
+  result.issues = issues;
+  result.rows = rows;
+  result.plan = plan;
+  if (!hasAlertIssues(issues)) {
+    log('✅ 알릴 이상 없음');
+    return result;
+  }
+  const message = buildReconMessage(issues);
+  if (preview) {
+    log('\n(미리보기 — 경고 발송·억제 기록 없음)\n');
+    log(renderAgentMessage(message));
+    return result;
+  }
+  const signature = alertSignature(issues);
+  const subjectKey = `holdings-ledger:${createHash('sha256').update(signature).digest('hex').slice(0, 20)}`;
+  mkdirSync(stateDir, { recursive: true });
+  await withLock(alertsFile, async () => {
+    let state = null;
+    try { state = readJson(alertsFile); } catch { state = null; }
+    const { send, today } = decideDailyAlert(state, subjectKey, now);
+    if (!send) {
+      log('   (같은 이상은 오늘 이미 알림 — 발송 생략)');
+      result.suppressed = true;
+      return;
+    }
+    await sendWarning(message, signature);
+    result.sentWarning = true;
+    try {
+      writeAtomic(alertsFile, `${JSON.stringify(recordDailyAlert(state, subjectKey, today))}\n`);
+    } catch (error) {
+      logError(`   ⚠️  경고는 보냈으나 하루 1회 억제 기록 실패 — 다음 실행에서 다시 보낼 수 있음: ${error.message}`);
+    }
+  }, { retries: 300, retryDelayMs: 100 });
+  return result;
+}

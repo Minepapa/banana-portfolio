@@ -2,12 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyFundPurchase, checkFundValuationDrift, isValuationStale, DEFAULT_FUND_ASSET_CLASS } from './fund-holdings-updater.mjs';
 
-const PURCHASE = { fundName: 'VIP한국형가치투자증권자투자신탁(주식)-C-Pe', amount: 200000, nav: 2027.92, units: 98623.21985088168, account: '연금저축', dedupKey: '2026-09-01|VIP한국형가치투자증권자투자신탁(주식)-C-Pe|200000' };
+// 가상값(공개 저장소 — 실제 펀드명·적립금·좌수를 쓰지 않는다).
+const PURCHASE = { fundName: '가상적립펀드', amount: 100000, nav: 2000, units: 50000, account: '연금저축', dedupKey: '2026-09-01|가상적립펀드|100000' };
 
 test('[실사고 재현] applyFundPurchase: 기존 보유 없으면 이번 매수 그대로 첫 보유가 됨', () => {
   const updated = applyFundPurchase(null, PURCHASE);
-  assert.equal(updated.qty, 98623.21985088168);
-  assert.equal(updated.invest, 200000);
+  assert.equal(updated.qty, 50000);
+  assert.equal(updated.invest, 100000);
   assert.equal(updated.account, '연금저축');
   assert.equal(updated.curPrice, null);
   assert.equal(updated.evalAmount, null); // curPrice 없으면 평가액도 추정 안 함
@@ -19,13 +20,13 @@ test('[코드리뷰 MEDIUM 지적] applyFundPurchase: 기존 보유 없으면(�
 });
 
 test('applyFundPurchase: 기존 보유에 정확히 누적(실측 데이터 기준 avgPrice 역산 검증)', () => {
-  // 2026-09-04 실측: invest 12,800,000/qty 8,202,681 → avgPrice ≈ 1560
-  const existing = { qty: 8202681, invest: 12800000, curPrice: 1978, assetClass: '국내주식', ticker: '', market: '' };
-  const updated = applyFundPurchase(existing, { ...PURCHASE, units: 98623.22 });
-  assert.equal(updated.qty, 8202681 + 98623.22);
-  assert.equal(updated.invest, 13000000);
+  // 가상값: invest 1,500,000/qty 1,000,000 → avgPrice 1,500(실측 검증 방식과 같은 역산)
+  const existing = { qty: 1000000, invest: 1500000, curPrice: 1600, assetClass: '국내주식', ticker: '', market: '' };
+  const updated = applyFundPurchase(existing, { ...PURCHASE, units: 49999.37 });
+  assert.equal(updated.qty, 1000000 + 49999.37);
+  assert.equal(updated.invest, 1600000);
   // avgPrice = (invest/qty)*1000
-  const expectedAvgPrice = (13000000 / (8202681 + 98623.22)) * 1000;
+  const expectedAvgPrice = (1600000 / (1000000 + 49999.37)) * 1000;
   assert.ok(Math.abs(updated.avgPrice - expectedAvgPrice) < 1e-6);
 });
 
@@ -67,16 +68,16 @@ test('[코드리뷰 MEDIUM 지적] applyFundPurchase: amount·units가 NaN·0·�
   assert.throws(() => applyFundPurchase(null, { ...PURCHASE, units: -5 }), /금액\/좌수/);
 });
 
-test('[실사고 재현] checkFundValuationDrift: 200,000원 미반영 매수 1건과 정확히 같은 크기의 차이를 잡아냄', () => {
-  const holding = { invest: 12800000 };
-  const valuation = { principal: 13000000, date: '2026-09-04' };
+test('[실사고 재현] checkFundValuationDrift: 미반영 매수 1건(적립금)과 정확히 같은 크기의 차이를 잡아냄', () => {
+  const holding = { invest: 1500000 };
+  const valuation = { principal: 1600000, date: '2026-09-04' };
   const warning = checkFundValuationDrift(holding, valuation);
-  assert.match(warning, /200,000원/);
+  assert.match(warning, /100,000원/);
   assert.match(warning, /2026-09-04/);
 });
 
 test('checkFundValuationDrift: threshold 이내 차이는 경고 없음(반올림 오차 허용)', () => {
-  assert.equal(checkFundValuationDrift({ invest: 13000500 }, { principal: 13000000, date: '2026-09-04' }), null);
+  assert.equal(checkFundValuationDrift({ invest: 1600500 }, { principal: 1600000, date: '2026-09-04' }), null);
 });
 
 test('checkFundValuationDrift: holding·valuation 둘 중 하나 없으면(비교 불가) null', () => {

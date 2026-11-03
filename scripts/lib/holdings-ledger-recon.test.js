@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  replayHoldings, diffHoldings, findExecutionDuplicates, classifyExecutionFilename, nextAnchors,
+  replayHoldings, diffHoldings, findExecutionDuplicates, classifyExecutionFilename, planAnchors, buildAnchorSummaryMessage,
   fundPurchaseAsExecution, selectAlertIssues, hasAlertIssues, alertSignature, buildReconMessage,
   buildQuantityTable, qtyEqual, collectActualHoldings,
 } from './holdings-ledger-recon.mjs';
@@ -144,19 +144,96 @@ test('파일명 규칙 4종 분류와 프론트매터 불일치', () => {
   assert.equal(classifyExecutionFilename('2026-09-01-100000-매수-가상-ETF-6.md', record), 'unknown');
 });
 
-test('기준점 저장: 첫 실행은 이상 없는 종목만 잡고, 그 뒤 나타난 설명 안 되는 보유는 잡지 않는다', () => {
+test('기준점 계획: 첫 실행은 이상 없는 종목만, 그 뒤 설명 안 되는 보유·중복 의심 종목은 잡지 않는다', () => {
   const rows = [
     { key: 'ISA|A', status: 'new-anchor', impliedOpening: 5 },
     { key: 'ISA|B', status: 'ok', impliedOpening: 0 },
     { key: 'ISA|C', status: 'negative-opening', impliedOpening: -2 },
+    { key: 'ISA|H', status: 'new-anchor', impliedOpening: 3 },
+    { key: 'IRP|X', status: 'external-mismatch', impliedOpening: -1 },
   ];
-  const first = nextAnchors(rows, null, { nowIso: 't' });
+  const first = planAnchors({ rows, heldKeys: new Set(['ISA|H']), nowIso: 't' });
   assert.deepEqual(first.state.anchors, { 'ISA|A': 5, 'ISA|B': 0 });
-  const later = nextAnchors([{ key: 'ISA|D', status: 'new-anchor', impliedOpening: 4 }, { key: 'ISA|E', status: 'ok', impliedOpening: 0 }],
-    first.state, { nowIso: 't2' });
+  assert.deepEqual(first.held, ['ISA|H']);
+  assert.deepEqual(first.seeded, ['ISA|A', 'ISA|B']);
+  const later = planAnchors({ rows: [{ key: 'ISA|D', status: 'new-anchor', impliedOpening: 4 }, { key: 'ISA|E', status: 'ok', impliedOpening: 0 }],
+    previous: first.state });
   assert.deepEqual(later.state.anchors, { 'ISA|A': 5, 'ISA|B': 0, 'ISA|E': 0 });
-  const reset = nextAnchors([{ key: 'ISA|A', status: 'new-anchor', impliedOpening: 9 }], first.state, { rebaseline: true });
-  assert.deepEqual(reset.state.anchors, { 'ISA|A': 9 });
+  assert.deepEqual(later.changes, [{ key: 'ISA|E', before: null, after: 0 }]);
+});
+
+test('기준점 재설정: 종목 단위는 보류 종목도 인정하고 이전 → 새를 남기며, 음수·없는 종목은 거부. 전 종목은 보류·음수 제외', () => {
+  const previous = { anchors: { 'ISA|A': 5, 'ISA|B': 0 } };
+  const rows = [
+    { key: 'ISA|A', status: 'mismatch', impliedOpening: 7 },
+    { key: 'ISA|B', status: 'ok', impliedOpening: 0 },
+    { key: 'ISA|H', status: 'new-anchor', impliedOpening: 3 },
+    { key: 'ISA|N', status: 'negative-opening', impliedOpening: -1 },
+  ];
+  const one = planAnchors({ rows, previous, heldKeys: new Set(['ISA|H']), rebaselineKeys: [' ISA | A ', 'ISA|H'] });
+  // 키 앞뒤 공백은 정규화된다.
+  assert.deepEqual(one.state.anchors, { 'ISA|A': 7, 'ISA|B': 0, 'ISA|H': 3 });
+  assert.deepEqual(one.changes, [{ key: 'ISA|A', before: 5, after: 7 }, { key: 'ISA|H', before: null, after: 3 }]);
+  const bad = planAnchors({ rows, previous, rebaselineKeys: ['ISA|N', 'ISA|없음'] });
+  assert.deepEqual(bad.rejected.map((item) => item.key), ['ISA|N', 'ISA|없음']);
+  const all = planAnchors({ rows, previous, heldKeys: new Set(['ISA|H']), rebaselineAll: true });
+  assert.deepEqual(all.state.anchors, { 'ISA|A': 7, 'ISA|B': 0 });
+  assert.deepEqual(all.held, ['ISA|H']);
+});
+
+test('키 정규화(trim·NFC)와 종목코드 묶기: 표기만 다른 체결은 같은 보유로, 코드가 없으면 이름으로', () => {
+  const decomposed = '가상ETF'.normalize('NFD');
+  const rows = diffHoldings(replayHoldings([
+    exec({ stockName: ` ${decomposed} `, quantity: 2 }),
+    exec({ stockName: '가상ETF(옛 표기)', stockCode: 'A123456', quantity: 3 }),
+  ], { ' ISA |가상ETF': 0 }, { holdings: [holding({ qty: 5, ticker: '123456' })] }));
+  assert.deepEqual(rows.map((row) => [row.key, row.status]), [['ISA|가상ETF', 'ok']]);
+});
+
+test('IRP는 미반영 체결도 원장 합에 넣고, 어긋나면 external-mismatch(원래 판정은 cause)', () => {
+  const irp = { account: 'IRP', stockName: '가상TDF' };
+  const replay = replayHoldings([exec({ ...irp, quantity: 4 }), exec({ ...irp, quantity: 1, holdingsApplied: false })],
+    { 'IRP|가상TDF': 10 }, { holdings: [{ account: 'IRP', name: '가상TDF', qty: 15 }] });
+  assert.equal(replay.pending.length, 0);
+  assert.equal(rowOf(diffHoldings(replay), 'IRP|가상TDF').status, 'ok');
+  const off = diffHoldings(replayHoldings([exec({ ...irp, quantity: 4 })], { 'IRP|가상TDF': 10 },
+    { holdings: [{ account: 'IRP', name: '가상TDF', qty: 13 }] }));
+  assert.equal(rowOf(off, 'IRP|가상TDF').status, 'external-mismatch');
+  assert.equal(rowOf(off, 'IRP|가상TDF').cause, 'mismatch');
+  const text = renderAgentMessage(buildReconMessage({ quantityIssues: [rowOf(off, 'IRP|가상TDF')], confirmedDuplicates: [], stalePending: [] }));
+  assert.ok(text.includes('카카오 원장 ↔ KIS 잔고'));
+});
+
+test('현금성 보유의 계좌|종목 키는 원장 쪽에서도 뺀다', () => {
+  const replay = replayHoldings([exec({ account: 'CMA', stockName: '가상RP', quantity: 9 })], {}, {
+    holdings: [{ account: 'CMA', name: '가상RP', qty: 100, isCashLike: true }],
+  });
+  assert.equal(replay.cashLikeSkipped, 1);
+  assert.deepEqual(diffHoldings(replay), []);
+});
+
+test('미반영 체결의 오래됨: recordedAt 없으면 tradeDate, 둘 다 없으면 오래된 것으로', () => {
+  const now = Date.parse('2026-09-10T00:00:00Z');
+  const replay = replayHoldings([
+    exec({ holdingsApplied: false, recordedAt: undefined, tradeDate: '2026-09-09 20:00:00', filename: 'fresh.md' }),
+    exec({ holdingsApplied: false, recordedAt: undefined, tradeDate: '2026-09-01 10:00:00', filename: 'old.md' }),
+    exec({ holdingsApplied: false, recordedAt: undefined, tradeDate: undefined, filename: 'none.md' }),
+  ], {}, { holdings: [], now });
+  assert.deepEqual(replay.pending.map((record) => [record.filename, record.stale]), [['fresh.md', false], ['old.md', true], ['none.md', true]]);
+});
+
+test('표 이름 자르기는 서로게이트 쌍을 깨지 않는다', () => {
+  const table = buildQuantityTable([{ account: 'ISA', name: `가상${'😀'.repeat(30)}`, expected: 1, actual: 2, diff: 1, status: 'mismatch' }]);
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(table), '짝 없는 상위 서로게이트');
+});
+
+test('기준점 요약 메시지는 정보성·플루토스·항목별 한 줄', () => {
+  const message = buildAnchorSummaryMessage({ seeded: ['ISA|A', 'ISA|B'], held: ['연금저축|가상&ETF'], heldReasons: { '연금저축|가상&ETF': '중복 의심' } });
+  assert.equal(message.agent, 'plutus');
+  assert.equal(message.kind, '정보');
+  const text = renderAgentMessage(message);
+  assert.ok(text.includes('잡은 종목 2개'));
+  assert.ok(text.includes('- 연금저축 가상&amp;ETF: 중복 의심'));
 });
 
 test('알림 대상: 첫 실행의 새 기준점은 알리지 않고, 기준점이 있던 뒤엔 알린다. 서명은 같은 이상이면 같다', () => {
@@ -180,7 +257,7 @@ test('표: 숫자 칸이 앞·한글 이름이 끝, 폰 한 줄 44칸 안, 이�
   const lines = table.replace(/^<pre>|<\/pre>$/g, '').replace(/&amp;/g, '&').split('\n');
   const width = (s) => [...s].reduce((w, ch) => w + (/[ㄱ-힝]/.test(ch) ? 2 : 1), 0);
   for (const line of lines) assert.ok(width(line) <= 44, `폭 초과: ${line}`);
-  assert.match(lines[1], /^\s*1,200\s+1,180\s+-20 연금저축 /);
+  assert.match(lines[1], /^\s*1,200\s+1,180\s+-20 연금 /);
   assert.match(lines[2], /^\s*10\.5\s+10\s+-0\.5 ISA 가상ETF$/);
 });
 
@@ -205,5 +282,5 @@ test('표: 수량이 커서 이름 칸이 좁아지면 기대 칸을 빼고, 1,0
   ]);
   const lines = table.replace(/^<pre>|<\/pre>$/g, '').split('\n');
   assert.match(lines[0], /^\s*실제\s+차이 계좌 종목$/);
-  assert.match(lines[1], /^7,654,321\s+\+6,419,753 연금저축 가상펀드$/);
+  assert.match(lines[1], /^7,654,321\s+\+6,419,753 연금 가상펀드$/);
 });

@@ -23,6 +23,7 @@ const ALLOWED_RAW_SENDS = Object.freeze({
   'jobs/proposal-execution-reminder.mjs': { count: 2, reason: '제안 응답·체결 리마인더' },
   'jobs/quarterly-allocation-review.mjs': { count: 1, reason: '분기 배분 검토' },
   'jobs/rebalance-proposal.mjs': { count: 1, reason: '분기 리밸런싱 제안 발송' },
+  'jobs/reconcile-holdings-ledger.mjs': { count: 1, reason: '보유↔원장 기준점 첫 설정 정보성 요약(이상 경고는 원장 경유)' },
   'jobs/reconcile-breakout-protection.mjs': { count: 1, reason: '경고 외 보호주문 상태 안내' },
   'jobs/themis-risk-review.mjs': { count: 1, reason: '정기 위험 검토 보고' },
   'jobs/weekly-report.mjs': { count: 1, reason: '주간 리포트 요약' },
