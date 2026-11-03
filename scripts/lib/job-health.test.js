@@ -1,11 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { buildJobHealthRecord, heartbeatWriteOptions, parseFrontmatter, isStale } from './job-health.mjs';
+import { buildJobHealthRecord, parseFrontmatter, isStale } from './job-health.mjs';
 import { updateFrontmatter } from './vault-frontmatter.mjs';
-import { writeIfChanged } from './write-if-changed.mjs';
 
 test('buildJobHealthRecord: OK 상태 — failStreak 0, 알림 없음', () => {
   const r = buildJobHealthRecord({ job: 'parse-notifications-to-vault', status: 'OK', durationSec: 4.2 });
@@ -104,55 +100,4 @@ test('isStale: lastRun 기록 자체가 없으면 stale(잡이 한 번도 안 �
 
 test('isStale: 파싱 불가한 lastRun도 안전하게 stale 취급', () => {
   assert.equal(isStale({ lastRun: '이상한값', expectedIntervalMs: 60 * 60 * 1000 }), true);
-});
-
-// ── 같은 내용이면 하트비트를 다시 쓰지 않기(2026-11-03, ⑤) ──
-const MIN = 60 * 1000;
-function heartbeatFile(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'heartbeat-skip-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  return join(dir, 'sim.md');
-}
-// run.sh → record-heartbeat-vault와 같은 순서: 앞 파일을 읽어 기록을 만들고, 같은 내용이면 쓰지 않는다.
-function beat(file, { at, status = 'OK', detail = '같음', intervals = { sim: 10 * MIN } }) {
-  let prior = null;
-  try { prior = parseFrontmatter(readFileSync(file, 'utf8')); } catch { /* 첫 실행 */ }
-  const now = new Date(at);
-  const record = buildJobHealthRecord({ job: 'sim', status, detail, durationSec: 1, now }, prior);
-  return writeIfChanged(file, record.content,
-    heartbeatWriteOptions({ job: 'sim', now, intervals, force: record.shouldAlert || record.shouldRecover }));
-}
-const T = Date.parse('2026-11-03T03:00:00Z'); // 12:00 KST
-
-test('heartbeatWriteOptions: 기대 주기의 절반 안에 다시 돌면 lastRun만 다른 하트비트는 쓰지 않는다', (t) => {
-  const file = heartbeatFile(t);
-  assert.equal(beat(file, { at: T }), true);
-  assert.equal(beat(file, { at: T + 4 * MIN }), false, '4분 < 10분/2');
-  assert.equal(parseFrontmatter(readFileSync(file, 'utf8')).lastRun, new Date(T).toISOString());
-  assert.equal(beat(file, { at: T + 5 * MIN }), true, '마지막으로 쓴 지 E/2면 다시 쓴다');
-});
-
-test('heartbeatWriteOptions: 기대 주기대로 도는 잡(간격 = E)은 한 번도 건너뛰지 않는다', (t) => {
-  const file = heartbeatFile(t);
-  for (let i = 0; i < 20; i += 1) assert.equal(beat(file, { at: T + i * 10 * MIN }), true);
-});
-
-test('heartbeatWriteOptions: 상태·연속 실패·detail·날짜가 바뀌면 E/2 안이어도 바로 쓴다', (t) => {
-  const file = heartbeatFile(t);
-  beat(file, { at: T });
-  assert.equal(beat(file, { at: T + 1 * MIN, status: 'FAIL' }), true, 'OK → FAIL');
-  assert.equal(beat(file, { at: T + 2 * MIN, status: 'FAIL' }), true, '연속 실패 1 → 2(알림 실행)');
-  assert.equal(beat(file, { at: T + 3 * MIN, status: 'FAIL' }), true, '연속 실패 2 → 3');
-  assert.equal(beat(file, { at: T + 4 * MIN }), true, 'FAIL → OK(복구)');
-  assert.equal(beat(file, { at: T + 4.5 * MIN }), false);
-  assert.equal(beat(file, { at: T + 4.6 * MIN, detail: '달라짐' }), true, 'detail이 바뀌면');
-  const beforeMidnight = Date.parse('2026-11-03T14:58:00Z');
-  beat(file, { at: beforeMidnight, detail: '날짜' });
-  assert.equal(beat(file, { at: beforeMidnight + 3 * MIN, detail: '날짜' }), true, 'KST 날짜(alertDate)가 바뀌면');
-});
-
-test('heartbeatWriteOptions: 기대 주기가 없거나(null) 알림을 보내는 실행이면 늘 쓴다', () => {
-  assert.equal(heartbeatWriteOptions({ job: 'off', intervals: { off: null } }).refreshMs, 0);
-  assert.equal(heartbeatWriteOptions({ job: 'sim', intervals: { sim: 10 * MIN }, force: true }).refreshMs, 0);
-  assert.equal(heartbeatWriteOptions({ job: 'unknown', intervals: {}, defaultIntervalMs: 60 * MIN }).refreshMs, 30 * MIN);
 });

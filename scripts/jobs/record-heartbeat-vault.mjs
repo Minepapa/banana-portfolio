@@ -10,10 +10,9 @@
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildJobHealthRecord, heartbeatWriteOptions, parseFrontmatter } from '../lib/job-health.mjs';
+import { buildJobHealthRecord, parseFrontmatter } from '../lib/job-health.mjs';
 import { updateFrontmatter } from '../lib/vault-frontmatter.mjs';
-import { withLock, writeStateFile } from '../lib/state-writer.mjs';
-import { writeIfChanged } from '../lib/write-if-changed.mjs';
+import { writeStateFile } from '../lib/state-writer.mjs';
 import { escapeHtml } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
@@ -46,13 +45,10 @@ async function main() {
   const filepath = join(VAULT_PATHS.state.jobHealth, `${job}.md`);
   const prior = existsSync(filepath) ? parseFrontmatter(readFileSync(filepath, 'utf8')) : null;
 
-  const now = new Date();
   const { content, failStreak, shouldAlert, shouldRecover, recoveredStreak, failureDurationSec } =
-    buildJobHealthRecord({ job, status, detail, durationSec, now }, prior);
-  // 같은 내용이면 쓰지 않기(⑤) — 규칙과 감시와의 관계는 job-health.mjs heartbeatWriteOptions 주석 참고.
-  const wrote = await withLock(filepath, () => writeIfChanged(filepath, content,
-    heartbeatWriteOptions({ job, now, force: shouldAlert || shouldRecover })));
-  console.log(`🫀 ${job} ${status} ${durationSec ?? '?'}s${status !== 'OK' ? ` (연속실패 ${failStreak}회)` : ''}${wrote ? '' : ' (같은 내용 — 쓰지 않음)'}`);
+    buildJobHealthRecord({ job, status, detail, durationSec }, prior);
+  await writeStateFile(filepath, content);
+  console.log(`🫀 ${job} ${status} ${durationSec ?? '?'}s${status !== 'OK' ? ` (연속실패 ${failStreak}회)` : ''}`);
 
   if (shouldAlert) {
     try {
