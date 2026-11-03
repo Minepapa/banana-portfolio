@@ -39,10 +39,13 @@ function killGroup(child, signal) {
 
 // group을 주면 그 줄의 도구만 끝낸다. 관문 종료 때는 media(음성 전사 — 노트는 전사가 끝난 뒤에만 생겨 끊어도 중복이 없다)만 끝내고,
 // main 줄 도구(기록·스위치)는 끝날 때까지 기다려 "기록은 됐는데 확인필요"가 생기지 않게 한다(1단계 리뷰 MEDIUM-5).
+// 주문 줄(order) 도구는 이름으로 지정할 때만 끝낸다 — 창구 종료·감시견 exit·예외 정리에서 주문 도중에 끊지 않는다
+// (증권사 접수와 장부 기록이 갈라지지 않게, telegram-gate-order-executor I4).
 export function killRunningGateTools(signal = 'SIGTERM', { group = null } = {}) {
   let killed = 0;
   for (const child of RUNNING) {
     if (group && child.gateGroup !== group) continue;
+    if (!group && child.gateGroup === 'order') continue;
     killGroup(child, signal);
     killed += 1;
   }
@@ -85,7 +88,8 @@ export function runGateTool(tool, args = [], { input = null, timeoutMs = TOOL_TI
     let settled = false;
     const finish = (fn, value) => { if (!settled) { settled = true; clearTimeout(timer); RUNNING.delete(child); fn(value); } };
     const timer = setTimeout(() => {
-      killGroup(child, 'SIGKILL');
+      // 주문 줄은 시간이 지나도 끊지 않고 결과 불명으로만 알린다(주문 도중 강제 종료 금지, order-executor I4).
+      if (group !== 'order') killGroup(child, 'SIGKILL');
       finish(reject, new Error(`${tool} 시간 초과(${Math.round(timeoutMs / 1000)}초)`));
     }, timeoutMs);
     child.stdout.on('data', (d) => { if (out.length < MAX_OUTPUT) out += d; });

@@ -40,7 +40,8 @@ import { fileURLToPath } from 'node:url';
 import { assertTestIsolation, buildGateSpawnEnv, defaultGatePaths, loadGateConfig } from '../lib/telegram-gate-config.mjs';
 import { createGateInbox } from '../lib/telegram-gate-inbox.mjs';
 import { laneOf, routeUpdate, sanitizeUpdate } from '../lib/telegram-gate-router.mjs';
-import { createGateHandlers, gateMediaDir, killRunningGateTools, pruneGateMedia } from '../lib/telegram-gate-handlers.mjs';
+import { createGateHandlers, gateMediaDir, killRunningGateTools, pruneGateMedia, runGateTool } from '../lib/telegram-gate-handlers.mjs';
+import { createOrderExecutor, createOrderLedger } from '../lib/telegram-gate-order-executor.mjs';
 import { classifyPollError, pollOnce, pollRetryDelayMs, shouldAlertPollError, POLL_TIMEOUT_SEC } from '../lib/telegram-gate-poller.mjs';
 import { getTelegramUpdates, setTelegramReaction, getTelegramFile, downloadTelegramFile, deleteTelegramMessage, escapeHtml, TelegramApiError } from '../lib/telegram.mjs';
 import { sendAgentMessage, editAgentMessage } from '../lib/pantheon-send.mjs';
@@ -106,7 +107,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     healthySince: null,
     lastPollError: null,
     backlogChecked: false,
-    processing: { main: null, media: null, llm: null },
+    processing: { main: null, media: null, llm: null, order: null },
     // 대화 줄과 약속 이행(LLM)이 동시에 claude를 띄우지 않게 하는 표시(같은 하루 세션을 이어 붙이므로).
     llmBusy: false,
   };
@@ -231,7 +232,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     }
   }
 
-  // 줄(lane)마다 하나씩 처리한다. main: 스위치·기록·상태 등, media: 음성·사진(오래 걸림). 같은 건을 두 줄이 집지 않게
+  // 줄(lane)마다 하나씩 처리한다. main: 스위치·기록·상태 등, media: 음성·사진(오래 걸림), order: 확인 답(실제 주문 도구). 같은 건을 두 줄이 집지 않게
   // 고르는 즉시 processItem이 '처리중'으로 바꾼다(await 전 동기 구간).
   function nextFor(lane) {
     return inbox.pending().find((item) => laneOf(routeOf(item)) === lane) ?? null;
@@ -465,7 +466,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
       const tick = setInterval(() => { minuteTick().catch((e) => log(`[gate] 1분 점검 실패: ${e.message}`)); }, TICK_INTERVAL_MS);
       try {
         // 첫 하트비트는 5분 뒤 — 시작 직후엔 수신 성공 전이라 FAIL로 남아 재시작마다 잡음이 생긴다.
-        await Promise.all([pollLoop(), workerLoop('main'), workerLoop('media'), workerLoop('llm')]);
+        await Promise.all([pollLoop(), workerLoop('main'), workerLoop('media'), workerLoop('llm'), workerLoop('order')]);
       } finally {
         clearInterval(tick);
         clearInterval(watchdog);
@@ -729,11 +730,19 @@ async function launchGate(mode) {
   const options = { config: gate.config };
   const journal = createJournal({ stateDir: gate.stateDir, dayOf: businessDay });
   const confirmStore = createConfirmStore({ stateDir: gate.stateDir });
+  // 확인된 돈 지시 실행기: 실전만 기존 도구를 부르고 시험은 명령만 보인다(order-executor I1). 지난 실행 중 끊긴 건은 결과 불명으로.
+  const orderLedger = createOrderLedger({ stateDir: gate.stateDir });
+  // 원장이 깨져 있어도 창구는 뜬다(수신·킬스위치는 살아야 함). 그때 주문은 claim이 던져 실행하지 않는다(fail-closed).
+  try {
+    for (const e of orderLedger.markInterrupted()) console.log(`[gate] 결과를 못 받은 주문 실행 → 결과 불명: ${e.confirmId} ${e.summary}`);
+  } catch (error) { console.log(`[gate] 주문 실행 원장 읽기 실패 — 주문 실행 막힘: ${error.message}`); }
+  const orderExecutor = createOrderExecutor({ mode: gate.mode, ledger: orderLedger, runTool: (tool, args, opts) => runGateTool(tool, args, { ...opts, env: buildGateSpawnEnv() }), log: (line) => console.log(line) });
   let daemonRef = null;
   let promiseRunner = null;
   const conversationDeps = buildConversationDeps({ gate, options, journal, confirmStore });
   const conversation = createConversation({
     ...conversationDeps,
+    orderExecutor,
     isStopping: () => Boolean(daemonRef?.state.stopping),
     listPendingPromises: () => promiseRunner?.pendingForHandoff() ?? null,
   });

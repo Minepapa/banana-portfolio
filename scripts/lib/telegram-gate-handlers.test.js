@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildStatusBody, createGateHandlers, describeWikiResult, runGateTool, GATE_TOOLS } from './telegram-gate-handlers.mjs';
+import { buildStatusBody, createGateHandlers, describeWikiResult, killRunningGateTools, runGateTool, GATE_TOOLS } from './telegram-gate-handlers.mjs';
 
 // 도구 실행·발송·Bot API는 전부 가짜다. 실제 도구·볼트·텔레그램을 건드리지 않는다.
 function setup(overrides = {}) {
@@ -319,4 +319,29 @@ test('상태 표: 아직 볼트에 반영되지 않은 약속은 "반영 중"으
   const max = buildStatusBody({ startedAt: 0, now: Date.parse('2026-10-30T10:00:00Z'), lastPollOkAt: null, counts: {}, cooldown: null, freeMemPct: 20, mode: 'live', promises: { pending: 20, inflight: 20, nextAt: '2026-10-30T09:00:00Z' } });
   assert.match(max, /약속 +대기 20\(반영 중 20\) · 다음 곧/);
   for (const line of max.replace(/<\/?pre>/g, '').split('\n')) assert.ok([...line].reduce((w, c) => w + (/[\u1100-\uffdc]/.test(c) ? 2 : 1), 0) <= 44, `폭 초과: ${line}`);
+});
+
+test('주문 줄(order) 도구: 창구 종료 정리·시간 초과로 끊지 않고, 이름으로 지정할 때만 끝낸다(order-executor I4)', async () => {
+  const kills = [];
+  const hanging = (tag) => (cmd, args, opts) => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = { on() {}, end() {} };
+    child.kill = (sig) => { kills.push(`${tag}:${sig}`); setImmediate(() => child.emit('close', 137)); };
+    return child;
+  };
+  const allowed = () => true;
+  const order = runGateTool('place-nh-direct-order.mjs', [], { env: {}, group: 'order', allowed, spawnImpl: hanging('order'), timeoutMs: 20 });
+  await assert.rejects(order, /시간 초과/);
+  assert.deepEqual(kills, [], '시간 초과여도 주문 도구는 죽이지 않음');
+  const media = runGateTool('inbox-memo.mjs', [], { env: {}, group: 'media', allowed, spawnImpl: hanging('media'), timeoutMs: 60_000 });
+  assert.equal(killRunningGateTools('SIGKILL'), 1, '그룹 미지정(종료 정리)은 order를 건너뜀');
+  await assert.rejects(media);
+  assert.deepEqual(kills, ['media:SIGKILL']);
+  const order2 = runGateTool('place-nh-direct-order.mjs', [], { env: {}, group: 'order', allowed, spawnImpl: hanging('order2'), timeoutMs: 60_000 });
+  assert.equal(killRunningGateTools('SIGKILL'), 0, '실행 중인 주문 도구도 종료 정리에서 빠짐');
+  assert.equal(killRunningGateTools('SIGTERM', { group: 'order' }), 1, '이름으로 지정하면 끝냄');
+  await assert.rejects(order2);
+  assert.deepEqual(kills, ['media:SIGKILL', 'order2:SIGTERM']);
 });

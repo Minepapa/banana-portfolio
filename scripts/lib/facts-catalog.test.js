@@ -17,13 +17,15 @@ const valid = {
 
 test('모든 사실 도구의 자기 선언은 생성 레지스트리와 일치한다', () => {
   const entries = factsCatalog();
-  assert.equal(entries.length, 9);
+  assert.equal(entries.length, 10);
   assert.deepEqual(factsFor('plutus').always.map((entry) => entry.filename).sort(),
     ['ledger-facts.mjs', 'macro-overlay-facts.mjs', 'rebalance-facts.mjs', 'risk-facts.mjs']);
   assert.deepEqual(factsFor('plutus').onRequest.map((entry) => entry.filename).sort(),
     ['isa-exposure-facts.mjs', 'stock-facts.mjs']);
   assert.deepEqual(factsFor('clio').onRequest.map((entry) => entry.filename), ['preference-facts.mjs']);
-  assert.deepEqual(factsFor('hermes'), { always: [], onRequest: [] });
+  // 창구 대화는 구글 캘린더 MCP를 못 써서(설계 R7) 헤르메스는 볼트 일정 정본을 기본 사실로 받는다(2026-11-03, 창구 4단계 전).
+  assert.deepEqual(factsFor('hermes').always.map((entry) => entry.filename), ['calendar-facts.mjs']);
+  assert.deepEqual(factsFor('hermes').onRequest, []);
   assert.equal(entries.filter((entry) => entry.deprecated).length, 2);
   assert.equal(factsFor('plutus').always.find((entry) => entry.filename === 'macro-overlay-facts.mjs').command,
     'macro-overlay-facts.mjs --dry-run');

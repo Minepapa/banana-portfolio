@@ -5,7 +5,8 @@ import { buildGateClaudeArgs, GATE_EFFORT, GATE_MODEL, GATE_TOOLS_SET, SOFT_TIME
 import { applyProgress, createEditThrottle, describeEvent, initialProgress, renderProgress } from './telegram-gate-progress.mjs';
 import { buildGateSystemPrompt, buildMessagePrompt, businessDay, fallbackMessage, previousDay, toGateMessages } from './telegram-gate-session.mjs';
 import { buildHandoffNote, conversationTranscript, handoffSummaryPrompt, HANDOFF_SUMMARY_SCHEMA } from './telegram-gate-journal.mjs';
-import { buildOrderCommand, confirmPromptBody, isAnswerToConfirm } from './telegram-gate-confirm.mjs';
+import { confirmPromptBody, isAnswerToConfirm } from './telegram-gate-confirm.mjs';
+import { fakeOrderExecutor } from './telegram-gate-order-executor.mjs';
 import { escapeHtml } from './telegram.mjs';
 
 const PROGRESS_TOPIC = '진행';
@@ -20,11 +21,8 @@ function kstTime(ms) {
   return new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms));
 }
 
-// 2단계 가짜 실행기: 실행할 명령을 보여 주기만 한다. 실제 실행 배선은 전환 전 별도 리뷰(설계 14절).
-export async function fakeOrderExecutor(confirm) {
-  const { tool, args } = buildOrderCommand(confirm);
-  return { executed: false, text: `창구 2단계라 실제로 실행하지 않았습니다.\n· 실행할 명령: ${tool} ${args.join(' ')}` };
-}
+// 가짜 실행기(시험 모드 기본값). 실전 실행기는 telegram-gate-order-executor의 createOrderExecutor(mode=live)를 주입한다.
+export { fakeOrderExecutor };
 
 // deps: send(message, chatId) → Bot API 응답, edit(messageId, message, chatId), del(messageId, chatId), downloadPhoto(fileId) → path,
 //       runner({args, env, onEvent}) → {promise, cancel}, spawnEnv, cooldown() → {resetAt}|null, readRules() → {inputRules, sessionRules},
@@ -301,9 +299,11 @@ export function createConversation(deps) {
     deps.confirmStore.update({ status: '확인됨', confirmedAt: now().toISOString(), confirmMessageId: meta.messageId }, { id: confirm.id });
     deps.journal.append({ type: 'confirm', id: confirm.id, status: '확인됨', summary: confirm.summary });
     const result = await orderExecutor(confirm);
-    deps.confirmStore.update({ status: result.executed ? '실행됨' : '실행 안 함(2단계)', result: String(result.text ?? '').slice(0, 500) }, { id: confirm.id });
+    const status = result.status ?? (result.executed ? '실행됨' : '실행 안 함');
+    deps.confirmStore.update({ status, result: String(result.text ?? '').slice(0, 500) }, { id: confirm.id });
+    deps.journal.append({ type: 'confirm', id: confirm.id, status, summary: confirm.summary });
     await reply('주문 접수', escapeHtml(result.text));
-    return { status: '완료', detail: result.executed ? '주문 실행' : '주문 확인(가짜 실행기)' };
+    return { status: '완료', detail: `주문 ${status}` };
   }
 
   // 만료됐거나 다른 주제가 와서 닫는 건. reason: '만료' | '다른 주제'

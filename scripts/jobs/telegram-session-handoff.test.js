@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  gateOwnsHandoff, GATE_HANDOFF_FRESH_MS,
   kstDateStr, kstYesterdayStr, filterProposalsByCreatedDate, filterProposalsByDecidedDate,
   buildModeChangeNotes, buildHandoffText, hasTelegramSessionMarker, pickTelegramTranscriptPaths,
   filterLinesByKstDate, earliestTimestampMs,
@@ -284,4 +285,16 @@ test('buildConversationPrompt: 대상일·오너/세션 구분·요약지시가 
   assert.match(prompt, /\[오너\] 안녕/);
   assert.match(prompt, /\[세션\] 네/);
   assert.match(prompt, /요약하라/);
+});
+
+test('gateOwnsHandoff: 창구 실전 하트비트가 30분 안이면 옛 잡은 노트를 쓰지 않는다(창구 노트와 이름 충돌)', () => {
+  const now = Date.parse('2026-11-09T18:55:00Z'); // 03:55 KST
+  const beat = (min, mode = 'live') => ({ at: new Date(now - min * 60000).toISOString(), mode, healthy: true });
+  assert.equal(gateOwnsHandoff(beat(4), now), true);
+  assert.equal(gateOwnsHandoff(beat(GATE_HANDOFF_FRESH_MS / 60000), now), true);
+  assert.equal(gateOwnsHandoff(beat(31), now), false, '되돌린 뒤(하트비트 끊김)에는 다시 씀');
+  assert.equal(gateOwnsHandoff(beat(1, 'test'), now), false, '시험 창구는 무관');
+  assert.equal(gateOwnsHandoff(null, now), false);
+  assert.equal(gateOwnsHandoff({ mode: 'live', at: 'x' }, now), false);
+  assert.equal(gateOwnsHandoff(beat(-120), now), false, '미래 시각(시계 이상)은 믿지 않음');
 });
