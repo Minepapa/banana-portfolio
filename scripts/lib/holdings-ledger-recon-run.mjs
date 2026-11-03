@@ -2,18 +2,24 @@
 //
 // 잡 진입점(scripts/jobs/reconcile-holdings-ledger.mjs)은 볼트를 읽어 이 함수에 넘기고, 상태 디렉터리와
 // 발송 함수를 주입한다. 진입점은 vault-paths를 import 시점에 읽어 테스트가 정적 import할 수 없으므로
-// 흐름 전체를 여기 두고 테스트는 이 모듈만 부른다. 이 모듈은 볼트를 읽거나 쓰지 않는다.
+// 흐름 전체를 여기 두고 테스트는 이 모듈만 부른다. 볼트 경로는 vaultFile 하나만 주입받는다(테스트는 임시 폴더).
 //
 // 불변식:
-//   - Holdings·Ledger에 쓰지 않는다. 쓰는 곳은 stateDir(볼트 밖) 아래 기준점·억제 파일뿐이다.
-//   - 미리보기 모드(--dry-run 또는 --anchors)는 어떤 파일도 쓰지 않고 어떤 발송도 하지 않는다.
+//   - Holdings·Ledger에 쓰지 않는다. 쓰는 곳은 stateDir(볼트 밖) 아래 기준점·억제 파일과 vaultFile(볼트 사본)뿐이다.
+//   - 정본 기준점은 stateDir 파일이다. vaultFile(95_Etna/Jobs/HoldingsLedgerRecon.json, 2026-11-04 오너 승인)은
+//     기준점과 마지막 대조 요약의 백업·열람용 사본이다. 정본이 없고 사본에 기준점이 있을 때만 사본에서 복원한다 —
+//     상태 파일이 사라졌다고 기준점을 조용히 지금 값으로 다시 잡으면 그동안 쌓인 차이가 묻히기 때문이다.
+//   - vaultFile은 generatedAt 말고 바뀐 것이 있을 때만 쓴다(write-if-changed.mjs, LiveSync 복제 줄이기).
+//   - 미리보기 모드(--dry-run 또는 --anchors)는 어떤 파일도 쓰지 않고 어떤 발송도 하지 않는다(볼트 사본도 안 쓴다).
+//   - 테스트(NODE_TEST_CONTEXT) 중 vaultFile이 실볼트 아래면 아무것도 하기 전에 거부한다.
 //   - 기준점 파일을 덮어쓰기 전에는 항상 타임스탬프 백업을 남기고, 바뀐 종목마다 "이전 → 새"를 로그에 남긴다.
 //   - 종목 단위 재설정 키가 하나라도 거부되면 아무것도 쓰지 않고 실패한다(부분 적용 금지).
 //   - 같은 이상 묶음 경고는 KST 하루 1회. 억제 기록은 발송(또는 아침 보류 큐 등록) 성공 뒤에만 남긴다.
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { withLock, writeAtomic } from './state-writer.mjs';
+import { assertNotRealVaultInTest, writeIfChanged } from './write-if-changed.mjs';
 import { renderAgentMessage } from './pantheon-send.mjs';
 import {
   replayHoldings, diffHoldings, findExecutionDuplicates, classifyExecutionFilename, FILENAME_RULES,
@@ -23,6 +29,7 @@ import {
 
 export const ANCHORS_FILENAME = 'holdings-ledger-anchors.json';
 export const ALERTS_FILENAME = 'holdings-ledger-alerts.json';
+export const VAULT_COPY_SCHEMA_VERSION = 1;
 
 export function parseReconArgs(argv) {
   const args = { dryRun: false, anchorsFile: null, rebaselineKeys: [], rebaselineAll: false };
@@ -68,6 +75,58 @@ function readJson(file) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
 
+// 볼트 사본에서 기준점을 읽는다. 없거나 기준점이 비어 있으면 null.
+// 사본이 있는데 깨졌거나 형식이 틀리면 던진다 — 상태 파일도 없는 날 조용히 지금 값으로 다시 잡으면 그동안 쌓인 차이가
+// 묻히고 깨진 사본까지 덮어써 단서가 사라진다(조용한 폴백 금지). 오너가 확인한 뒤 --rebaseline-all로만 다시 잡는다.
+function readVaultAnchors(vaultFile, { allowBroken = false, logError }) {
+  if (!vaultFile || !existsSync(vaultFile)) return null;
+  const refuse = (reason) => {
+    const message = `상태 파일이 없고 볼트 사본(${vaultFile})을 복원할 수 없음 — ${reason}. 확인 뒤 --rebaseline-all로 다시 잡을 것`;
+    if (!allowBroken) throw new Error(message);
+    logError(`   ⚠️  ${message} (--rebaseline-all이라 계속)`);
+    return null;
+  };
+  let copy;
+  try { copy = readJson(vaultFile); } catch (error) { return refuse(`읽기 실패: ${error.message}`); }
+  const anchors = copy?.anchors;
+  const valid = anchors && typeof anchors === 'object' && !Array.isArray(anchors)
+    && Object.values(anchors).every((value) => typeof value === 'number' && Number.isFinite(value));
+  if (!valid) return refuse('기준점 형식이 맞지 않음');
+  if (Object.keys(anchors).length === 0) return null;
+  return { version: 1, updatedAt: copy.anchorsUpdatedAt ?? copy.generatedAt ?? null, anchors };
+}
+
+// 볼트 사본 내용. generatedAt만 매번 바뀌고 나머지는 대조 결과가 같으면 같다(비교 키에서 generatedAt을 뺀다).
+export function buildVaultCopy({ anchorsState, anchorsUpdatedAt, rows, issues, held, heldReasons, nowIso }) {
+  const statusCounts = {};
+  for (const row of rows) statusCounts[row.status] = (statusCounts[row.status] ?? 0) + 1;
+  const sortedCounts = Object.fromEntries(Object.keys(statusCounts).sort().map((status) => [status, statusCounts[status]]));
+  return {
+    schemaVersion: VAULT_COPY_SCHEMA_VERSION,
+    generatedAt: nowIso,
+    anchorsUpdatedAt,
+    anchors: anchorsState.anchors,
+    lastRecon: {
+      rowCount: rows.length,
+      statusCounts: sortedCounts,
+      issues: [
+        ...issues.quantityIssues.map((row) => ({
+          type: 'quantity', key: row.key, status: row.status, cause: row.cause ?? null,
+          expected: row.expected ?? null, actual: row.actual ?? null, diff: row.diff ?? null,
+        })),
+        ...issues.confirmedDuplicates.map((dup) => ({ type: 'duplicate', reason: dup.reason, files: dup.records.map((r) => r.filename ?? r.dedupKey) })),
+        ...issues.stalePending.map((record) => ({ type: 'stale-pending', file: record.filename ?? record.dedupKey })),
+      ],
+      held: held.map((key) => ({ key, reason: heldReasons[key] ?? null })),
+    },
+  };
+}
+
+export function vaultCopyCompareKey(text) {
+  const { generatedAt, ...rest } = JSON.parse(text);
+  return JSON.stringify(rest);
+}
+
 function logReport(log, { rows, replay, duplicates, filenameCounts, unknownFilenames, anchorsLabel }) {
   log(`🔎 보유↔원장 재생 대조 — 기준점: ${anchorsLabel}`);
   log(`   대조 ${rows.length}종목 · 반영 체결 ${[...replay.rows.values()].reduce((sum, row) => sum + row.ledgerCount, 0)}건 · 미반영 ${replay.pending.length}건 · 계좌 미확정 ${replay.unassigned.length}건 · 보유 미기록 계좌(퀀트) ${replay.notInHoldings}건 · 현금성 키 제외 ${replay.cashLikeSkipped}건`);
@@ -85,21 +144,29 @@ function logReport(log, { rows, replay, duplicates, filenameCounts, unknownFilen
 
 // sendWarning(message, signature): 경고 발송(호출부가 경고 원장·보류 큐를 거치게 감싼다).
 // sendInfo(message): 기준점 첫 설정 정보성 요약 발송.
+// vaultFile: 볼트 사본 경로(없으면 볼트 사본을 읽지도 쓰지도 않는다).
 export async function runHoldingsLedgerRecon({
-  args, executions, fundPurchases = [], holdings, stateDir, sendWarning, sendInfo,
+  args, executions, fundPurchases = [], holdings, stateDir, vaultFile = null, sendWarning, sendInfo,
   log = console.log, logError = console.error, now = new Date(),
 }) {
+  if (vaultFile) assertNotRealVaultInTest(vaultFile);
   const preview = args.dryRun || Boolean(args.anchorsFile);
   const anchorsFile = join(stateDir, ANCHORS_FILENAME);
   const alertsFile = join(stateDir, ALERTS_FILENAME);
-  const result = { wroteAnchors: false, backupFile: null, sentWarning: false, sentInfo: false, suppressed: false };
+  const result = { wroteAnchors: false, backupFile: null, sentWarning: false, sentInfo: false, suppressed: false,
+    restoredFromVault: false, wroteVaultCopy: false, vaultCopyError: null };
 
-  const previous = args.anchorsFile ? null : (existsSync(anchorsFile) ? readJson(anchorsFile) : null);
+  let previous = args.anchorsFile ? null : (existsSync(anchorsFile) ? readJson(anchorsFile) : null);
   if (previous && (typeof previous.anchors !== 'object' || previous.anchors == null)) throw new Error(`기준점 파일 형식 오류: ${anchorsFile}`);
+  if (!args.anchorsFile && previous == null) {
+    previous = readVaultAnchors(vaultFile, { allowBroken: args.rebaselineAll, logError });
+    result.restoredFromVault = previous != null;
+  }
   const anchors = args.anchorsFile ? readJson(args.anchorsFile) : (args.rebaselineAll ? {} : (previous?.anchors ?? {}));
   const anchorsLabel = args.anchorsFile ? `지정 파일 ${args.anchorsFile}(미리보기 — 쓰기·발송 없음)`
     : args.rebaselineAll ? '전 종목 다시 잡기(--rebaseline-all)'
-      : previous ? `상태 파일(${Object.keys(previous.anchors).length}종목, ${previous.updatedAt})` : '없음(첫 실행 — 지금 값으로 잡음)';
+      : result.restoredFromVault ? `볼트 사본에서 복원(상태 파일 없음, ${Object.keys(previous.anchors).length}종목, ${previous.updatedAt})`
+        : previous ? `상태 파일(${Object.keys(previous.anchors).length}종목, ${previous.updatedAt})` : '없음(첫 실행 — 지금 값으로 잡음)';
 
   const ledger = [...executions, ...fundPurchases.map(fundPurchaseAsExecution)];
   const replay = replayHoldings(ledger, anchors, { holdings, now: now.getTime() });
@@ -131,15 +198,21 @@ export async function runHoldingsLedgerRecon({
     }
     for (const key of plan.held) log(`   기준점 보류 ${key}: ${heldReasons[key]}`);
     if (plan.seeded.length) log(`   기준점 새로 잡음 ${plan.seeded.length}종목${preview ? ' (미리보기 — 저장 안 함)' : ''}`);
-    if (!preview && plan.changes.length) {
+    // 볼트 사본에서 복원한 날은 바뀐 것이 없어도 상태 파일(정본)을 되살린다.
+    if (!preview && (plan.changes.length || result.restoredFromVault)) {
+      if (result.restoredFromVault) log(`   기준점 복원: 볼트 사본 → ${anchorsFile}`);
       mkdirSync(stateDir, { recursive: true });
       if (existsSync(anchorsFile)) {
         result.backupFile = join(stateDir, `${ANCHORS_FILENAME.replace(/\.json$/, '')}.${now.toISOString().replace(/[:.]/g, '-')}.json`);
         copyFileSync(anchorsFile, result.backupFile);
         log(`   기준점 백업: ${result.backupFile}`);
       }
-      writeAtomic(anchorsFile, `${JSON.stringify(plan.state, null, 2)}\n`);
+      // 복원만 한 날(바뀐 기준점 없음)은 원래 기준점 시각을 지킨다 — 언제 잡은 기준점인지 추적이 끊기지 않게.
+      const restoredOnly = result.restoredFromVault && plan.changes.length === 0 && previous.updatedAt;
+      const stateToWrite = restoredOnly ? { ...plan.state, updatedAt: previous.updatedAt } : plan.state;
+      writeAtomic(anchorsFile, `${JSON.stringify(stateToWrite, null, 2)}\n`);
       result.wroteAnchors = true;
+      result.anchorsUpdatedAt = stateToWrite.updatedAt;
     }
     // 기준점을 처음 잡거나 상태 파일이 사라져 다시 잡은 날 한 번 — 실운영에서만.
     if (!preview && previous == null && plan.seeded.length) {
@@ -161,6 +234,21 @@ export async function runHoldingsLedgerRecon({
   result.issues = issues;
   result.rows = rows;
   result.plan = plan;
+  // 볼트 사본은 경고 발송보다 먼저 쓴다(발송이 실패해도 사본은 남게). 실패해도 대조·경고는 계속하고 호출부가 종료 코드로 알린다.
+  if (!preview && vaultFile && plan) {
+    try {
+      const copy = buildVaultCopy({
+        anchorsState: plan.state, anchorsUpdatedAt: result.wroteAnchors ? result.anchorsUpdatedAt : (previous?.updatedAt ?? null),
+        rows, issues, held: plan.held, heldReasons, nowIso: now.toISOString(),
+      });
+      mkdirSync(dirname(vaultFile), { recursive: true });
+      result.wroteVaultCopy = writeIfChanged(vaultFile, `${JSON.stringify(copy, null, 2)}\n`, { compareKey: vaultCopyCompareKey });
+      log(`   볼트 사본: ${result.wroteVaultCopy ? '갱신' : '바뀐 것 없음(쓰지 않음)'}`);
+    } catch (error) {
+      result.vaultCopyError = error.message;
+      logError(`   ⚠️  볼트 사본 쓰기 실패(대조·경고는 계속): ${error.message}`);
+    }
+  }
   if (!hasAlertIssues(issues)) {
     log('✅ 알릴 이상 없음');
     return result;

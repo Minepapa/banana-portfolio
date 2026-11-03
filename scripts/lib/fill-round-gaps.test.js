@@ -76,7 +76,7 @@ test('알림 메시지는 판단 4단 구조로 렌더되고 스크립트 문구
 });
 
 test('삼성증권 체결 알림에서 차수를 읽어 원장에 남기고, 파일명·dedupKey는 그대로다', () => {
-  const body = '[삼성증권]<주식체결안내>\n71612*****-15\nTIGER 미국배당다우존스\n매도2주 14,825원\n체결(5차)';
+  const body = '[삼성증권]<주식체결안내>\n12345*****-01\nTIGER 미국배당다우존스\n매도2주 14,825원\n체결(5차)';
   const e = parseExecution(body, '2026-10-27 13:40:27');
   assert.equal(e.fillRound, 5);
   const withRound = buildExecutionRecord({ ...e, account: '연금저축' });

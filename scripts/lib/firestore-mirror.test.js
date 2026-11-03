@@ -39,12 +39,12 @@ test('buildHomeMirror: 보유종목 있으면 손익 계산', () => {
   assert.equal(r.usdRate, 1350);
 });
 
-test('buildHomeMirror: totalInvest는 invest 필드를 그대로 합산(avgPrice*qty 재계산 안 함) — 2026-08-21 실사고(총 투자금 130억원 오표시) 회귀 재현', () => {
-  // 실사고 재현: VIP펀드는 avgPrice가 1,000좌당 기준가 관례(1560)라 avgPrice*qty(8202681주)로
-  // 재계산하면 128억원까지 부풀려진다. 실제 투자금(invest 필드)은 1,280만원이다.
-  const holdings = [{ avgPrice: 1560, qty: 8202681, invest: 12800000, evalAmount: 15716337 }];
+test('buildHomeMirror: totalInvest는 invest 필드를 그대로 합산(avgPrice*qty 재계산 안 함) — 2026-08-21 실사고(총 투자금 약 1,000배 오표시) 회귀 재현', () => {
+  // 실사고 재현(가상값 — 공개 저장소): 펀드는 avgPrice가 1,000좌당 기준가 관례(1500)라 avgPrice*qty(1,000,000좌)로
+  // 재계산하면 15억원까지 부풀려진다. 실제 투자금(invest 필드)은 150만원이다.
+  const holdings = [{ avgPrice: 1500, qty: 1000000, invest: 1500000, evalAmount: 1600000 }];
   const r = buildHomeMirror({ holdings, now: NOW });
-  assert.equal(r.totalInvest, 12800000);
+  assert.equal(r.totalInvest, 1500000);
   assert.ok(r.totalProfitPct > -100 && r.totalProfitPct < 100, `비정상 totalProfitPct: ${r.totalProfitPct}`);
 });
 
@@ -64,9 +64,9 @@ test('buildHoldingsMirror: weightPct는 evalAmount 비중으로 계산', () => {
 });
 
 test('buildHoldingsMirror: invest 필드를 그대로 전달(2026-08-21 — 프론트가 avgPrice*qty로 재계산하지 않도록)', () => {
-  const holdings = [{ name: 'A', avgPrice: 1560, qty: 8202681, invest: 12800000, evalAmount: 15716337 }];
+  const holdings = [{ name: 'A', avgPrice: 1500, qty: 1000000, invest: 1500000, evalAmount: 1600000 }];
   const r = buildHoldingsMirror({ holdings, now: NOW });
-  assert.equal(r.items[0].invest, 12800000);
+  assert.equal(r.items[0].invest, 1500000);
 });
 
 test('buildHoldingsMirror: assetClass·isCashLike를 그대로 전달(App.jsx 7탭 재배선용, 2026-08-13)', () => {

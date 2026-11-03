@@ -11,7 +11,7 @@ export function accountsFromMirror(holdingsMirror) {
   const accounts = {};
   for (const [key, meta] of Object.entries(DEFAULT_ACCOUNTS)) {
     const rows = items.filter((h) => h.account === key);
-    // ⚠️ 버그 수정(2026-08-21, 실사고 — 총 투자금이 130억원으로 표시됨) — avgPrice*qty로
+    // ⚠️ 버그 수정(2026-08-21, 실사고 — 총 투자금이 실제의 약 1,000배로 표시됨) — avgPrice*qty로
     // 재계산하면 한국 펀드 1,000좌당 기준가 관례가 있는 보유(예: VIP펀드)의 투자금이
     // 1,000배 부풀려진다. mirror.items의 invest 필드(State/Holdings가 이미 정확히
     // 계산한 값)를 그대로 써야 한다 — firestore-mirror.mjs buildHomeMirror와 동일 원칙.

@@ -293,7 +293,7 @@ test('buildCashEventRecord: 같은 계좌·같은 시각이라도 잔고가 다�
 // Vault 빌더·잡 배선이 안 돼 있었다(Phase 2엔 State/Holdings 미완성이라 의도적으로
 // 미룸 — Phase 8·9 완료 후 마저 연결).
 const fundBuy = (overrides = {}) => ({
-  fundName: 'VIP한국형가치투자증권투자신탁', amount: 500000, nav: 1523.45, date: '2026-08-04', units: 328.185,
+  fundName: '가상가치증권투자신탁', amount: 500000, nav: 1523.45, date: '2026-08-04', units: 328.185,
   ...overrides,
 });
 
@@ -306,8 +306,8 @@ test('buildFundPurchaseRecord: 파일명·dedupKey가 결정론적(날짜-펀드
   const a = buildFundPurchaseRecord(fundBuy());
   const b = buildFundPurchaseRecord(fundBuy());
   assert.equal(a.filename, b.filename);
-  assert.equal(a.filename, '2026-08-04-VIP한국형가치투자증권투자신탁-500000.md');
-  assert.equal(a.dedupKey, '2026-08-04|VIP한국형가치투자증권투자신탁|500000');
+  assert.equal(a.filename, '2026-08-04-가상가치증권투자신탁-500000.md');
+  assert.equal(a.dedupKey, '2026-08-04|가상가치증권투자신탁|500000');
 });
 
 test('buildFundPurchaseRecord: 같은 펀드·같은 날이라도 금액이 다르면(분할매수) 다른 파일명', () => {
@@ -335,9 +335,10 @@ test('buildFundPurchaseRecord: account를 넘기면 그대로 채워지고 accou
 });
 
 // 2026-09-03 신설 — 삼성증권 "펀드수익률 및 평가금액 안내"(매달 발송 정기 스냅샷).
+// 가상값(공개 저장소 — 실제 펀드명·원금·평가금액을 쓰지 않는다).
 const fundVal = (overrides = {}) => ({
-  fundName: 'VIP한국형가치투자증권자투자(주식)-C-Pe', principal: 12800000,
-  valuationAmount: 16582868, profitAmount: 3782868, profitPct: 29.55, date: '2026-09-01',
+  fundName: '가상가치증권자투자(주식)-C-Pe', principal: 1500000,
+  valuationAmount: 1950000, profitAmount: 450000, profitPct: 30, date: '2026-09-01',
   ...overrides,
 });
 
@@ -350,23 +351,23 @@ test('buildFundValuationRecord: 파일명·dedupKey가 결정론적(날짜-펀�
   const a = buildFundValuationRecord(fundVal());
   const b = buildFundValuationRecord(fundVal());
   assert.equal(a.filename, b.filename);
-  assert.equal(a.filename, '2026-09-01-VIP한국형가치투자증권자투자(주식)-C-Pe-16582868.md');
-  assert.equal(a.dedupKey, '2026-09-01|VIP한국형가치투자증권자투자(주식)-C-Pe|16582868');
+  assert.equal(a.filename, '2026-09-01-가상가치증권자투자(주식)-C-Pe-1950000.md');
+  assert.equal(a.dedupKey, '2026-09-01|가상가치증권자투자(주식)-C-Pe|1950000');
 });
 
 test('buildFundValuationRecord: 같은 펀드·같은 날이라도 평가금액이 다르면(재발송·정정) 다른 파일명', () => {
-  const a = buildFundValuationRecord(fundVal({ valuationAmount: 16582868 }));
-  const b = buildFundValuationRecord(fundVal({ valuationAmount: 16000000 }));
+  const a = buildFundValuationRecord(fundVal({ valuationAmount: 1950000 }));
+  const b = buildFundValuationRecord(fundVal({ valuationAmount: 1900000 }));
   assert.notEqual(a.filename, b.filename);
 });
 
 test('buildFundValuationRecord: frontmatter에 원금·평가금액·수익금·수익률 포함, account 안 넘기면 지연패턴', () => {
   const { content } = buildFundValuationRecord(fundVal());
   assert.match(content, /type: "fund-valuation"/);
-  assert.match(content, /principal: 12800000/);
-  assert.match(content, /valuationAmount: 16582868/);
-  assert.match(content, /profitAmount: 3782868/);
-  assert.match(content, /profitPct: 29.55/);
+  assert.match(content, /principal: 1500000/);
+  assert.match(content, /valuationAmount: 1950000/);
+  assert.match(content, /profitAmount: 450000/);
+  assert.match(content, /profitPct: 30\b/);
   assert.match(content, /account: null/);
   assert.match(content, /accountNote: ".*Phase 8·9.*"/);
 });
@@ -466,14 +467,14 @@ test('[신설/2026-09-11] buildCashEventRecord: depositAmount 없으면(위탁·
 
 test('buildFundPurchaseRecord: account 안 넘기면(지연패턴) tags엔 종목(펀드명)만', () => {
   const { content } = buildFundPurchaseRecord(fundBuy());
-  assert.deepEqual(parseFrontmatter(content).tags, ['종목/VIP한국형가치투자증권투자신탁']);
+  assert.deepEqual(parseFrontmatter(content).tags, ['종목/가상가치증권투자신탁']);
 });
 
 test('buildFundValuationRecord: account 넘기면 tags에 계좌·종목 둘 다', () => {
-  const { content } = buildFundValuationRecord(fundVal({ account: '연금저축' }));
-  // fundVal()의 기본 fundName("...(주식)-C-Pe", 신탁 누락)은 stock-aliases.mjs에
-  // 등록된 실제 파편화 사례라 표준명("...신탁(주식)-C-Pe")으로 정규화된 태그가 나온다
-  // (2026-09-05 stock-registry.mjs 연동 후).
+  // 펀드명은 stock-aliases.mjs(운영 코드)에 등록된 실제 파편화 사례("...(주식)-C-Pe", 신탁 누락)를 그대로 쓴다 —
+  // 표준명("...신탁(주식)-C-Pe")으로 정규화된 태그가 나오는지 보는 테스트라 가상 이름으로는 별칭이 안 걸린다
+  // (2026-09-05 stock-registry.mjs 연동 후). 금액은 fundVal()의 가상값.
+  const { content } = buildFundValuationRecord(fundVal({ account: '연금저축', fundName: 'VIP한국형가치투자증권자투자(주식)-C-Pe' }));
   assert.deepEqual(parseFrontmatter(content).tags, ['계좌/연금저축', '종목/VIP한국형가치투자증권자투자신탁주식-C-Pe']);
 });
 

@@ -30,13 +30,13 @@ test('accountsFromMirror: profitAmount·profitPct가 없으면(구버전 미러)
   assert.equal(r.IRP.holdings[0].rate, 10);
 });
 
-test('accountsFromMirror: total_invest는 invest 필드를 그대로 합산(avgPrice*qty 재계산 안 함) — 2026-08-21 실사고(총 투자금 130억원 오표시) 회귀 재현', () => {
-  // VIP펀드처럼 avgPrice가 1,000좌당 기준가 관례라 avgPrice*qty로 재계산하면
-  // 128억원까지 부풀려지는 케이스. invest 필드(실제 투자금)를 그대로 써야 한다.
-  const holdingsMirror = { items: [{ account: '연금저축', name: 'VIP펀드', avgPrice: 1560, qty: 8202681, invest: 12800000, evalAmount: 15716337 }] };
+test('accountsFromMirror: total_invest는 invest 필드를 그대로 합산(avgPrice*qty 재계산 안 함) — 2026-08-21 실사고(총 투자금 약 1,000배 오표시) 회귀 재현', () => {
+  // 펀드처럼 avgPrice가 1,000좌당 기준가 관례라 avgPrice*qty로 재계산하면 1,000배 부풀려지는
+  // 케이스(가상값 — 공개 저장소). invest 필드(실제 투자금)를 그대로 써야 한다.
+  const holdingsMirror = { items: [{ account: '연금저축', name: '가상펀드', avgPrice: 1500, qty: 1000000, invest: 1500000, evalAmount: 1600000 }] };
   const r = accountsFromMirror(holdingsMirror);
-  assert.equal(r.연금저축.total_invest, 12800000);
-  assert.equal(r.연금저축.holdings[0].invest, 12800000);
+  assert.equal(r.연금저축.total_invest, 1500000);
+  assert.equal(r.연금저축.holdings[0].invest, 1500000);
 });
 
 test('rebalanceAccountFromMirror: allocation의 target/current + holdings의 자산군별 평가금 합산', () => {

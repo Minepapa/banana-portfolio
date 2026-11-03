@@ -33,8 +33,8 @@ test('Dividends: account가 null이라 종목만', () => {
 
 test('FundPurchases: 계좌·펀드명(종목 축)', () => {
   assert.deepEqual(
-    computeBackfillTags({ account: '연금저축', fundName: 'VIP한국형가치투자증권자투자신탁(주식)-C-Pe' }, extractFor('FundPurchases')),
-    ['계좌/연금저축', '종목/VIP한국형가치투자증권자투자신탁주식-C-Pe'],
+    computeBackfillTags({ account: '연금저축', fundName: '가상가치증권자투자신탁(주식)-C-Pe' }, extractFor('FundPurchases')),
+    ['계좌/연금저축', '종목/가상가치증권자투자신탁주식-C-Pe'],
   );
 });
 
@@ -139,14 +139,14 @@ test('[드리프트 가드/HIGH 회귀] Dividends: 계좌 지연귀속 후(accou
 });
 
 test('[드리프트 가드] FundPurchases: 라이브 writer ↔ 백필 extract 태그 일치', () => {
-  const { content } = buildFundPurchaseRecord({ fundName: 'VIP한국형가치투자증권투자신탁', amount: 500000, nav: 1523.45, date: '2026-08-04', units: 328.185, account: '연금저축' });
+  const { content } = buildFundPurchaseRecord({ fundName: '가상가치증권투자신탁', amount: 500000, nav: 1523.45, date: '2026-08-04', units: 328.185, account: '연금저축' });
   const fm = parseFrontmatter(content);
   assert.deepEqual(computeBackfillTags(fm, extractFor('FundPurchases')), fm.tags);
 });
 
 test('[드리프트 가드] FundValuations: 라이브 writer ↔ 백필 extract 태그 일치', () => {
   const { content } = buildFundValuationRecord({
-    fundName: 'VIP한국형가치투자증권자투자(주식)-C-Pe', principal: 12800000, valuationAmount: 16582868, profitAmount: 3782868, profitPct: 29.55, date: '2026-09-01', account: '연금저축',
+    fundName: '가상가치증권자투자(주식)-C-Pe', principal: 1500000, valuationAmount: 1950000, profitAmount: 450000, profitPct: 30, date: '2026-09-01', account: '연금저축',
   });
   const fm = parseFrontmatter(content);
   assert.deepEqual(computeBackfillTags(fm, extractFor('FundValuations')), fm.tags);

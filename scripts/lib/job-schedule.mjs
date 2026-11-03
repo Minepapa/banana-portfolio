@@ -264,9 +264,9 @@ export const JOB_FIRST_HEARTBEAT_BY = {
   'telegram-gate-health-check': '2026-11-09',
   // 연 1회(1월 1~3일) 잡. 첫 실행 다음날까지.
   'annual-instrument-rescore': '2027-01-04',
-  // 보유↔원장 재생 대조 — plist는 저장소에 있지만 launchctl 등록은 오너 승인 뒤 제우스가 한다(2026-11-03).
-  // 등록일이 늦어지면 이 날짜도 같이 옮긴다(안 옮기면 미등록 잡으로 경보가 나간다).
-  'reconcile-holdings-ledger': '2026-11-10',
+  // 보유↔원장 재생 대조 — 오너가 2026-11-04 등록을 승인했다. 제우스가 그날 launchctl 등록 + kickstart로 첫 실행을 한다.
+  // 등록이 늦어지면 이 날짜도 같이 옮긴다(안 옮기면 미등록 잡으로 경보가 나간다).
+  'reconcile-holdings-ledger': '2026-11-05',
 };
 export const RETIRED_JOBS = new Set(['media-diarize', 'media-faces-nightly', 'media-transcribe', 'media-vision']);
 

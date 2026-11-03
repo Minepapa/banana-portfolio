@@ -210,11 +210,11 @@ test('recomputeFxCashValuation: 환율이 매수 시점보다 크게 움직여�
 });
 
 test('recomputeValuation: unitScale 지정 시 1,000좌당 기준가를 좌당으로 환산(한국 펀드 관례)', () => {
-  // VIP펀드 실측 케이스: curPrice(1,000좌당 기준가) 1950, qty(보유 좌수) 8202681.
+  // 펀드 케이스(가상값 — 공개 저장소): curPrice(1,000좌당 기준가) 1600, qty(보유 좌수) 1,000,000.
   // unitScale 없이(기본값 1) 계산하면 qty×curPrice가 1,000배 부풀려진 평가금이 된다.
-  const r = recomputeValuation({ qty: 8202681, invest: 12800000 }, 1950, { unitScale: 0.001 });
-  assert.equal(r.evalAmount, 1950 * 8202681 * 0.001);
-  assert.ok(r.evalAmount > 10_000_000 && r.evalAmount < 20_000_000, `비정상 evalAmount: ${r.evalAmount}`);
+  const r = recomputeValuation({ qty: 1000000, invest: 1500000 }, 1600, { unitScale: 0.001 });
+  assert.equal(r.evalAmount, 1600 * 1000000 * 0.001);
+  assert.ok(r.evalAmount > 1_000_000 && r.evalAmount < 2_000_000, `비정상 evalAmount: ${r.evalAmount}`);
 });
 
 // ── 같은 내용이면 쓰지 않기(2026-11-03, ⑤)와 보유 시세 신선도 감시(holding-prices)의 상호작용 ──

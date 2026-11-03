@@ -35,15 +35,15 @@ import { buildReportFacts } from './report-facts.mjs';
 const FIXTURE_HOLDINGS = [
   { account: '위탁', name: '가상반도체', assetClass: '국내주식', qty: 8, invest: 15920000, evalAmount: 17200000.4 },
   { account: '위탁', name: '애플', assetClass: '해외주식', qty: 8, invest: 2400000, evalAmount: 2651420 },
-  // avgPrice=1560/qty=8202681처럼 1,000좌당 기준가 관례를 그대로 재현 — 2026-08-19
+  // avgPrice=1500/qty=1000000(가상값)처럼 1,000좌당 기준가 관례를 그대로 재현 — 2026-08-19
   // 사고(avgPrice*qty 재계산이 1,000배 부풀려짐)가 재발한다면 evalAmount가 아니라
   // avgPrice 쪽을 잘못 참고하는 코드에서 터진다는 걸 이 필드로 명시해둔다.
-  { account: '연금저축', name: 'VIP한국형가치투자', assetClass: '국내주식', qty: 8202681, avgPrice: 1560, invest: 12000000, evalAmount: 12797000 },
+  { account: '연금저축', name: '가상가치펀드', assetClass: '국내주식', qty: 1000000, avgPrice: 1500, invest: 1500000, evalAmount: 1600000 },
   { account: 'CMA', name: '예수금', assetClass: '현금', qty: 0, invest: 21054004, evalAmount: 21054004, isCashLike: true },
   { account: 'ISA', name: 'TIGER 리츠', assetClass: '리츠', qty: 50, invest: 2000000, evalAmount: 2100000 },
 ];
-const EXPECTED_TOTAL_RAW = 17200000.4 + 2651420 + 12797000 + 21054004 + 2100000; // 원시(비반올림) 합
-const EXPECTED_TOTAL_INVEST = 15920000 + 2400000 + 12000000 + 21054004 + 2000000;
+const EXPECTED_TOTAL_RAW = 17200000.4 + 2651420 + 1600000 + 21054004 + 2100000; // 원시(비반올림) 합
+const EXPECTED_TOTAL_INVEST = 15920000 + 2400000 + 1500000 + 21054004 + 2000000;
 // hList가 "종목명별로 묶어 그룹당 반올림"하므로, 그룹(=distinct 종목명) 하나당 최대
 // 0.5원까지 rawTotalEval과 갈라질 수 있다(수학적 상한, Math.round 오차구간
 // [-0.5, 0.5)). 고정 상수를 쓰면 픽스처를 실전처럼 종목 수를 늘릴 때마다 낡아
@@ -76,7 +76,7 @@ test('총자산 교차검증: buildHomeMirror(대시보드 헤드라인) vs buil
   );
 
   // 총원금(invest)은 어느 함수도 반올림하지 않으므로 완전 일치해야 정상 —
-  // 2026-08-21 "130억" 사고가 실제로 터진 필드는 evalAmount가 아니라 invest 쪽이라
+  // 2026-08-21 "총 투자금 약 1,000배" 사고가 실제로 터진 필드는 evalAmount가 아니라 invest 쪽이라
   // (코드리뷰 HIGH-2), 여기서 정확히 그 필드를 교차검증한다. 이 픽스처는 모든 행이
   // account를 갖고 있어 home(전체 holdings 합)과 facts.accounts(account 있는 것만
   // 집계) 스코프가 우연히 같다 — 그 전제가 깨지는 경우는 아래 별도 테스트에서 다룬다.

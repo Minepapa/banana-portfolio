@@ -37,6 +37,9 @@ export const VAULT_REL = {
   stateDeferredWarnings: '95_Etna/Jobs/DeferredWarnings.json',
   // 데이터 출처별 마지막 수신 시각·상태(2026-11-03 오너 결정, health-watcher만 쓴다 — 내용이 바뀔 때만). 표는 data-sources.mjs.
   dataFreshness: '95_Etna/Jobs/DataFreshness.json',
+  // 보유↔원장 대조 기준점·마지막 대조 요약(2026-11-04 오너 승인, reconcile-holdings-ledger만 쓴다 — 내용이 바뀔 때만).
+  // 정본 기준점은 볼트 밖 ~/.cache 파일이고 이 파일은 백업·열람용 사본이다(정본이 사라졌을 때만 여기서 복원).
+  holdingsLedgerRecon: '95_Etna/Jobs/HoldingsLedgerRecon.json',
   decisionsProposals: '95_Etna/Investing/Orders',
   decisionsProfile: '50_Outputs/Preferences', // D94: 성향 관찰 위치
   knowledge: '30_Wiki',

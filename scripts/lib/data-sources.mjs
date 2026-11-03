@@ -186,4 +186,5 @@ export const ETNA_PATH_CLASSES = Object.freeze({
   factsRawNotificationsApiCovered: 'source',
   macroIndicatorsFile: 'derived',
   dataFreshness: 'state',
+  holdingsLedgerRecon: 'state',
 });

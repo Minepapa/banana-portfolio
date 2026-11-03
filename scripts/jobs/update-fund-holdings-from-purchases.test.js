@@ -17,14 +17,15 @@ test('readUnappliedFundPurchases: 존재하지 않는 디렉터리면 빈 배열
 test('[실사고 재현] readUnappliedFundPurchases: holdingsApplied 없는 실제 2026-09-01 매수 기록 형태를 정확히 읽음', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fund-purchases-test-'));
   try {
-    writePurchase(dir, '2026-09-01-VIP한국형가치투자증권자투자신탁(주식)-C-Pe-200000.md', {
+    // 기록 형태(필드·파일명 규칙)는 실제 그대로, 금액·기준가·좌수는 가상값(공개 저장소). 펀드명은 잡의 VIP_FUND_NAME 상수.
+    writePurchase(dir, '2026-09-01-VIP한국형가치투자증권자투자신탁(주식)-C-Pe-100000.md', {
       type: 'fund-purchase', date: '2026-09-01', fundName: 'VIP한국형가치투자증권자투자신탁(주식)-C-Pe',
-      amount: 200000, nav: 2027.92, units: 98623.21985088168, account: '연금저축',
+      amount: 100000, nav: 2000.37, units: 49990.75171093348, account: '연금저축',
     });
     const targets = readUnappliedFundPurchases(dir);
     assert.equal(targets.length, 1);
-    assert.equal(targets[0].parsed.amount, 200000);
-    assert.equal(targets[0].parsed.units, 98623.21985088168);
+    assert.equal(targets[0].parsed.amount, 100000);
+    assert.equal(targets[0].parsed.units, 49990.75171093348);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

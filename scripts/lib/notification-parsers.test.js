@@ -57,7 +57,7 @@ test('parseExecution: NH투자증권 해외 체결(USD)', () => {
 });
 
 test('parseExecution: 삼성증권 매도 체결', () => {
-  const body = '[삼성증권]<주식체결안내>\n계좌: 71612-****\nKODEX 200\n매도10주 30,500원';
+  const body = '[삼성증권]<주식체결안내>\n계좌: 12345-****\nKODEX 200\n매도10주 30,500원';
   const r = parseExecution(body, '2026-08-04 10:00:00');
   assert.equal(r.tradeType, '매도');
   assert.equal(r.stockName, 'KODEX 200');
@@ -139,9 +139,9 @@ test('parseDividend: NH 분배금 입금 안내 실제 형식 — acctRaw가 대
 });
 
 test('parseFundBuy: 삼성증권 펀드 매수 완료 안내', () => {
-  const body = '펀드 매수 완료 안내\n펀드명 : VIP한국형가치투자증권자투자신탁(주식)-C-Pe\n매수금액 : 500,000원\n매수기준가 : 1,200.50\n매수신청일 : 2026년 8월 4일';
+  const body = '펀드 매수 완료 안내\n펀드명 : 가상가치증권자투자신탁(주식)-C-Pe\n매수금액 : 500,000원\n매수기준가 : 1,200.50\n매수신청일 : 2026년 8월 4일';
   const r = parseFundBuy(body, '2026-08-04 09:00:00');
-  assert.equal(r.fundName, 'VIP한국형가치투자증권자투자신탁(주식)-C-Pe');
+  assert.equal(r.fundName, '가상가치증권자투자신탁(주식)-C-Pe');
   assert.equal(r.amount, 500000);
   assert.equal(r.nav, 1200.5);
   assert.equal(r.date, '2026-08-04');
@@ -152,36 +152,37 @@ test('parseFundBuy: 펀드·매수기준가 키워드 없으면 null', () => {
   assert.equal(parseFundBuy('일반 알림', '2026-08-04 00:00:00'), null);
 });
 
-// 2026-09-03 신설 — 오너가 실제 원문을 그대로 공유(삼성증권 "펀드수익률 및 평가금액
-// 안내", 매달 발송되는 정기 평가 스냅샷 — parseFundBuy와 다른 메시지).
+// 2026-09-03 신설 — 오너가 공유한 실제 원문의 형식(삼성증권 "펀드수익률 및 평가금액
+// 안내", 매달 발송되는 정기 평가 스냅샷 — parseFundBuy와 다른 메시지). 형식(줄 순서·기호·
+// 단위)은 원문 그대로 두고 펀드명·계좌번호·금액·수익률만 가상값으로 바꿨다(공개 저장소).
 const FUND_VAL_BODY = `[삼성증권] <펀드수익률 및 평가금액 안내>
 
 2026년 9월 1일 기준 보유 중인 펀드 수익률 및 평가금액을 알려드립니다.
 
-- 종목명 : VIP한국형가치투자증권자투자(주식)-C-Pe
-- 계좌번호 : 71612*****-15 (잔고번호:002)
-- 원금 : 12,800,000원
-- 평가금액 : 16,582,868원
-- 수익금 : 3,782,868원
-- 수익률 : 29.55%
+- 종목명 : 가상가치증권자투자(주식)-C-Pe
+- 계좌번호 : 12345*****-01 (잔고번호:001)
+- 원금 : 1,500,000원
+- 평가금액 : 1,950,000원
+- 수익금 : 450,000원
+- 수익률 : 30.00%
 
 문의사항은 패밀리센터(1588-2323)로 연락하세요. 감사합니다.`;
 
-test('parseFundValuation: 실제 원문 그대로(오너 공유) 전 필드 정확히 추출', () => {
+test('parseFundValuation: 실제 원문 형식(오너 공유, 값은 가상) 전 필드 정확히 추출', () => {
   const r = parseFundValuation(FUND_VAL_BODY, '2026-09-01 09:00:00');
   assert.deepEqual(r, {
-    fundName: 'VIP한국형가치투자증권자투자(주식)-C-Pe',
-    principal: 12800000,
-    valuationAmount: 16582868,
-    profitAmount: 3782868,
-    profitPct: 29.55,
+    fundName: '가상가치증권자투자(주식)-C-Pe',
+    principal: 1500000,
+    valuationAmount: 1950000,
+    profitAmount: 450000,
+    profitPct: 30,
     date: '2026-09-01',
   });
 });
 
 test('[핵심 안전장치] parseFundValuation: parseFundBuy와 서로 오매칭하지 않음(다른 메시지)', () => {
   assert.equal(parseFundBuy(FUND_VAL_BODY, '2026-09-01 09:00:00'), null);
-  const buyBody = '펀드 매수 완료 안내\n펀드명 : VIP한국형가치투자증권자투자신탁(주식)-C-Pe\n매수금액 : 500,000원\n매수기준가 : 1,200.50\n매수신청일 : 2026년 8월 4일';
+  const buyBody = '펀드 매수 완료 안내\n펀드명 : 가상가치증권자투자신탁(주식)-C-Pe\n매수금액 : 500,000원\n매수기준가 : 1,200.50\n매수신청일 : 2026년 8월 4일';
   assert.equal(parseFundValuation(buyBody, '2026-08-04 09:00:00'), null);
 });
 
@@ -189,8 +190,8 @@ test('[핵심 안전장치] parseFundValuation: parseFundBuy와 서로 오매칭
 // 부호를 지워버리면 손실이 이익으로 뒤집혀 기록될 뻔했다.
 test('[핵심 안전장치] parseFundValuation: 수익금·수익률이 음수(평가손)여도 부호 보존', () => {
   const body = FUND_VAL_BODY
-    .replace('수익금 : 3,782,868원', '수익금 : -500,000원')
-    .replace('수익률 : 29.55%', '수익률 : -3.91%');
+    .replace('수익금 : 450,000원', '수익금 : -500,000원')
+    .replace('수익률 : 30.00%', '수익률 : -3.91%');
   const r = parseFundValuation(body, '2026-09-01 09:00:00');
   assert.equal(r.profitAmount, -500000);
   assert.equal(r.profitPct, -3.91);
@@ -199,8 +200,8 @@ test('[핵심 안전장치] parseFundValuation: 수익금·수익률이 음수(�
 test('parseFundValuation: 수익금·수익률 필드가 없어도(선택 필드) 원금·평가금액만으로 파싱', () => {
   const body = FUND_VAL_BODY.replace(/- 수익금 : .*\n/, '').replace(/- 수익률 : .*\n/, '');
   const r = parseFundValuation(body, '2026-09-01 09:00:00');
-  assert.equal(r.principal, 12800000);
-  assert.equal(r.valuationAmount, 16582868);
+  assert.equal(r.principal, 1500000);
+  assert.equal(r.valuationAmount, 1950000);
   assert.equal(r.profitAmount, null);
   assert.equal(r.profitPct, null);
 });
