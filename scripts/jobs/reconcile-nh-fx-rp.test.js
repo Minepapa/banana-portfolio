@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideFxRpWrite, num, ymdKst } from './reconcile-nh-fx-rp.mjs';
+import { decideFxRpWrite, blockingUnmatchedSells, UNMATCHED_SELL_GRACE_DAYS, num, ymdKst } from './reconcile-nh-fx-rp.mjs';
 
 test('num: 콤마 포함 문자열도 파싱', () => {
   assert.equal(num('5,353.15'), 5353.15);
@@ -91,4 +91,53 @@ test('decideFxRpWrite: 기존 기록이 없으면(첫 기록, currentQty null) �
   });
   assert.equal(result.write, true);
   assert.equal(result.derivedQty, 6005.62);
+});
+
+// 2026-11-03 — 로트 재구성이 매도의 짝을 못 찾으면 작은 오차라도 쓰지 않는다(50% 가드를 통과해 오너 확인값을 덮어쓴 사고).
+const okLots = { lots: [{ amount: 5400.25, currency: 'USD' }], total: 5400.25, currency: 'USD' };
+
+test('[막아야 함] decideFxRpWrite: 조회 시작 35일 뒤의 짝 없는 매도가 있으면 쓰지 않음(unmatched-sell)', () => {
+  const result = decideFxRpWrite({ rows: [{}], truncated: false, ...okLots, currentQty: 5000,
+    unmatchedSells: [{ trd_dt: '20261026', reason: 'no-lot' }], windowStartYmd: '20250929' });
+  assert.equal(result.write, false);
+  assert.equal(result.reason, 'unmatched-sell');
+});
+
+test('decideFxRpWrite: 조회 시작 직후(유예 기간 안)의 짝 없는 매도는 조회 전 로트 만기로 보고 쓴다', () => {
+  assert.equal(UNMATCHED_SELL_GRACE_DAYS, 35);
+  const result = decideFxRpWrite({ rows: [{}], truncated: false, ...okLots, currentQty: 5000,
+    unmatchedSells: [{ trd_dt: '20251020', reason: 'no-lot' }], windowStartYmd: '20250929' });
+  assert.equal(result.write, true);
+  assert.equal(result.derivedQty, 5400.25);
+});
+
+test('[막아야 함] decideFxRpWrite: 원금 없는 매도(missing-qty)는 유예 기간 안이라도 쓰지 않음', () => {
+  const result = decideFxRpWrite({ rows: [{}], truncated: false, ...okLots, currentQty: 5000,
+    unmatchedSells: [{ trd_dt: '20251001', reason: 'missing-qty' }], windowStartYmd: '20250929' });
+  assert.equal(result.reason, 'unmatched-sell');
+});
+
+test('blockingUnmatchedSells: 유예 경계는 시작일+35일까지 포함', () => {
+  const sells = [{ trd_dt: '20251103', reason: 'no-lot' }, { trd_dt: '20251104', reason: 'no-lot' }];
+  assert.deepEqual(blockingUnmatchedSells(sells, '20250929').map((s) => s.trd_dt), ['20251104']);
+});
+
+test('[막아야 함] decideFxRpWrite: 조회 전 로트의 부분 매도(잔량 남은 no-lot)는 유예 기간 안이라도 쓰지 않음', () => {
+  const result = decideFxRpWrite({ rows: [{}], truncated: false, ...okLots, currentQty: 5000,
+    unmatchedSells: [{ trd_dt: '20251010', reason: 'no-lot', partial: true }], windowStartYmd: '20250929' });
+  assert.equal(result.reason, 'unmatched-sell');
+});
+
+test('[막아야 함] decideFxRpWrite: 금액 없는 매수·잔량 없는 매도도 쓰지 않음', () => {
+  for (const reason of ['buy-missing-amt', 'missing-remaining']) {
+    const result = decideFxRpWrite({ rows: [{}], truncated: false, ...okLots, currentQty: 5000,
+      unmatchedSells: [{ trd_dt: '20251001', reason }], windowStartYmd: '20250929' });
+    assert.equal(result.reason, 'unmatched-sell', reason);
+  }
+});
+
+test('[막아야 함] decideFxRpWrite: 조회 시작일을 모르면 유예 없이 짝 없는 매도를 모두 막음', () => {
+  const result = decideFxRpWrite({ rows: [{}], truncated: false, ...okLots, currentQty: 5000,
+    unmatchedSells: [{ trd_dt: '20251001', reason: 'no-lot' }] });
+  assert.equal(result.reason, 'unmatched-sell');
 });

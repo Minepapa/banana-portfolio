@@ -134,6 +134,33 @@ export function filterDividendRows(rows) {
 // (그 매수가 로트를 열고, 바로 그 매도가 그 로트를 자기 자신인 줄 모르고 닫아버림)
 // 과소계상이 생긴다 — 같은 날짜는 매도를 매수보다 먼저 처리해 이 경계 케이스를
 // 정렬 순서 자체로 없앤다(API 응답 순서에 의존하지 않음).
+// ⚠️ 2026-11-03 매칭 규칙 교체(플루토스 세션, 오너 NH 앱 잔고로 확인) — 위 FIFO는 매도 한 건마다
+// 가장 오래된 로트를 통째로 닫아 두 가지가 틀렸다: ① 부분 매도도 로트 전체를 닫고, ② 실제로 판
+// 로트가 아니라 가장 오래된 로트를 닫는다(10-26 로트 C 일부 매도 때 로트 B를 닫아 장부가 수백 USD
+// 적게 나옴). 위 "금액 매칭 실패" 기록은 매도의 trd_amt(이자 포함)로 맞춘 이야기다. 이번 규칙은
+// trd_amt가 아니라 매도 행의 trd_qty(판 원금, 정수 내림)와 trd_af_bnc_qty(그 로트의 매도 뒤 잔량)를
+// 쓴다 — 둘을 더하면 원래 로트 금액과 1 USD 안쪽으로 맞는다(실계좌 400일 매도 26건 전부 0.97 이하).
+//   1. 매도: 열린 로트 중 |로트 금액 − (trd_qty + 잔량)|이 가장 작은 로트(동률이면 먼저 연 것)를 고른다.
+//      차이가 LOT_MATCH_TOLERANCE 안일 때만 짝으로 본다. 잔량 > 0이면 닫지 않고 로트 금액을 잔량으로 바꾼다.
+//   2. 같은 날 정렬은 지금처럼 매도 먼저다(롤오버 매도가 새 매수 로트를 닫지 않게). 그 단계에서 짝이 없던
+//      매도는 그날 매수를 모두 연 뒤 한 번 더 맞춘다 — 단 원금(trd_qty)과 금액(trd_amt)이 둘 다 같은 매수만
+//      짝으로 본다(같은 로트를 당일 사고판 경우, 실측 2026-03-06). 창 시작 경계의 롤오버(조회 전 로트 매도
+//      + 이자 붙은 새 매수)는 원금이 달라 여기서 짝이 되지 않는다.
+//   3. 끝까지 짝이 없는 매도는 로트를 건드리지 않고 unmatchedSells로 돌려준다(조회 시작 전에 열린 로트의
+//      매도이거나 데이터 이상). reason: 'no-lot'(짝 없음, partial이면 잔량이 남은 부분 매도),
+//      'missing-qty'(원금 없음), 'missing-remaining'(잔량 필드 없음 — 전량인지 부분인지 몰라 추정하지 않음),
+//      'buy-missing-amt'(금액을 못 읽은 매수 — 로트를 열지 못해 과소 계상 가능).
+//      쓸지 말지는 호출부(reconcile-nh-fx-rp decideFxRpWrite)가 정한다.
+//   한계(리뷰 LOW, 수용): trd_qty가 내림값이라 금액이 1.5 USD 안으로 붙은 로트끼리는 잔량을 이웃 로트에
+//   기록할 수 있다. 그 차이는 로트 간 금액 차이 이내이고 다음 매도에서 다시 맞춰진다.
+export const LOT_MATCH_TOLERANCE = 1.5;
+
+function parseRpNumber(raw) {
+  if (raw == null || raw === '') return null;
+  const n = Number(String(raw).replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
 export function reconstructForeignRpLots(rows) {
   const fxRows = (rows || [])
     .filter((r) => r?.trd_dt && r?.cur_cd)
@@ -146,18 +173,66 @@ export function reconstructForeignRpLots(rows) {
       return aIsSell ? -1 : 1;
     });
 
-  const openLots = []; // FIFO 큐 — push로 열고 shift로 닫는다.
-  for (const r of fxRows) {
-    const label = r.sps_cd_krl_anm || '';
-    const amt = Number(String(r.trd_amt ?? '').replace(/,/g, ''));
-    if (/매수/.test(label)) {
-      if (!Number.isFinite(amt)) continue;
-      openLots.push({ amount: amt, openedDate: r.trd_dt, currency: r.cur_cd, productName: r.iem_nm || null });
-    } else if (/매도/.test(label)) {
-      openLots.shift(); // 가장 먼저 열린 로트를 닫음 — 매칭 실패(창 시작 이전 개설분)는 no-op
+  const openLots = []; // 연 순서대로 쌓는다(동률이면 먼저 연 로트를 고르기 위해).
+  const unmatchedSells = [];
+
+  const matchSell = (sell) => {
+    const target = sell.principal + (sell.remaining ?? 0);
+    let best = -1;
+    let bestDiff = Infinity;
+    openLots.forEach((lot, i) => {
+      const diff = Math.abs(lot.amount - target);
+      if (diff < bestDiff - 1e-9) { best = i; bestDiff = diff; }
+    });
+    if (best < 0 || bestDiff > LOT_MATCH_TOLERANCE) return false;
+    if (sell.remaining != null && sell.remaining > 0) openLots[best].amount = sell.remaining;
+    else openLots.splice(best, 1);
+    return true;
+  };
+
+  let i = 0;
+  while (i < fxRows.length) {
+    const day = fxRows[i].trd_dt;
+    const dayRows = [];
+    while (i < fxRows.length && fxRows[i].trd_dt === day) dayRows.push(fxRows[i++]);
+    const deferred = [];
+    const dayBuys = [];
+    for (const r of dayRows) {
+      const label = r.sps_cd_krl_anm || '';
+      const amt = parseRpNumber(r.trd_amt);
+      if (/매수/.test(label)) {
+        if (amt == null) {
+          unmatchedSells.push({ trd_dt: r.trd_dt, trd_qty: r.trd_qty ?? null, trd_amt: r.trd_amt ?? null, reason: 'buy-missing-amt' });
+          continue;
+        }
+        const lot = { amount: amt, openedDate: r.trd_dt, currency: r.cur_cd, productName: r.iem_nm || null };
+        openLots.push(lot);
+        dayBuys.push({ lot, principal: parseRpNumber(r.trd_qty), amt });
+      } else if (/매도/.test(label)) {
+        const sell = { row: r, principal: parseRpNumber(r.trd_qty), remaining: parseRpNumber(r.trd_af_bnc_qty), amt };
+        if (sell.principal == null || sell.remaining == null) {
+          unmatchedSells.push({ trd_dt: r.trd_dt, trd_qty: r.trd_qty ?? null, trd_amt: r.trd_amt ?? null,
+            reason: sell.principal == null ? 'missing-qty' : 'missing-remaining' });
+          continue;
+        }
+        // 매수 처리 전이라 이 시점의 openLots에는 그날 매수가 아직 없다(정렬상 매도가 먼저).
+        if (!matchSell(sell)) deferred.push(sell);
+      }
+    }
+    for (const sell of deferred) {
+      // 같은 로트를 당일 사고판 경우만: 원금과 금액이 모두 같은 그날 매수 로트를 닫는다.
+      const same = dayBuys.find((b) => openLots.includes(b.lot) && b.principal === sell.principal
+        && b.amt != null && sell.amt != null && Math.abs(b.amt - sell.amt) < 0.005 && !(sell.remaining > 0));
+      if (same) {
+        openLots.splice(openLots.indexOf(same.lot), 1);
+        continue;
+      }
+      unmatchedSells.push({ trd_dt: sell.row.trd_dt, trd_qty: sell.row.trd_qty ?? null, trd_amt: sell.row.trd_amt ?? null,
+        reason: 'no-lot', partial: sell.remaining > 0 });
     }
   }
-  const total = openLots.reduce((sum, l) => sum + l.amount, 0);
+  // 센트 단위로 반올림한다(부동소수 합의 꼬리 오차가 장부 qty로 그대로 들어가지 않게).
+  const total = Math.round(openLots.reduce((sum, l) => sum + l.amount, 0) * 100) / 100;
   const currency = openLots[0]?.currency ?? null;
-  return { lots: openLots, total, currency };
+  return { lots: openLots, total, currency, unmatchedSells };
 }

@@ -10,6 +10,9 @@
  * 반증(같은 계좌에 만기 다른 로트가 동시에 여러 개 있을 수 있음), 2차 구현(금액
  * 매칭)도 RP 이자로 매도금액≠매수원금이라 실패 확인 — 3차 FIFO(reconstructForeignRpLots)
  * 로 실계좌 값과 정확히 일치 검증 완료(상세는 그 함수 주석 참고).
+ * 2026-11-03 4차: FIFO가 부분 매도와 "가장 오래된 로트가 아닌 로트의 매도"에서 틀려 장부가 수백 USD
+ * 적게 나온 사고(오너 NH 앱 잔고로 확인) — 매도의 원금(trd_qty)+잔량(trd_af_bnc_qty)으로 판 로트를
+ * 찾는 규칙으로 바꾸고, 짝 없는 매도가 조회 초반 유예 뒤에 있으면 쓰지 않는다(decideFxRpWrite ⑧).
  *
  * ⚠️ qty만 patch하고 avgPrice·curPrice는 안 건드린다(의도적) — 이 프로젝트는
  * "수량/잔고 확정"(reconcile-*)과 "시세·환율 밸류에이션"(update-holdings-prices.mjs)
@@ -39,7 +42,9 @@
  * 오너에게 통지(2026-09-19 코드리뷰 HIGH 지적 — 예전 읽기전용 버전은 불일치를
  * 무조건 텔레그램으로 알렸는데, 쓰기 버전으로 바뀌며 통지 채널이 통째로 사라져
  * 있었다. 실보유 수량이 바뀌었다는 사실 자체는 로그 파일이 아니라 오너가 보는
- * 채널에 남아야 한다).
+ * 채널에 남아야 한다). ⑧ 로트를 맞추지 못한 거래(짝 없는 매도·원금/잔량 없는 매도·금액 없는 매수)가
+ * 있으면 쓰지 않고 경고(2026-11-03). 예외는 조회 시작 뒤 35일 안의 잔량 없는 짝 없는 매도뿐이다(조회 전에
+ * 열린 로트의 만기). 작은 오차는 ⑤의 50% 가드를 통과하므로 이 가드가 따로 필요하다.
  *
  * 사용법: node scripts/jobs/reconcile-nh-fx-rp.mjs [--dry-run]
  */
@@ -78,6 +83,24 @@ export function ymdKst(d) {
   return `${get('year')}${get('month')}${get('day')}`;
 }
 
+// 조회 시작 뒤 이 일수 안의 짝 없는 매도는 "조회 시작 전에 열린 로트의 매도"로 본다(자유약정형 만기
+// 약 28일). 그 뒤의 짝 없는 매도는 로트 재구성이 틀렸다는 신호라 쓰지 않는다(2026-11-03 — 작은 오차가
+// 50% 가드를 통과해 오너 확인값을 덮어쓴 사고).
+export const UNMATCHED_SELL_GRACE_DAYS = 35;
+
+function ymdPlusDays(ymd, days) {
+  const t = Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(4, 6)) - 1, Number(ymd.slice(6, 8))) + days * 86400000;
+  return new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+// 쓰기를 막는 짝 없는 행만 고른다. 유예를 주는 것은 잔량 없는 'no-lot'(조회 전 로트의 만기·전량 매도)뿐이다.
+// 잔량이 남은 부분 매도는 조회 전 로트의 잔량이 장부에서 빠지므로 날짜와 상관없이 막는다(리뷰 MEDIUM).
+// windowStartYmd가 없으면 유예 없이 전부 막는다.
+export function blockingUnmatchedSells(unmatchedSells, windowStartYmd) {
+  const graceEnd = windowStartYmd ? ymdPlusDays(windowStartYmd, UNMATCHED_SELL_GRACE_DAYS) : null;
+  return (unmatchedSells || []).filter((s) => s.reason !== 'no-lot' || s.partial || !graceEnd || String(s.trd_dt) > graceEnd);
+}
+
 // 쓸지 말지 순수 판정(2026-09-19 코드리뷰 MEDIUM 지적 — 이 판정 로직에 있던 CRITICAL
 // 버그(로트 0개 가드 소실)가 테스트 없이 리팩터링 중 조용히 들어왔다. main()에서
 // 분리해 테스트 가능하게 함).
@@ -88,9 +111,11 @@ export function ymdKst(d) {
 // currentQty: State/Holdings 기존 qty(숫자, 파싱 실패 시 null).
 //
 // 반환: { write: boolean, reason: string, derivedQty: number|null }
-export function decideFxRpWrite({ rows, truncated, lots, total, currency, currentQty }) {
+// unmatchedSells·windowStartYmd: reconstructForeignRpLots의 짝 없는 행과 조회 시작일(YYYYMMDD) — ⑧ 참고.
+export function decideFxRpWrite({ rows, truncated, lots, total, currency, currentQty, unmatchedSells = [], windowStartYmd = null }) {
   if (truncated) return { write: false, reason: 'truncated', derivedQty: null };
   if (!rows || rows.length === 0) return { write: false, reason: 'no-rp-transactions', derivedQty: null };
+  if (blockingUnmatchedSells(unmatchedSells, windowStartYmd).length > 0) return { write: false, reason: 'unmatched-sell', derivedQty: null };
   // ⚠️ CRITICAL(2026-09-19 코드리뷰) — rows.length>0인데 lots.length===0인 경로가
   // 실재한다(cur_cd 결측·적요 표기 변경·매도만 창 안에 잡힌 경계 케이스 등). 데이터
   // 이상과 "진짜 전량상환"을 구분할 방법이 없어 항상 쓰지 않고 경고한다 — 연 몇 회
@@ -134,8 +159,10 @@ async function main() {
     token, actNo, iqrStaDt: ymdKst(start), iqrEndDt: ymdKst(end), iemLlfCd: '08', actTrdDtlCd: '00',
   });
 
-  const { lots, total, currency } = reconstructForeignRpLots(rows);
+  const { lots, total, currency, unmatchedSells } = reconstructForeignRpLots(rows);
+  const windowStartYmd = ymdKst(start);
   console.log(`NH API 유도값: 로트 ${lots.length}개, 합계 ${total} ${currency ?? '(로트 없음)'}`);
+  for (const u of unmatchedSells) console.log(`  · 짝 없는 매도 ${u.trd_dt} 원금 ${u.trd_qty ?? '-'} 금액 ${u.trd_amt ?? '-'} (${u.reason})`);
   for (const l of lots) console.log(`  - ${l.amount} ${l.currency}(${l.productName ?? '-'}) 개설일 ${l.openedDate}`);
 
   const dir = VAULT_PATHS.state.holdings;
@@ -151,7 +178,7 @@ async function main() {
     collectWarning(`NH 외화RP갱신: 기존 qty 파싱 실패(값="${current.qty}") — 파일 손상 가능성, 수동 확인 필요`);
   }
 
-  const decision = decideFxRpWrite({ rows, truncated, lots, total, currency, currentQty });
+  const decision = decideFxRpWrite({ rows, truncated, lots, total, currency, currentQty, unmatchedSells, windowStartYmd });
   console.log(`현재 기록: ${current.qty ?? '(없음)'} → 유도값 ${decision.derivedQty ?? '(계산 불가)'} — 판정: ${decision.reason}`);
 
   if (!decision.write) {
@@ -161,6 +188,7 @@ async function main() {
       'no-open-lots': `거래이력은 있는데 열린 로트가 0개로 계산됨 — 데이터 이상(적요·통화필드 변경 등)과 진짜 전량상환을 구분 못 해 쓰지 않음. 현재 기록(${current.qty})이 여전히 맞는지 NH 앱에서 직접 확인 필요`,
       'mixed-currency': '로트 통화가 혼재돼 있어 합계가 무의미할 수 있음 — 쓰지 않음, 수동 확인 필요',
       'invalid-derived-qty': '유도값 계산 실패 — 쓰지 않음',
+      'unmatched-sell': `로트를 맞추지 못한 거래가 있음(${blockingUnmatchedSells(unmatchedSells, windowStartYmd).map((u) => `${u.trd_dt} 원금 ${u.trd_qty ?? '-'} ${u.reason}${u.partial ? '·부분' : ''}`).join(' / ')}) — 로트 재구성이 틀렸을 수 있어 쓰지 않음. NH 앱 외화RP 잔고와 대조 필요. 해제: 그 거래가 400일 조회 창을 벗어나거나 개발 세션이 규칙을 고쳐야 다시 자동 갱신된다(그동안 장부는 마지막 값 유지, 수동 정정 가능)`,
       'large-change': `유도값이 기존 기록과 ${(LARGE_CHANGE_RATIO * 100).toFixed(0)}% 넘게 차이남(현재 ${currentQty} → 유도 ${decision.derivedQty}) — 자동 쓰기 대신 확인 요청`,
     }[decision.reason];
     if (reasonMsg && decision.reason !== 'unchanged') {
