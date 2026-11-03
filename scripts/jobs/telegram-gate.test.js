@@ -589,3 +589,42 @@ test('stampConsole: daemon.log 줄마다 ISO 시각을 앞에 붙인다', async 
   fake.log('x');
   assert.equal(lines.at(-1), '2026-10-31T05:07:00.000Z x', '두 번 불러도 시각은 한 번만');
 });
+
+test('주문 줄(4단계 배선 리뷰 HIGH-1): 응보다 먼저 받은 킬스위치가 main에 남아 있으면 응을 고르지 않고, 끝난 뒤에 고른다', async () => {
+  const conv = fakeConversation();
+  // 확인 질문은 T0-60초에 보냄. 킬스위치는 질문 전에 보냈지만 늦게 처리되는 상황(재시작 뒤 밀린 메시지).
+  const confirmStore = { pending: () => ({ id: 'CF', announced: true, announcedAt: new Date(T0 - 60_000).toISOString() }) };
+  const s = setup({ conversation: conv, confirmStore });
+  try {
+    s.inbox.appendUpdates([msg(1, '킬스위치 온', { date: T0 / 1000 - 120 }), msg(2, '응')]);
+    assert.equal(s.daemon.nextFor('order'), null, '먼저 온 킬스위치가 대기 중이면 응을 고르지 않음');
+    const main = s.daemon.nextFor('main');
+    assert.equal(main.updateId, 1);
+    s.inbox.markStatus(1, '처리중', 'switch');
+    assert.equal(s.daemon.nextFor('order'), null, '킬스위치 처리 중에도 기다림');
+    s.inbox.markStatus(1, '완료', '');
+    assert.equal(s.daemon.nextFor('order').updateId, 2);
+  } finally { s.cleanup(); }
+});
+
+test('주문 줄: 주문 실행이 오래 걸려도 main 줄 킬스위치는 바로 처리된다(줄 분리)', async () => {
+  const conv = fakeConversation();
+  let release;
+  conv.handleConfirm = (args) => new Promise((r) => { conv.calls.confirms.push(args.yes); release = () => r({ status: '완료', detail: '주문 실행됨' }); });
+  const confirmStore = { pending: () => ({ id: 'CF', announced: true, announcedAt: new Date(T0 - 60_000).toISOString() }) };
+  const s = setup({ conversation: conv, confirmStore });
+  try {
+    s.inbox.appendUpdates([msg(1, '응')]);
+    const order = s.daemon.processItem(s.daemon.nextFor('order'), 'order');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(conv.calls.confirms, [true]);
+    s.inbox.appendUpdates([msg(2, '킬스위치 온', { date: T0 / 1000 + 5 })]);
+    assert.equal(s.daemon.nextFor('order'), null, '뒤에 온 킬스위치는 주문 줄 대상 아님');
+    await s.daemon.processItem(s.daemon.nextFor('main'), 'main');
+    assert.deepEqual(s.tools, [{ tool: 'kill-switch-cli.mjs', args: ['--text=킬스위치 온'] }], '주문이 끝나기 전에 킬스위치 실행');
+    assert.equal(s.inbox.get(1).status, '처리중');
+    release();
+    await order;
+    assert.equal(s.inbox.get(1).status, '완료');
+  } finally { s.cleanup(); }
+});

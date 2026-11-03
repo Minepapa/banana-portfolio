@@ -387,7 +387,8 @@ export function gateOwnsHandoff(heartbeat, nowMs) {
 }
 
 function readGateHeartbeat() {
-  try { return JSON.parse(readFileSync(join(defaultGatePaths().liveStateDir, 'heartbeat.json'), 'utf8')); } catch { return null; }
+  const dir = process.env.TELEGRAM_GATE_STATE_DIR || defaultGatePaths().liveStateDir; // 창구와 같은 재지정 규칙(리뷰 LOW-10)
+  try { return JSON.parse(readFileSync(join(dir, 'heartbeat.json'), 'utf8')); } catch { return null; }
 }
 
 async function main() {

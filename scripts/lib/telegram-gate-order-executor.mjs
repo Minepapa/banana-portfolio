@@ -11,7 +11,11 @@
 //    정정·취소 도구에는 자체 멱등키가 없어서 이 원장이 유일한 중복 방지다(매수·매도는 도구의 --request-id 멱등과 이중).
 // I3 실행할 도구·인자는 buildOrderCommand가 확인 대기 내용에서 만든다(LLM 문장 아님). ORDER_TOOLS 세 개 밖의 도구는 부르지 않는다.
 // I4 주문 도구는 'order' 줄 그룹으로 띄운다 — 창구가 멈추거나 죽어도 끊지 않는다(killRunningGateTools가 건너뜀). 주문 중간에
-//    끊으면 증권사 접수와 장부 기록이 갈라질 수 있어서다. 결과를 못 받은 건은 원장에 '실행중'으로 남고 다음 시작 때 '결과 불명'으로 바뀐다.
+//    끊으면 증권사 접수와 장부 기록이 갈라질 수 있어서다. 출력은 파이프가 아니라 실행별 로그 파일로 보내 창구가 먼저 끝나도
+//    도구가 EPIPE로 죽지 않는다. 시간이 지나도 끊지 않고 '결과 불명'으로 알린다. 결과를 못 받은 건은 원장에 '실행중'으로 남고
+//    다음 시작 때 '결과 불명'으로 바뀐다.
+// I5 주문 도구는 한 번에 하나. 앞 도구가 (시간 초과 뒤에도) 아직 돌고 있으면 새 확인은 실행하지 않고 알린다.
+// 원장은 창구 프로세스 하나만 쓴다(실전 가드가 다른 창구가 있으면 시작을 거부 — 프로세스 사이 잠금은 두지 않음).
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { buildOrderCommand } from './telegram-gate-confirm.mjs';
@@ -43,6 +47,9 @@ function writeDurable(path, content) {
     fsyncSync(fd);
   } finally { closeSync(fd); }
   try { renameSync(tmp, path); } catch (error) { try { unlinkSync(tmp); } catch { /* 없음 */ } throw error; }
+  // 이름 바꾸기까지 디스크에 남긴다(전원이 나가도 옛 원장으로 돌아가지 않게, 리뷰 LOW-6).
+  const dirFd = openSync(dirname(path), 'r');
+  try { fsyncSync(dirFd); } finally { closeSync(dirFd); }
 }
 
 export function createOrderLedger({ stateDir, now = () => new Date() }) {
@@ -87,12 +94,34 @@ export function createOrderLedger({ stateDir, now = () => new Date() }) {
   };
 }
 
-// runTool(tool, args, { timeoutMs, group, allowed }) → stdout(성공) | throw(종료코드≠0·시간 초과). 시험은 가짜를 넣는다.
-export function createOrderExecutor({ mode, ledger, runTool, log = () => {} }) {
+// 답장에 붙일 도구 출력은 끝부분만(텔레그램 4096자, 리뷰 LOW-11). 전체는 실행별 로그 파일에 있다.
+const REPLY_OUTPUT_MAX = 1500;
+const tail = (text) => { const t = String(text ?? '').trim(); return t.length > REPLY_OUTPUT_MAX ? `…${t.slice(-REPLY_OUTPUT_MAX)}` : t; };
+
+// 순수 함수: 실패했을 때 원장 상태와 오너 안내. 매수·매도는 도구가 승인 제안을 먼저 남기고 체결 잡을 부르므로, 체결 잡이 실패해도
+// 10분 체결 잡(execute-asset-allocation-proposal)이 그 제안을 다시 실행할 수 있다(place-nh-direct-order 안내와 같음, 리뷰 HIGH-2).
+// 그래서 "다시 지시하지 말 것"을 먼저 말한다 — 다시 지시하면 새 요청이라 같은 주문이 두 번 나갈 수 있다.
+export function describeOrderFailure(confirm, error) {
+  const reason = tail(error?.message);
+  if (error?.code === 'GATE_TOOL_TIMEOUT') {
+    return { status: '결과 불명(시간 초과)', text: `주문 도구가 ${Math.round(ORDER_TOOL_TIMEOUT_MS / 60000)}분 안에 끝나지 않았습니다. 도구는 끊지 않고 계속 돌고 있어 결과를 아직 모릅니다.\n· 같은 주문을 다시 지시하지 말고 NH 앱과 제안 상태를 먼저 확인해 주세요.\n· ${confirm.summary}` };
+  }
+  if (confirm.action === '매수' || confirm.action === '매도') {
+    return { status: '실패(체결 잡 재시도 가능)', text: `주문 도구가 실패로 끝났습니다. 승인 제안이 남아 있으면 10분 체결 잡이 다시 실행할 수 있습니다.\n· 같은 주문을 다시 지시하지 마세요 — 두 번 나갈 수 있습니다. 제안·NH 주문 상태를 먼저 확인해 주세요.\n${reason}` };
+  }
+  return { status: '실패', text: `주문 도구가 실패로 끝났습니다. 창구는 자동으로 다시 시도하지 않습니다 — NH 앱에서 주문 상태를 확인한 뒤 필요하면 새로 지시해 주세요.\n${reason}` };
+}
+
+// runTool(tool, args, { timeoutMs, group, allowed, logFile }) → stdout(성공) | throw(종료코드≠0, 시간 초과는 code 'GATE_TOOL_TIMEOUT').
+// isBusy() → 앞 주문 도구가 아직 도는지(I5). 시험은 가짜를 넣는다.
+export function createOrderExecutor({ mode, ledger, runTool, logDir = null, isBusy = () => false, log = () => {} }) {
   if (mode !== 'live') return fakeOrderExecutor; // I1
   return async function realOrderExecutor(confirm) {
     const command = buildOrderCommand(confirm); // I3
     if (!ORDER_TOOLS.includes(command.tool)) throw new Error(`주문 도구 목록에 없는 도구: ${command.tool}`);
+    if (isBusy()) { // I5
+      return { executed: false, status: '실행 안 함(앞 주문 진행 중)', text: `앞 주문 도구가 아직 끝나지 않아 이번 확인은 실행하지 않았습니다. 앞 주문 결과를 확인한 뒤 다시 지시해 주세요.\n· ${confirm.summary}` };
+    }
     const key = orderKey(confirm);
     let claim;
     try {
@@ -106,13 +135,15 @@ export function createOrderExecutor({ mode, ledger, runTool, log = () => {} }) {
     }
     log(`[gate] 주문 실행 시작 ${confirm.id} ${commandText(command)}`);
     try {
-      const out = await runTool(command.tool, command.args, { timeoutMs: ORDER_TOOL_TIMEOUT_MS, group: 'order', allowed: (t) => ORDER_TOOLS.includes(t) });
-      safeFinish(ledger, key, { status: '성공', output: String(out ?? '').slice(-500) }, log);
-      return { executed: true, status: '실행됨', text: `실행했습니다.\n${String(out ?? '').trim() || '(도구 출력 없음)'}` };
+      const logFile = logDir ? join(logDir, `${confirm.id}.log`) : null;
+      const out = await runTool(command.tool, command.args, { timeoutMs: ORDER_TOOL_TIMEOUT_MS, group: 'order', allowed: (t) => ORDER_TOOLS.includes(t), logFile });
+      safeFinish(ledger, key, { status: '성공', output: String(out ?? '').slice(-500), logFile }, log);
+      return { executed: true, status: '실행됨', text: `실행했습니다.\n${tail(out) || '(도구 출력 없음)'}` };
     } catch (error) {
-      safeFinish(ledger, key, { status: '실패', output: String(error.message ?? '').slice(-500) }, log);
-      // 실패여도 다시 실행하지 않는다 — 도구가 증권사에 접수한 뒤 실패했을 수 있다. 오너가 상태를 보고 새로 지시한다.
-      return { executed: true, status: '실행 실패', text: `실행했지만 실패로 끝났습니다. 자동으로 다시 시도하지 않습니다 — NH 앱에서 주문 상태를 확인해 주세요.\n${error.message}` };
+      // 실패여도 창구는 다시 실행하지 않는다 — 도구가 증권사에 접수한 뒤 실패했을 수 있다.
+      const failure = describeOrderFailure(confirm, error);
+      safeFinish(ledger, key, { status: failure.status, output: String(error.message ?? '').slice(-500) }, log);
+      return { executed: true, status: failure.status, text: failure.text };
     }
   };
 }

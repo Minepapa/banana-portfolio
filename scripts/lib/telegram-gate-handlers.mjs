@@ -6,7 +6,7 @@
 // - 도구가 실패하면 원인을 그대로 알리고 다시 시도하지 않는다(입력 규칙 3절).
 // LLM이 필요한 route('llm')는 2단계 전까지 고정 안내만 한다.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildGateSpawnEnv } from './telegram-gate-config.mjs';
@@ -52,8 +52,12 @@ export function killRunningGateTools(signal = 'SIGTERM', { group = null } = {}) 
   return killed;
 }
 
-export function runningGateToolCount() {
-  return RUNNING.size;
+export function runningGateToolCount({ group = null } = {}) {
+  return group ? [...RUNNING].filter((child) => child.gateGroup === group).length : RUNNING.size;
+}
+
+function readTail(path) {
+  try { const text = readFileSync(path, 'utf8'); return text.length > MAX_OUTPUT ? text.slice(-MAX_OUTPUT) : text; } catch { return ''; }
 }
 
 // 2단계 LLM이 관문 MCP 도구(telegram-gate-mcp)를 거쳐 부를 수 있는 운영 도구. 돈 도구(주문·정정취소·손절·제안 체결)는
@@ -75,27 +79,37 @@ export function isGateToolAllowed(tool, { factsFiles = () => factsCatalog().filt
   return /^[a-z0-9-]+-facts\.mjs$/.test(tool) && factsFiles().includes(tool);
 }
 
-export function runGateTool(tool, args = [], { input = null, timeoutMs = TOOL_TIMEOUT_MS, env = buildGateSpawnEnv(), spawnImpl = spawn, group = 'main', allowed = isGateToolAllowed } = {}) {
+// logFile(선택): 표준출력·오류를 파이프 대신 이 파일로 보낸다. 창구가 먼저 끝나도 도구가 출력하다 EPIPE로 죽지 않는다(주문 줄, 리뷰 MEDIUM-3).
+// 주문 줄(order)은 시간이 지나도 끊지 않는다: 'GATE_TOOL_TIMEOUT' 오류로 먼저 알리고, 도구는 끝날 때까지 RUNNING에 남는다(리뷰 MEDIUM-4).
+export function runGateTool(tool, args = [], { input = null, timeoutMs = TOOL_TIMEOUT_MS, env = buildGateSpawnEnv(), spawnImpl = spawn, group = 'main', allowed = isGateToolAllowed, logFile = null } = {}) {
   if (!allowed(tool)) return Promise.reject(new Error(`창구 허용 목록에 없는 도구: ${tool}`));
   return new Promise((resolvePromise, reject) => {
-    const child = spawnImpl(process.execPath, [join(REPO_ROOT, 'scripts', 'tools', tool), ...args], {
-      cwd: REPO_ROOT, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true,
-    });
+    let logFd = null;
+    if (logFile) { mkdirSync(dirname(logFile), { recursive: true, mode: 0o700 }); logFd = openSync(logFile, 'a', 0o600); }
+    let child;
+    try {
+      child = spawnImpl(process.execPath, [join(REPO_ROOT, 'scripts', 'tools', tool), ...args], {
+        cwd: REPO_ROOT, env, stdio: ['pipe', logFd ?? 'pipe', logFd ?? 'pipe'], detached: true,
+      });
+    } finally { if (logFd !== null) closeSync(logFd); }
     child.gateGroup = group;
     RUNNING.add(child);
     let out = '';
     let err = '';
     let settled = false;
-    const finish = (fn, value) => { if (!settled) { settled = true; clearTimeout(timer); RUNNING.delete(child); fn(value); } };
+    const finish = (fn, value) => { if (!settled) { settled = true; clearTimeout(timer); fn(value); } };
     const timer = setTimeout(() => {
-      // 주문 줄은 시간이 지나도 끊지 않고 결과 불명으로만 알린다(주문 도중 강제 종료 금지, order-executor I4).
-      if (group !== 'order') killGroup(child, 'SIGKILL');
-      finish(reject, new Error(`${tool} 시간 초과(${Math.round(timeoutMs / 1000)}초)`));
+      if (group !== 'order') { RUNNING.delete(child); killGroup(child, 'SIGKILL'); }
+      const error = new Error(`${tool} 시간 초과(${Math.round(timeoutMs / 1000)}초)`);
+      error.code = 'GATE_TOOL_TIMEOUT';
+      finish(reject, error);
     }, timeoutMs);
-    child.stdout.on('data', (d) => { if (out.length < MAX_OUTPUT) out += d; });
-    child.stderr.on('data', (d) => { if (err.length < MAX_OUTPUT) err += d; });
-    child.on('error', (e) => finish(reject, e));
+    child.stdout?.on('data', (d) => { if (out.length < MAX_OUTPUT) out += d; });
+    child.stderr?.on('data', (d) => { if (err.length < MAX_OUTPUT) err += d; });
+    child.on('error', (e) => { RUNNING.delete(child); finish(reject, e); });
     child.on('close', (code) => {
+      RUNNING.delete(child);
+      if (logFile) out = readTail(logFile);
       if (code === 0) finish(resolvePromise, out.trim());
       else finish(reject, new Error((err.trim() || out.trim() || `${tool} 종료코드 ${code}`).split('\n').slice(-3).join('\n')));
     });

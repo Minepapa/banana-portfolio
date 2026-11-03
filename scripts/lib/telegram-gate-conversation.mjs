@@ -298,7 +298,14 @@ export function createConversation(deps) {
     }
     deps.confirmStore.update({ status: '확인됨', confirmedAt: now().toISOString(), confirmMessageId: meta.messageId }, { id: confirm.id });
     deps.journal.append({ type: 'confirm', id: confirm.id, status: '확인됨', summary: confirm.summary });
-    const result = await orderExecutor(confirm);
+    let result;
+    try {
+      result = await orderExecutor(confirm);
+    } catch (error) {
+      // 실행 전 단계 오류(명령 조립 등) — 돈은 나가지 않았다. 확인 대기가 '확인됨'으로 남아 답이 없지 않게 고정 문구로 알린다(리뷰 LOW-9).
+      log(`[gate] 주문 실행기 오류: ${error.message}`);
+      result = { executed: false, status: '실행 안 함(오류)', text: `주문을 실행하지 못했습니다(창구 오류, 로그 참고).\n· ${confirm.summary}` };
+    }
     const status = result.status ?? (result.executed ? '실행됨' : '실행 안 함');
     deps.confirmStore.update({ status, result: String(result.text ?? '').slice(0, 500) }, { id: confirm.id });
     deps.journal.append({ type: 'confirm', id: confirm.id, status, summary: confirm.summary });

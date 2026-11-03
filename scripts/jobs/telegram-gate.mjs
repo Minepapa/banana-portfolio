@@ -40,7 +40,7 @@ import { fileURLToPath } from 'node:url';
 import { assertTestIsolation, buildGateSpawnEnv, defaultGatePaths, loadGateConfig } from '../lib/telegram-gate-config.mjs';
 import { createGateInbox } from '../lib/telegram-gate-inbox.mjs';
 import { laneOf, routeUpdate, sanitizeUpdate } from '../lib/telegram-gate-router.mjs';
-import { createGateHandlers, gateMediaDir, killRunningGateTools, pruneGateMedia, runGateTool } from '../lib/telegram-gate-handlers.mjs';
+import { createGateHandlers, gateMediaDir, killRunningGateTools, pruneGateMedia, runGateTool, runningGateToolCount } from '../lib/telegram-gate-handlers.mjs';
 import { createOrderExecutor, createOrderLedger } from '../lib/telegram-gate-order-executor.mjs';
 import { classifyPollError, pollOnce, pollRetryDelayMs, shouldAlertPollError, POLL_TIMEOUT_SEC } from '../lib/telegram-gate-poller.mjs';
 import { getTelegramUpdates, setTelegramReaction, getTelegramFile, downloadTelegramFile, deleteTelegramMessage, escapeHtml, TelegramApiError } from '../lib/telegram.mjs';
@@ -235,7 +235,15 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
   // 줄(lane)마다 하나씩 처리한다. main: 스위치·기록·상태 등, media: 음성·사진(오래 걸림), order: 확인 답(실제 주문 도구). 같은 건을 두 줄이 집지 않게
   // 고르는 즉시 processItem이 '처리중'으로 바꾼다(await 전 동기 구간).
   function nextFor(lane) {
-    return inbox.pending().find((item) => laneOf(routeOf(item)) === lane) ?? null;
+    const next = inbox.pending().find((item) => laneOf(routeOf(item)) === lane) ?? null;
+    // 주문 줄: 이 응·아니보다 먼저 받은 main 줄 입력(킬스위치 등)이 아직 남아 있으면 그게 끝날 때까지 고르지 않는다 —
+    // 줄을 나눠도 "먼저 보낸 킬스위치 온 → 응" 순서를 지킨다(4단계 배선 리뷰 HIGH-1). 그 입력이 질문 뒤에 온 것이면 처리하면서 확인 대기를 닫는다.
+    if (lane === 'order' && next && hasEarlierMainInput(next)) return null;
+    return next;
+  }
+  function hasEarlierMainInput(item) {
+    return [...inbox.pending(), ...inbox.inFlight()].some((other) => other.updateId < item.updateId && other.update?.message
+      && laneOf(routeOf(other)) === 'main');
   }
 
   // 대화 줄: 쌓인 대화 입력을 모두 집어 한 번에 처리한다(Q6). 고르는 즉시 전부 '처리중'.
@@ -423,6 +431,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     state,
     processItem,
     processLlmBatch,
+    nextFor,
     runPromiseLlm,
     minuteTick,
     watchdogCheck,
@@ -735,8 +744,16 @@ async function launchGate(mode) {
   // 원장이 깨져 있어도 창구는 뜬다(수신·킬스위치는 살아야 함). 그때 주문은 claim이 던져 실행하지 않는다(fail-closed).
   try {
     for (const e of orderLedger.markInterrupted()) console.log(`[gate] 결과를 못 받은 주문 실행 → 결과 불명: ${e.confirmId} ${e.summary}`);
-  } catch (error) { console.log(`[gate] 주문 실행 원장 읽기 실패 — 주문 실행 막힘: ${error.message}`); }
-  const orderExecutor = createOrderExecutor({ mode: gate.mode, ledger: orderLedger, runTool: (tool, args, opts) => runGateTool(tool, args, { ...opts, env: buildGateSpawnEnv() }), log: (line) => console.log(line) });
+  } catch (error) {
+    console.log(`[gate] 주문 실행 원장 읽기 실패 — 주문 실행 막힘: ${error.message}`);
+    // 오너 알림은 "응" 때 실행기가 '원장 오류'로 답한다(시작 알림은 발송 허용표 변경이 필요해 보류, 리뷰 LOW-8).
+  }
+  const orderExecutor = createOrderExecutor({
+    mode: gate.mode, ledger: orderLedger, logDir: join(gate.stateDir, 'order-logs'),
+    runTool: (tool, args, opts) => runGateTool(tool, args, { ...opts, env: buildGateSpawnEnv() }),
+    isBusy: () => runningGateToolCount({ group: 'order' }) > 0,
+    log: (line) => console.log(line),
+  });
   let daemonRef = null;
   let promiseRunner = null;
   const conversationDeps = buildConversationDeps({ gate, options, journal, confirmStore });

@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildStatusBody, createGateHandlers, describeWikiResult, killRunningGateTools, runGateTool, GATE_TOOLS } from './telegram-gate-handlers.mjs';
+import { buildStatusBody, createGateHandlers, describeWikiResult, killRunningGateTools, runGateTool, runningGateToolCount, GATE_TOOLS } from './telegram-gate-handlers.mjs';
 
 // 도구 실행·발송·Bot API는 전부 가짜다. 실제 도구·볼트·텔레그램을 건드리지 않는다.
 function setup(overrides = {}) {
@@ -333,15 +333,36 @@ test('주문 줄(order) 도구: 창구 종료 정리·시간 초과로 끊지 �
   };
   const allowed = () => true;
   const order = runGateTool('place-nh-direct-order.mjs', [], { env: {}, group: 'order', allowed, spawnImpl: hanging('order'), timeoutMs: 20 });
-  await assert.rejects(order, /시간 초과/);
+  await assert.rejects(order, (e) => e.code === 'GATE_TOOL_TIMEOUT');
   assert.deepEqual(kills, [], '시간 초과여도 주문 도구는 죽이지 않음');
   const media = runGateTool('inbox-memo.mjs', [], { env: {}, group: 'media', allowed, spawnImpl: hanging('media'), timeoutMs: 60_000 });
   assert.equal(killRunningGateTools('SIGKILL'), 1, '그룹 미지정(종료 정리)은 order를 건너뜀');
   await assert.rejects(media);
   assert.deepEqual(kills, ['media:SIGKILL']);
-  const order2 = runGateTool('place-nh-direct-order.mjs', [], { env: {}, group: 'order', allowed, spawnImpl: hanging('order2'), timeoutMs: 60_000 });
+  assert.equal(runningGateToolCount({ group: 'order' }), 1, '시간 초과 뒤에도 끝날 때까지 추적(다음 주문을 막는 근거)');
   assert.equal(killRunningGateTools('SIGKILL'), 0, '실행 중인 주문 도구도 종료 정리에서 빠짐');
   assert.equal(killRunningGateTools('SIGTERM', { group: 'order' }), 1, '이름으로 지정하면 끝냄');
-  await assert.rejects(order2);
-  assert.deepEqual(kills, ['media:SIGKILL', 'order2:SIGTERM']);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(kills, ['media:SIGKILL', 'order:SIGTERM']);
+  assert.equal(runningGateToolCount({ group: 'order' }), 0);
+});
+
+test('runGateTool logFile: 출력은 파이프가 아니라 파일로(창구가 먼저 끝나도 EPIPE 없음), 끝나면 파일에서 읽는다', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gate-log-'));
+  try {
+    const logFile = join(dir, 'logs', 'CF-1.log');
+    let stdio = null;
+    const spawnImpl = (cmd, args, opts) => {
+      stdio = opts.stdio;
+      const child = new EventEmitter();
+      child.stdout = null; child.stderr = null;
+      child.stdin = { on() {}, end() { setImmediate(() => { writeFileSync(logFile, '✅ 접수\n'); child.emit('close', 0); }); } };
+      child.kill = () => {};
+      return child;
+    };
+    const out = await runGateTool('place-nh-direct-order.mjs', [], { env: {}, group: 'order', allowed: () => true, spawnImpl, logFile });
+    assert.equal(typeof stdio[1], 'number');
+    assert.equal(stdio[1], stdio[2]);
+    assert.equal(out, '✅ 접수');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
