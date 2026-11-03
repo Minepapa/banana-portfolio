@@ -14,23 +14,23 @@ const holding = (account, name, qty, keys, extra = {}) => ({
   account, name, qty, appliedDedupKeys: JSON.stringify(keys), ...extra,
 });
 
-test('알파벳 실사례: 전량매도 뒤 되살아난 옛 사본 위에 매수가 쌓이면 빠진 체결을 잡는다', () => {
-  const name = '알파벳 Class A';
+test('실사고 패턴(가상 숫자): 전량매도 뒤 되살아난 옛 사본 위에 매수가 쌓이면 빠진 체결을 잡는다', () => {
+  const name = '가상해외주식';
   const executions = [
-    exec('위탁', name, '2026-10-22 00:00:00', '매수', 2, '2026-10-23T07:05:00.000Z'),
-    exec('위탁', name, '2026-10-27 00:00:00', '매수', 2, '2026-10-28T07:05:00.000Z'),
-    exec('위탁', name, '2026-10-28 00:00:00', '매도', 22, '2026-10-29T07:05:00.000Z'),
-    exec('위탁', name, '2026-10-29 00:00:00', '매수', 5, '2026-10-30T07:05:00.000Z'),
+    exec('위탁', name, '2026-05-11 00:00:00', '매수', 3, '2026-05-12T07:05:00.000Z'),
+    exec('위탁', name, '2026-05-14 00:00:00', '매수', 3, '2026-05-15T07:05:00.000Z'),
+    exec('위탁', name, '2026-05-15 00:00:00', '매도', 16, '2026-05-16T07:05:00.000Z'),
+    exec('위탁', name, '2026-05-18 00:00:00', '매수', 4, '2026-05-19T07:05:00.000Z'),
   ];
-  // 10-23 시점 사본(키 1개)이 되살아난 뒤 10-29 매수 5주가 그 위에 적용됨.
-  const holdings = [holding('위탁', name, 25, [executions[0].dedupKey, executions[3].dedupKey])];
+  // 첫 매수 직후 사본(13주, 키 1개)이 되살아난 뒤 마지막 매수 4주가 그 위에 적용됨.
+  const holdings = [holding('위탁', name, 17, [executions[0].dedupKey, executions[3].dedupKey])];
   const result = findRevertedHoldings(executions, holdings);
   assert.equal(result.length, 1);
   assert.equal(result[0].account, '위탁');
   assert.equal(result[0].name, name);
-  assert.equal(result[0].qty, 25);
+  assert.equal(result[0].qty, 17);
   assert.deepEqual(result[0].missing.map((item) => `${item.tradeDate}|${item.tradeType}|${item.quantity}`),
-    ['2026-10-27 00:00:00|매수|2', '2026-10-28 00:00:00|매도|22']);
+    ['2026-05-14 00:00:00|매수|3', '2026-05-15 00:00:00|매도|16']);
   assert.equal(result[0].missing[1].dedupKey, executions[2].dedupKey);
 });
 
@@ -45,20 +45,20 @@ test('정상: 부분 매도 뒤 키가 계속 누적되면 이상 없음', () =>
 
 test('정상: 전량청산 뒤 신규 매수로 키가 새로 시작하면 청산 전 이력은 보지 않는다', () => {
   const executions = [
-    exec('위탁', '엔비디아', '2026-09-01 09:00:00', '매수', 5, '2026-09-01T07:05:00.000Z'),
-    exec('위탁', '엔비디아', '2026-09-05 09:00:00', '매도', 5, '2026-09-05T07:05:00.000Z'),
-    exec('위탁', '엔비디아', '2026-09-08 14:00:00', '매수', 3, '2026-09-08T07:05:00.000Z'),
+    exec('위탁', '가상해외주식B', '2026-09-01 09:00:00', '매수', 5, '2026-09-01T07:05:00.000Z'),
+    exec('위탁', '가상해외주식B', '2026-09-05 09:00:00', '매도', 5, '2026-09-05T07:05:00.000Z'),
+    exec('위탁', '가상해외주식B', '2026-09-08 14:00:00', '매수', 3, '2026-09-08T07:05:00.000Z'),
   ];
-  assert.deepEqual(findRevertedHoldings(executions, [holding('위탁', '엔비디아', 3, [executions[2].dedupKey])]), []);
+  assert.deepEqual(findRevertedHoldings(executions, [holding('위탁', '가상해외주식B', 3, [executions[2].dedupKey])]), []);
 });
 
 test('정상: 날짜만 있는 NH 체결로 같은 날 전량매도 뒤 재매수하면 매도는 누락이 아니다', () => {
   const executions = [
-    exec('위탁', '알파벳 Class A', '2026-10-20 00:00:00', '매수', 4, '2026-10-21T07:05:00.000Z'),
-    exec('위탁', '알파벳 Class A', '2026-10-28 00:00:00', '매도', 4, '2026-10-29T07:05:00.100Z'),
-    exec('위탁', '알파벳 Class A', '2026-10-28 00:00:00', '매수', 3, '2026-10-29T07:05:00.200Z'),
+    exec('위탁', '가상해외주식', '2026-05-04 00:00:00', '매수', 4, '2026-05-05T07:05:00.000Z'),
+    exec('위탁', '가상해외주식', '2026-05-12 00:00:00', '매도', 4, '2026-05-13T07:05:00.100Z'),
+    exec('위탁', '가상해외주식', '2026-05-12 00:00:00', '매수', 3, '2026-05-13T07:05:00.200Z'),
   ];
-  assert.deepEqual(findRevertedHoldings(executions, [holding('위탁', '알파벳 Class A', 3, [executions[2].dedupKey])]), []);
+  assert.deepEqual(findRevertedHoldings(executions, [holding('위탁', '가상해외주식', 3, [executions[2].dedupKey])]), []);
 });
 
 test('정상: 알림 누락분을 나중에 반영해 과거 체결시각 키가 새 파일에 들어와도 옛 로트 매도는 누락이 아니다', () => {
@@ -66,7 +66,7 @@ test('정상: 알림 누락분을 나중에 반영해 과거 체결시각 키가
     exec('위탁', '테스트', '2026-10-10 00:00:00', '매수', 5, '2026-10-10T07:05:00.000Z'),
     exec('위탁', '테스트', '2026-10-19 00:00:00', '매도', 5, '2026-10-19T07:05:00.000Z'),
     exec('위탁', '테스트', '2026-10-20 00:00:00', '매수', 2, '2026-10-20T07:05:00.000Z'),
-    // 10-18 매수 알림이 빠졌다가 10-25에 오너 확인 행으로 반영됨.
+    // 앞선 매수 알림이 빠졌다가 며칠 뒤 오너 확인 행으로 반영됨.
     exec('위탁', '테스트', '2026-10-18 00:00:00', '매수', 1, '2026-10-25T07:05:00.000Z', { source: 'OWNER_CONFIRMED' }),
   ];
   const holdings = [holding('위탁', '테스트', 3, [executions[2].dedupKey, executions[3].dedupKey])];
@@ -138,15 +138,15 @@ test('같은 날짜 체결도 첫 키보다 나중에 반영됐는데 빠지면 
 
 test('경고 메시지: 4단 구조·종목당 사실 한 항목·체결 한 줄씩·HTML 이스케이프·플루토스 발신', () => {
   const message = buildRevertedHoldingsMessage([
-    { account: '위탁', name: '알파벳 Class A', qty: 25, missing: [
-      { tradeDate: '2026-10-27 00:00:00', tradeType: '매수', quantity: 2 },
-      { tradeDate: '2026-10-28 00:00:00', tradeType: '매도', quantity: 22 }] },
-    { account: 'ISA', name: 'TIGER 미국S&P500', qty: 5, missing: Array.from({ length: 7 }, (_, index) => (
+    { account: '위탁', name: '가상해외주식', qty: 17, missing: [
+      { tradeDate: '2026-05-14 00:00:00', tradeType: '매수', quantity: 3 },
+      { tradeDate: '2026-05-15 00:00:00', tradeType: '매도', quantity: 16 }] },
+    { account: 'ISA', name: '가상 S&P500 ETF', qty: 5, missing: Array.from({ length: 7 }, (_, index) => (
       { tradeDate: `2026-10-0${index + 1} 09:00:00`, tradeType: '매수', quantity: 1 })) },
   ]);
   assert.equal(message.agent, 'plutus');
   assert.equal(message.facts.length, 2);
-  assert.equal(message.facts[0], '위탁 알파벳 Class A: 보유 파일 25주, 빠진 체결 2건\n10-27 매수 2주\n10-28 매도 22주');
+  assert.equal(message.facts[0], '위탁 가상해외주식: 보유 파일 17주, 빠진 체결 2건\n05-14 매수 3주\n05-15 매도 16주');
   assert.match(message.facts[1], /S&amp;P500/);
   assert.match(message.facts[1], /\n외 2건$/);
   const text = renderAgentMessage(message);

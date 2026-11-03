@@ -1,8 +1,8 @@
 // 보유 파일이 옛 버전으로 되돌아간 흔적을 찾는 순수 판정(읽기 전용, 쓰기·발송 없음).
 //
-// ⚠️ 실사고(2026-10-28) — 위탁 알파벳 22주 전량 매도가 반영돼 보유 파일이 지워졌는데,
-// 같은 날 볼트 동기화(LiveSync) 이상으로 10-23 시점 옛 사본(20주, 적용 키 1개)이
-// 되살아났다. 이후 매수가 그 위에 쌓여 28주(실제 8주)로 보였다. 체결 원장은 정상이고
+// ⚠️ 실사고(2026-10, 경위는 볼트 Requests 노트) — 위탁 해외주식 한 종목의 전량 매도가 반영돼 보유 파일이
+// 지워졌는데, 볼트 동기화(LiveSync)의 숨은 충돌 사본으로 며칠 전 옛 사본(적용 키 1개)이 되살아났다.
+// 이후 매수가 그 위에 쌓여 실제보다 훨씬 많은 수량으로 보였다. 체결 원장은 정상이고
 // 모든 체결이 holdingsApplied:true였다 — 즉 "반영됐다고 표시된 체결이 보유 파일의 적용
 // 키 목록에 없다"는 것이 되돌아감의 지문이다. 예방이 아니라 하루 안에 알리는 감지용이다.
 //
@@ -70,7 +70,7 @@ export function buildRevertedHoldingsMessage(anomalies) {
   const facts = anomalies.map(({ account, name, qty, missing }) => {
     const lines = missing.slice(0, 5).map((item) => `${String(item.tradeDate).slice(5, 10)} ${item.tradeType} ${item.quantity}주`);
     if (missing.length > lines.length) lines.push(`외 ${missing.length - lines.length}건`);
-    // 종목명에 &가 들어간다(예: TIGER 미국S&P500). HTML 발송이라 이스케이프한다.
+    // 종목명에 &가 들어갈 수 있다(예: 'S&P500'이 든 ETF 이름). HTML 발송이라 이스케이프한다.
     return [`${escapeHtml(account)} ${escapeHtml(name)}: 보유 파일 ${qty}주, 빠진 체결 ${missing.length}건`, ...lines].join('\n');
   });
   // 판정이 적용 키 목록 기준이라 수량만 고치면 다음 실행에도 같은 경고가 나간다.
@@ -82,7 +82,7 @@ export function buildRevertedHoldingsMessage(anomalies) {
     agent: 'plutus', kind: '판단', topic: '경고', llm: false,
     conclusion: `보유 파일 ${anomalies.length}종목이 옛 버전으로 되돌아갔을 가능성이 있습니다.`,
     facts,
-    context: '원장에는 반영 완료로 표시된 체결이 보유 파일의 적용 기록에서 빠져 있습니다. 볼트 동기화가 옛 사본을 되살린 2026-10-28 알파벳 사고와 같은 모양입니다.',
+    context: '원장에는 반영 완료로 표시된 체결이 보유 파일의 적용 기록에서 빠져 있습니다. 볼트 동기화가 지운 보유 파일을 옛 사본으로 되살렸던 2026-10 사고와 같은 모양입니다.',
     decisions,
   };
 }
