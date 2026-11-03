@@ -42,6 +42,7 @@ export const JOB_LABELS = {
   // API 없는 ISA·연금저축 2계좌만 처리(6계좌→2계좌로 범위 축소).
   'reconcile-irp': `IRP 계좌 KIS API 종목 대사 + 예수금 ${VAULT_REL.stateHoldings} 직접기록`,
   'reconcile-nh-cash': `위탁·CMA·금현물 예수금 NH PLUG API 직접조회(${VAULT_REL.stateHoldings} 직접기록, 2026-09-03 신설)`,
+  'reconcile-holdings-ledger': `${VAULT_REL.stateHoldings} 보유 수량을 체결 원장(Executions·FundPurchases) 재생 결과와 대조, 불일치·중복 체결·미반영 체결을 하루 1회 경고(읽기 전용, 2026-11-03 신설)`,
   'reconcile-nh-fx-rp': `위탁 계좌 외화RP 보유수량을 NH PLUG API 거래이력(FIFO 로트재구성)으로 유도해 ${VAULT_REL.stateHoldings} qty 직접기록(2026-09-19 신설, 평가금액은 update-holdings-prices.mjs가 별도 갱신)`,
   'reconcile-irp-executions': `IRP 체결을 KIS 퇴직연금 체결조회 API로 직접 폴링해 ${VAULT_REL.factsLedgerExecutions} 기록(2026-09-03 신설)`,
   'reconcile-nh-executions': `위탁·금현물 체결을 NH REST 체결조회 API로 직접 폴링해 ${VAULT_REL.factsLedgerExecutions} 기록(2026-09-03 신설)`,
@@ -133,6 +134,7 @@ export const JOB_SHORT_LABELS = {
   'reconcile-irp': 'IRP 잔고 대조',
   'reconcile-nh-cash': 'NH 예수금 대조',
   'reconcile-nh-fx-rp': 'NH 외화RP 대조',
+  'reconcile-holdings-ledger': '보유↔원장 대조',
   'reconcile-irp-executions': 'IRP 체결 대조',
   'reconcile-nh-executions': 'NH 체결 대조',
   'expire-stale-nh-orders': 'NH 미체결 만료',

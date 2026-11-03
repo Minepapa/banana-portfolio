@@ -59,6 +59,7 @@ export const JOB_OWNERS = {
   'reconcile-irp': 'plutus',
   'reconcile-nh-cash': 'plutus',
   'reconcile-nh-fx-rp': 'plutus',
+  'reconcile-holdings-ledger': 'plutus', // 보유↔체결 원장 재생 대조(장부 품질)
   'reconcile-irp-executions': 'plutus',
   'reconcile-nh-executions': 'plutus',
   'expire-stale-nh-orders': 'plutus',

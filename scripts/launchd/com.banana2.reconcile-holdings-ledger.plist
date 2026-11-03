@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.reconcile-holdings-ledger</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>reconcile-holdings-ledger</string>
+  </array>
+  <!-- 보유↔체결 원장 재생 대조(2026-11-03 신설, 데이터 체계 개선 ⑥). 읽기 전용 감시라 하루 1회면 된다.
+       매일 21:10: 평일 15:50~16:13 체결 반영 배치(reconcile-*-executions → update-holdings-from-executions
+       → update-fund-holdings-from-purchases)와 저녁 일괄 체결 안내가 온 뒤. 같은 날 늦게 온
+       알림은 아직 미반영이어도 24시간 전에는 경고하지 않는다(lib/holdings-ledger-recon STALE_PENDING_MS).
+       ⚠️ 등록 전 run.sh case 줄과 볼트 무인잡-카탈로그 행을 같이 넣는다(vault-job-catalog-audit 테스트). -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>21</integer>
+    <key>Minute</key><integer>10</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/reconcile-holdings-ledger.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/reconcile-holdings-ledger.log</string>
+</dict>
+</plist>

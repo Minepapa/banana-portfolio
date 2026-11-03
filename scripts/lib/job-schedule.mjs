@@ -100,6 +100,9 @@ export const EXPECTED_INTERVALS_MS = {
   // 안전망들과 동일 원칙(intraday-portfolio-sync 10분마다 + 고정시각 안전망 1개),
   // 동일 48h 간격.
   'update-fund-holdings-from-purchases': 48 * 60 * 60 * 1000,
+  // reconcile-holdings-ledger(2026-11-03 신설, 데이터 체계 개선 ⑥) — 보유↔체결 원장 재생 대조, 매일 21:10 KST
+  // 1회(평일 16시대 체결 반영 배치·저녁 일괄 체결 안내 뒤). 요일 제한이 없어 24h.
+  'reconcile-holdings-ledger': 24 * 60 * 60 * 1000,
   // ⚠️ 버그 수정(2026-08-23, 오너 신고 — 리포트는 실제로 발행됐는데 "조용하다" 오알람) —
   // backup-vault와 완전히 같은 클래스의 재발이다: 이 두 잡을 추가할 때 기본값(1시간)
   // 이 적용된 채 여기 등록을 안 해서, 정상 실행 후 2시간만 지나면 매번 오탐이 났다.
@@ -261,6 +264,9 @@ export const JOB_FIRST_HEARTBEAT_BY = {
   'telegram-gate-health-check': '2026-11-09',
   // 연 1회(1월 1~3일) 잡. 첫 실행 다음날까지.
   'annual-instrument-rescore': '2027-01-04',
+  // 보유↔원장 재생 대조 — plist는 저장소에 있지만 launchctl 등록은 오너 승인 뒤 제우스가 한다(2026-11-03).
+  // 등록일이 늦어지면 이 날짜도 같이 옮긴다(안 옮기면 미등록 잡으로 경보가 나간다).
+  'reconcile-holdings-ledger': '2026-11-10',
 };
 export const RETIRED_JOBS = new Set(['media-diarize', 'media-faces-nightly', 'media-transcribe', 'media-vision']);
 
