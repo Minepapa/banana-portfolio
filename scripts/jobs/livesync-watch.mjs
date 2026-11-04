@@ -12,6 +12,9 @@
  *     정상이면 번호가 계속 오른다) "Mac → 서버 업로드 멈춤"으로 본다. 볼트도 조용하면 멈춤이 아니다.
  *   - LiveSync가 올리지 않는 경로(플러그인 설정 syncIgnoreRegEx·syncOnlyRegEx)의 변경은 세지 않는다(2026-11-04,
  *     lib/livesync-filter.mjs). 설정을 못 읽거나 깨졌으면 예전처럼 모든 경로를 센다.
+ *   - 설정 파일은 있는데 못 읽거나 깨졌으면(read-fail·parse-fail·bad-type) 멈춤이어도 재시작하지 않고
+ *     "판정을 확신할 수 없음"만 6시간에 한 번 알린다(제우스 결정, 리뷰 MEDIUM-1). 파일이 아예 없으면(missing)
+ *     규칙이 없다는 뜻이라 예전 경로 그대로다. 필터 상태는 회차마다 상태 파일 liveSyncFilter에 남긴다.
  *   - 한계(리뷰 MEDIUM): update_seq는 DB 전체 번호라 폰이 쓴 변경도 올린다. 폰을 30분보다 자주 쓰면 감지가
  *     늦어질 수 있고, 재시작 뒤 "업로드 재개"(번호 증가) 판정도 근사치다. 문서 경로가 암호화돼 있어
  *     Mac 쪽 문서만 따로 확인할 수 없다.
@@ -138,6 +141,27 @@ export function parseTailscaleState(out) {
   } catch { return null; }
 }
 
+// 설정 파일은 있는데 읽지 못한 상태 — 이때는 제외 규칙을 모르므로 멈춤 판정을 믿지 않는다.
+const FILTER_UNCERTAIN = new Set(['read-fail', 'parse-fail', 'bad-type']);
+
+// 멈춤 회차에서 LiveSync 설정 상태가 불확실하면 재시작 대신 오너 알림만(6시간에 한 번, lastFilterAlertAt).
+// 반환 true = 이 회차는 여기서 끝(재시작하지 않음). false = 기존 재시작 경로로 간다(ok·missing).
+// 불변식: true를 돌려주는 경로에서는 restartObsidian·commitBaseline을 절대 부르지 않는다. 발송 전에 상태를 써서
+// 발송이 죽어도 6시간 상한을 지킨다(notifyTailscale과 같은 순서).
+export async function guardUncertainFilter(state, filterStatus, reason, now, { notify: send, writeState: save }) {
+  if (!FILTER_UNCERTAIN.has(filterStatus)) return false;
+  const due = dueAgain(state.lastFilterAlertAt, now);
+  if (due) state.lastFilterAlertAt = now.toISOString();
+  save(state);
+  if (due) {
+    await send([
+      `LiveSync 설정을 읽지 못해 멈춤 판정을 확신할 수 없습니다(${reason}, 설정 상태 ${filterStatus}).`,
+      'Obsidian은 다시 켜지 않았습니다. Mac Obsidian의 LiveSync 설정과 동기화 상태를 직접 확인해 주세요.',
+    ]);
+  }
+  return true;
+}
+
 // 같은 종류 알림을 6시간에 한 번만 보내기 위한 판정.
 export function dueAgain(lastIso, now) {
   return !lastIso || now.getTime() - Date.parse(lastIso) >= ESCALATE_REPEAT_MS;
@@ -148,7 +172,7 @@ export function dueAgain(lastIso, now) {
 // 바뀌어도 번호가 오르지 않으므로 세지 않는다. 판정 경로는 플러그인처럼 볼트 기준 `/` 구분 상대 경로다
 // (path.join이 아니라 '/'로 잇는다). 설정을 못 읽거나 깨졌으면 filter가 null이라 예전처럼 모든 경로를 센다
 // (lib/livesync-filter.mjs 불변식). 한계: 제외 경로만 바뀌는 시간대에는 실제 멈춤도 그만큼 늦게 안다.
-export function vaultChangedAfter(root, afterMs, filter = readLiveSyncFilter(root, (m) => console.log(`[${JOB}] ${m}`))) {
+export function vaultChangedAfter(root, afterMs, filter = readLiveSyncFilter(root, (m) => console.log(`[${JOB}] ${m}`)).filter) {
   const visit = (dir, rel, top) => {
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return false; }
@@ -157,7 +181,7 @@ export function vaultChangedAfter(root, afterMs, filter = readLiveSyncFilter(roo
       const abs = join(dir, e.name);
       const relPath = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) { if (visit(abs, relPath, false)) return true; continue; }
-      if (!isLiveSyncTarget(relPath, filter)) continue;
+      if (!isLiveSyncTarget(relPath.normalize('NFC'), filter)) continue; // Obsidian 경로는 NFC(리뷰 LOW-2)
       try { if (statSync(abs).mtimeMs > afterMs) return true; } catch { /* 사이에 지워짐 */ }
     }
     return false;
@@ -319,21 +343,25 @@ async function main() {
   const running = obsidianRunning();
   const liveSync = readLiveSyncStatus(running);
   const prev = readState();
+  const lsFilter = readLiveSyncFilter(VAULT_PATHS.root, (m) => console.log(`[${JOB}] ${m}`));
+  const liveSyncFilter = { status: lsFilter.status, invalidRules: lsFilter.invalidRules,
+    pluginVersion: lsFilter.pluginVersion, versionOk: lsFilter.versionOk };
   let seq;
   try { seq = readCouchSeq(); } catch (e) {
     // 서버 장애는 재시작 대상이 아니다 — 카드용 상태만 남기고 잡 FAIL(health-watcher가 알린다).
-    if (!dryRun) writeState({ ...prev, lastCheckAt: now.toISOString(), status: 'server-error', tailscale, liveSyncWarning: liveSync?.warning ?? null });
+    if (!dryRun) writeState({ ...prev, lastCheckAt: now.toISOString(), status: 'server-error', tailscale, liveSyncWarning: liveSync?.warning ?? null, liveSyncFilter });
     throw e;
   }
-  const result = evaluate(prev, { seq, now, vaultChangedAfter: (ms) => vaultChangedAfter(VAULT_PATHS.root, ms) });
+  const result = evaluate(prev, { seq, now, vaultChangedAfter: (ms) => vaultChangedAfter(VAULT_PATHS.root, ms, lsFilter.filter) });
   const cause = classifyCause({ tailscale });
   console.log(`[${JOB}] seq ${seq} · ${result.reason}${running ? '' : ' · Obsidian 꺼짐'} · Tailscale ${tailscale ?? '모름'}`
-    + `${liveSync?.warning ? ` · LiveSync 경고: ${liveSync.warning}` : ''}`);
+    + `${liveSync?.warning ? ` · LiveSync 경고: ${liveSync.warning}` : ''} · 제외 규칙 ${lsFilter.status}`);
   if (dryRun) {
-    if (result.stalled) console.log(`[${JOB}] 멈춤 — ${cause.restart ? planAction(result.state, now).action : 'Tailscale 끊김 — 재시작 안 함'}`);
+    if (result.stalled) console.log(`[${JOB}] 멈춤 — ${!cause.restart ? 'Tailscale 끊김 — 재시작 안 함'
+      : FILTER_UNCERTAIN.has(lsFilter.status) ? `LiveSync 설정 ${lsFilter.status} — 재시작 안 함, 알림만` : planAction(result.state, now).action}`);
     return;
   }
-  const state = { ...result.state, lastCheckAt: now.toISOString(), tailscale, liveSyncWarning: liveSync?.warning ?? null };
+  const state = { ...result.state, lastCheckAt: now.toISOString(), tailscale, liveSyncWarning: liveSync?.warning ?? null, liveSyncFilter };
   state.status = cause.cause === 'tailscale' ? 'tailscale' : result.stalled ? 'stalled' : 'ok';
   await recheckPendingReverts(state, now);
   const ts = planTailscale(state, tailscale, now);
@@ -343,6 +371,10 @@ async function main() {
   if (ts.skipRestart) {
     console.log(`[${JOB}] 멈춤 — ${cause.restart ? 'Tailscale 막 복구, 이번 회차는 재시작 안 함' : `Tailscale ${tailscale}, 재시작 안 함`}`);
     writeState(state);
+    return;
+  }
+  if (await guardUncertainFilter(state, lsFilter.status, result.reason, now, { notify, writeState })) {
+    console.log(`[${JOB}] 멈춤 — LiveSync 설정 ${lsFilter.status}, 판정을 확신할 수 없어 재시작 안 함`);
     return;
   }
 

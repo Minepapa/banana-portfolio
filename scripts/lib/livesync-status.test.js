@@ -31,7 +31,11 @@ test('summarizeLiveSyncState: 상태 코드·24시간 재시작·감시 끊김(4
     restarts: [ago(25 * 60), ago(120), ago(30)], pendingRevertCheck: { base: 'abc', reported: ['10_Periodic/x.md'] } };
   const s = summarizeLiveSyncState(state, NOW);
   assert.deepEqual(s, { status: 'ok', checkedAt: ago(3), serverChangedAt: ago(5), restarts24h: 2, lastRestartAt: ago(30),
-    tailscale: 'Running', warning: null }, '파일 이름(되돌림 목록)·기준점은 내보내지 않는다');
+    tailscale: 'Running', warning: null, filterStatus: null, filterVersionOk: null }, '파일 이름(되돌림 목록)·기준점은 내보내지 않는다');
+  const withFilter = summarizeLiveSyncState({ ...state, liveSyncFilter: { status: 'parse-fail', invalidRules: 0, pluginVersion: '1.0.43', versionOk: false } }, NOW);
+  assert.equal(withFilter.filterStatus, 'parse-fail', '제외 규칙 읽기 상태는 카드에 보인다');
+  assert.equal(withFilter.filterVersionOk, false);
+  assert.equal(summarizeLiveSyncState({ ...state, liveSyncFilter: { status: 'weird' } }, NOW).filterStatus, null);
   assert.equal(summarizeLiveSyncState({ ...state, status: 'tailscale', tailscale: 'NeedsLogin' }, NOW).status, 'tailscale');
   assert.equal(summarizeLiveSyncState({ ...state, liveSyncWarning: 'x.ts.net ERR_NAME_NOT_RESOLVED' }, NOW).warning,
     '서버 이름을 찾지 못함(Tailscale·DNS)', '카드에는 분류 문구만');

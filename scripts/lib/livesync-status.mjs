@@ -10,6 +10,7 @@ const DAY_MS = 24 * 60 * 60_000;
 // 감시 잡은 15분마다 돈다. 45분 넘게 확인 기록이 없으면 감시 자체가 멈춘 것으로 본다.
 export const CHECK_STALE_MS = 45 * 60_000;
 export const STATUS_CODES = ['ok', 'stalled', 'tailscale', 'server-error'];
+export const FILTER_STATUS_CODES = ['ok', 'missing', 'read-fail', 'parse-fail', 'bad-type'];
 
 // LiveSync 상태 표시줄 문구에서 경고(⚠️ 뒤)만 뽑는다. URL·이모지를 지우고 120자로 자른다.
 // 이 원문은 로그와 볼트 밖 상태 파일에만 둔다. 오너에게 가는 문장(텔레그램·카드)은 describeLiveSyncWarning의
@@ -45,6 +46,9 @@ export function summarizeLiveSyncState(state, now = new Date()) {
     lastRestartAt: restarts.at(-1) ?? null, // 쓰는 쪽이 항상 끝에 덧붙인다(시간순)
     tailscale: typeof state.tailscale === 'string' ? state.tailscale : null,
     warning: describeLiveSyncWarning(typeof state.liveSyncWarning === 'string' ? state.liveSyncWarning : null),
+    // LiveSync 제외 규칙 읽기 상태(2026-11-04, livesync-watch). 상태 코드·판 일치 여부만 내보낸다.
+    filterStatus: FILTER_STATUS_CODES.includes(state.liveSyncFilter?.status) ? state.liveSyncFilter.status : null,
+    filterVersionOk: typeof state.liveSyncFilter?.versionOk === 'boolean' ? state.liveSyncFilter.versionOk : null,
   };
   if (!Number.isFinite(checkedMs)) return { status: 'unknown', reason: '감시 기록 없음', ...base };
   if (nowMs - checkedMs > CHECK_STALE_MS) return { status: 'unknown', reason: '감시 잡이 45분 넘게 확인하지 않음', ...base };
