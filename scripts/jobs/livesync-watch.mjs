@@ -10,6 +10,8 @@
  *   - CouchDB 변경 번호(update_seq)가 마지막으로 바뀐 시각을 볼트 밖 상태 파일에 기억한다.
  *   - 번호가 STALL_MS(30분) 넘게 그대로인데, 그 뒤에 볼트 파일이 바뀌었으면(잡들이 10분마다 쓰므로
  *     정상이면 번호가 계속 오른다) "Mac → 서버 업로드 멈춤"으로 본다. 볼트도 조용하면 멈춤이 아니다.
+ *   - LiveSync가 올리지 않는 경로(플러그인 설정 syncIgnoreRegEx·syncOnlyRegEx)의 변경은 세지 않는다(2026-11-04,
+ *     lib/livesync-filter.mjs). 설정을 못 읽거나 깨졌으면 예전처럼 모든 경로를 센다.
  *   - 한계(리뷰 MEDIUM): update_seq는 DB 전체 번호라 폰이 쓴 변경도 올린다. 폰을 30분보다 자주 쓰면 감지가
  *     늦어질 수 있고, 재시작 뒤 "업로드 재개"(번호 증가) 판정도 근사치다. 문서 경로가 암호화돼 있어
  *     Mac 쪽 문서만 따로 확인할 수 없다.
@@ -52,6 +54,7 @@ import { MOUSEION_TOP_FOLDERS } from '../lib/vault-layout.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender } from '../lib/direct-warning-delivery.mjs';
 import { LIVESYNC_STATE_FILE, describeLiveSyncWarning, parseLiveSyncStatusText } from '../lib/livesync-status.mjs';
+import { isLiveSyncTarget, readLiveSyncFilter } from '../lib/livesync-filter.mjs';
 
 const JOB = 'livesync-watch';
 const SENDER_AGENT = 'clio'; // 볼트·동기화는 클리오 담당
@@ -141,19 +144,25 @@ export function dueAgain(lastIso, now) {
 }
 
 // 볼트에서 afterMs보다 늦게 바뀐 파일이 하나라도 있으면 true(찾는 즉시 멈춤).
-export function vaultChangedAfter(root, afterMs) {
-  const visit = (dir, top) => {
+// LiveSync가 올리지 않는 경로(설정 syncIgnoreRegEx·syncOnlyRegEx, 2026-11-04 오너 승인으로 95_Etna 고빈도 기계 데이터 제외)는
+// 바뀌어도 번호가 오르지 않으므로 세지 않는다. 판정 경로는 플러그인처럼 볼트 기준 `/` 구분 상대 경로다
+// (path.join이 아니라 '/'로 잇는다). 설정을 못 읽거나 깨졌으면 filter가 null이라 예전처럼 모든 경로를 센다
+// (lib/livesync-filter.mjs 불변식). 한계: 제외 경로만 바뀌는 시간대에는 실제 멈춤도 그만큼 늦게 안다.
+export function vaultChangedAfter(root, afterMs, filter = readLiveSyncFilter(root, (m) => console.log(`[${JOB}] ${m}`))) {
+  const visit = (dir, rel, top) => {
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return false; }
     for (const e of entries) {
       if (isIgnoredName(e.name) || (top && SKIP_TOP.has(e.name))) continue;
       const abs = join(dir, e.name);
-      if (e.isDirectory()) { if (visit(abs, false)) return true; continue; }
+      const relPath = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) { if (visit(abs, relPath, false)) return true; continue; }
+      if (!isLiveSyncTarget(relPath, filter)) continue;
       try { if (statSync(abs).mtimeMs > afterMs) return true; } catch { /* 사이에 지워짐 */ }
     }
     return false;
   };
-  return visit(root, true);
+  return visit(root, '', true);
 }
 
 function readCouchSeq() {
