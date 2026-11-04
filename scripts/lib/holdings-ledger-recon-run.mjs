@@ -15,6 +15,11 @@
 //   - 기준점 파일을 덮어쓰기 전에는 항상 타임스탬프 백업을 남기고, 바뀐 종목마다 "이전 → 새"를 로그에 남긴다.
 //   - 종목 단위 재설정 키가 하나라도 거부되면 아무것도 쓰지 않고 실패한다(부분 적용 금지).
 //   - 같은 이상 묶음 경고는 KST 하루 1회. 억제 기록은 발송(또는 아침 보류 큐 등록) 성공 뒤에만 남긴다.
+//   - 위탁 해외주식 외부 대사(보유 ↔ NH 해외주식 잔고, holdings-gb-balance-recon.mjs, 2026-11-04 제우스)는 원장 대조·
+//     기준점 저장·원장 경고가 다 끝난 뒤의 덧붙임 단계다. 조회 실패·빈 응답·구조 이상·내부 오류는 '외부 대사 건너뜀'
+//     (사유 포함)으로 기록만 하고 던지지 않는다 — 원장 대조 결과·기준점·원장 경고에 영향 0. NH 조회는 주입받은
+//     fetchGbBalance 한 번뿐이고, 미리보기(--dry-run·--anchors)·기준점 재설정에서는 부르지 않는다.
+//     --external-dry-run만 조회하되 쓰기·발송은 미리보기와 같이 하지 않는다.
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -26,15 +31,25 @@ import {
   selectAlertIssues, hasAlertIssues, alertSignature, buildReconMessage, buildAnchorSummaryMessage,
   formatQty, fundPurchaseAsExecution, planAnchors,
 } from './holdings-ledger-recon.mjs';
+import {
+  reconcileGbBalance, buildGbSummary, hasGbAlertIssues, gbAlertSignature, buildGbReconMessage, kstDay as gbKstDay,
+} from './holdings-gb-balance-recon.mjs';
 
 export const ANCHORS_FILENAME = 'holdings-ledger-anchors.json';
 export const ALERTS_FILENAME = 'holdings-ledger-alerts.json';
+// 위탁 해외주식 게시 대기 시작일(볼트 밖 상태 — 2영업일 판정 재료).
+export const GB_PENDING_FILENAME = 'holdings-gb-balance-pending.json';
+// NH 잔고 조회 전체 제한 시간. 원장 사본·원장 경고가 외부 대사 뒤에 이어지므로 NH가 응답을 붙잡아도 이만큼만 늦어진다
+// (잡은 각 HTTP 요청에도 따로 제한을 건다 — 여기는 재시도까지 포함한 마지막 안전망).
+export const GB_FETCH_TIMEOUT_MS = 90_000;
 export const VAULT_COPY_SCHEMA_VERSION = 1;
 
 export function parseReconArgs(argv) {
-  const args = { dryRun: false, anchorsFile: null, rebaselineKeys: [], rebaselineAll: false };
+  const args = { dryRun: false, externalDryRun: false, anchorsFile: null, rebaselineKeys: [], rebaselineAll: false };
   for (const arg of argv) {
     if (arg === '--dry-run') args.dryRun = true;
+    // 미리보기 + NH 해외주식 잔고 실조회(쓰기·발송 없음).
+    else if (arg === '--external-dry-run') { args.dryRun = true; args.externalDryRun = true; }
     else if (arg === '--rebaseline-all') args.rebaselineAll = true;
     else if (arg.startsWith('--anchors=')) {
       const file = arg.slice('--anchors='.length).trim();
@@ -55,6 +70,9 @@ export function parseReconArgs(argv) {
     throw new Error('--anchors와 기준점 재설정은 함께 쓸 수 없음');
   }
   if (args.rebaselineAll && args.rebaselineKeys.length) throw new Error('--rebaseline-all과 --rebaseline=은 함께 쓸 수 없음');
+  if (args.externalDryRun && (args.anchorsFile || args.rebaselineAll || args.rebaselineKeys.length)) {
+    throw new Error('--external-dry-run은 --anchors·기준점 재설정과 함께 쓸 수 없음');
+  }
   return args;
 }
 
@@ -97,7 +115,7 @@ function readVaultAnchors(vaultFile, { allowBroken = false, logError }) {
 }
 
 // 볼트 사본 내용. generatedAt만 매번 바뀌고 나머지는 대조 결과가 같으면 같다(비교 키에서 generatedAt을 뺀다).
-export function buildVaultCopy({ anchorsState, anchorsUpdatedAt, rows, issues, held, heldReasons, nowIso }) {
+export function buildVaultCopy({ anchorsState, anchorsUpdatedAt, rows, issues, held, heldReasons, nowIso, externalRecon = null }) {
   const statusCounts = {};
   for (const row of rows) statusCounts[row.status] = (statusCounts[row.status] ?? 0) + 1;
   const sortedCounts = Object.fromEntries(Object.keys(statusCounts).sort().map((status) => [status, statusCounts[status]]));
@@ -119,12 +137,89 @@ export function buildVaultCopy({ anchorsState, anchorsUpdatedAt, rows, issues, h
       ],
       held: held.map((key) => ({ key, reason: heldReasons[key] ?? null })),
     },
+    // 위탁 해외주식 보유 ↔ NH 잔고 외부 대사 요약(buildGbSummary). 원장 대조와 별개 칸.
+    externalRecon,
   };
 }
 
+// 비교 키는 실행 시각(generatedAt·외부 대사 checkedAt)만 뺀다 — 결과가 같으면 쓰지 않게.
 export function vaultCopyCompareKey(text) {
-  const { generatedAt, ...rest } = JSON.parse(text);
-  return JSON.stringify(rest);
+  const { generatedAt, externalRecon, ...rest } = JSON.parse(text);
+  if (externalRecon && typeof externalRecon === 'object') {
+    const { checkedAt, ...externalRest } = externalRecon;
+    return JSON.stringify({ ...rest, externalRecon: externalRest });
+  }
+  return JSON.stringify({ ...rest, externalRecon: externalRecon ?? null });
+}
+
+// 위탁 해외주식 보유 ↔ NH 잔고 외부 대사 단계. 무엇이 실패해도 던지지 않고 { summary, result }로 돌려준다.
+// 실운영에서 판정이 된 날만 게시 대기 상태 파일을 쓴다(건너뛴 날·미리보기는 쓰지 않는다).
+async function runGbBalanceStage({ args, fetchGbBalance, gbFetchTimeoutMs, holdings, executions, stateDir, now, preview, log, logError }) {
+  const checkedAt = now.toISOString();
+  const skip = (reason) => {
+    log(`   외부 대사(위탁 해외주식 ↔ NH 잔고) 건너뜀: ${reason}`);
+    return { summary: { checkedAt, status: 'skipped', reason }, result: { status: 'skipped', reason } };
+  };
+  const rebaseline = args.rebaselineAll || args.rebaselineKeys.length > 0;
+  if (!args.externalDryRun && preview) return skip('미리보기 실행(NH 조회 안 함)');
+  if (rebaseline) return skip('기준점 재설정 실행(NH 조회 안 함)');
+  if (typeof fetchGbBalance !== 'function') return skip('NH 잔고 조회 함수 없음');
+  try {
+    let body;
+    try {
+      let timer;
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error(`${gbFetchTimeoutMs}ms 안에 응답 없음`), { code: 'TIMEOUT' })), gbFetchTimeoutMs);
+      });
+      try { body = await Promise.race([fetchGbBalance(), timeout]); } finally { clearTimeout(timer); }
+    } catch (error) {
+      logError(`   ⚠️  NH 해외주식 잔고 조회 실패(원장 대조와 무관): ${error.message}`);
+      // 볼트 사본에는 단계와 코드만 남긴다(응답 원문은 로그에만).
+      const detail = error.code ?? error.status ?? null;
+      return skip(`NH 조회 실패${error.stage ? `(${error.stage})` : ''}${detail != null ? ` — ${detail}` : ''}`);
+    }
+    const pendingFile = join(stateDir, GB_PENDING_FILENAME);
+    let pendingState = null;
+    let pendingStateReset = false;
+    if (existsSync(pendingFile)) {
+      try {
+        pendingState = readJson(pendingFile);
+        if (!pendingState || typeof pendingState.pending !== 'object' || pendingState.pending == null || Array.isArray(pendingState.pending)) throw new Error('형식이 맞지 않음');
+      } catch (error) {
+        // 시작일을 잃으면 경고가 늦어질 뿐 거짓 경고는 나지 않는다 — 오늘부터 다시 세고 사본에 표시한다.
+        logError(`   ⚠️  게시 대기 상태 파일을 읽지 못함 — 시작일을 오늘부터 다시 셈: ${error.message}`);
+        pendingState = null;
+        pendingStateReset = true;
+      }
+    }
+    const today = gbKstDay(now);
+    const result = reconcileGbBalance({ holdings, executions, body, pendingState, today });
+    if (result.status !== 'ok') return skip(result.reason);
+    log(`   외부 대사(위탁 해외주식 ↔ NH 잔고): 비교 ${result.compared}종목 · 일치 ${result.matched.length} · 게시 대기 ${result.pending.length} · 차이 ${result.mismatches.length}`);
+    for (const item of result.pending) {
+      log(`   - [게시 대기] ${item.key} 보유 ${formatQty(item.holdingsQty ?? 0)} NH ${formatQty(item.nhQty)} (매수 대기 ${formatQty(item.buyPending)} · 매도 대기 ${formatQty(item.sellPending)}, ${item.since}부터 평일 ${item.businessDays}일)`);
+    }
+    for (const item of result.mismatches) {
+      log(`   - [수량 차이${item.side ? `:${item.side}` : ''}] ${item.key} 보유 ${item.holdingsQty == null ? '없음' : formatQty(item.holdingsQty)} NH ${item.nhQty == null ? '없음' : formatQty(item.nhQty)}`);
+    }
+    const summary = { ...buildGbSummary(result, checkedAt), ...(pendingStateReset ? { pendingStateReset: true } : {}) };
+    if (!preview) {
+      try {
+        const next = `${JSON.stringify({ ...result.nextPendingState, updatedAt: checkedAt }, null, 2)}\n`;
+        const prevPending = pendingState ? JSON.stringify(pendingState.pending) : null;
+        if (prevPending !== JSON.stringify(result.nextPendingState.pending)) {
+          mkdirSync(stateDir, { recursive: true });
+          writeAtomic(pendingFile, next);
+        }
+      } catch (error) {
+        logError(`   ⚠️  게시 대기 상태 파일 쓰기 실패(대조·경고는 계속): ${error.message}`);
+      }
+    }
+    return { summary, result };
+  } catch (error) {
+    logError(`   ⚠️  외부 대사 내부 오류(원장 대조와 무관): ${error.message}`);
+    return skip(`외부 대사 내부 오류: ${error.message}`);
+  }
 }
 
 function logReport(log, { rows, replay, duplicates, filenameCounts, unknownFilenames, anchorsLabel }) {
@@ -145,8 +240,10 @@ function logReport(log, { rows, replay, duplicates, filenameCounts, unknownFilen
 // sendWarning(message, signature): 경고 발송(호출부가 경고 원장·보류 큐를 거치게 감싼다).
 // sendInfo(message): 기준점 첫 설정 정보성 요약 발송.
 // vaultFile: 볼트 사본 경로(없으면 볼트 사본을 읽지도 쓰지도 않는다).
+// fetchGbBalance(): NH 해외주식 잔고 응답(getGbBalance 본문)을 돌려주는 함수. 없으면 외부 대사를 건너뛴다.
 export async function runHoldingsLedgerRecon({
-  args, executions, fundPurchases = [], holdings, stateDir, vaultFile = null, sendWarning, sendInfo,
+  args, executions, fundPurchases = [], holdings, stateDir, vaultFile = null, sendWarning, sendInfo, fetchGbBalance = null,
+  gbFetchTimeoutMs = GB_FETCH_TIMEOUT_MS,
   log = console.log, logError = console.error, now = new Date(),
 }) {
   if (vaultFile) assertNotRealVaultInTest(vaultFile);
@@ -154,7 +251,8 @@ export async function runHoldingsLedgerRecon({
   const anchorsFile = join(stateDir, ANCHORS_FILENAME);
   const alertsFile = join(stateDir, ALERTS_FILENAME);
   const result = { wroteAnchors: false, backupFile: null, sentWarning: false, sentInfo: false, suppressed: false,
-    restoredFromVault: false, wroteVaultCopy: false, vaultCopyError: null };
+    restoredFromVault: false, wroteVaultCopy: false, vaultCopyError: null,
+    externalRecon: null, sentGbWarning: false, gbSuppressed: false, gbAlertError: null };
 
   let previous = args.anchorsFile ? null : (existsSync(anchorsFile) ? readJson(anchorsFile) : null);
   if (previous && (typeof previous.anchors !== 'object' || previous.anchors == null)) throw new Error(`기준점 파일 형식 오류: ${anchorsFile}`);
@@ -234,12 +332,15 @@ export async function runHoldingsLedgerRecon({
   result.issues = issues;
   result.rows = rows;
   result.plan = plan;
+  // 외부 대사는 원장 대조·기준점이 다 정해진 뒤에 돈다(그 결과를 읽지도 바꾸지도 않는다).
+  const gbStage = await runGbBalanceStage({ args, fetchGbBalance, gbFetchTimeoutMs, holdings, executions, stateDir, now, preview, log, logError });
+  result.externalRecon = gbStage.summary;
   // 볼트 사본은 경고 발송보다 먼저 쓴다(발송이 실패해도 사본은 남게). 실패해도 대조·경고는 계속하고 호출부가 종료 코드로 알린다.
   if (!preview && vaultFile && plan) {
     try {
       const copy = buildVaultCopy({
         anchorsState: plan.state, anchorsUpdatedAt: result.wroteAnchors ? result.anchorsUpdatedAt : (previous?.updatedAt ?? null),
-        rows, issues, held: plan.held, heldReasons, nowIso: now.toISOString(),
+        rows, issues, held: plan.held, heldReasons, nowIso: now.toISOString(), externalRecon: gbStage.summary,
       });
       mkdirSync(dirname(vaultFile), { recursive: true });
       result.wroteVaultCopy = writeIfChanged(vaultFile, `${JSON.stringify(copy, null, 2)}\n`, { compareKey: vaultCopyCompareKey });
@@ -251,14 +352,19 @@ export async function runHoldingsLedgerRecon({
   }
   if (!hasAlertIssues(issues)) {
     log('✅ 알릴 이상 없음');
-    return result;
-  }
-  const message = buildReconMessage(issues);
-  if (preview) {
+  } else if (preview) {
     log('\n(미리보기 — 경고 발송·억제 기록 없음)\n');
-    log(renderAgentMessage(message));
-    return result;
+    log(renderAgentMessage(buildReconMessage(issues)));
+  } else {
+    await sendLedgerAlert({ issues, stateDir, alertsFile, now, sendWarning, log, logError, result });
   }
+  await sendGbAlert({ gbResult: gbStage.result, preview, stateDir, alertsFile, now, sendWarning, log, logError, result });
+  return result;
+}
+
+// 원장 대조 경고(기존 흐름 그대로 — 발송 실패는 던진다).
+async function sendLedgerAlert({ issues, stateDir, alertsFile, now, sendWarning, log, logError, result }) {
+  const message = buildReconMessage(issues);
   const signature = alertSignature(issues);
   const subjectKey = `holdings-ledger:${createHash('sha256').update(signature).digest('hex').slice(0, 20)}`;
   mkdirSync(stateDir, { recursive: true });
@@ -279,5 +385,41 @@ export async function runHoldingsLedgerRecon({
       logError(`   ⚠️  경고는 보냈으나 하루 1회 억제 기록 실패 — 다음 실행에서 다시 보낼 수 있음: ${error.message}`);
     }
   }, { retries: 300, retryDelayMs: 100 });
-  return result;
+}
+
+// 외부 대사 경고 — 같은 억제 파일·같은 하루 1회 규칙, 원장 경고와 다른 억제 키. 실패해도 던지지 않고 gbAlertError로 남긴다
+// (원장 대조 경고·결과에 영향 0, 호출부가 종료 코드로 알린다).
+async function sendGbAlert({ gbResult, preview, stateDir, alertsFile, now, sendWarning, log, logError, result }) {
+  if (!hasGbAlertIssues(gbResult)) return;
+  const message = buildGbReconMessage(gbResult);
+  if (preview) {
+    log('\n(미리보기 — 외부 대사 경고 발송·억제 기록 없음)\n');
+    log(renderAgentMessage(message));
+    return;
+  }
+  const signature = gbAlertSignature(gbResult);
+  const subjectKey = `holdings-gb-balance:${createHash('sha256').update(signature).digest('hex').slice(0, 20)}`;
+  try {
+    mkdirSync(stateDir, { recursive: true });
+    await withLock(alertsFile, async () => {
+      let state = null;
+      try { state = readJson(alertsFile); } catch { state = null; }
+      const { send, today } = decideDailyAlert(state, subjectKey, now);
+      if (!send) {
+        log('   (같은 외부 대사 이상은 오늘 이미 알림 — 발송 생략)');
+        result.gbSuppressed = true;
+        return;
+      }
+      await sendWarning(message, signature);
+      result.sentGbWarning = true;
+      try {
+        writeAtomic(alertsFile, `${JSON.stringify(recordDailyAlert(state, subjectKey, today))}\n`);
+      } catch (error) {
+        logError(`   ⚠️  외부 대사 경고는 보냈으나 하루 1회 억제 기록 실패 — 다음 실행에서 다시 보낼 수 있음: ${error.message}`);
+      }
+    }, { retries: 300, retryDelayMs: 100 });
+  } catch (error) {
+    result.gbAlertError = error.message;
+    logError(`   ⚠️  외부 대사 경고 발송 실패(원장 대조와 무관): ${error.message}`);
+  }
 }

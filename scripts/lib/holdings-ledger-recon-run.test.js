@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
-  parseReconArgs, runHoldingsLedgerRecon, vaultCopyCompareKey, ANCHORS_FILENAME, ALERTS_FILENAME,
+  parseReconArgs, runHoldingsLedgerRecon, vaultCopyCompareKey, ANCHORS_FILENAME, ALERTS_FILENAME, GB_PENDING_FILENAME,
 } from './holdings-ledger-recon-run.mjs';
 import { REAL_VAULT_ROOT } from './write-if-changed.mjs';
 
@@ -48,7 +48,12 @@ test('CLI: 모르는 인자·--help·빈 --anchors=·맨 --rebaseline·잘못된
     assert.throws(() => parseReconArgs(argv), Error, argv.join(' '));
   }
   assert.deepEqual(parseReconArgs(['--dry-run', '--rebaseline=ISA|가', '--rebaseline=연금저축|나']),
-    { dryRun: true, anchorsFile: null, rebaselineKeys: ['ISA|가', '연금저축|나'], rebaselineAll: false });
+    { dryRun: true, externalDryRun: false, anchorsFile: null, rebaselineKeys: ['ISA|가', '연금저축|나'], rebaselineAll: false });
+  assert.deepEqual(parseReconArgs(['--external-dry-run']),
+    { dryRun: true, externalDryRun: true, anchorsFile: null, rebaselineKeys: [], rebaselineAll: false });
+  for (const argv of [['--external-dry-run', '--anchors=a.json'], ['--external-dry-run', '--rebaseline-all'], ['--external-dry-run', '--rebaseline=ISA|x']]) {
+    assert.throws(() => parseReconArgs(argv), /--external-dry-run/, argv.join(' '));
+  }
 });
 
 test('첫 실행: 기준점 저장, 중복 의심 종목은 보류, 정보성 요약 한 번. 다음 실행은 요약 없음', async (t) => {
@@ -278,4 +283,184 @@ test('볼트 사본 비교 키는 generatedAt만 뺀다', () => {
   const c = JSON.stringify({ schemaVersion: 1, generatedAt: 'y', anchors: { k: 2 } });
   assert.equal(vaultCopyCompareKey(a), vaultCopyCompareKey(b));
   assert.notEqual(vaultCopyCompareKey(a), vaultCopyCompareKey(c));
+});
+
+// ── 위탁 해외주식 보유 ↔ NH 잔고 외부 대사 — NH 조회는 가짜 함수 주입(실API 없음) ──
+const gbHolding = (over = {}) => ({ account: '위탁', assetClass: '해외주식', name: '가상해외주식A', ticker: '', qty: 10, isCashLike: false, ...over });
+const gbBody = (rows) => ({ Output_0: {}, Output_1: rows });
+const gbRow = (over = {}) => ({ iem_cd: 'VAAA', iem_nm: '가상해외주식A', cns_bse_bnc_qty: '10', byn_cns_qty: '0', sll_cns_qty: '0', ...over });
+// 중복 의심 종목 없이(둘째 실행부터 원장 경고가 섞이지 않게) ISA 한 종목 + 위탁 해외주식 한 종목.
+const withGb = (holdingQty = 10) => ({
+  executions: [exec({ filename: 'a.md' })],
+  holdings: [{ account: 'ISA', name: '가상ETF', qty: 15 }, gbHolding({ qty: holdingQty })],
+});
+function fakeFetch(response) {
+  const fetch = async () => {
+    fetch.calls += 1;
+    if (response instanceof Error) throw response;
+    return typeof response === 'function' ? response() : response;
+  };
+  fetch.calls = 0;
+  return fetch;
+}
+// 원장 대조 쪽 결과만 뽑는다(외부 대사가 이것을 바꾸면 안 된다).
+const ledgerView = (result) => ({ rows: result.rows, issues: result.issues, plan: result.plan, wroteAnchors: result.wroteAnchors,
+  sentWarning: result.sentWarning, suppressed: result.suppressed, sentInfo: result.sentInfo });
+
+test('외부 대사: 실운영은 NH 잔고를 한 번 조회해 판정하고, 볼트 사본에 요약 칸을 남긴다', async (t) => {
+  const { runV, vaultFile, sent } = setupWithVault(t);
+  const fetchGbBalance = fakeFetch(gbBody([gbRow()]));
+  const result = await runV([], withGb(), undefined, { fetchGbBalance });
+  assert.equal(fetchGbBalance.calls, 1);
+  assert.equal(result.externalRecon.status, 'ok');
+  const copy = JSON.parse(readFileSync(vaultFile, 'utf8'));
+  assert.deepEqual(copy.externalRecon, {
+    checkedAt: '2026-09-10T12:00:00.000Z', status: 'ok', compared: 1,
+    matched: [{ name: '가상해외주식A', holdingsQty: 10, nhQty: 10 }], pending: [], mismatches: [],
+  });
+  assert.equal(sent.warning.length, 0);
+  // 둘째 실행은 원장 상태가 new-anchor → ok로 바뀌어 쓰고(기존 동작), 같은 결과의 셋째 실행은 실행 시각만 달라 쓰지 않는다.
+  await runV([], withGb(), new Date('2026-09-11T12:00:00Z'), { fetchGbBalance });
+  const third = await runV([], withGb(), new Date('2026-09-12T12:00:00Z'), { fetchGbBalance });
+  assert.equal(third.wroteVaultCopy, false);
+  assert.equal(JSON.parse(readFileSync(vaultFile, 'utf8')).externalRecon.checkedAt, '2026-09-11T12:00:00.000Z');
+});
+
+test('외부 대사 불변식: 조회 실패·빈 응답·구조 이상·판정 오류는 건너뜀(사유)이고 원장 대조·기준점·원장 경고는 그대로', async (t) => {
+  const drifted = { ...withGb(), holdings: [{ account: 'ISA', name: '가상ETF', qty: 18 }, gbHolding()] };
+  const baseline = setupWithVault(t);
+  await baseline.runV([], withGb());
+  const expected = await baseline.runV([], drifted, new Date('2026-09-11T03:00:00Z'));
+  const expectedAnchors = readFileSync(join(baseline.stateDir, ANCHORS_FILENAME), 'utf8');
+  const tokenError = Object.assign(new Error('토큰 거부 원문'), { stage: '토큰', code: 'RATE_LIMIT' });
+  const cases = [
+    [tokenError, /NH 조회 실패\(토큰\) — RATE_LIMIT/],
+    [gbBody([]), /빈 응답/],
+    [{ Output_1: 'x' }, /배열이 아님/],
+    [null, /응답 없음/],
+    [gbBody([{ iem_cd: 'VAAA', cns_bse_bnc_qty: 'abc' }]), /cns_bse_bnc_qty/],
+    [() => ({ get Output_1() { throw new Error('응답 읽기 폭발'); } }), /외부 대사 내부 오류/],
+  ];
+  for (const [response, pattern] of cases) {
+    const each = setupWithVault(t);
+    await each.runV([], withGb(), undefined, { fetchGbBalance: fakeFetch(gbBody([gbRow()])) });
+    const fetchGbBalance = fakeFetch(response);
+    const result = await each.runV([], drifted, new Date('2026-09-11T03:00:00Z'), { fetchGbBalance });
+    assert.equal(fetchGbBalance.calls, 1);
+    assert.equal(result.externalRecon.status, 'skipped');
+    assert.match(result.externalRecon.reason, pattern);
+    assert.deepEqual(ledgerView(result), ledgerView(expected));
+    assert.equal(readFileSync(join(each.stateDir, ANCHORS_FILENAME), 'utf8'), expectedAnchors);
+    assert.equal(each.sent.warning.length, 1, '원장 경고는 그대로 한 번');
+    assert.equal(each.sent.warning[0].signature, baseline.sent.warning[0].signature);
+    assert.deepEqual(JSON.parse(readFileSync(each.vaultFile, 'utf8')).externalRecon.status, 'skipped');
+    assert.ok(!JSON.stringify(JSON.parse(readFileSync(each.vaultFile, 'utf8')).externalRecon).includes('토큰 거부 원문'), '응답 원문은 사본에 남기지 않는다');
+  }
+});
+
+test('외부 대사: --dry-run·--anchors·--rebaseline·--rebaseline-all에서는 NH를 부르지 않는다', async (t) => {
+  const { run, stateDir } = setup(t);
+  await run([], withGb());
+  const anchorsFile = join(stateDir, 'given.json');
+  writeFileSync(anchorsFile, JSON.stringify({ 'ISA|가상ETF': 5 }));
+  for (const argv of [['--dry-run'], [`--anchors=${anchorsFile}`], ['--rebaseline=ISA|가상ETF'], ['--rebaseline-all']]) {
+    const fetchGbBalance = fakeFetch(gbBody([gbRow()]));
+    const result = await run(argv, withGb(), undefined, { fetchGbBalance });
+    assert.equal(fetchGbBalance.calls, 0, argv.join(' '));
+    assert.equal(result.externalRecon.status, 'skipped');
+    assert.match(result.externalRecon.reason, /NH 조회 안 함/);
+  }
+  assert.ok(!existsSync(join(stateDir, GB_PENDING_FILENAME)));
+});
+
+test('외부 대사: --external-dry-run은 NH를 한 번 조회하지만 어떤 파일도 쓰지 않고 발송하지 않는다', async (t) => {
+  const { runV, vaultFile, sent, files, logs } = setupWithVault(t);
+  const fetchGbBalance = fakeFetch(gbBody([gbRow({ cns_bse_bnc_qty: '12' })]));
+  const result = await runV(['--external-dry-run'], withGb(), undefined, { fetchGbBalance });
+  assert.equal(fetchGbBalance.calls, 1);
+  assert.equal(result.externalRecon.status, 'ok');
+  assert.equal(result.externalRecon.mismatches.length, 1);
+  assert.deepEqual(files(), []);
+  assert.equal(existsSync(vaultFile), false);
+  assert.deepEqual(sent, { warning: [], info: [] });
+  assert.ok(logs.some((line) => line.includes('외부 대사 경고 발송·억제 기록 없음')));
+  assert.ok(logs.some((line) => line.includes('위탁 해외주식 보유 파일과 NH 해외주식 잔고가 맞지 않습니다')));
+});
+
+test('외부 대사: 수량 차이 경고는 하루 1회(원장 경고와 다른 억제 키), 발송 실패는 던지지 않고 gbAlertError', async (t) => {
+  const { run, sent, stateDir } = setup(t);
+  const fetchGbBalance = fakeFetch(gbBody([gbRow({ cns_bse_bnc_qty: '12' })]));
+  const day1 = new Date('2026-09-10T12:00:00Z');
+  const first = await run([], withGb(), day1, { fetchGbBalance });
+  assert.equal(first.sentGbWarning, true);
+  assert.equal(sent.warning.length, 1);
+  assert.match(sent.warning[0].signature, /^gb-m:/);
+  assert.match(sent.warning[0].message.conclusion, /NH 해외주식 잔고/);
+  const again = await run([], withGb(), new Date('2026-09-10T13:00:00Z'), { fetchGbBalance });
+  assert.equal(again.gbSuppressed, true);
+  assert.equal(sent.warning.length, 1);
+  const alerts = JSON.parse(readFileSync(join(stateDir, ALERTS_FILENAME), 'utf8'));
+  assert.ok(Object.keys(alerts.sent).some((key) => key.startsWith('holdings-gb-balance:')));
+  await run([], withGb(), new Date('2026-09-11T12:00:00Z'), { fetchGbBalance });
+  assert.equal(sent.warning.length, 2);
+  // 발송 실패: 원장 결과는 그대로, 던지지 않음, 억제 기록 없음.
+  const other = setup(t);
+  const result = await other.run([], withGb(), day1, { fetchGbBalance, sendWarning: async () => { throw new Error('전송 실패'); } });
+  assert.match(result.gbAlertError, /전송 실패/);
+  assert.equal(result.sentGbWarning, false);
+  assert.ok(existsSync(join(other.stateDir, ANCHORS_FILENAME)));
+  assert.ok(!existsSync(join(other.stateDir, ALERTS_FILENAME)));
+});
+
+test('외부 대사: 게시 대기는 1일차 경고 없음, 시작일을 상태 파일에 기억해 주말 빼고 2영업일 초과 때 경고', async (t) => {
+  const { run, sent, stateDir } = setup(t);
+  const fetchGbBalance = fakeFetch(gbBody([gbRow({ cns_bse_bnc_qty: '12', byn_cns_qty: '2' })]));
+  // 2026-09-04(금) KST 21시 → 월(1) 화(2) 조용히, 수(3) 경고.
+  const at = (day) => new Date(`${day}T12:10:00Z`);
+  const fri = await run([], withGb(10), at('2026-09-04'), { fetchGbBalance });
+  assert.equal(fri.externalRecon.pending[0].since, '2026-09-04');
+  assert.deepEqual(JSON.parse(readFileSync(join(stateDir, GB_PENDING_FILENAME), 'utf8')).pending, { '위탁|가상해외주식A': { since: '2026-09-04' } });
+  for (const day of ['2026-09-05', '2026-09-06', '2026-09-07', '2026-09-08']) await run([], withGb(10), at(day), { fetchGbBalance });
+  assert.equal(sent.warning.length, 0);
+  const wed = await run([], withGb(10), at('2026-09-09'), { fetchGbBalance });
+  assert.equal(wed.sentGbWarning, true);
+  assert.match(sent.warning[0].signature, /^gb-p:위탁\|가상해외주식A:2026-09-04$/);
+  assert.equal(wed.externalRecon.pending[0].businessDays, 3);
+  // 미리보기는 상태 파일을 바꾸지 않는다.
+  const before = readFileSync(join(stateDir, GB_PENDING_FILENAME), 'utf8');
+  await run(['--external-dry-run'], withGb(12), at('2026-09-10'), { fetchGbBalance: fakeFetch(gbBody([gbRow({ cns_bse_bnc_qty: '12' })])) });
+  assert.equal(readFileSync(join(stateDir, GB_PENDING_FILENAME), 'utf8'), before);
+  // 게시되면(보유 12 = 잔고 12, 대기 0) 상태에서 빠진다.
+  await run([], withGb(12), at('2026-09-10'), { fetchGbBalance: fakeFetch(gbBody([gbRow({ cns_bse_bnc_qty: '12' })])) });
+  assert.deepEqual(JSON.parse(readFileSync(join(stateDir, GB_PENDING_FILENAME), 'utf8')).pending, {});
+});
+
+test('외부 대사: 게시 대기 상태 파일이 깨졌으면 오늘부터 다시 세고 사본 요약에 표시한다', async (t) => {
+  const { run, stateDir } = setup(t);
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(join(stateDir, GB_PENDING_FILENAME), '{ 깨짐');
+  const result = await run([], withGb(10), undefined, { fetchGbBalance: fakeFetch(gbBody([gbRow({ cns_bse_bnc_qty: '12', byn_cns_qty: '2' })])) });
+  assert.equal(result.externalRecon.pendingStateReset, true);
+  assert.equal(result.externalRecon.pending[0].since, '2026-09-10');
+});
+
+test('볼트 사본 비교 키는 외부 대사 checkedAt도 뺀다', () => {
+  const a = JSON.stringify({ generatedAt: 'x', anchors: {}, externalRecon: { checkedAt: 'x', status: 'ok', compared: 1 } });
+  const b = JSON.stringify({ generatedAt: 'y', anchors: {}, externalRecon: { checkedAt: 'y', status: 'ok', compared: 1 } });
+  const c = JSON.stringify({ generatedAt: 'y', anchors: {}, externalRecon: { checkedAt: 'y', status: 'skipped', reason: 'r' } });
+  assert.equal(vaultCopyCompareKey(a), vaultCopyCompareKey(b));
+  assert.notEqual(vaultCopyCompareKey(a), vaultCopyCompareKey(c));
+});
+
+test('외부 대사: NH 조회가 제한 시간 안에 끝나지 않으면 건너뜀(시간 초과)이고 원장 사본·경고는 이어진다', async (t) => {
+  const { runV, vaultFile, stateDir } = setupWithVault(t);
+  await runV([], withGb());
+  const hang = () => new Promise(() => {});
+  const drifted = { ...withGb(), holdings: [{ account: 'ISA', name: '가상ETF', qty: 18 }, gbHolding()] };
+  const result = await runV([], drifted, new Date('2026-09-11T03:00:00Z'), { fetchGbBalance: hang, gbFetchTimeoutMs: 20 });
+  assert.equal(result.externalRecon.status, 'skipped');
+  assert.match(result.externalRecon.reason, /NH 조회 실패 — TIMEOUT/);
+  assert.equal(result.sentWarning, true);
+  assert.equal(JSON.parse(readFileSync(vaultFile, 'utf8')).externalRecon.status, 'skipped');
+  assert.ok(!existsSync(join(stateDir, GB_PENDING_FILENAME)));
 });
