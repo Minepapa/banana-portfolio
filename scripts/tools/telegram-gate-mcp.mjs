@@ -5,7 +5,7 @@
 import { createInterface } from 'node:readline';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createGateMcpTools, GATE_MCP_SERVER_NAME } from '../lib/telegram-gate-mcp-tools.mjs';
+import { createGateMcpTools, gateMcpToolsForAgent, GATE_MCP_SERVER_NAME } from '../lib/telegram-gate-mcp-tools.mjs';
 
 const PROTOCOL_FALLBACK = '2024-11-05';
 const MAX_RESULT = 60_000;
@@ -36,8 +36,15 @@ export async function handleMcpMessage(msg, tools) {
   return fail(-32601, `지원하지 않는 메서드: ${msg.method}`);
 }
 
+// --agent=<담당>: 그 담당 프로세스용 서버 — 도구 표에 있는 도구만 내보내고 받는다(목록에 없으면 tools/call도 "없는 도구").
+export function parseAgentArg(argv) {
+  const arg = argv.find((a) => a.startsWith('--agent='));
+  return arg ? arg.slice('--agent='.length) : null;
+}
+
 function main() {
-  const tools = createGateMcpTools({ stateDir: process.env.TELEGRAM_GATE_STATE_DIR || null, testMode: process.env.TELEGRAM_GATE_MODE === 'test' });
+  const all = createGateMcpTools({ stateDir: process.env.TELEGRAM_GATE_STATE_DIR || null, testMode: process.env.TELEGRAM_GATE_MODE === 'test' });
+  const tools = gateMcpToolsForAgent(all, parseAgentArg(process.argv.slice(2)));
   const rl = createInterface({ input: process.stdin });
   rl.on('line', async (line) => {
     let msg;

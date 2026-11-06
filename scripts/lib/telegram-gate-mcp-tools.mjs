@@ -22,6 +22,21 @@ import { writeAtomic } from './state-writer.mjs';
 import { createPromiseStore, describeTrigger, MAX_PENDING, validatePromiseInput, TRIGGER_TYPES } from './telegram-gate-promises.mjs';
 import { JOB_LABELS } from './job-labels.mjs';
 import { randomUUID } from 'node:crypto';
+import { describeCalendarDay } from '../tools/calendar-facts.mjs';
+import { calendarDayPath, nextDates } from './calendar-days.mjs';
+import { gateMcpToolsFor } from './telegram-gate-tool-table.mjs';
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const CALENDAR_LIST_MAX_DAYS = 31;
+
+// 순수 함수: 볼트 일정 정본(calendar-days 잡이 15분마다 쓰는 {날짜}.json)에서 날짜 범위를 읽어 줄로 낸다. 구글 API·토큰을 쓰지 않는다.
+export function calendarRangeText({ from, to = from }, read) {
+  if (!DATE_RE.test(String(from)) || !DATE_RE.test(String(to))) throw new Error('from·to는 YYYY-MM-DD');
+  const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+  if (!Number.isFinite(days) || days < 1) throw new Error('to가 from보다 앞입니다');
+  if (days > CALENDAR_LIST_MAX_DAYS) throw new Error(`한 번에 ${CALENDAR_LIST_MAX_DAYS}일까지`);
+  return [`일정 정본(${VAULT_REL.calendarDays}, KST) ${from}~${to}`, ...nextDates(from, days).flatMap((date) => describeCalendarDay(date, read(date)))].join('\n');
+}
 
 export function promiseRequestDir(stateDir) {
   return join(stateDir, 'promise-requests');
@@ -64,7 +79,23 @@ export function createGateMcpTools(deps = {}) {
   };
   // 약속 저장소: MCP는 요청 파일만 쓰고, 볼트 대기열은 읽기만 한다(쓰는 주체는 관문 데몬, 경로 등록부).
   const promiseStoreFor = (stateDir) => createPromiseStore({ vaultFile: deps.promiseVaultFile ?? vaultAbs(VAULT_REL.telegramGatePromises), requestDir: promiseRequestDir(stateDir), now });
+  const readCalendarDay = deps.readCalendarDay ?? ((date) => {
+    const path = calendarDayPath(date);
+    return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
+  });
   const tools = [
+    {
+      name: 'calendar_list',
+      description: '오너·가족 일정을 날짜 범위로 조회한다(볼트 일정 정본, 15분마다 구글 캘린더에서 갱신, 지난날·앞으로 31일). 한 번에 31일까지.',
+      inputSchema: { type: 'object', properties: { from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD(없으면 from 하루)') }, required: ['from'], additionalProperties: false },
+      handler: async (a) => calendarRangeText(a, readCalendarDay),
+    },
+    {
+      name: 'memo_record',
+      description: '오너가 남겨 달라고 한 메모를 볼트 Inbox에 기록한다(📜 메모와 같은 도구). text는 오너 원문 그대로.',
+      inputSchema: { type: 'object', properties: { text: str('기록할 원문') }, required: ['text'], additionalProperties: false },
+      handler: (a) => run('inbox-memo.mjs', ['--json=-'], { input: json({ text: a.text }) }),
+    },
     {
       name: 'calendar_add_event',
       description: '오너 본인 일정을 기본 캘린더에 등록한다(입력 규칙 4-12). 날짜·시각이 분명할 때만. 종일은 date·endDate.',
@@ -212,4 +243,11 @@ export function createGateMcpTools(deps = {}) {
 export const GATE_MCP_SERVER_NAME = 'gate';
 export function gateMcpToolNames(tools = createGateMcpTools()) {
   return tools.map((t) => `mcp__${GATE_MCP_SERVER_NAME}__${t.name}`);
+}
+
+// 담당 프로세스에 붙는 도구(도구 표 telegram-gate-tool-table). agent가 없으면 전부(옛 실행·시험 호환).
+export function gateMcpToolsForAgent(tools, agent) {
+  if (!agent) return tools;
+  const allowed = new Set(gateMcpToolsFor(agent));
+  return tools.filter((t) => allowed.has(t.name));
 }
