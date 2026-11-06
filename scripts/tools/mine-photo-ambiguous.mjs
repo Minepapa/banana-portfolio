@@ -25,7 +25,7 @@ import { RUN_ROOT } from '../jobs/media-memory-orb.mjs';
 import { REVIEW_ROOT, ownerFields } from './mine-review-sheet.mjs';
 import { boxPercent, renderPhotoSheet, sheetEmotions, sheetPhoto } from './mine-photo-review-sheet.mjs';
 
-const MEDIA_REL = '20_Records/24_Media';
+const MEDIA_REL = VAULT_REL.mediaMoments;
 const kstStamp = (now) => new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(0, 16).replace(/[T:]/g, '-');
 const kstDay = (now) => new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
 
