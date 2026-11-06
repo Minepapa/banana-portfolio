@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildGateSystemPrompt, buildMessagePrompt, businessDay, createActorTracker, createSessionStore, enforceActorLabels, fallbackMessage, previousDay, toGateMessages } from './telegram-gate-session.mjs';
+import { buildDepartmentSystemPrompt, buildGateSystemPrompt, buildMessagePrompt, businessDay, createActorTracker, createSessionStore, enforceActorLabels, fallbackMessage, GATE_SOURCE_MAP, previousDay, toGateMessages } from './telegram-gate-session.mjs';
 
 test('업무일: KST 04:00이 경계(03:59는 전날)', () => {
   assert.equal(businessDay(new Date('2026-10-30T18:59:00Z')), '2026-10-30'); // KST 10-31 03:59
@@ -140,4 +140,39 @@ test('실제 담당 판정: Agent 도구 호출이 오류 없이 결과를 돌�
     { type: 'tool_result', tool_use_id: 'n1', content: 'x' },
   ] } });
   assert.deepEqual(t.actors(), ['athena']);
+});
+
+test('담당 시스템 프롬프트: 헌장 원문(머리말 제외)·자기 출처 지도·출력 계약·볼트 기록 규칙, 다른 담당 출처는 없다', () => {
+  const p = buildDepartmentSystemPrompt({ agent: 'hermes', charter: '---\nname: hermes\n---\n# 헤르메스 헌장\n일정 담당', sessionRules: '## 4. 답장\n형식', vaultRoot: '/v' });
+  assert.match(p, /텔레그램 창구의 헤르메스/);
+  assert.match(p, /# 헤르메스 헌장\n일정 담당/);
+  assert.doesNotMatch(p, /name: hermes/);
+  assert.match(p, /agent는 항상 hermes/);
+  assert.match(p, /calendar_list/);
+  assert.match(p, /95_Etna\/Spending/);
+  assert.doesNotMatch(p, /ledger-facts/, '플루토스 출처는 넣지 않는다');
+  assert.match(p, /볼트 기록\(메모·위키·주기 노트\)은 클리오만/);
+  assert.match(p, /## 4\. 답장\n형식/);
+  for (const id of Object.keys(GATE_SOURCE_MAP)) assert.ok(GATE_SOURCE_MAP[id].length > 0);
+  assert.match(buildDepartmentSystemPrompt({ agent: 'themis' }), /판정 원장/);
+  // 제우스 프롬프트: 넘길 담당이 있으면 handoff 안내, 없으면 예전 하위 에이전트 안내. 출처 지도는 전부.
+  assert.match(buildGateSystemPrompt({ handoffTo: ['hermes'] }), /handoff \{agent, request\}/);
+  assert.match(buildGateSystemPrompt({}), /Agent로 그 담당을 부르고/);
+  assert.match(buildGateSystemPrompt({}), /플루토스 · 체결·예수금·장부/);
+});
+
+test('세션 저장소: 담당마다 다른 파일, 넘긴 요청·직접 대화 참고는 프롬프트에 붙는다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gate-sess-file-'));
+  try {
+    let n = 0;
+    const zeus = createSessionStore({ stateDir: dir, uuid: () => `Z${++n}` });
+    const hermes = createSessionStore({ stateDir: dir, uuid: () => `H${++n}`, file: 'session-hermes.json' });
+    assert.equal(zeus.forDay('2026-11-06').sessionId, 'Z1');
+    assert.equal(hermes.forDay('2026-11-06').sessionId, 'H2');
+    assert.equal(zeus.forDay('2026-11-06').sessionId, 'Z1');
+    const prompt = buildMessagePrompt({ items: [{ meta: { messageId: 1 }, args: { kind: 'text', text: '고마워' } }], now: new Date('2026-11-06T03:00:00Z'),
+      directExchanges: [{ agent: 'hermes', input: '헤르메스 일정', output: '토요일 나들이' }], handoffRequest: null });
+    assert.match(prompt, /^\[창구\] 지난 네 답 뒤에 오너가 담당과 직접 나눈 대화[\s\S]*헤르메스 ← 헤르메스 일정\n  → 토요일 나들이/);
+    assert.match(buildMessagePrompt({ items: [], now: new Date(), handoffRequest: '정리' }), /제우스가 너에게 넘긴 요청: 정리$/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

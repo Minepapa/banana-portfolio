@@ -598,6 +598,14 @@ function buildConversationDeps({ gate, options, journal, confirmStore }) {
     mcpToolNames: gateMcpToolNames(createGateMcpTools()),
     journal,
     sessionStore: createSessionStore({ stateDir: gate.stateDir }),
+    // 담당 상시 프로세스(2026-11-06 개선안 2차): 담당마다 하루 세션 파일 하나, 시스템 프롬프트는 볼트 헌장 원문, 모델은 헌장 runtimeModel.
+    sessionStoreFor: (agent) => createSessionStore({ stateDir: gate.stateDir, file: `session-${agent}.json` }),
+    readCharter: (agent) => readText(vaultAbs(`${VAULT_REL.agentCharters}/${agent}.md`)) ?? '',
+    departmentModel: (agent) => {
+      const text = readText(vaultAbs(`${VAULT_REL.agentCharters}/${agent}.md`));
+      const model = text ? String(parseFrontmatter(text)?.runtimeModel ?? '') : '';
+      return ['opus', 'sonnet', 'haiku'].includes(model) ? model : null;
+    },
     confirmStore,
     log: (line) => console.log(line),
   };

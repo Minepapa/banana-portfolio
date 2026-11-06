@@ -1,15 +1,33 @@
 // 텔레그램 관문 대화 줄(llm lane) — 자유 문장·담당 호출·사진 판독을 헤드리스 claude 한 번으로 처리하고, 진행 메시지를 단계별로
 // 고치고, 최종 답을 발송 관문으로 보내고, 확인 대기(돈 지시)와 하루 인수인계를 다룬다(2026-10-30, 관문 2단계).
 // 설계 6·7·9절, 결정 `텔레그램-관문` 3~8항. 네트워크·프로세스는 모두 주입받는다(시험은 가짜로).
-import { buildGateClaudeArgs, GATE_EFFORT, GATE_MODEL, GATE_TOOLS_SET, SOFT_TIMEOUT_MS } from './telegram-gate-llm.mjs';
+import { buildGateClaudeArgs, buildGateMcpConfig, buildGateOutputSchema, GATE_EFFORT, GATE_MODEL, SOFT_TIMEOUT_MS } from './telegram-gate-llm.mjs';
+import { gateBuiltinTools, gateMcpToolsFor } from './telegram-gate-tool-table.mjs';
+import { AGENT_IDS, agentTitle } from './agent-registry.mjs';
 import { applyProgress, createEditThrottle, describeEvent, initialProgress, renderProgress } from './telegram-gate-progress.mjs';
-import { buildGateSystemPrompt, buildMessagePrompt, businessDay, createActorTracker, fallbackMessage, previousDay, toGateMessages } from './telegram-gate-session.mjs';
+import { buildDepartmentSystemPrompt, buildGateSystemPrompt, buildMessagePrompt, businessDay, createActorTracker, fallbackMessage, previousDay, toGateMessages } from './telegram-gate-session.mjs';
 import { buildHandoffNote, conversationTranscript, handoffSummaryPrompt, HANDOFF_SUMMARY_SCHEMA } from './telegram-gate-journal.mjs';
 import { confirmPromptBody, isAnswerToConfirm } from './telegram-gate-confirm.mjs';
 import { fakeOrderExecutor } from './telegram-gate-order-executor.mjs';
 import { escapeHtml } from './telegram.mjs';
 
 const PROGRESS_TOPIC = '진행';
+// 담당 프로세스 모델·노력: 헌장 runtimeModel(deps.departmentModel)이 없으면 sonnet. 조회·정리형이 대부분이라 노력은 medium
+// (2026-11-06 실측: 조회형 목표 20초 안). 제우스는 결정 `텔레그램-관문` 3항 그대로(opus·medium).
+export const DEPARTMENT_MODEL = 'sonnet';
+export const DEPARTMENT_EFFORT = 'medium';
+const DIRECT_LOG_MAX = 6;
+
+// 순수 함수: 이 묶음을 어느 프로세스가 처음 받는지. 담당 이름으로 시작한 메시지 하나면 그 담당(창구가 제우스를 거치지 않고 바로 연결),
+// 기호 없는 사진 하나면 클리오(판독 기록은 볼트 기록 = 클리오, B안), 나머지(여러 건 합침·자유 문장)는 제우스.
+// departments: 담당 프로세스를 띄울 수 있는 담당(세션 저장소가 있는 것). 없으면 늘 제우스(예전 하위 에이전트 방식).
+export function routeTarget(items, departments = []) {
+  if (items.length !== 1) return 'zeus';
+  const { args } = items[0];
+  const byTitle = args.department ? AGENT_IDS.find((id) => agentTitle(id) === args.department) : null;
+  const target = byTitle ?? (args.kind === 'photo' ? 'clio' : 'zeus');
+  return target !== 'zeus' && departments.includes(target) ? target : 'zeus';
+}
 const NO_CONVERSATION_RE = /No conversation found|no conversation/i;
 
 function shortReason(res) {
@@ -51,7 +69,7 @@ export function createConversation(deps) {
   // handoffFailures: 날짜별 { count, nextAt, warned } — 노트 쓰기 실패 뒤 백오프 재시도. handoffFallback: 쓰지 못한 날의 노트 본문
   // (다음 첫 대화에 직접 넣는다 — 인수인계가 조용히 사라지지 않게, 2단계 재리뷰 MEDIUM).
   const state = { running: null, queued: 0, lastRun: null, lastRateLimit: null, handoffDays: new Set(), handoffInFlight: null,
-    handoffFailures: new Map(), handoffFallback: new Map() };
+    handoffFailures: new Map(), handoffFallback: new Map(), directLog: [] };
   const isStopping = deps.isStopping ?? (() => false);
 
   const progressMessage = (body) => ({ agent: 'zeus', kind: '정보', topic: PROGRESS_TOPIC, body });
@@ -78,43 +96,90 @@ export function createConversation(deps) {
     }
   }
 
-  async function runOnce({ items, session, handoffText, handoffMissing, chatId, run }) {
-    const prompt = buildMessagePrompt({ items, handoffText, handoffMissing, now: now() });
+  const departments = () => (deps.sessionStoreFor ? AGENT_IDS.filter((id) => id !== 'zeus') : []);
+  const storeFor = (agent) => (agent === 'zeus' ? deps.sessionStore : deps.sessionStoreFor(agent));
+  // 도구 표를 적용할 담당. 담당 프로세스가 없는 옛 방식(시험 deps)에서는 제우스가 넘길 곳이 없으니 창구 도구 전부를 그대로 쓴다.
+  const tableAgent = (agent) => (agent === 'zeus' && !departments().length ? null : agent);
+  const allowedMcp = (agent) => {
+    if (!tableAgent(agent)) return deps.mcpToolNames;
+    const names = new Set(gateMcpToolsFor(agent));
+    return deps.mcpToolNames.filter((n) => names.has(n.replace(/^mcp__gate__/, '')));
+  };
+
+  // 프로세스 하나의 실행 인자. 제우스: 입력 규칙 전체 + 넘김 안내, Agent 포함. 담당: 헌장 + 출력 계약, 읽기 도구 + 도구 표의 MCP만.
+  function argsFor(agent, session, prompt) {
+    const live = Boolean(deps.live);
+    const rules = deps.readRules();
+    const isZeus = agent === 'zeus';
+    const handoffTo = isZeus ? departments() : [];
+    return buildGateClaudeArgs({
+      ...(live ? { streamInput: true } : { prompt }), sessionId: session.sessionId, resume: session.resume,
+      appendSystemPrompt: isZeus ? buildGateSystemPrompt({ ...rules, handoffTo })
+        : buildDepartmentSystemPrompt({ agent, charter: deps.readCharter?.(agent) ?? '', sessionRules: rules.sessionRules, vaultRoot: rules.vaultRoot }),
+      tools: gateBuiltinTools(agent),
+      allowedTools: [...gateBuiltinTools(agent), ...allowedMcp(agent)],
+      mcpConfig: buildGateMcpConfig({ agent: tableAgent(agent) }),
+      schema: buildGateOutputSchema({ agents: isZeus ? AGENT_IDS : [agent], handoffTo }),
+      // 모델·노력은 결정 `텔레그램-관문` 3항(제우스 opus·medium). 실측 시험만 haiku로 낮춘다(deps.model).
+      ...(deps.model ? { model: deps.model } : isZeus ? {} : { model: deps.departmentModel?.(agent) ?? DEPARTMENT_MODEL }),
+      ...(deps.effort ? { effort: deps.effort } : isZeus ? {} : { effort: DEPARTMENT_EFFORT }),
+    });
+  }
+
+  async function runOnce({ agent = 'zeus', items, session, handoffText, handoffMissing, run, directExchanges = [], handoffRequest = null }) {
+    const prompt = buildMessagePrompt({ items, handoffText, handoffMissing, now: now(), directExchanges, handoffRequest });
     // 상시 실행(deps.live 풀)이면 프롬프트 없이 띄우고 메시지를 stdin으로 넣는다. 인자는 새로 띄울 때만 쓰인다.
     const live = deps.live ?? null;
-    const args = buildGateClaudeArgs({
-      ...(live ? { streamInput: true } : { prompt }), sessionId: session.sessionId, resume: session.resume,
-      appendSystemPrompt: buildGateSystemPrompt(deps.readRules()),
-      allowedTools: [...GATE_TOOLS_SET, ...deps.mcpToolNames],
-      // 모델·노력은 결정 `텔레그램-관문` 3항(opus·medium). 실측 시험만 haiku로 낮춘다(deps.model).
-      ...(deps.model ? { model: deps.model } : {}),
-      ...(deps.effort ? { effort: deps.effort } : {}),
-    });
+    const args = argsFor(agent, session, prompt);
     if (run.cancelRequested) return { interrupted: 'cancel', isError: false, permissionDenials: [] };
     let started = false;
     const tracker = createActorTracker();
-    deps.sessionStore.markStarted?.(session.sessionId);
+    const store = storeFor(agent);
+    store.markStarted?.(session.sessionId);
     const onEvent = (event) => {
       tracker.observe(event);
       if (event.type === 'system' && event.subtype === 'init') started = true;
       if (event.type === 'rate_limit_event') state.lastRateLimit = event.rate_limit_info ?? null;
       if (event.type === 'assistant' && !event.parent_tool_use_id) {
         for (const use of (event.message?.content ?? []).filter((c) => c?.type === 'tool_use' && c.name !== 'StructuredOutput')) {
-          deps.journal.append({ type: 'tool', name: use.name, input: JSON.stringify(use.input ?? {}).slice(0, 300) });
+          deps.journal.append({ type: 'tool', agent, name: use.name, input: JSON.stringify(use.input ?? {}).slice(0, 300) });
         }
       }
       run.progress = applyProgress(run.progress, describeEvent(event));
       run.throttle.update(renderProgress(run.progress, now().getTime()));
     };
     const handle = live
-      ? live.turn({ key: 'zeus', day: session.day, sessionId: session.sessionId, args, env: deps.spawnEnv, text: prompt, onEvent })
+      ? live.turn({ key: agent, day: session.day, sessionId: session.sessionId, args, env: deps.spawnEnv, text: prompt, onEvent })
       : deps.runner({ args, env: deps.spawnEnv, onEvent });
     run.cancel = handle.cancel;
     // 진행 메시지 발송·사진 내려받기 사이에 온 "취소"도 놓치지 않는다(2단계 리뷰 MEDIUM).
     if (run.cancelRequested) handle.cancel();
     const res = await handle.promise;
-    if (started) deps.sessionStore.recordTurn(session.sessionId);
+    if (started) store.recordTurn(session.sessionId);
     return { ...res, actors: tracker.actors() };
+  }
+
+  // 담당(또는 제우스) 한 턴: 그 담당 하루 세션을 열고, 이어 붙일 기록이 사라졌으면 같은 날 새 세션으로 한 번만 다시.
+  // 인수인계 노트는 제우스 하루 대화에만 넣는다(담당 프로세스는 그날 처음 불릴 때 빈 대화로 시작한다).
+  async function runAgentTurn({ agent, items, day, run, handoffRequest }) {
+    const store = storeFor(agent);
+    const isZeus = agent === 'zeus';
+    let session = store.forDay(day);
+    let handoffText = null;
+    let handoffMissing = false;
+    if (isZeus && session.firstOfDay) {
+      handoffText = deps.readHandoff(previousDay(day)) ?? state.handoffFallback.get(previousDay(day)) ?? null;
+      handoffMissing = !handoffText;
+    }
+    const directExchanges = isZeus ? state.directLog.slice() : [];
+    let res = await runOnce({ agent, items, session, handoffText, handoffMissing, run, directExchanges, handoffRequest });
+    if (res.isError && session.resume && NO_CONVERSATION_RE.test(res.errorText ?? '')) {
+      session = store.reset(day);
+      const text = isZeus ? deps.readHandoff(previousDay(day)) : null;
+      res = await runOnce({ agent, items, session, handoffText: text, handoffMissing: isZeus && !text, run, directExchanges, handoffRequest });
+    }
+    if (isZeus && !res.isError && !res.interrupted) state.directLog = [];
+    return res;
   }
 
   async function processBatch(items) {
@@ -166,89 +231,97 @@ export function createConversation(deps) {
         run.throttle.update(renderProgress(run.progress, now().getTime()));
       }
       await writeHandoffIfDue(now());
-      let session = deps.sessionStore.forDay(day);
-      let handoffText = null;
-      let handoffMissing = false;
-      if (session.firstOfDay) {
-        handoffText = deps.readHandoff(previousDay(day)) ?? state.handoffFallback.get(previousDay(day)) ?? null;
-        handoffMissing = !handoffText;
-      }
       deps.confirmStore.setActiveBatch?.(items.map((i) => i.meta.messageId));
       const soft = setTimer(() => {
         run.progress = { ...run.progress, slow: true };
         run.throttle.update(renderProgress(run.progress, now().getTime()));
       }, SOFT_TIMEOUT_MS);
-      let res;
+      // 단계: 처음 받는 프로세스(routeTarget) → 제우스가 handoff로 넘기면 그 담당 프로세스(한 번만). 한 번에 한 턴씩(직렬).
+      let agent = routeTarget(items, departments());
+      let handoffRequest = null;
+      let sentCount = 0;
       try {
-        res = await runOnce({ items, session, handoffText, handoffMissing, chatId, run });
-        if (res.isError && session.resume && NO_CONVERSATION_RE.test(res.errorText ?? '')) {
-          // 이어 붙일 세션 기록이 사라졌다 — 같은 날 새 세션으로 한 번만 다시(인수인계는 다시 넣는다).
-          session = deps.sessionStore.reset(day);
-          const text = deps.readHandoff(previousDay(day));
-          res = await runOnce({ items, session, handoffText: text, handoffMissing: !text, chatId, run });
+        for (let stage = 0; agent; stage += 1) {
+          if (agent !== 'zeus') {
+            run.progress = applyProgress(run.progress, { step: handoffRequest ? `${agentTitle(agent)}에게 넘김` : `${agentTitle(agent)} 직통` });
+            run.throttle.update(renderProgress(run.progress, now().getTime()));
+          }
+          deps.journal.append({ type: 'route', agent, via: handoffRequest ? 'handoff' : stage === 0 && agent !== 'zeus' ? 'direct' : 'zeus' });
+          const res = await runAgentTurn({ agent, items, day, run, handoffRequest });
+
+          const seconds = Math.round((now().getTime() - startedAt) / 1000);
+          const lastStep = run.progress.steps.at(-1) ?? run.progress.stage;
+          if (res.permissionDenials?.length) {
+            log(`[gate] 허용되지 않은 도구 요청 ${res.permissionDenials.length}건: ${res.permissionDenials.map((d) => d.tool_name).join(', ')}`);
+            deps.journal.append({ type: 'denied', agent, tools: res.permissionDenials.map((d) => d.tool_name) });
+          }
+          if (res.interrupted && res.interrupted !== 'timeout') {
+            dropUnannouncedConfirm(startedAt);
+            if (isStopping()) {
+              // 관문 재시작으로 끊김 — 입력은 '처리중'으로 남겨 재시작 때 확인필요 안내로 간다.
+              await finishProgress('창구가 다시 시작되느라 멈췄습니다. 재시작 뒤 안내를 확인해 주세요.');
+              deps.journal.append({ type: 'llm', status: '중단', input: inputText });
+              return { status: '중단', detail: '창구 종료로 끊김', interruptedByShutdown: true };
+            }
+            await finishProgress(`취소함(경과 ${seconds}초, 마지막 단계: ${escapeHtml(lastStep)})`);
+            deps.journal.append({ type: 'llm', status: '취소', input: inputText });
+            state.lastRun = { ok: true, at: now().toISOString(), status: '취소' };
+            return { status: '완료', detail: '취소' };
+          }
+          if (res.interrupted === 'timeout') {
+            dropUnannouncedConfirm(startedAt);
+            await finishProgress(`시간 초과로 멈췄습니다(${Math.round(seconds / 60)}분, 마지막 단계: ${escapeHtml(lastStep)}). 다시 보내 주세요.`);
+            deps.journal.append({ type: 'llm', status: '시간 초과', input: inputText });
+            state.lastRun = { ok: false, at: now().toISOString(), status: '시간 초과' };
+            return { status: '실패', detail: '시간 초과' };
+          }
+          if (res.isError) {
+            dropUnannouncedConfirm(startedAt);
+            await finishProgress(`처리하지 못했습니다(${shortReason(res)}).`);
+            deps.journal.append({ type: 'llm', status: '실패', input: inputText, error: String(res.errorText ?? '').slice(0, 300) });
+            state.lastRun = { ok: false, at: now().toISOString(), status: '실패' };
+            log(`[gate] 대화 실패: ${res.errorText}`);
+            return { status: '실패', detail: String(res.errorText ?? '').slice(0, 200) };
+          }
+
+          // 이름표는 창구가 정한다: 이 프로세스(self)와 이 턴에 실제로 답한 하위 에이전트만 그 담당 이름을 단다(2026-11-06 오너).
+          // 넘김은 제우스 첫 단계에서만 받는다(담당끼리 다시 넘기지 않는다 — 고리 방지).
+          const { messages, problem, handoff } = toGateMessages(res.structured, res.result,
+            { labels: { self: agent, actors: res.actors ?? [] }, handoffTo: agent === 'zeus' && stage === 0 ? departments() : [] });
+          const outgoing = problem ? [fallbackMessage(res.result)] : messages;
+          if (problem) {
+            log(`[gate] 출력 계약 위반(${problem}) — 원문을 감싸 보냄`);
+            deps.journal.append({ type: 'contract', agent, problem });
+          }
+          if (!handoff) await run.throttle.close();
+          try {
+            for (const message of outgoing) {
+              await deps.send(message, chatId);
+              sentCount += 1;
+              deps.journal.append({ type: 'out', agent: message.agent, text: String(message.body ?? message.conclusion ?? (message.facts ?? []).join(' / ')).slice(0, 2000) });
+            }
+          } catch (error) {
+            // 최종 답을 못 보냈어도 확인 질문은 보낸다 — 확인 문구는 코드가 만든 자기완결 문장이라 답 없이도 뜻이 통한다
+            // (제우스 방향, 2단계 리뷰 MEDIUM). 진행 메시지에 실패를 남긴다.
+            await safe(() => announceStagedConfirm(startedAt, chatId), '확인 질문 발송');
+            await finishProgress('답을 만들었지만 보내지 못했습니다. 다시 보내 주세요.');
+            deps.journal.append({ type: 'llm', status: '실패', input: inputText, error: `발송 실패: ${String(error?.message ?? error).slice(0, 200)}` });
+            state.lastRun = { ok: false, at: now().toISOString(), status: '발송 실패' };
+            log(`[gate] 최종 답 발송 실패: ${error.message}`);
+            return { status: '실패', detail: '최종 답 발송 실패' };
+          }
+          // 제우스가 모르는 담당 대화(직통·넘김)는 다음 제우스 턴에 참고로 넘긴다.
+          if (agent !== 'zeus') {
+            const output = outgoing.map((m) => String(m.body ?? m.conclusion ?? (m.facts ?? []).join(' / '))).join(' / ').replace(/<[^>]+>/g, '');
+            state.directLog = [...state.directLog, { agent, input: handoffRequest ? `(${agentTitle('zeus')} 넘김) ${handoffRequest}` : inputText, output }].slice(-DIRECT_LOG_MAX);
+          }
+          agent = handoff?.agent ?? null;
+          handoffRequest = handoff?.request ?? null;
         }
       } finally {
         clearTimer(soft);
       }
-
       const seconds = Math.round((now().getTime() - startedAt) / 1000);
-      const lastStep = run.progress.steps.at(-1) ?? run.progress.stage;
-      if (res.permissionDenials?.length) {
-        log(`[gate] 허용되지 않은 도구 요청 ${res.permissionDenials.length}건: ${res.permissionDenials.map((d) => d.tool_name).join(', ')}`);
-        deps.journal.append({ type: 'denied', tools: res.permissionDenials.map((d) => d.tool_name) });
-      }
-      if (res.interrupted && res.interrupted !== 'timeout') {
-        dropUnannouncedConfirm(startedAt);
-        if (isStopping()) {
-          // 관문 재시작으로 끊김 — 입력은 '처리중'으로 남겨 재시작 때 확인필요 안내로 간다.
-          await finishProgress('창구가 다시 시작되느라 멈췄습니다. 재시작 뒤 안내를 확인해 주세요.');
-          deps.journal.append({ type: 'llm', status: '중단', input: inputText });
-          return { status: '중단', detail: '창구 종료로 끊김', interruptedByShutdown: true };
-        }
-        await finishProgress(`취소함(경과 ${seconds}초, 마지막 단계: ${escapeHtml(lastStep)})`);
-        deps.journal.append({ type: 'llm', status: '취소', input: inputText });
-        state.lastRun = { ok: true, at: now().toISOString(), status: '취소' };
-        return { status: '완료', detail: '취소' };
-      }
-      if (res.interrupted === 'timeout') {
-        dropUnannouncedConfirm(startedAt);
-        await finishProgress(`시간 초과로 멈췄습니다(${Math.round(seconds / 60)}분, 마지막 단계: ${escapeHtml(lastStep)}). 다시 보내 주세요.`);
-        deps.journal.append({ type: 'llm', status: '시간 초과', input: inputText });
-        state.lastRun = { ok: false, at: now().toISOString(), status: '시간 초과' };
-        return { status: '실패', detail: '시간 초과' };
-      }
-      if (res.isError) {
-        dropUnannouncedConfirm(startedAt);
-        await finishProgress(`처리하지 못했습니다(${shortReason(res)}).`);
-        deps.journal.append({ type: 'llm', status: '실패', input: inputText, error: String(res.errorText ?? '').slice(0, 300) });
-        state.lastRun = { ok: false, at: now().toISOString(), status: '실패' };
-        log(`[gate] 대화 실패: ${res.errorText}`);
-        return { status: '실패', detail: String(res.errorText ?? '').slice(0, 200) };
-      }
-
-      // 이름표는 창구가 정한다: 이 턴에 실제로 답한 하위 에이전트만 그 담당 이름을 단다(2026-11-06 오너).
-      const { messages, problem } = toGateMessages(res.structured, res.result, { labels: { self: 'zeus', actors: res.actors ?? [] } });
-      const outgoing = problem ? [fallbackMessage(res.result)] : messages;
-      if (problem) {
-        log(`[gate] 출력 계약 위반(${problem}) — 원문을 감싸 보냄`);
-        deps.journal.append({ type: 'contract', problem });
-      }
-      await run.throttle.close();
-      try {
-        for (const message of outgoing) {
-          await deps.send(message, chatId);
-          deps.journal.append({ type: 'out', agent: message.agent, text: String(message.body ?? message.conclusion ?? (message.facts ?? []).join(' / ')).slice(0, 2000) });
-        }
-      } catch (error) {
-        // 최종 답을 못 보냈어도 확인 질문은 보낸다 — 확인 문구는 코드가 만든 자기완결 문장이라 답 없이도 뜻이 통한다
-        // (제우스 방향, 2단계 리뷰 MEDIUM). 진행 메시지에 실패를 남긴다.
-        await safe(() => announceStagedConfirm(startedAt, chatId), '확인 질문 발송');
-        await finishProgress('답을 만들었지만 보내지 못했습니다. 다시 보내 주세요.');
-        deps.journal.append({ type: 'llm', status: '실패', input: inputText, error: `발송 실패: ${String(error?.message ?? error).slice(0, 200)}` });
-        state.lastRun = { ok: false, at: now().toISOString(), status: '발송 실패' };
-        log(`[gate] 최종 답 발송 실패: ${error.message}`);
-        return { status: '실패', detail: '최종 답 발송 실패' };
-      }
       if (progressId) {
         const deleted = await safe(() => deps.del(progressId, chatId), '진행 메시지 삭제');
         if (deleted === null) await safe(() => deps.edit(progressId, progressMessage(`처리 끝(${seconds}초)`), chatId), '진행 메시지 마무리');
@@ -256,7 +329,7 @@ export function createConversation(deps) {
       deps.journal.append({ type: 'llm', status: '완료', input: inputText, seconds });
       state.lastRun = { ok: true, at: now().toISOString(), status: '완료' };
       await announceStagedConfirm(startedAt, chatId);
-      return { status: '완료', detail: `대화 ${outgoing.length}건 답` };
+      return { status: '완료', detail: `대화 ${sentCount}건 답` };
     } finally {
       run.throttle?.close();
       deps.confirmStore.setActiveBatch?.(null);

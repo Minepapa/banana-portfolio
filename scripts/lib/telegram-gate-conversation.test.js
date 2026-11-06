@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createConversation, fakeOrderExecutor, buildHandoffSummaryArgs } from './telegram-gate-conversation.mjs';
+import { createConversation, fakeOrderExecutor, buildHandoffSummaryArgs, routeTarget } from './telegram-gate-conversation.mjs';
 import { createJournal } from './telegram-gate-journal.mjs';
 import { businessDay, createSessionStore } from './telegram-gate-session.mjs';
 
@@ -23,7 +23,7 @@ function memoryConfirmStore(initial = null) {
 }
 
 function setup({ clock = new Date('2026-10-30T05:00:00Z'), results = [], events = [{ type: 'system', subtype: 'init' }], cooldown = null, handoffs = {}, confirm = null, summarize,
-  sendImpl = null, downloadPhoto = null, isStopping = () => false, runnerHook = null, writeHandoffImpl = null, warns = null, journalWrap = (j) => j, live = null, extraDeps = {} } = {}) {
+  sendImpl = null, downloadPhoto = null, isStopping = () => false, runnerHook = null, writeHandoffImpl = null, warns = null, journalWrap = (j) => j, live = null, extraDeps = {}, departments = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'gate-conv-'));
   const state = { now: clock };
   const sent = [];
@@ -64,6 +64,8 @@ function setup({ clock = new Date('2026-10-30T05:00:00Z'), results = [], events 
     setTimer: (fn, ms) => { const t = { fn, ms }; timers.push(t); return t; },
     clearTimer: () => {},
     ...(live ? { live } : {}),
+    ...(departments ? { sessionStoreFor: (agent) => createSessionStore({ stateDir: dir, file: `session-${agent}.json`, uuid: () => `${agent}-S${++n}` }),
+      readCharter: (agent) => `---\nname: ${agent}\n---\n# ${agent} 헌장 본문` } : {}),
     ...extraDeps,
   });
   return { dir, conv, sent, edits, deleted, runs, vault, confirmStore, state, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
@@ -475,4 +477,97 @@ test('상시 실행: 풀이 있으면 프롬프트 없이 띄울 인자(stream-j
     assert.equal(flag(turns[1].args, '--resume'), turns[0].sessionId, '다시 띄워야 하면 --resume');
     assert.equal(s.sent.find((m) => m.topic === '답').body.includes('네'), true);
   } finally { s.cleanup(); }
+});
+
+const flags = (args, f) => { const i = args.indexOf(f); const out = []; for (let j = i + 1; j < args.length && !args[j].startsWith('--'); j += 1) out.push(args[j]); return out; };
+const ok = (agent, body, extra = {}) => ({ structured: { messages: [{ agent, topic: '답', kind: '정보', body }], ...extra }, isError: false, permissionDenials: [] });
+
+test('routeTarget: 담당 이름 호출 한 건은 그 담당, 기호 없는 사진 한 건은 클리오, 여러 건·자유 문장·담당 프로세스 없음은 제우스', () => {
+  const deps = ['clio', 'themis', 'hermes', 'athena', 'plutus'];
+  assert.equal(routeTarget([item(1, '헤르메스 주말 일정', { department: '헤르메스' })], deps), 'hermes');
+  assert.equal(routeTarget([item(1, '제우스 뭐해', { department: '제우스' })], deps), 'zeus');
+  assert.equal(routeTarget([item(1, '', { kind: 'photo' })], deps), 'clio');
+  assert.equal(routeTarget([item(1, '헤르메스 a', { department: '헤르메스' }), item(2, 'b')], deps), 'zeus');
+  assert.equal(routeTarget([item(1, '주말 일정')], deps), 'zeus');
+  assert.equal(routeTarget([item(1, '헤르메스 a', { department: '헤르메스' })], []), 'zeus', '담당 프로세스가 없으면 예전처럼 제우스');
+});
+
+test('담당 직통: "헤르메스 …"는 제우스를 거치지 않고 헤르메스 프로세스(헌장·자기 도구·자기 이름표·자기 세션)로 간다', async () => {
+  const s = setup({ departments: true, results: [ok('hermes', '토요일 가족 나들이')] });
+  try {
+    await s.conv.processBatch([item(1, '헤르메스 이번 주말 일정', { department: '헤르메스' })]);
+    assert.equal(s.runs.length, 1, '제우스 실행 없이 한 번');
+    const args = s.runs[0];
+    assert.match(flag(args, '--append-system-prompt'), /텔레그램 창구의 헤르메스[\s\S]*hermes 헌장 본문/);
+    assert.deepEqual(flags(args, '--tools'), ['Read,Grep,Glob'], '담당은 하위 에이전트 없음');
+    const allowed = flags(args, '--allowedTools');
+    assert.ok(allowed.includes('Read') && !allowed.includes('Agent'));
+    assert.deepEqual(JSON.parse(flag(args, '--mcp-config')).mcpServers.gate.args.at(-1), '--agent=hermes');
+    assert.deepEqual(JSON.parse(flag(args, '--json-schema')).properties.messages.items.properties.agent.enum, ['hermes']);
+    assert.equal(flag(args, '--model'), 'sonnet');
+    assert.equal(flag(args, '--effort'), 'medium');
+    assert.equal(flag(args, '--session-id'), 'hermes-S1', '담당은 자기 하루 세션');
+    const answer = s.sent.find((m) => m.topic === '답');
+    assert.equal(answer.agent, 'hermes');
+    assert.doesNotMatch(answer.body, /직접 조회/);
+  } finally { s.cleanup(); }
+});
+
+test('제우스 넘김: 제우스가 handoff를 내면 같은 묶음에서 그 담당 프로세스가 원문+요청을 받아 자기 이름으로 답하고, 다음 제우스 턴에 그 대화를 참고로 넘긴다', async () => {
+  const s = setup({ departments: true, results: [
+    ok('zeus', '헤르메스에게 넘깁니다', { handoff: { agent: 'hermes', request: '이번 주말 일정 정리' } }),
+    ok('hermes', '토요일 가족 나들이'),
+    ok('zeus', '네'),
+  ] });
+  try {
+    await s.conv.processBatch([item(1, '이번 주말 일정 알려줘')]);
+    assert.equal(s.runs.length, 2);
+    const zeusArgs = s.runs[0];
+    const schema = JSON.parse(flag(zeusArgs, '--json-schema'));
+    assert.deepEqual(schema.properties.handoff.properties.agent.enum.sort(), ['athena', 'clio', 'hermes', 'plutus', 'themis']);
+    assert.equal(schema.properties.messages.minItems, 0);
+    const zeusAllowed = flags(zeusArgs, '--allowedTools');
+    assert.ok(zeusAllowed.includes('Agent'));
+    assert.match(flag(zeusArgs, '--append-system-prompt'), /handoff/);
+    assert.match(flag(s.runs[1], '--append-system-prompt'), /텔레그램 창구의 헤르메스/);
+    assert.match(flag(s.runs[1], '-p'), /이번 주말 일정 알려줘[\s\S]*제우스가 너에게 넘긴 요청: 이번 주말 일정 정리/);
+    const answers = s.sent.filter((m) => m.topic === '답');
+    assert.deepEqual(answers.map((m) => m.agent), ['zeus', 'hermes']);
+    await s.conv.processBatch([item(2, '고마워')]);
+    assert.match(flag(s.runs[2], '-p'), /담당과 직접 나눈 대화[\s\S]*헤르메스 ← \(제우스 넘김\) 이번 주말 일정 정리[\s\S]*토요일 가족 나들이/);
+    await s.conv.processBatch([item(3, '또')]);
+    assert.doesNotMatch(flag(s.runs[3], '-p'), /직접 나눈 대화/, '한 번 넘긴 참고는 비운다');
+  } finally { s.cleanup(); }
+});
+
+test('넘김은 messages가 비어도 되지만 넘길 곳이 잘못되면 계약 위반으로 원문을 감싸 보낸다. 담당은 다시 넘기지 못한다', async () => {
+  const s = setup({ departments: true, results: [
+    { structured: { messages: [], handoff: { agent: 'hermes', request: '정리' } }, isError: false, permissionDenials: [] },
+    ok('hermes', '정리함', { handoff: { agent: 'clio', request: '기록' } }),
+    { structured: { messages: [], handoff: { agent: 'zeus', request: 'x' } }, result: 'raw', isError: false, permissionDenials: [] },
+  ] });
+  try {
+    await s.conv.processBatch([item(1, '정리해줘')]);
+    assert.equal(s.runs.length, 2, '헤르메스의 넘김은 따르지 않는다');
+    assert.deepEqual(s.sent.filter((m) => m.topic !== '진행').map((m) => `${m.agent}/${m.topic}`), ['zeus/답장(형식 오류)']);
+    assert.ok(s.sent.some((m) => m.agent === 'zeus' && m.topic === '답장(형식 오류)'), '담당이 넘김을 내면 계약 위반');
+    await s.conv.processBatch([item(2, '또')]);
+    assert.ok(s.sent.filter((m) => m.topic === '답장(형식 오류)').length >= 2, '제우스에게 넘김은 계약 위반');
+  } finally { s.cleanup(); }
+});
+
+test('도구 표 적용: 제우스는 볼트 기록 도구가 없고(클리오에게 넘김), 담당 프로세스가 없으면 예전처럼 전부', async () => {
+  const names = ['mcp__gate__photo_record', 'mcp__gate__tasks_add', 'mcp__gate__department_facts'];
+  const s = setup({ departments: true, extraDeps: { mcpToolNames: names } });
+  const legacy = setup({ extraDeps: { mcpToolNames: names } });
+  try {
+    await s.conv.processBatch([item(1, 'x')]);
+    const allowed = flags(s.runs[0], '--allowedTools');
+    assert.ok(allowed.includes('mcp__gate__tasks_add'));
+    assert.equal(allowed.includes('mcp__gate__photo_record'), false);
+    assert.equal(JSON.parse(flag(s.runs[0], '--mcp-config')).mcpServers.gate.args.at(-1), '--agent=zeus');
+    await legacy.conv.processBatch([item(1, 'x')]);
+    assert.ok(flags(legacy.runs[0], '--allowedTools').includes('mcp__gate__photo_record'));
+    assert.equal(JSON.parse(flag(legacy.runs[0], '--mcp-config')).mcpServers.gate.args.length, 1);
+  } finally { s.cleanup(); legacy.cleanup(); }
 });
