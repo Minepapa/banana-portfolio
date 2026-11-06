@@ -137,13 +137,14 @@ test('리뷰: 결정론 답에 데이터 신선도(마지막 갱신·동기화·
   const nowMs = NOW.getTime();
   assert.equal(freshnessLine('calendar', nowMs - 10 * 60_000, nowMs), '마지막 갱신 11:50');
   assert.match(freshnessLine('calendar', nowMs - 90 * 60_000, nowMs), /마지막 갱신 10:30 · 갱신 지연\(90분 전\)/);
-  assert.match(freshnessLine('trades', nowMs - 26 * 3600_000, nowMs, '동기화'), /마지막 동기화 11-05 10:00 · 갱신 지연\(26시간 전\)/);
+  assert.match(freshnessLine('trades', nowMs - 27 * 3600_000, nowMs, '동기화'), /마지막 동기화 11-05 09:00 · 갱신 지연\(27시간 전\)/);
+  assert.equal(freshnessLine('trades', nowMs - 20 * 3600_000, nowMs, '동기화'), '마지막 동기화 11-05 16:00', '하루 1회 대조 잡이라 26시간까지는 지연 아님');
   assert.match(freshnessLine('spending', null, nowMs), /시각을 알 수 없음/);
-  const jobs = { 'calendar-days': '2026-11-06T02:50:00Z', 'reconcile-nh-executions': '2026-11-06T02:40:00Z', 'parse-notifications-to-vault': '2026-11-06T00:00:00Z' };
-  const fresh = { ...read, jobLastRun: (job) => jobs[job] ?? null };
+  const jobs = { 'calendar-days': '2026-11-06T02:50:00Z', 'reconcile-nh-executions': '2026-11-06T02:40:00Z', 'parse-notifications-to-vault': '2026-11-06T02:59:00Z' };
+  const fresh = { ...read, jobHealth: (job) => (jobs[job] ? { lastRun: jobs[job], status: 'OK' } : null) };
   assert.match(answerFaq(parseFaq('오늘 일정'), { now: NOW, read: fresh }).body, /출처: 볼트 일정 정본 · 마지막 갱신 11:50$/);
   const zero = answerFaq(parseFaq('오늘 체결'), { now: NOW, read: { ...fresh, executions: () => [] } });
-  assert.match(zero.body, /^오늘\(11-06\(금\)\) 마지막 동기화 11:40 기준 체결 0건/, '가장 최근 동기화 잡 기준');
+  assert.match(zero.body, /^오늘\(11-06\(금\)\) 마지막 동기화 11:40 기준 체결 0건/, '알림 파싱(11:59)이 아니라 NH 체결 대조 잡 기준');
   const holdings = answerFaq(parseFaq('보유 요약'), { now: NOW, read: { ...read, holdings: () => read.holdings().map((h, i) => ({ ...h, updatedAt: i ? '2026-11-06T02:00:00Z' : '2026-11-04T02:00:00Z' })) } });
   assert.match(holdings.body, /마지막 갱신 11:00\(가장 오래된 항목 기준 11-04 11:00\)/);
   const stale = answerFaq(parseFaq('예수금'), { now: NOW, read: { ...read, holdings: () => read.holdings().map((h) => ({ ...h, updatedAt: '2026-11-04T02:00:00Z' })) } });
@@ -154,4 +155,18 @@ test('리뷰: 오늘 체결은 파일 이름 날짜 접두사로 먼저 거른�
   const asked = [];
   answerFaq(parseFaq('오늘 체결'), { now: NOW, read: { ...read, executions: (date) => { asked.push(date); return []; } } });
   assert.deepEqual(asked, ['2026-11-06']);
+});
+
+test('재리뷰 LOW: 신선도는 성공 시각만 — lastSuccess가 있으면 그것, 없으면 OK일 때만 lastRun, 실패면 실패 표시', async () => {
+  const { jobSuccessMs, jobFailNote } = await import('./telegram-gate-faq.mjs');
+  assert.equal(jobSuccessMs({ lastRun: '2026-11-06T02:00:00Z', status: 'FAIL', lastSuccess: '2026-11-05T02:00:00Z' }), Date.parse('2026-11-05T02:00:00Z'));
+  assert.equal(jobSuccessMs({ lastRun: '2026-11-06T02:00:00Z', status: 'OK' }), Date.parse('2026-11-06T02:00:00Z'));
+  assert.equal(jobSuccessMs({ lastRun: '2026-11-06T02:00:00Z', status: 'FAIL' }), null, '실패한 실행은 갱신이 아니다');
+  assert.equal(jobSuccessMs(null), null);
+  const failing = { ...read, jobHealth: (job) => (job === 'calendar-days' ? { lastRun: '2026-11-06T02:55:00Z', status: 'FAIL', failStreak: 3 } : null) };
+  const a = answerFaq(parseFaq('오늘 일정'), { now: NOW, read: failing });
+  assert.match(a.body, /갱신 시각을 알 수 없음\(잡 상태 확인 필요\) · 마지막 실행 실패\(연속 3회\)$/);
+  assert.equal(jobFailNote('calendar', { jobHealth: () => ({ status: 'OK' }) }), '');
+  const withSuccess = { ...read, jobHealth: () => ({ lastRun: '2026-11-06T02:55:00Z', status: 'FAIL', failStreak: 1, lastSuccess: '2026-11-06T02:50:00Z' }) };
+  assert.match(answerFaq(parseFaq('오늘 일정'), { now: NOW, read: withSuccess }).body, /마지막 갱신 11:50 · 마지막 실행 실패\(연속 1회\)$/);
 });

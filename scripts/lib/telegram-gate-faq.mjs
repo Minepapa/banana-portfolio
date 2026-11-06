@@ -115,10 +115,10 @@ export function defaultFaqReaders() {
     calendarDay: (date) => { const p = calendarDayPath(date); return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null; },
     // 체결 파일 이름은 'YYYY-MM-DD-HHMMSS-…'라 날짜 접두사로 먼저 거른다(리뷰 LOW: 전부 읽지 않게).
     executions: (date) => readDir(VAULT_PATHS.facts.ledger.executions, date ? `${date}-` : ''),
-    // 데이터 신선도: 잡 상태 파일의 마지막 실행 시각(ISO) 또는 null.
-    jobLastRun: (job) => {
+    // 데이터 신선도: 잡 상태 머리말(lastRun·status·failStreak, 있으면 lastSuccess) 또는 null.
+    jobHealth: (job) => {
       const p = join(VAULT_PATHS.state.jobHealth, `${job}.md`);
-      return existsSync(p) ? (parseFrontmatter(readFileSync(p, 'utf8'))?.lastRun ?? null) : null;
+      return existsSync(p) ? (parseFrontmatter(readFileSync(p, 'utf8')) ?? null) : null;
     },
     holdings: () => readDir(VAULT_PATHS.state.holdings),
     spendingSummary: (date) => { const p = spendingSummaryPath(date); return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null; },
@@ -131,19 +131,35 @@ const kstClock = (iso) => {
 };
 
 // 데이터 신선도 한 줄(리뷰 MEDIUM). 기준 시간보다 오래됐으면 "갱신 지연"을 붙인다. 시각을 모르면 모른다고 쓴다.
-export const FRESHNESS_MAX_MIN = Object.freeze({ calendar: 60, trades: 120, holdings: 24 * 60, spending: 120 });
+export const FRESHNESS_MAX_MIN = Object.freeze({ calendar: 60, trades: 26 * 60, holdings: 24 * 60, spending: 120 });
 const FRESHNESS_JOBS = Object.freeze({
   calendar: ['calendar-days'],
-  trades: ['parse-notifications-to-vault', 'reconcile-nh-executions', 'update-holdings-from-executions'],
+  // 체결은 NH 체결 대조 잡 하나를 기준으로 한다: 알림 파싱은 수시로 돌아 "가장 최근"을 쓰면 API로 확인되지 않은 시점까지 0건이라고
+  // 말하게 되고(재리뷰 LOW), 세 잡 중 "가장 오래된"은 하루 한 번 도는 대조 잡과 같아진다. 그래서 대조 잡 시각 + 기준 26시간(하루 1회 + 여유).
+  trades: ['reconcile-nh-executions'],
   spending: ['ingest-spending-inbox', 'argos-forward'],
 });
 function kstStamp(ms, nowMs) {
   const d = new Date(ms + 9 * 3_600_000).toISOString();
   return d.slice(0, 10) === new Date(nowMs + 9 * 3_600_000).toISOString().slice(0, 10) ? d.slice(11, 16) : `${d.slice(5, 10)} ${d.slice(11, 16)}`;
 }
+// 잡의 마지막 "성공" 시각(ms). lastSuccess(있으면)를 쓰고, 없으면 상태가 OK일 때만 lastRun을 쓴다 — 실패한 실행은 갱신이 아니다(재리뷰 LOW).
+export function jobSuccessMs(health) {
+  if (!health) return null;
+  const explicit = Date.parse(health.lastSuccess ?? health.lastSuccessAt ?? '');
+  if (Number.isFinite(explicit)) return explicit;
+  return health.status === 'OK' ? (Date.parse(health.lastRun ?? '') || null) : null;
+}
 export function latestJobRun(kind, read) {
-  const times = (FRESHNESS_JOBS[kind] ?? []).map((job) => Date.parse(read.jobLastRun?.(job) ?? '')).filter(Number.isFinite);
+  const times = (FRESHNESS_JOBS[kind] ?? []).map((job) => jobSuccessMs(read.jobHealth?.(job))).filter(Number.isFinite);
   return times.length ? Math.max(...times) : null;
+}
+// 마지막 실행이 실패한 잡 표시(" · 마지막 실행 실패(연속 N회)"), 없으면 ''.
+export function jobFailNote(kind, read) {
+  const failing = (FRESHNESS_JOBS[kind] ?? []).map((job) => read.jobHealth?.(job)).filter((h) => h && h.status && h.status !== 'OK');
+  if (!failing.length) return '';
+  const streak = Math.max(...failing.map((h) => Number(h.failStreak) || 1));
+  return ` · 마지막 실행 실패(연속 ${streak}회)`;
 }
 export function freshnessLine(kind, lastMs, nowMs, what = '갱신') {
   if (!Number.isFinite(lastMs)) return `${what} 시각을 알 수 없음(잡 상태 확인 필요)`;
@@ -170,7 +186,7 @@ function answerCalendar(q, today, read, nowMs) {
     }
     lines.push('');
   }
-  lines.push(`출처: 볼트 일정 정본 · ${freshnessLine('calendar', latestJobRun('calendar', read), nowMs)}`);
+  lines.push(`출처: 볼트 일정 정본 · ${freshnessLine('calendar', latestJobRun('calendar', read), nowMs)}${jobFailNote('calendar', read)}`);
   return { topic: '일정', body: lines.join('\n') };
 }
 
@@ -178,7 +194,7 @@ function answerTrades(today, read, nowMs) {
   const rows = read.executions(today).filter((e) => String(e.tradeDate ?? '').startsWith(today))
     .sort((a, b) => String(a.tradeDate).localeCompare(String(b.tradeDate)));
   const sync = latestJobRun('trades', read);
-  const fresh = freshnessLine('trades', sync, nowMs, '동기화');
+  const fresh = `${freshnessLine('trades', sync, nowMs, '동기화')}${jobFailNote('trades', read)}`;
   // 0건은 "없다"가 아니라 "마지막 동기화 기준 0건"이다(장중·동기화 전일 수 있음, 리뷰 MEDIUM).
   if (!rows.length) {
     return { topic: '오늘 체결', body: `오늘(${label(today)}) ${Number.isFinite(sync) ? `마지막 동기화 ${kstStamp(sync, nowMs)} 기준` : '동기화 시각 모름 ·'} 체결 0건\n출처: 볼트 체결 장부 · ${fresh}` };
@@ -224,7 +240,7 @@ function answerHoldings(read, nowMs) {
 }
 
 function answerSpending(q, today, read, nowMs) {
-  const fresh = freshnessLine('spending', latestJobRun('spending', read), nowMs, '수집');
+  const fresh = `${freshnessLine('spending', latestJobRun('spending', read), nowMs, '수집')}${jobFailNote('spending', read)}`;
   if (q.scope === 'today') {
     const s = read.spendingSummary(today);
     if (!s) return { topic: '오늘 소비', body: '오늘 소비 요약 파일이 아직 없습니다(수집 잡이 만들기 전).' };
