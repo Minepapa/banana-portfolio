@@ -98,16 +98,22 @@ export function locationSearch({ query = '', from, to, limit } = {}, { now = new
   return [head, ...(lines.length ? clip(lines, limit) : ['찾은 체류 없음'])].join('\n');
 }
 
-// 날짜 노트 폴더({YYYY}/YYYY-MM-DD 제목.md)에서 기간·query(제목·설명·사람)로 찾는다. 통화·녹음 전사(23_Conversations)·사진 순간(24_Media).
+// 날짜 노트 폴더({YYYY}/YYYY-MM-DD 제목.md)에서 기간·query로 찾는다. 제목·설명·사람에 더해 본문에서도 찾고, 본문에서만 맞으면
+// 맞은 줄 앞뒤를 짧게 붙인다(11-06 재측정: 제목만 보면 "미네 좋아하는 노래"를 못 찾음). 통화·녹음 전사·사진 순간·기록 노트.
 function noteSearch(rel, { query = '', from, to, limit } = {}, { now, listNotes, label }) {
   const range = searchRange({ from, to }, { now, defaultDays: 90, maxDays: 366 });
   const q = norm(query);
   const lines = [];
-  for (const { date, title, front } of listNotes(rel, range)) {
+  for (const { date, title, front, body } of listNotes(rel, range)) {
     const people = Array.isArray(front.people) ? front.people.join(' ') : String(front.people ?? '');
     const hay = norm(`${title} ${front.description ?? ''} ${people}`);
-    if (q && !hay.includes(q)) continue;
-    lines.push(`${date} ${title}${front.description ? ` — ${String(front.description).slice(0, 80)}` : ''}`);
+    let snippet = '';
+    if (q && !hay.includes(q)) {
+      const bodyLine = String(body ?? '').split('\n').find((l) => norm(l).includes(q));
+      if (!bodyLine) continue;
+      snippet = ` [본문: ${bodyLine.trim().slice(0, 80)}]`;
+    }
+    lines.push(`${date} ${title}${front.description ? ` — ${String(front.description).slice(0, 80)}` : ''}${snippet}`);
   }
   lines.sort((a, b) => b.localeCompare(a));
   const head = `${label} ${range.from}~${range.to}${query ? ` "${query}"` : ''}: ${lines.length}건`;
@@ -123,8 +129,13 @@ function defaultListNotes(rel, range) {
       const m = name.match(/^(\d{4}-\d{2}-\d{2}) (.+)\.md$/);
       if (!m || m[1] < range.from || m[1] > range.to) continue;
       let front = {};
-      try { front = parseFrontmatter(readFileSync(join(dir, name), 'utf8')) ?? {}; } catch { /* 머리말 없음 */ }
-      out.push({ date: m[1], title: m[2], front });
+      let body = '';
+      try {
+        const text = readFileSync(join(dir, name), 'utf8');
+        front = parseFrontmatter(text) ?? {};
+        body = text.replace(/^---\n[\s\S]*?\n---\n/, '');
+      } catch { /* 읽기 실패 노트는 건너뛴다 */ }
+      out.push({ date: m[1], title: m[2], front, body });
     }
   }
   return out;
@@ -136,4 +147,9 @@ export function callSearch(args = {}, { now = new Date(), listNotes = defaultLis
 
 export function mediaSearch(args = {}, { now = new Date(), listNotes = defaultListNotes } = {}) {
   return noteSearch(VAULT_REL.mediaMoments, args, { now, listNotes, label: '사진·영상 순간' });
+}
+
+// 기록 노트(20_Records/21_Notes — 📜 메모·오너 기록): 미네·가족 일화 같은 질문의 1차 출처.
+export function recordSearch(args = {}, { now = new Date(), listNotes = defaultListNotes } = {}) {
+  return noteSearch(VAULT_REL.recordsNotes, args, { now, listNotes, label: '기록 노트' });
 }

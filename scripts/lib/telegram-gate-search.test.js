@@ -60,3 +60,14 @@ test('도구 표: 조회 도구는 헤르메스(소비·동선)·아테나·클�
   assert.ok(gateMcpToolsFor('hermes').includes('spending_search') && gateMcpToolsFor('hermes').includes('location_search'));
   assert.ok(gateMcpToolsFor('athena').includes('call_search') && gateMcpToolsFor('athena').includes('media_search'));
 });
+
+test('노트 검색은 본문도 본다(본문에서만 맞으면 맞은 줄을 짧게), record_search는 기록 노트', async () => {
+  const { recordSearch } = await import('./telegram-gate-search.mjs');
+  const listNotes = (rel) => (rel.endsWith('21_Notes') ? [
+    { date: '2026-10-11', title: '공원 버스킹', front: { description: '일요일 공원' }, body: '# 공원\n미네가 그 노래를 아주 좋아했다.\n' },
+    { date: '2026-10-12', title: '숙제', front: {}, body: '수학' },
+  ] : []);
+  const out = recordSearch({ query: '노래' }, { now: NOW, listNotes });
+  assert.match(out, /기록 노트 .*: 1건\n2026-10-11 공원 버스킹 — 일요일 공원 \[본문: 미네가 그 노래를 아주 좋아했다\.\]/);
+  assert.ok(gateMcpToolsFor('athena').includes('record_search'));
+});

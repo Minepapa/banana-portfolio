@@ -90,7 +90,8 @@ export const GATE_SOURCE_MAP = Object.freeze({
     '거시·위험: facts_tool risk-facts.mjs·macro-overlay-facts.mjs, 리밸런싱: rebalance-facts.mjs',
   ],
   athena: [
-    `미네 기록: ${VAULT_REL.recordsNotes}·${VAULT_REL.people}/미네.md, 미네 통화·녹음 전사: call_search 도구 먼저(원본 ${VAULT_REL.mediaConversations})`,
+    `미네 기록·일화(좋아하는 것·있었던 일): record_search 도구(본문까지) 먼저, 위키 ${VAULT_REL.people}/미네.md. 통화·녹음 전사: call_search(원본 ${VAULT_REL.mediaConversations})`,
+    '도구가 0건이면 낱말을 바꿔(예: 노래→가수·곡 이름·음악) 한 번 더 찾고, 그래도 없을 때만 못 찾았다고 쓴다',
     `사진·영상: media_search 도구 먼저(원본 ${VAULT_REL.mediaMoments}), 색인 ${VAULT_REL.mediaArchiveIndex}·${VAULT_REL.mediaVisionIndex}`,
     `기록 파이프라인 현황: ${VAULT_REL.mineStatusBoard}`,
   ],

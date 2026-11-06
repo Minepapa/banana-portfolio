@@ -25,7 +25,7 @@ import { randomUUID } from 'node:crypto';
 import { describeCalendarDay } from '../tools/calendar-facts.mjs';
 import { calendarDayPath, nextDates } from './calendar-days.mjs';
 import { gateMcpToolsFor } from './telegram-gate-tool-table.mjs';
-import { callSearch, locationSearch, mediaSearch, spendingSearch } from './telegram-gate-search.mjs';
+import { callSearch, locationSearch, mediaSearch, recordSearch, spendingSearch } from './telegram-gate-search.mjs';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CALENDAR_LIST_MAX_DAYS = 31;
@@ -109,13 +109,19 @@ export function createGateMcpTools(deps = {}) {
     },
     {
       name: 'call_search',
-      description: '통화·녹음 전사 노트를 사람·주제 낱말·기간으로 찾는다(제목·설명·사람). 기본 최근 90일. 내용이 더 필요하면 찾은 노트를 Read한다.',
+      description: '통화·녹음 전사 노트를 사람·주제 낱말·기간으로 찾는다(제목·설명·사람·본문). 기본 최근 90일. 내용이 더 필요하면 찾은 노트를 Read한다.',
       inputSchema: { type: 'object', properties: { query: str('사람·주제 낱말'), from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD'), limit: { type: 'integer' } }, additionalProperties: false },
       handler: async (a) => callSearch(a, { now: now() }),
     },
     {
+      name: 'record_search',
+      description: '기록 노트(📜 메모·오너 기록, 20_Records/21_Notes)를 낱말·기간으로 찾는다(제목·설명·사람·본문). 기본 최근 90일. 미네·가족 일화 질문은 이것부터.',
+      inputSchema: { type: 'object', properties: { query: str('낱말(예: 노래)'), from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD'), limit: { type: 'integer' } }, additionalProperties: false },
+      handler: async (a) => recordSearch(a, { now: now() }),
+    },
+    {
       name: 'media_search',
-      description: '사진·영상 순간 노트를 장소·낱말·기간으로 찾는다(제목·설명). 기본 최근 90일.',
+      description: '사진·영상 순간 노트를 장소·낱말·기간으로 찾는다(제목·설명·본문). 기본 최근 90일.',
       inputSchema: { type: 'object', properties: { query: str('장소·낱말'), from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD'), limit: { type: 'integer' } }, additionalProperties: false },
       handler: async (a) => mediaSearch(a, { now: now() }),
     },
