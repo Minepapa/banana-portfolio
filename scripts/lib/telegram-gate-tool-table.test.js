@@ -26,7 +26,7 @@ test('도구 표 B안: 모든 담당 읽기·사실·요청 기록, 볼트 기�
     assert.equal(hasRecord, agent === 'clio', `${agent} 볼트 기록 도구`);
   }
   for (const t of VAULT_RECORD_TOOLS) assert.ok(toolNames.includes(t));
-  assert.deepEqual(gateBuiltinTools('zeus'), ['Read', 'Grep', 'Glob', 'Agent'], '하위 에이전트는 제우스만');
+  for (const agent of AGENT_IDS) assert.deepEqual(gateBuiltinTools(agent), ['Read', 'Grep', 'Glob'], '하위 에이전트(Agent)는 아무에게도 없다(담당 프로세스로 넘김)');
   // 돈: 접수 대기는 제우스·플루토스만, 실제 주문 도구는 없다.
   assert.deepEqual(AGENT_IDS.filter((a) => gateMcpToolsFor(a).includes('order_stage')).sort(), ['plutus', 'zeus']);
   assert.equal(toolNames.some((t) => /place.*order|execute|modify_cancel/.test(t)), false);

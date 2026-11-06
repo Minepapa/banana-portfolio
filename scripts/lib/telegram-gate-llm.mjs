@@ -4,12 +4,17 @@
 // 지키는 것:
 // - --strict-mcp-config + 관문 MCP 서버만 붙인다(텔레그램 플러그인이 뜨지 않아 봇을 가로채지 않는다, F8).
 // - --restricted는 쓰지 않는다. 쓰면 설정 파일 훅(금고 가드)이 꺼진다(F10).
-// - --tools는 Read·Grep·Glob·Agent만(Bash·Write·Edit 없음). 하위 에이전트도 이 집합을 넘지 못한다(실측).
+// - --tools는 Read·Grep·Glob만(Bash·Write·Edit·Agent 없음). 담당 일은 하위 에이전트 대신 담당 상시 프로세스로 넘긴다(handoff).
+// - 가벼운 실행(속도 개선 2차 A-4): cwd는 창구 전용 빈 폴더, --setting-sources local(사용자·프로젝트 설정·플러그인·CLAUDE.md·
+//   자동 메모리를 싣지 않음), --disable-slash-commands. 꼭 필요한 규칙은 --append-system-prompt로만 넣고, 금고 가드·읽기 가드 훅은
+//   --settings로 명시해 붙인다(프로젝트 설정을 안 읽으므로 금고 가드도 여기서 직접).
 //   실행은 관문 MCP 도구로만 한다(telegram-gate-mcp-tools.mjs).
 // - 자식 환경은 buildGateSpawnEnv(CLAUDE_TELEGRAM_GATE=1, 상시 세션 변수·봇 토큰 없음).
 // - 사용량 한도: 실행 전 getCooldown, 실행 중 rate_limit_event가 allowed가 아니거나 한도 오류면 setCooldown.
 // - 취소·시간 초과: 프로세스 그룹에 SIGTERM, 10초 뒤 SIGKILL. 세션은 다음 --resume에서 정상으로 이어진다(F6).
 import { spawn } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveClaudeBin } from './headless-claude.mjs';
@@ -18,10 +23,17 @@ import { buildGateSpawnEnv } from './telegram-gate-config.mjs';
 import { AGENT_IDS } from './agent-registry.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-export const GATE_LLM_CWD = resolve(REPO_ROOT, '..', '..'); // ~/Pantheon — 루트 CLAUDE.md·담당 정의·루트 훅, 세션 기록 위치 고정(F7)
+// 창구 전용 빈 폴더(2026-11-06 A-4): 판테온 루트에서 띄우면 루트 CLAUDE.md·메모리·플러그인·스킬 목록까지 실려 지시문이 약 5만 토큰이었다.
+// 세션 기록은 이 폴더 기준(~/.claude/projects/<이 경로>)으로 이어진다(F7: cwd가 같아야 --resume이 된다 — 늘 이 상수만 쓴다).
+// ~/.config·~/Library는 읽기 거부 대상이라 피한다(읽을 일은 없지만 헷갈리지 않게).
+export const GATE_LLM_CWD = join(homedir(), '.cache', 'banana-portfolio-v2', 'telegram-gate-cwd');
+export function ensureGateCwd(dir = GATE_LLM_CWD) {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
+}
 export const GATE_MODEL = 'opus';
 export const GATE_EFFORT = 'medium';
-export const GATE_TOOLS_SET = Object.freeze(['Read', 'Grep', 'Glob', 'Agent']);
+export const GATE_TOOLS_SET = Object.freeze(['Read', 'Grep', 'Glob']);
 export const SOFT_TIMEOUT_MS = 3 * 60 * 1000;
 export const HARD_TIMEOUT_MS = 15 * 60 * 1000;
 const KILL_GRACE_MS = 10 * 1000;
@@ -73,10 +85,16 @@ export function buildGateOutputSchema({ agents = AGENT_IDS, handoffTo = [] } = {
 }
 export const GATE_OUTPUT_SCHEMA = Object.freeze(buildGateOutputSchema());
 
-// 읽기 경로 제한 훅(scripts/hooks/gate-read-guard.mjs)을 이 실행에만 붙인다. 전역 설정은 바꾸지 않는다.
-// 허용 뿌리는 env GATE_READ_ROOTS로 넘긴다(buildGateReadEnv).
-export function buildGateReadGuardSettings({ nodePath = process.execPath, hookPath = join(REPO_ROOT, 'scripts', 'hooks', 'gate-read-guard.mjs') } = {}) {
-  return JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Read|Grep|Glob', hooks: [{ type: 'command', command: `"${nodePath}" "${hookPath}"`, timeout: 10 }] }] } });
+// 읽기 경로 제한 훅(scripts/hooks/gate-read-guard.mjs)과 금고 가드(scripts/hooks/adyton-guard.mjs)를 이 실행에만 붙인다. 전역 설정은 바꾸지 않는다.
+// 허용 뿌리는 env GATE_READ_ROOTS로 넘긴다(buildGateReadEnv). 금고 가드는 원래 판테온 프로젝트 설정에서 왔는데, 창구는 이제
+// 프로젝트 설정을 읽지 않으므로(--setting-sources local) 같은 matcher로 여기서 명시한다(A-4, 빠지면 금고 이중 방어가 사라진다).
+export function buildGateReadGuardSettings({ nodePath = process.execPath, hookPath = join(REPO_ROOT, 'scripts', 'hooks', 'gate-read-guard.mjs'),
+  adytonHookPath = join(REPO_ROOT, 'scripts', 'hooks', 'adyton-guard.mjs') } = {}) {
+  const hook = (path) => ({ type: 'command', command: `"${nodePath}" "${path}"`, timeout: 10 });
+  return JSON.stringify({ hooks: { PreToolUse: [
+    { matcher: 'Read|Grep|Glob', hooks: [hook(hookPath)] },
+    { matcher: 'Read|Write|Edit|NotebookEdit|Grep|Glob|Bash', hooks: [hook(adytonHookPath)] },
+  ] } });
 }
 
 // 읽기 허용 뿌리: 볼트(시험 모드면 시험 볼트)·이 저장소·관문 사진 폴더. 금고는 뿌리 안이라도 막는다.
@@ -109,6 +127,7 @@ export function buildGateClaudeArgs({ prompt, streamInput = false, sessionId, re
     '--allowedTools', ...allowedTools,
     '--disallowedTools', 'Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', ...GATE_DENY_RULES,
     '--strict-mcp-config', '--mcp-config', mcpConfig,
+    '--setting-sources', 'local', '--disable-slash-commands',
     '--settings', readGuardSettings,
     '--json-schema', JSON.stringify(schema),
     ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
@@ -131,6 +150,7 @@ export function rateLimitBlockedUntil(event) {
 // 실행 하나. 반환: { result, structured, sessionId, isError, errorText, interrupted('cancel'|'timeout'|null), permissionDenials, rateLimit, exitCode }
 export function runGateClaude({ args, env = buildGateSpawnEnv(), cwd = GATE_LLM_CWD, onEvent = () => {}, claudeBin = resolveClaudeBin(),
   spawnImpl = spawn, hardTimeoutMs = HARD_TIMEOUT_MS, cooldownWriter = setCooldown, now = () => Date.now() }) {
+  if (cwd === GATE_LLM_CWD) ensureGateCwd(cwd);
   let child;
   let interrupted = null;
   let killTimer = null;

@@ -165,3 +165,16 @@ test('거부 패턴은 실제 토큰·자격증명 경로 형태를 막는다(�
   ]) assert.equal(matchesSecret(path, home), true, path);
   assert.equal(matchesSecret(`${home}/Pantheon/Mouseion/90_Delphi/Schema/상태표준.md`, home), false);
 });
+
+test('가벼운 실행(A-4): 전용 cwd, 사용자·프로젝트 설정·슬래시 명령을 싣지 않고, 금고 가드·읽기 가드 훅은 --settings로 명시한다', async () => {
+  const { GATE_LLM_CWD, buildGateReadGuardSettings: build } = await import('./telegram-gate-llm.mjs');
+  assert.match(GATE_LLM_CWD, /\.cache\/banana-portfolio-v2\/telegram-gate-cwd$/);
+  assert.doesNotMatch(GATE_LLM_CWD, /Pantheon|\.config|Library/);
+  const args = buildGateClaudeArgs({ prompt: 'p', sessionId: 'S', resume: false, allowedTools: ['Read'] });
+  assert.deepEqual(flagValues(args, '--setting-sources'), ['local']);
+  assert.ok(args.includes('--disable-slash-commands'));
+  assert.deepEqual(flagValues(args, '--tools'), ['Read,Grep,Glob']);
+  const hooks = JSON.parse(build({ nodePath: '/n' })).hooks.PreToolUse;
+  assert.ok(hooks.some((h) => /Read\|Grep\|Glob/.test(h.matcher) && /gate-read-guard\.mjs/.test(h.hooks[0].command)));
+  assert.ok(hooks.some((h) => /Read\|.*Grep\|Glob\|Bash/.test(h.matcher) && /adyton-guard\.mjs/.test(h.hooks[0].command)));
+});

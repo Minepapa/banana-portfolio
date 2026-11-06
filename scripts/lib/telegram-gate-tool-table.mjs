@@ -21,9 +21,11 @@ export const GATE_TOOL_TABLE = Object.freeze({
   clio: Object.freeze([...GATE_COMMON_MCP_TOOLS, ...VAULT_RECORD_TOOLS]),
 });
 
-// 내장 도구: 제우스만 Agent(하위 에이전트)를 더 갖는다. 담당 프로세스는 읽기 도구만.
+// 내장 도구: 모두 읽기 도구만. 하위 에이전트(Agent)는 없다 — 제우스는 담당 상시 프로세스로 넘긴다(handoff). 창구는 판테온 루트 밖에서
+// 떠서(A-4) 루트의 담당 정의(.claude/agents)를 싣지 않으므로 Agent를 줘도 담당을 부를 수 없다.
 export function gateBuiltinTools(agent) {
-  return agent === 'zeus' ? [...GATE_READ_TOOLS, 'Agent'] : [...GATE_READ_TOOLS];
+  gateMcpToolsFor(agent);
+  return [...GATE_READ_TOOLS];
 }
 
 export function gateMcpToolsFor(agent) {

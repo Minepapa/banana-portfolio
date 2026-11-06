@@ -18,7 +18,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { resolveClaudeBin } from './headless-claude.mjs';
 import { LIMIT_RE, parseResetTime, setCooldown } from './quota-cooldown.mjs';
-import { parseStreamLine, rateLimitBlockedUntil, GATE_LLM_CWD, HARD_TIMEOUT_MS } from './telegram-gate-llm.mjs';
+import { ensureGateCwd, parseStreamLine, rateLimitBlockedUntil, GATE_LLM_CWD, HARD_TIMEOUT_MS } from './telegram-gate-llm.mjs';
 
 export const LIVE_IDLE_MS = 30 * 60 * 1000;
 export const LIVE_MAX_PROCESSES = 3;
@@ -106,6 +106,7 @@ export function createLiveClaude({ args, env, meta = {}, cwd = GATE_LLM_CWD, cla
   };
 
   try {
+    if (cwd === GATE_LLM_CWD) ensureGateCwd(cwd);
     child = spawnImpl(claudeBin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
   } catch (error) {
     closed = true;

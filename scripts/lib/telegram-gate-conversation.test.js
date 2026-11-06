@@ -527,7 +527,7 @@ test('제우스 넘김: 제우스가 handoff를 내면 같은 묶음에서 그 �
     assert.deepEqual(schema.properties.handoff.properties.agent.enum.sort(), ['athena', 'clio', 'hermes', 'plutus', 'themis']);
     assert.equal(schema.properties.messages.minItems, 0);
     const zeusAllowed = flags(zeusArgs, '--allowedTools');
-    assert.ok(zeusAllowed.includes('Agent'));
+    assert.equal(zeusAllowed.includes('Agent'), false, '하위 에이전트 대신 넘김');
     assert.match(flag(zeusArgs, '--append-system-prompt'), /handoff/);
     assert.match(flag(s.runs[1], '--append-system-prompt'), /텔레그램 창구의 헤르메스/);
     assert.match(flag(s.runs[1], '-p'), /이번 주말 계획 알려줘[\s\S]*제우스가 너에게 넘긴 요청: 이번 주말 일정 정리/);

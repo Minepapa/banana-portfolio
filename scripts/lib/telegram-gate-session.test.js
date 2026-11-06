@@ -157,7 +157,7 @@ test('담당 시스템 프롬프트: 헌장 원문(머리말 제외)·자기 출
   assert.match(buildDepartmentSystemPrompt({ agent: 'themis' }), /판정 원장/);
   // 제우스 프롬프트: 넘길 담당이 있으면 handoff 안내, 없으면 예전 하위 에이전트 안내. 출처 지도는 전부.
   assert.match(buildGateSystemPrompt({ handoffTo: ['hermes'] }), /handoff \{agent, request\}/);
-  assert.match(buildGateSystemPrompt({}), /Agent로 그 담당을 부르고/);
+  assert.match(buildGateSystemPrompt({}), /department_facts로 그 담당 기본 사실을 붙여 답한다/);
   assert.match(buildGateSystemPrompt({}), /플루토스 · 체결·예수금·장부/);
 });
 
