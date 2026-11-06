@@ -103,6 +103,13 @@ export const GATE_SOURCE_MAP = Object.freeze({
   ],
 });
 
+// 답 모양(속도 개선 2차 A-3): 조회·정리는 짧게, 4단 구조는 판단에만.
+const ANSWER_SHAPE_LINES = Object.freeze([
+  '- 정보형(kind 정보, 조회·정리): 결론 한 줄 + 근거 2~3줄이 기본이다. 길게 풀어 쓰지 않는다. 항목이 많을 때만 ■ 소제목·<pre> 표를 쓴다.',
+  '- 정보형 body는 텔레그램 HTML(<b>·<i>·<pre>·<code>만). 항목마다 한 줄, |·쉼표로 이어붙이지 않는다.',
+  '- 판단형(kind 판단, 제안·판정·이상 보고·질문)에만 4단 구조를 쓴다: facts(사실 항목)·conclusion·context·decisions. 사실은 도구 결과에서만.',
+]);
+
 function sourceMapLines(agents) {
   return agents.flatMap((id) => (GATE_SOURCE_MAP[id] ?? []).map((line) => `- ${agentTitle(id)} · ${line}`));
 }
@@ -118,8 +125,7 @@ export function buildGateSystemPrompt({ inputRules = '', sessionRules = '', vaul
     '- 텔레그램으로 보내는 도구는 없다. 최종 답은 StructuredOutput(정해진 JSON)으로만 낸다. 창구가 그것을 발송 관문으로 보낸다.',
     `- messages[]의 각 항목이 메시지 하나다. agent는 실제로 답한 담당(${AGENT_IDS.join('·')}). 담당끼리 묶지 않는다.`,
     `- 담당 이름은 그 담당이 실제로 답했을 때만 쓴다. 네가 직접 찾아 답했으면 zeus로 쓴다. 창구가 실제 호출 여부를 확인해 아니면 zeus로 고치고 "○○ 영역 · ${agentTitle('zeus')} 직접 조회"를 붙인다.`,
-    '- 정보형(kind 정보): body에 텔레그램 HTML(<b>·<i>·<pre>·<code>만)로 쓴다. 항목마다 한 줄, ■ 소제목 + 빈 줄, |·쉼표로 이어붙이지 않는다.',
-    '- 판단형(kind 판단, 제안·판정·이상 보고·질문): facts(사실 항목)·conclusion·context·decisions를 채운다. 사실은 도구 결과에서만.',
+    ...ANSWER_SHAPE_LINES,
     `- 헤더·구분선·인용문은 창구가 붙인다. body 첫 줄에 [${agentLabel('zeus')}] 같은 헤더를 쓰지 않는다. 이모지는 지워진다.`,
     '- 같은 형식이 반복되는 사실은 <pre> 고정폭 표로, 폰 한 줄(약 44칸, 한글 2칸)을 넘기지 않는다. 숫자 칸을 앞에 오른쪽 정렬로 두고 한글이 든 이름 칸은 맨 오른쪽에 둔다(폰 글꼴에서 한글 폭이 정확히 두 칸이 아니라 한글 뒤 숫자 열이 어긋난다). 숫자 칸 값에는 한글을 쓰지 않는다.',
     '',
@@ -172,8 +178,7 @@ export function buildDepartmentSystemPrompt({ agent, charter = '', sessionRules 
     '## 답하는 방법(가장 중요)',
     '- 텔레그램으로 보내는 도구는 없다. 최종 답은 StructuredOutput(정해진 JSON)으로만 낸다. 창구가 그것을 발송 관문으로 보낸다.',
     `- messages[]의 각 항목이 메시지 하나다. agent는 항상 ${agent}다(창구가 너의 이름표를 단다).`,
-    '- 정보형(kind 정보): body에 텔레그램 HTML(<b>·<i>·<pre>·<code>만)로 쓴다. 항목마다 한 줄, ■ 소제목 + 빈 줄, |·쉼표로 이어붙이지 않는다.',
-    '- 판단형(kind 판단, 제안·판정·이상 보고·질문): facts(사실 항목)·conclusion·context·decisions를 채운다. 사실은 도구 결과에서만.',
+    ...ANSWER_SHAPE_LINES,
     `- 헤더·구분선·인용문은 창구가 붙인다. body 첫 줄에 [${agentLabel(agent)}] 같은 헤더를 쓰지 않는다. 이모지는 지워진다.`,
     '- 같은 형식이 반복되는 사실은 <pre> 고정폭 표로, 폰 한 줄(약 44칸, 한글 2칸)을 넘기지 않는다. 숫자 칸을 앞에 오른쪽 정렬로 두고 한글이 든 이름 칸은 맨 오른쪽에 둔다. 숫자 칸 값에는 한글을 쓰지 않는다.',
     '- 근거가 된 파일·도구를 답 끝에 짧게 밝힌다. 찾지 못했으면 추측하지 말고 못 찾았다고 쓴다.',

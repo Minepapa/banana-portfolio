@@ -176,3 +176,10 @@ test('세션 저장소: 담당마다 다른 파일, 넘긴 요청·직접 대화
     assert.match(buildMessagePrompt({ items: [], now: new Date(), handoffRequest: '정리' }), /제우스가 너에게 넘긴 요청: 정리$/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('답 모양: 정보형은 결론 한 줄 + 근거 2~3줄, 4단 구조는 판단에만(제우스·담당 공통)', () => {
+  for (const p of [buildGateSystemPrompt({}), buildDepartmentSystemPrompt({ agent: 'hermes' })]) {
+    assert.match(p, /정보형\(kind 정보, 조회·정리\): 결론 한 줄 \+ 근거 2~3줄/);
+    assert.match(p, /판단형\(kind 판단[^)]*\)에만 4단 구조/);
+  }
+});
