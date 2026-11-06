@@ -36,31 +36,42 @@ export const GATE_DENY_RULES = Object.freeze(['Read', 'Grep', 'Glob'].flatMap((t
 const MCP_SERVER_PATH = join(REPO_ROOT, 'scripts', 'tools', 'telegram-gate-mcp.mjs');
 
 // 최종 답 계약(--json-schema, 실측: StructuredOutput 도구로 result.structured_output에 실린다).
-export const GATE_OUTPUT_SCHEMA = Object.freeze({
-  type: 'object',
-  properties: {
-    messages: {
-      type: 'array',
-      minItems: 1,
-      maxItems: 6,
-      items: {
-        type: 'object',
-        properties: {
-          agent: { type: 'string', enum: [...AGENT_IDS] },
-          topic: { type: 'string', maxLength: 40 },
-          kind: { type: 'string', enum: ['정보', '판단'] },
-          body: { type: 'string' },
-          facts: { type: 'array', items: { type: 'string' } },
-          conclusion: { type: 'string' },
-          context: { type: 'string' },
-          decisions: { type: 'array', items: { type: 'string' } },
+// agents: 이 프로세스가 쓸 수 있는 이름표(담당 프로세스는 자기 이름 하나). handoffTo: 제우스가 담당 프로세스로 넘길 수 있는 담당 —
+// 넘길 때는 messages가 비어도 된다(toGateMessages가 다시 검사).
+export function buildGateOutputSchema({ agents = AGENT_IDS, handoffTo = [] } = {}) {
+  return {
+    type: 'object',
+    properties: {
+      messages: {
+        type: 'array',
+        minItems: handoffTo.length ? 0 : 1,
+        maxItems: 6,
+        items: {
+          type: 'object',
+          properties: {
+            agent: { type: 'string', enum: [...agents] },
+            topic: { type: 'string', maxLength: 40 },
+            kind: { type: 'string', enum: ['정보', '판단'] },
+            body: { type: 'string' },
+            facts: { type: 'array', items: { type: 'string' } },
+            conclusion: { type: 'string' },
+            context: { type: 'string' },
+            decisions: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['agent', 'topic', 'kind'],
         },
-        required: ['agent', 'topic', 'kind'],
       },
+      ...(handoffTo.length ? { handoff: {
+        type: 'object',
+        description: '담당 프로세스로 넘길 때만. 그 담당이 오너 원문과 이 요청을 받아 직접 답한다.',
+        properties: { agent: { type: 'string', enum: [...handoffTo] }, request: { type: 'string' } },
+        required: ['agent', 'request'],
+      } } : {}),
     },
-  },
-  required: ['messages'],
-});
+    required: ['messages'],
+  };
+}
+export const GATE_OUTPUT_SCHEMA = Object.freeze(buildGateOutputSchema());
 
 // 읽기 경로 제한 훅(scripts/hooks/gate-read-guard.mjs)을 이 실행에만 붙인다. 전역 설정은 바꾸지 않는다.
 // 허용 뿌리는 env GATE_READ_ROOTS로 넘긴다(buildGateReadEnv).
@@ -77,21 +88,24 @@ export function buildGateReadEnv({ vaultRoot, mediaDir, adytonDir, repoRoot = RE
   };
 }
 
-export function buildGateMcpConfig({ nodePath = process.execPath, serverPath = MCP_SERVER_PATH } = {}) {
-  return JSON.stringify({ mcpServers: { gate: { command: nodePath, args: [serverPath] } } });
+// agent: 이 MCP 서버를 쓰는 프로세스의 담당 — 서버가 도구 표(telegram-gate-tool-table)에 있는 그 담당 도구만 내보낸다.
+export function buildGateMcpConfig({ nodePath = process.execPath, serverPath = MCP_SERVER_PATH, agent = null } = {}) {
+  return JSON.stringify({ mcpServers: { gate: { command: nodePath, args: [serverPath, ...(agent ? [`--agent=${agent}`] : [])] } } });
 }
 
 // 순수 함수: claude 인자. sessionId는 항상 넘긴다 — 새 대화면 --session-id, 이어 붙이면 --resume.
-export function buildGateClaudeArgs({ prompt, sessionId, resume, appendSystemPrompt, allowedTools, model = GATE_MODEL, effort = GATE_EFFORT,
-  mcpConfig = buildGateMcpConfig(), schema = GATE_OUTPUT_SCHEMA, readGuardSettings = buildGateReadGuardSettings() }) {
+// streamInput: 상시 실행(telegram-gate-live) — 프롬프트 없이 -p --input-format stream-json으로 띄우고 메시지는 stdin으로 넣는다.
+export function buildGateClaudeArgs({ prompt, streamInput = false, sessionId, resume, appendSystemPrompt, allowedTools, model = GATE_MODEL, effort = GATE_EFFORT,
+  tools = GATE_TOOLS_SET, mcpConfig = buildGateMcpConfig(), schema = GATE_OUTPUT_SCHEMA, readGuardSettings = buildGateReadGuardSettings() }) {
   if (!sessionId) throw new Error('sessionId 필요');
+  if (!streamInput && typeof prompt !== 'string') throw new Error('prompt 필요(상시 실행이 아니면)');
   return [
-    '-p', prompt,
+    ...(streamInput ? ['-p', '--input-format', 'stream-json'] : ['-p', prompt]),
     ...(resume ? ['--resume', sessionId] : ['--session-id', sessionId]),
     '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     '--model', model, '--effort', effort,
     '--permission-mode', 'dontAsk',
-    '--tools', GATE_TOOLS_SET.join(','),
+    '--tools', tools.join(','),
     '--allowedTools', ...allowedTools,
     '--disallowedTools', 'Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', ...GATE_DENY_RULES,
     '--strict-mcp-config', '--mcp-config', mcpConfig,

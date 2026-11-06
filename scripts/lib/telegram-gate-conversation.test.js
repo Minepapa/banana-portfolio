@@ -23,7 +23,7 @@ function memoryConfirmStore(initial = null) {
 }
 
 function setup({ clock = new Date('2026-10-30T05:00:00Z'), results = [], events = [{ type: 'system', subtype: 'init' }], cooldown = null, handoffs = {}, confirm = null, summarize,
-  sendImpl = null, downloadPhoto = null, isStopping = () => false, runnerHook = null, writeHandoffImpl = null, warns = null, journalWrap = (j) => j } = {}) {
+  sendImpl = null, downloadPhoto = null, isStopping = () => false, runnerHook = null, writeHandoffImpl = null, warns = null, journalWrap = (j) => j, live = null, extraDeps = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'gate-conv-'));
   const state = { now: clock };
   const sent = [];
@@ -63,6 +63,8 @@ function setup({ clock = new Date('2026-10-30T05:00:00Z'), results = [], events 
     log: () => {},
     setTimer: (fn, ms) => { const t = { fn, ms }; timers.push(t); return t; },
     clearTimer: () => {},
+    ...(live ? { live } : {}),
+    ...extraDeps,
   });
   return { dir, conv, sent, edits, deleted, runs, vault, confirmStore, state, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
@@ -447,5 +449,30 @@ test('이름표: 제우스가 직접 답하고 헤르메스 이름표를 달면 
     const second = s.sent.find((m) => m.topic === '미네');
     assert.equal(second.agent, 'athena');
     assert.doesNotMatch(second.body, /직접 조회/);
+  } finally { s.cleanup(); }
+});
+
+test('상시 실행: 풀이 있으면 프롬프트 없이 띄울 인자(stream-json)와 메시지 본문을 넘기고, 같은 날 둘째 메시지는 같은 세션 키로', async () => {
+  const turns = [];
+  const live = {
+    turn: (req) => {
+      turns.push(req);
+      req.onEvent({ type: 'system', subtype: 'init' });
+      return { promise: Promise.resolve({ structured: { messages: [{ agent: 'zeus', topic: '답', kind: '정보', body: '네' }] }, isError: false, permissionDenials: [] }), cancel: () => {} };
+    },
+    sweep: () => {}, closeAll: () => {}, list: () => [],
+  };
+  const s = setup({ live });
+  try {
+    await s.conv.processBatch([item(1, '우유 사야 해')]);
+    await s.conv.processBatch([item(2, '계란도')]);
+    assert.equal(s.runs.length, 0, '메시지마다 새로 띄우는 runner는 쓰지 않는다');
+    assert.equal(turns[0].key, 'zeus');
+    assert.deepEqual(turns[0].args.slice(0, 3), ['-p', '--input-format', 'stream-json']);
+    assert.match(turns[0].text, /우유 사야 해/);
+    assert.equal(turns[0].sessionId, turns[1].sessionId);
+    assert.equal(turns[0].day, '2026-10-30');
+    assert.equal(flag(turns[1].args, '--resume'), turns[0].sessionId, '다시 띄워야 하면 --resume');
+    assert.equal(s.sent.find((m) => m.topic === '답').body.includes('네'), true);
   } finally { s.cleanup(); }
 });

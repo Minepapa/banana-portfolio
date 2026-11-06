@@ -54,6 +54,7 @@ import { writeStateFile, writeAtomic } from '../lib/state-writer.mjs';
 import { DEFAULT_VAULT_ROOT, VAULT_PATHS, VAULT_REL, VAULT_ROOT, vaultAbs } from '../lib/vault-paths.mjs';
 import { buildHandoffSummaryArgs, createConversation } from '../lib/telegram-gate-conversation.mjs';
 import { buildGateReadEnv, runGateClaude } from '../lib/telegram-gate-llm.mjs';
+import { createLiveClaude, createLivePool, killAllLiveClaude } from '../lib/telegram-gate-live.mjs';
 // 종료코드 규칙(llm-run-outcome) 대상 아님: 상시 데몬이라 종료코드로 성패를 남기지 않는다. LLM 실패는 메시지마다 오너에게 알리고 inbox에 실패로 적는다.
 import { businessDay, createSessionStore } from '../lib/telegram-gate-session.mjs';
 import { createJournal, handoffNoteRelPath } from '../lib/telegram-gate-journal.mjs';
@@ -425,6 +426,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     await conversation.closeConfirm('만료', gate.config.chatId);
     await conversation.checkCooldownRelease(gate.config.chatId);
     await conversation.writeHandoffIfDue(now());
+    conversation.sweepLive?.();
   }
 
   return {
@@ -448,6 +450,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
       killRunningGateTools('SIGTERM', { group: 'media' });
       // 대화도 멈춘다(세션은 다음 --resume에서 이어진다). 끊긴 대화 입력은 재시작 때 확인필요 안내로 간다.
       conversation?.cancel();
+      conversation?.shutdownLive?.('창구 종료');
       wakeAll();
     },
     async run() {
@@ -558,6 +561,11 @@ function buildConversationDeps({ gate, options, journal, confirmStore }) {
       return path;
     },
     runner: ({ args, env, onEvent }) => runGateClaude({ args, env, onEvent }),
+    // 상시 실행(2026-11-06): 담당마다 하루 대화 프로세스 하나, 30분 무활동·업무일 바뀜이면 내림, 동시에 최대 3개.
+    live: createLivePool({
+      spawnLive: ({ args, env, meta }) => createLiveClaude({ args, env, meta, log: (line) => console.log(line) }),
+      log: (line) => console.log(line),
+    }),
     spawnEnv,
     cooldown: () => getCooldown(),
     readRules: () => ({
@@ -816,7 +824,8 @@ async function launchGate(mode) {
     listPollers: listTelegramPollers,
   });
   daemonRef = daemon;
-  installExitCleanup();
+  // 상시 claude 프로세스도 detached 그룹이라 창구가 끝날 때 같이 정리한다.
+  installExitCleanup({ kill: (signal) => { killRunningGateTools(signal); killAllLiveClaude(signal); } });
   console.log(`[gate] 시작 mode=${gate.mode} node=${process.version} claude=${resolveClaudeBin()} state=${gate.stateDir}`);
   const stop = (signal) => { console.log(`[gate] ${signal} — 종료`); daemon.stop(); setTimeout(() => process.exit(0), 10_000).unref(); };
   process.on('SIGTERM', () => stop('SIGTERM'));

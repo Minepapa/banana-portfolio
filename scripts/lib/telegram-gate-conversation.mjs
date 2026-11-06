@@ -80,8 +80,10 @@ export function createConversation(deps) {
 
   async function runOnce({ items, session, handoffText, handoffMissing, chatId, run }) {
     const prompt = buildMessagePrompt({ items, handoffText, handoffMissing, now: now() });
+    // 상시 실행(deps.live 풀)이면 프롬프트 없이 띄우고 메시지를 stdin으로 넣는다. 인자는 새로 띄울 때만 쓰인다.
+    const live = deps.live ?? null;
     const args = buildGateClaudeArgs({
-      prompt, sessionId: session.sessionId, resume: session.resume,
+      ...(live ? { streamInput: true } : { prompt }), sessionId: session.sessionId, resume: session.resume,
       appendSystemPrompt: buildGateSystemPrompt(deps.readRules()),
       allowedTools: [...GATE_TOOLS_SET, ...deps.mcpToolNames],
       // 모델·노력은 결정 `텔레그램-관문` 3항(opus·medium). 실측 시험만 haiku로 낮춘다(deps.model).
@@ -92,22 +94,21 @@ export function createConversation(deps) {
     let started = false;
     const tracker = createActorTracker();
     deps.sessionStore.markStarted?.(session.sessionId);
-    const handle = deps.runner({
-      args,
-      env: deps.spawnEnv,
-      onEvent: (event) => {
-        tracker.observe(event);
-        if (event.type === 'system' && event.subtype === 'init') started = true;
-        if (event.type === 'rate_limit_event') state.lastRateLimit = event.rate_limit_info ?? null;
-        if (event.type === 'assistant' && !event.parent_tool_use_id) {
-          for (const use of (event.message?.content ?? []).filter((c) => c?.type === 'tool_use' && c.name !== 'StructuredOutput')) {
-            deps.journal.append({ type: 'tool', name: use.name, input: JSON.stringify(use.input ?? {}).slice(0, 300) });
-          }
+    const onEvent = (event) => {
+      tracker.observe(event);
+      if (event.type === 'system' && event.subtype === 'init') started = true;
+      if (event.type === 'rate_limit_event') state.lastRateLimit = event.rate_limit_info ?? null;
+      if (event.type === 'assistant' && !event.parent_tool_use_id) {
+        for (const use of (event.message?.content ?? []).filter((c) => c?.type === 'tool_use' && c.name !== 'StructuredOutput')) {
+          deps.journal.append({ type: 'tool', name: use.name, input: JSON.stringify(use.input ?? {}).slice(0, 300) });
         }
-        run.progress = applyProgress(run.progress, describeEvent(event));
-        run.throttle.update(renderProgress(run.progress, now().getTime()));
-      },
-    });
+      }
+      run.progress = applyProgress(run.progress, describeEvent(event));
+      run.throttle.update(renderProgress(run.progress, now().getTime()));
+    };
+    const handle = live
+      ? live.turn({ key: 'zeus', day: session.day, sessionId: session.sessionId, args, env: deps.spawnEnv, text: prompt, onEvent })
+      : deps.runner({ args, env: deps.spawnEnv, onEvent });
     run.cancel = handle.cancel;
     // 진행 메시지 발송·사진 내려받기 사이에 온 "취소"도 놓치지 않는다(2단계 리뷰 MEDIUM).
     if (run.cancelRequested) handle.cancel();
@@ -396,6 +397,10 @@ export function createConversation(deps) {
       return true;
     },
     isRunning: () => Boolean(state.running),
+    // 상시 프로세스: 1분 점검에서 30분 무활동·업무일 바뀜을 정리하고, 창구 종료 때 모두 닫는다.
+    sweepLive: () => deps.live?.sweep({ day: businessDay(now()) }),
+    shutdownLive: (reason) => deps.live?.closeAll(reason),
+    liveProcesses: () => deps.live?.list() ?? [],
   };
 }
 
