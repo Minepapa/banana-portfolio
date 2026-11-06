@@ -68,6 +68,68 @@ export function describeEvent(event) {
 }
 
 // 상태: { stage, steps(최근 2개), stepCount, startedAt, queued, slow }
+// ── 실시간 답 미리보기(속도 개선 2차 B-7) ─────────────────────────────────────────
+// 실측(2026-11-06, sonnet): --json-schema 최종 답은 StructuredOutput 도구 입력으로 오고, --include-partial-messages면
+// 그 입력이 input_json_delta 조각으로 흘러나온다({"messages": [{"body":"서울 … 처럼 글자 단위). 출력 계약을 바꾸지 않고
+// 이 조각을 이어 붙여 지금 쓰고 있는 body(판단형이면 conclusion)를 꺼내 진행 메시지에 보여 준다. 최종 메시지는 지금처럼 발송 관문으로.
+export const PREVIEW_MAX_CHARS = 600;
+const PREVIEW_KEY_RE = /"(?:body|conclusion)"\s*:\s*"/g;
+
+// 순수 함수: 덜 끝난 JSON 조각에서 마지막 body/conclusion 문자열 값을 지금까지 온 만큼 풀어 낸다. 없으면 null.
+export function extractPartialBody(partialJson) {
+  const text = String(partialJson ?? '');
+  let start = -1;
+  for (const m of text.matchAll(PREVIEW_KEY_RE)) start = m.index + m[0].length;
+  if (start < 0) return null;
+  let out = '';
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '"') break;
+    if (ch !== '\\') { out += ch; continue; }
+    const next = text[i + 1];
+    if (next === undefined) break; // 이스케이프가 잘림 — 다음 조각에서
+    if (next === 'u') {
+      const hex = text.slice(i + 2, i + 6);
+      if (hex.length < 4) break;
+      out += String.fromCharCode(parseInt(hex, 16));
+      i += 5;
+      continue;
+    }
+    out += { n: '\n', t: '\t', r: '', '"': '"', '\\': '\\', '/': '/', b: '', f: '' }[next] ?? next;
+    i += 1;
+  }
+  return out;
+}
+
+// 이벤트 → 미리보기 글(바뀌었을 때만) 또는 null. 최상위(하위 에이전트 아님) StructuredOutput 블록만 본다.
+export function createAnswerPreview() {
+  const blocks = new Map(); // 블록 index → 지금까지의 partial_json
+  let last = null;
+  return {
+    feed(event) {
+      if (event?.type !== 'stream_event' || event.parent_tool_use_id) return null;
+      const ev = event.event ?? {};
+      if (ev.type === 'message_start') { blocks.clear(); return null; }
+      if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use' && ev.content_block.name === 'StructuredOutput') { blocks.set(ev.index, ''); return null; }
+      if (ev.type !== 'content_block_delta' || ev.delta?.type !== 'input_json_delta' || !blocks.has(ev.index)) return null;
+      blocks.set(ev.index, blocks.get(ev.index) + String(ev.delta.partial_json ?? ''));
+      const body = extractPartialBody(blocks.get(ev.index));
+      if (body === null || body === last) return null;
+      last = body;
+      return body;
+    },
+  };
+}
+
+// 순수 함수: 미리보기 글 → 진행 메시지에 넣을 안전한 줄(HTML 태그·덜 끝난 태그 제거, 끝 600자, 이스케이프).
+export function previewText(body) {
+  const plainText = String(body ?? '').replace(/<[^>]*>/g, '').replace(/<[^>]*$/, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim();
+  if (!plainText) return '';
+  const tail = plainText.length > PREVIEW_MAX_CHARS ? `…${plainText.slice(-PREVIEW_MAX_CHARS)}` : plainText;
+  return escapeHtml(tail);
+}
+
 export function initialProgress({ startedAt, queued = 0 }) {
   return { stage: STAGE_RECEIVED, steps: [], stepCount: 0, startedAt, queued, slow: false };
 }
@@ -109,6 +171,8 @@ export function renderProgress(state, nowMs) {
   // 자른 뒤에 이스케이프한다(엔티티 중간에서 자르지 않게).
   if (last) lines.push(escapeHtml(fit(`· ${last}`)));
   if (prev) lines.push(escapeHtml(fit(`· 직전: ${prev}`)));
+  const preview = state.preview ? previewText(state.preview) : '';
+  if (preview) lines.push('', `<i>쓰는 중</i>\n${preview}`, '');
   if (state.slow) lines.push('오래 걸리고 있음 — 멈추려면 "취소"');
   else if (state.stage !== STAGE_RECEIVED) lines.push('취소하려면 "취소"');
   return lines.join('\n');

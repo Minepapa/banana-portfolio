@@ -101,3 +101,22 @@ test('편집 제한: 429면 retry_after 동안 기다리고, "not modified"는 �
   await fc.advance(10_000);
   assert.equal(edits.length, 1, 'not modified는 성공 처리, close 뒤엔 보내지 않음');
 });
+
+test('실시간 답 미리보기: StructuredOutput 입력 조각에서 지금 쓰는 body를 풀어 진행 메시지에 넣는다', async () => {
+  const { createAnswerPreview, extractPartialBody, previewText, renderProgress, initialProgress } = await import('./telegram-gate-progress.mjs');
+  assert.equal(extractPartialBody('{"messages": [{"agent":"zeus","bo'), null);
+  assert.equal(extractPartialBody('{"messages": [{"body":"서울\\n가을'), '서울\n가을');
+  assert.equal(extractPartialBody('{"messages": [{"body":"a\\"b","topic":"x"}, {"body":"둘째 \\u'), '둘째 ', '덜 온 이스케이프는 다음 조각에서');
+  assert.equal(extractPartialBody('{"messages": [{"kind":"판단","conclusion":"사도 된다'), '사도 된다');
+  const p = createAnswerPreview();
+  const ev = (event, parent = null) => ({ type: 'stream_event', parent_tool_use_id: parent, event });
+  assert.equal(p.feed(ev({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'StructuredOutput' } })), null);
+  assert.equal(p.feed(ev({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"messages": [{"body":"<b>■ 일' } })), '<b>■ 일');
+  assert.equal(p.feed(ev({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '정</b>\\n토요일' } })), '<b>■ 일정</b>\n토요일');
+  assert.equal(p.feed(ev({ type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"body":"x' } })), null, '다른 도구 블록은 무시');
+  assert.equal(p.feed(ev({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: 'x' } }, 'sub')), null, '하위 에이전트 무시');
+  assert.equal(previewText('<b>■ 일정</b>\n<pre>a &amp; b</pre> <co'), '■ 일정\na &amp; b');
+  assert.match(previewText('가'.repeat(700)), /^…가{600}$/);
+  const text = renderProgress({ ...initialProgress({ startedAt: 0 }), stage: '답변 준비 중', preview: '<b>■ 일정</b>\n토요일 &lt;나들이&gt;' }, 5000);
+  assert.match(text, /<i>쓰는 중<\/i>\n■ 일정\n토요일 &lt;나들이&gt;/);
+});

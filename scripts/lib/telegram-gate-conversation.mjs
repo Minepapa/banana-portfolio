@@ -5,7 +5,7 @@ import { buildGateClaudeArgs, buildGateMcpConfig, buildGateOutputSchema, GATE_EF
 import { gateBuiltinTools, gateMcpToolsFor } from './telegram-gate-tool-table.mjs';
 import { keywordTarget } from './telegram-gate-keywords.mjs';
 import { AGENT_IDS, agentTitle } from './agent-registry.mjs';
-import { applyProgress, createEditThrottle, describeEvent, initialProgress, renderProgress } from './telegram-gate-progress.mjs';
+import { applyProgress, createAnswerPreview, createEditThrottle, describeEvent, initialProgress, renderProgress } from './telegram-gate-progress.mjs';
 import { buildDepartmentSystemPrompt, buildGateSystemPrompt, buildMessagePrompt, businessDay, createActorTracker, fallbackMessage, previousDay, toGateMessages } from './telegram-gate-session.mjs';
 import { buildHandoffNote, conversationTranscript, handoffSummaryPrompt, HANDOFF_SUMMARY_SCHEMA } from './telegram-gate-journal.mjs';
 import { confirmPromptBody, isAnswerToConfirm } from './telegram-gate-confirm.mjs';
@@ -136,6 +136,7 @@ export function createConversation(deps) {
     if (run.cancelRequested) return { interrupted: 'cancel', isError: false, permissionDenials: [] };
     let started = false;
     const tracker = createActorTracker();
+    const preview = createAnswerPreview();
     const store = storeFor(agent);
     store.markStarted?.(session.sessionId);
     const onEvent = (event) => {
@@ -147,7 +148,9 @@ export function createConversation(deps) {
           deps.journal.append({ type: 'tool', agent, name: use.name, input: JSON.stringify(use.input ?? {}).slice(0, 300) });
         }
       }
-      run.progress = applyProgress(run.progress, describeEvent(event));
+      // 실시간 답(B-7): 쓰고 있는 답을 진행 메시지에 흘린다(편집 빈도 제한은 throttle이 지킨다).
+      const partial = preview.feed(event);
+      run.progress = applyProgress(partial === null ? run.progress : { ...run.progress, preview: partial }, describeEvent(event));
       run.throttle.update(renderProgress(run.progress, now().getTime()));
     };
     const handle = live
