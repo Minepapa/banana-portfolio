@@ -211,6 +211,11 @@ export function createLivePool({ spawnLive, idleMs = LIVE_IDLE_MS, maxProcesses 
       }
       return { ...proc.turn({ text, onEvent, hardTimeoutMs }), spawned };
     },
+    // 호출(예열): 이 키의 같은 날·같은 세션 프로세스가 이미 살아 있는지.
+    isWarm({ key, day, sessionId }) {
+      const proc = procs.get(key);
+      return Boolean(proc && proc.alive() && proc.meta.day === day && proc.meta.sessionId === sessionId);
+    },
     // 1분 점검: 30분 무활동·업무일 바뀜·죽은 프로세스를 정리한다.
     sweep({ day } = {}) {
       for (const [key, proc] of [...procs.entries()]) {

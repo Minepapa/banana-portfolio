@@ -298,6 +298,7 @@ function fakeConversation() {
     cancel: () => { calls.cancels += 1; return running; },
     setQueued: (n) => calls.queued.push(n),
     processBatch: async (items) => { calls.batches.push(items.map((i) => i.args.text ?? i.args.caption)); return { status: '완료', detail: 'ok' }; },
+    warmup: async (args) => { calls.batches.push([`호출:${args.agent}`]); return { status: '완료', detail: '호출' }; },
     handleConfirm: async (args) => { calls.confirms.push(args.yes); return { status: '완료', detail: 'confirm' }; },
     closeConfirm: async (reason) => { calls.closes.push(reason); return false; },
     writeHandoffIfDue: async () => null,
@@ -627,5 +628,16 @@ test('주문 줄: 주문 실행이 오래 걸려도 main 줄 킬스위치는 바
     release();
     await order;
     assert.equal(s.inbox.get(1).status, '완료');
+  } finally { s.cleanup(); }
+});
+
+test('호출: 대화 줄에서 받은 차례대로 하나씩(묶지 않음), 앞의 대화는 호출 전까지만 묶는다', async () => {
+  const conv = fakeConversation();
+  const s = setup({ conversation: conv });
+  try {
+    s.inbox.appendUpdates([msg(1, '내일 일정'), msg(2, '헤르메스 호출'), msg(3, '주말 일정'), msg(4, '호출')]);
+    while (await s.daemon.processLlmBatch());
+    assert.deepEqual(conv.calls.batches, [['내일 일정'], ['호출:hermes'], ['주말 일정'], ['호출:zeus']]);
+    for (const id of [1, 2, 3, 4]) assert.equal(s.inbox.get(id).status, '완료');
   } finally { s.cleanup(); }
 });

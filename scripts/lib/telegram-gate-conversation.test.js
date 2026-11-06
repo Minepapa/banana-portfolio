@@ -571,3 +571,68 @@ test('도구 표 적용: 제우스는 볼트 기록 도구가 없고(클리오�
     assert.equal(JSON.parse(flag(legacy.runs[0], '--mcp-config')).mcpServers.gate.args.length, 1);
   } finally { s.cleanup(); legacy.cleanup(); }
 });
+
+function fakePool() {
+  const turns = [];
+  let warm = new Set();
+  return {
+    turns,
+    setWarm: (keys) => { warm = new Set(keys); },
+    isWarm: ({ key }) => warm.has(key),
+    turn: (req) => {
+      turns.push(req);
+      warm.add(req.key);
+      req.onEvent({ type: 'system', subtype: 'init' });
+      return { promise: Promise.resolve({ structured: { messages: [{ agent: req.key, topic: '답', kind: '정보', body: '네' }] }, isError: false, permissionDenials: [] }), cancel: () => {} };
+    },
+    sweep: () => {}, closeAll: () => {}, list: () => [],
+  };
+}
+const meta = { chatId: CHAT, messageId: 9, date: 0 };
+
+test('호출: 상시 프로세스를 예열 턴으로 띄우고 결정론 "준비됨 · N초"(예열 답은 보내지 않음), 이미 떠 있으면 "이미 준비됨"', async () => {
+  const live = fakePool();
+  const s = setup({ live, departments: true });
+  try {
+    const r = await s.conv.warmup({ agent: 'zeus' }, meta);
+    assert.equal(r.status, '완료');
+    assert.equal(live.turns.length, 1);
+    assert.equal(live.turns[0].key, 'zeus');
+    assert.match(live.turns[0].text, /예열: 오너가 "호출"로 미리 깨웠다/);
+    assert.deepEqual(s.sent.map((m) => `${m.agent}/${m.topic}/${m.body}`), ['zeus/호출/준비됨 · 0초']);
+    assert.equal(s.sent[0].llm, undefined, '결정론 답장');
+    await s.conv.warmup({ agent: 'zeus' }, meta);
+    assert.equal(live.turns.length, 1, '이미 떠 있으면 다시 띄우지 않는다');
+    assert.equal(s.sent[1].body, '이미 준비됨');
+    // 다음 질문은 같은 프로세스(같은 키·세션)로 이어진다.
+    await s.conv.processBatch([item(1, '주말 일정')]);
+    assert.equal(live.turns[1].key, 'zeus');
+    assert.equal(live.turns[1].sessionId, live.turns[0].sessionId);
+  } finally { s.cleanup(); }
+});
+
+test('담당 호출: 그 담당 프로세스를 띄우고, 다음 메시지 하나만 그 담당으로 보낸다(그다음은 제우스)', async () => {
+  const live = fakePool();
+  const s = setup({ live, departments: true });
+  try {
+    await s.conv.warmup({ agent: 'hermes' }, meta);
+    assert.equal(live.turns[0].key, 'hermes');
+    assert.match(s.sent[0].body, /^준비됨 · 0초\n· 다음 메시지 하나는 헤르메스가 바로 받습니다\.$/);
+    assert.equal(s.sent[0].agent, 'hermes');
+    await s.conv.processBatch([item(1, '주말 일정')]);
+    assert.equal(live.turns[1].key, 'hermes');
+    await s.conv.processBatch([item(2, '고마워')]);
+    assert.equal(live.turns[2].key, 'zeus');
+  } finally { s.cleanup(); }
+});
+
+test('호출: 상시 실행이 없거나 쿨다운이면 띄우지 않고 안내만', async () => {
+  const s = setup({});
+  const c = setup({ live: fakePool(), cooldown: { resetAt: Date.parse('2026-10-30T06:00:00Z') } });
+  try {
+    await s.conv.warmup({ agent: 'zeus' }, meta);
+    assert.match(s.sent[0].body, /상시 실행이 꺼져/);
+    await c.conv.warmup({ agent: 'zeus' }, meta);
+    assert.match(c.sent[0].body, /쿨다운/);
+  } finally { s.cleanup(); c.cleanup(); }
+});

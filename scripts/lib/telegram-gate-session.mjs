@@ -206,7 +206,7 @@ export function buildDepartmentSystemPrompt({ agent, charter = '', sessionRules 
 
 // 순수 함수: 이번 실행의 사용자 프롬프트. items = [{ meta, args, imagePath? }] (합쳐 처리, Q6).
 // directExchanges: 제우스가 모르는 사이 오너가 담당과 직접 나눈 대화(제우스 프로세스에만). handoffRequest: 제우스가 담당에게 넘긴 요청.
-export function buildMessagePrompt({ items, handoffText = null, handoffMissing = false, now, directExchanges = [], handoffRequest = null }) {
+export function buildMessagePrompt({ items, handoffText = null, handoffMissing = false, now, directExchanges = [], handoffRequest = null, warmup = false }) {
   const parts = [];
   if (directExchanges.length) {
     parts.push(['[창구] 지난 네 답 뒤에 오너가 담당과 직접 나눈 대화(참고만, 다시 답하지 않는다):',
@@ -235,6 +235,7 @@ export function buildMessagePrompt({ items, handoffText = null, handoffMissing =
     if (item.imageError) parts.push(`[창구] 사진을 받지 못함: ${item.imageError}`);
   }
   if (handoffRequest) parts.push(`[창구] ${agentTitle('zeus')}가 너에게 넘긴 요청: ${handoffRequest}`);
+  if (warmup) parts.push('[창구] 예열: 오너가 "호출"로 미리 깨웠다. 아직 질문은 없다. 도구를 쓰지 말고 StructuredOutput으로 messages 한 개(topic 예열, kind 정보, body 준비됨)만 낸다. 이 답은 오너에게 가지 않는다.');
   return parts.join('\n\n');
 }
 

@@ -8,6 +8,7 @@
 // 1단계에서 LLM이 필요한 입력(자유 문장·담당 호출·기호 없는 사진·제안 승인·직접 주문)은 route 'llm'으로만 표시한다.
 import { parseExecutionModeCommand, parseKillSwitchCommand, parseProposalModeCommand, parseDepartmentCall } from './telegram-messages.mjs';
 import { parseExplicitWikiAnswers } from './wiki-question-queue.mjs';
+import { AGENT_IDS, agentTitle } from './agent-registry.mjs';
 
 // 확인 대기(돈 지시 재확인) 답. 정확일치만 인정한다. 확인 대기가 있을 때만 이 뜻으로 쓴다.
 // 입력 규칙 4-8의 명확한 긍정(응·승인·ㅇㅇ)만. 네·예 같은 넓은 답은 확인으로 보지 않는다(2단계 리뷰 LOW).
@@ -44,7 +45,8 @@ export const MEDIA_ROUTES = new Set(['voice', 'photoMemo']);
 export function laneOf(decision) {
   if (decision.action !== 'handle') return 'main';
   if (MEDIA_ROUTES.has(decision.route)) return 'media';
-  if (decision.route === 'llm') return 'llm';
+  // 호출(예열)도 대화 줄: 상시 프로세스를 쓰므로 대화 턴과 겹치지 않게 같은 줄에서 차례로 처리한다(묶지는 않음).
+  if (decision.route === 'llm' || decision.route === 'warmup') return 'llm';
   // 확인 답(응·아니)은 주문 줄: 실제 주문 도구가 수십 초 걸려도 스위치(킬스위치 등)·기록이 그 뒤에 묶이지 않게(4단계 전 배선).
   if (decision.route === 'confirm') return 'order';
   return 'main';
@@ -55,6 +57,14 @@ export function sanitizeUpdate(update, { allowFrom }) {
   const message = update?.message;
   const allowed = message && message.chat?.type === 'private' && message.from?.id !== undefined && allowFrom.has(String(message.from.id));
   return allowed ? update : { update_id: update?.update_id, dropped: true };
+}
+
+// 순수 함수: 정확히 "호출"이면 { agent: 'zeus' }, "{담당 이름} 호출"(사이 공백 하나 이상)이면 그 담당. 그 밖은 null.
+export function parseWarmup(trimmed) {
+  if (trimmed === '호출') return { agent: 'zeus' };
+  const m = String(trimmed).match(/^(\S+)\s+호출$/u);
+  const agent = m ? AGENT_IDS.find((id) => agentTitle(id) === m[1]) : null;
+  return agent ? { agent } : null;
 }
 
 // update → { action: 'drop', reason } | { action: 'handle', route, args, meta }
@@ -100,6 +110,9 @@ export function routeUpdate(update, { allowFrom, confirmOpenSince = null }) {
   if (trimmed === '취소') return handle('cancel', { all: false });
   if (trimmed === '취소 전부') return handle('cancel', { all: true });
   if (trimmed === '안녕') return handle('greeting');
+  // "호출"·"{담당} 호출": 상시 프로세스를 미리 띄워 둔다(2026-11-06 오너). 담당 호출 파서("헤르메스 …")보다 먼저 본다.
+  const warm = parseWarmup(trimmed);
+  if (warm) return handle('warmup', warm);
 
   // risky: 늦게 실행되면 위험해지는 방향(브레이크를 푸는 쪽). 이 방향만 오래된 명령을 다시 묻는다.
   // 킬스위치 온·체결모드 오프·제안모드 오프는 늦게라도 실행하는 편이 안전하다(2026-10-30 1단계 리뷰 HIGH).

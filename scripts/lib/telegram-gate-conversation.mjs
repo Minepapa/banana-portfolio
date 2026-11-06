@@ -126,8 +126,8 @@ export function createConversation(deps) {
     });
   }
 
-  async function runOnce({ agent = 'zeus', items, session, handoffText, handoffMissing, run, directExchanges = [], handoffRequest = null }) {
-    const prompt = buildMessagePrompt({ items, handoffText, handoffMissing, now: now(), directExchanges, handoffRequest });
+  async function runOnce({ agent = 'zeus', items, session, handoffText, handoffMissing, run, directExchanges = [], handoffRequest = null, warmup = false }) {
+    const prompt = buildMessagePrompt({ items, handoffText, handoffMissing, now: now(), directExchanges, handoffRequest, warmup });
     // 상시 실행(deps.live 풀)이면 프롬프트 없이 띄우고 메시지를 stdin으로 넣는다. 인자는 새로 띄울 때만 쓰인다.
     const live = deps.live ?? null;
     const args = argsFor(agent, session, prompt);
@@ -161,7 +161,7 @@ export function createConversation(deps) {
 
   // 담당(또는 제우스) 한 턴: 그 담당 하루 세션을 열고, 이어 붙일 기록이 사라졌으면 같은 날 새 세션으로 한 번만 다시.
   // 인수인계 노트는 제우스 하루 대화에만 넣는다(담당 프로세스는 그날 처음 불릴 때 빈 대화로 시작한다).
-  async function runAgentTurn({ agent, items, day, run, handoffRequest }) {
+  async function runAgentTurn({ agent, items, day, run, handoffRequest, warmup = false }) {
     const store = storeFor(agent);
     const isZeus = agent === 'zeus';
     let session = store.forDay(day);
@@ -172,11 +172,11 @@ export function createConversation(deps) {
       handoffMissing = !handoffText;
     }
     const directExchanges = isZeus ? state.directLog.slice() : [];
-    let res = await runOnce({ agent, items, session, handoffText, handoffMissing, run, directExchanges, handoffRequest });
+    let res = await runOnce({ agent, items, session, handoffText, handoffMissing, run, directExchanges, handoffRequest, warmup });
     if (res.isError && session.resume && NO_CONVERSATION_RE.test(res.errorText ?? '')) {
       session = store.reset(day);
       const text = isZeus ? deps.readHandoff(previousDay(day)) : null;
-      res = await runOnce({ agent, items, session, handoffText: text, handoffMissing: isZeus && !text, run, directExchanges, handoffRequest });
+      res = await runOnce({ agent, items, session, handoffText: text, handoffMissing: isZeus && !text, run, directExchanges, handoffRequest, warmup });
     }
     if (isZeus && !res.isError && !res.interrupted) state.directLog = [];
     return res;
@@ -237,7 +237,10 @@ export function createConversation(deps) {
         run.throttle.update(renderProgress(run.progress, now().getTime()));
       }, SOFT_TIMEOUT_MS);
       // 단계: 처음 받는 프로세스(routeTarget) → 제우스가 handoff로 넘기면 그 담당 프로세스(한 번만). 한 번에 한 턴씩(직렬).
-      let agent = routeTarget(items, departments());
+      // "{담당} 호출" 뒤 다음 메시지 하나(30분 안)는 그 담당이 바로 받는다(호출한 프로세스로 이어 넣기).
+      const pinned = state.pinned && now().getTime() < state.pinned.until && items.length === 1 && !items[0].args.department ? state.pinned.agent : null;
+      state.pinned = null;
+      let agent = pinned && departments().includes(pinned) ? pinned : routeTarget(items, departments());
       let handoffRequest = null;
       let sentCount = 0;
       try {
@@ -335,6 +338,53 @@ export function createConversation(deps) {
       deps.confirmStore.setActiveBatch?.(null);
       state.running = null;
     }
+  }
+
+  // "호출"·"{담당} 호출"(2026-11-06 오너): 그 상시 프로세스를 미리 띄우고 아주 짧은 예열 턴으로 init·캐시까지 마친 뒤 결정론 답장.
+  // 예열 턴 답은 오너에게 보내지 않는다. 이미 떠 있으면 "이미 준비됨". 담당 호출이면 다음 메시지 하나를 그 담당으로 보낸다.
+  // 상시 실행이 아니면(시험 deps) 띄울 프로세스가 없으니 안내만 한다.
+  async function warmup({ agent: wanted = 'zeus' }, meta) {
+    const agent = wanted !== 'zeus' && departments().includes(wanted) ? wanted : 'zeus';
+    const reply = (body) => deps.send({ agent, kind: '정보', topic: '호출', body }, meta.chatId);
+    const startedAt = now().getTime();
+    if (agent !== 'zeus') state.pinned = { agent, until: startedAt + 30 * 60_000 };
+    const pinnedNote = agent !== 'zeus' ? `\n· 다음 메시지 하나는 ${agentTitle(agent)}가 바로 받습니다.` : '';
+    if (!deps.live) {
+      await reply(`상시 실행이 꺼져 있어 미리 띄울 프로세스가 없습니다.${pinnedNote}`);
+      return { status: '완료', detail: '호출 — 상시 실행 없음' };
+    }
+    const cooldown = deps.cooldown();
+    if (cooldown) {
+      await reply(`사용량 한도 쿨다운 중이라 띄우지 않았습니다. ${kstTime(cooldown.resetAt)} 이후 다시 보내 주세요.`);
+      return { status: '완료', detail: '호출 — 쿨다운' };
+    }
+    const day = businessDay(now());
+    await writeHandoffIfDue(now());
+    const session = storeFor(agent).forDay(day);
+    if (deps.live.isWarm({ key: agent, day, sessionId: session.sessionId })) {
+      await reply(`이미 준비됨${pinnedNote}`);
+      deps.journal.append({ type: 'warmup', agent, status: '이미 준비됨' });
+      return { status: '완료', detail: '호출 — 이미 준비됨' };
+    }
+    const run = { startedAt, progress: initialProgress({ startedAt, queued: 0 }), cancel: null, cancelRequested: false,
+      throttle: { update() {}, close: async () => {} }, items: [] };
+    state.running = run;
+    let res;
+    try {
+      res = await runAgentTurn({ agent, items: [], day, run, handoffRequest: null, warmup: true });
+    } finally {
+      state.running = null;
+    }
+    const seconds = Math.round((now().getTime() - startedAt) / 1000);
+    if (res.interrupted || res.isError) {
+      const why = res.interrupted ? '취소' : shortReason(res);
+      await reply(`준비하지 못했습니다(${why}).`);
+      deps.journal.append({ type: 'warmup', agent, status: '실패', seconds, error: String(res.errorText ?? why).slice(0, 200) });
+      return { status: res.interrupted ? '완료' : '실패', detail: `호출 — ${why}` };
+    }
+    await reply(`준비됨 · ${seconds}초${pinnedNote}`);
+    deps.journal.append({ type: 'warmup', agent, status: '준비됨', seconds });
+    return { status: '완료', detail: `호출 — 준비됨 ${seconds}초` };
   }
 
   // 이번 실행 중에 LLM이 order_stage로 접수한 건이 있으면 관문이 고정 문구로 다시 묻는다.
@@ -457,6 +507,7 @@ export function createConversation(deps) {
   return {
     state,
     processBatch,
+    warmup,
     checkCooldownRelease,
     handleConfirm,
     closeConfirm,

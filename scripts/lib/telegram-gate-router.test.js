@@ -33,6 +33,9 @@ const TABLE = [
   ['5-2 기호 없는 사진은 LLM(판독)', { photo: [{ file_id: 'p' }], caption: '영수증' }, 'llm', { kind: 'photo' }],
   ['5-3 음성', { voice: { file_id: 'v', duration: 12 } }, 'voice', { fileId: 'v' }],
   ['6 🪶 오늘 한 줄', { text: '🪶 좋은 하루' }, 'oneLine', { text: '좋은 하루' }],
+  ['호출(제우스 예열)', { text: ' 호출 ' }, 'warmup', { agent: 'zeus' }],
+  ['담당 호출(예열)', { text: '헤르메스 호출' }, 'warmup', { agent: 'hermes' }],
+  ['제우스 호출', { text: '제우스  호출' }, 'warmup', { agent: 'zeus' }],
   ['5 📜만(기호만)은 고정 안내', { text: '📜' }, 'symbolHelp', { symbol: '📜' }],
   ['5 📜 공백만도 고정 안내', { text: '📜️  ' }, 'symbolHelp', { symbol: '📜' }],
   ['5 📎만은 고정 안내', { text: '📎' }, 'symbolHelp', { symbol: '📎' }],
@@ -171,4 +174,14 @@ test('laneOf: 확인 답(응·아니)은 order 줄 — 주문 도구가 길어�
 test('laneOf: 대화는 llm 줄', () => {
   assert.equal(laneOf(route({ text: '내일 3시 치과' })), 'llm');
   assert.equal(laneOf(route({ photo: [{ file_id: 'p' }], caption: '영수증' })), 'llm');
+});
+
+test('호출은 정확히 "호출"·"{담당} 호출"만 — 담당 호출 문장·덧붙임·모르는 이름은 대화로(담당 호출 파서와 충돌 없음)', () => {
+  const cases = [['헤르메스 호출해줘', '헤르메스'], ['헤르메스 호출 좀', '헤르메스'], ['헤르메스 주말 일정', '헤르메스'], ['호출 좀 해줘', null], ['아무개 호출', null], ['헤르메스호출', null]];
+  for (const [text, department] of cases) {
+    const d = route({ text });
+    assert.equal(d.route, 'llm', text);
+    assert.equal(d.args.department ?? null, department, text);
+  }
+  assert.equal(laneOf(route({ text: '호출' })), 'llm', '대화 줄에서 차례로');
 });

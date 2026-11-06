@@ -250,8 +250,13 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
   // 대화 줄: 쌓인 대화 입력을 모두 집어 한 번에 처리한다(Q6). 고르는 즉시 전부 '처리중'.
   async function processLlmBatch() {
     if (state.llmBusy) return false;
-    const batch = llmQueue();
-    if (!batch.length) return false;
+    const queue = llmQueue();
+    if (!queue.length) return false;
+    // 호출(예열)은 묶지 않고 받은 차례대로 하나씩: 맨 앞이 호출이면 그것만, 아니면 다음 호출 전까지만 묶는다.
+    const isWarmup = (item) => routeOf(item).route === 'warmup';
+    if (isWarmup(queue[0])) return processWarmup(queue[0]);
+    const warmAt = queue.findIndex(isWarmup);
+    const batch = warmAt < 0 ? queue : queue.slice(0, warmAt);
     state.llmBusy = true;
     const items = [];
     for (const item of batch) {
@@ -273,6 +278,24 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
     } catch (error) {
       for (const item of items) inbox.markStatus(item.updateId, '실패', error.message);
       log(`[gate] 대화 줄 실패: ${error.message}`);
+    } finally {
+      state.processing.llm = null;
+      state.llmBusy = false;
+    }
+    return true;
+  }
+
+  async function processWarmup(item) {
+    state.llmBusy = true;
+    const decision = routeOf(item);
+    inbox.markStatus(item.updateId, '처리중', 'warmup');
+    state.processing.llm = { updateIds: [item.updateId], since: now().toISOString() };
+    try {
+      const result = await conversation.warmup(decision.args, decision.meta);
+      inbox.markStatus(item.updateId, result.status, result.detail ?? '');
+    } catch (error) {
+      inbox.markStatus(item.updateId, '실패', error.message);
+      log(`[gate] 호출 실패: ${error.message}`);
     } finally {
       state.processing.llm = null;
       state.llmBusy = false;
