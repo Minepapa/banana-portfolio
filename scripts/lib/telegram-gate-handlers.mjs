@@ -251,6 +251,13 @@ export function createGateHandlers(deps) {
       return { status: '완료', detail: out.slice(0, 120) };
     },
 
+    // 기호만 온 입력(📜·📎·🪶 뒤 내용 없음) — 아무것도 기록하지 않고 쓰는 법만 알린다.
+    async symbolHelp({ symbol }) {
+      const examples = { '📜': '📜 내일 아침 미네 우유', '📎': '📎 영수증 (사진과 함께)', '🪶': '🪶 오늘 한 줄' };
+      await deps.reply('clio', '기록 안내', `기호 뒤 내용이 없어 기록하지 않았습니다.\n· 기호 뒤에 남길 내용을 함께 보내 주세요.\n· 예: ${escapeHtml(examples[symbol] ?? `${symbol} 내용`)}`);
+      return { status: '완료', detail: '기호만 — 안내' };
+    },
+
     async memo({ text }) {
       const out = await run('inbox-memo.mjs', ['--json=-'], { input: JSON.stringify({ text }) });
       await deps.reply('clio', '기록', escapeHtml(out));

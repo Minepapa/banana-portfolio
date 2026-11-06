@@ -54,6 +54,27 @@ test('도구별 금고 접근 차단 및 일반 경로 통과', () => {
   ]) assert.equal(hook(tool, input).status, 0, tool);
 });
 
+test('Grep 제외 glob(!금고)은 통과하고 금고를 가리키는 glob·경로는 텔레그램에서 계속 막는다(2026-11-06 창구 오탐)', () => {
+  const tg = { CLAUDE_TELEGRAM_GATE: '1' };
+  // 오탐 재현: 볼트 루트 검색에 금고 제외 glob을 붙였다. 기록 폴더 검색도 통과해야 한다.
+  for (const input of [
+    { path: vault, pattern: '오아시스', glob: '!99_Adyton/**' },
+    { path: vault, pattern: 'x', glob: '!**/99_Adyton/** *.md' },
+    { path: join(vault, '20_Records'), pattern: '노래', glob: '*2026-1*' },
+    { path: join(vault, '30_Wiki', '31_People'), pattern: '노래' },
+  ]) assert.equal(hook('Grep', input, tg).status, 0, JSON.stringify(input));
+  // 회귀: 금고 경로·금고를 고르는 glob(제외와 섞여도)·괄호 묶음·쉼표 뒤 조각은 그대로 막는다.
+  for (const input of [
+    { path: adyton, pattern: 'x' },
+    { path: join(vault, '99_ADYTON'), pattern: 'x' },
+    { path: vault, pattern: 'x', glob: '!*.tmp 99_Adyton/**' },
+    { path: vault, pattern: 'x', glob: '!a,99_Adyton/**' },
+    { path: vault, pattern: 'x', glob: '{!a,99_Adyton/**}' },
+    { path: vault, pattern: 'x', glob: '**/99_Adyton/*.md' },
+    { path: vault, pattern: '99_Adyton', glob: '!x' },
+  ]) expectBlocked(hook('Grep', input, tg));
+});
+
 test('상위 폴더의 일반 작업은 통과한다', () => {
   const allowed = [
     `ls ${vault}`, `cd ${vault} && git status`, `ls ${fixture}`,

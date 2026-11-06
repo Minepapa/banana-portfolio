@@ -110,12 +110,13 @@ export function routeUpdate(update, { allowFrom, confirmOpenSince = null }) {
   const proposalMode = parseProposalModeCommand(trimmed);
   if (proposalMode) return handle('switch', { tool: 'proposal-mode-cli.mjs', text: trimmed, risky: proposalMode === 'allowed' });
 
+  // 기호만 오면 LLM에 보내지 않고 고정 안내로 답한다(2026-11-06 실측: 📜만 보낸 메시지가 LLM으로 가 15초 걸림).
   const memo = stripLeadingSymbol(text, MEMO);
-  if (memo !== null) return memo.trim() ? handle('memo', { text: memo }) : handle('llm', { kind: 'text', text });
+  if (memo !== null) return memo.trim() ? handle('memo', { text: memo }) : handle('symbolHelp', { symbol: MEMO });
   const photoMemoWithoutPhoto = stripLeadingSymbol(text, PHOTO_MEMO);
-  if (photoMemoWithoutPhoto !== null) return photoMemoWithoutPhoto.trim() ? handle('memo', { text: photoMemoWithoutPhoto }) : handle('llm', { kind: 'text', text });
+  if (photoMemoWithoutPhoto !== null) return photoMemoWithoutPhoto.trim() ? handle('memo', { text: photoMemoWithoutPhoto }) : handle('symbolHelp', { symbol: PHOTO_MEMO });
   const oneLine = stripLeadingSymbol(text, ONE_LINE);
-  if (oneLine !== null) return oneLine.trim() ? handle('oneLine', { text: oneLine }) : handle('llm', { kind: 'text', text });
+  if (oneLine !== null) return oneLine.trim() ? handle('oneLine', { text: oneLine }) : handle('symbolHelp', { symbol: ONE_LINE });
 
   if (isWikiAnswerOnly(trimmed)) return handle('wiki', { answers: parseExplicitWikiAnswers(trimmed) });
 

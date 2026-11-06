@@ -387,3 +387,20 @@ test('주문 줄 시간 초과 뒤 늦은 종료: RUNNING에서 빠지고 onLate
   await assert.rejects(runGateTool('place-nh-direct-order.mjs', [], { env: {}, group: 'order', allowed: () => true, spawnImpl, logFile: '/dev/null/x/y.log' }),
     (e) => e.code === 'GATE_TOOL_NOT_STARTED');
 });
+
+test('기호만(📜·📎·🪶): 도구를 부르지 않고 클리오 고정 안내로 답한다(2026-11-06 실측 15초 → LLM 안 감)', async () => {
+  const s = setup();
+  try {
+    for (const symbol of ['📜', '📎', '🪶']) {
+      const result = await s.handle('symbolHelp', { symbol });
+      assert.equal(result.status, '완료');
+    }
+    assert.equal(s.toolCalls.length, 0);
+    assert.equal(s.replies.length, 3);
+    for (const r of s.replies) {
+      assert.equal(r.agent, 'clio');
+      assert.match(r.body, /기록하지 않았습니다/);
+    }
+    assert.match(s.replies[0].body, /📜 내일 아침/);
+  } finally { s.cleanup(); }
+});

@@ -33,6 +33,10 @@ const TABLE = [
   ['5-2 기호 없는 사진은 LLM(판독)', { photo: [{ file_id: 'p' }], caption: '영수증' }, 'llm', { kind: 'photo' }],
   ['5-3 음성', { voice: { file_id: 'v', duration: 12 } }, 'voice', { fileId: 'v' }],
   ['6 🪶 오늘 한 줄', { text: '🪶 좋은 하루' }, 'oneLine', { text: '좋은 하루' }],
+  ['5 📜만(기호만)은 고정 안내', { text: '📜' }, 'symbolHelp', { symbol: '📜' }],
+  ['5 📜 공백만도 고정 안내', { text: '📜️  ' }, 'symbolHelp', { symbol: '📜' }],
+  ['5 📎만은 고정 안내', { text: '📎' }, 'symbolHelp', { symbol: '📎' }],
+  ['6 🪶만은 고정 안내', { text: '🪶' }, 'symbolHelp', { symbol: '🪶' }],
   ['7 WQ 답 한 줄', { text: 'WQ-20261030-abcd1234 등록' }, 'wiki'],
   ['7 WQ 답 여러 줄', { text: 'WQ-20261030-abcd1234 등록\nWQ-20261030-abcd5678 보류' }, 'wiki'],
   ['8 체결확인 계좌', { text: '체결확인 EC-20260929-ABC123 ISA' }, 'execConfirm', { id: 'EC-20260929-ABC123', account: 'ISA' }],
@@ -71,7 +75,6 @@ const NEAR_MISSES = [
   ['어제 12시 그곳은 헬스장이야', '장소 고치기는 날짜 계산이라 LLM'],
   ['승인', '제안 승인은 2단계(LLM 확인)'],
   ['삼성전자 10주 매수해', '직접 주문은 2단계'],
-  ['📜', '기호만 있고 내용 없음'],
 ];
 for (const [text, why] of NEAR_MISSES) {
   test(`라우터 근접 오답은 LLM으로: ${why}`, () => {
