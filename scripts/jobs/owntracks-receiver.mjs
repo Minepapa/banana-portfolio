@@ -202,8 +202,12 @@ export function createReceiver({ config, store = createLocationStore(), now = ()
       if (result.status === 200 && result.json.acked.length && current.getTime() - lastArgosHealth >= 600_000) {
         lastArgosHealth = current.getTime();
         // 상태 기록 실패가 이미 보낸 응답이나 다음 수신을 막지 않게 한다.
-        try { await health({ now: current, job: 'argos-ingest' }); }
-        catch { console.error('[argos] 상태 기록 실패'); }
+        // OwnTracks 앱을 지운 뒤(2026-11-06)에도 수신 서버가 살아 있음을 아르고스 수신으로 함께 남긴다.
+        // 그러지 않으면 owntracks-receiver 12시간 무수신 경보가 오탐한다.
+        for (const job of ['argos-ingest', 'owntracks-receiver']) {
+          try { await health({ now: current, job }); }
+          catch { console.error(`[argos] 상태 기록 실패 ${job}`); }
+        }
       }
     } catch (error) {
       // 본문 없이 오류 분류만(ENOSPC·EACCES·SyntaxError 등).

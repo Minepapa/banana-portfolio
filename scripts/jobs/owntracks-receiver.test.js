@@ -217,14 +217,14 @@ test('아르고스 수신은 받은 이벤트가 있을 때만 argos-ingest 상�
   });
   await post();
   await post();
-  assert.deepEqual(jobs, ['argos-ingest']);
+  assert.deepEqual(jobs, ['argos-ingest', 'owntracks-receiver']);
   clock += 600_000;
   acked = [];
   await post();
-  assert.deepEqual(jobs, ['argos-ingest']);
+  assert.deepEqual(jobs, ['argos-ingest', 'owntracks-receiver']);
   acked = ['h2'];
   await post();
-  assert.deepEqual(jobs, ['argos-ingest', 'argos-ingest']);
+  assert.deepEqual(jobs, ['argos-ingest', 'owntracks-receiver', 'argos-ingest', 'owntracks-receiver']);
 });
 
 test('아르고스 미디어 경로: 토큰 필요, 꺼져 있으면 404, status는 GET·upload는 PUT만', async () => {
