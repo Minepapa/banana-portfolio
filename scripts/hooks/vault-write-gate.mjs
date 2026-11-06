@@ -12,6 +12,8 @@
  * - 등록부를 읽거나 해석하지 못하면 막는다(확신이 없으면 멈춘다). 단 모듈 로드 실패·node 실행 실패·타임아웃은
  *   Claude Code가 비차단 오류로 처리해 통과된다 — 그런 경우는 매일 lint(backup-vault)가 안전망이다.
  *   Bash로 쓴 볼트 노트는 PostToolUse 훅 vault-bash-lint가 명령 직후 알린다(막지는 못함).
+ * - 본문 양식(2026-11-06): 새로 만드는 dev-request의 필수 절(무엇을·왜·완료 기준)이 없으면 막지 않고 경고만 한다
+ *   (scripts/lib/vault-doc-templates.mjs, 정본 `90_Delphi/Schema/문서 본문 양식`).
  * - Edit는 현재 파일에 old_string→new_string을 적용한 결과를 검사한다. 적용할 수 없으면(old_string 없음)
  *   도구 자체가 실패할 것이므로 통과시킨다.
  */
@@ -23,6 +25,7 @@ import { VAULT_ROOT, VAULT_REL } from '../lib/vault-paths.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { lintWorkDoc } from '../lib/work-doc-freshness.mjs';
 import { suggestFixes } from '../lib/vault-lint-fix.mjs';
+import { docTemplateWarning, isDevRequestDoc } from '../lib/vault-doc-templates.mjs';
 
 const SKIP_TOP = new Set([VAULT_REL.archiveRoot, VAULT_REL.etnaRoot, VAULT_REL.adytonRoot]);
 const ROOT_RULE_FILES = new Set(['CLAUDE.md', 'AGENTS.md']);
@@ -64,7 +67,8 @@ export function resultingContent(toolName, toolInput, currentContent) {
 // 등록부 자체를 쓸 때는 디스크의 옛 등록부가 아니라 새 내용으로 판정한다 — 깨진 등록부가 들어가면 그 뒤로
 // 고치는 쓰기까지 전부 막히므로(리뷰 HIGH), 새 내용이 해석되지 않으면 그 쓰기를 막는다.
 // vaultRoot가 있으면 작업 문서 최신성도 검사한다(supersedes 대상 확인에 볼트 경로가 필요).
-export function decideWrite({ relPath, content, registryText, vaultRoot = null }) {
+// isNew(새 파일)이고 요청 기록이면 본문 양식을 점검해 통과 판정에 warning(막지 않는 안내)을 덧붙인다.
+export function decideWrite({ relPath, content, registryText, vaultRoot = null, isNew = false }) {
   const isRegistry = relPath === VAULT_REL.registryFile;
   let rules;
   try {
@@ -75,7 +79,10 @@ export function decideWrite({ relPath, content, registryText, vaultRoot = null }
       : `경로 등록부를 해석하지 못해 볼트 쓰기를 막았습니다(${e.message}). ${VAULT_REL.registryFile}를 확인하세요.` };
   }
   const problems = [...checkNote(relPath, content, rules), ...(vaultRoot ? lintWorkDoc(vaultRoot, relPath, content) : [])];
-  if (!problems.length) return { block: false };
+  if (!problems.length) {
+    const warning = isNew && isDevRequestDoc(relPath, content) ? docTemplateWarning(relPath, content) : null;
+    return warning ? { block: false, warning } : { block: false };
+  }
   const suggestions = suggestFixes(relPath, content, problems, rules, { today: new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 10) });
   return {
     block: true,
@@ -106,10 +113,13 @@ async function main() {
 
   let registryText;
   try { registryText = readFileSync(join(VAULT_ROOT, VAULT_REL.registryFile), 'utf8'); } catch (e) { registryText = ''; }
-  const decision = decideWrite({ relPath, content, registryText, vaultRoot: VAULT_ROOT });
+  const decision = decideWrite({ relPath, content, registryText, vaultRoot: VAULT_ROOT, isNew: current == null });
   if (decision.block) {
     process.stderr.write(`${decision.reason}\n`);
     process.exit(2); // PreToolUse에서 2 = 도구 호출 차단, stderr가 모델에게 전달된다
+  }
+  if (decision.warning) { // 양식 경고 — 막지 않고 모델 컨텍스트에만 알린다
+    process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: decision.warning } })}\n`);
   }
 }
 

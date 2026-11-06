@@ -6,6 +6,7 @@ import { join, relative } from 'node:path';
 import { parseFlatFrontmatter } from './vault-integrity-audit.mjs';
 import { VAULT_REL } from './vault-paths.mjs';
 import { lintWorkDoc } from './work-doc-freshness.mjs';
+import { DOC_TEMPLATE_FROM, docTemplateWarning, isDevRequestDoc } from './vault-doc-templates.mjs';
 
 const BUNDLES = {
   C: ['type', 'category', 'description', 'sensitivity', 'created', 'modified'],
@@ -183,9 +184,11 @@ export function listVaultNotes(root) {
   return walk(root, root);
 }
 
+// results는 위반(차단 등급), warnings는 본문 양식 경고(시행일 DOC_TEMPLATE_FROM 이후 만든 요청 기록만).
 export function lintVault(root) {
   const rules = parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
   const results = [];
+  const warnings = [];
   const files = listVaultNotes(root);
   for (const rel of files) {
     const content = readFileSync(join(root, rel), 'utf8');
@@ -194,6 +197,10 @@ export function lintVault(root) {
       ...lintWorkDoc(root, rel, content),
     ];
     if (problems.length) results.push({ rel, problems });
+    if (isDevRequestDoc(rel, content) && (content.match(/^created:\s*"?(\d{4}-\d{2}-\d{2})/m)?.[1] ?? '') >= DOC_TEMPLATE_FROM) {
+      const warning = docTemplateWarning(rel, content);
+      if (warning) warnings.push({ rel, warning });
+    }
   }
-  return { checked: files.length, results };
+  return { checked: files.length, results, warnings };
 }

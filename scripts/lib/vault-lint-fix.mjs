@@ -208,9 +208,10 @@ export function recordFixesInClioLog(root, fixed, { now = Date.now(), write = wr
 export function lintVaultWithSuggestions(root, { now = Date.now() } = {}) {
   const rules = parseRegistry(readFileSync(join(root, VAULT_REL.registryFile), 'utf8'));
   const today = kstDate(now);
-  const { checked, results } = lintVault(root);
+  const { checked, results, warnings } = lintVault(root);
   return {
     checked,
+    warnings,
     results: results.map((r) => ({ ...r, suggestions: suggestFixes(r.rel, readFileSync(join(root, r.rel), 'utf8'), r.problems, rules, { today }) })),
   };
 }

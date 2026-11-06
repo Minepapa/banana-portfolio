@@ -18,7 +18,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     console.log('');
   }
   for (const { rel, error } of fixed.skipped ?? []) console.log(`자동 수정 실패: ${rel} — ${error}`);
-  const { checked, results } = lintVaultWithSuggestions(VAULT_PATHS.root);
+  const { checked, results, warnings } = lintVaultWithSuggestions(VAULT_PATHS.root);
   const byKind = new Map();
   for (const { rel, problems, suggestions } of results) for (const p of problems) {
     const kind = p.replace(/\(.*\)$/, '').replace(/: .*$/, '').replace(/"[^"]*"/, '"…"');
@@ -29,5 +29,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   for (const [kind, items] of [...byKind].sort((a, b) => b[1].length - a[1].length)) {
     console.log(`\n■ ${kind} (${items.length})`);
     for (const line of items.slice(0, process.argv.includes('--list') ? Infinity : 5)) console.log(`  ${line}`);
+  }
+  if (warnings.length) {
+    console.log(`\n■ 문서 본문 양식 경고 (${warnings.length}, 막지 않음)`);
+    for (const { rel, warning } of warnings) console.log(`  ${rel} — ${warning.split('\n').slice(1, -1).map((l) => l.replace(/^- /, '')).join(' / ')}`);
   }
 }
