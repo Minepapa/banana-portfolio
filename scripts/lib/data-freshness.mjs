@@ -282,7 +282,8 @@ export function findStaleSources({ now, sources, readers, silentJobs = new Set()
       final = { ...result, status: 'suppressed', reason: 'liveness', detail: `상위 채널 ${source.liveness} 끊김 — 상위 경보로 묶음` };
     }
     results.push({ id: source.id, label: source.label, owner: source.owner, kind: source.kind,
-      urgent: source.urgent, status: final.status, reason: final.reason ?? '', lastAt: final.lastAt ?? null, detail: final.detail ?? '' });
+      // 권한 꺼짐(폰이 직접 알린 것)은 출처가 묶음이어도 즉시 보낸다(2026-11-06 오너: 알림 접근이 이틀 꺼진 채 모름).
+      urgent: source.urgent || final.reason === 'access-off', status: final.status, reason: final.reason ?? '', lastAt: final.lastAt ?? null, detail: final.detail ?? '' });
   }
   return { results, stale: results.filter((r) => r.status === 'stale') };
 }

@@ -447,6 +447,7 @@ test('알림 접근 감시: 권한 칸이 없으면 18시간 공백 기준(밤 �
   const r = findStaleSources({ now, sources: [HEARTBEAT, NOTIF_ACCESS], readers: cut }).results[1];
   assert.equal(r.status, 'stale');
   assert.equal(r.reason, 'too-old');
+  assert.equal(r.urgent, false); // 공백은 묶음 그대로
   assert.match(r.detail, /19\.0시간째 없음\(기준 18시간\) — 권한 확인/);
 });
 
@@ -458,6 +459,7 @@ test('알림 접근 감시: 최근 상태 신호가 권한 꺼짐(false)을 알�
   const r = findStaleSources({ now, sources: [HEARTBEAT, NOTIF_ACCESS], readers }).results[1];
   assert.equal(r.status, 'stale');
   assert.equal(r.reason, 'access-off');
+  assert.equal(r.urgent, true); // 권한 꺼짐은 즉시(2026-11-06 오너)
 });
 
 test('알림 접근 감시: 권한 켜짐(true)이어도 공백 기준은 그대로, 가장 최근 상태 신호에 칸이 없으면 칸을 안 쓴다', () => {
