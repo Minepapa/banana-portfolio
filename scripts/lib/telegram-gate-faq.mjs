@@ -210,3 +210,42 @@ export function answerFaq(q, { now = new Date(), read = defaultFaqReaders() } = 
   else if (q.kind === 'spending') out = answerSpending(q, today, read);
   return out ? { agent: q.agent, ...out } : null;
 }
+
+// ── 재료 미리 붙이기(속도 개선 2차 B-5) ─────────────────────────────────────────────
+// LLM으로 가는 질문에도 날짜·낱말로 종류를 고르고, 해당 사실을 Node로 미리 읽어 프롬프트에 [창구 사실]로 붙인다.
+// 모델이 같은 사실을 도구로 다시 찾지 않게 한다. 넓게 붙이지 않는다: 낱말이 분명할 때만, 블록당 길이 제한.
+const PREFETCH_MAX = 1800;
+
+const plain = (html) => String(html).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+
+// 순수 함수: 오너 글 → 미리 읽을 사실 종류 목록(시험용으로 따로 둔다).
+export function prefetchPlan(text) {
+  const t = String(text ?? '');
+  const plan = [];
+  const day = t.match(new RegExp(DAY_WORD, 'u'));
+  if (day && /(일정|약속|캘린더|가족|스케줄)/u.test(t)) {
+    const month = day[2] ?? day[4];
+    const d = day[3] ?? day[5];
+    const valid = !month || new Date(Date.UTC(2024, Number(month) - 1, Number(d))).getUTCMonth() === Number(month) - 1;
+    if (valid) plan.push({ kind: 'calendar', range: month ? { month: Number(month), day: Number(d) } : day[1].replace(/\s+/g, ' ') });
+  }
+  if (/체결/u.test(t)) plan.push({ kind: 'trades' });
+  if (/예수금/u.test(t)) plan.push({ kind: 'cash' });
+  if (/보유/u.test(t)) plan.push({ kind: 'holdings' });
+  if (/(소비|지출|쓴\s*돈|결제)/u.test(t)) {
+    if (/이번\s*달/u.test(t)) plan.push({ kind: 'spending', scope: 'month' });
+    else if (/오늘/u.test(t)) plan.push({ kind: 'spending', scope: 'today' });
+  }
+  return plan;
+}
+
+export function prefetchFacts(text, { now = new Date(), read = defaultFaqReaders() } = {}) {
+  const blocks = [];
+  for (const q of prefetchPlan(text)) {
+    try {
+      const a = answerFaq({ ...q, agent: 'zeus' }, { now, read });
+      if (a) blocks.push(`· ${a.topic}\n${plain(a.body).slice(0, PREFETCH_MAX)}`);
+    } catch { /* 미리 읽기 실패는 붙이지 않는다 — 모델이 도구로 찾는다 */ }
+  }
+  return blocks.length ? blocks.join('\n\n') : null;
+}

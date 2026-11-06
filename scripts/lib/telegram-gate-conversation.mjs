@@ -128,8 +128,8 @@ export function createConversation(deps) {
     });
   }
 
-  async function runOnce({ agent = 'zeus', items, session, handoffText, handoffMissing, run, directExchanges = [], handoffRequest = null, warmup = false }) {
-    const prompt = buildMessagePrompt({ items, handoffText, handoffMissing, now: now(), directExchanges, handoffRequest, warmup });
+  async function runOnce({ agent = 'zeus', items, session, handoffText, handoffMissing, run, directExchanges = [], handoffRequest = null, warmup = false, facts = null }) {
+    const prompt = buildMessagePrompt({ items, handoffText, handoffMissing, now: now(), directExchanges, handoffRequest, warmup, facts });
     // 상시 실행(deps.live 풀)이면 프롬프트 없이 띄우고 메시지를 stdin으로 넣는다. 인자는 새로 띄울 때만 쓰인다.
     const live = deps.live ?? null;
     const args = argsFor(agent, session, prompt);
@@ -163,7 +163,7 @@ export function createConversation(deps) {
 
   // 담당(또는 제우스) 한 턴: 그 담당 하루 세션을 열고, 이어 붙일 기록이 사라졌으면 같은 날 새 세션으로 한 번만 다시.
   // 인수인계 노트는 제우스 하루 대화에만 넣는다(담당 프로세스는 그날 처음 불릴 때 빈 대화로 시작한다).
-  async function runAgentTurn({ agent, items, day, run, handoffRequest, warmup = false }) {
+  async function runAgentTurn({ agent, items, day, run, handoffRequest, warmup = false, facts = null }) {
     const store = storeFor(agent);
     const isZeus = agent === 'zeus';
     let session = store.forDay(day);
@@ -174,11 +174,11 @@ export function createConversation(deps) {
       handoffMissing = !handoffText;
     }
     const directExchanges = isZeus ? state.directLog.slice() : [];
-    let res = await runOnce({ agent, items, session, handoffText, handoffMissing, run, directExchanges, handoffRequest, warmup });
+    let res = await runOnce({ agent, items, session, handoffText, handoffMissing, run, directExchanges, handoffRequest, warmup, facts });
     if (res.isError && session.resume && NO_CONVERSATION_RE.test(res.errorText ?? '')) {
       session = store.reset(day);
       const text = isZeus ? deps.readHandoff(previousDay(day)) : null;
-      res = await runOnce({ agent, items, session, handoffText: text, handoffMissing: isZeus && !text, run, directExchanges, handoffRequest, warmup });
+      res = await runOnce({ agent, items, session, handoffText: text, handoffMissing: isZeus && !text, run, directExchanges, handoffRequest, warmup, facts });
     }
     if (isZeus && !res.isError && !res.interrupted) state.directLog = [];
     return res;
@@ -248,6 +248,10 @@ export function createConversation(deps) {
       let agent = pinned && departments().includes(pinned) ? pinned : routeTarget(items, departments());
       let handoffRequest = null;
       let sentCount = 0;
+      // 재료 미리 붙이기(B-5): 오너 글에서 날짜·낱말로 사실을 Node로 읽어 [창구 사실]로 붙인다(넘김 단계에도 같은 사실).
+      const ownerTexts = items.filter((i) => i.args.kind === 'text').map((i) => i.args.text ?? '').join('\n');
+      const facts = ownerTexts.trim() ? safeSync(() => deps.prefetch?.(ownerTexts) ?? null, '사실 미리 읽기') : null;
+      if (facts) deps.journal.append({ type: 'prefetch', chars: facts.length });
       try {
         for (let stage = 0; agent; stage += 1) {
           if (agent !== 'zeus') {
@@ -255,7 +259,7 @@ export function createConversation(deps) {
             run.throttle.update(renderProgress(run.progress, now().getTime()));
           }
           deps.journal.append({ type: 'route', agent, via: handoffRequest ? 'handoff' : stage === 0 && agent !== 'zeus' ? 'direct' : 'zeus' });
-          const res = await runAgentTurn({ agent, items, day, run, handoffRequest });
+          const res = await runAgentTurn({ agent, items, day, run, handoffRequest, facts });
 
           const seconds = Math.round((now().getTime() - startedAt) / 1000);
           const lastStep = run.progress.steps.at(-1) ?? run.progress.stage;

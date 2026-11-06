@@ -55,7 +55,7 @@ import { DEFAULT_VAULT_ROOT, VAULT_PATHS, VAULT_REL, VAULT_ROOT, vaultAbs } from
 import { buildHandoffSummaryArgs, createConversation } from '../lib/telegram-gate-conversation.mjs';
 import { buildGateReadEnv, runGateClaude } from '../lib/telegram-gate-llm.mjs';
 import { createLiveClaude, createLivePool, killAllLiveClaude } from '../lib/telegram-gate-live.mjs';
-import { answerFaq } from '../lib/telegram-gate-faq.mjs';
+import { answerFaq, prefetchFacts } from '../lib/telegram-gate-faq.mjs';
 // 종료코드 규칙(llm-run-outcome) 대상 아님: 상시 데몬이라 종료코드로 성패를 남기지 않는다. LLM 실패는 메시지마다 오너에게 알리고 inbox에 실패로 적는다.
 import { businessDay, createSessionStore } from '../lib/telegram-gate-session.mjs';
 import { createJournal, handoffNoteRelPath } from '../lib/telegram-gate-journal.mjs';
@@ -624,6 +624,8 @@ function buildConversationDeps({ gate, options, journal, confirmStore }) {
     mcpToolNames: gateMcpToolNames(createGateMcpTools()),
     journal,
     sessionStore: createSessionStore({ stateDir: gate.stateDir }),
+    // 재료 미리 붙이기(B-5): 질문의 날짜·낱말로 볼트 정본 사실을 Node로 읽어 프롬프트에 붙인다.
+    prefetch: (text) => prefetchFacts(text, { now: new Date() }),
     // 담당 상시 프로세스(2026-11-06 개선안 2차): 담당마다 하루 세션 파일 하나, 시스템 프롬프트는 볼트 헌장 원문, 모델은 헌장 runtimeModel.
     sessionStoreFor: (agent) => createSessionStore({ stateDir: gate.stateDir, file: `session-${agent}.json` }),
     readCharter: (agent) => readText(vaultAbs(`${VAULT_REL.agentCharters}/${agent}.md`)) ?? '',

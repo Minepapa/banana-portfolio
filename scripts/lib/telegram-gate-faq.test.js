@@ -108,3 +108,17 @@ test('라우터: 자주 묻는 질문은 faq(결정론), 근접 문장은 대화
   assert.equal(route('11월 14일 가족 중 일정이 등록된 사람이 누구야?').route, 'llm');
   assert.equal(route('헤르메스 내가 최근 언제 미용실을 방문했지?').route, 'llm');
 });
+
+test('재료 미리 붙이기: 날짜+일정 낱말이면 일정, 체결·예수금·보유·소비(오늘·이번 달) 낱말이면 그 사실, 없으면 null', async () => {
+  const { prefetchFacts, prefetchPlan } = await import('./telegram-gate-faq.mjs');
+  assert.deepEqual(prefetchPlan('11월 14일 가족 중 일정이 등록된 사람이 누구야?'), [{ kind: 'calendar', range: { month: 11, day: 14 } }]);
+  assert.deepEqual(prefetchPlan('이번 주말 일정 비어 있으면 미네랑 놀러 갈까?'), [{ kind: 'calendar', range: '이번 주말' }]);
+  assert.deepEqual(prefetchPlan('IRP 예수금은 대금이 빠져나가는데 체결일이 오늘이야').map((p) => p.kind), ['trades', 'cash']);
+  assert.deepEqual(prefetchPlan('이번 달 소비 패턴 분석해줘'), [{ kind: 'spending', scope: 'month' }]);
+  assert.deepEqual(prefetchPlan('내일 공원 산책 옷차림'), []);
+  assert.deepEqual(prefetchPlan('2월 30일 일정 잡아줘'), []);
+  const facts = prefetchFacts('이번 주말 일정 비어 있으면 놀러 갈까', { now: NOW, read });
+  assert.match(facts, /^· 일정\n■ 11-07\(토\)\n- 종일 \[가족\] 가족 나들이\n- 14:00~15:00 \[나\] <치과>/, 'HTML을 벗긴 평문');
+  assert.equal(prefetchFacts('안녕', { now: NOW, read }), null);
+  assert.equal(prefetchFacts('오늘 체결', { now: NOW, read: { ...read, executions: () => { throw new Error('x'); } } }), null, '읽기 실패는 붙이지 않는다');
+});

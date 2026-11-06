@@ -677,3 +677,16 @@ test('형식 오류 답장은 실제로 답을 쓴 프로세스 이름표로 보
     assert.equal(m.agent, 'hermes');
   } finally { s.cleanup(); }
 });
+
+test('재료 미리 붙이기: 오너 글로 deps.prefetch를 불러 [창구 사실]을 프롬프트에 붙이고(넘김 단계에도), 없으면 붙이지 않는다', async () => {
+  const asked = [];
+  const s = setup({ departments: true, extraDeps: { prefetch: (text) => { asked.push(text); return text.includes('일정') ? '· 일정\n■ 11-07(토)\n- 일정 없음' : null; } },
+    results: [ok('zeus', '넘김', { handoff: { agent: 'hermes', request: '정리' } }), ok('hermes', '없음'), ok('zeus', '네')] });
+  try {
+    await s.conv.processBatch([item(1, '주말 일정 비면 뭐 할까')]);
+    assert.deepEqual(asked, ['주말 일정 비면 뭐 할까']);
+    for (const args of s.runs.slice(0, 2)) assert.match(flag(args, '-p'), /\[창구 사실\][^\n]*\n· 일정\n■ 11-07\(토\)/);
+    await s.conv.processBatch([item(2, '고마워')]);
+    assert.doesNotMatch(flag(s.runs[2], '-p'), /창구 사실/);
+  } finally { s.cleanup(); }
+});
