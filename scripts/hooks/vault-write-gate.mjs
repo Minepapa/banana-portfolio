@@ -80,7 +80,8 @@ export function decideWrite({ relPath, content, registryText, vaultRoot = null, 
   }
   const problems = [...checkNote(relPath, content, rules), ...(vaultRoot ? lintWorkDoc(vaultRoot, relPath, content) : [])];
   if (!problems.length) {
-    const warning = isNew && isDevRequestDoc(relPath, content) ? docTemplateWarning(relPath, content) : null;
+    let warning = null; // 경고 계산이 던져도 쓰기를 막지 않는다(리뷰 MEDIUM)
+    try { warning = isNew && isDevRequestDoc(relPath, content) ? docTemplateWarning(relPath, content) : null; } catch { warning = null; }
     return warning ? { block: false, warning } : { block: false };
   }
   const suggestions = suggestFixes(relPath, content, problems, rules, { today: new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 10) });
