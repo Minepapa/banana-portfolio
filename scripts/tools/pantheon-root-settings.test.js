@@ -19,13 +19,15 @@ test('루트 설정은 훅만 복사하고 명령의 프로젝트 변수만 저�
   assert.match(settings.hooks.Stop[0].hooks[0].command, /\$CLAUDE_PROJECT_DIR/);
 });
 
-test('실제 저장소 설정의 훅 명령 11개를 모두 절대경로로 출력한다', () => {
+test('실제 저장소 설정의 훅 명령 10개를 모두 절대경로로 출력한다', () => {
   const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const settings = JSON.parse(readFileSync(join(repositoryRoot, '.claude/settings.json'), 'utf8'));
   const generated = rootHookSettings(settings, repositoryRoot);
   const commands = Object.values(generated.hooks).flatMap((entries) =>
     entries.flatMap((entry) => entry.hooks.map((hook) => hook.command)));
-  assert.equal(commands.length, 11);
+  assert.equal(commands.length, 10);
+  // 매 메시지 라우팅 안내(route-guard)는 2026-11-06 오너 결정으로 뺐다.
+  assert.equal(commands.some((command) => command.includes('route-guard.mjs')), false);
   assert.equal(commands.some((command) => command.includes('/scripts/hooks/adyton-guard.mjs')), true);
   assert.equal(commands.every((command) => command.includes(`${repositoryRoot}/scripts/hooks/`)), true);
   assert.equal(commands.some((command) => command.includes('$CLAUDE_PROJECT_DIR')), false);
