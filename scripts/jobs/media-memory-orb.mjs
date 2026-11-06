@@ -460,7 +460,9 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
               emotions: answer.fields.emotions, levels: answer.levels })) } : {}) };
           if (judged.ambiguous) {
             const row = ledgerRow; ledgerRow = null;
-            appendJudgment(ledgerPath, { ...row, status: 'ambiguous' });
+            // 대표 사진(원본 경로·세운 원본 얼굴 상자)을 남겨 오너 검수 시트(mine-photo-ambiguous)가 같은 사진을 보여 주게 한다.
+            appendJudgment(ledgerPath, { ...row, status: 'ambiguous',
+              photos: copies.map((copy) => ({ id: copy.id, path: copy.sourcePath, faceBox: copy.faceBox ?? null })) });
             summary.ambiguous = [...(summary.ambiguous ?? []), item.id];
             logRow(logPath, { runId, id: item.id, rel: item.rel, status: 'ambiguous', ...version, at: new Date(now()).toISOString() });
             for (const copy of copies) rmSync(copy.path, { force: true });

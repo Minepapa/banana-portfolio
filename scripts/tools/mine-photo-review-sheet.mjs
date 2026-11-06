@@ -162,7 +162,7 @@ export function boxPercent(bbox, size) {
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
-// 시트 HTML. cards: [{ no, title, photoId, date, age, image(data URL), box(boxPercent|null) }].
+// 시트 HTML. cards: [{ no, title, photoId, date, age, image(data URL), box(boxPercent|null) }] — 순간 카드는 images: [{ image, box }]로 여러 장.
 // 사진 종류·얼굴 크기·모델 답은 넣지 않는다(카드에 없는 값은 화면에 나올 수 없다). 미네 상자가 없는 카드(대개 가려짐)도
 // 기본 화면은 같게 둔다 — 눌렀을 때만 '표시할 상자 없음'. 미리 글로 알리면 종류가 드러나고 '안 보임' 쪽으로 끌린다.
 export function renderPhotoSheet(cards, { title, storageKey, downloadName, emotions }) {
@@ -170,7 +170,7 @@ export function renderPhotoSheet(cards, { title, storageKey, downloadName, emoti
   const card = (c) => `<section class="card" data-no="${c.no}" data-title="${escapeHtml(c.title)}" data-id="${escapeHtml(c.photoId)}">
 <h2>${c.no}. ${escapeHtml(c.title)}</h2>
 <p class="meta">${escapeHtml(c.date)}${c.age ? ` · 미네 ${escapeHtml(c.age)}` : ''}</p>
-<div class="photo"><img src="${c.image}" alt="">${c.box ? `<div class="box" hidden style="left:${c.box.left}%;top:${c.box.top}%;width:${c.box.width}%;height:${c.box.height}%"></div>` : ''}</div>
+${(c.images ?? [{ image: c.image, box: c.box }]).map((p) => `<div class="photo"><img src="${p.image}" alt="">${p.box ? `<div class="box" hidden style="left:${p.box.left}%;top:${p.box.top}%;width:${p.box.width}%;height:${p.box.height}%"></div>` : ''}</div>`).join('')}
 <button class="toggle">미네 얼굴 표시</button><span class="none" hidden>표시할 상자 없음</span>
 <div class="q"><b>① 미네 표정이 읽히나요?</b><div class="row">${buttons('read', READ_CHOICES)}</div></div>
 <div class="q"><b>② 미네 감정</b><div class="row">${buttons('state', EMOTION_STATES)}</div>
@@ -203,7 +203,7 @@ function entry(c){const no=c.dataset.no;return A[no]=Object.assign(A[no]||{},{t:
 for(const c of cards){
 for(const b of c.querySelectorAll('button[data-k]'))b.onclick=()=>{const a=entry(c);a[b.dataset.k]=b.dataset.k==='int'?Number(b.dataset.v):b.dataset.v;if(a.state!=='있음'){delete a.emo;delete a.int}store();render()};
 c.querySelector('textarea').oninput=(e)=>{entry(c).memo=e.target.value;store()};
-const box=c.querySelector('.box'),none=c.querySelector('.none');c.querySelector('.toggle').onclick=()=>{if(box)box.hidden=!box.hidden;else none.hidden=!none.hidden}}
+const boxes=[...c.querySelectorAll('.box')],none=c.querySelector('.none');c.querySelector('.toggle').onclick=()=>{if(boxes.length)for(const box of boxes)box.hidden=!box.hidden;else none.hidden=!none.hidden}}
 let shown=false;document.getElementById('all').onclick=()=>{shown=!shown;for(const box of document.querySelectorAll('.box'))box.hidden=!shown};
 document.getElementById('dl').onclick=()=>{const b=new Blob([JSON.stringify(A,null,1)],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=${JSON.stringify(downloadName)};a.click();setTimeout(()=>URL.revokeObjectURL(u),0)};
 render();
