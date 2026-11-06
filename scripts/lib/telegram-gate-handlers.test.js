@@ -404,3 +404,13 @@ test('기호만(📜·📎·🪶): 도구를 부르지 않고 클리오 고정 �
     assert.match(s.replies[0].body, /📜 내일 아침/);
   } finally { s.cleanup(); }
 });
+
+test('자주 묻는 질문: 도구 없이 deps.faq 답을 그 담당 이름표로 보낸다', async () => {
+  const s = setup({ deps: { faq: (q) => ({ agent: 'hermes', topic: '일정', body: `${q.kind} 답` }) } });
+  try {
+    const r = await s.handle('faq', { kind: 'calendar', agent: 'hermes', range: '오늘' });
+    assert.equal(r.status, '완료');
+    assert.deepEqual(s.replies, [{ agent: 'hermes', topic: '일정', body: 'calendar 답' }]);
+    assert.equal(s.toolCalls.length, 0);
+  } finally { s.cleanup(); }
+});

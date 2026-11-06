@@ -258,6 +258,14 @@ export function createGateHandlers(deps) {
       return { status: '완료', detail: '기호만 — 안내' };
     },
 
+    // 자주 묻는 질문: 볼트 정본을 Node로 읽어 그 담당 이름표로 답한다(LLM 없음, 가는 선).
+    async faq(q) {
+      const answer = deps.faq(q);
+      if (!answer) throw new Error('이 질문은 정해진 답으로 처리할 수 없습니다. 말을 조금 바꿔 다시 보내 주세요');
+      await deps.reply(answer.agent, answer.topic, answer.body);
+      return { status: '완료', detail: `자주 묻는 질문 ${q.kind}` };
+    },
+
     async memo({ text }) {
       const out = await run('inbox-memo.mjs', ['--json=-'], { input: JSON.stringify({ text }) });
       await deps.reply('clio', '기록', escapeHtml(out));

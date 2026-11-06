@@ -635,9 +635,9 @@ test('호출: 대화 줄에서 받은 차례대로 하나씩(묶지 않음), 앞
   const conv = fakeConversation();
   const s = setup({ conversation: conv });
   try {
-    s.inbox.appendUpdates([msg(1, '내일 일정'), msg(2, '헤르메스 호출'), msg(3, '주말 일정'), msg(4, '호출')]);
+    s.inbox.appendUpdates([msg(1, '내일 뭐 하지'), msg(2, '헤르메스 호출'), msg(3, '주말에 뭐 하지'), msg(4, '호출')]);
     while (await s.daemon.processLlmBatch());
-    assert.deepEqual(conv.calls.batches, [['내일 일정'], ['호출:hermes'], ['주말 일정'], ['호출:zeus']]);
+    assert.deepEqual(conv.calls.batches, [['내일 뭐 하지'], ['호출:hermes'], ['주말에 뭐 하지'], ['호출:zeus']]);
     for (const id of [1, 2, 3, 4]) assert.equal(s.inbox.get(id).status, '완료');
   } finally { s.cleanup(); }
 });

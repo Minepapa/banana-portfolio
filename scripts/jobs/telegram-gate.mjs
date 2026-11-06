@@ -55,6 +55,7 @@ import { DEFAULT_VAULT_ROOT, VAULT_PATHS, VAULT_REL, VAULT_ROOT, vaultAbs } from
 import { buildHandoffSummaryArgs, createConversation } from '../lib/telegram-gate-conversation.mjs';
 import { buildGateReadEnv, runGateClaude } from '../lib/telegram-gate-llm.mjs';
 import { createLiveClaude, createLivePool, killAllLiveClaude } from '../lib/telegram-gate-live.mjs';
+import { answerFaq } from '../lib/telegram-gate-faq.mjs';
 // 종료코드 규칙(llm-run-outcome) 대상 아님: 상시 데몬이라 종료코드로 성패를 남기지 않는다. LLM 실패는 메시지마다 오너에게 알리고 inbox에 실패로 적는다.
 import { businessDay, createSessionStore } from '../lib/telegram-gate-session.mjs';
 import { createJournal, handoffNoteRelPath } from '../lib/telegram-gate-journal.mjs';
@@ -95,7 +96,8 @@ function sleepChunked(ms, { onBeat, isStopping, sleep }) {
 // deps는 시험에서 가짜로 바꾼다: api{getUpdates, react, getFile, download}, send(message), now, sleep, exit, heartbeatWriter …
 export function createGateDaemon({ gate, inbox, api, send, warn = null, now = () => new Date(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   exit = (code) => process.exit(code), selfCheck, statusExtras = () => ({}), runTool, wiki, writeHeartbeat = async () => {},
-  log = (line) => console.log(line), listPollers = () => [], conversation = null, confirmStore = null, journal = null, promiseRunner = null } = {}) {
+  log = (line) => console.log(line), listPollers = () => [], conversation = null, confirmStore = null, journal = null, promiseRunner = null,
+  faq = (q) => answerFaq(q, { now: now() }) } = {}) {
   const startedAt = now().getTime();
   const state = {
     stopping: false,
@@ -152,6 +154,7 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
       mediaDir: gateMediaDir(gate.stateDir),
       testMode: gate.mode === 'test',
       isStopping: () => state.stopping,
+      faq,
       now,
     });
   }

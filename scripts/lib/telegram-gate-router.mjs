@@ -9,6 +9,7 @@
 import { parseExecutionModeCommand, parseKillSwitchCommand, parseProposalModeCommand, parseDepartmentCall } from './telegram-messages.mjs';
 import { parseExplicitWikiAnswers } from './wiki-question-queue.mjs';
 import { AGENT_IDS, agentTitle } from './agent-registry.mjs';
+import { parseFaq } from './telegram-gate-faq.mjs';
 
 // 확인 대기(돈 지시 재확인) 답. 정확일치만 인정한다. 확인 대기가 있을 때만 이 뜻으로 쓴다.
 // 입력 규칙 4-8의 명확한 긍정(응·승인·ㅇㅇ)만. 네·예 같은 넓은 답은 확인으로 보지 않는다(2단계 리뷰 LOW).
@@ -143,6 +144,10 @@ export function routeUpdate(update, { allowFrom, confirmOpenSince = null }) {
   }
   const here = trimmed.match(PLACE_HERE_RE);
   if (here && here[1].trim()) return handle('place', { here: true, name: here[1].trim() });
+
+  // 자주 묻는 질문(일정·오늘 체결·예수금·보유·소비)은 정해진 문장 모양일 때만 LLM 없이 답한다(속도 개선 2차 A-1).
+  const faq = parseFaq(trimmed);
+  if (faq) return handle('faq', faq);
 
   const department = parseDepartmentCall(trimmed);
   return handle('llm', { kind: 'text', text, department: department?.department ?? null });
