@@ -17,6 +17,12 @@
     <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
     <string>telegram-gate</string>
   </array>
+  <!-- 4단계 실전 전환(2026-11-06 오너 지시로 앞당김). -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TELEGRAM_GATE_LIVE_CUTOVER</key>
+    <string>1</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <!-- 비정상 종료(감시견 exit 1 등)만 다시 띄운다. 실전 가드 거부는 exit 0이라 다시 띄우지 않는다(10초마다 거부·FAIL 반복 방지, 2026-10-31).

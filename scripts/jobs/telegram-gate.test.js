@@ -559,7 +559,8 @@ test('실전 가드: run.sh는 --mode=live로 부르고 detail을 문자 단위�
   assert.match(runSh, /LC_ALL=en_US\.UTF-8 cut -c1-200/);
   const plist = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', new URL('../launchd/com.banana2.telegram-gate.plist', import.meta.url).pathname], { encoding: 'utf8' }));
   assert.deepEqual(plist.KeepAlive, { SuccessfulExit: false });
-  assert.equal(plist.EnvironmentVariables?.TELEGRAM_GATE_LIVE_CUTOVER, undefined, '전환 플래그는 4단계에서만 넣는다');
+  // 4단계 실전 전환(2026-11-06) 뒤에는 plist가 전환 플래그를 갖는다(launchctl setenv가 아니라 plist로만).
+  assert.equal(plist.EnvironmentVariables?.TELEGRAM_GATE_LIVE_CUTOVER, '1', '전환 뒤 plist에 전환 플래그가 있어야 한다');
 });
 
 test('실전 가드: 거부 기록은 heartbeat.json이 아니라 refusal.json, 상태 폴더가 없으면 만들지 않는다', async (t) => {
