@@ -238,8 +238,11 @@ export function createConversation(deps) {
       }, SOFT_TIMEOUT_MS);
       // 단계: 처음 받는 프로세스(routeTarget) → 제우스가 handoff로 넘기면 그 담당 프로세스(한 번만). 한 번에 한 턴씩(직렬).
       // "{담당} 호출" 뒤 다음 메시지 하나(30분 안)는 그 담당이 바로 받는다(호출한 프로세스로 이어 넣기).
-      const pinned = state.pinned && now().getTime() < state.pinned.until && items.length === 1 && !items[0].args.department ? state.pinned.agent : null;
-      state.pinned = null;
+      // 오너가 직접 친 글(kind text, 수신 기록 있음)에만 적용·소거한다 — 약속 이행·사진·전달은 직통 상태를 쓰지 않는다(리뷰 MEDIUM).
+      const ownerText = items.some((i) => i.args.kind === 'text' && i.updateId != null);
+      const pinned = ownerText && items.length === 1 && !items[0].args.department && state.pinned && now().getTime() < state.pinned.until
+        ? state.pinned.agent : null;
+      if (ownerText) state.pinned = null;
       let agent = pinned && departments().includes(pinned) ? pinned : routeTarget(items, departments());
       let handoffRequest = null;
       let sentCount = 0;
@@ -291,7 +294,7 @@ export function createConversation(deps) {
           // 넘김은 제우스 첫 단계에서만 받는다(담당끼리 다시 넘기지 않는다 — 고리 방지).
           const { messages, problem, handoff } = toGateMessages(res.structured, res.result,
             { labels: { self: agent, actors: res.actors ?? [] }, handoffTo: agent === 'zeus' && stage === 0 ? departments() : [] });
-          const outgoing = problem ? [fallbackMessage(res.result)] : messages;
+          const outgoing = problem ? [fallbackMessage(res.result, agent)] : messages;
           if (problem) {
             log(`[gate] 출력 계약 위반(${problem}) — 원문을 감싸 보냄`);
             deps.journal.append({ type: 'contract', agent, problem });
@@ -347,10 +350,12 @@ export function createConversation(deps) {
     const agent = wanted !== 'zeus' && departments().includes(wanted) ? wanted : 'zeus';
     const reply = (body) => deps.send({ agent, kind: '정보', topic: '호출', body }, meta.chatId);
     const startedAt = now().getTime();
-    if (agent !== 'zeus') state.pinned = { agent, until: startedAt + 30 * 60_000 };
+    // 새 호출은 앞 담당 직통을 지운다. 직통은 준비가 끝났을 때만 건다(쿨다운·실패면 걸지 않음, 리뷰 LOW).
+    state.pinned = null;
+    const pin = () => { if (agent !== 'zeus') state.pinned = { agent, until: now().getTime() + 30 * 60_000 }; };
     const pinnedNote = agent !== 'zeus' ? `\n· 다음 메시지 하나는 ${agentTitle(agent)}가 바로 받습니다.` : '';
     if (!deps.live) {
-      await reply(`상시 실행이 꺼져 있어 미리 띄울 프로세스가 없습니다.${pinnedNote}`);
+      await reply('상시 실행이 꺼져 있어 미리 띄울 프로세스가 없습니다.');
       return { status: '완료', detail: '호출 — 상시 실행 없음' };
     }
     const cooldown = deps.cooldown();
@@ -362,6 +367,7 @@ export function createConversation(deps) {
     await writeHandoffIfDue(now());
     const session = storeFor(agent).forDay(day);
     if (deps.live.isWarm({ key: agent, day, sessionId: session.sessionId })) {
+      pin();
       await reply(`이미 준비됨${pinnedNote}`);
       deps.journal.append({ type: 'warmup', agent, status: '이미 준비됨' });
       return { status: '완료', detail: '호출 — 이미 준비됨' };
@@ -382,6 +388,7 @@ export function createConversation(deps) {
       deps.journal.append({ type: 'warmup', agent, status: '실패', seconds, error: String(res.errorText ?? why).slice(0, 200) });
       return { status: res.interrupted ? '완료' : '실패', detail: `호출 — ${why}` };
     }
+    pin();
     await reply(`준비됨 · ${seconds}초${pinnedNote}`);
     deps.journal.append({ type: 'warmup', agent, status: '준비됨', seconds });
     return { status: '완료', detail: `호출 — 준비됨 ${seconds}초` };

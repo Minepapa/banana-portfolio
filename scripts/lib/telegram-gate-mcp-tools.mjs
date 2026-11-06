@@ -14,7 +14,7 @@ import { runGateTool } from './telegram-gate-handlers.mjs';
 import { createConfirmStore, ORDER_ACTIONS } from './telegram-gate-confirm.mjs';
 import { factsCatalog } from './facts-catalog.mjs';
 import { AGENT_IDS } from './agent-registry.mjs';
-import { buildFrontmatter } from './vault-frontmatter.mjs';
+import { renderDevRequest } from './vault-doc-templates.mjs';
 import { checkNote, parseRegistry } from './vault-registry.mjs';
 import { VAULT_PATHS, VAULT_REL, vaultAbs } from './vault-paths.mjs';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -49,19 +49,23 @@ function kstDate(now) {
 }
 
 // 순수 함수: 개발 요청 노트(dev-request) 본문·머리말. 텔레그램에서 "구현해줘"를 받으면 구현 대신 이것만 남긴다(운영 규칙 2절).
-export function buildRequestNote({ title, what, why, ownerText, background = '', priority = '' }, { now = new Date() } = {}) {
+// 본문은 문서 본문 양식(vault-doc-templates renderDevRequest: ## 무엇을·## 왜·## 완료 기준)으로 만든다.
+// 완료 기준(done)을 오너가 말하지 않았으면 개발 세션이 정한다고 적는다(추측해서 채우지 않는다).
+export function buildRequestNote({ title, what, why, ownerText, background = '', priority = '', done = null }, { now = new Date() } = {}) {
   const date = kstDate(now);
-  const next = kstDate(new Date(now.getTime() + 7 * 86_400_000));
   const cleanTitle = String(title ?? '').replace(/[\\/:*?"<>|#^[\]\r\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
   if (!cleanTitle) throw new Error('요청 제목이 필요합니다');
   for (const [k, v] of Object.entries({ what, why, ownerText })) if (!String(v ?? '').trim()) throw new Error(`${k}가 필요합니다`);
   const name = `${date} ${cleanTitle}`;
-  const content = `${buildFrontmatter({
-    type: 'dev-request', category: [`[[${VAULT_REL.homeDir}/500 기술]]`], description: String(what).replace(/[\r\n]+/g, ' ').slice(0, 150),
-    sensitivity: '일반', created: date, modified: date, requestedVia: '텔레그램 창구', status: '예정', waitingOn: '착수 대기', nextCheck: next,
-  })}\n# ${cleanTitle}\n\n## 무엇이 필요한가\n${what}\n\n## 왜(오너 원문)\n${why}\n\n> ${String(ownerText).replace(/\n/g, '\n> ')}\n`
-    + (background ? `\n## 배경\n${background}\n` : '') + (priority ? `\n## 우선순위\n${priority}\n` : '')
-    + '\n텔레그램 창구에서 받은 구현 요청이다. 구현은 개발 세션에서 한다.\n';
+  const doneList = (Array.isArray(done) ? done : [done]).map((d) => String(d ?? '').trim()).filter(Boolean);
+  const whyBody = [why, '', `> ${String(ownerText).replace(/\n/g, '\n> ')}`,
+    ...(background ? ['', `배경: ${background}`] : []), ...(priority ? ['', `우선순위: ${priority}`] : []),
+    '', '텔레그램 창구에서 받은 구현 요청이다. 구현은 개발 세션에서 한다.'].join('\n');
+  const content = renderDevRequest({
+    title: cleanTitle, date, description: String(what).replace(/[\r\n]+/g, ' ').slice(0, 150), requestedVia: '텔레그램 창구',
+    what, why: whyBody, done: doneList.length ? doneList : ['개발 세션에서 정한다(오너가 완료 기준을 말하지 않음)'],
+    category: `[[${VAULT_REL.homeDir}/500 기술]]`,
+  });
   return { name, content, relPath: `${VAULT_REL.logDevRequests}/${name}.md` };
 }
 
@@ -224,7 +228,8 @@ export function createGateMcpTools(deps = {}) {
     {
       name: 'request_record',
       description: '구현(코드·설정 변경) 요청을 개발 요청 노트로 기록한다. 텔레그램 창구는 구현하지 않는다(운영 규칙 2절) — 구현 요청은 이것만 하고 "개발 세션에서 이어서 구현한다"고 답한다.',
-      inputSchema: { type: 'object', properties: { title: str('짧은 설명(파일 제목)'), what: str('무엇이 필요한지'), why: str('왜 필요한지'), ownerText: str('오너 원문'), background: str('관련 배경'), priority: str('우선순위') }, required: ['title', 'what', 'why', 'ownerText'], additionalProperties: false },
+      inputSchema: { type: 'object', properties: { title: str('짧은 설명(파일 제목)'), what: str('무엇이 필요한지'), why: str('왜 필요한지'), ownerText: str('오너 원문'), background: str('관련 배경'), priority: str('우선순위'),
+        done: { type: 'array', items: { type: 'string' }, description: '완료 기준(오너가 말한 것만, 없으면 생략)' } }, required: ['title', 'what', 'why', 'ownerText'], additionalProperties: false },
       handler: async (a) => {
         const note = buildRequestNote(a, { now: now() });
         const problems = checkNote(note.relPath, note.content, registryRules());

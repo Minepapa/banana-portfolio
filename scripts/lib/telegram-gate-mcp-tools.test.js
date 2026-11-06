@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildRequestNote, createGateMcpTools, gateMcpToolNames } from './telegram-gate-mcp-tools.mjs';
+import { docTemplateWarning } from './vault-doc-templates.mjs';
 import { handleMcpMessage } from '../tools/telegram-gate-mcp.mjs';
 import { checkNote, parseRegistry } from './vault-registry.mjs';
 import { vaultAbs, VAULT_REL } from './vault-paths.mjs';
@@ -66,6 +67,13 @@ test('buildRequestNote: 등록부 규칙을 통과하는 개발 요청 노트(�
   assert.equal(note.relPath, `${VAULT_REL.logDevRequests}/2026-10-30 알림 설정 바꾸기.md`);
   assert.match(note.content, /status: "예정"/);
   assert.match(note.content, /> 원문\n> 둘째 줄/);
+  // 문서 본문 양식(vault-doc-templates): ## 무엇을·## 왜·## 완료 기준, 경고 없음.
+  assert.match(note.content, /\n## 무엇을\n무엇\n\n## 왜\n왜\n/);
+  assert.match(note.content, /## 완료 기준\n- 개발 세션에서 정한다/);
+  assert.equal(docTemplateWarning(note.relPath, note.content), null);
+  const withDone = buildRequestNote({ title: 't', what: 'a', why: 'b', ownerText: 'c', done: ['버튼이 보인다', '테스트 통과'], priority: '높음' }, { now: new Date('2026-10-30T05:00:00Z') });
+  assert.match(withDone.content, /## 완료 기준\n- 버튼이 보인다\n- 테스트 통과\n$/);
+  assert.match(withDone.content, /우선순위: 높음/);
   if (existsSync(vaultAbs(VAULT_REL.registryFile))) {
     assert.deepEqual(checkNote(note.relPath, note.content, parseRegistry(readFileSync(vaultAbs(VAULT_REL.registryFile), 'utf8'))), []);
   }

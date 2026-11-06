@@ -181,3 +181,48 @@ test('풀: 동시에 최대 3개(제우스 포함), 넘으면 가장 오래 쉰 
   assert.equal(log.at(-1), 'athena:업무일 바뀜');
   assert.equal(pool.list().length, 0);
 });
+
+test('result 오류문이 한도 문구면 쿨다운을 남긴다(stderr 없이도, 리뷰 HIGH)', async () => {
+  const cooldowns = [];
+  const { spawnImpl } = fakeSpawn((child) => {
+    child.stdout.emit('data', line({ type: 'result', subtype: 'success', is_error: true, result: "You've hit your limit · resets 10:50am (Asia/Seoul)" }));
+  });
+  const live = createLiveClaude({ args: [], env: {}, spawnImpl, claudeBin: '/c', cooldownWriter: (at) => cooldowns.push(at), now: () => Date.parse('2026-11-06T00:00:00Z') });
+  const res = await live.turn({ text: 'x' }).promise;
+  assert.equal(res.isError, true);
+  assert.equal(cooldowns.length, 1);
+  assert.ok(cooldowns[0] > Date.parse('2026-11-06T00:00:00Z'));
+});
+
+test('중단 요청이 턴 완료와 엇갈리면 늦게 온 중단 결과는 다음 턴을 끝내지 않는다(다음 턴 init 전 하나만 버림)', async () => {
+  let turnNo = 0;
+  let pendingControl = false;
+  const { spawnImpl } = fakeSpawn((child, msg) => {
+    if (msg.type === 'control_request') { pendingControl = true; return; }
+    turnNo += 1;
+    if (turnNo === 1) {
+      // 첫 턴은 중단 요청이 처리되기 전에 스스로 끝난다.
+      child.stdout.emit('data', line({ type: 'result', subtype: 'success', is_error: false, structured_output: { n: 1 } }));
+      return;
+    }
+    // 둘째 턴: 늦은 중단 결과가 먼저 오고, 그 뒤 이 턴 init·결과가 온다.
+    if (pendingControl) child.stdout.emit('data', line({ type: 'result', subtype: 'error_during_execution', is_error: true }));
+    child.stdout.emit('data', line({ type: 'system', subtype: 'init' }));
+    child.stdout.emit('data', line({ type: 'result', subtype: 'success', is_error: false, structured_output: { n: 2 } }));
+  });
+  const live = createLiveClaude({ args: [], env: {}, spawnImpl, claudeBin: '/c', cooldownWriter: () => {} });
+  const first = live.turn({ text: 'a' });
+  first.cancel();
+  const r1 = await first.promise;
+  assert.deepEqual(r1.structured, { n: 1 });
+  const r2 = await live.turn({ text: 'b' }).promise;
+  assert.deepEqual(r2.structured, { n: 2 }, '늦은 중단 결과로 끝나지 않는다');
+  assert.equal(r2.isError, false);
+  // 다음 턴이 시작된 뒤의 error_during_execution은 그 턴 결과로 본다.
+  const { spawnImpl: sp2 } = fakeSpawn((child) => {
+    child.stdout.emit('data', line({ type: 'system', subtype: 'init' }));
+    child.stdout.emit('data', line({ type: 'result', subtype: 'error_during_execution', is_error: true, result: '' }));
+  });
+  const live2 = createLiveClaude({ args: [], env: {}, spawnImpl: sp2, claudeBin: '/c', cooldownWriter: () => {} });
+  assert.equal((await live2.turn({ text: 'c' }).promise).isError, true);
+});

@@ -55,6 +55,7 @@ export function createLiveClaude({ args, env, meta = {}, cwd = GATE_LLM_CWD, cla
   let turn = null; // { out, onEvent, resolve, interrupted, timers }
   let lastActivityAt = now();
   let killTimer = null;
+  let strayInterrupt = false;
 
   const killGroup = () => {
     if (!child || closed) return;
@@ -75,6 +76,9 @@ export function createLiveClaude({ args, env, meta = {}, cwd = GATE_LLM_CWD, cla
     const event = parseStreamLine(line);
     if (!event) return;
     lastActivityAt = now();
+    // 늦게 온 중단 결과: 다음 턴의 init 전에 오는 error_during_execution 하나만 버린다(다음 턴이 시작되면 표시를 지운다).
+    if (strayInterrupt && event.type === 'system' && event.subtype === 'init') strayInterrupt = false;
+    if (strayInterrupt && event.type === 'result' && event.subtype === 'error_during_execution') { strayInterrupt = false; return; }
     if (!turn) return; // 턴 밖 이벤트(종료 직전 잔여 출력)는 버린다
     const { out } = turn;
     if (event.session_id && !out.sessionId) out.sessionId = event.session_id;
@@ -92,7 +96,11 @@ export function createLiveClaude({ args, env, meta = {}, cwd = GATE_LLM_CWD, cla
       if (turn.interrupted) { out.isError = false; out.errorText = ''; } else {
         out.isError = Boolean(event.is_error);
         if (out.isError) out.errorText = String(event.result ?? event.subtype ?? '').slice(0, 500);
+        // result 오류문이 한도 문구면 쿨다운(runGateClaude와 같이 result 오류문도 본다 — 리뷰 HIGH).
+        if (out.isError && LIMIT_RE.test(out.errorText)) cooldownWriter(parseResetTime(out.errorText, now()) ?? now() + 3600_000, out.errorText.slice(-300));
       }
+      // 중단 요청을 넣었는데 턴이 중단 전에 스스로 끝났으면, 늦게 오는 중단 결과가 다음 턴을 일찍 끝낼 수 있다 — 표시해 두고 버린다.
+      if (turn.interruptSent && event.subtype !== 'error_during_execution') strayInterrupt = true;
       finishTurn();
     }
   };
@@ -160,6 +168,7 @@ export function createLiveClaude({ args, env, meta = {}, cwd = GATE_LLM_CWD, cla
         current.interrupted = reason;
         // 먼저 중단 요청. 못 넣었거나 유예 안에 턴이 안 끝나면 프로세스를 죽인다(다음 메시지에서 --resume으로 다시 띄움).
         if (!write(interruptLine())) { killGroup(); return; }
+        current.interruptSent = true;
         current.timers.push(setTimer(() => { if (turn === current) killGroup(); }, interruptGraceMs));
       };
       current.timers.push(setTimer(() => stop('timeout'), hardTimeoutMs));

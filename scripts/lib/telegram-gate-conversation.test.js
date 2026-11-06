@@ -549,8 +549,7 @@ test('넘김은 messages가 비어도 되지만 넘길 곳이 잘못되면 계�
   try {
     await s.conv.processBatch([item(1, '정리해줘')]);
     assert.equal(s.runs.length, 2, '헤르메스의 넘김은 따르지 않는다');
-    assert.deepEqual(s.sent.filter((m) => m.topic !== '진행').map((m) => `${m.agent}/${m.topic}`), ['zeus/답장(형식 오류)']);
-    assert.ok(s.sent.some((m) => m.agent === 'zeus' && m.topic === '답장(형식 오류)'), '담당이 넘김을 내면 계약 위반');
+    assert.deepEqual(s.sent.filter((m) => m.topic !== '진행').map((m) => `${m.agent}/${m.topic}`), ['hermes/답장(형식 오류)'], '담당이 넘김을 내면 계약 위반(그 담당 이름표)');
     await s.conv.processBatch([item(2, '또')]);
     assert.ok(s.sent.filter((m) => m.topic === '답장(형식 오류)').length >= 2, '제우스에게 넘김은 계약 위반');
   } finally { s.cleanup(); }
@@ -635,4 +634,46 @@ test('호출: 상시 실행이 없거나 쿨다운이면 띄우지 않고 안내
     await c.conv.warmup({ agent: 'zeus' }, meta);
     assert.match(c.sent[0].body, /쿨다운/);
   } finally { s.cleanup(); c.cleanup(); }
+});
+
+test('담당 직통은 오너가 친 글에만 적용·소거(약속 이행·사진은 쓰지 않음), "호출"은 앞 직통을 지우고, 쿨다운·실패면 걸지 않는다', async () => {
+  const live = fakePool();
+  const s = setup({ live, departments: true });
+  try {
+    await s.conv.warmup({ agent: 'hermes' }, meta);
+    // 약속 이행(updateId 없음)과 사진은 직통을 쓰지도 지우지도 않는다.
+    await s.conv.processBatch([{ updateId: null, meta: { chatId: CHAT, messageId: null, date: 0 }, args: { kind: 'promise', text: '약속' } }]);
+    assert.equal(live.turns.at(-1).key, 'zeus');
+    await s.conv.processBatch([item(5, '', { kind: 'photo', fileId: 'p' })]);
+    assert.equal(live.turns.at(-1).key, 'clio');
+    await s.conv.processBatch([item(6, '주말 일정')]);
+    assert.equal(live.turns.at(-1).key, 'hermes', '직통은 오너 글이 쓴다');
+    // 그냥 "호출"은 앞 담당 직통을 지운다.
+    await s.conv.warmup({ agent: 'plutus' }, meta);
+    await s.conv.warmup({ agent: 'zeus' }, meta);
+    await s.conv.processBatch([item(7, '체결 알려줘')]);
+    assert.equal(live.turns.at(-1).key, 'zeus');
+  } finally { s.cleanup(); }
+  const failing = fakePool();
+  failing.turn = (req) => { failing.turns.push(req); return { promise: Promise.resolve({ isError: true, errorText: 'boom', permissionDenials: [] }), cancel: () => {} }; };
+  const f = setup({ live: failing, departments: true });
+  try {
+    await f.conv.warmup({ agent: 'hermes' }, meta);
+    assert.match(f.sent[0].body, /준비하지 못했습니다/);
+    assert.equal(f.conv.state.pinned, null, '준비 실패면 직통을 걸지 않는다');
+  } finally { f.cleanup(); }
+  const c = setup({ live: fakePool(), departments: true, cooldown: { resetAt: Date.parse('2026-10-30T06:00:00Z') } });
+  try {
+    await c.conv.warmup({ agent: 'hermes' }, meta);
+    assert.equal(c.conv.state.pinned, null, '쿨다운이면 직통을 걸지 않는다');
+  } finally { c.cleanup(); }
+});
+
+test('형식 오류 답장은 실제로 답을 쓴 프로세스 이름표로 보낸다', async () => {
+  const s = setup({ departments: true, results: [{ structured: null, result: '원문', isError: false, permissionDenials: [] }] });
+  try {
+    await s.conv.processBatch([item(1, '헤르메스 일정', { department: '헤르메스' })]);
+    const m = s.sent.find((x) => x.topic === '답장(형식 오류)');
+    assert.equal(m.agent, 'hermes');
+  } finally { s.cleanup(); }
 });

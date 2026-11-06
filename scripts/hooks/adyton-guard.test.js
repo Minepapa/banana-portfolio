@@ -70,6 +70,9 @@ test('Grep 제외 glob(!금고)은 통과하고 금고를 가리키는 glob·경
     { path: vault, pattern: 'x', glob: '!*.tmp 99_Adyton/**' },
     { path: vault, pattern: 'x', glob: '!a,99_Adyton/**' },
     { path: vault, pattern: 'x', glob: '{!a,99_Adyton/**}' },
+    // 공백은 괄호 안이어도 조각을 나눈다(리뷰 MEDIUM): 괄호로 감싼 제외 뒤에 숨긴 금고 조각도 막는다.
+    { path: vault, pattern: 'x', glob: '!{a 99_Adyton/** ,b}' },
+    { path: vault, pattern: 'x', glob: '!{a\t99_Adyton/*.md}' },
     { path: vault, pattern: 'x', glob: '**/99_Adyton/*.md' },
     { path: vault, pattern: '99_Adyton', glob: '!x' },
   ]) expectBlocked(hook('Grep', input, tg));

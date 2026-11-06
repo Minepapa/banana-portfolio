@@ -309,7 +309,8 @@ export function toGateMessages(structured, rawResult, { labels = null, handoffTo
 }
 
 // 계약이 깨졌을 때 오너에게 그대로 보이는 메시지(답이 안 가는 것보다 낫다).
-export function fallbackMessage(rawText) {
+// agent: 실제로 답을 쓴 프로세스(담당 프로세스면 그 담당 이름표).
+export function fallbackMessage(rawText, agent = 'zeus') {
   const text = String(rawText ?? '').trim() || '(답이 비어 있습니다)';
-  return { agent: 'zeus', kind: '정보', topic: '답장(형식 오류)', body: interpretation(escapeHtml(text.slice(0, 3500))), llm: true };
+  return { agent: AGENT_IDS.includes(agent) ? agent : 'zeus', kind: '정보', topic: '답장(형식 오류)', body: interpretation(escapeHtml(text.slice(0, 3500))), llm: true };
 }

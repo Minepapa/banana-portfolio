@@ -99,25 +99,22 @@ function stringsForTool(toolName, input) {
   return [JSON.stringify(input), ...nestedStrings(input)];
 }
 
-// Grep glob 중 '!'로 시작하는 제외 패턴은 검색 대상을 좁힐 뿐 금고를 가리키지 않는다. 볼트 루트 검색에 `!99_Adyton/**`를 붙인
-// 아테나 하위 에이전트가 금고 문자열 때문에 막힌 오탐(2026-11-06 창구 실측)을 고친다. glob 값은 공백·괄호 밖 쉼표로 여러 개가
-// 올 수 있으니 조각마다 판정하고, 제외가 아닌 조각(괄호로 시작하는 묶음 포함)은 그대로 검사한다.
+// Grep glob 중 '!'로 시작하는 제외 패턴은 검색 대상을 좁힐 뿐 금고를 가리키지 않는다. 볼트 루트 검색에 금고 제외 glob을 붙인
+// 아테나 하위 에이전트가 금고 문자열 때문에 막힌 오탐(2026-11-06 창구 실측)을 고친다. 보수적으로 자른다(리뷰 MEDIUM):
+// 공백은 괄호와 상관없이 늘 조각을 나누고, 쉼표는 괄호 밖에서만 나눈다. 제외가 아닌 조각(괄호로 시작하는 묶음 포함)은 그대로 검사한다.
 function includeGlobs(glob) {
   if (typeof glob !== 'string') return [];
   const pieces = [];
-  let piece = '';
-  let depth = 0;
-  for (const char of glob) {
-    if (char === '{') depth++;
-    if (char === '}') depth = Math.max(0, depth - 1);
-    if (depth === 0 && (char === ',' || /\s/.test(char))) {
-      pieces.push(piece);
-      piece = '';
-    } else {
-      piece += char;
+  for (const chunk of glob.split(/\s+/)) {
+    let piece = '';
+    let depth = 0;
+    for (const char of chunk) {
+      if (char === '{') depth++;
+      if (char === '}') depth = Math.max(0, depth - 1);
+      if (depth === 0 && char === ',') { pieces.push(piece); piece = ''; } else piece += char;
     }
+    pieces.push(piece);
   }
-  pieces.push(piece);
   return pieces.filter((p) => p && !p.startsWith('!'));
 }
 
