@@ -427,3 +427,55 @@ test('digestOpenSince: 묶음 상태의 처음 감지 시각만 뽑는다', () =
   assert.deepEqual(digestOpenSince({ sources: { a: { firstSeenAt: 5 }, b: {} } }), { a: 5 });
   assert.deepEqual(digestOpenSince(null), {});
 });
+
+// 알림 접근 감시(2026-11-06): 상태 신호는 오는데 알림만 끊긴 경우. 권한 칸(notifListener)이 오면 그걸 먼저 본다.
+const NOTIF_ACCESS = {
+  id: 'notif', label: '알림 수신', owner: 'hermes', producer: 'phone:argos',
+  probe: { type: 'events-type', pathKey: 'argosEvents', eventType: 'notification.received',
+    accessField: { eventType: 'core.heartbeat', field: 'notifListener' } },
+  kind: 'continuous', threshold: { maxAgeMs: 18 * HOUR }, urgent: false, liveness: 'hb', staleHint: '권한 확인',
+};
+const heartbeatLine = (receivedAt, payload = {}) => JSON.stringify({ type: 'core.heartbeat', received_at: receivedAt, payload });
+
+test('알림 접근 감시: 권한 칸이 없으면 18시간 공백 기준(밤 공백 16시간은 정상)', () => {
+  const now = at('2026-11-05T05:00:00Z');
+  const night = fakeReaders({ 'argosEvents/2026/2026-11-05.jsonl': [
+    eventLine('notification.received', now - 16 * HOUR), heartbeatLine(now - 10 * 60_000)].join('\n') });
+  assert.equal(findStaleSources({ now, sources: [HEARTBEAT, NOTIF_ACCESS], readers: night }).results[1].status, 'ok');
+  const cut = fakeReaders({ 'argosEvents/2026/2026-11-04.jsonl': eventLine('notification.received', now - 19 * HOUR),
+    'argosEvents/2026/2026-11-05.jsonl': heartbeatLine(now - 10 * 60_000) });
+  const r = findStaleSources({ now, sources: [HEARTBEAT, NOTIF_ACCESS], readers: cut }).results[1];
+  assert.equal(r.status, 'stale');
+  assert.equal(r.reason, 'too-old');
+  assert.match(r.detail, /19\.0시간째 없음\(기준 18시간\) — 권한 확인/);
+});
+
+test('알림 접근 감시: 최근 상태 신호가 권한 꺼짐(false)을 알리면 공백과 무관하게 바로 끊김', () => {
+  const now = at('2026-11-05T05:00:00Z');
+  const readers = fakeReaders({ 'argosEvents/2026/2026-11-05.jsonl': [
+    eventLine('notification.received', now - HOUR), heartbeatLine(now - 20 * 60_000, { notifListener: true }),
+    heartbeatLine(now - 5 * 60_000, { notifListener: false })].join('\n') });
+  const r = findStaleSources({ now, sources: [HEARTBEAT, NOTIF_ACCESS], readers }).results[1];
+  assert.equal(r.status, 'stale');
+  assert.equal(r.reason, 'access-off');
+});
+
+test('알림 접근 감시: 권한 켜짐(true)이어도 공백 기준은 그대로, 가장 최근 상태 신호에 칸이 없으면 칸을 안 쓴다', () => {
+  const now = at('2026-11-05T05:00:00Z');
+  const onButQuiet = fakeReaders({ 'argosEvents/2026/2026-11-04.jsonl': eventLine('notification.received', now - 20 * HOUR),
+    'argosEvents/2026/2026-11-05.jsonl': heartbeatLine(now - 5 * 60_000, { notifListener: true }) });
+  assert.equal(findStaleSources({ now, sources: [HEARTBEAT, NOTIF_ACCESS], readers: onButQuiet }).results[1].reason, 'too-old');
+  const oldFalse = fakeReaders({ 'argosEvents/2026/2026-11-05.jsonl': [
+    eventLine('notification.received', now - HOUR), heartbeatLine(now - 30 * 60_000, { notifListener: false }),
+    heartbeatLine(now - 5 * 60_000)].join('\n') });
+  assert.equal(findStaleSources({ now, sources: [HEARTBEAT, NOTIF_ACCESS], readers: oldFalse }).results[1].status, 'ok');
+});
+
+test('알림 접근 감시: 상태 신호까지 끊겼으면 상위 경보로 묶는다(폰·앱 전체 정지)', () => {
+  const now = at('2026-11-05T05:00:00Z');
+  const readers = fakeReaders({ 'argosEvents/2026/2026-11-04.jsonl': [
+    eventLine('notification.received', now - 20 * HOUR), heartbeatLine(now - 19 * HOUR)].join('\n') });
+  const results = findStaleSources({ now, sources: [HEARTBEAT, NOTIF_ACCESS], readers }).results;
+  assert.equal(results[0].status, 'stale');
+  assert.equal(results[1].status, 'suppressed');
+});

@@ -44,6 +44,11 @@ const TRADE_PATTERNS = [
     re: /\[한국투자증권 체결안내\][\s\S]*?(?:계좌번호\s*:\s*(?<acctNo>[0-9*\-]+)[\s\S]*?)?종목명\s*:\s*(?<stockName>[^(\n\r]+?)\s*\((?<stockCode>[A-Za-z0-9]{6})\)[\s\S]*?체결수량\s*:\s*(?<quantity>[\d,]+)\s*주[\s\S]*?체결단가\s*:\s*(?<price>[\d,]+)\s*원/ },
 ];
 
+// 알림을 보내는 증권사(발신자) — 체결 파서가 아는 증권사에서 뽑는다(목록을 따로 두지 않는다).
+// 'NH투자증권 해외'처럼 같은 증권사의 변종 형식은 첫 낱말로 묶인다. 아르고스 알림을 고를 때 쓴다
+// (argos-invest-alerts.mjs — 카톡 발신자가 이 이름이거나 '이름 …'(예: 퇴직연금 채널)이면 투자 알림).
+export const INVESTMENT_ALERT_BROKERS = Object.freeze([...new Set(TRADE_PATTERNS.map((p) => p.broker.split(' ')[0]))]);
+
 export function parseExecution(body, tsRaw) {
   if (!(body.includes('체결') && (body.includes('매수') || body.includes('매도')))) return null;
   for (const p of TRADE_PATTERNS) {

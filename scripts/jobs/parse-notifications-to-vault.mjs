@@ -58,10 +58,14 @@
  * 사용법:
  *   node scripts/jobs/parse-notifications-to-vault.mjs            # 실제로 Vault에 씀
  *   node scripts/jobs/parse-notifications-to-vault.mjs --dry-run  # 기록 대상만 출력(쓰기·삭제 없음)
+ *   --argos-mode=shadow|primary (기본 shadow, 2026-11-06) — 아르고스 투자 알림 전환 스위치.
+ *     shadow: Firestore가 정본, 아르고스는 대조 보고서(scripts/.cache/argos-invest-alerts-shadow.json)만.
+ *     primary: 아르고스가 정본, Firestore는 읽지 않음. 전환은 run.sh 인자로(lib/argos-invest-alerts.mjs 헤더 참고).
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { getFirestoreAdmin } from '../lib/firestore-admin.mjs';
 import { readKakaoInbox, deleteKakaoInboxDocs } from '../lib/kakao-inbox.mjs';
 import { parseExecution, parseDividend, parseGoldBuy, parseCashAlarm, parseFundBuy, parseFundValuation, parseExchange } from '../lib/notification-parsers.mjs';
@@ -83,6 +87,11 @@ import {
 import { escapeHtml } from '../lib/telegram.mjs';
 import { sendAgentMessage } from '../lib/pantheon-send.mjs';
 import { createDirectWarningSender, warningSubjectKey } from '../lib/direct-warning-delivery.mjs';
+import {
+  argosInboxDocs, buildShadowReport, crossSourceContextFromState, findCrossSourceTwin, isArgosDocId, loadArgosState,
+  parseArgosMode, readRecentArgosEvents, saveArgosState, shadowLogLine,
+} from '../lib/argos-invest-alerts.mjs';
+import { classifyInvestmentNotification } from '../lib/argos-notifications.mjs';
 
 // 금현물은 별도 Ledger 종류를 만들지 않고 체결(Executions)에 합류시킨다 — v1이 "금현물을
 // 별도 원장으로 뒀다가 버그나서 체결내역에 통합"한 전례를 반영(vault-paths.mjs 주석 참고).
@@ -124,6 +133,11 @@ const sendFillRoundGapWarning = createDirectWarningSender(sendAgentMessage, {
 // 여유를 둔다). 보낸 뒤에는 차수가 가장 큰 기록에 빠진 차수 목록을 남겨 같은 질문을
 // 반복하지 않는다. 발송 실패는 표시를 남기지 않아 다음 실행(10분 뒤)에 다시 시도한다.
 const FILL_ROUND_LOOKBACK_DAYS = 3;
+
+// 아르고스 투자 알림(2026-11-06, argos-invest-alerts.mjs 헤더 참고). 볼트 밖 로컬 상태(job-alerts와 같은 scripts/.cache).
+// state: primary에서 처리한 아르고스 문서·짝·쓴 파일. shadow 보고서: 매 실행 최근 2일치를 다시 판정해 덮어쓴다.
+const ARGOS_STATE_FILE = fileURLToPath(new URL('../.cache/argos-invest-alerts-state.json', import.meta.url));
+const ARGOS_SHADOW_REPORT_FILE = fileURLToPath(new URL('../.cache/argos-invest-alerts-shadow.json', import.meta.url));
 
 /**
  * 세후금액이 파일명에 들어가기 전(2026-10-29 이전) 이름으로 같은 배당이 이미 있는지 본다.
@@ -322,11 +336,29 @@ async function main() {
     mkdirSync(VAULT_PATHS.state.executionConfirmations, { recursive: true });
   }
 
-  const db = getFirestoreAdmin();
-  const inboxDocs = await readKakaoInbox(db);
+  // 출처: shadow(기본)는 Firestore kakaoInbox, primary는 아르고스(Firestore는 읽지도 지우지도 않는다).
+  // shadow에서 아르고스 쪽 실패는 경고만 하고 기존 Firestore 경로를 막지 않는다. primary에서는 그대로 던진다.
+  const argosMode = parseArgosMode(process.argv.slice(2));
+  const nowMs = Date.now();
+  let argosState = { version: 1, processed: {} };
+  let argosDocs = [];
+  try {
+    argosState = loadArgosState(ARGOS_STATE_FILE);
+    argosDocs = argosInboxDocs(readRecentArgosEvents(vaultAbs(VAULT_REL.argosEvents), nowMs));
+  } catch (error) {
+    if (argosMode === 'primary') throw error;
+    console.error(`  아르고스 투자 알림 읽기 실패(shadow — 기존 경로는 계속): ${error.message}`);
+    collectWarning('아르고스 투자 알림 대조 읽기 실패 — 장부는 기존 경로(Firestore)로 계속, 잡 로그 확인');
+  }
+  const db = argosMode === 'primary' ? null : getFirestoreAdmin();
+  const sourceDocs = argosMode === 'primary'
+    ? argosDocs.filter((doc) => !argosState.processed[doc.id])
+    : await readKakaoInbox(db);
   const holdings = readHoldings();
   const confirmations = readExecutionConfirmations();
-  console.log(`📨 카카오 수신함(Firestore kakaoInbox) ${inboxDocs.length}건 스캔`);
+  console.log(argosMode === 'primary'
+    ? `📨 아르고스 투자 알림(최근 2일, 미처리) ${sourceDocs.length}건 스캔 — primary`
+    : `📨 카카오 수신함(Firestore kakaoInbox) ${sourceDocs.length}건 스캔`);
 
   let execNew = 0, divNew = 0, cashNew = 0, fundNew = 0, fundValNew = 0, exchNew = 0, skip = 0, unrecognized = 0, executionApiExcluded = 0, executionUnresolved = 0, cashApiExcluded = 0;
   // ⚠️ 코드리뷰 지적(2026-08-22, 커밋 전) — 처음엔 훑은 문서를 결과와 무관하게 전부
@@ -338,6 +370,35 @@ async function main() {
   // 다음 실행에서도 계속 보이게 한다(재현 가능한 만큼만 안드로이드 필터를 이미 거친
   // 소량이라 방치 비용도 작다).
   const processedIds = [];
+
+  // ⚠️ 출처 간 중복 방지(불변식: 같은 실제 체결·입금은 장부에 한 번만). 기존 루프에 넣기 전에 다른 출처가 이미
+  // 남긴 같은 기록(장부·확인대기)이 있으면 쓰지 않고 처리 완료로 둔다. 판정은 shadow 보고서와 같은 함수다.
+  // 아르고스가 쓴 기록이 하나도 없으면 Firestore 문서는 짝 후보가 없어 기존 동작과 같다.
+  const ledgerDirs = {
+    executions: VAULT_PATHS.facts.ledger.executions, 배당: VAULT_PATHS.facts.ledger.dividends,
+    예수금: VAULT_PATHS.facts.ledger.cashEvents, 펀드적립: VAULT_PATHS.facts.ledger.fundPurchases,
+    펀드평가: VAULT_PATHS.facts.ledger.fundValuations, 환전: VAULT_PATHS.facts.ledger.exchanges,
+  };
+  const crossCtx = { ...crossSourceContextFromState(argosState), dirs: ledgerDirs, confirmations };
+  const argosRecords = {};
+  let crossSourceSkip = 0;
+  const inboxDocs = [];
+  for (const doc of sourceDocs) {
+    const twin = doc.body ? findCrossSourceTwin(doc, crossCtx).twin : null;
+    if (!twin) { inboxDocs.push(doc); continue; }
+    console.log(`  = [출처 간 중복] ${doc.ts} ${isArgosDocId(doc.id) ? '아르고스' : '카카오 알림 앱'} 알림 — 이미 있는 ${basename(twin)}과 같아 쓰지 않음`);
+    crossSourceSkip++;
+    processedIds.push(doc.id);
+    argosRecords[doc.id] = { twin };
+  }
+  // 장부 쓰기. 아르고스 문서가 쓴 파일은 상태에 남겨 다음 판정에서 출처를 안다(배당·예수금 등은 머리말에 출처가 없다).
+  const writeLedger = (id, filepath, content) => {
+    writeAtomic(filepath, content);
+    if (!isArgosDocId(id)) return;
+    argosRecords[id] = { ...argosRecords[id], written: filepath };
+    crossCtx.argosWritten.add(filepath);
+  };
+
   for (const { id, ts, body } of inboxDocs) {
     if (!body) continue;
 
@@ -418,7 +479,7 @@ async function main() {
           // 파일명만 달라진다. 같은 문서 ID의 원장이 이미 있으면 같은 체결이다(독립 리뷰 2026-10-29).
           if (ledgerHasSourceEvent(id)) return;
           console.log(`  + [체결] ${e.tradeDate} ${e.tradeType} ${e.stockName} ${e.quantity}주 @${e.price} (${e.broker})`);
-          writeAtomic(canonicalPath, records.canonical.content);
+          writeLedger(id, canonicalPath, records.canonical.content);
           recorded = true;
         });
       }
@@ -444,7 +505,7 @@ async function main() {
       const filepath = join(dir, filename);
       if (existsSync(filepath) || sameLegacyDividend(join(dir, legacyFilename), d)) { skip++; processedIds.push(id); continue; }
       console.log(`  + [배당] ${d.date} ${d.stockName} ${d.afterTaxAmount.toLocaleString()}원`);
-      if (!DRY_RUN) writeAtomic(filepath, content);
+      if (!DRY_RUN) writeLedger(id, filepath, content);
       divNew++;
       processedIds.push(id);
       continue;
@@ -469,7 +530,7 @@ async function main() {
       const filepath = join(dir, filename);
       if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
       console.log(`  + [금현물] ${g.date} ${g.tradeType} ${g.stockName} ${g.qty}g @${g.price}`);
-      if (!DRY_RUN) writeAtomic(filepath, content);
+      if (!DRY_RUN) writeLedger(id, filepath, content);
       execNew++;
       processedIds.push(id);
       continue;
@@ -493,7 +554,7 @@ async function main() {
       const filepath = join(dir, filename);
       if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
       console.log(`  + [예수금] ${c.ts} ${c.account} 잔고 ${c.balance.toLocaleString()}원`);
-      if (!DRY_RUN) writeAtomic(filepath, content);
+      if (!DRY_RUN) writeLedger(id, filepath, content);
       cashNew++;
       processedIds.push(id);
       continue;
@@ -505,7 +566,7 @@ async function main() {
       const filepath = join(dir, filename);
       if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
       console.log(`  + [펀드적립] ${f.date} ${f.fundName} ${f.amount.toLocaleString()}원 (${f.units.toFixed(2)}좌)`);
-      if (!DRY_RUN) writeAtomic(filepath, content);
+      if (!DRY_RUN) writeLedger(id, filepath, content);
       fundNew++;
       processedIds.push(id);
       continue;
@@ -520,7 +581,7 @@ async function main() {
       const filepath = join(dir, filename);
       if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
       console.log(`  + [펀드평가] ${v.date} ${v.fundName} 평가금액 ${v.valuationAmount.toLocaleString()}원(원금 ${v.principal.toLocaleString()}원)`);
-      if (!DRY_RUN) writeAtomic(filepath, content);
+      if (!DRY_RUN) writeLedger(id, filepath, content);
       fundValNew++;
       processedIds.push(id);
       continue;
@@ -532,7 +593,7 @@ async function main() {
       const filepath = join(dir, filename);
       if (existsSync(filepath)) { skip++; processedIds.push(id); continue; }
       console.log(`  + [환전] ${x.date} ${x.kind} USD ${x.usd.toLocaleString()}` + (x.won ? ` (${x.won.toLocaleString()}원)` : ''));
-      if (!DRY_RUN) writeAtomic(filepath, content);
+      if (!DRY_RUN) writeLedger(id, filepath, content);
       exchNew++;
       processedIds.push(id);
       continue;
@@ -542,8 +603,41 @@ async function main() {
     unrecognized++;
   }
 
+  // primary: 장부에 못 넣은(계좌 미상·미인식) 아르고스 알림은 Firestore와 달리 조회 기간(2일)이 지나면 다시 안 본다.
+  // 하루 넘게 남아 있으면 기간 밖으로 밀리기 전에 알린다(원문은 볼트 Events에 그대로 있다).
+  if (argosMode === 'primary') {
+    const done = new Set(processedIds);
+    const aging = inboxDocs.filter((doc) => !done.has(doc.id) && nowMs - doc.at > 24 * 3600_000
+      && classifyInvestmentNotification(doc.body, doc.ts)).length;
+    if (aging) collectWarning(`아르고스 투자 알림 ${aging}건이 하루 넘게 장부 반영 보류 — 2일 지나면 다시 읽지 않으니 확인 필요`);
+  }
+
   if (!DRY_RUN && processedIds.length) {
-    await deleteKakaoInboxDocs(db, processedIds);
+    if (argosMode === 'primary') {
+      const at = new Date(nowMs).toISOString();
+      for (const id of processedIds) argosState.processed[id] = { at, ...argosRecords[id] };
+      saveArgosState(ARGOS_STATE_FILE, argosState, nowMs);
+    } else {
+      await deleteKakaoInboxDocs(db, processedIds);
+    }
+  }
+
+  if (argosMode === 'shadow') {
+    // 장부에 쓰지 않는다. primary였다면 각 아르고스 알림이 어떻게 판정됐을지(같은 짝 판정)만 남긴다.
+    try {
+      const report = buildShadowReport(argosDocs, {
+        ...crossSourceContextFromState(argosState), dirs: ledgerDirs, confirmations: readExecutionConfirmations(),
+        holdings, cashApiExcluded: CASH_ALARM_API_EXCLUDED,
+      }, nowMs);
+      console.log(shadowLogLine(report));
+      if (!DRY_RUN) {
+        mkdirSync(dirname(ARGOS_SHADOW_REPORT_FILE), { recursive: true });
+        writeAtomic(ARGOS_SHADOW_REPORT_FILE, `${JSON.stringify(report, null, 2)}\n`);
+      }
+    } catch (error) {
+      console.error(`  아르고스 대조 보고서 실패: ${error.message}`);
+      collectWarning('아르고스 투자 알림 대조 보고서 실패 — 장부 반영은 끝났고 다음 실행에 다시 만듦, 잡 로그 확인');
+    }
   }
 
   try { await checkFillRoundGaps(); }
@@ -555,9 +649,9 @@ async function main() {
   console.log(
     `\n✅ 완료 — 체결 +${execNew}(금현물 포함) · 배당 +${divNew} · 예수금앵커 +${cashNew} · ` +
     `펀드적립 +${fundNew} · 펀드평가 +${fundValNew} · 환전 +${exchNew} · ` +
-    `중복스킵 ${skip} · API 정본 체결 제외 ${executionApiExcluded} · 계좌 미상 체결 보류 ${executionUnresolved} · ` +
+    `중복스킵 ${skip} · 출처 간 중복 ${crossSourceSkip} · API 정본 체결 제외 ${executionApiExcluded} · 계좌 미상 체결 보류 ${executionUnresolved} · ` +
     `위탁·CMA 예수금 제외 ${cashApiExcluded}(NH API가 정본) · 미인식 ${unrecognized} · ` +
-    `수신함 정리 ${DRY_RUN ? 0 : processedIds.length}건` +
+    `${argosMode === 'primary' ? '아르고스 처리 기록' : '수신함 정리'} ${DRY_RUN ? 0 : processedIds.length}건` +
     (DRY_RUN ? ' (드라이런 — 쓰기 없음)' : ''),
   );
   await flushWarnings('parse-notifications-to-vault', { dryRun: DRY_RUN });

@@ -21,7 +21,7 @@
 // - core.heartbeat: 15분마다. 정상 간격 99%가 1시간 미만.
 // - location.point_recorded: 정상 간격 99%가 20분 미만. 3시간 넘는 공백은 모두 상태 신호 공백과 겹쳤다
 //   → 상태 신호가 살아 있는데 3시간 없으면 위치 수집만 멈춘 것.
-// - notification.received: 0건인 날이 없었다. 밤 사이 최대 공백 16시간 → 24시간.
+// - notification.received: 0건인 날이 없었다. 밤 사이 최대 공백 16시간 → 24시간이었다가 18시간(2026-11-06, 아래 출처 주석).
 // - 통화(media.transferred kind=Calls): 0건인 날은 하루씩 떨어져서만 있었다 → 2일 연속이면 경보.
 // - 카메라·카톡 사진: 며칠씩 비는 게 정상(몰아서 옮김) → 건수 경보 없음.
 // - 소비(Spending): 0건인 날은 하루씩 떨어져서만 있었다 → 3일 연속이면 경보.
@@ -45,9 +45,19 @@ export const DATA_SOURCES = Object.freeze([
     kind: 'continuous', threshold: { maxAgeMs: 3 * HOUR_MS }, urgent: false, liveness: 'argos-heartbeat',
   },
   {
+    // 알림 접근 감시(2026-11-06): 폰 알림 접근 권한이 꺼져 이틀 가까이 알림이 안 들어왔다(상태 신호는 계속 옴).
+    // 이 알림은 투자 장부(카톡 체결·배당)와 소비의 원천이다.
+    // - liveness=상태 신호: 상태 신호가 오는데 알림만 없을 때만 경보한다(폰·앱 전체가 죽은 건 상태 신호 경보).
+    // - 18시간: 실측 정상 공백 최대가 약 16시간(밤사이)이라 그보다 2시간 여유 — 밤에 알림이 없는 정상 상황을
+    //   끊김으로 보지 않는다. 24시간보다 빨리 잡는다(저녁에 끊기면 다음날 낮에). 긴급 여부는 오너 결정(상태 신호·
+    //   데일리 노트만 긴급)대로 묶음(09·19시)이라 밤에 울리지 않는다.
+    // - accessField: 앱이 상태 신호에 notifListener(true|false)를 실어 오면 false일 때 공백 기준을 기다리지 않고 바로 경보.
+    //   칸이 없으면(구버전 앱) 공백 기준만 쓴다. true여도 공백 기준은 그대로 본다(권한은 켜졌는데 수집이 멈춘 경우).
     id: 'argos-notifications', label: '아르고스 알림 수신', owner: 'hermes', producer: 'phone:argos',
-    probe: { type: 'events-type', pathKey: 'argosEvents', eventType: 'notification.received' },
-    kind: 'continuous', threshold: { maxAgeMs: 24 * HOUR_MS }, urgent: false, liveness: 'argos-heartbeat',
+    probe: { type: 'events-type', pathKey: 'argosEvents', eventType: 'notification.received',
+      accessField: { eventType: 'core.heartbeat', field: 'notifListener' } },
+    kind: 'continuous', threshold: { maxAgeMs: 18 * HOUR_MS }, urgent: false, liveness: 'argos-heartbeat',
+    staleHint: '폰 알림 접근 권한(아르고스) 확인 — 꺼져 있으면 투자·소비 알림 장부가 멈춘다',
   },
   {
     id: 'argos-calls', label: '통화 녹음 전송', owner: 'athena', producer: 'phone:argos',

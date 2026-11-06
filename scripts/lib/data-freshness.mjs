@@ -89,7 +89,8 @@ function readEventDay(readers, memo, pathKey, label) {
     if (!line.trim()) continue;
     try {
       const event = JSON.parse(line);
-      events.push({ type: event.type, kind: event.payload?.kind ?? null, receivedAt: parseTimeValue(event.received_at) });
+      events.push({ type: event.type, kind: event.payload?.kind ?? null, receivedAt: parseTimeValue(event.received_at),
+        payload: event.payload ?? null });
     } catch { /* 깨진 줄은 건너뛴다(수신 쪽 줄바꿈 방어와 같은 원칙) */ }
   }
   memo.set(key, events);
@@ -105,10 +106,16 @@ function observe(source, { now, readers, memo }) {
       const lookback = probe.lookbackDays ?? DEFAULT_EVENT_LOOKBACK_DAYS;
       let lastAt = null;
       const dayCounts = {};
+      // accessField: 다른 이벤트(상태 신호)가 실어 오는 권한 칸. 가장 최근 그 이벤트에 불리언이 있을 때만 쓴다.
+      let latestAccess = null;
       for (let i = 0; i <= lookback; i += 1) {
         const label = addDays(today, -i);
         let count = 0;
         for (const event of readEventDay(readers, memo, probe.pathKey, label)) {
+          if (probe.accessField && event.type === probe.accessField.eventType && event.receivedAt !== null
+            && (latestAccess === null || event.receivedAt > latestAccess.at)) {
+            latestAccess = { at: event.receivedAt, value: event.payload?.[probe.accessField.field] };
+          }
           if (event.type !== probe.eventType) continue;
           if (probe.payloadKind && event.kind !== probe.payloadKind) continue;
           count += 1;
@@ -116,7 +123,8 @@ function observe(source, { now, readers, memo }) {
         }
         dayCounts[label] = count;
       }
-      return { lastAt, dayCounts };
+      const access = typeof latestAccess?.value === 'boolean' ? latestAccess : null;
+      return { lastAt, dayCounts, access };
     }
     case 'dated-jsonl': {
       const lookback = probe.lookbackDays ?? DEFAULT_EVENT_LOOKBACK_DAYS;
@@ -174,10 +182,13 @@ function judge(source, obs, { now, isTradingDay, openSince }) {
   if (source.probe.type === 'not-collected') return { status: 'not-collected', reason: 'not-collected', detail: '아직 수집하지 않음' };
   if (kind === 'bursty' || kind === 'display-only') return { status: 'display', reason: '', detail: '' };
   if (kind === 'continuous') {
-    if (obs.lastAt === null) return { status: 'stale', reason: 'no-record', detail: '최근 기록 없음' };
+    // staleHint: 끊겼을 때 오너가 할 일(출처 표에서 준다). 권한 칸이 false면 공백 기준을 기다리지 않고 바로 끊김이다.
+    const hint = source.staleHint ? ` — ${source.staleHint}` : '';
+    if (obs.access?.value === false) return { status: 'stale', reason: 'access-off', detail: `폰 상태 신호가 권한 꺼짐을 알림${hint}` };
+    if (obs.lastAt === null) return { status: 'stale', reason: 'no-record', detail: `최근 기록 없음${hint}` };
     const ageHours = (now - obs.lastAt) / HOUR_MS;
     return now - obs.lastAt > threshold.maxAgeMs
-      ? { status: 'stale', reason: 'too-old', detail: `${ageHours.toFixed(1)}시간째 없음(기준 ${threshold.maxAgeMs / HOUR_MS}시간)` }
+      ? { status: 'stale', reason: 'too-old', detail: `${ageHours.toFixed(1)}시간째 없음(기준 ${threshold.maxAgeMs / HOUR_MS}시간)${hint}` }
       : { status: 'ok', reason: '', detail: '' };
   }
   if (kind === 'daily-rhythm' && threshold.zeroDays) {

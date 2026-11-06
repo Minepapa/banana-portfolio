@@ -83,6 +83,12 @@ test('오너 결정 반영: 상태 신호·데일리 노트만 긴급, 통화는
   assert.equal(byId.get('argos-recordings').probe.type, 'not-collected');
   assert.equal(byId.get('argos-camera').kind, 'bursty');
   assert.equal(byId.get('executions').kind, 'display-only');
+  // 알림 접근 감시(2026-11-06): 상태 신호에 묶이고, 권한 칸을 먼저 보며, 18시간(밤 최대 공백 16시간 + 여유).
+  const notif = byId.get('argos-notifications');
+  assert.equal(notif.liveness, 'argos-heartbeat');
+  assert.equal(notif.producer, 'phone:argos');
+  assert.deepEqual(notif.probe.accessField, { eventType: 'core.heartbeat', field: 'notifListener' });
+  assert.equal(notif.threshold.maxAgeMs, 18 * 3600_000);
 });
 
 test('JOB_FIRST_HEARTBEAT_BY: 기대 주기 표에 있는 잡만, 날짜는 YYYY-MM-DD', () => {
