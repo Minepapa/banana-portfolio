@@ -155,6 +155,16 @@ test('확인 질문 뒤에 온 응·아니(취소 포함)만 confirm으로 간�
   assert.equal(routeUpdate(msg({ voice: { file_id: 'v' } }), { ...ctx, confirmOpenSince: since }).route, 'voice', '음성은 확인이 아님');
 });
 
+test('laneOf: 확인 답(응·아니)은 order 줄 — 주문 도구가 길어도 킬스위치는 main에서 바로', () => {
+  const at = 1_800_000_000;
+  const msg = (text) => ({ update_id: 1, message: { message_id: 2, date: at + 10, chat: { id: 31337, type: 'private' }, from: { id: 31337 }, text } });
+  const allowFrom = new Set(['31337']);
+  assert.equal(laneOf(routeUpdate(msg('응'), { allowFrom, confirmOpenSince: at })), 'order');
+  assert.equal(laneOf(routeUpdate(msg('아니'), { allowFrom, confirmOpenSince: at })), 'order');
+  assert.equal(laneOf(routeUpdate(msg('킬스위치 온'), { allowFrom, confirmOpenSince: at })), 'main');
+  assert.notEqual(laneOf(routeUpdate(msg('응'), { allowFrom, confirmOpenSince: null })), 'order', '확인 대기가 없으면 응은 주문 줄이 아님');
+});
+
 test('laneOf: 대화는 llm 줄', () => {
   assert.equal(laneOf(route({ text: '내일 3시 치과' })), 'llm');
   assert.equal(laneOf(route({ photo: [{ file_id: 'p' }], caption: '영수증' })), 'llm');

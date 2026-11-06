@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createTestQuestion, seedTestVault, SEED_FILES, testVaultRoot } from './telegram-gate-test-vault.mjs';
+import { createTestQuestion, parseTestVaultArgs, seedCalendarSample, seedTestVault, SEED_FILES, testVaultRoot } from './telegram-gate-test-vault.mjs';
+import { DEFAULT_VAULT_ROOT } from '../lib/vault-paths.mjs';
+import { calendarFacts } from './calendar-facts.mjs';
 import { VAULT_REL } from '../lib/vault-paths.mjs';
 
 // 임시 폴더만 쓴다 — 실제 볼트·질문 큐·텔레그램을 건드리지 않는다.
@@ -49,4 +51,28 @@ test('createTestQuestion: manual-change 시험 질문을 가짜 발송으로 만
 
 test('testVaultRoot: 시험 상태 폴더 아래 vault', () => {
   assert.equal(testVaultRoot({ TELEGRAM_GATE_STATE_DIR: '/s' }), '/s/vault');
+});
+
+test('일정 샘플: 시험 볼트에 KST 기준 n일치 구조만, 있는 날은 그대로, 실제 볼트 거부, calendar-facts가 읽음', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gate-cal-'));
+  try {
+    const now = new Date('2026-11-03T16:00:00Z'); // 11-04 01:00 KST
+    const keep = join(dir, '95_Etna', 'Calendar', '2026', '2026-11-05.json');
+    mkdirSync(dirname(keep), { recursive: true });
+    writeFileSync(keep, '{"schemaVersion":1,"date":"2026-11-05","events":[]}\n');
+    assert.deepEqual(seedCalendarSample({ targetRoot: dir, now, days: 3 }), ['2026-11-04', '2026-11-06']);
+    assert.equal(readFileSync(keep, 'utf8'), '{"schemaVersion":1,"date":"2026-11-05","events":[]}\n');
+    const day = JSON.parse(readFileSync(join(dir, '95_Etna', 'Calendar', '2026', '2026-11-04.json'), 'utf8'));
+    assert.match(day.events[0].title, /^\[시험\]/);
+    assert.deepEqual(seedCalendarSample({ targetRoot: dir, now, days: 3 }), [], '다시 돌려도 새로 쓰지 않음');
+    const out = calendarFacts({ now, read: (d) => { try { return JSON.parse(readFileSync(join(dir, '95_Etna', 'Calendar', '2026', `${d}.json`), 'utf8')); } catch { return null; } } });
+    assert.match(out, /2026-11-04: 1건\n- 20:00~21:00 \[시험\] \[시험\] 창구 일정 경로 확인용/);
+    assert.throws(() => seedCalendarSample({ targetRoot: DEFAULT_VAULT_ROOT, now }), /실제 볼트/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('parseTestVaultArgs: 인자 없음·--calendar-only만, 모르는 인자 거부(--help 포함)', () => {
+  assert.deepEqual(parseTestVaultArgs([]), { calendarOnly: false });
+  assert.deepEqual(parseTestVaultArgs(['--calendar-only']), { calendarOnly: true });
+  for (const bad of [['--help'], ['--calendar-only', '--x'], ['x']]) assert.ok(parseTestVaultArgs(bad).error);
 });

@@ -6,7 +6,7 @@
 // - 도구가 실패하면 원인을 그대로 알리고 다시 시도하지 않는다(입력 규칙 3절).
 // LLM이 필요한 route('llm')는 2단계 전까지 고정 안내만 한다.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildGateSpawnEnv } from './telegram-gate-config.mjs';
@@ -39,18 +39,25 @@ function killGroup(child, signal) {
 
 // group을 주면 그 줄의 도구만 끝낸다. 관문 종료 때는 media(음성 전사 — 노트는 전사가 끝난 뒤에만 생겨 끊어도 중복이 없다)만 끝내고,
 // main 줄 도구(기록·스위치)는 끝날 때까지 기다려 "기록은 됐는데 확인필요"가 생기지 않게 한다(1단계 리뷰 MEDIUM-5).
+// 주문 줄(order) 도구는 이름으로 지정할 때만 끝낸다 — 창구 종료·감시견 exit·예외 정리에서 주문 도중에 끊지 않는다
+// (증권사 접수와 장부 기록이 갈라지지 않게, telegram-gate-order-executor I4).
 export function killRunningGateTools(signal = 'SIGTERM', { group = null } = {}) {
   let killed = 0;
   for (const child of RUNNING) {
     if (group && child.gateGroup !== group) continue;
+    if (!group && child.gateGroup === 'order') continue;
     killGroup(child, signal);
     killed += 1;
   }
   return killed;
 }
 
-export function runningGateToolCount() {
-  return RUNNING.size;
+export function runningGateToolCount({ group = null } = {}) {
+  return group ? [...RUNNING].filter((child) => child.gateGroup === group).length : RUNNING.size;
+}
+
+function readTail(path) {
+  try { const text = readFileSync(path, 'utf8'); return text.length > MAX_OUTPUT ? text.slice(-MAX_OUTPUT) : text; } catch { return ''; }
 }
 
 // 2단계 LLM이 관문 MCP 도구(telegram-gate-mcp)를 거쳐 부를 수 있는 운영 도구. 돈 도구(주문·정정취소·손절·제안 체결)는
@@ -72,26 +79,46 @@ export function isGateToolAllowed(tool, { factsFiles = () => factsCatalog().filt
   return /^[a-z0-9-]+-facts\.mjs$/.test(tool) && factsFiles().includes(tool);
 }
 
-export function runGateTool(tool, args = [], { input = null, timeoutMs = TOOL_TIMEOUT_MS, env = buildGateSpawnEnv(), spawnImpl = spawn, group = 'main', allowed = isGateToolAllowed } = {}) {
+// logFile(선택): 표준출력·오류를 파이프 대신 이 파일로 보낸다. 창구가 먼저 끝나도 도구가 출력하다 EPIPE로 죽지 않는다(주문 줄, 리뷰 MEDIUM-3).
+// 주문 줄(order)은 시간이 지나도 끊지 않는다: 'GATE_TOOL_TIMEOUT' 오류로 먼저 알리고, 도구는 끝날 때까지 RUNNING에 남는다(리뷰 MEDIUM-4).
+export function runGateTool(tool, args = [], { input = null, timeoutMs = TOOL_TIMEOUT_MS, env = buildGateSpawnEnv(), spawnImpl = spawn, group = 'main', allowed = isGateToolAllowed, logFile = null, onLateExit = null } = {}) {
   if (!allowed(tool)) return Promise.reject(new Error(`창구 허용 목록에 없는 도구: ${tool}`));
   return new Promise((resolvePromise, reject) => {
-    const child = spawnImpl(process.execPath, [join(REPO_ROOT, 'scripts', 'tools', tool), ...args], {
-      cwd: REPO_ROOT, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true,
-    });
+    let logFd = null;
+    try {
+      if (logFile) { mkdirSync(dirname(logFile), { recursive: true, mode: 0o700 }); logFd = openSync(logFile, 'a', 0o600); }
+    } catch (error) {
+      // 도구를 띄우기 전 실패 — 호출자가 "실행 안 함"으로 구분한다(재리뷰 LOW-C).
+      error.code = 'GATE_TOOL_NOT_STARTED';
+      reject(error);
+      return;
+    }
+    let child;
+    try {
+      child = spawnImpl(process.execPath, [join(REPO_ROOT, 'scripts', 'tools', tool), ...args], {
+        cwd: REPO_ROOT, env, stdio: ['pipe', logFd ?? 'pipe', logFd ?? 'pipe'], detached: true,
+      });
+    } finally { if (logFd !== null) closeSync(logFd); }
     child.gateGroup = group;
     RUNNING.add(child);
     let out = '';
     let err = '';
     let settled = false;
-    const finish = (fn, value) => { if (!settled) { settled = true; clearTimeout(timer); RUNNING.delete(child); fn(value); } };
+    const finish = (fn, value) => { if (!settled) { settled = true; clearTimeout(timer); fn(value); } };
     const timer = setTimeout(() => {
-      killGroup(child, 'SIGKILL');
-      finish(reject, new Error(`${tool} 시간 초과(${Math.round(timeoutMs / 1000)}초)`));
+      if (group !== 'order') { RUNNING.delete(child); killGroup(child, 'SIGKILL'); }
+      const error = new Error(`${tool} 시간 초과(${Math.round(timeoutMs / 1000)}초)`);
+      error.code = 'GATE_TOOL_TIMEOUT';
+      finish(reject, error);
     }, timeoutMs);
-    child.stdout.on('data', (d) => { if (out.length < MAX_OUTPUT) out += d; });
-    child.stderr.on('data', (d) => { if (err.length < MAX_OUTPUT) err += d; });
-    child.on('error', (e) => finish(reject, e));
+    child.stdout?.on('data', (d) => { if (out.length < MAX_OUTPUT) out += d; });
+    child.stderr?.on('data', (d) => { if (err.length < MAX_OUTPUT) err += d; });
+    child.on('error', (e) => { RUNNING.delete(child); finish(reject, e); });
     child.on('close', (code) => {
+      RUNNING.delete(child);
+      if (logFile) out = readTail(logFile);
+      // 시간 초과로 먼저 알린 뒤에 끝난 도구(주문 줄): 결과를 버리지 않고 호출자에게 넘긴다(재리뷰 MEDIUM-A).
+      if (settled) { if (onLateExit) { try { onLateExit(code, (err.trim() || out.trim()).split('\n').slice(-3).join('\n')); } catch { /* 기록 실패는 무시 */ } } return; }
       if (code === 0) finish(resolvePromise, out.trim());
       else finish(reject, new Error((err.trim() || out.trim() || `${tool} 종료코드 ${code}`).split('\n').slice(-3).join('\n')));
     });

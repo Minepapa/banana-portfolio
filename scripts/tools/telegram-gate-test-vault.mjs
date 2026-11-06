@@ -9,11 +9,12 @@
 // 사용법: node scripts/tools/telegram-gate-test-vault.mjs
 //   출력의 "WQ-… 등록"을 시험 봇에 보내 위키 답 처리를 확인한다.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, realpathSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertTestIsolation, defaultGatePaths } from '../lib/telegram-gate-config.mjs';
 import { DEFAULT_VAULT_ROOT, VAULT_REL, VAULT_ROOT } from '../lib/vault-paths.mjs';
+import { CALENDAR_DAY_SCHEMA, calendarDayPath, kstDate } from '../lib/calendar-days.mjs';
 
 // 복사해도 되는 구조 파일(규칙층 90_Delphi의 스키마·채널 규칙만, 개인 기록 없음). 2단계부터 관문 LLM 시스템 프롬프트가
 // 텔레그램 입력 규칙·세션 운영 규칙 원문을 읽으므로 두 채널 규칙도 넣는다.
@@ -46,7 +47,35 @@ export async function createTestQuestion({ create }) {
   }, { sender: async () => ({ result: { message_id: 1 } }) });
 }
 
+// 시험 볼트 일정 샘플(구조만, 개인 일정 아님): 오늘부터 days일치 일정 정본 파일(calendarDayPath)에 시험 일정 1건씩.
+// 창구 대화의 일정 질문 → 헤르메스 기본 사실(calendar-facts) 경로를 시험 봇으로 확인하려고 둔다(설계 14절 4단계 전 확인).
+// 이미 있는 날짜 파일은 건드리지 않는다.
+export function seedCalendarSample({ targetRoot, now = new Date(), days = 7 }) {
+  if (resolve(targetRoot) === resolve(DEFAULT_VAULT_ROOT)) throw new Error('실제 볼트에는 일정 샘플을 쓰지 않는다');
+  const written = [];
+  for (let i = 0; i < days; i += 1) {
+    const date = kstDate(new Date(now.getTime() + i * 24 * 3_600_000));
+    const path = calendarDayPath(date, targetRoot);
+    if (existsSync(path)) continue;
+    const event = { owner: '시험', person: '시험', sharedWith: [], title: '[시험] 창구 일정 경로 확인용', start: `${date}T20:00:00+09:00`,
+      end: `${date}T21:00:00+09:00`, allDay: false, location: null, calendar: '시험' };
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify({ schemaVersion: CALENDAR_DAY_SCHEMA, date, events: [event] }, null, 2)}\n`);
+    written.push(date);
+  }
+  return written;
+}
+
+// 인자: 없음(전체 준비) 또는 --calendar-only(일정 샘플만, 시험 질문을 다시 만들지 않음). 모르는 인자는 거부한다.
+export function parseTestVaultArgs(argv) {
+  if (!argv.length) return { calendarOnly: false };
+  if (argv.length === 1 && argv[0] === '--calendar-only') return { calendarOnly: true };
+  return { error: '사용법: telegram-gate-test-vault.mjs [--calendar-only]' };
+}
+
 async function main() {
+  const parsed = parseTestVaultArgs(process.argv.slice(2));
+  if (parsed.error) { console.error(parsed.error); process.exit(2); }
   const target = testVaultRoot();
   if (process.env.VAULT_PATH !== target) {
     mkdirSync(target, { recursive: true, mode: 0o700 });
@@ -54,6 +83,9 @@ async function main() {
     process.exit(result.status ?? 1);
   }
   assertTestIsolation({ mode: 'test', vaultRoot: target, processVaultRoot: VAULT_ROOT, realVaultRoot: DEFAULT_VAULT_ROOT });
+  const calendar = seedCalendarSample({ targetRoot: target });
+  console.log(`일정 샘플: ${calendar.length ? calendar.join(', ') : '새로 쓴 날 없음(이미 있음)'}`);
+  if (parsed.calendarOnly) return;
   const copied = seedTestVault({ sourceRoot: DEFAULT_VAULT_ROOT, targetRoot: target });
   // 질문 큐 모듈은 볼트 경로 확정 뒤에 불러온다(이 프로세스는 이미 시험 볼트 경로로 떠 있다).
   const { createWikiQuestion } = await import('../lib/wiki-question-queue.mjs');

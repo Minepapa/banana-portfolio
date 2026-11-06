@@ -45,6 +45,8 @@ export function laneOf(decision) {
   if (decision.action !== 'handle') return 'main';
   if (MEDIA_ROUTES.has(decision.route)) return 'media';
   if (decision.route === 'llm') return 'llm';
+  // 확인 답(응·아니)은 주문 줄: 실제 주문 도구가 수십 초 걸려도 스위치(킬스위치 등)·기록이 그 뒤에 묶이지 않게(4단계 전 배선).
+  if (decision.route === 'confirm') return 'order';
   return 'main';
 }
 

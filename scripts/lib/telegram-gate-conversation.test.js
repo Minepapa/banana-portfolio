@@ -257,10 +257,10 @@ test('확인 대기: 실행 중에 접수된 건만 고정 문구로 묻고(실�
     const early = await s.conv.handleConfirm({ yes: true }, { chatId: CHAT, messageId: 6, date: answerDate - 60 });
     assert.equal(early.detail, '확인 질문 전 답 — 무시', '확인 질문보다 먼저 온 응은 실행하지 않음');
     const yes = await s.conv.handleConfirm({ yes: true }, { chatId: CHAT, messageId: 8, date: answerDate });
-    assert.equal(yes.detail, '주문 확인(가짜 실행기)');
+    assert.equal(yes.detail, '주문 실행 안 함(시험)');
     assert.match(s.sent.at(-1).body, /실제로 실행하지 않았습니다/);
     assert.match(s.sent.at(-1).body, /--request-id=telegram:31337:7/);
-    assert.equal(s.confirmStore.read().status, '실행 안 함(2단계)');
+    assert.equal(s.confirmStore.read().status, '실행 안 함(시험)');
     await s.conv.handleConfirm({ yes: true }, { chatId: CHAT, messageId: 9, date: answerDate });
     assert.match(s.sent.at(-1).body, /확인을 기다리는 주문이 없습니다/);
   } finally { s.cleanup(); }

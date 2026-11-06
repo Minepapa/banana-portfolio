@@ -64,6 +64,7 @@ import { parseFrontmatter, buildFrontmatter } from '../lib/vault-frontmatter.mjs
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { runHeadlessClaude, headlessResult } from '../lib/headless-claude.mjs';
 import { markLlmRunOutcome } from '../lib/llm-run-outcome.mjs';
+import { defaultGatePaths } from '../lib/telegram-gate-config.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const CONVERSATION_MAX_CHARS = 40_000;
@@ -374,9 +375,29 @@ function readModeState(filepath) {
   return parseFrontmatter(readFileSync(filepath, 'utf8'));
 }
 
+// 텔레그램 창구(telegram-gate) 전환 뒤에는 창구가 같은 이름의 인수인계 노트를 journal로 쓴다(설계 6-7). 이 잡이 03:55에 먼저
+// 쓰면 창구는 "이미 있음"으로 건너뛰어 그날 대화가 노트에서 빠진다. 창구 실전 하트비트(5분 주기)가 최근 30분 안에 있으면
+// 이 잡은 아무것도 쓰지 않는다 — 전환 날 잡을 내리는 것이 원칙이고(제우스 절차), 이 가드는 내리기를 놓쳤거나 되돌리기 뒤
+// 다시 올렸을 때의 안전망이다. 되돌리면 창구 하트비트가 끊겨 30분 뒤부터 이 잡이 다시 쓴다.
+export const GATE_HANDOFF_FRESH_MS = 30 * 60 * 1000;
+export function gateOwnsHandoff(heartbeat, nowMs) {
+  if (!heartbeat || heartbeat.mode !== 'live') return false;
+  const at = Date.parse(heartbeat.at ?? '');
+  return Number.isFinite(at) && nowMs - at <= GATE_HANDOFF_FRESH_MS && at - nowMs <= GATE_HANDOFF_FRESH_MS;
+}
+
+function readGateHeartbeat() {
+  const dir = process.env.TELEGRAM_GATE_STATE_DIR || defaultGatePaths().liveStateDir; // 창구와 같은 재지정 규칙(리뷰 LOW-10)
+  try { return JSON.parse(readFileSync(join(dir, 'heartbeat.json'), 'utf8')); } catch { return null; }
+}
+
 async function main() {
   const now = new Date();
   const targetDateStr = kstYesterdayStr(now);
+  if (gateOwnsHandoff(readGateHeartbeat(), now.getTime())) {
+    console.log(`ℹ️ 텔레그램 창구(실전)가 돌고 있어 ${targetDateStr} 인수인계는 창구가 쓴다 — 이 잡은 건너뜀`);
+    return;
+  }
 
   const proposals = readProposals();
   const createdToday = filterProposalsByCreatedDate(proposals, targetDateStr);
