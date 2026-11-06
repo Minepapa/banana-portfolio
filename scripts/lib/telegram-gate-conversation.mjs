@@ -3,7 +3,7 @@
 // 설계 6·7·9절, 결정 `텔레그램-관문` 3~8항. 네트워크·프로세스는 모두 주입받는다(시험은 가짜로).
 import { buildGateClaudeArgs, GATE_EFFORT, GATE_MODEL, GATE_TOOLS_SET, SOFT_TIMEOUT_MS } from './telegram-gate-llm.mjs';
 import { applyProgress, createEditThrottle, describeEvent, initialProgress, renderProgress } from './telegram-gate-progress.mjs';
-import { buildGateSystemPrompt, buildMessagePrompt, businessDay, fallbackMessage, previousDay, toGateMessages } from './telegram-gate-session.mjs';
+import { buildGateSystemPrompt, buildMessagePrompt, businessDay, createActorTracker, fallbackMessage, previousDay, toGateMessages } from './telegram-gate-session.mjs';
 import { buildHandoffNote, conversationTranscript, handoffSummaryPrompt, HANDOFF_SUMMARY_SCHEMA } from './telegram-gate-journal.mjs';
 import { confirmPromptBody, isAnswerToConfirm } from './telegram-gate-confirm.mjs';
 import { fakeOrderExecutor } from './telegram-gate-order-executor.mjs';
@@ -90,11 +90,13 @@ export function createConversation(deps) {
     });
     if (run.cancelRequested) return { interrupted: 'cancel', isError: false, permissionDenials: [] };
     let started = false;
+    const tracker = createActorTracker();
     deps.sessionStore.markStarted?.(session.sessionId);
     const handle = deps.runner({
       args,
       env: deps.spawnEnv,
       onEvent: (event) => {
+        tracker.observe(event);
         if (event.type === 'system' && event.subtype === 'init') started = true;
         if (event.type === 'rate_limit_event') state.lastRateLimit = event.rate_limit_info ?? null;
         if (event.type === 'assistant' && !event.parent_tool_use_id) {
@@ -111,7 +113,7 @@ export function createConversation(deps) {
     if (run.cancelRequested) handle.cancel();
     const res = await handle.promise;
     if (started) deps.sessionStore.recordTurn(session.sessionId);
-    return res;
+    return { ...res, actors: tracker.actors() };
   }
 
   async function processBatch(items) {
@@ -223,7 +225,8 @@ export function createConversation(deps) {
         return { status: '실패', detail: String(res.errorText ?? '').slice(0, 200) };
       }
 
-      const { messages, problem } = toGateMessages(res.structured, res.result);
+      // 이름표는 창구가 정한다: 이 턴에 실제로 답한 하위 에이전트만 그 담당 이름을 단다(2026-11-06 오너).
+      const { messages, problem } = toGateMessages(res.structured, res.result, { labels: { self: 'zeus', actors: res.actors ?? [] } });
       const outgoing = problem ? [fallbackMessage(res.result)] : messages;
       if (problem) {
         log(`[gate] 출력 계약 위반(${problem}) — 원문을 감싸 보냄`);

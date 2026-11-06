@@ -427,3 +427,25 @@ test('약속 이행 입력(kind promise)은 message_id 없이 origin="promise"�
     assert.doesNotMatch(prompt, /message_id="null"/);
   } finally { s.cleanup(); }
 });
+
+test('이름표: 제우스가 직접 답하고 헤르메스 이름표를 달면 제우스로 고쳐 보내고, 실제로 부른 담당은 그대로 둔다', async () => {
+  const s = setup({ results: [
+    { structured: { messages: [{ agent: 'hermes', topic: '일정', kind: '정보', body: '토요일 가족 일정' }] }, isError: false, permissionDenials: [] },
+    { structured: { messages: [{ agent: 'athena', topic: '미네', kind: '정보', body: '노래' }] }, isError: false, permissionDenials: [],
+      events: [
+        { type: 'system', subtype: 'init' },
+        { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'athena' } }] } },
+        { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: '노래' }] } },
+      ] },
+  ] });
+  try {
+    await s.conv.processBatch([item(1, '이번 주말 일정')]);
+    const first = s.sent.find((m) => m.topic === '일정');
+    assert.equal(first.agent, 'zeus');
+    assert.match(first.body, /헤르메스 영역 · 제우스 직접 조회/);
+    await s.conv.processBatch([item(2, '미네 좋아하는 노래')]);
+    const second = s.sent.find((m) => m.topic === '미네');
+    assert.equal(second.agent, 'athena');
+    assert.doesNotMatch(second.body, /직접 조회/);
+  } finally { s.cleanup(); }
+});

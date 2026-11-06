@@ -81,7 +81,8 @@ export function buildGateSystemPrompt({ inputRules = '', sessionRules = '', vaul
     '',
     '## 답하는 방법(가장 중요)',
     '- 텔레그램으로 보내는 도구는 없다. 최종 답은 StructuredOutput(정해진 JSON)으로만 낸다. 창구가 그것을 발송 관문으로 보낸다.',
-    `- messages[]의 각 항목이 메시지 하나다. agent는 실제로 답하는 담당(${AGENT_IDS.join('·')}). 담당끼리 묶지 않는다.`,
+    `- messages[]의 각 항목이 메시지 하나다. agent는 실제로 답한 담당(${AGENT_IDS.join('·')}). 담당끼리 묶지 않는다.`,
+    '- 담당 이름은 그 담당이 실제로 답했을 때만 쓴다. 네가 직접 찾아 답했으면 zeus로 쓴다. 창구가 실제 호출 여부를 확인해 아니면 zeus로 고치고 "○○ 영역 · 제우스 직접 조회"를 붙인다.',
     '- 정보형(kind 정보): body에 텔레그램 HTML(<b>·<i>·<pre>·<code>만)로 쓴다. 항목마다 한 줄, ■ 소제목 + 빈 줄, |·쉼표로 이어붙이지 않는다.',
     '- 판단형(kind 판단, 제안·판정·이상 보고·질문): facts(사실 항목)·conclusion·context·decisions를 채운다. 사실은 도구 결과에서만.',
     `- 헤더·구분선·인용문은 창구가 붙인다. body 첫 줄에 [${agentLabel('zeus')}] 같은 헤더를 쓰지 않는다. 이모지는 지워진다.`,
@@ -146,29 +147,72 @@ export function buildMessagePrompt({ items, handoffText = null, handoffMissing =
 }
 
 const KINDS = new Set(['정보', '판단']);
+const AGENT_TOOL_NAMES = new Set(['Agent', 'Task']);
+
+// 이번 턴에 실제로 답한 담당을 stream-json 이벤트에서 모은다(2026-11-06 오너 지시: 이름표는 모델이 아니라 창구가 정한다).
+// Agent 도구 호출(subagent_type)이 오류 없이 결과를 돌려준 담당만 센다. 호출만 하고 거부·실패한 것은 답한 것이 아니다.
+export function createActorTracker() {
+  const calls = new Map();
+  const actors = new Set();
+  return {
+    observe(event) {
+      const content = Array.isArray(event?.message?.content) ? event.message.content : [];
+      if (event?.type === 'assistant' && !event.parent_tool_use_id) {
+        for (const use of content) {
+          if (use?.type === 'tool_use' && AGENT_TOOL_NAMES.has(use.name) && AGENT_IDS.includes(use.input?.subagent_type)) calls.set(use.id, use.input.subagent_type);
+        }
+      }
+      if (event?.type === 'user') {
+        for (const r of content) {
+          if (r?.type === 'tool_result' && calls.has(r.tool_use_id) && !r.is_error) actors.add(calls.get(r.tool_use_id));
+        }
+      }
+    },
+    actors: () => [...actors],
+  };
+}
+
+// 순수 함수: 실제로 답하지 않은 담당 이름표를 떼고 답한 프로세스(self) 이름으로 바꾼 뒤, 끝에 "{담당} 영역 · {self} 직접 조회"를
+// 한 줄 붙인다. 11-06 시험에서 제우스가 직접 읽고 헤르메스·클리오 이름표를 단 답이 담당 답처럼 보였다.
+export function enforceActorLabels(list, { self = 'zeus', actors = [] } = {}) {
+  const real = new Set([self, ...actors]);
+  return list.map((m) => {
+    if (!AGENT_IDS.includes(m?.agent) || real.has(m.agent)) return m;
+    const note = `${agentTitle(m.agent)} 영역 · ${agentTitle(self)} 직접 조회`;
+    if (m.kind === '판단') return { ...m, agent: self, context: m.context ? `${m.context}\n${note}` : note };
+    // 본문이 비면 그대로 둔다 — 계약 검사(정보 메시지 본문 없음)가 이 줄 때문에 통과하지 않게.
+    const body = String(m.body ?? '').trimEnd();
+    return { ...m, agent: self, body: body.trim() ? `${body}\n\n${note}` : body };
+  });
+}
 
 // 순수 함수: 구조화 출력 → 발송 관문 메시지 목록. LLM 문장이므로 llm 표시(굵은 선·인용문)를 붙인다.
 // 계약이 깨지면 { messages: [], problem } — 호출부가 원문을 감싸 보내고 기록한다(조용한 폴백 금지).
-export function toGateMessages(structured, rawResult) {
+// labels: { self, actors } — 이름표 강제(enforceActorLabels). handoffTo: 이 실행이 넘길 수 있는 담당(제우스만). 넘기면 messages는 비어도 된다.
+export function toGateMessages(structured, rawResult, { labels = null, handoffTo = [] } = {}) {
   let data = structured;
   if (!data && typeof rawResult === 'string') { try { data = JSON.parse(rawResult); } catch { data = null; } }
-  const list = Array.isArray(data?.messages) ? data.messages : null;
-  if (!list || !list.length) return { messages: [], problem: '구조화 출력 없음' };
+  const handoff = data?.handoff && handoffTo.includes(data.handoff.agent) && String(data.handoff.request ?? '').trim()
+    ? { agent: data.handoff.agent, request: String(data.handoff.request).trim() } : null;
+  if (data?.handoff && !handoff) return { messages: [], problem: `넘김 형식 오류: ${JSON.stringify(data.handoff).slice(0, 120)}`, handoff: null };
+  const rawList = Array.isArray(data?.messages) ? data.messages : null;
+  if (!rawList || (!rawList.length && !handoff)) return { messages: [], problem: '구조화 출력 없음', handoff: null };
+  const list = labels ? enforceActorLabels(rawList, labels) : rawList;
   const messages = [];
   for (const m of list) {
-    if (!AGENT_IDS.includes(m?.agent) || !KINDS.has(m?.kind) || !String(m?.topic ?? '').trim()) return { messages: [], problem: `형식 오류: ${JSON.stringify(m).slice(0, 120)}` };
+    if (!AGENT_IDS.includes(m?.agent) || !KINDS.has(m?.kind) || !String(m?.topic ?? '').trim()) return { messages: [], problem: `형식 오류: ${JSON.stringify(m).slice(0, 120)}`, handoff: null };
     const topic = String(m.topic).replace(/[\r\n]+/g, ' ').slice(0, 40);
     if (m.kind === '정보') {
-      if (!String(m.body ?? '').trim()) return { messages: [], problem: '정보 메시지 본문 없음' };
+      if (!String(m.body ?? '').trim()) return { messages: [], problem: '정보 메시지 본문 없음', handoff: null };
       messages.push({ agent: m.agent, kind: '정보', topic, body: interpretation(m.body), llm: true });
     } else {
       const facts = (Array.isArray(m.facts) ? m.facts : []).map(String).filter((f) => f.trim());
-      if (!facts.length) return { messages: [], problem: '판단 메시지 사실 없음' };
+      if (!facts.length) return { messages: [], problem: '판단 메시지 사실 없음', handoff: null };
       messages.push({ agent: m.agent, kind: '판단', topic, facts, conclusion: m.conclusion ?? null, context: m.context ?? null,
         decisions: Array.isArray(m.decisions) ? m.decisions.map(String) : null });
     }
   }
-  return { messages, problem: null };
+  return { messages, problem: null, handoff };
 }
 
 // 계약이 깨졌을 때 오너에게 그대로 보이는 메시지(답이 안 가는 것보다 낫다).
