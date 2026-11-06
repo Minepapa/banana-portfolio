@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
@@ -8,8 +8,8 @@ import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { fixtureCriteria } from '../lib/mine-emotion-criteria.fixture.js';
 import { MAX_JOB_MS, NIGHTLY_LIMIT, ORB_FIELDS, PROMPT_VERSIONS, applyOrbFields, attemptState, ollamaPhotoDecision, orbSchema, validateOllamaOrb, readRuns,
-  requireRegistryFields, run, upsertOrbIndex, memoryOrbCounts, SCENE_ENGINE, SCENES_FILE, judgeSceneMoment } from './media-memory-orb.mjs';
-import { PHOTO_TEXT_JUDGMENTS_FILE, PHOTO_TEXT_PROMPT_VERSION, SCENE_PROMPT_VERSION } from '../lib/mine-photo-scene.mjs';
+  requireRegistryFields, run, upsertOrbIndex, memoryOrbCounts, SCENE_ENGINE, SCENES_FILE, JOB_SCENE_VERSION, judgeSceneMoment } from './media-memory-orb.mjs';
+import { PHOTO_TEXT_JUDGMENTS_FILE, PHOTO_TEXT_PROMPT_VERSION } from '../lib/mine-photo-scene.mjs';
 import { OLLAMA_MODELS } from '../lib/ollama-client.mjs';
 import { llmRunFailed } from '../lib/llm-run-outcome.mjs';
 
@@ -438,16 +438,19 @@ const sceneWords = (overrides = {}) => ({ mineVisible: '보임', mineFaceView: '
   mineExpression: '입꼬리가 올라가고 이가 보임', mineAction: '케이크 앞에 앉아 있음', place: '실내', occasion: '생일 케이크 앞', people: '어른 1명',
   other: '없음', ...overrides });
 const AFTERNOON = () => Date.parse('2026-11-01T14:00:00+09:00');
+const cropTargets = [];
 function sceneOptions(fixture, { scene = sceneWords(), answers = [ollamaAnswer({ 기쁨: '보통' })], ...overrides } = {}) {
   const ollama = []; const claude = [];
   let index = 0;
+  cropTargets.length = 0;
   // 오너 메모 감정이 있으면 한 번만 묻는다 — 두 번 묻기 시험은 메모 없는 순간으로.
   if (!overrides.keepMemo) for (const item of fixture.candidates) item.memo = '';
   delete overrides.keepMemo;
   const visible = new Map(fixture.candidates.map((item) => [item.id, { i: 0, score: 0.9, bbox: [700, 600, 1860, 1760] }]));
   return { ollama, claude, options: options(fixture, { engine: SCENE_ENGINE, now: AFTERNOON, cooldown: () => false, anchorScenes: {},
     mineFaces: visible, photoFaces: new Map([...visible].map(([id, face]) => [id, [{ ...face, det: 0.9, blur: 80 }]])),
-    copyPhoto: () => ({ width: 3000, height: 4000 }), readImage: () => 'aGk=',
+    copyPhoto: () => ({ width: 3000, height: 4000 }), readImage: (path) => (path.endsWith('-face.jpg') ? 'RkFDRQ==' : 'aGk='),
+    cropFace: (source, target) => { writeFileSync(target, 'x'); cropTargets.push(target); return { width: 448, height: 448 }; },
     invoke: async (request) => { ollama.push(request); return { json: scene, usage: { promptTokens: 1 } }; },
     judge: async (prompt) => { claude.push(prompt); const answer = answers[Math.min(index, answers.length - 1)]; index += 1; return JSON.stringify(answer); },
     ...overrides }) };
@@ -460,19 +463,22 @@ test('scene-claude: 사진은 로컬 모델에만(base64), Claude에는 장면 �
   const summary = await run(opts);
   assert.equal(summary.written, 1);
   assert.equal(ollama.length, 1);
-  assert.deepEqual(ollama[0].images, ['aGk=']);
+  assert.deepEqual(ollama[0].images, ['aGk=', 'RkFDRQ=='], '0.4-face: 사진 전체 + 미네 얼굴 확대 그림');
+  assert.match(ollama[0].prompt, /두 번째는 첫 번째 사진에서 미네 얼굴 부분만 잘라 크게 키운 것/);
   assert.equal(JSON.stringify(ollama[0].schema).includes('emotion'), false, '장면 낱말 답 모양에 감정 칸 없음');
   assert.equal(claude.length, 2, '순간마다 두 번');
   for (const prompt of claude) {
-    for (const leak of ['aGk=', '.jpg', fixture.root, 'photo.jpg']) assert.equal(prompt.includes(leak), false, `Claude 프롬프트에 ${leak}`);
+    for (const leak of ['aGk=', 'RkFDRQ==', '.jpg', fixture.root, 'photo.jpg']) assert.equal(prompt.includes(leak), false, `Claude 프롬프트에 ${leak}`);
     assert.match(prompt, /장면 낱말/);
   }
   const [row] = ledger(fixture);
   assert.deepEqual([row.mode, row.status, row.calls, row.engine, row.promptVersion, row.sceneModel, row.scenePromptVersion, row.at],
-    ['orb', 'applied', 2, 'claude', PHOTO_TEXT_PROMPT_VERSION, OLLAMA_MODELS.vision, SCENE_PROMPT_VERSION, '2026-11-01']);
+    ['orb', 'applied', 2, 'claude', PHOTO_TEXT_PROMPT_VERSION, OLLAMA_MODELS.vision, JOB_SCENE_VERSION, '2026-11-01']);
   assert.equal(row.answers.length, 2);
+  assert.deepEqual(row.faceCrops, [true]);
+  assert.ok(cropTargets.length === 1 && cropTargets.every((target) => !existsSync(target)), '확대 그림 파일은 읽은 뒤 지운다');
   const stored = readFileSync(join(fixture.out, SCENES_FILE), 'utf8').trim().split('\n').map(JSON.parse);
-  assert.deepEqual([stored[0].photoId, stored[0].sceneVersion], [fixture.candidates[0].id, SCENE_PROMPT_VERSION]);
+  assert.deepEqual([stored[0].photoId, stored[0].sceneVersion, stored[0].faceCrop], [fixture.candidates[0].id, JOB_SCENE_VERSION, true]);
   const orb = JSON.parse(readFileSync(join(fixture.out, 'orbs.jsonl'), 'utf8').trim());
   assert.deepEqual([orb.judgment.promptVersion, orb.judgment.photoKinds, orb.judgment.emotionState], [PHOTO_TEXT_PROMPT_VERSION, ['얼굴 가까이'], '있음']);
 });
@@ -573,4 +579,21 @@ test('judgeSceneMoment: 얼굴이 보이는 사진이 하나라도 있으면 Cla
   const bad = await judgeSceneMoment(item, [{ kind: '얼굴 가까이', scene: sceneWords() }],
     { criteria: fixtureCriteria, anchors, decide: async () => 'JSON 아님' });
   assert.equal(bad.formatFailure, true);
+});
+
+test('scene-claude: 얼굴 확대 그림을 못 만들면 사진 전체만으로 장면 낱말을 뽑고 순간은 그대로 판단한다', async (t) => {
+  const fixture = setup(t);
+  const errors = [];
+  let written = null;
+  const { ollama, options: opts } = sceneOptions(fixture, { cropFace: (source, target) => { writeFileSync(target, 'x'); written = target; throw new Error('exiftool 없음'); } });
+  const summary = await run({ ...opts, output: { log() {}, error: (line) => errors.push(line) } });
+  assert.equal(summary.written, 1);
+  assert.deepEqual(ollama[0].images, ['aGk=']);
+  assert.doesNotMatch(ollama[0].prompt, /두 번째 그림/);
+  assert.ok(errors.some((line) => /얼굴 확대 그림 실패/.test(line)));
+  const stored = readFileSync(join(fixture.out, SCENES_FILE), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual([stored[0].faceCrop, stored[0].faceCropError], [false, 'exiftool 없음']);
+  assert.equal(summary.faceCropFailures, 1);
+  assert.equal(existsSync(written), false, '실패해도 확대 그림 파일을 지운다');
+  assert.deepEqual(ledger(fixture)[0].faceCrops, [false]);
 });

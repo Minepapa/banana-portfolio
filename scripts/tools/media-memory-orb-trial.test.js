@@ -11,7 +11,7 @@ import { fixture, fixtureCriteria as criteria } from '../lib/mine-emotion-criter
 const EMOTIONS = allowedEmotions('2026-10-16', criteria).map((emotion) => emotion.name);
 import { buildArgs, headlessJsonFailure } from '../lib/headless-claude.mjs';
 import { agentTitle } from '../lib/agent-registry.mjs';
-import { albumForMoment, buildPrompt as rawBuildPrompt, makeCopy, makeGrid, chooseTargets, choosePhotos, momentPhotos, verifyStripped,
+import { albumForMoment, buildPrompt as rawBuildPrompt, makeCopy, makeFaceCrop, makeGrid, chooseTargets, choosePhotos, momentPhotos, verifyStripped,
   validateProposal as rawValidateProposal, ownerEmotions, parseClaudeResult, summarize,
   renderSheet as rawRenderSheet, run as rawRun } from './media-memory-orb-trial.mjs';
 
@@ -319,4 +319,35 @@ test('makeCopy: 크기를 못 읽거나 사본 방향이 원본과 다르면 멈
   assert.throws(() => makeCopy('/src.jpg', target, convert('{"width":0,"height":10}'), inspect({ ImageWidth: 10, ImageHeight: 10 }), 30_000, 'py'), /크기 읽기 실패/);
   assert.throws(() => makeCopy('/src.jpg', target, convert('{"width":900,"height":1200}'), inspect({ ImageWidth: 768, ImageHeight: 576 }), 30_000, 'py'), /방향이 원본과 다름/);
   assert.deepEqual(makeCopy('/src.jpg', target, convert('{"width":900,"height":1200}'), inspect({ ImageWidth: 576, ImageHeight: 768 }), 30_000, 'py'), { width: 900, height: 1200 });
+});
+
+test('makeFaceCrop: 세운 원본 좌표 상자로 얼굴을 잘라 448px로 키우고 메타데이터를 지운다(0600), 상자가 이상하면 만들지 않는다', (t) => {
+  const python = MEDIA_FACES_PATHS.python;
+  if (!existsSync(python)) { t.skip('faces-venv 없음'); return; }
+  const out = mkdtempSync(join(tmpdir(), 'orb-face-'));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const rotated = join(out, 'rotated.jpg');
+  // 가로 1200x900에 회전 태그 6 → 세우면 900x1200. 세운 좌표 (400,500)~(500,600)에만 흰 네모(얼굴 자리), 나머지 빨강 + GPS.
+  const generated = spawnSync(python, ['-c', `from PIL import Image, ImageOps\nimport sys\nupright = Image.new('RGB', (900, 1200), 'red')\nupright.paste((255, 255, 255), (400, 500, 500, 600))\nraw = upright.transpose(Image.ROTATE_90)\nexif = Image.Exif()\nexif[0x0112] = 6\nexif[0x8825] = {1: 'N', 2: (37.0, 30.0, 0.0)}\nraw.save(sys.argv[1], exif=exif, quality=95)\n`, rotated], { encoding: 'utf8' });
+  assert.equal(generated.status, 0, generated.stderr);
+  const target = join(out, 'face.jpg');
+  assert.deepEqual(makeFaceCrop(rotated, target, [400, 500, 500, 600]), { width: 448, height: 448 });
+  assert.equal(statSync(target).mode & 0o777, 0o600);
+  assert.doesNotThrow(() => verifyStripped(target));
+  // 가운데가 흰 얼굴 자리(세운 좌표로 잘랐다는 뜻 — 회전 전 좌표로 자르면 빨강).
+  const center = spawnSync(python, ['-c', `from PIL import Image\nimport sys\nprint(Image.open(sys.argv[1]).getpixel((224, 224)))`, target], { encoding: 'utf8' }).stdout.trim();
+  assert.match(center, /^\((2[3-5]\d), (2[3-5]\d), (2[3-5]\d)\)$/, center);
+  for (const bad of [[1, 2, 3], [NaN, 0, 10, 10], null]) assert.equal(makeFaceCrop(rotated, join(out, 'bad.jpg'), bad), null);
+});
+
+test('makeFaceCrop: 메타데이터가 남으면 던진다(호출 순서 python → exiftool 지우기 → 검증)', () => {
+  const calls = [];
+  const out = mkdtempSync(join(tmpdir(), 'orb-face-stub-'));
+  try {
+    const target = join(out, 'face.jpg');
+    const convert = (command, args) => { calls.push(command === 'exiftool' ? `exiftool ${args[0]}` : 'python'); if (command !== 'exiftool') writeFileSync(target, 'x'); return '{"width":448,"height":448}'; };
+    const inspect = (command, args) => { calls.push(`inspect ${args[0]}`); return JSON.stringify([{ SourceFile: target, 'IFD0:Make': 'Samsung' }]); };
+    assert.throws(() => makeFaceCrop('/x/src.jpg', target, [1, 2, 30, 40], convert, inspect), /메타데이터 잔류: IFD0:Make/);
+    assert.deepEqual(calls, ['python', 'exiftool -all=', 'inspect -j']);
+  } finally { rmSync(out, { recursive: true, force: true }); }
 });

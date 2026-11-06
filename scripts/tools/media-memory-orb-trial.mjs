@@ -266,6 +266,23 @@ export function makeCopy(source, target, convert = runTool, inspect = runTool, t
   return upright;
 }
 
+// 얼굴 확대 그림(0.4-face): 세운 원본에서 미네 얼굴 상자를 가운데 두고 얼굴 긴 변의 2.2배 정사각형으로 잘라 448px로 키운다.
+// 메타데이터를 지우고 확인한다(makeCopy와 같은 규칙). 원본 좌표 상자(card.mineBox)는 세운 원본 기준이다.
+export const FACE_CROP_PX = 448;
+export const FACE_CROP_SCRIPT = `from PIL import Image, ImageOps\nfrom pillow_heif import register_heif_opener\nimport sys, json\nregister_heif_opener()\nx1, y1, x2, y2 = [float(v) for v in sys.argv[3:7]]\nwith Image.open(sys.argv[1]) as source:\n    photo = ImageOps.exif_transpose(source).convert('RGB')\n    side = max(x2 - x1, y2 - y1) * 2.2\n    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2\n    left, top = max(0, cx - side / 2), max(0, cy - side / 2)\n    right, bottom = min(photo.width, cx + side / 2), min(photo.height, cy + side / 2)\n    if right - left < 8 or bottom - top < 8: raise SystemExit('face box too small')\n    crop = photo.crop((int(left), int(top), int(right), int(bottom)))\n    if max(crop.size) > ${FACE_CROP_PX}: crop.thumbnail((${FACE_CROP_PX}, ${FACE_CROP_PX}))\n    scale = ${FACE_CROP_PX} / max(crop.size)\n    if scale > 1: crop = crop.resize((round(crop.width * scale), round(crop.height * scale)), Image.LANCZOS)\n    crop.save(sys.argv[2], 'JPEG', quality=90)\nprint(json.dumps({'width': crop.width, 'height': crop.height}))\n`;
+export function makeFaceCrop(source, target, box, convert = runTool, inspect = runTool, timeoutMs = 30_000, python = MEDIA_FACES_PATHS.python) {
+  if (!Array.isArray(box) || box.length !== 4 || !box.every(Number.isFinite)) return null;
+  const deadline = Date.now() + timeoutMs;
+  const timed = (tool, command, args) => tool(command, args, Math.max(1, deadline - Date.now()));
+  mkdirSync(resolve(target, '..'), { recursive: true, mode: 0o700 });
+  const size = JSON.parse(timed(convert, python, ['-c', FACE_CROP_SCRIPT, source, target, ...box.map(String)]));
+  chmodSync(target, 0o600);
+  timed(convert, 'exiftool', ['-all=', '-overwrite_original', target]);
+  chmodSync(target, 0o600);
+  verifyStripped(target, (command, args) => timed(inspect, command, args));
+  return size;
+}
+
 export function makeGrid(copies, target, execute = spawnSync, inspect = runTool, timeoutMs = 30_000, python = MEDIA_FACES_PATHS.python) {
   const deadline = Date.now() + timeoutMs;
   if (!copies.length) throw new Error('격자에 넣을 사진 없음');

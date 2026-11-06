@@ -19,10 +19,10 @@ import { faceBoxText, loadMineFaces } from '../lib/mine-record-input.mjs';
 import { PHOTO_KINDS, loadPhotoFaces, momentForcesUnknown, photoKind } from '../lib/mine-photo-kind.mjs';
 import { loadCandidates, hasOrb } from '../lib/mine-memory-candidates.mjs';
 import { CLAUDE_RUNS, IMPORTANCE_GUIDE, judgeItems, mineAge, occurredDate, restrictedDecision } from './mine-athena-fields.mjs';
-import { BLOCKED_WINDOW, PHOTO_TEXT_JUDGMENTS_FILE, PHOTO_TEXT_PROMPT_VERSION, SCENE_PROMPT_VERSION, anchorScenesPath, buildPhotoTextPrompt, buildScenePrompt,
+import { BLOCKED_WINDOW, PHOTO_TEXT_JUDGMENTS_FILE, PHOTO_TEXT_PROMPT_VERSION, SCENE_FACE_PROMPT_VERSION, anchorScenesPath, buildPhotoTextPrompt, buildScenePrompt,
   effectiveKind, extractScene, faceEmotionUnknown, inBlockedWindow, kstDay as kstDate, photoTextRoom, unknownReason } from '../lib/mine-photo-scene.mjs';
 import { agentTitle } from '../lib/agent-registry.mjs';
-import { choosePhotos, makeCopy, makeGrid, buildPrompt, momentNoteData, ownerEmotions, parseClaudeResult, validateProposal } from '../tools/media-memory-orb-trial.mjs';
+import { choosePhotos, makeCopy, makeFaceCrop, makeGrid, buildPrompt, momentNoteData, ownerEmotions, parseClaudeResult, validateProposal } from '../tools/media-memory-orb-trial.mjs';
 import { EMOTION_STATES, SCORE_REQUIRED, deriveEmotionFields, judgmentPreamble, loadEmotionAnchors, scoreProperties } from '../lib/mine-judgment-prompt.mjs';
 
 export const NIGHTLY_LIMIT = 50;
@@ -141,7 +141,11 @@ export async function judgeSceneMoment(item, photos, { criteria, anchors, anchor
 }
 
 // 장면 낱말 저장 읽기: 사진 id → 장면 낱말(이 판만). 끝 줄이 덜 쓰였으면 버린다.
-export function readScenes(path, version = SCENE_PROMPT_VERSION) {
+// 잡의 장면 낱말 판(2026-11-04 오너 채택): 얼굴 확대 0.4-face + 질문 0.3 — holdout 29/39(74%, 0.1은 56%).
+// 결과 `Media/MemoryOrb/review/photo-2026-11-01-13-08/photo-prompt-result-2026-11-04.md`.
+export const JOB_SCENE_VERSION = SCENE_FACE_PROMPT_VERSION;
+
+export function readScenes(path, version = JOB_SCENE_VERSION) {
   const found = new Map();
   if (!existsSync(path)) return found;
   const lines = readFileSync(path, 'utf8').split('\n');
@@ -154,8 +158,11 @@ export function readScenes(path, version = SCENE_PROMPT_VERSION) {
 }
 
 // 기준 예시 사진의 장면 낱말(평가 도구 --stage=anchors가 맥 안에서 만든 것). 없으면 사진 기준 예시를 뺀다.
-export function loadAnchorScenes(path = anchorScenesPath()) {
-  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
+export function loadAnchorScenes(path = anchorScenesPath(undefined, JOB_SCENE_VERSION)) {
+  if (!existsSync(path)) return {};
+  // 판 이름은 파일 이름으로 정해지지만 행마다 한 번 더 거른다(리뷰 LOW). 판이 적히지 않은 옛 행은 그대로 둔다.
+  return Object.fromEntries(Object.entries(JSON.parse(readFileSync(path, 'utf8')))
+    .filter(([, entry]) => !entry?.sceneVersion || entry.sceneVersion === JOB_SCENE_VERSION));
 }
 
 export function readRuns(path) {
@@ -245,7 +252,7 @@ function logRow(path, row) {
 
 export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PATHS.mediaRoot,
   out = RUN_ROOT, dryRun = false, limit = NIGHTLY_LIMIT, candidates,
-  judge, cooldown = cooldownActive, copyPhoto = makeCopy, gridPhoto = makeGrid,
+  judge, cooldown = cooldownActive, copyPhoto = makeCopy, cropFace = makeFaceCrop, gridPhoto = makeGrid,
   write = writeAtomic, rules, registryText, criteria, charter, photoScores, visionRows,
   output = console, now = () => Date.now(), engine = 'claude', unload = unloadOllamaModel, invoke, readImage, mineFaces, photoFaces, anchors,
   anchorScenes, ignoreWindow = false } = {}) {
@@ -276,7 +283,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   // 판단 기록: 어느 엔진·모델·기준·프롬프트 판으로 판단했나(구슬 색인 행과 runs.jsonl에 남김).
   const version = { engine: sceneMode ? 'claude' : engine, model: engine === 'ollama' ? OLLAMA_MODELS.vision : agent.model,
     criteriaRef: activeCriteria.ref ?? null, promptVersion: PROMPT_VERSIONS[engine],
-    ...(sceneMode ? { sceneEngine: 'ollama', sceneModel: OLLAMA_MODELS.vision, scenePromptVersion: SCENE_PROMPT_VERSION } : {}) };
+    ...(sceneMode ? { sceneEngine: 'ollama', sceneModel: OLLAMA_MODELS.vision, scenePromptVersion: JOB_SCENE_VERSION } : {}) };
   // 사진 글 판의 판단 기록(하루 상한·이미 끝난 순간 거르기). 평가 도구(mode review)와 같은 파일이라 상한을 함께 센다.
   const ledgerPath = join(out, PHOTO_TEXT_JUDGMENTS_FILE);
   const scenesPath = join(out, SCENES_FILE);
@@ -312,7 +319,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
   if (dryRun) {
     output.log(`사진 기억 구슬 후보 ${summary.candidates}개; 오늘 상한 ${NIGHTLY_LIMIT}개; 읽기 전용 dry-run`);
     if (sceneMode) {
-      output.log(`사진 글 판 ${version.promptVersion}(장면 ${SCENE_PROMPT_VERSION}): 오늘 남은 Claude 호출 ${photoTextRoom(readJudgments(ledgerPath), now())}번, `
+      output.log(`사진 글 판 ${version.promptVersion}(장면 ${JOB_SCENE_VERSION}): 오늘 남은 Claude 호출 ${photoTextRoom(readJudgments(ledgerPath), now())}번, `
         + `이 판으로 끝난 순간 ${sceneDone.size}개, 기준 예시 사진 장면 낱말 ${Object.keys(activeAnchorScenes).length}개${blocked() ? `, 지금은 ${BLOCKED_WINDOW.text} 회차 시간` : ''}`);
     }
     for (const item of selected) {
@@ -390,6 +397,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
           const kind = usesFaces ? photoKind({ analyzed: allFaces.has(photo.id), faces: allFaces.get(photo.id) ?? [],
             mineIndex: faces.get(photo.id)?.i, size }) : null;
           copies.push({ id: photo.id, path, sourcePath: photo.path, reason: photo.reason, face: faceBoxText(faces.get(photo.id)?.bbox, size),
+            faceBox: faces.get(photo.id)?.bbox ?? null,
             ...(kind ? { kind: kind.kind, kindReason: kind.reason } : {}) });
         }
         const gridPath = join(copyDir, `${item.id}-grid.jpg`);
@@ -414,19 +422,38 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
             let row = stored.get(copy.id);
             if (!row) {
               if (now() - runStarted >= MAX_JOB_MS) throw new Error('잡 시간 상한');
-              const { scene, usage } = await extractScene({ image: (readImage ?? ((file) => readFileSync(file).toString('base64')))(copy.path),
+              const read = readImage ?? ((file) => readFileSync(file).toString('base64'));
+              // 얼굴 확대 그림: 원본에서 미네 얼굴 상자를 잘라 키움(맥 안·메타데이터 제거). 못 만들면 사진 전체만(장면 낱말 실패로 세지 않음).
+              // 파일 이름은 검증된 순간 id + 순번(사진 id는 노트에서 와 형식 검증이 없다 — 리뷰 LOW).
+              const facePath = join(copyDir, `${item.id}-${copies.indexOf(copy) + 1}-face.jpg`);
+              let faceImage = null; let faceCropError = null;
+              // 상자가 세운 원본 밖이면(copy.face가 null) 엉뚱한 곳을 키우지 않게 만들지 않는다(리뷰 LOW).
+              if (copy.faceBox && copy.face) {
+                try {
+                  faceImage = cropFace(resolve(mediaRoot, copy.sourcePath), facePath, copy.faceBox, undefined, undefined,
+                    Math.max(1, MAX_JOB_MS - (now() - runStarted))) ? read(facePath) : null;
+                } catch (error) {
+                  faceCropError = error.message;
+                  // 확대 실패는 집계해 회차 요약·runs.jsonl·판단 기록에 남긴다 — 채택 근거(74%)는 확대 그림이 있는 판이다(리뷰 MEDIUM).
+                  summary.faceCropFailures = (summary.faceCropFailures ?? 0) + 1;
+                  output.error(`[media-memory-orb] 얼굴 확대 그림 실패(사진 전체만): ${error.message}`);
+                } finally { rmSync(facePath, { force: true }); }
+              }
+              if (now() - runStarted >= MAX_JOB_MS) throw new Error('잡 시간 상한');
+              const { scene, usage } = await extractScene({ image: read(copy.path), faceImage,
                 age: mineAge(item.fields.occurred), kind: copy.kind ?? null, kindReason: copy.kindReason ?? null, face: copy.face,
                 ...(invoke ? { invoke } : {}), timeoutMs: Math.max(1, Math.min(OLLAMA_CALL_MS, MAX_JOB_MS - (now() - runStarted))),
                 usageLogger: (line) => output.log(`[media-memory-orb] ${line}`) });
-              row = { photoId: copy.id, sceneVersion: SCENE_PROMPT_VERSION, model: OLLAMA_MODELS.vision, scene, usage, at: new Date(now()).toISOString() };
+              row = { photoId: copy.id, sceneVersion: JOB_SCENE_VERSION, model: OLLAMA_MODELS.vision, faceCrop: Boolean(faceImage), ...(faceCropError ? { faceCropError } : {}), scene, usage, at: new Date(now()).toISOString() };
               logRow(scenesPath, row);
             }
-            Object.assign(copy, { scene: row.scene }, effectiveKind(copy.kind ?? null, row.scene, copy.kindReason ?? null));
+            Object.assign(copy, { scene: row.scene, faceCrop: row.faceCrop ?? null }, effectiveKind(copy.kind ?? null, row.scene, copy.kindReason ?? null));
           }
           const judged = await judgeSceneMoment(item, copies, { criteria: activeCriteria, anchors: activeAnchors, anchorScenes: activeAnchorScenes,
             decide, quota, deadline: runStarted + MAX_JOB_MS, now });
           ledgerRow = { mode: 'orb', id: item.id, rel: item.rel, at: kstDate(now()), ...version, calls: judged.calls ?? 0,
             photoKinds: copies.map((copy) => copy.kind ?? null), kindCorrected: copies.map((copy) => Boolean(copy.corrected)),
+            faceCrops: copies.map((copy) => copy.faceCrop ?? null),
             redactions: judged.built.redactions, photoAnchors: judged.built.photoAnchorsUsed.length,
             ...(judged.forced ? { forcedUnknown: true } : {}), ...(judged.answers ? { answers: judged.answers.map((answer) => ({
               emotionState: answer.emotionState, primaryEmotion: answer.fields.primaryEmotion, emotionIntensity: answer.fields.emotionIntensity,
@@ -535,7 +562,7 @@ export async function run({ root = VAULT_PATHS.root, mediaRoot = MEDIA_FACES_PAT
       }
     }
     if (!summary.failed.length) rmSync(copyDir, { recursive: true, force: true });
-    output.log(`[media-memory-orb] ${engine} 후보 ${summary.candidates}, 시도 ${attemptedThisRun}, 기록 ${summary.written}, 부분 실패 ${summary.failed.length}, 쿨다운 ${summary.cooldown}, 시간 상한 ${summary.timedOut}${summary.unavailable ? ', Ollama 멈춤' : ''}${summary.ambiguous?.length ? `, 애매함 ${summary.ambiguous.length}` : ''}${summary.capped ? ', 하루 상한' : ''}`);
+    output.log(`[media-memory-orb] ${engine} 후보 ${summary.candidates}, 시도 ${attemptedThisRun}, 기록 ${summary.written}, 부분 실패 ${summary.failed.length}, 쿨다운 ${summary.cooldown}, 시간 상한 ${summary.timedOut}${summary.unavailable ? ', Ollama 멈춤' : ''}${summary.ambiguous?.length ? `, 애매함 ${summary.ambiguous.length}` : ''}${summary.capped ? ', 하루 상한' : ''}${summary.faceCropFailures ? `, 얼굴 확대 실패 ${summary.faceCropFailures}(사진 전체로 판단)` : ''}`);
     return summary;
   }, { retries: 0 });
   // 16GB라 다음 잡(텍스트 모델)이 올라오기 전에 내린다. 시험 주입(judge)이면 부르지 않는다.
