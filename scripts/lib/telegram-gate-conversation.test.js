@@ -488,7 +488,7 @@ test('routeTarget: 담당 이름 호출 한 건은 그 담당, 기호 없는 사
   assert.equal(routeTarget([item(1, '제우스 뭐해', { department: '제우스' })], deps), 'zeus');
   assert.equal(routeTarget([item(1, '', { kind: 'photo' })], deps), 'clio');
   assert.equal(routeTarget([item(1, '헤르메스 a', { department: '헤르메스' }), item(2, 'b')], deps), 'zeus');
-  assert.equal(routeTarget([item(1, '주말 일정')], deps), 'zeus');
+  assert.equal(routeTarget([item(1, '주말 계획')], deps), 'zeus');
   assert.equal(routeTarget([item(1, '헤르메스 a', { department: '헤르메스' })], []), 'zeus', '담당 프로세스가 없으면 예전처럼 제우스');
 });
 
@@ -520,7 +520,7 @@ test('제우스 넘김: 제우스가 handoff를 내면 같은 묶음에서 그 �
     ok('zeus', '네'),
   ] });
   try {
-    await s.conv.processBatch([item(1, '이번 주말 일정 알려줘')]);
+    await s.conv.processBatch([item(1, '이번 주말 계획 알려줘')]);
     assert.equal(s.runs.length, 2);
     const zeusArgs = s.runs[0];
     const schema = JSON.parse(flag(zeusArgs, '--json-schema'));
@@ -530,7 +530,7 @@ test('제우스 넘김: 제우스가 handoff를 내면 같은 묶음에서 그 �
     assert.ok(zeusAllowed.includes('Agent'));
     assert.match(flag(zeusArgs, '--append-system-prompt'), /handoff/);
     assert.match(flag(s.runs[1], '--append-system-prompt'), /텔레그램 창구의 헤르메스/);
-    assert.match(flag(s.runs[1], '-p'), /이번 주말 일정 알려줘[\s\S]*제우스가 너에게 넘긴 요청: 이번 주말 일정 정리/);
+    assert.match(flag(s.runs[1], '-p'), /이번 주말 계획 알려줘[\s\S]*제우스가 너에게 넘긴 요청: 이번 주말 일정 정리/);
     const answers = s.sent.filter((m) => m.topic === '답');
     assert.deepEqual(answers.map((m) => m.agent), ['zeus', 'hermes']);
     await s.conv.processBatch([item(2, '고마워')]);
@@ -604,7 +604,7 @@ test('호출: 상시 프로세스를 예열 턴으로 띄우고 결정론 "준�
     assert.equal(live.turns.length, 1, '이미 떠 있으면 다시 띄우지 않는다');
     assert.equal(s.sent[1].body, '이미 준비됨');
     // 다음 질문은 같은 프로세스(같은 키·세션)로 이어진다.
-    await s.conv.processBatch([item(1, '주말 일정')]);
+    await s.conv.processBatch([item(1, '주말 계획')]);
     assert.equal(live.turns[1].key, 'zeus');
     assert.equal(live.turns[1].sessionId, live.turns[0].sessionId);
   } finally { s.cleanup(); }
@@ -618,7 +618,7 @@ test('담당 호출: 그 담당 프로세스를 띄우고, 다음 메시지 하�
     assert.equal(live.turns[0].key, 'hermes');
     assert.match(s.sent[0].body, /^준비됨 · 0초\n· 다음 메시지 하나는 헤르메스가 바로 받습니다\.$/);
     assert.equal(s.sent[0].agent, 'hermes');
-    await s.conv.processBatch([item(1, '주말 일정')]);
+    await s.conv.processBatch([item(1, '주말 계획')]);
     assert.equal(live.turns[1].key, 'hermes');
     await s.conv.processBatch([item(2, '고마워')]);
     assert.equal(live.turns[2].key, 'zeus');
@@ -646,12 +646,12 @@ test('담당 직통은 오너가 친 글에만 적용·소거(약속 이행·사
     assert.equal(live.turns.at(-1).key, 'zeus');
     await s.conv.processBatch([item(5, '', { kind: 'photo', fileId: 'p' })]);
     assert.equal(live.turns.at(-1).key, 'clio');
-    await s.conv.processBatch([item(6, '주말 일정')]);
+    await s.conv.processBatch([item(6, '주말 계획')]);
     assert.equal(live.turns.at(-1).key, 'hermes', '직통은 오너 글이 쓴다');
     // 그냥 "호출"은 앞 담당 직통을 지운다.
     await s.conv.warmup({ agent: 'plutus' }, meta);
     await s.conv.warmup({ agent: 'zeus' }, meta);
-    await s.conv.processBatch([item(7, '체결 알려줘')]);
+    await s.conv.processBatch([item(7, '내일 계획')]);
     assert.equal(live.turns.at(-1).key, 'zeus');
   } finally { s.cleanup(); }
   const failing = fakePool();

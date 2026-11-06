@@ -3,6 +3,7 @@
 // 설계 6·7·9절, 결정 `텔레그램-관문` 3~8항. 네트워크·프로세스는 모두 주입받는다(시험은 가짜로).
 import { buildGateClaudeArgs, buildGateMcpConfig, buildGateOutputSchema, GATE_EFFORT, GATE_MODEL, SOFT_TIMEOUT_MS } from './telegram-gate-llm.mjs';
 import { gateBuiltinTools, gateMcpToolsFor } from './telegram-gate-tool-table.mjs';
+import { keywordTarget } from './telegram-gate-keywords.mjs';
 import { AGENT_IDS, agentTitle } from './agent-registry.mjs';
 import { applyProgress, createEditThrottle, describeEvent, initialProgress, renderProgress } from './telegram-gate-progress.mjs';
 import { buildDepartmentSystemPrompt, buildGateSystemPrompt, buildMessagePrompt, businessDay, createActorTracker, fallbackMessage, previousDay, toGateMessages } from './telegram-gate-session.mjs';
@@ -25,7 +26,8 @@ export function routeTarget(items, departments = []) {
   if (items.length !== 1) return 'zeus';
   const { args } = items[0];
   const byTitle = args.department ? AGENT_IDS.find((id) => agentTitle(id) === args.department) : null;
-  const target = byTitle ?? (args.kind === 'photo' ? 'clio' : 'zeus');
+  // 이름으로 부르지 않은 오너 글은 낱말 표로 고른다(한 담당 낱말만·판단 질문 아님일 때만, 속도 개선 2차 A-2).
+  const target = byTitle ?? (args.kind === 'photo' ? 'clio' : args.kind === 'text' ? (keywordTarget(args.text) ?? 'zeus') : 'zeus');
   return target !== 'zeus' && departments.includes(target) ? target : 'zeus';
 }
 const NO_CONVERSATION_RE = /No conversation found|no conversation/i;
