@@ -115,7 +115,7 @@ export function createGateMcpTools(deps = {}) {
     },
     {
       name: 'record_search',
-      description: '기록 노트(📜 메모·오너 기록, 20_Records/21_Notes)를 낱말·기간으로 찾는다(제목·설명·사람·본문). 기본 최근 90일. 미네·가족 일화 질문은 이것부터.',
+      description: `기록 노트(📜 메모·오너 기록, ${VAULT_REL.recordsNotes})를 낱말·기간으로 찾는다(제목·설명·사람·본문). 기본 최근 90일. 미네·가족 일화 질문은 이것부터.`,
       inputSchema: { type: 'object', properties: { query: str('낱말(예: 노래)'), from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD'), limit: { type: 'integer' } }, additionalProperties: false },
       handler: async (a) => recordSearch(a, { now: now() }),
     },
