@@ -77,7 +77,7 @@ case "$JOB" in
   media-night-check) CMD=(scripts/jobs/media-night-check.mjs) ;; # 05:00 밤 점검(음성·사진·영상 블록 결과, 남은 일)
   media-faces-hold-monthly) CMD=(scripts/jobs/media-faces-hold-monthly.mjs) ;;
   media-delete-report-weekly) CMD=(scripts/jobs/media-delete-report-weekly.mjs) ;;
-  media-memory-orb) CMD=(scripts/jobs/media-memory-orb.mjs) ;;
+  media-memory-orb) CMD=(scripts/jobs/media-memory-orb.mjs --engine=scene-claude) ;; # 사진은 맥 밖으로 안 보냄: 로컬 장면 낱말 → Claude 글 판단(2026-11-06)
   mine-athena-fields) CMD=(scripts/jobs/mine-athena-fields.mjs) ;;
   backup-vault)   CMD=(scripts/jobs/backup-vault-snapshot.mjs) ;;
   vault-offsite-backup) CMD=(scripts/jobs/vault-offsite-backup.mjs) ;;

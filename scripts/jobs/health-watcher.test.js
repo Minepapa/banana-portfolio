@@ -720,7 +720,7 @@ test('중단된 사진 구슬 잡은 디스패치 정의를 보존하되 오래�
   assert.match(plist, /<string>com\.banana2\.media-memory-orb<\/string>/);
   assert.match(plist, /<key>Hour<\/key><integer>2<\/integer><key>Minute<\/key><integer>20<\/integer>/);
   assert.match(plist, /<string>media-memory-orb<\/string>/);
-  assert.match(runSh, /media-memory-orb\) CMD=\(scripts\/jobs\/media-memory-orb\.mjs\)/);
+  assert.match(runSh, /media-memory-orb\) CMD=\(scripts\/jobs\/media-memory-orb\.mjs --engine=scene-claude\)/); // 2026-11-06 사진 글 판
   assert.match(runSh, /mine-athena-fields\) CMD=\(scripts\/jobs\/mine-athena-fields\.mjs\)/);
   assert.equal(EXPECTED_INTERVALS_MS['mine-athena-fields'], 24 * 60 * 60 * 1000);
   for (const job of ['media-memory-orb']) {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildFrontmatter, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
@@ -596,4 +597,9 @@ test('scene-claude: 얼굴 확대 그림을 못 만들면 사진 전체만으로
   assert.equal(summary.faceCropFailures, 1);
   assert.equal(existsSync(written), false, '실패해도 확대 그림 파일을 지운다');
   assert.deepEqual(ledger(fixture)[0].faceCrops, [false]);
+});
+
+test('launchd 실행은 사진 글 판(scene-claude) — 옛 격자 경로(사진을 Claude가 직접 봄)로 돌지 않는다', () => {
+  const runner = readFileSync(join(fileURLToPath(new URL('../..', import.meta.url)), 'scripts/launchd/run.sh'), 'utf8');
+  assert.match(runner, /media-memory-orb\) CMD=\(scripts\/jobs\/media-memory-orb\.mjs --engine=scene-claude\)/);
 });
