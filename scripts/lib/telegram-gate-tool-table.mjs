@@ -10,15 +10,17 @@
 export const GATE_READ_TOOLS = Object.freeze(['Read', 'Grep', 'Glob']);
 export const GATE_COMMON_MCP_TOOLS = Object.freeze(['department_facts', 'facts_tool', 'request_record']);
 export const VAULT_RECORD_TOOLS = Object.freeze(['memo_record', 'photo_record', 'place_register', 'wiki_question_resolve']);
+// 전용 조회 도구(속도 개선 2차 B-6, 읽기만): 소비·동선은 헤르메스, 통화·사진은 아테나·클리오, 제우스는 전부.
+export const SEARCH_TOOLS = Object.freeze(['spending_search', 'location_search', 'call_search', 'media_search']);
 
 export const GATE_TOOL_TABLE = Object.freeze({
-  zeus: Object.freeze([...GATE_COMMON_MCP_TOOLS, 'calendar_list', 'calendar_add_event', 'tasks_add', 'tasks_delete', 'proposal_reply', 'order_stage',
+  zeus: Object.freeze([...GATE_COMMON_MCP_TOOLS, 'calendar_list', ...SEARCH_TOOLS, 'calendar_add_event', 'tasks_add', 'tasks_delete', 'proposal_reply', 'order_stage',
     'promise_add', 'promise_cancel', 'promise_list']),
-  hermes: Object.freeze([...GATE_COMMON_MCP_TOOLS, 'calendar_list', 'calendar_add_event', 'tasks_add', 'tasks_delete']),
+  hermes: Object.freeze([...GATE_COMMON_MCP_TOOLS, 'calendar_list', 'spending_search', 'location_search', 'calendar_add_event', 'tasks_add', 'tasks_delete']),
   plutus: Object.freeze([...GATE_COMMON_MCP_TOOLS, 'order_stage', 'proposal_reply']),
-  athena: Object.freeze([...GATE_COMMON_MCP_TOOLS]),
+  athena: Object.freeze([...GATE_COMMON_MCP_TOOLS, 'call_search', 'media_search']),
   themis: Object.freeze([...GATE_COMMON_MCP_TOOLS]),
-  clio: Object.freeze([...GATE_COMMON_MCP_TOOLS, ...VAULT_RECORD_TOOLS]),
+  clio: Object.freeze([...GATE_COMMON_MCP_TOOLS, 'call_search', 'media_search', ...VAULT_RECORD_TOOLS]),
 });
 
 // 내장 도구: 모두 읽기 도구만. 하위 에이전트(Agent)는 없다 — 제우스는 담당 상시 프로세스로 넘긴다(handoff). 창구는 판테온 루트 밖에서

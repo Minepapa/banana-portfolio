@@ -25,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import { describeCalendarDay } from '../tools/calendar-facts.mjs';
 import { calendarDayPath, nextDates } from './calendar-days.mjs';
 import { gateMcpToolsFor } from './telegram-gate-tool-table.mjs';
+import { callSearch, locationSearch, mediaSearch, spendingSearch } from './telegram-gate-search.mjs';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CALENDAR_LIST_MAX_DAYS = 31;
@@ -93,6 +94,30 @@ export function createGateMcpTools(deps = {}) {
       description: '오너·가족 일정을 날짜 범위로 조회한다(볼트 일정 정본, 15분마다 구글 캘린더에서 갱신, 지난날·앞으로 31일). 한 번에 31일까지.',
       inputSchema: { type: 'object', properties: { from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD(없으면 from 하루)') }, required: ['from'], additionalProperties: false },
       handler: async (a) => calendarRangeText(a, readCalendarDay),
+    },
+    {
+      name: 'spending_search',
+      description: '결제·소비를 가게 이름(일부)·기간·최소 금액으로 찾는다(하루 소비 요약 + 뱅크샐러드 보고서). 결과는 최근 순 요약 줄. 기본 최근 365일.',
+      inputSchema: { type: 'object', properties: { query: str('가게·분류 이름 일부(예: 미용실)'), from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD'), minAmount: { type: 'number' }, limit: { type: 'integer' } }, additionalProperties: false },
+      handler: async (a) => spendingSearch(a, { now: now() }),
+    },
+    {
+      name: 'location_search',
+      description: '동선(머문 곳)을 장소 이름 일부·기간으로 찾는다(하루 동선 파일). 기본 최근 30일, 최대 62일.',
+      inputSchema: { type: 'object', properties: { query: str('장소 이름 일부'), from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD'), limit: { type: 'integer' } }, additionalProperties: false },
+      handler: async (a) => locationSearch(a, { now: now() }),
+    },
+    {
+      name: 'call_search',
+      description: '통화·녹음 전사 노트를 사람·주제 낱말·기간으로 찾는다(제목·설명·사람). 기본 최근 90일. 내용이 더 필요하면 찾은 노트를 Read한다.',
+      inputSchema: { type: 'object', properties: { query: str('사람·주제 낱말'), from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD'), limit: { type: 'integer' } }, additionalProperties: false },
+      handler: async (a) => callSearch(a, { now: now() }),
+    },
+    {
+      name: 'media_search',
+      description: '사진·영상 순간 노트를 장소·낱말·기간으로 찾는다(제목·설명). 기본 최근 90일.',
+      inputSchema: { type: 'object', properties: { query: str('장소·낱말'), from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD'), limit: { type: 'integer' } }, additionalProperties: false },
+      handler: async (a) => mediaSearch(a, { now: now() }),
     },
     {
       name: 'memo_record',

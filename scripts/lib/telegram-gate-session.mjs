@@ -80,8 +80,8 @@ function section(markdown, heading) {
 export const GATE_SOURCE_MAP = Object.freeze({
   hermes: [
     `일정: calendar_list 도구(볼트 ${VAULT_REL.calendarDays}/{YYYY}/{날짜}.json, 15분마다 갱신). 할 일: ${VAULT_REL.todoOpen}`,
-    `결제·소비·가게 방문: ${VAULT_REL.spending}(달 합계 ${VAULT_REL.spendingMonthly}, 결제↔동선 ${VAULT_REL.spendingPlaces}/{YYYY}/{날짜}.json)`,
-    `동선·어디 갔었는지: ${VAULT_REL.locationDays}/{YYYY}/{날짜}.json, 오늘은 ${VAULT_REL.locationToday}, 장소 이름 ${VAULT_REL.places}`,
+    `결제·소비·가게 방문: spending_search 도구 먼저(가게 이름·기간). 원본 ${VAULT_REL.spending}(달 합계 ${VAULT_REL.spendingMonthly}, 결제↔동선 ${VAULT_REL.spendingPlaces}/{YYYY}/{날짜}.json)`,
+    `동선·어디 갔었는지: location_search 도구 먼저. 원본 ${VAULT_REL.locationDays}/{YYYY}/{날짜}.json, 오늘은 ${VAULT_REL.locationToday}, 장소 이름 ${VAULT_REL.places}`,
     `하루 기록: ${VAULT_REL.dailyNotes}/{YYYY}/{날짜}.md`,
   ],
   plutus: [
@@ -90,8 +90,8 @@ export const GATE_SOURCE_MAP = Object.freeze({
     '거시·위험: facts_tool risk-facts.mjs·macro-overlay-facts.mjs, 리밸런싱: rebalance-facts.mjs',
   ],
   athena: [
-    `미네 기록: ${VAULT_REL.recordsNotes}·${VAULT_REL.people}/미네.md, 미네 통화·녹음 전사: ${VAULT_REL.mediaConversations}`,
-    `사진·영상: ${VAULT_REL.mediaMoments}, 색인 ${VAULT_REL.mediaArchiveIndex}·${VAULT_REL.mediaVisionIndex}`,
+    `미네 기록: ${VAULT_REL.recordsNotes}·${VAULT_REL.people}/미네.md, 미네 통화·녹음 전사: call_search 도구 먼저(원본 ${VAULT_REL.mediaConversations})`,
+    `사진·영상: media_search 도구 먼저(원본 ${VAULT_REL.mediaMoments}), 색인 ${VAULT_REL.mediaArchiveIndex}·${VAULT_REL.mediaVisionIndex}`,
     `기록 파이프라인 현황: ${VAULT_REL.mineStatusBoard}`,
   ],
   clio: [
