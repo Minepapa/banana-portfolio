@@ -3,7 +3,9 @@
 //   GET /media/status?kind&name&size&sha256[&mtime]          → {state: absent|partial|complete, received}
 //   PUT /media/upload?kind&name&size&sha256&offset[&mtime]   (본문 = offset부터의 바이트)
 // 병행 기간에는 Media/Inbox-Argos에만 둔다. 기존 미디어 잡은 Syncthing의 Media/Inbox만 읽으므로
-// 이 모듈은 미네 기록 파이프라인에 아무 영향을 주지 않는다. 전환 때 dest만 'Inbox'로 바꾼다.
+// 이 모듈은 미네 기록 파이프라인에 아무 영향을 주지 않는다. 전환(2026-11-07)은 argos.json의 mediaDest 하나를
+// "Inbox"로 바꾸고 수신 서버를 다시 띄우는 것이다. 되돌리려면 그 값을 지우거나 "Inbox-Argos"로 둔다.
+// Inbox로 바꾸기 전 Inbox-Argos에만 있던 파일은 scripts/tools/argos-media-backfill.mjs가 Inbox로 채운다.
 // 불변식:
 // - 원본 바이트는 sha256이 맞을 때만 최종 위치에 생긴다. 기존 파일은 절대 덮어쓰지 않는다(link로 생성).
 // - 같은 종류·같은 이름·같은 바이트는 한 번만 보관한다. 종류나 이름이 다르면 각각 둔다(Syncthing과 같게).
@@ -83,7 +85,11 @@ function appendLine(path, line) {
   appendFileSync(path, `${needsNewline ? '\n' : ''}${line}\n`, { mode: 0o600 });
 }
 
+/** 받을 수 있는 위치는 둘뿐이다(오타가 엉뚱한 폴더를 만들어 파이프라인 밖에 파일이 쌓이지 않게). */
+export const ARGOS_MEDIA_DESTS = Object.freeze(['Inbox-Argos', 'Inbox']);
+
 export function createArgosMedia({ root = DEFAULT_ROOT, dest = 'Inbox-Argos', now = () => new Date() } = {}) {
+  if (!ARGOS_MEDIA_DESTS.includes(dest)) throw new Error(`아르고스 mediaDest는 ${ARGOS_MEDIA_DESTS.join('|')} 중 하나: ${dest}`);
   const base = join(root, dest);
   const partsDir = join(base, '.parts');
   const manifestPath = join(base, '.manifest.jsonl');

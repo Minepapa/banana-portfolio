@@ -66,3 +66,18 @@ test('폴더가 없으면 0으로 보고 빠짐 0이면 그렇게 말한다', (t
   assert.equal(report.length, 6);
   assert.match(formatReport(report, 7), /결론: 빠짐 0/);
 });
+
+test('폰 휴지통(.trashed-{초}-이름) 짝이 있는 Syncthing 파일은 빠짐이 아니라 폰 휴지통으로 센다', (t) => {
+  const { root, put, bornAt } = fixture(t);
+  put('Inbox/Screenshots', 'Screenshot_1.jpg', 30);
+  put('Inbox/Screenshots', '.trashed-2000000000-Screenshot_1.jpg', 31);
+  put('Inbox/Screenshots', 'Screenshot_2.jpg', 32); // 짝 없음 → 빠짐
+  put('Trash/2026-10-23/Camera', 'p.jpg', 33);
+  put('Trash/2026-10-23/Camera', '.trashed-2000000001-p.jpg', 34);
+  const report = compareMediaInboxes({ root, sinceMs: NOW - 7 * DAY, bornAt });
+  const shots = report.find((r) => r.kind === 'Screenshots');
+  assert.deepEqual(shots.missing, ['Screenshot_2.jpg']);
+  assert.deepEqual(shots.trashedOnPhone, ['Screenshot_1.jpg']);
+  assert.deepEqual(report.find((r) => r.kind === 'Camera').trashedOnPhone, ['p.jpg']);
+  assert.match(formatReport(report, 7), /Screenshots: .*빠짐 1 .*폰 휴지통 1/);
+});

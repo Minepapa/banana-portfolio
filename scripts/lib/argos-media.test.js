@@ -168,3 +168,17 @@ test('바이트를 다 받았는데 놓이지 못한 조각은 다음 status에�
   assert.equal(result.json.state, 'complete');
   assert.deepEqual(readFileSync(join(root, 'Inbox-Argos', 'Camera', 'stuck.jpg')), file);
 });
+
+test('전환: mediaDest가 Inbox면 파이프라인 입구(Inbox/종류)에 두고, 모르는 값은 거부한다', async (t) => {
+  const root = tempRoot(t);
+  const media = createArgosMedia({ root, dest: 'Inbox', now: () => NOW });
+  const file = randomBytes(1200);
+  for (const kind of ['Recordings', 'Screenshots', 'KakaoTalkMovie']) {
+    const name = `가상_${kind}.bin`;
+    const done = await put(media, { kind, name, size: file.length, sha256: sha(file), offset: 0 }, file);
+    assert.equal(done.json.state, 'complete');
+    assert.deepEqual(readFileSync(join(root, 'Inbox', kind, name)), file);
+  }
+  assert.equal(existsSync(join(root, 'Inbox-Argos')), false);
+  for (const dest of ['inbox', 'Archive', '../Inbox', '']) assert.throws(() => createArgosMedia({ root, dest }), /mediaDest/);
+});

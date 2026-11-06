@@ -8,20 +8,28 @@
 // - 하위 폴더까지 본다(media-archive도 Inbox를 하위 폴더까지 읽는다). 아르고스는 이름만으로 평평하게 둔다.
 // - media-archive가 휴지통(Trash/{날짜}/{종류})으로 옮긴 파일도 Syncthing이 받은 것으로 센다.
 // - 수정 시각이 다른 파일도 따로 센다(보관 잡이 EXIF 없는 파일의 날짜를 mtime으로 정한다).
+// - 폰 휴지통으로 간 파일(Syncthing 쪽에 ".trashed-{초}-{원래 이름}"이 같이 있음)은 아르고스가 받지 않는 게 맞다:
+//   빠짐이 아니라 "폰 휴지통"으로 따로 센다.
 import { lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { MEDIA_KINDS } from '../lib/argos-media.mjs';
 
-function walk(dir, visit) {
+const TRASHED = /^\.trashed-\d+-(.+)$/;
+
+function walk(dir, visit, onTrashed) {
   let entries;
   try { entries = readdirSync(dir, { withFileTypes: true }); }
   catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return; throw error; }
   for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue;
+    if (entry.name.startsWith('.')) {
+      const trashed = onTrashed && entry.isFile() && entry.name.normalize('NFC').match(TRASHED);
+      if (trashed) onTrashed(trashed[1]);
+      continue;
+    }
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) walk(full, visit);
+    if (entry.isDirectory()) walk(full, visit, onTrashed);
     else if (entry.isFile()) {
       // 비교 중에 지워지거나 바뀐 파일은 건너뛴다(한 파일 때문에 비교 전체가 죽지 않게).
       try { visit(entry.name.normalize('NFC'), lstatSync(full)); } catch { /* 경쟁 상황 */ }
@@ -31,13 +39,15 @@ function walk(dir, visit) {
 
 function syncthingFiles(root, kind, sinceMs, bornAt) {
   const out = new Map();
+  const trashed = new Set();
   const add = (name, st) => { if (bornAt(st) >= sinceMs) out.set(name, { size: st.size, mtimeMs: st.mtimeMs }); };
-  walk(join(root, 'Inbox', kind), add);
+  const onTrashed = (name) => trashed.add(name);
+  walk(join(root, 'Inbox', kind), add, onTrashed);
   let days = [];
   try { days = readdirSync(join(root, 'Trash')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   // 날짜 폴더만(.DS_Store 같은 파일은 건너뛴다).
-  for (const day of days.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))) walk(join(root, 'Trash', day, kind), add);
-  return out;
+  for (const day of days.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))) walk(join(root, 'Trash', day, kind), add, onTrashed);
+  return { files: out, trashed };
 }
 
 function argosFiles(root, kind) {
@@ -50,11 +60,12 @@ function argosFiles(root, kind) {
 export function compareMediaInboxes({ root = join(homedir(), 'Pantheon', 'Media'), sinceMs, bornAt = (st) => st.birthtimeMs }) {
   const report = [];
   for (const kind of MEDIA_KINDS) {
-    const sync = syncthingFiles(root, kind, sinceMs, bornAt);
+    const { files: sync, trashed } = syncthingFiles(root, kind, sinceMs, bornAt);
     const argos = argosFiles(root, kind);
     const missing = [];
     const sizeDiff = [];
     const timeDiff = [];
+    const trashedOnPhone = [];
     // 같은 이름에 다른 바이트가 먼저 와 있으면 Syncthing 파일은 "이름 (n)"으로 저장된다: 그 사본도 본다.
     const sameBytes = (name, s) => {
       const exact = argos.get(name);
@@ -71,7 +82,7 @@ export function compareMediaInboxes({ root = join(homedir(), 'Pantheon', 'Media'
     };
     for (const [name, s] of sync) {
       const a = sameBytes(name, s);
-      if (!a) missing.push(name);
+      if (!a) (trashed.has(name) ? trashedOnPhone : missing).push(name);
       else if (a.size !== s.size) sizeDiff.push(name);
       // 1초 안 차이는 파일 시스템 정밀도로 본다.
       else if (Math.abs(a.mtimeMs - s.mtimeMs) > 1000) timeDiff.push(name);
@@ -82,7 +93,7 @@ export function compareMediaInboxes({ root = join(homedir(), 'Pantheon', 'Media'
       return Boolean(m && argos.has(`${m[1]}${m[3]}`));
     };
     const argosOnly = [...argos.keys()].filter((name) => !sync.has(name) && !isConflictCopy(name));
-    report.push({ kind, syncthing: sync.size, argos: argos.size, missing, sizeDiff, timeDiff, argosOnly });
+    report.push({ kind, syncthing: sync.size, argos: argos.size, missing, sizeDiff, timeDiff, trashedOnPhone, argosOnly });
   }
   return report;
 }
@@ -92,7 +103,7 @@ export function formatReport(report, days) {
   let gaps = 0;
   for (const r of report) {
     gaps += r.missing.length + r.sizeDiff.length + r.timeDiff.length;
-    lines.push(`- ${r.kind}: Syncthing ${r.syncthing} · 아르고스 ${r.argos} · 빠짐 ${r.missing.length} · 크기 다름 ${r.sizeDiff.length} · 시각 다름 ${r.timeDiff.length} · 아르고스에만 ${r.argosOnly.length}`);
+    lines.push(`- ${r.kind}: Syncthing ${r.syncthing} · 아르고스 ${r.argos} · 빠짐 ${r.missing.length} · 크기 다름 ${r.sizeDiff.length} · 시각 다름 ${r.timeDiff.length} · 아르고스에만 ${r.argosOnly.length} · 폰 휴지통 ${r.trashedOnPhone.length}`);
   }
   lines.push(gaps === 0 ? '결론: 빠짐 0' : `결론: 빠짐·불일치 ${gaps}건 — 전환하지 않는다`);
   return lines.join('\n');

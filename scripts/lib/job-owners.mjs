@@ -37,6 +37,7 @@ export const JOB_OWNERS = {
   'route-today': 'hermes',
   'owntracks-receiver': 'hermes',
   'argos-ingest': 'hermes',
+  'argos-forward': 'hermes', // 아르고스 위치·소비 전달(2026-11-07 전환)
   'ingest-spending-inbox': 'hermes',
   // 아테나: 미네 기록 수집·기억 구슬
   'media-moments': 'athena',

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.argos-forward</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>argos-forward</string>
+  </array>
+  <!-- 15분 간격(2026-11-07 아르고스 전환) — 아르고스 이벤트(95_Etna/Events)의 위치점·소비 알림을 기존 위치·소비
+       데이터셋으로 넘긴다. 날짜 단위라 매 회차 전날·오늘(--days=2)을 다시 보고, 이미 있는 건(위치 tst·소비 id)은
+       건너뛰어 반복 실행해도 결과가 같다. 소비는 argos.json의 spendingSince 이후만(없으면 넘기지 않음: 알림 앱과
+       이중 집계 방지). scripts/tools/argos-forward.mjs 헤더 참고. -->
+  <key>StartInterval</key>
+  <integer>900</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/argos-forward.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/argos-forward.log</string>
+</dict>
+</plist>

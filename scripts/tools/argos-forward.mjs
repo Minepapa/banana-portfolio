@@ -3,7 +3,11 @@
 // 기본은 미리보기(읽기 전용): 새로 들어갈 건수와 이미 있는 건수만 센다.
 // --apply는 전환 때만 쓴다. 병행 기간에 소비를 넘기면 알림 앱과 아르고스가 같은 결제를 두 번 넣어
 // 지출이 이중 집계된다(두 경로가 같은 출처 이름을 쓰므로 파서의 출처 간 병합으로 걸러지지 않는다).
-//   node scripts/tools/argos-forward.mjs --date=2026-10-28 [--days=7] [--kinds=location,spending] [--apply]
+//   node scripts/tools/argos-forward.mjs --date=2026-10-28 [--days=7] [--kinds=location,spending] [--spending-since=ISO] [--apply]
+// 소비 컷오프(전환 뒤 상시 잡 argos-forward, 15분마다 전날·오늘): 알림 앱 소비 수집을 끈 시각 이전의 결제는 이미
+// 알림 앱으로 들어왔으므로 넘기지 않는다. --spending-since가 없으면 argos.json의 spendingSince를 읽고,
+// 둘 다 없으면 소비는 하나도 넘기지 않는다(안전 기본값). 위치는 컷오프와 무관하다(같은 tst는 저장 함수가 거른다).
+// 모르는 인자는 거부한다: run.sh가 --apply로 부르므로 오타 인자가 조용히 무시된 채 적용되면 안 된다.
 // 6번(닫히지 않은 체류)은 지금 체류 이벤트를 읽는 곳이 없어(동선은 점으로 계산) 이 도구 범위 밖이다.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -11,7 +15,8 @@ import { createLocationStore } from '../jobs/owntracks-receiver.mjs';
 import { locationPointsFromEvents, spendingRecordsFromEvents } from '../lib/argos-forward.mjs';
 import { spendingRawPath, writeSpendingSummary } from '../lib/spending-daily.mjs';
 import { loadEnrichment } from '../lib/spending-enrich.mjs';
-import { withLock, writeAtomic } from '../lib/state-writer.mjs';
+import { readArgosConfig } from '../lib/argos-ingest.mjs';
+import { withLock } from '../lib/state-writer.mjs';
 import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 
 const readJsonl = (path) => (existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean).flatMap((line) => {
@@ -52,10 +57,11 @@ async function appendSpending(records, spendingDir) {
   return written;
 }
 
-export async function forwardArgos({ date, days = 1, kinds = ['location', 'spending'], apply = false,
+/** spendingSinceMs: 이 시각(postedAt, epoch ms) 이후 결제만 넘긴다. null이면 소비는 넘기지 않는다. */
+export async function forwardArgos({ date, days = 1, kinds = ['location', 'spending'], apply = false, spendingSinceMs = null,
   root = VAULT_PATHS.root, spendingDir = VAULT_PATHS.spending, store = createLocationStore({ root }) }) {
   const result = { location: { events: 0, fresh: 0, existing: 0, written: 0 },
-    spending: { events: 0, fresh: 0, existing: 0, written: 0 } };
+    spending: { events: 0, beforeCutoff: 0, fresh: 0, existing: 0, written: 0 } };
   const dates = Array.from({ length: days }, (_, index) => shiftDate(date, -index)).reverse();
   for (const day of dates) {
     const events = readEvents(day, root);
@@ -69,11 +75,13 @@ export async function forwardArgos({ date, days = 1, kinds = ['location', 'spend
       if (apply) for (const point of fresh) if (store(point)) result.location.written += 1;
     }
     if (kinds.includes('spending')) {
-      const records = spendingRecordsFromEvents(events);
+      const all = spendingRecordsFromEvents(events);
+      const records = spendingSinceMs == null ? [] : all.filter((record) => record.postedAt >= spendingSinceMs);
+      result.spending.beforeCutoff += all.length - records.length;
       const ids = new Set(records.flatMap((record) => readJsonl(spendingRawPath(record.ts.slice(0, 10), spendingDir))
         .map((existing) => existing.id)));
       const fresh = records.filter((record) => !ids.has(record.id));
-      Object.assign(result.spending, { events: result.spending.events + records.length,
+      Object.assign(result.spending, { events: result.spending.events + all.length,
         fresh: result.spending.fresh + fresh.length, existing: result.spending.existing + records.length - fresh.length });
       if (apply) result.spending.written += await appendSpending(fresh, spendingDir);
     }
@@ -81,19 +89,43 @@ export async function forwardArgos({ date, days = 1, kinds = ['location', 'spend
   return result;
 }
 
+const ISO_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+
+/** 시간대가 붙은 ISO 시각만 받는다(시간대 없는 값은 맥 시계 기준으로 읽혀 컷오프가 몇 시간 어긋날 수 있다). */
+export function parseSpendingSince(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string' || !ISO_WITH_ZONE.test(value) || !Number.isFinite(Date.parse(value))) {
+    throw new Error('소비 컷오프는 시간대가 붙은 ISO 시각(예: 2026-11-07T09:00:00+09:00)');
+  }
+  return Date.parse(value);
+}
+
+const KNOWN_ARGS = new Set(['date', 'days', 'kinds', 'apply', 'spending-since']);
+
 async function main() {
-  const args = Object.fromEntries(process.argv.slice(2).map((arg) => arg.replace(/^--/, '').split('=')).map(([key, value]) => [key, value ?? true]));
+  const pairs = process.argv.slice(2).map((arg) => {
+    const match = arg.match(/^--([a-z-]+)(?:=(.*))?$/);
+    if (!match || !KNOWN_ARGS.has(match[1])) throw new Error(`모르는 인자 ${arg}`);
+    return [match[1], match[2] ?? true];
+  });
+  const args = Object.fromEntries(pairs);
+  if (args.apply !== undefined && args.apply !== true) throw new Error('--apply는 값 없이');
   const date = args.date ?? new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('--date=YYYY-MM-DD');
   const days = Number(args.days ?? 1);
   if (!Number.isInteger(days) || days < 1 || days > 31) throw new Error('--days는 1~31');
   const kinds = String(args.kinds ?? 'location,spending').split(',');
   if (kinds.some((kind) => !['location', 'spending'].includes(kind))) throw new Error('--kinds는 location,spending 중에서');
-  const result = await forwardArgos({ date, days, kinds, apply: args.apply === true });
+  const since = args['spending-since'] ?? (kinds.includes('spending') ? readArgosConfig()?.spendingSince : undefined);
+  if (since === true) throw new Error('--spending-since=ISO');
+  const spendingSinceMs = parseSpendingSince(since);
+  const result = await forwardArgos({ date, days, kinds, apply: args.apply === true, spendingSinceMs });
   console.log(`[argos-forward] ${date} ${days}일 ${args.apply === true ? '적용' : '미리보기'}`);
   for (const kind of kinds) {
     const r = result[kind];
-    console.log(`  ${kind}: 이벤트 ${r.events} · 새로 ${r.fresh} · 이미 있음 ${r.existing}${args.apply === true ? ` · 씀 ${r.written}` : ''}`);
+    const held = kind === 'spending'
+      ? ` · 컷오프 전 ${r.beforeCutoff}(${spendingSinceMs == null ? '컷오프 없음: 소비 안 넘김' : new Date(spendingSinceMs).toISOString()})` : '';
+    console.log(`  ${kind}: 이벤트 ${r.events}${held} · 새로 ${r.fresh} · 이미 있음 ${r.existing}${args.apply === true ? ` · 씀 ${r.written}` : ''}`);
   }
 }
 

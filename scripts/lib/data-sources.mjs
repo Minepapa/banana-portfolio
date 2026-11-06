@@ -71,9 +71,11 @@ export const DATA_SOURCES = Object.freeze([
     kind: 'display-only', threshold: null, urgent: false, liveness: null,
   },
   {
-    id: 'spending', label: '소비 알림', owner: 'hermes', producer: 'phone:kakao-notification',
+    // 2026-11-07 아르고스 전환: 폰 알림 앱 대신 아르고스 이벤트를 argos-forward 잡이 넘긴다.
+    // 잡이 조용하면 잡 경보로, 폰 아르고스가 조용하면 상태 신호 경보로 갈음한다.
+    id: 'spending', label: '소비 알림', owner: 'hermes', producer: 'argos-forward',
     probe: { type: 'dated-jsonl', pathKey: 'spending', layout: 'year', timeField: 'postedAt' },
-    kind: 'daily-rhythm', threshold: { zeroDays: 3 }, urgent: false, liveness: null,
+    kind: 'daily-rhythm', threshold: { zeroDays: 3 }, urgent: false, liveness: 'argos-heartbeat',
   },
   {
     // daily-note는 23:30 초안·05:00 확정. 다음날 02:00 KST까지 전날 노트가 없으면 통로가 죽은 것이다.

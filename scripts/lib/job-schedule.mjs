@@ -147,6 +147,8 @@ export const EXPECTED_INTERVALS_MS = {
   'telegram-session-health-check': 10 * 60 * 1000,
   // livesync-watch(2026-10-31 신설) — 볼트 LiveSync 업로드 멈춤 감시·Obsidian 자동 재시작. StartInterval=900(15분).
   'livesync-watch': 15 * 60 * 1000,
+  // argos-forward(2026-11-07 아르고스 전환) — 아르고스 이벤트 → 위치·소비 데이터셋. StartInterval=900(15분).
+  'argos-forward': 15 * 60 * 1000,
   // 텔레그램 관문(2026-10-30 관문 1단계) — 상시 데몬이 5분마다 스스로 하트비트를 쓴다(수신 3분 넘게 실패면 FAIL).
   // 15분으로 등록해 30분 동안 기록이 없으면 알린다. 4단계 전환 전에는 JobHealth 파일이 없어 아무 경보도 나지 않는다.
   'telegram-gate': 15 * 60 * 1000,
