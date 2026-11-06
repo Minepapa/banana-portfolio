@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { VAULT_PATHS, VAULT_REL, MEDIA_FACES_PATHS } from '../lib/vault-paths.mjs';
 import { loadEmotionCriteria, validateEmotionResult } from '../lib/mine-emotion-criteria.mjs';
 import { OWNER_ENGINE, appendJudgment, ownerDecided, readJudgments } from '../lib/mine-judgment.mjs';
-import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { assertFrontmatterRoundTrip, parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { checkNote, parseRegistry } from '../lib/vault-registry.mjs';
 import { withLock, writeAtomic } from '../lib/state-writer.mjs';
 import { PHOTO_TEXT_JUDGMENTS_FILE, PHOTO_TEXT_PROMPT_VERSION } from '../lib/mine-photo-scene.mjs';
@@ -49,7 +49,9 @@ export function buildAmbiguousSheet({ root = VAULT_PATHS.root, mediaRoot = MEDIA
     const fields = parseFrontmatter(readFileSync(path, 'utf8'));
     if (ownerDecided(fields)) return [];
     const images = row.photos.flatMap((p) => {
-      try { const image = photo(resolve(mediaRoot, p.path)); return [{ image: image.dataUrl, box: boxPercent(p.faceBox, image.upright) }]; }
+      const source = resolve(mediaRoot, String(p.path ?? ''));
+      if (!source.startsWith(`${resolve(mediaRoot)}/`)) { output.error(`미디어 폴더 밖 경로, 뺌: ${p.path}`); return []; }
+      try { const image = photo(source); return [{ image: image.dataUrl, box: boxPercent(p.faceBox, image.upright) }]; }
       catch (error) { output.error(`사진 사본 실패, 뺌: ${p.path} — ${error.message}`); return []; }
     });
     if (!images.length) return [];
@@ -100,20 +102,29 @@ export async function applyPhotoAnswers({ answersPath, cardsPath, root = VAULT_P
       const absolute = join(root, rel);
       const outcome = await withLock(absolute, () => {
         const content = readFileSync(absolute, 'utf8');
+        const end = content.startsWith('---\n') ? content.indexOf('\n---', 4) : -1;
+        if (end < 0) throw new Error('머리말 없음');
+        const head = content.slice(4, end);
+        // 들여쓴 줄·블록 목록(폰 속성 편집기 모양)은 줄 단위 교체가 깨뜨릴 수 있다 — 손으로 정리한 뒤 다시(통화·녹음 도구와 같은 규칙).
+        if (/^([ \t]+\S|- )/m.test(head)) throw new Error('머리말에 블록 목록·들여쓴 줄이 있음');
         const before = parseFrontmatter(content);
         validateEmotionResult(fields, { recordDate: occurredDate(before.occurred), criteria });
         const next = replaceEmotionFields(content, fields, today);
         if (next === content) return 'same';
+        assertFrontmatterRoundTrip(next, fields);
         const problems = checkNote(rel, next, activeRules);
         if (problems.length) throw new Error(`쓰기 관문: ${problems.join('; ')}`);
         if (dryRun) return 'applied';
         mkdirSync(out, { recursive: true, mode: 0o700 });
-        appendFileSync(backupPath, `${JSON.stringify({ rel, fields: Object.fromEntries([...EMOTION_KEYS, 'modified'].map((key) => [key, before[key] ?? null])) })}\n`, { mode: 0o600 });
+        appendFileSync(backupPath, `${JSON.stringify({ rel, frontmatter: head, fields: Object.fromEntries([...EMOTION_KEYS, 'modified', 'mineAge'].map((key) => [key, before[key] ?? null])) })}\n`, { mode: 0o600 });
         chmodSync(backupPath, 0o600);
         write(absolute, next);
         return 'applied';
       });
-      if (!dryRun && outcome === 'applied') appendJudgment(ledgerPath, { mode: 'orb', id, rel, at: today, engine: OWNER_ENGINE, status: 'applied', source: basename(answersPath), fields });
+      if (!dryRun && outcome === 'applied') {
+        try { appendJudgment(ledgerPath, { mode: 'orb', id, rel, at: today, engine: OWNER_ENGINE, status: 'applied', source: basename(answersPath), fields }); }
+        catch (error) { throw new Error(`노트는 썼으나 판단 기록 실패(노트의 오너 표식으로 다시 묻지 않음): ${error.message}`); }
+      }
       if (dryRun) output.log(`  ${no}. ${title} → ${fields.primaryEmotion ? `${fields.primaryEmotion} ${fields.emotionIntensity}` : answer.state}`);
       summary[outcome].push(rel);
     } catch (error) { summary.errors.push({ rel, reason: error.message }); }
