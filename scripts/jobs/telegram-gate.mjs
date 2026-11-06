@@ -154,7 +154,8 @@ export function createGateDaemon({ gate, inbox, api, send, warn = null, now = ()
       mediaDir: gateMediaDir(gate.stateDir),
       testMode: gate.mode === 'test',
       isStopping: () => state.stopping,
-      faq,
+      // 자주 묻는 질문은 결정론으로 답하되, "{담당} 호출" 직통 상태가 있으면 이 오너 글이 소비한다(지운다).
+      faq: (q) => { conversation?.clearPinned?.(); return faq(q); },
       now,
     });
   }

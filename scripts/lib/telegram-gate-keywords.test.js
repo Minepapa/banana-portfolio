@@ -49,3 +49,19 @@ test('routeTarget: 오너 글만 낱말 표를 본다(사진·전달·여러 건
   assert.equal(routeTarget([it({ kind: 'text', text: '미용실 언제 갔지' })], []), 'zeus');
   assert.equal(routeTarget([it({ kind: 'text', text: '체결 알려줘', department: '아테나' })], deps), 'athena', '이름으로 부르면 그 담당');
 });
+
+test('리뷰 HIGH: 약속·조건부 알림·기록 요청은 그 도구가 없는 담당으로 직행하지 않는다(제우스)', async () => {
+  const { TOOL_NEEDING_REQUESTS } = await import('./telegram-gate-keywords.mjs');
+  for (const text of [
+    '체결되면 알려줘', '예수금 들어오면 바로 알려줘', '주가 떨어지면 말해줘', '보유 종목 리밸런싱 끝나면 알려줘',
+    '내일 일정 리마인더 걸어줘', '일정 잊지 않게 알림 줘', '미네 오늘 학원에서 상 받았어 기록해줘', '미네 이야기 메모 남겨',
+    '결제 내역 저장해 줘', '이번 약속 일정 잡혔어',
+  ]) assert.equal(keywordTarget(text), null, text);
+  // 도구가 있는 담당이면 직행해도 된다(표로 판단).
+  assert.equal(keywordTarget('체결되면 알려줘', { toolsFor: () => ['promise_add'] }), 'plutus');
+  // 조건 없는 "알려줘"·명사 "기록"은 조회라 그대로 직행.
+  assert.equal(keywordTarget('오늘 체결 내역 알려줘'), 'plutus');
+  assert.equal(keywordTarget('지난주 결제 기록 보여줘'), 'hermes');
+  assert.equal(keywordTarget('미네 통화 기록 찾아줘'), 'athena');
+  for (const r of TOOL_NEEDING_REQUESTS) assert.ok(['promise_add', 'memo_record'].includes(r.tool));
+});

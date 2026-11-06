@@ -524,6 +524,8 @@ export function createConversation(deps) {
     state,
     processBatch,
     warmup,
+    // 결정론으로 처리된 오너 글(자주 묻는 질문)도 직통 상태를 소비한다(리뷰 LOW: 호출 직후 FAQ가 오면 직통이 남던 것).
+    clearPinned: () => { state.pinned = null; },
     checkCooldownRelease,
     handleConfirm,
     closeConfirm,

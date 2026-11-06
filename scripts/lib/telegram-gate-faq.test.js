@@ -84,7 +84,7 @@ test('체결·예수금·보유·소비 답: 오늘 것만, 표는 44칸 안(숫
   assert.ok(trades.body.indexOf('ISA') < trades.body.indexOf('위탁'), '시각 순');
   widthOk(trades.body);
   const none = answerFaq(parseFaq('오늘 체결'), { now: NOW, read: { ...read, executions: () => [] } });
-  assert.match(none.body, /체결 기록이 없습니다/);
+  assert.match(none.body, /동기화 시각 모름 · 체결 0건/);
   const cash = answerFaq(parseFaq('예수금'), { now: NOW, read });
   assert.match(cash.body, /1,000 위탁 11-06/);
   widthOk(cash.body);
@@ -121,4 +121,37 @@ test('재료 미리 붙이기: 날짜+일정 낱말이면 일정, 체결·예수
   assert.match(facts, /^· 일정\n■ 11-07\(토\)\n- 종일 \[가족\] 가족 나들이\n- 14:00~15:00 \[나\] <치과>/, 'HTML을 벗긴 평문');
   assert.equal(prefetchFacts('안녕', { now: NOW, read }), null);
   assert.equal(prefetchFacts('오늘 체결', { now: NOW, read: { ...read, executions: () => { throw new Error('x'); } } }), null, '읽기 실패는 붙이지 않는다');
+});
+
+test('리뷰: "N월 N일"은 지난 지 한 달 넘으면 다음 해(연도 표시), 최근 지난 날은 올해', () => {
+  assert.deepEqual(resolveRange({ month: 1, day: 5 }, '2026-12-20'), ['2027-01-05', '2027-01-05']);
+  assert.deepEqual(resolveRange({ month: 11, day: 1 }, '2026-11-06'), ['2026-11-01', '2026-11-01'], '방금 지난 날');
+  assert.deepEqual(resolveRange({ month: 12, day: 25 }, '2026-11-06'), ['2026-12-25', '2026-12-25']);
+  assert.equal(resolveRange({ month: 2, day: 29 }, '2026-11-06'), null, '2027-02-29 없음');
+  const dec = answerFaq(parseFaq('1월 5일 일정'), { now: new Date('2026-12-20T03:00:00Z'), read });
+  assert.match(dec.body, /■ 2027-01-05\(화\)/, '해가 바뀐 날짜는 연도를 붙인다');
+});
+
+test('리뷰: 결정론 답에 데이터 신선도(마지막 갱신·동기화·수집 시각)와 기준 초과면 갱신 지연', async () => {
+  const { freshnessLine } = await import('./telegram-gate-faq.mjs');
+  const nowMs = NOW.getTime();
+  assert.equal(freshnessLine('calendar', nowMs - 10 * 60_000, nowMs), '마지막 갱신 11:50');
+  assert.match(freshnessLine('calendar', nowMs - 90 * 60_000, nowMs), /마지막 갱신 10:30 · 갱신 지연\(90분 전\)/);
+  assert.match(freshnessLine('trades', nowMs - 26 * 3600_000, nowMs, '동기화'), /마지막 동기화 11-05 10:00 · 갱신 지연\(26시간 전\)/);
+  assert.match(freshnessLine('spending', null, nowMs), /시각을 알 수 없음/);
+  const jobs = { 'calendar-days': '2026-11-06T02:50:00Z', 'reconcile-nh-executions': '2026-11-06T02:40:00Z', 'parse-notifications-to-vault': '2026-11-06T00:00:00Z' };
+  const fresh = { ...read, jobLastRun: (job) => jobs[job] ?? null };
+  assert.match(answerFaq(parseFaq('오늘 일정'), { now: NOW, read: fresh }).body, /출처: 볼트 일정 정본 · 마지막 갱신 11:50$/);
+  const zero = answerFaq(parseFaq('오늘 체결'), { now: NOW, read: { ...fresh, executions: () => [] } });
+  assert.match(zero.body, /^오늘\(11-06\(금\)\) 마지막 동기화 11:40 기준 체결 0건/, '가장 최근 동기화 잡 기준');
+  const holdings = answerFaq(parseFaq('보유 요약'), { now: NOW, read: { ...read, holdings: () => read.holdings().map((h, i) => ({ ...h, updatedAt: i ? '2026-11-06T02:00:00Z' : '2026-11-04T02:00:00Z' })) } });
+  assert.match(holdings.body, /마지막 갱신 11:00\(가장 오래된 항목 기준 11-04 11:00\)/);
+  const stale = answerFaq(parseFaq('예수금'), { now: NOW, read: { ...read, holdings: () => read.holdings().map((h) => ({ ...h, updatedAt: '2026-11-04T02:00:00Z' })) } });
+  assert.match(stale.body, /갱신 지연\(49시간 전\)/);
+});
+
+test('리뷰: 오늘 체결은 파일 이름 날짜 접두사로 먼저 거른다(읽기 함수에 오늘 날짜를 넘김)', async () => {
+  const asked = [];
+  answerFaq(parseFaq('오늘 체결'), { now: NOW, read: { ...read, executions: (date) => { asked.push(date); return []; } } });
+  assert.deepEqual(asked, ['2026-11-06']);
 });

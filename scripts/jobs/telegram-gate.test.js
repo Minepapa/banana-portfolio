@@ -641,3 +641,16 @@ test('호출: 대화 줄에서 받은 차례대로 하나씩(묶지 않음), 앞
     for (const id of [1, 2, 3, 4]) assert.equal(s.inbox.get(id).status, '완료');
   } finally { s.cleanup(); }
 });
+
+test('리뷰 LOW: 자주 묻는 질문(결정론)은 대화 직통 상태를 지우고 답한다', async () => {
+  const conv = fakeConversation();
+  let cleared = 0;
+  conv.clearPinned = () => { cleared += 1; };
+  const s = setup({ conversation: conv });
+  try {
+    s.inbox.appendUpdates([msg(1, '예수금 얼마야')]);
+    await s.daemon.processItem(s.inbox.get(1));
+    assert.equal(cleared, 1);
+    assert.equal(s.inbox.get(1).status, '완료');
+  } finally { s.cleanup(); }
+});

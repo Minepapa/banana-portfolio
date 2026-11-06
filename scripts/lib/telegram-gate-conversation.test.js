@@ -690,3 +690,15 @@ test('재료 미리 붙이기: 오너 글로 deps.prefetch를 불러 [창구 사
     assert.doesNotMatch(flag(s.runs[2], '-p'), /창구 사실/);
   } finally { s.cleanup(); }
 });
+
+test('리뷰 LOW: 호출 직통 상태는 clearPinned(결정론 FAQ 처리)로 지워져 다음 대화가 직통으로 가지 않는다', async () => {
+  const live = fakePool();
+  const s = setup({ live, departments: true });
+  try {
+    await s.conv.warmup({ agent: 'hermes' }, meta);
+    assert.equal(s.conv.state.pinned?.agent, 'hermes');
+    s.conv.clearPinned();
+    await s.conv.processBatch([item(1, '내일 계획')]);
+    assert.equal(live.turns.at(-1).key, 'zeus');
+  } finally { s.cleanup(); }
+});

@@ -52,14 +52,21 @@ export function parseFaq(text) {
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const weekday = (date) => new Date(`${date}T00:00:00Z`).getUTCDay();
 const addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
-const label = (date) => `${date.slice(5)}(${WEEKDAYS[weekday(date)]})`;
+const label = (date, today = null) => `${today && date.slice(0, 4) !== today.slice(0, 4) ? `${date.slice(0, 4)}-` : ''}${date.slice(5)}(${WEEKDAYS[weekday(date)]})`;
+export const RECENT_PAST_DAYS = 31;
 
 // 순수 함수: 날짜 말 → [from, to](KST 날짜). 이번 주말은 다가오는(오늘 포함) 토·일, 일요일이면 오늘 하루.
 export function resolveRange(range, today) {
   if (typeof range === 'object') {
-    const year = Number(today.slice(0, 4));
-    const date = `${year}-${String(range.month).padStart(2, '0')}-${String(range.day).padStart(2, '0')}`;
+    // "N월 N일"은 올해로 보되, 이미 지난 날짜면 다음 해로 본다(리뷰 MEDIUM: 12월에 묻는 1월 5일).
+    // 다만 지난 지 RECENT_PAST_DAYS일 안이면 방금 지난 날을 묻는 것으로 보고 올해로 둔다("11월 1일 일정 어땠지").
+    // 해가 바뀐 답은 날짜 칸에 연도를 붙여 보인다(label).
+    const make = (y) => `${y}-${String(range.month).padStart(2, '0')}-${String(range.day).padStart(2, '0')}`;
+    let date = make(Number(today.slice(0, 4)));
     if (Number.isNaN(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).getUTCDate() !== range.day) return null;
+    const pastDays = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86_400_000;
+    if (pastDays > RECENT_PAST_DAYS) date = make(Number(today.slice(0, 4)) + 1);
+    if (new Date(`${date}T00:00:00Z`).getUTCDate() !== range.day) return null; // 다음 해 2월 29일 같은 경우
     return [date, date];
   }
   const dow = weekday(today);
@@ -97,16 +104,22 @@ function tableRow(numbers, widths, name) {
 const won = (n) => Math.round(Number(n) || 0).toLocaleString('ko-KR');
 const pre = (lines) => `<pre>${escapeHtml(lines.join('\n'))}</pre>`;
 
-function readDir(dir) {
+function readDir(dir, prefix = '') {
   if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
+  return readdirSync(dir).filter((f) => f.endsWith('.md') && f.startsWith(prefix)).map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
 }
 
 // 볼트 읽기(시험은 가짜를 넣는다).
 export function defaultFaqReaders() {
   return {
     calendarDay: (date) => { const p = calendarDayPath(date); return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null; },
-    executions: () => readDir(VAULT_PATHS.facts.ledger.executions),
+    // 체결 파일 이름은 'YYYY-MM-DD-HHMMSS-…'라 날짜 접두사로 먼저 거른다(리뷰 LOW: 전부 읽지 않게).
+    executions: (date) => readDir(VAULT_PATHS.facts.ledger.executions, date ? `${date}-` : ''),
+    // 데이터 신선도: 잡 상태 파일의 마지막 실행 시각(ISO) 또는 null.
+    jobLastRun: (job) => {
+      const p = join(VAULT_PATHS.state.jobHealth, `${job}.md`);
+      return existsSync(p) ? (parseFrontmatter(readFileSync(p, 'utf8'))?.lastRun ?? null) : null;
+    },
     holdings: () => readDir(VAULT_PATHS.state.holdings),
     spendingSummary: (date) => { const p = spendingSummaryPath(date); return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null; },
   };
@@ -117,7 +130,29 @@ const kstClock = (iso) => {
   return Number.isFinite(t) ? new Date(t + 9 * 3_600_000).toISOString().slice(11, 16) : '?';
 };
 
-function answerCalendar(q, today, read) {
+// 데이터 신선도 한 줄(리뷰 MEDIUM). 기준 시간보다 오래됐으면 "갱신 지연"을 붙인다. 시각을 모르면 모른다고 쓴다.
+export const FRESHNESS_MAX_MIN = Object.freeze({ calendar: 60, trades: 120, holdings: 24 * 60, spending: 120 });
+const FRESHNESS_JOBS = Object.freeze({
+  calendar: ['calendar-days'],
+  trades: ['parse-notifications-to-vault', 'reconcile-nh-executions', 'update-holdings-from-executions'],
+  spending: ['ingest-spending-inbox', 'argos-forward'],
+});
+function kstStamp(ms, nowMs) {
+  const d = new Date(ms + 9 * 3_600_000).toISOString();
+  return d.slice(0, 10) === new Date(nowMs + 9 * 3_600_000).toISOString().slice(0, 10) ? d.slice(11, 16) : `${d.slice(5, 10)} ${d.slice(11, 16)}`;
+}
+export function latestJobRun(kind, read) {
+  const times = (FRESHNESS_JOBS[kind] ?? []).map((job) => Date.parse(read.jobLastRun?.(job) ?? '')).filter(Number.isFinite);
+  return times.length ? Math.max(...times) : null;
+}
+export function freshnessLine(kind, lastMs, nowMs, what = '갱신') {
+  if (!Number.isFinite(lastMs)) return `${what} 시각을 알 수 없음(잡 상태 확인 필요)`;
+  const ageMin = Math.round((nowMs - lastMs) / 60_000);
+  const stale = ageMin > FRESHNESS_MAX_MIN[kind];
+  return `마지막 ${what} ${kstStamp(lastMs, nowMs)}${stale ? ` · 갱신 지연(${ageMin >= 120 ? `${Math.round(ageMin / 60)}시간` : `${ageMin}분`} 전)` : ''}`;
+}
+
+function answerCalendar(q, today, read, nowMs) {
   const range = resolveRange(q.range, today);
   if (!range) return null;
   const [from, to] = range;
@@ -125,7 +160,7 @@ function answerCalendar(q, today, read) {
   const lines = [];
   for (const date of nextDates(from, days)) {
     const day = read.calendarDay(date);
-    lines.push(`■ ${label(date)}`);
+    lines.push(`■ ${label(date, today)}`);
     if (!day) { lines.push('- 일정 파일 없음(아직 조회 전)', ''); continue; }
     const events = Array.isArray(day.events) ? day.events : [];
     if (!events.length) { lines.push('- 일정 없음', ''); continue; }
@@ -135,31 +170,44 @@ function answerCalendar(q, today, read) {
     }
     lines.push('');
   }
-  lines.push('출처: 볼트 일정 정본(15분마다 갱신)');
+  lines.push(`출처: 볼트 일정 정본 · ${freshnessLine('calendar', latestJobRun('calendar', read), nowMs)}`);
   return { topic: '일정', body: lines.join('\n') };
 }
 
-function answerTrades(today, read) {
-  const rows = read.executions().filter((e) => String(e.tradeDate ?? '').startsWith(today))
+function answerTrades(today, read, nowMs) {
+  const rows = read.executions(today).filter((e) => String(e.tradeDate ?? '').startsWith(today))
     .sort((a, b) => String(a.tradeDate).localeCompare(String(b.tradeDate)));
-  if (!rows.length) return { topic: '오늘 체결', body: `오늘(${label(today)}) 체결 기록이 없습니다.\n출처: 볼트 체결 장부` };
+  const sync = latestJobRun('trades', read);
+  const fresh = freshnessLine('trades', sync, nowMs, '동기화');
+  // 0건은 "없다"가 아니라 "마지막 동기화 기준 0건"이다(장중·동기화 전일 수 있음, 리뷰 MEDIUM).
+  if (!rows.length) {
+    return { topic: '오늘 체결', body: `오늘(${label(today)}) ${Number.isFinite(sync) ? `마지막 동기화 ${kstStamp(sync, nowMs)} 기준` : '동기화 시각 모름 ·'} 체결 0건\n출처: 볼트 체결 장부 · ${fresh}` };
+  }
   const table = ['  수량       단가 계좌 종목', ...rows.map((e) => {
     const qty = `${e.tradeType === '매도' ? '-' : '+'}${Number(e.quantity) || 0}`;
     const unit = e.currency === 'USD' ? '$' : '';
     const p = Number(e.price) || 0;
     return tableRow([qty, `${unit}${Number.isInteger(p) ? won(p) : p.toFixed(2)}`], [6, 10], `${e.account ?? '?'} ${e.stockName ?? '?'}`);
   })];
-  return { topic: '오늘 체결', body: `오늘(${label(today)}) 체결 ${rows.length}건(+매수·-매도)\n${pre(table)}\n출처: 볼트 체결 장부` };
+  return { topic: '오늘 체결', body: `오늘(${label(today)}) 체결 ${rows.length}건(+매수·-매도)\n${pre(table)}\n출처: 볼트 체결 장부 · ${fresh}` };
 }
 
-function answerCash(read) {
+// 보유 파일 신선도: 가장 오래된·최근 updatedAt. 기준일(가장 오래된 것)을 함께 보인다.
+function holdingsFreshness(rows, nowMs) {
+  const times = rows.map((h) => Date.parse(h.updatedAt ?? '')).filter(Number.isFinite);
+  if (!times.length) return '갱신 시각을 알 수 없음';
+  const oldest = Math.min(...times);
+  return `${freshnessLine('holdings', Math.max(...times), nowMs)}(가장 오래된 항목 기준 ${kstStamp(oldest, nowMs)})`;
+}
+
+function answerCash(read, nowMs) {
   const rows = read.holdings().filter((h) => h.isCashLike && h.name === '예수금');
   if (!rows.length) return { topic: '예수금', body: '예수금 기록을 찾지 못했습니다(볼트 보유 파일 확인 필요).' };
   const table = rows.map((h) => tableRow([won(h.evalAmount)], [14], `${h.account ?? '?'} ${String(h.anchorTs ?? '').slice(5, 10)}`));
-  return { topic: '예수금', body: `계좌별 예수금(원, 끝은 기준일)\n${pre(table)}\n출처: 볼트 보유 파일` };
+  return { topic: '예수금', body: `계좌별 예수금(원, 끝은 기준일)\n${pre(table)}\n출처: 볼트 보유 파일 · ${holdingsFreshness(rows, nowMs)}` };
 }
 
-function answerHoldings(read) {
+function answerHoldings(read, nowMs) {
   const all = read.holdings();
   if (!all.length) return { topic: '보유 요약', body: '보유 기록을 찾지 못했습니다(볼트 보유 파일 확인 필요).' };
   const byAcct = new Map();
@@ -172,14 +220,15 @@ function answerHoldings(read) {
   const rows = [...byAcct.entries()].sort((a, b) => b[1].total - a[1].total);
   const sum = rows.reduce((s, [, a]) => s + a.total, 0);
   const table = ['       평가액 종목 계좌', ...rows.map(([acct, a]) => tableRow([won(a.total), a.count], [13, 4], acct)), tableRow([won(sum), ''], [13, 4], '합계')];
-  return { topic: '보유 요약', body: `계좌별 평가액(원, 현금성 포함)·종목 수\n${pre(table)}\n출처: 볼트 보유 파일` };
+  return { topic: '보유 요약', body: `계좌별 평가액(원, 현금성 포함)·종목 수\n${pre(table)}\n출처: 볼트 보유 파일 · ${holdingsFreshness(all, nowMs)}` };
 }
 
-function answerSpending(q, today, read) {
+function answerSpending(q, today, read, nowMs) {
+  const fresh = freshnessLine('spending', latestJobRun('spending', read), nowMs, '수집');
   if (q.scope === 'today') {
     const s = read.spendingSummary(today);
     if (!s) return { topic: '오늘 소비', body: '오늘 소비 요약 파일이 아직 없습니다(수집 잡이 만들기 전).' };
-    return { topic: '오늘 소비', body: `${formatTodaySpending(s)}\n\n출처: 볼트 소비 요약` };
+    return { topic: '오늘 소비', body: `${formatTodaySpending(s)}\n\n출처: 볼트 소비 요약 · ${fresh}` };
   }
   const first = `${today.slice(0, 8)}01`;
   const days = Number(today.slice(8, 10));
@@ -196,18 +245,19 @@ function answerSpending(q, today, read) {
   }
   const table = Object.entries(byCategory).filter(([, v]) => v).map(([k, v]) => tableRow([won(v)], [12], k));
   return { topic: '이번 달 소비', body: [`${today.slice(0, 7)} 1일~오늘 확인된 지출 ${won(total)}원(${count}건)`,
-    ...(table.length ? [pre(table)] : []), ...(missing ? [`알림 기록이 없는 날 ${missing}일(합계에 없음)`] : []), '출처: 볼트 하루 소비 요약 합산'].join('\n') };
+    ...(table.length ? [pre(table)] : []), ...(missing ? [`알림 기록이 없는 날 ${missing}일(합계에 없음)`] : []), `출처: 볼트 하루 소비 요약 합산 · ${fresh}`].join('\n') };
 }
 
 // q(parseFaq 결과) → { agent, topic, body } 또는 null(답할 수 없으면 대화로).
 export function answerFaq(q, { now = new Date(), read = defaultFaqReaders() } = {}) {
   const today = kstDate(now);
+  const nowMs = now.getTime();
   let out = null;
-  if (q.kind === 'calendar') out = answerCalendar(q, today, read);
-  else if (q.kind === 'trades') out = answerTrades(today, read);
-  else if (q.kind === 'cash') out = answerCash(read);
-  else if (q.kind === 'holdings') out = answerHoldings(read);
-  else if (q.kind === 'spending') out = answerSpending(q, today, read);
+  if (q.kind === 'calendar') out = answerCalendar(q, today, read, nowMs);
+  else if (q.kind === 'trades') out = answerTrades(today, read, nowMs);
+  else if (q.kind === 'cash') out = answerCash(read, nowMs);
+  else if (q.kind === 'holdings') out = answerHoldings(read, nowMs);
+  else if (q.kind === 'spending') out = answerSpending(q, today, read, nowMs);
   return out ? { agent: q.agent, ...out } : null;
 }
 
