@@ -14,7 +14,7 @@ import { basename, dirname, join, relative, resolve as resolvePath } from 'node:
 import { fileURLToPath } from 'node:url';
 import { resolveDecision } from './decision-resolver.mjs';
 import { VAULT_PATHS, VAULT_REL, VAULT_ROOT } from './vault-paths.mjs';
-import { listDispatchedJobs, listPlistJobs } from './launchd-jobs.mjs';
+import { listDispatchedJobs, listPlistJobs, listRetiredPlistJobs } from './launchd-jobs.mjs';
 import { buildJobHealthRecord } from './job-health.mjs';
 import {
   STRATEGIES, STRATEGY_DECISION_KEY, STRATEGY_ENTRYPOINTS, STRATEGY_JOBS, STRATEGY_LABELS,
@@ -196,7 +196,8 @@ test('꺼진 전략의 잡·스크립트 집합과 상태 줄', () => {
 
 test('전략 목록 정합성: 라벨·잡·진입점이 모든 전략에 있고, 잡은 run.sh·plist에 실제로 등록돼 있다', () => {
   const dispatched = new Set(listDispatchedJobs());
-  const plists = new Set(listPlistJobs());
+  // 꺼진 전략의 plist는 retired/에 보관된다(켤 때 scripts/launchd/로 되돌림) — 운영 등록 또는 보관 폴더 둘 중 하나에 있어야 한다.
+  const plists = new Set([...listPlistJobs(), ...listRetiredPlistJobs()]);
   const runSh = readFileSync(join(REPO, 'scripts/launchd/run.sh'), 'utf8');
   for (const key of STRATEGIES) {
     assert.ok(STRATEGY_LABELS[key], `${key} 라벨 없음`);

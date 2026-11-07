@@ -14,3 +14,10 @@ export function listDispatchedJobs(dir = LAUNCHD_DIR) {
 export function listPlistJobs(dir = LAUNCHD_DIR) {
   return readdirSync(dir).filter((n) => /^com\.banana2\..+\.plist$/.test(n)).map((n) => n.replace(/^com\.banana2\./, '').replace(/\.plist$/, ''));
 }
+
+// 보관(폐지·정지) plist 잡 이름 — scripts/launchd/retired/. 운영 등록이 아니므로 listPlistJobs에는 안 섞는다.
+// 되돌릴 때는 이 폴더에서 scripts/launchd/로 옮긴다.
+export function listRetiredPlistJobs(dir = LAUNCHD_DIR) {
+  const retired = new URL('retired/', dir);
+  return readdirSync(retired).filter((n) => /^com\.banana2\..+\.plist$/.test(n)).map((n) => n.replace(/^com\.banana2\./, '').replace(/\.plist$/, ''));
+}

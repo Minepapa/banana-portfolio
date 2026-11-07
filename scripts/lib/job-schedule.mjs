@@ -58,10 +58,6 @@ export const EXPECTED_INTERVALS_MS = {
   'clio-inbox-ingest': 24 * 60 * 60 * 1000,
   // hermes-briefing(D86) — 07:30·21:00 매일 두 번, 여유 포함 24시간.
   'hermes-briefing': 24 * 60 * 60 * 1000,
-  // telegram-session-handoff(2026-08-29 신설) — 매일 03:55 KST 하루 1회, 요일 제한
-  // 없음(텔레그램 세션 자체가 주말에도 응답하므로 restart와 동일 원칙) — backup-vault와
-  // 같은 클래스.
-  'telegram-session-handoff': 24 * 60 * 60 * 1000,
   // daily-asset-allocation-check도 backup-vault와 같은 이유로 하루 1회 잡 — 처음부터
   // 여기 넣어 같은 오탐이 재발하지 않게 한다(2026-08-14). ⚠️ 평일 전용이라 2026-08-23
   // 48h로 상향(위 parse-notifications-to-vault 주석과 동일 사유).
@@ -139,12 +135,6 @@ export const EXPECTED_INTERVALS_MS = {
   // 위 세 잡과 동일 원칙: 등록값이 실제 주기와 정확히 같아야 진짜 정지를 늦게
   // 안 잡는다.
   'intraday-portfolio-sync': 10 * 60 * 1000,
-  // telegram-session-health-check(2026-08-31 신설) — 상시 텔레그램 세션 MCP 연결
-  // 끊김 감지·자동복구 잡 자체도 StartInterval=600(10분마다). 이 잡이 조용해지면
-  // "그 조용해짐을 감지해 복구할 다른 무엇"이 없다는 게 health-watcher 자기 자신과
-  // 같은 구조적 한계(바로 아래 주석 참고) — 그래도 최소한 이 등록으로 health-watcher
-  // 자신이 살아있는 한은 잡힌다.
-  'telegram-session-health-check': 10 * 60 * 1000,
   // livesync-watch(2026-10-31 신설) — 볼트 LiveSync 업로드 멈춤 감시·Obsidian 자동 재시작. StartInterval=900(15분).
   'livesync-watch': 15 * 60 * 1000,
   // argos-forward(2026-11-07 아르고스 전환) — 아르고스 이벤트 → 위치·소비 데이터셋. StartInterval=900(15분).
@@ -270,7 +260,8 @@ export const JOB_FIRST_HEARTBEAT_BY = {
   // 등록이 늦어지면 이 날짜도 같이 옮긴다(안 옮기면 미등록 잡으로 경보가 나간다).
   'reconcile-holdings-ledger': '2026-11-05',
 };
-export const RETIRED_JOBS = new Set(['media-diarize', 'media-faces-nightly', 'media-transcribe', 'media-vision']);
+// 텔레그램 옛 세션 4개: 2026-11-06 폐지(결정 텔레그램-관문), plist는 scripts/launchd/retired/에 보관.
+export const RETIRED_JOBS = new Set(['telegram-session', 'telegram-session-restart', 'telegram-session-handoff', 'telegram-session-health-check', 'media-diarize', 'media-faces-nightly', 'media-transcribe', 'media-vision']);
 
 export function isInactiveJob(job) {
   return RETIRED_JOBS.has(job) || EXPECTED_INTERVALS_MS[job] === null;
