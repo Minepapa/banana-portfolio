@@ -2,7 +2,7 @@
 // YAML 형태인지 확인.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildExecutionRecord, buildKakaoExecutionRecord, buildKakaoExecutionRecordCandidates, buildDividendRecord, buildProfitRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from './ledger-vault-writer.mjs';
+import { readExecutionsOnDates, buildExecutionRecord, buildKakaoExecutionRecord, buildKakaoExecutionRecordCandidates, buildDividendRecord, buildProfitRecord, buildCashEventRecord, buildFundPurchaseRecord, buildFundValuationRecord, buildExchangeRecord } from './ledger-vault-writer.mjs';
 import { VAULT_PATHS } from './vault-paths.mjs';
 import { parseFrontmatter } from './vault-frontmatter.mjs';
 
@@ -497,4 +497,34 @@ test('buildCashEventRecord: source는 넘겼을 때만(수동 앵커) 머리말�
   assert.equal(parseFrontmatter(buildCashEventRecord({ ...base, source: 'MANUAL_ANCHOR' }).content).source, 'MANUAL_ANCHOR');
   assert.equal(parseFrontmatter(buildCashEventRecord(base).content).source, undefined);
   assert.equal(buildCashEventRecord(base).filename, buildCashEventRecord({ ...base, source: 'MANUAL_ANCHOR' }).filename);
+});
+
+test('buildExecutionRecord: estimated면 추정 표기·설명을 남기고, 아니면 필드 자체가 없다', () => {
+  const estimated = parseFrontmatter(buildExecutionRecord(exec({ source: 'irp-balance-delta', sourceEventId: 'irp-balance-delta-2026-08-04-005930', estimated: true, estimateNote: '추정', estimateWindowFrom: '2026-08-03 16:07:00', estimateWindowTo: '2026-08-04 16:07:00' })).content);
+  assert.equal(estimated.estimated, true);
+  assert.equal(estimated.estimateWindowFrom, '2026-08-03 16:07:00');
+  assert.equal(estimated.estimateWindowTo, '2026-08-04 16:07:00');
+  assert.equal(estimated.estimateNote, '추정');
+  assert.equal(estimated.source, 'irp-balance-delta');
+  const normal = parseFrontmatter(buildExecutionRecord(exec()).content);
+  assert.equal('estimated' in normal, false);
+  assert.equal('estimateNote' in normal, false);
+});
+
+test('readExecutionsOnDates: 파일명이 그 날짜로 시작하는 체결만 읽고, 폴더가 없으면 빈 배열', async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'ledger-read-'));
+  try {
+    for (const [date, qty] of [['2026-08-03', 1], ['2026-08-04', 2], ['2026-08-05', 3]]) {
+      const { filename, content } = buildExecutionRecord(exec({ tradeDate: `${date} 10:00:00`, quantity: qty }));
+      writeFileSync(join(dir, filename), content);
+    }
+    const rows = readExecutionsOnDates(['2026-08-03', '2026-08-04'], dir);
+    assert.deepEqual(rows.map((r) => r.quantity).sort(), [1, 2]);
+    assert.deepEqual(readExecutionsOnDates(['2026-08-03'], join(dir, 'none')), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

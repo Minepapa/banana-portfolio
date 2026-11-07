@@ -284,3 +284,15 @@ test('표: 수량이 커서 이름 칸이 좁아지면 기대 칸을 빼고, 1,0
   assert.match(lines[0], /^\s*실제\s+차이 계좌 종목$/);
   assert.match(lines[1], /^7,654,321\s+\+6,419,753 연금 가상펀드$/);
 });
+
+// IRP 잔고 증가 추정 체결(irp-balance-delta, 2026-11-07) — 추정 기록과 늦게 온 카카오 알림이 둘 다
+// 원장에 있어도 원장 합이 KIS 잔고를 넘지 않아야 한다. 늦은 알림은 update-holdings-from-executions가
+// 추정 기록의 중복(duplicate-skipped)으로 표시하므로 재생에서 빠진다.
+test('[불변식] IRP 추정 체결 + 중복 표시된 늦은 카카오 → 이중 계상 없이 ok', () => {
+  const irp = { account: 'IRP', stockName: '가상TDF', tradeDate: '2026-09-05 11:10:00' };
+  const estimated = exec({ ...irp, quantity: 10, source: 'irp-balance-delta', estimated: true });
+  const lateKakao = exec({ ...irp, quantity: 10, source: 'KAKAO', holdingsApplied: 'duplicate-skipped', duplicateOf: 'estimated' });
+  const rows = diffHoldings(replayHoldings([estimated, lateKakao], { 'IRP|가상TDF': 100 },
+    { holdings: [{ account: 'IRP', name: '가상TDF', qty: 110 }] }));
+  assert.equal(rowOf(rows, 'IRP|가상TDF').status, 'ok');
+});

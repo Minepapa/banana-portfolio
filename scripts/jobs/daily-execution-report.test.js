@@ -151,3 +151,10 @@ test('같은 주문의 API 누적 스냅샷이 여러 개면 가장 큰 누적�
   assert.equal(rows[0].quantity, 5);
   assert.equal(rows[0].price, 102);
 });
+
+test('buildExecutionReportText: 잔고 증가로 추정한 체결은 "(추정)"을 붙인다', () => {
+  const text = buildExecutionReportText([
+    { tradeType: '매수', stockName: '가상 TDF2099', quantity: 10, price: 11000, currency: 'KRW', account: 'IRP', estimated: true },
+  ]);
+  assert.match(text, /\[매수\] 가상 TDF2099 10주 @11,000 \(추정\) \(IRP\)/);
+});

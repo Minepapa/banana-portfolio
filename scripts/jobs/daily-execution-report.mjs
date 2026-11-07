@@ -133,7 +133,7 @@ export function buildExecutionReportText(executions) {
     const price = Number(e.price ?? 0);
     const quantity = Number(e.quantity ?? 0);
 
-    const line = `[${e.tradeType}] ${e.stockName} ${quantity}주 @${price.toLocaleString()} (${account})`;
+    const line = `[${e.tradeType}] ${e.stockName} ${quantity}주 @${price.toLocaleString()}${e.estimated === true ? ' (추정)' : ''} (${account})`;
     if (!byAccount.has(account)) byAccount.set(account, []);
     byAccount.get(account).push(line);
 

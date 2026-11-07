@@ -80,6 +80,7 @@ import { resolveExecutionAccount, QUANT_TRACK_LABEL, IRP_ACCOUNT_LABEL } from '.
 import { applyBuy, applySell, consolidateLots } from '../lib/holdings-updater.mjs';
 import { writeHoldingSafely, holdingFilename, parseAppliedDedupKeys } from '../lib/holdings-vault-writer.mjs';
 import { buildProfitRecord } from '../lib/ledger-vault-writer.mjs';
+import { findOverlappingIrpEstimates } from '../lib/irp-balance-delta.mjs';
 import { fetchUsdKrwRate } from '../lib/fundamentals.mjs';
 // 그래프 뷰 다중축 태그(2026-09-05) — 계좌 지연귀속 지점마다 태그도 같이 재계산해야
 // 한다(2026-09-05 코드리뷰 HIGH 지적 — account:null로 쓰여진 뒤 여기서 나중에 채워지는
@@ -519,6 +520,14 @@ async function main() {
         }
       } else {
         console.log(`  ↪️  IRP 매수 체결 — ${VAULT_REL.stateHoldings} 반영 대상 아님(KIS API가 정본): ${exec.stockName}`);
+        // 잔고 증가 추정 체결(irp-balance-delta 불변식 7) 구간 안에 늦게 온 매수 — 분할 도착이면 위 수량
+        // 일치 중복 판정에 안 걸려 원장에 이중으로 남을 수 있다. 추정하지 않고 경고만(오너 알림은
+        // holdings-ledger-recon IRP 외부 대사가 맡는다).
+        const overlaps = findOverlappingIrpEstimates({ ...exec, account }, allExecutions);
+        if (overlaps.length) {
+          console.log(`  ⚠️  IRP 매수가 잔고 추정 체결 구간 안에 들어옴 — 같은 체결이면 원장 이중 기록, 실계좌 대조 필요: ${exec.tradeDate} ${exec.stockName} ${exec.quantity}주 ↔ 추정 ${overlaps.map((o) => `${o.tradeDate} ${o.quantity}주`).join(', ')}`);
+          warnings++;
+        }
       }
       if (!DRY_RUN) writeAtomic(filepath, updateFrontmatter(content, { account, tags: buildVaultTags({ account, stockName: exec.stockName }), holdingsApplied: true, holdingsAppliedAt: new Date().toISOString() }));
       knownExecutions.push({ ...exec, account });

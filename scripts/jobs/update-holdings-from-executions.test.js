@@ -327,3 +327,15 @@ test('오너 확인 기록(알림 누락분)은 같은 날 같은 수량의 카�
   // 반대 방향도 막는다: 시각 미상이라 먼저 반영된 오너 행에 같은 수량의 실제 카카오 체결이 걸리면 안 된다.
   assert.equal(findMatchingKnownExecution({ ...kakao, sourceEventId: 'k2' }, [owner]), null);
 });
+
+// IRP 잔고 증가 추정 체결(irp-balance-delta, 2026-11-07) — 추정 기록이 먼저 반영된 뒤 같은 날·같은
+// 종목·같은 수량의 카카오 알림이 늦게 오면, 추정 기록의 중복으로 잡혀 원장 합이 두 배가 되지 않는다.
+// (IRP 매수는 어느 쪽이든 보유에 반영하지 않는다 — 보유는 reconcile-irp의 KIS 잔고가 정본.)
+test('[불변식] IRP: 늦게 온 카카오 매수는 먼저 반영된 잔고 추정 체결의 중복으로 잡힌다', () => {
+  const base = { tradeType: '매수', stockCode: '900199', stockName: '가상 TDF2099', quantity: 10, broker: '한국투자증권', account: 'IRP' };
+  const estimated = { ...base, tradeDate: '2099-01-05 11:10:00', price: 11000, source: 'irp-balance-delta', sourceEventId: 'irp-balance-delta-2099-01-05-900199', estimated: true, holdingsApplied: true, filepath: '/x/estimated.md' };
+  const lateKakao = { ...base, tradeDate: '2099-01-05 11:03:00', price: 11000, orderNo: '1234500', source: 'KAKAO', sourceEventId: 'kakao-doc' };
+  assert.equal(findMatchingKnownExecution(lateKakao, [estimated])?.filepath, '/x/estimated.md');
+  // 수량이 다르면 별개 체결로 둔다(원장 대사에서 어긋남이 드러난다).
+  assert.equal(findMatchingKnownExecution({ ...lateKakao, quantity: 4 }, [estimated]), null);
+});
