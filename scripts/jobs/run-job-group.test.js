@@ -174,3 +174,19 @@ test('묶음 A(ledger-close): 평일 1회, 시작 분이 안전망 구간 안이
   assert.equal(order.at(-1), 'update-fund-holdings-from-purchases');
   assert.ok(!order.includes('intraday-portfolio-sync'), '안전망은 장중 동기화와 독립이어야 함');
 });
+
+test('묶음 B(post-close-reports): 평일 A 뒤, 분기·월 단계는 스크립트 안 날짜 판정이 LLM 호출 전에 막는다', () => {
+  const [[aHour, aMinute]] = plistHourMinutes('ledger-close');
+  const runs = plistHourMinutes('post-close-reports');
+  assert.equal(runs.length, 5);
+  for (const [hour, minute] of runs) assert.ok(hour * 60 + minute > aHour * 60 + aMinute + 5, 'A가 끝난 뒤여야 함');
+  assert.deepEqual(groupSteps('post-close-reports').map((s) => s.job),
+    ['new-cash-allocation', 'daily-execution-report', 'daily-asset-allocation-check', 'rebalance-proposal', 'monthly-macro-tilt-proposal']);
+  // 매 평일 불려도 해당일에만 판단하는 근거 — 날짜 판정이 main 맨 앞(loadEnv·LLM 전)에 있어야 한다.
+  for (const [file, gate] of [['rebalance-proposal.mjs', 'shouldRunToday'], ['monthly-macro-tilt-proposal.mjs', 'shouldRunThisMonth']]) {
+    const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+    const main = source.slice(source.indexOf('async function main()'));
+    assert.ok(main.indexOf(`!FORCE && !${gate}(`) > 0, `${file}: 날짜 판정 없음`);
+    assert.ok(main.indexOf(`!FORCE && !${gate}(`) < main.indexOf('runHeadlessClaude'), `${file}: 날짜 판정이 LLM 호출보다 뒤`);
+  }
+});

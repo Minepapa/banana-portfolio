@@ -21,8 +21,8 @@ test('buildWeeklyScheduleText: 제목과 주기 일정 부서·시각이 본문�
   assert.match(text, /평일 08:00 \[플루토스 Plutus\]/);
   assert.match(text, /평일 08:35 \[플루토스 Plutus\]/);
   assert.match(text, /평일 15:32 \[플루토스 Plutus\]/);
-  assert.match(text, /평일 16:15 \[플루토스 Plutus\]/);
-  assert.match(text, /평일 16:30 \[플루토스 Plutus\]/);
+  assert.match(text, /평일 16:16 \[플루토스 Plutus\] 당일 체결 내역 보고/); // 묶음 post-close-reports(2026-11-07)
+  assert.match(text, /평일 16:16 \[플루토스 Plutus\] 리밸런싱·거시 점검/);
   assert.match(text, /일요일 07:00 \[플루토스 Plutus\]/);
   assert.match(text, /일요일 07:20 \[제우스 Zeus\]/);
   assert.match(text, /일요일 07:30 \[클리오 Clio\]/);

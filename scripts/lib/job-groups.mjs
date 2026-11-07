@@ -43,6 +43,19 @@ export const JOB_GROUPS = {
     stepTimeoutMs: 10 * MIN,
     gapMs: 2000,
   },
+  // B 장후 보고·정기 제안 — 평일 16:16(A 뒤). 뒤 둘은 스크립트 안의 날짜 판정(shouldRunToday·shouldRunThisMonth)이
+  // 해당일이 아니면 LLM 호출 전에 바로 끝낸다. LLM 단계의 쿨다운·한도 처리는 각 스크립트 안 그대로.
+  'post-close-reports': {
+    steps: [
+      'new-cash-allocation',
+      'daily-execution-report',
+      'daily-asset-allocation-check',
+      'rebalance-proposal',
+      'monthly-macro-tilt-proposal',
+    ],
+    stepTimeoutMs: 60 * MIN,
+    gapMs: 0,
+  },
 };
 
 export function groupSteps(group) {
