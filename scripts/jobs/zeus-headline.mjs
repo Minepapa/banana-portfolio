@@ -212,12 +212,18 @@ const KOREAN_COUNT = /(?:^|\s)(?:한|두|세|네|다섯|여섯|일곱|여덟|아
 const ID_OR_DATE = /\b(?:TV|WQ|EC)-\d{8}-[0-9a-f]{8}\b|\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?/gi;
 const PATH_LIKE = /\b\d\d_[^\s/]+\/|\S+\/\S+\/\S+/; // 볼트 경로(NN_폴더/…)나 슬래시 둘 이상 — '매수/매도' 같은 한 번은 통과
 
+const VALIDATION_ERRORS = /^(?:후보에 없는|민감값|금고|링크|금액|경로|한글로 쓴|text 길이|sub 길이|판단 출력)/;
+
 function knownNumbers(pick) {
   const numbers = new Set(String(pick.title).match(/\d+/g) ?? []);
   for (const value of Object.values(pick.facts ?? {})) {
     if (typeof value === 'number') numbers.add(String(value));
   }
-  if (Number.isFinite(pick.facts?.startsInMinutes)) numbers.add(String(Math.round(pick.facts.startsInMinutes / 60))); // '8시간 뒤'
+  if (Number.isFinite(pick.facts?.startsInMinutes)) {
+    // '8시간 뒤'·'1시간 40분 뒤': 남은 분을 시간 반올림·내림·올림과 나머지 분으로 풀어 쓴 숫자는 같은 사실의 다른 표기다.
+    const total = pick.facts.startsInMinutes;
+    for (const n of [Math.round(total / 60), Math.floor(total / 60), Math.ceil(total / 60), total % 60]) numbers.add(String(n));
+  }
   for (const value of Object.values(pick.facts ?? {})) {
     if (typeof value === 'string' && /^\d{2}:\d{2}$/.test(value)) {
       const [hour, minute] = value.split(':').map(Number);
@@ -254,7 +260,7 @@ export function validatePick(raw, candidates, today = kstDate(new Date())) {
   if (KOREAN_COUNT.test(`${text} ${sub}`)) throw new Error('한글로 쓴 수');
   const known = knownNumbers(pick);
   for (const number of `${text} ${sub}`.replace(ID_OR_DATE, ' ').match(/\d+/g) ?? []) {
-    if (!known.has(number)) throw new Error('후보에 없는 숫자');
+    if (!known.has(number)) throw Object.assign(new Error('후보에 없는 숫자'), { detail: number });
   }
   return { pick, text, sub };
 }
@@ -305,7 +311,17 @@ export async function runZeusHeadline({ root = VAULT_PATHS.root, now = new Date(
     result = { ...base, status: 'cooldown', pick: null, agent: null, text: '', sub: '' };
   } else {
     try {
-      const { pick, text, sub } = validatePick(parseJsonBlock(headlessResult(await judge(buildPrompt(candidates, today)))), candidates, today);
+      // 검증 실패(LLM이 숫자를 지어냄 등)는 이유를 알려 한 번 다시 묻는다. 한도(isLimit)·호출 오류는 다시 묻지 않는다.
+      // 재시도 로그에는 사유와 걸린 숫자만 남긴다(문장 원문은 남기지 않는다).
+      const prompt = buildPrompt(candidates, today);
+      const attempt = async (input) => validatePick(parseJsonBlock(headlessResult(await judge(input))), candidates, today);
+      let verdict;
+      try { verdict = await attempt(prompt); } catch (first) {
+        if (first.isLimit || !VALIDATION_ERRORS.test(first.message)) throw first;
+        log.error(`[${JOB}] 검증 실패, 재시도: ${first.message}${first.detail ? ` (${first.detail})` : ''}`);
+        verdict = await attempt(`${prompt}\n\n[직전 답이 검증에서 거부됨: ${first.message}${first.detail ? ` — 숫자 ${first.detail}` : ''}. 후보 title·facts에 있는 숫자만 쓰거나 숫자 없이 다시 쓴다. JSON 하나만 출력.]`);
+      }
+      const { pick, text, sub } = verdict;
       counts.succeeded = 1;
       result = { ...base, status: 'ok', pick: { source: pick.source, refId: pick.refId }, agent: pick.agent, text, sub };
     } catch (error) {
