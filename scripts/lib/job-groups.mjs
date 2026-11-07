@@ -95,6 +95,15 @@ export const JOB_GROUPS = {
     stepTimeoutMs: 10 * MIN,
     gapMs: 0,
   },
+  // J 시세 후속 — 매시 :07·:17…(시세 :x0·동기화 :x5 뒤). 배분 → 미러(미러가 방금 쓴 배분을 읽는다).
+  'price-followups': {
+    steps: [
+      'update-allocation-from-holdings',
+      'sync-firestore-mirror',
+    ],
+    stepTimeoutMs: 5 * MIN,
+    gapMs: 0,
+  },
 };
 
 export function groupSteps(group) {

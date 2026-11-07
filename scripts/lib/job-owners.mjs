@@ -88,4 +88,5 @@ export const JOB_OWNERS = {
   'media-hourly': 'zeus', // 묶음(job-groups.mjs)
   'premarket-cache': 'plutus', // 묶음(job-groups.mjs)
   'hermes-refresh': 'hermes', // 묶음(job-groups.mjs)
+  'price-followups': 'plutus', // 묶음(job-groups.mjs)
 };

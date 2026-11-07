@@ -211,3 +211,11 @@ test('묶음 F(premarket-cache): 평일 07:06, 거시지표 → 휴장일 캐시
   assert.deepEqual(runs, Array(5).fill([7, 6]));
   assert.deepEqual(groupSteps('premarket-cache').map((s) => s.job), ['update-macro-indicators-cache', 'update-krx-trading-calendar']);
 });
+
+test('묶음 I·J: 15분 일정 → 동선, 10분 고정 분 배분 → 미러(시세 :x0·동기화 :x5 뒤)', () => {
+  assert.match(plistText('hermes-refresh'), /<key>StartInterval<\/key>\s*<integer>900<\/integer>/);
+  assert.deepEqual(groupSteps('hermes-refresh').map((s) => s.job), ['calendar-days', 'route-today']);
+  assert.deepEqual(plistMinutes('price-followups'), [7, 17, 27, 37, 47, 57]);
+  assert.doesNotMatch(plistText('price-followups'), /<key>(Hour|StartInterval)<\/key>/);
+  assert.deepEqual(groupSteps('price-followups').map((s) => s.job), ['update-allocation-from-holdings', 'sync-firestore-mirror']);
+});

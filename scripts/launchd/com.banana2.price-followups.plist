@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.price-followups</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>price-followups</string>
+  </array>
+  <!-- 매시 :07·:17·…·:57(10분) — 묶음 J 시세 후속(2026-11-07 무인잡 정리). update-allocation-from-holdings(10분) →
+       sync-firestore-mirror(10분). 둘 다 외부 증권사 API 없이 볼트를 읽는다. 시세 잡(:x0)·장중 동기화(:x5)가 쓴 보유를 2분 뒤에
+       읽어 배분을 다시 계산하고, 미러가 방금 쓴 배분을 읽는다(예전엔 둘 다 StartInterval 600이라 위상이 제멋대로였고 미러가
+       한 주기 늦은 배분을 읽을 수 있었다). 주기는 시세 잡과 같은 10분 그대로(2026-08-25 오너 지시). 단계 상한 5분. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Minute</key><integer>7</integer></dict>
+    <dict><key>Minute</key><integer>17</integer></dict>
+    <dict><key>Minute</key><integer>27</integer></dict>
+    <dict><key>Minute</key><integer>37</integer></dict>
+    <dict><key>Minute</key><integer>47</integer></dict>
+    <dict><key>Minute</key><integer>57</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/price-followups.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/price-followups.log</string>
+</dict>
+</plist>

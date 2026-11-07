@@ -107,6 +107,7 @@ export const JOB_LABELS = {
   'media-hourly': '묶음 D 미디어 매시: Media Inbox 보관·색인 → 순간 노트 묶기(보관 실패 시 순간 노트 건너뜀, 매시간)',
   'premarket-cache': '묶음 F 장전 데이터 갱신: 거시지표 캐시 → KRX 휴장일 캐시(평일 07:06)',
   'hermes-refresh': '묶음 I 15분 갱신: 일정 파일 정본 → 오늘 동선 임시 파일(15분마다, 발송 없음)',
+  'price-followups': '묶음 J 시세 후속: 보유 기준 자산분배 재계산 → Firestore 미러 동기화(매시 :07·:17…, 10분)',
 };
 
 // 화면용 짧은 이름(2026-10-31, 올림푸스 지휘소·제우스 방 — 오너 점검 "영문 식별자 + 긴 개발 메모" 지적).
@@ -193,6 +194,7 @@ export const JOB_SHORT_LABELS = {
   'media-hourly': '미디어 매시',
   'premarket-cache': '장전 캐시 갱신',
   'hermes-refresh': '일정·동선 갱신',
+  'price-followups': '시세 후속 갱신',
 };
 
 // 라벨 있으면 "잡이름(한글설명)", 없으면(등록 안 된 새 잡) 이름만 — 조용히 빈 문자열로
