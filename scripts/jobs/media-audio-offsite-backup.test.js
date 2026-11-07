@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main, verify, audioRecords, purgedIds, planUploads, AUDIO_NAME } from './media-audio-offsite-backup.mjs';
 import { encryptBuffer } from '../lib/vault-offsite-backup.mjs';
+import { groupSteps } from '../lib/job-groups.mjs';
 
 const id = (n) => n.toString(16).padStart(16, '0');
 const row = (n, kind = 'Calls', archivedAt = `2026-10-1${n % 10}`) => ({ id: id(n), kind, archivePath: `Archive/2026/10/${kind}/${n}.m4a`, size: 100, archivedAt });
@@ -68,10 +69,12 @@ test('키 권한이 넓으면 실패한다', async () => {
     readFile: async () => Buffer.alloc(32), lock: (fn) => fn() }), /권한/);
 });
 
-test('plist는 매일 00:00 run.sh media-audio-offsite-backup', () => {
-  const plist = readFileSync(new URL('../launchd/com.banana2.media-audio-offsite-backup.plist', import.meta.url), 'utf8');
-  assert.match(plist, /<string>media-audio-offsite-backup<\/string>/);
-  assert.match(plist, /<key>Hour<\/key><integer>0<\/integer><key>Minute<\/key><integer>0<\/integer>/);
+test('묶음 nightly-close(매일 23:51)의 마지막 단계로 run.sh media-audio-offsite-backup(2026-11-07 묶음, 옛 00:00 plist는 retired/)', () => {
+  const plist = readFileSync(new URL('../launchd/com.banana2.nightly-close.plist', import.meta.url), 'utf8');
+  assert.match(plist, /<string>nightly-close<\/string>/);
+  assert.match(plist, /<key>Hour<\/key><integer>23<\/integer><key>Minute<\/key><integer>51<\/integer>/);
+  assert.equal(groupSteps('nightly-close').at(-1).job, 'media-audio-offsite-backup');
+  assert.match(readFileSync(new URL('../launchd/retired/com.banana2.media-audio-offsite-backup.plist', import.meta.url), 'utf8'), /<string>media-audio-offsite-backup<\/string>/);
 });
 
 test('크기 불일치 응답은 실패로 남기고, 없는 파일(ENOENT)은 건너뜀으로 센다', async () => {

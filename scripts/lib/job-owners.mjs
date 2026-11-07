@@ -84,4 +84,5 @@ export const JOB_OWNERS = {
   'sync-firestore-mirror': 'plutus', // 같은 10분 주기 투자 데이터 잡들과 맞춤(2026-10-31 제우스)
   'ledger-close': 'plutus', // 묶음(job-groups.mjs)
   'post-close-reports': 'plutus', // 묶음(job-groups.mjs)
+  'nightly-close': 'clio', // 묶음(job-groups.mjs)
 };

@@ -250,6 +250,8 @@ export const EXPECTED_INTERVALS_MS = {
   'ledger-close': 48 * 60 * 60 * 1000,
   // 묶음 B 장후 보고·정기 제안(2026-11-07, 평일 16:16) — 평일 전용 48h. rebalance-proposal·monthly-macro-tilt-proposal 단계는 이제 평일마다 하트비트를 남긴다(값은 그대로).
   'post-close-reports': 48 * 60 * 60 * 1000,
+  // 묶음 C 야간 마감(2026-11-07, 매일 23:51) — 요일 제한 없음 24h.
+  'nightly-close': 24 * 60 * 60 * 1000,
 };
 export const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 // 아직 가동 전이라 하트비트 파일이 없는 게 정상인 잡 — 이 날짜(KST, 이날 00:00부터)까지는 파일이 없어도 경보하지 않는다
@@ -265,6 +267,7 @@ export const JOB_FIRST_HEARTBEAT_BY = {
   'reconcile-holdings-ledger': '2026-11-05',
   'ledger-close': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
   'post-close-reports': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
+  'nightly-close': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
 };
 // 텔레그램 옛 세션 4개: 2026-11-06 폐지(결정 텔레그램-관문), plist는 scripts/launchd/retired/에 보관.
 export const RETIRED_JOBS = new Set(['telegram-session', 'telegram-session-restart', 'telegram-session-handoff', 'telegram-session-health-check', 'media-diarize', 'media-faces-nightly', 'media-transcribe', 'media-vision']);

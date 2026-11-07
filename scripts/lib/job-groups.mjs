@@ -56,6 +56,17 @@ export const JOB_GROUPS = {
     stepTimeoutMs: 60 * MIN,
     gapMs: 0,
   },
+  // C 야간 마감 — 매일 23:51(시세 :x0 슬롯 밖). 스냅샷 → 볼트 git 백업 → 볼트 외부 백업 → 음성 외부 백업(회당 용량 상한, 가장 길어 맨 뒤).
+  'nightly-close': {
+    steps: [
+      'update-monthly-balance-snapshot',
+      'backup-vault',
+      'vault-offsite-backup',
+      'media-audio-offsite-backup',
+    ],
+    stepTimeoutMs: 90 * MIN,
+    gapMs: 0,
+  },
 };
 
 export function groupSteps(group) {

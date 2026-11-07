@@ -15,7 +15,7 @@ export const JOB_LABELS = {
   'media-moments': 'Camera와 촬영 시각이 확인된 KakaoTalk 사진·동영상을 순간별 Vault 노트로 묶음(매시간)',
   'media-audio': '음성 블록: 통화·녹음 로컬 Whisper 전사 → 로컬 pyannote 화자 분리 → 대화 노트(매일 02:00, 발송 없음)',
   'media-photo': '사진 블록: 로컬 Apple Vision 장면 분석 → 로컬 얼굴 판정·미네·휘영·나 이름표·순간 노트 반영(매일 03:00, 발송 없음)',
-  'media-audio-offsite-backup': '통화·녹음 원본 암호화(AES-256-GCM) 구글 드라이브 백업, 새 파일만(매일 00:00)',
+  'media-audio-offsite-backup': '통화·녹음 원본 암호화(AES-256-GCM) 구글 드라이브 백업, 새 파일만(매일 23:51 묶음 nightly-close 마지막 단계)',
   'media-video': '새 영상 얼굴·소리 분석 → 순간 이름표 → 하이라이트 → 말소리 전사·하이라이트 갱신(매일 04:00 영상 블록, 발송 없음)',
   'media-night-check': '밤 점검: 음성·사진·영상 블록 결과 확인, 남은 일을 현황판에 기록하고 요약 발송(매일 05:00)',
   'media-delete-report-weekly': '미디어 삭제 후보 측정·관찰 리포트(매주 일요일 06:00, 원본 처리 없음)',
@@ -23,7 +23,7 @@ export const JOB_LABELS = {
   'media-memory-orb': '미네 사진 기억 구슬 후보 50개 감정·중요도 제안(매일 02:20, 90분 상한, 발송 없음)',
   'mine-athena-fields': '미네 통화·녹음 감정 v1.0 재판단(매일 06:30, 하루 100개·Claude 두 번씩, 발송 없음)',
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
-  'vault-offsite-backup': '매일 00:20 Vault 암호화 외부 백업',
+  'vault-offsite-backup': 'Vault 암호화 외부 백업(매일 23:51 묶음 nightly-close)',
   'question-digest': '비긴급 질문 하루 두 번(09:00·19:00) 담당별 묶음 발송',
   'daily-note': '데일리 노트 23:30 초안(요약 발송)·05:30 확정(05:00 인박스 뒤)',
   'clio-inbox-ingest': 'Inbox 분류·적용(매일 05:00, 데일리 노트 확정 05:30 전)',
@@ -103,6 +103,7 @@ export const JOB_LABELS = {
   'isa-maturity-check': 'ISA 3년 만기(2028-04-06) 도달 여부를 매주 점검, 도달 시 연금계좌 일괄이전 제안(만기 전엔 조용히 스킵, 2026-08-29 신설)',
   'ledger-close': '묶음 A 장후 장부 마감(안전망): 체결(IRP·NH)·미체결 만료·보유 반영·예수금(IRP·NH·외화RP·원장)·펀드 적립 9단계를 순서대로(평일 16:01, 단계별 하트비트는 각 잡 이름으로)',
   'post-close-reports': '묶음 B 장후 보고·정기 제안: 신규 현금 배분·당일 체결 보고·자산분배 점검·분기 리밸런싱 제안·월간 거시틸트 제안 5단계를 순서대로(평일 16:16, 분기·월 단계는 스크립트 안 날짜 판정으로 해당일만)',
+  'nightly-close': '묶음 C 야간 마감: 월별·일별 잔고 스냅샷 → 볼트 git 백업 → 볼트 암호화 외부 백업 → 통화·녹음 원본 외부 백업 4단계를 순서대로(매일 23:51)',
 };
 
 // 화면용 짧은 이름(2026-10-31, 올림푸스 지휘소·제우스 방 — 오너 점검 "영문 식별자 + 긴 개발 메모" 지적).
@@ -185,6 +186,7 @@ export const JOB_SHORT_LABELS = {
   'isa-maturity-check': 'ISA 만기 점검',
   'ledger-close': '장후 장부 마감',
   'post-close-reports': '장후 보고·제안',
+  'nightly-close': '야간 마감·백업',
 };
 
 // 라벨 있으면 "잡이름(한글설명)", 없으면(등록 안 된 새 잡) 이름만 — 조용히 빈 문자열로

@@ -190,3 +190,10 @@ test('묶음 B(post-close-reports): 평일 A 뒤, 분기·월 단계는 스크�
     assert.ok(main.indexOf(`!FORCE && !${gate}(`) < main.indexOf('runHeadlessClaude'), `${file}: 날짜 판정이 LLM 호출보다 뒤`);
   }
 });
+
+test('묶음 C(nightly-close): 매일 자정 전 시작, 스냅샷 → 볼트 백업 → 외부 백업 → 음성 백업', () => {
+  assert.deepEqual(plistHourMinutes('nightly-close'), [[23, 51]]);
+  assert.doesNotMatch(plistText('nightly-close'), /<key>Weekday<\/key>/);
+  assert.deepEqual(groupSteps('nightly-close').map((s) => s.job),
+    ['update-monthly-balance-snapshot', 'backup-vault', 'vault-offsite-backup', 'media-audio-offsite-backup']);
+});
