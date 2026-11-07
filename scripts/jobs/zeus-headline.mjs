@@ -221,7 +221,7 @@ function knownNumbers(pick) {
   }
   if (Number.isFinite(pick.facts?.startsInMinutes)) {
     // '8시간 뒤'·'1시간 40분 뒤': 남은 분을 시간 반올림·내림·올림과 나머지 분으로 풀어 쓴 숫자는 같은 사실의 다른 표기다.
-    const total = pick.facts.startsInMinutes;
+    const total = Math.max(0, Math.floor(pick.facts.startsInMinutes));
     for (const n of [Math.round(total / 60), Math.floor(total / 60), Math.ceil(total / 60), total % 60]) numbers.add(String(n));
   }
   for (const value of Object.values(pick.facts ?? {})) {

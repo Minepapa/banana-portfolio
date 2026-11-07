@@ -250,3 +250,28 @@ test('검증 실패는 이유를 알려 한 번 다시 묻고, 두 번째가 맞
   const failed = await runZeusHeadline({ root: v.root, now: NOW, judge: bad, cooldown: () => false, log });
   assert.equal(failed.counts.failed, 1);
 });
+
+test('재질의 한계: 두 번 다 검증 실패면 judge는 정확히 2회, 한도·호출 오류는 재질문 없이 1회', async (t) => {
+  const v = vault(t);
+  seed(v);
+  const log = { log() {}, error() {} };
+  const run = (judge) => runZeusHeadline({ root: v.root, now: NOW, judge, cooldown: () => false, log });
+  let calls = 0;
+  const twice = await run(async () => { calls += 1; return JSON.stringify({ result: '{"refId":"killswitch","text":"킬스위치 켜짐 77건","sub":""}' }); });
+  assert.equal(calls, 2);
+  assert.equal(twice.result.status, 'failed');
+  calls = 0;
+  const limited = await run(async () => { calls += 1; throw Object.assign(new Error('limit'), { isLimit: true }); });
+  assert.equal(calls, 1);
+  assert.equal(limited.result.status, 'cooldown');
+  calls = 0;
+  const broken = await run(async () => { calls += 1; throw new Error('spawn 실패'); });
+  assert.equal(calls, 1);
+  assert.equal(broken.result.status, 'failed');
+});
+
+test('startsInMinutes가 음수·소수여도 허용 숫자 계산이 안전(내림·0 하한)', () => {
+  const mk = (m) => [{ refId: 'c', source: 'calendar', agent: 'hermes', title: '가짜', facts: { startsInMinutes: m } }];
+  assert.doesNotThrow(() => validatePick({ refId: 'c', text: '1시간 40분 뒤 가짜', sub: '' }, mk(100.7), TODAY));
+  assert.doesNotThrow(() => validatePick({ refId: 'c', text: '가짜 곧 시작', sub: '' }, mk(-5), TODAY));
+});
