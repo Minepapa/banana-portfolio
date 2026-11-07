@@ -13,10 +13,6 @@ export const JOB_OWNERS = {
   'olympus-server': 'zeus',
   'media-archive': 'zeus', // 오너 통화 포함 폰 미디어 전체 보존 — 여러 담당에 걸친 공용 인프라(2026-10-31 제우스)
   'media-audio-offsite-backup': 'zeus', // 통화·녹음 원본 오프사이트 백업 — media-archive와 같은 보존 인프라(2026-10-31 제우스)
-  'telegram-session': 'zeus',
-  'telegram-session-restart': 'zeus',
-  'telegram-session-handoff': 'zeus',
-  'telegram-session-health-check': 'zeus',
   'livesync-watch': 'clio',
   'telegram-gate': 'zeus',
   'telegram-gate-health-check': 'zeus',

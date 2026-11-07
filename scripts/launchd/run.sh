@@ -119,14 +119,12 @@ case "$JOB" in
   quarterly-allocation-review) CMD=(scripts/jobs/quarterly-allocation-review.mjs) ;;
   rebalance-proposal) CMD=(scripts/jobs/rebalance-proposal.mjs) ;;
   proposal-execution-reminder) CMD=(scripts/jobs/proposal-execution-reminder.mjs) ;;
-  telegram-session-handoff) CMD=(scripts/jobs/telegram-session-handoff.mjs) ;;
   owntracks-receiver) CMD=(scripts/jobs/owntracks-receiver.mjs) ;;
   # 아르고스 위치·소비 상시 전달(2026-11-07 전환). 15분마다 전날·오늘. 소비는 argos.json spendingSince 이후만(없으면 안 넘김).
   # 이벤트 파일 날짜는 발생 시각 기준: 폰이 이틀 넘게 끊겼다 밀린 것을 올리면 손으로 --days=N(최대 31) 한 번 돌린다.
   argos-forward) CMD=(scripts/tools/argos-forward.mjs --apply --days=2) ;;
   olympus-server) CMD=(scripts/jobs/olympus-server.mjs) ;;
   isa-maturity-check) CMD=(scripts/jobs/isa-maturity-check.mjs) ;;
-  telegram-session-health-check) CMD=(scripts/jobs/telegram-session-health-check.mjs) ;;
   telegram-gate) CMD=(scripts/jobs/telegram-gate.mjs --mode=live) ;; # 텔레그램 관문 상시 데몬(4단계 전환 전에는 등록 금지)
   telegram-gate-health-check) CMD=(scripts/jobs/telegram-gate-health-check.mjs) ;;
   intraday-market-move-monitor) CMD=(scripts/jobs/intraday-market-move-monitor.mjs) ;;
@@ -144,7 +142,10 @@ case "$JOB" in
   reconcile-breakout-protection) CMD=(scripts/jobs/reconcile-breakout-protection.mjs) ;;
   update-macro-indicators-cache) CMD=(scripts/jobs/update-macro-indicators-cache.mjs) ;;
   update-krx-trading-calendar) CMD=(scripts/jobs/update-krx-trading-calendar.mjs) ;;
-  *) echo "usage: run.sh {media-archive|media-moments|media-audio|media-photo|media-video|media-night-check|media-faces-hold-monthly|media-delete-report-weekly|media-memory-orb|mine-athena-fields|backup-vault|vault-offsite-backup|media-audio-offsite-backup|question-digest|daily-note|clio-inbox-ingest|hermes-briefing|calendar-days|route-today|zeus-headline|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|ingest-spending-inbox|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-nh-fx-rp|reconcile-irp-executions|reconcile-nh-executions|reconcile-holdings-ledger|expire-stale-nh-orders|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|telegram-session-handoff|owntracks-receiver|argos-forward|olympus-server|isa-maturity-check|telegram-session-health-check|telegram-gate|telegram-gate-health-check|intraday-market-move-monitor|process-warning-actions|weekly-vault-health-check|livesync-watch|weekly-warning-review|pension-balance-reminder|update-fund-holdings-from-purchases|annual-instrument-rescore|monthly-macro-tilt-proposal|update-breakout-price-cache|daily-breakout-signal-scan|place-breakout-fallback-entry|reconcile-breakout-protection|update-macro-indicators-cache|update-krx-trading-calendar}" >&2; exit 2 ;;
+  # 2026-11-07 폐지(결정 텔레그램-관문 11항, 2주 안정 11-20 전까지 보관): 되돌리려면 아래 두 줄을 case문에 되살리고 retired/의 plist를 올린다.
+  #   telegram-session-handoff) CMD=(scripts/jobs/telegram-session-handoff.mjs) ;;
+  #   telegram-session-health-check) CMD=(scripts/jobs/telegram-session-health-check.mjs) ;;
+  *) echo "usage: run.sh {media-archive|media-moments|media-audio|media-photo|media-video|media-night-check|media-faces-hold-monthly|media-delete-report-weekly|media-memory-orb|mine-athena-fields|backup-vault|vault-offsite-backup|media-audio-offsite-backup|question-digest|daily-note|clio-inbox-ingest|hermes-briefing|calendar-days|route-today|zeus-headline|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|ingest-spending-inbox|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-nh-fx-rp|reconcile-irp-executions|reconcile-nh-executions|reconcile-holdings-ledger|expire-stale-nh-orders|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|owntracks-receiver|argos-forward|olympus-server|isa-maturity-check|telegram-gate|telegram-gate-health-check|intraday-market-move-monitor|process-warning-actions|weekly-vault-health-check|livesync-watch|weekly-warning-review|pension-balance-reminder|update-fund-holdings-from-purchases|annual-instrument-rescore|monthly-macro-tilt-proposal|update-breakout-price-cache|daily-breakout-signal-scan|place-breakout-fallback-entry|reconcile-breakout-protection|update-macro-indicators-cache|update-krx-trading-calendar}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지). "$@"는 위 shift 이후라
