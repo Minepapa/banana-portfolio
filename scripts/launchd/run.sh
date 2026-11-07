@@ -142,10 +142,19 @@ case "$JOB" in
   reconcile-breakout-protection) CMD=(scripts/jobs/reconcile-breakout-protection.mjs) ;;
   update-macro-indicators-cache) CMD=(scripts/jobs/update-macro-indicators-cache.mjs) ;;
   update-krx-trading-calendar) CMD=(scripts/jobs/update-krx-trading-calendar.mjs) ;;
+  # 무인잡 묶음(2026-11-07, scripts/lib/job-groups.mjs) — 단계마다 이 run.sh를 다시 거친다(단계 이름의 로그·JobHealth 유지).
+  # 위 단계 잡 줄은 묶음이 부르므로 지우지 않는다(옛 plist는 retired/, 되돌리려면 그 plist를 올리고 묶음 plist를 내린다).
+  ledger-close) CMD=(scripts/jobs/run-job-group.mjs ledger-close) ;; # A 장후 장부 마감(평일 16:01)
+  post-close-reports) CMD=(scripts/jobs/run-job-group.mjs post-close-reports) ;; # B 장후 보고·정기 제안(평일 16:16)
+  nightly-close) CMD=(scripts/jobs/run-job-group.mjs nightly-close) ;; # C 야간 마감(매일 23:51)
+  media-hourly) CMD=(scripts/jobs/run-job-group.mjs media-hourly) ;; # D 미디어 매시(보관 → 순간 노트)
+  premarket-cache) CMD=(scripts/jobs/run-job-group.mjs premarket-cache) ;; # F 장전 데이터 갱신(평일 07:06)
+  hermes-refresh) CMD=(scripts/jobs/run-job-group.mjs hermes-refresh) ;; # I 헤르메스 15분 갱신(일정 → 동선)
+  price-followups) CMD=(scripts/jobs/run-job-group.mjs price-followups) ;; # J 시세 후속(매시 :07·:17…)
   # 2026-11-07 폐지(결정 텔레그램-관문 11항, 2주 안정 11-20 전까지 보관): 되돌리려면 아래 두 줄을 case문에 되살리고 retired/의 plist를 올린다.
   #   telegram-session-handoff) CMD=(scripts/jobs/telegram-session-handoff.mjs) ;;
   #   telegram-session-health-check) CMD=(scripts/jobs/telegram-session-health-check.mjs) ;;
-  *) echo "usage: run.sh {media-archive|media-moments|media-audio|media-photo|media-video|media-night-check|media-faces-hold-monthly|media-delete-report-weekly|media-memory-orb|mine-athena-fields|backup-vault|vault-offsite-backup|media-audio-offsite-backup|question-digest|daily-note|clio-inbox-ingest|hermes-briefing|calendar-days|route-today|zeus-headline|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|ingest-spending-inbox|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-nh-fx-rp|reconcile-irp-executions|reconcile-nh-executions|reconcile-holdings-ledger|expire-stale-nh-orders|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|owntracks-receiver|argos-forward|olympus-server|isa-maturity-check|telegram-gate|telegram-gate-health-check|intraday-market-move-monitor|process-warning-actions|weekly-vault-health-check|livesync-watch|weekly-warning-review|pension-balance-reminder|update-fund-holdings-from-purchases|annual-instrument-rescore|monthly-macro-tilt-proposal|update-breakout-price-cache|daily-breakout-signal-scan|place-breakout-fallback-entry|reconcile-breakout-protection|update-macro-indicators-cache|update-krx-trading-calendar}" >&2; exit 2 ;;
+  *) echo "usage: run.sh {media-archive|media-moments|media-audio|media-photo|media-video|media-night-check|media-faces-hold-monthly|media-delete-report-weekly|media-memory-orb|mine-athena-fields|backup-vault|vault-offsite-backup|media-audio-offsite-backup|question-digest|daily-note|clio-inbox-ingest|hermes-briefing|calendar-days|route-today|zeus-headline|health-watcher|execute-quant|execute-asset-allocation|daily-asset-allocation-check|parse-notifications-to-vault|ingest-spending-inbox|update-holdings-from-executions|daily-execution-report|update-holdings-prices|sync-firestore-mirror|new-cash-allocation|reconcile-irp|reconcile-nh-cash|reconcile-nh-fx-rp|reconcile-irp-executions|reconcile-nh-executions|reconcile-holdings-ledger|expire-stale-nh-orders|intraday-portfolio-sync|update-cash-from-ledger|weekly-report|update-allocation-from-holdings|update-monthly-balance-snapshot|morning-briefing|themis-risk-review|weekly-schedule-summary|quarterly-allocation-review|rebalance-proposal|proposal-execution-reminder|owntracks-receiver|argos-forward|olympus-server|isa-maturity-check|telegram-gate|telegram-gate-health-check|intraday-market-move-monitor|process-warning-actions|weekly-vault-health-check|livesync-watch|weekly-warning-review|pension-balance-reminder|update-fund-holdings-from-purchases|annual-instrument-rescore|monthly-macro-tilt-proposal|update-breakout-price-cache|daily-breakout-signal-scan|place-breakout-fallback-entry|reconcile-breakout-protection|update-macro-indicators-cache|update-krx-trading-calendar|ledger-close|post-close-reports|nightly-close|media-hourly|premarket-cache|hermes-refresh|price-followups}" >&2; exit 2 ;;
 esac
 
 # 잡을 포그라운드로 실행해 종료코드·소요시간 포착 (exec 금지). "$@"는 위 shift 이후라
@@ -156,8 +165,9 @@ START=$(date +%s)
 LOG_LINES_BEFORE=$(wc -l < "$LOG_DIR/$JOB.log" 2>/dev/null | tr -d ' ' || echo 0)
 [ -n "$LOG_LINES_BEFORE" ] || LOG_LINES_BEFORE=0
 set +e
-if [ "$JOB" = media-moments ] && [ "$#" -eq 0 ]; then
+if [ "$JOB" = media-moments ] && [ "$#" -eq 0 ] && [ -z "${JOB_GROUP:-}" ]; then
   # 같은 실행에서 색인이 끝난 뒤 순간을 만든다. 별도 launchd 시계의 위상은 보장되지 않는다.
+  # 묶음 media-hourly(2026-11-07) 안에서는 묶음이 media-archive를 앞 단계로 먼저 돌리므로 여기서 다시 돌리지 않는다(JOB_GROUP).
   "$NODE" scripts/jobs/media-archive.mjs
   ARCHIVE_CODE=$?
   if [ "$ARCHIVE_CODE" -ne 0 ]; then

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.post-close-reports</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>post-close-reports</string>
+  </array>
+  <!-- 평일 16:16 KST — 묶음 B 장후 보고·정기 제안(2026-11-07 무인잡 정리). 묶음 A(ledger-close 16:01) 뒤에 장부를 읽는
+       보고·제안 5개를 순서대로: new-cash-allocation(옛 16:13) → daily-execution-report(옛 16:15) → daily-asset-allocation-
+       check(옛 16:30, KRX 마감 15:30 + 버퍼) → rebalance-proposal(옛 분기 시작월 1~3일 16:32) → monthly-macro-tilt-proposal
+       (옛 매월 26~31일 16:35). 뒤 둘은 스크립트 안 날짜 판정(shouldRunToday·shouldRunThisMonth, 둘 다 평일만)이 해당일이
+       아니면 LLM 호출 전에 끝내므로 매 평일 불러도 실제 판단은 예전과 같은 날 한 번이다. 헤드리스 LLM 단계(1·3·4·5)의
+       쿨다운·한도 처리는 각 스크립트 안 그대로. 16:16은 10분 슬롯(:x0·:x3·:x5) 밖. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>16</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>16</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>16</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>16</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>16</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/post-close-reports.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/post-close-reports.log</string>
+</dict>
+</plist>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.ledger-close</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>ledger-close</string>
+  </array>
+  <!-- 평일 16:01 KST — 묶음 A 장후 장부 마감(안전망, 2026-11-07 무인잡 정리). 옛 고정시각 잡 9개
+       (reconcile-irp-executions 15:50 ~ update-fund-holdings-from-purchases 16:11)를 scripts/lib/job-groups.mjs
+       순서대로 run-job-group.mjs가 한 번에 돌린다. 단계마다 run.sh를 거쳐 옛 로그·JobHealth 이름이 그대로 남는다.
+       intraday-portfolio-sync가 죽어도 하루 1회는 도는 안전망(오너 2026-09-03 "지금 구조를 백업으로")이므로 그 잡을
+       부르지 않고 스크립트를 직접 부른다. 16:01은 10분 주기 슬롯(시세 :x0·급변 :x3·동기화 :x5) 밖이고
+       poll-schedule.mjs isSafetyNetWindow(15:50~16:14) 안이라 동기화 16:05 회차와 겹치지 않는다. 체결 조회 API는
+       장마감(15:30) 뒤에야 데이터가 뜨고, 장후 시간외(15:40~16:00) 체결까지 잡히는 시각이다. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>1</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>1</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>1</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>1</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>1</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/ledger-close.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/ledger-close.log</string>
+</dict>
+</plist>

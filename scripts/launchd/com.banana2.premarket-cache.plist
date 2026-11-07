@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.premarket-cache</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>premarket-cache</string>
+  </array>
+  <!-- 평일 07:06 KST — 묶음 F 장전 데이터 갱신(2026-11-07 무인잡 정리). update-macro-indicators-cache(옛 07:05) →
+       update-krx-trading-calendar(옛 08:15). 서로 부르지 않는 아침 캐시 갱신 두 개다. 휴장일 캐시는 당일 날짜 기준 KIS 조회라
+       당겨도 같은 값이고, 소비자(주문·신호 잡, 데이터 신선도 거래일 판정)는 그 뒤다. 07:06은 동기화 :x5 슬롯 밖(옛 07:05는 슬롯과
+       같은 분이었다). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>6</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>6</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>6</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>6</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>6</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/premarket-cache.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/premarket-cache.log</string>
+</dict>
+</plist>

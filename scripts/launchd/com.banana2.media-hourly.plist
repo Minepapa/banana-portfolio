@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.media-hourly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>media-hourly</string>
+  </array>
+  <!-- 매시간(StartInterval 3600) — 묶음 D 미디어 매시(2026-11-07 무인잡 정리). media-archive → media-moments 순서, 보관이 실패하면
+       순간 노트는 건너뛴다. 예전엔 media-archive(매시)와 media-moments(매시, run.sh 특례로 보관을 먼저 한 번 더 돌림) 두 plist가
+       따로 돌아 보관이 시간당 두 번 돌았다. 묶음 안에서는 run.sh 특례가 꺼진다(JOB_GROUP 환경변수). 두 단계 모두 잠금(withLock)이 있는
+       긴 작업이라 단계 상한 없음(옛 plist와 같음). -->
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-hourly.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/media-hourly.log</string>
+</dict>
+</plist>

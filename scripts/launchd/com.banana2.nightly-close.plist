@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.nightly-close</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>nightly-close</string>
+  </array>
+  <!-- 매일 23:51 KST — 묶음 C 야간 마감(2026-11-07 무인잡 정리). update-monthly-balance-snapshot(옛 23:50) → backup-vault
+       (옛 23:50, 이제 스냅샷 뒤라 그날 스냅샷까지 담는다) → vault-offsite-backup(옛 00:20) → media-audio-offsite-backup(옛 00:00,
+       회당 400MB 상한이라 가장 길어 맨 뒤). 스냅샷은 자정 전에 끝나야 그날 값이다(실측 0~9초). 외부 백업 이름은 KST 날짜라
+       이제 그날 날짜로 붙는다(옮긴 첫날은 같은 이름을 덮어써 하루치 한 개 유지 — vault-offsite-backup이 같은 이름 옛 파일을 지움).
+       23:51은 시세 :x0 슬롯 밖. 단계 상한 90분. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>51</integer></dict>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/nightly-close.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/nightly-close.log</string>
+</dict>
+</plist>

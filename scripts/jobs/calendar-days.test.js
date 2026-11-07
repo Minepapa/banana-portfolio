@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { makeCalendarFetcher, parseArgs, runCalendarDays } from './calendar-days.mjs';
 import { EXPECTED_INTERVALS_MS } from '../lib/job-schedule.mjs';
+import { groupSteps } from '../lib/job-groups.mjs';
 
 const owners = [{ calendarId: 'me@x', owner: '나' }];
 const now = new Date('2026-10-30T23:00:00Z'); // KST 10-31 08:00
@@ -50,12 +51,14 @@ test('미리보기는 쓰지 않고, 날 수는 1~31만 받는다', async () => 
   await assert.rejects(runCalendarDays({ now, days: Number.NaN, readOwners: () => owners }), /1~31/);
 });
 
-test('잡 등록: run.sh·plist 15분·헬스 30분', () => {
+test('잡 등록: run.sh·묶음 hermes-refresh 15분(첫 단계)·헬스 30분', () => {
   const run = readFileSync(new URL('../launchd/run.sh', import.meta.url), 'utf8');
   assert.match(run, /calendar-days\) CMD=\(scripts\/jobs\/calendar-days\.mjs\) ;;/);
-  const plist = readFileSync(new URL('../launchd/com.banana2.calendar-days.plist', import.meta.url), 'utf8');
-  assert.match(plist, /<string>com\.banana2\.calendar-days<\/string>/);
+  // 2026-11-07 묶음: 일정 → 동선 순서로 hermes-refresh가 15분마다 부른다(옛 plist는 retired/).
+  const plist = readFileSync(new URL('../launchd/com.banana2.hermes-refresh.plist', import.meta.url), 'utf8');
+  assert.match(plist, /<string>com\.banana2\.hermes-refresh<\/string>/);
   assert.match(plist, /<key>StartInterval<\/key>\s*<integer>900<\/integer>/);
+  assert.deepEqual(groupSteps('hermes-refresh').map((s) => s.job), ['calendar-days', 'route-today']);
   assert.equal(EXPECTED_INTERVALS_MS['calendar-days'], 30 * 60 * 1000);
 });
 

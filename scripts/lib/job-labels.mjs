@@ -15,7 +15,7 @@ export const JOB_LABELS = {
   'media-moments': 'Camera와 촬영 시각이 확인된 KakaoTalk 사진·동영상을 순간별 Vault 노트로 묶음(매시간)',
   'media-audio': '음성 블록: 통화·녹음 로컬 Whisper 전사 → 로컬 pyannote 화자 분리 → 대화 노트(매일 02:00, 발송 없음)',
   'media-photo': '사진 블록: 로컬 Apple Vision 장면 분석 → 로컬 얼굴 판정·미네·휘영·나 이름표·순간 노트 반영(매일 03:00, 발송 없음)',
-  'media-audio-offsite-backup': '통화·녹음 원본 암호화(AES-256-GCM) 구글 드라이브 백업, 새 파일만(매일 00:00)',
+  'media-audio-offsite-backup': '통화·녹음 원본 암호화(AES-256-GCM) 구글 드라이브 백업, 새 파일만(매일 23:51 묶음 nightly-close 마지막 단계)',
   'media-video': '새 영상 얼굴·소리 분석 → 순간 이름표 → 하이라이트 → 말소리 전사·하이라이트 갱신(매일 04:00 영상 블록, 발송 없음)',
   'media-night-check': '밤 점검: 음성·사진·영상 블록 결과 확인, 남은 일을 현황판에 기록하고 요약 발송(매일 05:00)',
   'media-delete-report-weekly': '미디어 삭제 후보 측정·관찰 리포트(매주 일요일 06:00, 원본 처리 없음)',
@@ -23,7 +23,7 @@ export const JOB_LABELS = {
   'media-memory-orb': '미네 사진 기억 구슬 후보 50개 감정·중요도 제안(매일 02:20, 90분 상한, 발송 없음)',
   'mine-athena-fields': '미네 통화·녹음 감정 v1.0 재판단(매일 06:30, 하루 100개·Claude 두 번씩, 발송 없음)',
   'backup-vault': '매일 밤 Vault 전체 스냅샷 git 백업',
-  'vault-offsite-backup': '매일 00:20 Vault 암호화 외부 백업',
+  'vault-offsite-backup': 'Vault 암호화 외부 백업(매일 23:51 묶음 nightly-close)',
   'question-digest': '비긴급 질문 하루 두 번(09:00·19:00) 담당별 묶음 발송',
   'daily-note': '데일리 노트 23:30 초안(요약 발송)·05:30 확정(05:00 인박스 뒤)',
   'clio-inbox-ingest': 'Inbox 분류·적용(매일 05:00, 데일리 노트 확정 05:30 전)',
@@ -85,8 +85,8 @@ export const JOB_LABELS = {
   'daily-breakout-signal-scan': '돌파매매 일별 신호판정 — 승인 없이 자동발주(평일 15:32, 2026-09-13 신설·2026-09-18 launchd 상시배선)',
   'place-breakout-fallback-entry': '돌파매매 전날 장후시간외 미체결 진입을 다음날 시가로 폴백 — 승인 없이 자동발주(평일 09:03, 2026-09-13 신설·2026-09-18 launchd 상시배선)',
   'reconcile-breakout-protection': '돌파매매 보유 포지션 청산 관리 — KRX 시가단일가(08:35) 매일 손절 재등록(당일유효 소멸분)·트레일링 정정·3R 부분익절 능동 판단·전량 종료 원장 기록(2026-09-29 재설계)',
-  'update-macro-indicators-cache': '거시지표 캐시(USD/KRW 환율 등) 매일 갱신 — 기존 일요일 전용(위험 재검토·주간리포트) 지연캐시가 평일엔 최대 6일 묵은 값을 낼 수 있던 설계 공백 보강(평일 07:05, 2026-09-18 신설)',
-  'update-krx-trading-calendar': '평일 08:15 KIS 국내휴장일조회로 당일 KRX 개장 여부 캐시 갱신 — 돌파매매 신호·주문 차단 기준',
+  'update-macro-indicators-cache': '거시지표 캐시(USD/KRW 환율 등) 매일 갱신 — 기존 일요일 전용(위험 재검토·주간리포트) 지연캐시가 평일엔 최대 6일 묵은 값을 낼 수 있던 설계 공백 보강(평일 07:06 묶음 premarket-cache, 2026-09-18 신설)',
+  'update-krx-trading-calendar': '평일 07:06(묶음 premarket-cache) KIS 국내휴장일조회로 당일 KRX 개장 여부 캐시 갱신 — 돌파매매 신호·주문 차단 기준',
   // 2026-09-19 발견(DevRequest 잡실패알림-잡한글설명추가 처리 중 신설한 구조적 가드가
   // 잡아낸 실제 공백 9건) — 등록 시점부터 라벨 없이 돌고 있던 잡들. 아래 vault-job-
   // catalog-audit.test.js가 이미 잡는 "무인잡-카탈로그.md 누락"과는 별개 축(그 문서엔
@@ -101,6 +101,13 @@ export const JOB_LABELS = {
   'proposal-execution-reminder': '자산분배 트랙 승인 제안의 미체결·무응답을 리마인드(3일 이상 미체결 또는 1일 이상 승인/거부 자체 방치, 2026-08-23 신설)',
   'telegram-session-handoff': '텔레그램 세션 재시작 5분 전, 그날 무세이온 활동과 오너-세션 대화 요약을 기록(재시작 후 새 세션이 SessionStart 훅으로 읽어옴, 매일 03:55)',
   'isa-maturity-check': 'ISA 3년 만기(2028-04-06) 도달 여부를 매주 점검, 도달 시 연금계좌 일괄이전 제안(만기 전엔 조용히 스킵, 2026-08-29 신설)',
+  'ledger-close': '묶음 A 장후 장부 마감(안전망): 체결(IRP·NH)·미체결 만료·보유 반영·예수금(IRP·NH·외화RP·원장)·펀드 적립 9단계를 순서대로(평일 16:01, 단계별 하트비트는 각 잡 이름으로)',
+  'post-close-reports': '묶음 B 장후 보고·정기 제안: 신규 현금 배분·당일 체결 보고·자산분배 점검·분기 리밸런싱 제안·월간 거시틸트 제안 5단계를 순서대로(평일 16:16, 분기·월 단계는 스크립트 안 날짜 판정으로 해당일만)',
+  'nightly-close': '묶음 C 야간 마감: 월별·일별 잔고 스냅샷 → 볼트 git 백업 → 볼트 암호화 외부 백업 → 통화·녹음 원본 외부 백업 4단계를 순서대로(매일 23:51)',
+  'media-hourly': '묶음 D 미디어 매시: Media Inbox 보관·색인 → 순간 노트 묶기(보관 실패 시 순간 노트 건너뜀, 매시간)',
+  'premarket-cache': '묶음 F 장전 데이터 갱신: 거시지표 캐시 → KRX 휴장일 캐시(평일 07:06)',
+  'hermes-refresh': '묶음 I 15분 갱신: 일정 파일 정본 → 오늘 동선 임시 파일(15분마다, 발송 없음)',
+  'price-followups': '묶음 J 시세 후속: 보유 기준 자산분배 재계산 → Firestore 미러 동기화(매시 :07·:17…, 10분)',
 };
 
 // 화면용 짧은 이름(2026-10-31, 올림푸스 지휘소·제우스 방 — 오너 점검 "영문 식별자 + 긴 개발 메모" 지적).
@@ -181,6 +188,13 @@ export const JOB_SHORT_LABELS = {
   'proposal-execution-reminder': '미체결 제안 알림',
   'telegram-session-handoff': '세션 인수인계',
   'isa-maturity-check': 'ISA 만기 점검',
+  'ledger-close': '장후 장부 마감',
+  'post-close-reports': '장후 보고·제안',
+  'nightly-close': '야간 마감·백업',
+  'media-hourly': '미디어 매시',
+  'premarket-cache': '장전 캐시 갱신',
+  'hermes-refresh': '일정·동선 갱신',
+  'price-followups': '시세 후속 갱신',
 };
 
 // 라벨 있으면 "잡이름(한글설명)", 없으면(등록 안 된 새 잡) 이름만 — 조용히 빈 문자열로

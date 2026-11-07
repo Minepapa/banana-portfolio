@@ -92,8 +92,8 @@ export const SCHEDULE = [
   // 신설(2026-09-13) 당시 부서별-텔레그램-보고.md에 "이벤트기반"으로 잘못 분류돼
   // 있어 이 배열에도 빠져 있었다(daily-execution-report와 동일 클래스의 누락).
   { day: '평일', time: '15:32', dept: agentLabel('plutus'), what: '돌파매매 일별 신호판정 결과 — 신호 없어도 항상 발송', script: 'daily-breakout-signal-scan.mjs' },
-  { day: '평일', time: '16:15', dept: agentLabel('plutus'), what: '당일 체결 내역 보고', conditional: '체결 있을 때만', script: 'daily-execution-report.mjs' },
-  { day: '평일', time: '16:30', dept: agentLabel('plutus'), what: '리밸런싱·거시 점검', conditional: '이상 있을 때만', script: 'daily-asset-allocation-check.mjs' },
+  { day: '평일', time: '16:16', dept: agentLabel('plutus'), what: '당일 체결 내역 보고', conditional: '체결 있을 때만', script: 'daily-execution-report.mjs' },
+  { day: '평일', time: '16:16', dept: agentLabel('plutus'), what: '리밸런싱·거시 점검', conditional: '이상 있을 때만', script: 'daily-asset-allocation-check.mjs' },
   { day: '일요일', time: '07:00', dept: agentLabel('plutus'), what: '주간 위험 재검토', script: 'themis-risk-review.mjs' },
   { day: '일요일', time: '06:00', dept: agentLabel('themis'), what: '미디어 삭제 후보 관찰 리포트(원본 처리 없음)', script: 'media-delete-report-weekly.mjs' },
   { day: '일요일', time: '07:20', dept: agentLabel('zeus'), what: '경고 주간 검토(이상 있을 때만)', conditional: '이상 있을 때만', script: 'weekly-warning-review.mjs' },

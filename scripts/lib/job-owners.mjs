@@ -82,4 +82,11 @@ export const JOB_OWNERS = {
   'update-macro-indicators-cache': 'plutus',
   'update-krx-trading-calendar': 'plutus',
   'sync-firestore-mirror': 'plutus', // 같은 10분 주기 투자 데이터 잡들과 맞춤(2026-10-31 제우스)
+  'ledger-close': 'plutus', // 묶음(job-groups.mjs)
+  'post-close-reports': 'plutus', // 묶음(job-groups.mjs)
+  'nightly-close': 'clio', // 묶음(job-groups.mjs)
+  'media-hourly': 'zeus', // 묶음(job-groups.mjs)
+  'premarket-cache': 'plutus', // 묶음(job-groups.mjs)
+  'hermes-refresh': 'hermes', // 묶음(job-groups.mjs)
+  'price-followups': 'plutus', // 묶음(job-groups.mjs)
 };

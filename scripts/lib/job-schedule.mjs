@@ -246,6 +246,20 @@ export const EXPECTED_INTERVALS_MS = {
   // 그대로 적용해 400일로 등록(×2 알람 문턱=800일, 연 1회 잡이 두 해 연속 완전히
   // 죽어야만 알람 — 이 cadence 자체의 한계이지 과도한 관대함이 아님).
   'annual-instrument-rescore': 400 * 24 * 60 * 60 * 1000,
+  // 묶음 A 장후 장부 마감(2026-11-07, 평일 16:01) — 옛 고정시각 9개와 같은 평일 전용 48h. 단계 하트비트는 옛 이름 그대로 아래 값으로 감시된다.
+  'ledger-close': 48 * 60 * 60 * 1000,
+  // 묶음 B 장후 보고·정기 제안(2026-11-07, 평일 16:16) — 평일 전용 48h. rebalance-proposal·monthly-macro-tilt-proposal 단계는 이제 평일마다 하트비트를 남긴다(값은 그대로).
+  'post-close-reports': 48 * 60 * 60 * 1000,
+  // 묶음 C 야간 마감(2026-11-07, 매일 23:51) — 요일 제한 없음 24h.
+  'nightly-close': 24 * 60 * 60 * 1000,
+  // 묶음 D 미디어 매시(2026-11-07, StartInterval 3600) — 1시간.
+  'media-hourly': 60 * 60 * 1000,
+  // 묶음 F 장전 데이터 갱신(2026-11-07, 평일 07:06) — 평일 전용 48h.
+  'premarket-cache': 48 * 60 * 60 * 1000,
+  // 묶음 I 헤르메스 15분 갱신(2026-11-07, StartInterval 900) — 단계(calendar-days·route-today)와 같은 30분 등록.
+  'hermes-refresh': 30 * 60 * 1000,
+  // 묶음 J 시세 후속(2026-11-07, 매시 :07·:17… 고정 분) — 10분.
+  'price-followups': 10 * 60 * 1000,
 };
 export const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 // 아직 가동 전이라 하트비트 파일이 없는 게 정상인 잡 — 이 날짜(KST, 이날 00:00부터)까지는 파일이 없어도 경보하지 않는다
@@ -259,6 +273,13 @@ export const JOB_FIRST_HEARTBEAT_BY = {
   // 보유↔원장 재생 대조 — 오너가 2026-11-04 등록을 승인했다. 제우스가 그날 launchctl 등록 + kickstart로 첫 실행을 한다.
   // 등록이 늦어지면 이 날짜도 같이 옮긴다(안 옮기면 미등록 잡으로 경보가 나간다).
   'reconcile-holdings-ledger': '2026-11-05',
+  'ledger-close': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
+  'post-close-reports': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
+  'nightly-close': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
+  'media-hourly': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
+  'premarket-cache': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
+  'hermes-refresh': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
+  'price-followups': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
 };
 // 텔레그램 옛 세션 4개: 2026-11-06 폐지(결정 텔레그램-관문), plist는 scripts/launchd/retired/에 보관.
 export const RETIRED_JOBS = new Set(['telegram-session', 'telegram-session-restart', 'telegram-session-handoff', 'telegram-session-health-check', 'media-diarize', 'media-faces-nightly', 'media-transcribe', 'media-vision']);
