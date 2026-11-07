@@ -9,8 +9,9 @@ import { join } from 'node:path';
 const VAULT = mkdtempSync(join(tmpdir(), 'argos-invest-vault-'));
 process.env.VAULT_PATH = VAULT;
 const {
-  ARGOS_DOC_PREFIX, argosInboxDocs, buildShadowReport, crossSourceContextFromState, findCrossSourceTwin,
-  isInvestmentAlertSender, loadArgosState, parseArgosMode, readRecentArgosEvents, saveArgosState, shadowLogLine,
+  ARGOS_DOC_PREFIX, argosInboxDocs, buildShadowReport, countAgingArgosDocs, createArgosLedgerWriter,
+  crossSourceContextFromState, findCrossSourceTwin, isInvestmentAlertSender, loadArgosState, parseArgosMode,
+  readRecentArgosEvents, saveArgosState, settleArgosProcessed, shadowLogLine,
 } = await import('./argos-invest-alerts.mjs');
 const { INVESTMENT_ALERT_BROKERS, parseExecution, parseDividend } = await import('./notification-parsers.mjs');
 const { buildDividendRecord, buildExecutionRecord, buildKakaoExecutionRecord } = await import('./ledger-vault-writer.mjs');
@@ -209,4 +210,124 @@ test('shadow 보고서: 일치·아르고스만·걸러냄을 세고, 원문은 
   assert.match(shadowLogLine(report), /일치 2 · 아르고스만 1 · API 정본 0 · 걸러냄 1/);
   assert.ok(!existsSync(join(dirs.배당, 'argos')), '보고서는 장부에 쓰지 않음');
   assert.equal(readFileSync(join(dirs.배당, fsRecord.filename), 'utf8'), fsRecord.content);
+});
+
+// ── 크래시 안전(2026-11-07, primary 전환 전 재리뷰 MEDIUM) ──
+// 불변식: 아르고스 문서로 장부에 쓴 파일은 상태 파일에서 반드시 아르고스 것으로 보인다(written 또는 쓰기 전 의도 pending).
+// 그래야 장부를 쓴 뒤 상태 저장 전에 잡이 죽고 shadow로 되돌려도 Firestore 쪽 같은 기록이 짝을 찾아 두 번 쓰지 않는다.
+function primaryRun(file) {
+  const state = loadArgosState(file);
+  const records = {};
+  const ctx = crossSourceContextFromState(state);
+  return { state, records, ctx };
+}
+
+test('크래시(배당): 장부를 쓴 뒤 상태 저장 전에 죽어도, shadow로 되돌린 Firestore 문서는 그 파일을 짝으로 찾는다', () => {
+  const dirs = freshDirs();
+  const file = join(mkdtempSync(join(VAULT, 'state-')), 'state.json');
+  const nowMs = at('2026-08-04 12:00:00');
+  const { state, records, ctx } = primaryRun(file);
+  const doc = { id: 'argos-d', ts: '2026-08-04 09:00:04', body: DIVIDEND };
+  const record = buildDividendRecord(parseDividend(doc.body, doc.ts));
+  const argosPath = join(dirs.배당, record.filename);
+  const crashAfterWrite = (path, content) => { writeFileSync(path, content); throw new Error('잡 강제 종료'); };
+  const writeLedger = createArgosLedgerWriter({ stateFile: file, state, records, argosWritten: ctx.argosWritten, nowMs, write: crashAfterWrite });
+  assert.throws(() => writeLedger(doc.id, argosPath, record.content), /강제 종료/);
+  assert.ok(existsSync(argosPath), '장부 파일은 써짐');
+  // 마지막 상태 저장(settle)은 일어나지 않았다. 다음 실행: shadow로 되돌림, 카카오 알림 앱이 받은 같은 배당.
+  const after = loadArgosState(file);
+  const fsDoc = { id: 'fs-d', ts: '2026-08-04 09:00:07', body: DIVIDEND };
+  const shadowCtx = { ...crossSourceContextFromState(after), dirs, confirmations: [] };
+  assert.equal(findCrossSourceTwin(fsDoc, shadowCtx).twin, argosPath, 'Firestore 쪽은 쓰지 않음(중복 없음)');
+});
+
+test('크래시 뒤 primary 재실행: 같은 문서가 다시 읽히고 기존 파일로 건너뛰어도 written이 남는다. 쓰기 전에 죽었으면 written 없음', () => {
+  const dirs = freshDirs();
+  const file = join(mkdtempSync(join(VAULT, 'state-')), 'state.json');
+  const nowMs = at('2026-08-04 12:00:00');
+  const record = buildDividendRecord(parseDividend(DIVIDEND, '2026-08-04 09:00:04'));
+  const argosPath = join(dirs.배당, record.filename);
+  const first = primaryRun(file);
+  const crash = (path, content) => { writeFileSync(path, content); throw new Error('죽음'); };
+  assert.throws(() => createArgosLedgerWriter({ stateFile: file, ...first, argosWritten: first.ctx.argosWritten, nowMs, write: crash })('argos-d', argosPath, record.content));
+  // 쓰기 직전에 죽은 다른 문서(파일 없음)
+  const crashBefore = () => { throw new Error('쓰기 전 죽음'); };
+  const missingPath = join(dirs.예수금, '2026-08-04-090100-없음.md');
+  const s2 = loadArgosState(file);
+  assert.throws(() => createArgosLedgerWriter({ stateFile: file, state: s2, records: {}, argosWritten: new Set(), nowMs, write: crashBefore })('argos-c', missingPath, 'x'));
+  // 재실행: 두 문서 모두 미처리라 다시 읽힌다(primary 필터는 processed만 본다).
+  const again = loadArgosState(file);
+  assert.equal(again.processed['argos-d'], undefined);
+  assert.equal(again.processed['argos-c'], undefined);
+  // argos-d는 파일이 이미 있어 건너뜀(기록 없이 처리), argos-c는 이번엔 안 쓰고 처리됐다고 치자.
+  settleArgosProcessed(again, ['argos-d', 'argos-c'], {}, nowMs);
+  saveArgosState(file, again, nowMs);
+  const final = loadArgosState(file);
+  assert.equal(final.processed['argos-d'].written, argosPath, '의도 기록이 written으로 이어짐');
+  assert.equal(final.processed['argos-c'].written, undefined, '파일이 없으면 written 아님');
+  assert.deepEqual(final.pending ?? {}, {}, '정리된 의도는 지움');
+  assert.ok(crossSourceContextFromState(final).argosWritten.has(argosPath));
+});
+
+test('정상 실행: 쓰기 성공 뒤 settle하면 written·twin이 남고 의도는 지워진다. 카카오 문서는 의도를 남기지 않는다', () => {
+  const dirs = freshDirs();
+  const file = join(mkdtempSync(join(VAULT, 'state-')), 'state.json');
+  const nowMs = at('2026-08-04 12:00:00');
+  const { state, records, ctx } = primaryRun(file);
+  const writeLedger = createArgosLedgerWriter({ stateFile: file, state, records, argosWritten: ctx.argosWritten, nowMs, write: writeFileSync });
+  const record = buildDividendRecord(parseDividend(DIVIDEND, '2026-08-04 09:00:04'));
+  const p = join(dirs.배당, record.filename);
+  writeLedger('argos-d', p, record.content);
+  assert.ok(ctx.argosWritten.has(p));
+  assert.equal(loadArgosState(file).pending['argos-d'].path, p, '쓰기 전에 의도가 디스크에 있음');
+  writeLedger('fs-x', join(dirs.배당, '2026-08-04-090500-다른.md'), 'x');
+  assert.equal(loadArgosState(file).pending['fs-x'], undefined);
+  records['argos-t'] = { twin: '/twin.md' };
+  settleArgosProcessed(state, ['argos-d', 'argos-t'], records, nowMs);
+  saveArgosState(file, state, nowMs);
+  const final = loadArgosState(file);
+  assert.equal(final.processed['argos-d'].written, p);
+  assert.equal(final.processed['argos-t'].twin, '/twin.md');
+  assert.deepEqual(final.pending, {});
+});
+
+test('primary→shadow→primary 왕복: 어느 쪽도 같은 배당을 두 번 쓰지 않는다', () => {
+  const dirs = freshDirs();
+  const file = join(mkdtempSync(join(VAULT, 'state-')), 'state.json');
+  const nowMs = at('2026-08-04 12:00:00');
+  // primary: 아르고스가 배당을 쓰고 상태 저장 전에 죽음
+  const r = primaryRun(file);
+  const rec = buildDividendRecord(parseDividend(DIVIDEND, '2026-08-04 09:00:04'));
+  const argosPath = join(dirs.배당, rec.filename);
+  assert.throws(() => createArgosLedgerWriter({ stateFile: file, ...r, argosWritten: r.ctx.argosWritten, nowMs,
+    write: (p, c) => { writeFileSync(p, c); throw new Error('죽음'); } })('argos-d', argosPath, rec.content));
+  // shadow: Firestore 문서는 짝 → 쓰지 않음
+  const shadowCtx = { ...crossSourceContextFromState(loadArgosState(file)), dirs, confirmations: [] };
+  assert.equal(findCrossSourceTwin({ id: 'fs-d', ts: '2026-08-04 09:00:01', body: DIVIDEND }, shadowCtx).twin, argosPath);
+  // 다시 primary: 같은 아르고스 문서는 자기 파일(같은 이름)이라 짝이 아니고 기존 존재 검사로 건너뛴다
+  const back = loadArgosState(file);
+  const primaryCtx = { ...crossSourceContextFromState(back), dirs, confirmations: [] };
+  assert.equal(findCrossSourceTwin({ id: 'argos-d', ts: '2026-08-04 09:00:04', body: DIVIDEND }, primaryCtx).twin, null);
+  assert.ok(existsSync(argosPath));
+});
+
+test('보류 경고: 확인 대기 건은 빼고, 폰이 늦게 올린 알림은 맥 수신 시각부터 센다', () => {
+  const nowMs = at('2026-08-04 12:00:00');
+  const old = at('2026-08-03 09:00:00');
+  const docs = [
+    { id: 'argos-a', ts: '2026-08-03 09:00:00', at: old, body: EXEC },
+    { id: 'argos-conf', ts: '2026-08-03 09:00:00', at: old, body: EXEC },
+    { id: 'argos-late', ts: '2026-08-03 09:00:00', at: old, receivedAt: at('2026-08-04 11:50:00'), body: EXEC },
+    { id: 'argos-done', ts: '2026-08-03 09:00:00', at: old, body: EXEC },
+    { id: 'argos-ad', ts: '2026-08-03 09:00:00', at: old, body: AD },
+    { id: 'argos-new', ts: '2026-08-04 11:00:00', at: at('2026-08-04 11:00:00'), body: EXEC },
+  ];
+  const n = countAgingArgosDocs({ docs, done: new Set(['argos-done']), nowMs, hasConfirmation: (id) => id === 'argos-conf' });
+  assert.equal(n, 1, 'argos-a만');
+});
+
+test('argosInboxDocs: 맥 수신 시각(received_at)을 receivedAt으로 남긴다', () => {
+  const payload = { packageName: 'com.kakao.talk', sender: '삼성증권', body: EXEC, postedAt: at('2026-08-01 10:00:00') };
+  const [doc] = argosInboxDocs([{ id: 'u', type: 'notification.received', received_at: '2026-08-04T00:00:00.000Z', payload }]);
+  assert.equal(doc.receivedAt, Date.parse('2026-08-04T00:00:00.000Z'));
 });

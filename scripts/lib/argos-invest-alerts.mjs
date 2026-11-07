@@ -86,7 +86,8 @@ export function argosInboxDocs(events) {
     const id = `${ARGOS_DOC_PREFIX}${createHash('sha256').update(`${sender}\n${at}\n${body}`).digest('hex').slice(0, 24)}`;
     if (seen.has(id)) continue;
     seen.add(id);
-    docs.push({ id, eventId: String(event.id), ts: kstTimestamp(at), at, body, sender });
+    // receivedAt: 맥이 받은 시각(폰이 늦게 올린 알림의 보류 경고 기준, countAgingArgosDocs).
+    docs.push({ id, eventId: String(event.id), ts: kstTimestamp(at), at, receivedAt: Date.parse(event.received_at), body, sender });
   }
   return docs.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
 }
@@ -115,14 +116,17 @@ export function readRecentArgosEvents(eventsDir, nowMs, lookbackDays = ARGOS_LOO
   return events;
 }
 
-// ── 상태 파일 { version, processed: { [문서 id]: { at, twin?, written? } } } ──
+// ── 상태 파일 { version, processed: { [문서 id]: { at, twin?, written? } }, pending: { [문서 id]: { at, path } } } ──
 // twin: 이 알림과 짝지은 다른 출처 기록(경로 또는 'confirmation:<id>'), written: 이 알림으로 쓴 장부 파일.
+// pending: 장부를 쓰기 직전에 디스크에 먼저 남긴 쓰기 의도(createArgosLedgerWriter). 실행 끝 settleArgosProcessed가
+// written으로 옮기고 지운다. processed가 아니므로 primary는 그 문서를 다시 읽는다(쓰기 전에 죽었으면 다시 쓴다).
 /** 없으면 빈 상태. 깨졌으면 던진다(primary에서 조용히 빈 상태로 시작하면 짝 기록을 잃는다). */
 export function loadArgosState(file) {
-  if (!existsSync(file)) return { version: 1, processed: {} };
+  if (!existsSync(file)) return { version: 1, processed: {}, pending: {} };
   const state = JSON.parse(readFileSync(file, 'utf8'));
   if (!state || typeof state.processed !== 'object' || state.processed === null) throw new Error(`아르고스 상태 파일 형식 오류: ${file}`);
-  return state;
+  if (state.pending !== undefined && (typeof state.pending !== 'object' || state.pending === null)) throw new Error(`아르고스 상태 파일 형식 오류(pending): ${file}`);
+  return { ...state, pending: state.pending ?? {} };
 }
 
 export function saveArgosState(file, state, nowMs) {
@@ -130,7 +134,58 @@ export function saveArgosState(file, state, nowMs) {
   const processed = Object.fromEntries(Object.entries(state.processed ?? {})
     .filter(([, v]) => v?.written || !(Date.parse(v?.at) < keepSince)));
   mkdirSync(dirname(file), { recursive: true });
-  writeAtomic(file, `${JSON.stringify({ version: 1, processed }, null, 2)}\n`);
+  // pending은 지우지 않는다 — 쓰기 의도가 남은 파일은 아르고스 것으로 계속 보여야 한다(정리는 settleArgosProcessed만).
+  writeAtomic(file, `${JSON.stringify({ version: 1, processed, pending: state.pending ?? {} }, null, 2)}\n`);
+}
+
+/**
+ * ⚠️ 크래시 안전(2026-11-07, primary 전환 전 재리뷰 MEDIUM). 불변식: 아르고스 문서로 장부에 쓴 파일은 언제 잡이
+ * 죽어도 상태 파일에서 아르고스 것으로 보인다(processed.written 또는 pending). 배당·예수금·금현물 파일엔 출처 칸이
+ * 없어, 이게 깨지면 shadow로 되돌렸을 때 Firestore 쪽 같은 기록이 짝을 못 찾고 두 번 써진다.
+ * 그래서 아르고스 문서는 쓰기 전에 의도(pending)를 먼저 디스크에 저장하고(write-ahead), 그다음 장부를 쓴다.
+ * - 의도 저장 뒤·쓰기 전에 죽음: 파일이 없으니 무해. 문서는 processed가 아니라 다음 실행이 다시 읽어 같은 이름으로 쓴다.
+ * - 쓰기 뒤·마지막 상태 저장 전에 죽음: pending이 남아 crossSourceContextFromState가 아르고스 파일로 본다.
+ * 카카오 알림 앱(Firestore) 문서는 기존대로 쓰기만 한다(머리말·파일명이 아니라 상태로 출처를 아는 쪽은 아르고스뿐).
+ */
+export function createArgosLedgerWriter({ stateFile, state, records, argosWritten, nowMs, write = writeAtomic }) {
+  return (id, filepath, content) => {
+    if (!isArgosDocId(id)) { write(filepath, content); return; }
+    state.pending = { ...(state.pending ?? {}), [id]: { at: new Date(nowMs).toISOString(), path: filepath } };
+    saveArgosState(stateFile, state, nowMs);
+    argosWritten.add(filepath);
+    write(filepath, content);
+    records[id] = { ...records[id], written: filepath };
+  };
+}
+
+/**
+ * 실행 끝: 처리한 문서를 processed로 옮긴다. 이번 실행에 쓴 파일이 없어도 지난 실행의 쓰기 의도가 남았고 그 파일이
+ * 있으면 written으로 이어 붙인다(크래시 뒤 재실행은 기존 파일 존재로 건너뛰므로 records엔 written이 없다).
+ * 처리한 문서의 의도는 지운다. 처리 못 한 문서의 의도는 그대로 둔다.
+ */
+export function settleArgosProcessed(state, ids, records, nowMs) {
+  const at = new Date(nowMs).toISOString();
+  const pending = { ...(state.pending ?? {}) };
+  for (const id of ids) {
+    const intent = pending[id];
+    const written = records[id]?.written ?? (intent?.path && existsSync(intent.path) ? intent.path : undefined);
+    state.processed[id] = { at, ...records[id], ...(written ? { written } : {}) };
+    delete pending[id];
+  }
+  state.pending = pending;
+}
+
+/**
+ * primary 보류 경고 대상 수: 처리 못 했고 장부 대상 알림인데 하루 넘게 남은 것. 조회 기간(2일)은 알림 시각 또는 맥
+ * 수신 시각 중 늦은 쪽 기준으로 빠지므로 나이도 그 기준으로 센다(폰이 늦게 올린 알림이 첫 실행에 바로 경고되지 않게).
+ * 체결 확인 대기에 들어간 건은 이미 오너에게 물었고 원문이 확인 기록에 있으므로 뺀다(매 실행 같은 경고 반복 방지).
+ */
+export function countAgingArgosDocs({ docs, done, nowMs, hasConfirmation = () => false, ageMs = DAY_MS }) {
+  return (docs ?? []).filter((doc) => {
+    if (done.has(doc.id) || hasConfirmation(doc.id)) return false;
+    const seen = Math.max(doc.at, Number.isFinite(doc.receivedAt) ? doc.receivedAt : -Infinity);
+    return nowMs - seen > ageMs && Boolean(classifyInvestmentNotification(doc.body, doc.ts));
+  }).length;
 }
 
 /** 상태에서 짝 판정 문맥을 만든다: used(이미 짝지은 기록), argosWritten(아르고스가 쓴 장부 파일). */
@@ -141,6 +196,8 @@ export function crossSourceContextFromState(state) {
     if (v?.twin) used.add(v.twin);
     if (v?.written) argosWritten.add(v.written);
   }
+  // 쓰기 의도만 남은 파일(크래시)도 아르고스 것으로 본다(createArgosLedgerWriter 불변식).
+  for (const v of Object.values(state?.pending ?? {})) if (v?.path) argosWritten.add(v.path);
   return { used, argosWritten };
 }
 
