@@ -86,6 +86,15 @@ export const JOB_GROUPS = {
     stepTimeoutMs: 15 * MIN,
     gapMs: 0,
   },
+  // I 헤르메스 15분 갱신 — 일정 → 동선(route-today가 일정 활동을 계산에 쓴다).
+  'hermes-refresh': {
+    steps: [
+      'calendar-days',
+      'route-today',
+    ],
+    stepTimeoutMs: 10 * MIN,
+    gapMs: 0,
+  },
 };
 
 export function groupSteps(group) {

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.banana2.hermes-refresh</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2/scripts/launchd/run.sh</string>
+    <string>hermes-refresh</string>
+  </array>
+  <!-- 15분마다(StartInterval 900) — 묶음 I 헤르메스 15분 갱신(2026-11-07 무인잡 정리). calendar-days(15분) → route-today(15분).
+       route-today가 일정 활동을 계산에 쓰므로 방금 쓴 일정 파일을 읽게 일정 → 동선 순서. 일정 조회가 실패해도 동선은 돈다(예전처럼
+       일정 활동 없이 계산). 발송 없음. 단계 상한 10분. -->
+  <key>StartInterval</key>
+  <integer>900</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/huinique/Pantheon/Repos/banana-portfolio-v2</string>
+  <key>StandardOutPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/hermes-refresh.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/huinique/Library/Logs/banana-portfolio-v2/hermes-refresh.log</string>
+</dict>
+</plist>

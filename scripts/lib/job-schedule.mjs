@@ -256,6 +256,8 @@ export const EXPECTED_INTERVALS_MS = {
   'media-hourly': 60 * 60 * 1000,
   // 묶음 F 장전 데이터 갱신(2026-11-07, 평일 07:06) — 평일 전용 48h.
   'premarket-cache': 48 * 60 * 60 * 1000,
+  // 묶음 I 헤르메스 15분 갱신(2026-11-07, StartInterval 900) — 단계(calendar-days·route-today)와 같은 30분 등록.
+  'hermes-refresh': 30 * 60 * 1000,
 };
 export const EXPECTED_INTERVAL_DEFAULT_MS = 60 * 60 * 1000;
 // 아직 가동 전이라 하트비트 파일이 없는 게 정상인 잡 — 이 날짜(KST, 이날 00:00부터)까지는 파일이 없어도 경보하지 않는다
@@ -274,6 +276,7 @@ export const JOB_FIRST_HEARTBEAT_BY = {
   'nightly-close': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
   'media-hourly': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
   'premarket-cache': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
+  'hermes-refresh': '2026-11-12', // 묶음(2026-11-07 구현, launchctl 적용 전) — 적용이 늦어지면 같이 옮긴다
 };
 // 텔레그램 옛 세션 4개: 2026-11-06 폐지(결정 텔레그램-관문), plist는 scripts/launchd/retired/에 보관.
 export const RETIRED_JOBS = new Set(['telegram-session', 'telegram-session-restart', 'telegram-session-handoff', 'telegram-session-health-check', 'media-diarize', 'media-faces-nightly', 'media-transcribe', 'media-vision']);
