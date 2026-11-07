@@ -42,6 +42,13 @@ function recordTimeoutHeartbeat(job, { group, timeoutMs, durationSec }) {
   });
 }
 
+// 지금 도는 단계 프로세스 묶음(detached라 launchd의 묶음 정리 밖) — 래퍼가 SIGTERM·SIGINT를 받으면 같이 끝낸다(리뷰 MEDIUM).
+const activeChildPids = new Set();
+export function forwardTermination(signal, { pids = activeChildPids, kill = process.kill.bind(process) } = {}) {
+  for (const pid of pids) { try { kill(-pid, 'SIGTERM'); } catch { /* 이미 끝남 */ } }
+  return signal;
+}
+
 // 단계 하나를 실제로 돌린다: bash run.sh <단계>, 출력은 그 단계의 옛 로그 파일에 이어 쓴다.
 // 상한을 넘기면 프로세스 묶음(bash + node 자식)을 SIGTERM → 10초 뒤 SIGKILL로 끝낸다.
 export function spawnStep(job, { group, timeoutMs, runSh = RUN_SH, logDir = LOG_DIR, cwd = REPO,
@@ -53,9 +60,17 @@ export function spawnStep(job, { group, timeoutMs, runSh = RUN_SH, logDir = LOG_
     let timedOut = false;
     let settled = false;
     let killTimer = null;
-    const child = spawn('/bin/bash', [runSh, job], {
-      cwd, stdio: ['ignore', fd, fd], detached: true, env: { ...process.env, JOB_GROUP: group },
-    });
+    let child;
+    try {
+      child = spawn('/bin/bash', [runSh, job], {
+        cwd, stdio: ['ignore', fd, fd], detached: true, env: { ...process.env, JOB_GROUP: group },
+      });
+    } catch {
+      closeSync(fd);
+      resolve({ code: 127, signal: null, timedOut: false, durationSec: 0 });
+      return;
+    }
+    activeChildPids.add(child.pid);
     const limitTimer = timeoutMs ? setTimeout(() => {
       timedOut = true;
       try { process.kill(-child.pid, 'SIGTERM'); } catch { /* 이미 끝남 */ }
@@ -64,6 +79,7 @@ export function spawnStep(job, { group, timeoutMs, runSh = RUN_SH, logDir = LOG_
     const finish = (code, signal) => {
       if (settled) return;
       settled = true;
+      activeChildPids.delete(child.pid);
       clearTimeout(limitTimer); clearTimeout(killTimer);
       closeSync(fd);
       const durationSec = Math.round((Date.now() - started) / 1000);
@@ -78,13 +94,18 @@ export function spawnStep(job, { group, timeoutMs, runSh = RUN_SH, logDir = LOG_
 const normalizeSteps = (config) => (config.steps ?? []).map((step) => (typeof step === 'string' ? { job: step } : step));
 
 function describeFailure(result) {
+  if (result.deadline) return '마감 지남';
   if (result.timedOut) return '상한 초과';
   if (result.signal) return `signal ${result.signal}`;
   return `exit ${result.code}`;
 }
 
 // 묶음 실행 — runStep·sleep·log를 바꿔 끼워 단위 테스트한다(실제 단계는 부르지 않는다).
-export async function runJobGroup(group, { groups = JOB_GROUPS, runStep = spawnStep, sleep = sleepMs, log = console.log } = {}) {
+// KST 'HH:MM' — deadlineKst 판정용
+const KST_HM = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+
+export async function runJobGroup(group, { groups = JOB_GROUPS, runStep = spawnStep, sleep = sleepMs, log = console.log,
+  now = () => new Date() } = {}) {
   const config = groups[group];
   if (!config) throw new Error(`알 수 없는 묶음: ${group}`);
   const steps = normalizeSteps(config);
@@ -92,6 +113,13 @@ export async function runJobGroup(group, { groups = JOB_GROUPS, runStep = spawnS
   let previousOk = true;
   for (const [index, step] of steps.entries()) {
     if (index > 0 && config.gapMs) await sleep(config.gapMs);
+    // 마감 시각(KST)을 넘기면 남은 단계는 시작하지 않는다 — 안전망 구간 밖에서 장중 동기화와 같은 스크립트가 겹치지 않게(리뷰 MEDIUM).
+    if (config.deadlineKst && KST_HM.format(now()) >= config.deadlineKst) {
+      log(`⏭ ${step.job} — 마감 ${config.deadlineKst} 지나 시작하지 않음(다음 동기화 회차가 이어받음)`);
+      results.push({ job: step.job, status: 'FAIL', code: null, signal: null, timedOut: false, deadline: true });
+      previousOk = false;
+      continue;
+    }
     if (step.requiresPrevious && !previousOk) {
       log(`⏭ ${step.job} — 앞 단계 실패로 건너뜀`);
       results.push({ job: step.job, status: 'SKIPPED' });
@@ -138,6 +166,9 @@ async function main(argv) {
   if (rest.length > 0) {
     console.error(`인자를 받지 않는다(단계로 넘기지 않음): ${rest.join(' ')} — 계획만 보려면 --plan`);
     process.exit(2);
+  }
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.on(signal, () => { forwardTermination(signal); process.exit(143); });
   }
   const { ok } = await runJobGroup(group);
   if (!ok) process.exitCode = 1;

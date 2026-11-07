@@ -21,6 +21,7 @@
 //   stepTimeoutMs — 단계 하나의 상한(null이면 상한 없음 = 옛 plist와 같음). 넘기면 그 단계 프로세스 묶음을 끝내고
 //                   그 단계 하트비트를 FAIL로 남긴 뒤 다음 단계로 간다(예전엔 잡마다 따로 돌아 한 잡이 멎어도 다른 잡이
 //                   돌았다 — 순차 실행에서 같은 격리를 지키려는 상한).
+//   deadlineKst — 'HH:MM'(KST). 이 시각을 넘기면 남은 단계는 시작하지 않고 FAIL로 남긴다.
 //   gapMs — 단계 사이 쉼(같은 증권사 API를 잇달아 부르는 묶음의 초당 한도 여유).
 const MIN = 60 * 1000;
 
@@ -40,7 +41,10 @@ export const JOB_GROUPS = {
       'update-cash-from-ledger',
       'update-fund-holdings-from-purchases',
     ],
-    stepTimeoutMs: 10 * MIN,
+    // 단계는 실측 0~3초. 상한 2분·마감 16:12(그 뒤 단계는 시작 안 함)라 최악에도 16:14:10 전에 끝나 isSafetyNetWindow
+    // (~16:14) 안에 머문다 — 16:15 동기화 회차가 같은 스크립트(update-holdings-from-executions, 잠금 없음)를 겹쳐 돌리지 않는다.
+    stepTimeoutMs: 2 * MIN,
+    deadlineKst: '16:12',
     gapMs: 2000,
   },
   // B 장후 보고·정기 제안 — 평일 16:16(A 뒤). 뒤 둘은 스크립트 안의 날짜 판정(shouldRunToday·shouldRunThisMonth)이

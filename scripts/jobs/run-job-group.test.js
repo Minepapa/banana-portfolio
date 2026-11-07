@@ -9,7 +9,7 @@ import { JOB_GROUPS, groupOfStep, groupSteps } from '../lib/job-groups.mjs';
 import { listDispatchedJobs, listPlistJobs, listRetiredPlistJobs } from '../lib/launchd-jobs.mjs';
 import { EXPECTED_INTERVALS_MS } from '../lib/job-schedule.mjs';
 import { isSafetyNetWindow } from '../lib/poll-schedule.mjs';
-import { describePlan, runJobGroup, spawnStep } from './run-job-group.mjs';
+import { describePlan, forwardTermination, runJobGroup, spawnStep } from './run-job-group.mjs';
 
 const fakeGroups = {
   g: { steps: ['a', 'b', { job: 'c', requiresPrevious: true }, 'd'], stepTimeoutMs: 1000, gapMs: 5 },
@@ -218,4 +218,30 @@ test('묶음 I·J: 15분 일정 → 동선, 10분 고정 분 배분 → 미러(�
   assert.deepEqual(plistMinutes('price-followups'), [7, 17, 27, 37, 47, 57]);
   assert.doesNotMatch(plistText('price-followups'), /<key>(Hour|StartInterval)<\/key>/);
   assert.deepEqual(groupSteps('price-followups').map((s) => s.job), ['update-allocation-from-holdings', 'sync-firestore-mirror']);
+});
+
+test('runJobGroup: 마감 시각(KST)을 넘기면 남은 단계는 시작하지 않고 실패로 남긴다', async () => {
+  const { calls, runStep } = fakeRunner({});
+  const clock = ['2026-11-09T16:11:30+09:00', '2026-11-09T16:12:05+09:00'];
+  let i = 0;
+  const lines = [];
+  const { ok, results } = await runJobGroup('g', { groups: { g: { steps: ['a', 'b'], deadlineKst: '16:12' } }, runStep,
+    sleep: async () => {}, log: (l) => lines.push(l), now: () => new Date(clock[Math.min(i++, 1)]) });
+  assert.equal(ok, false);
+  assert.deepEqual(calls.map((c) => c.job), ['a']);
+  assert.deepEqual(results.map((r) => r.status), ['OK', 'FAIL']);
+  assert.match(lines.at(-1), /b\(마감 지남\)/);
+});
+
+test('forwardTermination: 도는 단계 프로세스 묶음 전부에 SIGTERM', () => {
+  const killed = [];
+  forwardTermination('SIGTERM', { pids: new Set([11, 22]), kill: (pid, sig) => killed.push([pid, sig]) });
+  assert.deepEqual(killed, [[-11, 'SIGTERM'], [-22, 'SIGTERM']]);
+});
+
+test('묶음 A: 단계 상한·마감이 안전망 구간(~16:14) 안에서 끝나게 맞춰져 있다', () => {
+  const { stepTimeoutMs, deadlineKst } = JOB_GROUPS['ledger-close'];
+  const [h, m] = deadlineKst.split(':').map(Number);
+  const worstEnd = new Date(`2026-11-09T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+09:00`).getTime() - 1000 + stepTimeoutMs + 10_000; // 마감 1초 전에 시작한 마지막 단계
+  assert.equal(isSafetyNetWindow(new Date(worstEnd)), true);
 });
