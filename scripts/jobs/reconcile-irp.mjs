@@ -54,6 +54,8 @@
  * KIS API로 조회 가능한 건 한투에 있는 계좌뿐이다 — 위탁·ISA는 NH투자증권, 연금저축은
  * 삼성증권이라 KIS로는 조회 불가(계좌 구조 확인: decisionKey `투자자-성향` §2). IRP만
  * 한투라 이 잡도 IRP 전용. 체결내역 대사(주문별 매칭)는 이번 스코프 밖 — 수량 스냅샷 대조만.
+ * 단 2026-11-07부터 하루 순증가 중 원장에 없는 것을 "잔고 증가로 추정한 체결"로 원장에 남긴다
+ * (recordIrpBalanceDelta, 불변식은 scripts/lib/irp-balance-delta.mjs 헤더 — 보유는 건드리지 않음).
  *
  * 안전: 매매 API 미사용, 조회 전용. 계좌번호(CANO/ACNT_PRDT_CD)+전용 앱키는 kis-key.json에
  * 별도 irpAccount 필드로 로컬 설정(설정 안 돼 있으면 정상 skip — API키만 있고 계좌 미등록인
@@ -83,7 +85,11 @@ import { VAULT_PATHS, VAULT_REL } from '../lib/vault-paths.mjs';
 import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { buildCashHoldingRecord, writeHoldingSafely, holdingFilename } from '../lib/holdings-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
-import { IRP_ACCOUNT_LABEL } from '../lib/account-resolver.mjs';
+import { IRP_ACCOUNT_LABEL, IRP_ACCOUNT_NO } from '../lib/account-resolver.mjs';
+import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
+import {
+  observeIrpBalance, planIrpBalanceDeltaExecutions, readIrpBalanceDeltaState, writeIrpBalanceDeltaState,
+} from '../lib/irp-balance-delta.mjs';
 import { loadHoldingAssetClassSources, resolveHoldingAssetClass, missingAssetClassQuestion } from '../lib/holding-asset-class.mjs';
 import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
 
@@ -195,6 +201,54 @@ export function buildIrpHoldingsPlan(vaultHoldings, kisHoldings, { assetClassSou
   return { writes, closes, skipped, assetClassMissing, suspiciousEmpty, renames };
 }
 
+// KST 벽시계 "YYYY-MM-DD HH:MM:SS"(예수금 anchorTs와 같은 관례 — UTC로 쓰면 9시간 어긋난다).
+function kstNowTs() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((p) => p.type === type).value;
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+}
+
+// 원장 체결 파일명은 체결일(YYYY-MM-DD)로 시작한다(buildExecutionRecord) — 그날 것만 읽는다.
+function readLedgerExecutionsOn(day) {
+  const dir = VAULT_PATHS.facts.ledger.executions;
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.startsWith(`${day}-`) && f.endsWith('.md'))
+    .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
+}
+
+// IRP 잔고 증가 → "잔고 증가로 추정한 체결"(2026-11-07 오너 승인 — 체결조회 API가 계속 0건이라
+// 카카오 알림이 빠지면 원장에 구멍이 난다). 불변식·설계는 irp-balance-delta.mjs 헤더 참고.
+// 보유 덮어쓰기 전에 부른다 — 상태 파일이 없을 때 덮어쓰기 전 Vault 보유(직전 실행 값)를 기준으로
+// 삼기 때문이다. 이 함수는 원장(Facts/Ledger/Executions)에만 쓰고 보유는 건드리지 않는다.
+// 상태 파일은 원장 기록이 끝난 뒤에만 넘긴다 — 중간에 실패하면 다음 실행이 같은 날을 다시 정산하고,
+// 이미 쓴 기록은 원장 합 대조(불변식 1)로 인정돼 두 번 쓰지 않는다.
+function recordIrpBalanceDelta(kisHoldings, vaultIrpHoldings) {
+  const observedAt = kstNowTs();
+  const today = observedAt.slice(0, 10);
+  const { state, settle, clockSkew } = observeIrpBalance(readIrpBalanceDeltaState(), {
+    today, observedAt, kisHoldings, vaultIrpHoldings,
+  });
+  if (clockSkew) collectWarning(`IRP 잔고 추정 체결: 상태 날짜(${state.day})가 오늘(${today})보다 뒤 — 정산 건너뜀`);
+  if (settle) {
+    const { records, recognized, warnings } = planIrpBalanceDeltaExecutions({ ...settle, ledgerExecutions: readLedgerExecutionsOn(settle.day) });
+    for (const warning of warnings) collectWarning(`IRP 잔고 추정 체결: ${warning}`);
+    for (const item of recognized) console.log(`  · [잔고추정] ${item.day} IRP ${item.name} ${item.quantity}주 — 원장에 이미 있음(${item.sources.join(',')}), 새로 쓰지 않음`);
+    for (const input of records) {
+      const { filename, content, dir } = buildExecutionRecord({ ...input, acctNo: IRP_ACCOUNT_NO });
+      const filepath = join(dir, filename);
+      console.log(`  + [잔고추정 체결${DRY_RUN ? '(예정)' : ''}] ${input.tradeDate} IRP ${input.stockName} ${input.quantity}주 @${input.price}원(추정) — ${filename}`);
+      if (!DRY_RUN && !existsSync(filepath)) {
+        mkdirSync(dir, { recursive: true });
+        writeAtomic(filepath, content);
+      }
+    }
+  }
+  if (!DRY_RUN) writeIrpBalanceDeltaState(state);
+}
+
 async function main() {
   if (!hasKisCredentials()) {
     console.log('ℹ️ KIS 크리덴셜 미설정 — 스킵(설정 시 ~/.config/banana-portfolio/kis-key.json 생성)');
@@ -273,6 +327,10 @@ async function main() {
   if (suspiciousEmpty) {
     collectWarning('IRP 종목 KIS 잔고조회가 빈 응답 — 예수금과 같은 API 호출의 output1이 통째로 비었다(간헐적 결측 가능성, 파일 상단 주석 참고), 전량청산으로 추정하지 않고 이번 실행은 종목 반영을 건너뜀');
     console.log(`  ⚠️ IRP 종목 KIS 잔고조회 빈 응답 — 전량청산 추정 안 함, 기존 ${VAULT_REL.stateHoldings} 그대로 유지`);
+  }
+  if (!suspiciousEmpty && kisHoldings.length > 0) {
+    try { recordIrpBalanceDelta(kisHoldings, allHoldings.filter((holding) => holding.account === IRP_ACCOUNT_LABEL && !holding.isCashLike)); }
+    catch (error) { console.error('IRP 잔고 추정 체결 실패:', error); collectWarning('IRP 잔고 추정 체결 실패 — 잔고 대사는 계속(상세는 로그)'); }
   }
   for (const name of skipped) {
     collectWarning(`IRP ${name} — KIS 잔고조회에 평단가/원가 필드 결측, 갱신 건너뜀(기존 값 유지)`);

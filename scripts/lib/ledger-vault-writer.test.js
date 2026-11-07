@@ -498,3 +498,13 @@ test('buildCashEventRecord: source는 넘겼을 때만(수동 앵커) 머리말�
   assert.equal(parseFrontmatter(buildCashEventRecord(base).content).source, undefined);
   assert.equal(buildCashEventRecord(base).filename, buildCashEventRecord({ ...base, source: 'MANUAL_ANCHOR' }).filename);
 });
+
+test('buildExecutionRecord: estimated면 추정 표기·설명을 남기고, 아니면 필드 자체가 없다', () => {
+  const estimated = parseFrontmatter(buildExecutionRecord(exec({ source: 'irp-balance-delta', sourceEventId: 'irp-balance-delta-2026-08-04-005930', estimated: true, estimateNote: '추정' })).content);
+  assert.equal(estimated.estimated, true);
+  assert.equal(estimated.estimateNote, '추정');
+  assert.equal(estimated.source, 'irp-balance-delta');
+  const normal = parseFrontmatter(buildExecutionRecord(exec()).content);
+  assert.equal('estimated' in normal, false);
+  assert.equal('estimateNote' in normal, false);
+});

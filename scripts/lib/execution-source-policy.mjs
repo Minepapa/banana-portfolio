@@ -46,7 +46,8 @@ export function classifyKakaoExecution({ kind = 'stock', event = {}, receivedAt,
       return { action: 'exclude-api', account: QUANT_TRACK_LABEL, reason: 'KIS_API' };
     }
     // IRP 체결조회 API는 구현돼 있으나 실거래 대사에서 계속 0건을 반환해, 현재는
-    // 카카오 알림이 유일하게 검증된 체결 소스다.
+    // 카카오 알림이 유일하게 검증된 체결 소스다. 알림이 빠진 날은 reconcile-irp가 다음 날 잔고 순증가로
+    // 추정 체결(source irp-balance-delta)을 채운다 — 같은 날·종목·수량이 원장에 있으면 쓰지 않는다.
     if (event.acctNo === IRP_ACCOUNT_NO) {
       return { action: 'record', account: IRP_ACCOUNT_LABEL, reason: 'API_UNAVAILABLE' };
     }

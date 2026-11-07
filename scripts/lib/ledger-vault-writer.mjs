@@ -90,6 +90,8 @@ export function buildExecutionRecord(e) {
     // 분할 체결 차수(선택) — 파일명·dedupKey에는 넣지 않는다(기존 기록과 같은 이름 유지).
     ...(e.fillRound != null ? { fillRound: e.fillRound } : {}),
     ...(e.orderCumulativeAmount != null ? { orderCumulativeAmount: e.orderCumulativeAmount } : {}),
+    // 잔고 변화로 추정한 체결(irp-balance-delta.mjs) — 실제 체결 통보가 아님을 원장에 남긴다.
+    ...(e.estimated ? { estimated: true, estimateNote: e.estimateNote ?? '' } : {}),
     account: e.account ?? null,
     accountNote: e.account ? null : ACCOUNT_NOTE,
     tags: buildVaultTags({ account: e.account, stockName: e.stockName }),
