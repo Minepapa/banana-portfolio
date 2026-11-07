@@ -1,0 +1,148 @@
+#!/usr/bin/env node
+/**
+ * 무인잡 묶음 래퍼 — 묶음(scripts/lib/job-groups.mjs)의 단계를 순서대로 `bash run.sh <단계>`로 부른다(2026-11-07).
+ *
+ * 왜: 같은 목적의 잡이 분 단위로 쪼개져(예: 장후 장부 마감 9개가 15:50~16:11) 카탈로그·감시·로그를 따라가기
+ * 어려웠다(오너 "시간별, 기능별로 묶을 수 있는 것 묶고"). 시각 간격으로 흉내 내던 순서를 한 잡의 순서로 바꾼다.
+ *
+ * 기존 스크립트는 고치지 않는다 — 단계마다 run.sh를 그대로 거치므로 PATH·NODE_OPTIONS·작업 디렉터리·하트비트
+ * (JobHealth/<단계>.md)·연속 실패 알림이 예전 단독 잡과 같다. 로그도 단계 이름의 옛 파일에 이어 쓴다
+ * (run.sh가 그 파일 줄 수로 하트비트 detail을 자르므로 같은 파일이어야 한다).
+ *
+ * 실패 격리(intraday-portfolio-sync와 같은 원칙): 한 단계가 실패하거나 상한을 넘겨도 다음 단계는 계속한다.
+ * 예외는 requiresPrevious 단계뿐이다(바로 앞 단계가 실패하면 건너뜀). 전체 종료 코드는 하나라도 실패면 1이고,
+ * 마지막 줄에 실패 단계 이름을 남겨 묶음 하트비트 detail(로그 끝 3줄)에 실리게 한다.
+ *
+ * 인자를 받지 않는다 — 단계 스크립트마다 받는 인자가 달라 --dry-run을 그대로 넘기면 모르는 인자를 무시하고
+ * 실제로 도는 스크립트가 있다(2026-10-31 관문 사고). 계획만 보려면 --plan(아무것도 실행하지 않음).
+ *
+ * 사용법:
+ *   node scripts/jobs/run-job-group.mjs <묶음>          # launchd가 run.sh <묶음>으로 부른다
+ *   node scripts/jobs/run-job-group.mjs <묶음> --plan   # 단계·상한만 출력
+ */
+import { spawn, spawnSync } from 'node:child_process';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { JOB_GROUPS } from '../lib/job-groups.mjs';
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const RUN_SH = join(REPO, 'scripts', 'launchd', 'run.sh');
+const LOG_DIR = join(homedir(), 'Library', 'Logs', 'banana-portfolio-v2'); // run.sh LOG_DIR과 같은 곳
+const KILL_GRACE_MS = 10_000;
+
+const sleepMs = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+// 상한 초과로 끝낸 단계는 run.sh가 하트비트를 못 남겼으므로 여기서 FAIL로 남긴다(연속 실패 알림도 그 경로 그대로).
+function recordTimeoutHeartbeat(job, { group, timeoutMs, durationSec }) {
+  spawnSync(process.execPath, [join(REPO, 'scripts', 'jobs', 'record-heartbeat-vault.mjs'), job, 'FAIL', String(durationSec)], {
+    cwd: REPO, stdio: 'inherit',
+    env: { ...process.env, HB_DETAIL: `묶음 ${group}: 단계 상한 ${Math.round(timeoutMs / 60000)}분 초과로 중단` },
+  });
+}
+
+// 단계 하나를 실제로 돌린다: bash run.sh <단계>, 출력은 그 단계의 옛 로그 파일에 이어 쓴다.
+// 상한을 넘기면 프로세스 묶음(bash + node 자식)을 SIGTERM → 10초 뒤 SIGKILL로 끝낸다.
+export function spawnStep(job, { group, timeoutMs, runSh = RUN_SH, logDir = LOG_DIR, cwd = REPO,
+  killGraceMs = KILL_GRACE_MS, recordTimeout = recordTimeoutHeartbeat } = {}) {
+  mkdirSync(logDir, { recursive: true });
+  const fd = openSync(join(logDir, `${job}.log`), 'a');
+  const started = Date.now();
+  return new Promise((resolve) => {
+    let timedOut = false;
+    let settled = false;
+    let killTimer = null;
+    const child = spawn('/bin/bash', [runSh, job], {
+      cwd, stdio: ['ignore', fd, fd], detached: true, env: { ...process.env, JOB_GROUP: group },
+    });
+    const limitTimer = timeoutMs ? setTimeout(() => {
+      timedOut = true;
+      try { process.kill(-child.pid, 'SIGTERM'); } catch { /* 이미 끝남 */ }
+      killTimer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* 이미 끝남 */ } }, killGraceMs);
+    }, timeoutMs) : null;
+    const finish = (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(limitTimer); clearTimeout(killTimer);
+      closeSync(fd);
+      const durationSec = Math.round((Date.now() - started) / 1000);
+      if (timedOut) recordTimeout(job, { group, timeoutMs, durationSec });
+      resolve({ code, signal, timedOut, durationSec });
+    };
+    child.on('error', () => finish(127, null));
+    child.on('exit', (code, signal) => finish(code, signal));
+  });
+}
+
+const normalizeSteps = (config) => (config.steps ?? []).map((step) => (typeof step === 'string' ? { job: step } : step));
+
+function describeFailure(result) {
+  if (result.timedOut) return '상한 초과';
+  if (result.signal) return `signal ${result.signal}`;
+  return `exit ${result.code}`;
+}
+
+// 묶음 실행 — runStep·sleep·log를 바꿔 끼워 단위 테스트한다(실제 단계는 부르지 않는다).
+export async function runJobGroup(group, { groups = JOB_GROUPS, runStep = spawnStep, sleep = sleepMs, log = console.log } = {}) {
+  const config = groups[group];
+  if (!config) throw new Error(`알 수 없는 묶음: ${group}`);
+  const steps = normalizeSteps(config);
+  const results = [];
+  let previousOk = true;
+  for (const [index, step] of steps.entries()) {
+    if (index > 0 && config.gapMs) await sleep(config.gapMs);
+    if (step.requiresPrevious && !previousOk) {
+      log(`⏭ ${step.job} — 앞 단계 실패로 건너뜀`);
+      results.push({ job: step.job, status: 'SKIPPED' });
+      previousOk = false;
+      continue;
+    }
+    log(`▶ ${step.job}`);
+    let result;
+    try {
+      result = await runStep(step.job, { group, timeoutMs: config.stepTimeoutMs ?? null });
+    } catch (error) {
+      result = { code: 1, signal: null, timedOut: false, durationSec: 0, error: error.message };
+    }
+    const ok = result.code === 0 && !result.timedOut;
+    previousOk = ok;
+    results.push({ job: step.job, status: ok ? 'OK' : 'FAIL', ...result });
+    log(ok ? `  ✓ ${step.job} ${result.durationSec ?? '?'}s`
+      : `  ⚠️ ${step.job} 실패(${describeFailure(result)}) — 다음 단계로 계속`);
+  }
+  const failed = results.filter((r) => r.status === 'FAIL');
+  const skipped = results.filter((r) => r.status === 'SKIPPED');
+  const okCount = results.length - failed.length - skipped.length;
+  if (failed.length === 0 && skipped.length === 0) log(`✅ 묶음 ${group} ${okCount}/${steps.length}단계 정상`);
+  else log(`❌ 묶음 ${group} ${okCount}/${steps.length}단계 정상 — 실패: ${failed.map((r) => `${r.job}(${describeFailure(r)})`).join(', ') || '없음'}`
+    + (skipped.length ? ` · 건너뜀: ${skipped.map((r) => r.job).join(', ')}` : ''));
+  return { ok: failed.length === 0 && skipped.length === 0, results };
+}
+
+export function describePlan(group, groups = JOB_GROUPS) {
+  const config = groups[group];
+  if (!config) throw new Error(`알 수 없는 묶음: ${group}`);
+  const limit = config.stepTimeoutMs ? `단계 상한 ${Math.round(config.stepTimeoutMs / 60000)}분` : '단계 상한 없음';
+  return [`묶음 ${group} (${limit}${config.gapMs ? `, 단계 사이 ${config.gapMs / 1000}초` : ''})`,
+    ...normalizeSteps(config).map((step, i) => `  ${i + 1}. ${step.job}${step.requiresPrevious ? ' (앞 단계 성공 시만)' : ''}`)];
+}
+
+async function main(argv) {
+  const [group, ...rest] = argv;
+  if (!group || !JOB_GROUPS[group]) {
+    console.error(`사용법: run-job-group.mjs <${Object.keys(JOB_GROUPS).join('|')}> [--plan]`);
+    process.exit(2);
+  }
+  if (rest.length === 1 && rest[0] === '--plan') { console.log(describePlan(group).join('\n')); return; }
+  if (rest.length > 0) {
+    console.error(`인자를 받지 않는다(단계로 넘기지 않음): ${rest.join(' ')} — 계획만 보려면 --plan`);
+    process.exit(2);
+  }
+  const { ok } = await runJobGroup(group);
+  if (!ok) process.exitCode = 1;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main(process.argv.slice(2)).catch((error) => { console.error(`❌ 묶음 오류: ${error.message}`); process.exit(1); });
+}

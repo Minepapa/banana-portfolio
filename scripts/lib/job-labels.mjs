@@ -101,6 +101,7 @@ export const JOB_LABELS = {
   'proposal-execution-reminder': '자산분배 트랙 승인 제안의 미체결·무응답을 리마인드(3일 이상 미체결 또는 1일 이상 승인/거부 자체 방치, 2026-08-23 신설)',
   'telegram-session-handoff': '텔레그램 세션 재시작 5분 전, 그날 무세이온 활동과 오너-세션 대화 요약을 기록(재시작 후 새 세션이 SessionStart 훅으로 읽어옴, 매일 03:55)',
   'isa-maturity-check': 'ISA 3년 만기(2028-04-06) 도달 여부를 매주 점검, 도달 시 연금계좌 일괄이전 제안(만기 전엔 조용히 스킵, 2026-08-29 신설)',
+  'ledger-close': '묶음 A 장후 장부 마감(안전망): 체결(IRP·NH)·미체결 만료·보유 반영·예수금(IRP·NH·외화RP·원장)·펀드 적립 9단계를 순서대로(평일 16:01, 단계별 하트비트는 각 잡 이름으로)',
 };
 
 // 화면용 짧은 이름(2026-10-31, 올림푸스 지휘소·제우스 방 — 오너 점검 "영문 식별자 + 긴 개발 메모" 지적).
@@ -181,6 +182,7 @@ export const JOB_SHORT_LABELS = {
   'proposal-execution-reminder': '미체결 제안 알림',
   'telegram-session-handoff': '세션 인수인계',
   'isa-maturity-check': 'ISA 만기 점검',
+  'ledger-close': '장후 장부 마감',
 };
 
 // 라벨 있으면 "잡이름(한글설명)", 없으면(등록 안 된 새 잡) 이름만 — 조용히 빈 문자열로

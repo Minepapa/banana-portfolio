@@ -15,7 +15,7 @@
  * "1시간"은 그 시각의 첫 10분 칸(분 0~9)에 도는 회차만 뜻한다. 그래서 두 잡이 launchd
  * StartCalendarInterval로 고정 분(시세 :00·:10…, 동기화 :05·:15…)에 돌아야 정확히
  * 시간당 1회가 된다(plist 주석 참고). 회차가 늦게 시작돼 칸을 놓치면 그 시간은 건너뛴다
- * — 고정시각 안전망 잡(평일 15:50~16:11)이 하루 1회는 전부 조회한다.
+ * — 고정시각 안전망(평일 16:01 묶음 ledger-close, 2026-11-07 전엔 15:50~16:11 잡 9개)이 하루 1회는 전부 조회한다.
  */
 
 const KST_PARTS = new Intl.DateTimeFormat('en-US', {
@@ -48,8 +48,9 @@ export function isKrTradingWindow(date = new Date()) {
   return dow >= 1 && dow <= 5 && hhmm >= 830 && hhmm <= 1800;
 }
 
-// 평일 고정시각 안전망 잡 구간(reconcile-irp-executions 15:50 ~ update-fund-holdings-from-
-// purchases 16:11). 이 구간의 동기화 회차(15:55·16:05)는 같은 스크립트를 같은 순간에 돌려
+// 평일 고정시각 안전망 구간. 2026-11-07부터 안전망은 묶음 ledger-close 하나(평일 16:01 시작, 9단계 순차, 실측 10초 안팎 —
+// scripts/lib/job-groups.mjs)이고, 구간은 예전 잡 9개(15:50~16:11) 그대로 둔다(시작 분이 구간 안인지 테스트가 묶는다).
+// 이 구간의 동기화 회차(15:55·16:05)는 같은 스크립트를 같은 순간에 돌려
 // IRP 원장·NH 유량을 다시 부딪히고, update-holdings-from-executions 두 개가 잠금 없이 같은
 // 체결을 읽어 이중 반영할 수 있다(2026-10-29 독립 리뷰 MEDIUM). 안전망이 7단계를 전부 하므로
 // 동기화는 이 구간을 통째로 건너뛴다.
