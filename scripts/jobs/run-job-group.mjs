@@ -10,8 +10,9 @@
  * (run.sh가 그 파일 줄 수로 하트비트 detail을 자르므로 같은 파일이어야 한다).
  *
  * 실패 격리(intraday-portfolio-sync와 같은 원칙): 한 단계가 실패하거나 상한을 넘겨도 다음 단계는 계속한다.
- * 예외는 requiresPrevious 단계뿐이다(바로 앞 단계가 실패하면 건너뜀). 전체 종료 코드는 하나라도 실패면 1이고,
- * 마지막 줄에 실패 단계 이름을 남겨 묶음 하트비트 detail(로그 끝 3줄)에 실리게 한다.
+ * 예외는 requiresPrevious 단계뿐이다(바로 앞 단계가 실패하면 건너뜀). 종료 코드는 래퍼 자체 오류(단계를 띄우지 못함·
+ * 상한 초과 강제 종료·내부 예외)일 때만 1이다 — 단계 실패는 단계 JobHealth가 드러낸다(이중 경보 방지). 마지막 줄의
+ * "단계 n/m 성공, 실패: …"가 묶음 하트비트 detail(로그 끝 3줄)에 실린다.
  *
  * 인자를 받지 않는다 — 단계 스크립트마다 받는 인자가 달라 --dry-run을 그대로 넘기면 모르는 인자를 무시하고
  * 실제로 도는 스크립트가 있다(2026-10-31 관문 사고). 계획만 보려면 --plan(아무것도 실행하지 않음).
@@ -67,7 +68,7 @@ export function spawnStep(job, { group, timeoutMs, runSh = RUN_SH, logDir = LOG_
       });
     } catch {
       closeSync(fd);
-      resolve({ code: 127, signal: null, timedOut: false, durationSec: 0 });
+      resolve({ code: 127, signal: null, timedOut: false, durationSec: 0, launchError: true });
       return;
     }
     activeChildPids.add(child.pid);
@@ -76,7 +77,7 @@ export function spawnStep(job, { group, timeoutMs, runSh = RUN_SH, logDir = LOG_
       try { process.kill(-child.pid, 'SIGTERM'); } catch { /* 이미 끝남 */ }
       killTimer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* 이미 끝남 */ } }, killGraceMs);
     }, timeoutMs) : null;
-    const finish = (code, signal) => {
+    const finish = (code, signal, launchError = false) => {
       if (settled) return;
       settled = true;
       activeChildPids.delete(child.pid);
@@ -84,9 +85,9 @@ export function spawnStep(job, { group, timeoutMs, runSh = RUN_SH, logDir = LOG_
       closeSync(fd);
       const durationSec = Math.round((Date.now() - started) / 1000);
       if (timedOut) recordTimeout(job, { group, timeoutMs, durationSec });
-      resolve({ code, signal, timedOut, durationSec });
+      resolve({ code, signal, timedOut, durationSec, ...(launchError ? { launchError } : {}) });
     };
-    child.on('error', () => finish(127, null));
+    child.on('error', () => finish(127, null, true));
     child.on('exit', (code, signal) => finish(code, signal));
   });
 }
@@ -94,6 +95,7 @@ export function spawnStep(job, { group, timeoutMs, runSh = RUN_SH, logDir = LOG_
 const normalizeSteps = (config) => (config.steps ?? []).map((step) => (typeof step === 'string' ? { job: step } : step));
 
 function describeFailure(result) {
+  if (result.launchError) return '띄우지 못함';
   if (result.deadline) return '마감 지남';
   if (result.timedOut) return '상한 초과';
   if (result.signal) return `signal ${result.signal}`;
@@ -131,7 +133,7 @@ export async function runJobGroup(group, { groups = JOB_GROUPS, runStep = spawnS
     try {
       result = await runStep(step.job, { group, timeoutMs: config.stepTimeoutMs ?? null });
     } catch (error) {
-      result = { code: 1, signal: null, timedOut: false, durationSec: 0, error: error.message };
+      result = { code: 1, signal: null, timedOut: false, durationSec: 0, launchError: true, error: error.message };
     }
     const ok = result.code === 0 && !result.timedOut;
     previousOk = ok;
@@ -139,13 +141,17 @@ export async function runJobGroup(group, { groups = JOB_GROUPS, runStep = spawnS
     log(ok ? `  ✓ ${step.job} ${result.durationSec ?? '?'}s`
       : `  ⚠️ ${step.job} 실패(${describeFailure(result)}) — 다음 단계로 계속`);
   }
+  // 묶음 하트비트는 래퍼 자체 오류(단계를 띄우지 못함·상한 초과 강제 종료·내부 예외)일 때만 실패다(제우스 2026-11-07).
+  // 단계 실패는 단계 이름의 JobHealth·경보로만 드러난다 — 같은 원인 이중 경보, 회차마다 다른 단계 실패가 묶음 연속 실패로
+  // 쌓이는 오경보를 막는다(독립 리뷰 MEDIUM). 마지막 줄(묶음 하트비트 detail)에는 단계 결과를 남긴다.
   const failed = results.filter((r) => r.status === 'FAIL');
   const skipped = results.filter((r) => r.status === 'SKIPPED');
+  const wrapperErrors = failed.filter((r) => r.launchError || r.timedOut);
   const okCount = results.length - failed.length - skipped.length;
-  if (failed.length === 0 && skipped.length === 0) log(`✅ 묶음 ${group} ${okCount}/${steps.length}단계 정상`);
-  else log(`❌ 묶음 ${group} ${okCount}/${steps.length}단계 정상 — 실패: ${failed.map((r) => `${r.job}(${describeFailure(r)})`).join(', ') || '없음'}`
-    + (skipped.length ? ` · 건너뜀: ${skipped.map((r) => r.job).join(', ')}` : ''));
-  return { ok: failed.length === 0 && skipped.length === 0, results };
+  log(`${wrapperErrors.length ? '❌' : '✅'} 묶음 ${group} 단계 ${okCount}/${steps.length} 성공`
+    + (failed.length ? `, 실패: ${failed.map((r) => `${r.job}(${describeFailure(r)})`).join(', ')}` : '')
+    + (skipped.length ? `, 건너뜀: ${skipped.map((r) => r.job).join(', ')}` : ''));
+  return { ok: wrapperErrors.length === 0, allStepsOk: failed.length === 0 && skipped.length === 0, results };
 }
 
 export function describePlan(group, groups = JOB_GROUPS) {

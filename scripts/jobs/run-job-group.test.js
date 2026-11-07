@@ -32,27 +32,28 @@ test('runJobGroup: 단계를 정의 순서대로 하나씩, 묶음 이름·상�
   assert.deepEqual(sleeps, [5, 5, 5]); // 단계 사이에만 쉰다
 });
 
-test('runJobGroup: 한 단계가 실패해도 다음 단계는 돌고, 전체는 실패, 마지막 줄에 실패 단계 이름', async () => {
+test('runJobGroup: 한 단계가 실패해도 다음 단계는 돌고, 묶음은 성공(단계 실패는 단계 하트비트로만), 마지막 줄에 단계 결과', async () => {
   const { calls, runStep } = fakeRunner({ a: { code: 1 } });
   const lines = [];
-  const { ok, results } = await runJobGroup('g', { groups: { g: { steps: ['a', 'b'] } }, runStep, sleep: async () => {}, log: (l) => lines.push(l) });
-  assert.equal(ok, false);
+  const { ok, allStepsOk, results } = await runJobGroup('g', { groups: { g: { steps: ['a', 'b'] } }, runStep, sleep: async () => {}, log: (l) => lines.push(l) });
+  assert.equal(ok, true);
+  assert.equal(allStepsOk, false);
   assert.deepEqual(calls.map((c) => c.job), ['a', 'b']);
   assert.deepEqual(results.map((r) => r.status), ['FAIL', 'OK']);
-  assert.match(lines.at(-1), /❌ 묶음 g 1\/2단계 정상 — 실패: a\(exit 1\)/);
+  assert.equal(lines.at(-1), '✅ 묶음 g 단계 1/2 성공, 실패: a(exit 1)');
 });
 
 test('runJobGroup: requiresPrevious 단계는 바로 앞 단계가 실패하면 건너뛰고, 그 뒤 단계는 계속', async () => {
   const { calls, runStep } = fakeRunner({ b: { code: 2 } });
   const lines = [];
   const { ok, results } = await runJobGroup('g', { groups: fakeGroups, runStep, sleep: async () => {}, log: (l) => lines.push(l) });
-  assert.equal(ok, false);
+  assert.equal(ok, true); // 단계 실패·건너뜀은 래퍼 오류가 아니다
   assert.deepEqual(calls.map((c) => c.job), ['a', 'b', 'd']);
   assert.deepEqual(results.map((r) => r.status), ['OK', 'FAIL', 'SKIPPED', 'OK']);
-  assert.match(lines.at(-1), /실패: b\(exit 2\) · 건너뜀: c/);
+  assert.equal(lines.at(-1), '✅ 묶음 g 단계 2/4 성공, 실패: b(exit 2), 건너뜀: c');
 });
 
-test('runJobGroup: 상한 초과·신호 종료·runStep 예외도 실패로 세고 계속한다', async () => {
+test('runJobGroup: 래퍼 자체 오류(상한 초과 강제 종료·띄우지 못함·내부 예외)만 묶음 실패, 신호 종료는 단계 실패', async () => {
   const runStep = async (job) => {
     if (job === 'a') return { code: null, signal: 'SIGTERM', timedOut: true, durationSec: 1 };
     if (job === 'b') return { code: null, signal: 'SIGKILL', timedOut: false, durationSec: 1 };
@@ -62,7 +63,14 @@ test('runJobGroup: 상한 초과·신호 종료·runStep 예외도 실패로 세
   const { ok, results } = await runJobGroup('g', { groups: { g: { steps: ['a', 'b', 'x'] } }, runStep, sleep: async () => {}, log: (l) => lines.push(l) });
   assert.equal(ok, false);
   assert.deepEqual(results.map((r) => r.status), ['FAIL', 'FAIL', 'FAIL']);
-  assert.match(lines.at(-1), /a\(상한 초과\), b\(signal SIGKILL\), x\(exit 1\)/);
+  assert.equal(lines.at(-1), '❌ 묶음 g 단계 0/3 성공, 실패: a(상한 초과), b(signal SIGKILL), x(띄우지 못함)');
+  // 각각 따로: 상한 초과만 → 실패, 신호 종료만 → 성공, 띄우지 못함(spawnStep launchError) → 실패
+  const one = async (outcome) => (await runJobGroup('g', { groups: { g: { steps: ['s'] } }, sleep: async () => {}, log: () => {},
+    runStep: async () => ({ code: null, signal: null, timedOut: false, durationSec: 0, ...outcome }) })).ok;
+  assert.equal(await one({ timedOut: true, signal: 'SIGTERM' }), false);
+  assert.equal(await one({ signal: 'SIGKILL' }), true);
+  assert.equal(await one({ code: 127, launchError: true }), false);
+  assert.equal(await one({ code: 127 }), true); // 단계가 127로 끝난 것은 단계 실패
 });
 
 test('runJobGroup: 모르는 묶음은 예외, describePlan은 단계·상한을 보여 준다', async () => {
@@ -225,9 +233,10 @@ test('runJobGroup: 마감 시각(KST)을 넘기면 남은 단계는 시작하지
   const clock = ['2026-11-09T16:11:30+09:00', '2026-11-09T16:12:05+09:00'];
   let i = 0;
   const lines = [];
-  const { ok, results } = await runJobGroup('g', { groups: { g: { steps: ['a', 'b'], deadlineKst: '16:12' } }, runStep,
+  const { ok, allStepsOk, results } = await runJobGroup('g', { groups: { g: { steps: ['a', 'b'], deadlineKst: '16:12' } }, runStep,
     sleep: async () => {}, log: (l) => lines.push(l), now: () => new Date(clock[Math.min(i++, 1)]) });
-  assert.equal(ok, false);
+  assert.equal(ok, true);
+  assert.equal(allStepsOk, false);
   assert.deepEqual(calls.map((c) => c.job), ['a']);
   assert.deepEqual(results.map((r) => r.status), ['OK', 'FAIL']);
   assert.match(lines.at(-1), /b\(마감 지남\)/);
