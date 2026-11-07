@@ -205,3 +205,9 @@ test('묶음 D(media-hourly): 매시간 보관 → 순간 노트(보관 실패 �
   const runSh = readFileSync(new URL('run.sh', LAUNCHD), 'utf8');
   assert.match(runSh, /if \[ "\$JOB" = media-moments \] && \[ "\$#" -eq 0 \] && \[ -z "\$\{JOB_GROUP:-\}" \]; then/);
 });
+
+test('묶음 F(premarket-cache): 평일 07:06, 거시지표 → 휴장일 캐시, 휴장일 소비자(09:03 이후)보다 앞', () => {
+  const runs = plistHourMinutes('premarket-cache');
+  assert.deepEqual(runs, Array(5).fill([7, 6]));
+  assert.deepEqual(groupSteps('premarket-cache').map((s) => s.job), ['update-macro-indicators-cache', 'update-krx-trading-calendar']);
+});

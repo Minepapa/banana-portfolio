@@ -77,6 +77,15 @@ export const JOB_GROUPS = {
     stepTimeoutMs: null,
     gapMs: 0,
   },
+  // F 장전 데이터 갱신 — 평일 07:06. 거시지표 캐시(07:05) → KRX 휴장일 캐시(08:15에서 당김, 소비자는 09:03 이후).
+  'premarket-cache': {
+    steps: [
+      'update-macro-indicators-cache',
+      'update-krx-trading-calendar',
+    ],
+    stepTimeoutMs: 15 * MIN,
+    gapMs: 0,
+  },
 };
 
 export function groupSteps(group) {

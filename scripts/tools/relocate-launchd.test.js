@@ -323,10 +323,10 @@ test('임시 심볼릭 링크 경유 CLI도 --check를 실행한다', (t) => {
   assert.match(output, /저장소 루트:/);
 });
 
-test('실제 저장소 운영 plist 49개(보관 retired 29개 제외)는 현재 루트로 rewrite할 때 바이트가 같다', () => {
+test('실제 저장소 운영 plist 48개(보관 retired 31개 제외)는 현재 루트로 rewrite할 때 바이트가 같다', () => {
   const directory = path.join(repositoryRoot, 'scripts', 'launchd');
   const names = fs.readdirSync(directory).filter((name) => name.endsWith('.plist'));
-  assert.equal(names.length, 49);
+  assert.equal(names.length, 48);
   for (const name of names) {
     const source = fs.readFileSync(path.join(directory, name));
     assert.equal(Buffer.from(rewritePlist(source.toString('utf8'), repositoryRoot, repositoryRoot)).equals(source), true, name);

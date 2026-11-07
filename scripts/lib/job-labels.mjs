@@ -85,8 +85,8 @@ export const JOB_LABELS = {
   'daily-breakout-signal-scan': '돌파매매 일별 신호판정 — 승인 없이 자동발주(평일 15:32, 2026-09-13 신설·2026-09-18 launchd 상시배선)',
   'place-breakout-fallback-entry': '돌파매매 전날 장후시간외 미체결 진입을 다음날 시가로 폴백 — 승인 없이 자동발주(평일 09:03, 2026-09-13 신설·2026-09-18 launchd 상시배선)',
   'reconcile-breakout-protection': '돌파매매 보유 포지션 청산 관리 — KRX 시가단일가(08:35) 매일 손절 재등록(당일유효 소멸분)·트레일링 정정·3R 부분익절 능동 판단·전량 종료 원장 기록(2026-09-29 재설계)',
-  'update-macro-indicators-cache': '거시지표 캐시(USD/KRW 환율 등) 매일 갱신 — 기존 일요일 전용(위험 재검토·주간리포트) 지연캐시가 평일엔 최대 6일 묵은 값을 낼 수 있던 설계 공백 보강(평일 07:05, 2026-09-18 신설)',
-  'update-krx-trading-calendar': '평일 08:15 KIS 국내휴장일조회로 당일 KRX 개장 여부 캐시 갱신 — 돌파매매 신호·주문 차단 기준',
+  'update-macro-indicators-cache': '거시지표 캐시(USD/KRW 환율 등) 매일 갱신 — 기존 일요일 전용(위험 재검토·주간리포트) 지연캐시가 평일엔 최대 6일 묵은 값을 낼 수 있던 설계 공백 보강(평일 07:06 묶음 premarket-cache, 2026-09-18 신설)',
+  'update-krx-trading-calendar': '평일 07:06(묶음 premarket-cache) KIS 국내휴장일조회로 당일 KRX 개장 여부 캐시 갱신 — 돌파매매 신호·주문 차단 기준',
   // 2026-09-19 발견(DevRequest 잡실패알림-잡한글설명추가 처리 중 신설한 구조적 가드가
   // 잡아낸 실제 공백 9건) — 등록 시점부터 라벨 없이 돌고 있던 잡들. 아래 vault-job-
   // catalog-audit.test.js가 이미 잡는 "무인잡-카탈로그.md 누락"과는 별개 축(그 문서엔
@@ -105,6 +105,7 @@ export const JOB_LABELS = {
   'post-close-reports': '묶음 B 장후 보고·정기 제안: 신규 현금 배분·당일 체결 보고·자산분배 점검·분기 리밸런싱 제안·월간 거시틸트 제안 5단계를 순서대로(평일 16:16, 분기·월 단계는 스크립트 안 날짜 판정으로 해당일만)',
   'nightly-close': '묶음 C 야간 마감: 월별·일별 잔고 스냅샷 → 볼트 git 백업 → 볼트 암호화 외부 백업 → 통화·녹음 원본 외부 백업 4단계를 순서대로(매일 23:51)',
   'media-hourly': '묶음 D 미디어 매시: Media Inbox 보관·색인 → 순간 노트 묶기(보관 실패 시 순간 노트 건너뜀, 매시간)',
+  'premarket-cache': '묶음 F 장전 데이터 갱신: 거시지표 캐시 → KRX 휴장일 캐시(평일 07:06)',
 };
 
 // 화면용 짧은 이름(2026-10-31, 올림푸스 지휘소·제우스 방 — 오너 점검 "영문 식별자 + 긴 개발 메모" 지적).
@@ -189,6 +190,7 @@ export const JOB_SHORT_LABELS = {
   'post-close-reports': '장후 보고·제안',
   'nightly-close': '야간 마감·백업',
   'media-hourly': '미디어 매시',
+  'premarket-cache': '장전 캐시 갱신',
 };
 
 // 라벨 있으면 "잡이름(한글설명)", 없으면(등록 안 된 새 잡) 이름만 — 조용히 빈 문자열로
