@@ -15,28 +15,19 @@
  *   node scripts/tools/irp-balance-delta-backfill.mjs --log=/path/a.log --log=/path/b.log
  *   node scripts/tools/irp-balance-delta-backfill.mjs --from=… --apply      # 오너 승인 뒤 제우스만
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { IRP_ACCOUNT_NO } from '../lib/account-resolver.mjs';
-import { parseReconcileIrpLog, settlesFromObservations, planIrpBalanceDeltaExecutions } from '../lib/irp-balance-delta.mjs';
-import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
-import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
+import { parseReconcileIrpLog, settlesFromObservations, planIrpBalanceDeltaExecutions, ledgerDatesForSettle } from '../lib/irp-balance-delta.mjs';
+import { buildExecutionRecord, readExecutionsOnDates } from '../lib/ledger-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
-import { VAULT_PATHS } from '../lib/vault-paths.mjs';
 
 const args = process.argv.slice(2);
 const APPLY = args.includes('--apply');
 const FROM = args.find((a) => a.startsWith('--from='))?.slice('--from='.length) ?? '';
 const logArgs = args.filter((a) => a.startsWith('--log=')).map((a) => a.slice('--log='.length));
 const LOGS = logArgs.length ? logArgs : [join(homedir(), 'Library', 'Logs', 'banana-portfolio-v2', 'reconcile-irp.log')];
-
-function readLedgerExecutionsOn(day) {
-  const dir = VAULT_PATHS.facts.ledger.executions;
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter((f) => f.startsWith(`${day}-`) && f.endsWith('.md'))
-    .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
-}
 
 function main() {
   const observations = LOGS.filter((path) => existsSync(path))
@@ -48,7 +39,7 @@ function main() {
   console.log(`🔎 관측 ${observations.length}회 · 정산 ${settles.length}일${FROM ? `(${FROM}부터)` : ''}${APPLY ? '' : ' — 미리보기(쓰기 없음)'}`);
   let planned = 0, written = 0;
   for (const settle of settles) {
-    const { records, recognized, warnings } = planIrpBalanceDeltaExecutions({ ...settle, ledgerExecutions: readLedgerExecutionsOn(settle.day) });
+    const { records, recognized, warnings } = planIrpBalanceDeltaExecutions({ ...settle, ledgerExecutions: readExecutionsOnDates(ledgerDatesForSettle(settle)) });
     for (const item of recognized) console.log(`  · ${item.day} ${item.name} ${item.quantity}주 — 원장에 이미 있음(${item.sources.join(',')})`);
     for (const warning of warnings) console.log(`  ⚠️ ${warning}`);
     for (const input of records) {

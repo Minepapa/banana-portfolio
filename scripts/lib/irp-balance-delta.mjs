@@ -27,6 +27,14 @@
 //      시각은 잔고 조회에서 처음 증가를 본 시각이지 실제 체결 시각이 아니다.
 //   5. 상태 파일이 없거나 깨지면 지금 본 Vault 보유(덮어쓰기 전 = 직전 실행 값)를 기준으로 새로
 //      시작한다. 상태를 잃으면 그날 추정을 놓칠 뿐 이중 기록은 생기지 않는다.
+//   6. 정산 구간은 "그날"이 아니라 (기준 관측 시각, 마지막 관측 시각]이다(독립 리뷰 2026-11-07 HIGH —
+//      잡이 평일 16:07 하루 한 번이면 시간외 체결은 앞날 날짜로 원장에 들어온다). 원장 대조(불변식 1)는
+//      이 구간 안의 모든 IRP 체결로 한다. 시각 미상(00:00:00) 기록은 구간 양 끝 날짜 안이면 넣는다(합이
+//      어긋나면 경고로 빠지는 쪽이 이중 기록보다 낫다). 구간 사이에 평일이 하나라도 끼었거나(관측 누락·
+//      맥 잠듦·상태 저장 실패) 기준 관측 시각을 모르면 기록하지 않고 경고만 한다.
+//   7. 추정 기록에는 구간(estimateWindowFrom/To)을 남긴다 — 나중에 그 구간에 든 카카오 매수가 들어오면
+//      update-holdings-from-executions가 findOverlappingIrpEstimates로 찾아 경고한다(분할 도착은 수량
+//      일치 중복 판정에 안 걸린다).
 //
 // vault-paths를 import하지 않는다(테스트가 정적 import해도 실제 볼트 경로를 읽지 않게).
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -107,7 +115,7 @@ export function observeIrpBalance(state, { today, observedAt, kisHoldings, vault
   // 결측이었다면 다음 날 "처음 보는 종목" 경고만 나고 기록은 하지 않는다(불변식 2).
   const nextOpen = {};
   for (const [key, snap] of Object.entries(state.last)) {
-    nextOpen[key] = { name: snap.name, code: snap.code, qty: snap.qty, invest: snap.invest ?? null };
+    nextOpen[key] = { name: snap.name, code: snap.code, qty: snap.qty, invest: snap.invest ?? null, observedAt: snap.observedAt ?? null };
   }
   return {
     state: { day: today, open: nextOpen, last: withFirstChange(current, nextOpen, null, observedAt) },
@@ -133,6 +141,55 @@ function timeOf(ts) {
   return m ? m[1] : '00:00:00';
 }
 
+// (from, to] 구간 판정. 시각 미상(00:00:00·시각 없음)은 날짜만으로 양 끝 포함(불변식 6).
+export function tradeInWindow(tradeDate, from, to) {
+  const ts = String(tradeDate ?? '');
+  const date = ts.slice(0, 10);
+  const time = ts.slice(11, 19);
+  if (!from || !to || date.length !== 10) return false;
+  if (!time || time === '00:00:00') return date >= from.slice(0, 10) && date <= to.slice(0, 10);
+  return ts > from && ts <= to;
+}
+
+// 두 날짜 사이(양 끝 제외)에 평일이 있으면 true — 그 평일의 관측이 빠졌다는 뜻이다(공휴일은 모른다:
+// 공휴일이 끼면 경고로 빠지는 보수적 방향).
+function weekdayBetween(fromDate, toDate) {
+  const cursor = new Date(`${fromDate}T00:00:00Z`);
+  const end = new Date(`${toDate}T00:00:00Z`);
+  if (Number.isNaN(cursor.getTime()) || Number.isNaN(end.getTime())) return true;
+  cursor.setUTCDate(cursor.getUTCDate() + 1);
+  for (; cursor < end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const weekday = cursor.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) return true;
+  }
+  return false;
+}
+
+// 정산에 필요한 원장 날짜 목록 — 기준 관측일부터 정산일까지(최대 7일, 그보다 길면 어차피 경고로 빠진다).
+export function ledgerDatesForSettle({ day, open = {} }) {
+  const starts = Object.values(open).map((o) => String(o.observedAt ?? '').slice(0, 10)).filter((d) => d.length === 10 && d <= day);
+  const start = starts.length ? starts.sort()[0] : day;
+  const dates = [];
+  const cursor = new Date(`${start}T00:00:00Z`);
+  while (dates.length < 7) {
+    const date = cursor.toISOString().slice(0, 10);
+    if (date > day) break;
+    dates.push(date);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  if (!dates.includes(day)) dates.push(day);
+  return dates;
+}
+
+// 이미 원장에 있는 추정 기록 중, 들어온 IRP 매수(카카오·수동)가 그 구간 안에 드는 것(불변식 7).
+export function findOverlappingIrpEstimates(exec, ledgerExecutions) {
+  if (exec.account !== IRP_ACCOUNT_LABEL || exec.tradeType !== '매수' || exec.source === IRP_BALANCE_DELTA_SOURCE) return [];
+  return ledgerExecutions.filter((record) => record.source === IRP_BALANCE_DELTA_SOURCE
+    && record.account === IRP_ACCOUNT_LABEL && counted(record)
+    && sameInstrument(exec, { code: String(record.stockCode ?? '').trim(), name: String(record.stockName ?? '').trim() })
+    && tradeInWindow(exec.tradeDate, record.estimateWindowFrom, record.estimateWindowTo));
+}
+
 function estimatePrice(open, last, delta) {
   if (open.invest != null && last.invest != null) {
     const price = (last.invest - open.invest) / delta;
@@ -142,15 +199,14 @@ function estimatePrice(open, last, delta) {
   return null;
 }
 
-// 정산: 지난 날 순증가 중 원장에 없는 것만 추정 체결 입력으로 만든다.
-// ledgerExecutions: 원장 체결 프론트매터들(그날 것만 넘겨도 되고 전부 넘겨도 된다).
+// 정산: 지난 구간 순증가 중 원장에 없는 것만 추정 체결 입력으로 만든다.
+// ledgerExecutions: 원장 체결 프론트매터들(ledgerDatesForSettle 날짜 것을 넘긴다. 구간 판정은 여기서 한다).
 // 반환 records는 buildExecutionRecord 입력 모양(acctNo는 호출측이 채운다).
 export function planIrpBalanceDeltaExecutions({ day, open = {}, last = {}, ledgerExecutions = [] }) {
   const records = [];
   const recognized = [];
   const warnings = [];
-  const sameDayIrp = ledgerExecutions.filter((record) => record.account === IRP_ACCOUNT_LABEL
-    && String(record.tradeDate ?? '').slice(0, 10) === day && counted(record));
+  const irpRows = ledgerExecutions.filter((record) => record.account === IRP_ACCOUNT_LABEL && counted(record));
   for (const key of new Set([...Object.keys(open), ...Object.keys(last)])) {
     const o = open[key];
     const l = last[key];
@@ -160,7 +216,17 @@ export function planIrpBalanceDeltaExecutions({ day, open = {}, last = {}, ledge
     if (!Number.isFinite(delta)) { warnings.push(`IRP ${l.name} — ${day} 수량을 숫자로 읽지 못함, 기록 안 함`); continue; }
     if (delta === 0) continue;
     if (delta < 0) { warnings.push(`IRP ${l.name} — ${day} 잔고 ${-delta}주 감소(매도·환매는 자동 기록 범위 밖, 확인 필요)`); continue; }
-    const rows = sameDayIrp.filter((record) => sameInstrument(record, l));
+    const from = o.observedAt;
+    const to = l.observedAt;
+    if (!from || !to) {
+      warnings.push(`IRP ${l.name} — ${day} 순증가 ${delta}주, 기준 관측 시각을 몰라(상태 새로 시작) 구간을 정할 수 없음 — 기록 안 함(확인 필요)`);
+      continue;
+    }
+    if (weekdayBetween(from.slice(0, 10), to.slice(0, 10))) {
+      warnings.push(`IRP ${l.name} — 순증가 ${delta}주가 ${from}~${to} 구간(거래일 하나를 넘음, 관측 누락)에 걸쳐 체결일을 정할 수 없음 — 기록 안 함(확인 필요)`);
+      continue;
+    }
+    const rows = irpRows.filter((record) => sameInstrument(record, l) && tradeInWindow(record.tradeDate, from, to));
     if (rows.some((record) => record.tradeType === '매도')) {
       warnings.push(`IRP ${l.name} — ${day} 원장에 매도가 있어 순증가 ${delta}주를 매수로 추정하지 않음(확인 필요)`);
       continue;
@@ -191,6 +257,8 @@ export function planIrpBalanceDeltaExecutions({ day, open = {}, last = {}, ledge
       sourceEventId: `${IRP_BALANCE_DELTA_SOURCE}-${day}-${key}`,
       estimated: true,
       estimateNote: `${IRP_BALANCE_DELTA_NOTE} [단가 근거: ${estimate.basis}]`,
+      estimateWindowFrom: from,
+      estimateWindowTo: to,
     });
   }
   return { records, recognized, warnings };

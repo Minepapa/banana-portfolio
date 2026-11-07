@@ -86,9 +86,9 @@ import { parseFrontmatter } from '../lib/vault-frontmatter.mjs';
 import { buildCashHoldingRecord, writeHoldingSafely, holdingFilename } from '../lib/holdings-vault-writer.mjs';
 import { writeAtomic } from '../lib/state-writer.mjs';
 import { IRP_ACCOUNT_LABEL, IRP_ACCOUNT_NO } from '../lib/account-resolver.mjs';
-import { buildExecutionRecord } from '../lib/ledger-vault-writer.mjs';
+import { buildExecutionRecord, readExecutionsOnDates } from '../lib/ledger-vault-writer.mjs';
 import {
-  observeIrpBalance, planIrpBalanceDeltaExecutions, readIrpBalanceDeltaState, writeIrpBalanceDeltaState,
+  observeIrpBalance, planIrpBalanceDeltaExecutions, readIrpBalanceDeltaState, writeIrpBalanceDeltaState, ledgerDatesForSettle,
 } from '../lib/irp-balance-delta.mjs';
 import { loadHoldingAssetClassSources, resolveHoldingAssetClass, missingAssetClassQuestion } from '../lib/holding-asset-class.mjs';
 import { createWikiQuestion } from '../lib/wiki-question-queue.mjs';
@@ -204,19 +204,12 @@ export function buildIrpHoldingsPlan(vaultHoldings, kisHoldings, { assetClassSou
 // KST 벽시계 "YYYY-MM-DD HH:MM:SS"(예수금 anchorTs와 같은 관례 — UTC로 쓰면 9시간 어긋난다).
 function kstNowTs() {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Seoul', hour12: false,
+    // hour12:false만 쓰면 엔진에 따라 자정이 "24"로 나온다 — h23으로 고정한다.
+    timeZone: 'Asia/Seoul', hourCycle: 'h23',
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
   }).formatToParts(new Date());
   const get = (type) => parts.find((p) => p.type === type).value;
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
-}
-
-// 원장 체결 파일명은 체결일(YYYY-MM-DD)로 시작한다(buildExecutionRecord) — 그날 것만 읽는다.
-function readLedgerExecutionsOn(day) {
-  const dir = VAULT_PATHS.facts.ledger.executions;
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter((f) => f.startsWith(`${day}-`) && f.endsWith('.md'))
-    .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
 }
 
 // IRP 잔고 증가 → "잔고 증가로 추정한 체결"(2026-11-07 오너 승인 — 체결조회 API가 계속 0건이라
@@ -233,7 +226,7 @@ function recordIrpBalanceDelta(kisHoldings, vaultIrpHoldings) {
   });
   if (clockSkew) collectWarning(`IRP 잔고 추정 체결: 상태 날짜(${state.day})가 오늘(${today})보다 뒤 — 정산 건너뜀`);
   if (settle) {
-    const { records, recognized, warnings } = planIrpBalanceDeltaExecutions({ ...settle, ledgerExecutions: readLedgerExecutionsOn(settle.day) });
+    const { records, recognized, warnings } = planIrpBalanceDeltaExecutions({ ...settle, ledgerExecutions: readExecutionsOnDates(ledgerDatesForSettle(settle)) });
     for (const warning of warnings) collectWarning(`IRP 잔고 추정 체결: ${warning}`);
     for (const item of recognized) console.log(`  · [잔고추정] ${item.day} IRP ${item.name} ${item.quantity}주 — 원장에 이미 있음(${item.sources.join(',')}), 새로 쓰지 않음`);
     for (const input of records) {

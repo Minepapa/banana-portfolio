@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   observeIrpBalance, planIrpBalanceDeltaExecutions, readIrpBalanceDeltaState, writeIrpBalanceDeltaState,
-  IRP_BALANCE_DELTA_SOURCE, parseReconcileIrpLog, settlesFromObservations,
+  IRP_BALANCE_DELTA_SOURCE, parseReconcileIrpLog, settlesFromObservations, findOverlappingIrpEstimates, ledgerDatesForSettle,
 } from './irp-balance-delta.mjs';
 
 const FUND = { code: '900199', name: '가상 TDF2099' };
@@ -82,7 +82,8 @@ test('observeIrpBalance: 시계가 거꾸로 가면 상태를 바꾸지 않는�
 
 const settleFixture = () => ({
   day: '2099-01-05',
-  open: { [FUND.code]: { ...FUND, qty: 100, invest: 1000000 } },
+  // 2099-01-02(금) 16:07 기준 → 2099-01-05(월) 16:07 마지막 관측 — 주말을 낀 인접 거래일.
+  open: { [FUND.code]: { ...FUND, qty: 100, invest: 1000000, observedAt: '2099-01-02 16:07:00' } },
   last: { [FUND.code]: { ...FUND, qty: 110, invest: 1110000, curPrice: 10100, observedAt: '2099-01-05 16:07:00', firstChangeAt: '2099-01-05 11:10:00' } },
 });
 const ledgerRow = (overrides = {}) => ({
@@ -106,6 +107,66 @@ test('planIrpBalanceDeltaExecutions: 원장에 없는 순증가는 추정 체결
   assert.equal(record.price, 11000);
   assert.equal(record.tradeDate, '2099-01-05 11:10:00');
   assert.equal(record.sourceEventId, `${IRP_BALANCE_DELTA_SOURCE}-2099-01-05-${FUND.code}`);
+  assert.equal(record.estimateWindowFrom, '2099-01-02 16:07:00');
+  assert.equal(record.estimateWindowTo, '2099-01-05 16:07:00');
+});
+
+// 리뷰 HIGH(2026-11-07): 잡이 하루 한 번(16:07)이면 정산 구간은 "그날"이 아니라 (기준 관측, 마지막 관측]이다.
+test('[불변식 1] 원장 대조는 날짜가 아니라 (기준 관측 시각, 마지막 관측 시각] 구간 — 앞날 시간외 카카오도 인정', () => {
+  const afterHours = ledgerRow({ tradeDate: '2099-01-02 17:00:00' });
+  const { records, recognized } = planIrpBalanceDeltaExecutions({ ...settleFixture(), ledgerExecutions: [afterHours] });
+  assert.deepEqual(records, []);
+  assert.equal(recognized.length, 1);
+});
+
+test('[불변식 1] 기준 관측 이전 체결(앞 구간 몫)은 이번 구간 인정 근거가 아니다', () => {
+  const before = ledgerRow({ tradeDate: '2099-01-02 11:00:00' });
+  const { records } = planIrpBalanceDeltaExecutions({ ...settleFixture(), ledgerExecutions: [before] });
+  assert.equal(records.length, 1);
+});
+
+test('[불변식 1] 시각 미상(00:00:00) 기록은 구간 양 끝 날짜에 걸리면 넣어 대조한다(보수적)', () => {
+  const manual = ledgerRow({ tradeDate: '2099-01-02 00:00:00', sourceEventId: 'manual-x' });
+  const { records, recognized } = planIrpBalanceDeltaExecutions({ ...settleFixture(), ledgerExecutions: [manual] });
+  assert.deepEqual(records, []);
+  assert.equal(recognized.length, 1);
+});
+
+test('[불변식 6] 구간이 거래일 하나를 넘으면(중간 평일 관측 누락) 기록하지 않고 경고만', () => {
+  const fixture = settleFixture();
+  fixture.open[FUND.code].observedAt = '2099-01-01 16:07:00'; // 목 → 월: 금요일이 비었다
+  const { records, warnings } = planIrpBalanceDeltaExecutions({ ...fixture, ledgerExecutions: [] });
+  assert.deepEqual(records, []);
+  assert.match(warnings[0], /거래일/);
+});
+
+test('[불변식 6] 기준 관측 시각을 모르면(상태 새로 시작) 증가가 있어도 기록하지 않고 경고만', () => {
+  const fixture = settleFixture();
+  delete fixture.open[FUND.code].observedAt;
+  const { records, warnings } = planIrpBalanceDeltaExecutions({ ...fixture, ledgerExecutions: [] });
+  assert.deepEqual(records, []);
+  assert.match(warnings[0], /기준 관측 시각/);
+});
+
+test('observeIrpBalance: 날짜가 바뀌면 지난 마지막 관측 시각이 새 기준 관측 시각이 된다', () => {
+  const state = { day: '2099-01-05', open: {}, last: { [FUND.code]: { ...FUND, qty: 110, invest: 1, observedAt: '2099-01-05 16:07:00' } } };
+  const result = observeIrpBalance(state, { today: '2099-01-06', observedAt: '2099-01-06 16:07:00', kisHoldings: [kis(110, 1)] });
+  assert.equal(result.state.open[FUND.code].observedAt, '2099-01-05 16:07:00');
+});
+
+// 리뷰 MEDIUM: 추정 10주 기록 뒤 카카오가 4주·6주로 나눠 늦게 오면 수량 일치 중복 판정이 못 잡는다.
+test('findOverlappingIrpEstimates: 같은 종목 추정 기록의 구간 안에 든 IRP 카카오 매수를 찾는다', () => {
+  const estimate = {
+    ...ledgerRow({ tradeDate: '2099-01-05 11:10:00', source: IRP_BALANCE_DELTA_SOURCE, estimated: true }),
+    estimateWindowFrom: '2099-01-02 16:07:00', estimateWindowTo: '2099-01-05 16:07:00', quantity: 10,
+  };
+  const kakao = ledgerRow({ quantity: 4 });
+  assert.equal(findOverlappingIrpEstimates(kakao, [estimate, kakao]).length, 1);
+  assert.equal(findOverlappingIrpEstimates(ledgerRow({ tradeDate: '2099-01-06 11:00:00' }), [estimate]).length, 0);
+  assert.equal(findOverlappingIrpEstimates(ledgerRow({ stockCode: '900198', stockName: '가상 다른 펀드' }), [estimate]).length, 0);
+  assert.equal(findOverlappingIrpEstimates(ledgerRow({ tradeType: '매도' }), [estimate]).length, 0);
+  assert.equal(findOverlappingIrpEstimates(estimate, [estimate]).length, 0);
+  assert.equal(findOverlappingIrpEstimates(ledgerRow({ account: 'ISA' }), [estimate]).length, 0);
 });
 
 test('planIrpBalanceDeltaExecutions: 매입금액이 없으면 현재가로 단가를 추정하고 근거를 남긴다', () => {
@@ -142,9 +203,9 @@ test('[불변식 1] 원장 매수가 일부만 있으면 나머지를 짐작하�
   assert.equal(warnings.length, 1);
 });
 
-test('planIrpBalanceDeltaExecutions: 다른 날·다른 계좌·다른 종목·중복 표시 행은 인정 근거가 아니다', () => {
+test('planIrpBalanceDeltaExecutions: 구간 밖·다른 계좌·다른 종목·중복 표시 행은 인정 근거가 아니다', () => {
   const rows = [
-    ledgerRow({ tradeDate: '2099-01-04 11:03:00' }),
+    ledgerRow({ tradeDate: '2099-01-06 11:03:00' }), // 구간 뒤
     ledgerRow({ account: 'ISA' }),
     ledgerRow({ stockCode: '900198', stockName: '가상 다른 펀드' }),
     ledgerRow({ holdingsApplied: 'duplicate-skipped' }),
@@ -230,4 +291,9 @@ test('parseReconcileIrpLog + settlesFromObservations: 로그에서 날짜별 순
   // 마지막 관측일은 through(오늘)보다 이전일 때만 정산한다.
   assert.deepEqual(settlesFromObservations(observations, { through: '2099-01-06' }).map((s) => s.day), ['2099-01-04', '2099-01-05']);
   assert.deepEqual(settlesFromObservations(observations, { through: '2099-01-07' }).map((s) => s.day), ['2099-01-04', '2099-01-05', '2099-01-06']);
+});
+
+test('ledgerDatesForSettle: 기준 관측일부터 정산일까지, 기준 시각이 없으면 정산일만', () => {
+  assert.deepEqual(ledgerDatesForSettle(settleFixture()), ['2099-01-02', '2099-01-03', '2099-01-04', '2099-01-05']);
+  assert.deepEqual(ledgerDatesForSettle({ day: '2099-01-05', open: { x: { qty: 1 } } }), ['2099-01-05']);
 });

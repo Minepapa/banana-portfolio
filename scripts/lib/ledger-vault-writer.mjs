@@ -16,9 +16,11 @@
 //
 // 어느 Ledger 하위폴더에 쓸지는 이 모듈이 결정해 `dir`로 반환한다(2026-08-04 확정,
 // 오너 요청 — 이벤트 종류별 하위폴더 분리) — 호출부가 매핑을 따로 알 필요가 없다.
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { VAULT_PATHS, VAULT_REL } from './vault-paths.mjs';
 // frontmatter 빌드는 vault-frontmatter.mjs 공용 모듈 사용(2026-08-05 리팩터).
-import { buildFrontmatter } from './vault-frontmatter.mjs';
+import { buildFrontmatter, parseFrontmatter } from './vault-frontmatter.mjs';
 // 그래프 뷰 다중축 클러스터링용 태그(2026-09-05, vault-tags.mjs 헤더 주석 참고).
 import { buildVaultTags } from './vault-tags.mjs';
 
@@ -91,7 +93,11 @@ export function buildExecutionRecord(e) {
     ...(e.fillRound != null ? { fillRound: e.fillRound } : {}),
     ...(e.orderCumulativeAmount != null ? { orderCumulativeAmount: e.orderCumulativeAmount } : {}),
     // 잔고 변화로 추정한 체결(irp-balance-delta.mjs) — 실제 체결 통보가 아님을 원장에 남긴다.
-    ...(e.estimated ? { estimated: true, estimateNote: e.estimateNote ?? '' } : {}),
+    ...(e.estimated ? {
+      estimated: true, estimateNote: e.estimateNote ?? '',
+      ...(e.estimateWindowFrom ? { estimateWindowFrom: e.estimateWindowFrom } : {}),
+      ...(e.estimateWindowTo ? { estimateWindowTo: e.estimateWindowTo } : {}),
+    } : {}),
     account: e.account ?? null,
     accountNote: e.account ? null : ACCOUNT_NOTE,
     tags: buildVaultTags({ account: e.account, stockName: e.stockName }),
@@ -99,6 +105,14 @@ export function buildExecutionRecord(e) {
     recordedAt: new Date().toISOString(),
   });
   return { dedupKey, filename, content, dir: VAULT_PATHS.facts.ledger.executions };
+}
+
+// 체결 파일명은 체결일(YYYY-MM-DD)로 시작한다(위 buildExecutionRecord) — 주어진 날짜 것만 읽는다.
+export function readExecutionsOnDates(dates, dir = VAULT_PATHS.facts.ledger.executions) {
+  if (!existsSync(dir)) return [];
+  const prefixes = [...new Set(dates)].map((date) => `${date}-`);
+  return readdirSync(dir).filter((f) => f.endsWith('.md') && prefixes.some((prefix) => f.startsWith(prefix)))
+    .map((f) => parseFrontmatter(readFileSync(join(dir, f), 'utf8')));
 }
 
 // 카카오 체결 원문은 일반 파서와 오너 확인 큐가 같은 sourceEventId를 써야 한다. 그래야
