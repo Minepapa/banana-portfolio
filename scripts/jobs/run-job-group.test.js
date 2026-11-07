@@ -197,3 +197,11 @@ test('묶음 C(nightly-close): 매일 자정 전 시작, 스냅샷 → 볼트 �
   assert.deepEqual(groupSteps('nightly-close').map((s) => s.job),
     ['update-monthly-balance-snapshot', 'backup-vault', 'vault-offsite-backup', 'media-audio-offsite-backup']);
 });
+
+test('묶음 D(media-hourly): 매시간 보관 → 순간 노트(보관 실패 시 건너뜀), 묶음 안에서는 run.sh의 보관 선행 특례가 꺼진다', () => {
+  assert.match(plistText('media-hourly'), /<key>StartInterval<\/key>\s*<integer>3600<\/integer>/);
+  assert.deepEqual(groupSteps('media-hourly'), [{ job: 'media-archive' }, { job: 'media-moments', requiresPrevious: true }]);
+  assert.equal(JOB_GROUPS['media-hourly'].stepTimeoutMs, null); // 잠금 있는 긴 작업 — 옛 plist처럼 상한 없음
+  const runSh = readFileSync(new URL('run.sh', LAUNCHD), 'utf8');
+  assert.match(runSh, /if \[ "\$JOB" = media-moments \] && \[ "\$#" -eq 0 \] && \[ -z "\$\{JOB_GROUP:-\}" \]; then/);
+});

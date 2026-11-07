@@ -67,6 +67,16 @@ export const JOB_GROUPS = {
     stepTimeoutMs: 90 * MIN,
     gapMs: 0,
   },
+  // D 미디어 매시 — 보관 → 순간 노트. 보관이 실패하면 순간 노트는 돌리지 않는다(예전 run.sh media-moments 특례와 같음).
+  // 잠금(withLock)이 있는 긴 작업이라 상한을 두지 않는다(옛 plist와 같음).
+  'media-hourly': {
+    steps: [
+      'media-archive',
+      { job: 'media-moments', requiresPrevious: true },
+    ],
+    stepTimeoutMs: null,
+    gapMs: 0,
+  },
 };
 
 export function groupSteps(group) {

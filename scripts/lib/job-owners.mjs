@@ -85,4 +85,5 @@ export const JOB_OWNERS = {
   'ledger-close': 'plutus', // 묶음(job-groups.mjs)
   'post-close-reports': 'plutus', // 묶음(job-groups.mjs)
   'nightly-close': 'clio', // 묶음(job-groups.mjs)
+  'media-hourly': 'zeus', // 묶음(job-groups.mjs)
 };
